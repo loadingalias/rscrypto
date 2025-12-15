@@ -47,10 +47,10 @@ jobs:
           since: ${{ github.event.before }}
 
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # Core Platform Testing (All Free GitHub Runners)
+  # Core Platform Testing
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   # Full CI on all platforms: quality checks, build, and test
-  # All runners are FREE for public repos (Pro account)
+  # x86_64: GitHub runners | ARM64: Namespace runners (private repo support)
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   ci:
     name: CI (${{ matrix.target.name }})
@@ -73,7 +73,7 @@ jobs:
             runner: ubuntu-latest
 
           - name: aarch64-unknown-linux-gnu
-            runner: ubuntu-24.04-arm
+            runner: namespace-profile-rscrypto-linux-arm64
 
           # ─────────────────────────────────────────────────────────────────────
           # Windows (x86_64 + ARM64)
@@ -82,7 +82,7 @@ jobs:
             runner: windows-latest
 
           - name: aarch64-pc-windows-msvc
-            runner: windows-11-arm
+            runner: namespace-profile-rscrypto-windows-arm64
 
     steps:
       - name: Checkout
@@ -173,7 +173,10 @@ jobs:
         uses: dtolnay/rust-toolchain@0b1efabc08b657293548b77fb76cc02d26091c7e  # master
         with:
           toolchain: nightly-2025-12-14
-          targets: ${{ matrix.target }}
+
+      # Explicit target installation (rust-toolchain.toml doesn't include no_std targets)
+      - name: Install Target
+        run: rustup target add ${{ matrix.target }}
 
       - name: Setup Rust Cache
         uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1  # v2.8.1
@@ -238,7 +241,10 @@ jobs:
         uses: dtolnay/rust-toolchain@0b1efabc08b657293548b77fb76cc02d26091c7e  # master
         with:
           toolchain: nightly-2025-12-14
-          targets: ${{ matrix.target }}
+
+      # Explicit target installation (rust-toolchain.toml doesn't include WASM targets)
+      - name: Install Target
+        run: rustup target add ${{ matrix.target }}
 
       - name: Setup Rust Cache
         uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1  # v2.8.1

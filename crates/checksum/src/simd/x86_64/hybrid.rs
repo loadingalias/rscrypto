@@ -353,6 +353,7 @@ pub(crate) fn compute_hybrid_zen5_runtime(crc: u32, data: &[u8]) -> u32 {
 mod tests {
   extern crate std;
 
+  #[allow(unused_imports)] // Used only when target_feature = "avx512f" etc.
   use super::*;
 
   #[test]

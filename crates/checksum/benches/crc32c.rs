@@ -8,6 +8,8 @@
 //! - Bitwise table-less implementation (for embedded/wasm)
 //! - Hybrid Zen4/Zen5 kernels (when available on AMD hardware)
 
+#![allow(unsafe_code)] // Required for direct kernel benchmarks
+
 use checksum::Crc32c;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 

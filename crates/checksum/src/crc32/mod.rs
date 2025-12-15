@@ -537,7 +537,7 @@ mod tests {
     check_combine::<Crc32>();
   }
 
-  #[cfg(feature = "std")]
+  #[cfg(all(feature = "std", target_arch = "aarch64"))]
   fn gen_bytes(len: usize, seed: u64) -> Vec<u8> {
     let mut out = Vec::with_capacity(len);
     let mut x = seed;
