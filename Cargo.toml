@@ -1,0 +1,62 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.92"
+license = "MIT OR Apache-2.0"
+authors = ["loadingalias"]
+repository = "https://github.com/loadingalias/rscrypto"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+dangling_pointers_from_locals = "deny"
+integer_to_ptr_transmutes = "deny"
+
+[workspace.lints.clippy]
+correctness = { level = "deny", priority = -1 }
+suspicious = { level = "deny", priority = -1 }
+perf = { level = "deny", priority = -1 }
+
+std_instead_of_core = "warn"
+std_instead_of_alloc = "warn"
+
+[workspace.lints.rustdoc]
+broken_intra_doc_links = "deny"
+private_intra_doc_links = "warn"
+
+[workspace.dependencies]
+criterion = "^0.8.1" #unified
+proptest = "^1.9.0"
+platform = { path = "crates/platform", version = "^0.1.0", default-features = false } #unified
+traits = { path = "crates/traits", version = "^0.1.0", default-features = false } #unified
+
+[profile.dev]
+opt-level = 0
+debug = true
+split-debuginfo = "unpacked"
+strip = "none"
+debug-assertions = true
+overflow-checks = true
+lto = false
+incremental = false # Higher sccache hit rates and faster build/check/test cycles
+codegen-units = 256
+
+[profile.release]
+opt-level = 3
+debug = false
+strip = "debuginfo" # Keep symbols for backtraces, remove debug info
+overflow-checks = true # Critical for crypto: overflow = security vulnerability
+lto = "fat"
+panic = "abort"
+codegen-units = 1
+
+[profile.bench]
+inherits = "release"
+debug = true # Enable debug symbols for profiling and analysis

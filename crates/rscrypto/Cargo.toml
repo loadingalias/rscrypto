@@ -1,0 +1,22 @@
+[package]
+name = "rscrypto"
+description = "Modern, high-performance cryptography for Rust"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[features]
+default = ["std"]
+std = ["traits/std", "checksum/std", "hash/std"]
+alloc = ["traits/alloc", "checksum/alloc", "hash/alloc"]
+
+[dependencies]
+checksum = { path = "../checksum" }
+hash = { path = "../hash" }
+traits = { workspace = true } #unified
+
+[lints]
+workspace = true

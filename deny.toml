@@ -1,0 +1,37 @@
+[graph]
+# Target coverage for rscrypto
+targets = [
+  "aarch64-apple-darwin",
+  "x86_64-unknown-linux-gnu",
+  "aarch64-unknown-linux-gnu",
+  "x86_64-unknown-linux-musl",
+  "aarch64-unknown-linux-musl",
+  "x86_64-pc-windows-msvc",
+  "aarch64-pc-windows-msvc",
+  "wasm32-unknown-unknown",
+  "thumbv6m-none-eabi",
+]
+
+[advisories]
+yanked = "warn"
+
+[licenses]
+# Common Open Source Licenses
+allow = [
+  "MIT",
+  "Apache-2.0",
+]
+
+confidence-threshold = 0.93
+
+[bans]
+multiple-versions = "warn"
+wildcards = "allow"
+highlight = "all"
+
+skip = []
+
+[sources]
+unknown-registry = "warn"
+unknown-git = "warn"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

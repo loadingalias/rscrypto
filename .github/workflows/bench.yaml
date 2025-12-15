@@ -1,0 +1,436 @@
+name: Benchmark
+
+on:
+  schedule:
+    # Run every other Sunday at 4AM UTC (1st and 15th for bi-weekly pattern)
+    - cron: "0 4 1,15 * *"
+
+  # Manual trigger with options
+  workflow_dispatch:
+    inputs:
+      crates:
+        description: "Crate(s) to benchmark (comma-separated, leave empty for all)"
+        required: false
+        type: string
+        default: ""
+
+      run_linux_x64:
+        description: "Run on Linux x86-64"
+        required: false
+        type: boolean
+        default: true
+
+      run_linux_arm64:
+        description: "Run on Linux ARM64"
+        required: false
+        type: boolean
+        default: false
+
+      run_windows_x64:
+        description: "Run on Windows x86-64"
+        required: false
+        type: boolean
+        default: false
+
+      run_windows_arm64:
+        description: "Run on Windows ARM64"
+        required: false
+        type: boolean
+        default: false
+
+      specific_benches:
+        description: "Specific benchmark binary names (optional, comma-separated)"
+        required: false
+        type: string
+        default: ""
+
+env:
+  RUST_BACKTRACE: 1
+  CARGO_TERM_COLOR: always
+  RSCRYPTO_BENCH_MODE: ci
+  CARGO_INCREMENTAL: 0
+
+# Lock down permissions to read-only by default
+permissions:
+  contents: read  # Required for actions/checkout
+
+jobs:
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # Benchmark Execution - High-performance dedicated runners
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # For scheduled runs: only bench affected crates (cargo-rail change detection)
+  # For manual runs: always run (user controls scope via inputs)
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  benchmark:
+    name: Benchmark (${{ matrix.target.name }})
+    runs-on: ${{ matrix.target.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          # Linux x86-64 (Namespace)
+          - name: x86_64-unknown-linux-gnu
+            runner: namespace-profile-rscrypto-linux-x86
+            platform-id: linux-x64
+
+          # Linux ARM64 (Namespace)
+          - name: aarch64-unknown-linux-gnu
+            runner: namespace-profile-rscrypto-linux-arm64
+            platform-id: linux-arm64
+
+          # Windows x86-64 (WarpBuild)
+          - name: x86_64-pc-windows-msvc
+            runner: warp-windows-2025-x64-8x
+            platform-id: windows-x64
+
+          # Windows ARM64 (Namespace)
+          - name: aarch64-pc-windows-msvc
+            runner: namespace-profile-rscrypto-windows-arm64
+            platform-id: windows-arm64
+
+    steps:
+      # Check if this platform should run (for manual triggers)
+      - name: Check Platform Selection
+        id: should-run
+        shell: bash
+        run: |
+          # For scheduled runs, always run all platforms
+          if [ "${{ github.event_name }}" == "schedule" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "Scheduled run - running all platforms"
+            exit 0
+          fi
+
+          # For manual triggers, check platform-specific flags
+          PLATFORM="${{ matrix.target.platform-id }}"
+
+          case "$PLATFORM" in
+            "linux-x64")
+              if [ "${GITHUB_EVENT_INPUTS_RUN_LINUX_X64}" == "true" ]; then
+                echo "enabled=true" >> "$GITHUB_OUTPUT"
+                echo "Linux x86-64 enabled by manual trigger"
+              else
+                echo "enabled=false" >> "$GITHUB_OUTPUT"
+                echo "Linux x86-64 disabled - skipping"
+              fi
+              ;;
+            "linux-arm64")
+              if [ "${GITHUB_EVENT_INPUTS_RUN_LINUX_ARM64}" == "true" ]; then
+                echo "enabled=true" >> "$GITHUB_OUTPUT"
+                echo "Linux ARM64 enabled by manual trigger"
+              else
+                echo "enabled=false" >> "$GITHUB_OUTPUT"
+                echo "Linux ARM64 disabled - skipping"
+              fi
+              ;;
+            "windows-x64")
+              if [ "${GITHUB_EVENT_INPUTS_RUN_WINDOWS_X64}" == "true" ]; then
+                echo "enabled=true" >> "$GITHUB_OUTPUT"
+                echo "Windows x86-64 enabled by manual trigger"
+              else
+                echo "enabled=false" >> "$GITHUB_OUTPUT"
+                echo "Windows x86-64 disabled - skipping"
+              fi
+              ;;
+            "windows-arm64")
+              if [ "${GITHUB_EVENT_INPUTS_RUN_WINDOWS_ARM64}" == "true" ]; then
+                echo "enabled=true" >> "$GITHUB_OUTPUT"
+                echo "Windows ARM64 enabled by manual trigger"
+              else
+                echo "enabled=false" >> "$GITHUB_OUTPUT"
+                echo "Windows ARM64 disabled - skipping"
+              fi
+              ;;
+            *)
+              echo "enabled=false" >> "$GITHUB_OUTPUT"
+              echo "Unknown platform - skipping"
+              ;;
+          esac
+        env:
+          GITHUB_EVENT_INPUTS_RUN_LINUX_X64: ${{ github.event.inputs.run_linux_x64 }}
+          GITHUB_EVENT_INPUTS_RUN_LINUX_ARM64: ${{ github.event.inputs.run_linux_arm64 }}
+          GITHUB_EVENT_INPUTS_RUN_WINDOWS_X64: ${{ github.event.inputs.run_windows_x64 }}
+          GITHUB_EVENT_INPUTS_RUN_WINDOWS_ARM64: ${{ github.event.inputs.run_windows_arm64 }}
+
+      - name: Checkout
+        if: steps.should-run.outputs.enabled == 'true'
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
+        with:
+          fetch-depth: 0  # Required for cargo rail affected (needs git history)
+
+      # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      # Setup: Rust toolchain, performance tools, and caching
+      # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+      # TOOLCHAIN PIN: Must match rust-toolchain.toml
+      # Update locations: rust-toolchain.toml, setup/*.yaml, bench.yaml
+      - name: Install Rust Toolchain
+        if: steps.should-run.outputs.enabled == 'true'
+        uses: dtolnay/rust-toolchain@0b1efabc08b657293548b77fb76cc02d26091c7e  # master
+        with:
+          toolchain: nightly-2025-12-14
+          components: clippy, rustfmt
+
+      # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      # Caching Strategy:
+      # - Linux (Namespace runners): Namespace NVMe cache
+      # - Windows (WarpBuild + Namespace): rust-cache with GitHub backend
+      # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+      - name: Setup Namespace Cache (Linux - instant NVMe cache)
+        if: steps.should-run.outputs.enabled == 'true' && runner.os == 'Linux'
+        uses: namespacelabs/nscloud-cache-action@446d8f390563cd54ca27e8de5bdb816f63c0b706  # v1.2.21
+        with:
+          cache: rust
+
+      # Compute cache key from runner metadata
+      - name: Compute Cache Key
+        if: steps.should-run.outputs.enabled == 'true' && runner.os == 'Windows'
+        id: cache
+        shell: bash
+        run: |
+          OS=$(echo "${{ runner.os }}" | tr '[:upper:]' '[:lower:]')
+          ARCH=$(echo "${{ runner.arch }}" | tr '[:upper:]' '[:lower:]')
+          echo "key=bench-${OS}-${ARCH}" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Rust Cache (Windows)
+        if: steps.should-run.outputs.enabled == 'true' && runner.os == 'Windows'
+        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1  # v2.8.1
+        with:
+          shared-key: "rscrypto-v1"
+          key: ${{ steps.cache.outputs.key }}
+          cache-on-failure: true
+
+      - name: Install Benchmarking Tools
+        if: steps.should-run.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          # Only install tools that aren't already cached
+          TOOLS="cargo-criterion critcmp just"
+          MISSING=""
+
+          for tool in ${TOOLS}; do
+            if ! command -v "$tool" &> /dev/null; then
+              MISSING="$MISSING $tool"
+              echo "Missing: $tool"
+            else
+              echo "Cached: $tool ($(command -v "$tool"))"
+            fi
+          done
+
+          if [ -n "$MISSING" ]; then
+            echo "Installing:$MISSING"
+            # shellcheck disable=SC2086
+            cargo install ${MISSING} --locked
+          else
+            echo "All benchmarking tools already installed (from cache)"
+          fi
+
+      # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      # Run Benchmarks
+      # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+      # Install cargo-rail for scheduled runs (change detection)
+      - name: Install cargo-rail (Scheduled runs only)
+        if: steps.should-run.outputs.enabled == 'true' && github.event_name == 'schedule'
+        shell: bash
+        run: |
+          echo "Installing cargo-rail for change detection..."
+          cargo install cargo-rail --locked
+          echo "cargo-rail installed"
+
+      - name: Determine Benchmark Scope
+        if: steps.should-run.outputs.enabled == 'true'
+        id: scope
+        shell: bash
+        run: |
+          CRATES_INPUT="${GITHUB_EVENT_INPUTS_CRATES}"
+          BENCHES_INPUT="${GITHUB_EVENT_INPUTS_SPECIFIC_BENCHES}"
+          EVENT_NAME="${GITHUB_EVENT_NAME}"
+
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Determining Benchmark Scope"
+          echo "Event: $EVENT_NAME"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          # ─────────────────────────────────────────────────────────
+          # SCHEDULED RUNS: Use cargo-rail change detection
+          # ─────────────────────────────────────────────────────────
+          if [ "$EVENT_NAME" == "schedule" ]; then
+            echo "Scheduled run - using cargo-rail change detection"
+
+            # Get affected crates since ~2 weeks of commits
+            AFFECTED=$(cargo rail affected --since HEAD~50 -f names-only 2>/dev/null || echo "")
+
+            if [ -z "$AFFECTED" ]; then
+              echo "No crates changed in last ~2 weeks, running full workspace"
+              echo "crate_flags=--workspace" >> "$GITHUB_OUTPUT"
+              echo "skip_bench=false" >> "$GITHUB_OUTPUT"
+            else
+              # Build -p flags for each affected crate
+              CRATE_FLAGS=""
+              CRATE_LIST=""
+              while IFS= read -r crate; do
+                if [ -n "$crate" ]; then
+                  CRATE_FLAGS="$CRATE_FLAGS -p $crate"
+                  CRATE_LIST="$CRATE_LIST $crate"
+                fi
+              done <<< "$AFFECTED"
+
+              if [ -n "$CRATE_FLAGS" ]; then
+                echo "crate_flags=$CRATE_FLAGS" >> "$GITHUB_OUTPUT"
+                echo "skip_bench=false" >> "$GITHUB_OUTPUT"
+                echo "Benchmarking changed crates:$CRATE_LIST"
+              else
+                echo "No benchmark-relevant crates changed, skipping"
+                echo "crate_flags=" >> "$GITHUB_OUTPUT"
+                echo "skip_bench=true" >> "$GITHUB_OUTPUT"
+              fi
+            fi
+
+            # No bench filters for scheduled runs
+            echo "bench_flags=" >> "$GITHUB_OUTPUT"
+
+          # ─────────────────────────────────────────────────────────
+          # MANUAL RUNS: Use user-provided inputs (no change detection)
+          # ─────────────────────────────────────────────────────────
+          else
+            echo "Manual run - using user-provided scope"
+            echo "skip_bench=false" >> "$GITHUB_OUTPUT"
+
+            # Build crate flags from user input
+            if [ -n "$CRATES_INPUT" ]; then
+              CRATE_FLAGS=""
+              IFS=',' read -ra CRATES <<< "$CRATES_INPUT"
+              for crate in "${CRATES[@]}"; do
+                crate=$(echo "$crate" | xargs)
+                CRATE_FLAGS="$CRATE_FLAGS -p $crate"
+              done
+              echo "crate_flags=$CRATE_FLAGS" >> "$GITHUB_OUTPUT"
+              echo "Running benchmarks for crates: $CRATES_INPUT"
+            else
+              echo "crate_flags=--workspace" >> "$GITHUB_OUTPUT"
+              echo "Running benchmarks for all workspace crates"
+            fi
+
+            # Build benchmark binary filter flags from user input
+            if [ -n "$BENCHES_INPUT" ]; then
+              BENCH_FLAGS=""
+              IFS=',' read -ra BENCHES <<< "$BENCHES_INPUT"
+              for bench in "${BENCHES[@]}"; do
+                bench=$(echo "$bench" | xargs)
+                BENCH_FLAGS="$BENCH_FLAGS --bench $bench"
+              done
+              echo "bench_flags=$BENCH_FLAGS" >> "$GITHUB_OUTPUT"
+              echo "Filtering benchmark binaries: $BENCHES_INPUT"
+            else
+              echo "bench_flags=" >> "$GITHUB_OUTPUT"
+              echo "Running all benchmark binaries"
+            fi
+          fi
+        env:
+          GITHUB_EVENT_INPUTS_CRATES: ${{ github.event.inputs.crates }}
+          GITHUB_EVENT_INPUTS_SPECIFIC_BENCHES: ${{ github.event.inputs.specific_benches }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+
+      - name: Skip Notice (No Changes Detected)
+        if: steps.should-run.outputs.enabled == 'true' && steps.scope.outputs.skip_bench == 'true'
+        shell: bash
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "SKIPPING BENCHMARKS - No Changes Detected"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          echo "This is a scheduled run and no benchmark-relevant crates"
+          echo "have changed in the last ~2 weeks."
+          echo ""
+          echo "To run benchmarks anyway, use the manual trigger."
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+      - name: Clean Old Benchmark Data
+        if: steps.should-run.outputs.enabled == 'true' && steps.scope.outputs.skip_bench != 'true'
+        shell: bash
+        run: |
+          echo "Cleaning Old Benchmark Data"
+          if [ -d "target/criterion" ]; then
+            echo "Removing target/criterion/ to ensure clean results"
+            rm -rf target/criterion
+          else
+            echo "No existing criterion data to clean"
+          fi
+
+      - name: Build Benchmarks (no-run)
+        if: steps.should-run.outputs.enabled == 'true' && steps.scope.outputs.skip_bench != 'true'
+        shell: bash
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Building Criterion Benchmarks"
+          echo "Platform: ${{ matrix.target.name }}"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          # shellcheck disable=SC2086
+          cargo bench --profile bench ${STEPS_SCOPE_OUTPUTS_CRATE_FLAGS} ${STEPS_SCOPE_OUTPUTS_BENCH_FLAGS} --all-features --no-run
+        env:
+          STEPS_SCOPE_OUTPUTS_CRATE_FLAGS: ${{ steps.scope.outputs.crate_flags }}
+          STEPS_SCOPE_OUTPUTS_BENCH_FLAGS: ${{ steps.scope.outputs.bench_flags }}
+
+      - name: Run Criterion Benchmarks
+        if: steps.should-run.outputs.enabled == 'true' && steps.scope.outputs.skip_bench != 'true'
+        shell: bash
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Running Criterion Benchmarks"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          mkdir -p benchmark-results
+          # shellcheck disable=SC2086
+          cargo bench --profile bench ${STEPS_SCOPE_OUTPUTS_CRATE_FLAGS} ${STEPS_SCOPE_OUTPUTS_BENCH_FLAGS} --all-features 2>&1 | tee benchmark-results/benchmark-output.txt
+
+        env:
+          STEPS_SCOPE_OUTPUTS_CRATE_FLAGS: ${{ steps.scope.outputs.crate_flags }}
+          STEPS_SCOPE_OUTPUTS_BENCH_FLAGS: ${{ steps.scope.outputs.bench_flags }}
+
+      # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      # Upload Results
+      # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+      - name: Generate Benchmark Summary
+        if: steps.should-run.outputs.enabled == 'true' && steps.scope.outputs.skip_bench != 'true' && always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          SUMMARY_FILE="target/criterion/BENCHMARK_SUMMARY.md"
+          mkdir -p target/criterion
+          {
+            echo "# rscrypto Benchmark Report"
+            echo ""
+            echo "## Run Information"
+            echo "- **Platform**: ${{ matrix.target.name }}"
+            echo "- **Runner**: ${{ matrix.target.runner }}"
+            echo "- **Mode**: $RSCRYPTO_BENCH_MODE"
+            echo "- **Date**: $(date -u +"%Y-%m-%d %H:%M:%S UTC")"
+            echo "- **Commit**: ${{ github.sha }}"
+            echo ""
+            echo "## Artifacts"
+            echo "- **benchmark-results-${{ matrix.target.platform-id }}**: Console output"
+            echo "- **criterion-html-${{ matrix.target.platform-id }}**: Interactive HTML reports"
+          } | tee "$SUMMARY_FILE"
+
+      - name: Upload Benchmark Results (Console Output)
+        if: steps.should-run.outputs.enabled == 'true' && steps.scope.outputs.skip_bench != 'true' && always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5.0.0
+        with:
+          name: benchmark-results-${{ matrix.target.platform-id }}
+          path: benchmark-results/
+          retention-days: 90
+          if-no-files-found: warn
+          compression-level: 6
+
+      - name: Upload Criterion HTML Report
+        if: steps.should-run.outputs.enabled == 'true' && steps.scope.outputs.skip_bench != 'true' && always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5.0.0
+        with:
+          name: criterion-html-${{ matrix.target.platform-id }}
+          path: target/criterion/
+          retention-days: 90
+          if-no-files-found: ignore
+          compression-level: 6

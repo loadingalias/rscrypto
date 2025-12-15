@@ -1,0 +1,61 @@
+# rscrypto Cargo Configuration
+# ============================================================
+
+# ============================================================
+# Tier A - Primary Production Targets
+# ============================================================
+
+# Linux x86_64 - Runtime SIMD detection via std::arch
+[target.x86_64-unknown-linux-gnu]
+
+# Linux ARM64 - LSE atomics for better concurrent performance
+[target.aarch64-unknown-linux-gnu]
+rustflags = ["-C", "target-feature=+lse"]
+
+# Windows MSVC x86_64 - Runtime SIMD detection via std::arch
+[target.x86_64-pc-windows-msvc]
+
+# macOS Apple Silicon - LSE atomics (all M-series support ARMv8.3+)
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "target-feature=+lse"]
+
+# ============================================================
+# Tier B - Secondary Production Targets
+# ============================================================
+
+# Linux x86_64 MUSL - Static linking
+[target.x86_64-unknown-linux-musl]
+
+# Linux ARM64 MUSL - Static linking + LSE atomics
+[target.aarch64-unknown-linux-musl]
+rustflags = ["-C", "target-feature=+lse"]
+
+# Windows ARM64 - LSE atomics
+[target.aarch64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+lse"]
+
+# ============================================================
+# Tier C - Special Purpose Targets
+# ============================================================
+
+# WASM - Browser/Edge (table-based fallbacks, no SIMD)
+[target.wasm32-unknown-unknown]
+
+# Embedded - Cortex-M0/M0+ (no_std, portable only)
+[target.thumbv6m-none-eabi]
+
+# ============================================================
+# Build Configuration
+# ============================================================
+
+[build]
+rustdocflags = ["-D", "warnings"]
+
+# For maximum performance benchmarks, run with:
+#   RUSTFLAGS='-C target-cpu=native' cargo bench
+#
+# This enables all CPU features available on the current machine,
+# bypassing runtime detection for compile-time dispatch.
+
+[env]
+RUST_LOG = "info"

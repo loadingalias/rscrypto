@@ -1,0 +1,219 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Fuzz Testing for rscrypto
+#
+# This project uses a centralized fuzz crate at ./fuzz/ that tests all
+# workspace crates. Unlike per-crate fuzzing, all targets live in one place.
+#
+# Usage:
+#   ./scripts/test/test-fuzz.sh                    # Run smoke test (30s each)
+#   ./scripts/test/test-fuzz.sh <target>           # Run specific target
+#   ./scripts/test/test-fuzz.sh <target> <secs>    # Run target for duration
+#   ./scripts/test/test-fuzz.sh --all              # Run all targets
+#   ./scripts/test/test-fuzz.sh --build            # Build without running
+#   ./scripts/test/test-fuzz.sh --list             # List available targets
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+export RSCRYPTO_TEST_MODE=${RSCRYPTO_TEST_MODE:-local}
+
+# Configuration (can be overridden via environment)
+DURATION_SECS=${RSCRYPTO_FUZZ_DURATION_SECS:-30}
+TIMEOUT=${RSCRYPTO_FUZZ_TIMEOUT_SECS:-10}
+RSS_LIMIT=${RSCRYPTO_FUZZ_RSS_LIMIT_MB:-2048}
+MAX_LEN=${RSCRYPTO_FUZZ_MAX_LEN:-65536}
+JOBS=${RSCRYPTO_FUZZ_JOBS:-1}
+
+FUZZ_DIR="fuzz"
+
+# All available fuzz targets
+ALL_TARGETS=(
+  "fuzz_crc32c"
+  "fuzz_crc32"
+  "fuzz_crc64"
+  "fuzz_crc16"
+  "fuzz_combine"
+  "fuzz_streaming"
+  "fuzz_differential"
+)
+
+# Skip if commit mode (fuzzing takes too long)
+if [ "$RSCRYPTO_TEST_MODE" = "commit" ]; then
+  echo "Fuzzing skipped in commit mode"
+  exit 0
+fi
+
+show_help() {
+  echo "Fuzz testing for rscrypto"
+  echo ""
+  echo "Usage:"
+  echo "  $0                        Run smoke test (${DURATION_SECS}s per target)"
+  echo "  $0 <target>               Run specific target indefinitely"
+  echo "  $0 <target> <seconds>     Run target for specified duration"
+  echo "  $0 --all                  Run all targets (${DURATION_SECS}s each)"
+  echo "  $0 --smoke [seconds]      Run smoke test with custom duration"
+  echo "  $0 --build                Build fuzz targets without running"
+  echo "  $0 --list                 List available targets"
+  echo "  $0 --clean                Clean fuzz artifacts"
+  echo ""
+  echo "Environment variables:"
+  echo "  RSCRYPTO_FUZZ_DURATION_SECS  Duration per target (default: 30)"
+  echo "  RSCRYPTO_FUZZ_TIMEOUT_SECS   Timeout per test case (default: 10)"
+  echo "  RSCRYPTO_FUZZ_RSS_LIMIT_MB   Memory limit in MB (default: 2048)"
+  echo "  RSCRYPTO_FUZZ_MAX_LEN        Max input length (default: 65536)"
+  echo "  RSCRYPTO_FUZZ_JOBS           Parallel jobs (default: 1)"
+}
+
+list_targets() {
+  echo "Available fuzz targets:"
+  echo ""
+  echo "  fuzz_crc32c       CRC32-C (Castagnoli) - iSCSI, SCTP, Btrfs"
+  echo "  fuzz_crc32        CRC32 (ISO-HDLC) - Ethernet, gzip, PNG"
+  echo "  fuzz_crc64        CRC64/XZ and CRC64/NVME variants"
+  echo "  fuzz_crc16        CRC16/IBM and CRC16/CCITT-FALSE"
+  echo "  fuzz_combine      CRC combine operations (parallel checksumming)"
+  echo "  fuzz_streaming    Streaming API with arbitrary chunk sizes"
+  echo "  fuzz_differential Differential testing vs reference implementations"
+}
+
+check_requirements() {
+  if ! cargo +nightly --version &>/dev/null; then
+    echo "Error: Rust nightly toolchain not found"
+    echo "Install with: rustup toolchain install nightly"
+    exit 1
+  fi
+
+  if ! cargo +nightly fuzz --version &>/dev/null; then
+    echo "Error: cargo-fuzz not found"
+    echo "Install with: cargo +nightly install cargo-fuzz"
+    exit 1
+  fi
+
+  if [ ! -d "$FUZZ_DIR" ]; then
+    echo "Error: Fuzz directory not found at $FUZZ_DIR"
+    exit 1
+  fi
+}
+
+run_target() {
+  local target="$1"
+  local duration="${2:-}"
+
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "🔬 Fuzzing: $target"
+  if [ -n "$duration" ]; then
+    echo "⏱️  Duration: ${duration}s"
+  else
+    echo "⏱️  Duration: indefinite (Ctrl+C to stop)"
+  fi
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  cd "$FUZZ_DIR"
+
+  FUZZ_ARGS="-timeout=$TIMEOUT -rss_limit_mb=$RSS_LIMIT -max_len=$MAX_LEN"
+  FUZZ_ARGS="$FUZZ_ARGS -artifact_prefix=artifacts/$target/"
+
+  mkdir -p "artifacts/$target"
+
+  if [ -n "$duration" ]; then
+    FUZZ_ARGS="$FUZZ_ARGS -max_total_time=$duration"
+  fi
+
+  # shellcheck disable=SC2086
+  if cargo +nightly fuzz run "$target" --jobs="$JOBS" -- $FUZZ_ARGS 2>&1 | grep -v "^INFO:"; then
+    echo "✅ $target completed"
+    return 0
+  else
+    echo "❌ $target failed or found crash"
+    return 1
+  fi
+}
+
+run_smoke() {
+  local duration="${1:-$DURATION_SECS}"
+
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "🚀 Fuzz Smoke Test"
+  echo "⏱️  Duration: ${duration}s per target"
+  echo "🎯 Targets: ${#ALL_TARGETS[@]}"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo ""
+
+  local failed=()
+  local passed=0
+
+  for target in "${ALL_TARGETS[@]}"; do
+    if run_target "$target" "$duration"; then
+      passed=$((passed + 1))
+    else
+      failed+=("$target")
+    fi
+    echo ""
+  done
+
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "Fuzz Summary: $passed/${#ALL_TARGETS[@]} targets passed"
+
+  if [ ${#failed[@]} -gt 0 ]; then
+    echo "❌ Failed targets: ${failed[*]}"
+    exit 1
+  else
+    echo "✅ All fuzz targets passed!"
+  fi
+}
+
+build_targets() {
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "🔨 Building fuzz targets..."
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  cd "$FUZZ_DIR"
+  cargo +nightly fuzz build
+
+  echo "✅ Fuzz targets built successfully!"
+}
+
+clean_artifacts() {
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "🧹 Cleaning fuzz artifacts..."
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  cd "$FUZZ_DIR"
+  cargo +nightly fuzz clean
+  rm -rf artifacts/
+
+  echo "✅ Fuzz artifacts cleaned!"
+}
+
+# Main
+case "${1:-}" in
+  -h|--help)
+    show_help
+    ;;
+  --list)
+    list_targets
+    ;;
+  --build)
+    check_requirements
+    build_targets
+    ;;
+  --clean)
+    check_requirements
+    clean_artifacts
+    ;;
+  --all|--smoke)
+    check_requirements
+    run_smoke "${2:-$DURATION_SECS}"
+    ;;
+  "")
+    # Default: run smoke test
+    check_requirements
+    run_smoke "$DURATION_SECS"
+    ;;
+  *)
+    # Specific target
+    check_requirements
+    run_target "$1" "${2:-}"
+    ;;
+esac

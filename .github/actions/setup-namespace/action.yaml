@@ -1,0 +1,50 @@
+name: Setup rscrypto Environment (Namespace)
+description: |
+  Install Rust toolchain, cargo tools, and configure Namespace caching.
+  Optimized for Namespace-powered ARM64 runners with high-performance NVMe cache.
+
+inputs:
+  cache-key:
+    description: Additional cache key suffix
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    # TOOLCHAIN PIN: Must match rust-toolchain.toml
+    # Update locations: rust-toolchain.toml, setup/action.yaml, setup-namespace/action.yaml,
+    #                   setup-warpbuild/action.yaml, bench.yaml
+    - name: Install Rust Toolchain
+      uses: dtolnay/rust-toolchain@0b1efabc08b657293548b77fb76cc02d26091c7e  # master
+      with:
+        toolchain: nightly-2025-12-14
+        components: clippy, rustfmt, miri, rust-src
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # Cache installed cargo tools separately (very stable, saves 30-90 seconds)
+    # Using GitHub Actions cache (not Namespace) for portability
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    - name: Cache Cargo Tools
+      uses: actions/cache@9255dc7a253b0ccc959486e2bca901246202afeb  # v5.0.1
+      with:
+        path: ~/.cargo/bin
+        key: cargo-tools-${{ runner.os }}-${{ runner.arch }}-v1
+
+    # Install all required cargo tools via cargo-binstall (parallel, pre-built binaries)
+    # Skip if already in cache (install-tools.sh checks if tools exist)
+    - name: Install Cargo Tools
+      shell: bash
+      run: scripts/ci/install-tools.sh namespace
+
+    - name: Setup Namespace Cache (Rust)
+      uses: namespacelabs/nscloud-cache-action@446d8f390563cd54ca27e8de5bdb816f63c0b706  # v1.2.21
+      with:
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # Namespace Caching Strategy:
+        # - High-performance NVMe cache volumes (20GB+ minimum)
+        # - Guaranteed locality: cache attached to same runner
+        # - Zero impact on GitHub's 10GB cache quota
+        # - Automatic Rust/Cargo support (target/, ~/.cargo)
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        cache: rust

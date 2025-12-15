@@ -1,0 +1,64 @@
+name: Setup rscrypto Environment
+description: |
+  Install Rust toolchain, cargo tools, and configure caching.
+  All actions (dtolnay/rust-toolchain, taiki-e/install-action) skip if already installed
+
+inputs:
+  cache-key:
+    description: Additional cache key suffix
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    # Install Rust toolchain FIRST, before cargo tools (cargo-binstall needs cargo)
+    # TOOLCHAIN PIN: Must match rust-toolchain.toml
+    # Update locations: rust-toolchain.toml, setup/action.yaml, setup-namespace/action.yaml,
+    #                   setup-warpbuild/action.yaml, bench.yaml
+    - name: Install Rust Toolchain
+      uses: dtolnay/rust-toolchain@0b1efabc08b657293548b77fb76cc02d26091c7e  # master
+      with:
+        toolchain: nightly-2025-12-14
+        components: clippy, rustfmt, miri, rust-src
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # Cache installed cargo tools separately (very stable, saves 30-90 seconds)
+    # Tools rarely change, so this cache hits almost always
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    - name: Cache Cargo Tools
+      uses: actions/cache@9255dc7a253b0ccc959486e2bca901246202afeb  # v5.0.1
+      with:
+        path: ~/.cargo/bin
+        key: cargo-tools-${{ runner.os }}-${{ runner.arch }}-v1
+        # Tools are very stable - v1 bump only when tool versions change
+
+    # Install all required cargo tools via cargo-binstall (parallel, pre-built binaries)
+    # Skip if already in cache (install-tools.sh checks if tools exist)
+    - name: Install Cargo Tools
+      shell: bash
+      run: scripts/ci/install-tools.sh standard
+
+    - name: Setup Rust Cache
+      uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1  # v2.8.1
+      with:
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # Cache Strategy:
+        # - Caches: ~/.cargo (deps, tools) and ./target (build artifacts)
+        # - Cache key includes: workflow, platform, rustc version, Cargo.lock hash
+        # - Host triple automatically included in cache key
+        # - Separate caches per workflow and target triple via 'key' input
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+        # Shared prefix: stable across commits (invalidates on bump)
+        shared-key: "rscrypto-v1"
+
+        # Workflow and platform-specific suffix
+        key: ${{ inputs.cache-key }}
+
+        # Cache even on test failures (build artifacts still useful)
+        cache-on-failure: true
+
+        # Only save from main branch (prevents cache thrashing)
+        # Feature branches READ from main's cache but don't WRITE new ones
+        save-if: ${{ github.ref == 'refs/heads/main' }}

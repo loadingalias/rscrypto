@@ -1,0 +1,86 @@
+[package]
+name = "rscrypto-fuzz"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.92"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+# Workspace crates to fuzz
+checksum = { path = "../crates/checksum" }
+# hash = { path = "../crates/hash" }  # Uncomment when hash has implementations
+
+# Fuzzing infrastructure
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+
+# For differential fuzzing against reference implementations
+crc32fast = "1.5"
+crc64fast = "1.1"
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+# ============================================================================
+# Fuzz Targets
+# ============================================================================
+
+[[bin]]
+name = "fuzz_crc32c"
+path = "fuzz_targets/crc32c.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_crc32"
+path = "fuzz_targets/crc32.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_crc64"
+path = "fuzz_targets/crc64.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_crc16"
+path = "fuzz_targets/crc16.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_combine"
+path = "fuzz_targets/combine.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_streaming"
+path = "fuzz_targets/streaming.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_differential"
+path = "fuzz_targets/differential.rs"
+test = false
+doc = false
+bench = false
+
+[profile.release]
+opt-level = 3
+debug = false
+lto = "thin"
+codegen-units = 1

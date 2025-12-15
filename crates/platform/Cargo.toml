@@ -1,0 +1,16 @@
+[package]
+name = "platform"
+description = "CPU detection and microarchitecture identification for rscrypto"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[features]
+default = ["std"]
+std = []
+
+[lints]
+workspace = true

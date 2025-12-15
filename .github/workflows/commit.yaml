@@ -1,0 +1,309 @@
+name: Commit
+
+on:
+  push:
+    branches:
+      - "**"
+
+  # Allow manual trigger
+  workflow_dispatch:
+
+# Cancel in-progress runs for the same branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUST_BACKTRACE: 1
+  CARGO_TERM_COLOR: always
+  RSCRYPTO_TEST_MODE: commit
+  CARGO_INCREMENTAL: 0
+
+# Lock down permissions to read-only by default
+permissions:
+  contents: read  # Required for actions/checkout
+
+jobs:
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # Change Detection (cargo-rail)
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  detect:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      count: ${{ steps.rail.outputs.count }}
+      docs-only: ${{ steps.rail.outputs.docs-only }}
+      rebuild-all: ${{ steps.rail.outputs.rebuild-all }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Detect Changes
+        id: rail
+        uses: loadingalias/cargo-rail-action@54ed0b9922b74cb622698f8fa923231c075dadd8  # v1
+        with:
+          since: ${{ github.event.before }}
+
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # Core Platform Testing (All Free GitHub Runners)
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # Full CI on all platforms: quality checks, build, and test
+  # All runners are FREE for public repos (Pro account)
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ci:
+    name: CI (${{ matrix.target.name }})
+    needs: [detect]
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      needs.detect.outputs.rebuild-all == 'true' ||
+      (needs.detect.outputs.count != '0' &&
+       needs.detect.outputs.docs-only != 'true')
+    runs-on: ${{ matrix.target.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          # ─────────────────────────────────────────────────────────────────────
+          # Linux (x86_64 + ARM64)
+          # ─────────────────────────────────────────────────────────────────────
+          - name: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+
+          - name: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+
+          # ─────────────────────────────────────────────────────────────────────
+          # Windows (x86_64 + ARM64)
+          # ─────────────────────────────────────────────────────────────────────
+          - name: x86_64-pc-windows-msvc
+            runner: windows-latest
+
+          - name: aarch64-pc-windows-msvc
+            runner: windows-11-arm
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
+        with:
+          fetch-depth: 0  # Required for cargo rail affected (needs git history)
+
+      # Compute cache key from environment and runner metadata
+      - name: Compute Cache Key
+        id: cache
+        shell: bash
+        run: |
+          OS=$(echo "${{ runner.os }}" | tr '[:upper:]' '[:lower:]')
+          ARCH=$(echo "${{ runner.arch }}" | tr '[:upper:]' '[:lower:]')
+          echo "key=${{ env.RSCRYPTO_TEST_MODE }}-${OS}-${ARCH}" >> "$GITHUB_OUTPUT"
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          cache-key: ${{ steps.cache.outputs.key }}
+
+      - name: Quality Checks
+        run: just ci-check
+
+      - name: Build
+        run: just build
+
+      - name: Tests
+        run: just test
+
+      # ─────────────────────────────────────────────────────────────────────────
+      # Static Linking Verification (MUSL - Linux only)
+      # ─────────────────────────────────────────────────────────────────────────
+      - name: Build Verification (MUSL x86-64)
+        if: matrix.target.name == 'x86_64-unknown-linux-gnu'
+        run: |
+          rustup target add x86_64-unknown-linux-musl
+          cargo build --workspace --target x86_64-unknown-linux-musl
+
+      - name: Build Verification (MUSL ARM64)
+        if: matrix.target.name == 'aarch64-unknown-linux-gnu'
+        run: |
+          rustup target add aarch64-unknown-linux-musl
+          cargo build --workspace --target aarch64-unknown-linux-musl
+
+      # Ensure cache directories exist to avoid ENOENT warnings from rust-cache
+      - name: Ensure Cache Directories
+        shell: bash
+        run: mkdir -p target/tests/trybuild target/tests/target
+
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # no_std Targets (Cross-compile verification)
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # Strategic target selection:
+  #   - thumbv6m-none-eabi: Smallest Cortex-M (M0/M0+), if this works, M3/M4/M7/M33 work
+  #   - riscv32imac-unknown-none-elf: RISC-V 32-bit, different ISA coverage
+  #
+  # These can't run tests (no OS), but cargo check/build verifies:
+  #   - no_std compatibility
+  #   - no accidental std dependencies
+  #   - Feature flag combinations work
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  no-std:
+    name: no_std (${{ matrix.target }})
+    needs: [detect]
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      needs.detect.outputs.rebuild-all == 'true' ||
+      (needs.detect.outputs.count != '0' &&
+       needs.detect.outputs.docs-only != 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          # ARM Cortex-M0/M0+ (smallest, most restrictive - proves all larger Cortex-M work)
+          - thumbv6m-none-eabi
+          # RISC-V 32-bit (different ISA, no atomics in base)
+          - riscv32imac-unknown-none-elf
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
+
+      # TOOLCHAIN PIN: Must match rust-toolchain.toml
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@0b1efabc08b657293548b77fb76cc02d26091c7e  # master
+        with:
+          toolchain: nightly-2025-12-14
+          targets: ${{ matrix.target }}
+
+      - name: Setup Rust Cache
+        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1  # v2.8.1
+        with:
+          shared-key: "rscrypto-v1"
+          key: no-std-${{ matrix.target }}
+          cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      # ─────────────────────────────────────────────────────────────────────────
+      # no_std Feature Matrix Verification
+      # ─────────────────────────────────────────────────────────────────────────
+      - name: Check no_std (no features - pure no_std)
+        run: cargo check --workspace --target ${{ matrix.target }} --no-default-features --lib
+
+      - name: Check no_std with alloc
+        run: cargo check --workspace --target ${{ matrix.target }} --no-default-features --features alloc --lib
+
+      - name: Build no_std release (pure no_std)
+        run: cargo build --workspace --target ${{ matrix.target }} --no-default-features --lib --release
+
+      - name: Build no_std release with alloc
+        run: cargo build --workspace --target ${{ matrix.target }} --no-default-features --features alloc --lib --release
+
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # WASM Targets (Cross-compile verification)
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # Strategic target selection:
+  #   - wasm32-unknown-unknown: Core browser WASM (most common)
+  #   - wasm32-wasip1: WASI preview 1 (server-side WASM)
+  #
+  # Verifies:
+  #   - WASM compatibility
+  #   - No accidental WASM-incompatible dependencies
+  #   - Feature flag combinations work in WASM context
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  wasm:
+    name: WASM (${{ matrix.target }})
+    needs: [detect]
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      needs.detect.outputs.rebuild-all == 'true' ||
+      (needs.detect.outputs.count != '0' &&
+       needs.detect.outputs.docs-only != 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          # Core browser WASM (most common deployment target)
+          - wasm32-unknown-unknown
+          # WASI preview 1 (server-side WASM, Wasmtime/Wasmer)
+          - wasm32-wasip1
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
+
+      # TOOLCHAIN PIN: Must match rust-toolchain.toml
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@0b1efabc08b657293548b77fb76cc02d26091c7e  # master
+        with:
+          toolchain: nightly-2025-12-14
+          targets: ${{ matrix.target }}
+
+      - name: Setup Rust Cache
+        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1  # v2.8.1
+        with:
+          shared-key: "rscrypto-v1"
+          key: wasm-${{ matrix.target }}
+          cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      # ─────────────────────────────────────────────────────────────────────────
+      # WASM Feature Matrix Verification
+      # ─────────────────────────────────────────────────────────────────────────
+      - name: Check WASM (no features - pure no_std)
+        run: cargo check --workspace --target ${{ matrix.target }} --no-default-features --lib
+
+      - name: Check WASM with alloc
+        run: cargo check --workspace --target ${{ matrix.target }} --no-default-features --features alloc --lib
+
+      - name: Build WASM release (no features)
+        run: cargo build --workspace --target ${{ matrix.target }} --no-default-features --lib --release
+
+      - name: Build WASM release with alloc
+        run: cargo build --workspace --target ${{ matrix.target }} --no-default-features --features alloc --lib --release
+
+      # Additional wasm-pack verification for browser target
+      - name: Install wasm-pack
+        if: matrix.target == 'wasm32-unknown-unknown'
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Build with wasm-pack (browser target)
+        if: matrix.target == 'wasm32-unknown-unknown'
+        run: |
+          # Build each library crate with wasm-pack
+          for crate in crates/*/; do
+            if [ -f "${crate}Cargo.toml" ]; then
+              echo "Building $(basename "$crate") with wasm-pack..."
+              wasm-pack build "$crate" --target web --no-default-features --features alloc 2>/dev/null || true
+            fi
+          done
+
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # Summary Job
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  complete:
+    name: All checks complete
+    needs: [detect, ci, no-std, wasm]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check results
+        run: |
+          echo "Checking workflow results..."
+          echo "Should skip (docs-only): ${{ needs.detect.outputs.docs-only }}"
+
+          if [ "${{ needs.detect.outputs.docs-only }}" == "true" ]; then
+            echo "Documentation-only changes - no CI required"
+            exit 0
+          fi
+
+          # Check if any job failed
+          if [ "${{ needs.ci.result }}" == "failure" ] || \
+             [ "${{ needs.no-std.result }}" == "failure" ] || \
+             [ "${{ needs.wasm.result }}" == "failure" ]; then
+            echo "One or more jobs failed"
+            exit 1
+          fi
+
+          echo "All jobs passed"

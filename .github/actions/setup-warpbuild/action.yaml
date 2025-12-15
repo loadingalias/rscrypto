@@ -1,0 +1,47 @@
+name: Setup WarpBuild Environment
+description: |
+  Minimal setup for WarpBuild runners.
+  Only installs essential tools (just) to keep builds focused and fast.
+
+inputs:
+  cache-key:
+    description: Cache key suffix for differentiation
+    required: false
+    default: "warpbuild"
+
+runs:
+  using: composite
+  steps:
+    # TOOLCHAIN PIN: Must match rust-toolchain.toml
+    # Update locations: rust-toolchain.toml, setup/action.yaml, setup-namespace/action.yaml,
+    #                   setup-warpbuild/action.yaml, bench.yaml
+    - name: Install Rust Toolchain
+      uses: dtolnay/rust-toolchain@0b1efabc08b657293548b77fb76cc02d26091c7e  # master
+      with:
+        toolchain: nightly-2025-12-14
+        components: clippy, rustfmt
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # Cache installed cargo tools separately (very stable, saves 30-90 seconds)
+    # Using GitHub Actions cache for consistency across all runner types
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    - name: Cache Cargo Tools
+      uses: actions/cache@9255dc7a253b0ccc959486e2bca901246202afeb  # v5.0.1
+      with:
+        path: ~/.cargo/bin
+        key: cargo-tools-${{ runner.os }}-${{ runner.arch }}-v1
+
+    # Install minimal tools for WarpBuild via cargo-binstall
+    # Skip if already in cache (install-tools.sh checks if tools exist)
+    - name: Install Cargo Tools
+      shell: bash
+      run: scripts/ci/install-tools.sh minimal
+
+    - name: Setup Warp Rust Cache
+      uses: WarpBuilds/rust-cache@e58c7440f25a26655b3867119bf68a1ba2dcc171  # v2.9.0
+      with:
+        # Use consistent rscrypto-v1 prefix for cache sharing potential
+        shared-key: "rscrypto-v1"
+        key: ${{ inputs.cache-key }}
+        cache-on-failure: true
+        save-if: ${{ github.ref == 'refs/heads/main' }}

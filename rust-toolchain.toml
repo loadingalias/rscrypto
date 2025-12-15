@@ -1,0 +1,12 @@
+[toolchain]
+channel = "nightly-2025-11-23"
+profile = "default"
+components = ["clippy", "rustfmt", "miri", "rust-src"]
+
+targets = [
+  "aarch64-apple-darwin",
+  "x86_64-unknown-linux-gnu",
+  "aarch64-unknown-linux-gnu",
+  "x86_64-pc-windows-msvc",
+  "aarch64-pc-windows-msvc",
+]

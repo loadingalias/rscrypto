@@ -1,0 +1,79 @@
+# GitHub Actions Version Lock File
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Single source of truth for all GitHub Actions used in workflows.
+# Managed by Dependabot - DO NOT EDIT MANUALLY UNLESS ADDING NEW ACTIONS.
+#
+# Usage:
+#   1. Add new actions here first with desired semantic version
+#   2. Run: just pin-actions (generates SHA-pinned workflows)
+#   3. Dependabot automatically updates SHAs when new versions release
+#
+# Format:
+#   <action-name>:
+#     ref: <semantic-version>  # What we want (Dependabot monitors this)
+#     sha: <commit-sha>         # Immutable pin (generated)
+#     updated: <ISO-8601>       # Last verification timestamp
+#
+# Security Note:
+#   Workflows use SHA-pinned format: uses: actions/checkout@abc123...  # v4.1.7
+#   Dependabot reads the comment (# v4.1.7) and updates the SHA when new versions release.
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Official GitHub Actions
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+actions/checkout:
+  ref: v5.0.0
+  sha: "08c6903cd8c0fde910a37f88322edcfb5dd907a8"
+  updated: "2025-12-15T02:31:27Z"
+  notes: "Repository checkout - used in every workflow"
+actions/upload-artifact:
+  ref: v5.0.0
+  sha: "330a01c490aca151604b8cf639adc76d48f6c5d4"
+  updated: "2025-12-15T02:31:28Z"
+  notes: "Upload build artifacts and test results"
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Testing & Reporting
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+mikepenz/action-junit-report:
+  ref: v6.0.1
+  sha: "e08919a3b1fb83a78393dfb775a9c37f17d8eea6"
+  updated: "2025-12-15T02:31:29Z"
+  notes: "Publish JUnit test reports as GitHub Checks"
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Rust Toolchain & Ecosystem
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+dtolnay/rust-toolchain:
+  ref: master
+  sha: "0b1efabc08b657293548b77fb76cc02d26091c7e"
+  updated: "2025-12-15T02:31:29Z"
+  notes: "Rust toolchain installation - always tracks latest nightly"
+taiki-e/install-action:
+  ref: v2
+  sha: "d850aa816998e5cf15f67a78c7b933f2a5033f8a"
+  updated: "2025-12-15T02:31:30Z"
+  notes: "Install cargo tools (nextest, just, deny, audit)"
+Swatinem/rust-cache:
+  ref: v2.8.1
+  sha: "f13886b937689c021905a6b90929199931d60db1"
+  updated: "2025-12-15T02:31:30Z"
+  notes: "GitHub runner Rust cache"
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Release Workflow Actions
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+taiki-e/create-gh-release-action:
+  ref: v1.8.4
+  sha: "b7abb0cf5e72cb5500307b577f9ca3fd4c5be9d2"
+  updated: "2025-12-15T02:31:31Z"
+  notes: "Create GitHub releases from CHANGELOG.md"
+taiki-e/setup-cross-toolchain-action:
+  ref: v1.26.0
+  sha: "bdeb9ca6f0f909ea36bb94e1e3ec916b2ceb35fc"
+  updated: "2025-12-15T02:31:32Z"
+  notes: "Cross-compilation toolchain setup for multi-target builds"
+taiki-e/upload-rust-binary-action:
+  ref: v1.24.0
+  sha: "e7953b6078194a4ae5f5619632e3715db6275561"
+  updated: "2025-12-15T02:31:32Z"
+  notes: "Build and upload pre-built binaries to GitHub Releases"
