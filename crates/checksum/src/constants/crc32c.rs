@@ -90,6 +90,7 @@ pub mod fold {
 
   pub const PMULL_KEY_16: (u64, u64) = compute_pmull_key(16);
   pub const PMULL_KEY_32: (u64, u64) = compute_pmull_key(32);
+  pub const PMULL_KEY_48: (u64, u64) = compute_pmull_key(48);
   pub const PMULL_KEY_64: (u64, u64) = compute_pmull_key(64);
   pub const PMULL_KEY_144: (u64, u64) = compute_pmull_key(144);
   pub const PMULL_KEY_192: (u64, u64) = compute_pmull_key(192);

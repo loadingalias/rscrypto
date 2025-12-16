@@ -30,23 +30,25 @@ unsafe fn store_lanes(x: __m512i) -> [__m128i; 4] {
   lanes
 }
 
-/// Fold 64 bytes using cross multiplication (0x10/0x01) for CRC32.
+/// Fold 64 bytes using parallel multiplication (0x00/0x11).
+///
+/// Used for both CRC32/CRC32C and CRC64, matching ARM PMULL approach.
 #[inline(always)]
-unsafe fn fold64_cross(x: __m512i, coeff: __m512i, data: __m512i) -> __m512i {
-  let h = _mm512_clmulepi64_epi128(x, coeff, 0x10);
-  let l = _mm512_clmulepi64_epi128(x, coeff, 0x01);
-  _mm512_xor_si512(_mm512_xor_si512(h, l), data)
-}
-
-/// Fold 64 bytes using parallel multiplication (0x00/0x11) for CRC64.
-#[inline(always)]
-unsafe fn fold64_parallel(x: __m512i, coeff: __m512i, data: __m512i) -> __m512i {
+unsafe fn fold64(x: __m512i, coeff: __m512i, data: __m512i) -> __m512i {
   let lo = _mm512_clmulepi64_epi128(x, coeff, 0x00);
   let hi = _mm512_clmulepi64_epi128(x, coeff, 0x11);
   _mm512_xor_si512(_mm512_xor_si512(lo, hi), data)
 }
 
+/// Load a PMULL key as an __m128i with correct lane layout.
+#[inline(always)]
+unsafe fn load_key_128(key: (u64, u64)) -> __m128i {
+  _mm_set_epi64x(key.1 as i64, key.0 as i64)
+}
+
 /// Compute a reflected 32-bit CRC using VPCLMULQDQ.
+///
+/// Uses the same parallel multiplication approach as ARM PMULL.
 ///
 /// # Safety
 /// Caller must ensure the CPU supports the required AVX-512/VPCLMUL features.
@@ -59,12 +61,8 @@ unsafe fn compute_vpclmul_unchecked_impl<S: Crc32FoldSpec>(crc: u32, data: &[u8]
   let bulk_len = data.len() & !63;
   let (bulk, rem) = data.split_at(bulk_len);
 
-  // CRC32 uses cross multiplication (0x10/0x01), coefficients loaded as [high, low].
-  let coeff_64 = {
-    let (high, low) = S::COEFF_64;
-    _mm_set_epi64x(high as i64, low as i64)
-  };
-  let coeff_64 = _mm512_broadcast_i64x2(coeff_64);
+  // Load key with ARM-compatible layout and broadcast to 512 bits.
+  let key_64 = _mm512_broadcast_i64x2(load_key_128(S::KEY_64));
 
   let base = bulk.as_ptr();
   // Load data WITHOUT byte reflection (correct for reflected CRCs on little-endian).
@@ -79,42 +77,42 @@ unsafe fn compute_vpclmul_unchecked_impl<S: Crc32FoldSpec>(crc: u32, data: &[u8]
     let y2 = load_block(base.add(offset + 128));
     let y3 = load_block(base.add(offset + 192));
 
-    x = fold64_cross(x, coeff_64, y0);
-    x = fold64_cross(x, coeff_64, y1);
-    x = fold64_cross(x, coeff_64, y2);
-    x = fold64_cross(x, coeff_64, y3);
+    x = fold64(x, key_64, y0);
+    x = fold64(x, key_64, y1);
+    x = fold64(x, key_64, y2);
+    x = fold64(x, key_64, y3);
 
     offset += 256;
   }
 
   while offset < bulk_len {
     let y = load_block(base.add(offset));
-    x = fold64_cross(x, coeff_64, y);
+    x = fold64(x, key_64, y);
     offset += 64;
   }
 
   let lanes = store_lanes(x);
 
-  let coeff_48 = {
-    let (high, low) = S::COEFF_48;
-    _mm_set_epi64x(high as i64, low as i64)
-  };
-  let coeff_32 = {
-    let (high, low) = S::COEFF_32;
-    _mm_set_epi64x(high as i64, low as i64)
-  };
-  let coeff_16 = {
-    let (high, low) = S::COEFF_16;
-    _mm_set_epi64x(high as i64, low as i64)
-  };
+  // Load reduction keys with ARM-compatible layout.
+  let key_48 = load_key_128(S::KEY_48);
+  let key_32 = load_key_128(S::KEY_32);
+  let key_16 = load_key_128(S::KEY_16);
 
-  // Reduce 4×128 -> 1×128.
+  // Reduce 4×128 -> 1×128 using parallel multiplication.
   let mut folded = lanes[3];
-  folded = crate::simd::x86_64::pclmul::fold16_128(lanes[2], coeff_16, folded);
-  folded = crate::simd::x86_64::pclmul::fold16_128(lanes[1], coeff_32, folded);
-  folded = crate::simd::x86_64::pclmul::fold16_128(lanes[0], coeff_48, folded);
+  folded = crate::simd::x86_64::pclmul::fold16_128(lanes[2], key_16, folded);
+  folded = crate::simd::x86_64::pclmul::fold16_128(lanes[1], key_32, folded);
+  folded = crate::simd::x86_64::pclmul::fold16_128(lanes[0], key_48, folded);
 
-  let crc = crate::simd::x86_64::pclmul::finalize_reduced_128::<S>(folded);
+  // Finalize using portable (which uses hardware CRC if available).
+  let lo = _mm_extract_epi64(folded, 0) as u64;
+  let hi = _mm_extract_epi64(folded, 1) as u64;
+
+  let mut final_buf = [0u8; 16];
+  final_buf[0..8].copy_from_slice(&lo.to_le_bytes());
+  final_buf[8..16].copy_from_slice(&hi.to_le_bytes());
+
+  let crc = S::portable(0, &final_buf);
   S::portable(crc, rem)
 }
 
@@ -200,17 +198,17 @@ unsafe fn compute_vpclmul_crc64_unchecked_impl<S: Crc64FoldSpec>(crc: u64, data:
     let y2 = load_block(base.add(offset + 128));
     let y3 = load_block(base.add(offset + 192));
 
-    x = fold64_parallel(x, coeff_64, y0);
-    x = fold64_parallel(x, coeff_64, y1);
-    x = fold64_parallel(x, coeff_64, y2);
-    x = fold64_parallel(x, coeff_64, y3);
+    x = fold64(x, coeff_64, y0);
+    x = fold64(x, coeff_64, y1);
+    x = fold64(x, coeff_64, y2);
+    x = fold64(x, coeff_64, y3);
 
     offset += 256;
   }
 
   while offset < bulk_len {
     let y = load_block(base.add(offset));
-    x = fold64_parallel(x, coeff_64, y);
+    x = fold64(x, coeff_64, y);
     offset += 64;
   }
 

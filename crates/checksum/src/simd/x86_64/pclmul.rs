@@ -13,13 +13,18 @@
 
 use core::arch::x86_64::*;
 
+/// Trait for CRC32 polynomial-specific folding constants.
+///
+/// Uses PMULL_KEY constants (same as ARM) with parallel multiplication.
 pub(crate) trait Crc32FoldSpec {
-  const COEFF_64: (u64, u64);
-  const COEFF_48: (u64, u64);
-  const COEFF_32: (u64, u64);
-  const COEFF_16: (u64, u64);
-  const FOLD_WIDTH: (u64, u64);
-  const BARRETT: (u64, u64);
+  /// Key for 64-byte folding distance (main loop with 4 accumulators).
+  const KEY_64: (u64, u64);
+  /// Key for 48-byte folding distance (reduction: x0 → folded).
+  const KEY_48: (u64, u64);
+  /// Key for 32-byte folding distance (reduction: x1 → folded).
+  const KEY_32: (u64, u64);
+  /// Key for 16-byte folding distance (reduction: x2 → folded).
+  const KEY_16: (u64, u64);
 
   fn portable(crc: u32, data: &[u8]) -> u32;
 }
@@ -27,12 +32,10 @@ pub(crate) trait Crc32FoldSpec {
 pub(crate) struct Crc32cSpec;
 
 impl Crc32FoldSpec for Crc32cSpec {
-  const COEFF_64: (u64, u64) = crate::constants::crc32c::fold::COEFF_64;
-  const COEFF_48: (u64, u64) = crate::constants::crc32c::fold::COEFF_48;
-  const COEFF_32: (u64, u64) = crate::constants::crc32c::fold::COEFF_32;
-  const COEFF_16: (u64, u64) = crate::constants::crc32c::fold::COEFF_16;
-  const FOLD_WIDTH: (u64, u64) = crate::constants::crc32c::fold::FOLD_WIDTH;
-  const BARRETT: (u64, u64) = crate::constants::crc32c::fold::BARRETT;
+  const KEY_64: (u64, u64) = crate::constants::crc32c::fold::PMULL_KEY_64;
+  const KEY_48: (u64, u64) = crate::constants::crc32c::fold::PMULL_KEY_48;
+  const KEY_32: (u64, u64) = crate::constants::crc32c::fold::PMULL_KEY_32;
+  const KEY_16: (u64, u64) = crate::constants::crc32c::fold::PMULL_KEY_16;
 
   #[inline]
   fn portable(crc: u32, data: &[u8]) -> u32 {
@@ -43,12 +46,10 @@ impl Crc32FoldSpec for Crc32cSpec {
 pub(crate) struct Crc32Spec;
 
 impl Crc32FoldSpec for Crc32Spec {
-  const COEFF_64: (u64, u64) = crate::constants::crc32::fold::COEFF_64;
-  const COEFF_48: (u64, u64) = crate::constants::crc32::fold::COEFF_48;
-  const COEFF_32: (u64, u64) = crate::constants::crc32::fold::COEFF_32;
-  const COEFF_16: (u64, u64) = crate::constants::crc32::fold::COEFF_16;
-  const FOLD_WIDTH: (u64, u64) = crate::constants::crc32::fold::FOLD_WIDTH;
-  const BARRETT: (u64, u64) = crate::constants::crc32::fold::BARRETT;
+  const KEY_64: (u64, u64) = crate::constants::crc32::fold::PMULL_KEY_64;
+  const KEY_48: (u64, u64) = crate::constants::crc32::fold::PMULL_KEY_48;
+  const KEY_32: (u64, u64) = crate::constants::crc32::fold::PMULL_KEY_32;
+  const KEY_16: (u64, u64) = crate::constants::crc32::fold::PMULL_KEY_16;
 
   #[inline]
   fn portable(crc: u32, data: &[u8]) -> u32 {
@@ -64,44 +65,37 @@ unsafe fn load_128(ptr: *const u8) -> __m128i {
   _mm_loadu_si128(ptr as *const __m128i)
 }
 
+/// Fold 16 bytes using parallel multiplication (0x00/0x11) for CRC32/CRC32C.
+///
+/// This matches the ARM PMULL approach:
+/// - 0x00: current.lo × coeff.lo
+/// - 0x11: current.hi × coeff.hi
+///
+/// Coefficient layout: coeff.lo = KEY.0, coeff.hi = KEY.1
+/// (achieved by loading with `_mm_set_epi64x(KEY.1, KEY.0)`)
 #[inline(always)]
 pub(crate) unsafe fn fold16_128(current: __m128i, coeff: __m128i, data: __m128i) -> __m128i {
-  // CRC-32 folding uses "cross" carryless multiplications (see Intel whitepaper):
-  // - 0x10: current.high64 * coeff.low64
-  // - 0x01: current.low64  * coeff.high64
-  let h = _mm_clmulepi64_si128(current, coeff, 0x10);
-  let l = _mm_clmulepi64_si128(current, coeff, 0x01);
-  _mm_xor_si128(_mm_xor_si128(h, l), data)
+  let lo = _mm_clmulepi64_si128(current, coeff, 0x00);
+  let hi = _mm_clmulepi64_si128(current, coeff, 0x11);
+  _mm_xor_si128(_mm_xor_si128(lo, hi), data)
 }
 
+/// Load a PMULL key as an __m128i with correct lane layout.
+///
+/// ARM's `vld1q_u64([KEY.0, KEY.1])` puts KEY.0 in lane 0 and KEY.1 in lane 1.
+/// x86's `_mm_set_epi64x(a, b)` puts a in lane 1 and b in lane 0.
+/// So we need `_mm_set_epi64x(KEY.1, KEY.0)` to match ARM's layout.
 #[inline(always)]
-pub(crate) unsafe fn finalize_reduced_128<S: Crc32FoldSpec>(mut x: __m128i) -> u32 {
-  // Fold 16 bytes -> 4 bytes (CRC-32 width), then Barrett reduce.
-  let (high, low) = S::FOLD_WIDTH;
-  let coeff_low = _mm_set_epi64x(0, low as i64);
-  let coeff_high = _mm_set_epi64x(high as i64, 0);
-
-  x = _mm_xor_si128(_mm_clmulepi64_si128(x, coeff_low, 0x00), _mm_srli_si128(x, 8));
-
-  let mask2 = _mm_set_epi64x(0xFFFF_FFFF_0000_0000u64 as i64, 0xFFFF_FFFF_FFFF_FFFFu64 as i64);
-  let masked = _mm_and_si128(x, mask2);
-  let shifted = _mm_slli_si128(x, 12);
-  let clmul = _mm_clmulepi64_si128(shifted, coeff_high, 0x11);
-  x = _mm_xor_si128(clmul, masked);
-
-  let (poly, mu) = S::BARRETT;
-  let mu_poly = _mm_set_epi64x(poly as i64, mu as i64);
-  let clmul1 = _mm_clmulepi64_si128(x, mu_poly, 0x00);
-  let clmul2 = _mm_clmulepi64_si128(clmul1, mu_poly, 0x10);
-  let xorred = _mm_xor_si128(x, clmul2);
-
-  let mut out = [0u64; 2];
-  #[allow(clippy::cast_ptr_alignment)]
-  _mm_storeu_si128(out.as_mut_ptr() as *mut __m128i, xorred);
-  out[1] as u32
+unsafe fn load_key(key: (u64, u64)) -> __m128i {
+  _mm_set_epi64x(key.1 as i64, key.0 as i64)
 }
 
 /// Compute a reflected 32-bit CRC using PCLMULQDQ.
+///
+/// This implementation uses the same approach as ARM PMULL:
+/// - Parallel multiplication (0x00/0x11 selectors)
+/// - PMULL_KEY constants
+/// - Hardware CRC instruction for finalization (via portable fallback)
 ///
 /// # Safety
 /// Caller must ensure the CPU supports `pclmulqdq` and `sse2`.
@@ -111,24 +105,11 @@ unsafe fn compute_pclmul_unchecked_impl<S: Crc32FoldSpec>(crc: u32, data: &[u8])
     return S::portable(crc, data);
   }
 
-  // Load coefficients. For CRC32, we use "cross" multiplication (0x10/0x01),
-  // so coeff layout is: [high=COEFF.0, low=COEFF.1]
-  let coeff_64 = {
-    let (high, low) = S::COEFF_64;
-    _mm_set_epi64x(high as i64, low as i64)
-  };
-  let coeff_48 = {
-    let (high, low) = S::COEFF_48;
-    _mm_set_epi64x(high as i64, low as i64)
-  };
-  let coeff_32 = {
-    let (high, low) = S::COEFF_32;
-    _mm_set_epi64x(high as i64, low as i64)
-  };
-  let coeff_16 = {
-    let (high, low) = S::COEFF_16;
-    _mm_set_epi64x(high as i64, low as i64)
-  };
+  // Load coefficients with ARM-compatible layout (KEY.0 in lane 0, KEY.1 in lane 1).
+  let key_64 = load_key(S::KEY_64);
+  let key_48 = load_key(S::KEY_48);
+  let key_32 = load_key(S::KEY_32);
+  let key_16 = load_key(S::KEY_16);
 
   let bulk_len = data.len() & !63;
   let (bulk, rem) = data.split_at(bulk_len);
@@ -153,19 +134,29 @@ unsafe fn compute_pclmul_unchecked_impl<S: Crc32FoldSpec>(crc: u32, data: &[u8])
     let y2 = load_128(base.add(32));
     let y3 = load_128(base.add(48));
 
-    x0 = fold16_128(x0, coeff_64, y0);
-    x1 = fold16_128(x1, coeff_64, y1);
-    x2 = fold16_128(x2, coeff_64, y2);
-    x3 = fold16_128(x3, coeff_64, y3);
+    x0 = fold16_128(x0, key_64, y0);
+    x1 = fold16_128(x1, key_64, y1);
+    x2 = fold16_128(x2, key_64, y2);
+    x3 = fold16_128(x3, key_64, y3);
   }
 
   // Fold 4 accumulators -> 1.
   let mut folded = x3;
-  folded = fold16_128(x2, coeff_16, folded);
-  folded = fold16_128(x1, coeff_32, folded);
-  folded = fold16_128(x0, coeff_48, folded);
+  folded = fold16_128(x2, key_16, folded);
+  folded = fold16_128(x1, key_32, folded);
+  folded = fold16_128(x0, key_48, folded);
 
-  let crc = finalize_reduced_128::<S>(folded);
+  // Finalize: extract 128 bits and process with portable (which uses hardware CRC if available).
+  // This matches ARM's approach of using __crc32cd for finalization.
+  let lo = _mm_extract_epi64(folded, 0) as u64;
+  let hi = _mm_extract_epi64(folded, 1) as u64;
+
+  // Process the 16 bytes from the folded accumulator, then the remainder.
+  let mut final_buf = [0u8; 16];
+  final_buf[0..8].copy_from_slice(&lo.to_le_bytes());
+  final_buf[8..16].copy_from_slice(&hi.to_le_bytes());
+
+  let crc = S::portable(0, &final_buf);
   S::portable(crc, rem)
 }
 
