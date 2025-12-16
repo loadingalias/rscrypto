@@ -57,16 +57,11 @@ impl Crc32FoldSpec for Crc32Spec {
 }
 
 #[inline(always)]
-unsafe fn reflect_bytes_128(x: __m128i, smask: __m128i) -> __m128i {
-  _mm_shuffle_epi8(x, smask)
-}
-
-#[inline(always)]
-unsafe fn load_reflected(ptr: *const u8, smask: __m128i) -> __m128i {
+unsafe fn load_128(ptr: *const u8) -> __m128i {
   // SAFETY: caller ensures `ptr` is valid for 16 bytes.
+  // For reflected CRCs on little-endian, load data as-is without byte reflection.
   #[allow(clippy::cast_ptr_alignment)]
-  let v = _mm_loadu_si128(ptr as *const __m128i);
-  reflect_bytes_128(v, smask)
+  _mm_loadu_si128(ptr as *const __m128i)
 }
 
 #[inline(always)]
@@ -109,16 +104,15 @@ pub(crate) unsafe fn finalize_reduced_128<S: Crc32FoldSpec>(mut x: __m128i) -> u
 /// Compute a reflected 32-bit CRC using PCLMULQDQ.
 ///
 /// # Safety
-/// Caller must ensure the CPU supports `pclmulqdq` and `ssse3`.
-#[target_feature(enable = "pclmulqdq,ssse3")]
+/// Caller must ensure the CPU supports `pclmulqdq` and `sse2`.
+#[target_feature(enable = "pclmulqdq,sse2")]
 unsafe fn compute_pclmul_unchecked_impl<S: Crc32FoldSpec>(crc: u32, data: &[u8]) -> u32 {
   if data.len() < 64 {
     return S::portable(crc, data);
   }
 
-  // Byte-reflection shuffle mask.
-  let smask = _mm_set_epi64x(0x0809_0a0b_0c0d_0e0f_u64 as i64, 0x0001_0203_0405_0607_u64 as i64);
-
+  // Load coefficients. For CRC32, we use "cross" multiplication (0x10/0x01),
+  // so coeff layout is: [high=COEFF.0, low=COEFF.1]
   let coeff_64 = {
     let (high, low) = S::COEFF_64;
     _mm_set_epi64x(high as i64, low as i64)
@@ -143,20 +137,21 @@ unsafe fn compute_pclmul_unchecked_impl<S: Crc32FoldSpec>(crc: u32, data: &[u8])
   let first = blocks.next().unwrap();
   let base = first.as_ptr();
 
-  let mut x0 = load_reflected(base, smask);
-  let mut x1 = load_reflected(base.add(16), smask);
-  let mut x2 = load_reflected(base.add(32), smask);
-  let mut x3 = load_reflected(base.add(48), smask);
+  // Load data WITHOUT byte reflection (correct for reflected CRCs on little-endian).
+  let mut x0 = load_128(base);
+  let mut x1 = load_128(base.add(16));
+  let mut x2 = load_128(base.add(32));
+  let mut x3 = load_128(base.add(48));
 
   // XOR initial CRC into low 32 bits of the first block.
   x0 = _mm_xor_si128(x0, _mm_cvtsi32_si128(crc as i32));
 
   for block in blocks {
     let base = block.as_ptr();
-    let y0 = load_reflected(base, smask);
-    let y1 = load_reflected(base.add(16), smask);
-    let y2 = load_reflected(base.add(32), smask);
-    let y3 = load_reflected(base.add(48), smask);
+    let y0 = load_128(base);
+    let y1 = load_128(base.add(16));
+    let y2 = load_128(base.add(32));
+    let y3 = load_128(base.add(48));
 
     x0 = fold16_128(x0, coeff_64, y0);
     x1 = fold16_128(x1, coeff_64, y1);
@@ -328,23 +323,24 @@ unsafe fn compute_pclmul_crc64_unchecked_impl<S: Crc64FoldSpec>(crc: u64, data: 
   // For CRC64 with parallel multiplication (0x00/0x11):
   // - 0x00: current.lo × coeff.lo
   // - 0x11: current.hi × coeff.hi
-  // COEFF tuple is (key(d+8), key(d)) = (high_key, low_key)
-  // Load with high in high lane, low in low lane.
+  // COEFF tuple is (high_key, low_key).
+  // To match ARM's load_coeff_crc64 which puts high in lane 0 and low in lane 1,
+  // we use _mm_set_epi64x(low, high) since it puts first arg in HIGH lane and second in LOW.
   let coeff_64 = {
     let (high, low) = S::COEFF_64;
-    _mm_set_epi64x(high as i64, low as i64)
+    _mm_set_epi64x(low as i64, high as i64)
   };
   let coeff_48 = {
     let (high, low) = S::COEFF_48;
-    _mm_set_epi64x(high as i64, low as i64)
+    _mm_set_epi64x(low as i64, high as i64)
   };
   let coeff_32 = {
     let (high, low) = S::COEFF_32;
-    _mm_set_epi64x(high as i64, low as i64)
+    _mm_set_epi64x(low as i64, high as i64)
   };
   let coeff_16 = {
     let (high, low) = S::COEFF_16;
-    _mm_set_epi64x(high as i64, low as i64)
+    _mm_set_epi64x(low as i64, high as i64)
   };
 
   let bulk_len = data.len() & !63;
