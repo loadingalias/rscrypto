@@ -259,31 +259,29 @@ pub(crate) unsafe fn fold16_128_parallel(current: __m128i, coeff: __m128i, data:
 
 /// Barrett reduction from 128-bit folded value to 64-bit CRC.
 ///
-/// For reflected CRC64, following the crc-fast-rust algorithm:
-/// 1. Fold 128 bits to 64 bits using coeff.hi × state.lo (selector 0x01)
-/// 2. Apply Barrett reduction: multiply by poly first, then by mu
+/// For reflected CRC64, following the standard Barrett reduction algorithm:
+/// 1. Fold 128 bits to 64 bits using key16 × state.lo
+/// 2. Apply Barrett reduction: multiply by mu first, then by poly
 #[inline(always)]
 pub(crate) unsafe fn finalize_reduced_128_64<S: Crc64FoldSpec>(x: __m128i) -> u64 {
   let (_, key16) = S::FOLD_WIDTH;
   let (poly_simd, mu) = S::BARRETT;
 
-  // Step 1: Fold 128 bits to 64 bits (crc-fast-rust fold_width for reflected)
-  // h = coeff.lo × state.hi (using 0x01: src1.hi × src2.lo, but we swap operand order)
-  // Actually: coeff[lo=0, hi=key16] × state, selector 0x01 gives: coeff.hi × state.lo = key16 ×
-  // state.lo Then XOR with state >> 64
+  // Step 1: Fold 128 bits to 64 bits
+  // h = key16 × x.lo, then XOR with x >> 64
   let k_vec = _mm_set_epi64x(key16 as i64, 0);
   let h = _mm_clmulepi64_si128(k_vec, x, 0x01); // k_vec.hi × x.lo = key16 × x.lo
   let shifted = _mm_srli_si128(x, 8); // x >> 64
   let folded = _mm_xor_si128(h, shifted);
 
-  // Step 2: Barrett reduction (crc-fast-rust order: poly first, then mu)
-  // mu_poly = [poly (lo), mu (hi)]
-  let mu_poly = _mm_set_epi64x(mu as i64, poly_simd as i64);
+  // Step 2: Barrett reduction (mu first, then poly - matching ARM implementation)
+  // mu_poly = [mu (lo), poly (hi)]
+  let mu_poly = _mm_set_epi64x(poly_simd as i64, mu as i64);
 
-  // clmul1 = folded.lo × poly (selector 0x00)
+  // clmul1 = folded.lo × mu (selector 0x00)
   let clmul1 = _mm_clmulepi64_si128(folded, mu_poly, 0x00);
 
-  // clmul2 = clmul1.lo × mu (selector 0x10: clmul1.lo × mu_poly.hi)
+  // clmul2 = clmul1.lo × poly (selector 0x10: clmul1.lo × mu_poly.hi)
   let clmul2 = _mm_clmulepi64_si128(clmul1, mu_poly, 0x10);
 
   // Handle the x^64 term: (clmul1 << 64)
