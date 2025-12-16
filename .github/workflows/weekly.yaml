@@ -1,0 +1,137 @@
+name: Weekly
+
+on:
+  schedule:
+    # Run every Sunday at 3AM UTC
+    - cron: "0 3 * * 0"
+
+  # Allow manual trigger
+  workflow_dispatch:
+
+env:
+  RUST_BACKTRACE: 1
+  CARGO_TERM_COLOR: always
+  RSCRYPTO_TEST_MODE: weekly
+  CARGO_INCREMENTAL: 0
+
+# Lock down permissions to read-only by default
+permissions:
+  contents: read  # Required for actions/checkout
+
+jobs:
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # Miri Memory Safety Tests
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # Miri validates memory safety of portable code paths (non-SIMD).
+  # Runs on both x86-64 and ARM64 to catch platform-specific issues.
+  #
+  # Note: SIMD intrinsics cannot be interpreted by Miri, so we test
+  # portable fallbacks by disabling std and using no_std+alloc mode.
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  miri:
+    name: Miri (${{ matrix.target.name }})
+    runs-on: ${{ matrix.target.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          # Linux x86-64 (GitHub Free: ubuntu-latest)
+          - name: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+
+          # Linux ARM64 (Namespace: namespace-profile-rscrypto-linux-arm64)
+          - name: aarch64-unknown-linux-gnu
+            runner: namespace-profile-rscrypto-linux-arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
+
+      # TOOLCHAIN PIN: Must match rust-toolchain.toml
+      # Update locations: rust-toolchain.toml, setup/*.yaml, weekly.yaml, bench.yaml
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@0b1efabc08b657293548b77fb76cc02d26091c7e  # master
+        with:
+          toolchain: nightly-2025-12-14
+          components: miri, rust-src
+
+      - name: Install Tools
+        uses: taiki-e/install-action@d850aa816998e5cf15f67a78c7b933f2a5033f8a  # v2
+        with:
+          tool: just
+
+      - name: Miri Memory Safety Tests
+        run: just test-miri
+
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # Fuzzing: Isolated Job with Fresh Disk Space
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # Fuzzing requires cargo-fuzz nightly builds (~5GB) plus corpus data.
+  # Running in a separate job ensures:
+  #   - Fresh 14GB disk (no prior build artifacts)
+  #   - No cache interference with normal builds
+  #   - Parallel execution with Miri (faster wall-clock time)
+  #   - Isolated failures for easier debugging
+  #
+  # This job intentionally skips caching - fuzz builds use different
+  # RUSTFLAGS and shouldn't pollute the normal build cache.
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  fuzzing:
+    name: Fuzzing (Linux x86-64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
+
+      # TOOLCHAIN PIN: Must match rust-toolchain.toml
+      # Update locations: rust-toolchain.toml, setup/*.yaml, weekly.yaml, bench.yaml
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@0b1efabc08b657293548b77fb76cc02d26091c7e  # master
+        with:
+          toolchain: nightly-2025-12-14
+
+      - name: Install Tools
+        uses: taiki-e/install-action@d850aa816998e5cf15f67a78c7b933f2a5033f8a  # v2
+        with:
+          tool: cargo-fuzz,just
+
+      - name: Fuzz Testing
+        env:
+          RSCRYPTO_FUZZ_DURATION_SECS: "60"
+        run: just test-fuzz --all
+
+      - name: Upload Fuzz Crash Artifacts
+        if: failure()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5.0.0
+        with:
+          name: fuzz-crashes-weekly
+          path: fuzz/artifacts/
+          retention-days: 90
+          if-no-files-found: ignore
+
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # Summary Job
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  complete:
+    name: Weekly Complete
+    needs: [miri, fuzzing]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Results
+        run: |
+          echo "Weekly CI Results:"
+          echo "  Miri: ${{ needs.miri.result }}"
+          echo "  Fuzzing: ${{ needs.fuzzing.result }}"
+
+          if [ "${{ needs.miri.result }}" == "failure" ] || \
+             [ "${{ needs.fuzzing.result }}" == "failure" ]; then
+            echo ""
+            echo "❌ One or more jobs failed"
+            exit 1
+          fi
+
+          echo ""
+          echo "✅ All weekly jobs passed!"
