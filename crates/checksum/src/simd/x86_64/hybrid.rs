@@ -319,8 +319,8 @@ pub unsafe fn compute_hybrid_zen5_unchecked(crc: u32, data: &[u8]) -> u32 {
 
   // Combine all CRCs: crc(0||1||2||3||4||5||6||7)
   let mut combined = final_crcs[0];
-  for i in 1..7 {
-    combined = crc32c_combine(combined, final_crcs[i], scalar_len);
+  for &crc in &final_crcs[1..] {
+    combined = crc32c_combine(combined, crc, scalar_len);
   }
   crc32c_combine(combined, crc7, len7)
 }

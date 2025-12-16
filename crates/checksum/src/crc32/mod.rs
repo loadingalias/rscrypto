@@ -391,11 +391,13 @@ fn dispatch(crc: u32, data: &[u8]) -> u32 {
     if data.len() < 256 {
       return aarch64::compute_crc_enabled(crc, data);
     }
-    return crate::simd::aarch64::pmull::compute_pmull_crc32_enabled(crc, data);
+    crate::simd::aarch64::pmull::compute_pmull_crc32_enabled(crc, data)
   }
 
   #[cfg(all(target_arch = "aarch64", target_feature = "crc", not(target_feature = "aes")))]
-  return aarch64::compute_crc_enabled(crc, data);
+  {
+    aarch64::compute_crc_enabled(crc, data)
+  }
 
   // Everything below is only relevant when `target_feature="crc"` is not
   // enabled at compile time on aarch64.
@@ -410,10 +412,14 @@ fn dispatch(crc: u32, data: &[u8]) -> u32 {
       target_feature = "vpclmulqdq",
       target_feature = "pclmulqdq"
     ))]
-    return crate::simd::x86_64::vpclmul::compute_vpclmul_crc32_enabled(crc, data);
+    {
+      crate::simd::x86_64::vpclmul::compute_vpclmul_crc32_enabled(crc, data)
+    }
 
     #[cfg(all(target_arch = "x86_64", target_feature = "pclmulqdq", target_feature = "ssse3"))]
-    return crate::simd::x86_64::pclmul::compute_pclmul_crc32_enabled(crc, data);
+    {
+      crate::simd::x86_64::pclmul::compute_pclmul_crc32_enabled(crc, data)
+    }
 
     // Tier 2: Runtime detection (std only), cached with OnceLock.
     #[cfg(all(feature = "std", target_arch = "aarch64", not(target_feature = "crc")))]
@@ -421,7 +427,7 @@ fn dispatch(crc: u32, data: &[u8]) -> u32 {
       use std::sync::OnceLock;
       static DISPATCH: OnceLock<fn(u32, &[u8]) -> u32> = OnceLock::new();
       let f = DISPATCH.get_or_init(crate::simd::aarch64::detect_crc32_best);
-      return f(crc, data);
+      f(crc, data)
     }
 
     #[cfg(all(
@@ -442,12 +448,14 @@ fn dispatch(crc: u32, data: &[u8]) -> u32 {
       use std::sync::OnceLock;
       static DISPATCH: OnceLock<fn(u32, &[u8]) -> u32> = OnceLock::new();
       let f = DISPATCH.get_or_init(crate::simd::x86_64::detect_crc32_best);
-      return f(crc, data);
+      f(crc, data)
     }
 
     // Tier 3: wasm32 with parallel streams optimization.
     #[cfg(target_arch = "wasm32")]
-    return crate::simd::wasm32::compute_crc32(crc, data);
+    {
+      crate::simd::wasm32::compute_crc32(crc, data)
+    }
 
     // Tier 4: Portable fallback.
     #[cfg(not(any(
@@ -477,15 +485,15 @@ fn dispatch(crc: u32, data: &[u8]) -> u32 {
       all(target_arch = "x86_64", target_feature = "pclmulqdq", target_feature = "ssse3"),
       target_arch = "wasm32",
     )))]
-    return portable::compute(crc, data);
+    {
+      portable::compute(crc, data)
+    }
   }
 }
 
 #[cfg(test)]
 mod tests {
   extern crate std;
-
-  use alloc::vec::Vec;
 
   use super::*;
 
@@ -538,8 +546,8 @@ mod tests {
   }
 
   #[cfg(all(feature = "std", target_arch = "aarch64"))]
-  fn gen_bytes(len: usize, seed: u64) -> Vec<u8> {
-    let mut out = Vec::with_capacity(len);
+  fn gen_bytes(len: usize, seed: u64) -> alloc::vec::Vec<u8> {
+    let mut out = alloc::vec::Vec::with_capacity(len);
     let mut x = seed;
     for _ in 0..len {
       x ^= x << 13;

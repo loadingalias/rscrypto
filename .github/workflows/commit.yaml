@@ -161,8 +161,12 @@ jobs:
         target:
           # ARM Cortex-M0/M0+ (smallest, most restrictive - proves all larger Cortex-M work)
           - thumbv6m-none-eabi
-          # RISC-V 32-bit (different ISA, no atomics in base)
+          # RISC-V 32-bit (different ISA, atomics via 'a' extension)
           - riscv32imac-unknown-none-elf
+          # ARM64 bare metal (bootloaders, hypervisors, secure enclaves)
+          - aarch64-unknown-none
+          # x86_64 bare metal (kernels, bootloaders, hypervisors)
+          - x86_64-unknown-none
 
     steps:
       - name: Checkout
@@ -188,18 +192,19 @@ jobs:
 
       # ─────────────────────────────────────────────────────────────────────────
       # no_std Feature Matrix Verification
+      # Note: Use -p instead of --workspace to properly disable default features
       # ─────────────────────────────────────────────────────────────────────────
       - name: Check no_std (no features - pure no_std)
-        run: cargo check --workspace --target ${{ matrix.target }} --no-default-features --lib
+        run: cargo check -p platform -p traits -p checksum -p hash --target ${{ matrix.target }} --no-default-features --lib
 
       - name: Check no_std with alloc
-        run: cargo check --workspace --target ${{ matrix.target }} --no-default-features --features alloc --lib
+        run: cargo check -p platform -p traits -p checksum -p hash --target ${{ matrix.target }} --no-default-features --features alloc --lib
 
       - name: Build no_std release (pure no_std)
-        run: cargo build --workspace --target ${{ matrix.target }} --no-default-features --lib --release
+        run: cargo build -p platform -p traits -p checksum -p hash --target ${{ matrix.target }} --no-default-features --lib --release
 
       - name: Build no_std release with alloc
-        run: cargo build --workspace --target ${{ matrix.target }} --no-default-features --features alloc --lib --release
+        run: cargo build -p platform -p traits -p checksum -p hash --target ${{ matrix.target }} --no-default-features --features alloc --lib --release
 
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   # WASM Targets (Cross-compile verification)
@@ -256,18 +261,19 @@ jobs:
 
       # ─────────────────────────────────────────────────────────────────────────
       # WASM Feature Matrix Verification
+      # Note: Use -p instead of --workspace to properly disable default features
       # ─────────────────────────────────────────────────────────────────────────
       - name: Check WASM (no features - pure no_std)
-        run: cargo check --workspace --target ${{ matrix.target }} --no-default-features --lib
+        run: cargo check -p platform -p traits -p checksum -p hash --target ${{ matrix.target }} --no-default-features --lib
 
       - name: Check WASM with alloc
-        run: cargo check --workspace --target ${{ matrix.target }} --no-default-features --features alloc --lib
+        run: cargo check -p platform -p traits -p checksum -p hash --target ${{ matrix.target }} --no-default-features --features alloc --lib
 
       - name: Build WASM release (no features)
-        run: cargo build --workspace --target ${{ matrix.target }} --no-default-features --lib --release
+        run: cargo build -p platform -p traits -p checksum -p hash --target ${{ matrix.target }} --no-default-features --lib --release
 
       - name: Build WASM release with alloc
-        run: cargo build --workspace --target ${{ matrix.target }} --no-default-features --features alloc --lib --release
+        run: cargo build -p platform -p traits -p checksum -p hash --target ${{ matrix.target }} --no-default-features --features alloc --lib --release
 
       # Additional wasm-pack verification for browser target
       - name: Install wasm-pack

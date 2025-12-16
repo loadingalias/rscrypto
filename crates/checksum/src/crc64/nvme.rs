@@ -147,7 +147,7 @@ pub(super) fn selected_backend() -> &'static str {
   {
     use std::sync::OnceLock;
     static BACKEND: OnceLock<&'static str> = OnceLock::new();
-    return BACKEND.get_or_init(|| {
+    BACKEND.get_or_init(|| {
       if std::arch::is_x86_feature_detected!("vpclmulqdq") && std::arch::is_x86_feature_detected!("avx512f") {
         "x86_64/vpclmulqdq"
       } else if std::arch::is_x86_feature_detected!("pclmulqdq") {
@@ -155,7 +155,7 @@ pub(super) fn selected_backend() -> &'static str {
       } else {
         "portable/slicing-by-8"
       }
-    });
+    })
   }
 
   #[cfg(all(feature = "std", target_arch = "aarch64"))]
@@ -180,14 +180,18 @@ pub(super) fn selected_backend() -> &'static str {
     not(all(feature = "std", target_arch = "x86_64")),
     not(all(feature = "std", target_arch = "aarch64"))
   ))]
-  return "portable/bitwise";
+  {
+    "portable/bitwise"
+  }
 
   #[cfg(all(
     not(feature = "no-tables"),
     not(all(feature = "std", target_arch = "x86_64")),
     not(all(feature = "std", target_arch = "aarch64"))
   ))]
-  "portable/slicing-by-8"
+  {
+    "portable/slicing-by-8"
+  }
 }
 
 #[cfg(feature = "std")]

@@ -14,8 +14,8 @@ std = ["traits/std", "checksum/std", "hash/std"]
 alloc = ["traits/alloc", "checksum/alloc", "hash/alloc"]
 
 [dependencies]
-checksum = { path = "../checksum" }
-hash = { path = "../hash" }
+checksum = { path = "../checksum", default-features = false }
+hash = { path = "../hash", default-features = false }
 traits = { workspace = true } #unified
 
 [lints]

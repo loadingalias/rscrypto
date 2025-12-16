@@ -445,11 +445,13 @@ fn dispatch(crc: u32, data: &[u8]) -> u32 {
     if data.len() < 256 {
       return aarch64::compute_crc_enabled(crc, data);
     }
-    return crate::simd::aarch64::pmull::compute_pmull_enabled(crc, data);
+    crate::simd::aarch64::pmull::compute_pmull_enabled(crc, data)
   }
 
   #[cfg(all(target_arch = "aarch64", target_feature = "crc", not(target_feature = "aes")))]
-  return aarch64::compute_crc_enabled(crc, data);
+  {
+    aarch64::compute_crc_enabled(crc, data)
+  }
 
   // Everything below is only relevant when `target_feature="crc"` is not
   // enabled at compile time on aarch64.
@@ -473,7 +475,7 @@ fn dispatch(crc: u32, data: &[u8]) -> u32 {
           return x86_64::compute_sse42_enabled(crc, data);
         }
       }
-      return crate::simd::x86_64::vpclmul::compute_vpclmul_enabled(crc, data);
+      crate::simd::x86_64::vpclmul::compute_vpclmul_enabled(crc, data)
     }
 
     #[cfg(all(target_arch = "x86_64", target_feature = "pclmulqdq", target_feature = "ssse3"))]
@@ -484,11 +486,13 @@ fn dispatch(crc: u32, data: &[u8]) -> u32 {
           return x86_64::compute_sse42_enabled(crc, data);
         }
       }
-      return crate::simd::x86_64::pclmul::compute_pclmul_enabled(crc, data);
+      crate::simd::x86_64::pclmul::compute_pclmul_enabled(crc, data)
     }
 
     #[cfg(all(target_arch = "x86_64", target_feature = "sse4.2"))]
-    return x86_64::compute_sse42_enabled(crc, data);
+    {
+      x86_64::compute_sse42_enabled(crc, data)
+    }
 
     // Tier 2: Runtime detection (std only), cached with OnceLock.
     #[cfg(all(feature = "std", target_arch = "aarch64", not(target_feature = "crc")))]
@@ -496,7 +500,7 @@ fn dispatch(crc: u32, data: &[u8]) -> u32 {
       use std::sync::OnceLock;
       static DISPATCH: OnceLock<fn(u32, &[u8]) -> u32> = OnceLock::new();
       let f = DISPATCH.get_or_init(crate::simd::aarch64::detect_crc32c_best);
-      return f(crc, data);
+      f(crc, data)
     }
 
     #[cfg(all(feature = "std", target_arch = "x86_64", not(target_feature = "sse4.2")))]
@@ -504,12 +508,14 @@ fn dispatch(crc: u32, data: &[u8]) -> u32 {
       use std::sync::OnceLock;
       static DISPATCH: OnceLock<fn(u32, &[u8]) -> u32> = OnceLock::new();
       let f = DISPATCH.get_or_init(crate::simd::x86_64::detect_crc32c_best);
-      return f(crc, data);
+      f(crc, data)
     }
 
     // Tier 3: wasm32 with parallel streams optimization.
     #[cfg(target_arch = "wasm32")]
-    return crate::simd::wasm32::compute_crc32c(crc, data);
+    {
+      crate::simd::wasm32::compute_crc32c(crc, data)
+    }
 
     // Tier 4: Portable fallback.
     #[cfg(not(any(
@@ -517,7 +523,9 @@ fn dispatch(crc: u32, data: &[u8]) -> u32 {
       all(feature = "std", target_arch = "x86_64", not(target_feature = "sse4.2")),
       target_arch = "wasm32",
     )))]
-    return portable::compute(crc, data);
+    {
+      portable::compute(crc, data)
+    }
   }
 }
 
