@@ -20,6 +20,10 @@
 //!
 //! Kdf (HKDF, Argon2, scrypt)
 //! ```
+//!
+//! # Error Types
+//!
+//! - [`VerificationError`] - Opaque error for MAC/AEAD/signature verification
 
 #![no_std]
 
@@ -30,5 +34,7 @@ extern crate alloc;
 extern crate std;
 
 mod checksum;
+pub mod error;
 
 pub use checksum::{Checksum, ChecksumCombine};
+pub use error::VerificationError;
