@@ -114,8 +114,9 @@ if [ -z "$PKG_FLAGS" ]; then
 fi
 
 # Ensure Miri sysroot for target
+# Note: We don't use +nightly here - rust-toolchain.toml specifies the nightly version
 echo "Ensuring Miri sysroot for $MIRI_TARGET..."
-cargo +nightly miri setup --target "$MIRI_TARGET" 2>/dev/null || true
+cargo miri setup --target "$MIRI_TARGET" 2>/dev/null || true
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Run Miri Tests
@@ -129,7 +130,7 @@ echo "MIRIFLAGS: (none - strict mode)"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 # shellcheck disable=SC2086
-cargo +nightly miri test $PKG_FLAGS \
+cargo miri test $PKG_FLAGS \
   --target "$MIRI_TARGET" \
   --no-default-features \
   --features alloc \

@@ -78,15 +78,15 @@ list_targets() {
 }
 
 check_requirements() {
-  if ! cargo +nightly --version &>/dev/null; then
-    echo "Error: Rust nightly toolchain not found"
-    echo "Install with: rustup toolchain install nightly"
+  # Note: We rely on rust-toolchain.toml for nightly version, not +nightly
+  if ! cargo --version &>/dev/null; then
+    echo "Error: Rust toolchain not found"
     exit 1
   fi
 
-  if ! cargo +nightly fuzz --version &>/dev/null; then
+  if ! cargo fuzz --version &>/dev/null; then
     echo "Error: cargo-fuzz not found"
-    echo "Install with: cargo +nightly install cargo-fuzz"
+    echo "Install with: cargo install cargo-fuzz"
     exit 1
   fi
 
@@ -120,8 +120,15 @@ run_target() {
     FUZZ_ARGS="$FUZZ_ARGS -max_total_time=$duration"
   fi
 
+  # Use gnu target on Linux CI to avoid needing musl toolchain
+  # cargo-fuzz defaults to musl on Linux which requires musl-gcc/g++
+  TARGET_FLAG=""
+  if [ "$(uname)" = "Linux" ] && [ "${RSCRYPTO_TEST_MODE:-local}" != "local" ]; then
+    TARGET_FLAG="--target x86_64-unknown-linux-gnu"
+  fi
+
   # shellcheck disable=SC2086
-  if cargo +nightly fuzz run "$target" --jobs="$JOBS" -- $FUZZ_ARGS 2>&1 | grep -v "^INFO:"; then
+  if cargo fuzz run "$target" $TARGET_FLAG --jobs="$JOBS" -- $FUZZ_ARGS 2>&1 | grep -v "^INFO:"; then
     echo "✅ $target completed"
     return 0
   else
@@ -169,7 +176,15 @@ build_targets() {
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
   cd "$FUZZ_DIR"
-  cargo +nightly fuzz build
+
+  # Use gnu target on Linux CI to avoid needing musl toolchain
+  TARGET_FLAG=""
+  if [ "$(uname)" = "Linux" ] && [ "${RSCRYPTO_TEST_MODE:-local}" != "local" ]; then
+    TARGET_FLAG="--target x86_64-unknown-linux-gnu"
+  fi
+
+  # shellcheck disable=SC2086
+  cargo fuzz build $TARGET_FLAG
 
   echo "✅ Fuzz targets built successfully!"
 }
@@ -180,7 +195,7 @@ clean_artifacts() {
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
   cd "$FUZZ_DIR"
-  cargo +nightly fuzz clean
+  cargo fuzz clean
   rm -rf artifacts/
 
   echo "✅ Fuzz artifacts cleaned!"
