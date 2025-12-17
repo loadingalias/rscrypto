@@ -1,29 +1,36 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Miri Memory Safety Tests for rscrypto
+#
+# Miri interprets Rust code and checks for undefined behavior, memory safety
+# violations, and data races. This script runs Miri on the checksum crate.
+#
+# How it works:
+#   - Code uses #[cfg(miri)] guards to fall back to portable implementations
+#   - SIMD intrinsics that Miri can't interpret are automatically bypassed
+#   - No special RUSTFLAGS needed - works on ARM and x86 identically
+#
+# Usage:
+#   ./scripts/test/test-miri.sh           # Run Miri tests
+#   ./scripts/test/test-miri.sh checksum  # Test specific crate
+#   ./scripts/test/test-miri.sh --all     # Test all compatible crates
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "Running Memory Safety Tests via Miri..."
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# Miri Configuration for rscrypto
-#
-# The checksum crate uses SIMD intrinsics which Miri cannot interpret.
-# We force the portable code path by disabling the `std` feature.
-#
-# On x86_64: Run natively with --no-default-features (no compile-time SIMD)
-# On ARM: Skip (CRC intrinsics are compile-time enabled, cross-compile needs
-#         x86_64-linux-gnu-gcc which isn't installed). Run in CI on x86_64.
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-HOST_ARCH=$(uname -m)
-if [ "$HOST_ARCH" = "arm64" ] || [ "$HOST_ARCH" = "aarch64" ]; then
-  echo "Miri skipped on ARM (run in CI on x86_64)"
-  exit 0
-fi
-
-# Crates to test with Miri
+# Crates that work with Miri (have #[cfg(miri)] portable fallbacks)
 MIRI_CRATES="checksum"
-EXCLUDED_CRATES="platform hash traits"
+
+# Crates excluded from Miri testing
+# - platform: No tests, just feature detection
+# - hash: Not yet implemented
+# - traits: Just trait definitions, no unsafe code
+EXCLUDED_CRATES="platform hash traits rscrypto"
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Argument Parsing
@@ -39,23 +46,32 @@ is_in_list() {
 }
 
 CRATES=()
+ALL_FLAG=false
+
 for arg in "$@"; do
-  [ "$arg" = "--all" ] && continue
-  CRATES+=("$arg")
+  if [ "$arg" = "--all" ]; then
+    ALL_FLAG=true
+  else
+    CRATES+=("$arg")
+  fi
 done
 
+# Determine which crates to test
 if [ ${#CRATES[@]} -gt 0 ]; then
   CRATES_TO_TEST="${CRATES[*]}"
+elif [ "$ALL_FLAG" = true ]; then
+  CRATES_TO_TEST="$MIRI_CRATES"
 else
   CRATES_TO_TEST="$MIRI_CRATES"
 fi
 
+# Build package flags, filtering exclusions
 PKG_FLAGS=""
 PKG_LIST=""
 
 for crate in $CRATES_TO_TEST; do
   if is_in_list "$crate" "$EXCLUDED_CRATES"; then
-    echo "Skipping $crate (excluded)"
+    echo "Skipping $crate (excluded from Miri)"
   else
     PKG_FLAGS="$PKG_FLAGS -p $crate"
     PKG_LIST="$PKG_LIST $crate"
@@ -71,16 +87,16 @@ fi
 # Run Miri Tests
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "Running Miri tests for:$PKG_LIST"
-echo "Mode: --no-default-features --features alloc --lib"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "Testing:$PKG_LIST"
+echo "Mode: --lib (unit tests only, no benchmarks)"
+echo ""
 
+# Run Miri on library tests only (--lib excludes benchmarks/examples)
+# The #[cfg(miri)] guards in dispatch functions ensure portable code is used
 # shellcheck disable=SC2086
-cargo miri test $PKG_FLAGS \
-  --no-default-features \
-  --features alloc \
-  --lib
+cargo miri test $PKG_FLAGS --lib
 
 echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "All Miri tests passed"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

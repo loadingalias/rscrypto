@@ -414,7 +414,15 @@ impl std::io::Write for Crc32c {
 /// hardware features, detected at compile time or runtime.
 #[inline]
 fn dispatch(crc: u32, data: &[u8]) -> u32 {
+  // Miri cannot interpret SIMD/CRC intrinsics, so always use portable code.
+  // This cfg is only set when running `cargo miri` - production builds are unaffected.
+  #[cfg(miri)]
+  {
+    return portable::compute(crc, data);
+  }
+
   // Tier 1: Compile-time target features.
+  #[allow(unreachable_code)]
   #[cfg(all(
     target_arch = "aarch64",
     target_feature = "aes",
@@ -489,12 +497,10 @@ fn dispatch(crc: u32, data: &[u8]) -> u32 {
       crate::simd::x86_64::pclmul::compute_pclmul_enabled(crc, data)
     }
 
-    #[cfg(all(target_arch = "x86_64", target_feature = "sse4.2"))]
-    {
-      x86_64::compute_sse42_enabled(crc, data)
-    }
-
     // Tier 2: Runtime detection (std only), cached with OnceLock.
+    // This kicks in when compile-time target_feature isn't sufficient.
+    // NOTE: We check for PCLMULQDQ, not just SSE4.2, because PCLMULQDQ folding
+    // is 10-30x faster than scalar CRC32 instructions for large buffers.
     #[cfg(all(feature = "std", target_arch = "aarch64", not(target_feature = "crc")))]
     {
       use std::sync::OnceLock;
@@ -503,7 +509,11 @@ fn dispatch(crc: u32, data: &[u8]) -> u32 {
       f(crc, data)
     }
 
-    #[cfg(all(feature = "std", target_arch = "x86_64", not(target_feature = "sse4.2")))]
+    #[cfg(all(
+      feature = "std",
+      target_arch = "x86_64",
+      not(all(target_feature = "pclmulqdq", target_feature = "ssse3"))
+    ))]
     {
       use std::sync::OnceLock;
       static DISPATCH: OnceLock<fn(u32, &[u8]) -> u32> = OnceLock::new();
@@ -517,10 +527,14 @@ fn dispatch(crc: u32, data: &[u8]) -> u32 {
       crate::simd::wasm32::compute_crc32c(crc, data)
     }
 
-    // Tier 4: Portable fallback.
+    // Tier 4: Portable fallback (no_std or unsupported platform).
     #[cfg(not(any(
       all(feature = "std", target_arch = "aarch64", not(target_feature = "crc")),
-      all(feature = "std", target_arch = "x86_64", not(target_feature = "sse4.2")),
+      all(
+        feature = "std",
+        target_arch = "x86_64",
+        not(all(target_feature = "pclmulqdq", target_feature = "ssse3"))
+      ),
       target_arch = "wasm32",
     )))]
     {
@@ -622,7 +636,7 @@ mod tests {
   }
 
   #[test]
-  #[cfg(all(feature = "std", target_arch = "x86_64"))]
+  #[cfg(all(feature = "std", target_arch = "x86_64", not(miri)))]
   fn test_simd_matches_portable_x86() {
     let lengths = [0usize, 1, 2, 3, 4, 7, 8, 15, 16, 31, 32, 63, 64, 255, 256, 1024];
     let inits = [0u32, 0xFFFF_FFFFu32, 0x0123_4567u32];
@@ -665,7 +679,7 @@ mod tests {
   }
 
   #[test]
-  #[cfg(all(feature = "std", target_arch = "aarch64"))]
+  #[cfg(all(feature = "std", target_arch = "aarch64", not(miri)))]
   fn test_simd_matches_portable_aarch64() {
     let lengths = [0usize, 1, 2, 3, 4, 7, 8, 15, 16, 31, 32, 63, 64, 255, 256, 1024];
     let inits = [0u32, 0xFFFF_FFFFu32, 0x89AB_CDEFu32];

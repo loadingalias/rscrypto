@@ -7,9 +7,7 @@ use checksum::{Crc16CcittFalse, Crc16Ibm, Crc24, Crc32, Crc32c, Crc64, Crc64Nvme
 use proptest::prelude::*;
 use traits::Checksum;
 
-// ============================================================================
 // Test Strategies
-// ============================================================================
 
 /// Generate arbitrary byte vectors up to 8KB.
 fn arb_data() -> impl Strategy<Value = Vec<u8>> {
@@ -26,9 +24,7 @@ fn arb_splits(len: usize, count: usize) -> impl Strategy<Value = Vec<usize>> {
   })
 }
 
-// ============================================================================
 // Generic Property Tests
-// ============================================================================
 
 /// Test that incremental updates produce the same result as one-shot.
 fn prop_incremental_equals_oneshot<C: Checksum + Default + Clone>(data: &[u8], split: usize) -> bool {
@@ -74,9 +70,7 @@ fn prop_reset_works<C: Checksum + Default + Clone>(data: &[u8]) -> bool {
   hasher.finalize() == C::checksum(data)
 }
 
-// ============================================================================
 // CRC32-C Property Tests
-// ============================================================================
 
 proptest! {
   #![proptest_config(ProptestConfig::with_cases(1000))]
@@ -152,9 +146,7 @@ proptest! {
   }
 }
 
-// ============================================================================
 // CRC32 Property Tests
-// ============================================================================
 
 proptest! {
   #![proptest_config(ProptestConfig::with_cases(1000))]
@@ -195,9 +187,7 @@ proptest! {
   }
 }
 
-// ============================================================================
 // CRC64 Property Tests
-// ============================================================================
 
 proptest! {
   #![proptest_config(ProptestConfig::with_cases(1000))]
@@ -238,9 +228,7 @@ proptest! {
   }
 }
 
-// ============================================================================
 // CRC64/NVME Property Tests
-// ============================================================================
 
 proptest! {
   #![proptest_config(ProptestConfig::with_cases(1000))]
@@ -266,9 +254,7 @@ proptest! {
   }
 }
 
-// ============================================================================
 // CRC16 Property Tests
-// ============================================================================
 
 proptest! {
   #![proptest_config(ProptestConfig::with_cases(1000))]
@@ -314,9 +300,7 @@ proptest! {
   }
 }
 
-// ============================================================================
 // CRC24 Property Tests
-// ============================================================================
 
 proptest! {
   #![proptest_config(ProptestConfig::with_cases(1000))]

@@ -69,9 +69,7 @@ pub mod fold {
   pub const COEFF_32: (u64, u64) = coeff(32);
   pub const COEFF_16: (u64, u64) = coeff(16);
 
-  // ============================================================================
   // PMULL keys for aarch64 (different encoding than x86_64 PCLMULQDQ)
-  // ============================================================================
 
   /// Compute PMULL folding key for aarch64.
   ///

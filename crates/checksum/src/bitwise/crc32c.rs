@@ -18,9 +18,7 @@
 
 use crate::constants::crc32c::POLYNOMIAL;
 
-// ============================================================================
 // Main API
-// ============================================================================
 
 /// Compute CRC32-C over a byte slice without using lookup tables.
 ///

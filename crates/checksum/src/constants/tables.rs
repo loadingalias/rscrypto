@@ -15,9 +15,7 @@
 //! - CRC32: 8 × 256 × 4 = 8KB
 //! - CRC64: 8 × 256 × 8 = 16KB
 
-// ============================================================================
 // 16-bit CRC Tables (CRC16/IBM, etc.)
-// ============================================================================
 
 /// Generate base CRC16 lookup table (table 0) for a reflected polynomial.
 #[cfg(not(feature = "no-tables"))]
@@ -74,9 +72,7 @@ pub const fn generate_slicing_tables_16(poly: u16) -> [[u16; 256]; 8] {
   tables
 }
 
-// ============================================================================
 // 32-bit CRC Tables (CRC32, CRC32C)
-// ============================================================================
 
 /// Generate base CRC32 lookup table (table 0) for a reflected polynomial.
 #[cfg(not(feature = "no-tables"))]
@@ -128,9 +124,7 @@ pub const fn generate_slicing_tables_32(poly: u32) -> [[u32; 256]; 8] {
   tables
 }
 
-// ============================================================================
 // 64-bit CRC Tables (CRC64/XZ, CRC64/NVME)
-// ============================================================================
 
 /// Generate base CRC64 lookup table (table 0) for a reflected polynomial.
 #[cfg(not(feature = "no-tables"))]

@@ -15,9 +15,7 @@ use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_m
 
 const SIZES: [usize; 7] = [64, 256, 1024, 4096, 16384, 65536, 1048576];
 
-// ============================================================================
 // CRC32-C (Castagnoli)
-// ============================================================================
 
 fn comp_crc32c(c: &mut Criterion) {
   let mut group = c.benchmark_group("comp/crc32c");
@@ -48,9 +46,7 @@ fn comp_crc32c(c: &mut Criterion) {
   group.finish();
 }
 
-// ============================================================================
 // CRC32 (ISO-HDLC)
-// ============================================================================
 
 fn comp_crc32(c: &mut Criterion) {
   let mut group = c.benchmark_group("comp/crc32");
@@ -81,9 +77,7 @@ fn comp_crc32(c: &mut Criterion) {
   group.finish();
 }
 
-// ============================================================================
 // CRC64/XZ (ECMA)
-// ============================================================================
 
 fn comp_crc64_xz(c: &mut Criterion) {
   let mut group = c.benchmark_group("comp/crc64-xz");
@@ -118,9 +112,7 @@ fn comp_crc64_xz(c: &mut Criterion) {
   group.finish();
 }
 
-// ============================================================================
 // CRC64/NVMe
-// ============================================================================
 
 fn comp_crc64_nvme(c: &mut Criterion) {
   let mut group = c.benchmark_group("comp/crc64-nvme");
@@ -150,9 +142,7 @@ fn comp_crc64_nvme(c: &mut Criterion) {
   group.finish();
 }
 
-// ============================================================================
 // CRC16/IBM
-// ============================================================================
 
 fn comp_crc16_ibm(c: &mut Criterion) {
   let mut group = c.benchmark_group("comp/crc16-ibm");
@@ -175,9 +165,7 @@ fn comp_crc16_ibm(c: &mut Criterion) {
   group.finish();
 }
 
-// ============================================================================
 // CRC16/CCITT-FALSE
-// ============================================================================
 
 fn comp_crc16_ccitt(c: &mut Criterion) {
   let mut group = c.benchmark_group("comp/crc16-ccitt");
@@ -203,9 +191,7 @@ fn comp_crc16_ccitt(c: &mut Criterion) {
   group.finish();
 }
 
-// ============================================================================
 // CRC24/OpenPGP
-// ============================================================================
 
 fn comp_crc24(c: &mut Criterion) {
   let mut group = c.benchmark_group("comp/crc24");

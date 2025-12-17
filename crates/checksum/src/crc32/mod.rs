@@ -364,7 +364,15 @@ impl std::io::Write for Crc32 {
 
 #[inline]
 fn dispatch(crc: u32, data: &[u8]) -> u32 {
+  // Miri cannot interpret SIMD/CRC intrinsics, so always use portable code.
+  // This cfg is only set when running `cargo miri` - production builds are unaffected.
+  #[cfg(miri)]
+  {
+    return portable::compute(crc, data);
+  }
+
   // Tier 1: Compile-time target features.
+  #[allow(unreachable_code)]
   #[cfg(all(
     target_arch = "aarch64",
     target_feature = "aes",
@@ -559,7 +567,7 @@ mod tests {
   }
 
   #[test]
-  #[cfg(all(feature = "std", target_arch = "aarch64"))]
+  #[cfg(all(feature = "std", target_arch = "aarch64", not(miri)))]
   fn test_simd_matches_portable_aarch64() {
     let lengths = [0usize, 1, 2, 3, 4, 7, 8, 15, 16, 31, 32, 63, 64, 255, 256, 1024];
     let inits = [0u32, 0xFFFF_FFFFu32, 0x89AB_CDEFu32];

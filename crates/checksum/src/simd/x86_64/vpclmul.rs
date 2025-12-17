@@ -158,9 +158,7 @@ pub(crate) fn compute_vpclmul_crc32_runtime(crc: u32, data: &[u8]) -> u32 {
   unsafe { compute_vpclmul_unchecked_impl::<crate::simd::x86_64::pclmul::Crc32Spec>(crc, data) }
 }
 
-// ============================================================================
 // CRC64 Support
-// ============================================================================
 
 /// Compute a reflected 64-bit CRC using VPCLMULQDQ.
 ///

@@ -55,9 +55,7 @@ pub(crate) fn detect_crc32_best() -> fn(u32, &[u8]) -> u32 {
   crate::crc32::portable::compute
 }
 
-// ============================================================================
 // CRC64 Dispatch
-// ============================================================================
 
 /// Select the best available CRC64/XZ implementation at runtime (std only).
 ///

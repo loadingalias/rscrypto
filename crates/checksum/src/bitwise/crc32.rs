@@ -22,9 +22,7 @@
 
 use crate::constants::crc32::POLYNOMIAL;
 
-// ============================================================================
 // Main API
-// ============================================================================
 
 /// Compute CRC32 over a byte slice without using lookup tables.
 ///

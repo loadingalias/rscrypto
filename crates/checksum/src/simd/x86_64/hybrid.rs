@@ -39,9 +39,7 @@ const HYBRID_MIN_SIZE: usize = 512;
 /// Block size for each scalar stream per iteration (8 bytes = one crc32q).
 const SCALAR_BLOCK: usize = 8;
 
-// ============================================================================
 // Multi-Stream Parallel crc32q Kernels
-// ============================================================================
 
 /// Process 3 parallel `crc32q` streams (optimal for Zen 4).
 ///
@@ -184,9 +182,7 @@ unsafe fn crc32q_remainder(mut crc: u32, mut ptr: *const u8, mut len: usize) -> 
   crc
 }
 
-// ============================================================================
 // Hybrid Kernels
-// ============================================================================
 
 /// Compute CRC32-C using Zen 4 hybrid (3-way crc32q + VPCLMULQDQ).
 ///
@@ -325,9 +321,7 @@ pub unsafe fn compute_hybrid_zen5_unchecked(crc: u32, data: &[u8]) -> u32 {
   crc32c_combine(combined, crc7, len7)
 }
 
-// ============================================================================
 // Runtime-Dispatched Entry Points
-// ============================================================================
 
 /// Compute CRC32-C using Zen 4 hybrid kernel.
 ///

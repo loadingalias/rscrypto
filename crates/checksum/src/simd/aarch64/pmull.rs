@@ -648,9 +648,7 @@ pub(crate) fn compute_pmull_eor3_crc32_runtime(crc: u32, data: &[u8]) -> u32 {
   unsafe { compute_pmull_eor3_crc32_unchecked(crc, data) }
 }
 
-// ============================================================================
 // CRC64 PMULL Support
-// ============================================================================
 
 /// Trait for CRC64 polynomial-specific PMULL folding constants.
 ///
@@ -788,7 +786,7 @@ unsafe fn barrett_reduce_crc64<S: Crc64PmullSpec>(x: uint64x2_t) -> u64 {
   let key16 = S::FOLD_KEY;
   let (poly_simd, mu) = S::BARRETT;
 
-  // Step 1: Fold 128 bits to 64 bits (crc-fast-rust fold_width for reflected)
+  // Fold 128 bits to 64 bits (crc-fast-rust fold_width for reflected)
   // crc-fast-rust does: h = carryless_mul_01(coeff, state) = coeff.hi × state.lo
   // where coeff.hi = key16. So: h = key16 × x.lo (NOT x.hi!)
   let h = vmull_p64(key16, vgetq_lane_u64::<0>(x));
@@ -798,7 +796,7 @@ unsafe fn barrett_reduce_crc64<S: Crc64PmullSpec>(x: uint64x2_t) -> u64 {
   // folded = h XOR shifted
   let folded = veorq_u64(h, shifted);
 
-  // Step 2: Barrett reduction (crc-fast-rust order: mu first, then poly)
+  // Barrett reduction (crc-fast-rust order: mu first, then poly)
   // clmul1 = folded.lo × mu
   let clmul1 = vmull_p64(vgetq_lane_u64::<0>(folded), mu);
   let clmul1 = vreinterpretq_u64_p128(clmul1);
@@ -826,13 +824,13 @@ unsafe fn barrett_reduce_crc64_eor3<S: Crc64PmullSpec>(x: uint64x2_t) -> u64 {
   let key16 = S::FOLD_KEY;
   let (poly_simd, mu) = S::BARRETT;
 
-  // Step 1: Fold 128 bits to 64 bits
+  // Fold 128 bits to 64 bits
   let h = vmull_p64(key16, vgetq_lane_u64::<0>(x));
   let h = vreinterpretq_u64_p128(h);
   let shifted = _aarch64_shr_64(x);
   let folded = veorq_u64(h, shifted);
 
-  // Step 2: Barrett reduction
+  // Barrett reduction
   let clmul1 = vmull_p64(vgetq_lane_u64::<0>(folded), mu);
   let clmul1 = vreinterpretq_u64_p128(clmul1);
 
@@ -1145,9 +1143,7 @@ unsafe fn compute_pmull_crc64_8lane<S: Crc64PmullSpec>(crc: u64, data: &[u8]) ->
   crc0
 }
 
-// ============================================================================
 // EOR3-accelerated CRC64 implementations (sha3 feature)
-// ============================================================================
 
 /// Compute CRC64 using PMULL with 8-lane parallelism and EOR3.
 #[target_feature(enable = "aes,sha3")]

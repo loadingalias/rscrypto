@@ -27,7 +27,7 @@ pub static TABLES: super::Aligned64<[[u32; 256]; 8]> =
 /// carryless multiplication instructions (PCLMULQDQ on x86, PMULL on ARM).
 ///
 /// Reference: Intel's "Fast CRC Computation Using PCLMULQDQ Instruction"
-#[allow(dead_code)] // Used in Phase 2/3 SIMD implementations
+#[allow(dead_code)]
 pub mod fold {
   use super::super::gf2;
 
@@ -129,10 +129,8 @@ pub mod fold {
     0x0000_0000_dcb1_7aa4,
   ];
 
-  // ============================================================================
   // 9-accumulator (v9) fold constants for Apple M-series optimization
   // 144 bytes per iteration = 9 accumulators × 16 bytes
-  // ============================================================================
 
   /// Fold coefficient for 144-byte (1152-bit) distance.
   ///
@@ -152,10 +150,8 @@ pub mod fold {
   /// Fold coefficient for 80-byte distance (reduction: x3 into final).
   pub const COEFF_80: (u64, u64) = compute_fold_coeff(80);
 
-  // ============================================================================
   // 4-accumulator fold constants (verified against Intel whitepaper)
   // These use the KEYS_REFLECTED array which has been validated.
-  // ============================================================================
 
   /// Fold coefficient for a 64-byte (512-bit) distance.
   ///

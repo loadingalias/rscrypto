@@ -210,7 +210,12 @@ impl std::io::Write for Crc64Nvme {
 
 #[inline]
 fn dispatch(crc: u64, data: &[u8]) -> u64 {
+  // Miri cannot interpret SIMD intrinsics, so always use portable code.
+  #[cfg(miri)]
+  return compute_portable(crc, data);
+
   // Tier 1: Compile-time dispatch (when target features are known).
+  #[allow(unreachable_code)]
   #[cfg(all(
     target_arch = "x86_64",
     target_feature = "vpclmulqdq",
@@ -234,7 +239,13 @@ fn dispatch(crc: u64, data: &[u8]) -> u64 {
   return crate::simd::aarch64::pmull::compute_pmull_crc64_nvme_enabled(crc, data);
 
   // Tier 2: Runtime dispatch (std only).
-  #[cfg(all(feature = "std", target_arch = "x86_64", not(target_feature = "vpclmulqdq")))]
+  // NOTE: Check for PCLMULQDQ (not just VPCLMULQDQ) to ensure runtime detection
+  // kicks in when compile-time features aren't sufficient.
+  #[cfg(all(
+    feature = "std",
+    target_arch = "x86_64",
+    not(all(target_feature = "pclmulqdq", target_feature = "ssse3"))
+  ))]
   {
     use std::sync::OnceLock;
     static DISPATCH: OnceLock<fn(u64, &[u8]) -> u64> = OnceLock::new();

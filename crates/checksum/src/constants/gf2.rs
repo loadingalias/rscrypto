@@ -6,9 +6,7 @@
 //!
 //! All functions are generic over polynomial width (32-bit or 64-bit CRCs).
 
-// ============================================================================
 // Bit Reflection (used by all CRC variants)
-// ============================================================================
 
 /// Reflect (bit-reverse) the lower `width` bits of `value`.
 ///
@@ -40,9 +38,7 @@ pub const fn reflect_bits_u128(value: u128, width: u32) -> u128 {
   result
 }
 
-// ============================================================================
 // Polynomial Degree and Division
-// ============================================================================
 
 /// Returns the degree of a polynomial (position of highest set bit).
 ///
@@ -75,9 +71,7 @@ pub const fn gf2_div_128(dividend: u128, divisor: u128) -> u128 {
   q
 }
 
-// ============================================================================
 // 32-bit CRC Operations (CRC32, CRC32C)
-// ============================================================================
 
 /// Multiply two polynomials in GF(2) and reduce mod `poly_full`.
 ///
@@ -138,9 +132,7 @@ pub const fn xpow_mod_32(n: u32, poly_full: u64) -> u64 {
   result
 }
 
-// ============================================================================
 // 64-bit CRC Operations (CRC64/XZ, CRC64/NVME)
-// ============================================================================
 
 /// Multiply two 64-bit polynomials in GF(2) and reduce mod `poly_full`.
 ///

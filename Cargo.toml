@@ -18,6 +18,7 @@ repository = "https://github.com/loadingalias/rscrypto"
 unsafe_code = "deny"
 dangling_pointers_from_locals = "deny"
 integer_to_ptr_transmutes = "deny"
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(miri)'] }
 
 [workspace.lints.clippy]
 correctness = { level = "deny", priority = -1 }

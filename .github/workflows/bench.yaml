@@ -52,7 +52,7 @@ env:
 
 # Lock down permissions to read-only by default
 permissions:
-  contents: read  # Required for actions/checkout
+  contents: read # Required for actions/checkout
 
 jobs:
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -154,9 +154,9 @@ jobs:
 
       - name: Checkout
         if: steps.should-run.outputs.enabled == 'true'
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
-          fetch-depth: 0  # Required for cargo rail affected (needs git history)
+          fetch-depth: 0 # Required for cargo rail affected (needs git history)
 
       # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
       # Setup: Rust toolchain, performance tools, and caching
@@ -166,7 +166,7 @@ jobs:
       # Update locations: rust-toolchain.toml, setup/*.yaml, bench.yaml
       - name: Install Rust Toolchain
         if: steps.should-run.outputs.enabled == 'true'
-        uses: dtolnay/rust-toolchain@0b1efabc08b657293548b77fb76cc02d26091c7e  # master
+        uses: dtolnay/rust-toolchain@0b1efabc08b657293548b77fb76cc02d26091c7e # master
         with:
           toolchain: nightly-2025-12-14
           components: clippy, rustfmt
@@ -179,7 +179,7 @@ jobs:
 
       - name: Setup Namespace Cache (Linux - instant NVMe cache)
         if: steps.should-run.outputs.enabled == 'true' && runner.os == 'Linux'
-        uses: namespacelabs/nscloud-cache-action@446d8f390563cd54ca27e8de5bdb816f63c0b706  # v1.2.21
+        uses: namespacelabs/nscloud-cache-action@446d8f390563cd54ca27e8de5bdb816f63c0b706 # v1.2.21
         with:
           cache: rust
 
@@ -195,7 +195,7 @@ jobs:
 
       - name: Setup Rust Cache (Windows)
         if: steps.should-run.outputs.enabled == 'true' && runner.os == 'Windows'
-        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1  # v2.8.1
+        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
         with:
           shared-key: "rscrypto-v1"
           key: ${{ steps.cache.outputs.key }}
@@ -421,7 +421,7 @@ jobs:
 
       - name: Upload Benchmark Results (Console Output)
         if: steps.should-run.outputs.enabled == 'true' && steps.scope.outputs.skip_bench != 'true' && always()
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5.0.0
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: benchmark-results-${{ matrix.target.platform-id }}
           path: benchmark-results/
@@ -431,7 +431,7 @@ jobs:
 
       - name: Upload Criterion HTML Report
         if: steps.should-run.outputs.enabled == 'true' && steps.scope.outputs.skip_bench != 'true' && always()
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5.0.0
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: criterion-html-${{ matrix.target.platform-id }}
           path: target/criterion/

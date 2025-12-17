@@ -194,9 +194,7 @@ pub(crate) fn compute_pclmul_crc32_runtime(crc: u32, data: &[u8]) -> u32 {
   unsafe { compute_pclmul_unchecked_impl::<Crc32Spec>(crc, data) }
 }
 
-// ============================================================================
 // CRC64 Support
-// ============================================================================
 
 /// Trait for CRC64 polynomial-specific folding constants.
 pub(crate) trait Crc64FoldSpec {
@@ -267,14 +265,14 @@ pub(crate) unsafe fn finalize_reduced_128_64<S: Crc64FoldSpec>(x: __m128i) -> u6
   let (_, key16) = S::FOLD_WIDTH;
   let (poly_simd, mu) = S::BARRETT;
 
-  // Step 1: Fold 128 bits to 64 bits
+  // Fold 128 bits to 64 bits
   // h = key16 × x.lo, then XOR with x >> 64
   let k_vec = _mm_set_epi64x(key16 as i64, 0);
   let h = _mm_clmulepi64_si128(k_vec, x, 0x01); // k_vec.hi × x.lo = key16 × x.lo
   let shifted = _mm_srli_si128(x, 8); // x >> 64
   let folded = _mm_xor_si128(h, shifted);
 
-  // Step 2: Barrett reduction (mu first, then poly - matching ARM implementation)
+  // Barrett reduction (mu first, then poly - matching ARM implementation)
   // mu_poly = [mu (lo), poly (hi)]
   let mu_poly = _mm_set_epi64x(poly_simd as i64, mu as i64);
 
