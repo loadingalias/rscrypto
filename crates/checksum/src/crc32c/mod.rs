@@ -290,7 +290,12 @@ pub fn selected_backend() -> &'static str {
 #[doc(hidden)]
 #[inline]
 #[must_use]
-#[cfg(all(target_arch = "x86_64", target_feature = "pclmulqdq", target_feature = "ssse3"))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "pclmulqdq",
+  target_feature = "ssse3",
+  not(target_feature = "vpclmulqdq")
+))]
 pub fn selected_backend() -> &'static str {
   "x86_64/pclmul (compile-time)"
 }
@@ -298,7 +303,7 @@ pub fn selected_backend() -> &'static str {
 #[doc(hidden)]
 #[inline]
 #[must_use]
-#[cfg(all(target_arch = "x86_64", target_feature = "sse4.2"))]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse4.2", not(target_feature = "pclmulqdq")))]
 pub fn selected_backend() -> &'static str {
   "x86_64/sse4.2 (compile-time)"
 }
@@ -340,8 +345,13 @@ pub fn selected_backend() -> &'static str {
     target_feature = "vpclmulqdq",
     target_feature = "pclmulqdq"
   ),
-  all(target_arch = "x86_64", target_feature = "pclmulqdq", target_feature = "ssse3"),
-  all(target_arch = "x86_64", target_feature = "sse4.2"),
+  all(
+    target_arch = "x86_64",
+    target_feature = "pclmulqdq",
+    target_feature = "ssse3",
+    not(target_feature = "vpclmulqdq")
+  ),
+  all(target_arch = "x86_64", target_feature = "sse4.2", not(target_feature = "pclmulqdq")),
   target_arch = "wasm32",
 )))]
 pub fn selected_backend() -> &'static str {
@@ -466,6 +476,7 @@ fn dispatch(crc: u32, data: &[u8]) -> u32 {
   #[cfg(not(all(target_arch = "aarch64", target_feature = "crc")))]
   {
     // Tier 1: compile-time x86_64 target features.
+    // Each tier MUST exclude higher tiers to ensure mutual exclusivity.
     #[cfg(all(
       target_arch = "x86_64",
       target_feature = "avx512f",
@@ -483,10 +494,15 @@ fn dispatch(crc: u32, data: &[u8]) -> u32 {
           return x86_64::compute_sse42_enabled(crc, data);
         }
       }
-      crate::simd::x86_64::vpclmul::compute_vpclmul_enabled(crc, data)
+      return crate::simd::x86_64::vpclmul::compute_vpclmul_enabled(crc, data);
     }
 
-    #[cfg(all(target_arch = "x86_64", target_feature = "pclmulqdq", target_feature = "ssse3"))]
+    #[cfg(all(
+      target_arch = "x86_64",
+      target_feature = "pclmulqdq",
+      target_feature = "ssse3",
+      not(target_feature = "vpclmulqdq")
+    ))]
     {
       #[cfg(target_feature = "sse4.2")]
       {
@@ -494,7 +510,13 @@ fn dispatch(crc: u32, data: &[u8]) -> u32 {
           return x86_64::compute_sse42_enabled(crc, data);
         }
       }
-      crate::simd::x86_64::pclmul::compute_pclmul_enabled(crc, data)
+      return crate::simd::x86_64::pclmul::compute_pclmul_enabled(crc, data);
+    }
+
+    // SSE4.2-only tier (CRC32C has dedicated instruction)
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse4.2", not(target_feature = "pclmulqdq")))]
+    {
+      return x86_64::compute_sse42_enabled(crc, data);
     }
 
     // Tier 2: Runtime detection (std only), cached with OnceLock.
@@ -512,19 +534,34 @@ fn dispatch(crc: u32, data: &[u8]) -> u32 {
     #[cfg(all(
       feature = "std",
       target_arch = "x86_64",
-      not(all(target_feature = "pclmulqdq", target_feature = "ssse3"))
+      not(any(
+        // Exclude all compile-time x86_64 tiers
+        all(
+          target_feature = "avx512f",
+          target_feature = "avx512vl",
+          target_feature = "avx512bw",
+          target_feature = "vpclmulqdq",
+          target_feature = "pclmulqdq"
+        ),
+        all(
+          target_feature = "pclmulqdq",
+          target_feature = "ssse3",
+          not(target_feature = "vpclmulqdq")
+        ),
+        all(target_feature = "sse4.2", not(target_feature = "pclmulqdq")),
+      ))
     ))]
     {
       use std::sync::OnceLock;
       static DISPATCH: OnceLock<fn(u32, &[u8]) -> u32> = OnceLock::new();
       let f = DISPATCH.get_or_init(crate::simd::x86_64::detect_crc32c_best);
-      f(crc, data)
+      return f(crc, data);
     }
 
     // Tier 3: wasm32 with parallel streams optimization.
     #[cfg(target_arch = "wasm32")]
     {
-      crate::simd::wasm32::compute_crc32c(crc, data)
+      return crate::simd::wasm32::compute_crc32c(crc, data);
     }
 
     // Tier 4: Portable fallback (no_std or unsupported platform).
@@ -533,7 +570,41 @@ fn dispatch(crc: u32, data: &[u8]) -> u32 {
       all(
         feature = "std",
         target_arch = "x86_64",
-        not(all(target_feature = "pclmulqdq", target_feature = "ssse3"))
+        not(any(
+          all(
+            target_feature = "avx512f",
+            target_feature = "avx512vl",
+            target_feature = "avx512bw",
+            target_feature = "vpclmulqdq",
+            target_feature = "pclmulqdq"
+          ),
+          all(
+            target_feature = "pclmulqdq",
+            target_feature = "ssse3",
+            not(target_feature = "vpclmulqdq")
+          ),
+          all(target_feature = "sse4.2", not(target_feature = "pclmulqdq")),
+        ))
+      ),
+      // Compile-time x86_64 tiers (also exclude from fallback)
+      all(
+        target_arch = "x86_64",
+        target_feature = "avx512f",
+        target_feature = "avx512vl",
+        target_feature = "avx512bw",
+        target_feature = "vpclmulqdq",
+        target_feature = "pclmulqdq"
+      ),
+      all(
+        target_arch = "x86_64",
+        target_feature = "pclmulqdq",
+        target_feature = "ssse3",
+        not(target_feature = "vpclmulqdq")
+      ),
+      all(
+        target_arch = "x86_64",
+        target_feature = "sse4.2",
+        not(target_feature = "pclmulqdq")
       ),
       target_arch = "wasm32",
     )))]

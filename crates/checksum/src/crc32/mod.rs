@@ -263,7 +263,12 @@ pub fn selected_backend() -> &'static str {
 #[doc(hidden)]
 #[inline]
 #[must_use]
-#[cfg(all(target_arch = "x86_64", target_feature = "pclmulqdq", target_feature = "ssse3"))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "pclmulqdq",
+  target_feature = "ssse3",
+  not(target_feature = "vpclmulqdq")
+))]
 pub fn selected_backend() -> &'static str {
   "x86_64/pclmul (compile-time)"
 }
@@ -305,7 +310,12 @@ pub fn selected_backend() -> &'static str {
     target_feature = "vpclmulqdq",
     target_feature = "pclmulqdq"
   ),
-  all(target_arch = "x86_64", target_feature = "pclmulqdq", target_feature = "ssse3"),
+  all(
+    target_arch = "x86_64",
+    target_feature = "pclmulqdq",
+    target_feature = "ssse3",
+    not(target_feature = "vpclmulqdq")
+  ),
   target_arch = "wasm32",
 )))]
 pub fn selected_backend() -> &'static str {
@@ -412,6 +422,7 @@ fn dispatch(crc: u32, data: &[u8]) -> u32 {
   #[cfg(not(all(target_arch = "aarch64", target_feature = "crc")))]
   {
     // Tier 1: Compile-time x86_64 target features.
+    // Each tier MUST exclude higher tiers to ensure mutual exclusivity.
     #[cfg(all(
       target_arch = "x86_64",
       target_feature = "avx512f",
@@ -421,12 +432,17 @@ fn dispatch(crc: u32, data: &[u8]) -> u32 {
       target_feature = "pclmulqdq"
     ))]
     {
-      crate::simd::x86_64::vpclmul::compute_vpclmul_crc32_enabled(crc, data)
+      return crate::simd::x86_64::vpclmul::compute_vpclmul_crc32_enabled(crc, data);
     }
 
-    #[cfg(all(target_arch = "x86_64", target_feature = "pclmulqdq", target_feature = "ssse3"))]
+    #[cfg(all(
+      target_arch = "x86_64",
+      target_feature = "pclmulqdq",
+      target_feature = "ssse3",
+      not(target_feature = "vpclmulqdq")
+    ))]
     {
-      crate::simd::x86_64::pclmul::compute_pclmul_crc32_enabled(crc, data)
+      return crate::simd::x86_64::pclmul::compute_pclmul_crc32_enabled(crc, data);
     }
 
     // Tier 2: Runtime detection (std only), cached with OnceLock.
@@ -449,14 +465,18 @@ fn dispatch(crc: u32, data: &[u8]) -> u32 {
           target_feature = "vpclmulqdq",
           target_feature = "pclmulqdq"
         ),
-        all(target_feature = "pclmulqdq", target_feature = "ssse3"),
+        all(
+          target_feature = "pclmulqdq",
+          target_feature = "ssse3",
+          not(target_feature = "vpclmulqdq")
+        ),
       ))
     ))]
     {
       use std::sync::OnceLock;
       static DISPATCH: OnceLock<fn(u32, &[u8]) -> u32> = OnceLock::new();
       let f = DISPATCH.get_or_init(crate::simd::x86_64::detect_crc32_best);
-      f(crc, data)
+      return f(crc, data);
     }
 
     // Tier 3: wasm32 with parallel streams optimization.
@@ -479,7 +499,11 @@ fn dispatch(crc: u32, data: &[u8]) -> u32 {
             target_feature = "vpclmulqdq",
             target_feature = "pclmulqdq"
           ),
-          all(target_feature = "pclmulqdq", target_feature = "ssse3"),
+          all(
+            target_feature = "pclmulqdq",
+            target_feature = "ssse3",
+            not(target_feature = "vpclmulqdq")
+          ),
         ))
       ),
       all(
@@ -490,7 +514,12 @@ fn dispatch(crc: u32, data: &[u8]) -> u32 {
         target_feature = "vpclmulqdq",
         target_feature = "pclmulqdq"
       ),
-      all(target_arch = "x86_64", target_feature = "pclmulqdq", target_feature = "ssse3"),
+      all(
+        target_arch = "x86_64",
+        target_feature = "pclmulqdq",
+        target_feature = "ssse3",
+        not(target_feature = "vpclmulqdq")
+      ),
       target_arch = "wasm32",
     )))]
     {

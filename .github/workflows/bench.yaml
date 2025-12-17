@@ -78,9 +78,9 @@ jobs:
             runner: namespace-profile-rscrypto-linux-arm64
             platform-id: linux-arm64
 
-          # Windows x86-64 (WarpBuild)
+          # Windows x86-64 (GitHub larger runner)
           - name: x86_64-pc-windows-msvc
-            runner: warp-windows-2025-x64-8x
+            runner: windows-latest-large
             platform-id: windows-x64
 
           # Windows ARM64 (Namespace)
@@ -174,7 +174,7 @@ jobs:
       # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
       # Caching Strategy:
       # - Linux (Namespace runners): Namespace NVMe cache
-      # - Windows (WarpBuild + Namespace): rust-cache with GitHub backend
+      # - Windows (GitHub larger + Namespace): rust-cache with GitHub backend
       # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
       - name: Setup Namespace Cache (Linux - instant NVMe cache)
