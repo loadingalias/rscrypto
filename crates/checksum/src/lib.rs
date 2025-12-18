@@ -120,7 +120,11 @@
 //! This crate is `no_std` compatible. Without `std`:
 //! - SIMD is only used if target features are enabled at compile time
 //! - Falls back to portable slicing-by-8 implementation
-
+//!
+//! // Fallibility discipline: deny unwrap/expect in production, allow in tests.
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
+#![cfg_attr(not(test), deny(clippy::expect_used))]
+#![cfg_attr(not(test), deny(clippy::indexing_slicing))]
 #![no_std]
 
 #[cfg(feature = "alloc")]

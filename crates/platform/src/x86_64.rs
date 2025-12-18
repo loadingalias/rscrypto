@@ -36,7 +36,7 @@ pub enum Vendor {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum MicroArch {
-  // === Intel (different VPCLMULQDQ throughput characteristics) ===
+  // === Intel Server (different VPCLMULQDQ throughput characteristics) ===
   /// Cascade Lake (Family 6, Model 85) - No VPCLMULQDQ
   CascadeLake,
 
@@ -49,14 +49,36 @@ pub enum MicroArch {
   /// Emerald Rapids (Family 6, Model 207) - Similar to Sapphire Rapids
   EmeraldRapids,
 
-  /// Granite Rapids (Family 6, Model 173) - Next-gen
+  /// Granite Rapids (Family 6, Model 173/174) - Next-gen server
   GraniteRapids,
 
+  /// Sierra Forest (Family 6, Model 175) - E-core only server
+  SierraForest,
+
+  // === Intel Client (hybrid P+E cores) ===
+  /// Alder Lake (Family 6, Model 151/154) - First hybrid, AVX-512 disabled
+  AlderLake,
+
+  /// Raptor Lake (Family 6, Model 183/186) - Refined hybrid
+  RaptorLake,
+
+  /// Meteor Lake (Family 6, Model 170/172) - Tile architecture
+  MeteorLake,
+
+  /// Arrow Lake (Family 6, Model 198/199) - Latest client
+  ArrowLake,
+
+  /// Lunar Lake (Family 6, Model 189) - 2024 mobile
+  LunarLake,
+
+  /// Panther Lake (Family 6, Model 204) - Late 2025
+  PantherLake,
+
   // === AMD (virtually zero ZMM warmup) ===
-  /// Zen 3 (Family 25, various models) - No AVX-512
+  /// Zen 3 (Family 25, Model 0-95) - No AVX-512
   Zen3,
 
-  /// Zen 4 (Family 25, Model 96-111) - AVX-512 + VPCLMULQDQ, ~60ns warmup
+  /// Zen 4 (Family 25, Model 96-127) - AVX-512 + VPCLMULQDQ, ~60ns warmup
   Zen4,
 
   /// Zen 5 (Family 26) - AVX-512 + 7-way crc32q parallelism
@@ -79,9 +101,18 @@ impl MicroArch {
   #[must_use]
   pub const fn vendor(self) -> Vendor {
     match self {
-      Self::CascadeLake | Self::IceLake | Self::SapphireRapids | Self::EmeraldRapids | Self::GraniteRapids => {
-        Vendor::Intel
-      }
+      Self::CascadeLake
+      | Self::IceLake
+      | Self::SapphireRapids
+      | Self::EmeraldRapids
+      | Self::GraniteRapids
+      | Self::SierraForest
+      | Self::AlderLake
+      | Self::RaptorLake
+      | Self::MeteorLake
+      | Self::ArrowLake
+      | Self::LunarLake
+      | Self::PantherLake => Vendor::Intel,
 
       Self::Zen3 | Self::Zen4 | Self::Zen5 => Vendor::Amd,
 
@@ -90,6 +121,9 @@ impl MicroArch {
   }
 
   /// Returns `true` if this microarch supports VPCLMULQDQ (AVX-512 carryless multiply).
+  ///
+  /// Note: Alder Lake and Raptor Lake have AVX-512 in the P-cores but it's disabled
+  /// by default on hybrid configurations. We treat them as not having VPCLMULQDQ.
   #[inline]
   #[must_use]
   pub const fn has_vpclmulqdq(self) -> bool {
@@ -99,6 +133,7 @@ impl MicroArch {
         | Self::SapphireRapids
         | Self::EmeraldRapids
         | Self::GraniteRapids
+        | Self::SierraForest
         | Self::Zen4
         | Self::Zen5
         | Self::GenericAvx512Vpclmul
@@ -124,6 +159,18 @@ impl MicroArch {
     matches!(self, Self::Zen4 | Self::Zen5)
   }
 
+  /// Returns `true` if this is a hybrid (P+E core) architecture.
+  ///
+  /// Hybrid architectures may have asymmetric SIMD support between core types.
+  #[inline]
+  #[must_use]
+  pub const fn is_hybrid(self) -> bool {
+    matches!(
+      self,
+      Self::AlderLake | Self::RaptorLake | Self::MeteorLake | Self::ArrowLake | Self::LunarLake | Self::PantherLake
+    )
+  }
+
   /// Returns the recommended small-buffer threshold for SIMD.
   ///
   /// Below this size, scalar/portable code may be faster due to SIMD setup overhead.
@@ -135,9 +182,14 @@ impl MicroArch {
       // AMD: low warmup, use SIMD aggressively
       Self::Zen4 | Self::Zen5 => 64,
 
-      // Intel with VPCLMULQDQ: higher warmup, need larger buffers
-      Self::SapphireRapids | Self::EmeraldRapids | Self::GraniteRapids => 256,
+      // Intel server with VPCLMULQDQ: higher warmup, need larger buffers
+      Self::SapphireRapids | Self::EmeraldRapids | Self::GraniteRapids | Self::SierraForest => 256,
       Self::IceLake => 256,
+
+      // Intel client hybrids: conservative due to E-core limitations
+      Self::AlderLake | Self::RaptorLake | Self::MeteorLake | Self::ArrowLake | Self::LunarLake | Self::PantherLake => {
+        256
+      }
 
       // No VPCLMULQDQ or unknown
       Self::CascadeLake | Self::Zen3 => 256,
@@ -156,8 +208,43 @@ impl MicroArch {
     match self {
       Self::Zen5 => 7,
       Self::Zen4 | Self::Zen3 => 3,
-      Self::SapphireRapids | Self::EmeraldRapids | Self::GraniteRapids | Self::IceLake | Self::CascadeLake => 3,
+      Self::SapphireRapids
+      | Self::EmeraldRapids
+      | Self::GraniteRapids
+      | Self::SierraForest
+      | Self::IceLake
+      | Self::CascadeLake => 3,
+      // Hybrid chips: conservative due to E-cores
+      Self::AlderLake | Self::RaptorLake | Self::MeteorLake | Self::ArrowLake | Self::LunarLake | Self::PantherLake => {
+        3
+      }
       Self::GenericAvx512Vpclmul | Self::GenericPclmul | Self::Generic => 3,
+    }
+  }
+
+  /// Returns a human-readable name for this microarchitecture.
+  #[inline]
+  #[must_use]
+  pub const fn name(self) -> &'static str {
+    match self {
+      Self::CascadeLake => "Cascade Lake",
+      Self::IceLake => "Ice Lake",
+      Self::SapphireRapids => "Sapphire Rapids",
+      Self::EmeraldRapids => "Emerald Rapids",
+      Self::GraniteRapids => "Granite Rapids",
+      Self::SierraForest => "Sierra Forest",
+      Self::AlderLake => "Alder Lake",
+      Self::RaptorLake => "Raptor Lake",
+      Self::MeteorLake => "Meteor Lake",
+      Self::ArrowLake => "Arrow Lake",
+      Self::LunarLake => "Lunar Lake",
+      Self::PantherLake => "Panther Lake",
+      Self::Zen3 => "Zen 3",
+      Self::Zen4 => "Zen 4",
+      Self::Zen5 => "Zen 5",
+      Self::GenericAvx512Vpclmul => "Generic AVX-512",
+      Self::GenericPclmul => "Generic PCLMUL",
+      Self::Generic => "Generic",
     }
   }
 }
@@ -290,20 +377,43 @@ fn detect_intel(family: u32, model: u32) -> MicroArch {
   }
 
   match model {
+    // === Server ===
     // Cascade Lake (no VPCLMULQDQ)
     85 => MicroArch::CascadeLake,
 
-    // Ice Lake Server
+    // Ice Lake Server (ICX)
     106 | 108 => MicroArch::IceLake,
 
-    // Sapphire Rapids
+    // Sapphire Rapids (SPR)
     143 => MicroArch::SapphireRapids,
 
-    // Emerald Rapids
+    // Emerald Rapids (EMR)
     207 => MicroArch::EmeraldRapids,
 
-    // Granite Rapids
-    173 => MicroArch::GraniteRapids,
+    // Granite Rapids (GNR)
+    173 | 174 => MicroArch::GraniteRapids,
+
+    // Sierra Forest (SRF) - E-core only server
+    175 => MicroArch::SierraForest,
+
+    // === Client (Hybrid P+E) ===
+    // Alder Lake (ADL)
+    151 | 154 => MicroArch::AlderLake,
+
+    // Raptor Lake (RPL)
+    183 | 186 => MicroArch::RaptorLake,
+
+    // Meteor Lake (MTL)
+    170 | 172 => MicroArch::MeteorLake,
+
+    // Arrow Lake (ARL)
+    198 | 199 => MicroArch::ArrowLake,
+
+    // Lunar Lake (LNL) - 2024 mobile
+    189 => MicroArch::LunarLake,
+
+    // Panther Lake (PTL) - Late 2025
+    204 => MicroArch::PantherLake,
 
     // Unknown Intel - fall back to feature detection
     _ => detect_by_features(),
@@ -368,6 +478,7 @@ mod tests {
     let _ = arch.vendor();
     let _ = arch.has_vpclmulqdq();
     let _ = arch.simd_threshold();
+    let _ = arch.name();
   }
 
   #[test]
@@ -378,7 +489,12 @@ mod tests {
       | MicroArch::IceLake
       | MicroArch::EmeraldRapids
       | MicroArch::GraniteRapids
-      | MicroArch::CascadeLake => {
+      | MicroArch::SierraForest
+      | MicroArch::CascadeLake
+      | MicroArch::AlderLake
+      | MicroArch::RaptorLake
+      | MicroArch::MeteorLake
+      | MicroArch::ArrowLake => {
         assert_eq!(arch.vendor(), Vendor::Intel);
       }
       MicroArch::Zen3 | MicroArch::Zen4 | MicroArch::Zen5 => {
@@ -389,16 +505,37 @@ mod tests {
   }
 
   #[test]
-  fn test_intel_model_detection() {
-    // Sapphire Rapids
-    assert_eq!(detect_intel(6, 143), MicroArch::SapphireRapids);
-    // Ice Lake
-    assert_eq!(detect_intel(6, 106), MicroArch::IceLake);
-    assert_eq!(detect_intel(6, 108), MicroArch::IceLake);
+  fn test_intel_server_detection() {
     // Cascade Lake
     assert_eq!(detect_intel(6, 85), MicroArch::CascadeLake);
+    // Ice Lake Server
+    assert_eq!(detect_intel(6, 106), MicroArch::IceLake);
+    assert_eq!(detect_intel(6, 108), MicroArch::IceLake);
+    // Sapphire Rapids
+    assert_eq!(detect_intel(6, 143), MicroArch::SapphireRapids);
     // Emerald Rapids
     assert_eq!(detect_intel(6, 207), MicroArch::EmeraldRapids);
+    // Granite Rapids
+    assert_eq!(detect_intel(6, 173), MicroArch::GraniteRapids);
+    assert_eq!(detect_intel(6, 174), MicroArch::GraniteRapids);
+    // Sierra Forest
+    assert_eq!(detect_intel(6, 175), MicroArch::SierraForest);
+  }
+
+  #[test]
+  fn test_intel_client_detection() {
+    // Alder Lake
+    assert_eq!(detect_intel(6, 151), MicroArch::AlderLake);
+    assert_eq!(detect_intel(6, 154), MicroArch::AlderLake);
+    // Raptor Lake
+    assert_eq!(detect_intel(6, 183), MicroArch::RaptorLake);
+    assert_eq!(detect_intel(6, 186), MicroArch::RaptorLake);
+    // Meteor Lake
+    assert_eq!(detect_intel(6, 170), MicroArch::MeteorLake);
+    assert_eq!(detect_intel(6, 172), MicroArch::MeteorLake);
+    // Arrow Lake
+    assert_eq!(detect_intel(6, 198), MicroArch::ArrowLake);
+    assert_eq!(detect_intel(6, 199), MicroArch::ArrowLake);
   }
 
   #[test]
@@ -427,7 +564,33 @@ mod tests {
     // VPCLMULQDQ support
     assert!(MicroArch::SapphireRapids.has_vpclmulqdq());
     assert!(MicroArch::Zen4.has_vpclmulqdq());
+    assert!(MicroArch::SierraForest.has_vpclmulqdq());
     assert!(!MicroArch::CascadeLake.has_vpclmulqdq());
     assert!(!MicroArch::Zen3.has_vpclmulqdq());
+    // Hybrid chips don't report VPCLMULQDQ (disabled by default)
+    assert!(!MicroArch::AlderLake.has_vpclmulqdq());
+    assert!(!MicroArch::RaptorLake.has_vpclmulqdq());
+  }
+
+  #[test]
+  fn test_hybrid_detection() {
+    // Hybrid architectures
+    assert!(MicroArch::AlderLake.is_hybrid());
+    assert!(MicroArch::RaptorLake.is_hybrid());
+    assert!(MicroArch::MeteorLake.is_hybrid());
+    assert!(MicroArch::ArrowLake.is_hybrid());
+
+    // Non-hybrid
+    assert!(!MicroArch::SapphireRapids.is_hybrid());
+    assert!(!MicroArch::Zen5.is_hybrid());
+    assert!(!MicroArch::SierraForest.is_hybrid());
+  }
+
+  #[test]
+  fn test_microarch_names() {
+    assert_eq!(MicroArch::SapphireRapids.name(), "Sapphire Rapids");
+    assert_eq!(MicroArch::Zen5.name(), "Zen 5");
+    assert_eq!(MicroArch::AlderLake.name(), "Alder Lake");
+    assert_eq!(MicroArch::Generic.name(), "Generic");
   }
 }

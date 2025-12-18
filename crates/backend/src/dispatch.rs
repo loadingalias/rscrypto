@@ -95,7 +95,14 @@ impl<F> Selected<F> {
 /// # Panics
 ///
 /// Panics if `candidates` is empty or no candidate matches.
-#[inline]
+///
+/// # Performance
+///
+/// This function is called once during dispatcher initialization, not on
+/// every kernel invocation. However, it's marked `#[inline(always)]` to
+/// enable the compiler to optimize away the loop when candidates are known
+/// at compile time.
+#[inline(always)]
 #[must_use]
 pub fn select<F: Copy>(caps: CpuCaps, candidates: &[Candidate<F>]) -> Selected<F> {
   for candidate in candidates {
@@ -405,8 +412,19 @@ unsafe impl<F: Copy + 'static> Sync for GenericDispatcher<F> {}
 unsafe impl<F: Copy + 'static> Send for GenericDispatcher<F> {}
 
 #[cfg(test)]
+#[allow(clippy::std_instead_of_alloc, clippy::std_instead_of_core)]
 mod tests {
   use super::*;
+
+  #[cfg(feature = "std")]
+  extern crate std;
+
+  #[cfg(feature = "std")]
+  use std::{format, vec, vec::Vec};
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Test Kernel Functions
+  // ─────────────────────────────────────────────────────────────────────────────
 
   fn portable_crc32(_crc: u32, _data: &[u8]) -> u32 {
     0xDEADBEEF
@@ -416,12 +434,62 @@ mod tests {
     0xCAFEBABE
   }
 
+  fn fastest_crc32(_crc: u32, _data: &[u8]) -> u32 {
+    0xFEEDFACE
+  }
+
+  fn portable_crc64(_crc: u64, _data: &[u8]) -> u64 {
+    0xDEAD_BEEF_CAFE_BABE
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Candidate Tests
+  // ─────────────────────────────────────────────────────────────────────────────
+
   #[test]
   fn test_candidate_creation() {
     let c: Candidate<Crc32Fn> = Candidate::new("test", Bits256::NONE, portable_crc32);
     assert_eq!(c.name, "test");
     assert_eq!(c.requires, Bits256::NONE);
   }
+
+  #[test]
+  fn test_candidate_copy() {
+    let c1: Candidate<Crc32Fn> = Candidate::new("test", Bits256::NONE, portable_crc32);
+    let c2 = c1;
+    assert_eq!(c1.name, c2.name);
+    assert_eq!(c1.requires, c2.requires);
+  }
+
+  #[cfg(feature = "std")]
+  #[test]
+  fn test_candidate_debug() {
+    let c: Candidate<Crc32Fn> = Candidate::new("test", Bits256::NONE, portable_crc32);
+    let s = format!("{c:?}");
+    assert!(s.contains("test"));
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Selected Tests
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  #[test]
+  fn test_selected_creation() {
+    let s: Selected<Crc32Fn> = Selected::new("test", portable_crc32);
+    assert_eq!(s.name, "test");
+    assert_eq!((s.func)(0, &[]), 0xDEADBEEF);
+  }
+
+  #[test]
+  fn test_selected_copy() {
+    let s1: Selected<Crc32Fn> = Selected::new("test", portable_crc32);
+    let s2 = s1;
+    assert_eq!(s1.name, s2.name);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Select Function Tests
+  // ─────────────────────────────────────────────────────────────────────────────
 
   #[test]
   fn test_select_portable_fallback() {
@@ -465,6 +533,72 @@ mod tests {
     assert_eq!(selected.name, "needs_bit0");
   }
 
+  #[test]
+  fn test_select_first_match_wins() {
+    // Both candidates match, first one should be selected
+    let caps = CpuCaps::new(Bits256::from_bit(0).union(Bits256::from_bit(1)));
+    let candidates: &[Candidate<Crc32Fn>] = &[
+      Candidate::new("first", Bits256::from_bit(0), fast_crc32),
+      Candidate::new("second", Bits256::from_bit(1), fastest_crc32),
+      Candidate::new("portable", Bits256::NONE, portable_crc32),
+    ];
+
+    let selected = select(caps, candidates);
+    assert_eq!(selected.name, "first");
+  }
+
+  #[test]
+  fn test_select_combined_requirements() {
+    // Candidate requires multiple bits
+    let caps = CpuCaps::new(Bits256::from_bit(0).union(Bits256::from_bit(1)));
+    let combined = Bits256::from_bit(0).union(Bits256::from_bit(1));
+    let candidates: &[Candidate<Crc32Fn>] = &[
+      Candidate::new("needs_both", combined, fastest_crc32),
+      Candidate::new("portable", Bits256::NONE, portable_crc32),
+    ];
+
+    let selected = select(caps, candidates);
+    assert_eq!(selected.name, "needs_both");
+  }
+
+  #[test]
+  fn test_select_combined_requirements_partial() {
+    // Caps have only one of the required bits
+    let caps = CpuCaps::new(Bits256::from_bit(0));
+    let combined = Bits256::from_bit(0).union(Bits256::from_bit(1));
+    let candidates: &[Candidate<Crc32Fn>] = &[
+      Candidate::new("needs_both", combined, fastest_crc32),
+      Candidate::new("portable", Bits256::NONE, portable_crc32),
+    ];
+
+    let selected = select(caps, candidates);
+    assert_eq!(selected.name, "portable"); // Falls back because we're missing bit 1
+  }
+
+  #[test]
+  #[should_panic(expected = "No matching kernel found")]
+  fn test_select_no_fallback_panics() {
+    let caps = CpuCaps::NONE;
+    let candidates: &[Candidate<Crc32Fn>] = &[
+      // No portable fallback!
+      Candidate::new("needs_bit0", Bits256::from_bit(0), fast_crc32),
+    ];
+
+    let _ = select(caps, candidates);
+  }
+
+  #[test]
+  #[should_panic(expected = "No matching kernel found")]
+  fn test_select_empty_candidates_panics() {
+    let caps = CpuCaps::NONE;
+    let candidates: &[Candidate<Crc32Fn>] = &[];
+    let _ = select(caps, candidates);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Crc32Dispatcher Tests
+  // ─────────────────────────────────────────────────────────────────────────────
+
   fn test_selector() -> Selected<Crc32Fn> {
     Selected::new("test", portable_crc32)
   }
@@ -489,5 +623,225 @@ mod tests {
   fn test_dispatcher_backend_name() {
     static DISPATCH: Crc32Dispatcher = Crc32Dispatcher::new(test_selector);
     assert_eq!(DISPATCH.backend_name(), "test");
+  }
+
+  #[test]
+  fn test_crc32_dispatcher_with_data() {
+    fn echo_crc(crc: u32, data: &[u8]) -> u32 {
+      crc.wrapping_add(data.len() as u32)
+    }
+
+    fn echo_selector() -> Selected<Crc32Fn> {
+      Selected::new("echo", echo_crc)
+    }
+
+    static DISPATCH: Crc32Dispatcher = Crc32Dispatcher::new(echo_selector);
+
+    assert_eq!(DISPATCH.call(100, &[1, 2, 3, 4, 5]), 105);
+    assert_eq!(DISPATCH.call(0, &[]), 0);
+    assert_eq!(DISPATCH.call(u32::MAX, &[1]), 0); // Wrapping
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Crc64Dispatcher Tests
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  fn test_selector_64() -> Selected<Crc64Fn> {
+    Selected::new("test64", portable_crc64)
+  }
+
+  #[test]
+  fn test_crc64_dispatcher() {
+    static DISPATCH: Crc64Dispatcher = Crc64Dispatcher::new(test_selector_64);
+
+    let selected = DISPATCH.get();
+    assert_eq!(selected.name, "test64");
+
+    // Test call
+    let result = DISPATCH.call(0, &[]);
+    assert_eq!(result, 0xDEAD_BEEF_CAFE_BABE);
+  }
+
+  #[test]
+  fn test_crc64_dispatcher_backend_name() {
+    static DISPATCH: Crc64Dispatcher = Crc64Dispatcher::new(test_selector_64);
+    assert_eq!(DISPATCH.backend_name(), "test64");
+  }
+
+  #[test]
+  fn test_crc64_dispatcher_caching() {
+    static DISPATCH: Crc64Dispatcher = Crc64Dispatcher::new(test_selector_64);
+
+    // Multiple calls should return the same result (caching)
+    let r1 = DISPATCH.get();
+    let r2 = DISPATCH.get();
+    let r3 = DISPATCH.get();
+
+    assert_eq!(r1.name, r2.name);
+    assert_eq!(r2.name, r3.name);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Multi-threaded Dispatcher Tests (std only)
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  #[cfg(feature = "std")]
+  mod threading_tests {
+    use std::{
+      sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+      },
+      thread,
+    };
+
+    use super::*;
+
+    #[test]
+    fn test_crc32_dispatcher_concurrent_access() {
+      static CALL_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+      fn counting_selector() -> Selected<Crc32Fn> {
+        CALL_COUNT.fetch_add(1, Ordering::SeqCst);
+        Selected::new("counted", portable_crc32)
+      }
+
+      static DISPATCH: Crc32Dispatcher = Crc32Dispatcher::new(counting_selector);
+
+      // Reset counter
+      CALL_COUNT.store(0, Ordering::SeqCst);
+
+      // Spawn multiple threads that all call get()
+      let handles: Vec<_> = (0..10)
+        .map(|_| {
+          thread::spawn(|| {
+            for _ in 0..100 {
+              let selected = DISPATCH.get();
+              assert_eq!(selected.name, "counted");
+            }
+          })
+        })
+        .collect();
+
+      for handle in handles {
+        handle.join().unwrap();
+      }
+
+      // Selector should have been called exactly once (OnceLock guarantees this)
+      assert_eq!(CALL_COUNT.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn test_crc64_dispatcher_concurrent_access() {
+      static CALL_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+      fn counting_selector_64() -> Selected<Crc64Fn> {
+        CALL_COUNT.fetch_add(1, Ordering::SeqCst);
+        Selected::new("counted64", portable_crc64)
+      }
+
+      static DISPATCH: Crc64Dispatcher = Crc64Dispatcher::new(counting_selector_64);
+
+      CALL_COUNT.store(0, Ordering::SeqCst);
+
+      let handles: Vec<_> = (0..10)
+        .map(|_| {
+          thread::spawn(|| {
+            for _ in 0..100 {
+              let selected = DISPATCH.get();
+              assert_eq!(selected.name, "counted64");
+            }
+          })
+        })
+        .collect();
+
+      for handle in handles {
+        handle.join().unwrap();
+      }
+
+      assert_eq!(CALL_COUNT.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn test_dispatcher_call_concurrent() {
+      fn accumulate(crc: u32, data: &[u8]) -> u32 {
+        data.iter().fold(crc, |acc, &b| acc.wrapping_add(b as u32))
+      }
+
+      fn accum_selector() -> Selected<Crc32Fn> {
+        Selected::new("accum", accumulate)
+      }
+
+      static DISPATCH: Crc32Dispatcher = Crc32Dispatcher::new(accum_selector);
+
+      let results = Arc::new(std::sync::Mutex::new(Vec::new()));
+
+      let handles: Vec<_> = (0..4)
+        .map(|i| {
+          let results = Arc::clone(&results);
+          thread::spawn(move || {
+            let data = vec![i as u8; 10];
+            let result = DISPATCH.call(0, &data);
+            results.lock().unwrap().push(result);
+          })
+        })
+        .collect();
+
+      for handle in handles {
+        handle.join().unwrap();
+      }
+
+      let results = results.lock().unwrap();
+      assert_eq!(results.len(), 4);
+      // Each thread computes: 10 * thread_id
+      for &result in results.iter() {
+        assert!(result <= 30); // Max is 10 * 3 = 30
+      }
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // GenericDispatcher Tests (std only)
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  #[cfg(feature = "std")]
+  mod generic_dispatcher_tests {
+    use super::*;
+
+    type HashFn = fn(&mut [u8; 32], &[u8]);
+
+    fn test_hash(state: &mut [u8; 32], data: &[u8]) {
+      // Simple mock hash: XOR first byte of data into state
+      if !data.is_empty() {
+        state[0] ^= data[0];
+      }
+    }
+
+    fn hash_selector() -> Selected<HashFn> {
+      Selected::new("test_hash", test_hash)
+    }
+
+    #[test]
+    fn test_generic_dispatcher() {
+      static DISPATCH: GenericDispatcher<HashFn> = GenericDispatcher::new(hash_selector);
+
+      let selected = DISPATCH.get();
+      assert_eq!(selected.name, "test_hash");
+    }
+
+    #[test]
+    fn test_generic_dispatcher_backend_name() {
+      static DISPATCH: GenericDispatcher<HashFn> = GenericDispatcher::new(hash_selector);
+      assert_eq!(DISPATCH.backend_name(), "test_hash");
+    }
+
+    #[test]
+    fn test_generic_dispatcher_caching() {
+      static DISPATCH: GenericDispatcher<HashFn> = GenericDispatcher::new(hash_selector);
+
+      let r1 = DISPATCH.get();
+      let r2 = DISPATCH.get();
+      assert_eq!(r1.name, r2.name);
+    }
   }
 }

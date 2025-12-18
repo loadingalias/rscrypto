@@ -22,6 +22,8 @@
 //! }
 //! ```
 
+extern crate alloc;
+
 /// 256-bit feature bitset.
 ///
 /// This provides enough room for all ISA features we care about across all
@@ -35,7 +37,10 @@ impl Bits256 {
   pub const NONE: Self = Self([0; 4]);
 
   /// Check if all bits in `other` are set in `self`.
-  #[inline]
+  ///
+  /// This is the core check used by dispatch selection, so it's marked
+  /// `#[inline(always)]` to ensure zero overhead.
+  #[inline(always)]
   #[must_use]
   pub const fn contains(self, other: Self) -> bool {
     (self.0[0] & other.0[0]) == other.0[0]
@@ -69,9 +74,15 @@ impl Bits256 {
   }
 
   /// Create a bitset with a single bit set.
+  ///
+  /// # Panics
+  ///
+  /// Panics if `bit >= 256`.
   #[inline]
   #[must_use]
+  #[allow(clippy::indexing_slicing)] // bounds enforced by assert above
   pub const fn from_bit(bit: u16) -> Self {
+    assert!(bit < 256, "bit index must be < 256");
     let word = (bit / 64) as usize;
     let bit_in_word = bit % 64;
     let mut bits = [0u64; 4];
@@ -80,9 +91,15 @@ impl Bits256 {
   }
 
   /// Check if a specific bit is set.
+  ///
+  /// # Panics
+  ///
+  /// Panics if `bit >= 256`.
   #[inline]
   #[must_use]
+  #[allow(clippy::indexing_slicing)] // bounds enforced by assert above
   pub const fn has_bit(self, bit: u16) -> bool {
+    assert!(bit < 256, "bit index must be < 256");
     let word = (bit / 64) as usize;
     let bit_in_word = bit % 64;
     (self.0[word] & (1u64 << bit_in_word)) != 0
@@ -245,7 +262,9 @@ impl CpuCaps {
   }
 
   /// Check if `self` has all the capabilities required by `required`.
-  #[inline]
+  ///
+  /// This is the core check used by dispatch selection.
+  #[inline(always)]
   #[must_use]
   pub const fn has(self, required: Bits256) -> bool {
     self.bits.contains(required)
@@ -339,6 +358,22 @@ pub mod x86 {
   pub const AVX512FP16: Bits256 = Bits256::from_bit(34);
   pub const AVX512BF16: Bits256 = Bits256::from_bit(35);
 
+  // AVX10 (unified AVX-512 replacement)
+  pub const AVX10_1: Bits256 = Bits256::from_bit(36);
+  pub const AVX10_2: Bits256 = Bits256::from_bit(37);
+
+  // AMX (Advanced Matrix Extensions)
+  pub const AMX_TILE: Bits256 = Bits256::from_bit(38);
+  pub const AMX_BF16: Bits256 = Bits256::from_bit(39);
+  pub const AMX_INT8: Bits256 = Bits256::from_bit(40);
+
+  // Direct store instructions
+  pub const MOVDIRI: Bits256 = Bits256::from_bit(41);
+  pub const MOVDIR64B: Bits256 = Bits256::from_bit(42);
+
+  // Instruction serialization
+  pub const SERIALIZE: Bits256 = Bits256::from_bit(43);
+
   // Combined capability masks for common feature sets
   /// PCLMULQDQ-ready: PCLMULQDQ + SSSE3
   pub const PCLMUL_READY: Bits256 = Bits256([PCLMULQDQ.0[0] | SSSE3.0[0], 0, 0, 0]);
@@ -383,6 +418,22 @@ pub mod aarch64 {
   pub const SVE2_SHA3: Bits256 = Bits256::from_bit(79);
   pub const SVE2_SM4: Bits256 = Bits256::from_bit(80);
   pub const SVE2_BITPERM: Bits256 = Bits256::from_bit(81);
+
+  // Extended crypto and hash
+  pub const SHA512: Bits256 = Bits256::from_bit(82);
+  pub const RNG: Bits256 = Bits256::from_bit(83); // Hardware RNG (RNDR/RNDRRS)
+  pub const SVE2_SHA512: Bits256 = Bits256::from_bit(84);
+
+  // Atomics (ARMv8.1+)
+  pub const LSE: Bits256 = Bits256::from_bit(85); // Large System Extensions (atomics)
+  pub const LSE2: Bits256 = Bits256::from_bit(86); // ARMv8.4 atomics
+
+  // Memory operations
+  pub const MOPS: Bits256 = Bits256::from_bit(87); // FEAT_MOPS memcpy acceleration
+
+  // Scalable Matrix Extension
+  pub const SME: Bits256 = Bits256::from_bit(88);
+  pub const SME2: Bits256 = Bits256::from_bit(89);
 
   // Combined capability masks
   /// PMULL-ready: AES (includes PMULL on most implementations)
@@ -438,9 +489,208 @@ pub mod wasm {
   pub const RELAXED_SIMD: Bits256 = Bits256::from_bit(193);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Feature Name Lookup
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Feature name entry: (bit_index, name).
+pub type FeatureEntry = (u16, &'static str);
+
+/// x86/x86_64 feature names (bits 0-63).
+pub const X86_FEATURES: &[FeatureEntry] = &[
+  (0, "sse2"),
+  (1, "sse3"),
+  (2, "ssse3"),
+  (3, "sse4.1"),
+  (4, "sse4.2"),
+  (5, "avx"),
+  (6, "avx2"),
+  (7, "fma"),
+  (8, "aes"),
+  (9, "pclmulqdq"),
+  (10, "sha"),
+  (11, "avx512f"),
+  (12, "avx512vl"),
+  (13, "avx512bw"),
+  (14, "avx512dq"),
+  (15, "avx512cd"),
+  (16, "vpclmulqdq"),
+  (17, "vaes"),
+  (18, "gfni"),
+  (19, "avx512ifma"),
+  (20, "avx512vbmi"),
+  (21, "avx512vbmi2"),
+  (22, "avx512vnni"),
+  (23, "avx512bitalg"),
+  (24, "avx512vpopcntdq"),
+  (25, "bmi1"),
+  (26, "bmi2"),
+  (27, "popcnt"),
+  (28, "lzcnt"),
+  (29, "adx"),
+  (30, "sha512"),
+  (31, "sse4a"),
+  (32, "f16c"),
+  (33, "avx512vp2intersect"),
+  (34, "avx512fp16"),
+  (35, "avx512bf16"),
+  (36, "avx10.1"),
+  (37, "avx10.2"),
+  (38, "amx-tile"),
+  (39, "amx-bf16"),
+  (40, "amx-int8"),
+  (41, "movdiri"),
+  (42, "movdir64b"),
+  (43, "serialize"),
+];
+
+/// aarch64 feature names (bits 64-127).
+pub const AARCH64_FEATURES: &[FeatureEntry] = &[
+  (64, "neon"),
+  (65, "aes"),
+  (66, "pmull"),
+  (67, "sha2"),
+  (68, "sha3"),
+  (69, "sm3"),
+  (70, "sm4"),
+  (71, "crc"),
+  (72, "dotprod"),
+  (73, "i8mm"),
+  (74, "bf16"),
+  (75, "fp16"),
+  (76, "sve"),
+  (77, "sve2"),
+  (78, "sve2-aes"),
+  (79, "sve2-sha3"),
+  (80, "sve2-sm4"),
+  (81, "sve2-bitperm"),
+  (82, "sha512"),
+  (83, "rng"),
+  (84, "sve2-sha512"),
+  (85, "lse"),
+  (86, "lse2"),
+  (87, "mops"),
+  (88, "sme"),
+  (89, "sme2"),
+];
+
+/// RISC-V feature names (bits 128-191).
+pub const RISCV_FEATURES: &[FeatureEntry] = &[
+  (128, "v"),
+  (129, "zbb"),
+  (130, "zbs"),
+  (131, "zba"),
+  (132, "zbc"),
+  (133, "zbkb"),
+  (134, "zbkc"),
+  (135, "zbkx"),
+  (136, "zknd"),
+  (137, "zkne"),
+  (138, "zknh"),
+  (139, "zksed"),
+  (140, "zksh"),
+  (141, "zvbb"),
+  (142, "zvbc"),
+  (143, "zvkb"),
+  (144, "zvkg"),
+  (145, "zvkned"),
+  (146, "zvknha"),
+  (147, "zvknhb"),
+  (148, "zvksed"),
+  (149, "zvksh"),
+];
+
+/// WebAssembly feature names (bits 192-255).
+pub const WASM_FEATURES: &[FeatureEntry] = &[(192, "simd128"), (193, "relaxed-simd")];
+
+impl Bits256 {
+  /// Returns an iterator over the names of all set feature bits.
+  ///
+  /// The returned names match the Rust target feature strings where applicable.
+  ///
+  /// # Example
+  ///
+  /// ```ignore
+  /// let bits = x86::SSE42.union(x86::PCLMULQDQ);
+  /// let names: Vec<_> = bits.feature_names().collect();
+  /// assert!(names.contains(&"sse4.2"));
+  /// assert!(names.contains(&"pclmulqdq"));
+  /// ```
+  pub fn feature_names(self) -> impl Iterator<Item = &'static str> {
+    // Chain all feature tables and filter by set bits
+    X86_FEATURES
+      .iter()
+      .chain(AARCH64_FEATURES.iter())
+      .chain(RISCV_FEATURES.iter())
+      .chain(WASM_FEATURES.iter())
+      .filter_map(move |(bit, name)| if self.has_bit(*bit) { Some(*name) } else { None })
+  }
+
+  /// Returns the number of feature bits set.
+  #[inline]
+  #[must_use]
+  pub const fn count_ones(self) -> u32 {
+    self.0[0].count_ones() + self.0[1].count_ones() + self.0[2].count_ones() + self.0[3].count_ones()
+  }
+}
+
+impl Arch {
+  /// Returns the human-readable name for this architecture.
+  #[inline]
+  #[must_use]
+  pub const fn name(self) -> &'static str {
+    match self {
+      Self::X86_64 => "x86_64",
+      Self::X86 => "x86",
+      Self::Aarch64 => "aarch64",
+      Self::Arm => "arm",
+      Self::Riscv64 => "riscv64",
+      Self::Riscv32 => "riscv32",
+      Self::Powerpc64 => "powerpc64",
+      Self::LoongArch64 => "loongarch64",
+      Self::Wasm32 => "wasm32",
+      Self::Wasm64 => "wasm64",
+      Self::Other => "other",
+    }
+  }
+}
+
+impl core::fmt::Display for Arch {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.write_str(self.name())
+  }
+}
+
+// Custom Debug for CpuCaps that shows feature names
+impl core::fmt::Display for CpuCaps {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    write!(f, "CpuCaps({}", self.arch)?;
+
+    let names: alloc::vec::Vec<_> = self.bits.feature_names().collect();
+    if names.is_empty() {
+      write!(f, ", no features")?;
+    } else {
+      write!(f, ", [")?;
+      for (i, name) in names.iter().enumerate() {
+        if i > 0 {
+          write!(f, ", ")?;
+        }
+        write!(f, "{name}")?;
+      }
+      write!(f, "]")?;
+    }
+
+    write!(f, ")")
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Bits256 Basic Operations
+  // ─────────────────────────────────────────────────────────────────────────────
 
   #[test]
   fn test_bits256_basic() {
@@ -472,6 +722,195 @@ mod tests {
     assert!(!a.contains(ab));
   }
 
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Bits256 Algebraic Properties
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  #[test]
+  fn test_bits256_union_commutativity() {
+    let a = Bits256::from_bit(5);
+    let b = Bits256::from_bit(10);
+    assert_eq!(a.union(b), b.union(a));
+  }
+
+  #[test]
+  fn test_bits256_union_associativity() {
+    let a = Bits256::from_bit(0);
+    let b = Bits256::from_bit(64);
+    let c = Bits256::from_bit(128);
+    assert_eq!(a.union(b).union(c), a.union(b.union(c)));
+  }
+
+  #[test]
+  fn test_bits256_union_idempotence() {
+    let a = Bits256::from_bit(42);
+    assert_eq!(a.union(a), a);
+  }
+
+  #[test]
+  fn test_bits256_union_identity() {
+    let a = Bits256::from_bit(100);
+    assert_eq!(a.union(Bits256::NONE), a);
+    assert_eq!(Bits256::NONE.union(a), a);
+  }
+
+  #[test]
+  fn test_bits256_intersection_commutativity() {
+    let a = x86::SSE42.union(x86::AVX);
+    let b = x86::AVX.union(x86::AVX2);
+    assert_eq!(a.intersection(b), b.intersection(a));
+  }
+
+  #[test]
+  fn test_bits256_intersection_associativity() {
+    let a = x86::SSE42.union(x86::AVX).union(x86::AVX2);
+    let b = x86::AVX.union(x86::AVX2).union(x86::FMA);
+    let c = x86::AVX2.union(x86::FMA).union(x86::AVX512F);
+    assert_eq!(a.intersection(b).intersection(c), a.intersection(b.intersection(c)));
+  }
+
+  #[test]
+  fn test_bits256_intersection_idempotence() {
+    let a = x86::VPCLMUL_READY;
+    assert_eq!(a.intersection(a), a);
+  }
+
+  #[test]
+  fn test_bits256_contains_reflexive() {
+    let a = x86::VPCLMUL_READY;
+    assert!(a.contains(a));
+  }
+
+  #[test]
+  fn test_bits256_contains_transitive() {
+    let a = x86::SSE2;
+    let b = x86::SSE2.union(x86::SSE3);
+    let c = x86::SSE2.union(x86::SSE3).union(x86::SSSE3);
+    // If c contains b and b contains a, then c contains a
+    assert!(c.contains(b));
+    assert!(b.contains(a));
+    assert!(c.contains(a));
+  }
+
+  #[test]
+  fn test_bits256_none_contains_only_none() {
+    assert!(Bits256::NONE.contains(Bits256::NONE));
+    assert!(!Bits256::NONE.contains(Bits256::from_bit(0)));
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Bits256 All Words Coverage
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  #[test]
+  fn test_bits256_all_words() {
+    // Test bits in each of the 4 words
+    let word0 = Bits256::from_bit(0); // First word (x86)
+    let word1 = Bits256::from_bit(64); // Second word (aarch64)
+    let word2 = Bits256::from_bit(128); // Third word (riscv)
+    let word3 = Bits256::from_bit(192); // Fourth word (wasm/other)
+
+    assert_eq!(word0.0[0], 1);
+    assert_eq!(word0.0[1], 0);
+    assert_eq!(word0.0[2], 0);
+    assert_eq!(word0.0[3], 0);
+
+    assert_eq!(word1.0[0], 0);
+    assert_eq!(word1.0[1], 1);
+    assert_eq!(word1.0[2], 0);
+    assert_eq!(word1.0[3], 0);
+
+    assert_eq!(word2.0[0], 0);
+    assert_eq!(word2.0[1], 0);
+    assert_eq!(word2.0[2], 1);
+    assert_eq!(word2.0[3], 0);
+
+    assert_eq!(word3.0[0], 0);
+    assert_eq!(word3.0[1], 0);
+    assert_eq!(word3.0[2], 0);
+    assert_eq!(word3.0[3], 1);
+
+    // Union across all words
+    let all = word0.union(word1).union(word2).union(word3);
+    assert!(all.has_bit(0));
+    assert!(all.has_bit(64));
+    assert!(all.has_bit(128));
+    assert!(all.has_bit(192));
+
+    // Contains checks across words
+    assert!(all.contains(word0));
+    assert!(all.contains(word1));
+    assert!(all.contains(word2));
+    assert!(all.contains(word3));
+  }
+
+  #[test]
+  fn test_bits256_boundary_bits() {
+    // Test bits at word boundaries
+    for bit in [0, 63, 64, 127, 128, 191, 192, 255] {
+      let b = Bits256::from_bit(bit);
+      assert!(b.has_bit(bit), "bit {bit} should be set");
+      assert!(
+        !b.has_bit(if bit > 0 { bit - 1 } else { 1 }),
+        "adjacent bit should not be set"
+      );
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Bits256 count_ones
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  #[test]
+  fn test_bits256_count_ones() {
+    assert_eq!(Bits256::NONE.count_ones(), 0);
+    assert_eq!(Bits256::from_bit(0).count_ones(), 1);
+    assert_eq!(Bits256::from_bit(0).union(Bits256::from_bit(1)).count_ones(), 2);
+    assert_eq!(x86::VPCLMUL_READY.count_ones(), 5); // VPCLMULQDQ + AVX512F + AVX512VL + AVX512BW + PCLMULQDQ
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Feature Name Lookup
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  #[test]
+  fn test_feature_names_x86() {
+    let bits = x86::SSE42.union(x86::PCLMULQDQ);
+    let names: alloc::vec::Vec<_> = bits.feature_names().collect();
+    assert!(names.contains(&"sse4.2"));
+    assert!(names.contains(&"pclmulqdq"));
+    assert!(!names.contains(&"avx512f"));
+  }
+
+  #[test]
+  fn test_feature_names_aarch64() {
+    let bits = aarch64::NEON.union(aarch64::AES).union(aarch64::SHA3);
+    let names: alloc::vec::Vec<_> = bits.feature_names().collect();
+    assert!(names.contains(&"neon"));
+    assert!(names.contains(&"aes"));
+    assert!(names.contains(&"sha3"));
+  }
+
+  #[test]
+  fn test_feature_names_empty() {
+    let names: alloc::vec::Vec<_> = Bits256::NONE.feature_names().collect();
+    assert!(names.is_empty());
+  }
+
+  #[test]
+  fn test_feature_names_cross_arch() {
+    // Features from different architectures (unusual but valid)
+    let bits = x86::AVX2.union(aarch64::NEON).union(wasm::SIMD128);
+    let names: alloc::vec::Vec<_> = bits.feature_names().collect();
+    assert!(names.contains(&"avx2"));
+    assert!(names.contains(&"neon"));
+    assert!(names.contains(&"simd128"));
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // CpuCaps
+  // ─────────────────────────────────────────────────────────────────────────────
+
   #[test]
   fn test_cpu_caps_has() {
     let caps = CpuCaps::new(x86::SSE42.union(x86::PCLMULQDQ));
@@ -486,6 +925,69 @@ mod tests {
   }
 
   #[test]
+  fn test_cpu_caps_has_feature() {
+    let caps = CpuCaps::new(x86::SSE42.union(x86::AVX));
+    assert!(caps.has_feature(4)); // SSE42 is bit 4
+    assert!(caps.has_feature(5)); // AVX is bit 5
+    assert!(!caps.has_feature(6)); // AVX2 is bit 6 (not set)
+  }
+
+  #[test]
+  fn test_cpu_caps_union() {
+    let caps1 = CpuCaps::new(x86::SSE42);
+    let caps2 = CpuCaps::new(x86::AVX);
+    let combined = caps1.union(caps2);
+    assert!(combined.has(x86::SSE42));
+    assert!(combined.has(x86::AVX));
+  }
+
+  #[test]
+  fn test_cpu_caps_none() {
+    let caps = CpuCaps::NONE;
+    assert!(caps.bits.is_empty());
+    assert_eq!(caps.arch, Arch::Other);
+    assert!(!caps.has(x86::SSE2));
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Display Formatting
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  #[test]
+  fn test_cpu_caps_display() {
+    let caps = CpuCaps::new(x86::SSE42.union(x86::PCLMULQDQ));
+    let s = alloc::format!("{caps}");
+    assert!(s.contains("sse4.2"));
+    assert!(s.contains("pclmulqdq"));
+  }
+
+  #[test]
+  fn test_cpu_caps_display_no_features() {
+    let caps = CpuCaps::NONE;
+    let s = alloc::format!("{caps}");
+    assert!(s.contains("no features"));
+  }
+
+  #[test]
+  fn test_arch_display() {
+    assert_eq!(alloc::format!("{}", Arch::X86_64), "x86_64");
+    assert_eq!(alloc::format!("{}", Arch::Aarch64), "aarch64");
+    assert_eq!(alloc::format!("{}", Arch::Other), "other");
+  }
+
+  #[test]
+  fn test_arch_name() {
+    assert_eq!(Arch::X86_64.name(), "x86_64");
+    assert_eq!(Arch::Aarch64.name(), "aarch64");
+    assert_eq!(Arch::Riscv64.name(), "riscv64");
+    assert_eq!(Arch::Wasm32.name(), "wasm32");
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Arch
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  #[test]
   fn test_arch_current() {
     let arch = Arch::current();
     #[cfg(target_arch = "x86_64")]
@@ -493,6 +995,10 @@ mod tests {
     #[cfg(target_arch = "aarch64")]
     assert_eq!(arch, Arch::Aarch64);
   }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Feature Bit Definitions
+  // ─────────────────────────────────────────────────────────────────────────────
 
   #[test]
   fn test_x86_feature_bits() {
@@ -519,5 +1025,53 @@ mod tests {
     let pmull_eor3 = aarch64::PMULL_EOR3_READY;
     assert!(pmull_eor3.contains(aarch64::AES));
     assert!(pmull_eor3.contains(aarch64::SHA3));
+  }
+
+  #[test]
+  fn test_riscv_feature_bits() {
+    // Verify riscv bits are in the third word (bits 128-191)
+    assert!(riscv::V.0[2] != 0);
+    assert!(riscv::V.0[0] == 0);
+    assert!(riscv::V.0[1] == 0);
+  }
+
+  #[test]
+  fn test_wasm_feature_bits() {
+    // Verify wasm bits are in the fourth word (bits 192-255)
+    assert!(wasm::SIMD128.0[3] != 0);
+    assert!(wasm::SIMD128.0[0] == 0);
+    assert!(wasm::SIMD128.0[1] == 0);
+    assert!(wasm::SIMD128.0[2] == 0);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Operator Overloads
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  #[test]
+  fn test_bits256_bitor_operator() {
+    let a = Bits256::from_bit(0);
+    let b = Bits256::from_bit(1);
+    let ab = a | b;
+    assert_eq!(ab, a.union(b));
+  }
+
+  #[test]
+  fn test_bits256_bitand_operator() {
+    let a = x86::SSE42.union(x86::AVX);
+    let b = x86::AVX.union(x86::AVX2);
+    let intersection = a & b;
+    assert_eq!(intersection, a.intersection(b));
+    assert!(intersection.contains(x86::AVX));
+    assert!(!intersection.contains(x86::SSE42));
+    assert!(!intersection.contains(x86::AVX2));
+  }
+
+  #[test]
+  fn test_bits256_bitor_assign() {
+    let mut a = Bits256::from_bit(0);
+    a |= Bits256::from_bit(1);
+    assert!(a.has_bit(0));
+    assert!(a.has_bit(1));
   }
 }

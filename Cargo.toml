@@ -27,6 +27,9 @@ perf = { level = "deny", priority = -1 }
 
 std_instead_of_core = "warn"
 std_instead_of_alloc = "warn"
+unwrap_used = "allow"
+expect_used = "allow"
+indexing_slicing = "allow"
 
 [workspace.lints.rustdoc]
 broken_intra_doc_links = "deny"

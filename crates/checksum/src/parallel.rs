@@ -83,15 +83,12 @@ use traits::ChecksumCombine;
 /// ```
 #[inline]
 pub fn checksum_chunks<C: ChecksumCombine>(chunks: &[&[u8]]) -> C::Output {
-  if chunks.is_empty() {
+  let Some((first, rest)) = chunks.split_first() else {
     return C::checksum(&[]);
-  }
+  };
 
-  let mut iter = chunks.iter();
-  let first = iter.next().unwrap();
   let mut result = C::checksum(first);
-
-  for chunk in iter {
+  for chunk in rest {
     let chunk_crc = C::checksum(chunk);
     result = C::combine(result, chunk_crc, chunk.len());
   }
@@ -132,6 +129,7 @@ pub fn checksum_chunks<C: ChecksumCombine>(chunks: &[&[u8]]) -> C::Output {
 ///
 /// Panics if `checksums` is empty. Use [`combine_checksums_or`] for fallible version.
 #[inline]
+#[allow(clippy::expect_used)] // Intentional panic documented above
 pub fn combine_checksums<C: ChecksumCombine>(checksums: &[(C::Output, usize)]) -> C::Output {
   combine_checksums_or::<C>(checksums).expect("checksums slice must not be empty")
 }

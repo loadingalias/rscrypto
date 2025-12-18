@@ -39,7 +39,11 @@
 //!    overhead.
 //! 4. **Cached otherwise**: Runtime detection is cached in `OnceLock` (std) or atomics (no_std).
 //! 5. **Miri-safe**: Under Miri, always returns portable-only caps.
-
+//!
+//! // Fallibility discipline: deny unwrap/expect in production, allow in tests.
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
+#![cfg_attr(not(test), deny(clippy::expect_used))]
+#![cfg_attr(not(test), deny(clippy::indexing_slicing))]
 #![no_std]
 
 #[cfg(feature = "std")]
@@ -172,3 +176,21 @@ pub fn set_caps_override(value: Option<(CpuCaps, Tune)>) {
 pub fn has_override() -> bool {
   detect::has_override()
 }
+
+/// Returns a human-readable summary of detected CPU capabilities and tuning.
+///
+/// Useful for logging, debugging, and diagnostics.
+///
+/// # Example
+///
+/// ```ignore
+/// println!("{}", platform::describe());
+/// // Output: "x86_64 [sse2, sse3, ssse3, sse4.1, sse4.2, avx, avx2, ...] (Zen5)"
+/// ```
+#[must_use]
+pub fn describe() -> alloc::string::String {
+  let (caps, tune) = get();
+  alloc::format!("{} ({})", caps, tune.name())
+}
+
+extern crate alloc;

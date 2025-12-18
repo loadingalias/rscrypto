@@ -135,6 +135,7 @@ pub fn crc64_nvme_combine(crc_a: u64, crc_b: u64, len_b: usize) -> u64 {
 
 /// Multiply a 32×32 GF(2) matrix by a 32-bit vector.
 #[inline]
+#[allow(clippy::indexing_slicing)] // trailing_zeros on non-zero u32 yields 0..31
 fn gf2_matrix_times(mat: &[u32; 32], vec: u32) -> u32 {
   let mut sum = 0u32;
   let mut v = vec;
@@ -153,8 +154,8 @@ fn gf2_matrix_times(mat: &[u32; 32], vec: u32) -> u32 {
 #[inline]
 fn gf2_matrix_square(mat: &[u32; 32]) -> [u32; 32] {
   let mut square = [0u32; 32];
-  for i in 0..32 {
-    square[i] = gf2_matrix_times(mat, mat[i]);
+  for (sq, &m) in square.iter_mut().zip(mat.iter()) {
+    *sq = gf2_matrix_times(mat, m);
   }
   square
 }
@@ -200,17 +201,16 @@ fn step_one_bit_u64(reflected: bool, poly: u64, width: u8, crc: u64) -> u64 {
 #[inline]
 fn gf2_matrix_one_bit_u64(reflected: bool, poly: u64, width: u8) -> [u64; 64] {
   let mut mat = [0u64; 64];
-  let mut i = 0u8;
-  while i < width {
+  for (i, slot) in mat.iter_mut().enumerate().take(width as usize) {
     let v = 1u64 << i;
-    mat[i as usize] = step_one_bit_u64(reflected, poly, width, v);
-    i = i.wrapping_add(1);
+    *slot = step_one_bit_u64(reflected, poly, width, v);
   }
   mat
 }
 
 /// Multiply a width×width GF(2) matrix by a width-bit vector (both in u64).
 #[inline]
+#[allow(clippy::indexing_slicing)] // trailing_zeros on non-zero u64 yields 0..63
 fn gf2_matrix_times_u64(mat: &[u64; 64], vec: u64) -> u64 {
   let mut sum = 0u64;
   let mut v = vec;
@@ -227,10 +227,9 @@ fn gf2_matrix_times_u64(mat: &[u64; 64], vec: u64) -> u64 {
 #[inline]
 fn gf2_matrix_square_u64(mat: &[u64; 64], width: u8) -> [u64; 64] {
   let mut square = [0u64; 64];
-  let mut i = 0u8;
-  while i < width {
-    square[i as usize] = gf2_matrix_times_u64(mat, mat[i as usize]);
-    i = i.wrapping_add(1);
+  let width = width as usize;
+  for (sq, &m) in square.iter_mut().zip(mat.iter()).take(width) {
+    *sq = gf2_matrix_times_u64(mat, m);
   }
   square
 }

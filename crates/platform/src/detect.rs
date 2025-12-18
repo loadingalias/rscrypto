@@ -66,7 +66,7 @@ use crate::{caps::CpuCaps, tune::Tune};
 /// call `detect_uncached()` - which is fine since these are typically single-core MCUs.
 #[cfg(all(not(feature = "std"), target_has_atomic = "64"))]
 mod cache {
-  use core::sync::atomic::AtomicUsize;
+  use core::sync::atomic::{AtomicU16, AtomicUsize};
 
   use super::*;
 
@@ -90,6 +90,8 @@ mod cache {
   static CACHED_PREFER_HYBRID: AtomicBool = AtomicBool::new(false);
   static CACHED_CRC_PARALLELISM: AtomicU8 = AtomicU8::new(0);
   static CACHED_FAST_ZMM: AtomicBool = AtomicBool::new(false);
+  static CACHED_SVE_VLEN: AtomicU16 = AtomicU16::new(0);
+  static CACHED_HAS_SME: AtomicBool = AtomicBool::new(false);
 
   /// Try to get cached value, or compute and cache.
   #[inline]
@@ -138,6 +140,8 @@ mod cache {
       prefer_hybrid_crc: CACHED_PREFER_HYBRID.load(Ordering::Acquire),
       crc_parallelism: CACHED_CRC_PARALLELISM.load(Ordering::Acquire),
       fast_zmm: CACHED_FAST_ZMM.load(Ordering::Acquire),
+      sve_vlen: CACHED_SVE_VLEN.load(Ordering::Acquire),
+      has_sme: CACHED_HAS_SME.load(Ordering::Acquire),
     };
 
     (caps, tune)
@@ -154,6 +158,8 @@ mod cache {
     CACHED_PREFER_HYBRID.store(tune.prefer_hybrid_crc, Ordering::Release);
     CACHED_CRC_PARALLELISM.store(tune.crc_parallelism, Ordering::Release);
     CACHED_FAST_ZMM.store(tune.fast_zmm, Ordering::Release);
+    CACHED_SVE_VLEN.store(tune.sve_vlen, Ordering::Release);
+    CACHED_HAS_SME.store(tune.has_sme, Ordering::Release);
   }
 
   pub fn arch_to_u8(arch: Arch) -> u8 {
@@ -205,6 +211,8 @@ static OVERRIDE: std::sync::OnceLock<Option<(CpuCaps, Tune)>> = std::sync::OnceL
 /// not supported (set_caps_override becomes a no-op, get_override returns None).
 #[cfg(all(not(feature = "std"), target_has_atomic = "64"))]
 mod override_storage {
+  use core::sync::atomic::AtomicU16;
+
   use super::*;
 
   /// Override bits storage.
@@ -219,6 +227,8 @@ mod override_storage {
   pub static PREFER_HYBRID: AtomicBool = AtomicBool::new(false);
   pub static CRC_PARALLELISM: AtomicU8 = AtomicU8::new(0);
   pub static FAST_ZMM: AtomicBool = AtomicBool::new(false);
+  pub static SVE_VLEN: AtomicU16 = AtomicU16::new(0);
+  pub static HAS_SME: AtomicBool = AtomicBool::new(false);
 }
 
 /// Initialize with user-supplied capabilities.
@@ -243,6 +253,7 @@ mod override_storage {
 /// let caps = CpuCaps::new(x86::VPCLMUL_READY);
 /// platform::init_with_caps(caps, Tune::ZEN5);
 /// ```
+#[cold]
 pub fn init_with_caps(caps: CpuCaps, tune: Tune) {
   set_caps_override(Some((caps, tune)));
 }
@@ -251,6 +262,10 @@ pub fn init_with_caps(caps: CpuCaps, tune: Tune) {
 ///
 /// When set, `get()` will return the override value instead of detecting.
 /// Pass `None` to clear the override and resume detection.
+///
+/// **Important:** Must be called before any calls to `get()`. Overrides set
+/// after the first `get()` call will not take effect until the next process
+/// start.
 ///
 /// # Thread Safety
 ///
@@ -265,6 +280,7 @@ pub fn init_with_caps(caps: CpuCaps, tune: Tune) {
 /// // ... run tests with portable fallback ...
 /// platform::set_caps_override(None);
 /// ```
+#[cold]
 pub fn set_caps_override(value: Option<(CpuCaps, Tune)>) {
   #[cfg(feature = "std")]
   {
@@ -288,6 +304,8 @@ pub fn set_caps_override(value: Option<(CpuCaps, Tune)>) {
         override_storage::PREFER_HYBRID.store(tune.prefer_hybrid_crc, Ordering::Release);
         override_storage::CRC_PARALLELISM.store(tune.crc_parallelism, Ordering::Release);
         override_storage::FAST_ZMM.store(tune.fast_zmm, Ordering::Release);
+        override_storage::SVE_VLEN.store(tune.sve_vlen, Ordering::Release);
+        override_storage::HAS_SME.store(tune.has_sme, Ordering::Release);
         OVERRIDE_SET.store(true, Ordering::Release);
       }
       None => {
@@ -338,6 +356,8 @@ fn get_override() -> Option<(CpuCaps, Tune)> {
       prefer_hybrid_crc: override_storage::PREFER_HYBRID.load(Ordering::Acquire),
       crc_parallelism: override_storage::CRC_PARALLELISM.load(Ordering::Acquire),
       fast_zmm: override_storage::FAST_ZMM.load(Ordering::Acquire),
+      sve_vlen: override_storage::SVE_VLEN.load(Ordering::Acquire),
+      has_sme: override_storage::HAS_SME.load(Ordering::Acquire),
     };
     Some((caps, tune))
   }
@@ -364,8 +384,13 @@ fn get_override() -> Option<(CpuCaps, Tune)> {
 ///
 /// # Override
 ///
-/// If an override has been set via [`init_with_caps`] or [`set_caps_override`],
-/// that value is returned instead of detected capabilities.
+/// If an override has been set via [`init_with_caps`] or [`set_caps_override`]
+/// **before the first call to `get()`**, that value is returned instead of
+/// detected capabilities.
+///
+/// **Important:** For performance, overrides are checked only during cache
+/// initialization. Set overrides early in program startup, before any calls
+/// to `get()`.
 ///
 /// # Miri
 ///
@@ -382,31 +407,38 @@ pub fn get() -> (CpuCaps, Tune) {
 
   #[cfg(not(miri))]
   {
-    // Check for user-supplied override first
-    if let Some(result) = get_override() {
-      return result;
-    }
-
     #[cfg(feature = "std")]
     {
       use std::sync::OnceLock;
       static CACHED: OnceLock<(CpuCaps, Tune)> = OnceLock::new();
-      *CACHED.get_or_init(detect_uncached)
+      *CACHED.get_or_init(get_or_detect)
     }
 
     // no_std with full atomic support: use the cache
     #[cfg(all(not(feature = "std"), target_has_atomic = "64"))]
     {
-      cache::get_or_init(detect_uncached)
+      cache::get_or_init(get_or_detect)
     }
 
     // Constrained targets without 64-bit atomics: no caching, always detect fresh.
     // This is fine since these are typically single-core MCUs where caching has no benefit.
     #[cfg(all(not(feature = "std"), not(target_has_atomic = "64")))]
     {
-      detect_uncached()
+      get_or_detect()
     }
   }
+}
+
+/// Returns override if set, otherwise detects.
+///
+/// This is called once during cache initialization, not on every `get()` call.
+#[cold]
+fn get_or_detect() -> (CpuCaps, Tune) {
+  // Check for user-supplied override (only during initialization)
+  if let Some(result) = get_override() {
+    return result;
+  }
+  detect_uncached()
 }
 
 /// Get just the capabilities (convenience function).
@@ -426,7 +458,8 @@ pub fn tune() -> Tune {
 /// Detect capabilities without caching.
 ///
 /// This is useful for testing or when you need fresh detection.
-#[inline]
+/// Prefer [`get()`] for normal use as it caches the result.
+#[cold]
 #[must_use]
 pub fn detect_uncached() -> (CpuCaps, Tune) {
   #[cfg(target_arch = "x86_64")]
@@ -492,11 +525,19 @@ fn detect_x86_64() -> (CpuCaps, Tune) {
   let tune = match microarch {
     MicroArch::Zen5 => Tune::ZEN5,
     MicroArch::Zen4 => Tune::ZEN4,
-    MicroArch::SapphireRapids | MicroArch::EmeraldRapids | MicroArch::GraniteRapids => Tune::INTEL_SPR,
+    MicroArch::SapphireRapids | MicroArch::EmeraldRapids | MicroArch::GraniteRapids | MicroArch::SierraForest => {
+      Tune::INTEL_SPR
+    }
     MicroArch::IceLake => Tune::INTEL_ICL,
+    // Hybrid client chips use DEFAULT (conservative)
+    MicroArch::AlderLake
+    | MicroArch::RaptorLake
+    | MicroArch::MeteorLake
+    | MicroArch::ArrowLake
+    | MicroArch::LunarLake
+    | MicroArch::PantherLake => Tune::DEFAULT,
     MicroArch::CascadeLake | MicroArch::Zen3 => Tune::DEFAULT,
-    MicroArch::GenericAvx512Vpclmul => Tune::DEFAULT,
-    MicroArch::GenericPclmul | MicroArch::Generic => Tune::DEFAULT,
+    MicroArch::GenericAvx512Vpclmul | MicroArch::GenericPclmul | MicroArch::Generic => Tune::DEFAULT,
   };
 
   (caps, tune)
@@ -880,17 +921,58 @@ fn detect_aarch64() -> (CpuCaps, Tune) {
     bits,
   };
 
-  // Determine tuning based on detected features
-  let tune = if bits.contains(aarch64::PMULL_EOR3_READY) {
-    // Apple M-series or Neoverse with SHA3
-    Tune::APPLE_M
-  } else if bits.contains(aarch64::PMULL_READY) {
-    Tune::AARCH64_PMULL
-  } else {
-    Tune::PORTABLE
-  };
+  // Determine tuning based on detected features and platform
+  let tune = select_aarch64_tune(&bits);
 
   (caps, tune)
+}
+
+/// Select appropriate tuning for aarch64 based on features and platform.
+#[cfg(target_arch = "aarch64")]
+fn select_aarch64_tune(bits: &Bits256) -> Tune {
+  use crate::caps::aarch64;
+
+  // Apple Silicon detection: on macOS/iOS with PMULL+EOR3
+  #[cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "watchos"))]
+  {
+    if bits.contains(aarch64::PMULL_EOR3_READY) {
+      // TODO: When we can detect SME at runtime, differentiate M4 from M1-M3
+      // For now, use APPLE_M (alias for APPLE_M1_M3) for all Apple Silicon
+      return Tune::APPLE_M;
+    }
+  }
+
+  // SVE detection for server/embedded ARM (Graviton, Neoverse, etc.)
+  // Note: We can't easily query SVE vector length at runtime without platform-specific code.
+  // For now, we use conservative defaults for SVE-capable chips.
+  #[cfg(feature = "std")]
+  {
+    // If we have SVE2, this is likely a newer server chip (Graviton 3/4, Neoverse V1/V2)
+    if bits.contains(aarch64::SVE2) {
+      // Use Graviton 4 settings (128-bit SVE) as a conservative default
+      // This is appropriate for Neoverse V2-based chips
+      return Tune::GRAVITON4;
+    }
+
+    // If we have SVE (not SVE2), this could be Graviton 3 or similar
+    if bits.contains(aarch64::SVE) {
+      return Tune::GRAVITON3;
+    }
+  }
+
+  // Generic aarch64 with PMULL+EOR3 (non-Apple platforms with SHA3)
+  if bits.contains(aarch64::PMULL_EOR3_READY) {
+    // Use Graviton 2 settings (no SVE, but good PMULL support)
+    return Tune::GRAVITON2;
+  }
+
+  // Generic aarch64 with PMULL
+  if bits.contains(aarch64::PMULL_READY) {
+    return Tune::AARCH64_PMULL;
+  }
+
+  // Fallback
+  Tune::PORTABLE
 }
 
 /// Compile-time detected aarch64 features.

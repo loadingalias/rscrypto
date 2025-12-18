@@ -34,7 +34,11 @@
 //!     select(caps, candidates)
 //! }
 //! ```
-
+//!
+//! // Fallibility discipline: deny unwrap/expect in production, allow in tests.
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
+#![cfg_attr(not(test), deny(clippy::expect_used))]
+#![cfg_attr(not(test), deny(clippy::indexing_slicing))]
 #![no_std]
 
 #[cfg(feature = "std")]

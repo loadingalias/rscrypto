@@ -40,11 +40,11 @@ pub fn compute(mut crc: u32, data: &[u8]) -> u32 {
   let mut chunks = data.chunks_exact(4);
 
   for chunk in chunks.by_ref() {
-    // SAFETY: chunks_exact guarantees exactly 4 bytes
-    crc = compute_byte(crc, chunk[0]);
-    crc = compute_byte(crc, chunk[1]);
-    crc = compute_byte(crc, chunk[2]);
-    crc = compute_byte(crc, chunk[3]);
+    let &[a, b, c, d] = chunk else { unreachable!() };
+    crc = compute_byte(crc, a);
+    crc = compute_byte(crc, b);
+    crc = compute_byte(crc, c);
+    crc = compute_byte(crc, d);
   }
 
   // Handle remaining bytes
