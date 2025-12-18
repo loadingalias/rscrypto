@@ -555,7 +555,7 @@ fn dispatch(crc: u32, data: &[u8]) -> u32 {
       use std::sync::OnceLock;
       static DISPATCH: OnceLock<fn(u32, &[u8]) -> u32> = OnceLock::new();
       let f = DISPATCH.get_or_init(crate::simd::x86_64::detect_crc32c_best);
-      return f(crc, data);
+      f(crc, data)
     }
 
     // Tier 3: wasm32 with parallel streams optimization.

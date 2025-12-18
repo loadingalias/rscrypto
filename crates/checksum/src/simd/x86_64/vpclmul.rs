@@ -55,7 +55,13 @@ unsafe fn load_key_128(key: (u64, u64)) -> __m128i {
 #[target_feature(enable = "avx512f,avx512vl,avx512bw,vpclmulqdq,pclmulqdq")]
 unsafe fn compute_vpclmul_unchecked_impl<S: Crc32FoldSpec>(crc: u32, data: &[u8]) -> u32 {
   if data.len() < 64 {
-    return S::portable(crc, data);
+    #[cfg(feature = "std")]
+    {
+      return S::finalize_runtime(crc, data);
+    }
+
+    #[cfg(not(feature = "std"))]
+    return S::finalize(crc, data);
   }
 
   let bulk_len = data.len() & !63;
@@ -112,8 +118,17 @@ unsafe fn compute_vpclmul_unchecked_impl<S: Crc32FoldSpec>(crc: u32, data: &[u8]
   final_buf[0..8].copy_from_slice(&lo.to_le_bytes());
   final_buf[8..16].copy_from_slice(&hi.to_le_bytes());
 
-  let crc = S::portable(0, &final_buf);
-  S::portable(crc, rem)
+  #[cfg(feature = "std")]
+  {
+    let crc = S::finalize_runtime(0, &final_buf);
+    S::finalize_runtime(crc, rem)
+  }
+
+  #[cfg(not(feature = "std"))]
+  {
+    let crc = S::finalize(0, &final_buf);
+    S::finalize(crc, rem)
+  }
 }
 
 #[cfg(all(

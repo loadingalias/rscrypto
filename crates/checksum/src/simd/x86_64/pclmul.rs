@@ -27,6 +27,25 @@ pub(crate) trait Crc32FoldSpec {
   const KEY_16: (u64, u64);
 
   fn portable(crc: u32, data: &[u8]) -> u32;
+
+  /// Finalize CRC computation for small buffers.
+  ///
+  /// For CRC32C, this can use hardware CRC instructions when available.
+  /// Default implementation uses portable (table-based).
+  #[inline]
+  fn finalize(crc: u32, data: &[u8]) -> u32 {
+    Self::portable(crc, data)
+  }
+
+  /// Finalize using runtime-detected hardware support.
+  ///
+  /// For CRC32C with std, this uses SSE4.2 when available.
+  /// Default implementation uses portable (table-based).
+  #[cfg(feature = "std")]
+  #[inline]
+  fn finalize_runtime(crc: u32, data: &[u8]) -> u32 {
+    Self::finalize(crc, data)
+  }
 }
 
 pub(crate) struct Crc32cSpec;
@@ -40,6 +59,34 @@ impl Crc32FoldSpec for Crc32cSpec {
   #[inline]
   fn portable(crc: u32, data: &[u8]) -> u32 {
     crate::crc32c::portable::compute(crc, data)
+  }
+
+  #[inline]
+  fn finalize(crc: u32, data: &[u8]) -> u32 {
+    #[cfg(target_feature = "sse4.2")]
+    {
+      crate::crc32c::x86_64::compute_sse42_enabled(crc, data)
+    }
+
+    #[cfg(not(target_feature = "sse4.2"))]
+    Self::portable(crc, data)
+  }
+
+  #[cfg(feature = "std")]
+  #[inline]
+  fn finalize_runtime(crc: u32, data: &[u8]) -> u32 {
+    #[cfg(target_feature = "sse4.2")]
+    {
+      Self::finalize(crc, data)
+    }
+
+    #[cfg(not(target_feature = "sse4.2"))]
+    {
+      if std::arch::is_x86_feature_detected!("sse4.2") {
+        return crate::crc32c::x86_64::compute_sse42_runtime(crc, data);
+      }
+      Self::finalize(crc, data)
+    }
   }
 }
 
@@ -102,7 +149,13 @@ unsafe fn load_key(key: (u64, u64)) -> __m128i {
 #[target_feature(enable = "pclmulqdq,sse2")]
 unsafe fn compute_pclmul_unchecked_impl<S: Crc32FoldSpec>(crc: u32, data: &[u8]) -> u32 {
   if data.len() < 64 {
-    return S::portable(crc, data);
+    #[cfg(feature = "std")]
+    {
+      return S::finalize_runtime(crc, data);
+    }
+
+    #[cfg(not(feature = "std"))]
+    return S::finalize(crc, data);
   }
 
   // Load coefficients with ARM-compatible layout (KEY.0 in lane 0, KEY.1 in lane 1).
@@ -156,8 +209,17 @@ unsafe fn compute_pclmul_unchecked_impl<S: Crc32FoldSpec>(crc: u32, data: &[u8])
   final_buf[0..8].copy_from_slice(&lo.to_le_bytes());
   final_buf[8..16].copy_from_slice(&hi.to_le_bytes());
 
-  let crc = S::portable(0, &final_buf);
-  S::portable(crc, rem)
+  #[cfg(feature = "std")]
+  {
+    let crc = S::finalize_runtime(0, &final_buf);
+    S::finalize_runtime(crc, rem)
+  }
+
+  #[cfg(not(feature = "std"))]
+  {
+    let crc = S::finalize(0, &final_buf);
+    S::finalize(crc, rem)
+  }
 }
 
 /// Compute CRC32-C using `pclmulqdq` when enabled at compile time.

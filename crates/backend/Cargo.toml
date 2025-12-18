@@ -1,0 +1,19 @@
+[package]
+name = "backend"
+description = "Dispatch and SIMD acceleration primitives for rscrypto"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[features]
+default = ["std"]
+std = ["platform/std"]
+
+[dependencies]
+platform = { workspace = true, default-features = false }
+
+[lints]
+workspace = true

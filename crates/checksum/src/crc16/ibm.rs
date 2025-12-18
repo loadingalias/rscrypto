@@ -209,18 +209,28 @@ fn compute_portable(crc: u16, data: &[u8]) -> u16 {
       let lo = (crc as u64) ^ (d & 0xFFFF);
       let rest = d >> 16;
 
-      crc = table!(7)[(lo & 0xFF) as usize]
-        ^ table!(6)[((lo >> 8) & 0xFF) as usize]
-        ^ table!(5)[(rest & 0xFF) as usize]
-        ^ table!(4)[((rest >> 8) & 0xFF) as usize]
-        ^ table!(3)[((rest >> 16) & 0xFF) as usize]
-        ^ table!(2)[((rest >> 24) & 0xFF) as usize]
-        ^ table!(1)[((rest >> 32) & 0xFF) as usize]
-        ^ table!(0)[((rest >> 40) & 0xFF) as usize];
+      let b0 = lo as u8 as usize;
+      let b1 = (lo >> 8) as u8 as usize;
+      let b2 = rest as u8 as usize;
+      let b3 = (rest >> 8) as u8 as usize;
+      let b4 = (rest >> 16) as u8 as usize;
+      let b5 = (rest >> 24) as u8 as usize;
+      let b6 = (rest >> 32) as u8 as usize;
+      let b7 = (rest >> 40) as u8 as usize;
+
+      crc = table!(7)[b0]
+        ^ table!(6)[b1]
+        ^ table!(5)[b2]
+        ^ table!(4)[b3]
+        ^ table!(3)[b4]
+        ^ table!(2)[b5]
+        ^ table!(1)[b6]
+        ^ table!(0)[b7];
     }
 
     for &byte in chunks.remainder() {
-      crc = (crc >> 8) ^ table!(0)[((crc ^ (byte as u16)) & 0xFF) as usize];
+      let idx = (crc as u8 ^ byte) as usize;
+      crc = (crc >> 8) ^ table!(0)[idx];
     }
 
     crc
@@ -245,7 +255,8 @@ const fn compute_byte(crc: u16, byte: u8) -> u16 {
 
   #[cfg(not(feature = "no-tables"))]
   {
-    (crc >> 8) ^ table!(0)[((crc ^ (byte as u16)) & 0xFF) as usize]
+    let idx = (crc as u8 ^ byte) as usize;
+    (crc >> 8) ^ table!(0)[idx]
   }
 }
 

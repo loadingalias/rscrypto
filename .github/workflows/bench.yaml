@@ -369,7 +369,7 @@ jobs:
           echo "RUSTFLAGS: -C target-cpu=native"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           # shellcheck disable=SC2086
-          cargo bench --profile bench ${STEPS_SCOPE_OUTPUTS_CRATE_FLAGS} ${STEPS_SCOPE_OUTPUTS_BENCH_FLAGS} --all-features --no-run
+          cargo bench --profile bench ${STEPS_SCOPE_OUTPUTS_CRATE_FLAGS} ${STEPS_SCOPE_OUTPUTS_BENCH_FLAGS} --no-run
         env:
           RUSTFLAGS: "-C target-cpu=native"
           STEPS_SCOPE_OUTPUTS_CRATE_FLAGS: ${{ steps.scope.outputs.crate_flags }}
@@ -386,7 +386,7 @@ jobs:
 
           mkdir -p benchmark-results
           # shellcheck disable=SC2086
-          cargo bench --profile bench ${STEPS_SCOPE_OUTPUTS_CRATE_FLAGS} ${STEPS_SCOPE_OUTPUTS_BENCH_FLAGS} --all-features 2>&1 | tee benchmark-results/benchmark-output.txt
+          cargo bench --profile bench ${STEPS_SCOPE_OUTPUTS_CRATE_FLAGS} ${STEPS_SCOPE_OUTPUTS_BENCH_FLAGS} 2>&1 | tee benchmark-results/benchmark-output.txt
 
         env:
           RUSTFLAGS: "-C target-cpu=native"

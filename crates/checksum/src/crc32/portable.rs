@@ -39,18 +39,28 @@ pub fn compute(crc: u32, data: &[u8]) -> u32 {
       let lo = (crc as u64) ^ (d & 0xFFFF_FFFF);
       let hi = d >> 32;
 
-      crc = table!(7)[(lo & 0xFF) as usize]
-        ^ table!(6)[((lo >> 8) & 0xFF) as usize]
-        ^ table!(5)[((lo >> 16) & 0xFF) as usize]
-        ^ table!(4)[((lo >> 24) & 0xFF) as usize]
-        ^ table!(3)[(hi & 0xFF) as usize]
-        ^ table!(2)[((hi >> 8) & 0xFF) as usize]
-        ^ table!(1)[((hi >> 16) & 0xFF) as usize]
-        ^ table!(0)[((hi >> 24) & 0xFF) as usize];
+      let b0 = lo as u8 as usize;
+      let b1 = (lo >> 8) as u8 as usize;
+      let b2 = (lo >> 16) as u8 as usize;
+      let b3 = (lo >> 24) as u8 as usize;
+      let b4 = hi as u8 as usize;
+      let b5 = (hi >> 8) as u8 as usize;
+      let b6 = (hi >> 16) as u8 as usize;
+      let b7 = (hi >> 24) as u8 as usize;
+
+      crc = table!(7)[b0]
+        ^ table!(6)[b1]
+        ^ table!(5)[b2]
+        ^ table!(4)[b3]
+        ^ table!(3)[b4]
+        ^ table!(2)[b5]
+        ^ table!(1)[b6]
+        ^ table!(0)[b7];
     }
 
     for &byte in chunks.remainder() {
-      crc = (crc >> 8) ^ table!(0)[((crc ^ u32::from(byte)) & 0xFF) as usize];
+      let idx = (crc as u8 ^ byte) as usize;
+      crc = (crc >> 8) ^ table!(0)[idx];
     }
 
     crc
@@ -77,7 +87,8 @@ pub const fn compute_byte(crc: u32, byte: u8) -> u32 {
 
   #[cfg(not(feature = "no-tables"))]
   {
-    (crc >> 8) ^ table!(0)[((crc ^ byte as u32) & 0xFF) as usize]
+    let idx = (crc as u8 ^ byte) as usize;
+    (crc >> 8) ^ table!(0)[idx]
   }
 }
 

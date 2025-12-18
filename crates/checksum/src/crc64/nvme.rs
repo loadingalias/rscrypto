@@ -288,18 +288,28 @@ pub(crate) fn compute_portable(crc: u64, data: &[u8]) -> u64 {
 
       let x = crc ^ d;
 
-      crc = table!(7)[(x & 0xFF) as usize]
-        ^ table!(6)[((x >> 8) & 0xFF) as usize]
-        ^ table!(5)[((x >> 16) & 0xFF) as usize]
-        ^ table!(4)[((x >> 24) & 0xFF) as usize]
-        ^ table!(3)[((x >> 32) & 0xFF) as usize]
-        ^ table!(2)[((x >> 40) & 0xFF) as usize]
-        ^ table!(1)[((x >> 48) & 0xFF) as usize]
-        ^ table!(0)[((x >> 56) & 0xFF) as usize];
+      let b0 = x as u8 as usize;
+      let b1 = (x >> 8) as u8 as usize;
+      let b2 = (x >> 16) as u8 as usize;
+      let b3 = (x >> 24) as u8 as usize;
+      let b4 = (x >> 32) as u8 as usize;
+      let b5 = (x >> 40) as u8 as usize;
+      let b6 = (x >> 48) as u8 as usize;
+      let b7 = (x >> 56) as u8 as usize;
+
+      crc = table!(7)[b0]
+        ^ table!(6)[b1]
+        ^ table!(5)[b2]
+        ^ table!(4)[b3]
+        ^ table!(3)[b4]
+        ^ table!(2)[b5]
+        ^ table!(1)[b6]
+        ^ table!(0)[b7];
     }
 
     for &byte in chunks.remainder() {
-      crc = (crc >> 8) ^ table!(0)[((crc ^ u64::from(byte)) & 0xFF) as usize];
+      let idx = (crc as u8 ^ byte) as usize;
+      crc = (crc >> 8) ^ table!(0)[idx];
     }
 
     crc
@@ -324,7 +334,8 @@ const fn compute_byte(crc: u64, byte: u8) -> u64 {
 
   #[cfg(not(feature = "no-tables"))]
   {
-    (crc >> 8) ^ table!(0)[((crc ^ (byte as u64)) & 0xFF) as usize]
+    let idx = (crc as u8 ^ byte) as usize;
+    (crc >> 8) ^ table!(0)[idx]
   }
 }
 

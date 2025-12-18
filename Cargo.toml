@@ -36,6 +36,7 @@ private_intra_doc_links = "warn"
 criterion = { version = "^0.8.1", default-features = false, features = ["html_reports", "plotters"] } #unified
 proptest = "^1.9.0"
 platform = { path = "crates/platform", version = "^0.1.0", default-features = false } #unified
+backend = { path = "crates/backend", version = "^0.1.0", default-features = false } #unified
 traits = { path = "crates/traits", version = "^0.1.0", default-features = false } #unified
 
 [profile.dev]
