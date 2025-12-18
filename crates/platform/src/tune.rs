@@ -27,12 +27,72 @@
 //! }
 //! ```
 
+// ─────────────────────────────────────────────────────────────────────────────
+// TuneKind: Identity discriminant for O(1) name lookup
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Identifies which microarchitecture tuning preset is in use.
+///
+/// This discriminant enables O(1) `name()` lookup and disambiguates
+/// presets that happen to have identical tuning values.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum TuneKind {
+  Custom = 0,
+  Default,
+  Portable,
+  // x86_64
+  Zen4,
+  Zen5,
+  IntelSpr,
+  IntelIcl,
+  // Apple Silicon
+  AppleM1M3,
+  AppleM4,
+  // AWS Graviton
+  Graviton2,
+  Graviton3,
+  Graviton4,
+  // ARM Neoverse
+  NeoverseN2,
+  Aarch64Pmull,
+}
+
+impl TuneKind {
+  /// Returns the human-readable name for this tuning preset.
+  #[must_use]
+  pub const fn name(self) -> &'static str {
+    match self {
+      Self::Custom => "Custom",
+      Self::Default => "Default",
+      Self::Portable => "Portable",
+      Self::Zen4 => "Zen4",
+      Self::Zen5 => "Zen5",
+      Self::IntelSpr => "Intel SPR",
+      Self::IntelIcl => "Intel ICL",
+      Self::AppleM1M3 => "Apple M1-M3",
+      Self::AppleM4 => "Apple M4",
+      Self::Graviton2 => "Graviton 2",
+      Self::Graviton3 => "Graviton 3",
+      Self::Graviton4 => "Graviton 4",
+      Self::NeoverseN2 => "Neoverse N2",
+      Self::Aarch64Pmull => "AArch64 PMULL",
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tune: Microarchitecture tuning hints
+// ─────────────────────────────────────────────────────────────────────────────
+
 /// Microarchitecture-derived tuning hints.
 ///
 /// These hints guide algorithm selection and threshold decisions.
 /// They are derived from the detected CPU microarchitecture.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Tune {
+  /// Which preset this tuning came from (enables O(1) name lookup).
+  pub(crate) kind: TuneKind,
   /// Minimum buffer size (bytes) where SIMD becomes faster than scalar.
   ///
   /// Below this threshold, scalar code or hardware CRC instructions
@@ -81,6 +141,7 @@ pub struct Tune {
 impl Tune {
   /// Conservative defaults for unknown CPUs.
   pub const DEFAULT: Self = Self {
+    kind: TuneKind::Default,
     simd_threshold: 256,
     prefer_hybrid_crc: false,
     crc_parallelism: 3,
@@ -95,6 +156,7 @@ impl Tune {
 
   /// Tuning for AMD Zen 4.
   pub const ZEN4: Self = Self {
+    kind: TuneKind::Zen4,
     simd_threshold: 64,
     prefer_hybrid_crc: true,
     crc_parallelism: 3,
@@ -105,6 +167,7 @@ impl Tune {
 
   /// Tuning for AMD Zen 5.
   pub const ZEN5: Self = Self {
+    kind: TuneKind::Zen5,
     simd_threshold: 64,
     prefer_hybrid_crc: true,
     crc_parallelism: 7,
@@ -115,6 +178,7 @@ impl Tune {
 
   /// Tuning for Intel Sapphire Rapids / Emerald Rapids / Granite Rapids.
   pub const INTEL_SPR: Self = Self {
+    kind: TuneKind::IntelSpr,
     simd_threshold: 256,
     prefer_hybrid_crc: false,
     crc_parallelism: 3,
@@ -125,6 +189,7 @@ impl Tune {
 
   /// Tuning for Intel Ice Lake.
   pub const INTEL_ICL: Self = Self {
+    kind: TuneKind::IntelIcl,
     simd_threshold: 256,
     prefer_hybrid_crc: false,
     crc_parallelism: 3,
@@ -139,6 +204,7 @@ impl Tune {
 
   /// Tuning for Apple M1/M2/M3 (PMULL+EOR3, no SVE, no SME).
   pub const APPLE_M1_M3: Self = Self {
+    kind: TuneKind::AppleM1M3,
     simd_threshold: 64,
     prefer_hybrid_crc: false,
     crc_parallelism: 3,
@@ -149,11 +215,12 @@ impl Tune {
 
   /// Tuning for Apple M4 (PMULL+EOR3, SME with Streaming SVE, no full SVE).
   pub const APPLE_M4: Self = Self {
+    kind: TuneKind::AppleM4,
     simd_threshold: 64,
     prefer_hybrid_crc: false,
     crc_parallelism: 3,
     fast_zmm: false,
-    sve_vlen: 0, // M4 has SME with Streaming SVE, not full SVE
+    sve_vlen: 0,
     has_sme: true,
   };
 
@@ -166,6 +233,7 @@ impl Tune {
 
   /// Tuning for AWS Graviton 2 (Neoverse N1, no SVE).
   pub const GRAVITON2: Self = Self {
+    kind: TuneKind::Graviton2,
     simd_threshold: 64,
     prefer_hybrid_crc: false,
     crc_parallelism: 3,
@@ -176,6 +244,7 @@ impl Tune {
 
   /// Tuning for AWS Graviton 3 (Neoverse V1, 256-bit SVE).
   pub const GRAVITON3: Self = Self {
+    kind: TuneKind::Graviton3,
     simd_threshold: 64,
     prefer_hybrid_crc: false,
     crc_parallelism: 3,
@@ -186,6 +255,7 @@ impl Tune {
 
   /// Tuning for AWS Graviton 4 (Neoverse V2, 128-bit SVE for more cores).
   pub const GRAVITON4: Self = Self {
+    kind: TuneKind::Graviton4,
     simd_threshold: 64,
     prefer_hybrid_crc: false,
     crc_parallelism: 3,
@@ -200,6 +270,7 @@ impl Tune {
 
   /// Tuning for ARM Neoverse N2 (128-bit SVE).
   pub const NEOVERSE_N2: Self = Self {
+    kind: TuneKind::NeoverseN2,
     simd_threshold: 64,
     prefer_hybrid_crc: false,
     crc_parallelism: 3,
@@ -210,6 +281,7 @@ impl Tune {
 
   /// Tuning for generic aarch64 with PMULL (no SVE).
   pub const AARCH64_PMULL: Self = Self {
+    kind: TuneKind::Aarch64Pmull,
     simd_threshold: 256,
     prefer_hybrid_crc: false,
     crc_parallelism: 3,
@@ -224,6 +296,7 @@ impl Tune {
 
   /// Tuning for portable/scalar code.
   pub const PORTABLE: Self = Self {
+    kind: TuneKind::Portable,
     simd_threshold: 64,
     prefer_hybrid_crc: false,
     crc_parallelism: 1,
@@ -251,60 +324,42 @@ impl core::fmt::Display for Tune {
 }
 
 impl Tune {
+  /// Returns the kind discriminant for this tuning configuration.
+  #[inline]
+  #[must_use]
+  pub const fn kind(&self) -> TuneKind {
+    self.kind
+  }
+
   /// Returns a descriptive name for this tuning configuration.
   ///
-  /// Useful for logging and diagnostics.
+  /// O(1) lookup via the stored `TuneKind` discriminant.
+  #[inline]
   #[must_use]
   pub const fn name(&self) -> &'static str {
-    // Helper: check if all 6 fields match
-    macro_rules! matches_preset {
-      ($preset:expr) => {
-        self.simd_threshold == $preset.simd_threshold
-          && self.prefer_hybrid_crc == $preset.prefer_hybrid_crc
-          && self.crc_parallelism == $preset.crc_parallelism
-          && self.fast_zmm == $preset.fast_zmm
-          && self.sve_vlen == $preset.sve_vlen
-          && self.has_sme == $preset.has_sme
-      };
-    }
+    self.kind.name()
+  }
 
-    // x86_64 presets (most distinctive first)
-    if matches_preset!(Self::ZEN5) {
-      "Zen5"
-    } else if matches_preset!(Self::ZEN4) {
-      "Zen4"
-    } else if matches_preset!(Self::INTEL_SPR) {
-      "Intel SPR/EMR/GNR"
-    } else if matches_preset!(Self::INTEL_ICL) {
-      "Intel ICL"
-    }
-    // Apple Silicon (check M4 before M1-M3 since M4 has unique has_sme=true)
-    else if matches_preset!(Self::APPLE_M4) {
-      "Apple M4"
-    } else if matches_preset!(Self::APPLE_M1_M3) {
-      "Apple M1-M3"
-    }
-    // AWS Graviton (check by SVE vector length - most distinctive)
-    else if matches_preset!(Self::GRAVITON3) {
-      "Graviton 3"
-    } else if matches_preset!(Self::GRAVITON4) {
-      "Graviton 4"
-    } else if matches_preset!(Self::GRAVITON2) {
-      "Graviton 2"
-    }
-    // ARM Neoverse
-    else if matches_preset!(Self::NEOVERSE_N2) {
-      "Neoverse N2"
-    } else if matches_preset!(Self::AARCH64_PMULL) {
-      "AArch64 PMULL"
-    }
-    // Fallbacks
-    else if matches_preset!(Self::PORTABLE) {
-      "Portable"
-    } else if matches_preset!(Self::DEFAULT) {
-      "Default"
-    } else {
-      "Custom"
+  /// Create a custom tuning configuration.
+  ///
+  /// Use this when the built-in presets don't match your needs.
+  #[must_use]
+  pub const fn custom(
+    simd_threshold: usize,
+    prefer_hybrid_crc: bool,
+    crc_parallelism: u8,
+    fast_zmm: bool,
+    sve_vlen: u16,
+    has_sme: bool,
+  ) -> Self {
+    Self {
+      kind: TuneKind::Custom,
+      simd_threshold,
+      prefer_hybrid_crc,
+      crc_parallelism,
+      fast_zmm,
+      sve_vlen,
+      has_sme,
     }
   }
 }
@@ -443,50 +498,40 @@ mod tests {
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
-  // Tune Name Identification
+  // Tune Name Identification (O(1) via TuneKind discriminant)
   // ─────────────────────────────────────────────────────────────────────────────
 
   #[test]
   fn test_tune_name_presets() {
-    // Presets with unique field combinations
+    // Each preset now returns its distinct name via TuneKind discriminant
     assert_eq!(Tune::ZEN5.name(), "Zen5");
     assert_eq!(Tune::ZEN4.name(), "Zen4");
-    assert_eq!(Tune::APPLE_M4.name(), "Apple M4"); // Unique: has_sme=true
-    assert_eq!(Tune::GRAVITON3.name(), "Graviton 3"); // Unique: sve_vlen=256
-    assert_eq!(Tune::PORTABLE.name(), "Portable"); // Unique: crc_parallelism=1
-
-    // Note: Some presets have identical field values and will return the first match:
-    // - INTEL_SPR, INTEL_ICL, AARCH64_PMULL, DEFAULT all have: threshold=256, hybrid=false,
-    //   parallelism=3, fast_zmm=false, sve_vlen=0, has_sme=false
-    // - They all return "Intel SPR/EMR/GNR" because it's checked first
-    assert_eq!(Tune::INTEL_SPR.name(), "Intel SPR/EMR/GNR");
-    assert_eq!(Tune::INTEL_ICL.name(), "Intel SPR/EMR/GNR"); // Same as INTEL_SPR
-    assert_eq!(Tune::AARCH64_PMULL.name(), "Intel SPR/EMR/GNR"); // Same as INTEL_SPR
-    assert_eq!(Tune::DEFAULT.name(), "Intel SPR/EMR/GNR"); // Same as INTEL_SPR
-
-    // APPLE_M1_M3 and GRAVITON2 have identical values: threshold=64, hybrid=false,
-    // parallelism=3, fast_zmm=false, sve_vlen=0, has_sme=false
-    // APPLE_M4 is checked first (has_sme=true), then APPLE_M1_M3
+    assert_eq!(Tune::INTEL_SPR.name(), "Intel SPR");
+    assert_eq!(Tune::INTEL_ICL.name(), "Intel ICL");
     assert_eq!(Tune::APPLE_M1_M3.name(), "Apple M1-M3");
-    assert_eq!(Tune::GRAVITON2.name(), "Apple M1-M3"); // Same as APPLE_M1_M3
+    assert_eq!(Tune::APPLE_M4.name(), "Apple M4");
+    assert_eq!(Tune::GRAVITON2.name(), "Graviton 2");
+    assert_eq!(Tune::GRAVITON3.name(), "Graviton 3");
+    assert_eq!(Tune::GRAVITON4.name(), "Graviton 4");
+    assert_eq!(Tune::NEOVERSE_N2.name(), "Neoverse N2");
+    assert_eq!(Tune::AARCH64_PMULL.name(), "AArch64 PMULL");
+    assert_eq!(Tune::PORTABLE.name(), "Portable");
+    assert_eq!(Tune::DEFAULT.name(), "Default");
+  }
 
-    // GRAVITON4 and NEOVERSE_N2 have identical values: threshold=64, hybrid=false,
-    // parallelism=3, fast_zmm=false, sve_vlen=128, has_sme=false
-    assert_eq!(Tune::GRAVITON4.name(), "Graviton 4"); // Checked before NEOVERSE_N2
-    assert_eq!(Tune::NEOVERSE_N2.name(), "Graviton 4"); // Same as GRAVITON4
+  #[test]
+  fn test_tune_kind_accessor() {
+    assert_eq!(Tune::ZEN5.kind(), TuneKind::Zen5);
+    assert_eq!(Tune::INTEL_SPR.kind(), TuneKind::IntelSpr);
+    assert_eq!(Tune::APPLE_M4.kind(), TuneKind::AppleM4);
+    assert_eq!(Tune::GRAVITON3.kind(), TuneKind::Graviton3);
   }
 
   #[test]
   fn test_tune_name_custom() {
-    let custom = Tune {
-      simd_threshold: 128,
-      prefer_hybrid_crc: true,
-      crc_parallelism: 5,
-      fast_zmm: true,
-      sve_vlen: 512,
-      has_sme: true,
-    };
+    let custom = Tune::custom(128, true, 5, true, 512, true);
     assert_eq!(custom.name(), "Custom");
+    assert_eq!(custom.kind(), TuneKind::Custom);
   }
 
   // ─────────────────────────────────────────────────────────────────────────────

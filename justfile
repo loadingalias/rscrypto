@@ -78,6 +78,11 @@ pin-actions:
 verify-actions:
     @scripts/ci/pin-actions.sh --verify-only
 
+# Generate fuzz coverage report
+# Usage: just fuzz-coverage fuzz_crc32c
+fuzz-coverage target:
+    @scripts/test/test-fuzz.sh --coverage {{target}}
+
 # Clean fuzz artifacts
 clean-fuzz:
     @scripts/test/test-fuzz.sh --clean

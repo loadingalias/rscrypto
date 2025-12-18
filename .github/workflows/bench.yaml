@@ -162,13 +162,20 @@ jobs:
       # Setup: Rust toolchain, performance tools, and caching
       # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-      # TOOLCHAIN PIN: Must match rust-toolchain.toml
-      # Update locations: rust-toolchain.toml, setup/*.yaml, bench.yaml
+      # Install Rust toolchain (reads version from rust-toolchain.toml)
+      - name: Read Toolchain Version
+        if: steps.should-run.outputs.enabled == 'true'
+        id: toolchain
+        shell: bash
+        run: |
+          TOOLCHAIN=$(awk -F'"' '/^channel/ {print $2}' rust-toolchain.toml)
+          echo "version=$TOOLCHAIN" >> "$GITHUB_OUTPUT"
+
       - name: Install Rust Toolchain
         if: steps.should-run.outputs.enabled == 'true'
         uses: dtolnay/rust-toolchain@0b1efabc08b657293548b77fb76cc02d26091c7e # master
         with:
-          toolchain: nightly-2025-12-14
+          toolchain: ${{ steps.toolchain.outputs.version }}
           components: clippy, rustfmt
 
       # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

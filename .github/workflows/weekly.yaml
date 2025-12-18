@@ -31,10 +31,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
 
+      - name: Read Toolchain Version
+        id: toolchain
+        run: |
+          TOOLCHAIN=$(awk -F'"' '/^channel/ {print $2}' rust-toolchain.toml)
+          echo "version=$TOOLCHAIN" >> "$GITHUB_OUTPUT"
+
       - name: Install Rust Toolchain
         uses: dtolnay/rust-toolchain@0b1efabc08b657293548b77fb76cc02d26091c7e  # master
         with:
-          toolchain: nightly-2025-12-14
+          toolchain: ${{ steps.toolchain.outputs.version }}
           components: miri, rust-src
 
       - name: Install Tools
@@ -57,10 +63,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
 
+      - name: Read Toolchain Version
+        id: toolchain
+        run: |
+          TOOLCHAIN=$(awk -F'"' '/^channel/ {print $2}' rust-toolchain.toml)
+          echo "version=$TOOLCHAIN" >> "$GITHUB_OUTPUT"
+
       - name: Install Rust Toolchain
         uses: dtolnay/rust-toolchain@0b1efabc08b657293548b77fb76cc02d26091c7e  # master
         with:
-          toolchain: nightly-2025-12-14
+          toolchain: ${{ steps.toolchain.outputs.version }}
 
       - name: Install Tools
         uses: taiki-e/install-action@d850aa816998e5cf15f67a78c7b933f2a5033f8a  # v2

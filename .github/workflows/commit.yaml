@@ -172,11 +172,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
 
-      # TOOLCHAIN PIN: Must match rust-toolchain.toml
+      # Install Rust toolchain (reads version from rust-toolchain.toml)
+      - name: Read Toolchain Version
+        id: toolchain
+        run: |
+          TOOLCHAIN=$(awk -F'"' '/^channel/ {print $2}' rust-toolchain.toml)
+          echo "version=$TOOLCHAIN" >> "$GITHUB_OUTPUT"
+
       - name: Install Rust Toolchain
         uses: dtolnay/rust-toolchain@0b1efabc08b657293548b77fb76cc02d26091c7e  # master
         with:
-          toolchain: nightly-2025-12-14
+          toolchain: ${{ steps.toolchain.outputs.version }}
 
       # Explicit target installation (rust-toolchain.toml doesn't include no_std targets)
       - name: Install Target
@@ -195,16 +201,16 @@ jobs:
       # Note: Use -p instead of --workspace to properly disable default features
       # ─────────────────────────────────────────────────────────────────────────
       - name: Check no_std (no features - pure no_std)
-        run: cargo check -p platform -p traits -p checksum -p hash --target ${{ matrix.target }} --no-default-features --lib
+        run: cargo check -p platform -p traits -p backend --target ${{ matrix.target }} --no-default-features --lib
 
       - name: Check no_std with alloc
-        run: cargo check -p platform -p traits -p checksum -p hash --target ${{ matrix.target }} --no-default-features --features alloc --lib
+        run: cargo check -p platform -p traits -p backend --target ${{ matrix.target }} --no-default-features --features alloc --lib
 
       - name: Build no_std release (pure no_std)
-        run: cargo build -p platform -p traits -p checksum -p hash --target ${{ matrix.target }} --no-default-features --lib --release
+        run: cargo build -p platform -p traits -p backend --target ${{ matrix.target }} --no-default-features --lib --release
 
       - name: Build no_std release with alloc
-        run: cargo build -p platform -p traits -p checksum -p hash --target ${{ matrix.target }} --no-default-features --features alloc --lib --release
+        run: cargo build -p platform -p traits -p backend --target ${{ matrix.target }} --no-default-features --features alloc --lib --release
 
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   # WASM Targets (Cross-compile verification)
@@ -241,11 +247,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
 
-      # TOOLCHAIN PIN: Must match rust-toolchain.toml
+      # Install Rust toolchain (reads version from rust-toolchain.toml)
+      - name: Read Toolchain Version
+        id: toolchain
+        run: |
+          TOOLCHAIN=$(awk -F'"' '/^channel/ {print $2}' rust-toolchain.toml)
+          echo "version=$TOOLCHAIN" >> "$GITHUB_OUTPUT"
+
       - name: Install Rust Toolchain
         uses: dtolnay/rust-toolchain@0b1efabc08b657293548b77fb76cc02d26091c7e  # master
         with:
-          toolchain: nightly-2025-12-14
+          toolchain: ${{ steps.toolchain.outputs.version }}
 
       # Explicit target installation (rust-toolchain.toml doesn't include WASM targets)
       - name: Install Target
@@ -264,16 +276,16 @@ jobs:
       # Note: Use -p instead of --workspace to properly disable default features
       # ─────────────────────────────────────────────────────────────────────────
       - name: Check WASM (no features - pure no_std)
-        run: cargo check -p platform -p traits -p checksum -p hash --target ${{ matrix.target }} --no-default-features --lib
+        run: cargo check -p platform -p traits -p backend --target ${{ matrix.target }} --no-default-features --lib
 
       - name: Check WASM with alloc
-        run: cargo check -p platform -p traits -p checksum -p hash --target ${{ matrix.target }} --no-default-features --features alloc --lib
+        run: cargo check -p platform -p traits -p backend --target ${{ matrix.target }} --no-default-features --features alloc --lib
 
       - name: Build WASM release (no features)
-        run: cargo build -p platform -p traits -p checksum -p hash --target ${{ matrix.target }} --no-default-features --lib --release
+        run: cargo build -p platform -p traits -p backend --target ${{ matrix.target }} --no-default-features --lib --release
 
       - name: Build WASM release with alloc
-        run: cargo build -p platform -p traits -p checksum -p hash --target ${{ matrix.target }} --no-default-features --features alloc --lib --release
+        run: cargo build -p platform -p traits -p backend --target ${{ matrix.target }} --no-default-features --features alloc --lib --release
 
       # Additional wasm-pack verification for browser target
       - name: Install wasm-pack

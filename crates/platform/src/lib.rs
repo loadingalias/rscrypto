@@ -72,7 +72,7 @@ pub mod aarch64;
 // ─────────────────────────────────────────────────────────────────────────────
 
 pub use caps::{Arch, Bits256, CpuCaps};
-pub use tune::Tune;
+pub use tune::{Tune, TuneKind};
 
 /// Get detected CPU capabilities and tuning hints.
 ///

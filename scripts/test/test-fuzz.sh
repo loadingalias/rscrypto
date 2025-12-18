@@ -56,6 +56,7 @@ show_help() {
   echo "  $0 --build                Build fuzz targets without running"
   echo "  $0 --list                 List available targets"
   echo "  $0 --clean                Clean fuzz artifacts"
+  echo "  $0 --coverage <target>    Generate coverage report for target"
   echo ""
   echo "Environment variables:"
   echo "  RSCRYPTO_FUZZ_DURATION_SECS  Duration per target (default: 30)"
@@ -201,6 +202,27 @@ clean_artifacts() {
   echo "✅ Fuzz artifacts cleaned!"
 }
 
+run_coverage() {
+  local target="$1"
+
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "📊 Generating coverage for: $target"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  cd "$FUZZ_DIR"
+
+  # Use gnu target on Linux CI to avoid needing musl toolchain
+  TARGET_FLAG=""
+  if [ "$(uname)" = "Linux" ] && [ "${RSCRYPTO_TEST_MODE:-local}" != "local" ]; then
+    TARGET_FLAG="--target x86_64-unknown-linux-gnu"
+  fi
+
+  # shellcheck disable=SC2086
+  cargo fuzz coverage "$target" $TARGET_FLAG
+
+  echo "✅ Coverage report generated in: fuzz/coverage/$target/"
+}
+
 # Main
 case "${1:-}" in
   -h|--help)
@@ -216,6 +238,15 @@ case "${1:-}" in
   --clean)
     check_requirements
     clean_artifacts
+    ;;
+  --coverage)
+    check_requirements
+    if [ -z "${2:-}" ]; then
+      echo "Error: --coverage requires a target name"
+      echo "Usage: $0 --coverage <target>"
+      exit 1
+    fi
+    run_coverage "$2"
     ;;
   --all|--smoke)
     check_requirements

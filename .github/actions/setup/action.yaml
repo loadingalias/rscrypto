@@ -12,14 +12,10 @@ inputs:
 runs:
   using: composite
   steps:
-    # Install Rust toolchain FIRST, before cargo tools (cargo-binstall needs cargo)
-    # TOOLCHAIN PIN: Must match rust-toolchain.toml
-    # Update locations: rust-toolchain.toml, setup/action.yaml, setup-namespace/action.yaml,
-    #                   setup-warpbuild/action.yaml, bench.yaml
-    - name: Install Rust Toolchain
-      uses: dtolnay/rust-toolchain@0b1efabc08b657293548b77fb76cc02d26091c7e  # master
+    # Install Rust toolchain (reads version from rust-toolchain.toml)
+    - name: Setup Toolchain
+      uses: ./.github/actions/setup-toolchain
       with:
-        toolchain: nightly-2025-12-14
         components: clippy, rustfmt, miri, rust-src
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

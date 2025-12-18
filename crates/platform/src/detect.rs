@@ -260,12 +260,40 @@ mod cache {
   static CACHED_ARCH: AtomicU8 = AtomicU8::new(0);
 
   /// Cached Tune fields.
+  static CACHED_KIND: AtomicU8 = AtomicU8::new(0);
   static CACHED_SIMD_THRESHOLD: AtomicUsize = AtomicUsize::new(0);
   static CACHED_PREFER_HYBRID: AtomicBool = AtomicBool::new(false);
   static CACHED_CRC_PARALLELISM: AtomicU8 = AtomicU8::new(0);
   static CACHED_FAST_ZMM: AtomicBool = AtomicBool::new(false);
   static CACHED_SVE_VLEN: AtomicU16 = AtomicU16::new(0);
   static CACHED_HAS_SME: AtomicBool = AtomicBool::new(false);
+
+  use crate::tune::TuneKind;
+
+  /// Convert TuneKind to u8 for atomic storage.
+  pub const fn kind_to_u8(kind: TuneKind) -> u8 {
+    kind as u8
+  }
+
+  /// Convert u8 back to TuneKind.
+  pub const fn kind_from_u8(v: u8) -> TuneKind {
+    match v {
+      1 => TuneKind::Default,
+      2 => TuneKind::Portable,
+      3 => TuneKind::Zen4,
+      4 => TuneKind::Zen5,
+      5 => TuneKind::IntelSpr,
+      6 => TuneKind::IntelIcl,
+      7 => TuneKind::AppleM1M3,
+      8 => TuneKind::AppleM4,
+      9 => TuneKind::Graviton2,
+      10 => TuneKind::Graviton3,
+      11 => TuneKind::Graviton4,
+      12 => TuneKind::NeoverseN2,
+      13 => TuneKind::Aarch64Pmull,
+      _ => TuneKind::Custom,
+    }
+  }
 
   /// Try to get cached value, or compute and cache.
   #[inline]
@@ -310,6 +338,7 @@ mod cache {
     let caps = CpuCaps { arch, bits };
 
     let tune = Tune {
+      kind: kind_from_u8(CACHED_KIND.load(Ordering::Acquire)),
       simd_threshold: CACHED_SIMD_THRESHOLD.load(Ordering::Acquire),
       prefer_hybrid_crc: CACHED_PREFER_HYBRID.load(Ordering::Acquire),
       crc_parallelism: CACHED_CRC_PARALLELISM.load(Ordering::Acquire),
@@ -328,6 +357,7 @@ mod cache {
     CACHED_BITS[3].store(caps.bits.0[3], Ordering::Release);
     CACHED_ARCH.store(arch_to_u8(caps.arch), Ordering::Release);
 
+    CACHED_KIND.store(kind_to_u8(tune.kind), Ordering::Release);
     CACHED_SIMD_THRESHOLD.store(tune.simd_threshold, Ordering::Release);
     CACHED_PREFER_HYBRID.store(tune.prefer_hybrid_crc, Ordering::Release);
     CACHED_CRC_PARALLELISM.store(tune.crc_parallelism, Ordering::Release);
@@ -397,6 +427,7 @@ mod override_storage {
     core::sync::atomic::AtomicU64::new(0),
   ];
   pub static ARCH: AtomicU8 = AtomicU8::new(0);
+  pub static KIND: AtomicU8 = AtomicU8::new(0);
   pub static SIMD_THRESHOLD: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
   pub static PREFER_HYBRID: AtomicBool = AtomicBool::new(false);
   pub static CRC_PARALLELISM: AtomicU8 = AtomicU8::new(0);
@@ -474,6 +505,7 @@ pub fn set_caps_override(value: Option<(CpuCaps, Tune)>) {
         override_storage::BITS[2].store(caps.bits.0[2], Ordering::Release);
         override_storage::BITS[3].store(caps.bits.0[3], Ordering::Release);
         override_storage::ARCH.store(cache::arch_to_u8(caps.arch), Ordering::Release);
+        override_storage::KIND.store(cache::kind_to_u8(tune.kind), Ordering::Release);
         override_storage::SIMD_THRESHOLD.store(tune.simd_threshold, Ordering::Release);
         override_storage::PREFER_HYBRID.store(tune.prefer_hybrid_crc, Ordering::Release);
         override_storage::CRC_PARALLELISM.store(tune.crc_parallelism, Ordering::Release);
@@ -526,6 +558,7 @@ fn get_override() -> Option<(CpuCaps, Tune)> {
     let arch = cache::arch_from_u8(override_storage::ARCH.load(Ordering::Acquire));
     let caps = CpuCaps { arch, bits };
     let tune = Tune {
+      kind: cache::kind_from_u8(override_storage::KIND.load(Ordering::Acquire)),
       simd_threshold: override_storage::SIMD_THRESHOLD.load(Ordering::Acquire),
       prefer_hybrid_crc: override_storage::PREFER_HYBRID.load(Ordering::Acquire),
       crc_parallelism: override_storage::CRC_PARALLELISM.load(Ordering::Acquire),

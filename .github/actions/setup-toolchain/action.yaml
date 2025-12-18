@@ -1,0 +1,32 @@
+name: Setup Rust Toolchain (Dynamic)
+description: |
+  Install Rust toolchain reading version from rust-toolchain.toml.
+  Single source of truth for toolchain version.
+
+inputs:
+  components:
+    description: Comma-separated list of components to install
+    required: false
+    default: "clippy, rustfmt"
+
+outputs:
+  toolchain:
+    description: The toolchain version that was installed
+    value: ${{ steps.read-toolchain.outputs.toolchain }}
+
+runs:
+  using: composite
+  steps:
+    - name: Read Toolchain Version
+      id: read-toolchain
+      shell: bash
+      run: |
+        TOOLCHAIN=$(awk -F'"' '/^channel/ {print $2}' rust-toolchain.toml)
+        echo "toolchain=$TOOLCHAIN" >> "$GITHUB_OUTPUT"
+        echo "Using toolchain: $TOOLCHAIN"
+
+    - name: Install Rust Toolchain
+      uses: dtolnay/rust-toolchain@0b1efabc08b657293548b77fb76cc02d26091c7e  # master
+      with:
+        toolchain: ${{ steps.read-toolchain.outputs.toolchain }}
+        components: ${{ inputs.components }}

@@ -5,7 +5,7 @@ set -euo pipefail
 # Miri Memory Safety Tests for rscrypto
 #
 # Miri interprets Rust code and checks for undefined behavior, memory safety
-# violations, and data races. This script runs Miri on the checksum crate.
+# violations, and data races. This script runs Miri on crates with unsafe code.
 #
 # How it works:
 #   - Code uses #[cfg(miri)] guards to fall back to portable implementations
@@ -14,7 +14,7 @@ set -euo pipefail
 #
 # Usage:
 #   ./scripts/test/test-miri.sh           # Run Miri tests
-#   ./scripts/test/test-miri.sh checksum  # Test specific crate
+#   ./scripts/test/test-miri.sh backend   # Test specific crate
 #   ./scripts/test/test-miri.sh --all     # Test all compatible crates
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -24,13 +24,13 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo ""
 
 # Crates that work with Miri (have #[cfg(miri)] portable fallbacks)
-MIRI_CRATES="checksum"
+# - backend: Has dispatch with unsafe transmute (needs Miri testing)
+MIRI_CRATES="backend"
 
 # Crates excluded from Miri testing
-# - platform: No tests, just feature detection
-# - hash: Not yet implemented
+# - platform: Just feature detection, no tests with unsafe
 # - traits: Just trait definitions, no unsafe code
-EXCLUDED_CRATES="platform hash traits rscrypto"
+EXCLUDED_CRATES="platform traits"
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Argument Parsing
