@@ -60,7 +60,7 @@ use crate::{
 /// Cache state for no_std builds.
 #[cfg(not(feature = "std"))]
 mod cache {
-  use core::sync::atomic::{AtomicPtr, AtomicUsize};
+  use core::sync::atomic::AtomicUsize;
 
   use super::*;
 
@@ -433,7 +433,7 @@ pub fn detect_uncached() -> (CpuCaps, Tune) {
 #[cfg(target_arch = "x86_64")]
 fn detect_x86_64() -> (CpuCaps, Tune) {
   use crate::{
-    caps::{Arch, x86},
+    caps::Arch,
     x86_64::{MicroArch, detect_microarch_uncached},
   };
 
@@ -862,8 +862,12 @@ fn detect_aarch64() -> (CpuCaps, Tune) {
 /// Compile-time detected aarch64 features.
 #[cfg(target_arch = "aarch64")]
 const fn compile_time_aarch64() -> Bits256 {
+  // Import is used when target_feature attributes are enabled at compile time.
+  #[allow(unused_imports)]
   use crate::caps::aarch64;
 
+  // Mutable when target_feature attributes enable feature unions.
+  #[allow(unused_mut)]
   let mut bits = Bits256::NONE;
 
   #[cfg(target_feature = "aes")]
@@ -1025,8 +1029,13 @@ fn runtime_aarch64() -> Bits256 {
 
 #[cfg(target_arch = "wasm32")]
 fn detect_wasm32() -> (CpuCaps, Tune) {
-  use crate::caps::{Arch, wasm};
+  use crate::caps::Arch;
+  // Import is used when target_feature attributes are enabled at compile time.
+  #[allow(unused_imports)]
+  use crate::caps::wasm;
 
+  // Mutable when target_feature attributes enable feature unions.
+  #[allow(unused_mut)]
   let mut bits = Bits256::NONE;
 
   // SIMD128 is compile-time only for wasm
