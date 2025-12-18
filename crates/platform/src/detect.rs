@@ -50,6 +50,180 @@ use crate::caps::Bits256;
 use crate::{caps::CpuCaps, tune::Tune};
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Feature Tables (Single Source of Truth)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Each architecture defines a feature table that maps feature names to capability
+// bits. The same table drives both compile-time and runtime detection.
+//
+// Features are listed in dependency order (basic → advanced) within each category.
+// This ensures that when iterating, we accumulate bits correctly.
+
+/// x86/x86_64 feature table.
+///
+/// Maps target_feature names to capability bits.
+/// Used for: CRC (PCLMULQDQ, VPCLMULQDQ), AES (AESNI, VAES), SHA (SHA-NI),
+/// hashes (AVX2, AVX-512), and general SIMD acceleration.
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+macro_rules! x86_feature_table {
+  ($callback:ident) => {
+    $callback! {
+      // ─── SSE Family (baseline on x86_64) ───
+      "sse3"    => x86::SSE3,
+      "ssse3"   => x86::SSSE3,
+      "sse4.1"  => x86::SSE41,
+      "sse4.2"  => x86::SSE42,
+      "sse4a"   => x86::SSE4A,      // AMD-specific
+
+      // ─── Crypto Extensions ───
+      "aes"        => x86::AESNI,       // AES-NI (AES-GCM, etc.)
+      "pclmulqdq"  => x86::PCLMULQDQ,   // Carry-less multiply (CRC, GHASH)
+      "sha"        => x86::SHA,         // SHA-NI (SHA-1, SHA-256)
+
+      // ─── AVX Family ───
+      "avx"  => x86::AVX,
+      "avx2" => x86::AVX2,
+      "fma"  => x86::FMA,
+      "f16c" => x86::F16C,
+
+      // ─── Bit Manipulation ───
+      "bmi1"   => x86::BMI1,
+      "bmi2"   => x86::BMI2,
+      "popcnt" => x86::POPCNT,
+      "lzcnt"  => x86::LZCNT,
+      "adx"    => x86::ADX,
+
+      // ─── AVX-512 Foundation ───
+      "avx512f"  => x86::AVX512F,
+      "avx512vl" => x86::AVX512VL,
+      "avx512bw" => x86::AVX512BW,
+      "avx512dq" => x86::AVX512DQ,
+      "avx512cd" => x86::AVX512CD,
+
+      // ─── AVX-512 Crypto/Advanced ───
+      "vpclmulqdq" => x86::VPCLMULQDQ,  // 256/512-bit carry-less multiply
+      "vaes"       => x86::VAES,        // 256/512-bit AES
+      "gfni"       => x86::GFNI,        // Galois Field instructions
+
+      // ─── AVX-512 Extended ───
+      "avx512ifma"     => x86::AVX512IFMA,
+      "avx512vbmi"     => x86::AVX512VBMI,
+      "avx512vbmi2"    => x86::AVX512VBMI2,
+      "avx512vnni"     => x86::AVX512VNNI,
+      "avx512bitalg"   => x86::AVX512BITALG,
+      "avx512vpopcntdq" => x86::AVX512VPOPCNTDQ,
+      "avx512bf16"     => x86::AVX512BF16,
+    }
+  };
+}
+
+/// aarch64 feature table.
+///
+/// Maps target_feature names to capability bits.
+/// Used for: CRC (PMULL, CRC32), AES (AES), SHA (SHA2, SHA3),
+/// hashes (NEON, SVE), and general SIMD acceleration.
+#[cfg(target_arch = "aarch64")]
+macro_rules! aarch64_feature_table {
+  ($callback:ident) => {
+    $callback! {
+      // ─── Crypto Extensions ───
+      // Note: "aes" target_feature includes PMULL on ARM
+      "aes"  => aarch64::AES_PMULL,  // AES + PMULL bundled
+      "crc"  => aarch64::CRC,        // Hardware CRC32C
+      "sha2" => aarch64::SHA2,       // SHA-256
+      "sha3" => aarch64::SHA3,       // SHA-512, EOR3
+
+      // ─── Chinese SM Algorithms ───
+      "sm4" => aarch64::SM3_SM4,     // SM3 + SM4 bundled
+
+      // ─── SIMD Extensions ───
+      "dotprod" => aarch64::DOTPROD,
+      "i8mm"    => aarch64::I8MM,
+      "bf16"    => aarch64::BF16,
+      "fp16"    => aarch64::FP16,
+
+      // ─── SVE (Scalable Vector Extension) ───
+      "sve"          => aarch64::SVE,
+      "sve2"         => aarch64::SVE2,
+      "sve2-aes"     => aarch64::SVE2_AES,
+      "sve2-sha3"    => aarch64::SVE2_SHA3,
+      "sve2-sm4"     => aarch64::SVE2_SM4,
+      "sve2-bitperm" => aarch64::SVE2_BITPERM,
+    }
+  };
+}
+
+/// wasm feature table.
+#[cfg(target_arch = "wasm32")]
+macro_rules! wasm_feature_table {
+  ($callback:ident) => {
+    $callback! {
+      "simd128"      => wasm::SIMD128,
+      "relaxed-simd" => wasm::RELAXED_SIMD,
+    }
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Detection Macros
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// These macros are invoked by the feature tables to generate detection code.
+// Two variants: compile-time (cfg!) and runtime (is_*_feature_detected!).
+
+/// Compile-time detection for x86/x86_64.
+/// Uses cfg!() which evaluates at compile time - dead branches are eliminated.
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+macro_rules! x86_compile_time_detect {
+  ($($feature:literal => $const:expr),* $(,)?) => {{
+    #[allow(unused_imports)]
+    use crate::caps::x86;
+
+    let mut bits = Bits256::NONE;
+    $(
+      if cfg!(target_feature = $feature) {
+        bits = bits.union($const);
+      }
+    )*
+    bits
+  }};
+}
+
+/// Compile-time detection for aarch64.
+#[cfg(target_arch = "aarch64")]
+macro_rules! aarch64_compile_time_detect {
+  ($($feature:literal => $const:expr),* $(,)?) => {{
+    #[allow(unused_imports)]
+    use crate::caps::aarch64;
+
+    let mut bits = Bits256::NONE;
+    $(
+      if cfg!(target_feature = $feature) {
+        bits = bits.union($const);
+      }
+    )*
+    bits
+  }};
+}
+
+/// Compile-time detection for wasm.
+#[cfg(target_arch = "wasm32")]
+macro_rules! wasm_compile_time_detect {
+  ($($feature:literal => $const:expr),* $(,)?) => {{
+    #[allow(unused_imports)]
+    use crate::caps::wasm;
+
+    let mut bits = Bits256::NONE;
+    $(
+      if cfg!(target_feature = $feature) {
+        bits = bits.union($const);
+      }
+    )*
+    bits
+  }};
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Cache and Override Infrastructure
 // ─────────────────────────────────────────────────────────────────────────────
 //
@@ -494,7 +668,7 @@ pub fn detect_uncached() -> (CpuCaps, Tune) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// x86_64 detection
+// x86_64 Detection
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_arch = "x86_64")]
@@ -504,12 +678,13 @@ fn detect_x86_64() -> (CpuCaps, Tune) {
     x86_64::{MicroArch, detect_microarch_uncached},
   };
 
-  let mut bits = Bits256::NONE;
+  // SSE2 is always available on x86_64
+  let mut bits = crate::caps::x86::SSE2;
 
-  // Always start with compile-time features
+  // Compile-time detected features
   bits = bits.union(compile_time_x86_64());
 
-  // Add runtime-detected features (std only)
+  // Runtime detected features (std only)
   #[cfg(feature = "std")]
   {
     bits = bits.union(runtime_x86_64());
@@ -545,184 +720,14 @@ fn detect_x86_64() -> (CpuCaps, Tune) {
 
 /// Compile-time detected x86_64 features.
 #[cfg(target_arch = "x86_64")]
-const fn compile_time_x86_64() -> Bits256 {
-  use crate::caps::x86;
-
-  let mut bits = Bits256::NONE;
-
-  // SSE family (always available on x86_64)
-  bits = bits.union(x86::SSE2);
-
-  #[cfg(target_feature = "sse3")]
-  {
-    bits = bits.union(x86::SSE3);
-  }
-
-  #[cfg(target_feature = "ssse3")]
-  {
-    bits = bits.union(x86::SSSE3);
-  }
-
-  #[cfg(target_feature = "sse4.1")]
-  {
-    bits = bits.union(x86::SSE41);
-  }
-
-  #[cfg(target_feature = "sse4.2")]
-  {
-    bits = bits.union(x86::SSE42);
-  }
-
-  // AVX family
-  #[cfg(target_feature = "avx")]
-  {
-    bits = bits.union(x86::AVX);
-  }
-
-  #[cfg(target_feature = "avx2")]
-  {
-    bits = bits.union(x86::AVX2);
-  }
-
-  #[cfg(target_feature = "fma")]
-  {
-    bits = bits.union(x86::FMA);
-  }
-
-  // Crypto
-  #[cfg(target_feature = "aes")]
-  {
-    bits = bits.union(x86::AESNI);
-  }
-
-  #[cfg(target_feature = "pclmulqdq")]
-  {
-    bits = bits.union(x86::PCLMULQDQ);
-  }
-
-  #[cfg(target_feature = "sha")]
-  {
-    bits = bits.union(x86::SHA);
-  }
-
-  // AVX-512
-  #[cfg(target_feature = "avx512f")]
-  {
-    bits = bits.union(x86::AVX512F);
-  }
-
-  #[cfg(target_feature = "avx512vl")]
-  {
-    bits = bits.union(x86::AVX512VL);
-  }
-
-  #[cfg(target_feature = "avx512bw")]
-  {
-    bits = bits.union(x86::AVX512BW);
-  }
-
-  #[cfg(target_feature = "avx512dq")]
-  {
-    bits = bits.union(x86::AVX512DQ);
-  }
-
-  #[cfg(target_feature = "avx512cd")]
-  {
-    bits = bits.union(x86::AVX512CD);
-  }
-
-  #[cfg(target_feature = "vpclmulqdq")]
-  {
-    bits = bits.union(x86::VPCLMULQDQ);
-  }
-
-  #[cfg(target_feature = "vaes")]
-  {
-    bits = bits.union(x86::VAES);
-  }
-
-  #[cfg(target_feature = "gfni")]
-  {
-    bits = bits.union(x86::GFNI);
-  }
-
-  // Bit manipulation
-  #[cfg(target_feature = "bmi1")]
-  {
-    bits = bits.union(x86::BMI1);
-  }
-
-  #[cfg(target_feature = "bmi2")]
-  {
-    bits = bits.union(x86::BMI2);
-  }
-
-  #[cfg(target_feature = "popcnt")]
-  {
-    bits = bits.union(x86::POPCNT);
-  }
-
-  #[cfg(target_feature = "lzcnt")]
-  {
-    bits = bits.union(x86::LZCNT);
-  }
-
-  #[cfg(target_feature = "adx")]
-  {
-    bits = bits.union(x86::ADX);
-  }
-
-  // Additional features
-  #[cfg(target_feature = "sse4a")]
-  {
-    bits = bits.union(x86::SSE4A);
-  }
-
-  #[cfg(target_feature = "f16c")]
-  {
-    bits = bits.union(x86::F16C);
-  }
-
-  // AVX-512 additional subfeatures
-  #[cfg(target_feature = "avx512ifma")]
-  {
-    bits = bits.union(x86::AVX512IFMA);
-  }
-
-  #[cfg(target_feature = "avx512vbmi")]
-  {
-    bits = bits.union(x86::AVX512VBMI);
-  }
-
-  #[cfg(target_feature = "avx512vbmi2")]
-  {
-    bits = bits.union(x86::AVX512VBMI2);
-  }
-
-  #[cfg(target_feature = "avx512vnni")]
-  {
-    bits = bits.union(x86::AVX512VNNI);
-  }
-
-  #[cfg(target_feature = "avx512bitalg")]
-  {
-    bits = bits.union(x86::AVX512BITALG);
-  }
-
-  #[cfg(target_feature = "avx512vpopcntdq")]
-  {
-    bits = bits.union(x86::AVX512VPOPCNTDQ);
-  }
-
-  #[cfg(target_feature = "avx512bf16")]
-  {
-    bits = bits.union(x86::AVX512BF16);
-  }
-
-  bits
+fn compile_time_x86_64() -> Bits256 {
+  x86_feature_table!(x86_compile_time_detect)
 }
 
 /// Runtime detected x86_64 features.
+///
+/// Note: This uses explicit code rather than macro-generated because
+/// `is_x86_feature_detected!` uses pattern matching on literals.
 #[cfg(all(target_arch = "x86_64", feature = "std"))]
 fn runtime_x86_64() -> Bits256 {
   use crate::caps::x86;
@@ -742,16 +747,8 @@ fn runtime_x86_64() -> Bits256 {
   if std::arch::is_x86_feature_detected!("sse4.2") {
     bits = bits.union(x86::SSE42);
   }
-
-  // AVX family
-  if std::arch::is_x86_feature_detected!("avx") {
-    bits = bits.union(x86::AVX);
-  }
-  if std::arch::is_x86_feature_detected!("avx2") {
-    bits = bits.union(x86::AVX2);
-  }
-  if std::arch::is_x86_feature_detected!("fma") {
-    bits = bits.union(x86::FMA);
+  if std::arch::is_x86_feature_detected!("sse4a") {
+    bits = bits.union(x86::SSE4A);
   }
 
   // Crypto
@@ -765,30 +762,18 @@ fn runtime_x86_64() -> Bits256 {
     bits = bits.union(x86::SHA);
   }
 
-  // AVX-512
-  if std::arch::is_x86_feature_detected!("avx512f") {
-    bits = bits.union(x86::AVX512F);
+  // AVX family
+  if std::arch::is_x86_feature_detected!("avx") {
+    bits = bits.union(x86::AVX);
   }
-  if std::arch::is_x86_feature_detected!("avx512vl") {
-    bits = bits.union(x86::AVX512VL);
+  if std::arch::is_x86_feature_detected!("avx2") {
+    bits = bits.union(x86::AVX2);
   }
-  if std::arch::is_x86_feature_detected!("avx512bw") {
-    bits = bits.union(x86::AVX512BW);
+  if std::arch::is_x86_feature_detected!("fma") {
+    bits = bits.union(x86::FMA);
   }
-  if std::arch::is_x86_feature_detected!("avx512dq") {
-    bits = bits.union(x86::AVX512DQ);
-  }
-  if std::arch::is_x86_feature_detected!("avx512cd") {
-    bits = bits.union(x86::AVX512CD);
-  }
-  if std::arch::is_x86_feature_detected!("vpclmulqdq") {
-    bits = bits.union(x86::VPCLMULQDQ);
-  }
-  if std::arch::is_x86_feature_detected!("vaes") {
-    bits = bits.union(x86::VAES);
-  }
-  if std::arch::is_x86_feature_detected!("gfni") {
-    bits = bits.union(x86::GFNI);
+  if std::arch::is_x86_feature_detected!("f16c") {
+    bits = bits.union(x86::F16C);
   }
 
   // Bit manipulation
@@ -808,15 +793,35 @@ fn runtime_x86_64() -> Bits256 {
     bits = bits.union(x86::ADX);
   }
 
-  // Additional features
-  if std::arch::is_x86_feature_detected!("sse4a") {
-    bits = bits.union(x86::SSE4A);
+  // AVX-512 foundation
+  if std::arch::is_x86_feature_detected!("avx512f") {
+    bits = bits.union(x86::AVX512F);
   }
-  if std::arch::is_x86_feature_detected!("f16c") {
-    bits = bits.union(x86::F16C);
+  if std::arch::is_x86_feature_detected!("avx512vl") {
+    bits = bits.union(x86::AVX512VL);
+  }
+  if std::arch::is_x86_feature_detected!("avx512bw") {
+    bits = bits.union(x86::AVX512BW);
+  }
+  if std::arch::is_x86_feature_detected!("avx512dq") {
+    bits = bits.union(x86::AVX512DQ);
+  }
+  if std::arch::is_x86_feature_detected!("avx512cd") {
+    bits = bits.union(x86::AVX512CD);
   }
 
-  // AVX-512 additional subfeatures
+  // AVX-512 crypto/advanced
+  if std::arch::is_x86_feature_detected!("vpclmulqdq") {
+    bits = bits.union(x86::VPCLMULQDQ);
+  }
+  if std::arch::is_x86_feature_detected!("vaes") {
+    bits = bits.union(x86::VAES);
+  }
+  if std::arch::is_x86_feature_detected!("gfni") {
+    bits = bits.union(x86::GFNI);
+  }
+
+  // AVX-512 extended
   if std::arch::is_x86_feature_detected!("avx512ifma") {
     bits = bits.union(x86::AVX512IFMA);
   }
@@ -843,71 +848,79 @@ fn runtime_x86_64() -> Bits256 {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// x86 (32-bit) detection
+// x86 (32-bit) Detection
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_arch = "x86")]
 fn detect_x86() -> (CpuCaps, Tune) {
-  use crate::caps::{Arch, x86};
+  use crate::caps::Arch;
 
+  // x86 32-bit uses the same feature table
   let mut bits = Bits256::NONE;
 
-  // Compile-time features
-  #[cfg(target_feature = "sse2")]
-  {
-    bits = bits.union(x86::SSE2);
-  }
+  // Compile-time
+  bits = bits.union(compile_time_x86());
 
-  #[cfg(target_feature = "ssse3")]
-  {
-    bits = bits.union(x86::SSSE3);
-  }
-
-  #[cfg(target_feature = "sse4.2")]
-  {
-    bits = bits.union(x86::SSE42);
-  }
-
-  #[cfg(target_feature = "pclmulqdq")]
-  {
-    bits = bits.union(x86::PCLMULQDQ);
-  }
-
-  // Runtime detection (std only)
+  // Runtime (std only)
   #[cfg(feature = "std")]
   {
-    if std::arch::is_x86_feature_detected!("sse2") {
-      bits = bits.union(x86::SSE2);
-    }
-    if std::arch::is_x86_feature_detected!("ssse3") {
-      bits = bits.union(x86::SSSE3);
-    }
-    if std::arch::is_x86_feature_detected!("sse4.2") {
-      bits = bits.union(x86::SSE42);
-    }
-    if std::arch::is_x86_feature_detected!("pclmulqdq") {
-      bits = bits.union(x86::PCLMULQDQ);
-    }
+    bits = bits.union(runtime_x86());
   }
 
   let caps = CpuCaps { arch: Arch::X86, bits };
   (caps, Tune::DEFAULT)
 }
 
+#[cfg(target_arch = "x86")]
+fn compile_time_x86() -> Bits256 {
+  x86_feature_table!(x86_compile_time_detect)
+}
+
+/// Runtime detected x86 (32-bit) features.
+#[cfg(all(target_arch = "x86", feature = "std"))]
+fn runtime_x86() -> Bits256 {
+  use crate::caps::x86;
+
+  let mut bits = Bits256::NONE;
+
+  // Basic features relevant to 32-bit
+  if std::arch::is_x86_feature_detected!("sse2") {
+    bits = bits.union(x86::SSE2);
+  }
+  if std::arch::is_x86_feature_detected!("sse3") {
+    bits = bits.union(x86::SSE3);
+  }
+  if std::arch::is_x86_feature_detected!("ssse3") {
+    bits = bits.union(x86::SSSE3);
+  }
+  if std::arch::is_x86_feature_detected!("sse4.1") {
+    bits = bits.union(x86::SSE41);
+  }
+  if std::arch::is_x86_feature_detected!("sse4.2") {
+    bits = bits.union(x86::SSE42);
+  }
+  if std::arch::is_x86_feature_detected!("pclmulqdq") {
+    bits = bits.union(x86::PCLMULQDQ);
+  }
+  if std::arch::is_x86_feature_detected!("aes") {
+    bits = bits.union(x86::AESNI);
+  }
+
+  bits
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
-// aarch64 detection
+// aarch64 Detection
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_arch = "aarch64")]
 fn detect_aarch64() -> (CpuCaps, Tune) {
   use crate::caps::{Arch, aarch64};
 
-  let mut bits = Bits256::NONE;
-
   // NEON is always available on AArch64
-  bits = bits.union(aarch64::NEON);
+  let mut bits = aarch64::NEON;
 
-  // Compile-time features
+  // Compile-time detected features
   bits = bits.union(compile_time_aarch64());
 
   // Runtime detection (std only)
@@ -925,6 +938,78 @@ fn detect_aarch64() -> (CpuCaps, Tune) {
   let tune = select_aarch64_tune(&bits);
 
   (caps, tune)
+}
+
+/// Compile-time detected aarch64 features.
+#[cfg(target_arch = "aarch64")]
+fn compile_time_aarch64() -> Bits256 {
+  aarch64_feature_table!(aarch64_compile_time_detect)
+}
+
+/// Runtime detected aarch64 features.
+///
+/// Note: This uses explicit code rather than macro-generated because
+/// `is_aarch64_feature_detected!` uses pattern matching on literals.
+#[cfg(all(target_arch = "aarch64", feature = "std"))]
+fn runtime_aarch64() -> Bits256 {
+  use crate::caps::aarch64;
+
+  let mut bits = Bits256::NONE;
+
+  // Crypto extensions (AES includes PMULL on ARM)
+  if std::arch::is_aarch64_feature_detected!("aes") {
+    bits = bits.union(aarch64::AES_PMULL);
+  }
+  if std::arch::is_aarch64_feature_detected!("crc") {
+    bits = bits.union(aarch64::CRC);
+  }
+  if std::arch::is_aarch64_feature_detected!("sha2") {
+    bits = bits.union(aarch64::SHA2);
+  }
+  if std::arch::is_aarch64_feature_detected!("sha3") {
+    bits = bits.union(aarch64::SHA3);
+  }
+
+  // Chinese SM algorithms (sm4 includes both)
+  if std::arch::is_aarch64_feature_detected!("sm4") {
+    bits = bits.union(aarch64::SM3_SM4);
+  }
+
+  // SIMD extensions
+  if std::arch::is_aarch64_feature_detected!("dotprod") {
+    bits = bits.union(aarch64::DOTPROD);
+  }
+  if std::arch::is_aarch64_feature_detected!("i8mm") {
+    bits = bits.union(aarch64::I8MM);
+  }
+  if std::arch::is_aarch64_feature_detected!("bf16") {
+    bits = bits.union(aarch64::BF16);
+  }
+  if std::arch::is_aarch64_feature_detected!("fp16") {
+    bits = bits.union(aarch64::FP16);
+  }
+
+  // SVE family
+  if std::arch::is_aarch64_feature_detected!("sve") {
+    bits = bits.union(aarch64::SVE);
+  }
+  if std::arch::is_aarch64_feature_detected!("sve2") {
+    bits = bits.union(aarch64::SVE2);
+  }
+  if std::arch::is_aarch64_feature_detected!("sve2-aes") {
+    bits = bits.union(aarch64::SVE2_AES);
+  }
+  if std::arch::is_aarch64_feature_detected!("sve2-sha3") {
+    bits = bits.union(aarch64::SVE2_SHA3);
+  }
+  if std::arch::is_aarch64_feature_detected!("sve2-sm4") {
+    bits = bits.union(aarch64::SVE2_SM4);
+  }
+  if std::arch::is_aarch64_feature_detected!("sve2-bitperm") {
+    bits = bits.union(aarch64::SVE2_BITPERM);
+  }
+
+  bits
 }
 
 /// Select appropriate tuning for aarch64 based on features and platform.
@@ -975,196 +1060,15 @@ fn select_aarch64_tune(bits: &Bits256) -> Tune {
   Tune::PORTABLE
 }
 
-/// Compile-time detected aarch64 features.
-#[cfg(target_arch = "aarch64")]
-const fn compile_time_aarch64() -> Bits256 {
-  // Import is used when target_feature attributes are enabled at compile time.
-  #[allow(unused_imports)]
-  use crate::caps::aarch64;
-
-  // Mutable when target_feature attributes enable feature unions.
-  #[allow(unused_mut)]
-  let mut bits = Bits256::NONE;
-
-  #[cfg(target_feature = "aes")]
-  {
-    bits = bits.union(aarch64::AES);
-    bits = bits.union(aarch64::PMULL); // PMULL is bundled with AES
-  }
-
-  #[cfg(target_feature = "crc")]
-  {
-    bits = bits.union(aarch64::CRC);
-  }
-
-  #[cfg(target_feature = "sha2")]
-  {
-    bits = bits.union(aarch64::SHA2);
-  }
-
-  #[cfg(target_feature = "sha3")]
-  {
-    bits = bits.union(aarch64::SHA3);
-  }
-
-  #[cfg(target_feature = "sm4")]
-  {
-    bits = bits.union(aarch64::SM3);
-    bits = bits.union(aarch64::SM4);
-  }
-
-  #[cfg(target_feature = "dotprod")]
-  {
-    bits = bits.union(aarch64::DOTPROD);
-  }
-
-  #[cfg(target_feature = "i8mm")]
-  {
-    bits = bits.union(aarch64::I8MM);
-  }
-
-  #[cfg(target_feature = "bf16")]
-  {
-    bits = bits.union(aarch64::BF16);
-  }
-
-  #[cfg(target_feature = "fp16")]
-  {
-    bits = bits.union(aarch64::FP16);
-  }
-
-  #[cfg(target_feature = "sve")]
-  {
-    bits = bits.union(aarch64::SVE);
-  }
-
-  #[cfg(target_feature = "sve2")]
-  {
-    bits = bits.union(aarch64::SVE2);
-  }
-
-  #[cfg(target_feature = "sve2-aes")]
-  {
-    bits = bits.union(aarch64::SVE2_AES);
-  }
-
-  #[cfg(target_feature = "sve2-sha3")]
-  {
-    bits = bits.union(aarch64::SVE2_SHA3);
-  }
-
-  #[cfg(target_feature = "sve2-sm4")]
-  {
-    bits = bits.union(aarch64::SVE2_SM4);
-  }
-
-  #[cfg(target_feature = "sve2-bitperm")]
-  {
-    bits = bits.union(aarch64::SVE2_BITPERM);
-  }
-
-  bits
-}
-
-/// Runtime detected aarch64 features.
-#[cfg(all(target_arch = "aarch64", feature = "std"))]
-fn runtime_aarch64() -> Bits256 {
-  use crate::caps::aarch64;
-
-  let mut bits = Bits256::NONE;
-
-  if std::arch::is_aarch64_feature_detected!("aes") {
-    bits = bits.union(aarch64::AES);
-    bits = bits.union(aarch64::PMULL);
-  }
-
-  if std::arch::is_aarch64_feature_detected!("crc") {
-    bits = bits.union(aarch64::CRC);
-  }
-
-  if std::arch::is_aarch64_feature_detected!("sha2") {
-    bits = bits.union(aarch64::SHA2);
-  }
-
-  if std::arch::is_aarch64_feature_detected!("sha3") {
-    bits = bits.union(aarch64::SHA3);
-  }
-
-  if std::arch::is_aarch64_feature_detected!("sm4") {
-    bits = bits.union(aarch64::SM3);
-    bits = bits.union(aarch64::SM4);
-  }
-
-  if std::arch::is_aarch64_feature_detected!("dotprod") {
-    bits = bits.union(aarch64::DOTPROD);
-  }
-
-  if std::arch::is_aarch64_feature_detected!("i8mm") {
-    bits = bits.union(aarch64::I8MM);
-  }
-
-  if std::arch::is_aarch64_feature_detected!("bf16") {
-    bits = bits.union(aarch64::BF16);
-  }
-
-  if std::arch::is_aarch64_feature_detected!("fp16") {
-    bits = bits.union(aarch64::FP16);
-  }
-
-  // SVE detection
-  if std::arch::is_aarch64_feature_detected!("sve") {
-    bits = bits.union(aarch64::SVE);
-  }
-
-  if std::arch::is_aarch64_feature_detected!("sve2") {
-    bits = bits.union(aarch64::SVE2);
-  }
-
-  if std::arch::is_aarch64_feature_detected!("sve2-aes") {
-    bits = bits.union(aarch64::SVE2_AES);
-  }
-
-  if std::arch::is_aarch64_feature_detected!("sve2-sha3") {
-    bits = bits.union(aarch64::SVE2_SHA3);
-  }
-
-  if std::arch::is_aarch64_feature_detected!("sve2-sm4") {
-    bits = bits.union(aarch64::SVE2_SM4);
-  }
-
-  if std::arch::is_aarch64_feature_detected!("sve2-bitperm") {
-    bits = bits.union(aarch64::SVE2_BITPERM);
-  }
-
-  bits
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
-// wasm32 detection
+// wasm32 Detection
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_arch = "wasm32")]
 fn detect_wasm32() -> (CpuCaps, Tune) {
   use crate::caps::Arch;
-  // Import is used when target_feature attributes are enabled at compile time.
-  #[allow(unused_imports)]
-  use crate::caps::wasm;
 
-  // Mutable when target_feature attributes enable feature unions.
-  #[allow(unused_mut)]
-  let mut bits = Bits256::NONE;
-
-  // SIMD128 is compile-time only for wasm
-  #[cfg(target_feature = "simd128")]
-  {
-    bits = bits.union(wasm::SIMD128);
-  }
-
-  // Relaxed SIMD (compile-time only)
-  #[cfg(target_feature = "relaxed-simd")]
-  {
-    bits = bits.union(wasm::RELAXED_SIMD);
-  }
+  let bits = compile_time_wasm32();
 
   let caps = CpuCaps {
     arch: Arch::Wasm32,
@@ -1172,6 +1076,15 @@ fn detect_wasm32() -> (CpuCaps, Tune) {
   };
   (caps, Tune::PORTABLE)
 }
+
+#[cfg(target_arch = "wasm32")]
+fn compile_time_wasm32() -> Bits256 {
+  wasm_feature_table!(wasm_compile_time_detect)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tests
+// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {

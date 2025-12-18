@@ -435,7 +435,18 @@ pub mod aarch64 {
   pub const SME: Bits256 = Bits256::from_bit(88);
   pub const SME2: Bits256 = Bits256::from_bit(89);
 
-  // Combined capability masks
+  // ─── Combined Feature Sets (for detection tables) ───
+  // These are used by the feature detection macros to set multiple bits
+  // from a single target_feature (e.g., "aes" enables both AES and PMULL).
+
+  /// AES + PMULL combined (ARM bundles these together)
+  pub const AES_PMULL: Bits256 = Bits256([0, AES.0[1] | PMULL.0[1], 0, 0]);
+
+  /// SM3 + SM4 combined (both enabled by "sm4" target_feature)
+  pub const SM3_SM4: Bits256 = Bits256([0, SM3.0[1] | SM4.0[1], 0, 0]);
+
+  // ─── Combined Capability Masks (for dispatch checks) ───
+
   /// PMULL-ready: AES (includes PMULL on most implementations)
   pub const PMULL_READY: Bits256 = Bits256([0, AES.0[1], 0, 0]);
 

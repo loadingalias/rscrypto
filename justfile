@@ -44,14 +44,15 @@ check:
     cargo deny check all
     RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features
     cargo audit
-    @echo "🔍 Cross-target compile matrix (checksum crate)"
-    RUSTC_WRAPPER= cargo check -p checksum --all-features --target x86_64-unknown-linux-gnu
-    RUSTC_WRAPPER= cargo check -p checksum --all-features --target x86_64-pc-windows-msvc
-    RUSTC_WRAPPER= cargo check -p checksum --all-features --target aarch64-unknown-linux-gnu
-    RUSTC_WRAPPER= cargo check -p checksum --no-default-features
-    RUSTC_WRAPPER= cargo check -p checksum --no-default-features --features alloc
-    RUSTC_WRAPPER= cargo check -p checksum --no-default-features --target wasm32-unknown-unknown
-    RUSTC_WRAPPER= cargo check -p checksum --no-default-features --features alloc --target wasm32-unknown-unknown
+    @echo "🔍 Cross-target compile matrix (platform/backend crates)"
+    RUSTC_WRAPPER= cargo check -p platform --all-features --target x86_64-unknown-linux-gnu
+    RUSTC_WRAPPER= cargo check -p platform --all-features --target x86_64-pc-windows-msvc
+    RUSTC_WRAPPER= cargo check -p platform --all-features --target aarch64-unknown-linux-gnu
+    RUSTC_WRAPPER= cargo check -p platform --no-default-features
+    RUSTC_WRAPPER= cargo check -p platform --no-default-features --target wasm32-unknown-unknown
+    RUSTC_WRAPPER= cargo check -p backend --all-features --target x86_64-unknown-linux-gnu
+    RUSTC_WRAPPER= cargo check -p backend --all-features --target aarch64-unknown-linux-gnu
+    RUSTC_WRAPPER= cargo check -p backend --no-default-features
     @echo "✅ All checks passed!"
 
 # CI checks (no auto-fix, fail-fast)
