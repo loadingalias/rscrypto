@@ -36,16 +36,18 @@
 //! platform::set_caps_override(Some((test_caps, test_tune)));
 //! ```
 
-#[cfg(not(feature = "std"))]
+// AtomicU8 is only used in no_std builds with full atomic support (64-bit atomics + CAS).
+#[cfg(all(not(feature = "std"), target_has_atomic = "64"))]
 use core::sync::atomic::AtomicU8;
 use core::sync::atomic::{AtomicBool, Ordering};
 
-#[cfg(not(feature = "std"))]
+// Arch conversion functions are only needed for no_std with full atomic support.
+#[cfg(all(not(feature = "std"), target_has_atomic = "64"))]
 use crate::caps::Arch;
-use crate::{
-  caps::{Bits256, CpuCaps},
-  tune::Tune,
-};
+// Bits256 is used in cache/override modules (requires 64-bit atomics).
+#[cfg(any(feature = "std", target_has_atomic = "64"))]
+use crate::caps::Bits256;
+use crate::{caps::CpuCaps, tune::Tune};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Cache and Override Infrastructure
@@ -57,8 +59,12 @@ use crate::{
 //
 // The override takes precedence over detection.
 
-/// Cache state for no_std builds.
-#[cfg(not(feature = "std"))]
+/// Cache state for no_std builds with full atomic support.
+///
+/// This module requires 64-bit atomics with CAS operations. For constrained targets
+/// (e.g., thumbv6m-none-eabi) that lack these, we skip caching entirely and always
+/// call `detect_uncached()` - which is fine since these are typically single-core MCUs.
+#[cfg(all(not(feature = "std"), target_has_atomic = "64"))]
 mod cache {
   use core::sync::atomic::AtomicUsize;
 
@@ -193,7 +199,11 @@ static OVERRIDE_SET: AtomicBool = AtomicBool::new(false);
 #[cfg(feature = "std")]
 static OVERRIDE: std::sync::OnceLock<Option<(CpuCaps, Tune)>> = std::sync::OnceLock::new();
 
-#[cfg(not(feature = "std"))]
+/// Override storage for no_std builds with full atomic support.
+///
+/// This module requires 64-bit atomics. For constrained targets, overrides are
+/// not supported (set_caps_override becomes a no-op, get_override returns None).
+#[cfg(all(not(feature = "std"), target_has_atomic = "64"))]
 mod override_storage {
   use super::*;
 
@@ -264,7 +274,8 @@ pub fn set_caps_override(value: Option<(CpuCaps, Tune)>) {
     OVERRIDE_SET.store(value.is_some(), Ordering::Release);
   }
 
-  #[cfg(not(feature = "std"))]
+  // no_std with full atomic support (64-bit atomics + CAS)
+  #[cfg(all(not(feature = "std"), target_has_atomic = "64"))]
   {
     match value {
       Some((caps, tune)) => {
@@ -284,6 +295,12 @@ pub fn set_caps_override(value: Option<(CpuCaps, Tune)>) {
       }
     }
   }
+
+  // Constrained targets without 64-bit atomics: overrides not supported (no-op).
+  #[cfg(all(not(feature = "std"), not(target_has_atomic = "64")))]
+  {
+    let _ = value; // silence unused variable warning
+  }
 }
 
 /// Check if an override is currently set.
@@ -294,17 +311,20 @@ pub fn has_override() -> bool {
 
 /// Get the current override, if any.
 fn get_override() -> Option<(CpuCaps, Tune)> {
-  if !OVERRIDE_SET.load(Ordering::Acquire) {
-    return None;
-  }
-
   #[cfg(feature = "std")]
   {
+    if !OVERRIDE_SET.load(Ordering::Acquire) {
+      return None;
+    }
     OVERRIDE.get().and_then(|v| *v)
   }
 
-  #[cfg(not(feature = "std"))]
+  // no_std with full atomic support (64-bit atomics + CAS)
+  #[cfg(all(not(feature = "std"), target_has_atomic = "64"))]
   {
+    if !OVERRIDE_SET.load(Ordering::Acquire) {
+      return None;
+    }
     let bits = Bits256([
       override_storage::BITS[0].load(Ordering::Acquire),
       override_storage::BITS[1].load(Ordering::Acquire),
@@ -320,6 +340,12 @@ fn get_override() -> Option<(CpuCaps, Tune)> {
       fast_zmm: override_storage::FAST_ZMM.load(Ordering::Acquire),
     };
     Some((caps, tune))
+  }
+
+  // Constrained targets without 64-bit atomics: overrides not supported.
+  #[cfg(all(not(feature = "std"), not(target_has_atomic = "64")))]
+  {
+    None
   }
 }
 
@@ -368,9 +394,17 @@ pub fn get() -> (CpuCaps, Tune) {
       *CACHED.get_or_init(detect_uncached)
     }
 
-    #[cfg(not(feature = "std"))]
+    // no_std with full atomic support: use the cache
+    #[cfg(all(not(feature = "std"), target_has_atomic = "64"))]
     {
       cache::get_or_init(detect_uncached)
+    }
+
+    // Constrained targets without 64-bit atomics: no caching, always detect fresh.
+    // This is fine since these are typically single-core MCUs where caching has no benefit.
+    #[cfg(all(not(feature = "std"), not(target_has_atomic = "64")))]
+    {
+      detect_uncached()
     }
   }
 }
