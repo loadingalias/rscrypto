@@ -11,7 +11,7 @@
 #   OR: just bench-native
 #
 # ============================================================
-# Tier A - Primary Production Targets
+# Tier A - Primary Production Targets (Full SIMD)
 # ============================================================
 
 # Linux x86_64 - Runtime SIMD detection via std::arch
@@ -29,8 +29,11 @@ rustflags = ["-C", "target-feature=+lse"]
 [target.aarch64-apple-darwin]
 rustflags = ["-C", "target-feature=+lse"]
 
+# macOS Intel - Runtime SIMD detection
+[target.x86_64-apple-darwin]
+
 # ============================================================
-# Tier B - Secondary Production Targets
+# Tier B - Secondary Production Targets (Partial SIMD)
 # ============================================================
 
 # Linux x86_64 MUSL - Static linking for containers
@@ -45,14 +48,42 @@ rustflags = ["-C", "target-feature=+lse"]
 rustflags = ["-C", "target-feature=+lse"]
 
 # ============================================================
-# Tier C - Special Purpose Targets
+# Tier C - no_std Targets (Portable fallback only)
 # ============================================================
 
-# WASM - Browser/Edge (table-based fallbacks, no SIMD)
+# WASM - Browser/Edge (table-based fallbacks)
 [target.wasm32-unknown-unknown]
+
+# WASM - WASI (server-side WASM)
+[target.wasm32-wasip1]
 
 # Embedded - Cortex-M0/M0+ (no_std, portable only)
 [target.thumbv6m-none-eabi]
+
+# RISC-V 32-bit (no_std, atomics via 'a' extension)
+[target.riscv32imac-unknown-none-elf]
+
+# ARM64 bare metal (bootloaders, hypervisors, secure enclaves)
+[target.aarch64-unknown-none]
+
+# x86_64 bare metal (kernels, bootloaders, hypervisors)
+[target.x86_64-unknown-none]
+
+# ============================================================
+# Additional Architecture Targets (Future)
+# ============================================================
+
+# RISC-V 64-bit (no_std)
+[target.riscv64gc-unknown-none-elf]
+
+# LoongArch 64-bit
+[target.loongarch64-unknown-linux-gnu]
+
+# IBM s390x
+[target.s390x-unknown-linux-gnu]
+
+# PowerPC64
+[target.powerpc64le-unknown-linux-gnu]
 
 # ============================================================
 # Build Configuration

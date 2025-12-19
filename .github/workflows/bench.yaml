@@ -38,6 +38,12 @@ on:
         type: boolean
         default: false
 
+      run_macos_arm64:
+        description: "Run on macOS ARM64 (Apple Silicon)"
+        required: false
+        type: boolean
+        default: false
+
       specific_benches:
         description: "Specific benchmark binary names (optional, comma-separated)"
         required: false
@@ -87,6 +93,11 @@ jobs:
           - name: aarch64-pc-windows-msvc
             runner: namespace-profile-rscrypto-windows-arm64
             platform-id: windows-arm64
+
+          # macOS ARM64 (GitHub Free Runner - Apple Silicon)
+          - name: aarch64-apple-darwin
+            runner: macos-latest
+            platform-id: macos-arm64
 
     steps:
       # Check if this platform should run (for manual triggers)
@@ -141,6 +152,15 @@ jobs:
                 echo "Windows ARM64 disabled - skipping"
               fi
               ;;
+            "macos-arm64")
+              if [ "${GITHUB_EVENT_INPUTS_RUN_MACOS_ARM64}" == "true" ]; then
+                echo "enabled=true" >> "$GITHUB_OUTPUT"
+                echo "macOS ARM64 enabled by manual trigger"
+              else
+                echo "enabled=false" >> "$GITHUB_OUTPUT"
+                echo "macOS ARM64 disabled - skipping"
+              fi
+              ;;
             *)
               echo "enabled=false" >> "$GITHUB_OUTPUT"
               echo "Unknown platform - skipping"
@@ -151,12 +171,13 @@ jobs:
           GITHUB_EVENT_INPUTS_RUN_LINUX_ARM64: ${{ github.event.inputs.run_linux_arm64 }}
           GITHUB_EVENT_INPUTS_RUN_WINDOWS_X64: ${{ github.event.inputs.run_windows_x64 }}
           GITHUB_EVENT_INPUTS_RUN_WINDOWS_ARM64: ${{ github.event.inputs.run_windows_arm64 }}
+          GITHUB_EVENT_INPUTS_RUN_MACOS_ARM64: ${{ github.event.inputs.run_macos_arm64 }}
 
       - name: Checkout
         if: steps.should-run.outputs.enabled == 'true'
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
         with:
-          fetch-depth: 0 # Required for cargo rail affected (needs git history)
+          fetch-depth: 0  # Required for cargo rail affected (needs git history)
 
       # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
       # Setup: Rust toolchain, performance tools, and caching
@@ -173,7 +194,7 @@ jobs:
 
       - name: Install Rust Toolchain
         if: steps.should-run.outputs.enabled == 'true'
-        uses: dtolnay/rust-toolchain@0b1efabc08b657293548b77fb76cc02d26091c7e # master
+        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561  # master
         with:
           toolchain: ${{ steps.toolchain.outputs.version }}
           components: clippy, rustfmt
@@ -186,13 +207,13 @@ jobs:
 
       - name: Setup Namespace Cache (Linux - instant NVMe cache)
         if: steps.should-run.outputs.enabled == 'true' && runner.os == 'Linux'
-        uses: namespacelabs/nscloud-cache-action@446d8f390563cd54ca27e8de5bdb816f63c0b706 # v1.2.21
+        uses: namespacelabs/nscloud-cache-action@446d8f390563cd54ca27e8de5bdb816f63c0b706  # v1
         with:
           cache: rust
 
       # Compute cache key from runner metadata
       - name: Compute Cache Key
-        if: steps.should-run.outputs.enabled == 'true' && runner.os == 'Windows'
+        if: steps.should-run.outputs.enabled == 'true' && (runner.os == 'Windows' || runner.os == 'macOS')
         id: cache
         shell: bash
         run: |
@@ -200,9 +221,9 @@ jobs:
           ARCH=$(echo "${{ runner.arch }}" | tr '[:upper:]' '[:lower:]')
           echo "key=bench-${OS}-${ARCH}" >> "$GITHUB_OUTPUT"
 
-      - name: Setup Rust Cache (Windows)
-        if: steps.should-run.outputs.enabled == 'true' && runner.os == 'Windows'
-        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
+      - name: Setup Rust Cache (Windows/macOS)
+        if: steps.should-run.outputs.enabled == 'true' && (runner.os == 'Windows' || runner.os == 'macOS')
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5  # v2
         with:
           shared-key: "rscrypto-v1"
           key: ${{ steps.cache.outputs.key }}
@@ -210,28 +231,9 @@ jobs:
 
       - name: Install Benchmarking Tools
         if: steps.should-run.outputs.enabled == 'true'
-        shell: bash
-        run: |
-          # Only install tools that aren't already cached
-          TOOLS="cargo-criterion critcmp just"
-          MISSING=""
-
-          for tool in ${TOOLS}; do
-            if ! command -v "$tool" &> /dev/null; then
-              MISSING="$MISSING $tool"
-              echo "Missing: $tool"
-            else
-              echo "Cached: $tool ($(command -v "$tool"))"
-            fi
-          done
-
-          if [ -n "$MISSING" ]; then
-            echo "Installing:$MISSING"
-            # shellcheck disable=SC2086
-            cargo install ${MISSING} --locked
-          else
-            echo "All benchmarking tools already installed (from cache)"
-          fi
+        uses: taiki-e/install-action@60581cd7025e0e855cebd745379013e286d9c787  # v2
+        with:
+          tool: cargo-criterion,critcmp,just
 
       # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
       # Run Benchmarks
@@ -240,11 +242,9 @@ jobs:
       # Install cargo-rail for scheduled runs (change detection)
       - name: Install cargo-rail (Scheduled runs only)
         if: steps.should-run.outputs.enabled == 'true' && github.event_name == 'schedule'
-        shell: bash
-        run: |
-          echo "Installing cargo-rail for change detection..."
-          cargo install cargo-rail --locked
-          echo "cargo-rail installed"
+        uses: taiki-e/install-action@60581cd7025e0e855cebd745379013e286d9c787  # v2
+        with:
+          tool: cargo-rail
 
       - name: Determine Benchmark Scope
         if: steps.should-run.outputs.enabled == 'true'
@@ -428,7 +428,7 @@ jobs:
 
       - name: Upload Benchmark Results (Console Output)
         if: steps.should-run.outputs.enabled == 'true' && steps.scope.outputs.skip_bench != 'true' && always()
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: benchmark-results-${{ matrix.target.platform-id }}
           path: benchmark-results/
@@ -438,7 +438,7 @@ jobs:
 
       - name: Upload Criterion HTML Report
         if: steps.should-run.outputs.enabled == 'true' && steps.scope.outputs.skip_bench != 'true' && always()
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: criterion-html-${{ matrix.target.platform-id }}
           path: target/criterion/

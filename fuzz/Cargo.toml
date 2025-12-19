@@ -11,7 +11,8 @@ cargo-fuzz = true
 
 [dependencies]
 # Workspace crates to fuzz
-checksum = { path = "../crates/checksum" }
+# checksum = { path = "../crates/checksum" }  # Uncomment when checksum crate exists
+platform = { path = "../crates/platform", features = ["testing"] }
 # hash = { path = "../crates/hash" }  # Uncomment when hash has implementations
 
 # Fuzzing infrastructure
@@ -19,8 +20,8 @@ libfuzzer-sys = "0.4"
 arbitrary = { version = "1", features = ["derive"] }
 
 # For differential fuzzing against reference implementations
-crc32fast = "1.5"
-crc64fast = "1.1"
+# crc32fast = "1.5"  # Uncomment when checksum crate exists
+# crc64fast = "1.1"  # Uncomment when checksum crate exists
 
 # Prevent this from interfering with workspaces
 [workspace]
@@ -30,51 +31,67 @@ members = ["."]
 # Fuzz Targets
 # ============================================================================
 
+# Checksum targets - commented out until checksum crate exists
+# [[bin]]
+# name = "fuzz_crc32c"
+# path = "fuzz_targets/crc32c.rs"
+# test = false
+# doc = false
+# bench = false
+#
+# [[bin]]
+# name = "fuzz_crc32"
+# path = "fuzz_targets/crc32.rs"
+# test = false
+# doc = false
+# bench = false
+#
+# [[bin]]
+# name = "fuzz_crc64"
+# path = "fuzz_targets/crc64.rs"
+# test = false
+# doc = false
+# bench = false
+#
+# [[bin]]
+# name = "fuzz_crc16"
+# path = "fuzz_targets/crc16.rs"
+# test = false
+# doc = false
+# bench = false
+#
+# [[bin]]
+# name = "fuzz_combine"
+# path = "fuzz_targets/combine.rs"
+# test = false
+# doc = false
+# bench = false
+#
+# [[bin]]
+# name = "fuzz_streaming"
+# path = "fuzz_targets/streaming.rs"
+# test = false
+# doc = false
+# bench = false
+#
+# [[bin]]
+# name = "fuzz_differential"
+# path = "fuzz_targets/differential.rs"
+# test = false
+# doc = false
+# bench = false
+
+# Platform crate fuzz targets
 [[bin]]
-name = "fuzz_crc32c"
-path = "fuzz_targets/crc32c.rs"
+name = "fuzz_caps"
+path = "fuzz_targets/caps.rs"
 test = false
 doc = false
 bench = false
 
 [[bin]]
-name = "fuzz_crc32"
-path = "fuzz_targets/crc32.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "fuzz_crc64"
-path = "fuzz_targets/crc64.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "fuzz_crc16"
-path = "fuzz_targets/crc16.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "fuzz_combine"
-path = "fuzz_targets/combine.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "fuzz_streaming"
-path = "fuzz_targets/streaming.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "fuzz_differential"
-path = "fuzz_targets/differential.rs"
+name = "fuzz_caps_ops"
+path = "fuzz_targets/caps_ops.rs"
 test = false
 doc = false
 bench = false

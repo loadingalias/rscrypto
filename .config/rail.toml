@@ -3,21 +3,22 @@
 
 # Targets for multi-platform validation (runs `cargo metadata --filter-platform <target>` per target)
 targets = [
-  # Tier 1 (Guaranteed)
-  "aarch64-apple-darwin",
+  # Tier A: Primary Production Targets (Full SIMD)
+  "x86_64-unknown-linux-gnu",
   "aarch64-unknown-linux-gnu",
   "x86_64-pc-windows-msvc",
-  "x86_64-unknown-linux-gnu",
-  # Tier 2 (Common)
+  "aarch64-apple-darwin",
+  "x86_64-apple-darwin",
+  # Tier B: Secondary Production Targets (Partial SIMD)
+  "x86_64-unknown-linux-musl",
   "aarch64-unknown-linux-musl",
+  "aarch64-pc-windows-msvc",
+  # Tier C: no_std Targets (Portable fallback)
   "wasm32-unknown-unknown",
   "wasm32-wasip1",
-  "x86_64-unknown-linux-musl",
-  # Other
-  "aarch64-pc-windows-msvc",
-  "aarch64-unknown-none",
-  "riscv32imac-unknown-none-elf",
   "thumbv6m-none-eabi",
+  "riscv32imac-unknown-none-elf",
+  "aarch64-unknown-none",
   "x86_64-unknown-none",
 ]
 
@@ -48,6 +49,7 @@ exclude = []
 include = []
 max_backups = 3
 sort_dependencies = true  # Sort deps alphabetically (default: true)
+enforce_msrv_inheritance = false  # Ensure members inherit workspace rust-version
 
 
 [release]

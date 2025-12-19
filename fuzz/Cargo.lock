@@ -30,29 +30,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
-name = "checksum"
-version = "0.1.0"
-dependencies = [
- "platform",
- "traits",
-]
-
-[[package]]
-name = "crc32fast"
-version = "1.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9481c1c90cbf2ac953f07c8d4a58aa3945c425b7185c9154d67a65e4230da511"
-dependencies = [
- "cfg-if",
-]
-
-[[package]]
-name = "crc64fast"
-version = "1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "26bb92ecea20291efcf0009e2713d64b7e327dedb8ce780545250f24075429e2"
-
-[[package]]
 name = "derive_arbitrary"
 version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -140,10 +117,8 @@ name = "rscrypto-fuzz"
 version = "0.0.0"
 dependencies = [
  "arbitrary",
- "checksum",
- "crc32fast",
- "crc64fast",
  "libfuzzer-sys",
+ "platform",
 ]
 
 [[package]]
@@ -162,10 +137,6 @@ dependencies = [
  "quote",
  "unicode-ident",
 ]
-
-[[package]]
-name = "traits"
-version = "0.1.0"
 
 [[package]]
 name = "unicode-ident"

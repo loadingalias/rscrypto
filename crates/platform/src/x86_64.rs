@@ -439,19 +439,20 @@ fn detect_amd(family: u32, model: u32) -> MicroArch {
 }
 
 /// Fall back to feature detection when microarch is unknown.
+///
+/// Uses the centralized `platform::caps()` detection (which is cached)
+/// instead of individual `is_x86_feature_detected!` macro calls.
 #[cfg(feature = "std")]
 #[inline]
 fn detect_by_features() -> MicroArch {
-  let has_vpclmulqdq = std::arch::is_x86_feature_detected!("vpclmulqdq")
-    && std::arch::is_x86_feature_detected!("avx512f")
-    && std::arch::is_x86_feature_detected!("avx512vl")
-    && std::arch::is_x86_feature_detected!("avx512bw");
+  use crate::caps::x86;
 
-  let has_pclmulqdq = std::arch::is_x86_feature_detected!("pclmulqdq") && std::arch::is_x86_feature_detected!("ssse3");
+  // Reuse cached detection instead of 6 separate macro calls
+  let caps = crate::caps();
 
-  if has_vpclmulqdq {
+  if caps.has(x86::VPCLMUL_READY) {
     MicroArch::GenericAvx512Vpclmul
-  } else if has_pclmulqdq {
+  } else if caps.has(x86::PCLMUL_READY) {
     MicroArch::GenericPclmul
   } else {
     MicroArch::Generic

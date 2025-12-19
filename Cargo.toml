@@ -18,7 +18,11 @@ repository = "https://github.com/loadingalias/rscrypto"
 unsafe_code = "deny"
 dangling_pointers_from_locals = "deny"
 integer_to_ptr_transmutes = "deny"
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(miri)'] }
+# Allow miri cfg and x86 target features not yet stabilized in rustc's check-cfg
+unexpected_cfgs = { level = "warn", check-cfg = [
+  'cfg(miri)',
+  'cfg(target_feature, values("movdiri", "movdir64b", "serialize"))',
+] }
 
 [workspace.lints.clippy]
 correctness = { level = "deny", priority = -1 }

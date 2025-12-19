@@ -34,11 +34,13 @@ jobs:
       count: ${{ steps.rail.outputs.count }}
       docs-only: ${{ steps.rail.outputs.docs-only }}
       rebuild-all: ${{ steps.rail.outputs.rebuild-all }}
+      cargo-args: ${{ steps.rail.outputs.cargo-args }}
+      matrix: ${{ steps.rail.outputs.matrix }}
     steps:
       - name: Checkout
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
         with:
-          fetch-depth: 0
+          fetch-depth: 0  # Required for change detection
 
       - name: Detect Changes
         id: rail
@@ -47,10 +49,10 @@ jobs:
           since: ${{ github.event.before }}
 
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # Core Platform Testing
+  # Core Platform Testing (GitHub Free Runners)
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   # Full CI on all platforms: quality checks, build, and test
-  # x86_64: GitHub runners | ARM64: Namespace runners (private repo support)
+  # Uses GitHub free runners wherever possible
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   ci:
     name: CI (${{ matrix.target.name }})
@@ -67,26 +69,47 @@ jobs:
       matrix:
         target:
           # ─────────────────────────────────────────────────────────────────────
-          # Linux (x86_64 + ARM64)
+          # Linux (GitHub Free Runners)
           # ─────────────────────────────────────────────────────────────────────
           - name: x86_64-unknown-linux-gnu
             runner: ubuntu-latest
-
-          - name: aarch64-unknown-linux-gnu
-            runner: namespace-profile-rscrypto-linux-arm64
+            tier: a
 
           # ─────────────────────────────────────────────────────────────────────
-          # Windows (x86_64 + ARM64)
+          # Linux ARM64 (Namespace Runners - no free GitHub ARM runners)
+          # ─────────────────────────────────────────────────────────────────────
+          - name: aarch64-unknown-linux-gnu
+            runner: namespace-profile-rscrypto-linux-arm64
+            tier: a
+
+          # ─────────────────────────────────────────────────────────────────────
+          # macOS (GitHub Free Runners)
+          # ─────────────────────────────────────────────────────────────────────
+          - name: aarch64-apple-darwin
+            runner: macos-latest  # Apple Silicon (M1)
+            tier: a
+
+          - name: x86_64-apple-darwin
+            runner: macos-13  # Intel Mac
+            tier: b
+
+          # ─────────────────────────────────────────────────────────────────────
+          # Windows (GitHub Free Runners)
           # ─────────────────────────────────────────────────────────────────────
           - name: x86_64-pc-windows-msvc
             runner: windows-latest
+            tier: a
 
+          # ─────────────────────────────────────────────────────────────────────
+          # Windows ARM64 (Namespace Runners - no free GitHub ARM runners)
+          # ─────────────────────────────────────────────────────────────────────
           - name: aarch64-pc-windows-msvc
             runner: namespace-profile-rscrypto-windows-arm64
+            tier: b
 
     steps:
       - name: Checkout
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
         with:
           fetch-depth: 0  # Required for cargo rail affected (needs git history)
 
@@ -139,6 +162,8 @@ jobs:
   # Strategic target selection:
   #   - thumbv6m-none-eabi: Smallest Cortex-M (M0/M0+), if this works, M3/M4/M7/M33 work
   #   - riscv32imac-unknown-none-elf: RISC-V 32-bit, different ISA coverage
+  #   - aarch64-unknown-none: ARM64 bare metal
+  #   - x86_64-unknown-none: x86_64 bare metal
   #
   # These can't run tests (no OS), but cargo check/build verifies:
   #   - no_std compatibility
@@ -170,7 +195,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
 
       # Install Rust toolchain (reads version from rust-toolchain.toml)
       - name: Read Toolchain Version
@@ -180,7 +205,7 @@ jobs:
           echo "version=$TOOLCHAIN" >> "$GITHUB_OUTPUT"
 
       - name: Install Rust Toolchain
-        uses: dtolnay/rust-toolchain@0b1efabc08b657293548b77fb76cc02d26091c7e  # master
+        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561  # master
         with:
           toolchain: ${{ steps.toolchain.outputs.version }}
 
@@ -189,7 +214,7 @@ jobs:
         run: rustup target add ${{ matrix.target }}
 
       - name: Setup Rust Cache
-        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1  # v2.8.1
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5  # v2
         with:
           shared-key: "rscrypto-v1"
           key: no-std-${{ matrix.target }}
@@ -245,7 +270,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
 
       # Install Rust toolchain (reads version from rust-toolchain.toml)
       - name: Read Toolchain Version
@@ -255,7 +280,7 @@ jobs:
           echo "version=$TOOLCHAIN" >> "$GITHUB_OUTPUT"
 
       - name: Install Rust Toolchain
-        uses: dtolnay/rust-toolchain@0b1efabc08b657293548b77fb76cc02d26091c7e  # master
+        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561  # master
         with:
           toolchain: ${{ steps.toolchain.outputs.version }}
 
@@ -264,7 +289,7 @@ jobs:
         run: rustup target add ${{ matrix.target }}
 
       - name: Setup Rust Cache
-        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1  # v2.8.1
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5  # v2
         with:
           shared-key: "rscrypto-v1"
           key: wasm-${{ matrix.target }}

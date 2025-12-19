@@ -7,9 +7,9 @@
 //! # Example
 //!
 //! ```ignore
-//! use backend::caps::{CpuCaps, Bits256, x86, aarch64};
+//! use backend::caps::{Caps, x86, aarch64};
 //!
-//! fn select_kernel(caps: CpuCaps) {
+//! fn select_kernel(caps: Caps) {
 //!     if caps.has(x86::VPCLMUL_READY) {
 //!         // Use AVX-512 VPCLMULQDQ kernel
 //!     } else if caps.has(x86::PCLMUL_READY) {
@@ -19,7 +19,7 @@
 //! ```
 
 // Re-export core types
-pub use platform::caps::{Arch, Bits256, CpuCaps};
+pub use platform::caps::{Arch, Caps};
 
 // Re-export x86 feature constants
 pub mod x86 {

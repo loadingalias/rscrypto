@@ -17,7 +17,81 @@
 //! 2. **Runtime selection** (cached): For generic binaries, the dispatcher detects CPU features
 //!    once and caches the selected kernel. Subsequent calls are a single indirect call.
 
-use platform::{Bits256, CpuCaps};
+use platform::Caps;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Candidate List Macro
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Creates a static slice of [`Candidate`]s with concise syntax.
+///
+/// This macro reduces boilerplate when defining kernel candidate lists for dispatch.
+/// Each entry specifies a name, required capabilities, and the kernel function.
+///
+/// # Syntax
+///
+/// ```text
+/// candidates![
+///     "name" => CAPS_EXPR => kernel_fn,
+///     ...
+/// ]
+/// ```
+///
+/// # Example
+///
+/// ```ignore
+/// use backend::dispatch::{candidates, Candidate, select};
+/// use backend::caps::{Caps, x86};
+///
+/// fn select_crc32c() -> Selected<fn(u32, &[u8]) -> u32> {
+///     let caps = platform::caps();
+///     select(caps, candidates![
+///         "x86_64/vpclmul" => x86::VPCLMUL_READY => vpclmul_kernel,
+///         "x86_64/pclmul"  => x86::PCLMUL_READY  => pclmul_kernel,
+///         "portable"       => Caps::NONE         => portable_kernel,
+///     ])
+/// }
+/// ```
+///
+/// # Notes
+///
+/// - Trailing commas are optional
+/// - The last candidate should typically have `Caps::NONE` as a portable fallback
+/// - The macro expands to `&[Candidate::new(...), ...]`
+///
+/// # Type Inference
+///
+/// The macro coerces function items to function pointers using `as _`. This means
+/// type information must be recoverable from context. When using with [`select()`]
+/// directly, you'll need a type annotation on the result:
+///
+/// ```ignore
+/// // This works - type flows from the annotation
+/// let selected: Selected<Crc32Fn> = select(caps, candidates![...]);
+///
+/// // This also works - type flows from the variable
+/// let list: &[Candidate<Crc32Fn>] = candidates![...];
+/// let selected = select(caps, list);
+/// ```
+#[macro_export]
+macro_rules! candidates {
+  // Match one or more: name => caps => func, with optional trailing comma
+  //
+  // Note: We use `$func as _` to coerce function items to function pointers.
+  // This is necessary because each fn item in Rust has a unique zero-sized type,
+  // even if they share the same signature. Without coercion, the array literal
+  // would fail to compile when mixing different functions.
+  [ $( $name:literal => $caps:expr => $func:expr ),+ $(,)? ] => {
+    &[
+      $(
+        $crate::dispatch::Candidate::new($name, $caps, $func as _),
+      )+
+    ]
+  };
+}
+
+// Re-export at crate root for ergonomic imports
+pub use candidates;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Core Types
@@ -32,7 +106,7 @@ pub struct Candidate<F> {
   /// Human-readable name for diagnostics (e.g., "x86_64/vpclmul").
   pub name: &'static str,
   /// Required CPU capabilities. Must be a subset of detected caps.
-  pub requires: Bits256,
+  pub requires: Caps,
   /// The kernel function pointer.
   pub func: F,
 }
@@ -41,7 +115,7 @@ impl<F> Candidate<F> {
   /// Create a new candidate.
   #[inline]
   #[must_use]
-  pub const fn new(name: &'static str, requires: Bits256, func: F) -> Self {
+  pub const fn new(name: &'static str, requires: Caps, func: F) -> Self {
     Self { name, requires, func }
   }
 }
@@ -68,10 +142,10 @@ impl<F> Selected<F> {
 ///
 /// Returns the first candidate whose `requires` is satisfied by `caps`.
 /// Panics if no candidate matches (the last candidate should always have
-/// `requires = Bits256::NONE` as a fallback).
+/// `requires = Caps::NONE` as a fallback).
 #[inline(always)]
 #[must_use]
-pub fn select<F: Copy>(caps: CpuCaps, candidates: &[Candidate<F>]) -> Selected<F> {
+pub fn select<F: Copy>(caps: Caps, candidates: &[Candidate<F>]) -> Selected<F> {
   for candidate in candidates {
     if caps.has(candidate.requires) {
       return Selected::new(candidate.name, candidate.func);
@@ -143,33 +217,85 @@ macro_rules! define_dispatcher {
         {
           use core::sync::atomic::Ordering;
 
+          // Sentinel value indicating initialization in progress
+          const INIT_SENTINEL: usize = 1;
+
           let func_ptr = self.func.load(Ordering::Acquire);
           if func_ptr.is_null() {
-            let selected = (self.selector)();
-            self.func.store(selected.func as *mut (), Ordering::Release);
-            self.name_ptr.store(selected.name.as_ptr() as *mut u8, Ordering::Release);
-            self.name_len.store(selected.name.len(), Ordering::Release);
-            selected
-          } else {
-            // SAFETY: func_ptr was stored from a valid function pointer of type $fn_ty
-            #[allow(unsafe_code)]
-            let func: $fn_ty = unsafe { core::mem::transmute(func_ptr) };
-
-            let name_ptr = self.name_ptr.load(Ordering::Acquire);
-            let name_len = self.name_len.load(Ordering::Acquire);
-
-            let name = if name_ptr.is_null() || name_len == 0 {
-              "unknown"
-            } else {
-              // SAFETY: name_ptr and name_len were stored from a valid &'static str
-              #[allow(unsafe_code)]
-              unsafe {
-                core::str::from_utf8_unchecked(core::slice::from_raw_parts(name_ptr, name_len))
+            // Try to claim initialization using CAS
+            match self.func.compare_exchange(
+              core::ptr::null_mut(),
+              INIT_SENTINEL as *mut (),
+              Ordering::AcqRel,
+              Ordering::Acquire,
+            ) {
+              Ok(_) => {
+                // We won the race - perform initialization
+                let selected = (self.selector)();
+                self.name_ptr.store(selected.name.as_ptr() as *mut u8, Ordering::Release);
+                self.name_len.store(selected.name.len(), Ordering::Release);
+                // Store func last as it signals completion
+                self.func.store(selected.func as *mut (), Ordering::Release);
+                selected
               }
-            };
-            Selected { name, func }
+              Err(_) => {
+                // Another thread is initializing - wait for completion
+                let mut func_ptr = self.func.load(Ordering::Acquire);
+                while func_ptr as usize == INIT_SENTINEL {
+                  core::hint::spin_loop();
+                  func_ptr = self.func.load(Ordering::Acquire);
+                }
+                Self::load_selected(&self.func, &self.name_ptr, &self.name_len)
+              }
+            }
+          } else if func_ptr as usize == INIT_SENTINEL {
+            // Another thread is initializing - wait for completion
+            let mut func_ptr = self.func.load(Ordering::Acquire);
+            while func_ptr as usize == INIT_SENTINEL {
+              core::hint::spin_loop();
+              func_ptr = self.func.load(Ordering::Acquire);
+            }
+            Self::load_selected(&self.func, &self.name_ptr, &self.name_len)
+          } else {
+            Self::load_selected(&self.func, &self.name_ptr, &self.name_len)
           }
         }
+      }
+
+      #[cfg(not(feature = "std"))]
+      #[inline]
+      fn load_selected(
+        func: &core::sync::atomic::AtomicPtr<()>,
+        name_ptr: &core::sync::atomic::AtomicPtr<u8>,
+        name_len: &core::sync::atomic::AtomicUsize,
+      ) -> Selected<$fn_ty> {
+        use core::sync::atomic::Ordering;
+
+        let func_ptr = func.load(Ordering::Acquire);
+        // SAFETY: This transmute from `*mut ()` to `$fn_ty` (a function pointer) is sound because:
+        // 1. The pointer was originally a valid function pointer of type `$fn_ty`, cast to `*mut ()`
+        //    and stored via `store(selected.func as *mut (), ...)` on line 164.
+        // 2. Function pointers and raw pointers have the same size and alignment on all platforms
+        //    Rust supports (both are pointer-sized).
+        // 3. The Acquire ordering ensures we see the store that wrote this pointer, guaranteeing
+        //    it's not the null sentinel (checked above) or the INIT_SENTINEL (spin-waited above).
+        // 4. The function pointer remains valid for the program's lifetime ('static).
+        #[allow(unsafe_code)]
+        let func: $fn_ty = unsafe { core::mem::transmute(func_ptr) };
+
+        let ptr = name_ptr.load(Ordering::Acquire);
+        let len = name_len.load(Ordering::Acquire);
+
+        let name = if ptr.is_null() || len == 0 {
+          "unknown"
+        } else {
+          // SAFETY: name_ptr and name_len were stored from a valid &'static str
+          #[allow(unsafe_code)]
+          unsafe {
+            core::str::from_utf8_unchecked(core::slice::from_raw_parts(ptr, len))
+          }
+        };
+        Selected { name, func }
       }
 
       /// Get the name of the selected backend.
@@ -291,17 +417,17 @@ mod tests {
 
   #[test]
   fn test_candidate_creation() {
-    let c: Candidate<Crc32Fn> = Candidate::new("test", Bits256::NONE, portable_crc32);
+    let c: Candidate<Crc32Fn> = Candidate::new("test", Caps::NONE, portable_crc32);
     assert_eq!(c.name, "test");
-    assert_eq!(c.requires, Bits256::NONE);
+    assert_eq!(c.requires, Caps::NONE);
   }
 
   #[test]
   fn test_select_portable_fallback() {
-    let caps = CpuCaps::NONE;
+    let caps = Caps::NONE;
     let candidates: &[Candidate<Crc32Fn>] = &[
-      Candidate::new("fast", Bits256::from_bit(0), fast_crc32),
-      Candidate::new("portable", Bits256::NONE, portable_crc32),
+      Candidate::new("fast", Caps::bit(0), fast_crc32),
+      Candidate::new("portable", Caps::NONE, portable_crc32),
     ];
     let selected = select(caps, candidates);
     assert_eq!(selected.name, "portable");
@@ -309,10 +435,10 @@ mod tests {
 
   #[test]
   fn test_select_best_match() {
-    let caps = CpuCaps::new(Bits256::from_bit(0));
+    let caps = Caps::bit(0);
     let candidates: &[Candidate<Crc32Fn>] = &[
-      Candidate::new("fast", Bits256::from_bit(0), fast_crc32),
-      Candidate::new("portable", Bits256::NONE, portable_crc32),
+      Candidate::new("fast", Caps::bit(0), fast_crc32),
+      Candidate::new("portable", Caps::NONE, portable_crc32),
     ];
     let selected = select(caps, candidates);
     assert_eq!(selected.name, "fast");
@@ -320,11 +446,11 @@ mod tests {
 
   #[test]
   fn test_select_first_match_wins() {
-    let caps = CpuCaps::new(Bits256::from_bit(0).union(Bits256::from_bit(1)));
+    let caps = Caps::bit(0).union(Caps::bit(1));
     let candidates: &[Candidate<Crc32Fn>] = &[
-      Candidate::new("first", Bits256::from_bit(0), fast_crc32),
-      Candidate::new("second", Bits256::from_bit(1), fastest_crc32),
-      Candidate::new("portable", Bits256::NONE, portable_crc32),
+      Candidate::new("first", Caps::bit(0), fast_crc32),
+      Candidate::new("second", Caps::bit(1), fastest_crc32),
+      Candidate::new("portable", Caps::NONE, portable_crc32),
     ];
     let selected = select(caps, candidates);
     assert_eq!(selected.name, "first");
@@ -333,8 +459,8 @@ mod tests {
   #[test]
   #[should_panic(expected = "No matching kernel found")]
   fn test_select_no_fallback_panics() {
-    let caps = CpuCaps::NONE;
-    let candidates: &[Candidate<Crc32Fn>] = &[Candidate::new("needs_bit0", Bits256::from_bit(0), fast_crc32)];
+    let caps = Caps::NONE;
+    let candidates: &[Candidate<Crc32Fn>] = &[Candidate::new("needs_bit0", Caps::bit(0), fast_crc32)];
     let _ = select(caps, candidates);
   }
 
@@ -420,6 +546,221 @@ mod tests {
       static DISPATCH: GenericDispatcher<HashFn> = GenericDispatcher::new(hash_selector);
       assert_eq!(DISPATCH.get().name, "test_hash");
       assert_eq!(DISPATCH.backend_name(), "test_hash");
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // candidates! Macro Tests
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  mod candidates_macro_tests {
+    use super::*;
+
+    // ─── Basic Usage ───
+
+    #[test]
+    fn test_candidates_macro_basic() {
+      let list: &[Candidate<Crc32Fn>] = candidates![
+        "fast" => Caps::bit(0) => fast_crc32,
+        "portable" => Caps::NONE => portable_crc32,
+      ];
+
+      assert_eq!(list.len(), 2);
+      assert_eq!(list[0].name, "fast");
+      assert_eq!(list[0].requires, Caps::bit(0));
+      assert_eq!(list[1].name, "portable");
+      assert_eq!(list[1].requires, Caps::NONE);
+    }
+
+    #[test]
+    fn test_candidates_macro_single_entry() {
+      let list: &[Candidate<Crc32Fn>] = candidates![
+        "only" => Caps::NONE => portable_crc32,
+      ];
+
+      assert_eq!(list.len(), 1);
+      assert_eq!(list[0].name, "only");
+    }
+
+    #[test]
+    fn test_candidates_macro_three_entries() {
+      let list: &[Candidate<Crc32Fn>] = candidates![
+        "fastest" => Caps::bit(1) => fastest_crc32,
+        "fast" => Caps::bit(0) => fast_crc32,
+        "portable" => Caps::NONE => portable_crc32,
+      ];
+
+      assert_eq!(list.len(), 3);
+      assert_eq!(list[0].name, "fastest");
+      assert_eq!(list[1].name, "fast");
+      assert_eq!(list[2].name, "portable");
+    }
+
+    // ─── Trailing Comma Handling ───
+
+    #[test]
+    fn test_candidates_macro_trailing_comma() {
+      // With trailing comma
+      let with_trailing: &[Candidate<Crc32Fn>] = candidates![
+        "a" => Caps::NONE => portable_crc32,
+        "b" => Caps::NONE => portable_crc32,
+      ];
+
+      // Without trailing comma
+      let without_trailing: &[Candidate<Crc32Fn>] = candidates![
+        "a" => Caps::NONE => portable_crc32,
+        "b" => Caps::NONE => portable_crc32
+      ];
+
+      assert_eq!(with_trailing.len(), without_trailing.len());
+    }
+
+    #[test]
+    fn test_candidates_macro_single_no_trailing() {
+      let list: &[Candidate<Crc32Fn>] = candidates![
+        "only" => Caps::NONE => portable_crc32
+      ];
+      assert_eq!(list.len(), 1);
+    }
+
+    // ─── Integration with select() ───
+
+    #[test]
+    fn test_candidates_macro_with_select_fallback() {
+      let caps = Caps::NONE;
+      let selected: Selected<Crc32Fn> = select(
+        caps,
+        candidates![
+          "fast" => Caps::bit(0) => fast_crc32,
+          "portable" => Caps::NONE => portable_crc32,
+        ],
+      );
+
+      assert_eq!(selected.name, "portable");
+      assert_eq!((selected.func)(0, &[]), 0xDEADBEEF);
+    }
+
+    #[test]
+    fn test_candidates_macro_with_select_match() {
+      let caps = Caps::bit(0);
+      let selected: Selected<Crc32Fn> = select(
+        caps,
+        candidates![
+          "fast" => Caps::bit(0) => fast_crc32,
+          "portable" => Caps::NONE => portable_crc32,
+        ],
+      );
+
+      assert_eq!(selected.name, "fast");
+      assert_eq!((selected.func)(0, &[]), 0xCAFEBABE);
+    }
+
+    #[test]
+    fn test_candidates_macro_with_select_priority() {
+      // When multiple candidates match, first one wins
+      let caps = Caps::bit(0) | Caps::bit(1);
+      let selected: Selected<Crc32Fn> = select(
+        caps,
+        candidates![
+          "first" => Caps::bit(0) => fast_crc32,
+          "second" => Caps::bit(1) => fastest_crc32,
+          "portable" => Caps::NONE => portable_crc32,
+        ],
+      );
+
+      assert_eq!(selected.name, "first");
+    }
+
+    // ─── Different Function Signatures ───
+
+    #[test]
+    fn test_candidates_macro_crc64() {
+      let list: &[Candidate<Crc64Fn>] = candidates![
+        "fast64" => Caps::bit(0) => portable_crc64,
+        "portable64" => Caps::NONE => portable_crc64,
+      ];
+
+      assert_eq!(list.len(), 2);
+      assert_eq!(list[0].name, "fast64");
+    }
+
+    #[test]
+    fn test_candidates_macro_custom_signature() {
+      type CustomFn = fn(u128) -> u128;
+
+      fn custom_impl(x: u128) -> u128 {
+        x.wrapping_mul(2)
+      }
+
+      let list: &[Candidate<CustomFn>] = candidates![
+        "custom" => Caps::NONE => custom_impl,
+      ];
+
+      assert_eq!(list.len(), 1);
+      assert_eq!((list[0].func)(21), 42);
+    }
+
+    // ─── Complex Caps Expressions ───
+
+    #[test]
+    fn test_candidates_macro_complex_caps() {
+      let combined = Caps::bit(0) | Caps::bit(1);
+      let list: &[Candidate<Crc32Fn>] = candidates![
+        "needs_both" => combined => fast_crc32,
+        "needs_one" => Caps::bit(0) => fast_crc32,
+        "portable" => Caps::NONE => portable_crc32,
+      ];
+
+      assert_eq!(list.len(), 3);
+      assert!(list[0].requires.has(Caps::bit(0)));
+      assert!(list[0].requires.has(Caps::bit(1)));
+    }
+
+    #[test]
+    fn test_candidates_macro_with_union_inline() {
+      let list: &[Candidate<Crc32Fn>] = candidates![
+        "combined" => Caps::bit(0).union(Caps::bit(1)) => fast_crc32,
+        "portable" => Caps::NONE => portable_crc32,
+      ];
+
+      assert_eq!(list[0].requires.count(), 2);
+    }
+
+    // ─── Naming Conventions ───
+
+    #[test]
+    fn test_candidates_macro_path_style_names() {
+      let list: &[Candidate<Crc32Fn>] = candidates![
+        "x86_64/vpclmul" => Caps::bit(0) => fast_crc32,
+        "x86_64/pclmul" => Caps::bit(1) => fast_crc32,
+        "aarch64/pmull" => Caps::bit(64) => fast_crc32,
+        "portable" => Caps::NONE => portable_crc32,
+      ];
+
+      assert_eq!(list[0].name, "x86_64/vpclmul");
+      assert_eq!(list[1].name, "x86_64/pclmul");
+      assert_eq!(list[2].name, "aarch64/pmull");
+      assert_eq!(list[3].name, "portable");
+    }
+
+    // ─── Static Context ───
+
+    #[test]
+    fn test_candidates_macro_in_static_context() {
+      fn make_selector() -> Selected<Crc32Fn> {
+        select(
+          Caps::NONE,
+          candidates![
+            "fast" => Caps::bit(0) => fast_crc32,
+            "portable" => Caps::NONE => portable_crc32,
+          ],
+        )
+      }
+
+      static DISPATCHER: Crc32Dispatcher = Crc32Dispatcher::new(make_selector);
+
+      let selected = DISPATCHER.get();
+      assert_eq!(selected.name, "portable");
     }
   }
 }

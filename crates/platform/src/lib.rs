@@ -1,46 +1,74 @@
-//! CPU detection, capabilities, and tuning for rscrypto.
+//! CPU detection, capabilities, and tuning for maximum performance.
 //!
-//! This crate is the **single source of truth** for CPU feature detection
-//! and optimal algorithm selection across the rscrypto workspace.
+//! Unified platform abstraction for rscrypto: detects CPU features, selects optimal
+//! algorithms, and provides microarchitecture-specific tuning—all from a single API.
 //!
-//! # Core Types
+//! # Quick Start
 //!
-//! - [`CpuCaps`]: What instructions can run on this machine (capabilities)
-//! - [`Tune`]: What strategies are optimal on this machine (tuning hints)
+//! ```
+//! use platform::{Caps, Tune, dispatch_auto};
 //!
-//! # Main Entry Point
-//!
-//! ```ignore
-//! use platform::{get, caps, tune};
-//!
-//! let (caps, tune) = get();
-//!
-//! // Check capabilities
-//! if caps.has(platform::caps::x86::VPCLMUL_READY) {
-//!     // Use AVX-512 VPCLMULQDQ kernel
-//! }
-//!
-//! // Check tuning
-//! if data.len() < tune.simd_threshold {
-//!     // Use scalar/small-buffer path
-//! }
+//! // Automatic dispatch: zero-overhead when compiled with target features,
+//! // runtime detection otherwise
+//! let result = dispatch_auto(|caps, tune| {
+//!   // `caps` tells you what's possible (which instructions exist)
+//!   // `tune` tells you what's optimal (thresholds, strategies)
+//!   assert!(tune.simd_threshold > 0);
+//!   assert!(tune.cache_line >= 32);
+//!   caps.count() // returns number of detected features
+//! });
+//! assert!(result >= 1); // At least one feature detected
 //! ```
 //!
-//! # Architecture-Specific Modules
+//! # Three Dispatch Modes
 //!
-//! - `x86_64`: Intel/AMD microarchitecture detection (Zen, SPR, ICL, etc.)
-//! - `aarch64`: ARM feature detection (PMULL, CRC, SHA3, etc.)
+//! | Function | When to Use | Overhead |
+//! |----------|-------------|----------|
+//! | [`dispatch_static`] | Compiled with `-C target-cpu=native` | Zero |
+//! | [`dispatch()`] | Generic binary, need runtime detection | Nanoseconds (cached) |
+//! | [`dispatch_auto`] | Best of both: static when possible, runtime fallback | Optimal |
 //!
-//! # Design Philosophy
+//! # For Checksum/Hash Implementations
 //!
-//! 1. **One API**: Algorithms query `platform::get()` instead of doing ad-hoc detection.
-//! 2. **Capabilities vs Tuning**: `CpuCaps` says what's *possible*; `Tune` says what's *optimal*.
-//! 3. **Zero-cost when possible**: Compile-time features are detected via `cfg!`, avoiding runtime
-//!    overhead.
-//! 4. **Cached otherwise**: Runtime detection is cached in `OnceLock` (std) or atomics (no_std).
-//! 5. **Miri-safe**: Under Miri, always returns portable-only caps.
+//! ```
+//! # #[cfg(target_arch = "aarch64")]
+//! # fn example() {
+//! use platform::{Caps, Tune, caps::aarch64, dispatch_auto};
 //!
-//! // Fallibility discipline: deny unwrap/expect in production, allow in tests.
+//! fn crc32c(crc: u32, data: &[u8]) -> u32 {
+//!   dispatch_auto(|caps, tune| {
+//!     // Use tuning to decide scalar vs SIMD threshold
+//!     if data.len() < tune.simd_threshold {
+//!       scalar_crc32c(crc, data)
+//!     }
+//!     // Use caps to select best available kernel
+//!     else if caps.has(aarch64::PMULL_EOR3_READY) {
+//!       pmull_eor3_kernel(crc, data) // Apple M1+, Graviton3+
+//!     } else if caps.has(aarch64::AES) {
+//!       pmull_kernel(crc, data) // Most ARMv8
+//!     } else {
+//!       scalar_crc32c(crc, data) // Fallback
+//!     }
+//!   })
+//! }
+//! # fn scalar_crc32c(_: u32, _: &[u8]) -> u32 { 0 }
+//! # fn pmull_eor3_kernel(_: u32, _: &[u8]) -> u32 { 0 }
+//! # fn pmull_kernel(_: u32, _: &[u8]) -> u32 { 0 }
+//! # }
+//! ```
+//!
+//! # Design
+//!
+//! - **[`Caps`]**: 256-bit feature bitset. "What instructions can run?"
+//! - **[`Tune`]**: Microarchitecture hints. "What thresholds/strategies are optimal?"
+//! - **[`caps_static`]**: Compile-time detection via `cfg!()`. Zero overhead.
+//! - **[`caps()`]**: Runtime detection via CPUID/HWCAP. Cached in `OnceLock`.
+//!
+//! # Performance
+//!
+//! - Compile-time path: **0ns** (eliminated by optimizer)
+//! - Runtime path: **~3ns** (atomic load of cached `Detected`)
+//! - First detection: **~1μs** (CPUID/sysctl, happens once)
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 #![cfg_attr(not(test), deny(clippy::expect_used))]
 #![cfg_attr(not(test), deny(clippy::indexing_slicing))]
@@ -54,56 +82,38 @@ extern crate std;
 // ─────────────────────────────────────────────────────────────────────────────
 
 pub mod caps;
-mod detect;
+pub mod detect;
+pub mod dispatch;
 pub mod tune;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Architecture-specific modules
+// Public API - Types
 // ─────────────────────────────────────────────────────────────────────────────
 
-#[cfg(target_arch = "x86_64")]
-pub mod x86_64;
-
-#[cfg(target_arch = "aarch64")]
-pub mod aarch64;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Public API
-// ─────────────────────────────────────────────────────────────────────────────
-
-pub use caps::{Arch, Bits256, CpuCaps};
+pub use caps::{Arch, Caps};
+pub use detect::Detected;
+pub use dispatch::{dispatch, dispatch_auto, dispatch_static, has_static_features};
 pub use tune::{Tune, TuneKind};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Public API - Functions
+// ─────────────────────────────────────────────────────────────────────────────
 
 /// Get detected CPU capabilities and tuning hints.
 ///
-/// This is the main entry point for capability-based dispatch.
-///
-/// # Caching
-///
-/// - With `std`: Results are cached in a `OnceLock` (one-time detection).
-/// - Without `std`: Detection runs each call (fast, ~100 cycles for CPUID).
-///
-/// # Miri
-///
-/// Under Miri, always returns portable-only capabilities to avoid
-/// interpreting SIMD intrinsics.
+/// This is the main entry point. Results are cached after first call.
 ///
 /// # Example
 ///
 /// ```ignore
-/// let (caps, tune) = platform::get();
-///
-/// if caps.has(platform::caps::x86::VPCLMUL_READY) {
+/// let det = platform::get();
+/// if det.caps.has(platform::caps::x86::VPCLMUL_READY) {
 ///     // Use AVX-512 VPCLMULQDQ kernel
-/// }
-///
-/// if data.len() < tune.simd_threshold {
-///     // Use scalar path for small buffers
 /// }
 /// ```
 #[inline]
 #[must_use]
-pub fn get() -> (CpuCaps, Tune) {
+pub fn get() -> Detected {
   detect::get()
 }
 
@@ -112,7 +122,7 @@ pub fn get() -> (CpuCaps, Tune) {
 /// Convenience wrapper around [`get()`].
 #[inline]
 #[must_use]
-pub fn caps() -> CpuCaps {
+pub fn caps() -> Caps {
   detect::caps()
 }
 
@@ -125,9 +135,18 @@ pub fn tune() -> Tune {
   detect::tune()
 }
 
-/// Initialize with user-supplied capabilities.
+/// Get the detected architecture.
 ///
-/// Call this before any call to [`get()`] to bypass runtime detection.
+/// Convenience wrapper around [`get()`].
+#[inline]
+#[must_use]
+pub fn arch() -> Arch {
+  detect::arch()
+}
+
+/// Set detection override.
+///
+/// Call this **before** any call to [`get()`] to bypass runtime detection.
 /// This is useful for:
 /// - Bare metal environments without runtime detection support
 /// - Embedded systems where the CPU is known at deployment
@@ -136,38 +155,30 @@ pub fn tune() -> Tune {
 /// # Example
 ///
 /// ```ignore
-/// use platform::{CpuCaps, Tune, caps::x86};
+/// use platform::{Detected, Caps, Tune, caps::x86, caps::Arch};
 ///
-/// // Set up for a known Zen 5 CPU
-/// let caps = CpuCaps::new(x86::VPCLMUL_READY);
-/// platform::init_with_caps(caps, Tune::ZEN5);
+/// // Force portable mode for testing
+/// platform::set_override(Some(Detected::portable()));
+///
+/// // Or set specific capabilities
+/// let det = Detected {
+///     caps: x86::VPCLMUL_READY,
+///     tune: Tune::ZEN5,
+///     arch: Arch::X86_64,
+/// };
+/// platform::set_override(Some(det));
 /// ```
 #[inline]
-pub fn init_with_caps(caps: CpuCaps, tune: Tune) {
-  detect::init_with_caps(caps, tune);
+pub fn set_override(value: Option<Detected>) {
+  detect::set_override(value);
 }
 
-/// Set or clear the capabilities override.
+/// Clear the detection override.
 ///
-/// When set, [`get()`] will return the override value instead of detecting.
-/// Pass `None` to clear the override and resume detection.
-///
-/// # Thread Safety
-///
-/// This function is thread-safe but should typically be called early in
-/// program initialization, before any calls to [`get()`].
-///
-/// # Example
-///
-/// ```ignore
-/// // In tests
-/// platform::set_caps_override(Some((CpuCaps::NONE, Tune::PORTABLE)));
-/// // ... run tests with portable fallback ...
-/// platform::set_caps_override(None);
-/// ```
+/// Equivalent to `set_override(None)`.
 #[inline]
-pub fn set_caps_override(value: Option<(CpuCaps, Tune)>) {
-  detect::set_caps_override(value);
+pub fn clear_override() {
+  detect::clear_override();
 }
 
 /// Check if an override is currently set.
@@ -177,6 +188,53 @@ pub fn has_override() -> bool {
   detect::has_override()
 }
 
+/// Get compile-time known capabilities.
+///
+/// Returns capabilities that are known at compile time via `-C target-feature=...`
+/// or `-C target-cpu=native`. Use this for zero-overhead dispatch.
+///
+/// See [`detect::caps_static`] for details.
+#[inline(always)]
+#[must_use]
+pub const fn caps_static() -> Caps {
+  detect::caps_static()
+}
+
+/// Get compile-time tuning hints.
+///
+/// Returns conservative tuning hints based on compile-time known features.
+///
+/// See [`detect::tune_static`] for details.
+#[inline(always)]
+#[must_use]
+pub const fn tune_static() -> Tune {
+  detect::tune_static()
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Description (for diagnostics)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A zero-allocation description of detected CPU capabilities and tuning.
+///
+/// Implements `Display` so it can be written to any formatter without heap allocation.
+#[derive(Clone, Copy)]
+pub struct Description {
+  det: Detected,
+}
+
+impl core::fmt::Display for Description {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    write!(f, "{:?} ({})", self.det.caps, self.det.tune.name())
+  }
+}
+
+impl core::fmt::Debug for Description {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    core::fmt::Display::fmt(self, f)
+  }
+}
+
 /// Returns a human-readable summary of detected CPU capabilities and tuning.
 ///
 /// Useful for logging, debugging, and diagnostics.
@@ -184,13 +242,12 @@ pub fn has_override() -> bool {
 /// # Example
 ///
 /// ```ignore
+/// // Zero allocation - writes directly to stdout
 /// println!("{}", platform::describe());
-/// // Output: "x86_64 [sse2, sse3, ssse3, sse4.1, sse4.2, avx, avx2, ...] (Zen5)"
+/// // Output: "Caps(x86_64, [sse3, ssse3, sse4.1, pclmulqdq, ...]) (Zen5)"
 /// ```
+#[inline]
 #[must_use]
-pub fn describe() -> alloc::string::String {
-  let (caps, tune) = get();
-  alloc::format!("{} ({})", caps, tune.name())
+pub fn describe() -> Description {
+  Description { det: get() }
 }
-
-extern crate alloc;

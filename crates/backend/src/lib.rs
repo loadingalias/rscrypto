@@ -18,22 +18,25 @@
 //!
 //! # Usage
 //!
-//! Algorithm crates register kernels as an ordered list of `Candidate`s:
+//! Algorithm crates register kernels as an ordered list of `Candidate`s.
+//! Use the [`candidates!`] macro for concise syntax:
 //!
 //! ```ignore
-//! use backend::dispatch::{Candidate, Selected, select};
-//! use platform::caps::{CpuCaps, X86_64_VPCLMUL, X86_64_PCLMUL};
+//! use backend::dispatch::{candidates, Candidate, Selected, select};
+//! use backend::caps::{Caps, x86};
 //!
 //! fn select_crc32c() -> Selected<fn(u32, &[u8]) -> u32> {
-//!     let caps = platform::get().0;
-//!     let candidates = &[
-//!         Candidate::new("x86_64/vpclmul", X86_64_VPCLMUL, vpclmul_kernel),
-//!         Candidate::new("x86_64/pclmul", X86_64_PCLMUL, pclmul_kernel),
-//!         Candidate::new("portable", CpuCaps::NONE, portable_kernel),
-//!     ];
-//!     select(caps, candidates)
+//!     let caps = platform::caps();
+//!     select(caps, candidates![
+//!         "x86_64/vpclmul" => x86::VPCLMUL_READY => vpclmul_kernel,
+//!         "x86_64/pclmul"  => x86::PCLMUL_READY  => pclmul_kernel,
+//!         "portable"       => Caps::NONE         => portable_kernel,
+//!     ])
 //! }
 //! ```
+//!
+//! The macro expands to `&[Candidate::new(...), ...]`, providing a cleaner
+//! syntax while maintaining zero runtime overhead.
 //!
 //! // Fallibility discipline: deny unwrap/expect in production, allow in tests.
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]

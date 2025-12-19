@@ -23,7 +23,7 @@ runs:
     # Tools rarely change, so this cache hits almost always
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     - name: Cache Cargo Tools
-      uses: actions/cache@9255dc7a253b0ccc959486e2bca901246202afeb  # v5.0.1
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4
       with:
         path: ~/.cargo/bin
         key: cargo-tools-${{ runner.os }}-${{ runner.arch }}-v1
@@ -36,7 +36,7 @@ runs:
       run: scripts/ci/install-tools.sh standard
 
     - name: Setup Rust Cache
-      uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1  # v2.8.1
+      uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5  # v2
       with:
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         # Cache Strategy:

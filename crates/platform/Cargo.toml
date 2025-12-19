@@ -11,6 +11,11 @@ repository.workspace = true
 [features]
 default = ["std"]
 std = []
+# Enable test-only APIs (from_raw, as_raw) for external testing/fuzzing
+testing = []
+
+[dev-dependencies]
+proptest.workspace = true
 
 [lints]
 workspace = true

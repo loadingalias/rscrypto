@@ -25,12 +25,12 @@ echo ""
 
 # Crates that work with Miri (have #[cfg(miri)] portable fallbacks)
 # - backend: Has dispatch with unsafe transmute (needs Miri testing)
-MIRI_CRATES="backend"
+# - platform: Feature detection with #[cfg(miri)] fallbacks, Caps bitset tests
+MIRI_CRATES="backend platform"
 
 # Crates excluded from Miri testing
-# - platform: Just feature detection, no tests with unsafe
 # - traits: Just trait definitions, no unsafe code
-EXCLUDED_CRATES="platform traits"
+EXCLUDED_CRATES="traits"
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Argument Parsing

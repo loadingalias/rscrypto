@@ -37,33 +37,13 @@ bench crate="":
 bench-native crate="":
     RUSTFLAGS='-C target-cpu=native' scripts/bench/bench.sh "{{crate}}"
 
+# Local checks with cross-compilation verification
 check:
-    cargo fmt --all
-    cargo check --workspace --all-targets --all-features
-    cargo clippy --workspace --all-targets --all-features --fix --allow-dirty -- -D warnings
-    cargo deny check all
-    RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features
-    cargo audit
-    @echo "🔍 Cross-target compile matrix (platform/backend crates)"
-    RUSTC_WRAPPER= cargo check -p platform --all-features --target x86_64-unknown-linux-gnu
-    RUSTC_WRAPPER= cargo check -p platform --all-features --target x86_64-pc-windows-msvc
-    RUSTC_WRAPPER= cargo check -p platform --all-features --target aarch64-unknown-linux-gnu
-    RUSTC_WRAPPER= cargo check -p platform --no-default-features
-    RUSTC_WRAPPER= cargo check -p platform --no-default-features --target wasm32-unknown-unknown
-    RUSTC_WRAPPER= cargo check -p backend --all-features --target x86_64-unknown-linux-gnu
-    RUSTC_WRAPPER= cargo check -p backend --all-features --target aarch64-unknown-linux-gnu
-    RUSTC_WRAPPER= cargo check -p backend --no-default-features
-    @echo "✅ All checks passed!"
+    @scripts/ci/check.sh
 
-# CI checks (no auto-fix, fail-fast)
+# CI checks (no cross-compile, stricter - runs natively on each platform)
 ci-check:
-    cargo fmt --all -- --check
-    cargo check --workspace --all-targets --all-features
-    cargo clippy --workspace --all-targets --all-features -- -D warnings
-    cargo deny check all
-    RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features
-    cargo audit
-    @echo "✅ CI checks passed!"
+    @scripts/ci/check.sh --ci
 
 # Update dependencies
 update:

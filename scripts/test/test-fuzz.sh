@@ -19,7 +19,8 @@ set -euo pipefail
 export RSCRYPTO_TEST_MODE=${RSCRYPTO_TEST_MODE:-local}
 
 # Configuration (can be overridden via environment)
-DURATION_SECS=${RSCRYPTO_FUZZ_DURATION_SECS:-30}
+# Default: 60s local, override with RSCRYPTO_FUZZ_DURATION_SECS=300 for CI
+DURATION_SECS=${RSCRYPTO_FUZZ_DURATION_SECS:-60}
 TIMEOUT=${RSCRYPTO_FUZZ_TIMEOUT_SECS:-10}
 RSS_LIMIT=${RSCRYPTO_FUZZ_RSS_LIMIT_MB:-2048}
 MAX_LEN=${RSCRYPTO_FUZZ_MAX_LEN:-65536}
@@ -28,14 +29,19 @@ JOBS=${RSCRYPTO_FUZZ_JOBS:-1}
 FUZZ_DIR="fuzz"
 
 # All available fuzz targets
+# Note: checksum targets are commented out until checksum crate exists
 ALL_TARGETS=(
-  "fuzz_crc32c"
-  "fuzz_crc32"
-  "fuzz_crc64"
-  "fuzz_crc16"
-  "fuzz_combine"
-  "fuzz_streaming"
-  "fuzz_differential"
+  # Platform crate
+  "fuzz_caps"
+  "fuzz_caps_ops"
+  # Checksum crate (uncomment when available)
+  # "fuzz_crc32c"
+  # "fuzz_crc32"
+  # "fuzz_crc64"
+  # "fuzz_crc16"
+  # "fuzz_combine"
+  # "fuzz_streaming"
+  # "fuzz_differential"
 )
 
 # Skip if commit mode (fuzzing takes too long)
@@ -69,6 +75,11 @@ show_help() {
 list_targets() {
   echo "Available fuzz targets:"
   echo ""
+  echo "Platform crate:"
+  echo "  fuzz_caps         Caps bitset invariants and has_bit consistency"
+  echo "  fuzz_caps_ops     Caps union/intersection algebraic properties"
+  echo ""
+  echo "Checksum crate (not yet available):"
   echo "  fuzz_crc32c       CRC32-C (Castagnoli) - iSCSI, SCTP, Btrfs"
   echo "  fuzz_crc32        CRC32 (ISO-HDLC) - Ethernet, gzip, PNG"
   echo "  fuzz_crc64        CRC64/XZ and CRC64/NVME variants"
