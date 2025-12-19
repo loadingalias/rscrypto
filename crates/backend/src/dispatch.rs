@@ -175,11 +175,12 @@ macro_rules! define_dispatcher {
       #[cfg(feature = "std")]
       inner: std::sync::OnceLock<Selected<$fn_ty>>,
 
-      #[cfg(not(feature = "std"))]
+      // Atomic caching fields - only for no_std targets WITH CAS support
+      #[cfg(all(not(feature = "std"), any(not(target_arch = "arm"), target_feature = "thumb2")))]
       func: core::sync::atomic::AtomicPtr<()>,
-      #[cfg(not(feature = "std"))]
+      #[cfg(all(not(feature = "std"), any(not(target_arch = "arm"), target_feature = "thumb2")))]
       name_ptr: core::sync::atomic::AtomicPtr<u8>,
-      #[cfg(not(feature = "std"))]
+      #[cfg(all(not(feature = "std"), any(not(target_arch = "arm"), target_feature = "thumb2")))]
       name_len: core::sync::atomic::AtomicUsize,
 
       selector: fn() -> Selected<$fn_ty>,
@@ -193,11 +194,11 @@ macro_rules! define_dispatcher {
           #[cfg(feature = "std")]
           inner: std::sync::OnceLock::new(),
 
-          #[cfg(not(feature = "std"))]
+          #[cfg(all(not(feature = "std"), any(not(target_arch = "arm"), target_feature = "thumb2")))]
           func: core::sync::atomic::AtomicPtr::new(core::ptr::null_mut()),
-          #[cfg(not(feature = "std"))]
+          #[cfg(all(not(feature = "std"), any(not(target_arch = "arm"), target_feature = "thumb2")))]
           name_ptr: core::sync::atomic::AtomicPtr::new(core::ptr::null_mut()),
-          #[cfg(not(feature = "std"))]
+          #[cfg(all(not(feature = "std"), any(not(target_arch = "arm"), target_feature = "thumb2")))]
           name_len: core::sync::atomic::AtomicUsize::new(0),
 
           selector,
@@ -213,7 +214,12 @@ macro_rules! define_dispatcher {
           *self.inner.get_or_init(|| (self.selector)())
         }
 
-        #[cfg(not(feature = "std"))]
+        // no_std path for targets WITH atomic CAS support
+        // (non-ARM targets, or ARM with thumb2 which indicates ARMv7-M+)
+        #[cfg(all(
+          not(feature = "std"),
+          any(not(target_arch = "arm"), target_feature = "thumb2")
+        ))]
         {
           use core::sync::atomic::Ordering;
 
@@ -260,9 +266,25 @@ macro_rules! define_dispatcher {
             Self::load_selected(&self.func, &self.name_ptr, &self.name_len)
           }
         }
+
+        // no_std path for targets WITHOUT atomic CAS (e.g., ARMv6-M / thumbv6m)
+        // These targets only have atomic load/store, not compare_exchange.
+        // We simply call the selector each time - no caching.
+        #[cfg(all(
+          not(feature = "std"),
+          target_arch = "arm",
+          not(target_feature = "thumb2")
+        ))]
+        {
+          (self.selector)()
+        }
       }
 
-      #[cfg(not(feature = "std"))]
+      // Only needed for targets with atomic CAS support
+      #[cfg(all(
+        not(feature = "std"),
+        any(not(target_arch = "arm"), target_feature = "thumb2")
+      ))]
       #[inline]
       fn load_selected(
         func: &core::sync::atomic::AtomicPtr<()>,

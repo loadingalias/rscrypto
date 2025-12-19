@@ -1547,10 +1547,10 @@ fn hwcap_batch_aarch64() -> Caps {
     let mut hwcap2 = 0u64;
 
     // Parse as array of (u64, u64) pairs
-    let entries = &buf[..n];
+    let entries = buf.get(..n)?;
     for chunk in entries.chunks_exact(16) {
-      let a_type = u64::from_ne_bytes(chunk[0..8].try_into().ok()?);
-      let a_val = u64::from_ne_bytes(chunk[8..16].try_into().ok()?);
+      let a_type = u64::from_ne_bytes(chunk.get(0..8)?.try_into().ok()?);
+      let a_val = u64::from_ne_bytes(chunk.get(8..16)?.try_into().ok()?);
 
       if a_type == AT_HWCAP {
         hwcap = a_val;
@@ -2216,10 +2216,10 @@ fn read_midr_el1() -> Option<u64> {
   use std::fs;
 
   // Try to read from /sys/devices/system/cpu/cpu0/regs/identification/midr_el1
-  if let Ok(contents) = fs::read_to_string("/sys/devices/system/cpu/cpu0/regs/identification/midr_el1") {
-    if let Ok(midr) = u64::from_str_radix(contents.trim().trim_start_matches("0x"), 16) {
-      return Some(midr);
-    }
+  if let Ok(contents) = fs::read_to_string("/sys/devices/system/cpu/cpu0/regs/identification/midr_el1")
+    && let Ok(midr) = u64::from_str_radix(contents.trim().trim_start_matches("0x"), 16)
+  {
+    return Some(midr);
   }
 
   // Fallback: try to read MIDR directly via inline asm
@@ -3111,7 +3111,10 @@ mod tests {
     // Without env var set, override should be false
     // Note: We can't easily test with env var set due to test isolation
     // but we verify the default behavior
-    std::env::remove_var("RSCRYPTO_FORCE_AVX512");
+    // SAFETY: This test runs in isolation and doesn't rely on this env var being
+    // present for other threads. The remove_var is unsafe due to potential data
+    // races with other threads reading env vars, but test isolation mitigates this.
+    unsafe { std::env::remove_var("RSCRYPTO_FORCE_AVX512") };
     assert!(!hybrid_avx512_override());
   }
 
