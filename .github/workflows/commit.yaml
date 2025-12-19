@@ -83,17 +83,6 @@ jobs:
             tier: a
 
           # ─────────────────────────────────────────────────────────────────────
-          # macOS (GitHub Free Runners)
-          # ─────────────────────────────────────────────────────────────────────
-          - name: aarch64-apple-darwin
-            runner: macos-latest  # Apple Silicon (M1)
-            tier: a
-
-          - name: x86_64-apple-darwin
-            runner: macos-13  # Intel Mac
-            tier: b
-
-          # ─────────────────────────────────────────────────────────────────────
           # Windows (GitHub Free Runners)
           # ─────────────────────────────────────────────────────────────────────
           - name: x86_64-pc-windows-msvc

@@ -3106,6 +3106,7 @@ mod tests {
   }
 
   #[test]
+  #[allow(unsafe_code)]
   #[cfg(all(any(target_arch = "x86_64", target_arch = "x86"), feature = "std"))]
   fn test_hybrid_avx512_override_default() {
     // Without env var set, override should be false

@@ -38,12 +38,6 @@ on:
         type: boolean
         default: false
 
-      run_macos_arm64:
-        description: "Run on macOS ARM64 (Apple Silicon)"
-        required: false
-        type: boolean
-        default: false
-
       specific_benches:
         description: "Specific benchmark binary names (optional, comma-separated)"
         required: false
@@ -93,11 +87,6 @@ jobs:
           - name: aarch64-pc-windows-msvc
             runner: namespace-profile-rscrypto-windows-arm64
             platform-id: windows-arm64
-
-          # macOS ARM64 (GitHub Free Runner - Apple Silicon)
-          - name: aarch64-apple-darwin
-            runner: macos-latest
-            platform-id: macos-arm64
 
     steps:
       # Check if this platform should run (for manual triggers)
@@ -152,15 +141,6 @@ jobs:
                 echo "Windows ARM64 disabled - skipping"
               fi
               ;;
-            "macos-arm64")
-              if [ "${GITHUB_EVENT_INPUTS_RUN_MACOS_ARM64}" == "true" ]; then
-                echo "enabled=true" >> "$GITHUB_OUTPUT"
-                echo "macOS ARM64 enabled by manual trigger"
-              else
-                echo "enabled=false" >> "$GITHUB_OUTPUT"
-                echo "macOS ARM64 disabled - skipping"
-              fi
-              ;;
             *)
               echo "enabled=false" >> "$GITHUB_OUTPUT"
               echo "Unknown platform - skipping"
@@ -171,7 +151,6 @@ jobs:
           GITHUB_EVENT_INPUTS_RUN_LINUX_ARM64: ${{ github.event.inputs.run_linux_arm64 }}
           GITHUB_EVENT_INPUTS_RUN_WINDOWS_X64: ${{ github.event.inputs.run_windows_x64 }}
           GITHUB_EVENT_INPUTS_RUN_WINDOWS_ARM64: ${{ github.event.inputs.run_windows_arm64 }}
-          GITHUB_EVENT_INPUTS_RUN_MACOS_ARM64: ${{ github.event.inputs.run_macos_arm64 }}
 
       - name: Checkout
         if: steps.should-run.outputs.enabled == 'true'
@@ -213,7 +192,7 @@ jobs:
 
       # Compute cache key from runner metadata
       - name: Compute Cache Key
-        if: steps.should-run.outputs.enabled == 'true' && (runner.os == 'Windows' || runner.os == 'macOS')
+        if: steps.should-run.outputs.enabled == 'true' && runner.os == 'Windows'
         id: cache
         shell: bash
         run: |
@@ -221,8 +200,8 @@ jobs:
           ARCH=$(echo "${{ runner.arch }}" | tr '[:upper:]' '[:lower:]')
           echo "key=bench-${OS}-${ARCH}" >> "$GITHUB_OUTPUT"
 
-      - name: Setup Rust Cache (Windows/macOS)
-        if: steps.should-run.outputs.enabled == 'true' && (runner.os == 'Windows' || runner.os == 'macOS')
+      - name: Setup Rust Cache (Windows)
+        if: steps.should-run.outputs.enabled == 'true' && runner.os == 'Windows'
         uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5  # v2
         with:
           shared-key: "rscrypto-v1"
