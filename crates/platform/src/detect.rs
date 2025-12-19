@@ -1029,7 +1029,7 @@ fn detect_x86_64() -> Detected {
 
   #[cfg(feature = "std")]
   {
-    caps = caps | runtime_caps;
+    caps |= runtime_caps;
   }
 
   let tune = select_x86_tune(caps, is_amd, family, model);
@@ -1052,9 +1052,9 @@ fn detect_x86() -> Detected {
   {
     // SSE2 is not guaranteed on 32-bit x86, detect at runtime
     if std::arch::is_x86_feature_detected!("sse2") {
-      caps = caps | x86::SSE2;
+      caps |= x86::SSE2;
     }
-    caps = caps | runtime_x86_32();
+    caps |= runtime_x86_32();
   }
 
   Detected {
@@ -1127,37 +1127,37 @@ fn cpuid_batch_x86_64() -> CpuidBatch {
 
   // ECX features (leaf 1)
   if cpuid1.ecx & (1 << 0) != 0 {
-    caps = caps | x86::SSE3;
+    caps |= x86::SSE3;
   }
   if cpuid1.ecx & (1 << 9) != 0 {
-    caps = caps | x86::SSSE3;
+    caps |= x86::SSSE3;
   }
   if cpuid1.ecx & (1 << 19) != 0 {
-    caps = caps | x86::SSE41;
+    caps |= x86::SSE41;
   }
   if cpuid1.ecx & (1 << 20) != 0 {
-    caps = caps | x86::SSE42;
+    caps |= x86::SSE42;
   }
   if cpuid1.ecx & (1 << 23) != 0 {
-    caps = caps | x86::POPCNT;
+    caps |= x86::POPCNT;
   }
   if cpuid1.ecx & (1 << 25) != 0 {
-    caps = caps | x86::AESNI;
+    caps |= x86::AESNI;
   }
   if cpuid1.ecx & (1 << 1) != 0 {
-    caps = caps | x86::PCLMULQDQ;
+    caps |= x86::PCLMULQDQ;
   }
   if cpuid1.ecx & (1 << 28) != 0 {
-    caps = caps | x86::AVX;
+    caps |= x86::AVX;
   }
   if cpuid1.ecx & (1 << 12) != 0 {
-    caps = caps | x86::FMA;
+    caps |= x86::FMA;
   }
   if cpuid1.ecx & (1 << 29) != 0 {
-    caps = caps | x86::F16C;
+    caps |= x86::F16C;
   }
   if cpuid1.ecx & (1 << 30) != 0 {
-    caps = caps | x86::RDRAND;
+    caps |= x86::RDRAND;
   }
 
   // Extended feature flags (leaf 7, subleaf 0)
@@ -1166,77 +1166,77 @@ fn cpuid_batch_x86_64() -> CpuidBatch {
 
   // EBX features (leaf 7)
   if cpuid7.ebx & (1 << 3) != 0 {
-    caps = caps | x86::BMI1;
+    caps |= x86::BMI1;
   }
   if cpuid7.ebx & (1 << 5) != 0 {
-    caps = caps | x86::AVX2;
+    caps |= x86::AVX2;
   }
   if cpuid7.ebx & (1 << 8) != 0 {
-    caps = caps | x86::BMI2;
+    caps |= x86::BMI2;
   }
   if cpuid7.ebx & (1 << 19) != 0 {
-    caps = caps | x86::ADX;
+    caps |= x86::ADX;
   }
   if cpuid7.ebx & (1 << 29) != 0 {
-    caps = caps | x86::SHA;
+    caps |= x86::SHA;
   }
   if cpuid7.ebx & (1 << 16) != 0 {
-    caps = caps | x86::AVX512F;
+    caps |= x86::AVX512F;
   }
   if cpuid7.ebx & (1 << 17) != 0 {
-    caps = caps | x86::AVX512DQ;
+    caps |= x86::AVX512DQ;
   }
   if cpuid7.ebx & (1 << 21) != 0 {
-    caps = caps | x86::AVX512IFMA;
+    caps |= x86::AVX512IFMA;
   }
   if cpuid7.ebx & (1 << 28) != 0 {
-    caps = caps | x86::AVX512CD;
+    caps |= x86::AVX512CD;
   }
   if cpuid7.ebx & (1 << 30) != 0 {
-    caps = caps | x86::AVX512BW;
+    caps |= x86::AVX512BW;
   }
   if cpuid7.ebx & (1 << 31) != 0 {
-    caps = caps | x86::AVX512VL;
+    caps |= x86::AVX512VL;
   }
 
   // ECX features (leaf 7)
   if cpuid7.ecx & (1 << 1) != 0 {
-    caps = caps | x86::AVX512VBMI;
+    caps |= x86::AVX512VBMI;
   }
   if cpuid7.ecx & (1 << 6) != 0 {
-    caps = caps | x86::AVX512VBMI2;
+    caps |= x86::AVX512VBMI2;
   }
   if cpuid7.ecx & (1 << 8) != 0 {
-    caps = caps | x86::GFNI;
+    caps |= x86::GFNI;
   }
   if cpuid7.ecx & (1 << 9) != 0 {
-    caps = caps | x86::VAES;
+    caps |= x86::VAES;
   }
   if cpuid7.ecx & (1 << 10) != 0 {
-    caps = caps | x86::VPCLMULQDQ;
+    caps |= x86::VPCLMULQDQ;
   }
   if cpuid7.ecx & (1 << 11) != 0 {
-    caps = caps | x86::AVX512VNNI;
+    caps |= x86::AVX512VNNI;
   }
   if cpuid7.ecx & (1 << 12) != 0 {
-    caps = caps | x86::AVX512BITALG;
+    caps |= x86::AVX512BITALG;
   }
   if cpuid7.ecx & (1 << 14) != 0 {
-    caps = caps | x86::AVX512VPOPCNTDQ;
+    caps |= x86::AVX512VPOPCNTDQ;
   }
 
   // EDX features (leaf 7)
   if cpuid7.edx & (1 << 18) != 0 {
-    caps = caps | x86::RDSEED;
+    caps |= x86::RDSEED;
   }
   if cpuid7.edx & (1 << 24) != 0 {
-    caps = caps | x86::AMX_TILE;
+    caps |= x86::AMX_TILE;
   }
   if cpuid7.edx & (1 << 22) != 0 {
-    caps = caps | x86::AMX_BF16;
+    caps |= x86::AMX_BF16;
   }
   if cpuid7.edx & (1 << 25) != 0 {
-    caps = caps | x86::AMX_INT8;
+    caps |= x86::AMX_INT8;
   }
 
   // Extended feature flags (leaf 7, subleaf 1)
@@ -1245,20 +1245,20 @@ fn cpuid_batch_x86_64() -> CpuidBatch {
 
   // EAX features (leaf 7, subleaf 1)
   if cpuid7_1.eax & (1 << 4) != 0 {
-    caps = caps | x86::AVX512BF16;
+    caps |= x86::AVX512BF16;
   }
   if cpuid7_1.eax & (1 << 5) != 0 {
-    caps = caps | x86::AVX512FP16;
+    caps |= x86::AVX512FP16;
   }
   if cpuid7_1.eax & (1 << 0) != 0 {
-    caps = caps | x86::SHA512;
+    caps |= x86::SHA512;
   }
   // AMX extensions (Granite Rapids and newer)
   if cpuid7_1.eax & (1 << 21) != 0 {
-    caps = caps | x86::AMX_FP16;
+    caps |= x86::AMX_FP16;
   }
   if cpuid7_1.eax & (1 << 8) != 0 {
-    caps = caps | x86::AMX_COMPLEX;
+    caps |= x86::AMX_COMPLEX;
   }
 
   // AVX10 detection via CPUID leaf 0x24
@@ -1268,10 +1268,10 @@ fn cpuid_batch_x86_64() -> CpuidBatch {
     let cpuid24 = unsafe { __cpuid_count(0x24, 0) };
     let avx10_version = cpuid24.ebx & 0xFF;
     if avx10_version >= 1 {
-      caps = caps | x86::AVX10_1;
+      caps |= x86::AVX10_1;
     }
     if avx10_version >= 2 {
-      caps = caps | x86::AVX10_2;
+      caps |= x86::AVX10_2;
     }
   }
 
@@ -1282,7 +1282,7 @@ fn cpuid_batch_x86_64() -> CpuidBatch {
     let cpuid29 = unsafe { __cpuid_count(0x29, 0) };
     // APX_NCI_NDD_NF is bit 0 of EBX
     if cpuid29.ebx & 1 != 0 {
-      caps = caps | x86::APX;
+      caps |= x86::APX;
     }
   }
 
@@ -1290,10 +1290,10 @@ fn cpuid_batch_x86_64() -> CpuidBatch {
   // SAFETY: CPUID is always safe on x86_64
   let cpuid_ext = unsafe { __cpuid(0x8000_0001) };
   if cpuid_ext.ecx & (1 << 5) != 0 {
-    caps = caps | x86::LZCNT;
+    caps |= x86::LZCNT;
   }
   if cpuid_ext.ecx & (1 << 6) != 0 {
-    caps = caps | x86::SSE4A;
+    caps |= x86::SSE4A;
   }
 
   CpuidBatch {
@@ -1323,22 +1323,22 @@ fn runtime_x86_32() -> Caps {
 
   // ECX features (leaf 1)
   if cpuid1.ecx & (1 << 0) != 0 {
-    caps = caps | x86::SSE3;
+    caps |= x86::SSE3;
   }
   if cpuid1.ecx & (1 << 9) != 0 {
-    caps = caps | x86::SSSE3;
+    caps |= x86::SSSE3;
   }
   if cpuid1.ecx & (1 << 19) != 0 {
-    caps = caps | x86::SSE41;
+    caps |= x86::SSE41;
   }
   if cpuid1.ecx & (1 << 20) != 0 {
-    caps = caps | x86::SSE42;
+    caps |= x86::SSE42;
   }
   if cpuid1.ecx & (1 << 1) != 0 {
-    caps = caps | x86::PCLMULQDQ;
+    caps |= x86::PCLMULQDQ;
   }
   if cpuid1.ecx & (1 << 25) != 0 {
-    caps = caps | x86::AESNI;
+    caps |= x86::AESNI;
   }
 
   caps
@@ -1735,16 +1735,16 @@ fn runtime_aarch64() -> Caps {
 
   // ─── Crypto Extensions ───
   if std::arch::is_aarch64_feature_detected!("aes") {
-    caps = caps | aarch64::AES | aarch64::PMULL;
+    caps |= aarch64::AES | aarch64::PMULL;
   }
   if std::arch::is_aarch64_feature_detected!("sha2") {
     caps |= aarch64::SHA2;
   }
   if std::arch::is_aarch64_feature_detected!("sha3") {
-    caps = caps | aarch64::SHA3 | aarch64::SHA512;
+    caps |= aarch64::SHA3 | aarch64::SHA512;
   }
   if std::arch::is_aarch64_feature_detected!("sm4") {
-    caps = caps | aarch64::SM3 | aarch64::SM4;
+    caps |= aarch64::SM3 | aarch64::SM4;
   }
 
   // ─── CRC Extension ───
@@ -2396,11 +2396,11 @@ fn select_aarch64_tune(caps: Caps) -> Tune {
 fn detect_riscv64() -> Detected {
   let mut caps = Caps::NONE;
 
-  caps = caps | compile_time_riscv();
+  caps |= compile_time_riscv();
 
   #[cfg(feature = "std")]
   {
-    caps = caps | runtime_riscv();
+    caps |= runtime_riscv();
   }
 
   Detected {
@@ -2414,11 +2414,11 @@ fn detect_riscv64() -> Detected {
 fn detect_riscv32() -> Detected {
   let mut caps = Caps::NONE;
 
-  caps = caps | compile_time_riscv();
+  caps |= compile_time_riscv();
 
   #[cfg(feature = "std")]
   {
-    caps = caps | runtime_riscv();
+    caps |= runtime_riscv();
   }
 
   Detected {
@@ -2437,7 +2437,7 @@ fn compile_time_riscv() -> Caps {
   macro_rules! ct {
     ($f:literal => $c:expr) => {
       if cfg!(target_feature = $f) {
-        caps = caps | $c;
+        caps |= $c;
       }
     };
   }
@@ -2486,7 +2486,7 @@ fn runtime_riscv() -> Caps {
   macro_rules! rt {
     ($f:literal => $c:expr) => {
       if is_riscv_feature_detected!($f) {
-        caps = caps | $c;
+        caps |= $c;
       }
     };
   }
@@ -2777,10 +2777,10 @@ fn detect_wasm32() -> Detected {
   let mut caps = Caps::NONE;
 
   if cfg!(target_feature = "simd128") {
-    caps = caps | wasm::SIMD128;
+    caps |= wasm::SIMD128;
   }
   if cfg!(target_feature = "relaxed-simd") {
-    caps = caps | wasm::RELAXED_SIMD;
+    caps |= wasm::RELAXED_SIMD;
   }
 
   Detected {
@@ -2797,10 +2797,10 @@ fn detect_wasm64() -> Detected {
   let mut caps = Caps::NONE;
 
   if cfg!(target_feature = "simd128") {
-    caps = caps | wasm::SIMD128;
+    caps |= wasm::SIMD128;
   }
   if cfg!(target_feature = "relaxed-simd") {
-    caps = caps | wasm::RELAXED_SIMD;
+    caps |= wasm::RELAXED_SIMD;
   }
 
   Detected {
