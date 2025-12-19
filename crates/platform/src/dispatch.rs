@@ -271,6 +271,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg_attr(miri, ignore)] // Miri returns Caps::NONE, no runtime detection
   fn test_dispatch_auto_works() {
     let result = dispatch_auto(|caps, _tune| {
       // Just verify it returns something

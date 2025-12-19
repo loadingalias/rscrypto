@@ -121,7 +121,7 @@ run_target() {
   fi
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-  cd "$FUZZ_DIR"
+  pushd "$FUZZ_DIR" > /dev/null
 
   FUZZ_ARGS="-timeout=$TIMEOUT -rss_limit_mb=$RSS_LIMIT -max_len=$MAX_LEN"
   FUZZ_ARGS="$FUZZ_ARGS -artifact_prefix=artifacts/$target/"
@@ -139,14 +139,17 @@ run_target() {
     TARGET_FLAG="--target x86_64-unknown-linux-gnu"
   fi
 
+  local result=0
   # shellcheck disable=SC2086
   if cargo fuzz run "$target" $TARGET_FLAG --jobs="$JOBS" -- $FUZZ_ARGS 2>&1 | grep -v "^INFO:"; then
     echo "✅ $target completed"
-    return 0
   else
     echo "❌ $target failed or found crash"
-    return 1
+    result=1
   fi
+
+  popd > /dev/null
+  return $result
 }
 
 run_smoke() {
