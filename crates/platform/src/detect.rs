@@ -174,6 +174,7 @@ pub const fn caps_static() -> Caps {
   // Declarative macro for compile-time feature detection.
   // Uses cfg!() which returns a const bool, enabling use in const fn.
   // The compiler eliminates dead branches entirely.
+  #[allow(unused_macros)] // Only used on x86/x86_64/aarch64
   macro_rules! detect {
     ($caps:ident; $($feature:literal => $cap:expr),+ $(,)?) => {
       $(if cfg!(target_feature = $feature) { $caps = $caps.union($cap); })+
@@ -2203,6 +2204,7 @@ fn detect_sme_vlen() -> u16 {
 
 /// Fallback SME vector length detection for non-Linux platforms.
 #[cfg(all(target_arch = "aarch64", not(all(target_os = "linux", feature = "std"))))]
+#[allow(dead_code)] // May be unused on some aarch64 bare-metal configs
 fn detect_sme_vlen() -> u16 {
   // On non-Linux platforms, we can't easily detect SME VL.
   // Return 0 to indicate unknown; tuning will use hardcoded defaults.

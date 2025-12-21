@@ -57,8 +57,8 @@ export ALL_CRATES="platform backend traits checksum"
 # Cross-target check functions
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-# Check a single target. Returns 0 on success, 1 on failure.
-# Output is suppressed - caller handles displaying results.
+# Full check suite for a single target. Returns 0 on success, 1 on failure.
+# Runs: cargo check + cargo clippy (same as CI)
 # Uses separate target directory per-target to avoid parallel build conflicts.
 check_target() {
   local target=$1
@@ -66,6 +66,8 @@ check_target() {
 
   # Use target-specific build directory to avoid parallel conflicts
   local target_dir="target/cross-check/$target"
+  local log_file="$target_dir/check.log"
+  mkdir -p "$target_dir"
 
   # Determine if this is the host target (no cross-compilation needed)
   local is_host=false
@@ -84,23 +86,41 @@ check_target() {
     rustup target add "$target" >/dev/null 2>&1 || true
   fi
 
-  if [ "$is_host" = true ]; then
-    # Host target: no CC override needed, use main target dir
-    cargo check --workspace --lib --all-features --target "$target" >/dev/null 2>&1
-    return $?
-  elif [ "$mode" = "no_std" ]; then
-    # no_std targets: check all crates in no_std mode with isolated target dir
+  # Common env vars for cross-compilation
+  local cross_env=""
+  if [ "$is_host" = false ]; then
+    cross_env="CC=$ZIG_CC RUSTC_WRAPPER= CARGO_TARGET_DIR=$target_dir"
+  fi
+
+  if [ "$mode" = "no_std" ]; then
+    # no_std targets: check + clippy for each crate
     for crate in $ALL_CRATES; do
-      if ! CC="$ZIG_CC" RUSTC_WRAPPER="" CARGO_TARGET_DIR="$target_dir" \
-           cargo check -p "$crate" --no-default-features --target "$target" --lib >/dev/null 2>&1; then
-        return 1
+      if [ "$is_host" = true ]; then
+        if ! cargo check -p "$crate" --no-default-features --target "$target" --lib >>"$log_file" 2>&1; then
+          return 1
+        fi
+        if ! cargo clippy -p "$crate" --no-default-features --target "$target" --lib -- -D warnings >>"$log_file" 2>&1; then
+          return 1
+        fi
+      else
+        if ! env $cross_env cargo check -p "$crate" --no-default-features --target "$target" --lib >>"$log_file" 2>&1; then
+          return 1
+        fi
+        if ! env $cross_env cargo clippy -p "$crate" --no-default-features --target "$target" --lib -- -D warnings >>"$log_file" 2>&1; then
+          return 1
+        fi
       fi
     done
     return 0
   else
-    # Cross-compilation via zig with isolated target directory
-    CC="$ZIG_CC" RUSTC_WRAPPER="" CARGO_TARGET_DIR="$target_dir" \
-      cargo check --workspace --lib --all-features --target "$target" >/dev/null 2>&1
+    # std targets: full workspace check + clippy
+    if [ "$is_host" = true ]; then
+      cargo check --workspace --lib --all-features --target "$target" >>"$log_file" 2>&1 || return 1
+      cargo clippy --workspace --lib --all-features --target "$target" -- -D warnings >>"$log_file" 2>&1 || return 1
+    else
+      env $cross_env cargo check --workspace --lib --all-features --target "$target" >>"$log_file" 2>&1 || return 1
+      env $cross_env cargo clippy --workspace --lib --all-features --target "$target" -- -D warnings >>"$log_file" 2>&1 || return 1
+    fi
     return $?
   fi
 }
@@ -188,18 +208,39 @@ run_cross_target_checks() {
   # ─────────────────────────────────────────────────────────────────────────────
   local failed=0
 
+  # Helper to show result and log on failure
+  show_result() {
+    local target=$1
+    local result=$2
+    local log_file="target/cross-check/$target/check.log"
+
+    case "$result" in
+      pass) echo "  ✓ $target" ;;
+      skip) echo "  ○ $target (skipped: Windows SDK headers not in zig)" ;;
+      fail)
+        echo "  ✗ $target"
+        failed=1
+        # Show last 20 lines of log on failure
+        if [ -f "$log_file" ]; then
+          echo "    ┌─ Error log (last 20 lines):"
+          tail -20 "$log_file" | sed 's/^/    │ /'
+          echo "    └─ Full log: $log_file"
+        fi
+        ;;
+      *)
+        echo "  ? $target (unknown)"
+        failed=1
+        ;;
+    esac
+  }
+
   echo ""
   echo "Tier A: Primary platforms"
   echo "─────────────────────────────────────────────────────────────────────────────"
   for target in "${TIER_A_TARGETS[@]}"; do
     local result
     result=$(cat "$RESULTS_DIR/$target" 2>/dev/null || echo "unknown")
-    case "$result" in
-      pass) echo "  ✓ $target" ;;
-      skip) echo "  ○ $target (skipped: Windows SDK headers not in zig)" ;;
-      fail) echo "  ✗ $target"; failed=1 ;;
-      *)    echo "  ? $target (unknown)"; failed=1 ;;
-    esac
+    show_result "$target" "$result"
   done
 
   echo ""
@@ -208,12 +249,7 @@ run_cross_target_checks() {
   for target in "${TIER_B_TARGETS[@]}"; do
     local result
     result=$(cat "$RESULTS_DIR/$target" 2>/dev/null || echo "unknown")
-    case "$result" in
-      pass) echo "  ✓ $target" ;;
-      skip) echo "  ○ $target (skipped: Windows SDK headers not in zig)" ;;
-      fail) echo "  ✗ $target"; failed=1 ;;
-      *)    echo "  ? $target (unknown)"; failed=1 ;;
-    esac
+    show_result "$target" "$result"
   done
 
   echo ""
@@ -222,11 +258,7 @@ run_cross_target_checks() {
   for target in "${TIER_C_TARGETS[@]}"; do
     local result
     result=$(cat "$RESULTS_DIR/$target" 2>/dev/null || echo "unknown")
-    case "$result" in
-      pass) echo "  ✓ $target" ;;
-      fail) echo "  ✗ $target"; failed=1 ;;
-      *)    echo "  ? $target (unknown)"; failed=1 ;;
-    esac
+    show_result "$target" "$result"
   done
 
   echo ""

@@ -90,9 +90,9 @@ jobs:
             runner: namespace-profile-rscrypto-linux-arm64
             platform-id: linux-arm64
 
-          # Windows x86-64 (GitHub larger runner)
+          # Windows x86-64 (GitHub free runner)
           - name: x86_64-pc-windows-msvc
-            runner: windows-latest-large
+            runner: windows-latest
             platform-id: windows-x64
 
           # Windows ARM64 (Namespace)

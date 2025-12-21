@@ -18,10 +18,10 @@ mod x86_64;
 #[cfg(target_arch = "aarch64")]
 mod aarch64;
 
-use backend::{
-  candidates,
-  dispatch::{Selected, select},
-};
+use backend::dispatch::Selected;
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+use backend::{candidates, dispatch::select};
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 use platform::Caps;
 use traits::{Checksum, ChecksumCombine};
 

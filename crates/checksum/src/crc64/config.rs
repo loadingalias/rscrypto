@@ -150,6 +150,7 @@ fn overrides() -> Overrides {
 
 #[inline]
 #[must_use]
+#[allow(unused_variables)] // `caps` only used on x86_64/aarch64
 fn clamp_force_to_caps(requested: Crc64Force, caps: Caps) -> Crc64Force {
   match requested {
     Crc64Force::Auto | Crc64Force::Portable => requested,

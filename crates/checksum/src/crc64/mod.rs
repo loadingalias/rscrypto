@@ -19,6 +19,8 @@ mod x86_64;
 mod aarch64;
 
 use backend::dispatch::Selected;
+// Re-export config types for public API (Crc64Force only used internally on SIMD archs)
+#[allow(unused_imports)]
 pub use config::{Crc64Config, Crc64Force, Crc64Tunables};
 use traits::{Checksum, ChecksumCombine};
 
@@ -33,11 +35,11 @@ use crate::{
 #[inline]
 #[must_use]
 fn crc64_selected_kernel_name(len: usize) -> &'static str {
-  let cfg = config::get();
-  let caps = platform::caps();
-
   #[cfg(target_arch = "x86_64")]
   {
+    let cfg = config::get();
+    let caps = platform::caps();
+
     if len < CRC64_SMALL_LANE_BYTES || cfg.effective_force == Crc64Force::Portable {
       return "portable/slice8";
     }
@@ -125,6 +127,9 @@ fn crc64_selected_kernel_name(len: usize) -> &'static str {
 
   #[cfg(target_arch = "aarch64")]
   {
+    let cfg = config::get();
+    let caps = platform::caps();
+
     if len < CRC64_SMALL_LANE_BYTES || cfg.effective_force == Crc64Force::Portable {
       return "portable/slice8";
     }
@@ -183,7 +188,7 @@ fn crc64_selected_kernel_name(len: usize) -> &'static str {
 
   #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
   {
-    let _ = (len, cfg, caps);
+    let _ = len;
     "portable/slice8"
   }
 }
@@ -212,11 +217,13 @@ fn crc64_nvme_portable(crc: u64, data: &[u8]) -> u64 {
   portable::crc64_slice8_nvme(crc, data)
 }
 
-// Folding parameters
+// Folding parameters (only used on SIMD architectures)
 //
 // - Small-buffer tier folds one 16B lane at a time.
 // - Large-buffer tier folds 8×16B lanes per 128B block.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 const CRC64_FOLD_BLOCK_BYTES: usize = 128;
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 const CRC64_SMALL_LANE_BYTES: usize = 16;
 
 #[cfg(target_arch = "x86_64")]
@@ -258,6 +265,9 @@ const fn aarch64_use_2way(len: usize, streams: u8) -> bool {
   streams >= 2 && len >= CRC64_PMULL_2WAY_MIN_BYTES
 }
 
+// Note: Also matches x86_64-unknown-none where it may be unused (no auto-dispatch on bare metal)
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[allow(dead_code)]
 #[inline]
 fn crc64_simd_threshold() -> usize {
   config::get().tunables.portable_to_clmul
