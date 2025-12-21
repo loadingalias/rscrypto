@@ -17,7 +17,7 @@
 //! 2. **Runtime selection** (cached): For generic binaries, the dispatcher detects CPU features
 //!    once and caches the selected kernel. Subsequent calls are a single indirect call.
 
-use platform::Caps;
+use platform::{Caps, Tune};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Candidate List Macro
@@ -94,6 +94,63 @@ macro_rules! candidates {
 pub use candidates;
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Tuned Candidate List Macro
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Creates a static slice of [`TunedCandidate`]s with optional tuning predicates.
+///
+/// Like [`candidates!`], but each entry may include a `where` clause that filters
+/// candidates based on [`platform::Tune`].
+///
+/// # Syntax
+///
+/// ```text
+/// tuned_candidates![
+///     "name" => CAPS_EXPR => kernel_fn,
+///     "name" => CAPS_EXPR, where |t| <predicate> => kernel_fn,
+///     ...
+/// ]
+/// ```
+///
+/// # Example
+///
+/// ```ignore
+/// use backend::dispatch::{Selected, select_tuned, tuned_candidates};
+/// use platform::caps::{Caps, x86};
+///
+/// type CrcFn = fn(u64, &[u8]) -> u64;
+///
+/// fn select_crc(caps: Caps, tune: &platform::Tune) -> Selected<CrcFn> {
+///   select_tuned(caps, tune, tuned_candidates![
+///     "x86_64/vpclmul" => x86::VPCLMUL_READY, where |t| t.effective_simd_width >= 512 => vpclmul_kernel,
+///     "x86_64/pclmul"  => x86::PCLMUL_READY => pclmul_kernel,
+///     "portable"       => Caps::NONE => portable_kernel,
+///   ])
+/// }
+/// ```
+#[macro_export]
+macro_rules! tuned_candidates {
+  [ $( $name:literal => $caps:expr $(, where $pred:expr)? => $func:expr ),+ $(,)? ] => {
+    &[
+      $(
+        $crate::dispatch::TunedCandidate::new(
+          $name,
+          $caps,
+          $crate::tuned_candidates!(@pred $( $pred )?),
+          $func as _,
+        ),
+      )+
+    ]
+  };
+
+  (@pred) => { $crate::dispatch::always_tuned };
+  (@pred $pred:expr) => { $pred as fn(&$crate::platform::Tune) -> bool };
+}
+
+// Re-export at crate root for ergonomic imports
+pub use tuned_candidates;
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Core Types
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -117,6 +174,37 @@ impl<F> Candidate<F> {
   #[must_use]
   pub const fn new(name: &'static str, requires: Caps, func: F) -> Self {
     Self { name, requires, func }
+  }
+}
+
+/// A tuned candidate kernel with capability requirements and a tuning predicate.
+///
+/// Candidates are ordered from best to worst. The dispatcher selects the first
+/// candidate whose requirements are satisfied by the detected capabilities and
+/// whose predicate returns `true` for the detected tuning preset.
+#[derive(Clone, Copy, Debug)]
+pub struct TunedCandidate<F> {
+  /// Human-readable name for diagnostics (e.g., "x86_64/vpclmul").
+  pub name: &'static str,
+  /// Required CPU capabilities. Must be a subset of detected caps.
+  pub requires: Caps,
+  /// Tuning predicate: must return true for this candidate to be eligible.
+  pub predicate: fn(&Tune) -> bool,
+  /// The kernel function pointer.
+  pub func: F,
+}
+
+impl<F> TunedCandidate<F> {
+  /// Create a new tuned candidate.
+  #[inline]
+  #[must_use]
+  pub const fn new(name: &'static str, requires: Caps, predicate: fn(&Tune) -> bool, func: F) -> Self {
+    Self {
+      name,
+      requires,
+      predicate,
+      func,
+    }
   }
 }
 
@@ -154,17 +242,61 @@ pub fn select<F: Copy>(caps: Caps, candidates: &[Candidate<F>]) -> Selected<F> {
   panic!("No matching kernel found! Candidate list must include a portable fallback.");
 }
 
+/// Predicate used for tuned candidates without an explicit `where` clause.
+#[inline(always)]
+#[must_use]
+pub fn always_tuned(_: &Tune) -> bool {
+  true
+}
+
+/// Select the best kernel from a tuned candidate list.
+///
+/// Returns the first candidate whose `requires` is satisfied by `caps` and whose
+/// tuning predicate returns `true` for `tune`.
+///
+/// Panics if no candidate matches (the last candidate should always have
+/// `requires = Caps::NONE` as a fallback with an always-true predicate).
+#[inline(always)]
+#[must_use]
+pub fn select_tuned<F: Copy>(caps: Caps, tune: &Tune, candidates: &[TunedCandidate<F>]) -> Selected<F> {
+  for candidate in candidates {
+    if caps.has(candidate.requires) && (candidate.predicate)(tune) {
+      return Selected::new(candidate.name, candidate.func);
+    }
+  }
+  panic!("No matching kernel found! Candidate list must include a portable fallback.");
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Dispatcher Macro
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Generates a dispatcher type with caching for a specific function signature.
 ///
-/// Usage:
+/// This macro is designed to be used by algorithm crates to define their own
+/// dispatchers. The backend crate provides the infrastructure; algorithm crates
+/// (checksum, hashes, aead, etc.) define the concrete dispatcher types.
+///
+/// # Usage
+///
 /// ```ignore
+/// use backend::define_dispatcher;
+///
+/// pub type Crc32Fn = fn(u32, &[u8]) -> u32;
 /// define_dispatcher!(Crc32Dispatcher, Crc32Fn, u32);
-/// define_dispatcher!(Crc64Dispatcher, Crc64Fn, u64);
+///
+/// pub type HashFn = fn(&mut [u8; 32], &[u8]);
+/// define_dispatcher!(HashDispatcher, HashFn, [u8; 32]);
 /// ```
+///
+/// # Generated API
+///
+/// For each dispatcher, the macro generates:
+/// - `new(selector)` - Create with a selector function
+/// - `get()` - Get the selected kernel (cached after first call)
+/// - `backend_name()` - Get the name of the selected backend
+/// - `call(state, data)` - Call the kernel with given arguments
+#[macro_export]
 macro_rules! define_dispatcher {
   (
     $(#[$meta:meta])*
@@ -345,30 +477,6 @@ macro_rules! define_dispatcher {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Dispatcher Types
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Function signature for CRC32/CRC32C kernels.
-pub type Crc32Fn = fn(u32, &[u8]) -> u32;
-
-/// Function signature for CRC64 kernels.
-pub type Crc64Fn = fn(u64, &[u8]) -> u64;
-
-define_dispatcher!(
-  /// Dispatcher for CRC32/CRC32C kernels.
-  ///
-  /// Caches the selected kernel on first access. Thread-safe.
-  Crc32Dispatcher, Crc32Fn, u32
-);
-
-define_dispatcher!(
-  /// Dispatcher for CRC64 kernels.
-  ///
-  /// Caches the selected kernel on first access. Thread-safe.
-  Crc64Dispatcher, Crc64Fn, u64
-);
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Generic Dispatcher (std only, for custom signatures)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -423,6 +531,14 @@ unsafe impl<F: Copy + 'static> Send for GenericDispatcher<F> {}
 #[allow(clippy::std_instead_of_alloc, clippy::std_instead_of_core)]
 mod tests {
   use super::*;
+
+  // Test-local type aliases (dispatchers are owned by algorithm crates, not backend)
+  type Crc32Fn = fn(u32, &[u8]) -> u32;
+  type Crc64Fn = fn(u64, &[u8]) -> u64;
+
+  // Test-local dispatchers for verifying the macro works
+  define_dispatcher!(TestCrc32Dispatcher, Crc32Fn, u32);
+  define_dispatcher!(TestCrc64Dispatcher, Crc64Fn, u64);
 
   fn portable_crc32(_crc: u32, _data: &[u8]) -> u32 {
     0xDEADBEEF
@@ -492,9 +608,10 @@ mod tests {
 
   #[test]
   fn test_crc32_dispatcher() {
-    static DISPATCH: Crc32Dispatcher = Crc32Dispatcher::new(test_selector);
+    static DISPATCH: TestCrc32Dispatcher = TestCrc32Dispatcher::new(test_selector);
     let selected = DISPATCH.get();
     assert_eq!(selected.name, "test");
+    assert_eq!(DISPATCH.backend_name(), "test");
     assert_eq!(DISPATCH.call(0, &[]), 0xDEADBEEF);
   }
 
@@ -504,9 +621,10 @@ mod tests {
 
   #[test]
   fn test_crc64_dispatcher() {
-    static DISPATCH: Crc64Dispatcher = Crc64Dispatcher::new(test_selector_64);
+    static DISPATCH: TestCrc64Dispatcher = TestCrc64Dispatcher::new(test_selector_64);
     let selected = DISPATCH.get();
     assert_eq!(selected.name, "test64");
+    assert_eq!(DISPATCH.backend_name(), "test64");
     assert_eq!(DISPATCH.call(0, &[]), 0xDEAD_BEEF_CAFE_BABE);
   }
 
@@ -529,7 +647,7 @@ mod tests {
         Selected::new("counted", portable_crc32)
       }
 
-      static DISPATCH: Crc32Dispatcher = Crc32Dispatcher::new(counting_selector);
+      static DISPATCH: TestCrc32Dispatcher = TestCrc32Dispatcher::new(counting_selector);
       CALL_COUNT.store(0, Ordering::SeqCst);
 
       let handles: Vec<thread::JoinHandle<()>> = (0..10)
@@ -779,7 +897,7 @@ mod tests {
         )
       }
 
-      static DISPATCHER: Crc32Dispatcher = Crc32Dispatcher::new(make_selector);
+      static DISPATCHER: TestCrc32Dispatcher = TestCrc32Dispatcher::new(make_selector);
 
       let selected = DISPATCHER.get();
       assert_eq!(selected.name, "portable");

@@ -126,6 +126,56 @@ jobs:
         run: just test
 
       # ─────────────────────────────────────────────────────────────────────────
+      # SIMD Tier Smoke Tests - Platform-specific kernel verification
+      # ─────────────────────────────────────────────────────────────────────────
+
+      # x86_64 Linux: PCLMUL (SSE)
+      - name: CRC64 Tier Smoke (force PCLMUL)
+        if: matrix.target.name == 'x86_64-unknown-linux-gnu'
+        run: cargo test -p checksum test_crc64_forced_kernel_smoke_from_env --lib
+        env:
+          RSCRYPTO_CRC64_FORCE: pclmul
+          RSCRYPTO_CRC64_STREAMS: "2"
+
+      # x86_64 Windows: PCLMUL (SSE)
+      - name: CRC64 Tier Smoke (force PCLMUL)
+        if: matrix.target.name == 'x86_64-pc-windows-msvc'
+        run: cargo test -p checksum test_crc64_forced_kernel_smoke_from_env --lib
+        env:
+          RSCRYPTO_CRC64_FORCE: pclmul
+          RSCRYPTO_CRC64_STREAMS: "2"
+
+      # aarch64 Linux: PMULL (NEON/crypto)
+      - name: CRC64 Tier Smoke (force PMULL)
+        if: matrix.target.name == 'aarch64-unknown-linux-gnu'
+        run: cargo test -p checksum test_crc64_forced_kernel_smoke_from_env --lib
+        env:
+          RSCRYPTO_CRC64_FORCE: pmull
+
+      # aarch64 Linux: SVE2 PMULL (where available)
+      - name: CRC64 Tier Smoke (force SVE2 PMULL)
+        if: matrix.target.name == 'aarch64-unknown-linux-gnu'
+        run: cargo test -p checksum test_crc64_forced_kernel_smoke_from_env --lib
+        env:
+          RSCRYPTO_CRC64_FORCE: sve2-pmull
+          RSCRYPTO_CRC64_STREAMS: "2"
+
+      # aarch64 Windows: PMULL (NEON/crypto)
+      - name: CRC64 Tier Smoke (force PMULL)
+        if: matrix.target.name == 'aarch64-pc-windows-msvc'
+        run: cargo test -p checksum test_crc64_forced_kernel_smoke_from_env --lib
+        env:
+          RSCRYPTO_CRC64_FORCE: pmull
+
+      # ─────────────────────────────────────────────────────────────────────────
+      # Portable Fallback Verification - Ensure all platforms work without SIMD
+      # ─────────────────────────────────────────────────────────────────────────
+      - name: CRC64 Portable Fallback Verification
+        run: cargo test -p checksum test_crc64_forced_kernel_smoke_from_env --lib
+        env:
+          RSCRYPTO_CRC64_FORCE: portable
+
+      # ─────────────────────────────────────────────────────────────────────────
       # Static Linking Verification (MUSL - Linux only)
       # ─────────────────────────────────────────────────────────────────────────
       - name: Build Verification (MUSL x86-64)
@@ -144,6 +194,45 @@ jobs:
       - name: Ensure Cache Directories
         shell: bash
         run: mkdir -p target/tests/trybuild target/tests/target
+
+  crc64-avx512:
+    name: CRC64 Tiers (x86_64 AVX-512)
+    needs: [detect]
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      needs.detect.outputs.rebuild-all == 'true' ||
+      (needs.detect.outputs.count != '0' &&
+       needs.detect.outputs.docs-only != 'true')
+    runs-on: namespace-profile-rscrypto-linux-x86
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - name: Compute Cache Key
+        id: cache
+        shell: bash
+        run: |
+          OS=$(echo "${{ runner.os }}" | tr '[:upper:]' '[:lower:]')
+          ARCH=$(echo "${{ runner.arch }}" | tr '[:upper:]' '[:lower:]')
+          echo "key=${{ env.RSCRYPTO_TEST_MODE }}-${OS}-${ARCH}-crc64-avx512" >> "$GITHUB_OUTPUT"
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          cache-key: ${{ steps.cache.outputs.key }}
+
+      - name: CRC64 Tier Smoke (force VPCLMUL, 7-way)
+        run: cargo test -p checksum test_crc64_forced_kernel_smoke_from_env --lib
+        env:
+          RSCRYPTO_CRC64_FORCE: vpclmul
+          RSCRYPTO_CRC64_STREAMS: "7"
+
+      - name: CRC64 Tier Smoke (force PCLMUL, 2-way)
+        run: cargo test -p checksum test_crc64_forced_kernel_smoke_from_env --lib
+        env:
+          RSCRYPTO_CRC64_FORCE: pclmul
+          RSCRYPTO_CRC64_STREAMS: "2"
 
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   # no_std Targets (Cross-compile verification)
@@ -322,7 +411,7 @@ jobs:
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   complete:
     name: All checks complete
-    needs: [detect, ci, no-std, wasm]
+    needs: [detect, ci, crc64-avx512, no-std, wasm]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -338,6 +427,7 @@ jobs:
 
           # Check if any job failed
           if [ "${{ needs.ci.result }}" == "failure" ] || \
+             [ "${{ needs.crc64-avx512.result }}" == "failure" ] || \
              [ "${{ needs.no-std.result }}" == "failure" ] || \
              [ "${{ needs.wasm.result }}" == "failure" ]; then
             echo "One or more jobs failed"

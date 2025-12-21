@@ -423,8 +423,16 @@ pub mod x86 {
   /// PCLMULQDQ-ready: PCLMULQDQ + SSSE3 (for aligned loads)
   pub const PCLMUL_READY: Caps = Caps([PCLMULQDQ.0[0] | SSSE3.0[0], 0, 0, 0]);
 
-  /// VPCLMULQDQ-ready: VPCLMULQDQ + AVX512F + AVX512VL + AVX512BW
-  pub const VPCLMUL_READY: Caps = Caps([VPCLMULQDQ.0[0] | AVX512F.0[0] | AVX512VL.0[0] | AVX512BW.0[0], 0, 0, 0]);
+  /// VPCLMULQDQ-ready: VPCLMULQDQ + AVX512F + AVX512VL + AVX512BW (+ base PCLMULQDQ).
+  ///
+  /// Note: CRC folding kernels may still rely on the 128-bit `pclmulqdq`
+  /// instruction for tail reduction even when using VPCLMUL for the main loop.
+  pub const VPCLMUL_READY: Caps = Caps([
+    VPCLMULQDQ.0[0] | PCLMULQDQ.0[0] | AVX512F.0[0] | AVX512VL.0[0] | AVX512BW.0[0],
+    0,
+    0,
+    0,
+  ]);
 
   /// VAES-ready: VAES + AVX512F + AVX512VL
   pub const VAES_READY: Caps = Caps([VAES.0[0] | AVX512F.0[0] | AVX512VL.0[0], 0, 0, 0]);
@@ -1068,6 +1076,7 @@ mod tests {
     // Verify VPCLMUL_READY contains expected features
     let vpclmul = x86::VPCLMUL_READY;
     assert!(vpclmul.has(x86::VPCLMULQDQ));
+    assert!(vpclmul.has(x86::PCLMULQDQ));
     assert!(vpclmul.has(x86::AVX512F));
     assert!(vpclmul.has(x86::AVX512VL));
     assert!(vpclmul.has(x86::AVX512BW));

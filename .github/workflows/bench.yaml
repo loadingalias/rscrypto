@@ -44,6 +44,18 @@ on:
         type: string
         default: ""
 
+      run_tune_discovery:
+        description: "Run CRC64 tuning discovery (threshold/stream optimization)"
+        required: false
+        type: boolean
+        default: false
+
+      regression_baseline:
+        description: "Git ref for regression comparison (e.g., main, v1.0.0)"
+        required: false
+        type: string
+        default: ""
+
 env:
   RUST_BACKTRACE: 1
   CARGO_TERM_COLOR: always
@@ -424,3 +436,180 @@ jobs:
           retention-days: 90
           if-no-files-found: ignore
           compression-level: 6
+
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # CRC64 Tuning Discovery (Manual Only)
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # Runs the full CRC64 tuning matrix to discover optimal thresholds and stream
+  # counts for each microarchitecture. Results guide tune.rs preset updates.
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  tune-discovery:
+    name: CRC64 Tune Discovery (${{ matrix.target.name }})
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.run_tune_discovery == 'true'
+    runs-on: ${{ matrix.target.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - name: x86_64 (Zen4/5)
+            runner: namespace-profile-rscrypto-linux-x86
+            platform-id: linux-x64-zen
+
+          - name: aarch64 (Graviton)
+            runner: namespace-profile-rscrypto-linux-arm64
+            platform-id: linux-arm64-graviton
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - name: Read Toolchain Version
+        id: toolchain
+        shell: bash
+        run: |
+          TOOLCHAIN=$(awk -F'"' '/^channel/ {print $2}' rust-toolchain.toml)
+          echo "version=$TOOLCHAIN" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561  # master
+        with:
+          toolchain: ${{ steps.toolchain.outputs.version }}
+
+      - name: Setup Namespace Cache (Linux)
+        uses: namespacelabs/nscloud-cache-action@446d8f390563cd54ca27e8de5bdb816f63c0b706  # v1
+        with:
+          cache: rust
+
+      - name: Install Benchmarking Tools
+        uses: taiki-e/install-action@60581cd7025e0e855cebd745379013e286d9c787  # v2
+        with:
+          tool: just
+
+      - name: Run CRC64 Tuning Discovery
+        shell: bash
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "CRC64 Tuning Discovery"
+          echo "Platform: ${{ matrix.target.name }}"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          mkdir -p tune-results
+          RUSTFLAGS='-C target-cpu=native' bash scripts/bench/crc64-tune.sh --quick 2>&1 | tee tune-results/tune-output.txt
+        env:
+          RUSTFLAGS: "-C target-cpu=native"
+
+      - name: Generate Tuning Summary
+        shell: bash
+        run: |
+          echo "Generating tuning summary..."
+          python3 scripts/bench/criterion-summary.py --group-prefix 'crc64/' --only oneshot > tune-results/summary.tsv 2>/dev/null || true
+
+      - name: Upload Tuning Results
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: tune-discovery-${{ matrix.target.platform-id }}
+          path: |
+            tune-results/
+            target/criterion/
+          retention-days: 90
+          if-no-files-found: warn
+
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # Regression Detection (Manual Only)
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # Compares current benchmark results against a baseline using critcmp.
+  # Useful for detecting performance regressions before releases.
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  regression-check:
+    name: Regression Check
+    needs: [benchmark]
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.regression_baseline != ''
+    runs-on: namespace-profile-rscrypto-linux-x86
+    timeout-minutes: 60
+    steps:
+      - name: Checkout Current
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          path: current
+
+      - name: Checkout Baseline
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          ref: ${{ github.event.inputs.regression_baseline }}
+          path: baseline
+
+      - name: Read Toolchain Version
+        id: toolchain
+        shell: bash
+        run: |
+          TOOLCHAIN=$(awk -F'"' '/^channel/ {print $2}' current/rust-toolchain.toml)
+          echo "version=$TOOLCHAIN" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561  # master
+        with:
+          toolchain: ${{ steps.toolchain.outputs.version }}
+
+      - name: Setup Namespace Cache
+        uses: namespacelabs/nscloud-cache-action@446d8f390563cd54ca27e8de5bdb816f63c0b706  # v1
+        with:
+          cache: rust
+
+      - name: Install Benchmarking Tools
+        uses: taiki-e/install-action@60581cd7025e0e855cebd745379013e286d9c787  # v2
+        with:
+          tool: cargo-criterion,critcmp
+
+      - name: Benchmark Baseline
+        shell: bash
+        working-directory: baseline
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Benchmarking baseline: ${{ github.event.inputs.regression_baseline }}"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          cargo bench --workspace -- --noplot --save-baseline baseline
+        env:
+          RUSTFLAGS: "-C target-cpu=native"
+
+      - name: Benchmark Current
+        shell: bash
+        working-directory: current
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Benchmarking current: ${{ github.sha }}"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          cargo bench --workspace -- --noplot --save-baseline current
+        env:
+          RUSTFLAGS: "-C target-cpu=native"
+
+      - name: Compare Results
+        shell: bash
+        working-directory: current
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Regression Analysis"
+          echo "Baseline: ${{ github.event.inputs.regression_baseline }}"
+          echo "Current:  ${{ github.sha }}"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          mkdir -p regression-results
+          critcmp baseline current 2>&1 | tee regression-results/comparison.txt
+
+          # Check for significant regressions (>5% slower)
+          if grep -E "regressed|slower" regression-results/comparison.txt | grep -v "1\.[0-4][0-9]x"; then
+            echo ""
+            echo "⚠️  Potential regressions detected (>5% slower)"
+            echo "Review the comparison above for affected benchmarks."
+          else
+            echo ""
+            echo "✅ No significant regressions detected"
+          fi
+
+      - name: Upload Regression Report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: regression-report
+          path: current/regression-results/
+          retention-days: 90
+          if-no-files-found: warn

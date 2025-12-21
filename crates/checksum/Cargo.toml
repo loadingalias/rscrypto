@@ -1,0 +1,39 @@
+[package]
+name = "checksum"
+description = "High-performance CRC checksums with hardware acceleration"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords = ["crc", "checksum", "crc32", "crc64", "simd"]
+categories = ["algorithms", "no-std"]
+
+[features]
+default = ["std"]
+std = ["alloc", "traits/std", "backend/std", "platform/std"]
+alloc = ["traits/alloc"]
+
+[dependencies]
+traits = { workspace = true, default-features = false } #unified
+backend = { workspace = true, default-features = false } #unified
+platform = { workspace = true, default-features = false } #unified
+
+[dev-dependencies]
+criterion.workspace = true
+proptest.workspace = true
+crc64fast = "1.1.0"
+crc64fast-nvme = "1.2.1"
+crc-fast = "1.8.2"
+
+[[bench]]
+name = "crc64"
+harness = false
+
+[[bench]]
+name = "comp"
+harness = false
+
+[lints]
+workspace = true

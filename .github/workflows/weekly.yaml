@@ -20,13 +20,21 @@ permissions:
 
 jobs:
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # Weekly Validation (Miri + Fuzzing)
+  # Weekly Validation (Miri + Fuzzing + Extended Property Tests)
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   miri:
-    name: Miri (x86_64)
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    name: Miri (${{ matrix.target.name }})
+    runs-on: ${{ matrix.target.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - name: x86_64
+            runner: ubuntu-latest
+          - name: aarch64
+            runner: namespace-profile-rscrypto-linux-arm64
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
@@ -50,6 +58,39 @@ jobs:
 
       - name: Miri Memory Safety Tests
         run: just test-miri
+
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # Extended Property Tests (more iterations than commit-time tests)
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  proptests:
+    name: Property Tests (Extended)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - name: Read Toolchain Version
+        id: toolchain
+        run: |
+          TOOLCHAIN=$(awk -F'"' '/^channel/ {print $2}' rust-toolchain.toml)
+          echo "version=$TOOLCHAIN" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561  # master
+        with:
+          toolchain: ${{ steps.toolchain.outputs.version }}
+
+      - name: Install Tools
+        uses: taiki-e/install-action@60581cd7025e0e855cebd745379013e286d9c787  # v2
+        with:
+          tool: cargo-nextest,just
+
+      - name: Extended Property Tests
+        run: cargo nextest run --workspace --all-features -E 'test(/proptest/)' --test-threads=1
+        env:
+          PROPTEST_CASES: "10000"
 
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   # Fuzzing: Isolated Job with Fresh Disk Space
@@ -99,7 +140,7 @@ jobs:
 
   complete:
     name: Weekly Complete
-    needs: [miri, fuzzing]
+    needs: [miri, proptests, fuzzing]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -107,9 +148,11 @@ jobs:
         run: |
           echo "Weekly CI Results:"
           echo "  Miri: ${{ needs.miri.result }}"
+          echo "  Property Tests: ${{ needs.proptests.result }}"
           echo "  Fuzzing: ${{ needs.fuzzing.result }}"
 
           if [ "${{ needs.miri.result }}" == "failure" ] || \
+             [ "${{ needs.proptests.result }}" == "failure" ] || \
              [ "${{ needs.fuzzing.result }}" == "failure" ]; then
             echo ""
             echo "One or more jobs failed"

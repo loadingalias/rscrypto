@@ -714,6 +714,8 @@ mod atomic_cache {
   // Tune fields
   static TUNE_KIND: AtomicU8 = AtomicU8::new(0);
   static TUNE_THRESHOLD: AtomicU64 = AtomicU64::new(0);
+  static TUNE_PCLMUL_THRESHOLD: AtomicU64 = AtomicU64::new(0);
+  static TUNE_HWCRC_THRESHOLD: AtomicU64 = AtomicU64::new(0);
   static TUNE_EFFECTIVE_WIDTH: AtomicU16 = AtomicU16::new(0);
   static TUNE_FAST_WIDE: AtomicBool = AtomicBool::new(false);
   static TUNE_PARALLEL_STREAMS: AtomicU8 = AtomicU8::new(0);
@@ -733,6 +735,8 @@ mod atomic_cache {
   static OVERRIDE_ARCH: AtomicU8 = AtomicU8::new(0);
   static OVERRIDE_TUNE_KIND: AtomicU8 = AtomicU8::new(0);
   static OVERRIDE_TUNE_THRESHOLD: AtomicU64 = AtomicU64::new(0);
+  static OVERRIDE_TUNE_PCLMUL_THRESHOLD: AtomicU64 = AtomicU64::new(0);
+  static OVERRIDE_TUNE_HWCRC_THRESHOLD: AtomicU64 = AtomicU64::new(0);
   static OVERRIDE_TUNE_EFFECTIVE_WIDTH: AtomicU16 = AtomicU16::new(0);
   static OVERRIDE_TUNE_FAST_WIDE: AtomicBool = AtomicBool::new(false);
   static OVERRIDE_TUNE_PARALLEL_STREAMS: AtomicU8 = AtomicU8::new(0);
@@ -775,6 +779,8 @@ mod atomic_cache {
     let tune = Tune {
       kind: kind_from_u8(TUNE_KIND.load(Ordering::Acquire)),
       simd_threshold: TUNE_THRESHOLD.load(Ordering::Acquire) as usize,
+      pclmul_threshold: TUNE_PCLMUL_THRESHOLD.load(Ordering::Acquire) as usize,
+      hwcrc_threshold: TUNE_HWCRC_THRESHOLD.load(Ordering::Acquire) as usize,
       effective_simd_width: TUNE_EFFECTIVE_WIDTH.load(Ordering::Acquire),
       fast_wide_ops: TUNE_FAST_WIDE.load(Ordering::Acquire),
       parallel_streams: TUNE_PARALLEL_STREAMS.load(Ordering::Acquire),
@@ -795,6 +801,8 @@ mod atomic_cache {
     ARCH.store(arch_to_u8(det.arch), Ordering::Release);
     TUNE_KIND.store(det.tune.kind as u8, Ordering::Release);
     TUNE_THRESHOLD.store(det.tune.simd_threshold as u64, Ordering::Release);
+    TUNE_PCLMUL_THRESHOLD.store(det.tune.pclmul_threshold as u64, Ordering::Release);
+    TUNE_HWCRC_THRESHOLD.store(det.tune.hwcrc_threshold as u64, Ordering::Release);
     TUNE_EFFECTIVE_WIDTH.store(det.tune.effective_simd_width, Ordering::Release);
     TUNE_FAST_WIDE.store(det.tune.fast_wide_ops, Ordering::Release);
     TUNE_PARALLEL_STREAMS.store(det.tune.parallel_streams, Ordering::Release);
@@ -815,6 +823,8 @@ mod atomic_cache {
         OVERRIDE_ARCH.store(arch_to_u8(det.arch), Ordering::Release);
         OVERRIDE_TUNE_KIND.store(det.tune.kind as u8, Ordering::Release);
         OVERRIDE_TUNE_THRESHOLD.store(det.tune.simd_threshold as u64, Ordering::Release);
+        OVERRIDE_TUNE_PCLMUL_THRESHOLD.store(det.tune.pclmul_threshold as u64, Ordering::Release);
+        OVERRIDE_TUNE_HWCRC_THRESHOLD.store(det.tune.hwcrc_threshold as u64, Ordering::Release);
         OVERRIDE_TUNE_EFFECTIVE_WIDTH.store(det.tune.effective_simd_width, Ordering::Release);
         OVERRIDE_TUNE_FAST_WIDE.store(det.tune.fast_wide_ops, Ordering::Release);
         OVERRIDE_TUNE_PARALLEL_STREAMS.store(det.tune.parallel_streams, Ordering::Release);
@@ -850,6 +860,8 @@ mod atomic_cache {
       tune: Tune {
         kind: kind_from_u8(OVERRIDE_TUNE_KIND.load(Ordering::Acquire)),
         simd_threshold: OVERRIDE_TUNE_THRESHOLD.load(Ordering::Acquire) as usize,
+        pclmul_threshold: OVERRIDE_TUNE_PCLMUL_THRESHOLD.load(Ordering::Acquire) as usize,
+        hwcrc_threshold: OVERRIDE_TUNE_HWCRC_THRESHOLD.load(Ordering::Acquire) as usize,
         effective_simd_width: OVERRIDE_TUNE_EFFECTIVE_WIDTH.load(Ordering::Acquire),
         fast_wide_ops: OVERRIDE_TUNE_FAST_WIDE.load(Ordering::Acquire),
         parallel_streams: OVERRIDE_TUNE_PARALLEL_STREAMS.load(Ordering::Acquire),
@@ -1016,7 +1028,7 @@ pub fn detect_uncached() -> Detected {
 #[cfg(target_arch = "x86_64")]
 fn detect_x86_64() -> Detected {
   // Start with compile-time detected features (includes SSE2 baseline)
-  let mut caps = caps_static();
+  let caps_static = caps_static();
 
   // Runtime detection extracts features + vendor/family/model in batch
   #[cfg(feature = "std")]
@@ -1028,9 +1040,9 @@ fn detect_x86_64() -> Detected {
   let (is_amd, family, model) = (false, 0u32, 0u32);
 
   #[cfg(feature = "std")]
-  {
-    caps |= runtime_caps;
-  }
+  let caps = caps_static.union(runtime_caps);
+  #[cfg(not(feature = "std"))]
+  let caps = caps_static;
 
   let tune = select_x86_tune(caps, is_amd, family, model);
 

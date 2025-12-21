@@ -150,6 +150,31 @@ pub struct Tune {
   /// - Apple M-series: 64-256 bytes (depends on path)
   pub simd_threshold: usize,
 
+  // ─── CRC-Specific Thresholds ───
+  /// Minimum bytes where PCLMUL/PMULL operations become faster than table CRC.
+  ///
+  /// PCLMULQDQ (x86_64), VPCLMULQDQ (AVX-512), and PMULL (aarch64) use
+  /// carryless multiplication for CRC-64 computation. These have higher
+  /// setup overhead than hardware CRC instructions.
+  ///
+  /// Typical values:
+  /// - AMD Zen 4/5: 64 bytes (fast PCLMUL)
+  /// - Intel: 128-256 bytes
+  /// - Apple M-series: 64 bytes (fast PMULL)
+  /// - aarch64 without PMULL: usize::MAX (use table fallback)
+  pub pclmul_threshold: usize,
+
+  /// Minimum bytes where hardware CRC instructions become faster than table CRC.
+  ///
+  /// SSE4.2 crc32 (x86_64) and aarch64 CRC32 extension have very low overhead
+  /// and are effective even for small buffers. Used for CRC-32 and CRC-32C.
+  ///
+  /// Typical values:
+  /// - x86_64 with SSE4.2: 8 bytes
+  /// - aarch64 with CRC32: 8 bytes
+  /// - Without hardware CRC: usize::MAX (use table fallback)
+  pub hwcrc_threshold: usize,
+
   /// Maximum effective SIMD width in bits (128/256/512).
   ///
   /// Even if wider SIMD is available, some CPUs prefer narrower operations.
@@ -223,6 +248,8 @@ impl Tune {
   pub const DEFAULT: Self = Self {
     kind: TuneKind::Default,
     simd_threshold: 256,
+    pclmul_threshold: 256,
+    hwcrc_threshold: 16,
     effective_simd_width: 128,
     fast_wide_ops: false,
     parallel_streams: 3,
@@ -241,6 +268,8 @@ impl Tune {
   pub const ZEN4: Self = Self {
     kind: TuneKind::Zen4,
     simd_threshold: 64,
+    pclmul_threshold: 64,
+    hwcrc_threshold: 8,
     effective_simd_width: 512,
     fast_wide_ops: true,
     parallel_streams: 3,
@@ -262,6 +291,8 @@ impl Tune {
   pub const ZEN5: Self = Self {
     kind: TuneKind::Zen5,
     simd_threshold: 64,
+    pclmul_threshold: 64,
+    hwcrc_threshold: 8,
     effective_simd_width: 512,
     fast_wide_ops: true,
     parallel_streams: 7, // Zen 5 has 8-wide dispatch, but 7-way ILP for integer ops
@@ -283,6 +314,8 @@ impl Tune {
   pub const ZEN5C: Self = Self {
     kind: TuneKind::Zen5c,
     simd_threshold: 64,
+    pclmul_threshold: 64,
+    hwcrc_threshold: 8,
     effective_simd_width: 512,
     fast_wide_ops: true,
     parallel_streams: 6, // Conservative, Zen 5c is optimized for density
@@ -300,6 +333,8 @@ impl Tune {
   pub const INTEL_SPR: Self = Self {
     kind: TuneKind::IntelSpr,
     simd_threshold: 256,
+    pclmul_threshold: 128,
+    hwcrc_threshold: 8,
     effective_simd_width: 512,
     fast_wide_ops: false,
     parallel_streams: 3,
@@ -324,6 +359,8 @@ impl Tune {
   pub const INTEL_GNR: Self = Self {
     kind: TuneKind::IntelGnr,
     simd_threshold: 256,
+    pclmul_threshold: 128,
+    hwcrc_threshold: 8,
     effective_simd_width: 512,
     fast_wide_ops: false, // Still has ZMM warmup, though improved
     parallel_streams: 4,  // Improved over SPR due to enhanced execution
@@ -341,6 +378,8 @@ impl Tune {
   pub const INTEL_ICL: Self = Self {
     kind: TuneKind::IntelIcl,
     simd_threshold: 256,
+    pclmul_threshold: 128,
+    hwcrc_threshold: 8,
     effective_simd_width: 256, // ICL prefers 256-bit even with AVX-512
     fast_wide_ops: false,
     parallel_streams: 3,
@@ -359,6 +398,8 @@ impl Tune {
   pub const APPLE_M1_M3: Self = Self {
     kind: TuneKind::AppleM1M3,
     simd_threshold: 64,
+    pclmul_threshold: 64,
+    hwcrc_threshold: 8,
     effective_simd_width: 128,
     fast_wide_ops: true, // Apple Silicon has efficient NEON
     parallel_streams: 3,
@@ -373,6 +414,8 @@ impl Tune {
   pub const APPLE_M4: Self = Self {
     kind: TuneKind::AppleM4,
     simd_threshold: 64,
+    pclmul_threshold: 64,
+    hwcrc_threshold: 8,
     effective_simd_width: 128,
     fast_wide_ops: true,
     parallel_streams: 3,
@@ -391,6 +434,8 @@ impl Tune {
   pub const APPLE_M5: Self = Self {
     kind: TuneKind::AppleM5,
     simd_threshold: 64,
+    pclmul_threshold: 64,
+    hwcrc_threshold: 8,
     effective_simd_width: 128,
     fast_wide_ops: true,
     parallel_streams: 4, // M5 has improved parallelism
@@ -412,6 +457,8 @@ impl Tune {
   pub const GRAVITON2: Self = Self {
     kind: TuneKind::Graviton2,
     simd_threshold: 64,
+    pclmul_threshold: 64,
+    hwcrc_threshold: 8,
     effective_simd_width: 128,
     fast_wide_ops: true,
     parallel_streams: 3,
@@ -426,6 +473,8 @@ impl Tune {
   pub const GRAVITON3: Self = Self {
     kind: TuneKind::Graviton3,
     simd_threshold: 64,
+    pclmul_threshold: 64,
+    hwcrc_threshold: 8,
     effective_simd_width: 256,
     fast_wide_ops: true,
     parallel_streams: 3,
@@ -440,6 +489,8 @@ impl Tune {
   pub const GRAVITON4: Self = Self {
     kind: TuneKind::Graviton4,
     simd_threshold: 64,
+    pclmul_threshold: 64,
+    hwcrc_threshold: 8,
     effective_simd_width: 128,
     fast_wide_ops: true,
     parallel_streams: 3,
@@ -455,6 +506,8 @@ impl Tune {
   pub const GRAVITON5: Self = Self {
     kind: TuneKind::Graviton5,
     simd_threshold: 64,
+    pclmul_threshold: 64,
+    hwcrc_threshold: 8,
     effective_simd_width: 128,
     fast_wide_ops: true,
     parallel_streams: 4, // V3 has improved parallelism over V2
@@ -473,6 +526,8 @@ impl Tune {
   pub const NEOVERSE_N2: Self = Self {
     kind: TuneKind::NeoverseN2,
     simd_threshold: 64,
+    pclmul_threshold: 64,
+    hwcrc_threshold: 8,
     effective_simd_width: 128,
     fast_wide_ops: true,
     parallel_streams: 3,
@@ -491,6 +546,8 @@ impl Tune {
   pub const NEOVERSE_N3: Self = Self {
     kind: TuneKind::NeoverseN3,
     simd_threshold: 64,
+    pclmul_threshold: 64,
+    hwcrc_threshold: 8,
     effective_simd_width: 128,
     fast_wide_ops: true,
     parallel_streams: 3,
@@ -505,6 +562,8 @@ impl Tune {
   pub const NEOVERSE_V3: Self = Self {
     kind: TuneKind::NeoverseV3,
     simd_threshold: 64,
+    pclmul_threshold: 64,
+    hwcrc_threshold: 8,
     effective_simd_width: 128,
     fast_wide_ops: true,
     parallel_streams: 4,
@@ -528,6 +587,8 @@ impl Tune {
   pub const NVIDIA_GRACE: Self = Self {
     kind: TuneKind::NvidiaGrace,
     simd_threshold: 64,
+    pclmul_threshold: 64,
+    hwcrc_threshold: 8,
     effective_simd_width: 128,
     fast_wide_ops: true,
     parallel_streams: 4, // 4×128-bit SIMD ALU pipelines per core
@@ -547,6 +608,8 @@ impl Tune {
   pub const AMPERE_ALTRA: Self = Self {
     kind: TuneKind::AmpereAltra,
     simd_threshold: 64,
+    pclmul_threshold: 64,
+    hwcrc_threshold: 8,
     effective_simd_width: 128,
     fast_wide_ops: true,
     parallel_streams: 3,
@@ -561,6 +624,8 @@ impl Tune {
   pub const AARCH64_PMULL: Self = Self {
     kind: TuneKind::Aarch64Pmull,
     simd_threshold: 256,
+    pclmul_threshold: 128,
+    hwcrc_threshold: 8,
     effective_simd_width: 128,
     fast_wide_ops: false,
     parallel_streams: 3,
@@ -582,6 +647,8 @@ impl Tune {
   pub const LOONGARCH_LSX: Self = Self {
     kind: TuneKind::LoongArchLsx,
     simd_threshold: 128,
+    pclmul_threshold: 128,
+    hwcrc_threshold: usize::MAX, // No hardware CRC on LoongArch
     effective_simd_width: 128,
     fast_wide_ops: true, // LSX has efficient 128-bit ops
     parallel_streams: 3,
@@ -599,6 +666,8 @@ impl Tune {
   pub const LOONGARCH_LASX: Self = Self {
     kind: TuneKind::LoongArchLasx,
     simd_threshold: 64, // Lower threshold for 256-bit ops
+    pclmul_threshold: 64,
+    hwcrc_threshold: usize::MAX, // No hardware CRC on LoongArch
     effective_simd_width: 256,
     fast_wide_ops: true, // LASX has efficient 256-bit ops
     parallel_streams: 4, // LA664 has 4 SIMD/FPU units
@@ -621,6 +690,8 @@ impl Tune {
   pub const Z13: Self = Self {
     kind: TuneKind::Z13,
     simd_threshold: 256,
+    pclmul_threshold: usize::MAX, // No PCLMUL on s390x
+    hwcrc_threshold: usize::MAX,  // No hardware CRC on s390x
     effective_simd_width: 128,
     fast_wide_ops: true,
     parallel_streams: 2, // Two SIMD units
@@ -638,6 +709,8 @@ impl Tune {
   pub const Z14: Self = Self {
     kind: TuneKind::Z14,
     simd_threshold: 128,
+    pclmul_threshold: usize::MAX, // No PCLMUL on s390x
+    hwcrc_threshold: usize::MAX,  // No hardware CRC on s390x
     effective_simd_width: 128,
     fast_wide_ops: true,
     parallel_streams: 2,
@@ -656,6 +729,8 @@ impl Tune {
   pub const Z15: Self = Self {
     kind: TuneKind::Z15,
     simd_threshold: 64,
+    pclmul_threshold: usize::MAX, // No PCLMUL on s390x
+    hwcrc_threshold: usize::MAX,  // No hardware CRC on s390x
     effective_simd_width: 128,
     fast_wide_ops: true,
     parallel_streams: 2,
@@ -676,6 +751,8 @@ impl Tune {
   pub const POWER7: Self = Self {
     kind: TuneKind::Power7,
     simd_threshold: 256,
+    pclmul_threshold: usize::MAX, // No PCLMUL on POWER
+    hwcrc_threshold: usize::MAX,  // No hardware CRC on POWER
     effective_simd_width: 128,
     fast_wide_ops: true,
     parallel_streams: 2,
@@ -693,6 +770,8 @@ impl Tune {
   pub const POWER8: Self = Self {
     kind: TuneKind::Power8,
     simd_threshold: 128,
+    pclmul_threshold: usize::MAX, // No PCLMUL on POWER
+    hwcrc_threshold: usize::MAX,  // No hardware CRC on POWER
     effective_simd_width: 128,
     fast_wide_ops: true,
     parallel_streams: 2, // Two vector pipelines
@@ -709,6 +788,8 @@ impl Tune {
   pub const POWER9: Self = Self {
     kind: TuneKind::Power9,
     simd_threshold: 64,
+    pclmul_threshold: usize::MAX, // No PCLMUL on POWER
+    hwcrc_threshold: usize::MAX,  // No hardware CRC on POWER
     effective_simd_width: 128,
     fast_wide_ops: true,
     parallel_streams: 4, // Improved execution resources
@@ -726,6 +807,8 @@ impl Tune {
   pub const POWER10: Self = Self {
     kind: TuneKind::Power10,
     simd_threshold: 64,
+    pclmul_threshold: usize::MAX, // No PCLMUL on POWER
+    hwcrc_threshold: usize::MAX,  // No hardware CRC on POWER
     effective_simd_width: 128,
     fast_wide_ops: true,
     parallel_streams: 4,
@@ -748,7 +831,9 @@ impl Tune {
   pub const PORTABLE: Self = Self {
     kind: TuneKind::Portable,
     simd_threshold: 256,
-    effective_simd_width: 0, // No SIMD
+    pclmul_threshold: usize::MAX, // No PCLMUL for portable
+    hwcrc_threshold: usize::MAX,  // No hardware CRC for portable
+    effective_simd_width: 0,      // No SIMD
     fast_wide_ops: false,
     parallel_streams: 1,
     prefer_hybrid: false,
@@ -1187,6 +1272,8 @@ mod tests {
     let custom = Tune {
       kind: TuneKind::Custom,
       simd_threshold: 128,
+      pclmul_threshold: 128,
+      hwcrc_threshold: 8,
       effective_simd_width: 256,
       fast_wide_ops: true,
       parallel_streams: 5,
