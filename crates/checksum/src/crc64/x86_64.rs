@@ -572,6 +572,22 @@ unsafe fn fold16_4x(x: __m512i, coeff: __m512i) -> __m512i {
   _mm512_xor_si512(h, l)
 }
 
+/// Fold and XOR with data using VPTERNLOGD (3-way XOR in one instruction).
+///
+/// Computes: `data ^ clmul_hi(x, coeff) ^ clmul_lo(x, coeff)`
+///
+/// This saves one XOR instruction per fold operation compared to the
+/// two-step `data ^ fold16_4x(x, coeff)` pattern. The ternary logic
+/// immediate 0x96 encodes XOR(a, XOR(b, c)) = a ^ b ^ c.
+#[inline]
+#[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
+unsafe fn fold16_4x_ternlog(x: __m512i, data: __m512i, coeff: __m512i) -> __m512i {
+  let h = _mm512_clmulepi64_epi128::<0x11>(x, coeff);
+  let l = _mm512_clmulepi64_epi128::<0x00>(x, coeff);
+  // VPTERNLOGD: 3-way XOR (imm8 = 0x96 = a ^ b ^ c)
+  _mm512_ternarylogic_epi64::<0x96>(data, h, l)
+}
+
 #[inline]
 #[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
 unsafe fn vpclmul_coeff(pair: (u64, u64)) -> __m512i {
@@ -629,24 +645,16 @@ unsafe fn update_simd_vpclmul(state: u64, first: &[Simd; 8], rest: &[[Simd; 8]],
   x0 = _mm512_xor_si512(x0, crc_mask);
 
   // Broadcast 128-byte fold coefficient across the 4×128-bit lanes of each vector.
-  let coeff = _mm512_set_epi64(
-    consts.fold_128b.0 as i64,
-    consts.fold_128b.1 as i64,
-    consts.fold_128b.0 as i64,
-    consts.fold_128b.1 as i64,
-    consts.fold_128b.0 as i64,
-    consts.fold_128b.1 as i64,
-    consts.fold_128b.0 as i64,
-    consts.fold_128b.1 as i64,
-  );
+  let coeff = vpclmul_coeff(consts.fold_128b);
 
   for chunk in rest {
     let ptr = chunk as *const [Simd; 8] as *const u8;
     let y0 = _mm512_loadu_si512(ptr.cast::<__m512i>());
     let y1 = _mm512_loadu_si512(ptr.add(64).cast::<__m512i>());
 
-    x0 = _mm512_xor_si512(y0, fold16_4x(x0, coeff));
-    x1 = _mm512_xor_si512(y1, fold16_4x(x1, coeff));
+    // VPTERNLOGD: fold + XOR in one instruction per vector
+    x0 = fold16_4x_ternlog(x0, y0, coeff);
+    x1 = fold16_4x_ternlog(x1, y1, coeff);
   }
 
   finalize_vpclmul_state(x0, x1, consts)
@@ -700,25 +708,25 @@ unsafe fn update_simd_vpclmul_2way(
   let mut i = 2;
   while i < even {
     let (y0, y1) = load_128b_block(&blocks[i]);
-    x0_0 = _mm512_xor_si512(y0, fold16_4x(x0_0, coeff_256));
-    x1_0 = _mm512_xor_si512(y1, fold16_4x(x1_0, coeff_256));
+    x0_0 = fold16_4x_ternlog(x0_0, y0, coeff_256);
+    x1_0 = fold16_4x_ternlog(x1_0, y1, coeff_256);
 
     let (y0, y1) = load_128b_block(&blocks[i + 1]);
-    x0_1 = _mm512_xor_si512(y0, fold16_4x(x0_1, coeff_256));
-    x1_1 = _mm512_xor_si512(y1, fold16_4x(x1_1, coeff_256));
+    x0_1 = fold16_4x_ternlog(x0_1, y0, coeff_256);
+    x1_1 = fold16_4x_ternlog(x1_1, y1, coeff_256);
 
     i += 2;
   }
 
-  // Merge: A·s0 ⊕ s1 (A = shift by 128B).
-  let mut x0 = _mm512_xor_si512(x0_1, fold16_4x(x0_0, coeff_128));
-  let mut x1 = _mm512_xor_si512(x1_1, fold16_4x(x1_0, coeff_128));
+  // Merge: A·s0 ⊕ s1 (A = shift by 128B) using VPTERNLOGD.
+  let mut x0 = fold16_4x_ternlog(x0_0, x0_1, coeff_128);
+  let mut x1 = fold16_4x_ternlog(x1_0, x1_1, coeff_128);
 
   // Odd tail (one remaining block).
   if even != blocks.len() {
     let (y0, y1) = load_128b_block(&blocks[even]);
-    x0 = _mm512_xor_si512(y0, fold16_4x(x0, coeff_128));
-    x1 = _mm512_xor_si512(y1, fold16_4x(x1, coeff_128));
+    x0 = fold16_4x_ternlog(x0, y0, coeff_128);
+    x1 = fold16_4x_ternlog(x1, y1, coeff_128);
   }
 
   finalize_vpclmul_state(x0, x1, consts)
@@ -760,39 +768,37 @@ unsafe fn update_simd_vpclmul_4way(
   let mut i = 4;
   while i < aligned {
     let (y0, y1) = load_128b_block(&blocks[i]);
-    x0_0 = _mm512_xor_si512(y0, fold16_4x(x0_0, coeff_512));
-    x1_0 = _mm512_xor_si512(y1, fold16_4x(x1_0, coeff_512));
+    x0_0 = fold16_4x_ternlog(x0_0, y0, coeff_512);
+    x1_0 = fold16_4x_ternlog(x1_0, y1, coeff_512);
 
     let (y0, y1) = load_128b_block(&blocks[i + 1]);
-    x0_1 = _mm512_xor_si512(y0, fold16_4x(x0_1, coeff_512));
-    x1_1 = _mm512_xor_si512(y1, fold16_4x(x1_1, coeff_512));
+    x0_1 = fold16_4x_ternlog(x0_1, y0, coeff_512);
+    x1_1 = fold16_4x_ternlog(x1_1, y1, coeff_512);
 
     let (y0, y1) = load_128b_block(&blocks[i + 2]);
-    x0_2 = _mm512_xor_si512(y0, fold16_4x(x0_2, coeff_512));
-    x1_2 = _mm512_xor_si512(y1, fold16_4x(x1_2, coeff_512));
+    x0_2 = fold16_4x_ternlog(x0_2, y0, coeff_512);
+    x1_2 = fold16_4x_ternlog(x1_2, y1, coeff_512);
 
     let (y0, y1) = load_128b_block(&blocks[i + 3]);
-    x0_3 = _mm512_xor_si512(y0, fold16_4x(x0_3, coeff_512));
-    x1_3 = _mm512_xor_si512(y1, fold16_4x(x1_3, coeff_512));
+    x0_3 = fold16_4x_ternlog(x0_3, y0, coeff_512);
+    x1_3 = fold16_4x_ternlog(x1_3, y1, coeff_512);
 
     i += 4;
   }
 
-  // Merge: A^3·s0 ⊕ A^2·s1 ⊕ A·s2 ⊕ s3.
-  let mut x0 = x0_3;
-  let mut x1 = x1_3;
-  x0 = _mm512_xor_si512(x0, fold16_4x(x0_2, c128));
-  x1 = _mm512_xor_si512(x1, fold16_4x(x1_2, c128));
-  x0 = _mm512_xor_si512(x0, fold16_4x(x0_1, c256));
-  x1 = _mm512_xor_si512(x1, fold16_4x(x1_1, c256));
-  x0 = _mm512_xor_si512(x0, fold16_4x(x0_0, c384));
-  x1 = _mm512_xor_si512(x1, fold16_4x(x1_0, c384));
+  // Merge: A^3·s0 ⊕ A^2·s1 ⊕ A·s2 ⊕ s3 using VPTERNLOGD.
+  let mut x0 = fold16_4x_ternlog(x0_2, x0_3, c128);
+  let mut x1 = fold16_4x_ternlog(x1_2, x1_3, c128);
+  x0 = fold16_4x_ternlog(x0_1, x0, c256);
+  x1 = fold16_4x_ternlog(x1_1, x1, c256);
+  x0 = fold16_4x_ternlog(x0_0, x0, c384);
+  x1 = fold16_4x_ternlog(x1_0, x1, c384);
 
   // Remaining blocks processed sequentially.
   for block in &blocks[aligned..] {
     let (y0, y1) = load_128b_block(block);
-    x0 = _mm512_xor_si512(y0, fold16_4x(x0, coeff_128));
-    x1 = _mm512_xor_si512(y1, fold16_4x(x1, coeff_128));
+    x0 = fold16_4x_ternlog(x0, y0, coeff_128);
+    x1 = fold16_4x_ternlog(x1, y1, coeff_128);
   }
 
   finalize_vpclmul_state(x0, x1, consts)
@@ -840,57 +846,56 @@ unsafe fn update_simd_vpclmul_7way(
 
   let mut i = 7;
   while i < aligned {
+    // VPTERNLOGD: fold + XOR in one instruction per vector (7×2 = 14 per iteration)
     let (y0, y1) = load_128b_block(&blocks[i]);
-    x0_0 = _mm512_xor_si512(y0, fold16_4x(x0_0, coeff_896));
-    x1_0 = _mm512_xor_si512(y1, fold16_4x(x1_0, coeff_896));
+    x0_0 = fold16_4x_ternlog(x0_0, y0, coeff_896);
+    x1_0 = fold16_4x_ternlog(x1_0, y1, coeff_896);
 
     let (y0, y1) = load_128b_block(&blocks[i + 1]);
-    x0_1 = _mm512_xor_si512(y0, fold16_4x(x0_1, coeff_896));
-    x1_1 = _mm512_xor_si512(y1, fold16_4x(x1_1, coeff_896));
+    x0_1 = fold16_4x_ternlog(x0_1, y0, coeff_896);
+    x1_1 = fold16_4x_ternlog(x1_1, y1, coeff_896);
 
     let (y0, y1) = load_128b_block(&blocks[i + 2]);
-    x0_2 = _mm512_xor_si512(y0, fold16_4x(x0_2, coeff_896));
-    x1_2 = _mm512_xor_si512(y1, fold16_4x(x1_2, coeff_896));
+    x0_2 = fold16_4x_ternlog(x0_2, y0, coeff_896);
+    x1_2 = fold16_4x_ternlog(x1_2, y1, coeff_896);
 
     let (y0, y1) = load_128b_block(&blocks[i + 3]);
-    x0_3 = _mm512_xor_si512(y0, fold16_4x(x0_3, coeff_896));
-    x1_3 = _mm512_xor_si512(y1, fold16_4x(x1_3, coeff_896));
+    x0_3 = fold16_4x_ternlog(x0_3, y0, coeff_896);
+    x1_3 = fold16_4x_ternlog(x1_3, y1, coeff_896);
 
     let (y0, y1) = load_128b_block(&blocks[i + 4]);
-    x0_4 = _mm512_xor_si512(y0, fold16_4x(x0_4, coeff_896));
-    x1_4 = _mm512_xor_si512(y1, fold16_4x(x1_4, coeff_896));
+    x0_4 = fold16_4x_ternlog(x0_4, y0, coeff_896);
+    x1_4 = fold16_4x_ternlog(x1_4, y1, coeff_896);
 
     let (y0, y1) = load_128b_block(&blocks[i + 5]);
-    x0_5 = _mm512_xor_si512(y0, fold16_4x(x0_5, coeff_896));
-    x1_5 = _mm512_xor_si512(y1, fold16_4x(x1_5, coeff_896));
+    x0_5 = fold16_4x_ternlog(x0_5, y0, coeff_896);
+    x1_5 = fold16_4x_ternlog(x1_5, y1, coeff_896);
 
     let (y0, y1) = load_128b_block(&blocks[i + 6]);
-    x0_6 = _mm512_xor_si512(y0, fold16_4x(x0_6, coeff_896));
-    x1_6 = _mm512_xor_si512(y1, fold16_4x(x1_6, coeff_896));
+    x0_6 = fold16_4x_ternlog(x0_6, y0, coeff_896);
+    x1_6 = fold16_4x_ternlog(x1_6, y1, coeff_896);
 
     i += 7;
   }
 
-  // Merge: A^6·s0 ⊕ A^5·s1 ⊕ … ⊕ A·s5 ⊕ s6.
-  let mut x0 = x0_6;
-  let mut x1 = x1_6;
-  x0 = _mm512_xor_si512(x0, fold16_4x(x0_5, c128));
-  x1 = _mm512_xor_si512(x1, fold16_4x(x1_5, c128));
-  x0 = _mm512_xor_si512(x0, fold16_4x(x0_4, c256));
-  x1 = _mm512_xor_si512(x1, fold16_4x(x1_4, c256));
-  x0 = _mm512_xor_si512(x0, fold16_4x(x0_3, c384));
-  x1 = _mm512_xor_si512(x1, fold16_4x(x1_3, c384));
-  x0 = _mm512_xor_si512(x0, fold16_4x(x0_2, c512));
-  x1 = _mm512_xor_si512(x1, fold16_4x(x1_2, c512));
-  x0 = _mm512_xor_si512(x0, fold16_4x(x0_1, c640));
-  x1 = _mm512_xor_si512(x1, fold16_4x(x1_1, c640));
-  x0 = _mm512_xor_si512(x0, fold16_4x(x0_0, c768));
-  x1 = _mm512_xor_si512(x1, fold16_4x(x1_0, c768));
+  // Merge: A^6·s0 ⊕ A^5·s1 ⊕ … ⊕ A·s5 ⊕ s6 using VPTERNLOGD.
+  let mut x0 = fold16_4x_ternlog(x0_5, x0_6, c128);
+  let mut x1 = fold16_4x_ternlog(x1_5, x1_6, c128);
+  x0 = fold16_4x_ternlog(x0_4, x0, c256);
+  x1 = fold16_4x_ternlog(x1_4, x1, c256);
+  x0 = fold16_4x_ternlog(x0_3, x0, c384);
+  x1 = fold16_4x_ternlog(x1_3, x1, c384);
+  x0 = fold16_4x_ternlog(x0_2, x0, c512);
+  x1 = fold16_4x_ternlog(x1_2, x1, c512);
+  x0 = fold16_4x_ternlog(x0_1, x0, c640);
+  x1 = fold16_4x_ternlog(x1_1, x1, c640);
+  x0 = fold16_4x_ternlog(x0_0, x0, c768);
+  x1 = fold16_4x_ternlog(x1_0, x1, c768);
 
   for block in &blocks[aligned..] {
     let (y0, y1) = load_128b_block(block);
-    x0 = _mm512_xor_si512(y0, fold16_4x(x0, coeff_128));
-    x1 = _mm512_xor_si512(y1, fold16_4x(x1, coeff_128));
+    x0 = fold16_4x_ternlog(x0, y0, coeff_128);
+    x1 = fold16_4x_ternlog(x1, y1, coeff_128);
   }
 
   finalize_vpclmul_state(x0, x1, consts)
