@@ -182,7 +182,11 @@ mod constants_castagnoli {
 
 #[cfg(test)]
 mod tests {
+  extern crate alloc;
+  extern crate std;
+
   use super::*;
+  use alloc::vec::Vec;
 
   const TEST_DATA: &[u8] = b"123456789";
   const CRC32C_CHECK: u32 = 0xE3069283;
@@ -191,7 +195,7 @@ mod tests {
   #[cfg(target_arch = "x86_64")]
   fn test_crc32c_sse42() {
     if !std::is_x86_feature_detected!("sse4.2") {
-      eprintln!("Skipping SSE4.2 test: not supported");
+      std::eprintln!("Skipping SSE4.2 test: not supported");
       return;
     }
 
