@@ -26,7 +26,8 @@
 //! - Linux kernel: `arch/x86/crypto/crc32-pclmul_asm.S`
 //! - zlib-ng: `arch/x86/crc32_fold_pclmulqdq.c`
 
-#![allow(dead_code)] // Kernels wired up via dispatcher
+#![allow(dead_code)]
+// Kernels wired up via dispatcher
 // SAFETY: All indexing is over fixed-size arrays with in-bounds constant indices
 // (e.g., chunks_exact(8) guarantees 8 bytes per chunk).
 #![allow(clippy::indexing_slicing)]
