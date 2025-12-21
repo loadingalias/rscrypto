@@ -157,6 +157,23 @@ unsafe fn update_simd(state: u64, first: &[Simd; 8], rest: &[[Simd; 8]], consts:
   fold_tail(x, consts)
 }
 
+#[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
+unsafe fn update_simd_eor3(state: u64, first: &[Simd; 8], rest: &[[Simd; 8]], consts: &Crc64ClmulConstants) -> u64 {
+  let mut x = *first;
+
+  // XOR the initial CRC into the first lane.
+  x[0] ^= Simd::new(0, state);
+
+  // 128-byte folding.
+  let coeff_low = consts.fold_128b.1;
+  let coeff_high = consts.fold_128b.0;
+  for chunk in rest {
+    fold_block_128_eor3(&mut x, chunk, coeff_low, coeff_high);
+  }
+
+  fold_tail(x, consts)
+}
+
 #[inline(always)]
 unsafe fn fold_tail(x: [Simd; 8], consts: &Crc64ClmulConstants) -> u64 {
   // Tail reduction (8×16B → 1×16B), unrolled for throughput.
@@ -195,6 +212,37 @@ unsafe fn fold_block_128(x: &mut [Simd; 8], chunk: &[Simd; 8], coeff_low: u64, c
   x[5] = chunk[5] ^ x[5].fold_16_pair(coeff_low, coeff_high);
   x[6] = chunk[6] ^ x[6].fold_16_pair(coeff_low, coeff_high);
   x[7] = chunk[7] ^ x[7].fold_16_pair(coeff_low, coeff_high);
+}
+
+/// Fold a 128-byte block using EOR3 (3-way XOR in one instruction).
+///
+/// This reduces the XOR dependency chain: instead of `chunk ^ (h ^ l)` (2 XORs),
+/// we use `veor3(chunk, h, l)` (1 instruction).
+#[inline]
+#[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
+unsafe fn fold_block_128_eor3(x: &mut [Simd; 8], chunk: &[Simd; 8], coeff_low: u64, coeff_high: u64) {
+  x[0] = fold_lane_eor3(x[0], chunk[0], coeff_low, coeff_high);
+  x[1] = fold_lane_eor3(x[1], chunk[1], coeff_low, coeff_high);
+  x[2] = fold_lane_eor3(x[2], chunk[2], coeff_low, coeff_high);
+  x[3] = fold_lane_eor3(x[3], chunk[3], coeff_low, coeff_high);
+  x[4] = fold_lane_eor3(x[4], chunk[4], coeff_low, coeff_high);
+  x[5] = fold_lane_eor3(x[5], chunk[5], coeff_low, coeff_high);
+  x[6] = fold_lane_eor3(x[6], chunk[6], coeff_low, coeff_high);
+  x[7] = fold_lane_eor3(x[7], chunk[7], coeff_low, coeff_high);
+}
+
+/// Fold a single 16-byte lane using EOR3.
+///
+/// Computes: `data ^ pmull(coeff_low, x.low) ^ pmull(coeff_high, x.high)`
+/// using a single 3-way XOR instruction.
+#[inline]
+#[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
+unsafe fn fold_lane_eor3(x: Simd, data: Simd, coeff_low: poly64_t, coeff_high: poly64_t) -> Simd {
+  let [x0, x1] = x.into_poly64s();
+  let h = Simd::from_mul(coeff_low, x0);
+  let l = Simd::from_mul(coeff_high, x1);
+  // EOR3: 3-way XOR in one instruction (ARMv8.2-SHA3)
+  Simd(veor3q_u8(data.0, h.0, l.0))
 }
 
 #[target_feature(enable = "aes", enable = "neon")]
@@ -356,6 +404,26 @@ unsafe fn crc64_pmull(mut state: u64, bytes: &[u8], consts: &Crc64ClmulConstants
   if let Some((first, rest)) = middle.split_first() {
     state = super::portable::crc64_slice8(state, left, tables);
     state = update_simd(state, first, rest, consts);
+    super::portable::crc64_slice8(state, right, tables)
+  } else {
+    super::portable::crc64_slice8(state, bytes, tables)
+  }
+}
+
+/// PMULL+EOR3 path: uses 3-way XOR for faster folding.
+///
+/// Available on ARMv8.2+ with SHA3 extension (Apple M1+, AWS Graviton3+).
+#[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
+unsafe fn crc64_pmull_eor3(
+  mut state: u64,
+  bytes: &[u8],
+  consts: &Crc64ClmulConstants,
+  tables: &[[u64; 256]; 8],
+) -> u64 {
+  let (left, middle, right) = bytes.align_to::<[Simd; 8]>();
+  if let Some((first, rest)) = middle.split_first() {
+    state = super::portable::crc64_slice8(state, left, tables);
+    state = update_simd_eor3(state, first, rest, consts);
     super::portable::crc64_slice8(state, right, tables)
   } else {
     super::portable::crc64_slice8(state, bytes, tables)
@@ -528,6 +596,52 @@ pub unsafe fn crc64_nvme_sve2_pmull_3way(crc: u64, data: &[u8]) -> u64 {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// PMULL+EOR3 Kernels (ARMv8.2-SHA3)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// CRC-64-XZ using PMULL+EOR3 folding.
+///
+/// Uses the 3-way XOR instruction (EOR3) from ARMv8.2-SHA3 to reduce the
+/// folding dependency chain. Available on Apple M1+, AWS Graviton3+, etc.
+///
+/// # Safety
+///
+/// Requires PMULL+SHA3 (crypto/aes + sha3). Caller must verify via
+/// `platform::caps().has(aarch64::PMULL_EOR3_READY)`.
+#[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
+pub unsafe fn crc64_xz_pmull_eor3(crc: u64, data: &[u8]) -> u64 {
+  unsafe {
+    crc64_pmull_eor3(
+      crc,
+      data,
+      &crate::common::clmul::CRC64_XZ_CLMUL,
+      &super::kernel_tables::XZ_TABLES,
+    )
+  }
+}
+
+/// CRC-64-NVME using PMULL+EOR3 folding.
+///
+/// Uses the 3-way XOR instruction (EOR3) from ARMv8.2-SHA3 to reduce the
+/// folding dependency chain. Available on Apple M1+, AWS Graviton3+, etc.
+///
+/// # Safety
+///
+/// Requires PMULL+SHA3 (crypto/aes + sha3). Caller must verify via
+/// `platform::caps().has(aarch64::PMULL_EOR3_READY)`.
+#[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
+pub unsafe fn crc64_nvme_pmull_eor3(crc: u64, data: &[u8]) -> u64 {
+  unsafe {
+    crc64_pmull_eor3(
+      crc,
+      data,
+      &crate::common::clmul::CRC64_NVME_CLMUL,
+      &super::kernel_tables::NVME_TABLES,
+    )
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Dispatcher Wrappers (safe interface)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -609,6 +723,20 @@ pub fn crc64_nvme_sve2_pmull_2way_safe(crc: u64, data: &[u8]) -> u64 {
 pub fn crc64_nvme_sve2_pmull_3way_safe(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: Dispatcher verifies SVE2_PMULL + PMULL before selecting this kernel.
   unsafe { crc64_nvme_sve2_pmull_3way(crc, data) }
+}
+
+/// Safe wrapper for CRC-64-XZ PMULL+EOR3 kernel.
+#[inline]
+pub fn crc64_xz_pmull_eor3_safe(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Dispatcher verifies PMULL_EOR3_READY before selecting this kernel.
+  unsafe { crc64_xz_pmull_eor3(crc, data) }
+}
+
+/// Safe wrapper for CRC-64-NVME PMULL+EOR3 kernel.
+#[inline]
+pub fn crc64_nvme_pmull_eor3_safe(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Dispatcher verifies PMULL_EOR3_READY before selecting this kernel.
+  unsafe { crc64_nvme_pmull_eor3(crc, data) }
 }
 
 /// CRC-64-XZ using PMULL folding (2-way striping).
@@ -956,6 +1084,118 @@ mod tests {
       let portable = super::super::portable::crc64_slice8_nvme(!0, &data) ^ !0;
       let pmull_3way = crc64_nvme_pmull_3way_safe(!0, &data) ^ !0;
       assert_eq!(pmull_3way, portable, "mismatch at len={len}");
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // PMULL+EOR3 tests (ARMv8.2-SHA3)
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  #[test]
+  fn test_crc64_xz_pmull_eor3_matches_vector() {
+    if !std::arch::is_aarch64_feature_detected!("aes") || !std::arch::is_aarch64_feature_detected!("sha3") {
+      return;
+    }
+
+    // SAFETY: We just checked AES+SHA3 is available.
+    let crc = crc64_xz_pmull_eor3_safe(!0, TEST_DATA) ^ !0;
+    assert_eq!(crc, 0x995D_C9BB_DF19_39FA);
+  }
+
+  #[test]
+  fn test_crc64_nvme_pmull_eor3_matches_vector() {
+    if !std::arch::is_aarch64_feature_detected!("aes") || !std::arch::is_aarch64_feature_detected!("sha3") {
+      return;
+    }
+
+    // SAFETY: We just checked AES+SHA3 is available.
+    let crc = crc64_nvme_pmull_eor3_safe(!0, TEST_DATA) ^ !0;
+    assert_eq!(crc, 0xAE8B_1486_0A79_9888);
+  }
+
+  #[test]
+  fn test_crc64_xz_pmull_eor3_matches_portable_various_lengths() {
+    if !std::arch::is_aarch64_feature_detected!("aes") || !std::arch::is_aarch64_feature_detected!("sha3") {
+      return;
+    }
+
+    // Test lengths that exercise all code paths:
+    // - < 128: falls through to portable (no EOR3 benefit)
+    // - >= 128: uses EOR3 folding
+    // - various alignments and block boundaries
+    for len in [
+      0usize, 1, 7, 8, 15, 16, 31, 32, 63, 64, 127, 128, 129, 255, 256, 257, 383, 384, 511, 512, 513, 639, 640, 767,
+      768, 1024, 2048, 4096, 8192,
+    ] {
+      let data = make_data(len);
+      let portable = super::super::portable::crc64_slice8_xz(!0, &data) ^ !0;
+      let eor3 = crc64_xz_pmull_eor3_safe(!0, &data) ^ !0;
+      assert_eq!(eor3, portable, "XZ EOR3 mismatch at len={len}");
+    }
+  }
+
+  #[test]
+  fn test_crc64_nvme_pmull_eor3_matches_portable_various_lengths() {
+    if !std::arch::is_aarch64_feature_detected!("aes") || !std::arch::is_aarch64_feature_detected!("sha3") {
+      return;
+    }
+
+    for len in [
+      0usize, 1, 7, 8, 15, 16, 31, 32, 63, 64, 127, 128, 129, 255, 256, 257, 383, 384, 511, 512, 513, 639, 640, 767,
+      768, 1024, 2048, 4096, 8192,
+    ] {
+      let data = make_data(len);
+      let portable = super::super::portable::crc64_slice8_nvme(!0, &data) ^ !0;
+      let eor3 = crc64_nvme_pmull_eor3_safe(!0, &data) ^ !0;
+      assert_eq!(eor3, portable, "NVME EOR3 mismatch at len={len}");
+    }
+  }
+
+  #[test]
+  fn test_crc64_xz_pmull_eor3_matches_standard_pmull() {
+    if !std::arch::is_aarch64_feature_detected!("aes") || !std::arch::is_aarch64_feature_detected!("sha3") {
+      return;
+    }
+
+    // EOR3 should produce identical results to standard PMULL - just faster
+    for len in [128, 256, 512, 1024, 4096] {
+      let data = make_data(len);
+      let pmull = crc64_xz_pmull_safe(!0, &data);
+      let eor3 = crc64_xz_pmull_eor3_safe(!0, &data);
+      assert_eq!(eor3, pmull, "EOR3 vs PMULL mismatch at len={len}");
+    }
+  }
+
+  #[test]
+  fn test_crc64_nvme_pmull_eor3_matches_standard_pmull() {
+    if !std::arch::is_aarch64_feature_detected!("aes") || !std::arch::is_aarch64_feature_detected!("sha3") {
+      return;
+    }
+
+    // EOR3 should produce identical results to standard PMULL - just faster
+    for len in [128, 256, 512, 1024, 4096] {
+      let data = make_data(len);
+      let pmull = crc64_nvme_pmull_safe(!0, &data);
+      let eor3 = crc64_nvme_pmull_eor3_safe(!0, &data);
+      assert_eq!(eor3, pmull, "EOR3 vs PMULL mismatch at len={len}");
+    }
+  }
+
+  #[test]
+  fn test_crc64_pmull_eor3_streaming() {
+    if !std::arch::is_aarch64_feature_detected!("aes") || !std::arch::is_aarch64_feature_detected!("sha3") {
+      return;
+    }
+
+    // Test that streaming updates produce correct results with EOR3
+    let data = make_data(1024);
+    let oneshot = crc64_xz_pmull_eor3_safe(!0, &data);
+
+    // Split at various points
+    for split in [128, 256, 384, 512, 640, 768, 896] {
+      let state1 = crc64_xz_pmull_eor3_safe(!0, &data[..split]);
+      let state2 = crc64_xz_pmull_eor3_safe(state1, &data[split..]);
+      assert_eq!(state2, oneshot, "streaming mismatch at split={split}");
     }
   }
 }

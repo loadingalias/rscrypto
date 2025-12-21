@@ -149,6 +149,16 @@ fn crc64_selected_kernel_name(len: usize) -> &'static str {
         }
         return "portable/slice8";
       }
+      Crc64Force::PmullEor3 => {
+        if caps.has(platform::caps::aarch64::PMULL_EOR3_READY) {
+          return if len < CRC64_FOLD_BLOCK_BYTES {
+            "aarch64/pmull-small" // EOR3 only benefits large-buffer folding
+          } else {
+            "aarch64/pmull-eor3"
+          };
+        }
+        return "portable/slice8";
+      }
       Crc64Force::Sve2Pmull => {
         if caps.has(platform::caps::aarch64::SVE2_PMULL) && caps.has(platform::caps::aarch64::PMULL_READY) {
           return if len < CRC64_FOLD_BLOCK_BYTES {
@@ -168,6 +178,11 @@ fn crc64_selected_kernel_name(len: usize) -> &'static str {
 
     if len < cfg.tunables.portable_to_clmul {
       return "portable/slice8";
+    }
+
+    // Auto selection: prefer EOR3 > SVE2 > PMULL tiers
+    if caps.has(platform::caps::aarch64::PMULL_EOR3_READY) && len >= CRC64_FOLD_BLOCK_BYTES {
+      return "aarch64/pmull-eor3";
     }
 
     if caps.has(platform::caps::aarch64::SVE2_PMULL) && caps.has(platform::caps::aarch64::PMULL_READY) {
@@ -511,6 +526,15 @@ fn crc64_xz_aarch64_auto(crc: u64, data: &[u8]) -> u64 {
 
   match cfg.effective_force {
     Crc64Force::Portable => return crc64_xz_portable(crc, data),
+    Crc64Force::PmullEor3 => {
+      if caps.has(platform::caps::aarch64::PMULL_EOR3_READY) {
+        if len < CRC64_FOLD_BLOCK_BYTES {
+          return aarch64::crc64_xz_pmull_small_safe(crc, data);
+        }
+        return aarch64::crc64_xz_pmull_eor3_safe(crc, data);
+      }
+      return crc64_xz_portable(crc, data);
+    }
     Crc64Force::Sve2Pmull => {
       if caps.has(platform::caps::aarch64::SVE2_PMULL) && caps.has(platform::caps::aarch64::PMULL_READY) {
         if len < CRC64_FOLD_BLOCK_BYTES {
@@ -544,6 +568,11 @@ fn crc64_xz_aarch64_auto(crc: u64, data: &[u8]) -> u64 {
 
   if len < cfg.tunables.portable_to_clmul {
     return crc64_xz_portable(crc, data);
+  }
+
+  // Auto selection: prefer EOR3 > SVE2 > PMULL tiers
+  if caps.has(platform::caps::aarch64::PMULL_EOR3_READY) && len >= CRC64_FOLD_BLOCK_BYTES {
+    return aarch64::crc64_xz_pmull_eor3_safe(crc, data);
   }
 
   if caps.has(platform::caps::aarch64::SVE2_PMULL) && caps.has(platform::caps::aarch64::PMULL_READY) {
@@ -581,6 +610,15 @@ fn crc64_nvme_aarch64_auto(crc: u64, data: &[u8]) -> u64 {
 
   match cfg.effective_force {
     Crc64Force::Portable => return crc64_nvme_portable(crc, data),
+    Crc64Force::PmullEor3 => {
+      if caps.has(platform::caps::aarch64::PMULL_EOR3_READY) {
+        if len < CRC64_FOLD_BLOCK_BYTES {
+          return aarch64::crc64_nvme_pmull_small_safe(crc, data);
+        }
+        return aarch64::crc64_nvme_pmull_eor3_safe(crc, data);
+      }
+      return crc64_nvme_portable(crc, data);
+    }
     Crc64Force::Sve2Pmull => {
       if caps.has(platform::caps::aarch64::SVE2_PMULL) && caps.has(platform::caps::aarch64::PMULL_READY) {
         if len < CRC64_FOLD_BLOCK_BYTES {
@@ -614,6 +652,11 @@ fn crc64_nvme_aarch64_auto(crc: u64, data: &[u8]) -> u64 {
 
   if len < cfg.tunables.portable_to_clmul {
     return crc64_nvme_portable(crc, data);
+  }
+
+  // Auto selection: prefer EOR3 > SVE2 > PMULL tiers
+  if caps.has(platform::caps::aarch64::PMULL_EOR3_READY) && len >= CRC64_FOLD_BLOCK_BYTES {
+    return aarch64::crc64_nvme_pmull_eor3_safe(crc, data);
   }
 
   if caps.has(platform::caps::aarch64::SVE2_PMULL) && caps.has(platform::caps::aarch64::PMULL_READY) {

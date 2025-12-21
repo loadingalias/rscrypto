@@ -25,6 +25,8 @@ pub enum Crc64Force {
   Vpclmul,
   /// Force aarch64 PMULL (if supported).
   Pmull,
+  /// Force aarch64 PMULL+EOR3 (if supported, requires SHA3).
+  PmullEor3,
   /// Force aarch64 SVE2 PMULL (if supported).
   Sve2Pmull,
 }
@@ -38,6 +40,7 @@ impl Crc64Force {
       Self::Pclmul => "pclmul",
       Self::Vpclmul => "vpclmul",
       Self::Pmull => "pmull",
+      Self::PmullEor3 => "pmull-eor3",
       Self::Sve2Pmull => "sve2-pmull",
     }
   }
@@ -118,6 +121,12 @@ fn read_env_overrides() -> Overrides {
     if value.eq_ignore_ascii_case("pmull") || value.eq_ignore_ascii_case("pmull-neon") {
       return Some(Crc64Force::Pmull);
     }
+    if value.eq_ignore_ascii_case("pmull-eor3")
+      || value.eq_ignore_ascii_case("eor3")
+      || value.eq_ignore_ascii_case("pmull-sha3")
+    {
+      return Some(Crc64Force::PmullEor3);
+    }
     if value.eq_ignore_ascii_case("sve2-pmull")
       || value.eq_ignore_ascii_case("pmull-sve2")
       || value.eq_ignore_ascii_case("sve2")
@@ -177,6 +186,15 @@ fn clamp_force_to_caps(requested: Crc64Force, caps: Caps) -> Crc64Force {
       {
         if caps.has(platform::caps::aarch64::PMULL_READY) {
           return Crc64Force::Pmull;
+        }
+      }
+      Crc64Force::Auto
+    }
+    Crc64Force::PmullEor3 => {
+      #[cfg(target_arch = "aarch64")]
+      {
+        if caps.has(platform::caps::aarch64::PMULL_EOR3_READY) {
+          return Crc64Force::PmullEor3;
         }
       }
       Crc64Force::Auto
