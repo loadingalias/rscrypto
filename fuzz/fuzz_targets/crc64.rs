@@ -8,7 +8,7 @@
 #![no_main]
 
 use arbitrary::Arbitrary;
-use checksum::{Crc64, Crc64Nvme};
+use checksum::{Checksum, ChecksumCombine, Crc64, Crc64Nvme};
 use libfuzzer_sys::fuzz_target;
 
 #[derive(Arbitrary, Debug)]
