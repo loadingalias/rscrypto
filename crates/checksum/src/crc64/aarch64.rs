@@ -136,6 +136,10 @@ impl BitXorAssign for Simd {
 const XZ_FOLD_256B: (u64, u64) = fold16_coeff_for_bytes(CRC64_XZ_POLY, 256);
 const NVME_FOLD_256B: (u64, u64) = fold16_coeff_for_bytes(CRC64_NVME_POLY, 256);
 
+// 3-way: update step shifts by 3×128B = 384B.
+const XZ_FOLD_384B: (u64, u64) = fold16_coeff_for_bytes(CRC64_XZ_POLY, 384);
+const NVME_FOLD_384B: (u64, u64) = fold16_coeff_for_bytes(CRC64_NVME_POLY, 384);
+
 #[target_feature(enable = "aes", enable = "neon")]
 unsafe fn update_simd(state: u64, first: &[Simd; 8], rest: &[[Simd; 8]], consts: &Crc64ClmulConstants) -> u64 {
   let mut x = *first;
@@ -177,7 +181,7 @@ unsafe fn fold_tail(x: [Simd; 8], consts: &Crc64ClmulConstants) -> u64 {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PMULL multi-stream (2-way, 128B blocks)
+// PMULL multi-stream (2-way/3-way, 128B blocks)
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[inline]
@@ -242,6 +246,74 @@ unsafe fn update_simd_2way(
 }
 
 #[target_feature(enable = "aes", enable = "neon")]
+unsafe fn update_simd_3way(
+  state: u64,
+  blocks: &[[Simd; 8]],
+  fold_384b: (u64, u64),
+  fold_256b: (u64, u64),
+  consts: &Crc64ClmulConstants,
+) -> u64 {
+  if blocks.len() < 3 {
+    let Some((first, rest)) = blocks.split_first() else {
+      return state;
+    };
+    return update_simd(state, first, rest, consts);
+  }
+
+  let aligned = (blocks.len() / 3) * 3;
+
+  let coeff_384_low = fold_384b.1;
+  let coeff_384_high = fold_384b.0;
+  let coeff_256_low = fold_256b.1;
+  let coeff_256_high = fold_256b.0;
+  let coeff_128_low = consts.fold_128b.1;
+  let coeff_128_high = consts.fold_128b.0;
+
+  let mut s0 = blocks[0];
+  let mut s1 = blocks[1];
+  let mut s2 = blocks[2];
+
+  // Inject CRC into stream 0 (block 0).
+  s0[0] ^= Simd::new(0, state);
+
+  // Process the largest multiple-of-3 prefix with 3-way striping.
+  let mut i = 3;
+  while i < aligned {
+    fold_block_128(&mut s0, &blocks[i], coeff_384_low, coeff_384_high);
+    fold_block_128(&mut s1, &blocks[i + 1], coeff_384_low, coeff_384_high);
+    fold_block_128(&mut s2, &blocks[i + 2], coeff_384_low, coeff_384_high);
+    i += 3;
+  }
+
+  // Merge: A^2·s0 ⊕ A·s1 ⊕ s2 (A = shift by 128B).
+  let mut combined = s2;
+  combined[0] ^= s1[0].fold_16_pair(coeff_128_low, coeff_128_high);
+  combined[1] ^= s1[1].fold_16_pair(coeff_128_low, coeff_128_high);
+  combined[2] ^= s1[2].fold_16_pair(coeff_128_low, coeff_128_high);
+  combined[3] ^= s1[3].fold_16_pair(coeff_128_low, coeff_128_high);
+  combined[4] ^= s1[4].fold_16_pair(coeff_128_low, coeff_128_high);
+  combined[5] ^= s1[5].fold_16_pair(coeff_128_low, coeff_128_high);
+  combined[6] ^= s1[6].fold_16_pair(coeff_128_low, coeff_128_high);
+  combined[7] ^= s1[7].fold_16_pair(coeff_128_low, coeff_128_high);
+
+  combined[0] ^= s0[0].fold_16_pair(coeff_256_low, coeff_256_high);
+  combined[1] ^= s0[1].fold_16_pair(coeff_256_low, coeff_256_high);
+  combined[2] ^= s0[2].fold_16_pair(coeff_256_low, coeff_256_high);
+  combined[3] ^= s0[3].fold_16_pair(coeff_256_low, coeff_256_high);
+  combined[4] ^= s0[4].fold_16_pair(coeff_256_low, coeff_256_high);
+  combined[5] ^= s0[5].fold_16_pair(coeff_256_low, coeff_256_high);
+  combined[6] ^= s0[6].fold_16_pair(coeff_256_low, coeff_256_high);
+  combined[7] ^= s0[7].fold_16_pair(coeff_256_low, coeff_256_high);
+
+  // Handle any remaining blocks sequentially.
+  for block in &blocks[aligned..] {
+    fold_block_128(&mut combined, block, coeff_128_low, coeff_128_high);
+  }
+
+  fold_tail(combined, consts)
+}
+
+#[target_feature(enable = "aes", enable = "neon")]
 unsafe fn crc64_pmull_2way(
   mut state: u64,
   bytes: &[u8],
@@ -256,6 +328,25 @@ unsafe fn crc64_pmull_2way(
 
   state = super::portable::crc64_slice8(state, left, tables);
   state = update_simd_2way(state, middle, fold_256b, consts);
+  super::portable::crc64_slice8(state, right, tables)
+}
+
+#[target_feature(enable = "aes", enable = "neon")]
+unsafe fn crc64_pmull_3way(
+  mut state: u64,
+  bytes: &[u8],
+  fold_384b: (u64, u64),
+  fold_256b: (u64, u64),
+  consts: &Crc64ClmulConstants,
+  tables: &[[u64; 256]; 8],
+) -> u64 {
+  let (left, middle, right) = bytes.align_to::<[Simd; 8]>();
+  if middle.len() < 3 {
+    return crc64_pmull_2way(state, bytes, fold_256b, consts, tables);
+  }
+
+  state = super::portable::crc64_slice8(state, left, tables);
+  state = update_simd_3way(state, middle, fold_384b, fold_256b, consts);
   super::portable::crc64_slice8(state, right, tables)
 }
 
@@ -358,6 +449,20 @@ pub unsafe fn crc64_xz_sve2_pmull_2way(crc: u64, data: &[u8]) -> u64 {
   unsafe { crc64_xz_pmull_2way(crc, data) }
 }
 
+/// CRC-64-XZ using a tuned "SVE2 PMULL" tier (3-way striping).
+///
+/// This is still implemented with NEON+PMULL intrinsics, but is intended for
+/// high-throughput Armv9/SVE2-class CPUs where additional ILP helps.
+///
+/// # Safety
+///
+/// Requires PMULL (crypto/aes). Caller must verify via
+/// `platform::caps().has(aarch64::SVE2_PMULL)` and `PMULL_READY` before selecting.
+#[target_feature(enable = "aes", enable = "neon")]
+pub unsafe fn crc64_xz_sve2_pmull_3way(crc: u64, data: &[u8]) -> u64 {
+  unsafe { crc64_xz_pmull_3way(crc, data) }
+}
+
 /// CRC-64-NVME using PMULL folding.
 ///
 /// # Safety
@@ -408,6 +513,20 @@ pub unsafe fn crc64_nvme_sve2_pmull_2way(crc: u64, data: &[u8]) -> u64 {
   unsafe { crc64_nvme_pmull_2way(crc, data) }
 }
 
+/// CRC-64-NVME using a tuned "SVE2 PMULL" tier (3-way striping).
+///
+/// This is still implemented with NEON+PMULL intrinsics, but is intended for
+/// high-throughput Armv9/SVE2-class CPUs where additional ILP helps.
+///
+/// # Safety
+///
+/// Requires PMULL (crypto/aes). Caller must verify via
+/// `platform::caps().has(aarch64::SVE2_PMULL)` and `PMULL_READY` before selecting.
+#[target_feature(enable = "aes", enable = "neon")]
+pub unsafe fn crc64_nvme_sve2_pmull_3way(crc: u64, data: &[u8]) -> u64 {
+  unsafe { crc64_nvme_pmull_3way(crc, data) }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Dispatcher Wrappers (safe interface)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -445,6 +564,13 @@ pub fn crc64_xz_sve2_pmull_2way_safe(crc: u64, data: &[u8]) -> u64 {
   unsafe { crc64_xz_sve2_pmull_2way(crc, data) }
 }
 
+/// Safe wrapper for CRC-64-XZ tuned SVE2 3-way PMULL kernel.
+#[inline]
+pub fn crc64_xz_sve2_pmull_3way_safe(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Dispatcher verifies SVE2_PMULL + PMULL before selecting this kernel.
+  unsafe { crc64_xz_sve2_pmull_3way(crc, data) }
+}
+
 /// Safe wrapper for CRC-64-NVME PMULL kernel.
 #[inline]
 pub fn crc64_nvme_pmull_safe(crc: u64, data: &[u8]) -> u64 {
@@ -478,6 +604,13 @@ pub fn crc64_nvme_sve2_pmull_2way_safe(crc: u64, data: &[u8]) -> u64 {
   unsafe { crc64_nvme_sve2_pmull_2way(crc, data) }
 }
 
+/// Safe wrapper for CRC-64-NVME tuned SVE2 3-way PMULL kernel.
+#[inline]
+pub fn crc64_nvme_sve2_pmull_3way_safe(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Dispatcher verifies SVE2_PMULL + PMULL before selecting this kernel.
+  unsafe { crc64_nvme_sve2_pmull_3way(crc, data) }
+}
+
 /// CRC-64-XZ using PMULL folding (2-way striping).
 ///
 /// This is still NEON+PMULL, but splits the main loop into two independent
@@ -493,6 +626,29 @@ pub unsafe fn crc64_xz_pmull_2way(crc: u64, data: &[u8]) -> u64 {
     crc64_pmull_2way(
       crc,
       data,
+      XZ_FOLD_256B,
+      &crate::common::clmul::CRC64_XZ_CLMUL,
+      &super::kernel_tables::XZ_TABLES,
+    )
+  }
+}
+
+/// CRC-64-XZ using PMULL folding (3-way striping).
+///
+/// This is still NEON+PMULL, but splits the main loop into three independent
+/// streams to improve ILP on some microarchitectures.
+///
+/// # Safety
+///
+/// Requires PMULL (crypto/aes). Caller must verify via
+/// `platform::caps().has(aarch64::PMULL_READY)`.
+#[target_feature(enable = "aes", enable = "neon")]
+pub unsafe fn crc64_xz_pmull_3way(crc: u64, data: &[u8]) -> u64 {
+  unsafe {
+    crc64_pmull_3way(
+      crc,
+      data,
+      XZ_FOLD_384B,
       XZ_FOLD_256B,
       &crate::common::clmul::CRC64_XZ_CLMUL,
       &super::kernel_tables::XZ_TABLES,
@@ -519,6 +675,26 @@ pub unsafe fn crc64_nvme_pmull_2way(crc: u64, data: &[u8]) -> u64 {
   }
 }
 
+/// CRC-64-NVME using PMULL folding (3-way striping).
+///
+/// # Safety
+///
+/// Requires PMULL (crypto/aes). Caller must verify via
+/// `platform::caps().has(aarch64::PMULL_READY)`.
+#[target_feature(enable = "aes", enable = "neon")]
+pub unsafe fn crc64_nvme_pmull_3way(crc: u64, data: &[u8]) -> u64 {
+  unsafe {
+    crc64_pmull_3way(
+      crc,
+      data,
+      NVME_FOLD_384B,
+      NVME_FOLD_256B,
+      &crate::common::clmul::CRC64_NVME_CLMUL,
+      &super::kernel_tables::NVME_TABLES,
+    )
+  }
+}
+
 /// Safe wrapper for CRC-64-XZ PMULL 2-way kernel.
 #[inline]
 pub fn crc64_xz_pmull_2way_safe(crc: u64, data: &[u8]) -> u64 {
@@ -526,11 +702,25 @@ pub fn crc64_xz_pmull_2way_safe(crc: u64, data: &[u8]) -> u64 {
   unsafe { crc64_xz_pmull_2way(crc, data) }
 }
 
+/// Safe wrapper for CRC-64-XZ PMULL 3-way kernel.
+#[inline]
+pub fn crc64_xz_pmull_3way_safe(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Dispatcher verifies PMULL (crypto/aes) before selecting this kernel.
+  unsafe { crc64_xz_pmull_3way(crc, data) }
+}
+
 /// Safe wrapper for CRC-64-NVME PMULL 2-way kernel.
 #[inline]
 pub fn crc64_nvme_pmull_2way_safe(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: Dispatcher verifies PMULL (crypto/aes) before selecting this kernel.
   unsafe { crc64_nvme_pmull_2way(crc, data) }
+}
+
+/// Safe wrapper for CRC-64-NVME PMULL 3-way kernel.
+#[inline]
+pub fn crc64_nvme_pmull_3way_safe(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Dispatcher verifies PMULL (crypto/aes) before selecting this kernel.
+  unsafe { crc64_nvme_pmull_3way(crc, data) }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -651,6 +841,24 @@ mod tests {
   }
 
   #[test]
+  fn test_crc64_xz_sve2_pmull_3way_matches_portable_various_lengths() {
+    let caps = platform::caps();
+    if !caps.has(platform::caps::aarch64::SVE2_PMULL) || !caps.has(platform::caps::aarch64::PMULL_READY) {
+      return;
+    }
+
+    for len in [
+      0usize, 1, 7, 16, 31, 32, 63, 64, 127, 128, 255, 256, 257, 383, 384, 511, 512, 513, 639, 640, 767, 768, 1024,
+      4096,
+    ] {
+      let data = make_data(len);
+      let portable = super::super::portable::crc64_slice8_xz(!0, &data) ^ !0;
+      let sve2 = crc64_xz_sve2_pmull_3way_safe(!0, &data) ^ !0;
+      assert_eq!(sve2, portable, "mismatch at len={len}");
+    }
+  }
+
+  #[test]
   fn test_crc64_nvme_sve2_pmull_2way_matches_portable_various_lengths() {
     let caps = platform::caps();
     if !caps.has(platform::caps::aarch64::SVE2_PMULL) || !caps.has(platform::caps::aarch64::PMULL_READY) {
@@ -663,6 +871,24 @@ mod tests {
       let data = make_data(len);
       let portable = super::super::portable::crc64_slice8_nvme(!0, &data) ^ !0;
       let sve2 = crc64_nvme_sve2_pmull_2way_safe(!0, &data) ^ !0;
+      assert_eq!(sve2, portable, "mismatch at len={len}");
+    }
+  }
+
+  #[test]
+  fn test_crc64_nvme_sve2_pmull_3way_matches_portable_various_lengths() {
+    let caps = platform::caps();
+    if !caps.has(platform::caps::aarch64::SVE2_PMULL) || !caps.has(platform::caps::aarch64::PMULL_READY) {
+      return;
+    }
+
+    for len in [
+      0usize, 1, 7, 16, 31, 32, 63, 64, 127, 128, 255, 256, 257, 383, 384, 511, 512, 513, 639, 640, 767, 768, 1024,
+      4096,
+    ] {
+      let data = make_data(len);
+      let portable = super::super::portable::crc64_slice8_nvme(!0, &data) ^ !0;
+      let sve2 = crc64_nvme_sve2_pmull_3way_safe(!0, &data) ^ !0;
       assert_eq!(sve2, portable, "mismatch at len={len}");
     }
   }
@@ -684,6 +910,23 @@ mod tests {
   }
 
   #[test]
+  fn test_crc64_xz_pmull_3way_matches_portable_various_lengths() {
+    if !std::arch::is_aarch64_feature_detected!("aes") {
+      return;
+    }
+
+    for len in [
+      0usize, 1, 7, 16, 31, 32, 63, 64, 127, 128, 255, 256, 257, 383, 384, 511, 512, 513, 639, 640, 767, 768, 1024,
+      4096,
+    ] {
+      let data = make_data(len);
+      let portable = super::super::portable::crc64_slice8_xz(!0, &data) ^ !0;
+      let pmull_3way = crc64_xz_pmull_3way_safe(!0, &data) ^ !0;
+      assert_eq!(pmull_3way, portable, "mismatch at len={len}");
+    }
+  }
+
+  #[test]
   fn test_crc64_nvme_pmull_2way_matches_portable_various_lengths() {
     if !std::arch::is_aarch64_feature_detected!("aes") {
       return;
@@ -696,6 +939,23 @@ mod tests {
       let portable = super::super::portable::crc64_slice8_nvme(!0, &data) ^ !0;
       let pmull_2way = crc64_nvme_pmull_2way_safe(!0, &data) ^ !0;
       assert_eq!(pmull_2way, portable, "mismatch at len={len}");
+    }
+  }
+
+  #[test]
+  fn test_crc64_nvme_pmull_3way_matches_portable_various_lengths() {
+    if !std::arch::is_aarch64_feature_detected!("aes") {
+      return;
+    }
+
+    for len in [
+      0usize, 1, 7, 16, 31, 32, 63, 64, 127, 128, 255, 256, 257, 383, 384, 511, 512, 513, 639, 640, 767, 768, 1024,
+      4096,
+    ] {
+      let data = make_data(len);
+      let portable = super::super::portable::crc64_slice8_nvme(!0, &data) ^ !0;
+      let pmull_3way = crc64_nvme_pmull_3way_safe(!0, &data) ^ !0;
+      assert_eq!(pmull_3way, portable, "mismatch at len={len}");
     }
   }
 }

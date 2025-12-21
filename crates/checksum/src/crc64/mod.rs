@@ -139,10 +139,12 @@ fn crc64_selected_kernel_name(len: usize) -> &'static str {
         if caps.has(platform::caps::aarch64::PMULL_READY) {
           return if len < CRC64_FOLD_BLOCK_BYTES {
             "aarch64/pmull-small"
-          } else if aarch64_use_2way(len, cfg.tunables.streams) {
-            "aarch64/pmull-2way"
           } else {
-            "aarch64/pmull"
+            match aarch64_pmull_streams_for_len(len, cfg.tunables.streams) {
+              3 => "aarch64/pmull-3way",
+              2 => "aarch64/pmull-2way",
+              _ => "aarch64/pmull",
+            }
           };
         }
         return "portable/slice8";
@@ -151,10 +153,12 @@ fn crc64_selected_kernel_name(len: usize) -> &'static str {
         if caps.has(platform::caps::aarch64::SVE2_PMULL) && caps.has(platform::caps::aarch64::PMULL_READY) {
           return if len < CRC64_FOLD_BLOCK_BYTES {
             "aarch64/sve2-pmull-small"
-          } else if aarch64_use_2way(len, cfg.tunables.streams) {
-            "aarch64/sve2-pmull-2way"
           } else {
-            "aarch64/sve2-pmull"
+            match aarch64_pmull_streams_for_len(len, cfg.tunables.streams) {
+              3 => "aarch64/sve2-pmull-3way",
+              2 => "aarch64/sve2-pmull-2way",
+              _ => "aarch64/sve2-pmull",
+            }
           };
         }
         return "portable/slice8";
@@ -166,20 +170,23 @@ fn crc64_selected_kernel_name(len: usize) -> &'static str {
       return "portable/slice8";
     }
 
-    if caps.has(platform::caps::aarch64::SVE2_PMULL)
-      && caps.has(platform::caps::aarch64::PMULL_READY)
-      && aarch64_use_2way(len, cfg.tunables.streams)
-    {
-      return "aarch64/sve2-pmull-2way";
+    if caps.has(platform::caps::aarch64::SVE2_PMULL) && caps.has(platform::caps::aarch64::PMULL_READY) {
+      match aarch64_pmull_streams_for_len(len, cfg.tunables.streams) {
+        3 => return "aarch64/sve2-pmull-3way",
+        2 => return "aarch64/sve2-pmull-2way",
+        _ => {}
+      }
     }
 
     if caps.has(platform::caps::aarch64::PMULL_READY) {
       return if len < CRC64_FOLD_BLOCK_BYTES {
         "aarch64/pmull-small"
-      } else if aarch64_use_2way(len, cfg.tunables.streams) {
-        "aarch64/pmull-2way"
       } else {
-        "aarch64/pmull"
+        match aarch64_pmull_streams_for_len(len, cfg.tunables.streams) {
+          3 => "aarch64/pmull-3way",
+          2 => "aarch64/pmull-2way",
+          _ => "aarch64/pmull",
+        }
       };
     }
 
@@ -261,8 +268,18 @@ const CRC64_PMULL_2WAY_MIN_BYTES: usize = 128 * CRC64_FOLD_BLOCK_BYTES; // 16 Ki
 
 #[cfg(target_arch = "aarch64")]
 #[inline]
-const fn aarch64_use_2way(len: usize, streams: u8) -> bool {
-  streams >= 2 && len >= CRC64_PMULL_2WAY_MIN_BYTES
+const fn aarch64_pmull_streams_for_len(len: usize, streams: u8) -> u8 {
+  // 3-way is intentionally conservative: it increases register pressure and
+  // tends to win only in the large-buffer regime.
+  const CRC64_PMULL_3WAY_MIN_BYTES: usize = 256 * CRC64_FOLD_BLOCK_BYTES; // 32 KiB
+
+  if streams >= 3 && len >= CRC64_PMULL_3WAY_MIN_BYTES {
+    return 3;
+  }
+  if streams >= 2 && len >= CRC64_PMULL_2WAY_MIN_BYTES {
+    return 2;
+  }
+  1
 }
 
 // Note: Also matches x86_64-unknown-none where it may be unused (no auto-dispatch on bare metal)
@@ -499,8 +516,10 @@ fn crc64_xz_aarch64_auto(crc: u64, data: &[u8]) -> u64 {
         if len < CRC64_FOLD_BLOCK_BYTES {
           return aarch64::crc64_xz_sve2_pmull_small_safe(crc, data);
         }
-        if aarch64_use_2way(len, cfg.tunables.streams) {
-          return aarch64::crc64_xz_sve2_pmull_2way_safe(crc, data);
+        match aarch64_pmull_streams_for_len(len, cfg.tunables.streams) {
+          3 => return aarch64::crc64_xz_sve2_pmull_3way_safe(crc, data),
+          2 => return aarch64::crc64_xz_sve2_pmull_2way_safe(crc, data),
+          _ => {}
         }
         return aarch64::crc64_xz_sve2_pmull_safe(crc, data);
       }
@@ -511,8 +530,10 @@ fn crc64_xz_aarch64_auto(crc: u64, data: &[u8]) -> u64 {
         if len < CRC64_FOLD_BLOCK_BYTES {
           return aarch64::crc64_xz_pmull_small_safe(crc, data);
         }
-        if aarch64_use_2way(len, cfg.tunables.streams) {
-          return aarch64::crc64_xz_pmull_2way_safe(crc, data);
+        match aarch64_pmull_streams_for_len(len, cfg.tunables.streams) {
+          3 => return aarch64::crc64_xz_pmull_3way_safe(crc, data),
+          2 => return aarch64::crc64_xz_pmull_2way_safe(crc, data),
+          _ => {}
         }
         return aarch64::crc64_xz_pmull_safe(crc, data);
       }
@@ -525,19 +546,22 @@ fn crc64_xz_aarch64_auto(crc: u64, data: &[u8]) -> u64 {
     return crc64_xz_portable(crc, data);
   }
 
-  if caps.has(platform::caps::aarch64::SVE2_PMULL)
-    && caps.has(platform::caps::aarch64::PMULL_READY)
-    && aarch64_use_2way(len, cfg.tunables.streams)
-  {
-    return aarch64::crc64_xz_sve2_pmull_2way_safe(crc, data);
+  if caps.has(platform::caps::aarch64::SVE2_PMULL) && caps.has(platform::caps::aarch64::PMULL_READY) {
+    match aarch64_pmull_streams_for_len(len, cfg.tunables.streams) {
+      3 => return aarch64::crc64_xz_sve2_pmull_3way_safe(crc, data),
+      2 => return aarch64::crc64_xz_sve2_pmull_2way_safe(crc, data),
+      _ => {}
+    }
   }
 
   if caps.has(platform::caps::aarch64::PMULL_READY) {
     if len < CRC64_FOLD_BLOCK_BYTES {
       return aarch64::crc64_xz_pmull_small_safe(crc, data);
     }
-    if aarch64_use_2way(len, cfg.tunables.streams) {
-      return aarch64::crc64_xz_pmull_2way_safe(crc, data);
+    match aarch64_pmull_streams_for_len(len, cfg.tunables.streams) {
+      3 => return aarch64::crc64_xz_pmull_3way_safe(crc, data),
+      2 => return aarch64::crc64_xz_pmull_2way_safe(crc, data),
+      _ => {}
     }
     return aarch64::crc64_xz_pmull_safe(crc, data);
   }
@@ -562,8 +586,10 @@ fn crc64_nvme_aarch64_auto(crc: u64, data: &[u8]) -> u64 {
         if len < CRC64_FOLD_BLOCK_BYTES {
           return aarch64::crc64_nvme_sve2_pmull_small_safe(crc, data);
         }
-        if aarch64_use_2way(len, cfg.tunables.streams) {
-          return aarch64::crc64_nvme_sve2_pmull_2way_safe(crc, data);
+        match aarch64_pmull_streams_for_len(len, cfg.tunables.streams) {
+          3 => return aarch64::crc64_nvme_sve2_pmull_3way_safe(crc, data),
+          2 => return aarch64::crc64_nvme_sve2_pmull_2way_safe(crc, data),
+          _ => {}
         }
         return aarch64::crc64_nvme_sve2_pmull_safe(crc, data);
       }
@@ -574,8 +600,10 @@ fn crc64_nvme_aarch64_auto(crc: u64, data: &[u8]) -> u64 {
         if len < CRC64_FOLD_BLOCK_BYTES {
           return aarch64::crc64_nvme_pmull_small_safe(crc, data);
         }
-        if aarch64_use_2way(len, cfg.tunables.streams) {
-          return aarch64::crc64_nvme_pmull_2way_safe(crc, data);
+        match aarch64_pmull_streams_for_len(len, cfg.tunables.streams) {
+          3 => return aarch64::crc64_nvme_pmull_3way_safe(crc, data),
+          2 => return aarch64::crc64_nvme_pmull_2way_safe(crc, data),
+          _ => {}
         }
         return aarch64::crc64_nvme_pmull_safe(crc, data);
       }
@@ -588,19 +616,22 @@ fn crc64_nvme_aarch64_auto(crc: u64, data: &[u8]) -> u64 {
     return crc64_nvme_portable(crc, data);
   }
 
-  if caps.has(platform::caps::aarch64::SVE2_PMULL)
-    && caps.has(platform::caps::aarch64::PMULL_READY)
-    && aarch64_use_2way(len, cfg.tunables.streams)
-  {
-    return aarch64::crc64_nvme_sve2_pmull_2way_safe(crc, data);
+  if caps.has(platform::caps::aarch64::SVE2_PMULL) && caps.has(platform::caps::aarch64::PMULL_READY) {
+    match aarch64_pmull_streams_for_len(len, cfg.tunables.streams) {
+      3 => return aarch64::crc64_nvme_sve2_pmull_3way_safe(crc, data),
+      2 => return aarch64::crc64_nvme_sve2_pmull_2way_safe(crc, data),
+      _ => {}
+    }
   }
 
   if caps.has(platform::caps::aarch64::PMULL_READY) {
     if len < CRC64_FOLD_BLOCK_BYTES {
       return aarch64::crc64_nvme_pmull_small_safe(crc, data);
     }
-    if aarch64_use_2way(len, cfg.tunables.streams) {
-      return aarch64::crc64_nvme_pmull_2way_safe(crc, data);
+    match aarch64_pmull_streams_for_len(len, cfg.tunables.streams) {
+      3 => return aarch64::crc64_nvme_pmull_3way_safe(crc, data),
+      2 => return aarch64::crc64_nvme_pmull_2way_safe(crc, data),
+      _ => {}
     }
     return aarch64::crc64_nvme_pmull_safe(crc, data);
   }
@@ -1490,10 +1521,12 @@ mod tests {
           if streams_env.is_some() {
             let expected = if len < CRC64_FOLD_BLOCK_BYTES {
               "aarch64/sve2-pmull-small"
-            } else if aarch64_use_2way(len, cfg.tunables.streams) {
-              "aarch64/sve2-pmull-2way"
             } else {
-              "aarch64/sve2-pmull"
+              match aarch64_pmull_streams_for_len(len, cfg.tunables.streams) {
+                3 => "aarch64/sve2-pmull-3way",
+                2 => "aarch64/sve2-pmull-2way",
+                _ => "aarch64/sve2-pmull",
+              }
             };
             assert_eq!(kernel, expected);
           } else {

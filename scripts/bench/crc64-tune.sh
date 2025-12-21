@@ -53,6 +53,18 @@ for streams in 1 2 4 7; do
     RSCRYPTO_CRC64_STREAMS="$streams"
 done
 
+for streams in 1 2 3; do
+  run "force=pmull streams=${streams}" \
+    RSCRYPTO_CRC64_FORCE=pmull \
+    RSCRYPTO_CRC64_STREAMS="$streams"
+done
+
+for streams in 1 2 3; do
+  run "force=sve2-pmull streams=${streams}" \
+    RSCRYPTO_CRC64_FORCE=sve2-pmull \
+    RSCRYPTO_CRC64_STREAMS="$streams"
+done
+
 echo ""
 echo "Next:"
 echo "  python3 scripts/bench/criterion-summary.py --group-prefix 'crc64/' --only oneshot"
