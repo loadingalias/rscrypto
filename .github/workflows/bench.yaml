@@ -442,24 +442,74 @@ jobs:
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   # Runs the full CRC64 tuning matrix to discover optimal thresholds and stream
   # counts for each microarchitecture. Results guide tune.rs preset updates.
+  #
+  # Kernels tested:
+  # - x86_64: PCLMULQDQ (1-7 way), VPCLMULQDQ/AVX-512 (1-7 way)
+  # - aarch64: PMULL (1-4 way), PMULL+EOR3/SHA3 (1-4 way), SVE2-PMULL (1-4 way)
+  #
+  # Output: tune-results/analysis.json with recommended parallel_streams values
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   tune-discovery:
     name: CRC64 Tune Discovery (${{ matrix.target.name }})
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.run_tune_discovery == 'true'
     runs-on: ${{ matrix.target.runner }}
-    timeout-minutes: 120
+    timeout-minutes: 240
     strategy:
       fail-fast: false
       matrix:
         target:
-          - name: x86_64 (Zen4/5)
+          # ═══════════════════════════════════════════════════════════════════
+          # x86_64 Targets
+          # ═══════════════════════════════════════════════════════════════════
+
+          # AMD Zen4/5 - AVX-512 + VPCLMULQDQ, 6-8 wide dispatch
+          # Tests: pclmul (1-8 way), vpclmul (1-8 way)
+          - name: x86_64 (AMD Zen4/5)
             runner: namespace-profile-rscrypto-linux-x86
             platform-id: linux-x64-zen
+            tune-preset: ZEN4
 
-          - name: aarch64 (Graviton)
+          # Intel Sapphire Rapids - AVX-512 + VPCLMULQDQ
+          # Tests: pclmul (1-8 way), vpclmul (1-8 way)
+          # Note: Uses same runner, CPU detection determines actual chip
+          # - name: x86_64 (Intel SPR)
+          #   runner: [self-hosted, linux, x64, intel-spr]
+          #   platform-id: linux-x64-spr
+          #   tune-preset: INTEL_SPR
+
+          # ═══════════════════════════════════════════════════════════════════
+          # aarch64 Targets - Linux
+          # ═══════════════════════════════════════════════════════════════════
+
+          # AWS Graviton3 - PMULL + SVE2 + SHA3 (EOR3), Neoverse V1
+          # Tests: pmull (1-8 way), pmull-eor3 (1-8 way), sve2-pmull (1-8 way)
+          - name: aarch64 (AWS Graviton3)
             runner: namespace-profile-rscrypto-linux-arm64
-            platform-id: linux-arm64-graviton
+            platform-id: linux-arm64-graviton3
+            tune-preset: GRAVITON3
+
+          # ═══════════════════════════════════════════════════════════════════
+          # aarch64 Targets - macOS (Apple Silicon)
+          # ═══════════════════════════════════════════════════════════════════
+
+          # Apple M1/M2/M3 - PMULL + SHA3 (EOR3), no SVE2
+          # Tests: pmull (1-8 way), pmull-eor3 (1-8 way)
+          - name: aarch64 (Apple Silicon)
+            runner: macos-14
+            platform-id: macos-arm64-apple
+            tune-preset: APPLE_M1_M3
+
+          # ═══════════════════════════════════════════════════════════════════
+          # aarch64 Targets - Windows
+          # ═══════════════════════════════════════════════════════════════════
+
+          # Windows ARM64 - PMULL + SHA3 (EOR3)
+          # Tests: pmull (1-8 way), pmull-eor3 (1-8 way)
+          - name: aarch64 (Windows ARM64)
+            runner: namespace-profile-rscrypto-windows-arm64
+            platform-id: windows-arm64
+            tune-preset: GENERIC_AARCH64
 
     steps:
       - name: Checkout
@@ -478,14 +528,70 @@ jobs:
           toolchain: ${{ steps.toolchain.outputs.version }}
 
       - name: Setup Namespace Cache (Linux)
+        if: runner.os == 'Linux'
         uses: namespacelabs/nscloud-cache-action@446d8f390563cd54ca27e8de5bdb816f63c0b706  # v1
         with:
           cache: rust
+
+      - name: Setup Rust Cache (Windows/macOS)
+        if: runner.os == 'Windows' || runner.os == 'macOS'
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5  # v2
+        with:
+          shared-key: "rscrypto-tune-v1"
+          cache-on-failure: true
 
       - name: Install Benchmarking Tools
         uses: taiki-e/install-action@60581cd7025e0e855cebd745379013e286d9c787  # v2
         with:
           tool: just
+
+      - name: Detect CPU Features
+        id: cpu
+        shell: bash
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "CPU Detection"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          CPU_MODEL="unknown"
+          FEATURES=""
+
+          # Linux detection
+          if [[ -f /proc/cpuinfo ]]; then
+            CPU_MODEL=$(grep -m1 "model name" /proc/cpuinfo | cut -d: -f2 | xargs || echo "")
+            if [[ -z "$CPU_MODEL" ]]; then
+              # ARM: use implementer + part
+              IMPL=$(grep -m1 "CPU implementer" /proc/cpuinfo | cut -d: -f2 | xargs || echo "")
+              PART=$(grep -m1 "CPU part" /proc/cpuinfo | cut -d: -f2 | xargs || echo "")
+              [[ -n "$IMPL" && -n "$PART" ]] && CPU_MODEL="ARM impl=$IMPL part=$PART"
+            fi
+
+            # x86_64 features
+            grep -q "pclmulqdq" /proc/cpuinfo 2>/dev/null && FEATURES="$FEATURES pclmul"
+            grep -q "avx512f" /proc/cpuinfo 2>/dev/null && FEATURES="$FEATURES vpclmul vpternlogd"
+            # aarch64 features
+            grep -q "aes" /proc/cpuinfo 2>/dev/null && FEATURES="$FEATURES pmull"
+            grep -q "sha3" /proc/cpuinfo 2>/dev/null && FEATURES="$FEATURES pmull-eor3"
+            grep -q "sve2" /proc/cpuinfo 2>/dev/null && FEATURES="$FEATURES sve2-pmull"
+          fi
+
+          # macOS detection (Apple Silicon)
+          if command -v sysctl &>/dev/null; then
+            if [[ -z "$CPU_MODEL" || "$CPU_MODEL" == "unknown" ]]; then
+              CPU_MODEL=$(sysctl -n machdep.cpu.brand_string 2>/dev/null || echo "")
+            fi
+            # Apple Silicon always has AES/PMULL
+            sysctl -n hw.optional.arm.FEAT_AES 2>/dev/null | grep -q "1" && FEATURES="$FEATURES pmull"
+            # SHA3 provides EOR3
+            sysctl -n hw.optional.arm.FEAT_SHA3 2>/dev/null | grep -q "1" && FEATURES="$FEATURES pmull-eor3"
+          fi
+
+          [[ -z "$CPU_MODEL" ]] && CPU_MODEL="$(uname -m) CPU"
+
+          echo "CPU Model: $CPU_MODEL"
+          echo "cpu_model=$CPU_MODEL" >> "$GITHUB_OUTPUT"
+          echo "Detected features:$FEATURES"
+          echo "features=$FEATURES" >> "$GITHUB_OUTPUT"
 
       - name: Run CRC64 Tuning Discovery
         shell: bash
@@ -493,6 +599,8 @@ jobs:
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "CRC64 Tuning Discovery"
           echo "Platform: ${{ matrix.target.name }}"
+          echo "Tune Preset: ${{ matrix.target.tune-preset }}"
+          echo "CPU: ${{ steps.cpu.outputs.cpu_model }}"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           mkdir -p tune-results
           RUSTFLAGS='-C target-cpu=native' bash scripts/bench/crc64-tune.sh --quick 2>&1 | tee tune-results/tune-output.txt
@@ -502,8 +610,36 @@ jobs:
       - name: Generate Tuning Summary
         shell: bash
         run: |
-          echo "Generating tuning summary..."
-          python3 scripts/bench/criterion-summary.py --group-prefix 'crc64/' --only oneshot > tune-results/summary.tsv 2>/dev/null || true
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Generating tuning summary and analysis..."
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          # Generate TSV summary
+          python3 scripts/bench/criterion-summary.py \
+            --group-prefix 'crc64/' \
+            --only oneshot \
+            > tune-results/summary.tsv 2>/dev/null || echo "TSV generation failed"
+
+          # Run analysis to find optimal settings
+          python3 scripts/bench/crc64-analyze.py \
+            --tune-output tune-results/tune-output.txt \
+            --platform-file tune-results/platform.json \
+            --output tune-results/analysis.json 2>&1 | tee tune-results/analysis-output.txt || echo "Analysis failed"
+
+          # Print recommendations
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "RECOMMENDED SETTINGS FOR ${{ matrix.target.tune-preset }}"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          if [[ -f tune-results/analysis.json ]]; then
+            cat tune-results/analysis.json | python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)
+          rec = data.get('recommendations', {})
+          print(f\"  parallel_streams: {rec.get('parallel_streams', 'N/A')}\")
+          print(f\"  preferred_kernel: {rec.get('preferred_kernel', 'N/A')}\")
+          " 2>/dev/null || cat tune-results/analysis.json
+          fi
 
       - name: Upload Tuning Results
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
@@ -512,6 +648,89 @@ jobs:
           path: |
             tune-results/
             target/criterion/
+          retention-days: 90
+          if-no-files-found: warn
+
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # Tuning Summary (Aggregates all platform results)
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  tune-summary:
+    name: Tuning Summary
+    needs: [tune-discovery]
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.run_tune_discovery == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download All Tuning Artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
+        with:
+          pattern: tune-discovery-*
+          path: all-results
+          merge-multiple: false
+
+      - name: Generate Consolidated Report
+        shell: bash
+        run: |
+          echo "╔══════════════════════════════════════════════════════════════════════════╗"
+          echo "║               CRC64 TUNING DISCOVERY - CONSOLIDATED REPORT              ║"
+          echo "╚══════════════════════════════════════════════════════════════════════════╝"
+          echo ""
+          echo "Generated: $(date -u +"%Y-%m-%d %H:%M:%S UTC")"
+          echo "Commit: ${{ github.sha }}"
+          echo ""
+
+          # Process each platform's results
+          for dir in all-results/tune-discovery-*/; do
+            if [[ -d "$dir" ]]; then
+              PLATFORM=$(basename "$dir" | sed 's/tune-discovery-//')
+              echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+              echo "Platform: $PLATFORM"
+              echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+              # Show platform info
+              if [[ -f "$dir/tune-results/platform.json" ]]; then
+                echo "CPU: $(cat "$dir/tune-results/platform.json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('cpu_name','unknown'))" 2>/dev/null || echo "unknown")"
+                echo "Features: $(cat "$dir/tune-results/platform.json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('features',''))" 2>/dev/null || echo "")"
+              fi
+
+              # Show recommendations
+              if [[ -f "$dir/tune-results/analysis.json" ]]; then
+                echo ""
+                echo "Recommendations:"
+                cat "$dir/tune-results/analysis.json" | python3 -c "
+          import json, sys
+          try:
+            data = json.load(sys.stdin)
+            rec = data.get('recommendations', {})
+            print(f\"  parallel_streams: {rec.get('parallel_streams', 'N/A')}\")
+            print(f\"  preferred_kernel: {rec.get('preferred_kernel', 'N/A')}\")
+
+            # Show best by size
+            by_size = data.get('by_size', {})
+            if by_size:
+              print('')
+              print('  Best by size:')
+              for size, info in sorted(by_size.items(), key=lambda x: x[0]):
+                print(f\"    {info.get('size_label', size)}: {info.get('best_kernel', '?')}/{info.get('best_streams', '?')}-way @ {info.get('best_throughput_gib_s', 0):.1f} GiB/s\")
+          except Exception as e:
+            print(f'  Error parsing: {e}')
+          " 2>/dev/null || echo "  (analysis parse failed)"
+              fi
+              echo ""
+            fi
+          done
+
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "UPDATE tune.rs WITH THESE VALUES"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          echo "See individual platform artifacts for detailed analysis."
+
+      - name: Upload Consolidated Report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: tune-consolidated-report
+          path: all-results/
           retention-days: 90
           if-no-files-found: warn
 

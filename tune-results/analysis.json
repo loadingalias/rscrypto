@@ -1,0 +1,850 @@
+{
+  "platform": "aarch64",
+  "cpu_name": "Apple M1 Pro",
+  "total_results": 798,
+  "recommendations": {
+    "parallel_streams": 3,
+    "preferred_kernel": "pmull"
+  },
+  "by_size": {
+    "1B": {
+      "size_bytes": 1,
+      "size_label": "1B",
+      "best_kernel": "slice8",
+      "best_streams": 1,
+      "best_throughput_gib_s": 0.6,
+      "rankings": [
+        {
+          "kernel": "slice8",
+          "streams": 1,
+          "throughput_gib_s": 0.6,
+          "vs_best": 100.0
+        },
+        {
+          "kernel": "slice8",
+          "streams": 1,
+          "throughput_gib_s": 0.6,
+          "vs_best": 100.0
+        },
+        {
+          "kernel": "slice8",
+          "streams": 1,
+          "throughput_gib_s": 0.59,
+          "vs_best": 98.3
+        },
+        {
+          "kernel": "slice8",
+          "streams": 1,
+          "throughput_gib_s": 0.59,
+          "vs_best": 98.3
+        },
+        {
+          "kernel": "slice8",
+          "streams": 1,
+          "throughput_gib_s": 0.55,
+          "vs_best": 91.7
+        }
+      ]
+    },
+    "7B": {
+      "size_bytes": 7,
+      "size_label": "7B",
+      "best_kernel": "slice8",
+      "best_streams": 1,
+      "best_throughput_gib_s": 1.54,
+      "rankings": [
+        {
+          "kernel": "slice8",
+          "streams": 1,
+          "throughput_gib_s": 1.54,
+          "vs_best": 100.0
+        },
+        {
+          "kernel": "slice8",
+          "streams": 1,
+          "throughput_gib_s": 1.54,
+          "vs_best": 100.0
+        },
+        {
+          "kernel": "slice8",
+          "streams": 1,
+          "throughput_gib_s": 1.53,
+          "vs_best": 99.4
+        },
+        {
+          "kernel": "slice8",
+          "streams": 1,
+          "throughput_gib_s": 1.51,
+          "vs_best": 98.1
+        },
+        {
+          "kernel": "slice8",
+          "streams": 1,
+          "throughput_gib_s": 1.39,
+          "vs_best": 90.3
+        }
+      ]
+    },
+    "8B": {
+      "size_bytes": 8,
+      "size_label": "8B",
+      "best_kernel": "slice8",
+      "best_streams": 1,
+      "best_throughput_gib_s": 2.92,
+      "rankings": [
+        {
+          "kernel": "slice8",
+          "streams": 1,
+          "throughput_gib_s": 2.92,
+          "vs_best": 100.0
+        },
+        {
+          "kernel": "slice8",
+          "streams": 1,
+          "throughput_gib_s": 2.91,
+          "vs_best": 99.7
+        },
+        {
+          "kernel": "slice8",
+          "streams": 1,
+          "throughput_gib_s": 2.89,
+          "vs_best": 99.0
+        },
+        {
+          "kernel": "slice8",
+          "streams": 1,
+          "throughput_gib_s": 2.89,
+          "vs_best": 99.0
+        },
+        {
+          "kernel": "slice8",
+          "streams": 1,
+          "throughput_gib_s": 2.25,
+          "vs_best": 77.1
+        }
+      ]
+    },
+    "15B": {
+      "size_bytes": 15,
+      "size_label": "15B",
+      "best_kernel": "slice8",
+      "best_streams": 1,
+      "best_throughput_gib_s": 2.06,
+      "rankings": [
+        {
+          "kernel": "slice8",
+          "streams": 1,
+          "throughput_gib_s": 2.06,
+          "vs_best": 100.0
+        },
+        {
+          "kernel": "slice8",
+          "streams": 1,
+          "throughput_gib_s": 2.05,
+          "vs_best": 99.5
+        },
+        {
+          "kernel": "slice8",
+          "streams": 1,
+          "throughput_gib_s": 2.05,
+          "vs_best": 99.5
+        },
+        {
+          "kernel": "slice8",
+          "streams": 1,
+          "throughput_gib_s": 2.0,
+          "vs_best": 97.1
+        },
+        {
+          "kernel": "slice8",
+          "streams": 1,
+          "throughput_gib_s": 1.8,
+          "vs_best": 87.4
+        }
+      ]
+    },
+    "16B": {
+      "size_bytes": 16,
+      "size_label": "16B",
+      "best_kernel": "pmull-small",
+      "best_streams": 1,
+      "best_throughput_gib_s": 3.17,
+      "rankings": [
+        {
+          "kernel": "pmull-small",
+          "streams": 1,
+          "throughput_gib_s": 3.17,
+          "vs_best": 100.0
+        },
+        {
+          "kernel": "pmull-small",
+          "streams": 1,
+          "throughput_gib_s": 3.17,
+          "vs_best": 100.0
+        },
+        {
+          "kernel": "pmull-small",
+          "streams": 1,
+          "throughput_gib_s": 3.16,
+          "vs_best": 99.7
+        },
+        {
+          "kernel": "pmull-small",
+          "streams": 1,
+          "throughput_gib_s": 3.16,
+          "vs_best": 99.7
+        },
+        {
+          "kernel": "pmull-small",
+          "streams": 1,
+          "throughput_gib_s": 3.16,
+          "vs_best": 99.7
+        }
+      ]
+    },
+    "31B": {
+      "size_bytes": 31,
+      "size_label": "31B",
+      "best_kernel": "pmull-small",
+      "best_streams": 1,
+      "best_throughput_gib_s": 2.66,
+      "rankings": [
+        {
+          "kernel": "pmull-small",
+          "streams": 1,
+          "throughput_gib_s": 2.66,
+          "vs_best": 100.0
+        },
+        {
+          "kernel": "pmull-small",
+          "streams": 1,
+          "throughput_gib_s": 2.66,
+          "vs_best": 100.0
+        },
+        {
+          "kernel": "pmull-small",
+          "streams": 1,
+          "throughput_gib_s": 2.66,
+          "vs_best": 100.0
+        },
+        {
+          "kernel": "pmull-small",
+          "streams": 1,
+          "throughput_gib_s": 2.65,
+          "vs_best": 99.6
+        },
+        {
+          "kernel": "pmull-small",
+          "streams": 1,
+          "throughput_gib_s": 2.65,
+          "vs_best": 99.6
+        }
+      ]
+    },
+    "32B": {
+      "size_bytes": 32,
+      "size_label": "32B",
+      "best_kernel": "pmull-small",
+      "best_streams": 1,
+      "best_throughput_gib_s": 6.31,
+      "rankings": [
+        {
+          "kernel": "pmull-small",
+          "streams": 1,
+          "throughput_gib_s": 6.31,
+          "vs_best": 100.0
+        },
+        {
+          "kernel": "pmull-small",
+          "streams": 1,
+          "throughput_gib_s": 6.29,
+          "vs_best": 99.7
+        },
+        {
+          "kernel": "pmull-small",
+          "streams": 1,
+          "throughput_gib_s": 6.29,
+          "vs_best": 99.7
+        },
+        {
+          "kernel": "pmull-small",
+          "streams": 1,
+          "throughput_gib_s": 6.28,
+          "vs_best": 99.5
+        },
+        {
+          "kernel": "pmull-small",
+          "streams": 1,
+          "throughput_gib_s": 6.28,
+          "vs_best": 99.5
+        }
+      ]
+    },
+    "63B": {
+      "size_bytes": 63,
+      "size_label": "63B",
+      "best_kernel": "pmull-small",
+      "best_streams": 1,
+      "best_throughput_gib_s": 4.91,
+      "rankings": [
+        {
+          "kernel": "pmull-small",
+          "streams": 1,
+          "throughput_gib_s": 4.91,
+          "vs_best": 100.0
+        },
+        {
+          "kernel": "pmull-small",
+          "streams": 1,
+          "throughput_gib_s": 4.9,
+          "vs_best": 99.8
+        },
+        {
+          "kernel": "pmull-small",
+          "streams": 1,
+          "throughput_gib_s": 4.9,
+          "vs_best": 99.8
+        },
+        {
+          "kernel": "pmull-small",
+          "streams": 1,
+          "throughput_gib_s": 4.89,
+          "vs_best": 99.6
+        },
+        {
+          "kernel": "pmull-small",
+          "streams": 1,
+          "throughput_gib_s": 4.88,
+          "vs_best": 99.4
+        }
+      ]
+    },
+    "64B": {
+      "size_bytes": 64,
+      "size_label": "64B",
+      "best_kernel": "pmull-small",
+      "best_streams": 1,
+      "best_throughput_gib_s": 9.99,
+      "rankings": [
+        {
+          "kernel": "pmull-small",
+          "streams": 1,
+          "throughput_gib_s": 9.99,
+          "vs_best": 100.0
+        },
+        {
+          "kernel": "pmull-small",
+          "streams": 1,
+          "throughput_gib_s": 9.98,
+          "vs_best": 99.9
+        },
+        {
+          "kernel": "pmull-small",
+          "streams": 1,
+          "throughput_gib_s": 9.97,
+          "vs_best": 99.8
+        },
+        {
+          "kernel": "pmull-small",
+          "streams": 1,
+          "throughput_gib_s": 9.94,
+          "vs_best": 99.5
+        },
+        {
+          "kernel": "pmull-small",
+          "streams": 1,
+          "throughput_gib_s": 9.94,
+          "vs_best": 99.5
+        }
+      ]
+    },
+    "127B": {
+      "size_bytes": 127,
+      "size_label": "127B",
+      "best_kernel": "pmull-small",
+      "best_streams": 1,
+      "best_throughput_gib_s": 8.53,
+      "rankings": [
+        {
+          "kernel": "pmull-small",
+          "streams": 1,
+          "throughput_gib_s": 8.53,
+          "vs_best": 100.0
+        },
+        {
+          "kernel": "pmull-small",
+          "streams": 1,
+          "throughput_gib_s": 8.53,
+          "vs_best": 100.0
+        },
+        {
+          "kernel": "pmull-small",
+          "streams": 1,
+          "throughput_gib_s": 8.53,
+          "vs_best": 100.0
+        },
+        {
+          "kernel": "pmull-small",
+          "streams": 1,
+          "throughput_gib_s": 8.52,
+          "vs_best": 99.9
+        },
+        {
+          "kernel": "pmull-small",
+          "streams": 1,
+          "throughput_gib_s": 8.51,
+          "vs_best": 99.8
+        }
+      ]
+    },
+    "128B": {
+      "size_bytes": 128,
+      "size_label": "128B",
+      "best_kernel": "pmull",
+      "best_streams": 1,
+      "best_throughput_gib_s": 17.69,
+      "rankings": [
+        {
+          "kernel": "pmull",
+          "streams": 1,
+          "throughput_gib_s": 17.69,
+          "vs_best": 100.0
+        },
+        {
+          "kernel": "pmull",
+          "streams": 1,
+          "throughput_gib_s": 17.55,
+          "vs_best": 99.2
+        },
+        {
+          "kernel": "pmull",
+          "streams": 1,
+          "throughput_gib_s": 17.54,
+          "vs_best": 99.2
+        },
+        {
+          "kernel": "pmull",
+          "streams": 1,
+          "throughput_gib_s": 17.51,
+          "vs_best": 99.0
+        },
+        {
+          "kernel": "pmull",
+          "streams": 1,
+          "throughput_gib_s": 17.49,
+          "vs_best": 98.9
+        }
+      ]
+    },
+    "255B": {
+      "size_bytes": 255,
+      "size_label": "255B",
+      "best_kernel": "pmull",
+      "best_streams": 1,
+      "best_throughput_gib_s": 3.55,
+      "rankings": [
+        {
+          "kernel": "pmull",
+          "streams": 1,
+          "throughput_gib_s": 3.55,
+          "vs_best": 100.0
+        },
+        {
+          "kernel": "pmull-eor3",
+          "streams": 1,
+          "throughput_gib_s": 3.55,
+          "vs_best": 100.0
+        },
+        {
+          "kernel": "pmull-eor3",
+          "streams": 1,
+          "throughput_gib_s": 3.55,
+          "vs_best": 100.0
+        },
+        {
+          "kernel": "pmull-eor3",
+          "streams": 1,
+          "throughput_gib_s": 3.55,
+          "vs_best": 100.0
+        },
+        {
+          "kernel": "pmull",
+          "streams": 1,
+          "throughput_gib_s": 3.54,
+          "vs_best": 99.7
+        }
+      ]
+    },
+    "256B": {
+      "size_bytes": 256,
+      "size_label": "256B",
+      "best_kernel": "pmull-eor3",
+      "best_streams": 1,
+      "best_throughput_gib_s": 28.01,
+      "rankings": [
+        {
+          "kernel": "pmull-eor3",
+          "streams": 1,
+          "throughput_gib_s": 28.01,
+          "vs_best": 100.0
+        },
+        {
+          "kernel": "pmull",
+          "streams": 1,
+          "throughput_gib_s": 27.96,
+          "vs_best": 99.8
+        },
+        {
+          "kernel": "pmull",
+          "streams": 1,
+          "throughput_gib_s": 27.94,
+          "vs_best": 99.8
+        },
+        {
+          "kernel": "pmull",
+          "streams": 1,
+          "throughput_gib_s": 27.91,
+          "vs_best": 99.6
+        },
+        {
+          "kernel": "pmull",
+          "streams": 1,
+          "throughput_gib_s": 27.91,
+          "vs_best": 99.6
+        }
+      ]
+    },
+    "512B": {
+      "size_bytes": 512,
+      "size_label": "512B",
+      "best_kernel": "pmull",
+      "best_streams": 1,
+      "best_throughput_gib_s": 39.2,
+      "rankings": [
+        {
+          "kernel": "pmull",
+          "streams": 1,
+          "throughput_gib_s": 39.2,
+          "vs_best": 100.0
+        },
+        {
+          "kernel": "pmull",
+          "streams": 1,
+          "throughput_gib_s": 39.2,
+          "vs_best": 100.0
+        },
+        {
+          "kernel": "pmull",
+          "streams": 1,
+          "throughput_gib_s": 39.13,
+          "vs_best": 99.8
+        },
+        {
+          "kernel": "pmull",
+          "streams": 1,
+          "throughput_gib_s": 39.06,
+          "vs_best": 99.6
+        },
+        {
+          "kernel": "pmull",
+          "streams": 1,
+          "throughput_gib_s": 38.88,
+          "vs_best": 99.2
+        }
+      ]
+    },
+    "1KiB": {
+      "size_bytes": 1792,
+      "size_label": "1KiB",
+      "best_kernel": "pmull",
+      "best_streams": 1,
+      "best_throughput_gib_s": 53.27,
+      "rankings": [
+        {
+          "kernel": "pmull",
+          "streams": 1,
+          "throughput_gib_s": 53.27,
+          "vs_best": 100.0
+        },
+        {
+          "kernel": "pmull",
+          "streams": 1,
+          "throughput_gib_s": 53.23,
+          "vs_best": 99.9
+        },
+        {
+          "kernel": "pmull",
+          "streams": 1,
+          "throughput_gib_s": 53.14,
+          "vs_best": 99.8
+        },
+        {
+          "kernel": "pmull",
+          "streams": 1,
+          "throughput_gib_s": 53.11,
+          "vs_best": 99.7
+        },
+        {
+          "kernel": "pmull",
+          "streams": 1,
+          "throughput_gib_s": 53.11,
+          "vs_best": 99.7
+        }
+      ]
+    },
+    "2KiB": {
+      "size_bytes": 2048,
+      "size_label": "2KiB",
+      "best_kernel": "pmull",
+      "best_streams": 1,
+      "best_throughput_gib_s": 54.25,
+      "rankings": [
+        {
+          "kernel": "pmull",
+          "streams": 1,
+          "throughput_gib_s": 54.25,
+          "vs_best": 100.0
+        },
+        {
+          "kernel": "pmull",
+          "streams": 1,
+          "throughput_gib_s": 54.23,
+          "vs_best": 100.0
+        },
+        {
+          "kernel": "pmull",
+          "streams": 1,
+          "throughput_gib_s": 54.11,
+          "vs_best": 99.7
+        },
+        {
+          "kernel": "pmull",
+          "streams": 1,
+          "throughput_gib_s": 54.11,
+          "vs_best": 99.7
+        },
+        {
+          "kernel": "pmull",
+          "streams": 1,
+          "throughput_gib_s": 53.95,
+          "vs_best": 99.4
+        }
+      ]
+    },
+    "4KiB": {
+      "size_bytes": 4096,
+      "size_label": "4KiB",
+      "best_kernel": "pmull",
+      "best_streams": 1,
+      "best_throughput_gib_s": 57.9,
+      "rankings": [
+        {
+          "kernel": "pmull",
+          "streams": 1,
+          "throughput_gib_s": 57.9,
+          "vs_best": 100.0
+        },
+        {
+          "kernel": "pmull",
+          "streams": 1,
+          "throughput_gib_s": 57.55,
+          "vs_best": 99.4
+        },
+        {
+          "kernel": "pmull",
+          "streams": 1,
+          "throughput_gib_s": 57.51,
+          "vs_best": 99.3
+        },
+        {
+          "kernel": "pmull-eor3",
+          "streams": 1,
+          "throughput_gib_s": 57.39,
+          "vs_best": 99.1
+        },
+        {
+          "kernel": "pmull",
+          "streams": 1,
+          "throughput_gib_s": 56.91,
+          "vs_best": 98.3
+        }
+      ]
+    },
+    "16KiB": {
+      "size_bytes": 16384,
+      "size_label": "16KiB",
+      "best_kernel": "pmull-eor3",
+      "best_streams": 2,
+      "best_throughput_gib_s": 60.18,
+      "rankings": [
+        {
+          "kernel": "pmull-eor3",
+          "streams": 2,
+          "throughput_gib_s": 60.18,
+          "vs_best": 100.0
+        },
+        {
+          "kernel": "pmull-eor3",
+          "streams": 2,
+          "throughput_gib_s": 60.14,
+          "vs_best": 99.9
+        },
+        {
+          "kernel": "pmull",
+          "streams": 2,
+          "throughput_gib_s": 60.07,
+          "vs_best": 99.8
+        },
+        {
+          "kernel": "pmull",
+          "streams": 2,
+          "throughput_gib_s": 60.02,
+          "vs_best": 99.7
+        },
+        {
+          "kernel": "pmull",
+          "streams": 2,
+          "throughput_gib_s": 59.99,
+          "vs_best": 99.7
+        }
+      ]
+    },
+    "64KiB": {
+      "size_bytes": 65536,
+      "size_label": "64KiB",
+      "best_kernel": "pmull-eor3",
+      "best_streams": 3,
+      "best_throughput_gib_s": 62.41,
+      "rankings": [
+        {
+          "kernel": "pmull-eor3",
+          "streams": 3,
+          "throughput_gib_s": 62.41,
+          "vs_best": 100.0
+        },
+        {
+          "kernel": "pmull-eor3",
+          "streams": 3,
+          "throughput_gib_s": 62.17,
+          "vs_best": 99.6
+        },
+        {
+          "kernel": "pmull",
+          "streams": 3,
+          "throughput_gib_s": 62.06,
+          "vs_best": 99.4
+        },
+        {
+          "kernel": "pmull",
+          "streams": 3,
+          "throughput_gib_s": 62.0,
+          "vs_best": 99.3
+        },
+        {
+          "kernel": "pmull",
+          "streams": 3,
+          "throughput_gib_s": 61.95,
+          "vs_best": 99.3
+        }
+      ]
+    },
+    "1MiB": {
+      "size_bytes": 1048576,
+      "size_label": "1MiB",
+      "best_kernel": "pmull",
+      "best_streams": 3,
+      "best_throughput_gib_s": 62.78,
+      "rankings": [
+        {
+          "kernel": "pmull",
+          "streams": 3,
+          "throughput_gib_s": 62.78,
+          "vs_best": 100.0
+        },
+        {
+          "kernel": "pmull",
+          "streams": 3,
+          "throughput_gib_s": 62.73,
+          "vs_best": 99.9
+        },
+        {
+          "kernel": "pmull",
+          "streams": 3,
+          "throughput_gib_s": 62.61,
+          "vs_best": 99.7
+        },
+        {
+          "kernel": "pmull",
+          "streams": 3,
+          "throughput_gib_s": 62.6,
+          "vs_best": 99.7
+        },
+        {
+          "kernel": "pmull-eor3",
+          "streams": 3,
+          "throughput_gib_s": 62.59,
+          "vs_best": 99.7
+        }
+      ]
+    }
+  },
+  "by_kernel": {
+    "pmull": {
+      "kernel": "pmull",
+      "best_streams": 3,
+      "avg_throughput_by_streams": {
+        "1": 55.61,
+        "2": 60.91,
+        "3": 62.08
+      },
+      "best_streams_by_size": {
+        "128B": 1,
+        "255B": 1,
+        "256B": 1,
+        "512B": 1,
+        "1KiB": 1,
+        "2KiB": 1,
+        "4KiB": 1,
+        "16KiB": 2,
+        "64KiB": 3,
+        "1MiB": 3
+      }
+    },
+    "pmull-eor3": {
+      "kernel": "pmull-eor3",
+      "best_streams": 3,
+      "avg_throughput_by_streams": {
+        "1": 55.58,
+        "2": 60.98,
+        "3": 61.86
+      },
+      "best_streams_by_size": {
+        "128B": 1,
+        "255B": 1,
+        "256B": 1,
+        "512B": 1,
+        "1KiB": 1,
+        "2KiB": 1,
+        "4KiB": 1,
+        "16KiB": 2,
+        "64KiB": 3,
+        "1MiB": 3
+      }
+    },
+    "pmull-small": {
+      "kernel": "pmull-small",
+      "best_streams": 1,
+      "avg_throughput_by_streams": {
+        "1": 7.06
+      },
+      "best_streams_by_size": {
+        "64B": 1,
+        "127B": 1,
+        "16B": 1,
+        "31B": 1,
+        "32B": 1,
+        "63B": 1
+      }
+    }
+  }
+}
