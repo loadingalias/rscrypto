@@ -185,8 +185,9 @@ mod tests {
   extern crate alloc;
   extern crate std;
 
-  use super::*;
   use alloc::vec::Vec;
+
+  use super::*;
 
   const TEST_DATA: &[u8] = b"123456789";
   const CRC32C_CHECK: u32 = 0xE3069283;
