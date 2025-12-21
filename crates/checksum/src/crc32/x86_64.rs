@@ -27,6 +27,9 @@
 //! - zlib-ng: `arch/x86/crc32_fold_pclmulqdq.c`
 
 #![allow(dead_code)] // Kernels wired up via dispatcher
+// SAFETY: All indexing is over fixed-size arrays with in-bounds constant indices
+// (e.g., chunks_exact(8) guarantees 8 bytes per chunk).
+#![allow(clippy::indexing_slicing)]
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SSE4.2 CRC32C (native instruction)
