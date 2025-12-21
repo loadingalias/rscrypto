@@ -1422,11 +1422,14 @@ pub fn crc64_nvme_vpclmul_7way_safe(crc: u64, data: &[u8]) -> u64 {
 
 #[cfg(test)]
 mod tests {
+  extern crate alloc;
   extern crate std;
+
+  use alloc::vec::Vec;
 
   use super::*;
 
-  fn make_data(len: usize) -> std::vec::Vec<u8> {
+  fn make_data(len: usize) -> Vec<u8> {
     (0..len)
       .map(|i| (i as u8).wrapping_mul(17).wrapping_add((i >> 3) as u8))
       .collect()

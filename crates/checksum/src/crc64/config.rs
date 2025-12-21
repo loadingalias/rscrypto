@@ -206,9 +206,10 @@ fn default_pclmul_to_vpclmul_threshold(caps: Caps, tune: Tune) -> usize {
     // - Fast wide ops (Zen4/5): low crossover.
     // - Slow warmup (many Intel parts): require much larger buffers.
     if tune.fast_wide_ops {
-      return 1024;
+      1024
+    } else {
+      16 * 1024
     }
-    return 16 * 1024;
   }
 
   #[cfg(not(target_arch = "x86_64"))]

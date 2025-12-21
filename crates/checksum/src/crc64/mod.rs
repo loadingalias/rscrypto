@@ -120,7 +120,7 @@ fn crc64_selected_kernel_name(len: usize) -> &'static str {
       };
     }
 
-    return "portable/slice8";
+    "portable/slice8"
   }
 
   #[cfg(target_arch = "aarch64")]
@@ -1459,7 +1459,6 @@ mod tests {
             assert!(kernel.starts_with("x86_64/vpclmul"));
           }
         }
-        return;
       }
     }
 

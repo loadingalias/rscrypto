@@ -57,7 +57,9 @@ pub unsafe fn crc32c_sse42(mut crc: u32, data: &[u8]) -> u32 {
   // Process 8 bytes at a time
   let mut chunks = data.chunks_exact(8);
   for chunk in chunks.by_ref() {
-    let val = u64::from_le_bytes(chunk.try_into().unwrap());
+    // SAFETY: chunks_exact(8) guarantees exactly 8 bytes
+    let bytes: [u8; 8] = [chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7]];
+    let val = u64::from_le_bytes(bytes);
     crc64 = _mm_crc32_u64(crc64, val);
   }
 
