@@ -780,6 +780,17 @@ pub mod powerpc64 {
     0,
     ALTIVEC.0[3] | VSX.0[3] | POWER8_VECTOR.0[3] | POWER9_VECTOR.0[3] | POWER10_VECTOR.0[3],
   ]);
+
+  /// VPMSUM-ready: POWER8 vector crypto (`vpmsumd`) + baseline vector support.
+  ///
+  /// This is the minimum feature set required for carry-less multiply based
+  /// CRC folding on POWER8+.
+  pub const VPMSUM_READY: Caps = Caps([
+    0,
+    0,
+    0,
+    ALTIVEC.0[3] | VSX.0[3] | POWER8_VECTOR.0[3] | POWER8_CRYPTO.0[3],
+  ]);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -67,6 +67,11 @@ ALL_TARGETS=(
   "fuzz_differential"
 )
 
+FUZZ_RELEVANT_CRATES=(
+  "checksum"
+  "platform"
+)
+
 # Skip if commit mode (fuzzing takes too long)
 if [ "$RSCRYPTO_TEST_MODE" = "commit" ]; then
   echo "Fuzzing skipped in commit mode"
@@ -129,6 +134,37 @@ check_requirements() {
     echo "Error: Fuzz directory not found at $FUZZ_DIR"
     exit 1
   fi
+}
+
+get_affected_fuzz_crates() {
+  local since_arg=""
+  if [ -n "${RAIL_SINCE:-}" ]; then
+    since_arg="--since $RAIL_SINCE"
+  fi
+
+  # shellcheck disable=SC2086
+  local affected
+  affected=$(cargo rail affected $since_arg -f names-only 2>/dev/null || echo "")
+
+  if [ -z "$affected" ]; then
+    return 1
+  fi
+
+  local matched=()
+  for crate in $affected; do
+    for fuzz_crate in "${FUZZ_RELEVANT_CRATES[@]}"; do
+      if [ "$crate" = "$fuzz_crate" ]; then
+        matched+=("$crate")
+        break
+      fi
+    done
+  done
+
+  if [ ${#matched[@]} -eq 0 ]; then
+    return 1
+  fi
+
+  echo "${matched[*]}"
 }
 
 run_target() {
@@ -298,6 +334,15 @@ case "${1:-}" in
   "")
     # Default: run smoke test
     check_requirements
+    AFFECTED=$(get_affected_fuzz_crates || true)
+    if [ -z "$AFFECTED" ]; then
+      echo "No fuzz-relevant changes detected - skipping fuzzing"
+      exit 0
+    fi
+    if [ -n "${RAIL_SINCE:-}" ]; then
+      echo "Using base ref from CI: $RAIL_SINCE"
+    fi
+    echo "Fuzzing affected crates: $AFFECTED"
     run_smoke "$DURATION_SECS" "${SMOKE_TARGETS[@]}"
     ;;
   *)

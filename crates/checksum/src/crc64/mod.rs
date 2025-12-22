@@ -8,6 +8,7 @@
 //!
 //! - x86_64: VPCLMULQDQ / PCLMULQDQ folding
 //! - aarch64: PMULL folding
+//! - powerpc64le: VPMSUMD folding
 
 mod config;
 mod portable;
@@ -18,6 +19,11 @@ mod x86_64;
 
 #[cfg(target_arch = "aarch64")]
 mod aarch64;
+
+// NOTE: The VPMSUMD CRC64 backend is currently implemented for little-endian
+// POWER (powerpc64le). Big-endian powerpc64 targets fall back to portable.
+#[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+mod powerpc64;
 
 use backend::dispatch::Selected;
 // Re-export config types for public API (Crc64Force only used internally on SIMD archs)
@@ -219,7 +225,51 @@ fn crc64_selected_kernel_name(len: usize) -> &'static str {
     "portable/slice16"
   }
 
-  #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+  #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+  {
+    let cfg = config::get();
+    let caps = platform::caps();
+
+    if len < CRC64_SMALL_LANE_BYTES || cfg.effective_force == Crc64Force::Portable {
+      return "portable/slice16";
+    }
+
+    match cfg.effective_force {
+      Crc64Force::Vpmsum => {
+        if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
+          return match powerpc64_vpmsum_streams_for_len(len, cfg.tunables.streams) {
+            8 => "powerpc64/vpmsum-8way",
+            4 => "powerpc64/vpmsum-4way",
+            2 => "powerpc64/vpmsum-2way",
+            _ => "powerpc64/vpmsum",
+          };
+        }
+        return "portable/slice16";
+      }
+      _ => {}
+    }
+
+    if len < cfg.tunables.portable_to_clmul {
+      return "portable/slice16";
+    }
+
+    if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
+      return match powerpc64_vpmsum_streams_for_len(len, cfg.tunables.streams) {
+        8 => "powerpc64/vpmsum-8way",
+        4 => "powerpc64/vpmsum-4way",
+        2 => "powerpc64/vpmsum-2way",
+        _ => "powerpc64/vpmsum",
+      };
+    }
+
+    "portable/slice16"
+  }
+
+  #[cfg(not(any(
+    target_arch = "x86_64",
+    target_arch = "aarch64",
+    all(target_arch = "powerpc64", target_endian = "little")
+  )))]
   {
     let _ = len;
     "portable/slice16"
@@ -258,9 +308,17 @@ fn crc64_nvme_portable(crc: u64, data: &[u8]) -> u64 {
 //
 // - Small-buffer tier folds one 16B lane at a time.
 // - Large-buffer tier folds 8×16B lanes per 128B block.
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[cfg(any(
+  target_arch = "x86_64",
+  target_arch = "aarch64",
+  all(target_arch = "powerpc64", target_endian = "little")
+))]
 const CRC64_FOLD_BLOCK_BYTES: usize = 128;
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[cfg(any(
+  target_arch = "x86_64",
+  target_arch = "aarch64",
+  all(target_arch = "powerpc64", target_endian = "little")
+))]
 const CRC64_SMALL_LANE_BYTES: usize = 16;
 
 #[cfg(target_arch = "x86_64")]
@@ -312,8 +370,33 @@ const fn aarch64_pmull_streams_for_len(len: usize, streams: u8) -> u8 {
   1
 }
 
-// Note: Also matches x86_64-unknown-none where it may be unused (no auto-dispatch on bare metal)
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+const CRC64_VPMSUM_2WAY_MIN_BYTES: usize = 128 * CRC64_FOLD_BLOCK_BYTES; // 16 KiB
+
+#[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+#[inline]
+const fn powerpc64_vpmsum_streams_for_len(len: usize, streams: u8) -> u8 {
+  // POWER benefits from higher ILP, but multi-stream merging has non-trivial
+  // setup costs. Keep thresholds conservative by default; users can override
+  // via `RSCRYPTO_CRC64_STREAMS` and tune results.
+  const CRC64_VPMSUM_4WAY_MIN_BYTES: usize = 2 * CRC64_VPMSUM_2WAY_MIN_BYTES; // 32 KiB
+  const CRC64_VPMSUM_8WAY_MIN_BYTES: usize = 4 * CRC64_VPMSUM_2WAY_MIN_BYTES; // 64 KiB
+
+  if streams >= 8 && len >= CRC64_VPMSUM_8WAY_MIN_BYTES {
+    return 8;
+  }
+  if streams >= 4 && len >= CRC64_VPMSUM_4WAY_MIN_BYTES {
+    return 4;
+  }
+  if streams >= 2 && len >= CRC64_VPMSUM_2WAY_MIN_BYTES {
+    return 2;
+  }
+  1
+}
+
+// Buffered CRC uses this to decide when to flush accumulated small updates.
+// On platforms without a SIMD backend, this effectively becomes `usize::MAX`
+// (no early flush beyond the fixed buffer size).
 #[allow(dead_code)]
 #[inline]
 fn crc64_simd_threshold() -> usize {
@@ -529,6 +612,90 @@ fn select_crc64_xz() -> Selected<Crc64Fn> {
   Selected::new("portable/slice16", crc64_xz_portable)
 }
 
+#[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+fn crc64_xz_powerpc64_auto(crc: u64, data: &[u8]) -> u64 {
+  let len = data.len();
+  if len < CRC64_SMALL_LANE_BYTES {
+    return crc64_xz_portable(crc, data);
+  }
+
+  let cfg = config::get();
+  let caps = platform::caps();
+
+  match cfg.effective_force {
+    Crc64Force::Portable => return crc64_xz_portable(crc, data),
+    Crc64Force::Vpmsum => {
+      if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
+        return match powerpc64_vpmsum_streams_for_len(len, cfg.tunables.streams) {
+          8 => powerpc64::crc64_xz_vpmsum_8way_safe(crc, data),
+          4 => powerpc64::crc64_xz_vpmsum_4way_safe(crc, data),
+          2 => powerpc64::crc64_xz_vpmsum_2way_safe(crc, data),
+          _ => powerpc64::crc64_xz_vpmsum_safe(crc, data),
+        };
+      }
+      return crc64_xz_portable(crc, data);
+    }
+    _ => {}
+  }
+
+  if len < cfg.tunables.portable_to_clmul {
+    return crc64_xz_portable(crc, data);
+  }
+
+  if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
+    return match powerpc64_vpmsum_streams_for_len(len, cfg.tunables.streams) {
+      8 => powerpc64::crc64_xz_vpmsum_8way_safe(crc, data),
+      4 => powerpc64::crc64_xz_vpmsum_4way_safe(crc, data),
+      2 => powerpc64::crc64_xz_vpmsum_2way_safe(crc, data),
+      _ => powerpc64::crc64_xz_vpmsum_safe(crc, data),
+    };
+  }
+
+  crc64_xz_portable(crc, data)
+}
+
+#[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+fn crc64_nvme_powerpc64_auto(crc: u64, data: &[u8]) -> u64 {
+  let len = data.len();
+  if len < CRC64_SMALL_LANE_BYTES {
+    return crc64_nvme_portable(crc, data);
+  }
+
+  let cfg = config::get();
+  let caps = platform::caps();
+
+  match cfg.effective_force {
+    Crc64Force::Portable => return crc64_nvme_portable(crc, data),
+    Crc64Force::Vpmsum => {
+      if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
+        return match powerpc64_vpmsum_streams_for_len(len, cfg.tunables.streams) {
+          8 => powerpc64::crc64_nvme_vpmsum_8way_safe(crc, data),
+          4 => powerpc64::crc64_nvme_vpmsum_4way_safe(crc, data),
+          2 => powerpc64::crc64_nvme_vpmsum_2way_safe(crc, data),
+          _ => powerpc64::crc64_nvme_vpmsum_safe(crc, data),
+        };
+      }
+      return crc64_nvme_portable(crc, data);
+    }
+    _ => {}
+  }
+
+  if len < cfg.tunables.portable_to_clmul {
+    return crc64_nvme_portable(crc, data);
+  }
+
+  if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
+    return match powerpc64_vpmsum_streams_for_len(len, cfg.tunables.streams) {
+      8 => powerpc64::crc64_nvme_vpmsum_8way_safe(crc, data),
+      4 => powerpc64::crc64_nvme_vpmsum_4way_safe(crc, data),
+      2 => powerpc64::crc64_nvme_vpmsum_2way_safe(crc, data),
+      _ => powerpc64::crc64_nvme_vpmsum_safe(crc, data),
+    };
+  }
+
+  crc64_nvme_portable(crc, data)
+}
+
 #[cfg(target_arch = "aarch64")]
 fn crc64_xz_aarch64_auto(crc: u64, data: &[u8]) -> u64 {
   let len = data.len();
@@ -732,7 +899,26 @@ fn select_crc64_xz() -> Selected<Crc64Fn> {
   Selected::new("portable/slice16", crc64_xz_portable)
 }
 
-#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+fn select_crc64_xz() -> Selected<Crc64Fn> {
+  let caps = platform::caps();
+
+  if config::get().effective_force == Crc64Force::Portable {
+    return Selected::new("portable/slice16", crc64_xz_portable);
+  }
+
+  if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
+    return Selected::new("powerpc64/auto", crc64_xz_powerpc64_auto);
+  }
+
+  Selected::new("portable/slice16", crc64_xz_portable)
+}
+
+#[cfg(not(any(
+  target_arch = "x86_64",
+  target_arch = "aarch64",
+  all(target_arch = "powerpc64", target_endian = "little")
+)))]
 fn select_crc64_xz() -> Selected<Crc64Fn> {
   Selected::new("portable/slice16", crc64_xz_portable)
 }
@@ -768,7 +954,26 @@ fn select_crc64_nvme() -> Selected<Crc64Fn> {
   Selected::new("portable/slice16", crc64_nvme_portable)
 }
 
-#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+fn select_crc64_nvme() -> Selected<Crc64Fn> {
+  let caps = platform::caps();
+
+  if config::get().effective_force == Crc64Force::Portable {
+    return Selected::new("portable/slice16", crc64_nvme_portable);
+  }
+
+  if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
+    return Selected::new("powerpc64/auto", crc64_nvme_powerpc64_auto);
+  }
+
+  Selected::new("portable/slice16", crc64_nvme_portable)
+}
+
+#[cfg(not(any(
+  target_arch = "x86_64",
+  target_arch = "aarch64",
+  all(target_arch = "powerpc64", target_endian = "little")
+)))]
 fn select_crc64_nvme() -> Selected<Crc64Fn> {
   Selected::new("portable/slice16", crc64_nvme_portable)
 }

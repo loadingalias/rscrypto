@@ -174,7 +174,6 @@ const fn fold_k(normal_poly: u64, n: u32) -> u64 {
 /// The TiKV/Intel CLMUL folding step uses a pair `(K_{d-1}, K_{d+63})` where
 /// `d = 8 * shift_bytes` (in bits).
 #[must_use]
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) const fn fold16_coeff_for_bytes(reflected_poly: u64, shift_bytes: u32) -> (u64, u64) {
   if shift_bytes == 0 {
     return (0, 0);

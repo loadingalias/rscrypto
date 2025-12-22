@@ -2492,51 +2492,10 @@ fn compile_time_riscv() -> Caps {
 
 #[cfg(all(any(target_arch = "riscv64", target_arch = "riscv32"), feature = "std"))]
 fn runtime_riscv() -> Caps {
-  use std::arch::is_riscv_feature_detected;
-
-  use crate::caps::riscv;
-
-  let mut caps = Caps::NONE;
-
-  macro_rules! rt {
-    ($f:literal => $c:expr) => {
-      if is_riscv_feature_detected!($f) {
-        caps |= $c;
-      }
-    };
-  }
-
-  // ─── Vector Extension ───
-  rt!("v" => riscv::V);
-
-  // ─── Bit Manipulation ───
-  rt!("zbb" => riscv::ZBB);
-  rt!("zbs" => riscv::ZBS);
-  rt!("zba" => riscv::ZBA);
-  rt!("zbc" => riscv::ZBC);
-
-  // ─── Scalar Crypto ───
-  rt!("zbkb" => riscv::ZBKB);
-  rt!("zbkc" => riscv::ZBKC);
-  rt!("zbkx" => riscv::ZBKX);
-  rt!("zknd" => riscv::ZKND);
-  rt!("zkne" => riscv::ZKNE);
-  rt!("zknh" => riscv::ZKNH);
-  rt!("zksed" => riscv::ZKSED);
-  rt!("zksh" => riscv::ZKSH);
-
-  // ─── Vector Crypto ───
-  rt!("zvbb" => riscv::ZVBB);
-  rt!("zvbc" => riscv::ZVBC);
-  rt!("zvkb" => riscv::ZVKB);
-  rt!("zvkg" => riscv::ZVKG);
-  rt!("zvkned" => riscv::ZVKNED);
-  rt!("zvknha" => riscv::ZVKNHA);
-  rt!("zvknhb" => riscv::ZVKNHB);
-  rt!("zvksed" => riscv::ZVKSED);
-  rt!("zvksh" => riscv::ZVKSH);
-
-  caps
+  // `std::arch::is_riscv_feature_detected!` is currently unstable and does not
+  // cover the full extension surface used by rscrypto. For now, rely on
+  // compile-time `-C target-feature` (captured by `compile_time_riscv()`).
+  Caps::NONE
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2625,8 +2584,6 @@ fn select_loongarch64_tune(caps: Caps) -> Tune {
 
 #[cfg(target_arch = "s390x")]
 fn detect_s390x() -> Detected {
-  use crate::caps::s390x;
-
   let mut caps = Caps::NONE;
 
   // Compile-time detection (works on stable for vector)
@@ -2706,16 +2663,11 @@ fn select_s390x_tune(caps: Caps) -> Tune {
 
 #[cfg(target_arch = "powerpc64")]
 fn detect_powerpc64() -> Detected {
-  use crate::caps::powerpc64;
-
-  let mut caps = Caps::NONE;
-
-  // Compile-time detection (all features are unstable)
-  caps |= compile_time_powerpc64();
-
-  // Runtime detection (unstable)
-  // Note: is_powerpc64_feature_detected! requires unstable feature
-  // When stable, add runtime detection here
+  // Start with compile-time detected features.
+  #[cfg(feature = "std")]
+  let caps = caps_static() | runtime_powerpc64();
+  #[cfg(not(feature = "std"))]
+  let caps = caps_static();
 
   let tune = select_powerpc64_tune(caps);
 
@@ -2724,44 +2676,6 @@ fn detect_powerpc64() -> Detected {
     tune,
     arch: Arch::Powerpc64,
   }
-}
-
-#[cfg(target_arch = "powerpc64")]
-fn compile_time_powerpc64() -> Caps {
-  use crate::caps::powerpc64;
-
-  let mut caps = Caps::NONE;
-
-  // ─── Vector Extensions ───
-  // Note: All powerpc64 target features are unstable
-  if cfg!(target_feature = "altivec") {
-    caps |= powerpc64::ALTIVEC;
-  }
-  if cfg!(target_feature = "vsx") {
-    caps |= powerpc64::VSX;
-  }
-  if cfg!(target_feature = "power8-vector") {
-    caps |= powerpc64::POWER8_VECTOR;
-  }
-  if cfg!(target_feature = "power8-crypto") {
-    caps |= powerpc64::POWER8_CRYPTO;
-  }
-  if cfg!(target_feature = "power9-vector") {
-    caps |= powerpc64::POWER9_VECTOR;
-  }
-  if cfg!(target_feature = "power10-vector") {
-    caps |= powerpc64::POWER10_VECTOR;
-  }
-
-  // ─── Atomics ───
-  if cfg!(target_feature = "quadword-atomics") {
-    caps |= powerpc64::QUADWORD_ATOMICS;
-  }
-  if cfg!(target_feature = "partword-atomics") {
-    caps |= powerpc64::PARTWORD_ATOMICS;
-  }
-
-  caps
 }
 
 #[cfg(target_arch = "powerpc64")]
@@ -2779,6 +2693,92 @@ fn select_powerpc64_tune(caps: Caps) -> Tune {
   } else {
     Tune::PORTABLE
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PowerPC64 Runtime Detection
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Runtime powerpc64 detection for Linux/Android via /proc/self/auxv.
+///
+/// This avoids unstable `is_powerpc64_feature_detected!` and keeps the
+/// selection logic consistent with the x86/aarch64 batch detectors.
+#[cfg(all(
+  target_arch = "powerpc64",
+  feature = "std",
+  any(target_os = "linux", target_os = "android")
+))]
+fn runtime_powerpc64() -> Caps {
+  use std::{fs::File, io::Read};
+
+  use crate::caps::powerpc64;
+
+  // ELF auxiliary vector entry types
+  const AT_HWCAP: u64 = 16;
+  const AT_HWCAP2: u64 = 26;
+
+  // HWCAP masks (from linux/arch/powerpc/include/uapi/asm/cputable.h)
+  const PPC_FEATURE_HAS_ALTIVEC: u64 = 0x1000_0000;
+  const PPC_FEATURE_HAS_VSX: u64 = 0x0000_0080;
+
+  // HWCAP2 masks
+  const PPC_FEATURE2_ARCH_2_07: u64 = 0x8000_0000; // POWER8 ISA (v2.07)
+  const PPC_FEATURE2_ARCH_3_00: u64 = 0x0080_0000; // POWER9 ISA (v3.00)
+
+  let (hwcap, hwcap2) = (|| -> Option<(u64, u64)> {
+    let mut file = File::open("/proc/self/auxv").ok()?;
+    let mut buf = [0u8; 4096];
+    let n = file.read(&mut buf).ok()?;
+
+    let mut hwcap = 0u64;
+    let mut hwcap2 = 0u64;
+
+    for chunk in buf.get(..n)?.chunks_exact(16) {
+      let a_type = u64::from_ne_bytes(chunk.get(0..8)?.try_into().ok()?);
+      let a_val = u64::from_ne_bytes(chunk.get(8..16)?.try_into().ok()?);
+
+      if a_type == AT_HWCAP {
+        hwcap = a_val;
+      } else if a_type == AT_HWCAP2 {
+        hwcap2 = a_val;
+      } else if a_type == 0 {
+        break;
+      }
+    }
+
+    Some((hwcap, hwcap2))
+  })()
+  .unwrap_or((0, 0));
+
+  let mut caps = Caps::NONE;
+
+  if hwcap & PPC_FEATURE_HAS_ALTIVEC != 0 {
+    caps |= powerpc64::ALTIVEC;
+  }
+  if hwcap & PPC_FEATURE_HAS_VSX != 0 {
+    caps |= powerpc64::VSX;
+  }
+
+  // POWER9 implies POWER8 vector/crypto as well.
+  if hwcap2 & PPC_FEATURE2_ARCH_3_00 != 0 {
+    caps |= powerpc64::POWER9_VECTOR | powerpc64::POWER8_VECTOR | powerpc64::POWER8_CRYPTO;
+  } else if hwcap2 & PPC_FEATURE2_ARCH_2_07 != 0 {
+    caps |= powerpc64::POWER8_VECTOR | powerpc64::POWER8_CRYPTO;
+  }
+
+  caps
+}
+
+/// Runtime powerpc64 detection for other platforms.
+#[cfg(all(
+  target_arch = "powerpc64",
+  feature = "std",
+  not(any(target_os = "linux", target_os = "android"))
+))]
+fn runtime_powerpc64() -> Caps {
+  // No stable runtime detector available on non-Linux today; rely on compile-time
+  // `-C target-feature` for static dispatch in those environments.
+  Caps::NONE
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

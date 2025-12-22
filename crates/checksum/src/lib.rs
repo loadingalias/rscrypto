@@ -69,6 +69,11 @@
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 #![cfg_attr(not(test), deny(clippy::expect_used))]
 #![cfg_attr(not(test), deny(clippy::indexing_slicing))]
+// powerpc64 SIMD backends currently require nightly-only SIMD/asm + target-feature support.
+#![cfg_attr(
+  target_arch = "powerpc64",
+  feature(asm_experimental_arch, portable_simd, powerpc_target_feature)
+)]
 #![no_std]
 
 #[cfg(feature = "alloc")]

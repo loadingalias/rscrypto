@@ -7,7 +7,7 @@ set -euo pipefail
 # This script runs in CI on actual target machines (x86_64, aarch64, Windows).
 # No cross-compilation - each CI runner compiles natively for its platform.
 #
-# Local development uses `just check` which validates cross-targets via zig.
+# Local development uses `just check` for host checks and `just check-all` for cross-targets.
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

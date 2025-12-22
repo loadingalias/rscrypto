@@ -36,6 +36,7 @@ jobs:
       rebuild-all: ${{ steps.rail.outputs.rebuild-all }}
       cargo-args: ${{ steps.rail.outputs.cargo-args }}
       matrix: ${{ steps.rail.outputs.matrix }}
+      base-ref: ${{ steps.rail.outputs.base-ref }}
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
@@ -63,6 +64,9 @@ jobs:
       (needs.detect.outputs.count != '0' &&
        needs.detect.outputs.docs-only != 'true')
     runs-on: ${{ matrix.target.runner }}
+    env:
+      # Pass base-ref to scripts for consistent change detection
+      RAIL_SINCE: ${{ needs.detect.outputs.base-ref }}
     timeout-minutes: 30
     strategy:
       fail-fast: false

@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CRATE="${1:-}"
-
 maybe_disable_sccache() {
   if [[ -n "${RUSTC_WRAPPER:-}" && "${RUSTC_WRAPPER##*/}" == "sccache" ]]; then
     if ! "$RUSTC_WRAPPER" rustc -vV >/dev/null 2>&1; then
@@ -15,11 +13,12 @@ maybe_disable_sccache() {
 maybe_disable_sccache
 
 echo "Running Unit, Integration, and Property Tests via Nextest..."
-export CARGO_RAIL_TEST_MODE=${CARGO_RAIL_TEST_MODE:-local}
-echo "Test mode: $CARGO_RAIL_TEST_MODE"
+export RSCRYPTO_TEST_MODE=${RSCRYPTO_TEST_MODE:-${CARGO_RAIL_TEST_MODE:-local}}
+export CARGO_RAIL_TEST_MODE=${CARGO_RAIL_TEST_MODE:-$RSCRYPTO_TEST_MODE}
+echo "Test mode: $RSCRYPTO_TEST_MODE"
 
 # Select nextest profile based on test mode
-case "$CARGO_RAIL_TEST_MODE" in
+case "$RSCRYPTO_TEST_MODE" in
   commit)
     PROFILE="commit"
     ;;
@@ -30,16 +29,47 @@ esac
 
 echo "Using nextest profile: $PROFILE"
 
-if [ -n "$CRATE" ]; then
-  # User specified a crate explicitly
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Priority:
+#   1. --all flag: Force full workspace
+#   2. User-specified crate(s): Test those directly
+#   3. Otherwise: cargo rail change detection
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+ALL_FLAG=false
+CRATES=()
+for arg in "$@"; do
+  if [ "$arg" = "--all" ]; then
+    ALL_FLAG=true
+  else
+    CRATES+=("$arg")
+  fi
+done
+
+if [ ${#CRATES[@]} -gt 0 ]; then
+  CRATE_FLAGS=""
+  for crate in "${CRATES[@]}"; do
+    CRATE_FLAGS="$CRATE_FLAGS -p $crate"
+  done
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo "🎯 Running tests for specific crate: $CRATE"
+  echo "Testing specific crate(s): ${CRATES[*]}"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  cargo nextest run -p "$CRATE" -P "$PROFILE" --all-features --config-file .config/nextest.toml
-else
-  # Full workspace test
+  # shellcheck disable=SC2086
+  cargo nextest run $CRATE_FLAGS -P "$PROFILE" --all-features --config-file .config/nextest.toml
+elif [ "$ALL_FLAG" = true ]; then
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo "🔄 Running tests for entire workspace"
+  echo "Testing entire workspace (--all)"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   cargo nextest run --workspace -P "$PROFILE" --all-features --config-file .config/nextest.toml
+else
+  SINCE_ARG=""
+  if [ -n "${RAIL_SINCE:-}" ]; then
+    SINCE_ARG="--since $RAIL_SINCE"
+    echo "Using base ref from CI: $RAIL_SINCE"
+  fi
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "Running tests for affected crates (cargo rail change detection)"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  # shellcheck disable=SC2086
+  cargo rail test $SINCE_ARG -- -P "$PROFILE" --all-features --config-file .config/nextest.toml
 fi

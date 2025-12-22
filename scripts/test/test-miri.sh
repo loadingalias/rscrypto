@@ -62,7 +62,17 @@ if [ ${#CRATES[@]} -gt 0 ]; then
 elif [ "$ALL_FLAG" = true ]; then
   CRATES_TO_TEST="$MIRI_CRATES"
 else
-  CRATES_TO_TEST="$MIRI_CRATES"
+  SINCE_ARG=""
+  if [ -n "${RAIL_SINCE:-}" ]; then
+    SINCE_ARG="--since $RAIL_SINCE"
+  fi
+  # shellcheck disable=SC2086
+  CRATES_TO_TEST=$(cargo rail affected $SINCE_ARG -f names-only 2>/dev/null || echo "")
+
+  if [ -z "$CRATES_TO_TEST" ]; then
+    echo "No changes detected - skipping Miri tests"
+    exit 0
+  fi
 fi
 
 # Build package flags, filtering exclusions
@@ -70,7 +80,9 @@ PKG_FLAGS=""
 PKG_LIST=""
 
 for crate in $CRATES_TO_TEST; do
-  if is_in_list "$crate" "$EXCLUDED_CRATES"; then
+  if ! is_in_list "$crate" "$MIRI_CRATES"; then
+    echo "Skipping $crate (no Miri support)"
+  elif is_in_list "$crate" "$EXCLUDED_CRATES"; then
     echo "Skipping $crate (excluded from Miri)"
   else
     PKG_FLAGS="$PKG_FLAGS -p $crate"

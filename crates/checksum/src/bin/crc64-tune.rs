@@ -24,6 +24,7 @@ enum Force {
   Pmull,
   PmullEor3,
   Sve2Pmull,
+  Vpmsum,
 }
 
 impl Force {
@@ -36,6 +37,7 @@ impl Force {
       Self::Pmull => Some("pmull"),
       Self::PmullEor3 => Some("pmull-eor3"),
       Self::Sve2Pmull => Some("sve2-pmull"),
+      Self::Vpmsum => Some("vpmsum"),
     }
   }
 
@@ -48,6 +50,7 @@ impl Force {
       Self::Pmull => "pmull",
       Self::PmullEor3 => "pmull-eor3",
       Self::Sve2Pmull => "sve2-pmull",
+      Self::Vpmsum => "vpmsum",
     }
   }
 }
@@ -162,7 +165,15 @@ fn stream_candidates_for_arch() -> &'static [u8] {
   {
     &[1, 2, 3]
   }
-  #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+  #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+  {
+    &[1, 2, 4, 8]
+  }
+  #[cfg(not(any(
+    target_arch = "x86_64",
+    target_arch = "aarch64",
+    all(target_arch = "powerpc64", target_endian = "little")
+  )))]
   {
     &[1]
   }
@@ -244,33 +255,57 @@ fn parent_main(args: Args) -> io::Result<()> {
     }
   }
 
-  let caps = det.caps;
-  let mut forces: Vec<Force> = vec![Force::Portable];
+  #[cfg(any(
+    target_arch = "x86_64",
+    target_arch = "aarch64",
+    all(target_arch = "powerpc64", target_endian = "little")
+  ))]
+  let forces: Vec<Force> = {
+    let caps = det.caps;
+    let mut forces: Vec<Force> = vec![Force::Portable];
 
-  #[cfg(target_arch = "x86_64")]
-  {
-    use platform::caps::x86;
-    if caps.has(x86::PCLMUL_READY) {
-      forces.push(Force::Pclmul);
+    #[cfg(target_arch = "x86_64")]
+    {
+      use platform::caps::x86;
+      if caps.has(x86::PCLMUL_READY) {
+        forces.push(Force::Pclmul);
+      }
+      if caps.has(x86::VPCLMUL_READY) {
+        forces.push(Force::Vpclmul);
+      }
     }
-    if caps.has(x86::VPCLMUL_READY) {
-      forces.push(Force::Vpclmul);
-    }
-  }
 
-  #[cfg(target_arch = "aarch64")]
-  {
-    use platform::caps::aarch64;
-    if caps.has(aarch64::PMULL_READY) {
-      forces.push(Force::Pmull);
+    #[cfg(target_arch = "aarch64")]
+    {
+      use platform::caps::aarch64;
+      if caps.has(aarch64::PMULL_READY) {
+        forces.push(Force::Pmull);
+      }
+      if caps.has(aarch64::PMULL_EOR3_READY) {
+        forces.push(Force::PmullEor3);
+      }
+      if caps.has(aarch64::SVE2_PMULL) && caps.has(aarch64::PMULL_READY) {
+        forces.push(Force::Sve2Pmull);
+      }
     }
-    if caps.has(aarch64::PMULL_EOR3_READY) {
-      forces.push(Force::PmullEor3);
+
+    #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+    {
+      use platform::caps::powerpc64;
+      if caps.has(powerpc64::VPMSUM_READY) {
+        forces.push(Force::Vpmsum);
+      }
     }
-    if caps.has(aarch64::SVE2_PMULL) && caps.has(aarch64::PMULL_READY) {
-      forces.push(Force::Sve2Pmull);
-    }
-  }
+
+    forces
+  };
+
+  #[cfg(not(any(
+    target_arch = "x86_64",
+    target_arch = "aarch64",
+    all(target_arch = "powerpc64", target_endian = "little")
+  )))]
+  let forces: Vec<Force> = vec![Force::Portable];
 
   let stream_candidates = stream_candidates_for_arch();
   let mut stream_runs: Vec<RunConfig> = Vec::new();
@@ -667,6 +702,7 @@ fn preferred_auto_simd_force(available: &[Force]) -> Force {
   // Mirror the library's auto preference order for CRC64:
   // - x86_64: VPCLMUL if available, else PCLMUL
   // - aarch64: PMULL+EOR3, else SVE2-PMULL, else PMULL
+  // - powerpc64le: VPMSUMD
   #[cfg(target_arch = "x86_64")]
   {
     if available.iter().any(|f| *f == Force::Vpclmul) {
@@ -692,7 +728,19 @@ fn preferred_auto_simd_force(available: &[Force]) -> Force {
     Force::Portable
   }
 
-  #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+  #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+  {
+    if available.contains(&Force::Vpmsum) {
+      return Force::Vpmsum;
+    }
+    Force::Portable
+  }
+
+  #[cfg(not(any(
+    target_arch = "x86_64",
+    target_arch = "aarch64",
+    all(target_arch = "powerpc64", target_endian = "little")
+  )))]
   {
     let _ = available;
     Force::Portable
@@ -705,6 +753,7 @@ fn baseline_auto_simd_force(available: &[Force]) -> Force {
   //
   // - x86_64: PCLMUL (VPCLMUL is a higher tier with different overhead)
   // - aarch64: PMULL (base tier; EOR3/SVE2 build on top of it)
+  // - powerpc64le: VPMSUMD
   #[cfg(target_arch = "x86_64")]
   {
     if available.contains(&Force::Pclmul) {
@@ -730,7 +779,19 @@ fn baseline_auto_simd_force(available: &[Force]) -> Force {
     Force::Portable
   }
 
-  #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+  #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+  {
+    if available.contains(&Force::Vpmsum) {
+      return Force::Vpmsum;
+    }
+    Force::Portable
+  }
+
+  #[cfg(not(any(
+    target_arch = "x86_64",
+    target_arch = "aarch64",
+    all(target_arch = "powerpc64", target_endian = "little")
+  )))]
   {
     let _ = available;
     Force::Portable
@@ -745,6 +806,7 @@ fn parse_force_name(name: &str) -> Force {
     "pmull" => Force::Pmull,
     "pmull-eor3" => Force::PmullEor3,
     "sve2-pmull" => Force::Sve2Pmull,
+    "vpmsum" => Force::Vpmsum,
     _ => Force::Auto,
   }
 }

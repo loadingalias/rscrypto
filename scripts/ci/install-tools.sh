@@ -44,6 +44,7 @@ case "$MODE" in
     standard)
         # Standard CI tools for commit workflow
         install_if_missing "cargo-nextest" "cargo-nextest"
+        install_if_missing "cargo-rail" "cargo-rail"
         install_if_missing "cargo-deny" "cargo-deny"
         install_if_missing "cargo-audit" "cargo-audit"
         install_if_missing "just" "just"
@@ -52,6 +53,7 @@ case "$MODE" in
     namespace)
         # Namespace runners - same as standard but may have different caching
         install_if_missing "cargo-nextest" "cargo-nextest"
+        install_if_missing "cargo-rail" "cargo-rail"
         install_if_missing "cargo-deny" "cargo-deny"
         install_if_missing "cargo-audit" "cargo-audit"
         install_if_missing "just" "just"

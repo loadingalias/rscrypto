@@ -31,6 +31,8 @@ pub enum Crc64Force {
   PmullEor3,
   /// Force aarch64 SVE2 PMULL (if supported).
   Sve2Pmull,
+  /// Force powerpc64 VPMSUMD (if supported).
+  Vpmsum,
 }
 
 impl Crc64Force {
@@ -44,6 +46,7 @@ impl Crc64Force {
       Self::Pmull => "pmull",
       Self::PmullEor3 => "pmull-eor3",
       Self::Sve2Pmull => "sve2-pmull",
+      Self::Vpmsum => "vpmsum",
     }
   }
 }
@@ -135,6 +138,9 @@ fn read_env_overrides() -> Overrides {
     {
       return Some(Crc64Force::Sve2Pmull);
     }
+    if value.eq_ignore_ascii_case("vpmsum") || value.eq_ignore_ascii_case("vpmsumd") {
+      return Some(Crc64Force::Vpmsum);
+    }
 
     None
   }
@@ -210,6 +216,15 @@ fn clamp_force_to_caps(requested: Crc64Force, caps: Caps) -> Crc64Force {
       }
       Crc64Force::Auto
     }
+    Crc64Force::Vpmsum => {
+      #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+      {
+        if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
+          return Crc64Force::Vpmsum;
+        }
+      }
+      Crc64Force::Auto
+    }
   }
 }
 
@@ -269,7 +284,21 @@ fn default_crc64_streams(caps: Caps, tune: Tune) -> u8 {
     tune.parallel_streams.clamp(1, 3)
   }
 
-  #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+  #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+  {
+    // POWER VPMSUMD benefits from higher ILP; default to a higher stream count
+    // when the crypto/vector facility is present.
+    if !caps.has(platform::caps::powerpc64::VPMSUM_READY) {
+      return 1;
+    }
+    tune.parallel_streams.saturating_mul(2).clamp(1, 8)
+  }
+
+  #[cfg(not(any(
+    target_arch = "x86_64",
+    target_arch = "aarch64",
+    all(target_arch = "powerpc64", target_endian = "little")
+  )))]
   {
     let _ = (caps, tune);
     1

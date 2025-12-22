@@ -770,8 +770,8 @@ impl Tune {
   pub const POWER8: Self = Self {
     kind: TuneKind::Power8,
     simd_threshold: 128,
-    pclmul_threshold: usize::MAX, // No PCLMUL on POWER
-    hwcrc_threshold: usize::MAX,  // No hardware CRC on POWER
+    pclmul_threshold: 128,       // VPMSUMD folding crossover (POWER8+)
+    hwcrc_threshold: usize::MAX, // No hardware CRC on POWER
     effective_simd_width: 128,
     fast_wide_ops: true,
     parallel_streams: 2, // Two vector pipelines
@@ -788,8 +788,8 @@ impl Tune {
   pub const POWER9: Self = Self {
     kind: TuneKind::Power9,
     simd_threshold: 64,
-    pclmul_threshold: usize::MAX, // No PCLMUL on POWER
-    hwcrc_threshold: usize::MAX,  // No hardware CRC on POWER
+    pclmul_threshold: 64,        // VPMSUMD folding crossover (POWER9+)
+    hwcrc_threshold: usize::MAX, // No hardware CRC on POWER
     effective_simd_width: 128,
     fast_wide_ops: true,
     parallel_streams: 4, // Improved execution resources
@@ -807,8 +807,8 @@ impl Tune {
   pub const POWER10: Self = Self {
     kind: TuneKind::Power10,
     simd_threshold: 64,
-    pclmul_threshold: usize::MAX, // No PCLMUL on POWER
-    hwcrc_threshold: usize::MAX,  // No hardware CRC on POWER
+    pclmul_threshold: 64,        // VPMSUMD folding crossover (POWER10+)
+    hwcrc_threshold: usize::MAX, // No hardware CRC on POWER
     effective_simd_width: 128,
     fast_wide_ops: true,
     parallel_streams: 4,

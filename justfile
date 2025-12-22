@@ -89,10 +89,22 @@ bench-summary group="" only="oneshot":
 # Quality Checks
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Local checks with cross-compilation verification (zig-based)
-# Runs: fmt, check, clippy, deny, docs, audit, cross-target matrix
-check *crates="":
-    @scripts/check/check.sh {{crates}}
+# Host checks (fmt, check, clippy, deny, docs, audit)
+# Usage: just check --all | just check foo bar
+check *args="":
+    @scripts/check/check.sh {{args}}
+
+# Cross-compile for Windows targets (x86_64, aarch64)
+check-win *args="":
+    @scripts/check/check-win.sh {{args}}
+
+# Cross-compile for Linux targets (x86_64/aarch64 gnu/musl)
+check-linux *args="":
+    @scripts/check/check-linux.sh {{args}}
+
+# Complete cross-platform check: host + windows + linux + constrained targets
+check-all *args="":
+    @scripts/check/check-all.sh {{args}}
 
 # CI checks (native only, stricter - runs on actual target machines)
 # Runs: fmt --check, check, clippy -D warnings, deny, docs, audit
