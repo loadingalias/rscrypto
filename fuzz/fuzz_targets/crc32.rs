@@ -8,7 +8,7 @@
 #![no_main]
 
 use arbitrary::Arbitrary;
-use checksum::Crc32;
+use checksum::{Checksum, ChecksumCombine, Crc32};
 use libfuzzer_sys::fuzz_target;
 
 #[derive(Arbitrary, Debug)]

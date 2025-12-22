@@ -21,6 +21,20 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export ZIG_CC="$SCRIPT_DIR/zig-cc.sh"
 
+maybe_disable_sccache() {
+  # Some environments export RUSTC_WRAPPER=sccache but do not allow sccache to
+  # execute compilers or create its state. Detect that case early and fall back
+  # to direct rustc.
+  if [[ -n "${RUSTC_WRAPPER:-}" && "${RUSTC_WRAPPER##*/}" == "sccache" ]]; then
+    if ! "$RUSTC_WRAPPER" rustc -vV >/dev/null 2>&1; then
+      echo "⚠️  WARNING: sccache is configured but not usable; disabling RUSTC_WRAPPER for this run."
+      export RUSTC_WRAPPER=
+    fi
+  fi
+}
+
+maybe_disable_sccache
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Target Tiers (aligned with CI workflow)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

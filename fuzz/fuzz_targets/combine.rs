@@ -5,7 +5,7 @@
 #![no_main]
 
 use arbitrary::Arbitrary;
-use checksum::{Crc32, Crc32c, Crc64};
+use checksum::{Checksum, ChecksumCombine, Crc32, Crc32c, Crc64, Crc64Nvme};
 use libfuzzer_sys::fuzz_target;
 
 #[derive(Arbitrary, Debug)]
@@ -33,6 +33,9 @@ fuzz_target!(|input: Input| {
 
   // Test CRC64 combine chain
   test_combine_chain_crc64(data, &splits);
+
+  // Test CRC64/NVME combine chain
+  test_combine_chain_crc64_nvme(data, &splits);
 });
 
 fn test_combine_chain_crc32c(data: &[u8], splits: &[usize]) {
@@ -123,4 +126,32 @@ fn test_combine_chain_crc64(data: &[u8], splits: &[usize]) {
   }
 
   assert_eq!(combined_crc, expected, "crc64 combine chain mismatch");
+}
+
+fn test_combine_chain_crc64_nvme(data: &[u8], splits: &[usize]) {
+  let expected = Crc64Nvme::checksum(data);
+
+  let mut chunks = Vec::new();
+  let mut prev = 0;
+  for &split in splits {
+    if split > prev && split <= data.len() {
+      chunks.push(&data[prev..split]);
+      prev = split;
+    }
+  }
+  if prev < data.len() {
+    chunks.push(&data[prev..]);
+  }
+
+  if chunks.is_empty() {
+    return;
+  }
+
+  let mut combined_crc = Crc64Nvme::checksum(chunks[0]);
+  for chunk in &chunks[1..] {
+    let chunk_crc = Crc64Nvme::checksum(chunk);
+    combined_crc = Crc64Nvme::combine(combined_crc, chunk_crc, chunk.len());
+  }
+
+  assert_eq!(combined_crc, expected, "crc64/nvme combine chain mismatch");
 }

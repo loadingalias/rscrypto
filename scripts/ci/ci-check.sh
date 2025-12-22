@@ -14,6 +14,17 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo "🔍 CI Quality Checks"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
+maybe_disable_sccache() {
+  if [[ -n "${RUSTC_WRAPPER:-}" && "${RUSTC_WRAPPER##*/}" == "sccache" ]]; then
+    if ! "$RUSTC_WRAPPER" rustc -vV >/dev/null 2>&1; then
+      echo "⚠️  WARNING: sccache is configured but not usable; disabling RUSTC_WRAPPER for this run."
+      export RUSTC_WRAPPER=
+    fi
+  fi
+}
+
+maybe_disable_sccache
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Format Check
 # ─────────────────────────────────────────────────────────────────────────────

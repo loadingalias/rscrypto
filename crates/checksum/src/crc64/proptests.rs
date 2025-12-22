@@ -10,14 +10,14 @@ proptest! {
   #[test]
   fn crc64_xz_matches_portable(data in proptest::collection::vec(any::<u8>(), 0..=4096)) {
     let ours = Crc64::checksum(&data);
-    let portable = portable::crc64_slice8_xz(!0, &data) ^ !0;
+    let portable = portable::crc64_slice16_xz(!0, &data) ^ !0;
     prop_assert_eq!(ours, portable);
   }
 
   #[test]
   fn crc64_nvme_matches_portable(data in proptest::collection::vec(any::<u8>(), 0..=4096)) {
     let ours = Crc64Nvme::checksum(&data);
-    let portable = portable::crc64_slice8_nvme(!0, &data) ^ !0;
+    let portable = portable::crc64_slice16_nvme(!0, &data) ^ !0;
     prop_assert_eq!(ours, portable);
   }
 

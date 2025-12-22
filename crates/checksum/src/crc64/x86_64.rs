@@ -616,19 +616,18 @@ unsafe fn load_128b_block(block: &[Simd; 8]) -> (__m512i, __m512i) {
 #[inline]
 #[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
 unsafe fn finalize_vpclmul_state(x0: __m512i, x1: __m512i, consts: &Crc64ClmulConstants) -> u64 {
-  // Reuse the well-tested 128-bit tail fold + Barrett reduction by storing the
-  // 2×64B vectors into an aligned buffer and reinterpreting it as 8×16B lanes.
-  #[repr(align(64))]
-  struct Align64Bytes128([u8; 128]);
-
-  let mut tmp = Align64Bytes128([0u8; 128]);
-  let out = tmp.0.as_mut_ptr().cast::<__m512i>();
-  _mm512_store_si512(out, x0);
-  _mm512_store_si512(out.add(1), x1);
-
-  // SAFETY: `[u8; 128]` and `[Simd; 8]` have identical size, and any bit pattern
-  // is valid for `__m128i` (and thus `Simd`).
-  let lanes: [Simd; 8] = core::mem::transmute(tmp.0);
+  // Reuse the well-tested 128-bit tail fold + Barrett reduction by extracting
+  // the 8×16B lanes directly (avoids a store+reload round-trip).
+  let lanes: [Simd; 8] = [
+    Simd(_mm512_extracti32x4_epi32::<0>(x0)),
+    Simd(_mm512_extracti32x4_epi32::<1>(x0)),
+    Simd(_mm512_extracti32x4_epi32::<2>(x0)),
+    Simd(_mm512_extracti32x4_epi32::<3>(x0)),
+    Simd(_mm512_extracti32x4_epi32::<0>(x1)),
+    Simd(_mm512_extracti32x4_epi32::<1>(x1)),
+    Simd(_mm512_extracti32x4_epi32::<2>(x1)),
+    Simd(_mm512_extracti32x4_epi32::<3>(x1)),
+  ];
   fold_tail(lanes, consts)
 }
 
@@ -969,7 +968,7 @@ pub unsafe fn crc64_xz_pclmul(crc: u64, data: &[u8]) -> u64 {
       crc,
       data,
       &crate::common::clmul::CRC64_XZ_CLMUL,
-      &super::kernel_tables::XZ_TABLES,
+      &super::kernel_tables::XZ_TABLES_8,
     )
   }
 }
@@ -986,7 +985,7 @@ pub unsafe fn crc64_xz_pclmul_small(crc: u64, data: &[u8]) -> u64 {
       crc,
       data,
       &crate::common::clmul::CRC64_XZ_CLMUL,
-      &super::kernel_tables::XZ_TABLES,
+      &super::kernel_tables::XZ_TABLES_8,
     )
   }
 }
@@ -1004,7 +1003,7 @@ pub unsafe fn crc64_xz_pclmul_2way(crc: u64, data: &[u8]) -> u64 {
       data,
       XZ_FOLD_256B,
       &crate::common::clmul::CRC64_XZ_CLMUL,
-      &super::kernel_tables::XZ_TABLES,
+      &super::kernel_tables::XZ_TABLES_8,
     )
   }
 }
@@ -1023,7 +1022,7 @@ pub unsafe fn crc64_xz_pclmul_4way(crc: u64, data: &[u8]) -> u64 {
       XZ_FOLD_512B,
       &XZ_COMBINE_4WAY,
       &crate::common::clmul::CRC64_XZ_CLMUL,
-      &super::kernel_tables::XZ_TABLES,
+      &super::kernel_tables::XZ_TABLES_8,
     )
   }
 }
@@ -1042,7 +1041,7 @@ pub unsafe fn crc64_xz_pclmul_7way(crc: u64, data: &[u8]) -> u64 {
       XZ_FOLD_896B,
       &XZ_COMBINE_7WAY,
       &crate::common::clmul::CRC64_XZ_CLMUL,
-      &super::kernel_tables::XZ_TABLES,
+      &super::kernel_tables::XZ_TABLES_8,
     )
   }
 }
@@ -1060,7 +1059,7 @@ pub unsafe fn crc64_xz_vpclmul(crc: u64, data: &[u8]) -> u64 {
       crc,
       data,
       &crate::common::clmul::CRC64_XZ_CLMUL,
-      &super::kernel_tables::XZ_TABLES,
+      &super::kernel_tables::XZ_TABLES_8,
     )
   }
 }
@@ -1079,7 +1078,7 @@ pub unsafe fn crc64_xz_vpclmul_2way(crc: u64, data: &[u8]) -> u64 {
       data,
       XZ_FOLD_256B,
       &crate::common::clmul::CRC64_XZ_CLMUL,
-      &super::kernel_tables::XZ_TABLES,
+      &super::kernel_tables::XZ_TABLES_8,
     )
   }
 }
@@ -1099,7 +1098,7 @@ pub unsafe fn crc64_xz_vpclmul_4way(crc: u64, data: &[u8]) -> u64 {
       XZ_FOLD_512B,
       &XZ_COMBINE_4WAY,
       &crate::common::clmul::CRC64_XZ_CLMUL,
-      &super::kernel_tables::XZ_TABLES,
+      &super::kernel_tables::XZ_TABLES_8,
     )
   }
 }
@@ -1119,7 +1118,7 @@ pub unsafe fn crc64_xz_vpclmul_7way(crc: u64, data: &[u8]) -> u64 {
       XZ_FOLD_896B,
       &XZ_COMBINE_7WAY,
       &crate::common::clmul::CRC64_XZ_CLMUL,
-      &super::kernel_tables::XZ_TABLES,
+      &super::kernel_tables::XZ_TABLES_8,
     )
   }
 }
@@ -1136,7 +1135,7 @@ pub unsafe fn crc64_nvme_pclmul(crc: u64, data: &[u8]) -> u64 {
       crc,
       data,
       &crate::common::clmul::CRC64_NVME_CLMUL,
-      &super::kernel_tables::NVME_TABLES,
+      &super::kernel_tables::NVME_TABLES_8,
     )
   }
 }
@@ -1153,7 +1152,7 @@ pub unsafe fn crc64_nvme_pclmul_small(crc: u64, data: &[u8]) -> u64 {
       crc,
       data,
       &crate::common::clmul::CRC64_NVME_CLMUL,
-      &super::kernel_tables::NVME_TABLES,
+      &super::kernel_tables::NVME_TABLES_8,
     )
   }
 }
@@ -1171,7 +1170,7 @@ pub unsafe fn crc64_nvme_pclmul_2way(crc: u64, data: &[u8]) -> u64 {
       data,
       NVME_FOLD_256B,
       &crate::common::clmul::CRC64_NVME_CLMUL,
-      &super::kernel_tables::NVME_TABLES,
+      &super::kernel_tables::NVME_TABLES_8,
     )
   }
 }
@@ -1190,7 +1189,7 @@ pub unsafe fn crc64_nvme_pclmul_4way(crc: u64, data: &[u8]) -> u64 {
       NVME_FOLD_512B,
       &NVME_COMBINE_4WAY,
       &crate::common::clmul::CRC64_NVME_CLMUL,
-      &super::kernel_tables::NVME_TABLES,
+      &super::kernel_tables::NVME_TABLES_8,
     )
   }
 }
@@ -1209,7 +1208,7 @@ pub unsafe fn crc64_nvme_pclmul_7way(crc: u64, data: &[u8]) -> u64 {
       NVME_FOLD_896B,
       &NVME_COMBINE_7WAY,
       &crate::common::clmul::CRC64_NVME_CLMUL,
-      &super::kernel_tables::NVME_TABLES,
+      &super::kernel_tables::NVME_TABLES_8,
     )
   }
 }
@@ -1227,7 +1226,7 @@ pub unsafe fn crc64_nvme_vpclmul(crc: u64, data: &[u8]) -> u64 {
       crc,
       data,
       &crate::common::clmul::CRC64_NVME_CLMUL,
-      &super::kernel_tables::NVME_TABLES,
+      &super::kernel_tables::NVME_TABLES_8,
     )
   }
 }
@@ -1246,7 +1245,7 @@ pub unsafe fn crc64_nvme_vpclmul_2way(crc: u64, data: &[u8]) -> u64 {
       data,
       NVME_FOLD_256B,
       &crate::common::clmul::CRC64_NVME_CLMUL,
-      &super::kernel_tables::NVME_TABLES,
+      &super::kernel_tables::NVME_TABLES_8,
     )
   }
 }
@@ -1266,7 +1265,7 @@ pub unsafe fn crc64_nvme_vpclmul_4way(crc: u64, data: &[u8]) -> u64 {
       NVME_FOLD_512B,
       &NVME_COMBINE_4WAY,
       &crate::common::clmul::CRC64_NVME_CLMUL,
-      &super::kernel_tables::NVME_TABLES,
+      &super::kernel_tables::NVME_TABLES_8,
     )
   }
 }
@@ -1286,7 +1285,7 @@ pub unsafe fn crc64_nvme_vpclmul_7way(crc: u64, data: &[u8]) -> u64 {
       NVME_FOLD_896B,
       &NVME_COMBINE_7WAY,
       &crate::common::clmul::CRC64_NVME_CLMUL,
-      &super::kernel_tables::NVME_TABLES,
+      &super::kernel_tables::NVME_TABLES_8,
     )
   }
 }

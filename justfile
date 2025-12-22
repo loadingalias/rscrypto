@@ -75,6 +75,12 @@ bench-native crate="":
 bench-crc64-tune mode="":
     @bash scripts/bench/crc64-tune.sh {{mode}}
 
+# Fast CRC64 tuner (no Criterion; prints recommended RSCRYPTO_CRC64_* exports)
+# Usage: just tune-crc64
+#        just tune-crc64 --quick
+tune-crc64 *args="":
+    RUSTC_WRAPPER= cargo run -p checksum --release --bin crc64-tune -- {{args}}
+
 # Summarize Criterion results as TSV
 bench-summary group="" only="oneshot":
     @python3 scripts/bench/criterion-summary.py --group-prefix '{{group}}' --only {{only}}

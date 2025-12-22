@@ -11,6 +11,7 @@
 
 mod config;
 mod portable;
+mod tuned_defaults;
 
 #[cfg(target_arch = "x86_64")]
 mod x86_64;
@@ -24,10 +25,12 @@ use backend::dispatch::Selected;
 pub use config::{Crc64Config, Crc64Force, Crc64Tunables};
 use traits::{Checksum, ChecksumCombine};
 
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
+use crate::common::tables::generate_crc64_tables_8;
 use crate::{
   common::{
     combine::{Gf2Matrix64, combine_crc64, generate_shift8_matrix_64},
-    tables::{CRC64_NVME_POLY, CRC64_XZ_POLY, generate_crc64_tables_8},
+    tables::{CRC64_NVME_POLY, CRC64_XZ_POLY, generate_crc64_tables_16},
   },
   dispatchers::{Crc64Dispatcher, Crc64Fn},
 };
@@ -41,7 +44,7 @@ fn crc64_selected_kernel_name(len: usize) -> &'static str {
     let caps = platform::caps();
 
     if len < CRC64_SMALL_LANE_BYTES || cfg.effective_force == Crc64Force::Portable {
-      return "portable/slice8";
+      return "portable/slice16";
     }
 
     match cfg.effective_force {
@@ -58,7 +61,7 @@ fn crc64_selected_kernel_name(len: usize) -> &'static str {
             }
           };
         }
-        return "portable/slice8";
+        return "portable/slice16";
       }
       Crc64Force::Vpclmul => {
         if caps.has(platform::caps::x86::VPCLMUL_READY) {
@@ -82,13 +85,13 @@ fn crc64_selected_kernel_name(len: usize) -> &'static str {
             }
           };
         }
-        return "portable/slice8";
+        return "portable/slice16";
       }
       _ => {}
     }
 
     if len < cfg.tunables.portable_to_clmul {
-      return "portable/slice8";
+      return "portable/slice16";
     }
 
     if caps.has(platform::caps::x86::VPCLMUL_READY) && len >= cfg.tunables.pclmul_to_vpclmul {
@@ -122,7 +125,7 @@ fn crc64_selected_kernel_name(len: usize) -> &'static str {
       };
     }
 
-    "portable/slice8"
+    "portable/slice16"
   }
 
   #[cfg(target_arch = "aarch64")]
@@ -131,7 +134,7 @@ fn crc64_selected_kernel_name(len: usize) -> &'static str {
     let caps = platform::caps();
 
     if len < CRC64_SMALL_LANE_BYTES || cfg.effective_force == Crc64Force::Portable {
-      return "portable/slice8";
+      return "portable/slice16";
     }
 
     match cfg.effective_force {
@@ -147,7 +150,7 @@ fn crc64_selected_kernel_name(len: usize) -> &'static str {
             }
           };
         }
-        return "portable/slice8";
+        return "portable/slice16";
       }
       Crc64Force::PmullEor3 => {
         if caps.has(platform::caps::aarch64::PMULL_EOR3_READY) {
@@ -161,7 +164,7 @@ fn crc64_selected_kernel_name(len: usize) -> &'static str {
             }
           };
         }
-        return "portable/slice8";
+        return "portable/slice16";
       }
       Crc64Force::Sve2Pmull => {
         if caps.has(platform::caps::aarch64::SVE2_PMULL) && caps.has(platform::caps::aarch64::PMULL_READY) {
@@ -175,13 +178,13 @@ fn crc64_selected_kernel_name(len: usize) -> &'static str {
             }
           };
         }
-        return "portable/slice8";
+        return "portable/slice16";
       }
       _ => {}
     }
 
     if len < cfg.tunables.portable_to_clmul {
-      return "portable/slice8";
+      return "portable/slice16";
     }
 
     // Auto selection: prefer EOR3 > SVE2 > PMULL tiers
@@ -213,13 +216,13 @@ fn crc64_selected_kernel_name(len: usize) -> &'static str {
       };
     }
 
-    "portable/slice8"
+    "portable/slice16"
   }
 
   #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
   {
     let _ = len;
-    "portable/slice8"
+    "portable/slice16"
   }
 }
 
@@ -233,18 +236,22 @@ fn crc64_selected_kernel_name(len: usize) -> &'static str {
 /// Portable kernel tables (pre-computed at compile time).
 mod kernel_tables {
   use super::*;
-  pub static XZ_TABLES: [[u64; 256]; 8] = generate_crc64_tables_8(CRC64_XZ_POLY);
-  pub static NVME_TABLES: [[u64; 256]; 8] = generate_crc64_tables_8(CRC64_NVME_POLY);
+  #[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
+  pub static XZ_TABLES_8: [[u64; 256]; 8] = generate_crc64_tables_8(CRC64_XZ_POLY);
+  #[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
+  pub static NVME_TABLES_8: [[u64; 256]; 8] = generate_crc64_tables_8(CRC64_NVME_POLY);
+  pub static XZ_TABLES_16: [[u64; 256]; 16] = generate_crc64_tables_16(CRC64_XZ_POLY);
+  pub static NVME_TABLES_16: [[u64; 256]; 16] = generate_crc64_tables_16(CRC64_NVME_POLY);
 }
 
 /// CRC-64-XZ portable kernel wrapper.
 fn crc64_xz_portable(crc: u64, data: &[u8]) -> u64 {
-  portable::crc64_slice8_xz(crc, data)
+  portable::crc64_slice16_xz(crc, data)
 }
 
 /// CRC-64-NVME portable kernel wrapper.
 fn crc64_nvme_portable(crc: u64, data: &[u8]) -> u64 {
-  portable::crc64_slice8_nvme(crc, data)
+  portable::crc64_slice16_nvme(crc, data)
 }
 
 // Folding parameters (only used on SIMD architectures)
@@ -512,14 +519,14 @@ fn select_crc64_xz() -> Selected<Crc64Fn> {
 
   // Explicit portable override always wins.
   if config::get().effective_force == Crc64Force::Portable {
-    return Selected::new("portable/slice8", crc64_xz_portable);
+    return Selected::new("portable/slice16", crc64_xz_portable);
   }
 
   if caps.has(platform::caps::x86::PCLMUL_READY) || caps.has(platform::caps::x86::VPCLMUL_READY) {
     return Selected::new("x86_64/auto", crc64_xz_x86_64_auto);
   }
 
-  Selected::new("portable/slice8", crc64_xz_portable)
+  Selected::new("portable/slice16", crc64_xz_portable)
 }
 
 #[cfg(target_arch = "aarch64")]
@@ -715,19 +722,19 @@ fn select_crc64_xz() -> Selected<Crc64Fn> {
   let caps = platform::caps();
 
   if config::get().effective_force == Crc64Force::Portable {
-    return Selected::new("portable/slice8", crc64_xz_portable);
+    return Selected::new("portable/slice16", crc64_xz_portable);
   }
 
   if caps.has(platform::caps::aarch64::PMULL_READY) {
     return Selected::new("aarch64/auto", crc64_xz_aarch64_auto);
   }
 
-  Selected::new("portable/slice8", crc64_xz_portable)
+  Selected::new("portable/slice16", crc64_xz_portable)
 }
 
 #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
 fn select_crc64_xz() -> Selected<Crc64Fn> {
-  Selected::new("portable/slice8", crc64_xz_portable)
+  Selected::new("portable/slice16", crc64_xz_portable)
 }
 
 /// Select the best CRC-64-NVME kernel for the current platform.
@@ -736,14 +743,14 @@ fn select_crc64_nvme() -> Selected<Crc64Fn> {
   let caps = platform::caps();
 
   if config::get().effective_force == Crc64Force::Portable {
-    return Selected::new("portable/slice8", crc64_nvme_portable);
+    return Selected::new("portable/slice16", crc64_nvme_portable);
   }
 
   if caps.has(platform::caps::x86::PCLMUL_READY) || caps.has(platform::caps::x86::VPCLMUL_READY) {
     return Selected::new("x86_64/auto", crc64_nvme_x86_64_auto);
   }
 
-  Selected::new("portable/slice8", crc64_nvme_portable)
+  Selected::new("portable/slice16", crc64_nvme_portable)
 }
 
 #[cfg(target_arch = "aarch64")]
@@ -751,19 +758,19 @@ fn select_crc64_nvme() -> Selected<Crc64Fn> {
   let caps = platform::caps();
 
   if config::get().effective_force == Crc64Force::Portable {
-    return Selected::new("portable/slice8", crc64_nvme_portable);
+    return Selected::new("portable/slice16", crc64_nvme_portable);
   }
 
   if caps.has(platform::caps::aarch64::PMULL_READY) {
     return Selected::new("aarch64/auto", crc64_nvme_aarch64_auto);
   }
 
-  Selected::new("portable/slice8", crc64_nvme_portable)
+  Selected::new("portable/slice16", crc64_nvme_portable)
 }
 
 #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
 fn select_crc64_nvme() -> Selected<Crc64Fn> {
-  Selected::new("portable/slice8", crc64_nvme_portable)
+  Selected::new("portable/slice16", crc64_nvme_portable)
 }
 
 /// Static dispatcher for CRC-64-XZ.
@@ -830,7 +837,7 @@ impl Crc64 {
 
   /// Get the name of the currently selected backend.
   ///
-  /// Returns the dispatcher name (e.g., "portable/slice8", "x86_64/auto").
+  /// Returns the dispatcher name (e.g., "portable/slice16", "x86_64/auto").
   #[must_use]
   pub fn backend_name() -> &'static str {
     CRC64_XZ_DISPATCHER.backend_name()
@@ -954,7 +961,7 @@ impl Crc64Nvme {
 
   /// Get the name of the currently selected backend.
   ///
-  /// Returns the dispatcher name (e.g., "portable/slice8", "x86_64/auto").
+  /// Returns the dispatcher name (e.g., "portable/slice16", "x86_64/auto").
   #[must_use]
   pub fn backend_name() -> &'static str {
     CRC64_NVME_DISPATCHER.backend_name()
@@ -1478,11 +1485,11 @@ mod tests {
       let cfg = Crc64::config();
 
       if cfg.effective_force == Crc64Force::Portable {
-        assert_eq!(name, "portable/slice8");
+        assert_eq!(name, "portable/slice16");
       } else if caps.has(platform::caps::x86::PCLMUL_READY) || caps.has(platform::caps::x86::VPCLMUL_READY) {
         assert_eq!(name, "x86_64/auto");
       } else {
-        assert_eq!(name, "portable/slice8");
+        assert_eq!(name, "portable/slice16");
       }
     }
 
@@ -1492,16 +1499,16 @@ mod tests {
       let cfg = Crc64::config();
 
       if cfg.effective_force == Crc64Force::Portable {
-        assert_eq!(name, "portable/slice8");
+        assert_eq!(name, "portable/slice16");
       } else if caps.has(platform::caps::aarch64::PMULL_READY) {
         assert_eq!(name, "aarch64/auto");
       } else {
-        assert_eq!(name, "portable/slice8");
+        assert_eq!(name, "portable/slice16");
       }
     }
 
     // Introspection should always report portable for empty input.
-    assert_eq!(Crc64::kernel_name_for_len(0), "portable/slice8");
+    assert_eq!(Crc64::kernel_name_for_len(0), "portable/slice16");
   }
 
   /// If CRC-64 force env vars are set, assert that they are honored and exercise the tier.
@@ -1528,7 +1535,7 @@ mod tests {
 
     if force.eq_ignore_ascii_case("portable") {
       assert_eq!(cfg.requested_force, Crc64Force::Portable);
-      assert_eq!(kernel, "portable/slice8");
+      assert_eq!(kernel, "portable/slice16");
       return;
     }
 

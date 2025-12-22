@@ -3,7 +3,9 @@
 #
 # Runs a COMPLETE benchmark matrix to discover optimal settings for ALL:
 # - Kernels (portable, pclmul, vpclmul, pmull, pmull-eor3, sve2-pmull)
-# - Stream counts (1-8 way parallelism)
+# - Stream counts (supported values only; avoids "requested != effective" skew)
+#   - x86_64: 1 / 2 / 4 / 7-way folding
+#   - aarch64: 1 / 2 / 3-way folding
 # - Buffer sizes (64B to 1MB)
 #
 # This tests EVERY combination to find the true optimal configuration.
@@ -11,6 +13,7 @@
 # Usage:
 #   scripts/bench/crc64-tune.sh           # Full benchmark (slow, accurate)
 #   scripts/bench/crc64-tune.sh --quick   # Quick discovery (fast, noisy)
+#   cargo run -p checksum --release --bin crc64-tune -- --quick   # Fast tuner (recommended exports)
 #
 # Environment:
 #   RUSTFLAGS='-C target-cpu=native' scripts/bench/crc64-tune.sh
@@ -24,6 +27,26 @@ MODE="${1:-}"
 
 CRITERION_ARGS=(--noplot)
 FILTER=()
+
+CRC64_TUNE_FAILED=0
+
+maybe_disable_sccache() {
+  # Some environments export RUSTC_WRAPPER=sccache but do not allow sccache to
+  # execute compilers or create its state. Detect that case early and fall back
+  # to direct rustc to avoid silently producing stale/partial results.
+  if [[ "${RUSTC_WRAPPER:-}" == "sccache" ]]; then
+    if ! sccache rustc -vV >/dev/null 2>&1; then
+      echo "⚠️  WARNING: sccache is configured but not usable; disabling RUSTC_WRAPPER for this run."
+      export RUSTC_WRAPPER=
+    fi
+  fi
+}
+
+clear_old_crc64_results() {
+  # Avoid mixing results from previous runs. Criterion output is append-only
+  # across different group names; we clear only the crc64 subtree.
+  rm -rf target/criterion/crc64 2>/dev/null || true
+}
 
 case "$MODE" in
   --quick)
@@ -41,6 +64,10 @@ case "$MODE" in
     exit 1
     ;;
 esac
+
+# Make benchmark runs reproducible and avoid stale results.
+maybe_disable_sccache
+clear_old_crc64_results
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Platform Detection
@@ -141,7 +168,10 @@ run() {
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   echo "  $label"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  env "$@" cargo bench -p checksum --bench crc64 -- "${CRITERION_ARGS[@]}" "${FILTER[@]}" 2>&1 || true
+  if ! env "$@" cargo bench -p checksum --bench crc64 -- "${CRITERION_ARGS[@]}" "${FILTER[@]}" 2>&1; then
+    CRC64_TUNE_FAILED=1
+    echo "⚠️  WARNING: benchmark run failed: $label" >&2
+  fi
 }
 
 run_if_supported() {
@@ -149,7 +179,11 @@ run_if_supported() {
   local required_feature="$2"
   shift 2
 
-  if [[ " $DETECTED_FEATURES " == *" $required_feature "* ]]; then
+  # If we can't detect features (e.g., sandboxed macOS without sysctl),
+  # run anyway and let the library clamp unsafe force modes to safe fallbacks.
+  if [[ -z "${DETECTED_FEATURES// }" ]]; then
+    run "$label" "$@"
+  elif [[ " $DETECTED_FEATURES " == *" $required_feature "* ]]; then
     run "$label" "$@"
   else
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -217,10 +251,10 @@ run "auto (default)" \
 
 echo ""
 echo "══════════════════════════════════════════════════════════════════════════"
-echo "PORTABLE: Table-based slice-by-8 (no SIMD)"
+echo "PORTABLE: Table-based slice-by-16 (no SIMD)"
 echo "══════════════════════════════════════════════════════════════════════════"
 
-run "portable/slice8" \
+run "portable/slice16" \
   RSCRYPTO_CRC64_FORCE=portable \
   RSCRYPTO_CRC64_STREAMS=1
 
@@ -236,7 +270,10 @@ if [[ "$PLATFORM" == "x86_64" ]]; then
   echo "  Available on: Intel Westmere+, AMD Bulldozer+"
   echo "══════════════════════════════════════════════════════════════════════════"
 
-  for streams in 1 2 3 4 5 6 7 8; do
+  # Only test stream counts the implementation can actually execute.
+  # (If you pass 3/5/6/8 today, the selector clamps to 2/4/7 and the results
+  # are mislabeled and harder to analyze.)
+  for streams in 1 2 4 7; do
     run_if_supported "pclmul ${streams}-way" "pclmul" \
       RSCRYPTO_CRC64_FORCE=pclmul \
       RSCRYPTO_CRC64_STREAMS="$streams"
@@ -249,7 +286,7 @@ if [[ "$PLATFORM" == "x86_64" ]]; then
   echo "  Uses VPTERNLOGD for 3-way XOR when available"
   echo "══════════════════════════════════════════════════════════════════════════"
 
-  for streams in 1 2 3 4 5 6 7 8; do
+  for streams in 1 2 4 7; do
     run_if_supported "vpclmul ${streams}-way" "vpclmul" \
       RSCRYPTO_CRC64_FORCE=vpclmul \
       RSCRYPTO_CRC64_STREAMS="$streams"
@@ -270,7 +307,8 @@ if [[ "$PLATFORM" == "aarch64" ]]; then
   echo "  CPUs: Apple A7+, Cortex-A53+, Graviton, Neoverse"
   echo "══════════════════════════════════════════════════════════════════════════"
 
-  for streams in 1 2 3 4 5 6 7 8; do
+  # Only test stream counts the implementation can actually execute.
+  for streams in 1 2 3; do
     run_if_supported "pmull ${streams}-way" "pmull" \
       RSCRYPTO_CRC64_FORCE=pmull \
       RSCRYPTO_CRC64_STREAMS="$streams"
@@ -283,7 +321,7 @@ if [[ "$PLATFORM" == "aarch64" ]]; then
   echo "  Uses EOR3 instruction for single-cycle 3-way XOR in folding"
   echo "══════════════════════════════════════════════════════════════════════════"
 
-  for streams in 1 2 3 4 5 6 7 8; do
+  for streams in 1 2 3; do
     run_if_supported "pmull-eor3 ${streams}-way" "pmull-eor3" \
       RSCRYPTO_CRC64_FORCE=pmull-eor3 \
       RSCRYPTO_CRC64_STREAMS="$streams"
@@ -296,7 +334,7 @@ if [[ "$PLATFORM" == "aarch64" ]]; then
   echo "  Variable vector width (128-2048 bits)"
   echo "══════════════════════════════════════════════════════════════════════════"
 
-  for streams in 1 2 3 4 5 6 7 8; do
+  for streams in 1 2 3; do
     run_if_supported "sve2-pmull ${streams}-way" "sve2-pmull" \
       RSCRYPTO_CRC64_FORCE=sve2-pmull \
       RSCRYPTO_CRC64_STREAMS="$streams"
@@ -356,6 +394,7 @@ if python3 scripts/bench/criterion-summary.py \
   echo "Summary saved: tune-results/summary.tsv ($RESULT_COUNT results)"
 else
   echo "Warning: Summary generation failed"
+  CRC64_TUNE_FAILED=1
 fi
 
 # Run analysis
@@ -369,6 +408,7 @@ if python3 scripts/bench/crc64-analyze.py \
   echo "Analysis saved: tune-results/analysis.json"
 else
   echo "Warning: Analysis failed"
+  CRC64_TUNE_FAILED=1
 fi
 
 echo ""
@@ -384,3 +424,13 @@ echo ""
 echo "To compare specific sizes:"
 echo "  cat tune-results/summary.tsv | grep '65536' | sort -t$'\\t' -k5 -rn | head"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+if [[ "$CRC64_TUNE_FAILED" -ne 0 ]]; then
+  if [[ "${RSCRYPTO_CRC64_TUNE_IGNORE_FAILURES:-}" == "1" ]]; then
+    echo "⚠️  WARNING: one or more benchmark steps failed; ignoring due to RSCRYPTO_CRC64_TUNE_IGNORE_FAILURES=1" >&2
+    exit 0
+  fi
+  echo "ERROR: one or more benchmark steps failed; results may be incomplete." >&2
+  echo "Set RSCRYPTO_CRC64_TUNE_IGNORE_FAILURES=1 to keep partial outputs." >&2
+  exit 1
+fi

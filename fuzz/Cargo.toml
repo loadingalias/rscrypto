@@ -32,59 +32,45 @@ members = ["."]
 # Fuzz Targets
 # ============================================================================
 
-# Checksum targets - commented out until checksum crate exists
-# [[bin]]
-# name = "fuzz_crc32c"
-# path = "fuzz_targets/crc32c.rs"
-# test = false
-# doc = false
-# bench = false
-#
-# [[bin]]
-# name = "fuzz_crc32"
-# path = "fuzz_targets/crc32.rs"
-# test = false
-# doc = false
-# bench = false
-#
-# [[bin]]
-# name = "fuzz_crc64"
-# path = "fuzz_targets/crc64.rs"
-# test = false
-# doc = false
-# bench = false
-#
-# [[bin]]
-# name = "fuzz_crc16"
-# path = "fuzz_targets/crc16.rs"
-# test = false
-# doc = false
-# bench = false
-#
-# [[bin]]
-# name = "fuzz_combine"
-# path = "fuzz_targets/combine.rs"
-# test = false
-# doc = false
-# bench = false
-#
-# [[bin]]
-# name = "fuzz_streaming"
-# path = "fuzz_targets/streaming.rs"
-# test = false
-# doc = false
-# bench = false
-#
-# [[bin]]
-# name = "fuzz_differential"
-# path = "fuzz_targets/differential.rs"
-# test = false
-# doc = false
-# bench = false
+# Checksum crate fuzz targets
+[[bin]]
+name = "fuzz_crc16"
+path = "fuzz_targets/crc16.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_crc32"
+path = "fuzz_targets/crc32.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_crc32c"
+path = "fuzz_targets/crc32c.rs"
+test = false
+doc = false
+bench = false
 
 [[bin]]
 name = "fuzz_crc64"
 path = "fuzz_targets/crc64.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_combine"
+path = "fuzz_targets/combine.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_streaming"
+path = "fuzz_targets/streaming.rs"
 test = false
 doc = false
 bench = false

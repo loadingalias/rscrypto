@@ -18,6 +18,17 @@ set -euo pipefail
 
 export RSCRYPTO_TEST_MODE=${RSCRYPTO_TEST_MODE:-local}
 
+maybe_disable_sccache() {
+  if [[ -n "${RUSTC_WRAPPER:-}" && "${RUSTC_WRAPPER##*/}" == "sccache" ]]; then
+    if ! "$RUSTC_WRAPPER" rustc -vV >/dev/null 2>&1; then
+      echo "⚠️  WARNING: sccache is configured but not usable; disabling RUSTC_WRAPPER for this run."
+      export RUSTC_WRAPPER=
+    fi
+  fi
+}
+
+maybe_disable_sccache
+
 # Configuration (can be overridden via environment)
 # Default: 60s local, override with RSCRYPTO_FUZZ_DURATION_SECS=300 for CI
 DURATION_SECS=${RSCRYPTO_FUZZ_DURATION_SECS:-60}
@@ -28,14 +39,31 @@ JOBS=${RSCRYPTO_FUZZ_JOBS:-1}
 
 FUZZ_DIR="fuzz"
 
-# All available fuzz targets
-# Note: checksum targets are commented out until checksum crate exists
+# Smoke targets (default): keep runtime reasonable while still exercising the
+# most important invariants.
+SMOKE_TARGETS=(
+  # Platform crate
+  "fuzz_caps"
+  "fuzz_caps_ops"
+  # Checksum crate (CRC64 focus)
+  "fuzz_crc64"
+  "fuzz_streaming"
+  "fuzz_combine"
+  "fuzz_differential"
+)
+
+# All targets (invoked via --all).
 ALL_TARGETS=(
   # Platform crate
   "fuzz_caps"
   "fuzz_caps_ops"
   # Checksum crate
+  "fuzz_crc16"
+  "fuzz_crc32"
+  "fuzz_crc32c"
   "fuzz_crc64"
+  "fuzz_streaming"
+  "fuzz_combine"
   "fuzz_differential"
 )
 
@@ -149,18 +177,20 @@ run_target() {
 
 run_smoke() {
   local duration="${1:-$DURATION_SECS}"
+  shift || true
+  local targets=("$@")
 
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   echo "🚀 Fuzz Smoke Test"
   echo "⏱️  Duration: ${duration}s per target"
-  echo "🎯 Targets: ${#ALL_TARGETS[@]}"
+  echo "🎯 Targets: ${#targets[@]}"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   echo ""
 
   local failed=()
   local passed=0
 
-  for target in "${ALL_TARGETS[@]}"; do
+  for target in "${targets[@]}"; do
     if run_target "$target" "$duration"; then
       passed=$((passed + 1))
     else
@@ -170,7 +200,7 @@ run_smoke() {
   done
 
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo "Fuzz Summary: $passed/${#ALL_TARGETS[@]} targets passed"
+  echo "Fuzz Summary: $passed/${#targets[@]} targets passed"
 
   if [ ${#failed[@]} -gt 0 ]; then
     echo "❌ Failed targets: ${failed[*]}"
@@ -257,14 +287,18 @@ case "${1:-}" in
     fi
     run_coverage "$2"
     ;;
-  --all|--smoke)
+  --all)
     check_requirements
-    run_smoke "${2:-$DURATION_SECS}"
+    run_smoke "${2:-$DURATION_SECS}" "${ALL_TARGETS[@]}"
+    ;;
+  --smoke)
+    check_requirements
+    run_smoke "${2:-$DURATION_SECS}" "${SMOKE_TARGETS[@]}"
     ;;
   "")
     # Default: run smoke test
     check_requirements
-    run_smoke "$DURATION_SECS"
+    run_smoke "$DURATION_SECS" "${SMOKE_TARGETS[@]}"
     ;;
   *)
     # Specific target

@@ -308,11 +308,13 @@ macro_rules! define_dispatcher {
       inner: std::sync::OnceLock<Selected<$fn_ty>>,
 
       // Atomic caching fields - only for no_std targets WITH CAS support
-      #[cfg(all(not(feature = "std"), any(not(target_arch = "arm"), target_feature = "thumb2")))]
+      #[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
+      state: core::sync::atomic::AtomicUsize,
+      #[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
       func: core::sync::atomic::AtomicPtr<()>,
-      #[cfg(all(not(feature = "std"), any(not(target_arch = "arm"), target_feature = "thumb2")))]
+      #[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
       name_ptr: core::sync::atomic::AtomicPtr<u8>,
-      #[cfg(all(not(feature = "std"), any(not(target_arch = "arm"), target_feature = "thumb2")))]
+      #[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
       name_len: core::sync::atomic::AtomicUsize,
 
       selector: fn() -> Selected<$fn_ty>,
@@ -326,11 +328,13 @@ macro_rules! define_dispatcher {
           #[cfg(feature = "std")]
           inner: std::sync::OnceLock::new(),
 
-          #[cfg(all(not(feature = "std"), any(not(target_arch = "arm"), target_feature = "thumb2")))]
+          #[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
+          state: core::sync::atomic::AtomicUsize::new(0),
+          #[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
           func: core::sync::atomic::AtomicPtr::new(core::ptr::null_mut()),
-          #[cfg(all(not(feature = "std"), any(not(target_arch = "arm"), target_feature = "thumb2")))]
+          #[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
           name_ptr: core::sync::atomic::AtomicPtr::new(core::ptr::null_mut()),
-          #[cfg(all(not(feature = "std"), any(not(target_arch = "arm"), target_feature = "thumb2")))]
+          #[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
           name_len: core::sync::atomic::AtomicUsize::new(0),
 
           selector,
@@ -346,77 +350,54 @@ macro_rules! define_dispatcher {
           *self.inner.get_or_init(|| (self.selector)())
         }
 
-        // no_std path for targets WITH atomic CAS support
-        // (non-ARM targets, or ARM with thumb2 which indicates ARMv7-M+)
-        #[cfg(all(
-          not(feature = "std"),
-          any(not(target_arch = "arm"), target_feature = "thumb2")
-        ))]
+        // no_std path for targets WITH atomic CAS support.
+        #[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
         {
           use core::sync::atomic::Ordering;
 
-          // Sentinel value indicating initialization in progress
-          const INIT_SENTINEL: usize = 1;
+          // 0 = uninitialized, 1 = initializing, 2 = initialized
+          const UNINIT: usize = 0;
+          const INITING: usize = 1;
+          const READY: usize = 2;
 
-          let func_ptr = self.func.load(Ordering::Acquire);
-          if func_ptr.is_null() {
-            // Try to claim initialization using CAS
-            match self.func.compare_exchange(
-              core::ptr::null_mut(),
-              INIT_SENTINEL as *mut (),
-              Ordering::AcqRel,
-              Ordering::Acquire,
-            ) {
-              Ok(_) => {
-                // We won the race - perform initialization
-                let selected = (self.selector)();
-                self.name_ptr.store(selected.name.as_ptr() as *mut u8, Ordering::Release);
-                self.name_len.store(selected.name.len(), Ordering::Release);
-                // Store func last as it signals completion
-                self.func.store(selected.func as *mut (), Ordering::Release);
-                selected
-              }
-              Err(_) => {
-                // Another thread is initializing - wait for completion
-                let mut func_ptr = self.func.load(Ordering::Acquire);
-                while func_ptr as usize == INIT_SENTINEL {
-                  core::hint::spin_loop();
-                  func_ptr = self.func.load(Ordering::Acquire);
-                }
-                Self::load_selected(&self.func, &self.name_ptr, &self.name_len)
-              }
-            }
-          } else if func_ptr as usize == INIT_SENTINEL {
-            // Another thread is initializing - wait for completion
-            let mut func_ptr = self.func.load(Ordering::Acquire);
-            while func_ptr as usize == INIT_SENTINEL {
-              core::hint::spin_loop();
-              func_ptr = self.func.load(Ordering::Acquire);
-            }
-            Self::load_selected(&self.func, &self.name_ptr, &self.name_len)
-          } else {
-            Self::load_selected(&self.func, &self.name_ptr, &self.name_len)
+          let state = self.state.load(Ordering::Acquire);
+          if state == READY {
+            return Self::load_selected(&self.func, &self.name_ptr, &self.name_len);
           }
+
+          if state == UNINIT {
+            if self
+              .state
+              .compare_exchange(UNINIT, INITING, Ordering::AcqRel, Ordering::Acquire)
+              .is_ok()
+            {
+              let selected = (self.selector)();
+              self.name_ptr.store(selected.name.as_ptr() as *mut u8, Ordering::Release);
+              self.name_len.store(selected.name.len(), Ordering::Release);
+              self.func.store(selected.func as *mut (), Ordering::Release);
+              // Publish READY last; this is the synchronization point for waiters.
+              self.state.store(READY, Ordering::Release);
+              return selected;
+            }
+          }
+
+          // Another thread is initializing - wait for completion.
+          while self.state.load(Ordering::Acquire) != READY {
+            core::hint::spin_loop();
+          }
+          Self::load_selected(&self.func, &self.name_ptr, &self.name_len)
         }
 
-        // no_std path for targets WITHOUT atomic CAS (e.g., ARMv6-M / thumbv6m)
-        // These targets only have atomic load/store, not compare_exchange.
+        // no_std path for targets WITHOUT atomic CAS support.
         // We simply call the selector each time - no caching.
-        #[cfg(all(
-          not(feature = "std"),
-          target_arch = "arm",
-          not(target_feature = "thumb2")
-        ))]
+        #[cfg(all(not(feature = "std"), not(target_has_atomic = "ptr")))]
         {
           (self.selector)()
         }
       }
 
       // Only needed for targets with atomic CAS support
-      #[cfg(all(
-        not(feature = "std"),
-        any(not(target_arch = "arm"), target_feature = "thumb2")
-      ))]
+      #[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
       #[inline]
       fn load_selected(
         func: &core::sync::atomic::AtomicPtr<()>,
@@ -431,8 +412,7 @@ macro_rules! define_dispatcher {
         //    and stored via `store(selected.func as *mut (), ...)` on line 164.
         // 2. Function pointers and raw pointers have the same size and alignment on all platforms
         //    Rust supports (both are pointer-sized).
-        // 3. The Acquire ordering ensures we see the store that wrote this pointer, guaranteeing
-        //    it's not the null sentinel (checked above) or the INIT_SENTINEL (spin-waited above).
+        // 3. The Acquire ordering ensures we see the store that wrote this pointer.
         // 4. The function pointer remains valid for the program's lifetime ('static).
         #[allow(unsafe_code)]
         let func: $fn_ty = unsafe { core::mem::transmute(func_ptr) };

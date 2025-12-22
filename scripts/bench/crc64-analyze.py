@@ -157,12 +157,15 @@ def _parse_kernel_from_function_id(function_id: str) -> tuple[str, int]:
         "oneshot/aarch64/pmull-eor3-2way" -> ("pmull-eor3", 2)
         "oneshot/aarch64/pmull-eor3-3way" -> ("pmull-eor3", 3)
         "oneshot/x86_64/vpclmul-4way" -> ("vpclmul", 4)
-        "oneshot/portable/slice8" -> ("portable", 1)
+        "oneshot/portable/slice16" -> ("portable", 1)
     """
     # Get the last component
     parts = function_id.split("/")
     if len(parts) < 2:
         return ("unknown", 1)
+
+    if "portable" in parts:
+        return ("portable", 1)
 
     kernel_part = parts[-1]  # e.g., "pmull-eor3-2way" or "pmull-small"
 
@@ -273,7 +276,7 @@ def parse_summary_tsv(tsv_path: Path) -> list[BenchResult]:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 
-# Kernels to include in analysis (exclude portable, slice8, etc.)
+# Kernels to include in analysis (exclude portable, etc.)
 SIMD_KERNELS = {
     "pclmul",
     "vpclmul",

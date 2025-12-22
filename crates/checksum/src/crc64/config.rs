@@ -7,6 +7,8 @@
 
 use platform::{Caps, Tune};
 
+use super::tuned_defaults;
+
 /// Forced backend selection for CRC-64.
 ///
 /// This is a *request* that is clamped to the detected CPU capabilities to
@@ -242,6 +244,38 @@ fn clamp_streams(streams: u8) -> u8 {
   streams.clamp(1, 16)
 }
 
+#[inline]
+#[must_use]
+#[allow(unused_variables)] // arch-specific
+fn default_crc64_streams(caps: Caps, tune: Tune) -> u8 {
+  // Default stream preference is architecture- and backend-dependent. We bias
+  // slightly toward higher ILP on x86 (where our supported stream counts are
+  // 1/2/4/7) to avoid mapping common "3" presets down to 2-way.
+  #[cfg(target_arch = "x86_64")]
+  {
+    let _ = caps;
+    match tune.parallel_streams {
+      0 | 1 => 1,
+      2 => 2,
+      3 => 4,
+      4..=6 => 4,
+      _ => 7,
+    }
+  }
+
+  #[cfg(target_arch = "aarch64")]
+  {
+    let _ = caps;
+    tune.parallel_streams.clamp(1, 3)
+  }
+
+  #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+  {
+    let _ = (caps, tune);
+    1
+  }
+}
+
 /// Compute the effective CRC-64 config for the current process.
 ///
 /// This merges:
@@ -253,12 +287,23 @@ fn clamp_streams(streams: u8) -> u8 {
 pub fn config(caps: Caps, tune: Tune) -> Crc64Config {
   let ov = overrides();
 
-  let portable_to_clmul = ov.portable_to_clmul.unwrap_or(tune.pclmul_threshold);
+  let tuned = tuned_defaults::for_tune_kind(tune.kind);
+
+  let portable_to_clmul = ov
+    .portable_to_clmul
+    .or(tuned.map(|t| t.portable_to_clmul))
+    .unwrap_or(tune.pclmul_threshold);
+
   let pclmul_to_vpclmul = ov
     .pclmul_to_vpclmul
+    .or(tuned.map(|t| t.pclmul_to_vpclmul))
     .unwrap_or_else(|| default_pclmul_to_vpclmul_threshold(caps, tune));
 
-  let streams = clamp_streams(ov.streams.unwrap_or(tune.parallel_streams));
+  let streams = clamp_streams(
+    ov.streams
+      .or(tuned.map(|t| t.streams))
+      .unwrap_or_else(|| default_crc64_streams(caps, tune)),
+  );
 
   let requested_force = ov.force;
   let effective_force = clamp_force_to_caps(requested_force, caps);
@@ -286,7 +331,7 @@ pub fn get() -> Crc64Config {
   {
     use std::sync::OnceLock;
     static CACHED: OnceLock<Crc64Config> = OnceLock::new();
-    *CACHED.get_or_init(|| config(platform::caps(), platform::tune()))
+    *CACHED.get_or_init(|| platform::dispatch_auto(config))
   }
 
   #[cfg(not(feature = "std"))]

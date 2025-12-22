@@ -1,4 +1,4 @@
-//! Fuzz target for CRC16 implementations (IBM and CCITT-FALSE).
+//! Fuzz target for CRC16 implementations (IBM and CCITT).
 //!
 //! Tests that:
 //! - No panics on arbitrary input
@@ -8,7 +8,7 @@
 #![no_main]
 
 use arbitrary::Arbitrary;
-use checksum::{Crc16CcittFalse, Crc16Ibm};
+use checksum::{Checksum, ChecksumCombine, Crc16Ccitt, Crc16Ibm};
 use libfuzzer_sys::fuzz_target;
 
 #[derive(Arbitrary, Debug)]
@@ -24,8 +24,8 @@ fuzz_target!(|input: Input| {
   // Test CRC16/IBM
   test_crc16_ibm(data, split);
 
-  // Test CRC16/CCITT-FALSE
-  test_crc16_ccitt_false(data, split);
+  // Test CRC16/CCITT
+  test_crc16_ccitt(data, split);
 });
 
 fn test_crc16_ibm(data: &[u8], split: usize) {
@@ -52,26 +52,26 @@ fn test_crc16_ibm(data: &[u8], split: usize) {
   assert_eq!(oneshot, combined, "crc16/ibm combine mismatch");
 }
 
-fn test_crc16_ccitt_false(data: &[u8], split: usize) {
-  let oneshot = Crc16CcittFalse::checksum(data);
+fn test_crc16_ccitt(data: &[u8], split: usize) {
+  let oneshot = Crc16Ccitt::checksum(data);
 
   let (a, b) = data.split_at(split);
-  let mut hasher = Crc16CcittFalse::new();
+  let mut hasher = Crc16Ccitt::new();
   hasher.update(a);
   hasher.update(b);
   let incremental = hasher.finalize();
 
-  assert_eq!(oneshot, incremental, "crc16/ccitt-false incremental mismatch");
+  assert_eq!(oneshot, incremental, "crc16/ccitt incremental mismatch");
 
-  let crc_a = Crc16CcittFalse::checksum(a);
-  let mut resumed = Crc16CcittFalse::resume(crc_a);
+  let crc_a = Crc16Ccitt::checksum(a);
+  let mut resumed = Crc16Ccitt::resume(crc_a);
   resumed.update(b);
   let resume_result = resumed.finalize();
 
-  assert_eq!(oneshot, resume_result, "crc16/ccitt-false resume mismatch");
+  assert_eq!(oneshot, resume_result, "crc16/ccitt resume mismatch");
 
-  let crc_b = Crc16CcittFalse::checksum(b);
-  let combined = Crc16CcittFalse::combine(crc_a, crc_b, b.len());
+  let crc_b = Crc16Ccitt::checksum(b);
+  let combined = Crc16Ccitt::combine(crc_a, crc_b, b.len());
 
-  assert_eq!(oneshot, combined, "crc16/ccitt-false combine mismatch");
+  assert_eq!(oneshot, combined, "crc16/ccitt combine mismatch");
 }

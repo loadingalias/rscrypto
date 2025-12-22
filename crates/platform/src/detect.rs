@@ -618,7 +618,7 @@ pub const fn tune_static() -> Tune {
 #[cfg(feature = "std")]
 use std::sync::OnceLock;
 
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", not(miri)))]
 static STD_CACHE: OnceLock<Detected> = OnceLock::new();
 
 #[cfg(feature = "std")]
@@ -673,6 +673,7 @@ pub fn has_override() -> bool {
 }
 
 #[cold]
+#[cfg(not(miri))]
 fn detect_with_override() -> Detected {
   #[cfg(feature = "std")]
   {
