@@ -33,6 +33,12 @@ pub enum Crc64Force {
   Sve2Pmull,
   /// Force powerpc64 VPMSUMD (if supported).
   Vpmsum,
+  /// Force s390x VGFM (if supported).
+  Vgfm,
+  /// Force riscv64 Zbc carryless multiply (if supported).
+  Zbc,
+  /// Force riscv64 Zvbc (vector carryless multiply) folding (if supported).
+  Zvbc,
 }
 
 impl Crc64Force {
@@ -47,6 +53,9 @@ impl Crc64Force {
       Self::PmullEor3 => "pmull-eor3",
       Self::Sve2Pmull => "sve2-pmull",
       Self::Vpmsum => "vpmsum",
+      Self::Vgfm => "vgfm",
+      Self::Zbc => "zbc",
+      Self::Zvbc => "zvbc",
     }
   }
 }
@@ -141,6 +150,15 @@ fn read_env_overrides() -> Overrides {
     if value.eq_ignore_ascii_case("vpmsum") || value.eq_ignore_ascii_case("vpmsumd") {
       return Some(Crc64Force::Vpmsum);
     }
+    if value.eq_ignore_ascii_case("vgfm") || value.eq_ignore_ascii_case("gfmsum") {
+      return Some(Crc64Force::Vgfm);
+    }
+    if value.eq_ignore_ascii_case("zbc") {
+      return Some(Crc64Force::Zbc);
+    }
+    if value.eq_ignore_ascii_case("zvbc") || value.eq_ignore_ascii_case("vclmul") {
+      return Some(Crc64Force::Zvbc);
+    }
 
     None
   }
@@ -217,10 +235,37 @@ fn clamp_force_to_caps(requested: Crc64Force, caps: Caps) -> Crc64Force {
       Crc64Force::Auto
     }
     Crc64Force::Vpmsum => {
-      #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+      #[cfg(target_arch = "powerpc64")]
       {
         if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
           return Crc64Force::Vpmsum;
+        }
+      }
+      Crc64Force::Auto
+    }
+    Crc64Force::Vgfm => {
+      #[cfg(target_arch = "s390x")]
+      {
+        if caps.has(platform::caps::s390x::VECTOR) {
+          return Crc64Force::Vgfm;
+        }
+      }
+      Crc64Force::Auto
+    }
+    Crc64Force::Zbc => {
+      #[cfg(target_arch = "riscv64")]
+      {
+        if caps.has(platform::caps::riscv::ZBC) {
+          return Crc64Force::Zbc;
+        }
+      }
+      Crc64Force::Auto
+    }
+    Crc64Force::Zvbc => {
+      #[cfg(target_arch = "riscv64")]
+      {
+        if caps.has(platform::caps::riscv::ZVBC) {
+          return Crc64Force::Zvbc;
         }
       }
       Crc64Force::Auto
@@ -284,7 +329,7 @@ fn default_crc64_streams(caps: Caps, tune: Tune) -> u8 {
     tune.parallel_streams.clamp(1, 3)
   }
 
-  #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+  #[cfg(target_arch = "powerpc64")]
   {
     // POWER VPMSUMD benefits from higher ILP; default to a higher stream count
     // when the crypto/vector facility is present.
@@ -294,10 +339,36 @@ fn default_crc64_streams(caps: Caps, tune: Tune) -> u8 {
     tune.parallel_streams.saturating_mul(2).clamp(1, 8)
   }
 
+  #[cfg(target_arch = "s390x")]
+  {
+    if !caps.has(platform::caps::s390x::VECTOR) {
+      return 1;
+    }
+    // Similar strategy to POWER: use extra ILP to hide GF multiply latency.
+    tune.parallel_streams.saturating_mul(2).clamp(1, 4)
+  }
+
+  #[cfg(target_arch = "riscv64")]
+  {
+    if !(caps.has(platform::caps::riscv::ZVBC) || caps.has(platform::caps::riscv::ZBC)) {
+      return 1;
+    }
+
+    // Our RISC-V backends support 1/2/4-way folding; bias slightly upward
+    // (like x86) so the default tune preset (3 streams) doesn't map down to 2-way.
+    match tune.parallel_streams {
+      0 | 1 => 1,
+      2 => 2,
+      _ => 4,
+    }
+  }
+
   #[cfg(not(any(
     target_arch = "x86_64",
     target_arch = "aarch64",
-    all(target_arch = "powerpc64", target_endian = "little")
+    target_arch = "powerpc64",
+    target_arch = "s390x",
+    target_arch = "riscv64"
   )))]
   {
     let _ = (caps, tune);

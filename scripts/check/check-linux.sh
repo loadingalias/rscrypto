@@ -22,6 +22,11 @@ get_crate_flags "$@"
 
 export ZIG_CC="$SCRIPT_DIR/zig-cc.sh"
 
+CHECKSUM_IN_SCOPE=false
+if [[ "$CRATE_FLAGS" == "--workspace" || "$CRATE_FLAGS" == *"-p checksum"* ]]; then
+  CHECKSUM_IN_SCOPE=true
+fi
+
 LOG_DIR=$(mktemp -d)
 trap 'rm -rf "$LOG_DIR"' EXIT
 
@@ -58,6 +63,18 @@ for target in "${LINUX_TARGETS[@]}"; do
     exit 1
   fi
   ok
+
+  if [[ "$CHECKSUM_IN_SCOPE" == true && "$target" == x86_64-* ]]; then
+    step "$short_name crc64-tune"
+    if ! CC="$ZIG_CC" RUSTC_WRAPPER="" CARGO_TARGET_DIR="$target_dir" \
+         cargo clippy -p checksum --bin crc64-tune --all-features --target "$target" -- -D warnings \
+         >>"$LOG_DIR/$target.log" 2>&1; then
+      fail
+      show_error "$LOG_DIR/$target.log"
+      exit 1
+    fi
+    ok
+  fi
 done
 
 echo "${GREEN}✓${RESET} Linux targets passed"

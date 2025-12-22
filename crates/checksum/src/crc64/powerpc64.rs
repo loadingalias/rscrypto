@@ -63,6 +63,32 @@ impl Simd {
     self.0.to_array()[1] as u64
   }
 
+  /// Normalize a loaded vector to little-endian lane encoding.
+  ///
+  /// On `powerpc64le` this is a no-op. On big-endian `powerpc64`, we byte-swap
+  /// each 64-bit lane so the folding algorithm sees the same lane values as on
+  /// little-endian platforms.
+  #[inline]
+  #[target_feature(enable = "altivec", enable = "vsx", enable = "power8-vector")]
+  unsafe fn to_le(self) -> Self {
+    #[cfg(target_endian = "little")]
+    {
+      self
+    }
+
+    #[cfg(target_endian = "big")]
+    {
+      let out: i64x2;
+      asm!(
+        "xxbrd {out}, {inp}",
+        out = lateout(vreg) out,
+        inp = in(vreg) self.0,
+        options(nomem, nostack, pure)
+      );
+      Self(out)
+    }
+  }
+
   #[inline]
   #[target_feature(
     enable = "altivec",
@@ -216,14 +242,14 @@ unsafe fn fold_tail(x: [Simd; 8], consts: &Crc64ClmulConstants) -> u64 {
   enable = "power8-crypto"
 )]
 unsafe fn fold_block_128(x: &mut [Simd; 8], chunk: &[Simd; 8], coeff: Simd) {
-  x[0] = chunk[0] ^ x[0].fold_16(coeff);
-  x[1] = chunk[1] ^ x[1].fold_16(coeff);
-  x[2] = chunk[2] ^ x[2].fold_16(coeff);
-  x[3] = chunk[3] ^ x[3].fold_16(coeff);
-  x[4] = chunk[4] ^ x[4].fold_16(coeff);
-  x[5] = chunk[5] ^ x[5].fold_16(coeff);
-  x[6] = chunk[6] ^ x[6].fold_16(coeff);
-  x[7] = chunk[7] ^ x[7].fold_16(coeff);
+  x[0] = chunk[0].to_le() ^ x[0].fold_16(coeff);
+  x[1] = chunk[1].to_le() ^ x[1].fold_16(coeff);
+  x[2] = chunk[2].to_le() ^ x[2].fold_16(coeff);
+  x[3] = chunk[3].to_le() ^ x[3].fold_16(coeff);
+  x[4] = chunk[4].to_le() ^ x[4].fold_16(coeff);
+  x[5] = chunk[5].to_le() ^ x[5].fold_16(coeff);
+  x[6] = chunk[6].to_le() ^ x[6].fold_16(coeff);
+  x[7] = chunk[7].to_le() ^ x[7].fold_16(coeff);
 }
 
 #[target_feature(
@@ -234,6 +260,14 @@ unsafe fn fold_block_128(x: &mut [Simd; 8], chunk: &[Simd; 8], coeff: Simd) {
 )]
 unsafe fn update_simd(state: u64, first: &[Simd; 8], rest: &[[Simd; 8]], consts: &Crc64ClmulConstants) -> u64 {
   let mut x = *first;
+  x[0] = x[0].to_le();
+  x[1] = x[1].to_le();
+  x[2] = x[2].to_le();
+  x[3] = x[3].to_le();
+  x[4] = x[4].to_le();
+  x[5] = x[5].to_le();
+  x[6] = x[6].to_le();
+  x[7] = x[7].to_le();
 
   // XOR the initial CRC into the first lane.
   x[0] ^= Simd::new(0, state);
@@ -275,6 +309,23 @@ unsafe fn update_simd_2way(
 
   let mut s0 = blocks[0];
   let mut s1 = blocks[1];
+  s0[0] = s0[0].to_le();
+  s0[1] = s0[1].to_le();
+  s0[2] = s0[2].to_le();
+  s0[3] = s0[3].to_le();
+  s0[4] = s0[4].to_le();
+  s0[5] = s0[5].to_le();
+  s0[6] = s0[6].to_le();
+  s0[7] = s0[7].to_le();
+
+  s1[0] = s1[0].to_le();
+  s1[1] = s1[1].to_le();
+  s1[2] = s1[2].to_le();
+  s1[3] = s1[3].to_le();
+  s1[4] = s1[4].to_le();
+  s1[5] = s1[5].to_le();
+  s1[6] = s1[6].to_le();
+  s1[7] = s1[7].to_le();
 
   // Inject CRC into stream 0.
   s0[0] ^= Simd::new(0, state);
@@ -339,6 +390,41 @@ unsafe fn update_simd_4way(
   let mut s1 = blocks[1];
   let mut s2 = blocks[2];
   let mut s3 = blocks[3];
+  s0[0] = s0[0].to_le();
+  s0[1] = s0[1].to_le();
+  s0[2] = s0[2].to_le();
+  s0[3] = s0[3].to_le();
+  s0[4] = s0[4].to_le();
+  s0[5] = s0[5].to_le();
+  s0[6] = s0[6].to_le();
+  s0[7] = s0[7].to_le();
+
+  s1[0] = s1[0].to_le();
+  s1[1] = s1[1].to_le();
+  s1[2] = s1[2].to_le();
+  s1[3] = s1[3].to_le();
+  s1[4] = s1[4].to_le();
+  s1[5] = s1[5].to_le();
+  s1[6] = s1[6].to_le();
+  s1[7] = s1[7].to_le();
+
+  s2[0] = s2[0].to_le();
+  s2[1] = s2[1].to_le();
+  s2[2] = s2[2].to_le();
+  s2[3] = s2[3].to_le();
+  s2[4] = s2[4].to_le();
+  s2[5] = s2[5].to_le();
+  s2[6] = s2[6].to_le();
+  s2[7] = s2[7].to_le();
+
+  s3[0] = s3[0].to_le();
+  s3[1] = s3[1].to_le();
+  s3[2] = s3[2].to_le();
+  s3[3] = s3[3].to_le();
+  s3[4] = s3[4].to_le();
+  s3[5] = s3[5].to_le();
+  s3[6] = s3[6].to_le();
+  s3[7] = s3[7].to_le();
 
   // Inject CRC into stream 0.
   s0[0] ^= Simd::new(0, state);
@@ -431,6 +517,77 @@ unsafe fn update_simd_8way(
   let mut s5 = blocks[5];
   let mut s6 = blocks[6];
   let mut s7 = blocks[7];
+  s0[0] = s0[0].to_le();
+  s0[1] = s0[1].to_le();
+  s0[2] = s0[2].to_le();
+  s0[3] = s0[3].to_le();
+  s0[4] = s0[4].to_le();
+  s0[5] = s0[5].to_le();
+  s0[6] = s0[6].to_le();
+  s0[7] = s0[7].to_le();
+
+  s1[0] = s1[0].to_le();
+  s1[1] = s1[1].to_le();
+  s1[2] = s1[2].to_le();
+  s1[3] = s1[3].to_le();
+  s1[4] = s1[4].to_le();
+  s1[5] = s1[5].to_le();
+  s1[6] = s1[6].to_le();
+  s1[7] = s1[7].to_le();
+
+  s2[0] = s2[0].to_le();
+  s2[1] = s2[1].to_le();
+  s2[2] = s2[2].to_le();
+  s2[3] = s2[3].to_le();
+  s2[4] = s2[4].to_le();
+  s2[5] = s2[5].to_le();
+  s2[6] = s2[6].to_le();
+  s2[7] = s2[7].to_le();
+
+  s3[0] = s3[0].to_le();
+  s3[1] = s3[1].to_le();
+  s3[2] = s3[2].to_le();
+  s3[3] = s3[3].to_le();
+  s3[4] = s3[4].to_le();
+  s3[5] = s3[5].to_le();
+  s3[6] = s3[6].to_le();
+  s3[7] = s3[7].to_le();
+
+  s4[0] = s4[0].to_le();
+  s4[1] = s4[1].to_le();
+  s4[2] = s4[2].to_le();
+  s4[3] = s4[3].to_le();
+  s4[4] = s4[4].to_le();
+  s4[5] = s4[5].to_le();
+  s4[6] = s4[6].to_le();
+  s4[7] = s4[7].to_le();
+
+  s5[0] = s5[0].to_le();
+  s5[1] = s5[1].to_le();
+  s5[2] = s5[2].to_le();
+  s5[3] = s5[3].to_le();
+  s5[4] = s5[4].to_le();
+  s5[5] = s5[5].to_le();
+  s5[6] = s5[6].to_le();
+  s5[7] = s5[7].to_le();
+
+  s6[0] = s6[0].to_le();
+  s6[1] = s6[1].to_le();
+  s6[2] = s6[2].to_le();
+  s6[3] = s6[3].to_le();
+  s6[4] = s6[4].to_le();
+  s6[5] = s6[5].to_le();
+  s6[6] = s6[6].to_le();
+  s6[7] = s6[7].to_le();
+
+  s7[0] = s7[0].to_le();
+  s7[1] = s7[1].to_le();
+  s7[2] = s7[2].to_le();
+  s7[3] = s7[3].to_le();
+  s7[4] = s7[4].to_le();
+  s7[5] = s7[5].to_le();
+  s7[6] = s7[6].to_le();
+  s7[7] = s7[7].to_le();
 
   // Inject CRC into stream 0.
   s0[0] ^= Simd::new(0, state);

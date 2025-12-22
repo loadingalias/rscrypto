@@ -3,7 +3,7 @@
 This document defines the fastest possible CRC-64 (XZ and NVME) implementations
 for each target architecture, ordered by market importance and deployment priority.
 
-Last updated: 2025-12-21
+Last updated: 2025-12-22
 
 ---
 
@@ -13,10 +13,9 @@ Last updated: 2025-12-21
 |--------------|--------|-----------------|----------|
 | x86-64 | ✅ Complete | ~52 GB/s (VPCLMUL 7-way) | — |
 | aarch64 | ✅ Complete | ~18 GB/s (EOR3 3-way) | — |
-| powerpc64 | ❌ Missing | ~52 GB/s (VPMSUM 8-way) | P0 |
-| s390x | ❌ Missing | ~30 GB/s (VGFM) | P1 |
-| riscv64 | ❌ Missing | Variable (ZVBC) | P2 |
-| loongarch64 | ❌ Missing | ~15 GB/s (LSX) | P3 |
+| powerpc64 | ✅ Complete | ~52 GB/s (VPMSUM 8-way) | — |
+| s390x | ✅ Complete | ~30 GB/s (VGFM 4-way) | — |
+| riscv64 | ✅ Implemented | Variable (ZVBC vector, Zbc scalar) | P2 |
 | wasm32 | ❌ N/A | ~2 GB/s (table) | — |
 
 ---
@@ -82,14 +81,21 @@ consider SVE2-PMULL with wider multi-way folding when VL > 128 bits becomes comm
 
 ---
 
-## Tier 1: powerpc64 (IBM POWER) — NOT IMPLEMENTED
+## Tier 1: powerpc64 (IBM POWER) — COMPLETE
 
 ### Hardware Capability
 - **VPMSUM** (Vector Polynomial Multiply Sum): POWER8+ (2014)
 - **Intrinsics**: `vec_pmsum_be()` in `altivec.h`
 - **HWCAP2**: `PPC_FEATURE2_VEC_CRYPTO`
 
-### Optimal Implementation
+### Implemented Kernels
+- **VPMSUMD**: 1/2/4/8-way folding (128B blocks)
+- Small-buffer tier (16B lanes) + large-buffer tier (8×16B blocks)
+
+Big-endian `powerpc64` is supported by normalizing loads to match the
+little-endian lane interpretation used by the folding algorithm.
+
+### Throughput (expected)
 
 ```
 Algorithm: 8-way VPMSUM folding (128B blocks)
@@ -99,18 +105,9 @@ Theoretical: 16 bytes/cycle = 64 GB/s @ 4 GHz
 Measured: ~52 GB/s (13.6 bytes/cycle) on POWER8 4.1 GHz
 ```
 
-### Implementation Strategy
-1. Port existing x86 PCLMUL 7-way design (closest architectural match)
-2. Use `vec_pmsum_be()` for carryless multiply
-3. Barrett reduction for final 64→64 bit fold
-4. Estimated effort: ~1,500 lines
-
-### Kernel Structure
-```
-crc64_vpmsum()           - 1-way baseline
-crc64_vpmsum_small()     - 16B lane folding (< 128B)
-crc64_vpmsum_8way()      - 8-stream parallel (main loop)
-```
+### Implementation Notes
+- Code: `crates/checksum/src/crc64/powerpc64.rs`
+- Dispatch: `crates/checksum/src/crc64/mod.rs`
 
 ### References
 - [antonblanchard/crc32-vpmsum](https://github.com/antonblanchard/crc32-vpmsum) - Reference CRC32 implementation
@@ -118,14 +115,14 @@ crc64_vpmsum_8way()      - 8-stream parallel (main loop)
 
 ---
 
-## Tier 2: s390x (IBM Z) — NOT IMPLEMENTED
+## Tier 2: s390x (IBM Z) — COMPLETE
 
 ### Hardware Capability
 - **VGFM** (Vector Galois Field Multiply): z13+ (2015)
 - **VGFMA** (Vector Galois Field Multiply and Add): z13+
 - **Intrinsics**: `vec_gfmsum_128()`, `vec_gfmsum_accum_128()`
 
-### Optimal Implementation
+### Implemented Kernels
 
 ```
 Algorithm: VGFM-based 128-bit folding
@@ -134,18 +131,12 @@ Element sizes: byte, halfword, word, doubleword
 Theoretical: ~30 GB/s on z15/z16
 ```
 
-### Implementation Strategy
-1. Port aarch64 PMULL design (similar 128-bit vector model)
-2. Use `vec_gfmsum_128()` for polynomial multiply
-3. Multi-way striping (2-way or 4-way depending on z-gen)
-4. Estimated effort: ~1,200 lines
+Kernels:
+- `vgfm`: 1/2/4-way folding (128B blocks)
 
-### Kernel Structure
-```
-crc64_vgfm()             - 1-way baseline
-crc64_vgfm_small()       - Lane folding
-crc64_vgfm_2way()        - 2-stream parallel
-```
+Implementation notes:
+- Code: `crates/checksum/src/crc64/s390x.rs` (inline asm `vgfm …, 3`)
+- Dispatch/caps: `platform::caps::s390x::VECTOR`
 
 ### References
 - [linux-on-ibm-z/crc32-s390x](https://github.com/linux-on-ibm-z/crc32-s390x) - Reference CRC32 implementation
@@ -154,32 +145,30 @@ crc64_vgfm_2way()        - 2-stream parallel
 
 ---
 
-## Tier 3: riscv64 (RISC-V) — NOT IMPLEMENTED
+## Tier 3: riscv64 (RISC-V) — IMPLEMENTED (Zbc + ZVBC; needs HW validation)
 
 ### Hardware Capability
 - **Zbc** (Scalar carryless multiply): `clmul`, `clmulh`, `clmulr`
 - **Zvbc** (Vector carryless multiply): `vclmul.vv`, `vclmul.vx`, `vclmulh.vv`, `vclmulh.vx`
 - **Vector width**: Implementation-defined (128-65536 bits)
 
-### Optimal Implementation
+### Implemented
+- Scalar Zbc folding (1/2/4-way) using `clmul`/`clmulh`
+- Vector Zvbc folding (1/2/4-way) using RVV `vclmul{,h}.vx` with VL-agnostic chunking
+- Code: `crates/checksum/src/crc64/riscv64.rs`
+- Dispatch/caps: `platform::caps::riscv::{ZBC,ZVBC}`
 
-```
-Algorithm: RVV ZVBC-based folding with variable VL
-Width: LMUL=8 with VLEN-dependent parallelism
-Challenge: No hardware with Zvbc available as of late 2024
-```
-
-### Implementation Strategy
-1. Scalar Zbc path for baseline (if Zvbc unavailable)
-2. ZVBC path with VL-agnostic loop structure
-3. Barrett reduction using `clmulh`
-4. Estimated effort: ~1,600 lines
+### Implementation Notes
+- ZVBC requires nightly Rust target-feature gating (`riscv_target_feature`).
+- The hot loop folds 8×16B lanes per 128B block using RVV with `e64,m1` and `vsetvli` to adapt to any VLEN.
+- Tail reduction uses a VL=1 ZVBC microkernel to keep the hot path simple.
+- Benchmarking on real ZVBC hardware is still outstanding; tune defaults are heuristic.
 
 ### Kernel Structure
 ```
-crc64_zbc()              - Scalar clmul baseline
-crc64_zvbc()             - Vector clmul main
-crc64_zvbc_vl_agnostic() - Adapts to any VLEN
+crc64_{xz,nvme}_zbc*      - Scalar clmul baseline + ILP variants (1/2/4-way)
+crc64_{xz,nvme}_zvbc*     - Vector clmul baseline + ILP variants (1/2/4-way)
+fold_block_128_zvbc()     - VL-agnostic RVV folding core
 ```
 
 ### Zvbc32e (DRAFT Extension)
@@ -192,46 +181,6 @@ crc64_zvbc_vl_agnostic() - Adapts to any VLEN
 - [riscv/riscv-crypto ZVBC spec](https://github.com/riscv/riscv-crypto/blob/main/doc/vector/riscv-crypto-vector-zvbc.adoc)
 - [GCC RISC-V vclmul patches](https://www.mail-archive.com/gcc-patches@gcc.gnu.org/msg371024.html)
 - [Hadoop RISC-V CRC32](https://www.mail-archive.com/common-issues@hadoop.apache.org/msg321911.html)
-
----
-
-## Tier 4: loongarch64 (Loongson) — NOT IMPLEMENTED
-
-### Hardware Capability
-- **LSX** (128-bit SIMD): LA464+ baseline
-- **LASX** (256-bit SIMD): LA664+ optional
-- **Scalar CRC**: `CRC.W.B.W`, `CRC.W.H.W`, `CRC.W.W.W`, `CRC.W.D.W`
-
-### Problem: No Polynomial Multiply
-Unlike x86/ARM/POWER/s390x, LoongArch LSX/LASX **does not have** a dedicated
-polynomial/carryless multiply instruction. The scalar CRC instructions are
-CRC32-specific and don't support arbitrary polynomials.
-
-### Possible Approaches
-
-#### Option A: Emulated CLMUL via Lookup Tables
-- Use SIMD for parallel table lookups (like slice-by-16)
-- Throughput: ~4-6 GB/s (2-3× over scalar)
-- Complexity: Medium
-
-#### Option B: Bit-Sliced Polynomial Multiply
-- Implement CLMUL using bitwise operations
-- Throughput: ~2-3 GB/s (marginal gain)
-- Complexity: High
-
-#### Option C: Wait for LSX2/LASX2
-- LoongArch is evolving; crypto extensions may come
-- Not worth investing until clmul exists
-
-### Recommendation
-**Low priority**. Without hardware polynomial multiply, the best achievable is
-~3× over portable (vs 20-40× on other architectures). Implement only if there's
-specific customer demand.
-
-### References
-- [LoongArch Reference Manual](https://loongson.github.io/LoongArch-Documentation/LoongArch-Vol1-EN.html)
-- [Linux Kernel LoongArch docs](https://docs.kernel.org/arch/loongarch/introduction.html)
-- [GCC LoongArch SIMD options](https://gcc.gnu.org/onlinedocs/gcc/LoongArch-Options.html)
 
 ---
 
@@ -271,7 +220,7 @@ A novel CRC computation method without lookup tables or hardware CLMUL:
 - Potentially matches hardware-accelerated on some platforms
 - Paper: [arxiv.org/html/2412.16398v1](https://arxiv.org/html/2412.16398v1)
 
-**Evaluation needed**: Could benefit wasm32 and loongarch64 where clmul is absent.
+**Evaluation needed**: Could benefit wasm32/wasm64 and other targets where CLMUL is absent.
 
 ### Multi-Stream Folding Limits
 | Architecture | Max Practical Streams | Reason |
@@ -287,29 +236,19 @@ A novel CRC computation method without lookup tables or hardware CLMUL:
 
 ## Implementation Priority
 
-### P0: powerpc64 (VPMSUM)
+### P0: powerpc64le (VPMSUM) — DONE
 - **Impact**: IBM POWER servers (cloud, enterprise, HPC)
 - **Speedup**: 40× over portable
-- **Effort**: ~1,500 lines (mature reference exists)
-- **Risk**: Low (well-documented, Linux kernel has CRC32)
+ - **Note**: Both endiannesses are supported.
 
-### P1: s390x (VGFM)
+### P1: s390x (VGFM) — DONE
 - **Impact**: IBM Z mainframes (banking, enterprise)
 - **Speedup**: 15-20× over portable
-- **Effort**: ~1,200 lines (mature reference exists)
-- **Risk**: Low (well-documented)
 
-### P2: riscv64 (ZVBC)
+### P2: riscv64 (ZVBC) — IN PROGRESS
 - **Impact**: Emerging (SiFive, Alibaba T-Head, future Apple?)
 - **Speedup**: 10-30× over portable (depends on VLEN)
-- **Effort**: ~1,600 lines (no hardware to test yet)
-- **Risk**: Medium (spec stable, no production hardware)
-
-### P3: loongarch64 (LSX/LASX)
-- **Impact**: China domestic market
-- **Speedup**: 2-3× max (no clmul)
-- **Effort**: ~800 lines
-- **Risk**: Low, but low reward
+- **Current**: scalar Zbc folding implemented; ZVBC still pending.
 
 ### Skip: wasm32
 - No performance benefit possible
@@ -329,13 +268,15 @@ aarch64::PMULL_READY      // AES (includes PMULL)
 aarch64::PMULL_EOR3_READY // AES + SHA3
 aarch64::SVE2_PMULL       // SVE2 + crypto
 
-// To add:
+// powerpc64le
 powerpc64::VPMSUM_READY   // VEC_CRYPTO
-s390x::VGFM_READY         // Vector facility
-riscv64::ZBC_READY        // Scalar clmul
-riscv64::ZVBC_READY       // Vector clmul
-loongarch64::LSX_READY    // 128-bit SIMD
-loongarch64::LASX_READY   // 256-bit SIMD
+
+// s390x
+s390x::VECTOR             // Vector facility (z13+)
+
+// riscv64
+riscv::ZBC                // Scalar carryless multiply
+riscv::ZVBC               // Vector carryless multiply (future CRC64)
 ```
 
 ---
@@ -366,6 +307,5 @@ Recommended test sizes: 64, 128, 256, 512, 1K, 4K, 16K, 64K, 256K, 1M, 4M bytes
 - [komrad36/CRC](https://github.com/komrad36/CRC) (x86 reference)
 
 ### Architecture Manuals
-- [LoongArch Reference Manual](https://loongson.github.io/LoongArch-Documentation/LoongArch-Vol1-EN.html)
 - [ARM ACLE](https://arm-software.github.io/acle/main/acle.html)
 - [IBM z/Architecture Reference Summary](https://www.ibm.com/support/pages/sites/default/files/2021-05/SA22-7871-10.pdf)

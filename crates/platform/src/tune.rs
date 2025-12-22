@@ -65,9 +65,6 @@ pub enum TuneKind {
   NvidiaGrace,
   AmpereAltra,
   Aarch64Pmull,
-  // LoongArch
-  LoongArchLsx,
-  LoongArchLasx,
   // s390x (IBM Z)
   Z13,
   Z14,
@@ -106,8 +103,6 @@ impl TuneKind {
       Self::NvidiaGrace => "NVIDIA Grace",
       Self::AmpereAltra => "Ampere Altra",
       Self::Aarch64Pmull => "AArch64 PMULL",
-      Self::LoongArchLsx => "LoongArch LSX",
-      Self::LoongArchLasx => "LoongArch LASX",
       Self::Z13 => "IBM z13",
       Self::Z14 => "IBM z14",
       Self::Z15 => "IBM z15",
@@ -637,48 +632,6 @@ impl Tune {
   };
 
   // ─────────────────────────────────────────────────────────────────────────────
-  // LoongArch Presets
-  // ─────────────────────────────────────────────────────────────────────────────
-
-  /// Tuning for LoongArch with LSX (128-bit SIMD).
-  ///
-  /// LSX is the baseline SIMD extension for modern LoongArch processors.
-  /// This is the minimum configuration for loongarch64-unknown-linux-{gnu,musl}.
-  pub const LOONGARCH_LSX: Self = Self {
-    kind: TuneKind::LoongArchLsx,
-    simd_threshold: 128,
-    pclmul_threshold: 128,
-    hwcrc_threshold: usize::MAX, // No hardware CRC on LoongArch
-    effective_simd_width: 128,
-    fast_wide_ops: true, // LSX has efficient 128-bit ops
-    parallel_streams: 3,
-    prefer_hybrid: false,
-    cache_line: 64,
-    prefetch_distance: 0,
-    sve_vlen: 0,
-    sme_tile: 0,
-  };
-
-  /// Tuning for LoongArch with LASX (256-bit SIMD).
-  ///
-  /// LASX is the advanced 256-bit SIMD extension available on 3A5000+ processors.
-  /// The LA664 cores (3A6000) have 4 SIMD pipelines for improved throughput.
-  pub const LOONGARCH_LASX: Self = Self {
-    kind: TuneKind::LoongArchLasx,
-    simd_threshold: 64, // Lower threshold for 256-bit ops
-    pclmul_threshold: 64,
-    hwcrc_threshold: usize::MAX, // No hardware CRC on LoongArch
-    effective_simd_width: 256,
-    fast_wide_ops: true, // LASX has efficient 256-bit ops
-    parallel_streams: 4, // LA664 has 4 SIMD/FPU units
-    prefer_hybrid: false,
-    cache_line: 64,
-    prefetch_distance: 0,
-    sve_vlen: 0,
-    sme_tile: 0,
-  };
-
-  // ─────────────────────────────────────────────────────────────────────────────
   // s390x (IBM Z) Presets
   // ─────────────────────────────────────────────────────────────────────────────
 
@@ -690,8 +643,8 @@ impl Tune {
   pub const Z13: Self = Self {
     kind: TuneKind::Z13,
     simd_threshold: 256,
-    pclmul_threshold: usize::MAX, // No PCLMUL on s390x
-    hwcrc_threshold: usize::MAX,  // No hardware CRC on s390x
+    pclmul_threshold: 256,       // CRC64 VGFM folding crossover (z13+ vector)
+    hwcrc_threshold: usize::MAX, // No hardware CRC on s390x
     effective_simd_width: 128,
     fast_wide_ops: true,
     parallel_streams: 2, // Two SIMD units
@@ -709,8 +662,8 @@ impl Tune {
   pub const Z14: Self = Self {
     kind: TuneKind::Z14,
     simd_threshold: 128,
-    pclmul_threshold: usize::MAX, // No PCLMUL on s390x
-    hwcrc_threshold: usize::MAX,  // No hardware CRC on s390x
+    pclmul_threshold: 128,       // CRC64 VGFM folding crossover (z14+)
+    hwcrc_threshold: usize::MAX, // No hardware CRC on s390x
     effective_simd_width: 128,
     fast_wide_ops: true,
     parallel_streams: 2,
@@ -729,8 +682,8 @@ impl Tune {
   pub const Z15: Self = Self {
     kind: TuneKind::Z15,
     simd_threshold: 64,
-    pclmul_threshold: usize::MAX, // No PCLMUL on s390x
-    hwcrc_threshold: usize::MAX,  // No hardware CRC on s390x
+    pclmul_threshold: 64,        // CRC64 VGFM folding crossover (z15+)
+    hwcrc_threshold: usize::MAX, // No hardware CRC on s390x
     effective_simd_width: 128,
     fast_wide_ops: true,
     parallel_streams: 2,
@@ -1141,36 +1094,6 @@ mod tests {
   }
 
   #[test]
-  fn test_tune_loongarch_lsx() {
-    let tune = Tune::LOONGARCH_LSX;
-    assert_eq!(tune.simd_threshold, 128);
-    assert_eq!(tune.effective_simd_width, 128);
-    assert!(tune.fast_wide_ops); // LSX has efficient 128-bit ops
-    assert_eq!(tune.parallel_streams, 3);
-    assert!(!tune.prefer_hybrid);
-    assert_eq!(tune.cache_line, 64);
-    assert_eq!(tune.sve_vlen, 0);
-    assert_eq!(tune.sme_tile, 0);
-    assert_eq!(tune.kind(), TuneKind::LoongArchLsx);
-    assert_eq!(tune.name(), "LoongArch LSX");
-  }
-
-  #[test]
-  fn test_tune_loongarch_lasx() {
-    let tune = Tune::LOONGARCH_LASX;
-    assert_eq!(tune.simd_threshold, 64); // Lower threshold for 256-bit
-    assert_eq!(tune.effective_simd_width, 256);
-    assert!(tune.fast_wide_ops); // LASX has efficient 256-bit ops
-    assert_eq!(tune.parallel_streams, 4); // LA664 has 4 SIMD units
-    assert!(!tune.prefer_hybrid);
-    assert_eq!(tune.cache_line, 64);
-    assert_eq!(tune.sve_vlen, 0);
-    assert_eq!(tune.sme_tile, 0);
-    assert_eq!(tune.kind(), TuneKind::LoongArchLasx);
-    assert_eq!(tune.name(), "LoongArch LASX");
-  }
-
-  #[test]
   fn test_tune_z13() {
     let tune = Tune::Z13;
     assert_eq!(tune.simd_threshold, 256);
@@ -1245,8 +1168,6 @@ mod tests {
     assert_eq!(Tune::NVIDIA_GRACE.name(), "NVIDIA Grace");
     assert_eq!(Tune::AMPERE_ALTRA.name(), "Ampere Altra");
     assert_eq!(Tune::AARCH64_PMULL.name(), "AArch64 PMULL");
-    assert_eq!(Tune::LOONGARCH_LSX.name(), "LoongArch LSX");
-    assert_eq!(Tune::LOONGARCH_LASX.name(), "LoongArch LASX");
     assert_eq!(Tune::Z13.name(), "IBM z13");
     assert_eq!(Tune::Z14.name(), "IBM z14");
     assert_eq!(Tune::Z15.name(), "IBM z15");
@@ -1365,8 +1286,6 @@ mod tests {
       Tune::NVIDIA_GRACE,
       Tune::AMPERE_ALTRA,
       Tune::AARCH64_PMULL,
-      Tune::LOONGARCH_LSX,
-      Tune::LOONGARCH_LASX,
       Tune::Z13,
       Tune::Z14,
       Tune::Z15,

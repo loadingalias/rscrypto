@@ -9,7 +9,9 @@
 #[cfg(any(
   target_arch = "x86_64",
   target_arch = "aarch64",
-  all(target_arch = "powerpc64", target_endian = "little")
+  target_arch = "powerpc64",
+  target_arch = "s390x",
+  target_arch = "riscv64"
 ))]
 pub mod clmul;
 pub mod combine;

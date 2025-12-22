@@ -9,6 +9,8 @@
 //! - x86_64: VPCLMULQDQ / PCLMULQDQ folding
 //! - aarch64: PMULL folding
 //! - powerpc64le: VPMSUMD folding
+//! - s390x: VGFM folding
+//! - riscv64: ZVBC (RVV vector CLMUL) / Zbc folding
 
 mod config;
 mod portable;
@@ -21,9 +23,15 @@ mod x86_64;
 mod aarch64;
 
 // NOTE: The VPMSUMD CRC64 backend is currently implemented for little-endian
-// POWER (powerpc64le). Big-endian powerpc64 targets fall back to portable.
-#[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+// POWER and supports both endiannesses (big-endian loads are normalized).
+#[cfg(target_arch = "powerpc64")]
 mod powerpc64;
+
+#[cfg(target_arch = "s390x")]
+mod s390x;
+
+#[cfg(target_arch = "riscv64")]
+mod riscv64;
 
 use backend::dispatch::Selected;
 // Re-export config types for public API (Crc64Force only used internally on SIMD archs)
@@ -225,7 +233,7 @@ fn crc64_selected_kernel_name(len: usize) -> &'static str {
     "portable/slice16"
   }
 
-  #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+  #[cfg(target_arch = "powerpc64")]
   {
     let cfg = config::get();
     let caps = platform::caps();
@@ -234,19 +242,16 @@ fn crc64_selected_kernel_name(len: usize) -> &'static str {
       return "portable/slice16";
     }
 
-    match cfg.effective_force {
-      Crc64Force::Vpmsum => {
-        if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
-          return match powerpc64_vpmsum_streams_for_len(len, cfg.tunables.streams) {
-            8 => "powerpc64/vpmsum-8way",
-            4 => "powerpc64/vpmsum-4way",
-            2 => "powerpc64/vpmsum-2way",
-            _ => "powerpc64/vpmsum",
-          };
-        }
-        return "portable/slice16";
+    if cfg.effective_force == Crc64Force::Vpmsum {
+      if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
+        return match powerpc64_vpmsum_streams_for_len(len, cfg.tunables.streams) {
+          8 => "powerpc64/vpmsum-8way",
+          4 => "powerpc64/vpmsum-4way",
+          2 => "powerpc64/vpmsum-2way",
+          _ => "powerpc64/vpmsum",
+        };
       }
-      _ => {}
+      return "portable/slice16";
     }
 
     if len < cfg.tunables.portable_to_clmul {
@@ -265,10 +270,106 @@ fn crc64_selected_kernel_name(len: usize) -> &'static str {
     "portable/slice16"
   }
 
+  #[cfg(target_arch = "s390x")]
+  {
+    let cfg = config::get();
+    let caps = platform::caps();
+
+    if len < CRC64_SMALL_LANE_BYTES || cfg.effective_force == Crc64Force::Portable {
+      return "portable/slice16";
+    }
+
+    match cfg.effective_force {
+      Crc64Force::Vgfm => {
+        if caps.has(platform::caps::s390x::VECTOR) {
+          return match s390x_vgfm_streams_for_len(len, cfg.tunables.streams) {
+            4 => "s390x/vgfm-4way",
+            2 => "s390x/vgfm-2way",
+            _ => "s390x/vgfm",
+          };
+        }
+        return "portable/slice16";
+      }
+      _ => {}
+    }
+
+    if len < cfg.tunables.portable_to_clmul {
+      return "portable/slice16";
+    }
+
+    if caps.has(platform::caps::s390x::VECTOR) {
+      return match s390x_vgfm_streams_for_len(len, cfg.tunables.streams) {
+        4 => "s390x/vgfm-4way",
+        2 => "s390x/vgfm-2way",
+        _ => "s390x/vgfm",
+      };
+    }
+
+    "portable/slice16"
+  }
+
+  #[cfg(target_arch = "riscv64")]
+  {
+    let cfg = config::get();
+    let caps = platform::caps();
+
+    if len < CRC64_SMALL_LANE_BYTES || cfg.effective_force == Crc64Force::Portable {
+      return "portable/slice16";
+    }
+
+    match cfg.effective_force {
+      Crc64Force::Zvbc => {
+        if caps.has(platform::caps::riscv::ZVBC) {
+          return match riscv64_zbc_streams_for_len(len, cfg.tunables.streams) {
+            4 => "riscv64/zvbc-4way",
+            2 => "riscv64/zvbc-2way",
+            _ => "riscv64/zvbc",
+          };
+        }
+        return "portable/slice16";
+      }
+      Crc64Force::Zbc => {
+        if caps.has(platform::caps::riscv::ZBC) {
+          return match riscv64_zbc_streams_for_len(len, cfg.tunables.streams) {
+            4 => "riscv64/zbc-4way",
+            2 => "riscv64/zbc-2way",
+            _ => "riscv64/zbc",
+          };
+        }
+        return "portable/slice16";
+      }
+      _ => {}
+    }
+
+    if len < cfg.tunables.portable_to_clmul {
+      return "portable/slice16";
+    }
+
+    if caps.has(platform::caps::riscv::ZVBC) {
+      return match riscv64_zbc_streams_for_len(len, cfg.tunables.streams) {
+        4 => "riscv64/zvbc-4way",
+        2 => "riscv64/zvbc-2way",
+        _ => "riscv64/zvbc",
+      };
+    }
+
+    if caps.has(platform::caps::riscv::ZBC) {
+      return match riscv64_zbc_streams_for_len(len, cfg.tunables.streams) {
+        4 => "riscv64/zbc-4way",
+        2 => "riscv64/zbc-2way",
+        _ => "riscv64/zbc",
+      };
+    }
+
+    "portable/slice16"
+  }
+
   #[cfg(not(any(
     target_arch = "x86_64",
     target_arch = "aarch64",
-    all(target_arch = "powerpc64", target_endian = "little")
+    target_arch = "powerpc64",
+    target_arch = "s390x",
+    target_arch = "riscv64"
   )))]
   {
     let _ = len;
@@ -311,13 +412,17 @@ fn crc64_nvme_portable(crc: u64, data: &[u8]) -> u64 {
 #[cfg(any(
   target_arch = "x86_64",
   target_arch = "aarch64",
-  all(target_arch = "powerpc64", target_endian = "little")
+  target_arch = "powerpc64",
+  target_arch = "s390x",
+  target_arch = "riscv64"
 ))]
 const CRC64_FOLD_BLOCK_BYTES: usize = 128;
 #[cfg(any(
   target_arch = "x86_64",
   target_arch = "aarch64",
-  all(target_arch = "powerpc64", target_endian = "little")
+  target_arch = "powerpc64",
+  target_arch = "s390x",
+  target_arch = "riscv64"
 ))]
 const CRC64_SMALL_LANE_BYTES: usize = 16;
 
@@ -370,10 +475,10 @@ const fn aarch64_pmull_streams_for_len(len: usize, streams: u8) -> u8 {
   1
 }
 
-#[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+#[cfg(target_arch = "powerpc64")]
 const CRC64_VPMSUM_2WAY_MIN_BYTES: usize = 128 * CRC64_FOLD_BLOCK_BYTES; // 16 KiB
 
-#[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+#[cfg(target_arch = "powerpc64")]
 #[inline]
 const fn powerpc64_vpmsum_streams_for_len(len: usize, streams: u8) -> u8 {
   // POWER benefits from higher ILP, but multi-stream merging has non-trivial
@@ -389,6 +494,41 @@ const fn powerpc64_vpmsum_streams_for_len(len: usize, streams: u8) -> u8 {
     return 4;
   }
   if streams >= 2 && len >= CRC64_VPMSUM_2WAY_MIN_BYTES {
+    return 2;
+  }
+  1
+}
+
+#[cfg(target_arch = "s390x")]
+const CRC64_VGFM_2WAY_MIN_BYTES: usize = 128 * CRC64_FOLD_BLOCK_BYTES; // 16 KiB
+
+#[cfg(target_arch = "s390x")]
+#[inline]
+const fn s390x_vgfm_streams_for_len(len: usize, streams: u8) -> u8 {
+  // z13+ has 32 vector registers and strong ILP; keep thresholds conservative.
+  const CRC64_VGFM_4WAY_MIN_BYTES: usize = 2 * CRC64_VGFM_2WAY_MIN_BYTES; // 32 KiB
+
+  if streams >= 4 && len >= CRC64_VGFM_4WAY_MIN_BYTES {
+    return 4;
+  }
+  if streams >= 2 && len >= CRC64_VGFM_2WAY_MIN_BYTES {
+    return 2;
+  }
+  1
+}
+
+#[cfg(target_arch = "riscv64")]
+const CRC64_ZBC_2WAY_MIN_BYTES: usize = 128 * CRC64_FOLD_BLOCK_BYTES; // 16 KiB
+
+#[cfg(target_arch = "riscv64")]
+#[inline]
+const fn riscv64_zbc_streams_for_len(len: usize, streams: u8) -> u8 {
+  const CRC64_ZBC_4WAY_MIN_BYTES: usize = 2 * CRC64_ZBC_2WAY_MIN_BYTES; // 32 KiB
+
+  if streams >= 4 && len >= CRC64_ZBC_4WAY_MIN_BYTES {
+    return 4;
+  }
+  if streams >= 2 && len >= CRC64_ZBC_2WAY_MIN_BYTES {
     return 2;
   }
   1
@@ -612,7 +752,7 @@ fn select_crc64_xz() -> Selected<Crc64Fn> {
   Selected::new("portable/slice16", crc64_xz_portable)
 }
 
-#[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+#[cfg(target_arch = "powerpc64")]
 fn crc64_xz_powerpc64_auto(crc: u64, data: &[u8]) -> u64 {
   let len = data.len();
   if len < CRC64_SMALL_LANE_BYTES {
@@ -654,7 +794,7 @@ fn crc64_xz_powerpc64_auto(crc: u64, data: &[u8]) -> u64 {
   crc64_xz_portable(crc, data)
 }
 
-#[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+#[cfg(target_arch = "powerpc64")]
 fn crc64_nvme_powerpc64_auto(crc: u64, data: &[u8]) -> u64 {
   let len = data.len();
   if len < CRC64_SMALL_LANE_BYTES {
@@ -690,6 +830,202 @@ fn crc64_nvme_powerpc64_auto(crc: u64, data: &[u8]) -> u64 {
       4 => powerpc64::crc64_nvme_vpmsum_4way_safe(crc, data),
       2 => powerpc64::crc64_nvme_vpmsum_2way_safe(crc, data),
       _ => powerpc64::crc64_nvme_vpmsum_safe(crc, data),
+    };
+  }
+
+  crc64_nvme_portable(crc, data)
+}
+
+#[cfg(target_arch = "s390x")]
+fn crc64_xz_s390x_auto(crc: u64, data: &[u8]) -> u64 {
+  let len = data.len();
+  if len < CRC64_SMALL_LANE_BYTES {
+    return crc64_xz_portable(crc, data);
+  }
+
+  let cfg = config::get();
+  let caps = platform::caps();
+
+  match cfg.effective_force {
+    Crc64Force::Portable => return crc64_xz_portable(crc, data),
+    Crc64Force::Vgfm => {
+      if caps.has(platform::caps::s390x::VECTOR) {
+        return match s390x_vgfm_streams_for_len(len, cfg.tunables.streams) {
+          4 => s390x::crc64_xz_vgfm_4way_safe(crc, data),
+          2 => s390x::crc64_xz_vgfm_2way_safe(crc, data),
+          _ => s390x::crc64_xz_vgfm_safe(crc, data),
+        };
+      }
+      return crc64_xz_portable(crc, data);
+    }
+    _ => {}
+  }
+
+  if len < cfg.tunables.portable_to_clmul {
+    return crc64_xz_portable(crc, data);
+  }
+
+  if caps.has(platform::caps::s390x::VECTOR) {
+    return match s390x_vgfm_streams_for_len(len, cfg.tunables.streams) {
+      4 => s390x::crc64_xz_vgfm_4way_safe(crc, data),
+      2 => s390x::crc64_xz_vgfm_2way_safe(crc, data),
+      _ => s390x::crc64_xz_vgfm_safe(crc, data),
+    };
+  }
+
+  crc64_xz_portable(crc, data)
+}
+
+#[cfg(target_arch = "s390x")]
+fn crc64_nvme_s390x_auto(crc: u64, data: &[u8]) -> u64 {
+  let len = data.len();
+  if len < CRC64_SMALL_LANE_BYTES {
+    return crc64_nvme_portable(crc, data);
+  }
+
+  let cfg = config::get();
+  let caps = platform::caps();
+
+  match cfg.effective_force {
+    Crc64Force::Portable => return crc64_nvme_portable(crc, data),
+    Crc64Force::Vgfm => {
+      if caps.has(platform::caps::s390x::VECTOR) {
+        return match s390x_vgfm_streams_for_len(len, cfg.tunables.streams) {
+          4 => s390x::crc64_nvme_vgfm_4way_safe(crc, data),
+          2 => s390x::crc64_nvme_vgfm_2way_safe(crc, data),
+          _ => s390x::crc64_nvme_vgfm_safe(crc, data),
+        };
+      }
+      return crc64_nvme_portable(crc, data);
+    }
+    _ => {}
+  }
+
+  if len < cfg.tunables.portable_to_clmul {
+    return crc64_nvme_portable(crc, data);
+  }
+
+  if caps.has(platform::caps::s390x::VECTOR) {
+    return match s390x_vgfm_streams_for_len(len, cfg.tunables.streams) {
+      4 => s390x::crc64_nvme_vgfm_4way_safe(crc, data),
+      2 => s390x::crc64_nvme_vgfm_2way_safe(crc, data),
+      _ => s390x::crc64_nvme_vgfm_safe(crc, data),
+    };
+  }
+
+  crc64_nvme_portable(crc, data)
+}
+
+#[cfg(target_arch = "riscv64")]
+fn crc64_xz_riscv64_auto(crc: u64, data: &[u8]) -> u64 {
+  let len = data.len();
+  if len < CRC64_SMALL_LANE_BYTES {
+    return crc64_xz_portable(crc, data);
+  }
+
+  let cfg = config::get();
+  let caps = platform::caps();
+
+  match cfg.effective_force {
+    Crc64Force::Portable => return crc64_xz_portable(crc, data),
+    Crc64Force::Zvbc => {
+      if caps.has(platform::caps::riscv::ZVBC) {
+        return match riscv64_zbc_streams_for_len(len, cfg.tunables.streams) {
+          4 => riscv64::crc64_xz_zvbc_4way_safe(crc, data),
+          2 => riscv64::crc64_xz_zvbc_2way_safe(crc, data),
+          _ => riscv64::crc64_xz_zvbc_safe(crc, data),
+        };
+      }
+      return crc64_xz_portable(crc, data);
+    }
+    Crc64Force::Zbc => {
+      if caps.has(platform::caps::riscv::ZBC) {
+        return match riscv64_zbc_streams_for_len(len, cfg.tunables.streams) {
+          4 => riscv64::crc64_xz_zbc_4way_safe(crc, data),
+          2 => riscv64::crc64_xz_zbc_2way_safe(crc, data),
+          _ => riscv64::crc64_xz_zbc_safe(crc, data),
+        };
+      }
+      return crc64_xz_portable(crc, data);
+    }
+    _ => {}
+  }
+
+  if len < cfg.tunables.portable_to_clmul {
+    return crc64_xz_portable(crc, data);
+  }
+
+  if caps.has(platform::caps::riscv::ZVBC) {
+    return match riscv64_zbc_streams_for_len(len, cfg.tunables.streams) {
+      4 => riscv64::crc64_xz_zvbc_4way_safe(crc, data),
+      2 => riscv64::crc64_xz_zvbc_2way_safe(crc, data),
+      _ => riscv64::crc64_xz_zvbc_safe(crc, data),
+    };
+  }
+
+  if caps.has(platform::caps::riscv::ZBC) {
+    return match riscv64_zbc_streams_for_len(len, cfg.tunables.streams) {
+      4 => riscv64::crc64_xz_zbc_4way_safe(crc, data),
+      2 => riscv64::crc64_xz_zbc_2way_safe(crc, data),
+      _ => riscv64::crc64_xz_zbc_safe(crc, data),
+    };
+  }
+
+  crc64_xz_portable(crc, data)
+}
+
+#[cfg(target_arch = "riscv64")]
+fn crc64_nvme_riscv64_auto(crc: u64, data: &[u8]) -> u64 {
+  let len = data.len();
+  if len < CRC64_SMALL_LANE_BYTES {
+    return crc64_nvme_portable(crc, data);
+  }
+
+  let cfg = config::get();
+  let caps = platform::caps();
+
+  match cfg.effective_force {
+    Crc64Force::Portable => return crc64_nvme_portable(crc, data),
+    Crc64Force::Zvbc => {
+      if caps.has(platform::caps::riscv::ZVBC) {
+        return match riscv64_zbc_streams_for_len(len, cfg.tunables.streams) {
+          4 => riscv64::crc64_nvme_zvbc_4way_safe(crc, data),
+          2 => riscv64::crc64_nvme_zvbc_2way_safe(crc, data),
+          _ => riscv64::crc64_nvme_zvbc_safe(crc, data),
+        };
+      }
+      return crc64_nvme_portable(crc, data);
+    }
+    Crc64Force::Zbc => {
+      if caps.has(platform::caps::riscv::ZBC) {
+        return match riscv64_zbc_streams_for_len(len, cfg.tunables.streams) {
+          4 => riscv64::crc64_nvme_zbc_4way_safe(crc, data),
+          2 => riscv64::crc64_nvme_zbc_2way_safe(crc, data),
+          _ => riscv64::crc64_nvme_zbc_safe(crc, data),
+        };
+      }
+      return crc64_nvme_portable(crc, data);
+    }
+    _ => {}
+  }
+
+  if len < cfg.tunables.portable_to_clmul {
+    return crc64_nvme_portable(crc, data);
+  }
+
+  if caps.has(platform::caps::riscv::ZVBC) {
+    return match riscv64_zbc_streams_for_len(len, cfg.tunables.streams) {
+      4 => riscv64::crc64_nvme_zvbc_4way_safe(crc, data),
+      2 => riscv64::crc64_nvme_zvbc_2way_safe(crc, data),
+      _ => riscv64::crc64_nvme_zvbc_safe(crc, data),
+    };
+  }
+
+  if caps.has(platform::caps::riscv::ZBC) {
+    return match riscv64_zbc_streams_for_len(len, cfg.tunables.streams) {
+      4 => riscv64::crc64_nvme_zbc_4way_safe(crc, data),
+      2 => riscv64::crc64_nvme_zbc_2way_safe(crc, data),
+      _ => riscv64::crc64_nvme_zbc_safe(crc, data),
     };
   }
 
@@ -899,7 +1235,7 @@ fn select_crc64_xz() -> Selected<Crc64Fn> {
   Selected::new("portable/slice16", crc64_xz_portable)
 }
 
-#[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+#[cfg(target_arch = "powerpc64")]
 fn select_crc64_xz() -> Selected<Crc64Fn> {
   let caps = platform::caps();
 
@@ -914,10 +1250,42 @@ fn select_crc64_xz() -> Selected<Crc64Fn> {
   Selected::new("portable/slice16", crc64_xz_portable)
 }
 
+#[cfg(target_arch = "s390x")]
+fn select_crc64_xz() -> Selected<Crc64Fn> {
+  let caps = platform::caps();
+
+  if config::get().effective_force == Crc64Force::Portable {
+    return Selected::new("portable/slice16", crc64_xz_portable);
+  }
+
+  if caps.has(platform::caps::s390x::VECTOR) {
+    return Selected::new("s390x/auto", crc64_xz_s390x_auto);
+  }
+
+  Selected::new("portable/slice16", crc64_xz_portable)
+}
+
+#[cfg(target_arch = "riscv64")]
+fn select_crc64_xz() -> Selected<Crc64Fn> {
+  let caps = platform::caps();
+
+  if config::get().effective_force == Crc64Force::Portable {
+    return Selected::new("portable/slice16", crc64_xz_portable);
+  }
+
+  if caps.has(platform::caps::riscv::ZVBC) || caps.has(platform::caps::riscv::ZBC) {
+    return Selected::new("riscv64/auto", crc64_xz_riscv64_auto);
+  }
+
+  Selected::new("portable/slice16", crc64_xz_portable)
+}
+
 #[cfg(not(any(
   target_arch = "x86_64",
   target_arch = "aarch64",
-  all(target_arch = "powerpc64", target_endian = "little")
+  target_arch = "powerpc64",
+  target_arch = "s390x",
+  target_arch = "riscv64"
 )))]
 fn select_crc64_xz() -> Selected<Crc64Fn> {
   Selected::new("portable/slice16", crc64_xz_portable)
@@ -954,7 +1322,7 @@ fn select_crc64_nvme() -> Selected<Crc64Fn> {
   Selected::new("portable/slice16", crc64_nvme_portable)
 }
 
-#[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+#[cfg(target_arch = "powerpc64")]
 fn select_crc64_nvme() -> Selected<Crc64Fn> {
   let caps = platform::caps();
 
@@ -969,10 +1337,42 @@ fn select_crc64_nvme() -> Selected<Crc64Fn> {
   Selected::new("portable/slice16", crc64_nvme_portable)
 }
 
+#[cfg(target_arch = "s390x")]
+fn select_crc64_nvme() -> Selected<Crc64Fn> {
+  let caps = platform::caps();
+
+  if config::get().effective_force == Crc64Force::Portable {
+    return Selected::new("portable/slice16", crc64_nvme_portable);
+  }
+
+  if caps.has(platform::caps::s390x::VECTOR) {
+    return Selected::new("s390x/auto", crc64_nvme_s390x_auto);
+  }
+
+  Selected::new("portable/slice16", crc64_nvme_portable)
+}
+
+#[cfg(target_arch = "riscv64")]
+fn select_crc64_nvme() -> Selected<Crc64Fn> {
+  let caps = platform::caps();
+
+  if config::get().effective_force == Crc64Force::Portable {
+    return Selected::new("portable/slice16", crc64_nvme_portable);
+  }
+
+  if caps.has(platform::caps::riscv::ZVBC) || caps.has(platform::caps::riscv::ZBC) {
+    return Selected::new("riscv64/auto", crc64_nvme_riscv64_auto);
+  }
+
+  Selected::new("portable/slice16", crc64_nvme_portable)
+}
+
 #[cfg(not(any(
   target_arch = "x86_64",
   target_arch = "aarch64",
-  all(target_arch = "powerpc64", target_endian = "little")
+  target_arch = "powerpc64",
+  target_arch = "s390x",
+  target_arch = "riscv64"
 )))]
 fn select_crc64_nvme() -> Selected<Crc64Fn> {
   Selected::new("portable/slice16", crc64_nvme_portable)

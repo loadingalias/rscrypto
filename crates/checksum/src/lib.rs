@@ -74,6 +74,16 @@
   target_arch = "powerpc64",
   feature(asm_experimental_arch, portable_simd, powerpc_target_feature)
 )]
+// s390x VGFM backend uses vector asm + portable SIMD.
+#![cfg_attr(
+  target_arch = "s390x",
+  feature(asm_experimental_arch, asm_experimental_reg, portable_simd)
+)]
+// riscv64 ZVBC backend uses vector target features + inline asm.
+#![cfg_attr(
+  target_arch = "riscv64",
+  feature(asm_experimental_arch, asm_experimental_reg, riscv_target_feature)
+)]
 #![no_std]
 
 #[cfg(feature = "alloc")]

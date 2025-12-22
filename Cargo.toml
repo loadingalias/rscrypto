@@ -16,6 +16,7 @@ repository = "https://github.com/loadingalias/rscrypto"
 
 [workspace.lints.rust]
 unsafe_code = "deny"
+unsafe_op_in_unsafe_fn = "deny"
 dangling_pointers_from_locals = "deny"
 integer_to_ptr_transmutes = "deny"
 # Allow miri cfg and x86 target features not yet stabilized in rustc's check-cfg

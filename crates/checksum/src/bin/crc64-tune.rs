@@ -25,6 +25,9 @@ enum Force {
   PmullEor3,
   Sve2Pmull,
   Vpmsum,
+  Vgfm,
+  Zbc,
+  Zvbc,
 }
 
 impl Force {
@@ -38,6 +41,9 @@ impl Force {
       Self::PmullEor3 => Some("pmull-eor3"),
       Self::Sve2Pmull => Some("sve2-pmull"),
       Self::Vpmsum => Some("vpmsum"),
+      Self::Vgfm => Some("vgfm"),
+      Self::Zbc => Some("zbc"),
+      Self::Zvbc => Some("zvbc"),
     }
   }
 
@@ -51,6 +57,9 @@ impl Force {
       Self::PmullEor3 => "pmull-eor3",
       Self::Sve2Pmull => "sve2-pmull",
       Self::Vpmsum => "vpmsum",
+      Self::Vgfm => "vgfm",
+      Self::Zbc => "zbc",
+      Self::Zvbc => "zvbc",
     }
   }
 }
@@ -159,20 +168,30 @@ fn sizes_for_streams() -> &'static [usize] {
 fn stream_candidates_for_arch() -> &'static [u8] {
   #[cfg(target_arch = "x86_64")]
   {
-    return &[1, 2, 4, 7];
+    &[1, 2, 4, 7]
   }
   #[cfg(target_arch = "aarch64")]
   {
     &[1, 2, 3]
   }
-  #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+  #[cfg(target_arch = "powerpc64")]
   {
     &[1, 2, 4, 8]
+  }
+  #[cfg(target_arch = "s390x")]
+  {
+    &[1, 2, 4]
+  }
+  #[cfg(target_arch = "riscv64")]
+  {
+    &[1, 2, 4]
   }
   #[cfg(not(any(
     target_arch = "x86_64",
     target_arch = "aarch64",
-    all(target_arch = "powerpc64", target_endian = "little")
+    target_arch = "powerpc64",
+    target_arch = "s390x",
+    target_arch = "riscv64"
   )))]
   {
     &[1]
@@ -258,7 +277,9 @@ fn parent_main(args: Args) -> io::Result<()> {
   #[cfg(any(
     target_arch = "x86_64",
     target_arch = "aarch64",
-    all(target_arch = "powerpc64", target_endian = "little")
+    target_arch = "powerpc64",
+    target_arch = "s390x",
+    target_arch = "riscv64"
   ))]
   let forces: Vec<Force> = {
     let caps = det.caps;
@@ -289,11 +310,30 @@ fn parent_main(args: Args) -> io::Result<()> {
       }
     }
 
-    #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+    #[cfg(target_arch = "powerpc64")]
     {
       use platform::caps::powerpc64;
       if caps.has(powerpc64::VPMSUM_READY) {
         forces.push(Force::Vpmsum);
+      }
+    }
+
+    #[cfg(target_arch = "s390x")]
+    {
+      use platform::caps::s390x;
+      if caps.has(s390x::VECTOR) {
+        forces.push(Force::Vgfm);
+      }
+    }
+
+    #[cfg(target_arch = "riscv64")]
+    {
+      use platform::caps::riscv;
+      if caps.has(riscv::ZVBC) {
+        forces.push(Force::Zvbc);
+      }
+      if caps.has(riscv::ZBC) {
+        forces.push(Force::Zbc);
       }
     }
 
@@ -303,7 +343,9 @@ fn parent_main(args: Args) -> io::Result<()> {
   #[cfg(not(any(
     target_arch = "x86_64",
     target_arch = "aarch64",
-    all(target_arch = "powerpc64", target_endian = "little")
+    target_arch = "powerpc64",
+    target_arch = "s390x",
+    target_arch = "riscv64"
   )))]
   let forces: Vec<Force> = vec![Force::Portable];
 
@@ -410,24 +452,28 @@ fn parent_main(args: Args) -> io::Result<()> {
 
       // If VPCLMUL never wins consistently, disable it and tune streams
       // for PCLMUL instead.
-      if best_force == Force::Vpclmul && pclmul_to_vpclmul.is_none() {
-        if let Some((_, best_pclmul)) = best_by_force.iter().find(|(force, _)| *force == Force::Pclmul) {
-          best_force = Force::Pclmul;
-          chosen_streams = best_pclmul.streams;
+      let maybe_best_pclmul = if best_force == Force::Vpclmul && pclmul_to_vpclmul.is_none() {
+        best_by_force.iter().find(|(force, _)| *force == Force::Pclmul)
+      } else {
+        None
+      };
 
-          // Re-run the portable<->pclmul crossover with the final stream setting.
-          threshold_runs = vec![
-            RunConfig {
-              force: Force::Portable,
-              streams: 1,
-            },
-            RunConfig {
-              force: Force::Pclmul,
-              streams: chosen_streams,
-            },
-          ];
-          threshold_rows = run_matrix(&threshold_runs, threshold_sizes, warmup_ms, measure_ms)?;
-        }
+      if let Some((_, best_pclmul)) = maybe_best_pclmul {
+        best_force = Force::Pclmul;
+        chosen_streams = best_pclmul.streams;
+
+        // Re-run the portable<->pclmul crossover with the final stream setting.
+        threshold_runs = vec![
+          RunConfig {
+            force: Force::Portable,
+            streams: 1,
+          },
+          RunConfig {
+            force: Force::Pclmul,
+            streams: chosen_streams,
+          },
+        ];
+        threshold_rows = run_matrix(&threshold_runs, threshold_sizes, warmup_ms, measure_ms)?;
       }
     }
 
@@ -702,16 +748,18 @@ fn preferred_auto_simd_force(available: &[Force]) -> Force {
   // Mirror the library's auto preference order for CRC64:
   // - x86_64: VPCLMUL if available, else PCLMUL
   // - aarch64: PMULL+EOR3, else SVE2-PMULL, else PMULL
-  // - powerpc64le: VPMSUMD
+  // - powerpc64: VPMSUMD
+  // - s390x: VGFM
+  // - riscv64: ZVBC, else Zbc
   #[cfg(target_arch = "x86_64")]
   {
-    if available.iter().any(|f| *f == Force::Vpclmul) {
-      return Force::Vpclmul;
+    if available.contains(&Force::Vpclmul) {
+      Force::Vpclmul
+    } else if available.contains(&Force::Pclmul) {
+      Force::Pclmul
+    } else {
+      Force::Portable
     }
-    if available.iter().any(|f| *f == Force::Pclmul) {
-      return Force::Pclmul;
-    }
-    return Force::Portable;
   }
 
   #[cfg(target_arch = "aarch64")]
@@ -728,7 +776,7 @@ fn preferred_auto_simd_force(available: &[Force]) -> Force {
     Force::Portable
   }
 
-  #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+  #[cfg(target_arch = "powerpc64")]
   {
     if available.contains(&Force::Vpmsum) {
       return Force::Vpmsum;
@@ -736,10 +784,31 @@ fn preferred_auto_simd_force(available: &[Force]) -> Force {
     Force::Portable
   }
 
+  #[cfg(target_arch = "s390x")]
+  {
+    if available.contains(&Force::Vgfm) {
+      return Force::Vgfm;
+    }
+    Force::Portable
+  }
+
+  #[cfg(target_arch = "riscv64")]
+  {
+    if available.contains(&Force::Zvbc) {
+      return Force::Zvbc;
+    }
+    if available.contains(&Force::Zbc) {
+      return Force::Zbc;
+    }
+    Force::Portable
+  }
+
   #[cfg(not(any(
     target_arch = "x86_64",
     target_arch = "aarch64",
-    all(target_arch = "powerpc64", target_endian = "little")
+    target_arch = "powerpc64",
+    target_arch = "s390x",
+    target_arch = "riscv64"
   )))]
   {
     let _ = available;
@@ -754,15 +823,17 @@ fn baseline_auto_simd_force(available: &[Force]) -> Force {
   // - x86_64: PCLMUL (VPCLMUL is a higher tier with different overhead)
   // - aarch64: PMULL (base tier; EOR3/SVE2 build on top of it)
   // - powerpc64le: VPMSUMD
+  // - s390x: VGFM
+  // - riscv64: Zbc
   #[cfg(target_arch = "x86_64")]
   {
     if available.contains(&Force::Pclmul) {
-      return Force::Pclmul;
+      Force::Pclmul
+    } else if available.contains(&Force::Vpclmul) {
+      Force::Vpclmul
+    } else {
+      Force::Portable
     }
-    if available.contains(&Force::Vpclmul) {
-      return Force::Vpclmul;
-    }
-    return Force::Portable;
   }
 
   #[cfg(target_arch = "aarch64")]
@@ -779,7 +850,7 @@ fn baseline_auto_simd_force(available: &[Force]) -> Force {
     Force::Portable
   }
 
-  #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+  #[cfg(target_arch = "powerpc64")]
   {
     if available.contains(&Force::Vpmsum) {
       return Force::Vpmsum;
@@ -787,10 +858,28 @@ fn baseline_auto_simd_force(available: &[Force]) -> Force {
     Force::Portable
   }
 
+  #[cfg(target_arch = "s390x")]
+  {
+    if available.contains(&Force::Vgfm) {
+      return Force::Vgfm;
+    }
+    Force::Portable
+  }
+
+  #[cfg(target_arch = "riscv64")]
+  {
+    if available.contains(&Force::Zbc) {
+      return Force::Zbc;
+    }
+    Force::Portable
+  }
+
   #[cfg(not(any(
     target_arch = "x86_64",
     target_arch = "aarch64",
-    all(target_arch = "powerpc64", target_endian = "little")
+    target_arch = "powerpc64",
+    target_arch = "s390x",
+    target_arch = "riscv64"
   )))]
   {
     let _ = available;
@@ -807,6 +896,9 @@ fn parse_force_name(name: &str) -> Force {
     "pmull-eor3" => Force::PmullEor3,
     "sve2-pmull" => Force::Sve2Pmull,
     "vpmsum" => Force::Vpmsum,
+    "vgfm" => Force::Vgfm,
+    "zbc" => Force::Zbc,
+    "zvbc" => Force::Zvbc,
     _ => Force::Auto,
   }
 }

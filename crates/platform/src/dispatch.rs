@@ -127,7 +127,6 @@ where
 /// **Top-tier features** (triggers compile-time dispatch):
 /// - **x86_64**: AVX-512F + VPCLMULQDQ (modern AVX-512 crypto)
 /// - **aarch64**: AES + SHA3 (PMULL + EOR3 for fast carryless multiply)
-/// - **loongarch64**: LASX (256-bit SIMD)
 ///
 /// **Use this when**:
 /// - You want the best of both worlds
@@ -173,17 +172,10 @@ where
     dispatch_static(f)
   }
 
-  // loongarch64 with LASX (256-bit SIMD): use static dispatch
-  #[cfg(all(target_arch = "loongarch64", target_feature = "lasx"))]
-  {
-    return dispatch_static(f);
-  }
-
   // Fallback: use runtime detection
   #[cfg(not(any(
     all(target_arch = "x86_64", target_feature = "avx512f", target_feature = "vpclmulqdq"),
-    all(target_arch = "aarch64", target_feature = "aes", target_feature = "sha3"),
-    all(target_arch = "loongarch64", target_feature = "lasx")
+    all(target_arch = "aarch64", target_feature = "aes", target_feature = "sha3")
   )))]
   {
     dispatch(f)
@@ -210,15 +202,9 @@ pub const fn has_static_features() -> bool {
     true
   }
 
-  #[cfg(all(target_arch = "loongarch64", target_feature = "lasx"))]
-  {
-    return true;
-  }
-
   #[cfg(not(any(
     all(target_arch = "x86_64", target_feature = "avx512f", target_feature = "vpclmulqdq"),
-    all(target_arch = "aarch64", target_feature = "aes", target_feature = "sha3"),
-    all(target_arch = "loongarch64", target_feature = "lasx")
+    all(target_arch = "aarch64", target_feature = "aes", target_feature = "sha3")
   )))]
   {
     false

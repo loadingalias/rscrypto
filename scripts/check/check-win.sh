@@ -22,6 +22,11 @@ maybe_disable_sccache
 # Parse args and set CRATE_FLAGS, SCOPE_DESC
 get_crate_flags "$@"
 
+CHECKSUM_IN_SCOPE=false
+if [[ "$CRATE_FLAGS" == "--workspace" || "$CRATE_FLAGS" == *"-p checksum"* ]]; then
+  CHECKSUM_IN_SCOPE=true
+fi
+
 LOG_DIR=$(mktemp -d)
 trap 'rm -rf "$LOG_DIR"' EXIT
 
@@ -68,6 +73,18 @@ for target in "${WIN_TARGETS[@]}"; do
     exit 1
   fi
   ok
+
+  if [[ "$CHECKSUM_IN_SCOPE" == true && "$target" == "x86_64-pc-windows-msvc" ]]; then
+    step "$short_name crc64-tune"
+    if ! CARGO_TARGET_DIR="$target_dir" \
+         cargo xwin clippy -p checksum --bin crc64-tune --all-features --target "$target" -- -D warnings \
+         >>"$LOG_DIR/$target.log" 2>&1; then
+      fail
+      show_error "$LOG_DIR/$target.log"
+      exit 1
+    fi
+    ok
+  fi
 done
 
 echo "${GREEN}✓${RESET} Windows targets passed"

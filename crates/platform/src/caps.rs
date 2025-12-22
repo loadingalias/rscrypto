@@ -235,7 +235,6 @@ pub enum Arch {
   Riscv32,
   Powerpc64,
   S390x,
-  LoongArch64,
   Wasm32,
   Wasm64,
   #[default]
@@ -279,10 +278,6 @@ impl Arch {
     {
       Self::S390x
     }
-    #[cfg(target_arch = "loongarch64")]
-    {
-      Self::LoongArch64
-    }
     #[cfg(target_arch = "wasm32")]
     {
       Self::Wasm32
@@ -300,7 +295,6 @@ impl Arch {
       target_arch = "riscv32",
       target_arch = "powerpc64",
       target_arch = "s390x",
-      target_arch = "loongarch64",
       target_arch = "wasm32",
       target_arch = "wasm64"
     )))]
@@ -322,7 +316,6 @@ impl Arch {
       Self::Riscv32 => "riscv32",
       Self::Powerpc64 => "powerpc64",
       Self::S390x => "s390x",
-      Self::LoongArch64 => "loongarch64",
       Self::Wasm32 => "wasm32",
       Self::Wasm64 => "wasm64",
       Self::Other => "other",
@@ -598,59 +591,6 @@ pub mod wasm {
 
   pub const SIMD128: Caps = Caps::bit(192);
   pub const RELAXED_SIMD: Caps = Caps::bit(193);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// LoongArch Features (bits 208-223)
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// LoongArch CPU features.
-///
-/// Includes LSX (128-bit SIMD), LASX (256-bit SIMD), and various extensions.
-pub mod loongarch {
-  use super::Caps;
-
-  // ─── SIMD Extensions ───
-  /// LSX: 128-bit SIMD (baseline on 3A5000+, required for loongarch64-linux-gnu/musl)
-  pub const LSX: Caps = Caps::bit(208);
-  /// LASX: 256-bit Advanced SIMD (requires LSX)
-  pub const LASX: Caps = Caps::bit(209);
-
-  // ─── Floating-Point ───
-  /// Floating-point support (baseline)
-  pub const F: Caps = Caps::bit(210);
-  /// Double-precision floating-point (baseline for LP64D ABI)
-  pub const D: Caps = Caps::bit(211);
-  /// FRECIPE: Floating-point reciprocal estimate instructions
-  pub const FRECIPE: Caps = Caps::bit(212);
-
-  // ─── Atomics ───
-  /// LAM_BH: Atomic byte/halfword operations
-  pub const LAM_BH: Caps = Caps::bit(213);
-  /// LAMCAS: Atomic compare-and-swap
-  pub const LAMCAS: Caps = Caps::bit(214);
-
-  // ─── Memory ───
-  /// UAL: Unaligned memory access support
-  pub const UAL: Caps = Caps::bit(215);
-  /// LD_SEQ_SA: Load-load sequencing (self-assert)
-  pub const LD_SEQ_SA: Caps = Caps::bit(216);
-  /// SCQ: 16-byte conditional store
-  pub const SCQ: Caps = Caps::bit(217);
-
-  // ─── Virtualization & Binary Translation ───
-  /// LVZ: Virtualization extension
-  pub const LVZ: Caps = Caps::bit(218);
-  /// LBT: Binary translation extension
-  pub const LBT: Caps = Caps::bit(219);
-
-  // ─── Combined Capability Masks ───
-
-  /// LSX-ready: 128-bit SIMD available
-  pub const LSX_READY: Caps = Caps([0, 0, 0, LSX.0[3]]);
-
-  /// LASX-ready: 256-bit SIMD available (implies LSX)
-  pub const LASX_READY: Caps = Caps([0, 0, 0, LSX.0[3] | LASX.0[3]]);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -933,22 +873,6 @@ const RISCV_FEATURES: &[FeatureEntry] = &[
 /// WebAssembly feature names.
 const WASM_FEATURES: &[FeatureEntry] = &[(192, "simd128"), (193, "relaxed-simd")];
 
-/// LoongArch feature names.
-const LOONGARCH_FEATURES: &[FeatureEntry] = &[
-  (208, "lsx"),
-  (209, "lasx"),
-  (210, "f"),
-  (211, "d"),
-  (212, "frecipe"),
-  (213, "lam-bh"),
-  (214, "lamcas"),
-  (215, "ual"),
-  (216, "ld-seq-sa"),
-  (217, "scq"),
-  (218, "lvz"),
-  (219, "lbt"),
-];
-
 /// s390x (IBM Z) feature names.
 const S390X_FEATURES: &[FeatureEntry] = &[
   (224, "vector"),
@@ -988,7 +912,6 @@ impl Caps {
       .chain(AARCH64_FEATURES.iter())
       .chain(RISCV_FEATURES.iter())
       .chain(WASM_FEATURES.iter())
-      .chain(LOONGARCH_FEATURES.iter())
       .chain(S390X_FEATURES.iter())
       .chain(POWERPC64_FEATURES.iter())
       .filter_map(move |(bit, name)| if self.has_bit(*bit) { Some(*name) } else { None })
@@ -1183,49 +1106,6 @@ mod tests {
     assert_eq!(riscv::V.0[0], 0);
     assert_eq!(riscv::V.0[1], 0);
     assert_eq!(riscv::V.0[3], 0);
-  }
-
-  #[test]
-  fn test_loongarch_features() {
-    use super::loongarch;
-
-    // Test LoongArch feature constants are properly defined
-    assert!(!loongarch::LSX.is_empty());
-    assert!(!loongarch::LASX.is_empty());
-    assert!(!loongarch::F.is_empty());
-    assert!(!loongarch::D.is_empty());
-    assert!(!loongarch::FRECIPE.is_empty());
-    assert!(!loongarch::LAM_BH.is_empty());
-    assert!(!loongarch::LAMCAS.is_empty());
-    assert!(!loongarch::UAL.is_empty());
-    assert!(!loongarch::LVZ.is_empty());
-    assert!(!loongarch::LBT.is_empty());
-
-    // Verify LoongArch features are in the correct word (bits 208-223 = word 3)
-    assert!(loongarch::LSX.0[3] != 0);
-    assert_eq!(loongarch::LSX.0[0], 0);
-    assert_eq!(loongarch::LSX.0[1], 0);
-    assert_eq!(loongarch::LSX.0[2], 0);
-
-    // Test combined masks
-    assert!(loongarch::LSX_READY.has(loongarch::LSX));
-    assert!(loongarch::LASX_READY.has(loongarch::LSX));
-    assert!(loongarch::LASX_READY.has(loongarch::LASX));
-
-    // Verify distinct bit positions
-    let all = loongarch::LSX
-      | loongarch::LASX
-      | loongarch::F
-      | loongarch::D
-      | loongarch::FRECIPE
-      | loongarch::LAM_BH
-      | loongarch::LAMCAS
-      | loongarch::UAL
-      | loongarch::LD_SEQ_SA
-      | loongarch::SCQ
-      | loongarch::LVZ
-      | loongarch::LBT;
-    assert_eq!(all.count(), 12);
   }
 
   #[test]

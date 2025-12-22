@@ -362,22 +362,6 @@ pub const fn caps_static() -> Caps {
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
-  // LoongArch
-  // ─────────────────────────────────────────────────────────────────────────────
-  #[cfg(target_arch = "loongarch64")]
-  {
-    use crate::caps::loongarch;
-
-    detect!(result;
-      "lsx" => loongarch::LSX,
-      "lasx" => loongarch::LASX,
-      "frecipe" => loongarch::FRECIPE,
-      "lbt" => loongarch::LBT,
-      "lvz" => loongarch::LVZ,
-    );
-  }
-
-  // ─────────────────────────────────────────────────────────────────────────────
   // s390x (IBM Z)
   // ─────────────────────────────────────────────────────────────────────────────
   #[cfg(target_arch = "s390x")]
@@ -498,24 +482,6 @@ pub const fn tune_static() -> Tune {
     return Tune::PORTABLE;
   }
 
-  // LoongArch with LASX (256-bit SIMD)
-  #[cfg(all(target_arch = "loongarch64", target_feature = "lasx"))]
-  {
-    return Tune::LOONGARCH_LASX;
-  }
-
-  // LoongArch with LSX only (128-bit SIMD)
-  #[cfg(all(target_arch = "loongarch64", target_feature = "lsx", not(target_feature = "lasx")))]
-  {
-    return Tune::LOONGARCH_LSX;
-  }
-
-  // LoongArch baseline (no SIMD - unlikely for modern targets)
-  #[cfg(all(target_arch = "loongarch64", not(target_feature = "lsx")))]
-  {
-    return Tune::PORTABLE;
-  }
-
   // s390x with vector enhancements 2 (z15+)
   #[cfg(all(target_arch = "s390x", target_feature = "vector-enhancements-2"))]
   {
@@ -599,7 +565,6 @@ pub const fn tune_static() -> Tune {
     target_arch = "riscv32",
     target_arch = "wasm32",
     target_arch = "wasm64",
-    target_arch = "loongarch64",
     target_arch = "s390x",
     target_arch = "powerpc64"
   )))]
@@ -886,7 +851,6 @@ mod atomic_cache {
       Arch::Riscv32 => 6,
       Arch::Powerpc64 => 7,
       Arch::S390x => 8,
-      Arch::LoongArch64 => 9,
       Arch::Wasm32 => 10,
       Arch::Wasm64 => 11,
       Arch::Other => 0,
@@ -903,7 +867,6 @@ mod atomic_cache {
       6 => Arch::Riscv32,
       7 => Arch::Powerpc64,
       8 => Arch::S390x,
-      9 => Arch::LoongArch64,
       10 => Arch::Wasm32,
       11 => Arch::Wasm64,
       _ => Arch::Other,
@@ -934,15 +897,13 @@ mod atomic_cache {
       19 => TuneKind::NvidiaGrace,
       20 => TuneKind::AmpereAltra,
       21 => TuneKind::Aarch64Pmull,
-      22 => TuneKind::LoongArchLsx,
-      23 => TuneKind::LoongArchLasx,
-      24 => TuneKind::Z13,
-      25 => TuneKind::Z14,
-      26 => TuneKind::Z15,
-      27 => TuneKind::Power7,
-      28 => TuneKind::Power8,
-      29 => TuneKind::Power9,
-      30 => TuneKind::Power10,
+      22 => TuneKind::Z13,
+      23 => TuneKind::Z14,
+      24 => TuneKind::Z15,
+      25 => TuneKind::Power7,
+      26 => TuneKind::Power8,
+      27 => TuneKind::Power9,
+      28 => TuneKind::Power10,
       _ => TuneKind::Custom,
     }
   }
@@ -981,11 +942,6 @@ pub fn detect_uncached() -> Detected {
     detect_riscv32()
   }
 
-  #[cfg(target_arch = "loongarch64")]
-  {
-    detect_loongarch64()
-  }
-
   #[cfg(target_arch = "s390x")]
   {
     detect_s390x()
@@ -1012,7 +968,6 @@ pub fn detect_uncached() -> Detected {
     target_arch = "aarch64",
     target_arch = "riscv64",
     target_arch = "riscv32",
-    target_arch = "loongarch64",
     target_arch = "s390x",
     target_arch = "powerpc64",
     target_arch = "wasm32",
@@ -2420,7 +2375,11 @@ fn detect_riscv64() -> Detected {
 
   Detected {
     caps,
-    tune: Tune::PORTABLE,
+    tune: if caps.has(crate::caps::riscv::ZBC) || caps.has(crate::caps::riscv::ZVBC) {
+      Tune::DEFAULT
+    } else {
+      Tune::PORTABLE
+    },
     arch: Arch::Riscv64,
   }
 }
@@ -2438,7 +2397,11 @@ fn detect_riscv32() -> Detected {
 
   Detected {
     caps,
-    tune: Tune::PORTABLE,
+    tune: if caps.has(crate::caps::riscv::ZBC) || caps.has(crate::caps::riscv::ZVBC) {
+      Tune::DEFAULT
+    } else {
+      Tune::PORTABLE
+    },
     arch: Arch::Riscv32,
   }
 }
@@ -2496,86 +2459,6 @@ fn runtime_riscv() -> Caps {
   // cover the full extension surface used by rscrypto. For now, rely on
   // compile-time `-C target-feature` (captured by `compile_time_riscv()`).
   Caps::NONE
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// LoongArch Detection
-// ─────────────────────────────────────────────────────────────────────────────
-
-#[cfg(target_arch = "loongarch64")]
-fn detect_loongarch64() -> Detected {
-  use crate::caps::loongarch;
-
-  let mut caps = Caps::NONE;
-
-  // Compile-time detection (works on stable)
-  caps |= compile_time_loongarch64();
-
-  // Runtime detection (nightly only, feature-gated)
-  // Note: is_loongarch_feature_detected! requires unstable feature
-  // #![feature(stdarch_loongarch_feature_detection)]
-  // When stabilized, add runtime detection here similar to x86_64/aarch64
-
-  let tune = select_loongarch64_tune(caps);
-
-  Detected {
-    caps,
-    tune,
-    arch: Arch::LoongArch64,
-  }
-}
-
-#[cfg(target_arch = "loongarch64")]
-fn compile_time_loongarch64() -> Caps {
-  use crate::caps::loongarch;
-
-  let mut caps = Caps::NONE;
-
-  // ─── SIMD Extensions ───
-  // Note: LSX is enabled by default for loongarch64-unknown-linux-{gnu,musl} since Rust 1.84
-  if cfg!(target_feature = "lsx") {
-    caps |= loongarch::LSX;
-  }
-  if cfg!(target_feature = "lasx") {
-    caps |= loongarch::LASX;
-  }
-
-  // ─── Floating-Point ───
-  // F and D are baseline for LP64D ABI, always present
-  if cfg!(target_feature = "f") {
-    caps |= loongarch::F;
-  }
-  if cfg!(target_feature = "d") {
-    caps |= loongarch::D;
-  }
-  if cfg!(target_feature = "frecipe") {
-    caps |= loongarch::FRECIPE;
-  }
-
-  // ─── Virtualization & Binary Translation ───
-  if cfg!(target_feature = "lvz") {
-    caps |= loongarch::LVZ;
-  }
-  if cfg!(target_feature = "lbt") {
-    caps |= loongarch::LBT;
-  }
-
-  caps
-}
-
-#[cfg(target_arch = "loongarch64")]
-fn select_loongarch64_tune(caps: Caps) -> Tune {
-  use crate::caps::loongarch;
-
-  if caps.has(loongarch::LASX) {
-    // 256-bit SIMD available (3A5000+, 3A6000)
-    Tune::LOONGARCH_LASX
-  } else if caps.has(loongarch::LSX) {
-    // 128-bit SIMD only
-    Tune::LOONGARCH_LSX
-  } else {
-    Tune::PORTABLE
-  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3245,15 +3128,13 @@ mod tests {
       19 => TuneKind::NvidiaGrace,
       20 => TuneKind::AmpereAltra,
       21 => TuneKind::Aarch64Pmull,
-      22 => TuneKind::LoongArchLsx,
-      23 => TuneKind::LoongArchLasx,
-      24 => TuneKind::Z13,
-      25 => TuneKind::Z14,
-      26 => TuneKind::Z15,
-      27 => TuneKind::Power7,
-      28 => TuneKind::Power8,
-      29 => TuneKind::Power9,
-      30 => TuneKind::Power10,
+      22 => TuneKind::Z13,
+      23 => TuneKind::Z14,
+      24 => TuneKind::Z15,
+      25 => TuneKind::Power7,
+      26 => TuneKind::Power8,
+      27 => TuneKind::Power9,
+      28 => TuneKind::Power10,
       _ => TuneKind::Custom,
     }
   }
@@ -3267,8 +3148,8 @@ mod tests {
   fn test_tunekind_round_trip() {
     use crate::tune::TuneKind;
 
-    // TuneKind has 31 variants (0=Custom through 30=Power10)
-    for i in 0..=30u8 {
+    // TuneKind has 29 variants (0=Custom through 28=Power10)
+    for i in 0..=28u8 {
       let kind = test_kind_from_u8(i);
 
       // Custom (0) is the fallback for unknown values, so skip its reverse check
@@ -3282,7 +3163,7 @@ mod tests {
     }
 
     // Verify out-of-range values map to Custom
-    assert_eq!(test_kind_from_u8(31), TuneKind::Custom);
+    assert_eq!(test_kind_from_u8(29), TuneKind::Custom);
     assert_eq!(test_kind_from_u8(255), TuneKind::Custom);
   }
 
@@ -3316,8 +3197,6 @@ mod tests {
       TuneKind::NvidiaGrace,
       TuneKind::AmpereAltra,
       TuneKind::Aarch64Pmull,
-      TuneKind::LoongArchLsx,
-      TuneKind::LoongArchLasx,
       TuneKind::Z13,
       TuneKind::Z14,
       TuneKind::Z15,
@@ -3333,8 +3212,8 @@ mod tests {
       assert!(seen.insert(val), "TuneKind::{:?} has duplicate u8 value {}", kind, val);
     }
 
-    // Verify we have all 31 variants
-    assert_eq!(seen.len(), 31, "Expected 31 TuneKind variants");
+    // Verify we have all 29 variants
+    assert_eq!(seen.len(), 29, "Expected 29 TuneKind variants");
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -3354,7 +3233,6 @@ mod tests {
       Arch::Riscv32 => 6,
       Arch::Powerpc64 => 7,
       Arch::S390x => 8,
-      Arch::LoongArch64 => 9,
       Arch::Wasm32 => 10,
       Arch::Wasm64 => 11,
       Arch::Other => 0,
@@ -3371,7 +3249,6 @@ mod tests {
       6 => Arch::Riscv32,
       7 => Arch::Powerpc64,
       8 => Arch::S390x,
-      9 => Arch::LoongArch64,
       10 => Arch::Wasm32,
       11 => Arch::Wasm64,
       _ => Arch::Other,
@@ -3391,7 +3268,6 @@ mod tests {
       Arch::Riscv32,
       Arch::Powerpc64,
       Arch::S390x,
-      Arch::LoongArch64,
       Arch::Wasm32,
       Arch::Wasm64,
     ];
@@ -3426,7 +3302,6 @@ mod tests {
       Arch::Riscv32,
       Arch::Powerpc64,
       Arch::S390x,
-      Arch::LoongArch64,
       Arch::Wasm32,
       Arch::Wasm64,
     ];
@@ -3442,7 +3317,7 @@ mod tests {
       );
     }
 
-    assert_eq!(seen.len(), 12, "Expected 12 Arch variants with unique encodings");
+    assert_eq!(seen.len(), 11, "Expected 11 Arch variants with unique encodings");
   }
 
   // ─────────────────────────────────────────────────────────────────────────────

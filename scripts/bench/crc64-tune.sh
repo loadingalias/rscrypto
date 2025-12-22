@@ -79,7 +79,6 @@ detect_platform() {
   case "$arch" in
     x86_64|amd64) echo "x86_64" ;;
     aarch64|arm64) echo "aarch64" ;;
-    loongarch64) echo "loongarch64" ;;
     s390x) echo "s390x" ;;
     ppc64le|ppc64) echo "ppc64" ;;
     riscv64) echo "riscv64" ;;
@@ -117,10 +116,6 @@ detect_cpu_features() {
         sysctl -n hw.optional.arm.FEAT_AES 2>/dev/null | grep -q "1" && features="$features pmull"
         sysctl -n hw.optional.arm.FEAT_SHA3 2>/dev/null | grep -q "1" && features="$features pmull-eor3"
       fi
-      ;;
-    loongarch64)
-      features="$features lsx"
-      grep -q "lasx" /proc/cpuinfo 2>/dev/null && features="$features lasx"
       ;;
     s390x)
       features="$features vx"
@@ -345,15 +340,6 @@ fi
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Other Architectures (if we ever add them)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-if [[ "$PLATFORM" == "loongarch64" ]]; then
-  echo ""
-  echo "══════════════════════════════════════════════════════════════════════════"
-  echo "LoongArch64: LSX/LASX vector extensions"
-  echo "══════════════════════════════════════════════════════════════════════════"
-  # TODO: Add LoongArch kernels when implemented
-  echo "  (LoongArch CRC64 kernels not yet implemented)"
-fi
 
 if [[ "$PLATFORM" == "s390x" ]]; then
   echo ""
