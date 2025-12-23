@@ -133,11 +133,13 @@ impl Simd {
     let r_hi32 = _mm_srli_epi64::<32>(self.0);
 
     // T1 = (R >> 32) * µ, take bits [63:32] of the 64-bit result
-    let t1 = _mm_clmulepi64_si128::<0x00>(r_hi32, polymu.0);
+    // polymu = [mu, poly] (high, low), so use 0x10 to select src1.low × src2.high
+    let t1 = _mm_clmulepi64_si128::<0x10>(r_hi32, polymu.0);
     let t1_hi32 = _mm_srli_epi64::<32>(t1);
 
     // T2 = (T1 >> 32) * P, take low 32 bits
-    let t2 = _mm_clmulepi64_si128::<0x01>(t1_hi32, polymu.0);
+    // polymu.low = poly, t1_hi32.low = T1>>32, so use 0x00
+    let t2 = _mm_clmulepi64_si128::<0x00>(t1_hi32, polymu.0);
 
     // CRC = (R ^ T2) & 0xFFFFFFFF
     let result = _mm_xor_si128(self.0, t2);
