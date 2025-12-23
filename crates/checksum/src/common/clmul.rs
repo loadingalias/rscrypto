@@ -392,51 +392,48 @@ const fn reciprocal_poly_32(reflected_poly: u32) -> u64 {
   ((reflected_poly as u64) << 1) | 1
 }
 
-/// Compute the Barrett µ for CRC-32 using the same inverse approach as CRC-64.
+/// Compute the Barrett µ for CRC-32: µ = (floor(x^64 / P))'.
 ///
-/// The Barrett constant µ satisfies: (µ ⊗ P) mod x^64 = 1
-/// where ⊗ is carryless multiplication and P is the reciprocal polynomial.
+/// This computes the reflected Barrett reduction constant via polynomial
+/// long division in GF(2), matching the crc-fast/zlib-ng algorithm.
 ///
-/// This uses the TiKV power-series inversion algorithm that works for CRC-64.
-///
-/// Reference values (from Intel/zlib-ng):
-/// - CRC32 IEEE: mu = 0x1F7011641, poly = 0x1DB710641
-/// - CRC32C:     mu = 0x163CD6124, poly = 0x105EC76F1
+/// Reference values:
+/// - CRC32 IEEE (0xEDB88320): mu = 0x1F7011641, poly = 0x1DB710641
+/// - CRC32C     (0x82F63B78): mu = 0x0DEA713F1, poly = 0x105EC76F1
 #[cfg(any(target_arch = "x86_64", test))]
 #[must_use]
 const fn compute_barrett_mu_32(reflected_poly: u32) -> u64 {
-  // P = reciprocal polynomial = (reflected << 1) | 1
-  let poly = reciprocal_poly_32(reflected_poly);
-
-  // Compute the multiplicative inverse of poly mod x^64.
-  // For a polynomial p(x) with p(0) = 1 (constant term is 1),
-  // the inverse q(x) satisfies: p(x) * q(x) ≡ 1 (mod x^64)
+  // The algorithm computes floor(x^64 / P) where P is the 33-bit polynomial.
+  // For reflected CRCs, we bit-reverse the result.
   //
-  // We compute q bit by bit using the recurrence:
-  // q_0 = 1 (since p_0 = 1)
-  // q_k = XOR_{i=1..k} (p_i * q_{k-i}) for k >= 1
-  //
-  // This is the same algorithm as compute_tikv_mu for CRC-64.
-  let mut inv: u64 = 1;
+  // This matches the crc-fast/zlib-ng `crc32_mu` algorithm exactly.
 
-  let mut k: u32 = 1;
-  while k < 64 {
-    let mut s: u64 = 0;
-    let mut i: u32 = 1;
-    while i <= k {
-      let p_i = (poly >> i) & 1;
-      let q_j = (inv >> (k - i)) & 1;
-      s ^= p_i & q_j;
-      i += 1;
+  // P = normal polynomial with leading x^32 term
+  // reflected_poly.reverse_bits() gives the normal polynomial
+  let normal_poly = reflected_poly.reverse_bits() as u64;
+  let poly_with_leading = normal_poly | (1u64 << 32);
+
+  // Polynomial long division: dividend = x^64, divisor = P (33 bits)
+  // We compute quotient q such that x^64 = q * P + remainder
+  let mut n: u64 = 0x1_0000_0000; // x^32 (bit 32 set)
+  let mut q: u64 = 0;
+
+  // 33 iterations to extract all quotient bits
+  let mut i = 0;
+  while i < 33 {
+    q <<= 1;
+    if (n & 0x1_0000_0000) != 0 {
+      q |= 1;
+      n ^= poly_with_leading;
     }
-    inv |= s << k;
-    k += 1;
+    n <<= 1;
+    i += 1;
   }
 
-  // For CRC-32, we only need the low 33 bits of the inverse.
-  // The polynomial is 33 bits, so µ is also 33 bits.
-  // Mask to 33 bits to match Intel/zlib-ng conventions.
-  inv & ((1u64 << 33) - 1)
+  // Bit-reverse for reflected polynomial, then shift to align.
+  // The quotient is 33 bits in a u64. We reverse all 64 bits, then shift
+  // right by 31 to get the proper alignment for PCLMUL operations.
+  q.reverse_bits() >> 31
 }
 
 /// Compute a `(high, low)` fold coefficient pair for folding 16 bytes by `shift_bytes` for CRC32.
@@ -773,19 +770,12 @@ mod tests {
 
   #[test]
   fn test_crc32_mu_matches_reference() {
-    // Verify mu constants are computed correctly.
-    // These are critical for Barrett reduction correctness.
+    // Verify mu constants match crc-fast/zlib-ng reference values.
+    // µ = (floor(x^64 / P))' for Barrett reduction (reflected).
     //
-    // For CRC-32 IEEE (gzip, Ethernet):
-    //   poly = 0x1DB710641 (reciprocal of 0xEDB88320)
-    //   mu = inverse of poly mod x^64, masked to 33 bits
-    //   Reference: zlib-ng uses 0x1F7011640 (bit 0 = 0 convention)
-    //   We use 0x1F7011641 (bit 0 = 1 from reciprocal polynomial)
-    //
-    // For CRC-32C (iSCSI, Castagnoli):
-    //   poly = 0x105EC76F1 (reciprocal of 0x82F63B78)
-    //   mu = inverse of poly mod x^64, masked to 33 bits
-    //   Reference: DPDK uses low 33 bits of 0x4869EC38DEA713F1 = 0x0DEA713F1
+    // Reference values from crc-fast:
+    // - CRC32 IEEE (0xEDB88320): mu = 0x1F7011641, poly = 0x1DB710641
+    // - CRC32C     (0x82F63B78): mu = 0x0DEA713F1, poly = 0x105EC76F1
     assert_eq!(
       CRC32_IEEE_CLMUL.mu, 0x1_F701_1641,
       "CRC32 IEEE mu mismatch: expected 0x1F7011641, got {:#x}",
@@ -796,10 +786,5 @@ mod tests {
       "CRC32C mu mismatch: expected 0x0DEA713F1, got {:#x}",
       CRC32C_CLMUL.mu
     );
-
-    // Verify mu has correct relationship with poly.
-    // The product (mu * poly) mod x^64 should equal 1 for the inverse.
-    // We verify this property indirectly through the proptests that
-    // compare PCLMUL output against portable implementations.
   }
 }
