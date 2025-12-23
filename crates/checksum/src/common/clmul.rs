@@ -20,7 +20,9 @@
 //! - zlib-ng: `crc32_fold_pclmulqdq.c`
 //! - Linux kernel: `arch/x86/crypto/crc32-pclmul_asm.S`
 
-use crate::common::tables::{CRC32_IEEE_POLY, CRC32C_POLY, CRC64_NVME_POLY, CRC64_XZ_POLY};
+#[cfg(any(target_arch = "x86_64", test))]
+use crate::common::tables::{CRC32_IEEE_POLY, CRC32C_POLY};
+use crate::common::tables::{CRC64_NVME_POLY, CRC64_XZ_POLY};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GF(2) Polynomial Arithmetic
@@ -341,18 +343,22 @@ const fn xpow_mod_32(n: u32, poly: u32) -> u32 {
 }
 
 /// Compute the normal (non-reflected) polynomial from a reflected polynomial (32-bit).
-#[allow(dead_code)]
+#[cfg(any(target_arch = "x86_64", test))]
 #[must_use]
 const fn normal_poly_32(reflected_poly: u32) -> u32 {
   reflected_poly.reverse_bits()
 }
 
 /// Compute folding constant `K_n = bit_reverse(x^n mod (x^32 ⊕ NORMAL))` for CRC-32.
-#[allow(dead_code)]
+#[cfg(any(target_arch = "x86_64", test))]
 #[must_use]
 const fn fold_k_32(normal_poly: u32, n: u32) -> u32 {
   xpow_mod_32(n, normal_poly).reverse_bits()
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CRC32 CLMUL Constants (x86_64 only)
+// ─────────────────────────────────────────────────────────────────────────────
 
 /// Folding constants needed by the Intel CRC32 CLMUL algorithm.
 ///
@@ -360,7 +366,7 @@ const fn fold_k_32(normal_poly: u32, n: u32) -> u32 {
 /// - 64-byte blocks folded with `fold_64b`
 /// - Tail reduction with `tail_fold_16b` array (like CRC64)
 /// - Final Barrett reduction
-#[allow(dead_code)]
+#[cfg(any(target_arch = "x86_64", test))]
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Crc32ClmulConstants {
   /// Reciprocal polynomial (`POLY = (reflected << 1) | 1`), stored as u64 for CLMUL.
@@ -380,7 +386,7 @@ pub(crate) struct Crc32ClmulConstants {
 }
 
 /// Compute TiKV-style reciprocal polynomial from a reflected CRC-32 polynomial.
-#[allow(dead_code)]
+#[cfg(any(target_arch = "x86_64", test))]
 #[must_use]
 const fn reciprocal_poly_32(reflected_poly: u32) -> u64 {
   ((reflected_poly as u64) << 1) | 1
@@ -390,7 +396,7 @@ const fn reciprocal_poly_32(reflected_poly: u32) -> u64 {
 ///
 /// µ = x^64 / P where P = x^32 + poly.
 /// For Barrett reduction: (a mod P) = a - (a * µ / x^64) * P
-#[allow(dead_code)]
+#[cfg(any(target_arch = "x86_64", test))]
 #[must_use]
 const fn compute_barrett_mu_32(poly: u32) -> u64 {
   // For CRC-32, we need µ such that (µ * P) mod x^64 has bit 64 set.
@@ -451,9 +457,9 @@ const fn compute_barrett_mu_32(poly: u32) -> u64 {
 /// Compute a `(high, low)` fold coefficient pair for folding 16 bytes by `shift_bytes` for CRC32.
 ///
 /// Uses the same `(K_{d-1}, K_{d+63})` convention as CRC64.
-#[allow(dead_code)]
+#[cfg(any(target_arch = "x86_64", test))]
 #[must_use]
-const fn fold16_coeff_for_bytes_32(normal_poly: u32, shift_bytes: u32) -> (u64, u64) {
+pub(crate) const fn fold16_coeff_for_bytes_32(normal_poly: u32, shift_bytes: u32) -> (u64, u64) {
   if shift_bytes == 0 {
     return (0, 0);
   }
@@ -464,11 +470,11 @@ const fn fold16_coeff_for_bytes_32(normal_poly: u32, shift_bytes: u32) -> (u64, 
   )
 }
 
+#[cfg(any(target_arch = "x86_64", test))]
 impl Crc32ClmulConstants {
   /// Create CLMUL constants for a reflected CRC-32 polynomial.
   ///
   /// Uses the same `(K_{d-1}, K_{d+63})` convention as CRC64 for folding constants.
-  #[allow(dead_code)]
   #[must_use]
   pub const fn new(reflected_poly: u32) -> Self {
     let normal = normal_poly_32(reflected_poly);
@@ -501,10 +507,10 @@ impl Crc32ClmulConstants {
   }
 }
 
-// Pre-computed constant sets for CRC-32 (Phase 2+).
-#[allow(dead_code)]
+// Pre-computed constant sets for CRC-32.
+#[cfg(any(target_arch = "x86_64", test))]
 pub(crate) const CRC32_IEEE_CLMUL: Crc32ClmulConstants = Crc32ClmulConstants::new(CRC32_IEEE_POLY);
-#[allow(dead_code)]
+#[cfg(any(target_arch = "x86_64", test))]
 pub(crate) const CRC32C_CLMUL: Crc32ClmulConstants = Crc32ClmulConstants::new(CRC32C_POLY);
 
 // ─────────────────────────────────────────────────────────────────────────────

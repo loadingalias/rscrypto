@@ -77,6 +77,18 @@ fn crc32c_x86_64_sse42(crc: u32, data: &[u8]) -> u32 {
   x86_64::crc32c_sse42_safe(crc, data)
 }
 
+#[cfg(target_arch = "x86_64")]
+fn crc32_ieee_x86_64_pclmul(crc: u32, data: &[u8]) -> u32 {
+  x86_64::crc32_pclmul_safe(crc, data)
+}
+
+// Prepared for future PCLMUL dispatch (Phase 3 task: "Dispatcher integration (CRC32C)").
+#[cfg(target_arch = "x86_64")]
+#[allow(dead_code)]
+fn crc32c_x86_64_pclmul(crc: u32, data: &[u8]) -> u32 {
+  x86_64::crc32c_pclmul_safe(crc, data)
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Dispatcher Selection
 // ─────────────────────────────────────────────────────────────────────────────
@@ -96,8 +108,14 @@ fn select_crc32_ieee() -> Selected<Crc32Fn> {
 
 #[cfg(target_arch = "x86_64")]
 fn select_crc32_ieee() -> Selected<Crc32Fn> {
-  // No native x86_64 CRC32 IEEE instruction; PCLMULQDQ not yet implemented
-  Selected::new("portable/slice16", crc32_ieee_portable)
+  let caps = platform::caps();
+  select(
+    caps,
+    candidates![
+      "x86_64/pclmul" => platform::caps::x86::PCLMUL_READY => crc32_ieee_x86_64_pclmul,
+      "portable/slice16" => Caps::NONE => crc32_ieee_portable,
+    ],
+  )
 }
 
 #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
