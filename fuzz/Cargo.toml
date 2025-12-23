@@ -2,7 +2,7 @@
 name = "rscrypto-fuzz"
 version = "0.0.0"
 edition = "2024"
-rust-version = "1.92"
+rust-version = "1.92.0"
 license = "MIT OR Apache-2.0"
 publish = false
 
@@ -10,10 +10,8 @@ publish = false
 cargo-fuzz = true
 
 [dependencies]
-# Workspace crates to fuzz
 checksum = { path = "../crates/checksum" }
 platform = { path = "../crates/platform", features = ["testing"] }
-# hash = { path = "../crates/hash" }  # Uncomment when hash has implementations
 
 # Fuzzing infrastructure
 libfuzzer-sys = "0.4"
@@ -100,5 +98,8 @@ bench = false
 [profile.release]
 opt-level = 3
 debug = false
-lto = "thin"
+strip = "debuginfo"
+overflow-checks = true
+lto = "fat"
+panic = "abort"
 codegen-units = 1

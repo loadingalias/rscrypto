@@ -115,6 +115,12 @@ const fn crc32_table_entry(poly: u32, index: u8) -> u32 {
 /// # Arguments
 ///
 /// * `poly` - The reflected polynomial
+///
+/// # Note
+///
+/// Production code uses `generate_crc32_tables_16` for better throughput.
+/// This function is retained for testing slice-by-8 as a correctness baseline.
+#[cfg(test)]
 #[must_use]
 pub const fn generate_crc32_tables_8(poly: u32) -> [[u32; 256]; 8] {
   let mut tables = [[0u32; 256]; 8];
@@ -130,6 +136,41 @@ pub const fn generate_crc32_tables_8(poly: u32) -> [[u32; 256]; 8] {
   // table[k][i] = table[0][table[k-1][i] & 0xFF] ^ (table[k-1][i] >> 8)
   let mut k = 1usize;
   while k < 8 {
+    i = 0;
+    while i < 256 {
+      let prev = tables[k - 1][i as usize];
+      tables[k][i as usize] = tables[0][(prev & 0xFF) as usize] ^ (prev >> 8);
+      i += 1;
+    }
+    k += 1;
+  }
+
+  tables
+}
+
+/// Generate 16 CRC-32 lookup tables for slice-by-16 computation.
+///
+/// This is an extension of the slice-by-8 strategy that processes 16 bytes per
+/// iteration. It can improve throughput on targets without SIMD acceleration
+/// by approximately 1.5-2x compared to slice-by-8.
+///
+/// # Arguments
+///
+/// * `poly` - The reflected polynomial
+#[must_use]
+pub const fn generate_crc32_tables_16(poly: u32) -> [[u32; 256]; 16] {
+  let mut tables = [[0u32; 256]; 16];
+
+  // Generate table 0 (standard byte-at-a-time)
+  let mut i = 0u16;
+  while i < 256 {
+    tables[0][i as usize] = crc32_table_entry(poly, i as u8);
+    i += 1;
+  }
+
+  // Generate tables 1-15 using the recurrence relation
+  let mut k = 1usize;
+  while k < 16 {
     i = 0;
     while i < 256 {
       let prev = tables[k - 1][i as usize];
@@ -303,6 +344,30 @@ mod tests {
         let prev = tables[k - 1][i];
         let expected = tables[0][(prev & 0xFF) as usize] ^ (prev >> 8);
         assert_eq!(tables[k][i], expected);
+      }
+    }
+  }
+
+  #[test]
+  fn test_crc32_tables_16_consistency() {
+    let tables8 = generate_crc32_tables_8(CRC32_IEEE_POLY);
+    let tables16 = generate_crc32_tables_16(CRC32_IEEE_POLY);
+
+    // Table 0 is the standard byte-at-a-time table
+    assert_eq!(tables16[0][0], 0);
+    assert_ne!(tables16[0][1], 0);
+
+    // First 8 tables must match the slice-by-8 generation
+    for k in 0..8 {
+      assert_eq!(tables16[k], tables8[k]);
+    }
+
+    // Verify recurrence for all 16 tables
+    for k in 1..16 {
+      for i in 0..256 {
+        let prev = tables16[k - 1][i];
+        let expected = tables16[0][(prev & 0xFF) as usize] ^ (prev >> 8);
+        assert_eq!(tables16[k][i], expected);
       }
     }
   }

@@ -235,7 +235,7 @@ unsafe fn update_simd_2way(
   while i < even {
     fold_block_128(&mut s0, &blocks[i], coeff_256);
     fold_block_128(&mut s1, &blocks[i + 1], coeff_256);
-    i += 2;
+    i = i.strict_add(2);
   }
 
   // Merge streams: A·s0 ⊕ s1 (A = shift by 128B).
@@ -296,7 +296,7 @@ unsafe fn update_simd_4way(
     fold_block_128(&mut s1, &blocks[i + 1], coeff_512);
     fold_block_128(&mut s2, &blocks[i + 2], coeff_512);
     fold_block_128(&mut s3, &blocks[i + 3], coeff_512);
-    i += 4;
+    i = i.strict_add(4);
   }
 
   // Merge: A^3·s0 ⊕ A^2·s1 ⊕ A·s2 ⊕ s3.
@@ -384,7 +384,7 @@ unsafe fn update_simd_7way(
     fold_block_128(&mut s4, &blocks[i + 4], coeff_896);
     fold_block_128(&mut s5, &blocks[i + 5], coeff_896);
     fold_block_128(&mut s6, &blocks[i + 6], coeff_896);
-    i += 7;
+    i = i.strict_add(7);
   }
 
   // Merge: A^6·s0 ⊕ A^5·s1 ⊕ … ⊕ A·s5 ⊕ s6.
@@ -714,7 +714,7 @@ unsafe fn update_simd_vpclmul_2way(
     x0_1 = fold16_4x_ternlog(x0_1, y0, coeff_256);
     x1_1 = fold16_4x_ternlog(x1_1, y1, coeff_256);
 
-    i += 2;
+    i = i.strict_add(2);
   }
 
   // Merge: A·s0 ⊕ s1 (A = shift by 128B) using VPTERNLOGD.
@@ -782,7 +782,7 @@ unsafe fn update_simd_vpclmul_4way(
     x0_3 = fold16_4x_ternlog(x0_3, y0, coeff_512);
     x1_3 = fold16_4x_ternlog(x1_3, y1, coeff_512);
 
-    i += 4;
+    i = i.strict_add(4);
   }
 
   // Merge: A^3·s0 ⊕ A^2·s1 ⊕ A·s2 ⊕ s3 using VPTERNLOGD.
@@ -874,7 +874,7 @@ unsafe fn update_simd_vpclmul_7way(
     x0_6 = fold16_4x_ternlog(x0_6, y0, coeff_896);
     x1_6 = fold16_4x_ternlog(x1_6, y1, coeff_896);
 
-    i += 7;
+    i = i.strict_add(7);
   }
 
   // Merge: A^6·s0 ⊕ A^5·s1 ⊕ … ⊕ A·s5 ⊕ s6 using VPTERNLOGD.

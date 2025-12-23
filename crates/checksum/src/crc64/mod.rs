@@ -12,7 +12,7 @@
 //! - s390x: VGFM folding
 //! - riscv64: ZVBC (RVV vector CLMUL) / Zbc folding
 
-mod config;
+pub(crate) mod config;
 mod portable;
 mod tuned_defaults;
 
@@ -37,21 +37,20 @@ use backend::dispatch::Selected;
 // Re-export config types for public API (Crc64Force only used internally on SIMD archs)
 #[allow(unused_imports)]
 pub use config::{Crc64Config, Crc64Force, Crc64Tunables};
-use traits::{Checksum, ChecksumCombine};
+// Re-export traits for test module (`use super::*`).
+#[allow(unused_imports)]
+pub(super) use traits::{Checksum, ChecksumCombine};
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
 use crate::common::tables::generate_crc64_tables_8;
 use crate::{
-  common::{
-    combine::{Gf2Matrix64, combine_crc64, generate_shift8_matrix_64},
-    tables::{CRC64_NVME_POLY, CRC64_XZ_POLY, generate_crc64_tables_16},
-  },
+  common::tables::{CRC64_NVME_POLY, CRC64_XZ_POLY, generate_crc64_tables_16},
   dispatchers::{Crc64Dispatcher, Crc64Fn},
 };
 
 #[inline]
 #[must_use]
-fn crc64_selected_kernel_name(len: usize) -> &'static str {
+pub(crate) fn crc64_selected_kernel_name(len: usize) -> &'static str {
   #[cfg(target_arch = "x86_64")]
   {
     let cfg = config::get();
@@ -1385,252 +1384,100 @@ static CRC64_XZ_DISPATCHER: Crc64Dispatcher = Crc64Dispatcher::new(select_crc64_
 static CRC64_NVME_DISPATCHER: Crc64Dispatcher = Crc64Dispatcher::new(select_crc64_nvme);
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CRC-64-XZ (ECMA-182)
+// CRC-64 Types (generated via macro)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// CRC-64-XZ checksum (ECMA-182).
-///
-/// Used in XZ Utils, 7-Zip, and other compression tools.
-///
-/// # Properties
-///
-/// - **Polynomial**: 0x42F0E1EBA9EA3693 (normal), 0xC96C5795D7870F42 (reflected)
-/// - **Initial value**: 0xFFFFFFFFFFFFFFFF
-/// - **Final XOR**: 0xFFFFFFFFFFFFFFFF
-/// - **Reflect input/output**: Yes
-///
-/// # Performance Notes
-///
-/// For optimal throughput, prefer larger updates when possible:
-///
-/// | Update Size | Path | Notes |
-/// |-------------|------|-------|
-/// | < 32-128 bytes | Portable slice-by-8 | Threshold varies by CPU |
-/// | ≥ 32-128 bytes | SIMD (PCLMULQDQ/PMULL) | Hardware accelerated |
-///
-/// The exact threshold is microarchitecture-specific:
-/// - AMD Zen 4/5: 32 bytes (fast SIMD setup)
-/// - Intel SPR: 128 bytes (ZMM warmup overhead)
-/// - Apple M1-M5: 48 bytes (efficient PMULL)
-///
-/// For streaming many small chunks, consider using [`BufferedCrc64Xz`] which
-/// accumulates data internally until reaching the SIMD threshold.
-///
-/// # Example
-///
-/// ```ignore
-/// use checksum::{Crc64Xz, Checksum};
-///
-/// let crc = Crc64Xz::checksum(b"123456789");
-/// assert_eq!(crc, 0x995DC9BBDF1939FA); // "123456789" test vector
-/// ```
-#[derive(Clone, Default)]
-pub struct Crc64 {
-  state: u64,
-}
-
-impl Crc64 {
-  /// Pre-computed shift-by-8 matrix for combine.
-  const SHIFT8_MATRIX: Gf2Matrix64 = generate_shift8_matrix_64(CRC64_XZ_POLY);
-
-  /// Create a hasher to resume from a previous CRC value.
-  #[inline]
-  #[must_use]
-  pub const fn resume(crc: u64) -> Self {
-    Self { state: crc ^ !0 }
-  }
-
-  /// Get the name of the currently selected backend.
+define_crc64_type! {
+  /// CRC-64-XZ checksum (ECMA-182).
   ///
-  /// Returns the dispatcher name (e.g., "portable/slice16", "x86_64/auto").
-  #[must_use]
-  pub fn backend_name() -> &'static str {
-    CRC64_XZ_DISPATCHER.backend_name()
-  }
-
-  /// Get the effective CRC-64 configuration (overrides + thresholds).
-  #[must_use]
-  pub fn config() -> Crc64Config {
-    config::get()
-  }
-
-  /// Convenience accessor for the active CRC-64 tunables.
-  #[must_use]
-  pub fn tunables() -> Crc64Tunables {
-    Self::config().tunables
-  }
-
-  /// Returns the kernel name that the selector would choose for `len`.
+  /// Used in XZ Utils, 7-Zip, and other compression tools.
   ///
-  /// This is intended for debugging/benchmarking and does not allocate.
-  #[must_use]
-  pub fn kernel_name_for_len(len: usize) -> &'static str {
-    crc64_selected_kernel_name(len)
-  }
-}
-
-impl Checksum for Crc64 {
-  const OUTPUT_SIZE: usize = 8;
-  type Output = u64;
-
-  #[inline]
-  fn new() -> Self {
-    Self { state: !0 }
-  }
-
-  #[inline]
-  fn with_initial(initial: u64) -> Self {
-    Self { state: initial ^ !0 }
-  }
-
-  #[inline]
-  fn update(&mut self, data: &[u8]) {
-    self.state = CRC64_XZ_DISPATCHER.call(self.state, data);
-  }
-
-  #[inline]
-  fn finalize(&self) -> u64 {
-    self.state ^ !0
-  }
-
-  #[inline]
-  fn reset(&mut self) {
-    self.state = !0;
-  }
-}
-
-impl ChecksumCombine for Crc64 {
-  fn combine(crc_a: u64, crc_b: u64, len_b: usize) -> u64 {
-    combine_crc64(crc_a, crc_b, len_b, Self::SHIFT8_MATRIX)
+  /// # Properties
+  ///
+  /// - **Polynomial**: 0x42F0E1EBA9EA3693 (normal), 0xC96C5795D7870F42 (reflected)
+  /// - **Initial value**: 0xFFFFFFFFFFFFFFFF
+  /// - **Final XOR**: 0xFFFFFFFFFFFFFFFF
+  /// - **Reflect input/output**: Yes
+  ///
+  /// # Performance Notes
+  ///
+  /// For optimal throughput, prefer larger updates when possible:
+  ///
+  /// | Update Size | Path | Notes |
+  /// |-------------|------|-------|
+  /// | < 32-128 bytes | Portable slice-by-8 | Threshold varies by CPU |
+  /// | ≥ 32-128 bytes | SIMD (PCLMULQDQ/PMULL) | Hardware accelerated |
+  ///
+  /// The exact threshold is microarchitecture-specific:
+  /// - AMD Zen 4/5: 32 bytes (fast SIMD setup)
+  /// - Intel SPR: 128 bytes (ZMM warmup overhead)
+  /// - Apple M1-M5: 48 bytes (efficient PMULL)
+  ///
+  /// For streaming many small chunks, consider using [`BufferedCrc64Xz`] which
+  /// accumulates data internally until reaching the SIMD threshold.
+  ///
+  /// # Example
+  ///
+  /// ```ignore
+  /// use checksum::{Crc64Xz, Checksum};
+  ///
+  /// let crc = Crc64Xz::checksum(b"123456789");
+  /// assert_eq!(crc, 0x995DC9BBDF1939FA); // "123456789" test vector
+  /// ```
+  pub struct Crc64 {
+    poly: CRC64_XZ_POLY,
+    dispatcher: CRC64_XZ_DISPATCHER,
   }
 }
 
 /// Explicit name for the XZ CRC-64 variant (alias of [`Crc64`]).
 pub type Crc64Xz = Crc64;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// CRC-64-NVME
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// CRC-64-NVME checksum.
-///
-/// Used in the NVMe specification for data integrity.
-///
-/// # Properties
-///
-/// - **Polynomial**: 0xAD93D23594C93659 (normal), 0x9A6C9329AC4BC9B5 (reflected)
-/// - **Initial value**: 0xFFFFFFFFFFFFFFFF
-/// - **Final XOR**: 0xFFFFFFFFFFFFFFFF
-/// - **Reflect input/output**: Yes
-///
-/// # Performance Notes
-///
-/// For optimal throughput, prefer larger updates when possible:
-///
-/// | Update Size | Path | Notes |
-/// |-------------|------|-------|
-/// | < 32-128 bytes | Portable slice-by-8 | Threshold varies by CPU |
-/// | ≥ 32-128 bytes | SIMD (PCLMULQDQ/PMULL) | Hardware accelerated |
-///
-/// The exact threshold is microarchitecture-specific:
-/// - AMD Zen 4/5: 32 bytes (fast SIMD setup)
-/// - Intel SPR: 128 bytes (ZMM warmup overhead)
-/// - Apple M1-M5: 48 bytes (efficient PMULL)
-///
-/// For streaming many small chunks, consider using [`BufferedCrc64Nvme`] which
-/// accumulates data internally until reaching the SIMD threshold.
-///
-/// # Example
-///
-/// ```ignore
-/// use checksum::{Crc64Nvme, Checksum};
-///
-/// let crc = Crc64Nvme::checksum(b"123456789");
-/// // NVMe CRC-64 test vector
-/// ```
-#[derive(Clone, Default)]
-pub struct Crc64Nvme {
-  state: u64,
-}
-
-impl Crc64Nvme {
-  /// Pre-computed shift-by-8 matrix for combine.
-  const SHIFT8_MATRIX: Gf2Matrix64 = generate_shift8_matrix_64(CRC64_NVME_POLY);
-
-  /// Create a hasher to resume from a previous CRC value.
-  #[inline]
-  #[must_use]
-  pub const fn resume(crc: u64) -> Self {
-    Self { state: crc ^ !0 }
-  }
-
-  /// Get the name of the currently selected backend.
+define_crc64_type! {
+  /// CRC-64-NVME checksum.
   ///
-  /// Returns the dispatcher name (e.g., "portable/slice16", "x86_64/auto").
-  #[must_use]
-  pub fn backend_name() -> &'static str {
-    CRC64_NVME_DISPATCHER.backend_name()
-  }
-
-  /// Get the effective CRC-64 configuration (overrides + thresholds).
-  #[must_use]
-  pub fn config() -> Crc64Config {
-    config::get()
-  }
-
-  /// Convenience accessor for the active CRC-64 tunables.
-  #[must_use]
-  pub fn tunables() -> Crc64Tunables {
-    Self::config().tunables
-  }
-
-  /// Returns the kernel name that the selector would choose for `len`.
+  /// Used in the NVMe specification for data integrity.
   ///
-  /// This is intended for debugging/benchmarking and does not allocate.
-  #[must_use]
-  pub fn kernel_name_for_len(len: usize) -> &'static str {
-    crc64_selected_kernel_name(len)
-  }
-}
-
-impl Checksum for Crc64Nvme {
-  const OUTPUT_SIZE: usize = 8;
-  type Output = u64;
-
-  #[inline]
-  fn new() -> Self {
-    Self { state: !0 }
-  }
-
-  #[inline]
-  fn with_initial(initial: u64) -> Self {
-    Self { state: initial ^ !0 }
-  }
-
-  #[inline]
-  fn update(&mut self, data: &[u8]) {
-    self.state = CRC64_NVME_DISPATCHER.call(self.state, data);
-  }
-
-  #[inline]
-  fn finalize(&self) -> u64 {
-    self.state ^ !0
-  }
-
-  #[inline]
-  fn reset(&mut self) {
-    self.state = !0;
-  }
-}
-
-impl ChecksumCombine for Crc64Nvme {
-  fn combine(crc_a: u64, crc_b: u64, len_b: usize) -> u64 {
-    combine_crc64(crc_a, crc_b, len_b, Self::SHIFT8_MATRIX)
+  /// # Properties
+  ///
+  /// - **Polynomial**: 0xAD93D23594C93659 (normal), 0x9A6C9329AC4BC9B5 (reflected)
+  /// - **Initial value**: 0xFFFFFFFFFFFFFFFF
+  /// - **Final XOR**: 0xFFFFFFFFFFFFFFFF
+  /// - **Reflect input/output**: Yes
+  ///
+  /// # Performance Notes
+  ///
+  /// For optimal throughput, prefer larger updates when possible:
+  ///
+  /// | Update Size | Path | Notes |
+  /// |-------------|------|-------|
+  /// | < 32-128 bytes | Portable slice-by-8 | Threshold varies by CPU |
+  /// | ≥ 32-128 bytes | SIMD (PCLMULQDQ/PMULL) | Hardware accelerated |
+  ///
+  /// The exact threshold is microarchitecture-specific:
+  /// - AMD Zen 4/5: 32 bytes (fast SIMD setup)
+  /// - Intel SPR: 128 bytes (ZMM warmup overhead)
+  /// - Apple M1-M5: 48 bytes (efficient PMULL)
+  ///
+  /// For streaming many small chunks, consider using [`BufferedCrc64Nvme`] which
+  /// accumulates data internally until reaching the SIMD threshold.
+  ///
+  /// # Example
+  ///
+  /// ```ignore
+  /// use checksum::{Crc64Nvme, Checksum};
+  ///
+  /// let crc = Crc64Nvme::checksum(b"123456789");
+  /// // NVMe CRC-64 test vector
+  /// ```
+  pub struct Crc64Nvme {
+    poly: CRC64_NVME_POLY,
+    dispatcher: CRC64_NVME_DISPATCHER,
   }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Buffered CRC-64 Wrappers
+// Buffered CRC-64 Wrappers (generated via macro)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Buffer size for buffered CRC wrappers.
@@ -1640,130 +1487,39 @@ impl ChecksumCombine for Crc64Nvme {
 #[cfg(feature = "alloc")]
 const BUFFERED_CRC_BUFFER_SIZE: usize = 512;
 
-/// A buffering wrapper around [`Crc64Xz`] for streaming small chunks.
-///
-/// Use when you expect many small updates (< 64 bytes). This wrapper
-/// accumulates data internally until reaching the SIMD threshold, then
-/// flushes in batches for optimal throughput.
-///
-/// # When to Use
-///
-/// - Processing data from network sockets (typically 1-8 KB reads)
-/// - Streaming parsers that emit small tokens
-/// - Any workload with many small `update()` calls
-///
-/// For large contiguous buffers, use [`Crc64Xz`] directly.
-///
-/// # Example
-///
-/// ```ignore
-/// use checksum::{BufferedCrc64Xz, Checksum};
-///
-/// let mut hasher = BufferedCrc64Xz::new();
-///
-/// // Many small updates - internally buffered
-/// for byte in data.iter() {
-///     hasher.update(&[*byte]);
-/// }
-///
-/// let crc = hasher.finalize();
-/// ```
 #[cfg(feature = "alloc")]
-pub struct BufferedCrc64 {
-  inner: Crc64,
-  buffer: alloc::boxed::Box<[u8; BUFFERED_CRC_BUFFER_SIZE]>,
-  len: usize,
-}
-
-#[cfg(feature = "alloc")]
-impl BufferedCrc64 {
-  /// Create a new buffered CRC-64-XZ hasher.
-  #[must_use]
-  pub fn new() -> Self {
-    Self {
-      inner: Crc64::new(),
-      buffer: alloc::boxed::Box::new([0u8; BUFFERED_CRC_BUFFER_SIZE]),
-      len: 0,
-    }
-  }
-
-  /// Update the CRC with more data.
+define_buffered_crc! {
+  /// A buffering wrapper around [`Crc64Xz`] for streaming small chunks.
   ///
-  /// Data is buffered internally until enough accumulates for efficient
-  /// SIMD processing.
-  #[allow(clippy::indexing_slicing)]
-  // Safety: All slice indices are bounds-checked by the algorithm:
-  // - self.len < BUFFERED_CRC_BUFFER_SIZE (invariant maintained by this function)
-  // - fill = min(input.len(), space), so input[..fill] and buffer[len..len+fill] are valid
-  // - aligned <= input.len() by construction
-  pub fn update(&mut self, data: &[u8]) {
-    let threshold = crc64_simd_threshold();
-    let mut input = data;
-
-    // If we have buffered data, try to fill and flush
-    if self.len > 0 {
-      let space = BUFFERED_CRC_BUFFER_SIZE - self.len;
-      let fill = input.len().min(space);
-      self.buffer[self.len..self.len + fill].copy_from_slice(&input[..fill]);
-      self.len += fill;
-      input = &input[fill..];
-
-      // Flush if buffer is full or we have enough for SIMD
-      if self.len >= BUFFERED_CRC_BUFFER_SIZE || (self.len >= threshold && input.is_empty()) {
-        self.inner.update(&self.buffer[..self.len]);
-        self.len = 0;
-      }
-    }
-
-    // Process large chunks directly
-    if input.len() >= threshold {
-      // Find largest aligned chunk
-      let aligned = (input.len() / threshold) * threshold;
-      self.inner.update(&input[..aligned]);
-      input = &input[aligned..];
-    }
-
-    // Buffer remainder
-    if !input.is_empty() {
-      self.buffer[..input.len()].copy_from_slice(input);
-      self.len = input.len();
-    }
-  }
-
-  /// Finalize and return the CRC value.
+  /// Use when you expect many small updates (< 64 bytes). This wrapper
+  /// accumulates data internally until reaching the SIMD threshold, then
+  /// flushes in batches for optimal throughput.
   ///
-  /// Flushes any remaining buffered data before computing the final CRC.
-  #[must_use]
-  #[allow(clippy::indexing_slicing)]
-  // Safety: self.len < BUFFERED_CRC_BUFFER_SIZE (invariant)
-  pub fn finalize(&self) -> u64 {
-    if self.len > 0 {
-      // Clone inner to avoid mutating self
-      let mut inner = self.inner.clone();
-      inner.update(&self.buffer[..self.len]);
-      inner.finalize()
-    } else {
-      self.inner.finalize()
-    }
-  }
-
-  /// Reset the hasher to initial state.
-  pub fn reset(&mut self) {
-    self.inner.reset();
-    self.len = 0;
-  }
-
-  /// Get the name of the currently selected backend.
-  #[must_use]
-  pub fn backend_name() -> &'static str {
-    Crc64::backend_name()
-  }
-}
-
-#[cfg(feature = "alloc")]
-impl Default for BufferedCrc64 {
-  fn default() -> Self {
-    Self::new()
+  /// # When to Use
+  ///
+  /// - Processing data from network sockets (typically 1-8 KB reads)
+  /// - Streaming parsers that emit small tokens
+  /// - Any workload with many small `update()` calls
+  ///
+  /// For large contiguous buffers, use [`Crc64Xz`] directly.
+  ///
+  /// # Example
+  ///
+  /// ```ignore
+  /// use checksum::{BufferedCrc64Xz, Checksum};
+  ///
+  /// let mut hasher = BufferedCrc64Xz::new();
+  ///
+  /// // Many small updates - internally buffered
+  /// for byte in data.iter() {
+  ///     hasher.update(&[*byte]);
+  /// }
+  ///
+  /// let crc = hasher.finalize();
+  /// ```
+  pub struct BufferedCrc64<Crc64> {
+    buffer_size: BUFFERED_CRC_BUFFER_SIZE,
+    threshold_fn: crc64_simd_threshold,
   }
 }
 
@@ -1771,129 +1527,38 @@ impl Default for BufferedCrc64 {
 #[cfg(feature = "alloc")]
 pub type BufferedCrc64Xz = BufferedCrc64;
 
-/// A buffering wrapper around [`Crc64Nvme`] for streaming small chunks.
-///
-/// Use when you expect many small updates (< 64 bytes). This wrapper
-/// accumulates data internally until reaching the SIMD threshold, then
-/// flushes in batches for optimal throughput.
-///
-/// # When to Use
-///
-/// - Processing NVMe data from network/storage streams
-/// - Any workload with many small `update()` calls
-///
-/// For large contiguous buffers, use [`Crc64Nvme`] directly.
-///
-/// # Example
-///
-/// ```ignore
-/// use checksum::{BufferedCrc64Nvme, Checksum};
-///
-/// let mut hasher = BufferedCrc64Nvme::new();
-///
-/// // Many small updates - internally buffered
-/// for byte in data.iter() {
-///     hasher.update(&[*byte]);
-/// }
-///
-/// let crc = hasher.finalize();
-/// ```
 #[cfg(feature = "alloc")]
-pub struct BufferedCrc64Nvme {
-  inner: Crc64Nvme,
-  buffer: alloc::boxed::Box<[u8; BUFFERED_CRC_BUFFER_SIZE]>,
-  len: usize,
-}
-
-#[cfg(feature = "alloc")]
-impl BufferedCrc64Nvme {
-  /// Create a new buffered CRC-64-NVME hasher.
-  #[must_use]
-  pub fn new() -> Self {
-    Self {
-      inner: Crc64Nvme::new(),
-      buffer: alloc::boxed::Box::new([0u8; BUFFERED_CRC_BUFFER_SIZE]),
-      len: 0,
-    }
-  }
-
-  /// Update the CRC with more data.
+define_buffered_crc! {
+  /// A buffering wrapper around [`Crc64Nvme`] for streaming small chunks.
   ///
-  /// Data is buffered internally until enough accumulates for efficient
-  /// SIMD processing.
-  #[allow(clippy::indexing_slicing)]
-  // Safety: All slice indices are bounds-checked by the algorithm:
-  // - self.len < BUFFERED_CRC_BUFFER_SIZE (invariant maintained by this function)
-  // - fill = min(input.len(), space), so input[..fill] and buffer[len..len+fill] are valid
-  // - aligned <= input.len() by construction
-  pub fn update(&mut self, data: &[u8]) {
-    let threshold = crc64_simd_threshold();
-    let mut input = data;
-
-    // If we have buffered data, try to fill and flush
-    if self.len > 0 {
-      let space = BUFFERED_CRC_BUFFER_SIZE - self.len;
-      let fill = input.len().min(space);
-      self.buffer[self.len..self.len + fill].copy_from_slice(&input[..fill]);
-      self.len += fill;
-      input = &input[fill..];
-
-      // Flush if buffer is full or we have enough for SIMD
-      if self.len >= BUFFERED_CRC_BUFFER_SIZE || (self.len >= threshold && input.is_empty()) {
-        self.inner.update(&self.buffer[..self.len]);
-        self.len = 0;
-      }
-    }
-
-    // Process large chunks directly
-    if input.len() >= threshold {
-      // Find largest aligned chunk
-      let aligned = (input.len() / threshold) * threshold;
-      self.inner.update(&input[..aligned]);
-      input = &input[aligned..];
-    }
-
-    // Buffer remainder
-    if !input.is_empty() {
-      self.buffer[..input.len()].copy_from_slice(input);
-      self.len = input.len();
-    }
-  }
-
-  /// Finalize and return the CRC value.
+  /// Use when you expect many small updates (< 64 bytes). This wrapper
+  /// accumulates data internally until reaching the SIMD threshold, then
+  /// flushes in batches for optimal throughput.
   ///
-  /// Flushes any remaining buffered data before computing the final CRC.
-  #[must_use]
-  #[allow(clippy::indexing_slicing)]
-  // Safety: self.len < BUFFERED_CRC_BUFFER_SIZE (invariant)
-  pub fn finalize(&self) -> u64 {
-    if self.len > 0 {
-      // Clone inner to avoid mutating self
-      let mut inner = self.inner.clone();
-      inner.update(&self.buffer[..self.len]);
-      inner.finalize()
-    } else {
-      self.inner.finalize()
-    }
-  }
-
-  /// Reset the hasher to initial state.
-  pub fn reset(&mut self) {
-    self.inner.reset();
-    self.len = 0;
-  }
-
-  /// Get the name of the currently selected backend.
-  #[must_use]
-  pub fn backend_name() -> &'static str {
-    Crc64Nvme::backend_name()
-  }
-}
-
-#[cfg(feature = "alloc")]
-impl Default for BufferedCrc64Nvme {
-  fn default() -> Self {
-    Self::new()
+  /// # When to Use
+  ///
+  /// - Processing NVMe data from network/storage streams
+  /// - Any workload with many small `update()` calls
+  ///
+  /// For large contiguous buffers, use [`Crc64Nvme`] directly.
+  ///
+  /// # Example
+  ///
+  /// ```ignore
+  /// use checksum::{BufferedCrc64Nvme, Checksum};
+  ///
+  /// let mut hasher = BufferedCrc64Nvme::new();
+  ///
+  /// // Many small updates - internally buffered
+  /// for byte in data.iter() {
+  ///     hasher.update(&[*byte]);
+  /// }
+  ///
+  /// let crc = hasher.finalize();
+  /// ```
+  pub struct BufferedCrc64Nvme<Crc64Nvme> {
+    buffer_size: BUFFERED_CRC_BUFFER_SIZE,
+    threshold_fn: crc64_simd_threshold,
   }
 }
 

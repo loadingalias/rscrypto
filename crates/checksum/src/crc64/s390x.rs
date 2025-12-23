@@ -152,7 +152,7 @@ fn load_block(block: &Block) -> [Simd; 8] {
     unsafe {
       base.add(i).write(Simd::new(high, low));
     }
-    i += 1;
+    i = i.strict_add(1);
   }
 
   // SAFETY: all 8 elements are initialized above.
@@ -244,7 +244,7 @@ unsafe fn update_simd_2way(state: u64, blocks: &[Block], fold_256b: (u64, u64), 
     let b1 = load_block(&blocks[i + 1]);
     fold_block_128(&mut s0, &b0, coeff_256);
     fold_block_128(&mut s1, &b1, coeff_256);
-    i += 2;
+    i = i.strict_add(2);
   }
 
   // Merge streams: A·s0 ⊕ s1 (A = shift by 128B).
@@ -310,7 +310,7 @@ unsafe fn update_simd_4way(
     fold_block_128(&mut s1, &b1, coeff_512);
     fold_block_128(&mut s2, &b2, coeff_512);
     fold_block_128(&mut s3, &b3, coeff_512);
-    i += 4;
+    i = i.strict_add(4);
   }
 
   // Merge: A^3·s0 ⊕ A^2·s1 ⊕ A·s2 ⊕ s3.

@@ -167,7 +167,7 @@ fn load_block(block: &Block) -> [Simd; 8] {
     let low = u64::from_le(block[i * 2]);
     let high = u64::from_le(block[i * 2 + 1]);
     out[i] = Simd::new(high, low);
-    i += 1;
+    i = i.strict_add(1);
   }
 
   out
@@ -249,7 +249,7 @@ unsafe fn update_simd_2way(state: u64, blocks: &[Block], fold_256b: (u64, u64), 
     let b1 = load_block(&blocks[i + 1]);
     fold_block_128(&mut s0, &b0, coeff_256);
     fold_block_128(&mut s1, &b1, coeff_256);
-    i += 2;
+    i = i.strict_add(2);
   }
 
   // Merge streams: A·s0 ⊕ s1 (A = shift by 128B).
@@ -316,7 +316,7 @@ unsafe fn update_simd_4way(
     fold_block_128(&mut s1, &b1, coeff_512);
     fold_block_128(&mut s2, &b2, coeff_512);
     fold_block_128(&mut s3, &b3, coeff_512);
-    i += 4;
+    i = i.strict_add(4);
   }
 
   // Merge: A^3·s0 ⊕ A^2·s1 ⊕ A·s2 ⊕ s3.
@@ -369,7 +369,7 @@ fn load_block_split(block: &Block) -> ([u64; 8], [u64; 8]) {
   while i < 8 {
     lo[i] = u64::from_le(block[i * 2]);
     hi[i] = u64::from_le(block[i * 2 + 1]);
-    i += 1;
+    i = i.strict_add(1);
   }
 
   (hi, lo)
@@ -543,7 +543,7 @@ unsafe fn update_simd_zvbc_2way(
     let (b1_hi, b1_lo) = load_block_split(&blocks[i + 1]);
     fold_block_128_zvbc(&mut s0_hi, &mut s0_lo, &b0_hi, &b0_lo, coeff_256_low, coeff_256_high);
     fold_block_128_zvbc(&mut s1_hi, &mut s1_lo, &b1_hi, &b1_lo, coeff_256_low, coeff_256_high);
-    i += 2;
+    i = i.strict_add(2);
   }
 
   // Merge streams: A·s0 ⊕ s1 (A = shift by 128B).
@@ -614,7 +614,7 @@ unsafe fn update_simd_zvbc_4way(
     fold_block_128_zvbc(&mut s1_hi, &mut s1_lo, &b1_hi, &b1_lo, coeff_512_low, coeff_512_high);
     fold_block_128_zvbc(&mut s2_hi, &mut s2_lo, &b2_hi, &b2_lo, coeff_512_low, coeff_512_high);
     fold_block_128_zvbc(&mut s3_hi, &mut s3_lo, &b3_hi, &b3_lo, coeff_512_low, coeff_512_high);
-    i += 4;
+    i = i.strict_add(4);
   }
 
   // Merge: A^3·s0 ⊕ A^2·s1 ⊕ A·s2 ⊕ s3.

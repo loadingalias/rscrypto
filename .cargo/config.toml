@@ -69,15 +69,8 @@ rustflags = ["-C", "target-feature=+lse"]
 # x86_64 bare metal (kernels, bootloaders, hypervisors)
 [target.x86_64-unknown-none]
 
-# ============================================================
-# Additional Architecture Targets (Future)
-# ============================================================
-
 # RISC-V 64-bit (no_std)
 [target.riscv64gc-unknown-none-elf]
-
-# LoongArch 64-bit
-[target.loongarch64-unknown-linux-gnu]
 
 # IBM s390x
 [target.s390x-unknown-linux-gnu]

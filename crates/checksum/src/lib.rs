@@ -93,6 +93,11 @@ extern crate alloc;
 extern crate std;
 
 mod common;
+
+// Internal macros must be declared before modules that use them.
+#[macro_use]
+mod macros;
+
 mod crc16;
 mod crc24;
 mod crc32;

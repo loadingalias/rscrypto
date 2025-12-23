@@ -334,7 +334,7 @@ unsafe fn update_simd_2way(
   while i < even {
     fold_block_128(&mut s0, &blocks[i], coeff_256);
     fold_block_128(&mut s1, &blocks[i + 1], coeff_256);
-    i += 2;
+    i = i.strict_add(2);
   }
 
   // Merge streams: A·s0 ⊕ s1 (A = shift by 128B).
@@ -435,7 +435,7 @@ unsafe fn update_simd_4way(
     fold_block_128(&mut s1, &blocks[i + 1], coeff_512);
     fold_block_128(&mut s2, &blocks[i + 2], coeff_512);
     fold_block_128(&mut s3, &blocks[i + 3], coeff_512);
-    i += 4;
+    i = i.strict_add(4);
   }
 
   // Merge: A^3·s0 ⊕ A^2·s1 ⊕ A·s2 ⊕ s3.
@@ -602,7 +602,7 @@ unsafe fn update_simd_8way(
     fold_block_128(&mut s5, &blocks[i + 5], coeff_1024);
     fold_block_128(&mut s6, &blocks[i + 6], coeff_1024);
     fold_block_128(&mut s7, &blocks[i + 7], coeff_1024);
-    i += 8;
+    i = i.strict_add(8);
   }
 
   // Merge: A^7·s0 ⊕ A^6·s1 ⊕ … ⊕ A·s6 ⊕ s7.

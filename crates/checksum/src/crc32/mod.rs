@@ -18,6 +18,9 @@ mod x86_64;
 #[cfg(target_arch = "aarch64")]
 mod aarch64;
 
+#[cfg(test)]
+mod proptests;
+
 use backend::dispatch::Selected;
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 use backend::{candidates, dispatch::select};
@@ -28,7 +31,7 @@ use traits::{Checksum, ChecksumCombine};
 use crate::{
   common::{
     combine::{Gf2Matrix32, combine_crc32, generate_shift8_matrix_32},
-    tables::{CRC32_IEEE_POLY, CRC32C_POLY, generate_crc32_tables_8},
+    tables::{CRC32_IEEE_POLY, CRC32C_POLY, generate_crc32_tables_16},
   },
   dispatchers::{Crc32Dispatcher, Crc32Fn},
 };
@@ -43,18 +46,18 @@ use crate::{
 /// Portable kernel tables (pre-computed at compile time).
 mod kernel_tables {
   use super::*;
-  pub static IEEE_TABLES: [[u32; 256]; 8] = generate_crc32_tables_8(CRC32_IEEE_POLY);
-  pub static CASTAGNOLI_TABLES: [[u32; 256]; 8] = generate_crc32_tables_8(CRC32C_POLY);
+  pub static IEEE_TABLES_16: [[u32; 256]; 16] = generate_crc32_tables_16(CRC32_IEEE_POLY);
+  pub static CASTAGNOLI_TABLES_16: [[u32; 256]; 16] = generate_crc32_tables_16(CRC32C_POLY);
 }
 
 /// CRC-32 IEEE portable kernel wrapper.
 fn crc32_ieee_portable(crc: u32, data: &[u8]) -> u32 {
-  portable::crc32_slice8(crc, data, &kernel_tables::IEEE_TABLES)
+  portable::crc32_slice16(crc, data, &kernel_tables::IEEE_TABLES_16)
 }
 
 /// CRC-32C portable kernel wrapper.
 fn crc32c_portable(crc: u32, data: &[u8]) -> u32 {
-  portable::crc32_slice8(crc, data, &kernel_tables::CASTAGNOLI_TABLES)
+  portable::crc32_slice16(crc, data, &kernel_tables::CASTAGNOLI_TABLES_16)
 }
 
 // aarch64 kernel wrappers
@@ -86,7 +89,7 @@ fn select_crc32_ieee() -> Selected<Crc32Fn> {
     caps,
     candidates![
       "aarch64/crc" => platform::caps::aarch64::CRC => crc32_ieee_aarch64,
-      "portable/slice8" => Caps::NONE => crc32_ieee_portable,
+      "portable/slice16" => Caps::NONE => crc32_ieee_portable,
     ],
   )
 }
@@ -94,12 +97,12 @@ fn select_crc32_ieee() -> Selected<Crc32Fn> {
 #[cfg(target_arch = "x86_64")]
 fn select_crc32_ieee() -> Selected<Crc32Fn> {
   // No native x86_64 CRC32 IEEE instruction; PCLMULQDQ not yet implemented
-  Selected::new("portable/slice8", crc32_ieee_portable)
+  Selected::new("portable/slice16", crc32_ieee_portable)
 }
 
 #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
 fn select_crc32_ieee() -> Selected<Crc32Fn> {
-  Selected::new("portable/slice8", crc32_ieee_portable)
+  Selected::new("portable/slice16", crc32_ieee_portable)
 }
 
 /// Select the best CRC-32C kernel for the current platform.
@@ -110,7 +113,7 @@ fn select_crc32c() -> Selected<Crc32Fn> {
     caps,
     candidates![
       "aarch64/crc" => platform::caps::aarch64::CRC => crc32c_aarch64,
-      "portable/slice8" => Caps::NONE => crc32c_portable,
+      "portable/slice16" => Caps::NONE => crc32c_portable,
     ],
   )
 }
@@ -122,14 +125,14 @@ fn select_crc32c() -> Selected<Crc32Fn> {
     caps,
     candidates![
       "x86_64/sse42" => platform::caps::x86::SSE42 => crc32c_x86_64_sse42,
-      "portable/slice8" => Caps::NONE => crc32c_portable,
+      "portable/slice16" => Caps::NONE => crc32c_portable,
     ],
   )
 }
 
 #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
 fn select_crc32c() -> Selected<Crc32Fn> {
-  Selected::new("portable/slice8", crc32c_portable)
+  Selected::new("portable/slice16", crc32c_portable)
 }
 
 /// Static dispatcher for CRC-32 IEEE.

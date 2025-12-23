@@ -271,7 +271,7 @@ unsafe fn update_simd_2way(
   while i < even {
     fold_block_128(&mut s0, &blocks[i], coeff_256_low, coeff_256_high);
     fold_block_128(&mut s1, &blocks[i + 1], coeff_256_low, coeff_256_high);
-    i += 2;
+    i = i.strict_add(2);
   }
 
   // Merge streams: A·s0 ⊕ s1 (A = shift by 128B).
@@ -330,7 +330,7 @@ unsafe fn update_simd_3way(
     fold_block_128(&mut s0, &blocks[i], coeff_384_low, coeff_384_high);
     fold_block_128(&mut s1, &blocks[i + 1], coeff_384_low, coeff_384_high);
     fold_block_128(&mut s2, &blocks[i + 2], coeff_384_low, coeff_384_high);
-    i += 3;
+    i = i.strict_add(3);
   }
 
   // Merge: A^2·s0 ⊕ A·s1 ⊕ s2 (A = shift by 128B).
@@ -396,7 +396,7 @@ unsafe fn update_simd_eor3_2way(
   while i < even {
     fold_block_128_eor3(&mut s0, &blocks[i], coeff_256_low, coeff_256_high);
     fold_block_128_eor3(&mut s1, &blocks[i + 1], coeff_256_low, coeff_256_high);
-    i += 2;
+    i = i.strict_add(2);
   }
 
   // Merge streams using EOR3: combined = s1 ^ (A·s0) where A = shift by 128B.
@@ -463,7 +463,7 @@ unsafe fn update_simd_eor3_3way(
     fold_block_128_eor3(&mut s0, &blocks[i], coeff_384_low, coeff_384_high);
     fold_block_128_eor3(&mut s1, &blocks[i + 1], coeff_384_low, coeff_384_high);
     fold_block_128_eor3(&mut s2, &blocks[i + 2], coeff_384_low, coeff_384_high);
-    i += 3;
+    i = i.strict_add(3);
   }
 
   // Merge: A^2·s0 ⊕ A·s1 ⊕ s2 (A = shift by 128B).
