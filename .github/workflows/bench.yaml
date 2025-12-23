@@ -166,7 +166,7 @@ jobs:
 
       - name: Checkout
         if: steps.should-run.outputs.enabled == 'true'
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
           fetch-depth: 0  # Required for cargo rail affected (needs git history)
 
@@ -198,7 +198,7 @@ jobs:
 
       - name: Setup Namespace Cache (Linux - instant NVMe cache)
         if: steps.should-run.outputs.enabled == 'true' && runner.os == 'Linux'
-        uses: namespacelabs/nscloud-cache-action@446d8f390563cd54ca27e8de5bdb816f63c0b706  # v1
+        uses: namespacelabs/nscloud-cache-action@446d8f390563cd54ca27e8de5bdb816f63c0b706  # v1.2.21
         with:
           cache: rust
 
@@ -214,7 +214,7 @@ jobs:
 
       - name: Setup Rust Cache (Windows)
         if: steps.should-run.outputs.enabled == 'true' && runner.os == 'Windows'
-        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5  # v2
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5  # v2.8.2
         with:
           shared-key: "rscrypto-v1"
           key: ${{ steps.cache.outputs.key }}
@@ -222,7 +222,7 @@ jobs:
 
       - name: Install Benchmarking Tools
         if: steps.should-run.outputs.enabled == 'true'
-        uses: taiki-e/install-action@60581cd7025e0e855cebd745379013e286d9c787  # v2
+        uses: taiki-e/install-action@7ea888af71a31437ad4e71c62d021b3bb2728ea9  # v2.49.3
         with:
           tool: cargo-criterion,critcmp,just
 
@@ -233,7 +233,7 @@ jobs:
       # Install cargo-rail for scheduled runs (change detection)
       - name: Install cargo-rail (Scheduled runs only)
         if: steps.should-run.outputs.enabled == 'true' && github.event_name == 'schedule'
-        uses: taiki-e/install-action@60581cd7025e0e855cebd745379013e286d9c787  # v2
+        uses: taiki-e/install-action@7ea888af71a31437ad4e71c62d021b3bb2728ea9  # v2.49.3
         with:
           tool: cargo-rail
 
@@ -419,7 +419,7 @@ jobs:
 
       - name: Upload Benchmark Results (Console Output)
         if: steps.should-run.outputs.enabled == 'true' && steps.scope.outputs.skip_bench != 'true' && always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08  # v4.6.0
         with:
           name: benchmark-results-${{ matrix.target.platform-id }}
           path: benchmark-results/
@@ -429,7 +429,7 @@ jobs:
 
       - name: Upload Criterion HTML Report
         if: steps.should-run.outputs.enabled == 'true' && steps.scope.outputs.skip_bench != 'true' && always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08  # v4.6.0
         with:
           name: criterion-html-${{ matrix.target.platform-id }}
           path: target/criterion/
@@ -513,7 +513,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
       - name: Read Toolchain Version
         id: toolchain
@@ -529,19 +529,19 @@ jobs:
 
       - name: Setup Namespace Cache (Linux)
         if: runner.os == 'Linux'
-        uses: namespacelabs/nscloud-cache-action@446d8f390563cd54ca27e8de5bdb816f63c0b706  # v1
+        uses: namespacelabs/nscloud-cache-action@446d8f390563cd54ca27e8de5bdb816f63c0b706  # v1.2.21
         with:
           cache: rust
 
       - name: Setup Rust Cache (Windows/macOS)
         if: runner.os == 'Windows' || runner.os == 'macOS'
-        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5  # v2
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5  # v2.8.2
         with:
           shared-key: "rscrypto-tune-v1"
           cache-on-failure: true
 
       - name: Install Benchmarking Tools
-        uses: taiki-e/install-action@60581cd7025e0e855cebd745379013e286d9c787  # v2
+        uses: taiki-e/install-action@7ea888af71a31437ad4e71c62d021b3bb2728ea9  # v2.49.3
         with:
           tool: just
 
@@ -642,7 +642,7 @@ jobs:
           fi
 
       - name: Upload Tuning Results
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08  # v4.6.0
         with:
           name: tune-discovery-${{ matrix.target.platform-id }}
           path: |
@@ -662,7 +662,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download All Tuning Artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
         with:
           pattern: tune-discovery-*
           path: all-results
@@ -727,7 +727,7 @@ jobs:
           echo "See individual platform artifacts for detailed analysis."
 
       - name: Upload Consolidated Report
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08  # v4.6.0
         with:
           name: tune-consolidated-report
           path: all-results/
@@ -749,12 +749,12 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Checkout Current
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
           path: current
 
       - name: Checkout Baseline
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
           ref: ${{ github.event.inputs.regression_baseline }}
           path: baseline
@@ -772,12 +772,12 @@ jobs:
           toolchain: ${{ steps.toolchain.outputs.version }}
 
       - name: Setup Namespace Cache
-        uses: namespacelabs/nscloud-cache-action@446d8f390563cd54ca27e8de5bdb816f63c0b706  # v1
+        uses: namespacelabs/nscloud-cache-action@446d8f390563cd54ca27e8de5bdb816f63c0b706  # v1.2.21
         with:
           cache: rust
 
       - name: Install Benchmarking Tools
-        uses: taiki-e/install-action@60581cd7025e0e855cebd745379013e286d9c787  # v2
+        uses: taiki-e/install-action@7ea888af71a31437ad4e71c62d021b3bb2728ea9  # v2.49.3
         with:
           tool: cargo-criterion,critcmp
 
@@ -826,7 +826,7 @@ jobs:
           fi
 
       - name: Upload Regression Report
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08  # v4.6.0
         with:
           name: regression-report
           path: current/regression-results/

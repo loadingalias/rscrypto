@@ -39,13 +39,13 @@ jobs:
       base-ref: ${{ steps.rail.outputs.base-ref }}
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
           fetch-depth: 0  # Required for change detection
 
       - name: Detect Changes
         id: rail
-        uses: loadingalias/cargo-rail-action@54ed0b9922b74cb622698f8fa923231c075dadd8  # v1
+        uses: loadingalias/cargo-rail-action@6c5c295be5d51edbf8f88bfd9540acd460027f4a  # v1.0.3
         with:
           since: ${{ github.event.before }}
 
@@ -102,7 +102,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
           fetch-depth: 0  # Required for cargo rail affected (needs git history)
 
@@ -211,7 +211,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
       - name: Compute Cache Key
         id: cache
@@ -277,7 +277,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
       # Install Rust toolchain (reads version from rust-toolchain.toml)
       - name: Read Toolchain Version
@@ -296,7 +296,7 @@ jobs:
         run: rustup target add ${{ matrix.target }}
 
       - name: Setup Rust Cache
-        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5  # v2
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5  # v2.8.2
         with:
           shared-key: "rscrypto-v1"
           key: no-std-${{ matrix.target }}
@@ -352,7 +352,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
       # Install Rust toolchain (reads version from rust-toolchain.toml)
       - name: Read Toolchain Version
@@ -371,7 +371,7 @@ jobs:
         run: rustup target add ${{ matrix.target }}
 
       - name: Setup Rust Cache
-        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5  # v2
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5  # v2.8.2
         with:
           shared-key: "rscrypto-v1"
           key: wasm-${{ matrix.target }}

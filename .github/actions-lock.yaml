@@ -24,19 +24,24 @@
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 actions/checkout:
-  ref: v4
-  sha: "34e114876b0b11c390a56381ad16ebd13914f8d5"
-  updated: "2025-12-19T05:51:37Z"
+  ref: v4.2.2
+  sha: "11bd71901bbe5b1630ceea73d27597364c9af683"
+  updated: "2025-12-23T20:04:18Z"
   notes: "Repository checkout - used in every workflow"
 actions/upload-artifact:
-  ref: v4
-  sha: "ea165f8d65b6e75b540449e92b4886f43607fa02"
-  updated: "2025-12-19T05:51:38Z"
+  ref: v4.6.0
+  sha: "65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08"
+  updated: "2025-12-23T20:04:19Z"
   notes: "Upload build artifacts and test results"
+actions/download-artifact:
+  ref: v4.3.0
+  sha: "d3f86a106a0bac45b974a628896c90dbdf5c8093"
+  updated: "2025-12-23T20:04:19Z"
+  notes: "Download build artifacts"
 actions/cache:
-  ref: v4
-  sha: "0057852bfaa89a56745cba8c7296529d2fc39830"
-  updated: "2025-12-19T05:51:39Z"
+  ref: v4.2.3
+  sha: "5a3ec84eff668545956fd18022155c47e93e2684"
+  updated: "2025-12-23T20:04:20Z"
   notes: "Cache dependencies and build artifacts"
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Testing & Reporting
@@ -44,7 +49,7 @@ actions/cache:
 mikepenz/action-junit-report:
   ref: v6.0.1
   sha: "e08919a3b1fb83a78393dfb775a9c37f17d8eea6"
-  updated: "2025-12-19T05:51:40Z"
+  updated: "2025-12-23T20:04:21Z"
   notes: "Publish JUnit test reports as GitHub Checks"
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Rust Toolchain & Ecosystem
@@ -52,22 +57,22 @@ mikepenz/action-junit-report:
 dtolnay/rust-toolchain:
   ref: master
   sha: "f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561"
-  updated: "2025-12-19T05:51:41Z"
+  updated: "2025-12-23T20:04:22Z"
   notes: "Rust toolchain installation - always tracks latest nightly"
 taiki-e/install-action:
-  ref: v2
-  sha: "60581cd7025e0e855cebd745379013e286d9c787"
-  updated: "2025-12-19T05:51:42Z"
+  ref: v2.49.3
+  sha: "7ea888af71a31437ad4e71c62d021b3bb2728ea9"
+  updated: "2025-12-23T20:04:22Z"
   notes: "Install cargo tools (nextest, just, deny, audit)"
 Swatinem/rust-cache:
-  ref: v2
+  ref: v2.8.2
   sha: "779680da715d629ac1d338a641029a2f4372abb5"
-  updated: "2025-12-19T05:51:43Z"
+  updated: "2025-12-23T20:04:23Z"
   notes: "GitHub runner Rust cache"
 namespacelabs/nscloud-cache-action:
-  ref: v1
+  ref: v1.2.21
   sha: "446d8f390563cd54ca27e8de5bdb816f63c0b706"
-  updated: "2025-12-19T05:51:44Z"
+  updated: "2025-12-23T20:04:24Z"
   notes: "Namespace runner NVMe cache (instant restore)"
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Release Workflow Actions
@@ -75,15 +80,15 @@ namespacelabs/nscloud-cache-action:
 taiki-e/create-gh-release-action:
   ref: v1.8.4
   sha: "b7abb0cf5e72cb5500307b577f9ca3fd4c5be9d2"
-  updated: "2025-12-19T05:51:45Z"
+  updated: "2025-12-23T20:04:24Z"
   notes: "Create GitHub releases from CHANGELOG.md"
 taiki-e/setup-cross-toolchain-action:
   ref: v1.26.0
   sha: "bdeb9ca6f0f909ea36bb94e1e3ec916b2ceb35fc"
-  updated: "2025-12-19T05:51:46Z"
+  updated: "2025-12-23T20:04:25Z"
   notes: "Cross-compilation toolchain setup for multi-target builds"
 taiki-e/upload-rust-binary-action:
   ref: v1.24.0
   sha: "e7953b6078194a4ae5f5619632e3715db6275561"
-  updated: "2025-12-19T05:51:47Z"
+  updated: "2025-12-23T20:04:26Z"
   notes: "Build and upload pre-built binaries to GitHub Releases"
