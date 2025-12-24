@@ -326,6 +326,9 @@ pub(crate) const CRC64_NVME_STREAM: Crc64StreamConstants = Crc64StreamConstants:
 ///
 /// The CRC-32 CLMUL algorithm uses 64-byte blocks (4×16B lanes) and requires
 /// additional reduction steps compared to CRC-64.
+///
+/// For VPCLMULQDQ (AVX-512), we use 128-byte blocks (8×16B lanes = 2×__m512i)
+/// with multi-stream ILP optimizations.
 #[derive(Clone, Copy, Debug)]
 #[allow(dead_code)]
 pub(crate) struct Crc32ClmulConstants {
@@ -335,6 +338,8 @@ pub(crate) struct Crc32ClmulConstants {
   pub mu: u64,
   /// 64B block folding coefficient (K_511, K_575).
   pub fold_64b: (u64, u64),
+  /// 128B block folding coefficient (K_1023, K_1087) for VPCLMUL.
+  pub fold_128b: (u64, u64),
   /// 16B folding coefficient (K_127, K_191) for lane reduction.
   pub fold_16b: (u64, u64),
   /// 128→96 bit reduction constant (K_95).
@@ -484,6 +489,8 @@ impl Crc32ClmulConstants {
       mu,
       // 64B block: fold by 64 bytes = 512 bits
       fold_64b: (fold_k_32(normal, 511), fold_k_32(normal, 575)),
+      // 128B block: fold by 128 bytes = 1024 bits (for VPCLMUL)
+      fold_128b: (fold_k_32(normal, 1023), fold_k_32(normal, 1087)),
       // 16B lane: fold by 16 bytes = 128 bits
       fold_16b: (fold_k_32(normal, 127), fold_k_32(normal, 191)),
       // 128→96 bits: K_95

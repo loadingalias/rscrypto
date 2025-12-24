@@ -532,19 +532,289 @@ pub fn crc32_ieee_pclmul_safe(crc: u32, data: &[u8]) -> u32 {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// VPCLMUL Stubs (AVX-512)
+// VPCLMULQDQ (AVX-512) Implementation
 // ─────────────────────────────────────────────────────────────────────────────
+//
+// Uses AVX-512 VPCLMULQDQ for 4-way parallel carryless multiply with VPTERNLOGD
+// for fused 3-way XOR operations. Processes 128-byte blocks (8×16B lanes).
+//
+// Performance target: ~35-60 GB/s on modern CPUs (Ice Lake+, Zen 4+).
 
-/// VPCLMULQDQ CRC32C (placeholder - uses fusion for now).
+use crate::common::clmul::{CRC32_IEEE_CLMUL, CRC32C_CLMUL};
+
+/// Broadcast 128-bit fold coefficient across 4 lanes of a 512-bit vector.
+///
+/// For CRC-32, the coefficient pair is (K_high, K_low) stored as 64-bit values
+/// but only the low 32 bits are meaningful. VPCLMULQDQ operates on 128-bit lanes.
 #[inline]
-pub fn crc32c_vpclmul_safe(crc: u32, data: &[u8]) -> u32 {
-  crc32c_pclmul_safe(crc, data)
+#[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
+unsafe fn vpclmul_coeff_32(pair: (u64, u64)) -> __m512i {
+  _mm512_set_epi64(
+    pair.0 as i64,
+    pair.1 as i64,
+    pair.0 as i64,
+    pair.1 as i64,
+    pair.0 as i64,
+    pair.1 as i64,
+    pair.0 as i64,
+    pair.1 as i64,
+  )
 }
 
-/// VPCLMULQDQ CRC32-IEEE (placeholder - uses PCLMUL for now).
+/// Fold and XOR using VPTERNLOGD (3-way XOR in one instruction).
+///
+/// Computes: `data ^ clmul_hi(x, coeff) ^ clmul_lo(x, coeff)`
+#[inline]
+#[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
+unsafe fn fold16_4x_ternlog_32(x: __m512i, data: __m512i, coeff: __m512i) -> __m512i {
+  let h = _mm512_clmulepi64_epi128::<0x11>(x, coeff);
+  let l = _mm512_clmulepi64_epi128::<0x00>(x, coeff);
+  // VPTERNLOGD: 3-way XOR (imm8 = 0x96 = a ^ b ^ c)
+  _mm512_ternarylogic_epi64::<0x96>(data, h, l)
+}
+
+/// Fold without data XOR (for lane reduction).
+#[allow(dead_code)]
+#[inline]
+#[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
+unsafe fn fold16_4x_32(x: __m512i, coeff: __m512i) -> __m512i {
+  let h = _mm512_clmulepi64_epi128::<0x11>(x, coeff);
+  let l = _mm512_clmulepi64_epi128::<0x00>(x, coeff);
+  _mm512_xor_si512(h, l)
+}
+
+/// Extract 8×16B lanes from two 512-bit vectors.
+#[inline]
+#[target_feature(enable = "avx512f")]
+unsafe fn extract_lanes_512(x0: __m512i, x1: __m512i) -> [__m128i; 8] {
+  [
+    _mm512_extracti32x4_epi32::<0>(x0),
+    _mm512_extracti32x4_epi32::<1>(x0),
+    _mm512_extracti32x4_epi32::<2>(x0),
+    _mm512_extracti32x4_epi32::<3>(x0),
+    _mm512_extracti32x4_epi32::<0>(x1),
+    _mm512_extracti32x4_epi32::<1>(x1),
+    _mm512_extracti32x4_epi32::<2>(x1),
+    _mm512_extracti32x4_epi32::<3>(x1),
+  ]
+}
+
+/// Fold one 128-bit lane into accumulator using a fold constant.
+#[inline]
+#[target_feature(enable = "pclmulqdq", enable = "sse4.1")]
+unsafe fn fold_lane(acc: __m128i, next: __m128i, k: __m128i) -> __m128i {
+  // SAFETY: target_feature ensures PCLMULQDQ and SSE4.1 are available.
+  unsafe {
+    let lo = clmul_lo(acc, k);
+    let hi = clmul_hi(acc, k);
+    _mm_xor_si128(_mm_xor_si128(lo, hi), next)
+  }
+}
+
+/// Reduce 8×16B lanes to a single 128-bit value using a fold constant.
+#[inline]
+#[target_feature(enable = "pclmulqdq", enable = "sse4.1")]
+unsafe fn reduce_8_lanes(lanes: [__m128i; 8], k: __m128i) -> __m128i {
+  // SAFETY: target_feature ensures PCLMULQDQ and SSE4.1 are available.
+  // fold_lane has the same target_feature requirements.
+  unsafe {
+    // Fold lanes[0..8] → single lane
+    let mut acc = fold_lane(lanes[0], lanes[1], k);
+    acc = fold_lane(acc, lanes[2], k);
+    acc = fold_lane(acc, lanes[3], k);
+    acc = fold_lane(acc, lanes[4], k);
+    acc = fold_lane(acc, lanes[5], k);
+    acc = fold_lane(acc, lanes[6], k);
+    fold_lane(acc, lanes[7], k)
+  }
+}
+
+/// CRC32-IEEE using VPCLMULQDQ with 128-byte blocks.
+///
+/// # Safety
+///
+/// Caller must ensure AVX-512F, AVX-512VL, AVX-512BW, and VPCLMULQDQ are available.
+#[target_feature(
+  enable = "avx512f",
+  enable = "avx512vl",
+  enable = "avx512bw",
+  enable = "vpclmulqdq",
+  enable = "pclmulqdq",
+  enable = "sse4.1"
+)]
+pub unsafe fn crc32_ieee_vpclmul(crc: u32, data: &[u8]) -> u32 {
+  // SAFETY: All operations require the target features enabled by #[target_feature].
+  // Caller guarantees AVX-512F, AVX-512VL, AVX-512BW, VPCLMULQDQ, PCLMULQDQ, SSE4.1.
+  unsafe {
+    const BLOCK_SIZE: usize = 128;
+
+    // Fall back to PCLMUL for small buffers
+    if data.len() < BLOCK_SIZE {
+      return crc32_ieee_pclmul(crc, data);
+    }
+
+    let consts = &CRC32_IEEE_CLMUL;
+    let mut ptr = data.as_ptr();
+    let end = ptr.add(data.len());
+
+    // Load first 128 bytes (2×__m512i = 8×16B lanes)
+    let mut x0 = _mm512_loadu_si512(ptr.cast::<__m512i>());
+    let mut x1 = _mm512_loadu_si512(ptr.add(64).cast::<__m512i>());
+    ptr = ptr.add(BLOCK_SIZE);
+
+    // XOR initial CRC into lane 0
+    let crc_mask = _mm512_set_epi32(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, crc as i32);
+    x0 = _mm512_xor_si512(x0, crc_mask);
+
+    // Broadcast 128B fold coefficient
+    let coeff_128b = vpclmul_coeff_32(consts.fold_128b);
+
+    // Main loop: process 128-byte blocks
+    while ptr.add(BLOCK_SIZE) <= end {
+      let y0 = _mm512_loadu_si512(ptr.cast::<__m512i>());
+      let y1 = _mm512_loadu_si512(ptr.add(64).cast::<__m512i>());
+      ptr = ptr.add(BLOCK_SIZE);
+
+      x0 = fold16_4x_ternlog_32(x0, y0, coeff_128b);
+      x1 = fold16_4x_ternlog_32(x1, y1, coeff_128b);
+    }
+
+    // Extract 8 lanes and reduce to single 128-bit value
+    let lanes = extract_lanes_512(x0, x1);
+    let k3k4 = _mm_set_epi64x(crc32_ieee_constants::K4 as i64, crc32_ieee_constants::K3 as i64);
+    let mut acc = reduce_8_lanes(lanes, k3k4);
+
+    // Process remaining 16-byte blocks
+    while ptr.add(16) <= end {
+      let block = _mm_loadu_si128(ptr.cast::<__m128i>());
+      ptr = ptr.add(16);
+      acc = fold_lane(acc, block, k3k4);
+    }
+
+    // Barrett reduction: 128→32 bits
+    let result = barrett_reduce_ieee(acc, k3k4);
+
+    // Handle remaining bytes with portable
+    let remainder_len = end.offset_from(ptr) as usize;
+    if remainder_len > 0 {
+      crc32_ieee_slice16(result, core::slice::from_raw_parts(ptr, remainder_len))
+    } else {
+      result
+    }
+  }
+}
+
+/// Safe wrapper for CRC32-IEEE VPCLMUL.
 #[inline]
 pub fn crc32_ieee_vpclmul_safe(crc: u32, data: &[u8]) -> u32 {
-  crc32_ieee_pclmul_safe(crc, data)
+  // SAFETY: Dispatcher verifies VPCLMUL_READY before selecting this kernel.
+  unsafe { crc32_ieee_vpclmul(crc, data) }
+}
+
+/// CRC32C using VPCLMULQDQ with 128-byte blocks.
+///
+/// Uses the same VPCLMUL folding as IEEE but leverages SSE4.2 CRC32C
+/// instruction for final reduction (faster than Barrett).
+///
+/// # Safety
+///
+/// Caller must ensure AVX-512F, AVX-512VL, AVX-512BW, VPCLMULQDQ, and SSE4.2 are available.
+#[target_feature(
+  enable = "avx512f",
+  enable = "avx512vl",
+  enable = "avx512bw",
+  enable = "vpclmulqdq",
+  enable = "pclmulqdq",
+  enable = "sse4.2"
+)]
+pub unsafe fn crc32c_vpclmul(crc: u32, data: &[u8]) -> u32 {
+  // SAFETY: All operations require the target features enabled by #[target_feature].
+  // Caller guarantees AVX-512F, AVX-512VL, AVX-512BW, VPCLMULQDQ, PCLMULQDQ, SSE4.2.
+  unsafe {
+    const BLOCK_SIZE: usize = 128;
+
+    // Fall back to fusion for small buffers (fusion is faster for < 128 bytes)
+    if data.len() < BLOCK_SIZE {
+      return crc32c_fusion(crc, data);
+    }
+
+    let consts = &CRC32C_CLMUL;
+    let mut ptr = data.as_ptr();
+    let end = ptr.add(data.len());
+
+    // Load first 128 bytes (2×__m512i = 8×16B lanes)
+    let mut x0 = _mm512_loadu_si512(ptr.cast::<__m512i>());
+    let mut x1 = _mm512_loadu_si512(ptr.add(64).cast::<__m512i>());
+    ptr = ptr.add(BLOCK_SIZE);
+
+    // XOR initial CRC into lane 0
+    let crc_mask = _mm512_set_epi32(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, crc as i32);
+    x0 = _mm512_xor_si512(x0, crc_mask);
+
+    // Broadcast 128B fold coefficient
+    let coeff_128b = vpclmul_coeff_32(consts.fold_128b);
+
+    // Main loop: process 128-byte blocks
+    while ptr.add(BLOCK_SIZE) <= end {
+      let y0 = _mm512_loadu_si512(ptr.cast::<__m512i>());
+      let y1 = _mm512_loadu_si512(ptr.add(64).cast::<__m512i>());
+      ptr = ptr.add(BLOCK_SIZE);
+
+      x0 = fold16_4x_ternlog_32(x0, y0, coeff_128b);
+      x1 = fold16_4x_ternlog_32(x1, y1, coeff_128b);
+    }
+
+    // Extract 8 lanes and reduce using 16B fold constant
+    let lanes = extract_lanes_512(x0, x1);
+    let k16 = _mm_setr_epi32(
+      crc32c_constants::FOLD_16.0 as i32,
+      0,
+      crc32c_constants::FOLD_16.1 as i32,
+      0,
+    );
+
+    // Reduce 8 lanes → 1 lane
+    let mut acc = reduce_8_lanes(lanes, k16);
+
+    // Process remaining 16-byte blocks
+    while ptr.add(16) <= end {
+      let block = _mm_loadu_si128(ptr.cast::<__m128i>());
+      ptr = ptr.add(16);
+      acc = fold_lane(acc, block, k16);
+    }
+
+    // Final reduction: 128→32 bits using SSE4.2 CRC32C instruction
+    // First reduce 128→64 using REDUCE_64 constant
+    let k64 = _mm_setr_epi32(
+      crc32c_constants::REDUCE_64.0 as i32,
+      0,
+      crc32c_constants::REDUCE_64.1 as i32,
+      0,
+    );
+
+    let lo = clmul_lo(acc, k64);
+    let hi = clmul_hi(acc, k64);
+    acc = _mm_xor_si128(lo, hi);
+
+    // Extract 64-bit value and use SSE4.2 CRC32C for final reduction
+    let val64 = extract_epi64(acc, 0);
+    let mut result = crc32c_u64(0, val64);
+
+    // Handle remaining bytes with SSE4.2
+    while ptr < end {
+      result = _mm_crc32_u8(result, *ptr);
+      ptr = ptr.add(1);
+    }
+
+    result
+  }
+}
+
+/// Safe wrapper for CRC32C VPCLMUL.
+#[inline]
+pub fn crc32c_vpclmul_safe(crc: u32, data: &[u8]) -> u32 {
+  // SAFETY: Dispatcher verifies VPCLMUL_READY before selecting this kernel.
+  unsafe { crc32c_vpclmul(crc, data) }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -687,5 +957,198 @@ mod tests {
     let pclmul = crc32_ieee_pclmul_safe(!0, &data) ^ !0;
 
     assert_eq!(portable, pclmul, "CRC32-IEEE mismatch on 1 MiB");
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // VPCLMULQDQ (AVX-512) Tests
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /// Helper to detect VPCLMUL capability.
+  fn has_vpclmul() -> bool {
+    std::is_x86_feature_detected!("avx512f")
+      && std::is_x86_feature_detected!("avx512vl")
+      && std::is_x86_feature_detected!("avx512bw")
+      && std::is_x86_feature_detected!("vpclmulqdq")
+      && std::is_x86_feature_detected!("pclmulqdq")
+  }
+
+  #[test]
+  fn test_crc32_ieee_vpclmul_vs_portable() {
+    if !has_vpclmul() {
+      eprintln!("Skipping VPCLMUL test: AVX-512 VPCLMULQDQ not available");
+      return;
+    }
+
+    // Test various buffer sizes around block boundaries
+    for len in [128, 144, 192, 256, 384, 512, 640, 768, 896, 1024, 2048, 4096, 8192] {
+      let data: Vec<u8> = (0..len).map(|i| i as u8).collect();
+
+      let portable = crc32_ieee_slice16(!0, &data) ^ !0;
+      let vpclmul = crc32_ieee_vpclmul_safe(!0, &data) ^ !0;
+
+      assert_eq!(portable, vpclmul, "CRC32-IEEE VPCLMUL mismatch at length {len}");
+    }
+  }
+
+  #[test]
+  fn test_crc32_ieee_vpclmul_vs_pclmul() {
+    if !has_vpclmul() {
+      eprintln!("Skipping VPCLMUL test: AVX-512 VPCLMULQDQ not available");
+      return;
+    }
+
+    for len in [128, 256, 512, 1024, 4096, 16384] {
+      let data: Vec<u8> = (0..len).map(|i| i as u8).collect();
+
+      let pclmul = crc32_ieee_pclmul_safe(!0, &data) ^ !0;
+      let vpclmul = crc32_ieee_vpclmul_safe(!0, &data) ^ !0;
+
+      assert_eq!(pclmul, vpclmul, "CRC32-IEEE VPCLMUL vs PCLMUL mismatch at length {len}");
+    }
+  }
+
+  #[test]
+  fn test_crc32_ieee_vpclmul_large() {
+    if !has_vpclmul() {
+      eprintln!("Skipping VPCLMUL test: AVX-512 VPCLMULQDQ not available");
+      return;
+    }
+
+    // Test with 1 MiB
+    let data: Vec<u8> = (0..1048576u32).map(|i| i as u8).collect();
+
+    let portable = crc32_ieee_slice16(!0, &data) ^ !0;
+    let vpclmul = crc32_ieee_vpclmul_safe(!0, &data) ^ !0;
+
+    assert_eq!(portable, vpclmul, "CRC32-IEEE VPCLMUL mismatch on 1 MiB");
+  }
+
+  #[test]
+  fn test_crc32c_vpclmul_vs_portable() {
+    if !has_vpclmul() || !std::is_x86_feature_detected!("sse4.2") {
+      eprintln!("Skipping VPCLMUL test: AVX-512 VPCLMULQDQ or SSE4.2 not available");
+      return;
+    }
+
+    // Test various buffer sizes around block boundaries
+    for len in [128, 144, 192, 256, 384, 512, 640, 768, 896, 1024, 2048, 4096, 8192] {
+      let data: Vec<u8> = (0..len).map(|i| i as u8).collect();
+
+      let portable = crc32c_slice16(!0, &data) ^ !0;
+      let vpclmul = crc32c_vpclmul_safe(!0, &data) ^ !0;
+
+      assert_eq!(portable, vpclmul, "CRC32C VPCLMUL mismatch at length {len}");
+    }
+  }
+
+  #[test]
+  fn test_crc32c_vpclmul_vs_sse42() {
+    if !has_vpclmul() || !std::is_x86_feature_detected!("sse4.2") {
+      eprintln!("Skipping VPCLMUL test: AVX-512 VPCLMULQDQ or SSE4.2 not available");
+      return;
+    }
+
+    for len in [128, 256, 512, 1024, 4096, 16384] {
+      let data: Vec<u8> = (0..len).map(|i| i as u8).collect();
+
+      let sse42 = crc32c_sse42_safe(!0, &data) ^ !0;
+      let vpclmul = crc32c_vpclmul_safe(!0, &data) ^ !0;
+
+      assert_eq!(sse42, vpclmul, "CRC32C VPCLMUL vs SSE4.2 mismatch at length {len}");
+    }
+  }
+
+  #[test]
+  fn test_crc32c_vpclmul_vs_fusion() {
+    if !has_vpclmul() || !std::is_x86_feature_detected!("sse4.2") {
+      eprintln!("Skipping VPCLMUL test: AVX-512 VPCLMULQDQ or SSE4.2 not available");
+      return;
+    }
+
+    for len in [128, 256, 512, 1024, 4096, 16384] {
+      let data: Vec<u8> = (0..len).map(|i| i as u8).collect();
+
+      let fusion = crc32c_pclmul_safe(!0, &data) ^ !0;
+      let vpclmul = crc32c_vpclmul_safe(!0, &data) ^ !0;
+
+      assert_eq!(fusion, vpclmul, "CRC32C VPCLMUL vs fusion mismatch at length {len}");
+    }
+  }
+
+  #[test]
+  fn test_crc32c_vpclmul_large() {
+    if !has_vpclmul() || !std::is_x86_feature_detected!("sse4.2") {
+      eprintln!("Skipping VPCLMUL test: AVX-512 VPCLMULQDQ or SSE4.2 not available");
+      return;
+    }
+
+    // Test with 1 MiB
+    let data: Vec<u8> = (0..1048576u32).map(|i| i as u8).collect();
+
+    let portable = crc32c_slice16(!0, &data) ^ !0;
+    let vpclmul = crc32c_vpclmul_safe(!0, &data) ^ !0;
+
+    assert_eq!(portable, vpclmul, "CRC32C VPCLMUL mismatch on 1 MiB");
+  }
+
+  #[test]
+  fn test_crc32_ieee_vpclmul_check_value() {
+    if !has_vpclmul() {
+      eprintln!("Skipping VPCLMUL test: AVX-512 VPCLMULQDQ not available");
+      return;
+    }
+
+    // Need >= 128 bytes for VPCLMUL, so pad the check data
+    let mut data = Vec::with_capacity(256);
+    data.extend_from_slice(b"123456789");
+    data.resize(256, 0);
+
+    // Compute expected with portable
+    let expected = crc32_ieee_slice16(!0, &data) ^ !0;
+    let vpclmul = crc32_ieee_vpclmul_safe(!0, &data) ^ !0;
+
+    assert_eq!(expected, vpclmul, "CRC32-IEEE VPCLMUL check value mismatch");
+  }
+
+  #[test]
+  fn test_crc32c_vpclmul_check_value() {
+    if !has_vpclmul() || !std::is_x86_feature_detected!("sse4.2") {
+      eprintln!("Skipping VPCLMUL test: AVX-512 VPCLMULQDQ or SSE4.2 not available");
+      return;
+    }
+
+    // Need >= 128 bytes for VPCLMUL, so pad the check data
+    let mut data = Vec::with_capacity(256);
+    data.extend_from_slice(b"123456789");
+    data.resize(256, 0);
+
+    // Compute expected with portable
+    let expected = crc32c_slice16(!0, &data) ^ !0;
+    let vpclmul = crc32c_vpclmul_safe(!0, &data) ^ !0;
+
+    assert_eq!(expected, vpclmul, "CRC32C VPCLMUL check value mismatch");
+  }
+
+  #[test]
+  fn test_crc32_vpclmul_boundary_lengths() {
+    if !has_vpclmul() || !std::is_x86_feature_detected!("sse4.2") {
+      eprintln!("Skipping VPCLMUL boundary test: features not available");
+      return;
+    }
+
+    // Test exact block boundaries and off-by-one cases
+    for len in [127, 128, 129, 143, 144, 145, 255, 256, 257, 383, 384, 385] {
+      let data: Vec<u8> = (0..len).map(|i| i as u8).collect();
+
+      // CRC32-IEEE
+      let ieee_portable = crc32_ieee_slice16(!0, &data) ^ !0;
+      let ieee_vpclmul = crc32_ieee_vpclmul_safe(!0, &data) ^ !0;
+      assert_eq!(ieee_portable, ieee_vpclmul, "CRC32-IEEE boundary mismatch at {len}");
+
+      // CRC32C
+      let c_portable = crc32c_slice16(!0, &data) ^ !0;
+      let c_vpclmul = crc32c_vpclmul_safe(!0, &data) ^ !0;
+      assert_eq!(c_portable, c_vpclmul, "CRC32C boundary mismatch at {len}");
+    }
   }
 }
