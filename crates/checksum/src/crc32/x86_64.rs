@@ -41,17 +41,24 @@ mod crc32c_constants {
   pub const REDUCE_64: (u32, u32) = (0x3da6d0cb, 0xba4fc28e);
 }
 
-/// CRC32-IEEE (ISO-HDLC) Barrett reduction constants.
+/// CRC32-IEEE (ISO-HDLC) CLMUL folding and Barrett reduction constants.
 /// These are used for pure CLMUL reduction since x86 has no IEEE HW instruction.
+///
+/// Constants from crc32fast (MIT licensed, same as Intel paper constants):
+/// - K1/K2: 64-byte (512-bit) folding
+/// - K3/K4: 16-byte (128-bit) folding
+/// - MU/POLY: Barrett reduction
+///
+/// These are 33-bit values with bit 32 set, as required by the Intel algorithm.
 mod crc32_ieee_constants {
-  /// 128-byte block folding (x^1024+64 mod P, x^1024 mod P).
-  pub const FOLD_128: (u64, u64) = (0x00000001_54442bd4, 0x00000001_c6e41596);
-  /// 16-byte lane folding (x^128+64 mod P, x^128 mod P).
-  pub const FOLD_16: (u64, u64) = (0x0000_0000_1519_97d0, 0x0000_0000_ccaa_009e);
-  /// Barrett reduction: k3 (x^64 mod P), k4 (x^32 mod P).
-  pub const K3_K4: (u64, u64) = (0x00000001_f7011641, 0x00000000_db710641);
-  /// Barrett: µ (floor(x^64/P) with bit 32 set), P' (polynomial).
-  pub const MU_POLY: (u64, u64) = (0x00000001_00000001, 0x00000001_db710641);
+  /// 64-byte block folding: (K1, K2) for 512-bit fold.
+  pub const FOLD_64: (u64, u64) = (0x0000_0001_5444_2bd4, 0x0000_0001_c6e4_1596);
+
+  /// 16-byte lane folding: (K3, K4) for 128-bit fold.
+  pub const FOLD_16: (u64, u64) = (0x0000_0001_7519_97d0, 0x0000_0000_ccaa_009e);
+
+  /// Barrett reduction: (µ, P').
+  pub const MU_POLY: (u64, u64) = (0x0000_0001_F701_1641, 0x0000_0001_DB71_0641);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -396,28 +403,31 @@ pub fn crc32c_pclmul_safe(crc: u32, data: &[u8]) -> u32 {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Barrett reduction from 128 bits to 32 bits for CRC32-IEEE.
+///
+/// Algorithm based on Intel's "Fast CRC Computation" paper.
+/// Uses K3/K4 for 128→64→32 reduction, then Barrett for final step.
 #[target_feature(enable = "pclmulqdq", enable = "sse4.1")]
 unsafe fn barrett_reduce_ieee(acc: __m128i) -> u32 {
   // SAFETY: target_feature ensures PCLMULQDQ and SSE4.1 availability
   let k3_k4 = _mm_set_epi64x(
-    crc32_ieee_constants::K3_K4.1 as i64,
-    crc32_ieee_constants::K3_K4.0 as i64,
+    crc32_ieee_constants::FOLD_16.1 as i64, // K4
+    crc32_ieee_constants::FOLD_16.0 as i64, // K3
   );
   let mu_poly = _mm_set_epi64x(
-    crc32_ieee_constants::MU_POLY.1 as i64,
-    crc32_ieee_constants::MU_POLY.0 as i64,
+    crc32_ieee_constants::MU_POLY.1 as i64, // POLY
+    crc32_ieee_constants::MU_POLY.0 as i64, // MU
   );
 
-  // Fold 128→64 bits using k3
-  let t1 = _mm_clmulepi64_si128(acc, k3_k4, 0x10);
+  // Fold 128→64 bits: multiply high 64 bits by K3, XOR with low 64 bits
+  let t1 = _mm_clmulepi64_si128(acc, k3_k4, 0x10); // acc.hi × K3
   let t2 = _mm_xor_si128(t1, _mm_srli_si128(acc, 8));
   let t3 = _mm_xor_si128(t2, _mm_slli_si128(acc, 8));
 
-  // Fold 64→32 using k4
-  let t4 = _mm_clmulepi64_si128(t3, k3_k4, 0x01);
+  // Fold 64→32 bits: multiply bits [63:32] by K4
+  let t4 = _mm_clmulepi64_si128(t3, k3_k4, 0x01); // t3.lo × K4
   let t5 = _mm_xor_si128(t4, t3);
 
-  // Barrett reduction
+  // Barrett reduction: 64→32 bits
   let t6 = _mm_clmulepi64_si128(_mm_and_si128(t5, _mm_set_epi32(0, 0, !0, !0)), mu_poly, 0x00);
   let t7 = _mm_clmulepi64_si128(t6, mu_poly, 0x10);
   let result = _mm_xor_si128(t5, t7);
@@ -447,9 +457,9 @@ pub unsafe fn crc32_ieee_pclmul(mut crc: u32, data: &[u8]) -> u32 {
       crc32_ieee_constants::FOLD_16.1 as i64,
       crc32_ieee_constants::FOLD_16.0 as i64,
     );
-    let fold_128_k = _mm_set_epi64x(
-      crc32_ieee_constants::FOLD_128.1 as i64,
-      crc32_ieee_constants::FOLD_128.0 as i64,
+    let fold_64_k = _mm_set_epi64x(
+      crc32_ieee_constants::FOLD_64.1 as i64,
+      crc32_ieee_constants::FOLD_64.0 as i64,
     );
 
     // Initialize 4 lanes with first 64 bytes
@@ -466,8 +476,8 @@ pub unsafe fn crc32_ieee_pclmul(mut crc: u32, data: &[u8]) -> u32 {
     while ptr.add(FOLD_BYTES) <= end {
       for (i, lane) in lanes.iter_mut().enumerate() {
         let new_data = _mm_loadu_si128(ptr.add(i * 16) as *const __m128i);
-        let lo = clmul_lo(*lane, fold_128_k);
-        let hi = clmul_hi(*lane, fold_128_k);
+        let lo = clmul_lo(*lane, fold_64_k);
+        let hi = clmul_hi(*lane, fold_64_k);
         *lane = _mm_xor_si128(_mm_xor_si128(lo, hi), new_data);
       }
       ptr = ptr.add(FOLD_BYTES);
