@@ -1,9 +1,10 @@
 //! Portable CRC-64 implementation (slice-by-8 and slice-by-16).
-
-// SAFETY: chunks_exact(8) guarantees 8-byte chunks; table indices use `& 0xFF` (0..255).
-#![allow(clippy::indexing_slicing)]
+//!
+//! This module provides polynomial-specific wrappers around the generic
+//! slice-by-N implementations in [`crate::common::portable`].
 
 use super::kernel_tables;
+use crate::common::portable;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Polynomial-specific wrappers
@@ -36,7 +37,7 @@ pub fn crc64_slice16_nvme(crc: u64, data: &[u8]) -> u64 {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Generic slice-by-8
+// Generic slice-by-8/16 (delegating to common::portable)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Update CRC-64 state using slice-by-8 algorithm.
@@ -48,36 +49,9 @@ pub fn crc64_slice16_nvme(crc: u64, data: &[u8]) -> u64 {
 /// * `tables` - 8 lookup tables (256 entries each)
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
 #[inline]
-pub fn crc64_slice8(mut crc: u64, data: &[u8], tables: &[[u64; 256]; 8]) -> u64 {
-  let (chunks, remainder) = data.as_chunks::<8>();
-
-  for chunk in chunks {
-    // Read 8 bytes as u64 (little-endian) and XOR with current CRC.
-    let val = u64::from_le_bytes(*chunk) ^ crc;
-
-    // Lookup all 8 bytes using 8 different tables.
-    crc = tables[7][(val & 0xFF) as usize]
-      ^ tables[6][((val >> 8) & 0xFF) as usize]
-      ^ tables[5][((val >> 16) & 0xFF) as usize]
-      ^ tables[4][((val >> 24) & 0xFF) as usize]
-      ^ tables[3][((val >> 32) & 0xFF) as usize]
-      ^ tables[2][((val >> 40) & 0xFF) as usize]
-      ^ tables[1][((val >> 48) & 0xFF) as usize]
-      ^ tables[0][(val >> 56) as usize];
-  }
-
-  // Process remaining bytes (0-7) with byte-at-a-time.
-  for &byte in remainder {
-    let index = ((crc ^ (byte as u64)) & 0xFF) as usize;
-    crc = tables[0][index] ^ (crc >> 8);
-  }
-
-  crc
+pub fn crc64_slice8(crc: u64, data: &[u8], tables: &[[u64; 256]; 8]) -> u64 {
+  portable::slice8_64(crc, data, tables)
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Generic slice-by-16
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Update CRC-64 state using slice-by-16 algorithm.
 ///
@@ -87,52 +61,8 @@ pub fn crc64_slice8(mut crc: u64, data: &[u8], tables: &[[u64; 256]; 8]) -> u64 
 /// * `data` - Input data
 /// * `tables` - 16 lookup tables (256 entries each)
 #[inline]
-pub fn crc64_slice16(mut crc: u64, data: &[u8], tables: &[[u64; 256]; 16]) -> u64 {
-  let (chunks8, remainder) = data.as_chunks::<8>();
-  let mut pairs = chunks8.chunks_exact(2);
-
-  for pair in pairs.by_ref() {
-    let a = u64::from_le_bytes(pair[0]) ^ crc;
-    let b = u64::from_le_bytes(pair[1]);
-
-    crc = tables[15][(a & 0xFF) as usize]
-      ^ tables[14][((a >> 8) & 0xFF) as usize]
-      ^ tables[13][((a >> 16) & 0xFF) as usize]
-      ^ tables[12][((a >> 24) & 0xFF) as usize]
-      ^ tables[11][((a >> 32) & 0xFF) as usize]
-      ^ tables[10][((a >> 40) & 0xFF) as usize]
-      ^ tables[9][((a >> 48) & 0xFF) as usize]
-      ^ tables[8][(a >> 56) as usize]
-      ^ tables[7][(b & 0xFF) as usize]
-      ^ tables[6][((b >> 8) & 0xFF) as usize]
-      ^ tables[5][((b >> 16) & 0xFF) as usize]
-      ^ tables[4][((b >> 24) & 0xFF) as usize]
-      ^ tables[3][((b >> 32) & 0xFF) as usize]
-      ^ tables[2][((b >> 40) & 0xFF) as usize]
-      ^ tables[1][((b >> 48) & 0xFF) as usize]
-      ^ tables[0][(b >> 56) as usize];
-  }
-
-  // Handle an odd 8-byte tail (16-byte chunks_exact remainder).
-  if let [chunk] = pairs.remainder() {
-    let val = u64::from_le_bytes(*chunk) ^ crc;
-    crc = tables[7][(val & 0xFF) as usize]
-      ^ tables[6][((val >> 8) & 0xFF) as usize]
-      ^ tables[5][((val >> 16) & 0xFF) as usize]
-      ^ tables[4][((val >> 24) & 0xFF) as usize]
-      ^ tables[3][((val >> 32) & 0xFF) as usize]
-      ^ tables[2][((val >> 40) & 0xFF) as usize]
-      ^ tables[1][((val >> 48) & 0xFF) as usize]
-      ^ tables[0][(val >> 56) as usize];
-  }
-
-  // Process remaining bytes (< 8) with byte-at-a-time.
-  for &byte in remainder {
-    let index = ((crc ^ (byte as u64)) & 0xFF) as usize;
-    crc = tables[0][index] ^ (crc >> 8);
-  }
-
-  crc
+pub fn crc64_slice16(crc: u64, data: &[u8], tables: &[[u64; 256]; 16]) -> u64 {
+  portable::slice16_64(crc, data, tables)
 }
 
 #[cfg(test)]

@@ -13,6 +13,7 @@
 //! - riscv64: ZVBC (RVV vector CLMUL) / Zbc folding
 
 pub(crate) mod config;
+mod kernels;
 mod portable;
 mod tuned_defaults;
 
@@ -53,314 +54,240 @@ use crate::{
 pub(crate) fn crc64_selected_kernel_name(len: usize) -> &'static str {
   #[cfg(target_arch = "x86_64")]
   {
+    use kernels::x86_64::*;
     let cfg = config::get();
     let caps = platform::caps();
 
     if len < CRC64_SMALL_LANE_BYTES || cfg.effective_force == Crc64Force::Portable {
-      return "portable/slice16";
+      return kernels::PORTABLE;
     }
 
+    // Handle forced backend selection
     match cfg.effective_force {
-      Crc64Force::Pclmul => {
-        if caps.has(platform::caps::x86::PCLMUL_READY) {
-          return if len < CRC64_FOLD_BLOCK_BYTES {
-            "x86_64/pclmul-small"
-          } else {
-            match x86_pclmul_streams_for_len(len, cfg.tunables.streams) {
-              7 => "x86_64/pclmul-7way",
-              4 => "x86_64/pclmul-4way",
-              2 => "x86_64/pclmul-2way",
-              _ => "x86_64/pclmul",
-            }
-          };
-        }
-        return "portable/slice16";
+      Crc64Force::Pclmul if caps.has(platform::caps::x86::PCLMUL_READY) => {
+        let streams = x86_pclmul_streams_for_len(len, cfg.tunables.streams);
+        return kernels::select_name(PCLMUL_NAMES, Some(PCLMUL_SMALL), streams, len, CRC64_FOLD_BLOCK_BYTES);
       }
-      Crc64Force::Vpclmul => {
-        if caps.has(platform::caps::x86::VPCLMUL_READY) {
-          return match x86_vpclmul_streams_for_len(len, cfg.tunables.streams) {
-            7 => "x86_64/vpclmul-7way",
-            4 => "x86_64/vpclmul-4way",
-            2 => "x86_64/vpclmul-2way",
-            _ => "x86_64/vpclmul",
-          };
-        }
-        // Fall back to PCLMUL if available.
-        if caps.has(platform::caps::x86::PCLMUL_READY) {
-          return if len < CRC64_FOLD_BLOCK_BYTES {
-            "x86_64/pclmul-small"
-          } else {
-            match x86_pclmul_streams_for_len(len, cfg.tunables.streams) {
-              7 => "x86_64/pclmul-7way",
-              4 => "x86_64/pclmul-4way",
-              2 => "x86_64/pclmul-2way",
-              _ => "x86_64/pclmul",
-            }
-          };
-        }
-        return "portable/slice16";
+      Crc64Force::Pclmul => return kernels::PORTABLE,
+      Crc64Force::Vpclmul if caps.has(platform::caps::x86::VPCLMUL_READY) => {
+        let streams = x86_vpclmul_streams_for_len(len, cfg.tunables.streams);
+        return kernels::select_name(VPCLMUL_NAMES, None, streams, len, CRC64_FOLD_BLOCK_BYTES);
       }
+      Crc64Force::Vpclmul if caps.has(platform::caps::x86::PCLMUL_READY) => {
+        // Fall back to PCLMUL if VPCLMUL unavailable
+        let streams = x86_pclmul_streams_for_len(len, cfg.tunables.streams);
+        return kernels::select_name(PCLMUL_NAMES, Some(PCLMUL_SMALL), streams, len, CRC64_FOLD_BLOCK_BYTES);
+      }
+      Crc64Force::Vpclmul => return kernels::PORTABLE,
       _ => {}
     }
 
+    // Auto selection with thresholds
     if len < cfg.tunables.portable_to_clmul {
-      return "portable/slice16";
+      return kernels::PORTABLE;
     }
 
+    // VPCLMUL tier (if available and above threshold)
     if caps.has(platform::caps::x86::VPCLMUL_READY) && len >= cfg.tunables.pclmul_to_vpclmul {
-      return match x86_vpclmul_streams_for_len(len, cfg.tunables.streams) {
-        7 => "x86_64/vpclmul-7way",
-        4 => "x86_64/vpclmul-4way",
-        2 => "x86_64/vpclmul-2way",
-        _ => "x86_64/vpclmul",
-      };
+      let streams = x86_vpclmul_streams_for_len(len, cfg.tunables.streams);
+      return kernels::select_name(VPCLMUL_NAMES, None, streams, len, CRC64_FOLD_BLOCK_BYTES);
     }
 
+    // PCLMUL tier
     if caps.has(platform::caps::x86::PCLMUL_READY) {
-      return if len < CRC64_FOLD_BLOCK_BYTES {
-        "x86_64/pclmul-small"
-      } else {
-        match x86_pclmul_streams_for_len(len, cfg.tunables.streams) {
-          7 => "x86_64/pclmul-7way",
-          4 => "x86_64/pclmul-4way",
-          2 => "x86_64/pclmul-2way",
-          _ => "x86_64/pclmul",
-        }
-      };
+      let streams = x86_pclmul_streams_for_len(len, cfg.tunables.streams);
+      return kernels::select_name(PCLMUL_NAMES, Some(PCLMUL_SMALL), streams, len, CRC64_FOLD_BLOCK_BYTES);
     }
 
+    // Fallback: VPCLMUL without PCLMUL (rare edge case)
     if caps.has(platform::caps::x86::VPCLMUL_READY) {
-      return match x86_vpclmul_streams_for_len(len, cfg.tunables.streams) {
-        7 => "x86_64/vpclmul-7way",
-        4 => "x86_64/vpclmul-4way",
-        2 => "x86_64/vpclmul-2way",
-        _ => "x86_64/vpclmul",
-      };
+      let streams = x86_vpclmul_streams_for_len(len, cfg.tunables.streams);
+      return kernels::select_name(VPCLMUL_NAMES, None, streams, len, CRC64_FOLD_BLOCK_BYTES);
     }
 
-    "portable/slice16"
+    kernels::PORTABLE
   }
 
   #[cfg(target_arch = "aarch64")]
   {
+    use kernels::aarch64::*;
     let cfg = config::get();
     let caps = platform::caps();
 
     if len < CRC64_SMALL_LANE_BYTES || cfg.effective_force == Crc64Force::Portable {
-      return "portable/slice16";
+      return kernels::PORTABLE;
     }
 
+    // Handle forced backend selection
     match cfg.effective_force {
-      Crc64Force::Pmull => {
-        if caps.has(platform::caps::aarch64::PMULL_READY) {
-          return if len < CRC64_FOLD_BLOCK_BYTES {
-            "aarch64/pmull-small"
-          } else {
-            match aarch64_pmull_streams_for_len(len, cfg.tunables.streams) {
-              3 => "aarch64/pmull-3way",
-              2 => "aarch64/pmull-2way",
-              _ => "aarch64/pmull",
-            }
-          };
-        }
-        return "portable/slice16";
+      Crc64Force::Pmull if caps.has(platform::caps::aarch64::PMULL_READY) => {
+        let streams = aarch64_pmull_streams_for_len(len, cfg.tunables.streams);
+        return kernels::select_name(PMULL_NAMES, Some(PMULL_SMALL), streams, len, CRC64_FOLD_BLOCK_BYTES);
       }
-      Crc64Force::PmullEor3 => {
-        if caps.has(platform::caps::aarch64::PMULL_EOR3_READY) {
-          return if len < CRC64_FOLD_BLOCK_BYTES {
-            "aarch64/pmull-small" // EOR3 only benefits large-buffer folding
-          } else {
-            match aarch64_pmull_streams_for_len(len, cfg.tunables.streams) {
-              3 => "aarch64/pmull-eor3-3way",
-              2 => "aarch64/pmull-eor3-2way",
-              _ => "aarch64/pmull-eor3",
-            }
-          };
-        }
-        return "portable/slice16";
+      Crc64Force::Pmull => return kernels::PORTABLE,
+      Crc64Force::PmullEor3 if caps.has(platform::caps::aarch64::PMULL_EOR3_READY) => {
+        // EOR3 uses PMULL small kernel for small buffers
+        let streams = aarch64_pmull_streams_for_len(len, cfg.tunables.streams);
+        return kernels::select_name(
+          PMULL_EOR3_NAMES,
+          Some(PMULL_SMALL),
+          streams,
+          len,
+          CRC64_FOLD_BLOCK_BYTES,
+        );
       }
-      Crc64Force::Sve2Pmull => {
-        if caps.has(platform::caps::aarch64::SVE2_PMULL) && caps.has(platform::caps::aarch64::PMULL_READY) {
-          return if len < CRC64_FOLD_BLOCK_BYTES {
-            "aarch64/sve2-pmull-small"
-          } else {
-            match aarch64_pmull_streams_for_len(len, cfg.tunables.streams) {
-              3 => "aarch64/sve2-pmull-3way",
-              2 => "aarch64/sve2-pmull-2way",
-              _ => "aarch64/sve2-pmull",
-            }
-          };
-        }
-        return "portable/slice16";
+      Crc64Force::PmullEor3 => return kernels::PORTABLE,
+      Crc64Force::Sve2Pmull
+        if caps.has(platform::caps::aarch64::SVE2_PMULL) && caps.has(platform::caps::aarch64::PMULL_READY) =>
+      {
+        let streams = aarch64_pmull_streams_for_len(len, cfg.tunables.streams);
+        return kernels::select_name(
+          SVE2_PMULL_NAMES,
+          Some(SVE2_PMULL_SMALL),
+          streams,
+          len,
+          CRC64_FOLD_BLOCK_BYTES,
+        );
       }
+      Crc64Force::Sve2Pmull => return kernels::PORTABLE,
       _ => {}
     }
 
+    // Auto selection with thresholds
     if len < cfg.tunables.portable_to_clmul {
-      return "portable/slice16";
+      return kernels::PORTABLE;
     }
 
-    // Auto selection: prefer EOR3 > SVE2 > PMULL tiers
+    // EOR3 tier (highest priority, requires large buffer)
     if caps.has(platform::caps::aarch64::PMULL_EOR3_READY) && len >= CRC64_FOLD_BLOCK_BYTES {
-      return match aarch64_pmull_streams_for_len(len, cfg.tunables.streams) {
-        3 => "aarch64/pmull-eor3-3way",
-        2 => "aarch64/pmull-eor3-2way",
-        _ => "aarch64/pmull-eor3",
-      };
+      let streams = aarch64_pmull_streams_for_len(len, cfg.tunables.streams);
+      return kernels::select_name(PMULL_EOR3_NAMES, None, streams, len, CRC64_FOLD_BLOCK_BYTES);
     }
 
+    // SVE2 tier (only for multi-way, falls through for 1-way)
     if caps.has(platform::caps::aarch64::SVE2_PMULL) && caps.has(platform::caps::aarch64::PMULL_READY) {
-      match aarch64_pmull_streams_for_len(len, cfg.tunables.streams) {
-        3 => return "aarch64/sve2-pmull-3way",
-        2 => return "aarch64/sve2-pmull-2way",
-        _ => {}
+      let streams = aarch64_pmull_streams_for_len(len, cfg.tunables.streams);
+      if streams >= 2 {
+        return kernels::select_name(SVE2_PMULL_NAMES, None, streams, len, CRC64_FOLD_BLOCK_BYTES);
       }
     }
 
+    // PMULL tier (base tier)
     if caps.has(platform::caps::aarch64::PMULL_READY) {
-      return if len < CRC64_FOLD_BLOCK_BYTES {
-        "aarch64/pmull-small"
-      } else {
-        match aarch64_pmull_streams_for_len(len, cfg.tunables.streams) {
-          3 => "aarch64/pmull-3way",
-          2 => "aarch64/pmull-2way",
-          _ => "aarch64/pmull",
-        }
-      };
+      let streams = aarch64_pmull_streams_for_len(len, cfg.tunables.streams);
+      return kernels::select_name(PMULL_NAMES, Some(PMULL_SMALL), streams, len, CRC64_FOLD_BLOCK_BYTES);
     }
 
-    "portable/slice16"
+    kernels::PORTABLE
   }
 
   #[cfg(target_arch = "powerpc64")]
   {
+    use kernels::powerpc64::*;
     let cfg = config::get();
     let caps = platform::caps();
 
     if len < CRC64_SMALL_LANE_BYTES || cfg.effective_force == Crc64Force::Portable {
-      return "portable/slice16";
+      return kernels::PORTABLE;
     }
 
+    // Handle forced backend selection
     if cfg.effective_force == Crc64Force::Vpmsum {
       if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
-        return match powerpc64_vpmsum_streams_for_len(len, cfg.tunables.streams) {
-          8 => "powerpc64/vpmsum-8way",
-          4 => "powerpc64/vpmsum-4way",
-          2 => "powerpc64/vpmsum-2way",
-          _ => "powerpc64/vpmsum",
-        };
+        let streams = powerpc64_vpmsum_streams_for_len(len, cfg.tunables.streams);
+        return kernels::select_name(VPMSUM_NAMES, None, streams, len, CRC64_FOLD_BLOCK_BYTES);
       }
-      return "portable/slice16";
+      return kernels::PORTABLE;
     }
 
+    // Auto selection
     if len < cfg.tunables.portable_to_clmul {
-      return "portable/slice16";
+      return kernels::PORTABLE;
     }
 
     if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
-      return match powerpc64_vpmsum_streams_for_len(len, cfg.tunables.streams) {
-        8 => "powerpc64/vpmsum-8way",
-        4 => "powerpc64/vpmsum-4way",
-        2 => "powerpc64/vpmsum-2way",
-        _ => "powerpc64/vpmsum",
-      };
+      let streams = powerpc64_vpmsum_streams_for_len(len, cfg.tunables.streams);
+      return kernels::select_name(VPMSUM_NAMES, None, streams, len, CRC64_FOLD_BLOCK_BYTES);
     }
 
-    "portable/slice16"
+    kernels::PORTABLE
   }
 
   #[cfg(target_arch = "s390x")]
   {
+    use kernels::s390x::*;
     let cfg = config::get();
     let caps = platform::caps();
 
     if len < CRC64_SMALL_LANE_BYTES || cfg.effective_force == Crc64Force::Portable {
-      return "portable/slice16";
+      return kernels::PORTABLE;
     }
 
-    match cfg.effective_force {
-      Crc64Force::Vgfm => {
-        if caps.has(platform::caps::s390x::VECTOR) {
-          return match s390x_vgfm_streams_for_len(len, cfg.tunables.streams) {
-            4 => "s390x/vgfm-4way",
-            2 => "s390x/vgfm-2way",
-            _ => "s390x/vgfm",
-          };
-        }
-        return "portable/slice16";
+    // Handle forced backend selection
+    if cfg.effective_force == Crc64Force::Vgfm {
+      if caps.has(platform::caps::s390x::VECTOR) {
+        let streams = s390x_vgfm_streams_for_len(len, cfg.tunables.streams);
+        return kernels::select_name(VGFM_NAMES, None, streams, len, CRC64_FOLD_BLOCK_BYTES);
       }
-      _ => {}
+      return kernels::PORTABLE;
     }
 
+    // Auto selection
     if len < cfg.tunables.portable_to_clmul {
-      return "portable/slice16";
+      return kernels::PORTABLE;
     }
 
     if caps.has(platform::caps::s390x::VECTOR) {
-      return match s390x_vgfm_streams_for_len(len, cfg.tunables.streams) {
-        4 => "s390x/vgfm-4way",
-        2 => "s390x/vgfm-2way",
-        _ => "s390x/vgfm",
-      };
+      let streams = s390x_vgfm_streams_for_len(len, cfg.tunables.streams);
+      return kernels::select_name(VGFM_NAMES, None, streams, len, CRC64_FOLD_BLOCK_BYTES);
     }
 
-    "portable/slice16"
+    kernels::PORTABLE
   }
 
   #[cfg(target_arch = "riscv64")]
   {
+    use kernels::riscv64::*;
     let cfg = config::get();
     let caps = platform::caps();
 
     if len < CRC64_SMALL_LANE_BYTES || cfg.effective_force == Crc64Force::Portable {
-      return "portable/slice16";
+      return kernels::PORTABLE;
     }
 
+    // Handle forced backend selection
     match cfg.effective_force {
-      Crc64Force::Zvbc => {
-        if caps.has(platform::caps::riscv::ZVBC) {
-          return match riscv64_zbc_streams_for_len(len, cfg.tunables.streams) {
-            4 => "riscv64/zvbc-4way",
-            2 => "riscv64/zvbc-2way",
-            _ => "riscv64/zvbc",
-          };
-        }
-        return "portable/slice16";
+      Crc64Force::Zvbc if caps.has(platform::caps::riscv::ZVBC) => {
+        let streams = riscv64_zbc_streams_for_len(len, cfg.tunables.streams);
+        return kernels::select_name(ZVBC_NAMES, None, streams, len, CRC64_FOLD_BLOCK_BYTES);
       }
-      Crc64Force::Zbc => {
-        if caps.has(platform::caps::riscv::ZBC) {
-          return match riscv64_zbc_streams_for_len(len, cfg.tunables.streams) {
-            4 => "riscv64/zbc-4way",
-            2 => "riscv64/zbc-2way",
-            _ => "riscv64/zbc",
-          };
-        }
-        return "portable/slice16";
+      Crc64Force::Zvbc => return kernels::PORTABLE,
+      Crc64Force::Zbc if caps.has(platform::caps::riscv::ZBC) => {
+        let streams = riscv64_zbc_streams_for_len(len, cfg.tunables.streams);
+        return kernels::select_name(ZBC_NAMES, None, streams, len, CRC64_FOLD_BLOCK_BYTES);
       }
+      Crc64Force::Zbc => return kernels::PORTABLE,
       _ => {}
     }
 
+    // Auto selection
     if len < cfg.tunables.portable_to_clmul {
-      return "portable/slice16";
+      return kernels::PORTABLE;
     }
 
+    // ZVBC tier (higher priority)
     if caps.has(platform::caps::riscv::ZVBC) {
-      return match riscv64_zbc_streams_for_len(len, cfg.tunables.streams) {
-        4 => "riscv64/zvbc-4way",
-        2 => "riscv64/zvbc-2way",
-        _ => "riscv64/zvbc",
-      };
+      let streams = riscv64_zbc_streams_for_len(len, cfg.tunables.streams);
+      return kernels::select_name(ZVBC_NAMES, None, streams, len, CRC64_FOLD_BLOCK_BYTES);
     }
 
+    // ZBC tier
     if caps.has(platform::caps::riscv::ZBC) {
-      return match riscv64_zbc_streams_for_len(len, cfg.tunables.streams) {
-        4 => "riscv64/zbc-4way",
-        2 => "riscv64/zbc-2way",
-        _ => "riscv64/zbc",
-      };
+      let streams = riscv64_zbc_streams_for_len(len, cfg.tunables.streams);
+      return kernels::select_name(ZBC_NAMES, None, streams, len, CRC64_FOLD_BLOCK_BYTES);
     }
 
-    "portable/slice16"
+    kernels::PORTABLE
   }
 
   #[cfg(not(any(
@@ -372,7 +299,7 @@ pub(crate) fn crc64_selected_kernel_name(len: usize) -> &'static str {
   )))]
   {
     let _ = len;
-    "portable/slice16"
+    kernels::PORTABLE
   }
 }
 
@@ -544,6 +471,7 @@ fn crc64_simd_threshold() -> usize {
 
 #[cfg(target_arch = "x86_64")]
 fn crc64_xz_x86_64_auto(crc: u64, data: &[u8]) -> u64 {
+  use kernels::x86_64::*;
   let len = data.len();
 
   // Avoid any dispatch overhead for the tiny regime.
@@ -554,85 +482,72 @@ fn crc64_xz_x86_64_auto(crc: u64, data: &[u8]) -> u64 {
   let cfg = config::get();
   let caps = platform::caps();
 
+  // Handle forced backend selection
   match cfg.effective_force {
     Crc64Force::Portable => return crc64_xz_portable(crc, data),
-    Crc64Force::Pclmul => {
-      if caps.has(platform::caps::x86::PCLMUL_READY) {
-        if len < CRC64_FOLD_BLOCK_BYTES {
-          return x86_64::crc64_xz_pclmul_small_safe(crc, data);
-        }
-        match x86_pclmul_streams_for_len(len, cfg.tunables.streams) {
-          7 => return x86_64::crc64_xz_pclmul_7way_safe(crc, data),
-          4 => return x86_64::crc64_xz_pclmul_4way_safe(crc, data),
-          2 => return x86_64::crc64_xz_pclmul_2way_safe(crc, data),
-          _ => {}
-        }
-        return x86_64::crc64_xz_pclmul_safe(crc, data);
-      }
-      return crc64_xz_portable(crc, data);
+    Crc64Force::Pclmul if caps.has(platform::caps::x86::PCLMUL_READY) => {
+      let streams = x86_pclmul_streams_for_len(len, cfg.tunables.streams);
+      return kernels::dispatch_with_small(
+        &XZ_PCLMUL,
+        XZ_PCLMUL_SMALL,
+        streams,
+        len,
+        CRC64_FOLD_BLOCK_BYTES,
+        crc,
+        data,
+      );
     }
-    Crc64Force::Vpclmul => {
-      if caps.has(platform::caps::x86::VPCLMUL_READY) {
-        match x86_vpclmul_streams_for_len(len, cfg.tunables.streams) {
-          7 => return x86_64::crc64_xz_vpclmul_7way_safe(crc, data),
-          4 => return x86_64::crc64_xz_vpclmul_4way_safe(crc, data),
-          2 => return x86_64::crc64_xz_vpclmul_2way_safe(crc, data),
-          _ => return x86_64::crc64_xz_vpclmul_safe(crc, data),
-        }
-      }
-      // Safe fallback: PCLMUL if available, else portable.
-      if caps.has(platform::caps::x86::PCLMUL_READY) {
-        if len < CRC64_FOLD_BLOCK_BYTES {
-          return x86_64::crc64_xz_pclmul_small_safe(crc, data);
-        }
-        match x86_pclmul_streams_for_len(len, cfg.tunables.streams) {
-          7 => return x86_64::crc64_xz_pclmul_7way_safe(crc, data),
-          4 => return x86_64::crc64_xz_pclmul_4way_safe(crc, data),
-          2 => return x86_64::crc64_xz_pclmul_2way_safe(crc, data),
-          _ => {}
-        }
-        return x86_64::crc64_xz_pclmul_safe(crc, data);
-      }
-      return crc64_xz_portable(crc, data);
+    Crc64Force::Pclmul => return crc64_xz_portable(crc, data),
+    Crc64Force::Vpclmul if caps.has(platform::caps::x86::VPCLMUL_READY) => {
+      let streams = x86_vpclmul_streams_for_len(len, cfg.tunables.streams);
+      return kernels::dispatch_streams(&XZ_VPCLMUL, streams, crc, data);
     }
+    Crc64Force::Vpclmul if caps.has(platform::caps::x86::PCLMUL_READY) => {
+      // Fall back to PCLMUL if VPCLMUL unavailable
+      let streams = x86_pclmul_streams_for_len(len, cfg.tunables.streams);
+      return kernels::dispatch_with_small(
+        &XZ_PCLMUL,
+        XZ_PCLMUL_SMALL,
+        streams,
+        len,
+        CRC64_FOLD_BLOCK_BYTES,
+        crc,
+        data,
+      );
+    }
+    Crc64Force::Vpclmul => return crc64_xz_portable(crc, data),
     _ => {}
   }
 
-  // Auto selection.
+  // Auto selection
   if len < cfg.tunables.portable_to_clmul {
     return crc64_xz_portable(crc, data);
   }
 
+  // VPCLMUL tier (if available and above threshold)
   if caps.has(platform::caps::x86::VPCLMUL_READY) && len >= cfg.tunables.pclmul_to_vpclmul {
-    match x86_vpclmul_streams_for_len(len, cfg.tunables.streams) {
-      7 => return x86_64::crc64_xz_vpclmul_7way_safe(crc, data),
-      4 => return x86_64::crc64_xz_vpclmul_4way_safe(crc, data),
-      2 => return x86_64::crc64_xz_vpclmul_2way_safe(crc, data),
-      _ => return x86_64::crc64_xz_vpclmul_safe(crc, data),
-    }
+    let streams = x86_vpclmul_streams_for_len(len, cfg.tunables.streams);
+    return kernels::dispatch_streams(&XZ_VPCLMUL, streams, crc, data);
   }
 
+  // PCLMUL tier
   if caps.has(platform::caps::x86::PCLMUL_READY) {
-    if len < CRC64_FOLD_BLOCK_BYTES {
-      return x86_64::crc64_xz_pclmul_small_safe(crc, data);
-    }
-    match x86_pclmul_streams_for_len(len, cfg.tunables.streams) {
-      7 => return x86_64::crc64_xz_pclmul_7way_safe(crc, data),
-      4 => return x86_64::crc64_xz_pclmul_4way_safe(crc, data),
-      2 => return x86_64::crc64_xz_pclmul_2way_safe(crc, data),
-      _ => {}
-    }
-    return x86_64::crc64_xz_pclmul_safe(crc, data);
+    let streams = x86_pclmul_streams_for_len(len, cfg.tunables.streams);
+    return kernels::dispatch_with_small(
+      &XZ_PCLMUL,
+      XZ_PCLMUL_SMALL,
+      streams,
+      len,
+      CRC64_FOLD_BLOCK_BYTES,
+      crc,
+      data,
+    );
   }
 
-  // Unexpected: VPCLMUL without PCLMUL. Still safe to run VPCLMUL.
+  // Fallback: VPCLMUL without PCLMUL (rare edge case)
   if caps.has(platform::caps::x86::VPCLMUL_READY) {
-    match x86_vpclmul_streams_for_len(len, cfg.tunables.streams) {
-      7 => return x86_64::crc64_xz_vpclmul_7way_safe(crc, data),
-      4 => return x86_64::crc64_xz_vpclmul_4way_safe(crc, data),
-      2 => return x86_64::crc64_xz_vpclmul_2way_safe(crc, data),
-      _ => return x86_64::crc64_xz_vpclmul_safe(crc, data),
-    }
+    let streams = x86_vpclmul_streams_for_len(len, cfg.tunables.streams);
+    return kernels::dispatch_streams(&XZ_VPCLMUL, streams, crc, data);
   }
 
   crc64_xz_portable(crc, data)
@@ -640,6 +555,7 @@ fn crc64_xz_x86_64_auto(crc: u64, data: &[u8]) -> u64 {
 
 #[cfg(target_arch = "x86_64")]
 fn crc64_nvme_x86_64_auto(crc: u64, data: &[u8]) -> u64 {
+  use kernels::x86_64::*;
   let len = data.len();
 
   if len < CRC64_SMALL_LANE_BYTES {
@@ -649,82 +565,72 @@ fn crc64_nvme_x86_64_auto(crc: u64, data: &[u8]) -> u64 {
   let cfg = config::get();
   let caps = platform::caps();
 
+  // Handle forced backend selection
   match cfg.effective_force {
     Crc64Force::Portable => return crc64_nvme_portable(crc, data),
-    Crc64Force::Pclmul => {
-      if caps.has(platform::caps::x86::PCLMUL_READY) {
-        if len < CRC64_FOLD_BLOCK_BYTES {
-          return x86_64::crc64_nvme_pclmul_small_safe(crc, data);
-        }
-        match x86_pclmul_streams_for_len(len, cfg.tunables.streams) {
-          7 => return x86_64::crc64_nvme_pclmul_7way_safe(crc, data),
-          4 => return x86_64::crc64_nvme_pclmul_4way_safe(crc, data),
-          2 => return x86_64::crc64_nvme_pclmul_2way_safe(crc, data),
-          _ => {}
-        }
-        return x86_64::crc64_nvme_pclmul_safe(crc, data);
-      }
-      return crc64_nvme_portable(crc, data);
+    Crc64Force::Pclmul if caps.has(platform::caps::x86::PCLMUL_READY) => {
+      let streams = x86_pclmul_streams_for_len(len, cfg.tunables.streams);
+      return kernels::dispatch_with_small(
+        &NVME_PCLMUL,
+        NVME_PCLMUL_SMALL,
+        streams,
+        len,
+        CRC64_FOLD_BLOCK_BYTES,
+        crc,
+        data,
+      );
     }
-    Crc64Force::Vpclmul => {
-      if caps.has(platform::caps::x86::VPCLMUL_READY) {
-        match x86_vpclmul_streams_for_len(len, cfg.tunables.streams) {
-          7 => return x86_64::crc64_nvme_vpclmul_7way_safe(crc, data),
-          4 => return x86_64::crc64_nvme_vpclmul_4way_safe(crc, data),
-          2 => return x86_64::crc64_nvme_vpclmul_2way_safe(crc, data),
-          _ => return x86_64::crc64_nvme_vpclmul_safe(crc, data),
-        }
-      }
-      if caps.has(platform::caps::x86::PCLMUL_READY) {
-        if len < CRC64_FOLD_BLOCK_BYTES {
-          return x86_64::crc64_nvme_pclmul_small_safe(crc, data);
-        }
-        match x86_pclmul_streams_for_len(len, cfg.tunables.streams) {
-          7 => return x86_64::crc64_nvme_pclmul_7way_safe(crc, data),
-          4 => return x86_64::crc64_nvme_pclmul_4way_safe(crc, data),
-          2 => return x86_64::crc64_nvme_pclmul_2way_safe(crc, data),
-          _ => {}
-        }
-        return x86_64::crc64_nvme_pclmul_safe(crc, data);
-      }
-      return crc64_nvme_portable(crc, data);
+    Crc64Force::Pclmul => return crc64_nvme_portable(crc, data),
+    Crc64Force::Vpclmul if caps.has(platform::caps::x86::VPCLMUL_READY) => {
+      let streams = x86_vpclmul_streams_for_len(len, cfg.tunables.streams);
+      return kernels::dispatch_streams(&NVME_VPCLMUL, streams, crc, data);
     }
+    Crc64Force::Vpclmul if caps.has(platform::caps::x86::PCLMUL_READY) => {
+      // Fall back to PCLMUL if VPCLMUL unavailable
+      let streams = x86_pclmul_streams_for_len(len, cfg.tunables.streams);
+      return kernels::dispatch_with_small(
+        &NVME_PCLMUL,
+        NVME_PCLMUL_SMALL,
+        streams,
+        len,
+        CRC64_FOLD_BLOCK_BYTES,
+        crc,
+        data,
+      );
+    }
+    Crc64Force::Vpclmul => return crc64_nvme_portable(crc, data),
     _ => {}
   }
 
+  // Auto selection
   if len < cfg.tunables.portable_to_clmul {
     return crc64_nvme_portable(crc, data);
   }
 
+  // VPCLMUL tier (if available and above threshold)
   if caps.has(platform::caps::x86::VPCLMUL_READY) && len >= cfg.tunables.pclmul_to_vpclmul {
-    match x86_vpclmul_streams_for_len(len, cfg.tunables.streams) {
-      7 => return x86_64::crc64_nvme_vpclmul_7way_safe(crc, data),
-      4 => return x86_64::crc64_nvme_vpclmul_4way_safe(crc, data),
-      2 => return x86_64::crc64_nvme_vpclmul_2way_safe(crc, data),
-      _ => return x86_64::crc64_nvme_vpclmul_safe(crc, data),
-    }
+    let streams = x86_vpclmul_streams_for_len(len, cfg.tunables.streams);
+    return kernels::dispatch_streams(&NVME_VPCLMUL, streams, crc, data);
   }
 
+  // PCLMUL tier
   if caps.has(platform::caps::x86::PCLMUL_READY) {
-    if len < CRC64_FOLD_BLOCK_BYTES {
-      return x86_64::crc64_nvme_pclmul_small_safe(crc, data);
-    }
-    match x86_pclmul_streams_for_len(len, cfg.tunables.streams) {
-      7 => return x86_64::crc64_nvme_pclmul_7way_safe(crc, data),
-      4 => return x86_64::crc64_nvme_pclmul_4way_safe(crc, data),
-      2 => return x86_64::crc64_nvme_pclmul_2way_safe(crc, data),
-      _ => {}
-    }
-    return x86_64::crc64_nvme_pclmul_safe(crc, data);
+    let streams = x86_pclmul_streams_for_len(len, cfg.tunables.streams);
+    return kernels::dispatch_with_small(
+      &NVME_PCLMUL,
+      NVME_PCLMUL_SMALL,
+      streams,
+      len,
+      CRC64_FOLD_BLOCK_BYTES,
+      crc,
+      data,
+    );
   }
 
+  // Fallback: VPCLMUL without PCLMUL (rare edge case)
   if caps.has(platform::caps::x86::VPCLMUL_READY) {
-    match x86_vpclmul_streams_for_len(len, cfg.tunables.streams) {
-      7 => return x86_64::crc64_nvme_vpclmul_7way_safe(crc, data),
-      4 => return x86_64::crc64_nvme_vpclmul_4way_safe(crc, data),
-      2 => return x86_64::crc64_nvme_vpclmul_2way_safe(crc, data),
-      _ => return x86_64::crc64_nvme_vpclmul_safe(crc, data),
-    }
+    let streams = x86_vpclmul_streams_for_len(len, cfg.tunables.streams);
+    return kernels::dispatch_streams(&NVME_VPCLMUL, streams, crc, data);
   }
 
   crc64_nvme_portable(crc, data)
@@ -753,7 +659,9 @@ fn select_crc64_xz() -> Selected<Crc64Fn> {
 
 #[cfg(target_arch = "powerpc64")]
 fn crc64_xz_powerpc64_auto(crc: u64, data: &[u8]) -> u64 {
+  use kernels::powerpc64::*;
   let len = data.len();
+
   if len < CRC64_SMALL_LANE_BYTES {
     return crc64_xz_portable(crc, data);
   }
@@ -761,33 +669,25 @@ fn crc64_xz_powerpc64_auto(crc: u64, data: &[u8]) -> u64 {
   let cfg = config::get();
   let caps = platform::caps();
 
+  // Handle forced backend selection
   match cfg.effective_force {
     Crc64Force::Portable => return crc64_xz_portable(crc, data),
-    Crc64Force::Vpmsum => {
-      if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
-        return match powerpc64_vpmsum_streams_for_len(len, cfg.tunables.streams) {
-          8 => powerpc64::crc64_xz_vpmsum_8way_safe(crc, data),
-          4 => powerpc64::crc64_xz_vpmsum_4way_safe(crc, data),
-          2 => powerpc64::crc64_xz_vpmsum_2way_safe(crc, data),
-          _ => powerpc64::crc64_xz_vpmsum_safe(crc, data),
-        };
-      }
-      return crc64_xz_portable(crc, data);
+    Crc64Force::Vpmsum if caps.has(platform::caps::powerpc64::VPMSUM_READY) => {
+      let streams = powerpc64_vpmsum_streams_for_len(len, cfg.tunables.streams);
+      return kernels::dispatch_streams(&XZ_VPMSUM, streams, crc, data);
     }
+    Crc64Force::Vpmsum => return crc64_xz_portable(crc, data),
     _ => {}
   }
 
+  // Auto selection
   if len < cfg.tunables.portable_to_clmul {
     return crc64_xz_portable(crc, data);
   }
 
   if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
-    return match powerpc64_vpmsum_streams_for_len(len, cfg.tunables.streams) {
-      8 => powerpc64::crc64_xz_vpmsum_8way_safe(crc, data),
-      4 => powerpc64::crc64_xz_vpmsum_4way_safe(crc, data),
-      2 => powerpc64::crc64_xz_vpmsum_2way_safe(crc, data),
-      _ => powerpc64::crc64_xz_vpmsum_safe(crc, data),
-    };
+    let streams = powerpc64_vpmsum_streams_for_len(len, cfg.tunables.streams);
+    return kernels::dispatch_streams(&XZ_VPMSUM, streams, crc, data);
   }
 
   crc64_xz_portable(crc, data)
@@ -795,7 +695,9 @@ fn crc64_xz_powerpc64_auto(crc: u64, data: &[u8]) -> u64 {
 
 #[cfg(target_arch = "powerpc64")]
 fn crc64_nvme_powerpc64_auto(crc: u64, data: &[u8]) -> u64 {
+  use kernels::powerpc64::*;
   let len = data.len();
+
   if len < CRC64_SMALL_LANE_BYTES {
     return crc64_nvme_portable(crc, data);
   }
@@ -803,33 +705,25 @@ fn crc64_nvme_powerpc64_auto(crc: u64, data: &[u8]) -> u64 {
   let cfg = config::get();
   let caps = platform::caps();
 
+  // Handle forced backend selection
   match cfg.effective_force {
     Crc64Force::Portable => return crc64_nvme_portable(crc, data),
-    Crc64Force::Vpmsum => {
-      if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
-        return match powerpc64_vpmsum_streams_for_len(len, cfg.tunables.streams) {
-          8 => powerpc64::crc64_nvme_vpmsum_8way_safe(crc, data),
-          4 => powerpc64::crc64_nvme_vpmsum_4way_safe(crc, data),
-          2 => powerpc64::crc64_nvme_vpmsum_2way_safe(crc, data),
-          _ => powerpc64::crc64_nvme_vpmsum_safe(crc, data),
-        };
-      }
-      return crc64_nvme_portable(crc, data);
+    Crc64Force::Vpmsum if caps.has(platform::caps::powerpc64::VPMSUM_READY) => {
+      let streams = powerpc64_vpmsum_streams_for_len(len, cfg.tunables.streams);
+      return kernels::dispatch_streams(&NVME_VPMSUM, streams, crc, data);
     }
+    Crc64Force::Vpmsum => return crc64_nvme_portable(crc, data),
     _ => {}
   }
 
+  // Auto selection
   if len < cfg.tunables.portable_to_clmul {
     return crc64_nvme_portable(crc, data);
   }
 
   if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
-    return match powerpc64_vpmsum_streams_for_len(len, cfg.tunables.streams) {
-      8 => powerpc64::crc64_nvme_vpmsum_8way_safe(crc, data),
-      4 => powerpc64::crc64_nvme_vpmsum_4way_safe(crc, data),
-      2 => powerpc64::crc64_nvme_vpmsum_2way_safe(crc, data),
-      _ => powerpc64::crc64_nvme_vpmsum_safe(crc, data),
-    };
+    let streams = powerpc64_vpmsum_streams_for_len(len, cfg.tunables.streams);
+    return kernels::dispatch_streams(&NVME_VPMSUM, streams, crc, data);
   }
 
   crc64_nvme_portable(crc, data)
@@ -837,7 +731,9 @@ fn crc64_nvme_powerpc64_auto(crc: u64, data: &[u8]) -> u64 {
 
 #[cfg(target_arch = "s390x")]
 fn crc64_xz_s390x_auto(crc: u64, data: &[u8]) -> u64 {
+  use kernels::s390x::*;
   let len = data.len();
+
   if len < CRC64_SMALL_LANE_BYTES {
     return crc64_xz_portable(crc, data);
   }
@@ -845,31 +741,25 @@ fn crc64_xz_s390x_auto(crc: u64, data: &[u8]) -> u64 {
   let cfg = config::get();
   let caps = platform::caps();
 
+  // Handle forced backend selection
   match cfg.effective_force {
     Crc64Force::Portable => return crc64_xz_portable(crc, data),
-    Crc64Force::Vgfm => {
-      if caps.has(platform::caps::s390x::VECTOR) {
-        return match s390x_vgfm_streams_for_len(len, cfg.tunables.streams) {
-          4 => s390x::crc64_xz_vgfm_4way_safe(crc, data),
-          2 => s390x::crc64_xz_vgfm_2way_safe(crc, data),
-          _ => s390x::crc64_xz_vgfm_safe(crc, data),
-        };
-      }
-      return crc64_xz_portable(crc, data);
+    Crc64Force::Vgfm if caps.has(platform::caps::s390x::VECTOR) => {
+      let streams = s390x_vgfm_streams_for_len(len, cfg.tunables.streams);
+      return kernels::dispatch_streams(&XZ_VGFM, streams, crc, data);
     }
+    Crc64Force::Vgfm => return crc64_xz_portable(crc, data),
     _ => {}
   }
 
+  // Auto selection
   if len < cfg.tunables.portable_to_clmul {
     return crc64_xz_portable(crc, data);
   }
 
   if caps.has(platform::caps::s390x::VECTOR) {
-    return match s390x_vgfm_streams_for_len(len, cfg.tunables.streams) {
-      4 => s390x::crc64_xz_vgfm_4way_safe(crc, data),
-      2 => s390x::crc64_xz_vgfm_2way_safe(crc, data),
-      _ => s390x::crc64_xz_vgfm_safe(crc, data),
-    };
+    let streams = s390x_vgfm_streams_for_len(len, cfg.tunables.streams);
+    return kernels::dispatch_streams(&XZ_VGFM, streams, crc, data);
   }
 
   crc64_xz_portable(crc, data)
@@ -877,7 +767,9 @@ fn crc64_xz_s390x_auto(crc: u64, data: &[u8]) -> u64 {
 
 #[cfg(target_arch = "s390x")]
 fn crc64_nvme_s390x_auto(crc: u64, data: &[u8]) -> u64 {
+  use kernels::s390x::*;
   let len = data.len();
+
   if len < CRC64_SMALL_LANE_BYTES {
     return crc64_nvme_portable(crc, data);
   }
@@ -885,31 +777,25 @@ fn crc64_nvme_s390x_auto(crc: u64, data: &[u8]) -> u64 {
   let cfg = config::get();
   let caps = platform::caps();
 
+  // Handle forced backend selection
   match cfg.effective_force {
     Crc64Force::Portable => return crc64_nvme_portable(crc, data),
-    Crc64Force::Vgfm => {
-      if caps.has(platform::caps::s390x::VECTOR) {
-        return match s390x_vgfm_streams_for_len(len, cfg.tunables.streams) {
-          4 => s390x::crc64_nvme_vgfm_4way_safe(crc, data),
-          2 => s390x::crc64_nvme_vgfm_2way_safe(crc, data),
-          _ => s390x::crc64_nvme_vgfm_safe(crc, data),
-        };
-      }
-      return crc64_nvme_portable(crc, data);
+    Crc64Force::Vgfm if caps.has(platform::caps::s390x::VECTOR) => {
+      let streams = s390x_vgfm_streams_for_len(len, cfg.tunables.streams);
+      return kernels::dispatch_streams(&NVME_VGFM, streams, crc, data);
     }
+    Crc64Force::Vgfm => return crc64_nvme_portable(crc, data),
     _ => {}
   }
 
+  // Auto selection
   if len < cfg.tunables.portable_to_clmul {
     return crc64_nvme_portable(crc, data);
   }
 
   if caps.has(platform::caps::s390x::VECTOR) {
-    return match s390x_vgfm_streams_for_len(len, cfg.tunables.streams) {
-      4 => s390x::crc64_nvme_vgfm_4way_safe(crc, data),
-      2 => s390x::crc64_nvme_vgfm_2way_safe(crc, data),
-      _ => s390x::crc64_nvme_vgfm_safe(crc, data),
-    };
+    let streams = s390x_vgfm_streams_for_len(len, cfg.tunables.streams);
+    return kernels::dispatch_streams(&NVME_VGFM, streams, crc, data);
   }
 
   crc64_nvme_portable(crc, data)
@@ -917,7 +803,9 @@ fn crc64_nvme_s390x_auto(crc: u64, data: &[u8]) -> u64 {
 
 #[cfg(target_arch = "riscv64")]
 fn crc64_xz_riscv64_auto(crc: u64, data: &[u8]) -> u64 {
+  use kernels::riscv64::*;
   let len = data.len();
+
   if len < CRC64_SMALL_LANE_BYTES {
     return crc64_xz_portable(crc, data);
   }
@@ -925,49 +813,37 @@ fn crc64_xz_riscv64_auto(crc: u64, data: &[u8]) -> u64 {
   let cfg = config::get();
   let caps = platform::caps();
 
+  // Handle forced backend selection
   match cfg.effective_force {
     Crc64Force::Portable => return crc64_xz_portable(crc, data),
-    Crc64Force::Zvbc => {
-      if caps.has(platform::caps::riscv::ZVBC) {
-        return match riscv64_zbc_streams_for_len(len, cfg.tunables.streams) {
-          4 => riscv64::crc64_xz_zvbc_4way_safe(crc, data),
-          2 => riscv64::crc64_xz_zvbc_2way_safe(crc, data),
-          _ => riscv64::crc64_xz_zvbc_safe(crc, data),
-        };
-      }
-      return crc64_xz_portable(crc, data);
+    Crc64Force::Zvbc if caps.has(platform::caps::riscv::ZVBC) => {
+      let streams = riscv64_zbc_streams_for_len(len, cfg.tunables.streams);
+      return kernels::dispatch_streams(&XZ_ZVBC, streams, crc, data);
     }
-    Crc64Force::Zbc => {
-      if caps.has(platform::caps::riscv::ZBC) {
-        return match riscv64_zbc_streams_for_len(len, cfg.tunables.streams) {
-          4 => riscv64::crc64_xz_zbc_4way_safe(crc, data),
-          2 => riscv64::crc64_xz_zbc_2way_safe(crc, data),
-          _ => riscv64::crc64_xz_zbc_safe(crc, data),
-        };
-      }
-      return crc64_xz_portable(crc, data);
+    Crc64Force::Zvbc => return crc64_xz_portable(crc, data),
+    Crc64Force::Zbc if caps.has(platform::caps::riscv::ZBC) => {
+      let streams = riscv64_zbc_streams_for_len(len, cfg.tunables.streams);
+      return kernels::dispatch_streams(&XZ_ZBC, streams, crc, data);
     }
+    Crc64Force::Zbc => return crc64_xz_portable(crc, data),
     _ => {}
   }
 
+  // Auto selection
   if len < cfg.tunables.portable_to_clmul {
     return crc64_xz_portable(crc, data);
   }
 
+  // ZVBC tier (higher priority)
   if caps.has(platform::caps::riscv::ZVBC) {
-    return match riscv64_zbc_streams_for_len(len, cfg.tunables.streams) {
-      4 => riscv64::crc64_xz_zvbc_4way_safe(crc, data),
-      2 => riscv64::crc64_xz_zvbc_2way_safe(crc, data),
-      _ => riscv64::crc64_xz_zvbc_safe(crc, data),
-    };
+    let streams = riscv64_zbc_streams_for_len(len, cfg.tunables.streams);
+    return kernels::dispatch_streams(&XZ_ZVBC, streams, crc, data);
   }
 
+  // ZBC tier
   if caps.has(platform::caps::riscv::ZBC) {
-    return match riscv64_zbc_streams_for_len(len, cfg.tunables.streams) {
-      4 => riscv64::crc64_xz_zbc_4way_safe(crc, data),
-      2 => riscv64::crc64_xz_zbc_2way_safe(crc, data),
-      _ => riscv64::crc64_xz_zbc_safe(crc, data),
-    };
+    let streams = riscv64_zbc_streams_for_len(len, cfg.tunables.streams);
+    return kernels::dispatch_streams(&XZ_ZBC, streams, crc, data);
   }
 
   crc64_xz_portable(crc, data)
@@ -975,7 +851,9 @@ fn crc64_xz_riscv64_auto(crc: u64, data: &[u8]) -> u64 {
 
 #[cfg(target_arch = "riscv64")]
 fn crc64_nvme_riscv64_auto(crc: u64, data: &[u8]) -> u64 {
+  use kernels::riscv64::*;
   let len = data.len();
+
   if len < CRC64_SMALL_LANE_BYTES {
     return crc64_nvme_portable(crc, data);
   }
@@ -983,49 +861,37 @@ fn crc64_nvme_riscv64_auto(crc: u64, data: &[u8]) -> u64 {
   let cfg = config::get();
   let caps = platform::caps();
 
+  // Handle forced backend selection
   match cfg.effective_force {
     Crc64Force::Portable => return crc64_nvme_portable(crc, data),
-    Crc64Force::Zvbc => {
-      if caps.has(platform::caps::riscv::ZVBC) {
-        return match riscv64_zbc_streams_for_len(len, cfg.tunables.streams) {
-          4 => riscv64::crc64_nvme_zvbc_4way_safe(crc, data),
-          2 => riscv64::crc64_nvme_zvbc_2way_safe(crc, data),
-          _ => riscv64::crc64_nvme_zvbc_safe(crc, data),
-        };
-      }
-      return crc64_nvme_portable(crc, data);
+    Crc64Force::Zvbc if caps.has(platform::caps::riscv::ZVBC) => {
+      let streams = riscv64_zbc_streams_for_len(len, cfg.tunables.streams);
+      return kernels::dispatch_streams(&NVME_ZVBC, streams, crc, data);
     }
-    Crc64Force::Zbc => {
-      if caps.has(platform::caps::riscv::ZBC) {
-        return match riscv64_zbc_streams_for_len(len, cfg.tunables.streams) {
-          4 => riscv64::crc64_nvme_zbc_4way_safe(crc, data),
-          2 => riscv64::crc64_nvme_zbc_2way_safe(crc, data),
-          _ => riscv64::crc64_nvme_zbc_safe(crc, data),
-        };
-      }
-      return crc64_nvme_portable(crc, data);
+    Crc64Force::Zvbc => return crc64_nvme_portable(crc, data),
+    Crc64Force::Zbc if caps.has(platform::caps::riscv::ZBC) => {
+      let streams = riscv64_zbc_streams_for_len(len, cfg.tunables.streams);
+      return kernels::dispatch_streams(&NVME_ZBC, streams, crc, data);
     }
+    Crc64Force::Zbc => return crc64_nvme_portable(crc, data),
     _ => {}
   }
 
+  // Auto selection
   if len < cfg.tunables.portable_to_clmul {
     return crc64_nvme_portable(crc, data);
   }
 
+  // ZVBC tier (higher priority)
   if caps.has(platform::caps::riscv::ZVBC) {
-    return match riscv64_zbc_streams_for_len(len, cfg.tunables.streams) {
-      4 => riscv64::crc64_nvme_zvbc_4way_safe(crc, data),
-      2 => riscv64::crc64_nvme_zvbc_2way_safe(crc, data),
-      _ => riscv64::crc64_nvme_zvbc_safe(crc, data),
-    };
+    let streams = riscv64_zbc_streams_for_len(len, cfg.tunables.streams);
+    return kernels::dispatch_streams(&NVME_ZVBC, streams, crc, data);
   }
 
+  // ZBC tier
   if caps.has(platform::caps::riscv::ZBC) {
-    return match riscv64_zbc_streams_for_len(len, cfg.tunables.streams) {
-      4 => riscv64::crc64_nvme_zbc_4way_safe(crc, data),
-      2 => riscv64::crc64_nvme_zbc_2way_safe(crc, data),
-      _ => riscv64::crc64_nvme_zbc_safe(crc, data),
-    };
+    let streams = riscv64_zbc_streams_for_len(len, cfg.tunables.streams);
+    return kernels::dispatch_streams(&NVME_ZBC, streams, crc, data);
   }
 
   crc64_nvme_portable(crc, data)
@@ -1033,7 +899,9 @@ fn crc64_nvme_riscv64_auto(crc: u64, data: &[u8]) -> u64 {
 
 #[cfg(target_arch = "aarch64")]
 fn crc64_xz_aarch64_auto(crc: u64, data: &[u8]) -> u64 {
+  use kernels::aarch64::*;
   let len = data.len();
+
   if len < CRC64_SMALL_LANE_BYTES {
     return crc64_xz_portable(crc, data);
   }
@@ -1041,85 +909,85 @@ fn crc64_xz_aarch64_auto(crc: u64, data: &[u8]) -> u64 {
   let cfg = config::get();
   let caps = platform::caps();
 
+  // Handle forced backend selection
   match cfg.effective_force {
     Crc64Force::Portable => return crc64_xz_portable(crc, data),
-    Crc64Force::PmullEor3 => {
-      if caps.has(platform::caps::aarch64::PMULL_EOR3_READY) {
-        if len < CRC64_FOLD_BLOCK_BYTES {
-          return aarch64::crc64_xz_pmull_small_safe(crc, data);
-        }
-        match aarch64_pmull_streams_for_len(len, cfg.tunables.streams) {
-          3 => return aarch64::crc64_xz_pmull_eor3_3way_safe(crc, data),
-          2 => return aarch64::crc64_xz_pmull_eor3_2way_safe(crc, data),
-          _ => {}
-        }
-        return aarch64::crc64_xz_pmull_eor3_safe(crc, data);
-      }
-      return crc64_xz_portable(crc, data);
+    Crc64Force::PmullEor3 if caps.has(platform::caps::aarch64::PMULL_EOR3_READY) => {
+      // EOR3 uses PMULL small kernel for small buffers
+      let streams = aarch64_pmull_streams_for_len(len, cfg.tunables.streams);
+      return kernels::dispatch_with_small(
+        &XZ_PMULL_EOR3,
+        XZ_PMULL_SMALL,
+        streams,
+        len,
+        CRC64_FOLD_BLOCK_BYTES,
+        crc,
+        data,
+      );
     }
-    Crc64Force::Sve2Pmull => {
-      if caps.has(platform::caps::aarch64::SVE2_PMULL) && caps.has(platform::caps::aarch64::PMULL_READY) {
-        if len < CRC64_FOLD_BLOCK_BYTES {
-          return aarch64::crc64_xz_sve2_pmull_small_safe(crc, data);
-        }
-        match aarch64_pmull_streams_for_len(len, cfg.tunables.streams) {
-          3 => return aarch64::crc64_xz_sve2_pmull_3way_safe(crc, data),
-          2 => return aarch64::crc64_xz_sve2_pmull_2way_safe(crc, data),
-          _ => {}
-        }
-        return aarch64::crc64_xz_sve2_pmull_safe(crc, data);
-      }
-      return crc64_xz_portable(crc, data);
+    Crc64Force::PmullEor3 => return crc64_xz_portable(crc, data),
+    Crc64Force::Sve2Pmull
+      if caps.has(platform::caps::aarch64::SVE2_PMULL) && caps.has(platform::caps::aarch64::PMULL_READY) =>
+    {
+      let streams = aarch64_pmull_streams_for_len(len, cfg.tunables.streams);
+      return kernels::dispatch_with_small(
+        &XZ_SVE2_PMULL,
+        XZ_SVE2_PMULL_SMALL,
+        streams,
+        len,
+        CRC64_FOLD_BLOCK_BYTES,
+        crc,
+        data,
+      );
     }
-    Crc64Force::Pmull => {
-      if caps.has(platform::caps::aarch64::PMULL_READY) {
-        if len < CRC64_FOLD_BLOCK_BYTES {
-          return aarch64::crc64_xz_pmull_small_safe(crc, data);
-        }
-        match aarch64_pmull_streams_for_len(len, cfg.tunables.streams) {
-          3 => return aarch64::crc64_xz_pmull_3way_safe(crc, data),
-          2 => return aarch64::crc64_xz_pmull_2way_safe(crc, data),
-          _ => {}
-        }
-        return aarch64::crc64_xz_pmull_safe(crc, data);
-      }
-      return crc64_xz_portable(crc, data);
+    Crc64Force::Sve2Pmull => return crc64_xz_portable(crc, data),
+    Crc64Force::Pmull if caps.has(platform::caps::aarch64::PMULL_READY) => {
+      let streams = aarch64_pmull_streams_for_len(len, cfg.tunables.streams);
+      return kernels::dispatch_with_small(
+        &XZ_PMULL,
+        XZ_PMULL_SMALL,
+        streams,
+        len,
+        CRC64_FOLD_BLOCK_BYTES,
+        crc,
+        data,
+      );
     }
+    Crc64Force::Pmull => return crc64_xz_portable(crc, data),
     _ => {}
   }
 
+  // Auto selection
   if len < cfg.tunables.portable_to_clmul {
     return crc64_xz_portable(crc, data);
   }
 
-  // Auto selection: prefer EOR3 > SVE2 > PMULL tiers
+  // EOR3 tier (highest priority, requires large buffer)
   if caps.has(platform::caps::aarch64::PMULL_EOR3_READY) && len >= CRC64_FOLD_BLOCK_BYTES {
-    match aarch64_pmull_streams_for_len(len, cfg.tunables.streams) {
-      3 => return aarch64::crc64_xz_pmull_eor3_3way_safe(crc, data),
-      2 => return aarch64::crc64_xz_pmull_eor3_2way_safe(crc, data),
-      _ => {}
-    }
-    return aarch64::crc64_xz_pmull_eor3_safe(crc, data);
+    let streams = aarch64_pmull_streams_for_len(len, cfg.tunables.streams);
+    return kernels::dispatch_streams(&XZ_PMULL_EOR3, streams, crc, data);
   }
 
+  // SVE2 tier (only for multi-way, falls through for 1-way)
   if caps.has(platform::caps::aarch64::SVE2_PMULL) && caps.has(platform::caps::aarch64::PMULL_READY) {
-    match aarch64_pmull_streams_for_len(len, cfg.tunables.streams) {
-      3 => return aarch64::crc64_xz_sve2_pmull_3way_safe(crc, data),
-      2 => return aarch64::crc64_xz_sve2_pmull_2way_safe(crc, data),
-      _ => {}
+    let streams = aarch64_pmull_streams_for_len(len, cfg.tunables.streams);
+    if streams >= 2 {
+      return kernels::dispatch_streams(&XZ_SVE2_PMULL, streams, crc, data);
     }
   }
 
+  // PMULL tier (base tier)
   if caps.has(platform::caps::aarch64::PMULL_READY) {
-    if len < CRC64_FOLD_BLOCK_BYTES {
-      return aarch64::crc64_xz_pmull_small_safe(crc, data);
-    }
-    match aarch64_pmull_streams_for_len(len, cfg.tunables.streams) {
-      3 => return aarch64::crc64_xz_pmull_3way_safe(crc, data),
-      2 => return aarch64::crc64_xz_pmull_2way_safe(crc, data),
-      _ => {}
-    }
-    return aarch64::crc64_xz_pmull_safe(crc, data);
+    let streams = aarch64_pmull_streams_for_len(len, cfg.tunables.streams);
+    return kernels::dispatch_with_small(
+      &XZ_PMULL,
+      XZ_PMULL_SMALL,
+      streams,
+      len,
+      CRC64_FOLD_BLOCK_BYTES,
+      crc,
+      data,
+    );
   }
 
   crc64_xz_portable(crc, data)
@@ -1127,7 +995,9 @@ fn crc64_xz_aarch64_auto(crc: u64, data: &[u8]) -> u64 {
 
 #[cfg(target_arch = "aarch64")]
 fn crc64_nvme_aarch64_auto(crc: u64, data: &[u8]) -> u64 {
+  use kernels::aarch64::*;
   let len = data.len();
+
   if len < CRC64_SMALL_LANE_BYTES {
     return crc64_nvme_portable(crc, data);
   }
@@ -1135,85 +1005,85 @@ fn crc64_nvme_aarch64_auto(crc: u64, data: &[u8]) -> u64 {
   let cfg = config::get();
   let caps = platform::caps();
 
+  // Handle forced backend selection
   match cfg.effective_force {
     Crc64Force::Portable => return crc64_nvme_portable(crc, data),
-    Crc64Force::PmullEor3 => {
-      if caps.has(platform::caps::aarch64::PMULL_EOR3_READY) {
-        if len < CRC64_FOLD_BLOCK_BYTES {
-          return aarch64::crc64_nvme_pmull_small_safe(crc, data);
-        }
-        match aarch64_pmull_streams_for_len(len, cfg.tunables.streams) {
-          3 => return aarch64::crc64_nvme_pmull_eor3_3way_safe(crc, data),
-          2 => return aarch64::crc64_nvme_pmull_eor3_2way_safe(crc, data),
-          _ => {}
-        }
-        return aarch64::crc64_nvme_pmull_eor3_safe(crc, data);
-      }
-      return crc64_nvme_portable(crc, data);
+    Crc64Force::PmullEor3 if caps.has(platform::caps::aarch64::PMULL_EOR3_READY) => {
+      // EOR3 uses PMULL small kernel for small buffers
+      let streams = aarch64_pmull_streams_for_len(len, cfg.tunables.streams);
+      return kernels::dispatch_with_small(
+        &NVME_PMULL_EOR3,
+        NVME_PMULL_SMALL,
+        streams,
+        len,
+        CRC64_FOLD_BLOCK_BYTES,
+        crc,
+        data,
+      );
     }
-    Crc64Force::Sve2Pmull => {
-      if caps.has(platform::caps::aarch64::SVE2_PMULL) && caps.has(platform::caps::aarch64::PMULL_READY) {
-        if len < CRC64_FOLD_BLOCK_BYTES {
-          return aarch64::crc64_nvme_sve2_pmull_small_safe(crc, data);
-        }
-        match aarch64_pmull_streams_for_len(len, cfg.tunables.streams) {
-          3 => return aarch64::crc64_nvme_sve2_pmull_3way_safe(crc, data),
-          2 => return aarch64::crc64_nvme_sve2_pmull_2way_safe(crc, data),
-          _ => {}
-        }
-        return aarch64::crc64_nvme_sve2_pmull_safe(crc, data);
-      }
-      return crc64_nvme_portable(crc, data);
+    Crc64Force::PmullEor3 => return crc64_nvme_portable(crc, data),
+    Crc64Force::Sve2Pmull
+      if caps.has(platform::caps::aarch64::SVE2_PMULL) && caps.has(platform::caps::aarch64::PMULL_READY) =>
+    {
+      let streams = aarch64_pmull_streams_for_len(len, cfg.tunables.streams);
+      return kernels::dispatch_with_small(
+        &NVME_SVE2_PMULL,
+        NVME_SVE2_PMULL_SMALL,
+        streams,
+        len,
+        CRC64_FOLD_BLOCK_BYTES,
+        crc,
+        data,
+      );
     }
-    Crc64Force::Pmull => {
-      if caps.has(platform::caps::aarch64::PMULL_READY) {
-        if len < CRC64_FOLD_BLOCK_BYTES {
-          return aarch64::crc64_nvme_pmull_small_safe(crc, data);
-        }
-        match aarch64_pmull_streams_for_len(len, cfg.tunables.streams) {
-          3 => return aarch64::crc64_nvme_pmull_3way_safe(crc, data),
-          2 => return aarch64::crc64_nvme_pmull_2way_safe(crc, data),
-          _ => {}
-        }
-        return aarch64::crc64_nvme_pmull_safe(crc, data);
-      }
-      return crc64_nvme_portable(crc, data);
+    Crc64Force::Sve2Pmull => return crc64_nvme_portable(crc, data),
+    Crc64Force::Pmull if caps.has(platform::caps::aarch64::PMULL_READY) => {
+      let streams = aarch64_pmull_streams_for_len(len, cfg.tunables.streams);
+      return kernels::dispatch_with_small(
+        &NVME_PMULL,
+        NVME_PMULL_SMALL,
+        streams,
+        len,
+        CRC64_FOLD_BLOCK_BYTES,
+        crc,
+        data,
+      );
     }
+    Crc64Force::Pmull => return crc64_nvme_portable(crc, data),
     _ => {}
   }
 
+  // Auto selection
   if len < cfg.tunables.portable_to_clmul {
     return crc64_nvme_portable(crc, data);
   }
 
-  // Auto selection: prefer EOR3 > SVE2 > PMULL tiers
+  // EOR3 tier (highest priority, requires large buffer)
   if caps.has(platform::caps::aarch64::PMULL_EOR3_READY) && len >= CRC64_FOLD_BLOCK_BYTES {
-    match aarch64_pmull_streams_for_len(len, cfg.tunables.streams) {
-      3 => return aarch64::crc64_nvme_pmull_eor3_3way_safe(crc, data),
-      2 => return aarch64::crc64_nvme_pmull_eor3_2way_safe(crc, data),
-      _ => {}
-    }
-    return aarch64::crc64_nvme_pmull_eor3_safe(crc, data);
+    let streams = aarch64_pmull_streams_for_len(len, cfg.tunables.streams);
+    return kernels::dispatch_streams(&NVME_PMULL_EOR3, streams, crc, data);
   }
 
+  // SVE2 tier (only for multi-way, falls through for 1-way)
   if caps.has(platform::caps::aarch64::SVE2_PMULL) && caps.has(platform::caps::aarch64::PMULL_READY) {
-    match aarch64_pmull_streams_for_len(len, cfg.tunables.streams) {
-      3 => return aarch64::crc64_nvme_sve2_pmull_3way_safe(crc, data),
-      2 => return aarch64::crc64_nvme_sve2_pmull_2way_safe(crc, data),
-      _ => {}
+    let streams = aarch64_pmull_streams_for_len(len, cfg.tunables.streams);
+    if streams >= 2 {
+      return kernels::dispatch_streams(&NVME_SVE2_PMULL, streams, crc, data);
     }
   }
 
+  // PMULL tier (base tier)
   if caps.has(platform::caps::aarch64::PMULL_READY) {
-    if len < CRC64_FOLD_BLOCK_BYTES {
-      return aarch64::crc64_nvme_pmull_small_safe(crc, data);
-    }
-    match aarch64_pmull_streams_for_len(len, cfg.tunables.streams) {
-      3 => return aarch64::crc64_nvme_pmull_3way_safe(crc, data),
-      2 => return aarch64::crc64_nvme_pmull_2way_safe(crc, data),
-      _ => {}
-    }
-    return aarch64::crc64_nvme_pmull_safe(crc, data);
+    let streams = aarch64_pmull_streams_for_len(len, cfg.tunables.streams);
+    return kernels::dispatch_with_small(
+      &NVME_PMULL,
+      NVME_PMULL_SMALL,
+      streams,
+      len,
+      CRC64_FOLD_BLOCK_BYTES,
+      crc,
+      data,
+    );
   }
 
   crc64_nvme_portable(crc, data)

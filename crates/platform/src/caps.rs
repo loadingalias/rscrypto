@@ -438,6 +438,20 @@ pub mod x86 {
 
   /// AMX-ready: AMX_TILE + AMX_BF16 + AMX_INT8
   pub const AMX_READY: Caps = Caps([AMX_TILE.0[0] | AMX_BF16.0[0] | AMX_INT8.0[0], 0, 0, 0]);
+
+  /// CRC32C hardware instruction ready: SSE4.2 (provides `crc32` instruction).
+  ///
+  /// The SSE4.2 `crc32` instruction is polynomial-locked to CRC-32C (Castagnoli,
+  /// 0x1EDC6F41). It cannot compute CRC-32 IEEE (0x04C11DB7).
+  ///
+  /// # Performance
+  ///
+  /// - Throughput: ~20 GB/s (faster than PCLMULQDQ for small buffers)
+  /// - Latency: 3 cycles
+  /// - Available on all modern x86_64 CPUs since Nehalem (2008)
+  ///
+  /// For CRC-32 IEEE, use PCLMULQDQ-based algorithms instead.
+  pub const CRC32C_READY: Caps = Caps([SSE42.0[0], 0, 0, 0]);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1014,6 +1028,14 @@ mod tests {
     assert!(vpclmul.has(x86::AVX512F));
     assert!(vpclmul.has(x86::AVX512VL));
     assert!(vpclmul.has(x86::AVX512BW));
+
+    // Verify CRC32C_READY contains SSE4.2
+    let crc32c = x86::CRC32C_READY;
+    assert!(crc32c.has(x86::SSE42));
+    assert_eq!(crc32c.count(), 1); // Only SSE4.2, nothing else
+
+    // Verify CRC32C_READY is independent of PCLMUL_READY
+    assert!(!crc32c.has(x86::PCLMULQDQ));
   }
 
   #[test]

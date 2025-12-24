@@ -1,16 +1,54 @@
-//! CRC-32 implementations.
+//! CRC-32 implementations with hardware acceleration.
 //!
-//! This module provides:
-//! - [`Crc32`] - CRC-32 IEEE (Ethernet, ZIP, PNG)
-//! - [`Crc32c`] - CRC-32C Castagnoli (iSCSI, ext4, Btrfs)
+//! This module provides two CRC-32 variants:
+//! - [`Crc32`]: IEEE 802.3 polynomial (Ethernet, ZIP, PNG)
+//! - [`Crc32c`]: Castagnoli polynomial (iSCSI, ext4, Btrfs)
 //!
 //! # Hardware Acceleration
 //!
-//! On supported platforms, hardware acceleration is automatically used:
-//! - x86_64: SSE4.2 crc32 instruction (CRC-32C), PCLMULQDQ, VPCLMULQDQ
-//! - aarch64: CRC32 extension, PMULL
+//! ## x86_64
+//!
+//! | Feature | Algorithms | Throughput |
+//! |---------|------------|------------|
+//! | SSE4.2 crc32 | CRC-32C only | ~20 GB/s |
+//! | PCLMULQDQ | Both | ~15 GB/s |
+//! | VPCLMULQDQ | Both | ~35 GB/s |
+//!
+//! ## aarch64
+//!
+//! | Feature | Algorithms | Throughput |
+//! |---------|------------|------------|
+//! | CRC32 extension | Both | ~20 GB/s |
+//! | PMULL | Both | ~12 GB/s |
+//! | PMULL+EOR3 | Both | ~15 GB/s |
+//!
+//! # Example
+//!
+//! ```ignore
+//! use checksum::{Crc32c, Checksum, ChecksumCombine};
+//!
+//! // One-shot computation
+//! let crc = Crc32c::checksum(b"hello world");
+//!
+//! // Streaming computation
+//! let mut hasher = Crc32c::new();
+//! hasher.update(b"hello ");
+//! hasher.update(b"world");
+//! assert_eq!(hasher.finalize(), crc);
+//!
+//! // Parallel combine
+//! let crc_a = Crc32c::checksum(b"hello ");
+//! let crc_b = Crc32c::checksum(b"world");
+//! let combined = Crc32c::combine(crc_a, crc_b, 5);
+//! assert_eq!(combined, crc);
+//! ```
 
+pub mod config;
+mod kernels;
 mod portable;
+#[cfg(test)]
+mod proptests;
+mod tuned_defaults;
 
 #[cfg(target_arch = "x86_64")]
 mod x86_64;
@@ -18,325 +56,583 @@ mod x86_64;
 #[cfg(target_arch = "aarch64")]
 mod aarch64;
 
-#[cfg(test)]
-mod proptests;
-
+// Re-export config types
 use backend::dispatch::Selected;
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-use backend::{candidates, dispatch::select};
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+pub use config::{Crc32Config, Crc32Force, Crc32Tunables};
+#[allow(unused_imports)]
 use platform::Caps;
-use traits::{Checksum, ChecksumCombine};
 
 use crate::{
-  common::{
-    combine::{Gf2Matrix32, combine_crc32, generate_shift8_matrix_32},
-    tables::{CRC32_IEEE_POLY, CRC32C_POLY, generate_crc32_tables_16},
-  },
+  common::tables::{CRC32_IEEE_POLY, CRC32C_POLY},
   dispatchers::{Crc32Dispatcher, Crc32Fn},
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Kernel Wrappers
+// Auto-Dispatch Functions (Length-Based Kernel Selection)
 // ─────────────────────────────────────────────────────────────────────────────
-//
-// These wrap the portable/arch-specific implementations to match the Crc32Fn
-// signature. Each wrapper bakes in the appropriate polynomial tables.
 
-/// Portable kernel tables (pre-computed at compile time).
-mod kernel_tables {
-  use super::*;
-  pub static IEEE_TABLES_16: [[u32; 256]; 16] = generate_crc32_tables_16(CRC32_IEEE_POLY);
-  pub static CASTAGNOLI_TABLES_16: [[u32; 256]; 16] = generate_crc32_tables_16(CRC32C_POLY);
-}
-
-/// CRC-32 IEEE portable kernel wrapper.
+/// CRC-32-IEEE portable kernel wrapper.
 fn crc32_ieee_portable(crc: u32, data: &[u8]) -> u32 {
-  portable::crc32_slice16(crc, data, &kernel_tables::IEEE_TABLES_16)
+  portable::crc32_ieee_slice16(crc, data)
 }
 
 /// CRC-32C portable kernel wrapper.
 fn crc32c_portable(crc: u32, data: &[u8]) -> u32 {
-  portable::crc32_slice16(crc, data, &kernel_tables::CASTAGNOLI_TABLES_16)
+  portable::crc32c_slice16(crc, data)
 }
 
-// aarch64 kernel wrappers
+#[cfg(target_arch = "x86_64")]
+fn crc32_ieee_x86_64_auto(crc: u32, data: &[u8]) -> u32 {
+  let len = data.len();
+
+  // Tiny regime: avoid any dispatch overhead
+  if len < 16 {
+    return crc32_ieee_portable(crc, data);
+  }
+
+  let cfg = config::get();
+  let caps = platform::caps();
+
+  // Handle forced backend selection
+  match cfg.effective_force {
+    Crc32Force::Portable => return crc32_ieee_portable(crc, data),
+    Crc32Force::Vpclmul if caps.has(platform::caps::x86::VPCLMUL_READY) => {
+      return x86_64::crc32_ieee_vpclmul_safe(crc, data);
+    }
+    Crc32Force::Vpclmul if caps.has(platform::caps::x86::PCLMUL_READY) => {
+      return x86_64::crc32_ieee_pclmul_safe(crc, data);
+    }
+    Crc32Force::Vpclmul => return crc32_ieee_portable(crc, data),
+    Crc32Force::Pclmul if caps.has(platform::caps::x86::PCLMUL_READY) => {
+      return x86_64::crc32_ieee_pclmul_safe(crc, data);
+    }
+    Crc32Force::Pclmul => return crc32_ieee_portable(crc, data),
+    _ => {}
+  }
+
+  // Auto selection with thresholds
+  // CRC32-IEEE has no HW instruction on x86, so the tiers are:
+  // portable → PCLMUL → VPCLMUL
+
+  // VPCLMUL tier (if available and above threshold)
+  if caps.has(platform::caps::x86::VPCLMUL_READY) && len >= cfg.tunables.pclmul_to_vpclmul {
+    return x86_64::crc32_ieee_vpclmul_safe(crc, data);
+  }
+
+  // PCLMUL tier (64+ bytes minimum for efficient folding)
+  if caps.has(platform::caps::x86::PCLMUL_READY) && len >= 64 {
+    return x86_64::crc32_ieee_pclmul_safe(crc, data);
+  }
+
+  crc32_ieee_portable(crc, data)
+}
+
+#[cfg(target_arch = "x86_64")]
+fn crc32c_x86_64_auto(crc: u32, data: &[u8]) -> u32 {
+  let len = data.len();
+
+  // Tiny regime: avoid any dispatch overhead
+  if len < 8 {
+    return crc32c_portable(crc, data);
+  }
+
+  let cfg = config::get();
+  let caps = platform::caps();
+
+  // Handle forced backend selection
+  match cfg.effective_force {
+    Crc32Force::Portable => return crc32c_portable(crc, data),
+    Crc32Force::Vpclmul if caps.has(platform::caps::x86::VPCLMUL_READY) => {
+      return x86_64::crc32c_vpclmul_safe(crc, data);
+    }
+    Crc32Force::Vpclmul if caps.has(platform::caps::x86::PCLMUL_READY) => {
+      // Fallback to PCLMUL fusion
+      return x86_64::crc32c_pclmul_safe(crc, data);
+    }
+    Crc32Force::Vpclmul => return crc32c_portable(crc, data),
+    Crc32Force::Pclmul if caps.has(platform::caps::x86::PCLMUL_READY) => {
+      return x86_64::crc32c_pclmul_safe(crc, data);
+    }
+    Crc32Force::Pclmul => return crc32c_portable(crc, data),
+    Crc32Force::Sse42 if caps.has(platform::caps::x86::SSE42) => {
+      return x86_64::crc32c_sse42_safe(crc, data);
+    }
+    Crc32Force::Sse42 => return crc32c_portable(crc, data),
+    _ => {}
+  }
+
+  // Auto selection with thresholds for CRC32C:
+  // The SSE4.2 crc32 instruction is extremely fast for small/medium buffers.
+  // The PCLMUL fusion only wins for larger buffers due to setup overhead.
+  // Tiers: portable → SSE4.2 HW → PCLMUL fusion → VPCLMUL
+
+  // Below portable_to_hw: use portable
+  if len < cfg.tunables.portable_to_hw {
+    return crc32c_portable(crc, data);
+  }
+
+  // VPCLMUL tier (if available and above threshold)
+  if caps.has(platform::caps::x86::VPCLMUL_READY) && len >= cfg.tunables.pclmul_to_vpclmul {
+    return x86_64::crc32c_vpclmul_safe(crc, data);
+  }
+
+  // PCLMUL fusion tier (above hw_to_clmul threshold)
+  if caps.has(platform::caps::x86::PCLMUL_READY)
+    && caps.has(platform::caps::x86::SSE42)
+    && len >= cfg.tunables.hw_to_clmul
+  {
+    return x86_64::crc32c_pclmul_safe(crc, data);
+  }
+
+  // SSE4.2 hardware CRC tier (default fast path)
+  if caps.has(platform::caps::x86::SSE42) {
+    return x86_64::crc32c_sse42_safe(crc, data);
+  }
+
+  // Pure PCLMUL (no SSE4.2 fusion) for very rare CPUs
+  if caps.has(platform::caps::x86::PCLMUL_READY) {
+    return x86_64::crc32c_pclmul_safe(crc, data);
+  }
+
+  crc32c_portable(crc, data)
+}
+
 #[cfg(target_arch = "aarch64")]
-fn crc32_ieee_aarch64(crc: u32, data: &[u8]) -> u32 {
-  aarch64::crc32_crc_safe(crc, data)
+fn crc32_ieee_aarch64_auto(crc: u32, data: &[u8]) -> u32 {
+  let len = data.len();
+
+  if len < 8 {
+    return crc32_ieee_portable(crc, data);
+  }
+
+  let cfg = config::get();
+  let caps = platform::caps();
+
+  // Handle forced backend selection
+  match cfg.effective_force {
+    Crc32Force::Portable => return crc32_ieee_portable(crc, data),
+    Crc32Force::PmullEor3 if caps.has(platform::caps::aarch64::PMULL_EOR3_READY) => {
+      return aarch64::crc32_ieee_pmull_eor3_safe(crc, data);
+    }
+    Crc32Force::PmullEor3 => return crc32_ieee_portable(crc, data),
+    Crc32Force::Pmull if caps.has(platform::caps::aarch64::PMULL_READY) => {
+      return aarch64::crc32_ieee_pmull_safe(crc, data);
+    }
+    Crc32Force::Pmull => return crc32_ieee_portable(crc, data),
+    Crc32Force::ArmCrc if caps.has(platform::caps::aarch64::CRC) => {
+      return aarch64::crc32_ieee_arm_safe(crc, data);
+    }
+    Crc32Force::ArmCrc => return crc32_ieee_portable(crc, data),
+    _ => {}
+  }
+
+  // Auto selection with thresholds
+  // CRC32-IEEE on ARM: ARM CRC instruction handles both polynomials
+  // Tiers: portable → ARM CRC → PMULL → PMULL+EOR3
+
+  if len < cfg.tunables.portable_to_hw {
+    return crc32_ieee_portable(crc, data);
+  }
+
+  // PMULL+EOR3 tier (highest throughput, requires large buffers)
+  if caps.has(platform::caps::aarch64::PMULL_EOR3_READY) && len >= cfg.tunables.hw_to_clmul {
+    return aarch64::crc32_ieee_pmull_eor3_safe(crc, data);
+  }
+
+  // PMULL tier (for large buffers)
+  if caps.has(platform::caps::aarch64::PMULL_READY) && len >= cfg.tunables.hw_to_clmul {
+    return aarch64::crc32_ieee_pmull_safe(crc, data);
+  }
+
+  // ARM CRC instruction (fast for small/medium buffers)
+  if caps.has(platform::caps::aarch64::CRC) {
+    return aarch64::crc32_ieee_arm_safe(crc, data);
+  }
+
+  // PMULL fallback (if no ARM CRC)
+  if caps.has(platform::caps::aarch64::PMULL_READY) {
+    return aarch64::crc32_ieee_pmull_safe(crc, data);
+  }
+
+  crc32_ieee_portable(crc, data)
 }
 
 #[cfg(target_arch = "aarch64")]
-fn crc32c_aarch64(crc: u32, data: &[u8]) -> u32 {
-  aarch64::crc32c_crc_safe(crc, data)
-}
+fn crc32c_aarch64_auto(crc: u32, data: &[u8]) -> u32 {
+  let len = data.len();
 
-// x86_64 kernel wrappers
-#[cfg(target_arch = "x86_64")]
-fn crc32c_x86_64_sse42(crc: u32, data: &[u8]) -> u32 {
-  x86_64::crc32c_sse42_safe(crc, data)
-}
+  if len < 8 {
+    return crc32c_portable(crc, data);
+  }
 
-#[cfg(target_arch = "x86_64")]
-fn crc32_ieee_x86_64_pclmul(crc: u32, data: &[u8]) -> u32 {
-  x86_64::crc32_pclmul_safe(crc, data)
-}
+  let cfg = config::get();
+  let caps = platform::caps();
 
-// Prepared for future PCLMUL dispatch (Phase 3 task: "Dispatcher integration (CRC32C)").
-#[cfg(target_arch = "x86_64")]
-#[allow(dead_code)]
-fn crc32c_x86_64_pclmul(crc: u32, data: &[u8]) -> u32 {
-  x86_64::crc32c_pclmul_safe(crc, data)
+  // Handle forced backend selection
+  match cfg.effective_force {
+    Crc32Force::Portable => return crc32c_portable(crc, data),
+    Crc32Force::PmullEor3 if caps.has(platform::caps::aarch64::PMULL_EOR3_READY) => {
+      return aarch64::crc32c_pmull_eor3_safe(crc, data);
+    }
+    Crc32Force::PmullEor3 => return crc32c_portable(crc, data),
+    Crc32Force::Pmull if caps.has(platform::caps::aarch64::PMULL_READY) => {
+      return aarch64::crc32c_pmull_safe(crc, data);
+    }
+    Crc32Force::Pmull => return crc32c_portable(crc, data),
+    Crc32Force::ArmCrc if caps.has(platform::caps::aarch64::CRC) => {
+      return aarch64::crc32c_arm_safe(crc, data);
+    }
+    Crc32Force::ArmCrc => return crc32c_portable(crc, data),
+    _ => {}
+  }
+
+  // Auto selection with thresholds
+  // CRC32C on ARM: ARM CRC32C instruction is very fast
+  // Tiers: portable → ARM CRC32C → PMULL → PMULL+EOR3
+
+  if len < cfg.tunables.portable_to_hw {
+    return crc32c_portable(crc, data);
+  }
+
+  // PMULL+EOR3 tier (highest throughput, requires large buffers)
+  if caps.has(platform::caps::aarch64::PMULL_EOR3_READY) && len >= cfg.tunables.hw_to_clmul {
+    return aarch64::crc32c_pmull_eor3_safe(crc, data);
+  }
+
+  // PMULL tier (for large buffers)
+  if caps.has(platform::caps::aarch64::PMULL_READY) && len >= cfg.tunables.hw_to_clmul {
+    return aarch64::crc32c_pmull_safe(crc, data);
+  }
+
+  // ARM CRC32C instruction (fast for small/medium buffers)
+  if caps.has(platform::caps::aarch64::CRC) {
+    return aarch64::crc32c_arm_safe(crc, data);
+  }
+
+  // PMULL fallback (if no ARM CRC)
+  if caps.has(platform::caps::aarch64::PMULL_READY) {
+    return aarch64::crc32c_pmull_safe(crc, data);
+  }
+
+  crc32c_portable(crc, data)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Dispatcher Selection
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Select the best CRC-32 IEEE kernel for the current platform.
-#[cfg(target_arch = "aarch64")]
+/// Select the best CRC-32-IEEE kernel for the current platform.
 fn select_crc32_ieee() -> Selected<Crc32Fn> {
   let caps = platform::caps();
-  select(
-    caps,
-    candidates![
-      "aarch64/crc" => platform::caps::aarch64::CRC => crc32_ieee_aarch64,
-      "portable/slice16" => Caps::NONE => crc32_ieee_portable,
-    ],
-  )
-}
+  let config = config::get();
 
-#[cfg(target_arch = "x86_64")]
-fn select_crc32_ieee() -> Selected<Crc32Fn> {
-  let caps = platform::caps();
-  select(
-    caps,
-    candidates![
-      "x86_64/pclmul" => platform::caps::x86::PCLMUL_READY => crc32_ieee_x86_64_pclmul,
-      "portable/slice16" => Caps::NONE => crc32_ieee_portable,
-    ],
-  )
-}
+  // Explicit portable override always wins.
+  if config.effective_force == Crc32Force::Portable {
+    return Selected::new("portable/slice16", crc32_ieee_portable);
+  }
 
-#[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
-fn select_crc32_ieee() -> Selected<Crc32Fn> {
+  #[cfg(target_arch = "x86_64")]
+  {
+    use platform::caps::x86;
+
+    // If any SIMD feature is available, use the auto function for length-based dispatch
+    if caps.has(x86::PCLMUL_READY) || caps.has(x86::VPCLMUL_READY) {
+      return Selected::new("x86_64/auto", crc32_ieee_x86_64_auto);
+    }
+  }
+
+  #[cfg(target_arch = "aarch64")]
+  {
+    use platform::caps::aarch64 as arm;
+
+    // If any accelerator is available, use the auto function
+    if caps.has(arm::CRC) || caps.has(arm::PMULL_READY) {
+      return Selected::new("aarch64/auto", crc32_ieee_aarch64_auto);
+    }
+  }
+
   Selected::new("portable/slice16", crc32_ieee_portable)
 }
 
 /// Select the best CRC-32C kernel for the current platform.
-#[cfg(target_arch = "aarch64")]
 fn select_crc32c() -> Selected<Crc32Fn> {
   let caps = platform::caps();
-  select(
-    caps,
-    candidates![
-      "aarch64/crc" => platform::caps::aarch64::CRC => crc32c_aarch64,
-      "portable/slice16" => Caps::NONE => crc32c_portable,
-    ],
-  )
-}
+  let config = config::get();
 
-#[cfg(target_arch = "x86_64")]
-fn select_crc32c() -> Selected<Crc32Fn> {
-  let caps = platform::caps();
-  select(
-    caps,
-    candidates![
-      "x86_64/sse42" => platform::caps::x86::SSE42 => crc32c_x86_64_sse42,
-      "portable/slice16" => Caps::NONE => crc32c_portable,
-    ],
-  )
-}
+  // Explicit portable override always wins.
+  if config.effective_force == Crc32Force::Portable {
+    return Selected::new("portable/slice16", crc32c_portable);
+  }
 
-#[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
-fn select_crc32c() -> Selected<Crc32Fn> {
+  #[cfg(target_arch = "x86_64")]
+  {
+    use platform::caps::x86;
+
+    // If any accelerator is available, use the auto function for length-based dispatch
+    if caps.has(x86::SSE42) || caps.has(x86::PCLMUL_READY) || caps.has(x86::VPCLMUL_READY) {
+      return Selected::new("x86_64/auto", crc32c_x86_64_auto);
+    }
+  }
+
+  #[cfg(target_arch = "aarch64")]
+  {
+    use platform::caps::aarch64 as arm;
+
+    // If any accelerator is available, use the auto function
+    if caps.has(arm::CRC) || caps.has(arm::PMULL_READY) {
+      return Selected::new("aarch64/auto", crc32c_aarch64_auto);
+    }
+  }
+
   Selected::new("portable/slice16", crc32c_portable)
 }
 
-/// Static dispatcher for CRC-32 IEEE.
+// Static dispatchers
 static CRC32_IEEE_DISPATCHER: Crc32Dispatcher = Crc32Dispatcher::new(select_crc32_ieee);
-
-/// Static dispatcher for CRC-32C.
 static CRC32C_DISPATCHER: Crc32Dispatcher = Crc32Dispatcher::new(select_crc32c);
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CRC-32 IEEE
+// Type Definitions
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// CRC-32 checksum (IEEE 802.3 / ISO-HDLC).
-///
-/// Used in Ethernet FCS, ZIP, gzip, PNG, and many other formats.
-///
-/// # Properties
-///
-/// - **Polynomial**: 0x04C11DB7 (normal), 0xEDB88320 (reflected)
-/// - **Initial value**: 0xFFFFFFFF
-/// - **Final XOR**: 0xFFFFFFFF
-/// - **Reflect input/output**: Yes
-///
-/// # Hardware Acceleration
-///
-/// - **aarch64**: CRC32 extension (`crc32w`, `crc32b`)
-/// - **x86_64**: PCLMULQDQ folding, VPCLMULQDQ (AVX-512)
-///
-/// # Example
-///
-/// ```ignore
-/// use checksum::{Crc32, Checksum};
-///
-/// let crc = Crc32::checksum(b"123456789");
-/// assert_eq!(crc, 0xCBF43926); // "123456789" test vector
-/// ```
-#[derive(Clone, Default)]
-pub struct Crc32 {
-  state: u32,
-}
-
-impl Crc32 {
-  /// Pre-computed shift-by-8 matrix for combine.
-  const SHIFT8_MATRIX: Gf2Matrix32 = generate_shift8_matrix_32(CRC32_IEEE_POLY);
-
-  /// Create a hasher to resume from a previous CRC value.
-  #[inline]
-  #[must_use]
-  pub const fn resume(crc: u32) -> Self {
-    Self { state: crc ^ !0 }
-  }
-
-  /// Get the name of the currently selected backend.
+define_crc32_type!(
+  /// CRC-32 (IEEE 802.3) checksum.
   ///
-  /// Returns the implementation name (e.g., "portable/slice8", "aarch64/crc").
-  #[must_use]
-  pub fn backend_name() -> &'static str {
-    CRC32_IEEE_DISPATCHER.backend_name()
-  }
-}
-
-impl Checksum for Crc32 {
-  const OUTPUT_SIZE: usize = 4;
-  type Output = u32;
-
-  #[inline]
-  fn new() -> Self {
-    Self { state: !0 }
-  }
-
-  #[inline]
-  fn with_initial(initial: u32) -> Self {
-    Self { state: initial ^ !0 }
-  }
-
-  #[inline]
-  fn update(&mut self, data: &[u8]) {
-    self.state = CRC32_IEEE_DISPATCHER.call(self.state, data);
-  }
-
-  #[inline]
-  fn finalize(&self) -> u32 {
-    self.state ^ !0
-  }
-
-  #[inline]
-  fn reset(&mut self) {
-    self.state = !0;
-  }
-}
-
-impl ChecksumCombine for Crc32 {
-  fn combine(crc_a: u32, crc_b: u32, len_b: usize) -> u32 {
-    combine_crc32(crc_a, crc_b, len_b, Self::SHIFT8_MATRIX)
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// CRC-32C (Castagnoli)
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// CRC-32C checksum (Castagnoli polynomial).
-///
-/// Used in iSCSI, ext4, Btrfs, SCTP, and other modern protocols.
-/// Has better error detection properties than CRC-32 IEEE.
-///
-/// # Properties
-///
-/// - **Polynomial**: 0x1EDC6F41 (normal), 0x82F63B78 (reflected)
-/// - **Initial value**: 0xFFFFFFFF
-/// - **Final XOR**: 0xFFFFFFFF
-/// - **Reflect input/output**: Yes
-///
-/// # Hardware Acceleration
-///
-/// - **x86_64**: SSE4.2 `crc32` instruction (~20 GB/s)
-/// - **aarch64**: CRC32 extension with `crc32cw`/`crc32cb` (~20 GB/s)
-/// - **x86_64**: PCLMULQDQ (~15 GB/s), VPCLMULQDQ (~40 GB/s)
-///
-/// # Example
-///
-/// ```ignore
-/// use checksum::{Crc32c, Checksum};
-///
-/// let crc = Crc32c::checksum(b"123456789");
-/// assert_eq!(crc, 0xE3069283); // "123456789" test vector
-/// ```
-#[derive(Clone, Default)]
-pub struct Crc32c {
-  state: u32,
-}
-
-impl Crc32c {
-  /// Pre-computed shift-by-8 matrix for combine.
-  const SHIFT8_MATRIX: Gf2Matrix32 = generate_shift8_matrix_32(CRC32C_POLY);
-
-  /// Create a hasher to resume from a previous CRC value.
-  #[inline]
-  #[must_use]
-  pub const fn resume(crc: u32) -> Self {
-    Self { state: crc ^ !0 }
-  }
-
-  /// Get the name of the currently selected backend.
+  /// Used by Ethernet, PKZIP, Gzip, PNG, MPEG-2, and many other formats.
   ///
-  /// Returns the implementation name (e.g., "portable/slice8", "x86_64/sse42").
-  #[must_use]
-  pub fn backend_name() -> &'static str {
-    CRC32C_DISPATCHER.backend_name()
+  /// # Polynomial
+  ///
+  /// - Normal form: `0x04C11DB7`
+  /// - Reflected form: `0xEDB88320`
+  ///
+  /// # Example
+  ///
+  /// ```ignore
+  /// use checksum::{Crc32, Checksum};
+  ///
+  /// let crc = Crc32::checksum(b"hello world");
+  /// assert_eq!(crc, 0x0D4A1185);
+  /// ```
+  pub struct Crc32 {
+    poly: CRC32_IEEE_POLY,
+    dispatcher: CRC32_IEEE_DISPATCHER,
   }
+);
+
+define_crc32_type!(
+  /// CRC-32C (Castagnoli) checksum.
+  ///
+  /// Used by iSCSI, SCTP, ext4, Btrfs, LevelDB, and modern storage systems.
+  /// This polynomial was chosen for its superior error detection properties
+  /// and has dedicated hardware support on both x86_64 (SSE4.2) and aarch64.
+  ///
+  /// # Polynomial
+  ///
+  /// - Normal form: `0x1EDC6F41`
+  /// - Reflected form: `0x82F63B78`
+  ///
+  /// # Example
+  ///
+  /// ```ignore
+  /// use checksum::{Crc32c, Checksum};
+  ///
+  /// let crc = Crc32c::checksum(b"hello world");
+  /// assert_eq!(crc, 0xC99465AA);
+  /// ```
+  pub struct Crc32c {
+    poly: CRC32C_POLY,
+    dispatcher: CRC32C_DISPATCHER,
+  }
+);
+
+// Type aliases for compatibility
+/// Alias for [`Crc32`] (IEEE 802.3 polynomial).
+pub type Crc32Ieee = Crc32;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Kernel Name Selection
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Returns the kernel name that would be selected for CRC-32C for a given buffer length.
+///
+/// This is intended for debugging/benchmarking and does not allocate.
+///
+/// Note: This defaults to CRC-32C selection logic. For CRC-32-IEEE-specific
+/// selection, use [`crc32_ieee_selected_kernel_name`].
+#[must_use]
+pub fn crc32_selected_kernel_name(len: usize) -> &'static str {
+  crc32c_selected_kernel_name(len)
 }
 
-impl Checksum for Crc32c {
-  const OUTPUT_SIZE: usize = 4;
-  type Output = u32;
+/// Returns the kernel name that would be selected for CRC-32C for a given buffer length.
+///
+/// This is intended for debugging/benchmarking and does not allocate.
+#[must_use]
+pub fn crc32c_selected_kernel_name(len: usize) -> &'static str {
+  let config = config::get();
+  let caps = platform::caps();
 
-  #[inline]
-  fn new() -> Self {
-    Self { state: !0 }
-  }
-
-  #[inline]
-  fn with_initial(initial: u32) -> Self {
-    Self { state: initial ^ !0 }
-  }
-
-  #[inline]
-  fn update(&mut self, data: &[u8]) {
-    self.state = CRC32C_DISPATCHER.call(self.state, data);
-  }
-
-  #[inline]
-  fn finalize(&self) -> u32 {
-    self.state ^ !0
-  }
-
-  #[inline]
-  fn reset(&mut self) {
-    self.state = !0;
-  }
+  crc32c_kernel_name_for_caps_and_len(caps, &config, len)
 }
 
-impl ChecksumCombine for Crc32c {
-  fn combine(crc_a: u32, crc_b: u32, len_b: usize) -> u32 {
-    combine_crc32(crc_a, crc_b, len_b, Self::SHIFT8_MATRIX)
+/// Returns the kernel name that would be selected for CRC-32-IEEE for a given buffer length.
+///
+/// This is intended for debugging/benchmarking and does not allocate.
+#[must_use]
+#[allow(dead_code)]
+pub fn crc32_ieee_selected_kernel_name(len: usize) -> &'static str {
+  let config = config::get();
+  let caps = platform::caps();
+
+  crc32_ieee_kernel_name_for_caps_and_len(caps, &config, len)
+}
+
+#[allow(unused_variables)]
+fn crc32c_kernel_name_for_caps_and_len(caps: Caps, config: &Crc32Config, len: usize) -> &'static str {
+  #[cfg(target_arch = "x86_64")]
+  {
+    use platform::caps::x86;
+
+    if config.effective_force == Crc32Force::Portable {
+      return kernels::PORTABLE;
+    }
+
+    // Tiny regime
+    if len < 8 {
+      return kernels::PORTABLE;
+    }
+
+    // Below portable_to_hw threshold
+    if len < config.tunables.portable_to_hw {
+      return kernels::PORTABLE;
+    }
+
+    // VPCLMUL tier
+    if caps.has(x86::VPCLMUL_READY) && len >= config.tunables.pclmul_to_vpclmul {
+      return kernels::x86_64::VPCLMUL;
+    }
+
+    // PCLMUL fusion tier
+    if caps.has(x86::PCLMUL_READY) && caps.has(x86::SSE42) && len >= config.tunables.hw_to_clmul {
+      return kernels::x86_64::PCLMUL;
+    }
+
+    // SSE4.2 HW CRC tier
+    if caps.has(x86::SSE42) {
+      return kernels::x86_64::SSE42_CRC32C;
+    }
+
+    // Pure PCLMUL fallback
+    if caps.has(x86::PCLMUL_READY) {
+      return kernels::x86_64::PCLMUL;
+    }
   }
+
+  #[cfg(target_arch = "aarch64")]
+  {
+    use platform::caps::aarch64 as arm;
+
+    if config.effective_force == Crc32Force::Portable {
+      return kernels::PORTABLE;
+    }
+
+    if len < 8 {
+      return kernels::PORTABLE;
+    }
+
+    if len < config.tunables.portable_to_hw {
+      return kernels::PORTABLE;
+    }
+
+    // PMULL+EOR3 tier
+    if caps.has(arm::PMULL_EOR3_READY) && len >= config.tunables.hw_to_clmul {
+      return kernels::aarch64::PMULL_EOR3;
+    }
+
+    // PMULL tier
+    if caps.has(arm::PMULL_READY) && len >= config.tunables.hw_to_clmul {
+      return kernels::aarch64::PMULL;
+    }
+
+    // ARM CRC32C tier
+    if caps.has(arm::CRC) {
+      return kernels::aarch64::ARM_CRC32C;
+    }
+
+    // PMULL fallback
+    if caps.has(arm::PMULL_READY) {
+      return kernels::aarch64::PMULL;
+    }
+  }
+
+  kernels::PORTABLE
+}
+
+#[allow(unused_variables)]
+#[allow(dead_code)]
+fn crc32_ieee_kernel_name_for_caps_and_len(caps: Caps, config: &Crc32Config, len: usize) -> &'static str {
+  #[cfg(target_arch = "x86_64")]
+  {
+    use platform::caps::x86;
+
+    if config.effective_force == Crc32Force::Portable {
+      return kernels::PORTABLE;
+    }
+
+    // Tiny regime
+    if len < 16 {
+      return kernels::PORTABLE;
+    }
+
+    // VPCLMUL tier (CRC32-IEEE has no HW instruction, so skip directly to CLMUL)
+    if caps.has(x86::VPCLMUL_READY) && len >= config.tunables.pclmul_to_vpclmul {
+      return kernels::x86_64::VPCLMUL;
+    }
+
+    // PCLMUL tier (64+ bytes)
+    if caps.has(x86::PCLMUL_READY) && len >= 64 {
+      return kernels::x86_64::PCLMUL;
+    }
+  }
+
+  #[cfg(target_arch = "aarch64")]
+  {
+    use platform::caps::aarch64 as arm;
+
+    if config.effective_force == Crc32Force::Portable {
+      return kernels::PORTABLE;
+    }
+
+    if len < 8 {
+      return kernels::PORTABLE;
+    }
+
+    if len < config.tunables.portable_to_hw {
+      return kernels::PORTABLE;
+    }
+
+    // PMULL+EOR3 tier
+    if caps.has(arm::PMULL_EOR3_READY) && len >= config.tunables.hw_to_clmul {
+      return kernels::aarch64::PMULL_EOR3;
+    }
+
+    // PMULL tier
+    if caps.has(arm::PMULL_READY) && len >= config.tunables.hw_to_clmul {
+      return kernels::aarch64::PMULL;
+    }
+
+    // ARM CRC32 tier
+    if caps.has(arm::CRC) {
+      return kernels::aarch64::ARM_CRC32;
+    }
+
+    // PMULL fallback
+    if caps.has(arm::PMULL_READY) {
+      return kernels::aarch64::PMULL;
+    }
+  }
+
+  kernels::PORTABLE
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -345,110 +641,126 @@ impl ChecksumCombine for Crc32c {
 
 #[cfg(test)]
 mod tests {
-  use super::*;
+  extern crate alloc;
+  use alloc::vec::Vec;
 
-  const TEST_DATA: &[u8] = b"123456789";
+  use super::*;
+  use crate::{Checksum, ChecksumCombine};
+
+  // Known test vectors
+  const CRC32_IEEE_EMPTY: u32 = 0x0000_0000;
+  const CRC32_IEEE_HELLO_WORLD: u32 = 0x0D4A_1185;
+
+  const CRC32C_EMPTY: u32 = 0x0000_0000;
+  const CRC32C_HELLO_WORLD: u32 = 0xC99465AA;
 
   #[test]
-  fn test_crc32_ieee_checksum() {
-    let crc = Crc32::checksum(TEST_DATA);
-    assert_eq!(crc, 0xCBF43926);
+  fn test_crc32_empty() {
+    assert_eq!(Crc32::checksum(b""), CRC32_IEEE_EMPTY);
   }
 
   #[test]
-  fn test_crc32c_checksum() {
-    let crc = Crc32c::checksum(TEST_DATA);
-    assert_eq!(crc, 0xE3069283);
+  fn test_crc32_hello_world() {
+    assert_eq!(Crc32::checksum(b"hello world"), CRC32_IEEE_HELLO_WORLD);
+  }
+
+  #[test]
+  fn test_crc32c_empty() {
+    assert_eq!(Crc32c::checksum(b""), CRC32C_EMPTY);
+  }
+
+  #[test]
+  fn test_crc32c_hello_world() {
+    assert_eq!(Crc32c::checksum(b"hello world"), CRC32C_HELLO_WORLD);
   }
 
   #[test]
   fn test_crc32_streaming() {
-    let oneshot = Crc32::checksum(TEST_DATA);
+    let full = Crc32::checksum(b"hello world");
 
     let mut hasher = Crc32::new();
-    hasher.update(&TEST_DATA[..5]);
-    hasher.update(&TEST_DATA[5..]);
-    assert_eq!(hasher.finalize(), oneshot);
+    hasher.update(b"hello ");
+    hasher.update(b"world");
+    assert_eq!(hasher.finalize(), full);
   }
 
   #[test]
   fn test_crc32c_streaming() {
-    let oneshot = Crc32c::checksum(TEST_DATA);
+    let full = Crc32c::checksum(b"hello world");
 
     let mut hasher = Crc32c::new();
-    for chunk in TEST_DATA.chunks(3) {
-      hasher.update(chunk);
-    }
-    assert_eq!(hasher.finalize(), oneshot);
+    hasher.update(b"hello ");
+    hasher.update(b"world");
+    assert_eq!(hasher.finalize(), full);
   }
 
   #[test]
   fn test_crc32_combine() {
-    let data = b"hello world";
-    let (a, b) = data.split_at(6);
-
-    let crc_a = Crc32::checksum(a);
-    let crc_b = Crc32::checksum(b);
-    let combined = Crc32::combine(crc_a, crc_b, b.len());
-
-    assert_eq!(combined, Crc32::checksum(data));
+    let full = Crc32::checksum(b"hello world");
+    let crc_a = Crc32::checksum(b"hello ");
+    let crc_b = Crc32::checksum(b"world");
+    let combined = Crc32::combine(crc_a, crc_b, 5);
+    assert_eq!(combined, full);
   }
 
   #[test]
   fn test_crc32c_combine() {
-    let data = b"hello world";
-    let (a, b) = data.split_at(6);
-
-    let crc_a = Crc32c::checksum(a);
-    let crc_b = Crc32c::checksum(b);
-    let combined = Crc32c::combine(crc_a, crc_b, b.len());
-
-    assert_eq!(combined, Crc32c::checksum(data));
-  }
-
-  #[test]
-  fn test_crc32_empty() {
-    let crc = Crc32::checksum(&[]);
-    assert_eq!(crc, 0);
-
-    let crc = Crc32c::checksum(&[]);
-    assert_eq!(crc, 0);
-  }
-
-  #[test]
-  fn test_crc32_reset() {
-    let mut hasher = Crc32c::new();
-    hasher.update(b"some data");
-    hasher.reset();
-    hasher.update(TEST_DATA);
-    assert_eq!(hasher.finalize(), Crc32c::checksum(TEST_DATA));
-  }
-
-  #[test]
-  fn test_crc32_combine_all_splits() {
-    for split in 0..=TEST_DATA.len() {
-      let (a, b) = TEST_DATA.split_at(split);
-      let crc_a = Crc32c::checksum(a);
-      let crc_b = Crc32c::checksum(b);
-      let combined = Crc32c::combine(crc_a, crc_b, b.len());
-      assert_eq!(combined, Crc32c::checksum(TEST_DATA), "Failed at split {split}");
-    }
+    let full = Crc32c::checksum(b"hello world");
+    let crc_a = Crc32c::checksum(b"hello ");
+    let crc_b = Crc32c::checksum(b"world");
+    let combined = Crc32c::combine(crc_a, crc_b, 5);
+    assert_eq!(combined, full);
   }
 
   #[test]
   fn test_crc32_resume() {
-    let mut h1 = Crc32c::new();
-    h1.update(&TEST_DATA[..5]);
-    let partial = h1.finalize();
+    let data = b"hello world";
+    let full = Crc32::checksum(data);
 
-    let mut h2 = Crc32c::resume(partial);
-    h2.update(&TEST_DATA[5..]);
-    assert_eq!(h2.finalize(), Crc32c::checksum(TEST_DATA));
+    // Compute in two parts using resume
+    let part1 = Crc32::checksum(b"hello ");
+    let hasher = Crc32::resume(part1);
+    let mut hasher = hasher;
+    hasher.update(b"world");
+    let resumed = hasher.finalize();
+
+    assert_eq!(resumed, full);
   }
 
   #[test]
-  fn test_backend_name_not_empty() {
-    assert!(!Crc32::backend_name().is_empty());
-    assert!(!Crc32c::backend_name().is_empty());
+  fn test_crc32c_resume() {
+    let data = b"hello world";
+    let full = Crc32c::checksum(data);
+
+    let part1 = Crc32c::checksum(b"hello ");
+    let hasher = Crc32c::resume(part1);
+    let mut hasher = hasher;
+    hasher.update(b"world");
+    let resumed = hasher.finalize();
+
+    assert_eq!(resumed, full);
+  }
+
+  #[test]
+  fn test_backend_name() {
+    // Just verify it returns something
+    let name = Crc32::backend_name();
+    assert!(!name.is_empty());
+
+    let name = Crc32c::backend_name();
+    assert!(!name.is_empty());
+  }
+
+  #[test]
+  fn test_various_lengths() {
+    // Test various lengths to exercise different code paths
+    for len in [0, 1, 7, 8, 15, 16, 31, 32, 63, 64, 127, 128, 255, 256, 512, 1024, 4096] {
+      let data: Vec<u8> = (0..len).map(|i| i as u8).collect();
+
+      // Just verify it doesn't panic and returns consistent results
+      let crc1 = Crc32c::checksum(&data);
+      let crc2 = Crc32c::checksum(&data);
+      assert_eq!(crc1, crc2, "Inconsistent result at length {len}");
+    }
   }
 }

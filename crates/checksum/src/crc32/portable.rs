@@ -1,106 +1,74 @@
-//! Portable CRC-32 implementation using slice-by-8 and slice-by-16.
+//! Portable CRC-32 implementations using table-driven algorithms.
 //!
-//! Slice-by-8 processes 8 bytes per iteration, achieving ~2 GB/s on modern CPUs.
-//! Slice-by-16 processes 16 bytes per iteration for ~1.5-2x better throughput.
-//! These are the fallbacks when hardware acceleration is unavailable.
+//! These implementations work on all platforms without hardware acceleration.
+//! They serve as:
+//! - Fallback when SIMD isn't available or the buffer is too small
+//! - Reference implementations for testing
 
-// SAFETY: chunks_exact guarantees proper chunk sizes; table indices use `& 0xFF` (0..255).
-#![allow(clippy::indexing_slicing)]
+use crate::common::{
+  portable::{slice8_32, slice16_32},
+  tables::{CRC32_IEEE_POLY, CRC32C_POLY, generate_crc32_tables_8, generate_crc32_tables_16},
+};
 
-/// Update CRC-32 state using slice-by-8 algorithm.
+// ─────────────────────────────────────────────────────────────────────────────
+// CRC-32 IEEE (Ethernet/ZIP/PNG)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Slice-by-8 lookup tables for CRC-32-IEEE.
+#[allow(dead_code)]
+const CRC32_IEEE_TABLES_8: [[u32; 256]; 8] = generate_crc32_tables_8(CRC32_IEEE_POLY);
+
+/// Slice-by-16 lookup tables for CRC-32-IEEE.
+const CRC32_IEEE_TABLES_16: [[u32; 256]; 16] = generate_crc32_tables_16(CRC32_IEEE_POLY);
+
+/// CRC-32-IEEE using slice-by-8 algorithm.
 ///
-/// Processes 8 bytes at a time for improved throughput compared to
-/// byte-at-a-time table lookup.
-///
-/// # Arguments
-///
-/// * `crc` - Current CRC state (pre-inverted)
-/// * `data` - Input data
-/// * `tables` - 8 lookup tables (256 entries each)
+/// Processes 8 bytes per iteration. Good balance of speed and table size.
 #[inline]
-#[cfg(test)]
-pub fn crc32_slice8(mut crc: u32, data: &[u8], tables: &[[u32; 256]; 8]) -> u32 {
-  let mut chunks = data.chunks_exact(8);
-
-  for chunk in chunks.by_ref() {
-    // Read 8 bytes as two u32s (little-endian)
-    let lo = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-    let hi = u32::from_le_bytes([chunk[4], chunk[5], chunk[6], chunk[7]]);
-
-    // XOR first 4 bytes with current CRC
-    let val_lo = lo ^ crc;
-
-    // Lookup all 8 bytes in parallel using 8 different tables
-    crc = tables[7][(val_lo & 0xFF) as usize]
-      ^ tables[6][((val_lo >> 8) & 0xFF) as usize]
-      ^ tables[5][((val_lo >> 16) & 0xFF) as usize]
-      ^ tables[4][(val_lo >> 24) as usize]
-      ^ tables[3][(hi & 0xFF) as usize]
-      ^ tables[2][((hi >> 8) & 0xFF) as usize]
-      ^ tables[1][((hi >> 16) & 0xFF) as usize]
-      ^ tables[0][(hi >> 24) as usize];
-  }
-
-  // Process remaining bytes (0-7) with byte-at-a-time
-  for &byte in chunks.remainder() {
-    let index = ((crc ^ (byte as u32)) & 0xFF) as usize;
-    crc = tables[0][index] ^ (crc >> 8);
-  }
-
-  crc
+#[allow(dead_code)]
+pub fn crc32_ieee_slice8(crc: u32, data: &[u8]) -> u32 {
+  slice8_32(crc, data, &CRC32_IEEE_TABLES_8)
 }
 
-/// Update CRC-32 state using slice-by-16 algorithm.
+/// CRC-32-IEEE using slice-by-16 algorithm.
 ///
-/// Processes 16 bytes at a time for improved throughput (~1.5-2x faster than
-/// slice-by-8 on modern CPUs). Uses 16 lookup tables (16 KB total).
-///
-/// # Arguments
-///
-/// * `crc` - Current CRC state (pre-inverted)
-/// * `data` - Input data
-/// * `tables` - 16 lookup tables (256 entries each)
+/// Processes 16 bytes per iteration. Fastest portable implementation.
 #[inline]
-pub fn crc32_slice16(mut crc: u32, data: &[u8], tables: &[[u32; 256]; 16]) -> u32 {
-  let mut chunks = data.chunks_exact(16);
-
-  for chunk in chunks.by_ref() {
-    // Read 16 bytes as four u32s (little-endian)
-    let w0 = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-    let w1 = u32::from_le_bytes([chunk[4], chunk[5], chunk[6], chunk[7]]);
-    let w2 = u32::from_le_bytes([chunk[8], chunk[9], chunk[10], chunk[11]]);
-    let w3 = u32::from_le_bytes([chunk[12], chunk[13], chunk[14], chunk[15]]);
-
-    // XOR first 4 bytes with current CRC
-    let v0 = w0 ^ crc;
-
-    // Lookup all 16 bytes using 16 different tables
-    crc = tables[15][(v0 & 0xFF) as usize]
-      ^ tables[14][((v0 >> 8) & 0xFF) as usize]
-      ^ tables[13][((v0 >> 16) & 0xFF) as usize]
-      ^ tables[12][(v0 >> 24) as usize]
-      ^ tables[11][(w1 & 0xFF) as usize]
-      ^ tables[10][((w1 >> 8) & 0xFF) as usize]
-      ^ tables[9][((w1 >> 16) & 0xFF) as usize]
-      ^ tables[8][(w1 >> 24) as usize]
-      ^ tables[7][(w2 & 0xFF) as usize]
-      ^ tables[6][((w2 >> 8) & 0xFF) as usize]
-      ^ tables[5][((w2 >> 16) & 0xFF) as usize]
-      ^ tables[4][(w2 >> 24) as usize]
-      ^ tables[3][(w3 & 0xFF) as usize]
-      ^ tables[2][((w3 >> 8) & 0xFF) as usize]
-      ^ tables[1][((w3 >> 16) & 0xFF) as usize]
-      ^ tables[0][(w3 >> 24) as usize];
-  }
-
-  // Handle remainder (0-15 bytes) with byte-at-a-time using table[0]
-  for &byte in chunks.remainder() {
-    let index = ((crc ^ (byte as u32)) & 0xFF) as usize;
-    crc = tables[0][index] ^ (crc >> 8);
-  }
-
-  crc
+pub fn crc32_ieee_slice16(crc: u32, data: &[u8]) -> u32 {
+  slice16_32(crc, data, &CRC32_IEEE_TABLES_16)
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CRC-32C (Castagnoli) - iSCSI/ext4/Btrfs
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Slice-by-8 lookup tables for CRC-32C.
+#[allow(dead_code)]
+const CRC32C_TABLES_8: [[u32; 256]; 8] = generate_crc32_tables_8(CRC32C_POLY);
+
+/// Slice-by-16 lookup tables for CRC-32C.
+const CRC32C_TABLES_16: [[u32; 256]; 16] = generate_crc32_tables_16(CRC32C_POLY);
+
+/// CRC-32C using slice-by-8 algorithm.
+///
+/// Processes 8 bytes per iteration. Good balance of speed and table size.
+#[inline]
+#[allow(dead_code)]
+pub fn crc32c_slice8(crc: u32, data: &[u8]) -> u32 {
+  slice8_32(crc, data, &CRC32C_TABLES_8)
+}
+
+/// CRC-32C using slice-by-16 algorithm.
+///
+/// Processes 16 bytes per iteration. Fastest portable implementation.
+#[inline]
+pub fn crc32c_slice16(crc: u32, data: &[u8]) -> u32 {
+  slice16_32(crc, data, &CRC32C_TABLES_16)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tests
+// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
@@ -108,183 +76,102 @@ mod tests {
   use alloc::vec::Vec;
 
   use super::*;
-  use crate::common::tables::{CRC32_IEEE_POLY, CRC32C_POLY, generate_crc32_tables_8, generate_crc32_tables_16};
 
-  // ─────────────────────────────────────────────────────────────────────────────
-  // Slice-by-8 tests
-  // ─────────────────────────────────────────────────────────────────────────────
+  // Known test vectors
+  const CRC32_IEEE_EMPTY: u32 = 0x0000_0000;
+  const CRC32_IEEE_HELLO_WORLD: u32 = 0x0D4A_1185; // "hello world"
 
-  #[test]
-  fn test_slice8_empty() {
-    let tables = generate_crc32_tables_8(CRC32_IEEE_POLY);
-    let crc = crc32_slice8(!0, &[], &tables);
-    assert_eq!(crc, !0);
+  const CRC32C_EMPTY: u32 = 0x0000_0000;
+  const CRC32C_HELLO_WORLD: u32 = 0xC99465AA; // "hello world"
+
+  fn compute_crc32_ieee(data: &[u8]) -> u32 {
+    crc32_ieee_slice16(!0, data) ^ !0
+  }
+
+  fn compute_crc32c(data: &[u8]) -> u32 {
+    crc32c_slice16(!0, data) ^ !0
   }
 
   #[test]
-  fn test_slice8_short_data() {
-    let tables = generate_crc32_tables_8(CRC32_IEEE_POLY);
-
-    // Test with 1-7 bytes (all remainder cases)
-    for len in 1..8 {
-      let data: Vec<u8> = (0..len).map(|i| i as u8).collect();
-      let crc = crc32_slice8(!0, &data, &tables);
-      assert_ne!(crc, !0, "CRC should change for non-empty data");
-    }
+  fn test_crc32_ieee_empty() {
+    assert_eq!(compute_crc32_ieee(b""), CRC32_IEEE_EMPTY);
   }
 
   #[test]
-  fn test_slice8_exact_multiple() {
-    let tables = generate_crc32_tables_8(CRC32_IEEE_POLY);
-
-    // Test with exactly 8, 16, 24 bytes
-    for len in [8, 16, 24] {
-      let data: Vec<u8> = (0..len).map(|i| i as u8).collect();
-      let crc = crc32_slice8(!0, &data, &tables);
-      assert_ne!(crc, !0);
-    }
+  fn test_crc32_ieee_hello_world() {
+    assert_eq!(compute_crc32_ieee(b"hello world"), CRC32_IEEE_HELLO_WORLD);
   }
 
   #[test]
-  fn test_slice8_consistency_with_byte_at_a_time() {
-    let tables = generate_crc32_tables_8(CRC32C_POLY);
+  fn test_crc32c_empty() {
+    assert_eq!(compute_crc32c(b""), CRC32C_EMPTY);
+  }
+
+  #[test]
+  fn test_crc32c_hello_world() {
+    assert_eq!(compute_crc32c(b"hello world"), CRC32C_HELLO_WORLD);
+  }
+
+  #[test]
+  fn test_slice8_vs_slice16_ieee() {
     let data = b"The quick brown fox jumps over the lazy dog";
-
-    // Compute with slice-by-8
-    let slice8_result = crc32_slice8(!0, data, &tables);
-
-    // Compute byte-at-a-time using table[0]
-    let mut byte_result = !0u32;
-    for &b in data.iter() {
-      let index = ((byte_result ^ (b as u32)) & 0xFF) as usize;
-      byte_result = tables[0][index] ^ (byte_result >> 8);
-    }
-
-    assert_eq!(slice8_result, byte_result);
+    let crc8 = crc32_ieee_slice8(!0, data) ^ !0;
+    let crc16 = crc32_ieee_slice16(!0, data) ^ !0;
+    assert_eq!(crc8, crc16);
   }
 
   #[test]
-  fn test_slice8_incremental() {
-    let tables = generate_crc32_tables_8(CRC32_IEEE_POLY);
-    let data = b"hello world, this is a longer test string";
-
-    // Full computation
-    let full = crc32_slice8(!0, data, &tables);
-
-    // Split at various points and verify consistency
-    for split in [1, 7, 8, 9, 15, 16, 17, 20] {
-      if split < data.len() {
-        let crc1 = crc32_slice8(!0, &data[..split], &tables);
-        let crc2 = crc32_slice8(crc1, &data[split..], &tables);
-        assert_eq!(crc2, full, "Incremental failed at split {split}");
-      }
-    }
-  }
-
-  // ─────────────────────────────────────────────────────────────────────────────
-  // Slice-by-16 tests
-  // ─────────────────────────────────────────────────────────────────────────────
-
-  #[test]
-  fn test_slice16_empty() {
-    let tables = generate_crc32_tables_16(CRC32_IEEE_POLY);
-    let crc = crc32_slice16(!0, &[], &tables);
-    assert_eq!(crc, !0);
-  }
-
-  #[test]
-  fn test_slice16_short_data() {
-    let tables = generate_crc32_tables_16(CRC32_IEEE_POLY);
-
-    // Test with 1-15 bytes (all remainder cases)
-    for len in 1..16 {
-      let data: Vec<u8> = (0..len).map(|i| i as u8).collect();
-      let crc = crc32_slice16(!0, &data, &tables);
-      assert_ne!(crc, !0, "CRC should change for non-empty data (len={len})");
-    }
-  }
-
-  #[test]
-  fn test_slice16_exact_multiple() {
-    let tables = generate_crc32_tables_16(CRC32_IEEE_POLY);
-
-    // Test with exactly 16, 32, 48 bytes
-    for len in [16, 32, 48] {
-      let data: Vec<u8> = (0..len).map(|i| i as u8).collect();
-      let crc = crc32_slice16(!0, &data, &tables);
-      assert_ne!(crc, !0);
-    }
-  }
-
-  #[test]
-  fn test_slice16_matches_slice8() {
-    let tables8 = generate_crc32_tables_8(CRC32_IEEE_POLY);
-    let tables16 = generate_crc32_tables_16(CRC32_IEEE_POLY);
-
+  fn test_slice8_vs_slice16_crc32c() {
     let data = b"The quick brown fox jumps over the lazy dog";
-    let slice8_result = crc32_slice8(!0, data, &tables8);
-    let slice16_result = crc32_slice16(!0, data, &tables16);
-    assert_eq!(slice8_result, slice16_result);
+    let crc8 = crc32c_slice8(!0, data) ^ !0;
+    let crc16 = crc32c_slice16(!0, data) ^ !0;
+    assert_eq!(crc8, crc16);
   }
 
   #[test]
-  fn test_slice16_matches_slice8_castagnoli() {
-    let tables8 = generate_crc32_tables_8(CRC32C_POLY);
-    let tables16 = generate_crc32_tables_16(CRC32C_POLY);
+  fn test_incremental_ieee() {
+    let full = compute_crc32_ieee(b"hello world");
 
-    let data = b"The quick brown fox jumps over the lazy dog";
-    let slice8_result = crc32_slice8(!0, data, &tables8);
-    let slice16_result = crc32_slice16(!0, data, &tables16);
-    assert_eq!(slice8_result, slice16_result);
+    // Compute incrementally
+    let mut state = !0u32;
+    state = crc32_ieee_slice16(state, b"hello ");
+    state = crc32_ieee_slice16(state, b"world");
+    let incremental = state ^ !0;
+
+    assert_eq!(incremental, full);
   }
 
   #[test]
-  fn test_slice16_consistency_with_byte_at_a_time() {
-    let tables = generate_crc32_tables_16(CRC32C_POLY);
-    let data = b"The quick brown fox jumps over the lazy dog";
+  fn test_incremental_crc32c() {
+    let full = compute_crc32c(b"hello world");
 
-    // Compute with slice-by-16
-    let slice16_result = crc32_slice16(!0, data, &tables);
+    // Compute incrementally
+    let mut state = !0u32;
+    state = crc32c_slice16(state, b"hello ");
+    state = crc32c_slice16(state, b"world");
+    let incremental = state ^ !0;
 
-    // Compute byte-at-a-time using table[0]
-    let mut byte_result = !0u32;
-    for &b in data.iter() {
-      let index = ((byte_result ^ (b as u32)) & 0xFF) as usize;
-      byte_result = tables[0][index] ^ (byte_result >> 8);
-    }
-
-    assert_eq!(slice16_result, byte_result);
+    assert_eq!(incremental, full);
   }
 
   #[test]
-  fn test_slice16_incremental() {
-    let tables = generate_crc32_tables_16(CRC32_IEEE_POLY);
-    let data = b"hello world, this is a longer test string for slice16";
-
-    // Full computation
-    let full = crc32_slice16(!0, data, &tables);
-
-    // Split at various points and verify consistency
-    for split in [1, 7, 8, 9, 15, 16, 17, 20, 31, 32, 33] {
-      if split < data.len() {
-        let crc1 = crc32_slice16(!0, &data[..split], &tables);
-        let crc2 = crc32_slice16(crc1, &data[split..], &tables);
-        assert_eq!(crc2, full, "Incremental failed at split {split}");
-      }
-    }
-  }
-
-  #[test]
-  fn test_slice16_various_lengths() {
-    let tables8 = generate_crc32_tables_8(CRC32_IEEE_POLY);
-    let tables16 = generate_crc32_tables_16(CRC32_IEEE_POLY);
-
-    // Test a range of lengths to ensure slice16 matches slice8
+  fn test_various_lengths_ieee() {
+    // Test various lengths to exercise alignment and remainder handling
     for len in 0..=64 {
       let data: Vec<u8> = (0..len).map(|i| i as u8).collect();
-      let slice8_result = crc32_slice8(!0, &data, &tables8);
-      let slice16_result = crc32_slice16(!0, &data, &tables16);
-      assert_eq!(slice8_result, slice16_result, "Mismatch at length {len}");
+      let crc8 = crc32_ieee_slice8(!0, &data) ^ !0;
+      let crc16 = crc32_ieee_slice16(!0, &data) ^ !0;
+      assert_eq!(crc8, crc16, "Mismatch at length {len}");
+    }
+  }
+
+  #[test]
+  fn test_various_lengths_crc32c() {
+    for len in 0..=64 {
+      let data: Vec<u8> = (0..len).map(|i| i as u8).collect();
+      let crc8 = crc32c_slice8(!0, &data) ^ !0;
+      let crc16 = crc32c_slice16(!0, &data) ^ !0;
+      assert_eq!(crc8, crc16, "Mismatch at length {len}");
     }
   }
 }

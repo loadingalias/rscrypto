@@ -4,6 +4,113 @@
 //! of CRC algorithms (e.g., CRC-64-XZ and CRC-64-NVME share identical structure
 //! but different polynomials and tables).
 
+/// Generate a CRC-32 variant type with all trait implementations.
+///
+/// This macro creates:
+/// - The struct definition with `state: u32`
+/// - `resume()`, `backend_name()`, `config()`, `tunables()`, `kernel_name_for_len()` methods
+/// - `Checksum` trait implementation
+/// - `ChecksumCombine` trait implementation
+///
+/// # Arguments
+///
+/// - `$name`: The type name (e.g., `Crc32c`)
+/// - `$poly`: The polynomial constant (e.g., `CRC32C_POLY`)
+/// - `$dispatcher`: The dispatcher static (e.g., `CRC32C_DISPATCHER`)
+/// - `$doc`: Doc string for the type
+macro_rules! define_crc32_type {
+  (
+    $(#[$outer:meta])*
+    $vis:vis struct $name:ident {
+      poly: $poly:expr,
+      dispatcher: $dispatcher:expr,
+    }
+  ) => {
+    $(#[$outer])*
+    #[derive(Clone, Default)]
+    $vis struct $name {
+      state: u32,
+    }
+
+    impl $name {
+      /// Pre-computed shift-by-8 matrix for combine.
+      const SHIFT8_MATRIX: $crate::common::combine::Gf2Matrix32 =
+        $crate::common::combine::generate_shift8_matrix_32($poly);
+
+      /// Create a hasher to resume from a previous CRC value.
+      #[inline]
+      #[must_use]
+      pub const fn resume(crc: u32) -> Self {
+        Self { state: crc ^ !0 }
+      }
+
+      /// Get the name of the currently selected backend.
+      ///
+      /// Returns the dispatcher name (e.g., "portable/slice16", "x86_64/auto").
+      #[must_use]
+      pub fn backend_name() -> &'static str {
+        $dispatcher.backend_name()
+      }
+
+      /// Get the effective CRC-32 configuration (overrides + thresholds).
+      #[must_use]
+      pub fn config() -> $crate::crc32::Crc32Config {
+        $crate::crc32::config::get()
+      }
+
+      /// Convenience accessor for the active CRC-32 tunables.
+      #[must_use]
+      pub fn tunables() -> $crate::crc32::Crc32Tunables {
+        Self::config().tunables
+      }
+
+      /// Returns the kernel name that the selector would choose for `len`.
+      ///
+      /// This is intended for debugging/benchmarking and does not allocate.
+      #[must_use]
+      pub fn kernel_name_for_len(len: usize) -> &'static str {
+        $crate::crc32::crc32_selected_kernel_name(len)
+      }
+    }
+
+    impl $crate::Checksum for $name {
+      const OUTPUT_SIZE: usize = 4;
+      type Output = u32;
+
+      #[inline]
+      fn new() -> Self {
+        Self { state: !0 }
+      }
+
+      #[inline]
+      fn with_initial(initial: u32) -> Self {
+        Self { state: initial ^ !0 }
+      }
+
+      #[inline]
+      fn update(&mut self, data: &[u8]) {
+        self.state = $dispatcher.call(self.state, data);
+      }
+
+      #[inline]
+      fn finalize(&self) -> u32 {
+        self.state ^ !0
+      }
+
+      #[inline]
+      fn reset(&mut self) {
+        self.state = !0;
+      }
+    }
+
+    impl $crate::ChecksumCombine for $name {
+      fn combine(crc_a: u32, crc_b: u32, len_b: usize) -> u32 {
+        $crate::common::combine::combine_crc32(crc_a, crc_b, len_b, Self::SHIFT8_MATRIX)
+      }
+    }
+  };
+}
+
 /// Generate a CRC-64 variant type with all trait implementations.
 ///
 /// This macro creates:

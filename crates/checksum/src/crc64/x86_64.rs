@@ -19,10 +19,7 @@ use core::{
   ops::{BitXor, BitXorAssign},
 };
 
-use crate::common::{
-  clmul::{Crc64ClmulConstants, fold16_coeff_for_bytes},
-  tables::{CRC64_NVME_POLY, CRC64_XZ_POLY},
-};
+use crate::common::clmul::{CRC64_NVME_STREAM, CRC64_XZ_STREAM, Crc64ClmulConstants};
 
 #[repr(transparent)]
 #[derive(Copy, Clone, Debug)]
@@ -86,48 +83,6 @@ impl Simd {
     _mm_cvtsi128_si64(hi) as u64
   }
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Multi-stream coefficients (compile-time)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// 2-way (PCLMUL/VPCLMUL): update step shifts by 2×128B = 256B.
-const XZ_FOLD_256B: (u64, u64) = fold16_coeff_for_bytes(CRC64_XZ_POLY, 256);
-const NVME_FOLD_256B: (u64, u64) = fold16_coeff_for_bytes(CRC64_NVME_POLY, 256);
-
-// 4-way (PCLMUL/VPCLMUL): update step shifts by 4×128B = 512B, combine shifts by 3/2/1 blocks.
-const XZ_FOLD_512B: (u64, u64) = fold16_coeff_for_bytes(CRC64_XZ_POLY, 512);
-const NVME_FOLD_512B: (u64, u64) = fold16_coeff_for_bytes(CRC64_NVME_POLY, 512);
-const XZ_COMBINE_4WAY: [(u64, u64); 3] = [
-  fold16_coeff_for_bytes(CRC64_XZ_POLY, 384),
-  fold16_coeff_for_bytes(CRC64_XZ_POLY, 256),
-  fold16_coeff_for_bytes(CRC64_XZ_POLY, 128),
-];
-const NVME_COMBINE_4WAY: [(u64, u64); 3] = [
-  fold16_coeff_for_bytes(CRC64_NVME_POLY, 384),
-  fold16_coeff_for_bytes(CRC64_NVME_POLY, 256),
-  fold16_coeff_for_bytes(CRC64_NVME_POLY, 128),
-];
-
-// 7-way (PCLMUL/VPCLMUL): update step shifts by 7×128B = 896B, combine shifts by 6..1 blocks.
-const XZ_FOLD_896B: (u64, u64) = fold16_coeff_for_bytes(CRC64_XZ_POLY, 896);
-const NVME_FOLD_896B: (u64, u64) = fold16_coeff_for_bytes(CRC64_NVME_POLY, 896);
-const XZ_COMBINE_7WAY: [(u64, u64); 6] = [
-  fold16_coeff_for_bytes(CRC64_XZ_POLY, 768),
-  fold16_coeff_for_bytes(CRC64_XZ_POLY, 640),
-  fold16_coeff_for_bytes(CRC64_XZ_POLY, 512),
-  fold16_coeff_for_bytes(CRC64_XZ_POLY, 384),
-  fold16_coeff_for_bytes(CRC64_XZ_POLY, 256),
-  fold16_coeff_for_bytes(CRC64_XZ_POLY, 128),
-];
-const NVME_COMBINE_7WAY: [(u64, u64); 6] = [
-  fold16_coeff_for_bytes(CRC64_NVME_POLY, 768),
-  fold16_coeff_for_bytes(CRC64_NVME_POLY, 640),
-  fold16_coeff_for_bytes(CRC64_NVME_POLY, 512),
-  fold16_coeff_for_bytes(CRC64_NVME_POLY, 384),
-  fold16_coeff_for_bytes(CRC64_NVME_POLY, 256),
-  fold16_coeff_for_bytes(CRC64_NVME_POLY, 128),
-];
 
 #[target_feature(enable = "sse2", enable = "pclmulqdq")]
 unsafe fn update_simd(state: u64, first: &[Simd; 8], rest: &[[Simd; 8]], consts: &Crc64ClmulConstants) -> u64 {
@@ -1001,7 +956,7 @@ pub unsafe fn crc64_xz_pclmul_2way(crc: u64, data: &[u8]) -> u64 {
     crc64_pclmul_2way(
       crc,
       data,
-      XZ_FOLD_256B,
+      CRC64_XZ_STREAM.fold_256b,
       &crate::common::clmul::CRC64_XZ_CLMUL,
       &super::kernel_tables::XZ_TABLES_8,
     )
@@ -1019,8 +974,8 @@ pub unsafe fn crc64_xz_pclmul_4way(crc: u64, data: &[u8]) -> u64 {
     crc64_pclmul_4way(
       crc,
       data,
-      XZ_FOLD_512B,
-      &XZ_COMBINE_4WAY,
+      CRC64_XZ_STREAM.fold_512b,
+      &CRC64_XZ_STREAM.combine_4way,
       &crate::common::clmul::CRC64_XZ_CLMUL,
       &super::kernel_tables::XZ_TABLES_8,
     )
@@ -1038,8 +993,8 @@ pub unsafe fn crc64_xz_pclmul_7way(crc: u64, data: &[u8]) -> u64 {
     crc64_pclmul_7way(
       crc,
       data,
-      XZ_FOLD_896B,
-      &XZ_COMBINE_7WAY,
+      CRC64_XZ_STREAM.fold_896b,
+      &CRC64_XZ_STREAM.combine_7way,
       &crate::common::clmul::CRC64_XZ_CLMUL,
       &super::kernel_tables::XZ_TABLES_8,
     )
@@ -1076,7 +1031,7 @@ pub unsafe fn crc64_xz_vpclmul_2way(crc: u64, data: &[u8]) -> u64 {
     crc64_vpclmul_2way(
       crc,
       data,
-      XZ_FOLD_256B,
+      CRC64_XZ_STREAM.fold_256b,
       &crate::common::clmul::CRC64_XZ_CLMUL,
       &super::kernel_tables::XZ_TABLES_8,
     )
@@ -1095,8 +1050,8 @@ pub unsafe fn crc64_xz_vpclmul_4way(crc: u64, data: &[u8]) -> u64 {
     crc64_vpclmul_4way(
       crc,
       data,
-      XZ_FOLD_512B,
-      &XZ_COMBINE_4WAY,
+      CRC64_XZ_STREAM.fold_512b,
+      &CRC64_XZ_STREAM.combine_4way,
       &crate::common::clmul::CRC64_XZ_CLMUL,
       &super::kernel_tables::XZ_TABLES_8,
     )
@@ -1115,8 +1070,8 @@ pub unsafe fn crc64_xz_vpclmul_7way(crc: u64, data: &[u8]) -> u64 {
     crc64_vpclmul_7way(
       crc,
       data,
-      XZ_FOLD_896B,
-      &XZ_COMBINE_7WAY,
+      CRC64_XZ_STREAM.fold_896b,
+      &CRC64_XZ_STREAM.combine_7way,
       &crate::common::clmul::CRC64_XZ_CLMUL,
       &super::kernel_tables::XZ_TABLES_8,
     )
@@ -1168,7 +1123,7 @@ pub unsafe fn crc64_nvme_pclmul_2way(crc: u64, data: &[u8]) -> u64 {
     crc64_pclmul_2way(
       crc,
       data,
-      NVME_FOLD_256B,
+      CRC64_NVME_STREAM.fold_256b,
       &crate::common::clmul::CRC64_NVME_CLMUL,
       &super::kernel_tables::NVME_TABLES_8,
     )
@@ -1186,8 +1141,8 @@ pub unsafe fn crc64_nvme_pclmul_4way(crc: u64, data: &[u8]) -> u64 {
     crc64_pclmul_4way(
       crc,
       data,
-      NVME_FOLD_512B,
-      &NVME_COMBINE_4WAY,
+      CRC64_NVME_STREAM.fold_512b,
+      &CRC64_NVME_STREAM.combine_4way,
       &crate::common::clmul::CRC64_NVME_CLMUL,
       &super::kernel_tables::NVME_TABLES_8,
     )
@@ -1205,8 +1160,8 @@ pub unsafe fn crc64_nvme_pclmul_7way(crc: u64, data: &[u8]) -> u64 {
     crc64_pclmul_7way(
       crc,
       data,
-      NVME_FOLD_896B,
-      &NVME_COMBINE_7WAY,
+      CRC64_NVME_STREAM.fold_896b,
+      &CRC64_NVME_STREAM.combine_7way,
       &crate::common::clmul::CRC64_NVME_CLMUL,
       &super::kernel_tables::NVME_TABLES_8,
     )
@@ -1243,7 +1198,7 @@ pub unsafe fn crc64_nvme_vpclmul_2way(crc: u64, data: &[u8]) -> u64 {
     crc64_vpclmul_2way(
       crc,
       data,
-      NVME_FOLD_256B,
+      CRC64_NVME_STREAM.fold_256b,
       &crate::common::clmul::CRC64_NVME_CLMUL,
       &super::kernel_tables::NVME_TABLES_8,
     )
@@ -1262,8 +1217,8 @@ pub unsafe fn crc64_nvme_vpclmul_4way(crc: u64, data: &[u8]) -> u64 {
     crc64_vpclmul_4way(
       crc,
       data,
-      NVME_FOLD_512B,
-      &NVME_COMBINE_4WAY,
+      CRC64_NVME_STREAM.fold_512b,
+      &CRC64_NVME_STREAM.combine_4way,
       &crate::common::clmul::CRC64_NVME_CLMUL,
       &super::kernel_tables::NVME_TABLES_8,
     )
@@ -1282,8 +1237,8 @@ pub unsafe fn crc64_nvme_vpclmul_7way(crc: u64, data: &[u8]) -> u64 {
     crc64_vpclmul_7way(
       crc,
       data,
-      NVME_FOLD_896B,
-      &NVME_COMBINE_7WAY,
+      CRC64_NVME_STREAM.fold_896b,
+      &CRC64_NVME_STREAM.combine_7way,
       &crate::common::clmul::CRC64_NVME_CLMUL,
       &super::kernel_tables::NVME_TABLES_8,
     )
