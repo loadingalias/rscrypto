@@ -86,12 +86,20 @@ impl Simd {
     Self(_mm_loadu_si128(ptr.cast::<__m128i>()))
   }
 
-  /// Fold 16 bytes: `(coeff.low ⊗ self.low) ⊕ (coeff.high ⊗ self.high)`.
+  /// Fold 16 bytes for CRC-32 (reflected mode).
+  ///
+  /// For CRC-32, the folding uses different CLMUL selectors than CRC-64 because
+  /// the 32-bit CRC values are in specific positions within the 64-bit lanes:
+  /// - `mul_10`: self.low × coeff.high
+  /// - `mul_01`: self.high × coeff.low
+  ///
+  /// This matches crc-fast/zlib-ng's reflected CRC-32 folding.
   #[inline]
   #[target_feature(enable = "sse2", enable = "pclmulqdq")]
   unsafe fn fold_16(self, coeff: Self) -> Self {
-    let h = _mm_clmulepi64_si128::<0x11>(self.0, coeff.0);
-    let l = _mm_clmulepi64_si128::<0x00>(self.0, coeff.0);
+    // For CRC-32 reflected: use mul_10 and mul_01 (not mul_11 and mul_00 like CRC-64)
+    let h = _mm_clmulepi64_si128::<0x10>(self.0, coeff.0); // self.low × coeff.high
+    let l = _mm_clmulepi64_si128::<0x01>(self.0, coeff.0); // self.high × coeff.low
     Self(_mm_xor_si128(h, l))
   }
 
