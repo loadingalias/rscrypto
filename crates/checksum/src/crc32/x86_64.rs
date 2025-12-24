@@ -975,7 +975,6 @@ mod tests {
   #[test]
   fn test_crc32_ieee_vpclmul_vs_portable() {
     if !has_vpclmul() {
-      eprintln!("Skipping VPCLMUL test: AVX-512 VPCLMULQDQ not available");
       return;
     }
 
@@ -993,7 +992,6 @@ mod tests {
   #[test]
   fn test_crc32_ieee_vpclmul_vs_pclmul() {
     if !has_vpclmul() {
-      eprintln!("Skipping VPCLMUL test: AVX-512 VPCLMULQDQ not available");
       return;
     }
 
@@ -1010,7 +1008,6 @@ mod tests {
   #[test]
   fn test_crc32_ieee_vpclmul_large() {
     if !has_vpclmul() {
-      eprintln!("Skipping VPCLMUL test: AVX-512 VPCLMULQDQ not available");
       return;
     }
 
@@ -1026,7 +1023,6 @@ mod tests {
   #[test]
   fn test_crc32c_vpclmul_vs_portable() {
     if !has_vpclmul() || !std::is_x86_feature_detected!("sse4.2") {
-      eprintln!("Skipping VPCLMUL test: AVX-512 VPCLMULQDQ or SSE4.2 not available");
       return;
     }
 
@@ -1044,7 +1040,6 @@ mod tests {
   #[test]
   fn test_crc32c_vpclmul_vs_sse42() {
     if !has_vpclmul() || !std::is_x86_feature_detected!("sse4.2") {
-      eprintln!("Skipping VPCLMUL test: AVX-512 VPCLMULQDQ or SSE4.2 not available");
       return;
     }
 
@@ -1061,7 +1056,6 @@ mod tests {
   #[test]
   fn test_crc32c_vpclmul_vs_fusion() {
     if !has_vpclmul() || !std::is_x86_feature_detected!("sse4.2") {
-      eprintln!("Skipping VPCLMUL test: AVX-512 VPCLMULQDQ or SSE4.2 not available");
       return;
     }
 
@@ -1078,7 +1072,6 @@ mod tests {
   #[test]
   fn test_crc32c_vpclmul_large() {
     if !has_vpclmul() || !std::is_x86_feature_detected!("sse4.2") {
-      eprintln!("Skipping VPCLMUL test: AVX-512 VPCLMULQDQ or SSE4.2 not available");
       return;
     }
 
@@ -1094,7 +1087,6 @@ mod tests {
   #[test]
   fn test_crc32_ieee_vpclmul_check_value() {
     if !has_vpclmul() {
-      eprintln!("Skipping VPCLMUL test: AVX-512 VPCLMULQDQ not available");
       return;
     }
 
@@ -1113,7 +1105,6 @@ mod tests {
   #[test]
   fn test_crc32c_vpclmul_check_value() {
     if !has_vpclmul() || !std::is_x86_feature_detected!("sse4.2") {
-      eprintln!("Skipping VPCLMUL test: AVX-512 VPCLMULQDQ or SSE4.2 not available");
       return;
     }
 
@@ -1132,7 +1123,6 @@ mod tests {
   #[test]
   fn test_crc32_vpclmul_boundary_lengths() {
     if !has_vpclmul() || !std::is_x86_feature_detected!("sse4.2") {
-      eprintln!("Skipping VPCLMUL boundary test: features not available");
       return;
     }
 
