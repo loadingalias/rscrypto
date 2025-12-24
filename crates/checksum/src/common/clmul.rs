@@ -365,7 +365,8 @@ const fn fold_k_32(normal_poly: u32, n: u32) -> u32 {
 /// These constants support the classic PCLMULQDQ folding:
 /// - 64-byte blocks folded with `fold_64b`
 /// - Tail reduction with `tail_fold_16b` array (like CRC64)
-/// - Final Barrett reduction
+/// - Final two-step reduction (128 → 96 → 64 bits) with `k_96` and `k_64`
+/// - Barrett reduction (64 → 32 bits)
 #[cfg(any(target_arch = "x86_64", test))]
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Crc32ClmulConstants {
@@ -381,8 +382,12 @@ pub(crate) struct Crc32ClmulConstants {
   /// Index 1: 32-byte fold (256 bits)
   /// Index 2: 16-byte fold (128 bits)
   pub tail_fold_16b: [(u64, u64); 3],
-  /// 8-byte folding coefficient K_63 - for fold_8 (16B → prepared for Barrett).
-  pub fold_8b: u64,
+  /// K_96 - for first step of final reduction (128 → 96 bits).
+  /// This is x^96 mod P (reflected).
+  pub k_96: u64,
+  /// K_64 - for second step of final reduction (96 → 64 bits).
+  /// This is x^64 mod P (reflected).
+  pub k_64: u64,
 }
 
 /// Compute TiKV-style reciprocal polynomial from a reflected CRC-32 polynomial.
@@ -476,15 +481,19 @@ impl Crc32ClmulConstants {
       fold16_coeff_for_bytes_32(normal, 16), // (K_127, K_191)
     ];
 
-    // For fold_8: K_63 (fold by 64 bits, like CRC64's K_127)
-    let fold_8b = fold_k_32(normal, 63) as u64;
+    // Final reduction constants (128 → 96 → 64 bits):
+    // K_96 = x^96 mod P (for 128→96 step)
+    // K_64 = x^64 mod P (for 96→64 step)
+    let k_96 = fold_k_32(normal, 96) as u64;
+    let k_64 = fold_k_32(normal, 64) as u64;
 
     Self {
       poly,
       mu,
       fold_64b,
       tail_fold_16b,
-      fold_8b,
+      k_96,
+      k_64,
     }
   }
 }
@@ -723,7 +732,8 @@ mod tests {
     assert_ne!(CRC32_IEEE_CLMUL.tail_fold_16b[0], (0, 0));
     assert_ne!(CRC32_IEEE_CLMUL.tail_fold_16b[1], (0, 0));
     assert_ne!(CRC32_IEEE_CLMUL.tail_fold_16b[2], (0, 0));
-    assert_ne!(CRC32_IEEE_CLMUL.fold_8b, 0);
+    assert_ne!(CRC32_IEEE_CLMUL.k_96, 0);
+    assert_ne!(CRC32_IEEE_CLMUL.k_64, 0);
   }
 
   #[test]
@@ -786,5 +796,32 @@ mod tests {
       "CRC32C mu mismatch: expected 0x0DEA713F1, got {:#x}",
       CRC32C_CLMUL.mu
     );
+  }
+
+  #[test]
+  fn test_crc32_fold_constants_k96_k64() {
+    // Verify K_96 and K_64 constants.
+    // K_96 = x^96 mod P (reflected) - used for 128→96 bit fold
+    // K_64 = x^64 mod P (reflected) - used for 96→64 bit fold
+
+    // For IEEE, verify K_96 and K_64 are non-zero and distinct
+    assert_ne!(CRC32_IEEE_CLMUL.k_96, 0, "IEEE K_96 should be non-zero");
+    assert_ne!(CRC32_IEEE_CLMUL.k_64, 0, "IEEE K_64 should be non-zero");
+    assert_ne!(CRC32_IEEE_CLMUL.k_96, CRC32_IEEE_CLMUL.k_64, "IEEE K_96 != K_64");
+
+    // For CRC32C, verify K_96 and K_64 are non-zero and distinct
+    assert_ne!(CRC32C_CLMUL.k_96, 0, "CRC32C K_96 should be non-zero");
+    assert_ne!(CRC32C_CLMUL.k_64, 0, "CRC32C K_64 should be non-zero");
+    assert_ne!(CRC32C_CLMUL.k_96, CRC32C_CLMUL.k_64, "CRC32C K_96 != K_64");
+
+    // Verify K_64 is x^64 mod P (reflected).
+    // In GF(2), x^64 mod P where P is degree-32 involves polynomial squaring.
+    // x^32 mod P = P (by definition), but x^64 mod P = P*P mod P which is computed.
+    // We verify by computing directly.
+    let ieee_k64_expected = fold_k_32(normal_poly_32(CRC32_IEEE_POLY), 64);
+    let crc32c_k64_expected = fold_k_32(normal_poly_32(CRC32C_POLY), 64);
+
+    assert_eq!(CRC32_IEEE_CLMUL.k_64, ieee_k64_expected as u64, "IEEE K_64 mismatch");
+    assert_eq!(CRC32C_CLMUL.k_64, crc32c_k64_expected as u64, "CRC32C K_64 mismatch");
   }
 }

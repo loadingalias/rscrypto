@@ -95,23 +95,53 @@ impl Simd {
     Self(_mm_xor_si128(h, l))
   }
 
-  /// Fold 8 bytes: reduce 16B → 8B for CRC-32.
+  /// Two-step fold for CRC-32: reduce 128 bits → 96 bits → 64 bits.
   ///
-  /// Unlike CRC-64's fold_8 which keeps 16B, this prepares for 32-bit Barrett.
-  /// Computes: `self.high ⊕ (coeff ⊗ self.low)`.
+  /// This performs the proper reduction sequence before Barrett:
+  /// 1. 128→96: (low64 × K_96) ⊕ high64
+  /// 2. 96→64: Fold the remaining 32 high bits down using K_64
+  ///
+  /// After this, exactly 64 bits remain for Barrett reduction.
   #[inline]
   #[target_feature(enable = "sse2", enable = "pclmulqdq")]
-  unsafe fn fold_8(self, coeff: u64) -> Self {
-    let coeff = Self::new(0, coeff);
-    let h = _mm_clmulepi64_si128::<0x00>(self.0, coeff.0);
-    let l = _mm_srli_si128::<8>(self.0);
-    Self(_mm_xor_si128(h, l))
+  unsafe fn fold_width(self, k_96: u64, k_64: u64) -> Self {
+    // Step 1: 128 → 96 bits
+    // Multiply low 64 bits by K_96 (32-bit constant), XOR with high 64 bits
+    let k96 = Self::new(0, k_96);
+    let folded = _mm_clmulepi64_si128::<0x00>(self.0, k96.0); // low64 × K_96 → up to 95 bits
+    let hi64 = _mm_srli_si128::<8>(self.0); // Get high 64 bits into low lane
+    let step1 = _mm_xor_si128(folded, hi64); // 96-bit result (bits 0-95 may be set)
+
+    // Step 2: 96 → 64 bits
+    // The 96-bit value has bits [95:64] that need to be folded into [63:0]
+    // Extract bits [63:32], multiply by K_64, XOR into [63:0] with bits [95:64]
+    //
+    // Layout after step 1:
+    //   low64:  bits [63:0]
+    //   high64: bits [95:64] in positions [31:0] of high lane, rest zero
+    //
+    // We need: (bits[63:32] × K_64) ⊕ bits[31:0] ⊕ bits[95:64]
+
+    // Create mask to extract bits [63:32] → shift and mask
+    let k64 = Self::new(k_64, 0);
+
+    // Shift left by 4 bytes (32 bits) to align bits[63:32] to [95:64] position for clmul
+    let shifted = _mm_slli_si128::<4>(step1);
+    // clmul_11: high64 of src1 × high64 of src2 = bits[63:32] × K_64
+    let clmul = _mm_clmulepi64_si128::<0x11>(shifted, k64.0);
+
+    // Mask to keep bits [31:0] of low lane and bits [31:0] of high lane (which is bits[95:64])
+    let mask = _mm_set_epi32(-1, 0, -1, -1); // [0xFFFFFFFF, 0, 0xFFFFFFFF, 0xFFFFFFFF]
+    let masked = _mm_and_si128(step1, mask);
+
+    // Final XOR: clmul result ⊕ masked bits
+    Self(_mm_xor_si128(clmul, masked))
   }
 
   /// Barrett reduction for CRC-32: reduce 8B to 4B.
   ///
   /// The input `self` should have the 64-bit CRC residual in the low 64 bits
-  /// (high 64 bits zeroed after fold_8).
+  /// (high 64 bits zeroed after fold_width).
   ///
   /// # Arguments
   ///
@@ -245,8 +275,10 @@ unsafe fn fold_tail(x: [Simd; 4], consts: &Crc32ClmulConstants) -> u32 {
   acc ^= x[1].fold_16(c1);
   acc ^= x[2].fold_16(c2);
 
-  // 16B → 8B fold, then Barrett reduction to 4B.
-  acc.fold_8(consts.fold_8b).barrett_32(consts.poly, consts.mu)
+  // Two-step fold (128→96→64), then Barrett reduction to 32 bits.
+  acc
+    .fold_width(consts.k_96, consts.k_64)
+    .barrett_32(consts.poly, consts.mu)
 }
 
 /// Fold a single 64-byte block: `x = fold(x, coeff) ^ chunk`.
@@ -320,8 +352,10 @@ unsafe fn crc32_pclmul_small_impl(
     acc = *chunk ^ acc.fold_16(coeff_16b);
   }
 
-  // Reduce 16B → 8B → u32, then finish any tail bytes portably.
-  state = acc.fold_8(consts.fold_8b).barrett_32(consts.poly, consts.mu);
+  // Two-step fold (128→96→64), then Barrett reduction to 32 bits.
+  state = acc
+    .fold_width(consts.k_96, consts.k_64)
+    .barrett_32(consts.poly, consts.mu);
   super::portable::crc32_slice16(state, right, tables)
 }
 
