@@ -47,18 +47,25 @@ mod crc32c_constants {
 /// Constants from crc32fast (MIT licensed, same as Intel paper constants):
 /// - K1/K2: 64-byte (512-bit) folding
 /// - K3/K4: 16-byte (128-bit) folding
-/// - MU/POLY: Barrett reduction
+/// - K5: 64→32 bit reduction
+/// - P_X/U_PRIME: Barrett reduction
 ///
 /// These are 33-bit values with bit 32 set, as required by the Intel algorithm.
 mod crc32_ieee_constants {
   /// 64-byte block folding: (K1, K2) for 512-bit fold.
-  pub const FOLD_64: (u64, u64) = (0x0000_0001_5444_2bd4, 0x0000_0001_c6e4_1596);
+  pub const K1: u64 = 0x0000_0001_5444_2bd4;
+  pub const K2: u64 = 0x0000_0001_c6e4_1596;
 
   /// 16-byte lane folding: (K3, K4) for 128-bit fold.
-  pub const FOLD_16: (u64, u64) = (0x0000_0001_7519_97d0, 0x0000_0000_ccaa_009e);
+  pub const K3: u64 = 0x0000_0001_7519_97d0;
+  pub const K4: u64 = 0x0000_0000_ccaa_009e;
 
-  /// Barrett reduction: (µ, P').
-  pub const MU_POLY: (u64, u64) = (0x0000_0001_F701_1641, 0x0000_0001_DB71_0641);
+  /// 64→32 bit reduction constant.
+  pub const K5: u64 = 0x0000_0001_63cd_6124;
+
+  /// Barrett reduction: P_X (polynomial) and U_PRIME (µ).
+  pub const P_X: u64 = 0x0000_0001_DB71_0641;
+  pub const U_PRIME: u64 = 0x0000_0001_F701_1641;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -402,37 +409,37 @@ pub fn crc32c_pclmul_safe(crc: u32, data: &[u8]) -> u32 {
 // CRC32-IEEE: Pure PCLMUL + Barrett (no hardware instruction)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Barrett reduction from 128 bits to 32 bits for CRC32-IEEE.
+/// Reduce 128 bits to 32 bits for CRC32-IEEE.
 ///
-/// Algorithm based on Intel's "Fast CRC Computation" paper.
-/// Uses K3/K4 for 128→64→32 reduction, then Barrett for final step.
+/// Algorithm from crc32fast / Intel's "Fast CRC Computation" paper.
+/// Stages: 128→64 using K3, 64→32 using K5, then Barrett with P_X/U_PRIME.
 #[target_feature(enable = "pclmulqdq", enable = "sse4.1")]
-unsafe fn barrett_reduce_ieee(acc: __m128i) -> u32 {
+unsafe fn barrett_reduce_ieee(mut x: __m128i, k3k4: __m128i) -> u32 {
   // SAFETY: target_feature ensures PCLMULQDQ and SSE4.1 availability
-  let k3_k4 = _mm_set_epi64x(
-    crc32_ieee_constants::FOLD_16.1 as i64, // K4
-    crc32_ieee_constants::FOLD_16.0 as i64, // K3
+
+  // Stage 1: 128→64 bits using K3 (selector 0x10 = x.hi × k3k4.lo = x.hi × K3)
+  x = _mm_xor_si128(_mm_clmulepi64_si128(x, k3k4, 0x10), _mm_srli_si128(x, 8));
+
+  // Stage 2: 64→32 bits using K5
+  // Mask to get lower 32 bits, multiply by K5, XOR with upper 32 bits
+  let k5 = _mm_set_epi64x(0, crc32_ieee_constants::K5 as i64);
+  x = _mm_xor_si128(
+    _mm_clmulepi64_si128(_mm_and_si128(x, _mm_set_epi32(0, 0, 0, !0)), k5, 0x00),
+    _mm_srli_si128(x, 4),
   );
-  let mu_poly = _mm_set_epi64x(
-    crc32_ieee_constants::MU_POLY.1 as i64, // POLY
-    crc32_ieee_constants::MU_POLY.0 as i64, // MU
-  );
 
-  // Fold 128→64 bits: multiply high 64 bits by K3, XOR with low 64 bits
-  let t1 = _mm_clmulepi64_si128(acc, k3_k4, 0x10); // acc.hi × K3
-  let t2 = _mm_xor_si128(t1, _mm_srli_si128(acc, 8));
-  let t3 = _mm_xor_si128(t2, _mm_slli_si128(acc, 8));
+  // Stage 3: Barrett reduction
+  // pu = [U_PRIME, P_X] - note the order for selector usage
+  let pu = _mm_set_epi64x(crc32_ieee_constants::U_PRIME as i64, crc32_ieee_constants::P_X as i64);
 
-  // Fold 64→32 bits: multiply bits [63:32] by K4
-  let t4 = _mm_clmulepi64_si128(t3, k3_k4, 0x01); // t3.lo × K4
-  let t5 = _mm_xor_si128(t4, t3);
+  // t1 = (x & 0xFFFFFFFF) × U_PRIME (selector 0x10 = x.lo × pu.hi)
+  let t1 = _mm_clmulepi64_si128(_mm_and_si128(x, _mm_set_epi32(0, 0, 0, !0)), pu, 0x10);
 
-  // Barrett reduction: 64→32 bits
-  let t6 = _mm_clmulepi64_si128(_mm_and_si128(t5, _mm_set_epi32(0, 0, !0, !0)), mu_poly, 0x00);
-  let t7 = _mm_clmulepi64_si128(t6, mu_poly, 0x10);
-  let result = _mm_xor_si128(t5, t7);
+  // t2 = (t1 & 0xFFFFFFFF) × P_X (selector 0x00 = t1.lo × pu.lo)
+  let t2 = _mm_clmulepi64_si128(_mm_and_si128(t1, _mm_set_epi32(0, 0, 0, !0)), pu, 0x00);
 
-  _mm_extract_epi32(result, 1) as u32
+  // Result is in bits [63:32] after XOR
+  _mm_extract_epi32(_mm_xor_si128(x, t2), 1) as u32
 }
 
 /// CRC32-IEEE using PCLMULQDQ folding + Barrett reduction.
@@ -453,14 +460,9 @@ pub unsafe fn crc32_ieee_pclmul(mut crc: u32, data: &[u8]) -> u32 {
     let mut ptr = data.as_ptr();
     let end = ptr.add(data.len());
 
-    let fold_k = _mm_set_epi64x(
-      crc32_ieee_constants::FOLD_16.1 as i64,
-      crc32_ieee_constants::FOLD_16.0 as i64,
-    );
-    let fold_64_k = _mm_set_epi64x(
-      crc32_ieee_constants::FOLD_64.1 as i64,
-      crc32_ieee_constants::FOLD_64.0 as i64,
-    );
+    // K1K2 for 64-byte fold, K3K4 for 16-byte fold
+    let k1k2 = _mm_set_epi64x(crc32_ieee_constants::K2 as i64, crc32_ieee_constants::K1 as i64);
+    let k3k4 = _mm_set_epi64x(crc32_ieee_constants::K4 as i64, crc32_ieee_constants::K3 as i64);
 
     // Initialize 4 lanes with first 64 bytes
     let crc_vec = _mm_set_epi32(0, 0, 0, crc as i32);
@@ -472,45 +474,45 @@ pub unsafe fn crc32_ieee_pclmul(mut crc: u32, data: &[u8]) -> u32 {
     ];
     ptr = ptr.add(FOLD_BYTES);
 
-    // Process 64-byte blocks
+    // Process 64-byte blocks using K1K2
     while ptr.add(FOLD_BYTES) <= end {
       for (i, lane) in lanes.iter_mut().enumerate() {
         let new_data = _mm_loadu_si128(ptr.add(i * 16) as *const __m128i);
-        let lo = clmul_lo(*lane, fold_64_k);
-        let hi = clmul_hi(*lane, fold_64_k);
+        let lo = clmul_lo(*lane, k1k2);
+        let hi = clmul_hi(*lane, k1k2);
         *lane = _mm_xor_si128(_mm_xor_si128(lo, hi), new_data);
       }
       ptr = ptr.add(FOLD_BYTES);
     }
 
-    // Reduce 4 lanes to 1
+    // Reduce 4 lanes to 1 using K3K4
     let fold_48 = {
-      let lo = clmul_lo(lanes[0], fold_k);
-      let hi = clmul_hi(lanes[0], fold_k);
+      let lo = clmul_lo(lanes[0], k3k4);
+      let hi = clmul_hi(lanes[0], k3k4);
       _mm_xor_si128(_mm_xor_si128(lo, hi), lanes[1])
     };
     let fold_32 = {
-      let lo = clmul_lo(fold_48, fold_k);
-      let hi = clmul_hi(fold_48, fold_k);
+      let lo = clmul_lo(fold_48, k3k4);
+      let hi = clmul_hi(fold_48, k3k4);
       _mm_xor_si128(_mm_xor_si128(lo, hi), lanes[2])
     };
     let mut acc = {
-      let lo = clmul_lo(fold_32, fold_k);
-      let hi = clmul_hi(fold_32, fold_k);
+      let lo = clmul_lo(fold_32, k3k4);
+      let hi = clmul_hi(fold_32, k3k4);
       _mm_xor_si128(_mm_xor_si128(lo, hi), lanes[3])
     };
 
-    // Process remaining 16-byte blocks
+    // Process remaining 16-byte blocks using K3K4
     while ptr.add(16) <= end {
       let block = _mm_loadu_si128(ptr as *const __m128i);
-      let lo = clmul_lo(acc, fold_k);
-      let hi = clmul_hi(acc, fold_k);
+      let lo = clmul_lo(acc, k3k4);
+      let hi = clmul_hi(acc, k3k4);
       acc = _mm_xor_si128(_mm_xor_si128(lo, hi), block);
       ptr = ptr.add(16);
     }
 
-    // Barrett reduction
-    crc = barrett_reduce_ieee(acc);
+    // Reduce 128→32 bits
+    crc = barrett_reduce_ieee(acc, k3k4);
 
     // Handle remainder with portable
     let remainder_len = end.offset_from(ptr) as usize;
