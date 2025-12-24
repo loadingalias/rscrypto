@@ -99,9 +99,10 @@ impl Simd {
   ///
   /// This performs the proper reduction sequence before Barrett:
   /// 1. 128→96: (low64 × K_96) ⊕ high64
-  /// 2. 96→64: Fold the remaining 32 high bits down using K_64
+  /// 2. 96→64: (bits[31:0] × K_64) ⊕ bits[95:32]
   ///
   /// After this, exactly 64 bits remain for Barrett reduction.
+  /// The result is in bits [95:32] (matching crc-fast/zlib-ng layout).
   #[inline]
   #[target_feature(enable = "sse2", enable = "pclmulqdq")]
   unsafe fn fold_width(self, k_96: u64, k_64: u64) -> Self {
@@ -113,29 +114,38 @@ impl Simd {
     let step1 = _mm_xor_si128(folded, hi64); // 96-bit result (bits 0-95 may be set)
 
     // Step 2: 96 → 64 bits
-    // The 96-bit value has bits [95:64] that need to be folded into [63:0]
-    // Extract bits [63:32], multiply by K_64, XOR into [63:0] with bits [95:64]
-    //
     // Layout after step 1:
-    //   low64:  bits [63:0]
-    //   high64: bits [95:64] in positions [31:0] of high lane, rest zero
+    //   bits [31:0]:  low 32 bits (multiply by K_64)
+    //   bits [95:32]: high 64 bits (XOR with product)
     //
-    // We need: (bits[63:32] × K_64) ⊕ bits[31:0] ⊕ bits[95:64]
+    // Algorithm: (bits[31:0] × K_64) ⊕ bits[95:32]
 
-    // Create mask to extract bits [63:32] → shift and mask
+    // Coefficient vector: K_64 in high lane for clmul_11
     let k64 = Self::new(k_64, 0);
 
-    // Shift left by 4 bytes (32 bits) to align bits[63:32] to [95:64] position for clmul
-    let shifted = _mm_slli_si128::<4>(step1);
-    // clmul_11: high64 of src1 × high64 of src2 = bits[63:32] × K_64
+    // Shift left by 12 bytes (96 bits) to move bits[31:0] to bits[127:96]
+    // After shift: only bits [127:96] contain the original bits [31:0]
+    let shifted = _mm_slli_si128::<12>(step1);
+
+    // clmul_11: shifted.high × K_64
+    // shifted.high = (original bits[31:0] << 32) in positions [127:96], zeros in [95:64]
+    // Result: (bits[31:0] × K_64) × x^32, placed in bits [95:32] of result
     let clmul = _mm_clmulepi64_si128::<0x11>(shifted, k64.0);
 
-    // Mask to keep bits [31:0] of low lane and bits [31:0] of high lane (which is bits[95:64])
-    let mask = _mm_set_epi32(-1, 0, -1, -1); // [0xFFFFFFFF, 0, 0xFFFFFFFF, 0xFFFFFFFF]
+    // Mask to keep bits [63:32] (middle) and bits [127:64] (high) of the 96-bit value
+    // This preserves the high 64 bits of the 96-bit value in the correct positions
+    // low 64 bits:  0xFFFFFFFF_00000000 (keeps [63:32], zeros [31:0])
+    // high 64 bits: 0xFFFFFFFF_FFFFFFFF (keeps all)
+    let mask = _mm_set_epi64x(-1i64, 0xFFFFFFFF_00000000u64 as i64);
     let masked = _mm_and_si128(step1, mask);
 
     // Final XOR: clmul result ⊕ masked bits
-    Self(_mm_xor_si128(clmul, masked))
+    // At this point, the 64-bit reduced value is in bits [95:32]
+    let xored = _mm_xor_si128(clmul, masked);
+
+    // Shift right by 4 bytes (32 bits) to move the result from bits [95:32] to bits [63:0]
+    // This puts the 64-bit value in the low lane for Barrett reduction
+    Self(_mm_srli_si128::<4>(xored))
   }
 
   /// Barrett reduction for CRC-32: reduce 8B to 4B.
