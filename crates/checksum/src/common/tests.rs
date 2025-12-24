@@ -321,7 +321,7 @@ macro_rules! define_crc_property_tests {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
-mod tests {
+mod harness_self_tests {
   use super::*;
   // Test harness using CRC-64-XZ as the reference implementation
   use crate::Crc64Xz;
