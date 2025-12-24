@@ -330,7 +330,7 @@ pub(crate) const CRC64_NVME_STREAM: Crc64StreamConstants = Crc64StreamConstants:
 /// For VPCLMULQDQ (AVX-512), we use 128-byte blocks (8×16B lanes = 2×__m512i)
 /// with multi-stream ILP optimizations.
 #[derive(Clone, Copy, Debug)]
-#[allow(dead_code)]
+#[allow(dead_code)] // Some fields used only on specific architectures
 pub(crate) struct Crc32ClmulConstants {
   /// Reciprocal polynomial (POLY = reflected_poly << 1 | 1).
   pub poly: u64,
@@ -476,7 +476,6 @@ const fn compute_mu_32(poly: u64) -> u64 {
   inv
 }
 
-#[allow(dead_code)]
 impl Crc32ClmulConstants {
   #[must_use]
   pub const fn new(reflected_poly: u32) -> Self {
@@ -502,10 +501,84 @@ impl Crc32ClmulConstants {
 }
 
 // Pre-computed constants for CRC-32 variants.
-#[allow(dead_code)]
+#[allow(dead_code)] // Used on x86_64
 pub(crate) const CRC32_IEEE_CLMUL: Crc32ClmulConstants = Crc32ClmulConstants::new(CRC32_IEEE_POLY);
-#[allow(dead_code)]
+#[allow(dead_code)] // Used on x86_64
 pub(crate) const CRC32C_CLMUL: Crc32ClmulConstants = Crc32ClmulConstants::new(CRC32C_POLY);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Multi-stream folding constants for CRC-32.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Compute a `(high, low)` fold coefficient pair for CRC-32 folding by `shift_bytes`.
+#[must_use]
+#[allow(dead_code)] // Used on x86_64
+pub(crate) const fn fold16_coeff_for_bytes_32(reflected_poly: u32, shift_bytes: u32) -> (u64, u64) {
+  if shift_bytes == 0 {
+    return (0, 0);
+  }
+
+  let normal = reflected_poly.reverse_bits();
+  let d = shift_bytes * 8;
+  // K_n = bit_reverse(x^n mod normal_poly), stored as low 32 bits of u64
+  (fold_k_32(normal, d - 1), fold_k_32(normal, d + 63))
+}
+
+/// Multi-stream folding constants for CRC-32 CLMUL kernels.
+///
+/// These constants support multi-way ILP (instruction-level parallelism)
+/// optimizations on x86_64 (PCLMULQDQ/VPCLMULQDQ).
+///
+/// - `fold_256b`: 2-way striping (256B = 2×128B)
+/// - `fold_512b`: 4-way striping (512B = 4×128B)
+/// - `fold_896b`: 7-way striping (896B = 7×128B)
+/// - `combine_4way`: merge coefficients for 4-way
+/// - `combine_7way`: merge coefficients for 7-way
+#[derive(Clone, Copy, Debug)]
+#[allow(dead_code)] // Used on x86_64
+pub(crate) struct Crc32StreamConstants {
+  /// 2-way fold coefficient (256B = 2×128B).
+  pub fold_256b: (u64, u64),
+  /// 4-way fold coefficient (512B = 4×128B).
+  pub fold_512b: (u64, u64),
+  /// 7-way fold coefficient (896B = 7×128B).
+  pub fold_896b: (u64, u64),
+  /// 4-way combine coefficients: shifts by 384B, 256B, 128B.
+  pub combine_4way: [(u64, u64); 3],
+  /// 7-way combine coefficients: shifts by 768B, 640B, 512B, 384B, 256B, 128B.
+  pub combine_7way: [(u64, u64); 6],
+}
+
+impl Crc32StreamConstants {
+  /// Compute all multi-stream folding constants for a given CRC-32 polynomial.
+  #[must_use]
+  pub const fn new(reflected_poly: u32) -> Self {
+    Self {
+      fold_256b: fold16_coeff_for_bytes_32(reflected_poly, 256),
+      fold_512b: fold16_coeff_for_bytes_32(reflected_poly, 512),
+      fold_896b: fold16_coeff_for_bytes_32(reflected_poly, 896),
+      combine_4way: [
+        fold16_coeff_for_bytes_32(reflected_poly, 384),
+        fold16_coeff_for_bytes_32(reflected_poly, 256),
+        fold16_coeff_for_bytes_32(reflected_poly, 128),
+      ],
+      combine_7way: [
+        fold16_coeff_for_bytes_32(reflected_poly, 768),
+        fold16_coeff_for_bytes_32(reflected_poly, 640),
+        fold16_coeff_for_bytes_32(reflected_poly, 512),
+        fold16_coeff_for_bytes_32(reflected_poly, 384),
+        fold16_coeff_for_bytes_32(reflected_poly, 256),
+        fold16_coeff_for_bytes_32(reflected_poly, 128),
+      ],
+    }
+  }
+}
+
+// Pre-computed multi-stream constants for CRC-32.
+#[allow(dead_code)] // Used on x86_64
+pub(crate) const CRC32_IEEE_STREAM: Crc32StreamConstants = Crc32StreamConstants::new(CRC32_IEEE_POLY);
+#[allow(dead_code)] // Used on x86_64
+pub(crate) const CRC32C_STREAM: Crc32StreamConstants = Crc32StreamConstants::new(CRC32C_POLY);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tests

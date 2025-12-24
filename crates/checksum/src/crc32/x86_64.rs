@@ -22,6 +22,11 @@
 
 // SIMD intrinsics require unsafe; safety is documented per-function.
 #![allow(unsafe_code)]
+#![allow(dead_code)] // Kernels wired up via dispatcher
+// SAFETY: All indexing is over fixed-size arrays with in-bounds constant indices.
+#![allow(clippy::indexing_slicing)]
+// This module is intrinsics-heavy; keep unsafe blocks readable.
+#![allow(unsafe_op_in_unsafe_fn)]
 
 use core::arch::x86_64::*;
 
@@ -540,7 +545,7 @@ pub fn crc32_ieee_pclmul_safe(crc: u32, data: &[u8]) -> u32 {
 //
 // Performance target: ~35-60 GB/s on modern CPUs (Ice Lake+, Zen 4+).
 
-use crate::common::clmul::{CRC32_IEEE_CLMUL, CRC32C_CLMUL};
+use crate::common::clmul::{CRC32_IEEE_CLMUL, CRC32_IEEE_STREAM, CRC32C_CLMUL, CRC32C_STREAM, Crc32ClmulConstants};
 
 /// Broadcast 128-bit fold coefficient across 4 lanes of a 512-bit vector.
 ///
@@ -815,6 +820,1227 @@ pub unsafe fn crc32c_vpclmul(crc: u32, data: &[u8]) -> u32 {
 pub fn crc32c_vpclmul_safe(crc: u32, data: &[u8]) -> u32 {
   // SAFETY: Dispatcher verifies VPCLMUL_READY before selecting this kernel.
   unsafe { crc32c_vpclmul(crc, data) }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Multi-way PCLMULQDQ Implementation (2/4/7-way ILP)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// This implementation follows the CRC64 multi-way pattern:
+// - 128-byte blocks (8×16B lanes)
+// - Multiple independent folding streams for ILP
+// - Merge streams using pre-computed shift coefficients
+//
+// For CRC32:
+// - CRC32-IEEE uses Barrett reduction (128→96→64→32 bits)
+// - CRC32C uses SSE4.2 CRC32C instruction for final reduction
+
+use core::ops::{BitXor, BitXorAssign};
+
+/// 128-bit SIMD wrapper for CRC32 folding operations.
+#[repr(transparent)]
+#[derive(Copy, Clone, Debug)]
+struct Simd(__m128i);
+
+impl BitXor for Simd {
+  type Output = Self;
+
+  #[inline]
+  fn bitxor(self, other: Self) -> Self {
+    // SAFETY: `_mm_xor_si128` is available on all x86_64 (SSE2 baseline).
+    unsafe { Self(_mm_xor_si128(self.0, other.0)) }
+  }
+}
+
+impl BitXorAssign for Simd {
+  #[inline]
+  fn bitxor_assign(&mut self, other: Self) {
+    *self = *self ^ other;
+  }
+}
+
+impl Simd {
+  #[inline]
+  #[target_feature(enable = "sse2")]
+  unsafe fn new(high: u64, low: u64) -> Self {
+    Self(_mm_set_epi64x(high as i64, low as i64))
+  }
+
+  /// Fold 16 bytes: `(coeff.low ⊗ self.low) ⊕ (coeff.high ⊗ self.high)`.
+  #[inline]
+  #[target_feature(enable = "sse2", enable = "pclmulqdq")]
+  unsafe fn fold_16(self, coeff: Self) -> Self {
+    let h = _mm_clmulepi64_si128::<0x11>(self.0, coeff.0);
+    let l = _mm_clmulepi64_si128::<0x00>(self.0, coeff.0);
+    Self(_mm_xor_si128(h, l))
+  }
+}
+
+/// Fold one 128-byte block into the accumulator state.
+#[inline]
+#[target_feature(enable = "sse2", enable = "pclmulqdq")]
+unsafe fn fold_block_128_32(x: &mut [Simd; 8], chunk: &[Simd; 8], coeff: Simd) {
+  let t0 = x[0].fold_16(coeff);
+  let t1 = x[1].fold_16(coeff);
+  let t2 = x[2].fold_16(coeff);
+  let t3 = x[3].fold_16(coeff);
+  let t4 = x[4].fold_16(coeff);
+  let t5 = x[5].fold_16(coeff);
+  let t6 = x[6].fold_16(coeff);
+  let t7 = x[7].fold_16(coeff);
+
+  x[0] = chunk[0] ^ t0;
+  x[1] = chunk[1] ^ t1;
+  x[2] = chunk[2] ^ t2;
+  x[3] = chunk[3] ^ t3;
+  x[4] = chunk[4] ^ t4;
+  x[5] = chunk[5] ^ t5;
+  x[6] = chunk[6] ^ t6;
+  x[7] = chunk[7] ^ t7;
+}
+
+/// Reduce 8×16B lanes to a single 128-bit value for CRC32.
+///
+/// Uses the 16B fold coefficient to combine lanes.
+#[inline]
+#[target_feature(enable = "sse2", enable = "pclmulqdq")]
+unsafe fn fold_tail_32(x: [Simd; 8], consts: &Crc32ClmulConstants) -> __m128i {
+  let c = Simd::new(consts.fold_16b.0, consts.fold_16b.1);
+
+  let mut acc = x[7];
+  acc ^= x[0].fold_16(c);
+  acc ^= x[1].fold_16(c);
+  acc ^= x[2].fold_16(c);
+  acc ^= x[3].fold_16(c);
+  acc ^= x[4].fold_16(c);
+  acc ^= x[5].fold_16(c);
+  acc ^= x[6].fold_16(c);
+
+  acc.0
+}
+
+/// 1-way PCLMUL kernel with 128-byte blocks.
+#[target_feature(enable = "sse2", enable = "pclmulqdq")]
+unsafe fn update_simd_32(state: u32, first: &[Simd; 8], rest: &[[Simd; 8]], consts: &Crc32ClmulConstants) -> __m128i {
+  let mut x = *first;
+
+  // XOR the initial CRC into lane 0 (low 32 bits).
+  x[0] ^= Simd::new(0, state as u64);
+
+  // 128-byte folding.
+  let coeff = Simd::new(consts.fold_128b.0, consts.fold_128b.1);
+  for chunk in rest {
+    let t0 = x[0].fold_16(coeff);
+    let t1 = x[1].fold_16(coeff);
+    let t2 = x[2].fold_16(coeff);
+    let t3 = x[3].fold_16(coeff);
+    let t4 = x[4].fold_16(coeff);
+    let t5 = x[5].fold_16(coeff);
+    let t6 = x[6].fold_16(coeff);
+    let t7 = x[7].fold_16(coeff);
+
+    x[0] = chunk[0] ^ t0;
+    x[1] = chunk[1] ^ t1;
+    x[2] = chunk[2] ^ t2;
+    x[3] = chunk[3] ^ t3;
+    x[4] = chunk[4] ^ t4;
+    x[5] = chunk[5] ^ t5;
+    x[6] = chunk[6] ^ t6;
+    x[7] = chunk[7] ^ t7;
+  }
+
+  fold_tail_32(x, consts)
+}
+
+/// 2-way PCLMUL kernel with 128-byte blocks.
+#[target_feature(enable = "sse2", enable = "pclmulqdq")]
+unsafe fn update_simd_2way_32(
+  state: u32,
+  blocks: &[[Simd; 8]],
+  fold_256b: (u64, u64),
+  consts: &Crc32ClmulConstants,
+) -> __m128i {
+  debug_assert!(blocks.len() >= 2);
+
+  let coeff_256 = Simd::new(fold_256b.0, fold_256b.1);
+  let coeff_128 = Simd::new(consts.fold_128b.0, consts.fold_128b.1);
+
+  let mut s0 = blocks[0];
+  let mut s1 = blocks[1];
+
+  // Inject CRC into stream 0 (block 0).
+  s0[0] ^= Simd::new(0, state as u64);
+
+  // Process the largest even prefix with 2-way striping.
+  let mut i = 2;
+  let even = blocks.len() & !1usize;
+  while i < even {
+    fold_block_128_32(&mut s0, &blocks[i], coeff_256);
+    fold_block_128_32(&mut s1, &blocks[i + 1], coeff_256);
+    i = i.strict_add(2);
+  }
+
+  // Merge streams: A·s0 ⊕ s1 (A = shift by 128B).
+  let mut combined = s1;
+  combined[0] ^= s0[0].fold_16(coeff_128);
+  combined[1] ^= s0[1].fold_16(coeff_128);
+  combined[2] ^= s0[2].fold_16(coeff_128);
+  combined[3] ^= s0[3].fold_16(coeff_128);
+  combined[4] ^= s0[4].fold_16(coeff_128);
+  combined[5] ^= s0[5].fold_16(coeff_128);
+  combined[6] ^= s0[6].fold_16(coeff_128);
+  combined[7] ^= s0[7].fold_16(coeff_128);
+
+  // Handle any remaining block (odd tail) sequentially.
+  if even != blocks.len() {
+    fold_block_128_32(&mut combined, &blocks[even], coeff_128);
+  }
+
+  fold_tail_32(combined, consts)
+}
+
+/// 4-way PCLMUL kernel with 128-byte blocks.
+#[target_feature(enable = "sse2", enable = "pclmulqdq")]
+unsafe fn update_simd_4way_32(
+  state: u32,
+  blocks: &[[Simd; 8]],
+  fold_512b: (u64, u64),
+  combine: &[(u64, u64); 3],
+  consts: &Crc32ClmulConstants,
+) -> __m128i {
+  debug_assert!(!blocks.is_empty());
+
+  if blocks.len() < 4 {
+    let Some((first, rest)) = blocks.split_first() else {
+      return _mm_cvtsi32_si128(state as i32);
+    };
+    return update_simd_32(state, first, rest, consts);
+  }
+
+  let aligned = (blocks.len() / 4) * 4;
+
+  let coeff_512 = Simd::new(fold_512b.0, fold_512b.1);
+  let coeff_128 = Simd::new(consts.fold_128b.0, consts.fold_128b.1);
+  let c384 = Simd::new(combine[0].0, combine[0].1);
+  let c256 = Simd::new(combine[1].0, combine[1].1);
+  let c128 = Simd::new(combine[2].0, combine[2].1);
+
+  let mut s0 = blocks[0];
+  let mut s1 = blocks[1];
+  let mut s2 = blocks[2];
+  let mut s3 = blocks[3];
+
+  // Inject CRC into stream 0.
+  s0[0] ^= Simd::new(0, state as u64);
+
+  let mut i = 4;
+  while i < aligned {
+    fold_block_128_32(&mut s0, &blocks[i], coeff_512);
+    fold_block_128_32(&mut s1, &blocks[i + 1], coeff_512);
+    fold_block_128_32(&mut s2, &blocks[i + 2], coeff_512);
+    fold_block_128_32(&mut s3, &blocks[i + 3], coeff_512);
+    i = i.strict_add(4);
+  }
+
+  // Merge: A^3·s0 ⊕ A^2·s1 ⊕ A·s2 ⊕ s3.
+  let mut combined = s3;
+  combined[0] ^= s2[0].fold_16(c128);
+  combined[1] ^= s2[1].fold_16(c128);
+  combined[2] ^= s2[2].fold_16(c128);
+  combined[3] ^= s2[3].fold_16(c128);
+  combined[4] ^= s2[4].fold_16(c128);
+  combined[5] ^= s2[5].fold_16(c128);
+  combined[6] ^= s2[6].fold_16(c128);
+  combined[7] ^= s2[7].fold_16(c128);
+
+  combined[0] ^= s1[0].fold_16(c256);
+  combined[1] ^= s1[1].fold_16(c256);
+  combined[2] ^= s1[2].fold_16(c256);
+  combined[3] ^= s1[3].fold_16(c256);
+  combined[4] ^= s1[4].fold_16(c256);
+  combined[5] ^= s1[5].fold_16(c256);
+  combined[6] ^= s1[6].fold_16(c256);
+  combined[7] ^= s1[7].fold_16(c256);
+
+  combined[0] ^= s0[0].fold_16(c384);
+  combined[1] ^= s0[1].fold_16(c384);
+  combined[2] ^= s0[2].fold_16(c384);
+  combined[3] ^= s0[3].fold_16(c384);
+  combined[4] ^= s0[4].fold_16(c384);
+  combined[5] ^= s0[5].fold_16(c384);
+  combined[6] ^= s0[6].fold_16(c384);
+  combined[7] ^= s0[7].fold_16(c384);
+
+  for block in &blocks[aligned..] {
+    fold_block_128_32(&mut combined, block, coeff_128);
+  }
+
+  fold_tail_32(combined, consts)
+}
+
+/// 7-way PCLMUL kernel with 128-byte blocks.
+#[target_feature(enable = "sse2", enable = "pclmulqdq")]
+unsafe fn update_simd_7way_32(
+  state: u32,
+  blocks: &[[Simd; 8]],
+  fold_896b: (u64, u64),
+  combine: &[(u64, u64); 6],
+  consts: &Crc32ClmulConstants,
+) -> __m128i {
+  debug_assert!(!blocks.is_empty());
+
+  if blocks.len() < 7 {
+    let Some((first, rest)) = blocks.split_first() else {
+      return _mm_cvtsi32_si128(state as i32);
+    };
+    return update_simd_32(state, first, rest, consts);
+  }
+
+  let aligned = (blocks.len() / 7) * 7;
+
+  let coeff_896 = Simd::new(fold_896b.0, fold_896b.1);
+  let coeff_128 = Simd::new(consts.fold_128b.0, consts.fold_128b.1);
+
+  let c768 = Simd::new(combine[0].0, combine[0].1);
+  let c640 = Simd::new(combine[1].0, combine[1].1);
+  let c512 = Simd::new(combine[2].0, combine[2].1);
+  let c384 = Simd::new(combine[3].0, combine[3].1);
+  let c256 = Simd::new(combine[4].0, combine[4].1);
+  let c128 = Simd::new(combine[5].0, combine[5].1);
+
+  let mut s0 = blocks[0];
+  let mut s1 = blocks[1];
+  let mut s2 = blocks[2];
+  let mut s3 = blocks[3];
+  let mut s4 = blocks[4];
+  let mut s5 = blocks[5];
+  let mut s6 = blocks[6];
+
+  // Inject CRC into stream 0.
+  s0[0] ^= Simd::new(0, state as u64);
+
+  let mut i = 7;
+  while i < aligned {
+    fold_block_128_32(&mut s0, &blocks[i], coeff_896);
+    fold_block_128_32(&mut s1, &blocks[i + 1], coeff_896);
+    fold_block_128_32(&mut s2, &blocks[i + 2], coeff_896);
+    fold_block_128_32(&mut s3, &blocks[i + 3], coeff_896);
+    fold_block_128_32(&mut s4, &blocks[i + 4], coeff_896);
+    fold_block_128_32(&mut s5, &blocks[i + 5], coeff_896);
+    fold_block_128_32(&mut s6, &blocks[i + 6], coeff_896);
+    i = i.strict_add(7);
+  }
+
+  // Merge: A^6·s0 ⊕ A^5·s1 ⊕ … ⊕ A·s5 ⊕ s6.
+  let mut combined = s6;
+  combined[0] ^= s5[0].fold_16(c128);
+  combined[1] ^= s5[1].fold_16(c128);
+  combined[2] ^= s5[2].fold_16(c128);
+  combined[3] ^= s5[3].fold_16(c128);
+  combined[4] ^= s5[4].fold_16(c128);
+  combined[5] ^= s5[5].fold_16(c128);
+  combined[6] ^= s5[6].fold_16(c128);
+  combined[7] ^= s5[7].fold_16(c128);
+
+  combined[0] ^= s4[0].fold_16(c256);
+  combined[1] ^= s4[1].fold_16(c256);
+  combined[2] ^= s4[2].fold_16(c256);
+  combined[3] ^= s4[3].fold_16(c256);
+  combined[4] ^= s4[4].fold_16(c256);
+  combined[5] ^= s4[5].fold_16(c256);
+  combined[6] ^= s4[6].fold_16(c256);
+  combined[7] ^= s4[7].fold_16(c256);
+
+  combined[0] ^= s3[0].fold_16(c384);
+  combined[1] ^= s3[1].fold_16(c384);
+  combined[2] ^= s3[2].fold_16(c384);
+  combined[3] ^= s3[3].fold_16(c384);
+  combined[4] ^= s3[4].fold_16(c384);
+  combined[5] ^= s3[5].fold_16(c384);
+  combined[6] ^= s3[6].fold_16(c384);
+  combined[7] ^= s3[7].fold_16(c384);
+
+  combined[0] ^= s2[0].fold_16(c512);
+  combined[1] ^= s2[1].fold_16(c512);
+  combined[2] ^= s2[2].fold_16(c512);
+  combined[3] ^= s2[3].fold_16(c512);
+  combined[4] ^= s2[4].fold_16(c512);
+  combined[5] ^= s2[5].fold_16(c512);
+  combined[6] ^= s2[6].fold_16(c512);
+  combined[7] ^= s2[7].fold_16(c512);
+
+  combined[0] ^= s1[0].fold_16(c640);
+  combined[1] ^= s1[1].fold_16(c640);
+  combined[2] ^= s1[2].fold_16(c640);
+  combined[3] ^= s1[3].fold_16(c640);
+  combined[4] ^= s1[4].fold_16(c640);
+  combined[5] ^= s1[5].fold_16(c640);
+  combined[6] ^= s1[6].fold_16(c640);
+  combined[7] ^= s1[7].fold_16(c640);
+
+  combined[0] ^= s0[0].fold_16(c768);
+  combined[1] ^= s0[1].fold_16(c768);
+  combined[2] ^= s0[2].fold_16(c768);
+  combined[3] ^= s0[3].fold_16(c768);
+  combined[4] ^= s0[4].fold_16(c768);
+  combined[5] ^= s0[5].fold_16(c768);
+  combined[6] ^= s0[6].fold_16(c768);
+  combined[7] ^= s0[7].fold_16(c768);
+
+  for block in &blocks[aligned..] {
+    fold_block_128_32(&mut combined, block, coeff_128);
+  }
+
+  fold_tail_32(combined, consts)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CRC32-IEEE Multi-way PCLMUL Entry Points
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// CRC32-IEEE using multi-way PCLMUL (1-way, 128B blocks).
+#[target_feature(enable = "pclmulqdq", enable = "sse4.1")]
+unsafe fn crc32_ieee_pclmul_multiway(mut crc: u32, data: &[u8], consts: &Crc32ClmulConstants) -> u32 {
+  let (left, middle, right) = data.align_to::<[Simd; 8]>();
+  if let Some((first, rest)) = middle.split_first() {
+    crc = crc32_ieee_slice16(crc, left);
+    let k3k4 = _mm_set_epi64x(crc32_ieee_constants::K4 as i64, crc32_ieee_constants::K3 as i64);
+    let acc = update_simd_32(crc, first, rest, consts);
+    crc = barrett_reduce_ieee(acc, k3k4);
+    crc32_ieee_slice16(crc, right)
+  } else {
+    crc32_ieee_slice16(crc, data)
+  }
+}
+
+/// CRC32-IEEE using 2-way PCLMUL.
+#[target_feature(enable = "pclmulqdq", enable = "sse4.1")]
+unsafe fn crc32_ieee_pclmul_2way_inner(mut crc: u32, data: &[u8]) -> u32 {
+  let (left, middle, right) = data.align_to::<[Simd; 8]>();
+  if middle.is_empty() {
+    return crc32_ieee_slice16(crc, data);
+  }
+
+  crc = crc32_ieee_slice16(crc, left);
+
+  let k3k4 = _mm_set_epi64x(crc32_ieee_constants::K4 as i64, crc32_ieee_constants::K3 as i64);
+  let acc = if middle.len() >= 2 {
+    update_simd_2way_32(crc, middle, CRC32_IEEE_STREAM.fold_256b, &CRC32_IEEE_CLMUL)
+  } else if let Some((first, rest)) = middle.split_first() {
+    update_simd_32(crc, first, rest, &CRC32_IEEE_CLMUL)
+  } else {
+    return crc32_ieee_slice16(crc, right);
+  };
+
+  crc = barrett_reduce_ieee(acc, k3k4);
+  crc32_ieee_slice16(crc, right)
+}
+
+/// CRC32-IEEE using 4-way PCLMUL.
+#[target_feature(enable = "pclmulqdq", enable = "sse4.1")]
+unsafe fn crc32_ieee_pclmul_4way_inner(mut crc: u32, data: &[u8]) -> u32 {
+  let (left, middle, right) = data.align_to::<[Simd; 8]>();
+  if middle.is_empty() {
+    return crc32_ieee_slice16(crc, data);
+  }
+
+  crc = crc32_ieee_slice16(crc, left);
+
+  let k3k4 = _mm_set_epi64x(crc32_ieee_constants::K4 as i64, crc32_ieee_constants::K3 as i64);
+  let acc = update_simd_4way_32(
+    crc,
+    middle,
+    CRC32_IEEE_STREAM.fold_512b,
+    &CRC32_IEEE_STREAM.combine_4way,
+    &CRC32_IEEE_CLMUL,
+  );
+
+  crc = barrett_reduce_ieee(acc, k3k4);
+  crc32_ieee_slice16(crc, right)
+}
+
+/// CRC32-IEEE using 7-way PCLMUL.
+#[target_feature(enable = "pclmulqdq", enable = "sse4.1")]
+unsafe fn crc32_ieee_pclmul_7way_inner(mut crc: u32, data: &[u8]) -> u32 {
+  let (left, middle, right) = data.align_to::<[Simd; 8]>();
+  if middle.is_empty() {
+    return crc32_ieee_slice16(crc, data);
+  }
+
+  crc = crc32_ieee_slice16(crc, left);
+
+  let k3k4 = _mm_set_epi64x(crc32_ieee_constants::K4 as i64, crc32_ieee_constants::K3 as i64);
+  let acc = update_simd_7way_32(
+    crc,
+    middle,
+    CRC32_IEEE_STREAM.fold_896b,
+    &CRC32_IEEE_STREAM.combine_7way,
+    &CRC32_IEEE_CLMUL,
+  );
+
+  crc = barrett_reduce_ieee(acc, k3k4);
+  crc32_ieee_slice16(crc, right)
+}
+
+/// Public: CRC32-IEEE using 2-way PCLMUL.
+///
+/// # Safety
+///
+/// Requires PCLMULQDQ and SSE4.1.
+#[target_feature(enable = "pclmulqdq", enable = "sse4.1")]
+pub unsafe fn crc32_ieee_pclmul_2way(crc: u32, data: &[u8]) -> u32 {
+  crc32_ieee_pclmul_2way_inner(crc, data)
+}
+
+/// Public: CRC32-IEEE using 4-way PCLMUL.
+///
+/// # Safety
+///
+/// Requires PCLMULQDQ and SSE4.1.
+#[target_feature(enable = "pclmulqdq", enable = "sse4.1")]
+pub unsafe fn crc32_ieee_pclmul_4way(crc: u32, data: &[u8]) -> u32 {
+  crc32_ieee_pclmul_4way_inner(crc, data)
+}
+
+/// Public: CRC32-IEEE using 7-way PCLMUL.
+///
+/// # Safety
+///
+/// Requires PCLMULQDQ and SSE4.1.
+#[target_feature(enable = "pclmulqdq", enable = "sse4.1")]
+pub unsafe fn crc32_ieee_pclmul_7way(crc: u32, data: &[u8]) -> u32 {
+  crc32_ieee_pclmul_7way_inner(crc, data)
+}
+
+/// Safe wrapper for CRC32-IEEE 2-way PCLMUL.
+#[inline]
+pub fn crc32_ieee_pclmul_2way_safe(crc: u32, data: &[u8]) -> u32 {
+  // SAFETY: Dispatcher verifies PCLMUL before selecting this kernel.
+  unsafe { crc32_ieee_pclmul_2way(crc, data) }
+}
+
+/// Safe wrapper for CRC32-IEEE 4-way PCLMUL.
+#[inline]
+pub fn crc32_ieee_pclmul_4way_safe(crc: u32, data: &[u8]) -> u32 {
+  // SAFETY: Dispatcher verifies PCLMUL before selecting this kernel.
+  unsafe { crc32_ieee_pclmul_4way(crc, data) }
+}
+
+/// Safe wrapper for CRC32-IEEE 7-way PCLMUL.
+#[inline]
+pub fn crc32_ieee_pclmul_7way_safe(crc: u32, data: &[u8]) -> u32 {
+  // SAFETY: Dispatcher verifies PCLMUL before selecting this kernel.
+  unsafe { crc32_ieee_pclmul_7way(crc, data) }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CRC32C Multi-way PCLMUL Entry Points
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Final reduction for CRC32C: 128→32 bits using SSE4.2 CRC32C instruction.
+#[inline]
+#[target_feature(enable = "sse4.2", enable = "pclmulqdq")]
+unsafe fn reduce_to_crc32c(acc: __m128i, consts: &Crc32ClmulConstants) -> u32 {
+  // 128→64 bits: fold using K_95/K_63 (similar to IEEE but use SSE4.2 for final)
+  let k64 = _mm_setr_epi32(consts.k_96 as i32, 0, consts.k_64 as i32, 0);
+
+  let lo = clmul_lo(acc, k64);
+  let hi = clmul_hi(acc, k64);
+  let folded = _mm_xor_si128(lo, hi);
+
+  // Extract 64-bit value and use SSE4.2 CRC32C for final reduction
+  let val64 = extract_epi64(folded, 0);
+  crc32c_u64(0, val64)
+}
+
+/// CRC32C using 2-way PCLMUL.
+#[target_feature(enable = "sse4.2", enable = "pclmulqdq")]
+unsafe fn crc32c_pclmul_2way_inner(mut crc: u32, data: &[u8]) -> u32 {
+  let (left, middle, right) = data.align_to::<[Simd; 8]>();
+  if middle.is_empty() {
+    return crc32c_sse42(crc, data);
+  }
+
+  crc = crc32c_sse42(crc, left);
+
+  let acc = if middle.len() >= 2 {
+    update_simd_2way_32(crc, middle, CRC32C_STREAM.fold_256b, &CRC32C_CLMUL)
+  } else if let Some((first, rest)) = middle.split_first() {
+    update_simd_32(crc, first, rest, &CRC32C_CLMUL)
+  } else {
+    return crc32c_sse42(crc, right);
+  };
+
+  crc = reduce_to_crc32c(acc, &CRC32C_CLMUL);
+  crc32c_sse42(crc, right)
+}
+
+/// CRC32C using 4-way PCLMUL.
+#[target_feature(enable = "sse4.2", enable = "pclmulqdq")]
+unsafe fn crc32c_pclmul_4way_inner(mut crc: u32, data: &[u8]) -> u32 {
+  let (left, middle, right) = data.align_to::<[Simd; 8]>();
+  if middle.is_empty() {
+    return crc32c_sse42(crc, data);
+  }
+
+  crc = crc32c_sse42(crc, left);
+
+  let acc = update_simd_4way_32(
+    crc,
+    middle,
+    CRC32C_STREAM.fold_512b,
+    &CRC32C_STREAM.combine_4way,
+    &CRC32C_CLMUL,
+  );
+
+  crc = reduce_to_crc32c(acc, &CRC32C_CLMUL);
+  crc32c_sse42(crc, right)
+}
+
+/// CRC32C using 7-way PCLMUL.
+#[target_feature(enable = "sse4.2", enable = "pclmulqdq")]
+unsafe fn crc32c_pclmul_7way_inner(mut crc: u32, data: &[u8]) -> u32 {
+  let (left, middle, right) = data.align_to::<[Simd; 8]>();
+  if middle.is_empty() {
+    return crc32c_sse42(crc, data);
+  }
+
+  crc = crc32c_sse42(crc, left);
+
+  let acc = update_simd_7way_32(
+    crc,
+    middle,
+    CRC32C_STREAM.fold_896b,
+    &CRC32C_STREAM.combine_7way,
+    &CRC32C_CLMUL,
+  );
+
+  crc = reduce_to_crc32c(acc, &CRC32C_CLMUL);
+  crc32c_sse42(crc, right)
+}
+
+/// Public: CRC32C using 2-way PCLMUL.
+///
+/// # Safety
+///
+/// Requires SSE4.2 and PCLMULQDQ.
+#[target_feature(enable = "sse4.2", enable = "pclmulqdq")]
+pub unsafe fn crc32c_pclmul_2way(crc: u32, data: &[u8]) -> u32 {
+  crc32c_pclmul_2way_inner(crc, data)
+}
+
+/// Public: CRC32C using 4-way PCLMUL.
+///
+/// # Safety
+///
+/// Requires SSE4.2 and PCLMULQDQ.
+#[target_feature(enable = "sse4.2", enable = "pclmulqdq")]
+pub unsafe fn crc32c_pclmul_4way(crc: u32, data: &[u8]) -> u32 {
+  crc32c_pclmul_4way_inner(crc, data)
+}
+
+/// Public: CRC32C using 7-way PCLMUL.
+///
+/// # Safety
+///
+/// Requires SSE4.2 and PCLMULQDQ.
+#[target_feature(enable = "sse4.2", enable = "pclmulqdq")]
+pub unsafe fn crc32c_pclmul_7way(crc: u32, data: &[u8]) -> u32 {
+  crc32c_pclmul_7way_inner(crc, data)
+}
+
+/// Safe wrapper for CRC32C 2-way PCLMUL.
+#[inline]
+pub fn crc32c_pclmul_2way_safe(crc: u32, data: &[u8]) -> u32 {
+  // SAFETY: Dispatcher verifies SSE4.2+PCLMUL before selecting this kernel.
+  unsafe { crc32c_pclmul_2way(crc, data) }
+}
+
+/// Safe wrapper for CRC32C 4-way PCLMUL.
+#[inline]
+pub fn crc32c_pclmul_4way_safe(crc: u32, data: &[u8]) -> u32 {
+  // SAFETY: Dispatcher verifies SSE4.2+PCLMUL before selecting this kernel.
+  unsafe { crc32c_pclmul_4way(crc, data) }
+}
+
+/// Safe wrapper for CRC32C 7-way PCLMUL.
+#[inline]
+pub fn crc32c_pclmul_7way_safe(crc: u32, data: &[u8]) -> u32 {
+  // SAFETY: Dispatcher verifies SSE4.2+PCLMUL before selecting this kernel.
+  unsafe { crc32c_pclmul_7way(crc, data) }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Multi-way VPCLMULQDQ Implementation (2/4/7-way ILP)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// 2-way VPCLMUL kernel for CRC32.
+#[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
+unsafe fn update_simd_vpclmul_2way_32(
+  state: u32,
+  blocks: &[[Simd; 8]],
+  fold_256b: (u64, u64),
+  consts: &Crc32ClmulConstants,
+) -> (__m512i, __m512i) {
+  debug_assert!(!blocks.is_empty());
+
+  // Fallback to single-stream when not enough blocks.
+  if blocks.len() < 2 {
+    let Some(first) = blocks.first() else {
+      let zero = _mm512_setzero_si512();
+      return (zero, zero);
+    };
+    let ptr = first as *const [Simd; 8] as *const u8;
+    let mut x0 = _mm512_loadu_si512(ptr.cast::<__m512i>());
+    let x1 = _mm512_loadu_si512(ptr.add(64).cast::<__m512i>());
+    let crc_mask = _mm512_set_epi32(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, state as i32);
+    x0 = _mm512_xor_si512(x0, crc_mask);
+    return (x0, x1);
+  }
+
+  let even = blocks.len() & !1usize;
+
+  let ptr0 = &blocks[0] as *const [Simd; 8] as *const u8;
+  let ptr1 = &blocks[1] as *const [Simd; 8] as *const u8;
+
+  let (mut x0_0, mut x1_0) = (
+    _mm512_loadu_si512(ptr0.cast::<__m512i>()),
+    _mm512_loadu_si512(ptr0.add(64).cast::<__m512i>()),
+  );
+  let (mut x0_1, mut x1_1) = (
+    _mm512_loadu_si512(ptr1.cast::<__m512i>()),
+    _mm512_loadu_si512(ptr1.add(64).cast::<__m512i>()),
+  );
+
+  // Inject CRC into stream 0.
+  let crc_mask = _mm512_set_epi32(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, state as i32);
+  x0_0 = _mm512_xor_si512(x0_0, crc_mask);
+
+  let coeff_256 = vpclmul_coeff_32(fold_256b);
+  let coeff_128 = vpclmul_coeff_32(consts.fold_128b);
+
+  let mut i = 2;
+  while i < even {
+    let ptr = &blocks[i] as *const [Simd; 8] as *const u8;
+    let y0 = _mm512_loadu_si512(ptr.cast::<__m512i>());
+    let y1 = _mm512_loadu_si512(ptr.add(64).cast::<__m512i>());
+    x0_0 = fold16_4x_ternlog_32(x0_0, y0, coeff_256);
+    x1_0 = fold16_4x_ternlog_32(x1_0, y1, coeff_256);
+
+    let ptr = &blocks[i + 1] as *const [Simd; 8] as *const u8;
+    let y0 = _mm512_loadu_si512(ptr.cast::<__m512i>());
+    let y1 = _mm512_loadu_si512(ptr.add(64).cast::<__m512i>());
+    x0_1 = fold16_4x_ternlog_32(x0_1, y0, coeff_256);
+    x1_1 = fold16_4x_ternlog_32(x1_1, y1, coeff_256);
+
+    i = i.strict_add(2);
+  }
+
+  // Merge: A·s0 ⊕ s1.
+  let mut x0 = fold16_4x_ternlog_32(x0_0, x0_1, coeff_128);
+  let mut x1 = fold16_4x_ternlog_32(x1_0, x1_1, coeff_128);
+
+  // Odd tail.
+  if even != blocks.len() {
+    let ptr = &blocks[even] as *const [Simd; 8] as *const u8;
+    let y0 = _mm512_loadu_si512(ptr.cast::<__m512i>());
+    let y1 = _mm512_loadu_si512(ptr.add(64).cast::<__m512i>());
+    x0 = fold16_4x_ternlog_32(x0, y0, coeff_128);
+    x1 = fold16_4x_ternlog_32(x1, y1, coeff_128);
+  }
+
+  (x0, x1)
+}
+
+/// 4-way VPCLMUL kernel for CRC32.
+#[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
+unsafe fn update_simd_vpclmul_4way_32(
+  state: u32,
+  blocks: &[[Simd; 8]],
+  fold_512b: (u64, u64),
+  combine: &[(u64, u64); 3],
+  consts: &Crc32ClmulConstants,
+) -> (__m512i, __m512i) {
+  debug_assert!(!blocks.is_empty());
+
+  if blocks.len() < 4 {
+    return update_simd_vpclmul_2way_32(state, blocks, consts.fold_128b, consts);
+  }
+
+  let aligned = (blocks.len() / 4) * 4;
+
+  let ptr0 = &blocks[0] as *const [Simd; 8] as *const u8;
+  let ptr1 = &blocks[1] as *const [Simd; 8] as *const u8;
+  let ptr2 = &blocks[2] as *const [Simd; 8] as *const u8;
+  let ptr3 = &blocks[3] as *const [Simd; 8] as *const u8;
+
+  let (mut x0_0, mut x1_0) = (
+    _mm512_loadu_si512(ptr0.cast::<__m512i>()),
+    _mm512_loadu_si512(ptr0.add(64).cast::<__m512i>()),
+  );
+  let (mut x0_1, mut x1_1) = (
+    _mm512_loadu_si512(ptr1.cast::<__m512i>()),
+    _mm512_loadu_si512(ptr1.add(64).cast::<__m512i>()),
+  );
+  let (mut x0_2, mut x1_2) = (
+    _mm512_loadu_si512(ptr2.cast::<__m512i>()),
+    _mm512_loadu_si512(ptr2.add(64).cast::<__m512i>()),
+  );
+  let (mut x0_3, mut x1_3) = (
+    _mm512_loadu_si512(ptr3.cast::<__m512i>()),
+    _mm512_loadu_si512(ptr3.add(64).cast::<__m512i>()),
+  );
+
+  let crc_mask = _mm512_set_epi32(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, state as i32);
+  x0_0 = _mm512_xor_si512(x0_0, crc_mask);
+
+  let coeff_512 = vpclmul_coeff_32(fold_512b);
+  let coeff_128 = vpclmul_coeff_32(consts.fold_128b);
+  let c384 = vpclmul_coeff_32(combine[0]);
+  let c256 = vpclmul_coeff_32(combine[1]);
+  let c128 = vpclmul_coeff_32(combine[2]);
+
+  let mut i = 4;
+  while i < aligned {
+    let ptr = &blocks[i] as *const [Simd; 8] as *const u8;
+    let y0 = _mm512_loadu_si512(ptr.cast::<__m512i>());
+    let y1 = _mm512_loadu_si512(ptr.add(64).cast::<__m512i>());
+    x0_0 = fold16_4x_ternlog_32(x0_0, y0, coeff_512);
+    x1_0 = fold16_4x_ternlog_32(x1_0, y1, coeff_512);
+
+    let ptr = &blocks[i + 1] as *const [Simd; 8] as *const u8;
+    let y0 = _mm512_loadu_si512(ptr.cast::<__m512i>());
+    let y1 = _mm512_loadu_si512(ptr.add(64).cast::<__m512i>());
+    x0_1 = fold16_4x_ternlog_32(x0_1, y0, coeff_512);
+    x1_1 = fold16_4x_ternlog_32(x1_1, y1, coeff_512);
+
+    let ptr = &blocks[i + 2] as *const [Simd; 8] as *const u8;
+    let y0 = _mm512_loadu_si512(ptr.cast::<__m512i>());
+    let y1 = _mm512_loadu_si512(ptr.add(64).cast::<__m512i>());
+    x0_2 = fold16_4x_ternlog_32(x0_2, y0, coeff_512);
+    x1_2 = fold16_4x_ternlog_32(x1_2, y1, coeff_512);
+
+    let ptr = &blocks[i + 3] as *const [Simd; 8] as *const u8;
+    let y0 = _mm512_loadu_si512(ptr.cast::<__m512i>());
+    let y1 = _mm512_loadu_si512(ptr.add(64).cast::<__m512i>());
+    x0_3 = fold16_4x_ternlog_32(x0_3, y0, coeff_512);
+    x1_3 = fold16_4x_ternlog_32(x1_3, y1, coeff_512);
+
+    i = i.strict_add(4);
+  }
+
+  // Merge: A^3·s0 ⊕ A^2·s1 ⊕ A·s2 ⊕ s3.
+  let mut x0 = fold16_4x_ternlog_32(x0_2, x0_3, c128);
+  let mut x1 = fold16_4x_ternlog_32(x1_2, x1_3, c128);
+  x0 = fold16_4x_ternlog_32(x0_1, x0, c256);
+  x1 = fold16_4x_ternlog_32(x1_1, x1, c256);
+  x0 = fold16_4x_ternlog_32(x0_0, x0, c384);
+  x1 = fold16_4x_ternlog_32(x1_0, x1, c384);
+
+  // Remaining blocks.
+  for block in &blocks[aligned..] {
+    let ptr = block as *const [Simd; 8] as *const u8;
+    let y0 = _mm512_loadu_si512(ptr.cast::<__m512i>());
+    let y1 = _mm512_loadu_si512(ptr.add(64).cast::<__m512i>());
+    x0 = fold16_4x_ternlog_32(x0, y0, coeff_128);
+    x1 = fold16_4x_ternlog_32(x1, y1, coeff_128);
+  }
+
+  (x0, x1)
+}
+
+/// 7-way VPCLMUL kernel for CRC32.
+#[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
+unsafe fn update_simd_vpclmul_7way_32(
+  state: u32,
+  blocks: &[[Simd; 8]],
+  fold_896b: (u64, u64),
+  combine: &[(u64, u64); 6],
+  consts: &Crc32ClmulConstants,
+) -> (__m512i, __m512i) {
+  debug_assert!(!blocks.is_empty());
+
+  if blocks.len() < 7 {
+    return update_simd_vpclmul_4way_32(state, blocks, consts.fold_128b, &[(0, 0); 3], consts);
+  }
+
+  let aligned = (blocks.len() / 7) * 7;
+
+  let ptr0 = &blocks[0] as *const [Simd; 8] as *const u8;
+  let ptr1 = &blocks[1] as *const [Simd; 8] as *const u8;
+  let ptr2 = &blocks[2] as *const [Simd; 8] as *const u8;
+  let ptr3 = &blocks[3] as *const [Simd; 8] as *const u8;
+  let ptr4 = &blocks[4] as *const [Simd; 8] as *const u8;
+  let ptr5 = &blocks[5] as *const [Simd; 8] as *const u8;
+  let ptr6 = &blocks[6] as *const [Simd; 8] as *const u8;
+
+  let (mut x0_0, mut x1_0) = (
+    _mm512_loadu_si512(ptr0.cast::<__m512i>()),
+    _mm512_loadu_si512(ptr0.add(64).cast::<__m512i>()),
+  );
+  let (mut x0_1, mut x1_1) = (
+    _mm512_loadu_si512(ptr1.cast::<__m512i>()),
+    _mm512_loadu_si512(ptr1.add(64).cast::<__m512i>()),
+  );
+  let (mut x0_2, mut x1_2) = (
+    _mm512_loadu_si512(ptr2.cast::<__m512i>()),
+    _mm512_loadu_si512(ptr2.add(64).cast::<__m512i>()),
+  );
+  let (mut x0_3, mut x1_3) = (
+    _mm512_loadu_si512(ptr3.cast::<__m512i>()),
+    _mm512_loadu_si512(ptr3.add(64).cast::<__m512i>()),
+  );
+  let (mut x0_4, mut x1_4) = (
+    _mm512_loadu_si512(ptr4.cast::<__m512i>()),
+    _mm512_loadu_si512(ptr4.add(64).cast::<__m512i>()),
+  );
+  let (mut x0_5, mut x1_5) = (
+    _mm512_loadu_si512(ptr5.cast::<__m512i>()),
+    _mm512_loadu_si512(ptr5.add(64).cast::<__m512i>()),
+  );
+  let (mut x0_6, mut x1_6) = (
+    _mm512_loadu_si512(ptr6.cast::<__m512i>()),
+    _mm512_loadu_si512(ptr6.add(64).cast::<__m512i>()),
+  );
+
+  let crc_mask = _mm512_set_epi32(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, state as i32);
+  x0_0 = _mm512_xor_si512(x0_0, crc_mask);
+
+  let coeff_896 = vpclmul_coeff_32(fold_896b);
+  let coeff_128 = vpclmul_coeff_32(consts.fold_128b);
+
+  let c768 = vpclmul_coeff_32(combine[0]);
+  let c640 = vpclmul_coeff_32(combine[1]);
+  let c512 = vpclmul_coeff_32(combine[2]);
+  let c384 = vpclmul_coeff_32(combine[3]);
+  let c256 = vpclmul_coeff_32(combine[4]);
+  let c128 = vpclmul_coeff_32(combine[5]);
+
+  let mut i = 7;
+  while i < aligned {
+    let ptr = &blocks[i] as *const [Simd; 8] as *const u8;
+    let y0 = _mm512_loadu_si512(ptr.cast::<__m512i>());
+    let y1 = _mm512_loadu_si512(ptr.add(64).cast::<__m512i>());
+    x0_0 = fold16_4x_ternlog_32(x0_0, y0, coeff_896);
+    x1_0 = fold16_4x_ternlog_32(x1_0, y1, coeff_896);
+
+    let ptr = &blocks[i + 1] as *const [Simd; 8] as *const u8;
+    let y0 = _mm512_loadu_si512(ptr.cast::<__m512i>());
+    let y1 = _mm512_loadu_si512(ptr.add(64).cast::<__m512i>());
+    x0_1 = fold16_4x_ternlog_32(x0_1, y0, coeff_896);
+    x1_1 = fold16_4x_ternlog_32(x1_1, y1, coeff_896);
+
+    let ptr = &blocks[i + 2] as *const [Simd; 8] as *const u8;
+    let y0 = _mm512_loadu_si512(ptr.cast::<__m512i>());
+    let y1 = _mm512_loadu_si512(ptr.add(64).cast::<__m512i>());
+    x0_2 = fold16_4x_ternlog_32(x0_2, y0, coeff_896);
+    x1_2 = fold16_4x_ternlog_32(x1_2, y1, coeff_896);
+
+    let ptr = &blocks[i + 3] as *const [Simd; 8] as *const u8;
+    let y0 = _mm512_loadu_si512(ptr.cast::<__m512i>());
+    let y1 = _mm512_loadu_si512(ptr.add(64).cast::<__m512i>());
+    x0_3 = fold16_4x_ternlog_32(x0_3, y0, coeff_896);
+    x1_3 = fold16_4x_ternlog_32(x1_3, y1, coeff_896);
+
+    let ptr = &blocks[i + 4] as *const [Simd; 8] as *const u8;
+    let y0 = _mm512_loadu_si512(ptr.cast::<__m512i>());
+    let y1 = _mm512_loadu_si512(ptr.add(64).cast::<__m512i>());
+    x0_4 = fold16_4x_ternlog_32(x0_4, y0, coeff_896);
+    x1_4 = fold16_4x_ternlog_32(x1_4, y1, coeff_896);
+
+    let ptr = &blocks[i + 5] as *const [Simd; 8] as *const u8;
+    let y0 = _mm512_loadu_si512(ptr.cast::<__m512i>());
+    let y1 = _mm512_loadu_si512(ptr.add(64).cast::<__m512i>());
+    x0_5 = fold16_4x_ternlog_32(x0_5, y0, coeff_896);
+    x1_5 = fold16_4x_ternlog_32(x1_5, y1, coeff_896);
+
+    let ptr = &blocks[i + 6] as *const [Simd; 8] as *const u8;
+    let y0 = _mm512_loadu_si512(ptr.cast::<__m512i>());
+    let y1 = _mm512_loadu_si512(ptr.add(64).cast::<__m512i>());
+    x0_6 = fold16_4x_ternlog_32(x0_6, y0, coeff_896);
+    x1_6 = fold16_4x_ternlog_32(x1_6, y1, coeff_896);
+
+    i = i.strict_add(7);
+  }
+
+  // Merge: A^6·s0 ⊕ A^5·s1 ⊕ … ⊕ A·s5 ⊕ s6.
+  let mut x0 = fold16_4x_ternlog_32(x0_5, x0_6, c128);
+  let mut x1 = fold16_4x_ternlog_32(x1_5, x1_6, c128);
+  x0 = fold16_4x_ternlog_32(x0_4, x0, c256);
+  x1 = fold16_4x_ternlog_32(x1_4, x1, c256);
+  x0 = fold16_4x_ternlog_32(x0_3, x0, c384);
+  x1 = fold16_4x_ternlog_32(x1_3, x1, c384);
+  x0 = fold16_4x_ternlog_32(x0_2, x0, c512);
+  x1 = fold16_4x_ternlog_32(x1_2, x1, c512);
+  x0 = fold16_4x_ternlog_32(x0_1, x0, c640);
+  x1 = fold16_4x_ternlog_32(x1_1, x1, c640);
+  x0 = fold16_4x_ternlog_32(x0_0, x0, c768);
+  x1 = fold16_4x_ternlog_32(x1_0, x1, c768);
+
+  // Remaining blocks.
+  for block in &blocks[aligned..] {
+    let ptr = block as *const [Simd; 8] as *const u8;
+    let y0 = _mm512_loadu_si512(ptr.cast::<__m512i>());
+    let y1 = _mm512_loadu_si512(ptr.add(64).cast::<__m512i>());
+    x0 = fold16_4x_ternlog_32(x0, y0, coeff_128);
+    x1 = fold16_4x_ternlog_32(x1, y1, coeff_128);
+  }
+
+  (x0, x1)
+}
+
+/// Finalize VPCLMUL state to CRC32 using lane extraction and Barrett/SSE4.2 reduction.
+#[inline]
+#[target_feature(enable = "avx512f", enable = "vpclmulqdq", enable = "pclmulqdq", enable = "sse4.1")]
+unsafe fn finalize_vpclmul_state_ieee(x0: __m512i, x1: __m512i) -> u32 {
+  let lanes = extract_lanes_512(x0, x1);
+  let k3k4 = _mm_set_epi64x(crc32_ieee_constants::K4 as i64, crc32_ieee_constants::K3 as i64);
+  let acc = reduce_8_lanes(lanes, k3k4);
+  barrett_reduce_ieee(acc, k3k4)
+}
+
+#[inline]
+#[target_feature(enable = "avx512f", enable = "vpclmulqdq", enable = "pclmulqdq", enable = "sse4.2")]
+unsafe fn finalize_vpclmul_state_crc32c(x0: __m512i, x1: __m512i) -> u32 {
+  let lanes = extract_lanes_512(x0, x1);
+  let k16 = _mm_setr_epi32(
+    crc32c_constants::FOLD_16.0 as i32,
+    0,
+    crc32c_constants::FOLD_16.1 as i32,
+    0,
+  );
+  let acc = reduce_8_lanes(lanes, k16);
+  reduce_to_crc32c(acc, &CRC32C_CLMUL)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CRC32-IEEE Multi-way VPCLMUL Entry Points
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// CRC32-IEEE using 2-way VPCLMUL.
+#[target_feature(
+  enable = "avx512f",
+  enable = "avx512vl",
+  enable = "avx512bw",
+  enable = "vpclmulqdq",
+  enable = "pclmulqdq",
+  enable = "sse4.1"
+)]
+pub unsafe fn crc32_ieee_vpclmul_2way(mut crc: u32, data: &[u8]) -> u32 {
+  const BLOCK_SIZE: usize = 128;
+
+  if data.len() < BLOCK_SIZE {
+    return crc32_ieee_pclmul(crc, data);
+  }
+
+  let (left, middle, right) = data.align_to::<[Simd; 8]>();
+  if middle.is_empty() {
+    return crc32_ieee_slice16(crc, data);
+  }
+
+  crc = crc32_ieee_slice16(crc, left);
+  let (x0, x1) = update_simd_vpclmul_2way_32(crc, middle, CRC32_IEEE_STREAM.fold_256b, &CRC32_IEEE_CLMUL);
+  crc = finalize_vpclmul_state_ieee(x0, x1);
+  crc32_ieee_slice16(crc, right)
+}
+
+/// CRC32-IEEE using 4-way VPCLMUL.
+#[target_feature(
+  enable = "avx512f",
+  enable = "avx512vl",
+  enable = "avx512bw",
+  enable = "vpclmulqdq",
+  enable = "pclmulqdq",
+  enable = "sse4.1"
+)]
+pub unsafe fn crc32_ieee_vpclmul_4way(mut crc: u32, data: &[u8]) -> u32 {
+  const BLOCK_SIZE: usize = 128;
+
+  if data.len() < BLOCK_SIZE {
+    return crc32_ieee_pclmul(crc, data);
+  }
+
+  let (left, middle, right) = data.align_to::<[Simd; 8]>();
+  if middle.is_empty() {
+    return crc32_ieee_slice16(crc, data);
+  }
+
+  crc = crc32_ieee_slice16(crc, left);
+  let (x0, x1) = update_simd_vpclmul_4way_32(
+    crc,
+    middle,
+    CRC32_IEEE_STREAM.fold_512b,
+    &CRC32_IEEE_STREAM.combine_4way,
+    &CRC32_IEEE_CLMUL,
+  );
+  crc = finalize_vpclmul_state_ieee(x0, x1);
+  crc32_ieee_slice16(crc, right)
+}
+
+/// CRC32-IEEE using 7-way VPCLMUL.
+#[target_feature(
+  enable = "avx512f",
+  enable = "avx512vl",
+  enable = "avx512bw",
+  enable = "vpclmulqdq",
+  enable = "pclmulqdq",
+  enable = "sse4.1"
+)]
+pub unsafe fn crc32_ieee_vpclmul_7way(mut crc: u32, data: &[u8]) -> u32 {
+  const BLOCK_SIZE: usize = 128;
+
+  if data.len() < BLOCK_SIZE {
+    return crc32_ieee_pclmul(crc, data);
+  }
+
+  let (left, middle, right) = data.align_to::<[Simd; 8]>();
+  if middle.is_empty() {
+    return crc32_ieee_slice16(crc, data);
+  }
+
+  crc = crc32_ieee_slice16(crc, left);
+  let (x0, x1) = update_simd_vpclmul_7way_32(
+    crc,
+    middle,
+    CRC32_IEEE_STREAM.fold_896b,
+    &CRC32_IEEE_STREAM.combine_7way,
+    &CRC32_IEEE_CLMUL,
+  );
+  crc = finalize_vpclmul_state_ieee(x0, x1);
+  crc32_ieee_slice16(crc, right)
+}
+
+/// Safe wrapper for CRC32-IEEE 2-way VPCLMUL.
+#[inline]
+pub fn crc32_ieee_vpclmul_2way_safe(crc: u32, data: &[u8]) -> u32 {
+  unsafe { crc32_ieee_vpclmul_2way(crc, data) }
+}
+
+/// Safe wrapper for CRC32-IEEE 4-way VPCLMUL.
+#[inline]
+pub fn crc32_ieee_vpclmul_4way_safe(crc: u32, data: &[u8]) -> u32 {
+  unsafe { crc32_ieee_vpclmul_4way(crc, data) }
+}
+
+/// Safe wrapper for CRC32-IEEE 7-way VPCLMUL.
+#[inline]
+pub fn crc32_ieee_vpclmul_7way_safe(crc: u32, data: &[u8]) -> u32 {
+  unsafe { crc32_ieee_vpclmul_7way(crc, data) }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CRC32C Multi-way VPCLMUL Entry Points
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// CRC32C using 2-way VPCLMUL.
+#[target_feature(
+  enable = "avx512f",
+  enable = "avx512vl",
+  enable = "avx512bw",
+  enable = "vpclmulqdq",
+  enable = "pclmulqdq",
+  enable = "sse4.2"
+)]
+pub unsafe fn crc32c_vpclmul_2way(mut crc: u32, data: &[u8]) -> u32 {
+  const BLOCK_SIZE: usize = 128;
+
+  if data.len() < BLOCK_SIZE {
+    return crc32c_fusion(crc, data);
+  }
+
+  let (left, middle, right) = data.align_to::<[Simd; 8]>();
+  if middle.is_empty() {
+    return crc32c_sse42(crc, data);
+  }
+
+  crc = crc32c_sse42(crc, left);
+  let (x0, x1) = update_simd_vpclmul_2way_32(crc, middle, CRC32C_STREAM.fold_256b, &CRC32C_CLMUL);
+  crc = finalize_vpclmul_state_crc32c(x0, x1);
+  crc32c_sse42(crc, right)
+}
+
+/// CRC32C using 4-way VPCLMUL.
+#[target_feature(
+  enable = "avx512f",
+  enable = "avx512vl",
+  enable = "avx512bw",
+  enable = "vpclmulqdq",
+  enable = "pclmulqdq",
+  enable = "sse4.2"
+)]
+pub unsafe fn crc32c_vpclmul_4way(mut crc: u32, data: &[u8]) -> u32 {
+  const BLOCK_SIZE: usize = 128;
+
+  if data.len() < BLOCK_SIZE {
+    return crc32c_fusion(crc, data);
+  }
+
+  let (left, middle, right) = data.align_to::<[Simd; 8]>();
+  if middle.is_empty() {
+    return crc32c_sse42(crc, data);
+  }
+
+  crc = crc32c_sse42(crc, left);
+  let (x0, x1) = update_simd_vpclmul_4way_32(
+    crc,
+    middle,
+    CRC32C_STREAM.fold_512b,
+    &CRC32C_STREAM.combine_4way,
+    &CRC32C_CLMUL,
+  );
+  crc = finalize_vpclmul_state_crc32c(x0, x1);
+  crc32c_sse42(crc, right)
+}
+
+/// CRC32C using 7-way VPCLMUL.
+#[target_feature(
+  enable = "avx512f",
+  enable = "avx512vl",
+  enable = "avx512bw",
+  enable = "vpclmulqdq",
+  enable = "pclmulqdq",
+  enable = "sse4.2"
+)]
+pub unsafe fn crc32c_vpclmul_7way(mut crc: u32, data: &[u8]) -> u32 {
+  const BLOCK_SIZE: usize = 128;
+
+  if data.len() < BLOCK_SIZE {
+    return crc32c_fusion(crc, data);
+  }
+
+  let (left, middle, right) = data.align_to::<[Simd; 8]>();
+  if middle.is_empty() {
+    return crc32c_sse42(crc, data);
+  }
+
+  crc = crc32c_sse42(crc, left);
+  let (x0, x1) = update_simd_vpclmul_7way_32(
+    crc,
+    middle,
+    CRC32C_STREAM.fold_896b,
+    &CRC32C_STREAM.combine_7way,
+    &CRC32C_CLMUL,
+  );
+  crc = finalize_vpclmul_state_crc32c(x0, x1);
+  crc32c_sse42(crc, right)
+}
+
+/// Safe wrapper for CRC32C 2-way VPCLMUL.
+#[inline]
+pub fn crc32c_vpclmul_2way_safe(crc: u32, data: &[u8]) -> u32 {
+  unsafe { crc32c_vpclmul_2way(crc, data) }
+}
+
+/// Safe wrapper for CRC32C 4-way VPCLMUL.
+#[inline]
+pub fn crc32c_vpclmul_4way_safe(crc: u32, data: &[u8]) -> u32 {
+  unsafe { crc32c_vpclmul_4way(crc, data) }
+}
+
+/// Safe wrapper for CRC32C 7-way VPCLMUL.
+#[inline]
+pub fn crc32c_vpclmul_7way_safe(crc: u32, data: &[u8]) -> u32 {
+  unsafe { crc32c_vpclmul_7way(crc, data) }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1140,5 +2366,343 @@ mod tests {
       let c_vpclmul = crc32c_vpclmul_safe(!0, &data) ^ !0;
       assert_eq!(c_portable, c_vpclmul, "CRC32C boundary mismatch at {len}");
     }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Multi-way PCLMUL Tests (2/4/7-way ILP)
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /// Helper to detect PCLMUL capability.
+  fn has_pclmul() -> bool {
+    std::is_x86_feature_detected!("pclmulqdq") && std::is_x86_feature_detected!("sse4.1")
+  }
+
+  #[test]
+  fn test_crc32_ieee_pclmul_2way_vs_portable() {
+    if !has_pclmul() {
+      return;
+    }
+
+    // Test sizes >= 256B (2×128B blocks) for 2-way
+    for len in [256, 384, 512, 640, 896, 1024, 2048, 4096, 8192, 16384] {
+      let data: Vec<u8> = (0..len).map(|i| i as u8).collect();
+
+      let portable = crc32_ieee_slice16(!0, &data) ^ !0;
+      let pclmul_2way = crc32_ieee_pclmul_2way_safe(!0, &data) ^ !0;
+
+      assert_eq!(
+        portable, pclmul_2way,
+        "CRC32-IEEE PCLMUL 2-way mismatch at length {len}"
+      );
+    }
+  }
+
+  #[test]
+  fn test_crc32_ieee_pclmul_4way_vs_portable() {
+    if !has_pclmul() {
+      return;
+    }
+
+    // Test sizes >= 512B (4×128B blocks) for 4-way
+    for len in [512, 640, 768, 896, 1024, 2048, 4096, 8192, 16384, 65536] {
+      let data: Vec<u8> = (0..len).map(|i| i as u8).collect();
+
+      let portable = crc32_ieee_slice16(!0, &data) ^ !0;
+      let pclmul_4way = crc32_ieee_pclmul_4way_safe(!0, &data) ^ !0;
+
+      assert_eq!(
+        portable, pclmul_4way,
+        "CRC32-IEEE PCLMUL 4-way mismatch at length {len}"
+      );
+    }
+  }
+
+  #[test]
+  fn test_crc32_ieee_pclmul_7way_vs_portable() {
+    if !has_pclmul() {
+      return;
+    }
+
+    // Test sizes >= 896B (7×128B blocks) for 7-way
+    for len in [896, 1024, 1792, 2048, 4096, 8192, 16384, 65536, 131072] {
+      let data: Vec<u8> = (0..len).map(|i| i as u8).collect();
+
+      let portable = crc32_ieee_slice16(!0, &data) ^ !0;
+      let pclmul_7way = crc32_ieee_pclmul_7way_safe(!0, &data) ^ !0;
+
+      assert_eq!(
+        portable, pclmul_7way,
+        "CRC32-IEEE PCLMUL 7-way mismatch at length {len}"
+      );
+    }
+  }
+
+  #[test]
+  fn test_crc32c_pclmul_2way_vs_portable() {
+    if !has_pclmul() || !std::is_x86_feature_detected!("sse4.2") {
+      return;
+    }
+
+    for len in [256, 384, 512, 640, 896, 1024, 2048, 4096, 8192, 16384] {
+      let data: Vec<u8> = (0..len).map(|i| i as u8).collect();
+
+      let portable = crc32c_slice16(!0, &data) ^ !0;
+      let pclmul_2way = crc32c_pclmul_2way_safe(!0, &data) ^ !0;
+
+      assert_eq!(portable, pclmul_2way, "CRC32C PCLMUL 2-way mismatch at length {len}");
+    }
+  }
+
+  #[test]
+  fn test_crc32c_pclmul_4way_vs_portable() {
+    if !has_pclmul() || !std::is_x86_feature_detected!("sse4.2") {
+      return;
+    }
+
+    for len in [512, 640, 768, 896, 1024, 2048, 4096, 8192, 16384, 65536] {
+      let data: Vec<u8> = (0..len).map(|i| i as u8).collect();
+
+      let portable = crc32c_slice16(!0, &data) ^ !0;
+      let pclmul_4way = crc32c_pclmul_4way_safe(!0, &data) ^ !0;
+
+      assert_eq!(portable, pclmul_4way, "CRC32C PCLMUL 4-way mismatch at length {len}");
+    }
+  }
+
+  #[test]
+  fn test_crc32c_pclmul_7way_vs_portable() {
+    if !has_pclmul() || !std::is_x86_feature_detected!("sse4.2") {
+      return;
+    }
+
+    for len in [896, 1024, 1792, 2048, 4096, 8192, 16384, 65536, 131072] {
+      let data: Vec<u8> = (0..len).map(|i| i as u8).collect();
+
+      let portable = crc32c_slice16(!0, &data) ^ !0;
+      let pclmul_7way = crc32c_pclmul_7way_safe(!0, &data) ^ !0;
+
+      assert_eq!(portable, pclmul_7way, "CRC32C PCLMUL 7-way mismatch at length {len}");
+    }
+  }
+
+  #[test]
+  fn test_crc32_pclmul_multiway_consistency() {
+    if !has_pclmul() || !std::is_x86_feature_detected!("sse4.2") {
+      return;
+    }
+
+    // Test that all multi-way variants produce identical results
+    for len in [1024, 2048, 4096, 8192] {
+      let data: Vec<u8> = (0..len).map(|i| i as u8).collect();
+
+      // CRC32-IEEE
+      let ieee_1way = crc32_ieee_pclmul_safe(!0, &data) ^ !0;
+      let ieee_2way = crc32_ieee_pclmul_2way_safe(!0, &data) ^ !0;
+      let ieee_4way = crc32_ieee_pclmul_4way_safe(!0, &data) ^ !0;
+      let ieee_7way = crc32_ieee_pclmul_7way_safe(!0, &data) ^ !0;
+
+      assert_eq!(ieee_1way, ieee_2way, "IEEE 1-way vs 2-way at {len}");
+      assert_eq!(ieee_1way, ieee_4way, "IEEE 1-way vs 4-way at {len}");
+      assert_eq!(ieee_1way, ieee_7way, "IEEE 1-way vs 7-way at {len}");
+
+      // CRC32C
+      let c_1way = crc32c_pclmul_safe(!0, &data) ^ !0;
+      let c_2way = crc32c_pclmul_2way_safe(!0, &data) ^ !0;
+      let c_4way = crc32c_pclmul_4way_safe(!0, &data) ^ !0;
+      let c_7way = crc32c_pclmul_7way_safe(!0, &data) ^ !0;
+
+      assert_eq!(c_1way, c_2way, "CRC32C 1-way vs 2-way at {len}");
+      assert_eq!(c_1way, c_4way, "CRC32C 1-way vs 4-way at {len}");
+      assert_eq!(c_1way, c_7way, "CRC32C 1-way vs 7-way at {len}");
+    }
+  }
+
+  #[test]
+  fn test_crc32_pclmul_multiway_odd_lengths() {
+    if !has_pclmul() || !std::is_x86_feature_detected!("sse4.2") {
+      return;
+    }
+
+    // Test odd lengths that don't align to block boundaries
+    for len in [257, 513, 897, 1025, 1793, 2049, 4097] {
+      let data: Vec<u8> = (0..len).map(|i| i as u8).collect();
+
+      let ieee_portable = crc32_ieee_slice16(!0, &data) ^ !0;
+      let ieee_4way = crc32_ieee_pclmul_4way_safe(!0, &data) ^ !0;
+      assert_eq!(ieee_portable, ieee_4way, "IEEE odd length mismatch at {len}");
+
+      let c_portable = crc32c_slice16(!0, &data) ^ !0;
+      let c_4way = crc32c_pclmul_4way_safe(!0, &data) ^ !0;
+      assert_eq!(c_portable, c_4way, "CRC32C odd length mismatch at {len}");
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Multi-way VPCLMUL Tests (2/4/7-way ILP)
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  #[test]
+  fn test_crc32_ieee_vpclmul_2way_vs_portable() {
+    if !has_vpclmul() {
+      return;
+    }
+
+    for len in [256, 384, 512, 640, 896, 1024, 2048, 4096, 8192, 16384] {
+      let data: Vec<u8> = (0..len).map(|i| i as u8).collect();
+
+      let portable = crc32_ieee_slice16(!0, &data) ^ !0;
+      let vpclmul_2way = crc32_ieee_vpclmul_2way_safe(!0, &data) ^ !0;
+
+      assert_eq!(
+        portable, vpclmul_2way,
+        "CRC32-IEEE VPCLMUL 2-way mismatch at length {len}"
+      );
+    }
+  }
+
+  #[test]
+  fn test_crc32_ieee_vpclmul_4way_vs_portable() {
+    if !has_vpclmul() {
+      return;
+    }
+
+    for len in [512, 640, 768, 896, 1024, 2048, 4096, 8192, 16384, 65536] {
+      let data: Vec<u8> = (0..len).map(|i| i as u8).collect();
+
+      let portable = crc32_ieee_slice16(!0, &data) ^ !0;
+      let vpclmul_4way = crc32_ieee_vpclmul_4way_safe(!0, &data) ^ !0;
+
+      assert_eq!(
+        portable, vpclmul_4way,
+        "CRC32-IEEE VPCLMUL 4-way mismatch at length {len}"
+      );
+    }
+  }
+
+  #[test]
+  fn test_crc32_ieee_vpclmul_7way_vs_portable() {
+    if !has_vpclmul() {
+      return;
+    }
+
+    for len in [896, 1024, 1792, 2048, 4096, 8192, 16384, 65536, 131072] {
+      let data: Vec<u8> = (0..len).map(|i| i as u8).collect();
+
+      let portable = crc32_ieee_slice16(!0, &data) ^ !0;
+      let vpclmul_7way = crc32_ieee_vpclmul_7way_safe(!0, &data) ^ !0;
+
+      assert_eq!(
+        portable, vpclmul_7way,
+        "CRC32-IEEE VPCLMUL 7-way mismatch at length {len}"
+      );
+    }
+  }
+
+  #[test]
+  fn test_crc32c_vpclmul_2way_vs_portable() {
+    if !has_vpclmul() || !std::is_x86_feature_detected!("sse4.2") {
+      return;
+    }
+
+    for len in [256, 384, 512, 640, 896, 1024, 2048, 4096, 8192, 16384] {
+      let data: Vec<u8> = (0..len).map(|i| i as u8).collect();
+
+      let portable = crc32c_slice16(!0, &data) ^ !0;
+      let vpclmul_2way = crc32c_vpclmul_2way_safe(!0, &data) ^ !0;
+
+      assert_eq!(portable, vpclmul_2way, "CRC32C VPCLMUL 2-way mismatch at length {len}");
+    }
+  }
+
+  #[test]
+  fn test_crc32c_vpclmul_4way_vs_portable() {
+    if !has_vpclmul() || !std::is_x86_feature_detected!("sse4.2") {
+      return;
+    }
+
+    for len in [512, 640, 768, 896, 1024, 2048, 4096, 8192, 16384, 65536] {
+      let data: Vec<u8> = (0..len).map(|i| i as u8).collect();
+
+      let portable = crc32c_slice16(!0, &data) ^ !0;
+      let vpclmul_4way = crc32c_vpclmul_4way_safe(!0, &data) ^ !0;
+
+      assert_eq!(portable, vpclmul_4way, "CRC32C VPCLMUL 4-way mismatch at length {len}");
+    }
+  }
+
+  #[test]
+  fn test_crc32c_vpclmul_7way_vs_portable() {
+    if !has_vpclmul() || !std::is_x86_feature_detected!("sse4.2") {
+      return;
+    }
+
+    for len in [896, 1024, 1792, 2048, 4096, 8192, 16384, 65536, 131072] {
+      let data: Vec<u8> = (0..len).map(|i| i as u8).collect();
+
+      let portable = crc32c_slice16(!0, &data) ^ !0;
+      let vpclmul_7way = crc32c_vpclmul_7way_safe(!0, &data) ^ !0;
+
+      assert_eq!(portable, vpclmul_7way, "CRC32C VPCLMUL 7-way mismatch at length {len}");
+    }
+  }
+
+  #[test]
+  fn test_crc32_vpclmul_multiway_consistency() {
+    if !has_vpclmul() || !std::is_x86_feature_detected!("sse4.2") {
+      return;
+    }
+
+    // Test that all multi-way variants produce identical results
+    for len in [1024, 2048, 4096, 8192] {
+      let data: Vec<u8> = (0..len).map(|i| i as u8).collect();
+
+      // CRC32-IEEE
+      let ieee_1way = crc32_ieee_vpclmul_safe(!0, &data) ^ !0;
+      let ieee_2way = crc32_ieee_vpclmul_2way_safe(!0, &data) ^ !0;
+      let ieee_4way = crc32_ieee_vpclmul_4way_safe(!0, &data) ^ !0;
+      let ieee_7way = crc32_ieee_vpclmul_7way_safe(!0, &data) ^ !0;
+
+      assert_eq!(ieee_1way, ieee_2way, "IEEE VPCLMUL 1-way vs 2-way at {len}");
+      assert_eq!(ieee_1way, ieee_4way, "IEEE VPCLMUL 1-way vs 4-way at {len}");
+      assert_eq!(ieee_1way, ieee_7way, "IEEE VPCLMUL 1-way vs 7-way at {len}");
+
+      // CRC32C
+      let c_1way = crc32c_vpclmul_safe(!0, &data) ^ !0;
+      let c_2way = crc32c_vpclmul_2way_safe(!0, &data) ^ !0;
+      let c_4way = crc32c_vpclmul_4way_safe(!0, &data) ^ !0;
+      let c_7way = crc32c_vpclmul_7way_safe(!0, &data) ^ !0;
+
+      assert_eq!(c_1way, c_2way, "CRC32C VPCLMUL 1-way vs 2-way at {len}");
+      assert_eq!(c_1way, c_4way, "CRC32C VPCLMUL 1-way vs 4-way at {len}");
+      assert_eq!(c_1way, c_7way, "CRC32C VPCLMUL 1-way vs 7-way at {len}");
+    }
+  }
+
+  #[test]
+  fn test_crc32_multiway_large_buffer() {
+    if !has_pclmul() || !std::is_x86_feature_detected!("sse4.2") {
+      return;
+    }
+
+    // Test with 1 MiB - this exercises all multi-way paths
+    let data: Vec<u8> = (0..1048576u32).map(|i| i as u8).collect();
+
+    let portable = crc32_ieee_slice16(!0, &data) ^ !0;
+    let ieee_2way = crc32_ieee_pclmul_2way_safe(!0, &data) ^ !0;
+    let ieee_4way = crc32_ieee_pclmul_4way_safe(!0, &data) ^ !0;
+    let ieee_7way = crc32_ieee_pclmul_7way_safe(!0, &data) ^ !0;
+
+    assert_eq!(portable, ieee_2way, "IEEE PCLMUL 2-way 1MiB");
+    assert_eq!(portable, ieee_4way, "IEEE PCLMUL 4-way 1MiB");
+    assert_eq!(portable, ieee_7way, "IEEE PCLMUL 7-way 1MiB");
+
+    let c_portable = crc32c_slice16(!0, &data) ^ !0;
+    let c_2way = crc32c_pclmul_2way_safe(!0, &data) ^ !0;
+    let c_4way = crc32c_pclmul_4way_safe(!0, &data) ^ !0;
+    let c_7way = crc32c_pclmul_7way_safe(!0, &data) ^ !0;
+
+    assert_eq!(c_portable, c_2way, "CRC32C PCLMUL 2-way 1MiB");
+    assert_eq!(c_portable, c_4way, "CRC32C PCLMUL 4-way 1MiB");
+    assert_eq!(c_portable, c_7way, "CRC32C PCLMUL 7-way 1MiB");
   }
 }
