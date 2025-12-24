@@ -342,6 +342,9 @@ pub(crate) struct Crc32ClmulConstants {
   pub fold_128b: (u64, u64),
   /// 16B folding coefficient (K_127, K_191) for lane reduction.
   pub fold_16b: (u64, u64),
+  /// Tail fold coefficients (distance 112..16 bytes): (K_{d-1}, K_{d+63}).
+  /// Used to reduce 8 lanes to 1 lane in multi-way kernels.
+  pub tail_fold_16b: [(u64, u64); 7],
   /// 128→96 bit reduction constant (K_95).
   pub k_96: u64,
   /// 96→64 bit reduction constant (K_63).
@@ -492,6 +495,17 @@ impl Crc32ClmulConstants {
       fold_128b: (fold_k_32(normal, 1023), fold_k_32(normal, 1087)),
       // 16B lane: fold by 16 bytes = 128 bits
       fold_16b: (fold_k_32(normal, 127), fold_k_32(normal, 191)),
+      // Tail fold coefficients for reducing 8 lanes to 1 lane.
+      // Each coefficient shifts lane i by (7-i)*16 bytes to align with lane 7.
+      tail_fold_16b: [
+        (fold_k_32(normal, 895), fold_k_32(normal, 959)), // 112 bytes (lane 0)
+        (fold_k_32(normal, 767), fold_k_32(normal, 831)), // 96 bytes (lane 1)
+        (fold_k_32(normal, 639), fold_k_32(normal, 703)), // 80 bytes (lane 2)
+        (fold_k_32(normal, 511), fold_k_32(normal, 575)), // 64 bytes (lane 3)
+        (fold_k_32(normal, 383), fold_k_32(normal, 447)), // 48 bytes (lane 4)
+        (fold_k_32(normal, 255), fold_k_32(normal, 319)), // 32 bytes (lane 5)
+        (fold_k_32(normal, 127), fold_k_32(normal, 191)), // 16 bytes (lane 6)
+      ],
       // 128→96 bits: K_95
       k_96: fold_k_32(normal, 95),
       // 96→64 bits: K_63

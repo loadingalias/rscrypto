@@ -905,16 +905,24 @@ unsafe fn fold_block_128_32(x: &mut [Simd; 8], chunk: &[Simd; 8], coeff: Simd) {
 #[inline]
 #[target_feature(enable = "sse2", enable = "pclmulqdq")]
 unsafe fn fold_tail_32(x: [Simd; 8], consts: &Crc32ClmulConstants) -> __m128i {
-  let c = Simd::new(consts.fold_16b.0, consts.fold_16b.1);
+  // Tail reduction (8×16B → 1×16B), using per-lane coefficients.
+  // Each lane needs to be shifted by a different amount to align with lane 7.
+  let c0 = Simd::new(consts.tail_fold_16b[0].0, consts.tail_fold_16b[0].1); // 112 bytes
+  let c1 = Simd::new(consts.tail_fold_16b[1].0, consts.tail_fold_16b[1].1); // 96 bytes
+  let c2 = Simd::new(consts.tail_fold_16b[2].0, consts.tail_fold_16b[2].1); // 80 bytes
+  let c3 = Simd::new(consts.tail_fold_16b[3].0, consts.tail_fold_16b[3].1); // 64 bytes
+  let c4 = Simd::new(consts.tail_fold_16b[4].0, consts.tail_fold_16b[4].1); // 48 bytes
+  let c5 = Simd::new(consts.tail_fold_16b[5].0, consts.tail_fold_16b[5].1); // 32 bytes
+  let c6 = Simd::new(consts.tail_fold_16b[6].0, consts.tail_fold_16b[6].1); // 16 bytes
 
   let mut acc = x[7];
-  acc ^= x[0].fold_16(c);
-  acc ^= x[1].fold_16(c);
-  acc ^= x[2].fold_16(c);
-  acc ^= x[3].fold_16(c);
-  acc ^= x[4].fold_16(c);
-  acc ^= x[5].fold_16(c);
-  acc ^= x[6].fold_16(c);
+  acc ^= x[0].fold_16(c0);
+  acc ^= x[1].fold_16(c1);
+  acc ^= x[2].fold_16(c2);
+  acc ^= x[3].fold_16(c3);
+  acc ^= x[4].fold_16(c4);
+  acc ^= x[5].fold_16(c5);
+  acc ^= x[6].fold_16(c6);
 
   acc.0
 }
