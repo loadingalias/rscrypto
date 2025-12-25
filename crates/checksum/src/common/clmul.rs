@@ -487,31 +487,31 @@ impl Crc32ClmulConstants {
     let mu = compute_mu_32(poly);
 
     // For CRC-32 CLMUL, K constants are 32-bit values in the low bits of 64-bit words.
-    // The exponents follow the same pattern as CRC-64: (D, D+64) for (high, low).
-    // - K_high = x^D mod P (for high 64-bit half of 128-bit lane)
-    // - K_low = x^(D+64) mod P (for low 64-bit half)
+    // The exponents follow the same pattern as CRC-64: (D-1, D+63) for (high, low).
+    // - K_high = x^(D-1) mod P (for high 64-bit half of 128-bit lane)
+    // - K_low = x^(D+63) mod P (for low 64-bit half)
     //
-    // The low lane gets the larger exponent to shift data "up" in the result.
+    // This matches the TiKV/Intel CLMUL algorithm exactly.
     Self {
       poly,
       mu,
-      // 64B block: fold by 64 bytes = 512 bits → (512, 576)
-      fold_64b: (fold_k_32(normal, 512), fold_k_32(normal, 576)),
-      // 128B block: fold by 128 bytes = 1024 bits → (1024, 1088)
-      fold_128b: (fold_k_32(normal, 1024), fold_k_32(normal, 1088)),
-      // 16B lane: fold by 16 bytes = 128 bits → (128, 192)
-      fold_16b: (fold_k_32(normal, 128), fold_k_32(normal, 192)),
+      // 64B block: fold by 64 bytes = 512 bits → (511, 575)
+      fold_64b: (fold_k_32(normal, 511), fold_k_32(normal, 575)),
+      // 128B block: fold by 128 bytes = 1024 bits → (1023, 1087)
+      fold_128b: (fold_k_32(normal, 1023), fold_k_32(normal, 1087)),
+      // 16B lane: fold by 16 bytes = 128 bits → (127, 191)
+      fold_16b: (fold_k_32(normal, 127), fold_k_32(normal, 191)),
       // Tail fold coefficients for reducing 8 lanes to 1 lane.
       // Each coefficient shifts lane i by (7-i)*16 bytes to align with lane 7.
-      // Formula: for N bytes (D = N*8 bits), use (D, D+64).
+      // Formula: for N bytes (D = N*8 bits), use (D-1, D+63).
       tail_fold_16b: [
-        (fold_k_32(normal, 896), fold_k_32(normal, 960)), // 112 bytes (lane 0)
-        (fold_k_32(normal, 768), fold_k_32(normal, 832)), // 96 bytes (lane 1)
-        (fold_k_32(normal, 640), fold_k_32(normal, 704)), // 80 bytes (lane 2)
-        (fold_k_32(normal, 512), fold_k_32(normal, 576)), // 64 bytes (lane 3)
-        (fold_k_32(normal, 384), fold_k_32(normal, 448)), // 48 bytes (lane 4)
-        (fold_k_32(normal, 256), fold_k_32(normal, 320)), // 32 bytes (lane 5)
-        (fold_k_32(normal, 128), fold_k_32(normal, 192)), // 16 bytes (lane 6)
+        (fold_k_32(normal, 895), fold_k_32(normal, 959)), // 112 bytes (lane 0)
+        (fold_k_32(normal, 767), fold_k_32(normal, 831)), // 96 bytes (lane 1)
+        (fold_k_32(normal, 639), fold_k_32(normal, 703)), // 80 bytes (lane 2)
+        (fold_k_32(normal, 511), fold_k_32(normal, 575)), // 64 bytes (lane 3)
+        (fold_k_32(normal, 383), fold_k_32(normal, 447)), // 48 bytes (lane 4)
+        (fold_k_32(normal, 255), fold_k_32(normal, 319)), // 32 bytes (lane 5)
+        (fold_k_32(normal, 127), fold_k_32(normal, 191)), // 16 bytes (lane 6)
       ],
       // Final reduction constants (128→64 bits) - these use different exponents
       // since they're for bit-level reduction, not byte-block folding.
@@ -535,13 +535,12 @@ pub(crate) const CRC32C_CLMUL: Crc32ClmulConstants = Crc32ClmulConstants::new(CR
 ///
 /// For CRC-32 CLMUL, the K constants have 32-bit values positioned in the low 32 bits
 /// of a 64-bit word. The exponents follow the same pattern as CRC-64:
-/// - K_high = x^D mod P (for high 64-bit half of 128-bit lane)
-/// - K_low = x^(D+64) mod P (for low 64-bit half)
+/// - K_high = x^(D-1) mod P (for high 64-bit half of 128-bit lane)
+/// - K_low = x^(D+63) mod P (for low 64-bit half)
 ///
 /// where D = shift_bytes * 8 (the bit distance to fold).
 ///
-/// The low lane gets the larger exponent to shift data "up" in the result,
-/// matching the CRC-64 pattern of (smaller, larger) for (high, low).
+/// This matches the TiKV/Intel CLMUL algorithm: `(K_{d-1}, K_{d+63})`.
 #[must_use]
 #[allow(dead_code)] // Used on x86_64
 pub(crate) const fn fold16_coeff_for_bytes_32(reflected_poly: u32, shift_bytes: u32) -> (u64, u64) {
@@ -552,8 +551,8 @@ pub(crate) const fn fold16_coeff_for_bytes_32(reflected_poly: u32, shift_bytes: 
   let normal = reflected_poly.reverse_bits();
   let d = shift_bytes * 8;
   // K_n = bit_reverse(x^n mod normal_poly), stored as low 32 bits of u64.
-  // For CRC-32 CLMUL: (K_D, K_{D+64}) - smaller in high, larger in low.
-  (fold_k_32(normal, d), fold_k_32(normal, d.strict_add(64)))
+  // For CRC-32 CLMUL: (K_{d-1}, K_{d+63}) - matches CRC-64 pattern exactly.
+  (fold_k_32(normal, d.strict_sub(1)), fold_k_32(normal, d.strict_add(63)))
 }
 
 /// Multi-stream folding constants for CRC-32 CLMUL kernels.
