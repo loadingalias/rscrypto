@@ -486,30 +486,33 @@ impl Crc32ClmulConstants {
     let normal = reflected_poly.reverse_bits();
     let mu = compute_mu_32(poly);
 
+    // For CRC-32 CLMUL, K constants are 32-bit values in the low bits of 64-bit words.
+    // The exponents use (d-32, d+32) for proper CLMUL alignment with 32-bit coefficients.
     Self {
       poly,
       mu,
-      // 64B block: fold by 64 bytes = 512 bits
-      fold_64b: (fold_k_32(normal, 511), fold_k_32(normal, 575)),
-      // 128B block: fold by 128 bytes = 1024 bits (for VPCLMUL)
-      fold_128b: (fold_k_32(normal, 1023), fold_k_32(normal, 1087)),
-      // 16B lane: fold by 16 bytes = 128 bits
-      fold_16b: (fold_k_32(normal, 127), fold_k_32(normal, 191)),
+      // 64B block: fold by 64 bytes = 512 bits → (480, 544)
+      fold_64b: (fold_k_32(normal, 480), fold_k_32(normal, 544)),
+      // 128B block: fold by 128 bytes = 1024 bits → (992, 1056)
+      fold_128b: (fold_k_32(normal, 992), fold_k_32(normal, 1056)),
+      // 16B lane: fold by 16 bytes = 128 bits → (96, 160)
+      fold_16b: (fold_k_32(normal, 96), fold_k_32(normal, 160)),
       // Tail fold coefficients for reducing 8 lanes to 1 lane.
       // Each coefficient shifts lane i by (7-i)*16 bytes to align with lane 7.
+      // Formula: for N bytes, use (N*8 - 32, N*8 + 32).
       tail_fold_16b: [
-        (fold_k_32(normal, 895), fold_k_32(normal, 959)), // 112 bytes (lane 0)
-        (fold_k_32(normal, 767), fold_k_32(normal, 831)), // 96 bytes (lane 1)
-        (fold_k_32(normal, 639), fold_k_32(normal, 703)), // 80 bytes (lane 2)
-        (fold_k_32(normal, 511), fold_k_32(normal, 575)), // 64 bytes (lane 3)
-        (fold_k_32(normal, 383), fold_k_32(normal, 447)), // 48 bytes (lane 4)
-        (fold_k_32(normal, 255), fold_k_32(normal, 319)), // 32 bytes (lane 5)
-        (fold_k_32(normal, 127), fold_k_32(normal, 191)), // 16 bytes (lane 6)
+        (fold_k_32(normal, 864), fold_k_32(normal, 928)), // 112 bytes (lane 0)
+        (fold_k_32(normal, 736), fold_k_32(normal, 800)), // 96 bytes (lane 1)
+        (fold_k_32(normal, 608), fold_k_32(normal, 672)), // 80 bytes (lane 2)
+        (fold_k_32(normal, 480), fold_k_32(normal, 544)), // 64 bytes (lane 3)
+        (fold_k_32(normal, 352), fold_k_32(normal, 416)), // 48 bytes (lane 4)
+        (fold_k_32(normal, 224), fold_k_32(normal, 288)), // 32 bytes (lane 5)
+        (fold_k_32(normal, 96), fold_k_32(normal, 160)),  // 16 bytes (lane 6)
       ],
-      // 128→96 bits: K_95
-      k_96: fold_k_32(normal, 95),
-      // 96→64 bits: K_63
-      k_64: fold_k_32(normal, 63),
+      // Final reduction constants (128→64 bits) - these use different exponents
+      // since they're for bit-level reduction, not byte-block folding.
+      k_96: fold_k_32(normal, 96),
+      k_64: fold_k_32(normal, 64),
     }
   }
 }
@@ -525,6 +528,10 @@ pub(crate) const CRC32C_CLMUL: Crc32ClmulConstants = Crc32ClmulConstants::new(CR
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Compute a `(high, low)` fold coefficient pair for CRC-32 folding by `shift_bytes`.
+///
+/// For CRC-32 CLMUL, the K constants have 32-bit values positioned in the low 32 bits
+/// of a 64-bit word. The exponents are offset by ±32 from the byte shift distance
+/// (unlike CRC-64 which uses ±1/±63 due to 64-bit positioning).
 #[must_use]
 #[allow(dead_code)] // Used on x86_64
 pub(crate) const fn fold16_coeff_for_bytes_32(reflected_poly: u32, shift_bytes: u32) -> (u64, u64) {
@@ -534,8 +541,9 @@ pub(crate) const fn fold16_coeff_for_bytes_32(reflected_poly: u32, shift_bytes: 
 
   let normal = reflected_poly.reverse_bits();
   let d = shift_bytes * 8;
-  // K_n = bit_reverse(x^n mod normal_poly), stored as low 32 bits of u64
-  (fold_k_32(normal, d - 1), fold_k_32(normal, d + 63))
+  // K_n = bit_reverse(x^n mod normal_poly), stored as low 32 bits of u64.
+  // For CRC-32: use (d-32, d+32) to get proper CLMUL alignment with 32-bit coefficients.
+  (fold_k_32(normal, d.saturating_sub(32)), fold_k_32(normal, d + 32))
 }
 
 /// Multi-stream folding constants for CRC-32 CLMUL kernels.
