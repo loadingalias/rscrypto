@@ -30,12 +30,13 @@ members = ["."]
 # ============================================================================
 
 # Checksum crate fuzz targets
-[[bin]]
-name = "fuzz_crc16"
-path = "fuzz_targets/crc16.rs"
-test = false
-doc = false
-bench = false
+# NOTE: fuzz_crc16 disabled until CRC16 is implemented
+# [[bin]]
+# name = "fuzz_crc16"
+# path = "fuzz_targets/crc16.rs"
+# test = false
+# doc = false
+# bench = false
 
 [[bin]]
 name = "fuzz_crc64"
@@ -83,7 +84,8 @@ bench = false
 [profile.release]
 opt-level = 3
 debug = false
-strip = "debuginfo"
+# NOTE: Do NOT use strip here - it removes __sancov_gen_* symbols needed by sanitizer coverage
+strip = "none"
 overflow-checks = true
 lto = "fat"
 panic = "abort"
