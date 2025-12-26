@@ -222,7 +222,7 @@ jobs:
 
       - name: Install Benchmarking Tools
         if: steps.should-run.outputs.enabled == 'true'
-        uses: taiki-e/install-action@7ea888af71a31437ad4e71c62d021b3bb2728ea9  # v2.49.3
+        uses: taiki-e/install-action@de7896b7cd1c7d181266425abbe571b5a8c757bc  # v2.65.3
         with:
           tool: cargo-criterion,critcmp,just
 
@@ -233,7 +233,7 @@ jobs:
       # Install cargo-rail for scheduled runs (change detection)
       - name: Install cargo-rail (Scheduled runs only)
         if: steps.should-run.outputs.enabled == 'true' && github.event_name == 'schedule'
-        uses: taiki-e/install-action@7ea888af71a31437ad4e71c62d021b3bb2728ea9  # v2.49.3
+        uses: taiki-e/install-action@de7896b7cd1c7d181266425abbe571b5a8c757bc  # v2.65.3
         with:
           tool: cargo-rail
 
@@ -541,7 +541,7 @@ jobs:
           cache-on-failure: true
 
       - name: Install Benchmarking Tools
-        uses: taiki-e/install-action@7ea888af71a31437ad4e71c62d021b3bb2728ea9  # v2.49.3
+        uses: taiki-e/install-action@de7896b7cd1c7d181266425abbe571b5a8c757bc  # v2.65.3
         with:
           tool: just
 
@@ -777,7 +777,7 @@ jobs:
           cache: rust
 
       - name: Install Benchmarking Tools
-        uses: taiki-e/install-action@7ea888af71a31437ad4e71c62d021b3bb2728ea9  # v2.49.3
+        uses: taiki-e/install-action@de7896b7cd1c7d181266425abbe571b5a8c757bc  # v2.65.3
         with:
           tool: cargo-criterion,critcmp
 

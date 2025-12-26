@@ -52,7 +52,7 @@ jobs:
           components: miri, rust-src
 
       - name: Install Tools
-        uses: taiki-e/install-action@7ea888af71a31437ad4e71c62d021b3bb2728ea9  # v2.49.3
+        uses: taiki-e/install-action@de7896b7cd1c7d181266425abbe571b5a8c757bc  # v2.65.3
         with:
           tool: just
 
@@ -83,7 +83,7 @@ jobs:
           toolchain: ${{ steps.toolchain.outputs.version }}
 
       - name: Install Tools
-        uses: taiki-e/install-action@7ea888af71a31437ad4e71c62d021b3bb2728ea9  # v2.49.3
+        uses: taiki-e/install-action@de7896b7cd1c7d181266425abbe571b5a8c757bc  # v2.65.3
         with:
           tool: cargo-nextest,just
 
@@ -116,7 +116,7 @@ jobs:
           toolchain: ${{ steps.toolchain.outputs.version }}
 
       - name: Install Tools
-        uses: taiki-e/install-action@7ea888af71a31437ad4e71c62d021b3bb2728ea9  # v2.49.3
+        uses: taiki-e/install-action@de7896b7cd1c7d181266425abbe571b5a8c757bc  # v2.65.3
         with:
           tool: cargo-fuzz,just
 

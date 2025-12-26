@@ -57,8 +57,7 @@ ALL_TARGETS=(
   # Platform crate
   "fuzz_caps"
   "fuzz_caps_ops"
-  # Checksum crate
-  "fuzz_crc16"
+  # Checksum crate (CRC16 not yet implemented)
   "fuzz_crc64"
   "fuzz_streaming"
   "fuzz_combine"
@@ -107,7 +106,6 @@ list_targets() {
   echo ""
   echo "Checksum crate:"
   echo "  fuzz_crc64        CRC64/XZ and CRC64/NVME variants"
-  echo "  fuzz_crc16        CRC16/IBM and CRC16/CCITT-FALSE"
   echo "  fuzz_combine      CRC combine operations (parallel checksumming)"
   echo "  fuzz_streaming    Streaming API with arbitrary chunk sizes"
   echo "  fuzz_differential Differential testing vs reference implementations"
