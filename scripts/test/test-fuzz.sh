@@ -59,8 +59,6 @@ ALL_TARGETS=(
   "fuzz_caps_ops"
   # Checksum crate
   "fuzz_crc16"
-  "fuzz_crc32"
-  "fuzz_crc32c"
   "fuzz_crc64"
   "fuzz_streaming"
   "fuzz_combine"
@@ -108,8 +106,6 @@ list_targets() {
   echo "  fuzz_caps_ops     Caps union/intersection algebraic properties"
   echo ""
   echo "Checksum crate:"
-  echo "  fuzz_crc32c       CRC32-C (Castagnoli) - iSCSI, SCTP, Btrfs"
-  echo "  fuzz_crc32        CRC32 (ISO-HDLC) - Ethernet, gzip, PNG"
   echo "  fuzz_crc64        CRC64/XZ and CRC64/NVME variants"
   echo "  fuzz_crc16        CRC16/IBM and CRC16/CCITT-FALSE"
   echo "  fuzz_combine      CRC combine operations (parallel checksumming)"

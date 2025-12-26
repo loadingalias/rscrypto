@@ -18,7 +18,6 @@ libfuzzer-sys = "0.4"
 arbitrary = { version = "1", features = ["derive"] }
 
 # For differential fuzzing against reference implementations
-crc32fast = "1.5"
 crc64fast = "1.1.0"
 crc64fast-nvme = "1.2.1"
 
@@ -34,20 +33,6 @@ members = ["."]
 [[bin]]
 name = "fuzz_crc16"
 path = "fuzz_targets/crc16.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "fuzz_crc32"
-path = "fuzz_targets/crc32.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "fuzz_crc32c"
-path = "fuzz_targets/crc32c.rs"
 test = false
 doc = false
 bench = false

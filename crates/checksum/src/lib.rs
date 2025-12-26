@@ -7,8 +7,6 @@
 //!
 //! | Type | Polynomial | Output | Use Cases |
 //! |------|------------|--------|-----------|
-//! | [`Crc32`] | 0x04C11DB7 | `u32` | Ethernet, ZIP, PNG |
-//! | [`Crc32c`] | 0x1EDC6F41 | `u32` | iSCSI, ext4, Btrfs |
 //! | [`Crc64`] | 0x42F0E1EBA9EA3693 | `u64` | XZ Utils, 7-Zip |
 //! | [`Crc64Nvme`] | 0xAD93D23594C93659 | `u64` | NVMe specification |
 //!
@@ -21,17 +19,15 @@
 //!
 //! | Feature | Algorithms | Throughput |
 //! |---------|------------|------------|
-//! | SSE4.2 crc32 | CRC-32C only | ~20 GB/s |
-//! | VPCLMULQDQ | CRC-32, CRC-64 | ~35-40 GB/s |
-//! | PCLMULQDQ | CRC-32, CRC-64 | ~15 GB/s |
+//! | VPCLMULQDQ | CRC-64 | ~35-40 GB/s |
+//! | PCLMULQDQ | CRC-64 | ~15 GB/s |
 //!
 //! ## aarch64
 //!
 //! | Feature | Algorithms | Throughput |
 //! |---------|------------|------------|
-//! | CRC32 extension | CRC-32, CRC-32C | ~20 GB/s |
-//! | PMULL + EOR3 | CRC-32, CRC-64 | ~15 GB/s |
-//! | PMULL | CRC-32, CRC-64 | ~12 GB/s |
+//! | PMULL + EOR3 | CRC-64 | ~15 GB/s |
+//! | PMULL | CRC-64 | ~12 GB/s |
 //!
 //! # Example
 //!
@@ -95,15 +91,11 @@ mod common;
 #[macro_use]
 mod macros;
 
-mod crc32;
 mod crc64;
 pub mod dispatchers;
 pub mod tune;
 
 // Re-export public types
-// CRC-32 types
-pub use crc32::{Crc32, Crc32Ieee, Crc32c};
-// CRC-64 types
 // Re-export buffered types (requires alloc)
 #[cfg(feature = "alloc")]
 pub use crc64::{BufferedCrc64, BufferedCrc64Nvme, BufferedCrc64Xz};

@@ -57,7 +57,7 @@ jobs:
           tool: just
 
       - name: Miri Memory Safety Tests
-        run: just test-miri
+        run: just test-miri --all
 
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   # Extended Property Tests (more iterations than commit-time tests)

@@ -26,7 +26,8 @@ echo ""
 # Crates that work with Miri (have #[cfg(miri)] portable fallbacks)
 # - backend: Has dispatch with unsafe transmute (needs Miri testing)
 # - platform: Feature detection with #[cfg(miri)] fallbacks, Caps bitset tests
-MIRI_CRATES="backend platform"
+# - checksum: SIMD tests guarded with #[cfg(not(miri))], portable tests run
+MIRI_CRATES="backend platform checksum"
 
 # Crates excluded from Miri testing
 # - traits: Just trait definitions, no unsafe code

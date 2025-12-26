@@ -1860,5 +1860,6 @@ mod tests {
   }
 }
 
-#[cfg(test)]
+// Proptest uses file I/O for failure persistence that Miri cannot interpret.
+#[cfg(all(test, not(miri)))]
 mod proptests;
