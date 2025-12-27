@@ -41,10 +41,10 @@ pub const PORTABLE_SLICE4: &str = "portable/slice4";
 
 /// Map stream count to kernel array index.
 ///
-/// Kernel arrays are ordered: `[1-way, 2-way, 3/4-way, 7/8-way]`
+/// Kernel arrays are ordered: `[1-way, 2-way, 3/4-way, 7-way, 8-way]`
 ///
 /// This provides a consistent mapping across all architectures:
-/// - x86_64: 1, 2, 4, 7-way
+/// - x86_64: 1, 2, 4, 7, 8-way
 /// - aarch64: 1, 2, 3-way (slot 2 used for 3-way)
 /// - powerpc64: 1, 2, 4, 8-way
 /// - s390x: 1, 2, 4-way
@@ -53,7 +53,8 @@ pub const PORTABLE_SLICE4: &str = "portable/slice4";
 #[must_use]
 pub const fn stream_to_index(streams: u8) -> usize {
   match streams {
-    7 | 8 => 3,
+    8 => 4,
+    7 => 3,
     3 | 4 => 2,
     2 => 1,
     _ => 0,
@@ -171,18 +172,18 @@ macro_rules! define_crc_dispatch {
   ($fn_type:ty, $state_type:ty) => {
     /// Dispatch to stream variant based on stream count.
     ///
-    /// Kernels array: `[1-way, 2-way, 3/4-way, 7/8-way]`
+    /// Kernels array: `[1-way, 2-way, 3/4-way, 7-way, 8-way]`
     #[inline]
-    #[allow(clippy::indexing_slicing)] // stream_to_index returns 0-3, array is [_; 4]
-    pub fn dispatch_streams(kernels: &[$fn_type; 4], streams: u8, crc: $state_type, data: &[u8]) -> $state_type {
+    #[allow(clippy::indexing_slicing)] // stream_to_index returns 0-4, array is [_; 5]
+    pub fn dispatch_streams(kernels: &[$fn_type; 5], streams: u8, crc: $state_type, data: &[u8]) -> $state_type {
       kernels[$crate::common::kernels::stream_to_index(streams)](crc, data)
     }
 
     /// Dispatch with small buffer handling.
     #[inline]
-    #[allow(clippy::indexing_slicing)] // stream_to_index returns 0-3, array is [_; 4]
+    #[allow(clippy::indexing_slicing)] // stream_to_index returns 0-4, array is [_; 5]
     pub fn dispatch_with_small(
-      kernels: &[$fn_type; 4],
+      kernels: &[$fn_type; 5],
       small: $fn_type,
       streams: u8,
       len: usize,
@@ -214,17 +215,24 @@ mod tests {
     assert_eq!(stream_to_index(3), 2);
     assert_eq!(stream_to_index(4), 2);
     assert_eq!(stream_to_index(7), 3);
-    assert_eq!(stream_to_index(8), 3);
+    assert_eq!(stream_to_index(8), 4);
   }
 
   #[test]
   fn test_select_name_basic() {
-    let names = &["kernel/1way", "kernel/2way", "kernel/4way", "kernel/7way"];
+    let names = &[
+      "kernel/1way",
+      "kernel/2way",
+      "kernel/4way",
+      "kernel/7way",
+      "kernel/8way",
+    ];
 
     assert_eq!(select_name(names, None, 1, 256, 128), "kernel/1way");
     assert_eq!(select_name(names, None, 2, 256, 128), "kernel/2way");
     assert_eq!(select_name(names, None, 4, 256, 128), "kernel/4way");
     assert_eq!(select_name(names, None, 7, 256, 128), "kernel/7way");
+    assert_eq!(select_name(names, None, 8, 256, 128), "kernel/8way");
   }
 
   #[test]
@@ -256,30 +264,36 @@ mod tests {
   fn test_select_streams() {
     const FOLD_BYTES: usize = 128;
     const THRESHOLDS: &[(u8, usize)] = &[
+      (8, 8 * 2 * FOLD_BYTES), // 2048 bytes
       (7, 7 * 2 * FOLD_BYTES), // 1792 bytes
       (4, 4 * 2 * FOLD_BYTES), // 1024 bytes
       (2, 2 * 2 * FOLD_BYTES), // 512 bytes
     ];
 
     // Below minimum fold threshold
-    assert_eq!(select_streams(64, 7, FOLD_BYTES, THRESHOLDS), 0);
+    assert_eq!(select_streams(64, 8, FOLD_BYTES, THRESHOLDS), 0);
 
     // Above fold threshold but below 2-way threshold
-    assert_eq!(select_streams(256, 7, FOLD_BYTES, THRESHOLDS), 1);
+    assert_eq!(select_streams(256, 8, FOLD_BYTES, THRESHOLDS), 1);
 
     // 2-way threshold
-    assert_eq!(select_streams(512, 7, FOLD_BYTES, THRESHOLDS), 2);
-    assert_eq!(select_streams(1000, 7, FOLD_BYTES, THRESHOLDS), 2);
+    assert_eq!(select_streams(512, 8, FOLD_BYTES, THRESHOLDS), 2);
+    assert_eq!(select_streams(1000, 8, FOLD_BYTES, THRESHOLDS), 2);
 
     // 4-way threshold
-    assert_eq!(select_streams(1024, 7, FOLD_BYTES, THRESHOLDS), 4);
-    assert_eq!(select_streams(1500, 7, FOLD_BYTES, THRESHOLDS), 4);
+    assert_eq!(select_streams(1024, 8, FOLD_BYTES, THRESHOLDS), 4);
+    assert_eq!(select_streams(1500, 8, FOLD_BYTES, THRESHOLDS), 4);
 
     // 7-way threshold
-    assert_eq!(select_streams(1792, 7, FOLD_BYTES, THRESHOLDS), 7);
-    assert_eq!(select_streams(4096, 7, FOLD_BYTES, THRESHOLDS), 7);
+    assert_eq!(select_streams(1792, 8, FOLD_BYTES, THRESHOLDS), 7);
+    assert_eq!(select_streams(2000, 8, FOLD_BYTES, THRESHOLDS), 7);
+
+    // 8-way threshold
+    assert_eq!(select_streams(2048, 8, FOLD_BYTES, THRESHOLDS), 8);
+    assert_eq!(select_streams(4096, 8, FOLD_BYTES, THRESHOLDS), 8);
 
     // Respect max_streams config
+    assert_eq!(select_streams(4096, 7, FOLD_BYTES, THRESHOLDS), 7);
     assert_eq!(select_streams(4096, 4, FOLD_BYTES, THRESHOLDS), 4);
     assert_eq!(select_streams(4096, 2, FOLD_BYTES, THRESHOLDS), 2);
     assert_eq!(select_streams(4096, 1, FOLD_BYTES, THRESHOLDS), 1);

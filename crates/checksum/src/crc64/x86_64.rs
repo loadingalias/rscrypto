@@ -406,6 +406,133 @@ unsafe fn update_simd_7way(
 }
 
 #[target_feature(enable = "sse2", enable = "pclmulqdq")]
+unsafe fn update_simd_8way(
+  state: u64,
+  blocks: &[[Simd; 8]],
+  fold_1024b: (u64, u64),
+  combine: &[(u64, u64); 7],
+  consts: &Crc64ClmulConstants,
+) -> u64 {
+  debug_assert!(!blocks.is_empty());
+
+  if blocks.len() < 8 {
+    let Some((first, rest)) = blocks.split_first() else {
+      return state;
+    };
+    return update_simd(state, first, rest, consts);
+  }
+
+  let aligned = (blocks.len() / 8) * 8;
+
+  let coeff_1024 = Simd::new(fold_1024b.0, fold_1024b.1);
+  let coeff_128 = Simd::new(consts.fold_128b.0, consts.fold_128b.1);
+
+  let c896 = Simd::new(combine[0].0, combine[0].1);
+  let c768 = Simd::new(combine[1].0, combine[1].1);
+  let c640 = Simd::new(combine[2].0, combine[2].1);
+  let c512 = Simd::new(combine[3].0, combine[3].1);
+  let c384 = Simd::new(combine[4].0, combine[4].1);
+  let c256 = Simd::new(combine[5].0, combine[5].1);
+  let c128 = Simd::new(combine[6].0, combine[6].1);
+
+  let mut s0 = blocks[0];
+  let mut s1 = blocks[1];
+  let mut s2 = blocks[2];
+  let mut s3 = blocks[3];
+  let mut s4 = blocks[4];
+  let mut s5 = blocks[5];
+  let mut s6 = blocks[6];
+  let mut s7 = blocks[7];
+
+  // Inject CRC into stream 0.
+  s0[0] ^= Simd::new(0, state);
+
+  let mut i = 8;
+  while i < aligned {
+    fold_block_128(&mut s0, &blocks[i], coeff_1024);
+    fold_block_128(&mut s1, &blocks[i + 1], coeff_1024);
+    fold_block_128(&mut s2, &blocks[i + 2], coeff_1024);
+    fold_block_128(&mut s3, &blocks[i + 3], coeff_1024);
+    fold_block_128(&mut s4, &blocks[i + 4], coeff_1024);
+    fold_block_128(&mut s5, &blocks[i + 5], coeff_1024);
+    fold_block_128(&mut s6, &blocks[i + 6], coeff_1024);
+    fold_block_128(&mut s7, &blocks[i + 7], coeff_1024);
+    i = i.strict_add(8);
+  }
+
+  // Merge: A^7·s0 ⊕ A^6·s1 ⊕ … ⊕ A·s6 ⊕ s7.
+  let mut combined = s7;
+  combined[0] ^= s6[0].fold_16(c128);
+  combined[1] ^= s6[1].fold_16(c128);
+  combined[2] ^= s6[2].fold_16(c128);
+  combined[3] ^= s6[3].fold_16(c128);
+  combined[4] ^= s6[4].fold_16(c128);
+  combined[5] ^= s6[5].fold_16(c128);
+  combined[6] ^= s6[6].fold_16(c128);
+  combined[7] ^= s6[7].fold_16(c128);
+
+  combined[0] ^= s5[0].fold_16(c256);
+  combined[1] ^= s5[1].fold_16(c256);
+  combined[2] ^= s5[2].fold_16(c256);
+  combined[3] ^= s5[3].fold_16(c256);
+  combined[4] ^= s5[4].fold_16(c256);
+  combined[5] ^= s5[5].fold_16(c256);
+  combined[6] ^= s5[6].fold_16(c256);
+  combined[7] ^= s5[7].fold_16(c256);
+
+  combined[0] ^= s4[0].fold_16(c384);
+  combined[1] ^= s4[1].fold_16(c384);
+  combined[2] ^= s4[2].fold_16(c384);
+  combined[3] ^= s4[3].fold_16(c384);
+  combined[4] ^= s4[4].fold_16(c384);
+  combined[5] ^= s4[5].fold_16(c384);
+  combined[6] ^= s4[6].fold_16(c384);
+  combined[7] ^= s4[7].fold_16(c384);
+
+  combined[0] ^= s3[0].fold_16(c512);
+  combined[1] ^= s3[1].fold_16(c512);
+  combined[2] ^= s3[2].fold_16(c512);
+  combined[3] ^= s3[3].fold_16(c512);
+  combined[4] ^= s3[4].fold_16(c512);
+  combined[5] ^= s3[5].fold_16(c512);
+  combined[6] ^= s3[6].fold_16(c512);
+  combined[7] ^= s3[7].fold_16(c512);
+
+  combined[0] ^= s2[0].fold_16(c640);
+  combined[1] ^= s2[1].fold_16(c640);
+  combined[2] ^= s2[2].fold_16(c640);
+  combined[3] ^= s2[3].fold_16(c640);
+  combined[4] ^= s2[4].fold_16(c640);
+  combined[5] ^= s2[5].fold_16(c640);
+  combined[6] ^= s2[6].fold_16(c640);
+  combined[7] ^= s2[7].fold_16(c640);
+
+  combined[0] ^= s1[0].fold_16(c768);
+  combined[1] ^= s1[1].fold_16(c768);
+  combined[2] ^= s1[2].fold_16(c768);
+  combined[3] ^= s1[3].fold_16(c768);
+  combined[4] ^= s1[4].fold_16(c768);
+  combined[5] ^= s1[5].fold_16(c768);
+  combined[6] ^= s1[6].fold_16(c768);
+  combined[7] ^= s1[7].fold_16(c768);
+
+  combined[0] ^= s0[0].fold_16(c896);
+  combined[1] ^= s0[1].fold_16(c896);
+  combined[2] ^= s0[2].fold_16(c896);
+  combined[3] ^= s0[3].fold_16(c896);
+  combined[4] ^= s0[4].fold_16(c896);
+  combined[5] ^= s0[5].fold_16(c896);
+  combined[6] ^= s0[6].fold_16(c896);
+  combined[7] ^= s0[7].fold_16(c896);
+
+  for block in &blocks[aligned..] {
+    fold_block_128(&mut combined, block, coeff_128);
+  }
+
+  fold_tail(combined, consts)
+}
+
+#[target_feature(enable = "sse2", enable = "pclmulqdq")]
 unsafe fn crc64_pclmul(mut state: u64, bytes: &[u8], consts: &Crc64ClmulConstants, tables: &[[u64; 256]; 8]) -> u64 {
   let (left, middle, right) = bytes.align_to::<[Simd; 8]>();
   if let Some((first, rest)) = middle.split_first() {
@@ -476,6 +603,25 @@ unsafe fn crc64_pclmul_7way(
 
   state = super::portable::crc64_slice8(state, left, tables);
   state = update_simd_7way(state, middle, fold_896b, combine, consts);
+  super::portable::crc64_slice8(state, right, tables)
+}
+
+#[target_feature(enable = "sse2", enable = "pclmulqdq")]
+unsafe fn crc64_pclmul_8way(
+  mut state: u64,
+  bytes: &[u8],
+  fold_1024b: (u64, u64),
+  combine: &[(u64, u64); 7],
+  consts: &Crc64ClmulConstants,
+  tables: &[[u64; 256]; 8],
+) -> u64 {
+  let (left, middle, right) = bytes.align_to::<[Simd; 8]>();
+  if middle.is_empty() {
+    return super::portable::crc64_slice8(state, bytes, tables);
+  }
+
+  state = super::portable::crc64_slice8(state, left, tables);
+  state = update_simd_8way(state, middle, fold_1024b, combine, consts);
   super::portable::crc64_slice8(state, right, tables)
 }
 
@@ -856,6 +1002,111 @@ unsafe fn update_simd_vpclmul_7way(
 }
 
 #[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
+unsafe fn update_simd_vpclmul_8way(
+  state: u64,
+  blocks: &[[Simd; 8]],
+  fold_1024b: (u64, u64),
+  combine: &[(u64, u64); 7],
+  consts: &Crc64ClmulConstants,
+) -> u64 {
+  debug_assert!(!blocks.is_empty());
+
+  if blocks.len() < 8 {
+    let Some((first, rest)) = blocks.split_first() else {
+      return state;
+    };
+    return update_simd_vpclmul(state, first, rest, consts);
+  }
+
+  let aligned = (blocks.len() / 8) * 8;
+
+  let (mut x0_0, mut x1_0) = load_128b_block(&blocks[0]);
+  let (mut x0_1, mut x1_1) = load_128b_block(&blocks[1]);
+  let (mut x0_2, mut x1_2) = load_128b_block(&blocks[2]);
+  let (mut x0_3, mut x1_3) = load_128b_block(&blocks[3]);
+  let (mut x0_4, mut x1_4) = load_128b_block(&blocks[4]);
+  let (mut x0_5, mut x1_5) = load_128b_block(&blocks[5]);
+  let (mut x0_6, mut x1_6) = load_128b_block(&blocks[6]);
+  let (mut x0_7, mut x1_7) = load_128b_block(&blocks[7]);
+
+  let crc_mask = _mm512_set_epi64(0, 0, 0, 0, 0, 0, 0, state as i64);
+  x0_0 = _mm512_xor_si512(x0_0, crc_mask);
+
+  let coeff_1024 = vpclmul_coeff(fold_1024b);
+  let coeff_128 = vpclmul_coeff(consts.fold_128b);
+
+  let c896 = vpclmul_coeff(combine[0]);
+  let c768 = vpclmul_coeff(combine[1]);
+  let c640 = vpclmul_coeff(combine[2]);
+  let c512 = vpclmul_coeff(combine[3]);
+  let c384 = vpclmul_coeff(combine[4]);
+  let c256 = vpclmul_coeff(combine[5]);
+  let c128 = vpclmul_coeff(combine[6]);
+
+  let mut i = 8;
+  while i < aligned {
+    // VPTERNLOGD: fold + XOR in one instruction per vector (8×2 = 16 per iteration)
+    let (y0, y1) = load_128b_block(&blocks[i]);
+    x0_0 = fold16_4x_ternlog(x0_0, y0, coeff_1024);
+    x1_0 = fold16_4x_ternlog(x1_0, y1, coeff_1024);
+
+    let (y0, y1) = load_128b_block(&blocks[i + 1]);
+    x0_1 = fold16_4x_ternlog(x0_1, y0, coeff_1024);
+    x1_1 = fold16_4x_ternlog(x1_1, y1, coeff_1024);
+
+    let (y0, y1) = load_128b_block(&blocks[i + 2]);
+    x0_2 = fold16_4x_ternlog(x0_2, y0, coeff_1024);
+    x1_2 = fold16_4x_ternlog(x1_2, y1, coeff_1024);
+
+    let (y0, y1) = load_128b_block(&blocks[i + 3]);
+    x0_3 = fold16_4x_ternlog(x0_3, y0, coeff_1024);
+    x1_3 = fold16_4x_ternlog(x1_3, y1, coeff_1024);
+
+    let (y0, y1) = load_128b_block(&blocks[i + 4]);
+    x0_4 = fold16_4x_ternlog(x0_4, y0, coeff_1024);
+    x1_4 = fold16_4x_ternlog(x1_4, y1, coeff_1024);
+
+    let (y0, y1) = load_128b_block(&blocks[i + 5]);
+    x0_5 = fold16_4x_ternlog(x0_5, y0, coeff_1024);
+    x1_5 = fold16_4x_ternlog(x1_5, y1, coeff_1024);
+
+    let (y0, y1) = load_128b_block(&blocks[i + 6]);
+    x0_6 = fold16_4x_ternlog(x0_6, y0, coeff_1024);
+    x1_6 = fold16_4x_ternlog(x1_6, y1, coeff_1024);
+
+    let (y0, y1) = load_128b_block(&blocks[i + 7]);
+    x0_7 = fold16_4x_ternlog(x0_7, y0, coeff_1024);
+    x1_7 = fold16_4x_ternlog(x1_7, y1, coeff_1024);
+
+    i = i.strict_add(8);
+  }
+
+  // Merge: A^7·s0 ⊕ A^6·s1 ⊕ … ⊕ A·s6 ⊕ s7 using VPTERNLOGD.
+  let mut x0 = fold16_4x_ternlog(x0_6, x0_7, c128);
+  let mut x1 = fold16_4x_ternlog(x1_6, x1_7, c128);
+  x0 = fold16_4x_ternlog(x0_5, x0, c256);
+  x1 = fold16_4x_ternlog(x1_5, x1, c256);
+  x0 = fold16_4x_ternlog(x0_4, x0, c384);
+  x1 = fold16_4x_ternlog(x1_4, x1, c384);
+  x0 = fold16_4x_ternlog(x0_3, x0, c512);
+  x1 = fold16_4x_ternlog(x1_3, x1, c512);
+  x0 = fold16_4x_ternlog(x0_2, x0, c640);
+  x1 = fold16_4x_ternlog(x1_2, x1, c640);
+  x0 = fold16_4x_ternlog(x0_1, x0, c768);
+  x1 = fold16_4x_ternlog(x1_1, x1, c768);
+  x0 = fold16_4x_ternlog(x0_0, x0, c896);
+  x1 = fold16_4x_ternlog(x1_0, x1, c896);
+
+  for block in &blocks[aligned..] {
+    let (y0, y1) = load_128b_block(block);
+    x0 = fold16_4x_ternlog(x0, y0, coeff_128);
+    x1 = fold16_4x_ternlog(x1, y1, coeff_128);
+  }
+
+  finalize_vpclmul_state(x0, x1, consts)
+}
+
+#[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
 unsafe fn crc64_vpclmul_2way(
   mut state: u64,
   bytes: &[u8],
@@ -908,6 +1159,25 @@ unsafe fn crc64_vpclmul_7way(
 
   state = super::portable::crc64_slice8(state, left, tables);
   state = update_simd_vpclmul_7way(state, middle, fold_896b, combine, consts);
+  super::portable::crc64_slice8(state, right, tables)
+}
+
+#[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
+unsafe fn crc64_vpclmul_8way(
+  mut state: u64,
+  bytes: &[u8],
+  fold_1024b: (u64, u64),
+  combine: &[(u64, u64); 7],
+  consts: &Crc64ClmulConstants,
+  tables: &[[u64; 256]; 8],
+) -> u64 {
+  let (left, middle, right) = bytes.align_to::<[Simd; 8]>();
+  if middle.is_empty() {
+    return super::portable::crc64_slice8(state, bytes, tables);
+  }
+
+  state = super::portable::crc64_slice8(state, left, tables);
+  state = update_simd_vpclmul_8way(state, middle, fold_1024b, combine, consts);
   super::portable::crc64_slice8(state, right, tables)
 }
 
@@ -1001,6 +1271,25 @@ pub unsafe fn crc64_xz_pclmul_7way(crc: u64, data: &[u8]) -> u64 {
   }
 }
 
+/// CRC-64-XZ using PCLMULQDQ folding (8-way ILP variant).
+///
+/// # Safety
+///
+/// Requires PCLMULQDQ. Caller must verify via `platform::caps().has(x86::PCLMUL_READY)`.
+#[target_feature(enable = "sse2", enable = "pclmulqdq")]
+pub unsafe fn crc64_xz_pclmul_8way(crc: u64, data: &[u8]) -> u64 {
+  unsafe {
+    crc64_pclmul_8way(
+      crc,
+      data,
+      CRC64_XZ_STREAM.fold_1024b,
+      &CRC64_XZ_STREAM.combine_8way,
+      &crate::common::clmul::CRC64_XZ_CLMUL,
+      &super::kernel_tables::XZ_TABLES_8,
+    )
+  }
+}
+
 /// CRC-64-XZ using VPCLMULQDQ (AVX-512) folding.
 ///
 /// # Safety
@@ -1072,6 +1361,26 @@ pub unsafe fn crc64_xz_vpclmul_7way(crc: u64, data: &[u8]) -> u64 {
       data,
       CRC64_XZ_STREAM.fold_896b,
       &CRC64_XZ_STREAM.combine_7way,
+      &crate::common::clmul::CRC64_XZ_CLMUL,
+      &super::kernel_tables::XZ_TABLES_8,
+    )
+  }
+}
+
+/// CRC-64-XZ using VPCLMULQDQ (8-way ILP variant).
+///
+/// # Safety
+///
+/// Requires VPCLMULQDQ + AVX-512. Caller must verify via
+/// `platform::caps().has(x86::VPCLMUL_READY)`.
+#[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
+pub unsafe fn crc64_xz_vpclmul_8way(crc: u64, data: &[u8]) -> u64 {
+  unsafe {
+    crc64_vpclmul_8way(
+      crc,
+      data,
+      CRC64_XZ_STREAM.fold_1024b,
+      &CRC64_XZ_STREAM.combine_8way,
       &crate::common::clmul::CRC64_XZ_CLMUL,
       &super::kernel_tables::XZ_TABLES_8,
     )
@@ -1168,6 +1477,25 @@ pub unsafe fn crc64_nvme_pclmul_7way(crc: u64, data: &[u8]) -> u64 {
   }
 }
 
+/// CRC-64-NVME using PCLMULQDQ folding (8-way ILP variant).
+///
+/// # Safety
+///
+/// Requires PCLMULQDQ. Caller must verify via `platform::caps().has(x86::PCLMUL_READY)`.
+#[target_feature(enable = "sse2", enable = "pclmulqdq")]
+pub unsafe fn crc64_nvme_pclmul_8way(crc: u64, data: &[u8]) -> u64 {
+  unsafe {
+    crc64_pclmul_8way(
+      crc,
+      data,
+      CRC64_NVME_STREAM.fold_1024b,
+      &CRC64_NVME_STREAM.combine_8way,
+      &crate::common::clmul::CRC64_NVME_CLMUL,
+      &super::kernel_tables::NVME_TABLES_8,
+    )
+  }
+}
+
 /// CRC-64-NVME using VPCLMULQDQ (AVX-512) folding.
 ///
 /// # Safety
@@ -1245,6 +1573,26 @@ pub unsafe fn crc64_nvme_vpclmul_7way(crc: u64, data: &[u8]) -> u64 {
   }
 }
 
+/// CRC-64-NVME using VPCLMULQDQ (8-way ILP variant).
+///
+/// # Safety
+///
+/// Requires VPCLMULQDQ + AVX-512. Caller must verify via
+/// `platform::caps().has(x86::VPCLMUL_READY)`.
+#[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
+pub unsafe fn crc64_nvme_vpclmul_8way(crc: u64, data: &[u8]) -> u64 {
+  unsafe {
+    crc64_vpclmul_8way(
+      crc,
+      data,
+      CRC64_NVME_STREAM.fold_1024b,
+      &CRC64_NVME_STREAM.combine_8way,
+      &crate::common::clmul::CRC64_NVME_CLMUL,
+      &super::kernel_tables::NVME_TABLES_8,
+    )
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Dispatcher Wrappers (safe interface)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1284,6 +1632,13 @@ pub fn crc64_xz_pclmul_7way_safe(crc: u64, data: &[u8]) -> u64 {
   unsafe { crc64_xz_pclmul_7way(crc, data) }
 }
 
+/// Safe wrapper for CRC-64-XZ PCLMUL 8-way kernel.
+#[inline]
+pub fn crc64_xz_pclmul_8way_safe(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Dispatcher verifies PCLMULQDQ before selecting this kernel.
+  unsafe { crc64_xz_pclmul_8way(crc, data) }
+}
+
 /// Safe wrapper for CRC-64-XZ VPCLMUL kernel.
 #[inline]
 pub fn crc64_xz_vpclmul_safe(crc: u64, data: &[u8]) -> u64 {
@@ -1310,6 +1665,13 @@ pub fn crc64_xz_vpclmul_4way_safe(crc: u64, data: &[u8]) -> u64 {
 pub fn crc64_xz_vpclmul_7way_safe(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: Callers must verify VPCLMUL_READY before selecting this kernel.
   unsafe { crc64_xz_vpclmul_7way(crc, data) }
+}
+
+/// Safe wrapper for CRC-64-XZ VPCLMUL 8-way kernel.
+#[inline]
+pub fn crc64_xz_vpclmul_8way_safe(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Callers must verify VPCLMUL_READY before selecting this kernel.
+  unsafe { crc64_xz_vpclmul_8way(crc, data) }
 }
 
 /// Safe wrapper for CRC-64-NVME PCLMUL kernel.
@@ -1347,6 +1709,13 @@ pub fn crc64_nvme_pclmul_7way_safe(crc: u64, data: &[u8]) -> u64 {
   unsafe { crc64_nvme_pclmul_7way(crc, data) }
 }
 
+/// Safe wrapper for CRC-64-NVME PCLMUL 8-way kernel.
+#[inline]
+pub fn crc64_nvme_pclmul_8way_safe(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Dispatcher verifies PCLMULQDQ before selecting this kernel.
+  unsafe { crc64_nvme_pclmul_8way(crc, data) }
+}
+
 /// Safe wrapper for CRC-64-NVME VPCLMUL kernel.
 #[inline]
 pub fn crc64_nvme_vpclmul_safe(crc: u64, data: &[u8]) -> u64 {
@@ -1373,6 +1742,13 @@ pub fn crc64_nvme_vpclmul_4way_safe(crc: u64, data: &[u8]) -> u64 {
 pub fn crc64_nvme_vpclmul_7way_safe(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: Callers must verify VPCLMUL_READY before selecting this kernel.
   unsafe { crc64_nvme_vpclmul_7way(crc, data) }
+}
+
+/// Safe wrapper for CRC-64-NVME VPCLMUL 8-way kernel.
+#[inline]
+pub fn crc64_nvme_vpclmul_8way_safe(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Callers must verify VPCLMUL_READY before selecting this kernel.
+  unsafe { crc64_nvme_vpclmul_8way(crc, data) }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

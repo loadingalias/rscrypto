@@ -310,7 +310,8 @@ fn clamp_streams(streams: u8) -> u8 {
 fn default_crc64_streams(caps: Caps, tune: Tune) -> u8 {
   // Default stream preference is architecture- and backend-dependent. We bias
   // slightly toward higher ILP on x86 (where our supported stream counts are
-  // 1/2/4/7) to avoid mapping common "3" presets down to 2-way.
+  // 1/2/4/7/8) to avoid mapping common "3" presets down to 2-way.
+  // 8-way is the Intel white paper / Linux kernel standard.
   #[cfg(target_arch = "x86_64")]
   {
     let _ = caps;
@@ -318,8 +319,8 @@ fn default_crc64_streams(caps: Caps, tune: Tune) -> u8 {
       0 | 1 => 1,
       2 => 2,
       3 => 4,
-      4..=6 => 4,
-      _ => 7,
+      4..=6 => 7,
+      _ => 8,
     }
   }
 

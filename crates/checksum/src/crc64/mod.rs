@@ -355,6 +355,10 @@ const CRC64_SMALL_LANE_BYTES: usize = 16;
 #[cfg(target_arch = "x86_64")]
 #[inline]
 const fn x86_pclmul_streams_for_len(len: usize, streams: u8) -> u8 {
+  // 8-way is the default (Intel white paper / Linux kernel standard)
+  if streams >= 8 && len >= 8 * 2 * CRC64_FOLD_BLOCK_BYTES {
+    return 8;
+  }
   if streams >= 7 && len >= 7 * 2 * CRC64_FOLD_BLOCK_BYTES {
     return 7;
   }
@@ -370,6 +374,10 @@ const fn x86_pclmul_streams_for_len(len: usize, streams: u8) -> u8 {
 #[cfg(target_arch = "x86_64")]
 #[inline]
 const fn x86_vpclmul_streams_for_len(len: usize, streams: u8) -> u8 {
+  // 8-way is the default (Intel white paper / Linux kernel standard)
+  if streams >= 8 && len >= 8 * 2 * CRC64_FOLD_BLOCK_BYTES {
+    return 8;
+  }
   if streams >= 7 && len >= 7 * 2 * CRC64_FOLD_BLOCK_BYTES {
     return 7;
   }

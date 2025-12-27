@@ -261,8 +261,11 @@ pub(crate) const CRC64_NVME_CLMUL: Crc64ClmulConstants = Crc64ClmulConstants::ne
 /// - `fold_384b`: 3-way striping (aarch64)
 /// - `fold_512b`: 4-way striping (x86_64)
 /// - `fold_896b`: 7-way striping (x86_64)
+/// - `fold_1024b`: 8-way striping (x86_64, Intel/Linux kernel standard)
+/// - `fold_2048b`: 4×512-bit VPCLMULQDQ processing (256B blocks)
 /// - `combine_4way`: merge coefficients for 4-way (x86_64)
 /// - `combine_7way`: merge coefficients for 7-way (x86_64)
+/// - `combine_8way`: merge coefficients for 8-way (x86_64)
 // Some fields are only used on specific architectures.
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug)]
@@ -275,10 +278,19 @@ pub(crate) struct Crc64StreamConstants {
   pub fold_512b: (u64, u64),
   /// 7-way fold coefficient (896B = 7×128B).
   pub fold_896b: (u64, u64),
+  /// 8-way fold coefficient (1024B = 8×128B).
+  pub fold_1024b: (u64, u64),
+  /// 4×512-bit fold coefficient (2048B for 256B block processing).
+  ///
+  /// Used by the high-throughput VPCLMULQDQ path that processes 256B
+  /// (4×512-bit registers) per iteration on Ice Lake+/Zen4+ CPUs.
+  pub fold_2048b: (u64, u64),
   /// 4-way combine coefficients: shifts by 384B, 256B, 128B.
   pub combine_4way: [(u64, u64); 3],
   /// 7-way combine coefficients: shifts by 768B, 640B, 512B, 384B, 256B, 128B.
   pub combine_7way: [(u64, u64); 6],
+  /// 8-way combine coefficients: shifts by 896B, 768B, 640B, 512B, 384B, 256B, 128B.
+  pub combine_8way: [(u64, u64); 7],
 }
 
 impl Crc64StreamConstants {
@@ -290,12 +302,23 @@ impl Crc64StreamConstants {
       fold_384b: fold16_coeff_for_bytes(reflected_poly, 384),
       fold_512b: fold16_coeff_for_bytes(reflected_poly, 512),
       fold_896b: fold16_coeff_for_bytes(reflected_poly, 896),
+      fold_1024b: fold16_coeff_for_bytes(reflected_poly, 1024),
+      fold_2048b: fold16_coeff_for_bytes(reflected_poly, 2048),
       combine_4way: [
         fold16_coeff_for_bytes(reflected_poly, 384),
         fold16_coeff_for_bytes(reflected_poly, 256),
         fold16_coeff_for_bytes(reflected_poly, 128),
       ],
       combine_7way: [
+        fold16_coeff_for_bytes(reflected_poly, 768),
+        fold16_coeff_for_bytes(reflected_poly, 640),
+        fold16_coeff_for_bytes(reflected_poly, 512),
+        fold16_coeff_for_bytes(reflected_poly, 384),
+        fold16_coeff_for_bytes(reflected_poly, 256),
+        fold16_coeff_for_bytes(reflected_poly, 128),
+      ],
+      combine_8way: [
+        fold16_coeff_for_bytes(reflected_poly, 896),
         fold16_coeff_for_bytes(reflected_poly, 768),
         fold16_coeff_for_bytes(reflected_poly, 640),
         fold16_coeff_for_bytes(reflected_poly, 512),
