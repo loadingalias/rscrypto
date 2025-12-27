@@ -1,8 +1,32 @@
 use core::hint::black_box;
+use std::sync::Once;
 
 use checksum::{Checksum, Crc64, Crc64Nvme};
 use crc_fast::{CrcAlgorithm as CrcFastAlgorithm, Digest as CrcFastDigest};
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+
+/// Print platform detection info once at benchmark start.
+fn print_platform_info() {
+  static ONCE: Once = Once::new();
+  ONCE.call_once(|| {
+    let tune = platform::tune();
+    eprintln!("╔══════════════════════════════════════════════════════════════╗");
+    eprintln!("║                   PLATFORM DETECTION INFO                    ║");
+    eprintln!("╠══════════════════════════════════════════════════════════════╣");
+    eprintln!("║ Platform: {}", platform::describe());
+    eprintln!("║ Tune Kind: {:?}", tune.kind());
+    eprintln!("║ PCLMUL threshold: {} bytes", tune.pclmul_threshold);
+    eprintln!("║ SIMD width: {} bits", tune.effective_simd_width);
+    eprintln!("║ Fast wide ops: {}", tune.fast_wide_ops);
+    eprintln!("║ Parallel streams: {}", tune.parallel_streams);
+    eprintln!("╠══════════════════════════════════════════════════════════════╣");
+    eprintln!("║ Kernel selection by size:");
+    for &(label, size) in CASES {
+      eprintln!("║   {:>3} ({:>7} B): {}", label, size, Crc64::kernel_name_for_len(size));
+    }
+    eprintln!("╚══════════════════════════════════════════════════════════════╝");
+  });
+}
 
 const CASES: &[(&str, usize)] = &[
   ("xs", 64),
@@ -19,6 +43,7 @@ fn make_data(len: usize) -> Vec<u8> {
 }
 
 fn bench_crc64_xz_comp(c: &mut Criterion) {
+  print_platform_info();
   let base_rs = Crc64::new();
   let base_ref = crc64fast::Digest::new();
   let base_fast = CrcFastDigest::new(CrcFastAlgorithm::Crc64Xz);

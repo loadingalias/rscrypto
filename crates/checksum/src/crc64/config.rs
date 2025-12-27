@@ -283,10 +283,11 @@ fn default_pclmul_to_vpclmul_threshold(caps: Caps, tune: Tune) -> usize {
       return usize::MAX;
     }
 
-    // Heuristic default:
-    // - Fast wide ops (Zen4/5): low crossover.
-    // - Slow warmup (many Intel parts): require much larger buffers.
-    if tune.fast_wide_ops { 1024 } else { 16 * 1024 }
+    // Heuristic default based on benchmarks vs crc-fast-rust:
+    // - Fast wide ops (Zen4/5): low crossover (512B is sufficient).
+    // - Slow warmup (Intel SPR/GNR): 2KB is the practical crossover where VPCLMUL wins despite ZMM
+    //   warmup overhead. At 4KB, VPCLMUL is clearly faster.
+    if tune.fast_wide_ops { 512 } else { 2 * 1024 }
   }
 
   #[cfg(not(target_arch = "x86_64"))]

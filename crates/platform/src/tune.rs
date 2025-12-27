@@ -243,7 +243,7 @@ impl Tune {
   pub const DEFAULT: Self = Self {
     kind: TuneKind::Default,
     simd_threshold: 256,
-    pclmul_threshold: 256,
+    pclmul_threshold: 64, // Use PCLMUL-small for 64B+ (SIMD usually beats table)
     hwcrc_threshold: 16,
     effective_simd_width: 128,
     fast_wide_ops: false,
@@ -328,7 +328,7 @@ impl Tune {
   pub const INTEL_SPR: Self = Self {
     kind: TuneKind::IntelSpr,
     simd_threshold: 256,
-    pclmul_threshold: 128,
+    pclmul_threshold: 16, // Use PCLMUL-small for 16B+ (SIMD beats table even with warmup)
     hwcrc_threshold: 8,
     effective_simd_width: 512,
     fast_wide_ops: false,
@@ -354,7 +354,7 @@ impl Tune {
   pub const INTEL_GNR: Self = Self {
     kind: TuneKind::IntelGnr,
     simd_threshold: 256,
-    pclmul_threshold: 128,
+    pclmul_threshold: 16, // Use PCLMUL-small for 16B+ (SIMD beats table even with warmup)
     hwcrc_threshold: 8,
     effective_simd_width: 512,
     fast_wide_ops: false, // Still has ZMM warmup, though improved
@@ -373,7 +373,7 @@ impl Tune {
   pub const INTEL_ICL: Self = Self {
     kind: TuneKind::IntelIcl,
     simd_threshold: 256,
-    pclmul_threshold: 128,
+    pclmul_threshold: 16, // Use PCLMUL-small for 16B+ (SIMD beats table)
     hwcrc_threshold: 8,
     effective_simd_width: 256, // ICL prefers 256-bit even with AVX-512
     fast_wide_ops: false,
