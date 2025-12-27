@@ -1,6 +1,13 @@
 # rscrypto Cargo Configuration
 # ============================================================
 #
+# Canonical Target List (18 targets):
+#   Tier A: Primary Production (std, full SIMD)
+#   Tier B: Secondary Production (MUSL, static linking)
+#   Tier C: WASM
+#   Tier D: Enterprise/Exotic (std)
+#   Tier E: no_std Bare Metal Sentinels
+#
 # Performance Philosophy:
 # - Production: Runtime SIMD detection for portable binaries
 # - Benchmarks: Use target-cpu=native for compile-time dispatch
@@ -11,7 +18,7 @@
 #   OR: just bench-native
 #
 # ============================================================
-# Tier A - Primary Production Targets (Full SIMD)
+# Tier A - Primary Production (std, full SIMD dispatch)
 # ============================================================
 
 # Linux x86_64 - Runtime SIMD detection via std::arch
@@ -22,18 +29,19 @@
 [target.aarch64-unknown-linux-gnu]
 rustflags = ["-C", "target-feature=+lse"]
 
-# Windows MSVC x86_64 - Runtime SIMD detection via std::arch
+# Windows x86_64 - Runtime SIMD detection via std::arch
 [target.x86_64-pc-windows-msvc]
+
+# Windows ARM64 - LSE atomics
+[target.aarch64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+lse"]
 
 # macOS Apple Silicon - LSE atomics (all M-series support ARMv8.3+)
 [target.aarch64-apple-darwin]
 rustflags = ["-C", "target-feature=+lse"]
 
-# macOS Intel - Runtime SIMD detection
-[target.x86_64-apple-darwin]
-
 # ============================================================
-# Tier B - Secondary Production Targets (Partial SIMD)
+# Tier B - Secondary Production (MUSL, static linking)
 # ============================================================
 
 # Linux x86_64 MUSL - Static linking for containers
@@ -43,40 +51,54 @@ rustflags = ["-C", "target-feature=+lse"]
 [target.aarch64-unknown-linux-musl]
 rustflags = ["-C", "target-feature=+lse"]
 
-# Windows ARM64 - LSE atomics
-[target.aarch64-pc-windows-msvc]
-rustflags = ["-C", "target-feature=+lse"]
-
 # ============================================================
-# Tier C - no_std Targets (Portable fallback only)
+# Tier C - WASM
 # ============================================================
 
-# WASM - Browser/Edge (table-based fallbacks)
+# WASM - Browser/generic (table-based fallbacks)
 [target.wasm32-unknown-unknown]
 
-# WASM - WASI (server-side WASM)
+# WASM - WASI Preview 1 (server-side WASM)
 [target.wasm32-wasip1]
 
-# Embedded - Cortex-M0/M0+ (no_std, portable only)
+# WASM64 - Experimental (Memory64 / WASM 3.0)
+# Tier 3: requires -Z build-std, no pre-built std
+# See: https://doc.rust-lang.org/rustc/platform-support/wasm64-unknown-unknown.html
+[target.wasm64-unknown-unknown]
+
+# ============================================================
+# Tier D - Enterprise/Exotic (std available)
+# ============================================================
+
+# IBM s390x (Z mainframes)
+[target.s390x-unknown-linux-gnu]
+
+# IBM PowerPC64 (little-endian, modern POWER systems)
+[target.powerpc64le-unknown-linux-gnu]
+
+# RISC-V 64-bit Linux (RV64GC: general + compressed)
+[target.riscv64gc-unknown-linux-gnu]
+
+# LoongArch 64-bit Linux
+[target.loongarch64-unknown-linux-gnu]
+
+# ============================================================
+# Tier E - no_std Bare Metal Sentinels
+# ============================================================
+
+# Cortex-M0/M0+ (minimal no_std sentinel - no FPU, no DSP)
+# If it compiles here, it compiles everywhere
 [target.thumbv6m-none-eabi]
 
-# RISC-V 32-bit (no_std, atomics via 'a' extension)
-[target.riscv32imac-unknown-none-elf]
-
-# ARM64 bare metal (bootloaders, hypervisors, secure enclaves)
+# ARM64 bare metal (modern no_std sentinel - hypervisors, TEEs)
+# No LSE: target hardware capabilities vary
 [target.aarch64-unknown-none]
+
+# RISC-V 64-bit bare metal (RV64IMAFDC)
+[target.riscv64gc-unknown-none-elf]
 
 # x86_64 bare metal (kernels, bootloaders, hypervisors)
 [target.x86_64-unknown-none]
-
-# RISC-V 64-bit (no_std)
-[target.riscv64gc-unknown-none-elf]
-
-# IBM s390x
-[target.s390x-unknown-linux-gnu]
-
-# PowerPC64
-[target.powerpc64le-unknown-linux-gnu]
 
 # ============================================================
 # Build Configuration

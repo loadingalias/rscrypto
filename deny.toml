@@ -1,15 +1,29 @@
 [graph]
-# Target coverage for rscrypto
+# Target coverage for rscrypto - canonical list for dependency analysis
+# See .cargo/config.toml for per-target rustflags
 targets = [
-  "aarch64-apple-darwin",
+  # Tier A: Primary Production (std, full SIMD)
   "x86_64-unknown-linux-gnu",
   "aarch64-unknown-linux-gnu",
-  "x86_64-unknown-linux-musl",
-  "aarch64-unknown-linux-musl",
   "x86_64-pc-windows-msvc",
   "aarch64-pc-windows-msvc",
+  "aarch64-apple-darwin",
+  # Tier B: Secondary Production (MUSL, static linking)
+  "x86_64-unknown-linux-musl",
+  "aarch64-unknown-linux-musl",
+  # Tier C: WASM
   "wasm32-unknown-unknown",
+  "wasm32-wasip1",
+  # Tier D: Enterprise/Exotic (std)
+  "s390x-unknown-linux-gnu",
+  "powerpc64le-unknown-linux-gnu",
+  "riscv64gc-unknown-linux-gnu",
+  "loongarch64-unknown-linux-gnu",
+  # Tier E: no_std Bare Metal Sentinels
   "thumbv6m-none-eabi",
+  "aarch64-unknown-none",
+  "riscv64gc-unknown-none-elf",
+  "x86_64-unknown-none",
 ]
 
 [advisories]

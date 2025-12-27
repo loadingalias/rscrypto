@@ -1,0 +1,51 @@
+[package]
+name = "checksum-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4.10"
+arbitrary = { version = "1.4.2", features = ["derive"] }
+
+# For differential fuzzing against reference implementations
+crc64fast = "1.1.0"
+crc64fast-nvme = "1.2.1"
+
+[dependencies.checksum]
+path = ".."
+
+# Fuzz targets
+
+[[bin]]
+name = "crc64"
+path = "fuzz_targets/crc64.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "combine"
+path = "fuzz_targets/combine.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "streaming"
+path = "fuzz_targets/streaming.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "differential"
+path = "fuzz_targets/differential.rs"
+test = false
+doc = false
+bench = false

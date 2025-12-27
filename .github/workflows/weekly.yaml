@@ -135,12 +135,67 @@ jobs:
           if-no-files-found: ignore
 
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # WASM64 Experimental (Memory64 / WASM 3.0)
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # Tier 3 target - requires -Z build-std, no pre-built std available.
+  # Tests WASM 3.0 Memory64 support. Does not block CI on failure.
+  # See: https://doc.rust-lang.org/rustc/platform-support/wasm64-unknown-unknown.html
+
+  wasm64:
+    name: WASM64 Experimental
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    continue-on-error: true  # Don't fail weekly CI if wasm64 breaks
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Read Toolchain Version
+        id: toolchain
+        run: |
+          TOOLCHAIN=$(awk -F'"' '/^channel/ {print $2}' rust-toolchain.toml)
+          echo "version=$TOOLCHAIN" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561  # master
+        with:
+          toolchain: ${{ steps.toolchain.outputs.version }}
+          components: rust-src
+
+      - name: Build for wasm64-unknown-unknown
+        run: |
+          echo "Building rscrypto for wasm64 (Memory64 / WASM 3.0)"
+          echo "This is a Tier 3 experimental target - no pre-built std available"
+          echo ""
+
+          # Build all workspace crates for wasm64
+          cargo build \
+            -Z build-std=std,panic_abort \
+            --target wasm64-unknown-unknown \
+            --release \
+            --workspace \
+            --exclude rscrypto
+
+      - name: Verify WASM64 Artifacts
+        run: |
+          echo "Checking generated wasm64 artifacts..."
+          find target/wasm64-unknown-unknown/release -name "*.wasm" -type f | head -20
+
+          # Basic sanity check - ensure we produced valid wasm files
+          for wasm in target/wasm64-unknown-unknown/release/*.wasm; do
+            if [ -f "$wasm" ]; then
+              size=$(stat -c%s "$wasm" 2>/dev/null || stat -f%z "$wasm")
+              echo "  $(basename "$wasm"): $size bytes"
+            fi
+          done
+
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   # Summary
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   complete:
     name: Weekly Complete
-    needs: [miri, proptests, fuzzing]
+    needs: [miri, proptests, fuzzing, wasm64]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -150,13 +205,21 @@ jobs:
           echo "  Miri: ${{ needs.miri.result }}"
           echo "  Property Tests: ${{ needs.proptests.result }}"
           echo "  Fuzzing: ${{ needs.fuzzing.result }}"
+          echo "  WASM64 (experimental): ${{ needs.wasm64.result }}"
 
+          # Core jobs must pass
           if [ "${{ needs.miri.result }}" == "failure" ] || \
              [ "${{ needs.proptests.result }}" == "failure" ] || \
              [ "${{ needs.fuzzing.result }}" == "failure" ]; then
             echo ""
-            echo "One or more jobs failed"
+            echo "One or more core jobs failed"
             exit 1
+          fi
+
+          # WASM64 is experimental - warn but don't fail
+          if [ "${{ needs.wasm64.result }}" == "failure" ]; then
+            echo ""
+            echo "⚠ WASM64 experimental build failed (non-blocking)"
           fi
 
           echo ""

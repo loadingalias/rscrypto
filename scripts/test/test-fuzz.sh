@@ -4,14 +4,13 @@ set -euo pipefail
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Fuzz Testing for rscrypto
 #
-# This project uses a centralized fuzz crate at ./fuzz/ that tests all
-# workspace crates. Unlike per-crate fuzzing, all targets live in one place.
+# Per-crate fuzzing: each crate with a fuzz/ directory is tested independently.
+# This matches the rail codebase pattern for better isolation and modularity.
 #
 # Usage:
-#   ./scripts/test/test-fuzz.sh                    # Run smoke test (30s each)
-#   ./scripts/test/test-fuzz.sh <target>           # Run specific target
-#   ./scripts/test/test-fuzz.sh <target> <secs>    # Run target for duration
-#   ./scripts/test/test-fuzz.sh --all              # Run all targets
+#   ./scripts/test/test-fuzz.sh                    # Run smoke test (60s each)
+#   ./scripts/test/test-fuzz.sh --all              # Run all targets (60s each)
+#   ./scripts/test/test-fuzz.sh <crate>            # Run specific crate's fuzz targets
 #   ./scripts/test/test-fuzz.sh --build            # Build without running
 #   ./scripts/test/test-fuzz.sh --list             # List available targets
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -30,44 +29,11 @@ maybe_disable_sccache() {
 maybe_disable_sccache
 
 # Configuration (can be overridden via environment)
-# Default: 60s local, override with RSCRYPTO_FUZZ_DURATION_SECS=300 for CI
 DURATION_SECS=${RSCRYPTO_FUZZ_DURATION_SECS:-60}
 TIMEOUT=${RSCRYPTO_FUZZ_TIMEOUT_SECS:-10}
 RSS_LIMIT=${RSCRYPTO_FUZZ_RSS_LIMIT_MB:-2048}
 MAX_LEN=${RSCRYPTO_FUZZ_MAX_LEN:-65536}
 JOBS=${RSCRYPTO_FUZZ_JOBS:-1}
-
-FUZZ_DIR="fuzz"
-
-# Smoke targets (default): keep runtime reasonable while still exercising the
-# most important invariants.
-SMOKE_TARGETS=(
-  # Platform crate
-  "fuzz_caps"
-  "fuzz_caps_ops"
-  # Checksum crate (CRC64 focus)
-  "fuzz_crc64"
-  "fuzz_streaming"
-  "fuzz_combine"
-  "fuzz_differential"
-)
-
-# All targets (invoked via --all).
-ALL_TARGETS=(
-  # Platform crate
-  "fuzz_caps"
-  "fuzz_caps_ops"
-  # Checksum crate (CRC16 not yet implemented)
-  "fuzz_crc64"
-  "fuzz_streaming"
-  "fuzz_combine"
-  "fuzz_differential"
-)
-
-FUZZ_RELEVANT_CRATES=(
-  "checksum"
-  "platform"
-)
 
 # Skip if commit mode (fuzzing takes too long)
 if [ "$RSCRYPTO_TEST_MODE" = "commit" ]; then
@@ -76,43 +42,25 @@ if [ "$RSCRYPTO_TEST_MODE" = "commit" ]; then
 fi
 
 show_help() {
-  echo "Fuzz testing for rscrypto"
+  echo "Fuzz testing for rscrypto (per-crate)"
   echo ""
   echo "Usage:"
   echo "  $0                        Run smoke test (${DURATION_SECS}s per target)"
-  echo "  $0 <target>               Run specific target indefinitely"
-  echo "  $0 <target> <seconds>     Run target for specified duration"
   echo "  $0 --all                  Run all targets (${DURATION_SECS}s each)"
-  echo "  $0 --smoke [seconds]      Run smoke test with custom duration"
+  echo "  $0 <crate>                Run specific crate's fuzz targets"
   echo "  $0 --build                Build fuzz targets without running"
   echo "  $0 --list                 List available targets"
   echo "  $0 --clean                Clean fuzz artifacts"
-  echo "  $0 --coverage <target>    Generate coverage report for target"
   echo ""
   echo "Environment variables:"
-  echo "  RSCRYPTO_FUZZ_DURATION_SECS  Duration per target (default: 30)"
+  echo "  RSCRYPTO_FUZZ_DURATION_SECS  Duration per target (default: 60)"
   echo "  RSCRYPTO_FUZZ_TIMEOUT_SECS   Timeout per test case (default: 10)"
   echo "  RSCRYPTO_FUZZ_RSS_LIMIT_MB   Memory limit in MB (default: 2048)"
   echo "  RSCRYPTO_FUZZ_MAX_LEN        Max input length (default: 65536)"
   echo "  RSCRYPTO_FUZZ_JOBS           Parallel jobs (default: 1)"
 }
 
-list_targets() {
-  echo "Available fuzz targets:"
-  echo ""
-  echo "Platform crate:"
-  echo "  fuzz_caps         Caps bitset invariants and has_bit consistency"
-  echo "  fuzz_caps_ops     Caps union/intersection algebraic properties"
-  echo ""
-  echo "Checksum crate:"
-  echo "  fuzz_crc64        CRC64/XZ and CRC64/NVME variants"
-  echo "  fuzz_combine      CRC combine operations (parallel checksumming)"
-  echo "  fuzz_streaming    Streaming API with arbitrary chunk sizes"
-  echo "  fuzz_differential Differential testing vs reference implementations"
-}
-
 check_requirements() {
-  # Note: We rely on rust-toolchain.toml for nightly version, not +nightly
   if ! cargo --version &>/dev/null; then
     echo "Error: Rust toolchain not found"
     exit 1
@@ -123,121 +71,43 @@ check_requirements() {
     echo "Install with: cargo install cargo-fuzz"
     exit 1
   fi
-
-  if [ ! -d "$FUZZ_DIR" ]; then
-    echo "Error: Fuzz directory not found at $FUZZ_DIR"
-    exit 1
-  fi
 }
 
-get_affected_fuzz_crates() {
-  local since_arg=""
-  if [ -n "${RAIL_SINCE:-}" ]; then
-    since_arg="--since $RAIL_SINCE"
-  fi
-
-  # shellcheck disable=SC2086
-  local affected
-  affected=$(cargo rail affected $since_arg -f names-only 2>/dev/null || echo "")
-
-  if [ -z "$affected" ]; then
-    return 1
-  fi
-
-  local matched=()
-  for crate in $affected; do
-    for fuzz_crate in "${FUZZ_RELEVANT_CRATES[@]}"; do
-      if [ "$crate" = "$fuzz_crate" ]; then
-        matched+=("$crate")
-        break
-      fi
-    done
-  done
-
-  if [ ${#matched[@]} -eq 0 ]; then
-    return 1
-  fi
-
-  echo "${matched[*]}"
+# Find all crates with fuzz/ directories
+find_fuzz_dirs() {
+  find crates -type d -name fuzz 2>/dev/null || true
 }
 
-run_target() {
-  local target="$1"
-  local duration="${2:-}"
-
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo "🔬 Fuzzing: $target"
-  if [ -n "$duration" ]; then
-    echo "⏱️  Duration: ${duration}s"
-  else
-    echo "⏱️  Duration: indefinite (Ctrl+C to stop)"
-  fi
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-  pushd "$FUZZ_DIR" > /dev/null
-
-  FUZZ_ARGS="-timeout=$TIMEOUT -rss_limit_mb=$RSS_LIMIT -max_len=$MAX_LEN"
-  FUZZ_ARGS="$FUZZ_ARGS -artifact_prefix=artifacts/$target/"
-
-  mkdir -p "artifacts/$target"
-
-  if [ -n "$duration" ]; then
-    FUZZ_ARGS="$FUZZ_ARGS -max_total_time=$duration"
-  fi
-
-  # Use gnu target on Linux CI to avoid needing musl toolchain
-  # cargo-fuzz defaults to musl on Linux which requires musl-gcc/g++
-  TARGET_FLAG=""
-  if [ "$(uname)" = "Linux" ] && [ "${RSCRYPTO_TEST_MODE:-local}" != "local" ]; then
-    TARGET_FLAG="--target x86_64-unknown-linux-gnu"
-  fi
-
-  local result=0
-  # shellcheck disable=SC2086
-  if cargo fuzz run "$target" $TARGET_FLAG --jobs="$JOBS" -- $FUZZ_ARGS 2>&1 | grep -v "^INFO:"; then
-    echo "✅ $target completed"
-  else
-    echo "❌ $target failed or found crash"
-    result=1
-  fi
-
-  popd > /dev/null
-  return $result
-}
-
-run_smoke() {
-  local duration="${1:-$DURATION_SECS}"
-  shift || true
-  local targets=("$@")
-
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo "🚀 Fuzz Smoke Test"
-  echo "⏱️  Duration: ${duration}s per target"
-  echo "🎯 Targets: ${#targets[@]}"
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+list_targets() {
+  echo "Available fuzz targets:"
   echo ""
 
-  local failed=()
-  local passed=0
+  local fuzz_dirs
+  fuzz_dirs=$(find_fuzz_dirs)
 
-  for target in "${targets[@]}"; do
-    if run_target "$target" "$duration"; then
-      passed=$((passed + 1))
+  if [ -z "$fuzz_dirs" ]; then
+    echo "  No fuzz directories found"
+    return
+  fi
+
+  for fuzz_dir in $fuzz_dirs; do
+    local crate_name
+    crate_name=$(basename "$(dirname "$fuzz_dir")")
+    echo "━━━ $crate_name ━━━"
+
+    pushd "$fuzz_dir" > /dev/null
+    local targets
+    targets=$(cargo fuzz list 2>/dev/null || true)
+    if [ -z "$targets" ]; then
+      echo "  (no targets)"
     else
-      failed+=("$target")
+      for target in $targets; do
+        echo "  $target"
+      done
     fi
+    popd > /dev/null
     echo ""
   done
-
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo "Fuzz Summary: $passed/${#targets[@]} targets passed"
-
-  if [ ${#failed[@]} -gt 0 ]; then
-    echo "❌ Failed targets: ${failed[*]}"
-    exit 1
-  else
-    echo "✅ All fuzz targets passed!"
-  fi
 }
 
 build_targets() {
@@ -245,16 +115,23 @@ build_targets() {
   echo "🔨 Building fuzz targets..."
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-  cd "$FUZZ_DIR"
+  local fuzz_dirs
+  fuzz_dirs=$(find_fuzz_dirs)
 
-  # Use gnu target on Linux CI to avoid needing musl toolchain
-  TARGET_FLAG=""
-  if [ "$(uname)" = "Linux" ] && [ "${RSCRYPTO_TEST_MODE:-local}" != "local" ]; then
-    TARGET_FLAG="--target x86_64-unknown-linux-gnu"
+  if [ -z "$fuzz_dirs" ]; then
+    echo "No fuzz directories found"
+    exit 0
   fi
 
-  # shellcheck disable=SC2086
-  cargo fuzz build $TARGET_FLAG
+  for fuzz_dir in $fuzz_dirs; do
+    local crate_name
+    crate_name=$(basename "$(dirname "$fuzz_dir")")
+    echo "Building: $crate_name"
+
+    pushd "$fuzz_dir" > /dev/null
+    cargo fuzz build --target "$(rustc -vV | sed -n 's|host: ||p')"
+    popd > /dev/null
+  done
 
   echo "✅ Fuzz targets built successfully!"
 }
@@ -264,32 +141,82 @@ clean_artifacts() {
   echo "🧹 Cleaning fuzz artifacts..."
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-  cd "$FUZZ_DIR"
-  cargo fuzz clean
-  rm -rf artifacts/
+  local fuzz_dirs
+  fuzz_dirs=$(find_fuzz_dirs)
+
+  for fuzz_dir in $fuzz_dirs; do
+    pushd "$fuzz_dir" > /dev/null
+    cargo fuzz clean 2>/dev/null || true
+    rm -rf artifacts/ corpus/ coverage/
+    popd > /dev/null
+  done
 
   echo "✅ Fuzz artifacts cleaned!"
 }
 
-run_coverage() {
-  local target="$1"
+run_fuzz() {
+  local fuzz_dirs="$1"
+  local duration="$2"
 
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo "📊 Generating coverage for: $target"
+  echo "🚀 Fuzz Testing"
+  echo "⏱️  Duration: ${duration}s per target"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo ""
 
-  cd "$FUZZ_DIR"
+  local total_targets=0
+  local failed_targets=0
+  local crashed_targets=""
 
-  # Use gnu target on Linux CI to avoid needing musl toolchain
-  TARGET_FLAG=""
-  if [ "$(uname)" = "Linux" ] && [ "${RSCRYPTO_TEST_MODE:-local}" != "local" ]; then
-    TARGET_FLAG="--target x86_64-unknown-linux-gnu"
+  for fuzz_dir in $fuzz_dirs; do
+    local crate_name
+    crate_name=$(basename "$(dirname "$fuzz_dir")")
+    echo "━━━ Crate: $crate_name ━━━"
+
+    pushd "$fuzz_dir" > /dev/null
+
+    local targets
+    targets=$(cargo fuzz list 2>/dev/null || true)
+    if [ -z "$targets" ]; then
+      echo "  No fuzz targets found"
+      popd > /dev/null
+      continue
+    fi
+
+    for target in $targets; do
+      total_targets=$((total_targets + 1))
+      echo "  Running: $target"
+
+      mkdir -p "artifacts/$target"
+
+      local fuzz_args="-max_total_time=$duration -timeout=$TIMEOUT -rss_limit_mb=$RSS_LIMIT -max_len=$MAX_LEN"
+      fuzz_args="$fuzz_args -artifact_prefix=artifacts/$target/"
+
+      # shellcheck disable=SC2086
+      if cargo fuzz run "$target" \
+          --jobs="$JOBS" \
+          --target "$(rustc -vV | sed -n 's|host: ||p')" \
+          -- $fuzz_args 2>&1 | grep -v "^INFO:"; then
+        echo "    ✅ Completed"
+      else
+        echo "    ❌ Failed or found crash"
+        failed_targets=$((failed_targets + 1))
+        crashed_targets="${crashed_targets}${crate_name}/${target}\n"
+      fi
+    done
+
+    popd > /dev/null
+    echo ""
+  done
+
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "Fuzzing Summary: $total_targets targets, $failed_targets failed"
+  if [ $failed_targets -gt 0 ]; then
+    echo -e "Crashed: $crashed_targets"
+    exit 1
+  else
+    echo "✅ All fuzz targets passed!"
   fi
-
-  # shellcheck disable=SC2086
-  cargo fuzz coverage "$target" $TARGET_FLAG
-
-  echo "✅ Coverage report generated in: fuzz/coverage/$target/"
 }
 
 # Main
@@ -298,6 +225,7 @@ case "${1:-}" in
     show_help
     ;;
   --list)
+    check_requirements
     list_targets
     ;;
   --build)
@@ -308,40 +236,34 @@ case "${1:-}" in
     check_requirements
     clean_artifacts
     ;;
-  --coverage)
-    check_requirements
-    if [ -z "${2:-}" ]; then
-      echo "Error: --coverage requires a target name"
-      echo "Usage: $0 --coverage <target>"
-      exit 1
-    fi
-    run_coverage "$2"
-    ;;
   --all)
     check_requirements
-    run_smoke "${2:-$DURATION_SECS}" "${ALL_TARGETS[@]}"
-    ;;
-  --smoke)
-    check_requirements
-    run_smoke "${2:-$DURATION_SECS}" "${SMOKE_TARGETS[@]}"
-    ;;
-  "")
-    # Default: run smoke test
-    check_requirements
-    AFFECTED=$(get_affected_fuzz_crates || true)
-    if [ -z "$AFFECTED" ]; then
-      echo "No fuzz-relevant changes detected - skipping fuzzing"
+    fuzz_dirs=$(find_fuzz_dirs)
+    if [ -z "$fuzz_dirs" ]; then
+      echo "No fuzz directories found in crates/"
       exit 0
     fi
-    if [ -n "${RAIL_SINCE:-}" ]; then
-      echo "Using base ref from CI: $RAIL_SINCE"
+    run_fuzz "$fuzz_dirs" "${2:-$DURATION_SECS}"
+    ;;
+  "")
+    # Default: run all (same as --all for per-crate fuzzing)
+    check_requirements
+    fuzz_dirs=$(find_fuzz_dirs)
+    if [ -z "$fuzz_dirs" ]; then
+      echo "No fuzz directories found in crates/"
+      exit 0
     fi
-    echo "Fuzzing affected crates: $AFFECTED"
-    run_smoke "$DURATION_SECS" "${SMOKE_TARGETS[@]}"
+    run_fuzz "$fuzz_dirs" "$DURATION_SECS"
     ;;
   *)
-    # Specific target
+    # Specific crate
     check_requirements
-    run_target "$1" "${2:-}"
+    crate_fuzz_dir="crates/$1/fuzz"
+    if [ ! -d "$crate_fuzz_dir" ]; then
+      echo "Error: No fuzz directory found for crate: $1"
+      echo "Expected: $crate_fuzz_dir"
+      exit 1
+    fi
+    run_fuzz "$crate_fuzz_dir" "${2:-$DURATION_SECS}"
     ;;
 esac
