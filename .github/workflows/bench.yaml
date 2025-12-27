@@ -8,6 +8,12 @@ on:
   # Manual trigger with options
   workflow_dispatch:
     inputs:
+      tune_only:
+        description: "Run tuning only (skip benchmarks)"
+        required: false
+        type: boolean
+        default: false
+
       crates:
         description: "Crate(s) to benchmark (comma-separated, leave empty for all)"
         required: false
@@ -44,6 +50,18 @@ on:
         type: string
         default: ""
 
+      run_crc64_tune:
+        description: "Run fast crc64-tune (recommended exports; uploads logs)"
+        required: false
+        type: boolean
+        default: false
+
+      crc64_tune_quick:
+        description: "Use --quick for crc64-tune (faster, noisier)"
+        required: false
+        type: boolean
+        default: true
+
       run_tune_discovery:
         description: "Run CRC64 tuning discovery (threshold/stream optimization)"
         required: false
@@ -75,6 +93,7 @@ jobs:
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   benchmark:
     name: Benchmark (${{ matrix.target.name }})
+    if: github.event_name == 'schedule' || github.event.inputs.tune_only != 'true'
     runs-on: ${{ matrix.target.runner }}
     strategy:
       fail-fast: false
@@ -438,6 +457,179 @@ jobs:
           compression-level: 6
 
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # CRC64 Fast Tuning (Manual Only)
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # Runs the lightweight `crc64-tune` binary on the selected platforms and
+  # uploads the output logs as artifacts. This avoids running full Criterion
+  # benchmarks when you only want dispatch threshold/stream recommendations.
+  crc64-tune:
+    name: CRC64 Tune (${{ matrix.target.name }})
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.run_crc64_tune == 'true'
+    runs-on: ${{ matrix.target.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - name: x86_64-unknown-linux-gnu
+            runner: namespace-profile-rscrypto-linux-x86
+            platform-id: linux-x64
+
+          - name: aarch64-unknown-linux-gnu
+            runner: namespace-profile-rscrypto-linux-arm64
+            platform-id: linux-arm64
+
+          - name: x86_64-pc-windows-msvc
+            runner: windows-latest
+            platform-id: windows-x64
+
+          - name: aarch64-pc-windows-msvc
+            runner: namespace-profile-rscrypto-windows-arm64
+            platform-id: windows-arm64
+
+    steps:
+      - name: Check Platform Selection
+        id: should-run
+        shell: bash
+        run: |
+          PLATFORM="${{ matrix.target.platform-id }}"
+
+          case "$PLATFORM" in
+            "linux-x64")
+              if [ "${GITHUB_EVENT_INPUTS_RUN_LINUX_X64}" == "true" ]; then
+                echo "enabled=true" >> "$GITHUB_OUTPUT"
+                echo "Linux x86-64 enabled by manual trigger"
+              else
+                echo "enabled=false" >> "$GITHUB_OUTPUT"
+                echo "Linux x86-64 disabled - skipping"
+              fi
+              ;;
+            "linux-arm64")
+              if [ "${GITHUB_EVENT_INPUTS_RUN_LINUX_ARM64}" == "true" ]; then
+                echo "enabled=true" >> "$GITHUB_OUTPUT"
+                echo "Linux ARM64 enabled by manual trigger"
+              else
+                echo "enabled=false" >> "$GITHUB_OUTPUT"
+                echo "Linux ARM64 disabled - skipping"
+              fi
+              ;;
+            "windows-x64")
+              if [ "${GITHUB_EVENT_INPUTS_RUN_WINDOWS_X64}" == "true" ]; then
+                echo "enabled=true" >> "$GITHUB_OUTPUT"
+                echo "Windows x86-64 enabled by manual trigger"
+              else
+                echo "enabled=false" >> "$GITHUB_OUTPUT"
+                echo "Windows x86-64 disabled - skipping"
+              fi
+              ;;
+            "windows-arm64")
+              if [ "${GITHUB_EVENT_INPUTS_RUN_WINDOWS_ARM64}" == "true" ]; then
+                echo "enabled=true" >> "$GITHUB_OUTPUT"
+                echo "Windows ARM64 enabled by manual trigger"
+              else
+                echo "enabled=false" >> "$GITHUB_OUTPUT"
+                echo "Windows ARM64 disabled - skipping"
+              fi
+              ;;
+            *)
+              echo "enabled=false" >> "$GITHUB_OUTPUT"
+              echo "Unknown platform - skipping"
+              ;;
+          esac
+        env:
+          GITHUB_EVENT_INPUTS_RUN_LINUX_X64: ${{ github.event.inputs.run_linux_x64 }}
+          GITHUB_EVENT_INPUTS_RUN_LINUX_ARM64: ${{ github.event.inputs.run_linux_arm64 }}
+          GITHUB_EVENT_INPUTS_RUN_WINDOWS_X64: ${{ github.event.inputs.run_windows_x64 }}
+          GITHUB_EVENT_INPUTS_RUN_WINDOWS_ARM64: ${{ github.event.inputs.run_windows_arm64 }}
+
+      - name: Checkout
+        if: steps.should-run.outputs.enabled == 'true'
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Read Toolchain Version
+        if: steps.should-run.outputs.enabled == 'true'
+        id: toolchain
+        shell: bash
+        run: |
+          TOOLCHAIN=$(awk -F'"' '/^channel/ {print $2}' rust-toolchain.toml)
+          echo "version=$TOOLCHAIN" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust Toolchain
+        if: steps.should-run.outputs.enabled == 'true'
+        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561  # master
+        with:
+          toolchain: ${{ steps.toolchain.outputs.version }}
+
+      - name: Setup Namespace Cache (Linux - instant NVMe cache)
+        if: steps.should-run.outputs.enabled == 'true' && runner.os == 'Linux'
+        uses: namespacelabs/nscloud-cache-action@446d8f390563cd54ca27e8de5bdb816f63c0b706  # v1.2.21
+        with:
+          cache: rust
+
+      - name: Compute Cache Key
+        if: steps.should-run.outputs.enabled == 'true' && runner.os == 'Windows'
+        id: cache
+        shell: bash
+        run: |
+          OS=$(echo "${{ runner.os }}" | tr '[:upper:]' '[:lower:]')
+          ARCH=$(echo "${{ runner.arch }}" | tr '[:upper:]' '[:lower:]')
+          echo "key=tune-${OS}-${ARCH}" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Rust Cache (Windows)
+        if: steps.should-run.outputs.enabled == 'true' && runner.os == 'Windows'
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5  # v2.8.2
+        with:
+          shared-key: "rscrypto-tune-v1"
+          key: ${{ steps.cache.outputs.key }}
+          cache-on-failure: true
+
+      - name: Install Tools
+        if: steps.should-run.outputs.enabled == 'true'
+        uses: taiki-e/install-action@de7896b7cd1c7d181266425abbe571b5a8c757bc  # v2.65.3
+        with:
+          tool: just
+
+      - name: Run crc64-tune
+        if: steps.should-run.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p tune-results
+
+          ARGS=()
+          if [[ "${CRC64_TUNE_QUICK}" == "true" ]]; then
+            ARGS+=(--quick)
+          fi
+
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Running crc64-tune"
+          echo "Platform: ${{ matrix.target.name }}"
+          echo "RUSTFLAGS: -C target-cpu=native"
+          echo "Args: ${ARGS[*]:-(none)}"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          RUSTFLAGS='-C target-cpu=native' cargo run -p checksum --release --bin crc64-tune -- "${ARGS[@]}" 2>&1 | tee tune-results/crc64-tune.txt
+
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "## crc64-tune (${{ matrix.target.platform-id }})" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          grep '^export RSCRYPTO_CRC64_' tune-results/crc64-tune.txt >> "$GITHUB_STEP_SUMMARY" || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+        env:
+          CRC64_TUNE_QUICK: ${{ github.event.inputs.crc64_tune_quick }}
+
+      - name: Upload crc64-tune Results
+        if: steps.should-run.outputs.enabled == 'true' && always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08  # v4.6.0
+        with:
+          name: crc64-tune-${{ matrix.target.platform-id }}
+          path: tune-results/
+          retention-days: 90
+          if-no-files-found: warn
+          compression-level: 6
+
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   # CRC64 Tuning Discovery (Manual Only)
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   # Runs the full CRC64 tuning matrix to discover optimal thresholds and stream
@@ -739,7 +931,7 @@ jobs:
   regression-check:
     name: Regression Check
     needs: [benchmark]
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.regression_baseline != ''
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.regression_baseline != '' && github.event.inputs.tune_only != 'true'
     runs-on: namespace-profile-rscrypto-linux-x86
     timeout-minutes: 60
     steps:
