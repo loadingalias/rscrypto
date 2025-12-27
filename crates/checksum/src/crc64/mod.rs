@@ -1753,7 +1753,10 @@ mod tests {
       if force.eq_ignore_ascii_case("vpclmul") {
         assert_eq!(cfg.requested_force, Crc64Force::Vpclmul);
         if cfg.effective_force == Crc64Force::Vpclmul {
-          if streams_env.is_some() {
+          // For large buffers, 4x512 is always selected regardless of streams setting
+          if len >= CRC64_4X512_BLOCK_BYTES {
+            assert_eq!(kernel, "x86_64/vpclmul-4x512");
+          } else if streams_env.is_some() {
             let expected = match x86_vpclmul_streams_for_len(len, cfg.tunables.streams) {
               7 => "x86_64/vpclmul-7way",
               4 => "x86_64/vpclmul-4way",
