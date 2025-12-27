@@ -18,6 +18,7 @@ Thumbs.db
 # Personal - Notes, Docs, Examples, Testing, etc.
 notes/*
 bench_baseline/
+tune-results/
 
 # Fuzzing
 corpus

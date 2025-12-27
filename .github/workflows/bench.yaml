@@ -444,8 +444,8 @@ jobs:
   # counts for each microarchitecture. Results guide tune.rs preset updates.
   #
   # Kernels tested:
-  # - x86_64: PCLMULQDQ (1-7 way), VPCLMULQDQ/AVX-512 (1-7 way)
-  # - aarch64: PMULL (1-4 way), PMULL+EOR3/SHA3 (1-4 way), SVE2-PMULL (1-4 way)
+  # - x86_64: PCLMULQDQ (1-8 way), VPCLMULQDQ/AVX-512 (1-8 way)
+  # - aarch64: PMULL (1-3 way), PMULL+EOR3/SHA3 (1-3 way), SVE2-PMULL (1-3 way)
   #
   # Output: tune-results/analysis.json with recommended parallel_streams values
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -464,14 +464,14 @@ jobs:
           # ═══════════════════════════════════════════════════════════════════
 
           # AMD Zen4/5 - AVX-512 + VPCLMULQDQ, 6-8 wide dispatch
-          # Tests: pclmul (1-8 way), vpclmul (1-8 way)
+          # Tests: pclmul (1/2/4/7/8-way), vpclmul (1/2/4/7/8-way)
           - name: x86_64 (AMD Zen4/5)
             runner: namespace-profile-rscrypto-linux-x86
             platform-id: linux-x64-zen
             tune-preset: ZEN4
 
           # Intel Sapphire Rapids - AVX-512 + VPCLMULQDQ
-          # Tests: pclmul (1-8 way), vpclmul (1-8 way)
+          # Tests: pclmul (1/2/4/7/8-way), vpclmul (1/2/4/7/8-way)
           # Note: Uses same runner, CPU detection determines actual chip
           # - name: x86_64 (Intel SPR)
           #   runner: [self-hosted, linux, x64, intel-spr]
@@ -483,7 +483,7 @@ jobs:
           # ═══════════════════════════════════════════════════════════════════
 
           # AWS Graviton3 - PMULL + SVE2 + SHA3 (EOR3), Neoverse V1
-          # Tests: pmull (1-8 way), pmull-eor3 (1-8 way), sve2-pmull (1-8 way)
+          # Tests: pmull (1/2/3-way), pmull-eor3 (1/2/3-way), sve2-pmull (1/2/3-way)
           - name: aarch64 (AWS Graviton3)
             runner: namespace-profile-rscrypto-linux-arm64
             platform-id: linux-arm64-graviton3
@@ -492,20 +492,15 @@ jobs:
           # ═══════════════════════════════════════════════════════════════════
           # aarch64 Targets - macOS (Apple Silicon)
           # ═══════════════════════════════════════════════════════════════════
-
-          # Apple M1/M2/M3 - PMULL + SHA3 (EOR3), no SVE2
-          # Tests: pmull (1-8 way), pmull-eor3 (1-8 way)
-          - name: aarch64 (Apple Silicon)
-            runner: macos-14
-            platform-id: macos-arm64-apple
-            tune-preset: APPLE_M1_M3
+          # NOTE: macOS tuning is done locally via `just tune-crc64` to avoid
+          # CI runner variability. Results are committed to tuned_defaults.rs.
 
           # ═══════════════════════════════════════════════════════════════════
           # aarch64 Targets - Windows
           # ═══════════════════════════════════════════════════════════════════
 
           # Windows ARM64 - PMULL + SHA3 (EOR3)
-          # Tests: pmull (1-8 way), pmull-eor3 (1-8 way)
+          # Tests: pmull (1/2/3-way), pmull-eor3 (1/2/3-way)
           - name: aarch64 (Windows ARM64)
             runner: namespace-profile-rscrypto-windows-arm64
             platform-id: windows-arm64

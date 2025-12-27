@@ -4,7 +4,7 @@
 # Runs a COMPLETE benchmark matrix to discover optimal settings for ALL:
 # - Kernels (portable, pclmul, vpclmul, pmull, pmull-eor3, sve2-pmull)
 # - Stream counts (supported values only; avoids "requested != effective" skew)
-#   - x86_64: 1 / 2 / 4 / 7-way folding
+#   - x86_64: 1 / 2 / 4 / 7 / 8-way folding
 #   - aarch64: 1 / 2 / 3-way folding
 # - Buffer sizes (64B to 1MB)
 #
@@ -266,9 +266,8 @@ if [[ "$PLATFORM" == "x86_64" ]]; then
   echo "══════════════════════════════════════════════════════════════════════════"
 
   # Only test stream counts the implementation can actually execute.
-  # (If you pass 3/5/6/8 today, the selector clamps to 2/4/7 and the results
-  # are mislabeled and harder to analyze.)
-  for streams in 1 2 4 7; do
+  # x86_64 supports: 1 / 2 / 4 / 7 / 8-way folding
+  for streams in 1 2 4 7 8; do
     run_if_supported "pclmul ${streams}-way" "pclmul" \
       RSCRYPTO_CRC64_FORCE=pclmul \
       RSCRYPTO_CRC64_STREAMS="$streams"
@@ -281,7 +280,7 @@ if [[ "$PLATFORM" == "x86_64" ]]; then
   echo "  Uses VPTERNLOGD for 3-way XOR when available"
   echo "══════════════════════════════════════════════════════════════════════════"
 
-  for streams in 1 2 4 7; do
+  for streams in 1 2 4 7 8; do
     run_if_supported "vpclmul ${streams}-way" "vpclmul" \
       RSCRYPTO_CRC64_FORCE=vpclmul \
       RSCRYPTO_CRC64_STREAMS="$streams"

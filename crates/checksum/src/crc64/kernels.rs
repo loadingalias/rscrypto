@@ -48,6 +48,8 @@ pub mod x86_64 {
     "x86_64/vpclmul-7way",
     "x86_64/vpclmul-8way",
   ];
+  /// VPCLMUL 4×512-bit kernel name (256B block processing).
+  pub const VPCLMUL_4X512: &str = "x86_64/vpclmul-4x512";
 
   // ─────────────────────────────────────────────────────────────────────────
   // CRC64-XZ Kernel Function Arrays
@@ -72,6 +74,8 @@ pub mod x86_64 {
     arch::crc64_xz_vpclmul_7way_safe,
     arch::crc64_xz_vpclmul_8way_safe,
   ];
+  /// XZ VPCLMUL 4×512-bit kernel.
+  pub const XZ_VPCLMUL_4X512: Crc64Fn = arch::crc64_xz_vpclmul_4x512_safe;
 
   // ─────────────────────────────────────────────────────────────────────────
   // CRC64-NVME Kernel Function Arrays
@@ -96,6 +100,8 @@ pub mod x86_64 {
     arch::crc64_nvme_vpclmul_7way_safe,
     arch::crc64_nvme_vpclmul_8way_safe,
   ];
+  /// NVME VPCLMUL 4×512-bit kernel.
+  pub const NVME_VPCLMUL_4X512: Crc64Fn = arch::crc64_nvme_vpclmul_4x512_safe;
 }
 
 #[cfg(target_arch = "aarch64")]

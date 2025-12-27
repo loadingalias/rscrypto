@@ -1106,6 +1106,138 @@ unsafe fn update_simd_vpclmul_8way(
   finalize_vpclmul_state(x0, x1, consts)
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// VPCLMULQDQ 4×512-bit (256B blocks)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// High-throughput path for large buffers on Ice Lake+/Zen4+ CPUs.
+// Processes 256 bytes per iteration using 4 __m512i registers, folding at
+// 2048-bit distance. Uses VPTERNLOGD for fused XOR operations.
+
+/// Reduce 4×512-bit state (x0..x3) to final u64.
+///
+/// Steps:
+/// 1. Fold x0,x1 into x2,x3 (1024-bit shift = 128 bytes)
+/// 2. Fold result into single 512-bit register (512-bit shift = 64 bytes)
+/// 3. Extract 4×128-bit lanes and reduce to u64
+#[inline]
+#[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
+unsafe fn finalize_4x512_state(
+  x0: __m512i,
+  x1: __m512i,
+  x2: __m512i,
+  x3: __m512i,
+  fold_1024b: (u64, u64),
+  fold_512b: (u64, u64),
+  consts: &Crc64ClmulConstants,
+) -> u64 {
+  // Step 1: Fold x0,x1 → x2,x3 (shift by 1024 bits = 128 bytes).
+  let coeff_1024 = vpclmul_coeff(fold_1024b);
+  let r0 = fold16_4x_ternlog(x0, x2, coeff_1024);
+  let r1 = fold16_4x_ternlog(x1, x3, coeff_1024);
+
+  // Step 2: Fold r0 → r1 (shift by 512 bits = 64 bytes).
+  let coeff_512 = vpclmul_coeff(fold_512b);
+  let acc = fold16_4x_ternlog(r0, r1, coeff_512);
+
+  // Step 3: Extract 4×128-bit lanes and reduce.
+  let l0 = Simd(_mm512_extracti32x4_epi32::<0>(acc));
+  let l1 = Simd(_mm512_extracti32x4_epi32::<1>(acc));
+  let l2 = Simd(_mm512_extracti32x4_epi32::<2>(acc));
+  let l3 = Simd(_mm512_extracti32x4_epi32::<3>(acc));
+
+  // Fold 4×128 → 1×128 using tail fold coefficients.
+  // Lane distances: l0 is 48B ahead, l1 is 32B ahead, l2 is 16B ahead, l3 is current.
+  let c48 = Simd::new(consts.tail_fold_16b[4].0, consts.tail_fold_16b[4].1);
+  let c32 = Simd::new(consts.tail_fold_16b[5].0, consts.tail_fold_16b[5].1);
+  let c16 = Simd::new(consts.tail_fold_16b[6].0, consts.tail_fold_16b[6].1);
+
+  let mut res = l3;
+  res ^= l2.fold_16(c16);
+  res ^= l1.fold_16(c32);
+  res ^= l0.fold_16(c48);
+
+  res.fold_8(consts.fold_8b).barrett(consts.poly, consts.mu)
+}
+
+/// 4×512-bit VPCLMUL kernel.
+///
+/// Processes 256 bytes per iteration (4 × 64-byte __m512i registers),
+/// folding at 2048-bit distance for maximum throughput on Ice Lake+/Zen4+.
+#[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
+unsafe fn crc64_vpclmul_4x512(
+  mut state: u64,
+  bytes: &[u8],
+  fold_2048b: (u64, u64),
+  fold_1024b: (u64, u64),
+  fold_512b: (u64, u64),
+  consts: &Crc64ClmulConstants,
+  tables: &[[u64; 256]; 8],
+) -> u64 {
+  const BLOCK_SIZE: usize = 256; // 4 × 64 bytes
+
+  if bytes.len() < BLOCK_SIZE {
+    // Fall back to standard VPCLMUL for small buffers.
+    let (left, middle, right) = bytes.align_to::<[Simd; 8]>();
+    if let Some((first, rest)) = middle.split_first() {
+      state = super::portable::crc64_slice8(state, left, tables);
+      state = update_simd_vpclmul(state, first, rest, consts);
+      return super::portable::crc64_slice8(state, right, tables);
+    }
+    return super::portable::crc64_slice8(state, bytes, tables);
+  }
+
+  // Process any unaligned prefix.
+  let ptr = bytes.as_ptr();
+  let align_offset = ptr.align_offset(64).min(bytes.len());
+  state = super::portable::crc64_slice8(state, &bytes[..align_offset], tables);
+
+  let aligned_bytes = &bytes[align_offset..];
+  if aligned_bytes.len() < BLOCK_SIZE {
+    return super::portable::crc64_slice8(state, aligned_bytes, tables);
+  }
+
+  let mut ptr = aligned_bytes.as_ptr();
+  let end = ptr.add(aligned_bytes.len());
+
+  // Load first 256B block into 4 __m512i registers.
+  let mut x0 = _mm512_loadu_si512(ptr.cast::<__m512i>());
+  let mut x1 = _mm512_loadu_si512(ptr.add(64).cast::<__m512i>());
+  let mut x2 = _mm512_loadu_si512(ptr.add(128).cast::<__m512i>());
+  let mut x3 = _mm512_loadu_si512(ptr.add(192).cast::<__m512i>());
+  ptr = ptr.add(BLOCK_SIZE);
+
+  // XOR the initial CRC into lane 0 (low 64 bits of first register).
+  let crc_mask = _mm512_set_epi64(0, 0, 0, 0, 0, 0, 0, state as i64);
+  x0 = _mm512_xor_si512(x0, crc_mask);
+
+  // Broadcast 2048-bit fold coefficient across all 128-bit lanes.
+  let coeff_2048 = vpclmul_coeff(fold_2048b);
+
+  // Main loop: fold 256B per iteration.
+  while ptr.add(BLOCK_SIZE) <= end {
+    let y0 = _mm512_loadu_si512(ptr.cast::<__m512i>());
+    let y1 = _mm512_loadu_si512(ptr.add(64).cast::<__m512i>());
+    let y2 = _mm512_loadu_si512(ptr.add(128).cast::<__m512i>());
+    let y3 = _mm512_loadu_si512(ptr.add(192).cast::<__m512i>());
+
+    // VPTERNLOGD: fold + XOR in one instruction per register.
+    x0 = fold16_4x_ternlog(x0, y0, coeff_2048);
+    x1 = fold16_4x_ternlog(x1, y1, coeff_2048);
+    x2 = fold16_4x_ternlog(x2, y2, coeff_2048);
+    x3 = fold16_4x_ternlog(x3, y3, coeff_2048);
+
+    ptr = ptr.add(BLOCK_SIZE);
+  }
+
+  // Finalize 4×512 state to u64.
+  state = finalize_4x512_state(x0, x1, x2, x3, fold_1024b, fold_512b, consts);
+
+  // Process any remaining bytes.
+  let remaining = end.offset_from(ptr) as usize;
+  super::portable::crc64_slice8(state, core::slice::from_raw_parts(ptr, remaining), tables)
+}
+
 #[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
 unsafe fn crc64_vpclmul_2way(
   mut state: u64,
@@ -1387,6 +1519,30 @@ pub unsafe fn crc64_xz_vpclmul_8way(crc: u64, data: &[u8]) -> u64 {
   }
 }
 
+/// CRC-64-XZ using VPCLMULQDQ (4×512-bit variant).
+///
+/// High-throughput path processing 256 bytes per iteration.
+/// Optimal for large buffers (≥256 bytes) on Ice Lake+/Zen4+ CPUs.
+///
+/// # Safety
+///
+/// Requires VPCLMULQDQ + AVX-512. Caller must verify via
+/// `platform::caps().has(x86::VPCLMUL_READY)`.
+#[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
+pub unsafe fn crc64_xz_vpclmul_4x512(crc: u64, data: &[u8]) -> u64 {
+  unsafe {
+    crc64_vpclmul_4x512(
+      crc,
+      data,
+      CRC64_XZ_STREAM.fold_2048b,
+      CRC64_XZ_STREAM.fold_1024b,
+      CRC64_XZ_STREAM.fold_512b,
+      &crate::common::clmul::CRC64_XZ_CLMUL,
+      &super::kernel_tables::XZ_TABLES_8,
+    )
+  }
+}
+
 /// CRC-64-NVME using PCLMULQDQ folding.
 ///
 /// # Safety
@@ -1593,6 +1749,30 @@ pub unsafe fn crc64_nvme_vpclmul_8way(crc: u64, data: &[u8]) -> u64 {
   }
 }
 
+/// CRC-64-NVME using VPCLMULQDQ (4×512-bit variant).
+///
+/// High-throughput path processing 256 bytes per iteration.
+/// Optimal for large buffers (≥256 bytes) on Ice Lake+/Zen4+ CPUs.
+///
+/// # Safety
+///
+/// Requires VPCLMULQDQ + AVX-512. Caller must verify via
+/// `platform::caps().has(x86::VPCLMUL_READY)`.
+#[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
+pub unsafe fn crc64_nvme_vpclmul_4x512(crc: u64, data: &[u8]) -> u64 {
+  unsafe {
+    crc64_vpclmul_4x512(
+      crc,
+      data,
+      CRC64_NVME_STREAM.fold_2048b,
+      CRC64_NVME_STREAM.fold_1024b,
+      CRC64_NVME_STREAM.fold_512b,
+      &crate::common::clmul::CRC64_NVME_CLMUL,
+      &super::kernel_tables::NVME_TABLES_8,
+    )
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Dispatcher Wrappers (safe interface)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1674,6 +1854,13 @@ pub fn crc64_xz_vpclmul_8way_safe(crc: u64, data: &[u8]) -> u64 {
   unsafe { crc64_xz_vpclmul_8way(crc, data) }
 }
 
+/// Safe wrapper for CRC-64-XZ VPCLMUL 4×512-bit kernel.
+#[inline]
+pub fn crc64_xz_vpclmul_4x512_safe(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Callers must verify VPCLMUL_READY before selecting this kernel.
+  unsafe { crc64_xz_vpclmul_4x512(crc, data) }
+}
+
 /// Safe wrapper for CRC-64-NVME PCLMUL kernel.
 #[inline]
 pub fn crc64_nvme_pclmul_safe(crc: u64, data: &[u8]) -> u64 {
@@ -1749,6 +1936,13 @@ pub fn crc64_nvme_vpclmul_7way_safe(crc: u64, data: &[u8]) -> u64 {
 pub fn crc64_nvme_vpclmul_8way_safe(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: Callers must verify VPCLMUL_READY before selecting this kernel.
   unsafe { crc64_nvme_vpclmul_8way(crc, data) }
+}
+
+/// Safe wrapper for CRC-64-NVME VPCLMUL 4×512-bit kernel.
+#[inline]
+pub fn crc64_nvme_vpclmul_4x512_safe(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Callers must verify VPCLMUL_READY before selecting this kernel.
+  unsafe { crc64_nvme_vpclmul_4x512(crc, data) }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

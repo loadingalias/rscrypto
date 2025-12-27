@@ -168,7 +168,8 @@ fn sizes_for_streams() -> &'static [usize] {
 fn stream_candidates_for_arch() -> &'static [u8] {
   #[cfg(target_arch = "x86_64")]
   {
-    &[1, 2, 4, 7]
+    // x86_64 supports 1 / 2 / 4 / 7 / 8-way folding
+    &[1, 2, 4, 7, 8]
   }
   #[cfg(target_arch = "aarch64")]
   {
