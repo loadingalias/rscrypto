@@ -123,6 +123,38 @@ backend::define_dispatcher!(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
+// CRC-32 Dispatchers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Function signature for CRC-32 kernels.
+///
+/// Used by:
+/// - CRC-32 (IEEE)
+/// - CRC-32C (Castagnoli)
+///
+/// # Hardware Acceleration
+///
+/// - **x86_64**: SSE4.2 `crc32` (CRC-32C only)
+/// - **aarch64**: ARMv8 CRC extension (CRC-32 + CRC-32C)
+///
+/// # Arguments
+///
+/// * `state` - Current CRC state (typically initialized to 0xFFFFFFFF)
+/// * `data` - Input data to process
+///
+/// # Returns
+///
+/// Updated CRC state after processing the input data.
+pub type Crc32Fn = fn(u32, &[u8]) -> u32;
+
+backend::define_dispatcher!(
+  /// Dispatcher for CRC-32 kernels.
+  ///
+  /// Caches the selected kernel on first access. Thread-safe.
+  Crc32Dispatcher, Crc32Fn, u32
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Tests
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -140,6 +172,9 @@ mod tests {
   fn portable_crc64(_state: u64, _data: &[u8]) -> u64 {
     0xDEAD_BEEF_CAFE_BABE
   }
+  fn portable_crc32(_state: u32, _data: &[u8]) -> u32 {
+    0xC0FF_EE00
+  }
 
   fn test_crc16_selector() -> Selected<Crc16Fn> {
     Selected::new("portable", portable_crc16)
@@ -151,6 +186,10 @@ mod tests {
 
   fn test_crc64_selector() -> Selected<Crc64Fn> {
     Selected::new("portable", portable_crc64)
+  }
+
+  fn test_crc32_selector() -> Selected<Crc32Fn> {
+    Selected::new("portable", portable_crc32)
   }
 
   #[test]
@@ -172,5 +211,12 @@ mod tests {
     static DISPATCH: Crc64Dispatcher = Crc64Dispatcher::new(test_crc64_selector);
     assert_eq!(DISPATCH.get().name, "portable");
     assert_eq!(DISPATCH.call(0, &[]), 0xDEAD_BEEF_CAFE_BABE);
+  }
+
+  #[test]
+  fn test_crc32_dispatcher() {
+    static DISPATCH: Crc32Dispatcher = Crc32Dispatcher::new(test_crc32_selector);
+    assert_eq!(DISPATCH.get().name, "portable");
+    assert_eq!(DISPATCH.call(0, &[]), 0xC0FF_EE00);
   }
 }

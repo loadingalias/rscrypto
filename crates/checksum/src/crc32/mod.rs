@@ -1,0 +1,415 @@
+//! CRC-32 implementations (IEEE and Castagnoli).
+//!
+//! This module provides:
+//! - [`Crc32`] - CRC-32 (IEEE, Ethernet)
+//! - [`Crc32C`] - CRC-32C (Castagnoli, iSCSI)
+//!
+//! # Hardware Acceleration
+//!
+//! - x86_64: SSE4.2 `crc32` (CRC-32C only)
+//! - aarch64: ARMv8 CRC extension (CRC-32 and CRC-32C)
+
+pub(crate) mod config;
+mod kernels;
+mod portable;
+
+#[cfg(target_arch = "x86_64")]
+mod x86_64;
+
+#[cfg(target_arch = "aarch64")]
+mod aarch64;
+
+use backend::dispatch::Selected;
+#[allow(unused_imports)]
+pub use config::{Crc32Config, Crc32Force, Crc32Tunables};
+#[allow(unused_imports)]
+pub(super) use traits::{Checksum, ChecksumCombine};
+
+use crate::{
+  common::{
+    combine::{Gf2Matrix32, generate_shift8_matrix_32},
+    tables::{CRC32_IEEE_POLY, CRC32C_POLY, generate_crc32_tables_16},
+  },
+  dispatchers::{Crc32Dispatcher, Crc32Fn},
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Kernel Tables (compile-time)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Portable kernel tables (pre-computed at compile time).
+mod kernel_tables {
+  use super::*;
+  pub static IEEE_TABLES_16: [[u32; 256]; 16] = generate_crc32_tables_16(CRC32_IEEE_POLY);
+  pub static CRC32C_TABLES_16: [[u32; 256]; 16] = generate_crc32_tables_16(CRC32C_POLY);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Portable Kernel Wrappers
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn crc32_portable(crc: u32, data: &[u8]) -> u32 {
+  portable::crc32_slice16_ieee(crc, data)
+}
+
+fn crc32c_portable(crc: u32, data: &[u8]) -> u32 {
+  portable::crc32c_slice16(crc, data)
+}
+
+#[inline]
+#[must_use]
+pub(crate) fn crc32_selected_kernel_name(len: usize) -> &'static str {
+  let cfg = config::get();
+
+  if cfg.effective_force == Crc32Force::Portable
+    || (cfg.effective_force != Crc32Force::Hwcrc && len < cfg.tunables.portable_to_hwcrc)
+  {
+    return kernels::PORTABLE;
+  }
+
+  #[cfg(target_arch = "aarch64")]
+  {
+    let caps = platform::caps();
+    if caps.has(platform::caps::aarch64::CRC_READY) {
+      return kernels::aarch64::CRC32_NAMES
+        .first()
+        .copied()
+        .unwrap_or(kernels::PORTABLE);
+    }
+  }
+
+  kernels::PORTABLE
+}
+
+#[inline]
+#[must_use]
+pub(crate) fn crc32c_selected_kernel_name(len: usize) -> &'static str {
+  let cfg = config::get();
+  let caps = platform::caps();
+
+  if cfg.effective_force == Crc32Force::Portable
+    || (cfg.effective_force != Crc32Force::Hwcrc && len < cfg.tunables.portable_to_hwcrc)
+  {
+    return kernels::PORTABLE;
+  }
+
+  #[cfg(target_arch = "x86_64")]
+  {
+    if caps.has(platform::caps::x86::CRC32C_READY) {
+      return kernels::x86_64::CRC32C_NAMES
+        .first()
+        .copied()
+        .unwrap_or(kernels::PORTABLE);
+    }
+  }
+
+  #[cfg(target_arch = "aarch64")]
+  {
+    if caps.has(platform::caps::aarch64::CRC_READY) {
+      return kernels::aarch64::CRC32C_NAMES
+        .first()
+        .copied()
+        .unwrap_or(kernels::PORTABLE);
+    }
+  }
+
+  kernels::PORTABLE
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Auto Kernels (architecture-specific)
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[cfg(target_arch = "x86_64")]
+fn crc32c_x86_64_auto(crc: u32, data: &[u8]) -> u32 {
+  let cfg = config::get();
+  let caps = platform::caps();
+
+  if cfg.effective_force == Crc32Force::Portable
+    || (cfg.effective_force != Crc32Force::Hwcrc && data.len() < cfg.tunables.portable_to_hwcrc)
+  {
+    return crc32c_portable(crc, data);
+  }
+
+  if caps.has(platform::caps::x86::CRC32C_READY) {
+    return kernels::dispatch_streams(&kernels::x86_64::CRC32C, cfg.tunables.streams, crc, data);
+  }
+
+  crc32c_portable(crc, data)
+}
+
+#[cfg(target_arch = "aarch64")]
+fn crc32_aarch64_auto(crc: u32, data: &[u8]) -> u32 {
+  let cfg = config::get();
+  let caps = platform::caps();
+
+  if cfg.effective_force == Crc32Force::Portable
+    || (cfg.effective_force != Crc32Force::Hwcrc && data.len() < cfg.tunables.portable_to_hwcrc)
+  {
+    return crc32_portable(crc, data);
+  }
+
+  if caps.has(platform::caps::aarch64::CRC_READY) {
+    return kernels::dispatch_streams(&kernels::aarch64::CRC32, cfg.tunables.streams, crc, data);
+  }
+
+  crc32_portable(crc, data)
+}
+
+#[cfg(target_arch = "aarch64")]
+fn crc32c_aarch64_auto(crc: u32, data: &[u8]) -> u32 {
+  let cfg = config::get();
+  let caps = platform::caps();
+
+  if cfg.effective_force == Crc32Force::Portable
+    || (cfg.effective_force != Crc32Force::Hwcrc && data.len() < cfg.tunables.portable_to_hwcrc)
+  {
+    return crc32c_portable(crc, data);
+  }
+
+  if caps.has(platform::caps::aarch64::CRC_READY) {
+    return kernels::dispatch_streams(&kernels::aarch64::CRC32C, cfg.tunables.streams, crc, data);
+  }
+
+  crc32c_portable(crc, data)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Dispatcher Selection
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[cfg(target_arch = "x86_64")]
+fn select_crc32() -> Selected<Crc32Fn> {
+  Selected::new(kernels::PORTABLE, crc32_portable)
+}
+
+#[cfg(target_arch = "x86_64")]
+fn select_crc32c() -> Selected<Crc32Fn> {
+  let caps = platform::caps();
+  let cfg = config::get();
+
+  if cfg.effective_force == Crc32Force::Portable {
+    return Selected::new(kernels::PORTABLE, crc32c_portable);
+  }
+
+  if caps.has(platform::caps::x86::CRC32C_READY) {
+    return Selected::new("x86_64/auto", crc32c_x86_64_auto);
+  }
+
+  Selected::new(kernels::PORTABLE, crc32c_portable)
+}
+
+#[cfg(target_arch = "aarch64")]
+fn select_crc32() -> Selected<Crc32Fn> {
+  let caps = platform::caps();
+  let cfg = config::get();
+
+  if cfg.effective_force == Crc32Force::Portable {
+    return Selected::new(kernels::PORTABLE, crc32_portable);
+  }
+
+  if caps.has(platform::caps::aarch64::CRC_READY) {
+    return Selected::new("aarch64/auto", crc32_aarch64_auto);
+  }
+
+  Selected::new(kernels::PORTABLE, crc32_portable)
+}
+
+#[cfg(target_arch = "aarch64")]
+fn select_crc32c() -> Selected<Crc32Fn> {
+  let caps = platform::caps();
+  let cfg = config::get();
+
+  if cfg.effective_force == Crc32Force::Portable {
+    return Selected::new(kernels::PORTABLE, crc32c_portable);
+  }
+
+  if caps.has(platform::caps::aarch64::CRC_READY) {
+    return Selected::new("aarch64/auto", crc32c_aarch64_auto);
+  }
+
+  Selected::new(kernels::PORTABLE, crc32c_portable)
+}
+
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+fn select_crc32() -> Selected<Crc32Fn> {
+  Selected::new(kernels::PORTABLE, crc32_portable)
+}
+
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+fn select_crc32c() -> Selected<Crc32Fn> {
+  Selected::new(kernels::PORTABLE, crc32c_portable)
+}
+
+/// Static dispatcher for CRC-32 (IEEE).
+static CRC32_DISPATCHER: Crc32Dispatcher = Crc32Dispatcher::new(select_crc32);
+
+/// Static dispatcher for CRC-32C (Castagnoli).
+static CRC32C_DISPATCHER: Crc32Dispatcher = Crc32Dispatcher::new(select_crc32c);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CRC-32 Types
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// CRC-32 (IEEE) checksum.
+///
+/// Used by Ethernet, gzip, zip, PNG, etc.
+#[derive(Clone, Default)]
+pub struct Crc32 {
+  state: u32,
+}
+
+impl Crc32 {
+  /// Pre-computed shift-by-8 matrix for combine.
+  const SHIFT8_MATRIX: Gf2Matrix32 = generate_shift8_matrix_32(CRC32_IEEE_POLY);
+
+  /// Create a hasher to resume from a previous CRC value.
+  #[inline]
+  #[must_use]
+  pub const fn resume(crc: u32) -> Self {
+    Self { state: crc ^ !0 }
+  }
+
+  /// Get the name of the currently selected backend.
+  #[must_use]
+  pub fn backend_name() -> &'static str {
+    CRC32_DISPATCHER.backend_name()
+  }
+
+  /// Get the effective CRC-32 configuration (overrides + thresholds).
+  #[must_use]
+  pub fn config() -> Crc32Config {
+    config::get()
+  }
+
+  /// Convenience accessor for the active CRC-32 tunables.
+  #[must_use]
+  pub fn tunables() -> Crc32Tunables {
+    Self::config().tunables
+  }
+
+  /// Returns the kernel name that the selector would choose for `len`.
+  #[must_use]
+  pub fn kernel_name_for_len(len: usize) -> &'static str {
+    crc32_selected_kernel_name(len)
+  }
+}
+
+impl traits::Checksum for Crc32 {
+  const OUTPUT_SIZE: usize = 4;
+  type Output = u32;
+
+  #[inline]
+  fn new() -> Self {
+    Self { state: !0 }
+  }
+
+  #[inline]
+  fn with_initial(initial: u32) -> Self {
+    Self { state: initial ^ !0 }
+  }
+
+  #[inline]
+  fn update(&mut self, data: &[u8]) {
+    self.state = CRC32_DISPATCHER.call(self.state, data);
+  }
+
+  #[inline]
+  fn finalize(&self) -> u32 {
+    self.state ^ !0
+  }
+
+  #[inline]
+  fn reset(&mut self) {
+    self.state = !0;
+  }
+}
+
+impl traits::ChecksumCombine for Crc32 {
+  fn combine(crc_a: u32, crc_b: u32, len_b: usize) -> u32 {
+    crate::common::combine::combine_crc32(crc_a, crc_b, len_b, Self::SHIFT8_MATRIX)
+  }
+}
+
+/// CRC-32C (Castagnoli) checksum.
+///
+/// Used by iSCSI, SCTP, ext4, Btrfs, SSE4.2 `crc32`, etc.
+#[derive(Clone, Default)]
+pub struct Crc32C {
+  state: u32,
+}
+
+impl Crc32C {
+  /// Pre-computed shift-by-8 matrix for combine.
+  const SHIFT8_MATRIX: Gf2Matrix32 = generate_shift8_matrix_32(CRC32C_POLY);
+
+  /// Create a hasher to resume from a previous CRC value.
+  #[inline]
+  #[must_use]
+  pub const fn resume(crc: u32) -> Self {
+    Self { state: crc ^ !0 }
+  }
+
+  /// Get the name of the currently selected backend.
+  #[must_use]
+  pub fn backend_name() -> &'static str {
+    CRC32C_DISPATCHER.backend_name()
+  }
+
+  /// Get the effective CRC-32 configuration (overrides + thresholds).
+  #[must_use]
+  pub fn config() -> Crc32Config {
+    config::get()
+  }
+
+  /// Convenience accessor for the active CRC-32 tunables.
+  #[must_use]
+  pub fn tunables() -> Crc32Tunables {
+    Self::config().tunables
+  }
+
+  /// Returns the kernel name that the selector would choose for `len`.
+  #[must_use]
+  pub fn kernel_name_for_len(len: usize) -> &'static str {
+    crc32c_selected_kernel_name(len)
+  }
+}
+
+impl traits::Checksum for Crc32C {
+  const OUTPUT_SIZE: usize = 4;
+  type Output = u32;
+
+  #[inline]
+  fn new() -> Self {
+    Self { state: !0 }
+  }
+
+  #[inline]
+  fn with_initial(initial: u32) -> Self {
+    Self { state: initial ^ !0 }
+  }
+
+  #[inline]
+  fn update(&mut self, data: &[u8]) {
+    self.state = CRC32C_DISPATCHER.call(self.state, data);
+  }
+
+  #[inline]
+  fn finalize(&self) -> u32 {
+    self.state ^ !0
+  }
+
+  #[inline]
+  fn reset(&mut self) {
+    self.state = !0;
+  }
+}
+
+impl traits::ChecksumCombine for Crc32C {
+  fn combine(crc_a: u32, crc_b: u32, len_b: usize) -> u32 {
+    crate::common::combine::combine_crc32(crc_a, crc_b, len_b, Self::SHIFT8_MATRIX)
+  }
+}
+
+#[cfg(test)]
+mod proptests;

@@ -181,6 +181,7 @@ macro_rules! define_crc_dispatch {
 
     /// Dispatch with small buffer handling.
     #[inline]
+    #[allow(dead_code)] // Not all CRC widths/arches use small-buffer kernels yet.
     #[allow(clippy::indexing_slicing)] // stream_to_index returns 0-4, array is [_; 5]
     pub fn dispatch_with_small(
       kernels: &[$fn_type; 5],

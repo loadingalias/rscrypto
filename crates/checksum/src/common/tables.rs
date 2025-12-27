@@ -12,6 +12,7 @@
 //! |-------|------------|------------|-------------|
 //! | 16-bit | 4×256×u16 | 8×256×u16 | - |
 //! | 24-bit | 4×256×u32 | 8×256×u32 | - |
+//! | 32-bit | - | 8×256×u32 | 16×256×u32 |
 //! | 64-bit | - | 8×256×u64 | 16×256×u64 |
 //!
 //! Higher slice counts provide better throughput at the cost of table size.
@@ -188,6 +189,87 @@ pub const fn generate_crc24_tables_8(poly: u32) -> [[u32; 256]; 8] {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// CRC-32 Table Generation
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Generate a single CRC-32 lookup table entry.
+///
+/// Uses bit-by-bit computation with the reflected polynomial.
+#[must_use]
+pub const fn crc32_table_entry(poly: u32, index: u8) -> u32 {
+  let mut crc = index as u32;
+  let mut i: u32 = 0;
+  while i < 8 {
+    if crc & 1 != 0 {
+      crc = (crc >> 1) ^ poly;
+    } else {
+      crc >>= 1;
+    }
+    i = i.strict_add(1);
+  }
+  crc
+}
+
+/// Generate 8 CRC-32 lookup tables for slice-by-8 computation.
+///
+/// # Arguments
+///
+/// * `poly` - The reflected polynomial
+#[cfg(test)]
+#[must_use]
+pub const fn generate_crc32_tables_8(poly: u32) -> [[u32; 256]; 8] {
+  let mut tables = [[0u32; 256]; 8];
+
+  let mut i: u16 = 0;
+  while i < 256 {
+    tables[0][i as usize] = crc32_table_entry(poly, i as u8);
+    i = i.strict_add(1);
+  }
+
+  let mut k: usize = 1;
+  while k < 8 {
+    i = 0;
+    while i < 256 {
+      let prev = tables[k - 1][i as usize];
+      tables[k][i as usize] = tables[0][(prev & 0xFF) as usize] ^ (prev >> 8);
+      i = i.strict_add(1);
+    }
+    k = k.strict_add(1);
+  }
+
+  tables
+}
+
+/// Generate 16 CRC-32 lookup tables for slice-by-16 computation.
+///
+/// # Arguments
+///
+/// * `poly` - The reflected polynomial
+#[must_use]
+pub const fn generate_crc32_tables_16(poly: u32) -> [[u32; 256]; 16] {
+  let mut tables = [[0u32; 256]; 16];
+
+  let mut i: u16 = 0;
+  while i < 256 {
+    tables[0][i as usize] = crc32_table_entry(poly, i as u8);
+    i = i.strict_add(1);
+  }
+
+  let mut k: usize = 1;
+  while k < 16 {
+    i = 0;
+    while i < 256 {
+      let prev = tables[k - 1][i as usize];
+      tables[k][i as usize] = tables[0][(prev & 0xFF) as usize] ^ (prev >> 8);
+      i = i.strict_add(1);
+    }
+    k = k.strict_add(1);
+  }
+
+  tables
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // CRC-64 Table Generation
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -297,6 +379,18 @@ pub const CRC24_OPENPGP_POLY: u32 = 0x00DF_3261;
 
 // CRC-64 Polynomials
 
+// CRC-32 Polynomials
+
+/// CRC-32 (IEEE) polynomial (0x04C11DB7) in reflected form.
+///
+/// Used by Ethernet, gzip, zip, PNG, etc.
+pub const CRC32_IEEE_POLY: u32 = 0xEDB8_8320;
+
+/// CRC-32C (Castagnoli) polynomial (0x1EDC6F41) in reflected form.
+///
+/// Used by iSCSI, SCTP, ext4, Btrfs, SSE4.2 `crc32`, etc.
+pub const CRC32C_POLY: u32 = 0x82F6_3B78;
+
 /// CRC-64-XZ polynomial (0x42F0E1EBA9EA3693) in reflected form.
 /// Used by XZ Utils, 7-Zip, LZMA.
 pub const CRC64_XZ_POLY: u64 = 0xC96C_5795_D787_0F42;
@@ -348,6 +442,42 @@ mod tests {
         let prev = tables8[k - 1][i];
         let expected = tables8[0][(prev & 0xFF) as usize] ^ (prev >> 8);
         assert_eq!(tables8[k][i], expected);
+      }
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // CRC-32 Tests
+  // ─────────────────────────────────────────────────────────────────────────
+
+  #[test]
+  fn test_crc32_tables_8_consistency() {
+    let tables = generate_crc32_tables_8(CRC32_IEEE_POLY);
+
+    assert_eq!(tables[0][0], 0);
+    assert_ne!(tables[0][1], 0);
+
+    for k in 1..8 {
+      for i in 0..256 {
+        let prev = tables[k - 1][i];
+        let expected = tables[0][(prev & 0xFF) as usize] ^ (prev >> 8);
+        assert_eq!(tables[k][i], expected);
+      }
+    }
+  }
+
+  #[test]
+  fn test_crc32_tables_16_consistency() {
+    let tables = generate_crc32_tables_16(CRC32_IEEE_POLY);
+
+    assert_eq!(tables[0][0], 0);
+    assert_ne!(tables[0][1], 0);
+
+    for k in 1..16 {
+      for i in 0..256 {
+        let prev = tables[k - 1][i];
+        let expected = tables[0][(prev & 0xFF) as usize] ^ (prev >> 8);
+        assert_eq!(tables[k][i], expected);
       }
     }
   }

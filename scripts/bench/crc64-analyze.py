@@ -280,6 +280,7 @@ def parse_summary_tsv(tsv_path: Path) -> list[BenchResult]:
 SIMD_KERNELS = {
     "pclmul",
     "vpclmul",
+    "vpclmul-4x512",
     "pmull",
     "pmull-eor3",
     "pmull-small",
