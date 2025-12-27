@@ -1127,18 +1127,18 @@ unsafe fn finalize_4x512_state(
   x1: __m512i,
   x2: __m512i,
   x3: __m512i,
-  fold_1024b: (u64, u64),
-  fold_512b: (u64, u64),
+  fold_128b: (u64, u64),
+  fold_64b: (u64, u64),
   consts: &Crc64ClmulConstants,
 ) -> u64 {
   // Step 1: Fold x0,x1 → x2,x3 (shift by 1024 bits = 128 bytes).
-  let coeff_1024 = vpclmul_coeff(fold_1024b);
-  let r0 = fold16_4x_ternlog(x0, x2, coeff_1024);
-  let r1 = fold16_4x_ternlog(x1, x3, coeff_1024);
+  let coeff_128 = vpclmul_coeff(fold_128b);
+  let r0 = fold16_4x_ternlog(x0, x2, coeff_128);
+  let r1 = fold16_4x_ternlog(x1, x3, coeff_128);
 
   // Step 2: Fold r0 → r1 (shift by 512 bits = 64 bytes).
-  let coeff_512 = vpclmul_coeff(fold_512b);
-  let acc = fold16_4x_ternlog(r0, r1, coeff_512);
+  let coeff_64 = vpclmul_coeff(fold_64b);
+  let acc = fold16_4x_ternlog(r0, r1, coeff_64);
 
   // Step 3: Extract 4×128-bit lanes and reduce.
   let l0 = Simd(_mm512_extracti32x4_epi32::<0>(acc));
@@ -1168,9 +1168,7 @@ unsafe fn finalize_4x512_state(
 unsafe fn crc64_vpclmul_4x512(
   mut state: u64,
   bytes: &[u8],
-  fold_2048b: (u64, u64),
-  fold_1024b: (u64, u64),
-  fold_512b: (u64, u64),
+  fold_256b: (u64, u64),
   consts: &Crc64ClmulConstants,
   tables: &[[u64; 256]; 8],
 ) -> u64 {
@@ -1211,8 +1209,8 @@ unsafe fn crc64_vpclmul_4x512(
   let crc_mask = _mm512_set_epi64(0, 0, 0, 0, 0, 0, 0, state as i64);
   x0 = _mm512_xor_si512(x0, crc_mask);
 
-  // Broadcast 2048-bit fold coefficient across all 128-bit lanes.
-  let coeff_2048 = vpclmul_coeff(fold_2048b);
+  // Folding distance is 256 bytes (2048 bits) per iteration.
+  let coeff_256 = vpclmul_coeff(fold_256b);
 
   // Main loop: fold 256B per iteration.
   while ptr.add(BLOCK_SIZE) <= end {
@@ -1222,16 +1220,16 @@ unsafe fn crc64_vpclmul_4x512(
     let y3 = _mm512_loadu_si512(ptr.add(192).cast::<__m512i>());
 
     // VPTERNLOGD: fold + XOR in one instruction per register.
-    x0 = fold16_4x_ternlog(x0, y0, coeff_2048);
-    x1 = fold16_4x_ternlog(x1, y1, coeff_2048);
-    x2 = fold16_4x_ternlog(x2, y2, coeff_2048);
-    x3 = fold16_4x_ternlog(x3, y3, coeff_2048);
+    x0 = fold16_4x_ternlog(x0, y0, coeff_256);
+    x1 = fold16_4x_ternlog(x1, y1, coeff_256);
+    x2 = fold16_4x_ternlog(x2, y2, coeff_256);
+    x3 = fold16_4x_ternlog(x3, y3, coeff_256);
 
     ptr = ptr.add(BLOCK_SIZE);
   }
 
   // Finalize 4×512 state to u64.
-  state = finalize_4x512_state(x0, x1, x2, x3, fold_1024b, fold_512b, consts);
+  state = finalize_4x512_state(x0, x1, x2, x3, consts.fold_128b, consts.tail_fold_16b[3], consts);
 
   // Process any remaining bytes.
   let remaining = end.offset_from(ptr) as usize;
@@ -1534,9 +1532,7 @@ pub unsafe fn crc64_xz_vpclmul_4x512(crc: u64, data: &[u8]) -> u64 {
     crc64_vpclmul_4x512(
       crc,
       data,
-      CRC64_XZ_STREAM.fold_2048b,
-      CRC64_XZ_STREAM.fold_1024b,
-      CRC64_XZ_STREAM.fold_512b,
+      CRC64_XZ_STREAM.fold_256b,
       &crate::common::clmul::CRC64_XZ_CLMUL,
       &super::kernel_tables::XZ_TABLES_8,
     )
@@ -1764,9 +1760,7 @@ pub unsafe fn crc64_nvme_vpclmul_4x512(crc: u64, data: &[u8]) -> u64 {
     crc64_vpclmul_4x512(
       crc,
       data,
-      CRC64_NVME_STREAM.fold_2048b,
-      CRC64_NVME_STREAM.fold_1024b,
-      CRC64_NVME_STREAM.fold_512b,
+      CRC64_NVME_STREAM.fold_256b,
       &crate::common::clmul::CRC64_NVME_CLMUL,
       &super::kernel_tables::NVME_TABLES_8,
     )

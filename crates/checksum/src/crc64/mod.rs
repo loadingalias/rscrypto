@@ -1714,8 +1714,14 @@ mod tests {
 
     // Execute both variants to ensure the selected tier doesn't trap.
     let data: Vec<u8> = (0..len).map(|i| (i as u8).wrapping_mul(13)).collect();
-    let _ = Crc64::checksum(&data);
-    let _ = Crc64Nvme::checksum(&data);
+    let ours_xz = Crc64::checksum(&data);
+    let ours_nvme = Crc64Nvme::checksum(&data);
+
+    // Also validate correctness against the portable reference path.
+    let portable_xz = portable::crc64_slice16_xz(!0, &data) ^ !0;
+    let portable_nvme = portable::crc64_slice16_nvme(!0, &data) ^ !0;
+    assert_eq!(ours_xz, portable_xz, "Forced tier produced incorrect CRC64-XZ");
+    assert_eq!(ours_nvme, portable_nvme, "Forced tier produced incorrect CRC64-NVME");
 
     let kernel = Crc64::kernel_name_for_len(len);
     let streams_env = std::env::var("RSCRYPTO_CRC64_STREAMS").ok();
