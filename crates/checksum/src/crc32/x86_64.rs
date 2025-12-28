@@ -893,8 +893,9 @@ pub fn crc32_ieee_vpclmul_safe(crc: u32, data: &[u8]) -> u32 {
 
 #[cfg(test)]
 mod tests {
-  use super::*;
   use alloc::vec::Vec;
+
+  use super::*;
 
   #[test]
   fn test_crc32_ieee_pclmul_matches_portable_various_lengths() {
