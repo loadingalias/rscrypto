@@ -25,55 +25,55 @@ pub mod x86_64 {
   /// CRC-32 (IEEE) PCLMUL kernel names.
   pub const CRC32_PCLMUL_NAMES: &[&str] = &[
     "x86_64/crc32-pclmul",
-    "x86_64/crc32-pclmul",
-    "x86_64/crc32-pclmul",
-    "x86_64/crc32-pclmul",
-    "x86_64/crc32-pclmul",
+    "x86_64/crc32-pclmul-2way",
+    "x86_64/crc32-pclmul-4way",
+    "x86_64/crc32-pclmul-7way",
+    "x86_64/crc32-pclmul-8way",
   ];
 
   /// CRC-32 (IEEE) PCLMUL kernels.
   pub const CRC32_PCLMUL: [Crc32Fn; 5] = [
     arch::crc32_ieee_pclmul_safe,
-    arch::crc32_ieee_pclmul_safe,
-    arch::crc32_ieee_pclmul_safe,
-    arch::crc32_ieee_pclmul_safe,
-    arch::crc32_ieee_pclmul_safe,
+    arch::crc32_ieee_pclmul_2way_safe,
+    arch::crc32_ieee_pclmul_4way_safe,
+    arch::crc32_ieee_pclmul_7way_safe,
+    arch::crc32_ieee_pclmul_8way_safe,
   ];
 
   /// CRC-32 (IEEE) VPCLMUL kernel names.
   pub const CRC32_VPCLMUL_NAMES: &[&str] = &[
     "x86_64/crc32-vpclmul",
-    "x86_64/crc32-vpclmul",
-    "x86_64/crc32-vpclmul",
-    "x86_64/crc32-vpclmul",
-    "x86_64/crc32-vpclmul",
+    "x86_64/crc32-vpclmul-2way",
+    "x86_64/crc32-vpclmul-4way",
+    "x86_64/crc32-vpclmul-7way",
+    "x86_64/crc32-vpclmul-8way",
   ];
 
   /// CRC-32 (IEEE) VPCLMUL kernels.
   pub const CRC32_VPCLMUL: [Crc32Fn; 5] = [
     arch::crc32_ieee_vpclmul_safe,
-    arch::crc32_ieee_vpclmul_safe,
-    arch::crc32_ieee_vpclmul_safe,
-    arch::crc32_ieee_vpclmul_safe,
-    arch::crc32_ieee_vpclmul_safe,
+    arch::crc32_ieee_vpclmul_2way_safe,
+    arch::crc32_ieee_vpclmul_4way_safe,
+    arch::crc32_ieee_vpclmul_7way_safe,
+    arch::crc32_ieee_vpclmul_8way_safe,
   ];
 
   /// SSE4.2 `crc32` instruction kernel names (CRC-32C only).
   pub const CRC32C_HWCRC_NAMES: &[&str] = &[
     "x86_64/crc32c",
-    "x86_64/crc32c",
-    "x86_64/crc32c",
-    "x86_64/crc32c",
-    "x86_64/crc32c",
+    "x86_64/crc32c-2way",
+    "x86_64/crc32c-4way",
+    "x86_64/crc32c-7way",
+    "x86_64/crc32c-8way",
   ];
 
-  /// CRC-32C SSE4.2 kernel function array (no multi-stream variants yet).
+  /// CRC-32C SSE4.2 kernel function array.
   pub const CRC32C_HWCRC: [Crc32Fn; 5] = [
     arch::crc32c_sse42_safe,
-    arch::crc32c_sse42_safe,
-    arch::crc32c_sse42_safe,
-    arch::crc32c_sse42_safe,
-    arch::crc32c_sse42_safe,
+    arch::crc32c_sse42_2way_safe,
+    arch::crc32c_sse42_4way_safe,
+    arch::crc32c_sse42_7way_safe,
+    arch::crc32c_sse42_8way_safe,
   ];
 
   /// CRC-32C fusion (SSE4.2 + PCLMULQDQ) kernel names.
@@ -139,34 +139,34 @@ pub mod aarch64 {
   /// ARMv8 CRC extension kernel names.
   pub const CRC32_HWCRC_NAMES: &[&str] = &[
     "aarch64/crc32",
-    "aarch64/crc32",
-    "aarch64/crc32",
+    "aarch64/crc32-2way",
+    "aarch64/crc32-3way",
     "aarch64/crc32",
     "aarch64/crc32",
   ];
 
   pub const CRC32C_HWCRC_NAMES: &[&str] = &[
     "aarch64/crc32c",
-    "aarch64/crc32c",
-    "aarch64/crc32c",
+    "aarch64/crc32c-2way",
+    "aarch64/crc32c-3way",
     "aarch64/crc32c",
     "aarch64/crc32c",
   ];
 
-  /// CRC-32 (IEEE) CRC-extension kernel function array (no multi-stream variants yet).
+  /// CRC-32 (IEEE) CRC-extension kernel function array.
   pub const CRC32_HWCRC: [Crc32Fn; 5] = [
     arch::crc32_armv8_safe,
-    arch::crc32_armv8_safe,
-    arch::crc32_armv8_safe,
+    arch::crc32_armv8_2way_safe,
+    arch::crc32_armv8_3way_safe,
     arch::crc32_armv8_safe,
     arch::crc32_armv8_safe,
   ];
 
-  /// CRC-32C (Castagnoli) CRC-extension kernel function array (no multi-stream variants yet).
+  /// CRC-32C (Castagnoli) CRC-extension kernel function array.
   pub const CRC32C_HWCRC: [Crc32Fn; 5] = [
     arch::crc32c_armv8_safe,
-    arch::crc32c_armv8_safe,
-    arch::crc32c_armv8_safe,
+    arch::crc32c_armv8_2way_safe,
+    arch::crc32c_armv8_3way_safe,
     arch::crc32c_armv8_safe,
     arch::crc32c_armv8_safe,
   ];

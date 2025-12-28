@@ -11,9 +11,21 @@
 //! features are available before selecting a kernel (the dispatcher does this).
 
 #![allow(unsafe_code)]
+// SAFETY: This module is intrinsics-heavy and uses tight, invariant-driven indexing
+// (e.g. fixed-size lanes and chunked processing) where bounds are proven by
+// control flow; Clippy cannot always see these invariants.
+#![allow(clippy::indexing_slicing)]
 #![allow(unsafe_op_in_unsafe_fn)]
 
 use core::{arch::aarch64::*, ptr};
+
+use crate::common::{
+  combine::{Gf2Matrix32, generate_shift8_matrix_32},
+  tables::{CRC32_IEEE_POLY, CRC32C_POLY},
+};
+
+const CRC32_SHIFT8_MATRIX: Gf2Matrix32 = generate_shift8_matrix_32(CRC32_IEEE_POLY);
+const CRC32C_SHIFT8_MATRIX: Gf2Matrix32 = generate_shift8_matrix_32(CRC32C_POLY);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Hardware CRC extension (CRC-only)
@@ -91,6 +103,154 @@ pub fn crc32_armv8_safe(crc: u32, data: &[u8]) -> u32 {
 pub fn crc32c_armv8_safe(crc: u32, data: &[u8]) -> u32 {
   // SAFETY: Dispatcher verifies CRC extension before selecting this kernel.
   unsafe { crc32c_armv8(crc, data) }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Hardware CRC extension (multi-stream wrappers)
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[inline]
+#[target_feature(enable = "crc")]
+unsafe fn crc32_armv8_nway<const N: usize>(crc: u32, data: &[u8]) -> u32 {
+  debug_assert!(N == 2 || N == 3);
+
+  let len = data.len();
+  if len < N.strict_mul(256) {
+    return crc32_armv8(crc, data);
+  }
+
+  let chunk_len = len / N;
+  let mut lanes = [!0u32; N];
+
+  let mut i: usize = 0;
+  while i < chunk_len {
+    if i.strict_add(8) <= chunk_len {
+      let mut lane_idx: usize = 0;
+      while lane_idx < N {
+        let base = lane_idx.strict_mul(chunk_len).strict_add(i);
+        lanes[lane_idx] = __crc32d(
+          lanes[lane_idx],
+          ptr::read_unaligned(data.as_ptr().add(base) as *const u64),
+        );
+        lane_idx = lane_idx.strict_add(1);
+      }
+      i = i.strict_add(8);
+    } else {
+      let mut lane_idx: usize = 0;
+      while lane_idx < N {
+        let base = lane_idx.strict_mul(chunk_len).strict_add(i);
+        lanes[lane_idx] = __crc32b(lanes[lane_idx], *data.get_unchecked(base));
+        lane_idx = lane_idx.strict_add(1);
+      }
+      i = i.strict_add(1);
+    }
+  }
+
+  let tail_start = chunk_len.strict_mul(N);
+  if tail_start < len {
+    lanes[N - 1] = crc32_armv8(lanes[N - 1], data.get_unchecked(tail_start..));
+  }
+
+  let mut data_crc_final: u32 = 0;
+  let mut lane_idx: usize = 0;
+  while lane_idx < N {
+    let lane_len = if lane_idx.strict_add(1) == N {
+      len.strict_sub(chunk_len.strict_mul(lane_idx))
+    } else {
+      chunk_len
+    };
+    data_crc_final =
+      crate::common::combine::combine_crc32(data_crc_final, lanes[lane_idx] ^ !0, lane_len, CRC32_SHIFT8_MATRIX);
+    lane_idx = lane_idx.strict_add(1);
+  }
+
+  let boundary_final = crc ^ !0;
+  let combined_final = crate::common::combine::combine_crc32(boundary_final, data_crc_final, len, CRC32_SHIFT8_MATRIX);
+  combined_final ^ !0
+}
+
+#[inline]
+#[target_feature(enable = "crc")]
+unsafe fn crc32c_armv8_nway<const N: usize>(crc: u32, data: &[u8]) -> u32 {
+  debug_assert!(N == 2 || N == 3);
+
+  let len = data.len();
+  if len < N.strict_mul(256) {
+    return crc32c_armv8(crc, data);
+  }
+
+  let chunk_len = len / N;
+  let mut lanes = [!0u32; N];
+
+  let mut i: usize = 0;
+  while i < chunk_len {
+    if i.strict_add(8) <= chunk_len {
+      let mut lane_idx: usize = 0;
+      while lane_idx < N {
+        let base = lane_idx.strict_mul(chunk_len).strict_add(i);
+        lanes[lane_idx] = __crc32cd(
+          lanes[lane_idx],
+          ptr::read_unaligned(data.as_ptr().add(base) as *const u64),
+        );
+        lane_idx = lane_idx.strict_add(1);
+      }
+      i = i.strict_add(8);
+    } else {
+      let mut lane_idx: usize = 0;
+      while lane_idx < N {
+        let base = lane_idx.strict_mul(chunk_len).strict_add(i);
+        lanes[lane_idx] = __crc32cb(lanes[lane_idx], *data.get_unchecked(base));
+        lane_idx = lane_idx.strict_add(1);
+      }
+      i = i.strict_add(1);
+    }
+  }
+
+  let tail_start = chunk_len.strict_mul(N);
+  if tail_start < len {
+    lanes[N - 1] = crc32c_armv8(lanes[N - 1], data.get_unchecked(tail_start..));
+  }
+
+  let mut data_crc_final: u32 = 0;
+  let mut lane_idx: usize = 0;
+  while lane_idx < N {
+    let lane_len = if lane_idx.strict_add(1) == N {
+      len.strict_sub(chunk_len.strict_mul(lane_idx))
+    } else {
+      chunk_len
+    };
+    data_crc_final =
+      crate::common::combine::combine_crc32(data_crc_final, lanes[lane_idx] ^ !0, lane_len, CRC32C_SHIFT8_MATRIX);
+    lane_idx = lane_idx.strict_add(1);
+  }
+
+  let boundary_final = crc ^ !0;
+  let combined_final = crate::common::combine::combine_crc32(boundary_final, data_crc_final, len, CRC32C_SHIFT8_MATRIX);
+  combined_final ^ !0
+}
+
+#[inline]
+pub fn crc32_armv8_2way_safe(crc: u32, data: &[u8]) -> u32 {
+  // SAFETY: Dispatcher verifies CRC extension before selecting this kernel.
+  unsafe { crc32_armv8_nway::<2>(crc, data) }
+}
+
+#[inline]
+pub fn crc32_armv8_3way_safe(crc: u32, data: &[u8]) -> u32 {
+  // SAFETY: Dispatcher verifies CRC extension before selecting this kernel.
+  unsafe { crc32_armv8_nway::<3>(crc, data) }
+}
+
+#[inline]
+pub fn crc32c_armv8_2way_safe(crc: u32, data: &[u8]) -> u32 {
+  // SAFETY: Dispatcher verifies CRC extension before selecting this kernel.
+  unsafe { crc32c_armv8_nway::<2>(crc, data) }
+}
+
+#[inline]
+pub fn crc32c_armv8_3way_safe(crc: u32, data: &[u8]) -> u32 {
+  // SAFETY: Dispatcher verifies CRC extension before selecting this kernel.
+  unsafe { crc32c_armv8_nway::<3>(crc, data) }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

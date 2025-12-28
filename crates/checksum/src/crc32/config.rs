@@ -58,7 +58,7 @@ pub struct Crc32Tunables {
   pub fusion_to_avx512: usize,
   /// Bytes where VPCLMUL fusion becomes worthwhile (x86_64 only).
   pub fusion_to_vpclmul: usize,
-  /// Preferred number of independent streams (reserved for future fusion kernels).
+  /// Preferred number of independent streams (used by multi-stream kernels where available).
   pub streams: u8,
 }
 
@@ -230,7 +230,7 @@ fn clamp_force_to_caps(requested: Crc32Force, caps: Caps) -> Crc32Force {
 #[inline]
 #[must_use]
 fn tuned_defaults(caps: Caps, tune: Tune) -> Crc32Tunables {
-  let _ = caps;
+  let streams = default_crc32_streams(caps, tune);
   let fusion_to_avx512 = tune.simd_threshold;
   let fusion_to_vpclmul = if tune.fast_wide_ops {
     tune.simd_threshold
@@ -242,7 +242,37 @@ fn tuned_defaults(caps: Caps, tune: Tune) -> Crc32Tunables {
     hwcrc_to_fusion: tune.pclmul_threshold,
     fusion_to_avx512,
     fusion_to_vpclmul,
-    streams: 1,
+    streams,
+  }
+}
+
+#[inline]
+#[must_use]
+fn default_crc32_streams(caps: Caps, tune: Tune) -> u8 {
+  // Follow the CRC64 defaults: map the platform's estimated ILP to our supported
+  // stream slots (x86: 1/2/4/7/8, aarch64: 1/2/3).
+  #[cfg(target_arch = "x86_64")]
+  {
+    let _ = caps;
+    match tune.parallel_streams {
+      0 | 1 => 1,
+      2 => 2,
+      3 => 4,
+      4..=6 => 7,
+      _ => 8,
+    }
+  }
+
+  #[cfg(target_arch = "aarch64")]
+  {
+    let _ = caps;
+    tune.parallel_streams.clamp(1, 3)
+  }
+
+  #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+  {
+    let _ = (caps, tune);
+    1
   }
 }
 
