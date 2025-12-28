@@ -38,24 +38,58 @@ const CRC32C_SHIFT8_MATRIX: Gf2Matrix32 = generate_shift8_matrix_32(CRC32C_POLY)
 #[target_feature(enable = "crc")]
 unsafe fn crc32_armv8(crc: u32, data: &[u8]) -> u32 {
   let mut state = crc;
+  let mut buf = data.as_ptr();
+  let mut len = data.len();
 
-  let (chunks8, tail8) = data.as_chunks::<8>();
-  for chunk in chunks8 {
-    state = __crc32d(state, u64::from_le_bytes(*chunk));
+  // Align to 8-byte boundary for the hot loop.
+  while len > 0 && (buf as usize & 7) != 0 {
+    state = __crc32b(state, *buf);
+    buf = buf.add(1);
+    len = len.strict_sub(1);
   }
 
-  let (chunks4, tail4) = tail8.as_chunks::<4>();
-  for chunk in chunks4 {
-    state = __crc32w(state, u32::from_le_bytes(*chunk));
+  while len >= 64 {
+    state = __crc32d(state, ptr::read_unaligned(buf as *const u64));
+    state = __crc32d(state, ptr::read_unaligned(buf.add(8) as *const u64));
+    state = __crc32d(state, ptr::read_unaligned(buf.add(16) as *const u64));
+    state = __crc32d(state, ptr::read_unaligned(buf.add(24) as *const u64));
+    state = __crc32d(state, ptr::read_unaligned(buf.add(32) as *const u64));
+    state = __crc32d(state, ptr::read_unaligned(buf.add(40) as *const u64));
+    state = __crc32d(state, ptr::read_unaligned(buf.add(48) as *const u64));
+    state = __crc32d(state, ptr::read_unaligned(buf.add(56) as *const u64));
+    buf = buf.add(64);
+    len = len.strict_sub(64);
   }
 
-  let (chunks2, tail2) = tail4.as_chunks::<2>();
-  for chunk in chunks2 {
-    state = __crc32h(state, u16::from_le_bytes(*chunk));
+  while len >= 32 {
+    state = __crc32d(state, ptr::read_unaligned(buf as *const u64));
+    state = __crc32d(state, ptr::read_unaligned(buf.add(8) as *const u64));
+    state = __crc32d(state, ptr::read_unaligned(buf.add(16) as *const u64));
+    state = __crc32d(state, ptr::read_unaligned(buf.add(24) as *const u64));
+    buf = buf.add(32);
+    len = len.strict_sub(32);
   }
 
-  for &b in tail2 {
-    state = __crc32b(state, b);
+  while len >= 8 {
+    state = __crc32d(state, ptr::read_unaligned(buf as *const u64));
+    buf = buf.add(8);
+    len = len.strict_sub(8);
+  }
+
+  if len >= 4 {
+    state = __crc32w(state, ptr::read_unaligned(buf as *const u32));
+    buf = buf.add(4);
+    len = len.strict_sub(4);
+  }
+
+  if len >= 2 {
+    state = __crc32h(state, ptr::read_unaligned(buf as *const u16));
+    buf = buf.add(2);
+    len = len.strict_sub(2);
+  }
+
+  if len > 0 {
+    state = __crc32b(state, *buf);
   }
 
   state
@@ -68,24 +102,58 @@ unsafe fn crc32_armv8(crc: u32, data: &[u8]) -> u32 {
 #[target_feature(enable = "crc")]
 unsafe fn crc32c_armv8(crc: u32, data: &[u8]) -> u32 {
   let mut state = crc;
+  let mut buf = data.as_ptr();
+  let mut len = data.len();
 
-  let (chunks8, tail8) = data.as_chunks::<8>();
-  for chunk in chunks8 {
-    state = __crc32cd(state, u64::from_le_bytes(*chunk));
+  // Align to 8-byte boundary for the hot loop.
+  while len > 0 && (buf as usize & 7) != 0 {
+    state = __crc32cb(state, *buf);
+    buf = buf.add(1);
+    len = len.strict_sub(1);
   }
 
-  let (chunks4, tail4) = tail8.as_chunks::<4>();
-  for chunk in chunks4 {
-    state = __crc32cw(state, u32::from_le_bytes(*chunk));
+  while len >= 64 {
+    state = __crc32cd(state, ptr::read_unaligned(buf as *const u64));
+    state = __crc32cd(state, ptr::read_unaligned(buf.add(8) as *const u64));
+    state = __crc32cd(state, ptr::read_unaligned(buf.add(16) as *const u64));
+    state = __crc32cd(state, ptr::read_unaligned(buf.add(24) as *const u64));
+    state = __crc32cd(state, ptr::read_unaligned(buf.add(32) as *const u64));
+    state = __crc32cd(state, ptr::read_unaligned(buf.add(40) as *const u64));
+    state = __crc32cd(state, ptr::read_unaligned(buf.add(48) as *const u64));
+    state = __crc32cd(state, ptr::read_unaligned(buf.add(56) as *const u64));
+    buf = buf.add(64);
+    len = len.strict_sub(64);
   }
 
-  let (chunks2, tail2) = tail4.as_chunks::<2>();
-  for chunk in chunks2 {
-    state = __crc32ch(state, u16::from_le_bytes(*chunk));
+  while len >= 32 {
+    state = __crc32cd(state, ptr::read_unaligned(buf as *const u64));
+    state = __crc32cd(state, ptr::read_unaligned(buf.add(8) as *const u64));
+    state = __crc32cd(state, ptr::read_unaligned(buf.add(16) as *const u64));
+    state = __crc32cd(state, ptr::read_unaligned(buf.add(24) as *const u64));
+    buf = buf.add(32);
+    len = len.strict_sub(32);
   }
 
-  for &b in tail2 {
-    state = __crc32cb(state, b);
+  while len >= 8 {
+    state = __crc32cd(state, ptr::read_unaligned(buf as *const u64));
+    buf = buf.add(8);
+    len = len.strict_sub(8);
+  }
+
+  if len >= 4 {
+    state = __crc32cw(state, ptr::read_unaligned(buf as *const u32));
+    buf = buf.add(4);
+    len = len.strict_sub(4);
+  }
+
+  if len >= 2 {
+    state = __crc32ch(state, ptr::read_unaligned(buf as *const u16));
+    buf = buf.add(2);
+    len = len.strict_sub(2);
+  }
+
+  if len > 0 {
+    state = __crc32cb(state, *buf);
   }
 
   state
@@ -254,19 +322,23 @@ pub fn crc32c_armv8_3way_safe(crc: u32, data: &[u8]) -> u32 {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Fusion Multi-stream Wrappers (CRC + PMULL [+EOR3])
+// "SVE2 PMULL" Tier (ILP-oriented split + combine)
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Round-robin scheduling across independent lanes to expose ILP.
-const CRC32_FUSION_STRIPE_BYTES: usize = 1024;
-const CRC32_FOLD_BLOCK_BYTES: usize = 128;
+// Round-robin scheduling across independent CRC states to expose ILP.
+const CRC32_SVE2_PMULL_STRIPE_BYTES: usize = 1024;
 
 #[inline]
-fn crc32_fusion_nway<const N: usize>(crc: u32, data: &[u8], update: fn(u32, &[u8]) -> u32, shift8: Gf2Matrix32) -> u32 {
+fn crc32_sve2_pmull_nway<const N: usize>(
+  crc: u32,
+  data: &[u8],
+  update: fn(u32, &[u8]) -> u32,
+  shift8: Gf2Matrix32,
+) -> u32 {
   debug_assert!(N == 2 || N == 3);
 
   let len = data.len();
-  if len < N.strict_mul(2 * CRC32_FOLD_BLOCK_BYTES) {
+  if len < N.strict_mul(192) {
     return update(crc, data);
   }
 
@@ -276,7 +348,7 @@ fn crc32_fusion_nway<const N: usize>(crc: u32, data: &[u8], update: fn(u32, &[u8
   let mut offset: usize = 0;
   while offset < chunk_len {
     let remaining = chunk_len.strict_sub(offset);
-    let step = remaining.min(CRC32_FUSION_STRIPE_BYTES);
+    let step = remaining.min(CRC32_SVE2_PMULL_STRIPE_BYTES);
 
     let mut lane_idx: usize = 0;
     while lane_idx < N {
@@ -296,8 +368,9 @@ fn crc32_fusion_nway<const N: usize>(crc: u32, data: &[u8], update: fn(u32, &[u8
   let mut data_crc_final: u32 = 0;
   let mut lane_idx: usize = 0;
   while lane_idx < N {
+    let start = lane_idx.strict_mul(chunk_len);
     let lane_len = if lane_idx.strict_add(1) == N {
-      len.strict_sub(chunk_len.strict_mul(lane_idx))
+      len.strict_sub(start)
     } else {
       chunk_len
     };
@@ -311,53 +384,23 @@ fn crc32_fusion_nway<const N: usize>(crc: u32, data: &[u8], update: fn(u32, &[u8
 }
 
 #[inline]
-pub fn crc32_iso_hdlc_pmull_v12e_v1_2way_safe(crc: u32, data: &[u8]) -> u32 {
-  crc32_fusion_nway::<2>(crc, data, crc32_iso_hdlc_pmull_v12e_v1_safe, CRC32_SHIFT8_MATRIX)
+pub fn crc32_iso_hdlc_sve2_pmull_2way_safe(crc: u32, data: &[u8]) -> u32 {
+  crc32_sve2_pmull_nway::<2>(crc, data, crc32_iso_hdlc_pmull_v12e_v1_safe, CRC32_SHIFT8_MATRIX)
 }
 
 #[inline]
-pub fn crc32_iso_hdlc_pmull_v12e_v1_3way_safe(crc: u32, data: &[u8]) -> u32 {
-  crc32_fusion_nway::<3>(crc, data, crc32_iso_hdlc_pmull_v12e_v1_safe, CRC32_SHIFT8_MATRIX)
+pub fn crc32_iso_hdlc_sve2_pmull_3way_safe(crc: u32, data: &[u8]) -> u32 {
+  crc32_sve2_pmull_nway::<3>(crc, data, crc32_iso_hdlc_pmull_v12e_v1_safe, CRC32_SHIFT8_MATRIX)
 }
 
 #[inline]
-pub fn crc32c_iscsi_pmull_v12e_v1_2way_safe(crc: u32, data: &[u8]) -> u32 {
-  crc32_fusion_nway::<2>(crc, data, crc32c_iscsi_pmull_v12e_v1_safe, CRC32C_SHIFT8_MATRIX)
+pub fn crc32c_iscsi_sve2_pmull_2way_safe(crc: u32, data: &[u8]) -> u32 {
+  crc32_sve2_pmull_nway::<2>(crc, data, crc32c_iscsi_pmull_v12e_v1_safe, CRC32C_SHIFT8_MATRIX)
 }
 
 #[inline]
-pub fn crc32c_iscsi_pmull_v12e_v1_3way_safe(crc: u32, data: &[u8]) -> u32 {
-  crc32_fusion_nway::<3>(crc, data, crc32c_iscsi_pmull_v12e_v1_safe, CRC32C_SHIFT8_MATRIX)
-}
-
-#[inline]
-pub fn crc32_iso_hdlc_pmull_eor3_v9s3x2e_s3_2way_safe(crc: u32, data: &[u8]) -> u32 {
-  crc32_fusion_nway::<2>(
-    crc,
-    data,
-    crc32_iso_hdlc_pmull_eor3_v9s3x2e_s3_safe,
-    CRC32_SHIFT8_MATRIX,
-  )
-}
-
-#[inline]
-pub fn crc32_iso_hdlc_pmull_eor3_v9s3x2e_s3_3way_safe(crc: u32, data: &[u8]) -> u32 {
-  crc32_fusion_nway::<3>(
-    crc,
-    data,
-    crc32_iso_hdlc_pmull_eor3_v9s3x2e_s3_safe,
-    CRC32_SHIFT8_MATRIX,
-  )
-}
-
-#[inline]
-pub fn crc32c_iscsi_pmull_eor3_v9s3x2e_s3_2way_safe(crc: u32, data: &[u8]) -> u32 {
-  crc32_fusion_nway::<2>(crc, data, crc32c_iscsi_pmull_eor3_v9s3x2e_s3_safe, CRC32C_SHIFT8_MATRIX)
-}
-
-#[inline]
-pub fn crc32c_iscsi_pmull_eor3_v9s3x2e_s3_3way_safe(crc: u32, data: &[u8]) -> u32 {
-  crc32_fusion_nway::<3>(crc, data, crc32c_iscsi_pmull_eor3_v9s3x2e_s3_safe, CRC32C_SHIFT8_MATRIX)
+pub fn crc32c_iscsi_sve2_pmull_3way_safe(crc: u32, data: &[u8]) -> u32 {
+  crc32_sve2_pmull_nway::<3>(crc, data, crc32c_iscsi_pmull_v12e_v1_safe, CRC32C_SHIFT8_MATRIX)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -20,6 +20,9 @@ mod x86_64;
 #[cfg(target_arch = "aarch64")]
 mod aarch64;
 
+#[cfg(all(feature = "std", any(target_arch = "x86_64", target_arch = "aarch64")))]
+use std::sync::OnceLock;
+
 use backend::dispatch::Selected;
 #[allow(unused_imports)]
 pub use config::{Crc32Config, Crc32Force, Crc32Tunables};
@@ -60,6 +63,11 @@ fn crc32c_portable(crc: u32, data: &[u8]) -> u32 {
 // Folding block sizing (used by SIMD tiers and stream gating).
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 const CRC32_FOLD_BLOCK_BYTES: usize = 128;
+
+// AArch64 PMULL fusion kernels have a fairly high fixed overhead and only hit
+// their fast path once they have enough data to amortize setup.
+#[cfg(target_arch = "aarch64")]
+const CRC32_AARCH64_FUSION_MIN_BYTES: usize = 192;
 
 // Buffered wrappers use this to decide when to flush/process in larger chunks.
 //
@@ -134,6 +142,65 @@ const fn aarch64_streams_for_len(len: usize, streams: u8) -> u8 {
   1
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Cached Dispatch Params (std-only hot path)
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[cfg(all(feature = "std", target_arch = "aarch64"))]
+#[derive(Clone, Copy, Debug)]
+struct Crc32Aarch64Auto {
+  portable_to_hwcrc: usize,
+  hwcrc_to_fusion: usize,
+  streams: u8,
+  has_pmull: bool,
+  has_pmull_eor3: bool,
+}
+
+#[cfg(all(feature = "std", target_arch = "aarch64"))]
+static CRC32_AARCH64_AUTO: OnceLock<Crc32Aarch64Auto> = OnceLock::new();
+#[cfg(all(feature = "std", target_arch = "aarch64"))]
+static CRC32C_AARCH64_AUTO: OnceLock<Crc32Aarch64Auto> = OnceLock::new();
+
+#[cfg(all(feature = "std", target_arch = "aarch64"))]
+static CRC32_AARCH64_STREAMS: OnceLock<u8> = OnceLock::new();
+#[cfg(all(feature = "std", target_arch = "aarch64"))]
+static CRC32C_AARCH64_STREAMS: OnceLock<u8> = OnceLock::new();
+
+#[cfg(all(feature = "std", target_arch = "x86_64"))]
+#[derive(Clone, Copy, Debug)]
+struct Crc32X86Auto {
+  hwcrc_to_fusion: usize,
+  fusion_to_vpclmul: usize,
+  streams: u8,
+  has_pclmul: bool,
+  has_vpclmul: bool,
+}
+
+#[cfg(all(feature = "std", target_arch = "x86_64"))]
+#[derive(Clone, Copy, Debug)]
+struct Crc32cX86Auto {
+  portable_to_hwcrc: usize,
+  hwcrc_to_fusion: usize,
+  fusion_to_avx512: usize,
+  fusion_to_vpclmul: usize,
+  streams: u8,
+  has_crc32c: bool,
+  has_pclmul: bool,
+  has_vpclmul: bool,
+  has_avx512: bool,
+  has_pclmulqdq: bool,
+}
+
+#[cfg(all(feature = "std", target_arch = "x86_64"))]
+static CRC32_X86_AUTO: OnceLock<Crc32X86Auto> = OnceLock::new();
+#[cfg(all(feature = "std", target_arch = "x86_64"))]
+static CRC32C_X86_AUTO: OnceLock<Crc32cX86Auto> = OnceLock::new();
+
+#[cfg(all(feature = "std", target_arch = "x86_64"))]
+static CRC32_X86_STREAMS: OnceLock<u8> = OnceLock::new();
+#[cfg(all(feature = "std", target_arch = "x86_64"))]
+static CRC32C_X86_STREAMS: OnceLock<u8> = OnceLock::new();
+
 #[inline]
 #[must_use]
 pub(crate) fn crc32_selected_kernel_name(len: usize) -> &'static str {
@@ -192,6 +259,13 @@ pub(crate) fn crc32_selected_kernel_name(len: usize) -> &'static str {
         }
         return kernels::PORTABLE;
       }
+      Crc32Force::Sve2Pmull
+        if caps.has(platform::caps::aarch64::SVE2_PMULL)
+          && caps.has(platform::caps::aarch64::PMULL_READY)
+          && caps.has(platform::caps::aarch64::CRC_READY) =>
+      {
+        return kernels::select_name(CRC32_SVE2_PMULL_NAMES, None, streams, len, CRC32_FOLD_BLOCK_BYTES);
+      }
       Crc32Force::Hwcrc => {
         if caps.has(platform::caps::aarch64::CRC_READY) {
           return kernels::select_name(CRC32_HWCRC_NAMES, None, streams, len, CRC32_FOLD_BLOCK_BYTES);
@@ -202,7 +276,7 @@ pub(crate) fn crc32_selected_kernel_name(len: usize) -> &'static str {
     }
 
     // Auto selection: prefer fusion above threshold, otherwise HWCRC.
-    if len >= cfg.tunables.hwcrc_to_fusion {
+    if len >= cfg.tunables.hwcrc_to_fusion && len >= CRC32_AARCH64_FUSION_MIN_BYTES {
       if caps.has(platform::caps::aarch64::PMULL_EOR3_READY) {
         return kernels::select_name(CRC32_PMULL_EOR3_NAMES, None, streams, len, CRC32_FOLD_BLOCK_BYTES);
       }
@@ -292,6 +366,13 @@ pub(crate) fn crc32c_selected_kernel_name(len: usize) -> &'static str {
         }
         return kernels::PORTABLE;
       }
+      Crc32Force::Sve2Pmull
+        if caps.has(platform::caps::aarch64::SVE2_PMULL)
+          && caps.has(platform::caps::aarch64::PMULL_READY)
+          && caps.has(platform::caps::aarch64::CRC_READY) =>
+      {
+        return kernels::select_name(CRC32C_SVE2_PMULL_NAMES, None, streams, len, CRC32_FOLD_BLOCK_BYTES);
+      }
       Crc32Force::Hwcrc => {
         if caps.has(platform::caps::aarch64::CRC_READY) {
           return kernels::select_name(CRC32C_HWCRC_NAMES, None, streams, len, CRC32_FOLD_BLOCK_BYTES);
@@ -302,7 +383,7 @@ pub(crate) fn crc32c_selected_kernel_name(len: usize) -> &'static str {
     }
 
     // Auto selection: prefer fusion above threshold, otherwise HWCRC.
-    if len >= cfg.tunables.hwcrc_to_fusion {
+    if len >= cfg.tunables.hwcrc_to_fusion && len >= CRC32_AARCH64_FUSION_MIN_BYTES {
       if caps.has(platform::caps::aarch64::PMULL_EOR3_READY) {
         return kernels::select_name(CRC32C_PMULL_EOR3_NAMES, None, streams, len, CRC32_FOLD_BLOCK_BYTES);
       }
@@ -323,7 +404,7 @@ pub(crate) fn crc32c_selected_kernel_name(len: usize) -> &'static str {
 // Auto Kernels (architecture-specific)
 // ─────────────────────────────────────────────────────────────────────────────
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", not(feature = "std")))]
 fn crc32c_x86_64_auto(crc: u32, data: &[u8]) -> u32 {
   let cfg = config::get();
   let caps = platform::caps();
@@ -381,7 +462,49 @@ fn crc32c_x86_64_auto(crc: u32, data: &[u8]) -> u32 {
   crc32c_portable(crc, data)
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", feature = "std"))]
+fn crc32c_x86_64_auto(crc: u32, data: &[u8]) -> u32 {
+  let params = *CRC32C_X86_AUTO.get_or_init(|| {
+    let cfg = config::get();
+    let caps = platform::caps();
+    Crc32cX86Auto {
+      portable_to_hwcrc: cfg.tunables.portable_to_hwcrc,
+      hwcrc_to_fusion: cfg.tunables.hwcrc_to_fusion,
+      fusion_to_avx512: cfg.tunables.fusion_to_avx512,
+      fusion_to_vpclmul: cfg.tunables.fusion_to_vpclmul,
+      streams: cfg.tunables.streams,
+      has_crc32c: caps.has(platform::caps::x86::CRC32C_READY),
+      has_pclmul: caps.has(platform::caps::x86::PCLMUL_READY),
+      has_vpclmul: caps.has(platform::caps::x86::VPCLMUL_READY),
+      has_avx512: caps.has(platform::caps::x86::AVX512_READY),
+      has_pclmulqdq: caps.has(platform::caps::x86::PCLMULQDQ),
+    }
+  });
+  let len = data.len();
+
+  if !params.has_crc32c || len < params.portable_to_hwcrc {
+    return crc32c_portable(crc, data);
+  }
+
+  use kernels::x86_64::*;
+  let streams = x86_streams_for_len(len, params.streams);
+
+  if len >= params.hwcrc_to_fusion {
+    if params.has_vpclmul && len >= params.fusion_to_vpclmul {
+      return kernels::dispatch_streams(&CRC32C_FUSION_VPCLMUL, streams, crc, data);
+    }
+    if params.has_avx512 && len >= params.fusion_to_avx512 && params.has_pclmulqdq {
+      return kernels::dispatch_streams(&CRC32C_FUSION_AVX512, streams, crc, data);
+    }
+    if params.has_pclmul {
+      return kernels::dispatch_streams(&CRC32C_FUSION_SSE, streams, crc, data);
+    }
+  }
+
+  kernels::dispatch_streams(&CRC32C_HWCRC, streams, crc, data)
+}
+
+#[cfg(all(target_arch = "x86_64", not(feature = "std")))]
 fn crc32_x86_64_auto(crc: u32, data: &[u8]) -> u32 {
   let cfg = config::get();
   let caps = platform::caps();
@@ -421,7 +544,35 @@ fn crc32_x86_64_auto(crc: u32, data: &[u8]) -> u32 {
   crc32_portable(crc, data)
 }
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "x86_64", feature = "std"))]
+fn crc32_x86_64_auto(crc: u32, data: &[u8]) -> u32 {
+  let params = *CRC32_X86_AUTO.get_or_init(|| {
+    let cfg = config::get();
+    let caps = platform::caps();
+    Crc32X86Auto {
+      hwcrc_to_fusion: cfg.tunables.hwcrc_to_fusion,
+      fusion_to_vpclmul: cfg.tunables.fusion_to_vpclmul,
+      streams: cfg.tunables.streams,
+      has_pclmul: caps.has(platform::caps::x86::PCLMUL_READY),
+      has_vpclmul: caps.has(platform::caps::x86::VPCLMUL_READY),
+    }
+  });
+  let len = data.len();
+
+  if !params.has_pclmul || len < params.hwcrc_to_fusion {
+    return crc32_portable(crc, data);
+  }
+
+  use kernels::x86_64::*;
+  let streams = x86_streams_for_len(len, params.streams);
+
+  if params.has_vpclmul && len >= params.fusion_to_vpclmul {
+    return kernels::dispatch_streams(&CRC32_VPCLMUL, streams, crc, data);
+  }
+  kernels::dispatch_streams(&CRC32_PCLMUL, streams, crc, data)
+}
+
+#[cfg(all(target_arch = "aarch64", not(feature = "std")))]
 fn crc32_aarch64_auto(crc: u32, data: &[u8]) -> u32 {
   let cfg = config::get();
   let caps = platform::caps();
@@ -449,6 +600,12 @@ fn crc32_aarch64_auto(crc: u32, data: &[u8]) -> u32 {
       }
       return crc32_portable(crc, data);
     }
+    Crc32Force::Sve2Pmull => {
+      if caps.has(platform::caps::aarch64::SVE2_PMULL) && caps.has(platform::caps::aarch64::PMULL_READY) {
+        return kernels::dispatch_streams(&CRC32_SVE2_PMULL, streams, crc, data);
+      }
+      return crc32_portable(crc, data);
+    }
     Crc32Force::Hwcrc => {
       if caps.has(platform::caps::aarch64::CRC_READY) {
         return kernels::dispatch_streams(&CRC32_HWCRC, streams, crc, data);
@@ -459,7 +616,7 @@ fn crc32_aarch64_auto(crc: u32, data: &[u8]) -> u32 {
   }
 
   if caps.has(platform::caps::aarch64::CRC_READY) {
-    if len >= cfg.tunables.hwcrc_to_fusion {
+    if len >= cfg.tunables.hwcrc_to_fusion && len >= CRC32_AARCH64_FUSION_MIN_BYTES {
       if caps.has(platform::caps::aarch64::PMULL_EOR3_READY) {
         return kernels::dispatch_streams(&CRC32_PMULL_EOR3, streams, crc, data);
       }
@@ -473,7 +630,41 @@ fn crc32_aarch64_auto(crc: u32, data: &[u8]) -> u32 {
   crc32_portable(crc, data)
 }
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "aarch64", feature = "std"))]
+fn crc32_aarch64_auto(crc: u32, data: &[u8]) -> u32 {
+  let params = *CRC32_AARCH64_AUTO.get_or_init(|| {
+    let cfg = config::get();
+    let caps = platform::caps();
+    Crc32Aarch64Auto {
+      portable_to_hwcrc: cfg.tunables.portable_to_hwcrc,
+      hwcrc_to_fusion: cfg.tunables.hwcrc_to_fusion,
+      streams: cfg.tunables.streams,
+      has_pmull: caps.has(platform::caps::aarch64::PMULL_READY),
+      has_pmull_eor3: caps.has(platform::caps::aarch64::PMULL_EOR3_READY),
+    }
+  });
+  let len = data.len();
+
+  if len < params.portable_to_hwcrc {
+    return crc32_portable(crc, data);
+  }
+
+  use kernels::aarch64::*;
+  let streams = aarch64_streams_for_len(len, params.streams);
+
+  if len >= params.hwcrc_to_fusion && len >= CRC32_AARCH64_FUSION_MIN_BYTES {
+    if params.has_pmull_eor3 {
+      return kernels::dispatch_streams(&CRC32_PMULL_EOR3, streams, crc, data);
+    }
+    if params.has_pmull {
+      return kernels::dispatch_streams(&CRC32_PMULL, streams, crc, data);
+    }
+  }
+
+  kernels::dispatch_streams(&CRC32_HWCRC, streams, crc, data)
+}
+
+#[cfg(all(target_arch = "aarch64", not(feature = "std")))]
 fn crc32c_aarch64_auto(crc: u32, data: &[u8]) -> u32 {
   let cfg = config::get();
   let caps = platform::caps();
@@ -501,6 +692,12 @@ fn crc32c_aarch64_auto(crc: u32, data: &[u8]) -> u32 {
       }
       return crc32c_portable(crc, data);
     }
+    Crc32Force::Sve2Pmull => {
+      if caps.has(platform::caps::aarch64::SVE2_PMULL) && caps.has(platform::caps::aarch64::PMULL_READY) {
+        return kernels::dispatch_streams(&CRC32C_SVE2_PMULL, streams, crc, data);
+      }
+      return crc32c_portable(crc, data);
+    }
     Crc32Force::Hwcrc => {
       if caps.has(platform::caps::aarch64::CRC_READY) {
         return kernels::dispatch_streams(&CRC32C_HWCRC, streams, crc, data);
@@ -511,7 +708,7 @@ fn crc32c_aarch64_auto(crc: u32, data: &[u8]) -> u32 {
   }
 
   if caps.has(platform::caps::aarch64::CRC_READY) {
-    if len >= cfg.tunables.hwcrc_to_fusion {
+    if len >= cfg.tunables.hwcrc_to_fusion && len >= CRC32_AARCH64_FUSION_MIN_BYTES {
       if caps.has(platform::caps::aarch64::PMULL_EOR3_READY) {
         return kernels::dispatch_streams(&CRC32C_PMULL_EOR3, streams, crc, data);
       }
@@ -525,6 +722,125 @@ fn crc32c_aarch64_auto(crc: u32, data: &[u8]) -> u32 {
   crc32c_portable(crc, data)
 }
 
+#[cfg(all(target_arch = "aarch64", feature = "std"))]
+fn crc32c_aarch64_auto(crc: u32, data: &[u8]) -> u32 {
+  let params = *CRC32C_AARCH64_AUTO.get_or_init(|| {
+    let cfg = config::get();
+    let caps = platform::caps();
+    Crc32Aarch64Auto {
+      portable_to_hwcrc: cfg.tunables.portable_to_hwcrc,
+      hwcrc_to_fusion: cfg.tunables.hwcrc_to_fusion,
+      streams: cfg.tunables.streams,
+      has_pmull: caps.has(platform::caps::aarch64::PMULL_READY),
+      has_pmull_eor3: caps.has(platform::caps::aarch64::PMULL_EOR3_READY),
+    }
+  });
+  let len = data.len();
+
+  if len < params.portable_to_hwcrc {
+    return crc32c_portable(crc, data);
+  }
+
+  use kernels::aarch64::*;
+  let streams = aarch64_streams_for_len(len, params.streams);
+
+  if len >= params.hwcrc_to_fusion && len >= CRC32_AARCH64_FUSION_MIN_BYTES {
+    if params.has_pmull_eor3 {
+      return kernels::dispatch_streams(&CRC32C_PMULL_EOR3, streams, crc, data);
+    }
+    if params.has_pmull {
+      return kernels::dispatch_streams(&CRC32C_PMULL, streams, crc, data);
+    }
+  }
+
+  kernels::dispatch_streams(&CRC32C_HWCRC, streams, crc, data)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Forced Kernels (std-only hot path)
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[cfg(all(target_arch = "aarch64", feature = "std"))]
+fn crc32_aarch64_hwcrc_forced(crc: u32, data: &[u8]) -> u32 {
+  use kernels::aarch64::*;
+  let len = data.len();
+  let streams_cfg = CRC32_AARCH64_STREAMS.get().copied().unwrap_or(1);
+  let streams = aarch64_streams_for_len(len, streams_cfg);
+  kernels::dispatch_streams(&CRC32_HWCRC, streams, crc, data)
+}
+
+#[cfg(all(target_arch = "aarch64", feature = "std"))]
+fn crc32c_aarch64_hwcrc_forced(crc: u32, data: &[u8]) -> u32 {
+  use kernels::aarch64::*;
+  let len = data.len();
+  let streams_cfg = CRC32C_AARCH64_STREAMS.get().copied().unwrap_or(1);
+  let streams = aarch64_streams_for_len(len, streams_cfg);
+  kernels::dispatch_streams(&CRC32C_HWCRC, streams, crc, data)
+}
+
+#[cfg(all(target_arch = "aarch64", feature = "std"))]
+fn crc32_aarch64_sve2_pmull_forced(crc: u32, data: &[u8]) -> u32 {
+  use kernels::aarch64::*;
+  let len = data.len();
+  let streams_cfg = CRC32_AARCH64_STREAMS.get().copied().unwrap_or(1);
+  let streams = aarch64_streams_for_len(len, streams_cfg);
+  kernels::dispatch_streams(&CRC32_SVE2_PMULL, streams, crc, data)
+}
+
+#[cfg(all(target_arch = "aarch64", feature = "std"))]
+fn crc32c_aarch64_sve2_pmull_forced(crc: u32, data: &[u8]) -> u32 {
+  use kernels::aarch64::*;
+  let len = data.len();
+  let streams_cfg = CRC32C_AARCH64_STREAMS.get().copied().unwrap_or(1);
+  let streams = aarch64_streams_for_len(len, streams_cfg);
+  kernels::dispatch_streams(&CRC32C_SVE2_PMULL, streams, crc, data)
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "std"))]
+fn crc32_x86_64_pclmul_forced(crc: u32, data: &[u8]) -> u32 {
+  use kernels::x86_64::*;
+  let len = data.len();
+  let streams_cfg = CRC32_X86_STREAMS.get().copied().unwrap_or(1);
+  let streams = x86_streams_for_len(len, streams_cfg);
+  kernels::dispatch_streams(&CRC32_PCLMUL, streams, crc, data)
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "std"))]
+fn crc32_x86_64_vpclmul_forced(crc: u32, data: &[u8]) -> u32 {
+  use kernels::x86_64::*;
+  let len = data.len();
+  let streams_cfg = CRC32_X86_STREAMS.get().copied().unwrap_or(1);
+  let streams = x86_streams_for_len(len, streams_cfg);
+  kernels::dispatch_streams(&CRC32_VPCLMUL, streams, crc, data)
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "std"))]
+fn crc32c_x86_64_hwcrc_forced(crc: u32, data: &[u8]) -> u32 {
+  use kernels::x86_64::*;
+  let len = data.len();
+  let streams_cfg = CRC32C_X86_STREAMS.get().copied().unwrap_or(1);
+  let streams = x86_streams_for_len(len, streams_cfg);
+  kernels::dispatch_streams(&CRC32C_HWCRC, streams, crc, data)
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "std"))]
+fn crc32c_x86_64_pclmul_forced(crc: u32, data: &[u8]) -> u32 {
+  use kernels::x86_64::*;
+  let len = data.len();
+  let streams_cfg = CRC32C_X86_STREAMS.get().copied().unwrap_or(1);
+  let streams = x86_streams_for_len(len, streams_cfg);
+  kernels::dispatch_streams(&CRC32C_FUSION_SSE, streams, crc, data)
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "std"))]
+fn crc32c_x86_64_vpclmul_forced(crc: u32, data: &[u8]) -> u32 {
+  use kernels::x86_64::*;
+  let len = data.len();
+  let streams_cfg = CRC32C_X86_STREAMS.get().copied().unwrap_or(1);
+  let streams = x86_streams_for_len(len, streams_cfg);
+  kernels::dispatch_streams(&CRC32C_FUSION_VPCLMUL, streams, crc, data)
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Dispatcher Selection
 // ─────────────────────────────────────────────────────────────────────────────
@@ -532,16 +848,47 @@ fn crc32c_aarch64_auto(crc: u32, data: &[u8]) -> u32 {
 #[cfg(target_arch = "x86_64")]
 fn select_crc32() -> Selected<Crc32Fn> {
   let caps = platform::caps();
+  let cfg = config::get();
 
-  if config::get().effective_force == Crc32Force::Portable {
+  if cfg.effective_force == Crc32Force::Portable {
     return Selected::new(kernels::PORTABLE, crc32_portable);
   }
 
-  if caps.has(platform::caps::x86::PCLMUL_READY) {
-    return Selected::new("x86_64/auto", crc32_x86_64_auto);
+  #[cfg(feature = "std")]
+  {
+    let _ = CRC32_X86_STREAMS.get_or_init(|| cfg.tunables.streams);
+    match cfg.effective_force {
+      Crc32Force::Auto => {
+        if !caps.has(platform::caps::x86::PCLMUL_READY) {
+          Selected::new(kernels::PORTABLE, crc32_portable)
+        } else {
+          let _ = CRC32_X86_AUTO.get_or_init(|| Crc32X86Auto {
+            hwcrc_to_fusion: cfg.tunables.hwcrc_to_fusion,
+            fusion_to_vpclmul: cfg.tunables.fusion_to_vpclmul,
+            streams: cfg.tunables.streams,
+            has_pclmul: caps.has(platform::caps::x86::PCLMUL_READY),
+            has_vpclmul: caps.has(platform::caps::x86::VPCLMUL_READY),
+          });
+          Selected::new("x86_64/auto", crc32_x86_64_auto)
+        }
+      }
+      Crc32Force::Pclmul if caps.has(platform::caps::x86::PCLMUL_READY) => {
+        Selected::new("x86_64/crc32-pclmul", crc32_x86_64_pclmul_forced)
+      }
+      Crc32Force::Vpclmul if caps.has(platform::caps::x86::VPCLMUL_READY) => {
+        Selected::new("x86_64/crc32-vpclmul", crc32_x86_64_vpclmul_forced)
+      }
+      _ => Selected::new(kernels::PORTABLE, crc32_portable),
+    }
   }
 
-  Selected::new(kernels::PORTABLE, crc32_portable)
+  #[cfg(not(feature = "std"))]
+  {
+    if caps.has(platform::caps::x86::PCLMUL_READY) {
+      return Selected::new("x86_64/auto", crc32_x86_64_auto);
+    }
+    Selected::new(kernels::PORTABLE, crc32_portable)
+  }
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -553,11 +900,54 @@ fn select_crc32c() -> Selected<Crc32Fn> {
     return Selected::new(kernels::PORTABLE, crc32c_portable);
   }
 
-  if caps.has(platform::caps::x86::CRC32C_READY) {
-    return Selected::new("x86_64/auto", crc32c_x86_64_auto);
+  #[cfg(feature = "std")]
+  {
+    if !caps.has(platform::caps::x86::CRC32C_READY) {
+      return Selected::new(kernels::PORTABLE, crc32c_portable);
+    }
+
+    let _ = CRC32C_X86_STREAMS.get_or_init(|| cfg.tunables.streams);
+
+    match cfg.effective_force {
+      Crc32Force::Auto => {
+        let _ = CRC32C_X86_AUTO.get_or_init(|| Crc32cX86Auto {
+          portable_to_hwcrc: cfg.tunables.portable_to_hwcrc,
+          hwcrc_to_fusion: cfg.tunables.hwcrc_to_fusion,
+          fusion_to_avx512: cfg.tunables.fusion_to_avx512,
+          fusion_to_vpclmul: cfg.tunables.fusion_to_vpclmul,
+          streams: cfg.tunables.streams,
+          has_crc32c: caps.has(platform::caps::x86::CRC32C_READY),
+          has_pclmul: caps.has(platform::caps::x86::PCLMUL_READY),
+          has_vpclmul: caps.has(platform::caps::x86::VPCLMUL_READY),
+          has_avx512: caps.has(platform::caps::x86::AVX512_READY),
+          has_pclmulqdq: caps.has(platform::caps::x86::PCLMULQDQ),
+        });
+        Selected::new("x86_64/auto", crc32c_x86_64_auto)
+      }
+      Crc32Force::Hwcrc if caps.has(platform::caps::x86::CRC32C_READY) => {
+        Selected::new("x86_64/crc32c", crc32c_x86_64_hwcrc_forced)
+      }
+      Crc32Force::Pclmul
+        if caps.has(platform::caps::x86::CRC32C_READY) && caps.has(platform::caps::x86::PCLMUL_READY) =>
+      {
+        Selected::new("x86_64/crc32c-fusion-sse", crc32c_x86_64_pclmul_forced)
+      }
+      Crc32Force::Vpclmul
+        if caps.has(platform::caps::x86::CRC32C_READY) && caps.has(platform::caps::x86::VPCLMUL_READY) =>
+      {
+        Selected::new("x86_64/crc32c-fusion-vpclmul", crc32c_x86_64_vpclmul_forced)
+      }
+      _ => Selected::new(kernels::PORTABLE, crc32c_portable),
+    }
   }
 
-  Selected::new(kernels::PORTABLE, crc32c_portable)
+  #[cfg(not(feature = "std"))]
+  {
+    if caps.has(platform::caps::x86::CRC32C_READY) {
+      return Selected::new("x86_64/auto", crc32c_x86_64_auto);
+    }
+    Selected::new(kernels::PORTABLE, crc32c_portable)
+  }
 }
 
 #[cfg(target_arch = "aarch64")]
@@ -569,11 +959,50 @@ fn select_crc32() -> Selected<Crc32Fn> {
     return Selected::new(kernels::PORTABLE, crc32_portable);
   }
 
-  if caps.has(platform::caps::aarch64::CRC_READY) {
-    return Selected::new("aarch64/auto", crc32_aarch64_auto);
+  #[cfg(feature = "std")]
+  {
+    if !caps.has(platform::caps::aarch64::CRC_READY) {
+      return Selected::new(kernels::PORTABLE, crc32_portable);
+    }
+
+    let _ = CRC32_AARCH64_STREAMS.get_or_init(|| cfg.tunables.streams);
+
+    match cfg.effective_force {
+      Crc32Force::Auto => {
+        let _ = CRC32_AARCH64_AUTO.get_or_init(|| Crc32Aarch64Auto {
+          portable_to_hwcrc: cfg.tunables.portable_to_hwcrc,
+          hwcrc_to_fusion: cfg.tunables.hwcrc_to_fusion,
+          streams: cfg.tunables.streams,
+          has_pmull: caps.has(platform::caps::aarch64::PMULL_READY),
+          has_pmull_eor3: caps.has(platform::caps::aarch64::PMULL_EOR3_READY),
+        });
+        Selected::new("aarch64/auto", crc32_aarch64_auto)
+      }
+      Crc32Force::Hwcrc => Selected::new("aarch64/crc32", crc32_aarch64_hwcrc_forced),
+      Crc32Force::Pmull if caps.has(platform::caps::aarch64::PMULL_READY) => Selected::new(
+        "aarch64/crc32-pmull-v12e-v1",
+        aarch64::crc32_iso_hdlc_pmull_v12e_v1_safe,
+      ),
+      Crc32Force::PmullEor3 if caps.has(platform::caps::aarch64::PMULL_EOR3_READY) => Selected::new(
+        "aarch64/crc32-pmull-eor3-v9s3x2e-s3",
+        aarch64::crc32_iso_hdlc_pmull_eor3_v9s3x2e_s3_safe,
+      ),
+      Crc32Force::Sve2Pmull
+        if caps.has(platform::caps::aarch64::SVE2_PMULL) && caps.has(platform::caps::aarch64::PMULL_READY) =>
+      {
+        Selected::new("aarch64/crc32-sve2-pmull", crc32_aarch64_sve2_pmull_forced)
+      }
+      _ => Selected::new(kernels::PORTABLE, crc32_portable),
+    }
   }
 
-  Selected::new(kernels::PORTABLE, crc32_portable)
+  #[cfg(not(feature = "std"))]
+  {
+    if caps.has(platform::caps::aarch64::CRC_READY) {
+      return Selected::new("aarch64/auto", crc32_aarch64_auto);
+    }
+    Selected::new(kernels::PORTABLE, crc32_portable)
+  }
 }
 
 #[cfg(target_arch = "aarch64")]
@@ -585,11 +1014,49 @@ fn select_crc32c() -> Selected<Crc32Fn> {
     return Selected::new(kernels::PORTABLE, crc32c_portable);
   }
 
-  if caps.has(platform::caps::aarch64::CRC_READY) {
-    return Selected::new("aarch64/auto", crc32c_aarch64_auto);
+  #[cfg(feature = "std")]
+  {
+    if !caps.has(platform::caps::aarch64::CRC_READY) {
+      return Selected::new(kernels::PORTABLE, crc32c_portable);
+    }
+
+    let _ = CRC32C_AARCH64_STREAMS.get_or_init(|| cfg.tunables.streams);
+
+    match cfg.effective_force {
+      Crc32Force::Auto => {
+        let _ = CRC32C_AARCH64_AUTO.get_or_init(|| Crc32Aarch64Auto {
+          portable_to_hwcrc: cfg.tunables.portable_to_hwcrc,
+          hwcrc_to_fusion: cfg.tunables.hwcrc_to_fusion,
+          streams: cfg.tunables.streams,
+          has_pmull: caps.has(platform::caps::aarch64::PMULL_READY),
+          has_pmull_eor3: caps.has(platform::caps::aarch64::PMULL_EOR3_READY),
+        });
+        Selected::new("aarch64/auto", crc32c_aarch64_auto)
+      }
+      Crc32Force::Hwcrc => Selected::new("aarch64/crc32c", crc32c_aarch64_hwcrc_forced),
+      Crc32Force::Pmull if caps.has(platform::caps::aarch64::PMULL_READY) => {
+        Selected::new("aarch64/crc32c-pmull-v12e-v1", aarch64::crc32c_iscsi_pmull_v12e_v1_safe)
+      }
+      Crc32Force::PmullEor3 if caps.has(platform::caps::aarch64::PMULL_EOR3_READY) => Selected::new(
+        "aarch64/crc32c-pmull-eor3-v9s3x2e-s3",
+        aarch64::crc32c_iscsi_pmull_eor3_v9s3x2e_s3_safe,
+      ),
+      Crc32Force::Sve2Pmull
+        if caps.has(platform::caps::aarch64::SVE2_PMULL) && caps.has(platform::caps::aarch64::PMULL_READY) =>
+      {
+        Selected::new("aarch64/crc32c-sve2-pmull", crc32c_aarch64_sve2_pmull_forced)
+      }
+      _ => Selected::new(kernels::PORTABLE, crc32c_portable),
+    }
   }
 
-  Selected::new(kernels::PORTABLE, crc32c_portable)
+  #[cfg(not(feature = "std"))]
+  {
+    if caps.has(platform::caps::aarch64::CRC_READY) {
+      return Selected::new("aarch64/auto", crc32c_aarch64_auto);
+    }
+    Selected::new(kernels::PORTABLE, crc32c_portable)
+  }
 }
 
 #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
@@ -615,9 +1082,11 @@ static CRC32C_DISPATCHER: Crc32Dispatcher = Crc32Dispatcher::new(select_crc32c);
 /// CRC-32 (IEEE) checksum.
 ///
 /// Used by Ethernet, gzip, zip, PNG, etc.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct Crc32 {
   state: u32,
+  kernel: Crc32Fn,
+  initialized: bool,
 }
 
 impl Crc32 {
@@ -628,7 +1097,11 @@ impl Crc32 {
   #[inline]
   #[must_use]
   pub const fn resume(crc: u32) -> Self {
-    Self { state: crc ^ !0 }
+    Self {
+      state: crc ^ !0,
+      kernel: crc32_portable,
+      initialized: false,
+    }
   }
 
   /// Get the name of the currently selected backend.
@@ -662,17 +1135,29 @@ impl traits::Checksum for Crc32 {
 
   #[inline]
   fn new() -> Self {
-    Self { state: !0 }
+    Self {
+      state: !0,
+      kernel: CRC32_DISPATCHER.kernel(),
+      initialized: true,
+    }
   }
 
   #[inline]
   fn with_initial(initial: u32) -> Self {
-    Self { state: initial ^ !0 }
+    Self {
+      state: initial ^ !0,
+      kernel: CRC32_DISPATCHER.kernel(),
+      initialized: true,
+    }
   }
 
   #[inline]
   fn update(&mut self, data: &[u8]) {
-    self.state = CRC32_DISPATCHER.call(self.state, data);
+    if !self.initialized {
+      self.kernel = CRC32_DISPATCHER.kernel();
+      self.initialized = true;
+    }
+    self.state = (self.kernel)(self.state, data);
   }
 
   #[inline]
@@ -686,6 +1171,12 @@ impl traits::Checksum for Crc32 {
   }
 }
 
+impl Default for Crc32 {
+  fn default() -> Self {
+    <Self as traits::Checksum>::new()
+  }
+}
+
 impl traits::ChecksumCombine for Crc32 {
   fn combine(crc_a: u32, crc_b: u32, len_b: usize) -> u32 {
     crate::common::combine::combine_crc32(crc_a, crc_b, len_b, Self::SHIFT8_MATRIX)
@@ -695,9 +1186,11 @@ impl traits::ChecksumCombine for Crc32 {
 /// CRC-32C (Castagnoli) checksum.
 ///
 /// Used by iSCSI, SCTP, ext4, Btrfs, SSE4.2 `crc32`, etc.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct Crc32C {
   state: u32,
+  kernel: Crc32Fn,
+  initialized: bool,
 }
 
 impl Crc32C {
@@ -708,7 +1201,11 @@ impl Crc32C {
   #[inline]
   #[must_use]
   pub const fn resume(crc: u32) -> Self {
-    Self { state: crc ^ !0 }
+    Self {
+      state: crc ^ !0,
+      kernel: crc32c_portable,
+      initialized: false,
+    }
   }
 
   /// Get the name of the currently selected backend.
@@ -742,17 +1239,29 @@ impl traits::Checksum for Crc32C {
 
   #[inline]
   fn new() -> Self {
-    Self { state: !0 }
+    Self {
+      state: !0,
+      kernel: CRC32C_DISPATCHER.kernel(),
+      initialized: true,
+    }
   }
 
   #[inline]
   fn with_initial(initial: u32) -> Self {
-    Self { state: initial ^ !0 }
+    Self {
+      state: initial ^ !0,
+      kernel: CRC32C_DISPATCHER.kernel(),
+      initialized: true,
+    }
   }
 
   #[inline]
   fn update(&mut self, data: &[u8]) {
-    self.state = CRC32C_DISPATCHER.call(self.state, data);
+    if !self.initialized {
+      self.kernel = CRC32C_DISPATCHER.kernel();
+      self.initialized = true;
+    }
+    self.state = (self.kernel)(self.state, data);
   }
 
   #[inline]
@@ -763,6 +1272,12 @@ impl traits::Checksum for Crc32C {
   #[inline]
   fn reset(&mut self) {
     self.state = !0;
+  }
+}
+
+impl Default for Crc32C {
+  fn default() -> Self {
+    <Self as traits::Checksum>::new()
   }
 }
 

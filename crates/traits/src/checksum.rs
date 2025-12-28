@@ -17,7 +17,7 @@ use core::fmt::Debug;
 ///
 /// # Implementors
 ///
-/// - [`checksum::Crc32c`] - CRC32-C (Castagnoli)
+/// - [`checksum::Crc32C`] - CRC32-C (Castagnoli)
 /// - [`checksum::Crc32`] - CRC32 (ISO-HDLC)
 /// - [`checksum::Crc64`] - CRC64 (XZ/ECMA)
 ///
@@ -25,16 +25,16 @@ use core::fmt::Debug;
 ///
 /// ```text
 /// // One-shot (fastest)
-/// let crc = Crc32c::checksum(b"hello world");
+/// let crc = Crc32C::checksum(b"hello world");
 ///
 /// // Streaming
-/// let mut hasher = Crc32c::new();
+/// let mut hasher = Crc32C::new();
 /// hasher.update(b"hello ");
 /// hasher.update(b"world");
 /// let crc = hasher.finalize();
 /// ```
 ///
-/// [`checksum::Crc32c`]: https://docs.rs/checksum/latest/checksum/struct.Crc32c.html
+/// [`checksum::Crc32C`]: https://docs.rs/checksum/latest/checksum/struct.Crc32C.html
 /// [`checksum::Crc32`]: https://docs.rs/checksum/latest/checksum/struct.Crc32.html
 /// [`checksum::Crc64`]: https://docs.rs/checksum/latest/checksum/struct.Crc64.html
 pub trait Checksum: Clone + Default {
@@ -112,12 +112,12 @@ pub trait Checksum: Clone + Default {
 /// let data = b"hello world";
 /// let (a, b) = data.split_at(6);
 ///
-/// let crc_a = Crc32c::checksum(a);
-/// let crc_b = Crc32c::checksum(b);
+/// let crc_a = Crc32C::checksum(a);
+/// let crc_b = Crc32C::checksum(b);
 ///
 /// // Combine produces crc(a || b)
-/// let combined = Crc32c::combine(crc_a, crc_b, b.len());
-/// assert_eq!(combined, Crc32c::checksum(data));
+/// let combined = Crc32C::combine(crc_a, crc_b, b.len());
+/// assert_eq!(combined, Crc32C::checksum(data));
 /// ```
 pub trait ChecksumCombine: Checksum {
   /// Combine two checksums.

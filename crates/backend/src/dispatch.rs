@@ -443,7 +443,46 @@ macro_rules! define_dispatcher {
       #[inline]
       #[must_use]
       pub fn call(&self, state: $state, data: &[u8]) -> $state {
-        (self.get().func)(state, data)
+        let kernel = self.kernel();
+        kernel(state, data)
+      }
+
+      /// Get the selected function pointer.
+      #[inline]
+      #[must_use]
+      pub fn kernel(&self) -> $fn_ty {
+        #[cfg(feature = "std")]
+        {
+          self.get().func
+        }
+
+        // no_std path for targets WITH atomic CAS support.
+        #[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
+        {
+          use core::sync::atomic::Ordering;
+
+          const READY: usize = 2;
+          if self.state.load(Ordering::Acquire) == READY {
+            let func_ptr = self.func.load(Ordering::Acquire);
+            // SAFETY: This transmute from `*mut ()` to `$fn_ty` (a function pointer) is sound because:
+            // 1. The pointer was originally a valid function pointer of type `$fn_ty`, cast to `*mut ()`
+            //    and stored via `store(selected.func as *mut (), ...)` during initialization.
+            // 2. Function pointers and raw pointers have the same size and alignment on all platforms
+            //    Rust supports (both are pointer-sized).
+            // 3. The Acquire ordering ensures we see the store that wrote this pointer.
+            // 4. The function pointer remains valid for the program's lifetime ('static).
+            #[allow(unsafe_code)]
+            return unsafe { core::mem::transmute(func_ptr) };
+          }
+
+          self.get().func
+        }
+
+        // no_std path for targets WITHOUT atomic CAS support.
+        #[cfg(all(not(feature = "std"), not(target_has_atomic = "ptr")))]
+        {
+          self.get().func
+        }
       }
     }
 

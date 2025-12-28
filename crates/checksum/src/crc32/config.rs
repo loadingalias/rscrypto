@@ -30,6 +30,11 @@ pub enum Crc32Force {
   Pmull,
   /// Force aarch64 CRC fusion kernels (CRC + PMULL + EOR3/SHA3) if supported.
   PmullEor3,
+  /// Force aarch64 "SVE2 PMULL" tier (2/3-way striping) if supported.
+  ///
+  /// This mirrors the CRC64 selector: it is an ILP-oriented tier intended for
+  /// Armv9/SVE2-class CPUs. Implementations are still NEON+PMULL based.
+  Sve2Pmull,
 }
 
 impl Crc32Force {
@@ -43,6 +48,7 @@ impl Crc32Force {
       Self::Vpclmul => "vpclmul",
       Self::Pmull => "pmull",
       Self::PmullEor3 => "pmull-eor3",
+      Self::Sve2Pmull => "sve2-pmull",
     }
   }
 }
@@ -141,6 +147,9 @@ fn read_env_overrides() -> Overrides {
     {
       return Some(Crc32Force::PmullEor3);
     }
+    if value.eq_ignore_ascii_case("sve2-pmull") || value.eq_ignore_ascii_case("sve2pmull") {
+      return Some(Crc32Force::Sve2Pmull);
+    }
 
     None
   }
@@ -220,6 +229,18 @@ fn clamp_force_to_caps(requested: Crc32Force, caps: Caps) -> Crc32Force {
       {
         if caps.has(platform::caps::aarch64::CRC_READY) && caps.has(platform::caps::aarch64::PMULL_EOR3_READY) {
           return Crc32Force::PmullEor3;
+        }
+      }
+      Crc32Force::Auto
+    }
+    Crc32Force::Sve2Pmull => {
+      #[cfg(target_arch = "aarch64")]
+      {
+        if caps.has(platform::caps::aarch64::CRC_READY)
+          && caps.has(platform::caps::aarch64::PMULL_READY)
+          && caps.has(platform::caps::aarch64::SVE2_PMULL)
+        {
+          return Crc32Force::Sve2Pmull;
         }
       }
       Crc32Force::Auto
