@@ -191,7 +191,7 @@ fn clamp_force_to_caps(requested: Crc32Force, caps: Caps) -> Crc32Force {
     Crc32Force::Pclmul => {
       #[cfg(target_arch = "x86_64")]
       {
-        if caps.has(platform::caps::x86::CRC32C_READY) && caps.has(platform::caps::x86::PCLMUL_READY) {
+        if caps.has(platform::caps::x86::PCLMUL_READY) {
           return Crc32Force::Pclmul;
         }
       }
@@ -200,7 +200,7 @@ fn clamp_force_to_caps(requested: Crc32Force, caps: Caps) -> Crc32Force {
     Crc32Force::Vpclmul => {
       #[cfg(target_arch = "x86_64")]
       {
-        if caps.has(platform::caps::x86::CRC32C_READY) && caps.has(platform::caps::x86::VPCLMUL_READY) {
+        if caps.has(platform::caps::x86::VPCLMUL_READY) {
           return Crc32Force::Vpclmul;
         }
       }

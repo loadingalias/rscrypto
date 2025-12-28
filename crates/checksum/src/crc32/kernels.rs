@@ -22,6 +22,42 @@ pub mod x86_64 {
   use super::super::x86_64 as arch;
   use crate::dispatchers::Crc32Fn;
 
+  /// CRC-32 (IEEE) PCLMUL kernel names.
+  pub const CRC32_PCLMUL_NAMES: &[&str] = &[
+    "x86_64/crc32-pclmul",
+    "x86_64/crc32-pclmul",
+    "x86_64/crc32-pclmul",
+    "x86_64/crc32-pclmul",
+    "x86_64/crc32-pclmul",
+  ];
+
+  /// CRC-32 (IEEE) PCLMUL kernels.
+  pub const CRC32_PCLMUL: [Crc32Fn; 5] = [
+    arch::crc32_ieee_pclmul_safe,
+    arch::crc32_ieee_pclmul_safe,
+    arch::crc32_ieee_pclmul_safe,
+    arch::crc32_ieee_pclmul_safe,
+    arch::crc32_ieee_pclmul_safe,
+  ];
+
+  /// CRC-32 (IEEE) VPCLMUL kernel names.
+  pub const CRC32_VPCLMUL_NAMES: &[&str] = &[
+    "x86_64/crc32-vpclmul",
+    "x86_64/crc32-vpclmul",
+    "x86_64/crc32-vpclmul",
+    "x86_64/crc32-vpclmul",
+    "x86_64/crc32-vpclmul",
+  ];
+
+  /// CRC-32 (IEEE) VPCLMUL kernels.
+  pub const CRC32_VPCLMUL: [Crc32Fn; 5] = [
+    arch::crc32_ieee_vpclmul_safe,
+    arch::crc32_ieee_vpclmul_safe,
+    arch::crc32_ieee_vpclmul_safe,
+    arch::crc32_ieee_vpclmul_safe,
+    arch::crc32_ieee_vpclmul_safe,
+  ];
+
   /// SSE4.2 `crc32` instruction kernel names (CRC-32C only).
   pub const CRC32C_HWCRC_NAMES: &[&str] = &[
     "x86_64/crc32c",

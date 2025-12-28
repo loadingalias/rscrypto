@@ -7,7 +7,11 @@
 #![allow(unsafe_code)]
 #![allow(unsafe_op_in_unsafe_fn)]
 
-use core::{arch::x86_64::*, ptr};
+use core::{
+  arch::x86_64::*,
+  ops::{BitXor, BitXorAssign},
+  ptr,
+};
 
 /// CRC-32C update using SSE4.2 `crc32` instruction.
 ///
@@ -591,4 +595,343 @@ unsafe fn crc32c_iscsi_avx512_vpclmulqdq_v3x2(mut crc0: u32, mut buf: *const u8,
 pub fn crc32c_iscsi_avx512_vpclmulqdq_v3x2_safe(crc: u32, data: &[u8]) -> u32 {
   // SAFETY: Dispatcher verifies AVX-512 VPCLMULQDQ before selecting this kernel.
   unsafe { crc32c_iscsi_avx512_vpclmulqdq_v3x2(crc, data.as_ptr(), data.len()) }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CRC-32 (IEEE) PCLMULQDQ Folding Kernel (SSSE3 + PCLMULQDQ)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// The kernel below implements the reflected CRC-32/ISO-HDLC polynomial using a
+// 128-byte block folding strategy and a final reduction stage.
+
+const CRC32_IEEE_KEYS_REFLECTED: [u64; 23] = [
+  0x0000000000000000, // unused placeholder to match 1-based indexing
+  0x00000000_ccaa009e,
+  0x00000001_751997d0,
+  0x00000001_4a7fe880,
+  0x00000001_e88ef372,
+  0x00000000_ccaa009e,
+  0x00000001_63cd6124,
+  0x00000001_f7011641,
+  0x00000001_db710641,
+  0x00000001_d7cfc6ac,
+  0x00000001_ea89367e,
+  0x00000001_8cb44e58,
+  0x00000000_df068dc2,
+  0x00000000_ae0b5394,
+  0x00000001_c7569e54,
+  0x00000001_c6e41596,
+  0x00000001_54442bd4,
+  0x00000001_74359406,
+  0x00000000_3db1ecdc,
+  0x00000001_5a546366,
+  0x00000000_f1da05aa,
+  0x00000001_322d1430,
+  0x00000001_1542778a,
+];
+
+#[repr(transparent)]
+#[derive(Copy, Clone, Debug)]
+struct Simd128(__m128i);
+
+impl BitXor for Simd128 {
+  type Output = Self;
+
+  #[inline]
+  fn bitxor(self, other: Self) -> Self {
+    // SAFETY: `_mm_xor_si128` is available on all x86_64 (SSE2 baseline).
+    unsafe { Self(_mm_xor_si128(self.0, other.0)) }
+  }
+}
+
+impl BitXorAssign for Simd128 {
+  #[inline]
+  fn bitxor_assign(&mut self, other: Self) {
+    *self = *self ^ other;
+  }
+}
+
+impl Simd128 {
+  #[inline]
+  #[target_feature(enable = "sse2")]
+  unsafe fn new(high: u64, low: u64) -> Self {
+    Self(_mm_set_epi64x(high as i64, low as i64))
+  }
+
+  #[inline]
+  #[target_feature(enable = "sse2")]
+  unsafe fn shift_right_8(self) -> Self {
+    Self(_mm_srli_si128::<8>(self.0))
+  }
+
+  #[inline]
+  #[target_feature(enable = "sse2")]
+  unsafe fn shift_left_12(self) -> Self {
+    Self(_mm_slli_si128::<12>(self.0))
+  }
+
+  #[inline]
+  #[target_feature(enable = "sse2")]
+  unsafe fn and(self, mask: Self) -> Self {
+    Self(_mm_and_si128(self.0, mask.0))
+  }
+
+  /// Fold 16 bytes using the reflected CRC32 folding primitive.
+  #[inline]
+  #[target_feature(enable = "sse2", enable = "pclmulqdq")]
+  unsafe fn fold_16(self, coeff: Self, data_to_xor: Self) -> Self {
+    let h = _mm_clmulepi64_si128::<0x10>(self.0, coeff.0);
+    let l = _mm_clmulepi64_si128::<0x01>(self.0, coeff.0);
+    Self(_mm_xor_si128(_mm_xor_si128(h, l), data_to_xor.0))
+  }
+
+  /// Fold 16 bytes down to CRC32 width (reflected mode).
+  #[inline]
+  #[target_feature(enable = "sse2", enable = "pclmulqdq")]
+  unsafe fn fold_width_crc32_reflected(self, high: u64, low: u64) -> Self {
+    let coeff_low = Self::new(0, low);
+    let coeff_high = Self::new(high, 0);
+
+    // First: 16B -> 8B
+    let clmul = _mm_clmulepi64_si128::<0x00>(self.0, coeff_low.0);
+    let shifted = self.shift_right_8();
+    let mut state = Self(_mm_xor_si128(clmul, shifted.0));
+
+    // Second: 8B -> 4B
+    let mask2 = Self::new(0xFFFF_FFFF_FFFF_FFFF, 0xFFFF_FFFF_0000_0000);
+    let masked = state.and(mask2);
+    let shifted = state.shift_left_12();
+    let clmul = _mm_clmulepi64_si128::<0x11>(shifted.0, coeff_high.0);
+    state = Self(_mm_xor_si128(clmul, masked.0));
+
+    state
+  }
+
+  /// Barrett reduction for reflected CRC32; returns the updated (pre-inverted) CRC.
+  #[inline]
+  #[target_feature(enable = "sse2", enable = "pclmulqdq")]
+  unsafe fn barrett_crc32_reflected(self, poly: u64, mu: u64) -> u32 {
+    let polymu = Self::new(poly, mu);
+    let clmul1 = _mm_clmulepi64_si128::<0x00>(self.0, polymu.0);
+    let clmul2 = _mm_clmulepi64_si128::<0x10>(clmul1, polymu.0);
+    let xorred = _mm_xor_si128(self.0, clmul2);
+
+    let hi = _mm_srli_si128::<8>(xorred);
+    _mm_cvtsi128_si64(hi) as u32
+  }
+}
+
+#[inline]
+#[target_feature(enable = "sse2", enable = "ssse3", enable = "pclmulqdq")]
+unsafe fn update_simd_crc32_ieee_reflected(state: u32, first: &[Simd128; 8], rest: &[[Simd128; 8]]) -> u32 {
+  let keys = &CRC32_IEEE_KEYS_REFLECTED;
+  let mut x = *first;
+
+  // XOR initial CRC into the first 16-byte lane (low 32 bits).
+  x[0] ^= Simd128::new(0, state as u64);
+
+  // 128-byte folding coefficient pair.
+  let coeff_128b = Simd128::new(keys[4], keys[3]);
+
+  for chunk in rest {
+    // Unrolled: fold each 16-byte lane and XOR with the next input lane.
+    x[0] = x[0].fold_16(coeff_128b, chunk[0]);
+    x[1] = x[1].fold_16(coeff_128b, chunk[1]);
+    x[2] = x[2].fold_16(coeff_128b, chunk[2]);
+    x[3] = x[3].fold_16(coeff_128b, chunk[3]);
+    x[4] = x[4].fold_16(coeff_128b, chunk[4]);
+    x[5] = x[5].fold_16(coeff_128b, chunk[5]);
+    x[6] = x[6].fold_16(coeff_128b, chunk[6]);
+    x[7] = x[7].fold_16(coeff_128b, chunk[7]);
+  }
+
+  // Fold the 8 lanes down to 1 lane.
+  let mut res = x[7];
+  res = x[0].fold_16(Simd128::new(keys[10], keys[9]), res); // 112 bytes
+  res = x[1].fold_16(Simd128::new(keys[12], keys[11]), res); // 96 bytes
+  res = x[2].fold_16(Simd128::new(keys[14], keys[13]), res); // 80 bytes
+  res = x[3].fold_16(Simd128::new(keys[16], keys[15]), res); // 64 bytes
+  res = x[4].fold_16(Simd128::new(keys[18], keys[17]), res); // 48 bytes
+  res = x[5].fold_16(Simd128::new(keys[20], keys[19]), res); // 32 bytes
+  res = x[6].fold_16(Simd128::new(keys[2], keys[1]), res); // 16 bytes
+
+  // Final reduction to CRC32.
+  res = res.fold_width_crc32_reflected(keys[6], keys[5]);
+  res.barrett_crc32_reflected(keys[8], keys[7])
+}
+
+/// CRC-32 (IEEE / ISO-HDLC) update using PCLMULQDQ folding.
+///
+/// # Safety
+///
+/// Requires SSSE3 + PCLMULQDQ. Caller must verify via `platform::caps().has(x86::PCLMUL_READY)`.
+#[target_feature(enable = "sse2", enable = "ssse3", enable = "pclmulqdq")]
+pub unsafe fn crc32_ieee_pclmul(crc: u32, data: &[u8]) -> u32 {
+  let (left, middle, right) = data.align_to::<[Simd128; 8]>();
+  let Some((first, rest)) = middle.split_first() else {
+    return super::portable::crc32_slice16_ieee(crc, data);
+  };
+
+  let mut state = super::portable::crc32_slice16_ieee(crc, left);
+  state = update_simd_crc32_ieee_reflected(state, first, rest);
+  super::portable::crc32_slice16_ieee(state, right)
+}
+
+/// Safe wrapper for CRC-32 (IEEE) PCLMUL kernel.
+#[inline]
+pub fn crc32_ieee_pclmul_safe(crc: u32, data: &[u8]) -> u32 {
+  // SAFETY: Dispatcher verifies SSSE3 + PCLMULQDQ before selecting this kernel.
+  unsafe { crc32_ieee_pclmul(crc, data) }
+}
+
+#[inline]
+#[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq")]
+unsafe fn clmul10_vpclmul(a: __m512i, b: __m512i) -> __m512i {
+  _mm512_clmulepi64_epi128(a, b, 0x10)
+}
+
+#[inline]
+#[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq")]
+unsafe fn clmul01_vpclmul(a: __m512i, b: __m512i) -> __m512i {
+  _mm512_clmulepi64_epi128(a, b, 0x01)
+}
+
+#[inline]
+#[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq")]
+unsafe fn fold_16_crc32_reflected_vpclmul(state: __m512i, coeff: __m512i, data: __m512i) -> __m512i {
+  _mm512_ternarylogic_epi64(clmul10_vpclmul(state, coeff), clmul01_vpclmul(state, coeff), data, 0x96)
+}
+
+#[inline]
+#[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,ssse3,pclmulqdq,sse2")]
+unsafe fn update_simd_crc32_ieee_reflected_vpclmul(state: u32, first: &[Simd128; 8], rest: &[[Simd128; 8]]) -> u32 {
+  let keys = &CRC32_IEEE_KEYS_REFLECTED;
+
+  // Fold coefficient (128-byte distance), replicated across lanes:
+  // each 128-bit lane expects: low64=keys[3], high64=keys[4].
+  let coeff = _mm512_setr_epi64(
+    keys[3] as i64,
+    keys[4] as i64,
+    keys[3] as i64,
+    keys[4] as i64,
+    keys[3] as i64,
+    keys[4] as i64,
+    keys[3] as i64,
+    keys[4] as i64,
+  );
+
+  // Load the first 128-byte block as 2×512-bit registers (8×16B lanes).
+  let base = first.as_ptr().cast::<u8>();
+  let mut x0 = _mm512_loadu_si512(base.cast::<__m512i>());
+  let mut x1 = _mm512_loadu_si512(base.add(64).cast::<__m512i>());
+
+  // Inject CRC into the first lane (low 32 bits).
+  let injected = _mm512_setr_epi64(state as i64, 0, 0, 0, 0, 0, 0, 0);
+  x0 = _mm512_xor_si512(x0, injected);
+
+  for block in rest {
+    let ptr = block.as_ptr().cast::<u8>();
+    let y0 = _mm512_loadu_si512(ptr.cast::<__m512i>());
+    let y1 = _mm512_loadu_si512(ptr.add(64).cast::<__m512i>());
+    x0 = fold_16_crc32_reflected_vpclmul(x0, coeff, y0);
+    x1 = fold_16_crc32_reflected_vpclmul(x1, coeff, y1);
+  }
+
+  // Reduce the 8 lanes to one 128-bit lane using the same folding scheme as the SSE/PCLMUL path.
+  let lanes: [__m128i; 8] = [
+    _mm512_castsi512_si128(x0),
+    _mm512_extracti32x4_epi32(x0, 1),
+    _mm512_extracti32x4_epi32(x0, 2),
+    _mm512_extracti32x4_epi32(x0, 3),
+    _mm512_castsi512_si128(x1),
+    _mm512_extracti32x4_epi32(x1, 1),
+    _mm512_extracti32x4_epi32(x1, 2),
+    _mm512_extracti32x4_epi32(x1, 3),
+  ];
+
+  let mut res = Simd128(lanes[7]);
+  res = Simd128(lanes[0]).fold_16(Simd128::new(keys[10], keys[9]), res); // 112 bytes
+  res = Simd128(lanes[1]).fold_16(Simd128::new(keys[12], keys[11]), res); // 96 bytes
+  res = Simd128(lanes[2]).fold_16(Simd128::new(keys[14], keys[13]), res); // 80 bytes
+  res = Simd128(lanes[3]).fold_16(Simd128::new(keys[16], keys[15]), res); // 64 bytes
+  res = Simd128(lanes[4]).fold_16(Simd128::new(keys[18], keys[17]), res); // 48 bytes
+  res = Simd128(lanes[5]).fold_16(Simd128::new(keys[20], keys[19]), res); // 32 bytes
+  res = Simd128(lanes[6]).fold_16(Simd128::new(keys[2], keys[1]), res); // 16 bytes
+
+  res = res.fold_width_crc32_reflected(keys[6], keys[5]);
+  res.barrett_crc32_reflected(keys[8], keys[7])
+}
+
+/// CRC-32 (IEEE / ISO-HDLC) update using AVX-512 VPCLMULQDQ folding.
+///
+/// # Safety
+///
+/// Requires AVX-512 VPCLMULQDQ. Caller must verify via `platform::caps().has(x86::VPCLMUL_READY)`.
+#[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,ssse3,pclmulqdq,sse2")]
+pub unsafe fn crc32_ieee_vpclmul(crc: u32, data: &[u8]) -> u32 {
+  let (left, middle, right) = data.align_to::<[Simd128; 8]>();
+  let Some((first, rest)) = middle.split_first() else {
+    return super::portable::crc32_slice16_ieee(crc, data);
+  };
+
+  // If there are no full 128B blocks beyond `first`, the SSE/PCLMUL kernel is typically better.
+  if rest.is_empty() {
+    return crc32_ieee_pclmul(crc, data);
+  }
+
+  let mut state = super::portable::crc32_slice16_ieee(crc, left);
+  state = update_simd_crc32_ieee_reflected_vpclmul(state, first, rest);
+  super::portable::crc32_slice16_ieee(state, right)
+}
+
+/// Safe wrapper for CRC-32 (IEEE) VPCLMUL kernel.
+#[inline]
+pub fn crc32_ieee_vpclmul_safe(crc: u32, data: &[u8]) -> u32 {
+  // SAFETY: Dispatcher verifies AVX-512 VPCLMULQDQ before selecting this kernel.
+  unsafe { crc32_ieee_vpclmul(crc, data) }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn test_crc32_ieee_pclmul_matches_portable_various_lengths() {
+    if !(std::arch::is_x86_feature_detected!("pclmulqdq") && std::arch::is_x86_feature_detected!("ssse3")) {
+      return;
+    }
+
+    for len in [
+      0usize, 1, 2, 3, 4, 7, 8, 15, 16, 31, 32, 63, 64, 127, 128, 255, 256, 1024,
+    ] {
+      let mut data = Vec::with_capacity(len);
+      for i in 0..len {
+        data.push((i as u8).wrapping_mul(31).wrapping_add(7));
+      }
+
+      let portable = super::super::portable::crc32_slice16_ieee(!0, &data) ^ !0;
+      let pclmul = crc32_ieee_pclmul_safe(!0, &data) ^ !0;
+      assert_eq!(pclmul, portable, "len={len}");
+    }
+  }
+
+  #[test]
+  fn test_crc32_ieee_vpclmul_matches_portable_various_lengths() {
+    if !std::arch::is_x86_feature_detected!("vpclmulqdq") {
+      return;
+    }
+
+    for len in [
+      0usize, 1, 2, 3, 4, 7, 8, 15, 16, 31, 32, 63, 64, 127, 128, 255, 256, 1024, 4096,
+    ] {
+      let mut data = Vec::with_capacity(len);
+      for i in 0..len {
+        data.push((i as u8).wrapping_mul(31).wrapping_add(7));
+      }
+
+      let portable = super::super::portable::crc32_slice16_ieee(!0, &data) ^ !0;
+      let vpclmul = crc32_ieee_vpclmul_safe(!0, &data) ^ !0;
+      assert_eq!(vpclmul, portable, "len={len}");
+    }
+  }
 }
