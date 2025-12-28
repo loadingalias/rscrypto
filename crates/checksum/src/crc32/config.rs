@@ -2,6 +2,7 @@
 //!
 //! This module centralizes selection knobs for CRC-32/CRC-32C:
 //! - portable vs hardware instruction thresholds
+//! - hardware instruction vs fusion thresholds
 //! - optional forced backend selection
 //!
 //! Safety note: forced modes are always clamped to detected CPU capabilities.
@@ -21,6 +22,14 @@ pub enum Crc32Force {
   /// - x86_64: SSE4.2 `crc32` (CRC-32C only)
   /// - aarch64: ARMv8 CRC extension (CRC-32 + CRC-32C)
   Hwcrc,
+  /// Force x86_64 CRC-32C fusion kernels (SSE4.2 + PCLMULQDQ) if supported.
+  Pclmul,
+  /// Force x86_64 CRC-32C fusion kernels (AVX-512 + VPCLMULQDQ) if supported.
+  Vpclmul,
+  /// Force aarch64 CRC fusion kernels (CRC + PMULL) if supported.
+  Pmull,
+  /// Force aarch64 CRC fusion kernels (CRC + PMULL + EOR3/SHA3) if supported.
+  PmullEor3,
 }
 
 impl Crc32Force {
@@ -30,6 +39,10 @@ impl Crc32Force {
       Self::Auto => "auto",
       Self::Portable => "portable",
       Self::Hwcrc => "hwcrc",
+      Self::Pclmul => "pclmul",
+      Self::Vpclmul => "vpclmul",
+      Self::Pmull => "pmull",
+      Self::PmullEor3 => "pmull-eor3",
     }
   }
 }
@@ -39,6 +52,12 @@ impl Crc32Force {
 pub struct Crc32Tunables {
   /// Bytes where hardware CRC becomes faster than portable.
   pub portable_to_hwcrc: usize,
+  /// Bytes where fusion becomes faster than HWCRC.
+  pub hwcrc_to_fusion: usize,
+  /// Bytes where AVX-512 fusion becomes worthwhile (x86_64 only).
+  pub fusion_to_avx512: usize,
+  /// Bytes where VPCLMUL fusion becomes worthwhile (x86_64 only).
+  pub fusion_to_vpclmul: usize,
   /// Preferred number of independent streams (reserved for future fusion kernels).
   pub streams: u8,
 }
@@ -58,6 +77,9 @@ pub struct Crc32Config {
 struct Overrides {
   force: Crc32Force,
   portable_to_hwcrc: Option<usize>,
+  hwcrc_to_fusion: Option<usize>,
+  fusion_to_avx512: Option<usize>,
+  fusion_to_vpclmul: Option<usize>,
   streams: Option<u8>,
 }
 
@@ -104,6 +126,21 @@ fn read_env_overrides() -> Overrides {
     {
       return Some(Crc32Force::Hwcrc);
     }
+    if value.eq_ignore_ascii_case("pclmul") || value.eq_ignore_ascii_case("clmul") {
+      return Some(Crc32Force::Pclmul);
+    }
+    if value.eq_ignore_ascii_case("vpclmul") {
+      return Some(Crc32Force::Vpclmul);
+    }
+    if value.eq_ignore_ascii_case("pmull") || value.eq_ignore_ascii_case("pmull-neon") {
+      return Some(Crc32Force::Pmull);
+    }
+    if value.eq_ignore_ascii_case("pmull-eor3")
+      || value.eq_ignore_ascii_case("eor3")
+      || value.eq_ignore_ascii_case("pmull-sha3")
+    {
+      return Some(Crc32Force::PmullEor3);
+    }
 
     None
   }
@@ -111,6 +148,9 @@ fn read_env_overrides() -> Overrides {
   Overrides {
     force: parse_force("RSCRYPTO_CRC32_FORCE").unwrap_or(Crc32Force::Auto),
     portable_to_hwcrc: parse_usize("RSCRYPTO_CRC32_THRESHOLD_PORTABLE_TO_HWCRC"),
+    hwcrc_to_fusion: parse_usize("RSCRYPTO_CRC32_THRESHOLD_HWCRC_TO_FUSION"),
+    fusion_to_avx512: parse_usize("RSCRYPTO_CRC32_THRESHOLD_FUSION_TO_AVX512"),
+    fusion_to_vpclmul: parse_usize("RSCRYPTO_CRC32_THRESHOLD_FUSION_TO_VPCLMUL"),
     streams: parse_u8("RSCRYPTO_CRC32_STREAMS"),
   }
 }
@@ -148,6 +188,42 @@ fn clamp_force_to_caps(requested: Crc32Force, caps: Caps) -> Crc32Force {
       }
       Crc32Force::Auto
     }
+    Crc32Force::Pclmul => {
+      #[cfg(target_arch = "x86_64")]
+      {
+        if caps.has(platform::caps::x86::CRC32C_READY) && caps.has(platform::caps::x86::PCLMUL_READY) {
+          return Crc32Force::Pclmul;
+        }
+      }
+      Crc32Force::Auto
+    }
+    Crc32Force::Vpclmul => {
+      #[cfg(target_arch = "x86_64")]
+      {
+        if caps.has(platform::caps::x86::CRC32C_READY) && caps.has(platform::caps::x86::VPCLMUL_READY) {
+          return Crc32Force::Vpclmul;
+        }
+      }
+      Crc32Force::Auto
+    }
+    Crc32Force::Pmull => {
+      #[cfg(target_arch = "aarch64")]
+      {
+        if caps.has(platform::caps::aarch64::CRC_READY) && caps.has(platform::caps::aarch64::PMULL_READY) {
+          return Crc32Force::Pmull;
+        }
+      }
+      Crc32Force::Auto
+    }
+    Crc32Force::PmullEor3 => {
+      #[cfg(target_arch = "aarch64")]
+      {
+        if caps.has(platform::caps::aarch64::CRC_READY) && caps.has(platform::caps::aarch64::PMULL_EOR3_READY) {
+          return Crc32Force::PmullEor3;
+        }
+      }
+      Crc32Force::Auto
+    }
   }
 }
 
@@ -155,8 +231,17 @@ fn clamp_force_to_caps(requested: Crc32Force, caps: Caps) -> Crc32Force {
 #[must_use]
 fn tuned_defaults(caps: Caps, tune: Tune) -> Crc32Tunables {
   let _ = caps;
+  let fusion_to_avx512 = tune.simd_threshold;
+  let fusion_to_vpclmul = if tune.fast_wide_ops {
+    tune.simd_threshold
+  } else {
+    tune.simd_threshold.saturating_mul(8)
+  };
   Crc32Tunables {
     portable_to_hwcrc: tune.hwcrc_threshold,
+    hwcrc_to_fusion: tune.pclmul_threshold,
+    fusion_to_avx512,
+    fusion_to_vpclmul,
     streams: 1,
   }
 }
@@ -178,6 +263,21 @@ pub fn get() -> Crc32Config {
     portable_to_hwcrc = v;
   }
 
+  let mut hwcrc_to_fusion = base.hwcrc_to_fusion;
+  if let Some(v) = ov.hwcrc_to_fusion {
+    hwcrc_to_fusion = v;
+  }
+
+  let mut fusion_to_avx512 = base.fusion_to_avx512;
+  if let Some(v) = ov.fusion_to_avx512 {
+    fusion_to_avx512 = v;
+  }
+
+  let mut fusion_to_vpclmul = base.fusion_to_vpclmul;
+  if let Some(v) = ov.fusion_to_vpclmul {
+    fusion_to_vpclmul = v;
+  }
+
   let mut streams = base.streams;
   if let Some(v) = ov.streams {
     streams = v;
@@ -196,6 +296,9 @@ pub fn get() -> Crc32Config {
     effective_force,
     tunables: Crc32Tunables {
       portable_to_hwcrc,
+      hwcrc_to_fusion,
+      fusion_to_avx512,
+      fusion_to_vpclmul,
       streams,
     },
   }

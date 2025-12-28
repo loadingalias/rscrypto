@@ -5,6 +5,8 @@
 
 /// Portable fallback kernel name.
 pub use kernels::PORTABLE_SLICE16 as PORTABLE;
+/// Re-export select_name from common kernels.
+pub use kernels::select_name;
 
 use crate::{common::kernels, dispatchers::Crc32Fn};
 
@@ -20,8 +22,8 @@ pub mod x86_64 {
   use super::super::x86_64 as arch;
   use crate::dispatchers::Crc32Fn;
 
-  /// SSE4.2 `crc32` instruction kernel name (CRC-32C only).
-  pub const CRC32C_NAMES: &[&str] = &[
+  /// SSE4.2 `crc32` instruction kernel names (CRC-32C only).
+  pub const CRC32C_HWCRC_NAMES: &[&str] = &[
     "x86_64/crc32c",
     "x86_64/crc32c",
     "x86_64/crc32c",
@@ -30,12 +32,66 @@ pub mod x86_64 {
   ];
 
   /// CRC-32C SSE4.2 kernel function array (no multi-stream variants yet).
-  pub const CRC32C: [Crc32Fn; 5] = [
+  pub const CRC32C_HWCRC: [Crc32Fn; 5] = [
     arch::crc32c_sse42_safe,
     arch::crc32c_sse42_safe,
     arch::crc32c_sse42_safe,
     arch::crc32c_sse42_safe,
     arch::crc32c_sse42_safe,
+  ];
+
+  /// CRC-32C fusion (SSE4.2 + PCLMULQDQ) kernel names.
+  pub const CRC32C_FUSION_SSE_NAMES: &[&str] = &[
+    "x86_64/crc32c-fusion-v4s3x3",
+    "x86_64/crc32c-fusion-v4s3x3",
+    "x86_64/crc32c-fusion-v4s3x3",
+    "x86_64/crc32c-fusion-v4s3x3",
+    "x86_64/crc32c-fusion-v4s3x3",
+  ];
+
+  /// CRC-32C fusion (SSE4.2 + PCLMULQDQ) kernels.
+  pub const CRC32C_FUSION_SSE: [Crc32Fn; 5] = [
+    arch::crc32c_iscsi_sse_v4s3x3_safe,
+    arch::crc32c_iscsi_sse_v4s3x3_safe,
+    arch::crc32c_iscsi_sse_v4s3x3_safe,
+    arch::crc32c_iscsi_sse_v4s3x3_safe,
+    arch::crc32c_iscsi_sse_v4s3x3_safe,
+  ];
+
+  /// CRC-32C fusion (AVX-512 + PCLMULQDQ) kernel names.
+  pub const CRC32C_FUSION_AVX512_NAMES: &[&str] = &[
+    "x86_64/crc32c-fusion-avx512-v4s3x3",
+    "x86_64/crc32c-fusion-avx512-v4s3x3",
+    "x86_64/crc32c-fusion-avx512-v4s3x3",
+    "x86_64/crc32c-fusion-avx512-v4s3x3",
+    "x86_64/crc32c-fusion-avx512-v4s3x3",
+  ];
+
+  /// CRC-32C fusion (AVX-512 + PCLMULQDQ) kernels.
+  pub const CRC32C_FUSION_AVX512: [Crc32Fn; 5] = [
+    arch::crc32c_iscsi_avx512_v4s3x3_safe,
+    arch::crc32c_iscsi_avx512_v4s3x3_safe,
+    arch::crc32c_iscsi_avx512_v4s3x3_safe,
+    arch::crc32c_iscsi_avx512_v4s3x3_safe,
+    arch::crc32c_iscsi_avx512_v4s3x3_safe,
+  ];
+
+  /// CRC-32C fusion (AVX-512 + VPCLMULQDQ) kernel names.
+  pub const CRC32C_FUSION_VPCLMUL_NAMES: &[&str] = &[
+    "x86_64/crc32c-fusion-vpclmul-v3x2",
+    "x86_64/crc32c-fusion-vpclmul-v3x2",
+    "x86_64/crc32c-fusion-vpclmul-v3x2",
+    "x86_64/crc32c-fusion-vpclmul-v3x2",
+    "x86_64/crc32c-fusion-vpclmul-v3x2",
+  ];
+
+  /// CRC-32C fusion (AVX-512 + VPCLMULQDQ) kernels.
+  pub const CRC32C_FUSION_VPCLMUL: [Crc32Fn; 5] = [
+    arch::crc32c_iscsi_avx512_vpclmulqdq_v3x2_safe,
+    arch::crc32c_iscsi_avx512_vpclmulqdq_v3x2_safe,
+    arch::crc32c_iscsi_avx512_vpclmulqdq_v3x2_safe,
+    arch::crc32c_iscsi_avx512_vpclmulqdq_v3x2_safe,
+    arch::crc32c_iscsi_avx512_vpclmulqdq_v3x2_safe,
   ];
 }
 
@@ -45,7 +101,7 @@ pub mod aarch64 {
   use crate::dispatchers::Crc32Fn;
 
   /// ARMv8 CRC extension kernel names.
-  pub const CRC32_NAMES: &[&str] = &[
+  pub const CRC32_HWCRC_NAMES: &[&str] = &[
     "aarch64/crc32",
     "aarch64/crc32",
     "aarch64/crc32",
@@ -53,7 +109,7 @@ pub mod aarch64 {
     "aarch64/crc32",
   ];
 
-  pub const CRC32C_NAMES: &[&str] = &[
+  pub const CRC32C_HWCRC_NAMES: &[&str] = &[
     "aarch64/crc32c",
     "aarch64/crc32c",
     "aarch64/crc32c",
@@ -62,7 +118,7 @@ pub mod aarch64 {
   ];
 
   /// CRC-32 (IEEE) CRC-extension kernel function array (no multi-stream variants yet).
-  pub const CRC32: [Crc32Fn; 5] = [
+  pub const CRC32_HWCRC: [Crc32Fn; 5] = [
     arch::crc32_armv8_safe,
     arch::crc32_armv8_safe,
     arch::crc32_armv8_safe,
@@ -71,11 +127,83 @@ pub mod aarch64 {
   ];
 
   /// CRC-32C (Castagnoli) CRC-extension kernel function array (no multi-stream variants yet).
-  pub const CRC32C: [Crc32Fn; 5] = [
+  pub const CRC32C_HWCRC: [Crc32Fn; 5] = [
     arch::crc32c_armv8_safe,
     arch::crc32c_armv8_safe,
     arch::crc32c_armv8_safe,
     arch::crc32c_armv8_safe,
     arch::crc32c_armv8_safe,
+  ];
+
+  /// CRC-32 (IEEE) PMULL fusion kernel names.
+  pub const CRC32_PMULL_NAMES: &[&str] = &[
+    "aarch64/crc32-pmull-v12e-v1",
+    "aarch64/crc32-pmull-v12e-v1",
+    "aarch64/crc32-pmull-v12e-v1",
+    "aarch64/crc32-pmull-v12e-v1",
+    "aarch64/crc32-pmull-v12e-v1",
+  ];
+
+  /// CRC-32 (IEEE) PMULL fusion kernels.
+  pub const CRC32_PMULL: [Crc32Fn; 5] = [
+    arch::crc32_iso_hdlc_pmull_v12e_v1_safe,
+    arch::crc32_iso_hdlc_pmull_v12e_v1_safe,
+    arch::crc32_iso_hdlc_pmull_v12e_v1_safe,
+    arch::crc32_iso_hdlc_pmull_v12e_v1_safe,
+    arch::crc32_iso_hdlc_pmull_v12e_v1_safe,
+  ];
+
+  /// CRC-32 (IEEE) PMULL+EOR3 fusion kernel names.
+  pub const CRC32_PMULL_EOR3_NAMES: &[&str] = &[
+    "aarch64/crc32-pmull-eor3-v9s3x2e-s3",
+    "aarch64/crc32-pmull-eor3-v9s3x2e-s3",
+    "aarch64/crc32-pmull-eor3-v9s3x2e-s3",
+    "aarch64/crc32-pmull-eor3-v9s3x2e-s3",
+    "aarch64/crc32-pmull-eor3-v9s3x2e-s3",
+  ];
+
+  /// CRC-32 (IEEE) PMULL+EOR3 fusion kernels.
+  pub const CRC32_PMULL_EOR3: [Crc32Fn; 5] = [
+    arch::crc32_iso_hdlc_pmull_eor3_v9s3x2e_s3_safe,
+    arch::crc32_iso_hdlc_pmull_eor3_v9s3x2e_s3_safe,
+    arch::crc32_iso_hdlc_pmull_eor3_v9s3x2e_s3_safe,
+    arch::crc32_iso_hdlc_pmull_eor3_v9s3x2e_s3_safe,
+    arch::crc32_iso_hdlc_pmull_eor3_v9s3x2e_s3_safe,
+  ];
+
+  /// CRC-32C (Castagnoli) PMULL fusion kernel names.
+  pub const CRC32C_PMULL_NAMES: &[&str] = &[
+    "aarch64/crc32c-pmull-v12e-v1",
+    "aarch64/crc32c-pmull-v12e-v1",
+    "aarch64/crc32c-pmull-v12e-v1",
+    "aarch64/crc32c-pmull-v12e-v1",
+    "aarch64/crc32c-pmull-v12e-v1",
+  ];
+
+  /// CRC-32C (Castagnoli) PMULL fusion kernels.
+  pub const CRC32C_PMULL: [Crc32Fn; 5] = [
+    arch::crc32c_iscsi_pmull_v12e_v1_safe,
+    arch::crc32c_iscsi_pmull_v12e_v1_safe,
+    arch::crc32c_iscsi_pmull_v12e_v1_safe,
+    arch::crc32c_iscsi_pmull_v12e_v1_safe,
+    arch::crc32c_iscsi_pmull_v12e_v1_safe,
+  ];
+
+  /// CRC-32C (Castagnoli) PMULL+EOR3 fusion kernel names.
+  pub const CRC32C_PMULL_EOR3_NAMES: &[&str] = &[
+    "aarch64/crc32c-pmull-eor3-v9s3x2e-s3",
+    "aarch64/crc32c-pmull-eor3-v9s3x2e-s3",
+    "aarch64/crc32c-pmull-eor3-v9s3x2e-s3",
+    "aarch64/crc32c-pmull-eor3-v9s3x2e-s3",
+    "aarch64/crc32c-pmull-eor3-v9s3x2e-s3",
+  ];
+
+  /// CRC-32C (Castagnoli) PMULL+EOR3 fusion kernels.
+  pub const CRC32C_PMULL_EOR3: [Crc32Fn; 5] = [
+    arch::crc32c_iscsi_pmull_eor3_v9s3x2e_s3_safe,
+    arch::crc32c_iscsi_pmull_eor3_v9s3x2e_s3_safe,
+    arch::crc32c_iscsi_pmull_eor3_v9s3x2e_s3_safe,
+    arch::crc32c_iscsi_pmull_eor3_v9s3x2e_s3_safe,
+    arch::crc32c_iscsi_pmull_eor3_v9s3x2e_s3_safe,
   ];
 }
