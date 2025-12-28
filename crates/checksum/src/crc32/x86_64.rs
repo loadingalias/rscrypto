@@ -1932,7 +1932,7 @@ mod tests {
     );
     assert_eq!(
       fold16_coeff_for_bytes_crc32(CRC32_IEEE_POLY, 16),
-      (CRC32_IEEE_KEYS_REFLECTED[1], CRC32_IEEE_KEYS_REFLECTED[2])
+      (CRC32_IEEE_KEYS_REFLECTED[2], CRC32_IEEE_KEYS_REFLECTED[1])
     );
   }
 
