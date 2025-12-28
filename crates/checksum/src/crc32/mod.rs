@@ -1469,7 +1469,6 @@ mod tests {
             assert!(kernel.starts_with("x86_64/crc32-pclmul"));
           }
         }
-        return;
       }
       if force.eq_ignore_ascii_case("vpclmul") {
         assert_eq!(cfg.requested_force, Crc32Force::Vpclmul);
@@ -1487,7 +1486,6 @@ mod tests {
             assert!(kernel.starts_with("x86_64/crc32-vpclmul"));
           }
         }
-        return;
       }
     }
 
@@ -1542,7 +1540,6 @@ mod tests {
         if cfg.effective_force == Crc32Force::Hwcrc && caps.has(platform::caps::x86::CRC32C_READY) {
           assert!(kernel.starts_with("x86_64/crc32c"));
         }
-        return;
       }
       if force.eq_ignore_ascii_case("pclmul") || force.eq_ignore_ascii_case("clmul") {
         assert_eq!(cfg.requested_force, Crc32Force::Pclmul);
@@ -1563,7 +1560,6 @@ mod tests {
             assert!(kernel.starts_with("x86_64/crc32c-fusion-v4s3x3"));
           }
         }
-        return;
       }
       if force.eq_ignore_ascii_case("vpclmul") {
         assert_eq!(cfg.requested_force, Crc32Force::Vpclmul);
@@ -1584,7 +1580,6 @@ mod tests {
             assert!(kernel.starts_with("x86_64/crc32c-fusion-vpclmul-v3x2"));
           }
         }
-        return;
       }
     }
 
