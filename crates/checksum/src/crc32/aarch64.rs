@@ -254,6 +254,113 @@ pub fn crc32c_armv8_3way_safe(crc: u32, data: &[u8]) -> u32 {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Fusion Multi-stream Wrappers (CRC + PMULL [+EOR3])
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Round-robin scheduling across independent lanes to expose ILP.
+const CRC32_FUSION_STRIPE_BYTES: usize = 1024;
+const CRC32_FOLD_BLOCK_BYTES: usize = 128;
+
+#[inline]
+fn crc32_fusion_nway<const N: usize>(crc: u32, data: &[u8], update: fn(u32, &[u8]) -> u32, shift8: Gf2Matrix32) -> u32 {
+  debug_assert!(N == 2 || N == 3);
+
+  let len = data.len();
+  if len < N.strict_mul(2 * CRC32_FOLD_BLOCK_BYTES) {
+    return update(crc, data);
+  }
+
+  let chunk_len = len.strict_div(N);
+  let mut lanes = [!0u32; N];
+
+  let mut offset: usize = 0;
+  while offset < chunk_len {
+    let remaining = chunk_len.strict_sub(offset);
+    let step = remaining.min(CRC32_FUSION_STRIPE_BYTES);
+
+    let mut lane_idx: usize = 0;
+    while lane_idx < N {
+      let start = lane_idx.strict_mul(chunk_len).strict_add(offset);
+      lanes[lane_idx] = update(lanes[lane_idx], &data[start..start.strict_add(step)]);
+      lane_idx = lane_idx.strict_add(1);
+    }
+
+    offset = offset.strict_add(step);
+  }
+
+  let tail_start = chunk_len.strict_mul(N);
+  if tail_start < len {
+    lanes[N - 1] = update(lanes[N - 1], &data[tail_start..]);
+  }
+
+  let mut data_crc_final: u32 = 0;
+  let mut lane_idx: usize = 0;
+  while lane_idx < N {
+    let lane_len = if lane_idx.strict_add(1) == N {
+      len.strict_sub(chunk_len.strict_mul(lane_idx))
+    } else {
+      chunk_len
+    };
+    data_crc_final = crate::common::combine::combine_crc32(data_crc_final, lanes[lane_idx] ^ !0, lane_len, shift8);
+    lane_idx = lane_idx.strict_add(1);
+  }
+
+  let boundary_final = crc ^ !0;
+  let combined_final = crate::common::combine::combine_crc32(boundary_final, data_crc_final, len, shift8);
+  combined_final ^ !0
+}
+
+#[inline]
+pub fn crc32_iso_hdlc_pmull_v12e_v1_2way_safe(crc: u32, data: &[u8]) -> u32 {
+  crc32_fusion_nway::<2>(crc, data, crc32_iso_hdlc_pmull_v12e_v1_safe, CRC32_SHIFT8_MATRIX)
+}
+
+#[inline]
+pub fn crc32_iso_hdlc_pmull_v12e_v1_3way_safe(crc: u32, data: &[u8]) -> u32 {
+  crc32_fusion_nway::<3>(crc, data, crc32_iso_hdlc_pmull_v12e_v1_safe, CRC32_SHIFT8_MATRIX)
+}
+
+#[inline]
+pub fn crc32c_iscsi_pmull_v12e_v1_2way_safe(crc: u32, data: &[u8]) -> u32 {
+  crc32_fusion_nway::<2>(crc, data, crc32c_iscsi_pmull_v12e_v1_safe, CRC32C_SHIFT8_MATRIX)
+}
+
+#[inline]
+pub fn crc32c_iscsi_pmull_v12e_v1_3way_safe(crc: u32, data: &[u8]) -> u32 {
+  crc32_fusion_nway::<3>(crc, data, crc32c_iscsi_pmull_v12e_v1_safe, CRC32C_SHIFT8_MATRIX)
+}
+
+#[inline]
+pub fn crc32_iso_hdlc_pmull_eor3_v9s3x2e_s3_2way_safe(crc: u32, data: &[u8]) -> u32 {
+  crc32_fusion_nway::<2>(
+    crc,
+    data,
+    crc32_iso_hdlc_pmull_eor3_v9s3x2e_s3_safe,
+    CRC32_SHIFT8_MATRIX,
+  )
+}
+
+#[inline]
+pub fn crc32_iso_hdlc_pmull_eor3_v9s3x2e_s3_3way_safe(crc: u32, data: &[u8]) -> u32 {
+  crc32_fusion_nway::<3>(
+    crc,
+    data,
+    crc32_iso_hdlc_pmull_eor3_v9s3x2e_s3_safe,
+    CRC32_SHIFT8_MATRIX,
+  )
+}
+
+#[inline]
+pub fn crc32c_iscsi_pmull_eor3_v9s3x2e_s3_2way_safe(crc: u32, data: &[u8]) -> u32 {
+  crc32_fusion_nway::<2>(crc, data, crc32c_iscsi_pmull_eor3_v9s3x2e_s3_safe, CRC32C_SHIFT8_MATRIX)
+}
+
+#[inline]
+pub fn crc32c_iscsi_pmull_eor3_v9s3x2e_s3_3way_safe(crc: u32, data: &[u8]) -> u32 {
+  crc32_fusion_nway::<3>(crc, data, crc32c_iscsi_pmull_eor3_v9s3x2e_s3_safe, CRC32C_SHIFT8_MATRIX)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // PMULL helpers (fusion kernels)
 // ─────────────────────────────────────────────────────────────────────────────
 

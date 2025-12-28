@@ -69,9 +69,9 @@ bench crate="":
 bench-native crate="":
     RUSTFLAGS='-C target-cpu=native' scripts/bench/bench.sh "{{crate}}"
 
-# Run CRC64 tuning discovery matrix
-# Usage: just bench-crc64-tune           - Full matrix (precise)
-#        just bench-crc64-tune --quick   - Fast discovery (noisy but useful)
+# Run CRC64 tuning (prints recommended exports; binary-based)
+# Usage: just bench-crc64-tune           - Full run
+#        just bench-crc64-tune --quick   - Faster, noisier run
 bench-crc64-tune mode="":
     @bash scripts/bench/crc64-tune.sh {{mode}}
 

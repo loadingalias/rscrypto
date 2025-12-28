@@ -395,6 +395,83 @@ pub fn crc32c_iscsi_sse_v4s3x3_safe(crc: u32, data: &[u8]) -> u32 {
   unsafe { crc32c_iscsi_sse_v4s3x3(crc, data.as_ptr(), data.len()) }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// CRC-32C Fusion Multi-stream Wrappers (SSE/AVX-512)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Process per-lane blocks in a round-robin schedule to expose ILP between lanes.
+const CRC32C_FUSION_STRIPE_BYTES: usize = 1024;
+
+#[inline]
+fn crc32c_fusion_nway<const N: usize>(crc: u32, data: &[u8], update: fn(u32, &[u8]) -> u32) -> u32 {
+  debug_assert!(N == 2 || N == 4 || N == 7 || N == 8);
+
+  let len = data.len();
+  if len < N.strict_mul(2 * super::CRC32_FOLD_BLOCK_BYTES) {
+    return update(crc, data);
+  }
+
+  let chunk_len = len.strict_div(N);
+  let mut lanes = [!0u32; N];
+
+  let mut offset: usize = 0;
+  while offset < chunk_len {
+    let remaining = chunk_len.strict_sub(offset);
+    let step = remaining.min(CRC32C_FUSION_STRIPE_BYTES);
+
+    let mut lane_idx: usize = 0;
+    while lane_idx < N {
+      let start = lane_idx.strict_mul(chunk_len).strict_add(offset);
+      lanes[lane_idx] = update(lanes[lane_idx], &data[start..start.strict_add(step)]);
+      lane_idx = lane_idx.strict_add(1);
+    }
+
+    offset = offset.strict_add(step);
+  }
+
+  let tail_start = chunk_len.strict_mul(N);
+  if tail_start < len {
+    lanes[N - 1] = update(lanes[N - 1], &data[tail_start..]);
+  }
+
+  let mut data_crc_final: u32 = 0;
+  let mut lane_idx: usize = 0;
+  while lane_idx < N {
+    let lane_len = if lane_idx.strict_add(1) == N {
+      len.strict_sub(chunk_len.strict_mul(lane_idx))
+    } else {
+      chunk_len
+    };
+    data_crc_final =
+      crate::common::combine::combine_crc32(data_crc_final, lanes[lane_idx] ^ !0, lane_len, CRC32C_SHIFT8_MATRIX);
+    lane_idx = lane_idx.strict_add(1);
+  }
+
+  let boundary_final = crc ^ !0;
+  let combined_final = crate::common::combine::combine_crc32(boundary_final, data_crc_final, len, CRC32C_SHIFT8_MATRIX);
+  combined_final ^ !0
+}
+
+#[inline]
+pub fn crc32c_iscsi_sse_v4s3x3_2way_safe(crc: u32, data: &[u8]) -> u32 {
+  crc32c_fusion_nway::<2>(crc, data, crc32c_iscsi_sse_v4s3x3_safe)
+}
+
+#[inline]
+pub fn crc32c_iscsi_sse_v4s3x3_4way_safe(crc: u32, data: &[u8]) -> u32 {
+  crc32c_fusion_nway::<4>(crc, data, crc32c_iscsi_sse_v4s3x3_safe)
+}
+
+#[inline]
+pub fn crc32c_iscsi_sse_v4s3x3_7way_safe(crc: u32, data: &[u8]) -> u32 {
+  crc32c_fusion_nway::<7>(crc, data, crc32c_iscsi_sse_v4s3x3_safe)
+}
+
+#[inline]
+pub fn crc32c_iscsi_sse_v4s3x3_8way_safe(crc: u32, data: &[u8]) -> u32 {
+  crc32c_fusion_nway::<8>(crc, data, crc32c_iscsi_sse_v4s3x3_safe)
+}
+
 #[inline]
 #[target_feature(enable = "sse4.2,avx512f,avx512vl,avx512bw,avx512dq,pclmulqdq")]
 unsafe fn crc32c_iscsi_avx512_v4s3x3(mut crc0: u32, mut buf: *const u8, mut len: usize) -> u32 {
@@ -543,6 +620,26 @@ unsafe fn crc32c_iscsi_avx512_v4s3x3(mut crc0: u32, mut buf: *const u8, mut len:
 pub fn crc32c_iscsi_avx512_v4s3x3_safe(crc: u32, data: &[u8]) -> u32 {
   // SAFETY: Dispatcher verifies AVX-512 + PCLMULQDQ before selecting this kernel.
   unsafe { crc32c_iscsi_avx512_v4s3x3(crc, data.as_ptr(), data.len()) }
+}
+
+#[inline]
+pub fn crc32c_iscsi_avx512_v4s3x3_2way_safe(crc: u32, data: &[u8]) -> u32 {
+  crc32c_fusion_nway::<2>(crc, data, crc32c_iscsi_avx512_v4s3x3_safe)
+}
+
+#[inline]
+pub fn crc32c_iscsi_avx512_v4s3x3_4way_safe(crc: u32, data: &[u8]) -> u32 {
+  crc32c_fusion_nway::<4>(crc, data, crc32c_iscsi_avx512_v4s3x3_safe)
+}
+
+#[inline]
+pub fn crc32c_iscsi_avx512_v4s3x3_7way_safe(crc: u32, data: &[u8]) -> u32 {
+  crc32c_fusion_nway::<7>(crc, data, crc32c_iscsi_avx512_v4s3x3_safe)
+}
+
+#[inline]
+pub fn crc32c_iscsi_avx512_v4s3x3_8way_safe(crc: u32, data: &[u8]) -> u32 {
+  crc32c_fusion_nway::<8>(crc, data, crc32c_iscsi_avx512_v4s3x3_safe)
 }
 
 #[inline]
@@ -701,6 +798,26 @@ unsafe fn crc32c_iscsi_avx512_vpclmulqdq_v3x2(mut crc0: u32, mut buf: *const u8,
 pub fn crc32c_iscsi_avx512_vpclmulqdq_v3x2_safe(crc: u32, data: &[u8]) -> u32 {
   // SAFETY: Dispatcher verifies AVX-512 VPCLMULQDQ before selecting this kernel.
   unsafe { crc32c_iscsi_avx512_vpclmulqdq_v3x2(crc, data.as_ptr(), data.len()) }
+}
+
+#[inline]
+pub fn crc32c_iscsi_avx512_vpclmulqdq_v3x2_2way_safe(crc: u32, data: &[u8]) -> u32 {
+  crc32c_fusion_nway::<2>(crc, data, crc32c_iscsi_avx512_vpclmulqdq_v3x2_safe)
+}
+
+#[inline]
+pub fn crc32c_iscsi_avx512_vpclmulqdq_v3x2_4way_safe(crc: u32, data: &[u8]) -> u32 {
+  crc32c_fusion_nway::<4>(crc, data, crc32c_iscsi_avx512_vpclmulqdq_v3x2_safe)
+}
+
+#[inline]
+pub fn crc32c_iscsi_avx512_vpclmulqdq_v3x2_7way_safe(crc: u32, data: &[u8]) -> u32 {
+  crc32c_fusion_nway::<7>(crc, data, crc32c_iscsi_avx512_vpclmulqdq_v3x2_safe)
+}
+
+#[inline]
+pub fn crc32c_iscsi_avx512_vpclmulqdq_v3x2_8way_safe(crc: u32, data: &[u8]) -> u32 {
+  crc32c_fusion_nway::<8>(crc, data, crc32c_iscsi_avx512_vpclmulqdq_v3x2_safe)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2057,6 +2174,44 @@ mod tests {
           crc32c_sse42_8way_safe(init, &data),
           expected,
           "8way init={init:#x} len={len}"
+        );
+      }
+    }
+  }
+
+  #[test]
+  fn test_crc32c_fusion_sse_multistream_matches_portable() {
+    if !(std::arch::is_x86_feature_detected!("sse4.2") && std::arch::is_x86_feature_detected!("pclmulqdq")) {
+      return;
+    }
+
+    for &init in &[!0u32, 0x0123_4567, 0x89AB_CDEF] {
+      for len in [0usize, 1, 7, 8, 15, 16, 127, 128, 255, 256, 2048, 8192, 65536] {
+        let mut data = Vec::with_capacity(len);
+        for i in 0..len {
+          data.push((i as u8).wrapping_mul(19).wrapping_add(5));
+        }
+
+        let expected = super::super::portable::crc32c_slice16(init, &data);
+        assert_eq!(
+          crc32c_iscsi_sse_v4s3x3_2way_safe(init, &data),
+          expected,
+          "fusion/2way init={init:#x} len={len}"
+        );
+        assert_eq!(
+          crc32c_iscsi_sse_v4s3x3_4way_safe(init, &data),
+          expected,
+          "fusion/4way init={init:#x} len={len}"
+        );
+        assert_eq!(
+          crc32c_iscsi_sse_v4s3x3_7way_safe(init, &data),
+          expected,
+          "fusion/7way init={init:#x} len={len}"
+        );
+        assert_eq!(
+          crc32c_iscsi_sse_v4s3x3_8way_safe(init, &data),
+          expected,
+          "fusion/8way init={init:#x} len={len}"
         );
       }
     }

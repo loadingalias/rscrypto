@@ -102,6 +102,8 @@ pub mod tune;
 
 // Re-export public types
 // Re-export buffered types (requires alloc)
+#[cfg(feature = "alloc")]
+pub use crc32::{BufferedCrc32, BufferedCrc32C};
 pub use crc32::{Crc32, Crc32C};
 #[cfg(feature = "alloc")]
 pub use crc64::{BufferedCrc64, BufferedCrc64Nvme, BufferedCrc64Xz};

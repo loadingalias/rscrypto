@@ -784,7 +784,7 @@ jobs:
         shell: bash
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "CRC64 Tuning Discovery"
+          echo "CRC64 Tuning"
           echo "Platform: ${{ matrix.target.name }}"
           echo "Tune Preset: ${{ matrix.target.tune-preset }}"
           echo "CPU: ${{ steps.cpu.outputs.cpu_model }}"
@@ -794,47 +794,12 @@ jobs:
         env:
           RUSTFLAGS: "-C target-cpu=native"
 
-      - name: Generate Tuning Summary
-        shell: bash
-        run: |
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "Generating tuning summary and analysis..."
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-          # Generate TSV summary
-          python3 scripts/bench/criterion-summary.py \
-            --group-prefix 'crc64/' \
-            --only oneshot \
-            > tune-results/summary.tsv 2>/dev/null || echo "TSV generation failed"
-
-          # Run analysis to find optimal settings
-          python3 scripts/bench/crc64-analyze.py \
-            --tune-output tune-results/tune-output.txt \
-            --platform-file tune-results/platform.json \
-            --output tune-results/analysis.json 2>&1 | tee tune-results/analysis-output.txt || echo "Analysis failed"
-
-          # Print recommendations
-          echo ""
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "RECOMMENDED SETTINGS FOR ${{ matrix.target.tune-preset }}"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          if [[ -f tune-results/analysis.json ]]; then
-            cat tune-results/analysis.json | python3 -c "
-          import json, sys
-          data = json.load(sys.stdin)
-          rec = data.get('recommendations', {})
-          print(f\"  parallel_streams: {rec.get('parallel_streams', 'N/A')}\")
-          print(f\"  preferred_kernel: {rec.get('preferred_kernel', 'N/A')}\")
-          " 2>/dev/null || cat tune-results/analysis.json
-          fi
-
       - name: Upload Tuning Results
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08  # v4.6.0
         with:
           name: tune-discovery-${{ matrix.target.platform-id }}
           path: |
             tune-results/
-            target/criterion/
           retention-days: 90
           if-no-files-found: warn
 
@@ -859,7 +824,7 @@ jobs:
         shell: bash
         run: |
           echo "╔══════════════════════════════════════════════════════════════════════════╗"
-          echo "║               CRC64 TUNING DISCOVERY - CONSOLIDATED REPORT              ║"
+          echo "║                   CRC64 TUNING - CONSOLIDATED REPORT                   ║"
           echo "╚══════════════════════════════════════════════════════════════════════════╝"
           echo ""
           echo "Generated: $(date -u +"%Y-%m-%d %H:%M:%S UTC")"
@@ -880,38 +845,20 @@ jobs:
                 echo "Features: $(cat "$dir/tune-results/platform.json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('features',''))" 2>/dev/null || echo "")"
               fi
 
-              # Show recommendations
-              if [[ -f "$dir/tune-results/analysis.json" ]]; then
+              if [[ -f "$dir/tune-results/tune-output.txt" ]]; then
                 echo ""
-                echo "Recommendations:"
-                cat "$dir/tune-results/analysis.json" | python3 -c "
-          import json, sys
-          try:
-            data = json.load(sys.stdin)
-            rec = data.get('recommendations', {})
-            print(f\"  parallel_streams: {rec.get('parallel_streams', 'N/A')}\")
-            print(f\"  preferred_kernel: {rec.get('preferred_kernel', 'N/A')}\")
-
-            # Show best by size
-            by_size = data.get('by_size', {})
-            if by_size:
-              print('')
-              print('  Best by size:')
-              for size, info in sorted(by_size.items(), key=lambda x: x[0]):
-                print(f\"    {info.get('size_label', size)}: {info.get('best_kernel', '?')}/{info.get('best_streams', '?')}-way @ {info.get('best_throughput_gib_s', 0):.1f} GiB/s\")
-          except Exception as e:
-            print(f'  Error parsing: {e}')
-          " 2>/dev/null || echo "  (analysis parse failed)"
+                echo "crc64-tune output:"
+                tail -n 200 "$dir/tune-results/tune-output.txt" || true
               fi
               echo ""
             fi
           done
 
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "UPDATE tune.rs WITH THESE VALUES"
+          echo "Update tune presets as needed"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo ""
-          echo "See individual platform artifacts for detailed analysis."
+          echo "See individual platform artifacts for raw output."
 
       - name: Upload Consolidated Report
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08  # v4.6.0

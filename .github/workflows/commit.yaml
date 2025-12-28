@@ -158,6 +158,86 @@ jobs:
           RSCRYPTO_CRC64_STREAMS: "2"
 
       # ─────────────────────────────────────────────────────────────────────────
+      # CRC32/CRC32C Tier Smoke Tests
+      # ─────────────────────────────────────────────────────────────────────────
+
+      # x86_64: CRC32(IEEE) CLMUL
+      - name: CRC32 Tier Smoke (force PCLMUL, 4-way)
+        if: matrix.target.name == 'x86_64-unknown-linux-gnu'
+        run: cargo test -p checksum test_crc32_forced_kernel_smoke_from_env --lib
+        env:
+          RSCRYPTO_CRC32_FORCE: pclmul
+          RSCRYPTO_CRC32_STREAMS: "4"
+
+      - name: CRC32 Tier Smoke (force PCLMUL, 4-way)
+        if: matrix.target.name == 'x86_64-pc-windows-msvc'
+        run: cargo test -p checksum test_crc32_forced_kernel_smoke_from_env --lib
+        env:
+          RSCRYPTO_CRC32_FORCE: pclmul
+          RSCRYPTO_CRC32_STREAMS: "4"
+
+      # x86_64: CRC32C HWCRC + fusion tiers
+      - name: CRC32C Tier Smoke (force HWCRC)
+        if: matrix.target.name == 'x86_64-unknown-linux-gnu'
+        run: cargo test -p checksum test_crc32c_forced_kernel_smoke_from_env --lib
+        env:
+          RSCRYPTO_CRC32_FORCE: hwcrc
+
+      - name: CRC32C Tier Smoke (force HWCRC)
+        if: matrix.target.name == 'x86_64-pc-windows-msvc'
+        run: cargo test -p checksum test_crc32c_forced_kernel_smoke_from_env --lib
+        env:
+          RSCRYPTO_CRC32_FORCE: hwcrc
+
+      - name: CRC32C Tier Smoke (force PCLMUL, 4-way)
+        if: matrix.target.name == 'x86_64-unknown-linux-gnu'
+        run: cargo test -p checksum test_crc32c_forced_kernel_smoke_from_env --lib
+        env:
+          RSCRYPTO_CRC32_FORCE: pclmul
+          RSCRYPTO_CRC32_STREAMS: "4"
+
+      # aarch64: CRC32/CRC32C HWCRC + PMULL (+EOR3 where available)
+      - name: CRC32 Tier Smoke (force HWCRC)
+        if: matrix.target.name == 'aarch64-unknown-linux-gnu'
+        run: cargo test -p checksum test_crc32_forced_kernel_smoke_from_env --lib
+        env:
+          RSCRYPTO_CRC32_FORCE: hwcrc
+
+      - name: CRC32C Tier Smoke (force HWCRC)
+        if: matrix.target.name == 'aarch64-unknown-linux-gnu'
+        run: cargo test -p checksum test_crc32c_forced_kernel_smoke_from_env --lib
+        env:
+          RSCRYPTO_CRC32_FORCE: hwcrc
+
+      - name: CRC32 Tier Smoke (force PMULL, 2-way)
+        if: matrix.target.name == 'aarch64-unknown-linux-gnu'
+        run: cargo test -p checksum test_crc32_forced_kernel_smoke_from_env --lib
+        env:
+          RSCRYPTO_CRC32_FORCE: pmull
+          RSCRYPTO_CRC32_STREAMS: "2"
+
+      - name: CRC32C Tier Smoke (force PMULL, 2-way)
+        if: matrix.target.name == 'aarch64-unknown-linux-gnu'
+        run: cargo test -p checksum test_crc32c_forced_kernel_smoke_from_env --lib
+        env:
+          RSCRYPTO_CRC32_FORCE: pmull
+          RSCRYPTO_CRC32_STREAMS: "2"
+
+      - name: CRC32 Tier Smoke (force PMULL+EOR3, 2-way)
+        if: matrix.target.name == 'aarch64-unknown-linux-gnu'
+        run: cargo test -p checksum test_crc32_forced_kernel_smoke_from_env --lib
+        env:
+          RSCRYPTO_CRC32_FORCE: pmull-eor3
+          RSCRYPTO_CRC32_STREAMS: "2"
+
+      - name: CRC32C Tier Smoke (force PMULL+EOR3, 2-way)
+        if: matrix.target.name == 'aarch64-unknown-linux-gnu'
+        run: cargo test -p checksum test_crc32c_forced_kernel_smoke_from_env --lib
+        env:
+          RSCRYPTO_CRC32_FORCE: pmull-eor3
+          RSCRYPTO_CRC32_STREAMS: "2"
+
+      # ─────────────────────────────────────────────────────────────────────────
       # Portable Fallback Verification - Ensure all platforms work without SIMD
       # ─────────────────────────────────────────────────────────────────────────
       - name: CRC64 Portable Fallback Verification
