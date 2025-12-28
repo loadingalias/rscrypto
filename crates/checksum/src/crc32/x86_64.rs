@@ -824,16 +824,19 @@ const fn fold_k_crc32(reflected_poly: u32, n: u32) -> u64 {
 
 /// Compute a `(high, low)` fold coefficient pair for folding 16 bytes by `shift_bytes`.
 ///
-/// Returns `(K_{d-1}, K_{d+63})` where `d = 8 * shift_bytes`.
+/// Returns `(K_{d+32}, K_{d-32})` where `d = 8 * shift_bytes`.
 #[must_use]
 const fn fold16_coeff_for_bytes_crc32(reflected_poly: u32, shift_bytes: u32) -> (u64, u64) {
   if shift_bytes == 0 {
     return (0, 0);
   }
   let d = shift_bytes.strict_mul(8);
+  if d < 32 {
+    return (0, 0);
+  }
   (
-    fold_k_crc32(reflected_poly, d.strict_sub(1)),
-    fold_k_crc32(reflected_poly, d.strict_add(63)),
+    fold_k_crc32(reflected_poly, d.strict_add(32)),
+    fold_k_crc32(reflected_poly, d.strict_sub(32)),
   )
 }
 
@@ -1958,7 +1961,14 @@ mod tests {
 
   #[test]
   fn test_crc32_ieee_vpclmul_matches_portable_various_lengths() {
-    if !std::arch::is_x86_feature_detected!("vpclmulqdq") {
+    if !(std::arch::is_x86_feature_detected!("avx512f")
+      && std::arch::is_x86_feature_detected!("avx512vl")
+      && std::arch::is_x86_feature_detected!("avx512bw")
+      && std::arch::is_x86_feature_detected!("avx512dq")
+      && std::arch::is_x86_feature_detected!("vpclmulqdq")
+      && std::arch::is_x86_feature_detected!("pclmulqdq")
+      && std::arch::is_x86_feature_detected!("ssse3"))
+    {
       return;
     }
 

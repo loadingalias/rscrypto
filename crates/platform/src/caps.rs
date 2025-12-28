@@ -421,7 +421,7 @@ pub mod x86 {
   /// Note: CRC folding kernels may still rely on the 128-bit `pclmulqdq`
   /// instruction for tail reduction even when using VPCLMUL for the main loop.
   pub const VPCLMUL_READY: Caps = Caps([
-    VPCLMULQDQ.0[0] | PCLMULQDQ.0[0] | AVX512F.0[0] | AVX512VL.0[0] | AVX512BW.0[0],
+    VPCLMULQDQ.0[0] | PCLMULQDQ.0[0] | AVX512F.0[0] | AVX512VL.0[0] | AVX512BW.0[0] | AVX512DQ.0[0],
     0,
     0,
     0,

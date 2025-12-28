@@ -219,7 +219,7 @@ pub(crate) fn crc32c_selected_kernel_name(len: usize) -> &'static str {
       if caps.has(platform::caps::x86::VPCLMUL_READY) && len >= cfg.tunables.fusion_to_vpclmul {
         return kernels::select_name(CRC32C_FUSION_VPCLMUL_NAMES, None, streams, len, CRC32_FOLD_BLOCK_BYTES);
       }
-      if caps.has(platform::caps::x86::AVX512F)
+      if caps.has(platform::caps::x86::AVX512_READY)
         && len >= cfg.tunables.fusion_to_avx512
         && caps.has(platform::caps::x86::PCLMULQDQ)
       {
@@ -323,7 +323,7 @@ fn crc32c_x86_64_auto(crc: u32, data: &[u8]) -> u32 {
       if caps.has(platform::caps::x86::VPCLMUL_READY) && len >= cfg.tunables.fusion_to_vpclmul {
         return kernels::dispatch_streams(&CRC32C_FUSION_VPCLMUL, streams, crc, data);
       }
-      if caps.has(platform::caps::x86::AVX512F)
+      if caps.has(platform::caps::x86::AVX512_READY)
         && len >= cfg.tunables.fusion_to_avx512
         && caps.has(platform::caps::x86::PCLMULQDQ)
       {
