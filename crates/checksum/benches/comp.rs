@@ -2,10 +2,13 @@ use core::hint::black_box;
 use std::sync::Once;
 
 use checksum::{Checksum, Crc16Ccitt, Crc16Ibm, Crc24OpenPgp, Crc32, Crc32C, Crc64, Crc64Nvme};
+use crc::Crc as RefCrc;
 use crc_fast::{CrcAlgorithm as CrcFastAlgorithm, Digest as CrcFastDigest};
 use crc32c::crc32c as crc32c_oneshot;
 use crc32fast::Hasher as Crc32FastHasher;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+
+static REF_CRC24_OPENPGP: RefCrc<u32> = RefCrc::<u32>::new(&crc::CRC_24_OPENPGP);
 
 /// Print platform detection info once at benchmark start.
 fn print_platform_info() {
@@ -330,6 +333,14 @@ fn bench_crc24_openpgp_comp(c: &mut Criterion) {
         });
       },
     );
+
+    group.bench_with_input(BenchmarkId::new("crc/auto", label), &data, |b, data| {
+      b.iter(|| {
+        let mut digest = REF_CRC24_OPENPGP.digest();
+        digest.update(black_box(data));
+        black_box(digest.finalize() & 0x00FF_FFFF);
+      });
+    });
 
     // Bitwise reference is too slow for large buffers; keep it as a sanity/overhead baseline.
     if size <= 4096 {

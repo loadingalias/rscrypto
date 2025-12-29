@@ -1,8 +1,11 @@
 extern crate std;
 
+use crc::Crc as RefCrc;
 use proptest::prelude::*;
 
 use super::*;
+
+const REF_CRC24_OPENPGP: RefCrc<u32> = RefCrc::<u32>::new(&crc::CRC_24_OPENPGP);
 
 fn crc24_openpgp_reference(data: &[u8]) -> u32 {
   // MSB-first OpenPGP using a 32-bit expanded register (top 24 bits).
@@ -37,6 +40,13 @@ proptest! {
   }
 
   #[test]
+  fn crc24_openpgp_matches_crc_crate(data in proptest::collection::vec(any::<u8>(), 0..=4096)) {
+    let ours = Crc24OpenPgp::checksum(&data);
+    let reference = REF_CRC24_OPENPGP.checksum(&data) & 0x00FF_FFFF;
+    prop_assert_eq!(ours, reference);
+  }
+
+  #[test]
   fn crc24_openpgp_streaming_and_combine(
     data in proptest::collection::vec(any::<u8>(), 0..=4096),
     split in any::<usize>(),
@@ -64,6 +74,22 @@ proptest! {
     let mut resumed = Crc24OpenPgp::resume(crc_a);
     resumed.update(b);
     prop_assert_eq!(resumed.finalize(), oneshot);
+  }
+
+  #[test]
+  fn crc24_openpgp_streaming_matches_crc_crate(
+    data in proptest::collection::vec(any::<u8>(), 0..=4096),
+    chunk in 1usize..=257
+  ) {
+    let mut ours = Crc24OpenPgp::new();
+    let mut reference = REF_CRC24_OPENPGP.digest();
+
+    for part in data.chunks(chunk) {
+      ours.update(part);
+      reference.update(part);
+    }
+
+    prop_assert_eq!(ours.finalize(), reference.finalize() & 0x00FF_FFFF);
   }
 
   #[test]

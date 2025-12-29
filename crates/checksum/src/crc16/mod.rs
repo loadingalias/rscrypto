@@ -21,9 +21,11 @@
 pub(crate) mod config;
 mod kernels;
 mod portable;
+mod tuned_defaults;
 
 use backend::dispatch::Selected;
-pub use config::{Crc16Config, Crc16Tunables};
+#[allow(unused_imports)]
+pub use config::{Crc16Config, Crc16Force, Crc16Tunables};
 // Re-export traits for test modules (`use super::*`).
 #[allow(unused_imports)]
 pub(super) use traits::{Checksum, ChecksumCombine};
@@ -56,7 +58,7 @@ mod kernel_tables {
 
 #[inline]
 fn crc16_ccitt_portable_auto(crc: u16, data: &[u8]) -> u16 {
-  if data.len() < config::get().tunables.slice4_to_slice8 {
+  if data.len() < crc16_slice4_to_slice8() {
     portable::crc16_ccitt_slice4(crc, data)
   } else {
     portable::crc16_ccitt_slice8(crc, data)
@@ -65,10 +67,29 @@ fn crc16_ccitt_portable_auto(crc: u16, data: &[u8]) -> u16 {
 
 #[inline]
 fn crc16_ibm_portable_auto(crc: u16, data: &[u8]) -> u16 {
-  if data.len() < config::get().tunables.slice4_to_slice8 {
+  if data.len() < crc16_slice4_to_slice8() {
     portable::crc16_ibm_slice4(crc, data)
   } else {
     portable::crc16_ibm_slice8(crc, data)
+  }
+}
+
+#[cfg(feature = "std")]
+use std::sync::OnceLock;
+
+#[cfg(feature = "std")]
+static CRC16_SLICE4_TO_SLICE8: OnceLock<usize> = OnceLock::new();
+
+#[inline]
+#[must_use]
+fn crc16_slice4_to_slice8() -> usize {
+  #[cfg(feature = "std")]
+  {
+    *CRC16_SLICE4_TO_SLICE8.get_or_init(|| config::get().tunables.slice4_to_slice8)
+  }
+  #[cfg(not(feature = "std"))]
+  {
+    config::get().tunables.slice4_to_slice8
   }
 }
 
@@ -79,10 +100,11 @@ fn crc16_ibm_portable_auto(crc: u16, data: &[u8]) -> u16 {
 #[inline]
 #[must_use]
 pub(crate) fn crc16_selected_kernel_name(len: usize) -> &'static str {
-  if len < config::get().tunables.slice4_to_slice8 {
-    kernels::PORTABLE_SLICE4
-  } else {
-    kernels::PORTABLE_SLICE8
+  let cfg = config::get();
+  match cfg.effective_force {
+    config::Crc16Force::Slice4 => kernels::PORTABLE_SLICE4,
+    config::Crc16Force::Slice8 => kernels::PORTABLE_SLICE8,
+    _ => kernels::portable_name_for_len(len, cfg.tunables.slice4_to_slice8),
   }
 }
 
@@ -91,11 +113,27 @@ pub(crate) fn crc16_selected_kernel_name(len: usize) -> &'static str {
 // ─────────────────────────────────────────────────────────────────────────────
 
 fn select_crc16_ccitt() -> Selected<Crc16Fn> {
-  Selected::new(kernels::PORTABLE_AUTO, crc16_ccitt_portable_auto)
+  let cfg = config::get();
+  #[cfg(feature = "std")]
+  let _ = CRC16_SLICE4_TO_SLICE8.get_or_init(|| cfg.tunables.slice4_to_slice8);
+
+  match cfg.effective_force {
+    config::Crc16Force::Slice4 => Selected::new(kernels::PORTABLE_SLICE4, portable::crc16_ccitt_slice4),
+    config::Crc16Force::Slice8 => Selected::new(kernels::PORTABLE_SLICE8, portable::crc16_ccitt_slice8),
+    _ => Selected::new(kernels::PORTABLE_AUTO, crc16_ccitt_portable_auto),
+  }
 }
 
 fn select_crc16_ibm() -> Selected<Crc16Fn> {
-  Selected::new(kernels::PORTABLE_AUTO, crc16_ibm_portable_auto)
+  let cfg = config::get();
+  #[cfg(feature = "std")]
+  let _ = CRC16_SLICE4_TO_SLICE8.get_or_init(|| cfg.tunables.slice4_to_slice8);
+
+  match cfg.effective_force {
+    config::Crc16Force::Slice4 => Selected::new(kernels::PORTABLE_SLICE4, portable::crc16_ibm_slice4),
+    config::Crc16Force::Slice8 => Selected::new(kernels::PORTABLE_SLICE8, portable::crc16_ibm_slice8),
+    _ => Selected::new(kernels::PORTABLE_AUTO, crc16_ibm_portable_auto),
+  }
 }
 
 static CRC16_CCITT_DISPATCHER: Crc16Dispatcher = Crc16Dispatcher::new(select_crc16_ccitt);

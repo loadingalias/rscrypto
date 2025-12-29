@@ -99,6 +99,7 @@ name = "checksum"
 version = "0.1.0"
 dependencies = [
  "backend",
+ "crc",
  "crc-fast",
  "crc32c",
  "crc32fast",

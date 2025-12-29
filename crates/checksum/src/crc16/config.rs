@@ -1,30 +1,169 @@
-//! CRC-16 configuration and tunables.
+//! CRC-16 runtime configuration (portable tunables + overrides).
 //!
-//! CRC-16 is currently portable-only. This module exists to keep API parity
-//! with CRC-32/CRC-64 and to allow future tuning without breaking changes.
+//! CRC-16 is currently portable-only, but this module mirrors the CRC-32/CRC-64
+//! configuration surface so we can add accelerated tiers without breaking API.
 
-/// Tunables for CRC-16 portable kernel selection.
-#[derive(Clone, Copy, Debug)]
+use platform::{Caps, Tune};
+
+use super::tuned_defaults;
+
+/// Forced backend selection for CRC-16.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Crc16Force {
+  /// Use the default auto selector.
+  #[default]
+  Auto,
+  /// Force the portable tier (reserved for future accelerated backends).
+  Portable,
+  /// Force the portable slice-by-4 kernel.
+  Slice4,
+  /// Force the portable slice-by-8 kernel.
+  Slice8,
+}
+
+impl Crc16Force {
+  #[must_use]
+  pub const fn as_str(self) -> &'static str {
+    match self {
+      Self::Auto => "auto",
+      Self::Portable => "portable",
+      Self::Slice4 => "slice4",
+      Self::Slice8 => "slice8",
+    }
+  }
+}
+
+/// CRC-16 selection tunables.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Crc16Tunables {
   /// Minimum `len` in bytes to use slice-by-8 (otherwise slice-by-4).
   pub slice4_to_slice8: usize,
 }
 
-impl Default for Crc16Tunables {
-  fn default() -> Self {
-    Self { slice4_to_slice8: 64 }
+/// Full CRC-16 runtime configuration (after applying overrides).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Crc16Config {
+  /// Requested force mode (env/programmatic).
+  pub requested_force: Crc16Force,
+  /// Force mode clamped to detected CPU capabilities.
+  ///
+  /// Today this is identical to `requested_force` because there are no
+  /// accelerated tiers to clamp against.
+  pub effective_force: Crc16Force,
+  /// Tunables used by the selector.
+  pub tunables: Crc16Tunables,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct Overrides {
+  force: Crc16Force,
+  slice4_to_slice8: Option<usize>,
+}
+
+#[cfg(feature = "std")]
+fn read_env_overrides() -> Overrides {
+  fn parse_usize(name: &str) -> Option<usize> {
+    let value = std::env::var(name).ok()?;
+    let value = value.trim();
+    if value.is_empty() {
+      return None;
+    }
+    value.parse::<usize>().ok()
+  }
+
+  fn parse_force(name: &str) -> Option<Crc16Force> {
+    let value = std::env::var(name).ok()?;
+    let value = value.trim();
+    if value.is_empty() {
+      return None;
+    }
+
+    if value.eq_ignore_ascii_case("auto") {
+      return Some(Crc16Force::Auto);
+    }
+    if value.eq_ignore_ascii_case("portable")
+      || value.eq_ignore_ascii_case("scalar")
+      || value.eq_ignore_ascii_case("table")
+    {
+      return Some(Crc16Force::Portable);
+    }
+    if value.eq_ignore_ascii_case("slice4") || value.eq_ignore_ascii_case("slice-4") {
+      return Some(Crc16Force::Slice4);
+    }
+    if value.eq_ignore_ascii_case("slice8") || value.eq_ignore_ascii_case("slice-8") {
+      return Some(Crc16Force::Slice8);
+    }
+
+    None
+  }
+
+  Overrides {
+    force: parse_force("RSCRYPTO_CRC16_FORCE").unwrap_or(Crc16Force::Auto),
+    slice4_to_slice8: parse_usize("RSCRYPTO_CRC16_THRESHOLD_SLICE4_TO_SLICE8"),
   }
 }
 
-/// Effective CRC-16 configuration.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct Crc16Config {
-  /// Active tunables.
-  pub tunables: Crc16Tunables,
+#[cfg(feature = "std")]
+fn overrides() -> Overrides {
+  use std::sync::OnceLock;
+  static OVERRIDES: OnceLock<Overrides> = OnceLock::new();
+  *OVERRIDES.get_or_init(read_env_overrides)
+}
+
+#[cfg(not(feature = "std"))]
+fn overrides() -> Overrides {
+  Overrides::default()
 }
 
 #[inline]
 #[must_use]
-pub(crate) fn get() -> Crc16Config {
-  Crc16Config::default()
+#[allow(unused_variables)] // `caps` reserved for future accelerated tiers
+fn clamp_force_to_caps(requested: Crc16Force, caps: Caps) -> Crc16Force {
+  requested
+}
+
+#[inline]
+#[must_use]
+fn default_slice4_to_slice8(tune: Tune) -> usize {
+  tuned_defaults::for_tune_kind(tune.kind)
+    .map(|d| d.slice4_to_slice8)
+    .unwrap_or(tune.cache_line as usize)
+    .max(1)
+}
+
+#[inline]
+#[must_use]
+fn config(caps: Caps, tune: Tune) -> Crc16Config {
+  let ov = overrides();
+
+  let mut slice4_to_slice8 = default_slice4_to_slice8(tune);
+  if let Some(v) = ov.slice4_to_slice8 {
+    slice4_to_slice8 = v.max(1);
+  }
+
+  let requested_force = ov.force;
+  let effective_force = clamp_force_to_caps(requested_force, caps);
+
+  Crc16Config {
+    requested_force,
+    effective_force,
+    tunables: Crc16Tunables { slice4_to_slice8 },
+  }
+}
+
+/// Cached process-wide CRC-16 configuration.
+#[inline]
+#[must_use]
+pub fn get() -> Crc16Config {
+  #[cfg(feature = "std")]
+  {
+    use std::sync::OnceLock;
+    static CACHED: OnceLock<Crc16Config> = OnceLock::new();
+    *CACHED.get_or_init(|| platform::dispatch_auto(config))
+  }
+
+  #[cfg(not(feature = "std"))]
+  {
+    config(platform::caps(), platform::tune())
+  }
 }

@@ -23,9 +23,11 @@
 pub(crate) mod config;
 mod kernels;
 mod portable;
+mod tuned_defaults;
 
 use backend::dispatch::Selected;
-pub use config::{Crc24Config, Crc24Tunables};
+#[allow(unused_imports)]
+pub use config::{Crc24Config, Crc24Force, Crc24Tunables};
 // Re-export traits for test modules (`use super::*`).
 #[allow(unused_imports)]
 pub(super) use traits::{Checksum, ChecksumCombine};
@@ -54,10 +56,29 @@ mod kernel_tables {
 
 #[inline]
 fn crc24_openpgp_portable_auto(crc: u32, data: &[u8]) -> u32 {
-  if data.len() < config::get().tunables.slice4_to_slice8 {
+  if data.len() < crc24_slice4_to_slice8() {
     portable::crc24_openpgp_slice4(crc, data)
   } else {
     portable::crc24_openpgp_slice8(crc, data)
+  }
+}
+
+#[cfg(feature = "std")]
+use std::sync::OnceLock;
+
+#[cfg(feature = "std")]
+static CRC24_SLICE4_TO_SLICE8: OnceLock<usize> = OnceLock::new();
+
+#[inline]
+#[must_use]
+fn crc24_slice4_to_slice8() -> usize {
+  #[cfg(feature = "std")]
+  {
+    *CRC24_SLICE4_TO_SLICE8.get_or_init(|| config::get().tunables.slice4_to_slice8)
+  }
+  #[cfg(not(feature = "std"))]
+  {
+    config::get().tunables.slice4_to_slice8
   }
 }
 
@@ -68,10 +89,11 @@ fn crc24_openpgp_portable_auto(crc: u32, data: &[u8]) -> u32 {
 #[inline]
 #[must_use]
 pub(crate) fn crc24_selected_kernel_name(len: usize) -> &'static str {
-  if len < config::get().tunables.slice4_to_slice8 {
-    kernels::PORTABLE_SLICE4
-  } else {
-    kernels::PORTABLE_SLICE8
+  let cfg = config::get();
+  match cfg.effective_force {
+    config::Crc24Force::Slice4 => kernels::PORTABLE_SLICE4,
+    config::Crc24Force::Slice8 => kernels::PORTABLE_SLICE8,
+    _ => kernels::portable_name_for_len(len, cfg.tunables.slice4_to_slice8),
   }
 }
 
@@ -80,7 +102,15 @@ pub(crate) fn crc24_selected_kernel_name(len: usize) -> &'static str {
 // ─────────────────────────────────────────────────────────────────────────────
 
 fn select_crc24_openpgp() -> Selected<Crc24Fn> {
-  Selected::new(kernels::PORTABLE_AUTO, crc24_openpgp_portable_auto)
+  let cfg = config::get();
+  #[cfg(feature = "std")]
+  let _ = CRC24_SLICE4_TO_SLICE8.get_or_init(|| cfg.tunables.slice4_to_slice8);
+
+  match cfg.effective_force {
+    config::Crc24Force::Slice4 => Selected::new(kernels::PORTABLE_SLICE4, portable::crc24_openpgp_slice4),
+    config::Crc24Force::Slice8 => Selected::new(kernels::PORTABLE_SLICE8, portable::crc24_openpgp_slice8),
+    _ => Selected::new(kernels::PORTABLE_AUTO, crc24_openpgp_portable_auto),
+  }
 }
 
 static CRC24_OPENPGP_DISPATCHER: Crc24Dispatcher = Crc24Dispatcher::new(select_crc24_openpgp);

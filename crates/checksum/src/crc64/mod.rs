@@ -71,8 +71,8 @@ pub(crate) fn crc64_selected_kernel_name(len: usize) -> &'static str {
       }
       Crc64Force::Pclmul => return kernels::PORTABLE,
       Crc64Force::Vpclmul if caps.has(platform::caps::x86::VPCLMUL_READY) => {
-        // Use 4×512 kernel for large buffers (256B+ block processing)
-        if len >= CRC64_4X512_BLOCK_BYTES {
+        // Use 4×512 kernel only for very large buffers (higher fixed overhead).
+        if len >= CRC64_4X512_MIN_BYTES {
           return VPCLMUL_4X512;
         }
         let streams = x86_vpclmul_streams_for_len(len, cfg.tunables.streams);
@@ -94,8 +94,8 @@ pub(crate) fn crc64_selected_kernel_name(len: usize) -> &'static str {
 
     // VPCLMUL tier (if available and above threshold)
     if caps.has(platform::caps::x86::VPCLMUL_READY) && len >= cfg.tunables.pclmul_to_vpclmul {
-      // Use 4×512 kernel for large buffers (256B+ block processing)
-      if len >= CRC64_4X512_BLOCK_BYTES {
+      // Use 4×512 kernel only for very large buffers (higher fixed overhead).
+      if len >= CRC64_4X512_MIN_BYTES {
         return VPCLMUL_4X512;
       }
       let streams = x86_vpclmul_streams_for_len(len, cfg.tunables.streams);
@@ -110,8 +110,8 @@ pub(crate) fn crc64_selected_kernel_name(len: usize) -> &'static str {
 
     // Fallback: VPCLMUL without PCLMUL (rare edge case)
     if caps.has(platform::caps::x86::VPCLMUL_READY) {
-      // Use 4×512 kernel for large buffers (256B+ block processing)
-      if len >= CRC64_4X512_BLOCK_BYTES {
+      // Use 4×512 kernel only for very large buffers (higher fixed overhead).
+      if len >= CRC64_4X512_MIN_BYTES {
         return VPCLMUL_4X512;
       }
       let streams = x86_vpclmul_streams_for_len(len, cfg.tunables.streams);
@@ -367,6 +367,9 @@ const CRC64_SMALL_LANE_BYTES: usize = 16;
 /// Block size for 4×512-bit VPCLMUL processing (4 × 64 bytes).
 #[cfg(target_arch = "x86_64")]
 const CRC64_4X512_BLOCK_BYTES: usize = 256;
+/// Minimum buffer length where the 4×512-bit VPCLMUL kernel is worthwhile.
+#[cfg(target_arch = "x86_64")]
+const CRC64_4X512_MIN_BYTES: usize = CRC64_4X512_BLOCK_BYTES.strict_mul(1024);
 
 #[cfg(target_arch = "x86_64")]
 #[inline]
@@ -523,8 +526,8 @@ fn crc64_xz_x86_64_auto(crc: u64, data: &[u8]) -> u64 {
     }
     Crc64Force::Pclmul => return crc64_xz_portable(crc, data),
     Crc64Force::Vpclmul if caps.has(platform::caps::x86::VPCLMUL_READY) => {
-      // Use 4×512 kernel for large buffers (256B+ block processing)
-      if len >= CRC64_4X512_BLOCK_BYTES {
+      // Use 4×512 kernel only for very large buffers (higher fixed overhead).
+      if len >= CRC64_4X512_MIN_BYTES {
         return XZ_VPCLMUL_4X512(crc, data);
       }
       let streams = x86_vpclmul_streams_for_len(len, cfg.tunables.streams);
@@ -554,8 +557,8 @@ fn crc64_xz_x86_64_auto(crc: u64, data: &[u8]) -> u64 {
 
   // VPCLMUL tier (if available and above threshold)
   if caps.has(platform::caps::x86::VPCLMUL_READY) && len >= cfg.tunables.pclmul_to_vpclmul {
-    // Use 4×512 kernel for large buffers (256B+ block processing)
-    if len >= CRC64_4X512_BLOCK_BYTES {
+    // Use 4×512 kernel only for very large buffers (higher fixed overhead).
+    if len >= CRC64_4X512_MIN_BYTES {
       return XZ_VPCLMUL_4X512(crc, data);
     }
     let streams = x86_vpclmul_streams_for_len(len, cfg.tunables.streams);
@@ -578,8 +581,8 @@ fn crc64_xz_x86_64_auto(crc: u64, data: &[u8]) -> u64 {
 
   // Fallback: VPCLMUL without PCLMUL (rare edge case)
   if caps.has(platform::caps::x86::VPCLMUL_READY) {
-    // Use 4×512 kernel for large buffers (256B+ block processing)
-    if len >= CRC64_4X512_BLOCK_BYTES {
+    // Use 4×512 kernel only for very large buffers (higher fixed overhead).
+    if len >= CRC64_4X512_MIN_BYTES {
       return XZ_VPCLMUL_4X512(crc, data);
     }
     let streams = x86_vpclmul_streams_for_len(len, cfg.tunables.streams);
@@ -618,8 +621,8 @@ fn crc64_nvme_x86_64_auto(crc: u64, data: &[u8]) -> u64 {
     }
     Crc64Force::Pclmul => return crc64_nvme_portable(crc, data),
     Crc64Force::Vpclmul if caps.has(platform::caps::x86::VPCLMUL_READY) => {
-      // Use 4×512 kernel for large buffers (256B+ block processing)
-      if len >= CRC64_4X512_BLOCK_BYTES {
+      // Use 4×512 kernel only for very large buffers (higher fixed overhead).
+      if len >= CRC64_4X512_MIN_BYTES {
         return NVME_VPCLMUL_4X512(crc, data);
       }
       let streams = x86_vpclmul_streams_for_len(len, cfg.tunables.streams);
@@ -649,8 +652,8 @@ fn crc64_nvme_x86_64_auto(crc: u64, data: &[u8]) -> u64 {
 
   // VPCLMUL tier (if available and above threshold)
   if caps.has(platform::caps::x86::VPCLMUL_READY) && len >= cfg.tunables.pclmul_to_vpclmul {
-    // Use 4×512 kernel for large buffers (256B+ block processing)
-    if len >= CRC64_4X512_BLOCK_BYTES {
+    // Use 4×512 kernel only for very large buffers (higher fixed overhead).
+    if len >= CRC64_4X512_MIN_BYTES {
       return NVME_VPCLMUL_4X512(crc, data);
     }
     let streams = x86_vpclmul_streams_for_len(len, cfg.tunables.streams);
@@ -673,8 +676,8 @@ fn crc64_nvme_x86_64_auto(crc: u64, data: &[u8]) -> u64 {
 
   // Fallback: VPCLMUL without PCLMUL (rare edge case)
   if caps.has(platform::caps::x86::VPCLMUL_READY) {
-    // Use 4×512 kernel for large buffers (256B+ block processing)
-    if len >= CRC64_4X512_BLOCK_BYTES {
+    // Use 4×512 kernel only for very large buffers (higher fixed overhead).
+    if len >= CRC64_4X512_MIN_BYTES {
       return NVME_VPCLMUL_4X512(crc, data);
     }
     let streams = x86_vpclmul_streams_for_len(len, cfg.tunables.streams);
@@ -1764,8 +1767,8 @@ mod tests {
       if force.eq_ignore_ascii_case("vpclmul") {
         assert_eq!(cfg.requested_force, Crc64Force::Vpclmul);
         if cfg.effective_force == Crc64Force::Vpclmul {
-          // For large buffers, 4x512 is always selected regardless of streams setting
-          if len >= CRC64_4X512_BLOCK_BYTES {
+          // For very large buffers, 4x512 is selected regardless of streams setting.
+          if len >= CRC64_4X512_MIN_BYTES {
             assert_eq!(kernel, "x86_64/vpclmul-4x512");
           } else if streams_env.is_some() {
             let expected = match x86_vpclmul_streams_for_len(len, cfg.tunables.streams) {
