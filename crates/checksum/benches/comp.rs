@@ -1,7 +1,10 @@
 use core::hint::black_box;
 use std::sync::Once;
 
-use checksum::{Checksum, Crc16Ccitt, Crc16Ibm, Crc24OpenPgp, Crc32, Crc32C, Crc64, Crc64Nvme};
+use checksum::{
+  BufferedCrc16Ccitt, BufferedCrc16Ibm, BufferedCrc24OpenPgp, BufferedCrc32, BufferedCrc32C, BufferedCrc64Nvme,
+  BufferedCrc64Xz, Checksum, Crc16Ccitt, Crc16Ibm, Crc24OpenPgp, Crc32, Crc32C, Crc64, Crc64Nvme,
+};
 use crc::Crc as RefCrc;
 use crc_fast::{CrcAlgorithm as CrcFastAlgorithm, Digest as CrcFastDigest};
 use crc32c::crc32c as crc32c_oneshot;
@@ -9,6 +12,8 @@ use crc32fast::Hasher as Crc32FastHasher;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
 static REF_CRC24_OPENPGP: RefCrc<u32> = RefCrc::<u32>::new(&crc::CRC_24_OPENPGP);
+
+const BUFFERED_CHUNK_BYTES: usize = 31;
 
 /// Print platform detection info once at benchmark start.
 fn print_platform_info() {
@@ -47,40 +52,46 @@ fn print_platform_info() {
 const CASES: &[(&str, usize)] = &[
   ("xs", 64),
   ("s", 256),
-  ("m", 4 * 1024),
-  ("l", 64 * 1024),
-  ("xl", 1024 * 1024),
+  ("m", 4usize.strict_mul(1024)),
+  ("l", 64usize.strict_mul(1024)),
+  ("xl", 1024usize.strict_mul(1024)),
 ];
 
 fn make_data(len: usize) -> Vec<u8> {
   (0..len)
-    .map(|i| (i as u8).wrapping_mul(31).wrapping_add((i >> 8) as u8))
+    .map(|i| (i as u8).wrapping_mul(31).wrapping_add(i.strict_shr(8) as u8))
     .collect()
 }
 
 fn bench_crc64_xz_comp(c: &mut Criterion) {
   print_platform_info();
   let base_rs = Crc64::new();
+  let mut buffered_rs = BufferedCrc64Xz::new();
   let base_ref = crc64fast::Digest::new();
   let base_fast = CrcFastDigest::new(CrcFastAlgorithm::Crc64Xz);
 
-  let mut group = c.benchmark_group("crc64/xz/compare");
+  let mut group = c.benchmark_group("crc64/xz");
   for &(label, size) in CASES {
     let data = make_data(size);
     group.throughput(Throughput::Bytes(size as u64));
 
-    let kernel = Crc64::kernel_name_for_len(size);
-    group.bench_with_input(
-      BenchmarkId::new(format!("rscrypto/{kernel}"), label),
-      &data,
-      |b, data| {
-        b.iter(|| {
-          let mut hasher = base_rs.clone();
-          hasher.update(black_box(data));
-          black_box(hasher.finalize());
-        });
-      },
-    );
+    group.bench_with_input(BenchmarkId::new("rscrypto/checksum", label), &data, |b, data| {
+      b.iter(|| {
+        let mut hasher = base_rs.clone();
+        hasher.update(black_box(data));
+        black_box(hasher.finalize());
+      });
+    });
+
+    group.bench_with_input(BenchmarkId::new("rscrypto/buffered", label), &data, |b, data| {
+      b.iter(|| {
+        buffered_rs.reset();
+        for chunk in data.chunks(BUFFERED_CHUNK_BYTES) {
+          buffered_rs.update(black_box(chunk));
+        }
+        black_box(buffered_rs.finalize());
+      });
+    });
 
     group.bench_with_input(BenchmarkId::new("crc64fast/auto", label), &data, |b, data| {
       b.iter(|| {
@@ -103,26 +114,32 @@ fn bench_crc64_xz_comp(c: &mut Criterion) {
 
 fn bench_crc64_nvme_comp(c: &mut Criterion) {
   let base_rs = Crc64Nvme::new();
+  let mut buffered_rs = BufferedCrc64Nvme::new();
   let base_ref = crc64fast_nvme::Digest::new();
   let base_fast = CrcFastDigest::new(CrcFastAlgorithm::Crc64Nvme);
 
-  let mut group = c.benchmark_group("crc64/nvme/compare");
+  let mut group = c.benchmark_group("crc64/nvme");
   for &(label, size) in CASES {
     let data = make_data(size);
     group.throughput(Throughput::Bytes(size as u64));
 
-    let kernel = Crc64Nvme::kernel_name_for_len(size);
-    group.bench_with_input(
-      BenchmarkId::new(format!("rscrypto/{kernel}"), label),
-      &data,
-      |b, data| {
-        b.iter(|| {
-          let mut hasher = base_rs.clone();
-          hasher.update(black_box(data));
-          black_box(hasher.finalize());
-        });
-      },
-    );
+    group.bench_with_input(BenchmarkId::new("rscrypto/checksum", label), &data, |b, data| {
+      b.iter(|| {
+        let mut hasher = base_rs.clone();
+        hasher.update(black_box(data));
+        black_box(hasher.finalize());
+      });
+    });
+
+    group.bench_with_input(BenchmarkId::new("rscrypto/buffered", label), &data, |b, data| {
+      b.iter(|| {
+        buffered_rs.reset();
+        for chunk in data.chunks(BUFFERED_CHUNK_BYTES) {
+          buffered_rs.update(black_box(chunk));
+        }
+        black_box(buffered_rs.finalize());
+      });
+    });
 
     group.bench_with_input(BenchmarkId::new("crc64fast-nvme/auto", label), &data, |b, data| {
       b.iter(|| {
@@ -146,26 +163,32 @@ fn bench_crc64_nvme_comp(c: &mut Criterion) {
 fn bench_crc32_ieee_comp(c: &mut Criterion) {
   print_platform_info();
   let base_rs = Crc32::new();
+  let mut buffered_rs = BufferedCrc32::new();
   let base_fast = CrcFastDigest::new(CrcFastAlgorithm::Crc32IsoHdlc);
   let base_crc32fast = Crc32FastHasher::new();
 
-  let mut group = c.benchmark_group("crc32/ieee/compare");
+  let mut group = c.benchmark_group("crc32/ieee");
   for &(label, size) in CASES {
     let data = make_data(size);
     group.throughput(Throughput::Bytes(size as u64));
 
-    let kernel = Crc32::kernel_name_for_len(size);
-    group.bench_with_input(
-      BenchmarkId::new(format!("rscrypto/{kernel}"), label),
-      &data,
-      |b, data| {
-        b.iter(|| {
-          let mut hasher = base_rs.clone();
-          hasher.update(black_box(data));
-          black_box(hasher.finalize());
-        });
-      },
-    );
+    group.bench_with_input(BenchmarkId::new("rscrypto/checksum", label), &data, |b, data| {
+      b.iter(|| {
+        let mut hasher = base_rs.clone();
+        hasher.update(black_box(data));
+        black_box(hasher.finalize());
+      });
+    });
+
+    group.bench_with_input(BenchmarkId::new("rscrypto/buffered", label), &data, |b, data| {
+      b.iter(|| {
+        buffered_rs.reset();
+        for chunk in data.chunks(BUFFERED_CHUNK_BYTES) {
+          buffered_rs.update(black_box(chunk));
+        }
+        black_box(buffered_rs.finalize());
+      });
+    });
 
     group.bench_with_input(BenchmarkId::new("crc-fast/auto", label), &data, |b, data| {
       b.iter(|| {
@@ -189,25 +212,31 @@ fn bench_crc32_ieee_comp(c: &mut Criterion) {
 fn bench_crc32c_castagnoli_comp(c: &mut Criterion) {
   print_platform_info();
   let base_rs = Crc32C::new();
+  let mut buffered_rs = BufferedCrc32C::new();
   let base_fast = CrcFastDigest::new(CrcFastAlgorithm::Crc32Iscsi);
 
-  let mut group = c.benchmark_group("crc32c/castagnoli/compare");
+  let mut group = c.benchmark_group("crc32c/castagnoli");
   for &(label, size) in CASES {
     let data = make_data(size);
     group.throughput(Throughput::Bytes(size as u64));
 
-    let kernel = Crc32C::kernel_name_for_len(size);
-    group.bench_with_input(
-      BenchmarkId::new(format!("rscrypto/{kernel}"), label),
-      &data,
-      |b, data| {
-        b.iter(|| {
-          let mut hasher = base_rs.clone();
-          hasher.update(black_box(data));
-          black_box(hasher.finalize());
-        });
-      },
-    );
+    group.bench_with_input(BenchmarkId::new("rscrypto/checksum", label), &data, |b, data| {
+      b.iter(|| {
+        let mut hasher = base_rs.clone();
+        hasher.update(black_box(data));
+        black_box(hasher.finalize());
+      });
+    });
+
+    group.bench_with_input(BenchmarkId::new("rscrypto/buffered", label), &data, |b, data| {
+      b.iter(|| {
+        buffered_rs.reset();
+        for chunk in data.chunks(BUFFERED_CHUNK_BYTES) {
+          buffered_rs.update(black_box(chunk));
+        }
+        black_box(buffered_rs.finalize());
+      });
+    });
 
     group.bench_with_input(BenchmarkId::new("crc-fast/auto", label), &data, |b, data| {
       b.iter(|| {
@@ -227,25 +256,31 @@ fn bench_crc32c_castagnoli_comp(c: &mut Criterion) {
 fn bench_crc16_ccitt_comp(c: &mut Criterion) {
   print_platform_info();
   let base_rs = Crc16Ccitt::new();
+  let mut buffered_rs = BufferedCrc16Ccitt::new();
   let base_fast = CrcFastDigest::new(CrcFastAlgorithm::Crc16IbmSdlc);
 
-  let mut group = c.benchmark_group("crc16/ccitt/compare");
+  let mut group = c.benchmark_group("crc16/ccitt");
   for &(label, size) in CASES {
     let data = make_data(size);
     group.throughput(Throughput::Bytes(size as u64));
 
-    let kernel = Crc16Ccitt::kernel_name_for_len(size);
-    group.bench_with_input(
-      BenchmarkId::new(format!("rscrypto/{kernel}"), label),
-      &data,
-      |b, data| {
-        b.iter(|| {
-          let mut hasher = base_rs.clone();
-          hasher.update(black_box(data));
-          black_box(hasher.finalize());
-        });
-      },
-    );
+    group.bench_with_input(BenchmarkId::new("rscrypto/checksum", label), &data, |b, data| {
+      b.iter(|| {
+        let mut hasher = base_rs.clone();
+        hasher.update(black_box(data));
+        black_box(hasher.finalize());
+      });
+    });
+
+    group.bench_with_input(BenchmarkId::new("rscrypto/buffered", label), &data, |b, data| {
+      b.iter(|| {
+        buffered_rs.reset();
+        for chunk in data.chunks(BUFFERED_CHUNK_BYTES) {
+          buffered_rs.update(black_box(chunk));
+        }
+        black_box(buffered_rs.finalize());
+      });
+    });
 
     group.bench_with_input(BenchmarkId::new("crc-fast/auto", label), &data, |b, data| {
       b.iter(|| {
@@ -261,25 +296,31 @@ fn bench_crc16_ccitt_comp(c: &mut Criterion) {
 fn bench_crc16_ibm_comp(c: &mut Criterion) {
   print_platform_info();
   let base_rs = Crc16Ibm::new();
+  let mut buffered_rs = BufferedCrc16Ibm::new();
   let base_fast = CrcFastDigest::new(CrcFastAlgorithm::Crc16Arc);
 
-  let mut group = c.benchmark_group("crc16/ibm/compare");
+  let mut group = c.benchmark_group("crc16/ibm");
   for &(label, size) in CASES {
     let data = make_data(size);
     group.throughput(Throughput::Bytes(size as u64));
 
-    let kernel = Crc16Ibm::kernel_name_for_len(size);
-    group.bench_with_input(
-      BenchmarkId::new(format!("rscrypto/{kernel}"), label),
-      &data,
-      |b, data| {
-        b.iter(|| {
-          let mut hasher = base_rs.clone();
-          hasher.update(black_box(data));
-          black_box(hasher.finalize());
-        });
-      },
-    );
+    group.bench_with_input(BenchmarkId::new("rscrypto/checksum", label), &data, |b, data| {
+      b.iter(|| {
+        let mut hasher = base_rs.clone();
+        hasher.update(black_box(data));
+        black_box(hasher.finalize());
+      });
+    });
+
+    group.bench_with_input(BenchmarkId::new("rscrypto/buffered", label), &data, |b, data| {
+      b.iter(|| {
+        buffered_rs.reset();
+        for chunk in data.chunks(BUFFERED_CHUNK_BYTES) {
+          buffered_rs.update(black_box(chunk));
+        }
+        black_box(buffered_rs.finalize());
+      });
+    });
 
     group.bench_with_input(BenchmarkId::new("crc-fast/auto", label), &data, |b, data| {
       b.iter(|| {
@@ -315,24 +356,30 @@ fn crc24_openpgp_reference(data: &[u8]) -> u32 {
 fn bench_crc24_openpgp_comp(c: &mut Criterion) {
   print_platform_info();
   let base_rs = Crc24OpenPgp::new();
+  let mut buffered_rs = BufferedCrc24OpenPgp::new();
 
-  let mut group = c.benchmark_group("crc24/openpgp/compare");
+  let mut group = c.benchmark_group("crc24/openpgp");
   for &(label, size) in CASES {
     let data = make_data(size);
     group.throughput(Throughput::Bytes(size as u64));
 
-    let kernel = Crc24OpenPgp::kernel_name_for_len(size);
-    group.bench_with_input(
-      BenchmarkId::new(format!("rscrypto/{kernel}"), label),
-      &data,
-      |b, data| {
-        b.iter(|| {
-          let mut hasher = base_rs.clone();
-          hasher.update(black_box(data));
-          black_box(hasher.finalize());
-        });
-      },
-    );
+    group.bench_with_input(BenchmarkId::new("rscrypto/checksum", label), &data, |b, data| {
+      b.iter(|| {
+        let mut hasher = base_rs.clone();
+        hasher.update(black_box(data));
+        black_box(hasher.finalize());
+      });
+    });
+
+    group.bench_with_input(BenchmarkId::new("rscrypto/buffered", label), &data, |b, data| {
+      b.iter(|| {
+        buffered_rs.reset();
+        for chunk in data.chunks(BUFFERED_CHUNK_BYTES) {
+          buffered_rs.update(black_box(chunk));
+        }
+        black_box(buffered_rs.finalize());
+      });
+    });
 
     group.bench_with_input(BenchmarkId::new("crc/auto", label), &data, |b, data| {
       b.iter(|| {
