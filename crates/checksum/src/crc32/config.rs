@@ -267,7 +267,11 @@ fn tuned_defaults(caps: Caps, tune: Tune) -> Crc32Tunables {
   let fusion_to_avx512 = tuned.map(|t| t.fusion_to_avx512).unwrap_or(default_fusion_to_avx512);
   let fusion_to_vpclmul = tuned.map(|t| t.fusion_to_vpclmul).unwrap_or(default_fusion_to_vpclmul);
   Crc32Tunables {
-    portable_to_hwcrc: tuned.map(|t| t.portable_to_hwcrc).unwrap_or(tune.hwcrc_threshold),
+    // If HWCRC isn't available (e.g. POWER/s390x/RISC-V), treat this as the
+    // portable→accelerated crossover by falling back to the CLMUL threshold.
+    portable_to_hwcrc: tuned
+      .map(|t| t.portable_to_hwcrc)
+      .unwrap_or(tune.hwcrc_threshold.min(tune.pclmul_threshold)),
     hwcrc_to_fusion: tuned.map(|t| t.hwcrc_to_fusion).unwrap_or(tune.pclmul_threshold),
     fusion_to_avx512,
     fusion_to_vpclmul,
@@ -277,9 +281,9 @@ fn tuned_defaults(caps: Caps, tune: Tune) -> Crc32Tunables {
 
 #[inline]
 #[must_use]
+#[allow(unused_variables)] // arch-specific
 fn default_crc32_streams(caps: Caps, tune: Tune) -> u8 {
-  // Follow the CRC64 defaults: map the platform's estimated ILP to our supported
-  // stream slots (x86: 1/2/4/7/8, aarch64: 1/2/3).
+  // Keep CRC32 stream defaults in parity with CRC64.
   #[cfg(target_arch = "x86_64")]
   {
     let _ = caps;
@@ -298,7 +302,41 @@ fn default_crc32_streams(caps: Caps, tune: Tune) -> u8 {
     tune.parallel_streams.clamp(1, 3)
   }
 
-  #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+  #[cfg(target_arch = "powerpc64")]
+  {
+    if !caps.has(platform::caps::powerpc64::VPMSUM_READY) {
+      return 1;
+    }
+    tune.parallel_streams.saturating_mul(2).clamp(1, 8)
+  }
+
+  #[cfg(target_arch = "s390x")]
+  {
+    if !caps.has(platform::caps::s390x::VECTOR) {
+      return 1;
+    }
+    tune.parallel_streams.saturating_mul(2).clamp(1, 4)
+  }
+
+  #[cfg(target_arch = "riscv64")]
+  {
+    if !(caps.has(platform::caps::riscv::ZVBC) || caps.has(platform::caps::riscv::ZBC)) {
+      return 1;
+    }
+    match tune.parallel_streams {
+      0 | 1 => 1,
+      2 => 2,
+      _ => 4,
+    }
+  }
+
+  #[cfg(not(any(
+    target_arch = "x86_64",
+    target_arch = "aarch64",
+    target_arch = "powerpc64",
+    target_arch = "s390x",
+    target_arch = "riscv64"
+  )))]
   {
     let _ = (caps, tune);
     1

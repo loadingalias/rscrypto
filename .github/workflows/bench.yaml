@@ -38,12 +38,6 @@ on:
         type: boolean
         default: false
 
-      run_windows_arm64:
-        description: "Run on Windows ARM64"
-        required: false
-        type: boolean
-        default: false
-
       specific_benches:
         description: "Specific benchmark binary names (optional, comma-separated)"
         required: false
@@ -114,11 +108,6 @@ jobs:
             runner: windows-latest
             platform-id: windows-x64
 
-          # Windows ARM64 (Namespace)
-          - name: aarch64-pc-windows-msvc
-            runner: namespace-profile-rscrypto-windows-arm64
-            platform-id: windows-arm64
-
     steps:
       # Check if this platform should run (for manual triggers)
       - name: Check Platform Selection
@@ -163,15 +152,6 @@ jobs:
                 echo "Windows x86-64 disabled - skipping"
               fi
               ;;
-            "windows-arm64")
-              if [ "${GITHUB_EVENT_INPUTS_RUN_WINDOWS_ARM64}" == "true" ]; then
-                echo "enabled=true" >> "$GITHUB_OUTPUT"
-                echo "Windows ARM64 enabled by manual trigger"
-              else
-                echo "enabled=false" >> "$GITHUB_OUTPUT"
-                echo "Windows ARM64 disabled - skipping"
-              fi
-              ;;
             *)
               echo "enabled=false" >> "$GITHUB_OUTPUT"
               echo "Unknown platform - skipping"
@@ -181,13 +161,12 @@ jobs:
           GITHUB_EVENT_INPUTS_RUN_LINUX_X64: ${{ github.event.inputs.run_linux_x64 }}
           GITHUB_EVENT_INPUTS_RUN_LINUX_ARM64: ${{ github.event.inputs.run_linux_arm64 }}
           GITHUB_EVENT_INPUTS_RUN_WINDOWS_X64: ${{ github.event.inputs.run_windows_x64 }}
-          GITHUB_EVENT_INPUTS_RUN_WINDOWS_ARM64: ${{ github.event.inputs.run_windows_arm64 }}
 
       - name: Checkout
         if: steps.should-run.outputs.enabled == 'true'
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          fetch-depth: 0  # Required for cargo rail affected (needs git history)
+          fetch-depth: 0 # Required for cargo rail affected (needs git history)
 
       # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
       # Setup: Rust toolchain, performance tools, and caching
@@ -204,7 +183,7 @@ jobs:
 
       - name: Install Rust Toolchain
         if: steps.should-run.outputs.enabled == 'true'
-        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561  # master
+        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
         with:
           toolchain: ${{ steps.toolchain.outputs.version }}
           components: clippy, rustfmt
@@ -217,7 +196,7 @@ jobs:
 
       - name: Setup Namespace Cache (Linux - instant NVMe cache)
         if: steps.should-run.outputs.enabled == 'true' && runner.os == 'Linux'
-        uses: namespacelabs/nscloud-cache-action@446d8f390563cd54ca27e8de5bdb816f63c0b706  # v1.2.21
+        uses: namespacelabs/nscloud-cache-action@446d8f390563cd54ca27e8de5bdb816f63c0b706 # v1.2.21
         with:
           cache: rust
 
@@ -233,7 +212,7 @@ jobs:
 
       - name: Setup Rust Cache (Windows)
         if: steps.should-run.outputs.enabled == 'true' && runner.os == 'Windows'
-        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5  # v2.8.2
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
           shared-key: "rscrypto-v1"
           key: ${{ steps.cache.outputs.key }}
@@ -241,7 +220,7 @@ jobs:
 
       - name: Install Benchmarking Tools
         if: steps.should-run.outputs.enabled == 'true'
-        uses: taiki-e/install-action@de7896b7cd1c7d181266425abbe571b5a8c757bc  # v2.65.3
+        uses: taiki-e/install-action@de7896b7cd1c7d181266425abbe571b5a8c757bc # v2.65.3
         with:
           tool: cargo-criterion,critcmp,just
 
@@ -252,7 +231,7 @@ jobs:
       # Install cargo-rail for scheduled runs (change detection)
       - name: Install cargo-rail (Scheduled runs only)
         if: steps.should-run.outputs.enabled == 'true' && github.event_name == 'schedule'
-        uses: taiki-e/install-action@de7896b7cd1c7d181266425abbe571b5a8c757bc  # v2.65.3
+        uses: taiki-e/install-action@de7896b7cd1c7d181266425abbe571b5a8c757bc # v2.65.3
         with:
           tool: cargo-rail
 
@@ -438,7 +417,7 @@ jobs:
 
       - name: Upload Benchmark Results (Console Output)
         if: steps.should-run.outputs.enabled == 'true' && steps.scope.outputs.skip_bench != 'true' && always()
-        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08  # v4.6.0
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
         with:
           name: benchmark-results-${{ matrix.target.platform-id }}
           path: benchmark-results/
@@ -448,7 +427,7 @@ jobs:
 
       - name: Upload Criterion HTML Report
         if: steps.should-run.outputs.enabled == 'true' && steps.scope.outputs.skip_bench != 'true' && always()
-        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08  # v4.6.0
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
         with:
           name: criterion-html-${{ matrix.target.platform-id }}
           path: target/criterion/
@@ -482,10 +461,6 @@ jobs:
           - name: x86_64-pc-windows-msvc
             runner: windows-latest
             platform-id: windows-x64
-
-          - name: aarch64-pc-windows-msvc
-            runner: namespace-profile-rscrypto-windows-arm64
-            platform-id: windows-arm64
 
     steps:
       - name: Check Platform Selection
@@ -522,15 +497,6 @@ jobs:
                 echo "Windows x86-64 disabled - skipping"
               fi
               ;;
-            "windows-arm64")
-              if [ "${GITHUB_EVENT_INPUTS_RUN_WINDOWS_ARM64}" == "true" ]; then
-                echo "enabled=true" >> "$GITHUB_OUTPUT"
-                echo "Windows ARM64 enabled by manual trigger"
-              else
-                echo "enabled=false" >> "$GITHUB_OUTPUT"
-                echo "Windows ARM64 disabled - skipping"
-              fi
-              ;;
             *)
               echo "enabled=false" >> "$GITHUB_OUTPUT"
               echo "Unknown platform - skipping"
@@ -540,11 +506,10 @@ jobs:
           GITHUB_EVENT_INPUTS_RUN_LINUX_X64: ${{ github.event.inputs.run_linux_x64 }}
           GITHUB_EVENT_INPUTS_RUN_LINUX_ARM64: ${{ github.event.inputs.run_linux_arm64 }}
           GITHUB_EVENT_INPUTS_RUN_WINDOWS_X64: ${{ github.event.inputs.run_windows_x64 }}
-          GITHUB_EVENT_INPUTS_RUN_WINDOWS_ARM64: ${{ github.event.inputs.run_windows_arm64 }}
 
       - name: Checkout
         if: steps.should-run.outputs.enabled == 'true'
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Read Toolchain Version
         if: steps.should-run.outputs.enabled == 'true'
@@ -556,13 +521,13 @@ jobs:
 
       - name: Install Rust Toolchain
         if: steps.should-run.outputs.enabled == 'true'
-        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561  # master
+        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
         with:
           toolchain: ${{ steps.toolchain.outputs.version }}
 
       - name: Setup Namespace Cache (Linux - instant NVMe cache)
         if: steps.should-run.outputs.enabled == 'true' && runner.os == 'Linux'
-        uses: namespacelabs/nscloud-cache-action@446d8f390563cd54ca27e8de5bdb816f63c0b706  # v1.2.21
+        uses: namespacelabs/nscloud-cache-action@446d8f390563cd54ca27e8de5bdb816f63c0b706 # v1.2.21
         with:
           cache: rust
 
@@ -577,7 +542,7 @@ jobs:
 
       - name: Setup Rust Cache (Windows)
         if: steps.should-run.outputs.enabled == 'true' && runner.os == 'Windows'
-        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5  # v2.8.2
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
           shared-key: "rscrypto-tune-v1"
           key: ${{ steps.cache.outputs.key }}
@@ -585,7 +550,7 @@ jobs:
 
       - name: Install Tools
         if: steps.should-run.outputs.enabled == 'true'
-        uses: taiki-e/install-action@de7896b7cd1c7d181266425abbe571b5a8c757bc  # v2.65.3
+        uses: taiki-e/install-action@de7896b7cd1c7d181266425abbe571b5a8c757bc # v2.65.3
         with:
           tool: just
 
@@ -621,7 +586,7 @@ jobs:
 
       - name: Upload crc64-tune Results
         if: steps.should-run.outputs.enabled == 'true' && always()
-        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08  # v4.6.0
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
         with:
           name: crc64-tune-${{ matrix.target.platform-id }}
           path: tune-results/
@@ -687,20 +652,9 @@ jobs:
           # NOTE: macOS tuning is done locally via `just tune-crc64` to avoid
           # CI runner variability. Results are committed to tuned_defaults.rs.
 
-          # ═══════════════════════════════════════════════════════════════════
-          # aarch64 Targets - Windows
-          # ═══════════════════════════════════════════════════════════════════
-
-          # Windows ARM64 - PMULL + SHA3 (EOR3)
-          # Tests: pmull (1/2/3-way), pmull-eor3 (1/2/3-way)
-          - name: aarch64 (Windows ARM64)
-            runner: namespace-profile-rscrypto-windows-arm64
-            platform-id: windows-arm64
-            tune-preset: GENERIC_AARCH64
-
     steps:
       - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Read Toolchain Version
         id: toolchain
@@ -710,25 +664,25 @@ jobs:
           echo "version=$TOOLCHAIN" >> "$GITHUB_OUTPUT"
 
       - name: Install Rust Toolchain
-        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561  # master
+        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
         with:
           toolchain: ${{ steps.toolchain.outputs.version }}
 
       - name: Setup Namespace Cache (Linux)
         if: runner.os == 'Linux'
-        uses: namespacelabs/nscloud-cache-action@446d8f390563cd54ca27e8de5bdb816f63c0b706  # v1.2.21
+        uses: namespacelabs/nscloud-cache-action@446d8f390563cd54ca27e8de5bdb816f63c0b706 # v1.2.21
         with:
           cache: rust
 
       - name: Setup Rust Cache (Windows/macOS)
         if: runner.os == 'Windows' || runner.os == 'macOS'
-        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5  # v2.8.2
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
           shared-key: "rscrypto-tune-v1"
           cache-on-failure: true
 
       - name: Install Benchmarking Tools
-        uses: taiki-e/install-action@de7896b7cd1c7d181266425abbe571b5a8c757bc  # v2.65.3
+        uses: taiki-e/install-action@de7896b7cd1c7d181266425abbe571b5a8c757bc # v2.65.3
         with:
           tool: just
 
@@ -795,7 +749,7 @@ jobs:
           RUSTFLAGS: "-C target-cpu=native"
 
       - name: Upload Tuning Results
-        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08  # v4.6.0
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
         with:
           name: tune-discovery-${{ matrix.target.platform-id }}
           path: |
@@ -814,7 +768,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download All Tuning Artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: tune-discovery-*
           path: all-results
@@ -861,7 +815,7 @@ jobs:
           echo "See individual platform artifacts for raw output."
 
       - name: Upload Consolidated Report
-        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08  # v4.6.0
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
         with:
           name: tune-consolidated-report
           path: all-results/
@@ -883,12 +837,12 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Checkout Current
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           path: current
 
       - name: Checkout Baseline
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ github.event.inputs.regression_baseline }}
           path: baseline
@@ -901,17 +855,17 @@ jobs:
           echo "version=$TOOLCHAIN" >> "$GITHUB_OUTPUT"
 
       - name: Install Rust Toolchain
-        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561  # master
+        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
         with:
           toolchain: ${{ steps.toolchain.outputs.version }}
 
       - name: Setup Namespace Cache
-        uses: namespacelabs/nscloud-cache-action@446d8f390563cd54ca27e8de5bdb816f63c0b706  # v1.2.21
+        uses: namespacelabs/nscloud-cache-action@446d8f390563cd54ca27e8de5bdb816f63c0b706 # v1.2.21
         with:
           cache: rust
 
       - name: Install Benchmarking Tools
-        uses: taiki-e/install-action@de7896b7cd1c7d181266425abbe571b5a8c757bc  # v2.65.3
+        uses: taiki-e/install-action@de7896b7cd1c7d181266425abbe571b5a8c757bc # v2.65.3
         with:
           tool: cargo-criterion,critcmp
 
@@ -960,7 +914,7 @@ jobs:
           fi
 
       - name: Upload Regression Report
-        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08  # v4.6.0
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
         with:
           name: regression-report
           path: current/regression-results/

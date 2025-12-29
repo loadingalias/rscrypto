@@ -11,6 +11,7 @@
 //! - powerpc64le: VPMSUMD folding
 //! - s390x: VGFM folding
 //! - riscv64: ZVBC (RVV vector CLMUL) / Zbc folding
+//! - wasm32/wasm64: portable only (no CLMUL)
 
 pub(crate) mod config;
 mod kernels;

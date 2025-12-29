@@ -303,3 +303,165 @@ pub mod aarch64 {
   /// CRC-32C "SVE2 PMULL" small-buffer kernel.
   pub const CRC32C_SVE2_PMULL_SMALL_KERNEL: Crc32Fn = arch::crc32c_iscsi_sve2_pmull_small_safe;
 }
+
+#[cfg(target_arch = "powerpc64")]
+pub mod powerpc64 {
+  use super::super::powerpc64 as arch;
+  use crate::dispatchers::Crc32Fn;
+
+  /// VPMSUM kernel names: [1-way, 2-way, 4-way, 8-way, 8-way(dup)].
+  pub const CRC32_VPMSUM_NAMES: &[&str] = &[
+    "powerpc64/crc32-vpmsum",
+    "powerpc64/crc32-vpmsum-2way",
+    "powerpc64/crc32-vpmsum-4way",
+    "powerpc64/crc32-vpmsum-8way",
+    "powerpc64/crc32-vpmsum-8way",
+  ];
+
+  /// CRC-32 (IEEE) VPMSUM kernels: [1-way, 2-way, 4-way, 8-way, 8-way(dup)].
+  pub const CRC32_VPMSUM: [Crc32Fn; 5] = [
+    arch::crc32_ieee_vpmsum_safe,
+    arch::crc32_ieee_vpmsum_2way_safe,
+    arch::crc32_ieee_vpmsum_4way_safe,
+    arch::crc32_ieee_vpmsum_8way_safe,
+    arch::crc32_ieee_vpmsum_8way_safe, // dup for index consistency
+  ];
+
+  /// CRC-32C VPMSUM kernel names: [1-way, 2-way, 4-way, 8-way, 8-way(dup)].
+  pub const CRC32C_VPMSUM_NAMES: &[&str] = &[
+    "powerpc64/crc32c-vpmsum",
+    "powerpc64/crc32c-vpmsum-2way",
+    "powerpc64/crc32c-vpmsum-4way",
+    "powerpc64/crc32c-vpmsum-8way",
+    "powerpc64/crc32c-vpmsum-8way",
+  ];
+
+  /// CRC-32C VPMSUM kernels: [1-way, 2-way, 4-way, 8-way, 8-way(dup)].
+  pub const CRC32C_VPMSUM: [Crc32Fn; 5] = [
+    arch::crc32c_vpmsum_safe,
+    arch::crc32c_vpmsum_2way_safe,
+    arch::crc32c_vpmsum_4way_safe,
+    arch::crc32c_vpmsum_8way_safe,
+    arch::crc32c_vpmsum_8way_safe, // dup for index consistency
+  ];
+}
+
+#[cfg(target_arch = "s390x")]
+pub mod s390x {
+  use super::super::s390x as arch;
+  use crate::dispatchers::Crc32Fn;
+
+  /// VGFM kernel names: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)].
+  pub const CRC32_VGFM_NAMES: &[&str] = &[
+    "s390x/crc32-vgfm",
+    "s390x/crc32-vgfm-2way",
+    "s390x/crc32-vgfm-4way",
+    "s390x/crc32-vgfm-4way",
+    "s390x/crc32-vgfm-4way",
+  ];
+
+  /// CRC-32 (IEEE) VGFM kernels: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)].
+  pub const CRC32_VGFM: [Crc32Fn; 5] = [
+    arch::crc32_ieee_vgfm_safe,
+    arch::crc32_ieee_vgfm_2way_safe,
+    arch::crc32_ieee_vgfm_4way_safe,
+    arch::crc32_ieee_vgfm_4way_safe, // dup for index consistency
+    arch::crc32_ieee_vgfm_4way_safe, // dup for index consistency
+  ];
+
+  /// CRC-32C VGFM kernel names: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)].
+  pub const CRC32C_VGFM_NAMES: &[&str] = &[
+    "s390x/crc32c-vgfm",
+    "s390x/crc32c-vgfm-2way",
+    "s390x/crc32c-vgfm-4way",
+    "s390x/crc32c-vgfm-4way",
+    "s390x/crc32c-vgfm-4way",
+  ];
+
+  /// CRC-32C VGFM kernels: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)].
+  pub const CRC32C_VGFM: [Crc32Fn; 5] = [
+    arch::crc32c_vgfm_safe,
+    arch::crc32c_vgfm_2way_safe,
+    arch::crc32c_vgfm_4way_safe,
+    arch::crc32c_vgfm_4way_safe, // dup for index consistency
+    arch::crc32c_vgfm_4way_safe, // dup for index consistency
+  ];
+}
+
+#[cfg(target_arch = "riscv64")]
+pub mod riscv64 {
+  use super::super::riscv64 as arch;
+  use crate::dispatchers::Crc32Fn;
+
+  /// Zbc kernel names: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)].
+  pub const CRC32_ZBC_NAMES: &[&str] = &[
+    "riscv64/crc32-zbc",
+    "riscv64/crc32-zbc-2way",
+    "riscv64/crc32-zbc-4way",
+    "riscv64/crc32-zbc-4way",
+    "riscv64/crc32-zbc-4way",
+  ];
+
+  /// Zvbc kernel names: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)].
+  pub const CRC32_ZVBC_NAMES: &[&str] = &[
+    "riscv64/crc32-zvbc",
+    "riscv64/crc32-zvbc-2way",
+    "riscv64/crc32-zvbc-4way",
+    "riscv64/crc32-zvbc-4way",
+    "riscv64/crc32-zvbc-4way",
+  ];
+
+  /// CRC-32 (IEEE) Zbc kernels: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)].
+  pub const CRC32_ZBC: [Crc32Fn; 5] = [
+    arch::crc32_ieee_zbc_safe,
+    arch::crc32_ieee_zbc_2way_safe,
+    arch::crc32_ieee_zbc_4way_safe,
+    arch::crc32_ieee_zbc_4way_safe, // dup for index consistency
+    arch::crc32_ieee_zbc_4way_safe, // dup for index consistency
+  ];
+
+  /// CRC-32 (IEEE) Zvbc kernels: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)].
+  pub const CRC32_ZVBC: [Crc32Fn; 5] = [
+    arch::crc32_ieee_zvbc_safe,
+    arch::crc32_ieee_zvbc_2way_safe,
+    arch::crc32_ieee_zvbc_4way_safe,
+    arch::crc32_ieee_zvbc_4way_safe, // dup for index consistency
+    arch::crc32_ieee_zvbc_4way_safe, // dup for index consistency
+  ];
+
+  /// CRC-32C Zbc kernel names: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)].
+  pub const CRC32C_ZBC_NAMES: &[&str] = &[
+    "riscv64/crc32c-zbc",
+    "riscv64/crc32c-zbc-2way",
+    "riscv64/crc32c-zbc-4way",
+    "riscv64/crc32c-zbc-4way",
+    "riscv64/crc32c-zbc-4way",
+  ];
+
+  /// CRC-32C Zvbc kernel names: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)].
+  pub const CRC32C_ZVBC_NAMES: &[&str] = &[
+    "riscv64/crc32c-zvbc",
+    "riscv64/crc32c-zvbc-2way",
+    "riscv64/crc32c-zvbc-4way",
+    "riscv64/crc32c-zvbc-4way",
+    "riscv64/crc32c-zvbc-4way",
+  ];
+
+  /// CRC-32C Zbc kernels: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)].
+  pub const CRC32C_ZBC: [Crc32Fn; 5] = [
+    arch::crc32c_zbc_safe,
+    arch::crc32c_zbc_2way_safe,
+    arch::crc32c_zbc_4way_safe,
+    arch::crc32c_zbc_4way_safe, // dup for index consistency
+    arch::crc32c_zbc_4way_safe, // dup for index consistency
+  ];
+
+  /// CRC-32C Zvbc kernels: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)].
+  pub const CRC32C_ZVBC: [Crc32Fn; 5] = [
+    arch::crc32c_zvbc_safe,
+    arch::crc32c_zvbc_2way_safe,
+    arch::crc32c_zvbc_4way_safe,
+    arch::crc32c_zvbc_4way_safe, // dup for index consistency
+    arch::crc32c_zvbc_4way_safe, // dup for index consistency
+  ];
+}
