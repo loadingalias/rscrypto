@@ -291,7 +291,7 @@ fn baseline_auto_simd_force(forces: &[Force]) -> Force {
     if forces.contains(&Force::Hwcrc) {
       return Force::Hwcrc;
     }
-    return Force::Portable;
+    Force::Portable
   }
 
   #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
@@ -330,7 +330,7 @@ fn preferred_auto_simd_force(forces: &[Force]) -> Force {
     if forces.contains(&Force::Hwcrc) {
       return Force::Hwcrc;
     }
-    return Force::Portable;
+    Force::Portable
   }
 
   #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
@@ -660,7 +660,16 @@ fn apply_tuned_defaults(
     ));
   }
 
-  let mut entries: Vec<(String, (u8, usize, usize, usize, usize))> = Vec::new();
+  #[derive(Clone, Copy, Debug)]
+  struct TunedEntry {
+    streams: u8,
+    portable_to_hwcrc: usize,
+    hwcrc_to_fusion: usize,
+    fusion_to_avx512: usize,
+    fusion_to_vpclmul: usize,
+  }
+
+  let mut entries: Vec<(String, TunedEntry)> = Vec::new();
 
   let mut current = String::new();
   let mut depth: i32 = 0;
@@ -721,65 +730,45 @@ fn apply_tuned_defaults(
         )
       })?;
 
+      let values = TunedEntry {
+        streams,
+        portable_to_hwcrc,
+        hwcrc_to_fusion,
+        fusion_to_avx512,
+        fusion_to_vpclmul,
+      };
+
       if let Some(existing) = entries.iter_mut().find(|(k, _)| *k == kind_ident) {
-        *existing = (
-          kind_ident,
-          (
-            streams,
-            portable_to_hwcrc,
-            hwcrc_to_fusion,
-            fusion_to_avx512,
-            fusion_to_vpclmul,
-          ),
-        );
+        *existing = (kind_ident, values);
       } else {
-        entries.push((
-          kind_ident,
-          (
-            streams,
-            portable_to_hwcrc,
-            hwcrc_to_fusion,
-            fusion_to_avx512,
-            fusion_to_vpclmul,
-          ),
-        ));
+        entries.push((kind_ident, values));
       }
     }
   }
 
   let kind_ident = format!("{kind:?}");
+  let values = TunedEntry {
+    streams,
+    portable_to_hwcrc,
+    hwcrc_to_fusion,
+    fusion_to_avx512,
+    fusion_to_vpclmul,
+  };
   if let Some(existing) = entries.iter_mut().find(|(k, _)| *k == kind_ident) {
-    *existing = (
-      kind_ident,
-      (
-        streams,
-        portable_to_hwcrc,
-        hwcrc_to_fusion,
-        fusion_to_avx512,
-        fusion_to_vpclmul,
-      ),
-    );
+    *existing = (kind_ident, values);
   } else {
-    entries.push((
-      kind_ident,
-      (
-        streams,
-        portable_to_hwcrc,
-        hwcrc_to_fusion,
-        fusion_to_avx512,
-        fusion_to_vpclmul,
-      ),
-    ));
+    entries.push((kind_ident, values));
   }
 
   entries.sort_by(|a, b| a.0.cmp(&b.0));
 
   let mut emitted: Vec<String> = Vec::new();
-  for (kind_ident, (streams, portable_to_hwcrc, hwcrc_to_fusion, fusion_to_avx512, fusion_to_vpclmul)) in entries {
-    let portable_to_hwcrc = fmt_usize(portable_to_hwcrc);
-    let hwcrc_to_fusion = fmt_usize(hwcrc_to_fusion);
-    let fusion_to_avx512 = fmt_usize(fusion_to_avx512);
-    let fusion_to_vpclmul = fmt_usize(fusion_to_vpclmul);
+  for (kind_ident, values) in entries {
+    let streams = values.streams;
+    let portable_to_hwcrc = fmt_usize(values.portable_to_hwcrc);
+    let hwcrc_to_fusion = fmt_usize(values.hwcrc_to_fusion);
+    let fusion_to_avx512 = fmt_usize(values.fusion_to_avx512);
+    let fusion_to_vpclmul = fmt_usize(values.fusion_to_vpclmul);
     emitted.push(format!(
       "  (TuneKind::{kind_ident}, Crc32TunedDefaults {{ streams: {streams}, portable_to_hwcrc: {portable_to_hwcrc}, \
        hwcrc_to_fusion: {hwcrc_to_fusion}, fusion_to_avx512: {fusion_to_avx512}, fusion_to_vpclmul: \
