@@ -1178,6 +1178,63 @@ pub fn crc32_ieee_pclmul_safe(crc: u32, data: &[u8]) -> u32 {
   unsafe { crc32_ieee_pclmul(crc, data) }
 }
 
+/// CRC-32 (IEEE / ISO-HDLC) update using a "small-buffer" PCLMULQDQ folding path.
+///
+/// This avoids the 128B block requirement of the main kernel by folding one 16B
+/// lane at a time.
+///
+/// # Safety
+///
+/// Requires PCLMULQDQ. Caller must verify via `platform::caps().has(x86::VPCLMUL_READY)`
+/// or `platform::caps().has(x86::PCLMUL_READY)`.
+#[target_feature(enable = "sse2", enable = "pclmulqdq")]
+unsafe fn crc32_ieee_pclmul_small(crc: u32, data: &[u8]) -> u32 {
+  let mut buf = data.as_ptr();
+  let mut len = data.len();
+
+  if len < 16 {
+    return super::portable::crc32_slice16_ieee(crc, data);
+  }
+
+  let keys = &CRC32_IEEE_KEYS_REFLECTED;
+  let coeff_16b = Simd128::new(keys[2], keys[1]);
+
+  // Load the first lane and inject the initial CRC state (low 32 bits).
+  let mut x0 = Simd128(_mm_loadu_si128(buf as *const __m128i));
+  x0 ^= Simd128::new(0, crc as u64);
+  buf = buf.add(16);
+  len = len.strict_sub(16);
+
+  while len >= 16 {
+    let chunk = Simd128(_mm_loadu_si128(buf as *const __m128i));
+    x0 = x0.fold_16(coeff_16b, chunk);
+    buf = buf.add(16);
+    len = len.strict_sub(16);
+  }
+
+  // Reduce the folded lane to a CRC state, then finish the tail with the portable kernel.
+  let x0 = x0.fold_width_crc32_reflected(keys[6], keys[5]);
+  let state = x0.barrett_crc32_reflected(keys[8], keys[7]);
+  let tail = core::slice::from_raw_parts(buf, len);
+  super::portable::crc32_slice16_ieee(state, tail)
+}
+
+/// Safe wrapper for CRC-32 (IEEE) "pclmul-small" kernel.
+#[inline]
+pub fn crc32_ieee_pclmul_small_safe(crc: u32, data: &[u8]) -> u32 {
+  // SAFETY: Dispatcher verifies PCLMULQDQ (directly or via VPCLMUL-ready) before selecting this path.
+  unsafe { crc32_ieee_pclmul_small(crc, data) }
+}
+
+/// Safe wrapper for CRC-32 (IEEE) "vpclmul-small" kernel.
+///
+/// For small buffers we intentionally use the 128-bit PCLMUL small-lane kernel
+/// to avoid AVX-512 startup costs and 128B block requirements.
+#[inline]
+pub fn crc32_ieee_vpclmul_small_safe(crc: u32, data: &[u8]) -> u32 {
+  crc32_ieee_pclmul_small_safe(crc, data)
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // CRC-32 (IEEE) Multi-stream Folding (SSSE3 + PCLMULQDQ)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2073,6 +2130,26 @@ mod tests {
       let portable = super::super::portable::crc32_slice16_ieee(!0, &data) ^ !0;
       let pclmul = crc32_ieee_pclmul_safe(!0, &data) ^ !0;
       assert_eq!(pclmul, portable, "len={len}");
+    }
+  }
+
+  #[test]
+  fn test_crc32_ieee_pclmul_small_matches_portable_various_lengths() {
+    if !std::arch::is_x86_feature_detected!("pclmulqdq") {
+      return;
+    }
+
+    for len in [0usize, 1, 2, 3, 4, 7, 8, 15, 16, 31, 32, 63, 64, 127] {
+      let mut data = Vec::with_capacity(len);
+      for i in 0..len {
+        data.push((i as u8).wrapping_mul(31).wrapping_add(7));
+      }
+
+      let portable = super::super::portable::crc32_slice16_ieee(!0, &data) ^ !0;
+      let pclmul_small = crc32_ieee_pclmul_small_safe(!0, &data) ^ !0;
+      let vpclmul_small = crc32_ieee_vpclmul_small_safe(!0, &data) ^ !0;
+      assert_eq!(pclmul_small, portable, "len={len}");
+      assert_eq!(vpclmul_small, portable, "len={len}");
     }
   }
 

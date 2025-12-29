@@ -404,6 +404,88 @@ pub fn crc32c_iscsi_sve2_pmull_3way_safe(crc: u32, data: &[u8]) -> u32 {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// PMULL tier multi-stream wrappers (2/3-way)
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[inline]
+pub fn crc32_iso_hdlc_pmull_2way_safe(crc: u32, data: &[u8]) -> u32 {
+  crc32_sve2_pmull_nway::<2>(crc, data, crc32_iso_hdlc_pmull_v12e_v1_safe, CRC32_SHIFT8_MATRIX)
+}
+
+#[inline]
+pub fn crc32_iso_hdlc_pmull_3way_safe(crc: u32, data: &[u8]) -> u32 {
+  crc32_sve2_pmull_nway::<3>(crc, data, crc32_iso_hdlc_pmull_v12e_v1_safe, CRC32_SHIFT8_MATRIX)
+}
+
+#[inline]
+pub fn crc32c_iscsi_pmull_2way_safe(crc: u32, data: &[u8]) -> u32 {
+  crc32_sve2_pmull_nway::<2>(crc, data, crc32c_iscsi_pmull_v12e_v1_safe, CRC32C_SHIFT8_MATRIX)
+}
+
+#[inline]
+pub fn crc32c_iscsi_pmull_3way_safe(crc: u32, data: &[u8]) -> u32 {
+  crc32_sve2_pmull_nway::<3>(crc, data, crc32c_iscsi_pmull_v12e_v1_safe, CRC32C_SHIFT8_MATRIX)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EOR3 tier multi-stream wrappers (2/3-way)
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[inline]
+pub fn crc32_iso_hdlc_pmull_eor3_2way_safe(crc: u32, data: &[u8]) -> u32 {
+  crc32_sve2_pmull_nway::<2>(
+    crc,
+    data,
+    crc32_iso_hdlc_pmull_eor3_v9s3x2e_s3_safe,
+    CRC32_SHIFT8_MATRIX,
+  )
+}
+
+#[inline]
+pub fn crc32_iso_hdlc_pmull_eor3_3way_safe(crc: u32, data: &[u8]) -> u32 {
+  crc32_sve2_pmull_nway::<3>(
+    crc,
+    data,
+    crc32_iso_hdlc_pmull_eor3_v9s3x2e_s3_safe,
+    CRC32_SHIFT8_MATRIX,
+  )
+}
+
+#[inline]
+pub fn crc32c_iscsi_pmull_eor3_2way_safe(crc: u32, data: &[u8]) -> u32 {
+  crc32_sve2_pmull_nway::<2>(crc, data, crc32c_iscsi_pmull_eor3_v9s3x2e_s3_safe, CRC32C_SHIFT8_MATRIX)
+}
+
+#[inline]
+pub fn crc32c_iscsi_pmull_eor3_3way_safe(crc: u32, data: &[u8]) -> u32 {
+  crc32_sve2_pmull_nway::<3>(crc, data, crc32c_iscsi_pmull_eor3_v9s3x2e_s3_safe, CRC32C_SHIFT8_MATRIX)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Small-buffer wrappers (selected for len < fold block)
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[inline]
+pub fn crc32_iso_hdlc_pmull_small_safe(crc: u32, data: &[u8]) -> u32 {
+  crc32_iso_hdlc_pmull_v12e_v1_safe(crc, data)
+}
+
+#[inline]
+pub fn crc32c_iscsi_pmull_small_safe(crc: u32, data: &[u8]) -> u32 {
+  crc32c_iscsi_pmull_v12e_v1_safe(crc, data)
+}
+
+#[inline]
+pub fn crc32_iso_hdlc_sve2_pmull_small_safe(crc: u32, data: &[u8]) -> u32 {
+  crc32_iso_hdlc_pmull_v12e_v1_safe(crc, data)
+}
+
+#[inline]
+pub fn crc32c_iscsi_sve2_pmull_small_safe(crc: u32, data: &[u8]) -> u32 {
+  crc32c_iscsi_pmull_v12e_v1_safe(crc, data)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // PMULL helpers (fusion kernels)
 // ─────────────────────────────────────────────────────────────────────────────
 

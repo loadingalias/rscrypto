@@ -9,6 +9,8 @@
 
 use platform::{Caps, Tune};
 
+use super::tuned_defaults;
+
 /// Forced backend selection for CRC-32/CRC-32C.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Crc32Force {
@@ -251,16 +253,22 @@ fn clamp_force_to_caps(requested: Crc32Force, caps: Caps) -> Crc32Force {
 #[inline]
 #[must_use]
 fn tuned_defaults(caps: Caps, tune: Tune) -> Crc32Tunables {
-  let streams = default_crc32_streams(caps, tune);
-  let fusion_to_avx512 = tune.simd_threshold;
-  let fusion_to_vpclmul = if tune.fast_wide_ops {
+  let tuned = tuned_defaults::for_tune_kind(tune.kind);
+
+  let default_streams = default_crc32_streams(caps, tune);
+  let default_fusion_to_avx512 = tune.simd_threshold;
+  let default_fusion_to_vpclmul = if tune.fast_wide_ops {
     tune.simd_threshold
   } else {
     tune.simd_threshold.saturating_mul(8)
   };
+
+  let streams = tuned.map(|t| t.streams).unwrap_or(default_streams);
+  let fusion_to_avx512 = tuned.map(|t| t.fusion_to_avx512).unwrap_or(default_fusion_to_avx512);
+  let fusion_to_vpclmul = tuned.map(|t| t.fusion_to_vpclmul).unwrap_or(default_fusion_to_vpclmul);
   Crc32Tunables {
-    portable_to_hwcrc: tune.hwcrc_threshold,
-    hwcrc_to_fusion: tune.pclmul_threshold,
+    portable_to_hwcrc: tuned.map(|t| t.portable_to_hwcrc).unwrap_or(tune.hwcrc_threshold),
+    hwcrc_to_fusion: tuned.map(|t| t.hwcrc_to_fusion).unwrap_or(tune.pclmul_threshold),
     fusion_to_avx512,
     fusion_to_vpclmul,
     streams,

@@ -30,6 +30,8 @@ pub mod x86_64 {
     "x86_64/crc32-pclmul-7way",
     "x86_64/crc32-pclmul-8way",
   ];
+  /// CRC-32 (IEEE) PCLMUL small-buffer kernel name.
+  pub const CRC32_PCLMUL_SMALL: &str = "x86_64/crc32-pclmul-small";
 
   /// CRC-32 (IEEE) PCLMUL kernels.
   pub const CRC32_PCLMUL: [Crc32Fn; 5] = [
@@ -39,6 +41,8 @@ pub mod x86_64 {
     arch::crc32_ieee_pclmul_7way_safe,
     arch::crc32_ieee_pclmul_8way_safe,
   ];
+  /// CRC-32 (IEEE) PCLMUL small-buffer kernel.
+  pub const CRC32_PCLMUL_SMALL_KERNEL: Crc32Fn = arch::crc32_ieee_pclmul_small_safe;
 
   /// CRC-32 (IEEE) VPCLMUL kernel names.
   pub const CRC32_VPCLMUL_NAMES: &[&str] = &[
@@ -48,6 +52,8 @@ pub mod x86_64 {
     "x86_64/crc32-vpclmul-7way",
     "x86_64/crc32-vpclmul-8way",
   ];
+  /// CRC-32 (IEEE) VPCLMUL small-buffer kernel name.
+  pub const CRC32_VPCLMUL_SMALL: &str = "x86_64/crc32-vpclmul-small";
 
   /// CRC-32 (IEEE) VPCLMUL kernels.
   pub const CRC32_VPCLMUL: [Crc32Fn; 5] = [
@@ -57,6 +63,8 @@ pub mod x86_64 {
     arch::crc32_ieee_vpclmul_7way_safe,
     arch::crc32_ieee_vpclmul_8way_safe,
   ];
+  /// CRC-32 (IEEE) VPCLMUL small-buffer kernel (falls back to the PCLMUL small-lane kernel).
+  pub const CRC32_VPCLMUL_SMALL_KERNEL: Crc32Fn = arch::crc32_ieee_vpclmul_small_safe;
 
   /// SSE4.2 `crc32` instruction kernel names (CRC-32C only).
   pub const CRC32C_HWCRC_NAMES: &[&str] = &[
@@ -141,16 +149,16 @@ pub mod aarch64 {
     "aarch64/crc32",
     "aarch64/crc32-2way",
     "aarch64/crc32-3way",
-    "aarch64/crc32",
-    "aarch64/crc32",
+    "aarch64/crc32-3way", // dup for index consistency
+    "aarch64/crc32-3way", // dup for index consistency
   ];
 
   pub const CRC32C_HWCRC_NAMES: &[&str] = &[
     "aarch64/crc32c",
     "aarch64/crc32c-2way",
     "aarch64/crc32c-3way",
-    "aarch64/crc32c",
-    "aarch64/crc32c",
+    "aarch64/crc32c-3way", // dup for index consistency
+    "aarch64/crc32c-3way", // dup for index consistency
   ];
 
   /// CRC-32 (IEEE) CRC-extension kernel function array.
@@ -158,8 +166,8 @@ pub mod aarch64 {
     arch::crc32_armv8_safe,
     arch::crc32_armv8_2way_safe,
     arch::crc32_armv8_3way_safe,
-    arch::crc32_armv8_safe,
-    arch::crc32_armv8_safe,
+    arch::crc32_armv8_3way_safe, // dup for index consistency
+    arch::crc32_armv8_3way_safe, // dup for index consistency
   ];
 
   /// CRC-32C (Castagnoli) CRC-extension kernel function array.
@@ -167,57 +175,89 @@ pub mod aarch64 {
     arch::crc32c_armv8_safe,
     arch::crc32c_armv8_2way_safe,
     arch::crc32c_armv8_3way_safe,
-    arch::crc32c_armv8_safe,
-    arch::crc32c_armv8_safe,
+    arch::crc32c_armv8_3way_safe, // dup for index consistency
+    arch::crc32c_armv8_3way_safe, // dup for index consistency
   ];
 
   /// CRC-32 (IEEE) PMULL fusion kernel names.
   pub const CRC32_PMULL_NAMES: &[&str] = &[
     "aarch64/crc32-pmull-v12e-v1",
-    "aarch64/crc32-pmull-v12e-v1",
-    "aarch64/crc32-pmull-v12e-v1",
-    "aarch64/crc32-pmull-v12e-v1",
-    "aarch64/crc32-pmull-v12e-v1",
+    "aarch64/crc32-pmull-v12e-v1-2way",
+    "aarch64/crc32-pmull-v12e-v1-3way",
+    "aarch64/crc32-pmull-v12e-v1-3way", // dup for index consistency
+    "aarch64/crc32-pmull-v12e-v1-3way", // dup for index consistency
   ];
+  /// CRC-32 (IEEE) PMULL small-buffer kernel name.
+  pub const CRC32_PMULL_SMALL: &str = "aarch64/crc32-pmull-small";
 
   /// CRC-32 (IEEE) PMULL fusion kernels.
-  pub const CRC32_PMULL: [Crc32Fn; 5] = [arch::crc32_iso_hdlc_pmull_v12e_v1_safe; 5];
+  pub const CRC32_PMULL: [Crc32Fn; 5] = [
+    arch::crc32_iso_hdlc_pmull_v12e_v1_safe,
+    arch::crc32_iso_hdlc_pmull_2way_safe,
+    arch::crc32_iso_hdlc_pmull_3way_safe,
+    arch::crc32_iso_hdlc_pmull_3way_safe, // dup for index consistency
+    arch::crc32_iso_hdlc_pmull_3way_safe, // dup for index consistency
+  ];
+  /// CRC-32 (IEEE) PMULL small-buffer kernel.
+  pub const CRC32_PMULL_SMALL_KERNEL: Crc32Fn = arch::crc32_iso_hdlc_pmull_small_safe;
 
   /// CRC-32 (IEEE) PMULL+EOR3 fusion kernel names.
   pub const CRC32_PMULL_EOR3_NAMES: &[&str] = &[
     "aarch64/crc32-pmull-eor3-v9s3x2e-s3",
-    "aarch64/crc32-pmull-eor3-v9s3x2e-s3",
-    "aarch64/crc32-pmull-eor3-v9s3x2e-s3",
-    "aarch64/crc32-pmull-eor3-v9s3x2e-s3",
-    "aarch64/crc32-pmull-eor3-v9s3x2e-s3",
+    "aarch64/crc32-pmull-eor3-v9s3x2e-s3-2way",
+    "aarch64/crc32-pmull-eor3-v9s3x2e-s3-3way",
+    "aarch64/crc32-pmull-eor3-v9s3x2e-s3-3way", // dup for index consistency
+    "aarch64/crc32-pmull-eor3-v9s3x2e-s3-3way", // dup for index consistency
   ];
 
   /// CRC-32 (IEEE) PMULL+EOR3 fusion kernels.
-  pub const CRC32_PMULL_EOR3: [Crc32Fn; 5] = [arch::crc32_iso_hdlc_pmull_eor3_v9s3x2e_s3_safe; 5];
+  pub const CRC32_PMULL_EOR3: [Crc32Fn; 5] = [
+    arch::crc32_iso_hdlc_pmull_eor3_v9s3x2e_s3_safe,
+    arch::crc32_iso_hdlc_pmull_eor3_2way_safe,
+    arch::crc32_iso_hdlc_pmull_eor3_3way_safe,
+    arch::crc32_iso_hdlc_pmull_eor3_3way_safe, // dup for index consistency
+    arch::crc32_iso_hdlc_pmull_eor3_3way_safe, // dup for index consistency
+  ];
 
   /// CRC-32C (Castagnoli) PMULL fusion kernel names.
   pub const CRC32C_PMULL_NAMES: &[&str] = &[
     "aarch64/crc32c-pmull-v12e-v1",
-    "aarch64/crc32c-pmull-v12e-v1",
-    "aarch64/crc32c-pmull-v12e-v1",
-    "aarch64/crc32c-pmull-v12e-v1",
-    "aarch64/crc32c-pmull-v12e-v1",
+    "aarch64/crc32c-pmull-v12e-v1-2way",
+    "aarch64/crc32c-pmull-v12e-v1-3way",
+    "aarch64/crc32c-pmull-v12e-v1-3way", // dup for index consistency
+    "aarch64/crc32c-pmull-v12e-v1-3way", // dup for index consistency
   ];
+  /// CRC-32C PMULL small-buffer kernel name.
+  pub const CRC32C_PMULL_SMALL: &str = "aarch64/crc32c-pmull-small";
 
   /// CRC-32C (Castagnoli) PMULL fusion kernels.
-  pub const CRC32C_PMULL: [Crc32Fn; 5] = [arch::crc32c_iscsi_pmull_v12e_v1_safe; 5];
+  pub const CRC32C_PMULL: [Crc32Fn; 5] = [
+    arch::crc32c_iscsi_pmull_v12e_v1_safe,
+    arch::crc32c_iscsi_pmull_2way_safe,
+    arch::crc32c_iscsi_pmull_3way_safe,
+    arch::crc32c_iscsi_pmull_3way_safe, // dup for index consistency
+    arch::crc32c_iscsi_pmull_3way_safe, // dup for index consistency
+  ];
+  /// CRC-32C PMULL small-buffer kernel.
+  pub const CRC32C_PMULL_SMALL_KERNEL: Crc32Fn = arch::crc32c_iscsi_pmull_small_safe;
 
   /// CRC-32C (Castagnoli) PMULL+EOR3 fusion kernel names.
   pub const CRC32C_PMULL_EOR3_NAMES: &[&str] = &[
     "aarch64/crc32c-pmull-eor3-v9s3x2e-s3",
-    "aarch64/crc32c-pmull-eor3-v9s3x2e-s3",
-    "aarch64/crc32c-pmull-eor3-v9s3x2e-s3",
-    "aarch64/crc32c-pmull-eor3-v9s3x2e-s3",
-    "aarch64/crc32c-pmull-eor3-v9s3x2e-s3",
+    "aarch64/crc32c-pmull-eor3-v9s3x2e-s3-2way",
+    "aarch64/crc32c-pmull-eor3-v9s3x2e-s3-3way",
+    "aarch64/crc32c-pmull-eor3-v9s3x2e-s3-3way", // dup for index consistency
+    "aarch64/crc32c-pmull-eor3-v9s3x2e-s3-3way", // dup for index consistency
   ];
 
   /// CRC-32C (Castagnoli) PMULL+EOR3 fusion kernels.
-  pub const CRC32C_PMULL_EOR3: [Crc32Fn; 5] = [arch::crc32c_iscsi_pmull_eor3_v9s3x2e_s3_safe; 5];
+  pub const CRC32C_PMULL_EOR3: [Crc32Fn; 5] = [
+    arch::crc32c_iscsi_pmull_eor3_v9s3x2e_s3_safe,
+    arch::crc32c_iscsi_pmull_eor3_2way_safe,
+    arch::crc32c_iscsi_pmull_eor3_3way_safe,
+    arch::crc32c_iscsi_pmull_eor3_3way_safe, // dup for index consistency
+    arch::crc32c_iscsi_pmull_eor3_3way_safe, // dup for index consistency
+  ];
 
   /// CRC-32 (IEEE) "SVE2 PMULL" tier kernel names (2/3-way striping).
   pub const CRC32_SVE2_PMULL_NAMES: &[&str] = &[
@@ -227,6 +267,8 @@ pub mod aarch64 {
     "aarch64/crc32-sve2-pmull-3way",
     "aarch64/crc32-sve2-pmull-3way",
   ];
+  /// CRC-32 "SVE2 PMULL" small-buffer kernel name.
+  pub const CRC32_SVE2_PMULL_SMALL: &str = "aarch64/crc32-sve2-pmull-small";
 
   /// CRC-32C (Castagnoli) "SVE2 PMULL" tier kernel names (2/3-way striping).
   pub const CRC32C_SVE2_PMULL_NAMES: &[&str] = &[
@@ -236,6 +278,8 @@ pub mod aarch64 {
     "aarch64/crc32c-sve2-pmull-3way",
     "aarch64/crc32c-sve2-pmull-3way",
   ];
+  /// CRC-32C "SVE2 PMULL" small-buffer kernel name.
+  pub const CRC32C_SVE2_PMULL_SMALL: &str = "aarch64/crc32c-sve2-pmull-small";
 
   /// CRC-32 (IEEE) "SVE2 PMULL" tier kernels (2/3-way striping).
   pub const CRC32_SVE2_PMULL: [Crc32Fn; 5] = [
@@ -245,6 +289,8 @@ pub mod aarch64 {
     arch::crc32_iso_hdlc_sve2_pmull_3way_safe,
     arch::crc32_iso_hdlc_sve2_pmull_3way_safe,
   ];
+  /// CRC-32 "SVE2 PMULL" small-buffer kernel.
+  pub const CRC32_SVE2_PMULL_SMALL_KERNEL: Crc32Fn = arch::crc32_iso_hdlc_sve2_pmull_small_safe;
 
   /// CRC-32C (Castagnoli) "SVE2 PMULL" tier kernels (2/3-way striping).
   pub const CRC32C_SVE2_PMULL: [Crc32Fn; 5] = [
@@ -254,4 +300,6 @@ pub mod aarch64 {
     arch::crc32c_iscsi_sve2_pmull_3way_safe,
     arch::crc32c_iscsi_sve2_pmull_3way_safe,
   ];
+  /// CRC-32C "SVE2 PMULL" small-buffer kernel.
+  pub const CRC32C_SVE2_PMULL_SMALL_KERNEL: Crc32Fn = arch::crc32c_iscsi_sve2_pmull_small_safe;
 }

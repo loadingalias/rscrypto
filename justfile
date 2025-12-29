@@ -75,11 +75,23 @@ bench-native crate="":
 bench-crc64-tune mode="":
     @bash scripts/bench/crc64-tune.sh {{mode}}
 
+# Run CRC32 tuning (prints recommended exports; binary-based)
+# Usage: just bench-crc32-tune           - Full run
+#        just bench-crc32-tune --quick   - Faster, noisier run
+bench-crc32-tune mode="":
+    @bash scripts/bench/crc32-tune.sh {{mode}}
+
 # Fast CRC64 tuner (no Criterion; prints recommended RSCRYPTO_CRC64_* exports)
 # Usage: just tune-crc64
 #        just tune-crc64 --quick
 tune-crc64 *args="":
     RUSTC_WRAPPER= cargo run -p checksum --release --bin crc64-tune -- {{args}}
+
+# Fast CRC32 tuner (no Criterion; prints recommended RSCRYPTO_CRC32_* exports)
+# Usage: just tune-crc32
+#        just tune-crc32 --quick
+tune-crc32 *args="":
+    RUSTC_WRAPPER= cargo run -p checksum --release --bin crc32-tune -- {{args}}
 
 # Summarize Criterion results as TSV
 bench-summary group="" only="oneshot":
