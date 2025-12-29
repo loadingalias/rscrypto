@@ -10,6 +10,14 @@ pub const PORTABLE_SLICE8: &str = crate::common::kernels::PORTABLE_SLICE8;
 /// Portable auto-selection kernel name (slice4 vs slice8 by length).
 pub const PORTABLE_AUTO: &str = "portable/auto";
 
+/// x86_64 PCLMULQDQ folding kernel name.
+#[cfg(target_arch = "x86_64")]
+pub const X86_64_PCLMUL: &str = "x86_64/pclmul";
+
+/// aarch64 PMULL folding kernel name.
+#[cfg(target_arch = "aarch64")]
+pub const AARCH64_PMULL: &str = "aarch64/pmull";
+
 /// Portable kernel name table (ordered by increasing work per byte).
 #[allow(dead_code)]
 pub const PORTABLE_NAMES: &[&str] = &[PORTABLE_SLICE4, PORTABLE_SLICE8];

@@ -15,6 +15,8 @@ pub enum Crc16Force {
   Auto,
   /// Force the portable tier (reserved for future accelerated backends).
   Portable,
+  /// Force the carryless-multiply tier (PCLMULQDQ/PMULL) if supported.
+  Clmul,
   /// Force the portable slice-by-4 kernel.
   Slice4,
   /// Force the portable slice-by-8 kernel.
@@ -27,6 +29,7 @@ impl Crc16Force {
     match self {
       Self::Auto => "auto",
       Self::Portable => "portable",
+      Self::Clmul => "clmul",
       Self::Slice4 => "slice4",
       Self::Slice8 => "slice8",
     }
@@ -38,6 +41,8 @@ impl Crc16Force {
 pub struct Crc16Tunables {
   /// Minimum `len` in bytes to use slice-by-8 (otherwise slice-by-4).
   pub slice4_to_slice8: usize,
+  /// Minimum `len` in bytes to use the CLMUL/PMULL tier (otherwise portable).
+  pub portable_to_clmul: usize,
 }
 
 /// Full CRC-16 runtime configuration (after applying overrides).
@@ -58,6 +63,7 @@ pub struct Crc16Config {
 struct Overrides {
   force: Crc16Force,
   slice4_to_slice8: Option<usize>,
+  portable_to_clmul: Option<usize>,
 }
 
 #[cfg(feature = "std")]
@@ -87,6 +93,13 @@ fn read_env_overrides() -> Overrides {
     {
       return Some(Crc16Force::Portable);
     }
+    if value.eq_ignore_ascii_case("clmul")
+      || value.eq_ignore_ascii_case("pclmul")
+      || value.eq_ignore_ascii_case("pclmulqdq")
+      || value.eq_ignore_ascii_case("pmull")
+    {
+      return Some(Crc16Force::Clmul);
+    }
     if value.eq_ignore_ascii_case("slice4") || value.eq_ignore_ascii_case("slice-4") {
       return Some(Crc16Force::Slice4);
     }
@@ -100,6 +113,7 @@ fn read_env_overrides() -> Overrides {
   Overrides {
     force: parse_force("RSCRYPTO_CRC16_FORCE").unwrap_or(Crc16Force::Auto),
     slice4_to_slice8: parse_usize("RSCRYPTO_CRC16_THRESHOLD_SLICE4_TO_SLICE8"),
+    portable_to_clmul: parse_usize("RSCRYPTO_CRC16_THRESHOLD_PORTABLE_TO_CLMUL"),
   }
 }
 
@@ -117,9 +131,25 @@ fn overrides() -> Overrides {
 
 #[inline]
 #[must_use]
-#[allow(unused_variables)] // `caps` reserved for future accelerated tiers
 fn clamp_force_to_caps(requested: Crc16Force, caps: Caps) -> Crc16Force {
-  requested
+  match requested {
+    Crc16Force::Auto | Crc16Force::Portable | Crc16Force::Slice4 | Crc16Force::Slice8 => requested,
+    Crc16Force::Clmul => {
+      #[cfg(target_arch = "x86_64")]
+      {
+        if caps.has(platform::caps::x86::PCLMUL_READY) {
+          return Crc16Force::Clmul;
+        }
+      }
+      #[cfg(target_arch = "aarch64")]
+      {
+        if caps.has(platform::caps::aarch64::PMULL_READY) {
+          return Crc16Force::Clmul;
+        }
+      }
+      Crc16Force::Auto
+    }
+  }
 }
 
 #[inline]
@@ -133,6 +163,15 @@ fn default_slice4_to_slice8(tune: Tune) -> usize {
 
 #[inline]
 #[must_use]
+fn default_portable_to_clmul(tune: Tune) -> usize {
+  tuned_defaults::for_tune_kind(tune.kind)
+    .map(|d| d.portable_to_clmul)
+    .unwrap_or(tune.pclmul_threshold)
+    .max(1)
+}
+
+#[inline]
+#[must_use]
 fn config(caps: Caps, tune: Tune) -> Crc16Config {
   let ov = overrides();
 
@@ -141,13 +180,21 @@ fn config(caps: Caps, tune: Tune) -> Crc16Config {
     slice4_to_slice8 = v.max(1);
   }
 
+  let mut portable_to_clmul = default_portable_to_clmul(tune);
+  if let Some(v) = ov.portable_to_clmul {
+    portable_to_clmul = v.max(1);
+  }
+
   let requested_force = ov.force;
   let effective_force = clamp_force_to_caps(requested_force, caps);
 
   Crc16Config {
     requested_force,
     effective_force,
-    tunables: Crc16Tunables { slice4_to_slice8 },
+    tunables: Crc16Tunables {
+      slice4_to_slice8,
+      portable_to_clmul,
+    },
   }
 }
 

@@ -428,9 +428,6 @@ pub fn crc32c_iscsi_sse_v4s3x3_safe(crc: u32, data: &[u8]) -> u32 {
 // CRC-32C Fusion Multi-stream Wrappers (SSE/AVX-512)
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Process per-lane blocks in a round-robin schedule to expose ILP between lanes.
-const CRC32C_FUSION_STRIPE_BYTES: usize = 1024;
-
 #[inline]
 fn crc32c_fusion_nway<const N: usize>(crc: u32, data: &[u8], update: fn(u32, &[u8]) -> u32) -> u32 {
   debug_assert!(N == 2 || N == 4 || N == 7 || N == 8);
@@ -443,24 +440,16 @@ fn crc32c_fusion_nway<const N: usize>(crc: u32, data: &[u8], update: fn(u32, &[u
   let chunk_len = len.strict_div(N);
   let mut lanes = [!0u32; N];
 
-  let mut offset: usize = 0;
-  while offset < chunk_len {
-    let remaining = chunk_len.strict_sub(offset);
-    let step = remaining.min(CRC32C_FUSION_STRIPE_BYTES);
-
-    let mut lane_idx: usize = 0;
-    while lane_idx < N {
-      let start = lane_idx.strict_mul(chunk_len).strict_add(offset);
-      lanes[lane_idx] = update(lanes[lane_idx], &data[start..start.strict_add(step)]);
-      lane_idx = lane_idx.strict_add(1);
-    }
-
-    offset = offset.strict_add(step);
-  }
-
-  let tail_start = chunk_len.strict_mul(N);
-  if tail_start < len {
-    lanes[N - 1] = update(lanes[N - 1], &data[tail_start..]);
+  let mut lane_idx: usize = 0;
+  while lane_idx < N {
+    let start = lane_idx.strict_mul(chunk_len);
+    let end = if lane_idx.strict_add(1) == N {
+      len
+    } else {
+      start.strict_add(chunk_len)
+    };
+    lanes[lane_idx] = update(lanes[lane_idx], &data[start..end]);
+    lane_idx = lane_idx.strict_add(1);
   }
 
   let last_lane_len = len.strict_sub(chunk_len.strict_mul(N.strict_sub(1)));

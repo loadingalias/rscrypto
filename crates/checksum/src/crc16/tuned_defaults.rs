@@ -10,6 +10,7 @@ use platform::TuneKind;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Crc16TunedDefaults {
   pub slice4_to_slice8: usize,
+  pub portable_to_clmul: usize,
 }
 
 #[rustfmt::skip]

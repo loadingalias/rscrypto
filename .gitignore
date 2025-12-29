@@ -5,8 +5,9 @@
 Thumbs.db
 .DS_Store
 
-# Claude
+# Claude/Codex
 .claude
+AGENTS.md
 
 # Zed
 .zed
@@ -17,11 +18,16 @@ Thumbs.db
 
 # Personal - Notes, Docs, Examples, Testing, etc.
 notes/*
-bench_baseline/
-tune-results/
+crates/*/bench_baseline/
+crates/*/tune-results/
+tune-results
 blake3.md
+crates/checksum/arch_list.md
 
 # Fuzzing
 corpus
 artifacts
 coverage
+
+# Testing
+crates/checksum/proptest-regressions
