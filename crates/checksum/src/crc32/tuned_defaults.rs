@@ -21,6 +21,7 @@ pub struct Crc32TunedDefaults {
 #[rustfmt::skip]
 pub const CRC32_TUNED_DEFAULTS: &[(TuneKind, Crc32TunedDefaults)] = &[
   // BEGIN GENERATED (crc32-tune --apply)
+  (TuneKind::AppleM1M3, Crc32TunedDefaults { streams: 1, portable_to_hwcrc: 1048576, hwcrc_to_fusion: 1048576, fusion_to_avx512: 64, fusion_to_vpclmul: usize::MAX }),
   // END GENERATED (crc32-tune --apply)
 ];
 

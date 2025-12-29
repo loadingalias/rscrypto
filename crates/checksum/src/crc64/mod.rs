@@ -1336,7 +1336,7 @@ define_crc64_type! {
   ///
   /// # Example
   ///
-  /// ```ignore
+  /// ```rust
   /// use checksum::{Crc64Xz, Checksum};
   ///
   /// let crc = Crc64Xz::checksum(b"123456789");
@@ -1382,11 +1382,11 @@ define_crc64_type! {
   ///
   /// # Example
   ///
-  /// ```ignore
+  /// ```rust
   /// use checksum::{Crc64Nvme, Checksum};
   ///
   /// let crc = Crc64Nvme::checksum(b"123456789");
-  /// // NVMe CRC-64 test vector
+  /// assert_eq!(crc, 0xAE8B14860A799888); // "123456789" test vector
   /// ```
   pub struct Crc64Nvme {
     poly: CRC64_NVME_POLY,
@@ -1423,10 +1423,11 @@ define_buffered_crc! {
   ///
   /// # Example
   ///
-  /// ```ignore
+  /// ```rust
   /// use checksum::{BufferedCrc64Xz, Checksum};
   ///
   /// let mut hasher = BufferedCrc64Xz::new();
+  /// let data = b"The quick brown fox jumps over the lazy dog";
   ///
   /// // Many small updates - internally buffered
   /// for byte in data.iter() {
@@ -1434,6 +1435,7 @@ define_buffered_crc! {
   /// }
   ///
   /// let crc = hasher.finalize();
+  /// assert_eq!(crc, checksum::Crc64Xz::checksum(data));
   /// ```
   pub struct BufferedCrc64<Crc64> {
     buffer_size: BUFFERED_CRC_BUFFER_SIZE,
@@ -1462,10 +1464,11 @@ define_buffered_crc! {
   ///
   /// # Example
   ///
-  /// ```ignore
+  /// ```rust
   /// use checksum::{BufferedCrc64Nvme, Checksum};
   ///
   /// let mut hasher = BufferedCrc64Nvme::new();
+  /// let data = b"The quick brown fox jumps over the lazy dog";
   ///
   /// // Many small updates - internally buffered
   /// for byte in data.iter() {
@@ -1473,6 +1476,7 @@ define_buffered_crc! {
   /// }
   ///
   /// let crc = hasher.finalize();
+  /// assert_eq!(crc, checksum::Crc64Nvme::checksum(data));
   /// ```
   pub struct BufferedCrc64Nvme<Crc64Nvme> {
     buffer_size: BUFFERED_CRC_BUFFER_SIZE,

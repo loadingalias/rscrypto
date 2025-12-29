@@ -737,3 +737,60 @@ pub fn crc32c_vpmsum_4way_safe(crc: u32, data: &[u8]) -> u32 {
 pub fn crc32c_vpmsum_8way_safe(crc: u32, data: &[u8]) -> u32 {
   unsafe { crc32c_fold_kernel_nway::<8>(crc, data, &super::clmul::CRC32C_STREAM, &super::clmul::CRC32C_CLMUL) }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+  extern crate std;
+
+  use alloc::vec::Vec;
+
+  use super::*;
+
+  const LENS: &[usize] = &[0, 1, 7, 8, 15, 16, 31, 32, 63, 64, 127, 128, 255, 256, 1024, 16 * 1024];
+
+  fn make_data(len: usize) -> Vec<u8> {
+    (0..len)
+      .map(|i| (i as u8).wrapping_mul(17).wrapping_add((i >> 8) as u8))
+      .collect()
+  }
+
+  fn assert_crc32_kernel(name: &str, kernel: fn(u32, &[u8]) -> u32) {
+    for &len in LENS {
+      let data = make_data(len);
+      let expected = super::super::portable::crc32_slice16_ieee(!0, &data) ^ !0;
+      let got = kernel(!0, &data) ^ !0;
+      assert_eq!(got, expected, "{name} len={len}");
+    }
+  }
+
+  fn assert_crc32c_kernel(name: &str, kernel: fn(u32, &[u8]) -> u32) {
+    for &len in LENS {
+      let data = make_data(len);
+      let expected = super::super::portable::crc32c_slice16(!0, &data) ^ !0;
+      let got = kernel(!0, &data) ^ !0;
+      assert_eq!(got, expected, "{name} len={len}");
+    }
+  }
+
+  #[test]
+  fn test_crc32_vpmsum_matches_portable_various_lengths() {
+    let caps = platform::caps();
+    if !caps.has(platform::caps::powerpc64::VPMSUM_READY) {
+      return;
+    }
+
+    assert_crc32_kernel("crc32/vpmsum", crc32_ieee_vpmsum_safe);
+    assert_crc32_kernel("crc32/vpmsum-2way", crc32_ieee_vpmsum_2way_safe);
+    assert_crc32_kernel("crc32/vpmsum-4way", crc32_ieee_vpmsum_4way_safe);
+    assert_crc32_kernel("crc32/vpmsum-8way", crc32_ieee_vpmsum_8way_safe);
+
+    assert_crc32c_kernel("crc32c/vpmsum", crc32c_vpmsum_safe);
+    assert_crc32c_kernel("crc32c/vpmsum-2way", crc32c_vpmsum_2way_safe);
+    assert_crc32c_kernel("crc32c/vpmsum-4way", crc32c_vpmsum_4way_safe);
+    assert_crc32c_kernel("crc32c/vpmsum-8way", crc32c_vpmsum_8way_safe);
+  }
+}

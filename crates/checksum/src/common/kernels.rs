@@ -161,11 +161,18 @@ pub const fn select_streams(len: usize, max_streams: u8, fold_bytes: usize, stre
 ///
 /// # Example
 ///
-/// ```ignore
-/// define_dispatch!(Crc32Fn, u32);
+/// ```rust
+/// use checksum::dispatchers::Crc32Fn;
 ///
-/// // Use the generated functions:
-/// let result = dispatch_streams(&CRC32_KERNELS, streams, crc, data);
+/// checksum::define_crc_dispatch!(Crc32Fn, u32);
+///
+/// fn k(crc: u32, _data: &[u8]) -> u32 {
+///   crc.wrapping_add(1)
+/// }
+///
+/// const KERNELS: [Crc32Fn; 5] = [k, k, k, k, k];
+/// let out = dispatch_streams(&KERNELS, 1, 0, b"");
+/// assert_eq!(out, 1);
 /// ```
 #[macro_export]
 macro_rules! define_crc_dispatch {
@@ -176,7 +183,7 @@ macro_rules! define_crc_dispatch {
     #[inline]
     #[allow(clippy::indexing_slicing)] // stream_to_index returns 0-4, array is [_; 5]
     pub fn dispatch_streams(kernels: &[$fn_type; 5], streams: u8, crc: $state_type, data: &[u8]) -> $state_type {
-      kernels[$crate::common::kernels::stream_to_index(streams)](crc, data)
+      kernels[$crate::__internal::stream_to_index(streams)](crc, data)
     }
 
     /// Dispatch with small buffer handling.
@@ -195,7 +202,7 @@ macro_rules! define_crc_dispatch {
       if len < fold_bytes {
         small(crc, data)
       } else {
-        kernels[$crate::common::kernels::stream_to_index(streams)](crc, data)
+        kernels[$crate::__internal::stream_to_index(streams)](crc, data)
       }
     }
   };

@@ -5,20 +5,23 @@
 //!
 //! # Usage
 //!
-//! ```ignore
-//! use checksum::dispatchers::{Crc64Fn, Crc64Dispatcher};
-//! use backend::dispatch::{candidates, Selected, select};
-//! use backend::caps::{Caps, x86};
+//! ```rust
+//! use backend::dispatch::Selected;
+//! use checksum::dispatchers::{Crc32Dispatcher, Crc32Fn};
 //!
-//! fn select_crc64() -> Selected<Crc64Fn> {
-//!     let caps = platform::caps();
-//!     backend::dispatch::select(caps, candidates![
-//!         "x86_64/vpclmul" => x86::VPCLMUL_READY => vpclmul_kernel,
-//!         "portable"       => Caps::NONE         => portable_kernel,
-//!     ])
+//! fn portable(crc: u32, data: &[u8]) -> u32 {
+//!   crc.wrapping_add(data.len() as u32)
 //! }
 //!
-//! static DISPATCHER: Crc64Dispatcher = Crc64Dispatcher::new(select_crc64);
+//! fn select_crc32() -> Selected<Crc32Fn> {
+//!   Selected::new("portable", portable)
+//! }
+//!
+//! static DISPATCHER: Crc32Dispatcher = Crc32Dispatcher::new(select_crc32);
+//!
+//! let got = DISPATCHER.call(0, b"abc");
+//! assert_eq!(got, portable(0, b"abc"));
+//! assert_eq!(DISPATCHER.backend_name(), "portable");
 //! ```
 
 use backend::dispatch::Selected;

@@ -13,6 +13,29 @@
 //! - s390x: VGFM folding (CRC-32 and CRC-32C)
 //! - riscv64: ZVBC (RVV vector CLMUL) / Zbc folding (CRC-32 and CRC-32C)
 //! - wasm32/wasm64: portable only (no CRC32/CLMUL instructions)
+//!
+//! # Quick Start
+//!
+//! ```rust
+//! use checksum::{Checksum, ChecksumCombine, Crc32, Crc32C};
+//!
+//! let data = b"123456789";
+//!
+//! // One-shot
+//! assert_eq!(Crc32::checksum(data), 0xCBF4_3926);
+//! assert_eq!(Crc32C::checksum(data), 0xE306_9283);
+//!
+//! // Streaming
+//! let mut hasher = Crc32::new();
+//! hasher.update(b"1234");
+//! hasher.update(b"56789");
+//! assert_eq!(hasher.finalize(), Crc32::checksum(data));
+//!
+//! // Combine: crc(A || B) == combine(crc(A), crc(B), len(B))
+//! let (a, b) = data.split_at(4);
+//! let combined = Crc32::combine(Crc32::checksum(a), Crc32::checksum(b), b.len());
+//! assert_eq!(combined, Crc32::checksum(data));
+//! ```
 
 #[cfg(any(target_arch = "powerpc64", target_arch = "s390x", target_arch = "riscv64"))]
 mod clmul;
@@ -157,52 +180,79 @@ const fn x86_streams_for_len(len: usize, streams: u8) -> u8 {
 }
 
 #[cfg(target_arch = "aarch64")]
+const CRC32_AARCH64_2WAY_MIN_BYTES: usize = 128 * CRC32_FOLD_BLOCK_BYTES; // 16 KiB
+
+#[cfg(target_arch = "aarch64")]
 #[inline]
 const fn aarch64_streams_for_len(len: usize, streams: u8) -> u8 {
   // Our aarch64 stream slots are [1, 2, 3] (index 2 is shared by 3/4).
-  if streams >= 3 && len >= 3 * 2 * CRC32_FOLD_BLOCK_BYTES {
+  //
+  // Keep multi-stream thresholds conservative (CRC64 parity): multi-stream
+  // folding increases register pressure and has non-trivial merge/setup costs.
+  const CRC32_AARCH64_3WAY_MIN_BYTES: usize = 256 * CRC32_FOLD_BLOCK_BYTES; // 32 KiB
+
+  if streams >= 3 && len >= CRC32_AARCH64_3WAY_MIN_BYTES {
     return 3;
   }
-  if streams >= 2 && len >= 2 * 2 * CRC32_FOLD_BLOCK_BYTES {
+  if streams >= 2 && len >= CRC32_AARCH64_2WAY_MIN_BYTES {
     return 2;
   }
   1
 }
 
 #[cfg(target_arch = "powerpc64")]
+const CRC32_POWERPC64_2WAY_MIN_BYTES: usize = 128 * CRC32_FOLD_BLOCK_BYTES; // 16 KiB
+
+#[cfg(target_arch = "powerpc64")]
 #[inline]
 const fn powerpc64_streams_for_len(len: usize, streams: u8) -> u8 {
-  if streams >= 8 && len >= 8 * 2 * CRC32_FOLD_BLOCK_BYTES {
+  // POWER benefits from higher ILP, but multi-stream merging has setup costs.
+  // Keep thresholds conservative by default (CRC64 parity).
+  const CRC32_POWERPC64_4WAY_MIN_BYTES: usize = 2 * CRC32_POWERPC64_2WAY_MIN_BYTES; // 32 KiB
+  const CRC32_POWERPC64_8WAY_MIN_BYTES: usize = 4 * CRC32_POWERPC64_2WAY_MIN_BYTES; // 64 KiB
+
+  if streams >= 8 && len >= CRC32_POWERPC64_8WAY_MIN_BYTES {
     return 8;
   }
-  if streams >= 4 && len >= 4 * 2 * CRC32_FOLD_BLOCK_BYTES {
+  if streams >= 4 && len >= CRC32_POWERPC64_4WAY_MIN_BYTES {
     return 4;
   }
-  if streams >= 2 && len >= 2 * 2 * CRC32_FOLD_BLOCK_BYTES {
+  if streams >= 2 && len >= CRC32_POWERPC64_2WAY_MIN_BYTES {
     return 2;
   }
   1
 }
 
 #[cfg(target_arch = "s390x")]
+const CRC32_S390X_2WAY_MIN_BYTES: usize = 128 * CRC32_FOLD_BLOCK_BYTES; // 16 KiB
+
+#[cfg(target_arch = "s390x")]
 #[inline]
 const fn s390x_streams_for_len(len: usize, streams: u8) -> u8 {
-  if streams >= 4 && len >= 4 * 2 * CRC32_FOLD_BLOCK_BYTES {
+  // z13+ has 32 vector registers and strong ILP; keep thresholds conservative.
+  const CRC32_S390X_4WAY_MIN_BYTES: usize = 2 * CRC32_S390X_2WAY_MIN_BYTES; // 32 KiB
+
+  if streams >= 4 && len >= CRC32_S390X_4WAY_MIN_BYTES {
     return 4;
   }
-  if streams >= 2 && len >= 2 * 2 * CRC32_FOLD_BLOCK_BYTES {
+  if streams >= 2 && len >= CRC32_S390X_2WAY_MIN_BYTES {
     return 2;
   }
   1
 }
 
 #[cfg(target_arch = "riscv64")]
+const CRC32_RISCV64_2WAY_MIN_BYTES: usize = 128 * CRC32_FOLD_BLOCK_BYTES; // 16 KiB
+
+#[cfg(target_arch = "riscv64")]
 #[inline]
 const fn riscv64_streams_for_len(len: usize, streams: u8) -> u8 {
-  if streams >= 4 && len >= 4 * 2 * CRC32_FOLD_BLOCK_BYTES {
+  const CRC32_RISCV64_4WAY_MIN_BYTES: usize = 2 * CRC32_RISCV64_2WAY_MIN_BYTES; // 32 KiB
+
+  if streams >= 4 && len >= CRC32_RISCV64_4WAY_MIN_BYTES {
     return 4;
   }
-  if streams >= 2 && len >= 2 * 2 * CRC32_FOLD_BLOCK_BYTES {
+  if streams >= 2 && len >= CRC32_RISCV64_2WAY_MIN_BYTES {
     return 2;
   }
   1
@@ -1773,10 +1823,10 @@ fn select_crc32() -> Selected<Crc32Fn> {
         }
       }
       Crc32Force::Pclmul if caps.has(platform::caps::x86::PCLMUL_READY) => {
-        Selected::new("x86_64/crc32-pclmul", crc32_x86_64_pclmul_forced)
+        Selected::new("x86_64/pclmul", crc32_x86_64_pclmul_forced)
       }
       Crc32Force::Vpclmul if caps.has(platform::caps::x86::VPCLMUL_READY) => {
-        Selected::new("x86_64/crc32-vpclmul", crc32_x86_64_vpclmul_forced)
+        Selected::new("x86_64/vpclmul", crc32_x86_64_vpclmul_forced)
       }
       _ => Selected::new(kernels::PORTABLE, crc32_portable),
     }
@@ -1825,17 +1875,17 @@ fn select_crc32c() -> Selected<Crc32Fn> {
         Selected::new("x86_64/auto", crc32c_x86_64_auto)
       }
       Crc32Force::Hwcrc if caps.has(platform::caps::x86::CRC32C_READY) => {
-        Selected::new("x86_64/crc32c", crc32c_x86_64_hwcrc_forced)
+        Selected::new("x86_64/hwcrc", crc32c_x86_64_hwcrc_forced)
       }
       Crc32Force::Pclmul
         if caps.has(platform::caps::x86::CRC32C_READY) && caps.has(platform::caps::x86::PCLMUL_READY) =>
       {
-        Selected::new("x86_64/crc32c-fusion-sse", crc32c_x86_64_pclmul_forced)
+        Selected::new("x86_64/fusion-sse", crc32c_x86_64_pclmul_forced)
       }
       Crc32Force::Vpclmul
         if caps.has(platform::caps::x86::CRC32C_READY) && caps.has(platform::caps::x86::VPCLMUL_READY) =>
       {
-        Selected::new("x86_64/crc32c-fusion-vpclmul", crc32c_x86_64_vpclmul_forced)
+        Selected::new("x86_64/fusion-vpclmul", crc32c_x86_64_vpclmul_forced)
       }
       _ => Selected::new(kernels::PORTABLE, crc32c_portable),
     }
@@ -1869,17 +1919,17 @@ fn select_crc32() -> Selected<Crc32Fn> {
 
     match cfg.effective_force {
       Crc32Force::Auto => Selected::new("aarch64/auto", crc32_aarch64_auto),
-      Crc32Force::Hwcrc => Selected::new("aarch64/crc32", crc32_aarch64_hwcrc_forced),
+      Crc32Force::Hwcrc => Selected::new("aarch64/hwcrc", crc32_aarch64_hwcrc_forced),
       Crc32Force::Pmull if caps.has(platform::caps::aarch64::PMULL_READY) => {
-        Selected::new("aarch64/crc32-pmull-v12e-v1", crc32_aarch64_pmull_forced)
+        Selected::new("aarch64/pmull-v12e-v1", crc32_aarch64_pmull_forced)
       }
       Crc32Force::PmullEor3 if caps.has(platform::caps::aarch64::PMULL_EOR3_READY) => {
-        Selected::new("aarch64/crc32-pmull-eor3-v9s3x2e-s3", crc32_aarch64_pmull_eor3_forced)
+        Selected::new("aarch64/pmull-eor3-v9s3x2e-s3", crc32_aarch64_pmull_eor3_forced)
       }
       Crc32Force::Sve2Pmull
         if caps.has(platform::caps::aarch64::SVE2_PMULL) && caps.has(platform::caps::aarch64::PMULL_READY) =>
       {
-        Selected::new("aarch64/crc32-sve2-pmull", crc32_aarch64_sve2_pmull_forced)
+        Selected::new("aarch64/sve2-pmull", crc32_aarch64_sve2_pmull_forced)
       }
       _ => Selected::new(kernels::PORTABLE, crc32_portable),
     }
@@ -1913,17 +1963,17 @@ fn select_crc32c() -> Selected<Crc32Fn> {
 
     match cfg.effective_force {
       Crc32Force::Auto => Selected::new("aarch64/auto", crc32c_aarch64_auto),
-      Crc32Force::Hwcrc => Selected::new("aarch64/crc32c", crc32c_aarch64_hwcrc_forced),
+      Crc32Force::Hwcrc => Selected::new("aarch64/hwcrc", crc32c_aarch64_hwcrc_forced),
       Crc32Force::Pmull if caps.has(platform::caps::aarch64::PMULL_READY) => {
-        Selected::new("aarch64/crc32c-pmull-v12e-v1", crc32c_aarch64_pmull_forced)
+        Selected::new("aarch64/pmull-v12e-v1", crc32c_aarch64_pmull_forced)
       }
       Crc32Force::PmullEor3 if caps.has(platform::caps::aarch64::PMULL_EOR3_READY) => {
-        Selected::new("aarch64/crc32c-pmull-eor3-v9s3x2e-s3", crc32c_aarch64_pmull_eor3_forced)
+        Selected::new("aarch64/pmull-eor3-v9s3x2e-s3", crc32c_aarch64_pmull_eor3_forced)
       }
       Crc32Force::Sve2Pmull
         if caps.has(platform::caps::aarch64::SVE2_PMULL) && caps.has(platform::caps::aarch64::PMULL_READY) =>
       {
-        Selected::new("aarch64/crc32c-sve2-pmull", crc32c_aarch64_sve2_pmull_forced)
+        Selected::new("aarch64/sve2-pmull", crc32c_aarch64_sve2_pmull_forced)
       }
       _ => Selected::new(kernels::PORTABLE, crc32c_portable),
     }
@@ -2063,6 +2113,22 @@ static CRC32C_DISPATCHER: Crc32Dispatcher = Crc32Dispatcher::new(select_crc32c);
 /// CRC-32 (IEEE) checksum.
 ///
 /// Used by Ethernet, gzip, zip, PNG, etc.
+///
+/// # Properties
+///
+/// - **Polynomial**: 0x04C11DB7 (normal), 0xEDB88320 (reflected)
+/// - **Initial value**: 0xFFFFFFFF
+/// - **Final XOR**: 0xFFFFFFFF
+/// - **Reflect input/output**: Yes
+///
+/// # Examples
+///
+/// ```rust
+/// use checksum::{Checksum, Crc32};
+///
+/// let crc = Crc32::checksum(b"123456789");
+/// assert_eq!(crc, 0xCBF4_3926);
+/// ```
 #[derive(Clone)]
 pub struct Crc32 {
   state: u32,
@@ -2170,6 +2236,22 @@ impl traits::ChecksumCombine for Crc32 {
 /// CRC-32C (Castagnoli) checksum.
 ///
 /// Used by iSCSI, SCTP, ext4, Btrfs, SSE4.2 `crc32`, etc.
+///
+/// # Properties
+///
+/// - **Polynomial**: 0x1EDC6F41 (normal), 0x82F63B78 (reflected)
+/// - **Initial value**: 0xFFFFFFFF
+/// - **Final XOR**: 0xFFFFFFFF
+/// - **Reflect input/output**: Yes
+///
+/// # Examples
+///
+/// ```rust
+/// use checksum::{Checksum, Crc32C};
+///
+/// let crc = Crc32C::checksum(b"123456789");
+/// assert_eq!(crc, 0xE306_9283);
+/// ```
 #[derive(Clone)]
 pub struct Crc32C {
   state: u32,
@@ -2322,10 +2404,30 @@ mod tests {
 
   use super::*;
 
+  const TEST_DATA: &[u8] = b"123456789";
+
+  #[test]
+  fn test_crc32_test_vectors() {
+    assert_eq!(Crc32::checksum(TEST_DATA), 0xCBF4_3926);
+    assert_eq!(Crc32C::checksum(TEST_DATA), 0xE306_9283);
+  }
+
   #[test]
   fn test_crc32_empty_is_zero() {
     assert_eq!(Crc32::checksum(&[]), 0);
     assert_eq!(Crc32C::checksum(&[]), 0);
+  }
+
+  #[test]
+  fn test_backend_name_not_empty() {
+    assert!(!Crc32::backend_name().is_empty());
+    assert!(!Crc32C::backend_name().is_empty());
+  }
+
+  #[test]
+  fn test_kernel_name_empty_input_is_portable() {
+    assert_eq!(Crc32::kernel_name_for_len(0), "portable/slice16");
+    assert_eq!(Crc32C::kernel_name_for_len(0), "portable/slice16");
   }
 
   #[test]
@@ -2453,15 +2555,15 @@ mod tests {
         if cfg.effective_force == Crc32Force::Pclmul && caps.has(platform::caps::x86::PCLMUL_READY) {
           if streams_env.is_some() {
             let expected = match x86_streams_for_len(len, cfg.tunables.streams) {
-              8 => "x86_64/crc32-pclmul-8way",
-              7 => "x86_64/crc32-pclmul-7way",
-              4 => "x86_64/crc32-pclmul-4way",
-              2 => "x86_64/crc32-pclmul-2way",
-              _ => "x86_64/crc32-pclmul",
+              8 => "x86_64/pclmul-8way",
+              7 => "x86_64/pclmul-7way",
+              4 => "x86_64/pclmul-4way",
+              2 => "x86_64/pclmul-2way",
+              _ => "x86_64/pclmul",
             };
             assert_eq!(kernel, expected);
           } else {
-            assert!(kernel.starts_with("x86_64/crc32-pclmul"));
+            assert!(kernel.starts_with("x86_64/pclmul"));
           }
         }
       }
@@ -2470,15 +2572,15 @@ mod tests {
         if cfg.effective_force == Crc32Force::Vpclmul && caps.has(platform::caps::x86::VPCLMUL_READY) {
           if streams_env.is_some() {
             let expected = match x86_streams_for_len(len, cfg.tunables.streams) {
-              8 => "x86_64/crc32-vpclmul-8way",
-              7 => "x86_64/crc32-vpclmul-7way",
-              4 => "x86_64/crc32-vpclmul-4way",
-              2 => "x86_64/crc32-vpclmul-2way",
-              _ => "x86_64/crc32-vpclmul",
+              8 => "x86_64/vpclmul-8way",
+              7 => "x86_64/vpclmul-7way",
+              4 => "x86_64/vpclmul-4way",
+              2 => "x86_64/vpclmul-2way",
+              _ => "x86_64/vpclmul",
             };
             assert_eq!(kernel, expected);
           } else {
-            assert!(kernel.starts_with("x86_64/crc32-vpclmul"));
+            assert!(kernel.starts_with("x86_64/vpclmul"));
           }
         }
       }
@@ -2490,19 +2592,19 @@ mod tests {
       if force.eq_ignore_ascii_case("hwcrc") || force.eq_ignore_ascii_case("crc") {
         assert_eq!(cfg.requested_force, Crc32Force::Hwcrc);
         if cfg.effective_force == Crc32Force::Hwcrc && caps.has(platform::caps::aarch64::CRC_READY) {
-          assert!(kernel.starts_with("aarch64/crc32"));
+          assert!(kernel.starts_with("aarch64/hwcrc"));
         }
       }
       if force.eq_ignore_ascii_case("pmull") {
         assert_eq!(cfg.requested_force, Crc32Force::Pmull);
         if cfg.effective_force == Crc32Force::Pmull && caps.has(platform::caps::aarch64::PMULL_READY) {
-          assert!(kernel.starts_with("aarch64/crc32-pmull"));
+          assert!(kernel.starts_with("aarch64/pmull"));
         }
       }
       if force.eq_ignore_ascii_case("pmull-eor3") || force.eq_ignore_ascii_case("eor3") {
         assert_eq!(cfg.requested_force, Crc32Force::PmullEor3);
         if cfg.effective_force == Crc32Force::PmullEor3 && caps.has(platform::caps::aarch64::PMULL_EOR3_READY) {
-          assert!(kernel.starts_with("aarch64/crc32-pmull-eor3"));
+          assert!(kernel.starts_with("aarch64/pmull-eor3"));
         }
       }
     }
@@ -2533,7 +2635,7 @@ mod tests {
       if force.eq_ignore_ascii_case("hwcrc") || force.eq_ignore_ascii_case("crc") {
         assert_eq!(cfg.requested_force, Crc32Force::Hwcrc);
         if cfg.effective_force == Crc32Force::Hwcrc && caps.has(platform::caps::x86::CRC32C_READY) {
-          assert!(kernel.starts_with("x86_64/crc32c"));
+          assert!(kernel.starts_with("x86_64/hwcrc"));
         }
       }
       if force.eq_ignore_ascii_case("pclmul") || force.eq_ignore_ascii_case("clmul") {
@@ -2544,15 +2646,15 @@ mod tests {
         {
           if streams_env.is_some() {
             let expected = match x86_streams_for_len(len, cfg.tunables.streams) {
-              8 => "x86_64/crc32c-fusion-v4s3x3-8way",
-              7 => "x86_64/crc32c-fusion-v4s3x3-7way",
-              4 => "x86_64/crc32c-fusion-v4s3x3-4way",
-              2 => "x86_64/crc32c-fusion-v4s3x3-2way",
-              _ => "x86_64/crc32c-fusion-v4s3x3",
+              8 => "x86_64/fusion-sse-v4s3x3-8way",
+              7 => "x86_64/fusion-sse-v4s3x3-7way",
+              4 => "x86_64/fusion-sse-v4s3x3-4way",
+              2 => "x86_64/fusion-sse-v4s3x3-2way",
+              _ => "x86_64/fusion-sse-v4s3x3",
             };
             assert_eq!(kernel, expected);
           } else {
-            assert!(kernel.starts_with("x86_64/crc32c-fusion-v4s3x3"));
+            assert!(kernel.starts_with("x86_64/fusion-sse-v4s3x3"));
           }
         }
       }
@@ -2564,15 +2666,15 @@ mod tests {
         {
           if streams_env.is_some() {
             let expected = match x86_streams_for_len(len, cfg.tunables.streams) {
-              8 => "x86_64/crc32c-fusion-vpclmul-v3x2-8way",
-              7 => "x86_64/crc32c-fusion-vpclmul-v3x2-7way",
-              4 => "x86_64/crc32c-fusion-vpclmul-v3x2-4way",
-              2 => "x86_64/crc32c-fusion-vpclmul-v3x2-2way",
-              _ => "x86_64/crc32c-fusion-vpclmul-v3x2",
+              8 => "x86_64/fusion-vpclmul-v3x2-8way",
+              7 => "x86_64/fusion-vpclmul-v3x2-7way",
+              4 => "x86_64/fusion-vpclmul-v3x2-4way",
+              2 => "x86_64/fusion-vpclmul-v3x2-2way",
+              _ => "x86_64/fusion-vpclmul-v3x2",
             };
             assert_eq!(kernel, expected);
           } else {
-            assert!(kernel.starts_with("x86_64/crc32c-fusion-vpclmul-v3x2"));
+            assert!(kernel.starts_with("x86_64/fusion-vpclmul-v3x2"));
           }
         }
       }
@@ -2584,19 +2686,19 @@ mod tests {
       if force.eq_ignore_ascii_case("hwcrc") || force.eq_ignore_ascii_case("crc") {
         assert_eq!(cfg.requested_force, Crc32Force::Hwcrc);
         if cfg.effective_force == Crc32Force::Hwcrc && caps.has(platform::caps::aarch64::CRC_READY) {
-          assert!(kernel.starts_with("aarch64/crc32c"));
+          assert!(kernel.starts_with("aarch64/hwcrc"));
         }
       }
       if force.eq_ignore_ascii_case("pmull") {
         assert_eq!(cfg.requested_force, Crc32Force::Pmull);
         if cfg.effective_force == Crc32Force::Pmull && caps.has(platform::caps::aarch64::PMULL_READY) {
-          assert!(kernel.starts_with("aarch64/crc32c-pmull"));
+          assert!(kernel.starts_with("aarch64/pmull"));
         }
       }
       if force.eq_ignore_ascii_case("pmull-eor3") || force.eq_ignore_ascii_case("eor3") {
         assert_eq!(cfg.requested_force, Crc32Force::PmullEor3);
         if cfg.effective_force == Crc32Force::PmullEor3 && caps.has(platform::caps::aarch64::PMULL_EOR3_READY) {
-          assert!(kernel.starts_with("aarch64/crc32c-pmull-eor3"));
+          assert!(kernel.starts_with("aarch64/pmull-eor3"));
         }
       }
     }

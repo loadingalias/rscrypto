@@ -986,3 +986,74 @@ pub fn crc32c_zvbc_2way_safe(crc: u32, data: &[u8]) -> u32 {
 pub fn crc32c_zvbc_4way_safe(crc: u32, data: &[u8]) -> u32 {
   unsafe { crc32c_zvbc_nway::<4>(crc, data, &super::clmul::CRC32C_CLMUL, &super::clmul::CRC32C_STREAM) }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+  extern crate std;
+
+  use alloc::vec::Vec;
+
+  use super::*;
+
+  const LENS: &[usize] = &[0, 1, 7, 8, 15, 16, 31, 32, 63, 64, 127, 128, 255, 256, 1024, 16 * 1024];
+
+  fn make_data(len: usize) -> Vec<u8> {
+    (0..len)
+      .map(|i| (i as u8).wrapping_mul(13).wrapping_add((i >> 8) as u8))
+      .collect()
+  }
+
+  fn assert_crc32_kernel(name: &str, kernel: fn(u32, &[u8]) -> u32) {
+    for &len in LENS {
+      let data = make_data(len);
+      let expected = super::super::portable::crc32_slice16_ieee(!0, &data) ^ !0;
+      let got = kernel(!0, &data) ^ !0;
+      assert_eq!(got, expected, "{name} len={len}");
+    }
+  }
+
+  fn assert_crc32c_kernel(name: &str, kernel: fn(u32, &[u8]) -> u32) {
+    for &len in LENS {
+      let data = make_data(len);
+      let expected = super::super::portable::crc32c_slice16(!0, &data) ^ !0;
+      let got = kernel(!0, &data) ^ !0;
+      assert_eq!(got, expected, "{name} len={len}");
+    }
+  }
+
+  #[test]
+  fn test_crc32_zbc_matches_portable_various_lengths() {
+    let caps = platform::caps();
+    if !caps.has(platform::caps::riscv::ZBC) {
+      return;
+    }
+
+    assert_crc32_kernel("crc32/zbc", crc32_ieee_zbc_safe);
+    assert_crc32_kernel("crc32/zbc-2way", crc32_ieee_zbc_2way_safe);
+    assert_crc32_kernel("crc32/zbc-4way", crc32_ieee_zbc_4way_safe);
+
+    assert_crc32c_kernel("crc32c/zbc", crc32c_zbc_safe);
+    assert_crc32c_kernel("crc32c/zbc-2way", crc32c_zbc_2way_safe);
+    assert_crc32c_kernel("crc32c/zbc-4way", crc32c_zbc_4way_safe);
+  }
+
+  #[test]
+  fn test_crc32_zvbc_matches_portable_various_lengths() {
+    let caps = platform::caps();
+    if !caps.has(platform::caps::riscv::ZVBC) {
+      return;
+    }
+
+    assert_crc32_kernel("crc32/zvbc", crc32_ieee_zvbc_safe);
+    assert_crc32_kernel("crc32/zvbc-2way", crc32_ieee_zvbc_2way_safe);
+    assert_crc32_kernel("crc32/zvbc-4way", crc32_ieee_zvbc_4way_safe);
+
+    assert_crc32c_kernel("crc32c/zvbc", crc32c_zvbc_safe);
+    assert_crc32c_kernel("crc32c/zvbc-2way", crc32c_zvbc_2way_safe);
+    assert_crc32c_kernel("crc32c/zvbc-4way", crc32c_zvbc_4way_safe);
+  }
+}

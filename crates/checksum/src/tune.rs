@@ -5,15 +5,13 @@
 //!
 //! # Usage
 //!
-//! ```ignore
+//! ```rust
 //! use checksum::tune;
 //!
-//! fn my_kernel(crc: u64, data: &[u8]) -> u64 {
-//!     if data.len() < tune::pclmul_threshold() {
-//!         return portable_impl(crc, data);
-//!     }
-//!     simd_impl(crc, data)
-//! }
+//! let pclmul = tune::pclmul_threshold();
+//! let hwcrc = tune::hwcrc_threshold();
+//! assert!(pclmul > 0);
+//! assert!(hwcrc > 0);
 //! ```
 
 // ─────────────────────────────────────────────────────────────────────────────

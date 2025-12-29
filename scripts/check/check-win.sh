@@ -75,6 +75,16 @@ for target in "${WIN_TARGETS[@]}"; do
   ok
 
   if [[ "$CHECKSUM_IN_SCOPE" == true && "$target" == "x86_64-pc-windows-msvc" ]]; then
+    step "$short_name crc32-tune"
+    if ! CARGO_TARGET_DIR="$target_dir" \
+         cargo xwin clippy -p checksum --bin crc32-tune --all-features --target "$target" -- -D warnings \
+         >>"$LOG_DIR/$target.log" 2>&1; then
+      fail
+      show_error "$LOG_DIR/$target.log"
+      exit 1
+    fi
+    ok
+
     step "$short_name crc64-tune"
     if ! CARGO_TARGET_DIR="$target_dir" \
          cargo xwin clippy -p checksum --bin crc64-tune --all-features --target "$target" -- -D warnings \

@@ -35,22 +35,25 @@
 //!
 //! # Example
 //!
-//! ```ignore
-//! use checksum::{Crc64, Checksum, ChecksumCombine};
+//! ```rust
+//! use checksum::{Checksum, ChecksumCombine, Crc32};
 //!
 //! // One-shot computation (fastest for complete data)
-//! let crc = Crc64::checksum(b"hello world");
+//! let data = b"123456789";
+//! let crc = Crc32::checksum(data);
+//! assert_eq!(crc, 0xCBF4_3926);
 //!
 //! // Streaming computation
-//! let mut hasher = Crc64::new();
-//! hasher.update(b"hello ");
-//! hasher.update(b"world");
+//! let mut hasher = Crc32::new();
+//! hasher.update(b"1234");
+//! hasher.update(b"56789");
 //! assert_eq!(hasher.finalize(), crc);
 //!
 //! // Parallel combine (useful for multi-threaded processing)
-//! let crc_a = Crc64::checksum(b"hello ");
-//! let crc_b = Crc64::checksum(b"world");
-//! let combined = Crc64::combine(crc_a, crc_b, 5);
+//! let (a, b) = data.split_at(4);
+//! let crc_a = Crc32::checksum(a);
+//! let crc_b = Crc32::checksum(b);
+//! let combined = Crc32::combine(crc_a, crc_b, b.len());
 //! assert_eq!(combined, crc);
 //! ```
 //!
@@ -99,6 +102,11 @@ mod crc32;
 mod crc64;
 pub mod dispatchers;
 pub mod tune;
+
+#[doc(hidden)]
+pub mod __internal {
+  pub use crate::common::kernels::stream_to_index;
+}
 
 // Re-export public types
 // Re-export buffered types (requires alloc)

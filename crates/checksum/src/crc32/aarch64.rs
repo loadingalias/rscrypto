@@ -1303,3 +1303,129 @@ pub fn crc32_iso_hdlc_pmull_eor3_v9s3x2e_s3_safe(crc: u32, data: &[u8]) -> u32 {
   // SAFETY: Dispatcher verifies CRC + PMULL + SHA3/EOR3 before selecting this kernel.
   unsafe { crc32_iso_hdlc_pmull_eor3_v9s3x2e_s3(crc, data.as_ptr(), data.len()) }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+  extern crate std;
+
+  use alloc::vec::Vec;
+
+  use super::*;
+
+  const LENS: &[usize] = &[0, 1, 7, 8, 15, 16, 31, 32, 63, 64, 127, 128, 255, 256, 1024, 4096];
+
+  const SMALL_LENS: &[usize] = &[0, 1, 7, 8, 15, 16, 31, 32, 63, 64, 127];
+
+  fn make_data(len: usize) -> Vec<u8> {
+    (0..len)
+      .map(|i| (i as u8).wrapping_mul(31).wrapping_add((i >> 8) as u8))
+      .collect()
+  }
+
+  fn assert_crc32_kernel(name: &str, kernel: fn(u32, &[u8]) -> u32, lens: &[usize]) {
+    for &len in lens {
+      let data = make_data(len);
+      let expected = super::super::portable::crc32_slice16_ieee(!0, &data) ^ !0;
+      let got = kernel(!0, &data) ^ !0;
+      assert_eq!(got, expected, "{name} len={len}");
+    }
+  }
+
+  fn assert_crc32c_kernel(name: &str, kernel: fn(u32, &[u8]) -> u32, lens: &[usize]) {
+    for &len in lens {
+      let data = make_data(len);
+      let expected = super::super::portable::crc32c_slice16(!0, &data) ^ !0;
+      let got = kernel(!0, &data) ^ !0;
+      assert_eq!(got, expected, "{name} len={len}");
+    }
+  }
+
+  #[test]
+  fn test_crc32_hwcrc_matches_portable_various_lengths() {
+    let caps = platform::caps();
+    if !caps.has(platform::caps::aarch64::CRC_READY) {
+      return;
+    }
+
+    assert_crc32_kernel("crc32/hwcrc", crc32_armv8_safe, LENS);
+    assert_crc32_kernel("crc32/hwcrc-2way", crc32_armv8_2way_safe, LENS);
+    assert_crc32_kernel("crc32/hwcrc-3way", crc32_armv8_3way_safe, LENS);
+
+    assert_crc32c_kernel("crc32c/hwcrc", crc32c_armv8_safe, LENS);
+    assert_crc32c_kernel("crc32c/hwcrc-2way", crc32c_armv8_2way_safe, LENS);
+    assert_crc32c_kernel("crc32c/hwcrc-3way", crc32c_armv8_3way_safe, LENS);
+  }
+
+  #[test]
+  fn test_crc32_pmull_v12e_v1_matches_portable_various_lengths() {
+    let caps = platform::caps();
+    if !(caps.has(platform::caps::aarch64::CRC_READY) && caps.has(platform::caps::aarch64::PMULL_READY)) {
+      return;
+    }
+
+    assert_crc32_kernel("crc32/pmull-v12e-v1", crc32_iso_hdlc_pmull_v12e_v1_safe, LENS);
+    assert_crc32_kernel("crc32/pmull-v12e-v1-2way", crc32_iso_hdlc_pmull_2way_safe, LENS);
+    assert_crc32_kernel("crc32/pmull-v12e-v1-3way", crc32_iso_hdlc_pmull_3way_safe, LENS);
+    assert_crc32_kernel("crc32/pmull-small", crc32_iso_hdlc_pmull_small_safe, SMALL_LENS);
+
+    assert_crc32c_kernel("crc32c/pmull-v12e-v1", crc32c_iscsi_pmull_v12e_v1_safe, LENS);
+    assert_crc32c_kernel("crc32c/pmull-v12e-v1-2way", crc32c_iscsi_pmull_2way_safe, LENS);
+    assert_crc32c_kernel("crc32c/pmull-v12e-v1-3way", crc32c_iscsi_pmull_3way_safe, LENS);
+    assert_crc32c_kernel("crc32c/pmull-small", crc32c_iscsi_pmull_small_safe, SMALL_LENS);
+  }
+
+  #[test]
+  fn test_crc32_pmull_eor3_v9s3x2e_s3_matches_portable_various_lengths() {
+    let caps = platform::caps();
+    if !(caps.has(platform::caps::aarch64::CRC_READY) && caps.has(platform::caps::aarch64::PMULL_EOR3_READY)) {
+      return;
+    }
+
+    assert_crc32_kernel(
+      "crc32/pmull-eor3-v9s3x2e-s3",
+      crc32_iso_hdlc_pmull_eor3_v9s3x2e_s3_safe,
+      LENS,
+    );
+    assert_crc32_kernel("crc32/pmull-eor3-2way", crc32_iso_hdlc_pmull_eor3_2way_safe, LENS);
+    assert_crc32_kernel("crc32/pmull-eor3-3way", crc32_iso_hdlc_pmull_eor3_3way_safe, LENS);
+
+    assert_crc32c_kernel(
+      "crc32c/pmull-eor3-v9s3x2e-s3",
+      crc32c_iscsi_pmull_eor3_v9s3x2e_s3_safe,
+      LENS,
+    );
+    assert_crc32c_kernel("crc32c/pmull-eor3-2way", crc32c_iscsi_pmull_eor3_2way_safe, LENS);
+    assert_crc32c_kernel("crc32c/pmull-eor3-3way", crc32c_iscsi_pmull_eor3_3way_safe, LENS);
+  }
+
+  #[test]
+  fn test_crc32_sve2_pmull_matches_portable_various_lengths() {
+    let caps = platform::caps();
+    if !(caps.has(platform::caps::aarch64::CRC_READY)
+      && caps.has(platform::caps::aarch64::PMULL_READY)
+      && caps.has(platform::caps::aarch64::SVE2_PMULL))
+    {
+      return;
+    }
+
+    assert_crc32_kernel("crc32/sve2-pmull-2way", crc32_iso_hdlc_sve2_pmull_2way_safe, LENS);
+    assert_crc32_kernel("crc32/sve2-pmull-3way", crc32_iso_hdlc_sve2_pmull_3way_safe, LENS);
+    assert_crc32_kernel(
+      "crc32/sve2-pmull-small",
+      crc32_iso_hdlc_sve2_pmull_small_safe,
+      SMALL_LENS,
+    );
+
+    assert_crc32c_kernel("crc32c/sve2-pmull-2way", crc32c_iscsi_sve2_pmull_2way_safe, LENS);
+    assert_crc32c_kernel("crc32c/sve2-pmull-3way", crc32c_iscsi_sve2_pmull_3way_safe, LENS);
+    assert_crc32c_kernel(
+      "crc32c/sve2-pmull-small",
+      crc32c_iscsi_sve2_pmull_small_safe,
+      SMALL_LENS,
+    );
+  }
+}
