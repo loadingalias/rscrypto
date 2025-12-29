@@ -19,6 +19,7 @@ Thumbs.db
 notes/*
 bench_baseline/
 tune-results/
+blake3.md
 
 # Fuzzing
 corpus

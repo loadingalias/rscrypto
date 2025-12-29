@@ -35,6 +35,9 @@ mod s390x;
 #[cfg(target_arch = "riscv64")]
 mod riscv64;
 
+#[cfg(all(feature = "std", target_arch = "x86_64"))]
+use std::sync::OnceLock;
+
 use backend::dispatch::Selected;
 // Re-export config types for public API (Crc64Force only used internally on SIMD archs)
 #[allow(unused_imports)]
@@ -50,6 +53,24 @@ use crate::{
   dispatchers::{Crc64Dispatcher, Crc64Fn},
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Cached Dispatch Params (std-only hot path)
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[cfg(target_arch = "x86_64")]
+#[derive(Clone, Copy, Debug)]
+struct Crc64X86Auto {
+  portable_to_clmul: usize,
+  pclmul_to_vpclmul: usize,
+  streams: u8,
+  effective_force: Crc64Force,
+  has_pclmul: bool,
+  has_vpclmul: bool,
+}
+
+#[cfg(all(feature = "std", target_arch = "x86_64"))]
+static CRC64_X86_AUTO: OnceLock<Crc64X86Auto> = OnceLock::new();
+
 #[inline]
 #[must_use]
 pub(crate) fn crc64_selected_kernel_name(len: usize) -> &'static str {
@@ -58,6 +79,7 @@ pub(crate) fn crc64_selected_kernel_name(len: usize) -> &'static str {
     use kernels::x86_64::*;
     let cfg = config::get();
     let caps = platform::caps();
+    let portable_to_clmul = cfg.tunables.portable_to_clmul.max(64);
 
     if len < CRC64_SMALL_LANE_BYTES || cfg.effective_force == Crc64Force::Portable {
       return kernels::PORTABLE;
@@ -88,7 +110,7 @@ pub(crate) fn crc64_selected_kernel_name(len: usize) -> &'static str {
     }
 
     // Auto selection with thresholds
-    if len < cfg.tunables.portable_to_clmul {
+    if len < portable_to_clmul {
       return kernels::PORTABLE;
     }
 
@@ -493,7 +515,7 @@ const fn riscv64_zbc_streams_for_len(len: usize, streams: u8) -> u8 {
 #[allow(dead_code)]
 #[inline]
 fn crc64_simd_threshold() -> usize {
-  config::get().tunables.portable_to_clmul
+  config::get().tunables.portable_to_clmul.max(64)
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -506,14 +528,42 @@ fn crc64_xz_x86_64_auto(crc: u64, data: &[u8]) -> u64 {
     return crc64_xz_portable(crc, data);
   }
 
-  let cfg = config::get();
-  let caps = platform::caps();
+  #[cfg(feature = "std")]
+  let params = *CRC64_X86_AUTO.get_or_init(|| {
+    let cfg = config::get();
+    let caps = platform::caps();
+    Crc64X86Auto {
+      // Keep this conservative: several x86 µarches lose below ~64B due to setup costs.
+      portable_to_clmul: cfg.tunables.portable_to_clmul.max(64),
+      pclmul_to_vpclmul: cfg.tunables.pclmul_to_vpclmul,
+      streams: cfg.tunables.streams,
+      effective_force: cfg.effective_force,
+      has_pclmul: caps.has(platform::caps::x86::PCLMUL_READY),
+      has_vpclmul: caps.has(platform::caps::x86::VPCLMUL_READY),
+    }
+  });
+
+  #[cfg(not(feature = "std"))]
+  let params = {
+    let cfg = config::get();
+    let caps = platform::caps();
+    Crc64X86Auto {
+      portable_to_clmul: cfg.tunables.portable_to_clmul.max(64),
+      pclmul_to_vpclmul: cfg.tunables.pclmul_to_vpclmul,
+      streams: cfg.tunables.streams,
+      effective_force: cfg.effective_force,
+      has_pclmul: caps.has(platform::caps::x86::PCLMUL_READY),
+      has_vpclmul: caps.has(platform::caps::x86::VPCLMUL_READY),
+    }
+  };
 
   // Handle forced backend selection
-  match cfg.effective_force {
-    Crc64Force::Portable => return crc64_xz_portable(crc, data),
-    Crc64Force::Pclmul if caps.has(platform::caps::x86::PCLMUL_READY) => {
-      let streams = x86_pclmul_streams_for_len(len, cfg.tunables.streams);
+  match params.effective_force {
+    Crc64Force::Portable => {
+      return crc64_xz_portable(crc, data);
+    }
+    Crc64Force::Pclmul if params.has_pclmul => {
+      let streams = x86_pclmul_streams_for_len(len, params.streams);
       return kernels::dispatch_with_small(
         &XZ_PCLMUL,
         XZ_PCLMUL_SMALL,
@@ -524,18 +574,20 @@ fn crc64_xz_x86_64_auto(crc: u64, data: &[u8]) -> u64 {
         data,
       );
     }
-    Crc64Force::Pclmul => return crc64_xz_portable(crc, data),
-    Crc64Force::Vpclmul if caps.has(platform::caps::x86::VPCLMUL_READY) => {
+    Crc64Force::Pclmul => {
+      return crc64_xz_portable(crc, data);
+    }
+    Crc64Force::Vpclmul if params.has_vpclmul => {
       // Use 4×512 kernel only for very large buffers (higher fixed overhead).
       if len >= CRC64_4X512_MIN_BYTES {
         return XZ_VPCLMUL_4X512(crc, data);
       }
-      let streams = x86_vpclmul_streams_for_len(len, cfg.tunables.streams);
+      let streams = x86_vpclmul_streams_for_len(len, params.streams);
       return kernels::dispatch_streams(&XZ_VPCLMUL, streams, crc, data);
     }
-    Crc64Force::Vpclmul if caps.has(platform::caps::x86::PCLMUL_READY) => {
+    Crc64Force::Vpclmul if params.has_pclmul => {
       // Fall back to PCLMUL if VPCLMUL unavailable
-      let streams = x86_pclmul_streams_for_len(len, cfg.tunables.streams);
+      let streams = x86_pclmul_streams_for_len(len, params.streams);
       return kernels::dispatch_with_small(
         &XZ_PCLMUL,
         XZ_PCLMUL_SMALL,
@@ -546,28 +598,30 @@ fn crc64_xz_x86_64_auto(crc: u64, data: &[u8]) -> u64 {
         data,
       );
     }
-    Crc64Force::Vpclmul => return crc64_xz_portable(crc, data),
+    Crc64Force::Vpclmul => {
+      return crc64_xz_portable(crc, data);
+    }
     _ => {}
   }
 
   // Auto selection
-  if len < cfg.tunables.portable_to_clmul {
+  if len < params.portable_to_clmul {
     return crc64_xz_portable(crc, data);
   }
 
   // VPCLMUL tier (if available and above threshold)
-  if caps.has(platform::caps::x86::VPCLMUL_READY) && len >= cfg.tunables.pclmul_to_vpclmul {
+  if params.has_vpclmul && len >= params.pclmul_to_vpclmul {
     // Use 4×512 kernel only for very large buffers (higher fixed overhead).
     if len >= CRC64_4X512_MIN_BYTES {
       return XZ_VPCLMUL_4X512(crc, data);
     }
-    let streams = x86_vpclmul_streams_for_len(len, cfg.tunables.streams);
+    let streams = x86_vpclmul_streams_for_len(len, params.streams);
     return kernels::dispatch_streams(&XZ_VPCLMUL, streams, crc, data);
   }
 
   // PCLMUL tier
-  if caps.has(platform::caps::x86::PCLMUL_READY) {
-    let streams = x86_pclmul_streams_for_len(len, cfg.tunables.streams);
+  if params.has_pclmul {
+    let streams = x86_pclmul_streams_for_len(len, params.streams);
     return kernels::dispatch_with_small(
       &XZ_PCLMUL,
       XZ_PCLMUL_SMALL,
@@ -580,12 +634,12 @@ fn crc64_xz_x86_64_auto(crc: u64, data: &[u8]) -> u64 {
   }
 
   // Fallback: VPCLMUL without PCLMUL (rare edge case)
-  if caps.has(platform::caps::x86::VPCLMUL_READY) {
+  if params.has_vpclmul {
     // Use 4×512 kernel only for very large buffers (higher fixed overhead).
     if len >= CRC64_4X512_MIN_BYTES {
       return XZ_VPCLMUL_4X512(crc, data);
     }
-    let streams = x86_vpclmul_streams_for_len(len, cfg.tunables.streams);
+    let streams = x86_vpclmul_streams_for_len(len, params.streams);
     return kernels::dispatch_streams(&XZ_VPCLMUL, streams, crc, data);
   }
 
@@ -601,14 +655,41 @@ fn crc64_nvme_x86_64_auto(crc: u64, data: &[u8]) -> u64 {
     return crc64_nvme_portable(crc, data);
   }
 
-  let cfg = config::get();
-  let caps = platform::caps();
+  #[cfg(feature = "std")]
+  let params = *CRC64_X86_AUTO.get_or_init(|| {
+    let cfg = config::get();
+    let caps = platform::caps();
+    Crc64X86Auto {
+      portable_to_clmul: cfg.tunables.portable_to_clmul.max(64),
+      pclmul_to_vpclmul: cfg.tunables.pclmul_to_vpclmul,
+      streams: cfg.tunables.streams,
+      effective_force: cfg.effective_force,
+      has_pclmul: caps.has(platform::caps::x86::PCLMUL_READY),
+      has_vpclmul: caps.has(platform::caps::x86::VPCLMUL_READY),
+    }
+  });
+
+  #[cfg(not(feature = "std"))]
+  let params = {
+    let cfg = config::get();
+    let caps = platform::caps();
+    Crc64X86Auto {
+      portable_to_clmul: cfg.tunables.portable_to_clmul.max(64),
+      pclmul_to_vpclmul: cfg.tunables.pclmul_to_vpclmul,
+      streams: cfg.tunables.streams,
+      effective_force: cfg.effective_force,
+      has_pclmul: caps.has(platform::caps::x86::PCLMUL_READY),
+      has_vpclmul: caps.has(platform::caps::x86::VPCLMUL_READY),
+    }
+  };
 
   // Handle forced backend selection
-  match cfg.effective_force {
-    Crc64Force::Portable => return crc64_nvme_portable(crc, data),
-    Crc64Force::Pclmul if caps.has(platform::caps::x86::PCLMUL_READY) => {
-      let streams = x86_pclmul_streams_for_len(len, cfg.tunables.streams);
+  match params.effective_force {
+    Crc64Force::Portable => {
+      return crc64_nvme_portable(crc, data);
+    }
+    Crc64Force::Pclmul if params.has_pclmul => {
+      let streams = x86_pclmul_streams_for_len(len, params.streams);
       return kernels::dispatch_with_small(
         &NVME_PCLMUL,
         NVME_PCLMUL_SMALL,
@@ -619,18 +700,20 @@ fn crc64_nvme_x86_64_auto(crc: u64, data: &[u8]) -> u64 {
         data,
       );
     }
-    Crc64Force::Pclmul => return crc64_nvme_portable(crc, data),
-    Crc64Force::Vpclmul if caps.has(platform::caps::x86::VPCLMUL_READY) => {
+    Crc64Force::Pclmul => {
+      return crc64_nvme_portable(crc, data);
+    }
+    Crc64Force::Vpclmul if params.has_vpclmul => {
       // Use 4×512 kernel only for very large buffers (higher fixed overhead).
       if len >= CRC64_4X512_MIN_BYTES {
         return NVME_VPCLMUL_4X512(crc, data);
       }
-      let streams = x86_vpclmul_streams_for_len(len, cfg.tunables.streams);
+      let streams = x86_vpclmul_streams_for_len(len, params.streams);
       return kernels::dispatch_streams(&NVME_VPCLMUL, streams, crc, data);
     }
-    Crc64Force::Vpclmul if caps.has(platform::caps::x86::PCLMUL_READY) => {
+    Crc64Force::Vpclmul if params.has_pclmul => {
       // Fall back to PCLMUL if VPCLMUL unavailable
-      let streams = x86_pclmul_streams_for_len(len, cfg.tunables.streams);
+      let streams = x86_pclmul_streams_for_len(len, params.streams);
       return kernels::dispatch_with_small(
         &NVME_PCLMUL,
         NVME_PCLMUL_SMALL,
@@ -641,28 +724,30 @@ fn crc64_nvme_x86_64_auto(crc: u64, data: &[u8]) -> u64 {
         data,
       );
     }
-    Crc64Force::Vpclmul => return crc64_nvme_portable(crc, data),
+    Crc64Force::Vpclmul => {
+      return crc64_nvme_portable(crc, data);
+    }
     _ => {}
   }
 
   // Auto selection
-  if len < cfg.tunables.portable_to_clmul {
+  if len < params.portable_to_clmul {
     return crc64_nvme_portable(crc, data);
   }
 
   // VPCLMUL tier (if available and above threshold)
-  if caps.has(platform::caps::x86::VPCLMUL_READY) && len >= cfg.tunables.pclmul_to_vpclmul {
+  if params.has_vpclmul && len >= params.pclmul_to_vpclmul {
     // Use 4×512 kernel only for very large buffers (higher fixed overhead).
     if len >= CRC64_4X512_MIN_BYTES {
       return NVME_VPCLMUL_4X512(crc, data);
     }
-    let streams = x86_vpclmul_streams_for_len(len, cfg.tunables.streams);
+    let streams = x86_vpclmul_streams_for_len(len, params.streams);
     return kernels::dispatch_streams(&NVME_VPCLMUL, streams, crc, data);
   }
 
   // PCLMUL tier
-  if caps.has(platform::caps::x86::PCLMUL_READY) {
-    let streams = x86_pclmul_streams_for_len(len, cfg.tunables.streams);
+  if params.has_pclmul {
+    let streams = x86_pclmul_streams_for_len(len, params.streams);
     return kernels::dispatch_with_small(
       &NVME_PCLMUL,
       NVME_PCLMUL_SMALL,
@@ -675,12 +760,12 @@ fn crc64_nvme_x86_64_auto(crc: u64, data: &[u8]) -> u64 {
   }
 
   // Fallback: VPCLMUL without PCLMUL (rare edge case)
-  if caps.has(platform::caps::x86::VPCLMUL_READY) {
+  if params.has_vpclmul {
     // Use 4×512 kernel only for very large buffers (higher fixed overhead).
     if len >= CRC64_4X512_MIN_BYTES {
       return NVME_VPCLMUL_4X512(crc, data);
     }
-    let streams = x86_vpclmul_streams_for_len(len, cfg.tunables.streams);
+    let streams = x86_vpclmul_streams_for_len(len, params.streams);
     return kernels::dispatch_streams(&NVME_VPCLMUL, streams, crc, data);
   }
 

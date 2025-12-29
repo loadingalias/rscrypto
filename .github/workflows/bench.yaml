@@ -62,6 +62,12 @@ on:
         type: boolean
         default: false
 
+      run_comp_report:
+        description: "Run checksum comp report (bench + analysis artifact)"
+        required: false
+        type: boolean
+        default: false
+
       regression_baseline:
         description: "Git ref for regression comparison (e.g., main, v1.0.0)"
         required: false
@@ -389,6 +395,27 @@ jobs:
           STEPS_SCOPE_OUTPUTS_CRATE_FLAGS: ${{ steps.scope.outputs.crate_flags }}
           STEPS_SCOPE_OUTPUTS_BENCH_FLAGS: ${{ steps.scope.outputs.bench_flags }}
 
+      - name: Run checksum comp benchmark + report
+        if: steps.should-run.outputs.enabled == 'true' && steps.scope.outputs.skip_bench != 'true' && github.event_name == 'workflow_dispatch' && github.event.inputs.run_comp_report == 'true' && runner.os == 'Linux' && matrix.target.platform-id == 'linux-x64'
+        shell: bash
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Running checksum comp benchmark (report mode)"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          mkdir -p benchmark-results
+          # shellcheck disable=SC2086
+          cargo bench --profile bench -p checksum --bench comp -- --noplot 2>&1 | tee benchmark-results/comp-output.txt
+
+          python3 scripts/bench/comp-analyze.py benchmark-results/comp-output.txt | tee benchmark-results/comp-report.txt
+
+          {
+            echo "comp-report generated at: benchmark-results/comp-report.txt"
+            echo "comp-output captured at:  benchmark-results/comp-output.txt"
+          } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          RUSTFLAGS: "-C target-cpu=native"
+
       # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
       # Upload Results
       # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -433,6 +460,18 @@ jobs:
           path: target/criterion/
           retention-days: 90
           if-no-files-found: ignore
+          compression-level: 6
+
+      - name: Upload checksum comp report
+        if: steps.should-run.outputs.enabled == 'true' && steps.scope.outputs.skip_bench != 'true' && github.event_name == 'workflow_dispatch' && github.event.inputs.run_comp_report == 'true' && runner.os == 'Linux' && matrix.target.platform-id == 'linux-x64' && always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        with:
+          name: checksum-comp-report-${{ matrix.target.platform-id }}
+          path: |
+            benchmark-results/comp-output.txt
+            benchmark-results/comp-report.txt
+          retention-days: 90
+          if-no-files-found: warn
           compression-level: 6
 
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

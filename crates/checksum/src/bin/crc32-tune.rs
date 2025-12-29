@@ -1141,18 +1141,20 @@ where
     }
   }
 
-  let mut candidate: Option<usize> = None;
-  for (l, r) in pairs {
+  // We want the smallest size such that RHS is >= LHS for all larger sizes.
+  // Scan from large→small and keep a running "suffix ok" flag.
+  let mut threshold: Option<usize> = None;
+  let mut suffix_ok = true;
+
+  for (l, r) in pairs.into_iter().rev() {
     let lv = metric(l);
     let rv = metric(r);
-    if rv >= lv * margin {
-      candidate = Some(l.size);
-    } else {
-      // Require sustained advantage: once it falls behind again, stop.
-      if candidate.is_some() {
-        break;
-      }
+    let ok_here = rv >= lv * margin;
+    suffix_ok = suffix_ok && ok_here;
+    if suffix_ok {
+      threshold = Some(l.size);
     }
   }
-  candidate
+
+  threshold
 }
