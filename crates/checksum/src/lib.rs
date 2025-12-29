@@ -7,6 +7,9 @@
 //!
 //! | Type | Polynomial | Output | Use Cases |
 //! |------|------------|--------|-----------|
+//! | [`Crc16Ccitt`] | 0x1021 | `u16` | X.25, HDLC, PACTOR, SD |
+//! | [`Crc16Ibm`] | 0x8005 | `u16` | Legacy protocols, ARC/IBM |
+//! | [`Crc24OpenPgp`] | 0x864CFB | `u32` (24-bit) | OpenPGP (RFC 4880) |
 //! | [`Crc32`] | 0x04C11DB7 | `u32` | Ethernet, gzip, zip, PNG |
 //! | [`Crc32C`] | 0x1EDC6F41 | `u32` | iSCSI, SCTP, ext4, Btrfs |
 //! | [`Crc64`] | 0x42F0E1EBA9EA3693 | `u64` | XZ Utils, 7-Zip |
@@ -98,6 +101,8 @@ mod common;
 #[macro_use]
 mod macros;
 
+mod crc16;
+mod crc24;
 mod crc32;
 mod crc64;
 pub mod dispatchers;
@@ -110,6 +115,12 @@ pub mod __internal {
 
 // Re-export public types
 // Re-export buffered types (requires alloc)
+#[cfg(feature = "alloc")]
+pub use crc16::{BufferedCrc16Ccitt, BufferedCrc16Ibm};
+pub use crc16::{Crc16Ccitt, Crc16Ibm};
+#[cfg(feature = "alloc")]
+pub use crc24::BufferedCrc24OpenPgp;
+pub use crc24::Crc24OpenPgp;
 #[cfg(feature = "alloc")]
 pub use crc32::{BufferedCrc32, BufferedCrc32C};
 #[cfg(feature = "alloc")]

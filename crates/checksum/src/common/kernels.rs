@@ -31,7 +31,6 @@ pub const PORTABLE_SLICE16: &str = "portable/slice16";
 pub const PORTABLE_SLICE8: &str = "portable/slice8";
 
 /// Portable slice-by-4 kernel name.
-#[cfg(test)] // Will be used when CRC-16 module is added
 #[allow(dead_code)]
 pub const PORTABLE_SLICE4: &str = "portable/slice4";
 

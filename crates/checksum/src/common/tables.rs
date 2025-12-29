@@ -28,18 +28,17 @@
 /// Generate a single CRC-16 lookup table entry.
 ///
 /// Uses bit-by-bit computation with the reflected polynomial.
-#[cfg(test)] // Will be used when CRC-16 module is added
 #[must_use]
 pub const fn crc16_table_entry(poly: u16, index: u8) -> u16 {
   let mut crc = index as u16;
-  let mut i = 0;
+  let mut i: u32 = 0;
   while i < 8 {
     if crc & 1 != 0 {
       crc = (crc >> 1) ^ poly;
     } else {
       crc >>= 1;
     }
-    i += 1;
+    i = i.strict_add(1);
   }
   crc
 }
@@ -49,7 +48,6 @@ pub const fn crc16_table_entry(poly: u16, index: u8) -> u16 {
 /// # Arguments
 ///
 /// * `poly` - The reflected polynomial
-#[cfg(test)] // Will be used when CRC-16 module is added
 #[must_use]
 pub const fn generate_crc16_tables_4(poly: u16) -> [[u16; 256]; 4] {
   let mut tables = [[0u16; 256]; 4];
@@ -57,7 +55,7 @@ pub const fn generate_crc16_tables_4(poly: u16) -> [[u16; 256]; 4] {
   let mut i = 0u16;
   while i < 256 {
     tables[0][i as usize] = crc16_table_entry(poly, i as u8);
-    i += 1;
+    i = i.strict_add(1);
   }
 
   let mut k = 1usize;
@@ -66,7 +64,7 @@ pub const fn generate_crc16_tables_4(poly: u16) -> [[u16; 256]; 4] {
     while i < 256 {
       let prev = tables[k - 1][i as usize];
       tables[k][i as usize] = tables[0][(prev & 0xFF) as usize] ^ (prev >> 8);
-      i += 1;
+      i = i.strict_add(1);
     }
     k += 1;
   }
@@ -79,7 +77,6 @@ pub const fn generate_crc16_tables_4(poly: u16) -> [[u16; 256]; 4] {
 /// # Arguments
 ///
 /// * `poly` - The reflected polynomial
-#[cfg(test)] // Will be used when CRC-16 module is added
 #[must_use]
 pub const fn generate_crc16_tables_8(poly: u16) -> [[u16; 256]; 8] {
   let mut tables = [[0u16; 256]; 8];
@@ -87,7 +84,7 @@ pub const fn generate_crc16_tables_8(poly: u16) -> [[u16; 256]; 8] {
   let mut i = 0u16;
   while i < 256 {
     tables[0][i as usize] = crc16_table_entry(poly, i as u8);
-    i += 1;
+    i = i.strict_add(1);
   }
 
   let mut k = 1usize;
@@ -96,7 +93,7 @@ pub const fn generate_crc16_tables_8(poly: u16) -> [[u16; 256]; 8] {
     while i < 256 {
       let prev = tables[k - 1][i as usize];
       tables[k][i as usize] = tables[0][(prev & 0xFF) as usize] ^ (prev >> 8);
-      i += 1;
+      i = i.strict_add(1);
     }
     k += 1;
   }
@@ -110,30 +107,35 @@ pub const fn generate_crc16_tables_8(poly: u16) -> [[u16; 256]; 8] {
 
 /// Generate a single CRC-24 lookup table entry.
 ///
-/// Uses bit-by-bit computation with the reflected polynomial.
-/// The result is stored in the low 24 bits of a u32.
-#[cfg(test)] // Will be used when CRC-24 module is added
+/// CRC-24 here is generated in a MSB-first representation using a 32-bit
+/// expanded register (top 24 bits) so the same slice-by-N strategy as CRC-32
+/// can be applied. Callers should store the CRC in the low 24 bits and shift
+/// to/from the expanded form as needed.
+///
+/// The returned entry has its low 8 bits cleared.
 #[must_use]
 pub const fn crc24_table_entry(poly: u32, index: u8) -> u32 {
-  let mut crc = index as u32;
-  let mut i = 0;
+  // Expand a 24-bit CRC into the top 24 bits of a u32.
+  // Polynomial is aligned to the same position (<< 8).
+  let poly = poly.strict_shl(8);
+  let mut crc = (index as u32).strict_shl(24);
+  let mut i: u32 = 0;
   while i < 8 {
-    if crc & 1 != 0 {
-      crc = (crc >> 1) ^ poly;
+    if crc & 0x8000_0000 != 0 {
+      crc = (crc.strict_shl(1)) ^ poly;
     } else {
-      crc >>= 1;
+      crc = crc.strict_shl(1);
     }
-    i += 1;
+    i = i.strict_add(1);
   }
-  crc & 0x00FF_FFFF // Ensure only 24 bits
+  crc & 0xFFFF_FF00
 }
 
 /// Generate 4 CRC-24 lookup tables for slice-by-4 computation.
 ///
 /// # Arguments
 ///
-/// * `poly` - The reflected polynomial (low 24 bits)
-#[cfg(test)] // Will be used when CRC-24 module is added
+/// * `poly` - The normal polynomial (low 24 bits), e.g. 0x864CFB for OpenPGP
 #[must_use]
 pub const fn generate_crc24_tables_4(poly: u32) -> [[u32; 256]; 4] {
   let mut tables = [[0u32; 256]; 4];
@@ -141,7 +143,7 @@ pub const fn generate_crc24_tables_4(poly: u32) -> [[u32; 256]; 4] {
   let mut i = 0u16;
   while i < 256 {
     tables[0][i as usize] = crc24_table_entry(poly, i as u8);
-    i += 1;
+    i = i.strict_add(1);
   }
 
   let mut k = 1usize;
@@ -149,8 +151,8 @@ pub const fn generate_crc24_tables_4(poly: u32) -> [[u32; 256]; 4] {
     i = 0;
     while i < 256 {
       let prev = tables[k - 1][i as usize];
-      tables[k][i as usize] = (tables[0][(prev & 0xFF) as usize] ^ (prev >> 8)) & 0x00FF_FFFF;
-      i += 1;
+      tables[k][i as usize] = tables[0][(prev >> 24) as usize] ^ (prev.strict_shl(8));
+      i = i.strict_add(1);
     }
     k += 1;
   }
@@ -162,8 +164,7 @@ pub const fn generate_crc24_tables_4(poly: u32) -> [[u32; 256]; 4] {
 ///
 /// # Arguments
 ///
-/// * `poly` - The reflected polynomial (low 24 bits)
-#[cfg(test)] // Will be used when CRC-24 module is added
+/// * `poly` - The normal polynomial (low 24 bits), e.g. 0x864CFB for OpenPGP
 #[must_use]
 pub const fn generate_crc24_tables_8(poly: u32) -> [[u32; 256]; 8] {
   let mut tables = [[0u32; 256]; 8];
@@ -171,7 +172,7 @@ pub const fn generate_crc24_tables_8(poly: u32) -> [[u32; 256]; 8] {
   let mut i = 0u16;
   while i < 256 {
     tables[0][i as usize] = crc24_table_entry(poly, i as u8);
-    i += 1;
+    i = i.strict_add(1);
   }
 
   let mut k = 1usize;
@@ -179,8 +180,8 @@ pub const fn generate_crc24_tables_8(poly: u32) -> [[u32; 256]; 8] {
     i = 0;
     while i < 256 {
       let prev = tables[k - 1][i as usize];
-      tables[k][i as usize] = (tables[0][(prev & 0xFF) as usize] ^ (prev >> 8)) & 0x00FF_FFFF;
-      i += 1;
+      tables[k][i as usize] = tables[0][(prev >> 24) as usize] ^ (prev.strict_shl(8));
+      i = i.strict_add(1);
     }
     k += 1;
   }
@@ -354,28 +355,25 @@ pub const fn generate_crc64_tables_16(poly: u64) -> [[u64; 256]; 16] {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Polynomial Constants (Reflected Form)
+// Polynomial Constants
 // ─────────────────────────────────────────────────────────────────────────────
 
 // CRC-16 Polynomials
 
 /// CRC-16-CCITT polynomial (0x1021) in reflected form.
 /// Used by X.25, V.41, HDLC, XMODEM, Bluetooth, PACTOR, SD, etc.
-#[cfg(test)] // Will be used when CRC-16 module is added
 pub const CRC16_CCITT_POLY: u16 = 0x8408;
 
 /// CRC-16-IBM polynomial (0x8005) in reflected form.
 /// Used by Modbus, USB, ANSI X3.28, etc.
-#[cfg(test)] // Will be used when CRC-16 module is added
 #[allow(dead_code)]
 pub const CRC16_IBM_POLY: u16 = 0xA001;
 
 // CRC-24 Polynomials
 
-/// CRC-24-OPENPGP polynomial (0x864CFB) in reflected form.
+/// CRC-24-OPENPGP polynomial (0x864CFB) in normal form.
 /// Used by OpenPGP (RFC 4880).
-#[cfg(test)] // Will be used when CRC-24 module is added
-pub const CRC24_OPENPGP_POLY: u32 = 0x00DF_3261;
+pub const CRC24_OPENPGP_POLY: u32 = 0x0086_4CFB;
 
 // CRC-64 Polynomials
 
@@ -496,10 +494,10 @@ mod tests {
     for k in 1..4 {
       for i in 0..256 {
         let prev = tables[k - 1][i];
-        let expected = (tables[0][(prev & 0xFF) as usize] ^ (prev >> 8)) & 0x00FF_FFFF;
+        let expected = tables[0][(prev >> 24) as usize] ^ (prev << 8);
         assert_eq!(tables[k][i], expected);
-        // Verify 24-bit constraint
-        assert_eq!(tables[k][i] & 0xFF00_0000, 0);
+        // Expanded table entries must keep their low 8 bits clear.
+        assert_eq!(tables[k][i] & 0xFF, 0);
       }
     }
   }
@@ -517,10 +515,10 @@ mod tests {
     for k in 1..8 {
       for i in 0..256 {
         let prev = tables8[k - 1][i];
-        let expected = (tables8[0][(prev & 0xFF) as usize] ^ (prev >> 8)) & 0x00FF_FFFF;
+        let expected = tables8[0][(prev >> 24) as usize] ^ (prev << 8);
         assert_eq!(tables8[k][i], expected);
-        // Verify 24-bit constraint
-        assert_eq!(tables8[k][i] & 0xFF00_0000, 0);
+        // Expanded table entries must keep their low 8 bits clear.
+        assert_eq!(tables8[k][i] & 0xFF, 0);
       }
     }
   }

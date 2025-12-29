@@ -5,7 +5,7 @@
 #![no_main]
 
 use arbitrary::Arbitrary;
-use checksum::{Checksum, ChecksumCombine, Crc32, Crc32C, Crc64, Crc64Nvme};
+use checksum::{Checksum, ChecksumCombine, Crc16Ccitt, Crc16Ibm, Crc24OpenPgp, Crc32, Crc32C, Crc64, Crc64Nvme};
 use libfuzzer_sys::fuzz_target;
 
 #[derive(Arbitrary, Debug)]
@@ -41,6 +41,15 @@ fuzz_target!(|input: Input| {
 
   // Test CRC32C combine chain
   test_combine_chain_crc32c(data, &splits);
+
+  // Test CRC16/CCITT combine chain
+  test_combine_chain_crc16_ccitt(data, &splits);
+
+  // Test CRC16/IBM combine chain
+  test_combine_chain_crc16_ibm(data, &splits);
+
+  // Test CRC24/OPENPGP combine chain
+  test_combine_chain_crc24_openpgp(data, &splits);
 });
 
 fn test_combine_chain_crc64(data: &[u8], splits: &[usize]) {
@@ -153,4 +162,88 @@ fn test_combine_chain_crc32c(data: &[u8], splits: &[usize]) {
   }
 
   assert_eq!(combined_crc, expected, "crc32c combine chain mismatch");
+}
+
+fn test_combine_chain_crc16_ccitt(data: &[u8], splits: &[usize]) {
+  let expected = Crc16Ccitt::checksum(data);
+
+  let mut chunks = Vec::new();
+  let mut prev = 0;
+  for &split in splits {
+    if split > prev && split <= data.len() {
+      chunks.push(&data[prev..split]);
+      prev = split;
+    }
+  }
+  if prev < data.len() {
+    chunks.push(&data[prev..]);
+  }
+
+  if chunks.is_empty() {
+    return;
+  }
+
+  let mut combined_crc = Crc16Ccitt::checksum(chunks[0]);
+  for chunk in &chunks[1..] {
+    let chunk_crc = Crc16Ccitt::checksum(chunk);
+    combined_crc = Crc16Ccitt::combine(combined_crc, chunk_crc, chunk.len());
+  }
+
+  assert_eq!(combined_crc, expected, "crc16/ccitt combine chain mismatch");
+}
+
+fn test_combine_chain_crc16_ibm(data: &[u8], splits: &[usize]) {
+  let expected = Crc16Ibm::checksum(data);
+
+  let mut chunks = Vec::new();
+  let mut prev = 0;
+  for &split in splits {
+    if split > prev && split <= data.len() {
+      chunks.push(&data[prev..split]);
+      prev = split;
+    }
+  }
+  if prev < data.len() {
+    chunks.push(&data[prev..]);
+  }
+
+  if chunks.is_empty() {
+    return;
+  }
+
+  let mut combined_crc = Crc16Ibm::checksum(chunks[0]);
+  for chunk in &chunks[1..] {
+    let chunk_crc = Crc16Ibm::checksum(chunk);
+    combined_crc = Crc16Ibm::combine(combined_crc, chunk_crc, chunk.len());
+  }
+
+  assert_eq!(combined_crc, expected, "crc16/ibm combine chain mismatch");
+}
+
+fn test_combine_chain_crc24_openpgp(data: &[u8], splits: &[usize]) {
+  let expected = Crc24OpenPgp::checksum(data);
+
+  let mut chunks = Vec::new();
+  let mut prev = 0;
+  for &split in splits {
+    if split > prev && split <= data.len() {
+      chunks.push(&data[prev..split]);
+      prev = split;
+    }
+  }
+  if prev < data.len() {
+    chunks.push(&data[prev..]);
+  }
+
+  if chunks.is_empty() {
+    return;
+  }
+
+  let mut combined_crc = Crc24OpenPgp::checksum(chunks[0]);
+  for chunk in &chunks[1..] {
+    let chunk_crc = Crc24OpenPgp::checksum(chunk);
+    combined_crc = Crc24OpenPgp::combine(combined_crc, chunk_crc, chunk.len());
+  }
+
+  assert_eq!(combined_crc, expected, "crc24/openpgp combine chain mismatch");
 }
