@@ -17,13 +17,11 @@ impl Default for Crc16Tunables {
 }
 
 /// Effective CRC-16 configuration.
-#[derive(Clone, Copy, Debug)]
-#[derive(Default)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct Crc16Config {
   /// Active tunables.
   pub tunables: Crc16Tunables,
 }
-
 
 #[inline]
 #[must_use]

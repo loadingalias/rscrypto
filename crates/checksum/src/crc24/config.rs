@@ -17,13 +17,11 @@ impl Default for Crc24Tunables {
 }
 
 /// Effective CRC-24 configuration.
-#[derive(Clone, Copy, Debug)]
-#[derive(Default)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct Crc24Config {
   /// Active tunables.
   pub tunables: Crc24Tunables,
 }
-
 
 #[inline]
 #[must_use]
