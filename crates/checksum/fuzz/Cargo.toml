@@ -33,6 +33,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "crc32"
+path = "fuzz_targets/crc32.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "combine"
 path = "fuzz_targets/combine.rs"
 test = false

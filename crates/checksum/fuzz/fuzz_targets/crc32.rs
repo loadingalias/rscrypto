@@ -1,14 +1,14 @@
-//! Fuzz target for checksum implementations.
+//! Fuzz target for CRC32 implementations.
 //!
 //! Tests that:
-//! - No panics on arbitrary input
-//! - Incremental updates produce same result as one-shot
+//! - Incremental updates produce the same result as one-shot
 //! - Resume produces correct results
+//! - Combine produces correct results
 
 #![no_main]
 
 use arbitrary::Arbitrary;
-use checksum::{Checksum, ChecksumCombine, Crc32, Crc32C, Crc64, Crc64Nvme};
+use checksum::{Checksum, ChecksumCombine, Crc32, Crc32C};
 use libfuzzer_sys::fuzz_target;
 
 #[derive(Arbitrary, Debug)]
@@ -23,66 +23,9 @@ fuzz_target!(|input: Input| {
     .split_point
     .strict_rem(data.len().strict_add(1));
 
-  // Test CRC64/XZ
-  test_crc64_xz(data, split);
-
-  // Test CRC64/NVME
-  test_crc64_nvme(data, split);
-
-  // Test CRC32/IEEE
   test_crc32_ieee(data, split);
-
-  // Test CRC32C
   test_crc32c(data, split);
 });
-
-fn test_crc64_xz(data: &[u8], split: usize) {
-  let oneshot = Crc64::checksum(data);
-
-  let (a, b) = data.split_at(split);
-  let mut hasher = Crc64::new();
-  hasher.update(a);
-  hasher.update(b);
-  let incremental = hasher.finalize();
-
-  assert_eq!(oneshot, incremental, "crc64/xz incremental mismatch");
-
-  let crc_a = Crc64::checksum(a);
-  let mut resumed = Crc64::resume(crc_a);
-  resumed.update(b);
-  let resume_result = resumed.finalize();
-
-  assert_eq!(oneshot, resume_result, "crc64/xz resume mismatch");
-
-  let crc_b = Crc64::checksum(b);
-  let combined = Crc64::combine(crc_a, crc_b, b.len());
-
-  assert_eq!(oneshot, combined, "crc64/xz combine mismatch");
-}
-
-fn test_crc64_nvme(data: &[u8], split: usize) {
-  let oneshot = Crc64Nvme::checksum(data);
-
-  let (a, b) = data.split_at(split);
-  let mut hasher = Crc64Nvme::new();
-  hasher.update(a);
-  hasher.update(b);
-  let incremental = hasher.finalize();
-
-  assert_eq!(oneshot, incremental, "crc64/nvme incremental mismatch");
-
-  let crc_a = Crc64Nvme::checksum(a);
-  let mut resumed = Crc64Nvme::resume(crc_a);
-  resumed.update(b);
-  let resume_result = resumed.finalize();
-
-  assert_eq!(oneshot, resume_result, "crc64/nvme resume mismatch");
-
-  let crc_b = Crc64Nvme::checksum(b);
-  let combined = Crc64Nvme::combine(crc_a, crc_b, b.len());
-
-  assert_eq!(oneshot, combined, "crc64/nvme combine mismatch");
-}
 
 fn test_crc32_ieee(data: &[u8], split: usize) {
   let oneshot = Crc32::checksum(data);

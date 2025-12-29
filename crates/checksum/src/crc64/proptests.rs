@@ -42,7 +42,7 @@ proptest! {
 
   #[test]
   fn crc64_xz_streaming_and_combine(data in proptest::collection::vec(any::<u8>(), 0..=4096), split in any::<usize>(), chunk in 1usize..=257) {
-    let split = split % (data.len() + 1);
+    let split = split.strict_rem(data.len().strict_add(1));
     let (a, b) = data.split_at(split);
 
     let oneshot = Crc64::checksum(&data);
@@ -81,7 +81,7 @@ proptest! {
 
   #[test]
   fn crc64_nvme_streaming_and_combine(data in proptest::collection::vec(any::<u8>(), 0..=4096), split in any::<usize>(), chunk in 1usize..=257) {
-    let split = split % (data.len() + 1);
+    let split = split.strict_rem(data.len().strict_add(1));
     let (a, b) = data.split_at(split);
 
     let oneshot = Crc64Nvme::checksum(&data);
@@ -164,7 +164,7 @@ proptest! {
 
   #[test]
   fn crc64_xz_combine_matches_crc_fast_rust(data in proptest::collection::vec(any::<u8>(), 0..=4096), split in any::<usize>()) {
-    let split = split % (data.len() + 1);
+    let split = split.strict_rem(data.len().strict_add(1));
     let (a, b) = data.split_at(split);
 
     let crc_a = Crc64::checksum(a);
@@ -180,7 +180,7 @@ proptest! {
 
   #[test]
   fn crc64_nvme_combine_matches_crc_fast_rust(data in proptest::collection::vec(any::<u8>(), 0..=4096), split in any::<usize>()) {
-    let split = split % (data.len() + 1);
+    let split = split.strict_rem(data.len().strict_add(1));
     let (a, b) = data.split_at(split);
 
     let crc_a = Crc64Nvme::checksum(a);

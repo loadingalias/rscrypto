@@ -449,6 +449,14 @@ pub(crate) fn crc32_selected_kernel_name(len: usize) -> &'static str {
     let caps = platform::caps();
     let streams = powerpc64_streams_for_len(len, cfg.tunables.streams);
 
+    match cfg.effective_force {
+      Crc32Force::Vpmsum if caps.has(platform::caps::powerpc64::VPMSUM_READY) => {
+        return kernels::select_name(CRC32_VPMSUM_NAMES, None, streams, len, CRC32_FOLD_BLOCK_BYTES);
+      }
+      Crc32Force::Vpmsum => return kernels::PORTABLE,
+      _ => {}
+    }
+
     if cfg.effective_force == Crc32Force::Auto && len < cfg.tunables.hwcrc_to_fusion {
       return kernels::PORTABLE;
     }
@@ -464,6 +472,14 @@ pub(crate) fn crc32_selected_kernel_name(len: usize) -> &'static str {
     let caps = platform::caps();
     let streams = s390x_streams_for_len(len, cfg.tunables.streams);
 
+    match cfg.effective_force {
+      Crc32Force::Vgfm if caps.has(platform::caps::s390x::VECTOR) => {
+        return kernels::select_name(CRC32_VGFM_NAMES, None, streams, len, CRC32_FOLD_BLOCK_BYTES);
+      }
+      Crc32Force::Vgfm => return kernels::PORTABLE,
+      _ => {}
+    }
+
     if cfg.effective_force == Crc32Force::Auto && len < cfg.tunables.hwcrc_to_fusion {
       return kernels::PORTABLE;
     }
@@ -478,6 +494,18 @@ pub(crate) fn crc32_selected_kernel_name(len: usize) -> &'static str {
     use kernels::riscv64::*;
     let caps = platform::caps();
     let streams = riscv64_streams_for_len(len, cfg.tunables.streams);
+
+    match cfg.effective_force {
+      Crc32Force::Zvbc if caps.has(platform::caps::riscv::ZVBC) => {
+        return kernels::select_name(CRC32_ZVBC_NAMES, None, streams, len, CRC32_FOLD_BLOCK_BYTES);
+      }
+      Crc32Force::Zvbc => return kernels::PORTABLE,
+      Crc32Force::Zbc if caps.has(platform::caps::riscv::ZBC) => {
+        return kernels::select_name(CRC32_ZBC_NAMES, None, streams, len, CRC32_FOLD_BLOCK_BYTES);
+      }
+      Crc32Force::Zbc => return kernels::PORTABLE,
+      _ => {}
+    }
 
     if cfg.effective_force == Crc32Force::Auto && len < cfg.tunables.hwcrc_to_fusion {
       return kernels::PORTABLE;
@@ -655,6 +683,15 @@ pub(crate) fn crc32c_selected_kernel_name(len: usize) -> &'static str {
   {
     use kernels::powerpc64::*;
     let streams = powerpc64_streams_for_len(len, cfg.tunables.streams);
+
+    match cfg.effective_force {
+      Crc32Force::Vpmsum if caps.has(platform::caps::powerpc64::VPMSUM_READY) => {
+        return kernels::select_name(CRC32C_VPMSUM_NAMES, None, streams, len, CRC32_FOLD_BLOCK_BYTES);
+      }
+      Crc32Force::Vpmsum => return kernels::PORTABLE,
+      _ => {}
+    }
+
     if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
       return kernels::select_name(CRC32C_VPMSUM_NAMES, None, streams, len, CRC32_FOLD_BLOCK_BYTES);
     }
@@ -664,6 +701,15 @@ pub(crate) fn crc32c_selected_kernel_name(len: usize) -> &'static str {
   {
     use kernels::s390x::*;
     let streams = s390x_streams_for_len(len, cfg.tunables.streams);
+
+    match cfg.effective_force {
+      Crc32Force::Vgfm if caps.has(platform::caps::s390x::VECTOR) => {
+        return kernels::select_name(CRC32C_VGFM_NAMES, None, streams, len, CRC32_FOLD_BLOCK_BYTES);
+      }
+      Crc32Force::Vgfm => return kernels::PORTABLE,
+      _ => {}
+    }
+
     if caps.has(platform::caps::s390x::VECTOR) {
       return kernels::select_name(CRC32C_VGFM_NAMES, None, streams, len, CRC32_FOLD_BLOCK_BYTES);
     }
@@ -673,6 +719,19 @@ pub(crate) fn crc32c_selected_kernel_name(len: usize) -> &'static str {
   {
     use kernels::riscv64::*;
     let streams = riscv64_streams_for_len(len, cfg.tunables.streams);
+
+    match cfg.effective_force {
+      Crc32Force::Zvbc if caps.has(platform::caps::riscv::ZVBC) => {
+        return kernels::select_name(CRC32C_ZVBC_NAMES, None, streams, len, CRC32_FOLD_BLOCK_BYTES);
+      }
+      Crc32Force::Zvbc => return kernels::PORTABLE,
+      Crc32Force::Zbc if caps.has(platform::caps::riscv::ZBC) => {
+        return kernels::select_name(CRC32C_ZBC_NAMES, None, streams, len, CRC32_FOLD_BLOCK_BYTES);
+      }
+      Crc32Force::Zbc => return kernels::PORTABLE,
+      _ => {}
+    }
+
     if caps.has(platform::caps::riscv::ZVBC) {
       return kernels::select_name(CRC32C_ZVBC_NAMES, None, streams, len, CRC32_FOLD_BLOCK_BYTES);
     }
@@ -1464,13 +1523,24 @@ fn crc32_powerpc64_auto(crc: u32, data: &[u8]) -> u32 {
   }
 
   let cfg = config::get();
-  if cfg.effective_force == Crc32Force::Portable
-    || (cfg.effective_force == Crc32Force::Auto && len < cfg.tunables.hwcrc_to_fusion)
-  {
+  let caps = platform::caps();
+
+  // Handle forced backend selection
+  match cfg.effective_force {
+    Crc32Force::Portable => return crc32_portable(crc, data),
+    Crc32Force::Vpmsum if caps.has(platform::caps::powerpc64::VPMSUM_READY) => {
+      let streams = powerpc64_streams_for_len(len, cfg.tunables.streams);
+      return kernels::dispatch_streams(&CRC32_VPMSUM, streams, crc, data);
+    }
+    Crc32Force::Vpmsum => return crc32_portable(crc, data),
+    _ => {}
+  }
+
+  // Auto selection
+  if cfg.effective_force == Crc32Force::Auto && len < cfg.tunables.hwcrc_to_fusion {
     return crc32_portable(crc, data);
   }
 
-  let caps = platform::caps();
   if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
     let streams = powerpc64_streams_for_len(len, cfg.tunables.streams);
     return kernels::dispatch_streams(&CRC32_VPMSUM, streams, crc, data);
@@ -1489,13 +1559,24 @@ fn crc32c_powerpc64_auto(crc: u32, data: &[u8]) -> u32 {
   }
 
   let cfg = config::get();
-  if cfg.effective_force == Crc32Force::Portable
-    || (cfg.effective_force == Crc32Force::Auto && len < cfg.tunables.portable_to_hwcrc)
-  {
+  let caps = platform::caps();
+
+  // Handle forced backend selection
+  match cfg.effective_force {
+    Crc32Force::Portable => return crc32c_portable(crc, data),
+    Crc32Force::Vpmsum if caps.has(platform::caps::powerpc64::VPMSUM_READY) => {
+      let streams = powerpc64_streams_for_len(len, cfg.tunables.streams);
+      return kernels::dispatch_streams(&CRC32C_VPMSUM, streams, crc, data);
+    }
+    Crc32Force::Vpmsum => return crc32c_portable(crc, data),
+    _ => {}
+  }
+
+  // Auto selection
+  if cfg.effective_force == Crc32Force::Auto && len < cfg.tunables.portable_to_hwcrc {
     return crc32c_portable(crc, data);
   }
 
-  let caps = platform::caps();
   if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
     let streams = powerpc64_streams_for_len(len, cfg.tunables.streams);
     return kernels::dispatch_streams(&CRC32C_VPMSUM, streams, crc, data);
@@ -1514,13 +1595,24 @@ fn crc32_s390x_auto(crc: u32, data: &[u8]) -> u32 {
   }
 
   let cfg = config::get();
-  if cfg.effective_force == Crc32Force::Portable
-    || (cfg.effective_force == Crc32Force::Auto && len < cfg.tunables.hwcrc_to_fusion)
-  {
+  let caps = platform::caps();
+
+  // Handle forced backend selection
+  match cfg.effective_force {
+    Crc32Force::Portable => return crc32_portable(crc, data),
+    Crc32Force::Vgfm if caps.has(platform::caps::s390x::VECTOR) => {
+      let streams = s390x_streams_for_len(len, cfg.tunables.streams);
+      return kernels::dispatch_streams(&CRC32_VGFM, streams, crc, data);
+    }
+    Crc32Force::Vgfm => return crc32_portable(crc, data),
+    _ => {}
+  }
+
+  // Auto selection
+  if cfg.effective_force == Crc32Force::Auto && len < cfg.tunables.hwcrc_to_fusion {
     return crc32_portable(crc, data);
   }
 
-  let caps = platform::caps();
   if caps.has(platform::caps::s390x::VECTOR) {
     let streams = s390x_streams_for_len(len, cfg.tunables.streams);
     return kernels::dispatch_streams(&CRC32_VGFM, streams, crc, data);
@@ -1539,13 +1631,24 @@ fn crc32c_s390x_auto(crc: u32, data: &[u8]) -> u32 {
   }
 
   let cfg = config::get();
-  if cfg.effective_force == Crc32Force::Portable
-    || (cfg.effective_force == Crc32Force::Auto && len < cfg.tunables.portable_to_hwcrc)
-  {
+  let caps = platform::caps();
+
+  // Handle forced backend selection
+  match cfg.effective_force {
+    Crc32Force::Portable => return crc32c_portable(crc, data),
+    Crc32Force::Vgfm if caps.has(platform::caps::s390x::VECTOR) => {
+      let streams = s390x_streams_for_len(len, cfg.tunables.streams);
+      return kernels::dispatch_streams(&CRC32C_VGFM, streams, crc, data);
+    }
+    Crc32Force::Vgfm => return crc32c_portable(crc, data),
+    _ => {}
+  }
+
+  // Auto selection
+  if cfg.effective_force == Crc32Force::Auto && len < cfg.tunables.portable_to_hwcrc {
     return crc32c_portable(crc, data);
   }
 
-  let caps = platform::caps();
   if caps.has(platform::caps::s390x::VECTOR) {
     let streams = s390x_streams_for_len(len, cfg.tunables.streams);
     return kernels::dispatch_streams(&CRC32C_VGFM, streams, crc, data);
@@ -1564,14 +1667,27 @@ fn crc32_riscv64_auto(crc: u32, data: &[u8]) -> u32 {
   }
 
   let cfg = config::get();
-  if cfg.effective_force == Crc32Force::Portable
-    || (cfg.effective_force == Crc32Force::Auto && len < cfg.tunables.hwcrc_to_fusion)
-  {
-    return crc32_portable(crc, data);
-  }
-
   let caps = platform::caps();
   let streams = riscv64_streams_for_len(len, cfg.tunables.streams);
+
+  // Handle forced backend selection
+  match cfg.effective_force {
+    Crc32Force::Portable => return crc32_portable(crc, data),
+    Crc32Force::Zvbc if caps.has(platform::caps::riscv::ZVBC) => {
+      return kernels::dispatch_streams(&CRC32_ZVBC, streams, crc, data);
+    }
+    Crc32Force::Zvbc => return crc32_portable(crc, data),
+    Crc32Force::Zbc if caps.has(platform::caps::riscv::ZBC) => {
+      return kernels::dispatch_streams(&CRC32_ZBC, streams, crc, data);
+    }
+    Crc32Force::Zbc => return crc32_portable(crc, data),
+    _ => {}
+  }
+
+  // Auto selection
+  if cfg.effective_force == Crc32Force::Auto && len < cfg.tunables.hwcrc_to_fusion {
+    return crc32_portable(crc, data);
+  }
 
   if caps.has(platform::caps::riscv::ZVBC) {
     return kernels::dispatch_streams(&CRC32_ZVBC, streams, crc, data);
@@ -1593,14 +1709,27 @@ fn crc32c_riscv64_auto(crc: u32, data: &[u8]) -> u32 {
   }
 
   let cfg = config::get();
-  if cfg.effective_force == Crc32Force::Portable
-    || (cfg.effective_force == Crc32Force::Auto && len < cfg.tunables.portable_to_hwcrc)
-  {
-    return crc32c_portable(crc, data);
-  }
-
   let caps = platform::caps();
   let streams = riscv64_streams_for_len(len, cfg.tunables.streams);
+
+  // Handle forced backend selection
+  match cfg.effective_force {
+    Crc32Force::Portable => return crc32c_portable(crc, data),
+    Crc32Force::Zvbc if caps.has(platform::caps::riscv::ZVBC) => {
+      return kernels::dispatch_streams(&CRC32C_ZVBC, streams, crc, data);
+    }
+    Crc32Force::Zvbc => return crc32c_portable(crc, data),
+    Crc32Force::Zbc if caps.has(platform::caps::riscv::ZBC) => {
+      return kernels::dispatch_streams(&CRC32C_ZBC, streams, crc, data);
+    }
+    Crc32Force::Zbc => return crc32c_portable(crc, data),
+    _ => {}
+  }
+
+  // Auto selection
+  if cfg.effective_force == Crc32Force::Auto && len < cfg.tunables.portable_to_hwcrc {
+    return crc32c_portable(crc, data);
+  }
 
   if caps.has(platform::caps::riscv::ZVBC) {
     return kernels::dispatch_streams(&CRC32C_ZVBC, streams, crc, data);

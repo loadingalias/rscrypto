@@ -22,7 +22,7 @@ proptest! {
 
   #[test]
   fn crc32_streaming_and_combine(data in proptest::collection::vec(any::<u8>(), 0..=4096), split in any::<usize>(), chunk in 1usize..=257) {
-    let split = split % (data.len() + 1);
+    let split = split.strict_rem(data.len().strict_add(1));
     let (a, b) = data.split_at(split);
 
     let oneshot = Crc32::checksum(&data);
@@ -48,7 +48,7 @@ proptest! {
 
   #[test]
   fn crc32c_streaming_and_combine(data in proptest::collection::vec(any::<u8>(), 0..=4096), split in any::<usize>(), chunk in 1usize..=257) {
-    let split = split % (data.len() + 1);
+    let split = split.strict_rem(data.len().strict_add(1));
     let (a, b) = data.split_at(split);
 
     let oneshot = Crc32C::checksum(&data);
@@ -118,7 +118,7 @@ proptest! {
 
   #[test]
   fn crc32_combine_matches_crc_fast_rust(data in proptest::collection::vec(any::<u8>(), 0..=4096), split in any::<usize>()) {
-    let split = split % (data.len() + 1);
+    let split = split.strict_rem(data.len().strict_add(1));
     let (a, b) = data.split_at(split);
 
     let crc_a = Crc32::checksum(a);
@@ -134,7 +134,7 @@ proptest! {
 
   #[test]
   fn crc32c_combine_matches_crc_fast_rust(data in proptest::collection::vec(any::<u8>(), 0..=4096), split in any::<usize>()) {
-    let split = split % (data.len() + 1);
+    let split = split.strict_rem(data.len().strict_add(1));
     let (a, b) = data.split_at(split);
 
     let crc_a = Crc32C::checksum(a);

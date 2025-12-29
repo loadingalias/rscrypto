@@ -21,7 +21,12 @@ fuzz_target!(|input: Input| {
   }
 
   // Normalize splits to valid range and sort
-  let mut splits: Vec<usize> = input.splits.iter().map(|s| s % (data.len() + 1)).collect();
+  let max_split = data.len().strict_add(1);
+  let mut splits: Vec<usize> = input
+    .splits
+    .iter()
+    .map(|s| (*s).strict_rem(max_split))
+    .collect();
   splits.sort();
   splits.dedup();
 

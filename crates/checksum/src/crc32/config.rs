@@ -37,6 +37,14 @@ pub enum Crc32Force {
   /// This mirrors the CRC64 selector: it is an ILP-oriented tier intended for
   /// Armv9/SVE2-class CPUs. Implementations are still NEON+PMULL based.
   Sve2Pmull,
+  /// Force powerpc64 VPMSUMD folding (if supported).
+  Vpmsum,
+  /// Force s390x VGFM folding (if supported).
+  Vgfm,
+  /// Force riscv64 Zbc carryless multiply folding (if supported).
+  Zbc,
+  /// Force riscv64 Zvbc (vector carryless multiply) folding (if supported).
+  Zvbc,
 }
 
 impl Crc32Force {
@@ -51,6 +59,10 @@ impl Crc32Force {
       Self::Pmull => "pmull",
       Self::PmullEor3 => "pmull-eor3",
       Self::Sve2Pmull => "sve2-pmull",
+      Self::Vpmsum => "vpmsum",
+      Self::Vgfm => "vgfm",
+      Self::Zbc => "zbc",
+      Self::Zvbc => "zvbc",
     }
   }
 }
@@ -152,6 +164,18 @@ fn read_env_overrides() -> Overrides {
     if value.eq_ignore_ascii_case("sve2-pmull") || value.eq_ignore_ascii_case("sve2pmull") {
       return Some(Crc32Force::Sve2Pmull);
     }
+    if value.eq_ignore_ascii_case("vpmsum") || value.eq_ignore_ascii_case("vpmsumd") {
+      return Some(Crc32Force::Vpmsum);
+    }
+    if value.eq_ignore_ascii_case("vgfm") || value.eq_ignore_ascii_case("gfmsum") {
+      return Some(Crc32Force::Vgfm);
+    }
+    if value.eq_ignore_ascii_case("zbc") {
+      return Some(Crc32Force::Zbc);
+    }
+    if value.eq_ignore_ascii_case("zvbc") || value.eq_ignore_ascii_case("vclmul") {
+      return Some(Crc32Force::Zvbc);
+    }
 
     None
   }
@@ -180,7 +204,7 @@ fn overrides() -> Overrides {
 
 #[inline]
 #[must_use]
-#[allow(unused_variables)] // `caps` only used on x86_64/aarch64
+#[allow(unused_variables)] // `caps` used on arch-specific cfg paths
 fn clamp_force_to_caps(requested: Crc32Force, caps: Caps) -> Crc32Force {
   match requested {
     Crc32Force::Auto | Crc32Force::Portable => requested,
@@ -243,6 +267,42 @@ fn clamp_force_to_caps(requested: Crc32Force, caps: Caps) -> Crc32Force {
           && caps.has(platform::caps::aarch64::SVE2_PMULL)
         {
           return Crc32Force::Sve2Pmull;
+        }
+      }
+      Crc32Force::Auto
+    }
+    Crc32Force::Vpmsum => {
+      #[cfg(target_arch = "powerpc64")]
+      {
+        if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
+          return Crc32Force::Vpmsum;
+        }
+      }
+      Crc32Force::Auto
+    }
+    Crc32Force::Vgfm => {
+      #[cfg(target_arch = "s390x")]
+      {
+        if caps.has(platform::caps::s390x::VECTOR) {
+          return Crc32Force::Vgfm;
+        }
+      }
+      Crc32Force::Auto
+    }
+    Crc32Force::Zbc => {
+      #[cfg(target_arch = "riscv64")]
+      {
+        if caps.has(platform::caps::riscv::ZBC) {
+          return Crc32Force::Zbc;
+        }
+      }
+      Crc32Force::Auto
+    }
+    Crc32Force::Zvbc => {
+      #[cfg(target_arch = "riscv64")]
+      {
+        if caps.has(platform::caps::riscv::ZVBC) {
+          return Crc32Force::Zvbc;
         }
       }
       Crc32Force::Auto
