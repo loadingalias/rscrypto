@@ -24,6 +24,28 @@ use crate::common::{
 
 const CRC32C_SHIFT8_MATRIX: Gf2Matrix32 = generate_shift8_matrix_32(CRC32C_POLY);
 
+#[inline]
+#[must_use]
+fn pow_shift8_crc32c(len_bytes: usize) -> Gf2Matrix32 {
+  if len_bytes == 0 {
+    return Gf2Matrix32::identity();
+  }
+
+  let mut mat = CRC32C_SHIFT8_MATRIX;
+  let mut result = Gf2Matrix32::identity();
+  let mut remaining = len_bytes;
+
+  while remaining > 0 {
+    if (remaining & 1) != 0 {
+      result = result.mul_mat(mat);
+    }
+    mat = mat.square();
+    remaining = remaining.strict_shr(1);
+  }
+
+  result
+}
+
 /// CRC-32C update using SSE4.2 `crc32` instruction.
 ///
 /// `crc` is the current state (pre-inverted).
@@ -116,21 +138,28 @@ unsafe fn crc32c_sse42_nway<const N: usize>(crc: u32, data: &[u8]) -> u32 {
   // Compute CRC(data) under the standard initial state, then append it to `crc`.
   //
   // This keeps correctness for arbitrary `crc` while allowing multi-stream computation of CRC(data).
+  let last_lane_len = len.strict_sub(chunk_len.strict_mul(N.strict_sub(1)));
+  let pow_chunk = pow_shift8_crc32c(chunk_len);
+  let pow_last = if last_lane_len == chunk_len {
+    pow_chunk
+  } else {
+    pow_shift8_crc32c(last_lane_len)
+  };
+
   let mut data_crc_final: u32 = 0;
   let mut lane_idx: usize = 0;
   while lane_idx < N {
-    let lane_len = if lane_idx.strict_add(1) == N {
-      len.strict_sub(chunk_len.strict_mul(lane_idx))
+    let pow = if lane_idx.strict_add(1) == N {
+      pow_last
     } else {
-      chunk_len
+      pow_chunk
     };
-    data_crc_final =
-      crate::common::combine::combine_crc32(data_crc_final, lanes[lane_idx] ^ !0, lane_len, CRC32C_SHIFT8_MATRIX);
+    data_crc_final = pow.mul_vec(data_crc_final) ^ (lanes[lane_idx] ^ !0);
     lane_idx = lane_idx.strict_add(1);
   }
 
   let boundary_final = crc ^ !0;
-  let combined_final = crate::common::combine::combine_crc32(boundary_final, data_crc_final, len, CRC32C_SHIFT8_MATRIX);
+  let combined_final = pow_shift8_crc32c(len).mul_vec(boundary_final) ^ data_crc_final;
   combined_final ^ !0
 }
 
@@ -434,21 +463,28 @@ fn crc32c_fusion_nway<const N: usize>(crc: u32, data: &[u8], update: fn(u32, &[u
     lanes[N - 1] = update(lanes[N - 1], &data[tail_start..]);
   }
 
+  let last_lane_len = len.strict_sub(chunk_len.strict_mul(N.strict_sub(1)));
+  let pow_chunk = pow_shift8_crc32c(chunk_len);
+  let pow_last = if last_lane_len == chunk_len {
+    pow_chunk
+  } else {
+    pow_shift8_crc32c(last_lane_len)
+  };
+
   let mut data_crc_final: u32 = 0;
   let mut lane_idx: usize = 0;
   while lane_idx < N {
-    let lane_len = if lane_idx.strict_add(1) == N {
-      len.strict_sub(chunk_len.strict_mul(lane_idx))
+    let pow = if lane_idx.strict_add(1) == N {
+      pow_last
     } else {
-      chunk_len
+      pow_chunk
     };
-    data_crc_final =
-      crate::common::combine::combine_crc32(data_crc_final, lanes[lane_idx] ^ !0, lane_len, CRC32C_SHIFT8_MATRIX);
+    data_crc_final = pow.mul_vec(data_crc_final) ^ (lanes[lane_idx] ^ !0);
     lane_idx = lane_idx.strict_add(1);
   }
 
   let boundary_final = crc ^ !0;
-  let combined_final = crate::common::combine::combine_crc32(boundary_final, data_crc_final, len, CRC32C_SHIFT8_MATRIX);
+  let combined_final = pow_shift8_crc32c(len).mul_vec(boundary_final) ^ data_crc_final;
   combined_final ^ !0
 }
 

@@ -316,6 +316,14 @@ fn tuned_defaults(caps: Caps, tune: Tune) -> Crc32Tunables {
   let tuned = tuned_defaults::for_tune_kind(tune.kind);
 
   let default_streams = default_crc32_streams(caps, tune);
+  // Fusion kernels (HWCRC + carryless-multiply folding) have non-trivial setup
+  // costs vs pure HWCRC/table, especially on Intel parts. Treat this threshold
+  // as a "SIMD-ish" crossover, not the raw CLMUL crossover.
+  let default_hwcrc_to_fusion = tune.pclmul_threshold.max(if tune.fast_wide_ops {
+    tune.simd_threshold
+  } else {
+    tune.simd_threshold.strict_mul(2)
+  });
   let default_fusion_to_avx512 = tune.simd_threshold;
   let default_fusion_to_vpclmul = if tune.fast_wide_ops {
     tune.simd_threshold
@@ -332,7 +340,7 @@ fn tuned_defaults(caps: Caps, tune: Tune) -> Crc32Tunables {
     portable_to_hwcrc: tuned
       .map(|t| t.portable_to_hwcrc)
       .unwrap_or(tune.hwcrc_threshold.min(tune.pclmul_threshold)),
-    hwcrc_to_fusion: tuned.map(|t| t.hwcrc_to_fusion).unwrap_or(tune.pclmul_threshold),
+    hwcrc_to_fusion: tuned.map(|t| t.hwcrc_to_fusion).unwrap_or(default_hwcrc_to_fusion),
     fusion_to_avx512,
     fusion_to_vpclmul,
     streams,

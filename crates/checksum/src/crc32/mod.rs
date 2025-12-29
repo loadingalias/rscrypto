@@ -279,6 +279,7 @@ struct Crc32cX86Auto {
   hwcrc_to_fusion: usize,
   fusion_to_avx512: usize,
   fusion_to_vpclmul: usize,
+  streams: u8,
   has_crc32c: bool,
   has_pclmul: bool,
   has_vpclmul: bool,
@@ -579,13 +580,7 @@ pub(crate) fn crc32c_selected_kernel_name(len: usize) -> &'static str {
   #[cfg(target_arch = "x86_64")]
   {
     use kernels::x86_64::*;
-    // NOTE: Our current CRC32C fusion multi-stream wrappers use the generic
-    // `combine_crc32` GF(2) matrix path, which is orders-of-magnitude slower
-    // than the CLMUL-based folding kernels for medium/large buffers.
-    //
-    // Until CRC32C has proper CLMUL-based multi-stream combination (like CRC32/IEEE),
-    // always select the 1-way kernels.
-    let streams = 1u8;
+    let streams = x86_streams_for_len(len, cfg.tunables.streams);
 
     match cfg.effective_force {
       Crc32Force::Vpclmul
@@ -797,9 +792,7 @@ fn crc32c_x86_64_auto(crc: u32, data: &[u8]) -> u32 {
   }
 
   use kernels::x86_64::*;
-  // See `crc32c_selected_kernel_name`: CRC32C multi-stream fusion currently
-  // uses a very slow GF(2) combine path. Force 1-way kernels.
-  let streams = 1u8;
+  let streams = x86_streams_for_len(len, cfg.tunables.streams);
 
   match cfg.effective_force {
     Crc32Force::Hwcrc => {
@@ -854,6 +847,7 @@ fn crc32c_x86_64_auto(crc: u32, data: &[u8]) -> u32 {
       hwcrc_to_fusion: cfg.tunables.hwcrc_to_fusion,
       fusion_to_avx512: cfg.tunables.fusion_to_avx512,
       fusion_to_vpclmul: cfg.tunables.fusion_to_vpclmul,
+      streams: cfg.tunables.streams,
       has_crc32c: caps.has(platform::caps::x86::CRC32C_READY),
       has_pclmul: caps.has(platform::caps::x86::PCLMUL_READY),
       has_vpclmul: caps.has(platform::caps::x86::VPCLMUL_READY),
@@ -868,9 +862,7 @@ fn crc32c_x86_64_auto(crc: u32, data: &[u8]) -> u32 {
   }
 
   use kernels::x86_64::*;
-  // See `crc32c_selected_kernel_name`: CRC32C multi-stream fusion currently
-  // uses a very slow GF(2) combine path. Force 1-way kernels.
-  let streams = 1u8;
+  let streams = x86_streams_for_len(len, params.streams);
 
   if len >= params.hwcrc_to_fusion {
     if params.has_vpclmul && len >= params.fusion_to_vpclmul {
@@ -1530,27 +1522,27 @@ fn crc32_x86_64_vpclmul_forced(crc: u32, data: &[u8]) -> u32 {
 #[cfg(all(target_arch = "x86_64", feature = "std"))]
 fn crc32c_x86_64_hwcrc_forced(crc: u32, data: &[u8]) -> u32 {
   use kernels::x86_64::*;
-  // Avoid multi-stream wrappers that currently combine via `combine_crc32`.
-  let _ = data.len();
-  let streams = 1u8;
+  let len = data.len();
+  let streams_cfg = CRC32C_X86_STREAMS.get().copied().unwrap_or(1);
+  let streams = x86_streams_for_len(len, streams_cfg);
   kernels::dispatch_streams(&CRC32C_HWCRC, streams, crc, data)
 }
 
 #[cfg(all(target_arch = "x86_64", feature = "std"))]
 fn crc32c_x86_64_pclmul_forced(crc: u32, data: &[u8]) -> u32 {
   use kernels::x86_64::*;
-  // Avoid multi-stream wrappers that currently combine via `combine_crc32`.
-  let _ = data.len();
-  let streams = 1u8;
+  let len = data.len();
+  let streams_cfg = CRC32C_X86_STREAMS.get().copied().unwrap_or(1);
+  let streams = x86_streams_for_len(len, streams_cfg);
   kernels::dispatch_streams(&CRC32C_FUSION_SSE, streams, crc, data)
 }
 
 #[cfg(all(target_arch = "x86_64", feature = "std"))]
 fn crc32c_x86_64_vpclmul_forced(crc: u32, data: &[u8]) -> u32 {
   use kernels::x86_64::*;
-  // Avoid multi-stream wrappers that currently combine via `combine_crc32`.
-  let _ = data.len();
-  let streams = 1u8;
+  let len = data.len();
+  let streams_cfg = CRC32C_X86_STREAMS.get().copied().unwrap_or(1);
+  let streams = x86_streams_for_len(len, streams_cfg);
   kernels::dispatch_streams(&CRC32C_FUSION_VPCLMUL, streams, crc, data)
 }
 
@@ -1860,6 +1852,7 @@ fn select_crc32c() -> Selected<Crc32Fn> {
           hwcrc_to_fusion: cfg.tunables.hwcrc_to_fusion,
           fusion_to_avx512: cfg.tunables.fusion_to_avx512,
           fusion_to_vpclmul: cfg.tunables.fusion_to_vpclmul,
+          streams: cfg.tunables.streams,
           has_crc32c: caps.has(platform::caps::x86::CRC32C_READY),
           has_pclmul: caps.has(platform::caps::x86::PCLMUL_READY),
           has_vpclmul: caps.has(platform::caps::x86::VPCLMUL_READY),
