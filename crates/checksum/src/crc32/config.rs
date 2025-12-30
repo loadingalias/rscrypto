@@ -78,8 +78,14 @@ pub struct Crc32Tunables {
   pub fusion_to_avx512: usize,
   /// Bytes where VPCLMUL fusion becomes worthwhile (x86_64 only).
   pub fusion_to_vpclmul: usize,
-  /// Preferred number of independent streams (used by multi-stream kernels where available).
-  pub streams: u8,
+  /// Preferred number of independent streams for CRC-32 (IEEE).
+  ///
+  /// Used by multi-stream kernels where available.
+  pub streams_crc32: u8,
+  /// Preferred number of independent streams for CRC-32C (Castagnoli).
+  ///
+  /// Used by multi-stream kernels where available.
+  pub streams_crc32c: u8,
 }
 
 /// Full CRC-32 runtime configuration (after applying overrides).
@@ -100,7 +106,8 @@ struct Overrides {
   hwcrc_to_fusion: Option<usize>,
   fusion_to_avx512: Option<usize>,
   fusion_to_vpclmul: Option<usize>,
-  streams: Option<u8>,
+  streams_crc32: Option<u8>,
+  streams_crc32c: Option<u8>,
 }
 
 #[cfg(feature = "std")]
@@ -186,7 +193,8 @@ fn read_env_overrides() -> Overrides {
     hwcrc_to_fusion: parse_usize("RSCRYPTO_CRC32_THRESHOLD_HWCRC_TO_FUSION"),
     fusion_to_avx512: parse_usize("RSCRYPTO_CRC32_THRESHOLD_FUSION_TO_AVX512"),
     fusion_to_vpclmul: parse_usize("RSCRYPTO_CRC32_THRESHOLD_FUSION_TO_VPCLMUL"),
-    streams: parse_u8("RSCRYPTO_CRC32_STREAMS"),
+    streams_crc32: parse_u8("RSCRYPTO_CRC32_STREAMS_CRC32"),
+    streams_crc32c: parse_u8("RSCRYPTO_CRC32_STREAMS_CRC32C"),
   }
 }
 
@@ -331,7 +339,8 @@ fn tuned_defaults(caps: Caps, tune: Tune) -> Crc32Tunables {
     tune.simd_threshold.saturating_mul(8)
   };
 
-  let streams = tuned.map(|t| t.streams).unwrap_or(default_streams);
+  let streams_crc32 = tuned.map(|t| t.streams_crc32).unwrap_or(default_streams);
+  let streams_crc32c = tuned.map(|t| t.streams_crc32c).unwrap_or(default_streams);
   let fusion_to_avx512 = tuned.map(|t| t.fusion_to_avx512).unwrap_or(default_fusion_to_avx512);
   let fusion_to_vpclmul = tuned.map(|t| t.fusion_to_vpclmul).unwrap_or(default_fusion_to_vpclmul);
   Crc32Tunables {
@@ -343,8 +352,22 @@ fn tuned_defaults(caps: Caps, tune: Tune) -> Crc32Tunables {
     hwcrc_to_fusion: tuned.map(|t| t.hwcrc_to_fusion).unwrap_or(default_hwcrc_to_fusion),
     fusion_to_avx512,
     fusion_to_vpclmul,
-    streams,
+    streams_crc32,
+    streams_crc32c,
   }
+}
+
+#[inline]
+#[must_use]
+fn clamp_streams(mut streams: u8) -> u8 {
+  // Clamp streams to the supported name mapping.
+  if streams == 0 {
+    streams = 1;
+  }
+  if streams > 8 {
+    streams = 8;
+  }
+  streams
 }
 
 #[inline]
@@ -443,18 +466,18 @@ pub fn get() -> Crc32Config {
     fusion_to_vpclmul = v;
   }
 
-  let mut streams = base.streams;
-  if let Some(v) = ov.streams {
-    streams = v;
+  let mut streams_crc32 = base.streams_crc32;
+  if let Some(v) = ov.streams_crc32 {
+    streams_crc32 = v;
   }
 
-  // Clamp streams to the supported name mapping.
-  if streams == 0 {
-    streams = 1;
+  let mut streams_crc32c = base.streams_crc32c;
+  if let Some(v) = ov.streams_crc32c {
+    streams_crc32c = v;
   }
-  if streams > 8 {
-    streams = 8;
-  }
+
+  streams_crc32 = clamp_streams(streams_crc32);
+  streams_crc32c = clamp_streams(streams_crc32c);
 
   Crc32Config {
     requested_force,
@@ -464,7 +487,8 @@ pub fn get() -> Crc32Config {
       hwcrc_to_fusion,
       fusion_to_avx512,
       fusion_to_vpclmul,
-      streams,
+      streams_crc32,
+      streams_crc32c,
     },
   }
 }

@@ -14,6 +14,10 @@ pub const PORTABLE_AUTO: &str = "portable/auto";
 #[cfg(target_arch = "x86_64")]
 pub const X86_64_PCLMUL: &str = "x86_64/pclmul";
 
+/// x86_64 VPCLMULQDQ folding kernel name (AVX-512).
+#[cfg(target_arch = "x86_64")]
+pub const X86_64_VPCLMUL: &str = "x86_64/vpclmul";
+
 /// aarch64 PMULL folding kernel name.
 #[cfg(target_arch = "aarch64")]
 pub const AARCH64_PMULL: &str = "aarch64/pmull";

@@ -253,6 +253,98 @@ unsafe fn crc16_width32_pclmul(mut state: u16, data: &[u8], keys: &[u64; 23], po
   portable(state, right)
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// AVX-512 VPCLMULQDQ Tier
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[inline]
+#[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq")]
+unsafe fn clmul10_vpclmul(a: __m512i, b: __m512i) -> __m512i {
+  _mm512_clmulepi64_epi128(a, b, 0x10)
+}
+
+#[inline]
+#[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq")]
+unsafe fn clmul01_vpclmul(a: __m512i, b: __m512i) -> __m512i {
+  _mm512_clmulepi64_epi128(a, b, 0x01)
+}
+
+#[inline]
+#[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq")]
+unsafe fn fold_16_reflected_vpclmul(state: __m512i, coeff: __m512i, data: __m512i) -> __m512i {
+  _mm512_ternarylogic_epi64(clmul10_vpclmul(state, coeff), clmul01_vpclmul(state, coeff), data, 0x96)
+}
+
+#[inline]
+#[target_feature(enable = "avx512f")]
+unsafe fn broadcast_coeff_128b(high: u64, low: u64) -> __m512i {
+  _mm512_set_epi64(
+    high as i64,
+    low as i64,
+    high as i64,
+    low as i64,
+    high as i64,
+    low as i64,
+    high as i64,
+    low as i64,
+  )
+}
+
+#[inline]
+#[target_feature(enable = "avx512f")]
+unsafe fn state_mask_lane0(state: u32) -> __m512i {
+  _mm512_set_epi64(0, 0, 0, 0, 0, 0, 0, state as i64)
+}
+
+#[inline]
+#[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,ssse3,pclmulqdq,sse2")]
+unsafe fn update_simd_width32_reflected_vpclmul(
+  state: u32,
+  first: &[Simd128; 8],
+  rest: &[[Simd128; 8]],
+  keys: &[u64; 23],
+) -> u32 {
+  let ptr = first.as_ptr() as *const u8;
+  let mut x0 = _mm512_loadu_si512(ptr as *const __m512i);
+  let mut x1 = _mm512_loadu_si512(ptr.add(64) as *const __m512i);
+
+  x0 = _mm512_xor_si512(x0, state_mask_lane0(state));
+
+  let coeff_128b = broadcast_coeff_128b(keys[4], keys[3]);
+  for chunk in rest {
+    let ptr = chunk.as_ptr() as *const u8;
+    let y0 = _mm512_loadu_si512(ptr as *const __m512i);
+    let y1 = _mm512_loadu_si512(ptr.add(64) as *const __m512i);
+    x0 = fold_16_reflected_vpclmul(x0, coeff_128b, y0);
+    x1 = fold_16_reflected_vpclmul(x1, coeff_128b, y1);
+  }
+
+  let mut lanes0 = [Simd128(_mm_setzero_si128()); 4];
+  let mut lanes1 = [Simd128(_mm_setzero_si128()); 4];
+  _mm512_storeu_si512(lanes0.as_mut_ptr() as *mut __m512i, x0);
+  _mm512_storeu_si512(lanes1.as_mut_ptr() as *mut __m512i, x1);
+
+  let x = [
+    lanes0[0], lanes0[1], lanes0[2], lanes0[3], lanes1[0], lanes1[1], lanes1[2], lanes1[3],
+  ];
+
+  finalize_lanes_width32_reflected(x, keys)
+}
+
+#[inline]
+#[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,ssse3,pclmulqdq,sse2")]
+unsafe fn crc16_width32_vpclmul(mut state: u16, data: &[u8], keys: &[u64; 23], portable: fn(u16, &[u8]) -> u16) -> u16 {
+  let (left, middle, right) = data.align_to::<[Simd128; 8]>();
+  let Some((first, rest)) = middle.split_first() else {
+    return crc16_width32_pclmul_small(state, data, keys, portable);
+  };
+
+  state = portable(state, left);
+  let state32 = update_simd_width32_reflected_vpclmul(state as u32, first, rest, keys);
+  state = state32 as u16;
+  portable(state, right)
+}
+
 #[inline]
 pub fn crc16_ccitt_pclmul_safe(crc: u16, data: &[u8], portable: fn(u16, &[u8]) -> u16) -> u16 {
   // SAFETY: Dispatcher verifies SSSE3 + PCLMULQDQ before selecting this kernel.
@@ -260,7 +352,19 @@ pub fn crc16_ccitt_pclmul_safe(crc: u16, data: &[u8], portable: fn(u16, &[u8]) -
 }
 
 #[inline]
+pub fn crc16_ccitt_vpclmul_safe(crc: u16, data: &[u8], portable: fn(u16, &[u8]) -> u16) -> u16 {
+  // SAFETY: Dispatcher verifies VPCLMULQDQ + AVX-512 before selecting this kernel.
+  unsafe { crc16_width32_vpclmul(crc, data, &KEYS_CRC16_1021_REFLECTED, portable) }
+}
+
+#[inline]
 pub fn crc16_ibm_pclmul_safe(crc: u16, data: &[u8], portable: fn(u16, &[u8]) -> u16) -> u16 {
   // SAFETY: Dispatcher verifies SSSE3 + PCLMULQDQ before selecting this kernel.
   unsafe { crc16_width32_pclmul(crc, data, &KEYS_CRC16_8005_REFLECTED, portable) }
+}
+
+#[inline]
+pub fn crc16_ibm_vpclmul_safe(crc: u16, data: &[u8], portable: fn(u16, &[u8]) -> u16) -> u16 {
+  // SAFETY: Dispatcher verifies VPCLMULQDQ + AVX-512 before selecting this kernel.
+  unsafe { crc16_width32_vpclmul(crc, data, &KEYS_CRC16_8005_REFLECTED, portable) }
 }

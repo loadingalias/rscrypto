@@ -88,6 +88,10 @@ static CRC16_SLICE4_TO_SLICE8: OnceLock<usize> = OnceLock::new();
 static CRC16_PORTABLE_TO_CLMUL: OnceLock<usize> = OnceLock::new();
 #[cfg(feature = "std")]
 static CRC16_HAS_CLMUL: OnceLock<bool> = OnceLock::new();
+#[cfg(all(feature = "std", target_arch = "x86_64"))]
+static CRC16_HAS_VPCLMUL: OnceLock<bool> = OnceLock::new();
+#[cfg(all(feature = "std", target_arch = "x86_64"))]
+static CRC16_CLMUL_TO_VPCLMUL: OnceLock<usize> = OnceLock::new();
 
 #[inline]
 #[must_use]
@@ -156,10 +160,56 @@ fn crc16_has_clmul() -> bool {
   }
 }
 
+#[cfg(target_arch = "x86_64")]
+#[inline]
+#[must_use]
+fn crc16_clmul_to_vpclmul_uncached() -> usize {
+  let tune = platform::tune();
+  let simd_bytes = (tune.effective_simd_width as usize).strict_div(8).max(1);
+  simd_bytes.strict_mul(4).max(tune.pclmul_threshold).max(1)
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline]
+#[must_use]
+fn crc16_clmul_to_vpclmul() -> usize {
+  #[cfg(feature = "std")]
+  {
+    *CRC16_CLMUL_TO_VPCLMUL.get_or_init(crc16_clmul_to_vpclmul_uncached)
+  }
+  #[cfg(not(feature = "std"))]
+  {
+    crc16_clmul_to_vpclmul_uncached()
+  }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline]
+#[must_use]
+fn crc16_has_vpclmul() -> bool {
+  #[cfg(feature = "std")]
+  {
+    *CRC16_HAS_VPCLMUL.get_or_init(|| {
+      let caps = platform::caps();
+      let tune = platform::tune();
+      caps.has(platform::caps::x86::VPCLMUL_READY) && tune.fast_wide_ops && tune.effective_simd_width >= 512
+    })
+  }
+  #[cfg(not(feature = "std"))]
+  {
+    let caps = platform::caps();
+    let tune = platform::tune();
+    caps.has(platform::caps::x86::VPCLMUL_READY) && tune.fast_wide_ops && tune.effective_simd_width >= 512
+  }
+}
+
 #[inline]
 fn crc16_ccitt_clmul(crc: u16, data: &[u8]) -> u16 {
   #[cfg(target_arch = "x86_64")]
   {
+    if crc16_has_vpclmul() && data.len() >= crc16_clmul_to_vpclmul() {
+      return x86_64::crc16_ccitt_vpclmul_safe(crc, data, crc16_ccitt_portable_auto);
+    }
     x86_64::crc16_ccitt_pclmul_safe(crc, data, crc16_ccitt_portable_auto)
   }
   #[cfg(target_arch = "aarch64")]
@@ -176,6 +226,9 @@ fn crc16_ccitt_clmul(crc: u16, data: &[u8]) -> u16 {
 fn crc16_ibm_clmul(crc: u16, data: &[u8]) -> u16 {
   #[cfg(target_arch = "x86_64")]
   {
+    if crc16_has_vpclmul() && data.len() >= crc16_clmul_to_vpclmul() {
+      return x86_64::crc16_ibm_vpclmul_safe(crc, data, crc16_ibm_portable_auto);
+    }
     x86_64::crc16_ibm_pclmul_safe(crc, data, crc16_ibm_portable_auto)
   }
   #[cfg(target_arch = "aarch64")]
@@ -222,14 +275,24 @@ pub(crate) fn crc16_selected_kernel_name(len: usize) -> &'static str {
 
   if cfg.effective_force == config::Crc16Force::Clmul && crc16_has_clmul() && len >= cfg.tunables.portable_to_clmul {
     #[cfg(target_arch = "x86_64")]
-    return kernels::X86_64_PCLMUL;
+    {
+      if crc16_has_vpclmul() && len >= crc16_clmul_to_vpclmul() {
+        return kernels::X86_64_VPCLMUL;
+      }
+      return kernels::X86_64_PCLMUL;
+    }
     #[cfg(target_arch = "aarch64")]
     return kernels::AARCH64_PMULL;
   }
 
   if cfg.effective_force == config::Crc16Force::Auto && crc16_has_clmul() && len >= cfg.tunables.portable_to_clmul {
     #[cfg(target_arch = "x86_64")]
-    return kernels::X86_64_PCLMUL;
+    {
+      if crc16_has_vpclmul() && len >= crc16_clmul_to_vpclmul() {
+        return kernels::X86_64_VPCLMUL;
+      }
+      return kernels::X86_64_PCLMUL;
+    }
     #[cfg(target_arch = "aarch64")]
     return kernels::AARCH64_PMULL;
   }
@@ -247,6 +310,8 @@ fn select_crc16_ccitt() -> Selected<Crc16Fn> {
   let _ = CRC16_SLICE4_TO_SLICE8.get_or_init(|| cfg.tunables.slice4_to_slice8);
   #[cfg(feature = "std")]
   let _ = CRC16_PORTABLE_TO_CLMUL.get_or_init(|| cfg.tunables.portable_to_clmul);
+  #[cfg(all(feature = "std", target_arch = "x86_64"))]
+  let _ = CRC16_CLMUL_TO_VPCLMUL.get_or_init(crc16_clmul_to_vpclmul_uncached);
 
   match cfg.effective_force {
     config::Crc16Force::Slice4 => Selected::new(kernels::PORTABLE_SLICE4, portable::crc16_ccitt_slice4),
@@ -271,6 +336,8 @@ fn select_crc16_ibm() -> Selected<Crc16Fn> {
   let _ = CRC16_SLICE4_TO_SLICE8.get_or_init(|| cfg.tunables.slice4_to_slice8);
   #[cfg(feature = "std")]
   let _ = CRC16_PORTABLE_TO_CLMUL.get_or_init(|| cfg.tunables.portable_to_clmul);
+  #[cfg(all(feature = "std", target_arch = "x86_64"))]
+  let _ = CRC16_CLMUL_TO_VPCLMUL.get_or_init(crc16_clmul_to_vpclmul_uncached);
 
   match cfg.effective_force {
     config::Crc16Force::Slice4 => Selected::new(kernels::PORTABLE_SLICE4, portable::crc16_ibm_slice4),

@@ -186,14 +186,16 @@ struct BenchRow {
 }
 
 fn print_env_exports(
-  streams: u8,
+  streams_crc32: u8,
+  streams_crc32c: u8,
   portable_to_hwcrc: usize,
   hwcrc_to_fusion: usize,
   fusion_to_avx512: usize,
   fusion_to_vpclmul: usize,
 ) {
   println!("# rscrypto CRC32 tuning (paste into your shell env)");
-  println!("export RSCRYPTO_CRC32_STREAMS={streams}");
+  println!("export RSCRYPTO_CRC32_STREAMS_CRC32={streams_crc32}");
+  println!("export RSCRYPTO_CRC32_STREAMS_CRC32C={streams_crc32c}");
   println!("export RSCRYPTO_CRC32_THRESHOLD_PORTABLE_TO_HWCRC={portable_to_hwcrc}");
   println!("export RSCRYPTO_CRC32_THRESHOLD_HWCRC_TO_FUSION={hwcrc_to_fusion}");
   println!("export RSCRYPTO_CRC32_THRESHOLD_FUSION_TO_AVX512={fusion_to_avx512}");
@@ -599,6 +601,7 @@ fn parent_main(args: Args) -> io::Result<()> {
 
   print_env_exports(
     chosen_streams,
+    chosen_streams,
     portable_to_hwcrc,
     hwcrc_to_fusion,
     fusion_to_avx512,
@@ -607,6 +610,7 @@ fn parent_main(args: Args) -> io::Result<()> {
   if args.apply {
     apply_tuned_defaults(
       tune_kind,
+      chosen_streams,
       chosen_streams,
       portable_to_hwcrc,
       hwcrc_to_fusion,
@@ -628,7 +632,8 @@ fn tuned_defaults_path() -> PathBuf {
 
 fn apply_tuned_defaults(
   kind: platform::TuneKind,
-  streams: u8,
+  streams_crc32: u8,
+  streams_crc32c: u8,
   portable_to_hwcrc: usize,
   hwcrc_to_fusion: usize,
   fusion_to_avx512: usize,
@@ -662,7 +667,8 @@ fn apply_tuned_defaults(
 
   #[derive(Clone, Copy, Debug)]
   struct TunedEntry {
-    streams: u8,
+    streams_crc32: u8,
+    streams_crc32c: u8,
     portable_to_hwcrc: usize,
     hwcrc_to_fusion: usize,
     fusion_to_avx512: usize,
@@ -699,12 +705,22 @@ fn apply_tuned_defaults(
       let Some(kind_ident) = parse_tune_kind_ident(&current) else {
         continue;
       };
-      let streams = parse_u8_field(&current, "streams:").ok_or_else(|| {
-        io::Error::new(
-          io::ErrorKind::InvalidData,
-          format!("Missing/invalid streams for {kind_ident}"),
-        )
-      })?;
+      let streams_crc32 = parse_u8_field(&current, "streams_crc32:")
+        .or_else(|| parse_u8_field(&current, "streams:"))
+        .ok_or_else(|| {
+          io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Missing/invalid streams_crc32 for {kind_ident}"),
+          )
+        })?;
+      let streams_crc32c = parse_u8_field(&current, "streams_crc32c:")
+        .or_else(|| parse_u8_field(&current, "streams:"))
+        .ok_or_else(|| {
+          io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Missing/invalid streams_crc32c for {kind_ident}"),
+          )
+        })?;
       let portable_to_hwcrc = parse_usize_field(&current, "portable_to_hwcrc:").ok_or_else(|| {
         io::Error::new(
           io::ErrorKind::InvalidData,
@@ -731,7 +747,8 @@ fn apply_tuned_defaults(
       })?;
 
       let values = TunedEntry {
-        streams,
+        streams_crc32,
+        streams_crc32c,
         portable_to_hwcrc,
         hwcrc_to_fusion,
         fusion_to_avx512,
@@ -748,7 +765,8 @@ fn apply_tuned_defaults(
 
   let kind_ident = format!("{kind:?}");
   let values = TunedEntry {
-    streams,
+    streams_crc32,
+    streams_crc32c,
     portable_to_hwcrc,
     hwcrc_to_fusion,
     fusion_to_avx512,
@@ -764,15 +782,16 @@ fn apply_tuned_defaults(
 
   let mut emitted: Vec<String> = Vec::new();
   for (kind_ident, values) in entries {
-    let streams = values.streams;
+    let streams_crc32 = values.streams_crc32;
+    let streams_crc32c = values.streams_crc32c;
     let portable_to_hwcrc = fmt_usize(values.portable_to_hwcrc);
     let hwcrc_to_fusion = fmt_usize(values.hwcrc_to_fusion);
     let fusion_to_avx512 = fmt_usize(values.fusion_to_avx512);
     let fusion_to_vpclmul = fmt_usize(values.fusion_to_vpclmul);
     emitted.push(format!(
-      "  (TuneKind::{kind_ident}, Crc32TunedDefaults {{ streams: {streams}, portable_to_hwcrc: {portable_to_hwcrc}, \
-       hwcrc_to_fusion: {hwcrc_to_fusion}, fusion_to_avx512: {fusion_to_avx512}, fusion_to_vpclmul: \
-       {fusion_to_vpclmul} }}),"
+      "  (TuneKind::{kind_ident}, Crc32TunedDefaults {{ streams_crc32: {streams_crc32}, streams_crc32c: \
+       {streams_crc32c}, portable_to_hwcrc: {portable_to_hwcrc}, hwcrc_to_fusion: {hwcrc_to_fusion}, \
+       fusion_to_avx512: {fusion_to_avx512}, fusion_to_vpclmul: {fusion_to_vpclmul} }}),"
     ));
   }
 
@@ -860,7 +879,8 @@ fn run_matrix(configs: &[RunConfig], sizes: &[usize], warmup_ms: u64, measure_ms
 
     for key in [
       "RSCRYPTO_CRC32_FORCE",
-      "RSCRYPTO_CRC32_STREAMS",
+      "RSCRYPTO_CRC32_STREAMS_CRC32",
+      "RSCRYPTO_CRC32_STREAMS_CRC32C",
       "RSCRYPTO_CRC32_THRESHOLD_PORTABLE_TO_HWCRC",
       "RSCRYPTO_CRC32_THRESHOLD_HWCRC_TO_FUSION",
       "RSCRYPTO_CRC32_THRESHOLD_FUSION_TO_AVX512",
@@ -872,7 +892,8 @@ fn run_matrix(configs: &[RunConfig], sizes: &[usize], warmup_ms: u64, measure_ms
     if let Some(force) = cfg.force.as_env_value() {
       cmd.env("RSCRYPTO_CRC32_FORCE", force);
     }
-    cmd.env("RSCRYPTO_CRC32_STREAMS", cfg_value(cfg.streams));
+    cmd.env("RSCRYPTO_CRC32_STREAMS_CRC32", cfg_value(cfg.streams));
+    cmd.env("RSCRYPTO_CRC32_STREAMS_CRC32C", cfg_value(cfg.streams));
     cmd.env("RSCRYPTO_CRC32_TUNE_SIZES", sizes_csv(sizes));
 
     let output = cmd.output()?;
@@ -955,7 +976,7 @@ fn worker_main(args: Args) -> io::Result<()> {
   let cfg = Crc32C::config();
   let requested_force = cfg.requested_force.as_str().to_owned();
   let effective_force = cfg.effective_force.as_str().to_owned();
-  let streams = cfg.tunables.streams;
+  let streams = cfg.tunables.streams_crc32;
 
   for size in sizes {
     if size == 0 || size > buffer.len() {

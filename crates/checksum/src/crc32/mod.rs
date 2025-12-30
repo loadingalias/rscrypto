@@ -179,6 +179,12 @@ const fn x86_streams_for_len(len: usize, streams: u8) -> u8 {
   1
 }
 
+#[cfg(target_arch = "x86_64")]
+#[inline]
+fn x86_streams_for_len_crc32c(len: usize, streams: u8) -> u8 {
+  x86_streams_for_len(len, streams)
+}
+
 #[cfg(target_arch = "powerpc64")]
 const CRC32_POWERPC64_2WAY_MIN_BYTES: usize = 128 * CRC32_FOLD_BLOCK_BYTES; // 16 KiB
 
@@ -321,7 +327,7 @@ pub(crate) fn crc32_selected_kernel_name(len: usize) -> &'static str {
   {
     let caps = platform::caps();
     use kernels::x86_64::*;
-    let streams = x86_streams_for_len(len, cfg.tunables.streams);
+    let streams = x86_streams_for_len(len, cfg.tunables.streams_crc32);
 
     // CRC-32 (IEEE) has no HWCRC tier on x86; use the folding threshold.
     if cfg.effective_force == Crc32Force::Auto && len < cfg.tunables.hwcrc_to_fusion {
@@ -477,7 +483,7 @@ pub(crate) fn crc32_selected_kernel_name(len: usize) -> &'static str {
   {
     use kernels::powerpc64::*;
     let caps = platform::caps();
-    let streams = powerpc64_streams_for_len(len, cfg.tunables.streams);
+    let streams = powerpc64_streams_for_len(len, cfg.tunables.streams_crc32);
 
     match cfg.effective_force {
       Crc32Force::Vpmsum if caps.has(platform::caps::powerpc64::VPMSUM_READY) => {
@@ -500,7 +506,7 @@ pub(crate) fn crc32_selected_kernel_name(len: usize) -> &'static str {
   {
     use kernels::s390x::*;
     let caps = platform::caps();
-    let streams = s390x_streams_for_len(len, cfg.tunables.streams);
+    let streams = s390x_streams_for_len(len, cfg.tunables.streams_crc32);
 
     match cfg.effective_force {
       Crc32Force::Vgfm if caps.has(platform::caps::s390x::VECTOR) => {
@@ -523,7 +529,7 @@ pub(crate) fn crc32_selected_kernel_name(len: usize) -> &'static str {
   {
     use kernels::riscv64::*;
     let caps = platform::caps();
-    let streams = riscv64_streams_for_len(len, cfg.tunables.streams);
+    let streams = riscv64_streams_for_len(len, cfg.tunables.streams_crc32);
 
     match cfg.effective_force {
       Crc32Force::Zvbc if caps.has(platform::caps::riscv::ZVBC) => {
@@ -580,7 +586,7 @@ pub(crate) fn crc32c_selected_kernel_name(len: usize) -> &'static str {
   #[cfg(target_arch = "x86_64")]
   {
     use kernels::x86_64::*;
-    let streams = x86_streams_for_len(len, cfg.tunables.streams);
+    let streams = x86_streams_for_len_crc32c(len, cfg.tunables.streams_crc32c);
 
     match cfg.effective_force {
       Crc32Force::Vpclmul
@@ -714,7 +720,7 @@ pub(crate) fn crc32c_selected_kernel_name(len: usize) -> &'static str {
   #[cfg(target_arch = "powerpc64")]
   {
     use kernels::powerpc64::*;
-    let streams = powerpc64_streams_for_len(len, cfg.tunables.streams);
+    let streams = powerpc64_streams_for_len(len, cfg.tunables.streams_crc32c);
 
     match cfg.effective_force {
       Crc32Force::Vpmsum if caps.has(platform::caps::powerpc64::VPMSUM_READY) => {
@@ -732,7 +738,7 @@ pub(crate) fn crc32c_selected_kernel_name(len: usize) -> &'static str {
   #[cfg(target_arch = "s390x")]
   {
     use kernels::s390x::*;
-    let streams = s390x_streams_for_len(len, cfg.tunables.streams);
+    let streams = s390x_streams_for_len(len, cfg.tunables.streams_crc32c);
 
     match cfg.effective_force {
       Crc32Force::Vgfm if caps.has(platform::caps::s390x::VECTOR) => {
@@ -750,7 +756,7 @@ pub(crate) fn crc32c_selected_kernel_name(len: usize) -> &'static str {
   #[cfg(target_arch = "riscv64")]
   {
     use kernels::riscv64::*;
-    let streams = riscv64_streams_for_len(len, cfg.tunables.streams);
+    let streams = riscv64_streams_for_len(len, cfg.tunables.streams_crc32c);
 
     match cfg.effective_force {
       Crc32Force::Zvbc if caps.has(platform::caps::riscv::ZVBC) => {
@@ -792,7 +798,7 @@ fn crc32c_x86_64_auto(crc: u32, data: &[u8]) -> u32 {
   }
 
   use kernels::x86_64::*;
-  let streams = x86_streams_for_len(len, cfg.tunables.streams);
+  let streams = x86_streams_for_len_crc32c(len, cfg.tunables.streams_crc32c);
 
   match cfg.effective_force {
     Crc32Force::Hwcrc => {
@@ -847,7 +853,7 @@ fn crc32c_x86_64_auto(crc: u32, data: &[u8]) -> u32 {
       hwcrc_to_fusion: cfg.tunables.hwcrc_to_fusion,
       fusion_to_avx512: cfg.tunables.fusion_to_avx512,
       fusion_to_vpclmul: cfg.tunables.fusion_to_vpclmul,
-      streams: cfg.tunables.streams,
+      streams: cfg.tunables.streams_crc32c,
       has_crc32c: caps.has(platform::caps::x86::CRC32C_READY),
       has_pclmul: caps.has(platform::caps::x86::PCLMUL_READY),
       has_vpclmul: caps.has(platform::caps::x86::VPCLMUL_READY),
@@ -862,7 +868,7 @@ fn crc32c_x86_64_auto(crc: u32, data: &[u8]) -> u32 {
   }
 
   use kernels::x86_64::*;
-  let streams = x86_streams_for_len(len, params.streams);
+  let streams = x86_streams_for_len_crc32c(len, params.streams);
 
   if len >= params.hwcrc_to_fusion {
     if params.has_vpclmul && len >= params.fusion_to_vpclmul {
@@ -890,7 +896,7 @@ fn crc32_x86_64_auto(crc: u32, data: &[u8]) -> u32 {
   }
 
   use kernels::x86_64::*;
-  let streams = x86_streams_for_len(len, cfg.tunables.streams);
+  let streams = x86_streams_for_len(len, cfg.tunables.streams_crc32);
 
   match cfg.effective_force {
     Crc32Force::Vpclmul => {
@@ -962,7 +968,7 @@ fn crc32_x86_64_auto(crc: u32, data: &[u8]) -> u32 {
     Crc32X86Auto {
       hwcrc_to_fusion: cfg.tunables.hwcrc_to_fusion,
       fusion_to_vpclmul: cfg.tunables.fusion_to_vpclmul,
-      streams: cfg.tunables.streams,
+      streams: cfg.tunables.streams_crc32,
       has_pclmul: caps.has(platform::caps::x86::PCLMUL_READY),
       has_vpclmul: caps.has(platform::caps::x86::VPCLMUL_READY),
     }
@@ -1524,7 +1530,7 @@ fn crc32c_x86_64_hwcrc_forced(crc: u32, data: &[u8]) -> u32 {
   use kernels::x86_64::*;
   let len = data.len();
   let streams_cfg = CRC32C_X86_STREAMS.get().copied().unwrap_or(1);
-  let streams = x86_streams_for_len(len, streams_cfg);
+  let streams = x86_streams_for_len_crc32c(len, streams_cfg);
   kernels::dispatch_streams(&CRC32C_HWCRC, streams, crc, data)
 }
 
@@ -1533,7 +1539,7 @@ fn crc32c_x86_64_pclmul_forced(crc: u32, data: &[u8]) -> u32 {
   use kernels::x86_64::*;
   let len = data.len();
   let streams_cfg = CRC32C_X86_STREAMS.get().copied().unwrap_or(1);
-  let streams = x86_streams_for_len(len, streams_cfg);
+  let streams = x86_streams_for_len_crc32c(len, streams_cfg);
   kernels::dispatch_streams(&CRC32C_FUSION_SSE, streams, crc, data)
 }
 
@@ -1542,7 +1548,7 @@ fn crc32c_x86_64_vpclmul_forced(crc: u32, data: &[u8]) -> u32 {
   use kernels::x86_64::*;
   let len = data.len();
   let streams_cfg = CRC32C_X86_STREAMS.get().copied().unwrap_or(1);
-  let streams = x86_streams_for_len(len, streams_cfg);
+  let streams = x86_streams_for_len_crc32c(len, streams_cfg);
   kernels::dispatch_streams(&CRC32C_FUSION_VPCLMUL, streams, crc, data)
 }
 
@@ -1566,7 +1572,7 @@ fn crc32_powerpc64_auto(crc: u32, data: &[u8]) -> u32 {
   match cfg.effective_force {
     Crc32Force::Portable => return crc32_portable(crc, data),
     Crc32Force::Vpmsum if caps.has(platform::caps::powerpc64::VPMSUM_READY) => {
-      let streams = powerpc64_streams_for_len(len, cfg.tunables.streams);
+      let streams = powerpc64_streams_for_len(len, cfg.tunables.streams_crc32);
       return kernels::dispatch_streams(&CRC32_VPMSUM, streams, crc, data);
     }
     Crc32Force::Vpmsum => return crc32_portable(crc, data),
@@ -1579,7 +1585,7 @@ fn crc32_powerpc64_auto(crc: u32, data: &[u8]) -> u32 {
   }
 
   if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
-    let streams = powerpc64_streams_for_len(len, cfg.tunables.streams);
+    let streams = powerpc64_streams_for_len(len, cfg.tunables.streams_crc32);
     return kernels::dispatch_streams(&CRC32_VPMSUM, streams, crc, data);
   }
 
@@ -1602,7 +1608,7 @@ fn crc32c_powerpc64_auto(crc: u32, data: &[u8]) -> u32 {
   match cfg.effective_force {
     Crc32Force::Portable => return crc32c_portable(crc, data),
     Crc32Force::Vpmsum if caps.has(platform::caps::powerpc64::VPMSUM_READY) => {
-      let streams = powerpc64_streams_for_len(len, cfg.tunables.streams);
+      let streams = powerpc64_streams_for_len(len, cfg.tunables.streams_crc32c);
       return kernels::dispatch_streams(&CRC32C_VPMSUM, streams, crc, data);
     }
     Crc32Force::Vpmsum => return crc32c_portable(crc, data),
@@ -1615,7 +1621,7 @@ fn crc32c_powerpc64_auto(crc: u32, data: &[u8]) -> u32 {
   }
 
   if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
-    let streams = powerpc64_streams_for_len(len, cfg.tunables.streams);
+    let streams = powerpc64_streams_for_len(len, cfg.tunables.streams_crc32c);
     return kernels::dispatch_streams(&CRC32C_VPMSUM, streams, crc, data);
   }
 
@@ -1638,7 +1644,7 @@ fn crc32_s390x_auto(crc: u32, data: &[u8]) -> u32 {
   match cfg.effective_force {
     Crc32Force::Portable => return crc32_portable(crc, data),
     Crc32Force::Vgfm if caps.has(platform::caps::s390x::VECTOR) => {
-      let streams = s390x_streams_for_len(len, cfg.tunables.streams);
+      let streams = s390x_streams_for_len(len, cfg.tunables.streams_crc32);
       return kernels::dispatch_streams(&CRC32_VGFM, streams, crc, data);
     }
     Crc32Force::Vgfm => return crc32_portable(crc, data),
@@ -1651,7 +1657,7 @@ fn crc32_s390x_auto(crc: u32, data: &[u8]) -> u32 {
   }
 
   if caps.has(platform::caps::s390x::VECTOR) {
-    let streams = s390x_streams_for_len(len, cfg.tunables.streams);
+    let streams = s390x_streams_for_len(len, cfg.tunables.streams_crc32);
     return kernels::dispatch_streams(&CRC32_VGFM, streams, crc, data);
   }
 
@@ -1674,7 +1680,7 @@ fn crc32c_s390x_auto(crc: u32, data: &[u8]) -> u32 {
   match cfg.effective_force {
     Crc32Force::Portable => return crc32c_portable(crc, data),
     Crc32Force::Vgfm if caps.has(platform::caps::s390x::VECTOR) => {
-      let streams = s390x_streams_for_len(len, cfg.tunables.streams);
+      let streams = s390x_streams_for_len(len, cfg.tunables.streams_crc32c);
       return kernels::dispatch_streams(&CRC32C_VGFM, streams, crc, data);
     }
     Crc32Force::Vgfm => return crc32c_portable(crc, data),
@@ -1687,7 +1693,7 @@ fn crc32c_s390x_auto(crc: u32, data: &[u8]) -> u32 {
   }
 
   if caps.has(platform::caps::s390x::VECTOR) {
-    let streams = s390x_streams_for_len(len, cfg.tunables.streams);
+    let streams = s390x_streams_for_len(len, cfg.tunables.streams_crc32c);
     return kernels::dispatch_streams(&CRC32C_VGFM, streams, crc, data);
   }
 
@@ -1705,7 +1711,7 @@ fn crc32_riscv64_auto(crc: u32, data: &[u8]) -> u32 {
 
   let cfg = config::get();
   let caps = platform::caps();
-  let streams = riscv64_streams_for_len(len, cfg.tunables.streams);
+  let streams = riscv64_streams_for_len(len, cfg.tunables.streams_crc32);
 
   // Handle forced backend selection
   match cfg.effective_force {
@@ -1747,7 +1753,7 @@ fn crc32c_riscv64_auto(crc: u32, data: &[u8]) -> u32 {
 
   let cfg = config::get();
   let caps = platform::caps();
-  let streams = riscv64_streams_for_len(len, cfg.tunables.streams);
+  let streams = riscv64_streams_for_len(len, cfg.tunables.streams_crc32c);
 
   // Handle forced backend selection
   match cfg.effective_force {
@@ -1793,7 +1799,7 @@ fn select_crc32() -> Selected<Crc32Fn> {
 
   #[cfg(feature = "std")]
   {
-    let _ = CRC32_X86_STREAMS.get_or_init(|| cfg.tunables.streams);
+    let _ = CRC32_X86_STREAMS.get_or_init(|| cfg.tunables.streams_crc32);
     match cfg.effective_force {
       Crc32Force::Auto => {
         if !caps.has(platform::caps::x86::PCLMUL_READY) {
@@ -1802,7 +1808,7 @@ fn select_crc32() -> Selected<Crc32Fn> {
           let _ = CRC32_X86_AUTO.get_or_init(|| Crc32X86Auto {
             hwcrc_to_fusion: cfg.tunables.hwcrc_to_fusion,
             fusion_to_vpclmul: cfg.tunables.fusion_to_vpclmul,
-            streams: cfg.tunables.streams,
+            streams: cfg.tunables.streams_crc32,
             has_pclmul: caps.has(platform::caps::x86::PCLMUL_READY),
             has_vpclmul: caps.has(platform::caps::x86::VPCLMUL_READY),
           });
@@ -1843,7 +1849,7 @@ fn select_crc32c() -> Selected<Crc32Fn> {
       return Selected::new(kernels::PORTABLE, crc32c_portable);
     }
 
-    let _ = CRC32C_X86_STREAMS.get_or_init(|| cfg.tunables.streams);
+    let _ = CRC32C_X86_STREAMS.get_or_init(|| cfg.tunables.streams_crc32c);
 
     match cfg.effective_force {
       Crc32Force::Auto => {
@@ -1852,7 +1858,7 @@ fn select_crc32c() -> Selected<Crc32Fn> {
           hwcrc_to_fusion: cfg.tunables.hwcrc_to_fusion,
           fusion_to_avx512: cfg.tunables.fusion_to_avx512,
           fusion_to_vpclmul: cfg.tunables.fusion_to_vpclmul,
-          streams: cfg.tunables.streams,
+          streams: cfg.tunables.streams_crc32c,
           has_crc32c: caps.has(platform::caps::x86::CRC32C_READY),
           has_pclmul: caps.has(platform::caps::x86::PCLMUL_READY),
           has_vpclmul: caps.has(platform::caps::x86::VPCLMUL_READY),
@@ -1902,7 +1908,7 @@ fn select_crc32() -> Selected<Crc32Fn> {
       return Selected::new(kernels::PORTABLE, crc32_portable);
     }
 
-    let _ = CRC32_AARCH64_STREAMS.get_or_init(|| cfg.tunables.streams);
+    let _ = CRC32_AARCH64_STREAMS.get_or_init(|| cfg.tunables.streams_crc32);
 
     match cfg.effective_force {
       Crc32Force::Auto => Selected::new("aarch64/auto", crc32_aarch64_auto),
@@ -1946,7 +1952,7 @@ fn select_crc32c() -> Selected<Crc32Fn> {
       return Selected::new(kernels::PORTABLE, crc32c_portable);
     }
 
-    let _ = CRC32C_AARCH64_STREAMS.get_or_init(|| cfg.tunables.streams);
+    let _ = CRC32C_AARCH64_STREAMS.get_or_init(|| cfg.tunables.streams_crc32c);
 
     match cfg.effective_force {
       Crc32Force::Auto => Selected::new("aarch64/auto", crc32c_aarch64_auto),
@@ -2535,13 +2541,13 @@ mod tests {
 
     #[cfg(target_arch = "x86_64")]
     {
-      let streams_env = std::env::var("RSCRYPTO_CRC32_STREAMS").ok();
+      let streams_env = std::env::var("RSCRYPTO_CRC32_STREAMS_CRC32").ok();
       let caps = platform::caps();
       if force.eq_ignore_ascii_case("pclmul") || force.eq_ignore_ascii_case("clmul") {
         assert_eq!(cfg.requested_force, Crc32Force::Pclmul);
         if cfg.effective_force == Crc32Force::Pclmul && caps.has(platform::caps::x86::PCLMUL_READY) {
           if streams_env.is_some() {
-            let expected = match x86_streams_for_len(len, cfg.tunables.streams) {
+            let expected = match x86_streams_for_len(len, cfg.tunables.streams_crc32) {
               8 => "x86_64/pclmul-8way",
               7 => "x86_64/pclmul-7way",
               4 => "x86_64/pclmul-4way",
@@ -2558,7 +2564,7 @@ mod tests {
         assert_eq!(cfg.requested_force, Crc32Force::Vpclmul);
         if cfg.effective_force == Crc32Force::Vpclmul && caps.has(platform::caps::x86::VPCLMUL_READY) {
           if streams_env.is_some() {
-            let expected = match x86_streams_for_len(len, cfg.tunables.streams) {
+            let expected = match x86_streams_for_len(len, cfg.tunables.streams_crc32) {
               8 => "x86_64/vpclmul-8way",
               7 => "x86_64/vpclmul-7way",
               4 => "x86_64/vpclmul-4way",
@@ -2617,7 +2623,7 @@ mod tests {
 
     #[cfg(target_arch = "x86_64")]
     {
-      let streams_env = std::env::var("RSCRYPTO_CRC32_STREAMS").ok();
+      let streams_env = std::env::var("RSCRYPTO_CRC32_STREAMS_CRC32C").ok();
       let caps = platform::caps();
       if force.eq_ignore_ascii_case("hwcrc") || force.eq_ignore_ascii_case("crc") {
         assert_eq!(cfg.requested_force, Crc32Force::Hwcrc);
@@ -2632,7 +2638,7 @@ mod tests {
           && caps.has(platform::caps::x86::PCLMUL_READY)
         {
           if streams_env.is_some() {
-            let expected = match x86_streams_for_len(len, cfg.tunables.streams) {
+            let expected = match x86_streams_for_len_crc32c(len, cfg.tunables.streams_crc32c) {
               8 => "x86_64/fusion-sse-v4s3x3-8way",
               7 => "x86_64/fusion-sse-v4s3x3-7way",
               4 => "x86_64/fusion-sse-v4s3x3-4way",
@@ -2652,7 +2658,7 @@ mod tests {
           && caps.has(platform::caps::x86::VPCLMUL_READY)
         {
           if streams_env.is_some() {
-            let expected = match x86_streams_for_len(len, cfg.tunables.streams) {
+            let expected = match x86_streams_for_len_crc32c(len, cfg.tunables.streams_crc32c) {
               8 => "x86_64/fusion-vpclmul-v3x2-8way",
               7 => "x86_64/fusion-vpclmul-v3x2-7way",
               4 => "x86_64/fusion-vpclmul-v3x2-4way",
