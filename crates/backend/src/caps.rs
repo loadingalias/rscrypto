@@ -40,3 +40,13 @@ pub mod riscv {
 pub mod wasm {
   pub use platform::caps::wasm::*;
 }
+
+// Re-export s390x feature constants
+pub mod s390x {
+  pub use platform::caps::s390x::*;
+}
+
+// Re-export powerpc64 feature constants
+pub mod powerpc64 {
+  pub use platform::caps::powerpc64::*;
+}

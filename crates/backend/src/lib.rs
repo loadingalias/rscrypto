@@ -47,8 +47,17 @@
 #[cfg(feature = "std")]
 extern crate std;
 
+pub mod cache;
 pub mod caps;
 pub mod dispatch;
+pub mod family;
+pub mod policy;
+pub mod tier;
 
+// Re-export core dispatch types for convenience.
+pub use cache::PolicyCache;
+pub use family::KernelFamily;
 // Re-export platform types for convenience.
 pub use platform;
+pub use policy::{ForceMode, SelectionPolicy};
+pub use tier::KernelTier;

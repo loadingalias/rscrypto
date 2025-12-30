@@ -95,51 +95,6 @@ pub const fn stream_to_index(streams: u8) -> usize {
 // Name Selection
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Select kernel name from a static array based on stream count.
-///
-/// # Arguments
-///
-/// * `names` - Static array of kernel names ordered by stream count
-/// * `small` - Optional small-buffer kernel name (used when `len < fold_bytes`)
-/// * `streams` - Selected stream count (1, 2, 3, 4, 7, or 8)
-/// * `len` - Input buffer length
-/// * `fold_bytes` - Minimum bytes for full folding (e.g., 128 for CRC-64)
-///
-/// # Returns
-///
-/// The kernel name that would be selected for the given parameters.
-#[cfg(any(
-  target_arch = "x86_64",
-  target_arch = "aarch64",
-  target_arch = "powerpc64",
-  target_arch = "s390x",
-  target_arch = "riscv64"
-))]
-#[inline]
-#[must_use]
-pub fn select_name(
-  names: &[&'static str],
-  small: Option<&'static str>,
-  streams: u8,
-  len: usize,
-  fold_bytes: usize,
-) -> &'static str {
-  // Use small kernel for buffers below fold threshold
-  if let Some(s) = small
-    && len < fold_bytes
-  {
-    return s;
-  }
-
-  // Select from the names array based on stream count
-  // Fallback to first element (1-way kernel) if index is out of bounds
-  names
-    .get(stream_to_index(streams))
-    .or_else(|| names.first())
-    .copied()
-    .unwrap_or(PORTABLE_SLICE16)
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Stream Selection Helpers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -218,6 +173,7 @@ macro_rules! define_crc_dispatch {
     ///
     /// Kernels array: `[1-way, 2-way, 3/4-way, 7-way, 8-way]`
     #[inline]
+    #[allow(dead_code)] // Not all CRC widths/arches use stream dispatch directly.
     #[allow(clippy::indexing_slicing)] // stream_to_index returns 0-4, array is [_; 5]
     pub fn dispatch_streams(kernels: &[$fn_type; 5], streams: u8, crc: $state_type, data: &[u8]) -> $state_type {
       kernels[$crate::__internal::stream_to_index(streams)](crc, data)
@@ -261,48 +217,6 @@ mod tests {
     assert_eq!(stream_to_index(4), 2);
     assert_eq!(stream_to_index(7), 3);
     assert_eq!(stream_to_index(8), 4);
-  }
-
-  #[test]
-  fn test_select_name_basic() {
-    let names = &[
-      "kernel/1way",
-      "kernel/2way",
-      "kernel/4way",
-      "kernel/7way",
-      "kernel/8way",
-    ];
-
-    assert_eq!(select_name(names, None, 1, 256, 128), "kernel/1way");
-    assert_eq!(select_name(names, None, 2, 256, 128), "kernel/2way");
-    assert_eq!(select_name(names, None, 4, 256, 128), "kernel/4way");
-    assert_eq!(select_name(names, None, 7, 256, 128), "kernel/7way");
-    assert_eq!(select_name(names, None, 8, 256, 128), "kernel/8way");
-  }
-
-  #[test]
-  fn test_select_name_with_small() {
-    let names = &["kernel/1way", "kernel/2way"];
-    let small = "kernel/small";
-
-    // Below fold threshold: use small kernel
-    assert_eq!(select_name(names, Some(small), 1, 64, 128), "kernel/small");
-
-    // At or above fold threshold: use stream kernel
-    assert_eq!(select_name(names, Some(small), 1, 128, 128), "kernel/1way");
-    assert_eq!(select_name(names, Some(small), 2, 256, 128), "kernel/2way");
-  }
-
-  #[test]
-  fn test_select_name_fallback() {
-    let names = &["kernel/1way"];
-
-    // Out of bounds stream count falls back to first element
-    assert_eq!(select_name(names, None, 7, 256, 128), "kernel/1way");
-
-    // Empty names array falls back to portable
-    let empty: &[&str] = &[];
-    assert_eq!(select_name(empty, None, 1, 256, 128), PORTABLE_SLICE16);
   }
 
   #[test]

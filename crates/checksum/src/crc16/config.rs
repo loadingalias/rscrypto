@@ -37,6 +37,45 @@ impl Crc16Force {
       Self::Slice8 => "slice8",
     }
   }
+
+  /// Map to `KernelFamily` for policy-based dispatch.
+  ///
+  /// Returns `None` for `Auto` (let policy decide) and portable tiers.
+  #[must_use]
+  pub const fn to_family(self) -> Option<backend::KernelFamily> {
+    match self {
+      Self::Auto | Self::Portable | Self::Slice4 | Self::Slice8 => None,
+      Self::Reference => Some(backend::KernelFamily::Reference),
+      Self::Clmul => {
+        #[cfg(target_arch = "x86_64")]
+        {
+          Some(backend::KernelFamily::X86Pclmul)
+        }
+        #[cfg(target_arch = "aarch64")]
+        {
+          Some(backend::KernelFamily::ArmPmull)
+        }
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        {
+          None
+        }
+      }
+    }
+  }
+
+  /// Create from `KernelFamily`.
+  #[must_use]
+  pub const fn from_family(family: backend::KernelFamily) -> Self {
+    match family {
+      backend::KernelFamily::Reference => Self::Reference,
+      backend::KernelFamily::Portable => Self::Portable,
+      backend::KernelFamily::X86Pclmul | backend::KernelFamily::X86Vpclmul => Self::Clmul,
+      backend::KernelFamily::ArmPmull | backend::KernelFamily::ArmPmullEor3 | backend::KernelFamily::ArmSve2Pmull => {
+        Self::Clmul
+      }
+      _ => Self::Auto,
+    }
+  }
 }
 
 /// CRC-16 selection tunables.

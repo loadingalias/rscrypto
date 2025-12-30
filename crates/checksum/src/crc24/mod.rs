@@ -22,10 +22,11 @@
 
 pub(crate) mod config;
 mod kernels;
+pub(crate) mod policy;
 pub(crate) mod portable;
 mod tuned_defaults;
 
-use backend::dispatch::Selected;
+use backend::{PolicyCache, dispatch::Selected};
 #[allow(unused_imports)]
 pub use config::{Crc24Config, Crc24Force, Crc24Tunables};
 // Re-export traits for test modules (`use super::*`).
@@ -62,61 +63,51 @@ fn crc24_openpgp_reference(crc: u32, data: &[u8]) -> u32 {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Portable Kernel Wrapper (auto selection)
+// Cached Policy and Kernels (works on both std and no_std)
+// ─────────────────────────────────────────────────────────────────────────────
+
+static CRC24_OPENPGP_CACHED: PolicyCache<policy::Crc24Policy, policy::Crc24Kernels> = PolicyCache::new();
+
+fn init_openpgp_policy() -> (policy::Crc24Policy, policy::Crc24Kernels) {
+  let cfg = config::get();
+  let caps = platform::caps();
+  let tune = platform::tune();
+  let pol = policy::Crc24Policy::from_config(&cfg, caps, &tune);
+  let kernels = policy::build_openpgp_kernels(
+    crc24_openpgp_reference,
+    portable::crc24_openpgp_slice4,
+    portable::crc24_openpgp_slice8,
+  );
+  (pol, kernels)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Auto Dispatch Function (policy-based)
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[inline]
 fn crc24_openpgp_portable_auto(crc: u32, data: &[u8]) -> u32 {
-  if data.len() < crc24_slice4_to_slice8() {
-    portable::crc24_openpgp_slice4(crc, data)
-  } else {
-    portable::crc24_openpgp_slice8(crc, data)
-  }
-}
-
-#[cfg(feature = "std")]
-use std::sync::OnceLock;
-
-#[cfg(feature = "std")]
-static CRC24_SLICE4_TO_SLICE8: OnceLock<usize> = OnceLock::new();
-
-#[inline]
-#[must_use]
-fn crc24_slice4_to_slice8() -> usize {
-  #[cfg(feature = "std")]
-  {
-    *CRC24_SLICE4_TO_SLICE8.get_or_init(|| config::get().tunables.slice4_to_slice8)
-  }
-  #[cfg(not(feature = "std"))]
-  {
-    config::get().tunables.slice4_to_slice8
-  }
+  let (pol, kernels) = CRC24_OPENPGP_CACHED.get_or_init(init_openpgp_policy);
+  policy::policy_dispatch(&pol, &kernels, crc, data)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Introspection (portable-only)
+// Introspection
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[inline]
 #[must_use]
 pub(crate) fn crc24_selected_kernel_name(len: usize) -> &'static str {
-  let cfg = config::get();
-  match cfg.effective_force {
-    config::Crc24Force::Reference => kernels::REFERENCE,
-    config::Crc24Force::Slice4 => kernels::PORTABLE_SLICE4,
-    config::Crc24Force::Slice8 => kernels::PORTABLE_SLICE8,
-    _ => kernels::portable_name_for_len(len, cfg.tunables.slice4_to_slice8),
-  }
+  let (pol, _) = CRC24_OPENPGP_CACHED.get_or_init(init_openpgp_policy);
+  pol.kernel_name(len)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Dispatcher Selection (portable-only)
+// Dispatcher Selection
 // ─────────────────────────────────────────────────────────────────────────────
 
 fn select_crc24_openpgp() -> Selected<Crc24Fn> {
   let cfg = config::get();
-  #[cfg(feature = "std")]
-  let _ = CRC24_SLICE4_TO_SLICE8.get_or_init(|| cfg.tunables.slice4_to_slice8);
 
   match cfg.effective_force {
     config::Crc24Force::Reference => Selected::new(kernels::REFERENCE, crc24_openpgp_reference),

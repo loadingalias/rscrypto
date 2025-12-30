@@ -72,6 +72,63 @@ impl Crc32Force {
       Self::Zvbc => "zvbc",
     }
   }
+
+  /// Map to kernel family (None means Auto selection).
+  #[must_use]
+  pub const fn to_family(self) -> Option<backend::KernelFamily> {
+    use backend::KernelFamily;
+    match self {
+      Self::Auto => None,
+      Self::Reference => Some(KernelFamily::Reference),
+      Self::Portable => Some(KernelFamily::Portable),
+      Self::Hwcrc => {
+        // Architecture-specific: x86_64 uses X86Crc32, aarch64 uses ArmCrc32
+        #[cfg(target_arch = "x86_64")]
+        {
+          Some(KernelFamily::X86Crc32)
+        }
+        #[cfg(target_arch = "aarch64")]
+        {
+          Some(KernelFamily::ArmCrc32)
+        }
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        {
+          Some(KernelFamily::Portable)
+        }
+      }
+      Self::Pclmul => Some(KernelFamily::X86Pclmul),
+      Self::Vpclmul => Some(KernelFamily::X86Vpclmul),
+      Self::Pmull => Some(KernelFamily::ArmPmull),
+      Self::PmullEor3 => Some(KernelFamily::ArmPmullEor3),
+      Self::Sve2Pmull => Some(KernelFamily::ArmSve2Pmull),
+      Self::Vpmsum => Some(KernelFamily::PowerVpmsum),
+      Self::Vgfm => Some(KernelFamily::S390xVgfm),
+      Self::Zbc => Some(KernelFamily::RiscvZbc),
+      Self::Zvbc => Some(KernelFamily::RiscvZvbc),
+    }
+  }
+
+  /// Map from kernel family to force mode.
+  #[must_use]
+  pub const fn from_family(family: backend::KernelFamily) -> Self {
+    use backend::KernelFamily;
+    match family {
+      KernelFamily::Reference => Self::Reference,
+      KernelFamily::Portable => Self::Portable,
+      KernelFamily::X86Crc32 | KernelFamily::ArmCrc32 => Self::Hwcrc,
+      KernelFamily::X86Pclmul => Self::Pclmul,
+      KernelFamily::X86Vpclmul => Self::Vpclmul,
+      KernelFamily::ArmPmull => Self::Pmull,
+      KernelFamily::ArmPmullEor3 => Self::PmullEor3,
+      KernelFamily::ArmSve2Pmull => Self::Sve2Pmull,
+      KernelFamily::PowerVpmsum => Self::Vpmsum,
+      KernelFamily::S390xVgfm => Self::Vgfm,
+      KernelFamily::RiscvZbc => Self::Zbc,
+      KernelFamily::RiscvZvbc => Self::Zvbc,
+      // Non-exhaustive fallback
+      _ => Self::Portable,
+    }
+  }
 }
 
 /// CRC-32 selection tunables (thresholds + parallelism).

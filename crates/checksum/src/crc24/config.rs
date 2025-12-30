@@ -34,6 +34,29 @@ impl Crc24Force {
       Self::Slice8 => "slice8",
     }
   }
+
+  /// Map to `KernelFamily` for policy-based dispatch.
+  ///
+  /// Returns `None` for `Auto` (let policy decide) and portable tiers.
+  /// CRC-24 is currently portable-only, so only Reference maps to a family.
+  #[must_use]
+  pub const fn to_family(self) -> Option<backend::KernelFamily> {
+    match self {
+      Self::Auto | Self::Portable | Self::Slice4 | Self::Slice8 => None,
+      Self::Reference => Some(backend::KernelFamily::Reference),
+    }
+  }
+
+  /// Create from `KernelFamily`.
+  #[must_use]
+  pub const fn from_family(family: backend::KernelFamily) -> Self {
+    match family {
+      backend::KernelFamily::Reference => Self::Reference,
+      backend::KernelFamily::Portable => Self::Portable,
+      // CRC-24 is portable-only; map all SIMD families to Auto (which falls back to portable)
+      _ => Self::Auto,
+    }
+  }
 }
 
 /// CRC-24 selection tunables.

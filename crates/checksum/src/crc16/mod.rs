@@ -20,6 +20,7 @@
 
 pub(crate) mod config;
 mod kernels;
+pub(crate) mod policy;
 pub(crate) mod portable;
 mod tuned_defaults;
 
@@ -80,7 +81,8 @@ fn crc16_ibm_reference(crc: u16, data: &[u8]) -> u16 {
 
 #[inline]
 fn crc16_ccitt_portable_auto(crc: u16, data: &[u8]) -> u16 {
-  if data.len() < crc16_slice4_to_slice8() {
+  let threshold = config::get().tunables.slice4_to_slice8;
+  if data.len() < threshold {
     portable::crc16_ccitt_slice4(crc, data)
   } else {
     portable::crc16_ccitt_slice8(crc, data)
@@ -89,189 +91,137 @@ fn crc16_ccitt_portable_auto(crc: u16, data: &[u8]) -> u16 {
 
 #[inline]
 fn crc16_ibm_portable_auto(crc: u16, data: &[u8]) -> u16 {
-  if data.len() < crc16_slice4_to_slice8() {
+  let threshold = config::get().tunables.slice4_to_slice8;
+  if data.len() < threshold {
     portable::crc16_ibm_slice4(crc, data)
   } else {
     portable::crc16_ibm_slice8(crc, data)
   }
 }
 
-#[cfg(feature = "std")]
-use std::sync::OnceLock;
+// ─────────────────────────────────────────────────────────────────────────────
+// Cached Policy and Kernels (works on both std and no_std)
+// ─────────────────────────────────────────────────────────────────────────────
 
-#[cfg(feature = "std")]
-static CRC16_SLICE4_TO_SLICE8: OnceLock<usize> = OnceLock::new();
-#[cfg(feature = "std")]
-static CRC16_PORTABLE_TO_CLMUL: OnceLock<usize> = OnceLock::new();
-#[cfg(feature = "std")]
-static CRC16_HAS_CLMUL: OnceLock<bool> = OnceLock::new();
-#[cfg(all(feature = "std", target_arch = "x86_64"))]
-static CRC16_HAS_VPCLMUL: OnceLock<bool> = OnceLock::new();
-#[cfg(all(feature = "std", target_arch = "x86_64"))]
-static CRC16_CLMUL_TO_VPCLMUL: OnceLock<usize> = OnceLock::new();
-
-#[inline]
-#[must_use]
-fn crc16_slice4_to_slice8() -> usize {
-  #[cfg(feature = "std")]
-  {
-    *CRC16_SLICE4_TO_SLICE8.get_or_init(|| config::get().tunables.slice4_to_slice8)
-  }
-  #[cfg(not(feature = "std"))]
-  {
-    config::get().tunables.slice4_to_slice8
-  }
-}
-
-#[inline]
-#[must_use]
-fn crc16_portable_to_clmul() -> usize {
-  #[cfg(feature = "std")]
-  {
-    *CRC16_PORTABLE_TO_CLMUL.get_or_init(|| config::get().tunables.portable_to_clmul)
-  }
-  #[cfg(not(feature = "std"))]
-  {
-    config::get().tunables.portable_to_clmul
-  }
-}
-
-#[inline]
-#[must_use]
-fn crc16_has_clmul() -> bool {
-  #[cfg(feature = "std")]
-  {
-    *CRC16_HAS_CLMUL.get_or_init(|| {
-      let caps = platform::caps();
-      #[cfg(target_arch = "x86_64")]
-      {
-        caps.has(platform::caps::x86::PCLMUL_READY)
-      }
-      #[cfg(target_arch = "aarch64")]
-      {
-        caps.has(platform::caps::aarch64::PMULL_READY)
-      }
-      #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-      {
-        let _ = caps;
-        false
-      }
-    })
-  }
-  #[cfg(not(feature = "std"))]
-  {
-    let caps = platform::caps();
-    #[cfg(target_arch = "x86_64")]
-    {
-      caps.has(platform::caps::x86::PCLMUL_READY)
-    }
-    #[cfg(target_arch = "aarch64")]
-    {
-      caps.has(platform::caps::aarch64::PMULL_READY)
-    }
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-    {
-      let _ = caps;
-      false
-    }
-  }
-}
+use backend::PolicyCache;
 
 #[cfg(target_arch = "x86_64")]
-#[inline]
-#[must_use]
-fn crc16_clmul_to_vpclmul_uncached() -> usize {
+static CRC16_CCITT_CACHED: PolicyCache<policy::Crc16Policy, policy::Crc16Kernels> = PolicyCache::new();
+#[cfg(target_arch = "x86_64")]
+static CRC16_IBM_CACHED: PolicyCache<policy::Crc16Policy, policy::Crc16Kernels> = PolicyCache::new();
+
+#[cfg(target_arch = "aarch64")]
+static CRC16_CCITT_CACHED: PolicyCache<policy::Crc16Policy, policy::Crc16Kernels> = PolicyCache::new();
+#[cfg(target_arch = "aarch64")]
+static CRC16_IBM_CACHED: PolicyCache<policy::Crc16Policy, policy::Crc16Kernels> = PolicyCache::new();
+
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+static CRC16_CCITT_CACHED: PolicyCache<policy::Crc16Policy, policy::Crc16Kernels> = PolicyCache::new();
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+static CRC16_IBM_CACHED: PolicyCache<policy::Crc16Policy, policy::Crc16Kernels> = PolicyCache::new();
+
+#[cfg(target_arch = "x86_64")]
+fn init_ccitt_policy() -> (policy::Crc16Policy, policy::Crc16Kernels) {
+  let cfg = config::get();
+  let caps = platform::caps();
   let tune = platform::tune();
-  let simd_bytes = (tune.effective_simd_width as usize).strict_div(8).max(1);
-  simd_bytes.strict_mul(4).max(tune.pclmul_threshold).max(1)
+  let pol = policy::Crc16Policy::from_config(&cfg, caps, &tune, policy::Crc16Variant::Ccitt);
+  let kernels = policy::build_ccitt_kernels_x86(
+    &pol,
+    crc16_ccitt_reference,
+    portable::crc16_ccitt_slice4,
+    portable::crc16_ccitt_slice8,
+  );
+  (pol, kernels)
 }
 
 #[cfg(target_arch = "x86_64")]
-#[inline]
-#[must_use]
-fn crc16_clmul_to_vpclmul() -> usize {
-  #[cfg(feature = "std")]
-  {
-    *CRC16_CLMUL_TO_VPCLMUL.get_or_init(crc16_clmul_to_vpclmul_uncached)
-  }
-  #[cfg(not(feature = "std"))]
-  {
-    crc16_clmul_to_vpclmul_uncached()
-  }
+fn init_ibm_policy() -> (policy::Crc16Policy, policy::Crc16Kernels) {
+  let cfg = config::get();
+  let caps = platform::caps();
+  let tune = platform::tune();
+  let pol = policy::Crc16Policy::from_config(&cfg, caps, &tune, policy::Crc16Variant::Ibm);
+  let kernels = policy::build_ibm_kernels_x86(
+    &pol,
+    crc16_ibm_reference,
+    portable::crc16_ibm_slice4,
+    portable::crc16_ibm_slice8,
+  );
+  (pol, kernels)
 }
 
-#[cfg(target_arch = "x86_64")]
-#[inline]
-#[must_use]
-fn crc16_has_vpclmul() -> bool {
-  #[cfg(feature = "std")]
-  {
-    *CRC16_HAS_VPCLMUL.get_or_init(|| {
-      let caps = platform::caps();
-      let tune = platform::tune();
-      caps.has(platform::caps::x86::VPCLMUL_READY) && tune.fast_wide_ops && tune.effective_simd_width >= 512
-    })
-  }
-  #[cfg(not(feature = "std"))]
-  {
-    let caps = platform::caps();
-    let tune = platform::tune();
-    caps.has(platform::caps::x86::VPCLMUL_READY) && tune.fast_wide_ops && tune.effective_simd_width >= 512
-  }
+#[cfg(target_arch = "aarch64")]
+fn init_ccitt_policy() -> (policy::Crc16Policy, policy::Crc16Kernels) {
+  let cfg = config::get();
+  let caps = platform::caps();
+  let tune = platform::tune();
+  let pol = policy::Crc16Policy::from_config(&cfg, caps, &tune, policy::Crc16Variant::Ccitt);
+  let kernels = policy::build_ccitt_kernels_aarch64(
+    &pol,
+    crc16_ccitt_reference,
+    portable::crc16_ccitt_slice4,
+    portable::crc16_ccitt_slice8,
+  );
+  (pol, kernels)
 }
 
-#[inline]
-fn crc16_ccitt_clmul(crc: u16, data: &[u8]) -> u16 {
-  #[cfg(target_arch = "x86_64")]
-  {
-    if crc16_has_vpclmul() && data.len() >= crc16_clmul_to_vpclmul() {
-      return x86_64::crc16_ccitt_vpclmul_safe(crc, data);
-    }
-    x86_64::crc16_ccitt_pclmul_safe(crc, data)
-  }
-  #[cfg(target_arch = "aarch64")]
-  {
-    aarch64::crc16_ccitt_pmull_safe(crc, data)
-  }
-  #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-  {
-    crc16_ccitt_portable_auto(crc, data)
-  }
+#[cfg(target_arch = "aarch64")]
+fn init_ibm_policy() -> (policy::Crc16Policy, policy::Crc16Kernels) {
+  let cfg = config::get();
+  let caps = platform::caps();
+  let tune = platform::tune();
+  let pol = policy::Crc16Policy::from_config(&cfg, caps, &tune, policy::Crc16Variant::Ibm);
+  let kernels = policy::build_ibm_kernels_aarch64(
+    &pol,
+    crc16_ibm_reference,
+    portable::crc16_ibm_slice4,
+    portable::crc16_ibm_slice8,
+  );
+  (pol, kernels)
 }
 
-#[inline]
-fn crc16_ibm_clmul(crc: u16, data: &[u8]) -> u16 {
-  #[cfg(target_arch = "x86_64")]
-  {
-    if crc16_has_vpclmul() && data.len() >= crc16_clmul_to_vpclmul() {
-      return x86_64::crc16_ibm_vpclmul_safe(crc, data);
-    }
-    x86_64::crc16_ibm_pclmul_safe(crc, data)
-  }
-  #[cfg(target_arch = "aarch64")]
-  {
-    aarch64::crc16_ibm_pmull_safe(crc, data)
-  }
-  #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-  {
-    crc16_ibm_portable_auto(crc, data)
-  }
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+fn init_ccitt_policy() -> (policy::Crc16Policy, policy::Crc16Kernels) {
+  let cfg = config::get();
+  let caps = platform::caps();
+  let tune = platform::tune();
+  let pol = policy::Crc16Policy::from_config(&cfg, caps, &tune, policy::Crc16Variant::Ccitt);
+  let kernels = policy::build_ccitt_kernels_generic(
+    crc16_ccitt_reference,
+    portable::crc16_ccitt_slice4,
+    portable::crc16_ccitt_slice8,
+  );
+  (pol, kernels)
 }
+
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+fn init_ibm_policy() -> (policy::Crc16Policy, policy::Crc16Kernels) {
+  let cfg = config::get();
+  let caps = platform::caps();
+  let tune = platform::tune();
+  let pol = policy::Crc16Policy::from_config(&cfg, caps, &tune, policy::Crc16Variant::Ibm);
+  let kernels = policy::build_ibm_kernels_generic(
+    crc16_ibm_reference,
+    portable::crc16_ibm_slice4,
+    portable::crc16_ibm_slice8,
+  );
+  (pol, kernels)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Auto Dispatch Functions (policy-based)
+// ─────────────────────────────────────────────────────────────────────────────
 
 #[inline]
 fn crc16_ccitt_auto(crc: u16, data: &[u8]) -> u16 {
-  if crc16_has_clmul() && data.len() >= crc16_portable_to_clmul() {
-    return crc16_ccitt_clmul(crc, data);
-  }
-  crc16_ccitt_portable_auto(crc, data)
+  let (pol, kernels) = CRC16_CCITT_CACHED.get_or_init(init_ccitt_policy);
+  policy::policy_dispatch(&pol, &kernels, crc, data)
 }
 
 #[inline]
 fn crc16_ibm_auto(crc: u16, data: &[u8]) -> u16 {
-  if crc16_has_clmul() && data.len() >= crc16_portable_to_clmul() {
-    return crc16_ibm_clmul(crc, data);
-  }
-  crc16_ibm_portable_auto(crc, data)
+  let (pol, kernels) = CRC16_IBM_CACHED.get_or_init(init_ibm_policy);
+  policy::policy_dispatch(&pol, &kernels, crc, data)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -281,41 +231,8 @@ fn crc16_ibm_auto(crc: u16, data: &[u8]) -> u16 {
 #[inline]
 #[must_use]
 pub(crate) fn crc16_selected_kernel_name(len: usize) -> &'static str {
-  let cfg = config::get();
-
-  match cfg.effective_force {
-    config::Crc16Force::Reference => return kernels::REFERENCE,
-    config::Crc16Force::Slice4 => return kernels::PORTABLE_SLICE4,
-    config::Crc16Force::Slice8 => return kernels::PORTABLE_SLICE8,
-    config::Crc16Force::Portable => return kernels::portable_name_for_len(len, cfg.tunables.slice4_to_slice8),
-    _ => {}
-  }
-
-  if cfg.effective_force == config::Crc16Force::Clmul && crc16_has_clmul() && len >= cfg.tunables.portable_to_clmul {
-    #[cfg(target_arch = "x86_64")]
-    {
-      if crc16_has_vpclmul() && len >= crc16_clmul_to_vpclmul() {
-        return kernels::x86_64::VPCLMUL;
-      }
-      return kernels::x86_64::PCLMUL;
-    }
-    #[cfg(target_arch = "aarch64")]
-    return kernels::aarch64::PMULL;
-  }
-
-  if cfg.effective_force == config::Crc16Force::Auto && crc16_has_clmul() && len >= cfg.tunables.portable_to_clmul {
-    #[cfg(target_arch = "x86_64")]
-    {
-      if crc16_has_vpclmul() && len >= crc16_clmul_to_vpclmul() {
-        return kernels::x86_64::VPCLMUL;
-      }
-      return kernels::x86_64::PCLMUL;
-    }
-    #[cfg(target_arch = "aarch64")]
-    return kernels::aarch64::PMULL;
-  }
-
-  kernels::portable_name_for_len(len, cfg.tunables.slice4_to_slice8)
+  let (pol, _) = CRC16_CCITT_CACHED.get_or_init(init_ccitt_policy);
+  pol.kernel_name(len)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -324,55 +241,25 @@ pub(crate) fn crc16_selected_kernel_name(len: usize) -> &'static str {
 
 fn select_crc16_ccitt() -> Selected<Crc16Fn> {
   let cfg = config::get();
-  #[cfg(feature = "std")]
-  let _ = CRC16_SLICE4_TO_SLICE8.get_or_init(|| cfg.tunables.slice4_to_slice8);
-  #[cfg(feature = "std")]
-  let _ = CRC16_PORTABLE_TO_CLMUL.get_or_init(|| cfg.tunables.portable_to_clmul);
-  #[cfg(all(feature = "std", target_arch = "x86_64"))]
-  let _ = CRC16_CLMUL_TO_VPCLMUL.get_or_init(crc16_clmul_to_vpclmul_uncached);
 
   match cfg.effective_force {
     config::Crc16Force::Reference => Selected::new(kernels::REFERENCE, crc16_ccitt_reference),
     config::Crc16Force::Slice4 => Selected::new(kernels::PORTABLE_SLICE4, portable::crc16_ccitt_slice4),
     config::Crc16Force::Slice8 => Selected::new(kernels::PORTABLE_SLICE8, portable::crc16_ccitt_slice8),
     config::Crc16Force::Portable => Selected::new(kernels::PORTABLE_AUTO, crc16_ccitt_portable_auto),
-    config::Crc16Force::Clmul if crc16_has_clmul() => {
-      #[cfg(target_arch = "x86_64")]
-      return Selected::new(kernels::x86_64::PCLMUL, crc16_ccitt_clmul);
-      #[cfg(target_arch = "aarch64")]
-      return Selected::new(kernels::aarch64::PMULL, crc16_ccitt_clmul);
-      #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-      Selected::new(kernels::PORTABLE_AUTO, crc16_ccitt_portable_auto)
-    }
-    config::Crc16Force::Auto if crc16_has_clmul() => Selected::new("auto", crc16_ccitt_auto),
-    _ => Selected::new(kernels::PORTABLE_AUTO, crc16_ccitt_portable_auto),
+    _ => Selected::new("auto", crc16_ccitt_auto),
   }
 }
 
 fn select_crc16_ibm() -> Selected<Crc16Fn> {
   let cfg = config::get();
-  #[cfg(feature = "std")]
-  let _ = CRC16_SLICE4_TO_SLICE8.get_or_init(|| cfg.tunables.slice4_to_slice8);
-  #[cfg(feature = "std")]
-  let _ = CRC16_PORTABLE_TO_CLMUL.get_or_init(|| cfg.tunables.portable_to_clmul);
-  #[cfg(all(feature = "std", target_arch = "x86_64"))]
-  let _ = CRC16_CLMUL_TO_VPCLMUL.get_or_init(crc16_clmul_to_vpclmul_uncached);
 
   match cfg.effective_force {
     config::Crc16Force::Reference => Selected::new(kernels::REFERENCE, crc16_ibm_reference),
     config::Crc16Force::Slice4 => Selected::new(kernels::PORTABLE_SLICE4, portable::crc16_ibm_slice4),
     config::Crc16Force::Slice8 => Selected::new(kernels::PORTABLE_SLICE8, portable::crc16_ibm_slice8),
     config::Crc16Force::Portable => Selected::new(kernels::PORTABLE_AUTO, crc16_ibm_portable_auto),
-    config::Crc16Force::Clmul if crc16_has_clmul() => {
-      #[cfg(target_arch = "x86_64")]
-      return Selected::new(kernels::x86_64::PCLMUL, crc16_ibm_clmul);
-      #[cfg(target_arch = "aarch64")]
-      return Selected::new(kernels::aarch64::PMULL, crc16_ibm_clmul);
-      #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-      Selected::new(kernels::PORTABLE_AUTO, crc16_ibm_portable_auto)
-    }
-    config::Crc16Force::Auto if crc16_has_clmul() => Selected::new("auto", crc16_ibm_auto),
-    _ => Selected::new(kernels::PORTABLE_AUTO, crc16_ibm_portable_auto),
+    _ => Selected::new("auto", crc16_ibm_auto),
   }
 }
 

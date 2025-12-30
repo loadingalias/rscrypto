@@ -41,6 +41,7 @@
 mod clmul;
 pub(crate) mod config;
 mod kernels;
+mod policy;
 pub(crate) mod portable;
 mod tuned_defaults;
 
@@ -59,10 +60,7 @@ mod s390x;
 #[cfg(target_arch = "riscv64")]
 mod riscv64;
 
-#[cfg(all(feature = "std", any(target_arch = "x86_64", target_arch = "aarch64")))]
-use std::sync::OnceLock;
-
-use backend::dispatch::Selected;
+use backend::{PolicyCache, dispatch::Selected};
 #[allow(unused_imports)]
 pub use config::{Crc32Config, Crc32Force, Crc32Tunables};
 #[allow(unused_imports)]
@@ -130,16 +128,6 @@ fn crc32c_reference(crc: u32, data: &[u8]) -> u32 {
 ))]
 const CRC32_FOLD_BLOCK_BYTES: usize = 128;
 
-// Small-buffer tier folds a single 16B lane; large-buffer tiers fold 8×16B lanes per 128B block.
-#[cfg(any(
-  target_arch = "x86_64",
-  target_arch = "aarch64",
-  target_arch = "powerpc64",
-  target_arch = "s390x",
-  target_arch = "riscv64"
-))]
-const CRC32_SMALL_LANE_BYTES: usize = 16;
-
 // Buffered wrappers use this to decide when to flush/process in larger chunks.
 //
 // We want a value that is:
@@ -206,130 +194,168 @@ fn x86_streams_for_len_crc32c(len: usize, streams: u8) -> u8 {
   x86_streams_for_len(len, streams)
 }
 
-#[cfg(target_arch = "powerpc64")]
-const CRC32_POWERPC64_2WAY_MIN_BYTES: usize = 128 * CRC32_FOLD_BLOCK_BYTES; // 16 KiB
-
-#[cfg(target_arch = "powerpc64")]
-#[inline]
-const fn powerpc64_streams_for_len(len: usize, streams: u8) -> u8 {
-  // POWER benefits from higher ILP, but multi-stream merging has setup costs.
-  // Keep thresholds conservative by default (CRC64 parity).
-  const CRC32_POWERPC64_4WAY_MIN_BYTES: usize = 2 * CRC32_POWERPC64_2WAY_MIN_BYTES; // 32 KiB
-  const CRC32_POWERPC64_8WAY_MIN_BYTES: usize = 4 * CRC32_POWERPC64_2WAY_MIN_BYTES; // 64 KiB
-
-  if streams >= 8 && len >= CRC32_POWERPC64_8WAY_MIN_BYTES {
-    return 8;
-  }
-  if streams >= 4 && len >= CRC32_POWERPC64_4WAY_MIN_BYTES {
-    return 4;
-  }
-  if streams >= 2 && len >= CRC32_POWERPC64_2WAY_MIN_BYTES {
-    return 2;
-  }
-  1
-}
-
-#[cfg(target_arch = "s390x")]
-const CRC32_S390X_2WAY_MIN_BYTES: usize = 128 * CRC32_FOLD_BLOCK_BYTES; // 16 KiB
-
-#[cfg(target_arch = "s390x")]
-#[inline]
-const fn s390x_streams_for_len(len: usize, streams: u8) -> u8 {
-  // z13+ has 32 vector registers and strong ILP; keep thresholds conservative.
-  const CRC32_S390X_4WAY_MIN_BYTES: usize = 2 * CRC32_S390X_2WAY_MIN_BYTES; // 32 KiB
-
-  if streams >= 4 && len >= CRC32_S390X_4WAY_MIN_BYTES {
-    return 4;
-  }
-  if streams >= 2 && len >= CRC32_S390X_2WAY_MIN_BYTES {
-    return 2;
-  }
-  1
-}
-
-#[cfg(target_arch = "riscv64")]
-const CRC32_RISCV64_2WAY_MIN_BYTES: usize = 128 * CRC32_FOLD_BLOCK_BYTES; // 16 KiB
-
-#[cfg(target_arch = "riscv64")]
-#[inline]
-const fn riscv64_streams_for_len(len: usize, streams: u8) -> u8 {
-  const CRC32_RISCV64_4WAY_MIN_BYTES: usize = 2 * CRC32_RISCV64_2WAY_MIN_BYTES; // 32 KiB
-
-  if streams >= 4 && len >= CRC32_RISCV64_4WAY_MIN_BYTES {
-    return 4;
-  }
-  if streams >= 2 && len >= CRC32_RISCV64_2WAY_MIN_BYTES {
-    return 2;
-  }
-  1
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
-// Cached Dispatch Params (std-only hot path)
+// Cached Policy and Kernels (works on both std and no_std)
 // ─────────────────────────────────────────────────────────────────────────────
 
-#[cfg(all(feature = "std", target_arch = "aarch64"))]
-#[derive(Clone, Copy, Debug)]
-struct Crc32Aarch64Auto {
-  portable_to_hwcrc: usize,
-  hwcrc_to_fusion: usize,
-  has_crc: bool,
-  has_pmull: bool,
-  has_pmull_eor3: bool,
-  has_sve2_pmull: bool,
+/// Cached IEEE policy and kernels for x86_64.
+#[cfg(target_arch = "x86_64")]
+static CRC32_IEEE_CACHED: PolicyCache<policy::Crc32Policy, policy::Crc32Kernels> = PolicyCache::new();
+
+/// Cached Castagnoli policy and kernels for x86_64.
+#[cfg(target_arch = "x86_64")]
+static CRC32C_CACHED: PolicyCache<policy::Crc32Policy, policy::Crc32Kernels> = PolicyCache::new();
+
+/// Cached IEEE policy and kernels for aarch64.
+#[cfg(target_arch = "aarch64")]
+static CRC32_IEEE_CACHED: PolicyCache<policy::Crc32Policy, policy::Crc32Kernels> = PolicyCache::new();
+
+/// Cached Castagnoli policy and kernels for aarch64.
+#[cfg(target_arch = "aarch64")]
+static CRC32C_CACHED: PolicyCache<policy::Crc32Policy, policy::Crc32Kernels> = PolicyCache::new();
+
+/// Cached IEEE policy and kernels for powerpc64.
+#[cfg(target_arch = "powerpc64")]
+static CRC32_IEEE_CACHED: PolicyCache<policy::Crc32Policy, policy::Crc32Kernels> = PolicyCache::new();
+
+/// Cached Castagnoli policy and kernels for powerpc64.
+#[cfg(target_arch = "powerpc64")]
+static CRC32C_CACHED: PolicyCache<policy::Crc32Policy, policy::Crc32Kernels> = PolicyCache::new();
+
+/// Cached IEEE policy and kernels for s390x.
+#[cfg(target_arch = "s390x")]
+static CRC32_IEEE_CACHED: PolicyCache<policy::Crc32Policy, policy::Crc32Kernels> = PolicyCache::new();
+
+/// Cached Castagnoli policy and kernels for s390x.
+#[cfg(target_arch = "s390x")]
+static CRC32C_CACHED: PolicyCache<policy::Crc32Policy, policy::Crc32Kernels> = PolicyCache::new();
+
+/// Cached IEEE policy and kernels for riscv64.
+#[cfg(target_arch = "riscv64")]
+static CRC32_IEEE_CACHED: PolicyCache<policy::Crc32Policy, policy::Crc32Kernels> = PolicyCache::new();
+
+/// Cached Castagnoli policy and kernels for riscv64.
+#[cfg(target_arch = "riscv64")]
+static CRC32C_CACHED: PolicyCache<policy::Crc32Policy, policy::Crc32Kernels> = PolicyCache::new();
+
+/// Initialize IEEE policy and kernels for x86_64.
+#[cfg(target_arch = "x86_64")]
+fn init_ieee_policy() -> (policy::Crc32Policy, policy::Crc32Kernels) {
+  let cfg = config::get();
+  let caps = platform::caps();
+  let tune = platform::tune();
+  let pol = policy::Crc32Policy::from_config(&cfg, caps, &tune, policy::Crc32Variant::Ieee);
+  let kernels = policy::build_ieee_kernels_x86(&pol, crc32_reference, crc32_portable);
+  (pol, kernels)
 }
 
-#[cfg(all(feature = "std", target_arch = "aarch64"))]
-static CRC32_AARCH64_AUTO: OnceLock<Crc32Aarch64Auto> = OnceLock::new();
-#[cfg(all(feature = "std", target_arch = "aarch64"))]
-static CRC32C_AARCH64_AUTO: OnceLock<Crc32Aarch64Auto> = OnceLock::new();
-
-#[cfg(all(feature = "std", target_arch = "aarch64"))]
-static CRC32_AARCH64_STREAMS: OnceLock<u8> = OnceLock::new();
-#[cfg(all(feature = "std", target_arch = "aarch64"))]
-static CRC32C_AARCH64_STREAMS: OnceLock<u8> = OnceLock::new();
-
-#[cfg(all(feature = "std", target_arch = "x86_64"))]
-#[derive(Clone, Copy, Debug)]
-struct Crc32X86Auto {
-  hwcrc_to_fusion: usize,
-  fusion_to_vpclmul: usize,
-  streams: u8,
-  has_pclmul: bool,
-  has_vpclmul: bool,
+/// Initialize Castagnoli policy and kernels for x86_64.
+#[cfg(target_arch = "x86_64")]
+fn init_castagnoli_policy() -> (policy::Crc32Policy, policy::Crc32Kernels) {
+  let cfg = config::get();
+  let caps = platform::caps();
+  let tune = platform::tune();
+  let pol = policy::Crc32Policy::from_config(&cfg, caps, &tune, policy::Crc32Variant::Castagnoli);
+  let kernels = policy::build_castagnoli_kernels_x86(&pol, crc32c_reference, crc32c_portable);
+  (pol, kernels)
 }
 
-#[cfg(all(feature = "std", target_arch = "x86_64"))]
-#[derive(Clone, Copy, Debug)]
-struct Crc32cX86Auto {
-  portable_to_hwcrc: usize,
-  hwcrc_to_fusion: usize,
-  fusion_to_avx512: usize,
-  fusion_to_vpclmul: usize,
-  streams: u8,
-  has_crc32c: bool,
-  has_pclmul: bool,
-  has_vpclmul: bool,
-  has_avx512: bool,
-  has_pclmulqdq: bool,
+/// Initialize IEEE policy and kernels for aarch64.
+#[cfg(target_arch = "aarch64")]
+fn init_ieee_policy() -> (policy::Crc32Policy, policy::Crc32Kernels) {
+  let cfg = config::get();
+  let caps = platform::caps();
+  let tune = platform::tune();
+  let pol = policy::Crc32Policy::from_config(&cfg, caps, &tune, policy::Crc32Variant::Ieee);
+  let kernels = policy::build_ieee_kernels_aarch64(&pol, crc32_reference, crc32_portable);
+  (pol, kernels)
 }
 
-#[cfg(all(feature = "std", target_arch = "x86_64"))]
-static CRC32_X86_AUTO: OnceLock<Crc32X86Auto> = OnceLock::new();
-#[cfg(all(feature = "std", target_arch = "x86_64"))]
-static CRC32C_X86_AUTO: OnceLock<Crc32cX86Auto> = OnceLock::new();
+/// Initialize Castagnoli policy and kernels for aarch64.
+#[cfg(target_arch = "aarch64")]
+fn init_castagnoli_policy() -> (policy::Crc32Policy, policy::Crc32Kernels) {
+  let cfg = config::get();
+  let caps = platform::caps();
+  let tune = platform::tune();
+  let pol = policy::Crc32Policy::from_config(&cfg, caps, &tune, policy::Crc32Variant::Castagnoli);
+  let kernels = policy::build_castagnoli_kernels_aarch64(&pol, crc32c_reference, crc32c_portable);
+  (pol, kernels)
+}
 
-#[cfg(all(feature = "std", target_arch = "x86_64"))]
-static CRC32_X86_STREAMS: OnceLock<u8> = OnceLock::new();
-#[cfg(all(feature = "std", target_arch = "x86_64"))]
-static CRC32C_X86_STREAMS: OnceLock<u8> = OnceLock::new();
+/// Initialize IEEE policy and kernels for powerpc64.
+#[cfg(target_arch = "powerpc64")]
+fn init_ieee_policy() -> (policy::Crc32Policy, policy::Crc32Kernels) {
+  let cfg = config::get();
+  let caps = platform::caps();
+  let tune = platform::tune();
+  let pol = policy::Crc32Policy::from_config(&cfg, caps, &tune, policy::Crc32Variant::Ieee);
+  let kernels = policy::build_ieee_kernels_powerpc64(&pol, crc32_reference, crc32_portable);
+  (pol, kernels)
+}
 
+/// Initialize Castagnoli policy and kernels for powerpc64.
+#[cfg(target_arch = "powerpc64")]
+fn init_castagnoli_policy() -> (policy::Crc32Policy, policy::Crc32Kernels) {
+  let cfg = config::get();
+  let caps = platform::caps();
+  let tune = platform::tune();
+  let pol = policy::Crc32Policy::from_config(&cfg, caps, &tune, policy::Crc32Variant::Castagnoli);
+  let kernels = policy::build_castagnoli_kernels_powerpc64(&pol, crc32c_reference, crc32c_portable);
+  (pol, kernels)
+}
+
+/// Initialize IEEE policy and kernels for s390x.
+#[cfg(target_arch = "s390x")]
+fn init_ieee_policy() -> (policy::Crc32Policy, policy::Crc32Kernels) {
+  let cfg = config::get();
+  let caps = platform::caps();
+  let tune = platform::tune();
+  let pol = policy::Crc32Policy::from_config(&cfg, caps, &tune, policy::Crc32Variant::Ieee);
+  let kernels = policy::build_ieee_kernels_s390x(&pol, crc32_reference, crc32_portable);
+  (pol, kernels)
+}
+
+/// Initialize Castagnoli policy and kernels for s390x.
+#[cfg(target_arch = "s390x")]
+fn init_castagnoli_policy() -> (policy::Crc32Policy, policy::Crc32Kernels) {
+  let cfg = config::get();
+  let caps = platform::caps();
+  let tune = platform::tune();
+  let pol = policy::Crc32Policy::from_config(&cfg, caps, &tune, policy::Crc32Variant::Castagnoli);
+  let kernels = policy::build_castagnoli_kernels_s390x(&pol, crc32c_reference, crc32c_portable);
+  (pol, kernels)
+}
+
+/// Initialize IEEE policy and kernels for riscv64.
+#[cfg(target_arch = "riscv64")]
+fn init_ieee_policy() -> (policy::Crc32Policy, policy::Crc32Kernels) {
+  let cfg = config::get();
+  let caps = platform::caps();
+  let tune = platform::tune();
+  let pol = policy::Crc32Policy::from_config(&cfg, caps, &tune, policy::Crc32Variant::Ieee);
+  let kernels = policy::build_ieee_kernels_riscv64(&pol, crc32_reference, crc32_portable);
+  (pol, kernels)
+}
+
+/// Initialize Castagnoli policy and kernels for riscv64.
+#[cfg(target_arch = "riscv64")]
+fn init_castagnoli_policy() -> (policy::Crc32Policy, policy::Crc32Kernels) {
+  let cfg = config::get();
+  let caps = platform::caps();
+  let tune = platform::tune();
+  let pol = policy::Crc32Policy::from_config(&cfg, caps, &tune, policy::Crc32Variant::Castagnoli);
+  let kernels = policy::build_castagnoli_kernels_riscv64(&pol, crc32c_reference, crc32c_portable);
+  (pol, kernels)
+}
+
+/// Get the kernel name for the selected CRC-32 (IEEE) algorithm.
+///
+/// Uses the cached policy for efficient kernel name lookup.
+/// Caching works on both std (OnceLock) and no_std (atomic state machine).
 #[inline]
 #[must_use]
 #[allow(unused_variables)] // `len` only used on SIMD architectures
 pub(crate) fn crc32_selected_kernel_name(len: usize) -> &'static str {
-  let cfg = config::get();
-
   #[cfg(any(
     target_arch = "x86_64",
     target_arch = "aarch64",
@@ -337,254 +363,31 @@ pub(crate) fn crc32_selected_kernel_name(len: usize) -> &'static str {
     target_arch = "s390x",
     target_arch = "riscv64"
   ))]
-  if len < CRC32_SMALL_LANE_BYTES {
-    return kernels::PORTABLE;
-  }
-
-  if cfg.effective_force == Crc32Force::Portable {
-    return kernels::PORTABLE;
-  }
-
-  #[cfg(target_arch = "x86_64")]
   {
-    let caps = platform::caps();
-    use kernels::x86_64::*;
-    let streams = x86_streams_for_len(len, cfg.tunables.streams_crc32);
-
-    // CRC-32 (IEEE) has no HWCRC tier on x86; use the folding threshold.
-    if cfg.effective_force == Crc32Force::Auto && len < cfg.tunables.hwcrc_to_fusion {
-      return kernels::PORTABLE;
-    }
-
-    match cfg.effective_force {
-      Crc32Force::Vpclmul if caps.has(platform::caps::x86::VPCLMUL_READY) => {
-        return kernels::select_name(
-          CRC32_VPCLMUL_NAMES,
-          Some(CRC32_VPCLMUL_SMALL),
-          streams,
-          len,
-          CRC32_FOLD_BLOCK_BYTES,
-        );
-      }
-      Crc32Force::Vpclmul => return kernels::PORTABLE,
-      Crc32Force::Pclmul if caps.has(platform::caps::x86::PCLMUL_READY) => {
-        return kernels::select_name(
-          CRC32_PCLMUL_NAMES,
-          Some(CRC32_PCLMUL_SMALL),
-          streams,
-          len,
-          CRC32_FOLD_BLOCK_BYTES,
-        );
-      }
-      Crc32Force::Pclmul => return kernels::PORTABLE,
-      _ => {}
-    }
-
-    if cfg.effective_force == Crc32Force::Auto
-      && len >= cfg.tunables.hwcrc_to_fusion
-      && caps.has(platform::caps::x86::PCLMUL_READY)
-    {
-      if len >= CRC32_FOLD_BLOCK_BYTES
-        && len >= cfg.tunables.fusion_to_vpclmul
-        && caps.has(platform::caps::x86::VPCLMUL_READY)
-      {
-        return kernels::select_name(
-          CRC32_VPCLMUL_NAMES,
-          Some(CRC32_VPCLMUL_SMALL),
-          streams,
-          len,
-          CRC32_FOLD_BLOCK_BYTES,
-        );
-      }
-      return kernels::select_name(
-        CRC32_PCLMUL_NAMES,
-        Some(CRC32_PCLMUL_SMALL),
-        streams,
-        len,
-        CRC32_FOLD_BLOCK_BYTES,
-      );
-    }
+    let (pol, _) = CRC32_IEEE_CACHED.get_or_init(init_ieee_policy);
+    pol.kernel_name(len)
   }
 
-  #[cfg(target_arch = "aarch64")]
+  #[cfg(not(any(
+    target_arch = "x86_64",
+    target_arch = "aarch64",
+    target_arch = "powerpc64",
+    target_arch = "s390x",
+    target_arch = "riscv64"
+  )))]
   {
-    let caps = platform::caps();
-    use kernels::aarch64::*;
-    // Match the auto-kernel behavior: avoid the current 2/3-way wrappers that
-    // use `combine_crc32` (GF(2) matrix exponentiation).
-    let streams = 1u8;
-
-    if cfg.effective_force == Crc32Force::Auto && len < cfg.tunables.portable_to_hwcrc {
-      return kernels::PORTABLE;
-    }
-
-    match cfg.effective_force {
-      Crc32Force::PmullEor3
-        if caps.has(platform::caps::aarch64::CRC_READY) && caps.has(platform::caps::aarch64::PMULL_EOR3_READY) =>
-      {
-        return kernels::select_name(
-          CRC32_PMULL_EOR3_NAMES,
-          Some(CRC32_PMULL_SMALL),
-          streams,
-          len,
-          CRC32_FOLD_BLOCK_BYTES,
-        );
-      }
-      Crc32Force::Pmull => {
-        if caps.has(platform::caps::aarch64::CRC_READY) && caps.has(platform::caps::aarch64::PMULL_READY) {
-          return kernels::select_name(
-            CRC32_PMULL_NAMES,
-            Some(CRC32_PMULL_SMALL),
-            streams,
-            len,
-            CRC32_FOLD_BLOCK_BYTES,
-          );
-        }
-        return kernels::PORTABLE;
-      }
-      Crc32Force::Sve2Pmull
-        if caps.has(platform::caps::aarch64::SVE2_PMULL)
-          && caps.has(platform::caps::aarch64::PMULL_READY)
-          && caps.has(platform::caps::aarch64::CRC_READY) =>
-      {
-        return kernels::select_name(
-          CRC32_SVE2_PMULL_NAMES,
-          Some(CRC32_SVE2_PMULL_SMALL),
-          streams,
-          len,
-          CRC32_FOLD_BLOCK_BYTES,
-        );
-      }
-      Crc32Force::Hwcrc => {
-        if caps.has(platform::caps::aarch64::CRC_READY) {
-          return kernels::select_name(CRC32_HWCRC_NAMES, None, streams, len, CRC32_FOLD_BLOCK_BYTES);
-        }
-        return kernels::PORTABLE;
-      }
-      _ => {}
-    }
-
-    // Auto selection: prefer fusion above threshold, otherwise HWCRC.
-    if len >= cfg.tunables.hwcrc_to_fusion && caps.has(platform::caps::aarch64::CRC_READY) {
-      if caps.has(platform::caps::aarch64::PMULL_EOR3_READY) {
-        return kernels::select_name(
-          CRC32_PMULL_EOR3_NAMES,
-          Some(CRC32_PMULL_SMALL),
-          streams,
-          len,
-          CRC32_FOLD_BLOCK_BYTES,
-        );
-      }
-      if caps.has(platform::caps::aarch64::SVE2_PMULL) && caps.has(platform::caps::aarch64::PMULL_READY) && streams >= 2
-      {
-        return kernels::select_name(
-          CRC32_SVE2_PMULL_NAMES,
-          Some(CRC32_SVE2_PMULL_SMALL),
-          streams,
-          len,
-          CRC32_FOLD_BLOCK_BYTES,
-        );
-      }
-      if caps.has(platform::caps::aarch64::PMULL_READY) {
-        return kernels::select_name(
-          CRC32_PMULL_NAMES,
-          Some(CRC32_PMULL_SMALL),
-          streams,
-          len,
-          CRC32_FOLD_BLOCK_BYTES,
-        );
-      }
-    }
-
-    if caps.has(platform::caps::aarch64::CRC_READY) {
-      return kernels::select_name(CRC32_HWCRC_NAMES, None, streams, len, CRC32_FOLD_BLOCK_BYTES);
-    }
+    kernels::PORTABLE
   }
-
-  #[cfg(target_arch = "powerpc64")]
-  {
-    use kernels::powerpc64::*;
-    let caps = platform::caps();
-    let streams = powerpc64_streams_for_len(len, cfg.tunables.streams_crc32);
-
-    match cfg.effective_force {
-      Crc32Force::Vpmsum if caps.has(platform::caps::powerpc64::VPMSUM_READY) => {
-        return kernels::select_name(CRC32_VPMSUM_NAMES, None, streams, len, CRC32_FOLD_BLOCK_BYTES);
-      }
-      Crc32Force::Vpmsum => return kernels::PORTABLE,
-      _ => {}
-    }
-
-    if cfg.effective_force == Crc32Force::Auto && len < cfg.tunables.hwcrc_to_fusion {
-      return kernels::PORTABLE;
-    }
-
-    if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
-      return kernels::select_name(CRC32_VPMSUM_NAMES, None, streams, len, CRC32_FOLD_BLOCK_BYTES);
-    }
-  }
-
-  #[cfg(target_arch = "s390x")]
-  {
-    use kernels::s390x::*;
-    let caps = platform::caps();
-    let streams = s390x_streams_for_len(len, cfg.tunables.streams_crc32);
-
-    match cfg.effective_force {
-      Crc32Force::Vgfm if caps.has(platform::caps::s390x::VECTOR) => {
-        return kernels::select_name(CRC32_VGFM_NAMES, None, streams, len, CRC32_FOLD_BLOCK_BYTES);
-      }
-      Crc32Force::Vgfm => return kernels::PORTABLE,
-      _ => {}
-    }
-
-    if cfg.effective_force == Crc32Force::Auto && len < cfg.tunables.hwcrc_to_fusion {
-      return kernels::PORTABLE;
-    }
-
-    if caps.has(platform::caps::s390x::VECTOR) {
-      return kernels::select_name(CRC32_VGFM_NAMES, None, streams, len, CRC32_FOLD_BLOCK_BYTES);
-    }
-  }
-
-  #[cfg(target_arch = "riscv64")]
-  {
-    use kernels::riscv64::*;
-    let caps = platform::caps();
-    let streams = riscv64_streams_for_len(len, cfg.tunables.streams_crc32);
-
-    match cfg.effective_force {
-      Crc32Force::Zvbc if caps.has(platform::caps::riscv::ZVBC) => {
-        return kernels::select_name(CRC32_ZVBC_NAMES, None, streams, len, CRC32_FOLD_BLOCK_BYTES);
-      }
-      Crc32Force::Zvbc => return kernels::PORTABLE,
-      Crc32Force::Zbc if caps.has(platform::caps::riscv::ZBC) => {
-        return kernels::select_name(CRC32_ZBC_NAMES, None, streams, len, CRC32_FOLD_BLOCK_BYTES);
-      }
-      Crc32Force::Zbc => return kernels::PORTABLE,
-      _ => {}
-    }
-
-    if cfg.effective_force == Crc32Force::Auto && len < cfg.tunables.hwcrc_to_fusion {
-      return kernels::PORTABLE;
-    }
-
-    if caps.has(platform::caps::riscv::ZVBC) {
-      return kernels::select_name(CRC32_ZVBC_NAMES, None, streams, len, CRC32_FOLD_BLOCK_BYTES);
-    }
-    if caps.has(platform::caps::riscv::ZBC) {
-      return kernels::select_name(CRC32_ZBC_NAMES, None, streams, len, CRC32_FOLD_BLOCK_BYTES);
-    }
-  }
-
-  kernels::PORTABLE
 }
 
+/// Get the kernel name for the selected CRC-32C (Castagnoli) algorithm.
+///
+/// Uses the cached policy for efficient kernel name lookup.
+/// Caching works on both std (OnceLock) and no_std (atomic state machine).
 #[inline]
 #[must_use]
 #[allow(unused_variables)] // `len` only used on SIMD architectures
 pub(crate) fn crc32c_selected_kernel_name(len: usize) -> &'static str {
-  let cfg = config::get();
   #[cfg(any(
     target_arch = "x86_64",
     target_arch = "aarch64",
@@ -592,811 +395,65 @@ pub(crate) fn crc32c_selected_kernel_name(len: usize) -> &'static str {
     target_arch = "s390x",
     target_arch = "riscv64"
   ))]
-  let caps = platform::caps();
+  {
+    let (pol, _) = CRC32C_CACHED.get_or_init(init_castagnoli_policy);
+    pol.kernel_name(len)
+  }
 
-  #[cfg(any(
+  #[cfg(not(any(
     target_arch = "x86_64",
     target_arch = "aarch64",
     target_arch = "powerpc64",
     target_arch = "s390x",
     target_arch = "riscv64"
-  ))]
-  if len < CRC32_SMALL_LANE_BYTES {
-    return kernels::PORTABLE;
-  }
-
-  if cfg.effective_force == Crc32Force::Portable {
-    return kernels::PORTABLE;
-  }
-
-  if cfg.effective_force == Crc32Force::Auto && len < cfg.tunables.portable_to_hwcrc {
-    return kernels::PORTABLE;
-  }
-
-  #[cfg(target_arch = "x86_64")]
+  )))]
   {
-    use kernels::x86_64::*;
-    let streams = x86_streams_for_len_crc32c(len, cfg.tunables.streams_crc32c);
-
-    match cfg.effective_force {
-      Crc32Force::Vpclmul
-        if caps.has(platform::caps::x86::VPCLMUL_READY) && caps.has(platform::caps::x86::CRC32C_READY) =>
-      {
-        return kernels::select_name(CRC32C_FUSION_VPCLMUL_NAMES, None, streams, len, CRC32_FOLD_BLOCK_BYTES);
-      }
-      Crc32Force::Pclmul
-        if caps.has(platform::caps::x86::PCLMUL_READY) && caps.has(platform::caps::x86::CRC32C_READY) =>
-      {
-        return kernels::select_name(CRC32C_FUSION_SSE_NAMES, None, streams, len, CRC32_FOLD_BLOCK_BYTES);
-      }
-      Crc32Force::Hwcrc if caps.has(platform::caps::x86::CRC32C_READY) => {
-        return kernels::select_name(CRC32C_HWCRC_NAMES, None, streams, len, CRC32_FOLD_BLOCK_BYTES);
-      }
-      Crc32Force::Hwcrc => return kernels::PORTABLE,
-      _ => {}
-    }
-
-    // Auto selection: prefer fusion above threshold.
-    if len >= cfg.tunables.hwcrc_to_fusion && caps.has(platform::caps::x86::CRC32C_READY) {
-      if caps.has(platform::caps::x86::VPCLMUL_READY) && len >= cfg.tunables.fusion_to_vpclmul {
-        return kernels::select_name(CRC32C_FUSION_VPCLMUL_NAMES, None, streams, len, CRC32_FOLD_BLOCK_BYTES);
-      }
-      if caps.has(platform::caps::x86::AVX512_READY)
-        && len >= cfg.tunables.fusion_to_avx512
-        && caps.has(platform::caps::x86::PCLMULQDQ)
-      {
-        return kernels::select_name(CRC32C_FUSION_AVX512_NAMES, None, streams, len, CRC32_FOLD_BLOCK_BYTES);
-      }
-      if caps.has(platform::caps::x86::PCLMUL_READY) {
-        return kernels::select_name(CRC32C_FUSION_SSE_NAMES, None, streams, len, CRC32_FOLD_BLOCK_BYTES);
-      }
-    }
-
-    if caps.has(platform::caps::x86::CRC32C_READY) {
-      return kernels::select_name(CRC32C_HWCRC_NAMES, None, streams, len, CRC32_FOLD_BLOCK_BYTES);
-    }
+    kernels::PORTABLE
   }
-
-  #[cfg(target_arch = "aarch64")]
-  {
-    use kernels::aarch64::*;
-    // Similar to x86_64: avoid multi-stream wrappers that combine lanes via
-    // `combine_crc32` (GF(2) matrix exponentiation).
-    let streams = 1u8;
-
-    match cfg.effective_force {
-      Crc32Force::PmullEor3
-        if caps.has(platform::caps::aarch64::CRC_READY) && caps.has(platform::caps::aarch64::PMULL_EOR3_READY) =>
-      {
-        return kernels::select_name(
-          CRC32C_PMULL_EOR3_NAMES,
-          Some(CRC32C_PMULL_SMALL),
-          streams,
-          len,
-          CRC32_FOLD_BLOCK_BYTES,
-        );
-      }
-      Crc32Force::Pmull => {
-        if caps.has(platform::caps::aarch64::CRC_READY) && caps.has(platform::caps::aarch64::PMULL_READY) {
-          return kernels::select_name(
-            CRC32C_PMULL_NAMES,
-            Some(CRC32C_PMULL_SMALL),
-            streams,
-            len,
-            CRC32_FOLD_BLOCK_BYTES,
-          );
-        }
-        return kernels::PORTABLE;
-      }
-      Crc32Force::Sve2Pmull
-        if caps.has(platform::caps::aarch64::SVE2_PMULL)
-          && caps.has(platform::caps::aarch64::PMULL_READY)
-          && caps.has(platform::caps::aarch64::CRC_READY) =>
-      {
-        return kernels::select_name(
-          CRC32C_SVE2_PMULL_NAMES,
-          Some(CRC32C_SVE2_PMULL_SMALL),
-          streams,
-          len,
-          CRC32_FOLD_BLOCK_BYTES,
-        );
-      }
-      Crc32Force::Hwcrc => {
-        if caps.has(platform::caps::aarch64::CRC_READY) {
-          return kernels::select_name(CRC32C_HWCRC_NAMES, None, streams, len, CRC32_FOLD_BLOCK_BYTES);
-        }
-        return kernels::PORTABLE;
-      }
-      _ => {}
-    }
-
-    // Auto selection: prefer fusion above threshold, otherwise HWCRC.
-    if len >= cfg.tunables.hwcrc_to_fusion && caps.has(platform::caps::aarch64::CRC_READY) {
-      if caps.has(platform::caps::aarch64::PMULL_EOR3_READY) {
-        return kernels::select_name(
-          CRC32C_PMULL_EOR3_NAMES,
-          Some(CRC32C_PMULL_SMALL),
-          streams,
-          len,
-          CRC32_FOLD_BLOCK_BYTES,
-        );
-      }
-      if caps.has(platform::caps::aarch64::SVE2_PMULL) && caps.has(platform::caps::aarch64::PMULL_READY) && streams >= 2
-      {
-        return kernels::select_name(
-          CRC32C_SVE2_PMULL_NAMES,
-          Some(CRC32C_SVE2_PMULL_SMALL),
-          streams,
-          len,
-          CRC32_FOLD_BLOCK_BYTES,
-        );
-      }
-      if caps.has(platform::caps::aarch64::PMULL_READY) {
-        return kernels::select_name(
-          CRC32C_PMULL_NAMES,
-          Some(CRC32C_PMULL_SMALL),
-          streams,
-          len,
-          CRC32_FOLD_BLOCK_BYTES,
-        );
-      }
-    }
-
-    if caps.has(platform::caps::aarch64::CRC_READY) {
-      return kernels::select_name(CRC32C_HWCRC_NAMES, None, streams, len, CRC32_FOLD_BLOCK_BYTES);
-    }
-  }
-
-  #[cfg(target_arch = "powerpc64")]
-  {
-    use kernels::powerpc64::*;
-    let streams = powerpc64_streams_for_len(len, cfg.tunables.streams_crc32c);
-
-    match cfg.effective_force {
-      Crc32Force::Vpmsum if caps.has(platform::caps::powerpc64::VPMSUM_READY) => {
-        return kernels::select_name(CRC32C_VPMSUM_NAMES, None, streams, len, CRC32_FOLD_BLOCK_BYTES);
-      }
-      Crc32Force::Vpmsum => return kernels::PORTABLE,
-      _ => {}
-    }
-
-    if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
-      return kernels::select_name(CRC32C_VPMSUM_NAMES, None, streams, len, CRC32_FOLD_BLOCK_BYTES);
-    }
-  }
-
-  #[cfg(target_arch = "s390x")]
-  {
-    use kernels::s390x::*;
-    let streams = s390x_streams_for_len(len, cfg.tunables.streams_crc32c);
-
-    match cfg.effective_force {
-      Crc32Force::Vgfm if caps.has(platform::caps::s390x::VECTOR) => {
-        return kernels::select_name(CRC32C_VGFM_NAMES, None, streams, len, CRC32_FOLD_BLOCK_BYTES);
-      }
-      Crc32Force::Vgfm => return kernels::PORTABLE,
-      _ => {}
-    }
-
-    if caps.has(platform::caps::s390x::VECTOR) {
-      return kernels::select_name(CRC32C_VGFM_NAMES, None, streams, len, CRC32_FOLD_BLOCK_BYTES);
-    }
-  }
-
-  #[cfg(target_arch = "riscv64")]
-  {
-    use kernels::riscv64::*;
-    let streams = riscv64_streams_for_len(len, cfg.tunables.streams_crc32c);
-
-    match cfg.effective_force {
-      Crc32Force::Zvbc if caps.has(platform::caps::riscv::ZVBC) => {
-        return kernels::select_name(CRC32C_ZVBC_NAMES, None, streams, len, CRC32_FOLD_BLOCK_BYTES);
-      }
-      Crc32Force::Zvbc => return kernels::PORTABLE,
-      Crc32Force::Zbc if caps.has(platform::caps::riscv::ZBC) => {
-        return kernels::select_name(CRC32C_ZBC_NAMES, None, streams, len, CRC32_FOLD_BLOCK_BYTES);
-      }
-      Crc32Force::Zbc => return kernels::PORTABLE,
-      _ => {}
-    }
-
-    if caps.has(platform::caps::riscv::ZVBC) {
-      return kernels::select_name(CRC32C_ZVBC_NAMES, None, streams, len, CRC32_FOLD_BLOCK_BYTES);
-    }
-    if caps.has(platform::caps::riscv::ZBC) {
-      return kernels::select_name(CRC32C_ZBC_NAMES, None, streams, len, CRC32_FOLD_BLOCK_BYTES);
-    }
-  }
-
-  kernels::PORTABLE
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Auto Kernels (architecture-specific)
 // ─────────────────────────────────────────────────────────────────────────────
 
-#[cfg(all(target_arch = "x86_64", not(feature = "std")))]
+/// CRC-32C (Castagnoli) auto-dispatch for x86_64.
+///
+/// Uses cached policy and kernels for efficient dispatch with minimal branching.
+/// Caching works on both std (OnceLock) and no_std (atomic state machine).
+#[cfg(target_arch = "x86_64")]
 fn crc32c_x86_64_auto(crc: u32, data: &[u8]) -> u32 {
-  let cfg = config::get();
-  let caps = platform::caps();
-  let len = data.len();
-
-  if cfg.effective_force == Crc32Force::Portable
-    || (cfg.effective_force == Crc32Force::Auto && len < cfg.tunables.portable_to_hwcrc)
-  {
-    return crc32c_portable(crc, data);
-  }
-
-  use kernels::x86_64::*;
-  let streams = x86_streams_for_len_crc32c(len, cfg.tunables.streams_crc32c);
-
-  match cfg.effective_force {
-    Crc32Force::Hwcrc => {
-      if caps.has(platform::caps::x86::CRC32C_READY) {
-        return kernels::dispatch_streams(&CRC32C_HWCRC, streams, crc, data);
-      }
-      return crc32c_portable(crc, data);
-    }
-    Crc32Force::Pclmul => {
-      if caps.has(platform::caps::x86::CRC32C_READY) && caps.has(platform::caps::x86::PCLMUL_READY) {
-        return kernels::dispatch_streams(&CRC32C_FUSION_SSE, streams, crc, data);
-      }
-      return crc32c_portable(crc, data);
-    }
-    Crc32Force::Vpclmul => {
-      if caps.has(platform::caps::x86::CRC32C_READY) && caps.has(platform::caps::x86::VPCLMUL_READY) {
-        return kernels::dispatch_streams(&CRC32C_FUSION_VPCLMUL, streams, crc, data);
-      }
-      return crc32c_portable(crc, data);
-    }
-    _ => {}
-  }
-
-  if caps.has(platform::caps::x86::CRC32C_READY) {
-    if len >= cfg.tunables.hwcrc_to_fusion {
-      if caps.has(platform::caps::x86::VPCLMUL_READY) && len >= cfg.tunables.fusion_to_vpclmul {
-        return kernels::dispatch_streams(&CRC32C_FUSION_VPCLMUL, streams, crc, data);
-      }
-      if caps.has(platform::caps::x86::AVX512_READY)
-        && len >= cfg.tunables.fusion_to_avx512
-        && caps.has(platform::caps::x86::PCLMULQDQ)
-      {
-        return kernels::dispatch_streams(&CRC32C_FUSION_AVX512, streams, crc, data);
-      }
-      if caps.has(platform::caps::x86::PCLMUL_READY) {
-        return kernels::dispatch_streams(&CRC32C_FUSION_SSE, streams, crc, data);
-      }
-    }
-    return kernels::dispatch_streams(&CRC32C_HWCRC, streams, crc, data);
-  }
-
-  crc32c_portable(crc, data)
+  let (pol, kernels) = CRC32C_CACHED.get_or_init(init_castagnoli_policy);
+  policy::policy_dispatch(&pol, &kernels, crc, data)
 }
 
-#[cfg(all(target_arch = "x86_64", feature = "std"))]
-fn crc32c_x86_64_auto(crc: u32, data: &[u8]) -> u32 {
-  let params = *CRC32C_X86_AUTO.get_or_init(|| {
-    let cfg = config::get();
-    let caps = platform::caps();
-    Crc32cX86Auto {
-      portable_to_hwcrc: cfg.tunables.portable_to_hwcrc,
-      hwcrc_to_fusion: cfg.tunables.hwcrc_to_fusion,
-      fusion_to_avx512: cfg.tunables.fusion_to_avx512,
-      fusion_to_vpclmul: cfg.tunables.fusion_to_vpclmul,
-      streams: cfg.tunables.streams_crc32c,
-      has_crc32c: caps.has(platform::caps::x86::CRC32C_READY),
-      has_pclmul: caps.has(platform::caps::x86::PCLMUL_READY),
-      has_vpclmul: caps.has(platform::caps::x86::VPCLMUL_READY),
-      has_avx512: caps.has(platform::caps::x86::AVX512_READY),
-      has_pclmulqdq: caps.has(platform::caps::x86::PCLMULQDQ),
-    }
-  });
-  let len = data.len();
-
-  if !params.has_crc32c || len < params.portable_to_hwcrc {
-    return crc32c_portable(crc, data);
-  }
-
-  use kernels::x86_64::*;
-  let streams = x86_streams_for_len_crc32c(len, params.streams);
-
-  if len >= params.hwcrc_to_fusion {
-    if params.has_vpclmul && len >= params.fusion_to_vpclmul {
-      return kernels::dispatch_streams(&CRC32C_FUSION_VPCLMUL, streams, crc, data);
-    }
-    if params.has_avx512 && len >= params.fusion_to_avx512 && params.has_pclmulqdq {
-      return kernels::dispatch_streams(&CRC32C_FUSION_AVX512, streams, crc, data);
-    }
-    if params.has_pclmul {
-      return kernels::dispatch_streams(&CRC32C_FUSION_SSE, streams, crc, data);
-    }
-  }
-
-  kernels::dispatch_streams(&CRC32C_HWCRC, streams, crc, data)
-}
-
-#[cfg(all(target_arch = "x86_64", not(feature = "std")))]
+/// CRC-32 (IEEE) auto-dispatch for x86_64.
+///
+/// Uses cached policy and kernels for efficient dispatch with minimal branching.
+/// Caching works on both std (OnceLock) and no_std (atomic state machine).
+#[cfg(target_arch = "x86_64")]
 fn crc32_x86_64_auto(crc: u32, data: &[u8]) -> u32 {
-  let cfg = config::get();
-  let caps = platform::caps();
-  let len = data.len();
-
-  if cfg.effective_force == Crc32Force::Portable {
-    return crc32_portable(crc, data);
-  }
-
-  use kernels::x86_64::*;
-  let streams = x86_streams_for_len(len, cfg.tunables.streams_crc32);
-
-  match cfg.effective_force {
-    Crc32Force::Vpclmul => {
-      if caps.has(platform::caps::x86::VPCLMUL_READY) {
-        return kernels::dispatch_with_small(
-          &CRC32_VPCLMUL,
-          CRC32_VPCLMUL_SMALL_KERNEL,
-          streams,
-          len,
-          CRC32_FOLD_BLOCK_BYTES,
-          crc,
-          data,
-        );
-      }
-      return crc32_portable(crc, data);
-    }
-    Crc32Force::Pclmul => {
-      if caps.has(platform::caps::x86::PCLMUL_READY) {
-        return kernels::dispatch_with_small(
-          &CRC32_PCLMUL,
-          CRC32_PCLMUL_SMALL_KERNEL,
-          streams,
-          len,
-          CRC32_FOLD_BLOCK_BYTES,
-          crc,
-          data,
-        );
-      }
-      return crc32_portable(crc, data);
-    }
-    Crc32Force::Hwcrc => return crc32_portable(crc, data),
-    _ => {}
-  }
-
-  if len >= cfg.tunables.hwcrc_to_fusion && caps.has(platform::caps::x86::PCLMUL_READY) {
-    if len >= CRC32_FOLD_BLOCK_BYTES
-      && len >= cfg.tunables.fusion_to_vpclmul
-      && caps.has(platform::caps::x86::VPCLMUL_READY)
-    {
-      return kernels::dispatch_with_small(
-        &CRC32_VPCLMUL,
-        CRC32_VPCLMUL_SMALL_KERNEL,
-        streams,
-        len,
-        CRC32_FOLD_BLOCK_BYTES,
-        crc,
-        data,
-      );
-    }
-    return kernels::dispatch_with_small(
-      &CRC32_PCLMUL,
-      CRC32_PCLMUL_SMALL_KERNEL,
-      streams,
-      len,
-      CRC32_FOLD_BLOCK_BYTES,
-      crc,
-      data,
-    );
-  }
-
-  crc32_portable(crc, data)
+  let (pol, kernels) = CRC32_IEEE_CACHED.get_or_init(init_ieee_policy);
+  policy::policy_dispatch(&pol, &kernels, crc, data)
 }
 
-#[cfg(all(target_arch = "x86_64", feature = "std"))]
-fn crc32_x86_64_auto(crc: u32, data: &[u8]) -> u32 {
-  let params = *CRC32_X86_AUTO.get_or_init(|| {
-    let cfg = config::get();
-    let caps = platform::caps();
-    Crc32X86Auto {
-      hwcrc_to_fusion: cfg.tunables.hwcrc_to_fusion,
-      fusion_to_vpclmul: cfg.tunables.fusion_to_vpclmul,
-      streams: cfg.tunables.streams_crc32,
-      has_pclmul: caps.has(platform::caps::x86::PCLMUL_READY),
-      has_vpclmul: caps.has(platform::caps::x86::VPCLMUL_READY),
-    }
-  });
-  let len = data.len();
-
-  if !params.has_pclmul || len < params.hwcrc_to_fusion {
-    return crc32_portable(crc, data);
-  }
-
-  use kernels::x86_64::*;
-  let streams = x86_streams_for_len(len, params.streams);
-
-  if params.has_vpclmul && len >= CRC32_FOLD_BLOCK_BYTES && len >= params.fusion_to_vpclmul {
-    return kernels::dispatch_with_small(
-      &CRC32_VPCLMUL,
-      CRC32_VPCLMUL_SMALL_KERNEL,
-      streams,
-      len,
-      CRC32_FOLD_BLOCK_BYTES,
-      crc,
-      data,
-    );
-  }
-  kernels::dispatch_with_small(
-    &CRC32_PCLMUL,
-    CRC32_PCLMUL_SMALL_KERNEL,
-    streams,
-    len,
-    CRC32_FOLD_BLOCK_BYTES,
-    crc,
-    data,
-  )
-}
-
-#[cfg(all(target_arch = "aarch64", not(feature = "std")))]
+/// CRC-32 (IEEE) auto-dispatch for aarch64.
+///
+/// Uses cached policy and kernels for efficient dispatch with minimal branching.
+/// Caching works on both std (OnceLock) and no_std (atomic state machine).
+#[cfg(target_arch = "aarch64")]
 fn crc32_aarch64_auto(crc: u32, data: &[u8]) -> u32 {
-  let cfg = config::get();
-  let caps = platform::caps();
-  let len = data.len();
-
-  if cfg.effective_force == Crc32Force::Portable
-    || (cfg.effective_force == Crc32Force::Auto && len < cfg.tunables.portable_to_hwcrc)
-  {
-    return crc32_portable(crc, data);
-  }
-
-  use kernels::aarch64::*;
-  // The aarch64 CRC32 HWCRC/PMULL 2/3-way wrappers currently use `combine_crc32`
-  // (GF(2) matrix exponentiation), which is much slower than the underlying
-  // 1-way tuned kernels. Clamp streams to 1 until we have CLMUL/PMULL combine.
-  let streams = 1u8;
-
-  match cfg.effective_force {
-    Crc32Force::PmullEor3 => {
-      if caps.has(platform::caps::aarch64::CRC_READY) && caps.has(platform::caps::aarch64::PMULL_EOR3_READY) {
-        return kernels::dispatch_with_small(
-          &CRC32_PMULL_EOR3,
-          CRC32_PMULL_SMALL_KERNEL,
-          streams,
-          len,
-          CRC32_FOLD_BLOCK_BYTES,
-          crc,
-          data,
-        );
-      }
-      return crc32_portable(crc, data);
-    }
-    Crc32Force::Pmull => {
-      if caps.has(platform::caps::aarch64::CRC_READY) && caps.has(platform::caps::aarch64::PMULL_READY) {
-        return kernels::dispatch_with_small(
-          &CRC32_PMULL,
-          CRC32_PMULL_SMALL_KERNEL,
-          streams,
-          len,
-          CRC32_FOLD_BLOCK_BYTES,
-          crc,
-          data,
-        );
-      }
-      return crc32_portable(crc, data);
-    }
-    Crc32Force::Sve2Pmull => {
-      if caps.has(platform::caps::aarch64::CRC_READY)
-        && caps.has(platform::caps::aarch64::SVE2_PMULL)
-        && caps.has(platform::caps::aarch64::PMULL_READY)
-      {
-        return kernels::dispatch_with_small(
-          &CRC32_SVE2_PMULL,
-          CRC32_SVE2_PMULL_SMALL_KERNEL,
-          streams,
-          len,
-          CRC32_FOLD_BLOCK_BYTES,
-          crc,
-          data,
-        );
-      }
-      return crc32_portable(crc, data);
-    }
-    Crc32Force::Hwcrc => {
-      if caps.has(platform::caps::aarch64::CRC_READY) {
-        return kernels::dispatch_streams(&CRC32_HWCRC, streams, crc, data);
-      }
-      return crc32_portable(crc, data);
-    }
-    _ => {}
-  }
-
-  if caps.has(platform::caps::aarch64::CRC_READY) {
-    if len >= cfg.tunables.hwcrc_to_fusion {
-      if caps.has(platform::caps::aarch64::PMULL_EOR3_READY) {
-        return kernels::dispatch_with_small(
-          &CRC32_PMULL_EOR3,
-          CRC32_PMULL_SMALL_KERNEL,
-          streams,
-          len,
-          CRC32_FOLD_BLOCK_BYTES,
-          crc,
-          data,
-        );
-      }
-      if caps.has(platform::caps::aarch64::SVE2_PMULL) && caps.has(platform::caps::aarch64::PMULL_READY) && streams >= 2
-      {
-        return kernels::dispatch_with_small(
-          &CRC32_SVE2_PMULL,
-          CRC32_SVE2_PMULL_SMALL_KERNEL,
-          streams,
-          len,
-          CRC32_FOLD_BLOCK_BYTES,
-          crc,
-          data,
-        );
-      }
-      if caps.has(platform::caps::aarch64::PMULL_READY) {
-        return kernels::dispatch_with_small(
-          &CRC32_PMULL,
-          CRC32_PMULL_SMALL_KERNEL,
-          streams,
-          len,
-          CRC32_FOLD_BLOCK_BYTES,
-          crc,
-          data,
-        );
-      }
-    }
-    return kernels::dispatch_streams(&CRC32_HWCRC, streams, crc, data);
-  }
-
-  crc32_portable(crc, data)
+  let (pol, kernels) = CRC32_IEEE_CACHED.get_or_init(init_ieee_policy);
+  policy::policy_dispatch(&pol, &kernels, crc, data)
 }
 
-#[cfg(all(target_arch = "aarch64", feature = "std"))]
-fn crc32_aarch64_auto(crc: u32, data: &[u8]) -> u32 {
-  let params = *CRC32_AARCH64_AUTO.get_or_init(|| {
-    let cfg = config::get();
-    let caps = platform::caps();
-    let has_crc = caps.has(platform::caps::aarch64::CRC_READY);
-    Crc32Aarch64Auto {
-      portable_to_hwcrc: cfg.tunables.portable_to_hwcrc,
-      hwcrc_to_fusion: cfg.tunables.hwcrc_to_fusion,
-      has_crc,
-      has_pmull: has_crc && caps.has(platform::caps::aarch64::PMULL_READY),
-      has_pmull_eor3: has_crc && caps.has(platform::caps::aarch64::PMULL_EOR3_READY),
-      has_sve2_pmull: has_crc
-        && caps.has(platform::caps::aarch64::PMULL_READY)
-        && caps.has(platform::caps::aarch64::SVE2_PMULL),
-    }
-  });
-  let len = data.len();
-
-  if !params.has_crc || len < params.portable_to_hwcrc {
-    return crc32_portable(crc, data);
-  }
-
-  use kernels::aarch64::*;
-  // See the `not(feature = "std")` variant above: clamp streams to 1 until
-  // multi-stream combine is implemented without `combine_crc32`.
-  let streams = 1u8;
-
-  if len >= params.hwcrc_to_fusion {
-    if params.has_pmull_eor3 {
-      return kernels::dispatch_with_small(
-        &CRC32_PMULL_EOR3,
-        CRC32_PMULL_SMALL_KERNEL,
-        streams,
-        len,
-        CRC32_FOLD_BLOCK_BYTES,
-        crc,
-        data,
-      );
-    }
-    if params.has_sve2_pmull && streams >= 2 {
-      return kernels::dispatch_with_small(
-        &CRC32_SVE2_PMULL,
-        CRC32_SVE2_PMULL_SMALL_KERNEL,
-        streams,
-        len,
-        CRC32_FOLD_BLOCK_BYTES,
-        crc,
-        data,
-      );
-    }
-    if params.has_pmull {
-      return kernels::dispatch_with_small(
-        &CRC32_PMULL,
-        CRC32_PMULL_SMALL_KERNEL,
-        streams,
-        len,
-        CRC32_FOLD_BLOCK_BYTES,
-        crc,
-        data,
-      );
-    }
-  }
-
-  kernels::dispatch_streams(&CRC32_HWCRC, streams, crc, data)
-}
-
-#[cfg(all(target_arch = "aarch64", not(feature = "std")))]
+/// CRC-32C (Castagnoli) auto-dispatch for aarch64.
+///
+/// Uses cached policy and kernels for efficient dispatch with minimal branching.
+/// Caching works on both std (OnceLock) and no_std (atomic state machine).
+#[cfg(target_arch = "aarch64")]
 fn crc32c_aarch64_auto(crc: u32, data: &[u8]) -> u32 {
-  let cfg = config::get();
-  let caps = platform::caps();
-  let len = data.len();
-
-  if cfg.effective_force == Crc32Force::Portable
-    || (cfg.effective_force == Crc32Force::Auto && len < cfg.tunables.portable_to_hwcrc)
-  {
-    return crc32c_portable(crc, data);
-  }
-
-  use kernels::aarch64::*;
-  // See `crc32_aarch64_auto`: clamp streams to 1 until multi-stream combine is
-  // implemented without `combine_crc32`.
-  let streams = 1u8;
-
-  match cfg.effective_force {
-    Crc32Force::PmullEor3 => {
-      if caps.has(platform::caps::aarch64::CRC_READY) && caps.has(platform::caps::aarch64::PMULL_EOR3_READY) {
-        return kernels::dispatch_with_small(
-          &CRC32C_PMULL_EOR3,
-          CRC32C_PMULL_SMALL_KERNEL,
-          streams,
-          len,
-          CRC32_FOLD_BLOCK_BYTES,
-          crc,
-          data,
-        );
-      }
-      return crc32c_portable(crc, data);
-    }
-    Crc32Force::Pmull => {
-      if caps.has(platform::caps::aarch64::CRC_READY) && caps.has(platform::caps::aarch64::PMULL_READY) {
-        return kernels::dispatch_with_small(
-          &CRC32C_PMULL,
-          CRC32C_PMULL_SMALL_KERNEL,
-          streams,
-          len,
-          CRC32_FOLD_BLOCK_BYTES,
-          crc,
-          data,
-        );
-      }
-      return crc32c_portable(crc, data);
-    }
-    Crc32Force::Sve2Pmull => {
-      if caps.has(platform::caps::aarch64::CRC_READY)
-        && caps.has(platform::caps::aarch64::SVE2_PMULL)
-        && caps.has(platform::caps::aarch64::PMULL_READY)
-      {
-        return kernels::dispatch_with_small(
-          &CRC32C_SVE2_PMULL,
-          CRC32C_SVE2_PMULL_SMALL_KERNEL,
-          streams,
-          len,
-          CRC32_FOLD_BLOCK_BYTES,
-          crc,
-          data,
-        );
-      }
-      return crc32c_portable(crc, data);
-    }
-    Crc32Force::Hwcrc => {
-      if caps.has(platform::caps::aarch64::CRC_READY) {
-        return kernels::dispatch_streams(&CRC32C_HWCRC, streams, crc, data);
-      }
-      return crc32c_portable(crc, data);
-    }
-    _ => {}
-  }
-
-  if caps.has(platform::caps::aarch64::CRC_READY) {
-    if len >= cfg.tunables.hwcrc_to_fusion {
-      if caps.has(platform::caps::aarch64::PMULL_EOR3_READY) {
-        return kernels::dispatch_with_small(
-          &CRC32C_PMULL_EOR3,
-          CRC32C_PMULL_SMALL_KERNEL,
-          streams,
-          len,
-          CRC32_FOLD_BLOCK_BYTES,
-          crc,
-          data,
-        );
-      }
-      if caps.has(platform::caps::aarch64::SVE2_PMULL) && caps.has(platform::caps::aarch64::PMULL_READY) && streams >= 2
-      {
-        return kernels::dispatch_with_small(
-          &CRC32C_SVE2_PMULL,
-          CRC32C_SVE2_PMULL_SMALL_KERNEL,
-          streams,
-          len,
-          CRC32_FOLD_BLOCK_BYTES,
-          crc,
-          data,
-        );
-      }
-      if caps.has(platform::caps::aarch64::PMULL_READY) {
-        return kernels::dispatch_with_small(
-          &CRC32C_PMULL,
-          CRC32C_PMULL_SMALL_KERNEL,
-          streams,
-          len,
-          CRC32_FOLD_BLOCK_BYTES,
-          crc,
-          data,
-        );
-      }
-    }
-    return kernels::dispatch_streams(&CRC32C_HWCRC, streams, crc, data);
-  }
-
-  crc32c_portable(crc, data)
-}
-
-#[cfg(all(target_arch = "aarch64", feature = "std"))]
-fn crc32c_aarch64_auto(crc: u32, data: &[u8]) -> u32 {
-  let params = *CRC32C_AARCH64_AUTO.get_or_init(|| {
-    let cfg = config::get();
-    let caps = platform::caps();
-    let has_crc = caps.has(platform::caps::aarch64::CRC_READY);
-    Crc32Aarch64Auto {
-      portable_to_hwcrc: cfg.tunables.portable_to_hwcrc,
-      hwcrc_to_fusion: cfg.tunables.hwcrc_to_fusion,
-      has_crc,
-      has_pmull: has_crc && caps.has(platform::caps::aarch64::PMULL_READY),
-      has_pmull_eor3: has_crc && caps.has(platform::caps::aarch64::PMULL_EOR3_READY),
-      has_sve2_pmull: has_crc
-        && caps.has(platform::caps::aarch64::PMULL_READY)
-        && caps.has(platform::caps::aarch64::SVE2_PMULL),
-    }
-  });
-  let len = data.len();
-
-  if !params.has_crc || len < params.portable_to_hwcrc {
-    return crc32c_portable(crc, data);
-  }
-
-  use kernels::aarch64::*;
-  // See the `not(feature = "std")` variant above: clamp streams to 1 until
-  // multi-stream combine is implemented without `combine_crc32`.
-  let streams = 1u8;
-
-  if len >= params.hwcrc_to_fusion {
-    if params.has_pmull_eor3 {
-      return kernels::dispatch_with_small(
-        &CRC32C_PMULL_EOR3,
-        CRC32C_PMULL_SMALL_KERNEL,
-        streams,
-        len,
-        CRC32_FOLD_BLOCK_BYTES,
-        crc,
-        data,
-      );
-    }
-    if params.has_sve2_pmull && streams >= 2 {
-      return kernels::dispatch_with_small(
-        &CRC32C_SVE2_PMULL,
-        CRC32C_SVE2_PMULL_SMALL_KERNEL,
-        streams,
-        len,
-        CRC32_FOLD_BLOCK_BYTES,
-        crc,
-        data,
-      );
-    }
-    if params.has_pmull {
-      return kernels::dispatch_with_small(
-        &CRC32C_PMULL,
-        CRC32C_PMULL_SMALL_KERNEL,
-        streams,
-        len,
-        CRC32_FOLD_BLOCK_BYTES,
-        crc,
-        data,
-      );
-    }
-  }
-
-  kernels::dispatch_streams(&CRC32C_HWCRC, streams, crc, data)
+  let (pol, kernels) = CRC32C_CACHED.get_or_init(init_castagnoli_policy);
+  policy::policy_dispatch(&pol, &kernels, crc, data)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1525,7 +582,7 @@ fn crc32c_aarch64_sve2_pmull_forced(crc: u32, data: &[u8]) -> u32 {
 fn crc32_x86_64_pclmul_forced(crc: u32, data: &[u8]) -> u32 {
   use kernels::x86_64::*;
   let len = data.len();
-  let streams_cfg = CRC32_X86_STREAMS.get().copied().unwrap_or(1);
+  let streams_cfg = config::get().tunables.streams_crc32;
   let streams = x86_streams_for_len(len, streams_cfg);
   kernels::dispatch_with_small(
     &CRC32_PCLMUL,
@@ -1542,7 +599,7 @@ fn crc32_x86_64_pclmul_forced(crc: u32, data: &[u8]) -> u32 {
 fn crc32_x86_64_vpclmul_forced(crc: u32, data: &[u8]) -> u32 {
   use kernels::x86_64::*;
   let len = data.len();
-  let streams_cfg = CRC32_X86_STREAMS.get().copied().unwrap_or(1);
+  let streams_cfg = config::get().tunables.streams_crc32;
   let streams = x86_streams_for_len(len, streams_cfg);
   kernels::dispatch_with_small(
     &CRC32_VPCLMUL,
@@ -1559,7 +616,7 @@ fn crc32_x86_64_vpclmul_forced(crc: u32, data: &[u8]) -> u32 {
 fn crc32c_x86_64_hwcrc_forced(crc: u32, data: &[u8]) -> u32 {
   use kernels::x86_64::*;
   let len = data.len();
-  let streams_cfg = CRC32C_X86_STREAMS.get().copied().unwrap_or(1);
+  let streams_cfg = config::get().tunables.streams_crc32c;
   let streams = x86_streams_for_len_crc32c(len, streams_cfg);
   kernels::dispatch_streams(&CRC32C_HWCRC, streams, crc, data)
 }
@@ -1568,7 +625,7 @@ fn crc32c_x86_64_hwcrc_forced(crc: u32, data: &[u8]) -> u32 {
 fn crc32c_x86_64_pclmul_forced(crc: u32, data: &[u8]) -> u32 {
   use kernels::x86_64::*;
   let len = data.len();
-  let streams_cfg = CRC32C_X86_STREAMS.get().copied().unwrap_or(1);
+  let streams_cfg = config::get().tunables.streams_crc32c;
   let streams = x86_streams_for_len_crc32c(len, streams_cfg);
   kernels::dispatch_streams(&CRC32C_FUSION_SSE, streams, crc, data)
 }
@@ -1577,7 +634,7 @@ fn crc32c_x86_64_pclmul_forced(crc: u32, data: &[u8]) -> u32 {
 fn crc32c_x86_64_vpclmul_forced(crc: u32, data: &[u8]) -> u32 {
   use kernels::x86_64::*;
   let len = data.len();
-  let streams_cfg = CRC32C_X86_STREAMS.get().copied().unwrap_or(1);
+  let streams_cfg = config::get().tunables.streams_crc32c;
   let streams = x86_streams_for_len_crc32c(len, streams_cfg);
   kernels::dispatch_streams(&CRC32C_FUSION_VPCLMUL, streams, crc, data)
 }
@@ -1586,232 +643,64 @@ fn crc32c_x86_64_vpclmul_forced(crc: u32, data: &[u8]) -> u32 {
 // CRC32 CLMUL Backends (POWER/s390x/RISC-V)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// CRC-32 (IEEE) auto-dispatch for powerpc64.
+///
+/// Uses cached policy and kernels for efficient dispatch with minimal branching.
+/// Caching works on both std (OnceLock) and no_std (atomic state machine).
 #[cfg(target_arch = "powerpc64")]
 fn crc32_powerpc64_auto(crc: u32, data: &[u8]) -> u32 {
-  use kernels::powerpc64::*;
-  let len = data.len();
-
-  if len < CRC32_SMALL_LANE_BYTES {
-    return crc32_portable(crc, data);
-  }
-
-  let cfg = config::get();
-  let caps = platform::caps();
-
-  // Handle forced backend selection
-  match cfg.effective_force {
-    Crc32Force::Portable => return crc32_portable(crc, data),
-    Crc32Force::Vpmsum if caps.has(platform::caps::powerpc64::VPMSUM_READY) => {
-      let streams = powerpc64_streams_for_len(len, cfg.tunables.streams_crc32);
-      return kernels::dispatch_streams(&CRC32_VPMSUM, streams, crc, data);
-    }
-    Crc32Force::Vpmsum => return crc32_portable(crc, data),
-    _ => {}
-  }
-
-  // Auto selection
-  if cfg.effective_force == Crc32Force::Auto && len < cfg.tunables.hwcrc_to_fusion {
-    return crc32_portable(crc, data);
-  }
-
-  if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
-    let streams = powerpc64_streams_for_len(len, cfg.tunables.streams_crc32);
-    return kernels::dispatch_streams(&CRC32_VPMSUM, streams, crc, data);
-  }
-
-  crc32_portable(crc, data)
+  let (pol, kernels) = CRC32_IEEE_CACHED.get_or_init(init_ieee_policy);
+  policy::policy_dispatch(&pol, &kernels, crc, data)
 }
 
+/// CRC-32C (Castagnoli) auto-dispatch for powerpc64.
+///
+/// Uses cached policy and kernels for efficient dispatch with minimal branching.
+/// Caching works on both std (OnceLock) and no_std (atomic state machine).
 #[cfg(target_arch = "powerpc64")]
 fn crc32c_powerpc64_auto(crc: u32, data: &[u8]) -> u32 {
-  use kernels::powerpc64::*;
-  let len = data.len();
-
-  if len < CRC32_SMALL_LANE_BYTES {
-    return crc32c_portable(crc, data);
-  }
-
-  let cfg = config::get();
-  let caps = platform::caps();
-
-  // Handle forced backend selection
-  match cfg.effective_force {
-    Crc32Force::Portable => return crc32c_portable(crc, data),
-    Crc32Force::Vpmsum if caps.has(platform::caps::powerpc64::VPMSUM_READY) => {
-      let streams = powerpc64_streams_for_len(len, cfg.tunables.streams_crc32c);
-      return kernels::dispatch_streams(&CRC32C_VPMSUM, streams, crc, data);
-    }
-    Crc32Force::Vpmsum => return crc32c_portable(crc, data),
-    _ => {}
-  }
-
-  // Auto selection
-  if cfg.effective_force == Crc32Force::Auto && len < cfg.tunables.portable_to_hwcrc {
-    return crc32c_portable(crc, data);
-  }
-
-  if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
-    let streams = powerpc64_streams_for_len(len, cfg.tunables.streams_crc32c);
-    return kernels::dispatch_streams(&CRC32C_VPMSUM, streams, crc, data);
-  }
-
-  crc32c_portable(crc, data)
+  let (pol, kernels) = CRC32C_CACHED.get_or_init(init_castagnoli_policy);
+  policy::policy_dispatch(&pol, &kernels, crc, data)
 }
 
+/// CRC-32 (IEEE) auto-dispatch for s390x.
+///
+/// Uses cached policy and kernels for efficient dispatch with minimal branching.
+/// Caching works on both std (OnceLock) and no_std (atomic state machine).
 #[cfg(target_arch = "s390x")]
 fn crc32_s390x_auto(crc: u32, data: &[u8]) -> u32 {
-  use kernels::s390x::*;
-  let len = data.len();
-
-  if len < CRC32_SMALL_LANE_BYTES {
-    return crc32_portable(crc, data);
-  }
-
-  let cfg = config::get();
-  let caps = platform::caps();
-
-  // Handle forced backend selection
-  match cfg.effective_force {
-    Crc32Force::Portable => return crc32_portable(crc, data),
-    Crc32Force::Vgfm if caps.has(platform::caps::s390x::VECTOR) => {
-      let streams = s390x_streams_for_len(len, cfg.tunables.streams_crc32);
-      return kernels::dispatch_streams(&CRC32_VGFM, streams, crc, data);
-    }
-    Crc32Force::Vgfm => return crc32_portable(crc, data),
-    _ => {}
-  }
-
-  // Auto selection
-  if cfg.effective_force == Crc32Force::Auto && len < cfg.tunables.hwcrc_to_fusion {
-    return crc32_portable(crc, data);
-  }
-
-  if caps.has(platform::caps::s390x::VECTOR) {
-    let streams = s390x_streams_for_len(len, cfg.tunables.streams_crc32);
-    return kernels::dispatch_streams(&CRC32_VGFM, streams, crc, data);
-  }
-
-  crc32_portable(crc, data)
+  let (pol, kernels) = CRC32_IEEE_CACHED.get_or_init(init_ieee_policy);
+  policy::policy_dispatch(&pol, &kernels, crc, data)
 }
 
+/// CRC-32C (Castagnoli) auto-dispatch for s390x.
+///
+/// Uses cached policy and kernels for efficient dispatch with minimal branching.
+/// Caching works on both std (OnceLock) and no_std (atomic state machine).
 #[cfg(target_arch = "s390x")]
 fn crc32c_s390x_auto(crc: u32, data: &[u8]) -> u32 {
-  use kernels::s390x::*;
-  let len = data.len();
-
-  if len < CRC32_SMALL_LANE_BYTES {
-    return crc32c_portable(crc, data);
-  }
-
-  let cfg = config::get();
-  let caps = platform::caps();
-
-  // Handle forced backend selection
-  match cfg.effective_force {
-    Crc32Force::Portable => return crc32c_portable(crc, data),
-    Crc32Force::Vgfm if caps.has(platform::caps::s390x::VECTOR) => {
-      let streams = s390x_streams_for_len(len, cfg.tunables.streams_crc32c);
-      return kernels::dispatch_streams(&CRC32C_VGFM, streams, crc, data);
-    }
-    Crc32Force::Vgfm => return crc32c_portable(crc, data),
-    _ => {}
-  }
-
-  // Auto selection
-  if cfg.effective_force == Crc32Force::Auto && len < cfg.tunables.portable_to_hwcrc {
-    return crc32c_portable(crc, data);
-  }
-
-  if caps.has(platform::caps::s390x::VECTOR) {
-    let streams = s390x_streams_for_len(len, cfg.tunables.streams_crc32c);
-    return kernels::dispatch_streams(&CRC32C_VGFM, streams, crc, data);
-  }
-
-  crc32c_portable(crc, data)
+  let (pol, kernels) = CRC32C_CACHED.get_or_init(init_castagnoli_policy);
+  policy::policy_dispatch(&pol, &kernels, crc, data)
 }
 
+/// CRC-32 (IEEE) auto-dispatch for riscv64.
+///
+/// Uses cached policy and kernels for efficient dispatch with minimal branching.
+/// Caching works on both std (OnceLock) and no_std (atomic state machine).
 #[cfg(target_arch = "riscv64")]
 fn crc32_riscv64_auto(crc: u32, data: &[u8]) -> u32 {
-  use kernels::riscv64::*;
-  let len = data.len();
-
-  if len < CRC32_SMALL_LANE_BYTES {
-    return crc32_portable(crc, data);
-  }
-
-  let cfg = config::get();
-  let caps = platform::caps();
-  let streams = riscv64_streams_for_len(len, cfg.tunables.streams_crc32);
-
-  // Handle forced backend selection
-  match cfg.effective_force {
-    Crc32Force::Portable => return crc32_portable(crc, data),
-    Crc32Force::Zvbc if caps.has(platform::caps::riscv::ZVBC) => {
-      return kernels::dispatch_streams(&CRC32_ZVBC, streams, crc, data);
-    }
-    Crc32Force::Zvbc => return crc32_portable(crc, data),
-    Crc32Force::Zbc if caps.has(platform::caps::riscv::ZBC) => {
-      return kernels::dispatch_streams(&CRC32_ZBC, streams, crc, data);
-    }
-    Crc32Force::Zbc => return crc32_portable(crc, data),
-    _ => {}
-  }
-
-  // Auto selection
-  if cfg.effective_force == Crc32Force::Auto && len < cfg.tunables.hwcrc_to_fusion {
-    return crc32_portable(crc, data);
-  }
-
-  if caps.has(platform::caps::riscv::ZVBC) {
-    return kernels::dispatch_streams(&CRC32_ZVBC, streams, crc, data);
-  }
-  if caps.has(platform::caps::riscv::ZBC) {
-    return kernels::dispatch_streams(&CRC32_ZBC, streams, crc, data);
-  }
-
-  crc32_portable(crc, data)
+  let (pol, kernels) = CRC32_IEEE_CACHED.get_or_init(init_ieee_policy);
+  policy::policy_dispatch(&pol, &kernels, crc, data)
 }
 
+/// CRC-32C (Castagnoli) auto-dispatch for riscv64.
+///
+/// Uses cached policy and kernels for efficient dispatch with minimal branching.
+/// Caching works on both std (OnceLock) and no_std (atomic state machine).
 #[cfg(target_arch = "riscv64")]
 fn crc32c_riscv64_auto(crc: u32, data: &[u8]) -> u32 {
-  use kernels::riscv64::*;
-  let len = data.len();
-
-  if len < CRC32_SMALL_LANE_BYTES {
-    return crc32c_portable(crc, data);
-  }
-
-  let cfg = config::get();
-  let caps = platform::caps();
-  let streams = riscv64_streams_for_len(len, cfg.tunables.streams_crc32c);
-
-  // Handle forced backend selection
-  match cfg.effective_force {
-    Crc32Force::Portable => return crc32c_portable(crc, data),
-    Crc32Force::Zvbc if caps.has(platform::caps::riscv::ZVBC) => {
-      return kernels::dispatch_streams(&CRC32C_ZVBC, streams, crc, data);
-    }
-    Crc32Force::Zvbc => return crc32c_portable(crc, data),
-    Crc32Force::Zbc if caps.has(platform::caps::riscv::ZBC) => {
-      return kernels::dispatch_streams(&CRC32C_ZBC, streams, crc, data);
-    }
-    Crc32Force::Zbc => return crc32c_portable(crc, data),
-    _ => {}
-  }
-
-  // Auto selection
-  if cfg.effective_force == Crc32Force::Auto && len < cfg.tunables.portable_to_hwcrc {
-    return crc32c_portable(crc, data);
-  }
-
-  if caps.has(platform::caps::riscv::ZVBC) {
-    return kernels::dispatch_streams(&CRC32C_ZVBC, streams, crc, data);
-  }
-  if caps.has(platform::caps::riscv::ZBC) {
-    return kernels::dispatch_streams(&CRC32C_ZBC, streams, crc, data);
-  }
-
-  crc32c_portable(crc, data)
+  let (pol, kernels) = CRC32C_CACHED.get_or_init(init_castagnoli_policy);
+  policy::policy_dispatch(&pol, &kernels, crc, data)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1831,40 +720,23 @@ fn select_crc32() -> Selected<Crc32Fn> {
     return Selected::new(kernels::PORTABLE, crc32_portable);
   }
 
-  #[cfg(feature = "std")]
-  {
-    let _ = CRC32_X86_STREAMS.get_or_init(|| cfg.tunables.streams_crc32);
-    match cfg.effective_force {
-      Crc32Force::Auto => {
-        if !caps.has(platform::caps::x86::PCLMUL_READY) {
-          Selected::new(kernels::PORTABLE, crc32_portable)
-        } else {
-          let _ = CRC32_X86_AUTO.get_or_init(|| Crc32X86Auto {
-            hwcrc_to_fusion: cfg.tunables.hwcrc_to_fusion,
-            fusion_to_vpclmul: cfg.tunables.fusion_to_vpclmul,
-            streams: cfg.tunables.streams_crc32,
-            has_pclmul: caps.has(platform::caps::x86::PCLMUL_READY),
-            has_vpclmul: caps.has(platform::caps::x86::VPCLMUL_READY),
-          });
-          Selected::new("x86_64/auto", crc32_x86_64_auto)
-        }
+  match cfg.effective_force {
+    Crc32Force::Auto => {
+      if !caps.has(platform::caps::x86::PCLMUL_READY) {
+        Selected::new(kernels::PORTABLE, crc32_portable)
+      } else {
+        Selected::new("x86_64/auto", crc32_x86_64_auto)
       }
-      Crc32Force::Pclmul if caps.has(platform::caps::x86::PCLMUL_READY) => {
-        Selected::new("x86_64/pclmul", crc32_x86_64_pclmul_forced)
-      }
-      Crc32Force::Vpclmul if caps.has(platform::caps::x86::VPCLMUL_READY) => {
-        Selected::new("x86_64/vpclmul", crc32_x86_64_vpclmul_forced)
-      }
-      _ => Selected::new(kernels::PORTABLE, crc32_portable),
     }
-  }
-
-  #[cfg(not(feature = "std"))]
-  {
-    if caps.has(platform::caps::x86::PCLMUL_READY) {
-      return Selected::new("x86_64/auto", crc32_x86_64_auto);
+    #[cfg(feature = "std")]
+    Crc32Force::Pclmul if caps.has(platform::caps::x86::PCLMUL_READY) => {
+      Selected::new("x86_64/pclmul", crc32_x86_64_pclmul_forced)
     }
-    Selected::new(kernels::PORTABLE, crc32_portable)
+    #[cfg(feature = "std")]
+    Crc32Force::Vpclmul if caps.has(platform::caps::x86::VPCLMUL_READY) => {
+      Selected::new("x86_64/vpclmul", crc32_x86_64_vpclmul_forced)
+    }
+    _ => Selected::new(kernels::PORTABLE, crc32_portable),
   }
 }
 
@@ -1881,53 +753,29 @@ fn select_crc32c() -> Selected<Crc32Fn> {
     return Selected::new(kernels::PORTABLE, crc32c_portable);
   }
 
-  #[cfg(feature = "std")]
-  {
-    if !caps.has(platform::caps::x86::CRC32C_READY) {
-      return Selected::new(kernels::PORTABLE, crc32c_portable);
-    }
-
-    let _ = CRC32C_X86_STREAMS.get_or_init(|| cfg.tunables.streams_crc32c);
-
-    match cfg.effective_force {
-      Crc32Force::Auto => {
-        let _ = CRC32C_X86_AUTO.get_or_init(|| Crc32cX86Auto {
-          portable_to_hwcrc: cfg.tunables.portable_to_hwcrc,
-          hwcrc_to_fusion: cfg.tunables.hwcrc_to_fusion,
-          fusion_to_avx512: cfg.tunables.fusion_to_avx512,
-          fusion_to_vpclmul: cfg.tunables.fusion_to_vpclmul,
-          streams: cfg.tunables.streams_crc32c,
-          has_crc32c: caps.has(platform::caps::x86::CRC32C_READY),
-          has_pclmul: caps.has(platform::caps::x86::PCLMUL_READY),
-          has_vpclmul: caps.has(platform::caps::x86::VPCLMUL_READY),
-          has_avx512: caps.has(platform::caps::x86::AVX512_READY),
-          has_pclmulqdq: caps.has(platform::caps::x86::PCLMULQDQ),
-        });
-        Selected::new("x86_64/auto", crc32c_x86_64_auto)
-      }
-      Crc32Force::Hwcrc if caps.has(platform::caps::x86::CRC32C_READY) => {
-        Selected::new("x86_64/hwcrc", crc32c_x86_64_hwcrc_forced)
-      }
-      Crc32Force::Pclmul
-        if caps.has(platform::caps::x86::CRC32C_READY) && caps.has(platform::caps::x86::PCLMUL_READY) =>
-      {
-        Selected::new("x86_64/fusion-sse", crc32c_x86_64_pclmul_forced)
-      }
-      Crc32Force::Vpclmul
-        if caps.has(platform::caps::x86::CRC32C_READY) && caps.has(platform::caps::x86::VPCLMUL_READY) =>
-      {
-        Selected::new("x86_64/fusion-vpclmul", crc32c_x86_64_vpclmul_forced)
-      }
-      _ => Selected::new(kernels::PORTABLE, crc32c_portable),
-    }
+  if !caps.has(platform::caps::x86::CRC32C_READY) {
+    return Selected::new(kernels::PORTABLE, crc32c_portable);
   }
 
-  #[cfg(not(feature = "std"))]
-  {
-    if caps.has(platform::caps::x86::CRC32C_READY) {
-      return Selected::new("x86_64/auto", crc32c_x86_64_auto);
+  match cfg.effective_force {
+    Crc32Force::Auto => Selected::new("x86_64/auto", crc32c_x86_64_auto),
+    #[cfg(feature = "std")]
+    Crc32Force::Hwcrc if caps.has(platform::caps::x86::CRC32C_READY) => {
+      Selected::new("x86_64/hwcrc", crc32c_x86_64_hwcrc_forced)
     }
-    Selected::new(kernels::PORTABLE, crc32c_portable)
+    #[cfg(feature = "std")]
+    Crc32Force::Pclmul
+      if caps.has(platform::caps::x86::CRC32C_READY) && caps.has(platform::caps::x86::PCLMUL_READY) =>
+    {
+      Selected::new("x86_64/fusion-sse", crc32c_x86_64_pclmul_forced)
+    }
+    #[cfg(feature = "std")]
+    Crc32Force::Vpclmul
+      if caps.has(platform::caps::x86::CRC32C_READY) && caps.has(platform::caps::x86::VPCLMUL_READY) =>
+    {
+      Selected::new("x86_64/fusion-vpclmul", crc32c_x86_64_vpclmul_forced)
+    }
+    _ => Selected::new(kernels::PORTABLE, crc32c_portable),
   }
 }
 
@@ -1949,8 +797,6 @@ fn select_crc32() -> Selected<Crc32Fn> {
     if !caps.has(platform::caps::aarch64::CRC_READY) {
       return Selected::new(kernels::PORTABLE, crc32_portable);
     }
-
-    let _ = CRC32_AARCH64_STREAMS.get_or_init(|| cfg.tunables.streams_crc32);
 
     match cfg.effective_force {
       Crc32Force::Auto => Selected::new("aarch64/auto", crc32_aarch64_auto),
@@ -1997,8 +843,6 @@ fn select_crc32c() -> Selected<Crc32Fn> {
     if !caps.has(platform::caps::aarch64::CRC_READY) {
       return Selected::new(kernels::PORTABLE, crc32c_portable);
     }
-
-    let _ = CRC32C_AARCH64_STREAMS.get_or_init(|| cfg.tunables.streams_crc32c);
 
     match cfg.effective_force {
       Crc32Force::Auto => Selected::new("aarch64/auto", crc32c_aarch64_auto),

@@ -23,15 +23,6 @@
 pub use kernels::PORTABLE_SLICE16 as PORTABLE;
 /// Reference (bitwise) kernel name - always available for force mode.
 pub use kernels::REFERENCE;
-/// Re-export select_name from common kernels (SIMD architectures only).
-#[cfg(any(
-  target_arch = "x86_64",
-  target_arch = "aarch64",
-  target_arch = "powerpc64",
-  target_arch = "s390x",
-  target_arch = "riscv64"
-))]
-pub use kernels::select_name;
 
 use crate::common::kernels;
 #[cfg(any(
