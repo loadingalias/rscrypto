@@ -1,3 +1,6 @@
+// Proptest uses getcwd() which fails under Miri isolation.
+#![cfg(not(miri))]
+
 //! Unified property tests for all CRC implementations.
 //!
 //! This module provides rigorous property-based tests that verify two fundamental

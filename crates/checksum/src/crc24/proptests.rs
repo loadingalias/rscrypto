@@ -1,3 +1,6 @@
+// Proptest uses getcwd() which fails under Miri isolation.
+#![cfg(not(miri))]
+
 extern crate std;
 
 use crc::Crc as RefCrc;

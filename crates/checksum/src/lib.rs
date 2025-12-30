@@ -111,6 +111,15 @@ pub mod tune;
 #[doc(hidden)]
 pub mod __internal {
   pub use crate::common::kernels::stream_to_index;
+
+  /// Kernel testing utilities (for fuzz targets and integration tests).
+  #[cfg(feature = "alloc")]
+  pub mod kernel_test {
+    pub use crate::crc64::kernel_test::{
+      KernelResult, run_all_crc64_nvme_kernels, run_all_crc64_xz_kernels, verify_crc64_nvme_kernels,
+      verify_crc64_xz_kernels,
+    };
+  }
 }
 
 // Re-export public types

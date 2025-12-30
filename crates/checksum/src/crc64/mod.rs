@@ -14,9 +14,12 @@
 //! - wasm32/wasm64: portable only (no CLMUL)
 
 pub(crate) mod config;
-mod kernels;
+pub(crate) mod kernels;
 mod portable;
 mod tuned_defaults;
+
+#[cfg(feature = "alloc")]
+pub mod kernel_test;
 
 #[cfg(target_arch = "x86_64")]
 mod x86_64;

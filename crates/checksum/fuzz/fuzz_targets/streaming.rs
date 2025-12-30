@@ -33,7 +33,7 @@ fn test_streaming_crc64(data: &[u8], chunk_sizes: &[usize]) {
 
   let mut hasher = Crc64::new();
   let mut offset = 0;
-  let mut chunk_idx = 0;
+  let mut chunk_idx: usize = 0;
 
   while offset < data.len() {
     let chunk_size = if chunk_sizes.is_empty() {
@@ -57,7 +57,7 @@ fn test_streaming_crc64_nvme(data: &[u8], chunk_sizes: &[usize]) {
 
   let mut hasher = Crc64Nvme::new();
   let mut offset = 0;
-  let mut chunk_idx = 0;
+  let mut chunk_idx: usize = 0;
 
   while offset < data.len() {
     let chunk_size = if chunk_sizes.is_empty() {
@@ -81,7 +81,7 @@ fn test_streaming_crc32(data: &[u8], chunk_sizes: &[usize]) {
 
   let mut hasher = Crc32::new();
   let mut offset = 0;
-  let mut chunk_idx = 0;
+  let mut chunk_idx: usize = 0;
 
   while offset < data.len() {
     let chunk_size = if chunk_sizes.is_empty() {
@@ -105,7 +105,7 @@ fn test_streaming_crc32c(data: &[u8], chunk_sizes: &[usize]) {
 
   let mut hasher = Crc32C::new();
   let mut offset = 0;
-  let mut chunk_idx = 0;
+  let mut chunk_idx: usize = 0;
 
   while offset < data.len() {
     let chunk_size = if chunk_sizes.is_empty() {
@@ -129,7 +129,7 @@ fn test_streaming_crc16_ccitt(data: &[u8], chunk_sizes: &[usize]) {
 
   let mut hasher = Crc16Ccitt::new();
   let mut offset = 0;
-  let mut chunk_idx = 0;
+  let mut chunk_idx: usize = 0;
 
   while offset < data.len() {
     let chunk_size = if chunk_sizes.is_empty() {
@@ -153,7 +153,7 @@ fn test_streaming_crc16_ibm(data: &[u8], chunk_sizes: &[usize]) {
 
   let mut hasher = Crc16Ibm::new();
   let mut offset = 0;
-  let mut chunk_idx = 0;
+  let mut chunk_idx: usize = 0;
 
   while offset < data.len() {
     let chunk_size = if chunk_sizes.is_empty() {
@@ -177,7 +177,7 @@ fn test_streaming_crc24_openpgp(data: &[u8], chunk_sizes: &[usize]) {
 
   let mut hasher = Crc24OpenPgp::new();
   let mut offset = 0;
-  let mut chunk_idx = 0;
+  let mut chunk_idx: usize = 0;
 
   while offset < data.len() {
     let chunk_size = if chunk_sizes.is_empty() {
