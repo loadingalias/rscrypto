@@ -20,57 +20,9 @@ proptest! {
     prop_assert_eq!(ours, portable);
   }
 
-  #[test]
-  fn crc32_streaming_and_combine(data in proptest::collection::vec(any::<u8>(), 0..=4096), split in any::<usize>(), chunk in 1usize..=257) {
-    let split = split.strict_rem(data.len().strict_add(1));
-    let (a, b) = data.split_at(split);
-
-    let oneshot = Crc32::checksum(&data);
-
-    let mut hasher = Crc32::new();
-    for part in a.chunks(chunk) {
-      hasher.update(part);
-    }
-    for part in b.chunks(chunk) {
-      hasher.update(part);
-    }
-    prop_assert_eq!(hasher.finalize(), oneshot);
-
-    let crc_a = Crc32::checksum(a);
-    let crc_b = Crc32::checksum(b);
-    let combined = Crc32::combine(crc_a, crc_b, b.len());
-    prop_assert_eq!(combined, oneshot);
-
-    let mut resumed = Crc32::resume(crc_a);
-    resumed.update(b);
-    prop_assert_eq!(resumed.finalize(), oneshot);
-  }
-
-  #[test]
-  fn crc32c_streaming_and_combine(data in proptest::collection::vec(any::<u8>(), 0..=4096), split in any::<usize>(), chunk in 1usize..=257) {
-    let split = split.strict_rem(data.len().strict_add(1));
-    let (a, b) = data.split_at(split);
-
-    let oneshot = Crc32C::checksum(&data);
-
-    let mut hasher = Crc32C::new();
-    for part in a.chunks(chunk) {
-      hasher.update(part);
-    }
-    for part in b.chunks(chunk) {
-      hasher.update(part);
-    }
-    prop_assert_eq!(hasher.finalize(), oneshot);
-
-    let crc_a = Crc32C::checksum(a);
-    let crc_b = Crc32C::checksum(b);
-    let combined = Crc32C::combine(crc_a, crc_b, b.len());
-    prop_assert_eq!(combined, oneshot);
-
-    let mut resumed = Crc32C::resume(crc_a);
-    resumed.update(b);
-    prop_assert_eq!(resumed.finalize(), oneshot);
-  }
+  // NOTE: crc32_streaming_and_combine and crc32c_streaming_and_combine tests removed -
+  // now covered by unified tests in common/proptests.rs (combine_correctness,
+  // chunking_equivalence, resume_correctness)
 
   // ─────────────────────────────────────────────────────────────────────────────
   // Cross-validation against crc-fast-rust

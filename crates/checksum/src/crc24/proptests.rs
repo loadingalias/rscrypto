@@ -46,35 +46,8 @@ proptest! {
     prop_assert_eq!(ours, reference);
   }
 
-  #[test]
-  fn crc24_openpgp_streaming_and_combine(
-    data in proptest::collection::vec(any::<u8>(), 0..=4096),
-    split in any::<usize>(),
-    chunk in 1usize..=257
-  ) {
-    let split = split.strict_rem(data.len().strict_add(1));
-    let (a, b) = data.split_at(split);
-
-    let oneshot = Crc24OpenPgp::checksum(&data);
-
-    let mut hasher = Crc24OpenPgp::new();
-    for part in a.chunks(chunk) {
-      hasher.update(part);
-    }
-    for part in b.chunks(chunk) {
-      hasher.update(part);
-    }
-    prop_assert_eq!(hasher.finalize(), oneshot);
-
-    let crc_a = Crc24OpenPgp::checksum(a);
-    let crc_b = Crc24OpenPgp::checksum(b);
-    let combined = Crc24OpenPgp::combine(crc_a, crc_b, b.len());
-    prop_assert_eq!(combined, oneshot);
-
-    let mut resumed = Crc24OpenPgp::resume(crc_a);
-    resumed.update(b);
-    prop_assert_eq!(resumed.finalize(), oneshot);
-  }
+  // NOTE: crc24_openpgp_streaming_and_combine test removed - now covered by unified
+  // tests in common/proptests.rs (combine_correctness, chunking_equivalence, resume_correctness)
 
   #[test]
   fn crc24_openpgp_streaming_matches_crc_crate(
