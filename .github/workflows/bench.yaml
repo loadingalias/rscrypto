@@ -68,19 +68,13 @@ on:
         type: boolean
         default: false
 
-      comp_only:
-        description: "Skip full Criterion benches; run comp report only (Linux only)"
+      comp_report_crc32c_diagnose:
+        description: "For comp report: run CRC32C diagnostics variants (default, streams=1, force=hwcrc) on Linux x86-64"
         required: false
         type: boolean
         default: false
 
-      comp_crc32c_diagnose:
-        description: "For comp report: run CRC32C diagnostics variants (default, streams=1, force=hwcrc)"
-        required: false
-        type: boolean
-        default: false
-
-      comp_filter:
+      comp_report_filter:
         description: "Criterion FILTER for comp bench (e.g. 'crc32c/castagnoli'; empty runs all)"
         required: false
         type: string
@@ -113,7 +107,7 @@ jobs:
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   benchmark:
     name: Benchmark (${{ matrix.target.name }})
-    if: github.event_name == 'schedule' || github.event.inputs.tune_only != 'true' || github.event.inputs.run_comp_report == 'true' || github.event.inputs.comp_crc32c_diagnose == 'true' || github.event.inputs.comp_only == 'true'
+    if: github.event_name == 'schedule' || github.event.inputs.tune_only != 'true' || github.event.inputs.run_comp_report == 'true' || github.event.inputs.comp_report_crc32c_diagnose == 'true'
     runs-on: ${{ matrix.target.runner }}
     strategy:
       fail-fast: false
@@ -270,7 +264,7 @@ jobs:
           BENCHES_INPUT="${GITHUB_EVENT_INPUTS_SPECIFIC_BENCHES}"
           EVENT_NAME="${GITHUB_EVENT_NAME}"
           TUNE_ONLY="${GITHUB_EVENT_INPUTS_TUNE_ONLY}"
-          COMP_ONLY="${GITHUB_EVENT_INPUTS_COMP_ONLY}"
+          RUN_COMP_REPORT="${GITHUB_EVENT_INPUTS_RUN_COMP_REPORT}"
 
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "Determining Benchmark Scope"
@@ -329,14 +323,6 @@ jobs:
               exit 0
             fi
 
-            if [ "$COMP_ONLY" == "true" ]; then
-              echo "comp_only=true - skipping full Criterion benches"
-              echo "skip_bench=true" >> "$GITHUB_OUTPUT"
-              echo "crate_flags=" >> "$GITHUB_OUTPUT"
-              echo "bench_flags=" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-
             echo "skip_bench=false" >> "$GITHUB_OUTPUT"
 
             # Build crate flags from user input
@@ -368,12 +354,23 @@ jobs:
               echo "bench_flags=" >> "$GITHUB_OUTPUT"
               echo "Running all benchmark binaries"
             fi
+
+            # If the user is only running the checksum comp bench and also requested a comp report,
+            # skip the generic "Run Criterion Benchmarks" step to avoid double-running `comp`.
+            if [ "$RUN_COMP_REPORT" == "true" ]; then
+              CRATES_TRIMMED=$(echo "$CRATES_INPUT" | tr -d '[:space:]')
+              BENCHES_TRIMMED=$(echo "$BENCHES_INPUT" | tr -d '[:space:]')
+              if [ "$CRATES_TRIMMED" == "checksum" ] && [ "$BENCHES_TRIMMED" == "comp" ]; then
+                echo "Detected crates=checksum and specific_benches=comp with run_comp_report=true; skipping full bench run."
+                echo "skip_bench=true" >> "$GITHUB_OUTPUT"
+              fi
+            fi
           fi
         env:
           GITHUB_EVENT_INPUTS_CRATES: ${{ github.event.inputs.crates }}
           GITHUB_EVENT_INPUTS_SPECIFIC_BENCHES: ${{ github.event.inputs.specific_benches }}
           GITHUB_EVENT_INPUTS_TUNE_ONLY: ${{ github.event.inputs.tune_only }}
-          GITHUB_EVENT_INPUTS_COMP_ONLY: ${{ github.event.inputs.comp_only }}
+          GITHUB_EVENT_INPUTS_RUN_COMP_REPORT: ${{ github.event.inputs.run_comp_report }}
           GITHUB_EVENT_NAME: ${{ github.event_name }}
 
       - name: Skip Notice (No Changes Detected)
@@ -435,7 +432,7 @@ jobs:
           STEPS_SCOPE_OUTPUTS_BENCH_FLAGS: ${{ steps.scope.outputs.bench_flags }}
 
       - name: Run checksum comp benchmark + report
-        if: steps.should-run.outputs.enabled == 'true' && github.event_name == 'workflow_dispatch' && github.event.inputs.run_comp_report == 'true' && github.event.inputs.comp_crc32c_diagnose != 'true' && runner.os == 'Linux' && startsWith(matrix.target.platform-id, 'linux-')
+        if: steps.should-run.outputs.enabled == 'true' && github.event_name == 'workflow_dispatch' && github.event.inputs.run_comp_report == 'true' && github.event.inputs.comp_report_crc32c_diagnose != 'true' && runner.os == 'Linux' && startsWith(matrix.target.platform-id, 'linux-')
         shell: bash
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -444,7 +441,7 @@ jobs:
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
           mkdir -p benchmark-results
-          FILTER="${GITHUB_EVENT_INPUTS_COMP_FILTER}"
+          FILTER="${GITHUB_EVENT_INPUTS_COMP_REPORT_FILTER}"
           ARGS=(--noplot)
           if [ -n "$FILTER" ]; then
             ARGS=("$FILTER" "${ARGS[@]}")
@@ -458,10 +455,10 @@ jobs:
             echo "comp-output captured at:  benchmark-results/comp-output.txt"
           } >> "$GITHUB_STEP_SUMMARY"
         env:
-          GITHUB_EVENT_INPUTS_COMP_FILTER: ${{ github.event.inputs.comp_filter }}
+          GITHUB_EVENT_INPUTS_COMP_REPORT_FILTER: ${{ github.event.inputs.comp_report_filter }}
 
       - name: Run checksum comp benchmark + report (CRC32C diagnostics)
-        if: steps.should-run.outputs.enabled == 'true' && github.event_name == 'workflow_dispatch' && github.event.inputs.comp_crc32c_diagnose == 'true' && runner.os == 'Linux' && matrix.target.platform-id == 'linux-x64'
+        if: steps.should-run.outputs.enabled == 'true' && github.event_name == 'workflow_dispatch' && github.event.inputs.comp_report_crc32c_diagnose == 'true' && runner.os == 'Linux' && matrix.target.platform-id == 'linux-x64'
         shell: bash
         run: |
           set -euo pipefail
@@ -474,7 +471,7 @@ jobs:
 
           mkdir -p benchmark-results
 
-          FILTER="${GITHUB_EVENT_INPUTS_COMP_FILTER}"
+          FILTER="${GITHUB_EVENT_INPUTS_COMP_REPORT_FILTER}"
           if [ -z "$FILTER" ]; then
             FILTER="crc32c/castagnoli"
           fi
@@ -510,7 +507,7 @@ jobs:
             echo "- benchmark-results/comp-report.force-hwcrc.txt"
           } >> "$GITHUB_STEP_SUMMARY"
         env:
-          GITHUB_EVENT_INPUTS_COMP_FILTER: ${{ github.event.inputs.comp_filter }}
+          GITHUB_EVENT_INPUTS_COMP_REPORT_FILTER: ${{ github.event.inputs.comp_report_filter }}
 
       # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
       # Upload Results
@@ -559,7 +556,7 @@ jobs:
           compression-level: 6
 
       - name: Upload checksum comp report
-        if: steps.should-run.outputs.enabled == 'true' && github.event_name == 'workflow_dispatch' && (github.event.inputs.run_comp_report == 'true' || github.event.inputs.comp_crc32c_diagnose == 'true') && runner.os == 'Linux' && startsWith(matrix.target.platform-id, 'linux-') && always()
+        if: steps.should-run.outputs.enabled == 'true' && github.event_name == 'workflow_dispatch' && (github.event.inputs.run_comp_report == 'true' || github.event.inputs.comp_report_crc32c_diagnose == 'true') && runner.os == 'Linux' && startsWith(matrix.target.platform-id, 'linux-') && always()
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
         with:
           name: checksum-comp-report-${{ matrix.target.platform-id }}
