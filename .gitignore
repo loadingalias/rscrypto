@@ -18,7 +18,7 @@ AGENTS.md
 
 # Personal - Notes, Docs, Examples, Testing, etc.
 notes/*
-crates/*/bench_baseline/
+crates/*/bench_baseline/*
 crates/*/tune-results/
 tune-results
 blake3.md

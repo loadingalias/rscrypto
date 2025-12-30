@@ -68,6 +68,24 @@ on:
         type: boolean
         default: false
 
+      comp_only:
+        description: "Skip full Criterion benches; run comp report only (Linux only)"
+        required: false
+        type: boolean
+        default: false
+
+      comp_crc32c_diagnose:
+        description: "For comp report: run CRC32C diagnostics variants (default, streams=1, force=hwcrc)"
+        required: false
+        type: boolean
+        default: false
+
+      comp_filter:
+        description: "Criterion FILTER for comp bench (e.g. 'crc32c/castagnoli'; empty runs all)"
+        required: false
+        type: string
+        default: ""
+
       regression_baseline:
         description: "Git ref for regression comparison (e.g., main, v1.0.0)"
         required: false
@@ -79,6 +97,8 @@ env:
   CARGO_TERM_COLOR: always
   RSCRYPTO_BENCH_MODE: ci
   CARGO_INCREMENTAL: 0
+  # Ensure benchmark builds use the host CPU features by construction.
+  RUSTFLAGS: "-C target-cpu=native"
 
 # Lock down permissions to read-only by default
 permissions:
@@ -93,7 +113,7 @@ jobs:
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   benchmark:
     name: Benchmark (${{ matrix.target.name }})
-    if: github.event_name == 'schedule' || github.event.inputs.tune_only != 'true'
+    if: github.event_name == 'schedule' || github.event.inputs.tune_only != 'true' || github.event.inputs.run_comp_report == 'true' || github.event.inputs.comp_crc32c_diagnose == 'true' || github.event.inputs.comp_only == 'true'
     runs-on: ${{ matrix.target.runner }}
     strategy:
       fail-fast: false
@@ -249,6 +269,8 @@ jobs:
           CRATES_INPUT="${GITHUB_EVENT_INPUTS_CRATES}"
           BENCHES_INPUT="${GITHUB_EVENT_INPUTS_SPECIFIC_BENCHES}"
           EVENT_NAME="${GITHUB_EVENT_NAME}"
+          TUNE_ONLY="${GITHUB_EVENT_INPUTS_TUNE_ONLY}"
+          COMP_ONLY="${GITHUB_EVENT_INPUTS_COMP_ONLY}"
 
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "Determining Benchmark Scope"
@@ -298,6 +320,23 @@ jobs:
           # ─────────────────────────────────────────────────────────
           else
             echo "Manual run - using user-provided scope"
+
+            if [ "$TUNE_ONLY" == "true" ]; then
+              echo "tune_only=true - skipping full Criterion benches"
+              echo "skip_bench=true" >> "$GITHUB_OUTPUT"
+              echo "crate_flags=" >> "$GITHUB_OUTPUT"
+              echo "bench_flags=" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+            if [ "$COMP_ONLY" == "true" ]; then
+              echo "comp_only=true - skipping full Criterion benches"
+              echo "skip_bench=true" >> "$GITHUB_OUTPUT"
+              echo "crate_flags=" >> "$GITHUB_OUTPUT"
+              echo "bench_flags=" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
             echo "skip_bench=false" >> "$GITHUB_OUTPUT"
 
             # Build crate flags from user input
@@ -333,6 +372,8 @@ jobs:
         env:
           GITHUB_EVENT_INPUTS_CRATES: ${{ github.event.inputs.crates }}
           GITHUB_EVENT_INPUTS_SPECIFIC_BENCHES: ${{ github.event.inputs.specific_benches }}
+          GITHUB_EVENT_INPUTS_TUNE_ONLY: ${{ github.event.inputs.tune_only }}
+          GITHUB_EVENT_INPUTS_COMP_ONLY: ${{ github.event.inputs.comp_only }}
           GITHUB_EVENT_NAME: ${{ github.event_name }}
 
       - name: Skip Notice (No Changes Detected)
@@ -368,12 +409,11 @@ jobs:
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "Building Criterion Benchmarks"
           echo "Platform: ${{ matrix.target.name }}"
-          echo "RUSTFLAGS: -C target-cpu=native"
+          echo "RUSTFLAGS: ${RUSTFLAGS}"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           # shellcheck disable=SC2086
           cargo bench --profile bench ${STEPS_SCOPE_OUTPUTS_CRATE_FLAGS} ${STEPS_SCOPE_OUTPUTS_BENCH_FLAGS} --no-run
         env:
-          RUSTFLAGS: "-C target-cpu=native"
           STEPS_SCOPE_OUTPUTS_CRATE_FLAGS: ${{ steps.scope.outputs.crate_flags }}
           STEPS_SCOPE_OUTPUTS_BENCH_FLAGS: ${{ steps.scope.outputs.bench_flags }}
 
@@ -383,7 +423,7 @@ jobs:
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "Running Criterion Benchmarks"
-          echo "RUSTFLAGS: -C target-cpu=native"
+          echo "RUSTFLAGS: ${RUSTFLAGS}"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
           mkdir -p benchmark-results
@@ -391,21 +431,25 @@ jobs:
           cargo bench --profile bench ${STEPS_SCOPE_OUTPUTS_CRATE_FLAGS} ${STEPS_SCOPE_OUTPUTS_BENCH_FLAGS} 2>&1 | tee benchmark-results/benchmark-output.txt
 
         env:
-          RUSTFLAGS: "-C target-cpu=native"
           STEPS_SCOPE_OUTPUTS_CRATE_FLAGS: ${{ steps.scope.outputs.crate_flags }}
           STEPS_SCOPE_OUTPUTS_BENCH_FLAGS: ${{ steps.scope.outputs.bench_flags }}
 
       - name: Run checksum comp benchmark + report
-        if: steps.should-run.outputs.enabled == 'true' && steps.scope.outputs.skip_bench != 'true' && github.event_name == 'workflow_dispatch' && github.event.inputs.run_comp_report == 'true' && runner.os == 'Linux' && matrix.target.platform-id == 'linux-x64'
+        if: steps.should-run.outputs.enabled == 'true' && github.event_name == 'workflow_dispatch' && github.event.inputs.run_comp_report == 'true' && github.event.inputs.comp_crc32c_diagnose != 'true' && runner.os == 'Linux' && startsWith(matrix.target.platform-id, 'linux-')
         shell: bash
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "Running checksum comp benchmark (report mode)"
+          echo "RUSTFLAGS: ${RUSTFLAGS}"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
           mkdir -p benchmark-results
-          # shellcheck disable=SC2086
-          cargo bench --profile bench -p checksum --bench comp -- --noplot 2>&1 | tee benchmark-results/comp-output.txt
+          FILTER="${GITHUB_EVENT_INPUTS_COMP_FILTER}"
+          ARGS=(--noplot)
+          if [ -n "$FILTER" ]; then
+            ARGS=("$FILTER" "${ARGS[@]}")
+          fi
+          cargo bench --profile bench -p checksum --bench comp -- "${ARGS[@]}" 2>&1 | tee benchmark-results/comp-output.txt
 
           python3 scripts/bench/comp-analyze.py benchmark-results/comp-output.txt | tee benchmark-results/comp-report.txt
 
@@ -414,7 +458,59 @@ jobs:
             echo "comp-output captured at:  benchmark-results/comp-output.txt"
           } >> "$GITHUB_STEP_SUMMARY"
         env:
-          RUSTFLAGS: "-C target-cpu=native"
+          GITHUB_EVENT_INPUTS_COMP_FILTER: ${{ github.event.inputs.comp_filter }}
+
+      - name: Run checksum comp benchmark + report (CRC32C diagnostics)
+        if: steps.should-run.outputs.enabled == 'true' && github.event_name == 'workflow_dispatch' && github.event.inputs.comp_crc32c_diagnose == 'true' && runner.os == 'Linux' && matrix.target.platform-id == 'linux-x64'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Running checksum comp benchmark (CRC32C diagnostics)"
+          echo "RUSTFLAGS: ${RUSTFLAGS}"
+          echo "Variants: default, RSCRYPTO_CRC32_STREAMS=1, RSCRYPTO_CRC32_FORCE=hwcrc"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          mkdir -p benchmark-results
+
+          FILTER="${GITHUB_EVENT_INPUTS_COMP_FILTER}"
+          if [ -z "$FILTER" ]; then
+            FILTER="crc32c/castagnoli"
+          fi
+          ARGS=("$FILTER" --noplot)
+
+          run_variant() {
+            local label="$1"
+            shift
+            local out="benchmark-results/comp-output.${label}.txt"
+            local rep="benchmark-results/comp-report.${label}.txt"
+
+            echo "" | tee "$out" >/dev/null
+            echo ">>> variant=${label} env=$*" | tee -a "$out"
+
+            # shellcheck disable=SC2086
+            env "$@" cargo bench --profile bench -p checksum --bench comp -- "${ARGS[@]}" 2>&1 | tee -a "$out"
+            python3 scripts/bench/comp-analyze.py "$out" | tee "$rep"
+          }
+
+          run_variant "default"
+          run_variant "streams1" RSCRYPTO_CRC32_STREAMS=1
+          run_variant "force-hwcrc" RSCRYPTO_CRC32_FORCE=hwcrc
+
+          {
+            echo "CRC32C diagnostics filter: ${FILTER}"
+            echo ""
+            echo "Artifacts:"
+            echo "- benchmark-results/comp-output.default.txt"
+            echo "- benchmark-results/comp-report.default.txt"
+            echo "- benchmark-results/comp-output.streams1.txt"
+            echo "- benchmark-results/comp-report.streams1.txt"
+            echo "- benchmark-results/comp-output.force-hwcrc.txt"
+            echo "- benchmark-results/comp-report.force-hwcrc.txt"
+          } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          GITHUB_EVENT_INPUTS_COMP_FILTER: ${{ github.event.inputs.comp_filter }}
 
       # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
       # Upload Results
@@ -463,13 +559,15 @@ jobs:
           compression-level: 6
 
       - name: Upload checksum comp report
-        if: steps.should-run.outputs.enabled == 'true' && steps.scope.outputs.skip_bench != 'true' && github.event_name == 'workflow_dispatch' && github.event.inputs.run_comp_report == 'true' && runner.os == 'Linux' && matrix.target.platform-id == 'linux-x64' && always()
+        if: steps.should-run.outputs.enabled == 'true' && github.event_name == 'workflow_dispatch' && (github.event.inputs.run_comp_report == 'true' || github.event.inputs.comp_crc32c_diagnose == 'true') && runner.os == 'Linux' && startsWith(matrix.target.platform-id, 'linux-') && always()
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
         with:
           name: checksum-comp-report-${{ matrix.target.platform-id }}
           path: |
             benchmark-results/comp-output.txt
             benchmark-results/comp-report.txt
+            benchmark-results/comp-output.*.txt
+            benchmark-results/comp-report.*.txt
           retention-days: 90
           if-no-files-found: warn
           compression-level: 6
