@@ -23,6 +23,9 @@
 // Common Constants
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Reference (bitwise) kernel name - canonical implementation for verification.
+pub const REFERENCE: &str = "reference/bitwise";
+
 /// Portable fallback kernel name (used by all CRC widths).
 pub const PORTABLE_SLICE16: &str = "portable/slice16";
 

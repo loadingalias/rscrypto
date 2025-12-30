@@ -49,7 +49,10 @@ pub(super) use traits::{Checksum, ChecksumCombine};
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
 use crate::common::tables::generate_crc64_tables_8;
 use crate::{
-  common::tables::{CRC64_NVME_POLY, CRC64_XZ_POLY, generate_crc64_tables_16},
+  common::{
+    reference::crc64_bitwise,
+    tables::{CRC64_NVME_POLY, CRC64_XZ_POLY, generate_crc64_tables_16},
+  },
   dispatchers::{Crc64Dispatcher, Crc64Fn},
 };
 
@@ -80,6 +83,11 @@ pub(crate) fn crc64_selected_kernel_name(len: usize) -> &'static str {
     let cfg = config::get();
     let caps = platform::caps();
     let portable_to_clmul = cfg.tunables.portable_to_clmul.max(64);
+
+    // Reference always uses bitwise
+    if cfg.effective_force == Crc64Force::Reference {
+      return kernels::REFERENCE;
+    }
 
     if len < CRC64_SMALL_LANE_BYTES || cfg.effective_force == Crc64Force::Portable {
       return kernels::PORTABLE;
@@ -148,6 +156,11 @@ pub(crate) fn crc64_selected_kernel_name(len: usize) -> &'static str {
     use kernels::aarch64::*;
     let cfg = config::get();
     let caps = platform::caps();
+
+    // Reference always uses bitwise
+    if cfg.effective_force == Crc64Force::Reference {
+      return kernels::REFERENCE;
+    }
 
     if len < CRC64_SMALL_LANE_BYTES || cfg.effective_force == Crc64Force::Portable {
       return kernels::PORTABLE;
@@ -222,6 +235,11 @@ pub(crate) fn crc64_selected_kernel_name(len: usize) -> &'static str {
     let cfg = config::get();
     let caps = platform::caps();
 
+    // Reference always uses bitwise
+    if cfg.effective_force == Crc64Force::Reference {
+      return kernels::REFERENCE;
+    }
+
     if len < CRC64_SMALL_LANE_BYTES || cfg.effective_force == Crc64Force::Portable {
       return kernels::PORTABLE;
     }
@@ -254,6 +272,11 @@ pub(crate) fn crc64_selected_kernel_name(len: usize) -> &'static str {
     let cfg = config::get();
     let caps = platform::caps();
 
+    // Reference always uses bitwise
+    if cfg.effective_force == Crc64Force::Reference {
+      return kernels::REFERENCE;
+    }
+
     if len < CRC64_SMALL_LANE_BYTES || cfg.effective_force == Crc64Force::Portable {
       return kernels::PORTABLE;
     }
@@ -285,6 +308,11 @@ pub(crate) fn crc64_selected_kernel_name(len: usize) -> &'static str {
     use kernels::riscv64::*;
     let cfg = config::get();
     let caps = platform::caps();
+
+    // Reference always uses bitwise
+    if cfg.effective_force == Crc64Force::Reference {
+      return kernels::REFERENCE;
+    }
 
     if len < CRC64_SMALL_LANE_BYTES || cfg.effective_force == Crc64Force::Portable {
       return kernels::PORTABLE;
@@ -364,6 +392,22 @@ fn crc64_xz_portable(crc: u64, data: &[u8]) -> u64 {
 /// CRC-64-NVME portable kernel wrapper.
 fn crc64_nvme_portable(crc: u64, data: &[u8]) -> u64 {
   portable::crc64_slice16_nvme(crc, data)
+}
+
+/// CRC-64-XZ reference (bitwise) kernel wrapper.
+///
+/// This is the canonical reference implementation - obviously correct,
+/// audit-friendly, and used for verification of all optimized paths.
+fn crc64_xz_reference(crc: u64, data: &[u8]) -> u64 {
+  crc64_bitwise(CRC64_XZ_POLY, crc, data)
+}
+
+/// CRC-64-NVME reference (bitwise) kernel wrapper.
+///
+/// This is the canonical reference implementation - obviously correct,
+/// audit-friendly, and used for verification of all optimized paths.
+fn crc64_nvme_reference(crc: u64, data: &[u8]) -> u64 {
+  crc64_bitwise(CRC64_NVME_POLY, crc, data)
 }
 
 // Folding parameters (only used on SIMD architectures)
@@ -559,6 +603,9 @@ fn crc64_xz_x86_64_auto(crc: u64, data: &[u8]) -> u64 {
 
   // Handle forced backend selection
   match params.effective_force {
+    Crc64Force::Reference => {
+      return crc64_xz_reference(crc, data);
+    }
     Crc64Force::Portable => {
       return crc64_xz_portable(crc, data);
     }
@@ -685,6 +732,9 @@ fn crc64_nvme_x86_64_auto(crc: u64, data: &[u8]) -> u64 {
 
   // Handle forced backend selection
   match params.effective_force {
+    Crc64Force::Reference => {
+      return crc64_nvme_reference(crc, data);
+    }
     Crc64Force::Portable => {
       return crc64_nvme_portable(crc, data);
     }
@@ -780,9 +830,15 @@ fn crc64_nvme_x86_64_auto(crc: u64, data: &[u8]) -> u64 {
 #[cfg(target_arch = "x86_64")]
 fn select_crc64_xz() -> Selected<Crc64Fn> {
   let caps = platform::caps();
+  let cfg = config::get();
 
-  // Explicit portable override always wins.
-  if config::get().effective_force == Crc64Force::Portable {
+  // Explicit reference override always wins.
+  if cfg.effective_force == Crc64Force::Reference {
+    return Selected::new("reference/bitwise", crc64_xz_reference);
+  }
+
+  // Explicit portable override.
+  if cfg.effective_force == Crc64Force::Portable {
     return Selected::new("portable/slice16", crc64_xz_portable);
   }
 
@@ -807,6 +863,7 @@ fn crc64_xz_powerpc64_auto(crc: u64, data: &[u8]) -> u64 {
 
   // Handle forced backend selection
   match cfg.effective_force {
+    Crc64Force::Reference => return crc64_xz_reference(crc, data),
     Crc64Force::Portable => return crc64_xz_portable(crc, data),
     Crc64Force::Vpmsum if caps.has(platform::caps::powerpc64::VPMSUM_READY) => {
       let streams = powerpc64_vpmsum_streams_for_len(len, cfg.tunables.streams);
@@ -843,6 +900,7 @@ fn crc64_nvme_powerpc64_auto(crc: u64, data: &[u8]) -> u64 {
 
   // Handle forced backend selection
   match cfg.effective_force {
+    Crc64Force::Reference => return crc64_nvme_reference(crc, data),
     Crc64Force::Portable => return crc64_nvme_portable(crc, data),
     Crc64Force::Vpmsum if caps.has(platform::caps::powerpc64::VPMSUM_READY) => {
       let streams = powerpc64_vpmsum_streams_for_len(len, cfg.tunables.streams);
@@ -879,6 +937,7 @@ fn crc64_xz_s390x_auto(crc: u64, data: &[u8]) -> u64 {
 
   // Handle forced backend selection
   match cfg.effective_force {
+    Crc64Force::Reference => return crc64_xz_reference(crc, data),
     Crc64Force::Portable => return crc64_xz_portable(crc, data),
     Crc64Force::Vgfm if caps.has(platform::caps::s390x::VECTOR) => {
       let streams = s390x_vgfm_streams_for_len(len, cfg.tunables.streams);
@@ -915,6 +974,7 @@ fn crc64_nvme_s390x_auto(crc: u64, data: &[u8]) -> u64 {
 
   // Handle forced backend selection
   match cfg.effective_force {
+    Crc64Force::Reference => return crc64_nvme_reference(crc, data),
     Crc64Force::Portable => return crc64_nvme_portable(crc, data),
     Crc64Force::Vgfm if caps.has(platform::caps::s390x::VECTOR) => {
       let streams = s390x_vgfm_streams_for_len(len, cfg.tunables.streams);
@@ -951,6 +1011,7 @@ fn crc64_xz_riscv64_auto(crc: u64, data: &[u8]) -> u64 {
 
   // Handle forced backend selection
   match cfg.effective_force {
+    Crc64Force::Reference => return crc64_xz_reference(crc, data),
     Crc64Force::Portable => return crc64_xz_portable(crc, data),
     Crc64Force::Zvbc if caps.has(platform::caps::riscv::ZVBC) => {
       let streams = riscv64_zbc_streams_for_len(len, cfg.tunables.streams);
@@ -999,6 +1060,7 @@ fn crc64_nvme_riscv64_auto(crc: u64, data: &[u8]) -> u64 {
 
   // Handle forced backend selection
   match cfg.effective_force {
+    Crc64Force::Reference => return crc64_nvme_reference(crc, data),
     Crc64Force::Portable => return crc64_nvme_portable(crc, data),
     Crc64Force::Zvbc if caps.has(platform::caps::riscv::ZVBC) => {
       let streams = riscv64_zbc_streams_for_len(len, cfg.tunables.streams);
@@ -1047,6 +1109,7 @@ fn crc64_xz_aarch64_auto(crc: u64, data: &[u8]) -> u64 {
 
   // Handle forced backend selection
   match cfg.effective_force {
+    Crc64Force::Reference => return crc64_xz_reference(crc, data),
     Crc64Force::Portable => return crc64_xz_portable(crc, data),
     Crc64Force::PmullEor3 if caps.has(platform::caps::aarch64::PMULL_EOR3_READY) => {
       // EOR3 uses PMULL small kernel for small buffers
@@ -1143,6 +1206,7 @@ fn crc64_nvme_aarch64_auto(crc: u64, data: &[u8]) -> u64 {
 
   // Handle forced backend selection
   match cfg.effective_force {
+    Crc64Force::Reference => return crc64_nvme_reference(crc, data),
     Crc64Force::Portable => return crc64_nvme_portable(crc, data),
     Crc64Force::PmullEor3 if caps.has(platform::caps::aarch64::PMULL_EOR3_READY) => {
       // EOR3 uses PMULL small kernel for small buffers
@@ -1228,8 +1292,13 @@ fn crc64_nvme_aarch64_auto(crc: u64, data: &[u8]) -> u64 {
 #[cfg(target_arch = "aarch64")]
 fn select_crc64_xz() -> Selected<Crc64Fn> {
   let caps = platform::caps();
+  let cfg = config::get();
 
-  if config::get().effective_force == Crc64Force::Portable {
+  if cfg.effective_force == Crc64Force::Reference {
+    return Selected::new("reference/bitwise", crc64_xz_reference);
+  }
+
+  if cfg.effective_force == Crc64Force::Portable {
     return Selected::new("portable/slice16", crc64_xz_portable);
   }
 
@@ -1243,8 +1312,13 @@ fn select_crc64_xz() -> Selected<Crc64Fn> {
 #[cfg(target_arch = "powerpc64")]
 fn select_crc64_xz() -> Selected<Crc64Fn> {
   let caps = platform::caps();
+  let cfg = config::get();
 
-  if config::get().effective_force == Crc64Force::Portable {
+  if cfg.effective_force == Crc64Force::Reference {
+    return Selected::new("reference/bitwise", crc64_xz_reference);
+  }
+
+  if cfg.effective_force == Crc64Force::Portable {
     return Selected::new("portable/slice16", crc64_xz_portable);
   }
 
@@ -1258,8 +1332,13 @@ fn select_crc64_xz() -> Selected<Crc64Fn> {
 #[cfg(target_arch = "s390x")]
 fn select_crc64_xz() -> Selected<Crc64Fn> {
   let caps = platform::caps();
+  let cfg = config::get();
 
-  if config::get().effective_force == Crc64Force::Portable {
+  if cfg.effective_force == Crc64Force::Reference {
+    return Selected::new("reference/bitwise", crc64_xz_reference);
+  }
+
+  if cfg.effective_force == Crc64Force::Portable {
     return Selected::new("portable/slice16", crc64_xz_portable);
   }
 
@@ -1273,8 +1352,13 @@ fn select_crc64_xz() -> Selected<Crc64Fn> {
 #[cfg(target_arch = "riscv64")]
 fn select_crc64_xz() -> Selected<Crc64Fn> {
   let caps = platform::caps();
+  let cfg = config::get();
 
-  if config::get().effective_force == Crc64Force::Portable {
+  if cfg.effective_force == Crc64Force::Reference {
+    return Selected::new("reference/bitwise", crc64_xz_reference);
+  }
+
+  if cfg.effective_force == Crc64Force::Portable {
     return Selected::new("portable/slice16", crc64_xz_portable);
   }
 
@@ -1293,6 +1377,9 @@ fn select_crc64_xz() -> Selected<Crc64Fn> {
   target_arch = "riscv64"
 )))]
 fn select_crc64_xz() -> Selected<Crc64Fn> {
+  if config::get().effective_force == Crc64Force::Reference {
+    return Selected::new("reference/bitwise", crc64_xz_reference);
+  }
   Selected::new("portable/slice16", crc64_xz_portable)
 }
 
@@ -1300,8 +1387,13 @@ fn select_crc64_xz() -> Selected<Crc64Fn> {
 #[cfg(target_arch = "x86_64")]
 fn select_crc64_nvme() -> Selected<Crc64Fn> {
   let caps = platform::caps();
+  let cfg = config::get();
 
-  if config::get().effective_force == Crc64Force::Portable {
+  if cfg.effective_force == Crc64Force::Reference {
+    return Selected::new("reference/bitwise", crc64_nvme_reference);
+  }
+
+  if cfg.effective_force == Crc64Force::Portable {
     return Selected::new("portable/slice16", crc64_nvme_portable);
   }
 
@@ -1315,8 +1407,13 @@ fn select_crc64_nvme() -> Selected<Crc64Fn> {
 #[cfg(target_arch = "aarch64")]
 fn select_crc64_nvme() -> Selected<Crc64Fn> {
   let caps = platform::caps();
+  let cfg = config::get();
 
-  if config::get().effective_force == Crc64Force::Portable {
+  if cfg.effective_force == Crc64Force::Reference {
+    return Selected::new("reference/bitwise", crc64_nvme_reference);
+  }
+
+  if cfg.effective_force == Crc64Force::Portable {
     return Selected::new("portable/slice16", crc64_nvme_portable);
   }
 
@@ -1330,8 +1427,13 @@ fn select_crc64_nvme() -> Selected<Crc64Fn> {
 #[cfg(target_arch = "powerpc64")]
 fn select_crc64_nvme() -> Selected<Crc64Fn> {
   let caps = platform::caps();
+  let cfg = config::get();
 
-  if config::get().effective_force == Crc64Force::Portable {
+  if cfg.effective_force == Crc64Force::Reference {
+    return Selected::new("reference/bitwise", crc64_nvme_reference);
+  }
+
+  if cfg.effective_force == Crc64Force::Portable {
     return Selected::new("portable/slice16", crc64_nvme_portable);
   }
 
@@ -1345,8 +1447,13 @@ fn select_crc64_nvme() -> Selected<Crc64Fn> {
 #[cfg(target_arch = "s390x")]
 fn select_crc64_nvme() -> Selected<Crc64Fn> {
   let caps = platform::caps();
+  let cfg = config::get();
 
-  if config::get().effective_force == Crc64Force::Portable {
+  if cfg.effective_force == Crc64Force::Reference {
+    return Selected::new("reference/bitwise", crc64_nvme_reference);
+  }
+
+  if cfg.effective_force == Crc64Force::Portable {
     return Selected::new("portable/slice16", crc64_nvme_portable);
   }
 
@@ -1360,8 +1467,13 @@ fn select_crc64_nvme() -> Selected<Crc64Fn> {
 #[cfg(target_arch = "riscv64")]
 fn select_crc64_nvme() -> Selected<Crc64Fn> {
   let caps = platform::caps();
+  let cfg = config::get();
 
-  if config::get().effective_force == Crc64Force::Portable {
+  if cfg.effective_force == Crc64Force::Reference {
+    return Selected::new("reference/bitwise", crc64_nvme_reference);
+  }
+
+  if cfg.effective_force == Crc64Force::Portable {
     return Selected::new("portable/slice16", crc64_nvme_portable);
   }
 
@@ -1380,6 +1492,9 @@ fn select_crc64_nvme() -> Selected<Crc64Fn> {
   target_arch = "riscv64"
 )))]
 fn select_crc64_nvme() -> Selected<Crc64Fn> {
+  if config::get().effective_force == Crc64Force::Reference {
+    return Selected::new("reference/bitwise", crc64_nvme_reference);
+  }
   Selected::new("portable/slice16", crc64_nvme_portable)
 }
 
@@ -2006,6 +2121,311 @@ mod tests {
     let crc1 = buffered.finalize();
     let crc2 = buffered.finalize();
     assert_eq!(crc1, crc2, "finalize should be idempotent");
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Cross-Check Tests: Reference Implementation Verification
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /// Cross-check all kernels against the bitwise reference implementation.
+  ///
+  /// This is the canonical test that verifies correctness of all optimized
+  /// implementations against the obviously-correct bitwise reference.
+  mod cross_check {
+    use alloc::{vec, vec::Vec};
+
+    use super::*;
+    use crate::common::{
+      reference::crc64_bitwise,
+      tables::{CRC64_NVME_POLY, CRC64_XZ_POLY},
+    };
+
+    /// Comprehensive test lengths covering all edge cases.
+    const TEST_LENGTHS: &[usize] = &[
+      // Empty
+      0, // Single bytes
+      1, // Small lengths (portable path)
+      2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, // SIMD lane boundaries (16 bytes)
+      16, 17, 31, 32, 33, // Near 64-byte boundaries
+      63, 64, 65, // Near 128-byte fold block boundaries
+      127, 128, 129, // Near 256-byte boundaries (VPCLMUL threshold)
+      255, 256, 257, // Near 512-byte boundaries
+      511, 512, 513, // Larger sizes for multi-stream kernels
+      1023, 1024, 1025, 2047, 2048, 2049, 4095, 4096, 4097, // Very large (exercises 8-way and 4x512 kernels)
+      8192, 16384, 32768, 65536,
+    ];
+
+    /// Prime-sized chunk patterns for streaming tests.
+    const STREAMING_CHUNK_SIZES: &[usize] = &[1, 3, 7, 13, 17, 31, 37, 61, 127, 251];
+
+    /// Generate deterministic test data of given length.
+    fn generate_test_data(len: usize) -> Vec<u8> {
+      (0..len)
+        .map(|i| {
+          // Use a mixing function to avoid patterns that might accidentally pass
+          let i = i as u64;
+          ((i.wrapping_mul(2654435761) ^ i.wrapping_mul(0x9E3779B97F4A7C15)) & 0xFF) as u8
+        })
+        .collect()
+    }
+
+    /// Compute CRC-64-XZ using the bitwise reference.
+    fn reference_xz(data: &[u8]) -> u64 {
+      crc64_bitwise(CRC64_XZ_POLY, !0u64, data) ^ !0u64
+    }
+
+    /// Compute CRC-64-NVME using the bitwise reference.
+    fn reference_nvme(data: &[u8]) -> u64 {
+      crc64_bitwise(CRC64_NVME_POLY, !0u64, data) ^ !0u64
+    }
+
+    #[test]
+    fn cross_check_xz_all_lengths() {
+      for &len in TEST_LENGTHS {
+        let data = generate_test_data(len);
+        let reference = reference_xz(&data);
+        let actual = Crc64::checksum(&data);
+        assert_eq!(
+          actual, reference,
+          "CRC64-XZ mismatch at len={len}: actual={actual:#018X}, reference={reference:#018X}"
+        );
+      }
+    }
+
+    #[test]
+    fn cross_check_nvme_all_lengths() {
+      for &len in TEST_LENGTHS {
+        let data = generate_test_data(len);
+        let reference = reference_nvme(&data);
+        let actual = Crc64Nvme::checksum(&data);
+        assert_eq!(
+          actual, reference,
+          "CRC64-NVME mismatch at len={len}: actual={actual:#018X}, reference={reference:#018X}"
+        );
+      }
+    }
+
+    #[test]
+    fn cross_check_xz_all_single_bytes() {
+      // Verify every possible single-byte input
+      for byte in 0u8..=255 {
+        let data = [byte];
+        let reference = reference_xz(&data);
+        let actual = Crc64::checksum(&data);
+        assert_eq!(actual, reference, "CRC64-XZ single-byte mismatch for byte={byte:#04X}");
+      }
+    }
+
+    #[test]
+    fn cross_check_nvme_all_single_bytes() {
+      for byte in 0u8..=255 {
+        let data = [byte];
+        let reference = reference_nvme(&data);
+        let actual = Crc64Nvme::checksum(&data);
+        assert_eq!(
+          actual, reference,
+          "CRC64-NVME single-byte mismatch for byte={byte:#04X}"
+        );
+      }
+    }
+
+    #[test]
+    fn cross_check_xz_streaming_all_chunk_sizes() {
+      let data = generate_test_data(4096);
+      let reference = reference_xz(&data);
+
+      for &chunk_size in STREAMING_CHUNK_SIZES {
+        let mut hasher = Crc64::new();
+        for chunk in data.chunks(chunk_size) {
+          hasher.update(chunk);
+        }
+        let actual = hasher.finalize();
+        assert_eq!(
+          actual, reference,
+          "CRC64-XZ streaming mismatch with chunk_size={chunk_size}"
+        );
+      }
+    }
+
+    #[test]
+    fn cross_check_nvme_streaming_all_chunk_sizes() {
+      let data = generate_test_data(4096);
+      let reference = reference_nvme(&data);
+
+      for &chunk_size in STREAMING_CHUNK_SIZES {
+        let mut hasher = Crc64Nvme::new();
+        for chunk in data.chunks(chunk_size) {
+          hasher.update(chunk);
+        }
+        let actual = hasher.finalize();
+        assert_eq!(
+          actual, reference,
+          "CRC64-NVME streaming mismatch with chunk_size={chunk_size}"
+        );
+      }
+    }
+
+    #[test]
+    fn cross_check_xz_combine_all_splits() {
+      let data = generate_test_data(1024);
+      let reference = reference_xz(&data);
+
+      // Test combine at every split point for smaller buffer
+      let small_data = &data[..64];
+      let small_ref = reference_xz(small_data);
+
+      for split in 0..=small_data.len() {
+        let (a, b) = small_data.split_at(split);
+        let crc_a = Crc64::checksum(a);
+        let crc_b = Crc64::checksum(b);
+        let combined = Crc64::combine(crc_a, crc_b, b.len());
+        assert_eq!(combined, small_ref, "CRC64-XZ combine mismatch at split={split}");
+      }
+
+      // Test strategic splits for larger buffer
+      let strategic_splits = [0, 1, 15, 16, 17, 63, 64, 65, 127, 128, 129, 255, 256, 512, 1024];
+      for &split in &strategic_splits {
+        if split > data.len() {
+          continue;
+        }
+        let (a, b) = data.split_at(split);
+        let crc_a = Crc64::checksum(a);
+        let crc_b = Crc64::checksum(b);
+        let combined = Crc64::combine(crc_a, crc_b, b.len());
+        assert_eq!(
+          combined, reference,
+          "CRC64-XZ combine mismatch at strategic split={split}"
+        );
+      }
+    }
+
+    #[test]
+    fn cross_check_nvme_combine_all_splits() {
+      let data = generate_test_data(1024);
+      let reference = reference_nvme(&data);
+
+      // Test combine at every split point for smaller buffer
+      let small_data = &data[..64];
+      let small_ref = reference_nvme(small_data);
+
+      for split in 0..=small_data.len() {
+        let (a, b) = small_data.split_at(split);
+        let crc_a = Crc64Nvme::checksum(a);
+        let crc_b = Crc64Nvme::checksum(b);
+        let combined = Crc64Nvme::combine(crc_a, crc_b, b.len());
+        assert_eq!(combined, small_ref, "CRC64-NVME combine mismatch at split={split}");
+      }
+
+      // Test strategic splits for larger buffer
+      let strategic_splits = [0, 1, 15, 16, 17, 63, 64, 65, 127, 128, 129, 255, 256, 512, 1024];
+      for &split in &strategic_splits {
+        if split > data.len() {
+          continue;
+        }
+        let (a, b) = data.split_at(split);
+        let crc_a = Crc64Nvme::checksum(a);
+        let crc_b = Crc64Nvme::checksum(b);
+        let combined = Crc64Nvme::combine(crc_a, crc_b, b.len());
+        assert_eq!(
+          combined, reference,
+          "CRC64-NVME combine mismatch at strategic split={split}"
+        );
+      }
+    }
+
+    #[test]
+    fn cross_check_xz_unaligned_offsets() {
+      // Test with data at various alignment offsets
+      let mut buffer = vec![0u8; 4096 + 64];
+      for (i, byte) in buffer.iter_mut().enumerate() {
+        *byte = (((i as u64).wrapping_mul(17)) & 0xFF) as u8;
+      }
+
+      for offset in 0..16 {
+        let data = &buffer[offset..offset + 1024];
+        let reference = reference_xz(data);
+        let actual = Crc64::checksum(data);
+        assert_eq!(actual, reference, "CRC64-XZ unaligned mismatch at offset={offset}");
+      }
+    }
+
+    #[test]
+    fn cross_check_nvme_unaligned_offsets() {
+      let mut buffer = vec![0u8; 4096 + 64];
+      for (i, byte) in buffer.iter_mut().enumerate() {
+        *byte = (((i as u64).wrapping_mul(17)) & 0xFF) as u8;
+      }
+
+      for offset in 0..16 {
+        let data = &buffer[offset..offset + 1024];
+        let reference = reference_nvme(data);
+        let actual = Crc64Nvme::checksum(data);
+        assert_eq!(actual, reference, "CRC64-NVME unaligned mismatch at offset={offset}");
+      }
+    }
+
+    #[test]
+    fn cross_check_xz_byte_at_a_time_streaming() {
+      // Most stringent test: update one byte at a time
+      let data = generate_test_data(256);
+      let reference = reference_xz(&data);
+
+      let mut hasher = Crc64::new();
+      for &byte in &data {
+        hasher.update(&[byte]);
+      }
+      let actual = hasher.finalize();
+      assert_eq!(actual, reference, "CRC64-XZ byte-at-a-time streaming mismatch");
+    }
+
+    #[test]
+    fn cross_check_nvme_byte_at_a_time_streaming() {
+      let data = generate_test_data(256);
+      let reference = reference_nvme(&data);
+
+      let mut hasher = Crc64Nvme::new();
+      for &byte in &data {
+        hasher.update(&[byte]);
+      }
+      let actual = hasher.finalize();
+      assert_eq!(actual, reference, "CRC64-NVME byte-at-a-time streaming mismatch");
+    }
+
+    /// Test that the reference kernel is accessible and works correctly.
+    #[test]
+    fn cross_check_reference_kernel_accessible() {
+      // Force reference kernel via the wrapper functions
+      let data = generate_test_data(1024);
+
+      // Compute via reference kernel wrappers
+      let xz_ref = crc64_xz_reference(!0u64, &data) ^ !0u64;
+      let nvme_ref = crc64_nvme_reference(!0u64, &data) ^ !0u64;
+
+      // Compute via bitwise reference directly
+      let xz_direct = reference_xz(&data);
+      let nvme_direct = reference_nvme(&data);
+
+      assert_eq!(xz_ref, xz_direct, "XZ reference kernel mismatch");
+      assert_eq!(nvme_ref, nvme_direct, "NVME reference kernel mismatch");
+    }
+
+    /// Test portable kernel matches reference.
+    #[test]
+    fn cross_check_portable_matches_reference() {
+      for &len in TEST_LENGTHS {
+        let data = generate_test_data(len);
+
+        // XZ
+        let portable_xz = portable::crc64_slice16_xz(!0u64, &data) ^ !0u64;
+        let reference_xz_val = reference_xz(&data);
+        assert_eq!(portable_xz, reference_xz_val, "XZ portable mismatch at len={len}");
+
+        // NVME
+        let portable_nvme = portable::crc64_slice16_nvme(!0u64, &data) ^ !0u64;
+        let reference_nvme_val = reference_nvme(&data);
+        assert_eq!(portable_nvme, reference_nvme_val, "NVME portable mismatch at len={len}");
+      }
+    }
   }
 }
 

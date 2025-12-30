@@ -13,6 +13,8 @@ pub enum Crc24Force {
   /// Use the default auto selector.
   #[default]
   Auto,
+  /// Force the bitwise reference implementation (slow, obviously correct).
+  Reference,
   /// Force the portable tier (reserved for future accelerated backends).
   Portable,
   /// Force the portable slice-by-4 kernel.
@@ -26,6 +28,7 @@ impl Crc24Force {
   pub const fn as_str(self) -> &'static str {
     match self {
       Self::Auto => "auto",
+      Self::Reference => "reference",
       Self::Portable => "portable",
       Self::Slice4 => "slice4",
       Self::Slice8 => "slice8",
@@ -80,6 +83,9 @@ fn read_env_overrides() -> Overrides {
 
     if value.eq_ignore_ascii_case("auto") {
       return Some(Crc24Force::Auto);
+    }
+    if value.eq_ignore_ascii_case("reference") || value.eq_ignore_ascii_case("bitwise") {
+      return Some(Crc24Force::Reference);
     }
     if value.eq_ignore_ascii_case("portable")
       || value.eq_ignore_ascii_case("scalar")

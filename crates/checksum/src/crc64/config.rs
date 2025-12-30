@@ -19,6 +19,12 @@ pub enum Crc64Force {
   /// Use the default auto selector.
   #[default]
   Auto,
+  /// Force the bitwise reference implementation (slow, obviously correct).
+  ///
+  /// This is the canonical reference against which all optimizations are
+  /// verified. Use for correctness testing or when absolute auditability
+  /// is required over performance.
+  Reference,
   /// Force the portable table-based implementation.
   Portable,
   /// Force x86_64 PCLMULQDQ (if supported).
@@ -46,6 +52,7 @@ impl Crc64Force {
   pub const fn as_str(self) -> &'static str {
     match self {
       Self::Auto => "auto",
+      Self::Reference => "reference",
       Self::Portable => "portable",
       Self::Pclmul => "pclmul",
       Self::Vpclmul => "vpclmul",
@@ -120,6 +127,9 @@ fn read_env_overrides() -> Overrides {
     if value.eq_ignore_ascii_case("auto") {
       return Some(Crc64Force::Auto);
     }
+    if value.eq_ignore_ascii_case("reference") || value.eq_ignore_ascii_case("bitwise") {
+      return Some(Crc64Force::Reference);
+    }
     if value.eq_ignore_ascii_case("portable")
       || value.eq_ignore_ascii_case("scalar")
       || value.eq_ignore_ascii_case("table")
@@ -188,7 +198,7 @@ fn overrides() -> Overrides {
 #[allow(unused_variables)] // `caps` only used on x86_64/aarch64
 fn clamp_force_to_caps(requested: Crc64Force, caps: Caps) -> Crc64Force {
   match requested {
-    Crc64Force::Auto | Crc64Force::Portable => requested,
+    Crc64Force::Auto | Crc64Force::Reference | Crc64Force::Portable => requested,
     Crc64Force::Pclmul => {
       #[cfg(target_arch = "x86_64")]
       {

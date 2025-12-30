@@ -5,6 +5,8 @@
 
 /// Portable fallback kernel name.
 pub use kernels::PORTABLE_SLICE16 as PORTABLE;
+/// Reference (bitwise) kernel name.
+pub use kernels::REFERENCE;
 /// Re-export select_name from common kernels.
 pub use kernels::select_name;
 

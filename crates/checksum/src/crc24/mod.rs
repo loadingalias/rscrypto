@@ -35,6 +35,7 @@ pub(super) use traits::{Checksum, ChecksumCombine};
 use crate::{
   common::{
     combine::{Gf2Matrix24, combine_crc24, generate_shift8_matrix_24},
+    reference::crc24_bitwise,
     tables::{CRC24_OPENPGP_POLY, generate_crc24_tables_4, generate_crc24_tables_8},
   },
   dispatchers::{Crc24Dispatcher, Crc24Fn},
@@ -48,6 +49,16 @@ mod kernel_tables {
   use super::*;
   pub static OPENPGP_TABLES_4: [[u32; 256]; 4] = generate_crc24_tables_4(CRC24_OPENPGP_POLY);
   pub static OPENPGP_TABLES_8: [[u32; 256]; 8] = generate_crc24_tables_8(CRC24_OPENPGP_POLY);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Reference Kernel Wrapper
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Bitwise reference implementation for CRC-24/OPENPGP.
+#[inline]
+fn crc24_openpgp_reference(crc: u32, data: &[u8]) -> u32 {
+  crc24_bitwise(CRC24_OPENPGP_POLY, crc, data)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -91,6 +102,7 @@ fn crc24_slice4_to_slice8() -> usize {
 pub(crate) fn crc24_selected_kernel_name(len: usize) -> &'static str {
   let cfg = config::get();
   match cfg.effective_force {
+    config::Crc24Force::Reference => kernels::REFERENCE,
     config::Crc24Force::Slice4 => kernels::PORTABLE_SLICE4,
     config::Crc24Force::Slice8 => kernels::PORTABLE_SLICE8,
     _ => kernels::portable_name_for_len(len, cfg.tunables.slice4_to_slice8),
@@ -107,6 +119,7 @@ fn select_crc24_openpgp() -> Selected<Crc24Fn> {
   let _ = CRC24_SLICE4_TO_SLICE8.get_or_init(|| cfg.tunables.slice4_to_slice8);
 
   match cfg.effective_force {
+    config::Crc24Force::Reference => Selected::new(kernels::REFERENCE, crc24_openpgp_reference),
     config::Crc24Force::Slice4 => Selected::new(kernels::PORTABLE_SLICE4, portable::crc24_openpgp_slice4),
     config::Crc24Force::Slice8 => Selected::new(kernels::PORTABLE_SLICE8, portable::crc24_openpgp_slice8),
     _ => Selected::new(kernels::PORTABLE_AUTO, crc24_openpgp_portable_auto),
@@ -306,5 +319,150 @@ mod tests {
       buffered.update(chunk);
     }
     assert_eq!(buffered.finalize(), expected);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cross-Check Tests: All accelerated kernels vs bitwise reference
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod cross_check {
+  extern crate alloc;
+  extern crate std;
+
+  use alloc::vec::Vec;
+
+  use super::*;
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Test Data Generation
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /// Lengths covering SIMD boundaries, alignment edges, and common sizes.
+  const TEST_LENGTHS: &[usize] = &[
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, // Tiny
+    16, 17, 31, 32, 33, 63, 64, 65, // SSE/NEON boundaries
+    127, 128, 129, 255, 256, 257, // Cache line boundaries
+    511, 512, 513, 1023, 1024, 1025, // Larger buffers
+    2047, 2048, 2049, 4095, 4096, 4097, // Page boundaries
+    8192, 16384, 32768, 65536, // Large buffers
+  ];
+
+  /// Chunk sizes for streaming tests.
+  const STREAMING_CHUNK_SIZES: &[usize] = &[1, 3, 7, 13, 17, 31, 37, 61, 127, 251];
+
+  /// Generate deterministic test data of a given length.
+  fn generate_test_data(len: usize) -> Vec<u8> {
+    (0..len)
+      .map(|i| (i as u64).wrapping_mul(17).wrapping_add(i as u64) as u8)
+      .collect()
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // CRC-24/OPENPGP Cross-Check Tests
+  // ─────────────────────────────────────────────────────────────────────────
+
+  const INIT: u32 = 0x00B7_04CE;
+  const MASK: u32 = 0x00FF_FFFF;
+
+  #[test]
+  fn openpgp_all_lengths() {
+    for &len in TEST_LENGTHS {
+      let data = generate_test_data(len);
+      let reference = crc24_openpgp_reference(INIT, &data) & MASK;
+      let actual = Crc24OpenPgp::checksum(&data);
+      assert_eq!(actual, reference, "CRC-24/OPENPGP mismatch at len={len}");
+    }
+  }
+
+  #[test]
+  fn openpgp_all_single_bytes() {
+    for byte in 0u8..=255 {
+      let data = [byte];
+      let reference = crc24_openpgp_reference(INIT, &data) & MASK;
+      let actual = Crc24OpenPgp::checksum(&data);
+      assert_eq!(actual, reference, "CRC-24/OPENPGP mismatch for byte={byte:#04X}");
+    }
+  }
+
+  #[test]
+  fn openpgp_streaming_all_chunk_sizes() {
+    let data = generate_test_data(4096);
+    let reference = crc24_openpgp_reference(INIT, &data) & MASK;
+
+    for &chunk_size in STREAMING_CHUNK_SIZES {
+      let mut hasher = Crc24OpenPgp::new();
+      for chunk in data.chunks(chunk_size) {
+        hasher.update(chunk);
+      }
+      let actual = hasher.finalize();
+      assert_eq!(
+        actual, reference,
+        "CRC-24/OPENPGP streaming mismatch with chunk_size={chunk_size}"
+      );
+    }
+  }
+
+  #[test]
+  fn openpgp_combine_all_splits() {
+    let data = generate_test_data(1024);
+    let reference = crc24_openpgp_reference(INIT, &data) & MASK;
+
+    for split in [0, 1, 15, 16, 17, 127, 128, 129, 511, 512, 513, 1023, 1024] {
+      if split > data.len() {
+        continue;
+      }
+      let (a, b) = data.split_at(split);
+      let crc_a = Crc24OpenPgp::checksum(a);
+      let crc_b = Crc24OpenPgp::checksum(b);
+      let combined = Crc24OpenPgp::combine(crc_a, crc_b, b.len());
+      assert_eq!(combined, reference, "CRC-24/OPENPGP combine mismatch at split={split}");
+    }
+  }
+
+  #[test]
+  fn openpgp_unaligned_offsets() {
+    let data = generate_test_data(4096 + 64);
+
+    for offset in 1..=16 {
+      let slice = &data[offset..offset + 4096];
+      let reference = crc24_openpgp_reference(INIT, slice) & MASK;
+      let actual = Crc24OpenPgp::checksum(slice);
+      assert_eq!(
+        actual, reference,
+        "CRC-24/OPENPGP unaligned mismatch at offset={offset}"
+      );
+    }
+  }
+
+  #[test]
+  fn openpgp_byte_at_a_time_streaming() {
+    let data = generate_test_data(256);
+    let reference = crc24_openpgp_reference(INIT, &data) & MASK;
+
+    let mut hasher = Crc24OpenPgp::new();
+    for &byte in &data {
+      hasher.update(&[byte]);
+    }
+    assert_eq!(hasher.finalize(), reference, "CRC-24/OPENPGP byte-at-a-time mismatch");
+  }
+
+  #[test]
+  fn openpgp_reference_kernel_accessible() {
+    let data = b"123456789";
+    let expected = 0x0021_CF02_u32;
+    let reference = crc24_openpgp_reference(INIT, data) & MASK;
+    assert_eq!(reference, expected, "Reference kernel check value mismatch");
+  }
+
+  #[test]
+  fn openpgp_portable_matches_reference() {
+    for &len in TEST_LENGTHS {
+      let data = generate_test_data(len);
+      let reference = crc24_openpgp_reference(INIT, &data) & MASK;
+      let portable = portable::crc24_openpgp_slice8(INIT, &data) & MASK;
+      assert_eq!(portable, reference, "CRC-24/OPENPGP portable mismatch at len={len}");
+    }
   }
 }

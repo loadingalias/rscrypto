@@ -13,6 +13,8 @@ pub enum Crc16Force {
   /// Use the default auto selector.
   #[default]
   Auto,
+  /// Force the bitwise reference implementation (slow, obviously correct).
+  Reference,
   /// Force the portable tier (reserved for future accelerated backends).
   Portable,
   /// Force the carryless-multiply tier (PCLMULQDQ/PMULL) if supported.
@@ -28,6 +30,7 @@ impl Crc16Force {
   pub const fn as_str(self) -> &'static str {
     match self {
       Self::Auto => "auto",
+      Self::Reference => "reference",
       Self::Portable => "portable",
       Self::Clmul => "clmul",
       Self::Slice4 => "slice4",
@@ -87,6 +90,9 @@ fn read_env_overrides() -> Overrides {
     if value.eq_ignore_ascii_case("auto") {
       return Some(Crc16Force::Auto);
     }
+    if value.eq_ignore_ascii_case("reference") || value.eq_ignore_ascii_case("bitwise") {
+      return Some(Crc16Force::Reference);
+    }
     if value.eq_ignore_ascii_case("portable")
       || value.eq_ignore_ascii_case("scalar")
       || value.eq_ignore_ascii_case("table")
@@ -133,7 +139,9 @@ fn overrides() -> Overrides {
 #[must_use]
 fn clamp_force_to_caps(requested: Crc16Force, caps: Caps) -> Crc16Force {
   match requested {
-    Crc16Force::Auto | Crc16Force::Portable | Crc16Force::Slice4 | Crc16Force::Slice8 => requested,
+    Crc16Force::Auto | Crc16Force::Reference | Crc16Force::Portable | Crc16Force::Slice4 | Crc16Force::Slice8 => {
+      requested
+    }
     Crc16Force::Clmul => {
       #[cfg(target_arch = "x86_64")]
       {

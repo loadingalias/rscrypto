@@ -17,6 +17,12 @@ pub enum Crc32Force {
   /// Use the default auto selector.
   #[default]
   Auto,
+  /// Force the bitwise reference implementation (slow, obviously correct).
+  ///
+  /// This is the canonical reference against which all optimizations are
+  /// verified. Use for correctness testing or when absolute auditability
+  /// is required over performance.
+  Reference,
   /// Force the portable table-based implementation.
   Portable,
   /// Force hardware CRC instructions (if available).
@@ -52,6 +58,7 @@ impl Crc32Force {
   pub const fn as_str(self) -> &'static str {
     match self {
       Self::Auto => "auto",
+      Self::Reference => "reference",
       Self::Portable => "portable",
       Self::Hwcrc => "hwcrc",
       Self::Pclmul => "pclmul",
@@ -140,6 +147,9 @@ fn read_env_overrides() -> Overrides {
     if value.eq_ignore_ascii_case("auto") {
       return Some(Crc32Force::Auto);
     }
+    if value.eq_ignore_ascii_case("reference") || value.eq_ignore_ascii_case("bitwise") {
+      return Some(Crc32Force::Reference);
+    }
     if value.eq_ignore_ascii_case("portable")
       || value.eq_ignore_ascii_case("scalar")
       || value.eq_ignore_ascii_case("table")
@@ -215,7 +225,7 @@ fn overrides() -> Overrides {
 #[allow(unused_variables)] // `caps` used on arch-specific cfg paths
 fn clamp_force_to_caps(requested: Crc32Force, caps: Caps) -> Crc32Force {
   match requested {
-    Crc32Force::Auto | Crc32Force::Portable => requested,
+    Crc32Force::Auto | Crc32Force::Reference | Crc32Force::Portable => requested,
     Crc32Force::Hwcrc => {
       #[cfg(target_arch = "x86_64")]
       {

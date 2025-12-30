@@ -3,6 +3,8 @@
 //! This mirrors the structure used by CRC-32/CRC-64: keep all kernel names in
 //! one place so both introspection and dispatch share identifiers.
 
+pub use crate::common::kernels::REFERENCE;
+
 /// Portable slice-by-4 kernel name.
 pub const PORTABLE_SLICE4: &str = crate::common::kernels::PORTABLE_SLICE4;
 /// Portable slice-by-8 kernel name.

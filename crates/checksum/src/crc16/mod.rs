@@ -33,6 +33,7 @@ pub(super) use traits::{Checksum, ChecksumCombine};
 use crate::{
   common::{
     combine::{Gf2Matrix16, combine_crc16, generate_shift8_matrix_16},
+    reference::crc16_bitwise,
     tables::{CRC16_CCITT_POLY, CRC16_IBM_POLY, generate_crc16_tables_4, generate_crc16_tables_8},
   },
   dispatchers::{Crc16Dispatcher, Crc16Fn},
@@ -55,6 +56,22 @@ mod kernel_tables {
 
   pub static IBM_TABLES_4: [[u16; 256]; 4] = generate_crc16_tables_4(CRC16_IBM_POLY);
   pub static IBM_TABLES_8: [[u16; 256]; 8] = generate_crc16_tables_8(CRC16_IBM_POLY);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Reference Kernel Wrappers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Bitwise reference implementation for CRC-16/CCITT.
+#[inline]
+fn crc16_ccitt_reference(crc: u16, data: &[u8]) -> u16 {
+  crc16_bitwise(CRC16_CCITT_POLY, crc, data)
+}
+
+/// Bitwise reference implementation for CRC-16/IBM.
+#[inline]
+fn crc16_ibm_reference(crc: u16, data: &[u8]) -> u16 {
+  crc16_bitwise(CRC16_IBM_POLY, crc, data)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -267,6 +284,7 @@ pub(crate) fn crc16_selected_kernel_name(len: usize) -> &'static str {
   let cfg = config::get();
 
   match cfg.effective_force {
+    config::Crc16Force::Reference => return kernels::REFERENCE,
     config::Crc16Force::Slice4 => return kernels::PORTABLE_SLICE4,
     config::Crc16Force::Slice8 => return kernels::PORTABLE_SLICE8,
     config::Crc16Force::Portable => return kernels::portable_name_for_len(len, cfg.tunables.slice4_to_slice8),
@@ -314,6 +332,7 @@ fn select_crc16_ccitt() -> Selected<Crc16Fn> {
   let _ = CRC16_CLMUL_TO_VPCLMUL.get_or_init(crc16_clmul_to_vpclmul_uncached);
 
   match cfg.effective_force {
+    config::Crc16Force::Reference => Selected::new(kernels::REFERENCE, crc16_ccitt_reference),
     config::Crc16Force::Slice4 => Selected::new(kernels::PORTABLE_SLICE4, portable::crc16_ccitt_slice4),
     config::Crc16Force::Slice8 => Selected::new(kernels::PORTABLE_SLICE8, portable::crc16_ccitt_slice8),
     config::Crc16Force::Portable => Selected::new(kernels::PORTABLE_AUTO, crc16_ccitt_portable_auto),
@@ -340,6 +359,7 @@ fn select_crc16_ibm() -> Selected<Crc16Fn> {
   let _ = CRC16_CLMUL_TO_VPCLMUL.get_or_init(crc16_clmul_to_vpclmul_uncached);
 
   match cfg.effective_force {
+    config::Crc16Force::Reference => Selected::new(kernels::REFERENCE, crc16_ibm_reference),
     config::Crc16Force::Slice4 => Selected::new(kernels::PORTABLE_SLICE4, portable::crc16_ibm_slice4),
     config::Crc16Force::Slice8 => Selected::new(kernels::PORTABLE_SLICE8, portable::crc16_ibm_slice8),
     config::Crc16Force::Portable => Selected::new(kernels::PORTABLE_AUTO, crc16_ibm_portable_auto),
@@ -709,5 +729,249 @@ mod tests {
       buffered.update(chunk);
     }
     assert_eq!(buffered.finalize(), expected);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cross-Check Tests: All accelerated kernels vs bitwise reference
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod cross_check {
+  extern crate alloc;
+  extern crate std;
+
+  use alloc::vec::Vec;
+
+  use super::*;
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Test Data Generation
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /// Lengths covering SIMD boundaries, alignment edges, and common sizes.
+  const TEST_LENGTHS: &[usize] = &[
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, // Tiny
+    16, 17, 31, 32, 33, 63, 64, 65, // SSE/NEON boundaries
+    127, 128, 129, 255, 256, 257, // Cache line boundaries
+    511, 512, 513, 1023, 1024, 1025, // Larger buffers
+    2047, 2048, 2049, 4095, 4096, 4097, // Page boundaries
+    8192, 16384, 32768, 65536, // Large buffers
+  ];
+
+  /// Chunk sizes for streaming tests.
+  const STREAMING_CHUNK_SIZES: &[usize] = &[1, 3, 7, 13, 17, 31, 37, 61, 127, 251];
+
+  /// Generate deterministic test data of a given length.
+  fn generate_test_data(len: usize) -> Vec<u8> {
+    (0..len)
+      .map(|i| (i as u64).wrapping_mul(17).wrapping_add(i as u64) as u8)
+      .collect()
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // CRC-16/CCITT Cross-Check Tests
+  // ─────────────────────────────────────────────────────────────────────────
+
+  #[test]
+  fn ccitt_all_lengths() {
+    for &len in TEST_LENGTHS {
+      let data = generate_test_data(len);
+      let reference = crc16_ccitt_reference(!0u16, &data) ^ !0u16;
+      let actual = Crc16Ccitt::checksum(&data);
+      assert_eq!(actual, reference, "CRC-16/CCITT mismatch at len={len}");
+    }
+  }
+
+  #[test]
+  fn ccitt_all_single_bytes() {
+    for byte in 0u8..=255 {
+      let data = [byte];
+      let reference = crc16_ccitt_reference(!0u16, &data) ^ !0u16;
+      let actual = Crc16Ccitt::checksum(&data);
+      assert_eq!(actual, reference, "CRC-16/CCITT mismatch for byte={byte:#04X}");
+    }
+  }
+
+  #[test]
+  fn ccitt_streaming_all_chunk_sizes() {
+    let data = generate_test_data(4096);
+    let reference = crc16_ccitt_reference(!0u16, &data) ^ !0u16;
+
+    for &chunk_size in STREAMING_CHUNK_SIZES {
+      let mut hasher = Crc16Ccitt::new();
+      for chunk in data.chunks(chunk_size) {
+        hasher.update(chunk);
+      }
+      let actual = hasher.finalize();
+      assert_eq!(
+        actual, reference,
+        "CRC-16/CCITT streaming mismatch with chunk_size={chunk_size}"
+      );
+    }
+  }
+
+  #[test]
+  fn ccitt_combine_all_splits() {
+    let data = generate_test_data(1024);
+    let reference = crc16_ccitt_reference(!0u16, &data) ^ !0u16;
+
+    for split in [0, 1, 15, 16, 17, 127, 128, 129, 511, 512, 513, 1023, 1024] {
+      if split > data.len() {
+        continue;
+      }
+      let (a, b) = data.split_at(split);
+      let crc_a = Crc16Ccitt::checksum(a);
+      let crc_b = Crc16Ccitt::checksum(b);
+      let combined = Crc16Ccitt::combine(crc_a, crc_b, b.len());
+      assert_eq!(combined, reference, "CRC-16/CCITT combine mismatch at split={split}");
+    }
+  }
+
+  #[test]
+  fn ccitt_unaligned_offsets() {
+    let data = generate_test_data(4096 + 64);
+
+    for offset in 1..=16 {
+      let slice = &data[offset..offset + 4096];
+      let reference = crc16_ccitt_reference(!0u16, slice) ^ !0u16;
+      let actual = Crc16Ccitt::checksum(slice);
+      assert_eq!(actual, reference, "CRC-16/CCITT unaligned mismatch at offset={offset}");
+    }
+  }
+
+  #[test]
+  fn ccitt_byte_at_a_time_streaming() {
+    let data = generate_test_data(256);
+    let reference = crc16_ccitt_reference(!0u16, &data) ^ !0u16;
+
+    let mut hasher = Crc16Ccitt::new();
+    for &byte in &data {
+      hasher.update(&[byte]);
+    }
+    assert_eq!(hasher.finalize(), reference, "CRC-16/CCITT byte-at-a-time mismatch");
+  }
+
+  #[test]
+  fn ccitt_reference_kernel_accessible() {
+    let data = b"123456789";
+    let expected = 0x906E_u16;
+    let reference = crc16_ccitt_reference(!0u16, data) ^ !0u16;
+    assert_eq!(reference, expected, "Reference kernel check value mismatch");
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // CRC-16/IBM Cross-Check Tests
+  // ─────────────────────────────────────────────────────────────────────────
+
+  #[test]
+  fn ibm_all_lengths() {
+    for &len in TEST_LENGTHS {
+      let data = generate_test_data(len);
+      let reference = crc16_ibm_reference(0u16, &data);
+      let actual = Crc16Ibm::checksum(&data);
+      assert_eq!(actual, reference, "CRC-16/IBM mismatch at len={len}");
+    }
+  }
+
+  #[test]
+  fn ibm_all_single_bytes() {
+    for byte in 0u8..=255 {
+      let data = [byte];
+      let reference = crc16_ibm_reference(0u16, &data);
+      let actual = Crc16Ibm::checksum(&data);
+      assert_eq!(actual, reference, "CRC-16/IBM mismatch for byte={byte:#04X}");
+    }
+  }
+
+  #[test]
+  fn ibm_streaming_all_chunk_sizes() {
+    let data = generate_test_data(4096);
+    let reference = crc16_ibm_reference(0u16, &data);
+
+    for &chunk_size in STREAMING_CHUNK_SIZES {
+      let mut hasher = Crc16Ibm::new();
+      for chunk in data.chunks(chunk_size) {
+        hasher.update(chunk);
+      }
+      let actual = hasher.finalize();
+      assert_eq!(
+        actual, reference,
+        "CRC-16/IBM streaming mismatch with chunk_size={chunk_size}"
+      );
+    }
+  }
+
+  #[test]
+  fn ibm_combine_all_splits() {
+    let data = generate_test_data(1024);
+    let reference = crc16_ibm_reference(0u16, &data);
+
+    for split in [0, 1, 15, 16, 17, 127, 128, 129, 511, 512, 513, 1023, 1024] {
+      if split > data.len() {
+        continue;
+      }
+      let (a, b) = data.split_at(split);
+      let crc_a = Crc16Ibm::checksum(a);
+      let crc_b = Crc16Ibm::checksum(b);
+      let combined = Crc16Ibm::combine(crc_a, crc_b, b.len());
+      assert_eq!(combined, reference, "CRC-16/IBM combine mismatch at split={split}");
+    }
+  }
+
+  #[test]
+  fn ibm_unaligned_offsets() {
+    let data = generate_test_data(4096 + 64);
+
+    for offset in 1..=16 {
+      let slice = &data[offset..offset + 4096];
+      let reference = crc16_ibm_reference(0u16, slice);
+      let actual = Crc16Ibm::checksum(slice);
+      assert_eq!(actual, reference, "CRC-16/IBM unaligned mismatch at offset={offset}");
+    }
+  }
+
+  #[test]
+  fn ibm_byte_at_a_time_streaming() {
+    let data = generate_test_data(256);
+    let reference = crc16_ibm_reference(0u16, &data);
+
+    let mut hasher = Crc16Ibm::new();
+    for &byte in &data {
+      hasher.update(&[byte]);
+    }
+    assert_eq!(hasher.finalize(), reference, "CRC-16/IBM byte-at-a-time mismatch");
+  }
+
+  #[test]
+  fn ibm_reference_kernel_accessible() {
+    let data = b"123456789";
+    let expected = 0xBB3D_u16;
+    let reference = crc16_ibm_reference(0u16, data);
+    assert_eq!(reference, expected, "Reference kernel check value mismatch");
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Portable Kernel Explicit Tests
+  // ─────────────────────────────────────────────────────────────────────────
+
+  #[test]
+  fn ccitt_portable_matches_reference() {
+    for &len in TEST_LENGTHS {
+      let data = generate_test_data(len);
+      let reference = crc16_ccitt_reference(!0u16, &data) ^ !0u16;
+      let portable = portable::crc16_ccitt_slice8(!0u16, &data) ^ !0u16;
+      assert_eq!(portable, reference, "CRC-16/CCITT portable mismatch at len={len}");
+    }
+  }
+
+  #[test]
+  fn ibm_portable_matches_reference() {
+    for &len in TEST_LENGTHS {
+      let data = generate_test_data(len);
+      let reference = crc16_ibm_reference(0u16, &data);
+      let portable = portable::crc16_ibm_slice8(0u16, &data);
+      assert_eq!(portable, reference, "CRC-16/IBM portable mismatch at len={len}");
+    }
   }
 }

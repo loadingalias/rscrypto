@@ -71,6 +71,7 @@ pub(super) use traits::{Checksum, ChecksumCombine};
 use crate::{
   common::{
     combine::{Gf2Matrix32, generate_shift8_matrix_32},
+    reference::crc32_bitwise,
     tables::{CRC32_IEEE_POLY, CRC32C_POLY, generate_crc32_tables_16},
   },
   dispatchers::{Crc32Dispatcher, Crc32Fn},
@@ -97,6 +98,26 @@ fn crc32_portable(crc: u32, data: &[u8]) -> u32 {
 
 fn crc32c_portable(crc: u32, data: &[u8]) -> u32 {
   portable::crc32c_slice16(crc, data)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Reference Kernel Wrappers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// CRC-32 (IEEE) reference (bitwise) kernel wrapper.
+///
+/// This is the canonical reference implementation - obviously correct,
+/// audit-friendly, and used for verification of all optimized paths.
+fn crc32_reference(crc: u32, data: &[u8]) -> u32 {
+  crc32_bitwise(CRC32_IEEE_POLY, crc, data)
+}
+
+/// CRC-32C (Castagnoli) reference (bitwise) kernel wrapper.
+///
+/// This is the canonical reference implementation - obviously correct,
+/// audit-friendly, and used for verification of all optimized paths.
+fn crc32c_reference(crc: u32, data: &[u8]) -> u32 {
+  crc32_bitwise(CRC32C_POLY, crc, data)
 }
 
 // Folding block sizing (used by SIMD tiers and stream gating).
@@ -1793,6 +1814,10 @@ fn select_crc32() -> Selected<Crc32Fn> {
   let caps = platform::caps();
   let cfg = config::get();
 
+  if cfg.effective_force == Crc32Force::Reference {
+    return Selected::new(kernels::REFERENCE, crc32_reference);
+  }
+
   if cfg.effective_force == Crc32Force::Portable {
     return Selected::new(kernels::PORTABLE, crc32_portable);
   }
@@ -1838,6 +1863,10 @@ fn select_crc32() -> Selected<Crc32Fn> {
 fn select_crc32c() -> Selected<Crc32Fn> {
   let caps = platform::caps();
   let cfg = config::get();
+
+  if cfg.effective_force == Crc32Force::Reference {
+    return Selected::new(kernels::REFERENCE, crc32c_reference);
+  }
 
   if cfg.effective_force == Crc32Force::Portable {
     return Selected::new(kernels::PORTABLE, crc32c_portable);
@@ -1898,6 +1927,10 @@ fn select_crc32() -> Selected<Crc32Fn> {
   let caps = platform::caps();
   let cfg = config::get();
 
+  if cfg.effective_force == Crc32Force::Reference {
+    return Selected::new(kernels::REFERENCE, crc32_reference);
+  }
+
   if cfg.effective_force == Crc32Force::Portable {
     return Selected::new(kernels::PORTABLE, crc32_portable);
   }
@@ -1942,6 +1975,10 @@ fn select_crc32c() -> Selected<Crc32Fn> {
   let caps = platform::caps();
   let cfg = config::get();
 
+  if cfg.effective_force == Crc32Force::Reference {
+    return Selected::new(kernels::REFERENCE, crc32c_reference);
+  }
+
   if cfg.effective_force == Crc32Force::Portable {
     return Selected::new(kernels::PORTABLE, crc32c_portable);
   }
@@ -1984,8 +2021,13 @@ fn select_crc32c() -> Selected<Crc32Fn> {
 #[cfg(target_arch = "powerpc64")]
 fn select_crc32() -> Selected<Crc32Fn> {
   let caps = platform::caps();
+  let cfg = config::get();
 
-  if config::get().effective_force == Crc32Force::Portable {
+  if cfg.effective_force == Crc32Force::Reference {
+    return Selected::new(kernels::REFERENCE, crc32_reference);
+  }
+
+  if cfg.effective_force == Crc32Force::Portable {
     return Selected::new(kernels::PORTABLE, crc32_portable);
   }
 
@@ -1999,8 +2041,13 @@ fn select_crc32() -> Selected<Crc32Fn> {
 #[cfg(target_arch = "powerpc64")]
 fn select_crc32c() -> Selected<Crc32Fn> {
   let caps = platform::caps();
+  let cfg = config::get();
 
-  if config::get().effective_force == Crc32Force::Portable {
+  if cfg.effective_force == Crc32Force::Reference {
+    return Selected::new(kernels::REFERENCE, crc32c_reference);
+  }
+
+  if cfg.effective_force == Crc32Force::Portable {
     return Selected::new(kernels::PORTABLE, crc32c_portable);
   }
 
@@ -2014,8 +2061,13 @@ fn select_crc32c() -> Selected<Crc32Fn> {
 #[cfg(target_arch = "s390x")]
 fn select_crc32() -> Selected<Crc32Fn> {
   let caps = platform::caps();
+  let cfg = config::get();
 
-  if config::get().effective_force == Crc32Force::Portable {
+  if cfg.effective_force == Crc32Force::Reference {
+    return Selected::new(kernels::REFERENCE, crc32_reference);
+  }
+
+  if cfg.effective_force == Crc32Force::Portable {
     return Selected::new(kernels::PORTABLE, crc32_portable);
   }
 
@@ -2029,8 +2081,13 @@ fn select_crc32() -> Selected<Crc32Fn> {
 #[cfg(target_arch = "s390x")]
 fn select_crc32c() -> Selected<Crc32Fn> {
   let caps = platform::caps();
+  let cfg = config::get();
 
-  if config::get().effective_force == Crc32Force::Portable {
+  if cfg.effective_force == Crc32Force::Reference {
+    return Selected::new(kernels::REFERENCE, crc32c_reference);
+  }
+
+  if cfg.effective_force == Crc32Force::Portable {
     return Selected::new(kernels::PORTABLE, crc32c_portable);
   }
 
@@ -2044,8 +2101,13 @@ fn select_crc32c() -> Selected<Crc32Fn> {
 #[cfg(target_arch = "riscv64")]
 fn select_crc32() -> Selected<Crc32Fn> {
   let caps = platform::caps();
+  let cfg = config::get();
 
-  if config::get().effective_force == Crc32Force::Portable {
+  if cfg.effective_force == Crc32Force::Reference {
+    return Selected::new(kernels::REFERENCE, crc32_reference);
+  }
+
+  if cfg.effective_force == Crc32Force::Portable {
     return Selected::new(kernels::PORTABLE, crc32_portable);
   }
 
@@ -2059,8 +2121,13 @@ fn select_crc32() -> Selected<Crc32Fn> {
 #[cfg(target_arch = "riscv64")]
 fn select_crc32c() -> Selected<Crc32Fn> {
   let caps = platform::caps();
+  let cfg = config::get();
 
-  if config::get().effective_force == Crc32Force::Portable {
+  if cfg.effective_force == Crc32Force::Reference {
+    return Selected::new(kernels::REFERENCE, crc32c_reference);
+  }
+
+  if cfg.effective_force == Crc32Force::Portable {
     return Selected::new(kernels::PORTABLE, crc32c_portable);
   }
 
@@ -2079,6 +2146,9 @@ fn select_crc32c() -> Selected<Crc32Fn> {
   target_arch = "riscv64"
 )))]
 fn select_crc32() -> Selected<Crc32Fn> {
+  if config::get().effective_force == Crc32Force::Reference {
+    return Selected::new(kernels::REFERENCE, crc32_reference);
+  }
   Selected::new(kernels::PORTABLE, crc32_portable)
 }
 
@@ -2090,6 +2160,9 @@ fn select_crc32() -> Selected<Crc32Fn> {
   target_arch = "riscv64"
 )))]
 fn select_crc32c() -> Selected<Crc32Fn> {
+  if config::get().effective_force == Crc32Force::Reference {
+    return Selected::new(kernels::REFERENCE, crc32c_reference);
+  }
   Selected::new(kernels::PORTABLE, crc32c_portable)
 }
 
@@ -2693,6 +2766,274 @@ mod tests {
         if cfg.effective_force == Crc32Force::PmullEor3 && caps.has(platform::caps::aarch64::PMULL_EOR3_READY) {
           assert!(kernel.starts_with("aarch64/pmull-eor3"));
         }
+      }
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Cross-Check Tests: Reference Implementation Verification
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  mod cross_check {
+    use alloc::{vec, vec::Vec};
+
+    use super::*;
+    use crate::common::{
+      reference::crc32_bitwise,
+      tables::{CRC32_IEEE_POLY, CRC32C_POLY},
+    };
+
+    /// Comprehensive test lengths covering all edge cases.
+    const TEST_LENGTHS: &[usize] = &[
+      0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129, 255, 256,
+      257, 511, 512, 513, 1023, 1024, 1025, 2047, 2048, 2049, 4095, 4096, 4097, 8192, 16384, 32768, 65536,
+    ];
+
+    const STREAMING_CHUNK_SIZES: &[usize] = &[1, 3, 7, 13, 17, 31, 37, 61, 127, 251];
+
+    fn generate_test_data(len: usize) -> Vec<u8> {
+      (0..len)
+        .map(|i| {
+          let i = i as u64;
+          ((i.wrapping_mul(2654435761) ^ i.wrapping_mul(0x9E3779B97F4A7C15)) & 0xFF) as u8
+        })
+        .collect()
+    }
+
+    fn reference_ieee(data: &[u8]) -> u32 {
+      crc32_bitwise(CRC32_IEEE_POLY, !0u32, data) ^ !0u32
+    }
+
+    fn reference_castagnoli(data: &[u8]) -> u32 {
+      crc32_bitwise(CRC32C_POLY, !0u32, data) ^ !0u32
+    }
+
+    #[test]
+    fn cross_check_ieee_all_lengths() {
+      for &len in TEST_LENGTHS {
+        let data = generate_test_data(len);
+        let reference = reference_ieee(&data);
+        let actual = Crc32::checksum(&data);
+        assert_eq!(
+          actual, reference,
+          "CRC32-IEEE mismatch at len={len}: actual={actual:#010X}, reference={reference:#010X}"
+        );
+      }
+    }
+
+    #[test]
+    fn cross_check_castagnoli_all_lengths() {
+      for &len in TEST_LENGTHS {
+        let data = generate_test_data(len);
+        let reference = reference_castagnoli(&data);
+        let actual = Crc32C::checksum(&data);
+        assert_eq!(
+          actual, reference,
+          "CRC32C mismatch at len={len}: actual={actual:#010X}, reference={reference:#010X}"
+        );
+      }
+    }
+
+    #[test]
+    fn cross_check_ieee_all_single_bytes() {
+      for byte in 0u8..=255 {
+        let data = [byte];
+        let reference = reference_ieee(&data);
+        let actual = Crc32::checksum(&data);
+        assert_eq!(
+          actual, reference,
+          "CRC32-IEEE single-byte mismatch for byte={byte:#04X}"
+        );
+      }
+    }
+
+    #[test]
+    fn cross_check_castagnoli_all_single_bytes() {
+      for byte in 0u8..=255 {
+        let data = [byte];
+        let reference = reference_castagnoli(&data);
+        let actual = Crc32C::checksum(&data);
+        assert_eq!(actual, reference, "CRC32C single-byte mismatch for byte={byte:#04X}");
+      }
+    }
+
+    #[test]
+    fn cross_check_ieee_streaming_all_chunk_sizes() {
+      let data = generate_test_data(4096);
+      let reference = reference_ieee(&data);
+
+      for &chunk_size in STREAMING_CHUNK_SIZES {
+        let mut hasher = Crc32::new();
+        for chunk in data.chunks(chunk_size) {
+          hasher.update(chunk);
+        }
+        let actual = hasher.finalize();
+        assert_eq!(
+          actual, reference,
+          "CRC32-IEEE streaming mismatch with chunk_size={chunk_size}"
+        );
+      }
+    }
+
+    #[test]
+    fn cross_check_castagnoli_streaming_all_chunk_sizes() {
+      let data = generate_test_data(4096);
+      let reference = reference_castagnoli(&data);
+
+      for &chunk_size in STREAMING_CHUNK_SIZES {
+        let mut hasher = Crc32C::new();
+        for chunk in data.chunks(chunk_size) {
+          hasher.update(chunk);
+        }
+        let actual = hasher.finalize();
+        assert_eq!(
+          actual, reference,
+          "CRC32C streaming mismatch with chunk_size={chunk_size}"
+        );
+      }
+    }
+
+    #[test]
+    fn cross_check_ieee_combine_all_splits() {
+      let data = generate_test_data(1024);
+      let reference = reference_ieee(&data);
+
+      let small_data = &data[..64];
+      let small_ref = reference_ieee(small_data);
+
+      for split in 0..=small_data.len() {
+        let (a, b) = small_data.split_at(split);
+        let crc_a = Crc32::checksum(a);
+        let crc_b = Crc32::checksum(b);
+        let combined = Crc32::combine(crc_a, crc_b, b.len());
+        assert_eq!(combined, small_ref, "CRC32-IEEE combine mismatch at split={split}");
+      }
+
+      let strategic_splits = [0, 1, 15, 16, 17, 63, 64, 65, 127, 128, 129, 255, 256, 512, 1024];
+      for &split in &strategic_splits {
+        if split > data.len() {
+          continue;
+        }
+        let (a, b) = data.split_at(split);
+        let combined = Crc32::combine(Crc32::checksum(a), Crc32::checksum(b), b.len());
+        assert_eq!(
+          combined, reference,
+          "CRC32-IEEE combine mismatch at strategic split={split}"
+        );
+      }
+    }
+
+    #[test]
+    fn cross_check_castagnoli_combine_all_splits() {
+      let data = generate_test_data(1024);
+      let reference = reference_castagnoli(&data);
+
+      let small_data = &data[..64];
+      let small_ref = reference_castagnoli(small_data);
+
+      for split in 0..=small_data.len() {
+        let (a, b) = small_data.split_at(split);
+        let crc_a = Crc32C::checksum(a);
+        let crc_b = Crc32C::checksum(b);
+        let combined = Crc32C::combine(crc_a, crc_b, b.len());
+        assert_eq!(combined, small_ref, "CRC32C combine mismatch at split={split}");
+      }
+
+      let strategic_splits = [0, 1, 15, 16, 17, 63, 64, 65, 127, 128, 129, 255, 256, 512, 1024];
+      for &split in &strategic_splits {
+        if split > data.len() {
+          continue;
+        }
+        let (a, b) = data.split_at(split);
+        let combined = Crc32C::combine(Crc32C::checksum(a), Crc32C::checksum(b), b.len());
+        assert_eq!(
+          combined, reference,
+          "CRC32C combine mismatch at strategic split={split}"
+        );
+      }
+    }
+
+    #[test]
+    fn cross_check_ieee_unaligned_offsets() {
+      let mut buffer = vec![0u8; 4096 + 64];
+      for (i, byte) in buffer.iter_mut().enumerate() {
+        *byte = (((i as u64).wrapping_mul(17)) & 0xFF) as u8;
+      }
+
+      for offset in 0..16 {
+        let data = &buffer[offset..offset + 1024];
+        let reference = reference_ieee(data);
+        let actual = Crc32::checksum(data);
+        assert_eq!(actual, reference, "CRC32-IEEE unaligned mismatch at offset={offset}");
+      }
+    }
+
+    #[test]
+    fn cross_check_castagnoli_unaligned_offsets() {
+      let mut buffer = vec![0u8; 4096 + 64];
+      for (i, byte) in buffer.iter_mut().enumerate() {
+        *byte = (((i as u64).wrapping_mul(17)) & 0xFF) as u8;
+      }
+
+      for offset in 0..16 {
+        let data = &buffer[offset..offset + 1024];
+        let reference = reference_castagnoli(data);
+        let actual = Crc32C::checksum(data);
+        assert_eq!(actual, reference, "CRC32C unaligned mismatch at offset={offset}");
+      }
+    }
+
+    #[test]
+    fn cross_check_ieee_byte_at_a_time_streaming() {
+      let data = generate_test_data(256);
+      let reference = reference_ieee(&data);
+
+      let mut hasher = Crc32::new();
+      for &byte in &data {
+        hasher.update(&[byte]);
+      }
+      let actual = hasher.finalize();
+      assert_eq!(actual, reference, "CRC32-IEEE byte-at-a-time streaming mismatch");
+    }
+
+    #[test]
+    fn cross_check_castagnoli_byte_at_a_time_streaming() {
+      let data = generate_test_data(256);
+      let reference = reference_castagnoli(&data);
+
+      let mut hasher = Crc32C::new();
+      for &byte in &data {
+        hasher.update(&[byte]);
+      }
+      let actual = hasher.finalize();
+      assert_eq!(actual, reference, "CRC32C byte-at-a-time streaming mismatch");
+    }
+
+    #[test]
+    fn cross_check_reference_kernel_accessible() {
+      let data = generate_test_data(1024);
+
+      let ieee_ref = crc32_reference(!0u32, &data) ^ !0u32;
+      let ieee_direct = reference_ieee(&data);
+      assert_eq!(ieee_ref, ieee_direct, "IEEE reference kernel mismatch");
+
+      let c_ref = crc32c_reference(!0u32, &data) ^ !0u32;
+      let c_direct = reference_castagnoli(&data);
+      assert_eq!(c_ref, c_direct, "Castagnoli reference kernel mismatch");
+    }
+
+    #[test]
+    fn cross_check_portable_matches_reference() {
+      for &len in TEST_LENGTHS {
+        let data = generate_test_data(len);
+
+        let portable_ieee = portable::crc32_slice16_ieee(!0u32, &data) ^ !0u32;
+        let reference_ieee_val = reference_ieee(&data);
+        assert_eq!(portable_ieee, reference_ieee_val, "IEEE portable mismatch at len={len}");
+
+        let portable_c = portable::crc32c_slice16(!0u32, &data) ^ !0u32;
+        let reference_c_val = reference_castagnoli(&data);
+        assert_eq!(portable_c, reference_c_val, "Castagnoli portable mismatch at len={len}");
       }
     }
   }
