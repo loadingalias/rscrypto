@@ -1,18 +1,25 @@
+//! CRC-24 property tests: portable kernel comparison and cross-library validation.
+//!
+//! These tests validate our CRC-24 implementation against:
+//! 1. Our own portable (slice-by-N) implementation
+//! 2. A local bitwise reference implementation
+//! 3. The `crc` crate as an external reference
+
 // Proptest uses getcwd() which fails under Miri isolation.
 #![cfg(not(miri))]
 
-extern crate std;
-
+use checksum::{
+  __internal::proptest_internals::{CRC24_OPENPGP_POLY, crc24_openpgp_slice8},
+  Checksum, ChecksumCombine, Crc24OpenPgp,
+};
 use crc::Crc as RefCrc;
 use proptest::prelude::*;
-
-use super::*;
 
 const REF_CRC24_OPENPGP: RefCrc<u32> = RefCrc::<u32>::new(&crc::CRC_24_OPENPGP);
 
 fn crc24_openpgp_reference(data: &[u8]) -> u32 {
   // MSB-first OpenPGP using a 32-bit expanded register (top 24 bits).
-  let poly_aligned = crate::common::tables::CRC24_OPENPGP_POLY << 8;
+  let poly_aligned = CRC24_OPENPGP_POLY << 8;
   let mut state: u32 = 0x00B7_04CE << 8;
   for &byte in data {
     state ^= (byte as u32) << 24;
@@ -31,7 +38,7 @@ proptest! {
   #[test]
   fn crc24_openpgp_matches_portable(data in proptest::collection::vec(any::<u8>(), 0..=4096)) {
     let ours = Crc24OpenPgp::checksum(&data);
-    let portable = portable::crc24_openpgp_slice8(0x00B7_04CE, &data) & 0x00FF_FFFF;
+    let portable = crc24_openpgp_slice8(0x00B7_04CE, &data) & 0x00FF_FFFF;
     prop_assert_eq!(ours, portable);
   }
 
@@ -48,9 +55,6 @@ proptest! {
     let reference = REF_CRC24_OPENPGP.checksum(&data) & 0x00FF_FFFF;
     prop_assert_eq!(ours, reference);
   }
-
-  // NOTE: crc24_openpgp_streaming_and_combine test removed - now covered by unified
-  // tests in common/proptests.rs (combine_correctness, chunking_equivalence, resume_correctness)
 
   #[test]
   fn crc24_openpgp_streaming_matches_crc_crate(

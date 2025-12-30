@@ -1,6 +1,3 @@
-// Proptest uses getcwd() which fails under Miri isolation.
-#![cfg(not(miri))]
-
 //! Unified property tests for all CRC implementations.
 //!
 //! This module provides rigorous property-based tests that verify two fundamental
@@ -17,20 +14,17 @@
 //! These tests use our own bitwise reference implementations as the oracle,
 //! establishing that production code matches the mathematical CRC definition.
 
-#![cfg(all(test, not(miri)))]
+// Proptest uses getcwd() which fails under Miri isolation.
+#![cfg(not(miri))]
 
-extern crate std;
-
-use proptest::prelude::*;
-use traits::{Checksum, ChecksumCombine};
-
-use super::{
-  reference::{crc16_bitwise, crc24_bitwise, crc32_bitwise, crc64_bitwise},
-  tables::{
+use checksum::{
+  __internal::proptest_internals::{
     CRC16_CCITT_POLY, CRC16_IBM_POLY, CRC24_OPENPGP_POLY, CRC32_IEEE_POLY, CRC32C_POLY, CRC64_NVME_POLY, CRC64_XZ_POLY,
+    crc16_bitwise, crc24_bitwise, crc32_bitwise, crc64_bitwise,
   },
+  Checksum, ChecksumCombine, Crc16Ccitt, Crc16Ibm, Crc24OpenPgp, Crc32, Crc32C, Crc64, Crc64Nvme,
 };
-use crate::{Crc16Ccitt, Crc16Ibm, Crc24OpenPgp, Crc32, Crc32C, Crc64, Crc64Nvme};
+use proptest::prelude::*;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Combine Correctness Tests
@@ -350,7 +344,7 @@ macro_rules! test_combine_all_splits {
     fn $name() {
       // Test various small sizes including edge cases
       for size in [0, 1, 2, 3, 7, 8, 15, 16, 31, 32, 63, 64, 127, 128, 255, 256] {
-        let data: alloc::vec::Vec<u8> = (0..size).map(|i| (i as u8).wrapping_mul(17)).collect();
+        let data: Vec<u8> = (0..size).map(|i| (i as u8).wrapping_mul(17)).collect();
 
         for split in 0..=data.len() {
           let (a, b) = data.split_at(split);
@@ -442,7 +436,7 @@ macro_rules! test_chunking_edge_cases {
       for size in [
         0, 1, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129, 255, 256, 512, 1024,
       ] {
-        let data: alloc::vec::Vec<u8> = (0..size).map(|i| (i as u8).wrapping_mul(23)).collect();
+        let data: Vec<u8> = (0..size).map(|i| (i as u8).wrapping_mul(23)).collect();
         let expected = <$crc_type>::checksum(&data);
 
         // Byte-at-a-time

@@ -7,6 +7,34 @@
 //! 2. Check forced backend override
 //! 3. Check CPU capabilities and thresholds → select SIMD tier
 //!
+//! # Kernel Tier System
+//!
+//! CRC implementations follow a tiered kernel selection model. Higher tiers
+//! offer better performance but have stricter hardware requirements.
+//!
+//! | Tier | Name | Description |
+//! |------|------|-------------|
+//! | 0 | Reference | Bitwise implementation - always available, for verification |
+//! | 1 | Portable | Table-based slice-by-N - always available, production fallback |
+//! | 2 | HW CRC | Native CRC instructions - CRC-32/32C only on x86_64 (SSE4.2), aarch64 (CRC ext) |
+//! | 3 | Folding | PCLMUL/PMULL/VPMSUM/VGFM/Zbc - carryless multiply folding |
+//! | 4 | Wide | VPCLMUL/EOR3/SVE2/Zvbc - wide SIMD / advanced folding |
+//!
+//! ## Tier Availability by CRC Width
+//!
+//! | CRC Width | Tier 0 | Tier 1 | Tier 2 | Tier 3 | Tier 4 |
+//! |-----------|--------|--------|--------|--------|--------|
+//! | CRC-16 | Yes | Yes | No | Yes | Yes* |
+//! | CRC-24 | Yes | Yes | No | No | No |
+//! | CRC-32/32C | Yes | Yes | Yes | Yes | Yes |
+//! | CRC-64 | Yes | Yes | No | Yes | Yes |
+//!
+//! *CRC-16 Tier 4 is x86_64 VPCLMUL only.
+//!
+//! CRC-24 lacks SIMD acceleration because its non-reflected (MSB-first)
+//! polynomial makes carryless multiply folding significantly more complex
+//! with diminishing returns for the OpenPGP use case.
+//!
 //! # Design Philosophy
 //!
 //! Rather than using traits (which add vtable overhead) or generics (which
@@ -80,6 +108,13 @@ pub const fn stream_to_index(streams: u8) -> usize {
 /// # Returns
 ///
 /// The kernel name that would be selected for the given parameters.
+#[cfg(any(
+  target_arch = "x86_64",
+  target_arch = "aarch64",
+  target_arch = "powerpc64",
+  target_arch = "s390x",
+  target_arch = "riscv64"
+))]
 #[inline]
 #[must_use]
 pub fn select_name(

@@ -20,7 +20,7 @@
 
 pub(crate) mod config;
 mod kernels;
-mod portable;
+pub(crate) mod portable;
 mod tuned_defaults;
 
 use backend::dispatch::Selected;
@@ -225,13 +225,13 @@ fn crc16_ccitt_clmul(crc: u16, data: &[u8]) -> u16 {
   #[cfg(target_arch = "x86_64")]
   {
     if crc16_has_vpclmul() && data.len() >= crc16_clmul_to_vpclmul() {
-      return x86_64::crc16_ccitt_vpclmul_safe(crc, data, crc16_ccitt_portable_auto);
+      return x86_64::crc16_ccitt_vpclmul_safe(crc, data);
     }
-    x86_64::crc16_ccitt_pclmul_safe(crc, data, crc16_ccitt_portable_auto)
+    x86_64::crc16_ccitt_pclmul_safe(crc, data)
   }
   #[cfg(target_arch = "aarch64")]
   {
-    aarch64::crc16_ccitt_pmull_safe(crc, data, crc16_ccitt_portable_auto)
+    aarch64::crc16_ccitt_pmull_safe(crc, data)
   }
   #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
   {
@@ -244,13 +244,13 @@ fn crc16_ibm_clmul(crc: u16, data: &[u8]) -> u16 {
   #[cfg(target_arch = "x86_64")]
   {
     if crc16_has_vpclmul() && data.len() >= crc16_clmul_to_vpclmul() {
-      return x86_64::crc16_ibm_vpclmul_safe(crc, data, crc16_ibm_portable_auto);
+      return x86_64::crc16_ibm_vpclmul_safe(crc, data);
     }
-    x86_64::crc16_ibm_pclmul_safe(crc, data, crc16_ibm_portable_auto)
+    x86_64::crc16_ibm_pclmul_safe(crc, data)
   }
   #[cfg(target_arch = "aarch64")]
   {
-    aarch64::crc16_ibm_pmull_safe(crc, data, crc16_ibm_portable_auto)
+    aarch64::crc16_ibm_pmull_safe(crc, data)
   }
   #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
   {
@@ -295,24 +295,24 @@ pub(crate) fn crc16_selected_kernel_name(len: usize) -> &'static str {
     #[cfg(target_arch = "x86_64")]
     {
       if crc16_has_vpclmul() && len >= crc16_clmul_to_vpclmul() {
-        return kernels::X86_64_VPCLMUL;
+        return kernels::x86_64::VPCLMUL;
       }
-      return kernels::X86_64_PCLMUL;
+      return kernels::x86_64::PCLMUL;
     }
     #[cfg(target_arch = "aarch64")]
-    return kernels::AARCH64_PMULL;
+    return kernels::aarch64::PMULL;
   }
 
   if cfg.effective_force == config::Crc16Force::Auto && crc16_has_clmul() && len >= cfg.tunables.portable_to_clmul {
     #[cfg(target_arch = "x86_64")]
     {
       if crc16_has_vpclmul() && len >= crc16_clmul_to_vpclmul() {
-        return kernels::X86_64_VPCLMUL;
+        return kernels::x86_64::VPCLMUL;
       }
-      return kernels::X86_64_PCLMUL;
+      return kernels::x86_64::PCLMUL;
     }
     #[cfg(target_arch = "aarch64")]
-    return kernels::AARCH64_PMULL;
+    return kernels::aarch64::PMULL;
   }
 
   kernels::portable_name_for_len(len, cfg.tunables.slice4_to_slice8)
@@ -338,9 +338,9 @@ fn select_crc16_ccitt() -> Selected<Crc16Fn> {
     config::Crc16Force::Portable => Selected::new(kernels::PORTABLE_AUTO, crc16_ccitt_portable_auto),
     config::Crc16Force::Clmul if crc16_has_clmul() => {
       #[cfg(target_arch = "x86_64")]
-      return Selected::new(kernels::X86_64_PCLMUL, crc16_ccitt_clmul);
+      return Selected::new(kernels::x86_64::PCLMUL, crc16_ccitt_clmul);
       #[cfg(target_arch = "aarch64")]
-      return Selected::new(kernels::AARCH64_PMULL, crc16_ccitt_clmul);
+      return Selected::new(kernels::aarch64::PMULL, crc16_ccitt_clmul);
       #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
       Selected::new(kernels::PORTABLE_AUTO, crc16_ccitt_portable_auto)
     }
@@ -365,9 +365,9 @@ fn select_crc16_ibm() -> Selected<Crc16Fn> {
     config::Crc16Force::Portable => Selected::new(kernels::PORTABLE_AUTO, crc16_ibm_portable_auto),
     config::Crc16Force::Clmul if crc16_has_clmul() => {
       #[cfg(target_arch = "x86_64")]
-      return Selected::new(kernels::X86_64_PCLMUL, crc16_ibm_clmul);
+      return Selected::new(kernels::x86_64::PCLMUL, crc16_ibm_clmul);
       #[cfg(target_arch = "aarch64")]
-      return Selected::new(kernels::AARCH64_PMULL, crc16_ibm_clmul);
+      return Selected::new(kernels::aarch64::PMULL, crc16_ibm_clmul);
       #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
       Selected::new(kernels::PORTABLE_AUTO, crc16_ibm_portable_auto)
     }
@@ -660,10 +660,6 @@ define_buffered_crc! {
     threshold_fn: crc16_buffered_threshold,
   }
 }
-
-// Proptest uses file I/O for failure persistence that Miri cannot interpret.
-#[cfg(all(test, not(miri)))]
-mod proptests;
 
 #[cfg(test)]
 mod tests {

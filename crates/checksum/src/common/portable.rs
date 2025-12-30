@@ -33,6 +33,244 @@
 #![allow(clippy::indexing_slicing)]
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Small Input Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Process a small tail (0-7 bytes) for 64-bit CRC with unrolled lookups.
+///
+/// This avoids loop overhead for the common case of small remainders.
+/// The function is always inlined for zero call overhead.
+#[inline(always)]
+fn tail8_64(mut crc: u64, data: &[u8], table: &[u64; 256]) -> u64 {
+  // Unrolled processing for 0-7 bytes. Each arm is branchless after the match.
+  // The `_ =>` arm handles ≥8 bytes by falling through to a loop; this case
+  // never occurs when called from slice functions (as_chunks guarantees < 8),
+  // but we keep it for safety and the compiler eliminates it.
+  match data.len() {
+    0 => {}
+    1 => {
+      crc = table[((crc ^ data[0] as u64) & 0xFF) as usize] ^ (crc >> 8);
+    }
+    2 => {
+      crc = table[((crc ^ data[0] as u64) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[1] as u64) & 0xFF) as usize] ^ (crc >> 8);
+    }
+    3 => {
+      crc = table[((crc ^ data[0] as u64) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[1] as u64) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[2] as u64) & 0xFF) as usize] ^ (crc >> 8);
+    }
+    4 => {
+      crc = table[((crc ^ data[0] as u64) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[1] as u64) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[2] as u64) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[3] as u64) & 0xFF) as usize] ^ (crc >> 8);
+    }
+    5 => {
+      crc = table[((crc ^ data[0] as u64) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[1] as u64) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[2] as u64) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[3] as u64) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[4] as u64) & 0xFF) as usize] ^ (crc >> 8);
+    }
+    6 => {
+      crc = table[((crc ^ data[0] as u64) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[1] as u64) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[2] as u64) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[3] as u64) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[4] as u64) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[5] as u64) & 0xFF) as usize] ^ (crc >> 8);
+    }
+    7 => {
+      crc = table[((crc ^ data[0] as u64) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[1] as u64) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[2] as u64) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[3] as u64) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[4] as u64) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[5] as u64) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[6] as u64) & 0xFF) as usize] ^ (crc >> 8);
+    }
+    // Fallback loop for ≥8 bytes (unreachable from slice functions, but safe)
+    _ => {
+      for &byte in data {
+        crc = table[((crc ^ byte as u64) & 0xFF) as usize] ^ (crc >> 8);
+      }
+    }
+  }
+  crc
+}
+
+/// Process a small tail (0-7 bytes) for 32-bit CRC with unrolled lookups.
+#[cfg(test)]
+#[inline(always)]
+fn tail8_32(mut crc: u32, data: &[u8], table: &[u32; 256]) -> u32 {
+  match data.len() {
+    0 => {}
+    1 => {
+      crc = table[((crc ^ data[0] as u32) & 0xFF) as usize] ^ (crc >> 8);
+    }
+    2 => {
+      crc = table[((crc ^ data[0] as u32) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[1] as u32) & 0xFF) as usize] ^ (crc >> 8);
+    }
+    3 => {
+      crc = table[((crc ^ data[0] as u32) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[1] as u32) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[2] as u32) & 0xFF) as usize] ^ (crc >> 8);
+    }
+    4 => {
+      crc = table[((crc ^ data[0] as u32) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[1] as u32) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[2] as u32) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[3] as u32) & 0xFF) as usize] ^ (crc >> 8);
+    }
+    5 => {
+      crc = table[((crc ^ data[0] as u32) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[1] as u32) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[2] as u32) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[3] as u32) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[4] as u32) & 0xFF) as usize] ^ (crc >> 8);
+    }
+    6 => {
+      crc = table[((crc ^ data[0] as u32) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[1] as u32) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[2] as u32) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[3] as u32) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[4] as u32) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[5] as u32) & 0xFF) as usize] ^ (crc >> 8);
+    }
+    7 => {
+      crc = table[((crc ^ data[0] as u32) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[1] as u32) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[2] as u32) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[3] as u32) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[4] as u32) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[5] as u32) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[6] as u32) & 0xFF) as usize] ^ (crc >> 8);
+    }
+    // Fallback loop for ≥8 bytes (unreachable from slice functions, but safe)
+    _ => {
+      for &byte in data {
+        crc = table[((crc ^ byte as u32) & 0xFF) as usize] ^ (crc >> 8);
+      }
+    }
+  }
+  crc
+}
+
+/// Process a small tail (0-3 bytes) for 32-bit CRC with unrolled lookups.
+/// Used by slice16_32 which processes 4-byte chunks.
+#[inline(always)]
+fn tail4_32(mut crc: u32, data: &[u8], table: &[u32; 256]) -> u32 {
+  match data.len() {
+    0 => {}
+    1 => {
+      crc = table[((crc ^ data[0] as u32) & 0xFF) as usize] ^ (crc >> 8);
+    }
+    2 => {
+      crc = table[((crc ^ data[0] as u32) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[1] as u32) & 0xFF) as usize] ^ (crc >> 8);
+    }
+    3 => {
+      crc = table[((crc ^ data[0] as u32) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[1] as u32) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[2] as u32) & 0xFF) as usize] ^ (crc >> 8);
+    }
+    // Fallback loop for ≥4 bytes (unreachable from slice functions, but safe)
+    _ => {
+      for &byte in data {
+        crc = table[((crc ^ byte as u32) & 0xFF) as usize] ^ (crc >> 8);
+      }
+    }
+  }
+  crc
+}
+
+/// Process a small tail (0-3 bytes) for 16-bit CRC with unrolled lookups.
+#[inline(always)]
+fn tail4_16(mut crc: u16, data: &[u8], table: &[u16; 256]) -> u16 {
+  match data.len() {
+    0 => {}
+    1 => {
+      crc = table[((crc ^ data[0] as u16) & 0xFF) as usize] ^ (crc >> 8);
+    }
+    2 => {
+      crc = table[((crc ^ data[0] as u16) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[1] as u16) & 0xFF) as usize] ^ (crc >> 8);
+    }
+    3 => {
+      crc = table[((crc ^ data[0] as u16) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[1] as u16) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[2] as u16) & 0xFF) as usize] ^ (crc >> 8);
+    }
+    // Fallback loop for ≥4 bytes (unreachable from slice functions, but safe)
+    _ => {
+      for &byte in data {
+        crc = table[((crc ^ byte as u16) & 0xFF) as usize] ^ (crc >> 8);
+      }
+    }
+  }
+  crc
+}
+
+/// Process a small tail (0-7 bytes) for 16-bit CRC with unrolled lookups.
+#[inline(always)]
+fn tail8_16(mut crc: u16, data: &[u8], table: &[u16; 256]) -> u16 {
+  match data.len() {
+    0 => {}
+    1 => {
+      crc = table[((crc ^ data[0] as u16) & 0xFF) as usize] ^ (crc >> 8);
+    }
+    2 => {
+      crc = table[((crc ^ data[0] as u16) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[1] as u16) & 0xFF) as usize] ^ (crc >> 8);
+    }
+    3 => {
+      crc = table[((crc ^ data[0] as u16) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[1] as u16) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[2] as u16) & 0xFF) as usize] ^ (crc >> 8);
+    }
+    4 => {
+      crc = table[((crc ^ data[0] as u16) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[1] as u16) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[2] as u16) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[3] as u16) & 0xFF) as usize] ^ (crc >> 8);
+    }
+    5 => {
+      crc = table[((crc ^ data[0] as u16) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[1] as u16) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[2] as u16) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[3] as u16) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[4] as u16) & 0xFF) as usize] ^ (crc >> 8);
+    }
+    6 => {
+      crc = table[((crc ^ data[0] as u16) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[1] as u16) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[2] as u16) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[3] as u16) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[4] as u16) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[5] as u16) & 0xFF) as usize] ^ (crc >> 8);
+    }
+    7 => {
+      crc = table[((crc ^ data[0] as u16) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[1] as u16) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[2] as u16) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[3] as u16) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[4] as u16) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[5] as u16) & 0xFF) as usize] ^ (crc >> 8);
+      crc = table[((crc ^ data[6] as u16) & 0xFF) as usize] ^ (crc >> 8);
+    }
+    // Fallback loop for ≥8 bytes (unreachable from slice functions, but safe)
+    _ => {
+      for &byte in data {
+        crc = table[((crc ^ byte as u16) & 0xFF) as usize] ^ (crc >> 8);
+      }
+    }
+  }
+  crc
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // CRC-16 Portable Implementations
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -60,13 +298,8 @@ pub(crate) fn slice4_16(mut crc: u16, data: &[u8], tables: &[[u16; 256]; 4]) -> 
       ^ tables[0][((b >> 8) & 0xFF) as usize];
   }
 
-  // Process remaining bytes with byte-at-a-time
-  for &byte in remainder {
-    let index = ((crc ^ (byte as u16)) & 0xFF) as usize;
-    crc = tables[0][index] ^ (crc >> 8);
-  }
-
-  crc
+  // Process remaining bytes (0-3) with unrolled lookups
+  tail4_16(crc, remainder, &tables[0])
 }
 
 /// Update CRC-16 state using slice-by-8 algorithm.
@@ -99,13 +332,8 @@ pub(crate) fn slice8_16(mut crc: u16, data: &[u8], tables: &[[u16; 256]; 8]) -> 
       ^ tables[0][((d >> 8) & 0xFF) as usize];
   }
 
-  // Process remaining bytes with byte-at-a-time
-  for &byte in remainder {
-    let index = ((crc ^ (byte as u16)) & 0xFF) as usize;
-    crc = tables[0][index] ^ (crc >> 8);
-  }
-
-  crc
+  // Process remaining bytes (0-7) with unrolled lookups
+  tail8_16(crc, remainder, &tables[0])
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -216,13 +444,8 @@ pub fn slice8_32(mut crc: u32, data: &[u8], tables: &[[u32; 256]; 8]) -> u32 {
       ^ tables[0][(b >> 24) as usize];
   }
 
-  // Process remaining bytes (< 8) with byte-at-a-time
-  for &byte in remainder {
-    let index = ((crc ^ (byte as u32)) & 0xFF) as usize;
-    crc = tables[0][index] ^ (crc >> 8);
-  }
-
-  crc
+  // Process remaining bytes (0-7) with unrolled lookups
+  tail8_32(crc, remainder, &tables[0])
 }
 
 /// Update CRC-32 state using slice-by-16 algorithm.
@@ -272,13 +495,8 @@ pub fn slice16_32(mut crc: u32, data: &[u8], tables: &[[u32; 256]; 16]) -> u32 {
       ^ tables[0][(val >> 24) as usize];
   }
 
-  // Process remaining bytes (< 4) with byte-at-a-time
-  for &byte in remainder {
-    let index = ((crc ^ (byte as u32)) & 0xFF) as usize;
-    crc = tables[0][index] ^ (crc >> 8);
-  }
-
-  crc
+  // Process remaining bytes (0-3) with unrolled lookups
+  tail4_32(crc, remainder, &tables[0])
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -312,13 +530,8 @@ pub fn slice8_64(mut crc: u64, data: &[u8], tables: &[[u64; 256]; 8]) -> u64 {
       ^ tables[0][(val >> 56) as usize];
   }
 
-  // Process remaining bytes (0-7) with byte-at-a-time
-  for &byte in remainder {
-    let index = ((crc ^ (byte as u64)) & 0xFF) as usize;
-    crc = tables[0][index] ^ (crc >> 8);
-  }
-
-  crc
+  // Process remaining bytes (0-7) with unrolled lookups
+  tail8_64(crc, remainder, &tables[0])
 }
 
 /// Update CRC-64 state using slice-by-16 algorithm.
@@ -371,13 +584,8 @@ pub fn slice16_64(mut crc: u64, data: &[u8], tables: &[[u64; 256]; 16]) -> u64 {
       ^ tables[0][(val >> 56) as usize];
   }
 
-  // Process remaining bytes (< 8) with byte-at-a-time
-  for &byte in remainder {
-    let index = ((crc ^ (byte as u64)) & 0xFF) as usize;
-    crc = tables[0][index] ^ (crc >> 8);
-  }
-
-  crc
+  // Process remaining bytes (0-7) with unrolled lookups
+  tail8_64(crc, remainder, &tables[0])
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

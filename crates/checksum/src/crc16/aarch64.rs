@@ -285,14 +285,35 @@ unsafe fn crc16_width32_pmull(mut state: u16, data: &[u8], keys: &[u64; 23], por
   portable(state, right)
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Public Safe Kernels (matching CRC-64 pure fn(u16, &[u8]) -> u16 signature)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// CRC-16/CCITT PMULL kernel.
+///
+/// # Safety
+///
+/// Dispatcher verifies PMULL before selecting this kernel.
 #[inline]
-pub fn crc16_ccitt_pmull_safe(crc: u16, data: &[u8], portable: fn(u16, &[u8]) -> u16) -> u16 {
+pub fn crc16_ccitt_pmull_safe(crc: u16, data: &[u8]) -> u16 {
   // SAFETY: Dispatcher verifies PMULL before selecting this kernel.
-  unsafe { crc16_width32_pmull(crc, data, &KEYS_CRC16_1021_REFLECTED, portable) }
+  unsafe {
+    crc16_width32_pmull(
+      crc,
+      data,
+      &KEYS_CRC16_1021_REFLECTED,
+      super::portable::crc16_ccitt_slice8,
+    )
+  }
 }
 
+/// CRC-16/IBM PMULL kernel.
+///
+/// # Safety
+///
+/// Dispatcher verifies PMULL before selecting this kernel.
 #[inline]
-pub fn crc16_ibm_pmull_safe(crc: u16, data: &[u8], portable: fn(u16, &[u8]) -> u16) -> u16 {
+pub fn crc16_ibm_pmull_safe(crc: u16, data: &[u8]) -> u16 {
   // SAFETY: Dispatcher verifies PMULL before selecting this kernel.
-  unsafe { crc16_width32_pmull(crc, data, &KEYS_CRC16_8005_REFLECTED, portable) }
+  unsafe { crc16_width32_pmull(crc, data, &KEYS_CRC16_8005_REFLECTED, super::portable::crc16_ibm_slice8) }
 }

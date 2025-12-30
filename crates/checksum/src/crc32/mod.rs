@@ -41,7 +41,7 @@
 mod clmul;
 pub(crate) mod config;
 mod kernels;
-mod portable;
+pub(crate) mod portable;
 mod tuned_defaults;
 
 #[cfg(target_arch = "x86_64")]
@@ -326,6 +326,7 @@ static CRC32C_X86_STREAMS: OnceLock<u8> = OnceLock::new();
 
 #[inline]
 #[must_use]
+#[allow(unused_variables)] // `len` only used on SIMD architectures
 pub(crate) fn crc32_selected_kernel_name(len: usize) -> &'static str {
   let cfg = config::get();
 
@@ -581,8 +582,16 @@ pub(crate) fn crc32_selected_kernel_name(len: usize) -> &'static str {
 
 #[inline]
 #[must_use]
+#[allow(unused_variables)] // `len` only used on SIMD architectures
 pub(crate) fn crc32c_selected_kernel_name(len: usize) -> &'static str {
   let cfg = config::get();
+  #[cfg(any(
+    target_arch = "x86_64",
+    target_arch = "aarch64",
+    target_arch = "powerpc64",
+    target_arch = "s390x",
+    target_arch = "riscv64"
+  ))]
   let caps = platform::caps();
 
   #[cfg(any(
@@ -3038,6 +3047,3 @@ mod tests {
     }
   }
 }
-
-#[cfg(test)]
-mod proptests;

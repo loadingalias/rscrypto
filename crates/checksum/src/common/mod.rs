@@ -21,8 +21,6 @@ pub mod clmul;
 pub mod combine;
 pub mod kernels;
 pub mod portable;
-#[cfg(all(test, not(miri)))]
-mod proptests;
 pub mod reference;
 pub mod tables;
 #[cfg(test)]

@@ -22,7 +22,7 @@
 
 pub(crate) mod config;
 mod kernels;
-mod portable;
+pub(crate) mod portable;
 mod tuned_defaults;
 
 use backend::dispatch::Selected;
@@ -280,10 +280,6 @@ define_buffered_crc! {
     threshold_fn: crc24_buffered_threshold,
   }
 }
-
-// Proptest uses file I/O for failure persistence that Miri cannot interpret.
-#[cfg(all(test, not(miri)))]
-mod proptests;
 
 #[cfg(test)]
 mod tests {

@@ -345,26 +345,64 @@ unsafe fn crc16_width32_vpclmul(mut state: u16, data: &[u8], keys: &[u64; 23], p
   portable(state, right)
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Public Safe Kernels (matching CRC-64 pure fn(u16, &[u8]) -> u16 signature)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// CRC-16/CCITT PCLMULQDQ kernel.
+///
+/// # Safety
+///
+/// Dispatcher verifies SSSE3 + PCLMULQDQ before selecting this kernel.
 #[inline]
-pub fn crc16_ccitt_pclmul_safe(crc: u16, data: &[u8], portable: fn(u16, &[u8]) -> u16) -> u16 {
+pub fn crc16_ccitt_pclmul_safe(crc: u16, data: &[u8]) -> u16 {
   // SAFETY: Dispatcher verifies SSSE3 + PCLMULQDQ before selecting this kernel.
-  unsafe { crc16_width32_pclmul(crc, data, &KEYS_CRC16_1021_REFLECTED, portable) }
+  unsafe {
+    crc16_width32_pclmul(
+      crc,
+      data,
+      &KEYS_CRC16_1021_REFLECTED,
+      super::portable::crc16_ccitt_slice8,
+    )
+  }
 }
 
+/// CRC-16/CCITT VPCLMULQDQ kernel (AVX-512).
+///
+/// # Safety
+///
+/// Dispatcher verifies VPCLMULQDQ + AVX-512 before selecting this kernel.
 #[inline]
-pub fn crc16_ccitt_vpclmul_safe(crc: u16, data: &[u8], portable: fn(u16, &[u8]) -> u16) -> u16 {
+pub fn crc16_ccitt_vpclmul_safe(crc: u16, data: &[u8]) -> u16 {
   // SAFETY: Dispatcher verifies VPCLMULQDQ + AVX-512 before selecting this kernel.
-  unsafe { crc16_width32_vpclmul(crc, data, &KEYS_CRC16_1021_REFLECTED, portable) }
+  unsafe {
+    crc16_width32_vpclmul(
+      crc,
+      data,
+      &KEYS_CRC16_1021_REFLECTED,
+      super::portable::crc16_ccitt_slice8,
+    )
+  }
 }
 
+/// CRC-16/IBM PCLMULQDQ kernel.
+///
+/// # Safety
+///
+/// Dispatcher verifies SSSE3 + PCLMULQDQ before selecting this kernel.
 #[inline]
-pub fn crc16_ibm_pclmul_safe(crc: u16, data: &[u8], portable: fn(u16, &[u8]) -> u16) -> u16 {
+pub fn crc16_ibm_pclmul_safe(crc: u16, data: &[u8]) -> u16 {
   // SAFETY: Dispatcher verifies SSSE3 + PCLMULQDQ before selecting this kernel.
-  unsafe { crc16_width32_pclmul(crc, data, &KEYS_CRC16_8005_REFLECTED, portable) }
+  unsafe { crc16_width32_pclmul(crc, data, &KEYS_CRC16_8005_REFLECTED, super::portable::crc16_ibm_slice8) }
 }
 
+/// CRC-16/IBM VPCLMULQDQ kernel (AVX-512).
+///
+/// # Safety
+///
+/// Dispatcher verifies VPCLMULQDQ + AVX-512 before selecting this kernel.
 #[inline]
-pub fn crc16_ibm_vpclmul_safe(crc: u16, data: &[u8], portable: fn(u16, &[u8]) -> u16) -> u16 {
+pub fn crc16_ibm_vpclmul_safe(crc: u16, data: &[u8]) -> u16 {
   // SAFETY: Dispatcher verifies VPCLMULQDQ + AVX-512 before selecting this kernel.
-  unsafe { crc16_width32_vpclmul(crc, data, &KEYS_CRC16_8005_REFLECTED, portable) }
+  unsafe { crc16_width32_vpclmul(crc, data, &KEYS_CRC16_8005_REFLECTED, super::portable::crc16_ibm_slice8) }
 }

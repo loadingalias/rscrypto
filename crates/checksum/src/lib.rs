@@ -120,6 +120,29 @@ pub mod __internal {
       verify_crc64_xz_kernels,
     };
   }
+
+  /// Property test internals - bitwise reference implementations and constants.
+  ///
+  /// These are exposed for integration tests in `tests/` that need access to
+  /// the mathematical CRC definitions for correctness verification.
+  pub mod proptest_internals {
+    // Bitwise reference implementations (the mathematical definition of CRC)
+    // Polynomial constants for all CRC variants
+    // Portable kernel wrappers for cross-validation tests
+    pub use crate::{
+      common::{
+        reference::{crc16_bitwise, crc24_bitwise, crc32_bitwise, crc64_bitwise},
+        tables::{
+          CRC16_CCITT_POLY, CRC16_IBM_POLY, CRC24_OPENPGP_POLY, CRC32_IEEE_POLY, CRC32C_POLY, CRC64_NVME_POLY,
+          CRC64_XZ_POLY,
+        },
+      },
+      crc16::portable::{crc16_ccitt_slice8, crc16_ibm_slice8},
+      crc24::portable::crc24_openpgp_slice8,
+      crc32::portable::{crc32_slice16_ieee, crc32c_slice16},
+      crc64::portable::{crc64_slice16_nvme, crc64_slice16_xz},
+    };
+  }
 }
 
 // Re-export public types

@@ -15,7 +15,7 @@
 
 pub(crate) mod config;
 pub(crate) mod kernels;
-mod portable;
+pub(crate) mod portable;
 mod tuned_defaults;
 
 #[cfg(feature = "alloc")]
@@ -1381,9 +1381,9 @@ fn select_crc64_xz() -> Selected<Crc64Fn> {
 )))]
 fn select_crc64_xz() -> Selected<Crc64Fn> {
   if config::get().effective_force == Crc64Force::Reference {
-    return Selected::new("reference/bitwise", crc64_xz_reference);
+    return Selected::new(kernels::REFERENCE, crc64_xz_reference);
   }
-  Selected::new("portable/slice16", crc64_xz_portable)
+  Selected::new(kernels::PORTABLE, crc64_xz_portable)
 }
 
 /// Select the best CRC-64-NVME kernel for the current platform.
@@ -1496,9 +1496,9 @@ fn select_crc64_nvme() -> Selected<Crc64Fn> {
 )))]
 fn select_crc64_nvme() -> Selected<Crc64Fn> {
   if config::get().effective_force == Crc64Force::Reference {
-    return Selected::new("reference/bitwise", crc64_nvme_reference);
+    return Selected::new(kernels::REFERENCE, crc64_nvme_reference);
   }
-  Selected::new("portable/slice16", crc64_nvme_portable)
+  Selected::new(kernels::PORTABLE, crc64_nvme_portable)
 }
 
 /// Static dispatcher for CRC-64-XZ.
@@ -2431,7 +2431,3 @@ mod tests {
     }
   }
 }
-
-// Proptest uses file I/O for failure persistence that Miri cannot interpret.
-#[cfg(all(test, not(miri)))]
-mod proptests;

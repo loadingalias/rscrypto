@@ -4,6 +4,15 @@
 //! code duplication across architectures. The same pattern applies to both
 //! kernel name selection (for introspection) and actual dispatch.
 //!
+//! # Kernel Tiers
+//!
+//! CRC-64 supports Tiers 0, 1, 3, and 4 (no HW CRC instructions exist):
+//! - Tier 0 (Reference): Bitwise implementation
+//! - Tier 1 (Portable): Slice-by-16 table lookup
+//! - Tier 3 (Folding): PCLMUL (x86_64), PMULL (aarch64), VPMSUM (ppc64), VGFM (s390x), Zbc
+//!   (riscv64)
+//! - Tier 4 (Wide): VPCLMUL (x86_64), PMULL+EOR3/SVE2 (aarch64), Zvbc (riscv64)
+//!
 //! # Design
 //!
 //! - Static arrays for kernel names per tier per architecture
@@ -12,14 +21,37 @@
 
 /// Portable fallback kernel name.
 pub use kernels::PORTABLE_SLICE16 as PORTABLE;
-/// Reference (bitwise) kernel name.
+/// Reference (bitwise) kernel name - always available for force mode.
 pub use kernels::REFERENCE;
-/// Re-export select_name from common kernels.
+/// Re-export select_name from common kernels (SIMD architectures only).
+#[cfg(any(
+  target_arch = "x86_64",
+  target_arch = "aarch64",
+  target_arch = "powerpc64",
+  target_arch = "s390x",
+  target_arch = "riscv64"
+))]
 pub use kernels::select_name;
 
-use crate::{common::kernels, dispatchers::Crc64Fn};
+use crate::common::kernels;
+#[cfg(any(
+  target_arch = "x86_64",
+  target_arch = "aarch64",
+  target_arch = "powerpc64",
+  target_arch = "s390x",
+  target_arch = "riscv64"
+))]
+use crate::dispatchers::Crc64Fn;
 
 // Generate CRC64-specific dispatch functions using the common macro.
+// Only needed on SIMD architectures where we have multiple kernel tiers.
+#[cfg(any(
+  target_arch = "x86_64",
+  target_arch = "aarch64",
+  target_arch = "powerpc64",
+  target_arch = "s390x",
+  target_arch = "riscv64"
+))]
 crate::define_crc_dispatch!(Crc64Fn, u64);
 
 // ─────────────────────────────────────────────────────────────────────────────

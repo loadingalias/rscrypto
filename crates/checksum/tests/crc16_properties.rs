@@ -1,31 +1,33 @@
+//! CRC-16 property tests: portable kernel comparison and cross-library validation.
+//!
+//! These tests validate our CRC-16 implementations against:
+//! 1. Our own portable (slice-by-N) implementations
+//! 2. The `crc-fast` crate as an external reference
+
 // Proptest uses getcwd() which fails under Miri isolation.
 #![cfg(not(miri))]
 
-extern crate std;
-
+use checksum::{
+  __internal::proptest_internals::{crc16_ccitt_slice8, crc16_ibm_slice8},
+  Checksum, ChecksumCombine, Crc16Ccitt, Crc16Ibm,
+};
 use crc_fast::CrcAlgorithm;
 use proptest::prelude::*;
-
-use super::*;
 
 proptest! {
   #[test]
   fn crc16_ccitt_matches_portable(data in proptest::collection::vec(any::<u8>(), 0..=4096)) {
     let ours = Crc16Ccitt::checksum(&data);
-    let portable = portable::crc16_ccitt_slice8(0xFFFF, &data) ^ 0xFFFF;
+    let portable = crc16_ccitt_slice8(0xFFFF, &data) ^ 0xFFFF;
     prop_assert_eq!(ours, portable);
   }
 
   #[test]
   fn crc16_ibm_matches_portable(data in proptest::collection::vec(any::<u8>(), 0..=4096)) {
     let ours = Crc16Ibm::checksum(&data);
-    let portable = portable::crc16_ibm_slice8(0, &data);
+    let portable = crc16_ibm_slice8(0, &data);
     prop_assert_eq!(ours, portable);
   }
-
-  // NOTE: crc16_ccitt_streaming_and_combine and crc16_ibm_streaming_and_combine tests removed -
-  // now covered by unified tests in common/proptests.rs (combine_correctness,
-  // chunking_equivalence, resume_correctness)
 
   // ─────────────────────────────────────────────────────────────────────────────
   // Cross-validation against crc-fast-rust
