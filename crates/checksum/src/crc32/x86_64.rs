@@ -24,6 +24,24 @@ use crate::common::{
 
 const CRC32C_SHIFT8_MATRIX: Gf2Matrix32 = generate_shift8_matrix_32(CRC32C_POLY);
 
+/// Powers-of-two table for `CRC32C_SHIFT8_MATRIX^len_bytes`.
+///
+/// This is used by multi-stream kernels to combine lane CRCs efficiently. The
+/// previous per-call repeated-squaring approach was correct but incurred a large
+/// constant overhead (~dozens of 32x32 GF(2) matrix multiplies), which could
+/// dominate for medium buffers (e.g. 4–64KiB) and make the multi-stream path
+/// catastrophically slow despite a fast core kernel.
+const CRC32C_SHIFT8_POW2: [Gf2Matrix32; usize::BITS as usize] = {
+  let mut tbl = [Gf2Matrix32::identity(); usize::BITS as usize];
+  tbl[0] = CRC32C_SHIFT8_MATRIX;
+  let mut i: usize = 1;
+  while i < usize::BITS as usize {
+    tbl[i] = tbl[i.strict_sub(1)].square();
+    i = i.strict_add(1);
+  }
+  tbl
+};
+
 #[inline]
 #[must_use]
 fn pow_shift8_crc32c(len_bytes: usize) -> Gf2Matrix32 {
@@ -31,16 +49,20 @@ fn pow_shift8_crc32c(len_bytes: usize) -> Gf2Matrix32 {
     return Gf2Matrix32::identity();
   }
 
-  let mut mat = CRC32C_SHIFT8_MATRIX;
+  if len_bytes.is_power_of_two() {
+    return CRC32C_SHIFT8_POW2[len_bytes.trailing_zeros() as usize];
+  }
+
   let mut result = Gf2Matrix32::identity();
   let mut remaining = len_bytes;
+  let mut bit: usize = 0;
 
   while remaining > 0 {
     if (remaining & 1) != 0 {
-      result = result.mul_mat(mat);
+      result = result.mul_mat(CRC32C_SHIFT8_POW2[bit]);
     }
-    mat = mat.square();
     remaining = remaining.strict_shr(1);
+    bit = bit.strict_add(1);
   }
 
   result

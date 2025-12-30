@@ -32,9 +32,40 @@ KERNEL_ROW_RE = re.compile(
     r"^\s*║\s*(?P<size>\w+)\s*\(\s*(?P<bytes>\d+)\s*B\):\s*(?P<rest>.*)$"
 )
 
-BENCH_HEAD_RE = re.compile(r"^(?P<algo>crc(?:16|24|32c?|64)/(?:xz|nvme|ieee|castagnoli|ccitt|ibm|openpgp))/(?P<impl>[^/]+)/(?P<size>\w+)\s*$")
+BENCH_HEAD_RE = re.compile(
+    r"^(?P<algo>crc(?:16|24|32c?|64)/(?:xz|nvme|ieee|castagnoli|ccitt|ibm|openpgp))/(?P<impl>.+)/(?P<size>\w+)\s*$"
+)
 
-THRPT_RE = re.compile(r"^\s*thrpt:\s*\[\s*(?P<lo>[0-9.]+)\s+GiB/s\s+(?P<mid>[0-9.]+)\s+GiB/s\s+(?P<hi>[0-9.]+)\s+GiB/s\]\s*$")
+THRPT_RE = re.compile(
+    r"^\s*thrpt:\s*\[\s*"
+    r"(?P<lo>[0-9.]+)\s+(?P<unit>GiB/s|MiB/s|KiB/s|B/s)\s+"
+    r"(?P<mid>[0-9.]+)\s+(?P=unit)\s+"
+    r"(?P<hi>[0-9.]+)\s+(?P=unit)\s*"
+    r"\]\s*$"
+)
+
+
+def to_gib_per_s(value: float, unit: str) -> float:
+    if unit == "GiB/s":
+        return value
+    if unit == "MiB/s":
+        return value / 1024.0
+    if unit == "KiB/s":
+        return value / (1024.0 * 1024.0)
+    if unit == "B/s":
+        return value / (1024.0 * 1024.0 * 1024.0)
+    raise ValueError(f"unknown throughput unit: {unit}")
+
+
+def algo_to_kernel_key(algo: str) -> str:
+    # Kernel selection table printed by comp.rs uses these short keys:
+    #   crc32  -> CRC32/IEEE
+    #   crc32c -> CRC32C/Castagnoli
+    if algo == "crc32/ieee":
+        return "crc32"
+    if algo == "crc32c/castagnoli":
+        return "crc32c"
+    return algo
 
 
 def parse_kernel_selection(lines: List[str]) -> Dict[Tuple[str, str], str]:
@@ -95,7 +126,8 @@ def parse_points(lines: List[str]) -> List[BenchPoint]:
         while j < len(lines) and j < i + 12:
             tm = THRPT_RE.match(lines[j])
             if tm:
-                thrpt_mid = float(tm.group("mid"))
+                unit = tm.group("unit")
+                thrpt_mid = to_gib_per_s(float(tm.group("mid")), unit)
                 break
             j += 1
 
@@ -156,7 +188,7 @@ def main(argv: List[str]) -> int:
 
     print(f"{path}: rscrypto/checksum losing cases (higher GiB/s is better):")
     for algo, size, ours, winner in losing:
-        kernel = kernel_map.get((algo, size))
+        kernel = kernel_map.get((algo_to_kernel_key(algo), size))
         kinfo = f" kernel={kernel}" if kernel else ""
         print(
             f"- {algo}/{size}{kinfo}: ours={ours.gib_s:.2f} GiB/s vs best={winner.impl} {winner.gib_s:.2f} GiB/s ({fmt_ratio(winner.gib_s, ours.gib_s)} faster)"
@@ -172,4 +204,3 @@ def main(argv: List[str]) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main(sys.argv))
-
