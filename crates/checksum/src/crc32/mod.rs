@@ -1034,6 +1034,30 @@ mod tests {
 
   const TEST_DATA: &[u8] = b"123456789";
 
+  // Test helpers - stream calculation functions for verifying kernel selection
+  #[cfg(target_arch = "x86_64")]
+  const fn x86_streams_for_len(len: usize, streams: u8) -> u8 {
+    const FOLD_BLOCK: usize = policy::CRC32_FOLD_BLOCK_BYTES;
+    if streams >= 8 && len >= 8 * 2 * FOLD_BLOCK {
+      return 8;
+    }
+    if streams >= 7 && len >= 7 * 2 * FOLD_BLOCK {
+      return 7;
+    }
+    if streams >= 4 && len >= 4 * 2 * FOLD_BLOCK {
+      return 4;
+    }
+    if streams >= 2 && len >= 2 * 2 * FOLD_BLOCK {
+      return 2;
+    }
+    1
+  }
+
+  #[cfg(target_arch = "x86_64")]
+  const fn x86_streams_for_len_crc32c(len: usize, streams: u8) -> u8 {
+    x86_streams_for_len(len, streams)
+  }
+
   #[test]
   fn test_crc32_test_vectors() {
     assert_eq!(Crc32::checksum(TEST_DATA), 0xCBF4_3926);
