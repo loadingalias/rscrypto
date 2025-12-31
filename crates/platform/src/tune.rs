@@ -236,6 +236,21 @@ pub struct Tune {
   /// Apple M4 has SME with Streaming SVE mode but not full SVE.
   /// When non-zero, indicates SME is available with this tile dimension.
   pub sme_tile: u16,
+
+  /// Whether hardware CRC instructions are memory-bandwidth limited.
+  ///
+  /// When true, multi-stream HWCRC doesn't improve throughput because
+  /// memory bandwidth (not instruction latency) is the bottleneck.
+  /// This affects CRC-32C dispatch decisions.
+  ///
+  /// Common cases where this is true:
+  /// - AMD Zen 4/5: CRC32 instructions are very fast, memory-bound
+  /// - Apple M-series: Hardware CRC saturates memory bandwidth
+  /// - ARM Graviton: Similar memory-bound behavior
+  ///
+  /// When true, CRC-32C policies should use single-stream HWCRC for
+  /// large buffers rather than multi-stream parallel computation.
+  pub memory_bound_hwcrc: bool,
 }
 
 impl Tune {
@@ -253,6 +268,7 @@ impl Tune {
     prefetch_distance: 0,
     sve_vlen: 0,
     sme_tile: 0,
+    memory_bound_hwcrc: false, // Conservative default
   };
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -273,6 +289,7 @@ impl Tune {
     prefetch_distance: 0,
     sve_vlen: 0,
     sme_tile: 0,
+    memory_bound_hwcrc: true, // CRC32 instructions are very fast, memory-bound
   };
 
   /// Tuning for AMD Zen 5.
@@ -296,6 +313,7 @@ impl Tune {
     prefetch_distance: 0,
     sve_vlen: 0,
     sme_tile: 0,
+    memory_bound_hwcrc: true, // CRC32 instructions are very fast, memory-bound
   };
 
   /// Tuning for AMD Zen 5c (compact/efficiency variant).
@@ -319,6 +337,7 @@ impl Tune {
     prefetch_distance: 0,
     sve_vlen: 0,
     sme_tile: 0,
+    memory_bound_hwcrc: true, // Same as Zen 5
   };
 
   /// Tuning for Intel Sapphire Rapids / Emerald Rapids.
@@ -338,6 +357,7 @@ impl Tune {
     prefetch_distance: 0,
     sve_vlen: 0,
     sme_tile: 0,
+    memory_bound_hwcrc: false, // Higher CRC latency, not memory-bound
   };
 
   /// Tuning for Intel Granite Rapids (Xeon 6).
@@ -364,6 +384,7 @@ impl Tune {
     prefetch_distance: 0,
     sve_vlen: 0,
     sme_tile: 0,
+    memory_bound_hwcrc: false, // Higher CRC latency, not memory-bound
   };
 
   /// Tuning for Intel Ice Lake.
@@ -383,6 +404,7 @@ impl Tune {
     prefetch_distance: 0,
     sve_vlen: 0,
     sme_tile: 0,
+    memory_bound_hwcrc: false, // Higher CRC latency, not memory-bound
   };
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -403,6 +425,7 @@ impl Tune {
     prefetch_distance: 0,
     sve_vlen: 0,
     sme_tile: 0,
+    memory_bound_hwcrc: true, // Hardware CRC saturates memory bandwidth
   };
 
   /// Tuning for Apple M4 (PMULL+EOR3, SME with Streaming SVE, no full SVE).
@@ -418,7 +441,8 @@ impl Tune {
     cache_line: 64,
     prefetch_distance: 0,
     sve_vlen: 0,
-    sme_tile: 256, // M4 has SME with 256-bit tiles
+    sme_tile: 256,            // M4 has SME with 256-bit tiles
+    memory_bound_hwcrc: true, // Hardware CRC saturates memory bandwidth
   };
 
   /// Tuning for Apple M5 (PMULL+EOR3, SME2p1).
@@ -438,7 +462,8 @@ impl Tune {
     cache_line: 64,
     prefetch_distance: 0,
     sve_vlen: 0,
-    sme_tile: 256, // M5 has SME2p1 with 256-bit tiles
+    sme_tile: 256,            // M5 has SME2p1 with 256-bit tiles
+    memory_bound_hwcrc: true, // Hardware CRC saturates memory bandwidth
   };
 
   /// Alias: Apple M-series (M1-M3).
@@ -462,6 +487,7 @@ impl Tune {
     prefetch_distance: 0,
     sve_vlen: 0,
     sme_tile: 0,
+    memory_bound_hwcrc: true, // ARM CRC saturates memory bandwidth
   };
 
   /// Tuning for AWS Graviton 3 (Neoverse V1, 256-bit SVE).
@@ -478,6 +504,7 @@ impl Tune {
     prefetch_distance: 0,
     sve_vlen: 256,
     sme_tile: 0,
+    memory_bound_hwcrc: true, // ARM CRC saturates memory bandwidth
   };
 
   /// Tuning for AWS Graviton 4 (Neoverse V2, 128-bit SVE for more cores).
@@ -494,6 +521,7 @@ impl Tune {
     prefetch_distance: 0,
     sve_vlen: 128,
     sme_tile: 0,
+    memory_bound_hwcrc: true, // ARM CRC saturates memory bandwidth
   };
 
   /// Tuning for AWS Graviton 5 (Neoverse V3, 128-bit SVE2).
@@ -511,6 +539,7 @@ impl Tune {
     prefetch_distance: 0,
     sve_vlen: 128,
     sme_tile: 0,
+    memory_bound_hwcrc: true, // ARM CRC saturates memory bandwidth
   };
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -531,6 +560,7 @@ impl Tune {
     prefetch_distance: 0,
     sve_vlen: 128,
     sme_tile: 0,
+    memory_bound_hwcrc: true, // ARM CRC saturates memory bandwidth
   };
 
   /// Tuning for ARM Neoverse N3 (Hermes, Armv9.2-A with 128-bit SVE2).
@@ -551,6 +581,7 @@ impl Tune {
     prefetch_distance: 0,
     sve_vlen: 128, // 128-bit SVE2
     sme_tile: 0,
+    memory_bound_hwcrc: true, // ARM CRC saturates memory bandwidth
   };
 
   /// Tuning for ARM Neoverse V3 (Poseidon, 128-bit SVE2).
@@ -567,6 +598,7 @@ impl Tune {
     prefetch_distance: 0,
     sve_vlen: 128,
     sme_tile: 0,
+    memory_bound_hwcrc: true, // ARM CRC saturates memory bandwidth
   };
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -592,6 +624,7 @@ impl Tune {
     prefetch_distance: 0,
     sve_vlen: 128, // Neoverse V2 with 128-bit SVE2
     sme_tile: 0,
+    memory_bound_hwcrc: true, // ARM CRC saturates memory bandwidth
   };
 
   /// Tuning for Ampere Altra (Neoverse N1-based, ARMv8.2+, no SVE).
@@ -613,6 +646,7 @@ impl Tune {
     prefetch_distance: 0,
     sve_vlen: 0, // No SVE - Neoverse N1 is ARMv8.2-A only
     sme_tile: 0,
+    memory_bound_hwcrc: true, // ARM CRC saturates memory bandwidth
   };
 
   /// Tuning for generic aarch64 with PMULL (no SVE).
@@ -629,6 +663,7 @@ impl Tune {
     prefetch_distance: 0,
     sve_vlen: 0,
     sme_tile: 0,
+    memory_bound_hwcrc: true, // Conservative default for ARM
   };
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -653,6 +688,7 @@ impl Tune {
     prefetch_distance: 0,
     sve_vlen: 0,
     sme_tile: 0,
+    memory_bound_hwcrc: false, // No hardware CRC on s390x
   };
 
   /// Tuning for IBM z14 (vector enhancements 1).
@@ -672,6 +708,7 @@ impl Tune {
     prefetch_distance: 0,
     sve_vlen: 0,
     sme_tile: 0,
+    memory_bound_hwcrc: false, // No hardware CRC on s390x
   };
 
   /// Tuning for IBM z15 (vector enhancements 2).
@@ -692,6 +729,7 @@ impl Tune {
     prefetch_distance: 0,
     sve_vlen: 0,
     sme_tile: 0,
+    memory_bound_hwcrc: false, // No hardware CRC on s390x
   };
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -714,6 +752,7 @@ impl Tune {
     prefetch_distance: 0,
     sve_vlen: 0,
     sme_tile: 0,
+    memory_bound_hwcrc: false, // No hardware CRC on POWER
   };
 
   /// Tuning for IBM POWER8 (power8-vector + crypto).
@@ -733,6 +772,7 @@ impl Tune {
     prefetch_distance: 0,
     sve_vlen: 0,
     sme_tile: 0,
+    memory_bound_hwcrc: false, // No hardware CRC on POWER
   };
 
   /// Tuning for IBM POWER9 (power9-vector).
@@ -751,6 +791,7 @@ impl Tune {
     prefetch_distance: 0,
     sve_vlen: 0,
     sme_tile: 0,
+    memory_bound_hwcrc: false, // No hardware CRC on POWER
   };
 
   /// Tuning for IBM POWER10 (power10-vector).
@@ -770,6 +811,7 @@ impl Tune {
     prefetch_distance: 0,
     sve_vlen: 0,
     sme_tile: 0,
+    memory_bound_hwcrc: false, // No hardware CRC on POWER
   };
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -794,6 +836,7 @@ impl Tune {
     prefetch_distance: 0,
     sve_vlen: 0,
     sme_tile: 0,
+    memory_bound_hwcrc: false, // Not applicable for portable
   };
 }
 
@@ -1203,6 +1246,7 @@ mod tests {
       prefetch_distance: 512,
       sve_vlen: 256,
       sme_tile: 128,
+      memory_bound_hwcrc: true,
     };
     assert_eq!(custom.name(), "Custom");
     assert_eq!(custom.kind(), TuneKind::Custom);
@@ -1215,6 +1259,7 @@ mod tests {
     assert_eq!(custom.prefetch_distance, 512);
     assert_eq!(custom.sve_vlen, 256);
     assert_eq!(custom.sme_tile, 128);
+    assert!(custom.memory_bound_hwcrc);
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -1370,6 +1415,31 @@ mod tests {
     const { assert!(Tune::APPLE_M1_M3.sme_tile == 0) };
     const { assert!(Tune::APPLE_M4.sme_tile == 256) };
     assert_ne!(Tune::APPLE_M1_M3, Tune::APPLE_M4);
+  }
+
+  #[test]
+  fn test_memory_bound_hwcrc() {
+    // AMD/ARM with fast HWCRC are memory-bound
+    assert!(Tune::ZEN4.memory_bound_hwcrc);
+    assert!(Tune::ZEN5.memory_bound_hwcrc);
+    assert!(Tune::ZEN5C.memory_bound_hwcrc);
+    assert!(Tune::APPLE_M1_M3.memory_bound_hwcrc);
+    assert!(Tune::APPLE_M4.memory_bound_hwcrc);
+    assert!(Tune::APPLE_M5.memory_bound_hwcrc);
+    assert!(Tune::GRAVITON2.memory_bound_hwcrc);
+    assert!(Tune::GRAVITON3.memory_bound_hwcrc);
+    assert!(Tune::GRAVITON4.memory_bound_hwcrc);
+    assert!(Tune::GRAVITON5.memory_bound_hwcrc);
+
+    // Intel with higher CRC latency are NOT memory-bound
+    assert!(!Tune::INTEL_SPR.memory_bound_hwcrc);
+    assert!(!Tune::INTEL_GNR.memory_bound_hwcrc);
+    assert!(!Tune::INTEL_ICL.memory_bound_hwcrc);
+
+    // Architectures without HWCRC: flag doesn't matter but set to false
+    assert!(!Tune::Z13.memory_bound_hwcrc);
+    assert!(!Tune::POWER10.memory_bound_hwcrc);
+    assert!(!Tune::PORTABLE.memory_bound_hwcrc);
   }
 
   // ─────────────────────────────────────────────────────────────────────────────

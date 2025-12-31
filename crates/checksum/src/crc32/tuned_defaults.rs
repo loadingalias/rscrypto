@@ -17,15 +17,23 @@ pub struct Crc32TunedDefaults {
   pub hwcrc_to_fusion: usize,
   pub fusion_to_avx512: usize,
   pub fusion_to_vpclmul: usize,
+  /// Minimum bytes per lane for CRC-32 (IEEE) multi-stream folding.
+  ///
+  /// When `None`, uses `KernelFamily::min_bytes_per_lane()` as the default.
+  pub min_bytes_per_lane_crc32: Option<usize>,
+  /// Minimum bytes per lane for CRC-32C (Castagnoli) multi-stream folding.
+  ///
+  /// When `None`, uses `KernelFamily::min_bytes_per_lane()` as the default.
+  pub min_bytes_per_lane_crc32c: Option<usize>,
 }
 
 #[rustfmt::skip]
 pub const CRC32_TUNED_DEFAULTS: &[(TuneKind, Crc32TunedDefaults)] = &[
   // Zen4: CRC32C is often memory-bound; 1-way avoids the multi-stream cliff.
-  (TuneKind::Zen4, Crc32TunedDefaults { streams_crc32: 4, streams_crc32c: 1, portable_to_hwcrc: 8, hwcrc_to_fusion: 64, fusion_to_avx512: 64, fusion_to_vpclmul: 64 }),
+  (TuneKind::Zen4, Crc32TunedDefaults { streams_crc32: 4, streams_crc32c: 1, portable_to_hwcrc: 8, hwcrc_to_fusion: 64, fusion_to_avx512: 64, fusion_to_vpclmul: 64, min_bytes_per_lane_crc32: None, min_bytes_per_lane_crc32c: None }),
   // BEGIN GENERATED (crc32-tune --apply)
-  (TuneKind::AppleM1M3, Crc32TunedDefaults { streams_crc32: 3, streams_crc32c: 3, portable_to_hwcrc: 16, hwcrc_to_fusion: 512, fusion_to_avx512: 64, fusion_to_vpclmul: usize::MAX }),
-  (TuneKind::Graviton2, Crc32TunedDefaults { streams_crc32: 1, streams_crc32c: 1, portable_to_hwcrc: 8, hwcrc_to_fusion: 512, fusion_to_avx512: usize::MAX, fusion_to_vpclmul: usize::MAX }),
+  (TuneKind::AppleM1M3, Crc32TunedDefaults { streams_crc32: 3, streams_crc32c: 3, portable_to_hwcrc: 16, hwcrc_to_fusion: 512, fusion_to_avx512: 64, fusion_to_vpclmul: usize::MAX, min_bytes_per_lane_crc32: None, min_bytes_per_lane_crc32c: None }),
+  (TuneKind::Graviton2, Crc32TunedDefaults { streams_crc32: 1, streams_crc32c: 1, portable_to_hwcrc: 8, hwcrc_to_fusion: 512, fusion_to_avx512: usize::MAX, fusion_to_vpclmul: usize::MAX, min_bytes_per_lane_crc32: None, min_bytes_per_lane_crc32c: None }),
   // END GENERATED (crc32-tune --apply)
 ];
 

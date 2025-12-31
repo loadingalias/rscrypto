@@ -81,17 +81,35 @@ bench-crc64-tune mode="":
 bench-crc32-tune mode="":
     @bash scripts/bench/crc32-tune.sh {{mode}}
 
-# Fast CRC64 tuner (no Criterion; prints recommended RSCRYPTO_CRC64_* exports)
-# Usage: just tune-crc64
-#        just tune-crc64 --quick
-tune-crc64 *args="":
-    RUSTC_WRAPPER= cargo run -p checksum --release --bin crc64-tune -- {{args}}
+# ─────────────────────────────────────────────────────────────────────────────
+# Tuning
+# ─────────────────────────────────────────────────────────────────────────────
 
-# Fast CRC32 tuner (no Criterion; prints recommended RSCRYPTO_CRC32_* exports)
-# Usage: just tune-crc32
-#        just tune-crc32 --quick
-tune-crc32 *args="":
-    RUSTC_WRAPPER= cargo run -p checksum --release --bin crc32-tune -- {{args}}
+# Run all CRC tuning (CRC-64 + CRC-32)
+# Usage: just tune-all
+#        just tune-all --quick
+tune-all *args="":
+    @echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    @echo "Running CRC-64 tuning..."
+    @echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p checksum --release --bin crc64-tune -- {{args}}
+    @echo ""
+    @echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    @echo "Running CRC-32 tuning..."
+    @echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p checksum --release --bin crc32-tune -- {{args}}
+
+# CRC-64 tuning (prints recommended RSCRYPTO_CRC64_* exports)
+# Usage: just tune-64
+#        just tune-64 --quick
+tune-64 *args="":
+    RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p checksum --release --bin crc64-tune -- {{args}}
+
+# CRC-32 tuning (prints recommended RSCRYPTO_CRC32_* exports)
+# Usage: just tune-32
+#        just tune-32 --quick
+tune-32 *args="":
+    RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p checksum --release --bin crc32-tune -- {{args}}
 
 # Summarize Criterion results as TSV
 bench-summary group="" only="oneshot":

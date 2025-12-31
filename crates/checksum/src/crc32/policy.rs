@@ -86,6 +86,15 @@ pub struct Crc32Policy {
   /// Whether AVX-512 fusion is available (x86_64 CRC-32C only).
   #[allow(dead_code)] // Only used on x86_64
   pub has_avx512: bool,
+  /// Minimum bytes per lane for multi-stream folding.
+  ///
+  /// This is resolved from tunables (if set) or the kernel family default.
+  pub min_bytes_per_lane: usize,
+  /// Whether this variant is memory-bandwidth limited on this microarch.
+  ///
+  /// When true, multi-stream processing is suppressed for HWCRC and fusion
+  /// kernels (both use hardware CRC as the combine step).
+  pub memory_bound: bool,
 }
 
 impl Crc32Policy {
@@ -106,6 +115,18 @@ impl Crc32Policy {
       policy
     };
 
+    // Resolve min_bytes_per_lane: tunables override > family default
+    let min_bytes_per_lane = match variant {
+      Crc32Variant::Ieee => cfg.tunables.min_bytes_per_lane_crc32,
+      Crc32Variant::Castagnoli => cfg.tunables.min_bytes_per_lane_crc32c,
+    }
+    .unwrap_or_else(|| inner.family().min_bytes_per_lane());
+
+    // Memory-bound heuristic: suppress multi-stream for CRC-32C when HWCRC
+    // is bandwidth-limited. This applies to both pure HWCRC AND fusion kernels
+    // (fusion still uses HWCRC as the combine step, so it's also bandwidth-limited).
+    let memory_bound = variant == Crc32Variant::Castagnoli && tune.memory_bound_hwcrc && has_hwcrc;
+
     Self {
       inner,
       effective_force: cfg.effective_force,
@@ -118,6 +139,8 @@ impl Crc32Policy {
       has_fusion,
       has_vpclmul,
       has_avx512,
+      min_bytes_per_lane,
+      memory_bound,
     }
   }
 
@@ -205,10 +228,19 @@ impl Crc32Policy {
   }
 
   /// Get the optimal stream count for this buffer length.
+  ///
+  /// Uses the algorithm-specific `min_bytes_per_lane` to determine when
+  /// multi-stream processing is worthwhile. When `memory_bound` is set
+  /// (CRC-32C on bandwidth-limited microarchs), returns 1 to suppress
+  /// parallelization.
   #[inline]
   #[must_use]
   pub fn streams_for_len(&self, len: usize) -> u8 {
-    self.inner.streams_for_len(len)
+    // Memory-bound: suppress multi-stream (HWCRC already saturates bandwidth)
+    if self.memory_bound {
+      return 1;
+    }
+    self.inner.streams_for_len_with_min(len, self.min_bytes_per_lane)
   }
 
   /// Get the kernel name for this policy and buffer length.
@@ -833,6 +865,8 @@ mod tests {
         fusion_to_vpclmul: 2048,
         streams_crc32: 4,
         streams_crc32c: 4,
+        min_bytes_per_lane_crc32: None,
+        min_bytes_per_lane_crc32c: None,
       },
     };
 
@@ -855,6 +889,8 @@ mod tests {
         fusion_to_vpclmul: 2048,
         streams_crc32: 4,
         streams_crc32c: 4,
+        min_bytes_per_lane_crc32: None,
+        min_bytes_per_lane_crc32c: None,
       },
     };
 

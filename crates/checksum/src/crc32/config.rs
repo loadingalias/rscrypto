@@ -150,6 +150,14 @@ pub struct Crc32Tunables {
   ///
   /// Used by multi-stream kernels where available.
   pub streams_crc32c: u8,
+  /// Minimum bytes per lane for CRC-32 (IEEE) multi-stream folding.
+  ///
+  /// When `None`, uses `KernelFamily::min_bytes_per_lane()` as the default.
+  pub min_bytes_per_lane_crc32: Option<usize>,
+  /// Minimum bytes per lane for CRC-32C (Castagnoli) multi-stream folding.
+  ///
+  /// When `None`, uses `KernelFamily::min_bytes_per_lane()` as the default.
+  pub min_bytes_per_lane_crc32c: Option<usize>,
 }
 
 /// Full CRC-32 runtime configuration (after applying overrides).
@@ -172,6 +180,8 @@ struct Overrides {
   fusion_to_vpclmul: Option<usize>,
   streams_crc32: Option<u8>,
   streams_crc32c: Option<u8>,
+  min_bytes_per_lane_crc32: Option<usize>,
+  min_bytes_per_lane_crc32c: Option<usize>,
 }
 
 #[cfg(feature = "std")]
@@ -262,6 +272,8 @@ fn read_env_overrides() -> Overrides {
     fusion_to_vpclmul: parse_usize("RSCRYPTO_CRC32_THRESHOLD_FUSION_TO_VPCLMUL"),
     streams_crc32: parse_u8("RSCRYPTO_CRC32_STREAMS_CRC32"),
     streams_crc32c: parse_u8("RSCRYPTO_CRC32_STREAMS_CRC32C"),
+    min_bytes_per_lane_crc32: parse_usize("RSCRYPTO_CRC32_MIN_BYTES_PER_LANE"),
+    min_bytes_per_lane_crc32c: parse_usize("RSCRYPTO_CRC32C_MIN_BYTES_PER_LANE"),
   }
 }
 
@@ -421,6 +433,9 @@ fn tuned_defaults(caps: Caps, tune: Tune) -> Crc32Tunables {
     fusion_to_vpclmul,
     streams_crc32,
     streams_crc32c,
+    // min_bytes_per_lane: tuned defaults > None (use family default in policy)
+    min_bytes_per_lane_crc32: tuned.and_then(|t| t.min_bytes_per_lane_crc32),
+    min_bytes_per_lane_crc32c: tuned.and_then(|t| t.min_bytes_per_lane_crc32c),
   }
 }
 
@@ -546,6 +561,10 @@ pub fn get() -> Crc32Config {
   streams_crc32 = clamp_streams(streams_crc32);
   streams_crc32c = clamp_streams(streams_crc32c);
 
+  // min_bytes_per_lane: env var > tuned defaults > None (use family default in policy)
+  let min_bytes_per_lane_crc32 = ov.min_bytes_per_lane_crc32.or(base.min_bytes_per_lane_crc32);
+  let min_bytes_per_lane_crc32c = ov.min_bytes_per_lane_crc32c.or(base.min_bytes_per_lane_crc32c);
+
   Crc32Config {
     requested_force,
     effective_force,
@@ -556,6 +575,8 @@ pub fn get() -> Crc32Config {
       fusion_to_vpclmul,
       streams_crc32,
       streams_crc32c,
+      min_bytes_per_lane_crc32,
+      min_bytes_per_lane_crc32c,
     },
   }
 }

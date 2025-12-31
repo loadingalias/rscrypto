@@ -220,6 +220,40 @@ impl KernelFamily {
     caps.has(self.required_caps())
   }
 
+  /// Minimum bytes per lane for multi-stream folding.
+  ///
+  /// Multi-stream kernels divide the buffer into parallel lanes. Each lane
+  /// must have enough data to amortize setup costs. This returns the minimum
+  /// bytes *per lane* for this family.
+  ///
+  /// **NOTE**: These are initial conservative defaults. Run tune binaries
+  /// to find empirical crossover points for each microarch.
+  ///
+  /// # Returns
+  ///
+  /// - `usize::MAX` for Reference/Portable (no multi-stream support)
+  /// - Conservative values for SIMD families, to be refined by benchmarking
+  #[inline]
+  #[must_use]
+  pub const fn min_bytes_per_lane(self) -> usize {
+    match self {
+      // Reference/Portable: no multi-stream, return MAX to disable
+      Self::Reference | Self::Portable => usize::MAX,
+
+      // HW CRC: low latency instructions, but memory-bound quickly
+      Self::X86Crc32 | Self::ArmCrc32 => 128,
+
+      // Folding tier: ~1 fold block per lane minimum
+      Self::X86Pclmul | Self::ArmPmull | Self::PowerVpmsum | Self::S390xVgfm | Self::RiscvZbc => 256,
+
+      // Wide tier: higher setup cost, need more per lane
+      Self::X86Vpclmul => 512,
+      Self::ArmPmullEor3 => 256, // EOR3 is still 128-bit NEON operations
+      Self::ArmSve2Pmull => 512,
+      Self::RiscvZvbc => 512,
+    }
+  }
+
   /// All families in the given tier.
   #[must_use]
   pub const fn families_in_tier(tier: KernelTier) -> &'static [Self] {
@@ -358,5 +392,35 @@ mod tests {
     // Verify portable and reference are always present
     assert!(families.contains(&KernelFamily::Portable));
     assert!(families.contains(&KernelFamily::Reference));
+  }
+
+  #[test]
+  fn min_bytes_per_lane_values() {
+    // Reference/Portable: no multi-stream
+    assert_eq!(KernelFamily::Reference.min_bytes_per_lane(), usize::MAX);
+    assert_eq!(KernelFamily::Portable.min_bytes_per_lane(), usize::MAX);
+
+    // HW CRC: low values (memory-bound quickly)
+    assert_eq!(KernelFamily::X86Crc32.min_bytes_per_lane(), 128);
+    assert_eq!(KernelFamily::ArmCrc32.min_bytes_per_lane(), 128);
+
+    // Folding tier: moderate values
+    assert_eq!(KernelFamily::X86Pclmul.min_bytes_per_lane(), 256);
+    assert_eq!(KernelFamily::ArmPmull.min_bytes_per_lane(), 256);
+
+    // Wide tier: higher values
+    assert_eq!(KernelFamily::X86Vpclmul.min_bytes_per_lane(), 512);
+    assert_eq!(KernelFamily::ArmSve2Pmull.min_bytes_per_lane(), 512);
+
+    // All SIMD families should have finite min_bytes_per_lane
+    for &family in KernelFamily::families_for_current_arch() {
+      if family.tier().is_simd() {
+        assert!(
+          family.min_bytes_per_lane() < usize::MAX,
+          "{:?} should have finite min_bytes_per_lane",
+          family
+        );
+      }
+    }
   }
 }

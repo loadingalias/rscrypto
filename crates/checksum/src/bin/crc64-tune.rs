@@ -74,6 +74,7 @@ struct RunConfig {
 struct Args {
   worker: bool,
   apply: bool,
+  sweep_per_lane: bool,
   warmup_ms: u64,
   measure_ms: u64,
 }
@@ -83,6 +84,7 @@ impl Default for Args {
     Self {
       worker: false,
       apply: false,
+      sweep_per_lane: false,
       warmup_ms: 150,
       measure_ms: 250,
     }
@@ -97,6 +99,7 @@ fn parse_args() -> Result<Args, String> {
       "--" => continue,
       "--worker" => args.worker = true,
       "--apply" => args.apply = true,
+      "--sweep-per-lane" => args.sweep_per_lane = true,
       "--quick" => {
         args.warmup_ms = 75;
         args.measure_ms = 125;
@@ -134,6 +137,7 @@ USAGE:
 OPTIONS:
   --quick                 Shorter warmup/measurement (noisier)
   --apply                 Update baked defaults in the repo (writes tuned_defaults.rs)
+  --sweep-per-lane        Run per-lane sweep to find optimal min_bytes_per_lane
   --warmup-ms <ms>        Warmup time per size (default 150)
   --measure-ms <ms>       Measurement time per size (default 250)
 "
@@ -163,6 +167,22 @@ fn sizes_for_thresholds() -> &'static [usize] {
 
 fn sizes_for_streams() -> &'static [usize] {
   &[1024 * 1024]
+}
+
+/// Sizes for per-lane sweep: find the crossover point where multi-stream wins.
+fn sizes_for_per_lane_sweep() -> &'static [usize] {
+  &[
+    256,
+    512,
+    1024,
+    2048,
+    4096,
+    8192,
+    16 * 1024,
+    32 * 1024,
+    64 * 1024,
+    128 * 1024,
+  ]
 }
 
 fn stream_candidates_for_arch() -> &'static [u8] {
@@ -211,12 +231,32 @@ struct BenchRow {
   nvme_gib_s: f64,
 }
 
-fn print_env_exports(streams: u8, portable_to_clmul: usize, pclmul_to_vpclmul: Option<usize>) {
+/// Collected tuning parameters for CRC64.
+///
+/// Groups all tuned values for easier passing between functions.
+#[derive(Clone, Copy, Debug)]
+struct TunedParams {
+  streams: u8,
+  portable_to_clmul: usize,
+  pclmul_to_vpclmul: usize,
+  min_bytes_per_lane: Option<usize>,
+}
+
+fn print_env_exports(params: &TunedParams) {
   println!("# rscrypto CRC64 tuning (paste into your shell env)");
-  println!("export RSCRYPTO_CRC64_STREAMS={streams}");
-  println!("export RSCRYPTO_CRC64_THRESHOLD_PORTABLE_TO_CLMUL={portable_to_clmul}");
-  if let Some(threshold) = pclmul_to_vpclmul {
-    println!("export RSCRYPTO_CRC64_THRESHOLD_PCLMUL_TO_VPCLMUL={threshold}");
+  println!("export RSCRYPTO_CRC64_STREAMS={}", params.streams);
+  println!(
+    "export RSCRYPTO_CRC64_THRESHOLD_PORTABLE_TO_CLMUL={}",
+    params.portable_to_clmul
+  );
+  if params.pclmul_to_vpclmul != usize::MAX {
+    println!(
+      "export RSCRYPTO_CRC64_THRESHOLD_PCLMUL_TO_VPCLMUL={}",
+      params.pclmul_to_vpclmul
+    );
+  }
+  if let Some(min_bpl) = params.min_bytes_per_lane {
+    println!("export RSCRYPTO_CRC64_MIN_BYTES_PER_LANE={min_bpl}");
   }
 }
 
@@ -482,7 +522,7 @@ fn parent_main(args: Args) -> io::Result<()> {
   }?;
 
   #[cfg(not(target_arch = "x86_64"))]
-  let pclmul_to_vpclmul: Option<usize> = None;
+  let _pclmul_to_vpclmul: Option<usize> = None;
 
   let portable_to_clmul_xz = estimate_threshold_sustained_by(
     &threshold_rows,
@@ -534,15 +574,58 @@ fn parent_main(args: Args) -> io::Result<()> {
       pclmul_to_vpclmul.map_or("disabled".to_owned(), |v| v.to_string())
     );
   }
+
+  // Phase C: per-lane sweep (optional)
+  let min_bytes_per_lane: Option<usize> = if args.sweep_per_lane && chosen_streams > 1 {
+    println!();
+    println!("# per-lane sweep: comparing 1-stream vs {chosen_streams}-stream");
+
+    // Run 1-stream and N-stream at per-lane sweep sizes
+    let per_lane_runs = vec![
+      RunConfig {
+        force: best_force,
+        streams: 1,
+      },
+      RunConfig {
+        force: best_force,
+        streams: chosen_streams,
+      },
+    ];
+    let per_lane_sizes = sizes_for_per_lane_sweep();
+    let per_lane_rows = run_matrix(&per_lane_runs, per_lane_sizes, warmup_ms, measure_ms)?;
+
+    // Find min_bytes_per_lane using geometric mean of XZ and NVME
+    let min_bpl = find_min_bytes_per_lane(&per_lane_rows, best_force, chosen_streams, per_lane_sizes, |r| {
+      (r.xz_gib_s * r.nvme_gib_s).sqrt()
+    });
+
+    println!(
+      "min_bytes_per_lane crossover: found={:?}",
+      min_bpl.map_or("none (1-stream always wins)".to_owned(), |v| v.to_string())
+    );
+
+    min_bpl
+  } else {
+    None
+  };
+
+  #[cfg(target_arch = "x86_64")]
+  let pclmul_to_vpclmul_value = pclmul_to_vpclmul.unwrap_or(usize::MAX);
+  #[cfg(not(target_arch = "x86_64"))]
+  let pclmul_to_vpclmul_value = usize::MAX;
+
+  let tuned_params = TunedParams {
+    streams: chosen_streams,
+    portable_to_clmul,
+    pclmul_to_vpclmul: pclmul_to_vpclmul_value,
+    min_bytes_per_lane,
+  };
+
   println!();
 
-  print_env_exports(chosen_streams, portable_to_clmul, pclmul_to_vpclmul);
+  print_env_exports(&tuned_params);
   if args.apply {
-    #[cfg(target_arch = "x86_64")]
-    let pclmul_to_vpclmul_value = pclmul_to_vpclmul.unwrap_or(usize::MAX);
-    #[cfg(not(target_arch = "x86_64"))]
-    let pclmul_to_vpclmul_value = usize::MAX;
-    apply_tuned_defaults(tune_kind, chosen_streams, portable_to_clmul, pclmul_to_vpclmul_value)?;
+    apply_tuned_defaults(tune_kind, &tuned_params)?;
     println!(
       "# applied baked defaults for {:?} in {}",
       tune_kind,
@@ -556,14 +639,74 @@ fn tuned_defaults_path() -> PathBuf {
   PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/crc64/tuned_defaults.rs")
 }
 
-fn apply_tuned_defaults(
-  kind: platform::TuneKind,
-  streams: u8,
-  portable_to_clmul: usize,
-  pclmul_to_vpclmul: usize,
-) -> io::Result<()> {
+/// Evidence metadata for auditability of tuning results.
+struct TuneEvidence {
+  /// Timestamp in UTC.
+  timestamp: String,
+  /// Host platform (arch, OS).
+  platform: String,
+  /// Git commit SHA if available.
+  commit: Option<String>,
+  /// Runner identifier (hostname or CI runner).
+  runner: String,
+}
+
+impl TuneEvidence {
+  fn collect() -> Self {
+    use std::process::Command;
+
+    let timestamp = {
+      let now = std::time::SystemTime::now();
+      let duration = now.duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+      // Format as ISO 8601 (approximate, without chrono)
+      let secs = duration.as_secs();
+      let days = secs / 86400;
+      let years_approx = 1970 + (days / 365);
+      format!("{years_approx}-xx-xx (epoch: {secs})")
+    };
+
+    let platform = format!("{}/{}", std::env::consts::ARCH, std::env::consts::OS);
+
+    let commit = Command::new("git")
+      .args(["rev-parse", "--short", "HEAD"])
+      .output()
+      .ok()
+      .filter(|o| o.status.success())
+      .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned());
+
+    let runner = std::env::var("GITHUB_RUNNER_NAME")
+      .or_else(|_| std::env::var("HOSTNAME"))
+      .or_else(|_| {
+        Command::new("hostname")
+          .output()
+          .ok()
+          .filter(|o| o.status.success())
+          .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
+          .ok_or(std::env::VarError::NotPresent)
+      })
+      .unwrap_or_else(|_| "unknown".to_owned());
+
+    Self {
+      timestamp,
+      platform,
+      commit,
+      runner,
+    }
+  }
+
+  fn format_comment(&self, kind_ident: &str) -> String {
+    let commit_str = self.commit.as_deref().unwrap_or("unknown");
+    format!(
+      "  // {kind_ident}: tuned on {} ({}) commit={} runner={}",
+      self.timestamp, self.platform, commit_str, self.runner
+    )
+  }
+}
+
+fn apply_tuned_defaults(kind: platform::TuneKind, params: &TunedParams) -> io::Result<()> {
   const BEGIN: &str = "// BEGIN GENERATED (crc64-tune --apply)";
   const END: &str = "// END GENERATED (crc64-tune --apply)";
+  let evidence = TuneEvidence::collect();
 
   let path = tuned_defaults_path();
   let src = fs::read_to_string(&path)?;
@@ -590,7 +733,7 @@ fn apply_tuned_defaults(
 
   // Parse the existing generated block so we can re-emit it in a stable,
   // rustfmt-proof one-entry-per-line format.
-  let mut entries: Vec<(String, (u8, usize, usize))> = Vec::new();
+  let mut entries: Vec<(String, TunedParams)> = Vec::new();
 
   let mut current = String::new();
   let mut depth: i32 = 0;
@@ -640,31 +783,47 @@ fn apply_tuned_defaults(
           format!("Missing/invalid pclmul_to_vpclmul for {kind_ident}"),
         )
       })?;
+      // min_bytes_per_lane is optional (might be None in existing entries)
+      let min_bpl = parse_option_usize_field(&current, "min_bytes_per_lane:");
 
+      let entry_params = TunedParams {
+        streams,
+        portable_to_clmul,
+        pclmul_to_vpclmul,
+        min_bytes_per_lane: min_bpl,
+      };
       if let Some((_, existing)) = entries.iter_mut().find(|(k, _)| k == &kind_ident) {
-        *existing = (streams, portable_to_clmul, pclmul_to_vpclmul);
+        *existing = entry_params;
       } else {
-        entries.push((kind_ident, (streams, portable_to_clmul, pclmul_to_vpclmul)));
+        entries.push((kind_ident, entry_params));
       }
       current.clear();
     }
   }
 
-  let kind_ident = format!("{kind:?}");
-  if let Some((_, existing)) = entries.iter_mut().find(|(k, _)| k == &kind_ident) {
-    *existing = (streams, portable_to_clmul, pclmul_to_vpclmul);
+  let current_kind_ident = format!("{kind:?}");
+  if let Some((_, existing)) = entries.iter_mut().find(|(k, _)| k == &current_kind_ident) {
+    *existing = *params;
   } else {
-    entries.push((kind_ident, (streams, portable_to_clmul, pclmul_to_vpclmul)));
+    entries.push((current_kind_ident.clone(), *params));
   }
   entries.sort_by(|a, b| a.0.cmp(&b.0));
 
   let mut emitted: Vec<String> = Vec::new();
-  for (kind_ident, (streams, portable_to_clmul, pclmul_to_vpclmul)) in entries {
-    let portable_to_clmul = fmt_usize(portable_to_clmul);
-    let pclmul_to_vpclmul = fmt_usize(pclmul_to_vpclmul);
+  for (kind_ident, entry) in entries {
+    let streams = entry.streams;
+    let portable_to_clmul = fmt_usize(entry.portable_to_clmul);
+    let pclmul_to_vpclmul = fmt_usize(entry.pclmul_to_vpclmul);
+    let min_bpl_str = fmt_option_usize(entry.min_bytes_per_lane);
+
+    // Add evidence comment for the entry we're updating
+    if kind_ident == current_kind_ident {
+      emitted.push(evidence.format_comment(&kind_ident));
+    }
+
     emitted.push(format!(
       "  (TuneKind::{kind_ident}, Crc64TunedDefaults {{ streams: {streams}, portable_to_clmul: {portable_to_clmul}, \
-       pclmul_to_vpclmul: {pclmul_to_vpclmul} }}),"
+       pclmul_to_vpclmul: {pclmul_to_vpclmul}, min_bytes_per_lane: {min_bpl_str} }}),"
     ));
   }
 
@@ -692,6 +851,35 @@ fn fmt_usize(value: usize) -> String {
   } else {
     value.to_string()
   }
+}
+
+fn fmt_option_usize(value: Option<usize>) -> String {
+  match value {
+    Some(v) => format!("Some({v})"),
+    None => "None".to_owned(),
+  }
+}
+
+/// Parse an `Option<usize>` field from the source. Returns None if the field is not present
+/// or if it's explicitly "None".
+fn parse_option_usize_field(src: &str, needle: &str) -> Option<usize> {
+  let idx = src.find(needle)?;
+  let rest = &src[idx + needle.len()..].trim_start();
+
+  // Skip whitespace and check for None
+  if rest.starts_with("None") {
+    return None;
+  }
+
+  // Check for Some(value)
+  if rest.starts_with("Some(") {
+    let inner_start = "Some(".len();
+    let inner_end = rest[inner_start..].find(')')?;
+    let inner = rest[inner_start..inner_start + inner_end].trim();
+    return usize::from_str(inner).ok();
+  }
+
+  None
 }
 
 fn paren_delta(value: &str) -> i32 {
@@ -1017,6 +1205,55 @@ where
   }
 
   threshold
+}
+
+/// Find the optimal `min_bytes_per_lane` by comparing 1-stream vs N-stream.
+///
+/// Returns the smallest per-lane byte count where N-stream is consistently faster
+/// than 1-stream across all larger sizes. Uses the geometric mean of XZ and NVME
+/// throughput.
+fn find_min_bytes_per_lane<F>(
+  rows: &[BenchRow],
+  force: Force,
+  streams: u8,
+  sizes: &[usize],
+  mut metric: F,
+) -> Option<usize>
+where
+  F: FnMut(&BenchRow) -> f64,
+{
+  if streams <= 1 {
+    return None;
+  }
+
+  // We want to find the smallest size where N-stream beats 1-stream consistently.
+  // Work from largest to smallest, tracking "suffix ok" (all larger sizes pass).
+  let mut threshold: Option<usize> = None;
+  let mut suffix_ok = true;
+
+  const MARGIN: f64 = 1.02; // N-stream must be at least 2% faster
+
+  for &size in sizes.iter().rev() {
+    let one_stream = lookup_row(rows, force, 1, size);
+    let n_stream = lookup_row(rows, force, streams, size);
+
+    let Some(one) = one_stream else { continue };
+    let Some(n) = n_stream else { continue };
+
+    let one_metric = metric(one);
+    let n_metric = metric(n);
+
+    // N-stream must be faster by MARGIN
+    let ok_here = n_metric >= one_metric * MARGIN;
+    suffix_ok = suffix_ok && ok_here;
+
+    if suffix_ok {
+      threshold = Some(size);
+    }
+  }
+
+  // Convert total size threshold to per-lane threshold
+  threshold.map(|total| total / (streams as usize))
 }
 
 fn run_matrix(configs: &[RunConfig], sizes: &[usize], warmup_ms: u64, measure_ms: u64) -> io::Result<Vec<BenchRow>> {

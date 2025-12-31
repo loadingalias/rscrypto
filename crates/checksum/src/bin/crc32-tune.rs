@@ -65,6 +65,7 @@ struct RunConfig {
 struct Args {
   worker: bool,
   apply: bool,
+  sweep_per_lane: bool,
   warmup_ms: u64,
   measure_ms: u64,
 }
@@ -74,6 +75,7 @@ impl Default for Args {
     Self {
       worker: false,
       apply: false,
+      sweep_per_lane: false,
       warmup_ms: 150,
       measure_ms: 250,
     }
@@ -88,6 +90,7 @@ fn parse_args() -> Result<Args, String> {
       "--" => continue,
       "--worker" => args.worker = true,
       "--apply" => args.apply = true,
+      "--sweep-per-lane" => args.sweep_per_lane = true,
       "--quick" => {
         args.warmup_ms = 75;
         args.measure_ms = 125;
@@ -125,6 +128,7 @@ USAGE:
 OPTIONS:
   --quick                 Shorter warmup/measurement (noisier)
   --apply                 Update baked defaults in the repo (writes tuned_defaults.rs)
+  --sweep-per-lane        Run per-lane sweep to find optimal min_bytes_per_lane
   --warmup-ms <ms>        Warmup time per size (default 150)
   --measure-ms <ms>       Measurement time per size (default 250)
 "
@@ -158,6 +162,22 @@ fn sizes_for_streams() -> &'static [usize] {
   &[1024 * 1024]
 }
 
+/// Sizes for per-lane sweep: find the crossover point where multi-stream wins.
+fn sizes_for_per_lane_sweep() -> &'static [usize] {
+  &[
+    256,
+    512,
+    1024,
+    2048,
+    4096,
+    8192,
+    16 * 1024,
+    32 * 1024,
+    64 * 1024,
+    128 * 1024,
+  ]
+}
+
 fn stream_candidates_for_arch() -> &'static [u8] {
   #[cfg(target_arch = "x86_64")]
   {
@@ -185,21 +205,47 @@ struct BenchRow {
   crc32c_gib_s: f64,
 }
 
-fn print_env_exports(
+/// Collected tuning parameters for CRC32.
+///
+/// Groups all tuned values for easier passing between functions.
+#[derive(Clone, Copy, Debug)]
+struct TunedParams {
   streams_crc32: u8,
   streams_crc32c: u8,
   portable_to_hwcrc: usize,
   hwcrc_to_fusion: usize,
   fusion_to_avx512: usize,
   fusion_to_vpclmul: usize,
-) {
+  min_bytes_per_lane_crc32: Option<usize>,
+  min_bytes_per_lane_crc32c: Option<usize>,
+}
+
+fn print_env_exports(params: &TunedParams) {
   println!("# rscrypto CRC32 tuning (paste into your shell env)");
-  println!("export RSCRYPTO_CRC32_STREAMS_CRC32={streams_crc32}");
-  println!("export RSCRYPTO_CRC32_STREAMS_CRC32C={streams_crc32c}");
-  println!("export RSCRYPTO_CRC32_THRESHOLD_PORTABLE_TO_HWCRC={portable_to_hwcrc}");
-  println!("export RSCRYPTO_CRC32_THRESHOLD_HWCRC_TO_FUSION={hwcrc_to_fusion}");
-  println!("export RSCRYPTO_CRC32_THRESHOLD_FUSION_TO_AVX512={fusion_to_avx512}");
-  println!("export RSCRYPTO_CRC32_THRESHOLD_FUSION_TO_VPCLMUL={fusion_to_vpclmul}");
+  println!("export RSCRYPTO_CRC32_STREAMS_CRC32={}", params.streams_crc32);
+  println!("export RSCRYPTO_CRC32_STREAMS_CRC32C={}", params.streams_crc32c);
+  println!(
+    "export RSCRYPTO_CRC32_THRESHOLD_PORTABLE_TO_HWCRC={}",
+    params.portable_to_hwcrc
+  );
+  println!(
+    "export RSCRYPTO_CRC32_THRESHOLD_HWCRC_TO_FUSION={}",
+    params.hwcrc_to_fusion
+  );
+  println!(
+    "export RSCRYPTO_CRC32_THRESHOLD_FUSION_TO_AVX512={}",
+    params.fusion_to_avx512
+  );
+  println!(
+    "export RSCRYPTO_CRC32_THRESHOLD_FUSION_TO_VPCLMUL={}",
+    params.fusion_to_vpclmul
+  );
+  if let Some(min_bpl) = params.min_bytes_per_lane_crc32 {
+    println!("export RSCRYPTO_CRC32_MIN_BYTES_PER_LANE={min_bpl}");
+  }
+  if let Some(min_bpl) = params.min_bytes_per_lane_crc32c {
+    println!("export RSCRYPTO_CRC32C_MIN_BYTES_PER_LANE={min_bpl}");
+  }
 }
 
 fn main() -> ExitCode {
@@ -382,29 +428,45 @@ fn parent_main(args: Args) -> io::Result<()> {
   let stream_rows = run_matrix(&stream_runs, stream_sizes, args.warmup_ms, args.measure_ms)?;
   let best_by_force = select_best_by_force(&stream_rows, stream_sizes);
 
-  let Some((_, preferred_simd)) = best_by_force.iter().find(|(force, _)| *force == preferred_simd_force) else {
+  let Some(preferred_simd) = best_by_force.iter().find(|b| b.force == preferred_simd_force) else {
     println!("No SIMD CRC32 backend detected; portable only.");
     return Ok(());
   };
-  let chosen_streams = preferred_simd.streams;
+
+  // Pick streams independently for CRC-32 and CRC-32C based on each algorithm's best throughput
+  let chosen_streams_crc32 = preferred_simd.crc32_best.streams;
+  let chosen_streams_crc32c = preferred_simd.crc32c_best.streams;
 
   // Phase B: threshold curves.
-  let mut threshold_runs: Vec<RunConfig> = vec![
-    RunConfig {
-      force: Force::Portable,
-      streams: 1,
-    },
-    RunConfig {
+  // We need runs for both stream counts if they differ.
+  let mut threshold_runs: Vec<RunConfig> = vec![RunConfig {
+    force: Force::Portable,
+    streams: 1,
+  }];
+
+  // Add preferred SIMD with both stream counts
+  threshold_runs.push(RunConfig {
+    force: preferred_simd_force,
+    streams: chosen_streams_crc32,
+  });
+  if chosen_streams_crc32c != chosen_streams_crc32 {
+    threshold_runs.push(RunConfig {
       force: preferred_simd_force,
-      streams: chosen_streams,
-    },
-  ];
+      streams: chosen_streams_crc32c,
+    });
+  }
 
   if forces.contains(&Force::Hwcrc) {
     threshold_runs.push(RunConfig {
       force: Force::Hwcrc,
-      streams: chosen_streams,
+      streams: chosen_streams_crc32,
     });
+    if chosen_streams_crc32c != chosen_streams_crc32 {
+      threshold_runs.push(RunConfig {
+        force: Force::Hwcrc,
+        streams: chosen_streams_crc32c,
+      });
+    }
   }
 
   #[cfg(target_arch = "x86_64")]
@@ -412,12 +474,22 @@ fn parent_main(args: Args) -> io::Result<()> {
     if forces.contains(&Force::Pclmul) && forces.contains(&Force::Vpclmul) {
       threshold_runs.push(RunConfig {
         force: Force::Pclmul,
-        streams: chosen_streams,
+        streams: chosen_streams_crc32,
       });
       threshold_runs.push(RunConfig {
         force: Force::Vpclmul,
-        streams: chosen_streams,
+        streams: chosen_streams_crc32,
       });
+      if chosen_streams_crc32c != chosen_streams_crc32 {
+        threshold_runs.push(RunConfig {
+          force: Force::Pclmul,
+          streams: chosen_streams_crc32c,
+        });
+        threshold_runs.push(RunConfig {
+          force: Force::Vpclmul,
+          streams: chosen_streams_crc32c,
+        });
+      }
     }
   }
 
@@ -436,7 +508,7 @@ fn parent_main(args: Args) -> io::Result<()> {
       Force::Portable,
       1,
       Force::Hwcrc,
-      chosen_streams,
+      chosen_streams_crc32c,
       |r| r.crc32c_gib_s,
       MARGIN,
     )
@@ -450,7 +522,7 @@ fn parent_main(args: Args) -> io::Result<()> {
     Force::Portable,
     1,
     baseline_simd_force,
-    chosen_streams,
+    chosen_streams_crc32,
     |r| r.crc32_gib_s,
     MARGIN,
   );
@@ -462,7 +534,7 @@ fn parent_main(args: Args) -> io::Result<()> {
       Force::Portable,
       1,
       Force::Hwcrc,
-      chosen_streams,
+      chosen_streams_crc32,
       |r| r.crc32_gib_s,
       MARGIN,
     )
@@ -485,9 +557,9 @@ fn parent_main(args: Args) -> io::Result<()> {
     estimate_threshold_sustained_by(
       &threshold_rows,
       Force::Hwcrc,
-      chosen_streams,
+      chosen_streams_crc32c,
       preferred_simd_force,
-      chosen_streams,
+      chosen_streams_crc32c,
       |r| r.crc32c_gib_s,
       MARGIN,
     )
@@ -501,7 +573,7 @@ fn parent_main(args: Args) -> io::Result<()> {
     Force::Portable,
     1,
     preferred_simd_force,
-    chosen_streams,
+    chosen_streams_crc32,
     |r| r.crc32_gib_s,
     MARGIN,
   );
@@ -511,9 +583,9 @@ fn parent_main(args: Args) -> io::Result<()> {
     estimate_threshold_sustained_by(
       &threshold_rows,
       Force::Hwcrc,
-      chosen_streams,
+      chosen_streams_crc32,
       preferred_simd_force,
-      chosen_streams,
+      chosen_streams_crc32,
       |r| r.crc32_gib_s,
       MARGIN,
     )
@@ -537,18 +609,18 @@ fn parent_main(args: Args) -> io::Result<()> {
     let crc32 = estimate_threshold_sustained_by(
       &threshold_rows,
       Force::Pclmul,
-      chosen_streams,
+      chosen_streams_crc32,
       Force::Vpclmul,
-      chosen_streams,
+      chosen_streams_crc32,
       |r| r.crc32_gib_s,
       MARGIN,
     );
     let crc32c = estimate_threshold_sustained_by(
       &threshold_rows,
       Force::Pclmul,
-      chosen_streams,
+      chosen_streams_crc32c,
       Force::Vpclmul,
-      chosen_streams,
+      chosen_streams_crc32c,
       |r| r.crc32c_gib_s,
       MARGIN,
     );
@@ -565,18 +637,18 @@ fn parent_main(args: Args) -> io::Result<()> {
   // AVX-512 fusion threshold is currently best-effort (no dedicated force mode).
   let fusion_to_avx512 = det.tune.simd_threshold;
 
-  let Some((_, best_simd)) = best_by_force.iter().find(|(force, _)| *force == preferred_simd_force) else {
-    println!("No SIMD CRC32 backend detected; portable only.");
-    return Ok(());
-  };
-
   println!(
-    "best large-buffer config: force={} eff={} streams={} crc32={:.2} GiB/s crc32c={:.2} GiB/s",
-    best_simd.requested_force, best_simd.effective_force, chosen_streams, best_simd.crc32_gib_s, best_simd.crc32c_gib_s
+    "best large-buffer config: force={} eff={} streams_crc32={} streams_crc32c={} crc32={:.2} GiB/s crc32c={:.2} GiB/s",
+    preferred_simd.crc32_best.requested_force,
+    preferred_simd.crc32_best.effective_force,
+    chosen_streams_crc32,
+    chosen_streams_crc32c,
+    preferred_simd.crc32_best.crc32_gib_s,
+    preferred_simd.crc32c_best.crc32c_gib_s
   );
   println!(
     "kernels: crc32={} crc32c={}",
-    best_simd.crc32_kernel, best_simd.crc32c_kernel
+    preferred_simd.crc32_best.crc32_kernel, preferred_simd.crc32c_best.crc32c_kernel
   );
   println!(
     "portable->accel crossover (sustained): crc32={:?} crc32c={:?} chosen={portable_to_hwcrc}",
@@ -597,26 +669,91 @@ fn parent_main(args: Args) -> io::Result<()> {
       }
     );
   }
-  println!();
 
-  print_env_exports(
-    chosen_streams,
-    chosen_streams,
+  // Phase C: per-lane sweep (optional)
+  // Run independently for CRC-32 and CRC-32C if their stream counts differ
+  let (min_bytes_per_lane_crc32, min_bytes_per_lane_crc32c): (Option<usize>, Option<usize>) = if args.sweep_per_lane
+    && (chosen_streams_crc32 > 1 || chosen_streams_crc32c > 1)
+  {
+    println!();
+    println!(
+      "# per-lane sweep: comparing 1-stream vs N-stream (crc32={chosen_streams_crc32}, crc32c={chosen_streams_crc32c})"
+    );
+
+    // Build runs for all unique stream counts we need
+    let mut per_lane_runs = vec![RunConfig {
+      force: preferred_simd_force,
+      streams: 1,
+    }];
+    if chosen_streams_crc32 > 1 {
+      per_lane_runs.push(RunConfig {
+        force: preferred_simd_force,
+        streams: chosen_streams_crc32,
+      });
+    }
+    if chosen_streams_crc32c > 1 && chosen_streams_crc32c != chosen_streams_crc32 {
+      per_lane_runs.push(RunConfig {
+        force: preferred_simd_force,
+        streams: chosen_streams_crc32c,
+      });
+    }
+
+    let per_lane_sizes = sizes_for_per_lane_sweep();
+    let per_lane_rows = run_matrix(&per_lane_runs, per_lane_sizes, args.warmup_ms, args.measure_ms)?;
+
+    // Find min_bytes_per_lane for CRC32 (using crc32_gib_s)
+    let min_bpl_crc32 = if chosen_streams_crc32 > 1 {
+      find_min_bytes_per_lane(
+        &per_lane_rows,
+        preferred_simd_force,
+        chosen_streams_crc32,
+        per_lane_sizes,
+        |r| r.crc32_gib_s,
+      )
+    } else {
+      None
+    };
+
+    // Find min_bytes_per_lane for CRC32C (using crc32c_gib_s)
+    let min_bpl_crc32c = if chosen_streams_crc32c > 1 {
+      find_min_bytes_per_lane(
+        &per_lane_rows,
+        preferred_simd_force,
+        chosen_streams_crc32c,
+        per_lane_sizes,
+        |r| r.crc32c_gib_s,
+      )
+    } else {
+      None
+    };
+
+    println!(
+      "min_bytes_per_lane crossover: crc32={:?} crc32c={:?}",
+      min_bpl_crc32.map_or("none (1-stream always wins)".to_owned(), |v| v.to_string()),
+      min_bpl_crc32c.map_or("none (1-stream always wins)".to_owned(), |v| v.to_string())
+    );
+
+    (min_bpl_crc32, min_bpl_crc32c)
+  } else {
+    (None, None)
+  };
+
+  let tuned_params = TunedParams {
+    streams_crc32: chosen_streams_crc32,
+    streams_crc32c: chosen_streams_crc32c,
     portable_to_hwcrc,
     hwcrc_to_fusion,
     fusion_to_avx512,
     fusion_to_vpclmul,
-  );
+    min_bytes_per_lane_crc32,
+    min_bytes_per_lane_crc32c,
+  };
+
+  println!();
+
+  print_env_exports(&tuned_params);
   if args.apply {
-    apply_tuned_defaults(
-      tune_kind,
-      chosen_streams,
-      chosen_streams,
-      portable_to_hwcrc,
-      hwcrc_to_fusion,
-      fusion_to_avx512,
-      fusion_to_vpclmul,
-    )?;
+    apply_tuned_defaults(tune_kind, &tuned_params)?;
     println!(
       "# applied baked defaults for {:?} in {}",
       tune_kind,
@@ -630,17 +767,74 @@ fn tuned_defaults_path() -> PathBuf {
   PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/crc32/tuned_defaults.rs")
 }
 
-fn apply_tuned_defaults(
-  kind: platform::TuneKind,
-  streams_crc32: u8,
-  streams_crc32c: u8,
-  portable_to_hwcrc: usize,
-  hwcrc_to_fusion: usize,
-  fusion_to_avx512: usize,
-  fusion_to_vpclmul: usize,
-) -> io::Result<()> {
+/// Evidence metadata for auditability of tuning results.
+struct TuneEvidence {
+  /// Timestamp in UTC.
+  timestamp: String,
+  /// Host platform (arch, OS).
+  platform: String,
+  /// Git commit SHA if available.
+  commit: Option<String>,
+  /// Runner identifier (hostname or CI runner).
+  runner: String,
+}
+
+impl TuneEvidence {
+  fn collect() -> Self {
+    use std::process::Command;
+
+    let timestamp = {
+      let now = std::time::SystemTime::now();
+      let duration = now.duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+      // Format as ISO 8601 (approximate, without chrono)
+      let secs = duration.as_secs();
+      let days = secs / 86400;
+      let years_approx = 1970 + (days / 365);
+      format!("{years_approx}-xx-xx (epoch: {secs})")
+    };
+
+    let platform = format!("{}/{}", std::env::consts::ARCH, std::env::consts::OS);
+
+    let commit = Command::new("git")
+      .args(["rev-parse", "--short", "HEAD"])
+      .output()
+      .ok()
+      .filter(|o| o.status.success())
+      .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned());
+
+    let runner = std::env::var("GITHUB_RUNNER_NAME")
+      .or_else(|_| std::env::var("HOSTNAME"))
+      .or_else(|_| {
+        Command::new("hostname")
+          .output()
+          .ok()
+          .filter(|o| o.status.success())
+          .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
+          .ok_or(std::env::VarError::NotPresent)
+      })
+      .unwrap_or_else(|_| "unknown".to_owned());
+
+    Self {
+      timestamp,
+      platform,
+      commit,
+      runner,
+    }
+  }
+
+  fn format_comment(&self, kind_ident: &str) -> String {
+    let commit_str = self.commit.as_deref().unwrap_or("unknown");
+    format!(
+      "  // {kind_ident}: tuned on {} ({}) commit={} runner={}",
+      self.timestamp, self.platform, commit_str, self.runner
+    )
+  }
+}
+
+fn apply_tuned_defaults(kind: platform::TuneKind, params: &TunedParams) -> io::Result<()> {
   const BEGIN: &str = "// BEGIN GENERATED (crc32-tune --apply)";
   const END: &str = "// END GENERATED (crc32-tune --apply)";
+  let evidence = TuneEvidence::collect();
 
   let path = tuned_defaults_path();
   let src = fs::read_to_string(&path)?;
@@ -673,6 +867,8 @@ fn apply_tuned_defaults(
     hwcrc_to_fusion: usize,
     fusion_to_avx512: usize,
     fusion_to_vpclmul: usize,
+    min_bytes_per_lane_crc32: Option<usize>,
+    min_bytes_per_lane_crc32c: Option<usize>,
   }
 
   let mut entries: Vec<(String, TunedEntry)> = Vec::new();
@@ -745,6 +941,9 @@ fn apply_tuned_defaults(
           format!("Missing/invalid fusion_to_vpclmul for {kind_ident}"),
         )
       })?;
+      // min_bytes_per_lane fields are optional (might be None in existing entries)
+      let min_bytes_per_lane_crc32 = parse_option_usize_field(&current, "min_bytes_per_lane_crc32:");
+      let min_bytes_per_lane_crc32c = parse_option_usize_field(&current, "min_bytes_per_lane_crc32c:");
 
       let values = TunedEntry {
         streams_crc32,
@@ -753,6 +952,8 @@ fn apply_tuned_defaults(
         hwcrc_to_fusion,
         fusion_to_avx512,
         fusion_to_vpclmul,
+        min_bytes_per_lane_crc32,
+        min_bytes_per_lane_crc32c,
       };
 
       if let Some(existing) = entries.iter_mut().find(|(k, _)| *k == kind_ident) {
@@ -765,12 +966,14 @@ fn apply_tuned_defaults(
 
   let kind_ident = format!("{kind:?}");
   let values = TunedEntry {
-    streams_crc32,
-    streams_crc32c,
-    portable_to_hwcrc,
-    hwcrc_to_fusion,
-    fusion_to_avx512,
-    fusion_to_vpclmul,
+    streams_crc32: params.streams_crc32,
+    streams_crc32c: params.streams_crc32c,
+    portable_to_hwcrc: params.portable_to_hwcrc,
+    hwcrc_to_fusion: params.hwcrc_to_fusion,
+    fusion_to_avx512: params.fusion_to_avx512,
+    fusion_to_vpclmul: params.fusion_to_vpclmul,
+    min_bytes_per_lane_crc32: params.min_bytes_per_lane_crc32,
+    min_bytes_per_lane_crc32c: params.min_bytes_per_lane_crc32c,
   };
   if let Some(existing) = entries.iter_mut().find(|(k, _)| *k == kind_ident) {
     *existing = (kind_ident, values);
@@ -781,6 +984,7 @@ fn apply_tuned_defaults(
   entries.sort_by(|a, b| a.0.cmp(&b.0));
 
   let mut emitted: Vec<String> = Vec::new();
+  let current_kind_ident = format!("{kind:?}");
   for (kind_ident, values) in entries {
     let streams_crc32 = values.streams_crc32;
     let streams_crc32c = values.streams_crc32c;
@@ -788,10 +992,19 @@ fn apply_tuned_defaults(
     let hwcrc_to_fusion = fmt_usize(values.hwcrc_to_fusion);
     let fusion_to_avx512 = fmt_usize(values.fusion_to_avx512);
     let fusion_to_vpclmul = fmt_usize(values.fusion_to_vpclmul);
+    let min_bpl_crc32 = fmt_option_usize(values.min_bytes_per_lane_crc32);
+    let min_bpl_crc32c = fmt_option_usize(values.min_bytes_per_lane_crc32c);
+
+    // Add evidence comment for the entry we're updating
+    if kind_ident == current_kind_ident {
+      emitted.push(evidence.format_comment(&kind_ident));
+    }
+
     emitted.push(format!(
       "  (TuneKind::{kind_ident}, Crc32TunedDefaults {{ streams_crc32: {streams_crc32}, streams_crc32c: \
        {streams_crc32c}, portable_to_hwcrc: {portable_to_hwcrc}, hwcrc_to_fusion: {hwcrc_to_fusion}, \
-       fusion_to_avx512: {fusion_to_avx512}, fusion_to_vpclmul: {fusion_to_vpclmul} }}),"
+       fusion_to_avx512: {fusion_to_avx512}, fusion_to_vpclmul: {fusion_to_vpclmul}, min_bytes_per_lane_crc32: \
+       {min_bpl_crc32}, min_bytes_per_lane_crc32c: {min_bpl_crc32c} }}),"
     ));
   }
 
@@ -865,6 +1078,35 @@ fn fmt_usize(v: usize) -> String {
   } else {
     v.to_string()
   }
+}
+
+fn fmt_option_usize(value: Option<usize>) -> String {
+  match value {
+    Some(v) => format!("Some({v})"),
+    None => "None".to_owned(),
+  }
+}
+
+/// Parse an `Option<usize>` field from the source. Returns None if the field is not present
+/// or if it's explicitly "None".
+fn parse_option_usize_field(src: &str, needle: &str) -> Option<usize> {
+  let idx = src.find(needle)?;
+  let rest = &src[idx + needle.len()..].trim_start();
+
+  // Skip whitespace and check for None
+  if rest.starts_with("None") {
+    return None;
+  }
+
+  // Check for Some(value)
+  if rest.starts_with("Some(") {
+    let inner_start = "Some(".len();
+    let inner_end = rest[inner_start..].find(')')?;
+    let inner = rest[inner_start..inner_start + inner_end].trim();
+    return usize::from_str(inner).ok();
+  }
+
+  None
 }
 
 fn run_matrix(configs: &[RunConfig], sizes: &[usize], warmup_ms: u64, measure_ms: u64) -> io::Result<Vec<BenchRow>> {
@@ -1087,8 +1329,20 @@ fn batch_size_for_len(len: usize) -> u32 {
   32
 }
 
-fn select_best_by_force(rows: &[BenchRow], sizes: &[usize]) -> Vec<(Force, BenchRow)> {
-  let mut out: Vec<(Force, BenchRow)> = Vec::new();
+/// Best configuration for a given force, with per-algorithm stream counts.
+#[derive(Clone, Debug)]
+struct BestForForce {
+  force: Force,
+  /// Best row for CRC-32 (IEEE).
+  crc32_best: BenchRow,
+  /// Best row for CRC-32C (Castagnoli).
+  crc32c_best: BenchRow,
+}
+
+/// Select the best configuration for each force, picking streams independently
+/// for CRC-32 and CRC-32C based on each algorithm's throughput.
+fn select_best_by_force(rows: &[BenchRow], sizes: &[usize]) -> Vec<BestForForce> {
+  let mut out: Vec<BestForForce> = Vec::new();
 
   let mut forces: Vec<Force> = Vec::new();
   for row in rows {
@@ -1100,24 +1354,33 @@ fn select_best_by_force(rows: &[BenchRow], sizes: &[usize]) -> Vec<(Force, Bench
   forces.sort_by(|a, b| a.name().cmp(b.name()));
 
   for force in forces {
-    let mut best: Option<&BenchRow> = None;
-    for row in rows.iter().filter(|r| parse_force_name(&r.requested_force) == force) {
-      if !sizes.contains(&row.size) {
-        continue;
-      }
-      match best {
-        None => best = Some(row),
-        Some(prev) => {
-          let prev_score = prev.crc32_gib_s.min(prev.crc32c_gib_s);
-          let score = row.crc32_gib_s.min(row.crc32c_gib_s);
-          if score.partial_cmp(&prev_score).unwrap_or(Ordering::Equal) == Ordering::Greater {
-            best = Some(row);
-          }
-        }
-      }
+    let relevant: Vec<&BenchRow> = rows
+      .iter()
+      .filter(|r| parse_force_name(&r.requested_force) == force && sizes.contains(&r.size))
+      .collect();
+
+    if relevant.is_empty() {
+      continue;
     }
-    if let Some(best) = best {
-      out.push((force, best.clone()));
+
+    // Find best streams for CRC-32 (IEEE)
+    let crc32_best = relevant
+      .iter()
+      .max_by(|a, b| a.crc32_gib_s.partial_cmp(&b.crc32_gib_s).unwrap_or(Ordering::Equal))
+      .copied();
+
+    // Find best streams for CRC-32C (Castagnoli)
+    let crc32c_best = relevant
+      .iter()
+      .max_by(|a, b| a.crc32c_gib_s.partial_cmp(&b.crc32c_gib_s).unwrap_or(Ordering::Equal))
+      .copied();
+
+    if let (Some(crc32_best), Some(crc32c_best)) = (crc32_best, crc32c_best) {
+      out.push(BestForForce {
+        force,
+        crc32_best: crc32_best.clone(),
+        crc32c_best: crc32c_best.clone(),
+      });
     }
   }
 
@@ -1178,4 +1441,58 @@ where
   }
 
   threshold
+}
+
+fn lookup_row(rows: &[BenchRow], force: Force, streams: u8, size: usize) -> Option<&BenchRow> {
+  rows
+    .iter()
+    .find(|r| parse_force_name(&r.requested_force) == force && r.streams == streams && r.size == size)
+}
+
+/// Find the optimal `min_bytes_per_lane` by comparing 1-stream vs N-stream.
+///
+/// Returns the smallest per-lane byte count where N-stream is consistently faster
+/// than 1-stream across all larger sizes.
+fn find_min_bytes_per_lane<F>(
+  rows: &[BenchRow],
+  force: Force,
+  streams: u8,
+  sizes: &[usize],
+  mut metric: F,
+) -> Option<usize>
+where
+  F: FnMut(&BenchRow) -> f64,
+{
+  if streams <= 1 {
+    return None;
+  }
+
+  // We want to find the smallest size where N-stream beats 1-stream consistently.
+  // Work from largest to smallest, tracking "suffix ok" (all larger sizes pass).
+  let mut threshold: Option<usize> = None;
+  let mut suffix_ok = true;
+
+  const MARGIN: f64 = 1.02; // N-stream must be at least 2% faster
+
+  for &size in sizes.iter().rev() {
+    let one_stream = lookup_row(rows, force, 1, size);
+    let n_stream = lookup_row(rows, force, streams, size);
+
+    let Some(one) = one_stream else { continue };
+    let Some(n) = n_stream else { continue };
+
+    let one_metric = metric(one);
+    let n_metric = metric(n);
+
+    // N-stream must be faster by MARGIN
+    let ok_here = n_metric >= one_metric * MARGIN;
+    suffix_ok = suffix_ok && ok_here;
+
+    if suffix_ok {
+      threshold = Some(size);
+    }
+  }
+
+  // Convert total size threshold to per-lane threshold
+  threshold.map(|total| total / (streams as usize))
 }

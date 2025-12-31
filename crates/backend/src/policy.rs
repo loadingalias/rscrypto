@@ -39,11 +39,18 @@ use crate::{family::KernelFamily, tier::KernelTier};
 /// lifetime. They encode:
 /// - Which kernel family to use
 /// - Thresholds for tier transitions (e.g., portable → folding)
-/// - Stream count selection for different buffer sizes
+/// - Per-lane stream count selection based on `min_bytes_per_lane`
+///
+/// # Per-Lane Stream Selection
+///
+/// Unlike fixed total-length thresholds, stream selection uses:
+/// `streams = max(s) where len / s >= min_bytes_per_lane`
+///
+/// This ensures each parallel lane has sufficient data to amortize setup.
 ///
 /// # Cache-Friendliness
 ///
-/// The struct is 56 bytes, fitting in one cache line. All fields are
+/// The struct is 48 bytes, fitting in one cache line. All fields are
 /// accessed together during dispatch, maximizing spatial locality.
 ///
 /// # no_std Support
@@ -84,11 +91,14 @@ pub struct SelectionPolicy {
   /// - riscv64: 4-way
   pub max_streams: u8,
 
-  /// Pre-computed stream thresholds: [8-way, 7-way, 4-way, 2-way].
+  /// Minimum bytes per lane for multi-stream to be worthwhile.
   ///
-  /// Bytes required for each stream level. Used by `streams_for_len()`.
-  /// Higher stream counts require larger buffers to amortize setup cost.
-  stream_thresholds: [usize; 4],
+  /// Stream selection uses: `streams = max(s) where len / s >= min_bytes_per_lane`.
+  /// This ensures each parallel lane has enough data to amortize setup costs.
+  ///
+  /// Initialized from `KernelFamily::min_bytes_per_lane()` but can be overridden
+  /// by algorithm-specific tunables.
+  pub min_bytes_per_lane: usize,
 }
 
 impl SelectionPolicy {
@@ -110,7 +120,7 @@ impl SelectionPolicy {
       fold_threshold: usize::MAX,
       wide_threshold: usize::MAX,
       max_streams: 1,
-      stream_thresholds: [usize::MAX; 4],
+      min_bytes_per_lane: usize::MAX,
     }
   }
 
@@ -127,7 +137,7 @@ impl SelectionPolicy {
       fold_threshold: usize::MAX,
       wide_threshold: usize::MAX,
       max_streams: 1,
-      stream_thresholds: [usize::MAX; 4],
+      min_bytes_per_lane: usize::MAX,
     }
   }
 
@@ -143,8 +153,9 @@ impl SelectionPolicy {
     // Compute thresholds based on tune preset
     let (small_threshold, fold_threshold, wide_threshold) = Self::compute_thresholds(family, tune);
 
-    // Compute stream thresholds for multi-way folding
-    let (max_streams, stream_thresholds) = Self::compute_stream_params(family, tune);
+    // Compute stream parameters for multi-way folding
+    let max_streams = Self::compute_max_streams(family, tune);
+    let min_bytes_per_lane = family.min_bytes_per_lane();
 
     Self {
       family,
@@ -153,7 +164,7 @@ impl SelectionPolicy {
       fold_threshold,
       wide_threshold,
       max_streams,
-      stream_thresholds,
+      min_bytes_per_lane,
     }
   }
 
@@ -170,7 +181,8 @@ impl SelectionPolicy {
     };
 
     let (small_threshold, fold_threshold, wide_threshold) = Self::compute_thresholds(effective_family, tune);
-    let (max_streams, stream_thresholds) = Self::compute_stream_params(effective_family, tune);
+    let max_streams = Self::compute_max_streams(effective_family, tune);
+    let min_bytes_per_lane = effective_family.min_bytes_per_lane();
 
     Self {
       family: effective_family,
@@ -179,7 +191,7 @@ impl SelectionPolicy {
       fold_threshold,
       wide_threshold,
       max_streams,
-      stream_thresholds,
+      min_bytes_per_lane,
     }
   }
 
@@ -231,37 +243,25 @@ impl SelectionPolicy {
     }
   }
 
-  /// Compute stream parameters for multi-way folding.
-  fn compute_stream_params(family: KernelFamily, tune: &Tune) -> (u8, [usize; 4]) {
+  /// Compute maximum stream count for multi-way folding.
+  ///
+  /// Returns the architecture-specific limit capped by tune's parallel_streams.
+  fn compute_max_streams(family: KernelFamily, tune: &Tune) -> u8 {
     let tier = family.tier();
 
-    if !matches!(tier, KernelTier::Folding | KernelTier::Wide) {
-      return (1, [usize::MAX; 4]);
+    if !matches!(tier, KernelTier::HwCrc | KernelTier::Folding | KernelTier::Wide) {
+      return 1;
     }
-
-    // Base fold block size (128 bytes for most CRC folding)
-    const FOLD_BLOCK: usize = 128;
 
     // Architecture-specific stream limits
     let arch_max: u8 = match family {
-      KernelFamily::ArmPmull | KernelFamily::ArmPmullEor3 | KernelFamily::ArmSve2Pmull => 3,
+      KernelFamily::ArmPmull | KernelFamily::ArmPmullEor3 | KernelFamily::ArmSve2Pmull | KernelFamily::ArmCrc32 => 3,
       KernelFamily::S390xVgfm => 4,
       KernelFamily::RiscvZbc | KernelFamily::RiscvZvbc => 4,
       _ => 8, // x86, powerpc
     };
 
-    let max_streams = tune.parallel_streams.min(arch_max);
-
-    // Compute thresholds: 2× fold block per stream level
-    // These are minimum buffer sizes to use each stream count
-    let thresholds = [
-      8usize.strict_mul(2).strict_mul(FOLD_BLOCK), // 8-way: 2048 bytes
-      7usize.strict_mul(2).strict_mul(FOLD_BLOCK), // 7-way: 1792 bytes
-      4usize.strict_mul(2).strict_mul(FOLD_BLOCK), // 4-way: 1024 bytes
-      2usize.strict_mul(2).strict_mul(FOLD_BLOCK), // 2-way: 512 bytes
-    ];
-
-    (max_streams, thresholds)
+    tune.parallel_streams.min(arch_max)
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -302,43 +302,56 @@ impl SelectionPolicy {
 
   /// Select stream count for the given buffer length.
   ///
-  /// This is the hot path optimization - uses arithmetic instead of branches
-  /// to minimize branch misprediction overhead.
-  ///
-  /// # Algorithm
-  ///
-  /// Counts how many stream thresholds are satisfied and maps to stream count:
-  /// - 4 thresholds met → 8-way
-  /// - 3 thresholds met → 7-way
-  /// - 2 thresholds met → 4-way
-  /// - 1 threshold met → 2-way
-  /// - 0 thresholds met → 1-way
+  /// Uses per-lane logic: `streams = max(s) where len / s >= min_bytes_per_lane`.
+  /// This ensures each parallel lane has enough data to amortize setup costs.
   #[inline]
   #[must_use]
   pub fn streams_for_len(&self, len: usize) -> u8 {
-    // Early exit for non-folding tiers
+    self.streams_for_len_with_min(len, self.min_bytes_per_lane)
+  }
+
+  /// Select stream count with a custom `min_bytes_per_lane`.
+  ///
+  /// This is the core per-lane stream selection logic. Algorithm-specific
+  /// policies can use this to override the default `min_bytes_per_lane`.
+  ///
+  /// # Algorithm
+  ///
+  /// Find the maximum stream count `s` from `[8, 7, 4, 2, 1]` such that:
+  /// - `s <= max_streams` (architecture limit)
+  /// - `len / s >= min_bytes_per_lane` (each lane has enough data)
+  ///
+  /// Falls back to 1-way if no stream count satisfies the requirement.
+  #[inline]
+  #[must_use]
+  pub fn streams_for_len_with_min(&self, len: usize, min_bytes_per_lane: usize) -> u8 {
+    // Early exit for single-stream policies
     if self.max_streams == 1 {
       return 1;
     }
 
-    let t = &self.stream_thresholds;
+    // If buffer is smaller than min_bytes_per_lane, always 1-way
+    if len < min_bytes_per_lane {
+      return 1;
+    }
 
-    // Branchless: count how many thresholds are satisfied
-    // Each comparison produces 0 or 1
-    let m0 = (len >= t[0]) as usize; // 8-way eligible
-    let m1 = (len >= t[1]) as usize; // 7-way eligible
-    let m2 = (len >= t[2]) as usize; // 4-way eligible
-    let m3 = (len >= t[3]) as usize; // 2-way eligible
+    // Available stream counts in descending order
+    // Includes 3 for aarch64's 3-way folding limit
+    const STREAM_LEVELS: [u8; 6] = [8, 7, 4, 3, 2, 1];
 
-    // Map count to stream value: [1, 2, 4, 7, 8]
-    const STREAM_MAP: [u8; 5] = [1, 2, 4, 7, 8];
+    for &s in &STREAM_LEVELS {
+      // Skip if above architecture limit
+      if s > self.max_streams {
+        continue;
+      }
+      // Check if each lane gets at least min_bytes_per_lane
+      // Use division (no overflow possible since s >= 1)
+      if len / (s as usize) >= min_bytes_per_lane {
+        return s;
+      }
+    }
 
-    // Index = m0 + m1 + m2 + m3 (0-4)
-    let idx = m0.wrapping_add(m1).wrapping_add(m2).wrapping_add(m3);
-
-    // SAFETY: idx is in 0..=4, STREAM_MAP has 5 elements
-    // Use get().copied().unwrap_or(1) for bounds safety without panicking
-    STREAM_MAP.get(idx).copied().unwrap_or(1).min(self.max_streams)
+    1
   }
 
   /// Check if wide tier should be used for this length.
@@ -535,7 +548,8 @@ mod tests {
   }
 
   #[test]
-  fn streams_for_len_basic() {
+  fn streams_for_len_per_lane() {
+    // Test per-lane stream selection with min_bytes_per_lane = 256
     let policy = SelectionPolicy {
       family: KernelFamily::X86Pclmul,
       caps: Caps::NONE,
@@ -543,27 +557,26 @@ mod tests {
       fold_threshold: 64,
       wide_threshold: usize::MAX,
       max_streams: 8,
-      stream_thresholds: [2048, 1792, 1024, 512],
+      min_bytes_per_lane: 256,
     };
 
-    // Below 2-way threshold
+    // len=256: 256/8=32 < 256, 256/7=36 < 256, ..., 256/1=256 >= 256 → 1-way
     assert_eq!(policy.streams_for_len(256), 1);
 
-    // 2-way (512+ bytes)
+    // len=512: 512/2=256 >= 256 → 2-way
     assert_eq!(policy.streams_for_len(512), 2);
-    assert_eq!(policy.streams_for_len(768), 2);
 
-    // 4-way (1024+ bytes)
+    // len=1024: 1024/4=256 >= 256 → 4-way
     assert_eq!(policy.streams_for_len(1024), 4);
-    assert_eq!(policy.streams_for_len(1500), 4);
 
-    // 7-way (1792+ bytes)
+    // len=1792: 1792/7=256 >= 256 → 7-way
     assert_eq!(policy.streams_for_len(1792), 7);
-    assert_eq!(policy.streams_for_len(2000), 7);
 
-    // 8-way (2048+ bytes)
+    // len=2048: 2048/8=256 >= 256 → 8-way
     assert_eq!(policy.streams_for_len(2048), 8);
-    assert_eq!(policy.streams_for_len(10000), 8);
+
+    // len=4096: 4096/8=512 >= 256 → 8-way
+    assert_eq!(policy.streams_for_len(4096), 8);
   }
 
   #[test]
@@ -575,11 +588,50 @@ mod tests {
       fold_threshold: 64,
       wide_threshold: usize::MAX,
       max_streams: 3, // aarch64 limit
-      stream_thresholds: [2048, 1792, 1024, 512],
+      min_bytes_per_lane: 256,
     };
 
     // Should cap at 3 even with large buffer
+    // len=10000: could be 8-way but max_streams=3, so 3-way
     assert_eq!(policy.streams_for_len(10000), 3);
+  }
+
+  #[test]
+  fn streams_for_len_with_custom_min() {
+    let policy = SelectionPolicy {
+      family: KernelFamily::X86Vpclmul,
+      caps: Caps::NONE,
+      small_threshold: 64,
+      fold_threshold: 64,
+      wide_threshold: 512,
+      max_streams: 8,
+      min_bytes_per_lane: 512, // Wide tier default
+    };
+
+    // Use custom min_bytes_per_lane of 128 (algorithm override)
+    // len=1024: 1024/8=128 >= 128 → 8-way with custom min
+    assert_eq!(policy.streams_for_len_with_min(1024, 128), 8);
+
+    // But with default min_bytes_per_lane=512:
+    // len=1024: 1024/2=512 >= 512 → 2-way
+    assert_eq!(policy.streams_for_len(1024), 2);
+  }
+
+  #[test]
+  fn streams_below_min_returns_one() {
+    let policy = SelectionPolicy {
+      family: KernelFamily::X86Pclmul,
+      caps: Caps::NONE,
+      small_threshold: 64,
+      fold_threshold: 64,
+      wide_threshold: usize::MAX,
+      max_streams: 8,
+      min_bytes_per_lane: 256,
+    };
+
+    // Buffer smaller than min_bytes_per_lane always returns 1
+    assert_eq!(policy.streams_for_len(100), 1);
+    assert_eq!(policy.streams_for_len(255), 1);
   }
 
   #[test]

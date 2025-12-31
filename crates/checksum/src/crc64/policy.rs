@@ -53,6 +53,10 @@ pub struct Crc64Policy {
   /// Only used on x86_64 with VPCLMUL support.
   #[allow(dead_code)] // Only used on x86_64
   pub use_4x512: bool,
+  /// Minimum bytes per lane for multi-stream folding.
+  ///
+  /// This is resolved from tunables (if set) or the kernel family default.
+  pub min_bytes_per_lane: usize,
 }
 
 impl Crc64Policy {
@@ -73,10 +77,17 @@ impl Crc64Policy {
     // Check if 4×512 VPCLMUL is worthwhile
     let use_4x512 = inner.family() == KernelFamily::X86Vpclmul && tune.fast_wide_ops;
 
+    // Resolve min_bytes_per_lane: tunables override > family default
+    let min_bytes_per_lane = cfg
+      .tunables
+      .min_bytes_per_lane
+      .unwrap_or_else(|| inner.family().min_bytes_per_lane());
+
     Self {
       inner,
       effective_force: cfg.effective_force,
       use_4x512,
+      min_bytes_per_lane,
     }
   }
 
@@ -114,10 +125,13 @@ impl Crc64Policy {
   }
 
   /// Get the optimal stream count for this buffer length.
+  ///
+  /// Uses the algorithm-specific `min_bytes_per_lane` to determine when
+  /// multi-stream processing is worthwhile.
   #[inline]
   #[must_use]
   pub fn streams_for_len(&self, len: usize) -> u8 {
-    self.inner.streams_for_len(len)
+    self.inner.streams_for_len_with_min(len, self.min_bytes_per_lane)
   }
 
   /// Get the kernel name for this policy and buffer length.
@@ -632,6 +646,7 @@ mod tests {
         portable_to_clmul: 64,
         pclmul_to_vpclmul: 512,
         streams: 4,
+        min_bytes_per_lane: None,
       },
     };
 
@@ -652,6 +667,7 @@ mod tests {
         portable_to_clmul: 64,
         pclmul_to_vpclmul: 512,
         streams: 4,
+        min_bytes_per_lane: None,
       },
     };
 
@@ -671,6 +687,7 @@ mod tests {
         portable_to_clmul: 64,
         pclmul_to_vpclmul: 512,
         streams: 4,
+        min_bytes_per_lane: None,
       },
     };
 

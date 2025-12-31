@@ -121,6 +121,11 @@ pub struct Crc64Tunables {
   pub pclmul_to_vpclmul: usize,
   /// Preferred number of independent folding streams for large buffers.
   pub streams: u8,
+  /// Minimum bytes per lane for multi-stream folding.
+  ///
+  /// When `None`, uses `KernelFamily::min_bytes_per_lane()` as the default.
+  /// This allows per-algorithm overrides via env vars or tuned defaults.
+  pub min_bytes_per_lane: Option<usize>,
 }
 
 /// Full CRC-64 runtime configuration (after applying overrides).
@@ -140,6 +145,7 @@ struct Overrides {
   portable_to_clmul: Option<usize>,
   pclmul_to_vpclmul: Option<usize>,
   streams: Option<u8>,
+  min_bytes_per_lane: Option<usize>,
 }
 
 #[cfg(feature = "std")]
@@ -223,6 +229,7 @@ fn read_env_overrides() -> Overrides {
     portable_to_clmul: parse_usize("RSCRYPTO_CRC64_THRESHOLD_PORTABLE_TO_CLMUL"),
     pclmul_to_vpclmul: parse_usize("RSCRYPTO_CRC64_THRESHOLD_PCLMUL_TO_VPCLMUL"),
     streams: parse_u8("RSCRYPTO_CRC64_STREAMS"),
+    min_bytes_per_lane: parse_usize("RSCRYPTO_CRC64_MIN_BYTES_PER_LANE"),
   }
 }
 
@@ -462,6 +469,9 @@ pub fn config(caps: Caps, tune: Tune) -> Crc64Config {
       .unwrap_or_else(|| default_crc64_streams(caps, tune)),
   );
 
+  // min_bytes_per_lane: env var > tuned defaults > None (use family default in policy)
+  let min_bytes_per_lane = ov.min_bytes_per_lane.or(tuned.and_then(|t| t.min_bytes_per_lane));
+
   let requested_force = ov.force;
   let effective_force = clamp_force_to_caps(requested_force, caps);
 
@@ -472,6 +482,7 @@ pub fn config(caps: Caps, tune: Tune) -> Crc64Config {
       portable_to_clmul,
       pclmul_to_vpclmul,
       streams,
+      min_bytes_per_lane,
     },
   }
 }
