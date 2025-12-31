@@ -455,7 +455,7 @@ fn crc32c_fusion_nway<const N: usize>(crc: u32, data: &[u8], update: fn(u32, &[u
   debug_assert!(N == 2 || N == 4 || N == 7 || N == 8);
 
   let len = data.len();
-  if len < N.strict_mul(2 * super::CRC32_FOLD_BLOCK_BYTES) {
+  if len < N.strict_mul(2 * super::policy::CRC32_FOLD_BLOCK_BYTES) {
     return update(crc, data);
   }
 
@@ -1278,6 +1278,7 @@ pub fn crc32_ieee_pclmul_small_safe(crc: u32, data: &[u8]) -> u32 {
 /// For small buffers we intentionally use the 128-bit PCLMUL small-lane kernel
 /// to avoid AVX-512 startup costs and 128B block requirements.
 #[inline]
+#[allow(dead_code)] // Reserved for future wide_small policy field
 pub fn crc32_ieee_vpclmul_small_safe(crc: u32, data: &[u8]) -> u32 {
   crc32_ieee_pclmul_small_safe(crc, data)
 }

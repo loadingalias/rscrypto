@@ -31,6 +31,7 @@ pub const PORTABLE_SLICE4: &str = kernels::PORTABLE_SLICE4;
 /// Portable slice-by-8 kernel name.
 pub const PORTABLE_SLICE8: &str = kernels::PORTABLE_SLICE8;
 /// Portable auto-selection kernel name (slice4 vs slice8 by length).
+#[allow(dead_code)] // Reserved for introspection
 pub const PORTABLE_AUTO: &str = "portable/auto";
 
 /// Portable kernel name table (ordered by increasing work per byte).

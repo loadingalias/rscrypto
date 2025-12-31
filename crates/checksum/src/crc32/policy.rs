@@ -86,6 +86,12 @@ pub struct Crc32Policy {
   /// Whether AVX-512 fusion is available (x86_64 CRC-32C only).
   #[allow(dead_code)] // Only used on x86_64
   pub has_avx512: bool,
+  /// Whether PMULL+EOR3 is available (aarch64 only).
+  #[allow(dead_code)] // Only used on aarch64
+  pub has_eor3: bool,
+  /// Whether SVE2 PMULL is available (aarch64 only).
+  #[allow(dead_code)] // Only used on aarch64
+  pub has_sve2: bool,
   /// Minimum bytes per lane for multi-stream folding.
   ///
   /// This is resolved from tunables (if set) or the kernel family default.
@@ -102,7 +108,7 @@ impl Crc32Policy {
   #[must_use]
   pub fn from_config(cfg: &Crc32Config, caps: Caps, tune: &Tune, variant: Crc32Variant) -> Self {
     // Detect available features
-    let (has_hwcrc, has_fusion, has_vpclmul, has_avx512) = Self::detect_features(caps, variant);
+    let (has_hwcrc, has_fusion, has_vpclmul, has_avx512, has_eor3, has_sve2) = Self::detect_features(caps, variant);
 
     // Map Crc32Force to ForceMode if explicitly set
     let inner = if let Some(family) = cfg.effective_force.to_family() {
@@ -139,14 +145,18 @@ impl Crc32Policy {
       has_fusion,
       has_vpclmul,
       has_avx512,
+      has_eor3,
+      has_sve2,
       min_bytes_per_lane,
       memory_bound,
     }
   }
 
   /// Detect available features for a given variant.
+  ///
+  /// Returns: `(has_hwcrc, has_fusion, has_vpclmul, has_avx512, has_eor3, has_sve2)`
   #[allow(unused_variables)] // caps only used on specific archs
-  fn detect_features(caps: Caps, variant: Crc32Variant) -> (bool, bool, bool, bool) {
+  fn detect_features(caps: Caps, variant: Crc32Variant) -> (bool, bool, bool, bool, bool, bool) {
     #[cfg(target_arch = "x86_64")]
     {
       let has_hwcrc = variant == Crc32Variant::Castagnoli && caps.has(platform::caps::x86::CRC32C_READY);
@@ -161,7 +171,7 @@ impl Crc32Policy {
         Crc32Variant::Castagnoli => has_hwcrc && has_pclmul, // CRC-32C needs both
       };
 
-      (has_hwcrc, has_fusion, has_vpclmul, has_avx512)
+      (has_hwcrc, has_fusion, has_vpclmul, has_avx512, false, false)
     }
 
     #[cfg(target_arch = "aarch64")]
@@ -169,27 +179,29 @@ impl Crc32Policy {
       let has_hwcrc = caps.has(platform::caps::aarch64::CRC_READY);
       let has_pmull = caps.has(platform::caps::aarch64::PMULL_READY);
       let has_fusion = has_hwcrc && has_pmull;
+      let has_eor3 = caps.has(platform::caps::aarch64::PMULL_EOR3_READY);
+      let has_sve2 = caps.has(platform::caps::aarch64::SVE2_PMULL);
 
-      (has_hwcrc, has_fusion, false, false)
+      (has_hwcrc, has_fusion, false, false, has_eor3, has_sve2)
     }
 
     #[cfg(target_arch = "powerpc64")]
     {
       let has_vpmsum = caps.has(platform::caps::powerpc64::VPMSUM_READY);
-      (false, has_vpmsum, false, false)
+      (false, has_vpmsum, false, false, false, false)
     }
 
     #[cfg(target_arch = "s390x")]
     {
       let has_vgfm = caps.has(platform::caps::s390x::VECTOR);
-      (false, has_vgfm, false, false)
+      (false, has_vgfm, false, false, false, false)
     }
 
     #[cfg(target_arch = "riscv64")]
     {
       let has_zvbc = caps.has(platform::caps::riscv::ZVBC);
       let has_zbc = caps.has(platform::caps::riscv::ZBC);
-      (false, has_zbc || has_zvbc, has_zvbc, false)
+      (false, has_zbc || has_zvbc, has_zvbc, false, false, false)
     }
 
     #[cfg(not(any(
@@ -200,7 +212,7 @@ impl Crc32Policy {
       target_arch = "riscv64"
     )))]
     {
-      (false, false, false, false)
+      (false, false, false, false, false, false)
     }
   }
 
@@ -315,12 +327,29 @@ impl Crc32Policy {
       return kernels::PORTABLE;
     }
 
-    let (hwcrc_names, fusion_names) = match self.variant {
-      Crc32Variant::Ieee => (CRC32_HWCRC_NAMES, CRC32_PMULL_NAMES),
-      Crc32Variant::Castagnoli => (CRC32C_HWCRC_NAMES, CRC32C_PMULL_NAMES),
+    let (hwcrc_names, fusion_names, eor3_names, sve2_names) = match self.variant {
+      Crc32Variant::Ieee => (
+        CRC32_HWCRC_NAMES,
+        CRC32_PMULL_NAMES,
+        CRC32_PMULL_EOR3_NAMES,
+        CRC32_SVE2_PMULL_NAMES,
+      ),
+      Crc32Variant::Castagnoli => (
+        CRC32C_HWCRC_NAMES,
+        CRC32C_PMULL_NAMES,
+        CRC32C_PMULL_EOR3_NAMES,
+        CRC32C_SVE2_PMULL_NAMES,
+      ),
     };
 
     if len >= self.hwcrc_to_fusion && self.has_fusion {
+      // Wide tier: SVE2 > EOR3
+      if self.has_sve2 {
+        return sve2_names.get(idx).copied().unwrap_or(kernels::PORTABLE);
+      }
+      if self.has_eor3 {
+        return eor3_names.get(idx).copied().unwrap_or(kernels::PORTABLE);
+      }
       return fusion_names.get(idx).copied().unwrap_or(kernels::PORTABLE);
     }
     hwcrc_names.get(idx).copied().unwrap_or(kernels::PORTABLE)
@@ -538,6 +567,13 @@ fn policy_dispatch_simd(policy: &Crc32Policy, kernels: &Crc32Kernels, crc: u32, 
 
   // Fusion tier (CRC + PMULL)
   if len >= policy.hwcrc_to_fusion && policy.has_fusion {
+    // Wide tier (EOR3 or SVE2) - prefer for larger buffers
+    if let Some(ref wide) = kernels.wide
+      && (policy.has_sve2 || policy.has_eor3)
+    {
+      return (wide.get(idx).copied().unwrap_or(wide[0]))(crc, data);
+    }
+
     // Small buffer kernel
     if len < CRC32_FOLD_BLOCK_BYTES
       && let Some(small) = kernels.primary_small
@@ -687,6 +723,15 @@ pub fn build_ieee_kernels_aarch64(policy: &Crc32Policy, reference: Crc32Fn, port
     return Crc32Kernels::portable_only(reference, portable);
   }
 
+  // Determine wide tier: SVE2 > EOR3 > None
+  let wide = if policy.has_sve2 {
+    Some(CRC32_SVE2_PMULL)
+  } else if policy.has_eor3 {
+    Some(CRC32_PMULL_EOR3)
+  } else {
+    None
+  };
+
   Crc32Kernels {
     reference,
     portable,
@@ -697,7 +742,7 @@ pub fn build_ieee_kernels_aarch64(policy: &Crc32Policy, reference: Crc32Fn, port
     } else {
       None
     },
-    wide: None,
+    wide,
   }
 }
 
@@ -711,6 +756,15 @@ pub fn build_castagnoli_kernels_aarch64(policy: &Crc32Policy, reference: Crc32Fn
     return Crc32Kernels::portable_only(reference, portable);
   }
 
+  // Determine wide tier: SVE2 > EOR3 > None
+  let wide = if policy.has_sve2 {
+    Some(CRC32C_SVE2_PMULL)
+  } else if policy.has_eor3 {
+    Some(CRC32C_PMULL_EOR3)
+  } else {
+    None
+  };
+
   Crc32Kernels {
     reference,
     portable,
@@ -721,7 +775,7 @@ pub fn build_castagnoli_kernels_aarch64(policy: &Crc32Policy, reference: Crc32Fn
     } else {
       None
     },
-    wide: None,
+    wide,
   }
 }
 

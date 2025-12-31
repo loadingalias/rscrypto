@@ -240,27 +240,15 @@ pub(crate) fn crc16_selected_kernel_name(len: usize) -> &'static str {
 // ─────────────────────────────────────────────────────────────────────────────
 
 fn select_crc16_ccitt() -> Selected<Crc16Fn> {
-  let cfg = config::get();
-
-  match cfg.effective_force {
-    config::Crc16Force::Reference => Selected::new(kernels::REFERENCE, crc16_ccitt_reference),
-    config::Crc16Force::Slice4 => Selected::new(kernels::PORTABLE_SLICE4, portable::crc16_ccitt_slice4),
-    config::Crc16Force::Slice8 => Selected::new(kernels::PORTABLE_SLICE8, portable::crc16_ccitt_slice8),
-    config::Crc16Force::Portable => Selected::new(kernels::PORTABLE_AUTO, crc16_ccitt_portable_auto),
-    _ => Selected::new("auto", crc16_ccitt_auto),
-  }
+  // ALL modes go through policy dispatch.
+  // The policy respects effective_force internally.
+  Selected::new("auto", crc16_ccitt_auto)
 }
 
 fn select_crc16_ibm() -> Selected<Crc16Fn> {
-  let cfg = config::get();
-
-  match cfg.effective_force {
-    config::Crc16Force::Reference => Selected::new(kernels::REFERENCE, crc16_ibm_reference),
-    config::Crc16Force::Slice4 => Selected::new(kernels::PORTABLE_SLICE4, portable::crc16_ibm_slice4),
-    config::Crc16Force::Slice8 => Selected::new(kernels::PORTABLE_SLICE8, portable::crc16_ibm_slice8),
-    config::Crc16Force::Portable => Selected::new(kernels::PORTABLE_AUTO, crc16_ibm_portable_auto),
-    _ => Selected::new("auto", crc16_ibm_auto),
-  }
+  // ALL modes go through policy dispatch.
+  // The policy respects effective_force internally.
+  Selected::new("auto", crc16_ibm_auto)
 }
 
 static CRC16_CCITT_DISPATCHER: Crc16Dispatcher = Crc16Dispatcher::new(select_crc16_ccitt);

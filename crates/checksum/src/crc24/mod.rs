@@ -107,14 +107,9 @@ pub(crate) fn crc24_selected_kernel_name(len: usize) -> &'static str {
 // ─────────────────────────────────────────────────────────────────────────────
 
 fn select_crc24_openpgp() -> Selected<Crc24Fn> {
-  let cfg = config::get();
-
-  match cfg.effective_force {
-    config::Crc24Force::Reference => Selected::new(kernels::REFERENCE, crc24_openpgp_reference),
-    config::Crc24Force::Slice4 => Selected::new(kernels::PORTABLE_SLICE4, portable::crc24_openpgp_slice4),
-    config::Crc24Force::Slice8 => Selected::new(kernels::PORTABLE_SLICE8, portable::crc24_openpgp_slice8),
-    _ => Selected::new(kernels::PORTABLE_AUTO, crc24_openpgp_portable_auto),
-  }
+  // ALL modes go through policy dispatch.
+  // The policy respects effective_force internally.
+  Selected::new("auto", crc24_openpgp_portable_auto)
 }
 
 static CRC24_OPENPGP_DISPATCHER: Crc24Dispatcher = Crc24Dispatcher::new(select_crc24_openpgp);
