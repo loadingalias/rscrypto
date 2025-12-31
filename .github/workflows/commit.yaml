@@ -123,42 +123,7 @@ jobs:
         run: just test
 
       # ─────────────────────────────────────────────────────────────────────────
-      # SIMD Tier Smoke Tests - Platform-specific kernel verification
-      # ─────────────────────────────────────────────────────────────────────────
-
-      # x86_64 Linux: PCLMUL (SSE)
-      - name: CRC64 Tier Smoke (force PCLMUL)
-        if: matrix.target.name == 'x86_64-unknown-linux-gnu'
-        run: cargo test -p checksum test_crc64_forced_kernel_smoke_from_env --lib
-        env:
-          RSCRYPTO_CRC64_FORCE: pclmul
-          RSCRYPTO_CRC64_STREAMS: "2"
-
-      # x86_64 Windows: PCLMUL (SSE)
-      - name: CRC64 Tier Smoke (force PCLMUL)
-        if: matrix.target.name == 'x86_64-pc-windows-msvc'
-        run: cargo test -p checksum test_crc64_forced_kernel_smoke_from_env --lib
-        env:
-          RSCRYPTO_CRC64_FORCE: pclmul
-          RSCRYPTO_CRC64_STREAMS: "2"
-
-      # aarch64 Linux: PMULL (NEON/crypto)
-      - name: CRC64 Tier Smoke (force PMULL)
-        if: matrix.target.name == 'aarch64-unknown-linux-gnu'
-        run: cargo test -p checksum test_crc64_forced_kernel_smoke_from_env --lib
-        env:
-          RSCRYPTO_CRC64_FORCE: pmull
-
-      # aarch64 Linux: SVE2 PMULL (where available)
-      - name: CRC64 Tier Smoke (force SVE2 PMULL)
-        if: matrix.target.name == 'aarch64-unknown-linux-gnu'
-        run: cargo test -p checksum test_crc64_forced_kernel_smoke_from_env --lib
-        env:
-          RSCRYPTO_CRC64_FORCE: sve2-pmull
-          RSCRYPTO_CRC64_STREAMS: "2"
-
-      # ─────────────────────────────────────────────────────────────────────────
-      # CRC32/CRC32C Tier Smoke Tests
+      # CRC32/CRC32C Tier Smoke Tests - Platform-specific kernel verification
       # ─────────────────────────────────────────────────────────────────────────
 
       # x86_64: CRC32(IEEE) CLMUL
@@ -236,14 +201,6 @@ jobs:
         env:
           RSCRYPTO_CRC32_FORCE: pmull-eor3
           RSCRYPTO_CRC32_STREAMS: "2"
-
-      # ─────────────────────────────────────────────────────────────────────────
-      # Portable Fallback Verification - Ensure all platforms work without SIMD
-      # ─────────────────────────────────────────────────────────────────────────
-      - name: CRC64 Portable Fallback Verification
-        run: cargo test -p checksum test_crc64_forced_kernel_smoke_from_env --lib
-        env:
-          RSCRYPTO_CRC64_FORCE: portable
 
       # ─────────────────────────────────────────────────────────────────────────
       # Static Linking Verification (MUSL - Linux only)

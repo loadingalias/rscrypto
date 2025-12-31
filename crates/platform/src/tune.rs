@@ -1420,26 +1420,27 @@ mod tests {
   #[test]
   fn test_memory_bound_hwcrc() {
     // AMD/ARM with fast HWCRC are memory-bound
-    assert!(Tune::ZEN4.memory_bound_hwcrc);
-    assert!(Tune::ZEN5.memory_bound_hwcrc);
-    assert!(Tune::ZEN5C.memory_bound_hwcrc);
-    assert!(Tune::APPLE_M1_M3.memory_bound_hwcrc);
-    assert!(Tune::APPLE_M4.memory_bound_hwcrc);
-    assert!(Tune::APPLE_M5.memory_bound_hwcrc);
-    assert!(Tune::GRAVITON2.memory_bound_hwcrc);
-    assert!(Tune::GRAVITON3.memory_bound_hwcrc);
-    assert!(Tune::GRAVITON4.memory_bound_hwcrc);
-    assert!(Tune::GRAVITON5.memory_bound_hwcrc);
+    // Use const blocks for compile-time assertions on const values
+    const { assert!(Tune::ZEN4.memory_bound_hwcrc) };
+    const { assert!(Tune::ZEN5.memory_bound_hwcrc) };
+    const { assert!(Tune::ZEN5C.memory_bound_hwcrc) };
+    const { assert!(Tune::APPLE_M1_M3.memory_bound_hwcrc) };
+    const { assert!(Tune::APPLE_M4.memory_bound_hwcrc) };
+    const { assert!(Tune::APPLE_M5.memory_bound_hwcrc) };
+    const { assert!(Tune::GRAVITON2.memory_bound_hwcrc) };
+    const { assert!(Tune::GRAVITON3.memory_bound_hwcrc) };
+    const { assert!(Tune::GRAVITON4.memory_bound_hwcrc) };
+    const { assert!(Tune::GRAVITON5.memory_bound_hwcrc) };
 
     // Intel with higher CRC latency are NOT memory-bound
-    assert!(!Tune::INTEL_SPR.memory_bound_hwcrc);
-    assert!(!Tune::INTEL_GNR.memory_bound_hwcrc);
-    assert!(!Tune::INTEL_ICL.memory_bound_hwcrc);
+    const { assert!(!Tune::INTEL_SPR.memory_bound_hwcrc) };
+    const { assert!(!Tune::INTEL_GNR.memory_bound_hwcrc) };
+    const { assert!(!Tune::INTEL_ICL.memory_bound_hwcrc) };
 
     // Architectures without HWCRC: flag doesn't matter but set to false
-    assert!(!Tune::Z13.memory_bound_hwcrc);
-    assert!(!Tune::POWER10.memory_bound_hwcrc);
-    assert!(!Tune::PORTABLE.memory_bound_hwcrc);
+    const { assert!(!Tune::Z13.memory_bound_hwcrc) };
+    const { assert!(!Tune::POWER10.memory_bound_hwcrc) };
+    const { assert!(!Tune::PORTABLE.memory_bound_hwcrc) };
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
