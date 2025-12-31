@@ -990,6 +990,8 @@ pub fn detect_uncached() -> Detected {
 
 #[cfg(target_arch = "x86_64")]
 fn detect_x86_64() -> Detected {
+  use crate::caps::x86;
+
   // Start with compile-time detected features (includes SSE2 baseline)
   let caps_static = caps_static();
 
@@ -1003,9 +1005,43 @@ fn detect_x86_64() -> Detected {
   let (is_amd, family, model) = (false, 0u32, 0u32);
 
   #[cfg(feature = "std")]
-  let caps = caps_static.union(runtime_caps);
+  let mut caps = caps_static.union(runtime_caps);
   #[cfg(not(feature = "std"))]
   let caps = caps_static;
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Hybrid Intel AVX-512 Safety: Clear AVX-512 caps on hybrid CPUs
+  // ─────────────────────────────────────────────────────────────────────────────
+  // On hybrid Intel CPUs (Alder Lake, Raptor Lake, etc.), the P-cores have
+  // AVX-512 but E-cores don't. If a thread migrates to an E-core while
+  // executing AVX-512 code, it will SIGILL. The only safe approach is to
+  // disable AVX-512 entirely unless the user explicitly overrides.
+  #[cfg(feature = "std")]
+  {
+    if is_intel_hybrid(is_amd, family, model) && !hybrid_avx512_override() {
+      // Clear all AVX-512 related capabilities to prevent kernel selection
+      // from choosing AVX-512/VPCLMUL paths that could SIGILL on E-cores.
+      caps = caps
+        .difference(x86::AVX512F)
+        .difference(x86::AVX512DQ)
+        .difference(x86::AVX512IFMA)
+        .difference(x86::AVX512CD)
+        .difference(x86::AVX512BW)
+        .difference(x86::AVX512VL)
+        .difference(x86::AVX512VBMI)
+        .difference(x86::AVX512VBMI2)
+        .difference(x86::AVX512VNNI)
+        .difference(x86::AVX512BITALG)
+        .difference(x86::AVX512VPOPCNTDQ)
+        .difference(x86::AVX512BF16)
+        .difference(x86::AVX512FP16)
+        .difference(x86::VPCLMULQDQ)
+        .difference(x86::VAES)
+        .difference(x86::GFNI)
+        .difference(x86::AVX10_1)
+        .difference(x86::AVX10_2);
+    }
+  }
 
   let tune = select_x86_tune(caps, is_amd, family, model);
 
@@ -1065,14 +1101,25 @@ struct CpuidBatch {
 /// - Leaf 0x29: APX detection (if max leaf >= 0x29)
 /// - Leaf 0x80000001: AMD-specific features
 ///
+/// **Critical**: This function properly gates AVX/AVX-512 features by checking
+/// OSXSAVE and XGETBV(XCR0) to ensure the OS will save/restore extended registers.
+/// Without this check, using AVX/AVX-512 instructions could cause SIGILL.
+///
 /// # Safety
-/// Uses CPUID instruction which requires unsafe, but is always safe to call on x86.
+/// Uses CPUID and XGETBV instructions which require unsafe, but are always safe
+/// to call on x86_64 when OSXSAVE is set.
 #[cfg(all(target_arch = "x86_64", feature = "std"))]
 #[allow(unsafe_code)]
 fn cpuid_batch_x86_64() -> CpuidBatch {
-  use core::arch::x86_64::{__cpuid, __cpuid_count};
+  use core::arch::x86_64::{__cpuid, __cpuid_count, _xgetbv};
 
   use crate::caps::x86;
+
+  // XCR0 bit masks for OS support verification
+  // Bits 1-2: XMM (SSE) + YMM (AVX) state - must be set for AVX
+  const XCR0_AVX_MASK: u64 = 0x6;
+  // Bits 5-7: opmask + ZMM_Hi256 + Hi16_ZMM state - must be set for AVX-512
+  const XCR0_AVX512_MASK: u64 = 0xE0;
 
   let mut caps = Caps::NONE;
 
@@ -1100,7 +1147,32 @@ fn cpuid_batch_x86_64() -> CpuidBatch {
     base_model
   };
 
-  // ECX features (leaf 1)
+  // ─────────────────────────────────────────────────────────────────────────────
+  // OS Support Detection via OSXSAVE + XGETBV
+  // ─────────────────────────────────────────────────────────────────────────────
+  // CRITICAL: CPUID reports what the CPU supports, not what the OS allows.
+  // We must check OSXSAVE (indicates OS uses XSAVE) and read XCR0 to verify
+  // the OS will actually save/restore AVX/AVX-512 registers. Without this,
+  // using AVX instructions on an OS that doesn't save YMM/ZMM state causes SIGILL.
+
+  // OSXSAVE (bit 27): OS has set CR4.OSXSAVE and supports XSAVE/XGETBV
+  let osxsave = cpuid1.ecx & (1 << 27) != 0;
+
+  // Read XCR0 if OSXSAVE is enabled, otherwise assume no extended state support
+  let xcr0 = if osxsave {
+    // SAFETY: XGETBV is safe when OSXSAVE is set (checked above)
+    unsafe { _xgetbv(0) }
+  } else {
+    0
+  };
+
+  // Determine OS support for AVX and AVX-512 register state
+  let os_avx = (xcr0 & XCR0_AVX_MASK) == XCR0_AVX_MASK;
+  let os_avx512 = os_avx && (xcr0 & XCR0_AVX512_MASK) == XCR0_AVX512_MASK;
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // ECX features (leaf 1) - SSE/basic features (no OS gating needed)
+  // ─────────────────────────────────────────────────────────────────────────────
   if cpuid1.ecx & (1 << 0) != 0 {
     caps |= x86::SSE3;
   }
@@ -1122,29 +1194,34 @@ fn cpuid_batch_x86_64() -> CpuidBatch {
   if cpuid1.ecx & (1 << 1) != 0 {
     caps |= x86::PCLMULQDQ;
   }
-  if cpuid1.ecx & (1 << 28) != 0 {
-    caps |= x86::AVX;
-  }
-  if cpuid1.ecx & (1 << 12) != 0 {
-    caps |= x86::FMA;
-  }
-  if cpuid1.ecx & (1 << 29) != 0 {
-    caps |= x86::F16C;
-  }
   if cpuid1.ecx & (1 << 30) != 0 {
     caps |= x86::RDRAND;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // AVX-class features (require OS AVX support via XCR0)
+  // ─────────────────────────────────────────────────────────────────────────────
+  if os_avx {
+    if cpuid1.ecx & (1 << 28) != 0 {
+      caps |= x86::AVX;
+    }
+    if cpuid1.ecx & (1 << 12) != 0 {
+      caps |= x86::FMA;
+    }
+    if cpuid1.ecx & (1 << 29) != 0 {
+      caps |= x86::F16C;
+    }
   }
 
   // Extended feature flags (leaf 7, subleaf 0)
   // SAFETY: CPUID is always safe on x86_64
   let cpuid7 = unsafe { __cpuid_count(7, 0) };
 
-  // EBX features (leaf 7)
+  // ─────────────────────────────────────────────────────────────────────────────
+  // EBX features (leaf 7) - non-AVX features (no OS gating needed)
+  // ─────────────────────────────────────────────────────────────────────────────
   if cpuid7.ebx & (1 << 3) != 0 {
     caps |= x86::BMI1;
-  }
-  if cpuid7.ebx & (1 << 5) != 0 {
-    caps |= x86::AVX2;
   }
   if cpuid7.ebx & (1 << 8) != 0 {
     caps |= x86::BMI2;
@@ -1155,52 +1232,69 @@ fn cpuid_batch_x86_64() -> CpuidBatch {
   if cpuid7.ebx & (1 << 29) != 0 {
     caps |= x86::SHA;
   }
-  if cpuid7.ebx & (1 << 16) != 0 {
-    caps |= x86::AVX512F;
-  }
-  if cpuid7.ebx & (1 << 17) != 0 {
-    caps |= x86::AVX512DQ;
-  }
-  if cpuid7.ebx & (1 << 21) != 0 {
-    caps |= x86::AVX512IFMA;
-  }
-  if cpuid7.ebx & (1 << 28) != 0 {
-    caps |= x86::AVX512CD;
-  }
-  if cpuid7.ebx & (1 << 30) != 0 {
-    caps |= x86::AVX512BW;
-  }
-  if cpuid7.ebx & (1 << 31) != 0 {
-    caps |= x86::AVX512VL;
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // AVX2 (requires OS AVX support for YMM registers)
+  // ─────────────────────────────────────────────────────────────────────────────
+  if os_avx && cpuid7.ebx & (1 << 5) != 0 {
+    caps |= x86::AVX2;
   }
 
-  // ECX features (leaf 7)
-  if cpuid7.ecx & (1 << 1) != 0 {
-    caps |= x86::AVX512VBMI;
-  }
-  if cpuid7.ecx & (1 << 6) != 0 {
-    caps |= x86::AVX512VBMI2;
-  }
-  if cpuid7.ecx & (1 << 8) != 0 {
-    caps |= x86::GFNI;
-  }
-  if cpuid7.ecx & (1 << 9) != 0 {
-    caps |= x86::VAES;
-  }
-  if cpuid7.ecx & (1 << 10) != 0 {
-    caps |= x86::VPCLMULQDQ;
-  }
-  if cpuid7.ecx & (1 << 11) != 0 {
-    caps |= x86::AVX512VNNI;
-  }
-  if cpuid7.ecx & (1 << 12) != 0 {
-    caps |= x86::AVX512BITALG;
-  }
-  if cpuid7.ecx & (1 << 14) != 0 {
-    caps |= x86::AVX512VPOPCNTDQ;
+  // ─────────────────────────────────────────────────────────────────────────────
+  // AVX-512 features (require OS AVX-512 support for ZMM/opmask registers)
+  // ─────────────────────────────────────────────────────────────────────────────
+  if os_avx512 {
+    if cpuid7.ebx & (1 << 16) != 0 {
+      caps |= x86::AVX512F;
+    }
+    if cpuid7.ebx & (1 << 17) != 0 {
+      caps |= x86::AVX512DQ;
+    }
+    if cpuid7.ebx & (1 << 21) != 0 {
+      caps |= x86::AVX512IFMA;
+    }
+    if cpuid7.ebx & (1 << 28) != 0 {
+      caps |= x86::AVX512CD;
+    }
+    if cpuid7.ebx & (1 << 30) != 0 {
+      caps |= x86::AVX512BW;
+    }
+    if cpuid7.ebx & (1 << 31) != 0 {
+      caps |= x86::AVX512VL;
+    }
+
+    // ECX AVX-512 features (leaf 7)
+    if cpuid7.ecx & (1 << 1) != 0 {
+      caps |= x86::AVX512VBMI;
+    }
+    if cpuid7.ecx & (1 << 6) != 0 {
+      caps |= x86::AVX512VBMI2;
+    }
+    if cpuid7.ecx & (1 << 11) != 0 {
+      caps |= x86::AVX512VNNI;
+    }
+    if cpuid7.ecx & (1 << 12) != 0 {
+      caps |= x86::AVX512BITALG;
+    }
+    if cpuid7.ecx & (1 << 14) != 0 {
+      caps |= x86::AVX512VPOPCNTDQ;
+    }
+
+    // Vector extensions that use 512-bit registers (gate with AVX-512 OS support)
+    if cpuid7.ecx & (1 << 8) != 0 {
+      caps |= x86::GFNI;
+    }
+    if cpuid7.ecx & (1 << 9) != 0 {
+      caps |= x86::VAES;
+    }
+    if cpuid7.ecx & (1 << 10) != 0 {
+      caps |= x86::VPCLMULQDQ;
+    }
   }
 
-  // EDX features (leaf 7)
+  // ─────────────────────────────────────────────────────────────────────────────
+  // EDX features (leaf 7) - non-AVX features
+  // ─────────────────────────────────────────────────────────────────────────────
   if cpuid7.edx & (1 << 18) != 0 {
     caps |= x86::RDSEED;
   }
@@ -1218,17 +1312,27 @@ fn cpuid_batch_x86_64() -> CpuidBatch {
   // SAFETY: CPUID is always safe on x86_64
   let cpuid7_1 = unsafe { __cpuid_count(7, 1) };
 
+  // ─────────────────────────────────────────────────────────────────────────────
   // EAX features (leaf 7, subleaf 1)
-  if cpuid7_1.eax & (1 << 4) != 0 {
-    caps |= x86::AVX512BF16;
-  }
-  if cpuid7_1.eax & (1 << 5) != 0 {
-    caps |= x86::AVX512FP16;
-  }
+  // ─────────────────────────────────────────────────────────────────────────────
+  // SHA512 doesn't require AVX-512 (uses XMM registers)
   if cpuid7_1.eax & (1 << 0) != 0 {
     caps |= x86::SHA512;
   }
-  // AMX extensions (Granite Rapids and newer)
+
+  // AVX-512 extensions (require OS AVX-512 support)
+  if os_avx512 {
+    if cpuid7_1.eax & (1 << 4) != 0 {
+      caps |= x86::AVX512BF16;
+    }
+    if cpuid7_1.eax & (1 << 5) != 0 {
+      caps |= x86::AVX512FP16;
+    }
+  }
+
+  // AMX extensions (Granite Rapids and newer) - separate state component
+  // Note: AMX has its own XCR0 bits (17-18), but for now we don't gate these
+  // as they're not used for crypto kernels
   if cpuid7_1.eax & (1 << 21) != 0 {
     caps |= x86::AMX_FP16;
   }
@@ -1236,9 +1340,9 @@ fn cpuid_batch_x86_64() -> CpuidBatch {
     caps |= x86::AMX_COMPLEX;
   }
 
-  // AVX10 detection via CPUID leaf 0x24
-  // First check if leaf 0x24 is supported (max leaf >= 0x24)
-  if cpuid0.eax >= 0x24 {
+  // AVX10 detection via CPUID leaf 0x24 (requires OS AVX-512 support)
+  // AVX10 is Intel's unified vector ISA that subsumes AVX-512
+  if os_avx512 && cpuid0.eax >= 0x24 {
     // SAFETY: CPUID is always safe on x86_64
     let cpuid24 = unsafe { __cpuid_count(0x24, 0) };
     let avx10_version = cpuid24.ebx & 0xFF;
