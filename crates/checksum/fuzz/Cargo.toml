@@ -66,3 +66,24 @@ path = "fuzz_targets/kernels.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "kernels_crc32"
+path = "fuzz_targets/kernels_crc32.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "kernels_crc16"
+path = "fuzz_targets/kernels_crc16.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "kernels_crc24"
+path = "fuzz_targets/kernels_crc24.rs"
+test = false
+doc = false
+bench = false

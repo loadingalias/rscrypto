@@ -115,9 +115,22 @@ pub mod __internal {
   /// Kernel testing utilities (for fuzz targets and integration tests).
   #[cfg(feature = "alloc")]
   pub mod kernel_test {
-    pub use crate::crc64::kernel_test::{
-      KernelResult, run_all_crc64_nvme_kernels, run_all_crc64_xz_kernels, verify_crc64_nvme_kernels,
-      verify_crc64_xz_kernels,
+    pub use crate::{
+      crc16::kernel_test::{
+        KernelResult as KernelResult16, run_all_crc16_ccitt_kernels, run_all_crc16_ibm_kernels,
+        verify_crc16_ccitt_kernels, verify_crc16_ibm_kernels,
+      },
+      crc24::kernel_test::{
+        KernelResult as KernelResult24, run_all_crc24_openpgp_kernels, verify_crc24_openpgp_kernels,
+      },
+      crc32::kernel_test::{
+        KernelResult as KernelResult32, run_all_crc32_ieee_kernels, run_all_crc32c_kernels, verify_crc32_ieee_kernels,
+        verify_crc32c_kernels,
+      },
+      crc64::kernel_test::{
+        KernelResult, run_all_crc64_nvme_kernels, run_all_crc64_xz_kernels, verify_crc64_nvme_kernels,
+        verify_crc64_xz_kernels,
+      },
     };
   }
 

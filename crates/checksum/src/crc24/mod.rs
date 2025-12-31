@@ -26,6 +26,9 @@ pub(crate) mod policy;
 pub(crate) mod portable;
 mod tuned_defaults;
 
+#[cfg(feature = "alloc")]
+pub mod kernel_test;
+
 use backend::{PolicyCache, dispatch::Selected};
 #[allow(unused_imports)]
 pub use config::{Crc24Config, Crc24Force, Crc24Tunables};

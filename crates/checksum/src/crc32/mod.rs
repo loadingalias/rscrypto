@@ -45,6 +45,9 @@ mod policy;
 pub(crate) mod portable;
 mod tuned_defaults;
 
+#[cfg(feature = "alloc")]
+pub mod kernel_test;
+
 #[cfg(target_arch = "x86_64")]
 mod x86_64;
 

@@ -27,4 +27,5 @@ NOSTD_TARGETS=(
 WASM_TARGETS=(
   "wasm32-unknown-unknown"
   "wasm32-wasip1"
+  # "wasm64-unknown-unknown"  # Tier 3: requires -Z build-std (nightly), tested in weekly CI
 )

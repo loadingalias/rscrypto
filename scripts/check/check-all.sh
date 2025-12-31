@@ -14,6 +14,7 @@ DEFAULT_CONSTRAINED_CRATES=(
   "platform"
   "backend"
   "traits"
+  "checksum"
 )
 
 CONSTRAINED_CRATES=()

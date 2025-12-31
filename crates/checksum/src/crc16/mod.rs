@@ -24,6 +24,9 @@ pub(crate) mod policy;
 pub(crate) mod portable;
 mod tuned_defaults;
 
+#[cfg(feature = "alloc")]
+pub mod kernel_test;
+
 use backend::dispatch::Selected;
 #[allow(unused_imports)]
 pub use config::{Crc16Config, Crc16Force, Crc16Tunables};
