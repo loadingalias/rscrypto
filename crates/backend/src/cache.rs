@@ -472,6 +472,7 @@ mod tests {
   // ─── Threading Tests (std only) ────────────────────────────────────────────
 
   #[cfg(feature = "std")]
+  #[allow(clippy::std_instead_of_core, clippy::std_instead_of_alloc)]
   mod threading_tests {
     use std::{
       sync::atomic::{AtomicUsize, Ordering},
