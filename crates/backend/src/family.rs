@@ -330,6 +330,186 @@ impl KernelFamily {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// KernelSubfamily - Algorithm-specific kernel variations
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Kernel subfamily for fine-grained dispatch decisions.
+///
+/// While [`KernelFamily`] identifies the base instruction set (PCLMUL, PMULL, etc.),
+/// subfamilies capture algorithm-specific variations:
+///
+/// - **Fusion**: Combining hardware CRC with carryless multiply for CRC-32C
+/// - **Wide**: Using 256/512-bit operations instead of 128-bit
+/// - **Multi-stream**: Parallel processing of multiple buffer lanes
+///
+/// # Design Rationale
+///
+/// This type exists to avoid algorithm-specific booleans in policy structs.
+/// Instead of:
+/// ```ignore
+/// struct Crc32Policy {
+///   has_hwcrc: bool,
+///   has_fusion: bool,
+///   has_vpclmul: bool,
+///   has_avx512: bool,
+/// }
+/// ```
+///
+/// We have a single, uniform abstraction that works for any algorithm:
+/// ```ignore
+/// struct Crc32Policy {
+///   subfamily: KernelSubfamily,
+/// }
+/// ```
+///
+/// # Algorithm Agnosticism
+///
+/// The subfamily is structurally algorithm-agnostic: the same fields apply to
+/// CRC-32, CRC-64, Blake3, and future algorithms. The *semantics* of each field
+/// may vary by algorithm (e.g., `uses_hwcrc` only makes sense for CRC), but the
+/// struct provides a uniform interface for policy decisions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct KernelSubfamily {
+  /// Base kernel family (instruction set).
+  pub family: KernelFamily,
+  /// Whether this subfamily uses hardware CRC as part of the algorithm.
+  ///
+  /// True for CRC-32C fusion kernels that combine HWCRC + carryless multiply.
+  /// False for pure folding (CRC-32 IEEE) or non-CRC algorithms.
+  pub uses_hwcrc: bool,
+  /// Whether this subfamily uses wide (256/512-bit) vector operations.
+  ///
+  /// True for AVX-512/VPCLMUL on x86, SVE2 on ARM, etc.
+  /// False for 128-bit SIMD (SSE, NEON).
+  pub uses_wide: bool,
+  /// Whether this subfamily supports multi-stream processing.
+  ///
+  /// True for most SIMD kernels that can process parallel lanes.
+  /// False for scalar or single-stream implementations.
+  pub multi_stream: bool,
+}
+
+impl KernelSubfamily {
+  /// Create a reference subfamily (no SIMD, no special features).
+  #[must_use]
+  pub const fn reference() -> Self {
+    Self {
+      family: KernelFamily::Reference,
+      uses_hwcrc: false,
+      uses_wide: false,
+      multi_stream: false,
+    }
+  }
+
+  /// Create a portable subfamily (table-based, no SIMD).
+  #[must_use]
+  pub const fn portable() -> Self {
+    Self {
+      family: KernelFamily::Portable,
+      uses_hwcrc: false,
+      uses_wide: false,
+      multi_stream: false,
+    }
+  }
+
+  /// Create a pure folding subfamily (PCLMUL/PMULL without HWCRC).
+  ///
+  /// Used for CRC-32 IEEE on x86 (no hardware CRC instruction for that polynomial).
+  #[must_use]
+  pub const fn folding(family: KernelFamily) -> Self {
+    Self {
+      family,
+      uses_hwcrc: false,
+      uses_wide: false,
+      multi_stream: true,
+    }
+  }
+
+  /// Create a fusion subfamily (HWCRC + folding combined).
+  ///
+  /// Used for CRC-32C on x86/ARM where hardware CRC can be combined with
+  /// carryless multiply for better performance.
+  #[must_use]
+  pub const fn fusion(family: KernelFamily) -> Self {
+    Self {
+      family,
+      uses_hwcrc: true,
+      uses_wide: false,
+      multi_stream: true,
+    }
+  }
+
+  /// Create a wide subfamily (256/512-bit operations).
+  ///
+  /// # Arguments
+  /// * `family` - Base kernel family (usually wide tier like X86Vpclmul)
+  /// * `uses_hwcrc` - Whether fusion with hardware CRC is used
+  #[must_use]
+  pub const fn wide(family: KernelFamily, uses_hwcrc: bool) -> Self {
+    Self {
+      family,
+      uses_hwcrc,
+      uses_wide: true,
+      multi_stream: true,
+    }
+  }
+
+  /// Create a hardware CRC subfamily (scalar HWCRC, no folding).
+  ///
+  /// Used when buffer is too small for folding overhead to pay off.
+  #[must_use]
+  pub const fn hwcrc(family: KernelFamily) -> Self {
+    Self {
+      family,
+      uses_hwcrc: true,
+      uses_wide: false,
+      multi_stream: true, // HW CRC kernels can still multi-stream
+    }
+  }
+
+  /// Create a single-stream subfamily (no parallel lane processing).
+  #[must_use]
+  pub const fn single_stream(family: KernelFamily) -> Self {
+    Self {
+      family,
+      uses_hwcrc: false,
+      uses_wide: false,
+      multi_stream: false,
+    }
+  }
+
+  /// Get the kernel tier from the underlying family.
+  #[inline]
+  #[must_use]
+  pub const fn tier(self) -> KernelTier {
+    self.family.tier()
+  }
+
+  /// Get the minimum bytes per lane from the underlying family.
+  #[inline]
+  #[must_use]
+  pub const fn min_bytes_per_lane(self) -> usize {
+    self.family.min_bytes_per_lane()
+  }
+
+  /// Human-readable subfamily name for diagnostics.
+  ///
+  /// Returns names like `"x86_64/vpclmul-fusion"` or `"aarch64/pmull"`.
+  #[must_use]
+  pub const fn as_str(self) -> &'static str {
+    // For now, delegate to family name. Algorithm crates can add suffixes
+    // like "-fusion" or "-wide" in their diagnostic output.
+    self.family.as_str()
+  }
+}
+
+impl Default for KernelSubfamily {
+  fn default() -> Self {
+    Self::reference()
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -422,5 +602,53 @@ mod tests {
         );
       }
     }
+  }
+
+  // ─── KernelSubfamily Tests ─────────────────────────────────────────────────
+
+  #[test]
+  fn subfamily_constructors() {
+    let ref_sub = KernelSubfamily::reference();
+    assert_eq!(ref_sub.family, KernelFamily::Reference);
+    assert!(!ref_sub.uses_hwcrc);
+    assert!(!ref_sub.uses_wide);
+    assert!(!ref_sub.multi_stream);
+
+    let portable_sub = KernelSubfamily::portable();
+    assert_eq!(portable_sub.family, KernelFamily::Portable);
+    assert!(!portable_sub.multi_stream);
+
+    let folding_sub = KernelSubfamily::folding(KernelFamily::X86Pclmul);
+    assert_eq!(folding_sub.family, KernelFamily::X86Pclmul);
+    assert!(!folding_sub.uses_hwcrc);
+    assert!(folding_sub.multi_stream);
+
+    let fusion_sub = KernelSubfamily::fusion(KernelFamily::X86Pclmul);
+    assert!(fusion_sub.uses_hwcrc);
+    assert!(!fusion_sub.uses_wide);
+    assert!(fusion_sub.multi_stream);
+
+    let wide_sub = KernelSubfamily::wide(KernelFamily::X86Vpclmul, true);
+    assert!(wide_sub.uses_hwcrc);
+    assert!(wide_sub.uses_wide);
+    assert!(wide_sub.multi_stream);
+
+    let hwcrc_sub = KernelSubfamily::hwcrc(KernelFamily::X86Crc32);
+    assert!(hwcrc_sub.uses_hwcrc);
+    assert!(!hwcrc_sub.uses_wide);
+  }
+
+  #[test]
+  fn subfamily_tier_delegation() {
+    let folding = KernelSubfamily::folding(KernelFamily::X86Pclmul);
+    assert_eq!(folding.tier(), KernelTier::Folding);
+
+    let wide = KernelSubfamily::wide(KernelFamily::X86Vpclmul, false);
+    assert_eq!(wide.tier(), KernelTier::Wide);
+  }
+
+  #[test]
+  fn subfamily_default_is_reference() {
+    assert_eq!(KernelSubfamily::default(), KernelSubfamily::reference());
   }
 }

@@ -24,8 +24,6 @@
 //! assert_eq!(DISPATCHER.backend_name(), "portable");
 //! ```
 
-use backend::dispatch::Selected;
-
 // ─────────────────────────────────────────────────────────────────────────────
 // CRC-16 Dispatchers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -163,6 +161,8 @@ backend::define_dispatcher!(
 
 #[cfg(test)]
 mod tests {
+  use backend::dispatch::Selected;
+
   use super::*;
 
   // Test kernel functions

@@ -296,6 +296,13 @@ pub fn select_tuned<F: Copy>(caps: Caps, tune: &Tune, candidates: &[TunedCandida
 /// - `get()` - Get the selected kernel (cached after first call)
 /// - `backend_name()` - Get the name of the selected backend
 /// - `call(state, data)` - Call the kernel with given arguments
+///
+/// # Thread Safety
+///
+/// Dispatchers are `Send + Sync` and can be used from multiple threads:
+/// - **std**: Uses `OnceCache` backed by `OnceLock` (auto-derives `Send + Sync`)
+/// - **no_std with atomics**: Uses `OnceCache` with atomic state machine
+/// - **no_std without atomics**: Single-threaded targets (no caching)
 #[macro_export]
 macro_rules! define_dispatcher {
   (
@@ -304,132 +311,30 @@ macro_rules! define_dispatcher {
   ) => {
     $(#[$meta])*
     pub struct $name {
-      #[cfg(feature = "std")]
-      inner: std::sync::OnceLock<Selected<$fn_ty>>,
-
-      // Atomic caching fields - only for no_std targets WITH CAS support
-      #[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
-      state: core::sync::atomic::AtomicUsize,
-      #[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
-      func: core::sync::atomic::AtomicPtr<()>,
-      #[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
-      name_ptr: core::sync::atomic::AtomicPtr<u8>,
-      #[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
-      name_len: core::sync::atomic::AtomicUsize,
-
-      selector: fn() -> Selected<$fn_ty>,
+      /// Cached selection result.
+      cache: $crate::cache::OnceCache<$crate::dispatch::Selected<$fn_ty>>,
+      /// Selector function called on first access.
+      selector: fn() -> $crate::dispatch::Selected<$fn_ty>,
     }
 
     impl $name {
       /// Create a new dispatcher with the given selector function.
       #[must_use]
-      pub const fn new(selector: fn() -> Selected<$fn_ty>) -> Self {
+      pub const fn new(selector: fn() -> $crate::dispatch::Selected<$fn_ty>) -> Self {
         Self {
-          #[cfg(feature = "std")]
-          inner: std::sync::OnceLock::new(),
-
-          #[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
-          state: core::sync::atomic::AtomicUsize::new(0),
-          #[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
-          func: core::sync::atomic::AtomicPtr::new(core::ptr::null_mut()),
-          #[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
-          name_ptr: core::sync::atomic::AtomicPtr::new(core::ptr::null_mut()),
-          #[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
-          name_len: core::sync::atomic::AtomicUsize::new(0),
-
+          cache: $crate::cache::OnceCache::new(),
           selector,
         }
       }
 
       /// Get the selected kernel, initializing on first call.
+      ///
+      /// The selector is called at most once (on targets with atomics).
+      /// Subsequent calls return the cached result.
       #[inline]
       #[must_use]
-      pub fn get(&self) -> Selected<$fn_ty> {
-        #[cfg(feature = "std")]
-        {
-          *self.inner.get_or_init(|| (self.selector)())
-        }
-
-        // no_std path for targets WITH atomic CAS support.
-        #[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
-        {
-          use core::sync::atomic::Ordering;
-
-          // 0 = uninitialized, 1 = initializing, 2 = initialized
-          const UNINIT: usize = 0;
-          const INITING: usize = 1;
-          const READY: usize = 2;
-
-          let state = self.state.load(Ordering::Acquire);
-          if state == READY {
-            return Self::load_selected(&self.func, &self.name_ptr, &self.name_len);
-          }
-
-          if state == UNINIT {
-            if self
-              .state
-              .compare_exchange(UNINIT, INITING, Ordering::AcqRel, Ordering::Acquire)
-              .is_ok()
-            {
-              let selected = (self.selector)();
-              self.name_ptr.store(selected.name.as_ptr() as *mut u8, Ordering::Release);
-              self.name_len.store(selected.name.len(), Ordering::Release);
-              self.func.store(selected.func as *mut (), Ordering::Release);
-              // Publish READY last; this is the synchronization point for waiters.
-              self.state.store(READY, Ordering::Release);
-              return selected;
-            }
-          }
-
-          // Another thread is initializing - wait for completion.
-          while self.state.load(Ordering::Acquire) != READY {
-            core::hint::spin_loop();
-          }
-          Self::load_selected(&self.func, &self.name_ptr, &self.name_len)
-        }
-
-        // no_std path for targets WITHOUT atomic CAS support.
-        // We simply call the selector each time - no caching.
-        #[cfg(all(not(feature = "std"), not(target_has_atomic = "ptr")))]
-        {
-          (self.selector)()
-        }
-      }
-
-      // Only needed for targets with atomic CAS support
-      #[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
-      #[inline]
-      fn load_selected(
-        func: &core::sync::atomic::AtomicPtr<()>,
-        name_ptr: &core::sync::atomic::AtomicPtr<u8>,
-        name_len: &core::sync::atomic::AtomicUsize,
-      ) -> Selected<$fn_ty> {
-        use core::sync::atomic::Ordering;
-
-        let func_ptr = func.load(Ordering::Acquire);
-        // SAFETY: This transmute from `*mut ()` to `$fn_ty` (a function pointer) is sound because:
-        // 1. The pointer was originally a valid function pointer of type `$fn_ty`, cast to `*mut ()`
-        //    and stored via `store(selected.func as *mut (), ...)` on line 164.
-        // 2. Function pointers and raw pointers have the same size and alignment on all platforms
-        //    Rust supports (both are pointer-sized).
-        // 3. The Acquire ordering ensures we see the store that wrote this pointer.
-        // 4. The function pointer remains valid for the program's lifetime ('static).
-        #[allow(unsafe_code)]
-        let func: $fn_ty = unsafe { core::mem::transmute(func_ptr) };
-
-        let ptr = name_ptr.load(Ordering::Acquire);
-        let len = name_len.load(Ordering::Acquire);
-
-        let name = if ptr.is_null() || len == 0 {
-          "unknown"
-        } else {
-          // SAFETY: name_ptr and name_len were stored from a valid &'static str
-          #[allow(unsafe_code)]
-          unsafe {
-            core::str::from_utf8_unchecked(core::slice::from_raw_parts(ptr, len))
-          }
-        };
-        Selected { name, func }
+      pub fn get(&self) -> $crate::dispatch::Selected<$fn_ty> {
+        self.cache.get_or_init(|| (self.selector)())
       }
 
       /// Get the name of the selected backend.
@@ -451,47 +356,18 @@ macro_rules! define_dispatcher {
       #[inline]
       #[must_use]
       pub fn kernel(&self) -> $fn_ty {
-        #[cfg(feature = "std")]
-        {
-          self.get().func
-        }
-
-        // no_std path for targets WITH atomic CAS support.
-        #[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
-        {
-          use core::sync::atomic::Ordering;
-
-          const READY: usize = 2;
-          if self.state.load(Ordering::Acquire) == READY {
-            let func_ptr = self.func.load(Ordering::Acquire);
-            // SAFETY: This transmute from `*mut ()` to `$fn_ty` (a function pointer) is sound because:
-            // 1. The pointer was originally a valid function pointer of type `$fn_ty`, cast to `*mut ()`
-            //    and stored via `store(selected.func as *mut (), ...)` during initialization.
-            // 2. Function pointers and raw pointers have the same size and alignment on all platforms
-            //    Rust supports (both are pointer-sized).
-            // 3. The Acquire ordering ensures we see the store that wrote this pointer.
-            // 4. The function pointer remains valid for the program's lifetime ('static).
-            #[allow(unsafe_code)]
-            return unsafe { core::mem::transmute(func_ptr) };
-          }
-
-          self.get().func
-        }
-
-        // no_std path for targets WITHOUT atomic CAS support.
-        #[cfg(all(not(feature = "std"), not(target_has_atomic = "ptr")))]
-        {
-          self.get().func
-        }
+        self.get().func
       }
     }
 
-    // SAFETY: Dispatcher uses OnceLock (std) or atomic operations (no_std),
-    // both of which are thread-safe. Stored function pointers are read-only after init.
-    #[allow(unsafe_code)]
-    unsafe impl Sync for $name {}
-    #[allow(unsafe_code)]
-    unsafe impl Send for $name {}
+    // Send + Sync are inherited from OnceCache<Selected<F>>:
+    // - std: OnceLock<T> is Send+Sync when T: Send+Sync
+    // - no_std+atomics: OnceCache has unsafe impl Sync
+    // - no_std without atomics: OnceCache is !Send+!Sync (single-threaded targets)
+    //
+    // Selected<F> where F is a fn pointer: fn pointers are Send+Sync,
+    // &'static str is Send+Sync, so Selected<F> is automatically Send+Sync.
+    // No manual unsafe impl needed!
   };
 }
 
@@ -503,6 +379,13 @@ macro_rules! define_dispatcher {
 ///
 /// Use this for hash functions, MACs, or other algorithms with custom signatures.
 /// For CRC algorithms, prefer the typed dispatchers above.
+///
+/// # Thread Safety
+///
+/// `GenericDispatcher` is `Send + Sync` when `F: Send + Sync`:
+/// - `OnceLock<Selected<F>>` auto-derives `Send + Sync` when `Selected<F>: Send + Sync`
+/// - `Selected<F>` is `Send + Sync` when `F: Send + Sync` (fn pointers always are)
+/// - No manual `unsafe impl` needed!
 #[cfg(feature = "std")]
 pub struct GenericDispatcher<F: Copy + 'static> {
   inner: std::sync::OnceLock<Selected<F>>,
@@ -535,12 +418,8 @@ impl<F: Copy + 'static> GenericDispatcher<F> {
   }
 }
 
-#[cfg(feature = "std")]
-#[allow(unsafe_code)]
-unsafe impl<F: Copy + 'static> Sync for GenericDispatcher<F> {}
-#[cfg(feature = "std")]
-#[allow(unsafe_code)]
-unsafe impl<F: Copy + 'static> Send for GenericDispatcher<F> {}
+// No manual unsafe impl Send/Sync needed - OnceLock<Selected<F>> auto-derives both
+// when Selected<F>: Send + Sync, which holds when F: Send + Sync (always true for fn pointers).
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tests

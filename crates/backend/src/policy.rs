@@ -27,7 +27,10 @@
 
 use platform::{Caps, Tune};
 
-use crate::{family::KernelFamily, tier::KernelTier};
+use crate::{
+  family::{KernelFamily, KernelSubfamily},
+  tier::KernelTier,
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SelectionPolicy
@@ -37,7 +40,7 @@ use crate::{family::KernelFamily, tier::KernelTier};
 ///
 /// Policies are computed once from `Caps` + `Tune` and cached for the process
 /// lifetime. They encode:
-/// - Which kernel family to use
+/// - Which kernel family and subfamily to use
 /// - Thresholds for tier transitions (e.g., portable → folding)
 /// - Per-lane stream count selection based on `min_bytes_per_lane`
 ///
@@ -50,8 +53,8 @@ use crate::{family::KernelFamily, tier::KernelTier};
 ///
 /// # Cache-Friendliness
 ///
-/// The struct is 48 bytes, fitting in one cache line. All fields are
-/// accessed together during dispatch, maximizing spatial locality.
+/// The struct fits in one cache line. All fields are accessed together
+/// during dispatch, maximizing spatial locality.
 ///
 /// # no_std Support
 ///
@@ -61,6 +64,12 @@ use crate::{family::KernelFamily, tier::KernelTier};
 pub struct SelectionPolicy {
   /// Selected kernel family for this policy.
   family: KernelFamily,
+
+  /// Subfamily with algorithm-specific variation details.
+  ///
+  /// This captures whether the kernel uses hardware CRC, wide operations,
+  /// multi-stream processing, etc. See [`KernelSubfamily`] for details.
+  subfamily: KernelSubfamily,
 
   /// Cached capabilities (for diagnostics / introspection).
   caps: Caps,
@@ -115,6 +124,7 @@ impl SelectionPolicy {
   pub const fn portable() -> Self {
     Self {
       family: KernelFamily::Portable,
+      subfamily: KernelSubfamily::portable(),
       caps: Caps::NONE,
       small_threshold: usize::MAX, // Never transition to SIMD
       fold_threshold: usize::MAX,
@@ -132,6 +142,7 @@ impl SelectionPolicy {
   pub const fn reference() -> Self {
     Self {
       family: KernelFamily::Reference,
+      subfamily: KernelSubfamily::reference(),
       caps: Caps::NONE,
       small_threshold: usize::MAX,
       fold_threshold: usize::MAX,
@@ -150,6 +161,9 @@ impl SelectionPolicy {
     // Select the best available family
     let family = Self::select_family(caps, tune);
 
+    // Compute subfamily based on family and tier
+    let subfamily = Self::compute_subfamily(family);
+
     // Compute thresholds based on tune preset
     let (small_threshold, fold_threshold, wide_threshold) = Self::compute_thresholds(family, tune);
 
@@ -159,6 +173,7 @@ impl SelectionPolicy {
 
     Self {
       family,
+      subfamily,
       caps,
       small_threshold,
       fold_threshold,
@@ -180,18 +195,55 @@ impl SelectionPolicy {
       Self::select_family(caps, tune)
     };
 
+    let subfamily = Self::compute_subfamily(effective_family);
     let (small_threshold, fold_threshold, wide_threshold) = Self::compute_thresholds(effective_family, tune);
     let max_streams = Self::compute_max_streams(effective_family, tune);
     let min_bytes_per_lane = effective_family.min_bytes_per_lane();
 
     Self {
       family: effective_family,
+      subfamily,
       caps,
       small_threshold,
       fold_threshold,
       wide_threshold,
       max_streams,
       min_bytes_per_lane,
+    }
+  }
+
+  /// Construct a policy with a specific subfamily (for algorithm-specific policies).
+  ///
+  /// This allows algorithm-specific code to set exact subfamily configuration.
+  #[must_use]
+  pub fn with_subfamily(caps: Caps, tune: &Tune, subfamily: KernelSubfamily) -> Self {
+    let family = subfamily.family;
+    let (small_threshold, fold_threshold, wide_threshold) = Self::compute_thresholds(family, tune);
+    let max_streams = Self::compute_max_streams(family, tune);
+    let min_bytes_per_lane = family.min_bytes_per_lane();
+
+    Self {
+      family,
+      subfamily,
+      caps,
+      small_threshold,
+      fold_threshold,
+      wide_threshold,
+      max_streams,
+      min_bytes_per_lane,
+    }
+  }
+
+  /// Compute the default subfamily for a given family.
+  ///
+  /// Algorithm-specific policies may override this with more specific subfamilies.
+  fn compute_subfamily(family: KernelFamily) -> KernelSubfamily {
+    match family.tier() {
+      KernelTier::Reference => KernelSubfamily::reference(),
+      KernelTier::Portable => KernelSubfamily::portable(),
+      KernelTier::HwCrc => KernelSubfamily::hwcrc(family),
+      KernelTier::Folding => KernelSubfamily::folding(family),
+      KernelTier::Wide => KernelSubfamily::wide(family, false), // Algorithm can override uses_hwcrc
     }
   }
 
@@ -275,6 +327,16 @@ impl SelectionPolicy {
     self.family
   }
 
+  /// Get the selected kernel subfamily.
+  ///
+  /// The subfamily provides algorithm-specific details like whether
+  /// hardware CRC is used, wide operations are enabled, etc.
+  #[inline]
+  #[must_use]
+  pub const fn subfamily(&self) -> KernelSubfamily {
+    self.subfamily
+  }
+
   /// Get the tier of the selected family.
   #[inline]
   #[must_use]
@@ -287,6 +349,27 @@ impl SelectionPolicy {
   #[must_use]
   pub const fn caps(&self) -> Caps {
     self.caps
+  }
+
+  /// Check if this policy uses hardware CRC instructions.
+  #[inline]
+  #[must_use]
+  pub const fn uses_hwcrc(&self) -> bool {
+    self.subfamily.uses_hwcrc
+  }
+
+  /// Check if this policy uses wide (256/512-bit) operations.
+  #[inline]
+  #[must_use]
+  pub const fn uses_wide(&self) -> bool {
+    self.subfamily.uses_wide
+  }
+
+  /// Check if this policy supports multi-stream processing.
+  #[inline]
+  #[must_use]
+  pub const fn supports_multi_stream(&self) -> bool {
+    self.subfamily.multi_stream
   }
 
   /// Human-readable policy description.
@@ -552,6 +635,7 @@ mod tests {
     // Test per-lane stream selection with min_bytes_per_lane = 256
     let policy = SelectionPolicy {
       family: KernelFamily::X86Pclmul,
+      subfamily: KernelSubfamily::folding(KernelFamily::X86Pclmul),
       caps: Caps::NONE,
       small_threshold: 64,
       fold_threshold: 64,
@@ -583,6 +667,7 @@ mod tests {
   fn streams_capped_by_max() {
     let policy = SelectionPolicy {
       family: KernelFamily::ArmPmull,
+      subfamily: KernelSubfamily::folding(KernelFamily::ArmPmull),
       caps: Caps::NONE,
       small_threshold: 64,
       fold_threshold: 64,
@@ -600,6 +685,7 @@ mod tests {
   fn streams_for_len_with_custom_min() {
     let policy = SelectionPolicy {
       family: KernelFamily::X86Vpclmul,
+      subfamily: KernelSubfamily::wide(KernelFamily::X86Vpclmul, false),
       caps: Caps::NONE,
       small_threshold: 64,
       fold_threshold: 64,
@@ -621,6 +707,7 @@ mod tests {
   fn streams_below_min_returns_one() {
     let policy = SelectionPolicy {
       family: KernelFamily::X86Pclmul,
+      subfamily: KernelSubfamily::folding(KernelFamily::X86Pclmul),
       caps: Caps::NONE,
       small_threshold: 64,
       fold_threshold: 64,

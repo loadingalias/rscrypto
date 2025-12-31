@@ -55,8 +55,8 @@ pub mod policy;
 pub mod tier;
 
 // Re-export core dispatch types for convenience.
-pub use cache::PolicyCache;
-pub use family::KernelFamily;
+pub use cache::{OnceCache, PolicyCache};
+pub use family::{KernelFamily, KernelSubfamily};
 // Re-export platform types for convenience.
 pub use platform;
 pub use policy::{ForceMode, SelectionPolicy};
