@@ -115,20 +115,29 @@ fn crc32_ieee_kernel_specs(caps: &Caps) -> Vec<KernelSpec> {
         3,
       ));
     }
-    if caps.has(aarch64::PMULL_READY) {
+    if caps.has(aarch64::PMULL_READY) && caps.has(aarch64::CRC_READY) {
       specs.push(KernelSpec::with_streams(
-        "aarch64/pmull",
+        "aarch64/pmull-v12e-v1",
         KernelTier::Folding,
         aarch64::PMULL_READY,
         1,
         3,
       ));
     }
-    if caps.has(aarch64::PMULL_EOR3_READY) {
+    if caps.has(aarch64::PMULL_EOR3_READY) && caps.has(aarch64::CRC_READY) {
       specs.push(KernelSpec::with_streams(
-        "aarch64/pmull-eor3",
+        "aarch64/pmull-eor3-v9s3x2e-s3",
         KernelTier::Wide,
         aarch64::PMULL_EOR3_READY,
+        1,
+        3,
+      ));
+    }
+    if caps.has(aarch64::SVE2_PMULL) && caps.has(aarch64::PMULL_READY) && caps.has(aarch64::CRC_READY) {
+      specs.push(KernelSpec::with_streams(
+        "aarch64/sve2-pmull",
+        KernelTier::Wide,
+        aarch64::SVE2_PMULL,
         1,
         3,
       ));
@@ -223,16 +232,25 @@ fn crc32c_kernel_specs(caps: &Caps) -> Vec<KernelSpec> {
     // Fusion kernels (hwcrc + pclmul)
     if caps.has(x86::CRC32C_READY) && caps.has(x86::PCLMUL_READY) {
       specs.push(KernelSpec::with_streams(
-        "x86_64/fusion-sse",
+        "x86_64/fusion-sse-v4s3x3",
         KernelTier::Folding,
         x86::PCLMUL_READY,
         1,
         8,
       ));
     }
+    if caps.has(x86::CRC32C_READY) && caps.has(x86::AVX512_READY) && caps.has(x86::PCLMUL_READY) {
+      specs.push(KernelSpec::with_streams(
+        "x86_64/fusion-avx512-v4s3x3",
+        KernelTier::Wide,
+        x86::AVX512_READY,
+        1,
+        8,
+      ));
+    }
     if caps.has(x86::CRC32C_READY) && caps.has(x86::VPCLMUL_READY) {
       specs.push(KernelSpec::with_streams(
-        "x86_64/fusion-vpclmul",
+        "x86_64/fusion-vpclmul-v3x2",
         KernelTier::Wide,
         x86::VPCLMUL_READY,
         1,
@@ -255,7 +273,7 @@ fn crc32c_kernel_specs(caps: &Caps) -> Vec<KernelSpec> {
     }
     if caps.has(aarch64::PMULL_READY) && caps.has(aarch64::CRC_READY) {
       specs.push(KernelSpec::with_streams(
-        "aarch64/pmull",
+        "aarch64/pmull-v12e-v1",
         KernelTier::Folding,
         aarch64::PMULL_READY,
         1,
@@ -264,9 +282,18 @@ fn crc32c_kernel_specs(caps: &Caps) -> Vec<KernelSpec> {
     }
     if caps.has(aarch64::PMULL_EOR3_READY) && caps.has(aarch64::CRC_READY) {
       specs.push(KernelSpec::with_streams(
-        "aarch64/pmull-eor3",
+        "aarch64/pmull-eor3-v9s3x2e-s3",
         KernelTier::Wide,
         aarch64::PMULL_EOR3_READY,
+        1,
+        3,
+      ));
+    }
+    if caps.has(aarch64::SVE2_PMULL) && caps.has(aarch64::PMULL_READY) && caps.has(aarch64::CRC_READY) {
+      specs.push(KernelSpec::with_streams(
+        "aarch64/sve2-pmull",
+        KernelTier::Wide,
+        aarch64::SVE2_PMULL,
         1,
         3,
       ));
@@ -387,6 +414,9 @@ impl Crc32IeeeTunable {
         // Fallback to base name
         self.cached_kernel = Some(kernel);
         self.effective_kernel_name = kernel.name;
+      } else {
+        self.cached_kernel = None;
+        self.effective_kernel_name = "unresolved";
       }
     } else {
       self.cached_kernel = None;
@@ -413,7 +443,7 @@ impl crate::Tunable for Crc32IeeeTunable {
   fn force_kernel(&mut self, name: &str) -> Result<(), TuneError> {
     let caps = platform::caps();
     let available = self.available_kernels(&caps);
-    let base_name = name.split('-').next().unwrap_or(name);
+    let base_name = strip_stream_suffix(name);
 
     let valid = available.iter().any(|k| {
       k.name == name || k.name == base_name || name.starts_with(k.name) || name == "reference" || name == "portable"
@@ -425,6 +455,13 @@ impl crate::Tunable for Crc32IeeeTunable {
 
     self.forced_kernel = Some(name.to_string());
     self.resolve_kernel();
+    if self.cached_kernel.is_none() {
+      self.forced_kernel = None;
+      self.forced_streams = None;
+      return Err(TuneError::KernelNotAvailable(
+        "kernel name did not resolve to a bench kernel",
+      ));
+    }
     Ok(())
   }
 
@@ -545,6 +582,9 @@ impl Crc32cTunable {
         // Fallback to base name
         self.cached_kernel = Some(kernel);
         self.effective_kernel_name = kernel.name;
+      } else {
+        self.cached_kernel = None;
+        self.effective_kernel_name = "unresolved";
       }
     } else {
       self.cached_kernel = None;
@@ -571,7 +611,7 @@ impl crate::Tunable for Crc32cTunable {
   fn force_kernel(&mut self, name: &str) -> Result<(), TuneError> {
     let caps = platform::caps();
     let available = self.available_kernels(&caps);
-    let base_name = name.split('-').next().unwrap_or(name);
+    let base_name = strip_stream_suffix(name);
 
     let valid = available.iter().any(|k| {
       k.name == name || k.name == base_name || name.starts_with(k.name) || name == "reference" || name == "portable"
@@ -583,6 +623,13 @@ impl crate::Tunable for Crc32cTunable {
 
     self.forced_kernel = Some(name.to_string());
     self.resolve_kernel();
+    if self.cached_kernel.is_none() {
+      self.forced_kernel = None;
+      self.forced_streams = None;
+      return Err(TuneError::KernelNotAvailable(
+        "kernel name did not resolve to a bench kernel",
+      ));
+    }
     Ok(())
   }
 
@@ -660,86 +707,77 @@ impl crate::Tunable for Crc32cTunable {
 
 /// Get the kernel name with stream suffix (e.g., "x86_64/pclmul-4way").
 fn kernel_name_with_streams(base: &str, streams: u8) -> &'static str {
-  // Map kernel base names to their stream-suffixed versions
-  match (base, streams) {
-    // x86_64 PCLMUL
-    ("x86_64/pclmul", 1) => "x86_64/pclmul",
-    ("x86_64/pclmul", 2) => "x86_64/pclmul-2way",
-    ("x86_64/pclmul", 4) => "x86_64/pclmul-4way",
-    ("x86_64/pclmul", 7) => "x86_64/pclmul-7way",
-    ("x86_64/pclmul", 8) => "x86_64/pclmul-8way",
+  if streams <= 1 {
+    return match base {
+      "portable" | "portable/slice16" => "portable/slice16",
+      "reference" | "reference/bitwise" => "reference",
+      _ => Box::leak(base.to_string().into_boxed_str()),
+    };
+  }
 
-    // x86_64 VPCLMUL
-    ("x86_64/vpclmul", 1) => "x86_64/vpclmul",
-    ("x86_64/vpclmul", 2) => "x86_64/vpclmul-2way",
-    ("x86_64/vpclmul", 4) => "x86_64/vpclmul-4way",
-    ("x86_64/vpclmul", 7) => "x86_64/vpclmul-7way",
-    ("x86_64/vpclmul", 8) => "x86_64/vpclmul-8way",
+  if base == "portable" || base == "portable/slice16" {
+    return "portable/slice16";
+  }
+  if base == "reference" || base == "reference/bitwise" {
+    return "reference";
+  }
 
-    // x86_64 hardware CRC
-    ("x86_64/hwcrc", 1) => "x86_64/hwcrc",
-    ("x86_64/hwcrc", 2) => "x86_64/hwcrc-2way",
-    ("x86_64/hwcrc", 3) => "x86_64/hwcrc-3way",
-    ("x86_64/hwcrc", 4) => "x86_64/hwcrc-4way",
-    ("x86_64/hwcrc", 7) => "x86_64/hwcrc-7way",
-    ("x86_64/hwcrc", 8) => "x86_64/hwcrc-8way",
+  // If the caller provided a fully qualified stream-suffixed name already,
+  // keep it.
+  if base.contains("-way") {
+    return Box::leak(base.to_string().into_boxed_str());
+  }
 
-    // x86_64 fusion kernels
-    ("x86_64/fusion-sse", 1) => "x86_64/fusion-sse",
-    ("x86_64/fusion-sse", 2) => "x86_64/fusion-sse-2way",
-    ("x86_64/fusion-sse", 4) => "x86_64/fusion-sse-4way",
-    ("x86_64/fusion-vpclmul", 1) => "x86_64/fusion-vpclmul",
-    ("x86_64/fusion-vpclmul", 2) => "x86_64/fusion-vpclmul-2way",
-    ("x86_64/fusion-vpclmul", 4) => "x86_64/fusion-vpclmul-4way",
+  Box::leak(format!("{base}-{streams}way").into_boxed_str())
+}
 
-    // aarch64 hardware CRC
-    ("aarch64/hwcrc", 1) => "aarch64/hwcrc",
-    ("aarch64/hwcrc", 2) => "aarch64/hwcrc-2way",
-    ("aarch64/hwcrc", 3) => "aarch64/hwcrc-3way",
+#[inline]
+#[must_use]
+fn strip_stream_suffix(name: &str) -> &str {
+  name
+    .strip_suffix("-2way")
+    .or_else(|| name.strip_suffix("-3way"))
+    .or_else(|| name.strip_suffix("-4way"))
+    .or_else(|| name.strip_suffix("-7way"))
+    .or_else(|| name.strip_suffix("-8way"))
+    .unwrap_or(name)
+}
 
-    // aarch64 PMULL
-    ("aarch64/pmull", 1) => "aarch64/pmull",
-    ("aarch64/pmull", 2) => "aarch64/pmull-2way",
-    ("aarch64/pmull", 3) => "aarch64/pmull-3way",
+#[cfg(test)]
+mod tests {
+  extern crate std;
 
-    // aarch64 PMULL+EOR3
-    ("aarch64/pmull-eor3", 1) => "aarch64/pmull-eor3",
-    ("aarch64/pmull-eor3", 2) => "aarch64/pmull-eor3-2way",
-    ("aarch64/pmull-eor3", 3) => "aarch64/pmull-eor3-3way",
+  use super::*;
 
-    // powerpc64 VPMSUM
-    ("powerpc64/vpmsum", 1) => "powerpc64/vpmsum",
-    ("powerpc64/vpmsum", 2) => "powerpc64/vpmsum-2way",
-    ("powerpc64/vpmsum", 4) => "powerpc64/vpmsum-4way",
-    ("powerpc64/vpmsum", 8) => "powerpc64/vpmsum-8way",
+  #[test]
+  fn strip_stream_suffix_preserves_versioned_kernel_names() {
+    assert_eq!(
+      strip_stream_suffix("aarch64/pmull-v12e-v1-2way"),
+      "aarch64/pmull-v12e-v1"
+    );
+    assert_eq!(
+      strip_stream_suffix("x86_64/fusion-sse-v4s3x3-4way"),
+      "x86_64/fusion-sse-v4s3x3"
+    );
+    assert_eq!(
+      strip_stream_suffix("x86_64/fusion-vpclmul-v3x2-8way"),
+      "x86_64/fusion-vpclmul-v3x2"
+    );
+    assert_eq!(strip_stream_suffix("aarch64/pmull-v12e-v1"), "aarch64/pmull-v12e-v1");
+  }
 
-    // s390x VGFM
-    ("s390x/vgfm", 1) => "s390x/vgfm",
-    ("s390x/vgfm", 2) => "s390x/vgfm-2way",
-    ("s390x/vgfm", 4) => "s390x/vgfm-4way",
-
-    // riscv64 ZBC
-    ("riscv64/zbc", 1) => "riscv64/zbc",
-    ("riscv64/zbc", 2) => "riscv64/zbc-2way",
-    ("riscv64/zbc", 4) => "riscv64/zbc-4way",
-
-    // riscv64 ZVBC
-    ("riscv64/zvbc", 1) => "riscv64/zvbc",
-    ("riscv64/zvbc", 2) => "riscv64/zvbc-2way",
-    ("riscv64/zvbc", 4) => "riscv64/zvbc-4way",
-
-    // Reference and portable don't have stream variants
-    ("reference", _) => "reference",
-    ("portable", _) | ("portable/slice16", _) => "portable/slice16",
-
-    // Fallback: return base unchanged (this might be a fully-qualified name already)
-    _ => {
-      if base.contains("-way") || base == "reference" || base.contains("slice") {
-        // Leak a copy since we need 'static
-        Box::leak(base.to_string().into_boxed_str())
-      } else {
-        "unknown"
-      }
-    }
+  #[test]
+  fn kernel_name_with_streams_appends_expected_suffix() {
+    assert_eq!(kernel_name_with_streams("portable", 8), "portable/slice16");
+    assert_eq!(kernel_name_with_streams("reference", 8), "reference");
+    assert_eq!(kernel_name_with_streams("x86_64/pclmul", 4), "x86_64/pclmul-4way");
+    assert_eq!(
+      kernel_name_with_streams("x86_64/fusion-sse-v4s3x3", 4),
+      "x86_64/fusion-sse-v4s3x3-4way"
+    );
+    assert_eq!(
+      kernel_name_with_streams("aarch64/pmull-eor3-v9s3x2e-s3", 3),
+      "aarch64/pmull-eor3-v9s3x2e-s3-3way"
+    );
   }
 }

@@ -369,14 +369,17 @@ pub fn available_crc32_ieee_kernels() -> Vec<&'static str> {
       kernels.push("aarch64/hwcrc-2way");
       kernels.push("aarch64/hwcrc-3way");
     }
-    if caps.has(platform::caps::aarch64::PMULL_READY) {
+    if caps.has(platform::caps::aarch64::PMULL_READY) && caps.has(platform::caps::aarch64::CRC_READY) {
       kernels.extend_from_slice(aarch64::CRC32_PMULL_NAMES);
       kernels.push(aarch64::PMULL_SMALL);
     }
-    if caps.has(platform::caps::aarch64::PMULL_EOR3_READY) {
+    if caps.has(platform::caps::aarch64::PMULL_EOR3_READY) && caps.has(platform::caps::aarch64::CRC_READY) {
       kernels.extend_from_slice(aarch64::CRC32_PMULL_EOR3_NAMES);
     }
-    if caps.has(platform::caps::aarch64::SVE2_PMULL) && caps.has(platform::caps::aarch64::PMULL_READY) {
+    if caps.has(platform::caps::aarch64::SVE2_PMULL)
+      && caps.has(platform::caps::aarch64::PMULL_READY)
+      && caps.has(platform::caps::aarch64::CRC_READY)
+    {
       kernels.extend_from_slice(aarch64::CRC32_SVE2_PMULL_NAMES);
       kernels.push(aarch64::SVE2_PMULL_SMALL);
     }
@@ -456,14 +459,17 @@ pub fn available_crc32c_kernels() -> Vec<&'static str> {
       kernels.push("aarch64/hwcrc-2way");
       kernels.push("aarch64/hwcrc-3way");
     }
-    if caps.has(platform::caps::aarch64::PMULL_READY) {
+    if caps.has(platform::caps::aarch64::PMULL_READY) && caps.has(platform::caps::aarch64::CRC_READY) {
       kernels.extend_from_slice(aarch64::CRC32C_PMULL_NAMES);
       kernels.push(aarch64::PMULL_SMALL);
     }
-    if caps.has(platform::caps::aarch64::PMULL_EOR3_READY) {
+    if caps.has(platform::caps::aarch64::PMULL_EOR3_READY) && caps.has(platform::caps::aarch64::CRC_READY) {
       kernels.extend_from_slice(aarch64::CRC32C_PMULL_EOR3_NAMES);
     }
-    if caps.has(platform::caps::aarch64::SVE2_PMULL) && caps.has(platform::caps::aarch64::PMULL_READY) {
+    if caps.has(platform::caps::aarch64::SVE2_PMULL)
+      && caps.has(platform::caps::aarch64::PMULL_READY)
+      && caps.has(platform::caps::aarch64::CRC_READY)
+    {
       kernels.extend_from_slice(aarch64::CRC32C_SVE2_PMULL_NAMES);
       kernels.push(aarch64::SVE2_PMULL_SMALL);
     }
@@ -753,7 +759,7 @@ fn get_aarch64_crc32_ieee_kernel(name: &str) -> Option<Crc32Kernel> {
   }
 
   // PMULL kernels
-  if caps.has(platform::caps::aarch64::PMULL_READY) {
+  if caps.has(platform::caps::aarch64::PMULL_READY) && caps.has(platform::caps::aarch64::CRC_READY) {
     if name == aarch64::PMULL_SMALL {
       return Some(Crc32Kernel {
         name: aarch64::PMULL_SMALL,
@@ -771,7 +777,7 @@ fn get_aarch64_crc32_ieee_kernel(name: &str) -> Option<Crc32Kernel> {
   }
 
   // PMULL+EOR3 kernels
-  if caps.has(platform::caps::aarch64::PMULL_EOR3_READY) {
+  if caps.has(platform::caps::aarch64::PMULL_EOR3_READY) && caps.has(platform::caps::aarch64::CRC_READY) {
     for (i, &kernel_name) in aarch64::CRC32_PMULL_EOR3_NAMES.iter().enumerate() {
       if name == kernel_name {
         return Some(Crc32Kernel {
@@ -783,7 +789,10 @@ fn get_aarch64_crc32_ieee_kernel(name: &str) -> Option<Crc32Kernel> {
   }
 
   // SVE2 PMULL kernels
-  if caps.has(platform::caps::aarch64::SVE2_PMULL) && caps.has(platform::caps::aarch64::PMULL_READY) {
+  if caps.has(platform::caps::aarch64::SVE2_PMULL)
+    && caps.has(platform::caps::aarch64::PMULL_READY)
+    && caps.has(platform::caps::aarch64::CRC_READY)
+  {
     if name == aarch64::SVE2_PMULL_SMALL {
       return Some(Crc32Kernel {
         name: aarch64::SVE2_PMULL_SMALL,
@@ -821,7 +830,7 @@ fn get_aarch64_crc32c_kernel(name: &str) -> Option<Crc32Kernel> {
   }
 
   // PMULL kernels
-  if caps.has(platform::caps::aarch64::PMULL_READY) {
+  if caps.has(platform::caps::aarch64::PMULL_READY) && caps.has(platform::caps::aarch64::CRC_READY) {
     if name == aarch64::PMULL_SMALL {
       return Some(Crc32Kernel {
         name: aarch64::PMULL_SMALL,
@@ -839,7 +848,7 @@ fn get_aarch64_crc32c_kernel(name: &str) -> Option<Crc32Kernel> {
   }
 
   // PMULL+EOR3 kernels
-  if caps.has(platform::caps::aarch64::PMULL_EOR3_READY) {
+  if caps.has(platform::caps::aarch64::PMULL_EOR3_READY) && caps.has(platform::caps::aarch64::CRC_READY) {
     for (i, &kernel_name) in aarch64::CRC32C_PMULL_EOR3_NAMES.iter().enumerate() {
       if name == kernel_name {
         return Some(Crc32Kernel {
@@ -851,7 +860,10 @@ fn get_aarch64_crc32c_kernel(name: &str) -> Option<Crc32Kernel> {
   }
 
   // SVE2 PMULL kernels
-  if caps.has(platform::caps::aarch64::SVE2_PMULL) && caps.has(platform::caps::aarch64::PMULL_READY) {
+  if caps.has(platform::caps::aarch64::SVE2_PMULL)
+    && caps.has(platform::caps::aarch64::PMULL_READY)
+    && caps.has(platform::caps::aarch64::CRC_READY)
+  {
     if name == aarch64::SVE2_PMULL_SMALL {
       return Some(Crc32Kernel {
         name: aarch64::SVE2_PMULL_SMALL,

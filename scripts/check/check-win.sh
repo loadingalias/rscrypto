@@ -22,6 +22,12 @@ maybe_disable_sccache
 # Parse args and set CRATE_FLAGS, SCOPE_DESC
 get_crate_flags "$@"
 
+# Keep cargo-xwin's SDK cache inside the workspace `target/` dir so this script
+# works in sandboxed environments that disallow writes to user cache locations.
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+XWIN_CACHE_DIR_DEFAULT="$REPO_ROOT/target/cross-check/xwin-cache"
+mkdir -p "$XWIN_CACHE_DIR_DEFAULT"
+
 TUNE_IN_SCOPE=false
 if [[ "$CRATE_FLAGS" == "--workspace" || "$CRATE_FLAGS" == *"-p tune"* || "$CRATE_FLAGS" == *"-p checksum"* ]]; then
   TUNE_IN_SCOPE=true
@@ -34,7 +40,8 @@ echo "Windows targets ${DIM}($SCOPE_DESC)${RESET}"
 
 # Initialize xwin cache once (avoids race conditions)
 step "Initializing SDK cache"
-if ! CARGO_TARGET_DIR="target/cross-check/xwin-init" \
+if ! XWIN_CACHE_DIR="$XWIN_CACHE_DIR_DEFAULT" \
+     CARGO_TARGET_DIR="target/cross-check/xwin-init" \
      cargo xwin check -p traits --lib --target x86_64-pc-windows-msvc \
      >"$LOG_DIR/xwin-init.log" 2>&1; then
   fail
@@ -54,7 +61,8 @@ for target in "${WIN_TARGETS[@]}"; do
 
   # Check
   # shellcheck disable=SC2086
-  if ! CARGO_TARGET_DIR="$target_dir" \
+  if ! XWIN_CACHE_DIR="$XWIN_CACHE_DIR_DEFAULT" \
+       CARGO_TARGET_DIR="$target_dir" \
        cargo xwin check $CRATE_FLAGS --lib --all-features --target "$target" \
        >"$LOG_DIR/$target.log" 2>&1; then
     fail
@@ -65,7 +73,8 @@ for target in "${WIN_TARGETS[@]}"; do
 
   step "$short_name clippy"
   # shellcheck disable=SC2086
-  if ! CARGO_TARGET_DIR="$target_dir" \
+  if ! XWIN_CACHE_DIR="$XWIN_CACHE_DIR_DEFAULT" \
+       CARGO_TARGET_DIR="$target_dir" \
        cargo xwin clippy $CRATE_FLAGS --lib --all-features --target "$target" -- -D warnings \
        >>"$LOG_DIR/$target.log" 2>&1; then
     fail
@@ -76,7 +85,8 @@ for target in "${WIN_TARGETS[@]}"; do
 
   if [[ "$TUNE_IN_SCOPE" == true && "$target" == "x86_64-pc-windows-msvc" ]]; then
     step "$short_name rscrypto-tune"
-    if ! CARGO_TARGET_DIR="$target_dir" \
+    if ! XWIN_CACHE_DIR="$XWIN_CACHE_DIR_DEFAULT" \
+         CARGO_TARGET_DIR="$target_dir" \
          cargo xwin clippy -p tune --bin rscrypto-tune --all-features --target "$target" -- -D warnings \
          >>"$LOG_DIR/$target.log" 2>&1; then
       fail

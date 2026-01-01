@@ -46,7 +46,7 @@ ok
 # Clippy
 step "Linting"
 # shellcheck disable=SC2086
-if ! cargo clippy $CRATE_FLAGS --all-targets --all-features --fix --allow-dirty -- -D warnings >"$LOG_DIR/clippy.log" 2>&1; then
+if ! cargo clippy $CRATE_FLAGS --all-targets --all-features -- -D warnings >"$LOG_DIR/clippy.log" 2>&1; then
   fail
   show_error "$LOG_DIR/clippy.log"
   exit 1
