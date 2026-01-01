@@ -277,6 +277,8 @@ impl Crc64Policy {
 ///
 /// This eliminates runtime kernel array lookups by caching all needed
 /// function pointers at policy initialization time.
+// Reserved for future pre-resolved dispatch API.
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug)]
 pub struct Crc64Kernels {
   /// Reference (bitwise) kernel - always available.
@@ -296,6 +298,8 @@ pub struct Crc64Kernels {
 
 impl Crc64Kernels {
   /// Create a portable-only kernel table.
+  // Reserved for future pre-resolved dispatch API.
+  #[allow(dead_code)]
   #[must_use]
   pub const fn portable_only(reference: Crc64Fn, portable: Crc64Fn) -> Self {
     Self {
@@ -317,6 +321,8 @@ impl Crc64Kernels {
 ///
 /// This is the new hot path - policy and kernels are pre-computed,
 /// so dispatch is just threshold checks and function pointer calls.
+// Reserved for future pre-resolved dispatch API.
+#[allow(dead_code)]
 #[inline]
 pub fn policy_dispatch(policy: &Crc64Policy, kernels: &Crc64Kernels, crc: u64, data: &[u8]) -> u64 {
   let len = data.len();

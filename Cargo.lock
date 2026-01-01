@@ -738,6 +738,15 @@ name = "traits"
 version = "0.1.0"
 
 [[package]]
+name = "tune"
+version = "0.1.0"
+dependencies = [
+ "backend",
+ "checksum",
+ "platform",
+]
+
+[[package]]
 name = "typenum"
 version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

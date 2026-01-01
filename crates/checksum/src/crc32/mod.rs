@@ -40,7 +40,7 @@
 #[cfg(any(target_arch = "powerpc64", target_arch = "s390x", target_arch = "riscv64"))]
 mod clmul;
 pub(crate) mod config;
-mod kernels;
+pub(crate) mod kernels;
 mod policy;
 pub(crate) mod portable;
 mod tuned_defaults;

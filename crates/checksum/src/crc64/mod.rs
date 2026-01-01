@@ -14,8 +14,10 @@
 //! - wasm32/wasm64: portable only (no CLMUL)
 
 pub(crate) mod config;
+// kernels is pub(crate) but needs internal access from bench module
 pub(crate) mod kernels;
 pub(crate) mod policy;
+// portable is pub(crate) but needs internal access from bench module
 pub(crate) mod portable;
 mod tuned_defaults;
 

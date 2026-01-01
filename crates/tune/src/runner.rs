@@ -1,0 +1,312 @@
+//! Benchmark runner with warmup, measurement, and statistical validation.
+
+use core::time::Duration;
+
+use crate::{BenchResult, Tunable, TuneError, stats::DEFAULT_CV_THRESHOLD};
+
+/// Default warmup duration.
+const DEFAULT_WARMUP_MS: u64 = 150;
+
+/// Default measurement duration.
+const DEFAULT_MEASURE_MS: u64 = 250;
+
+/// Quick mode warmup duration.
+const QUICK_WARMUP_MS: u64 = 75;
+
+/// Quick mode measurement duration.
+const QUICK_MEASURE_MS: u64 = 125;
+
+/// Benchmark runner configuration.
+#[derive(Clone, Debug)]
+pub struct BenchRunner {
+  /// Warmup duration before measurement.
+  warmup: Duration,
+
+  /// Measurement duration.
+  measure: Duration,
+
+  /// Whether to warn about high variance.
+  warn_high_variance: bool,
+
+  /// Coefficient of variation threshold for warnings.
+  cv_threshold: f64,
+}
+
+impl Default for BenchRunner {
+  fn default() -> Self {
+    Self {
+      warmup: Duration::from_millis(DEFAULT_WARMUP_MS),
+      measure: Duration::from_millis(DEFAULT_MEASURE_MS),
+      warn_high_variance: true,
+      cv_threshold: DEFAULT_CV_THRESHOLD,
+    }
+  }
+}
+
+impl BenchRunner {
+  /// Create a new benchmark runner with default settings.
+  #[must_use]
+  pub fn new() -> Self {
+    Self::default()
+  }
+
+  /// Create a runner with quick mode settings (faster, noisier).
+  #[must_use]
+  pub fn quick() -> Self {
+    Self {
+      warmup: Duration::from_millis(QUICK_WARMUP_MS),
+      measure: Duration::from_millis(QUICK_MEASURE_MS),
+      ..Default::default()
+    }
+  }
+
+  /// Set warmup duration.
+  #[must_use]
+  pub fn with_warmup(mut self, warmup: Duration) -> Self {
+    self.warmup = warmup;
+    self
+  }
+
+  /// Set measurement duration.
+  #[must_use]
+  pub fn with_measure(mut self, measure: Duration) -> Self {
+    self.measure = measure;
+    self
+  }
+
+  /// Set warmup duration in milliseconds.
+  #[must_use]
+  pub fn with_warmup_ms(mut self, ms: u64) -> Self {
+    self.warmup = Duration::from_millis(ms);
+    self
+  }
+
+  /// Set measurement duration in milliseconds.
+  #[must_use]
+  pub fn with_measure_ms(mut self, ms: u64) -> Self {
+    self.measure = Duration::from_millis(ms);
+    self
+  }
+
+  /// Disable high variance warnings.
+  #[must_use]
+  pub fn without_variance_warnings(mut self) -> Self {
+    self.warn_high_variance = false;
+    self
+  }
+
+  /// Set the coefficient of variation threshold for warnings.
+  #[must_use]
+  pub fn with_cv_threshold(mut self, threshold: f64) -> Self {
+    self.cv_threshold = threshold;
+    self
+  }
+
+  /// Returns `true` if high variance warnings are enabled.
+  #[inline]
+  #[must_use]
+  pub fn warns_high_variance(&self) -> bool {
+    self.warn_high_variance
+  }
+
+  /// Returns the CV threshold for warnings.
+  #[inline]
+  #[must_use]
+  pub fn cv_threshold(&self) -> f64 {
+    self.cv_threshold
+  }
+
+  /// Check if a benchmark result has high variance.
+  ///
+  /// Returns `Some(cv)` if the result has high variance, `None` otherwise.
+  #[must_use]
+  pub fn check_variance(&self, result: &BenchResult) -> Option<f64> {
+    if !self.warn_high_variance {
+      return None;
+    }
+    if let Some(cv) = result.cv
+      && cv > self.cv_threshold
+    {
+      return Some(cv);
+    }
+    None
+  }
+
+  /// Emit a warning if the result has high variance.
+  ///
+  /// Returns `true` if a warning was emitted.
+  pub fn warn_if_high_variance(&self, result: &BenchResult, kernel: &str, size: usize) -> bool {
+    if let Some(cv) = self.check_variance(result) {
+      eprintln!(
+        "warning: high variance in benchmark for {} @ {} bytes: CV = {:.1}% (threshold: {:.1}%)",
+        kernel,
+        size,
+        cv * 100.0,
+        self.cv_threshold * 100.0
+      );
+      true
+    } else {
+      false
+    }
+  }
+
+  /// Run a complete benchmark suite for an algorithm.
+  ///
+  /// Benchmarks the algorithm at various buffer sizes and returns
+  /// all measurements.
+  pub fn run_suite(&self, algorithm: &dyn Tunable, sizes: &[usize]) -> Result<Vec<BenchResult>, TuneError> {
+    let max_size = sizes.iter().copied().max().unwrap_or(0);
+    if max_size == 0 {
+      return Err(TuneError::BenchmarkFailed("no sizes specified"));
+    }
+
+    let mut buffer = vec![0u8; max_size];
+    fill_data(&mut buffer);
+
+    let mut results = Vec::with_capacity(sizes.len());
+    for &size in sizes {
+      if size == 0 || size > buffer.len() {
+        continue;
+      }
+
+      let data = &buffer[..size];
+      let result = self.measure_single(algorithm, data)?;
+      results.push(result);
+    }
+
+    Ok(results)
+  }
+
+  /// Measure throughput for a single buffer size.
+  ///
+  /// Delegates timing to the algorithm's `benchmark()` method, which handles
+  /// warmup and measurement internally. This avoids nested timing loops.
+  ///
+  /// If variance warnings are enabled and the result has high CV, a warning
+  /// is emitted to stderr.
+  pub fn measure_single(&self, algorithm: &dyn Tunable, data: &[u8]) -> Result<BenchResult, TuneError> {
+    // The algorithm's benchmark() method handles warmup and measurement internally.
+    let result = algorithm.benchmark(data, 0);
+
+    // Emit warning if high variance
+    self.warn_if_high_variance(&result, result.kernel, data.len());
+
+    Ok(result)
+  }
+
+  /// Run benchmarks for multiple kernel/stream configurations.
+  pub fn run_matrix<F>(
+    &self,
+    algorithm: &mut dyn Tunable,
+    configs: &[(Option<&str>, Option<u8>)],
+    sizes: &[usize],
+    mut callback: F,
+  ) -> Result<Vec<BenchResult>, TuneError>
+  where
+    F: FnMut(&str, u8, &BenchResult),
+  {
+    let max_size = sizes.iter().copied().max().unwrap_or(0);
+    if max_size == 0 {
+      return Err(TuneError::BenchmarkFailed("no sizes specified"));
+    }
+
+    let mut buffer = vec![0u8; max_size];
+    fill_data(&mut buffer);
+
+    let mut all_results = Vec::new();
+
+    for &(kernel, streams) in configs {
+      // Apply configuration
+      algorithm.reset();
+      if let Some(k) = kernel {
+        algorithm.force_kernel(k)?;
+      }
+      if let Some(s) = streams {
+        algorithm.force_streams(s)?;
+      }
+
+      let effective_streams = streams.unwrap_or(1);
+
+      // Benchmark each size
+      for &size in sizes {
+        if size == 0 || size > buffer.len() {
+          continue;
+        }
+
+        let data = &buffer[..size];
+        let result = self.measure_single(algorithm, data)?;
+
+        callback(algorithm.current_kernel(), effective_streams, &result);
+        all_results.push(result);
+      }
+    }
+
+    // Reset to auto mode
+    algorithm.reset();
+
+    Ok(all_results)
+  }
+}
+
+/// Fill buffer with deterministic pseudo-random data.
+fn fill_data(buf: &mut [u8]) {
+  for (i, b) in buf.iter_mut().enumerate() {
+    let x = (i as u8).wrapping_mul(31).wrapping_add((i >> 8) as u8);
+    *b = x;
+  }
+}
+
+/// Standard buffer sizes for threshold detection.
+pub const THRESHOLD_SIZES: &[usize] = &[
+  64,
+  128,
+  256,
+  512,
+  1024,
+  2048,
+  4096,
+  8192,
+  16 * 1024,
+  32 * 1024,
+  64 * 1024,
+  1024 * 1024,
+];
+
+/// Buffer sizes for stream count selection.
+pub const STREAM_SIZES: &[usize] = &[1024 * 1024];
+
+/// Get stream candidates for the current architecture.
+#[must_use]
+pub fn stream_candidates() -> &'static [u8] {
+  #[cfg(target_arch = "x86_64")]
+  {
+    // x86_64 supports 1 / 2 / 4 / 7 / 8-way folding
+    &[1, 2, 4, 7, 8]
+  }
+  #[cfg(target_arch = "aarch64")]
+  {
+    &[1, 2, 3]
+  }
+  #[cfg(target_arch = "powerpc64")]
+  {
+    &[1, 2, 4, 8]
+  }
+  #[cfg(target_arch = "s390x")]
+  {
+    &[1, 2, 4]
+  }
+  #[cfg(target_arch = "riscv64")]
+  {
+    &[1, 2, 4]
+  }
+  #[cfg(not(any(
+    target_arch = "x86_64",
+    target_arch = "aarch64",
+    target_arch = "powerpc64",
+    target_arch = "s390x",
+    target_arch = "riscv64"
+  )))]
+  {
+    &[1]
+  }
+}

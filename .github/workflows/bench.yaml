@@ -44,20 +44,8 @@ on:
         type: string
         default: ""
 
-      run_tune_all:
-        description: "Run all CRC tuning (CRC-64 + CRC-32)"
-        required: false
-        type: boolean
-        default: false
-
-      run_tune_crc64:
-        description: "Run CRC-64 tuning only"
-        required: false
-        type: boolean
-        default: false
-
-      run_tune_crc32:
-        description: "Run CRC-32 tuning only"
+      run_tune:
+        description: "Run unified tuning (all algorithms: CRC-16/24/32/64)"
         required: false
         type: boolean
         default: false
@@ -576,19 +564,18 @@ jobs:
           compression-level: 6
 
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # CRC Tuning (Manual Only)
+  # Unified Tuning (Manual Only)
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # Runs the lightweight `crc64-tune` and/or `crc32-tune` binaries on selected
-  # platforms. Outputs recommended RSCRYPTO_CRC*_* environment exports.
+  # Runs the unified `rscrypto-tune` binary on selected platforms.
+  # Benchmarks all checksum algorithms (CRC-16/24/32/64) and outputs
+  # recommended RSCRYPTO_CRC*_* environment exports.
   #
-  # Local equivalents:
-  #   just tune-all [--quick]   - Run both CRC-64 and CRC-32 tuning
-  #   just tune-64 [--quick]    - Run CRC-64 tuning only
-  #   just tune-32 [--quick]    - Run CRC-32 tuning only
+  # Local equivalent:
+  #   just tune [--quick]   - Run unified tuning for all algorithms
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   tuning:
-    name: CRC Tuning (${{ matrix.target.name }})
-    if: github.event_name == 'workflow_dispatch' && (github.event.inputs.run_tune_all == 'true' || github.event.inputs.run_tune_crc64 == 'true' || github.event.inputs.run_tune_crc32 == 'true')
+    name: Unified Tuning (${{ matrix.target.name }})
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.run_tune == 'true'
     runs-on: ${{ matrix.target.runner }}
     timeout-minutes: 60
     strategy:
@@ -699,7 +686,7 @@ jobs:
         with:
           tool: just
 
-      - name: Determine Tuning Scope
+      - name: Determine Tuning Args
         if: steps.should-run.outputs.enabled == 'true'
         id: scope
         shell: bash
@@ -709,73 +696,32 @@ jobs:
             QUICK_ARG="--quick"
           fi
           echo "quick_arg=$QUICK_ARG" >> "$GITHUB_OUTPUT"
-
-          RUN_64="false"
-          RUN_32="false"
-          if [[ "${RUN_TUNE_ALL}" == "true" ]]; then
-            RUN_64="true"
-            RUN_32="true"
-          else
-            [[ "${RUN_TUNE_CRC64}" == "true" ]] && RUN_64="true"
-            [[ "${RUN_TUNE_CRC32}" == "true" ]] && RUN_32="true"
-          fi
-          echo "run_64=$RUN_64" >> "$GITHUB_OUTPUT"
-          echo "run_32=$RUN_32" >> "$GITHUB_OUTPUT"
         env:
           TUNE_QUICK: ${{ github.event.inputs.tune_quick }}
-          RUN_TUNE_ALL: ${{ github.event.inputs.run_tune_all }}
-          RUN_TUNE_CRC64: ${{ github.event.inputs.run_tune_crc64 }}
-          RUN_TUNE_CRC32: ${{ github.event.inputs.run_tune_crc32 }}
 
-      - name: Run CRC-64 Tuning
-        if: steps.should-run.outputs.enabled == 'true' && steps.scope.outputs.run_64 == 'true'
+      - name: Run Unified Tuning
+        if: steps.should-run.outputs.enabled == 'true'
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p tune-results
 
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "Running CRC-64 tuning"
+          echo "Running unified tuning (all algorithms)"
           echo "Platform: ${{ matrix.target.name }}"
           echo "RUSTFLAGS: -C target-cpu=native"
           echo "Args: ${{ steps.scope.outputs.quick_arg }}"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
           # shellcheck disable=SC2086
-          RUSTFLAGS='-C target-cpu=native' cargo run -p checksum --release --bin crc64-tune -- ${{ steps.scope.outputs.quick_arg }} 2>&1 | tee tune-results/crc64-tune.txt
+          RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p tune --release --bin rscrypto-tune -- ${{ steps.scope.outputs.quick_arg }} 2>&1 | tee tune-results/rscrypto-tune.txt
 
           {
             echo ""
-            echo "## CRC-64 Tuning (${{ matrix.target.platform-id }})"
+            echo "## Unified Tuning Results (${{ matrix.target.platform-id }})"
             echo ""
             echo '```'
-            grep '^export RSCRYPTO_CRC64_' tune-results/crc64-tune.txt || true
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Run CRC-32 Tuning
-        if: steps.should-run.outputs.enabled == 'true' && steps.scope.outputs.run_32 == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p tune-results
-
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "Running CRC-32 tuning"
-          echo "Platform: ${{ matrix.target.name }}"
-          echo "RUSTFLAGS: -C target-cpu=native"
-          echo "Args: ${{ steps.scope.outputs.quick_arg }}"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-          # shellcheck disable=SC2086
-          RUSTFLAGS='-C target-cpu=native' cargo run -p checksum --release --bin crc32-tune -- ${{ steps.scope.outputs.quick_arg }} 2>&1 | tee tune-results/crc32-tune.txt
-
-          {
-            echo ""
-            echo "## CRC-32 Tuning (${{ matrix.target.platform-id }})"
-            echo ""
-            echo '```'
-            grep '^export RSCRYPTO_CRC32' tune-results/crc32-tune.txt || true
+            cat tune-results/rscrypto-tune.txt
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -783,7 +729,7 @@ jobs:
         if: steps.should-run.outputs.enabled == 'true' && always()
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
         with:
-          name: crc-tuning-${{ matrix.target.platform-id }}
+          name: rscrypto-tuning-${{ matrix.target.platform-id }}
           path: tune-results/
           retention-days: 90
           if-no-files-found: warn

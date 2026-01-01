@@ -101,6 +101,9 @@ mod common;
 #[macro_use]
 mod macros;
 
+#[cfg(feature = "alloc")]
+#[allow(clippy::indexing_slicing)] // All indexing uses enumerate() indices
+pub mod bench;
 mod crc16;
 mod crc24;
 mod crc32;

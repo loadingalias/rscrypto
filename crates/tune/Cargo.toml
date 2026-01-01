@@ -1,0 +1,27 @@
+[package]
+name = "tune"
+description = "Unified tuning engine for rscrypto algorithms"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[features]
+default = ["std"]
+std = ["alloc", "platform/std", "backend/std", "checksum/std"]
+alloc = ["checksum/alloc"]
+
+[dependencies]
+platform = { workspace = true, default-features = false }
+backend = { workspace = true, default-features = false }
+checksum = { workspace = true, default-features = false }
+
+[[bin]]
+name = "rscrypto-tune"
+path = "src/bin/rscrypto-tune.rs"
+required-features = ["std"]
+
+[lints]
+workspace = true

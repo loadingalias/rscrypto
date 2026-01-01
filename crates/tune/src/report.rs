@@ -1,0 +1,292 @@
+//! Output formatters for tuning results.
+
+use std::io::{self, Write};
+
+use crate::{AlgorithmResult, TuneResults};
+
+/// Output format for tuning results.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum OutputFormat {
+  /// Human-readable summary (default).
+  #[default]
+  Summary,
+
+  /// Shell environment variable exports.
+  Env,
+
+  /// JSON format for programmatic use.
+  Json,
+
+  /// Tab-separated values.
+  Tsv,
+}
+
+impl OutputFormat {
+  /// Parse format from string.
+  #[must_use]
+  pub fn parse(s: &str) -> Option<Self> {
+    match s.to_lowercase().as_str() {
+      "summary" | "text" | "human" => Some(Self::Summary),
+      "env" | "shell" | "export" => Some(Self::Env),
+      "json" => Some(Self::Json),
+      "tsv" | "tab" => Some(Self::Tsv),
+      _ => None,
+    }
+  }
+}
+
+/// Report generator for tuning results.
+pub struct Report<W: Write> {
+  writer: W,
+  format: OutputFormat,
+}
+
+impl<W: Write> Report<W> {
+  /// Create a new report generator.
+  pub fn new(writer: W, format: OutputFormat) -> Self {
+    Self { writer, format }
+  }
+
+  /// Write the complete tuning results.
+  pub fn write(&mut self, results: &TuneResults) -> io::Result<()> {
+    match self.format {
+      OutputFormat::Summary => self.write_summary(results),
+      OutputFormat::Env => self.write_env(results),
+      OutputFormat::Json => self.write_json(results),
+      OutputFormat::Tsv => self.write_tsv(results),
+    }
+  }
+
+  /// Write human-readable summary.
+  fn write_summary(&mut self, results: &TuneResults) -> io::Result<()> {
+    writeln!(self.writer, "rscrypto Tuning Results")?;
+    writeln!(self.writer, "========================")?;
+    writeln!(self.writer)?;
+
+    // Platform info
+    writeln!(self.writer, "Platform: {}", results.platform.description)?;
+    writeln!(self.writer, "Tune preset: {:?}", results.platform.tune_kind)?;
+    writeln!(self.writer, "Timestamp: {}", results.timestamp)?;
+    writeln!(self.writer)?;
+
+    // Algorithm results
+    for algo in &results.algorithms {
+      self.write_algorithm_summary(algo)?;
+      writeln!(self.writer)?;
+    }
+
+    Ok(())
+  }
+
+  /// Write summary for a single algorithm.
+  fn write_algorithm_summary(&mut self, algo: &AlgorithmResult) -> io::Result<()> {
+    writeln!(self.writer, "=== {} ===", algo.name)?;
+    writeln!(self.writer, "Best kernel: {}", algo.best_kernel)?;
+    writeln!(self.writer, "Recommended streams: {}", algo.recommended_streams)?;
+    writeln!(self.writer, "Peak throughput: {:.2} GiB/s", algo.peak_throughput_gib_s)?;
+
+    if !algo.thresholds.is_empty() {
+      writeln!(self.writer, "Recommended thresholds:")?;
+      for (name, value) in &algo.thresholds {
+        if *value == usize::MAX {
+          writeln!(self.writer, "  {name}: usize::MAX")?;
+        } else {
+          writeln!(self.writer, "  {name}: {value}")?;
+        }
+      }
+    }
+
+    // Crossovers
+    if !algo.analysis.crossovers.is_empty() {
+      writeln!(self.writer, "Crossovers:")?;
+      for crossover in &algo.analysis.crossovers {
+        writeln!(
+          self.writer,
+          "  {} -> {} at {} bytes (margin: {:.1}%)",
+          crossover.from_kernel, crossover.to_kernel, crossover.crossover_size, crossover.margin_percent
+        )?;
+      }
+    }
+
+    Ok(())
+  }
+
+  /// Write shell environment variable exports.
+  fn write_env(&mut self, results: &TuneResults) -> io::Result<()> {
+    writeln!(
+      self.writer,
+      "# rscrypto tuning results - generated {}",
+      results.timestamp
+    )?;
+    writeln!(self.writer, "# Platform: {}", results.platform.description)?;
+    writeln!(self.writer)?;
+
+    for algo in &results.algorithms {
+      self.write_algorithm_env(algo)?;
+      writeln!(self.writer)?;
+    }
+
+    Ok(())
+  }
+
+  /// Write env exports for a single algorithm.
+  fn write_algorithm_env(&mut self, algo: &AlgorithmResult) -> io::Result<()> {
+    writeln!(self.writer, "# {}", algo.name)?;
+
+    // Use the stored env prefix (e.g., "RSCRYPTO_CRC64")
+    let prefix = algo.env_prefix;
+
+    // Stream count
+    writeln!(self.writer, "export {prefix}_STREAMS={}", algo.recommended_streams)?;
+
+    // Thresholds - the suffix already includes proper naming (e.g., "THRESHOLD_PORTABLE_TO_CLMUL")
+    for (env_suffix, value) in &algo.thresholds {
+      if *value == usize::MAX {
+        writeln!(self.writer, "export {prefix}_{env_suffix}=usize::MAX")?;
+      } else {
+        writeln!(self.writer, "export {prefix}_{env_suffix}={value}")?;
+      }
+    }
+
+    Ok(())
+  }
+
+  /// Write JSON format.
+  fn write_json(&mut self, results: &TuneResults) -> io::Result<()> {
+    // Simple JSON serialization without serde
+    writeln!(self.writer, "{{")?;
+    writeln!(self.writer, "  \"timestamp\": \"{}\",", results.timestamp)?;
+    writeln!(self.writer, "  \"platform\": {{")?;
+    writeln!(self.writer, "    \"arch\": \"{}\",", results.platform.arch)?;
+    writeln!(self.writer, "    \"os\": \"{}\",", results.platform.os)?;
+    writeln!(
+      self.writer,
+      "    \"description\": \"{}\",",
+      escape_json(&results.platform.description)
+    )?;
+    writeln!(self.writer, "    \"tune_kind\": \"{:?}\"", results.platform.tune_kind)?;
+    writeln!(self.writer, "  }},")?;
+
+    writeln!(self.writer, "  \"algorithms\": [")?;
+    for (i, algo) in results.algorithms.iter().enumerate() {
+      let comma = if i < results.algorithms.len().strict_sub(1) {
+        ","
+      } else {
+        ""
+      };
+      self.write_algorithm_json(algo, comma)?;
+    }
+    writeln!(self.writer, "  ]")?;
+    writeln!(self.writer, "}}")?;
+
+    Ok(())
+  }
+
+  /// Write JSON for a single algorithm.
+  fn write_algorithm_json(&mut self, algo: &AlgorithmResult, trailing_comma: &str) -> io::Result<()> {
+    writeln!(self.writer, "    {{")?;
+    writeln!(self.writer, "      \"name\": \"{}\",", algo.name)?;
+    writeln!(self.writer, "      \"env_prefix\": \"{}\",", algo.env_prefix)?;
+    writeln!(self.writer, "      \"best_kernel\": \"{}\",", algo.best_kernel)?;
+    writeln!(
+      self.writer,
+      "      \"recommended_streams\": {},",
+      algo.recommended_streams
+    )?;
+    writeln!(
+      self.writer,
+      "      \"peak_throughput_gib_s\": {:.6},",
+      algo.peak_throughput_gib_s
+    )?;
+
+    writeln!(self.writer, "      \"thresholds\": {{")?;
+    for (i, (env_suffix, value)) in algo.thresholds.iter().enumerate() {
+      let comma = if i < algo.thresholds.len().strict_sub(1) {
+        ","
+      } else {
+        ""
+      };
+      // Use the full env var name in JSON for clarity
+      let env_var = format!("{}_{}", algo.env_prefix, env_suffix);
+      if *value == usize::MAX {
+        writeln!(self.writer, "        \"{env_var}\": null{comma}")?;
+      } else {
+        writeln!(self.writer, "        \"{env_var}\": {value}{comma}")?;
+      }
+    }
+    writeln!(self.writer, "      }}")?;
+
+    writeln!(self.writer, "    }}{trailing_comma}")?;
+
+    Ok(())
+  }
+
+  /// Write TSV format.
+  fn write_tsv(&mut self, results: &TuneResults) -> io::Result<()> {
+    // Header
+    writeln!(self.writer, "algorithm\tbest_kernel\tstreams\tpeak_gib_s\tthresholds")?;
+
+    for algo in &results.algorithms {
+      let thresholds: Vec<String> = algo
+        .thresholds
+        .iter()
+        .map(|(k, v)| {
+          if *v == usize::MAX {
+            format!("{k}=MAX")
+          } else {
+            format!("{k}={v}")
+          }
+        })
+        .collect();
+
+      writeln!(
+        self.writer,
+        "{}\t{}\t{}\t{:.6}\t{}",
+        algo.name,
+        algo.best_kernel,
+        algo.recommended_streams,
+        algo.peak_throughput_gib_s,
+        thresholds.join(",")
+      )?;
+    }
+
+    Ok(())
+  }
+}
+
+/// Escape a string for JSON output.
+fn escape_json(s: &str) -> String {
+  s.replace('\\', "\\\\")
+    .replace('"', "\\\"")
+    .replace('\n', "\\n")
+    .replace('\r', "\\r")
+    .replace('\t', "\\t")
+}
+
+/// Print results to stdout.
+pub fn print_summary(results: &TuneResults) -> io::Result<()> {
+  let stdout = io::stdout();
+  let mut report = Report::new(stdout.lock(), OutputFormat::Summary);
+  report.write(results)
+}
+
+/// Print env exports to stdout.
+pub fn print_env(results: &TuneResults) -> io::Result<()> {
+  let stdout = io::stdout();
+  let mut report = Report::new(stdout.lock(), OutputFormat::Env);
+  report.write(results)
+}
+
+/// Print JSON to stdout.
+pub fn print_json(results: &TuneResults) -> io::Result<()> {
+  let stdout = io::stdout();
+  let mut report = Report::new(stdout.lock(), OutputFormat::Json);
+  report.write(results)
+}
+
+/// Print TSV to stdout.
+pub fn print_tsv(results: &TuneResults) -> io::Result<()> {
+  let stdout = io::stdout();
+  let mut report = Report::new(stdout.lock(), OutputFormat::Tsv);
+  report.write(results)
+}

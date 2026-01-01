@@ -69,47 +69,24 @@ bench crate="":
 bench-native crate="":
     RUSTFLAGS='-C target-cpu=native' scripts/bench/bench.sh "{{crate}}"
 
-# Run CRC64 tuning (prints recommended exports; binary-based)
-# Usage: just bench-crc64-tune           - Full run
-#        just bench-crc64-tune --quick   - Faster, noisier run
-bench-crc64-tune mode="":
-    @bash scripts/bench/crc64-tune.sh {{mode}}
-
-# Run CRC32 tuning (prints recommended exports; binary-based)
-# Usage: just bench-crc32-tune           - Full run
-#        just bench-crc32-tune --quick   - Faster, noisier run
-bench-crc32-tune mode="":
-    @bash scripts/bench/crc32-tune.sh {{mode}}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Tuning
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Run all CRC tuning (CRC-64 + CRC-32)
-# Usage: just tune-all
-#        just tune-all --quick
-tune-all *args="":
-    @echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    @echo "Running CRC-64 tuning..."
-    @echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p checksum --release --bin crc64-tune -- {{args}}
-    @echo ""
-    @echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    @echo "Running CRC-32 tuning..."
-    @echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p checksum --release --bin crc32-tune -- {{args}}
+# Unified tuning engine - benchmarks all checksum algorithms and finds optimal settings
+# Usage: just tune            - Full tuning run with detailed output
+#        just tune --quick    - Faster, noisier measurements
+#        just tune --verbose  - Show progress during tuning
+#        just tune --format env   - Output as shell export statements
+#        just tune --format json  - Output as JSON
+tune *args="":
+    RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p tune --release --bin rscrypto-tune -- {{args}}
 
-# CRC-64 tuning (prints recommended RSCRYPTO_CRC64_* exports)
-# Usage: just tune-64
-#        just tune-64 --quick
-tune-64 *args="":
-    RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p checksum --release --bin crc64-tune -- {{args}}
+# Quick tune alias (faster measurements, still useful for development)
+tune-quick *args="":
+    RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p tune --release --bin rscrypto-tune -- --quick {{args}}
 
-# CRC-32 tuning (prints recommended RSCRYPTO_CRC32_* exports)
-# Usage: just tune-32
-#        just tune-32 --quick
-tune-32 *args="":
-    RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p checksum --release --bin crc32-tune -- {{args}}
 
 # Summarize Criterion results as TSV
 bench-summary group="" only="oneshot":

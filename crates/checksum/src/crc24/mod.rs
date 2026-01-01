@@ -21,7 +21,7 @@
 //! ```
 
 pub(crate) mod config;
-mod kernels;
+pub(crate) mod kernels;
 pub(crate) mod policy;
 pub(crate) mod portable;
 mod tuned_defaults;
