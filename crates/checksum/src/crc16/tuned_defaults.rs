@@ -15,7 +15,12 @@ pub struct Crc16TunedDefaults {
 
 #[rustfmt::skip]
 pub const CRC16_TUNED_DEFAULTS: &[(TuneKind, Crc16TunedDefaults)] = &[
-  // Intentionally empty (no tuned data applied yet).
+  // BEGIN GENERATED (rscrypto-tune)
+  // Zen4: pclmul is fastest; use 64-byte threshold for CLMUL dispatch.
+  (TuneKind::Zen4, Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64 }),
+  // Apple M1-M3: pmull is fastest; use 64-byte threshold for CLMUL dispatch.
+  (TuneKind::AppleM1M3, Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64 }),
+  // END GENERATED (rscrypto-tune)
 ];
 
 #[inline]
