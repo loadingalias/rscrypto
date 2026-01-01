@@ -362,10 +362,11 @@ mod tests {
 
   #[test]
   fn test_variance_quality() {
-    let mut stats = SampleStats::default();
-    stats.sample_count = 10;
-
-    stats.cv = 0.02;
+    let mut stats = SampleStats {
+      sample_count: 10,
+      cv: 0.02,
+      ..Default::default()
+    };
     assert_eq!(stats.variance_quality(0.05), VarianceQuality::Excellent);
 
     stats.cv = 0.04;
