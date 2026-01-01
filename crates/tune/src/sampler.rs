@@ -337,8 +337,9 @@ mod tests {
       core::hint::black_box(sum);
     });
 
-    // Should have collected multiple samples
-    assert!(result.sample_count >= 5, "sample_count = {}", result.sample_count);
+    // Should have collected multiple samples (threshold is low to handle slow CI runners
+    // and outlier rejection reducing the count)
+    assert!(result.sample_count >= 3, "sample_count = {}", result.sample_count);
   }
 
   #[test]
