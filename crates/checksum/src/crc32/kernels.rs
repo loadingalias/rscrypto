@@ -207,16 +207,16 @@ pub mod aarch64 {
 
   /// CRC-32 (IEEE) PMULL fusion kernel names.
   pub const CRC32_PMULL_NAMES: &[&str] = &[
-    "aarch64/pmull-v12e-v1",
-    "aarch64/pmull-v12e-v1-2way",
-    "aarch64/pmull-v12e-v1-3way",
-    "aarch64/pmull-v12e-v1-3way", // dup for index consistency
-    "aarch64/pmull-v12e-v1-3way", // dup for index consistency
+    "aarch64/pmull-v9s3x2e-s3",
+    "aarch64/pmull-v9s3x2e-s3-2way",
+    "aarch64/pmull-v9s3x2e-s3-3way",
+    "aarch64/pmull-v9s3x2e-s3-3way", // dup for index consistency
+    "aarch64/pmull-v9s3x2e-s3-3way", // dup for index consistency
   ];
 
   /// CRC-32 (IEEE) PMULL fusion kernels.
   pub const CRC32_PMULL: [Crc32Fn; 5] = [
-    arch::crc32_iso_hdlc_pmull_v12e_v1_safe,
+    arch::crc32_iso_hdlc_pmull_v9s3x2e_s3_safe,
     arch::crc32_iso_hdlc_pmull_2way_safe,
     arch::crc32_iso_hdlc_pmull_3way_safe,
     arch::crc32_iso_hdlc_pmull_3way_safe, // dup for index consistency
@@ -247,16 +247,16 @@ pub mod aarch64 {
 
   /// CRC-32C (Castagnoli) PMULL fusion kernel names.
   pub const CRC32C_PMULL_NAMES: &[&str] = &[
-    "aarch64/pmull-v12e-v1",
-    "aarch64/pmull-v12e-v1-2way",
-    "aarch64/pmull-v12e-v1-3way",
-    "aarch64/pmull-v12e-v1-3way", // dup for index consistency
-    "aarch64/pmull-v12e-v1-3way", // dup for index consistency
+    "aarch64/pmull-v9s3x2e-s3",
+    "aarch64/pmull-v9s3x2e-s3-2way",
+    "aarch64/pmull-v9s3x2e-s3-3way",
+    "aarch64/pmull-v9s3x2e-s3-3way", // dup for index consistency
+    "aarch64/pmull-v9s3x2e-s3-3way", // dup for index consistency
   ];
 
   /// CRC-32C (Castagnoli) PMULL fusion kernels.
   pub const CRC32C_PMULL: [Crc32Fn; 5] = [
-    arch::crc32c_iscsi_pmull_v12e_v1_safe,
+    arch::crc32c_iscsi_pmull_v9s3x2e_s3_safe,
     arch::crc32c_iscsi_pmull_2way_safe,
     arch::crc32c_iscsi_pmull_3way_safe,
     arch::crc32c_iscsi_pmull_3way_safe, // dup for index consistency

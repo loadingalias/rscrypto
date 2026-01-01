@@ -117,7 +117,7 @@ fn crc32_ieee_kernel_specs(caps: &Caps) -> Vec<KernelSpec> {
     }
     if caps.has(aarch64::PMULL_READY) && caps.has(aarch64::CRC_READY) {
       specs.push(KernelSpec::with_streams(
-        "aarch64/pmull-v12e-v1",
+        "aarch64/pmull-v9s3x2e-s3",
         KernelTier::Folding,
         aarch64::PMULL_READY,
         1,
@@ -273,7 +273,7 @@ fn crc32c_kernel_specs(caps: &Caps) -> Vec<KernelSpec> {
     }
     if caps.has(aarch64::PMULL_READY) && caps.has(aarch64::CRC_READY) {
       specs.push(KernelSpec::with_streams(
-        "aarch64/pmull-v12e-v1",
+        "aarch64/pmull-v9s3x2e-s3",
         KernelTier::Folding,
         aarch64::PMULL_READY,
         1,
@@ -752,8 +752,8 @@ mod tests {
   #[test]
   fn strip_stream_suffix_preserves_versioned_kernel_names() {
     assert_eq!(
-      strip_stream_suffix("aarch64/pmull-v12e-v1-2way"),
-      "aarch64/pmull-v12e-v1"
+      strip_stream_suffix("aarch64/pmull-v9s3x2e-s3-2way"),
+      "aarch64/pmull-v9s3x2e-s3"
     );
     assert_eq!(
       strip_stream_suffix("x86_64/fusion-sse-v4s3x3-4way"),
@@ -763,7 +763,10 @@ mod tests {
       strip_stream_suffix("x86_64/fusion-vpclmul-v3x2-8way"),
       "x86_64/fusion-vpclmul-v3x2"
     );
-    assert_eq!(strip_stream_suffix("aarch64/pmull-v12e-v1"), "aarch64/pmull-v12e-v1");
+    assert_eq!(
+      strip_stream_suffix("aarch64/pmull-v9s3x2e-s3"),
+      "aarch64/pmull-v9s3x2e-s3"
+    );
   }
 
   #[test]
