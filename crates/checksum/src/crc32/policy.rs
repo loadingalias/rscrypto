@@ -288,6 +288,9 @@ impl Crc32Policy {
         if !self.has_fusion || len < self.hwcrc_to_fusion {
           return kernels::PORTABLE;
         }
+        if len < CRC32_FOLD_BLOCK_BYTES {
+          return CRC32_PCLMUL_SMALL;
+        }
         if self.has_vpclmul && len >= self.fusion_to_vpclmul {
           return CRC32_VPCLMUL_NAMES.get(idx).copied().unwrap_or(kernels::PORTABLE);
         }
@@ -343,6 +346,9 @@ impl Crc32Policy {
     };
 
     if len >= self.hwcrc_to_fusion && self.has_fusion {
+      if len < CRC32_FOLD_BLOCK_BYTES {
+        return PMULL_SMALL;
+      }
       // Wide tier: SVE2 > EOR3
       if self.has_sve2 {
         return sve2_names.get(idx).copied().unwrap_or(kernels::PORTABLE);
@@ -509,19 +515,19 @@ fn policy_dispatch_simd(policy: &Crc32Policy, kernels: &Crc32Kernels, crc: u32, 
         return (kernels.portable)(crc, data);
       }
 
+      // Small buffer kernel
+      if len < CRC32_FOLD_BLOCK_BYTES
+        && let Some(small) = kernels.primary_small
+      {
+        return (small)(crc, data);
+      }
+
       // Wide tier (VPCLMUL)
       if let Some(ref wide) = kernels.wide
         && policy.has_vpclmul
         && len >= policy.fusion_to_vpclmul
       {
         return (wide.get(idx).copied().unwrap_or(wide[0]))(crc, data);
-      }
-
-      // Small buffer kernel
-      if len < CRC32_FOLD_BLOCK_BYTES
-        && let Some(small) = kernels.primary_small
-      {
-        return (small)(crc, data);
       }
 
       // Primary PCLMUL
@@ -567,6 +573,13 @@ fn policy_dispatch_simd(policy: &Crc32Policy, kernels: &Crc32Kernels, crc: u32, 
 
   // Fusion tier (CRC + PMULL)
   if len >= policy.hwcrc_to_fusion && policy.has_fusion {
+    // Small buffer kernel
+    if len < CRC32_FOLD_BLOCK_BYTES
+      && let Some(small) = kernels.primary_small
+    {
+      return (small)(crc, data);
+    }
+
     // Wide tier (EOR3 or SVE2) - prefer for larger buffers
     if let Some(ref wide) = kernels.wide
       && (policy.has_sve2 || policy.has_eor3)
@@ -574,12 +587,6 @@ fn policy_dispatch_simd(policy: &Crc32Policy, kernels: &Crc32Kernels, crc: u32, 
       return (wide.get(idx).copied().unwrap_or(wide[0]))(crc, data);
     }
 
-    // Small buffer kernel
-    if len < CRC32_FOLD_BLOCK_BYTES
-      && let Some(small) = kernels.primary_small
-    {
-      return (small)(crc, data);
-    }
     return (kernels.primary.get(idx).copied().unwrap_or(kernels.primary[0]))(crc, data);
   }
 

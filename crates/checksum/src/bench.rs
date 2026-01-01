@@ -351,9 +351,11 @@ pub fn available_crc32_ieee_kernels() -> Vec<&'static str> {
 
     if caps.has(platform::caps::x86::PCLMUL_READY) {
       kernels.extend_from_slice(x86_64::CRC32_PCLMUL_NAMES);
+      kernels.push(x86_64::CRC32_PCLMUL_SMALL);
     }
     if caps.has(platform::caps::x86::VPCLMUL_READY) {
       kernels.extend_from_slice(x86_64::CRC32_VPCLMUL_NAMES);
+      kernels.push(x86_64::CRC32_VPCLMUL_SMALL);
     }
   }
 
@@ -369,9 +371,14 @@ pub fn available_crc32_ieee_kernels() -> Vec<&'static str> {
     }
     if caps.has(platform::caps::aarch64::PMULL_READY) {
       kernels.extend_from_slice(aarch64::CRC32_PMULL_NAMES);
+      kernels.push(aarch64::PMULL_SMALL);
     }
     if caps.has(platform::caps::aarch64::PMULL_EOR3_READY) {
       kernels.extend_from_slice(aarch64::CRC32_PMULL_EOR3_NAMES);
+    }
+    if caps.has(platform::caps::aarch64::SVE2_PMULL) && caps.has(platform::caps::aarch64::PMULL_READY) {
+      kernels.extend_from_slice(aarch64::CRC32_SVE2_PMULL_NAMES);
+      kernels.push(aarch64::SVE2_PMULL_SMALL);
     }
   }
 
@@ -451,9 +458,14 @@ pub fn available_crc32c_kernels() -> Vec<&'static str> {
     }
     if caps.has(platform::caps::aarch64::PMULL_READY) {
       kernels.extend_from_slice(aarch64::CRC32C_PMULL_NAMES);
+      kernels.push(aarch64::PMULL_SMALL);
     }
     if caps.has(platform::caps::aarch64::PMULL_EOR3_READY) {
       kernels.extend_from_slice(aarch64::CRC32C_PMULL_EOR3_NAMES);
+    }
+    if caps.has(platform::caps::aarch64::SVE2_PMULL) && caps.has(platform::caps::aarch64::PMULL_READY) {
+      kernels.extend_from_slice(aarch64::CRC32C_SVE2_PMULL_NAMES);
+      kernels.push(aarch64::SVE2_PMULL_SMALL);
     }
   }
 
@@ -630,6 +642,12 @@ fn get_x86_64_crc32_ieee_kernel(name: &str) -> Option<Crc32Kernel> {
 
   // PCLMUL kernels
   if caps.has(platform::caps::x86::PCLMUL_READY) {
+    if name == CRC32_PCLMUL_SMALL {
+      return Some(Crc32Kernel {
+        name: CRC32_PCLMUL_SMALL,
+        func: CRC32_PCLMUL_SMALL_KERNEL,
+      });
+    }
     for (i, &kernel_name) in CRC32_PCLMUL_NAMES.iter().enumerate() {
       if name == kernel_name {
         return Some(Crc32Kernel {
@@ -642,6 +660,12 @@ fn get_x86_64_crc32_ieee_kernel(name: &str) -> Option<Crc32Kernel> {
 
   // VPCLMUL kernels
   if caps.has(platform::caps::x86::VPCLMUL_READY) {
+    if name == CRC32_VPCLMUL_SMALL {
+      return Some(Crc32Kernel {
+        name: CRC32_VPCLMUL_SMALL,
+        func: CRC32_VPCLMUL_SMALL_KERNEL,
+      });
+    }
     for (i, &kernel_name) in CRC32_VPCLMUL_NAMES.iter().enumerate() {
       if name == kernel_name {
         return Some(Crc32Kernel {
@@ -730,6 +754,12 @@ fn get_aarch64_crc32_ieee_kernel(name: &str) -> Option<Crc32Kernel> {
 
   // PMULL kernels
   if caps.has(platform::caps::aarch64::PMULL_READY) {
+    if name == aarch64::PMULL_SMALL {
+      return Some(Crc32Kernel {
+        name: aarch64::PMULL_SMALL,
+        func: aarch64::CRC32_PMULL_SMALL_KERNEL,
+      });
+    }
     for (i, &kernel_name) in aarch64::CRC32_PMULL_NAMES.iter().enumerate() {
       if name == kernel_name {
         return Some(Crc32Kernel {
@@ -747,6 +777,24 @@ fn get_aarch64_crc32_ieee_kernel(name: &str) -> Option<Crc32Kernel> {
         return Some(Crc32Kernel {
           name: kernel_name,
           func: aarch64::CRC32_PMULL_EOR3[i],
+        });
+      }
+    }
+  }
+
+  // SVE2 PMULL kernels
+  if caps.has(platform::caps::aarch64::SVE2_PMULL) && caps.has(platform::caps::aarch64::PMULL_READY) {
+    if name == aarch64::SVE2_PMULL_SMALL {
+      return Some(Crc32Kernel {
+        name: aarch64::SVE2_PMULL_SMALL,
+        func: aarch64::CRC32_SVE2_PMULL_SMALL_KERNEL,
+      });
+    }
+    for (i, &kernel_name) in aarch64::CRC32_SVE2_PMULL_NAMES.iter().enumerate() {
+      if name == kernel_name {
+        return Some(Crc32Kernel {
+          name: kernel_name,
+          func: aarch64::CRC32_SVE2_PMULL[i],
         });
       }
     }
@@ -774,6 +822,12 @@ fn get_aarch64_crc32c_kernel(name: &str) -> Option<Crc32Kernel> {
 
   // PMULL kernels
   if caps.has(platform::caps::aarch64::PMULL_READY) {
+    if name == aarch64::PMULL_SMALL {
+      return Some(Crc32Kernel {
+        name: aarch64::PMULL_SMALL,
+        func: aarch64::CRC32C_PMULL_SMALL_KERNEL,
+      });
+    }
     for (i, &kernel_name) in aarch64::CRC32C_PMULL_NAMES.iter().enumerate() {
       if name == kernel_name {
         return Some(Crc32Kernel {
@@ -791,6 +845,24 @@ fn get_aarch64_crc32c_kernel(name: &str) -> Option<Crc32Kernel> {
         return Some(Crc32Kernel {
           name: kernel_name,
           func: aarch64::CRC32C_PMULL_EOR3[i],
+        });
+      }
+    }
+  }
+
+  // SVE2 PMULL kernels
+  if caps.has(platform::caps::aarch64::SVE2_PMULL) && caps.has(platform::caps::aarch64::PMULL_READY) {
+    if name == aarch64::SVE2_PMULL_SMALL {
+      return Some(Crc32Kernel {
+        name: aarch64::SVE2_PMULL_SMALL,
+        func: aarch64::CRC32C_SVE2_PMULL_SMALL_KERNEL,
+      });
+    }
+    for (i, &kernel_name) in aarch64::CRC32C_SVE2_PMULL_NAMES.iter().enumerate() {
+      if name == kernel_name {
+        return Some(Crc32Kernel {
+          name: kernel_name,
+          func: aarch64::CRC32C_SVE2_PMULL[i],
         });
       }
     }

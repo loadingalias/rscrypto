@@ -56,6 +56,8 @@ pub mod x86_64 {
     "x86_64/pclmul-7way",
     "x86_64/pclmul-8way",
   ];
+  /// CRC-32 (IEEE) PCLMUL small-buffer kernel name.
+  pub const CRC32_PCLMUL_SMALL: &str = "x86_64/pclmul-small";
   /// CRC-32 (IEEE) PCLMUL kernels.
   pub const CRC32_PCLMUL: [Crc32Fn; 5] = [
     arch::crc32_ieee_pclmul_safe,
@@ -75,6 +77,9 @@ pub mod x86_64 {
     "x86_64/vpclmul-7way",
     "x86_64/vpclmul-8way",
   ];
+  /// CRC-32 (IEEE) VPCLMUL small-buffer kernel name.
+  #[allow(dead_code)] // Reserved for future wide_small policy field
+  pub const CRC32_VPCLMUL_SMALL: &str = "x86_64/vpclmul-small";
   /// CRC-32 (IEEE) VPCLMUL kernels.
   pub const CRC32_VPCLMUL: [Crc32Fn; 5] = [
     arch::crc32_ieee_vpclmul_safe,
@@ -219,6 +224,8 @@ pub mod aarch64 {
   ];
   /// CRC-32 (IEEE) PMULL small-buffer kernel.
   pub const CRC32_PMULL_SMALL_KERNEL: Crc32Fn = arch::crc32_iso_hdlc_pmull_small_safe;
+  /// CRC-32 PMULL small-buffer kernel name.
+  pub const PMULL_SMALL: &str = "aarch64/pmull-small";
 
   /// CRC-32 (IEEE) PMULL+EOR3 fusion kernel names.
   pub const CRC32_PMULL_EOR3_NAMES: &[&str] = &[
@@ -296,6 +303,9 @@ pub mod aarch64 {
   /// CRC-32 "SVE2 PMULL" small-buffer kernel.
   #[allow(dead_code)] // Reserved for future wide_small policy field
   pub const CRC32_SVE2_PMULL_SMALL_KERNEL: Crc32Fn = arch::crc32_iso_hdlc_sve2_pmull_small_safe;
+  /// CRC-32 SVE2 PMULL small-buffer kernel name.
+  #[allow(dead_code)] // Reserved for future wide_small policy field
+  pub const SVE2_PMULL_SMALL: &str = "aarch64/sve2-pmull-small";
 
   /// CRC-32C (Castagnoli) "SVE2 PMULL" tier kernel names.
   pub const CRC32C_SVE2_PMULL_NAMES: &[&str] = &[

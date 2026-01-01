@@ -1776,31 +1776,30 @@ unsafe fn update_simd_crc32_ieee_vpclmul_2way(state: u32, blocks: &[[Simd128; 8]
   let coeff_256b = vpclmul_coeff(CRC32_IEEE_STREAM.fold_256b);
   let coeff_128b = vpclmul_coeff((CRC32_IEEE_KEYS_REFLECTED[4], CRC32_IEEE_KEYS_REFLECTED[3]));
 
-  let (mut s0_0, mut s0_1) = load_128b_block(&blocks[0]);
-  let (mut s1_0, mut s1_1) = load_128b_block(&blocks[1]);
+  let (first, rest) = blocks.split_at(2);
+  let (mut s0_0, mut s0_1) = load_128b_block(&first[0]);
+  let (mut s1_0, mut s1_1) = load_128b_block(&first[1]);
 
   let injected = _mm512_setr_epi64(state as i64, 0, 0, 0, 0, 0, 0, 0);
   s0_0 = _mm512_xor_si512(s0_0, injected);
 
-  let mut i: usize = 2;
-  let even = blocks.len() & !1usize;
-  while i < even {
-    let (y0, y1) = load_128b_block(&blocks[i]);
+  let mut pairs = rest.chunks_exact(2);
+  for pair in &mut pairs {
+    let [b0, b1] = pair else { unreachable!() };
+    let (y0, y1) = load_128b_block(b0);
     s0_0 = fold_16_crc32_reflected_vpclmul(s0_0, coeff_256b, y0);
     s0_1 = fold_16_crc32_reflected_vpclmul(s0_1, coeff_256b, y1);
 
-    let (y0, y1) = load_128b_block(&blocks[i + 1]);
+    let (y0, y1) = load_128b_block(b1);
     s1_0 = fold_16_crc32_reflected_vpclmul(s1_0, coeff_256b, y0);
     s1_1 = fold_16_crc32_reflected_vpclmul(s1_1, coeff_256b, y1);
-
-    i = i.strict_add(2);
   }
 
   let mut combined0 = _mm512_xor_si512(s1_0, fold_only_crc32_reflected_vpclmul(s0_0, coeff_128b));
   let mut combined1 = _mm512_xor_si512(s1_1, fold_only_crc32_reflected_vpclmul(s0_1, coeff_128b));
 
-  if even != blocks.len() {
-    let (y0, y1) = load_128b_block(&blocks[even]);
+  if let Some(block) = pairs.remainder().first() {
+    let (y0, y1) = load_128b_block(block);
     combined0 = fold_16_crc32_reflected_vpclmul(combined0, coeff_128b, y0);
     combined1 = fold_16_crc32_reflected_vpclmul(combined1, coeff_128b, y1);
   }
@@ -1817,7 +1816,6 @@ unsafe fn update_simd_crc32_ieee_vpclmul_4way(state: u32, blocks: &[[Simd128; 8]
     return update_simd_crc32_ieee_reflected_vpclmul(state, first, rest);
   }
 
-  let aligned = (blocks.len() / 4) * 4;
   let coeff_512b = vpclmul_coeff(CRC32_IEEE_STREAM.fold_512b);
   let coeff_128b = vpclmul_coeff((CRC32_IEEE_KEYS_REFLECTED[4], CRC32_IEEE_KEYS_REFLECTED[3]));
 
@@ -1825,33 +1823,33 @@ unsafe fn update_simd_crc32_ieee_vpclmul_4way(state: u32, blocks: &[[Simd128; 8]
   let c256 = vpclmul_coeff(CRC32_IEEE_STREAM.combine_4way[1]);
   let c128 = vpclmul_coeff(CRC32_IEEE_STREAM.combine_4way[2]);
 
-  let (mut s0_0, mut s0_1) = load_128b_block(&blocks[0]);
-  let (mut s1_0, mut s1_1) = load_128b_block(&blocks[1]);
-  let (mut s2_0, mut s2_1) = load_128b_block(&blocks[2]);
-  let (mut s3_0, mut s3_1) = load_128b_block(&blocks[3]);
+  let (first, rest) = blocks.split_at(4);
+  let (mut s0_0, mut s0_1) = load_128b_block(&first[0]);
+  let (mut s1_0, mut s1_1) = load_128b_block(&first[1]);
+  let (mut s2_0, mut s2_1) = load_128b_block(&first[2]);
+  let (mut s3_0, mut s3_1) = load_128b_block(&first[3]);
 
   let injected = _mm512_setr_epi64(state as i64, 0, 0, 0, 0, 0, 0, 0);
   s0_0 = _mm512_xor_si512(s0_0, injected);
 
-  let mut i: usize = 4;
-  while i < aligned {
-    let (y0, y1) = load_128b_block(&blocks[i]);
+  let mut groups = rest.chunks_exact(4);
+  for group in &mut groups {
+    let [b0, b1, b2, b3] = group else { unreachable!() };
+    let (y0, y1) = load_128b_block(b0);
     s0_0 = fold_16_crc32_reflected_vpclmul(s0_0, coeff_512b, y0);
     s0_1 = fold_16_crc32_reflected_vpclmul(s0_1, coeff_512b, y1);
 
-    let (y0, y1) = load_128b_block(&blocks[i + 1]);
+    let (y0, y1) = load_128b_block(b1);
     s1_0 = fold_16_crc32_reflected_vpclmul(s1_0, coeff_512b, y0);
     s1_1 = fold_16_crc32_reflected_vpclmul(s1_1, coeff_512b, y1);
 
-    let (y0, y1) = load_128b_block(&blocks[i + 2]);
+    let (y0, y1) = load_128b_block(b2);
     s2_0 = fold_16_crc32_reflected_vpclmul(s2_0, coeff_512b, y0);
     s2_1 = fold_16_crc32_reflected_vpclmul(s2_1, coeff_512b, y1);
 
-    let (y0, y1) = load_128b_block(&blocks[i + 3]);
+    let (y0, y1) = load_128b_block(b3);
     s3_0 = fold_16_crc32_reflected_vpclmul(s3_0, coeff_512b, y0);
     s3_1 = fold_16_crc32_reflected_vpclmul(s3_1, coeff_512b, y1);
-
-    i = i.strict_add(4);
   }
 
   let mut combined0 = s3_0;
@@ -1864,7 +1862,7 @@ unsafe fn update_simd_crc32_ieee_vpclmul_4way(state: u32, blocks: &[[Simd128; 8]
   combined0 = _mm512_xor_si512(combined0, fold_only_crc32_reflected_vpclmul(s2_0, c128));
   combined1 = _mm512_xor_si512(combined1, fold_only_crc32_reflected_vpclmul(s2_1, c128));
 
-  for block in &blocks[aligned..] {
+  for block in groups.remainder() {
     let (y0, y1) = load_128b_block(block);
     combined0 = fold_16_crc32_reflected_vpclmul(combined0, coeff_128b, y0);
     combined1 = fold_16_crc32_reflected_vpclmul(combined1, coeff_128b, y1);
@@ -1882,7 +1880,6 @@ unsafe fn update_simd_crc32_ieee_vpclmul_7way(state: u32, blocks: &[[Simd128; 8]
     return update_simd_crc32_ieee_reflected_vpclmul(state, first, rest);
   }
 
-  let aligned = (blocks.len() / 7) * 7;
   let coeff_896b = vpclmul_coeff(CRC32_IEEE_STREAM.fold_896b);
   let coeff_128b = vpclmul_coeff((CRC32_IEEE_KEYS_REFLECTED[4], CRC32_IEEE_KEYS_REFLECTED[3]));
 
@@ -1894,48 +1891,50 @@ unsafe fn update_simd_crc32_ieee_vpclmul_7way(state: u32, blocks: &[[Simd128; 8]
   let c256 = vpclmul_coeff(combine[4]);
   let c128 = vpclmul_coeff(combine[5]);
 
-  let (mut s0_0, mut s0_1) = load_128b_block(&blocks[0]);
-  let (mut s1_0, mut s1_1) = load_128b_block(&blocks[1]);
-  let (mut s2_0, mut s2_1) = load_128b_block(&blocks[2]);
-  let (mut s3_0, mut s3_1) = load_128b_block(&blocks[3]);
-  let (mut s4_0, mut s4_1) = load_128b_block(&blocks[4]);
-  let (mut s5_0, mut s5_1) = load_128b_block(&blocks[5]);
-  let (mut s6_0, mut s6_1) = load_128b_block(&blocks[6]);
+  let (first, rest) = blocks.split_at(7);
+  let (mut s0_0, mut s0_1) = load_128b_block(&first[0]);
+  let (mut s1_0, mut s1_1) = load_128b_block(&first[1]);
+  let (mut s2_0, mut s2_1) = load_128b_block(&first[2]);
+  let (mut s3_0, mut s3_1) = load_128b_block(&first[3]);
+  let (mut s4_0, mut s4_1) = load_128b_block(&first[4]);
+  let (mut s5_0, mut s5_1) = load_128b_block(&first[5]);
+  let (mut s6_0, mut s6_1) = load_128b_block(&first[6]);
 
   let injected = _mm512_setr_epi64(state as i64, 0, 0, 0, 0, 0, 0, 0);
   s0_0 = _mm512_xor_si512(s0_0, injected);
 
-  let mut i: usize = 7;
-  while i < aligned {
-    let (y0, y1) = load_128b_block(&blocks[i]);
+  let mut groups = rest.chunks_exact(7);
+  for group in &mut groups {
+    let [b0, b1, b2, b3, b4, b5, b6] = group else {
+      unreachable!()
+    };
+    let (y0, y1) = load_128b_block(b0);
     s0_0 = fold_16_crc32_reflected_vpclmul(s0_0, coeff_896b, y0);
     s0_1 = fold_16_crc32_reflected_vpclmul(s0_1, coeff_896b, y1);
 
-    let (y0, y1) = load_128b_block(&blocks[i + 1]);
+    let (y0, y1) = load_128b_block(b1);
     s1_0 = fold_16_crc32_reflected_vpclmul(s1_0, coeff_896b, y0);
     s1_1 = fold_16_crc32_reflected_vpclmul(s1_1, coeff_896b, y1);
 
-    let (y0, y1) = load_128b_block(&blocks[i + 2]);
+    let (y0, y1) = load_128b_block(b2);
     s2_0 = fold_16_crc32_reflected_vpclmul(s2_0, coeff_896b, y0);
     s2_1 = fold_16_crc32_reflected_vpclmul(s2_1, coeff_896b, y1);
 
-    let (y0, y1) = load_128b_block(&blocks[i + 3]);
+    let (y0, y1) = load_128b_block(b3);
     s3_0 = fold_16_crc32_reflected_vpclmul(s3_0, coeff_896b, y0);
     s3_1 = fold_16_crc32_reflected_vpclmul(s3_1, coeff_896b, y1);
 
-    let (y0, y1) = load_128b_block(&blocks[i + 4]);
+    let (y0, y1) = load_128b_block(b4);
     s4_0 = fold_16_crc32_reflected_vpclmul(s4_0, coeff_896b, y0);
     s4_1 = fold_16_crc32_reflected_vpclmul(s4_1, coeff_896b, y1);
 
-    let (y0, y1) = load_128b_block(&blocks[i + 5]);
+    let (y0, y1) = load_128b_block(b5);
     s5_0 = fold_16_crc32_reflected_vpclmul(s5_0, coeff_896b, y0);
     s5_1 = fold_16_crc32_reflected_vpclmul(s5_1, coeff_896b, y1);
 
-    let (y0, y1) = load_128b_block(&blocks[i + 6]);
+    let (y0, y1) = load_128b_block(b6);
     s6_0 = fold_16_crc32_reflected_vpclmul(s6_0, coeff_896b, y0);
     s6_1 = fold_16_crc32_reflected_vpclmul(s6_1, coeff_896b, y1);
-
-    i = i.strict_add(7);
   }
 
   let mut combined0 = s6_0;
@@ -1954,7 +1953,7 @@ unsafe fn update_simd_crc32_ieee_vpclmul_7way(state: u32, blocks: &[[Simd128; 8]
   combined0 = _mm512_xor_si512(combined0, fold_only_crc32_reflected_vpclmul(s5_0, c128));
   combined1 = _mm512_xor_si512(combined1, fold_only_crc32_reflected_vpclmul(s5_1, c128));
 
-  for block in &blocks[aligned..] {
+  for block in groups.remainder() {
     let (y0, y1) = load_128b_block(block);
     combined0 = fold_16_crc32_reflected_vpclmul(combined0, coeff_128b, y0);
     combined1 = fold_16_crc32_reflected_vpclmul(combined1, coeff_128b, y1);
@@ -1972,7 +1971,6 @@ unsafe fn update_simd_crc32_ieee_vpclmul_8way(state: u32, blocks: &[[Simd128; 8]
     return update_simd_crc32_ieee_reflected_vpclmul(state, first, rest);
   }
 
-  let aligned = (blocks.len() / 8) * 8;
   let coeff_1024b = vpclmul_coeff(CRC32_IEEE_STREAM.fold_1024b);
   let coeff_128b = vpclmul_coeff((CRC32_IEEE_KEYS_REFLECTED[4], CRC32_IEEE_KEYS_REFLECTED[3]));
 
@@ -1985,53 +1983,55 @@ unsafe fn update_simd_crc32_ieee_vpclmul_8way(state: u32, blocks: &[[Simd128; 8]
   let c256 = vpclmul_coeff(combine[5]);
   let c128 = vpclmul_coeff(combine[6]);
 
-  let (mut s0_0, mut s0_1) = load_128b_block(&blocks[0]);
-  let (mut s1_0, mut s1_1) = load_128b_block(&blocks[1]);
-  let (mut s2_0, mut s2_1) = load_128b_block(&blocks[2]);
-  let (mut s3_0, mut s3_1) = load_128b_block(&blocks[3]);
-  let (mut s4_0, mut s4_1) = load_128b_block(&blocks[4]);
-  let (mut s5_0, mut s5_1) = load_128b_block(&blocks[5]);
-  let (mut s6_0, mut s6_1) = load_128b_block(&blocks[6]);
-  let (mut s7_0, mut s7_1) = load_128b_block(&blocks[7]);
+  let (first, rest) = blocks.split_at(8);
+  let (mut s0_0, mut s0_1) = load_128b_block(&first[0]);
+  let (mut s1_0, mut s1_1) = load_128b_block(&first[1]);
+  let (mut s2_0, mut s2_1) = load_128b_block(&first[2]);
+  let (mut s3_0, mut s3_1) = load_128b_block(&first[3]);
+  let (mut s4_0, mut s4_1) = load_128b_block(&first[4]);
+  let (mut s5_0, mut s5_1) = load_128b_block(&first[5]);
+  let (mut s6_0, mut s6_1) = load_128b_block(&first[6]);
+  let (mut s7_0, mut s7_1) = load_128b_block(&first[7]);
 
   let injected = _mm512_setr_epi64(state as i64, 0, 0, 0, 0, 0, 0, 0);
   s0_0 = _mm512_xor_si512(s0_0, injected);
 
-  let mut i: usize = 8;
-  while i < aligned {
-    let (y0, y1) = load_128b_block(&blocks[i]);
+  let mut groups = rest.chunks_exact(8);
+  for group in &mut groups {
+    let [b0, b1, b2, b3, b4, b5, b6, b7] = group else {
+      unreachable!()
+    };
+    let (y0, y1) = load_128b_block(b0);
     s0_0 = fold_16_crc32_reflected_vpclmul(s0_0, coeff_1024b, y0);
     s0_1 = fold_16_crc32_reflected_vpclmul(s0_1, coeff_1024b, y1);
 
-    let (y0, y1) = load_128b_block(&blocks[i + 1]);
+    let (y0, y1) = load_128b_block(b1);
     s1_0 = fold_16_crc32_reflected_vpclmul(s1_0, coeff_1024b, y0);
     s1_1 = fold_16_crc32_reflected_vpclmul(s1_1, coeff_1024b, y1);
 
-    let (y0, y1) = load_128b_block(&blocks[i + 2]);
+    let (y0, y1) = load_128b_block(b2);
     s2_0 = fold_16_crc32_reflected_vpclmul(s2_0, coeff_1024b, y0);
     s2_1 = fold_16_crc32_reflected_vpclmul(s2_1, coeff_1024b, y1);
 
-    let (y0, y1) = load_128b_block(&blocks[i + 3]);
+    let (y0, y1) = load_128b_block(b3);
     s3_0 = fold_16_crc32_reflected_vpclmul(s3_0, coeff_1024b, y0);
     s3_1 = fold_16_crc32_reflected_vpclmul(s3_1, coeff_1024b, y1);
 
-    let (y0, y1) = load_128b_block(&blocks[i + 4]);
+    let (y0, y1) = load_128b_block(b4);
     s4_0 = fold_16_crc32_reflected_vpclmul(s4_0, coeff_1024b, y0);
     s4_1 = fold_16_crc32_reflected_vpclmul(s4_1, coeff_1024b, y1);
 
-    let (y0, y1) = load_128b_block(&blocks[i + 5]);
+    let (y0, y1) = load_128b_block(b5);
     s5_0 = fold_16_crc32_reflected_vpclmul(s5_0, coeff_1024b, y0);
     s5_1 = fold_16_crc32_reflected_vpclmul(s5_1, coeff_1024b, y1);
 
-    let (y0, y1) = load_128b_block(&blocks[i + 6]);
+    let (y0, y1) = load_128b_block(b6);
     s6_0 = fold_16_crc32_reflected_vpclmul(s6_0, coeff_1024b, y0);
     s6_1 = fold_16_crc32_reflected_vpclmul(s6_1, coeff_1024b, y1);
 
-    let (y0, y1) = load_128b_block(&blocks[i + 7]);
+    let (y0, y1) = load_128b_block(b7);
     s7_0 = fold_16_crc32_reflected_vpclmul(s7_0, coeff_1024b, y0);
     s7_1 = fold_16_crc32_reflected_vpclmul(s7_1, coeff_1024b, y1);
-
-    i = i.strict_add(8);
   }
 
   let mut combined0 = s7_0;
@@ -2052,7 +2052,7 @@ unsafe fn update_simd_crc32_ieee_vpclmul_8way(state: u32, blocks: &[[Simd128; 8]
   combined0 = _mm512_xor_si512(combined0, fold_only_crc32_reflected_vpclmul(s6_0, c128));
   combined1 = _mm512_xor_si512(combined1, fold_only_crc32_reflected_vpclmul(s6_1, c128));
 
-  for block in &blocks[aligned..] {
+  for block in groups.remainder() {
     let (y0, y1) = load_128b_block(block);
     combined0 = fold_16_crc32_reflected_vpclmul(combined0, coeff_128b, y0);
     combined1 = fold_16_crc32_reflected_vpclmul(combined1, coeff_128b, y1);
@@ -2259,6 +2259,51 @@ mod tests {
         );
         assert_eq!(
           crc32_ieee_pclmul_8way_safe(init, &data),
+          expected,
+          "8way init={init:#x} len={len}"
+        );
+      }
+    }
+  }
+
+  #[test]
+  fn test_crc32_ieee_vpclmul_multistream_matches_portable() {
+    if !(std::arch::is_x86_feature_detected!("avx512f")
+      && std::arch::is_x86_feature_detected!("avx512vl")
+      && std::arch::is_x86_feature_detected!("avx512bw")
+      && std::arch::is_x86_feature_detected!("avx512dq")
+      && std::arch::is_x86_feature_detected!("vpclmulqdq")
+      && std::arch::is_x86_feature_detected!("pclmulqdq")
+      && std::arch::is_x86_feature_detected!("ssse3"))
+    {
+      return;
+    }
+
+    for &init in &[!0u32, 0x1234_5678, 0xDEAD_BEEF] {
+      for len in [0usize, 1, 15, 16, 127, 128, 255, 256, 1024, 4096, 16384] {
+        let mut data = Vec::with_capacity(len);
+        for i in 0..len {
+          data.push((i as u8).wrapping_mul(31).wrapping_add(7));
+        }
+
+        let expected = super::super::portable::crc32_slice16_ieee(init, &data);
+        assert_eq!(
+          crc32_ieee_vpclmul_2way_safe(init, &data),
+          expected,
+          "2way init={init:#x} len={len}"
+        );
+        assert_eq!(
+          crc32_ieee_vpclmul_4way_safe(init, &data),
+          expected,
+          "4way init={init:#x} len={len}"
+        );
+        assert_eq!(
+          crc32_ieee_vpclmul_7way_safe(init, &data),
+          expected,
+          "7way init={init:#x} len={len}"
+        );
+        assert_eq!(
+          crc32_ieee_vpclmul_8way_safe(init, &data),
           expected,
           "8way init={init:#x} len={len}"
         );
