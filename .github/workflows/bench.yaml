@@ -8,12 +8,6 @@ on:
   # Manual trigger with options
   workflow_dispatch:
     inputs:
-      tune_only:
-        description: "Run tuning only (skip benchmarks)"
-        required: false
-        type: boolean
-        default: false
-
       crates:
         description: "Crate(s) to benchmark (comma-separated, leave empty for all)"
         required: false
@@ -44,17 +38,11 @@ on:
         type: string
         default: ""
 
-      run_tune:
-        description: "Run unified tuning (all algorithms: CRC-16/24/32/64)"
+      tune:
+        description: "Run unified tuning only (skip benchmarks, mirrors 'just tune')"
         required: false
         type: boolean
         default: false
-
-      tune_quick:
-        description: "Use --quick mode for tuning (faster, noisier)"
-        required: false
-        type: boolean
-        default: true
 
       run_comp_report:
         description: "Run checksum comp report (bench + analysis artifact)"
@@ -101,7 +89,7 @@ jobs:
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   benchmark:
     name: Benchmark (${{ matrix.target.name }})
-    if: github.event_name == 'schedule' || github.event.inputs.tune_only != 'true' || github.event.inputs.run_comp_report == 'true' || github.event.inputs.comp_report_crc32c_diagnose == 'true'
+    if: github.event_name == 'schedule' || github.event.inputs.tune != 'true' || github.event.inputs.run_comp_report == 'true' || github.event.inputs.comp_report_crc32c_diagnose == 'true'
     runs-on: ${{ matrix.target.runner }}
     strategy:
       fail-fast: false
@@ -257,7 +245,7 @@ jobs:
           CRATES_INPUT="${GITHUB_EVENT_INPUTS_CRATES}"
           BENCHES_INPUT="${GITHUB_EVENT_INPUTS_SPECIFIC_BENCHES}"
           EVENT_NAME="${GITHUB_EVENT_NAME}"
-          TUNE_ONLY="${GITHUB_EVENT_INPUTS_TUNE_ONLY}"
+          TUNE="${GITHUB_EVENT_INPUTS_TUNE}"
           RUN_COMP_REPORT="${GITHUB_EVENT_INPUTS_RUN_COMP_REPORT}"
 
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -309,8 +297,8 @@ jobs:
           else
             echo "Manual run - using user-provided scope"
 
-            if [ "$TUNE_ONLY" == "true" ]; then
-              echo "tune_only=true - skipping full Criterion benches"
+            if [ "$TUNE" == "true" ]; then
+              echo "tune=true - skipping full Criterion benches"
               echo "skip_bench=true" >> "$GITHUB_OUTPUT"
               echo "crate_flags=" >> "$GITHUB_OUTPUT"
               echo "bench_flags=" >> "$GITHUB_OUTPUT"
@@ -363,7 +351,7 @@ jobs:
         env:
           GITHUB_EVENT_INPUTS_CRATES: ${{ github.event.inputs.crates }}
           GITHUB_EVENT_INPUTS_SPECIFIC_BENCHES: ${{ github.event.inputs.specific_benches }}
-          GITHUB_EVENT_INPUTS_TUNE_ONLY: ${{ github.event.inputs.tune_only }}
+          GITHUB_EVENT_INPUTS_TUNE: ${{ github.event.inputs.tune }}
           GITHUB_EVENT_INPUTS_RUN_COMP_REPORT: ${{ github.event.inputs.run_comp_report }}
           GITHUB_EVENT_NAME: ${{ github.event_name }}
 
@@ -570,12 +558,11 @@ jobs:
   # Benchmarks all checksum algorithms (CRC-16/24/32/64) and outputs
   # recommended RSCRYPTO_CRC*_* environment exports.
   #
-  # Local equivalent:
-  #   just tune [--quick]   - Run unified tuning for all algorithms
+  # Local equivalent: just tune
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   tuning:
     name: Unified Tuning (${{ matrix.target.name }})
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.run_tune == 'true'
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.tune == 'true'
     runs-on: ${{ matrix.target.runner }}
     timeout-minutes: 60
     strategy:
@@ -686,19 +673,6 @@ jobs:
         with:
           tool: just
 
-      - name: Determine Tuning Args
-        if: steps.should-run.outputs.enabled == 'true'
-        id: scope
-        shell: bash
-        run: |
-          QUICK_ARG=""
-          if [[ "${TUNE_QUICK}" == "true" ]]; then
-            QUICK_ARG="--quick"
-          fi
-          echo "quick_arg=$QUICK_ARG" >> "$GITHUB_OUTPUT"
-        env:
-          TUNE_QUICK: ${{ github.event.inputs.tune_quick }}
-
       - name: Run Unified Tuning
         if: steps.should-run.outputs.enabled == 'true'
         shell: bash
@@ -710,11 +684,9 @@ jobs:
           echo "Running unified tuning (all algorithms)"
           echo "Platform: ${{ matrix.target.name }}"
           echo "RUSTFLAGS: -C target-cpu=native"
-          echo "Args: ${{ steps.scope.outputs.quick_arg }}"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-          # shellcheck disable=SC2086
-          RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p tune --release --bin rscrypto-tune -- ${{ steps.scope.outputs.quick_arg }} 2>&1 | tee tune-results/rscrypto-tune.txt
+          RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p tune --release --bin rscrypto-tune -- --quick 2>&1 | tee tune-results/rscrypto-tune.txt
 
           {
             echo ""
@@ -745,7 +717,7 @@ jobs:
   regression-check:
     name: Regression Check
     needs: [benchmark]
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.regression_baseline != '' && github.event.inputs.tune_only != 'true'
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.regression_baseline != '' && github.event.inputs.tune != 'true'
     runs-on: namespace-profile-rscrypto-linux-x86
     timeout-minutes: 60
     steps:
