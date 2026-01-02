@@ -1,13 +1,17 @@
-//! x86_64 carryless-multiply CRC-16 kernels (PCLMULQDQ).
+//! x86_64 carryless-multiply CRC-24/OPENPGP kernels (PCLMULQDQ).
 //!
-//! These kernels implement reflected CRC-16 polynomials by lifting the 16-bit
-//! state into the "width32" folding/reduction strategy (same structure as the
-//! CRC-32 PCLMUL kernels, but with CRC-16-specific constants).
+//! CRC-24/OPENPGP is MSB-first in the portable implementation. These kernels
+//! reuse the existing "width32" folding/reduction structure by computing the
+//! equivalent **reflected** CRC-24 over per-byte bit-reversed input.
+//!
+//! This keeps the core folding code identical to CRC-16 (width32) and CRC-32,
+//! while still producing the correct MSB-first OpenPGP checksum.
 //!
 //! # Safety
 //!
-//! Uses `unsafe` for x86 SIMD intrinsics. Callers must ensure SSSE3 + PCLMULQDQ
-//! are available before executing these kernels (the dispatcher does this).
+//! Uses `unsafe` for x86 SIMD intrinsics. Callers must ensure SSSE3 +
+//! PCLMULQDQ are available before executing these kernels (the dispatcher does
+//! this).
 #![allow(unsafe_code)]
 #![allow(clippy::indexing_slicing)]
 #![allow(unsafe_op_in_unsafe_fn)]
@@ -17,10 +21,14 @@ use core::{
   ops::{BitXor, BitXorAssign},
 };
 
-use super::keys::{
-  CRC16_CCITT_KEYS_REFLECTED, CRC16_CCITT_STREAM_REFLECTED, CRC16_IBM_KEYS_REFLECTED, CRC16_IBM_STREAM_REFLECTED,
-  Width32StreamConstants,
+use super::{
+  keys::{CRC24_OPENPGP_KEYS_REFLECTED, CRC24_OPENPGP_STREAM_REFLECTED, Crc24StreamConstants},
+  reflected::{crc24_reflected_update_bitrev_bytes, from_reflected_state, to_reflected_state},
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SIMD helpers
+// ─────────────────────────────────────────────────────────────────────────────
 
 #[repr(transparent)]
 #[derive(Copy, Clone)]
@@ -68,6 +76,22 @@ impl Simd128 {
     Self(_mm_and_si128(self.0, mask.0))
   }
 
+  /// Reverse bits within each byte (u8::reverse_bits), lane-wise.
+  #[inline]
+  #[target_feature(enable = "sse2", enable = "ssse3")]
+  unsafe fn bitrev_bytes(self) -> Self {
+    let mask = _mm_set1_epi8(0x0f);
+    let lo = _mm_and_si128(self.0, mask);
+    let hi = _mm_and_si128(_mm_srli_epi16::<4>(self.0), mask);
+
+    // Nibble bit-reversal LUT: 0b0000..0b1111 -> reversed bits.
+    let lut = _mm_setr_epi8(0, 8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15);
+    let lo_rev = _mm_shuffle_epi8(lut, lo);
+    let hi_rev = _mm_shuffle_epi8(lut, hi);
+    let lo_shift = _mm_slli_epi16::<4>(lo_rev);
+    Self(_mm_or_si128(lo_shift, hi_rev))
+  }
+
   #[inline]
   #[target_feature(enable = "sse2", enable = "pclmulqdq")]
   unsafe fn fold_16_reflected(self, coeff: Self, data_to_xor: Self) -> Self {
@@ -111,6 +135,10 @@ impl Simd128 {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 8-lane width32 update (128B blocks)
+// ─────────────────────────────────────────────────────────────────────────────
+
 #[inline]
 #[target_feature(enable = "sse2", enable = "pclmulqdq")]
 unsafe fn finalize_lanes_width32_reflected(x: [Simd128; 8], keys: &[u64; 23]) -> u32 {
@@ -129,7 +157,7 @@ unsafe fn finalize_lanes_width32_reflected(x: [Simd128; 8], keys: &[u64; 23]) ->
 
 #[inline]
 #[target_feature(enable = "sse2", enable = "ssse3", enable = "pclmulqdq")]
-unsafe fn update_simd_width32_reflected(
+unsafe fn update_simd_width32_reflected_bitrev_bytes(
   state: u32,
   first: &[Simd128; 8],
   rest: &[[Simd128; 8]],
@@ -137,18 +165,36 @@ unsafe fn update_simd_width32_reflected(
 ) -> u32 {
   let mut x = *first;
 
+  x[0] = x[0].bitrev_bytes();
+  x[1] = x[1].bitrev_bytes();
+  x[2] = x[2].bitrev_bytes();
+  x[3] = x[3].bitrev_bytes();
+  x[4] = x[4].bitrev_bytes();
+  x[5] = x[5].bitrev_bytes();
+  x[6] = x[6].bitrev_bytes();
+  x[7] = x[7].bitrev_bytes();
+
   x[0] ^= Simd128::new(0, state as u64);
 
   let coeff_128b = Simd128::new(keys[4], keys[3]);
   for chunk in rest {
-    x[0] = x[0].fold_16_reflected(coeff_128b, chunk[0]);
-    x[1] = x[1].fold_16_reflected(coeff_128b, chunk[1]);
-    x[2] = x[2].fold_16_reflected(coeff_128b, chunk[2]);
-    x[3] = x[3].fold_16_reflected(coeff_128b, chunk[3]);
-    x[4] = x[4].fold_16_reflected(coeff_128b, chunk[4]);
-    x[5] = x[5].fold_16_reflected(coeff_128b, chunk[5]);
-    x[6] = x[6].fold_16_reflected(coeff_128b, chunk[6]);
-    x[7] = x[7].fold_16_reflected(coeff_128b, chunk[7]);
+    let y0 = chunk[0].bitrev_bytes();
+    let y1 = chunk[1].bitrev_bytes();
+    let y2 = chunk[2].bitrev_bytes();
+    let y3 = chunk[3].bitrev_bytes();
+    let y4 = chunk[4].bitrev_bytes();
+    let y5 = chunk[5].bitrev_bytes();
+    let y6 = chunk[6].bitrev_bytes();
+    let y7 = chunk[7].bitrev_bytes();
+
+    x[0] = x[0].fold_16_reflected(coeff_128b, y0);
+    x[1] = x[1].fold_16_reflected(coeff_128b, y1);
+    x[2] = x[2].fold_16_reflected(coeff_128b, y2);
+    x[3] = x[3].fold_16_reflected(coeff_128b, y3);
+    x[4] = x[4].fold_16_reflected(coeff_128b, y4);
+    x[5] = x[5].fold_16_reflected(coeff_128b, y5);
+    x[6] = x[6].fold_16_reflected(coeff_128b, y6);
+    x[7] = x[7].fold_16_reflected(coeff_128b, y7);
   }
 
   finalize_lanes_width32_reflected(x, keys)
@@ -159,21 +205,30 @@ unsafe fn update_simd_width32_reflected(
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[inline]
-#[target_feature(enable = "sse2", enable = "pclmulqdq")]
-unsafe fn fold_block_128_reflected(x: &mut [Simd128; 8], chunk: &[Simd128; 8], coeff: Simd128) {
-  x[0] = x[0].fold_16_reflected(coeff, chunk[0]);
-  x[1] = x[1].fold_16_reflected(coeff, chunk[1]);
-  x[2] = x[2].fold_16_reflected(coeff, chunk[2]);
-  x[3] = x[3].fold_16_reflected(coeff, chunk[3]);
-  x[4] = x[4].fold_16_reflected(coeff, chunk[4]);
-  x[5] = x[5].fold_16_reflected(coeff, chunk[5]);
-  x[6] = x[6].fold_16_reflected(coeff, chunk[6]);
-  x[7] = x[7].fold_16_reflected(coeff, chunk[7]);
+#[target_feature(enable = "sse2", enable = "ssse3", enable = "pclmulqdq")]
+unsafe fn fold_block_128_reflected_bitrev(x: &mut [Simd128; 8], chunk: &[Simd128; 8], coeff: Simd128) {
+  let y0 = chunk[0].bitrev_bytes();
+  let y1 = chunk[1].bitrev_bytes();
+  let y2 = chunk[2].bitrev_bytes();
+  let y3 = chunk[3].bitrev_bytes();
+  let y4 = chunk[4].bitrev_bytes();
+  let y5 = chunk[5].bitrev_bytes();
+  let y6 = chunk[6].bitrev_bytes();
+  let y7 = chunk[7].bitrev_bytes();
+
+  x[0] = x[0].fold_16_reflected(coeff, y0);
+  x[1] = x[1].fold_16_reflected(coeff, y1);
+  x[2] = x[2].fold_16_reflected(coeff, y2);
+  x[3] = x[3].fold_16_reflected(coeff, y3);
+  x[4] = x[4].fold_16_reflected(coeff, y4);
+  x[5] = x[5].fold_16_reflected(coeff, y5);
+  x[6] = x[6].fold_16_reflected(coeff, y6);
+  x[7] = x[7].fold_16_reflected(coeff, y7);
 }
 
 #[inline]
 #[target_feature(enable = "sse2", enable = "ssse3", enable = "pclmulqdq")]
-unsafe fn update_simd_width32_reflected_2way(
+unsafe fn update_simd_width32_reflected_bitrev_bytes_2way(
   state: u32,
   blocks: &[[Simd128; 8]],
   fold_256b: (u64, u64),
@@ -185,7 +240,7 @@ unsafe fn update_simd_width32_reflected_2way(
     let Some((first, rest)) = blocks.split_first() else {
       return state;
     };
-    return update_simd_width32_reflected(state, first, rest, keys);
+    return update_simd_width32_reflected_bitrev_bytes(state, first, rest, keys);
   }
 
   let coeff_256 = Simd128::new(fold_256b.0, fold_256b.1);
@@ -194,17 +249,34 @@ unsafe fn update_simd_width32_reflected_2way(
   let mut s0 = blocks[0];
   let mut s1 = blocks[1];
 
+  s0[0] = s0[0].bitrev_bytes();
+  s0[1] = s0[1].bitrev_bytes();
+  s0[2] = s0[2].bitrev_bytes();
+  s0[3] = s0[3].bitrev_bytes();
+  s0[4] = s0[4].bitrev_bytes();
+  s0[5] = s0[5].bitrev_bytes();
+  s0[6] = s0[6].bitrev_bytes();
+  s0[7] = s0[7].bitrev_bytes();
+
+  s1[0] = s1[0].bitrev_bytes();
+  s1[1] = s1[1].bitrev_bytes();
+  s1[2] = s1[2].bitrev_bytes();
+  s1[3] = s1[3].bitrev_bytes();
+  s1[4] = s1[4].bitrev_bytes();
+  s1[5] = s1[5].bitrev_bytes();
+  s1[6] = s1[6].bitrev_bytes();
+  s1[7] = s1[7].bitrev_bytes();
+
   s0[0] ^= Simd128::new(0, state as u64);
 
   let mut i: usize = 2;
   let even = blocks.len() & !1usize;
   while i < even {
-    fold_block_128_reflected(&mut s0, &blocks[i], coeff_256);
-    fold_block_128_reflected(&mut s1, &blocks[i.strict_add(1)], coeff_256);
+    fold_block_128_reflected_bitrev(&mut s0, &blocks[i], coeff_256);
+    fold_block_128_reflected_bitrev(&mut s1, &blocks[i.strict_add(1)], coeff_256);
     i = i.strict_add(2);
   }
 
-  // Merge: A·s0 ⊕ s1 (A = shift by 128B).
   let mut combined = s1;
   combined[0] = s0[0].fold_16_reflected(coeff_128, combined[0]);
   combined[1] = s0[1].fold_16_reflected(coeff_128, combined[1]);
@@ -216,7 +288,7 @@ unsafe fn update_simd_width32_reflected_2way(
   combined[7] = s0[7].fold_16_reflected(coeff_128, combined[7]);
 
   if even != blocks.len() {
-    fold_block_128_reflected(&mut combined, &blocks[even], coeff_128);
+    fold_block_128_reflected_bitrev(&mut combined, &blocks[even], coeff_128);
   }
 
   finalize_lanes_width32_reflected(combined, keys)
@@ -224,7 +296,7 @@ unsafe fn update_simd_width32_reflected_2way(
 
 #[inline]
 #[target_feature(enable = "sse2", enable = "ssse3", enable = "pclmulqdq")]
-unsafe fn update_simd_width32_reflected_4way(
+unsafe fn update_simd_width32_reflected_bitrev_bytes_4way(
   state: u32,
   blocks: &[[Simd128; 8]],
   fold_512b: (u64, u64),
@@ -237,7 +309,7 @@ unsafe fn update_simd_width32_reflected_4way(
     let Some((first, rest)) = blocks.split_first() else {
       return state;
     };
-    return update_simd_width32_reflected(state, first, rest, keys);
+    return update_simd_width32_reflected_bitrev_bytes(state, first, rest, keys);
   }
 
   let aligned = (blocks.len() / 4) * 4;
@@ -253,18 +325,28 @@ unsafe fn update_simd_width32_reflected_4way(
   let mut s2 = blocks[2];
   let mut s3 = blocks[3];
 
+  for s in [&mut s0, &mut s1, &mut s2, &mut s3] {
+    s[0] = s[0].bitrev_bytes();
+    s[1] = s[1].bitrev_bytes();
+    s[2] = s[2].bitrev_bytes();
+    s[3] = s[3].bitrev_bytes();
+    s[4] = s[4].bitrev_bytes();
+    s[5] = s[5].bitrev_bytes();
+    s[6] = s[6].bitrev_bytes();
+    s[7] = s[7].bitrev_bytes();
+  }
+
   s0[0] ^= Simd128::new(0, state as u64);
 
   let mut i: usize = 4;
   while i < aligned {
-    fold_block_128_reflected(&mut s0, &blocks[i], coeff_512);
-    fold_block_128_reflected(&mut s1, &blocks[i.strict_add(1)], coeff_512);
-    fold_block_128_reflected(&mut s2, &blocks[i.strict_add(2)], coeff_512);
-    fold_block_128_reflected(&mut s3, &blocks[i.strict_add(3)], coeff_512);
+    fold_block_128_reflected_bitrev(&mut s0, &blocks[i], coeff_512);
+    fold_block_128_reflected_bitrev(&mut s1, &blocks[i.strict_add(1)], coeff_512);
+    fold_block_128_reflected_bitrev(&mut s2, &blocks[i.strict_add(2)], coeff_512);
+    fold_block_128_reflected_bitrev(&mut s3, &blocks[i.strict_add(3)], coeff_512);
     i = i.strict_add(4);
   }
 
-  // Merge: A^3·s0 ⊕ A^2·s1 ⊕ A·s2 ⊕ s3.
   let mut acc = s3;
   acc[0] = s2[0].fold_16_reflected(c128, acc[0]);
   acc[1] = s2[1].fold_16_reflected(c128, acc[1]);
@@ -294,7 +376,7 @@ unsafe fn update_simd_width32_reflected_4way(
   acc[7] = s0[7].fold_16_reflected(c384, acc[7]);
 
   for block in &blocks[aligned..] {
-    fold_block_128_reflected(&mut acc, block, coeff_128);
+    fold_block_128_reflected_bitrev(&mut acc, block, coeff_128);
   }
 
   finalize_lanes_width32_reflected(acc, keys)
@@ -302,7 +384,7 @@ unsafe fn update_simd_width32_reflected_4way(
 
 #[inline]
 #[target_feature(enable = "sse2", enable = "ssse3", enable = "pclmulqdq")]
-unsafe fn update_simd_width32_reflected_7way(
+unsafe fn update_simd_width32_reflected_bitrev_bytes_7way(
   state: u32,
   blocks: &[[Simd128; 8]],
   fold_896b: (u64, u64),
@@ -315,7 +397,7 @@ unsafe fn update_simd_width32_reflected_7way(
     let Some((first, rest)) = blocks.split_first() else {
       return state;
     };
-    return update_simd_width32_reflected(state, first, rest, keys);
+    return update_simd_width32_reflected_bitrev_bytes(state, first, rest, keys);
   }
 
   let aligned = (blocks.len() / 7) * 7;
@@ -337,21 +419,31 @@ unsafe fn update_simd_width32_reflected_7way(
   let mut s5 = blocks[5];
   let mut s6 = blocks[6];
 
+  for s in [&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, &mut s6] {
+    s[0] = s[0].bitrev_bytes();
+    s[1] = s[1].bitrev_bytes();
+    s[2] = s[2].bitrev_bytes();
+    s[3] = s[3].bitrev_bytes();
+    s[4] = s[4].bitrev_bytes();
+    s[5] = s[5].bitrev_bytes();
+    s[6] = s[6].bitrev_bytes();
+    s[7] = s[7].bitrev_bytes();
+  }
+
   s0[0] ^= Simd128::new(0, state as u64);
 
   let mut i: usize = 7;
   while i < aligned {
-    fold_block_128_reflected(&mut s0, &blocks[i], coeff_896);
-    fold_block_128_reflected(&mut s1, &blocks[i.strict_add(1)], coeff_896);
-    fold_block_128_reflected(&mut s2, &blocks[i.strict_add(2)], coeff_896);
-    fold_block_128_reflected(&mut s3, &blocks[i.strict_add(3)], coeff_896);
-    fold_block_128_reflected(&mut s4, &blocks[i.strict_add(4)], coeff_896);
-    fold_block_128_reflected(&mut s5, &blocks[i.strict_add(5)], coeff_896);
-    fold_block_128_reflected(&mut s6, &blocks[i.strict_add(6)], coeff_896);
+    fold_block_128_reflected_bitrev(&mut s0, &blocks[i], coeff_896);
+    fold_block_128_reflected_bitrev(&mut s1, &blocks[i.strict_add(1)], coeff_896);
+    fold_block_128_reflected_bitrev(&mut s2, &blocks[i.strict_add(2)], coeff_896);
+    fold_block_128_reflected_bitrev(&mut s3, &blocks[i.strict_add(3)], coeff_896);
+    fold_block_128_reflected_bitrev(&mut s4, &blocks[i.strict_add(4)], coeff_896);
+    fold_block_128_reflected_bitrev(&mut s5, &blocks[i.strict_add(5)], coeff_896);
+    fold_block_128_reflected_bitrev(&mut s6, &blocks[i.strict_add(6)], coeff_896);
     i = i.strict_add(7);
   }
 
-  // Merge: A^6·s0 ⊕ A^5·s1 ⊕ A^4·s2 ⊕ A^3·s3 ⊕ A^2·s4 ⊕ A·s5 ⊕ s6.
   let mut acc = s6;
   acc[0] = s5[0].fold_16_reflected(c128, acc[0]);
   acc[1] = s5[1].fold_16_reflected(c128, acc[1]);
@@ -408,7 +500,7 @@ unsafe fn update_simd_width32_reflected_7way(
   acc[7] = s0[7].fold_16_reflected(c768, acc[7]);
 
   for block in &blocks[aligned..] {
-    fold_block_128_reflected(&mut acc, block, coeff_128);
+    fold_block_128_reflected_bitrev(&mut acc, block, coeff_128);
   }
 
   finalize_lanes_width32_reflected(acc, keys)
@@ -416,7 +508,7 @@ unsafe fn update_simd_width32_reflected_7way(
 
 #[inline]
 #[target_feature(enable = "sse2", enable = "ssse3", enable = "pclmulqdq")]
-unsafe fn update_simd_width32_reflected_8way(
+unsafe fn update_simd_width32_reflected_bitrev_bytes_8way(
   state: u32,
   blocks: &[[Simd128; 8]],
   fold_1024b: (u64, u64),
@@ -429,7 +521,7 @@ unsafe fn update_simd_width32_reflected_8way(
     let Some((first, rest)) = blocks.split_first() else {
       return state;
     };
-    return update_simd_width32_reflected(state, first, rest, keys);
+    return update_simd_width32_reflected_bitrev_bytes(state, first, rest, keys);
   }
 
   let aligned = (blocks.len() / 8) * 8;
@@ -453,22 +545,32 @@ unsafe fn update_simd_width32_reflected_8way(
   let mut s6 = blocks[6];
   let mut s7 = blocks[7];
 
+  for s in [&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, &mut s6, &mut s7] {
+    s[0] = s[0].bitrev_bytes();
+    s[1] = s[1].bitrev_bytes();
+    s[2] = s[2].bitrev_bytes();
+    s[3] = s[3].bitrev_bytes();
+    s[4] = s[4].bitrev_bytes();
+    s[5] = s[5].bitrev_bytes();
+    s[6] = s[6].bitrev_bytes();
+    s[7] = s[7].bitrev_bytes();
+  }
+
   s0[0] ^= Simd128::new(0, state as u64);
 
   let mut i: usize = 8;
   while i < aligned {
-    fold_block_128_reflected(&mut s0, &blocks[i], coeff_1024);
-    fold_block_128_reflected(&mut s1, &blocks[i.strict_add(1)], coeff_1024);
-    fold_block_128_reflected(&mut s2, &blocks[i.strict_add(2)], coeff_1024);
-    fold_block_128_reflected(&mut s3, &blocks[i.strict_add(3)], coeff_1024);
-    fold_block_128_reflected(&mut s4, &blocks[i.strict_add(4)], coeff_1024);
-    fold_block_128_reflected(&mut s5, &blocks[i.strict_add(5)], coeff_1024);
-    fold_block_128_reflected(&mut s6, &blocks[i.strict_add(6)], coeff_1024);
-    fold_block_128_reflected(&mut s7, &blocks[i.strict_add(7)], coeff_1024);
+    fold_block_128_reflected_bitrev(&mut s0, &blocks[i], coeff_1024);
+    fold_block_128_reflected_bitrev(&mut s1, &blocks[i.strict_add(1)], coeff_1024);
+    fold_block_128_reflected_bitrev(&mut s2, &blocks[i.strict_add(2)], coeff_1024);
+    fold_block_128_reflected_bitrev(&mut s3, &blocks[i.strict_add(3)], coeff_1024);
+    fold_block_128_reflected_bitrev(&mut s4, &blocks[i.strict_add(4)], coeff_1024);
+    fold_block_128_reflected_bitrev(&mut s5, &blocks[i.strict_add(5)], coeff_1024);
+    fold_block_128_reflected_bitrev(&mut s6, &blocks[i.strict_add(6)], coeff_1024);
+    fold_block_128_reflected_bitrev(&mut s7, &blocks[i.strict_add(7)], coeff_1024);
     i = i.strict_add(8);
   }
 
-  // Merge: A^7·s0 ⊕ A^6·s1 ⊕ A^5·s2 ⊕ A^4·s3 ⊕ A^3·s4 ⊕ A^2·s5 ⊕ A·s6 ⊕ s7.
   let mut acc = s7;
   acc[0] = s6[0].fold_16_reflected(c128, acc[0]);
   acc[1] = s6[1].fold_16_reflected(c128, acc[1]);
@@ -534,7 +636,7 @@ unsafe fn update_simd_width32_reflected_8way(
   acc[7] = s0[7].fold_16_reflected(c896, acc[7]);
 
   for block in &blocks[aligned..] {
-    fold_block_128_reflected(&mut acc, block, coeff_128);
+    fold_block_128_reflected_bitrev(&mut acc, block, coeff_128);
   }
 
   finalize_lanes_width32_reflected(acc, keys)
@@ -542,79 +644,77 @@ unsafe fn update_simd_width32_reflected_8way(
 
 #[inline]
 #[target_feature(enable = "sse2", enable = "ssse3", enable = "pclmulqdq")]
-unsafe fn crc16_width32_pclmul_stream(
-  mut state: u16,
+unsafe fn crc24_width32_pclmul_stream(
+  mut state: u32,
   data: &[u8],
   keys: &[u64; 23],
-  stream: &Width32StreamConstants,
+  stream: &Crc24StreamConstants,
   streams: u8,
-  portable: fn(u16, &[u8]) -> u16,
-) -> u16 {
+) -> u32 {
   let (left, middle, right) = data.align_to::<[Simd128; 8]>();
   let Some((first, rest)) = middle.split_first() else {
-    return crc16_width32_pclmul_small(state, data, keys, portable);
+    return crc24_width32_pclmul_small(state, data, keys);
   };
 
-  state = portable(state, left);
+  state = crc24_reflected_update_bitrev_bytes(state, left);
   let state32 = match streams {
-    8 => update_simd_width32_reflected_8way(state as u32, middle, stream.fold_1024b, &stream.combine_8way, keys),
-    7 => update_simd_width32_reflected_7way(state as u32, middle, stream.fold_896b, &stream.combine_7way, keys),
-    4 => update_simd_width32_reflected_4way(state as u32, middle, stream.fold_512b, &stream.combine_4way, keys),
-    2 => update_simd_width32_reflected_2way(state as u32, middle, stream.fold_256b, keys),
-    _ => update_simd_width32_reflected(state as u32, first, rest, keys),
+    8 => update_simd_width32_reflected_bitrev_bytes_8way(state, middle, stream.fold_1024b, &stream.combine_8way, keys),
+    7 => update_simd_width32_reflected_bitrev_bytes_7way(state, middle, stream.fold_896b, &stream.combine_7way, keys),
+    4 => update_simd_width32_reflected_bitrev_bytes_4way(state, middle, stream.fold_512b, &stream.combine_4way, keys),
+    2 => update_simd_width32_reflected_bitrev_bytes_2way(state, middle, stream.fold_256b, keys),
+    _ => update_simd_width32_reflected_bitrev_bytes(state, first, rest, keys),
   };
-  state = state32 as u16;
-  portable(state, right)
+  state = state32;
+  crc24_reflected_update_bitrev_bytes(state, right)
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Single-stream kernel entry points
+// ─────────────────────────────────────────────────────────────────────────────
+
 #[inline]
-#[target_feature(enable = "sse2", enable = "pclmulqdq")]
-unsafe fn crc16_width32_pclmul_small(
-  mut state: u16,
-  data: &[u8],
-  keys: &[u64; 23],
-  portable: fn(u16, &[u8]) -> u16,
-) -> u16 {
+#[target_feature(enable = "sse2", enable = "ssse3", enable = "pclmulqdq")]
+unsafe fn crc24_width32_pclmul_small(mut state: u32, data: &[u8], keys: &[u64; 23]) -> u32 {
   let mut buf = data.as_ptr();
   let mut len = data.len();
 
   if len < 16 {
-    return portable(state, data);
+    return crc24_reflected_update_bitrev_bytes(state, data);
   }
 
   let coeff_16b = Simd128::new(keys[2], keys[1]);
 
-  let mut x0 = Simd128(_mm_loadu_si128(buf as *const __m128i));
+  let mut x0 = Simd128(_mm_loadu_si128(buf as *const __m128i)).bitrev_bytes();
   x0 ^= Simd128::new(0, state as u64);
   buf = buf.add(16);
   len = len.strict_sub(16);
 
   while len >= 16 {
-    let chunk = Simd128(_mm_loadu_si128(buf as *const __m128i));
+    let chunk = Simd128(_mm_loadu_si128(buf as *const __m128i)).bitrev_bytes();
     x0 = x0.fold_16_reflected(coeff_16b, chunk);
     buf = buf.add(16);
     len = len.strict_sub(16);
   }
 
   let x0 = x0.fold_width32_reflected(keys[6], keys[5]);
-  state = x0.barrett_width32_reflected(keys[8], keys[7]) as u16;
+  state = x0.barrett_width32_reflected(keys[8], keys[7]);
 
   let tail = core::slice::from_raw_parts(buf, len);
-  portable(state, tail)
+  crc24_reflected_update_bitrev_bytes(state, tail)
 }
 
 #[inline]
 #[target_feature(enable = "sse2", enable = "ssse3", enable = "pclmulqdq")]
-unsafe fn crc16_width32_pclmul(mut state: u16, data: &[u8], keys: &[u64; 23], portable: fn(u16, &[u8]) -> u16) -> u16 {
+unsafe fn crc24_width32_pclmul(mut state: u32, data: &[u8], keys: &[u64; 23]) -> u32 {
   let (left, middle, right) = data.align_to::<[Simd128; 8]>();
   let Some((first, rest)) = middle.split_first() else {
-    return crc16_width32_pclmul_small(state, data, keys, portable);
+    return crc24_width32_pclmul_small(state, data, keys);
   };
 
-  state = portable(state, left);
-  let state32 = update_simd_width32_reflected(state as u32, first, rest, keys);
-  state = state32 as u16;
-  portable(state, right)
+  state = crc24_reflected_update_bitrev_bytes(state, left);
+  let state32 = update_simd_width32_reflected_bitrev_bytes(state, first, rest, keys);
+  state = state32;
+  crc24_reflected_update_bitrev_bytes(state, right)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -661,8 +761,22 @@ unsafe fn state_mask_lane0(state: u32) -> __m512i {
 }
 
 #[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+unsafe fn bitrev_bytes_vpclmul(x: __m512i) -> __m512i {
+  let mask = _mm512_set1_epi8(0x0f);
+  let lo = _mm512_and_si512(x, mask);
+  let hi = _mm512_and_si512(_mm512_srli_epi16(x, 4), mask);
+
+  let lut128 = _mm_setr_epi8(0, 8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15);
+  let lut = _mm512_broadcast_i32x4(lut128);
+  let lo_rev = _mm512_shuffle_epi8(lut, lo);
+  let hi_rev = _mm512_shuffle_epi8(lut, hi);
+  _mm512_or_si512(_mm512_slli_epi16(lo_rev, 4), hi_rev)
+}
+
+#[inline]
 #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,ssse3,pclmulqdq,sse2")]
-unsafe fn update_simd_width32_reflected_vpclmul(
+unsafe fn update_simd_width32_reflected_vpclmul_bitrev_bytes(
   state: u32,
   first: &[Simd128; 8],
   rest: &[[Simd128; 8]],
@@ -672,13 +786,16 @@ unsafe fn update_simd_width32_reflected_vpclmul(
   let mut x0 = _mm512_loadu_si512(ptr as *const __m512i);
   let mut x1 = _mm512_loadu_si512(ptr.add(64) as *const __m512i);
 
+  x0 = bitrev_bytes_vpclmul(x0);
+  x1 = bitrev_bytes_vpclmul(x1);
+
   x0 = _mm512_xor_si512(x0, state_mask_lane0(state));
 
   let coeff_128b = broadcast_coeff_128b(keys[4], keys[3]);
   for chunk in rest {
     let ptr = chunk.as_ptr() as *const u8;
-    let y0 = _mm512_loadu_si512(ptr as *const __m512i);
-    let y1 = _mm512_loadu_si512(ptr.add(64) as *const __m512i);
+    let y0 = bitrev_bytes_vpclmul(_mm512_loadu_si512(ptr as *const __m512i));
+    let y1 = bitrev_bytes_vpclmul(_mm512_loadu_si512(ptr.add(64) as *const __m512i));
     x0 = fold_16_reflected_vpclmul(x0, coeff_128b, y0);
     x1 = fold_16_reflected_vpclmul(x1, coeff_128b, y1);
   }
@@ -703,12 +820,11 @@ unsafe fn vpclmul_coeff(pair: (u64, u64)) -> __m512i {
 
 #[inline]
 #[target_feature(enable = "avx512f")]
-unsafe fn load_128b_block(block: &[Simd128; 8]) -> (__m512i, __m512i) {
+unsafe fn load_128b_block_bitrev(block: &[Simd128; 8]) -> (__m512i, __m512i) {
   let ptr = block.as_ptr() as *const u8;
-  (
-    _mm512_loadu_si512(ptr as *const __m512i),
-    _mm512_loadu_si512(ptr.add(64) as *const __m512i),
-  )
+  let y0 = bitrev_bytes_vpclmul(_mm512_loadu_si512(ptr as *const __m512i));
+  let y1 = bitrev_bytes_vpclmul(_mm512_loadu_si512(ptr.add(64) as *const __m512i));
+  (y0, y1)
 }
 
 #[inline]
@@ -735,7 +851,7 @@ unsafe fn finalize_vpclmul_state(x0: __m512i, x1: __m512i, keys: &[u64; 23]) -> 
 
 #[inline]
 #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,ssse3,pclmulqdq,sse2")]
-unsafe fn update_simd_width32_reflected_vpclmul_2way(
+unsafe fn update_simd_width32_reflected_vpclmul_bitrev_bytes_2way(
   state: u32,
   blocks: &[[Simd128; 8]],
   fold_256b: (u64, u64),
@@ -747,13 +863,13 @@ unsafe fn update_simd_width32_reflected_vpclmul_2way(
     let Some((first, rest)) = blocks.split_first() else {
       return state;
     };
-    return update_simd_width32_reflected_vpclmul(state, first, rest, keys);
+    return update_simd_width32_reflected_vpclmul_bitrev_bytes(state, first, rest, keys);
   }
 
   let even = blocks.len() & !1usize;
 
-  let (mut x0_0, mut x1_0) = load_128b_block(&blocks[0]);
-  let (mut x0_1, mut x1_1) = load_128b_block(&blocks[1]);
+  let (mut x0_0, mut x1_0) = load_128b_block_bitrev(&blocks[0]);
+  let (mut x0_1, mut x1_1) = load_128b_block_bitrev(&blocks[1]);
 
   x0_0 = _mm512_xor_si512(x0_0, state_mask_lane0(state));
 
@@ -762,11 +878,11 @@ unsafe fn update_simd_width32_reflected_vpclmul_2way(
 
   let mut i: usize = 2;
   while i < even {
-    let (y0, y1) = load_128b_block(&blocks[i]);
+    let (y0, y1) = load_128b_block_bitrev(&blocks[i]);
     x0_0 = fold_16_reflected_vpclmul(x0_0, coeff_256, y0);
     x1_0 = fold_16_reflected_vpclmul(x1_0, coeff_256, y1);
 
-    let (y0, y1) = load_128b_block(&blocks[i.strict_add(1)]);
+    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(1)]);
     x0_1 = fold_16_reflected_vpclmul(x0_1, coeff_256, y0);
     x1_1 = fold_16_reflected_vpclmul(x1_1, coeff_256, y1);
 
@@ -777,7 +893,7 @@ unsafe fn update_simd_width32_reflected_vpclmul_2way(
   let mut x1 = fold_16_reflected_vpclmul(x1_0, coeff_128, x1_1);
 
   if even != blocks.len() {
-    let (y0, y1) = load_128b_block(&blocks[even]);
+    let (y0, y1) = load_128b_block_bitrev(&blocks[even]);
     x0 = fold_16_reflected_vpclmul(x0, coeff_128, y0);
     x1 = fold_16_reflected_vpclmul(x1, coeff_128, y1);
   }
@@ -787,7 +903,7 @@ unsafe fn update_simd_width32_reflected_vpclmul_2way(
 
 #[inline]
 #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,ssse3,pclmulqdq,sse2")]
-unsafe fn update_simd_width32_reflected_vpclmul_4way(
+unsafe fn update_simd_width32_reflected_vpclmul_bitrev_bytes_4way(
   state: u32,
   blocks: &[[Simd128; 8]],
   fold_512b: (u64, u64),
@@ -800,15 +916,15 @@ unsafe fn update_simd_width32_reflected_vpclmul_4way(
     let Some((first, rest)) = blocks.split_first() else {
       return state;
     };
-    return update_simd_width32_reflected_vpclmul(state, first, rest, keys);
+    return update_simd_width32_reflected_vpclmul_bitrev_bytes(state, first, rest, keys);
   }
 
   let aligned = (blocks.len() / 4) * 4;
 
-  let (mut x0_0, mut x1_0) = load_128b_block(&blocks[0]);
-  let (mut x0_1, mut x1_1) = load_128b_block(&blocks[1]);
-  let (mut x0_2, mut x1_2) = load_128b_block(&blocks[2]);
-  let (mut x0_3, mut x1_3) = load_128b_block(&blocks[3]);
+  let (mut x0_0, mut x1_0) = load_128b_block_bitrev(&blocks[0]);
+  let (mut x0_1, mut x1_1) = load_128b_block_bitrev(&blocks[1]);
+  let (mut x0_2, mut x1_2) = load_128b_block_bitrev(&blocks[2]);
+  let (mut x0_3, mut x1_3) = load_128b_block_bitrev(&blocks[3]);
 
   x0_0 = _mm512_xor_si512(x0_0, state_mask_lane0(state));
 
@@ -820,19 +936,19 @@ unsafe fn update_simd_width32_reflected_vpclmul_4way(
 
   let mut i: usize = 4;
   while i < aligned {
-    let (y0, y1) = load_128b_block(&blocks[i]);
+    let (y0, y1) = load_128b_block_bitrev(&blocks[i]);
     x0_0 = fold_16_reflected_vpclmul(x0_0, coeff_512, y0);
     x1_0 = fold_16_reflected_vpclmul(x1_0, coeff_512, y1);
 
-    let (y0, y1) = load_128b_block(&blocks[i.strict_add(1)]);
+    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(1)]);
     x0_1 = fold_16_reflected_vpclmul(x0_1, coeff_512, y0);
     x1_1 = fold_16_reflected_vpclmul(x1_1, coeff_512, y1);
 
-    let (y0, y1) = load_128b_block(&blocks[i.strict_add(2)]);
+    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(2)]);
     x0_2 = fold_16_reflected_vpclmul(x0_2, coeff_512, y0);
     x1_2 = fold_16_reflected_vpclmul(x1_2, coeff_512, y1);
 
-    let (y0, y1) = load_128b_block(&blocks[i.strict_add(3)]);
+    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(3)]);
     x0_3 = fold_16_reflected_vpclmul(x0_3, coeff_512, y0);
     x1_3 = fold_16_reflected_vpclmul(x1_3, coeff_512, y1);
 
@@ -847,7 +963,7 @@ unsafe fn update_simd_width32_reflected_vpclmul_4way(
   x1 = fold_16_reflected_vpclmul(x1_0, c384, x1);
 
   for block in &blocks[aligned..] {
-    let (y0, y1) = load_128b_block(block);
+    let (y0, y1) = load_128b_block_bitrev(block);
     x0 = fold_16_reflected_vpclmul(x0, coeff_128, y0);
     x1 = fold_16_reflected_vpclmul(x1, coeff_128, y1);
   }
@@ -857,7 +973,7 @@ unsafe fn update_simd_width32_reflected_vpclmul_4way(
 
 #[inline]
 #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,ssse3,pclmulqdq,sse2")]
-unsafe fn update_simd_width32_reflected_vpclmul_7way(
+unsafe fn update_simd_width32_reflected_vpclmul_bitrev_bytes_7way(
   state: u32,
   blocks: &[[Simd128; 8]],
   fold_896b: (u64, u64),
@@ -870,18 +986,18 @@ unsafe fn update_simd_width32_reflected_vpclmul_7way(
     let Some((first, rest)) = blocks.split_first() else {
       return state;
     };
-    return update_simd_width32_reflected_vpclmul(state, first, rest, keys);
+    return update_simd_width32_reflected_vpclmul_bitrev_bytes(state, first, rest, keys);
   }
 
   let aligned = (blocks.len() / 7) * 7;
 
-  let (mut x0_0, mut x1_0) = load_128b_block(&blocks[0]);
-  let (mut x0_1, mut x1_1) = load_128b_block(&blocks[1]);
-  let (mut x0_2, mut x1_2) = load_128b_block(&blocks[2]);
-  let (mut x0_3, mut x1_3) = load_128b_block(&blocks[3]);
-  let (mut x0_4, mut x1_4) = load_128b_block(&blocks[4]);
-  let (mut x0_5, mut x1_5) = load_128b_block(&blocks[5]);
-  let (mut x0_6, mut x1_6) = load_128b_block(&blocks[6]);
+  let (mut x0_0, mut x1_0) = load_128b_block_bitrev(&blocks[0]);
+  let (mut x0_1, mut x1_1) = load_128b_block_bitrev(&blocks[1]);
+  let (mut x0_2, mut x1_2) = load_128b_block_bitrev(&blocks[2]);
+  let (mut x0_3, mut x1_3) = load_128b_block_bitrev(&blocks[3]);
+  let (mut x0_4, mut x1_4) = load_128b_block_bitrev(&blocks[4]);
+  let (mut x0_5, mut x1_5) = load_128b_block_bitrev(&blocks[5]);
+  let (mut x0_6, mut x1_6) = load_128b_block_bitrev(&blocks[6]);
 
   x0_0 = _mm512_xor_si512(x0_0, state_mask_lane0(state));
 
@@ -896,31 +1012,31 @@ unsafe fn update_simd_width32_reflected_vpclmul_7way(
 
   let mut i: usize = 7;
   while i < aligned {
-    let (y0, y1) = load_128b_block(&blocks[i]);
+    let (y0, y1) = load_128b_block_bitrev(&blocks[i]);
     x0_0 = fold_16_reflected_vpclmul(x0_0, coeff_896, y0);
     x1_0 = fold_16_reflected_vpclmul(x1_0, coeff_896, y1);
 
-    let (y0, y1) = load_128b_block(&blocks[i.strict_add(1)]);
+    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(1)]);
     x0_1 = fold_16_reflected_vpclmul(x0_1, coeff_896, y0);
     x1_1 = fold_16_reflected_vpclmul(x1_1, coeff_896, y1);
 
-    let (y0, y1) = load_128b_block(&blocks[i.strict_add(2)]);
+    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(2)]);
     x0_2 = fold_16_reflected_vpclmul(x0_2, coeff_896, y0);
     x1_2 = fold_16_reflected_vpclmul(x1_2, coeff_896, y1);
 
-    let (y0, y1) = load_128b_block(&blocks[i.strict_add(3)]);
+    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(3)]);
     x0_3 = fold_16_reflected_vpclmul(x0_3, coeff_896, y0);
     x1_3 = fold_16_reflected_vpclmul(x1_3, coeff_896, y1);
 
-    let (y0, y1) = load_128b_block(&blocks[i.strict_add(4)]);
+    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(4)]);
     x0_4 = fold_16_reflected_vpclmul(x0_4, coeff_896, y0);
     x1_4 = fold_16_reflected_vpclmul(x1_4, coeff_896, y1);
 
-    let (y0, y1) = load_128b_block(&blocks[i.strict_add(5)]);
+    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(5)]);
     x0_5 = fold_16_reflected_vpclmul(x0_5, coeff_896, y0);
     x1_5 = fold_16_reflected_vpclmul(x1_5, coeff_896, y1);
 
-    let (y0, y1) = load_128b_block(&blocks[i.strict_add(6)]);
+    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(6)]);
     x0_6 = fold_16_reflected_vpclmul(x0_6, coeff_896, y0);
     x1_6 = fold_16_reflected_vpclmul(x1_6, coeff_896, y1);
 
@@ -941,7 +1057,7 @@ unsafe fn update_simd_width32_reflected_vpclmul_7way(
   x1 = fold_16_reflected_vpclmul(x1_0, c768, x1);
 
   for block in &blocks[aligned..] {
-    let (y0, y1) = load_128b_block(block);
+    let (y0, y1) = load_128b_block_bitrev(block);
     x0 = fold_16_reflected_vpclmul(x0, coeff_128, y0);
     x1 = fold_16_reflected_vpclmul(x1, coeff_128, y1);
   }
@@ -951,7 +1067,7 @@ unsafe fn update_simd_width32_reflected_vpclmul_7way(
 
 #[inline]
 #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,ssse3,pclmulqdq,sse2")]
-unsafe fn update_simd_width32_reflected_vpclmul_8way(
+unsafe fn update_simd_width32_reflected_vpclmul_bitrev_bytes_8way(
   state: u32,
   blocks: &[[Simd128; 8]],
   fold_1024b: (u64, u64),
@@ -964,19 +1080,19 @@ unsafe fn update_simd_width32_reflected_vpclmul_8way(
     let Some((first, rest)) = blocks.split_first() else {
       return state;
     };
-    return update_simd_width32_reflected_vpclmul(state, first, rest, keys);
+    return update_simd_width32_reflected_vpclmul_bitrev_bytes(state, first, rest, keys);
   }
 
   let aligned = (blocks.len() / 8) * 8;
 
-  let (mut x0_0, mut x1_0) = load_128b_block(&blocks[0]);
-  let (mut x0_1, mut x1_1) = load_128b_block(&blocks[1]);
-  let (mut x0_2, mut x1_2) = load_128b_block(&blocks[2]);
-  let (mut x0_3, mut x1_3) = load_128b_block(&blocks[3]);
-  let (mut x0_4, mut x1_4) = load_128b_block(&blocks[4]);
-  let (mut x0_5, mut x1_5) = load_128b_block(&blocks[5]);
-  let (mut x0_6, mut x1_6) = load_128b_block(&blocks[6]);
-  let (mut x0_7, mut x1_7) = load_128b_block(&blocks[7]);
+  let (mut x0_0, mut x1_0) = load_128b_block_bitrev(&blocks[0]);
+  let (mut x0_1, mut x1_1) = load_128b_block_bitrev(&blocks[1]);
+  let (mut x0_2, mut x1_2) = load_128b_block_bitrev(&blocks[2]);
+  let (mut x0_3, mut x1_3) = load_128b_block_bitrev(&blocks[3]);
+  let (mut x0_4, mut x1_4) = load_128b_block_bitrev(&blocks[4]);
+  let (mut x0_5, mut x1_5) = load_128b_block_bitrev(&blocks[5]);
+  let (mut x0_6, mut x1_6) = load_128b_block_bitrev(&blocks[6]);
+  let (mut x0_7, mut x1_7) = load_128b_block_bitrev(&blocks[7]);
 
   x0_0 = _mm512_xor_si512(x0_0, state_mask_lane0(state));
 
@@ -992,35 +1108,35 @@ unsafe fn update_simd_width32_reflected_vpclmul_8way(
 
   let mut i: usize = 8;
   while i < aligned {
-    let (y0, y1) = load_128b_block(&blocks[i]);
+    let (y0, y1) = load_128b_block_bitrev(&blocks[i]);
     x0_0 = fold_16_reflected_vpclmul(x0_0, coeff_1024, y0);
     x1_0 = fold_16_reflected_vpclmul(x1_0, coeff_1024, y1);
 
-    let (y0, y1) = load_128b_block(&blocks[i.strict_add(1)]);
+    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(1)]);
     x0_1 = fold_16_reflected_vpclmul(x0_1, coeff_1024, y0);
     x1_1 = fold_16_reflected_vpclmul(x1_1, coeff_1024, y1);
 
-    let (y0, y1) = load_128b_block(&blocks[i.strict_add(2)]);
+    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(2)]);
     x0_2 = fold_16_reflected_vpclmul(x0_2, coeff_1024, y0);
     x1_2 = fold_16_reflected_vpclmul(x1_2, coeff_1024, y1);
 
-    let (y0, y1) = load_128b_block(&blocks[i.strict_add(3)]);
+    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(3)]);
     x0_3 = fold_16_reflected_vpclmul(x0_3, coeff_1024, y0);
     x1_3 = fold_16_reflected_vpclmul(x1_3, coeff_1024, y1);
 
-    let (y0, y1) = load_128b_block(&blocks[i.strict_add(4)]);
+    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(4)]);
     x0_4 = fold_16_reflected_vpclmul(x0_4, coeff_1024, y0);
     x1_4 = fold_16_reflected_vpclmul(x1_4, coeff_1024, y1);
 
-    let (y0, y1) = load_128b_block(&blocks[i.strict_add(5)]);
+    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(5)]);
     x0_5 = fold_16_reflected_vpclmul(x0_5, coeff_1024, y0);
     x1_5 = fold_16_reflected_vpclmul(x1_5, coeff_1024, y1);
 
-    let (y0, y1) = load_128b_block(&blocks[i.strict_add(6)]);
+    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(6)]);
     x0_6 = fold_16_reflected_vpclmul(x0_6, coeff_1024, y0);
     x1_6 = fold_16_reflected_vpclmul(x1_6, coeff_1024, y1);
 
-    let (y0, y1) = load_128b_block(&blocks[i.strict_add(7)]);
+    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(7)]);
     x0_7 = fold_16_reflected_vpclmul(x0_7, coeff_1024, y0);
     x1_7 = fold_16_reflected_vpclmul(x1_7, coeff_1024, y1);
 
@@ -1043,7 +1159,7 @@ unsafe fn update_simd_width32_reflected_vpclmul_8way(
   x1 = fold_16_reflected_vpclmul(x1_0, c896, x1);
 
   for block in &blocks[aligned..] {
-    let (y0, y1) = load_128b_block(block);
+    let (y0, y1) = load_128b_block_bitrev(block);
     x0 = fold_16_reflected_vpclmul(x0, coeff_128, y0);
     x1 = fold_16_reflected_vpclmul(x1, coeff_128, y1);
   }
@@ -1053,345 +1169,216 @@ unsafe fn update_simd_width32_reflected_vpclmul_8way(
 
 #[inline]
 #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,ssse3,pclmulqdq,sse2")]
-unsafe fn crc16_width32_vpclmul_stream(
-  mut state: u16,
+unsafe fn crc24_width32_vpclmul_stream(
+  mut state: u32,
   data: &[u8],
   keys: &[u64; 23],
-  stream: &Width32StreamConstants,
+  stream: &Crc24StreamConstants,
   streams: u8,
-  portable: fn(u16, &[u8]) -> u16,
-) -> u16 {
+) -> u32 {
   let (left, middle, right) = data.align_to::<[Simd128; 8]>();
   let Some((first, rest)) = middle.split_first() else {
-    return crc16_width32_pclmul_small(state, data, keys, portable);
+    return crc24_width32_pclmul_small(state, data, keys);
   };
 
-  state = portable(state, left);
+  state = crc24_reflected_update_bitrev_bytes(state, left);
   let state32 = match streams {
-    8 => {
-      update_simd_width32_reflected_vpclmul_8way(state as u32, middle, stream.fold_1024b, &stream.combine_8way, keys)
-    }
-    7 => update_simd_width32_reflected_vpclmul_7way(state as u32, middle, stream.fold_896b, &stream.combine_7way, keys),
-    4 => update_simd_width32_reflected_vpclmul_4way(state as u32, middle, stream.fold_512b, &stream.combine_4way, keys),
-    2 => update_simd_width32_reflected_vpclmul_2way(state as u32, middle, stream.fold_256b, keys),
-    _ => update_simd_width32_reflected_vpclmul(state as u32, first, rest, keys),
+    8 => update_simd_width32_reflected_vpclmul_bitrev_bytes_8way(
+      state,
+      middle,
+      stream.fold_1024b,
+      &stream.combine_8way,
+      keys,
+    ),
+    7 => update_simd_width32_reflected_vpclmul_bitrev_bytes_7way(
+      state,
+      middle,
+      stream.fold_896b,
+      &stream.combine_7way,
+      keys,
+    ),
+    4 => update_simd_width32_reflected_vpclmul_bitrev_bytes_4way(
+      state,
+      middle,
+      stream.fold_512b,
+      &stream.combine_4way,
+      keys,
+    ),
+    2 => update_simd_width32_reflected_vpclmul_bitrev_bytes_2way(state, middle, stream.fold_256b, keys),
+    _ => update_simd_width32_reflected_vpclmul_bitrev_bytes(state, first, rest, keys),
   };
-  state = state32 as u16;
-  portable(state, right)
+  state = state32;
+  crc24_reflected_update_bitrev_bytes(state, right)
 }
 
 #[inline]
 #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,ssse3,pclmulqdq,sse2")]
-unsafe fn crc16_width32_vpclmul(mut state: u16, data: &[u8], keys: &[u64; 23], portable: fn(u16, &[u8]) -> u16) -> u16 {
+unsafe fn crc24_width32_vpclmul(mut state: u32, data: &[u8], keys: &[u64; 23]) -> u32 {
   let (left, middle, right) = data.align_to::<[Simd128; 8]>();
   let Some((first, rest)) = middle.split_first() else {
-    return crc16_width32_pclmul_small(state, data, keys, portable);
+    return crc24_width32_pclmul_small(state, data, keys);
   };
 
-  state = portable(state, left);
-  let state32 = update_simd_width32_reflected_vpclmul(state as u32, first, rest, keys);
-  state = state32 as u16;
-  portable(state, right)
+  state = crc24_reflected_update_bitrev_bytes(state, left);
+  let state32 = update_simd_width32_reflected_vpclmul_bitrev_bytes(state, first, rest, keys);
+  state = state32;
+  crc24_reflected_update_bitrev_bytes(state, right)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Public Safe Kernels (matching CRC-64 pure fn(u16, &[u8]) -> u16 signature)
+// Public Safe Kernels
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// CRC-16/CCITT PCLMULQDQ kernel.
+/// CRC-24/OPENPGP PCLMULQDQ kernel.
 ///
 /// # Safety
 ///
 /// Dispatcher verifies SSSE3 + PCLMULQDQ before selecting this kernel.
 #[inline]
-pub fn crc16_ccitt_pclmul_safe(crc: u16, data: &[u8]) -> u16 {
+pub fn crc24_openpgp_pclmul_safe(crc: u32, data: &[u8]) -> u32 {
+  let mut state = to_reflected_state(crc);
   // SAFETY: Dispatcher verifies SSSE3 + PCLMULQDQ before selecting this kernel.
-  unsafe {
-    crc16_width32_pclmul(
-      crc,
-      data,
-      &CRC16_CCITT_KEYS_REFLECTED,
-      super::portable::crc16_ccitt_slice8,
-    )
-  }
+  state = unsafe { crc24_width32_pclmul(state, data, &CRC24_OPENPGP_KEYS_REFLECTED) };
+  from_reflected_state(state)
 }
 
-/// CRC-16/CCITT PCLMULQDQ kernel (2-way multi-stream).
+/// CRC-24/OPENPGP PCLMULQDQ kernel (2-way multi-stream).
 #[inline]
-pub fn crc16_ccitt_pclmul_2way_safe(crc: u16, data: &[u8]) -> u16 {
-  unsafe {
-    crc16_width32_pclmul_stream(
-      crc,
+pub fn crc24_openpgp_pclmul_2way_safe(crc: u32, data: &[u8]) -> u32 {
+  let mut state = to_reflected_state(crc);
+  state = unsafe {
+    crc24_width32_pclmul_stream(
+      state,
       data,
-      &CRC16_CCITT_KEYS_REFLECTED,
-      &CRC16_CCITT_STREAM_REFLECTED,
+      &CRC24_OPENPGP_KEYS_REFLECTED,
+      &CRC24_OPENPGP_STREAM_REFLECTED,
       2,
-      super::portable::crc16_ccitt_slice8,
     )
-  }
+  };
+  from_reflected_state(state)
 }
 
-/// CRC-16/CCITT PCLMULQDQ kernel (4-way multi-stream).
+/// CRC-24/OPENPGP PCLMULQDQ kernel (4-way multi-stream).
 #[inline]
-pub fn crc16_ccitt_pclmul_4way_safe(crc: u16, data: &[u8]) -> u16 {
-  unsafe {
-    crc16_width32_pclmul_stream(
-      crc,
+pub fn crc24_openpgp_pclmul_4way_safe(crc: u32, data: &[u8]) -> u32 {
+  let mut state = to_reflected_state(crc);
+  state = unsafe {
+    crc24_width32_pclmul_stream(
+      state,
       data,
-      &CRC16_CCITT_KEYS_REFLECTED,
-      &CRC16_CCITT_STREAM_REFLECTED,
+      &CRC24_OPENPGP_KEYS_REFLECTED,
+      &CRC24_OPENPGP_STREAM_REFLECTED,
       4,
-      super::portable::crc16_ccitt_slice8,
     )
-  }
+  };
+  from_reflected_state(state)
 }
 
-/// CRC-16/CCITT PCLMULQDQ kernel (7-way multi-stream).
+/// CRC-24/OPENPGP PCLMULQDQ kernel (7-way multi-stream).
 #[inline]
-pub fn crc16_ccitt_pclmul_7way_safe(crc: u16, data: &[u8]) -> u16 {
-  unsafe {
-    crc16_width32_pclmul_stream(
-      crc,
+pub fn crc24_openpgp_pclmul_7way_safe(crc: u32, data: &[u8]) -> u32 {
+  let mut state = to_reflected_state(crc);
+  state = unsafe {
+    crc24_width32_pclmul_stream(
+      state,
       data,
-      &CRC16_CCITT_KEYS_REFLECTED,
-      &CRC16_CCITT_STREAM_REFLECTED,
+      &CRC24_OPENPGP_KEYS_REFLECTED,
+      &CRC24_OPENPGP_STREAM_REFLECTED,
       7,
-      super::portable::crc16_ccitt_slice8,
     )
-  }
+  };
+  from_reflected_state(state)
 }
 
-/// CRC-16/CCITT PCLMULQDQ kernel (8-way multi-stream).
+/// CRC-24/OPENPGP PCLMULQDQ kernel (8-way multi-stream).
 #[inline]
-pub fn crc16_ccitt_pclmul_8way_safe(crc: u16, data: &[u8]) -> u16 {
-  unsafe {
-    crc16_width32_pclmul_stream(
-      crc,
+pub fn crc24_openpgp_pclmul_8way_safe(crc: u32, data: &[u8]) -> u32 {
+  let mut state = to_reflected_state(crc);
+  state = unsafe {
+    crc24_width32_pclmul_stream(
+      state,
       data,
-      &CRC16_CCITT_KEYS_REFLECTED,
-      &CRC16_CCITT_STREAM_REFLECTED,
+      &CRC24_OPENPGP_KEYS_REFLECTED,
+      &CRC24_OPENPGP_STREAM_REFLECTED,
       8,
-      super::portable::crc16_ccitt_slice8,
     )
-  }
+  };
+  from_reflected_state(state)
 }
 
-/// CRC-16/CCITT VPCLMULQDQ kernel (AVX-512).
+/// CRC-24/OPENPGP VPCLMULQDQ kernel (AVX-512).
 ///
 /// # Safety
 ///
 /// Dispatcher verifies VPCLMULQDQ + AVX-512 before selecting this kernel.
 #[inline]
-pub fn crc16_ccitt_vpclmul_safe(crc: u16, data: &[u8]) -> u16 {
+pub fn crc24_openpgp_vpclmul_safe(crc: u32, data: &[u8]) -> u32 {
+  let mut state = to_reflected_state(crc);
   // SAFETY: Dispatcher verifies VPCLMULQDQ + AVX-512 before selecting this kernel.
-  unsafe {
-    crc16_width32_vpclmul(
-      crc,
-      data,
-      &CRC16_CCITT_KEYS_REFLECTED,
-      super::portable::crc16_ccitt_slice8,
-    )
-  }
+  state = unsafe { crc24_width32_vpclmul(state, data, &CRC24_OPENPGP_KEYS_REFLECTED) };
+  from_reflected_state(state)
 }
 
-/// CRC-16/CCITT VPCLMULQDQ kernel (2-way multi-stream).
+/// CRC-24/OPENPGP VPCLMULQDQ kernel (2-way multi-stream).
 #[inline]
-pub fn crc16_ccitt_vpclmul_2way_safe(crc: u16, data: &[u8]) -> u16 {
-  unsafe {
-    crc16_width32_vpclmul_stream(
-      crc,
+pub fn crc24_openpgp_vpclmul_2way_safe(crc: u32, data: &[u8]) -> u32 {
+  let mut state = to_reflected_state(crc);
+  state = unsafe {
+    crc24_width32_vpclmul_stream(
+      state,
       data,
-      &CRC16_CCITT_KEYS_REFLECTED,
-      &CRC16_CCITT_STREAM_REFLECTED,
+      &CRC24_OPENPGP_KEYS_REFLECTED,
+      &CRC24_OPENPGP_STREAM_REFLECTED,
       2,
-      super::portable::crc16_ccitt_slice8,
     )
-  }
+  };
+  from_reflected_state(state)
 }
 
-/// CRC-16/CCITT VPCLMULQDQ kernel (4-way multi-stream).
+/// CRC-24/OPENPGP VPCLMULQDQ kernel (4-way multi-stream).
 #[inline]
-pub fn crc16_ccitt_vpclmul_4way_safe(crc: u16, data: &[u8]) -> u16 {
-  unsafe {
-    crc16_width32_vpclmul_stream(
-      crc,
+pub fn crc24_openpgp_vpclmul_4way_safe(crc: u32, data: &[u8]) -> u32 {
+  let mut state = to_reflected_state(crc);
+  state = unsafe {
+    crc24_width32_vpclmul_stream(
+      state,
       data,
-      &CRC16_CCITT_KEYS_REFLECTED,
-      &CRC16_CCITT_STREAM_REFLECTED,
+      &CRC24_OPENPGP_KEYS_REFLECTED,
+      &CRC24_OPENPGP_STREAM_REFLECTED,
       4,
-      super::portable::crc16_ccitt_slice8,
     )
-  }
+  };
+  from_reflected_state(state)
 }
 
-/// CRC-16/CCITT VPCLMULQDQ kernel (7-way multi-stream).
+/// CRC-24/OPENPGP VPCLMULQDQ kernel (7-way multi-stream).
 #[inline]
-pub fn crc16_ccitt_vpclmul_7way_safe(crc: u16, data: &[u8]) -> u16 {
-  unsafe {
-    crc16_width32_vpclmul_stream(
-      crc,
+pub fn crc24_openpgp_vpclmul_7way_safe(crc: u32, data: &[u8]) -> u32 {
+  let mut state = to_reflected_state(crc);
+  state = unsafe {
+    crc24_width32_vpclmul_stream(
+      state,
       data,
-      &CRC16_CCITT_KEYS_REFLECTED,
-      &CRC16_CCITT_STREAM_REFLECTED,
+      &CRC24_OPENPGP_KEYS_REFLECTED,
+      &CRC24_OPENPGP_STREAM_REFLECTED,
       7,
-      super::portable::crc16_ccitt_slice8,
     )
-  }
+  };
+  from_reflected_state(state)
 }
 
-/// CRC-16/CCITT VPCLMULQDQ kernel (8-way multi-stream).
+/// CRC-24/OPENPGP VPCLMULQDQ kernel (8-way multi-stream).
 #[inline]
-pub fn crc16_ccitt_vpclmul_8way_safe(crc: u16, data: &[u8]) -> u16 {
-  unsafe {
-    crc16_width32_vpclmul_stream(
-      crc,
+pub fn crc24_openpgp_vpclmul_8way_safe(crc: u32, data: &[u8]) -> u32 {
+  let mut state = to_reflected_state(crc);
+  state = unsafe {
+    crc24_width32_vpclmul_stream(
+      state,
       data,
-      &CRC16_CCITT_KEYS_REFLECTED,
-      &CRC16_CCITT_STREAM_REFLECTED,
+      &CRC24_OPENPGP_KEYS_REFLECTED,
+      &CRC24_OPENPGP_STREAM_REFLECTED,
       8,
-      super::portable::crc16_ccitt_slice8,
     )
-  }
-}
-
-/// CRC-16/IBM PCLMULQDQ kernel.
-///
-/// # Safety
-///
-/// Dispatcher verifies SSSE3 + PCLMULQDQ before selecting this kernel.
-#[inline]
-pub fn crc16_ibm_pclmul_safe(crc: u16, data: &[u8]) -> u16 {
-  // SAFETY: Dispatcher verifies SSSE3 + PCLMULQDQ before selecting this kernel.
-  unsafe { crc16_width32_pclmul(crc, data, &CRC16_IBM_KEYS_REFLECTED, super::portable::crc16_ibm_slice8) }
-}
-
-/// CRC-16/IBM PCLMULQDQ kernel (2-way multi-stream).
-#[inline]
-pub fn crc16_ibm_pclmul_2way_safe(crc: u16, data: &[u8]) -> u16 {
-  unsafe {
-    crc16_width32_pclmul_stream(
-      crc,
-      data,
-      &CRC16_IBM_KEYS_REFLECTED,
-      &CRC16_IBM_STREAM_REFLECTED,
-      2,
-      super::portable::crc16_ibm_slice8,
-    )
-  }
-}
-
-/// CRC-16/IBM PCLMULQDQ kernel (4-way multi-stream).
-#[inline]
-pub fn crc16_ibm_pclmul_4way_safe(crc: u16, data: &[u8]) -> u16 {
-  unsafe {
-    crc16_width32_pclmul_stream(
-      crc,
-      data,
-      &CRC16_IBM_KEYS_REFLECTED,
-      &CRC16_IBM_STREAM_REFLECTED,
-      4,
-      super::portable::crc16_ibm_slice8,
-    )
-  }
-}
-
-/// CRC-16/IBM PCLMULQDQ kernel (7-way multi-stream).
-#[inline]
-pub fn crc16_ibm_pclmul_7way_safe(crc: u16, data: &[u8]) -> u16 {
-  unsafe {
-    crc16_width32_pclmul_stream(
-      crc,
-      data,
-      &CRC16_IBM_KEYS_REFLECTED,
-      &CRC16_IBM_STREAM_REFLECTED,
-      7,
-      super::portable::crc16_ibm_slice8,
-    )
-  }
-}
-
-/// CRC-16/IBM PCLMULQDQ kernel (8-way multi-stream).
-#[inline]
-pub fn crc16_ibm_pclmul_8way_safe(crc: u16, data: &[u8]) -> u16 {
-  unsafe {
-    crc16_width32_pclmul_stream(
-      crc,
-      data,
-      &CRC16_IBM_KEYS_REFLECTED,
-      &CRC16_IBM_STREAM_REFLECTED,
-      8,
-      super::portable::crc16_ibm_slice8,
-    )
-  }
-}
-
-/// CRC-16/IBM VPCLMULQDQ kernel (AVX-512).
-///
-/// # Safety
-///
-/// Dispatcher verifies VPCLMULQDQ + AVX-512 before selecting this kernel.
-#[inline]
-pub fn crc16_ibm_vpclmul_safe(crc: u16, data: &[u8]) -> u16 {
-  // SAFETY: Dispatcher verifies VPCLMULQDQ + AVX-512 before selecting this kernel.
-  unsafe { crc16_width32_vpclmul(crc, data, &CRC16_IBM_KEYS_REFLECTED, super::portable::crc16_ibm_slice8) }
-}
-
-/// CRC-16/IBM VPCLMULQDQ kernel (2-way multi-stream).
-#[inline]
-pub fn crc16_ibm_vpclmul_2way_safe(crc: u16, data: &[u8]) -> u16 {
-  unsafe {
-    crc16_width32_vpclmul_stream(
-      crc,
-      data,
-      &CRC16_IBM_KEYS_REFLECTED,
-      &CRC16_IBM_STREAM_REFLECTED,
-      2,
-      super::portable::crc16_ibm_slice8,
-    )
-  }
-}
-
-/// CRC-16/IBM VPCLMULQDQ kernel (4-way multi-stream).
-#[inline]
-pub fn crc16_ibm_vpclmul_4way_safe(crc: u16, data: &[u8]) -> u16 {
-  unsafe {
-    crc16_width32_vpclmul_stream(
-      crc,
-      data,
-      &CRC16_IBM_KEYS_REFLECTED,
-      &CRC16_IBM_STREAM_REFLECTED,
-      4,
-      super::portable::crc16_ibm_slice8,
-    )
-  }
-}
-
-/// CRC-16/IBM VPCLMULQDQ kernel (7-way multi-stream).
-#[inline]
-pub fn crc16_ibm_vpclmul_7way_safe(crc: u16, data: &[u8]) -> u16 {
-  unsafe {
-    crc16_width32_vpclmul_stream(
-      crc,
-      data,
-      &CRC16_IBM_KEYS_REFLECTED,
-      &CRC16_IBM_STREAM_REFLECTED,
-      7,
-      super::portable::crc16_ibm_slice8,
-    )
-  }
-}
-
-/// CRC-16/IBM VPCLMULQDQ kernel (8-way multi-stream).
-#[inline]
-pub fn crc16_ibm_vpclmul_8way_safe(crc: u16, data: &[u8]) -> u16 {
-  unsafe {
-    crc16_width32_vpclmul_stream(
-      crc,
-      data,
-      &CRC16_IBM_KEYS_REFLECTED,
-      &CRC16_IBM_STREAM_REFLECTED,
-      8,
-      super::portable::crc16_ibm_slice8,
-    )
-  }
+  };
+  from_reflected_state(state)
 }

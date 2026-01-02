@@ -20,6 +20,7 @@
 
 pub(crate) mod config;
 pub(crate) mod kernels;
+pub(crate) mod keys;
 pub(crate) mod policy;
 pub(crate) mod portable;
 mod tuned_defaults;
@@ -45,6 +46,12 @@ use crate::{
 
 #[cfg(target_arch = "aarch64")]
 mod aarch64;
+#[cfg(target_arch = "powerpc64")]
+mod powerpc64;
+#[cfg(target_arch = "riscv64")]
+mod riscv64;
+#[cfg(target_arch = "s390x")]
+mod s390x;
 #[cfg(target_arch = "x86_64")]
 mod x86_64;
 
@@ -84,7 +91,7 @@ fn crc16_ibm_reference(crc: u16, data: &[u8]) -> u16 {
 
 #[inline]
 fn crc16_ccitt_portable_auto(crc: u16, data: &[u8]) -> u16 {
-  let threshold = config::get().tunables.slice4_to_slice8;
+  let threshold = config::get_ccitt().tunables.slice4_to_slice8;
   if data.len() < threshold {
     portable::crc16_ccitt_slice4(crc, data)
   } else {
@@ -94,7 +101,7 @@ fn crc16_ccitt_portable_auto(crc: u16, data: &[u8]) -> u16 {
 
 #[inline]
 fn crc16_ibm_portable_auto(crc: u16, data: &[u8]) -> u16 {
-  let threshold = config::get().tunables.slice4_to_slice8;
+  let threshold = config::get_ibm().tunables.slice4_to_slice8;
   if data.len() < threshold {
     portable::crc16_ibm_slice4(crc, data)
   } else {
@@ -125,7 +132,7 @@ static CRC16_IBM_CACHED: PolicyCache<policy::Crc16Policy, policy::Crc16Kernels> 
 
 #[cfg(target_arch = "x86_64")]
 fn init_ccitt_policy() -> (policy::Crc16Policy, policy::Crc16Kernels) {
-  let cfg = config::get();
+  let cfg = config::get_ccitt();
   let caps = platform::caps();
   let tune = platform::tune();
   let pol = policy::Crc16Policy::from_config(&cfg, caps, &tune, policy::Crc16Variant::Ccitt);
@@ -140,7 +147,7 @@ fn init_ccitt_policy() -> (policy::Crc16Policy, policy::Crc16Kernels) {
 
 #[cfg(target_arch = "x86_64")]
 fn init_ibm_policy() -> (policy::Crc16Policy, policy::Crc16Kernels) {
-  let cfg = config::get();
+  let cfg = config::get_ibm();
   let caps = platform::caps();
   let tune = platform::tune();
   let pol = policy::Crc16Policy::from_config(&cfg, caps, &tune, policy::Crc16Variant::Ibm);
@@ -155,7 +162,7 @@ fn init_ibm_policy() -> (policy::Crc16Policy, policy::Crc16Kernels) {
 
 #[cfg(target_arch = "aarch64")]
 fn init_ccitt_policy() -> (policy::Crc16Policy, policy::Crc16Kernels) {
-  let cfg = config::get();
+  let cfg = config::get_ccitt();
   let caps = platform::caps();
   let tune = platform::tune();
   let pol = policy::Crc16Policy::from_config(&cfg, caps, &tune, policy::Crc16Variant::Ccitt);
@@ -170,7 +177,7 @@ fn init_ccitt_policy() -> (policy::Crc16Policy, policy::Crc16Kernels) {
 
 #[cfg(target_arch = "aarch64")]
 fn init_ibm_policy() -> (policy::Crc16Policy, policy::Crc16Kernels) {
-  let cfg = config::get();
+  let cfg = config::get_ibm();
   let caps = platform::caps();
   let tune = platform::tune();
   let pol = policy::Crc16Policy::from_config(&cfg, caps, &tune, policy::Crc16Variant::Ibm);
@@ -183,9 +190,105 @@ fn init_ibm_policy() -> (policy::Crc16Policy, policy::Crc16Kernels) {
   (pol, kernels)
 }
 
-#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(target_arch = "powerpc64")]
 fn init_ccitt_policy() -> (policy::Crc16Policy, policy::Crc16Kernels) {
-  let cfg = config::get();
+  let cfg = config::get_ccitt();
+  let caps = platform::caps();
+  let tune = platform::tune();
+  let pol = policy::Crc16Policy::from_config(&cfg, caps, &tune, policy::Crc16Variant::Ccitt);
+  let kernels = policy::build_ccitt_kernels_powerpc64(
+    &pol,
+    crc16_ccitt_reference,
+    portable::crc16_ccitt_slice4,
+    portable::crc16_ccitt_slice8,
+  );
+  (pol, kernels)
+}
+
+#[cfg(target_arch = "powerpc64")]
+fn init_ibm_policy() -> (policy::Crc16Policy, policy::Crc16Kernels) {
+  let cfg = config::get_ibm();
+  let caps = platform::caps();
+  let tune = platform::tune();
+  let pol = policy::Crc16Policy::from_config(&cfg, caps, &tune, policy::Crc16Variant::Ibm);
+  let kernels = policy::build_ibm_kernels_powerpc64(
+    &pol,
+    crc16_ibm_reference,
+    portable::crc16_ibm_slice4,
+    portable::crc16_ibm_slice8,
+  );
+  (pol, kernels)
+}
+
+#[cfg(target_arch = "s390x")]
+fn init_ccitt_policy() -> (policy::Crc16Policy, policy::Crc16Kernels) {
+  let cfg = config::get_ccitt();
+  let caps = platform::caps();
+  let tune = platform::tune();
+  let pol = policy::Crc16Policy::from_config(&cfg, caps, &tune, policy::Crc16Variant::Ccitt);
+  let kernels = policy::build_ccitt_kernels_s390x(
+    &pol,
+    crc16_ccitt_reference,
+    portable::crc16_ccitt_slice4,
+    portable::crc16_ccitt_slice8,
+  );
+  (pol, kernels)
+}
+
+#[cfg(target_arch = "s390x")]
+fn init_ibm_policy() -> (policy::Crc16Policy, policy::Crc16Kernels) {
+  let cfg = config::get_ibm();
+  let caps = platform::caps();
+  let tune = platform::tune();
+  let pol = policy::Crc16Policy::from_config(&cfg, caps, &tune, policy::Crc16Variant::Ibm);
+  let kernels = policy::build_ibm_kernels_s390x(
+    &pol,
+    crc16_ibm_reference,
+    portable::crc16_ibm_slice4,
+    portable::crc16_ibm_slice8,
+  );
+  (pol, kernels)
+}
+
+#[cfg(target_arch = "riscv64")]
+fn init_ccitt_policy() -> (policy::Crc16Policy, policy::Crc16Kernels) {
+  let cfg = config::get_ccitt();
+  let caps = platform::caps();
+  let tune = platform::tune();
+  let pol = policy::Crc16Policy::from_config(&cfg, caps, &tune, policy::Crc16Variant::Ccitt);
+  let kernels = policy::build_ccitt_kernels_riscv64(
+    &pol,
+    crc16_ccitt_reference,
+    portable::crc16_ccitt_slice4,
+    portable::crc16_ccitt_slice8,
+  );
+  (pol, kernels)
+}
+
+#[cfg(target_arch = "riscv64")]
+fn init_ibm_policy() -> (policy::Crc16Policy, policy::Crc16Kernels) {
+  let cfg = config::get_ibm();
+  let caps = platform::caps();
+  let tune = platform::tune();
+  let pol = policy::Crc16Policy::from_config(&cfg, caps, &tune, policy::Crc16Variant::Ibm);
+  let kernels = policy::build_ibm_kernels_riscv64(
+    &pol,
+    crc16_ibm_reference,
+    portable::crc16_ibm_slice4,
+    portable::crc16_ibm_slice8,
+  );
+  (pol, kernels)
+}
+
+#[cfg(not(any(
+  target_arch = "x86_64",
+  target_arch = "aarch64",
+  target_arch = "powerpc64",
+  target_arch = "s390x",
+  target_arch = "riscv64"
+)))]
+fn init_ccitt_policy() -> (policy::Crc16Policy, policy::Crc16Kernels) {
+  let cfg = config::get_ccitt();
   let caps = platform::caps();
   let tune = platform::tune();
   let pol = policy::Crc16Policy::from_config(&cfg, caps, &tune, policy::Crc16Variant::Ccitt);
@@ -197,9 +300,15 @@ fn init_ccitt_policy() -> (policy::Crc16Policy, policy::Crc16Kernels) {
   (pol, kernels)
 }
 
-#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(not(any(
+  target_arch = "x86_64",
+  target_arch = "aarch64",
+  target_arch = "powerpc64",
+  target_arch = "s390x",
+  target_arch = "riscv64"
+)))]
 fn init_ibm_policy() -> (policy::Crc16Policy, policy::Crc16Kernels) {
-  let cfg = config::get();
+  let cfg = config::get_ibm();
   let caps = platform::caps();
   let tune = platform::tune();
   let pol = policy::Crc16Policy::from_config(&cfg, caps, &tune, policy::Crc16Variant::Ibm);
@@ -313,7 +422,7 @@ impl Crc16Ccitt {
   /// Get the effective CRC-16 configuration.
   #[must_use]
   pub fn config() -> Crc16Config {
-    config::get()
+    config::get_ccitt()
   }
 
   /// Convenience accessor for the active CRC-16 tunables.
@@ -435,7 +544,7 @@ impl Crc16Ibm {
   /// Get the effective CRC-16 configuration.
   #[must_use]
   pub fn config() -> Crc16Config {
-    config::get()
+    config::get_ibm()
   }
 
   /// Convenience accessor for the active CRC-16 tunables.
@@ -516,8 +625,16 @@ const BUFFERED_CRC16_BUFFER_SIZE: usize = 256;
 #[cfg(feature = "alloc")]
 #[inline]
 #[must_use]
-fn crc16_buffered_threshold() -> usize {
-  let t = config::get().tunables;
+fn crc16_ccitt_buffered_threshold() -> usize {
+  let t = config::get_ccitt().tunables;
+  t.slice4_to_slice8.max(t.portable_to_clmul).max(64)
+}
+
+#[cfg(feature = "alloc")]
+#[inline]
+#[must_use]
+fn crc16_ibm_buffered_threshold() -> usize {
+  let t = config::get_ibm().tunables;
   t.slice4_to_slice8.max(t.portable_to_clmul).max(64)
 }
 
@@ -526,7 +643,7 @@ define_buffered_crc! {
   /// A buffering wrapper around [`Crc16Ccitt`] for streaming small chunks.
   pub struct BufferedCrc16Ccitt<Crc16Ccitt> {
     buffer_size: BUFFERED_CRC16_BUFFER_SIZE,
-    threshold_fn: crc16_buffered_threshold,
+    threshold_fn: crc16_ccitt_buffered_threshold,
   }
 }
 
@@ -535,7 +652,7 @@ define_buffered_crc! {
   /// A buffering wrapper around [`Crc16Ibm`] for streaming small chunks.
   pub struct BufferedCrc16Ibm<Crc16Ibm> {
     buffer_size: BUFFERED_CRC16_BUFFER_SIZE,
-    threshold_fn: crc16_buffered_threshold,
+    threshold_fn: crc16_ibm_buffered_threshold,
   }
 }
 

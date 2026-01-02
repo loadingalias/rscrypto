@@ -1,4 +1,4 @@
-//! CRC-24 implementations (portable-only, initial release).
+//! CRC-24 implementations with optional hardware acceleration.
 //!
 //! This module provides:
 //! - [`Crc24OpenPgp`] - CRC-24/OPENPGP (RFC 4880)
@@ -22,8 +22,17 @@
 
 pub(crate) mod config;
 pub(crate) mod kernels;
+pub(crate) mod keys;
 pub(crate) mod policy;
 pub(crate) mod portable;
+#[cfg(any(
+  target_arch = "x86_64",
+  target_arch = "aarch64",
+  target_arch = "powerpc64",
+  target_arch = "s390x",
+  target_arch = "riscv64"
+))]
+mod reflected;
 mod tuned_defaults;
 
 #[cfg(feature = "alloc")]
@@ -44,6 +53,17 @@ use crate::{
   },
   dispatchers::{Crc24Dispatcher, Crc24Fn},
 };
+
+#[cfg(target_arch = "aarch64")]
+mod aarch64;
+#[cfg(target_arch = "powerpc64")]
+mod powerpc64;
+#[cfg(target_arch = "riscv64")]
+mod riscv64;
+#[cfg(target_arch = "s390x")]
+mod s390x;
+#[cfg(target_arch = "x86_64")]
+mod x86_64;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Kernel Tables (compile-time)
@@ -76,11 +96,67 @@ fn init_openpgp_policy() -> (policy::Crc24Policy, policy::Crc24Kernels) {
   let caps = platform::caps();
   let tune = platform::tune();
   let pol = policy::Crc24Policy::from_config(&cfg, caps, &tune);
-  let kernels = policy::build_openpgp_kernels(
-    crc24_openpgp_reference,
-    portable::crc24_openpgp_slice4,
-    portable::crc24_openpgp_slice8,
-  );
+  let kernels = {
+    #[cfg(target_arch = "x86_64")]
+    {
+      policy::build_openpgp_kernels_x86(
+        &pol,
+        crc24_openpgp_reference,
+        portable::crc24_openpgp_slice4,
+        portable::crc24_openpgp_slice8,
+      )
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+      policy::build_openpgp_kernels_aarch64(
+        &pol,
+        crc24_openpgp_reference,
+        portable::crc24_openpgp_slice4,
+        portable::crc24_openpgp_slice8,
+      )
+    }
+    #[cfg(target_arch = "powerpc64")]
+    {
+      policy::build_openpgp_kernels_powerpc64(
+        &pol,
+        crc24_openpgp_reference,
+        portable::crc24_openpgp_slice4,
+        portable::crc24_openpgp_slice8,
+      )
+    }
+    #[cfg(target_arch = "s390x")]
+    {
+      policy::build_openpgp_kernels_s390x(
+        &pol,
+        crc24_openpgp_reference,
+        portable::crc24_openpgp_slice4,
+        portable::crc24_openpgp_slice8,
+      )
+    }
+    #[cfg(target_arch = "riscv64")]
+    {
+      policy::build_openpgp_kernels_riscv64(
+        &pol,
+        crc24_openpgp_reference,
+        portable::crc24_openpgp_slice4,
+        portable::crc24_openpgp_slice8,
+      )
+    }
+    #[cfg(not(any(
+      target_arch = "x86_64",
+      target_arch = "aarch64",
+      target_arch = "powerpc64",
+      target_arch = "s390x",
+      target_arch = "riscv64"
+    )))]
+    {
+      policy::build_openpgp_kernels_generic(
+        crc24_openpgp_reference,
+        portable::crc24_openpgp_slice4,
+        portable::crc24_openpgp_slice8,
+      )
+    }
+  };
   (pol, kernels)
 }
 
@@ -258,7 +334,8 @@ const BUFFERED_CRC24_BUFFER_SIZE: usize = 256;
 #[inline]
 #[must_use]
 fn crc24_buffered_threshold() -> usize {
-  config::get().tunables.slice4_to_slice8.max(64)
+  let t = config::get().tunables;
+  t.slice4_to_slice8.max(t.portable_to_clmul).max(64)
 }
 
 #[cfg(feature = "alloc")]

@@ -119,7 +119,11 @@ fn tune_algorithm_impl(
   }
 
   // Classify kernels by tier
-  let portable_kernel = find_kernel_by_tier(&available_kernels, KernelTier::Portable);
+  let portable_kernels: Vec<&KernelSpec> = available_kernels
+    .iter()
+    .filter(|k| k.tier == KernelTier::Portable)
+    .collect();
+  let portable_kernel = portable_kernels.first().copied();
   let folding_kernel = find_kernel_by_tier(&available_kernels, KernelTier::Folding);
   let wide_kernel = find_kernel_by_tier(&available_kernels, KernelTier::Wide);
 
@@ -130,7 +134,9 @@ fn tune_algorithm_impl(
   let (best_kernel, best_streams) = find_best_config(&stream_measurements);
 
   // Phase B: Threshold curves - portable vs best SIMD
-  let mut threshold_measurements = benchmark_thresholds(runner, algorithm, best_kernel, best_streams)?;
+  let portable_names: Vec<&'static str> = portable_kernels.iter().map(|k| k.name).collect();
+  let portable_names_owned: Vec<String> = portable_names.iter().map(|&n| n.to_string()).collect();
+  let mut threshold_measurements = benchmark_thresholds(runner, algorithm, &portable_names, best_kernel, best_streams)?;
 
   // Phase C: Additional threshold curves for tier-based crossovers
   // If we have both folding and wide kernels, benchmark the folding kernel
@@ -157,7 +163,18 @@ fn tune_algorithm_impl(
   };
 
   // Analyze results
-  let portable_name = portable_kernel.map(|k| k.name).unwrap_or("portable");
+  let max_threshold_size = THRESHOLD_SIZES.iter().copied().max().unwrap_or(0);
+  let portable_name = if portable_names.is_empty() {
+    portable_kernel.map(|k| k.name).unwrap_or("portable")
+  } else {
+    threshold_measurements
+      .iter()
+      .filter(|m| m.streams == 1 && portable_names_owned.contains(&m.kernel))
+      .filter(|m| m.size == max_threshold_size)
+      .max_by(|a, b| a.throughput_gib_s.partial_cmp(&b.throughput_gib_s).unwrap())
+      .map(|m| Box::leak(m.kernel.clone().into_boxed_str()) as &'static str)
+      .unwrap_or_else(|| portable_kernel.map(|k| k.name).unwrap_or("portable"))
+  };
   let mut result_analysis = analysis::analyze(&threshold_measurements, portable_name);
   result_analysis.best_large_kernel = Some(best_kernel);
   result_analysis.recommended_streams = best_streams;
@@ -175,6 +192,16 @@ fn tune_algorithm_impl(
       CrossoverType::PortableToSimd.threshold_name().to_string(),
       crossover.crossover_size,
     ));
+  }
+
+  // 1b. Portable slice4 → slice8 crossover (if present).
+  if portable_names.contains(&"portable/slice4")
+    && portable_names.contains(&"portable/slice8")
+    && let Some(crossover) =
+      analysis::find_crossover(&threshold_measurements, "portable/slice4", 1, "portable/slice8", 1, 1.0)
+  {
+    thresholds.push(("slice4_to_slice8".to_string(), crossover.crossover_size));
+    result_analysis.crossovers.push(crossover);
   }
 
   // 2. SIMD → Wide crossover (if applicable)
@@ -289,18 +316,35 @@ fn benchmark_streams(
 fn benchmark_thresholds(
   runner: &BenchRunner,
   algorithm: &mut dyn Tunable,
+  portable_kernels: &[&'static str],
   best_kernel: &str,
   best_streams: u8,
 ) -> Result<Vec<Measurement>, TuneError> {
   let mut measurements = Vec::new();
 
-  // Benchmark portable
-  algorithm.reset();
-  algorithm.force_kernel("portable").ok(); // May not exist, that's ok
+  // Benchmark portable kernels
+  for &portable in portable_kernels {
+    algorithm.reset();
+    if algorithm.force_kernel(portable).is_err() {
+      continue;
+    }
 
-  for &size in THRESHOLD_SIZES {
-    if let Ok(result) = benchmark_at_size(runner, algorithm, size) {
-      measurements.push(Measurement::with_streams(&result, 1));
+    for &size in THRESHOLD_SIZES {
+      if let Ok(result) = benchmark_at_size(runner, algorithm, size) {
+        measurements.push(Measurement::with_streams(&result, 1));
+      }
+    }
+  }
+
+  // Fallback if the algorithm doesn't expose portable kernel names.
+  if portable_kernels.is_empty() {
+    algorithm.reset();
+    algorithm.force_kernel("portable").ok(); // May not exist, that's ok
+
+    for &size in THRESHOLD_SIZES {
+      if let Ok(result) = benchmark_at_size(runner, algorithm, size) {
+        measurements.push(Measurement::with_streams(&result, 1));
+      }
     }
   }
 

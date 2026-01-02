@@ -25,15 +25,11 @@
 //! | CRC Width | Tier 0 | Tier 1 | Tier 2 | Tier 3 | Tier 4 |
 //! |-----------|--------|--------|--------|--------|--------|
 //! | CRC-16 | Yes | Yes | No | Yes | Yes* |
-//! | CRC-24 | Yes | Yes | No | No | No |
+//! | CRC-24 | Yes | Yes | No | Yes | Yes* |
 //! | CRC-32/32C | Yes | Yes | Yes | Yes | Yes |
 //! | CRC-64 | Yes | Yes | No | Yes | Yes |
 //!
-//! *CRC-16 Tier 4 is x86_64 VPCLMUL only.
-//!
-//! CRC-24 lacks SIMD acceleration because its non-reflected (MSB-first)
-//! polynomial makes carryless multiply folding significantly more complex
-//! with diminishing returns for the OpenPGP use case.
+//! *CRC-16/CRC-24 Tier 4 is x86_64 VPCLMUL only.
 //!
 //! # Design Philosophy
 //!

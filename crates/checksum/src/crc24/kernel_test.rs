@@ -9,9 +9,6 @@
 //! The oracle is the bitwise reference implementation, which is obviously
 //! correct by inspection. All production kernels (portable slice-by-N)
 //! must produce identical results to the reference for any input.
-//!
-//! Note: CRC-24 currently has portable-only implementations (no SIMD).
-//! This module is provided for uniformity and to support future SIMD backends.
 
 /// Result from running a kernel.
 #[derive(Debug, Clone, Copy)]
@@ -59,7 +56,31 @@ pub fn run_all_crc24_openpgp_kernels(data: &[u8]) -> alloc::vec::Vec<KernelResul
     checksum: portable8,
   });
 
-  // Future: Architecture-specific kernels would be added here
+  // Architecture-specific kernels
+  #[cfg(target_arch = "x86_64")]
+  {
+    run_x86_64_kernels_openpgp(data, &mut results);
+  }
+
+  #[cfg(target_arch = "aarch64")]
+  {
+    run_aarch64_kernels_openpgp(data, &mut results);
+  }
+
+  #[cfg(target_arch = "powerpc64")]
+  {
+    run_powerpc64_kernels_openpgp(data, &mut results);
+  }
+
+  #[cfg(target_arch = "s390x")]
+  {
+    run_s390x_kernels_openpgp(data, &mut results);
+  }
+
+  #[cfg(target_arch = "riscv64")]
+  {
+    run_riscv64_kernels_openpgp(data, &mut results);
+  }
 
   results
 }
@@ -85,6 +106,83 @@ pub fn verify_crc24_openpgp_kernels(data: &[u8]) -> Result<u32, alloc::string::S
   }
 
   Ok(expected)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Architecture-specific kernel runners
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[cfg(target_arch = "x86_64")]
+fn run_x86_64_kernels_openpgp(data: &[u8], results: &mut alloc::vec::Vec<KernelResult>) {
+  use super::kernels::x86_64::*;
+  let caps = platform::caps();
+
+  if caps.has(platform::caps::x86::PCLMUL_READY) {
+    for (&name, &func) in PCLMUL_NAMES.iter().zip(OPENPGP_PCLMUL.iter()) {
+      let checksum = func(INIT, data) & MASK;
+      results.push(KernelResult { name, checksum });
+    }
+  }
+
+  if caps.has(platform::caps::x86::VPCLMUL_READY) {
+    for (&name, &func) in VPCLMUL_NAMES.iter().zip(OPENPGP_VPCLMUL.iter()) {
+      let checksum = func(INIT, data) & MASK;
+      results.push(KernelResult { name, checksum });
+    }
+  }
+}
+
+#[cfg(target_arch = "aarch64")]
+fn run_aarch64_kernels_openpgp(data: &[u8], results: &mut alloc::vec::Vec<KernelResult>) {
+  use super::kernels::aarch64::*;
+  let caps = platform::caps();
+
+  if caps.has(platform::caps::aarch64::PMULL_READY) {
+    for (&name, &func) in PMULL_NAMES.iter().zip(OPENPGP_PMULL.iter()).take(3) {
+      let checksum = func(INIT, data) & MASK;
+      results.push(KernelResult { name, checksum });
+    }
+  }
+}
+
+#[cfg(target_arch = "powerpc64")]
+fn run_powerpc64_kernels_openpgp(data: &[u8], results: &mut alloc::vec::Vec<KernelResult>) {
+  use super::kernels::powerpc64::*;
+  let caps = platform::caps();
+
+  if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
+    let checksum = OPENPGP_VPMSUM(INIT, data) & MASK;
+    results.push(KernelResult { name: VPMSUM, checksum });
+  }
+}
+
+#[cfg(target_arch = "s390x")]
+fn run_s390x_kernels_openpgp(data: &[u8], results: &mut alloc::vec::Vec<KernelResult>) {
+  use super::kernels::s390x::*;
+  let caps = platform::caps();
+
+  if caps.has(platform::caps::s390x::VECTOR) {
+    let checksum = OPENPGP_VGFM(INIT, data) & MASK;
+    results.push(KernelResult { name: VGFM, checksum });
+  }
+}
+
+#[cfg(target_arch = "riscv64")]
+fn run_riscv64_kernels_openpgp(data: &[u8], results: &mut alloc::vec::Vec<KernelResult>) {
+  use platform::caps::riscv;
+
+  use super::kernels::riscv64::*;
+  let caps = platform::caps();
+
+  if caps.has(riscv::ZBC) {
+    let checksum = OPENPGP_ZBC(INIT, data) & MASK;
+    results.push(KernelResult { name: ZBC, checksum });
+  }
+
+  if caps.has(riscv::ZVBC) {
+    let checksum = OPENPGP_ZVBC(INIT, data) & MASK;
+    results.push(KernelResult { name: ZVBC, checksum });
+  }
 }
 
 #[cfg(test)]

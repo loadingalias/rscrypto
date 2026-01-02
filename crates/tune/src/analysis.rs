@@ -2,6 +2,18 @@
 
 use crate::BenchResult;
 
+#[inline]
+#[must_use]
+fn strip_stream_suffix(name: &str) -> &str {
+  name
+    .strip_suffix("-2way")
+    .or_else(|| name.strip_suffix("-3way"))
+    .or_else(|| name.strip_suffix("-4way"))
+    .or_else(|| name.strip_suffix("-7way"))
+    .or_else(|| name.strip_suffix("-8way"))
+    .unwrap_or(name)
+}
+
 /// Complete analysis result for an algorithm.
 #[derive(Clone, Debug, Default)]
 pub struct AnalysisResult {
@@ -62,7 +74,7 @@ pub struct Measurement {
 impl From<&BenchResult> for Measurement {
   fn from(r: &BenchResult) -> Self {
     Self {
-      kernel: r.kernel.to_string(),
+      kernel: strip_stream_suffix(r.kernel).to_string(),
       streams: 1, // Default; can be overridden
       size: r.buffer_size,
       throughput_gib_s: r.throughput_gib_s,
@@ -75,7 +87,7 @@ impl Measurement {
   #[must_use]
   pub fn with_streams(result: &BenchResult, streams: u8) -> Self {
     Self {
-      kernel: result.kernel.to_string(),
+      kernel: strip_stream_suffix(result.kernel).to_string(),
       streams,
       size: result.buffer_size,
       throughput_gib_s: result.throughput_gib_s,

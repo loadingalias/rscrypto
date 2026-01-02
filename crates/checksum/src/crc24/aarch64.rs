@@ -1,8 +1,8 @@
-//! aarch64 carryless-multiply CRC-16 kernels (PMULL).
+//! aarch64 carryless-multiply CRC-24/OPENPGP kernels (PMULL).
 //!
-//! These kernels implement reflected CRC-16 polynomials by lifting the 16-bit
-//! state into the "width32" folding/reduction strategy (same structure as the
-//! CRC-32 folding kernels, but with CRC-16-specific constants).
+//! CRC-24/OPENPGP is MSB-first in the portable implementation. These kernels
+//! reuse the existing "width32" folding/reduction structure by computing the
+//! equivalent **reflected** CRC-24 over per-byte bit-reversed input.
 //!
 //! # Safety
 //!
@@ -17,9 +17,14 @@ use core::{
   ops::{BitXor, BitXorAssign},
 };
 
-use super::keys::{
-  CRC16_CCITT_KEYS_REFLECTED, CRC16_CCITT_STREAM_REFLECTED, CRC16_IBM_KEYS_REFLECTED, CRC16_IBM_STREAM_REFLECTED,
+use super::{
+  keys::{CRC24_OPENPGP_KEYS_REFLECTED, CRC24_OPENPGP_STREAM_REFLECTED},
+  reflected::{crc24_reflected_update_bitrev_bytes, from_reflected_state, to_reflected_state},
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SIMD helpers
+// ─────────────────────────────────────────────────────────────────────────────
 
 #[repr(transparent)]
 #[derive(Copy, Clone)]
@@ -73,6 +78,13 @@ impl Simd {
     let low_32 = vgetq_lane_u32(vreinterpretq_u32_u8(self.0), 0);
     let result = vsetq_lane_u32(low_32, vdupq_n_u32(0), 3);
     Self(vreinterpretq_u8_u32(result))
+  }
+
+  /// Reverse bits within each byte (u8::reverse_bits), lane-wise.
+  #[inline]
+  #[target_feature(enable = "neon")]
+  unsafe fn bitrev_bytes(self) -> Self {
+    Self(vrbitq_u8(self.0))
   }
 
   #[inline]
@@ -147,6 +159,10 @@ impl Simd {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 8-lane width32 update (128B blocks)
+// ─────────────────────────────────────────────────────────────────────────────
+
 #[inline]
 #[target_feature(enable = "aes", enable = "neon")]
 unsafe fn finalize_lanes_width32_reflected(x: [Simd; 8], keys: &[u64; 23]) -> u32 {
@@ -165,19 +181,43 @@ unsafe fn finalize_lanes_width32_reflected(x: [Simd; 8], keys: &[u64; 23]) -> u3
 
 #[inline]
 #[target_feature(enable = "aes", enable = "neon")]
-unsafe fn fold_block_128_width32_reflected(x: &mut [Simd; 8], chunk: &[Simd; 8], coeff: Simd) {
-  x[0] = x[0].fold_16_reflected(coeff, chunk[0]);
-  x[1] = x[1].fold_16_reflected(coeff, chunk[1]);
-  x[2] = x[2].fold_16_reflected(coeff, chunk[2]);
-  x[3] = x[3].fold_16_reflected(coeff, chunk[3]);
-  x[4] = x[4].fold_16_reflected(coeff, chunk[4]);
-  x[5] = x[5].fold_16_reflected(coeff, chunk[5]);
-  x[6] = x[6].fold_16_reflected(coeff, chunk[6]);
-  x[7] = x[7].fold_16_reflected(coeff, chunk[7]);
+unsafe fn bitrev_block(block: &[Simd; 8]) -> [Simd; 8] {
+  [
+    block[0].bitrev_bytes(),
+    block[1].bitrev_bytes(),
+    block[2].bitrev_bytes(),
+    block[3].bitrev_bytes(),
+    block[4].bitrev_bytes(),
+    block[5].bitrev_bytes(),
+    block[6].bitrev_bytes(),
+    block[7].bitrev_bytes(),
+  ]
+}
+
+#[inline]
+#[target_feature(enable = "aes", enable = "neon")]
+unsafe fn fold_block_128_width32_reflected_bitrev_bytes(x: &mut [Simd; 8], chunk: &[Simd; 8], coeff: Simd) {
+  let y0 = chunk[0].bitrev_bytes();
+  let y1 = chunk[1].bitrev_bytes();
+  let y2 = chunk[2].bitrev_bytes();
+  let y3 = chunk[3].bitrev_bytes();
+  let y4 = chunk[4].bitrev_bytes();
+  let y5 = chunk[5].bitrev_bytes();
+  let y6 = chunk[6].bitrev_bytes();
+  let y7 = chunk[7].bitrev_bytes();
+
+  x[0] = x[0].fold_16_reflected(coeff, y0);
+  x[1] = x[1].fold_16_reflected(coeff, y1);
+  x[2] = x[2].fold_16_reflected(coeff, y2);
+  x[3] = x[3].fold_16_reflected(coeff, y3);
+  x[4] = x[4].fold_16_reflected(coeff, y4);
+  x[5] = x[5].fold_16_reflected(coeff, y5);
+  x[6] = x[6].fold_16_reflected(coeff, y6);
+  x[7] = x[7].fold_16_reflected(coeff, y7);
 }
 
 #[target_feature(enable = "aes", enable = "neon")]
-unsafe fn update_simd_width32_reflected_2way(
+unsafe fn update_simd_width32_reflected_bitrev_bytes_2way(
   state: u32,
   blocks: &[[Simd; 8]],
   fold_256b: (u64, u64),
@@ -189,8 +229,8 @@ unsafe fn update_simd_width32_reflected_2way(
   let coeff_128b = Simd::new(keys[4], keys[3]);
   let zero = Simd::new(0, 0);
 
-  let mut s0 = blocks[0];
-  let mut s1 = blocks[1];
+  let mut s0 = bitrev_block(&blocks[0]);
+  let mut s1 = bitrev_block(&blocks[1]);
 
   // Inject CRC into stream 0 (block 0).
   s0[0] ^= Simd::new(0, state as u64);
@@ -199,8 +239,8 @@ unsafe fn update_simd_width32_reflected_2way(
   let mut i = 2;
   let even = blocks.len() & !1usize;
   while i < even {
-    fold_block_128_width32_reflected(&mut s0, &blocks[i], coeff_256b);
-    fold_block_128_width32_reflected(&mut s1, &blocks[i + 1], coeff_256b);
+    fold_block_128_width32_reflected_bitrev_bytes(&mut s0, &blocks[i], coeff_256b);
+    fold_block_128_width32_reflected_bitrev_bytes(&mut s1, &blocks[i + 1], coeff_256b);
     i = i.strict_add(2);
   }
 
@@ -217,14 +257,14 @@ unsafe fn update_simd_width32_reflected_2way(
 
   // Handle any remaining block (odd tail) sequentially.
   if even != blocks.len() {
-    fold_block_128_width32_reflected(&mut combined, &blocks[even], coeff_128b);
+    fold_block_128_width32_reflected_bitrev_bytes(&mut combined, &blocks[even], coeff_128b);
   }
 
   finalize_lanes_width32_reflected(combined, keys)
 }
 
 #[target_feature(enable = "aes", enable = "neon")]
-unsafe fn update_simd_width32_reflected_3way(
+unsafe fn update_simd_width32_reflected_bitrev_bytes_3way(
   state: u32,
   blocks: &[[Simd; 8]],
   fold_384b: (u64, u64),
@@ -235,7 +275,7 @@ unsafe fn update_simd_width32_reflected_3way(
     let Some((first, rest)) = blocks.split_first() else {
       return state;
     };
-    return update_simd_width32_reflected(state, first, rest, keys);
+    return update_simd_width32_reflected_bitrev_bytes(state, first, rest, keys);
   }
 
   let aligned = (blocks.len() / 3).strict_mul(3);
@@ -245,9 +285,9 @@ unsafe fn update_simd_width32_reflected_3way(
   let coeff_128b = Simd::new(keys[4], keys[3]);
   let zero = Simd::new(0, 0);
 
-  let mut s0 = blocks[0];
-  let mut s1 = blocks[1];
-  let mut s2 = blocks[2];
+  let mut s0 = bitrev_block(&blocks[0]);
+  let mut s1 = bitrev_block(&blocks[1]);
+  let mut s2 = bitrev_block(&blocks[2]);
 
   // Inject CRC into stream 0 (block 0).
   s0[0] ^= Simd::new(0, state as u64);
@@ -255,9 +295,9 @@ unsafe fn update_simd_width32_reflected_3way(
   // Process the largest multiple-of-3 prefix with 3-way striping.
   let mut i = 3;
   while i < aligned {
-    fold_block_128_width32_reflected(&mut s0, &blocks[i], coeff_384b);
-    fold_block_128_width32_reflected(&mut s1, &blocks[i + 1], coeff_384b);
-    fold_block_128_width32_reflected(&mut s2, &blocks[i + 2], coeff_384b);
+    fold_block_128_width32_reflected_bitrev_bytes(&mut s0, &blocks[i], coeff_384b);
+    fold_block_128_width32_reflected_bitrev_bytes(&mut s1, &blocks[i + 1], coeff_384b);
+    fold_block_128_width32_reflected_bitrev_bytes(&mut s2, &blocks[i + 2], coeff_384b);
     i = i.strict_add(3);
   }
 
@@ -284,7 +324,7 @@ unsafe fn update_simd_width32_reflected_3way(
 
   // Handle any remaining blocks sequentially.
   for block in &blocks[aligned..] {
-    fold_block_128_width32_reflected(&mut combined, block, coeff_128b);
+    fold_block_128_width32_reflected_bitrev_bytes(&mut combined, block, coeff_128b);
   }
 
   finalize_lanes_width32_reflected(combined, keys)
@@ -292,231 +332,188 @@ unsafe fn update_simd_width32_reflected_3way(
 
 #[inline]
 #[target_feature(enable = "aes", enable = "neon")]
-unsafe fn update_simd_width32_reflected(state: u32, first: &[Simd; 8], rest: &[[Simd; 8]], keys: &[u64; 23]) -> u32 {
+unsafe fn update_simd_width32_reflected_bitrev_bytes(
+  state: u32,
+  first: &[Simd; 8],
+  rest: &[[Simd; 8]],
+  keys: &[u64; 23],
+) -> u32 {
   let mut x = *first;
+
+  x[0] = x[0].bitrev_bytes();
+  x[1] = x[1].bitrev_bytes();
+  x[2] = x[2].bitrev_bytes();
+  x[3] = x[3].bitrev_bytes();
+  x[4] = x[4].bitrev_bytes();
+  x[5] = x[5].bitrev_bytes();
+  x[6] = x[6].bitrev_bytes();
+  x[7] = x[7].bitrev_bytes();
 
   x[0] ^= Simd::new(0, state as u64);
 
   let coeff_128b = Simd::new(keys[4], keys[3]);
   for chunk in rest {
-    x[0] = x[0].fold_16_reflected(coeff_128b, chunk[0]);
-    x[1] = x[1].fold_16_reflected(coeff_128b, chunk[1]);
-    x[2] = x[2].fold_16_reflected(coeff_128b, chunk[2]);
-    x[3] = x[3].fold_16_reflected(coeff_128b, chunk[3]);
-    x[4] = x[4].fold_16_reflected(coeff_128b, chunk[4]);
-    x[5] = x[5].fold_16_reflected(coeff_128b, chunk[5]);
-    x[6] = x[6].fold_16_reflected(coeff_128b, chunk[6]);
-    x[7] = x[7].fold_16_reflected(coeff_128b, chunk[7]);
+    let y0 = chunk[0].bitrev_bytes();
+    let y1 = chunk[1].bitrev_bytes();
+    let y2 = chunk[2].bitrev_bytes();
+    let y3 = chunk[3].bitrev_bytes();
+    let y4 = chunk[4].bitrev_bytes();
+    let y5 = chunk[5].bitrev_bytes();
+    let y6 = chunk[6].bitrev_bytes();
+    let y7 = chunk[7].bitrev_bytes();
+
+    x[0] = x[0].fold_16_reflected(coeff_128b, y0);
+    x[1] = x[1].fold_16_reflected(coeff_128b, y1);
+    x[2] = x[2].fold_16_reflected(coeff_128b, y2);
+    x[3] = x[3].fold_16_reflected(coeff_128b, y3);
+    x[4] = x[4].fold_16_reflected(coeff_128b, y4);
+    x[5] = x[5].fold_16_reflected(coeff_128b, y5);
+    x[6] = x[6].fold_16_reflected(coeff_128b, y6);
+    x[7] = x[7].fold_16_reflected(coeff_128b, y7);
   }
 
   finalize_lanes_width32_reflected(x, keys)
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Single-stream kernel entry points
+// ─────────────────────────────────────────────────────────────────────────────
+
 #[inline]
 #[target_feature(enable = "aes", enable = "neon")]
-unsafe fn crc16_width32_pmull_small(
-  mut state: u16,
-  data: &[u8],
-  keys: &[u64; 23],
-  portable: fn(u16, &[u8]) -> u16,
-) -> u16 {
+unsafe fn crc24_width32_pmull_small(mut state: u32, data: &[u8], keys: &[u64; 23]) -> u32 {
   let mut buf = data.as_ptr();
   let mut len = data.len();
 
   if len < 16 {
-    return portable(state, data);
+    return crc24_reflected_update_bitrev_bytes(state, data);
   }
 
   let coeff_16b = Simd::new(keys[2], keys[1]);
 
-  let mut x0 = Simd::load(buf);
+  let mut x0 = Simd::load(buf).bitrev_bytes();
   x0 ^= Simd::new(0, state as u64);
   buf = buf.add(16);
   len = len.strict_sub(16);
 
   while len >= 16 {
-    let chunk = Simd::load(buf);
+    let chunk = Simd::load(buf).bitrev_bytes();
     x0 = x0.fold_16_reflected(coeff_16b, chunk);
     buf = buf.add(16);
     len = len.strict_sub(16);
   }
 
   let x0 = x0.fold_width32_reflected(keys[6], keys[5]);
-  state = x0.barrett_width32_reflected(keys[8], keys[7]) as u16;
+  state = x0.barrett_width32_reflected(keys[8], keys[7]);
 
   let tail = core::slice::from_raw_parts(buf, len);
-  portable(state, tail)
+  crc24_reflected_update_bitrev_bytes(state, tail)
 }
 
 #[inline]
 #[target_feature(enable = "aes", enable = "neon")]
-unsafe fn crc16_width32_pmull(mut state: u16, data: &[u8], keys: &[u64; 23], portable: fn(u16, &[u8]) -> u16) -> u16 {
+unsafe fn crc24_width32_pmull(mut state: u32, data: &[u8], keys: &[u64; 23]) -> u32 {
   let (left, middle, right) = data.align_to::<[Simd; 8]>();
   let Some((first, rest)) = middle.split_first() else {
-    return crc16_width32_pmull_small(state, data, keys, portable);
+    return crc24_width32_pmull_small(state, data, keys);
   };
 
-  state = portable(state, left);
-  let state32 = update_simd_width32_reflected(state as u32, first, rest, keys);
-  state = state32 as u16;
-  portable(state, right)
+  state = crc24_reflected_update_bitrev_bytes(state, left);
+  let state32 = update_simd_width32_reflected_bitrev_bytes(state, first, rest, keys);
+  state = state32;
+  crc24_reflected_update_bitrev_bytes(state, right)
 }
 
 #[inline]
 #[target_feature(enable = "aes", enable = "neon")]
-unsafe fn crc16_width32_pmull_2way(
-  mut state: u16,
-  data: &[u8],
-  keys: &[u64; 23],
-  fold_256b: (u64, u64),
-  portable: fn(u16, &[u8]) -> u16,
-) -> u16 {
+unsafe fn crc24_width32_pmull_2way(mut state: u32, data: &[u8], fold_256b: (u64, u64), keys: &[u64; 23]) -> u32 {
   let (left, middle, right) = data.align_to::<[Simd; 8]>();
   if middle.is_empty() {
-    return crc16_width32_pmull_small(state, data, keys, portable);
+    return crc24_width32_pmull_small(state, data, keys);
   }
 
-  state = portable(state, left);
-  let state32 = if middle.len() >= 2 {
-    update_simd_width32_reflected_2way(state as u32, middle, fold_256b, keys)
-  } else {
-    let Some((first, rest)) = middle.split_first() else {
-      return crc16_width32_pmull_small(state, data, keys, portable);
-    };
-    update_simd_width32_reflected(state as u32, first, rest, keys)
-  };
-  state = state32 as u16;
-  portable(state, right)
+  state = crc24_reflected_update_bitrev_bytes(state, left);
+  if middle.len() >= 2 {
+    state = update_simd_width32_reflected_bitrev_bytes_2way(state, middle, fold_256b, keys);
+  } else if let Some((first, rest)) = middle.split_first() {
+    state = update_simd_width32_reflected_bitrev_bytes(state, first, rest, keys);
+  }
+  crc24_reflected_update_bitrev_bytes(state, right)
 }
 
 #[inline]
 #[target_feature(enable = "aes", enable = "neon")]
-unsafe fn crc16_width32_pmull_3way(
-  mut state: u16,
+unsafe fn crc24_width32_pmull_3way(
+  mut state: u32,
   data: &[u8],
-  keys: &[u64; 23],
   fold_384b: (u64, u64),
   fold_256b: (u64, u64),
-  portable: fn(u16, &[u8]) -> u16,
-) -> u16 {
+  keys: &[u64; 23],
+) -> u32 {
   let (left, middle, right) = data.align_to::<[Simd; 8]>();
   if middle.is_empty() {
-    return crc16_width32_pmull_small(state, data, keys, portable);
+    return crc24_width32_pmull_small(state, data, keys);
   }
 
-  state = portable(state, left);
-  let state32 = update_simd_width32_reflected_3way(state as u32, middle, fold_384b, fold_256b, keys);
-  state = state32 as u16;
-  portable(state, right)
+  state = crc24_reflected_update_bitrev_bytes(state, left);
+  state = update_simd_width32_reflected_bitrev_bytes_3way(state, middle, fold_384b, fold_256b, keys);
+  crc24_reflected_update_bitrev_bytes(state, right)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Public Safe Kernels (matching CRC-64 pure fn(u16, &[u8]) -> u16 signature)
+// Public Safe Kernel
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// CRC-16/CCITT PMULL kernel.
+/// CRC-24/OPENPGP PMULL kernel.
 ///
 /// # Safety
 ///
 /// Dispatcher verifies PMULL before selecting this kernel.
 #[inline]
-pub fn crc16_ccitt_pmull_safe(crc: u16, data: &[u8]) -> u16 {
+pub fn crc24_openpgp_pmull_safe(crc: u32, data: &[u8]) -> u32 {
+  let mut state = to_reflected_state(crc);
   // SAFETY: Dispatcher verifies PMULL before selecting this kernel.
-  unsafe {
-    crc16_width32_pmull(
-      crc,
-      data,
-      &CRC16_CCITT_KEYS_REFLECTED,
-      super::portable::crc16_ccitt_slice8,
-    )
-  }
+  state = unsafe { crc24_width32_pmull(state, data, &CRC24_OPENPGP_KEYS_REFLECTED) };
+  from_reflected_state(state)
 }
 
-/// CRC-16/CCITT PMULL kernel (2-way striping).
+/// CRC-24/OPENPGP PMULL kernel (2-way striping).
 ///
 /// # Safety
 ///
 /// Dispatcher verifies PMULL before selecting this kernel.
 #[inline]
-pub fn crc16_ccitt_pmull_2way_safe(crc: u16, data: &[u8]) -> u16 {
+pub fn crc24_openpgp_pmull_2way_safe(crc: u32, data: &[u8]) -> u32 {
+  let mut state = to_reflected_state(crc);
   // SAFETY: Dispatcher verifies PMULL before selecting this kernel.
-  unsafe {
-    crc16_width32_pmull_2way(
-      crc,
+  state = unsafe {
+    crc24_width32_pmull_2way(
+      state,
       data,
-      &CRC16_CCITT_KEYS_REFLECTED,
-      CRC16_CCITT_STREAM_REFLECTED.fold_256b,
-      super::portable::crc16_ccitt_slice8,
+      CRC24_OPENPGP_STREAM_REFLECTED.fold_256b,
+      &CRC24_OPENPGP_KEYS_REFLECTED,
     )
-  }
+  };
+  from_reflected_state(state)
 }
 
-/// CRC-16/CCITT PMULL kernel (3-way striping).
+/// CRC-24/OPENPGP PMULL kernel (3-way striping).
 ///
 /// # Safety
 ///
 /// Dispatcher verifies PMULL before selecting this kernel.
 #[inline]
-pub fn crc16_ccitt_pmull_3way_safe(crc: u16, data: &[u8]) -> u16 {
+pub fn crc24_openpgp_pmull_3way_safe(crc: u32, data: &[u8]) -> u32 {
+  let mut state = to_reflected_state(crc);
   // SAFETY: Dispatcher verifies PMULL before selecting this kernel.
-  unsafe {
-    crc16_width32_pmull_3way(
-      crc,
+  state = unsafe {
+    crc24_width32_pmull_3way(
+      state,
       data,
-      &CRC16_CCITT_KEYS_REFLECTED,
-      CRC16_CCITT_STREAM_REFLECTED.fold_384b,
-      CRC16_CCITT_STREAM_REFLECTED.fold_256b,
-      super::portable::crc16_ccitt_slice8,
+      CRC24_OPENPGP_STREAM_REFLECTED.fold_384b,
+      CRC24_OPENPGP_STREAM_REFLECTED.fold_256b,
+      &CRC24_OPENPGP_KEYS_REFLECTED,
     )
-  }
-}
-
-/// CRC-16/IBM PMULL kernel.
-///
-/// # Safety
-///
-/// Dispatcher verifies PMULL before selecting this kernel.
-#[inline]
-pub fn crc16_ibm_pmull_safe(crc: u16, data: &[u8]) -> u16 {
-  // SAFETY: Dispatcher verifies PMULL before selecting this kernel.
-  unsafe { crc16_width32_pmull(crc, data, &CRC16_IBM_KEYS_REFLECTED, super::portable::crc16_ibm_slice8) }
-}
-
-/// CRC-16/IBM PMULL kernel (2-way striping).
-///
-/// # Safety
-///
-/// Dispatcher verifies PMULL before selecting this kernel.
-#[inline]
-pub fn crc16_ibm_pmull_2way_safe(crc: u16, data: &[u8]) -> u16 {
-  // SAFETY: Dispatcher verifies PMULL before selecting this kernel.
-  unsafe {
-    crc16_width32_pmull_2way(
-      crc,
-      data,
-      &CRC16_IBM_KEYS_REFLECTED,
-      CRC16_IBM_STREAM_REFLECTED.fold_256b,
-      super::portable::crc16_ibm_slice8,
-    )
-  }
-}
-
-/// CRC-16/IBM PMULL kernel (3-way striping).
-///
-/// # Safety
-///
-/// Dispatcher verifies PMULL before selecting this kernel.
-#[inline]
-pub fn crc16_ibm_pmull_3way_safe(crc: u16, data: &[u8]) -> u16 {
-  // SAFETY: Dispatcher verifies PMULL before selecting this kernel.
-  unsafe {
-    crc16_width32_pmull_3way(
-      crc,
-      data,
-      &CRC16_IBM_KEYS_REFLECTED,
-      CRC16_IBM_STREAM_REFLECTED.fold_384b,
-      CRC16_IBM_STREAM_REFLECTED.fold_256b,
-      super::portable::crc16_ibm_slice8,
-    )
-  }
+  };
+  from_reflected_state(state)
 }

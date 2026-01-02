@@ -1,0 +1,467 @@
+//! riscv64 hardware-accelerated CRC-16 kernels (Zbc + Zvbc).
+//!
+//! This is a RISC-V carryless-multiply implementation of the 128-byte width32
+//! folding algorithm used by the reflected CRC-16 CLMUL backends.
+//!
+//! # Safety
+//!
+//! Uses `unsafe` for RISC-V inline assembly. Callers must ensure the required
+//! CPU features are available before executing the accelerated path (the
+//! dispatcher does this).
+#![allow(unsafe_code)]
+#![allow(dead_code)] // Kernels wired up via dispatcher
+// SAFETY: All indexing is over fixed-size arrays with in-bounds constant indices.
+#![allow(clippy::indexing_slicing)]
+// This module is intrinsics-heavy; keep unsafe blocks readable.
+#![allow(unsafe_op_in_unsafe_fn)]
+
+use core::{
+  arch::asm,
+  mem::MaybeUninit,
+  ops::{BitXor, BitXorAssign},
+};
+
+use super::keys::{CRC16_CCITT_KEYS_REFLECTED, CRC16_IBM_KEYS_REFLECTED};
+
+type Block = [u64; 16]; // 128 bytes (8×16B lanes)
+
+#[derive(Copy, Clone, Debug)]
+struct Simd {
+  hi: u64,
+  lo: u64,
+}
+
+impl BitXor for Simd {
+  type Output = Self;
+
+  #[inline]
+  fn bitxor(self, other: Self) -> Self {
+    Self {
+      hi: self.hi ^ other.hi,
+      lo: self.lo ^ other.lo,
+    }
+  }
+}
+
+impl BitXorAssign for Simd {
+  #[inline]
+  fn bitxor_assign(&mut self, other: Self) {
+    self.hi ^= other.hi;
+    self.lo ^= other.lo;
+  }
+}
+
+impl Simd {
+  #[inline]
+  const fn new(high: u64, low: u64) -> Self {
+    Self { hi: high, lo: low }
+  }
+
+  #[inline]
+  const fn low_64(self) -> u64 {
+    self.lo
+  }
+
+  #[inline]
+  const fn high_64(self) -> u64 {
+    self.hi
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Zbc carryless multiply primitives
+  // ─────────────────────────────────────────────────────────────────────────
+
+  #[inline]
+  #[target_feature(enable = "zbc")]
+  unsafe fn clmul_lo(a: u64, b: u64) -> u64 {
+    let out: u64;
+    asm!(
+      "clmul {out}, {a}, {b}",
+      out = lateout(reg) out,
+      a = in(reg) a,
+      b = in(reg) b,
+      options(nomem, nostack, pure)
+    );
+    out
+  }
+
+  #[inline]
+  #[target_feature(enable = "zbc")]
+  unsafe fn clmul_hi(a: u64, b: u64) -> u64 {
+    let out: u64;
+    asm!(
+      "clmulh {out}, {a}, {b}",
+      out = lateout(reg) out,
+      a = in(reg) a,
+      b = in(reg) b,
+      options(nomem, nostack, pure)
+    );
+    out
+  }
+
+  #[inline]
+  #[target_feature(enable = "zbc")]
+  unsafe fn mul64(a: u64, b: u64) -> Self {
+    Self {
+      hi: Self::clmul_hi(a, b),
+      lo: Self::clmul_lo(a, b),
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Load helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[inline(always)]
+fn load_block(block: &Block) -> [Simd; 8] {
+  let mut out = MaybeUninit::<[Simd; 8]>::uninit();
+  let base = out.as_mut_ptr().cast::<Simd>();
+
+  let mut i = 0usize;
+  while i < 8 {
+    let lo = u64::from_le(block[i * 2]);
+    let hi = u64::from_le(block[i * 2 + 1]);
+    // SAFETY: `base` points to a `[Simd; 8]` buffer and `i` is in-bounds.
+    unsafe {
+      base.add(i).write(Simd::new(hi, lo));
+    }
+    i = i.strict_add(1);
+  }
+
+  // SAFETY: all 8 elements are initialized above.
+  unsafe { out.assume_init() }
+}
+
+#[inline]
+fn load_block_split(block: &Block) -> ([u64; 8], [u64; 8]) {
+  let mut hi = [0u64; 8];
+  let mut lo = [0u64; 8];
+
+  let mut i = 0usize;
+  while i < 8 {
+    lo[i] = u64::from_le(block[i * 2]);
+    hi[i] = u64::from_le(block[i * 2 + 1]);
+    i = i.strict_add(1);
+  }
+
+  (hi, lo)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ZBC (scalar carryless multiply) backend
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[inline]
+#[target_feature(enable = "zbc")]
+unsafe fn fold_16_zbc(x: Simd, coeff: (u64, u64)) -> Simd {
+  let (coeff_high, coeff_low) = coeff;
+  Simd::mul64(x.low_64(), coeff_high) ^ Simd::mul64(x.high_64(), coeff_low)
+}
+
+#[inline]
+#[target_feature(enable = "zbc")]
+unsafe fn fold_16_reflected_zbc(x: Simd, coeff: (u64, u64), data_to_xor: Simd) -> Simd {
+  data_to_xor ^ fold_16_zbc(x, coeff)
+}
+
+#[inline]
+#[target_feature(enable = "zbc")]
+unsafe fn fold_width32_reflected_zbc(x: Simd, high: u64, low: u64) -> Simd {
+  let clmul = Simd::mul64(x.low_64(), low);
+  let shifted = Simd::new(0, x.high_64());
+  let mut state = clmul ^ shifted;
+
+  let masked = Simd::new(state.high_64(), state.low_64() & 0xFFFF_FFFF_0000_0000);
+  let shifted_high = (state.low_64() & 0xFFFF_FFFF).strict_shl(32);
+  let clmul = Simd::mul64(shifted_high, high);
+  state = clmul ^ masked;
+
+  state
+}
+
+#[inline]
+#[target_feature(enable = "zbc")]
+unsafe fn barrett_width32_reflected_zbc(x: Simd, poly: u64, mu: u64) -> u32 {
+  let t1 = Simd::mul64(x.low_64(), mu);
+  let l = Simd::mul64(t1.low_64(), poly);
+  (x ^ l).high_64() as u32
+}
+
+#[inline]
+#[target_feature(enable = "zbc")]
+unsafe fn finalize_lanes_width32_reflected_zbc(x: [Simd; 8], keys: &[u64; 23]) -> u32 {
+  let mut res = x[7];
+  res = fold_16_reflected_zbc(x[0], (keys[10], keys[9]), res);
+  res = fold_16_reflected_zbc(x[1], (keys[12], keys[11]), res);
+  res = fold_16_reflected_zbc(x[2], (keys[14], keys[13]), res);
+  res = fold_16_reflected_zbc(x[3], (keys[16], keys[15]), res);
+  res = fold_16_reflected_zbc(x[4], (keys[18], keys[17]), res);
+  res = fold_16_reflected_zbc(x[5], (keys[20], keys[19]), res);
+  res = fold_16_reflected_zbc(x[6], (keys[2], keys[1]), res);
+
+  barrett_width32_reflected_zbc(fold_width32_reflected_zbc(res, keys[6], keys[5]), keys[8], keys[7])
+}
+
+#[inline]
+#[target_feature(enable = "zbc")]
+unsafe fn update_simd_zbc(state: u32, first: &Block, rest: &[Block], keys: &[u64; 23]) -> u32 {
+  let mut x = load_block(first);
+  x[0] ^= Simd::new(0, state as u64);
+
+  let coeff_128b = (keys[4], keys[3]);
+  for block in rest {
+    let chunk = load_block(block);
+    x[0] = fold_16_reflected_zbc(x[0], coeff_128b, chunk[0]);
+    x[1] = fold_16_reflected_zbc(x[1], coeff_128b, chunk[1]);
+    x[2] = fold_16_reflected_zbc(x[2], coeff_128b, chunk[2]);
+    x[3] = fold_16_reflected_zbc(x[3], coeff_128b, chunk[3]);
+    x[4] = fold_16_reflected_zbc(x[4], coeff_128b, chunk[4]);
+    x[5] = fold_16_reflected_zbc(x[5], coeff_128b, chunk[5]);
+    x[6] = fold_16_reflected_zbc(x[6], coeff_128b, chunk[6]);
+    x[7] = fold_16_reflected_zbc(x[7], coeff_128b, chunk[7]);
+  }
+
+  finalize_lanes_width32_reflected_zbc(x, keys)
+}
+
+#[inline]
+#[target_feature(enable = "zbc")]
+unsafe fn crc16_width32_zbc(mut state: u16, data: &[u8], keys: &[u64; 23], portable: fn(u16, &[u8]) -> u16) -> u16 {
+  let (left, middle, right) = data.align_to::<Block>();
+  let Some((first, rest)) = middle.split_first() else {
+    return portable(state, data);
+  };
+
+  state = portable(state, left);
+  let state32 = update_simd_zbc(state as u32, first, rest, keys);
+  state = state32 as u16;
+  portable(state, right)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ZVBC (vector carryless multiply) backend
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Carryless multiply of two `u64` values using ZVBC (returns 128-bit result as `{hi, lo}`).
+///
+/// # Safety
+///
+/// Requires RISC-V `v` + `zvbc`.
+#[inline]
+#[target_feature(enable = "v", enable = "zvbc")]
+unsafe fn mul64_zvbc(a: u64, b: u64) -> Simd {
+  let lo: u64;
+  let hi: u64;
+  asm!(
+    "vsetivli zero, 1, e64, m1, ta, ma",
+    "vmv.v.x v0, {a}",
+    "vclmul.vx v1, v0, {b}",
+    "vclmulh.vx v2, v0, {b}",
+    "vmv.x.s {lo}, v1",
+    "vmv.x.s {hi}, v2",
+    a = in(reg) a,
+    b = in(reg) b,
+    lo = lateout(reg) lo,
+    hi = lateout(reg) hi,
+    out("v0") _,
+    out("v1") _,
+    out("v2") _,
+    options(nostack)
+  );
+  Simd::new(hi, lo)
+}
+
+#[inline]
+#[target_feature(enable = "v", enable = "zvbc")]
+unsafe fn fold_16_zvbc(x: Simd, coeff: (u64, u64)) -> Simd {
+  let (coeff_high, coeff_low) = coeff;
+  mul64_zvbc(x.low_64(), coeff_high) ^ mul64_zvbc(x.high_64(), coeff_low)
+}
+
+#[inline]
+#[target_feature(enable = "v", enable = "zvbc")]
+unsafe fn fold_16_reflected_zvbc(x: Simd, coeff: (u64, u64), data_to_xor: Simd) -> Simd {
+  data_to_xor ^ fold_16_zvbc(x, coeff)
+}
+
+#[inline]
+#[target_feature(enable = "v", enable = "zvbc")]
+unsafe fn fold_width32_reflected_zvbc(x: Simd, high: u64, low: u64) -> Simd {
+  let clmul = mul64_zvbc(x.low_64(), low);
+  let shifted = Simd::new(0, x.high_64());
+  let mut state = clmul ^ shifted;
+
+  let masked = Simd::new(state.high_64(), state.low_64() & 0xFFFF_FFFF_0000_0000);
+  let shifted_high = (state.low_64() & 0xFFFF_FFFF).strict_shl(32);
+  let clmul = mul64_zvbc(shifted_high, high);
+  state = clmul ^ masked;
+
+  state
+}
+
+#[inline]
+#[target_feature(enable = "v", enable = "zvbc")]
+unsafe fn barrett_width32_reflected_zvbc(x: Simd, poly: u64, mu: u64) -> u32 {
+  let t1 = mul64_zvbc(x.low_64(), mu);
+  let l = mul64_zvbc(t1.low_64(), poly);
+  (x ^ l).high_64() as u32
+}
+
+#[inline]
+#[target_feature(enable = "v", enable = "zvbc")]
+unsafe fn fold_tail_zvbc(hi: [u64; 8], lo: [u64; 8], keys: &[u64; 23]) -> u32 {
+  let mut acc = Simd::new(hi[7], lo[7]);
+  acc ^= fold_16_zvbc(Simd::new(hi[0], lo[0]), (keys[10], keys[9]));
+  acc ^= fold_16_zvbc(Simd::new(hi[1], lo[1]), (keys[12], keys[11]));
+  acc ^= fold_16_zvbc(Simd::new(hi[2], lo[2]), (keys[14], keys[13]));
+  acc ^= fold_16_zvbc(Simd::new(hi[3], lo[3]), (keys[16], keys[15]));
+  acc ^= fold_16_zvbc(Simd::new(hi[4], lo[4]), (keys[18], keys[17]));
+  acc ^= fold_16_zvbc(Simd::new(hi[5], lo[5]), (keys[20], keys[19]));
+  acc ^= fold_16_zvbc(Simd::new(hi[6], lo[6]), (keys[2], keys[1]));
+
+  barrett_width32_reflected_zvbc(fold_width32_reflected_zvbc(acc, keys[6], keys[5]), keys[8], keys[7])
+}
+
+#[inline]
+#[target_feature(enable = "v", enable = "zvbc")]
+unsafe fn fold_block_128_zvbc(
+  x_hi: &mut [u64; 8],
+  x_lo: &mut [u64; 8],
+  chunk_hi: &[u64; 8],
+  chunk_lo: &[u64; 8],
+  coeff_low: u64,
+  coeff_high: u64,
+) {
+  let mut offset = 0usize;
+  while offset < 8 {
+    let remaining = 8 - offset;
+    let vl: usize;
+    asm!(
+      "vsetvli {vl}, {avl}, e64, m1, ta, ma",
+      "vle64.v v0, ({xlo})",
+      "vle64.v v1, ({xhi})",
+      // Cross-term fold: (x_lo ⊗ coeff_high) ⊕ (x_hi ⊗ coeff_low)
+      "vclmul.vx v2, v0, {chi}",
+      "vclmulh.vx v3, v0, {chi}",
+      "vclmul.vx v4, v1, {clo}",
+      "vclmulh.vx v5, v1, {clo}",
+      "vxor.vv v2, v2, v4",
+      "vxor.vv v3, v3, v5",
+      "vle64.v v4, ({dlo})",
+      "vle64.v v5, ({dhi})",
+      "vxor.vv v2, v2, v4",
+      "vxor.vv v3, v3, v5",
+      "vse64.v v2, ({xlo})",
+      "vse64.v v3, ({xhi})",
+      vl = lateout(reg) vl,
+      avl = in(reg) remaining,
+      xlo = in(reg) x_lo.as_mut_ptr().add(offset),
+      xhi = in(reg) x_hi.as_mut_ptr().add(offset),
+      dlo = in(reg) chunk_lo.as_ptr().add(offset),
+      dhi = in(reg) chunk_hi.as_ptr().add(offset),
+      clo = in(reg) coeff_low,
+      chi = in(reg) coeff_high,
+      out("v0") _,
+      out("v1") _,
+      out("v2") _,
+      out("v3") _,
+      out("v4") _,
+      out("v5") _,
+      options(nostack)
+    );
+    offset += vl;
+  }
+}
+
+#[target_feature(enable = "v", enable = "zvbc")]
+unsafe fn update_simd_zvbc(state: u32, first: &Block, rest: &[Block], keys: &[u64; 23]) -> u32 {
+  let (mut x_hi, mut x_lo) = load_block_split(first);
+  x_lo[0] ^= state as u64;
+
+  let coeff_low = keys[3];
+  let coeff_high = keys[4];
+
+  for block in rest {
+    let (chunk_hi, chunk_lo) = load_block_split(block);
+    fold_block_128_zvbc(&mut x_hi, &mut x_lo, &chunk_hi, &chunk_lo, coeff_low, coeff_high);
+  }
+
+  fold_tail_zvbc(x_hi, x_lo, keys)
+}
+
+#[inline]
+#[target_feature(enable = "v", enable = "zvbc")]
+unsafe fn crc16_width32_zvbc(mut state: u16, data: &[u8], keys: &[u64; 23], portable: fn(u16, &[u8]) -> u16) -> u16 {
+  let (left, middle, right) = data.align_to::<Block>();
+  let Some((first, rest)) = middle.split_first() else {
+    return portable(state, data);
+  };
+
+  state = portable(state, left);
+  let state32 = update_simd_zvbc(state as u32, first, rest, keys);
+  state = state32 as u16;
+  portable(state, right)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Public Safe Kernels
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// CRC-16/CCITT Zbc kernel.
+///
+/// # Safety
+///
+/// Dispatcher verifies Zbc before selecting this kernel.
+#[inline]
+pub fn crc16_ccitt_zbc_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: Dispatcher verifies Zbc before selecting this kernel.
+  unsafe {
+    crc16_width32_zbc(
+      crc,
+      data,
+      &CRC16_CCITT_KEYS_REFLECTED,
+      super::portable::crc16_ccitt_slice8,
+    )
+  }
+}
+
+/// CRC-16/CCITT Zvbc kernel.
+///
+/// # Safety
+///
+/// Dispatcher verifies Zvbc before selecting this kernel.
+#[inline]
+pub fn crc16_ccitt_zvbc_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: Dispatcher verifies Zvbc before selecting this kernel.
+  unsafe {
+    crc16_width32_zvbc(
+      crc,
+      data,
+      &CRC16_CCITT_KEYS_REFLECTED,
+      super::portable::crc16_ccitt_slice8,
+    )
+  }
+}
+
+/// CRC-16/IBM Zbc kernel.
+///
+/// # Safety
+///
+/// Dispatcher verifies Zbc before selecting this kernel.
+#[inline]
+pub fn crc16_ibm_zbc_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: Dispatcher verifies Zbc before selecting this kernel.
+  unsafe { crc16_width32_zbc(crc, data, &CRC16_IBM_KEYS_REFLECTED, super::portable::crc16_ibm_slice8) }
+}
+
+/// CRC-16/IBM Zvbc kernel.
+///
+/// # Safety
+///
+/// Dispatcher verifies Zvbc before selecting this kernel.
+#[inline]
+pub fn crc16_ibm_zvbc_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: Dispatcher verifies Zvbc before selecting this kernel.
+  unsafe { crc16_width32_zvbc(crc, data, &CRC16_IBM_KEYS_REFLECTED, super::portable::crc16_ibm_slice8) }
+}

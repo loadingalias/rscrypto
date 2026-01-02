@@ -5,21 +5,23 @@
 //!
 //! # Kernel Tiers
 //!
-//! CRC-24 supports only Tiers 0 and 1:
+//! CRC-24 supports Tiers 0, 1, 3, and 4 (no HW CRC instructions exist):
 //! - Tier 0 (Reference): Bitwise implementation
 //! - Tier 1 (Portable): Slice-by-4/8 table lookup
+//! - Tier 3 (Folding): PCLMUL (x86_64), PMULL (aarch64), VPMSUM (powerpc64), VGFM (s390x), Zbc
+//!   (riscv64)
+//! - Tier 4 (Wide): VPCLMUL (x86_64 AVX-512), Zvbc (riscv64)
 //!
 //! ## Why No SIMD Acceleration?
 //!
 //! CRC-24/OPENPGP uses a non-reflected (MSB-first) polynomial. This means:
 //! - Data bits are processed high-to-low instead of low-to-high
 //! - Carryless multiply folding requires additional byte-reversal operations
-//! - The performance gain would be marginal for typical OpenPGP message sizes
 //! - The OpenPGP use case (ASCII armor integrity) doesn't require extreme throughput
 //!
-//! If SIMD acceleration is needed in the future, it can be added following the
-//! CRC-16/CRC-64 patterns, but the portable implementation is likely sufficient
-//! for the foreseeable future.
+//! SIMD acceleration is provided via CLMUL/PMULL folding by internally computing
+//! the equivalent reflected CRC-24 over bit-reversed bytes, then converting the
+//! state back to the MSB-first OpenPGP representation.
 
 /// Reference (bitwise) kernel name.
 pub use kernels::REFERENCE;
@@ -46,4 +48,123 @@ pub const fn portable_name_for_len(len: usize, slice4_to_slice8: usize) -> &'sta
   } else {
     PORTABLE_SLICE8
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Kernel Name Tables and Functions (per architecture)
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[cfg(target_arch = "x86_64")]
+pub mod x86_64 {
+  use super::super::x86_64 as arch;
+  use crate::dispatchers::Crc24Fn;
+
+  /// PCLMUL kernel name (SSSE3 + PCLMULQDQ).
+  pub const PCLMUL: &str = "x86_64/pclmul";
+  /// PCLMUL kernel names: [1-way, 2-way, 4-way, 7-way, 8-way].
+  pub const PCLMUL_NAMES: &[&str] = &[
+    "x86_64/pclmul",
+    "x86_64/pclmul-2way",
+    "x86_64/pclmul-4way",
+    "x86_64/pclmul-7way",
+    "x86_64/pclmul-8way",
+  ];
+
+  /// VPCLMUL kernel name (AVX-512 VPCLMULQDQ).
+  pub const VPCLMUL: &str = "x86_64/vpclmul";
+  /// VPCLMUL kernel names: [1-way, 2-way, 4-way, 7-way, 8-way].
+  pub const VPCLMUL_NAMES: &[&str] = &[
+    "x86_64/vpclmul",
+    "x86_64/vpclmul-2way",
+    "x86_64/vpclmul-4way",
+    "x86_64/vpclmul-7way",
+    "x86_64/vpclmul-8way",
+  ];
+
+  /// OpenPGP PCLMUL kernel.
+  #[allow(dead_code)] // Used by bench + policy dispatch.
+  pub const OPENPGP_PCLMUL: [Crc24Fn; 5] = [
+    arch::crc24_openpgp_pclmul_safe,
+    arch::crc24_openpgp_pclmul_2way_safe,
+    arch::crc24_openpgp_pclmul_4way_safe,
+    arch::crc24_openpgp_pclmul_7way_safe,
+    arch::crc24_openpgp_pclmul_8way_safe,
+  ];
+
+  /// OpenPGP VPCLMUL kernel.
+  #[allow(dead_code)] // Used by bench + policy dispatch.
+  pub const OPENPGP_VPCLMUL: [Crc24Fn; 5] = [
+    arch::crc24_openpgp_vpclmul_safe,
+    arch::crc24_openpgp_vpclmul_2way_safe,
+    arch::crc24_openpgp_vpclmul_4way_safe,
+    arch::crc24_openpgp_vpclmul_7way_safe,
+    arch::crc24_openpgp_vpclmul_8way_safe,
+  ];
+}
+
+#[cfg(target_arch = "aarch64")]
+pub mod aarch64 {
+  use super::super::aarch64 as arch;
+  use crate::dispatchers::Crc24Fn;
+
+  /// PMULL kernel name (NEON carryless multiply).
+  pub const PMULL: &str = "aarch64/pmull";
+  /// PMULL kernel names: [1-way, 2-way, 3-way].
+  pub const PMULL_NAMES: &[&str] = &["aarch64/pmull", "aarch64/pmull-2way", "aarch64/pmull-3way"];
+
+  /// OpenPGP PMULL kernels: [1-way, 2-way, 3-way, 3-way(dup), 3-way(dup)].
+  #[allow(dead_code)] // Used by bench + future stream dispatch.
+  pub const OPENPGP_PMULL: [Crc24Fn; 5] = [
+    arch::crc24_openpgp_pmull_safe,
+    arch::crc24_openpgp_pmull_2way_safe,
+    arch::crc24_openpgp_pmull_3way_safe,
+    arch::crc24_openpgp_pmull_3way_safe, // dup for index consistency
+    arch::crc24_openpgp_pmull_3way_safe, // dup for index consistency
+  ];
+}
+
+#[cfg(target_arch = "powerpc64")]
+pub mod powerpc64 {
+  use super::super::powerpc64 as arch;
+  use crate::dispatchers::Crc24Fn;
+
+  /// VPMSUM kernel name (POWER8+ carryless multiply).
+  pub const VPMSUM: &str = "powerpc64/vpmsum";
+
+  /// OpenPGP VPMSUM kernel.
+  #[allow(dead_code)] // Exposed for kernel ladder consistency; dispatch uses wrapper fn
+  pub const OPENPGP_VPMSUM: Crc24Fn = arch::crc24_openpgp_vpmsum_safe;
+}
+
+#[cfg(target_arch = "s390x")]
+pub mod s390x {
+  use super::super::s390x as arch;
+  use crate::dispatchers::Crc24Fn;
+
+  /// VGFM kernel name (s390x vector Galois field multiply).
+  pub const VGFM: &str = "s390x/vgfm";
+
+  /// OpenPGP VGFM kernel.
+  #[allow(dead_code)] // Exposed for kernel ladder consistency; dispatch uses wrapper fn
+  pub const OPENPGP_VGFM: Crc24Fn = arch::crc24_openpgp_vgfm_safe;
+}
+
+#[cfg(target_arch = "riscv64")]
+pub mod riscv64 {
+  use super::super::riscv64 as arch;
+  use crate::dispatchers::Crc24Fn;
+
+  /// Zbc kernel name (scalar carryless multiply).
+  pub const ZBC: &str = "riscv64/zbc";
+
+  /// Zvbc kernel name (vector carryless multiply).
+  pub const ZVBC: &str = "riscv64/zvbc";
+
+  /// OpenPGP Zbc kernel.
+  #[allow(dead_code)] // Exposed for kernel ladder consistency; dispatch uses wrapper fn
+  pub const OPENPGP_ZBC: Crc24Fn = arch::crc24_openpgp_zbc_safe;
+
+  /// OpenPGP Zvbc kernel.
+  #[allow(dead_code)] // Exposed for kernel ladder consistency; dispatch uses wrapper fn
+  pub const OPENPGP_ZVBC: Crc24Fn = arch::crc24_openpgp_zvbc_safe;
 }

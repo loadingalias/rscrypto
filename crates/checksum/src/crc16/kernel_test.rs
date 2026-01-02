@@ -67,6 +67,21 @@ pub fn run_all_crc16_ccitt_kernels(data: &[u8]) -> alloc::vec::Vec<KernelResult>
     run_aarch64_kernels_ccitt(data, &mut results);
   }
 
+  #[cfg(target_arch = "powerpc64")]
+  {
+    run_powerpc64_kernels_ccitt(data, &mut results);
+  }
+
+  #[cfg(target_arch = "s390x")]
+  {
+    run_s390x_kernels_ccitt(data, &mut results);
+  }
+
+  #[cfg(target_arch = "riscv64")]
+  {
+    run_riscv64_kernels_ccitt(data, &mut results);
+  }
+
   results
 }
 
@@ -110,6 +125,21 @@ pub fn run_all_crc16_ibm_kernels(data: &[u8]) -> alloc::vec::Vec<KernelResult> {
   #[cfg(target_arch = "aarch64")]
   {
     run_aarch64_kernels_ibm(data, &mut results);
+  }
+
+  #[cfg(target_arch = "powerpc64")]
+  {
+    run_powerpc64_kernels_ibm(data, &mut results);
+  }
+
+  #[cfg(target_arch = "s390x")]
+  {
+    run_s390x_kernels_ibm(data, &mut results);
+  }
+
+  #[cfg(target_arch = "riscv64")]
+  {
+    run_riscv64_kernels_ibm(data, &mut results);
   }
 
   results
@@ -158,12 +188,16 @@ fn run_x86_64_kernels_ccitt(data: &[u8], results: &mut alloc::vec::Vec<KernelRes
 
   // PCLMUL kernel
   if caps.has(platform::caps::x86::PCLMUL_READY) {
-    run_single_kernel_ccitt(data, CCITT_PCLMUL, PCLMUL, results);
+    for (&name, &func) in PCLMUL_NAMES.iter().zip(CCITT_PCLMUL.iter()) {
+      run_single_kernel_ccitt(data, func, name, results);
+    }
   }
 
   // VPCLMUL kernel
   if caps.has(platform::caps::x86::VPCLMUL_READY) {
-    run_single_kernel_ccitt(data, CCITT_VPCLMUL, VPCLMUL, results);
+    for (&name, &func) in VPCLMUL_NAMES.iter().zip(CCITT_VPCLMUL.iter()) {
+      run_single_kernel_ccitt(data, func, name, results);
+    }
   }
 }
 
@@ -174,12 +208,16 @@ fn run_x86_64_kernels_ibm(data: &[u8], results: &mut alloc::vec::Vec<KernelResul
 
   // PCLMUL kernel
   if caps.has(platform::caps::x86::PCLMUL_READY) {
-    run_single_kernel_ibm(data, IBM_PCLMUL, PCLMUL, results);
+    for (&name, &func) in PCLMUL_NAMES.iter().zip(IBM_PCLMUL.iter()) {
+      run_single_kernel_ibm(data, func, name, results);
+    }
   }
 
   // VPCLMUL kernel
   if caps.has(platform::caps::x86::VPCLMUL_READY) {
-    run_single_kernel_ibm(data, IBM_VPCLMUL, VPCLMUL, results);
+    for (&name, &func) in VPCLMUL_NAMES.iter().zip(IBM_VPCLMUL.iter()) {
+      run_single_kernel_ibm(data, func, name, results);
+    }
   }
 }
 
@@ -189,7 +227,9 @@ fn run_aarch64_kernels_ccitt(data: &[u8], results: &mut alloc::vec::Vec<KernelRe
   let caps = platform::caps();
 
   if caps.has(platform::caps::aarch64::PMULL_READY) {
-    run_single_kernel_ccitt(data, CCITT_PMULL, PMULL, results);
+    for (&name, &func) in PMULL_NAMES.iter().zip(CCITT_PMULL.iter()).take(3) {
+      run_single_kernel_ccitt(data, func, name, results);
+    }
   }
 }
 
@@ -199,7 +239,81 @@ fn run_aarch64_kernels_ibm(data: &[u8], results: &mut alloc::vec::Vec<KernelResu
   let caps = platform::caps();
 
   if caps.has(platform::caps::aarch64::PMULL_READY) {
-    run_single_kernel_ibm(data, IBM_PMULL, PMULL, results);
+    for (&name, &func) in PMULL_NAMES.iter().zip(IBM_PMULL.iter()).take(3) {
+      run_single_kernel_ibm(data, func, name, results);
+    }
+  }
+}
+
+#[cfg(target_arch = "powerpc64")]
+fn run_powerpc64_kernels_ccitt(data: &[u8], results: &mut alloc::vec::Vec<KernelResult>) {
+  use super::kernels::powerpc64::*;
+  let caps = platform::caps();
+
+  if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
+    run_single_kernel_ccitt(data, CCITT_VPMSUM, VPMSUM, results);
+  }
+}
+
+#[cfg(target_arch = "powerpc64")]
+fn run_powerpc64_kernels_ibm(data: &[u8], results: &mut alloc::vec::Vec<KernelResult>) {
+  use super::kernels::powerpc64::*;
+  let caps = platform::caps();
+
+  if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
+    run_single_kernel_ibm(data, IBM_VPMSUM, VPMSUM, results);
+  }
+}
+
+#[cfg(target_arch = "s390x")]
+fn run_s390x_kernels_ccitt(data: &[u8], results: &mut alloc::vec::Vec<KernelResult>) {
+  use super::kernels::s390x::*;
+  let caps = platform::caps();
+
+  if caps.has(platform::caps::s390x::VECTOR) {
+    run_single_kernel_ccitt(data, CCITT_VGFM, VGFM, results);
+  }
+}
+
+#[cfg(target_arch = "s390x")]
+fn run_s390x_kernels_ibm(data: &[u8], results: &mut alloc::vec::Vec<KernelResult>) {
+  use super::kernels::s390x::*;
+  let caps = platform::caps();
+
+  if caps.has(platform::caps::s390x::VECTOR) {
+    run_single_kernel_ibm(data, IBM_VGFM, VGFM, results);
+  }
+}
+
+#[cfg(target_arch = "riscv64")]
+fn run_riscv64_kernels_ccitt(data: &[u8], results: &mut alloc::vec::Vec<KernelResult>) {
+  use platform::caps::riscv;
+
+  use super::kernels::riscv64::*;
+  let caps = platform::caps();
+
+  if caps.has(riscv::ZBC) {
+    run_single_kernel_ccitt(data, CCITT_ZBC, ZBC, results);
+  }
+
+  if caps.has(riscv::ZVBC) {
+    run_single_kernel_ccitt(data, CCITT_ZVBC, ZVBC, results);
+  }
+}
+
+#[cfg(target_arch = "riscv64")]
+fn run_riscv64_kernels_ibm(data: &[u8], results: &mut alloc::vec::Vec<KernelResult>) {
+  use platform::caps::riscv;
+
+  use super::kernels::riscv64::*;
+  let caps = platform::caps();
+
+  if caps.has(riscv::ZBC) {
+    run_single_kernel_ibm(data, IBM_ZBC, ZBC, results);
+  }
+
+  if caps.has(riscv::ZVBC) {
+    run_single_kernel_ibm(data, IBM_ZVBC, ZVBC, results);
   }
 }
 
