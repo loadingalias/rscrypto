@@ -483,6 +483,16 @@ impl SelectionPolicy {
     // Fall back to portable if tier unavailable
     Self::portable()
   }
+
+  /// Cap the maximum number of parallel streams used by this policy.
+  ///
+  /// This allows algorithm-specific tuning to prefer fewer streams than the
+  /// platform-wide tune preset (while still respecting architecture limits).
+  #[inline]
+  pub fn cap_max_streams(&mut self, cap: u8) {
+    let cap = cap.max(1);
+    self.max_streams = self.max_streams.min(cap);
+  }
 }
 
 impl Default for SelectionPolicy {

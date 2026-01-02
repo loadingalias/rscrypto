@@ -114,7 +114,7 @@ impl Crc64Force {
 
 /// CRC-64 selection tunables (thresholds + parallelism).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Crc64Tunables {
+pub struct Crc64VariantTunables {
   /// Bytes where CLMUL/PMULL becomes faster than portable.
   pub portable_to_clmul: usize,
   /// Bytes where VPCLMUL becomes faster than PCLMUL on wide-SIMD CPUs.
@@ -124,8 +124,17 @@ pub struct Crc64Tunables {
   /// Minimum bytes per lane for multi-stream folding.
   ///
   /// When `None`, uses `KernelFamily::min_bytes_per_lane()` as the default.
-  /// This allows per-algorithm overrides via env vars or tuned defaults.
   pub min_bytes_per_lane: Option<usize>,
+}
+
+/// CRC-64 selection tunables (per-variant thresholds + parallelism).
+///
+/// CRC-64-XZ and CRC-64-NVME can have different stream and crossover behavior
+/// on the same CPU. Keep tunables separate so tuning can be applied losslessly.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Crc64Tunables {
+  pub xz: Crc64VariantTunables,
+  pub nvme: Crc64VariantTunables,
 }
 
 /// Full CRC-64 runtime configuration (after applying overrides).
@@ -453,24 +462,40 @@ pub fn config(caps: Caps, tune: Tune) -> Crc64Config {
 
   let tuned = tuned_defaults::for_tune_kind(tune.kind);
 
-  let portable_to_clmul = ov
-    .portable_to_clmul
-    .or(tuned.map(|t| t.portable_to_clmul))
-    .unwrap_or(tune.pclmul_threshold);
+  let default_portable_to_clmul = tune.pclmul_threshold;
+  let default_pclmul_to_vpclmul = default_pclmul_to_vpclmul_threshold(caps, tune);
+  let default_streams = default_crc64_streams(caps, tune);
 
-  let pclmul_to_vpclmul = ov
-    .pclmul_to_vpclmul
-    .or(tuned.map(|t| t.pclmul_to_vpclmul))
-    .unwrap_or_else(|| default_pclmul_to_vpclmul_threshold(caps, tune));
+  let xz_streams = clamp_streams(ov.streams.or(tuned.map(|t| t.xz.streams)).unwrap_or(default_streams));
+  let nvme_streams = clamp_streams(ov.streams.or(tuned.map(|t| t.nvme.streams)).unwrap_or(default_streams));
 
-  let streams = clamp_streams(
-    ov.streams
-      .or(tuned.map(|t| t.streams))
-      .unwrap_or_else(|| default_crc64_streams(caps, tune)),
-  );
+  let xz = Crc64VariantTunables {
+    portable_to_clmul: ov
+      .portable_to_clmul
+      .or(tuned.map(|t| t.xz.portable_to_clmul))
+      .unwrap_or(default_portable_to_clmul),
+    pclmul_to_vpclmul: ov
+      .pclmul_to_vpclmul
+      .or(tuned.map(|t| t.xz.pclmul_to_vpclmul))
+      .unwrap_or(default_pclmul_to_vpclmul),
+    streams: xz_streams,
+    // min_bytes_per_lane: env var > tuned defaults > None (use family default in policy)
+    min_bytes_per_lane: ov.min_bytes_per_lane.or(tuned.and_then(|t| t.xz.min_bytes_per_lane)),
+  };
 
-  // min_bytes_per_lane: env var > tuned defaults > None (use family default in policy)
-  let min_bytes_per_lane = ov.min_bytes_per_lane.or(tuned.and_then(|t| t.min_bytes_per_lane));
+  let nvme = Crc64VariantTunables {
+    portable_to_clmul: ov
+      .portable_to_clmul
+      .or(tuned.map(|t| t.nvme.portable_to_clmul))
+      .unwrap_or(default_portable_to_clmul),
+    pclmul_to_vpclmul: ov
+      .pclmul_to_vpclmul
+      .or(tuned.map(|t| t.nvme.pclmul_to_vpclmul))
+      .unwrap_or(default_pclmul_to_vpclmul),
+    streams: nvme_streams,
+    // min_bytes_per_lane: env var > tuned defaults > None (use family default in policy)
+    min_bytes_per_lane: ov.min_bytes_per_lane.or(tuned.and_then(|t| t.nvme.min_bytes_per_lane)),
+  };
 
   let requested_force = ov.force;
   let effective_force = clamp_force_to_caps(requested_force, caps);
@@ -478,12 +503,7 @@ pub fn config(caps: Caps, tune: Tune) -> Crc64Config {
   Crc64Config {
     requested_force,
     effective_force,
-    tunables: Crc64Tunables {
-      portable_to_clmul,
-      pclmul_to_vpclmul,
-      streams,
-      min_bytes_per_lane,
-    },
+    tunables: Crc64Tunables { xz, nvme },
   }
 }
 

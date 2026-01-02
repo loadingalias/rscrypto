@@ -62,24 +62,31 @@ pub struct Crc64Policy {
 impl Crc64Policy {
   /// Create a policy from CRC-64 configuration and platform detection.
   #[must_use]
-  pub fn from_config(cfg: &Crc64Config, caps: Caps, tune: &Tune) -> Self {
+  pub fn from_config(
+    cfg: &Crc64Config,
+    tunables: super::config::Crc64VariantTunables,
+    caps: Caps,
+    tune: &Tune,
+  ) -> Self {
     // Map Crc64Force to ForceMode if explicitly set
-    let inner = if let Some(family) = cfg.effective_force.to_family() {
+    let mut inner = if let Some(family) = cfg.effective_force.to_family() {
       SelectionPolicy::with_family(caps, tune, family)
     } else {
       // Auto selection with CRC-64 specific thresholds
       let mut policy = SelectionPolicy::from_platform(caps, tune);
       // Apply CRC-64 specific thresholds from tunables
-      Self::apply_tunables(&mut policy, cfg);
+      Self::apply_tunables(&mut policy, tunables);
       policy
     };
+
+    // Apply tuned stream preference (still capped by the architecture limit).
+    inner.cap_max_streams(tunables.streams);
 
     // Check if 4×512 VPCLMUL is worthwhile
     let use_4x512 = inner.family() == KernelFamily::X86Vpclmul && tune.fast_wide_ops;
 
     // Resolve min_bytes_per_lane: tunables override > family default
-    let min_bytes_per_lane = cfg
-      .tunables
+    let min_bytes_per_lane = tunables
       .min_bytes_per_lane
       .unwrap_or_else(|| inner.family().min_bytes_per_lane());
 
@@ -92,13 +99,13 @@ impl Crc64Policy {
   }
 
   /// Apply CRC-64 specific tunables to a policy.
-  fn apply_tunables(policy: &mut SelectionPolicy, cfg: &Crc64Config) {
+  fn apply_tunables(policy: &mut SelectionPolicy, tunables: super::config::Crc64VariantTunables) {
     // Override thresholds from config if set
-    policy.small_threshold = cfg.tunables.portable_to_clmul.max(CRC64_SMALL_THRESHOLD);
+    policy.small_threshold = tunables.portable_to_clmul.max(CRC64_SMALL_THRESHOLD);
 
     // VPCLMUL threshold
     if policy.tier() == KernelTier::Wide {
-      policy.wide_threshold = cfg.tunables.pclmul_to_vpclmul;
+      policy.wide_threshold = tunables.pclmul_to_vpclmul;
     }
   }
 
@@ -649,16 +656,24 @@ mod tests {
       requested_force: Crc64Force::Portable,
       effective_force: Crc64Force::Portable,
       tunables: super::super::config::Crc64Tunables {
-        portable_to_clmul: 64,
-        pclmul_to_vpclmul: 512,
-        streams: 4,
-        min_bytes_per_lane: None,
+        xz: super::super::config::Crc64VariantTunables {
+          portable_to_clmul: 64,
+          pclmul_to_vpclmul: 512,
+          streams: 4,
+          min_bytes_per_lane: None,
+        },
+        nvme: super::super::config::Crc64VariantTunables {
+          portable_to_clmul: 64,
+          pclmul_to_vpclmul: 512,
+          streams: 4,
+          min_bytes_per_lane: None,
+        },
       },
     };
 
     let caps = Caps::NONE;
     let tune = Tune::DEFAULT;
-    let policy = Crc64Policy::from_config(&cfg, caps, &tune);
+    let policy = Crc64Policy::from_config(&cfg, cfg.tunables.xz, caps, &tune);
 
     assert_eq!(policy.family(), KernelFamily::Portable);
     assert_eq!(policy.effective_force, Crc64Force::Portable);
@@ -670,16 +685,24 @@ mod tests {
       requested_force: Crc64Force::Reference,
       effective_force: Crc64Force::Reference,
       tunables: super::super::config::Crc64Tunables {
-        portable_to_clmul: 64,
-        pclmul_to_vpclmul: 512,
-        streams: 4,
-        min_bytes_per_lane: None,
+        xz: super::super::config::Crc64VariantTunables {
+          portable_to_clmul: 64,
+          pclmul_to_vpclmul: 512,
+          streams: 4,
+          min_bytes_per_lane: None,
+        },
+        nvme: super::super::config::Crc64VariantTunables {
+          portable_to_clmul: 64,
+          pclmul_to_vpclmul: 512,
+          streams: 4,
+          min_bytes_per_lane: None,
+        },
       },
     };
 
     let caps = Caps::NONE;
     let tune = Tune::DEFAULT;
-    let policy = Crc64Policy::from_config(&cfg, caps, &tune);
+    let policy = Crc64Policy::from_config(&cfg, cfg.tunables.xz, caps, &tune);
 
     assert_eq!(policy.family(), KernelFamily::Reference);
   }
@@ -690,16 +713,24 @@ mod tests {
       requested_force: Crc64Force::Portable,
       effective_force: Crc64Force::Portable,
       tunables: super::super::config::Crc64Tunables {
-        portable_to_clmul: 64,
-        pclmul_to_vpclmul: 512,
-        streams: 4,
-        min_bytes_per_lane: None,
+        xz: super::super::config::Crc64VariantTunables {
+          portable_to_clmul: 64,
+          pclmul_to_vpclmul: 512,
+          streams: 4,
+          min_bytes_per_lane: None,
+        },
+        nvme: super::super::config::Crc64VariantTunables {
+          portable_to_clmul: 64,
+          pclmul_to_vpclmul: 512,
+          streams: 4,
+          min_bytes_per_lane: None,
+        },
       },
     };
 
     let caps = Caps::NONE;
     let tune = Tune::DEFAULT;
-    let policy = Crc64Policy::from_config(&cfg, caps, &tune);
+    let policy = Crc64Policy::from_config(&cfg, cfg.tunables.xz, caps, &tune);
 
     assert_eq!(policy.kernel_name(100), kernels::PORTABLE);
     assert_eq!(policy.kernel_name(10000), kernels::PORTABLE);

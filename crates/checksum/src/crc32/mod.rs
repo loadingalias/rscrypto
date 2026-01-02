@@ -138,21 +138,21 @@ fn crc32_buffered_threshold() -> usize {
 #[inline]
 #[must_use]
 fn crc32_buffered_threshold_impl() -> usize {
-  config::get().tunables.hwcrc_to_fusion.max(64)
+  config::get().tunables.crc32.hwcrc_to_fusion.max(64)
 }
 
 #[cfg(all(feature = "alloc", target_arch = "aarch64"))]
 #[inline]
 #[must_use]
 fn crc32_buffered_threshold_impl() -> usize {
-  config::get().tunables.portable_to_hwcrc.max(64)
+  config::get().tunables.crc32.portable_to_hwcrc.max(64)
 }
 
 #[cfg(all(feature = "alloc", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 #[inline]
 #[must_use]
 fn crc32_buffered_threshold_impl() -> usize {
-  config::get().tunables.portable_to_hwcrc.max(64)
+  config::get().tunables.crc32.portable_to_hwcrc.max(64)
 }
 
 #[cfg(feature = "alloc")]
@@ -160,7 +160,7 @@ fn crc32_buffered_threshold_impl() -> usize {
 #[must_use]
 #[allow(dead_code)]
 fn crc32c_buffered_threshold() -> usize {
-  config::get().tunables.portable_to_hwcrc.max(64)
+  config::get().tunables.crc32c.portable_to_hwcrc.max(64)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1149,14 +1149,14 @@ mod tests {
   fn test_crc32_streaming_across_thresholds() {
     let cfg = config::get();
 
-    let thresholds = [
-      cfg.tunables.portable_to_hwcrc,
-      cfg.tunables.hwcrc_to_fusion,
-      cfg.tunables.fusion_to_avx512,
-      cfg.tunables.fusion_to_vpclmul,
+    let crc32_thresholds = [
+      cfg.tunables.crc32.portable_to_hwcrc,
+      cfg.tunables.crc32.hwcrc_to_fusion,
+      cfg.tunables.crc32.fusion_to_avx512,
+      cfg.tunables.crc32.fusion_to_vpclmul,
     ];
 
-    for &threshold in &thresholds {
+    for &threshold in &crc32_thresholds {
       if threshold == usize::MAX || threshold == 0 || threshold > (1 << 20) {
         continue;
       }
@@ -1165,12 +1165,29 @@ mod tests {
       let data: Vec<u8> = (0..size).map(|i| (i as u8).wrapping_mul(13)).collect();
 
       let oneshot32 = Crc32::checksum(&data);
-      let oneshot32c = Crc32C::checksum(&data);
 
       let mut h32 = Crc32::new();
       h32.update(&data[..16]);
       h32.update(&data[16..]);
       assert_eq!(h32.finalize(), oneshot32, "crc32 threshold={threshold}");
+    }
+
+    let crc32c_thresholds = [
+      cfg.tunables.crc32c.portable_to_hwcrc,
+      cfg.tunables.crc32c.hwcrc_to_fusion,
+      cfg.tunables.crc32c.fusion_to_avx512,
+      cfg.tunables.crc32c.fusion_to_vpclmul,
+    ];
+
+    for &threshold in &crc32c_thresholds {
+      if threshold == usize::MAX || threshold == 0 || threshold > (1 << 20) {
+        continue;
+      }
+
+      let size = threshold + 256;
+      let data: Vec<u8> = (0..size).map(|i| (i as u8).wrapping_mul(13)).collect();
+
+      let oneshot32c = Crc32C::checksum(&data);
 
       let mut h32c = Crc32C::new();
       h32c.update(&data[..16]);
@@ -1203,13 +1220,13 @@ mod tests {
 
     #[cfg(target_arch = "x86_64")]
     {
-      let streams_env = std::env::var("RSCRYPTO_CRC32_STREAMS_CRC32").ok();
+      let streams_env = std::env::var("RSCRYPTO_CRC32_STREAMS").ok();
       let caps = platform::caps();
       if force.eq_ignore_ascii_case("pclmul") || force.eq_ignore_ascii_case("clmul") {
         assert_eq!(cfg.requested_force, Crc32Force::Pclmul);
         if cfg.effective_force == Crc32Force::Pclmul && caps.has(platform::caps::x86::PCLMUL_READY) {
           if streams_env.is_some() {
-            let expected = match x86_streams_for_len(len, cfg.tunables.streams_crc32) {
+            let expected = match x86_streams_for_len(len, cfg.tunables.crc32.streams) {
               8 => "x86_64/pclmul-8way",
               7 => "x86_64/pclmul-7way",
               4 => "x86_64/pclmul-4way",
@@ -1226,7 +1243,7 @@ mod tests {
         assert_eq!(cfg.requested_force, Crc32Force::Vpclmul);
         if cfg.effective_force == Crc32Force::Vpclmul && caps.has(platform::caps::x86::VPCLMUL_READY) {
           if streams_env.is_some() {
-            let expected = match x86_streams_for_len(len, cfg.tunables.streams_crc32) {
+            let expected = match x86_streams_for_len(len, cfg.tunables.crc32.streams) {
               8 => "x86_64/vpclmul-8way",
               7 => "x86_64/vpclmul-7way",
               4 => "x86_64/vpclmul-4way",
@@ -1283,7 +1300,7 @@ mod tests {
 
     #[cfg(target_arch = "x86_64")]
     {
-      let streams_env = std::env::var("RSCRYPTO_CRC32_STREAMS_CRC32C").ok();
+      let streams_env = std::env::var("RSCRYPTO_CRC32C_STREAMS").ok();
       let caps = platform::caps();
       if force.eq_ignore_ascii_case("hwcrc") || force.eq_ignore_ascii_case("crc") {
         // Verify the force mode was recognized - checksum correctness already validated above.
@@ -1299,7 +1316,7 @@ mod tests {
           && caps.has(platform::caps::x86::PCLMUL_READY)
         {
           if streams_env.is_some() {
-            let expected = match x86_streams_for_len_crc32c(len, cfg.tunables.streams_crc32c) {
+            let expected = match x86_streams_for_len_crc32c(len, cfg.tunables.crc32c.streams) {
               8 => "x86_64/fusion-sse-v4s3x3-8way",
               7 => "x86_64/fusion-sse-v4s3x3-7way",
               4 => "x86_64/fusion-sse-v4s3x3-4way",
@@ -1319,7 +1336,7 @@ mod tests {
           && caps.has(platform::caps::x86::VPCLMUL_READY)
         {
           if streams_env.is_some() {
-            let expected = match x86_streams_for_len_crc32c(len, cfg.tunables.streams_crc32c) {
+            let expected = match x86_streams_for_len_crc32c(len, cfg.tunables.crc32c.streams) {
               8 => "x86_64/fusion-vpclmul-v3x2-8way",
               7 => "x86_64/fusion-vpclmul-v3x2-7way",
               4 => "x86_64/fusion-vpclmul-v3x2-4way",

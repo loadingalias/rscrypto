@@ -104,7 +104,7 @@ fn init_xz_policy() -> (policy::Crc64Policy, policy::Crc64Kernels) {
   let cfg = config::get();
   let caps = platform::caps();
   let tune = platform::tune();
-  let pol = policy::Crc64Policy::from_config(&cfg, caps, &tune);
+  let pol = policy::Crc64Policy::from_config(&cfg, cfg.tunables.xz, caps, &tune);
   let kernels = policy::build_xz_kernels_x86(&pol, crc64_xz_reference, crc64_xz_portable);
   (pol, kernels)
 }
@@ -115,7 +115,7 @@ fn init_nvme_policy() -> (policy::Crc64Policy, policy::Crc64Kernels) {
   let cfg = config::get();
   let caps = platform::caps();
   let tune = platform::tune();
-  let pol = policy::Crc64Policy::from_config(&cfg, caps, &tune);
+  let pol = policy::Crc64Policy::from_config(&cfg, cfg.tunables.nvme, caps, &tune);
   let kernels = policy::build_nvme_kernels_x86(&pol, crc64_nvme_reference, crc64_nvme_portable);
   (pol, kernels)
 }
@@ -126,7 +126,7 @@ fn init_xz_policy() -> (policy::Crc64Policy, policy::Crc64Kernels) {
   let cfg = config::get();
   let caps = platform::caps();
   let tune = platform::tune();
-  let pol = policy::Crc64Policy::from_config(&cfg, caps, &tune);
+  let pol = policy::Crc64Policy::from_config(&cfg, cfg.tunables.xz, caps, &tune);
   let kernels = policy::build_xz_kernels_aarch64(&pol, crc64_xz_reference, crc64_xz_portable);
   (pol, kernels)
 }
@@ -137,7 +137,7 @@ fn init_nvme_policy() -> (policy::Crc64Policy, policy::Crc64Kernels) {
   let cfg = config::get();
   let caps = platform::caps();
   let tune = platform::tune();
-  let pol = policy::Crc64Policy::from_config(&cfg, caps, &tune);
+  let pol = policy::Crc64Policy::from_config(&cfg, cfg.tunables.nvme, caps, &tune);
   let kernels = policy::build_nvme_kernels_aarch64(&pol, crc64_nvme_reference, crc64_nvme_portable);
   (pol, kernels)
 }
@@ -148,7 +148,7 @@ fn init_xz_policy() -> (policy::Crc64Policy, policy::Crc64Kernels) {
   let cfg = config::get();
   let caps = platform::caps();
   let tune = platform::tune();
-  let pol = policy::Crc64Policy::from_config(&cfg, caps, &tune);
+  let pol = policy::Crc64Policy::from_config(&cfg, cfg.tunables.xz, caps, &tune);
   let kernels = policy::build_xz_kernels_powerpc64(&pol, crc64_xz_reference, crc64_xz_portable);
   (pol, kernels)
 }
@@ -159,7 +159,7 @@ fn init_nvme_policy() -> (policy::Crc64Policy, policy::Crc64Kernels) {
   let cfg = config::get();
   let caps = platform::caps();
   let tune = platform::tune();
-  let pol = policy::Crc64Policy::from_config(&cfg, caps, &tune);
+  let pol = policy::Crc64Policy::from_config(&cfg, cfg.tunables.nvme, caps, &tune);
   let kernels = policy::build_nvme_kernels_powerpc64(&pol, crc64_nvme_reference, crc64_nvme_portable);
   (pol, kernels)
 }
@@ -170,7 +170,7 @@ fn init_xz_policy() -> (policy::Crc64Policy, policy::Crc64Kernels) {
   let cfg = config::get();
   let caps = platform::caps();
   let tune = platform::tune();
-  let pol = policy::Crc64Policy::from_config(&cfg, caps, &tune);
+  let pol = policy::Crc64Policy::from_config(&cfg, cfg.tunables.xz, caps, &tune);
   let kernels = policy::build_xz_kernels_s390x(&pol, crc64_xz_reference, crc64_xz_portable);
   (pol, kernels)
 }
@@ -181,7 +181,7 @@ fn init_nvme_policy() -> (policy::Crc64Policy, policy::Crc64Kernels) {
   let cfg = config::get();
   let caps = platform::caps();
   let tune = platform::tune();
-  let pol = policy::Crc64Policy::from_config(&cfg, caps, &tune);
+  let pol = policy::Crc64Policy::from_config(&cfg, cfg.tunables.nvme, caps, &tune);
   let kernels = policy::build_nvme_kernels_s390x(&pol, crc64_nvme_reference, crc64_nvme_portable);
   (pol, kernels)
 }
@@ -192,7 +192,7 @@ fn init_xz_policy() -> (policy::Crc64Policy, policy::Crc64Kernels) {
   let cfg = config::get();
   let caps = platform::caps();
   let tune = platform::tune();
-  let pol = policy::Crc64Policy::from_config(&cfg, caps, &tune);
+  let pol = policy::Crc64Policy::from_config(&cfg, cfg.tunables.xz, caps, &tune);
   let kernels = policy::build_xz_kernels_riscv64(&pol, crc64_xz_reference, crc64_xz_portable);
   (pol, kernels)
 }
@@ -203,7 +203,7 @@ fn init_nvme_policy() -> (policy::Crc64Policy, policy::Crc64Kernels) {
   let cfg = config::get();
   let caps = platform::caps();
   let tune = platform::tune();
-  let pol = policy::Crc64Policy::from_config(&cfg, caps, &tune);
+  let pol = policy::Crc64Policy::from_config(&cfg, cfg.tunables.nvme, caps, &tune);
   let kernels = policy::build_nvme_kernels_riscv64(&pol, crc64_nvme_reference, crc64_nvme_portable);
   (pol, kernels)
 }
@@ -291,7 +291,8 @@ fn crc64_nvme_reference(crc: u64, data: &[u8]) -> u64 {
 // (no early flush beyond the fixed buffer size).
 #[inline]
 fn crc64_simd_threshold() -> usize {
-  config::get().tunables.portable_to_clmul.max(64)
+  let t = config::get().tunables;
+  t.xz.portable_to_clmul.min(t.nvme.portable_to_clmul).max(64)
 }
 
 /// CRC-64-XZ auto-dispatch for x86_64.
@@ -986,7 +987,7 @@ mod tests {
   /// (switches to SIMD), or vice versa.
   #[test]
   fn test_crc64_streaming_across_threshold() {
-    let threshold = Crc64::tunables().portable_to_clmul;
+    let threshold = Crc64::tunables().xz.portable_to_clmul;
     if threshold == usize::MAX || threshold > (1 << 20) {
       // No meaningful SIMD crossover on this target/preset.
       return;
@@ -1098,7 +1099,7 @@ mod tests {
             let expected = if len < CRC64_FOLD_BLOCK_BYTES {
               "x86_64/pclmul-small"
             } else {
-              match x86_pclmul_streams_for_len(len, cfg.tunables.streams) {
+              match x86_pclmul_streams_for_len(len, cfg.tunables.xz.streams) {
                 7 => "x86_64/pclmul-7way",
                 4 => "x86_64/pclmul-4way",
                 2 => "x86_64/pclmul-2way",
@@ -1120,7 +1121,7 @@ mod tests {
           if len >= CRC64_4X512_MIN_BYTES {
             assert_eq!(kernel, "x86_64/vpclmul-4x512");
           } else if streams_env.is_some() {
-            let expected = match x86_vpclmul_streams_for_len(len, cfg.tunables.streams) {
+            let expected = match x86_vpclmul_streams_for_len(len, cfg.tunables.xz.streams) {
               7 => "x86_64/vpclmul-7way",
               4 => "x86_64/vpclmul-4way",
               2 => "x86_64/vpclmul-2way",
@@ -1153,7 +1154,7 @@ mod tests {
             let expected = if len < CRC64_FOLD_BLOCK_BYTES {
               "aarch64/sve2-pmull-small"
             } else {
-              match aarch64_pmull_streams_for_len(len, cfg.tunables.streams) {
+              match aarch64_pmull_streams_for_len(len, cfg.tunables.xz.streams) {
                 3 => "aarch64/sve2-pmull-3way",
                 2 => "aarch64/sve2-pmull-2way",
                 _ => "aarch64/sve2-pmull",

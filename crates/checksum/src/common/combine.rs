@@ -313,6 +313,33 @@ pub const fn generate_shift8_matrix_32(poly: u32) -> Gf2Matrix32 {
   shift4.square()
 }
 
+/// Compute the matrix that applies a shift of `len_bytes` bytes for a reflected CRC-32.
+///
+/// This returns `M = (shift8_matrix)^(len_bytes)` where multiplication is in
+/// GF(2), so `M.mul_vec(crc)` computes `crc * x^(8*len_bytes) mod G(x)`.
+#[inline]
+#[must_use]
+#[cfg(any(target_arch = "aarch64", test))]
+pub const fn pow_shift8_matrix_32(len_bytes: usize, shift8_matrix: Gf2Matrix32) -> Gf2Matrix32 {
+  if len_bytes == 0 {
+    return Gf2Matrix32::identity();
+  }
+
+  let mut mat = shift8_matrix;
+  let mut result_mat = Gf2Matrix32::identity();
+  let mut remaining = len_bytes;
+
+  while remaining > 0 {
+    if remaining & 1 != 0 {
+      result_mat = result_mat.mul_mat(mat);
+    }
+    mat = mat.square();
+    remaining = remaining.strict_shr(1);
+  }
+
+  result_mat
+}
+
 /// Combine two CRC-32 values.
 #[must_use]
 pub const fn combine_crc32(crc_a: u32, crc_b: u32, len_b: usize, shift8_matrix: Gf2Matrix32) -> u32 {
@@ -329,7 +356,7 @@ pub const fn combine_crc32(crc_a: u32, crc_b: u32, len_b: usize, shift8_matrix: 
       result_mat = result_mat.mul_mat(mat);
     }
     mat = mat.square();
-    remaining >>= 1;
+    remaining = remaining.strict_shr(1);
   }
 
   result_mat.mul_vec(crc_a) ^ crc_b

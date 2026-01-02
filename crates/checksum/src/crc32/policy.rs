@@ -110,23 +110,29 @@ impl Crc32Policy {
     // Detect available features
     let (has_hwcrc, has_fusion, has_vpclmul, has_avx512, has_eor3, has_sve2) = Self::detect_features(caps, variant);
 
+    let tunables = match variant {
+      Crc32Variant::Ieee => cfg.tunables.crc32,
+      Crc32Variant::Castagnoli => cfg.tunables.crc32c,
+    };
+
     // Map Crc32Force to ForceMode if explicitly set
-    let inner = if let Some(family) = cfg.effective_force.to_family() {
+    let mut inner = if let Some(family) = cfg.effective_force.to_family() {
       SelectionPolicy::with_family(caps, tune, family)
     } else {
       // Auto selection
       let mut policy = SelectionPolicy::from_platform(caps, tune);
       // Apply CRC-32 specific thresholds from tunables
-      policy.small_threshold = cfg.tunables.portable_to_hwcrc.max(CRC32_SMALL_THRESHOLD);
+      policy.small_threshold = tunables.portable_to_hwcrc.max(CRC32_SMALL_THRESHOLD);
       policy
     };
 
+    // Apply tuned stream preference (still capped by the architecture limit).
+    inner.cap_max_streams(tunables.streams);
+
     // Resolve min_bytes_per_lane: tunables override > family default
-    let min_bytes_per_lane = match variant {
-      Crc32Variant::Ieee => cfg.tunables.min_bytes_per_lane_crc32,
-      Crc32Variant::Castagnoli => cfg.tunables.min_bytes_per_lane_crc32c,
-    }
-    .unwrap_or_else(|| inner.family().min_bytes_per_lane());
+    let min_bytes_per_lane = tunables
+      .min_bytes_per_lane
+      .unwrap_or_else(|| inner.family().min_bytes_per_lane());
 
     // Memory-bound heuristic: suppress multi-stream for CRC-32C when HWCRC
     // is bandwidth-limited. This applies to both pure HWCRC AND fusion kernels
@@ -137,10 +143,10 @@ impl Crc32Policy {
       inner,
       effective_force: cfg.effective_force,
       variant,
-      portable_to_hwcrc: cfg.tunables.portable_to_hwcrc,
-      hwcrc_to_fusion: cfg.tunables.hwcrc_to_fusion,
-      fusion_to_vpclmul: cfg.tunables.fusion_to_vpclmul,
-      fusion_to_avx512: cfg.tunables.fusion_to_avx512,
+      portable_to_hwcrc: tunables.portable_to_hwcrc,
+      hwcrc_to_fusion: tunables.hwcrc_to_fusion,
+      fusion_to_vpclmul: tunables.fusion_to_vpclmul,
+      fusion_to_avx512: tunables.fusion_to_avx512,
       has_hwcrc,
       has_fusion,
       has_vpclmul,
@@ -262,18 +268,140 @@ impl Crc32Policy {
       return kernels::PORTABLE;
     }
 
+    // Handle forced modes BEFORE threshold checks - forcing bypasses thresholds.
+    match self.effective_force {
+      Crc32Force::Reference => return kernels::REFERENCE,
+      Crc32Force::Portable => return kernels::PORTABLE,
+      Crc32Force::Auto => {}
+      // For specific force modes, dispatch to forced kernel name
+      _ => return self.kernel_name_forced(len),
+    }
+
     if !self.should_use_simd(len) {
       return kernels::PORTABLE;
     }
 
-    match self.effective_force {
-      Crc32Force::Reference => return kernels::REFERENCE,
-      Crc32Force::Portable => return kernels::PORTABLE,
-      _ => {}
-    }
-
     // Dispatch based on architecture and variant
     self.kernel_name_for_family(len)
+  }
+
+  /// Get the kernel name for a forced mode (bypasses thresholds).
+  fn kernel_name_forced(&self, len: usize) -> &'static str {
+    #[cfg(target_arch = "x86_64")]
+    {
+      use kernels::x86_64::*;
+      let streams = self.streams_for_len(len);
+      let idx = stream_to_index(streams);
+
+      match self.effective_force {
+        Crc32Force::Hwcrc => {
+          // HWCRC only available for CRC-32C on x86_64
+          if self.variant == Crc32Variant::Castagnoli && self.has_hwcrc {
+            return CRC32C_HWCRC_NAMES.get(idx).copied().unwrap_or(kernels::PORTABLE);
+          }
+          kernels::PORTABLE
+        }
+        Crc32Force::Pclmul => {
+          if !self.has_fusion {
+            return kernels::PORTABLE;
+          }
+          if len < CRC32_FOLD_BLOCK_BYTES {
+            return match self.variant {
+              Crc32Variant::Ieee => CRC32_PCLMUL_SMALL,
+              Crc32Variant::Castagnoli => CRC32C_FUSION_SSE_NAMES.first().copied().unwrap_or(kernels::PORTABLE),
+            };
+          }
+          match self.variant {
+            Crc32Variant::Ieee => CRC32_PCLMUL_NAMES.get(idx).copied().unwrap_or(kernels::PORTABLE),
+            Crc32Variant::Castagnoli => CRC32C_FUSION_SSE_NAMES.get(idx).copied().unwrap_or(kernels::PORTABLE),
+          }
+        }
+        Crc32Force::Vpclmul => {
+          if !self.has_vpclmul {
+            return kernels::PORTABLE;
+          }
+          if len < CRC32_FOLD_BLOCK_BYTES {
+            return match self.variant {
+              Crc32Variant::Ieee => CRC32_VPCLMUL_SMALL,
+              Crc32Variant::Castagnoli => CRC32C_FUSION_VPCLMUL_NAMES
+                .first()
+                .copied()
+                .unwrap_or(kernels::PORTABLE),
+            };
+          }
+          match self.variant {
+            Crc32Variant::Ieee => CRC32_VPCLMUL_NAMES.get(idx).copied().unwrap_or(kernels::PORTABLE),
+            Crc32Variant::Castagnoli => CRC32C_FUSION_VPCLMUL_NAMES
+              .get(idx)
+              .copied()
+              .unwrap_or(kernels::PORTABLE),
+          }
+        }
+        _ => kernels::PORTABLE,
+      }
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    {
+      use kernels::aarch64::*;
+      let streams = self.streams_for_len(len);
+      let idx = stream_to_index(streams);
+
+      let (hwcrc_names, fusion_names, eor3_names, sve2_names) = match self.variant {
+        Crc32Variant::Ieee => (
+          CRC32_HWCRC_NAMES,
+          CRC32_PMULL_NAMES,
+          CRC32_PMULL_EOR3_NAMES,
+          CRC32_SVE2_PMULL_NAMES,
+        ),
+        Crc32Variant::Castagnoli => (
+          CRC32C_HWCRC_NAMES,
+          CRC32C_PMULL_NAMES,
+          CRC32C_PMULL_EOR3_NAMES,
+          CRC32C_SVE2_PMULL_NAMES,
+        ),
+      };
+
+      match self.effective_force {
+        Crc32Force::Hwcrc => {
+          if self.has_hwcrc {
+            return hwcrc_names.get(idx).copied().unwrap_or(kernels::PORTABLE);
+          }
+          kernels::PORTABLE
+        }
+        Crc32Force::Pmull => {
+          if !self.has_fusion {
+            return kernels::PORTABLE;
+          }
+          if len < CRC32_FOLD_BLOCK_BYTES {
+            return PMULL_SMALL;
+          }
+          fusion_names.get(idx).copied().unwrap_or(kernels::PORTABLE)
+        }
+        Crc32Force::PmullEor3 => {
+          if !self.has_eor3 {
+            return kernels::PORTABLE;
+          }
+          if len < CRC32_FOLD_BLOCK_BYTES {
+            return PMULL_SMALL;
+          }
+          eor3_names.get(idx).copied().unwrap_or(kernels::PORTABLE)
+        }
+        Crc32Force::Sve2Pmull => {
+          if self.has_sve2 {
+            return sve2_names.get(idx).copied().unwrap_or(kernels::PORTABLE);
+          }
+          kernels::PORTABLE
+        }
+        _ => kernels::PORTABLE,
+      }
+    }
+
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    {
+      let _ = len; // silence unused warning
+      kernels::PORTABLE
+    }
   }
 
   #[cfg(target_arch = "x86_64")]
@@ -300,22 +428,23 @@ impl Crc32Policy {
         if !self.has_hwcrc {
           return kernels::PORTABLE;
         }
-        if len >= self.hwcrc_to_fusion && self.has_fusion {
-          if self.has_vpclmul && len >= self.fusion_to_vpclmul {
-            return CRC32C_FUSION_VPCLMUL_NAMES
-              .get(idx)
-              .copied()
-              .unwrap_or(kernels::PORTABLE);
-          }
-          if self.has_avx512 && len >= self.fusion_to_avx512 {
-            return CRC32C_FUSION_AVX512_NAMES
-              .get(idx)
-              .copied()
-              .unwrap_or(kernels::PORTABLE);
-          }
-          return CRC32C_FUSION_SSE_NAMES.get(idx).copied().unwrap_or(kernels::PORTABLE);
+        if len < self.hwcrc_to_fusion || !self.has_fusion {
+          return CRC32C_HWCRC_NAMES.get(idx).copied().unwrap_or(kernels::PORTABLE);
         }
-        CRC32C_HWCRC_NAMES.get(idx).copied().unwrap_or(kernels::PORTABLE)
+
+        if self.has_vpclmul && len >= self.fusion_to_vpclmul {
+          return CRC32C_FUSION_VPCLMUL_NAMES
+            .get(idx)
+            .copied()
+            .unwrap_or(kernels::PORTABLE);
+        }
+        if self.has_avx512 && len >= self.fusion_to_avx512 {
+          return CRC32C_FUSION_AVX512_NAMES
+            .get(idx)
+            .copied()
+            .unwrap_or(kernels::PORTABLE);
+        }
+        CRC32C_FUSION_SSE_NAMES.get(idx).copied().unwrap_or(kernels::PORTABLE)
       }
     }
   }
@@ -345,20 +474,22 @@ impl Crc32Policy {
       ),
     };
 
-    if len >= self.hwcrc_to_fusion && self.has_fusion {
-      if len < CRC32_FOLD_BLOCK_BYTES {
-        return PMULL_SMALL;
-      }
-      // Wide tier: SVE2 > EOR3
-      if self.has_sve2 {
-        return sve2_names.get(idx).copied().unwrap_or(kernels::PORTABLE);
-      }
-      if self.has_eor3 {
-        return eor3_names.get(idx).copied().unwrap_or(kernels::PORTABLE);
-      }
-      return fusion_names.get(idx).copied().unwrap_or(kernels::PORTABLE);
+    if len < self.hwcrc_to_fusion || !self.has_fusion {
+      return hwcrc_names.get(idx).copied().unwrap_or(kernels::PORTABLE);
     }
-    hwcrc_names.get(idx).copied().unwrap_or(kernels::PORTABLE)
+
+    if len < CRC32_FOLD_BLOCK_BYTES {
+      return PMULL_SMALL;
+    }
+
+    // Wide tier: SVE2 > EOR3
+    if self.has_sve2 {
+      return sve2_names.get(idx).copied().unwrap_or(kernels::PORTABLE);
+    }
+    if self.has_eor3 {
+      return eor3_names.get(idx).copied().unwrap_or(kernels::PORTABLE);
+    }
+    fusion_names.get(idx).copied().unwrap_or(kernels::PORTABLE)
   }
 
   #[cfg(target_arch = "powerpc64")]
@@ -486,11 +617,13 @@ pub fn policy_dispatch(policy: &Crc32Policy, kernels: &Crc32Kernels, crc: u32, d
     return (kernels.portable)(crc, data);
   }
 
-  // Handle forced modes
+  // Handle forced modes BEFORE threshold checks - forcing bypasses thresholds.
   match policy.effective_force {
     Crc32Force::Reference => return (kernels.reference)(crc, data),
     Crc32Force::Portable => return (kernels.portable)(crc, data),
-    _ => {}
+    Crc32Force::Auto => {}
+    // For specific force modes, dispatch to forced kernel
+    _ => return policy_dispatch_forced(policy, kernels, crc, data),
   }
 
   // Below SIMD threshold: use portable
@@ -500,6 +633,81 @@ pub fn policy_dispatch(policy: &Crc32Policy, kernels: &Crc32Kernels, crc: u32, d
 
   // Architecture-specific dispatch
   policy_dispatch_simd(policy, kernels, crc, data)
+}
+
+/// Dispatch to forced kernel (bypasses thresholds).
+#[inline]
+fn policy_dispatch_forced(policy: &Crc32Policy, kernels: &Crc32Kernels, crc: u32, data: &[u8]) -> u32 {
+  let len = data.len();
+  let streams = policy.streams_for_len(len);
+  let idx = stream_to_index(streams);
+
+  #[cfg(target_arch = "x86_64")]
+  {
+    match policy.effective_force {
+      Crc32Force::Hwcrc => {
+        // HWCRC only available for CRC-32C on x86_64
+        if policy.variant == Crc32Variant::Castagnoli
+          && let Some(ref hwcrc) = kernels.hwcrc
+        {
+          (hwcrc.get(idx).copied().unwrap_or(hwcrc[0]))(crc, data)
+        } else {
+          (kernels.portable)(crc, data)
+        }
+      }
+      Crc32Force::Pclmul => {
+        if !policy.has_fusion {
+          (kernels.portable)(crc, data)
+        } else if len < CRC32_FOLD_BLOCK_BYTES
+          && let Some(small) = kernels.primary_small
+        {
+          (small)(crc, data)
+        } else {
+          (kernels.primary.get(idx).copied().unwrap_or(kernels.primary[0]))(crc, data)
+        }
+      }
+      Crc32Force::Vpclmul => {
+        if !policy.has_vpclmul {
+          (kernels.portable)(crc, data)
+        } else if let Some(ref wide) = kernels.wide {
+          (wide.get(idx).copied().unwrap_or(wide[0]))(crc, data)
+        } else {
+          (kernels.portable)(crc, data)
+        }
+      }
+      _ => (kernels.portable)(crc, data),
+    }
+  }
+
+  #[cfg(target_arch = "aarch64")]
+  {
+    match policy.effective_force {
+      Crc32Force::Hwcrc => {
+        if let Some(ref hwcrc) = kernels.hwcrc {
+          (hwcrc.get(idx).copied().unwrap_or(hwcrc[0]))(crc, data)
+        } else {
+          (kernels.portable)(crc, data)
+        }
+      }
+      Crc32Force::Pmull | Crc32Force::PmullEor3 | Crc32Force::Sve2Pmull => {
+        if len < CRC32_FOLD_BLOCK_BYTES
+          && let Some(small) = kernels.primary_small
+        {
+          (small)(crc, data)
+        } else {
+          // Primary fusion kernels (built for the forced tier)
+          (kernels.primary.get(idx).copied().unwrap_or(kernels.primary[0]))(crc, data)
+        }
+      }
+      _ => (kernels.portable)(crc, data),
+    }
+  }
+
+  #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+  {
+    let _ = (len, streams, idx);
+    (kernels.portable)(crc, data)
+  }
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -920,14 +1128,22 @@ mod tests {
       requested_force: Crc32Force::Portable,
       effective_force: Crc32Force::Portable,
       tunables: super::super::config::Crc32Tunables {
-        portable_to_hwcrc: 64,
-        hwcrc_to_fusion: 256,
-        fusion_to_avx512: 1024,
-        fusion_to_vpclmul: 2048,
-        streams_crc32: 4,
-        streams_crc32c: 4,
-        min_bytes_per_lane_crc32: None,
-        min_bytes_per_lane_crc32c: None,
+        crc32: super::super::config::Crc32VariantTunables {
+          portable_to_hwcrc: 64,
+          hwcrc_to_fusion: 256,
+          fusion_to_avx512: 1024,
+          fusion_to_vpclmul: 2048,
+          streams: 4,
+          min_bytes_per_lane: None,
+        },
+        crc32c: super::super::config::Crc32VariantTunables {
+          portable_to_hwcrc: 64,
+          hwcrc_to_fusion: 256,
+          fusion_to_avx512: 1024,
+          fusion_to_vpclmul: 2048,
+          streams: 4,
+          min_bytes_per_lane: None,
+        },
       },
     };
 
@@ -944,14 +1160,22 @@ mod tests {
       requested_force: Crc32Force::Portable,
       effective_force: Crc32Force::Portable,
       tunables: super::super::config::Crc32Tunables {
-        portable_to_hwcrc: 64,
-        hwcrc_to_fusion: 256,
-        fusion_to_avx512: 1024,
-        fusion_to_vpclmul: 2048,
-        streams_crc32: 4,
-        streams_crc32c: 4,
-        min_bytes_per_lane_crc32: None,
-        min_bytes_per_lane_crc32c: None,
+        crc32: super::super::config::Crc32VariantTunables {
+          portable_to_hwcrc: 64,
+          hwcrc_to_fusion: 256,
+          fusion_to_avx512: 1024,
+          fusion_to_vpclmul: 2048,
+          streams: 4,
+          min_bytes_per_lane: None,
+        },
+        crc32c: super::super::config::Crc32VariantTunables {
+          portable_to_hwcrc: 64,
+          hwcrc_to_fusion: 256,
+          fusion_to_avx512: 1024,
+          fusion_to_vpclmul: 2048,
+          streams: 4,
+          min_bytes_per_lane: None,
+        },
       },
     };
 

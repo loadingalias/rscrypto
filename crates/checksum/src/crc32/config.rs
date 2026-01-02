@@ -133,7 +133,7 @@ impl Crc32Force {
 
 /// CRC-32 selection tunables (thresholds + parallelism).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Crc32Tunables {
+pub struct Crc32VariantTunables {
   /// Bytes where hardware CRC becomes faster than portable.
   pub portable_to_hwcrc: usize,
   /// Bytes where fusion becomes faster than HWCRC.
@@ -142,22 +142,25 @@ pub struct Crc32Tunables {
   pub fusion_to_avx512: usize,
   /// Bytes where VPCLMUL fusion becomes worthwhile (x86_64 only).
   pub fusion_to_vpclmul: usize,
-  /// Preferred number of independent streams for CRC-32 (IEEE).
+  /// Preferred number of independent streams.
   ///
   /// Used by multi-stream kernels where available.
-  pub streams_crc32: u8,
-  /// Preferred number of independent streams for CRC-32C (Castagnoli).
-  ///
-  /// Used by multi-stream kernels where available.
-  pub streams_crc32c: u8,
-  /// Minimum bytes per lane for CRC-32 (IEEE) multi-stream folding.
+  pub streams: u8,
+  /// Minimum bytes per lane for multi-stream folding.
   ///
   /// When `None`, uses `KernelFamily::min_bytes_per_lane()` as the default.
-  pub min_bytes_per_lane_crc32: Option<usize>,
-  /// Minimum bytes per lane for CRC-32C (Castagnoli) multi-stream folding.
-  ///
-  /// When `None`, uses `KernelFamily::min_bytes_per_lane()` as the default.
-  pub min_bytes_per_lane_crc32c: Option<usize>,
+  pub min_bytes_per_lane: Option<usize>,
+}
+
+/// CRC-32 selection tunables (per-variant thresholds + parallelism).
+///
+/// CRC-32 and CRC-32C use different instruction sets and have different
+/// crossovers on many machines. Keep their tunables separate so tuning can
+/// be applied losslessly.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Crc32Tunables {
+  pub crc32: Crc32VariantTunables,
+  pub crc32c: Crc32VariantTunables,
 }
 
 /// Full CRC-32 runtime configuration (after applying overrides).
@@ -172,16 +175,20 @@ pub struct Crc32Config {
 }
 
 #[derive(Clone, Copy, Debug, Default)]
-struct Overrides {
-  force: Crc32Force,
+struct VariantOverrides {
   portable_to_hwcrc: Option<usize>,
   hwcrc_to_fusion: Option<usize>,
   fusion_to_avx512: Option<usize>,
   fusion_to_vpclmul: Option<usize>,
-  streams_crc32: Option<u8>,
-  streams_crc32c: Option<u8>,
-  min_bytes_per_lane_crc32: Option<usize>,
-  min_bytes_per_lane_crc32c: Option<usize>,
+  streams: Option<u8>,
+  min_bytes_per_lane: Option<usize>,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct Overrides {
+  force: Crc32Force,
+  crc32: VariantOverrides,
+  crc32c: VariantOverrides,
 }
 
 #[cfg(feature = "std")]
@@ -264,16 +271,28 @@ fn read_env_overrides() -> Overrides {
     None
   }
 
-  Overrides {
-    force: parse_force("RSCRYPTO_CRC32_FORCE").unwrap_or(Crc32Force::Auto),
+  let crc32 = VariantOverrides {
     portable_to_hwcrc: parse_usize("RSCRYPTO_CRC32_THRESHOLD_PORTABLE_TO_HWCRC"),
     hwcrc_to_fusion: parse_usize("RSCRYPTO_CRC32_THRESHOLD_HWCRC_TO_FUSION"),
     fusion_to_avx512: parse_usize("RSCRYPTO_CRC32_THRESHOLD_FUSION_TO_AVX512"),
     fusion_to_vpclmul: parse_usize("RSCRYPTO_CRC32_THRESHOLD_FUSION_TO_VPCLMUL"),
-    streams_crc32: parse_u8("RSCRYPTO_CRC32_STREAMS_CRC32"),
-    streams_crc32c: parse_u8("RSCRYPTO_CRC32_STREAMS_CRC32C"),
-    min_bytes_per_lane_crc32: parse_usize("RSCRYPTO_CRC32_MIN_BYTES_PER_LANE"),
-    min_bytes_per_lane_crc32c: parse_usize("RSCRYPTO_CRC32C_MIN_BYTES_PER_LANE"),
+    streams: parse_u8("RSCRYPTO_CRC32_STREAMS"),
+    min_bytes_per_lane: parse_usize("RSCRYPTO_CRC32_MIN_BYTES_PER_LANE"),
+  };
+
+  let crc32c = VariantOverrides {
+    portable_to_hwcrc: parse_usize("RSCRYPTO_CRC32C_THRESHOLD_PORTABLE_TO_HWCRC"),
+    hwcrc_to_fusion: parse_usize("RSCRYPTO_CRC32C_THRESHOLD_HWCRC_TO_FUSION"),
+    fusion_to_avx512: parse_usize("RSCRYPTO_CRC32C_THRESHOLD_FUSION_TO_AVX512"),
+    fusion_to_vpclmul: parse_usize("RSCRYPTO_CRC32C_THRESHOLD_FUSION_TO_VPCLMUL"),
+    streams: parse_u8("RSCRYPTO_CRC32C_STREAMS"),
+    min_bytes_per_lane: parse_usize("RSCRYPTO_CRC32C_MIN_BYTES_PER_LANE"),
+  };
+
+  Overrides {
+    force: parse_force("RSCRYPTO_CRC32_FORCE").unwrap_or(Crc32Force::Auto),
+    crc32,
+    crc32c,
   }
 }
 
@@ -418,24 +437,47 @@ fn tuned_defaults(caps: Caps, tune: Tune) -> Crc32Tunables {
     tune.simd_threshold.saturating_mul(8)
   };
 
-  let streams_crc32 = tuned.map(|t| t.streams_crc32).unwrap_or(default_streams);
-  let streams_crc32c = tuned.map(|t| t.streams_crc32c).unwrap_or(default_streams);
-  let fusion_to_avx512 = tuned.map(|t| t.fusion_to_avx512).unwrap_or(default_fusion_to_avx512);
-  let fusion_to_vpclmul = tuned.map(|t| t.fusion_to_vpclmul).unwrap_or(default_fusion_to_vpclmul);
+  let default_portable_to_hwcrc = tune.hwcrc_threshold.min(tune.pclmul_threshold);
+
+  let crc32 = tuned
+    .map(|t| t.crc32)
+    .unwrap_or(tuned_defaults::Crc32VariantTunedDefaults {
+      streams: default_streams,
+      portable_to_hwcrc: default_portable_to_hwcrc,
+      hwcrc_to_fusion: default_hwcrc_to_fusion,
+      fusion_to_avx512: default_fusion_to_avx512,
+      fusion_to_vpclmul: default_fusion_to_vpclmul,
+      min_bytes_per_lane: None,
+    });
+
+  let crc32c = tuned
+    .map(|t| t.crc32c)
+    .unwrap_or(tuned_defaults::Crc32VariantTunedDefaults {
+      streams: default_streams,
+      portable_to_hwcrc: default_portable_to_hwcrc,
+      hwcrc_to_fusion: default_hwcrc_to_fusion,
+      fusion_to_avx512: default_fusion_to_avx512,
+      fusion_to_vpclmul: default_fusion_to_vpclmul,
+      min_bytes_per_lane: None,
+    });
+
   Crc32Tunables {
-    // If HWCRC isn't available (e.g. POWER/s390x/RISC-V), treat this as the
-    // portable→accelerated crossover by falling back to the CLMUL threshold.
-    portable_to_hwcrc: tuned
-      .map(|t| t.portable_to_hwcrc)
-      .unwrap_or(tune.hwcrc_threshold.min(tune.pclmul_threshold)),
-    hwcrc_to_fusion: tuned.map(|t| t.hwcrc_to_fusion).unwrap_or(default_hwcrc_to_fusion),
-    fusion_to_avx512,
-    fusion_to_vpclmul,
-    streams_crc32,
-    streams_crc32c,
-    // min_bytes_per_lane: tuned defaults > None (use family default in policy)
-    min_bytes_per_lane_crc32: tuned.and_then(|t| t.min_bytes_per_lane_crc32),
-    min_bytes_per_lane_crc32c: tuned.and_then(|t| t.min_bytes_per_lane_crc32c),
+    crc32: Crc32VariantTunables {
+      portable_to_hwcrc: crc32.portable_to_hwcrc,
+      hwcrc_to_fusion: crc32.hwcrc_to_fusion,
+      fusion_to_avx512: crc32.fusion_to_avx512,
+      fusion_to_vpclmul: crc32.fusion_to_vpclmul,
+      streams: crc32.streams,
+      min_bytes_per_lane: crc32.min_bytes_per_lane,
+    },
+    crc32c: Crc32VariantTunables {
+      portable_to_hwcrc: crc32c.portable_to_hwcrc,
+      hwcrc_to_fusion: crc32c.hwcrc_to_fusion,
+      fusion_to_avx512: crc32c.fusion_to_avx512,
+      fusion_to_vpclmul: crc32c.fusion_to_vpclmul,
+      streams: crc32c.streams,
+      min_bytes_per_lane: crc32c.min_bytes_per_lane,
+    },
   }
 }
 
@@ -528,55 +570,50 @@ pub fn get() -> Crc32Config {
   let requested_force = ov.force;
   let effective_force = clamp_force_to_caps(requested_force, caps);
 
-  let mut portable_to_hwcrc = base.portable_to_hwcrc;
-  if let Some(v) = ov.portable_to_hwcrc {
-    portable_to_hwcrc = v;
-  }
-
-  let mut hwcrc_to_fusion = base.hwcrc_to_fusion;
-  if let Some(v) = ov.hwcrc_to_fusion {
-    hwcrc_to_fusion = v;
-  }
-
-  let mut fusion_to_avx512 = base.fusion_to_avx512;
-  if let Some(v) = ov.fusion_to_avx512 {
-    fusion_to_avx512 = v;
-  }
-
-  let mut fusion_to_vpclmul = base.fusion_to_vpclmul;
-  if let Some(v) = ov.fusion_to_vpclmul {
-    fusion_to_vpclmul = v;
-  }
-
-  let mut streams_crc32 = base.streams_crc32;
-  if let Some(v) = ov.streams_crc32 {
-    streams_crc32 = v;
-  }
-
-  let mut streams_crc32c = base.streams_crc32c;
-  if let Some(v) = ov.streams_crc32c {
-    streams_crc32c = v;
-  }
-
-  streams_crc32 = clamp_streams(streams_crc32);
-  streams_crc32c = clamp_streams(streams_crc32c);
-
-  // min_bytes_per_lane: env var > tuned defaults > None (use family default in policy)
-  let min_bytes_per_lane_crc32 = ov.min_bytes_per_lane_crc32.or(base.min_bytes_per_lane_crc32);
-  let min_bytes_per_lane_crc32c = ov.min_bytes_per_lane_crc32c.or(base.min_bytes_per_lane_crc32c);
-
   Crc32Config {
     requested_force,
     effective_force,
-    tunables: Crc32Tunables {
-      portable_to_hwcrc,
-      hwcrc_to_fusion,
-      fusion_to_avx512,
-      fusion_to_vpclmul,
-      streams_crc32,
-      streams_crc32c,
-      min_bytes_per_lane_crc32,
-      min_bytes_per_lane_crc32c,
+    tunables: {
+      let mut crc32 = base.crc32;
+      let mut crc32c = base.crc32c;
+
+      if let Some(v) = ov.crc32.portable_to_hwcrc {
+        crc32.portable_to_hwcrc = v;
+      }
+      if let Some(v) = ov.crc32.hwcrc_to_fusion {
+        crc32.hwcrc_to_fusion = v;
+      }
+      if let Some(v) = ov.crc32.fusion_to_avx512 {
+        crc32.fusion_to_avx512 = v;
+      }
+      if let Some(v) = ov.crc32.fusion_to_vpclmul {
+        crc32.fusion_to_vpclmul = v;
+      }
+      if let Some(v) = ov.crc32.streams {
+        crc32.streams = v;
+      }
+      crc32.streams = clamp_streams(crc32.streams);
+      crc32.min_bytes_per_lane = ov.crc32.min_bytes_per_lane.or(crc32.min_bytes_per_lane);
+
+      if let Some(v) = ov.crc32c.portable_to_hwcrc {
+        crc32c.portable_to_hwcrc = v;
+      }
+      if let Some(v) = ov.crc32c.hwcrc_to_fusion {
+        crc32c.hwcrc_to_fusion = v;
+      }
+      if let Some(v) = ov.crc32c.fusion_to_avx512 {
+        crc32c.fusion_to_avx512 = v;
+      }
+      if let Some(v) = ov.crc32c.fusion_to_vpclmul {
+        crc32c.fusion_to_vpclmul = v;
+      }
+      if let Some(v) = ov.crc32c.streams {
+        crc32c.streams = v;
+      }
+      crc32c.streams = clamp_streams(crc32c.streams);
+      crc32c.min_bytes_per_lane = ov.crc32c.min_bytes_per_lane.or(crc32c.min_bytes_per_lane);
+
+      Crc32Tunables { crc32, crc32c }
     },
   }
 }
