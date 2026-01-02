@@ -319,7 +319,7 @@ pub const fn generate_shift8_matrix_32(poly: u32) -> Gf2Matrix32 {
 /// GF(2), so `M.mul_vec(crc)` computes `crc * x^(8*len_bytes) mod G(x)`.
 #[inline]
 #[must_use]
-#[cfg(any(target_arch = "aarch64", test))]
+#[cfg(target_arch = "aarch64")]
 pub const fn pow_shift8_matrix_32(len_bytes: usize, shift8_matrix: Gf2Matrix32) -> Gf2Matrix32 {
   if len_bytes == 0 {
     return Gf2Matrix32::identity();
