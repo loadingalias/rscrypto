@@ -142,6 +142,43 @@ fn tune_algorithm_impl(
   let portable_names_owned: Vec<String> = portable_names.iter().map(|&n| n.to_string()).collect();
   let mut threshold_measurements = benchmark_thresholds(runner, algorithm, &portable_names, best_kernel, best_streams)?;
 
+  // CRC-64: benchmark the small-buffer SIMD kernel explicitly so:
+  // - portable→SIMD crossovers reflect the real small-kernel behavior
+  // - we can tune the small-kernel window (small→best crossover)
+  let mut crc64_small_kernel: Option<&'static str> = None;
+  if matches!(algorithm.name(), "crc64-xz" | "crc64-nvme") {
+    // Ensure we have a single-stream curve for the best kernel (small kernel is single-stream).
+    if best_streams != 1
+      && !threshold_measurements
+        .iter()
+        .any(|m| m.kernel == best_kernel && m.streams == 1)
+    {
+      let curve = benchmark_single_kernel(runner, algorithm, best_kernel, 1)?;
+      threshold_measurements.extend(curve);
+    }
+
+    let small_name = if best_kernel.starts_with("x86_64/") {
+      Some("x86_64/pclmul-small")
+    } else if best_kernel.starts_with("aarch64/sve2-pmull") {
+      Some("aarch64/sve2-pmull-small")
+    } else if best_kernel.starts_with("aarch64/") {
+      Some("aarch64/pmull-small")
+    } else {
+      None
+    };
+
+    if let Some(name) = small_name
+      && !threshold_measurements
+        .iter()
+        .any(|m| m.kernel == name && m.streams == 1)
+      && let Ok(curve) = benchmark_single_kernel(runner, algorithm, name, 1)
+      && !curve.is_empty()
+    {
+      crc64_small_kernel = Some(name);
+      threshold_measurements.extend(curve);
+    }
+  }
+
   // Phase C: Additional threshold curves for tier-based crossovers
   // If we have both folding and wide kernels, benchmark the folding kernel
   // to detect SIMD→wide crossover
@@ -227,6 +264,22 @@ fn tune_algorithm_impl(
       result_analysis.crossovers.push(crossover);
     }
 
+    // portable_bytewise_to_slice16: within the portable tier, select bytewise for tiny buffers.
+    if portable_names.contains(&"portable/bytewise")
+      && portable_names.contains(&"portable/slice16")
+      && let Some(crossover) = analysis::find_crossover(
+        &threshold_measurements,
+        "portable/bytewise",
+        1,
+        "portable/slice16",
+        1,
+        1.0,
+      )
+    {
+      thresholds.push(("portable_bytewise_to_slice16".to_string(), crossover.crossover_size));
+      result_analysis.crossovers.push(crossover);
+    }
+
     // hwcrc_to_fusion: HWCRC → baseline folding kernel.
     //
     // This matches the `checksum::crc32` policy semantics: hwcrc_to_fusion gates
@@ -305,6 +358,16 @@ fn tune_algorithm_impl(
       CrossoverType::PortableToSimd.threshold_name().to_string(),
       crossover.crossover_size,
     ));
+  }
+
+  // CRC-64: small SIMD kernel window (small→best crossover).
+  if matches!(algorithm.name(), "crc64-xz" | "crc64-nvme")
+    && let Some(small) = crc64_small_kernel
+    && best_kernel != small
+    && let Some(crossover) = analysis::find_crossover(&threshold_measurements, small, 1, best_kernel, 1, 1.0)
+  {
+    thresholds.push(("small_kernel_max_bytes".to_string(), crossover.crossover_size));
+    result_analysis.crossovers.push(crossover);
   }
 
   // 1b. Portable slice4 → slice8 crossover (if present).

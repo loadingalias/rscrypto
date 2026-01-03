@@ -119,6 +119,8 @@ pub struct Crc64VariantTunables {
   pub portable_to_clmul: usize,
   /// Bytes where VPCLMUL becomes faster than PCLMUL on wide-SIMD CPUs.
   pub pclmul_to_vpclmul: usize,
+  /// Upper bound for selecting the small-buffer SIMD kernel.
+  pub small_kernel_max_bytes: usize,
   /// Preferred number of independent folding streams for large buffers.
   pub streams: u8,
   /// Minimum bytes per lane for multi-stream folding.
@@ -153,6 +155,7 @@ struct Overrides {
   force: Crc64Force,
   portable_to_clmul: Option<usize>,
   pclmul_to_vpclmul: Option<usize>,
+  small_kernel_max_bytes: Option<usize>,
   streams: Option<u8>,
   min_bytes_per_lane: Option<usize>,
 }
@@ -237,6 +240,7 @@ fn read_env_overrides() -> Overrides {
     force: parse_force("RSCRYPTO_CRC64_FORCE").unwrap_or(Crc64Force::Auto),
     portable_to_clmul: parse_usize("RSCRYPTO_CRC64_THRESHOLD_PORTABLE_TO_CLMUL"),
     pclmul_to_vpclmul: parse_usize("RSCRYPTO_CRC64_THRESHOLD_PCLMUL_TO_VPCLMUL"),
+    small_kernel_max_bytes: parse_usize("RSCRYPTO_CRC64_THRESHOLD_SMALL_KERNEL_MAX_BYTES"),
     streams: parse_u8("RSCRYPTO_CRC64_STREAMS"),
     min_bytes_per_lane: parse_usize("RSCRYPTO_CRC64_MIN_BYTES_PER_LANE"),
   }
@@ -464,6 +468,7 @@ pub fn config(caps: Caps, tune: Tune) -> Crc64Config {
 
   let default_portable_to_clmul = tune.pclmul_threshold;
   let default_pclmul_to_vpclmul = default_pclmul_to_vpclmul_threshold(caps, tune);
+  let default_small_kernel_max_bytes = super::policy::CRC64_SMALL_KERNEL_MAX_BYTES_DEFAULT;
   let default_streams = default_crc64_streams(caps, tune);
 
   let xz_streams = clamp_streams(ov.streams.or(tuned.map(|t| t.xz.streams)).unwrap_or(default_streams));
@@ -478,6 +483,11 @@ pub fn config(caps: Caps, tune: Tune) -> Crc64Config {
       .pclmul_to_vpclmul
       .or(tuned.map(|t| t.xz.pclmul_to_vpclmul))
       .unwrap_or(default_pclmul_to_vpclmul),
+    small_kernel_max_bytes: ov
+      .small_kernel_max_bytes
+      .or(tuned.map(|t| t.xz.small_kernel_max_bytes))
+      .unwrap_or(default_small_kernel_max_bytes)
+      .max(1),
     streams: xz_streams,
     // min_bytes_per_lane: env var > tuned defaults > None (use family default in policy)
     min_bytes_per_lane: ov.min_bytes_per_lane.or(tuned.and_then(|t| t.xz.min_bytes_per_lane)),
@@ -492,6 +502,11 @@ pub fn config(caps: Caps, tune: Tune) -> Crc64Config {
       .pclmul_to_vpclmul
       .or(tuned.map(|t| t.nvme.pclmul_to_vpclmul))
       .unwrap_or(default_pclmul_to_vpclmul),
+    small_kernel_max_bytes: ov
+      .small_kernel_max_bytes
+      .or(tuned.map(|t| t.nvme.small_kernel_max_bytes))
+      .unwrap_or(default_small_kernel_max_bytes)
+      .max(1),
     streams: nvme_streams,
     // min_bytes_per_lane: env var > tuned defaults > None (use family default in policy)
     min_bytes_per_lane: ov.min_bytes_per_lane.or(tuned.and_then(|t| t.nvme.min_bytes_per_lane)),

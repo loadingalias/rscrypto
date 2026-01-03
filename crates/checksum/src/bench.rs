@@ -718,6 +718,7 @@ pub fn available_crc32_ieee_kernels() -> Vec<&'static str> {
 
   // Always available
   kernels.push("reference");
+  kernels.push("portable/bytewise");
   kernels.push("portable/slice16");
 
   #[cfg(target_arch = "x86_64")]
@@ -804,6 +805,7 @@ pub fn available_crc32c_kernels() -> Vec<&'static str> {
 
   // Always available
   kernels.push("reference");
+  kernels.push("portable/bytewise");
   kernels.push("portable/slice16");
 
   #[cfg(target_arch = "x86_64")]
@@ -910,6 +912,12 @@ pub fn get_crc32_ieee_kernel(name: &str) -> Option<Crc32Kernel> {
       func: crate::crc32::portable::crc32_slice16_ieee,
     });
   }
+  if name == "portable/bytewise" {
+    return Some(Crc32Kernel {
+      name: "portable/bytewise",
+      func: crate::crc32::portable::crc32_bytewise_ieee,
+    });
+  }
 
   // Architecture-specific kernels
   #[cfg(target_arch = "x86_64")]
@@ -971,6 +979,12 @@ pub fn get_crc32c_kernel(name: &str) -> Option<Crc32Kernel> {
     return Some(Crc32Kernel {
       name: "portable/slice16",
       func: crate::crc32::portable::crc32c_slice16,
+    });
+  }
+  if name == "portable/bytewise" {
+    return Some(Crc32Kernel {
+      name: "portable/bytewise",
+      func: crate::crc32::portable::crc32c_bytewise,
     });
   }
 

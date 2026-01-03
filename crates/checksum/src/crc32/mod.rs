@@ -94,11 +94,21 @@ mod kernel_tables {
 // ─────────────────────────────────────────────────────────────────────────────
 
 fn crc32_portable(crc: u32, data: &[u8]) -> u32 {
-  portable::crc32_slice16_ieee(crc, data)
+  let threshold = config::get().tunables.crc32.portable_bytewise_to_slice16;
+  if data.len() < threshold {
+    portable::crc32_bytewise_ieee(crc, data)
+  } else {
+    portable::crc32_slice16_ieee(crc, data)
+  }
 }
 
 fn crc32c_portable(crc: u32, data: &[u8]) -> u32 {
-  portable::crc32c_slice16(crc, data)
+  let threshold = config::get().tunables.crc32c.portable_bytewise_to_slice16;
+  if data.len() < threshold {
+    portable::crc32c_bytewise(crc, data)
+  } else {
+    portable::crc32c_slice16(crc, data)
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -17,8 +17,6 @@ use crate::{
   sampler::{Sampler, SamplerConfig},
 };
 
-const CRC64_FOLD_BLOCK_BYTES: usize = 128;
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Common Tunable Parameters
 // ─────────────────────────────────────────────────────────────────────────────
@@ -31,6 +29,8 @@ fn crc64_threshold_to_env_suffix(threshold_name: &str) -> Option<&'static str> {
   match threshold_name {
     // Portable → SIMD crossover
     "portable_to_simd" => Some("THRESHOLD_PORTABLE_TO_CLMUL"),
+    // Small SIMD kernel window (within the SIMD tier)
+    "small_kernel_max_bytes" => Some("THRESHOLD_SMALL_KERNEL_MAX_BYTES"),
     // SIMD → Wide crossover (PCLMUL → VPCLMUL on x86, PMULL → PMULL-EOR3 on ARM, etc.)
     "simd_to_wide" => Some("THRESHOLD_PCLMUL_TO_VPCLMUL"),
     // Min bytes per lane (no THRESHOLD_ prefix in config)
@@ -49,6 +49,13 @@ const CRC64_PARAMS: &[TunableParam] = &[
     16,
     4096,
     64,
+  ),
+  TunableParam::new(
+    "small_kernel_max_bytes",
+    "Max bytes where the small SIMD kernel is preferred",
+    16,
+    4096,
+    512,
   ),
   TunableParam::new(
     "pclmul_to_vpclmul",
@@ -358,6 +365,13 @@ impl crate::Tunable for Crc64XzTunable {
 
     self.forced_kernel = Some(name.to_string());
     self.resolve_kernel();
+    if self.cached_kernel.is_none() {
+      self.forced_kernel = None;
+      self.forced_streams = None;
+      return Err(TuneError::KernelNotAvailable(
+        "kernel name did not resolve to a bench kernel",
+      ));
+    }
     Ok(())
   }
 
@@ -383,36 +397,7 @@ impl crate::Tunable for Crc64XzTunable {
 
     // Use the forced kernel if available, otherwise fall back to auto
     let (kernel_name, result) = if let Some(ref kernel) = self.cached_kernel {
-      let mut func = kernel.func;
-
-      // Mirror library dispatch: for sub-block sizes, the family may use a
-      // dedicated small-buffer kernel even when the "tier name" is the wide
-      // kernel (e.g., PMULL-EOR3 still uses PMULL-small below 128B).
-      if data.len() < CRC64_FOLD_BLOCK_BYTES
-        && let Some(ref forced) = self.forced_kernel
-      {
-        #[cfg(target_arch = "x86_64")]
-        {
-          if forced.starts_with("x86_64/pclmul")
-            && let Some(small) = bench::get_crc64_xz_kernel("x86_64/pclmul-small")
-          {
-            func = small.func;
-          }
-        }
-
-        #[cfg(target_arch = "aarch64")]
-        {
-          if forced.starts_with("aarch64/sve2-pmull")
-            && let Some(small) = bench::get_crc64_xz_kernel("aarch64/sve2-pmull-small")
-          {
-            func = small.func;
-          } else if forced.starts_with("aarch64/pmull")
-            && let Some(small) = bench::get_crc64_xz_kernel("aarch64/pmull-small")
-          {
-            func = small.func;
-          }
-        }
-      }
+      let func = kernel.func;
 
       let result = sampler.run(data, |buf| {
         core::hint::black_box(func(core::hint::black_box(!0u64), core::hint::black_box(buf)));
@@ -545,6 +530,13 @@ impl crate::Tunable for Crc64NvmeTunable {
 
     self.forced_kernel = Some(name.to_string());
     self.resolve_kernel();
+    if self.cached_kernel.is_none() {
+      self.forced_kernel = None;
+      self.forced_streams = None;
+      return Err(TuneError::KernelNotAvailable(
+        "kernel name did not resolve to a bench kernel",
+      ));
+    }
     Ok(())
   }
 
@@ -569,33 +561,7 @@ impl crate::Tunable for Crc64NvmeTunable {
     let sampler = Sampler::new(&config);
 
     let (kernel_name, result) = if let Some(ref kernel) = self.cached_kernel {
-      let mut func = kernel.func;
-
-      if data.len() < CRC64_FOLD_BLOCK_BYTES
-        && let Some(ref forced) = self.forced_kernel
-      {
-        #[cfg(target_arch = "x86_64")]
-        {
-          if forced.starts_with("x86_64/pclmul")
-            && let Some(small) = bench::get_crc64_nvme_kernel("x86_64/pclmul-small")
-          {
-            func = small.func;
-          }
-        }
-
-        #[cfg(target_arch = "aarch64")]
-        {
-          if forced.starts_with("aarch64/sve2-pmull")
-            && let Some(small) = bench::get_crc64_nvme_kernel("aarch64/sve2-pmull-small")
-          {
-            func = small.func;
-          } else if forced.starts_with("aarch64/pmull")
-            && let Some(small) = bench::get_crc64_nvme_kernel("aarch64/pmull-small")
-          {
-            func = small.func;
-          }
-        }
-      }
+      let func = kernel.func;
 
       let result = sampler.run(data, |buf| {
         core::hint::black_box(func(core::hint::black_box(!0u64), core::hint::black_box(buf)));

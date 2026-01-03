@@ -30,7 +30,14 @@ use crate::{common::kernels::stream_to_index, dispatchers::Crc64Fn};
 pub const CRC64_SMALL_THRESHOLD: usize = 16;
 
 /// Block size for CRC-64 folding operations.
+#[allow(dead_code)] // Retained as a semantic baseline constant for tuning docs.
 pub const CRC64_FOLD_BLOCK_BYTES: usize = 128;
+
+/// Upper bound for selecting the "small" SIMD kernel.
+///
+/// The small kernels fold 16-byte lanes with minimal setup cost and can be
+/// faster than full 128-byte folding for small-to-medium inputs.
+pub const CRC64_SMALL_KERNEL_MAX_BYTES_DEFAULT: usize = 512;
 
 /// Minimum bytes for 4×512 VPCLMUL kernel (very high setup cost).
 pub const CRC64_4X512_MIN_BYTES: usize = 8192;
@@ -57,6 +64,8 @@ pub struct Crc64Policy {
   ///
   /// This is resolved from tunables (if set) or the kernel family default.
   pub min_bytes_per_lane: usize,
+  /// Upper bound for selecting the small-buffer SIMD kernel.
+  pub small_kernel_max_bytes: usize,
 }
 
 impl Crc64Policy {
@@ -90,11 +99,14 @@ impl Crc64Policy {
       .min_bytes_per_lane
       .unwrap_or_else(|| inner.family().min_bytes_per_lane());
 
+    let small_kernel_max_bytes = tunables.small_kernel_max_bytes.max(CRC64_SMALL_THRESHOLD);
+
     Self {
       inner,
       effective_force: cfg.effective_force,
       use_4x512,
       min_bytes_per_lane,
+      small_kernel_max_bytes,
     }
   }
 
@@ -158,6 +170,9 @@ impl Crc64Policy {
 
       #[cfg(target_arch = "x86_64")]
       KernelFamily::X86Vpclmul => {
+        if len < self.small_kernel_max_bytes {
+          return kernels::x86_64::PCLMUL_SMALL;
+        }
         if self.use_4x512 && len >= CRC64_4X512_MIN_BYTES {
           return kernels::x86_64::VPCLMUL_4X512;
         }
@@ -174,7 +189,7 @@ impl Crc64Policy {
       KernelFamily::X86Pclmul => {
         let streams = self.streams_for_len(len);
         let idx = stream_to_index(streams);
-        if len < CRC64_FOLD_BLOCK_BYTES {
+        if len < self.small_kernel_max_bytes {
           kernels::x86_64::PCLMUL_SMALL
         } else {
           kernels::x86_64::PCLMUL_NAMES
@@ -187,6 +202,9 @@ impl Crc64Policy {
 
       #[cfg(target_arch = "aarch64")]
       KernelFamily::ArmSve2Pmull => {
+        if len < self.small_kernel_max_bytes {
+          return kernels::aarch64::SVE2_PMULL_SMALL;
+        }
         let streams = self.streams_for_len(len);
         let idx = stream_to_index(streams);
         kernels::aarch64::SVE2_PMULL_NAMES
@@ -200,7 +218,7 @@ impl Crc64Policy {
       KernelFamily::ArmPmullEor3 => {
         let streams = self.streams_for_len(len);
         let idx = stream_to_index(streams);
-        if len < CRC64_FOLD_BLOCK_BYTES {
+        if len < self.small_kernel_max_bytes {
           kernels::aarch64::PMULL_SMALL
         } else {
           kernels::aarch64::PMULL_EOR3_NAMES
@@ -215,7 +233,7 @@ impl Crc64Policy {
       KernelFamily::ArmPmull => {
         let streams = self.streams_for_len(len);
         let idx = stream_to_index(streams);
-        if len < CRC64_FOLD_BLOCK_BYTES {
+        if len < self.small_kernel_max_bytes {
           kernels::aarch64::PMULL_SMALL
         } else {
           kernels::aarch64::PMULL_NAMES
@@ -351,6 +369,13 @@ pub fn policy_dispatch(policy: &Crc64Policy, kernels: &Crc64Kernels, crc: u64, d
     return (kernels.portable)(crc, data);
   }
 
+  // Small-buffer SIMD kernel: prefer this before wide-tier selection.
+  if len < policy.small_kernel_max_bytes
+    && let Some(small) = kernels.primary_small
+  {
+    return (small)(crc, data);
+  }
+
   // Wide tier (VPCLMUL/SVE2)
   if let Some(ref wide) = kernels.wide
     && policy.inner.should_use_wide(len)
@@ -368,13 +393,6 @@ pub fn policy_dispatch(policy: &Crc64Policy, kernels: &Crc64Kernels, crc: u64, d
 
   // Primary tier (PCLMUL/PMULL/etc)
   let streams = policy.streams_for_len(len);
-
-  // Small-buffer kernel for sub-block sizes
-  if len < CRC64_FOLD_BLOCK_BYTES
-    && let Some(small) = kernels.primary_small
-  {
-    return (small)(crc, data);
-  }
 
   let idx = stream_to_index(streams);
   (kernels.primary.get(idx).copied().unwrap_or(kernels.primary[0]))(crc, data)
@@ -453,7 +471,7 @@ pub fn build_xz_kernels_aarch64(policy: &Crc64Policy, reference: Crc64Fn, portab
       reference,
       portable,
       primary: XZ_PMULL,
-      primary_small: Some(XZ_PMULL_SMALL),
+      primary_small: Some(XZ_SVE2_PMULL_SMALL),
       wide: Some(XZ_SVE2_PMULL),
       wide_4x512: None,
     },
@@ -488,7 +506,7 @@ pub fn build_nvme_kernels_aarch64(policy: &Crc64Policy, reference: Crc64Fn, port
       reference,
       portable,
       primary: NVME_PMULL,
-      primary_small: Some(NVME_PMULL_SMALL),
+      primary_small: Some(NVME_SVE2_PMULL_SMALL),
       wide: Some(NVME_SVE2_PMULL),
       wide_4x512: None,
     },
@@ -657,12 +675,14 @@ mod tests {
       effective_force: Crc64Force::Portable,
       tunables: super::super::config::Crc64Tunables {
         xz: super::super::config::Crc64VariantTunables {
+          small_kernel_max_bytes: CRC64_SMALL_KERNEL_MAX_BYTES_DEFAULT,
           portable_to_clmul: 64,
           pclmul_to_vpclmul: 512,
           streams: 4,
           min_bytes_per_lane: None,
         },
         nvme: super::super::config::Crc64VariantTunables {
+          small_kernel_max_bytes: CRC64_SMALL_KERNEL_MAX_BYTES_DEFAULT,
           portable_to_clmul: 64,
           pclmul_to_vpclmul: 512,
           streams: 4,
@@ -686,12 +706,14 @@ mod tests {
       effective_force: Crc64Force::Reference,
       tunables: super::super::config::Crc64Tunables {
         xz: super::super::config::Crc64VariantTunables {
+          small_kernel_max_bytes: CRC64_SMALL_KERNEL_MAX_BYTES_DEFAULT,
           portable_to_clmul: 64,
           pclmul_to_vpclmul: 512,
           streams: 4,
           min_bytes_per_lane: None,
         },
         nvme: super::super::config::Crc64VariantTunables {
+          small_kernel_max_bytes: CRC64_SMALL_KERNEL_MAX_BYTES_DEFAULT,
           portable_to_clmul: 64,
           pclmul_to_vpclmul: 512,
           streams: 4,
@@ -714,12 +736,14 @@ mod tests {
       effective_force: Crc64Force::Portable,
       tunables: super::super::config::Crc64Tunables {
         xz: super::super::config::Crc64VariantTunables {
+          small_kernel_max_bytes: CRC64_SMALL_KERNEL_MAX_BYTES_DEFAULT,
           portable_to_clmul: 64,
           pclmul_to_vpclmul: 512,
           streams: 4,
           min_bytes_per_lane: None,
         },
         nvme: super::super::config::Crc64VariantTunables {
+          small_kernel_max_bytes: CRC64_SMALL_KERNEL_MAX_BYTES_DEFAULT,
           portable_to_clmul: 64,
           pclmul_to_vpclmul: 512,
           streams: 4,

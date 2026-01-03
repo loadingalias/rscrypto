@@ -39,7 +39,7 @@ pub const CRC16_CCITT_TUNED_DEFAULTS: &[(TuneKind, Crc16TunedDefaults)] = &[
   (TuneKind::AppleM5,   Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 2, min_bytes_per_lane: Some(32) }),
 
   // Graviton/Neoverse class: PMULL is fastest; conservative single-stream default.
-  (TuneKind::Graviton2,  Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 1, min_bytes_per_lane: None }),
+  (TuneKind::Graviton2,  Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 3, min_bytes_per_lane: None }),
   (TuneKind::Graviton3,  Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 1, min_bytes_per_lane: None }),
   (TuneKind::Graviton4,  Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 1, min_bytes_per_lane: None }),
   (TuneKind::Graviton5,  Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 1, min_bytes_per_lane: None }),
@@ -83,7 +83,7 @@ pub const CRC16_IBM_TUNED_DEFAULTS: &[(TuneKind, Crc16TunedDefaults)] = &[
   (TuneKind::AppleM5,   Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 3, min_bytes_per_lane: Some(682) }),
 
   // Graviton/Neoverse class: PMULL is fastest; conservative single-stream default.
-  (TuneKind::Graviton2,  Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 1, min_bytes_per_lane: None }),
+  (TuneKind::Graviton2,  Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 3, min_bytes_per_lane: None }),
   (TuneKind::Graviton3,  Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 1, min_bytes_per_lane: None }),
   (TuneKind::Graviton4,  Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 1, min_bytes_per_lane: None }),
   (TuneKind::Graviton5,  Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 1, min_bytes_per_lane: None }),

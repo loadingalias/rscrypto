@@ -134,6 +134,8 @@ impl Crc32Force {
 /// CRC-32 selection tunables (thresholds + parallelism).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Crc32VariantTunables {
+  /// Bytes where portable bytewise becomes slower than slice-by-16.
+  pub portable_bytewise_to_slice16: usize,
   /// Bytes where hardware CRC becomes faster than portable.
   pub portable_to_hwcrc: usize,
   /// Bytes where fusion becomes faster than HWCRC.
@@ -176,6 +178,7 @@ pub struct Crc32Config {
 
 #[derive(Clone, Copy, Debug, Default)]
 struct VariantOverrides {
+  portable_bytewise_to_slice16: Option<usize>,
   portable_to_hwcrc: Option<usize>,
   hwcrc_to_fusion: Option<usize>,
   fusion_to_avx512: Option<usize>,
@@ -272,6 +275,7 @@ fn read_env_overrides() -> Overrides {
   }
 
   let crc32 = VariantOverrides {
+    portable_bytewise_to_slice16: parse_usize("RSCRYPTO_CRC32_THRESHOLD_PORTABLE_BYTEWISE_TO_SLICE16"),
     portable_to_hwcrc: parse_usize("RSCRYPTO_CRC32_THRESHOLD_PORTABLE_TO_HWCRC"),
     hwcrc_to_fusion: parse_usize("RSCRYPTO_CRC32_THRESHOLD_HWCRC_TO_FUSION"),
     fusion_to_avx512: parse_usize("RSCRYPTO_CRC32_THRESHOLD_FUSION_TO_AVX512"),
@@ -281,6 +285,7 @@ fn read_env_overrides() -> Overrides {
   };
 
   let crc32c = VariantOverrides {
+    portable_bytewise_to_slice16: parse_usize("RSCRYPTO_CRC32C_THRESHOLD_PORTABLE_BYTEWISE_TO_SLICE16"),
     portable_to_hwcrc: parse_usize("RSCRYPTO_CRC32C_THRESHOLD_PORTABLE_TO_HWCRC"),
     hwcrc_to_fusion: parse_usize("RSCRYPTO_CRC32C_THRESHOLD_HWCRC_TO_FUSION"),
     fusion_to_avx512: parse_usize("RSCRYPTO_CRC32C_THRESHOLD_FUSION_TO_AVX512"),
@@ -422,6 +427,7 @@ fn tuned_defaults(caps: Caps, tune: Tune) -> Crc32Tunables {
   let tuned = tuned_defaults::for_tune_kind(tune.kind);
 
   let default_streams = default_crc32_streams(caps, tune);
+  let default_portable_bytewise_to_slice16: usize = 64;
   // Fusion kernels (HWCRC + carryless-multiply folding) have non-trivial setup
   // costs vs pure HWCRC/table, especially on Intel parts. Treat this threshold
   // as a "SIMD-ish" crossover, not the raw CLMUL crossover.
@@ -443,6 +449,7 @@ fn tuned_defaults(caps: Caps, tune: Tune) -> Crc32Tunables {
     .map(|t| t.crc32)
     .unwrap_or(tuned_defaults::Crc32VariantTunedDefaults {
       streams: default_streams,
+      portable_bytewise_to_slice16: default_portable_bytewise_to_slice16,
       portable_to_hwcrc: default_portable_to_hwcrc,
       hwcrc_to_fusion: default_hwcrc_to_fusion,
       fusion_to_avx512: default_fusion_to_avx512,
@@ -454,6 +461,7 @@ fn tuned_defaults(caps: Caps, tune: Tune) -> Crc32Tunables {
     .map(|t| t.crc32c)
     .unwrap_or(tuned_defaults::Crc32VariantTunedDefaults {
       streams: default_streams,
+      portable_bytewise_to_slice16: default_portable_bytewise_to_slice16,
       portable_to_hwcrc: default_portable_to_hwcrc,
       hwcrc_to_fusion: default_hwcrc_to_fusion,
       fusion_to_avx512: default_fusion_to_avx512,
@@ -463,6 +471,7 @@ fn tuned_defaults(caps: Caps, tune: Tune) -> Crc32Tunables {
 
   Crc32Tunables {
     crc32: Crc32VariantTunables {
+      portable_bytewise_to_slice16: crc32.portable_bytewise_to_slice16,
       portable_to_hwcrc: crc32.portable_to_hwcrc,
       hwcrc_to_fusion: crc32.hwcrc_to_fusion,
       fusion_to_avx512: crc32.fusion_to_avx512,
@@ -471,6 +480,7 @@ fn tuned_defaults(caps: Caps, tune: Tune) -> Crc32Tunables {
       min_bytes_per_lane: crc32.min_bytes_per_lane,
     },
     crc32c: Crc32VariantTunables {
+      portable_bytewise_to_slice16: crc32c.portable_bytewise_to_slice16,
       portable_to_hwcrc: crc32c.portable_to_hwcrc,
       hwcrc_to_fusion: crc32c.hwcrc_to_fusion,
       fusion_to_avx512: crc32c.fusion_to_avx512,
@@ -577,6 +587,9 @@ pub fn get() -> Crc32Config {
       let mut crc32 = base.crc32;
       let mut crc32c = base.crc32c;
 
+      if let Some(v) = ov.crc32.portable_bytewise_to_slice16 {
+        crc32.portable_bytewise_to_slice16 = v;
+      }
       if let Some(v) = ov.crc32.portable_to_hwcrc {
         crc32.portable_to_hwcrc = v;
       }
@@ -594,7 +607,11 @@ pub fn get() -> Crc32Config {
       }
       crc32.streams = clamp_streams(crc32.streams);
       crc32.min_bytes_per_lane = ov.crc32.min_bytes_per_lane.or(crc32.min_bytes_per_lane);
+      crc32.portable_bytewise_to_slice16 = crc32.portable_bytewise_to_slice16.max(1);
 
+      if let Some(v) = ov.crc32c.portable_bytewise_to_slice16 {
+        crc32c.portable_bytewise_to_slice16 = v;
+      }
       if let Some(v) = ov.crc32c.portable_to_hwcrc {
         crc32c.portable_to_hwcrc = v;
       }
@@ -612,6 +629,7 @@ pub fn get() -> Crc32Config {
       }
       crc32c.streams = clamp_streams(crc32c.streams);
       crc32c.min_bytes_per_lane = ov.crc32c.min_bytes_per_lane.or(crc32c.min_bytes_per_lane);
+      crc32c.portable_bytewise_to_slice16 = crc32c.portable_bytewise_to_slice16.max(1);
 
       Crc32Tunables { crc32, crc32c }
     },

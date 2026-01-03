@@ -34,6 +34,7 @@ const CRC32_FOLD_BLOCK_BYTES: usize = 128;
 /// - Fusion → VPCLMUL (on AVX-512 x86_64)
 fn crc32_threshold_to_env_suffix(threshold_name: &str) -> Option<&'static str> {
   match threshold_name {
+    "portable_bytewise_to_slice16" => Some("THRESHOLD_PORTABLE_BYTEWISE_TO_SLICE16"),
     // Policy-specific thresholds (match `checksum::crc32::config` env vars).
     "portable_to_hwcrc" => Some("THRESHOLD_PORTABLE_TO_HWCRC"),
     "hwcrc_to_fusion" => Some("THRESHOLD_HWCRC_TO_FUSION"),
@@ -71,6 +72,13 @@ fn small_kernel_name_for_crc32(name: &str) -> Option<&'static str> {
 
 /// Tunable parameters for CRC-32 algorithms.
 const CRC32_PARAMS: &[TunableParam] = &[
+  TunableParam::new(
+    "portable_bytewise_to_slice16",
+    "Bytes where slice-by-16 becomes faster than bytewise portable",
+    1,
+    256,
+    64,
+  ),
   TunableParam::new(
     "portable_to_hwcrc",
     "Bytes where hardware CRC becomes faster than portable",
@@ -117,6 +125,7 @@ const CRC32_PARAMS: &[TunableParam] = &[
 fn crc32_ieee_kernel_specs(caps: &Caps) -> Vec<KernelSpec> {
   let mut specs = vec![
     KernelSpec::new("reference", KernelTier::Reference, Caps::NONE),
+    KernelSpec::new("portable/bytewise", KernelTier::Portable, Caps::NONE),
     KernelSpec::new("portable/slice16", KernelTier::Portable, Caps::NONE),
   ];
 
@@ -253,6 +262,7 @@ fn crc32_ieee_kernel_specs(caps: &Caps) -> Vec<KernelSpec> {
 fn crc32c_kernel_specs(caps: &Caps) -> Vec<KernelSpec> {
   let mut specs = vec![
     KernelSpec::new("reference", KernelTier::Reference, Caps::NONE),
+    KernelSpec::new("portable/bytewise", KernelTier::Portable, Caps::NONE),
     KernelSpec::new("portable/slice16", KernelTier::Portable, Caps::NONE),
   ];
 
@@ -762,6 +772,7 @@ fn kernel_name_with_streams(base: &str, streams: u8) -> &'static str {
   if streams <= 1 {
     return match base {
       "portable" | "portable/slice16" => "portable/slice16",
+      "portable/bytewise" => "portable/bytewise",
       "reference" | "reference/bitwise" => "reference",
       _ => Box::leak(base.to_string().into_boxed_str()),
     };
@@ -769,6 +780,9 @@ fn kernel_name_with_streams(base: &str, streams: u8) -> &'static str {
 
   if base == "portable" || base == "portable/slice16" {
     return "portable/slice16";
+  }
+  if base == "portable/bytewise" {
+    return "portable/bytewise";
   }
   if base == "reference" || base == "reference/bitwise" {
     return "reference";

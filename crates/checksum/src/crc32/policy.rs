@@ -254,9 +254,15 @@ impl Crc32Policy {
   #[inline]
   #[must_use]
   pub fn streams_for_len(&self, len: usize) -> u8 {
-    // Memory-bound: suppress multi-stream (HWCRC already saturates bandwidth)
+    // Memory-bound heuristic applies to the pure HWCRC tier only.
+    //
+    // For large buffers that cross into the fusion tier, allowing multi-stream
+    // folding can still improve throughput by increasing ILP and hiding latency.
     if self.memory_bound {
-      return 1;
+      let in_hwcrc_tier = len < self.hwcrc_to_fusion || !self.has_fusion;
+      if in_hwcrc_tier {
+        return 1;
+      }
     }
     self.inner.streams_for_len_with_min(len, self.min_bytes_per_lane)
   }
@@ -1131,6 +1137,7 @@ mod tests {
       effective_force: Crc32Force::Portable,
       tunables: super::super::config::Crc32Tunables {
         crc32: super::super::config::Crc32VariantTunables {
+          portable_bytewise_to_slice16: 64,
           portable_to_hwcrc: 64,
           hwcrc_to_fusion: 256,
           fusion_to_avx512: 1024,
@@ -1139,6 +1146,7 @@ mod tests {
           min_bytes_per_lane: None,
         },
         crc32c: super::super::config::Crc32VariantTunables {
+          portable_bytewise_to_slice16: 64,
           portable_to_hwcrc: 64,
           hwcrc_to_fusion: 256,
           fusion_to_avx512: 1024,
@@ -1163,6 +1171,7 @@ mod tests {
       effective_force: Crc32Force::Portable,
       tunables: super::super::config::Crc32Tunables {
         crc32: super::super::config::Crc32VariantTunables {
+          portable_bytewise_to_slice16: 64,
           portable_to_hwcrc: 64,
           hwcrc_to_fusion: 256,
           fusion_to_avx512: 1024,
@@ -1171,6 +1180,7 @@ mod tests {
           min_bytes_per_lane: None,
         },
         crc32c: super::super::config::Crc32VariantTunables {
+          portable_bytewise_to_slice16: 64,
           portable_to_hwcrc: 64,
           hwcrc_to_fusion: 256,
           fusion_to_avx512: 1024,
