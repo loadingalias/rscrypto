@@ -29,14 +29,13 @@ use core::mem::MaybeUninit;
 /// - **no_std with atomics**: Atomic state machine with spin-wait synchronization
 /// - **no_std without atomics**: Per-call computation (no caching)
 ///
-/// # Example
+/// # Examples
 ///
-/// ```ignore
-/// use backend::cache::OnceCache;
-///
+/// ```
+/// use backend::OnceCache;
 /// static CACHE: OnceCache<u64> = OnceCache::new();
-///
-/// let value = CACHE.get_or_init(|| expensive_computation());
+/// let value = CACHE.get_or_init(|| 42);
+/// assert_eq!(value, 42);
 /// ```
 pub struct OnceCache<T: Copy> {
   #[cfg(feature = "std")]

@@ -4,18 +4,12 @@
 //! for convenience. Algorithm crates can import everything they need from
 //! `backend::caps` instead of reaching into `platform` directly.
 //!
-//! # Example
+//! # Examples
 //!
-//! ```ignore
-//! use backend::caps::{Caps, x86, aarch64};
-//!
-//! fn select_kernel(caps: Caps) {
-//!     if caps.has(x86::VPCLMUL_READY) {
-//!         // Use AVX-512 VPCLMULQDQ kernel
-//!     } else if caps.has(x86::PCLMUL_READY) {
-//!         // Use PCLMULQDQ kernel
-//!     }
-//! }
+//! ```
+//! use backend::caps::Caps;
+//! let caps = platform::caps();
+//! assert!(caps.has(Caps::NONE));
 //! ```
 
 // Re-export core types

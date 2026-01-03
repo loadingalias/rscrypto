@@ -11,10 +11,9 @@
 //!
 //! # Override Support
 //!
-//! For testing and bare-metal environments:
-//!
-//! ```ignore
-//! platform::set_override(Some(Detected { caps, tune, arch }));
+//! ```
+//! use platform::Detected;
+//! platform::set_override(Some(Detected::portable()));
 //! platform::clear_override();
 //! ```
 
@@ -48,15 +47,13 @@ impl Detected {
 
 /// Get detected CPU capabilities and tuning hints.
 ///
-/// This is the main entry point. Results are cached after first call.
+/// Results are cached after first call.
 ///
-/// # Example
+/// # Examples
 ///
-/// ```ignore
+/// ```
 /// let det = platform::detect::get();
-/// if det.caps.has(x86::VPCLMUL_READY) {
-///     // Use AVX-512 VPCLMULQDQ
-/// }
+/// assert!(det.caps.count() >= 1);
 /// ```
 #[inline]
 #[must_use]

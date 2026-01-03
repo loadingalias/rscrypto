@@ -107,27 +107,34 @@ USAGE:
 OPTIONS:
     -q, --quick           Quick mode (faster, noisier measurements)
     -v, --verbose         Verbose output during tuning
-    -f, --format FORMAT   Output format: summary (default), env, json, tsv
+    -f, --format FORMAT   Output format: summary (default), env, json, tsv, contribute
     --apply               Update tuned_defaults.rs for this TuneKind
     --warmup-ms MS        Custom warmup duration (default: 150, quick: 75)
     --measure-ms MS       Custom measurement duration (default: 250, quick: 125)
     -h, --help            Show this help message
 
-	EXAMPLES:
-	    # Standard tuning run
-	    just tune
+FORMATS:
+    summary     Human-readable summary (default)
+    env         Shell environment variable exports
+    json        JSON for programmatic use
+    tsv         Tab-separated values
+    contribute  Markdown ready for GitHub issue submission
 
-	    # Quick run for development
-	    just tune-quick
+EXAMPLES:
+    # Standard tuning run
+    just tune
 
-	    # Output as shell exports
-	    just tune -- --format env
+    # Quick run for development
+    just tune-quick
 
-	    # Output as JSON
-	    just tune -- --format json
+    # Generate markdown for contributing your results
+    just tune -- --format contribute
 
-	    # Apply to tuned defaults (writes into crates/checksum)
-	    just tune-apply
+    # Output as JSON
+    just tune -- --format json
+
+    # Apply to tuned defaults (writes into crates/checksum)
+    just tune-apply
 "
   );
 }
@@ -216,6 +223,12 @@ fn main() -> ExitCode {
     OutputFormat::Tsv => {
       if let Err(err) = tune::report::print_tsv(&results) {
         eprintln!("Failed to print tsv: {err}");
+        return ExitCode::FAILURE;
+      }
+    }
+    OutputFormat::Contribute => {
+      if let Err(err) = tune::report::print_contribute(&results) {
+        eprintln!("Failed to print contribute: {err}");
         return ExitCode::FAILURE;
       }
     }

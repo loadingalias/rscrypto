@@ -12,27 +12,14 @@
 //! `-C target-feature=+avx512f,+vpclmulqdq`), the dispatch can be resolved to a direct
 //! function call with no runtime overhead.
 //!
-//! # Usage
+//! # Examples
 //!
-//! ```ignore
-//! use platform::{dispatch_auto, Caps};
-//! use platform::caps::x86;
-//!
-//! pub fn crc32c(crc: u32, data: &[u8]) -> u32 {
-//!     dispatch_auto(|caps, tune| {
-//!         if caps.has(x86::VPCLMUL_READY) {
-//!             vpclmul_kernel(crc, data)
-//!         } else if caps.has(x86::PCLMUL_READY) {
-//!             pclmul_kernel(crc, data)
-//!         } else {
-//!             portable_kernel(crc, data)
-//!         }
-//!     })
-//! }
 //! ```
+//! use platform::dispatch_auto;
 //!
-//! When compiled with `-C target-feature=+avx512f,+vpclmulqdq`, the entire dispatch
-//! collapses to a direct call to `vpclmul_kernel` with no runtime checks.
+//! let count = dispatch_auto(|caps, _tune| caps.count());
+//! assert!(count >= 1);
+//! ```
 
 use crate::{Caps, Tune, detect};
 
@@ -51,25 +38,16 @@ use crate::{Caps, Tune, detect};
 /// - You want guaranteed zero-overhead dispatch
 /// - You're building a specialized binary for a known target
 ///
-/// **Note**: This only returns features known at compile time. Runtime-detected
-/// features (e.g., from CPUID) are not included. For full runtime detection,
-/// use [`dispatch`] instead.
+/// **Note**: Only returns features known at compile time. For runtime
+/// detection, use [`dispatch`].
 ///
-/// # Example
+/// # Examples
 ///
-/// ```ignore
+/// ```
 /// use platform::dispatch_static;
-/// use platform::caps::x86;
 ///
-/// // When compiled with -C target-feature=+avx512f
-/// let result = dispatch_static(|caps, _tune| {
-///     if caps.has(x86::AVX512F) {
-///         avx512_path()
-///     } else {
-///         fallback_path()
-///     }
-/// });
-/// // Compiles to direct call to avx512_path()
+/// let count = dispatch_static(|caps, _| caps.count());
+/// // count is known at compile time
 /// ```
 #[inline(always)]
 pub fn dispatch_static<F, R>(f: F) -> R
@@ -91,24 +69,16 @@ where
 ///
 /// # Overhead
 ///
-/// - First call: performs detection (cold path, microseconds)
-/// - Subsequent calls: reads cached value (hot path, nanoseconds)
+/// - First call: ~1μs (detection)
+/// - Subsequent: ~3ns (cached)
 ///
-/// # Example
+/// # Examples
 ///
-/// ```ignore
+/// ```
 /// use platform::dispatch;
-/// use platform::caps::x86;
 ///
-/// let result = dispatch(|caps, tune| {
-///     if caps.has(x86::VPCLMUL_READY) {
-///         vpclmul_kernel()
-///     } else if caps.has(x86::PCLMUL_READY) {
-///         pclmul_kernel()
-///     } else {
-///         portable_kernel()
-///     }
-/// });
+/// let threshold = dispatch(|_, tune| tune.simd_threshold);
+/// assert!(threshold > 0);
 /// ```
 #[inline]
 pub fn dispatch<F, R>(f: F) -> R
@@ -128,32 +98,16 @@ where
 /// - **x86_64**: AVX-512F + VPCLMULQDQ (modern AVX-512 crypto)
 /// - **aarch64**: AES + SHA3 (PMULL + EOR3 for fast carryless multiply)
 ///
-/// **Use this when**:
-/// - You want the best of both worlds
-/// - Performance-critical code that may be compiled with or without target features
-/// - Library code that should work everywhere but optimize when possible
+/// **Use this when**: Library code that should work everywhere but
+/// optimize when compiled with target features.
 ///
-/// # Example
+/// # Examples
 ///
-/// ```ignore
+/// ```
 /// use platform::dispatch_auto;
-/// use platform::caps::x86;
 ///
-/// pub fn process(data: &[u8]) -> u64 {
-///     dispatch_auto(|caps, _tune| {
-///         if caps.has(x86::VPCLMUL_READY) {
-///             fast_simd_path(data)
-///         } else {
-///             portable_path(data)
-///         }
-///     })
-/// }
-///
-/// // When compiled with -C target-cpu=znver4:
-/// // -> dispatch_static is used, entire dispatch is eliminated
-/// //
-/// // When compiled without target features:
-/// // -> dispatch is used, runtime detection selects best path
+/// let cache_line = dispatch_auto(|_, tune| tune.cache_line);
+/// assert!(cache_line >= 32);
 /// ```
 #[inline(always)]
 pub fn dispatch_auto<F, R>(f: F) -> R

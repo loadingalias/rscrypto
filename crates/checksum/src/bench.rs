@@ -4,21 +4,7 @@
 //! engine to directly benchmark specific kernels without going through the
 //! cached dispatch system.
 //!
-//! # Usage
-//!
-//! ```ignore
-//! use checksum::bench;
-//!
-//! // Get a kernel by name
-//! if let Some(kernel) = bench::get_crc64_xz_kernel("x86_64/vpclmul-4way") {
-//!     let result = (kernel.func)(!0u64, &data) ^ !0u64;
-//! }
-//!
-//! // List available kernels
-//! for kernel in bench::available_crc64_kernels() {
-//!     println!("{}", kernel);
-//! }
-//! ```
+//! Used by the `tune` crate to benchmark specific kernels.
 
 use alloc::vec::Vec;
 

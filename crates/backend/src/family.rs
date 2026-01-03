@@ -345,23 +345,7 @@ impl KernelFamily {
 ///
 /// # Design Rationale
 ///
-/// This type exists to avoid algorithm-specific booleans in policy structs.
-/// Instead of:
-/// ```ignore
-/// struct Crc32Policy {
-///   has_hwcrc: bool,
-///   has_fusion: bool,
-///   has_vpclmul: bool,
-///   has_avx512: bool,
-/// }
-/// ```
-///
-/// We have a single, uniform abstraction that works for any algorithm:
-/// ```ignore
-/// struct Crc32Policy {
-///   subfamily: KernelSubfamily,
-/// }
-/// ```
+/// Replaces algorithm-specific booleans with a uniform abstraction.
 ///
 /// # Algorithm Agnosticism
 ///

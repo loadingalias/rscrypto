@@ -11,15 +11,7 @@
 //! 3. **Streaming consistency**: Incremental updates produce the same result as one-shot
 //! 4. **Idempotent finalize**: `finalize()` can be called multiple times
 //!
-//! # Usage
-//!
-//! ```ignore
-//! use checksum::common::tests::CrcTestHarness;
-//! use checksum::Crc64Xz;
-//!
-//! // Run all property tests for CRC-64-XZ
-//! CrcTestHarness::<Crc64Xz>::run_all_tests();
-//! ```
+//! Used via [`define_crc_property_tests!`] macro in algorithm modules.
 
 use traits::{Checksum, ChecksumCombine};
 
@@ -238,13 +230,7 @@ where
 
 /// Helper macro to generate property tests for a CRC type.
 ///
-/// Creates a test module with standard property-based tests using proptest.
-///
-/// # Example
-///
-/// ```ignore
-/// define_crc_property_tests!(crc64_xz_tests, Crc64Xz);
-/// ```
+/// Creates a test module with proptest-based tests.
 #[macro_export]
 macro_rules! define_crc_property_tests {
   ($mod_name:ident, $crc_type:ty) => {

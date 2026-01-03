@@ -36,7 +36,7 @@
 //! | PMULL + EOR3 | CRC-64 | ~15 GB/s |
 //! | PMULL | CRC-64 | ~12 GB/s |
 //!
-//! # Example
+//! # Examples
 //!
 //! ```rust
 //! use checksum::{Checksum, ChecksumCombine, Crc32};

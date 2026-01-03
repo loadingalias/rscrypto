@@ -147,7 +147,7 @@ pub const fn select_streams(len: usize, max_streams: u8, fold_bytes: usize, stre
 /// - `dispatch_streams`: Dispatch to stream variant based on count
 /// - `dispatch_with_small`: Dispatch with small buffer handling
 ///
-/// # Example
+/// # Examples
 ///
 /// ```rust
 /// use checksum::dispatchers::Crc32Fn;

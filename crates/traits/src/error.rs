@@ -15,7 +15,7 @@ use core::fmt;
 /// This error provides no details about the failure. The underlying
 /// verification uses constant-time comparison.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```
 /// use traits::VerificationError;

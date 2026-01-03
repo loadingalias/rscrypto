@@ -1,64 +1,34 @@
-# rscrypto Cargo Configuration
-# ============================================================
-#
-# Canonical Target List (18 targets):
-#   Tier A: Primary Production (std, full SIMD)
-#   Tier B: Secondary Production (MUSL, static linking)
-#   Tier C: WASM
-#   Tier D: Enterprise/Exotic (std)
-#   Tier E: no_std Bare Metal Sentinels
-#
-# Performance Philosophy:
-# - Production: Runtime SIMD detection for portable binaries
-# - Benchmarks: Use target-cpu=native for compile-time dispatch
-# - Miri/Testing: Portable code via #[cfg(miri)] guards
-#
-# For maximum performance benchmarks, run with:
-#   RUSTFLAGS='-C target-cpu=native' cargo bench
-#   OR: just bench-native
-#
-# ============================================================
-# Tier A - Primary Production (std, full SIMD dispatch)
-# ============================================================
-
-# Linux x86_64 - Runtime SIMD detection via std::arch
+# Linux x86_64
 [target.x86_64-unknown-linux-gnu]
 
-# Linux ARM64 - LSE atomics for better concurrent performance
-# All modern ARM64 servers support ARMv8.1+ LSE instructions
+# Linux ARM64
 [target.aarch64-unknown-linux-gnu]
 rustflags = ["-C", "target-feature=+lse"]
 
-# Windows x86_64 - Runtime SIMD detection via std::arch
+# Windows x86_64
 [target.x86_64-pc-windows-msvc]
 
-# Windows ARM64 - LSE atomics
+# Windows ARM64
 [target.aarch64-pc-windows-msvc]
 rustflags = ["-C", "target-feature=+lse"]
 
-# macOS Apple Silicon - LSE atomics (all M-series support ARMv8.3+)
+# macOS Apple Silicon
 [target.aarch64-apple-darwin]
 rustflags = ["-C", "target-feature=+lse"]
 
-# ============================================================
-# Tier B - Secondary Production (MUSL, static linking)
-# ============================================================
-
-# Linux x86_64 MUSL - Static linking for containers
+# Tier B
+# Linux x86_64 MUSL
 [target.x86_64-unknown-linux-musl]
 
-# Linux ARM64 MUSL - Static linking + LSE atomics
+# Linux ARM64 MUSL
 [target.aarch64-unknown-linux-musl]
 rustflags = ["-C", "target-feature=+lse"]
 
-# ============================================================
 # Tier C - WASM
-# ============================================================
-
-# WASM - Browser/generic (table-based fallbacks)
+# WASM - Browser
 [target.wasm32-unknown-unknown]
 
-# WASM - WASI Preview 1 (server-side WASM)
+# WASM/WASI - Server
 [target.wasm32-wasip1]
 
 # WASM64 - Experimental (Memory64 / WASM 3.0)
@@ -66,10 +36,7 @@ rustflags = ["-C", "target-feature=+lse"]
 # See: https://doc.rust-lang.org/rustc/platform-support/wasm64-unknown-unknown.html
 [target.wasm64-unknown-unknown]
 
-# ============================================================
-# Tier D - Enterprise/Exotic (std available)
-# ============================================================
-
+# Tier D - Enterprise
 # IBM s390x (Z mainframes)
 [target.s390x-unknown-linux-gnu]
 
@@ -82,10 +49,7 @@ rustflags = ["-C", "target-feature=+lse"]
 # LoongArch 64-bit Linux
 [target.loongarch64-unknown-linux-gnu]
 
-# ============================================================
 # Tier E - no_std Bare Metal Sentinels
-# ============================================================
-
 # Cortex-M0/M0+ (minimal no_std sentinel - no FPU, no DSP)
 # If it compiles here, it compiles everywhere
 [target.thumbv6m-none-eabi]
@@ -100,10 +64,7 @@ rustflags = ["-C", "target-feature=+lse"]
 # x86_64 bare metal (kernels, bootloaders, hypervisors)
 [target.x86_64-unknown-none]
 
-# ============================================================
 # Build Configuration
-# ============================================================
-
 [build]
 rustdocflags = ["-D", "warnings"]
 

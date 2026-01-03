@@ -101,15 +101,13 @@ pub use tune::{Tune, TuneKind};
 
 /// Get detected CPU capabilities and tuning hints.
 ///
-/// This is the main entry point. Results are cached after first call.
+/// Results are cached after first call.
 ///
-/// # Example
+/// # Examples
 ///
-/// ```ignore
+/// ```
 /// let det = platform::get();
-/// if det.caps.has(platform::caps::x86::VPCLMUL_READY) {
-///     // Use AVX-512 VPCLMULQDQ kernel
-/// }
+/// assert!(det.caps.count() >= 1);
 /// ```
 #[inline]
 #[must_use]
@@ -147,26 +145,16 @@ pub fn arch() -> Arch {
 /// Set detection override.
 ///
 /// Call this **before** any call to [`get()`] to bypass runtime detection.
-/// This is useful for:
-/// - Bare metal environments without runtime detection support
-/// - Embedded systems where the CPU is known at deployment
-/// - Testing specific code paths
+/// Useful for bare-metal, embedded, or testing.
 ///
-/// # Example
+/// # Examples
 ///
-/// ```ignore
-/// use platform::{Detected, Caps, Tune, caps::x86, caps::Arch};
+/// ```
+/// use platform::Detected;
 ///
-/// // Force portable mode for testing
 /// platform::set_override(Some(Detected::portable()));
-///
-/// // Or set specific capabilities
-/// let det = Detected {
-///     caps: x86::VPCLMUL_READY,
-///     tune: Tune::ZEN5,
-///     arch: Arch::X86_64,
-/// };
-/// platform::set_override(Some(det));
+/// assert!(platform::has_override());
+/// platform::clear_override();
 /// ```
 #[inline]
 pub fn set_override(value: Option<Detected>) {
@@ -235,16 +223,13 @@ impl core::fmt::Debug for Description {
   }
 }
 
-/// Returns a human-readable summary of detected CPU capabilities and tuning.
+/// Returns a human-readable summary of detected CPU capabilities.
 ///
-/// Useful for logging, debugging, and diagnostics.
+/// # Examples
 ///
-/// # Example
-///
-/// ```ignore
-/// // Zero allocation - writes directly to stdout
-/// println!("{}", platform::describe());
-/// // Output: "Caps(x86_64, [sse3, ssse3, sse4.1, pclmulqdq, ...]) (Zen5)"
+/// ```
+/// let desc = platform::describe();
+/// assert!(!format!("{desc}").is_empty());
 /// ```
 #[inline]
 #[must_use]

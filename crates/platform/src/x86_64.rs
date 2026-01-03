@@ -335,15 +335,15 @@ impl CpuidSignature {
 /// With the `std` feature, results are cached in a `OnceLock`.
 /// Without `std`, CPUID is called each time (~100 cycles).
 ///
-/// # Example
+/// # Examples
 ///
-/// ```ignore
+/// ```no_run
+/// # #[cfg(all(target_arch = "x86_64", feature = "std"))]
+/// # fn example() {
 /// use platform::x86_64::detect_microarch;
-///
 /// let arch = detect_microarch();
-/// if arch.has_vpclmulqdq() {
-///     // Use AVX-512 carryless multiply path
-/// }
+/// println!("{arch:?}");
+/// # }
 /// ```
 #[cfg(feature = "std")]
 #[inline]

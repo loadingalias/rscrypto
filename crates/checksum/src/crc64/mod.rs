@@ -646,7 +646,7 @@ define_crc64_type! {
   /// For streaming many small chunks, consider using [`BufferedCrc64Xz`] which
   /// accumulates data internally until reaching the SIMD threshold.
   ///
-  /// # Example
+  /// # Examples
   ///
   /// ```rust
   /// use checksum::{Crc64Xz, Checksum};
@@ -692,7 +692,7 @@ define_crc64_type! {
   /// For streaming many small chunks, consider using [`BufferedCrc64Nvme`] which
   /// accumulates data internally until reaching the SIMD threshold.
   ///
-  /// # Example
+  /// # Examples
   ///
   /// ```rust
   /// use checksum::{Crc64Nvme, Checksum};
@@ -733,7 +733,7 @@ define_buffered_crc! {
   ///
   /// For large contiguous buffers, use [`Crc64Xz`] directly.
   ///
-  /// # Example
+  /// # Examples
   ///
   /// ```rust
   /// use checksum::{BufferedCrc64Xz, Checksum};
@@ -774,7 +774,7 @@ define_buffered_crc! {
   ///
   /// For large contiguous buffers, use [`Crc64Nvme`] directly.
   ///
-  /// # Example
+  /// # Examples
   ///
   /// ```rust
   /// use checksum::{BufferedCrc64Nvme, Checksum};

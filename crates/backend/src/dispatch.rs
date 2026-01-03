@@ -37,42 +37,7 @@ use platform::{Caps, Tune};
 /// ]
 /// ```
 ///
-/// # Example
-///
-/// ```ignore
-/// use backend::dispatch::{candidates, Candidate, select};
-/// use backend::caps::{Caps, x86};
-///
-/// fn select_crc32c() -> Selected<fn(u32, &[u8]) -> u32> {
-///     let caps = platform::caps();
-///     select(caps, candidates![
-///         "x86_64/vpclmul" => x86::VPCLMUL_READY => vpclmul_kernel,
-///         "x86_64/pclmul"  => x86::PCLMUL_READY  => pclmul_kernel,
-///         "portable"       => Caps::NONE         => portable_kernel,
-///     ])
-/// }
-/// ```
-///
-/// # Notes
-///
-/// - Trailing commas are optional
-/// - The last candidate should typically have `Caps::NONE` as a portable fallback
-/// - The macro expands to `&[Candidate::new(...), ...]`
-///
-/// # Type Inference
-///
-/// The macro coerces function items to function pointers using `as _`. This means
-/// type information must be recoverable from context. When using with [`select()`]
-/// directly, you'll need a type annotation on the result:
-///
-/// ```ignore
-/// // This works - type flows from the annotation
-/// let selected: Selected<Crc32Fn> = select(caps, candidates![...]);
-///
-/// // This also works - type flows from the variable
-/// let list: &[Candidate<Crc32Fn>] = candidates![...];
-/// let selected = select(caps, list);
-/// ```
+/// See `checksum` crate for usage examples.
 #[macro_export]
 macro_rules! candidates {
   // Match one or more: name => caps => func, with optional trailing comma
@@ -112,22 +77,7 @@ pub use candidates;
 /// ]
 /// ```
 ///
-/// # Example
-///
-/// ```ignore
-/// use backend::dispatch::{Selected, select_tuned, tuned_candidates};
-/// use platform::caps::{Caps, x86};
-///
-/// type CrcFn = fn(u64, &[u8]) -> u64;
-///
-/// fn select_crc(caps: Caps, tune: &platform::Tune) -> Selected<CrcFn> {
-///   select_tuned(caps, tune, tuned_candidates![
-///     "x86_64/vpclmul" => x86::VPCLMUL_READY, where |t| t.effective_simd_width >= 512 => vpclmul_kernel,
-///     "x86_64/pclmul"  => x86::PCLMUL_READY => pclmul_kernel,
-///     "portable"       => Caps::NONE => portable_kernel,
-///   ])
-/// }
-/// ```
+/// See `checksum` crate for usage examples.
 #[macro_export]
 macro_rules! tuned_candidates {
   [ $( $name:literal => $caps:expr $(, where $pred:expr)? => $func:expr ),+ $(,)? ] => {
@@ -276,18 +226,6 @@ pub fn select_tuned<F: Copy>(caps: Caps, tune: &Tune, candidates: &[TunedCandida
 /// This macro is designed to be used by algorithm crates to define their own
 /// dispatchers. The backend crate provides the infrastructure; algorithm crates
 /// (checksum, hashes, aead, etc.) define the concrete dispatcher types.
-///
-/// # Usage
-///
-/// ```ignore
-/// use backend::define_dispatcher;
-///
-/// pub type Crc32Fn = fn(u32, &[u8]) -> u32;
-/// define_dispatcher!(Crc32Dispatcher, Crc32Fn, u32);
-///
-/// pub type HashFn = fn(&mut [u8; 32], &[u8]);
-/// define_dispatcher!(HashDispatcher, HashFn, [u8; 32]);
-/// ```
 ///
 /// # Generated API
 ///

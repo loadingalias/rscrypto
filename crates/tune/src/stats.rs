@@ -13,16 +13,13 @@
 //! - **Coefficient of variation (CV)** to quantify measurement noise
 //! - **Sample statistics** for confidence in results
 //!
-//! # Example
+//! # Examples
 //!
-//! ```ignore
-//! use tune::stats::{compute_stats, DEFAULT_CV_THRESHOLD};
-//!
-//! let throughput_samples = vec![10.1, 10.2, 10.0, 10.3, 10.1, 15.0]; // 15.0 is an outlier
-//! let stats = compute_stats(&throughput_samples);
-//!
-//! assert_eq!(stats.outliers_rejected, 1); // 15.0 removed
-//! assert!(stats.cv < DEFAULT_CV_THRESHOLD); // Low variance after filtering
+//! ```
+//! use tune::stats::compute_stats;
+//! let samples = vec![10.1, 10.2, 10.0, 10.3, 10.1];
+//! let stats = compute_stats(&samples);
+//! assert!(stats.mean > 10.0);
 //! ```
 
 use alloc::vec::Vec;

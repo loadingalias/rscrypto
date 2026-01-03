@@ -10,20 +10,7 @@
 //! 3. **no_std compatible**: All types are `Copy` and heap-free
 //! 4. **Algorithm-agnostic**: Same policy structure works for CRC/hash/AEAD
 //!
-//! # Usage
-//!
-//! ```ignore
-//! // Compute policy once at initialization
-//! let policy = SelectionPolicy::from_platform(caps, &tune);
-//!
-//! // Per-call dispatch (fast path)
-//! if policy.should_use_simd(len) {
-//!     let streams = policy.streams_for_len(len);
-//!     simd_kernel(streams, data)
-//! } else {
-//!     portable_kernel(data)
-//! }
-//! ```
+//! See `checksum` crate for usage examples.
 
 use platform::{Caps, Tune};
 

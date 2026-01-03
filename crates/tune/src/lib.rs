@@ -15,15 +15,7 @@
 //!
 //! # Quick Start
 //!
-//! ```ignore
-//! use tune::{TuneEngine, BenchRunner};
-//!
-//! let mut engine = TuneEngine::new();
-//! engine.add(Box::new(MyCrc64Tunable::new()));
-//!
-//! let results = engine.run()?;
-//! println!("{}", results.summary());
-//! ```
+//! Run `just tune` to benchmark all algorithms and print optimal settings.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
@@ -308,38 +300,8 @@ impl From<std::io::Error> for TuneError {
 
 /// Trait for algorithms that can be tuned.
 ///
-/// Implement this trait to enable an algorithm to be benchmarked and tuned
-/// by the unified tuning engine.
-///
-/// # Example
-///
-/// ```ignore
-/// struct MyCrc64Tunable {
-///     forced_kernel: Option<String>,
-///     forced_streams: Option<u8>,
-/// }
-///
-/// impl Tunable for MyCrc64Tunable {
-///     fn name(&self) -> &'static str { "crc64-xz" }
-///
-///     fn available_kernels(&self, caps: &Caps) -> Vec<KernelSpec> {
-///         // Return kernels available on this platform
-///     }
-///
-///     fn force_kernel(&mut self, name: &str) -> Result<(), TuneError> {
-///         self.forced_kernel = Some(name.to_owned());
-///         Ok(())
-///     }
-///
-///     fn benchmark(&self, data: &[u8], iterations: usize) -> BenchResult {
-///         // Run the algorithm and measure throughput
-///     }
-///
-///     fn tunable_params(&self) -> &[TunableParam] {
-///         // Return parameters that can be tuned
-///     }
-/// }
-/// ```
+/// Implement this trait to enable benchmarking by the tuning engine.
+/// See `crates/tune/src/crc64.rs` for reference implementations.
 #[cfg(feature = "std")]
 pub trait Tunable: Send + Sync {
   /// Algorithm name (e.g., "crc64-xz", "blake3", "aes-gcm-256").

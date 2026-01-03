@@ -19,6 +19,9 @@ pub enum OutputFormat {
 
   /// Tab-separated values.
   Tsv,
+
+  /// Markdown formatted for GitHub issue submission.
+  Contribute,
 }
 
 impl OutputFormat {
@@ -30,6 +33,7 @@ impl OutputFormat {
       "env" | "shell" | "export" => Some(Self::Env),
       "json" => Some(Self::Json),
       "tsv" | "tab" => Some(Self::Tsv),
+      "contribute" | "pr" | "issue" | "markdown" | "md" => Some(Self::Contribute),
       _ => None,
     }
   }
@@ -54,6 +58,7 @@ impl<W: Write> Report<W> {
       OutputFormat::Env => self.write_env(results),
       OutputFormat::Json => self.write_json(results),
       OutputFormat::Tsv => self.write_tsv(results),
+      OutputFormat::Contribute => self.write_contribute(results),
     }
   }
 
@@ -252,6 +257,62 @@ impl<W: Write> Report<W> {
 
     Ok(())
   }
+
+  /// Write markdown format for GitHub issue contribution.
+  fn write_contribute(&mut self, results: &TuneResults) -> io::Result<()> {
+    writeln!(self.writer)?;
+    writeln!(self.writer, "## Tuning Results")?;
+    writeln!(self.writer)?;
+    writeln!(self.writer, "**Platform:** `{}`", results.platform.description)?;
+    writeln!(self.writer, "**Tune preset:** `{:?}`", results.platform.tune_kind)?;
+    writeln!(self.writer, "**Timestamp:** {}", results.timestamp)?;
+    writeln!(self.writer)?;
+
+    // Compact table
+    writeln!(self.writer, "| Algorithm | Best Kernel | Streams | Peak GiB/s |")?;
+    writeln!(self.writer, "|-----------|-------------|---------|------------|")?;
+    for algo in &results.algorithms {
+      writeln!(
+        self.writer,
+        "| {} | `{}` | {} | {:.1} |",
+        algo.name, algo.best_kernel, algo.recommended_streams, algo.peak_throughput_gib_s
+      )?;
+    }
+    writeln!(self.writer)?;
+
+    // Thresholds in collapsible section
+    writeln!(self.writer, "<details>")?;
+    writeln!(self.writer, "<summary>Detailed thresholds (click to expand)</summary>")?;
+    writeln!(self.writer)?;
+    writeln!(self.writer, "```")?;
+    for algo in &results.algorithms {
+      writeln!(self.writer, "# {}", algo.name)?;
+      writeln!(self.writer, "{}_STREAMS={}", algo.env_prefix, algo.recommended_streams)?;
+      for (suffix, value) in &algo.thresholds {
+        if *value == usize::MAX {
+          writeln!(self.writer, "{}=usize::MAX", suffix)?;
+        } else {
+          writeln!(self.writer, "{}={}", suffix, value)?;
+        }
+      }
+      writeln!(self.writer)?;
+    }
+    writeln!(self.writer, "```")?;
+    writeln!(self.writer)?;
+    writeln!(self.writer, "</details>")?;
+    writeln!(self.writer)?;
+
+    // Instructions
+    writeln!(self.writer, "---")?;
+    writeln!(self.writer)?;
+    writeln!(self.writer, "Copy everything above this line into a GitHub issue at:")?;
+    writeln!(
+      self.writer,
+      "https://github.com/anthropics/rscrypto/issues/new?template=tuning-results.md"
+    )?;
+
+    Ok(())
+  }
 }
 
 /// Escape a string for JSON output.
@@ -288,5 +349,12 @@ pub fn print_json(results: &TuneResults) -> io::Result<()> {
 pub fn print_tsv(results: &TuneResults) -> io::Result<()> {
   let stdout = io::stdout();
   let mut report = Report::new(stdout.lock(), OutputFormat::Tsv);
+  report.write(results)
+}
+
+/// Print contribution-ready markdown to stdout.
+pub fn print_contribute(results: &TuneResults) -> io::Result<()> {
+  let stdout = io::stdout();
+  let mut report = Report::new(stdout.lock(), OutputFormat::Contribute);
   report.write(results)
 }

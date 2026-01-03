@@ -15,16 +15,12 @@
 //! 1. Detected microarchitecture (x86_64: family/model, aarch64: feature combo)
 //! 2. Known performance characteristics from benchmarks
 //!
-//! # Usage
+//! # Examples
 //!
-//! ```ignore
+//! ```
 //! let tune = platform::tune();
-//!
-//! if data.len() < tune.simd_threshold {
-//!     // Use scalar/small-buffer handler
-//! } else {
-//!     // Use SIMD kernel
-//! }
+//! assert!(tune.simd_threshold > 0);
+//! assert!(tune.cache_line >= 32);
 //! ```
 
 // ─────────────────────────────────────────────────────────────────────────────

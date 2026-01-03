@@ -16,18 +16,13 @@
 //! - Bits 128-191: RISC-V features
 //! - Bits 192-255: WebAssembly and other architectures
 //!
-//! # Usage
+//! # Examples
 //!
-//! ```ignore
-//! use platform::{caps, Caps};
-//! use platform::caps::x86;
+//! ```
+//! use platform::Caps;
 //!
-//! let c = caps();
-//! if c.has(x86::VPCLMUL_READY) {
-//!     // Use AVX-512 VPCLMULQDQ path
-//! } else if c.has(x86::PCLMUL_READY) {
-//!     // Use PCLMULQDQ path
-//! }
+//! let caps = platform::caps();
+//! assert!(caps.has(Caps::NONE)); // NONE is always present
 //! ```
 
 // alloc is only needed for tests (feature_names iteration with Vec)
@@ -40,22 +35,16 @@ extern crate alloc;
 
 /// CPU capabilities: a 256-bit feature bitset.
 ///
-/// This is the core type for capability-based dispatch. Use [`has()`](Caps::has)
-/// to check if required features are available.
+/// Use [`has()`](Caps::has) to check if required features are available.
+/// `Caps` is `Copy`, `Send`, and `Sync`.
 ///
-/// # Thread Safety
+/// # Examples
 ///
-/// `Caps` is `Copy`, `Send`, and `Sync`. It can be freely shared across threads.
-///
-/// # Example
-///
-/// ```ignore
-/// use platform::caps::{Caps, x86};
+/// ```
+/// use platform::Caps;
 ///
 /// let caps = platform::caps();
-/// if caps.has(x86::VPCLMUL_READY) {
-///     // Use VPCLMULQDQ kernel
-/// }
+/// assert!(caps.count() >= 1);
 /// ```
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
 #[repr(transparent)]
@@ -102,14 +91,12 @@ impl Caps {
 
   /// Check if all features in `required` are present.
   ///
-  /// This is the core dispatch check, marked `#[inline(always)]` for zero overhead.
+  /// # Examples
   ///
-  /// # Example
-  ///
-  /// ```ignore
-  /// if caps.has(x86::VPCLMUL_READY) {
-  ///     // VPCLMULQDQ + AVX512F + AVX512VL + AVX512BW are all available
-  /// }
+  /// ```
+  /// use platform::Caps;
+  /// let caps = platform::caps();
+  /// assert!(caps.has(Caps::NONE));
   /// ```
   #[inline(always)]
   #[must_use]

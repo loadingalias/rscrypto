@@ -12,21 +12,7 @@
 //! 3. Applies outlier rejection to filter system noise
 //! 4. Computes CV to validate measurement quality
 //!
-//! # Example
-//!
-//! ```ignore
-//! use tune::sampler::{Sampler, SamplerConfig};
-//!
-//! let config = SamplerConfig::default();
-//! let result = Sampler::new(&config).run(
-//!     data,
-//!     |buf| my_kernel(buf),  // Closure that runs one iteration
-//! );
-//!
-//! println!("Throughput: {:.2} GiB/s (CV: {:.1}%)",
-//!     result.throughput_gib_s,
-//!     result.cv * 100.0);
-//! ```
+//! Used internally by the tuning engine. See `rscrypto-tune` binary for usage.
 
 use alloc::vec::Vec;
 use core::time::Duration;
