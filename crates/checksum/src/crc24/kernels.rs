@@ -61,6 +61,8 @@ pub mod x86_64 {
 
   /// PCLMUL kernel name (SSSE3 + PCLMULQDQ).
   pub const PCLMUL: &str = "x86_64/pclmul";
+  /// PCLMUL small-buffer kernel name.
+  pub const PCLMUL_SMALL: &str = "x86_64/pclmul-small";
   /// PCLMUL kernel names: [1-way, 2-way, 4-way, 7-way, 8-way].
   pub const PCLMUL_NAMES: &[&str] = &[
     "x86_64/pclmul",
@@ -91,6 +93,10 @@ pub mod x86_64 {
     arch::crc24_openpgp_pclmul_8way_safe,
   ];
 
+  /// OpenPGP PCLMUL small-buffer kernel.
+  #[allow(dead_code)] // Used by bench + policy dispatch.
+  pub const OPENPGP_PCLMUL_SMALL_KERNEL: Crc24Fn = arch::crc24_openpgp_pclmul_small_safe;
+
   /// OpenPGP VPCLMUL kernel.
   #[allow(dead_code)] // Used by bench + policy dispatch.
   pub const OPENPGP_VPCLMUL: [Crc24Fn; 5] = [
@@ -109,6 +115,8 @@ pub mod aarch64 {
 
   /// PMULL kernel name (NEON carryless multiply).
   pub const PMULL: &str = "aarch64/pmull";
+  /// PMULL small-buffer kernel name.
+  pub const PMULL_SMALL: &str = "aarch64/pmull-small";
   /// PMULL kernel names: [1-way, 2-way, 3-way].
   pub const PMULL_NAMES: &[&str] = &["aarch64/pmull", "aarch64/pmull-2way", "aarch64/pmull-3way"];
 
@@ -121,6 +129,10 @@ pub mod aarch64 {
     arch::crc24_openpgp_pmull_3way_safe, // dup for index consistency
     arch::crc24_openpgp_pmull_3way_safe, // dup for index consistency
   ];
+
+  /// OpenPGP PMULL small-buffer kernel.
+  #[allow(dead_code)] // Used by bench + policy dispatch.
+  pub const OPENPGP_PMULL_SMALL_KERNEL: Crc24Fn = arch::crc24_openpgp_pmull_small_safe;
 }
 
 #[cfg(target_arch = "powerpc64")]

@@ -191,6 +191,7 @@ fn run_x86_64_kernels_ccitt(data: &[u8], results: &mut alloc::vec::Vec<KernelRes
     for (&name, &func) in PCLMUL_NAMES.iter().zip(CCITT_PCLMUL.iter()) {
       run_single_kernel_ccitt(data, func, name, results);
     }
+    run_single_kernel_ccitt(data, CCITT_PCLMUL_SMALL_KERNEL, PCLMUL_SMALL, results);
   }
 
   // VPCLMUL kernel
@@ -211,6 +212,7 @@ fn run_x86_64_kernels_ibm(data: &[u8], results: &mut alloc::vec::Vec<KernelResul
     for (&name, &func) in PCLMUL_NAMES.iter().zip(IBM_PCLMUL.iter()) {
       run_single_kernel_ibm(data, func, name, results);
     }
+    run_single_kernel_ibm(data, IBM_PCLMUL_SMALL_KERNEL, PCLMUL_SMALL, results);
   }
 
   // VPCLMUL kernel
@@ -230,6 +232,7 @@ fn run_aarch64_kernels_ccitt(data: &[u8], results: &mut alloc::vec::Vec<KernelRe
     for (&name, &func) in PMULL_NAMES.iter().zip(CCITT_PMULL.iter()).take(3) {
       run_single_kernel_ccitt(data, func, name, results);
     }
+    run_single_kernel_ccitt(data, CCITT_PMULL_SMALL_KERNEL, PMULL_SMALL, results);
   }
 }
 
@@ -242,6 +245,7 @@ fn run_aarch64_kernels_ibm(data: &[u8], results: &mut alloc::vec::Vec<KernelResu
     for (&name, &func) in PMULL_NAMES.iter().zip(IBM_PMULL.iter()).take(3) {
       run_single_kernel_ibm(data, func, name, results);
     }
+    run_single_kernel_ibm(data, IBM_PMULL_SMALL_KERNEL, PMULL_SMALL, results);
   }
 }
 

@@ -477,6 +477,21 @@ pub fn crc24_openpgp_pmull_safe(crc: u32, data: &[u8]) -> u32 {
   from_reflected_state(state)
 }
 
+/// CRC-24/OPENPGP PMULL small-buffer kernel.
+///
+/// Optimized for inputs smaller than a folding block (128 bytes).
+///
+/// # Safety
+///
+/// Dispatcher verifies PMULL before selecting this kernel.
+#[inline]
+pub fn crc24_openpgp_pmull_small_safe(crc: u32, data: &[u8]) -> u32 {
+  let mut state = to_reflected_state(crc);
+  // SAFETY: Dispatcher verifies PMULL before selecting this kernel.
+  state = unsafe { crc24_width32_pmull_small(state, data, &CRC24_OPENPGP_KEYS_REFLECTED) };
+  from_reflected_state(state)
+}
+
 /// CRC-24/OPENPGP PMULL kernel (2-way striping).
 ///
 /// # Safety

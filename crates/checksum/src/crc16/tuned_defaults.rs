@@ -19,10 +19,36 @@ pub struct Crc16TunedDefaults {
 #[rustfmt::skip]
 pub const CRC16_CCITT_TUNED_DEFAULTS: &[(TuneKind, Crc16TunedDefaults)] = &[
   // BEGIN GENERATED (rscrypto-tune)
-  // Zen4: pclmul is fastest; use 64-byte threshold for CLMUL dispatch.
-  (TuneKind::Zen4, Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 1, min_bytes_per_lane: None }),
-  // Apple M1-M3: pmull is fastest; 3 streams on large buffers.
-  (TuneKind::AppleM1M3, Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 3, min_bytes_per_lane: Some(2730) }),
+  // Zen4: VPCLMUL is fastest; switch at 512 bytes, prefer 2 streams on large buffers.
+  (TuneKind::Zen4,  Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: Some(512), streams: 2, min_bytes_per_lane: Some(32) }),
+  // Zen5 / Zen5c: extrapolate from Zen4 (same instruction set + wide CLMUL).
+  (TuneKind::Zen5,  Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: Some(512), streams: 2, min_bytes_per_lane: Some(32) }),
+  (TuneKind::Zen5c, Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: Some(512), streams: 2, min_bytes_per_lane: Some(32) }),
+
+  // Intel baseline: VPCLMUL has a large warmup cost; delay wide tier.
+  // These are conservative placeholders until rscrypto-tune results land.
+  (TuneKind::IntelSpr, Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: Some(2_048), streams: 3, min_bytes_per_lane: None }),
+  (TuneKind::IntelGnr, Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: Some(2_048), streams: 4, min_bytes_per_lane: None }),
+  // Ice Lake prefers 256-bit operations; disable VPCLMUL selection by default.
+  (TuneKind::IntelIcl, Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: Some(usize::MAX), streams: 3, min_bytes_per_lane: None }),
+
+  // Apple M1-M3: PMULL is fastest; prefer 2 streams, 32B/lane minimum.
+  (TuneKind::AppleM1M3, Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 2, min_bytes_per_lane: Some(32) }),
+  // Apple M4/M5: extrapolate from Apple M1-M3 (same PMULL model + cache behavior class).
+  (TuneKind::AppleM4,   Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 2, min_bytes_per_lane: Some(32) }),
+  (TuneKind::AppleM5,   Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 2, min_bytes_per_lane: Some(32) }),
+
+  // Graviton/Neoverse class: PMULL is fastest; conservative single-stream default.
+  (TuneKind::Graviton2,  Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 1, min_bytes_per_lane: None }),
+  (TuneKind::Graviton3,  Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 1, min_bytes_per_lane: None }),
+  (TuneKind::Graviton4,  Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 1, min_bytes_per_lane: None }),
+  (TuneKind::Graviton5,  Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 1, min_bytes_per_lane: None }),
+  (TuneKind::NeoverseN2, Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 1, min_bytes_per_lane: None }),
+  (TuneKind::NeoverseN3, Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 1, min_bytes_per_lane: None }),
+  (TuneKind::NeoverseV3, Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 1, min_bytes_per_lane: None }),
+  (TuneKind::NvidiaGrace, Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 1, min_bytes_per_lane: None }),
+  (TuneKind::AmpereAltra, Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 1, min_bytes_per_lane: None }),
+  (TuneKind::Aarch64Pmull, Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 1, min_bytes_per_lane: None }),
   // END GENERATED (rscrypto-tune)
 ];
 
@@ -37,10 +63,36 @@ pub fn for_tune_kind_ccitt(kind: TuneKind) -> Option<Crc16TunedDefaults> {
 #[rustfmt::skip]
 pub const CRC16_IBM_TUNED_DEFAULTS: &[(TuneKind, Crc16TunedDefaults)] = &[
   // BEGIN GENERATED (rscrypto-tune)
-  // Zen4: pclmul is fastest; use 64-byte threshold for CLMUL dispatch.
-  (TuneKind::Zen4, Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 1, min_bytes_per_lane: None }),
-  // Apple M1-M3: pmull is fastest; 3 streams on large buffers.
+  // Zen4: VPCLMUL is fastest; use it immediately, prefer 4 streams on large buffers.
+  (TuneKind::Zen4,  Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: Some(64), streams: 4, min_bytes_per_lane: Some(128) }),
+  // Zen5 / Zen5c: extrapolate from Zen4 (same instruction set + wide CLMUL).
+  (TuneKind::Zen5,  Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: Some(64), streams: 4, min_bytes_per_lane: Some(128) }),
+  (TuneKind::Zen5c, Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: Some(64), streams: 4, min_bytes_per_lane: Some(128) }),
+
+  // Intel baseline: VPCLMUL has a large warmup cost; delay wide tier.
+  // These are conservative placeholders until rscrypto-tune results land.
+  (TuneKind::IntelSpr, Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: Some(2_048), streams: 3, min_bytes_per_lane: None }),
+  (TuneKind::IntelGnr, Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: Some(2_048), streams: 4, min_bytes_per_lane: None }),
+  // Ice Lake prefers 256-bit operations; disable VPCLMUL selection by default.
+  (TuneKind::IntelIcl, Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: Some(usize::MAX), streams: 3, min_bytes_per_lane: None }),
+
+  // Apple M1-M3: PMULL is fastest; prefer 3 streams, large per-lane minimum.
   (TuneKind::AppleM1M3, Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 3, min_bytes_per_lane: Some(682) }),
+  // Apple M4/M5: extrapolate from Apple M1-M3.
+  (TuneKind::AppleM4,   Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 3, min_bytes_per_lane: Some(682) }),
+  (TuneKind::AppleM5,   Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 3, min_bytes_per_lane: Some(682) }),
+
+  // Graviton/Neoverse class: PMULL is fastest; conservative single-stream default.
+  (TuneKind::Graviton2,  Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 1, min_bytes_per_lane: None }),
+  (TuneKind::Graviton3,  Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 1, min_bytes_per_lane: None }),
+  (TuneKind::Graviton4,  Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 1, min_bytes_per_lane: None }),
+  (TuneKind::Graviton5,  Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 1, min_bytes_per_lane: None }),
+  (TuneKind::NeoverseN2, Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 1, min_bytes_per_lane: None }),
+  (TuneKind::NeoverseN3, Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 1, min_bytes_per_lane: None }),
+  (TuneKind::NeoverseV3, Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 1, min_bytes_per_lane: None }),
+  (TuneKind::NvidiaGrace, Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 1, min_bytes_per_lane: None }),
+  (TuneKind::AmpereAltra, Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 1, min_bytes_per_lane: None }),
+  (TuneKind::Aarch64Pmull, Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 1, min_bytes_per_lane: None }),
   // END GENERATED (rscrypto-tune)
 ];
 
@@ -50,4 +102,56 @@ pub fn for_tune_kind_ibm(kind: TuneKind) -> Option<Crc16TunedDefaults> {
   CRC16_IBM_TUNED_DEFAULTS
     .iter()
     .find_map(|(k, v)| if *k == kind { Some(*v) } else { None })
+}
+
+#[cfg(test)]
+mod invariants {
+  use super::*;
+
+  #[test]
+  fn crc16_tuned_defaults_includes_intel_presets() {
+    assert!(for_tune_kind_ccitt(TuneKind::IntelSpr).is_some());
+    assert!(for_tune_kind_ccitt(TuneKind::IntelGnr).is_some());
+    assert!(for_tune_kind_ccitt(TuneKind::IntelIcl).is_some());
+    assert!(for_tune_kind_ibm(TuneKind::IntelSpr).is_some());
+    assert!(for_tune_kind_ibm(TuneKind::IntelGnr).is_some());
+    assert!(for_tune_kind_ibm(TuneKind::IntelIcl).is_some());
+  }
+
+  fn assert_unique(table: &[(TuneKind, Crc16TunedDefaults)]) {
+    use std::collections::HashSet;
+    let mut seen = HashSet::new();
+    for (kind, _) in table {
+      assert!(seen.insert(*kind), "duplicate TuneKind entry: {kind:?}");
+    }
+  }
+
+  fn assert_defaults(d: Crc16TunedDefaults) {
+    assert!(d.slice4_to_slice8 >= 1);
+    assert!(d.portable_to_clmul >= 1);
+    assert!(d.slice4_to_slice8 <= d.portable_to_clmul);
+    assert!((1..=16).contains(&d.streams));
+    if let Some(v) = d.pclmul_to_vpclmul {
+      assert!(v >= d.portable_to_clmul);
+    }
+    if let Some(v) = d.min_bytes_per_lane {
+      assert!(v >= 1);
+    }
+  }
+
+  #[test]
+  fn ccitt_tuned_defaults_invariants() {
+    assert_unique(CRC16_CCITT_TUNED_DEFAULTS);
+    for (_, d) in CRC16_CCITT_TUNED_DEFAULTS {
+      assert_defaults(*d);
+    }
+  }
+
+  #[test]
+  fn ibm_tuned_defaults_invariants() {
+    assert_unique(CRC16_IBM_TUNED_DEFAULTS);
+    for (_, d) in CRC16_IBM_TUNED_DEFAULTS {
+      assert_defaults(*d);
+    }
+  }
 }

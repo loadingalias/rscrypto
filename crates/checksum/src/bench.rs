@@ -97,6 +97,7 @@ pub fn available_crc16_kernels() -> Vec<&'static str> {
 
     if caps.has(platform::caps::x86::PCLMUL_READY) {
       kernels.extend_from_slice(x86_64::PCLMUL_NAMES);
+      kernels.push(x86_64::PCLMUL_SMALL);
     }
     if caps.has(platform::caps::x86::VPCLMUL_READY) {
       kernels.extend_from_slice(x86_64::VPCLMUL_NAMES);
@@ -110,6 +111,7 @@ pub fn available_crc16_kernels() -> Vec<&'static str> {
 
     if caps.has(platform::caps::aarch64::PMULL_READY) {
       kernels.extend_from_slice(aarch64::PMULL_NAMES);
+      kernels.push(aarch64::PMULL_SMALL);
     }
   }
 
@@ -295,6 +297,12 @@ fn get_x86_64_crc16_ccitt_kernel(name: &str) -> Option<Crc16Kernel> {
   let caps = platform::caps();
 
   if caps.has(platform::caps::x86::PCLMUL_READY) {
+    if name == x86_64::PCLMUL_SMALL {
+      return Some(Crc16Kernel {
+        name: x86_64::PCLMUL_SMALL,
+        func: x86_64::CCITT_PCLMUL_SMALL_KERNEL,
+      });
+    }
     for (&k, &func) in x86_64::PCLMUL_NAMES.iter().zip(x86_64::CCITT_PCLMUL.iter()) {
       if name == k {
         return Some(Crc16Kernel { name: k, func });
@@ -319,6 +327,12 @@ fn get_x86_64_crc16_ibm_kernel(name: &str) -> Option<Crc16Kernel> {
   let caps = platform::caps();
 
   if caps.has(platform::caps::x86::PCLMUL_READY) {
+    if name == x86_64::PCLMUL_SMALL {
+      return Some(Crc16Kernel {
+        name: x86_64::PCLMUL_SMALL,
+        func: x86_64::IBM_PCLMUL_SMALL_KERNEL,
+      });
+    }
     for (&k, &func) in x86_64::PCLMUL_NAMES.iter().zip(x86_64::IBM_PCLMUL.iter()) {
       if name == k {
         return Some(Crc16Kernel { name: k, func });
@@ -343,6 +357,12 @@ fn get_aarch64_crc16_ccitt_kernel(name: &str) -> Option<Crc16Kernel> {
   let caps = platform::caps();
 
   if caps.has(platform::caps::aarch64::PMULL_READY) {
+    if name == aarch64::PMULL_SMALL {
+      return Some(Crc16Kernel {
+        name: aarch64::PMULL_SMALL,
+        func: aarch64::CCITT_PMULL_SMALL_KERNEL,
+      });
+    }
     for (&k, &func) in aarch64::PMULL_NAMES.iter().zip(aarch64::CCITT_PMULL.iter()) {
       if name == k {
         return Some(Crc16Kernel { name: k, func });
@@ -359,6 +379,12 @@ fn get_aarch64_crc16_ibm_kernel(name: &str) -> Option<Crc16Kernel> {
   let caps = platform::caps();
 
   if caps.has(platform::caps::aarch64::PMULL_READY) {
+    if name == aarch64::PMULL_SMALL {
+      return Some(Crc16Kernel {
+        name: aarch64::PMULL_SMALL,
+        func: aarch64::IBM_PMULL_SMALL_KERNEL,
+      });
+    }
     for (&k, &func) in aarch64::PMULL_NAMES.iter().zip(aarch64::IBM_PMULL.iter()) {
       if name == k {
         return Some(Crc16Kernel { name: k, func });
@@ -506,6 +532,7 @@ pub fn available_crc24_kernels() -> Vec<&'static str> {
 
     if caps.has(platform::caps::x86::PCLMUL_READY) {
       kernels.extend_from_slice(x86_64::PCLMUL_NAMES);
+      kernels.push(x86_64::PCLMUL_SMALL);
     }
     if caps.has(platform::caps::x86::VPCLMUL_READY) {
       kernels.extend_from_slice(x86_64::VPCLMUL_NAMES);
@@ -519,6 +546,7 @@ pub fn available_crc24_kernels() -> Vec<&'static str> {
 
     if caps.has(platform::caps::aarch64::PMULL_READY) {
       kernels.extend_from_slice(aarch64::PMULL_NAMES);
+      kernels.push(aarch64::PMULL_SMALL);
     }
   }
 
@@ -596,6 +624,12 @@ pub fn get_crc24_openpgp_kernel(name: &str) -> Option<Crc24Kernel> {
     let caps = platform::caps();
 
     if caps.has(platform::caps::x86::PCLMUL_READY) {
+      if name == x86_64::PCLMUL_SMALL {
+        return Some(Crc24Kernel {
+          name: x86_64::PCLMUL_SMALL,
+          func: x86_64::OPENPGP_PCLMUL_SMALL_KERNEL,
+        });
+      }
       for (&k, &func) in x86_64::PCLMUL_NAMES.iter().zip(x86_64::OPENPGP_PCLMUL.iter()) {
         if name == k {
           return Some(Crc24Kernel { name: k, func });
@@ -618,6 +652,12 @@ pub fn get_crc24_openpgp_kernel(name: &str) -> Option<Crc24Kernel> {
     let caps = platform::caps();
 
     if caps.has(platform::caps::aarch64::PMULL_READY) {
+      if name == aarch64::PMULL_SMALL {
+        return Some(Crc24Kernel {
+          name: aarch64::PMULL_SMALL,
+          func: aarch64::OPENPGP_PMULL_SMALL_KERNEL,
+        });
+      }
       for (&k, &func) in aarch64::PMULL_NAMES.iter().zip(aarch64::OPENPGP_PMULL.iter()) {
         if name == k {
           return Some(Crc24Kernel { name: k, func });

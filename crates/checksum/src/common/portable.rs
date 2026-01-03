@@ -31,6 +31,7 @@
 // - Table indices use `& 0xFF` (0..255) or explicit byte extraction
 // Clippy cannot prove this in const fn contexts, but bounds are statically guaranteed.
 #![allow(clippy::indexing_slicing)]
+#![cfg_attr(all(target_arch = "wasm32", target_feature = "simd128"), allow(unsafe_code))]
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Small Input Helpers
@@ -458,7 +459,7 @@ pub fn slice8_32(mut crc: u32, data: &[u8], tables: &[[u32; 256]; 8]) -> u32 {
 /// * `data` - Input data
 /// * `tables` - 16 lookup tables (256 entries each)
 #[inline]
-pub fn slice16_32(mut crc: u32, data: &[u8], tables: &[[u32; 256]; 16]) -> u32 {
+fn slice16_32_scalar(mut crc: u32, data: &[u8], tables: &[[u32; 256]; 16]) -> u32 {
   let (chunks4, remainder) = data.as_chunks::<4>();
   let mut quads = chunks4.chunks_exact(4);
 
@@ -497,6 +498,71 @@ pub fn slice16_32(mut crc: u32, data: &[u8], tables: &[[u32; 256]; 16]) -> u32 {
 
   // Process remaining bytes (0-3) with unrolled lookups
   tail4_32(crc, remainder, &tables[0])
+}
+
+/// Update CRC-32 state using slice-by-16 algorithm.
+///
+/// Processes 16 bytes per iteration (4× the CRC width in bytes).
+///
+/// # Arguments
+///
+/// * `crc` - Current CRC state (pre-inverted)
+/// * `data` - Input data
+/// * `tables` - 16 lookup tables (256 entries each)
+#[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
+#[inline]
+pub fn slice16_32(crc: u32, data: &[u8], tables: &[[u32; 256]; 16]) -> u32 {
+  slice16_32_scalar(crc, data, tables)
+}
+
+/// Update CRC-32 state using slice-by-16 algorithm, using `wasm32/simd128` loads.
+///
+/// This is still a table-driven portable algorithm (no CLMUL/HWCRC), but uses
+/// `v128` loads when `target_feature = "simd128"` is enabled.
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+#[inline]
+pub fn slice16_32(mut crc: u32, data: &[u8], tables: &[[u32; 256]; 16]) -> u32 {
+  use core::arch::wasm32::v128;
+
+  let mut ptr = data.as_ptr();
+  let mut len = data.len();
+
+  while len >= 16 {
+    // SAFETY: `ptr` is within `data` and `len >= 16`.
+    let v = unsafe { core::ptr::read_unaligned(ptr as *const v128) };
+    // SAFETY: `v128` is a 16-byte value and `u32x4` lane layout matches memory order on wasm.
+    let words: [u32; 4] = unsafe { core::mem::transmute(v) };
+
+    let a = words[0] ^ crc;
+    let b = words[1];
+    let c = words[2];
+    let d = words[3];
+
+    crc = tables[15][(a & 0xFF) as usize]
+      ^ tables[14][((a >> 8) & 0xFF) as usize]
+      ^ tables[13][((a >> 16) & 0xFF) as usize]
+      ^ tables[12][(a >> 24) as usize]
+      ^ tables[11][(b & 0xFF) as usize]
+      ^ tables[10][((b >> 8) & 0xFF) as usize]
+      ^ tables[9][((b >> 16) & 0xFF) as usize]
+      ^ tables[8][(b >> 24) as usize]
+      ^ tables[7][(c & 0xFF) as usize]
+      ^ tables[6][((c >> 8) & 0xFF) as usize]
+      ^ tables[5][((c >> 16) & 0xFF) as usize]
+      ^ tables[4][(c >> 24) as usize]
+      ^ tables[3][(d & 0xFF) as usize]
+      ^ tables[2][((d >> 8) & 0xFF) as usize]
+      ^ tables[1][((d >> 16) & 0xFF) as usize]
+      ^ tables[0][(d >> 24) as usize];
+
+    // SAFETY: ptr stays within `data` due to the `len >= 16` loop guard.
+    ptr = unsafe { ptr.add(16) };
+    len = len.strict_sub(16);
+  }
+
+  // SAFETY: `ptr` points to the unprocessed tail of `data` with length `len`.
+  let tail = unsafe { core::slice::from_raw_parts(ptr, len) };
+  slice16_32_scalar(crc, tail, tables)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -545,7 +611,7 @@ pub fn slice8_64(mut crc: u64, data: &[u8], tables: &[[u64; 256]; 8]) -> u64 {
 /// * `data` - Input data
 /// * `tables` - 16 lookup tables (256 entries each)
 #[inline]
-pub fn slice16_64(mut crc: u64, data: &[u8], tables: &[[u64; 256]; 16]) -> u64 {
+fn slice16_64_scalar(mut crc: u64, data: &[u8], tables: &[[u64; 256]; 16]) -> u64 {
   let (chunks8, remainder) = data.as_chunks::<8>();
   let mut pairs = chunks8.chunks_exact(2);
 
@@ -586,6 +652,70 @@ pub fn slice16_64(mut crc: u64, data: &[u8], tables: &[[u64; 256]; 16]) -> u64 {
 
   // Process remaining bytes (0-7) with unrolled lookups
   tail8_64(crc, remainder, &tables[0])
+}
+
+/// Update CRC-64 state using slice-by-16 algorithm.
+///
+/// Processes 16 bytes per iteration (2× the CRC width in bytes).
+/// Optimal for larger buffers where cache is warm.
+///
+/// # Arguments
+///
+/// * `crc` - Current CRC state (pre-inverted)
+/// * `data` - Input data
+/// * `tables` - 16 lookup tables (256 entries each)
+#[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
+#[inline]
+pub fn slice16_64(crc: u64, data: &[u8], tables: &[[u64; 256]; 16]) -> u64 {
+  slice16_64_scalar(crc, data, tables)
+}
+
+/// Update CRC-64 state using slice-by-16 algorithm, using `wasm32/simd128` loads.
+///
+/// This is still a table-driven portable algorithm (no CLMUL), but uses `v128`
+/// loads when `target_feature = "simd128"` is enabled.
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+#[inline]
+pub fn slice16_64(mut crc: u64, data: &[u8], tables: &[[u64; 256]; 16]) -> u64 {
+  use core::arch::wasm32::v128;
+
+  let mut ptr = data.as_ptr();
+  let mut len = data.len();
+
+  while len >= 16 {
+    // SAFETY: `ptr` is within `data` and `len >= 16`.
+    let v = unsafe { core::ptr::read_unaligned(ptr as *const v128) };
+    // SAFETY: `v128` is a 16-byte value and `u64x2` lane layout matches memory order on wasm.
+    let words: [u64; 2] = unsafe { core::mem::transmute(v) };
+
+    let a = words[0] ^ crc;
+    let b = words[1];
+
+    crc = tables[15][(a & 0xFF) as usize]
+      ^ tables[14][((a >> 8) & 0xFF) as usize]
+      ^ tables[13][((a >> 16) & 0xFF) as usize]
+      ^ tables[12][((a >> 24) & 0xFF) as usize]
+      ^ tables[11][((a >> 32) & 0xFF) as usize]
+      ^ tables[10][((a >> 40) & 0xFF) as usize]
+      ^ tables[9][((a >> 48) & 0xFF) as usize]
+      ^ tables[8][(a >> 56) as usize]
+      ^ tables[7][(b & 0xFF) as usize]
+      ^ tables[6][((b >> 8) & 0xFF) as usize]
+      ^ tables[5][((b >> 16) & 0xFF) as usize]
+      ^ tables[4][((b >> 24) & 0xFF) as usize]
+      ^ tables[3][((b >> 32) & 0xFF) as usize]
+      ^ tables[2][((b >> 40) & 0xFF) as usize]
+      ^ tables[1][((b >> 48) & 0xFF) as usize]
+      ^ tables[0][(b >> 56) as usize];
+
+    // SAFETY: ptr stays within `data` due to the `len >= 16` loop guard.
+    ptr = unsafe { ptr.add(16) };
+    len = len.strict_sub(16);
+  }
+
+  // SAFETY: `ptr` points to the unprocessed tail of `data` with length `len`.
+  let tail = unsafe { core::slice::from_raw_parts(ptr, len) };
+  slice16_64_scalar(crc, tail, tables)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

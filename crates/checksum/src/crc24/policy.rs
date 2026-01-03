@@ -26,6 +26,9 @@ use crate::{common::kernels::stream_to_index, dispatchers::Crc24Fn};
 #[allow(dead_code)] // Reserved for future small-buffer optimization
 pub const CRC24_SMALL_THRESHOLD: usize = 16;
 
+/// Block size for CRC-24 folding operations.
+pub const CRC24_FOLD_BLOCK_BYTES: usize = 128;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Crc24Policy
 // ─────────────────────────────────────────────────────────────────────────────
@@ -225,6 +228,9 @@ impl Crc24Policy {
 
   #[cfg(target_arch = "x86_64")]
   fn kernel_name_for_family(&self, len: usize) -> &'static str {
+    if len < CRC24_FOLD_BLOCK_BYTES {
+      return kernels::x86_64::PCLMUL_SMALL;
+    }
     let streams = self.streams_for_len(len);
     let idx = stream_to_index(streams);
     if self.has_vpclmul && len >= self.clmul_to_vpclmul {
@@ -244,6 +250,9 @@ impl Crc24Policy {
 
   #[cfg(target_arch = "aarch64")]
   fn kernel_name_for_family(&self, len: usize) -> &'static str {
+    if len < CRC24_FOLD_BLOCK_BYTES {
+      return kernels::aarch64::PMULL_SMALL;
+    }
     let streams = self.streams_for_len(len);
     let idx = stream_to_index(streams);
     kernels::aarch64::PMULL_NAMES
@@ -321,6 +330,8 @@ pub struct Crc24Kernels {
   pub slice8: Crc24Fn,
   /// CLMUL/PMULL kernel array (if available), indexed by `stream_to_index`.
   pub clmul: Option<[Crc24Fn; 5]>,
+  /// Small-buffer kernel for the CLMUL/PMULL family (< fold block).
+  pub clmul_small: Option<Crc24Fn>,
   /// VPCLMUL kernel (x86_64 only, if available).
   #[allow(dead_code)] // Only used on x86_64
   pub vpclmul: Option<[Crc24Fn; 5]>,
@@ -336,6 +347,7 @@ impl Crc24Kernels {
       slice4,
       slice8,
       clmul: None,
+      clmul_small: None,
       vpclmul: None,
     }
   }
@@ -352,6 +364,11 @@ impl Crc24Kernels {
 #[inline]
 pub fn policy_dispatch(policy: &Crc24Policy, kernels: &Crc24Kernels, crc: u32, data: &[u8]) -> u32 {
   let len = data.len();
+
+  // Fast path: tiny buffers
+  if len < CRC24_SMALL_THRESHOLD {
+    return portable_auto(policy, kernels, crc, data);
+  }
 
   // Handle forced modes
   match policy.effective_force {
@@ -383,6 +400,12 @@ fn portable_auto(policy: &Crc24Policy, kernels: &Crc24Kernels, crc: u32, data: &
 fn policy_dispatch_simd(policy: &Crc24Policy, kernels: &Crc24Kernels, crc: u32, data: &[u8]) -> u32 {
   let len = data.len();
 
+  if len < CRC24_FOLD_BLOCK_BYTES
+    && let Some(small) = kernels.clmul_small
+  {
+    return small(crc, data);
+  }
+
   if policy.has_vpclmul
     && len >= policy.clmul_to_vpclmul
     && let Some(vpclmul) = kernels.vpclmul
@@ -413,6 +436,12 @@ fn policy_dispatch_simd(policy: &Crc24Policy, kernels: &Crc24Kernels, crc: u32, 
 
 #[cfg(target_arch = "aarch64")]
 fn policy_dispatch_simd(policy: &Crc24Policy, kernels: &Crc24Kernels, crc: u32, data: &[u8]) -> u32 {
+  if data.len() < CRC24_FOLD_BLOCK_BYTES
+    && let Some(small) = kernels.clmul_small
+  {
+    return small(crc, data);
+  }
+
   if let Some(clmul) = kernels.clmul {
     let streams = policy.streams_for_len(data.len());
     let idx = stream_to_index(streams);
@@ -519,6 +548,11 @@ pub fn build_openpgp_kernels_x86(
     } else {
       None
     },
+    clmul_small: if policy.has_clmul {
+      Some(kernels::x86_64::OPENPGP_PCLMUL_SMALL_KERNEL)
+    } else {
+      None
+    },
     vpclmul: if policy.has_vpclmul {
       Some(kernels::x86_64::OPENPGP_VPCLMUL)
     } else {
@@ -553,6 +587,11 @@ pub fn build_openpgp_kernels_aarch64(
     } else {
       None
     },
+    clmul_small: if policy.has_clmul {
+      Some(kernels::aarch64::OPENPGP_PMULL_SMALL_KERNEL)
+    } else {
+      None
+    },
     vpclmul: None,
   }
 }
@@ -575,6 +614,7 @@ pub fn build_openpgp_kernels_power(
     } else {
       None
     },
+    clmul_small: None,
     vpclmul: None,
   }
 }
@@ -597,6 +637,7 @@ pub fn build_openpgp_kernels_s390x(
     } else {
       None
     },
+    clmul_small: None,
     vpclmul: None,
   }
 }
@@ -623,6 +664,7 @@ pub fn build_openpgp_kernels_riscv64(
     } else {
       None
     },
+    clmul_small: None,
     vpclmul: if policy.has_vpclmul && caps.has(riscv::ZVBC) {
       Some(kernels::riscv64::OPENPGP_ZVBC)
     } else {

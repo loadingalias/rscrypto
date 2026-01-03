@@ -122,6 +122,11 @@ fn run_x86_64_kernels_openpgp(data: &[u8], results: &mut alloc::vec::Vec<KernelR
       let checksum = func(INIT, data) & MASK;
       results.push(KernelResult { name, checksum });
     }
+    let checksum = OPENPGP_PCLMUL_SMALL_KERNEL(INIT, data) & MASK;
+    results.push(KernelResult {
+      name: PCLMUL_SMALL,
+      checksum,
+    });
   }
 
   if caps.has(platform::caps::x86::VPCLMUL_READY) {
@@ -142,6 +147,11 @@ fn run_aarch64_kernels_openpgp(data: &[u8], results: &mut alloc::vec::Vec<Kernel
       let checksum = func(INIT, data) & MASK;
       results.push(KernelResult { name, checksum });
     }
+    let checksum = OPENPGP_PMULL_SMALL_KERNEL(INIT, data) & MASK;
+    results.push(KernelResult {
+      name: PMULL_SMALL,
+      checksum,
+    });
   }
 }
 
@@ -151,8 +161,10 @@ fn run_power_kernels_openpgp(data: &[u8], results: &mut alloc::vec::Vec<KernelRe
   let caps = platform::caps();
 
   if caps.has(platform::caps::power::VPMSUM_READY) {
-    let checksum = OPENPGP_VPMSUM(INIT, data) & MASK;
-    results.push(KernelResult { name: VPMSUM, checksum });
+    for (&name, &func) in VPMSUM_NAMES.iter().zip(OPENPGP_VPMSUM.iter()) {
+      let checksum = func(INIT, data) & MASK;
+      results.push(KernelResult { name, checksum });
+    }
   }
 }
 
@@ -162,8 +174,10 @@ fn run_s390x_kernels_openpgp(data: &[u8], results: &mut alloc::vec::Vec<KernelRe
   let caps = platform::caps();
 
   if caps.has(platform::caps::s390x::VECTOR) {
-    let checksum = OPENPGP_VGFM(INIT, data) & MASK;
-    results.push(KernelResult { name: VGFM, checksum });
+    for (&name, &func) in VGFM_NAMES.iter().zip(OPENPGP_VGFM.iter()) {
+      let checksum = func(INIT, data) & MASK;
+      results.push(KernelResult { name, checksum });
+    }
   }
 }
 
@@ -175,13 +189,17 @@ fn run_riscv64_kernels_openpgp(data: &[u8], results: &mut alloc::vec::Vec<Kernel
   let caps = platform::caps();
 
   if caps.has(riscv::ZBC) {
-    let checksum = OPENPGP_ZBC(INIT, data) & MASK;
-    results.push(KernelResult { name: ZBC, checksum });
+    for (&name, &func) in ZBC_NAMES.iter().zip(OPENPGP_ZBC.iter()) {
+      let checksum = func(INIT, data) & MASK;
+      results.push(KernelResult { name, checksum });
+    }
   }
 
   if caps.has(riscv::ZVBC) {
-    let checksum = OPENPGP_ZVBC(INIT, data) & MASK;
-    results.push(KernelResult { name: ZVBC, checksum });
+    for (&name, &func) in ZVBC_NAMES.iter().zip(OPENPGP_ZVBC.iter()) {
+      let checksum = func(INIT, data) & MASK;
+      results.push(KernelResult { name, checksum });
+    }
   }
 }
 

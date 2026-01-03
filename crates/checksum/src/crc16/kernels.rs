@@ -58,6 +58,8 @@ pub mod x86_64 {
 
   /// PCLMUL kernel name (SSE4.2 + PCLMULQDQ).
   pub const PCLMUL: &str = "x86_64/pclmul";
+  /// PCLMUL small-buffer kernel name.
+  pub const PCLMUL_SMALL: &str = "x86_64/pclmul-small";
   /// PCLMUL kernel names: [1-way, 2-way, 4-way, 7-way, 8-way].
   pub const PCLMUL_NAMES: &[&str] = &[
     "x86_64/pclmul",
@@ -92,6 +94,10 @@ pub mod x86_64 {
     arch::crc16_ccitt_pclmul_8way_safe,
   ];
 
+  /// CCITT PCLMUL small-buffer kernel.
+  #[allow(dead_code)] // Used by bench + policy dispatch.
+  pub const CCITT_PCLMUL_SMALL_KERNEL: Crc16Fn = arch::crc16_ccitt_pclmul_small_safe;
+
   /// CCITT VPCLMUL kernel.
   #[allow(dead_code)] // Used by bench + policy dispatch.
   pub const CCITT_VPCLMUL: [Crc16Fn; 5] = [
@@ -116,6 +122,10 @@ pub mod x86_64 {
     arch::crc16_ibm_pclmul_8way_safe,
   ];
 
+  /// IBM PCLMUL small-buffer kernel.
+  #[allow(dead_code)] // Used by bench + policy dispatch.
+  pub const IBM_PCLMUL_SMALL_KERNEL: Crc16Fn = arch::crc16_ibm_pclmul_small_safe;
+
   /// IBM VPCLMUL kernel.
   #[allow(dead_code)] // Used by bench + policy dispatch.
   pub const IBM_VPCLMUL: [Crc16Fn; 5] = [
@@ -134,6 +144,8 @@ pub mod aarch64 {
 
   /// PMULL kernel name (NEON carryless multiply).
   pub const PMULL: &str = "aarch64/pmull";
+  /// PMULL small-buffer kernel name.
+  pub const PMULL_SMALL: &str = "aarch64/pmull-small";
   /// PMULL kernel names: [1-way, 2-way, 3-way].
   pub const PMULL_NAMES: &[&str] = &["aarch64/pmull", "aarch64/pmull-2way", "aarch64/pmull-3way"];
 
@@ -151,6 +163,10 @@ pub mod aarch64 {
     arch::crc16_ccitt_pmull_3way_safe, // dup for index consistency
   ];
 
+  /// CCITT PMULL small-buffer kernel.
+  #[allow(dead_code)] // Used by bench + policy dispatch.
+  pub const CCITT_PMULL_SMALL_KERNEL: Crc16Fn = arch::crc16_ccitt_pmull_small_safe;
+
   // ─────────────────────────────────────────────────────────────────────────
   // CRC-16/IBM Kernel Functions
   // ─────────────────────────────────────────────────────────────────────────
@@ -164,6 +180,10 @@ pub mod aarch64 {
     arch::crc16_ibm_pmull_3way_safe, // dup for index consistency
     arch::crc16_ibm_pmull_3way_safe, // dup for index consistency
   ];
+
+  /// IBM PMULL small-buffer kernel.
+  #[allow(dead_code)] // Used by bench + policy dispatch.
+  pub const IBM_PMULL_SMALL_KERNEL: Crc16Fn = arch::crc16_ibm_pmull_small_safe;
 }
 
 #[cfg(target_arch = "powerpc64")]

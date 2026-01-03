@@ -1242,6 +1242,21 @@ pub fn crc24_openpgp_pclmul_safe(crc: u32, data: &[u8]) -> u32 {
   from_reflected_state(state)
 }
 
+/// CRC-24/OPENPGP PCLMULQDQ small-buffer kernel.
+///
+/// Optimized for inputs smaller than a folding block (128 bytes).
+///
+/// # Safety
+///
+/// Dispatcher verifies SSSE3 + PCLMULQDQ before selecting this kernel.
+#[inline]
+pub fn crc24_openpgp_pclmul_small_safe(crc: u32, data: &[u8]) -> u32 {
+  let mut state = to_reflected_state(crc);
+  // SAFETY: Dispatcher verifies SSSE3 + PCLMULQDQ before selecting this kernel.
+  state = unsafe { crc24_width32_pclmul_small(state, data, &CRC24_OPENPGP_KEYS_REFLECTED) };
+  from_reflected_state(state)
+}
+
 /// CRC-24/OPENPGP PCLMULQDQ kernel (2-way multi-stream).
 #[inline]
 pub fn crc24_openpgp_pclmul_2way_safe(crc: u32, data: &[u8]) -> u32 {

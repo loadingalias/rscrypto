@@ -432,6 +432,26 @@ pub fn crc16_ccitt_pmull_safe(crc: u16, data: &[u8]) -> u16 {
   }
 }
 
+/// CRC-16/CCITT PMULL small-buffer kernel.
+///
+/// Optimized for inputs smaller than a folding block (128 bytes).
+///
+/// # Safety
+///
+/// Dispatcher verifies PMULL before selecting this kernel.
+#[inline]
+pub fn crc16_ccitt_pmull_small_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: Dispatcher verifies PMULL before selecting this kernel.
+  unsafe {
+    crc16_width32_pmull_small(
+      crc,
+      data,
+      &CRC16_CCITT_KEYS_REFLECTED,
+      super::portable::crc16_ccitt_slice8,
+    )
+  }
+}
+
 /// CRC-16/CCITT PMULL kernel (2-way striping).
 ///
 /// # Safety
@@ -480,6 +500,19 @@ pub fn crc16_ccitt_pmull_3way_safe(crc: u16, data: &[u8]) -> u16 {
 pub fn crc16_ibm_pmull_safe(crc: u16, data: &[u8]) -> u16 {
   // SAFETY: Dispatcher verifies PMULL before selecting this kernel.
   unsafe { crc16_width32_pmull(crc, data, &CRC16_IBM_KEYS_REFLECTED, super::portable::crc16_ibm_slice8) }
+}
+
+/// CRC-16/IBM PMULL small-buffer kernel.
+///
+/// Optimized for inputs smaller than a folding block (128 bytes).
+///
+/// # Safety
+///
+/// Dispatcher verifies PMULL before selecting this kernel.
+#[inline]
+pub fn crc16_ibm_pmull_small_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: Dispatcher verifies PMULL before selecting this kernel.
+  unsafe { crc16_width32_pmull_small(crc, data, &CRC16_IBM_KEYS_REFLECTED, super::portable::crc16_ibm_slice8) }
 }
 
 /// CRC-16/IBM PMULL kernel (2-way striping).

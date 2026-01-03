@@ -35,6 +35,9 @@ use crate::{common::kernels::stream_to_index, dispatchers::Crc16Fn};
 #[allow(dead_code)] // Reserved for future small-buffer optimization
 pub const CRC16_SMALL_THRESHOLD: usize = 16;
 
+/// Block size for CRC-16 folding operations.
+pub const CRC16_FOLD_BLOCK_BYTES: usize = 128;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Crc16Variant - Distinguishes CCITT from IBM
 // ─────────────────────────────────────────────────────────────────────────────
@@ -255,6 +258,9 @@ impl Crc16Policy {
 
   #[cfg(target_arch = "x86_64")]
   fn kernel_name_for_family(&self, len: usize) -> &'static str {
+    if len < CRC16_FOLD_BLOCK_BYTES {
+      return kernels::x86_64::PCLMUL_SMALL;
+    }
     let streams = self.streams_for_len(len);
     let idx = stream_to_index(streams);
     if self.has_vpclmul && len >= self.clmul_to_vpclmul {
@@ -274,6 +280,9 @@ impl Crc16Policy {
 
   #[cfg(target_arch = "aarch64")]
   fn kernel_name_for_family(&self, len: usize) -> &'static str {
+    if len < CRC16_FOLD_BLOCK_BYTES {
+      return kernels::aarch64::PMULL_SMALL;
+    }
     let streams = self.streams_for_len(len);
     let idx = stream_to_index(streams);
     kernels::aarch64::PMULL_NAMES
@@ -354,6 +363,8 @@ pub struct Crc16Kernels {
   pub slice8: Crc16Fn,
   /// CLMUL/PMULL kernel array (if available), indexed by `stream_to_index`.
   pub clmul: Option<[Crc16Fn; 5]>,
+  /// Small-buffer kernel for the CLMUL/PMULL family (< fold block).
+  pub clmul_small: Option<Crc16Fn>,
   /// VPCLMUL kernel (x86_64 only, if available).
   #[allow(dead_code)] // Only used on x86_64
   pub vpclmul: Option<[Crc16Fn; 5]>,
@@ -369,6 +380,7 @@ impl Crc16Kernels {
       slice4,
       slice8,
       clmul: None,
+      clmul_small: None,
       vpclmul: None,
     }
   }
@@ -385,6 +397,11 @@ impl Crc16Kernels {
 #[inline]
 pub fn policy_dispatch(policy: &Crc16Policy, kernels: &Crc16Kernels, crc: u16, data: &[u8]) -> u16 {
   let len = data.len();
+
+  // Fast path: tiny buffers
+  if len < CRC16_SMALL_THRESHOLD {
+    return portable_auto(policy, kernels, crc, data);
+  }
 
   // Handle forced modes
   match policy.effective_force {
@@ -418,6 +435,12 @@ fn portable_auto(policy: &Crc16Policy, kernels: &Crc16Kernels, crc: u16, data: &
 fn policy_dispatch_simd(policy: &Crc16Policy, kernels: &Crc16Kernels, crc: u16, data: &[u8]) -> u16 {
   let len = data.len();
 
+  if len < CRC16_FOLD_BLOCK_BYTES
+    && let Some(small) = kernels.clmul_small
+  {
+    return small(crc, data);
+  }
+
   // VPCLMUL tier
   if let Some(vpclmul) = kernels.vpclmul
     && policy.has_vpclmul
@@ -450,6 +473,12 @@ fn policy_dispatch_simd(policy: &Crc16Policy, kernels: &Crc16Kernels, crc: u16, 
 
 #[cfg(target_arch = "aarch64")]
 fn policy_dispatch_simd(policy: &Crc16Policy, kernels: &Crc16Kernels, crc: u16, data: &[u8]) -> u16 {
+  if data.len() < CRC16_FOLD_BLOCK_BYTES
+    && let Some(small) = kernels.clmul_small
+  {
+    return small(crc, data);
+  }
+
   // PMULL tier
   if let Some(clmul) = kernels.clmul {
     let streams = policy.streams_for_len(data.len());
@@ -488,6 +517,12 @@ fn policy_dispatch_simd(policy: &Crc16Policy, kernels: &Crc16Kernels, crc: u16, 
 #[cfg(target_arch = "riscv64")]
 fn policy_dispatch_simd(policy: &Crc16Policy, kernels: &Crc16Kernels, crc: u16, data: &[u8]) -> u16 {
   let len = data.len();
+
+  if len < CRC16_FOLD_BLOCK_BYTES
+    && let Some(small) = kernels.clmul_small
+  {
+    return small(crc, data);
+  }
 
   if let Some(vpclmul) = kernels.vpclmul
     && policy.has_vpclmul
@@ -540,6 +575,11 @@ pub fn build_ccitt_kernels_x86(
     } else {
       None
     },
+    clmul_small: if policy.has_clmul {
+      Some(kernels::x86_64::CCITT_PCLMUL_SMALL_KERNEL)
+    } else {
+      None
+    },
     vpclmul: if policy.has_vpclmul {
       Some(kernels::x86_64::CCITT_VPCLMUL)
     } else {
@@ -563,6 +603,11 @@ pub fn build_ibm_kernels_x86(
     slice8,
     clmul: if policy.has_clmul {
       Some(kernels::x86_64::IBM_PCLMUL)
+    } else {
+      None
+    },
+    clmul_small: if policy.has_clmul {
+      Some(kernels::x86_64::IBM_PCLMUL_SMALL_KERNEL)
     } else {
       None
     },
@@ -600,6 +645,11 @@ pub fn build_ccitt_kernels_aarch64(
     } else {
       None
     },
+    clmul_small: if policy.has_clmul {
+      Some(kernels::aarch64::CCITT_PMULL_SMALL_KERNEL)
+    } else {
+      None
+    },
     vpclmul: None,
   }
 }
@@ -630,6 +680,11 @@ pub fn build_ibm_kernels_aarch64(
     } else {
       None
     },
+    clmul_small: if policy.has_clmul {
+      Some(kernels::aarch64::IBM_PMULL_SMALL_KERNEL)
+    } else {
+      None
+    },
     vpclmul: None,
   }
 }
@@ -652,6 +707,7 @@ pub fn build_ccitt_kernels_power(
     } else {
       None
     },
+    clmul_small: None,
     vpclmul: None,
   }
 }
@@ -673,6 +729,7 @@ pub fn build_ibm_kernels_power(
     } else {
       None
     },
+    clmul_small: None,
     vpclmul: None,
   }
 }
@@ -694,6 +751,7 @@ pub fn build_ccitt_kernels_s390x(
     } else {
       None
     },
+    clmul_small: None,
     vpclmul: None,
   }
 }
@@ -715,6 +773,7 @@ pub fn build_ibm_kernels_s390x(
     } else {
       None
     },
+    clmul_small: None,
     vpclmul: None,
   }
 }
@@ -740,6 +799,7 @@ pub fn build_ccitt_kernels_riscv64(
     } else {
       None
     },
+    clmul_small: None,
     vpclmul: if policy.has_vpclmul && caps.has(riscv::ZVBC) {
       Some(kernels::riscv64::CCITT_ZVBC)
     } else {
@@ -769,6 +829,7 @@ pub fn build_ibm_kernels_riscv64(
     } else {
       None
     },
+    clmul_small: None,
     vpclmul: if policy.has_vpclmul && caps.has(riscv::ZVBC) {
       Some(kernels::riscv64::IBM_ZVBC)
     } else {

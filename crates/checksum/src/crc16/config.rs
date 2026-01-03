@@ -371,7 +371,17 @@ fn default_pclmul_to_vpclmul(tune: Tune, tuned: Option<tuned_defaults::Crc16Tune
   let simd_bytes = (tune.effective_simd_width as usize).strict_div(8).max(1);
   tuned
     .and_then(|d| d.pclmul_to_vpclmul)
-    .unwrap_or_else(|| simd_bytes.strict_mul(4).max(tune.pclmul_threshold))
+    .unwrap_or_else(|| {
+      // VPCLMUL is x86_64-only and only worthwhile for wide (512-bit) preferences.
+      // On slow-warmup parts (Intel), treat the fold→wide transition as a SIMD-ish crossover.
+      if tune.effective_simd_width < 512 {
+        usize::MAX
+      } else if tune.fast_wide_ops {
+        simd_bytes.strict_mul(4).max(tune.pclmul_threshold)
+      } else {
+        tune.simd_threshold.strict_mul(8).max(tune.pclmul_threshold)
+      }
+    })
     .max(1)
 }
 

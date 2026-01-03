@@ -1116,6 +1116,26 @@ pub fn crc16_ccitt_pclmul_safe(crc: u16, data: &[u8]) -> u16 {
   }
 }
 
+/// CRC-16/CCITT PCLMULQDQ small-buffer kernel.
+///
+/// Optimized for inputs smaller than a folding block (128 bytes).
+///
+/// # Safety
+///
+/// Dispatcher verifies SSSE3 + PCLMULQDQ before selecting this kernel.
+#[inline]
+pub fn crc16_ccitt_pclmul_small_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: Dispatcher verifies SSSE3 + PCLMULQDQ before selecting this kernel.
+  unsafe {
+    crc16_width32_pclmul_small(
+      crc,
+      data,
+      &CRC16_CCITT_KEYS_REFLECTED,
+      super::portable::crc16_ccitt_slice8,
+    )
+  }
+}
+
 /// CRC-16/CCITT PCLMULQDQ kernel (2-way multi-stream).
 #[inline]
 pub fn crc16_ccitt_pclmul_2way_safe(crc: u16, data: &[u8]) -> u16 {
@@ -1263,6 +1283,19 @@ pub fn crc16_ccitt_vpclmul_8way_safe(crc: u16, data: &[u8]) -> u16 {
 pub fn crc16_ibm_pclmul_safe(crc: u16, data: &[u8]) -> u16 {
   // SAFETY: Dispatcher verifies SSSE3 + PCLMULQDQ before selecting this kernel.
   unsafe { crc16_width32_pclmul(crc, data, &CRC16_IBM_KEYS_REFLECTED, super::portable::crc16_ibm_slice8) }
+}
+
+/// CRC-16/IBM PCLMULQDQ small-buffer kernel.
+///
+/// Optimized for inputs smaller than a folding block (128 bytes).
+///
+/// # Safety
+///
+/// Dispatcher verifies SSSE3 + PCLMULQDQ before selecting this kernel.
+#[inline]
+pub fn crc16_ibm_pclmul_small_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: Dispatcher verifies SSSE3 + PCLMULQDQ before selecting this kernel.
+  unsafe { crc16_width32_pclmul_small(crc, data, &CRC16_IBM_KEYS_REFLECTED, super::portable::crc16_ibm_slice8) }
 }
 
 /// CRC-16/IBM PCLMULQDQ kernel (2-way multi-stream).
