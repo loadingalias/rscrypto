@@ -1,6 +1,7 @@
 [package]
 name = "checksum"
 description = "High-performance CRC checksums with hardware acceleration"
+publish = false
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

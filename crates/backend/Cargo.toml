@@ -1,6 +1,7 @@
 [package]
 name = "backend"
 description = "Dispatch and SIMD acceleration primitives for rscrypto"
+publish = false
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

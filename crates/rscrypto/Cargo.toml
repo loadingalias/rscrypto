@@ -1,0 +1,26 @@
+[package]
+name = "rscrypto"
+description = "Pure Rust cryptography. Hardware-accelerated. Zero dependencies."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords = ["crypto", "crc", "checksum", "simd", "no-std"]
+categories = ["cryptography", "no-std::no-alloc", "algorithms"]
+
+[features]
+default = ["std", "checksums"]
+std = ["alloc", "checksum?/std"]
+alloc = ["checksum?/alloc"]
+
+checksums = ["dep:checksum"]
+# hashes = ["dep:hashes"]   # future
+# aead = ["dep:aead"]       # future
+
+[dependencies]
+checksum = { workspace = true, optional = true }
+
+[lints]
+workspace = true

@@ -718,8 +718,10 @@ fn policy_dispatch_simd(policy: &Crc32Policy, kernels: &Crc32Kernels, crc: u32, 
 
   match policy.variant {
     Crc32Variant::Ieee => {
-      // IEEE: no HWCRC on x86, just PCLMUL/VPCLMUL
-      if !policy.has_fusion || len < policy.hwcrc_to_fusion {
+      // IEEE: no HWCRC on x86, just PCLMUL/VPCLMUL.
+      // NOTE: We don't check hwcrc_to_fusion here because IEEE has no HWCRC tier.
+      // The portable_to_hwcrc threshold was already checked in policy_dispatch().
+      if !policy.has_fusion {
         return (kernels.portable)(crc, data);
       }
 
