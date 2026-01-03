@@ -115,11 +115,11 @@ pub fn available_crc16_kernels() -> Vec<&'static str> {
 
   #[cfg(target_arch = "powerpc64")]
   {
-    use crate::crc16::kernels::powerpc64;
+    use crate::crc16::kernels::power;
     let caps = platform::caps();
 
-    if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
-      kernels.push(powerpc64::VPMSUM);
+    if caps.has(platform::caps::power::VPMSUM_READY) {
+      kernels.extend_from_slice(power::VPMSUM_NAMES);
     }
   }
 
@@ -129,7 +129,7 @@ pub fn available_crc16_kernels() -> Vec<&'static str> {
     let caps = platform::caps();
 
     if caps.has(platform::caps::s390x::VECTOR) {
-      kernels.push(s390x::VGFM);
+      kernels.extend_from_slice(s390x::VGFM_NAMES);
     }
   }
 
@@ -141,10 +141,10 @@ pub fn available_crc16_kernels() -> Vec<&'static str> {
     let caps = platform::caps();
 
     if caps.has(riscv::ZBC) {
-      kernels.push(riscv64::ZBC);
+      kernels.extend_from_slice(riscv64::ZBC_NAMES);
     }
     if caps.has(riscv::ZVBC) {
-      kernels.push(riscv64::ZVBC);
+      kernels.extend_from_slice(riscv64::ZVBC_NAMES);
     }
   }
 
@@ -198,7 +198,7 @@ pub fn get_crc16_ccitt_kernel(name: &str) -> Option<Crc16Kernel> {
 
   #[cfg(target_arch = "powerpc64")]
   {
-    if let Some(k) = get_powerpc64_crc16_ccitt_kernel(name) {
+    if let Some(k) = get_power_crc16_ccitt_kernel(name) {
       return Some(k);
     }
   }
@@ -267,7 +267,7 @@ pub fn get_crc16_ibm_kernel(name: &str) -> Option<Crc16Kernel> {
 
   #[cfg(target_arch = "powerpc64")]
   {
-    if let Some(k) = get_powerpc64_crc16_ibm_kernel(name) {
+    if let Some(k) = get_power_crc16_ibm_kernel(name) {
       return Some(k);
     }
   }
@@ -370,30 +370,32 @@ fn get_aarch64_crc16_ibm_kernel(name: &str) -> Option<Crc16Kernel> {
 }
 
 #[cfg(target_arch = "powerpc64")]
-fn get_powerpc64_crc16_ccitt_kernel(name: &str) -> Option<Crc16Kernel> {
-  use crate::crc16::kernels::powerpc64;
+fn get_power_crc16_ccitt_kernel(name: &str) -> Option<Crc16Kernel> {
+  use crate::crc16::kernels::power;
   let caps = platform::caps();
 
-  if caps.has(platform::caps::powerpc64::VPMSUM_READY) && name == powerpc64::VPMSUM {
-    return Some(Crc16Kernel {
-      name: powerpc64::VPMSUM,
-      func: powerpc64::CCITT_VPMSUM,
-    });
+  if caps.has(platform::caps::power::VPMSUM_READY) {
+    for (&k, &func) in power::VPMSUM_NAMES.iter().zip(power::CCITT_VPMSUM.iter()) {
+      if name == k {
+        return Some(Crc16Kernel { name: k, func });
+      }
+    }
   }
 
   None
 }
 
 #[cfg(target_arch = "powerpc64")]
-fn get_powerpc64_crc16_ibm_kernel(name: &str) -> Option<Crc16Kernel> {
-  use crate::crc16::kernels::powerpc64;
+fn get_power_crc16_ibm_kernel(name: &str) -> Option<Crc16Kernel> {
+  use crate::crc16::kernels::power;
   let caps = platform::caps();
 
-  if caps.has(platform::caps::powerpc64::VPMSUM_READY) && name == powerpc64::VPMSUM {
-    return Some(Crc16Kernel {
-      name: powerpc64::VPMSUM,
-      func: powerpc64::IBM_VPMSUM,
-    });
+  if caps.has(platform::caps::power::VPMSUM_READY) {
+    for (&k, &func) in power::VPMSUM_NAMES.iter().zip(power::IBM_VPMSUM.iter()) {
+      if name == k {
+        return Some(Crc16Kernel { name: k, func });
+      }
+    }
   }
 
   None
@@ -404,11 +406,12 @@ fn get_s390x_crc16_ccitt_kernel(name: &str) -> Option<Crc16Kernel> {
   use crate::crc16::kernels::s390x;
   let caps = platform::caps();
 
-  if caps.has(platform::caps::s390x::VECTOR) && name == s390x::VGFM {
-    return Some(Crc16Kernel {
-      name: s390x::VGFM,
-      func: s390x::CCITT_VGFM,
-    });
+  if caps.has(platform::caps::s390x::VECTOR) {
+    for (&k, &func) in s390x::VGFM_NAMES.iter().zip(s390x::CCITT_VGFM.iter()) {
+      if name == k {
+        return Some(Crc16Kernel { name: k, func });
+      }
+    }
   }
 
   None
@@ -419,11 +422,12 @@ fn get_s390x_crc16_ibm_kernel(name: &str) -> Option<Crc16Kernel> {
   use crate::crc16::kernels::s390x;
   let caps = platform::caps();
 
-  if caps.has(platform::caps::s390x::VECTOR) && name == s390x::VGFM {
-    return Some(Crc16Kernel {
-      name: s390x::VGFM,
-      func: s390x::IBM_VGFM,
-    });
+  if caps.has(platform::caps::s390x::VECTOR) {
+    for (&k, &func) in s390x::VGFM_NAMES.iter().zip(s390x::IBM_VGFM.iter()) {
+      if name == k {
+        return Some(Crc16Kernel { name: k, func });
+      }
+    }
   }
 
   None
@@ -436,18 +440,20 @@ fn get_riscv64_crc16_ccitt_kernel(name: &str) -> Option<Crc16Kernel> {
   use crate::crc16::kernels::riscv64;
   let caps = platform::caps();
 
-  if caps.has(riscv::ZBC) && name == riscv64::ZBC {
-    return Some(Crc16Kernel {
-      name: riscv64::ZBC,
-      func: riscv64::CCITT_ZBC,
-    });
+  if caps.has(riscv::ZBC) {
+    for (&k, &func) in riscv64::ZBC_NAMES.iter().zip(riscv64::CCITT_ZBC.iter()) {
+      if name == k {
+        return Some(Crc16Kernel { name: k, func });
+      }
+    }
   }
 
-  if caps.has(riscv::ZVBC) && name == riscv64::ZVBC {
-    return Some(Crc16Kernel {
-      name: riscv64::ZVBC,
-      func: riscv64::CCITT_ZVBC,
-    });
+  if caps.has(riscv::ZVBC) {
+    for (&k, &func) in riscv64::ZVBC_NAMES.iter().zip(riscv64::CCITT_ZVBC.iter()) {
+      if name == k {
+        return Some(Crc16Kernel { name: k, func });
+      }
+    }
   }
 
   None
@@ -460,18 +466,20 @@ fn get_riscv64_crc16_ibm_kernel(name: &str) -> Option<Crc16Kernel> {
   use crate::crc16::kernels::riscv64;
   let caps = platform::caps();
 
-  if caps.has(riscv::ZBC) && name == riscv64::ZBC {
-    return Some(Crc16Kernel {
-      name: riscv64::ZBC,
-      func: riscv64::IBM_ZBC,
-    });
+  if caps.has(riscv::ZBC) {
+    for (&k, &func) in riscv64::ZBC_NAMES.iter().zip(riscv64::IBM_ZBC.iter()) {
+      if name == k {
+        return Some(Crc16Kernel { name: k, func });
+      }
+    }
   }
 
-  if caps.has(riscv::ZVBC) && name == riscv64::ZVBC {
-    return Some(Crc16Kernel {
-      name: riscv64::ZVBC,
-      func: riscv64::IBM_ZVBC,
-    });
+  if caps.has(riscv::ZVBC) {
+    for (&k, &func) in riscv64::ZVBC_NAMES.iter().zip(riscv64::IBM_ZVBC.iter()) {
+      if name == k {
+        return Some(Crc16Kernel { name: k, func });
+      }
+    }
   }
 
   None
@@ -516,11 +524,11 @@ pub fn available_crc24_kernels() -> Vec<&'static str> {
 
   #[cfg(target_arch = "powerpc64")]
   {
-    use crate::crc24::kernels::powerpc64;
+    use crate::crc24::kernels::power;
     let caps = platform::caps();
 
-    if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
-      kernels.push(powerpc64::VPMSUM);
+    if caps.has(platform::caps::power::VPMSUM_READY) {
+      kernels.extend_from_slice(power::VPMSUM_NAMES);
     }
   }
 
@@ -530,7 +538,7 @@ pub fn available_crc24_kernels() -> Vec<&'static str> {
     let caps = platform::caps();
 
     if caps.has(platform::caps::s390x::VECTOR) {
-      kernels.push(s390x::VGFM);
+      kernels.extend_from_slice(s390x::VGFM_NAMES);
     }
   }
 
@@ -542,10 +550,10 @@ pub fn available_crc24_kernels() -> Vec<&'static str> {
     let caps = platform::caps();
 
     if caps.has(riscv::ZBC) {
-      kernels.push(riscv64::ZBC);
+      kernels.extend_from_slice(riscv64::ZBC_NAMES);
     }
     if caps.has(riscv::ZVBC) {
-      kernels.push(riscv64::ZVBC);
+      kernels.extend_from_slice(riscv64::ZVBC_NAMES);
     }
   }
 
@@ -620,14 +628,15 @@ pub fn get_crc24_openpgp_kernel(name: &str) -> Option<Crc24Kernel> {
 
   #[cfg(target_arch = "powerpc64")]
   {
-    use crate::crc24::kernels::powerpc64;
+    use crate::crc24::kernels::power;
     let caps = platform::caps();
 
-    if caps.has(platform::caps::powerpc64::VPMSUM_READY) && name == powerpc64::VPMSUM {
-      return Some(Crc24Kernel {
-        name: powerpc64::VPMSUM,
-        func: powerpc64::OPENPGP_VPMSUM,
-      });
+    if caps.has(platform::caps::power::VPMSUM_READY) {
+      for (&k, &func) in power::VPMSUM_NAMES.iter().zip(power::OPENPGP_VPMSUM.iter()) {
+        if name == k {
+          return Some(Crc24Kernel { name: k, func });
+        }
+      }
     }
   }
 
@@ -636,11 +645,12 @@ pub fn get_crc24_openpgp_kernel(name: &str) -> Option<Crc24Kernel> {
     use crate::crc24::kernels::s390x;
     let caps = platform::caps();
 
-    if caps.has(platform::caps::s390x::VECTOR) && name == s390x::VGFM {
-      return Some(Crc24Kernel {
-        name: s390x::VGFM,
-        func: s390x::OPENPGP_VGFM,
-      });
+    if caps.has(platform::caps::s390x::VECTOR) {
+      for (&k, &func) in s390x::VGFM_NAMES.iter().zip(s390x::OPENPGP_VGFM.iter()) {
+        if name == k {
+          return Some(Crc24Kernel { name: k, func });
+        }
+      }
     }
   }
 
@@ -651,18 +661,20 @@ pub fn get_crc24_openpgp_kernel(name: &str) -> Option<Crc24Kernel> {
     use crate::crc24::kernels::riscv64;
     let caps = platform::caps();
 
-    if caps.has(riscv::ZBC) && name == riscv64::ZBC {
-      return Some(Crc24Kernel {
-        name: riscv64::ZBC,
-        func: riscv64::OPENPGP_ZBC,
-      });
+    if caps.has(riscv::ZBC) {
+      for (&k, &func) in riscv64::ZBC_NAMES.iter().zip(riscv64::OPENPGP_ZBC.iter()) {
+        if name == k {
+          return Some(Crc24Kernel { name: k, func });
+        }
+      }
     }
 
-    if caps.has(riscv::ZVBC) && name == riscv64::ZVBC {
-      return Some(Crc24Kernel {
-        name: riscv64::ZVBC,
-        func: riscv64::OPENPGP_ZVBC,
-      });
+    if caps.has(riscv::ZVBC) {
+      for (&k, &func) in riscv64::ZVBC_NAMES.iter().zip(riscv64::OPENPGP_ZVBC.iter()) {
+        if name == k {
+          return Some(Crc24Kernel { name: k, func });
+        }
+      }
     }
   }
 
@@ -725,11 +737,11 @@ pub fn available_crc32_ieee_kernels() -> Vec<&'static str> {
 
   #[cfg(target_arch = "powerpc64")]
   {
-    use crate::crc32::kernels::powerpc64;
+    use crate::crc32::kernels::power;
     let caps = platform::caps();
 
-    if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
-      kernels.extend_from_slice(powerpc64::CRC32_VPMSUM_NAMES);
+    if caps.has(platform::caps::power::VPMSUM_READY) {
+      kernels.extend_from_slice(power::CRC32_VPMSUM_NAMES);
     }
   }
 
@@ -815,11 +827,11 @@ pub fn available_crc32c_kernels() -> Vec<&'static str> {
 
   #[cfg(target_arch = "powerpc64")]
   {
-    use crate::crc32::kernels::powerpc64;
+    use crate::crc32::kernels::power;
     let caps = platform::caps();
 
-    if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
-      kernels.extend_from_slice(powerpc64::CRC32C_VPMSUM_NAMES);
+    if caps.has(platform::caps::power::VPMSUM_READY) {
+      kernels.extend_from_slice(power::CRC32C_VPMSUM_NAMES);
     }
   }
 
@@ -890,7 +902,7 @@ pub fn get_crc32_ieee_kernel(name: &str) -> Option<Crc32Kernel> {
 
   #[cfg(target_arch = "powerpc64")]
   {
-    if let Some(k) = get_powerpc64_crc32_ieee_kernel(name) {
+    if let Some(k) = get_power_crc32_ieee_kernel(name) {
       return Some(k);
     }
   }
@@ -953,7 +965,7 @@ pub fn get_crc32c_kernel(name: &str) -> Option<Crc32Kernel> {
 
   #[cfg(target_arch = "powerpc64")]
   {
-    if let Some(k) = get_powerpc64_crc32c_kernel(name) {
+    if let Some(k) = get_power_crc32c_kernel(name) {
       return Some(k);
     }
   }
@@ -1222,11 +1234,11 @@ fn get_aarch64_crc32c_kernel(name: &str) -> Option<Crc32Kernel> {
 }
 
 #[cfg(target_arch = "powerpc64")]
-fn get_powerpc64_crc32_ieee_kernel(name: &str) -> Option<Crc32Kernel> {
-  use crate::crc32::kernels::powerpc64::*;
+fn get_power_crc32_ieee_kernel(name: &str) -> Option<Crc32Kernel> {
+  use crate::crc32::kernels::power::*;
   let caps = platform::caps();
 
-  if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
+  if caps.has(platform::caps::power::VPMSUM_READY) {
     for (i, &kernel_name) in CRC32_VPMSUM_NAMES.iter().enumerate() {
       if name == kernel_name {
         return Some(Crc32Kernel {
@@ -1241,11 +1253,11 @@ fn get_powerpc64_crc32_ieee_kernel(name: &str) -> Option<Crc32Kernel> {
 }
 
 #[cfg(target_arch = "powerpc64")]
-fn get_powerpc64_crc32c_kernel(name: &str) -> Option<Crc32Kernel> {
-  use crate::crc32::kernels::powerpc64::*;
+fn get_power_crc32c_kernel(name: &str) -> Option<Crc32Kernel> {
+  use crate::crc32::kernels::power::*;
   let caps = platform::caps();
 
-  if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
+  if caps.has(platform::caps::power::VPMSUM_READY) {
     for (i, &kernel_name) in CRC32C_VPMSUM_NAMES.iter().enumerate() {
       if name == kernel_name {
         return Some(Crc32Kernel {
@@ -1408,10 +1420,10 @@ pub fn available_crc64_kernels() -> Vec<&'static str> {
 
   #[cfg(target_arch = "powerpc64")]
   {
-    use crate::crc64::kernels::powerpc64::*;
+    use crate::crc64::kernels::power::*;
     let caps = platform::caps();
 
-    if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
+    if caps.has(platform::caps::power::VPMSUM_READY) {
       kernels.extend_from_slice(VPMSUM_NAMES);
     }
   }
@@ -1485,7 +1497,7 @@ pub fn get_crc64_xz_kernel(name: &str) -> Option<Crc64Kernel> {
 
   #[cfg(target_arch = "powerpc64")]
   {
-    if let Some(k) = get_powerpc64_xz_kernel(name) {
+    if let Some(k) = get_power_xz_kernel(name) {
       return Some(k);
     }
   }
@@ -1550,7 +1562,7 @@ pub fn get_crc64_nvme_kernel(name: &str) -> Option<Crc64Kernel> {
 
   #[cfg(target_arch = "powerpc64")]
   {
-    if let Some(k) = get_powerpc64_nvme_kernel(name) {
+    if let Some(k) = get_power_nvme_kernel(name) {
       return Some(k);
     }
   }
@@ -1769,11 +1781,11 @@ fn get_aarch64_nvme_kernel(name: &str) -> Option<Crc64Kernel> {
 }
 
 #[cfg(target_arch = "powerpc64")]
-fn get_powerpc64_xz_kernel(name: &str) -> Option<Crc64Kernel> {
-  use crate::crc64::kernels::powerpc64::*;
+fn get_power_xz_kernel(name: &str) -> Option<Crc64Kernel> {
+  use crate::crc64::kernels::power::*;
   let caps = platform::caps();
 
-  if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
+  if caps.has(platform::caps::power::VPMSUM_READY) {
     for (i, &kernel_name) in VPMSUM_NAMES.iter().enumerate() {
       if name == kernel_name {
         return Some(Crc64Kernel {
@@ -1788,11 +1800,11 @@ fn get_powerpc64_xz_kernel(name: &str) -> Option<Crc64Kernel> {
 }
 
 #[cfg(target_arch = "powerpc64")]
-fn get_powerpc64_nvme_kernel(name: &str) -> Option<Crc64Kernel> {
-  use crate::crc64::kernels::powerpc64::*;
+fn get_power_nvme_kernel(name: &str) -> Option<Crc64Kernel> {
+  use crate::crc64::kernels::power::*;
   let caps = platform::caps();
 
-  if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
+  if caps.has(platform::caps::power::VPMSUM_READY) {
     for (i, &kernel_name) in VPMSUM_NAMES.iter().enumerate() {
       if name == kernel_name {
         return Some(Crc64Kernel {

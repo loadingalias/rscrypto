@@ -59,10 +59,13 @@ use core::fmt;
 #[cfg(feature = "std")]
 pub use analysis::{
   AnalysisResult, BestConfig, Crossover, CrossoverType, TypedCrossover, estimate_min_bytes_per_lane,
-  find_best_large_config, find_best_large_kernel, find_tier_crossover, select_best_streams,
+  find_best_config_across_sizes, find_best_large_config, find_best_large_kernel, find_tier_crossover,
+  select_best_streams,
 };
 #[cfg(feature = "std")]
 pub use engine::TuneEngine;
+#[cfg(feature = "std")]
+pub mod apply;
 use platform::Caps;
 #[cfg(feature = "std")]
 pub use report::{OutputFormat, Report};
@@ -424,7 +427,7 @@ impl PlatformInfo {
   pub fn collect() -> Self {
     let detected = platform::get();
     Self {
-      arch: std::env::consts::ARCH,
+      arch: detected.arch.name(),
       os: std::env::consts::OS,
       caps: detected.caps,
       tune_kind: detected.tune.kind,

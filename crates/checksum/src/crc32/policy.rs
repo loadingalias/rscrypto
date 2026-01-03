@@ -193,7 +193,7 @@ impl Crc32Policy {
 
     #[cfg(target_arch = "powerpc64")]
     {
-      let has_vpmsum = caps.has(platform::caps::powerpc64::VPMSUM_READY);
+      let has_vpmsum = caps.has(platform::caps::power::VPMSUM_READY);
       (false, has_vpmsum, false, false, false, false)
     }
 
@@ -413,7 +413,7 @@ impl Crc32Policy {
     match self.variant {
       Crc32Variant::Ieee => {
         // IEEE: no HWCRC on x86, just PCLMUL/VPCLMUL
-        if !self.has_fusion || len < self.hwcrc_to_fusion {
+        if !self.has_fusion {
           return kernels::PORTABLE;
         }
         if len < CRC32_FOLD_BLOCK_BYTES {
@@ -494,11 +494,11 @@ impl Crc32Policy {
 
   #[cfg(target_arch = "powerpc64")]
   fn kernel_name_for_family(&self, len: usize) -> &'static str {
-    use kernels::powerpc64::*;
+    use kernels::power::*;
     let streams = self.streams_for_len(len);
     let idx = stream_to_index(streams);
 
-    if !self.has_fusion || len < self.hwcrc_to_fusion {
+    if !self.has_fusion {
       return kernels::PORTABLE;
     }
 
@@ -515,7 +515,7 @@ impl Crc32Policy {
     let streams = self.streams_for_len(len);
     let idx = stream_to_index(streams);
 
-    if !self.has_fusion || len < self.hwcrc_to_fusion {
+    if !self.has_fusion {
       return kernels::PORTABLE;
     }
 
@@ -532,7 +532,7 @@ impl Crc32Policy {
     let streams = self.streams_for_len(len);
     let idx = stream_to_index(streams);
 
-    if !self.has_fusion || len < self.hwcrc_to_fusion {
+    if !self.has_fusion {
       return kernels::PORTABLE;
     }
 
@@ -994,11 +994,11 @@ pub fn build_castagnoli_kernels_aarch64(policy: &Crc32Policy, reference: Crc32Fn
   }
 }
 
-/// Build IEEE kernel table for powerpc64.
+/// Build IEEE kernel table for Power.
 #[cfg(target_arch = "powerpc64")]
 #[must_use]
-pub fn build_ieee_kernels_powerpc64(policy: &Crc32Policy, reference: Crc32Fn, portable: Crc32Fn) -> Crc32Kernels {
-  use kernels::powerpc64::*;
+pub fn build_ieee_kernels_power(policy: &Crc32Policy, reference: Crc32Fn, portable: Crc32Fn) -> Crc32Kernels {
+  use kernels::power::*;
 
   if !policy.has_fusion {
     return Crc32Kernels::portable_only(reference, portable);
@@ -1014,11 +1014,11 @@ pub fn build_ieee_kernels_powerpc64(policy: &Crc32Policy, reference: Crc32Fn, po
   }
 }
 
-/// Build Castagnoli kernel table for powerpc64.
+/// Build Castagnoli kernel table for Power.
 #[cfg(target_arch = "powerpc64")]
 #[must_use]
-pub fn build_castagnoli_kernels_powerpc64(policy: &Crc32Policy, reference: Crc32Fn, portable: Crc32Fn) -> Crc32Kernels {
-  use kernels::powerpc64::*;
+pub fn build_castagnoli_kernels_power(policy: &Crc32Policy, reference: Crc32Fn, portable: Crc32Fn) -> Crc32Kernels {
+  use kernels::power::*;
 
   if !policy.has_fusion {
     return Crc32Kernels::portable_only(reference, portable);

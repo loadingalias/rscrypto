@@ -11,6 +11,7 @@ use platform::TuneKind;
 pub struct Crc16TunedDefaults {
   pub slice4_to_slice8: usize,
   pub portable_to_clmul: usize,
+  pub pclmul_to_vpclmul: Option<usize>,
   pub streams: u8,
   pub min_bytes_per_lane: Option<usize>,
 }
@@ -19,9 +20,9 @@ pub struct Crc16TunedDefaults {
 pub const CRC16_CCITT_TUNED_DEFAULTS: &[(TuneKind, Crc16TunedDefaults)] = &[
   // BEGIN GENERATED (rscrypto-tune)
   // Zen4: pclmul is fastest; use 64-byte threshold for CLMUL dispatch.
-  (TuneKind::Zen4, Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, streams: 1, min_bytes_per_lane: None }),
+  (TuneKind::Zen4, Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 1, min_bytes_per_lane: None }),
   // Apple M1-M3: pmull is fastest; 3 streams on large buffers.
-  (TuneKind::AppleM1M3, Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, streams: 3, min_bytes_per_lane: Some(2730) }),
+  (TuneKind::AppleM1M3, Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 3, min_bytes_per_lane: Some(2730) }),
   // END GENERATED (rscrypto-tune)
 ];
 
@@ -37,9 +38,9 @@ pub fn for_tune_kind_ccitt(kind: TuneKind) -> Option<Crc16TunedDefaults> {
 pub const CRC16_IBM_TUNED_DEFAULTS: &[(TuneKind, Crc16TunedDefaults)] = &[
   // BEGIN GENERATED (rscrypto-tune)
   // Zen4: pclmul is fastest; use 64-byte threshold for CLMUL dispatch.
-  (TuneKind::Zen4, Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, streams: 1, min_bytes_per_lane: None }),
+  (TuneKind::Zen4, Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 1, min_bytes_per_lane: None }),
   // Apple M1-M3: pmull is fastest; 3 streams on large buffers.
-  (TuneKind::AppleM1M3, Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, streams: 3, min_bytes_per_lane: Some(682) }),
+  (TuneKind::AppleM1M3, Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 3, min_bytes_per_lane: Some(682) }),
   // END GENERATED (rscrypto-tune)
 ];
 

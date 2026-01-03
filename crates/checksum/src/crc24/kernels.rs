@@ -8,7 +8,7 @@
 //! CRC-24 supports Tiers 0, 1, 3, and 4 (no HW CRC instructions exist):
 //! - Tier 0 (Reference): Bitwise implementation
 //! - Tier 1 (Portable): Slice-by-4/8 table lookup
-//! - Tier 3 (Folding): PCLMUL (x86_64), PMULL (aarch64), VPMSUM (powerpc64), VGFM (s390x), Zbc
+//! - Tier 3 (Folding): PCLMUL (x86_64), PMULL (aarch64), VPMSUM (Power), VGFM (s390x), Zbc
 //!   (riscv64)
 //! - Tier 4 (Wide): VPCLMUL (x86_64 AVX-512), Zvbc (riscv64)
 //!
@@ -124,16 +124,31 @@ pub mod aarch64 {
 }
 
 #[cfg(target_arch = "powerpc64")]
-pub mod powerpc64 {
-  use super::super::powerpc64 as arch;
+pub mod power {
+  use super::super::power as arch;
   use crate::dispatchers::Crc24Fn;
 
   /// VPMSUM kernel name (POWER8+ carryless multiply).
-  pub const VPMSUM: &str = "powerpc64/vpmsum";
+  pub const VPMSUM: &str = "power/vpmsum";
 
-  /// OpenPGP VPMSUM kernel.
-  #[allow(dead_code)] // Exposed for kernel ladder consistency; dispatch uses wrapper fn
-  pub const OPENPGP_VPMSUM: Crc24Fn = arch::crc24_openpgp_vpmsum_safe;
+  /// VPMSUM kernel names: [1-way, 2-way, 4-way, 8-way, 8-way(dup)].
+  pub const VPMSUM_NAMES: &[&str] = &[
+    "power/vpmsum",
+    "power/vpmsum-2way",
+    "power/vpmsum-4way",
+    "power/vpmsum-8way",
+    "power/vpmsum-8way", // dup for index consistency
+  ];
+
+  /// OpenPGP VPMSUM kernels: [1-way, 2-way, 4-way, 8-way, 8-way(dup)].
+  #[allow(dead_code)] // Used by bench + policy dispatch.
+  pub const OPENPGP_VPMSUM: [Crc24Fn; 5] = [
+    arch::crc24_openpgp_vpmsum_safe,
+    arch::crc24_openpgp_vpmsum_2way_safe,
+    arch::crc24_openpgp_vpmsum_4way_safe,
+    arch::crc24_openpgp_vpmsum_8way_safe,
+    arch::crc24_openpgp_vpmsum_8way_safe, // dup for index consistency
+  ];
 }
 
 #[cfg(target_arch = "s390x")]
@@ -144,9 +159,24 @@ pub mod s390x {
   /// VGFM kernel name (s390x vector Galois field multiply).
   pub const VGFM: &str = "s390x/vgfm";
 
-  /// OpenPGP VGFM kernel.
-  #[allow(dead_code)] // Exposed for kernel ladder consistency; dispatch uses wrapper fn
-  pub const OPENPGP_VGFM: Crc24Fn = arch::crc24_openpgp_vgfm_safe;
+  /// VGFM kernel names: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)].
+  pub const VGFM_NAMES: &[&str] = &[
+    "s390x/vgfm",
+    "s390x/vgfm-2way",
+    "s390x/vgfm-4way",
+    "s390x/vgfm-4way", // dup for index consistency
+    "s390x/vgfm-4way", // dup for index consistency
+  ];
+
+  /// OpenPGP VGFM kernels: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)].
+  #[allow(dead_code)] // Used by bench + policy dispatch.
+  pub const OPENPGP_VGFM: [Crc24Fn; 5] = [
+    arch::crc24_openpgp_vgfm_safe,
+    arch::crc24_openpgp_vgfm_2way_safe,
+    arch::crc24_openpgp_vgfm_4way_safe,
+    arch::crc24_openpgp_vgfm_4way_safe, // dup for index consistency
+    arch::crc24_openpgp_vgfm_4way_safe, // dup for index consistency
+  ];
 }
 
 #[cfg(target_arch = "riscv64")]
@@ -160,11 +190,41 @@ pub mod riscv64 {
   /// Zvbc kernel name (vector carryless multiply).
   pub const ZVBC: &str = "riscv64/zvbc";
 
-  /// OpenPGP Zbc kernel.
-  #[allow(dead_code)] // Exposed for kernel ladder consistency; dispatch uses wrapper fn
-  pub const OPENPGP_ZBC: Crc24Fn = arch::crc24_openpgp_zbc_safe;
+  /// Zbc kernel names: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)].
+  pub const ZBC_NAMES: &[&str] = &[
+    "riscv64/zbc",
+    "riscv64/zbc-2way",
+    "riscv64/zbc-4way",
+    "riscv64/zbc-4way", // dup for index consistency
+    "riscv64/zbc-4way", // dup for index consistency
+  ];
 
-  /// OpenPGP Zvbc kernel.
-  #[allow(dead_code)] // Exposed for kernel ladder consistency; dispatch uses wrapper fn
-  pub const OPENPGP_ZVBC: Crc24Fn = arch::crc24_openpgp_zvbc_safe;
+  /// Zvbc kernel names: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)].
+  pub const ZVBC_NAMES: &[&str] = &[
+    "riscv64/zvbc",
+    "riscv64/zvbc-2way",
+    "riscv64/zvbc-4way",
+    "riscv64/zvbc-4way", // dup for index consistency
+    "riscv64/zvbc-4way", // dup for index consistency
+  ];
+
+  /// OpenPGP Zbc kernels: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)].
+  #[allow(dead_code)] // Used by bench + policy dispatch.
+  pub const OPENPGP_ZBC: [Crc24Fn; 5] = [
+    arch::crc24_openpgp_zbc_safe,
+    arch::crc24_openpgp_zbc_2way_safe,
+    arch::crc24_openpgp_zbc_4way_safe,
+    arch::crc24_openpgp_zbc_4way_safe, // dup for index consistency
+    arch::crc24_openpgp_zbc_4way_safe, // dup for index consistency
+  ];
+
+  /// OpenPGP Zvbc kernels: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)].
+  #[allow(dead_code)] // Used by bench + policy dispatch.
+  pub const OPENPGP_ZVBC: [Crc24Fn; 5] = [
+    arch::crc24_openpgp_zvbc_safe,
+    arch::crc24_openpgp_zvbc_2way_safe,
+    arch::crc24_openpgp_zvbc_4way_safe,
+    arch::crc24_openpgp_zvbc_4way_safe, // dup for index consistency
+    arch::crc24_openpgp_zvbc_4way_safe, // dup for index consistency
+  ];
 }

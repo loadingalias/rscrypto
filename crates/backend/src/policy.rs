@@ -95,7 +95,7 @@ pub struct SelectionPolicy {
   /// Capped by architecture limits:
   /// - x86_64: 8-way
   /// - aarch64: 3-way
-  /// - powerpc64: 8-way
+  /// - Power: 8-way
   /// - s390x: 4-way
   /// - riscv64: 4-way
   pub max_streams: u8,
@@ -400,7 +400,7 @@ impl SelectionPolicy {
   ///
   /// # Algorithm
   ///
-  /// Find the maximum stream count `s` from `[8, 7, 4, 2, 1]` such that:
+  /// Find the maximum stream count `s` from a family-specific list such that:
   /// - `s <= max_streams` (architecture limit)
   /// - `len / s >= min_bytes_per_lane` (each lane has enough data)
   ///
@@ -418,18 +418,33 @@ impl SelectionPolicy {
       return 1;
     }
 
-    // Available stream counts in descending order
-    // Includes 3 for aarch64's 3-way folding limit
-    const STREAM_LEVELS: [u8; 6] = [8, 7, 4, 3, 2, 1];
+    // Stream counts supported by the selected backend family.
+    //
+    // This avoids selecting unsupported levels (e.g. 3-way on x86_64, 7-way on Power),
+    // while still letting `max_streams` cap per-arch limits and tunables.
+    const STREAM_LEVELS_X86: [u8; 5] = [8, 7, 4, 2, 1];
+    const STREAM_LEVELS_ARM: [u8; 3] = [3, 2, 1];
+    const STREAM_LEVELS_POWER: [u8; 4] = [8, 4, 2, 1];
+    const STREAM_LEVELS_4WAY: [u8; 3] = [4, 2, 1];
+    const STREAM_LEVELS_NONE: [u8; 1] = [1];
 
-    for &s in &STREAM_LEVELS {
+    let stream_levels: &[u8] = match self.family {
+      KernelFamily::X86Crc32 | KernelFamily::X86Pclmul | KernelFamily::X86Vpclmul => &STREAM_LEVELS_X86,
+      KernelFamily::ArmCrc32 | KernelFamily::ArmPmull | KernelFamily::ArmPmullEor3 | KernelFamily::ArmSve2Pmull => {
+        &STREAM_LEVELS_ARM
+      }
+      KernelFamily::PowerVpmsum => &STREAM_LEVELS_POWER,
+      KernelFamily::S390xVgfm | KernelFamily::RiscvZbc | KernelFamily::RiscvZvbc => &STREAM_LEVELS_4WAY,
+      _ => &STREAM_LEVELS_NONE,
+    };
+
+    for &s in stream_levels {
       // Skip if above architecture limit
       if s > self.max_streams {
         continue;
       }
       // Check if each lane gets at least min_bytes_per_lane
-      // Use division (no overflow possible since s >= 1)
-      if len / (s as usize) >= min_bytes_per_lane {
+      if len.strict_div(s as usize) >= min_bytes_per_lane {
         return s;
       }
     }

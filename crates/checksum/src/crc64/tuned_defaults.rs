@@ -5,7 +5,7 @@
 //! overrides to win).
 //!
 //! Update via:
-//! - `just tune-crc64 --apply` (writes this file)
+//! - `just tune-apply` (writes this file)
 
 use platform::TuneKind;
 
@@ -36,13 +36,13 @@ pub const CRC64_TUNED_DEFAULTS: &[(TuneKind, Crc64TunedDefaults)] = &[
   }),
   // Apple M1-M3: pmull-eor3-3way is fastest; XZ benefits from a higher per-lane minimum.
   (TuneKind::AppleM1M3, Crc64TunedDefaults {
-    xz:   Crc64VariantTunedDefaults { streams: 3, portable_to_clmul: 128, pclmul_to_vpclmul: usize::MAX, min_bytes_per_lane: Some(349525) },
-    nvme: Crc64VariantTunedDefaults { streams: 3, portable_to_clmul: 128, pclmul_to_vpclmul: usize::MAX, min_bytes_per_lane: None },
+    xz:   Crc64VariantTunedDefaults { streams: 3, portable_to_clmul: 64, pclmul_to_vpclmul: usize::MAX, min_bytes_per_lane: Some(349525) },
+    nvme: Crc64VariantTunedDefaults { streams: 3, portable_to_clmul: 64, pclmul_to_vpclmul: usize::MAX, min_bytes_per_lane: None },
   }),
   // Graviton2: pmull-eor3-3way is fastest; XZ benefits from a higher per-lane minimum.
   (TuneKind::Graviton2, Crc64TunedDefaults {
-    xz:   Crc64VariantTunedDefaults { streams: 3, portable_to_clmul: 128, pclmul_to_vpclmul: usize::MAX, min_bytes_per_lane: Some(349525) },
-    nvme: Crc64VariantTunedDefaults { streams: 3, portable_to_clmul: 128, pclmul_to_vpclmul: usize::MAX, min_bytes_per_lane: None },
+    xz:   Crc64VariantTunedDefaults { streams: 3, portable_to_clmul: 64, pclmul_to_vpclmul: usize::MAX, min_bytes_per_lane: Some(349525) },
+    nvme: Crc64VariantTunedDefaults { streams: 3, portable_to_clmul: 64, pclmul_to_vpclmul: usize::MAX, min_bytes_per_lane: None },
   }),
   // END GENERATED (rscrypto-tune)
 ];

@@ -94,12 +94,14 @@ fn crc24_kernel_specs(caps: &Caps) -> Vec<KernelSpec> {
 
   #[cfg(target_arch = "powerpc64")]
   {
-    use platform::caps::powerpc64;
-    if caps.has(powerpc64::VPMSUM_READY) {
-      specs.push(KernelSpec::new(
-        "powerpc64/vpmsum",
+    use platform::caps::power;
+    if caps.has(power::VPMSUM_READY) {
+      specs.push(KernelSpec::with_streams(
+        "power/vpmsum",
         KernelTier::Folding,
-        powerpc64::VPMSUM_READY,
+        power::VPMSUM_READY,
+        1,
+        8,
       ));
     }
   }
@@ -108,7 +110,13 @@ fn crc24_kernel_specs(caps: &Caps) -> Vec<KernelSpec> {
   {
     use platform::caps::s390x;
     if caps.has(s390x::VECTOR) {
-      specs.push(KernelSpec::new("s390x/vgfm", KernelTier::Folding, s390x::VECTOR));
+      specs.push(KernelSpec::with_streams(
+        "s390x/vgfm",
+        KernelTier::Folding,
+        s390x::VECTOR,
+        1,
+        4,
+      ));
     }
   }
 
@@ -116,10 +124,22 @@ fn crc24_kernel_specs(caps: &Caps) -> Vec<KernelSpec> {
   {
     use platform::caps::riscv;
     if caps.has(riscv::ZBC) {
-      specs.push(KernelSpec::new("riscv64/zbc", KernelTier::Folding, riscv::ZBC));
+      specs.push(KernelSpec::with_streams(
+        "riscv64/zbc",
+        KernelTier::Folding,
+        riscv::ZBC,
+        1,
+        4,
+      ));
     }
     if caps.has(riscv::ZVBC) {
-      specs.push(KernelSpec::new("riscv64/zvbc", KernelTier::Wide, riscv::ZVBC));
+      specs.push(KernelSpec::with_streams(
+        "riscv64/zvbc",
+        KernelTier::Wide,
+        riscv::ZVBC,
+        1,
+        4,
+      ));
     }
   }
 

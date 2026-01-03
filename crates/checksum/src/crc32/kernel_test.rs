@@ -61,7 +61,7 @@ pub fn run_all_crc32_ieee_kernels(data: &[u8]) -> alloc::vec::Vec<KernelResult> 
 
   #[cfg(target_arch = "powerpc64")]
   {
-    run_powerpc64_kernels_ieee(data, &mut results);
+    run_power_kernels_ieee(data, &mut results);
   }
 
   #[cfg(target_arch = "s390x")]
@@ -113,7 +113,7 @@ pub fn run_all_crc32c_kernels(data: &[u8]) -> alloc::vec::Vec<KernelResult> {
 
   #[cfg(target_arch = "powerpc64")]
   {
-    run_powerpc64_kernels_castagnoli(data, &mut results);
+    run_power_kernels_castagnoli(data, &mut results);
   }
 
   #[cfg(target_arch = "s390x")]
@@ -263,21 +263,21 @@ fn run_aarch64_kernels_castagnoli(data: &[u8], results: &mut alloc::vec::Vec<Ker
 }
 
 #[cfg(target_arch = "powerpc64")]
-fn run_powerpc64_kernels_ieee(data: &[u8], results: &mut alloc::vec::Vec<KernelResult>) {
-  use super::kernels::powerpc64::*;
+fn run_power_kernels_ieee(data: &[u8], results: &mut alloc::vec::Vec<KernelResult>) {
+  use super::kernels::power::*;
   let caps = platform::caps();
 
-  if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
+  if caps.has(platform::caps::power::VPMSUM_READY) {
     run_kernel_array_unique(data, &CRC32_VPMSUM, CRC32_VPMSUM_NAMES, results);
   }
 }
 
 #[cfg(target_arch = "powerpc64")]
-fn run_powerpc64_kernels_castagnoli(data: &[u8], results: &mut alloc::vec::Vec<KernelResult>) {
-  use super::kernels::powerpc64::*;
+fn run_power_kernels_castagnoli(data: &[u8], results: &mut alloc::vec::Vec<KernelResult>) {
+  use super::kernels::power::*;
   let caps = platform::caps();
 
-  if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
+  if caps.has(platform::caps::power::VPMSUM_READY) {
     run_kernel_array_unique(data, &CRC32C_VPMSUM, CRC32C_VPMSUM_NAMES, results);
   }
 }

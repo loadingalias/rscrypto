@@ -106,7 +106,25 @@ impl Crc24Policy {
     {
       true
     }
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    #[cfg(target_arch = "powerpc64")]
+    {
+      true
+    }
+    #[cfg(target_arch = "s390x")]
+    {
+      true
+    }
+    #[cfg(target_arch = "riscv64")]
+    {
+      true
+    }
+    #[cfg(not(any(
+      target_arch = "x86_64",
+      target_arch = "aarch64",
+      target_arch = "powerpc64",
+      target_arch = "s390x",
+      target_arch = "riscv64"
+    )))]
     {
       false
     }
@@ -130,7 +148,7 @@ impl Crc24Policy {
     #[cfg(target_arch = "powerpc64")]
     {
       let _ = tune;
-      (caps.has(platform::caps::powerpc64::VPMSUM_READY), false)
+      (caps.has(platform::caps::power::VPMSUM_READY), false)
     }
     #[cfg(target_arch = "s390x")]
     {
@@ -236,21 +254,43 @@ impl Crc24Policy {
   }
 
   #[cfg(target_arch = "powerpc64")]
-  fn kernel_name_for_family(&self, _len: usize) -> &'static str {
-    kernels::powerpc64::VPMSUM
+  fn kernel_name_for_family(&self, len: usize) -> &'static str {
+    let streams = self.streams_for_len(len);
+    let idx = stream_to_index(streams);
+    kernels::power::VPMSUM_NAMES
+      .get(idx)
+      .or(kernels::power::VPMSUM_NAMES.first())
+      .copied()
+      .unwrap_or(kernels::power::VPMSUM)
   }
 
   #[cfg(target_arch = "s390x")]
-  fn kernel_name_for_family(&self, _len: usize) -> &'static str {
-    kernels::s390x::VGFM
+  fn kernel_name_for_family(&self, len: usize) -> &'static str {
+    let streams = self.streams_for_len(len);
+    let idx = stream_to_index(streams);
+    kernels::s390x::VGFM_NAMES
+      .get(idx)
+      .or(kernels::s390x::VGFM_NAMES.first())
+      .copied()
+      .unwrap_or(kernels::s390x::VGFM)
   }
 
   #[cfg(target_arch = "riscv64")]
   fn kernel_name_for_family(&self, len: usize) -> &'static str {
+    let streams = self.streams_for_len(len);
+    let idx = stream_to_index(streams);
     if self.has_vpclmul && len >= self.clmul_to_vpclmul {
-      kernels::riscv64::ZVBC
+      kernels::riscv64::ZVBC_NAMES
+        .get(idx)
+        .or(kernels::riscv64::ZVBC_NAMES.first())
+        .copied()
+        .unwrap_or(kernels::riscv64::ZVBC)
     } else {
-      kernels::riscv64::ZBC
+      kernels::riscv64::ZBC_NAMES
+        .get(idx)
+        .or(kernels::riscv64::ZBC_NAMES.first())
+        .copied()
+        .unwrap_or(kernels::riscv64::ZBC)
     }
   }
 
@@ -389,6 +429,11 @@ fn policy_dispatch_simd(policy: &Crc24Policy, kernels: &Crc24Kernels, crc: u32, 
 #[cfg(target_arch = "powerpc64")]
 fn policy_dispatch_simd(policy: &Crc24Policy, kernels: &Crc24Kernels, crc: u32, data: &[u8]) -> u32 {
   if let Some(clmul) = kernels.clmul {
+    let streams = policy.streams_for_len(data.len());
+    let idx = stream_to_index(streams);
+    if let Some(&func) = clmul.get(idx) {
+      return func(crc, data);
+    }
     if let Some(&func) = clmul.first() {
       return func(crc, data);
     }
@@ -399,6 +444,11 @@ fn policy_dispatch_simd(policy: &Crc24Policy, kernels: &Crc24Kernels, crc: u32, 
 #[cfg(target_arch = "s390x")]
 fn policy_dispatch_simd(policy: &Crc24Policy, kernels: &Crc24Kernels, crc: u32, data: &[u8]) -> u32 {
   if let Some(clmul) = kernels.clmul {
+    let streams = policy.streams_for_len(data.len());
+    let idx = stream_to_index(streams);
+    if let Some(&func) = clmul.get(idx) {
+      return func(crc, data);
+    }
     if let Some(&func) = clmul.first() {
       return func(crc, data);
     }
@@ -408,15 +458,26 @@ fn policy_dispatch_simd(policy: &Crc24Policy, kernels: &Crc24Kernels, crc: u32, 
 
 #[cfg(target_arch = "riscv64")]
 fn policy_dispatch_simd(policy: &Crc24Policy, kernels: &Crc24Kernels, crc: u32, data: &[u8]) -> u32 {
-  if policy.has_vpclmul && data.len() >= policy.clmul_to_vpclmul {
-    if let Some(vpclmul) = kernels.vpclmul {
-      if let Some(&func) = vpclmul.first() {
-        return func(crc, data);
-      }
+  if policy.has_vpclmul
+    && data.len() >= policy.clmul_to_vpclmul
+    && let Some(vpclmul) = kernels.vpclmul
+  {
+    let streams = policy.streams_for_len(data.len());
+    let idx = stream_to_index(streams);
+    if let Some(&func) = vpclmul.get(idx) {
+      return func(crc, data);
+    }
+    if let Some(&func) = vpclmul.first() {
+      return func(crc, data);
     }
   }
 
   if let Some(clmul) = kernels.clmul {
+    let streams = policy.streams_for_len(data.len());
+    let idx = stream_to_index(streams);
+    if let Some(&func) = clmul.get(idx) {
+      return func(crc, data);
+    }
     if let Some(&func) = clmul.first() {
       return func(crc, data);
     }
@@ -496,23 +557,21 @@ pub fn build_openpgp_kernels_aarch64(
   }
 }
 
-/// Build OpenPGP kernel table for powerpc64.
+/// Build OpenPGP kernel table for Power.
 #[cfg(target_arch = "powerpc64")]
 #[must_use]
-pub fn build_openpgp_kernels_powerpc64(
+pub fn build_openpgp_kernels_power(
   policy: &Crc24Policy,
   reference: Crc24Fn,
   slice4: Crc24Fn,
   slice8: Crc24Fn,
 ) -> Crc24Kernels {
-  use super::powerpc64;
-
   Crc24Kernels {
     reference,
     slice4,
     slice8,
     clmul: if policy.has_clmul {
-      Some([powerpc64::crc24_openpgp_vpmsum_safe; 5])
+      Some(kernels::power::OPENPGP_VPMSUM)
     } else {
       None
     },
@@ -529,14 +588,12 @@ pub fn build_openpgp_kernels_s390x(
   slice4: Crc24Fn,
   slice8: Crc24Fn,
 ) -> Crc24Kernels {
-  use super::s390x;
-
   Crc24Kernels {
     reference,
     slice4,
     slice8,
     clmul: if policy.has_clmul {
-      Some([s390x::crc24_openpgp_vgfm_safe; 5])
+      Some(kernels::s390x::OPENPGP_VGFM)
     } else {
       None
     },
@@ -555,8 +612,6 @@ pub fn build_openpgp_kernels_riscv64(
 ) -> Crc24Kernels {
   use platform::caps::riscv;
 
-  use super::riscv64;
-
   let caps = platform::caps();
 
   Crc24Kernels {
@@ -564,12 +619,12 @@ pub fn build_openpgp_kernels_riscv64(
     slice4,
     slice8,
     clmul: if policy.has_clmul && caps.has(riscv::ZBC) {
-      Some([riscv64::crc24_openpgp_zbc_safe; 5])
+      Some(kernels::riscv64::OPENPGP_ZBC)
     } else {
       None
     },
     vpclmul: if policy.has_vpclmul && caps.has(riscv::ZVBC) {
-      Some([riscv64::crc24_openpgp_zvbc_safe; 5])
+      Some(kernels::riscv64::OPENPGP_ZVBC)
     } else {
       None
     },

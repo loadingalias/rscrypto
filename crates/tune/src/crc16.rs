@@ -95,12 +95,12 @@ fn crc16_kernel_specs(caps: &Caps) -> Vec<KernelSpec> {
 
   #[cfg(target_arch = "powerpc64")]
   {
-    use platform::caps::powerpc64;
-    if caps.has(powerpc64::VPMSUM_READY) {
+    use platform::caps::power;
+    if caps.has(power::VPMSUM_READY) {
       specs.push(KernelSpec::new(
-        "powerpc64/vpmsum",
+        "power/vpmsum",
         KernelTier::Folding,
-        powerpc64::VPMSUM_READY,
+        power::VPMSUM_READY,
       ));
     }
   }

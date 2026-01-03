@@ -1,11 +1,11 @@
-//! powerpc64 hardware-accelerated CRC-32/CRC-32C kernels (VPMSUMD-style).
+//! Power hardware-accelerated CRC-32/CRC-32C kernels (VPMSUMD-style).
 //!
 //! This is a VPMSUMD implementation of the 128-byte folding algorithm used by
 //! our reflected CRC32 CLMUL backends.
 //!
 //! # Safety
 //!
-//! Uses `unsafe` for powerpc64 SIMD + inline assembly. Callers must ensure the
+//! Uses `unsafe` for Power SIMD + inline assembly. Callers must ensure the
 //! required CPU features are available before executing the accelerated path
 //! (the dispatcher does this).
 #![allow(unsafe_code)]
@@ -55,7 +55,7 @@ impl BitAnd for Simd {
 impl Simd {
   #[inline]
   fn new(high: u64, low: u64) -> Self {
-    // Match the x86/aarch64 lane layout: lane0 = low, lane1 = high.
+    // Match the x86/aarch64 layout: lane0 = low, lane1 = high.
     Self(i64x2::from_array([low as i64, high as i64]))
   }
 
@@ -779,7 +779,7 @@ mod tests {
   #[test]
   fn test_crc32_vpmsum_matches_portable_various_lengths() {
     let caps = platform::caps();
-    if !caps.has(platform::caps::powerpc64::VPMSUM_READY) {
+    if !caps.has(platform::caps::power::VPMSUM_READY) {
       return;
     }
 

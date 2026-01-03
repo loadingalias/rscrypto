@@ -6,6 +6,10 @@ use crate::{
   runner::{BenchRunner, STREAM_SIZES, THRESHOLD_SIZES, stream_candidates},
 };
 
+fn is_crc32_algorithm(name: &str) -> bool {
+  matches!(name, "crc32-ieee" | "crc32c")
+}
+
 /// Main tuning engine that orchestrates benchmarking for multiple algorithms.
 pub struct TuneEngine {
   /// Algorithms to tune.
@@ -150,6 +154,30 @@ fn tune_algorithm_impl(
     }
   }
 
+  // CRC-32: benchmark all non-portable tiers across THRESHOLD_SIZES so we can
+  // compute policy-specific crossovers (portable→hwcrc, hwcrc→fusion, fusion→wide).
+  if is_crc32_algorithm(algorithm.name()) {
+    for kernel in &available_kernels {
+      if matches!(kernel.tier, KernelTier::Reference | KernelTier::Portable) {
+        continue;
+      }
+
+      // CRC-32 crossovers are tier boundaries, not stream-selection boundaries.
+      // Benchmark all tiers at single-stream so crossover points match the policy:
+      // multi-stream enters via `min_bytes_per_lane`, not via the tier thresholds.
+      let streams = 1;
+      if threshold_measurements
+        .iter()
+        .any(|m| m.kernel == kernel.name && m.streams == streams)
+      {
+        continue;
+      }
+
+      let curve = benchmark_single_kernel(runner, algorithm, kernel.name, streams)?;
+      threshold_measurements.extend(curve);
+    }
+  }
+
   // Phase D: Single-stream vs multi-stream comparison for min_bytes_per_lane
   // Only if best_streams > 1
   let min_bytes_per_lane = if best_streams > 1 {
@@ -181,6 +209,91 @@ fn tune_algorithm_impl(
 
   // Build thresholds
   let mut thresholds = Vec::new();
+
+  if is_crc32_algorithm(algorithm.name()) {
+    let hw = find_kernel_by_tier(&available_kernels, KernelTier::Hardware);
+    let folding = find_kernel_by_tier(&available_kernels, KernelTier::Folding);
+    let wide: Vec<&KernelSpec> = available_kernels
+      .iter()
+      .filter(|k| k.tier == KernelTier::Wide)
+      .collect();
+
+    // portable_to_hwcrc: portable → first accelerated tier (HWCRC if present, else Folding).
+    let portable_to_target = hw.or(folding).or(wide.first().copied());
+    if let Some(target) = portable_to_target
+      && let Some(crossover) = analysis::find_crossover(&threshold_measurements, portable_name, 1, target.name, 1, 1.0)
+    {
+      thresholds.push(("portable_to_hwcrc".to_string(), crossover.crossover_size));
+      result_analysis.crossovers.push(crossover);
+    }
+
+    // hwcrc_to_fusion: HWCRC → baseline folding kernel.
+    //
+    // This matches the `checksum::crc32` policy semantics: hwcrc_to_fusion gates
+    // entry into the folding/fusion family; further x86-only thresholds handle
+    // selecting wider fusion kernels.
+    if let (Some(hw), Some(folding)) = (hw, folding)
+      && let Some(crossover) = analysis::find_crossover(&threshold_measurements, hw.name, 1, folding.name, 1, 1.0)
+    {
+      thresholds.push(("hwcrc_to_fusion".to_string(), crossover.crossover_size));
+      result_analysis.crossovers.push(crossover);
+    }
+
+    // x86_64: fusion→wide thresholds for the policy's x86-only tiers.
+    #[cfg(target_arch = "x86_64")]
+    {
+      if algorithm.name() == "crc32-ieee"
+        && let (Some(folding), Some(wide)) = (folding, wide.first().copied())
+        && let Some(crossover) = analysis::find_crossover(&threshold_measurements, folding.name, 1, wide.name, 1, 1.0)
+      {
+        thresholds.push(("fusion_to_vpclmul".to_string(), crossover.crossover_size));
+        result_analysis.crossovers.push(crossover);
+      }
+
+      if algorithm.name() == "crc32c"
+        && let Some(base) = folding
+      {
+        let avx512 = available_kernels
+          .iter()
+          .find(|k| k.name.starts_with("x86_64/fusion-avx512-"));
+        if let Some(avx512) = avx512
+          && let Some(crossover) = analysis::find_crossover(&threshold_measurements, base.name, 1, avx512.name, 1, 1.0)
+        {
+          thresholds.push(("fusion_to_avx512".to_string(), crossover.crossover_size));
+          result_analysis.crossovers.push(crossover);
+        }
+
+        let vpclmul = available_kernels
+          .iter()
+          .find(|k| k.name.starts_with("x86_64/fusion-vpclmul-"));
+        if let Some(vpclmul) = vpclmul
+          && let Some(crossover) = analysis::find_crossover(&threshold_measurements, base.name, 1, vpclmul.name, 1, 1.0)
+        {
+          thresholds.push(("fusion_to_vpclmul".to_string(), crossover.crossover_size));
+          result_analysis.crossovers.push(crossover);
+        }
+      }
+    }
+
+    // Min bytes per lane threshold
+    if let Some(min_bpl) = min_bytes_per_lane {
+      thresholds.push(("min_bytes_per_lane".to_string(), min_bpl));
+    }
+
+    // Sort thresholds by size for consistent output
+    thresholds.sort_by_key(|(_, size)| *size);
+
+    let mapped_thresholds = map_threshold_names(algorithm, thresholds);
+    return Ok(AlgorithmResult {
+      name: algorithm.name(),
+      env_prefix: algorithm.env_prefix(),
+      best_kernel,
+      recommended_streams: best_streams,
+      peak_throughput_gib_s: result_analysis.peak_throughput_gib_s,
+      thresholds: mapped_thresholds,
+      analysis: result_analysis,
+    });
+  }
 
   // 1. Portable → SIMD crossover
   if let Some(crossover) = result_analysis
@@ -408,7 +521,7 @@ fn benchmark_single_kernel(
 /// Delegates to `analysis::find_best_large_config` and converts the result
 /// to static strings for use in the engine.
 fn find_best_config(measurements: &[Measurement]) -> (&'static str, u8) {
-  match analysis::find_best_large_config(measurements) {
+  match analysis::find_best_config_across_sizes(measurements, STREAM_SIZES) {
     Some(config) => {
       // Convert borrowed str to 'static by leaking (one-time operation during tuning)
       let name: &'static str = Box::leak(config.kernel.to_string().into_boxed_str());

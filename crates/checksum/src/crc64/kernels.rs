@@ -9,7 +9,7 @@
 //! CRC-64 supports Tiers 0, 1, 3, and 4 (no HW CRC instructions exist):
 //! - Tier 0 (Reference): Bitwise implementation
 //! - Tier 1 (Portable): Slice-by-16 table lookup
-//! - Tier 3 (Folding): PCLMUL (x86_64), PMULL (aarch64), VPMSUM (ppc64), VGFM (s390x), Zbc
+//! - Tier 3 (Folding): PCLMUL (x86_64), PMULL (aarch64), VPMSUM (Power), VGFM (s390x), Zbc
 //!   (riscv64)
 //! - Tier 4 (Wide): VPCLMUL (x86_64), PMULL+EOR3/SVE2 (aarch64), Zvbc (riscv64)
 //!
@@ -228,17 +228,17 @@ pub mod aarch64 {
 }
 
 #[cfg(target_arch = "powerpc64")]
-pub mod powerpc64 {
-  use super::super::powerpc64 as arch;
+pub mod power {
+  use super::super::power as arch;
   use crate::dispatchers::Crc64Fn;
 
   /// VPMSUM kernel names: [1-way, 2-way, 4-way, 8-way]
   pub const VPMSUM_NAMES: &[&str] = &[
-    "powerpc64/vpmsum",
-    "powerpc64/vpmsum-2way",
-    "powerpc64/vpmsum-4way",
-    "powerpc64/vpmsum-8way",
-    "powerpc64/vpmsum-8way", // 8-way slot (same as 7-way slot on ppc64)
+    "power/vpmsum",
+    "power/vpmsum-2way",
+    "power/vpmsum-4way",
+    "power/vpmsum-8way",
+    "power/vpmsum-8way", // 8-way slot (same as 7-way slot on ppc64)
   ];
 
   // ─────────────────────────────────────────────────────────────────────────

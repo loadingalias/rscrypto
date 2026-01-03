@@ -241,7 +241,7 @@ fn clamp_force_to_caps(requested: Crc24Force, caps: Caps) -> Crc24Force {
       }
       #[cfg(target_arch = "powerpc64")]
       {
-        if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
+        if caps.has(platform::caps::power::VPMSUM_READY) {
           return Crc24Force::Clmul;
         }
       }
@@ -285,7 +285,10 @@ fn default_portable_to_clmul(tune: Tune) -> usize {
 #[must_use]
 fn default_pclmul_to_vpclmul(tune: Tune) -> usize {
   let simd_bytes = (tune.effective_simd_width as usize).strict_div(8).max(1);
-  simd_bytes.strict_mul(4).max(tune.pclmul_threshold).max(1)
+  tuned_defaults::for_tune_kind(tune.kind)
+    .and_then(|d| d.pclmul_to_vpclmul)
+    .unwrap_or_else(|| simd_bytes.strict_mul(4).max(tune.pclmul_threshold))
+    .max(1)
 }
 
 #[inline]

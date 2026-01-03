@@ -17,6 +17,8 @@ use crate::{
   sampler::{Sampler, SamplerConfig},
 };
 
+const CRC64_FOLD_BLOCK_BYTES: usize = 128;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Common Tunable Parameters
 // ─────────────────────────────────────────────────────────────────────────────
@@ -133,12 +135,12 @@ fn crc64_kernel_specs(caps: &Caps) -> Vec<KernelSpec> {
 
   #[cfg(target_arch = "powerpc64")]
   {
-    use platform::caps::powerpc64;
-    if caps.has(powerpc64::VPMSUM_READY) {
+    use platform::caps::power;
+    if caps.has(power::VPMSUM_READY) {
       specs.push(KernelSpec::with_streams(
-        "powerpc64/vpmsum",
+        "power/vpmsum",
         KernelTier::Folding,
-        powerpc64::VPMSUM_READY,
+        power::VPMSUM_READY,
         1,
         8,
       ));
@@ -229,11 +231,11 @@ fn kernel_name_with_streams(base: &str, streams: u8) -> &'static str {
     ("aarch64/sve2-pmull", 2) => "aarch64/sve2-pmull-2way",
     ("aarch64/sve2-pmull", 3) => "aarch64/sve2-pmull-3way",
 
-    // powerpc64 VPMSUM
-    ("powerpc64/vpmsum", 1) => "powerpc64/vpmsum",
-    ("powerpc64/vpmsum", 2) => "powerpc64/vpmsum-2way",
-    ("powerpc64/vpmsum", 4) => "powerpc64/vpmsum-4way",
-    ("powerpc64/vpmsum", 8) => "powerpc64/vpmsum-8way",
+    // Power VPMSUM
+    ("power/vpmsum", 1) => "power/vpmsum",
+    ("power/vpmsum", 2) => "power/vpmsum-2way",
+    ("power/vpmsum", 4) => "power/vpmsum-4way",
+    ("power/vpmsum", 8) => "power/vpmsum-8way",
 
     // s390x VGFM
     ("s390x/vgfm", 1) => "s390x/vgfm",
@@ -381,7 +383,37 @@ impl crate::Tunable for Crc64XzTunable {
 
     // Use the forced kernel if available, otherwise fall back to auto
     let (kernel_name, result) = if let Some(ref kernel) = self.cached_kernel {
-      let func = kernel.func;
+      let mut func = kernel.func;
+
+      // Mirror library dispatch: for sub-block sizes, the family may use a
+      // dedicated small-buffer kernel even when the "tier name" is the wide
+      // kernel (e.g., PMULL-EOR3 still uses PMULL-small below 128B).
+      if data.len() < CRC64_FOLD_BLOCK_BYTES
+        && let Some(ref forced) = self.forced_kernel
+      {
+        #[cfg(target_arch = "x86_64")]
+        {
+          if forced.starts_with("x86_64/pclmul")
+            && let Some(small) = bench::get_crc64_xz_kernel("x86_64/pclmul-small")
+          {
+            func = small.func;
+          }
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+          if forced.starts_with("aarch64/sve2-pmull")
+            && let Some(small) = bench::get_crc64_xz_kernel("aarch64/sve2-pmull-small")
+          {
+            func = small.func;
+          } else if forced.starts_with("aarch64/pmull")
+            && let Some(small) = bench::get_crc64_xz_kernel("aarch64/pmull-small")
+          {
+            func = small.func;
+          }
+        }
+      }
+
       let result = sampler.run(data, |buf| {
         core::hint::black_box(func(core::hint::black_box(!0u64), core::hint::black_box(buf)));
       });
@@ -537,7 +569,34 @@ impl crate::Tunable for Crc64NvmeTunable {
     let sampler = Sampler::new(&config);
 
     let (kernel_name, result) = if let Some(ref kernel) = self.cached_kernel {
-      let func = kernel.func;
+      let mut func = kernel.func;
+
+      if data.len() < CRC64_FOLD_BLOCK_BYTES
+        && let Some(ref forced) = self.forced_kernel
+      {
+        #[cfg(target_arch = "x86_64")]
+        {
+          if forced.starts_with("x86_64/pclmul")
+            && let Some(small) = bench::get_crc64_nvme_kernel("x86_64/pclmul-small")
+          {
+            func = small.func;
+          }
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+          if forced.starts_with("aarch64/sve2-pmull")
+            && let Some(small) = bench::get_crc64_nvme_kernel("aarch64/sve2-pmull-small")
+          {
+            func = small.func;
+          } else if forced.starts_with("aarch64/pmull")
+            && let Some(small) = bench::get_crc64_nvme_kernel("aarch64/pmull-small")
+          {
+            func = small.func;
+          }
+        }
+      }
+
       let result = sampler.run(data, |buf| {
         core::hint::black_box(func(core::hint::black_box(!0u64), core::hint::black_box(buf)));
       });

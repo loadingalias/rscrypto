@@ -87,6 +87,14 @@ tune *args="":
 tune-quick *args="":
     RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p tune --release --bin rscrypto-tune -- --quick {{args}}
 
+# Apply tuned defaults into the repo for this machine (writes into crates/checksum)
+tune-apply *args="":
+    RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p tune --release --bin rscrypto-tune -- --apply {{args}}
+
+# Quick mode + apply (faster, noisier; still useful for iterative tuning)
+tune-quick-apply *args="":
+    RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p tune --release --bin rscrypto-tune -- --quick --apply {{args}}
+
 
 # Summarize Criterion results as TSV
 bench-summary group="" only="oneshot":

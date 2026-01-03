@@ -338,6 +338,70 @@ pub struct BestConfig<'a> {
   pub throughput_gib_s: f64,
 }
 
+/// Find the best kernel and stream configuration across a set of sizes.
+///
+/// This reduces noise from selecting streams based on a single large size, and
+/// helps avoid "over-capping" streams when the highest stream count is only
+/// briefly optimal at a single point.
+///
+/// The score is the arithmetic mean throughput over `sizes` (using only sizes
+/// present in the measurement set). The returned `throughput_gib_s` is that
+/// mean.
+pub fn find_best_config_across_sizes<'a>(measurements: &'a [Measurement], sizes: &[usize]) -> Option<BestConfig<'a>> {
+  if measurements.is_empty() {
+    return None;
+  }
+
+  // If no sizes are provided, fall back to the "largest size wins" rule.
+  if sizes.is_empty() {
+    return find_best_large_config(measurements);
+  }
+
+  // Track the best (kernel, streams) by mean throughput across sizes.
+  let mut best_kernel: Option<&str> = None;
+  let mut best_streams: u8 = 1;
+  let mut best_mean: f64 = -1.0;
+
+  // Iterate all unique (kernel, streams) pairs.
+  for candidate in measurements {
+    let candidate_kernel = candidate.kernel.as_str();
+    let candidate_streams = candidate.streams;
+
+    // Compute mean throughput across requested sizes for this (kernel, streams).
+    let mut sum: f64 = 0.0;
+    let mut count: u32 = 0;
+
+    for &size in sizes {
+      if let Some(m) = measurements
+        .iter()
+        .find(|m| m.kernel == candidate_kernel && m.streams == candidate_streams && m.size == size)
+      {
+        sum += m.throughput_gib_s;
+        count = count.strict_add(1);
+      }
+    }
+
+    if count == 0 {
+      continue;
+    }
+
+    let mean = sum / f64::from(count);
+
+    // Tie-break: prefer fewer streams when mean is equal (stability).
+    if mean > best_mean || (mean == best_mean && candidate_streams < best_streams) {
+      best_mean = mean;
+      best_kernel = Some(candidate_kernel);
+      best_streams = candidate_streams;
+    }
+  }
+
+  best_kernel.map(|kernel| BestConfig {
+    kernel,
+    streams: best_streams,
+    throughput_gib_s: best_mean,
+  })
+}
+
 /// Find the best kernel and stream configuration for large buffers.
 ///
 /// Combines `find_best_large_kernel` and `select_best_streams` into a single lookup.

@@ -9,7 +9,7 @@
 //! - Tier 0 (Reference): Bitwise implementation
 //! - Tier 1 (Portable): Slice-by-16 table lookup
 //! - Tier 2 (HW CRC): SSE4.2 `crc32` (x86_64), ARMv8 CRC extension (aarch64) - CRC-32C only on x86
-//! - Tier 3 (Folding): PCLMUL (x86_64), PMULL (aarch64), VPMSUM (ppc64), VGFM (s390x), Zbc
+//! - Tier 3 (Folding): PCLMUL (x86_64), PMULL (aarch64), VPMSUM (Power), VGFM (s390x), Zbc
 //!   (riscv64)
 //! - Tier 4 (Wide): VPCLMUL (x86_64), PMULL+EOR3/SVE2 (aarch64), Zvbc (riscv64)
 
@@ -330,17 +330,17 @@ pub mod aarch64 {
 }
 
 #[cfg(target_arch = "powerpc64")]
-pub mod powerpc64 {
-  use super::super::powerpc64 as arch;
+pub mod power {
+  use super::super::power as arch;
   use crate::dispatchers::Crc32Fn;
 
   /// VPMSUM kernel names: [1-way, 2-way, 4-way, 8-way, 8-way(dup)].
   pub const CRC32_VPMSUM_NAMES: &[&str] = &[
-    "powerpc64/vpmsum",
-    "powerpc64/vpmsum-2way",
-    "powerpc64/vpmsum-4way",
-    "powerpc64/vpmsum-8way",
-    "powerpc64/vpmsum-8way",
+    "power/vpmsum",
+    "power/vpmsum-2way",
+    "power/vpmsum-4way",
+    "power/vpmsum-8way",
+    "power/vpmsum-8way",
   ];
 
   /// CRC-32 (IEEE) VPMSUM kernels: [1-way, 2-way, 4-way, 8-way, 8-way(dup)].
@@ -354,11 +354,11 @@ pub mod powerpc64 {
 
   /// CRC-32C VPMSUM kernel names: [1-way, 2-way, 4-way, 8-way, 8-way(dup)].
   pub const CRC32C_VPMSUM_NAMES: &[&str] = &[
-    "powerpc64/vpmsum",
-    "powerpc64/vpmsum-2way",
-    "powerpc64/vpmsum-4way",
-    "powerpc64/vpmsum-8way",
-    "powerpc64/vpmsum-8way",
+    "power/vpmsum",
+    "power/vpmsum-2way",
+    "power/vpmsum-4way",
+    "power/vpmsum-8way",
+    "power/vpmsum-8way",
   ];
 
   /// CRC-32C VPMSUM kernels: [1-way, 2-way, 4-way, 8-way, 8-way(dup)].

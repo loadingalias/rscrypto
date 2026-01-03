@@ -8,7 +8,7 @@
 //!
 //! - x86_64: VPCLMULQDQ / PCLMULQDQ folding
 //! - aarch64: PMULL folding
-//! - powerpc64le: VPMSUMD folding
+//! - Power: VPMSUMD folding
 //! - s390x: VGFM folding
 //! - riscv64: ZVBC (RVV vector CLMUL) / Zbc folding
 //! - wasm32/wasm64: portable only (no CLMUL)
@@ -33,7 +33,7 @@ mod aarch64;
 // NOTE: The VPMSUMD CRC64 backend is currently implemented for little-endian
 // POWER and supports both endiannesses (big-endian loads are normalized).
 #[cfg(target_arch = "powerpc64")]
-mod powerpc64;
+mod power;
 
 #[cfg(target_arch = "s390x")]
 mod s390x;
@@ -77,10 +77,10 @@ static CRC64_XZ_CACHED: PolicyCache<policy::Crc64Policy, policy::Crc64Kernels> =
 #[cfg(target_arch = "aarch64")]
 static CRC64_NVME_CACHED: PolicyCache<policy::Crc64Policy, policy::Crc64Kernels> = PolicyCache::new();
 
-/// Cached XZ policy and kernels for powerpc64.
+/// Cached XZ policy and kernels for Power.
 #[cfg(target_arch = "powerpc64")]
 static CRC64_XZ_CACHED: PolicyCache<policy::Crc64Policy, policy::Crc64Kernels> = PolicyCache::new();
-/// Cached NVME policy and kernels for powerpc64.
+/// Cached NVME policy and kernels for Power.
 #[cfg(target_arch = "powerpc64")]
 static CRC64_NVME_CACHED: PolicyCache<policy::Crc64Policy, policy::Crc64Kernels> = PolicyCache::new();
 
@@ -142,25 +142,25 @@ fn init_nvme_policy() -> (policy::Crc64Policy, policy::Crc64Kernels) {
   (pol, kernels)
 }
 
-/// Initialize XZ policy and kernels for powerpc64.
+/// Initialize XZ policy and kernels for Power.
 #[cfg(target_arch = "powerpc64")]
 fn init_xz_policy() -> (policy::Crc64Policy, policy::Crc64Kernels) {
   let cfg = config::get();
   let caps = platform::caps();
   let tune = platform::tune();
   let pol = policy::Crc64Policy::from_config(&cfg, cfg.tunables.xz, caps, &tune);
-  let kernels = policy::build_xz_kernels_powerpc64(&pol, crc64_xz_reference, crc64_xz_portable);
+  let kernels = policy::build_xz_kernels_power(&pol, crc64_xz_reference, crc64_xz_portable);
   (pol, kernels)
 }
 
-/// Initialize NVME policy and kernels for powerpc64.
+/// Initialize NVME policy and kernels for Power.
 #[cfg(target_arch = "powerpc64")]
 fn init_nvme_policy() -> (policy::Crc64Policy, policy::Crc64Kernels) {
   let cfg = config::get();
   let caps = platform::caps();
   let tune = platform::tune();
   let pol = policy::Crc64Policy::from_config(&cfg, cfg.tunables.nvme, caps, &tune);
-  let kernels = policy::build_nvme_kernels_powerpc64(&pol, crc64_nvme_reference, crc64_nvme_portable);
+  let kernels = policy::build_nvme_kernels_power(&pol, crc64_nvme_reference, crc64_nvme_portable);
   (pol, kernels)
 }
 
@@ -342,16 +342,16 @@ fn select_crc64_xz() -> Selected<Crc64Fn> {
   Selected::new("portable/slice16", crc64_xz_portable)
 }
 
-/// CRC-64-XZ auto-dispatch for powerpc64.
+/// CRC-64-XZ auto-dispatch for Power.
 #[cfg(target_arch = "powerpc64")]
-fn crc64_xz_powerpc64_auto(crc: u64, data: &[u8]) -> u64 {
+fn crc64_xz_power_auto(crc: u64, data: &[u8]) -> u64 {
   let (pol, kernels) = CRC64_XZ_CACHED.get_or_init(init_xz_policy);
   policy::policy_dispatch(&pol, &kernels, crc, data)
 }
 
-/// CRC-64-NVME auto-dispatch for powerpc64.
+/// CRC-64-NVME auto-dispatch for Power.
 #[cfg(target_arch = "powerpc64")]
-fn crc64_nvme_powerpc64_auto(crc: u64, data: &[u8]) -> u64 {
+fn crc64_nvme_power_auto(crc: u64, data: &[u8]) -> u64 {
   let (pol, kernels) = CRC64_NVME_CACHED.get_or_init(init_nvme_policy);
   policy::policy_dispatch(&pol, &kernels, crc, data)
 }
@@ -431,8 +431,8 @@ fn select_crc64_xz() -> Selected<Crc64Fn> {
     return Selected::new("portable/slice16", crc64_xz_portable);
   }
 
-  if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
-    return Selected::new("powerpc64/auto", crc64_xz_powerpc64_auto);
+  if caps.has(platform::caps::power::VPMSUM_READY) {
+    return Selected::new("power/auto", crc64_xz_power_auto);
   }
 
   Selected::new("portable/slice16", crc64_xz_portable)
@@ -546,8 +546,8 @@ fn select_crc64_nvme() -> Selected<Crc64Fn> {
     return Selected::new("portable/slice16", crc64_nvme_portable);
   }
 
-  if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
-    return Selected::new("powerpc64/auto", crc64_nvme_powerpc64_auto);
+  if caps.has(platform::caps::power::VPMSUM_READY) {
+    return Selected::new("power/auto", crc64_nvme_power_auto);
   }
 
   Selected::new("portable/slice16", crc64_nvme_portable)

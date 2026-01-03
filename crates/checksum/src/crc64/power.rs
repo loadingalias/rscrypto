@@ -1,11 +1,11 @@
-//! powerpc64 hardware-accelerated CRC-64 kernels (XZ + NVME).
+//! Power hardware-accelerated CRC-64 kernels (XZ + NVME).
 //!
 //! This is a VPMSUMD implementation derived from the Intel/TiKV folding
 //! algorithm (also used by `crc64fast` / `crc64fast-nvme`).
 //!
 //! # Safety
 //!
-//! Uses `unsafe` for powerpc64 SIMD + inline assembly. Callers must ensure the
+//! Uses `unsafe` for Power SIMD + inline assembly. Callers must ensure the
 //! required CPU features are available before executing the accelerated path
 //! (the dispatcher does this).
 #![allow(unsafe_code)]
@@ -780,7 +780,7 @@ unsafe fn crc64_vpmsum_8way(
 /// # Safety
 ///
 /// Requires POWER8 vector crypto. Caller must verify via
-/// `platform::caps().has(powerpc64::VPMSUM_READY)`.
+/// `platform::caps().has(platform::caps::power::VPMSUM_READY)`.
 #[target_feature(
   enable = "altivec",
   enable = "vsx",
@@ -801,7 +801,7 @@ pub unsafe fn crc64_xz_vpmsum(crc: u64, data: &[u8]) -> u64 {
 /// # Safety
 ///
 /// Requires POWER8 vector crypto. Caller must verify via
-/// `platform::caps().has(powerpc64::VPMSUM_READY)`.
+/// `platform::caps().has(platform::caps::power::VPMSUM_READY)`.
 #[target_feature(
   enable = "altivec",
   enable = "vsx",
@@ -823,7 +823,7 @@ pub unsafe fn crc64_xz_vpmsum_2way(crc: u64, data: &[u8]) -> u64 {
 /// # Safety
 ///
 /// Requires POWER8 vector crypto. Caller must verify via
-/// `platform::caps().has(powerpc64::VPMSUM_READY)`.
+/// `platform::caps().has(platform::caps::power::VPMSUM_READY)`.
 #[target_feature(
   enable = "altivec",
   enable = "vsx",
@@ -846,7 +846,7 @@ pub unsafe fn crc64_xz_vpmsum_4way(crc: u64, data: &[u8]) -> u64 {
 /// # Safety
 ///
 /// Requires POWER8 vector crypto. Caller must verify via
-/// `platform::caps().has(powerpc64::VPMSUM_READY)`.
+/// `platform::caps().has(platform::caps::power::VPMSUM_READY)`.
 #[target_feature(
   enable = "altivec",
   enable = "vsx",
@@ -869,7 +869,7 @@ pub unsafe fn crc64_xz_vpmsum_8way(crc: u64, data: &[u8]) -> u64 {
 /// # Safety
 ///
 /// Requires POWER8 vector crypto. Caller must verify via
-/// `platform::caps().has(powerpc64::VPMSUM_READY)`.
+/// `platform::caps().has(platform::caps::power::VPMSUM_READY)`.
 #[target_feature(
   enable = "altivec",
   enable = "vsx",
@@ -890,7 +890,7 @@ pub unsafe fn crc64_nvme_vpmsum(crc: u64, data: &[u8]) -> u64 {
 /// # Safety
 ///
 /// Requires POWER8 vector crypto. Caller must verify via
-/// `platform::caps().has(powerpc64::VPMSUM_READY)`.
+/// `platform::caps().has(platform::caps::power::VPMSUM_READY)`.
 #[target_feature(
   enable = "altivec",
   enable = "vsx",
@@ -912,7 +912,7 @@ pub unsafe fn crc64_nvme_vpmsum_2way(crc: u64, data: &[u8]) -> u64 {
 /// # Safety
 ///
 /// Requires POWER8 vector crypto. Caller must verify via
-/// `platform::caps().has(powerpc64::VPMSUM_READY)`.
+/// `platform::caps().has(platform::caps::power::VPMSUM_READY)`.
 #[target_feature(
   enable = "altivec",
   enable = "vsx",
@@ -935,7 +935,7 @@ pub unsafe fn crc64_nvme_vpmsum_4way(crc: u64, data: &[u8]) -> u64 {
 /// # Safety
 ///
 /// Requires POWER8 vector crypto. Caller must verify via
-/// `platform::caps().has(powerpc64::VPMSUM_READY)`.
+/// `platform::caps().has(platform::caps::power::VPMSUM_READY)`.
 #[target_feature(
   enable = "altivec",
   enable = "vsx",

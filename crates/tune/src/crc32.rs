@@ -22,6 +22,9 @@ use crate::{
 // Common Tunable Parameters
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Must match `checksum::crc32::policy::CRC32_FOLD_BLOCK_BYTES`.
+const CRC32_FOLD_BLOCK_BYTES: usize = 128;
+
 /// Map generic threshold names to CRC-32 specific env var suffixes.
 ///
 /// CRC-32 has a more complex tier system than CRC-64:
@@ -31,9 +34,14 @@ use crate::{
 /// - Fusion → VPCLMUL (on AVX-512 x86_64)
 fn crc32_threshold_to_env_suffix(threshold_name: &str) -> Option<&'static str> {
   match threshold_name {
-    // Portable → hardware crossover (could be HWCRC or PCLMUL depending on platform)
+    // Policy-specific thresholds (match `checksum::crc32::config` env vars).
+    "portable_to_hwcrc" => Some("THRESHOLD_PORTABLE_TO_HWCRC"),
+    "hwcrc_to_fusion" => Some("THRESHOLD_HWCRC_TO_FUSION"),
+    "fusion_to_avx512" => Some("THRESHOLD_FUSION_TO_AVX512"),
+    "fusion_to_vpclmul" => Some("THRESHOLD_FUSION_TO_VPCLMUL"),
+
+    // Back-compat with older generic naming used by the engine.
     "portable_to_simd" => Some("THRESHOLD_PORTABLE_TO_HWCRC"),
-    // SIMD → Wide crossover (e.g., HWCRC → Fusion, or Fusion → VPCLMUL)
     "simd_to_wide" => Some("THRESHOLD_HWCRC_TO_FUSION"),
     // Min bytes per lane
     "min_bytes_per_lane" => Some("MIN_BYTES_PER_LANE"),
@@ -41,6 +49,24 @@ fn crc32_threshold_to_env_suffix(threshold_name: &str) -> Option<&'static str> {
     "streams" => Some("STREAMS"),
     _ => None,
   }
+}
+
+#[inline]
+#[must_use]
+fn small_kernel_name_for_crc32(name: &str) -> Option<&'static str> {
+  if name.starts_with("x86_64/pclmul") {
+    return Some("x86_64/pclmul-small");
+  }
+  if name.starts_with("x86_64/vpclmul") {
+    return Some("x86_64/vpclmul-small");
+  }
+  if name.starts_with("aarch64/sve2-pmull") {
+    return Some("aarch64/sve2-pmull-small");
+  }
+  if name.starts_with("aarch64/pmull") || name.starts_with("aarch64/pmull-eor3") {
+    return Some("aarch64/pmull-small");
+  }
+  None
 }
 
 /// Tunable parameters for CRC-32 algorithms.
@@ -53,10 +79,24 @@ const CRC32_PARAMS: &[TunableParam] = &[
     64,
   ),
   TunableParam::new(
-    "hwcrc_to_clmul",
-    "Bytes where CLMUL folding becomes faster than HWCRC",
-    128,
+    "hwcrc_to_fusion",
+    "Bytes where fusion/folding becomes faster than HWCRC",
+    64,
     65536,
+    1024,
+  ),
+  TunableParam::new(
+    "fusion_to_vpclmul",
+    "Bytes where VPCLMUL fusion becomes faster than baseline fusion",
+    64,
+    1_048_576,
+    2048,
+  ),
+  TunableParam::new(
+    "fusion_to_avx512",
+    "Bytes where AVX-512 fusion becomes faster than baseline fusion",
+    64,
+    1_048_576,
     2048,
   ),
   TunableParam::new("streams", "Number of parallel folding streams", 1, 8, 4),
@@ -146,12 +186,12 @@ fn crc32_ieee_kernel_specs(caps: &Caps) -> Vec<KernelSpec> {
 
   #[cfg(target_arch = "powerpc64")]
   {
-    use platform::caps::powerpc64;
-    if caps.has(powerpc64::VPMSUM_READY) {
+    use platform::caps::power;
+    if caps.has(power::VPMSUM_READY) {
       specs.push(KernelSpec::with_streams(
-        "powerpc64/vpmsum",
+        "power/vpmsum",
         KernelTier::Folding,
-        powerpc64::VPMSUM_READY,
+        power::VPMSUM_READY,
         1,
         8,
       ));
@@ -302,12 +342,12 @@ fn crc32c_kernel_specs(caps: &Caps) -> Vec<KernelSpec> {
 
   #[cfg(target_arch = "powerpc64")]
   {
-    use platform::caps::powerpc64;
-    if caps.has(powerpc64::VPMSUM_READY) {
+    use platform::caps::power;
+    if caps.has(power::VPMSUM_READY) {
       specs.push(KernelSpec::with_streams(
-        "powerpc64/vpmsum",
+        "power/vpmsum",
         KernelTier::Folding,
-        powerpc64::VPMSUM_READY,
+        power::VPMSUM_READY,
         1,
         8,
       ));
@@ -486,7 +526,13 @@ impl crate::Tunable for Crc32IeeeTunable {
     let sampler = Sampler::new(&config);
 
     let (kernel_name, result) = if let Some(ref kernel) = self.cached_kernel {
-      let func = kernel.func;
+      let mut func = kernel.func;
+      if data.len() < CRC32_FOLD_BLOCK_BYTES
+        && let Some(small_name) = small_kernel_name_for_crc32(kernel.name)
+        && let Some(small) = bench::get_crc32_ieee_kernel(small_name)
+      {
+        func = small.func;
+      }
       let result = sampler.run(data, |buf| {
         core::hint::black_box(func(core::hint::black_box(!0u32), core::hint::black_box(buf)));
       });
@@ -654,7 +700,13 @@ impl crate::Tunable for Crc32cTunable {
     let sampler = Sampler::new(&config);
 
     let (kernel_name, result) = if let Some(ref kernel) = self.cached_kernel {
-      let func = kernel.func;
+      let mut func = kernel.func;
+      if data.len() < CRC32_FOLD_BLOCK_BYTES
+        && let Some(small_name) = small_kernel_name_for_crc32(kernel.name)
+        && let Some(small) = bench::get_crc32c_kernel(small_name)
+      {
+        func = small.func;
+      }
       let result = sampler.run(data, |buf| {
         core::hint::black_box(func(core::hint::black_box(!0u32), core::hint::black_box(buf)));
       });

@@ -5,7 +5,7 @@
 //! overrides to win).
 //!
 //! Update via:
-//! - `just tune-crc32 --apply` (writes this file)
+//! - `just tune-apply` (writes this file)
 
 use platform::TuneKind;
 

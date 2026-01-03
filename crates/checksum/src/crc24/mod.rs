@@ -57,7 +57,7 @@ use crate::{
 #[cfg(target_arch = "aarch64")]
 mod aarch64;
 #[cfg(target_arch = "powerpc64")]
-mod powerpc64;
+mod power;
 #[cfg(target_arch = "riscv64")]
 mod riscv64;
 #[cfg(target_arch = "s390x")]
@@ -117,7 +117,7 @@ fn init_openpgp_policy() -> (policy::Crc24Policy, policy::Crc24Kernels) {
     }
     #[cfg(target_arch = "powerpc64")]
     {
-      policy::build_openpgp_kernels_powerpc64(
+      policy::build_openpgp_kernels_power(
         &pol,
         crc24_openpgp_reference,
         portable::crc24_openpgp_slice4,

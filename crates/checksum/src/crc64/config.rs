@@ -37,7 +37,7 @@ pub enum Crc64Force {
   PmullEor3,
   /// Force aarch64 SVE2 PMULL (if supported).
   Sve2Pmull,
-  /// Force powerpc64 VPMSUMD (if supported).
+  /// Force Power VPMSUMD (if supported).
   Vpmsum,
   /// Force s390x VGFM (if supported).
   Vgfm,
@@ -308,7 +308,7 @@ fn clamp_force_to_caps(requested: Crc64Force, caps: Caps) -> Crc64Force {
     Crc64Force::Vpmsum => {
       #[cfg(target_arch = "powerpc64")]
       {
-        if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
+        if caps.has(platform::caps::power::VPMSUM_READY) {
           return Crc64Force::Vpmsum;
         }
       }
@@ -406,7 +406,7 @@ fn default_crc64_streams(caps: Caps, tune: Tune) -> u8 {
   {
     // POWER VPMSUMD benefits from higher ILP; default to a higher stream count
     // when the crypto/vector facility is present.
-    if !caps.has(platform::caps::powerpc64::VPMSUM_READY) {
+    if !caps.has(platform::caps::power::VPMSUM_READY) {
       return 1;
     }
     tune.parallel_streams.saturating_mul(2).clamp(1, 8)

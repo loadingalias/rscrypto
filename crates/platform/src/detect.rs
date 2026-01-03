@@ -377,19 +377,19 @@ pub const fn caps_static() -> Caps {
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
-  // PowerPC64
+  // Power
   // ─────────────────────────────────────────────────────────────────────────────
   #[cfg(target_arch = "powerpc64")]
   {
-    use crate::caps::powerpc64;
+    use crate::caps::power;
 
     detect!(result;
-      "altivec" => powerpc64::ALTIVEC,
-      "vsx" => powerpc64::VSX,
-      "power8-vector" => powerpc64::POWER8_VECTOR,
-      "power8-crypto" => powerpc64::POWER8_CRYPTO,
-      "power9-vector" => powerpc64::POWER9_VECTOR,
-      "power10-vector" => powerpc64::POWER10_VECTOR,
+      "altivec" => power::ALTIVEC,
+      "vsx" => power::VSX,
+      "power8-vector" => power::POWER8_VECTOR,
+      "power8-crypto" => power::POWER8_CRYPTO,
+      "power9-vector" => power::POWER9_VECTOR,
+      "power10-vector" => power::POWER10_VECTOR,
     );
   }
 
@@ -861,7 +861,7 @@ mod atomic_cache {
       Arch::Arm => 4,
       Arch::Riscv64 => 5,
       Arch::Riscv32 => 6,
-      Arch::Powerpc64 => 7,
+      Arch::Power => 7,
       Arch::S390x => 8,
       Arch::Wasm32 => 10,
       Arch::Wasm64 => 11,
@@ -877,7 +877,7 @@ mod atomic_cache {
       4 => Arch::Arm,
       5 => Arch::Riscv64,
       6 => Arch::Riscv32,
-      7 => Arch::Powerpc64,
+      7 => Arch::Power,
       8 => Arch::S390x,
       10 => Arch::Wasm32,
       11 => Arch::Wasm64,
@@ -961,7 +961,7 @@ pub fn detect_uncached() -> Detected {
 
   #[cfg(target_arch = "powerpc64")]
   {
-    detect_powerpc64()
+    detect_power()
   }
 
   #[cfg(target_arch = "wasm32")]
@@ -2657,37 +2657,37 @@ fn select_s390x_tune(caps: Caps) -> Tune {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PowerPC64 Detection
+// Power Detection
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_arch = "powerpc64")]
-fn detect_powerpc64() -> Detected {
+fn detect_power() -> Detected {
   // Start with compile-time detected features.
   #[cfg(feature = "std")]
-  let caps = caps_static() | runtime_powerpc64();
+  let caps = caps_static() | runtime_power();
   #[cfg(not(feature = "std"))]
   let caps = caps_static();
 
-  let tune = select_powerpc64_tune(caps);
+  let tune = select_power_tune(caps);
 
   Detected {
     caps,
     tune,
-    arch: Arch::Powerpc64,
+    arch: Arch::Power,
   }
 }
 
 #[cfg(target_arch = "powerpc64")]
-fn select_powerpc64_tune(caps: Caps) -> Tune {
-  use crate::caps::powerpc64;
+fn select_power_tune(caps: Caps) -> Tune {
+  use crate::caps::power;
 
-  if caps.has(powerpc64::POWER10_VECTOR) {
+  if caps.has(power::POWER10_VECTOR) {
     Tune::POWER10
-  } else if caps.has(powerpc64::POWER9_VECTOR) {
+  } else if caps.has(power::POWER9_VECTOR) {
     Tune::POWER9
-  } else if caps.has(powerpc64::POWER8_VECTOR) {
+  } else if caps.has(power::POWER8_VECTOR) {
     Tune::POWER8
-  } else if caps.has(powerpc64::VSX) {
+  } else if caps.has(power::VSX) {
     Tune::POWER7
   } else {
     Tune::PORTABLE
@@ -2695,10 +2695,10 @@ fn select_powerpc64_tune(caps: Caps) -> Tune {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PowerPC64 Runtime Detection
+// Power Runtime Detection
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Runtime powerpc64 detection for Linux/Android via /proc/self/auxv.
+/// Runtime Power detection for Linux/Android via /proc/self/auxv.
 ///
 /// This avoids unstable `is_powerpc64_feature_detected!` and keeps the
 /// selection logic consistent with the x86/aarch64 batch detectors.
@@ -2707,10 +2707,10 @@ fn select_powerpc64_tune(caps: Caps) -> Tune {
   feature = "std",
   any(target_os = "linux", target_os = "android")
 ))]
-fn runtime_powerpc64() -> Caps {
+fn runtime_power() -> Caps {
   use std::{fs::File, io::Read};
 
-  use crate::caps::powerpc64;
+  use crate::caps::power;
 
   // ELF auxiliary vector entry types
   const AT_HWCAP: u64 = 16;
@@ -2752,29 +2752,29 @@ fn runtime_powerpc64() -> Caps {
   let mut caps = Caps::NONE;
 
   if hwcap & PPC_FEATURE_HAS_ALTIVEC != 0 {
-    caps |= powerpc64::ALTIVEC;
+    caps |= power::ALTIVEC;
   }
   if hwcap & PPC_FEATURE_HAS_VSX != 0 {
-    caps |= powerpc64::VSX;
+    caps |= power::VSX;
   }
 
   // POWER9 implies POWER8 vector/crypto as well.
   if hwcap2 & PPC_FEATURE2_ARCH_3_00 != 0 {
-    caps |= powerpc64::POWER9_VECTOR | powerpc64::POWER8_VECTOR | powerpc64::POWER8_CRYPTO;
+    caps |= power::POWER9_VECTOR | power::POWER8_VECTOR | power::POWER8_CRYPTO;
   } else if hwcap2 & PPC_FEATURE2_ARCH_2_07 != 0 {
-    caps |= powerpc64::POWER8_VECTOR | powerpc64::POWER8_CRYPTO;
+    caps |= power::POWER8_VECTOR | power::POWER8_CRYPTO;
   }
 
   caps
 }
 
-/// Runtime powerpc64 detection for other platforms.
+/// Runtime Power detection for other platforms.
 #[cfg(all(
   target_arch = "powerpc64",
   feature = "std",
   not(any(target_os = "linux", target_os = "android"))
 ))]
-fn runtime_powerpc64() -> Caps {
+fn runtime_power() -> Caps {
   // No stable runtime detector available on non-Linux today; rely on compile-time
   // `-C target-feature` for static dispatch in those environments.
   Caps::NONE
@@ -3347,7 +3347,7 @@ mod tests {
       Arch::Arm => 4,
       Arch::Riscv64 => 5,
       Arch::Riscv32 => 6,
-      Arch::Powerpc64 => 7,
+      Arch::Power => 7,
       Arch::S390x => 8,
       Arch::Wasm32 => 10,
       Arch::Wasm64 => 11,
@@ -3363,7 +3363,7 @@ mod tests {
       4 => Arch::Arm,
       5 => Arch::Riscv64,
       6 => Arch::Riscv32,
-      7 => Arch::Powerpc64,
+      7 => Arch::Power,
       8 => Arch::S390x,
       10 => Arch::Wasm32,
       11 => Arch::Wasm64,
@@ -3382,7 +3382,7 @@ mod tests {
       Arch::Arm,
       Arch::Riscv64,
       Arch::Riscv32,
-      Arch::Powerpc64,
+      Arch::Power,
       Arch::S390x,
       Arch::Wasm32,
       Arch::Wasm64,
@@ -3416,7 +3416,7 @@ mod tests {
       Arch::Arm,
       Arch::Riscv64,
       Arch::Riscv32,
-      Arch::Powerpc64,
+      Arch::Power,
       Arch::S390x,
       Arch::Wasm32,
       Arch::Wasm64,

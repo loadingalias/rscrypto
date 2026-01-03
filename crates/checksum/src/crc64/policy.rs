@@ -230,9 +230,9 @@ impl Crc64Policy {
       KernelFamily::PowerVpmsum => {
         let streams = self.streams_for_len(len);
         let idx = stream_to_index(streams);
-        kernels::powerpc64::VPMSUM_NAMES
+        kernels::power::VPMSUM_NAMES
           .get(idx)
-          .or(kernels::powerpc64::VPMSUM_NAMES.first())
+          .or(kernels::power::VPMSUM_NAMES.first())
           .copied()
           .unwrap_or(kernels::PORTABLE)
       }
@@ -512,11 +512,11 @@ pub fn build_nvme_kernels_aarch64(policy: &Crc64Policy, reference: Crc64Fn, port
   }
 }
 
-/// Build XZ kernel table for powerpc64.
+/// Build XZ kernel table for Power.
 #[cfg(target_arch = "powerpc64")]
 #[must_use]
-pub fn build_xz_kernels_powerpc64(policy: &Crc64Policy, reference: Crc64Fn, portable: Crc64Fn) -> Crc64Kernels {
-  use kernels::powerpc64::*;
+pub fn build_xz_kernels_power(policy: &Crc64Policy, reference: Crc64Fn, portable: Crc64Fn) -> Crc64Kernels {
+  use kernels::power::*;
 
   match policy.family() {
     KernelFamily::PowerVpmsum => Crc64Kernels {
@@ -531,11 +531,11 @@ pub fn build_xz_kernels_powerpc64(policy: &Crc64Policy, reference: Crc64Fn, port
   }
 }
 
-/// Build NVME kernel table for powerpc64.
+/// Build NVME kernel table for Power.
 #[cfg(target_arch = "powerpc64")]
 #[must_use]
-pub fn build_nvme_kernels_powerpc64(policy: &Crc64Policy, reference: Crc64Fn, portable: Crc64Fn) -> Crc64Kernels {
-  use kernels::powerpc64::*;
+pub fn build_nvme_kernels_power(policy: &Crc64Policy, reference: Crc64Fn, portable: Crc64Fn) -> Crc64Kernels {
+  use kernels::power::*;
 
   match policy.family() {
     KernelFamily::PowerVpmsum => Crc64Kernels {

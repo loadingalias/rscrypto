@@ -72,7 +72,7 @@ pub const PORTABLE_SLICE4: &str = "portable/slice4";
 /// This provides a consistent mapping across all architectures:
 /// - x86_64: 1, 2, 4, 7, 8-way
 /// - aarch64: 1, 2, 3-way (slot 2 used for 3-way)
-/// - powerpc64: 1, 2, 4, 8-way
+/// - Power: 1, 2, 4, 8-way
 /// - s390x: 1, 2, 4-way
 /// - riscv64: 1, 2, 4-way
 #[inline]

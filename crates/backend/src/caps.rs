@@ -46,7 +46,7 @@ pub mod s390x {
   pub use platform::caps::s390x::*;
 }
 
-// Re-export powerpc64 feature constants
-pub mod powerpc64 {
-  pub use platform::caps::powerpc64::*;
+// Re-export Power feature constants
+pub mod power {
+  pub use platform::caps::power::*;
 }

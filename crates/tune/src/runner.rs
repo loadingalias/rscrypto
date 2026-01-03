@@ -273,7 +273,11 @@ pub const THRESHOLD_SIZES: &[usize] = &[
 ];
 
 /// Buffer sizes for stream count selection.
-pub const STREAM_SIZES: &[usize] = &[1024 * 1024];
+///
+/// We intentionally benchmark multiple "large-ish" sizes to avoid overfitting
+/// stream selection to a single point (1 MiB). This better captures when
+/// additional ILP stops being beneficial (or becomes beneficial later).
+pub const STREAM_SIZES: &[usize] = &[32 * 1024, 64 * 1024, 128 * 1024, 256 * 1024, 512 * 1024, 1024 * 1024];
 
 /// Get stream candidates for the current architecture.
 #[must_use]
@@ -289,6 +293,7 @@ pub fn stream_candidates() -> &'static [u8] {
   }
   #[cfg(target_arch = "powerpc64")]
   {
+    // Power (powerpc64) supports 1 / 2 / 4 / 8-way folding
     &[1, 2, 4, 8]
   }
   #[cfg(target_arch = "s390x")]

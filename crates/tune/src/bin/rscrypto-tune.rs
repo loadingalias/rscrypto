@@ -28,6 +28,9 @@ struct Args {
   /// Verbose output.
   verbose: bool,
 
+  /// Apply results into tuned_defaults.rs tables.
+  apply: bool,
+
   /// Custom warmup duration in ms.
   warmup_ms: Option<u64>,
 
@@ -44,6 +47,7 @@ impl Default for Args {
       quick: false,
       format: OutputFormat::Summary,
       verbose: false,
+      apply: false,
       warmup_ms: None,
       measure_ms: None,
       help: false,
@@ -61,6 +65,7 @@ fn parse_args() -> Result<Args, String> {
       "--quick" | "-q" => args.quick = true,
       "--verbose" | "-v" => args.verbose = true,
       "--help" | "-h" => args.help = true,
+      "--apply" => args.apply = true,
       "--format" | "-f" => {
         let Some(value) = iter.next() else {
           return Err("--format requires a value".to_string());
@@ -103,22 +108,26 @@ OPTIONS:
     -q, --quick           Quick mode (faster, noisier measurements)
     -v, --verbose         Verbose output during tuning
     -f, --format FORMAT   Output format: summary (default), env, json, tsv
+    --apply               Update tuned_defaults.rs for this TuneKind
     --warmup-ms MS        Custom warmup duration (default: 150, quick: 75)
     --measure-ms MS       Custom measurement duration (default: 250, quick: 125)
     -h, --help            Show this help message
 
-EXAMPLES:
-    # Standard tuning run
-    just tune
+	EXAMPLES:
+	    # Standard tuning run
+	    just tune
 
-    # Quick run for development
-    just tune --quick
+	    # Quick run for development
+	    just tune-quick
 
-    # Output as shell exports
-    just tune --format env
+	    # Output as shell exports
+	    just tune -- --format env
 
-    # Output as JSON
-    just tune --format json
+	    # Output as JSON
+	    just tune -- --format json
+
+	    # Apply to tuned defaults (writes into crates/checksum)
+	    just tune-apply
 "
   );
 }
@@ -209,6 +218,21 @@ fn main() -> ExitCode {
         eprintln!("Failed to print tsv: {err}");
         return ExitCode::FAILURE;
       }
+    }
+  }
+
+  if args.apply {
+    let cwd = match std::env::current_dir() {
+      Ok(p) => p,
+      Err(err) => {
+        eprintln!("Failed to resolve current directory for --apply: {err}");
+        return ExitCode::FAILURE;
+      }
+    };
+
+    if let Err(err) = tune::apply::apply_tuned_defaults(&cwd, &results) {
+      eprintln!("Failed to apply tuned defaults: {err}");
+      return ExitCode::FAILURE;
     }
   }
 

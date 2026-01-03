@@ -135,7 +135,25 @@ impl Crc16Policy {
     {
       true
     }
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    #[cfg(target_arch = "powerpc64")]
+    {
+      true
+    }
+    #[cfg(target_arch = "s390x")]
+    {
+      true
+    }
+    #[cfg(target_arch = "riscv64")]
+    {
+      true
+    }
+    #[cfg(not(any(
+      target_arch = "x86_64",
+      target_arch = "aarch64",
+      target_arch = "powerpc64",
+      target_arch = "s390x",
+      target_arch = "riscv64"
+    )))]
     {
       false
     }
@@ -160,7 +178,7 @@ impl Crc16Policy {
     #[cfg(target_arch = "powerpc64")]
     {
       let _ = tune;
-      (caps.has(platform::caps::powerpc64::VPMSUM_READY), false)
+      (caps.has(platform::caps::power::VPMSUM_READY), false)
     }
     #[cfg(target_arch = "s390x")]
     {
@@ -266,21 +284,43 @@ impl Crc16Policy {
   }
 
   #[cfg(target_arch = "powerpc64")]
-  fn kernel_name_for_family(&self, _len: usize) -> &'static str {
-    kernels::powerpc64::VPMSUM
+  fn kernel_name_for_family(&self, len: usize) -> &'static str {
+    let streams = self.streams_for_len(len);
+    let idx = stream_to_index(streams);
+    kernels::power::VPMSUM_NAMES
+      .get(idx)
+      .or(kernels::power::VPMSUM_NAMES.first())
+      .copied()
+      .unwrap_or(kernels::power::VPMSUM)
   }
 
   #[cfg(target_arch = "s390x")]
-  fn kernel_name_for_family(&self, _len: usize) -> &'static str {
-    kernels::s390x::VGFM
+  fn kernel_name_for_family(&self, len: usize) -> &'static str {
+    let streams = self.streams_for_len(len);
+    let idx = stream_to_index(streams);
+    kernels::s390x::VGFM_NAMES
+      .get(idx)
+      .or(kernels::s390x::VGFM_NAMES.first())
+      .copied()
+      .unwrap_or(kernels::s390x::VGFM)
   }
 
   #[cfg(target_arch = "riscv64")]
   fn kernel_name_for_family(&self, len: usize) -> &'static str {
+    let streams = self.streams_for_len(len);
+    let idx = stream_to_index(streams);
     if self.has_vpclmul && len >= self.clmul_to_vpclmul {
-      kernels::riscv64::ZVBC
+      kernels::riscv64::ZVBC_NAMES
+        .get(idx)
+        .or(kernels::riscv64::ZVBC_NAMES.first())
+        .copied()
+        .unwrap_or(kernels::riscv64::ZVBC)
     } else {
-      kernels::riscv64::ZBC
+      kernels::riscv64::ZBC_NAMES
+        .get(idx)
+        .or(kernels::riscv64::ZBC_NAMES.first())
+        .copied()
+        .unwrap_or(kernels::riscv64::ZBC)
     }
   }
 
@@ -597,20 +637,18 @@ pub fn build_ibm_kernels_aarch64(
 /// Build kernel table for non-SIMD architectures.
 #[cfg(target_arch = "powerpc64")]
 #[must_use]
-pub fn build_ccitt_kernels_powerpc64(
+pub fn build_ccitt_kernels_power(
   policy: &Crc16Policy,
   reference: Crc16Fn,
   slice4: Crc16Fn,
   slice8: Crc16Fn,
 ) -> Crc16Kernels {
-  use super::powerpc64;
-
   Crc16Kernels {
     reference,
     slice4,
     slice8,
     clmul: if policy.has_clmul {
-      Some([powerpc64::crc16_ccitt_vpmsum_safe; 5])
+      Some(kernels::power::CCITT_VPMSUM)
     } else {
       None
     },
@@ -620,20 +658,18 @@ pub fn build_ccitt_kernels_powerpc64(
 
 #[cfg(target_arch = "powerpc64")]
 #[must_use]
-pub fn build_ibm_kernels_powerpc64(
+pub fn build_ibm_kernels_power(
   policy: &Crc16Policy,
   reference: Crc16Fn,
   slice4: Crc16Fn,
   slice8: Crc16Fn,
 ) -> Crc16Kernels {
-  use super::powerpc64;
-
   Crc16Kernels {
     reference,
     slice4,
     slice8,
     clmul: if policy.has_clmul {
-      Some([powerpc64::crc16_ibm_vpmsum_safe; 5])
+      Some(kernels::power::IBM_VPMSUM)
     } else {
       None
     },
@@ -649,14 +685,12 @@ pub fn build_ccitt_kernels_s390x(
   slice4: Crc16Fn,
   slice8: Crc16Fn,
 ) -> Crc16Kernels {
-  use super::s390x;
-
   Crc16Kernels {
     reference,
     slice4,
     slice8,
     clmul: if policy.has_clmul {
-      Some([s390x::crc16_ccitt_vgfm_safe; 5])
+      Some(kernels::s390x::CCITT_VGFM)
     } else {
       None
     },
@@ -672,14 +706,12 @@ pub fn build_ibm_kernels_s390x(
   slice4: Crc16Fn,
   slice8: Crc16Fn,
 ) -> Crc16Kernels {
-  use super::s390x;
-
   Crc16Kernels {
     reference,
     slice4,
     slice8,
     clmul: if policy.has_clmul {
-      Some([s390x::crc16_ibm_vgfm_safe; 5])
+      Some(kernels::s390x::IBM_VGFM)
     } else {
       None
     },
@@ -697,8 +729,6 @@ pub fn build_ccitt_kernels_riscv64(
 ) -> Crc16Kernels {
   use platform::caps::riscv;
 
-  use super::riscv64;
-
   let caps = platform::caps();
 
   Crc16Kernels {
@@ -706,12 +736,12 @@ pub fn build_ccitt_kernels_riscv64(
     slice4,
     slice8,
     clmul: if policy.has_clmul && caps.has(riscv::ZBC) {
-      Some([riscv64::crc16_ccitt_zbc_safe; 5])
+      Some(kernels::riscv64::CCITT_ZBC)
     } else {
       None
     },
     vpclmul: if policy.has_vpclmul && caps.has(riscv::ZVBC) {
-      Some([riscv64::crc16_ccitt_zvbc_safe; 5])
+      Some(kernels::riscv64::CCITT_ZVBC)
     } else {
       None
     },
@@ -728,8 +758,6 @@ pub fn build_ibm_kernels_riscv64(
 ) -> Crc16Kernels {
   use platform::caps::riscv;
 
-  use super::riscv64;
-
   let caps = platform::caps();
 
   Crc16Kernels {
@@ -737,12 +765,12 @@ pub fn build_ibm_kernels_riscv64(
     slice4,
     slice8,
     clmul: if policy.has_clmul && caps.has(riscv::ZBC) {
-      Some([riscv64::crc16_ibm_zbc_safe; 5])
+      Some(kernels::riscv64::IBM_ZBC)
     } else {
       None
     },
     vpclmul: if policy.has_vpclmul && caps.has(riscv::ZVBC) {
-      Some([riscv64::crc16_ibm_zvbc_safe; 5])
+      Some(kernels::riscv64::IBM_ZVBC)
     } else {
       None
     },

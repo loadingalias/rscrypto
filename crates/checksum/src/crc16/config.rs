@@ -325,7 +325,7 @@ fn clamp_force_to_caps(requested: Crc16Force, caps: Caps) -> Crc16Force {
       }
       #[cfg(target_arch = "powerpc64")]
       {
-        if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
+        if caps.has(platform::caps::power::VPMSUM_READY) {
           return Crc16Force::Clmul;
         }
       }
@@ -367,9 +367,12 @@ fn default_portable_to_clmul(tune: Tune, tuned: Option<tuned_defaults::Crc16Tune
 
 #[inline]
 #[must_use]
-fn default_pclmul_to_vpclmul(tune: Tune) -> usize {
+fn default_pclmul_to_vpclmul(tune: Tune, tuned: Option<tuned_defaults::Crc16TunedDefaults>) -> usize {
   let simd_bytes = (tune.effective_simd_width as usize).strict_div(8).max(1);
-  simd_bytes.strict_mul(4).max(tune.pclmul_threshold).max(1)
+  tuned
+    .and_then(|d| d.pclmul_to_vpclmul)
+    .unwrap_or_else(|| simd_bytes.strict_mul(4).max(tune.pclmul_threshold))
+    .max(1)
 }
 
 #[inline]
@@ -396,7 +399,7 @@ fn config_impl(
     portable_to_clmul = v.max(1);
   }
 
-  let mut pclmul_to_vpclmul = default_pclmul_to_vpclmul(tune);
+  let mut pclmul_to_vpclmul = default_pclmul_to_vpclmul(tune, tuned);
   if let Some(v) = ov.pclmul_to_vpclmul {
     pclmul_to_vpclmul = v.max(1);
   }

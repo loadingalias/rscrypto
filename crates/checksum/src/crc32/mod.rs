@@ -9,7 +9,7 @@
 //! - x86_64: SSE4.2 `crc32` (CRC-32C only)
 //! - x86_64: PCLMULQDQ folding (CRC-32 / IEEE)
 //! - aarch64: ARMv8 CRC extension (CRC-32 and CRC-32C)
-//! - powerpc64: VPMSUMD folding (CRC-32 and CRC-32C)
+//! - Power: VPMSUMD folding (CRC-32 and CRC-32C)
 //! - s390x: VGFM folding (CRC-32 and CRC-32C)
 //! - riscv64: ZVBC (RVV vector CLMUL) / Zbc folding (CRC-32 and CRC-32C)
 //! - wasm32/wasm64: portable only (no CRC32/CLMUL instructions)
@@ -55,7 +55,7 @@ mod x86_64;
 mod aarch64;
 
 #[cfg(target_arch = "powerpc64")]
-mod powerpc64;
+mod power;
 
 #[cfg(target_arch = "s390x")]
 mod s390x;
@@ -183,11 +183,11 @@ static CRC32_IEEE_CACHED: PolicyCache<policy::Crc32Policy, policy::Crc32Kernels>
 #[cfg(target_arch = "aarch64")]
 static CRC32C_CACHED: PolicyCache<policy::Crc32Policy, policy::Crc32Kernels> = PolicyCache::new();
 
-/// Cached IEEE policy and kernels for powerpc64.
+/// Cached IEEE policy and kernels for Power.
 #[cfg(target_arch = "powerpc64")]
 static CRC32_IEEE_CACHED: PolicyCache<policy::Crc32Policy, policy::Crc32Kernels> = PolicyCache::new();
 
-/// Cached Castagnoli policy and kernels for powerpc64.
+/// Cached Castagnoli policy and kernels for Power.
 #[cfg(target_arch = "powerpc64")]
 static CRC32C_CACHED: PolicyCache<policy::Crc32Policy, policy::Crc32Kernels> = PolicyCache::new();
 
@@ -251,25 +251,25 @@ fn init_castagnoli_policy() -> (policy::Crc32Policy, policy::Crc32Kernels) {
   (pol, kernels)
 }
 
-/// Initialize IEEE policy and kernels for powerpc64.
+/// Initialize IEEE policy and kernels for Power.
 #[cfg(target_arch = "powerpc64")]
 fn init_ieee_policy() -> (policy::Crc32Policy, policy::Crc32Kernels) {
   let cfg = config::get();
   let caps = platform::caps();
   let tune = platform::tune();
   let pol = policy::Crc32Policy::from_config(&cfg, caps, &tune, policy::Crc32Variant::Ieee);
-  let kernels = policy::build_ieee_kernels_powerpc64(&pol, crc32_reference, crc32_portable);
+  let kernels = policy::build_ieee_kernels_power(&pol, crc32_reference, crc32_portable);
   (pol, kernels)
 }
 
-/// Initialize Castagnoli policy and kernels for powerpc64.
+/// Initialize Castagnoli policy and kernels for Power.
 #[cfg(target_arch = "powerpc64")]
 fn init_castagnoli_policy() -> (policy::Crc32Policy, policy::Crc32Kernels) {
   let cfg = config::get();
   let caps = platform::caps();
   let tune = platform::tune();
   let pol = policy::Crc32Policy::from_config(&cfg, caps, &tune, policy::Crc32Variant::Castagnoli);
-  let kernels = policy::build_castagnoli_kernels_powerpc64(&pol, crc32c_reference, crc32c_portable);
+  let kernels = policy::build_castagnoli_kernels_power(&pol, crc32c_reference, crc32c_portable);
   (pol, kernels)
 }
 
@@ -429,22 +429,22 @@ fn crc32c_aarch64_auto(crc: u32, data: &[u8]) -> u32 {
 // CRC32 CLMUL Backends (POWER/s390x/RISC-V)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// CRC-32 (IEEE) auto-dispatch for powerpc64.
+/// CRC-32 (IEEE) auto-dispatch for Power.
 ///
 /// Uses cached policy and kernels for efficient dispatch with minimal branching.
 /// Caching works on both std (OnceLock) and no_std (atomic state machine).
 #[cfg(target_arch = "powerpc64")]
-fn crc32_powerpc64_auto(crc: u32, data: &[u8]) -> u32 {
+fn crc32_power_auto(crc: u32, data: &[u8]) -> u32 {
   let (pol, kernels) = CRC32_IEEE_CACHED.get_or_init(init_ieee_policy);
   policy::policy_dispatch(&pol, &kernels, crc, data)
 }
 
-/// CRC-32C (Castagnoli) auto-dispatch for powerpc64.
+/// CRC-32C (Castagnoli) auto-dispatch for Power.
 ///
 /// Uses cached policy and kernels for efficient dispatch with minimal branching.
 /// Caching works on both std (OnceLock) and no_std (atomic state machine).
 #[cfg(target_arch = "powerpc64")]
-fn crc32c_powerpc64_auto(crc: u32, data: &[u8]) -> u32 {
+fn crc32c_power_auto(crc: u32, data: &[u8]) -> u32 {
   let (pol, kernels) = CRC32C_CACHED.get_or_init(init_castagnoli_policy);
   policy::policy_dispatch(&pol, &kernels, crc, data)
 }
@@ -596,8 +596,8 @@ fn select_crc32() -> Selected<Crc32Fn> {
     return Selected::new(kernels::PORTABLE, crc32_portable);
   }
 
-  if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
-    return Selected::new("powerpc64/auto", crc32_powerpc64_auto);
+  if caps.has(platform::caps::power::VPMSUM_READY) {
+    return Selected::new("power/auto", crc32_power_auto);
   }
 
   Selected::new(kernels::PORTABLE, crc32_portable)
@@ -616,8 +616,8 @@ fn select_crc32c() -> Selected<Crc32Fn> {
     return Selected::new(kernels::PORTABLE, crc32c_portable);
   }
 
-  if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
-    return Selected::new("powerpc64/auto", crc32c_powerpc64_auto);
+  if caps.has(platform::caps::power::VPMSUM_READY) {
+    return Selected::new("power/auto", crc32c_power_auto);
   }
 
   Selected::new(kernels::PORTABLE, crc32c_portable)

@@ -9,7 +9,7 @@
 //! CRC-16 supports Tiers 0, 1, 3, and 4 (no HW CRC instructions exist):
 //! - Tier 0 (Reference): Bitwise implementation
 //! - Tier 1 (Portable): Slice-by-4/8 table lookup
-//! - Tier 3 (Folding): PCLMUL (x86_64), PMULL (aarch64), VPMSUM (powerpc64), VGFM (s390x), Zbc
+//! - Tier 3 (Folding): PCLMUL (x86_64), PMULL (aarch64), VPMSUM (Power), VGFM (s390x), Zbc
 //!   (riscv64)
 //! - Tier 4 (Wide): VPCLMUL (x86_64 AVX-512), Zvbc (riscv64)
 
@@ -167,20 +167,41 @@ pub mod aarch64 {
 }
 
 #[cfg(target_arch = "powerpc64")]
-pub mod powerpc64 {
-  use super::super::powerpc64 as arch;
+pub mod power {
+  use super::super::power as arch;
   use crate::dispatchers::Crc16Fn;
 
   /// VPMSUM kernel name (POWER8+ carryless multiply).
-  pub const VPMSUM: &str = "powerpc64/vpmsum";
+  pub const VPMSUM: &str = "power/vpmsum";
 
-  /// CCITT VPMSUM kernel.
-  #[allow(dead_code)] // Exposed for kernel ladder consistency; dispatch uses wrapper fn
-  pub const CCITT_VPMSUM: Crc16Fn = arch::crc16_ccitt_vpmsum_safe;
+  /// VPMSUM kernel names: [1-way, 2-way, 4-way, 8-way, 8-way(dup)].
+  pub const VPMSUM_NAMES: &[&str] = &[
+    "power/vpmsum",
+    "power/vpmsum-2way",
+    "power/vpmsum-4way",
+    "power/vpmsum-8way",
+    "power/vpmsum-8way",
+  ];
 
-  /// IBM VPMSUM kernel.
-  #[allow(dead_code)] // Exposed for kernel ladder consistency; dispatch uses wrapper fn
-  pub const IBM_VPMSUM: Crc16Fn = arch::crc16_ibm_vpmsum_safe;
+  /// CCITT VPMSUM kernels: [1-way, 2-way, 4-way, 8-way, 8-way(dup)].
+  #[allow(dead_code)] // Used by bench + policy dispatch.
+  pub const CCITT_VPMSUM: [Crc16Fn; 5] = [
+    arch::crc16_ccitt_vpmsum_safe,
+    arch::crc16_ccitt_vpmsum_2way_safe,
+    arch::crc16_ccitt_vpmsum_4way_safe,
+    arch::crc16_ccitt_vpmsum_8way_safe,
+    arch::crc16_ccitt_vpmsum_8way_safe,
+  ];
+
+  /// IBM VPMSUM kernels: [1-way, 2-way, 4-way, 8-way, 8-way(dup)].
+  #[allow(dead_code)] // Used by bench + policy dispatch.
+  pub const IBM_VPMSUM: [Crc16Fn; 5] = [
+    arch::crc16_ibm_vpmsum_safe,
+    arch::crc16_ibm_vpmsum_2way_safe,
+    arch::crc16_ibm_vpmsum_4way_safe,
+    arch::crc16_ibm_vpmsum_8way_safe,
+    arch::crc16_ibm_vpmsum_8way_safe,
+  ];
 }
 
 #[cfg(target_arch = "s390x")]
@@ -191,13 +212,34 @@ pub mod s390x {
   /// VGFM kernel name (s390x vector Galois field multiply).
   pub const VGFM: &str = "s390x/vgfm";
 
-  /// CCITT VGFM kernel.
-  #[allow(dead_code)] // Exposed for kernel ladder consistency; dispatch uses wrapper fn
-  pub const CCITT_VGFM: Crc16Fn = arch::crc16_ccitt_vgfm_safe;
+  /// VGFM kernel names: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)].
+  pub const VGFM_NAMES: &[&str] = &[
+    "s390x/vgfm",
+    "s390x/vgfm-2way",
+    "s390x/vgfm-4way",
+    "s390x/vgfm-4way",
+    "s390x/vgfm-4way",
+  ];
 
-  /// IBM VGFM kernel.
-  #[allow(dead_code)] // Exposed for kernel ladder consistency; dispatch uses wrapper fn
-  pub const IBM_VGFM: Crc16Fn = arch::crc16_ibm_vgfm_safe;
+  /// CCITT VGFM kernels: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)].
+  #[allow(dead_code)] // Used by bench + policy dispatch.
+  pub const CCITT_VGFM: [Crc16Fn; 5] = [
+    arch::crc16_ccitt_vgfm_safe,
+    arch::crc16_ccitt_vgfm_2way_safe,
+    arch::crc16_ccitt_vgfm_4way_safe,
+    arch::crc16_ccitt_vgfm_4way_safe,
+    arch::crc16_ccitt_vgfm_4way_safe,
+  ];
+
+  /// IBM VGFM kernels: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)].
+  #[allow(dead_code)] // Used by bench + policy dispatch.
+  pub const IBM_VGFM: [Crc16Fn; 5] = [
+    arch::crc16_ibm_vgfm_safe,
+    arch::crc16_ibm_vgfm_2way_safe,
+    arch::crc16_ibm_vgfm_4way_safe,
+    arch::crc16_ibm_vgfm_4way_safe,
+    arch::crc16_ibm_vgfm_4way_safe,
+  ];
 }
 
 #[cfg(target_arch = "riscv64")]
@@ -207,23 +249,63 @@ pub mod riscv64 {
 
   /// Zbc kernel name (scalar carryless multiply).
   pub const ZBC: &str = "riscv64/zbc";
+  /// Zbc kernel names: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)].
+  pub const ZBC_NAMES: &[&str] = &[
+    "riscv64/zbc",
+    "riscv64/zbc-2way",
+    "riscv64/zbc-4way",
+    "riscv64/zbc-4way",
+    "riscv64/zbc-4way",
+  ];
 
   /// Zvbc kernel name (vector carryless multiply).
   pub const ZVBC: &str = "riscv64/zvbc";
+  /// Zvbc kernel names: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)].
+  pub const ZVBC_NAMES: &[&str] = &[
+    "riscv64/zvbc",
+    "riscv64/zvbc-2way",
+    "riscv64/zvbc-4way",
+    "riscv64/zvbc-4way",
+    "riscv64/zvbc-4way",
+  ];
 
-  /// CCITT Zbc kernel.
-  #[allow(dead_code)] // Exposed for kernel ladder consistency; dispatch uses wrapper fn
-  pub const CCITT_ZBC: Crc16Fn = arch::crc16_ccitt_zbc_safe;
+  /// CCITT Zbc kernels: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)].
+  #[allow(dead_code)] // Used by bench + policy dispatch.
+  pub const CCITT_ZBC: [Crc16Fn; 5] = [
+    arch::crc16_ccitt_zbc_safe,
+    arch::crc16_ccitt_zbc_2way_safe,
+    arch::crc16_ccitt_zbc_4way_safe,
+    arch::crc16_ccitt_zbc_4way_safe,
+    arch::crc16_ccitt_zbc_4way_safe,
+  ];
 
-  /// CCITT Zvbc kernel.
-  #[allow(dead_code)] // Exposed for kernel ladder consistency; dispatch uses wrapper fn
-  pub const CCITT_ZVBC: Crc16Fn = arch::crc16_ccitt_zvbc_safe;
+  /// CCITT Zvbc kernels: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)].
+  #[allow(dead_code)] // Used by bench + policy dispatch.
+  pub const CCITT_ZVBC: [Crc16Fn; 5] = [
+    arch::crc16_ccitt_zvbc_safe,
+    arch::crc16_ccitt_zvbc_2way_safe,
+    arch::crc16_ccitt_zvbc_4way_safe,
+    arch::crc16_ccitt_zvbc_4way_safe,
+    arch::crc16_ccitt_zvbc_4way_safe,
+  ];
 
-  /// IBM Zbc kernel.
-  #[allow(dead_code)] // Exposed for kernel ladder consistency; dispatch uses wrapper fn
-  pub const IBM_ZBC: Crc16Fn = arch::crc16_ibm_zbc_safe;
+  /// IBM Zbc kernels: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)].
+  #[allow(dead_code)] // Used by bench + policy dispatch.
+  pub const IBM_ZBC: [Crc16Fn; 5] = [
+    arch::crc16_ibm_zbc_safe,
+    arch::crc16_ibm_zbc_2way_safe,
+    arch::crc16_ibm_zbc_4way_safe,
+    arch::crc16_ibm_zbc_4way_safe,
+    arch::crc16_ibm_zbc_4way_safe,
+  ];
 
-  /// IBM Zvbc kernel.
-  #[allow(dead_code)] // Exposed for kernel ladder consistency; dispatch uses wrapper fn
-  pub const IBM_ZVBC: Crc16Fn = arch::crc16_ibm_zvbc_safe;
+  /// IBM Zvbc kernels: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)].
+  #[allow(dead_code)] // Used by bench + policy dispatch.
+  pub const IBM_ZVBC: [Crc16Fn; 5] = [
+    arch::crc16_ibm_zvbc_safe,
+    arch::crc16_ibm_zvbc_2way_safe,
+    arch::crc16_ibm_zvbc_4way_safe,
+    arch::crc16_ibm_zvbc_4way_safe,
+    arch::crc16_ibm_zvbc_4way_safe,
+  ];
 }

@@ -32,7 +32,7 @@ use crate::{
 /// Family names follow the pattern `{Arch}{Instruction}`:
 /// - `X86Pclmul` - x86_64 PCLMULQDQ instruction
 /// - `ArmPmull` - aarch64 PMULL instruction
-/// - `PowerVpmsum` - powerpc64 VPMSUMD instruction
+/// - `PowerVpmsum` - Power VPMSUMD instruction
 ///
 /// # Extensibility
 ///
@@ -83,7 +83,7 @@ pub enum KernelFamily {
   /// Available on ARMv8+ with crypto extensions.
   ArmPmull = 21,
 
-  /// powerpc64 VPMSUMD vector carryless multiply.
+  /// Power VPMSUMD vector carryless multiply.
   ///
   /// 128-bit vector polynomial multiply using AltiVec/VSX.
   /// Available on POWER8+.
@@ -155,7 +155,7 @@ impl KernelFamily {
       Self::ArmCrc32 => "aarch64/crc32",
       Self::X86Pclmul => "x86_64/pclmul",
       Self::ArmPmull => "aarch64/pmull",
-      Self::PowerVpmsum => "powerpc64/vpmsum",
+      Self::PowerVpmsum => "power/vpmsum",
       Self::S390xVgfm => "s390x/vgfm",
       Self::RiscvZbc => "riscv64/zbc",
       Self::X86Vpclmul => "x86_64/vpclmul",
@@ -181,7 +181,7 @@ impl KernelFamily {
       Self::ArmCrc32 | Self::ArmPmull | Self::ArmPmullEor3 | Self::ArmSve2Pmull => {
         matches!(arch, Arch::Aarch64 | Arch::Arm)
       }
-      Self::PowerVpmsum => matches!(arch, Arch::Powerpc64),
+      Self::PowerVpmsum => matches!(arch, Arch::Power),
       Self::S390xVgfm => matches!(arch, Arch::S390x),
       Self::RiscvZbc | Self::RiscvZvbc => matches!(arch, Arch::Riscv64 | Arch::Riscv32),
     }
@@ -206,7 +206,7 @@ impl KernelFamily {
       Self::ArmPmull => aarch64::PMULL_READY,
       Self::ArmPmullEor3 => aarch64::PMULL_EOR3_READY,
       Self::ArmSve2Pmull => aarch64::SVE2_PMULL.union(aarch64::PMULL_READY),
-      Self::PowerVpmsum => platform::caps::powerpc64::VPMSUM_READY,
+      Self::PowerVpmsum => platform::caps::power::VPMSUM_READY,
       Self::S390xVgfm => platform::caps::s390x::VECTOR,
       Self::RiscvZbc => riscv::ZBC,
       Self::RiscvZvbc => riscv::ZVBC,

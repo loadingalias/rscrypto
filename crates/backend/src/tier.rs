@@ -56,7 +56,7 @@ pub enum KernelTier {
   /// Available on:
   /// - x86_64: PCLMULQDQ
   /// - aarch64: PMULL
-  /// - powerpc64: VPMSUMD
+  /// - Power: VPMSUMD
   /// - s390x: VGFM
   /// - riscv64: Zbc
   ///

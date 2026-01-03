@@ -43,7 +43,7 @@ pub enum Crc32Force {
   /// This mirrors the CRC64 selector: it is an ILP-oriented tier intended for
   /// Armv9/SVE2-class CPUs. Implementations are still NEON+PMULL based.
   Sve2Pmull,
-  /// Force powerpc64 VPMSUMD folding (if supported).
+  /// Force Power VPMSUMD folding (if supported).
   Vpmsum,
   /// Force s390x VGFM folding (if supported).
   Vgfm,
@@ -380,7 +380,7 @@ fn clamp_force_to_caps(requested: Crc32Force, caps: Caps) -> Crc32Force {
     Crc32Force::Vpmsum => {
       #[cfg(target_arch = "powerpc64")]
       {
-        if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
+        if caps.has(platform::caps::power::VPMSUM_READY) {
           return Crc32Force::Vpmsum;
         }
       }
@@ -519,7 +519,7 @@ fn default_crc32_streams(caps: Caps, tune: Tune) -> u8 {
 
   #[cfg(target_arch = "powerpc64")]
   {
-    if !caps.has(platform::caps::powerpc64::VPMSUM_READY) {
+    if !caps.has(platform::caps::power::VPMSUM_READY) {
       return 1;
     }
     tune.parallel_streams.saturating_mul(2).clamp(1, 8)

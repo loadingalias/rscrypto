@@ -69,7 +69,7 @@ pub fn run_all_crc24_openpgp_kernels(data: &[u8]) -> alloc::vec::Vec<KernelResul
 
   #[cfg(target_arch = "powerpc64")]
   {
-    run_powerpc64_kernels_openpgp(data, &mut results);
+    run_power_kernels_openpgp(data, &mut results);
   }
 
   #[cfg(target_arch = "s390x")]
@@ -146,11 +146,11 @@ fn run_aarch64_kernels_openpgp(data: &[u8], results: &mut alloc::vec::Vec<Kernel
 }
 
 #[cfg(target_arch = "powerpc64")]
-fn run_powerpc64_kernels_openpgp(data: &[u8], results: &mut alloc::vec::Vec<KernelResult>) {
-  use super::kernels::powerpc64::*;
+fn run_power_kernels_openpgp(data: &[u8], results: &mut alloc::vec::Vec<KernelResult>) {
+  use super::kernels::power::*;
   let caps = platform::caps();
 
-  if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
+  if caps.has(platform::caps::power::VPMSUM_READY) {
     let checksum = OPENPGP_VPMSUM(INIT, data) & MASK;
     results.push(KernelResult { name: VPMSUM, checksum });
   }

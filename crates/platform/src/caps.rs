@@ -247,7 +247,8 @@ pub enum Arch {
   Arm,
   Riscv64,
   Riscv32,
-  Powerpc64,
+  /// IBM POWER (Rust target_arch = "powerpc64").
+  Power,
   S390x,
   Wasm32,
   Wasm64,
@@ -286,7 +287,7 @@ impl Arch {
     }
     #[cfg(target_arch = "powerpc64")]
     {
-      Self::Powerpc64
+      Self::Power
     }
     #[cfg(target_arch = "s390x")]
     {
@@ -328,7 +329,7 @@ impl Arch {
       Self::Arm => "arm",
       Self::Riscv64 => "riscv64",
       Self::Riscv32 => "riscv32",
-      Self::Powerpc64 => "powerpc64",
+      Self::Power => "power",
       Self::S390x => "s390x",
       Self::Wasm32 => "wasm32",
       Self::Wasm64 => "wasm64",
@@ -691,13 +692,13 @@ pub mod s390x {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PowerPC64 Features (bits 240-255)
+// Power Features (bits 240-255)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// PowerPC64 CPU features.
+/// Power CPU features.
 ///
 /// Includes AltiVec/VMX and VSX vector extensions, plus crypto accelerators.
-pub mod powerpc64 {
+pub mod power {
   use super::Caps;
 
   // ─── Vector Extensions ───
@@ -920,8 +921,8 @@ const S390X_FEATURES: &[FeatureEntry] = &[
   (238, "enhanced-sort"),
 ];
 
-/// PowerPC64 feature names.
-const POWERPC64_FEATURES: &[FeatureEntry] = &[
+/// Power feature names.
+const POWER_FEATURES: &[FeatureEntry] = &[
   (240, "altivec"),
   (241, "vsx"),
   (242, "power8-vector"),
@@ -941,7 +942,7 @@ impl Caps {
       .chain(RISCV_FEATURES.iter())
       .chain(WASM_FEATURES.iter())
       .chain(S390X_FEATURES.iter())
-      .chain(POWERPC64_FEATURES.iter())
+      .chain(POWER_FEATURES.iter())
       .filter_map(move |(bit, name)| if self.has_bit(*bit) { Some(*name) } else { None })
   }
 }
@@ -1193,42 +1194,42 @@ mod tests {
   }
 
   #[test]
-  fn test_powerpc64_features() {
-    use super::powerpc64;
+  fn test_power_features() {
+    use super::power;
 
-    // Test powerpc64 feature constants are properly defined
-    assert!(!powerpc64::ALTIVEC.is_empty());
-    assert!(!powerpc64::VSX.is_empty());
-    assert!(!powerpc64::POWER8_VECTOR.is_empty());
-    assert!(!powerpc64::POWER8_CRYPTO.is_empty());
-    assert!(!powerpc64::POWER9_VECTOR.is_empty());
-    assert!(!powerpc64::POWER10_VECTOR.is_empty());
-    assert!(!powerpc64::QUADWORD_ATOMICS.is_empty());
-    assert!(!powerpc64::PARTWORD_ATOMICS.is_empty());
+    // Test power feature constants are properly defined
+    assert!(!power::ALTIVEC.is_empty());
+    assert!(!power::VSX.is_empty());
+    assert!(!power::POWER8_VECTOR.is_empty());
+    assert!(!power::POWER8_CRYPTO.is_empty());
+    assert!(!power::POWER9_VECTOR.is_empty());
+    assert!(!power::POWER10_VECTOR.is_empty());
+    assert!(!power::QUADWORD_ATOMICS.is_empty());
+    assert!(!power::PARTWORD_ATOMICS.is_empty());
 
-    // Verify powerpc64 features are in the correct word (bits 240-255 = word 3)
-    assert!(powerpc64::ALTIVEC.0[3] != 0);
-    assert_eq!(powerpc64::ALTIVEC.0[0], 0);
-    assert_eq!(powerpc64::ALTIVEC.0[1], 0);
-    assert_eq!(powerpc64::ALTIVEC.0[2], 0);
+    // Verify power features are in the correct word (bits 240-255 = word 3)
+    assert!(power::ALTIVEC.0[3] != 0);
+    assert_eq!(power::ALTIVEC.0[0], 0);
+    assert_eq!(power::ALTIVEC.0[1], 0);
+    assert_eq!(power::ALTIVEC.0[2], 0);
 
     // Test combined masks
-    assert!(powerpc64::POWER7_READY.has(powerpc64::ALTIVEC));
-    assert!(powerpc64::POWER7_READY.has(powerpc64::VSX));
-    assert!(powerpc64::POWER8_READY.has(powerpc64::POWER8_VECTOR));
-    assert!(powerpc64::POWER8_READY.has(powerpc64::POWER8_CRYPTO));
-    assert!(powerpc64::POWER9_READY.has(powerpc64::POWER9_VECTOR));
-    assert!(powerpc64::POWER10_READY.has(powerpc64::POWER10_VECTOR));
+    assert!(power::POWER7_READY.has(power::ALTIVEC));
+    assert!(power::POWER7_READY.has(power::VSX));
+    assert!(power::POWER8_READY.has(power::POWER8_VECTOR));
+    assert!(power::POWER8_READY.has(power::POWER8_CRYPTO));
+    assert!(power::POWER9_READY.has(power::POWER9_VECTOR));
+    assert!(power::POWER10_READY.has(power::POWER10_VECTOR));
 
     // Verify distinct bit positions
-    let all = powerpc64::ALTIVEC
-      | powerpc64::VSX
-      | powerpc64::POWER8_VECTOR
-      | powerpc64::POWER8_CRYPTO
-      | powerpc64::POWER9_VECTOR
-      | powerpc64::POWER10_VECTOR
-      | powerpc64::QUADWORD_ATOMICS
-      | powerpc64::PARTWORD_ATOMICS;
+    let all = power::ALTIVEC
+      | power::VSX
+      | power::POWER8_VECTOR
+      | power::POWER8_CRYPTO
+      | power::POWER9_VECTOR
+      | power::POWER10_VECTOR
+      | power::QUADWORD_ATOMICS
+      | power::PARTWORD_ATOMICS;
     assert_eq!(all.count(), 8);
   }
 

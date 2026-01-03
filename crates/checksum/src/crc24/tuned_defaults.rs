@@ -11,6 +11,7 @@ use platform::TuneKind;
 pub struct Crc24TunedDefaults {
   pub slice4_to_slice8: usize,
   pub portable_to_clmul: usize,
+  pub pclmul_to_vpclmul: Option<usize>,
   pub streams: u8,
   pub min_bytes_per_lane: Option<usize>,
 }
@@ -19,7 +20,7 @@ pub struct Crc24TunedDefaults {
 pub const CRC24_TUNED_DEFAULTS: &[(TuneKind, Crc24TunedDefaults)] = &[
   // BEGIN GENERATED (rscrypto-tune)
   // Apple M1-M3: pmull is fastest; use 64-byte threshold for dispatch.
-  (TuneKind::AppleM1M3, Crc24TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, streams: 3, min_bytes_per_lane: None }),
+  (TuneKind::AppleM1M3, Crc24TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 3, min_bytes_per_lane: None }),
   // END GENERATED (rscrypto-tune)
 ];
 

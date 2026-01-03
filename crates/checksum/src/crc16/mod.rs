@@ -47,7 +47,7 @@ use crate::{
 #[cfg(target_arch = "aarch64")]
 mod aarch64;
 #[cfg(target_arch = "powerpc64")]
-mod powerpc64;
+mod power;
 #[cfg(target_arch = "riscv64")]
 mod riscv64;
 #[cfg(target_arch = "s390x")]
@@ -196,7 +196,7 @@ fn init_ccitt_policy() -> (policy::Crc16Policy, policy::Crc16Kernels) {
   let caps = platform::caps();
   let tune = platform::tune();
   let pol = policy::Crc16Policy::from_config(&cfg, caps, &tune, policy::Crc16Variant::Ccitt);
-  let kernels = policy::build_ccitt_kernels_powerpc64(
+  let kernels = policy::build_ccitt_kernels_power(
     &pol,
     crc16_ccitt_reference,
     portable::crc16_ccitt_slice4,
@@ -211,7 +211,7 @@ fn init_ibm_policy() -> (policy::Crc16Policy, policy::Crc16Kernels) {
   let caps = platform::caps();
   let tune = platform::tune();
   let pol = policy::Crc16Policy::from_config(&cfg, caps, &tune, policy::Crc16Variant::Ibm);
-  let kernels = policy::build_ibm_kernels_powerpc64(
+  let kernels = policy::build_ibm_kernels_power(
     &pol,
     crc16_ibm_reference,
     portable::crc16_ibm_slice4,

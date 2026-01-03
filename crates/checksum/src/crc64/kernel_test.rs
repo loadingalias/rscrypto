@@ -61,7 +61,7 @@ pub fn run_all_crc64_xz_kernels(data: &[u8]) -> alloc::vec::Vec<KernelResult> {
 
   #[cfg(target_arch = "powerpc64")]
   {
-    run_powerpc64_kernels_xz(data, &mut results);
+    run_power_kernels_xz(data, &mut results);
   }
 
   #[cfg(target_arch = "s390x")]
@@ -113,7 +113,7 @@ pub fn run_all_crc64_nvme_kernels(data: &[u8]) -> alloc::vec::Vec<KernelResult> 
 
   #[cfg(target_arch = "powerpc64")]
   {
-    run_powerpc64_kernels_nvme(data, &mut results);
+    run_power_kernels_nvme(data, &mut results);
   }
 
   #[cfg(target_arch = "s390x")]
@@ -241,21 +241,21 @@ fn run_aarch64_kernels_nvme(data: &[u8], results: &mut alloc::vec::Vec<KernelRes
 }
 
 #[cfg(target_arch = "powerpc64")]
-fn run_powerpc64_kernels_xz(data: &[u8], results: &mut alloc::vec::Vec<KernelResult>) {
-  use super::kernels::powerpc64::*;
+fn run_power_kernels_xz(data: &[u8], results: &mut alloc::vec::Vec<KernelResult>) {
+  use super::kernels::power::*;
   let caps = platform::caps();
 
-  if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
+  if caps.has(platform::caps::power::VPMSUM_READY) {
     run_kernel_array_unique(data, &XZ_VPMSUM, VPMSUM_NAMES, results);
   }
 }
 
 #[cfg(target_arch = "powerpc64")]
-fn run_powerpc64_kernels_nvme(data: &[u8], results: &mut alloc::vec::Vec<KernelResult>) {
-  use super::kernels::powerpc64::*;
+fn run_power_kernels_nvme(data: &[u8], results: &mut alloc::vec::Vec<KernelResult>) {
+  use super::kernels::power::*;
   let caps = platform::caps();
 
-  if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
+  if caps.has(platform::caps::power::VPMSUM_READY) {
     run_kernel_array_unique(data, &NVME_VPMSUM, VPMSUM_NAMES, results);
   }
 }

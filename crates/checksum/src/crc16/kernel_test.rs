@@ -69,7 +69,7 @@ pub fn run_all_crc16_ccitt_kernels(data: &[u8]) -> alloc::vec::Vec<KernelResult>
 
   #[cfg(target_arch = "powerpc64")]
   {
-    run_powerpc64_kernels_ccitt(data, &mut results);
+    run_power_kernels_ccitt(data, &mut results);
   }
 
   #[cfg(target_arch = "s390x")]
@@ -129,7 +129,7 @@ pub fn run_all_crc16_ibm_kernels(data: &[u8]) -> alloc::vec::Vec<KernelResult> {
 
   #[cfg(target_arch = "powerpc64")]
   {
-    run_powerpc64_kernels_ibm(data, &mut results);
+    run_power_kernels_ibm(data, &mut results);
   }
 
   #[cfg(target_arch = "s390x")]
@@ -246,21 +246,21 @@ fn run_aarch64_kernels_ibm(data: &[u8], results: &mut alloc::vec::Vec<KernelResu
 }
 
 #[cfg(target_arch = "powerpc64")]
-fn run_powerpc64_kernels_ccitt(data: &[u8], results: &mut alloc::vec::Vec<KernelResult>) {
-  use super::kernels::powerpc64::*;
+fn run_power_kernels_ccitt(data: &[u8], results: &mut alloc::vec::Vec<KernelResult>) {
+  use super::kernels::power::*;
   let caps = platform::caps();
 
-  if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
+  if caps.has(platform::caps::power::VPMSUM_READY) {
     run_single_kernel_ccitt(data, CCITT_VPMSUM, VPMSUM, results);
   }
 }
 
 #[cfg(target_arch = "powerpc64")]
-fn run_powerpc64_kernels_ibm(data: &[u8], results: &mut alloc::vec::Vec<KernelResult>) {
-  use super::kernels::powerpc64::*;
+fn run_power_kernels_ibm(data: &[u8], results: &mut alloc::vec::Vec<KernelResult>) {
+  use super::kernels::power::*;
   let caps = platform::caps();
 
-  if caps.has(platform::caps::powerpc64::VPMSUM_READY) {
+  if caps.has(platform::caps::power::VPMSUM_READY) {
     run_single_kernel_ibm(data, IBM_VPMSUM, VPMSUM, results);
   }
 }
