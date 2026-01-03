@@ -501,12 +501,27 @@ impl SelectionPolicy {
 
   /// Cap the maximum number of parallel streams used by this policy.
   ///
-  /// This allows algorithm-specific tuning to prefer fewer streams than the
-  /// platform-wide tune preset (while still respecting architecture limits).
+  /// This allows algorithm-specific tuning to set the maximum stream count used
+  /// by dispatch (while still respecting architecture limits and available tiers).
   #[inline]
   pub fn cap_max_streams(&mut self, cap: u8) {
+    // Reference/Portable families cannot multi-stream.
+    if matches!(self.family, KernelFamily::Reference | KernelFamily::Portable) {
+      self.max_streams = 1;
+      return;
+    }
+
     let cap = cap.max(1);
-    self.max_streams = self.max_streams.min(cap);
+
+    // Architecture-specific stream limits.
+    let arch_max: u8 = match self.family {
+      KernelFamily::ArmPmull | KernelFamily::ArmPmullEor3 | KernelFamily::ArmSve2Pmull | KernelFamily::ArmCrc32 => 3,
+      KernelFamily::S390xVgfm => 4,
+      KernelFamily::RiscvZbc | KernelFamily::RiscvZvbc => 4,
+      _ => 8, // x86, power
+    };
+
+    self.max_streams = cap.min(arch_max);
   }
 }
 
