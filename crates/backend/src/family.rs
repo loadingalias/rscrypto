@@ -141,6 +141,20 @@ impl KernelFamily {
     }
   }
 
+  /// Whether this family requires "true wide SIMD" (≥256-bit effective width).
+  ///
+  /// Most "wide tier" families are "wide" due to instruction set / algorithmic
+  /// advantages, not necessarily because they use 256-bit vectors.
+  ///
+  /// This is currently only relevant for x86_64 AVX-512 VPCLMUL selection:
+  /// some CPUs prefer staying in 128-bit mode, in which case selecting VPCLMUL
+  /// kernels globally can be a net loss.
+  #[inline]
+  #[must_use]
+  pub const fn requires_simd_width_256(self) -> bool {
+    matches!(self, Self::X86Vpclmul)
+  }
+
   /// Human-readable family name.
   ///
   /// Returns a path-style name like `"x86_64/pclmul"` that matches

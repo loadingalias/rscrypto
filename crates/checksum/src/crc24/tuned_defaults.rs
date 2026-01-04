@@ -19,11 +19,14 @@ pub struct Crc24TunedDefaults {
 #[rustfmt::skip]
 pub const CRC24_TUNED_DEFAULTS: &[(TuneKind, Crc24TunedDefaults)] = &[
   // BEGIN GENERATED (rscrypto-tune)
+  // Default: conservative x86_64 tuning (used when microarch is unknown).
+  (TuneKind::Default, Crc24TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 2, min_bytes_per_lane: Some(256) }),
+
   // Zen4: VPCLMUL is fastest; use it immediately. Multi-stream only pays off at very large sizes.
-  (TuneKind::Zen4,  Crc24TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: Some(64), streams: 7, min_bytes_per_lane: Some(149_796) }),
+  (TuneKind::Zen4,  Crc24TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: Some(256), streams: 8, min_bytes_per_lane: Some(2_048) }),
   // Zen5 / Zen5c: extrapolate from Zen4 (same instruction set + wide CLMUL).
-  (TuneKind::Zen5,  Crc24TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: Some(64), streams: 7, min_bytes_per_lane: Some(149_796) }),
-  (TuneKind::Zen5c, Crc24TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: Some(64), streams: 7, min_bytes_per_lane: Some(149_796) }),
+  (TuneKind::Zen5,  Crc24TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: Some(256), streams: 8, min_bytes_per_lane: Some(2_048) }),
+  (TuneKind::Zen5c, Crc24TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: Some(256), streams: 8, min_bytes_per_lane: Some(2_048) }),
 
   // Intel baseline: VPCLMUL has a large warmup cost; delay wide tier.
   // These are conservative placeholders until rscrypto-tune results land.
@@ -32,11 +35,11 @@ pub const CRC24_TUNED_DEFAULTS: &[(TuneKind, Crc24TunedDefaults)] = &[
   // Ice Lake prefers 256-bit operations; disable VPCLMUL selection by default.
   (TuneKind::IntelIcl, Crc24TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: Some(usize::MAX), streams: 3, min_bytes_per_lane: None }),
 
-  // Apple M1-M3: PMULL is fastest; single-stream is best.
-  (TuneKind::AppleM1M3, Crc24TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 1, min_bytes_per_lane: None }),
+  // Apple M1-M3: PMULL is fastest; 3 streams is best.
+  (TuneKind::AppleM1M3, Crc24TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 3, min_bytes_per_lane: None }),
   // Apple M4/M5: extrapolate from Apple M1-M3.
-  (TuneKind::AppleM4,   Crc24TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 1, min_bytes_per_lane: None }),
-  (TuneKind::AppleM5,   Crc24TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 1, min_bytes_per_lane: None }),
+  (TuneKind::AppleM4,   Crc24TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 3, min_bytes_per_lane: None }),
+  (TuneKind::AppleM5,   Crc24TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 3, min_bytes_per_lane: None }),
 
   // Graviton/Neoverse class: PMULL is fastest; single-stream is best.
   (TuneKind::Graviton2,  Crc24TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 1, min_bytes_per_lane: None }),

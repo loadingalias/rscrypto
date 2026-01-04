@@ -30,19 +30,25 @@ pub struct Crc64TunedDefaults {
 #[rustfmt::skip]
 pub const CRC64_TUNED_DEFAULTS: &[(TuneKind, Crc64TunedDefaults)] = &[
   // BEGIN GENERATED (rscrypto-tune)
+  // Default: conservative x86_64 tuning (used when microarch is unknown).
+  (TuneKind::Default, Crc64TunedDefaults {
+    xz:   Crc64VariantTunedDefaults { streams: 1, portable_to_clmul: 64, pclmul_to_vpclmul: usize::MAX, small_kernel_max_bytes: 256, min_bytes_per_lane: None },
+    nvme: Crc64VariantTunedDefaults { streams: 4, portable_to_clmul: 64, pclmul_to_vpclmul: usize::MAX, small_kernel_max_bytes: 128, min_bytes_per_lane: None },
+  }),
+
   // Zen4: vpclmul-2way is fastest; per-variant MIN_BYTES_PER_LANE differs.
   (TuneKind::Zen4, Crc64TunedDefaults {
-    xz:   Crc64VariantTunedDefaults { streams: 2, portable_to_clmul: 64, pclmul_to_vpclmul: 128, small_kernel_max_bytes: 512, min_bytes_per_lane: Some(8_192) },
-    nvme: Crc64VariantTunedDefaults { streams: 2, portable_to_clmul: 64, pclmul_to_vpclmul: 128, small_kernel_max_bytes: 512, min_bytes_per_lane: None },
+    xz:   Crc64VariantTunedDefaults { streams: 2, portable_to_clmul: 64, pclmul_to_vpclmul: 512, small_kernel_max_bytes: 128, min_bytes_per_lane: Some(128) },
+    nvme: Crc64VariantTunedDefaults { streams: 4, portable_to_clmul: 64, pclmul_to_vpclmul: 512, small_kernel_max_bytes: 128, min_bytes_per_lane: Some(128) },
   }),
   // Zen5 / Zen5c: extrapolate from Zen4 (same instruction set + wide CLMUL).
   (TuneKind::Zen5, Crc64TunedDefaults {
-    xz:   Crc64VariantTunedDefaults { streams: 2, portable_to_clmul: 64, pclmul_to_vpclmul: 128, small_kernel_max_bytes: 512, min_bytes_per_lane: Some(8_192) },
-    nvme: Crc64VariantTunedDefaults { streams: 2, portable_to_clmul: 64, pclmul_to_vpclmul: 128, small_kernel_max_bytes: 512, min_bytes_per_lane: None },
+    xz:   Crc64VariantTunedDefaults { streams: 2, portable_to_clmul: 64, pclmul_to_vpclmul: 512, small_kernel_max_bytes: 128, min_bytes_per_lane: Some(128) },
+    nvme: Crc64VariantTunedDefaults { streams: 4, portable_to_clmul: 64, pclmul_to_vpclmul: 512, small_kernel_max_bytes: 128, min_bytes_per_lane: Some(128) },
   }),
   (TuneKind::Zen5c, Crc64TunedDefaults {
-    xz:   Crc64VariantTunedDefaults { streams: 2, portable_to_clmul: 64, pclmul_to_vpclmul: 128, small_kernel_max_bytes: 512, min_bytes_per_lane: Some(8_192) },
-    nvme: Crc64VariantTunedDefaults { streams: 2, portable_to_clmul: 64, pclmul_to_vpclmul: 128, small_kernel_max_bytes: 512, min_bytes_per_lane: None },
+    xz:   Crc64VariantTunedDefaults { streams: 2, portable_to_clmul: 64, pclmul_to_vpclmul: 512, small_kernel_max_bytes: 128, min_bytes_per_lane: Some(128) },
+    nvme: Crc64VariantTunedDefaults { streams: 4, portable_to_clmul: 64, pclmul_to_vpclmul: 512, small_kernel_max_bytes: 128, min_bytes_per_lane: Some(128) },
   }),
 
   // Intel baseline: VPCLMUL has a large warmup cost; delay wide tier.
@@ -63,48 +69,48 @@ pub const CRC64_TUNED_DEFAULTS: &[(TuneKind, Crc64TunedDefaults)] = &[
 
   // Apple M1-M3: PMULL is fastest; prefer 3 streams with a modest per-lane minimum.
   (TuneKind::AppleM1M3, Crc64TunedDefaults {
-    xz:   Crc64VariantTunedDefaults { streams: 3, portable_to_clmul: 64, pclmul_to_vpclmul: usize::MAX, small_kernel_max_bytes: 512, min_bytes_per_lane: Some(2_730) },
-    nvme: Crc64VariantTunedDefaults { streams: 3, portable_to_clmul: 64, pclmul_to_vpclmul: usize::MAX, small_kernel_max_bytes: 512, min_bytes_per_lane: Some(2_730) },
+    xz:   Crc64VariantTunedDefaults { streams: 3, portable_to_clmul: 64, pclmul_to_vpclmul: usize::MAX, small_kernel_max_bytes: 128, min_bytes_per_lane: Some(2_730) },
+    nvme: Crc64VariantTunedDefaults { streams: 3, portable_to_clmul: 64, pclmul_to_vpclmul: usize::MAX, small_kernel_max_bytes: 128, min_bytes_per_lane: Some(2_730) },
   }),
   // Apple M4/M5: extrapolate from Apple M1-M3.
   (TuneKind::AppleM4, Crc64TunedDefaults {
-    xz:   Crc64VariantTunedDefaults { streams: 3, portable_to_clmul: 64, pclmul_to_vpclmul: usize::MAX, small_kernel_max_bytes: 512, min_bytes_per_lane: Some(2_730) },
-    nvme: Crc64VariantTunedDefaults { streams: 3, portable_to_clmul: 64, pclmul_to_vpclmul: usize::MAX, small_kernel_max_bytes: 512, min_bytes_per_lane: Some(2_730) },
+    xz:   Crc64VariantTunedDefaults { streams: 3, portable_to_clmul: 64, pclmul_to_vpclmul: usize::MAX, small_kernel_max_bytes: 128, min_bytes_per_lane: Some(2_730) },
+    nvme: Crc64VariantTunedDefaults { streams: 3, portable_to_clmul: 64, pclmul_to_vpclmul: usize::MAX, small_kernel_max_bytes: 128, min_bytes_per_lane: Some(2_730) },
   }),
   (TuneKind::AppleM5, Crc64TunedDefaults {
-    xz:   Crc64VariantTunedDefaults { streams: 3, portable_to_clmul: 64, pclmul_to_vpclmul: usize::MAX, small_kernel_max_bytes: 512, min_bytes_per_lane: Some(2_730) },
-    nvme: Crc64VariantTunedDefaults { streams: 3, portable_to_clmul: 64, pclmul_to_vpclmul: usize::MAX, small_kernel_max_bytes: 512, min_bytes_per_lane: Some(2_730) },
+    xz:   Crc64VariantTunedDefaults { streams: 3, portable_to_clmul: 64, pclmul_to_vpclmul: usize::MAX, small_kernel_max_bytes: 128, min_bytes_per_lane: Some(2_730) },
+    nvme: Crc64VariantTunedDefaults { streams: 3, portable_to_clmul: 64, pclmul_to_vpclmul: usize::MAX, small_kernel_max_bytes: 128, min_bytes_per_lane: Some(2_730) },
   }),
 
   // Graviton2: PMULL(+EOR3 when available) is fastest; single-stream is best.
   (TuneKind::Graviton2, Crc64TunedDefaults {
-    xz:   Crc64VariantTunedDefaults { streams: 1, portable_to_clmul: 64, pclmul_to_vpclmul: usize::MAX, small_kernel_max_bytes: 512, min_bytes_per_lane: None },
-    nvme: Crc64VariantTunedDefaults { streams: 1, portable_to_clmul: 64, pclmul_to_vpclmul: usize::MAX, small_kernel_max_bytes: 512, min_bytes_per_lane: None },
+    xz:   Crc64VariantTunedDefaults { streams: 1, portable_to_clmul: 64, pclmul_to_vpclmul: usize::MAX, small_kernel_max_bytes: 128, min_bytes_per_lane: None },
+    nvme: Crc64VariantTunedDefaults { streams: 1, portable_to_clmul: 64, pclmul_to_vpclmul: usize::MAX, small_kernel_max_bytes: 128, min_bytes_per_lane: None },
   }),
   // Graviton/Neoverse class: extrapolate from Graviton2.
   (TuneKind::Graviton3, Crc64TunedDefaults {
-    xz:   Crc64VariantTunedDefaults { streams: 1, portable_to_clmul: 64, pclmul_to_vpclmul: usize::MAX, small_kernel_max_bytes: 512, min_bytes_per_lane: None },
-    nvme: Crc64VariantTunedDefaults { streams: 1, portable_to_clmul: 64, pclmul_to_vpclmul: usize::MAX, small_kernel_max_bytes: 512, min_bytes_per_lane: None },
+    xz:   Crc64VariantTunedDefaults { streams: 1, portable_to_clmul: 64, pclmul_to_vpclmul: usize::MAX, small_kernel_max_bytes: 128, min_bytes_per_lane: None },
+    nvme: Crc64VariantTunedDefaults { streams: 1, portable_to_clmul: 64, pclmul_to_vpclmul: usize::MAX, small_kernel_max_bytes: 128, min_bytes_per_lane: None },
   }),
   (TuneKind::Graviton4, Crc64TunedDefaults {
-    xz:   Crc64VariantTunedDefaults { streams: 1, portable_to_clmul: 64, pclmul_to_vpclmul: usize::MAX, small_kernel_max_bytes: 512, min_bytes_per_lane: None },
-    nvme: Crc64VariantTunedDefaults { streams: 1, portable_to_clmul: 64, pclmul_to_vpclmul: usize::MAX, small_kernel_max_bytes: 512, min_bytes_per_lane: None },
+    xz:   Crc64VariantTunedDefaults { streams: 1, portable_to_clmul: 64, pclmul_to_vpclmul: usize::MAX, small_kernel_max_bytes: 128, min_bytes_per_lane: None },
+    nvme: Crc64VariantTunedDefaults { streams: 1, portable_to_clmul: 64, pclmul_to_vpclmul: usize::MAX, small_kernel_max_bytes: 128, min_bytes_per_lane: None },
   }),
   (TuneKind::Graviton5, Crc64TunedDefaults {
-    xz:   Crc64VariantTunedDefaults { streams: 1, portable_to_clmul: 64, pclmul_to_vpclmul: usize::MAX, small_kernel_max_bytes: 512, min_bytes_per_lane: None },
-    nvme: Crc64VariantTunedDefaults { streams: 1, portable_to_clmul: 64, pclmul_to_vpclmul: usize::MAX, small_kernel_max_bytes: 512, min_bytes_per_lane: None },
+    xz:   Crc64VariantTunedDefaults { streams: 1, portable_to_clmul: 64, pclmul_to_vpclmul: usize::MAX, small_kernel_max_bytes: 128, min_bytes_per_lane: None },
+    nvme: Crc64VariantTunedDefaults { streams: 1, portable_to_clmul: 64, pclmul_to_vpclmul: usize::MAX, small_kernel_max_bytes: 128, min_bytes_per_lane: None },
   }),
   (TuneKind::NeoverseN2, Crc64TunedDefaults {
-    xz:   Crc64VariantTunedDefaults { streams: 1, portable_to_clmul: 64, pclmul_to_vpclmul: usize::MAX, small_kernel_max_bytes: 512, min_bytes_per_lane: None },
-    nvme: Crc64VariantTunedDefaults { streams: 1, portable_to_clmul: 64, pclmul_to_vpclmul: usize::MAX, small_kernel_max_bytes: 512, min_bytes_per_lane: None },
+    xz:   Crc64VariantTunedDefaults { streams: 1, portable_to_clmul: 64, pclmul_to_vpclmul: usize::MAX, small_kernel_max_bytes: 128, min_bytes_per_lane: None },
+    nvme: Crc64VariantTunedDefaults { streams: 1, portable_to_clmul: 64, pclmul_to_vpclmul: usize::MAX, small_kernel_max_bytes: 128, min_bytes_per_lane: None },
   }),
   (TuneKind::NeoverseN3, Crc64TunedDefaults {
-    xz:   Crc64VariantTunedDefaults { streams: 1, portable_to_clmul: 64, pclmul_to_vpclmul: usize::MAX, small_kernel_max_bytes: 512, min_bytes_per_lane: None },
-    nvme: Crc64VariantTunedDefaults { streams: 1, portable_to_clmul: 64, pclmul_to_vpclmul: usize::MAX, small_kernel_max_bytes: 512, min_bytes_per_lane: None },
+    xz:   Crc64VariantTunedDefaults { streams: 1, portable_to_clmul: 64, pclmul_to_vpclmul: usize::MAX, small_kernel_max_bytes: 128, min_bytes_per_lane: None },
+    nvme: Crc64VariantTunedDefaults { streams: 1, portable_to_clmul: 64, pclmul_to_vpclmul: usize::MAX, small_kernel_max_bytes: 128, min_bytes_per_lane: None },
   }),
   (TuneKind::NeoverseV3, Crc64TunedDefaults {
-    xz:   Crc64VariantTunedDefaults { streams: 1, portable_to_clmul: 64, pclmul_to_vpclmul: usize::MAX, small_kernel_max_bytes: 512, min_bytes_per_lane: None },
-    nvme: Crc64VariantTunedDefaults { streams: 1, portable_to_clmul: 64, pclmul_to_vpclmul: usize::MAX, small_kernel_max_bytes: 512, min_bytes_per_lane: None },
+    xz:   Crc64VariantTunedDefaults { streams: 1, portable_to_clmul: 64, pclmul_to_vpclmul: usize::MAX, small_kernel_max_bytes: 128, min_bytes_per_lane: None },
+    nvme: Crc64VariantTunedDefaults { streams: 1, portable_to_clmul: 64, pclmul_to_vpclmul: usize::MAX, small_kernel_max_bytes: 128, min_bytes_per_lane: None },
   }),
   (TuneKind::NvidiaGrace, Crc64TunedDefaults {
     xz:   Crc64VariantTunedDefaults { streams: 1, portable_to_clmul: 64, pclmul_to_vpclmul: usize::MAX, small_kernel_max_bytes: 512, min_bytes_per_lane: None },

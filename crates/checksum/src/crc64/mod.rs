@@ -657,6 +657,7 @@ define_crc64_type! {
   pub struct Crc64 {
     poly: CRC64_XZ_POLY,
     dispatcher: CRC64_XZ_DISPATCHER,
+    portable: crc64_xz_portable,
   }
 }
 
@@ -703,6 +704,7 @@ define_crc64_type! {
   pub struct Crc64Nvme {
     poly: CRC64_NVME_POLY,
     dispatcher: CRC64_NVME_DISPATCHER,
+    portable: crc64_nvme_portable,
   }
 }
 

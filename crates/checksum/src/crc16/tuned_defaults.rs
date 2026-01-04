@@ -19,11 +19,14 @@ pub struct Crc16TunedDefaults {
 #[rustfmt::skip]
 pub const CRC16_CCITT_TUNED_DEFAULTS: &[(TuneKind, Crc16TunedDefaults)] = &[
   // BEGIN GENERATED (rscrypto-tune)
-  // Zen4: VPCLMUL is fastest; switch at 512 bytes, prefer 2 streams on large buffers.
-  (TuneKind::Zen4,  Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: Some(512), streams: 2, min_bytes_per_lane: Some(32) }),
+  // Default: conservative x86_64 tuning (used when microarch is unknown).
+  (TuneKind::Default, Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 1, min_bytes_per_lane: None }),
+
+  // Zen4: VPCLMUL is fastest; switch at 512 bytes, prefer 4 streams on large buffers.
+  (TuneKind::Zen4,  Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: Some(512), streams: 4, min_bytes_per_lane: Some(16) }),
   // Zen5 / Zen5c: extrapolate from Zen4 (same instruction set + wide CLMUL).
-  (TuneKind::Zen5,  Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: Some(512), streams: 2, min_bytes_per_lane: Some(32) }),
-  (TuneKind::Zen5c, Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: Some(512), streams: 2, min_bytes_per_lane: Some(32) }),
+  (TuneKind::Zen5,  Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: Some(512), streams: 4, min_bytes_per_lane: Some(16) }),
+  (TuneKind::Zen5c, Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: Some(512), streams: 4, min_bytes_per_lane: Some(16) }),
 
   // Intel baseline: VPCLMUL has a large warmup cost; delay wide tier.
   // These are conservative placeholders until rscrypto-tune results land.
@@ -32,14 +35,14 @@ pub const CRC16_CCITT_TUNED_DEFAULTS: &[(TuneKind, Crc16TunedDefaults)] = &[
   // Ice Lake prefers 256-bit operations; disable VPCLMUL selection by default.
   (TuneKind::IntelIcl, Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: Some(usize::MAX), streams: 3, min_bytes_per_lane: None }),
 
-  // Apple M1-M3: PMULL is fastest; prefer 2 streams, 32B/lane minimum.
-  (TuneKind::AppleM1M3, Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 2, min_bytes_per_lane: Some(32) }),
+  // Apple M1-M3: PMULL is fastest; prefer 3 streams, large per-lane minimum.
+  (TuneKind::AppleM1M3, Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 3, min_bytes_per_lane: Some(2_730) }),
   // Apple M4/M5: extrapolate from Apple M1-M3 (same PMULL model + cache behavior class).
-  (TuneKind::AppleM4,   Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 2, min_bytes_per_lane: Some(32) }),
-  (TuneKind::AppleM5,   Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 2, min_bytes_per_lane: Some(32) }),
+  (TuneKind::AppleM4,   Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 3, min_bytes_per_lane: Some(2_730) }),
+  (TuneKind::AppleM5,   Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 3, min_bytes_per_lane: Some(2_730) }),
 
   // Graviton/Neoverse class: PMULL is fastest; conservative single-stream default.
-  (TuneKind::Graviton2,  Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 3, min_bytes_per_lane: None }),
+  (TuneKind::Graviton2,  Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 1, min_bytes_per_lane: None }),
   (TuneKind::Graviton3,  Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 1, min_bytes_per_lane: None }),
   (TuneKind::Graviton4,  Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 1, min_bytes_per_lane: None }),
   (TuneKind::Graviton5,  Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 1, min_bytes_per_lane: None }),
@@ -63,11 +66,14 @@ pub fn for_tune_kind_ccitt(kind: TuneKind) -> Option<Crc16TunedDefaults> {
 #[rustfmt::skip]
 pub const CRC16_IBM_TUNED_DEFAULTS: &[(TuneKind, Crc16TunedDefaults)] = &[
   // BEGIN GENERATED (rscrypto-tune)
+  // Default: conservative x86_64 tuning (used when microarch is unknown).
+  (TuneKind::Default, Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 1, min_bytes_per_lane: None }),
+
   // Zen4: VPCLMUL is fastest; use it immediately, prefer 4 streams on large buffers.
-  (TuneKind::Zen4,  Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: Some(64), streams: 4, min_bytes_per_lane: Some(128) }),
+  (TuneKind::Zen4,  Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: Some(64), streams: 4, min_bytes_per_lane: Some(16) }),
   // Zen5 / Zen5c: extrapolate from Zen4 (same instruction set + wide CLMUL).
-  (TuneKind::Zen5,  Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: Some(64), streams: 4, min_bytes_per_lane: Some(128) }),
-  (TuneKind::Zen5c, Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: Some(64), streams: 4, min_bytes_per_lane: Some(128) }),
+  (TuneKind::Zen5,  Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: Some(64), streams: 4, min_bytes_per_lane: Some(16) }),
+  (TuneKind::Zen5c, Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: Some(64), streams: 4, min_bytes_per_lane: Some(16) }),
 
   // Intel baseline: VPCLMUL has a large warmup cost; delay wide tier.
   // These are conservative placeholders until rscrypto-tune results land.
@@ -76,14 +82,14 @@ pub const CRC16_IBM_TUNED_DEFAULTS: &[(TuneKind, Crc16TunedDefaults)] = &[
   // Ice Lake prefers 256-bit operations; disable VPCLMUL selection by default.
   (TuneKind::IntelIcl, Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: Some(usize::MAX), streams: 3, min_bytes_per_lane: None }),
 
-  // Apple M1-M3: PMULL is fastest; prefer 3 streams, large per-lane minimum.
-  (TuneKind::AppleM1M3, Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 3, min_bytes_per_lane: Some(682) }),
+  // Apple M1-M3: PMULL is fastest; prefer 3 streams, modest per-lane minimum.
+  (TuneKind::AppleM1M3, Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 3, min_bytes_per_lane: Some(170) }),
   // Apple M4/M5: extrapolate from Apple M1-M3.
-  (TuneKind::AppleM4,   Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 3, min_bytes_per_lane: Some(682) }),
-  (TuneKind::AppleM5,   Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 3, min_bytes_per_lane: Some(682) }),
+  (TuneKind::AppleM4,   Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 3, min_bytes_per_lane: Some(170) }),
+  (TuneKind::AppleM5,   Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 3, min_bytes_per_lane: Some(170) }),
 
   // Graviton/Neoverse class: PMULL is fastest; conservative single-stream default.
-  (TuneKind::Graviton2,  Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 3, min_bytes_per_lane: None }),
+  (TuneKind::Graviton2,  Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 1, min_bytes_per_lane: None }),
   (TuneKind::Graviton3,  Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 1, min_bytes_per_lane: None }),
   (TuneKind::Graviton4,  Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 1, min_bytes_per_lane: None }),
   (TuneKind::Graviton5,  Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 1, min_bytes_per_lane: None }),

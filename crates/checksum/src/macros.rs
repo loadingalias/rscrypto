@@ -24,12 +24,15 @@ macro_rules! define_crc64_type {
     $vis:vis struct $name:ident {
       poly: $poly:expr,
       dispatcher: $dispatcher:expr,
+      portable: $portable:expr,
     }
   ) => {
     $(#[$outer])*
-    #[derive(Clone, Default)]
+    #[derive(Clone)]
     $vis struct $name {
       state: u64,
+      kernel: $crate::dispatchers::Crc64Fn,
+      initialized: bool,
     }
 
     impl $name {
@@ -41,7 +44,11 @@ macro_rules! define_crc64_type {
       #[inline]
       #[must_use]
       pub const fn resume(crc: u64) -> Self {
-        Self { state: crc ^ !0 }
+        Self {
+          state: crc ^ !0,
+          kernel: $portable,
+          initialized: false,
+        }
       }
 
       /// Get the name of the currently selected backend.
@@ -79,17 +86,29 @@ macro_rules! define_crc64_type {
 
       #[inline]
       fn new() -> Self {
-        Self { state: !0 }
+        Self {
+          state: !0,
+          kernel: $dispatcher.kernel(),
+          initialized: true,
+        }
       }
 
       #[inline]
       fn with_initial(initial: u64) -> Self {
-        Self { state: initial ^ !0 }
+        Self {
+          state: initial ^ !0,
+          kernel: $dispatcher.kernel(),
+          initialized: true,
+        }
       }
 
       #[inline]
       fn update(&mut self, data: &[u8]) {
-        self.state = $dispatcher.call(self.state, data);
+        if !self.initialized {
+          self.kernel = $dispatcher.kernel();
+          self.initialized = true;
+        }
+        self.state = (self.kernel)(self.state, data);
       }
 
       #[inline]
@@ -100,6 +119,13 @@ macro_rules! define_crc64_type {
       #[inline]
       fn reset(&mut self) {
         self.state = !0;
+      }
+    }
+
+    impl Default for $name {
+      #[inline]
+      fn default() -> Self {
+        <$name as $crate::Checksum>::new()
       }
     }
 

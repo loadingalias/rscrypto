@@ -33,19 +33,25 @@ pub struct Crc32TunedDefaults {
 #[rustfmt::skip]
 pub const CRC32_TUNED_DEFAULTS: &[(TuneKind, Crc32TunedDefaults)] = &[
   // BEGIN GENERATED (rscrypto-tune)
+  // Default: conservative x86_64 tuning (used when microarch is unknown).
+  (TuneKind::Default, Crc32TunedDefaults {
+    crc32:  Crc32VariantTunedDefaults { streams: 1, portable_bytewise_to_slice16: 64, portable_to_hwcrc: 64, hwcrc_to_fusion: usize::MAX, fusion_to_avx512: usize::MAX, fusion_to_vpclmul: usize::MAX, min_bytes_per_lane: None },
+    crc32c: Crc32VariantTunedDefaults { streams: 1, portable_bytewise_to_slice16: 64, portable_to_hwcrc: 64, hwcrc_to_fusion: 2048,     fusion_to_avx512: usize::MAX, fusion_to_vpclmul: usize::MAX, min_bytes_per_lane: None },
+  }),
+
   // Zen4: VPCLMUL dominates CRC32; VPCLMUL fusion dominates CRC32C after a modest crossover.
   (TuneKind::Zen4, Crc32TunedDefaults {
-    crc32:  Crc32VariantTunedDefaults { streams: 8, portable_bytewise_to_slice16: 64, portable_to_hwcrc: 64, hwcrc_to_fusion: usize::MAX, fusion_to_avx512: usize::MAX, fusion_to_vpclmul: 256, min_bytes_per_lane: Some(128) },
-    crc32c: Crc32VariantTunedDefaults { streams: 1, portable_bytewise_to_slice16: 64, portable_to_hwcrc: 64, hwcrc_to_fusion: 1024,     fusion_to_avx512: 1_048_576,  fusion_to_vpclmul: 256, min_bytes_per_lane: None },
+    crc32:  Crc32VariantTunedDefaults { streams: 4, portable_bytewise_to_slice16: 64, portable_to_hwcrc: 64, hwcrc_to_fusion: usize::MAX, fusion_to_avx512: usize::MAX, fusion_to_vpclmul: 512, min_bytes_per_lane: Some(64) },
+    crc32c: Crc32VariantTunedDefaults { streams: 1, portable_bytewise_to_slice16: 64, portable_to_hwcrc: 64, hwcrc_to_fusion: 512,      fusion_to_avx512: usize::MAX, fusion_to_vpclmul: 64,  min_bytes_per_lane: None },
   }),
   // Zen5 / Zen5c: extrapolate from Zen4 (same instruction set + wide CLMUL).
   (TuneKind::Zen5, Crc32TunedDefaults {
-    crc32:  Crc32VariantTunedDefaults { streams: 8, portable_bytewise_to_slice16: 64, portable_to_hwcrc: 64, hwcrc_to_fusion: usize::MAX, fusion_to_avx512: usize::MAX, fusion_to_vpclmul: 256, min_bytes_per_lane: Some(128) },
-    crc32c: Crc32VariantTunedDefaults { streams: 1, portable_bytewise_to_slice16: 64, portable_to_hwcrc: 64, hwcrc_to_fusion: 1024,     fusion_to_avx512: 1_048_576,  fusion_to_vpclmul: 256, min_bytes_per_lane: None },
+    crc32:  Crc32VariantTunedDefaults { streams: 4, portable_bytewise_to_slice16: 64, portable_to_hwcrc: 64, hwcrc_to_fusion: usize::MAX, fusion_to_avx512: usize::MAX, fusion_to_vpclmul: 512, min_bytes_per_lane: Some(64) },
+    crc32c: Crc32VariantTunedDefaults { streams: 1, portable_bytewise_to_slice16: 64, portable_to_hwcrc: 64, hwcrc_to_fusion: 512,      fusion_to_avx512: usize::MAX, fusion_to_vpclmul: 64,  min_bytes_per_lane: None },
   }),
   (TuneKind::Zen5c, Crc32TunedDefaults {
-    crc32:  Crc32VariantTunedDefaults { streams: 8, portable_bytewise_to_slice16: 64, portable_to_hwcrc: 64, hwcrc_to_fusion: usize::MAX, fusion_to_avx512: usize::MAX, fusion_to_vpclmul: 256, min_bytes_per_lane: Some(128) },
-    crc32c: Crc32VariantTunedDefaults { streams: 1, portable_bytewise_to_slice16: 64, portable_to_hwcrc: 64, hwcrc_to_fusion: 1024,     fusion_to_avx512: 1_048_576,  fusion_to_vpclmul: 256, min_bytes_per_lane: None },
+    crc32:  Crc32VariantTunedDefaults { streams: 4, portable_bytewise_to_slice16: 64, portable_to_hwcrc: 64, hwcrc_to_fusion: usize::MAX, fusion_to_avx512: usize::MAX, fusion_to_vpclmul: 512, min_bytes_per_lane: Some(64) },
+    crc32c: Crc32VariantTunedDefaults { streams: 1, portable_bytewise_to_slice16: 64, portable_to_hwcrc: 64, hwcrc_to_fusion: 512,      fusion_to_avx512: usize::MAX, fusion_to_vpclmul: 64,  min_bytes_per_lane: None },
   }),
 
   // Intel baseline: wide tiers have a large warmup cost; delay VPCLMUL/AVX-512 fusion.
@@ -66,23 +72,23 @@ pub const CRC32_TUNED_DEFAULTS: &[(TuneKind, Crc32TunedDefaults)] = &[
 
   // Apple M1-M3: PMULL+EOR3 fusion is fastest; switch from HWCRC at 512 bytes.
   (TuneKind::AppleM1M3, Crc32TunedDefaults {
-    crc32:  Crc32VariantTunedDefaults { streams: 1, portable_bytewise_to_slice16: 64, portable_to_hwcrc: 128, hwcrc_to_fusion: 512, fusion_to_avx512: usize::MAX, fusion_to_vpclmul: usize::MAX, min_bytes_per_lane: None },
-    crc32c: Crc32VariantTunedDefaults { streams: 1, portable_bytewise_to_slice16: 64, portable_to_hwcrc: 128, hwcrc_to_fusion: 512, fusion_to_avx512: usize::MAX, fusion_to_vpclmul: usize::MAX, min_bytes_per_lane: None },
+    crc32:  Crc32VariantTunedDefaults { streams: 1, portable_bytewise_to_slice16: 64, portable_to_hwcrc: 64,  hwcrc_to_fusion: 512, fusion_to_avx512: usize::MAX, fusion_to_vpclmul: usize::MAX, min_bytes_per_lane: None },
+    crc32c: Crc32VariantTunedDefaults { streams: 1, portable_bytewise_to_slice16: 64, portable_to_hwcrc: 64,  hwcrc_to_fusion: 512, fusion_to_avx512: usize::MAX, fusion_to_vpclmul: usize::MAX, min_bytes_per_lane: None },
   }),
   // Apple M4/M5: extrapolate from Apple M1-M3.
   (TuneKind::AppleM4, Crc32TunedDefaults {
-    crc32:  Crc32VariantTunedDefaults { streams: 1, portable_bytewise_to_slice16: 64, portable_to_hwcrc: 128, hwcrc_to_fusion: 512, fusion_to_avx512: usize::MAX, fusion_to_vpclmul: usize::MAX, min_bytes_per_lane: None },
-    crc32c: Crc32VariantTunedDefaults { streams: 1, portable_bytewise_to_slice16: 64, portable_to_hwcrc: 128, hwcrc_to_fusion: 512, fusion_to_avx512: usize::MAX, fusion_to_vpclmul: usize::MAX, min_bytes_per_lane: None },
+    crc32:  Crc32VariantTunedDefaults { streams: 1, portable_bytewise_to_slice16: 64, portable_to_hwcrc: 64,  hwcrc_to_fusion: 512, fusion_to_avx512: usize::MAX, fusion_to_vpclmul: usize::MAX, min_bytes_per_lane: None },
+    crc32c: Crc32VariantTunedDefaults { streams: 1, portable_bytewise_to_slice16: 64, portable_to_hwcrc: 64,  hwcrc_to_fusion: 512, fusion_to_avx512: usize::MAX, fusion_to_vpclmul: usize::MAX, min_bytes_per_lane: None },
   }),
   (TuneKind::AppleM5, Crc32TunedDefaults {
-    crc32:  Crc32VariantTunedDefaults { streams: 1, portable_bytewise_to_slice16: 64, portable_to_hwcrc: 128, hwcrc_to_fusion: 512, fusion_to_avx512: usize::MAX, fusion_to_vpclmul: usize::MAX, min_bytes_per_lane: None },
-    crc32c: Crc32VariantTunedDefaults { streams: 1, portable_bytewise_to_slice16: 64, portable_to_hwcrc: 128, hwcrc_to_fusion: 512, fusion_to_avx512: usize::MAX, fusion_to_vpclmul: usize::MAX, min_bytes_per_lane: None },
+    crc32:  Crc32VariantTunedDefaults { streams: 1, portable_bytewise_to_slice16: 64, portable_to_hwcrc: 64,  hwcrc_to_fusion: 512, fusion_to_avx512: usize::MAX, fusion_to_vpclmul: usize::MAX, min_bytes_per_lane: None },
+    crc32c: Crc32VariantTunedDefaults { streams: 1, portable_bytewise_to_slice16: 64, portable_to_hwcrc: 64,  hwcrc_to_fusion: 512, fusion_to_avx512: usize::MAX, fusion_to_vpclmul: usize::MAX, min_bytes_per_lane: None },
   }),
 
   // Graviton2: HWCRC dominates early; switch to PMULL+EOR3 fusion at 2048 bytes.
   (TuneKind::Graviton2, Crc32TunedDefaults {
-    crc32:  Crc32VariantTunedDefaults { streams: 3, portable_bytewise_to_slice16: 64, portable_to_hwcrc: 128, hwcrc_to_fusion: 2048, fusion_to_avx512: usize::MAX, fusion_to_vpclmul: usize::MAX, min_bytes_per_lane: None },
-    crc32c: Crc32VariantTunedDefaults { streams: 3, portable_bytewise_to_slice16: 64, portable_to_hwcrc: 128, hwcrc_to_fusion: 2048, fusion_to_avx512: usize::MAX, fusion_to_vpclmul: usize::MAX, min_bytes_per_lane: None },
+    crc32:  Crc32VariantTunedDefaults { streams: 1, portable_bytewise_to_slice16: 64, portable_to_hwcrc: 64,  hwcrc_to_fusion: 2048, fusion_to_avx512: usize::MAX, fusion_to_vpclmul: usize::MAX, min_bytes_per_lane: None },
+    crc32c: Crc32VariantTunedDefaults { streams: 1, portable_bytewise_to_slice16: 64, portable_to_hwcrc: 64,  hwcrc_to_fusion: 2048, fusion_to_avx512: usize::MAX, fusion_to_vpclmul: usize::MAX, min_bytes_per_lane: None },
   }),
   // Graviton/Neoverse class: extrapolate from Graviton2.
   (TuneKind::Graviton3, Crc32TunedDefaults {

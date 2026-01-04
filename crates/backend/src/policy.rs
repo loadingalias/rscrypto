@@ -248,8 +248,11 @@ impl SelectionPolicy {
         continue;
       }
 
-      // For wide tier, check if wide ops are worth it
-      if family.tier() == KernelTier::Wide && tune.effective_simd_width < 256 {
+      // For wide tier, check if wide SIMD is worth it.
+      //
+      // Note: some "wide tier" families (e.g. aarch64 PMULL+EOR3) are still
+      // 128-bit NEON and should not be gated on SIMD width.
+      if family.tier() == KernelTier::Wide && family.requires_simd_width_256() && tune.effective_simd_width < 256 {
         continue;
       }
 
@@ -640,6 +643,21 @@ impl ForceMode {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  #[cfg(target_arch = "aarch64")]
+  fn arm_pmull_eor3_is_not_blocked_by_128bit_tune() {
+    // Apple M-series (and other aarch64 CPUs) report 128-bit NEON, but EOR3 is
+    // still a strictly better instruction mix for CRC folding when available.
+    let caps = platform::caps::aarch64::PMULL_EOR3_READY;
+    let tune = Tune {
+      effective_simd_width: 128,
+      ..Tune::DEFAULT
+    };
+
+    let policy = SelectionPolicy::from_platform(caps, &tune);
+    assert_eq!(policy.family(), KernelFamily::ArmPmullEor3);
+  }
 
   #[test]
   fn portable_policy() {
