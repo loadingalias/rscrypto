@@ -33,5 +33,9 @@ crc32c = "0.6.8"
 name = "comp"
 harness = false
 
+[[bench]]
+name = "kernels"
+harness = false
+
 [lints]
 workspace = true

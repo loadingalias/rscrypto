@@ -41,7 +41,7 @@ mod s390x;
 #[cfg(target_arch = "riscv64")]
 mod riscv64;
 
-use backend::{PolicyCache, dispatch::Selected};
+use backend::dispatch::Selected;
 // Re-export config types for public API (Crc64Force only used internally on SIMD archs)
 #[allow(unused_imports)]
 pub use config::{Crc64Config, Crc64Force, Crc64Tunables};
@@ -63,177 +63,74 @@ use crate::{
 // Cached Policy and Kernels (works on both std and no_std)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Cached XZ policy and kernels for x86_64.
-#[cfg(target_arch = "x86_64")]
-static CRC64_XZ_CACHED: PolicyCache<policy::Crc64Policy, policy::Crc64Kernels> = PolicyCache::new();
-/// Cached NVME policy and kernels for x86_64.
-#[cfg(target_arch = "x86_64")]
-static CRC64_NVME_CACHED: PolicyCache<policy::Crc64Policy, policy::Crc64Kernels> = PolicyCache::new();
+define_policy_cache!(
+  /// Cached XZ policy and kernels (SIMD-capable architectures).
+  CRC64_XZ_CACHED: policy::Crc64Policy,
+  policy::Crc64Kernels
+);
 
-/// Cached XZ policy and kernels for aarch64.
-#[cfg(target_arch = "aarch64")]
-static CRC64_XZ_CACHED: PolicyCache<policy::Crc64Policy, policy::Crc64Kernels> = PolicyCache::new();
-/// Cached NVME policy and kernels for aarch64.
-#[cfg(target_arch = "aarch64")]
-static CRC64_NVME_CACHED: PolicyCache<policy::Crc64Policy, policy::Crc64Kernels> = PolicyCache::new();
+define_policy_cache!(
+  /// Cached NVME policy and kernels (SIMD-capable architectures).
+  CRC64_NVME_CACHED: policy::Crc64Policy,
+  policy::Crc64Kernels
+);
 
-/// Cached XZ policy and kernels for Power.
-#[cfg(target_arch = "powerpc64")]
-static CRC64_XZ_CACHED: PolicyCache<policy::Crc64Policy, policy::Crc64Kernels> = PolicyCache::new();
-/// Cached NVME policy and kernels for Power.
-#[cfg(target_arch = "powerpc64")]
-static CRC64_NVME_CACHED: PolicyCache<policy::Crc64Policy, policy::Crc64Kernels> = PolicyCache::new();
+cfg_crc_simd_arches! {
+  #[inline]
+  #[must_use]
+  fn init_policy(
+    cfg: config::Crc64Config,
+    variant_tunables: config::Crc64VariantTunables,
+    build_kernels: fn(&policy::Crc64Policy, Crc64Fn, Crc64Fn) -> policy::Crc64Kernels,
+    reference: Crc64Fn,
+    portable: Crc64Fn,
+  ) -> (policy::Crc64Policy, policy::Crc64Kernels) {
+    let caps = platform::caps();
+    let tune = platform::tune();
+    let pol = policy::Crc64Policy::from_config(&cfg, variant_tunables, caps, &tune);
+    let kernels = build_kernels(&pol, reference, portable);
+    (pol, kernels)
+  }
 
-/// Cached XZ policy and kernels for s390x.
-#[cfg(target_arch = "s390x")]
-static CRC64_XZ_CACHED: PolicyCache<policy::Crc64Policy, policy::Crc64Kernels> = PolicyCache::new();
-/// Cached NVME policy and kernels for s390x.
-#[cfg(target_arch = "s390x")]
-static CRC64_NVME_CACHED: PolicyCache<policy::Crc64Policy, policy::Crc64Kernels> = PolicyCache::new();
+  /// Initialize XZ policy and kernels (SIMD-capable architectures).
+  fn init_xz_policy() -> (policy::Crc64Policy, policy::Crc64Kernels) {
+    let cfg = config::get();
+    let tunables = cfg.tunables.xz;
+    init_policy(cfg, tunables, policy::build_xz_kernels_arch, crc64_xz_reference, crc64_xz_portable)
+  }
 
-/// Cached XZ policy and kernels for riscv64.
-#[cfg(target_arch = "riscv64")]
-static CRC64_XZ_CACHED: PolicyCache<policy::Crc64Policy, policy::Crc64Kernels> = PolicyCache::new();
-/// Cached NVME policy and kernels for riscv64.
-#[cfg(target_arch = "riscv64")]
-static CRC64_NVME_CACHED: PolicyCache<policy::Crc64Policy, policy::Crc64Kernels> = PolicyCache::new();
-
-/// Initialize XZ policy and kernels for x86_64.
-#[cfg(target_arch = "x86_64")]
-fn init_xz_policy() -> (policy::Crc64Policy, policy::Crc64Kernels) {
-  let cfg = config::get();
-  let caps = platform::caps();
-  let tune = platform::tune();
-  let pol = policy::Crc64Policy::from_config(&cfg, cfg.tunables.xz, caps, &tune);
-  let kernels = policy::build_xz_kernels_x86(&pol, crc64_xz_reference, crc64_xz_portable);
-  (pol, kernels)
+  /// Initialize NVME policy and kernels (SIMD-capable architectures).
+  fn init_nvme_policy() -> (policy::Crc64Policy, policy::Crc64Kernels) {
+    let cfg = config::get();
+    let tunables = cfg.tunables.nvme;
+    init_policy(
+      cfg,
+      tunables,
+      policy::build_nvme_kernels_arch,
+      crc64_nvme_reference,
+      crc64_nvme_portable,
+    )
+  }
 }
 
-/// Initialize NVME policy and kernels for x86_64.
-#[cfg(target_arch = "x86_64")]
-fn init_nvme_policy() -> (policy::Crc64Policy, policy::Crc64Kernels) {
-  let cfg = config::get();
-  let caps = platform::caps();
-  let tune = platform::tune();
-  let pol = policy::Crc64Policy::from_config(&cfg, cfg.tunables.nvme, caps, &tune);
-  let kernels = policy::build_nvme_kernels_x86(&pol, crc64_nvme_reference, crc64_nvme_portable);
-  (pol, kernels)
-}
-
-/// Initialize XZ policy and kernels for aarch64.
-#[cfg(target_arch = "aarch64")]
-fn init_xz_policy() -> (policy::Crc64Policy, policy::Crc64Kernels) {
-  let cfg = config::get();
-  let caps = platform::caps();
-  let tune = platform::tune();
-  let pol = policy::Crc64Policy::from_config(&cfg, cfg.tunables.xz, caps, &tune);
-  let kernels = policy::build_xz_kernels_aarch64(&pol, crc64_xz_reference, crc64_xz_portable);
-  (pol, kernels)
-}
-
-/// Initialize NVME policy and kernels for aarch64.
-#[cfg(target_arch = "aarch64")]
-fn init_nvme_policy() -> (policy::Crc64Policy, policy::Crc64Kernels) {
-  let cfg = config::get();
-  let caps = platform::caps();
-  let tune = platform::tune();
-  let pol = policy::Crc64Policy::from_config(&cfg, cfg.tunables.nvme, caps, &tune);
-  let kernels = policy::build_nvme_kernels_aarch64(&pol, crc64_nvme_reference, crc64_nvme_portable);
-  (pol, kernels)
-}
-
-/// Initialize XZ policy and kernels for Power.
-#[cfg(target_arch = "powerpc64")]
-fn init_xz_policy() -> (policy::Crc64Policy, policy::Crc64Kernels) {
-  let cfg = config::get();
-  let caps = platform::caps();
-  let tune = platform::tune();
-  let pol = policy::Crc64Policy::from_config(&cfg, cfg.tunables.xz, caps, &tune);
-  let kernels = policy::build_xz_kernels_power(&pol, crc64_xz_reference, crc64_xz_portable);
-  (pol, kernels)
-}
-
-/// Initialize NVME policy and kernels for Power.
-#[cfg(target_arch = "powerpc64")]
-fn init_nvme_policy() -> (policy::Crc64Policy, policy::Crc64Kernels) {
-  let cfg = config::get();
-  let caps = platform::caps();
-  let tune = platform::tune();
-  let pol = policy::Crc64Policy::from_config(&cfg, cfg.tunables.nvme, caps, &tune);
-  let kernels = policy::build_nvme_kernels_power(&pol, crc64_nvme_reference, crc64_nvme_portable);
-  (pol, kernels)
-}
-
-/// Initialize XZ policy and kernels for s390x.
-#[cfg(target_arch = "s390x")]
-fn init_xz_policy() -> (policy::Crc64Policy, policy::Crc64Kernels) {
-  let cfg = config::get();
-  let caps = platform::caps();
-  let tune = platform::tune();
-  let pol = policy::Crc64Policy::from_config(&cfg, cfg.tunables.xz, caps, &tune);
-  let kernels = policy::build_xz_kernels_s390x(&pol, crc64_xz_reference, crc64_xz_portable);
-  (pol, kernels)
-}
-
-/// Initialize NVME policy and kernels for s390x.
-#[cfg(target_arch = "s390x")]
-fn init_nvme_policy() -> (policy::Crc64Policy, policy::Crc64Kernels) {
-  let cfg = config::get();
-  let caps = platform::caps();
-  let tune = platform::tune();
-  let pol = policy::Crc64Policy::from_config(&cfg, cfg.tunables.nvme, caps, &tune);
-  let kernels = policy::build_nvme_kernels_s390x(&pol, crc64_nvme_reference, crc64_nvme_portable);
-  (pol, kernels)
-}
-
-/// Initialize XZ policy and kernels for riscv64.
-#[cfg(target_arch = "riscv64")]
-fn init_xz_policy() -> (policy::Crc64Policy, policy::Crc64Kernels) {
-  let cfg = config::get();
-  let caps = platform::caps();
-  let tune = platform::tune();
-  let pol = policy::Crc64Policy::from_config(&cfg, cfg.tunables.xz, caps, &tune);
-  let kernels = policy::build_xz_kernels_riscv64(&pol, crc64_xz_reference, crc64_xz_portable);
-  (pol, kernels)
-}
-
-/// Initialize NVME policy and kernels for riscv64.
-#[cfg(target_arch = "riscv64")]
-fn init_nvme_policy() -> (policy::Crc64Policy, policy::Crc64Kernels) {
-  let cfg = config::get();
-  let caps = platform::caps();
-  let tune = platform::tune();
-  let pol = policy::Crc64Policy::from_config(&cfg, cfg.tunables.nvme, caps, &tune);
-  let kernels = policy::build_nvme_kernels_riscv64(&pol, crc64_nvme_reference, crc64_nvme_portable);
-  (pol, kernels)
-}
-
-#[inline]
-#[must_use]
-pub(crate) fn crc64_selected_kernel_name(len: usize) -> &'static str {
-  // Use cached policy (works on both std and no_std)
-  #[cfg(any(
-    target_arch = "x86_64",
-    target_arch = "aarch64",
-    target_arch = "powerpc64",
-    target_arch = "s390x",
-    target_arch = "riscv64"
-  ))]
-  {
+cfg_crc_simd_arches! {
+  #[inline]
+  #[must_use]
+  pub(crate) fn crc64_selected_kernel_name(len: usize) -> &'static str {
     let (pol, _) = CRC64_XZ_CACHED.get_or_init(init_xz_policy);
     pol.kernel_name(len)
   }
+}
 
-  #[cfg(not(any(
-    target_arch = "x86_64",
-    target_arch = "aarch64",
-    target_arch = "powerpc64",
-    target_arch = "s390x",
-    target_arch = "riscv64"
-  )))]
-  {
-    let _ = len;
-    kernels::PORTABLE
+cfg_not_crc_simd_arches! {
+  #[inline]
+  #[must_use]
+  pub(crate) fn crc64_selected_kernel_name(_len: usize) -> &'static str {
+    if config::get().effective_force == Crc64Force::Reference {
+      kernels::REFERENCE
+    } else {
+      kernels::PORTABLE
+    }
   }
 }
 
@@ -289,322 +186,166 @@ fn crc64_nvme_reference(crc: u64, data: &[u8]) -> u64 {
 // Buffered CRC uses this to decide when to flush accumulated small updates.
 // On platforms without a SIMD backend, this effectively becomes `usize::MAX`
 // (no early flush beyond the fixed buffer size).
+#[cfg(feature = "alloc")]
 #[inline]
 fn crc64_simd_threshold() -> usize {
   let t = config::get().tunables;
   t.xz.portable_to_clmul.min(t.nvme.portable_to_clmul).max(64)
 }
 
-/// CRC-64-XZ auto-dispatch for x86_64.
-///
-/// Uses cached policy and kernels for efficient dispatch with minimal branching.
-/// Caching works on both std (OnceLock) and no_std (atomic state machine).
-#[cfg(target_arch = "x86_64")]
-fn crc64_xz_x86_64_auto(crc: u64, data: &[u8]) -> u64 {
-  let (pol, kernels) = CRC64_XZ_CACHED.get_or_init(init_xz_policy);
-  policy::policy_dispatch(&pol, &kernels, crc, data)
+// ─────────────────────────────────────────────────────────────────────────────
+// Auto Kernels (SIMD-capable architectures)
+// ─────────────────────────────────────────────────────────────────────────────
+
+cfg_crc_simd_arches! {
+  /// CRC-64-XZ auto-dispatch.
+  ///
+  /// Uses cached policy and kernels for efficient dispatch with minimal branching.
+  /// Caching works on both std (OnceLock) and no_std (atomic state machine).
+  fn crc64_xz_auto(crc: u64, data: &[u8]) -> u64 {
+    let (pol, kernels) = CRC64_XZ_CACHED.get_or_init(init_xz_policy);
+    policy::policy_dispatch(&pol, &kernels, crc, data)
+  }
 }
 
-/// CRC-64-NVME auto-dispatch for x86_64.
-///
-/// Uses cached policy and kernels for efficient dispatch with minimal branching.
-/// Caching works on both std (OnceLock) and no_std (atomic state machine).
-#[cfg(target_arch = "x86_64")]
-fn crc64_nvme_x86_64_auto(crc: u64, data: &[u8]) -> u64 {
-  let (pol, kernels) = CRC64_NVME_CACHED.get_or_init(init_nvme_policy);
-  policy::policy_dispatch(&pol, &kernels, crc, data)
+cfg_crc_simd_arches! {
+  /// CRC-64-NVME auto-dispatch.
+  ///
+  /// Uses cached policy and kernels for efficient dispatch with minimal branching.
+  /// Caching works on both std (OnceLock) and no_std (atomic state machine).
+  fn crc64_nvme_auto(crc: u64, data: &[u8]) -> u64 {
+    let (pol, kernels) = CRC64_NVME_CACHED.get_or_init(init_nvme_policy);
+    policy::policy_dispatch(&pol, &kernels, crc, data)
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Dispatcher Selection
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Select the best CRC-64-XZ kernel for the current platform.
+cfg_crc_simd_arches! {
+  #[inline]
+  fn select_crc64_variant(
+    effective_force: Crc64Force,
+    caps_ready: bool,
+    auto_name: &'static str,
+    reference: Crc64Fn,
+    portable: Crc64Fn,
+    auto: Crc64Fn,
+  ) -> Selected<Crc64Fn> {
+    // Explicit reference override always wins.
+    if effective_force == Crc64Force::Reference {
+      return Selected::new("reference/bitwise", reference);
+    }
+
+    // Explicit portable override.
+    if effective_force == Crc64Force::Portable {
+      return Selected::new("portable/slice16", portable);
+    }
+
+    if caps_ready {
+      return Selected::new(auto_name, auto);
+    }
+
+    Selected::new("portable/slice16", portable)
+  }
+}
+
 #[cfg(target_arch = "x86_64")]
-fn select_crc64_xz() -> Selected<Crc64Fn> {
-  let caps = platform::caps();
-  let cfg = config::get();
-
-  // Explicit reference override always wins.
-  if cfg.effective_force == Crc64Force::Reference {
-    return Selected::new("reference/bitwise", crc64_xz_reference);
-  }
-
-  // Explicit portable override.
-  if cfg.effective_force == Crc64Force::Portable {
-    return Selected::new("portable/slice16", crc64_xz_portable);
-  }
-
-  if caps.has(platform::caps::x86::PCLMUL_READY) || caps.has(platform::caps::x86::VPCLMUL_READY) {
-    return Selected::new("x86_64/auto", crc64_xz_x86_64_auto);
-  }
-
-  Selected::new("portable/slice16", crc64_xz_portable)
-}
-
-/// CRC-64-XZ auto-dispatch for Power.
-#[cfg(target_arch = "powerpc64")]
-fn crc64_xz_power_auto(crc: u64, data: &[u8]) -> u64 {
-  let (pol, kernels) = CRC64_XZ_CACHED.get_or_init(init_xz_policy);
-  policy::policy_dispatch(&pol, &kernels, crc, data)
-}
-
-/// CRC-64-NVME auto-dispatch for Power.
-#[cfg(target_arch = "powerpc64")]
-fn crc64_nvme_power_auto(crc: u64, data: &[u8]) -> u64 {
-  let (pol, kernels) = CRC64_NVME_CACHED.get_or_init(init_nvme_policy);
-  policy::policy_dispatch(&pol, &kernels, crc, data)
-}
-
-/// CRC-64-XZ auto-dispatch for s390x.
-#[cfg(target_arch = "s390x")]
-fn crc64_xz_s390x_auto(crc: u64, data: &[u8]) -> u64 {
-  let (pol, kernels) = CRC64_XZ_CACHED.get_or_init(init_xz_policy);
-  policy::policy_dispatch(&pol, &kernels, crc, data)
-}
-
-/// CRC-64-NVME auto-dispatch for s390x.
-#[cfg(target_arch = "s390x")]
-fn crc64_nvme_s390x_auto(crc: u64, data: &[u8]) -> u64 {
-  let (pol, kernels) = CRC64_NVME_CACHED.get_or_init(init_nvme_policy);
-  policy::policy_dispatch(&pol, &kernels, crc, data)
-}
-
-/// CRC-64-XZ auto-dispatch for riscv64.
-#[cfg(target_arch = "riscv64")]
-fn crc64_xz_riscv64_auto(crc: u64, data: &[u8]) -> u64 {
-  let (pol, kernels) = CRC64_XZ_CACHED.get_or_init(init_xz_policy);
-  policy::policy_dispatch(&pol, &kernels, crc, data)
-}
-
-/// CRC-64-NVME auto-dispatch for riscv64.
-#[cfg(target_arch = "riscv64")]
-fn crc64_nvme_riscv64_auto(crc: u64, data: &[u8]) -> u64 {
-  let (pol, kernels) = CRC64_NVME_CACHED.get_or_init(init_nvme_policy);
-  policy::policy_dispatch(&pol, &kernels, crc, data)
-}
-
-/// CRC-64-XZ auto-dispatch for aarch64.
+const AUTO_NAME: &str = "x86_64/auto";
 #[cfg(target_arch = "aarch64")]
-fn crc64_xz_aarch64_auto(crc: u64, data: &[u8]) -> u64 {
-  let (pol, kernels) = CRC64_XZ_CACHED.get_or_init(init_xz_policy);
-  policy::policy_dispatch(&pol, &kernels, crc, data)
-}
-
-/// CRC-64-NVME auto-dispatch for aarch64.
-#[cfg(target_arch = "aarch64")]
-fn crc64_nvme_aarch64_auto(crc: u64, data: &[u8]) -> u64 {
-  let (pol, kernels) = CRC64_NVME_CACHED.get_or_init(init_nvme_policy);
-  policy::policy_dispatch(&pol, &kernels, crc, data)
-}
-
-#[cfg(target_arch = "aarch64")]
-fn select_crc64_xz() -> Selected<Crc64Fn> {
-  let caps = platform::caps();
-  let cfg = config::get();
-
-  if cfg.effective_force == Crc64Force::Reference {
-    return Selected::new("reference/bitwise", crc64_xz_reference);
-  }
-
-  if cfg.effective_force == Crc64Force::Portable {
-    return Selected::new("portable/slice16", crc64_xz_portable);
-  }
-
-  if caps.has(platform::caps::aarch64::PMULL_READY) {
-    return Selected::new("aarch64/auto", crc64_xz_aarch64_auto);
-  }
-
-  Selected::new("portable/slice16", crc64_xz_portable)
-}
-
+const AUTO_NAME: &str = "aarch64/auto";
 #[cfg(target_arch = "powerpc64")]
-fn select_crc64_xz() -> Selected<Crc64Fn> {
-  let caps = platform::caps();
-  let cfg = config::get();
-
-  if cfg.effective_force == Crc64Force::Reference {
-    return Selected::new("reference/bitwise", crc64_xz_reference);
-  }
-
-  if cfg.effective_force == Crc64Force::Portable {
-    return Selected::new("portable/slice16", crc64_xz_portable);
-  }
-
-  if caps.has(platform::caps::power::VPMSUM_READY) {
-    return Selected::new("power/auto", crc64_xz_power_auto);
-  }
-
-  Selected::new("portable/slice16", crc64_xz_portable)
-}
-
+const AUTO_NAME: &str = "power/auto";
 #[cfg(target_arch = "s390x")]
-fn select_crc64_xz() -> Selected<Crc64Fn> {
-  let caps = platform::caps();
-  let cfg = config::get();
-
-  if cfg.effective_force == Crc64Force::Reference {
-    return Selected::new("reference/bitwise", crc64_xz_reference);
-  }
-
-  if cfg.effective_force == Crc64Force::Portable {
-    return Selected::new("portable/slice16", crc64_xz_portable);
-  }
-
-  if caps.has(platform::caps::s390x::VECTOR) {
-    return Selected::new("s390x/auto", crc64_xz_s390x_auto);
-  }
-
-  Selected::new("portable/slice16", crc64_xz_portable)
-}
-
+const AUTO_NAME: &str = "s390x/auto";
 #[cfg(target_arch = "riscv64")]
-fn select_crc64_xz() -> Selected<Crc64Fn> {
-  let caps = platform::caps();
-  let cfg = config::get();
+const AUTO_NAME: &str = "riscv64/auto";
 
-  if cfg.effective_force == Crc64Force::Reference {
-    return Selected::new("reference/bitwise", crc64_xz_reference);
+cfg_crc_simd_arches! {
+  #[cfg(target_arch = "x86_64")]
+  #[inline]
+  fn crc64_caps_ready(caps: &platform::Caps) -> bool {
+    caps.has(platform::caps::x86::PCLMUL_READY) || caps.has(platform::caps::x86::VPCLMUL_READY)
   }
 
-  if cfg.effective_force == Crc64Force::Portable {
-    return Selected::new("portable/slice16", crc64_xz_portable);
+  #[cfg(target_arch = "aarch64")]
+  #[inline]
+  fn crc64_caps_ready(caps: &platform::Caps) -> bool {
+    caps.has(platform::caps::aarch64::PMULL_READY)
   }
 
-  if caps.has(platform::caps::riscv::ZVBC) || caps.has(platform::caps::riscv::ZBC) {
-    return Selected::new("riscv64/auto", crc64_xz_riscv64_auto);
+  #[cfg(target_arch = "powerpc64")]
+  #[inline]
+  fn crc64_caps_ready(caps: &platform::Caps) -> bool {
+    caps.has(platform::caps::power::VPMSUM_READY)
   }
 
-  Selected::new("portable/slice16", crc64_xz_portable)
+  #[cfg(target_arch = "s390x")]
+  #[inline]
+  fn crc64_caps_ready(caps: &platform::Caps) -> bool {
+    caps.has(platform::caps::s390x::VECTOR)
+  }
+
+  #[cfg(target_arch = "riscv64")]
+  #[inline]
+  fn crc64_caps_ready(caps: &platform::Caps) -> bool {
+    caps.has(platform::caps::riscv::ZVBC) || caps.has(platform::caps::riscv::ZBC)
+  }
 }
 
-#[cfg(not(any(
-  target_arch = "x86_64",
-  target_arch = "aarch64",
-  target_arch = "powerpc64",
-  target_arch = "s390x",
-  target_arch = "riscv64"
-)))]
-fn select_crc64_xz() -> Selected<Crc64Fn> {
-  if config::get().effective_force == Crc64Force::Reference {
-    return Selected::new(kernels::REFERENCE, crc64_xz_reference);
+cfg_crc_simd_arches! {
+  /// Select the best CRC-64-XZ kernel for the current platform.
+  fn select_crc64_xz() -> Selected<Crc64Fn> {
+    let caps = platform::caps();
+    let cfg = config::get();
+
+    let caps_ready = crc64_caps_ready(&caps);
+
+    select_crc64_variant(
+      cfg.effective_force,
+      caps_ready,
+      AUTO_NAME,
+      crc64_xz_reference,
+      crc64_xz_portable,
+      crc64_xz_auto,
+    )
   }
-  Selected::new(kernels::PORTABLE, crc64_xz_portable)
 }
 
-/// Select the best CRC-64-NVME kernel for the current platform.
-#[cfg(target_arch = "x86_64")]
-fn select_crc64_nvme() -> Selected<Crc64Fn> {
-  let caps = platform::caps();
-  let cfg = config::get();
+cfg_crc_simd_arches! {
+  /// Select the best CRC-64-NVME kernel for the current platform.
+  fn select_crc64_nvme() -> Selected<Crc64Fn> {
+    let caps = platform::caps();
+    let cfg = config::get();
 
-  if cfg.effective_force == Crc64Force::Reference {
-    return Selected::new("reference/bitwise", crc64_nvme_reference);
+    let caps_ready = crc64_caps_ready(&caps);
+
+    select_crc64_variant(
+      cfg.effective_force,
+      caps_ready,
+      AUTO_NAME,
+      crc64_nvme_reference,
+      crc64_nvme_portable,
+      crc64_nvme_auto,
+    )
   }
-
-  if cfg.effective_force == Crc64Force::Portable {
-    return Selected::new("portable/slice16", crc64_nvme_portable);
-  }
-
-  if caps.has(platform::caps::x86::PCLMUL_READY) || caps.has(platform::caps::x86::VPCLMUL_READY) {
-    return Selected::new("x86_64/auto", crc64_nvme_x86_64_auto);
-  }
-
-  Selected::new("portable/slice16", crc64_nvme_portable)
 }
 
-#[cfg(target_arch = "aarch64")]
-fn select_crc64_nvme() -> Selected<Crc64Fn> {
-  let caps = platform::caps();
-  let cfg = config::get();
-
-  if cfg.effective_force == Crc64Force::Reference {
-    return Selected::new("reference/bitwise", crc64_nvme_reference);
+cfg_not_crc_simd_arches! {
+  fn select_crc64_xz() -> Selected<Crc64Fn> {
+    if config::get().effective_force == Crc64Force::Reference {
+      return Selected::new(kernels::REFERENCE, crc64_xz_reference);
+    }
+    Selected::new(kernels::PORTABLE, crc64_xz_portable)
   }
 
-  if cfg.effective_force == Crc64Force::Portable {
-    return Selected::new("portable/slice16", crc64_nvme_portable);
+  fn select_crc64_nvme() -> Selected<Crc64Fn> {
+    if config::get().effective_force == Crc64Force::Reference {
+      return Selected::new(kernels::REFERENCE, crc64_nvme_reference);
+    }
+    Selected::new(kernels::PORTABLE, crc64_nvme_portable)
   }
-
-  if caps.has(platform::caps::aarch64::PMULL_READY) {
-    return Selected::new("aarch64/auto", crc64_nvme_aarch64_auto);
-  }
-
-  Selected::new("portable/slice16", crc64_nvme_portable)
-}
-
-#[cfg(target_arch = "powerpc64")]
-fn select_crc64_nvme() -> Selected<Crc64Fn> {
-  let caps = platform::caps();
-  let cfg = config::get();
-
-  if cfg.effective_force == Crc64Force::Reference {
-    return Selected::new("reference/bitwise", crc64_nvme_reference);
-  }
-
-  if cfg.effective_force == Crc64Force::Portable {
-    return Selected::new("portable/slice16", crc64_nvme_portable);
-  }
-
-  if caps.has(platform::caps::power::VPMSUM_READY) {
-    return Selected::new("power/auto", crc64_nvme_power_auto);
-  }
-
-  Selected::new("portable/slice16", crc64_nvme_portable)
-}
-
-#[cfg(target_arch = "s390x")]
-fn select_crc64_nvme() -> Selected<Crc64Fn> {
-  let caps = platform::caps();
-  let cfg = config::get();
-
-  if cfg.effective_force == Crc64Force::Reference {
-    return Selected::new("reference/bitwise", crc64_nvme_reference);
-  }
-
-  if cfg.effective_force == Crc64Force::Portable {
-    return Selected::new("portable/slice16", crc64_nvme_portable);
-  }
-
-  if caps.has(platform::caps::s390x::VECTOR) {
-    return Selected::new("s390x/auto", crc64_nvme_s390x_auto);
-  }
-
-  Selected::new("portable/slice16", crc64_nvme_portable)
-}
-
-#[cfg(target_arch = "riscv64")]
-fn select_crc64_nvme() -> Selected<Crc64Fn> {
-  let caps = platform::caps();
-  let cfg = config::get();
-
-  if cfg.effective_force == Crc64Force::Reference {
-    return Selected::new("reference/bitwise", crc64_nvme_reference);
-  }
-
-  if cfg.effective_force == Crc64Force::Portable {
-    return Selected::new("portable/slice16", crc64_nvme_portable);
-  }
-
-  if caps.has(platform::caps::riscv::ZVBC) || caps.has(platform::caps::riscv::ZBC) {
-    return Selected::new("riscv64/auto", crc64_nvme_riscv64_auto);
-  }
-
-  Selected::new("portable/slice16", crc64_nvme_portable)
-}
-
-#[cfg(not(any(
-  target_arch = "x86_64",
-  target_arch = "aarch64",
-  target_arch = "powerpc64",
-  target_arch = "s390x",
-  target_arch = "riscv64"
-)))]
-fn select_crc64_nvme() -> Selected<Crc64Fn> {
-  if config::get().effective_force == Crc64Force::Reference {
-    return Selected::new(kernels::REFERENCE, crc64_nvme_reference);
-  }
-  Selected::new(kernels::PORTABLE, crc64_nvme_portable)
 }
 
 /// Static dispatcher for CRC-64-XZ.

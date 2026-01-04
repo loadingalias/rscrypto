@@ -4,6 +4,51 @@
 //! of CRC algorithms (e.g., CRC-64-XZ and CRC-64-NVME share identical structure
 //! but different polynomials and tables).
 
+/// Apply a CRC-SIMD architecture `#[cfg(any(...))]` gate to a set of items.
+///
+/// Note: `cfg` attributes do not expand macro invocations in their meta, so we
+/// wrap items instead of writing `#[cfg(my_macro!())]`.
+macro_rules! cfg_crc_simd_arches {
+  ($($item:item)*) => {
+    $(
+      #[cfg(any(
+        target_arch = "x86_64",
+        target_arch = "aarch64",
+        target_arch = "powerpc64",
+        target_arch = "s390x",
+        target_arch = "riscv64",
+      ))]
+      $item
+    )*
+  };
+}
+
+/// Apply a non-CRC-SIMD architecture `#[cfg(not(any(...)))]` gate to a set of items.
+macro_rules! cfg_not_crc_simd_arches {
+  ($($item:item)*) => {
+    $(
+      #[cfg(not(any(
+        target_arch = "x86_64",
+        target_arch = "aarch64",
+        target_arch = "powerpc64",
+        target_arch = "s390x",
+        target_arch = "riscv64",
+      )))]
+      $item
+    )*
+  };
+}
+
+/// Define a `PolicyCache<Policy, Kernels>` static for SIMD-capable architectures.
+macro_rules! define_policy_cache {
+  ($(#[$meta:meta])* $name:ident : $policy:ty, $kernels:ty) => {
+    cfg_crc_simd_arches! {
+      $(#[$meta])*
+      static $name: ::backend::PolicyCache<$policy, $kernels> = ::backend::PolicyCache::new();
+    }
+  };
+}
+
 /// Generate a CRC-64 variant type with all trait implementations.
 ///
 /// This macro creates:

@@ -876,6 +876,76 @@ fn policy_dispatch_simd(_policy: &Crc32Policy, kernels: &Crc32Kernels, crc: u32,
 // Kernel Builders (per architecture)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Build IEEE kernel table for the current architecture.
+#[cfg(target_arch = "x86_64")]
+#[must_use]
+pub fn build_ieee_kernels_arch(policy: &Crc32Policy, reference: Crc32Fn, portable: Crc32Fn) -> Crc32Kernels {
+  build_ieee_kernels_x86(policy, reference, portable)
+}
+
+/// Build Castagnoli kernel table for the current architecture.
+#[cfg(target_arch = "x86_64")]
+#[must_use]
+pub fn build_castagnoli_kernels_arch(policy: &Crc32Policy, reference: Crc32Fn, portable: Crc32Fn) -> Crc32Kernels {
+  build_castagnoli_kernels_x86(policy, reference, portable)
+}
+
+/// Build IEEE kernel table for the current architecture.
+#[cfg(target_arch = "aarch64")]
+#[must_use]
+pub fn build_ieee_kernels_arch(policy: &Crc32Policy, reference: Crc32Fn, portable: Crc32Fn) -> Crc32Kernels {
+  build_ieee_kernels_aarch64(policy, reference, portable)
+}
+
+/// Build Castagnoli kernel table for the current architecture.
+#[cfg(target_arch = "aarch64")]
+#[must_use]
+pub fn build_castagnoli_kernels_arch(policy: &Crc32Policy, reference: Crc32Fn, portable: Crc32Fn) -> Crc32Kernels {
+  build_castagnoli_kernels_aarch64(policy, reference, portable)
+}
+
+/// Build IEEE kernel table for the current architecture.
+#[cfg(target_arch = "powerpc64")]
+#[must_use]
+pub fn build_ieee_kernels_arch(policy: &Crc32Policy, reference: Crc32Fn, portable: Crc32Fn) -> Crc32Kernels {
+  build_ieee_kernels_power(policy, reference, portable)
+}
+
+/// Build Castagnoli kernel table for the current architecture.
+#[cfg(target_arch = "powerpc64")]
+#[must_use]
+pub fn build_castagnoli_kernels_arch(policy: &Crc32Policy, reference: Crc32Fn, portable: Crc32Fn) -> Crc32Kernels {
+  build_castagnoli_kernels_power(policy, reference, portable)
+}
+
+/// Build IEEE kernel table for the current architecture.
+#[cfg(target_arch = "s390x")]
+#[must_use]
+pub fn build_ieee_kernels_arch(policy: &Crc32Policy, reference: Crc32Fn, portable: Crc32Fn) -> Crc32Kernels {
+  build_ieee_kernels_s390x(policy, reference, portable)
+}
+
+/// Build Castagnoli kernel table for the current architecture.
+#[cfg(target_arch = "s390x")]
+#[must_use]
+pub fn build_castagnoli_kernels_arch(policy: &Crc32Policy, reference: Crc32Fn, portable: Crc32Fn) -> Crc32Kernels {
+  build_castagnoli_kernels_s390x(policy, reference, portable)
+}
+
+/// Build IEEE kernel table for the current architecture.
+#[cfg(target_arch = "riscv64")]
+#[must_use]
+pub fn build_ieee_kernels_arch(policy: &Crc32Policy, reference: Crc32Fn, portable: Crc32Fn) -> Crc32Kernels {
+  build_ieee_kernels_riscv64(policy, reference, portable)
+}
+
+/// Build Castagnoli kernel table for the current architecture.
+#[cfg(target_arch = "riscv64")]
+#[must_use]
+pub fn build_castagnoli_kernels_arch(policy: &Crc32Policy, reference: Crc32Fn, portable: Crc32Fn) -> Crc32Kernels {
+  build_castagnoli_kernels_riscv64(policy, reference, portable)
+}
+
 /// Build IEEE kernel table for x86_64.
 #[cfg(target_arch = "x86_64")]
 #[must_use]

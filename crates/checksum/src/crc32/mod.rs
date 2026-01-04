@@ -63,7 +63,7 @@ mod s390x;
 #[cfg(target_arch = "riscv64")]
 mod riscv64;
 
-use backend::{PolicyCache, dispatch::Selected};
+use backend::dispatch::Selected;
 #[allow(unused_imports)]
 pub use config::{Crc32Config, Crc32Force, Crc32Tunables};
 #[allow(unused_imports)]
@@ -177,568 +177,256 @@ fn crc32c_buffered_threshold() -> usize {
 // Cached Policy and Kernels (works on both std and no_std)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Cached IEEE policy and kernels for x86_64.
-#[cfg(target_arch = "x86_64")]
-static CRC32_IEEE_CACHED: PolicyCache<policy::Crc32Policy, policy::Crc32Kernels> = PolicyCache::new();
+define_policy_cache!(
+  /// Cached IEEE policy and kernels (SIMD-capable architectures).
+  CRC32_IEEE_CACHED: policy::Crc32Policy,
+  policy::Crc32Kernels
+);
 
-/// Cached Castagnoli policy and kernels for x86_64.
-#[cfg(target_arch = "x86_64")]
-static CRC32C_CACHED: PolicyCache<policy::Crc32Policy, policy::Crc32Kernels> = PolicyCache::new();
+define_policy_cache!(
+  /// Cached Castagnoli policy and kernels (SIMD-capable architectures).
+  CRC32C_CACHED: policy::Crc32Policy,
+  policy::Crc32Kernels
+);
 
-/// Cached IEEE policy and kernels for aarch64.
-#[cfg(target_arch = "aarch64")]
-static CRC32_IEEE_CACHED: PolicyCache<policy::Crc32Policy, policy::Crc32Kernels> = PolicyCache::new();
+cfg_crc_simd_arches! {
+  #[inline]
+  #[must_use]
+  fn init_policy(
+    cfg: config::Crc32Config,
+    variant: policy::Crc32Variant,
+    build_kernels: fn(&policy::Crc32Policy, Crc32Fn, Crc32Fn) -> policy::Crc32Kernels,
+    reference: Crc32Fn,
+    portable: Crc32Fn,
+  ) -> (policy::Crc32Policy, policy::Crc32Kernels) {
+    let caps = platform::caps();
+    let tune = platform::tune();
+    let pol = policy::Crc32Policy::from_config(&cfg, caps, &tune, variant);
+    let kernels = build_kernels(&pol, reference, portable);
+    (pol, kernels)
+  }
 
-/// Cached Castagnoli policy and kernels for aarch64.
-#[cfg(target_arch = "aarch64")]
-static CRC32C_CACHED: PolicyCache<policy::Crc32Policy, policy::Crc32Kernels> = PolicyCache::new();
+  /// Initialize IEEE policy and kernels (SIMD-capable architectures).
+  fn init_ieee_policy() -> (policy::Crc32Policy, policy::Crc32Kernels) {
+    let cfg = config::get();
+    init_policy(
+      cfg,
+      policy::Crc32Variant::Ieee,
+      policy::build_ieee_kernels_arch,
+      crc32_reference,
+      crc32_portable,
+    )
+  }
 
-/// Cached IEEE policy and kernels for Power.
-#[cfg(target_arch = "powerpc64")]
-static CRC32_IEEE_CACHED: PolicyCache<policy::Crc32Policy, policy::Crc32Kernels> = PolicyCache::new();
-
-/// Cached Castagnoli policy and kernels for Power.
-#[cfg(target_arch = "powerpc64")]
-static CRC32C_CACHED: PolicyCache<policy::Crc32Policy, policy::Crc32Kernels> = PolicyCache::new();
-
-/// Cached IEEE policy and kernels for s390x.
-#[cfg(target_arch = "s390x")]
-static CRC32_IEEE_CACHED: PolicyCache<policy::Crc32Policy, policy::Crc32Kernels> = PolicyCache::new();
-
-/// Cached Castagnoli policy and kernels for s390x.
-#[cfg(target_arch = "s390x")]
-static CRC32C_CACHED: PolicyCache<policy::Crc32Policy, policy::Crc32Kernels> = PolicyCache::new();
-
-/// Cached IEEE policy and kernels for riscv64.
-#[cfg(target_arch = "riscv64")]
-static CRC32_IEEE_CACHED: PolicyCache<policy::Crc32Policy, policy::Crc32Kernels> = PolicyCache::new();
-
-/// Cached Castagnoli policy and kernels for riscv64.
-#[cfg(target_arch = "riscv64")]
-static CRC32C_CACHED: PolicyCache<policy::Crc32Policy, policy::Crc32Kernels> = PolicyCache::new();
-
-/// Initialize IEEE policy and kernels for x86_64.
-#[cfg(target_arch = "x86_64")]
-fn init_ieee_policy() -> (policy::Crc32Policy, policy::Crc32Kernels) {
-  let cfg = config::get();
-  let caps = platform::caps();
-  let tune = platform::tune();
-  let pol = policy::Crc32Policy::from_config(&cfg, caps, &tune, policy::Crc32Variant::Ieee);
-  let kernels = policy::build_ieee_kernels_x86(&pol, crc32_reference, crc32_portable);
-  (pol, kernels)
+  /// Initialize Castagnoli policy and kernels (SIMD-capable architectures).
+  fn init_castagnoli_policy() -> (policy::Crc32Policy, policy::Crc32Kernels) {
+    let cfg = config::get();
+    init_policy(
+      cfg,
+      policy::Crc32Variant::Castagnoli,
+      policy::build_castagnoli_kernels_arch,
+      crc32c_reference,
+      crc32c_portable,
+    )
+  }
 }
 
-/// Initialize Castagnoli policy and kernels for x86_64.
-#[cfg(target_arch = "x86_64")]
-fn init_castagnoli_policy() -> (policy::Crc32Policy, policy::Crc32Kernels) {
-  let cfg = config::get();
-  let caps = platform::caps();
-  let tune = platform::tune();
-  let pol = policy::Crc32Policy::from_config(&cfg, caps, &tune, policy::Crc32Variant::Castagnoli);
-  let kernels = policy::build_castagnoli_kernels_x86(&pol, crc32c_reference, crc32c_portable);
-  (pol, kernels)
-}
-
-/// Initialize IEEE policy and kernels for aarch64.
-#[cfg(target_arch = "aarch64")]
-fn init_ieee_policy() -> (policy::Crc32Policy, policy::Crc32Kernels) {
-  let cfg = config::get();
-  let caps = platform::caps();
-  let tune = platform::tune();
-  let pol = policy::Crc32Policy::from_config(&cfg, caps, &tune, policy::Crc32Variant::Ieee);
-  let kernels = policy::build_ieee_kernels_aarch64(&pol, crc32_reference, crc32_portable);
-  (pol, kernels)
-}
-
-/// Initialize Castagnoli policy and kernels for aarch64.
-#[cfg(target_arch = "aarch64")]
-fn init_castagnoli_policy() -> (policy::Crc32Policy, policy::Crc32Kernels) {
-  let cfg = config::get();
-  let caps = platform::caps();
-  let tune = platform::tune();
-  let pol = policy::Crc32Policy::from_config(&cfg, caps, &tune, policy::Crc32Variant::Castagnoli);
-  let kernels = policy::build_castagnoli_kernels_aarch64(&pol, crc32c_reference, crc32c_portable);
-  (pol, kernels)
-}
-
-/// Initialize IEEE policy and kernels for Power.
-#[cfg(target_arch = "powerpc64")]
-fn init_ieee_policy() -> (policy::Crc32Policy, policy::Crc32Kernels) {
-  let cfg = config::get();
-  let caps = platform::caps();
-  let tune = platform::tune();
-  let pol = policy::Crc32Policy::from_config(&cfg, caps, &tune, policy::Crc32Variant::Ieee);
-  let kernels = policy::build_ieee_kernels_power(&pol, crc32_reference, crc32_portable);
-  (pol, kernels)
-}
-
-/// Initialize Castagnoli policy and kernels for Power.
-#[cfg(target_arch = "powerpc64")]
-fn init_castagnoli_policy() -> (policy::Crc32Policy, policy::Crc32Kernels) {
-  let cfg = config::get();
-  let caps = platform::caps();
-  let tune = platform::tune();
-  let pol = policy::Crc32Policy::from_config(&cfg, caps, &tune, policy::Crc32Variant::Castagnoli);
-  let kernels = policy::build_castagnoli_kernels_power(&pol, crc32c_reference, crc32c_portable);
-  (pol, kernels)
-}
-
-/// Initialize IEEE policy and kernels for s390x.
-#[cfg(target_arch = "s390x")]
-fn init_ieee_policy() -> (policy::Crc32Policy, policy::Crc32Kernels) {
-  let cfg = config::get();
-  let caps = platform::caps();
-  let tune = platform::tune();
-  let pol = policy::Crc32Policy::from_config(&cfg, caps, &tune, policy::Crc32Variant::Ieee);
-  let kernels = policy::build_ieee_kernels_s390x(&pol, crc32_reference, crc32_portable);
-  (pol, kernels)
-}
-
-/// Initialize Castagnoli policy and kernels for s390x.
-#[cfg(target_arch = "s390x")]
-fn init_castagnoli_policy() -> (policy::Crc32Policy, policy::Crc32Kernels) {
-  let cfg = config::get();
-  let caps = platform::caps();
-  let tune = platform::tune();
-  let pol = policy::Crc32Policy::from_config(&cfg, caps, &tune, policy::Crc32Variant::Castagnoli);
-  let kernels = policy::build_castagnoli_kernels_s390x(&pol, crc32c_reference, crc32c_portable);
-  (pol, kernels)
-}
-
-/// Initialize IEEE policy and kernels for riscv64.
-#[cfg(target_arch = "riscv64")]
-fn init_ieee_policy() -> (policy::Crc32Policy, policy::Crc32Kernels) {
-  let cfg = config::get();
-  let caps = platform::caps();
-  let tune = platform::tune();
-  let pol = policy::Crc32Policy::from_config(&cfg, caps, &tune, policy::Crc32Variant::Ieee);
-  let kernels = policy::build_ieee_kernels_riscv64(&pol, crc32_reference, crc32_portable);
-  (pol, kernels)
-}
-
-/// Initialize Castagnoli policy and kernels for riscv64.
-#[cfg(target_arch = "riscv64")]
-fn init_castagnoli_policy() -> (policy::Crc32Policy, policy::Crc32Kernels) {
-  let cfg = config::get();
-  let caps = platform::caps();
-  let tune = platform::tune();
-  let pol = policy::Crc32Policy::from_config(&cfg, caps, &tune, policy::Crc32Variant::Castagnoli);
-  let kernels = policy::build_castagnoli_kernels_riscv64(&pol, crc32c_reference, crc32c_portable);
-  (pol, kernels)
-}
-
-/// Get the kernel name for the selected CRC-32 (IEEE) algorithm.
-///
-/// Uses the cached policy for efficient kernel name lookup.
-/// Caching works on both std (OnceLock) and no_std (atomic state machine).
-#[inline]
-#[must_use]
-#[allow(unused_variables)] // `len` only used on SIMD architectures
-pub(crate) fn crc32_selected_kernel_name(len: usize) -> &'static str {
-  #[cfg(any(
-    target_arch = "x86_64",
-    target_arch = "aarch64",
-    target_arch = "powerpc64",
-    target_arch = "s390x",
-    target_arch = "riscv64"
-  ))]
-  {
+cfg_crc_simd_arches! {
+  /// Get the kernel name for the selected CRC-32 (IEEE) algorithm.
+  ///
+  /// Uses the cached policy for efficient kernel name lookup.
+  /// Caching works on both std (OnceLock) and no_std (atomic state machine).
+  #[inline]
+  #[must_use]
+  pub(crate) fn crc32_selected_kernel_name(len: usize) -> &'static str {
     let (pol, _) = CRC32_IEEE_CACHED.get_or_init(init_ieee_policy);
     pol.kernel_name(len)
   }
 
-  #[cfg(not(any(
-    target_arch = "x86_64",
-    target_arch = "aarch64",
-    target_arch = "powerpc64",
-    target_arch = "s390x",
-    target_arch = "riscv64"
-  )))]
-  {
-    kernels::PORTABLE
-  }
-}
-
-/// Get the kernel name for the selected CRC-32C (Castagnoli) algorithm.
-///
-/// Uses the cached policy for efficient kernel name lookup.
-/// Caching works on both std (OnceLock) and no_std (atomic state machine).
-#[inline]
-#[must_use]
-#[allow(unused_variables)] // `len` only used on SIMD architectures
-pub(crate) fn crc32c_selected_kernel_name(len: usize) -> &'static str {
-  #[cfg(any(
-    target_arch = "x86_64",
-    target_arch = "aarch64",
-    target_arch = "powerpc64",
-    target_arch = "s390x",
-    target_arch = "riscv64"
-  ))]
-  {
+  /// Get the kernel name for the selected CRC-32C (Castagnoli) algorithm.
+  ///
+  /// Uses the cached policy for efficient kernel name lookup.
+  /// Caching works on both std (OnceLock) and no_std (atomic state machine).
+  #[inline]
+  #[must_use]
+  pub(crate) fn crc32c_selected_kernel_name(len: usize) -> &'static str {
     let (pol, _) = CRC32C_CACHED.get_or_init(init_castagnoli_policy);
     pol.kernel_name(len)
   }
+}
 
-  #[cfg(not(any(
-    target_arch = "x86_64",
-    target_arch = "aarch64",
-    target_arch = "powerpc64",
-    target_arch = "s390x",
-    target_arch = "riscv64"
-  )))]
-  {
-    kernels::PORTABLE
+cfg_not_crc_simd_arches! {
+  #[inline]
+  #[must_use]
+  pub(crate) fn crc32_selected_kernel_name(_len: usize) -> &'static str {
+    if config::get().effective_force == Crc32Force::Reference {
+      kernels::REFERENCE
+    } else {
+      kernels::PORTABLE
+    }
+  }
+
+  #[inline]
+  #[must_use]
+  pub(crate) fn crc32c_selected_kernel_name(_len: usize) -> &'static str {
+    if config::get().effective_force == Crc32Force::Reference {
+      kernels::REFERENCE
+    } else {
+      kernels::PORTABLE
+    }
   }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Auto Kernels (architecture-specific)
+// Auto Kernels (SIMD-capable architectures)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// CRC-32C (Castagnoli) auto-dispatch for x86_64.
-///
-/// Uses cached policy and kernels for efficient dispatch with minimal branching.
-/// Caching works on both std (OnceLock) and no_std (atomic state machine).
+cfg_crc_simd_arches! {
+  /// CRC-32 (IEEE) auto-dispatch.
+  ///
+  /// Uses cached policy and kernels for efficient dispatch with minimal branching.
+  /// Caching works on both std (OnceLock) and no_std (atomic state machine).
+  fn crc32_auto(crc: u32, data: &[u8]) -> u32 {
+    let (pol, kernels) = CRC32_IEEE_CACHED.get_or_init(init_ieee_policy);
+    policy::policy_dispatch(&pol, &kernels, crc, data)
+  }
+
+  /// CRC-32C (Castagnoli) auto-dispatch.
+  ///
+  /// Uses cached policy and kernels for efficient dispatch with minimal branching.
+  /// Caching works on both std (OnceLock) and no_std (atomic state machine).
+  fn crc32c_auto(crc: u32, data: &[u8]) -> u32 {
+    let (pol, kernels) = CRC32C_CACHED.get_or_init(init_castagnoli_policy);
+    policy::policy_dispatch(&pol, &kernels, crc, data)
+  }
+}
+
 #[cfg(target_arch = "x86_64")]
-fn crc32c_x86_64_auto(crc: u32, data: &[u8]) -> u32 {
-  let (pol, kernels) = CRC32C_CACHED.get_or_init(init_castagnoli_policy);
-  policy::policy_dispatch(&pol, &kernels, crc, data)
-}
-
-/// CRC-32 (IEEE) auto-dispatch for x86_64.
-///
-/// Uses cached policy and kernels for efficient dispatch with minimal branching.
-/// Caching works on both std (OnceLock) and no_std (atomic state machine).
-#[cfg(target_arch = "x86_64")]
-fn crc32_x86_64_auto(crc: u32, data: &[u8]) -> u32 {
-  let (pol, kernels) = CRC32_IEEE_CACHED.get_or_init(init_ieee_policy);
-  policy::policy_dispatch(&pol, &kernels, crc, data)
-}
-
-/// CRC-32 (IEEE) auto-dispatch for aarch64.
-///
-/// Uses cached policy and kernels for efficient dispatch with minimal branching.
-/// Caching works on both std (OnceLock) and no_std (atomic state machine).
+const AUTO_NAME: &str = "x86_64/auto";
 #[cfg(target_arch = "aarch64")]
-fn crc32_aarch64_auto(crc: u32, data: &[u8]) -> u32 {
-  let (pol, kernels) = CRC32_IEEE_CACHED.get_or_init(init_ieee_policy);
-  policy::policy_dispatch(&pol, &kernels, crc, data)
-}
-
-/// CRC-32C (Castagnoli) auto-dispatch for aarch64.
-///
-/// Uses cached policy and kernels for efficient dispatch with minimal branching.
-/// Caching works on both std (OnceLock) and no_std (atomic state machine).
-#[cfg(target_arch = "aarch64")]
-fn crc32c_aarch64_auto(crc: u32, data: &[u8]) -> u32 {
-  let (pol, kernels) = CRC32C_CACHED.get_or_init(init_castagnoli_policy);
-  policy::policy_dispatch(&pol, &kernels, crc, data)
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// CRC32 CLMUL Backends (POWER/s390x/RISC-V)
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// CRC-32 (IEEE) auto-dispatch for Power.
-///
-/// Uses cached policy and kernels for efficient dispatch with minimal branching.
-/// Caching works on both std (OnceLock) and no_std (atomic state machine).
+const AUTO_NAME: &str = "aarch64/auto";
 #[cfg(target_arch = "powerpc64")]
-fn crc32_power_auto(crc: u32, data: &[u8]) -> u32 {
-  let (pol, kernels) = CRC32_IEEE_CACHED.get_or_init(init_ieee_policy);
-  policy::policy_dispatch(&pol, &kernels, crc, data)
-}
-
-/// CRC-32C (Castagnoli) auto-dispatch for Power.
-///
-/// Uses cached policy and kernels for efficient dispatch with minimal branching.
-/// Caching works on both std (OnceLock) and no_std (atomic state machine).
-#[cfg(target_arch = "powerpc64")]
-fn crc32c_power_auto(crc: u32, data: &[u8]) -> u32 {
-  let (pol, kernels) = CRC32C_CACHED.get_or_init(init_castagnoli_policy);
-  policy::policy_dispatch(&pol, &kernels, crc, data)
-}
-
-/// CRC-32 (IEEE) auto-dispatch for s390x.
-///
-/// Uses cached policy and kernels for efficient dispatch with minimal branching.
-/// Caching works on both std (OnceLock) and no_std (atomic state machine).
+const AUTO_NAME: &str = "power/auto";
 #[cfg(target_arch = "s390x")]
-fn crc32_s390x_auto(crc: u32, data: &[u8]) -> u32 {
-  let (pol, kernels) = CRC32_IEEE_CACHED.get_or_init(init_ieee_policy);
-  policy::policy_dispatch(&pol, &kernels, crc, data)
-}
-
-/// CRC-32C (Castagnoli) auto-dispatch for s390x.
-///
-/// Uses cached policy and kernels for efficient dispatch with minimal branching.
-/// Caching works on both std (OnceLock) and no_std (atomic state machine).
-#[cfg(target_arch = "s390x")]
-fn crc32c_s390x_auto(crc: u32, data: &[u8]) -> u32 {
-  let (pol, kernels) = CRC32C_CACHED.get_or_init(init_castagnoli_policy);
-  policy::policy_dispatch(&pol, &kernels, crc, data)
-}
-
-/// CRC-32 (IEEE) auto-dispatch for riscv64.
-///
-/// Uses cached policy and kernels for efficient dispatch with minimal branching.
-/// Caching works on both std (OnceLock) and no_std (atomic state machine).
+const AUTO_NAME: &str = "s390x/auto";
 #[cfg(target_arch = "riscv64")]
-fn crc32_riscv64_auto(crc: u32, data: &[u8]) -> u32 {
-  let (pol, kernels) = CRC32_IEEE_CACHED.get_or_init(init_ieee_policy);
-  policy::policy_dispatch(&pol, &kernels, crc, data)
-}
-
-/// CRC-32C (Castagnoli) auto-dispatch for riscv64.
-///
-/// Uses cached policy and kernels for efficient dispatch with minimal branching.
-/// Caching works on both std (OnceLock) and no_std (atomic state machine).
-#[cfg(target_arch = "riscv64")]
-fn crc32c_riscv64_auto(crc: u32, data: &[u8]) -> u32 {
-  let (pol, kernels) = CRC32C_CACHED.get_or_init(init_castagnoli_policy);
-  policy::policy_dispatch(&pol, &kernels, crc, data)
-}
+const AUTO_NAME: &str = "riscv64/auto";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Dispatcher Selection
 // ─────────────────────────────────────────────────────────────────────────────
 
-#[cfg(target_arch = "x86_64")]
-fn select_crc32() -> Selected<Crc32Fn> {
-  let caps = platform::caps();
-  let cfg = config::get();
+cfg_crc_simd_arches! {
+  #[inline]
+  fn select_crc32_variant(
+    effective_force: Crc32Force,
+    caps_ready: bool,
+    reference: Crc32Fn,
+    portable: Crc32Fn,
+    auto: Crc32Fn,
+  ) -> Selected<Crc32Fn> {
+    if effective_force == Crc32Force::Reference {
+      return Selected::new(kernels::REFERENCE, reference);
+    }
 
-  // Reference/Portable bypass is fine - no SIMD semantics to preserve
-  if cfg.effective_force == Crc32Force::Reference {
-    return Selected::new(kernels::REFERENCE, crc32_reference);
-  }
-  if cfg.effective_force == Crc32Force::Portable {
-    return Selected::new(kernels::PORTABLE, crc32_portable);
+    if effective_force == Crc32Force::Portable {
+      return Selected::new(kernels::PORTABLE, portable);
+    }
+
+    if caps_ready {
+      return Selected::new(AUTO_NAME, auto);
+    }
+
+    Selected::new(kernels::PORTABLE, portable)
   }
 
-  // ALL SIMD modes (Auto + forced) go through policy dispatch.
-  // The policy respects effective_force via kernel family selection.
-  if caps.has(platform::caps::x86::PCLMUL_READY) {
-    return Selected::new("x86_64/auto", crc32_x86_64_auto);
+  fn select_crc32() -> Selected<Crc32Fn> {
+    let caps = platform::caps();
+    let cfg = config::get();
+
+    let caps_ready = {
+      #[cfg(target_arch = "x86_64")]
+      {
+        caps.has(platform::caps::x86::PCLMUL_READY)
+      }
+      #[cfg(target_arch = "aarch64")]
+      {
+        caps.has(platform::caps::aarch64::CRC_READY)
+      }
+      #[cfg(target_arch = "powerpc64")]
+      {
+        caps.has(platform::caps::power::VPMSUM_READY)
+      }
+      #[cfg(target_arch = "s390x")]
+      {
+        caps.has(platform::caps::s390x::VECTOR)
+      }
+      #[cfg(target_arch = "riscv64")]
+      {
+        caps.has(platform::caps::riscv::ZBC) || caps.has(platform::caps::riscv::ZVBC)
+      }
+    };
+
+    select_crc32_variant(
+      cfg.effective_force,
+      caps_ready,
+      crc32_reference,
+      crc32_portable,
+      crc32_auto,
+    )
   }
 
-  Selected::new(kernels::PORTABLE, crc32_portable)
+  fn select_crc32c() -> Selected<Crc32Fn> {
+    let caps = platform::caps();
+    let cfg = config::get();
+
+    let caps_ready = {
+      #[cfg(target_arch = "x86_64")]
+      {
+        caps.has(platform::caps::x86::CRC32C_READY)
+      }
+      #[cfg(target_arch = "aarch64")]
+      {
+        caps.has(platform::caps::aarch64::CRC_READY)
+      }
+      #[cfg(target_arch = "powerpc64")]
+      {
+        caps.has(platform::caps::power::VPMSUM_READY)
+      }
+      #[cfg(target_arch = "s390x")]
+      {
+        caps.has(platform::caps::s390x::VECTOR)
+      }
+      #[cfg(target_arch = "riscv64")]
+      {
+        caps.has(platform::caps::riscv::ZBC) || caps.has(platform::caps::riscv::ZVBC)
+      }
+    };
+
+    select_crc32_variant(
+      cfg.effective_force,
+      caps_ready,
+      crc32c_reference,
+      crc32c_portable,
+      crc32c_auto,
+    )
+  }
 }
 
-#[cfg(target_arch = "x86_64")]
-fn select_crc32c() -> Selected<Crc32Fn> {
-  let caps = platform::caps();
-  let cfg = config::get();
-
-  // Reference/Portable bypass is fine - no SIMD semantics to preserve
-  if cfg.effective_force == Crc32Force::Reference {
-    return Selected::new(kernels::REFERENCE, crc32c_reference);
-  }
-  if cfg.effective_force == Crc32Force::Portable {
-    return Selected::new(kernels::PORTABLE, crc32c_portable);
+cfg_not_crc_simd_arches! {
+  fn select_crc32() -> Selected<Crc32Fn> {
+    if config::get().effective_force == Crc32Force::Reference {
+      return Selected::new(kernels::REFERENCE, crc32_reference);
+    }
+    Selected::new(kernels::PORTABLE, crc32_portable)
   }
 
-  // ALL SIMD modes (Auto + forced) go through policy dispatch.
-  // The policy respects effective_force via kernel family selection.
-  if caps.has(platform::caps::x86::CRC32C_READY) {
-    return Selected::new("x86_64/auto", crc32c_x86_64_auto);
+  fn select_crc32c() -> Selected<Crc32Fn> {
+    if config::get().effective_force == Crc32Force::Reference {
+      return Selected::new(kernels::REFERENCE, crc32c_reference);
+    }
+    Selected::new(kernels::PORTABLE, crc32c_portable)
   }
-
-  Selected::new(kernels::PORTABLE, crc32c_portable)
-}
-
-#[cfg(target_arch = "aarch64")]
-fn select_crc32() -> Selected<Crc32Fn> {
-  let caps = platform::caps();
-  let cfg = config::get();
-
-  // Reference/Portable bypass is fine - no SIMD semantics to preserve
-  if cfg.effective_force == Crc32Force::Reference {
-    return Selected::new(kernels::REFERENCE, crc32_reference);
-  }
-  if cfg.effective_force == Crc32Force::Portable {
-    return Selected::new(kernels::PORTABLE, crc32_portable);
-  }
-
-  // ALL SIMD modes (Auto + forced) go through policy dispatch.
-  // The policy respects effective_force via kernel family selection,
-  // and applies memory_bound stream suppression uniformly.
-  if caps.has(platform::caps::aarch64::CRC_READY) {
-    return Selected::new("aarch64/auto", crc32_aarch64_auto);
-  }
-
-  Selected::new(kernels::PORTABLE, crc32_portable)
-}
-
-#[cfg(target_arch = "aarch64")]
-fn select_crc32c() -> Selected<Crc32Fn> {
-  let caps = platform::caps();
-  let cfg = config::get();
-
-  // Reference/Portable bypass is fine - no SIMD semantics to preserve
-  if cfg.effective_force == Crc32Force::Reference {
-    return Selected::new(kernels::REFERENCE, crc32c_reference);
-  }
-  if cfg.effective_force == Crc32Force::Portable {
-    return Selected::new(kernels::PORTABLE, crc32c_portable);
-  }
-
-  // ALL SIMD modes (Auto + forced) go through policy dispatch.
-  // The policy respects effective_force via kernel family selection,
-  // and applies memory_bound stream suppression uniformly.
-  if caps.has(platform::caps::aarch64::CRC_READY) {
-    return Selected::new("aarch64/auto", crc32c_aarch64_auto);
-  }
-
-  Selected::new(kernels::PORTABLE, crc32c_portable)
-}
-
-#[cfg(target_arch = "powerpc64")]
-fn select_crc32() -> Selected<Crc32Fn> {
-  let caps = platform::caps();
-  let cfg = config::get();
-
-  if cfg.effective_force == Crc32Force::Reference {
-    return Selected::new(kernels::REFERENCE, crc32_reference);
-  }
-
-  if cfg.effective_force == Crc32Force::Portable {
-    return Selected::new(kernels::PORTABLE, crc32_portable);
-  }
-
-  if caps.has(platform::caps::power::VPMSUM_READY) {
-    return Selected::new("power/auto", crc32_power_auto);
-  }
-
-  Selected::new(kernels::PORTABLE, crc32_portable)
-}
-
-#[cfg(target_arch = "powerpc64")]
-fn select_crc32c() -> Selected<Crc32Fn> {
-  let caps = platform::caps();
-  let cfg = config::get();
-
-  if cfg.effective_force == Crc32Force::Reference {
-    return Selected::new(kernels::REFERENCE, crc32c_reference);
-  }
-
-  if cfg.effective_force == Crc32Force::Portable {
-    return Selected::new(kernels::PORTABLE, crc32c_portable);
-  }
-
-  if caps.has(platform::caps::power::VPMSUM_READY) {
-    return Selected::new("power/auto", crc32c_power_auto);
-  }
-
-  Selected::new(kernels::PORTABLE, crc32c_portable)
-}
-
-#[cfg(target_arch = "s390x")]
-fn select_crc32() -> Selected<Crc32Fn> {
-  let caps = platform::caps();
-  let cfg = config::get();
-
-  if cfg.effective_force == Crc32Force::Reference {
-    return Selected::new(kernels::REFERENCE, crc32_reference);
-  }
-
-  if cfg.effective_force == Crc32Force::Portable {
-    return Selected::new(kernels::PORTABLE, crc32_portable);
-  }
-
-  if caps.has(platform::caps::s390x::VECTOR) {
-    return Selected::new("s390x/auto", crc32_s390x_auto);
-  }
-
-  Selected::new(kernels::PORTABLE, crc32_portable)
-}
-
-#[cfg(target_arch = "s390x")]
-fn select_crc32c() -> Selected<Crc32Fn> {
-  let caps = platform::caps();
-  let cfg = config::get();
-
-  if cfg.effective_force == Crc32Force::Reference {
-    return Selected::new(kernels::REFERENCE, crc32c_reference);
-  }
-
-  if cfg.effective_force == Crc32Force::Portable {
-    return Selected::new(kernels::PORTABLE, crc32c_portable);
-  }
-
-  if caps.has(platform::caps::s390x::VECTOR) {
-    return Selected::new("s390x/auto", crc32c_s390x_auto);
-  }
-
-  Selected::new(kernels::PORTABLE, crc32c_portable)
-}
-
-#[cfg(target_arch = "riscv64")]
-fn select_crc32() -> Selected<Crc32Fn> {
-  let caps = platform::caps();
-  let cfg = config::get();
-
-  if cfg.effective_force == Crc32Force::Reference {
-    return Selected::new(kernels::REFERENCE, crc32_reference);
-  }
-
-  if cfg.effective_force == Crc32Force::Portable {
-    return Selected::new(kernels::PORTABLE, crc32_portable);
-  }
-
-  if caps.has(platform::caps::riscv::ZBC) || caps.has(platform::caps::riscv::ZVBC) {
-    return Selected::new("riscv64/auto", crc32_riscv64_auto);
-  }
-
-  Selected::new(kernels::PORTABLE, crc32_portable)
-}
-
-#[cfg(target_arch = "riscv64")]
-fn select_crc32c() -> Selected<Crc32Fn> {
-  let caps = platform::caps();
-  let cfg = config::get();
-
-  if cfg.effective_force == Crc32Force::Reference {
-    return Selected::new(kernels::REFERENCE, crc32c_reference);
-  }
-
-  if cfg.effective_force == Crc32Force::Portable {
-    return Selected::new(kernels::PORTABLE, crc32c_portable);
-  }
-
-  if caps.has(platform::caps::riscv::ZBC) || caps.has(platform::caps::riscv::ZVBC) {
-    return Selected::new("riscv64/auto", crc32c_riscv64_auto);
-  }
-
-  Selected::new(kernels::PORTABLE, crc32c_portable)
-}
-
-#[cfg(not(any(
-  target_arch = "x86_64",
-  target_arch = "aarch64",
-  target_arch = "powerpc64",
-  target_arch = "s390x",
-  target_arch = "riscv64"
-)))]
-fn select_crc32() -> Selected<Crc32Fn> {
-  if config::get().effective_force == Crc32Force::Reference {
-    return Selected::new(kernels::REFERENCE, crc32_reference);
-  }
-  Selected::new(kernels::PORTABLE, crc32_portable)
-}
-
-#[cfg(not(any(
-  target_arch = "x86_64",
-  target_arch = "aarch64",
-  target_arch = "powerpc64",
-  target_arch = "s390x",
-  target_arch = "riscv64"
-)))]
-fn select_crc32c() -> Selected<Crc32Fn> {
-  if config::get().effective_force == Crc32Force::Reference {
-    return Selected::new(kernels::REFERENCE, crc32c_reference);
-  }
-  Selected::new(kernels::PORTABLE, crc32c_portable)
 }
 
 /// Static dispatcher for CRC-32 (IEEE).

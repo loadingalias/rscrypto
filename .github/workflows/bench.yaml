@@ -417,6 +417,8 @@ jobs:
         if: steps.should-run.outputs.enabled == 'true' && github.event_name == 'workflow_dispatch' && github.event.inputs.run_comp_report == 'true' && github.event.inputs.comp_report_crc32c_diagnose != 'true' && runner.os == 'Linux' && startsWith(matrix.target.platform-id, 'linux-')
         shell: bash
         run: |
+          set -euo pipefail
+
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "Running checksum comp benchmark (report mode)"
           echo "RUSTFLAGS: ${RUSTFLAGS}"
@@ -428,13 +430,23 @@ jobs:
           if [ -n "$FILTER" ]; then
             ARGS=("$FILTER" "${ARGS[@]}")
           fi
-          cargo bench --profile bench -p checksum --bench comp -- "${ARGS[@]}" 2>&1 | tee benchmark-results/comp-output.txt
+          CRITERION_HOME="target/criterion/comp-report"
+          rm -rf "${CRITERION_HOME}"
+          mkdir -p "${CRITERION_HOME}"
 
-          python3 scripts/bench/comp-analyze.py benchmark-results/comp-output.txt | tee benchmark-results/comp-report.txt
+          env CRITERION_HOME="${CRITERION_HOME}" cargo bench --profile bench -p checksum --bench comp -- "${ARGS[@]}" 2>&1 | tee benchmark-results/comp-output.txt
+
+          python3 scripts/bench/criterion-summary.py \
+            --root "${CRITERION_HOME}" \
+            --group-prefix "${FILTER}" \
+            --only oneshot \
+            --non-wins \
+            | tee benchmark-results/comp-report.txt
 
           {
             echo "comp-report generated at: benchmark-results/comp-report.txt"
             echo "comp-output captured at:  benchmark-results/comp-output.txt"
+            echo "criterion-home:           ${CRITERION_HOME}"
           } >> "$GITHUB_STEP_SUMMARY"
         env:
           GITHUB_EVENT_INPUTS_COMP_REPORT_FILTER: ${{ github.event.inputs.comp_report_filter }}
@@ -464,13 +476,23 @@ jobs:
             shift
             local out="benchmark-results/comp-output.${label}.txt"
             local rep="benchmark-results/comp-report.${label}.txt"
+            local criterion_home="target/criterion/comp-crc32c-diagnose/${label}"
 
             echo "" | tee "$out" >/dev/null
             echo ">>> variant=${label} env=$*" | tee -a "$out"
 
+            rm -rf "${criterion_home}"
+            mkdir -p "${criterion_home}"
+
             # shellcheck disable=SC2086
-            env "$@" cargo bench --profile bench -p checksum --bench comp -- "${ARGS[@]}" 2>&1 | tee -a "$out"
-            python3 scripts/bench/comp-analyze.py "$out" | tee "$rep"
+            env CRITERION_HOME="${criterion_home}" "$@" cargo bench --profile bench -p checksum --bench comp -- "${ARGS[@]}" 2>&1 | tee -a "$out"
+
+            python3 scripts/bench/criterion-summary.py \
+              --root "${criterion_home}" \
+              --group-prefix "${FILTER}" \
+              --only oneshot \
+              --non-wins \
+              | tee "$rep"
           }
 
           run_variant "default"
@@ -487,6 +509,11 @@ jobs:
             echo "- benchmark-results/comp-report.streams1.txt"
             echo "- benchmark-results/comp-output.force-hwcrc.txt"
             echo "- benchmark-results/comp-report.force-hwcrc.txt"
+            echo ""
+            echo "Criterion roots:"
+            echo "- target/criterion/comp-crc32c-diagnose/default"
+            echo "- target/criterion/comp-crc32c-diagnose/streams1"
+            echo "- target/criterion/comp-crc32c-diagnose/force-hwcrc"
           } >> "$GITHUB_STEP_SUMMARY"
         env:
           GITHUB_EVENT_INPUTS_COMP_REPORT_FILTER: ${{ github.event.inputs.comp_report_filter }}
@@ -547,6 +574,8 @@ jobs:
             benchmark-results/comp-report.txt
             benchmark-results/comp-output.*.txt
             benchmark-results/comp-report.*.txt
+            target/criterion/comp-report/
+            target/criterion/comp-crc32c-diagnose/
           retention-days: 90
           if-no-files-found: warn
           compression-level: 6

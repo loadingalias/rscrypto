@@ -77,6 +77,11 @@ tune-contribute:
 bench-summary group="" only="oneshot":
     @python3 scripts/bench/criterion-summary.py --group-prefix '{{group}}' --only {{only}}
 
+# Run `checksum` comparison benches and report non-wins vs competitors.
+bench-compare group="" ours="rscrypto/checksum" min_pct="0":
+    RUSTC_WRAPPER= cargo bench -p checksum --bench comp
+    @python3 scripts/bench/criterion-summary.py --group-prefix '{{group}}' --non-wins --ours '{{ours}}' --min-improvement-pct {{min_pct}}
+
 
 update:
     cargo update --workspace

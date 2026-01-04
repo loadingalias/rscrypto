@@ -176,27 +176,15 @@ impl Crc64Policy {
         if self.use_4x512 && len >= CRC64_4X512_MIN_BYTES {
           return kernels::x86_64::VPCLMUL_4X512;
         }
-        let streams = self.streams_for_len(len);
-        let idx = stream_to_index(streams);
-        kernels::x86_64::VPCLMUL_NAMES
-          .get(idx)
-          .or(kernels::x86_64::VPCLMUL_NAMES.first())
-          .copied()
-          .unwrap_or(kernels::PORTABLE)
+        select_kernel_name_for_len(self, len, kernels::x86_64::VPCLMUL_NAMES)
       }
 
       #[cfg(target_arch = "x86_64")]
       KernelFamily::X86Pclmul => {
-        let streams = self.streams_for_len(len);
-        let idx = stream_to_index(streams);
         if len < self.small_kernel_max_bytes {
           kernels::x86_64::PCLMUL_SMALL
         } else {
-          kernels::x86_64::PCLMUL_NAMES
-            .get(idx)
-            .or(kernels::x86_64::PCLMUL_NAMES.first())
-            .copied()
-            .unwrap_or(kernels::PORTABLE)
+          select_kernel_name_for_len(self, len, kernels::x86_64::PCLMUL_NAMES)
         }
       }
 
@@ -205,93 +193,56 @@ impl Crc64Policy {
         if len < self.small_kernel_max_bytes {
           return kernels::aarch64::SVE2_PMULL_SMALL;
         }
-        let streams = self.streams_for_len(len);
-        let idx = stream_to_index(streams);
-        kernels::aarch64::SVE2_PMULL_NAMES
-          .get(idx)
-          .or(kernels::aarch64::SVE2_PMULL_NAMES.first())
-          .copied()
-          .unwrap_or(kernels::PORTABLE)
+        select_kernel_name_for_len(self, len, kernels::aarch64::SVE2_PMULL_NAMES)
       }
 
       #[cfg(target_arch = "aarch64")]
       KernelFamily::ArmPmullEor3 => {
-        let streams = self.streams_for_len(len);
-        let idx = stream_to_index(streams);
         if len < self.small_kernel_max_bytes {
           kernels::aarch64::PMULL_SMALL
         } else {
-          kernels::aarch64::PMULL_EOR3_NAMES
-            .get(idx)
-            .or(kernels::aarch64::PMULL_EOR3_NAMES.first())
-            .copied()
-            .unwrap_or(kernels::PORTABLE)
+          select_kernel_name_for_len(self, len, kernels::aarch64::PMULL_EOR3_NAMES)
         }
       }
 
       #[cfg(target_arch = "aarch64")]
       KernelFamily::ArmPmull => {
-        let streams = self.streams_for_len(len);
-        let idx = stream_to_index(streams);
         if len < self.small_kernel_max_bytes {
           kernels::aarch64::PMULL_SMALL
         } else {
-          kernels::aarch64::PMULL_NAMES
-            .get(idx)
-            .or(kernels::aarch64::PMULL_NAMES.first())
-            .copied()
-            .unwrap_or(kernels::PORTABLE)
+          select_kernel_name_for_len(self, len, kernels::aarch64::PMULL_NAMES)
         }
       }
 
       #[cfg(target_arch = "powerpc64")]
-      KernelFamily::PowerVpmsum => {
-        let streams = self.streams_for_len(len);
-        let idx = stream_to_index(streams);
-        kernels::power::VPMSUM_NAMES
-          .get(idx)
-          .or(kernels::power::VPMSUM_NAMES.first())
-          .copied()
-          .unwrap_or(kernels::PORTABLE)
-      }
+      KernelFamily::PowerVpmsum => select_kernel_name_for_len(self, len, kernels::power::VPMSUM_NAMES),
 
       #[cfg(target_arch = "s390x")]
-      KernelFamily::S390xVgfm => {
-        let streams = self.streams_for_len(len);
-        let idx = stream_to_index(streams);
-        kernels::s390x::VGFM_NAMES
-          .get(idx)
-          .or(kernels::s390x::VGFM_NAMES.first())
-          .copied()
-          .unwrap_or(kernels::PORTABLE)
-      }
+      KernelFamily::S390xVgfm => select_kernel_name_for_len(self, len, kernels::s390x::VGFM_NAMES),
 
       #[cfg(target_arch = "riscv64")]
-      KernelFamily::RiscvZvbc => {
-        let streams = self.streams_for_len(len);
-        let idx = stream_to_index(streams);
-        kernels::riscv64::ZVBC_NAMES
-          .get(idx)
-          .or(kernels::riscv64::ZVBC_NAMES.first())
-          .copied()
-          .unwrap_or(kernels::PORTABLE)
-      }
+      KernelFamily::RiscvZvbc => select_kernel_name_for_len(self, len, kernels::riscv64::ZVBC_NAMES),
 
       #[cfg(target_arch = "riscv64")]
-      KernelFamily::RiscvZbc => {
-        let streams = self.streams_for_len(len);
-        let idx = stream_to_index(streams);
-        kernels::riscv64::ZBC_NAMES
-          .get(idx)
-          .or(kernels::riscv64::ZBC_NAMES.first())
-          .copied()
-          .unwrap_or(kernels::PORTABLE)
-      }
+      KernelFamily::RiscvZbc => select_kernel_name_for_len(self, len, kernels::riscv64::ZBC_NAMES),
 
       // Fallback for families not applicable to current arch
       _ => kernels::PORTABLE,
     }
   }
+}
+
+#[inline]
+#[must_use]
+fn select_kernel_name_for_streams(names: &[&'static str], streams: u8) -> &'static str {
+  let idx = stream_to_index(streams);
+  names.get(idx).or(names.first()).copied().unwrap_or(kernels::PORTABLE)
+}
+
+#[inline]
+#[must_use]
+fn select_kernel_name_for_len(policy: &Crc64Policy, len: usize, names: &[&'static str]) -> &'static str {
+  select_kernel_name_for_streams(names, policy.streams_for_len(len))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -401,6 +352,76 @@ pub fn policy_dispatch(policy: &Crc64Policy, kernels: &Crc64Kernels, crc: u64, d
 // ─────────────────────────────────────────────────────────────────────────────
 // Kernel Builders (per architecture)
 // ─────────────────────────────────────────────────────────────────────────────
+
+/// Build XZ kernel table for the current architecture.
+#[cfg(target_arch = "x86_64")]
+#[must_use]
+pub fn build_xz_kernels_arch(policy: &Crc64Policy, reference: Crc64Fn, portable: Crc64Fn) -> Crc64Kernels {
+  build_xz_kernels_x86(policy, reference, portable)
+}
+
+/// Build NVME kernel table for the current architecture.
+#[cfg(target_arch = "x86_64")]
+#[must_use]
+pub fn build_nvme_kernels_arch(policy: &Crc64Policy, reference: Crc64Fn, portable: Crc64Fn) -> Crc64Kernels {
+  build_nvme_kernels_x86(policy, reference, portable)
+}
+
+/// Build XZ kernel table for the current architecture.
+#[cfg(target_arch = "aarch64")]
+#[must_use]
+pub fn build_xz_kernels_arch(policy: &Crc64Policy, reference: Crc64Fn, portable: Crc64Fn) -> Crc64Kernels {
+  build_xz_kernels_aarch64(policy, reference, portable)
+}
+
+/// Build NVME kernel table for the current architecture.
+#[cfg(target_arch = "aarch64")]
+#[must_use]
+pub fn build_nvme_kernels_arch(policy: &Crc64Policy, reference: Crc64Fn, portable: Crc64Fn) -> Crc64Kernels {
+  build_nvme_kernels_aarch64(policy, reference, portable)
+}
+
+/// Build XZ kernel table for the current architecture.
+#[cfg(target_arch = "powerpc64")]
+#[must_use]
+pub fn build_xz_kernels_arch(policy: &Crc64Policy, reference: Crc64Fn, portable: Crc64Fn) -> Crc64Kernels {
+  build_xz_kernels_power(policy, reference, portable)
+}
+
+/// Build NVME kernel table for the current architecture.
+#[cfg(target_arch = "powerpc64")]
+#[must_use]
+pub fn build_nvme_kernels_arch(policy: &Crc64Policy, reference: Crc64Fn, portable: Crc64Fn) -> Crc64Kernels {
+  build_nvme_kernels_power(policy, reference, portable)
+}
+
+/// Build XZ kernel table for the current architecture.
+#[cfg(target_arch = "s390x")]
+#[must_use]
+pub fn build_xz_kernels_arch(policy: &Crc64Policy, reference: Crc64Fn, portable: Crc64Fn) -> Crc64Kernels {
+  build_xz_kernels_s390x(policy, reference, portable)
+}
+
+/// Build NVME kernel table for the current architecture.
+#[cfg(target_arch = "s390x")]
+#[must_use]
+pub fn build_nvme_kernels_arch(policy: &Crc64Policy, reference: Crc64Fn, portable: Crc64Fn) -> Crc64Kernels {
+  build_nvme_kernels_s390x(policy, reference, portable)
+}
+
+/// Build XZ kernel table for the current architecture.
+#[cfg(target_arch = "riscv64")]
+#[must_use]
+pub fn build_xz_kernels_arch(policy: &Crc64Policy, reference: Crc64Fn, portable: Crc64Fn) -> Crc64Kernels {
+  build_xz_kernels_riscv64(policy, reference, portable)
+}
+
+/// Build NVME kernel table for the current architecture.
+#[cfg(target_arch = "riscv64")]
+#[must_use]
+pub fn build_nvme_kernels_arch(policy: &Crc64Policy, reference: Crc64Fn, portable: Crc64Fn) -> Crc64Kernels {
+  build_nvme_kernels_riscv64(policy, reference, portable)
+}
 
 /// Build XZ kernel table for the selected family.
 #[cfg(target_arch = "x86_64")]
