@@ -29,7 +29,9 @@ pub struct Crc64TunedDefaults {
 
 #[rustfmt::skip]
 pub const CRC64_TUNED_DEFAULTS: &[(TuneKind, Crc64TunedDefaults)] = &[
-  // BEGIN GENERATED (rscrypto-tune)  // Default: conservative x86_64 tuning (used when microarch is unknown).  (TuneKind::Default, Crc64TunedDefaults {
+  // BEGIN GENERATED (rscrypto-tune)
+  // Default: conservative x86_64 tuning (used when microarch is unknown).
+  (TuneKind::Default, Crc64TunedDefaults {
     xz:   Crc64VariantTunedDefaults { streams: 1, portable_to_clmul: 64, pclmul_to_vpclmul: usize::MAX, small_kernel_max_bytes: 256, min_bytes_per_lane: None },
     nvme: Crc64VariantTunedDefaults { streams: 4, portable_to_clmul: 64, pclmul_to_vpclmul: usize::MAX, small_kernel_max_bytes: 128, min_bytes_per_lane: None },
   }),

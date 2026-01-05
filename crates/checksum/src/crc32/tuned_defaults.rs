@@ -32,7 +32,9 @@ pub struct Crc32TunedDefaults {
 
 #[rustfmt::skip]
 pub const CRC32_TUNED_DEFAULTS: &[(TuneKind, Crc32TunedDefaults)] = &[
-  // BEGIN GENERATED (rscrypto-tune)  // Default: conservative x86_64 tuning (used when microarch is unknown).  (TuneKind::Default, Crc32TunedDefaults {
+  // BEGIN GENERATED (rscrypto-tune)
+  // Default: conservative x86_64 tuning (used when microarch is unknown).
+  (TuneKind::Default, Crc32TunedDefaults {
     crc32:  Crc32VariantTunedDefaults { streams: 1, portable_bytewise_to_slice16: 64, portable_to_hwcrc: 64, hwcrc_to_fusion: usize::MAX, fusion_to_avx512: usize::MAX, fusion_to_vpclmul: usize::MAX, min_bytes_per_lane: None },
     crc32c: Crc32VariantTunedDefaults { streams: 1, portable_bytewise_to_slice16: 64, portable_to_hwcrc: 64, hwcrc_to_fusion: 2048,     fusion_to_avx512: usize::MAX, fusion_to_vpclmul: usize::MAX, min_bytes_per_lane: None },
   }),
