@@ -51,6 +51,8 @@ pub(super) use traits::{Checksum, ChecksumCombine};
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
 use crate::common::tables::generate_crc64_tables_8;
+#[cfg(feature = "diag")]
+use crate::diag::{Crc64Polynomial, Crc64SelectionDiag};
 use crate::{
   common::{
     reference::crc64_bitwise,
@@ -130,6 +132,104 @@ cfg_not_crc_simd_arches! {
       kernels::REFERENCE
     } else {
       kernels::PORTABLE
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Selection Diagnostics
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[cfg(feature = "diag")]
+cfg_crc_simd_arches! {
+  #[inline]
+  #[must_use]
+  pub(crate) fn diag_crc64_xz(len: usize) -> Crc64SelectionDiag {
+    let tune = platform::tune();
+    let (pol, _) = CRC64_XZ_CACHED.get_or_init(init_xz_policy);
+    pol.diag(len, Crc64Polynomial::Xz, tune.kind())
+  }
+
+  #[inline]
+  #[must_use]
+  pub(crate) fn diag_crc64_nvme(len: usize) -> Crc64SelectionDiag {
+    let tune = platform::tune();
+    let (pol, _) = CRC64_NVME_CACHED.get_or_init(init_nvme_policy);
+    pol.diag(len, Crc64Polynomial::Nvme, tune.kind())
+  }
+}
+
+#[cfg(feature = "diag")]
+cfg_not_crc_simd_arches! {
+  #[inline]
+  #[must_use]
+  pub(crate) fn diag_crc64_xz(len: usize) -> Crc64SelectionDiag {
+    let tune = platform::tune();
+    let cfg = config::get();
+    let selected_kernel = crc64_selected_kernel_name(len);
+
+    let reason = if len < policy::CRC64_SMALL_THRESHOLD {
+      crate::diag::SelectionReason::BelowSmallThreshold
+    } else if cfg.effective_force != Crc64Force::Auto {
+      crate::diag::SelectionReason::Forced
+    } else if len < cfg.tunables.xz.portable_to_clmul {
+      crate::diag::SelectionReason::BelowSimdThreshold
+    } else {
+      crate::diag::SelectionReason::Auto
+    };
+
+    Crc64SelectionDiag {
+      polynomial: Crc64Polynomial::Xz,
+      len,
+      tune_kind: tune.kind(),
+      reason,
+      effective_force: cfg.effective_force,
+      policy_family: "portable",
+      selected_kernel,
+      selected_streams: 1,
+      portable_to_clmul: cfg.tunables.xz.portable_to_clmul,
+      pclmul_to_vpclmul: cfg.tunables.xz.pclmul_to_vpclmul,
+      small_kernel_max_bytes: cfg.tunables.xz.small_kernel_max_bytes,
+      use_4x512: false,
+      min_bytes_per_lane: usize::MAX,
+    }
+  }
+
+  #[inline]
+  #[must_use]
+  pub(crate) fn diag_crc64_nvme(len: usize) -> Crc64SelectionDiag {
+    let tune = platform::tune();
+    let cfg = config::get();
+    let selected_kernel = if cfg.effective_force == Crc64Force::Reference {
+      kernels::REFERENCE
+    } else {
+      kernels::PORTABLE
+    };
+
+    let reason = if len < policy::CRC64_SMALL_THRESHOLD {
+      crate::diag::SelectionReason::BelowSmallThreshold
+    } else if cfg.effective_force != Crc64Force::Auto {
+      crate::diag::SelectionReason::Forced
+    } else if len < cfg.tunables.nvme.portable_to_clmul {
+      crate::diag::SelectionReason::BelowSimdThreshold
+    } else {
+      crate::diag::SelectionReason::Auto
+    };
+
+    Crc64SelectionDiag {
+      polynomial: Crc64Polynomial::Nvme,
+      len,
+      tune_kind: tune.kind(),
+      reason,
+      effective_force: cfg.effective_force,
+      policy_family: "portable",
+      selected_kernel,
+      selected_streams: 1,
+      portable_to_clmul: cfg.tunables.nvme.portable_to_clmul,
+      pclmul_to_vpclmul: cfg.tunables.nvme.pclmul_to_vpclmul,
+      small_kernel_max_bytes: cfg.tunables.nvme.small_kernel_max_bytes,
+      use_4x512: false,
+      min_bytes_per_lane: usize::MAX,
     }
   }
 }

@@ -19,12 +19,16 @@
 //! eliminating per-call branching on capabilities and thresholds.
 
 use backend::{KernelFamily, KernelTier, SelectionPolicy};
+#[cfg(feature = "diag")]
+use platform::TuneKind;
 use platform::{Caps, Tune};
 
 use super::{
   config::{Crc32Config, Crc32Force},
   kernels,
 };
+#[cfg(feature = "diag")]
+use crate::diag::{Crc32Polynomial, Crc32SelectionDiag, SelectionReason};
 use crate::{common::kernels::stream_to_index, dispatchers::Crc32Fn};
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -562,6 +566,51 @@ impl Crc32Policy {
   )))]
   fn kernel_name_for_family(&self, _len: usize) -> &'static str {
     kernels::PORTABLE
+  }
+
+  #[cfg(feature = "diag")]
+  #[inline]
+  #[must_use]
+  pub fn diag(&self, len: usize, polynomial: Crc32Polynomial, tune_kind: TuneKind) -> Crc32SelectionDiag {
+    let selected_kernel = self.kernel_name(len);
+    let selected_streams = if selected_kernel.contains("small") {
+      1
+    } else {
+      self.streams_for_len(len)
+    };
+
+    let reason = if len < CRC32_SMALL_THRESHOLD {
+      SelectionReason::BelowSmallThreshold
+    } else if self.effective_force != Crc32Force::Auto {
+      SelectionReason::Forced
+    } else if !self.should_use_simd(len) {
+      SelectionReason::BelowSimdThreshold
+    } else {
+      SelectionReason::Auto
+    };
+
+    Crc32SelectionDiag {
+      polynomial,
+      len,
+      tune_kind,
+      reason,
+      effective_force: self.effective_force,
+      policy_family: self.inner.name(),
+      selected_kernel,
+      selected_streams,
+      portable_to_hwcrc: self.portable_to_hwcrc,
+      hwcrc_to_fusion: self.hwcrc_to_fusion,
+      fusion_to_avx512: self.fusion_to_avx512,
+      fusion_to_vpclmul: self.fusion_to_vpclmul,
+      min_bytes_per_lane: self.min_bytes_per_lane,
+      memory_bound: self.memory_bound,
+      has_hwcrc: self.has_hwcrc,
+      has_fusion: self.has_fusion,
+      has_vpclmul: self.has_vpclmul,
+      has_avx512: self.has_avx512,
+      has_eor3: self.has_eor3,
+      has_sve2: self.has_sve2,
+    }
   }
 }
 

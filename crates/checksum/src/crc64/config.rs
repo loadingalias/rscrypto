@@ -66,7 +66,7 @@ impl Crc64Force {
     }
   }
 
-  /// Convert to the corresponding [`KernelFamily`], if applicable.
+  /// Convert to the corresponding [`backend::KernelFamily`], if applicable.
   ///
   /// Returns `None` for `Auto` since it doesn't map to a specific family.
   #[must_use]
@@ -88,7 +88,7 @@ impl Crc64Force {
     }
   }
 
-  /// Create from a [`KernelFamily`].
+  /// Create from a [`backend::KernelFamily`].
   #[must_use]
   pub const fn from_family(family: backend::KernelFamily) -> Self {
     use backend::KernelFamily;
@@ -534,7 +534,7 @@ pub fn get() -> Crc64Config {
   {
     use std::sync::OnceLock;
     static CACHED: OnceLock<Crc64Config> = OnceLock::new();
-    *CACHED.get_or_init(|| platform::dispatch_auto(config))
+    *CACHED.get_or_init(|| platform::dispatch(config))
   }
 
   #[cfg(not(feature = "std"))]

@@ -69,6 +69,8 @@ pub use config::{Crc32Config, Crc32Force, Crc32Tunables};
 #[allow(unused_imports)]
 pub(super) use traits::{Checksum, ChecksumCombine};
 
+#[cfg(feature = "diag")]
+use crate::diag::{Crc32Polynomial, Crc32SelectionDiag};
 use crate::{
   common::{
     combine::{Gf2Matrix32, generate_shift8_matrix_32},
@@ -273,6 +275,114 @@ cfg_not_crc_simd_arches! {
       kernels::REFERENCE
     } else {
       kernels::PORTABLE
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Selection Diagnostics
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[cfg(feature = "diag")]
+cfg_crc_simd_arches! {
+  #[inline]
+  #[must_use]
+  pub(crate) fn diag_crc32_ieee(len: usize) -> Crc32SelectionDiag {
+    let tune = platform::tune();
+    let (pol, _) = CRC32_IEEE_CACHED.get_or_init(init_ieee_policy);
+    pol.diag(len, Crc32Polynomial::Ieee, tune.kind())
+  }
+
+  #[inline]
+  #[must_use]
+  pub(crate) fn diag_crc32c(len: usize) -> Crc32SelectionDiag {
+    let tune = platform::tune();
+    let (pol, _) = CRC32C_CACHED.get_or_init(init_castagnoli_policy);
+    pol.diag(len, Crc32Polynomial::Castagnoli, tune.kind())
+  }
+}
+
+#[cfg(feature = "diag")]
+cfg_not_crc_simd_arches! {
+  #[inline]
+  #[must_use]
+  pub(crate) fn diag_crc32_ieee(len: usize) -> Crc32SelectionDiag {
+    let tune = platform::tune();
+    let cfg = config::get();
+    let selected_kernel = crc32_selected_kernel_name(len);
+
+    let reason = if len < policy::CRC32_SMALL_THRESHOLD {
+      crate::diag::SelectionReason::BelowSmallThreshold
+    } else if cfg.effective_force != Crc32Force::Auto {
+      crate::diag::SelectionReason::Forced
+    } else if len < cfg.tunables.crc32.portable_to_hwcrc {
+      crate::diag::SelectionReason::BelowSimdThreshold
+    } else {
+      crate::diag::SelectionReason::Auto
+    };
+
+    Crc32SelectionDiag {
+      polynomial: Crc32Polynomial::Ieee,
+      len,
+      tune_kind: tune.kind(),
+      reason,
+      effective_force: cfg.effective_force,
+      policy_family: "portable",
+      selected_kernel,
+      selected_streams: 1,
+      portable_to_hwcrc: cfg.tunables.crc32.portable_to_hwcrc,
+      hwcrc_to_fusion: cfg.tunables.crc32.hwcrc_to_fusion,
+      fusion_to_avx512: cfg.tunables.crc32.fusion_to_avx512,
+      fusion_to_vpclmul: cfg.tunables.crc32.fusion_to_vpclmul,
+      min_bytes_per_lane: usize::MAX,
+      memory_bound: false,
+      has_hwcrc: false,
+      has_fusion: false,
+      has_vpclmul: false,
+      has_avx512: false,
+      has_eor3: false,
+      has_sve2: false,
+    }
+  }
+
+  #[inline]
+  #[must_use]
+  pub(crate) fn diag_crc32c(len: usize) -> Crc32SelectionDiag {
+    let tune = platform::tune();
+    let cfg = config::get();
+    let selected_kernel = crc32c_selected_kernel_name(len);
+
+    let reason = if len < policy::CRC32_SMALL_THRESHOLD {
+      crate::diag::SelectionReason::BelowSmallThreshold
+    } else if cfg.effective_force != Crc32Force::Auto {
+      crate::diag::SelectionReason::Forced
+    } else if len < cfg.tunables.crc32c.portable_to_hwcrc {
+      crate::diag::SelectionReason::BelowSimdThreshold
+    } else {
+      crate::diag::SelectionReason::Auto
+    };
+
+    Crc32SelectionDiag {
+      polynomial: Crc32Polynomial::Castagnoli,
+      len,
+      tune_kind: tune.kind(),
+      reason,
+      effective_force: cfg.effective_force,
+      policy_family: "portable",
+      selected_kernel,
+      selected_streams: 1,
+      portable_to_hwcrc: cfg.tunables.crc32c.portable_to_hwcrc,
+      hwcrc_to_fusion: cfg.tunables.crc32c.hwcrc_to_fusion,
+      fusion_to_avx512: cfg.tunables.crc32c.fusion_to_avx512,
+      fusion_to_vpclmul: cfg.tunables.crc32c.fusion_to_vpclmul,
+      min_bytes_per_lane: usize::MAX,
+      memory_bound: false,
+      has_hwcrc: false,
+      has_fusion: false,
+      has_vpclmul: false,
+      has_avx512: false,
+      has_eor3: false,
+      has_sve2: false,
     }
   }
 }

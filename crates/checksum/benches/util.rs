@@ -153,6 +153,17 @@ pub fn print_platform_info() {
     eprintln!("╠══════════════════════════════════════════════════════════════╣");
     eprintln!("║ Platform: {}", platform::describe());
     eprintln!("║ Tune Kind: {:?}", tune.kind());
+    if tune.kind() == platform::TuneKind::Default {
+      let strict = std::env::var("RSCRYPTO_BENCH_REQUIRE_TUNED")
+        .ok()
+        .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
+      if strict {
+        panic!(
+          "Tune Kind is Default; refusing to benchmark unknown tuning (unset RSCRYPTO_BENCH_REQUIRE_TUNED to allow)."
+        );
+      }
+      eprintln!("║ WARNING: Tune Kind is Default (results may not reflect tuned dispatch).");
+    }
     eprintln!("║ PCLMUL threshold: {} bytes", tune.pclmul_threshold);
     eprintln!("║ SIMD width: {} bits", tune.effective_simd_width);
     eprintln!("║ Fast wide ops: {}", tune.fast_wide_ops);

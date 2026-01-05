@@ -14,12 +14,16 @@
 //! eliminating per-call branching on capabilities and thresholds.
 
 use backend::{KernelFamily, KernelTier, SelectionPolicy};
+#[cfg(feature = "diag")]
+use platform::TuneKind;
 use platform::{Caps, Tune};
 
 use super::{
   config::{Crc64Config, Crc64Force},
   kernels,
 };
+#[cfg(feature = "diag")]
+use crate::diag::{Crc64Polynomial, Crc64SelectionDiag, SelectionReason};
 use crate::{common::kernels::stream_to_index, dispatchers::Crc64Fn};
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -228,6 +232,44 @@ impl Crc64Policy {
 
       // Fallback for families not applicable to current arch
       _ => kernels::PORTABLE,
+    }
+  }
+
+  #[cfg(feature = "diag")]
+  #[inline]
+  #[must_use]
+  pub fn diag(&self, len: usize, polynomial: Crc64Polynomial, tune_kind: TuneKind) -> Crc64SelectionDiag {
+    let selected_kernel = self.kernel_name(len);
+    let selected_streams = if selected_kernel.contains("small") {
+      1
+    } else {
+      self.streams_for_len(len)
+    };
+
+    let reason = if len < CRC64_SMALL_THRESHOLD {
+      SelectionReason::BelowSmallThreshold
+    } else if self.effective_force != Crc64Force::Auto {
+      SelectionReason::Forced
+    } else if !self.should_use_simd(len) {
+      SelectionReason::BelowSimdThreshold
+    } else {
+      SelectionReason::Auto
+    };
+
+    Crc64SelectionDiag {
+      polynomial,
+      len,
+      tune_kind,
+      reason,
+      effective_force: self.effective_force,
+      policy_family: self.inner.name(),
+      selected_kernel,
+      selected_streams,
+      portable_to_clmul: self.inner.small_threshold,
+      pclmul_to_vpclmul: self.inner.wide_threshold,
+      small_kernel_max_bytes: self.small_kernel_max_bytes,
+      use_4x512: self.use_4x512,
+      min_bytes_per_lane: self.min_bytes_per_lane,
     }
   }
 }

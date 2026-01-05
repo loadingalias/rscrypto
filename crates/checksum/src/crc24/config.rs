@@ -363,7 +363,7 @@ pub fn get() -> Crc24Config {
   {
     use std::sync::OnceLock;
     static CACHED: OnceLock<Crc24Config> = OnceLock::new();
-    *CACHED.get_or_init(|| platform::dispatch_auto(config))
+    *CACHED.get_or_init(|| platform::dispatch(config))
   }
 
   #[cfg(not(feature = "std"))]

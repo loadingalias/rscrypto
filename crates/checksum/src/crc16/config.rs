@@ -462,7 +462,7 @@ pub fn get_ccitt() -> Crc16Config {
   {
     use std::sync::OnceLock;
     static CACHED: OnceLock<Crc16Config> = OnceLock::new();
-    *CACHED.get_or_init(|| platform::dispatch_auto(config_ccitt))
+    *CACHED.get_or_init(|| platform::dispatch(config_ccitt))
   }
 
   #[cfg(not(feature = "std"))]
@@ -479,7 +479,7 @@ pub fn get_ibm() -> Crc16Config {
   {
     use std::sync::OnceLock;
     static CACHED: OnceLock<Crc16Config> = OnceLock::new();
-    *CACHED.get_or_init(|| platform::dispatch_auto(config_ibm))
+    *CACHED.get_or_init(|| platform::dispatch(config_ibm))
   }
 
   #[cfg(not(feature = "std"))]

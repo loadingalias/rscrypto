@@ -13,6 +13,7 @@ repository.workspace = true
 default = ["std"]
 std = ["alloc", "traits/std", "backend/std", "platform/std"]
 alloc = ["traits/alloc"]
+diag = []
 
 [dependencies]
 traits = { workspace = true, default-features = false } #unified
