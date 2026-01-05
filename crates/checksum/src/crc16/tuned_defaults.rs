@@ -18,9 +18,7 @@ pub struct Crc16TunedDefaults {
 
 #[rustfmt::skip]
 pub const CRC16_CCITT_TUNED_DEFAULTS: &[(TuneKind, Crc16TunedDefaults)] = &[
-  // BEGIN GENERATED (rscrypto-tune)  // Default: conservative x86_64 tuning (used when microarch is unknown).  (TuneKind::Default, Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 1, min_bytes_per_lane: None }),
-
-  // Zen4: VPCLMUL is fastest; switch at 512 bytes, prefer 4 streams on large buffers.
+  // BEGIN GENERATED (rscrypto-tune)  // Default: conservative x86_64 tuning (used when microarch is unknown).  (TuneKind::Default, Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 1, min_bytes_per_lane: None }),  // Zen4: VPCLMUL is fastest; switch at 512 bytes, prefer 4 streams on large buffers.
   (TuneKind::Zen4,  Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: Some(512), streams: 4, min_bytes_per_lane: Some(16) }),
   // Zen5 / Zen5c: extrapolate from Zen4 (same instruction set + wide CLMUL).
   (TuneKind::Zen5,  Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: Some(512), streams: 4, min_bytes_per_lane: Some(16) }),
@@ -63,9 +61,7 @@ pub fn for_tune_kind_ccitt(kind: TuneKind) -> Option<Crc16TunedDefaults> {
 
 #[rustfmt::skip]
 pub const CRC16_IBM_TUNED_DEFAULTS: &[(TuneKind, Crc16TunedDefaults)] = &[
-  // BEGIN GENERATED (rscrypto-tune)  // Default: conservative x86_64 tuning (used when microarch is unknown).  (TuneKind::Default, Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 1, min_bytes_per_lane: None }),
-
-  // Zen4: VPCLMUL is fastest; use it immediately, prefer 4 streams on large buffers.
+  // BEGIN GENERATED (rscrypto-tune)  // Default: conservative x86_64 tuning (used when microarch is unknown).  (TuneKind::Default, Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: None, streams: 1, min_bytes_per_lane: None }),  // Zen4: VPCLMUL is fastest; use it immediately, prefer 4 streams on large buffers.
   (TuneKind::Zen4,  Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: Some(64), streams: 4, min_bytes_per_lane: Some(16) }),
   // Zen5 / Zen5c: extrapolate from Zen4 (same instruction set + wide CLMUL).
   (TuneKind::Zen5,  Crc16TunedDefaults { slice4_to_slice8: 64, portable_to_clmul: 64, pclmul_to_vpclmul: Some(64), streams: 4, min_bytes_per_lane: Some(16) }),

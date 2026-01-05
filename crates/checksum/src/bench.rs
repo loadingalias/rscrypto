@@ -2000,4 +2000,20 @@ mod tests {
     let result = (kernel.func)(!0u64, data) ^ !0u64;
     assert_eq!(result, 0xAE8B14860A799888);
   }
+
+  #[test]
+  fn test_crc32c_kernels_available() {
+    let kernels = available_crc32c_kernels();
+    assert!(
+      kernels.len() >= 3,
+      "should have at least reference and portable kernels, got: {:?}",
+      kernels
+    );
+
+    // Verify each kernel can be looked up
+    for &name in &kernels {
+      let kernel = get_crc32c_kernel(name);
+      assert!(kernel.is_some(), "kernel '{name}' should be available");
+    }
+  }
 }

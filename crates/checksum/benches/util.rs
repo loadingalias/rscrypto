@@ -126,6 +126,14 @@ pub fn make_data(len: usize) -> Vec<u8> {
 
 #[must_use]
 pub fn make_alignment_variants(src: Vec<u8>) -> Vec<BenchData> {
+  // Single alignment for fast benchmarking - Vec is the common real-world case.
+  // Use make_all_alignment_variants() for full tuning runs.
+  vec![BenchData::from_vec(src)]
+}
+
+#[allow(dead_code)]
+#[must_use]
+pub fn make_all_alignment_variants(src: Vec<u8>) -> Vec<BenchData> {
   let src_ref: &[u8] = &src;
   let mut out = Vec::with_capacity(Alignment::ALL.len());
 
@@ -168,7 +176,7 @@ pub fn print_platform_info() {
     eprintln!("║ SIMD width: {} bits", tune.effective_simd_width);
     eprintln!("║ Fast wide ops: {}", tune.fast_wide_ops);
     eprintln!("║ Parallel streams: {}", tune.parallel_streams);
-    eprintln!("║ Bench alignments: vec, a16, a32, a64");
+    eprintln!("║ Bench alignment: vec (fast mode)");
     eprintln!("╠══════════════════════════════════════════════════════════════╣");
     eprintln!("║ Kernel selection by size:");
     for &(label, size) in CASES {
