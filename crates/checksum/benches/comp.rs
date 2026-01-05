@@ -1,4 +1,4 @@
-use core::hint::black_box;
+use core::{hint::black_box, time::Duration};
 
 use checksum::{
   BufferedCrc16Ccitt, BufferedCrc16Ibm, BufferedCrc24OpenPgp, BufferedCrc32, BufferedCrc32C, BufferedCrc64Nvme,
@@ -449,13 +449,29 @@ fn bench_crc24_openpgp_comp(c: &mut Criterion) {
 }
 
 criterion_group!(
-  benches,
-  bench_crc64_xz_comp,
-  bench_crc64_nvme_comp,
-  bench_crc32_ieee_comp,
-  bench_crc32c_castagnoli_comp,
-  bench_crc16_ccitt_comp,
-  bench_crc16_ibm_comp,
-  bench_crc24_openpgp_comp
+  name = benches;
+  config = criterion_config();
+  targets =
+    bench_crc64_xz_comp,
+    bench_crc64_nvme_comp,
+    bench_crc32_ieee_comp,
+    bench_crc32c_castagnoli_comp,
+    bench_crc16_ccitt_comp,
+    bench_crc16_ibm_comp,
+    bench_crc24_openpgp_comp
 );
 criterion_main!(benches);
+
+fn criterion_config() -> Criterion {
+  let mode = std::env::var("RSCRYPTO_BENCH_MODE").ok();
+  let mut c = Criterion::default();
+
+  if mode.as_deref() == Some("ci") {
+    c = c
+      .warm_up_time(Duration::from_millis(200))
+      .measurement_time(Duration::from_millis(300))
+      .sample_size(20);
+  }
+
+  c
+}
