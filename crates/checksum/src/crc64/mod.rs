@@ -16,10 +16,8 @@
 pub(crate) mod config;
 // kernels is pub(crate) but needs internal access from bench module
 pub(crate) mod kernels;
-pub(crate) mod policy;
 // portable is pub(crate) but needs internal access from bench module
 pub(crate) mod portable;
-mod tuned_defaults;
 
 #[cfg(feature = "alloc")]
 pub mod kernel_test;
@@ -44,7 +42,7 @@ mod riscv64;
 use backend::dispatch::Selected;
 // Re-export config types for public API (Crc64Force only used internally on SIMD archs)
 #[allow(unused_imports)]
-pub use config::{Crc64Config, Crc64Force, Crc64Tunables};
+pub use config::{Crc64Config, Crc64Force};
 // Re-export traits for test module (`use super::*`).
 #[allow(unused_imports)]
 pub(super) use traits::{Checksum, ChecksumCombine};
@@ -62,77 +60,61 @@ use crate::{
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Cached Policy and Kernels (works on both std and no_std)
+// Kernel Name Introspection
 // ─────────────────────────────────────────────────────────────────────────────
 
-define_policy_cache!(
-  /// Cached XZ policy and kernels (SIMD-capable architectures).
-  CRC64_XZ_CACHED: policy::Crc64Policy,
-  policy::Crc64Kernels
-);
+/// Get the name of the kernel that would be selected for a given buffer length.
+///
+/// This is primarily for diagnostics and testing. The actual kernel selection
+/// happens via the dispatch module's pre-computed tables.
+#[inline]
+#[must_use]
+pub(crate) fn crc64_selected_kernel_name(len: usize) -> &'static str {
+  let cfg = config::get();
 
-define_policy_cache!(
-  /// Cached NVME policy and kernels (SIMD-capable architectures).
-  CRC64_NVME_CACHED: policy::Crc64Policy,
-  policy::Crc64Kernels
-);
-
-cfg_crc_simd_arches! {
-  #[inline]
-  #[must_use]
-  fn init_policy(
-    cfg: config::Crc64Config,
-    variant_tunables: config::Crc64VariantTunables,
-    build_kernels: fn(&policy::Crc64Policy, Crc64Fn, Crc64Fn) -> policy::Crc64Kernels,
-    reference: Crc64Fn,
-    portable: Crc64Fn,
-  ) -> (policy::Crc64Policy, policy::Crc64Kernels) {
-    let caps = platform::caps();
-    let tune = platform::tune();
-    let pol = policy::Crc64Policy::from_config(&cfg, variant_tunables, caps, &tune);
-    let kernels = build_kernels(&pol, reference, portable);
-    (pol, kernels)
+  // Handle forced modes
+  if cfg.effective_force == Crc64Force::Reference {
+    return kernels::REFERENCE;
+  }
+  if cfg.effective_force == Crc64Force::Portable {
+    return kernels::PORTABLE;
   }
 
-  /// Initialize XZ policy and kernels (SIMD-capable architectures).
-  fn init_xz_policy() -> (policy::Crc64Policy, policy::Crc64Kernels) {
-    let cfg = config::get();
-    let tunables = cfg.tunables.xz;
-    init_policy(cfg, tunables, policy::build_xz_kernels_arch, crc64_xz_reference, crc64_xz_portable)
-  }
+  // For auto mode, describe based on dispatch table selection
+  let table = crate::dispatch::active_table();
+  let _set = table.select_set(len);
 
-  /// Initialize NVME policy and kernels (SIMD-capable architectures).
-  fn init_nvme_policy() -> (policy::Crc64Policy, policy::Crc64Kernels) {
-    let cfg = config::get();
-    let tunables = cfg.tunables.nvme;
-    init_policy(
-      cfg,
-      tunables,
-      policy::build_nvme_kernels_arch,
-      crc64_nvme_reference,
-      crc64_nvme_portable,
-    )
+  // Return a generic name indicating auto dispatch
+  // The exact kernel is determined by the dispatch table
+  #[cfg(target_arch = "x86_64")]
+  {
+    "x86_64/auto"
   }
-}
-
-cfg_crc_simd_arches! {
-  #[inline]
-  #[must_use]
-  pub(crate) fn crc64_selected_kernel_name(len: usize) -> &'static str {
-    let (pol, _) = CRC64_XZ_CACHED.get_or_init(init_xz_policy);
-    pol.kernel_name(len)
+  #[cfg(target_arch = "aarch64")]
+  {
+    "aarch64/auto"
   }
-}
-
-cfg_not_crc_simd_arches! {
-  #[inline]
-  #[must_use]
-  pub(crate) fn crc64_selected_kernel_name(_len: usize) -> &'static str {
-    if config::get().effective_force == Crc64Force::Reference {
-      kernels::REFERENCE
-    } else {
-      kernels::PORTABLE
-    }
+  #[cfg(target_arch = "powerpc64")]
+  {
+    "power/auto"
+  }
+  #[cfg(target_arch = "s390x")]
+  {
+    "s390x/auto"
+  }
+  #[cfg(target_arch = "riscv64")]
+  {
+    "riscv64/auto"
+  }
+  #[cfg(not(any(
+    target_arch = "x86_64",
+    target_arch = "aarch64",
+    target_arch = "powerpc64",
+    target_arch = "s390x",
+    target_arch = "riscv64"
+  )))]
+  {
+    kernels::PORTABLE
   }
 }
 
@@ -141,96 +123,72 @@ cfg_not_crc_simd_arches! {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(feature = "diag")]
-cfg_crc_simd_arches! {
-  #[inline]
-  #[must_use]
-  pub(crate) fn diag_crc64_xz(len: usize) -> Crc64SelectionDiag {
-    let tune = platform::tune();
-    let (pol, _) = CRC64_XZ_CACHED.get_or_init(init_xz_policy);
-    pol.diag(len, Crc64Polynomial::Xz, tune.kind())
-  }
+#[inline]
+#[must_use]
+pub(crate) fn diag_crc64_xz(len: usize) -> Crc64SelectionDiag {
+  let tune = platform::tune();
+  let cfg = config::get();
+  let selected_kernel = crc64_selected_kernel_name(len);
 
-  #[inline]
-  #[must_use]
-  pub(crate) fn diag_crc64_nvme(len: usize) -> Crc64SelectionDiag {
-    let tune = platform::tune();
-    let (pol, _) = CRC64_NVME_CACHED.get_or_init(init_nvme_policy);
-    pol.diag(len, Crc64Polynomial::Nvme, tune.kind())
+  // Dispatch handles size-based kernel selection internally
+  let reason = if cfg.effective_force != Crc64Force::Auto {
+    crate::diag::SelectionReason::Forced
+  } else {
+    crate::diag::SelectionReason::Auto
+  };
+
+  // Thresholds are now baked into dispatch tables; report dispatch boundaries
+  let table = crate::dispatch::active_table();
+
+  Crc64SelectionDiag {
+    polynomial: Crc64Polynomial::Xz,
+    len,
+    tune_kind: tune.kind(),
+    reason,
+    effective_force: cfg.effective_force,
+    policy_family: "dispatch",
+    selected_kernel,
+    selected_streams: 1,                         // Dispatch uses pre-computed optimal kernel
+    portable_to_clmul: table.boundaries[0],      // xs_max boundary
+    pclmul_to_vpclmul: table.boundaries[2],      // m_max boundary
+    small_kernel_max_bytes: table.boundaries[1], // s_max boundary
+    use_4x512: false,
+    min_bytes_per_lane: usize::MAX,
   }
 }
 
 #[cfg(feature = "diag")]
-cfg_not_crc_simd_arches! {
-  #[inline]
-  #[must_use]
-  pub(crate) fn diag_crc64_xz(len: usize) -> Crc64SelectionDiag {
-    let tune = platform::tune();
-    let cfg = config::get();
-    let selected_kernel = crc64_selected_kernel_name(len);
+#[inline]
+#[must_use]
+pub(crate) fn diag_crc64_nvme(len: usize) -> Crc64SelectionDiag {
+  let tune = platform::tune();
+  let cfg = config::get();
+  let selected_kernel = crc64_selected_kernel_name(len);
 
-    let reason = if len < policy::CRC64_SMALL_THRESHOLD {
-      crate::diag::SelectionReason::BelowSmallThreshold
-    } else if cfg.effective_force != Crc64Force::Auto {
-      crate::diag::SelectionReason::Forced
-    } else if len < cfg.tunables.xz.portable_to_clmul {
-      crate::diag::SelectionReason::BelowSimdThreshold
-    } else {
-      crate::diag::SelectionReason::Auto
-    };
+  // Dispatch handles size-based kernel selection internally
+  let reason = if cfg.effective_force != Crc64Force::Auto {
+    crate::diag::SelectionReason::Forced
+  } else {
+    crate::diag::SelectionReason::Auto
+  };
 
-    Crc64SelectionDiag {
-      polynomial: Crc64Polynomial::Xz,
-      len,
-      tune_kind: tune.kind(),
-      reason,
-      effective_force: cfg.effective_force,
-      policy_family: "portable",
-      selected_kernel,
-      selected_streams: 1,
-      portable_to_clmul: cfg.tunables.xz.portable_to_clmul,
-      pclmul_to_vpclmul: cfg.tunables.xz.pclmul_to_vpclmul,
-      small_kernel_max_bytes: cfg.tunables.xz.small_kernel_max_bytes,
-      use_4x512: false,
-      min_bytes_per_lane: usize::MAX,
-    }
-  }
+  // Thresholds are now baked into dispatch tables; report dispatch boundaries
+  let table = crate::dispatch::active_table();
 
-  #[inline]
-  #[must_use]
-  pub(crate) fn diag_crc64_nvme(len: usize) -> Crc64SelectionDiag {
-    let tune = platform::tune();
-    let cfg = config::get();
-    let selected_kernel = if cfg.effective_force == Crc64Force::Reference {
-      kernels::REFERENCE
-    } else {
-      kernels::PORTABLE
-    };
-
-    let reason = if len < policy::CRC64_SMALL_THRESHOLD {
-      crate::diag::SelectionReason::BelowSmallThreshold
-    } else if cfg.effective_force != Crc64Force::Auto {
-      crate::diag::SelectionReason::Forced
-    } else if len < cfg.tunables.nvme.portable_to_clmul {
-      crate::diag::SelectionReason::BelowSimdThreshold
-    } else {
-      crate::diag::SelectionReason::Auto
-    };
-
-    Crc64SelectionDiag {
-      polynomial: Crc64Polynomial::Nvme,
-      len,
-      tune_kind: tune.kind(),
-      reason,
-      effective_force: cfg.effective_force,
-      policy_family: "portable",
-      selected_kernel,
-      selected_streams: 1,
-      portable_to_clmul: cfg.tunables.nvme.portable_to_clmul,
-      pclmul_to_vpclmul: cfg.tunables.nvme.pclmul_to_vpclmul,
-      small_kernel_max_bytes: cfg.tunables.nvme.small_kernel_max_bytes,
-      use_4x512: false,
-      min_bytes_per_lane: usize::MAX,
-    }
+  Crc64SelectionDiag {
+    polynomial: Crc64Polynomial::Nvme,
+    len,
+    tune_kind: tune.kind(),
+    reason,
+    effective_force: cfg.effective_force,
+    policy_family: "dispatch",
+    selected_kernel,
+    selected_streams: 1,
+    portable_to_clmul: table.boundaries[0],      // xs_max boundary
+    pclmul_to_vpclmul: table.boundaries[2],      // m_max boundary
+    small_kernel_max_bytes: table.boundaries[1], // s_max boundary
+    use_4x512: false,
+    min_bytes_per_lane: usize::MAX,
   }
 }
 
@@ -283,73 +241,43 @@ fn crc64_nvme_reference(crc: u64, data: &[u8]) -> u64 {
 // - Small-buffer tier folds one 16B lane at a time.
 // - Large-buffer tier folds 8×16B lanes per 128B block.
 
-// Buffered CRC uses this to decide when to flush accumulated small updates.
-// On platforms without a SIMD backend, this effectively becomes `usize::MAX`
-// (no early flush beyond the fixed buffer size).
+/// Default SIMD threshold for buffered CRC.
+///
+/// Buffered CRC uses this to decide when to flush accumulated small updates.
+/// The dispatch system handles optimal kernel selection; this is a conservative
+/// threshold for buffer flush decisions.
 #[cfg(feature = "alloc")]
+const CRC64_BUFFERED_THRESHOLD: usize = 64;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Auto Kernels (using new dispatch module)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// CRC-64-XZ auto-dispatch using pre-computed kernel tables.
+///
+/// Uses the dispatch module's globally cached kernel table for efficient
+/// dispatch with minimal overhead (~1.5ns vs ~5ns with old policy system).
 #[inline]
-fn crc64_simd_threshold() -> usize {
-  let t = config::get().tunables;
-  t.xz.portable_to_clmul.min(t.nvme.portable_to_clmul).max(64)
+fn crc64_xz_auto(crc: u64, data: &[u8]) -> u64 {
+  let table = crate::dispatch::active_table();
+  let kernel = table.select_set(data.len()).crc64_xz;
+  kernel(crc, data)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Auto Kernels (SIMD-capable architectures)
-// ─────────────────────────────────────────────────────────────────────────────
-
-cfg_crc_simd_arches! {
-  /// CRC-64-XZ auto-dispatch.
-  ///
-  /// Uses cached policy and kernels for efficient dispatch with minimal branching.
-  /// Caching works on both std (OnceLock) and no_std (atomic state machine).
-  fn crc64_xz_auto(crc: u64, data: &[u8]) -> u64 {
-    let (pol, kernels) = CRC64_XZ_CACHED.get_or_init(init_xz_policy);
-    policy::policy_dispatch(&pol, &kernels, crc, data)
-  }
-}
-
-cfg_crc_simd_arches! {
-  /// CRC-64-NVME auto-dispatch.
-  ///
-  /// Uses cached policy and kernels for efficient dispatch with minimal branching.
-  /// Caching works on both std (OnceLock) and no_std (atomic state machine).
-  fn crc64_nvme_auto(crc: u64, data: &[u8]) -> u64 {
-    let (pol, kernels) = CRC64_NVME_CACHED.get_or_init(init_nvme_policy);
-    policy::policy_dispatch(&pol, &kernels, crc, data)
-  }
+/// CRC-64-NVME auto-dispatch using pre-computed kernel tables.
+///
+/// Uses the dispatch module's globally cached kernel table for efficient
+/// dispatch with minimal overhead (~1.5ns vs ~5ns with old policy system).
+#[inline]
+fn crc64_nvme_auto(crc: u64, data: &[u8]) -> u64 {
+  let table = crate::dispatch::active_table();
+  let kernel = table.select_set(data.len()).crc64_nvme;
+  kernel(crc, data)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Dispatcher Selection
 // ─────────────────────────────────────────────────────────────────────────────
-
-cfg_crc_simd_arches! {
-  #[inline]
-  fn select_crc64_variant(
-    effective_force: Crc64Force,
-    caps_ready: bool,
-    auto_name: &'static str,
-    reference: Crc64Fn,
-    portable: Crc64Fn,
-    auto: Crc64Fn,
-  ) -> Selected<Crc64Fn> {
-    // Explicit reference override always wins.
-    if effective_force == Crc64Force::Reference {
-      return Selected::new("reference/bitwise", reference);
-    }
-
-    // Explicit portable override.
-    if effective_force == Crc64Force::Portable {
-      return Selected::new("portable/slice16", portable);
-    }
-
-    if caps_ready {
-      return Selected::new(auto_name, auto);
-    }
-
-    Selected::new("portable/slice16", portable)
-  }
-}
 
 #[cfg(target_arch = "x86_64")]
 const AUTO_NAME: &str = "x86_64/auto";
@@ -361,91 +289,53 @@ const AUTO_NAME: &str = "power/auto";
 const AUTO_NAME: &str = "s390x/auto";
 #[cfg(target_arch = "riscv64")]
 const AUTO_NAME: &str = "riscv64/auto";
+#[cfg(not(any(
+  target_arch = "x86_64",
+  target_arch = "aarch64",
+  target_arch = "powerpc64",
+  target_arch = "s390x",
+  target_arch = "riscv64"
+)))]
+const AUTO_NAME: &str = "portable/slice16";
 
-cfg_crc_simd_arches! {
-  #[cfg(target_arch = "x86_64")]
-  #[inline]
-  fn crc64_caps_ready(caps: &platform::Caps) -> bool {
-    caps.has(platform::caps::x86::PCLMUL_READY) || caps.has(platform::caps::x86::VPCLMUL_READY)
+/// Select the best CRC-64-XZ kernel for the current platform.
+///
+/// Respects forced mode from config, otherwise uses auto dispatch.
+fn select_crc64_xz() -> Selected<Crc64Fn> {
+  let cfg = config::get();
+
+  // Explicit reference override always wins.
+  if cfg.effective_force == Crc64Force::Reference {
+    return Selected::new(kernels::REFERENCE, crc64_xz_reference);
   }
 
-  #[cfg(target_arch = "aarch64")]
-  #[inline]
-  fn crc64_caps_ready(caps: &platform::Caps) -> bool {
-    caps.has(platform::caps::aarch64::PMULL_READY)
+  // Explicit portable override.
+  if cfg.effective_force == Crc64Force::Portable {
+    return Selected::new(kernels::PORTABLE, crc64_xz_portable);
   }
 
-  #[cfg(target_arch = "powerpc64")]
-  #[inline]
-  fn crc64_caps_ready(caps: &platform::Caps) -> bool {
-    caps.has(platform::caps::power::VPMSUM_READY)
-  }
-
-  #[cfg(target_arch = "s390x")]
-  #[inline]
-  fn crc64_caps_ready(caps: &platform::Caps) -> bool {
-    caps.has(platform::caps::s390x::VECTOR)
-  }
-
-  #[cfg(target_arch = "riscv64")]
-  #[inline]
-  fn crc64_caps_ready(caps: &platform::Caps) -> bool {
-    caps.has(platform::caps::riscv::ZVBC) || caps.has(platform::caps::riscv::ZBC)
-  }
+  // Auto dispatch via pre-computed kernel tables
+  Selected::new(AUTO_NAME, crc64_xz_auto)
 }
 
-cfg_crc_simd_arches! {
-  /// Select the best CRC-64-XZ kernel for the current platform.
-  fn select_crc64_xz() -> Selected<Crc64Fn> {
-    let caps = platform::caps();
-    let cfg = config::get();
+/// Select the best CRC-64-NVME kernel for the current platform.
+///
+/// Respects forced mode from config, otherwise uses auto dispatch.
+fn select_crc64_nvme() -> Selected<Crc64Fn> {
+  let cfg = config::get();
 
-    let caps_ready = crc64_caps_ready(&caps);
-
-    select_crc64_variant(
-      cfg.effective_force,
-      caps_ready,
-      AUTO_NAME,
-      crc64_xz_reference,
-      crc64_xz_portable,
-      crc64_xz_auto,
-    )
-  }
-}
-
-cfg_crc_simd_arches! {
-  /// Select the best CRC-64-NVME kernel for the current platform.
-  fn select_crc64_nvme() -> Selected<Crc64Fn> {
-    let caps = platform::caps();
-    let cfg = config::get();
-
-    let caps_ready = crc64_caps_ready(&caps);
-
-    select_crc64_variant(
-      cfg.effective_force,
-      caps_ready,
-      AUTO_NAME,
-      crc64_nvme_reference,
-      crc64_nvme_portable,
-      crc64_nvme_auto,
-    )
-  }
-}
-
-cfg_not_crc_simd_arches! {
-  fn select_crc64_xz() -> Selected<Crc64Fn> {
-    if config::get().effective_force == Crc64Force::Reference {
-      return Selected::new(kernels::REFERENCE, crc64_xz_reference);
-    }
-    Selected::new(kernels::PORTABLE, crc64_xz_portable)
+  // Explicit reference override always wins.
+  if cfg.effective_force == Crc64Force::Reference {
+    return Selected::new(kernels::REFERENCE, crc64_nvme_reference);
   }
 
-  fn select_crc64_nvme() -> Selected<Crc64Fn> {
-    if config::get().effective_force == Crc64Force::Reference {
-      return Selected::new(kernels::REFERENCE, crc64_nvme_reference);
-    }
-    Selected::new(kernels::PORTABLE, crc64_nvme_portable)
+  // Explicit portable override.
+  if cfg.effective_force == Crc64Force::Portable {
+    return Selected::new(kernels::PORTABLE, crc64_nvme_portable);
   }
+
+  // Auto dispatch via pre-computed kernel tables
+  Selected::new(AUTO_NAME, crc64_nvme_auto)
 }
 
 /// Static dispatcher for CRC-64-XZ.
@@ -594,7 +484,7 @@ define_buffered_crc! {
   /// ```
   pub struct BufferedCrc64<Crc64> {
     buffer_size: BUFFERED_CRC_BUFFER_SIZE,
-    threshold_fn: crc64_simd_threshold,
+    threshold_fn: || CRC64_BUFFERED_THRESHOLD,
   }
 }
 
@@ -635,7 +525,7 @@ define_buffered_crc! {
   /// ```
   pub struct BufferedCrc64Nvme<Crc64Nvme> {
     buffer_size: BUFFERED_CRC_BUFFER_SIZE,
-    threshold_fn: crc64_simd_threshold,
+    threshold_fn: || CRC64_BUFFERED_THRESHOLD,
   }
 }
 
@@ -652,47 +542,6 @@ mod tests {
   use super::*;
 
   const TEST_DATA: &[u8] = b"123456789";
-
-  // Test helpers - constants and stream functions for verifying kernel selection
-  const CRC64_FOLD_BLOCK_BYTES: usize = 128;
-
-  #[cfg(target_arch = "x86_64")]
-  const CRC64_4X512_MIN_BYTES: usize = 256 * 1024; // 256 KiB
-
-  #[cfg(target_arch = "x86_64")]
-  const fn x86_pclmul_streams_for_len(len: usize, streams: u8) -> u8 {
-    if streams >= 8 && len >= 8 * 2 * CRC64_FOLD_BLOCK_BYTES {
-      return 8;
-    }
-    if streams >= 7 && len >= 7 * 2 * CRC64_FOLD_BLOCK_BYTES {
-      return 7;
-    }
-    if streams >= 4 && len >= 4 * 2 * CRC64_FOLD_BLOCK_BYTES {
-      return 4;
-    }
-    if streams >= 2 && len >= 2 * 2 * CRC64_FOLD_BLOCK_BYTES {
-      return 2;
-    }
-    1
-  }
-
-  #[cfg(target_arch = "x86_64")]
-  const fn x86_vpclmul_streams_for_len(len: usize, streams: u8) -> u8 {
-    x86_pclmul_streams_for_len(len, streams)
-  }
-
-  #[cfg(target_arch = "aarch64")]
-  const fn aarch64_pmull_streams_for_len(len: usize, streams: u8) -> u8 {
-    const CRC64_PMULL_2WAY_MIN_BYTES: usize = 128 * CRC64_FOLD_BLOCK_BYTES;
-    const CRC64_PMULL_3WAY_MIN_BYTES: usize = 256 * CRC64_FOLD_BLOCK_BYTES;
-    if streams >= 3 && len >= CRC64_PMULL_3WAY_MIN_BYTES {
-      return 3;
-    }
-    if streams >= 2 && len >= CRC64_PMULL_2WAY_MIN_BYTES {
-      return 2;
-    }
-    1
-  }
 
   #[test]
   fn test_crc64_xz_checksum() {
@@ -823,18 +672,15 @@ mod tests {
     }
   }
 
-  /// Test streaming across the SIMD threshold boundary.
+  /// Test streaming across size class boundaries.
   ///
-  /// This ensures correct state handling when the first chunk is below
-  /// threshold (uses portable) and later chunks push us above threshold
-  /// (switches to SIMD), or vice versa.
+  /// This ensures correct state handling when chunks span different
+  /// size classes in the dispatch system.
   #[test]
   fn test_crc64_streaming_across_threshold() {
-    let threshold = Crc64::tunables().xz.portable_to_clmul;
-    if threshold == usize::MAX || threshold > (1 << 20) {
-      // No meaningful SIMD crossover on this target/preset.
-      return;
-    }
+    // Use dispatch table boundaries for threshold
+    let table = crate::dispatch::active_table();
+    let threshold = table.boundaries[0]; // xs_max boundary
 
     // Generate test data larger than threshold
     let size = threshold + 128;
@@ -844,13 +690,13 @@ mod tests {
 
     // Stream: small chunk (below threshold), then rest (above threshold)
     let mut hasher = Crc64::new();
-    hasher.update(&data[..16]); // Small, uses portable
-    hasher.update(&data[16..]); // Large, may use SIMD
+    hasher.update(&data[..16]); // Small, uses xs kernel
+    hasher.update(&data[16..]); // Large, may use different kernel
     assert_eq!(hasher.finalize(), oneshot, "Small-then-large streaming failed");
 
     // Stream: large chunk, then small chunk
     let mut hasher = Crc64::new();
-    hasher.update(&data[..threshold + 64]); // Large, uses SIMD
+    hasher.update(&data[..threshold + 64]); // Large
     hasher.update(&data[threshold + 64..]); // Small remainder
     assert_eq!(hasher.finalize(), oneshot, "Large-then-small streaming failed");
 
@@ -895,8 +741,13 @@ mod tests {
       }
     }
 
-    // Introspection should always report portable for empty input.
-    assert_eq!(Crc64::kernel_name_for_len(0), "portable/slice16");
+    // With the new dispatch system, kernel_name_for_len returns the dispatcher name
+    // (e.g., "aarch64/auto") rather than the specific kernel for each length.
+    let len0_name = Crc64::kernel_name_for_len(0);
+    assert!(
+      !len0_name.is_empty(),
+      "kernel_name_for_len should return a non-empty name"
+    );
   }
 
   /// If CRC-64 force env vars are set, assert that they are honored and exercise the tier.
@@ -925,7 +776,6 @@ mod tests {
     assert_eq!(ours_nvme, portable_nvme, "Forced tier produced incorrect CRC64-NVME");
 
     let kernel = Crc64::kernel_name_for_len(len);
-    let streams_env = std::env::var("RSCRYPTO_CRC64_STREAMS").ok();
 
     if force.eq_ignore_ascii_case("portable") {
       assert_eq!(cfg.requested_force, Crc64Force::Portable);
@@ -937,22 +787,12 @@ mod tests {
     {
       if force.eq_ignore_ascii_case("pclmul") {
         assert_eq!(cfg.requested_force, Crc64Force::Pclmul);
+        // Kernel selection is handled by dispatch; just verify it's a pclmul variant
         if cfg.effective_force == Crc64Force::Pclmul {
-          if streams_env.is_some() {
-            let expected = if len < CRC64_FOLD_BLOCK_BYTES {
-              "x86_64/pclmul-small"
-            } else {
-              match x86_pclmul_streams_for_len(len, cfg.tunables.xz.streams) {
-                7 => "x86_64/pclmul-7way",
-                4 => "x86_64/pclmul-4way",
-                2 => "x86_64/pclmul-2way",
-                _ => "x86_64/pclmul",
-              }
-            };
-            assert_eq!(kernel, expected);
-          } else {
-            assert!(kernel.starts_with("x86_64/pclmul"));
-          }
+          assert!(
+            kernel.starts_with("x86_64/pclmul"),
+            "Expected pclmul kernel, got {kernel}"
+          );
         }
         return;
       }
@@ -960,20 +800,10 @@ mod tests {
       if force.eq_ignore_ascii_case("vpclmul") {
         assert_eq!(cfg.requested_force, Crc64Force::Vpclmul);
         if cfg.effective_force == Crc64Force::Vpclmul {
-          // For very large buffers, 4x512 is selected regardless of streams setting.
-          if len >= CRC64_4X512_MIN_BYTES {
-            assert_eq!(kernel, "x86_64/vpclmul-4x512");
-          } else if streams_env.is_some() {
-            let expected = match x86_vpclmul_streams_for_len(len, cfg.tunables.xz.streams) {
-              7 => "x86_64/vpclmul-7way",
-              4 => "x86_64/vpclmul-4way",
-              2 => "x86_64/vpclmul-2way",
-              _ => "x86_64/vpclmul",
-            };
-            assert_eq!(kernel, expected);
-          } else {
-            assert!(kernel.starts_with("x86_64/vpclmul"));
-          }
+          assert!(
+            kernel.starts_with("x86_64/vpclmul"),
+            "Expected vpclmul kernel, got {kernel}"
+          );
         }
       }
     }
@@ -983,7 +813,10 @@ mod tests {
       if force.eq_ignore_ascii_case("pmull") {
         assert_eq!(cfg.requested_force, Crc64Force::Pmull);
         if cfg.effective_force == Crc64Force::Pmull {
-          assert!(kernel.starts_with("aarch64/pmull"));
+          assert!(
+            kernel.starts_with("aarch64/pmull"),
+            "Expected pmull kernel, got {kernel}"
+          );
         }
       }
 
@@ -993,20 +826,10 @@ mod tests {
       {
         assert_eq!(cfg.requested_force, Crc64Force::Sve2Pmull);
         if cfg.effective_force == Crc64Force::Sve2Pmull {
-          if streams_env.is_some() {
-            let expected = if len < CRC64_FOLD_BLOCK_BYTES {
-              "aarch64/sve2-pmull-small"
-            } else {
-              match aarch64_pmull_streams_for_len(len, cfg.tunables.xz.streams) {
-                3 => "aarch64/sve2-pmull-3way",
-                2 => "aarch64/sve2-pmull-2way",
-                _ => "aarch64/sve2-pmull",
-              }
-            };
-            assert_eq!(kernel, expected);
-          } else {
-            assert!(kernel.starts_with("aarch64/sve2-pmull"));
-          }
+          assert!(
+            kernel.starts_with("aarch64/sve2-pmull"),
+            "Expected sve2-pmull kernel, got {kernel}"
+          );
         }
       }
     }

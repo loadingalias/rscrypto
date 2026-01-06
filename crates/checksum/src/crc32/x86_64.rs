@@ -455,7 +455,7 @@ fn crc32c_fusion_nway<const N: usize>(crc: u32, data: &[u8], update: fn(u32, &[u
   debug_assert!(N == 2 || N == 4 || N == 7 || N == 8);
 
   let len = data.len();
-  if len < N.strict_mul(2 * super::policy::CRC32_FOLD_BLOCK_BYTES) {
+  if len < N.strict_mul(2 * super::CRC32_FOLD_BLOCK_BYTES) {
     return update(crc, data);
   }
 

@@ -110,6 +110,7 @@ mod crc32;
 mod crc64;
 #[cfg(feature = "diag")]
 pub mod diag;
+pub mod dispatch;
 pub mod dispatchers;
 pub mod tune;
 
@@ -167,17 +168,17 @@ pub mod __internal {
 // Re-export buffered types (requires alloc)
 #[cfg(feature = "alloc")]
 pub use crc16::{BufferedCrc16Ccitt, BufferedCrc16Ibm};
-pub use crc16::{Crc16Ccitt, Crc16Config, Crc16Force, Crc16Ibm, Crc16Tunables};
+pub use crc16::{Crc16Ccitt, Crc16Config, Crc16Force, Crc16Ibm};
 #[cfg(feature = "alloc")]
 pub use crc24::BufferedCrc24OpenPgp;
-pub use crc24::{Crc24Config, Crc24Force, Crc24OpenPgp, Crc24Tunables};
+pub use crc24::{Crc24Config, Crc24Force, Crc24OpenPgp};
 #[cfg(feature = "alloc")]
 pub use crc32::{BufferedCrc32, BufferedCrc32C};
 #[cfg(feature = "alloc")]
 pub use crc32::{BufferedCrc32Castagnoli, BufferedCrc32Ieee};
-pub use crc32::{Crc32, Crc32C, Crc32Castagnoli, Crc32Config, Crc32Force, Crc32Ieee, Crc32Tunables};
+pub use crc32::{Crc32, Crc32C, Crc32Castagnoli, Crc32Config, Crc32Force, Crc32Ieee};
 #[cfg(feature = "alloc")]
 pub use crc64::{BufferedCrc64, BufferedCrc64Nvme, BufferedCrc64Xz};
-pub use crc64::{Crc64, Crc64Config, Crc64Force, Crc64Nvme, Crc64Tunables, Crc64Xz};
+pub use crc64::{Crc64, Crc64Config, Crc64Force, Crc64Nvme, Crc64Xz};
 // Re-export traits for convenience
 pub use traits::{Checksum, ChecksumCombine};

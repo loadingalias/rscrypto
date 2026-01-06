@@ -23,7 +23,6 @@
 pub(crate) mod config;
 pub(crate) mod kernels;
 pub(crate) mod keys;
-pub(crate) mod policy;
 pub(crate) mod portable;
 #[cfg(any(
   target_arch = "x86_64",
@@ -33,14 +32,13 @@ pub(crate) mod portable;
   target_arch = "riscv64"
 ))]
 mod reflected;
-mod tuned_defaults;
 
 #[cfg(feature = "alloc")]
 pub mod kernel_test;
 
-use backend::{PolicyCache, dispatch::Selected};
+use backend::dispatch::Selected;
 #[allow(unused_imports)]
-pub use config::{Crc24Config, Crc24Force, Crc24Tunables};
+pub use config::{Crc24Config, Crc24Force};
 // Re-export traits for test modules (`use super::*`).
 #[allow(unused_imports)]
 pub(super) use traits::{Checksum, ChecksumCombine};
@@ -86,99 +84,55 @@ fn crc24_openpgp_reference(crc: u32, data: &[u8]) -> u32 {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Cached Policy and Kernels (works on both std and no_std)
+// Auto Dispatch Function (using new dispatch module)
 // ─────────────────────────────────────────────────────────────────────────────
 
-static CRC24_OPENPGP_CACHED: PolicyCache<policy::Crc24Policy, policy::Crc24Kernels> = PolicyCache::new();
-
-fn init_openpgp_policy() -> (policy::Crc24Policy, policy::Crc24Kernels) {
-  let cfg = config::get();
-  let caps = platform::caps();
-  let tune = platform::tune();
-  let pol = policy::Crc24Policy::from_config(&cfg, caps, &tune);
-  let kernels = {
-    #[cfg(target_arch = "x86_64")]
-    {
-      policy::build_openpgp_kernels_x86(
-        &pol,
-        crc24_openpgp_reference,
-        portable::crc24_openpgp_slice4,
-        portable::crc24_openpgp_slice8,
-      )
-    }
-    #[cfg(target_arch = "aarch64")]
-    {
-      policy::build_openpgp_kernels_aarch64(
-        &pol,
-        crc24_openpgp_reference,
-        portable::crc24_openpgp_slice4,
-        portable::crc24_openpgp_slice8,
-      )
-    }
-    #[cfg(target_arch = "powerpc64")]
-    {
-      policy::build_openpgp_kernels_power(
-        &pol,
-        crc24_openpgp_reference,
-        portable::crc24_openpgp_slice4,
-        portable::crc24_openpgp_slice8,
-      )
-    }
-    #[cfg(target_arch = "s390x")]
-    {
-      policy::build_openpgp_kernels_s390x(
-        &pol,
-        crc24_openpgp_reference,
-        portable::crc24_openpgp_slice4,
-        portable::crc24_openpgp_slice8,
-      )
-    }
-    #[cfg(target_arch = "riscv64")]
-    {
-      policy::build_openpgp_kernels_riscv64(
-        &pol,
-        crc24_openpgp_reference,
-        portable::crc24_openpgp_slice4,
-        portable::crc24_openpgp_slice8,
-      )
-    }
-    #[cfg(not(any(
-      target_arch = "x86_64",
-      target_arch = "aarch64",
-      target_arch = "powerpc64",
-      target_arch = "s390x",
-      target_arch = "riscv64"
-    )))]
-    {
-      policy::build_openpgp_kernels_generic(
-        crc24_openpgp_reference,
-        portable::crc24_openpgp_slice4,
-        portable::crc24_openpgp_slice8,
-      )
-    }
-  };
-  (pol, kernels)
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Auto Dispatch Function (policy-based)
-// ─────────────────────────────────────────────────────────────────────────────
-
+/// CRC-24/OPENPGP auto-dispatch using pre-computed kernel tables.
 #[inline]
-fn crc24_openpgp_portable_auto(crc: u32, data: &[u8]) -> u32 {
-  let (pol, kernels) = CRC24_OPENPGP_CACHED.get_or_init(init_openpgp_policy);
-  policy::policy_dispatch(&pol, &kernels, crc, data)
+fn crc24_openpgp_auto(crc: u32, data: &[u8]) -> u32 {
+  let table = crate::dispatch::active_table();
+  let kernel = table.select_set(data.len()).crc24_openpgp;
+  kernel(crc, data)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Introspection
 // ─────────────────────────────────────────────────────────────────────────────
 
+#[cfg(target_arch = "x86_64")]
+const AUTO_NAME: &str = "x86_64/auto";
+#[cfg(target_arch = "aarch64")]
+const AUTO_NAME: &str = "aarch64/auto";
+#[cfg(target_arch = "powerpc64")]
+const AUTO_NAME: &str = "power/auto";
+#[cfg(target_arch = "s390x")]
+const AUTO_NAME: &str = "s390x/auto";
+#[cfg(target_arch = "riscv64")]
+const AUTO_NAME: &str = "riscv64/auto";
+#[cfg(not(any(
+  target_arch = "x86_64",
+  target_arch = "aarch64",
+  target_arch = "powerpc64",
+  target_arch = "s390x",
+  target_arch = "riscv64"
+)))]
+const AUTO_NAME: &str = "portable/slice8";
+
 #[inline]
 #[must_use]
 pub(crate) fn crc24_selected_kernel_name(len: usize) -> &'static str {
-  let (pol, _) = CRC24_OPENPGP_CACHED.get_or_init(init_openpgp_policy);
-  pol.kernel_name(len)
+  let cfg = config::get();
+
+  if cfg.effective_force == Crc24Force::Reference {
+    return kernels::REFERENCE;
+  }
+  if cfg.effective_force == Crc24Force::Portable {
+    return kernels::PORTABLE_SLICE8;
+  }
+
+  let table = crate::dispatch::active_table();
+  let _set = table.select_set(len);
+  AUTO_NAME
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -186,9 +140,17 @@ pub(crate) fn crc24_selected_kernel_name(len: usize) -> &'static str {
 // ─────────────────────────────────────────────────────────────────────────────
 
 fn select_crc24_openpgp() -> Selected<Crc24Fn> {
-  // ALL modes go through policy dispatch.
-  // The policy respects effective_force internally.
-  Selected::new("auto", crc24_openpgp_portable_auto)
+  let cfg = config::get();
+
+  if cfg.effective_force == Crc24Force::Reference {
+    return Selected::new(kernels::REFERENCE, crc24_openpgp_reference);
+  }
+
+  if cfg.effective_force == Crc24Force::Portable {
+    return Selected::new(kernels::PORTABLE_SLICE8, portable::crc24_openpgp_slice8);
+  }
+
+  Selected::new(AUTO_NAME, crc24_openpgp_auto)
 }
 
 static CRC24_OPENPGP_DISPATCHER: Crc24Dispatcher = Crc24Dispatcher::new(select_crc24_openpgp);
@@ -238,7 +200,7 @@ impl Crc24OpenPgp {
   pub const fn resume(crc: u32) -> Self {
     Self {
       state: (crc ^ Self::XOROUT) & Self::MASK,
-      kernel: crc24_openpgp_portable_auto,
+      kernel: crc24_openpgp_auto,
       initialized: false,
     }
   }
@@ -255,10 +217,10 @@ impl Crc24OpenPgp {
     config::get()
   }
 
-  /// Convenience accessor for the active CRC-24 tunables.
+  /// Returns diagnostic information about the active dispatch threshold.
   #[must_use]
-  pub fn tunables() -> Crc24Tunables {
-    Self::config().tunables
+  pub fn diagnostic_threshold() -> usize {
+    crate::dispatch::active_table().boundaries[0]
   }
 
   /// Returns the kernel name that the selector would choose for `len`.
@@ -334,8 +296,7 @@ const BUFFERED_CRC24_BUFFER_SIZE: usize = 256;
 #[inline]
 #[must_use]
 fn crc24_buffered_threshold() -> usize {
-  let t = config::get().tunables;
-  t.slice4_to_slice8.max(t.portable_to_clmul).max(64)
+  64
 }
 
 #[cfg(feature = "alloc")]

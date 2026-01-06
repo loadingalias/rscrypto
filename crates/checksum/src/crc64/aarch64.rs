@@ -1210,7 +1210,7 @@ mod tests {
       return;
     }
 
-    for len in 0..super::super::policy::CRC64_SMALL_KERNEL_MAX_BYTES_DEFAULT {
+    for len in 0..512 {
       let data = make_data(len);
       let portable = super::super::portable::crc64_slice8_xz(!0, &data) ^ !0;
       let pmull_small = crc64_xz_pmull_small_safe(!0, &data) ^ !0;
@@ -1224,7 +1224,7 @@ mod tests {
       return;
     }
 
-    for len in 0..super::super::policy::CRC64_SMALL_KERNEL_MAX_BYTES_DEFAULT {
+    for len in 0..512 {
       let data = make_data(len);
       let portable = super::super::portable::crc64_slice8_nvme(!0, &data) ^ !0;
       let pmull_small = crc64_nvme_pmull_small_safe(!0, &data) ^ !0;

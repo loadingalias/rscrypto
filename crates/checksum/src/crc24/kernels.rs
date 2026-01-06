@@ -42,6 +42,7 @@ pub const PORTABLE_NAMES: &[&str] = &[PORTABLE_SLICE4, PORTABLE_SLICE8];
 
 #[inline]
 #[must_use]
+#[allow(dead_code)]
 pub const fn portable_name_for_len(len: usize, slice4_to_slice8: usize) -> &'static str {
   if len < slice4_to_slice8 {
     PORTABLE_SLICE4
@@ -55,6 +56,7 @@ pub const fn portable_name_for_len(len: usize, slice4_to_slice8: usize) -> &'sta
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_arch = "x86_64")]
+#[allow(dead_code)] // Kernel names are part of the registry; used by bench/test.
 pub mod x86_64 {
   use super::super::x86_64 as arch;
   use crate::dispatchers::Crc24Fn;
@@ -109,6 +111,7 @@ pub mod x86_64 {
 }
 
 #[cfg(target_arch = "aarch64")]
+#[allow(dead_code)] // Kernel names are part of the registry; used by bench/test.
 pub mod aarch64 {
   use super::super::aarch64 as arch;
   use crate::dispatchers::Crc24Fn;
