@@ -28,7 +28,7 @@ struct Args {
   /// Verbose output.
   verbose: bool,
 
-  /// Apply results into tuned_defaults.rs tables.
+  /// Apply results into dispatch.rs kernel tables.
   apply: bool,
 
   /// Custom warmup duration in ms.
@@ -108,7 +108,7 @@ OPTIONS:
     -q, --quick           Quick mode (faster, noisier measurements)
     -v, --verbose         Verbose output during tuning
     -f, --format FORMAT   Output format: summary (default), env, json, tsv, contribute
-    --apply               Update tuned_defaults.rs for this TuneKind
+    --apply               Generate dispatch.rs table entry for this TuneKind
     --warmup-ms MS        Custom warmup duration (default: 150, quick: 75)
     --measure-ms MS       Custom measurement duration (default: 250, quick: 125)
     -h, --help            Show this help message
@@ -133,7 +133,7 @@ EXAMPLES:
     # Output as JSON
     just tune -- --format json
 
-    # Apply to tuned defaults (writes into crates/checksum)
+    # Generate dispatch table entry (outputs to crates/checksum/src/dispatch.rs)
     just tune-apply
 "
   );
