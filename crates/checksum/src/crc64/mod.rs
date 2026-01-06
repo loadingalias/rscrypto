@@ -345,97 +345,273 @@ static CRC64_XZ_DISPATCHER: Crc64Dispatcher = Crc64Dispatcher::new(select_crc64_
 static CRC64_NVME_DISPATCHER: Crc64Dispatcher = Crc64Dispatcher::new(select_crc64_nvme);
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CRC-64 Types (generated via macro)
+// CRC-64 Types
 // ─────────────────────────────────────────────────────────────────────────────
 
-define_crc64_type! {
-  /// CRC-64-XZ checksum (ECMA-182).
-  ///
-  /// Used in XZ Utils, 7-Zip, and other compression tools.
-  ///
-  /// # Properties
-  ///
-  /// - **Polynomial**: 0x42F0E1EBA9EA3693 (normal), 0xC96C5795D7870F42 (reflected)
-  /// - **Initial value**: 0xFFFFFFFFFFFFFFFF
-  /// - **Final XOR**: 0xFFFFFFFFFFFFFFFF
-  /// - **Reflect input/output**: Yes
-  ///
-  /// # Performance Notes
-  ///
-  /// For optimal throughput, prefer larger updates when possible:
-  ///
-  /// | Update Size | Path | Notes |
-  /// |-------------|------|-------|
-  /// | < 32-128 bytes | Portable slice-by-8 | Threshold varies by CPU |
-  /// | ≥ 32-128 bytes | SIMD (PCLMULQDQ/PMULL) | Hardware accelerated |
-  ///
-  /// The exact threshold is microarchitecture-specific:
-  /// - AMD Zen 4/5: 32 bytes (fast SIMD setup)
-  /// - Intel SPR: 128 bytes (ZMM warmup overhead)
-  /// - Apple M1-M5: 48 bytes (efficient PMULL)
-  ///
-  /// For streaming many small chunks, consider using [`BufferedCrc64Xz`] which
-  /// accumulates data internally until reaching the SIMD threshold.
-  ///
-  /// # Examples
-  ///
-  /// ```rust
-  /// use checksum::{Crc64Xz, Checksum};
-  ///
-  /// let crc = Crc64Xz::checksum(b"123456789");
-  /// assert_eq!(crc, 0x995DC9BBDF1939FA); // "123456789" test vector
-  /// ```
-  pub struct Crc64 {
-    poly: CRC64_XZ_POLY,
-    dispatcher: CRC64_XZ_DISPATCHER,
-    portable: crc64_xz_portable,
-  }
+/// CRC-64-XZ checksum (ECMA-182).
+///
+/// Used in XZ Utils, 7-Zip, and other compression tools.
+///
+/// # Properties
+///
+/// - **Polynomial**: 0x42F0E1EBA9EA3693 (normal), 0xC96C5795D7870F42 (reflected)
+/// - **Initial value**: 0xFFFFFFFFFFFFFFFF
+/// - **Final XOR**: 0xFFFFFFFFFFFFFFFF
+/// - **Reflect input/output**: Yes
+///
+/// # Performance Notes
+///
+/// For optimal throughput, prefer larger updates when possible:
+///
+/// | Update Size | Path | Notes |
+/// |-------------|------|-------|
+/// | < 32-128 bytes | Portable slice-by-8 | Threshold varies by CPU |
+/// | ≥ 32-128 bytes | SIMD (PCLMULQDQ/PMULL) | Hardware accelerated |
+///
+/// The exact threshold is microarchitecture-specific:
+/// - AMD Zen 4/5: 32 bytes (fast SIMD setup)
+/// - Intel SPR: 128 bytes (ZMM warmup overhead)
+/// - Apple M1-M5: 48 bytes (efficient PMULL)
+///
+/// For streaming many small chunks, consider using [`BufferedCrc64Xz`] which
+/// accumulates data internally until reaching the SIMD threshold.
+///
+/// # Examples
+///
+/// ```rust
+/// use checksum::{Checksum, Crc64Xz};
+///
+/// let crc = Crc64Xz::checksum(b"123456789");
+/// assert_eq!(crc, 0x995DC9BBDF1939FA); // "123456789" test vector
+/// ```
+#[derive(Clone)]
+pub struct Crc64 {
+  state: u64,
+  kernel: crate::dispatchers::Crc64Fn,
+  initialized: bool,
 }
 
 /// Explicit name for the XZ CRC-64 variant (alias of [`Crc64`]).
 pub type Crc64Xz = Crc64;
 
-define_crc64_type! {
-  /// CRC-64-NVME checksum.
-  ///
-  /// Used in the NVMe specification for data integrity.
-  ///
-  /// # Properties
-  ///
-  /// - **Polynomial**: 0xAD93D23594C93659 (normal), 0x9A6C9329AC4BC9B5 (reflected)
-  /// - **Initial value**: 0xFFFFFFFFFFFFFFFF
-  /// - **Final XOR**: 0xFFFFFFFFFFFFFFFF
-  /// - **Reflect input/output**: Yes
-  ///
-  /// # Performance Notes
-  ///
-  /// For optimal throughput, prefer larger updates when possible:
-  ///
-  /// | Update Size | Path | Notes |
-  /// |-------------|------|-------|
-  /// | < 32-128 bytes | Portable slice-by-8 | Threshold varies by CPU |
-  /// | ≥ 32-128 bytes | SIMD (PCLMULQDQ/PMULL) | Hardware accelerated |
-  ///
-  /// The exact threshold is microarchitecture-specific:
-  /// - AMD Zen 4/5: 32 bytes (fast SIMD setup)
-  /// - Intel SPR: 128 bytes (ZMM warmup overhead)
-  /// - Apple M1-M5: 48 bytes (efficient PMULL)
-  ///
-  /// For streaming many small chunks, consider using [`BufferedCrc64Nvme`] which
-  /// accumulates data internally until reaching the SIMD threshold.
-  ///
-  /// # Examples
-  ///
-  /// ```rust
-  /// use checksum::{Crc64Nvme, Checksum};
-  ///
-  /// let crc = Crc64Nvme::checksum(b"123456789");
-  /// assert_eq!(crc, 0xAE8B14860A799888); // "123456789" test vector
-  /// ```
-  pub struct Crc64Nvme {
-    poly: CRC64_NVME_POLY,
-    dispatcher: CRC64_NVME_DISPATCHER,
-    portable: crc64_nvme_portable,
+impl Crc64 {
+  /// Pre-computed shift-by-8 matrix for combine.
+  const SHIFT8_MATRIX: crate::common::combine::Gf2Matrix64 =
+    crate::common::combine::generate_shift8_matrix_64(CRC64_XZ_POLY);
+
+  /// Create a hasher to resume from a previous CRC value.
+  #[inline]
+  #[must_use]
+  pub const fn resume(crc: u64) -> Self {
+    Self {
+      state: crc ^ !0,
+      kernel: crc64_xz_portable,
+      initialized: false,
+    }
+  }
+
+  /// Get the name of the currently selected backend.
+  #[must_use]
+  pub fn backend_name() -> &'static str {
+    CRC64_XZ_DISPATCHER.backend_name()
+  }
+
+  /// Get the effective CRC-64 configuration (force mode).
+  #[must_use]
+  pub fn config() -> Crc64Config {
+    config::get()
+  }
+
+  /// Returns the kernel name that the selector would choose for `len`.
+  #[must_use]
+  pub fn kernel_name_for_len(len: usize) -> &'static str {
+    crc64_selected_kernel_name(len)
+  }
+}
+
+impl traits::Checksum for Crc64 {
+  const OUTPUT_SIZE: usize = 8;
+  type Output = u64;
+
+  #[inline]
+  fn new() -> Self {
+    Self {
+      state: !0,
+      kernel: CRC64_XZ_DISPATCHER.kernel(),
+      initialized: true,
+    }
+  }
+
+  #[inline]
+  fn with_initial(initial: u64) -> Self {
+    Self {
+      state: initial ^ !0,
+      kernel: CRC64_XZ_DISPATCHER.kernel(),
+      initialized: true,
+    }
+  }
+
+  #[inline]
+  fn update(&mut self, data: &[u8]) {
+    if !self.initialized {
+      self.kernel = CRC64_XZ_DISPATCHER.kernel();
+      self.initialized = true;
+    }
+    self.state = (self.kernel)(self.state, data);
+  }
+
+  #[inline]
+  fn finalize(&self) -> u64 {
+    self.state ^ !0
+  }
+
+  #[inline]
+  fn reset(&mut self) {
+    self.state = !0;
+  }
+}
+
+impl Default for Crc64 {
+  fn default() -> Self {
+    <Self as traits::Checksum>::new()
+  }
+}
+
+impl traits::ChecksumCombine for Crc64 {
+  fn combine(crc_a: u64, crc_b: u64, len_b: usize) -> u64 {
+    crate::common::combine::combine_crc64(crc_a, crc_b, len_b, Self::SHIFT8_MATRIX)
+  }
+}
+
+/// CRC-64-NVME checksum.
+///
+/// Used in the NVMe specification for data integrity.
+///
+/// # Properties
+///
+/// - **Polynomial**: 0xAD93D23594C93659 (normal), 0x9A6C9329AC4BC9B5 (reflected)
+/// - **Initial value**: 0xFFFFFFFFFFFFFFFF
+/// - **Final XOR**: 0xFFFFFFFFFFFFFFFF
+/// - **Reflect input/output**: Yes
+///
+/// # Performance Notes
+///
+/// For optimal throughput, prefer larger updates when possible:
+///
+/// | Update Size | Path | Notes |
+/// |-------------|------|-------|
+/// | < 32-128 bytes | Portable slice-by-8 | Threshold varies by CPU |
+/// | ≥ 32-128 bytes | SIMD (PCLMULQDQ/PMULL) | Hardware accelerated |
+///
+/// The exact threshold is microarchitecture-specific:
+/// - AMD Zen 4/5: 32 bytes (fast SIMD setup)
+/// - Intel SPR: 128 bytes (ZMM warmup overhead)
+/// - Apple M1-M5: 48 bytes (efficient PMULL)
+///
+/// For streaming many small chunks, consider using [`BufferedCrc64Nvme`] which
+/// accumulates data internally until reaching the SIMD threshold.
+///
+/// # Examples
+///
+/// ```rust
+/// use checksum::{Checksum, Crc64Nvme};
+///
+/// let crc = Crc64Nvme::checksum(b"123456789");
+/// assert_eq!(crc, 0xAE8B14860A799888); // "123456789" test vector
+/// ```
+#[derive(Clone)]
+pub struct Crc64Nvme {
+  state: u64,
+  kernel: crate::dispatchers::Crc64Fn,
+  initialized: bool,
+}
+
+impl Crc64Nvme {
+  /// Pre-computed shift-by-8 matrix for combine.
+  const SHIFT8_MATRIX: crate::common::combine::Gf2Matrix64 =
+    crate::common::combine::generate_shift8_matrix_64(CRC64_NVME_POLY);
+
+  /// Create a hasher to resume from a previous CRC value.
+  #[inline]
+  #[must_use]
+  pub const fn resume(crc: u64) -> Self {
+    Self {
+      state: crc ^ !0,
+      kernel: crc64_nvme_portable,
+      initialized: false,
+    }
+  }
+
+  /// Get the name of the currently selected backend.
+  #[must_use]
+  pub fn backend_name() -> &'static str {
+    CRC64_NVME_DISPATCHER.backend_name()
+  }
+
+  /// Get the effective CRC-64 configuration (force mode).
+  #[must_use]
+  pub fn config() -> Crc64Config {
+    config::get()
+  }
+
+  /// Returns the kernel name that the selector would choose for `len`.
+  #[must_use]
+  pub fn kernel_name_for_len(len: usize) -> &'static str {
+    crc64_selected_kernel_name(len)
+  }
+}
+
+impl traits::Checksum for Crc64Nvme {
+  const OUTPUT_SIZE: usize = 8;
+  type Output = u64;
+
+  #[inline]
+  fn new() -> Self {
+    Self {
+      state: !0,
+      kernel: CRC64_NVME_DISPATCHER.kernel(),
+      initialized: true,
+    }
+  }
+
+  #[inline]
+  fn with_initial(initial: u64) -> Self {
+    Self {
+      state: initial ^ !0,
+      kernel: CRC64_NVME_DISPATCHER.kernel(),
+      initialized: true,
+    }
+  }
+
+  #[inline]
+  fn update(&mut self, data: &[u8]) {
+    if !self.initialized {
+      self.kernel = CRC64_NVME_DISPATCHER.kernel();
+      self.initialized = true;
+    }
+    self.state = (self.kernel)(self.state, data);
+  }
+
+  #[inline]
+  fn finalize(&self) -> u64 {
+    self.state ^ !0
+  }
+
+  #[inline]
+  fn reset(&mut self) {
+    self.state = !0;
+  }
+}
+
+impl Default for Crc64Nvme {
+  fn default() -> Self {
+    <Self as traits::Checksum>::new()
+  }
+}
+
+impl traits::ChecksumCombine for Crc64Nvme {
+  fn combine(crc_a: u64, crc_b: u64, len_b: usize) -> u64 {
+    crate::common::combine::combine_crc64(crc_a, crc_b, len_b, Self::SHIFT8_MATRIX)
   }
 }
 

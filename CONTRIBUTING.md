@@ -14,7 +14,7 @@ rscrypto automatically selects optimal algorithms based on your CPU. But we need
 
 ```bash
 # Clone and build
-git clone https://github.com/anthropics/rscrypto.git
+git clone https://github.com/loadingalias/rscrypto.git
 cd rscrypto
 
 # Run tuning and generate contribution-ready output

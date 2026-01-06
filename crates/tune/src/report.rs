@@ -308,7 +308,7 @@ impl<W: Write> Report<W> {
     writeln!(self.writer, "Copy everything above this line into a GitHub issue at:")?;
     writeln!(
       self.writer,
-      "https://github.com/anthropics/rscrypto/issues/new?template=tuning-results.md"
+      "https://github.com/loadingalias/rscrypto/issues/new?template=tuning-results.md"
     )?;
 
     Ok(())

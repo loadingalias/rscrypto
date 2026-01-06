@@ -689,7 +689,6 @@ mod atomic_cache {
   static TUNE_SVE_VLEN: AtomicU16 = AtomicU16::new(0);
   static TUNE_SME_TILE: AtomicU16 = AtomicU16::new(0);
   static TUNE_MEMORY_BOUND_HWCRC: AtomicBool = AtomicBool::new(false);
-  static TUNE_SPECULATIVE: AtomicBool = AtomicBool::new(false);
 
   static OVERRIDE_SET: AtomicBool = AtomicBool::new(false);
   static OVERRIDE_CAPS: [AtomicU64; 4] = [
@@ -712,7 +711,6 @@ mod atomic_cache {
   static OVERRIDE_TUNE_SVE_VLEN: AtomicU16 = AtomicU16::new(0);
   static OVERRIDE_TUNE_SME_TILE: AtomicU16 = AtomicU16::new(0);
   static OVERRIDE_TUNE_MEMORY_BOUND_HWCRC: AtomicBool = AtomicBool::new(false);
-  static OVERRIDE_TUNE_SPECULATIVE: AtomicBool = AtomicBool::new(false);
 
   pub fn get_or_init(f: fn() -> Detected) -> Detected {
     if STATE.load(Ordering::Acquire) == 2 {
@@ -758,7 +756,6 @@ mod atomic_cache {
       sve_vlen: TUNE_SVE_VLEN.load(Ordering::Acquire),
       sme_tile: TUNE_SME_TILE.load(Ordering::Acquire),
       memory_bound_hwcrc: TUNE_MEMORY_BOUND_HWCRC.load(Ordering::Acquire),
-      speculative: TUNE_SPECULATIVE.load(Ordering::Acquire),
     };
     Detected { caps, tune, arch }
   }
@@ -782,7 +779,6 @@ mod atomic_cache {
     TUNE_SVE_VLEN.store(det.tune.sve_vlen, Ordering::Release);
     TUNE_SME_TILE.store(det.tune.sme_tile, Ordering::Release);
     TUNE_MEMORY_BOUND_HWCRC.store(det.tune.memory_bound_hwcrc, Ordering::Release);
-    TUNE_SPECULATIVE.store(det.tune.speculative, Ordering::Release);
   }
 
   pub fn set_override(value: Option<Detected>) {
@@ -806,7 +802,6 @@ mod atomic_cache {
         OVERRIDE_TUNE_SVE_VLEN.store(det.tune.sve_vlen, Ordering::Release);
         OVERRIDE_TUNE_SME_TILE.store(det.tune.sme_tile, Ordering::Release);
         OVERRIDE_TUNE_MEMORY_BOUND_HWCRC.store(det.tune.memory_bound_hwcrc, Ordering::Release);
-        OVERRIDE_TUNE_SPECULATIVE.store(det.tune.speculative, Ordering::Release);
         OVERRIDE_SET.store(true, Ordering::Release);
       }
       None => {
@@ -845,7 +840,6 @@ mod atomic_cache {
         sve_vlen: OVERRIDE_TUNE_SVE_VLEN.load(Ordering::Acquire),
         sme_tile: OVERRIDE_TUNE_SME_TILE.load(Ordering::Acquire),
         memory_bound_hwcrc: OVERRIDE_TUNE_MEMORY_BOUND_HWCRC.load(Ordering::Acquire),
-        speculative: OVERRIDE_TUNE_SPECULATIVE.load(Ordering::Acquire),
       },
     })
   }

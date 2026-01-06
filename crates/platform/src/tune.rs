@@ -247,21 +247,6 @@ pub struct Tune {
   /// When true, CRC-32C policies should use single-stream HWCRC for
   /// large buffers rather than multi-stream parallel computation.
   pub memory_bound_hwcrc: bool,
-
-  /// Whether this preset contains speculative (unmeasured) values.
-  ///
-  /// When true, the tuning values are based on architectural expectations
-  /// rather than actual benchmark measurements. This happens for:
-  /// - Newly announced hardware we don't have access to yet
-  /// - Upcoming microarchitectures with published specs but no silicon
-  ///
-  /// Speculative presets use reasonable defaults based on the closest
-  /// known microarchitecture but should be updated with real measurements
-  /// when hardware becomes available.
-  ///
-  /// Users running `just tune` on speculative hardware will get accurate
-  /// values for their specific machine, overriding these defaults.
-  pub speculative: bool,
 }
 
 impl Tune {
@@ -280,7 +265,6 @@ impl Tune {
     sve_vlen: 0,
     sme_tile: 0,
     memory_bound_hwcrc: false, // Conservative default
-    speculative: false,
   };
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -302,7 +286,6 @@ impl Tune {
     sve_vlen: 0,
     sme_tile: 0,
     memory_bound_hwcrc: true,
-    speculative: false,
   };
 
   /// Tuning for AMD Zen 5.
@@ -327,7 +310,6 @@ impl Tune {
     sve_vlen: 0,
     sme_tile: 0,
     memory_bound_hwcrc: true,
-    speculative: false,
   };
 
   /// Tuning for AMD Zen 5c (compact/efficiency variant).
@@ -352,7 +334,6 @@ impl Tune {
     sve_vlen: 0,
     sme_tile: 0,
     memory_bound_hwcrc: true,
-    speculative: false,
   };
 
   /// Tuning for Intel Sapphire Rapids / Emerald Rapids.
@@ -373,7 +354,6 @@ impl Tune {
     sve_vlen: 0,
     sme_tile: 0,
     memory_bound_hwcrc: false, // Higher CRC latency, not memory-bound
-    speculative: false,
   };
 
   /// Tuning for Intel Granite Rapids (Xeon 6).
@@ -401,7 +381,6 @@ impl Tune {
     sve_vlen: 0,
     sme_tile: 0,
     memory_bound_hwcrc: false, // Higher CRC latency, not memory-bound
-    speculative: false,
   };
 
   /// Tuning for Intel Ice Lake.
@@ -422,7 +401,6 @@ impl Tune {
     sve_vlen: 0,
     sme_tile: 0,
     memory_bound_hwcrc: false, // Higher CRC latency, not memory-bound
-    speculative: false,
   };
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -444,7 +422,6 @@ impl Tune {
     sve_vlen: 0,
     sme_tile: 0,
     memory_bound_hwcrc: true, // Hardware CRC saturates memory bandwidth
-    speculative: false,
   };
 
   /// Tuning for Apple M4 (PMULL+EOR3, SME with Streaming SVE, no full SVE).
@@ -462,7 +439,6 @@ impl Tune {
     sve_vlen: 0,
     sme_tile: 256,            // M4 has SME with 256-bit tiles
     memory_bound_hwcrc: true, // Hardware CRC saturates memory bandwidth
-    speculative: false,
   };
 
   /// Tuning for Apple M5 (PMULL+EOR3, SME2p1).
@@ -471,7 +447,7 @@ impl Tune {
   /// Features SME2p1, SMEB16B16, SMEF16F16 per LLVM commit f85494f6afeb.
   /// Slightly higher parallelism than M4 due to architectural improvements.
   ///
-  /// SPECULATIVE: Values extrapolated from M4 + architectural docs.
+  /// Values extrapolated from M4 + architectural docs.
   /// Run `just tune` on M5 hardware to get measured values.
   pub const APPLE_M5: Self = Self {
     kind: TuneKind::AppleM5,
@@ -487,7 +463,6 @@ impl Tune {
     sve_vlen: 0,
     sme_tile: 256,
     memory_bound_hwcrc: true,
-    speculative: true, // No measured data yet
   };
 
   /// Alias: Apple M-series (M1-M3).
@@ -512,7 +487,6 @@ impl Tune {
     sve_vlen: 0,
     sme_tile: 0,
     memory_bound_hwcrc: true, // ARM CRC saturates memory bandwidth
-    speculative: false,
   };
 
   /// Tuning for AWS Graviton 3 (Neoverse V1, 256-bit SVE).
@@ -530,7 +504,6 @@ impl Tune {
     sve_vlen: 256,
     sme_tile: 0,
     memory_bound_hwcrc: true, // ARM CRC saturates memory bandwidth
-    speculative: false,
   };
 
   /// Tuning for AWS Graviton 4 (Neoverse V2, 128-bit SVE for more cores).
@@ -548,14 +521,13 @@ impl Tune {
     sve_vlen: 128,
     sme_tile: 0,
     memory_bound_hwcrc: true, // ARM CRC saturates memory bandwidth
-    speculative: false,
   };
 
   /// Tuning for AWS Graviton 5 (Neoverse V3, 128-bit SVE2).
   ///
   /// Expected late 2025, uses Poseidon cores with enhanced ILP.
   ///
-  /// SPECULATIVE: Values extrapolated from Graviton4 + Neoverse V3 docs.
+  /// Values extrapolated from Graviton4 + Neoverse V3 docs.
   /// Run `just tune` on Graviton5 hardware to get measured values.
   pub const GRAVITON5: Self = Self {
     kind: TuneKind::Graviton5,
@@ -571,7 +543,6 @@ impl Tune {
     sve_vlen: 128,
     sme_tile: 0,
     memory_bound_hwcrc: true,
-    speculative: true, // No measured data yet
   };
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -593,7 +564,6 @@ impl Tune {
     sve_vlen: 128,
     sme_tile: 0,
     memory_bound_hwcrc: true, // ARM CRC saturates memory bandwidth
-    speculative: false,
   };
 
   /// Tuning for ARM Neoverse N3 (Hermes, Armv9.2-A with 128-bit SVE2).
@@ -615,7 +585,6 @@ impl Tune {
     sve_vlen: 128, // 128-bit SVE2
     sme_tile: 0,
     memory_bound_hwcrc: true, // ARM CRC saturates memory bandwidth
-    speculative: false,
   };
 
   /// Tuning for ARM Neoverse V3 (Poseidon, 128-bit SVE2).
@@ -633,7 +602,6 @@ impl Tune {
     sve_vlen: 128,
     sme_tile: 0,
     memory_bound_hwcrc: true, // ARM CRC saturates memory bandwidth
-    speculative: false,
   };
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -660,7 +628,6 @@ impl Tune {
     sve_vlen: 128, // Neoverse V2 with 128-bit SVE2
     sme_tile: 0,
     memory_bound_hwcrc: true, // ARM CRC saturates memory bandwidth
-    speculative: false,
   };
 
   /// Tuning for Ampere Altra (Neoverse N1-based, ARMv8.2+, no SVE).
@@ -683,7 +650,6 @@ impl Tune {
     sve_vlen: 0, // No SVE - Neoverse N1 is ARMv8.2-A only
     sme_tile: 0,
     memory_bound_hwcrc: true, // ARM CRC saturates memory bandwidth
-    speculative: false,
   };
 
   /// Tuning for generic aarch64 with PMULL (no SVE).
@@ -701,7 +667,6 @@ impl Tune {
     sve_vlen: 0,
     sme_tile: 0,
     memory_bound_hwcrc: true, // Conservative default for ARM
-    speculative: false,
   };
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -727,7 +692,6 @@ impl Tune {
     sve_vlen: 0,
     sme_tile: 0,
     memory_bound_hwcrc: false, // No hardware CRC on s390x
-    speculative: false,
   };
 
   /// Tuning for IBM z14 (vector enhancements 1).
@@ -748,7 +712,6 @@ impl Tune {
     sve_vlen: 0,
     sme_tile: 0,
     memory_bound_hwcrc: false, // No hardware CRC on s390x
-    speculative: false,
   };
 
   /// Tuning for IBM z15 (vector enhancements 2).
@@ -770,7 +733,6 @@ impl Tune {
     sve_vlen: 0,
     sme_tile: 0,
     memory_bound_hwcrc: false, // No hardware CRC on s390x
-    speculative: false,
   };
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -794,7 +756,6 @@ impl Tune {
     sve_vlen: 0,
     sme_tile: 0,
     memory_bound_hwcrc: false, // No hardware CRC on POWER
-    speculative: false,
   };
 
   /// Tuning for IBM POWER8 (power8-vector + crypto).
@@ -815,7 +776,6 @@ impl Tune {
     sve_vlen: 0,
     sme_tile: 0,
     memory_bound_hwcrc: false, // No hardware CRC on POWER
-    speculative: false,
   };
 
   /// Tuning for IBM POWER9 (power9-vector).
@@ -835,7 +795,6 @@ impl Tune {
     sve_vlen: 0,
     sme_tile: 0,
     memory_bound_hwcrc: false, // No hardware CRC on POWER
-    speculative: false,
   };
 
   /// Tuning for IBM POWER10 (power10-vector).
@@ -856,7 +815,6 @@ impl Tune {
     sve_vlen: 0,
     sme_tile: 0,
     memory_bound_hwcrc: false, // No hardware CRC on POWER
-    speculative: false,
   };
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -882,7 +840,6 @@ impl Tune {
     sve_vlen: 0,
     sme_tile: 0,
     memory_bound_hwcrc: false, // Not applicable for portable
-    speculative: false,
   };
 }
 
@@ -1293,7 +1250,6 @@ mod tests {
       sve_vlen: 256,
       sme_tile: 128,
       memory_bound_hwcrc: true,
-      speculative: false,
     };
     assert_eq!(custom.name(), "Custom");
     assert_eq!(custom.kind(), TuneKind::Custom);
@@ -1532,26 +1488,5 @@ mod tests {
     assert_eq!(Tune::ZEN5.prefetch_distance, 0);
     assert_eq!(Tune::INTEL_SPR.prefetch_distance, 0);
     assert_eq!(Tune::GRAVITON3.prefetch_distance, 0);
-  }
-
-  #[test]
-  fn test_speculative_presets() {
-    // These presets have measured benchmark data
-    const { assert!(!Tune::DEFAULT.speculative) };
-    const { assert!(!Tune::ZEN4.speculative) };
-    const { assert!(!Tune::ZEN5.speculative) };
-    const { assert!(!Tune::ZEN5C.speculative) };
-    const { assert!(!Tune::INTEL_SPR.speculative) };
-    const { assert!(!Tune::INTEL_GNR.speculative) };
-    const { assert!(!Tune::INTEL_ICL.speculative) };
-    const { assert!(!Tune::APPLE_M1_M3.speculative) };
-    const { assert!(!Tune::APPLE_M4.speculative) };
-    const { assert!(!Tune::GRAVITON2.speculative) };
-    const { assert!(!Tune::GRAVITON3.speculative) };
-    const { assert!(!Tune::GRAVITON4.speculative) };
-
-    // These presets are SPECULATIVE (extrapolated, no hardware access yet)
-    const { assert!(Tune::APPLE_M5.speculative) };
-    const { assert!(Tune::GRAVITON5.speculative) };
   }
 }
