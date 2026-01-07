@@ -1,3 +1,5 @@
+#![allow(clippy::clone_on_copy)] // Needed for benchmark closures in loops
+
 use core::{hint::black_box, time::Duration};
 
 use checksum::{

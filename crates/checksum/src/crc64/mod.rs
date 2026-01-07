@@ -39,7 +39,6 @@ mod s390x;
 #[cfg(target_arch = "riscv64")]
 mod riscv64;
 
-use backend::dispatch::Selected;
 // Re-export config types for public API (Crc64Force only used internally on SIMD archs)
 #[allow(unused_imports)]
 pub use config::{Crc64Config, Crc64Force};
@@ -49,15 +48,12 @@ pub(super) use traits::{Checksum, ChecksumCombine};
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
 use crate::common::tables::generate_crc64_tables_8;
+use crate::common::{
+  reference::crc64_bitwise,
+  tables::{CRC64_NVME_POLY, CRC64_XZ_POLY, generate_crc64_tables_16},
+};
 #[cfg(feature = "diag")]
 use crate::diag::{Crc64Polynomial, Crc64SelectionDiag};
-use crate::{
-  common::{
-    reference::crc64_bitwise,
-    tables::{CRC64_NVME_POLY, CRC64_XZ_POLY, generate_crc64_tables_16},
-  },
-  dispatchers::{Crc64Dispatcher, Crc64Fn},
-};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Kernel Name Introspection
@@ -253,96 +249,43 @@ const CRC64_BUFFERED_THRESHOLD: usize = 64;
 // Auto Kernels (using new dispatch module)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// CRC-64-XZ auto-dispatch using pre-computed kernel tables.
+/// CRC-64-XZ dispatch with force mode support.
 ///
-/// Uses the dispatch module's globally cached kernel table for efficient
-/// dispatch with minimal overhead (~1.5ns vs ~5ns with old policy system).
+/// Checks force mode from config, then uses dispatch tables for auto selection.
+/// Force mode is cached via OnceLock, so this check is essentially free.
 #[inline]
-fn crc64_xz_auto(crc: u64, data: &[u8]) -> u64 {
-  let table = crate::dispatch::active_table();
-  let kernel = table.select_set(data.len()).crc64_xz;
-  kernel(crc, data)
+fn crc64_xz_dispatch(crc: u64, data: &[u8]) -> u64 {
+  let cfg = config::get();
+  match cfg.effective_force {
+    Crc64Force::Reference => crc64_xz_reference(crc, data),
+    Crc64Force::Portable => crc64_xz_portable(crc, data),
+    _ => {
+      // Auto or specific SIMD force - use dispatch tables
+      let table = crate::dispatch::active_table();
+      let kernel = table.select_set(data.len()).crc64_xz;
+      kernel(crc, data)
+    }
+  }
 }
 
-/// CRC-64-NVME auto-dispatch using pre-computed kernel tables.
+/// CRC-64-NVME dispatch with force mode support.
 ///
-/// Uses the dispatch module's globally cached kernel table for efficient
-/// dispatch with minimal overhead (~1.5ns vs ~5ns with old policy system).
+/// Checks force mode from config, then uses dispatch tables for auto selection.
+/// Force mode is cached via OnceLock, so this check is essentially free.
 #[inline]
-fn crc64_nvme_auto(crc: u64, data: &[u8]) -> u64 {
-  let table = crate::dispatch::active_table();
-  let kernel = table.select_set(data.len()).crc64_nvme;
-  kernel(crc, data)
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Dispatcher Selection
-// ─────────────────────────────────────────────────────────────────────────────
-
-#[cfg(target_arch = "x86_64")]
-const AUTO_NAME: &str = "x86_64/auto";
-#[cfg(target_arch = "aarch64")]
-const AUTO_NAME: &str = "aarch64/auto";
-#[cfg(target_arch = "powerpc64")]
-const AUTO_NAME: &str = "power/auto";
-#[cfg(target_arch = "s390x")]
-const AUTO_NAME: &str = "s390x/auto";
-#[cfg(target_arch = "riscv64")]
-const AUTO_NAME: &str = "riscv64/auto";
-#[cfg(not(any(
-  target_arch = "x86_64",
-  target_arch = "aarch64",
-  target_arch = "powerpc64",
-  target_arch = "s390x",
-  target_arch = "riscv64"
-)))]
-const AUTO_NAME: &str = "portable/slice16";
-
-/// Select the best CRC-64-XZ kernel for the current platform.
-///
-/// Respects forced mode from config, otherwise uses auto dispatch.
-fn select_crc64_xz() -> Selected<Crc64Fn> {
+fn crc64_nvme_dispatch(crc: u64, data: &[u8]) -> u64 {
   let cfg = config::get();
-
-  // Explicit reference override always wins.
-  if cfg.effective_force == Crc64Force::Reference {
-    return Selected::new(kernels::REFERENCE, crc64_xz_reference);
+  match cfg.effective_force {
+    Crc64Force::Reference => crc64_nvme_reference(crc, data),
+    Crc64Force::Portable => crc64_nvme_portable(crc, data),
+    _ => {
+      // Auto or specific SIMD force - use dispatch tables
+      let table = crate::dispatch::active_table();
+      let kernel = table.select_set(data.len()).crc64_nvme;
+      kernel(crc, data)
+    }
   }
-
-  // Explicit portable override.
-  if cfg.effective_force == Crc64Force::Portable {
-    return Selected::new(kernels::PORTABLE, crc64_xz_portable);
-  }
-
-  // Auto dispatch via pre-computed kernel tables
-  Selected::new(AUTO_NAME, crc64_xz_auto)
 }
-
-/// Select the best CRC-64-NVME kernel for the current platform.
-///
-/// Respects forced mode from config, otherwise uses auto dispatch.
-fn select_crc64_nvme() -> Selected<Crc64Fn> {
-  let cfg = config::get();
-
-  // Explicit reference override always wins.
-  if cfg.effective_force == Crc64Force::Reference {
-    return Selected::new(kernels::REFERENCE, crc64_nvme_reference);
-  }
-
-  // Explicit portable override.
-  if cfg.effective_force == Crc64Force::Portable {
-    return Selected::new(kernels::PORTABLE, crc64_nvme_portable);
-  }
-
-  // Auto dispatch via pre-computed kernel tables
-  Selected::new(AUTO_NAME, crc64_nvme_auto)
-}
-
-/// Static dispatcher for CRC-64-XZ.
-static CRC64_XZ_DISPATCHER: Crc64Dispatcher = Crc64Dispatcher::new(select_crc64_xz);
-
-/// Static dispatcher for CRC-64-NVME.
-static CRC64_NVME_DISPATCHER: Crc64Dispatcher = Crc64Dispatcher::new(select_crc64_nvme);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CRC-64 Types
@@ -384,11 +327,9 @@ static CRC64_NVME_DISPATCHER: Crc64Dispatcher = Crc64Dispatcher::new(select_crc6
 /// let crc = Crc64Xz::checksum(b"123456789");
 /// assert_eq!(crc, 0x995DC9BBDF1939FA); // "123456789" test vector
 /// ```
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct Crc64 {
   state: u64,
-  kernel: crate::dispatchers::Crc64Fn,
-  initialized: bool,
 }
 
 /// Explicit name for the XZ CRC-64 variant (alias of [`Crc64`]).
@@ -403,17 +344,18 @@ impl Crc64 {
   #[inline]
   #[must_use]
   pub const fn resume(crc: u64) -> Self {
-    Self {
-      state: crc ^ !0,
-      kernel: crc64_xz_portable,
-      initialized: false,
-    }
+    Self { state: crc ^ !0 }
   }
 
   /// Get the name of the currently selected backend.
   #[must_use]
   pub fn backend_name() -> &'static str {
-    CRC64_XZ_DISPATCHER.backend_name()
+    let cfg = config::get();
+    match cfg.effective_force {
+      Crc64Force::Reference => kernels::REFERENCE,
+      Crc64Force::Portable => kernels::PORTABLE,
+      _ => crc64_selected_kernel_name(1024), // representative size
+    }
   }
 
   /// Get the effective CRC-64 configuration (force mode).
@@ -435,29 +377,17 @@ impl traits::Checksum for Crc64 {
 
   #[inline]
   fn new() -> Self {
-    Self {
-      state: !0,
-      kernel: CRC64_XZ_DISPATCHER.kernel(),
-      initialized: true,
-    }
+    Self { state: !0 }
   }
 
   #[inline]
   fn with_initial(initial: u64) -> Self {
-    Self {
-      state: initial ^ !0,
-      kernel: CRC64_XZ_DISPATCHER.kernel(),
-      initialized: true,
-    }
+    Self { state: initial ^ !0 }
   }
 
   #[inline]
   fn update(&mut self, data: &[u8]) {
-    if !self.initialized {
-      self.kernel = CRC64_XZ_DISPATCHER.kernel();
-      self.initialized = true;
-    }
-    self.state = (self.kernel)(self.state, data);
+    self.state = crc64_xz_dispatch(self.state, data);
   }
 
   #[inline]
@@ -519,11 +449,9 @@ impl traits::ChecksumCombine for Crc64 {
 /// let crc = Crc64Nvme::checksum(b"123456789");
 /// assert_eq!(crc, 0xAE8B14860A799888); // "123456789" test vector
 /// ```
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct Crc64Nvme {
   state: u64,
-  kernel: crate::dispatchers::Crc64Fn,
-  initialized: bool,
 }
 
 impl Crc64Nvme {
@@ -535,17 +463,18 @@ impl Crc64Nvme {
   #[inline]
   #[must_use]
   pub const fn resume(crc: u64) -> Self {
-    Self {
-      state: crc ^ !0,
-      kernel: crc64_nvme_portable,
-      initialized: false,
-    }
+    Self { state: crc ^ !0 }
   }
 
   /// Get the name of the currently selected backend.
   #[must_use]
   pub fn backend_name() -> &'static str {
-    CRC64_NVME_DISPATCHER.backend_name()
+    let cfg = config::get();
+    match cfg.effective_force {
+      Crc64Force::Reference => kernels::REFERENCE,
+      Crc64Force::Portable => kernels::PORTABLE,
+      _ => crc64_selected_kernel_name(1024), // representative size
+    }
   }
 
   /// Get the effective CRC-64 configuration (force mode).
@@ -567,29 +496,17 @@ impl traits::Checksum for Crc64Nvme {
 
   #[inline]
   fn new() -> Self {
-    Self {
-      state: !0,
-      kernel: CRC64_NVME_DISPATCHER.kernel(),
-      initialized: true,
-    }
+    Self { state: !0 }
   }
 
   #[inline]
   fn with_initial(initial: u64) -> Self {
-    Self {
-      state: initial ^ !0,
-      kernel: CRC64_NVME_DISPATCHER.kernel(),
-      initialized: true,
-    }
+    Self { state: initial ^ !0 }
   }
 
   #[inline]
   fn update(&mut self, data: &[u8]) {
-    if !self.initialized {
-      self.kernel = CRC64_NVME_DISPATCHER.kernel();
-      self.initialized = true;
-    }
-    self.state = (self.kernel)(self.state, data);
+    self.state = crc64_nvme_dispatch(self.state, data);
   }
 
   #[inline]

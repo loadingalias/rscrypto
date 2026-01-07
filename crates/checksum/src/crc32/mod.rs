@@ -61,22 +61,18 @@ mod s390x;
 #[cfg(target_arch = "riscv64")]
 mod riscv64;
 
-use backend::dispatch::Selected;
 #[allow(unused_imports)]
 pub use config::{Crc32Config, Crc32Force};
 #[allow(unused_imports)]
 pub(super) use traits::{Checksum, ChecksumCombine};
 
+use crate::common::{
+  combine::{Gf2Matrix32, generate_shift8_matrix_32},
+  reference::crc32_bitwise,
+  tables::{CRC32_IEEE_POLY, CRC32C_POLY, generate_crc32_tables_16},
+};
 #[cfg(feature = "diag")]
 use crate::diag::{Crc32Polynomial, Crc32SelectionDiag};
-use crate::{
-  common::{
-    combine::{Gf2Matrix32, generate_shift8_matrix_32},
-    reference::crc32_bitwise,
-    tables::{CRC32_IEEE_POLY, CRC32C_POLY, generate_crc32_tables_16},
-  },
-  dispatchers::{Crc32Dispatcher, Crc32Fn},
-};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Kernel Tables (compile-time)
@@ -379,80 +375,35 @@ pub(crate) fn diag_crc32c(len: usize) -> Crc32SelectionDiag {
 // Auto Kernels (using new dispatch module)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// CRC-32 (IEEE) auto-dispatch using pre-computed kernel tables.
+/// CRC-32 (IEEE) dispatch with force mode support.
 #[inline]
-fn crc32_auto(crc: u32, data: &[u8]) -> u32 {
-  let table = crate::dispatch::active_table();
-  let kernel = table.select_set(data.len()).crc32_ieee;
-  kernel(crc, data)
+fn crc32_dispatch(crc: u32, data: &[u8]) -> u32 {
+  let cfg = config::get();
+  match cfg.effective_force {
+    Crc32Force::Reference => crc32_reference(crc, data),
+    Crc32Force::Portable => crc32_portable(crc, data),
+    _ => {
+      let table = crate::dispatch::active_table();
+      let kernel = table.select_set(data.len()).crc32_ieee;
+      kernel(crc, data)
+    }
+  }
 }
 
-/// CRC-32C (Castagnoli) auto-dispatch using pre-computed kernel tables.
+/// CRC-32C (Castagnoli) dispatch with force mode support.
 #[inline]
-fn crc32c_auto(crc: u32, data: &[u8]) -> u32 {
-  let table = crate::dispatch::active_table();
-  let kernel = table.select_set(data.len()).crc32c;
-  kernel(crc, data)
-}
-
-#[cfg(target_arch = "x86_64")]
-const AUTO_NAME: &str = "x86_64/auto";
-#[cfg(target_arch = "aarch64")]
-const AUTO_NAME: &str = "aarch64/auto";
-#[cfg(target_arch = "powerpc64")]
-const AUTO_NAME: &str = "power/auto";
-#[cfg(target_arch = "s390x")]
-const AUTO_NAME: &str = "s390x/auto";
-#[cfg(target_arch = "riscv64")]
-const AUTO_NAME: &str = "riscv64/auto";
-#[cfg(not(any(
-  target_arch = "x86_64",
-  target_arch = "aarch64",
-  target_arch = "powerpc64",
-  target_arch = "s390x",
-  target_arch = "riscv64"
-)))]
-const AUTO_NAME: &str = "portable/slice16";
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Dispatcher Selection
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Select the best CRC-32 (IEEE) kernel for the current platform.
-fn select_crc32() -> Selected<Crc32Fn> {
+fn crc32c_dispatch(crc: u32, data: &[u8]) -> u32 {
   let cfg = config::get();
-
-  if cfg.effective_force == Crc32Force::Reference {
-    return Selected::new(kernels::REFERENCE, crc32_reference);
+  match cfg.effective_force {
+    Crc32Force::Reference => crc32c_reference(crc, data),
+    Crc32Force::Portable => crc32c_portable(crc, data),
+    _ => {
+      let table = crate::dispatch::active_table();
+      let kernel = table.select_set(data.len()).crc32c;
+      kernel(crc, data)
+    }
   }
-
-  if cfg.effective_force == Crc32Force::Portable {
-    return Selected::new(kernels::PORTABLE, crc32_portable);
-  }
-
-  Selected::new(AUTO_NAME, crc32_auto)
 }
-
-/// Select the best CRC-32C (Castagnoli) kernel for the current platform.
-fn select_crc32c() -> Selected<Crc32Fn> {
-  let cfg = config::get();
-
-  if cfg.effective_force == Crc32Force::Reference {
-    return Selected::new(kernels::REFERENCE, crc32c_reference);
-  }
-
-  if cfg.effective_force == Crc32Force::Portable {
-    return Selected::new(kernels::PORTABLE, crc32c_portable);
-  }
-
-  Selected::new(AUTO_NAME, crc32c_auto)
-}
-
-/// Static dispatcher for CRC-32 (IEEE).
-static CRC32_DISPATCHER: Crc32Dispatcher = Crc32Dispatcher::new(select_crc32);
-
-/// Static dispatcher for CRC-32C (Castagnoli).
-static CRC32C_DISPATCHER: Crc32Dispatcher = Crc32Dispatcher::new(select_crc32c);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CRC-32 Types
@@ -477,11 +428,9 @@ static CRC32C_DISPATCHER: Crc32Dispatcher = Crc32Dispatcher::new(select_crc32c);
 /// let crc = Crc32::checksum(b"123456789");
 /// assert_eq!(crc, 0xCBF4_3926);
 /// ```
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct Crc32 {
   state: u32,
-  kernel: Crc32Fn,
-  initialized: bool,
 }
 
 /// Explicit name for the IEEE CRC-32 variant (alias of [`Crc32`]).
@@ -495,17 +444,18 @@ impl Crc32 {
   #[inline]
   #[must_use]
   pub const fn resume(crc: u32) -> Self {
-    Self {
-      state: crc ^ !0,
-      kernel: crc32_portable,
-      initialized: false,
-    }
+    Self { state: crc ^ !0 }
   }
 
   /// Get the name of the currently selected backend.
   #[must_use]
   pub fn backend_name() -> &'static str {
-    CRC32_DISPATCHER.backend_name()
+    let cfg = config::get();
+    match cfg.effective_force {
+      Crc32Force::Reference => kernels::REFERENCE,
+      Crc32Force::Portable => kernels::PORTABLE,
+      _ => crc32_selected_kernel_name(1024),
+    }
   }
 
   /// Get the effective CRC-32 configuration (overrides + thresholds).
@@ -527,29 +477,17 @@ impl traits::Checksum for Crc32 {
 
   #[inline]
   fn new() -> Self {
-    Self {
-      state: !0,
-      kernel: CRC32_DISPATCHER.kernel(),
-      initialized: true,
-    }
+    Self { state: !0 }
   }
 
   #[inline]
   fn with_initial(initial: u32) -> Self {
-    Self {
-      state: initial ^ !0,
-      kernel: CRC32_DISPATCHER.kernel(),
-      initialized: true,
-    }
+    Self { state: initial ^ !0 }
   }
 
   #[inline]
   fn update(&mut self, data: &[u8]) {
-    if !self.initialized {
-      self.kernel = CRC32_DISPATCHER.kernel();
-      self.initialized = true;
-    }
-    self.state = (self.kernel)(self.state, data);
+    self.state = crc32_dispatch(self.state, data);
   }
 
   #[inline]
@@ -594,11 +532,9 @@ impl traits::ChecksumCombine for Crc32 {
 /// let crc = Crc32C::checksum(b"123456789");
 /// assert_eq!(crc, 0xE306_9283);
 /// ```
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct Crc32C {
   state: u32,
-  kernel: Crc32Fn,
-  initialized: bool,
 }
 
 /// Explicit name for the Castagnoli CRC-32C variant (alias of [`Crc32C`]).
@@ -612,17 +548,18 @@ impl Crc32C {
   #[inline]
   #[must_use]
   pub const fn resume(crc: u32) -> Self {
-    Self {
-      state: crc ^ !0,
-      kernel: crc32c_portable,
-      initialized: false,
-    }
+    Self { state: crc ^ !0 }
   }
 
   /// Get the name of the currently selected backend.
   #[must_use]
   pub fn backend_name() -> &'static str {
-    CRC32C_DISPATCHER.backend_name()
+    let cfg = config::get();
+    match cfg.effective_force {
+      Crc32Force::Reference => kernels::REFERENCE,
+      Crc32Force::Portable => kernels::PORTABLE,
+      _ => crc32c_selected_kernel_name(1024),
+    }
   }
 
   /// Get the effective CRC-32 configuration (overrides + thresholds).
@@ -644,29 +581,17 @@ impl traits::Checksum for Crc32C {
 
   #[inline]
   fn new() -> Self {
-    Self {
-      state: !0,
-      kernel: CRC32C_DISPATCHER.kernel(),
-      initialized: true,
-    }
+    Self { state: !0 }
   }
 
   #[inline]
   fn with_initial(initial: u32) -> Self {
-    Self {
-      state: initial ^ !0,
-      kernel: CRC32C_DISPATCHER.kernel(),
-      initialized: true,
-    }
+    Self { state: initial ^ !0 }
   }
 
   #[inline]
   fn update(&mut self, data: &[u8]) {
-    if !self.initialized {
-      self.kernel = CRC32C_DISPATCHER.kernel();
-      self.initialized = true;
-    }
-    self.state = (self.kernel)(self.state, data);
+    self.state = crc32c_dispatch(self.state, data);
   }
 
   #[inline]

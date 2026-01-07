@@ -448,8 +448,8 @@ mod aarch64_tables {
       crc16_ccitt: crc16_k::CCITT_PMULL_SMALL_KERNEL,
       crc16_ibm: crc16_k::IBM_PMULL_SMALL_KERNEL,
       crc24_openpgp: crc24_k::OPENPGP_PMULL_SMALL_KERNEL,
-      crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL,
-      crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL,
+      crc32_ieee: crc32_k::CRC32_HWCRC[0], // hwcrc faster than PMULL for tiny buffers
+      crc32c: crc32_k::CRC32C_HWCRC[0],    // hwcrc faster than PMULL for tiny buffers
       crc64_xz: crc64_k::XZ_PMULL_SMALL,
       crc64_nvme: crc64_k::NVME_PMULL_SMALL,
     },
@@ -458,10 +458,10 @@ mod aarch64_tables {
       crc16_ccitt: crc16_k::CCITT_PMULL_SMALL_KERNEL,
       crc16_ibm: crc16_k::IBM_PMULL_SMALL_KERNEL,
       crc24_openpgp: crc24_k::OPENPGP_PMULL[0], // 1-way
-      crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL,
-      crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL,
-      crc64_xz: crc64_k::XZ_PMULL[0],          // 1-way
-      crc64_nvme: crc64_k::NVME_PMULL_EOR3[0], // 1-way eor3
+      crc32_ieee: crc32_k::CRC32_HWCRC[0],      // hwcrc faster than PMULL for small buffers
+      crc32c: crc32_k::CRC32C_HWCRC[0],         // hwcrc faster than PMULL for small buffers
+      crc64_xz: crc64_k::XZ_PMULL[0],           // 1-way
+      crc64_nvme: crc64_k::NVME_PMULL_EOR3[0],  // 1-way eor3
     },
 
     m: KernelSet {
@@ -512,8 +512,8 @@ mod aarch64_tables {
       crc16_ccitt: crc16_k::CCITT_PMULL_SMALL_KERNEL,
       crc16_ibm: crc16_k::IBM_PMULL_SMALL_KERNEL,
       crc24_openpgp: crc24_k::OPENPGP_PMULL_SMALL_KERNEL,
-      crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL,
-      crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL,
+      crc32_ieee: crc32_k::CRC32_HWCRC[0], // hwcrc faster than PMULL for tiny buffers
+      crc32c: crc32_k::CRC32C_HWCRC[0],    // hwcrc faster than PMULL for tiny buffers
       crc64_xz: crc64_k::XZ_PMULL_SMALL,
       crc64_nvme: crc64_k::NVME_PMULL_SMALL,
     },
@@ -522,8 +522,8 @@ mod aarch64_tables {
       crc16_ccitt: crc16_k::CCITT_PMULL_SMALL_KERNEL,
       crc16_ibm: crc16_k::IBM_PMULL_SMALL_KERNEL,
       crc24_openpgp: crc24_k::OPENPGP_PMULL[0],
-      crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL,
-      crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL,
+      crc32_ieee: crc32_k::CRC32_HWCRC[0], // hwcrc faster than PMULL for small buffers
+      crc32c: crc32_k::CRC32C_HWCRC[0],    // hwcrc faster than PMULL for small buffers
       crc64_xz: crc64_k::XZ_PMULL[0],
       crc64_nvme: crc64_k::NVME_PMULL[0],
     },
@@ -618,7 +618,7 @@ mod x86_64_tables {
       crc32_ieee: crc32_k::CRC32_VPCLMUL[3],      // 7-way
       crc32c: crc32_k::CRC32C_HWCRC[0],           // hwcrc still wins at small
       crc64_xz: crc64_k::XZ_VPCLMUL[4],           // 8-way
-      crc64_nvme: crc64_k::NVME_VPCLMUL_4X512,
+      crc64_nvme: crc64_k::NVME_VPCLMUL[4],       // 8-way (was 4x512 - too slow for 256B)
     },
 
     m: KernelSet {

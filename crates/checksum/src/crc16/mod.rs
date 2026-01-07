@@ -26,20 +26,16 @@ pub(crate) mod portable;
 #[cfg(feature = "alloc")]
 pub mod kernel_test;
 
-use backend::dispatch::Selected;
 #[allow(unused_imports)]
 pub use config::{Crc16Config, Crc16Force};
 // Re-export traits for test modules (`use super::*`).
 #[allow(unused_imports)]
 pub(super) use traits::{Checksum, ChecksumCombine};
 
-use crate::{
-  common::{
-    combine::{Gf2Matrix16, combine_crc16, generate_shift8_matrix_16},
-    reference::crc16_bitwise,
-    tables::{CRC16_CCITT_POLY, CRC16_IBM_POLY, generate_crc16_tables_4, generate_crc16_tables_8},
-  },
-  dispatchers::{Crc16Dispatcher, Crc16Fn},
+use crate::common::{
+  combine::{Gf2Matrix16, combine_crc16, generate_shift8_matrix_16},
+  reference::crc16_bitwise,
+  tables::{CRC16_CCITT_POLY, CRC16_IBM_POLY, generate_crc16_tables_4, generate_crc16_tables_8},
 };
 
 #[cfg(target_arch = "aarch64")]
@@ -84,71 +80,42 @@ fn crc16_ibm_reference(crc: u16, data: &[u8]) -> u16 {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Portable Kernel Wrappers
+// Dispatch Functions (using new dispatch module)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// CRC-16/CCITT dispatch with force mode support.
 #[inline]
-fn crc16_ccitt_portable_auto(crc: u16, data: &[u8]) -> u16 {
-  const THRESHOLD: usize = 64;
-  if data.len() < THRESHOLD {
-    portable::crc16_ccitt_slice4(crc, data)
-  } else {
-    portable::crc16_ccitt_slice8(crc, data)
+fn crc16_ccitt_dispatch(crc: u16, data: &[u8]) -> u16 {
+  let cfg = config::get_ccitt();
+  match cfg.effective_force {
+    Crc16Force::Reference => crc16_ccitt_reference(crc, data),
+    Crc16Force::Portable => portable::crc16_ccitt_slice8(crc, data),
+    _ => {
+      let table = crate::dispatch::active_table();
+      let kernel = table.select_set(data.len()).crc16_ccitt;
+      kernel(crc, data)
+    }
   }
 }
 
+/// CRC-16/IBM dispatch with force mode support.
 #[inline]
-fn crc16_ibm_portable_auto(crc: u16, data: &[u8]) -> u16 {
-  const THRESHOLD: usize = 64;
-  if data.len() < THRESHOLD {
-    portable::crc16_ibm_slice4(crc, data)
-  } else {
-    portable::crc16_ibm_slice8(crc, data)
+fn crc16_ibm_dispatch(crc: u16, data: &[u8]) -> u16 {
+  let cfg = config::get_ibm();
+  match cfg.effective_force {
+    Crc16Force::Reference => crc16_ibm_reference(crc, data),
+    Crc16Force::Portable => portable::crc16_ibm_slice8(crc, data),
+    _ => {
+      let table = crate::dispatch::active_table();
+      let kernel = table.select_set(data.len()).crc16_ibm;
+      kernel(crc, data)
+    }
   }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Auto Dispatch Functions (using new dispatch module)
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// CRC-16/CCITT auto-dispatch using pre-computed kernel tables.
-#[inline]
-fn crc16_ccitt_auto(crc: u16, data: &[u8]) -> u16 {
-  let table = crate::dispatch::active_table();
-  let kernel = table.select_set(data.len()).crc16_ccitt;
-  kernel(crc, data)
-}
-
-/// CRC-16/IBM auto-dispatch using pre-computed kernel tables.
-#[inline]
-fn crc16_ibm_auto(crc: u16, data: &[u8]) -> u16 {
-  let table = crate::dispatch::active_table();
-  let kernel = table.select_set(data.len()).crc16_ibm;
-  kernel(crc, data)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Introspection
 // ─────────────────────────────────────────────────────────────────────────────
-
-#[cfg(target_arch = "x86_64")]
-const AUTO_NAME: &str = "x86_64/auto";
-#[cfg(target_arch = "aarch64")]
-const AUTO_NAME: &str = "aarch64/auto";
-#[cfg(target_arch = "powerpc64")]
-const AUTO_NAME: &str = "power/auto";
-#[cfg(target_arch = "s390x")]
-const AUTO_NAME: &str = "s390x/auto";
-#[cfg(target_arch = "riscv64")]
-const AUTO_NAME: &str = "riscv64/auto";
-#[cfg(not(any(
-  target_arch = "x86_64",
-  target_arch = "aarch64",
-  target_arch = "powerpc64",
-  target_arch = "s390x",
-  target_arch = "riscv64"
-)))]
-const AUTO_NAME: &str = "portable/slice8";
 
 #[inline]
 #[must_use]
@@ -164,43 +131,38 @@ pub(crate) fn crc16_selected_kernel_name(len: usize) -> &'static str {
 
   let table = crate::dispatch::active_table();
   let _set = table.select_set(len);
-  AUTO_NAME
+
+  #[cfg(target_arch = "x86_64")]
+  {
+    "x86_64/auto"
+  }
+  #[cfg(target_arch = "aarch64")]
+  {
+    "aarch64/auto"
+  }
+  #[cfg(target_arch = "powerpc64")]
+  {
+    "power/auto"
+  }
+  #[cfg(target_arch = "s390x")]
+  {
+    "s390x/auto"
+  }
+  #[cfg(target_arch = "riscv64")]
+  {
+    "riscv64/auto"
+  }
+  #[cfg(not(any(
+    target_arch = "x86_64",
+    target_arch = "aarch64",
+    target_arch = "powerpc64",
+    target_arch = "s390x",
+    target_arch = "riscv64"
+  )))]
+  {
+    kernels::PORTABLE_SLICE8
+  }
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Dispatcher Selection
-// ─────────────────────────────────────────────────────────────────────────────
-
-fn select_crc16_ccitt() -> Selected<Crc16Fn> {
-  let cfg = config::get_ccitt();
-
-  if cfg.effective_force == Crc16Force::Reference {
-    return Selected::new(kernels::REFERENCE, crc16_ccitt_reference);
-  }
-
-  if cfg.effective_force == Crc16Force::Portable {
-    return Selected::new(kernels::PORTABLE_SLICE8, portable::crc16_ccitt_slice8);
-  }
-
-  Selected::new(AUTO_NAME, crc16_ccitt_auto)
-}
-
-fn select_crc16_ibm() -> Selected<Crc16Fn> {
-  let cfg = config::get_ibm();
-
-  if cfg.effective_force == Crc16Force::Reference {
-    return Selected::new(kernels::REFERENCE, crc16_ibm_reference);
-  }
-
-  if cfg.effective_force == Crc16Force::Portable {
-    return Selected::new(kernels::PORTABLE_SLICE8, portable::crc16_ibm_slice8);
-  }
-
-  Selected::new(AUTO_NAME, crc16_ibm_auto)
-}
-
-static CRC16_CCITT_DISPATCHER: Crc16Dispatcher = Crc16Dispatcher::new(select_crc16_ccitt);
-static CRC16_IBM_DISPATCHER: Crc16Dispatcher = Crc16Dispatcher::new(select_crc16_ibm);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CRC-16 Types
@@ -223,11 +185,9 @@ static CRC16_IBM_DISPATCHER: Crc16Dispatcher = Crc16Dispatcher::new(select_crc16
 /// let crc = Crc16Ccitt::checksum(b"123456789");
 /// assert_eq!(crc, 0x906E);
 /// ```
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct Crc16Ccitt {
   state: u16,
-  kernel: Crc16Fn,
-  initialized: bool,
 }
 
 impl Crc16Ccitt {
@@ -244,15 +204,18 @@ impl Crc16Ccitt {
   pub const fn resume(crc: u16) -> Self {
     Self {
       state: crc ^ Self::XOROUT,
-      kernel: crc16_ccitt_portable_auto,
-      initialized: false,
     }
   }
 
   /// Get the name of the currently selected backend.
   #[must_use]
   pub fn backend_name() -> &'static str {
-    CRC16_CCITT_DISPATCHER.backend_name()
+    let cfg = config::get_ccitt();
+    match cfg.effective_force {
+      Crc16Force::Reference => kernels::REFERENCE,
+      Crc16Force::Portable => kernels::PORTABLE_SLICE8,
+      _ => crc16_selected_kernel_name(1024),
+    }
   }
 
   /// Get the effective CRC-16 configuration.
@@ -274,29 +237,19 @@ impl traits::Checksum for Crc16Ccitt {
 
   #[inline]
   fn new() -> Self {
-    Self {
-      state: Self::INIT,
-      kernel: CRC16_CCITT_DISPATCHER.kernel(),
-      initialized: true,
-    }
+    Self { state: Self::INIT }
   }
 
   #[inline]
   fn with_initial(initial: u16) -> Self {
     Self {
       state: initial ^ Self::XOROUT,
-      kernel: CRC16_CCITT_DISPATCHER.kernel(),
-      initialized: true,
     }
   }
 
   #[inline]
   fn update(&mut self, data: &[u8]) {
-    if !self.initialized {
-      self.kernel = CRC16_CCITT_DISPATCHER.kernel();
-      self.initialized = true;
-    }
-    self.state = (self.kernel)(self.state, data);
+    self.state = crc16_ccitt_dispatch(self.state, data);
   }
 
   #[inline]
@@ -339,11 +292,9 @@ impl traits::ChecksumCombine for Crc16Ccitt {
 /// let crc = Crc16Ibm::checksum(b"123456789");
 /// assert_eq!(crc, 0xBB3D);
 /// ```
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct Crc16Ibm {
   state: u16,
-  kernel: Crc16Fn,
-  initialized: bool,
 }
 
 impl Crc16Ibm {
@@ -360,15 +311,18 @@ impl Crc16Ibm {
   pub const fn resume(crc: u16) -> Self {
     Self {
       state: crc ^ Self::XOROUT,
-      kernel: crc16_ibm_portable_auto,
-      initialized: false,
     }
   }
 
   /// Get the name of the currently selected backend.
   #[must_use]
   pub fn backend_name() -> &'static str {
-    CRC16_IBM_DISPATCHER.backend_name()
+    let cfg = config::get_ibm();
+    match cfg.effective_force {
+      Crc16Force::Reference => kernels::REFERENCE,
+      Crc16Force::Portable => kernels::PORTABLE_SLICE8,
+      _ => crc16_selected_kernel_name(1024),
+    }
   }
 
   /// Get the effective CRC-16 configuration.
@@ -390,29 +344,19 @@ impl traits::Checksum for Crc16Ibm {
 
   #[inline]
   fn new() -> Self {
-    Self {
-      state: Self::INIT,
-      kernel: CRC16_IBM_DISPATCHER.kernel(),
-      initialized: true,
-    }
+    Self { state: Self::INIT }
   }
 
   #[inline]
   fn with_initial(initial: u16) -> Self {
     Self {
       state: initial ^ Self::XOROUT,
-      kernel: CRC16_IBM_DISPATCHER.kernel(),
-      initialized: true,
     }
   }
 
   #[inline]
   fn update(&mut self, data: &[u8]) {
-    if !self.initialized {
-      self.kernel = CRC16_IBM_DISPATCHER.kernel();
-      self.initialized = true;
-    }
-    self.state = (self.kernel)(self.state, data);
+    self.state = crc16_ibm_dispatch(self.state, data);
   }
 
   #[inline]
