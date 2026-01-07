@@ -428,17 +428,18 @@ mod aarch64_tables {
   // ───────────────────────────────────────────────────────────────────────────
   // Apple M1-M3 Table
   //
-  // Benchmark source: macos_arm64_kernels.txt
+  // Benchmark source: macOS local (2026-01-20)
   // Features: PMULL + SHA3 (EOR3)
+  // Peak throughputs: CRC-16 ~60 GiB/s, CRC-32 ~75 GiB/s, CRC-64 ~62 GiB/s
   //
-  // Optimal kernels per (variant, size_class):
-  //   crc16/ccitt: xs=pmull-small, s=pmull-small, m=pmull-2way, l=pmull-3way
-  //   crc16/ibm:   xs=pmull-small, s=pmull-small, m=pmull-3way, l=pmull-3way
-  //   crc24/openpgp: xs=pmull-small, s=pmull, m=pmull, l=pmull
-  //   crc32/ieee:  xs=pmull-small, s=pmull-small, m=pmull-small, l=pmull-eor3-v9s3x2e-s3
-  //   crc32c:      xs=pmull-small, s=pmull-small, m=pmull-small, l=pmull-eor3-v9s3x2e-s3
-  //   crc64/xz:    xs=pmull-small, s=pmull, m=pmull-eor3, l=pmull-eor3-3way
-  //   crc64/nvme:  xs=pmull-small, s=pmull-eor3, m=pmull-eor3, l=pmull-3way
+  // Optimal kernels per (variant, peak):
+  //   crc16/ccitt: pmull, streams=3, 60.15 GiB/s
+  //   crc16/ibm:   pmull, streams=3, 58.77 GiB/s
+  //   crc24/openpgp: pmull, streams=3, 44.70 GiB/s
+  //   crc32/ieee:  pmull-eor3-v9s3x2e-s3, streams=1, 74.32 GiB/s
+  //   crc32c:      pmull-eor3-v9s3x2e-s3, streams=1, 75.32 GiB/s
+  //   crc64/xz:    pmull, streams=3, 62.58 GiB/s
+  //   crc64/nvme:  pmull-eor3, streams=3, 62.57 GiB/s
   // ───────────────────────────────────────────────────────────────────────────
   pub static APPLE_M1M3_TABLE: KernelTable = KernelTable {
     boundaries: [64, 256, 4096],
@@ -474,26 +475,35 @@ mod aarch64_tables {
     },
 
     l: KernelSet {
-      crc16_ccitt: crc16_k::CCITT_PMULL[2], // 3-way
-      crc16_ibm: crc16_k::IBM_PMULL[2],     // 3-way
-      crc24_openpgp: crc24_k::OPENPGP_PMULL[0],
+      crc16_ccitt: crc16_k::CCITT_PMULL[2],     // 3-way (streams=3)
+      crc16_ibm: crc16_k::IBM_PMULL[2],         // 3-way (streams=3)
+      crc24_openpgp: crc24_k::OPENPGP_PMULL[2], // 3-way (streams=3)
       crc32_ieee: crc32_k::CRC32_PMULL_EOR3[0], // pmull-eor3-v9s3x2e-s3
-      crc32c: crc32_k::CRC32C_PMULL_EOR3[0],
-      crc64_xz: crc64_k::XZ_PMULL_EOR3[2], // 3-way eor3
-      crc64_nvme: crc64_k::NVME_PMULL[2],  // 3-way
+      crc32c: crc32_k::CRC32C_PMULL_EOR3[0],    // pmull-eor3-v9s3x2e-s3
+      crc64_xz: crc64_k::XZ_PMULL[2],           // 3-way (streams=3)
+      crc64_nvme: crc64_k::NVME_PMULL_EOR3[2],  // 3-way eor3 (streams=3)
     },
   };
 
   // ───────────────────────────────────────────────────────────────────────────
   // Graviton2 Table
   //
-  // Benchmark source: linux_arm64_kernels.txt
+  // Benchmark source: Namespace linux-arm64 runner (2026-01-20)
   // Features: PMULL (no EOR3/SHA3)
+  // Peak throughputs: CRC-16 ~33 GiB/s, CRC-32 ~40 GiB/s, CRC-64 ~33 GiB/s
   //
-  // Note: Graviton2 benchmark shows pmull-eor3 winning in some cases even
-  // without SHA3 feature flag. This is because the EOR3 instruction is
-  // available on Graviton2 through a different path. We use the winning
-  // kernel from benchmarks.
+  // Optimal kernels per (variant, peak):
+  //   crc16/ccitt: pmull, streams=1, 33.42 GiB/s
+  //   crc16/ibm:   pmull, streams=1, 33.45 GiB/s
+  //   crc24/openpgp: pmull, streams=1, 24.85 GiB/s
+  //   crc32/ieee:  pmull-eor3-v9s3x2e-s3, streams=1, 40.31 GiB/s
+  //   crc32c:      pmull-eor3-v9s3x2e-s3, streams=1, 40.11 GiB/s
+  //   crc64/xz:    pmull-eor3, streams=1, 33.49 GiB/s
+  //   crc64/nvme:  pmull, streams=1, 33.33 GiB/s
+  //
+  // Note: Graviton2 benchmark shows pmull-eor3 winning for CRC-64/XZ even
+  // without SHA3 feature flag - the EOR3 instruction is available through
+  // a different path on this hardware.
   // ───────────────────────────────────────────────────────────────────────────
   pub static GRAVITON2_TABLE: KernelTable = KernelTable {
     boundaries: [64, 256, 4096],
@@ -529,13 +539,13 @@ mod aarch64_tables {
     },
 
     l: KernelSet {
-      crc16_ccitt: crc16_k::CCITT_PMULL[0],
-      crc16_ibm: crc16_k::IBM_PMULL[0],
-      crc24_openpgp: crc24_k::OPENPGP_PMULL[0],
-      crc32_ieee: crc32_k::CRC32_PMULL_EOR3[0],
-      crc32c: crc32_k::CRC32C_PMULL_EOR3[0],
-      crc64_xz: crc64_k::XZ_PMULL[0], // pmull wins over eor3 at large sizes
-      crc64_nvme: crc64_k::NVME_PMULL_EOR3[0],
+      crc16_ccitt: crc16_k::CCITT_PMULL[0],     // 1-way (streams=1)
+      crc16_ibm: crc16_k::IBM_PMULL[0],         // 1-way (streams=1)
+      crc24_openpgp: crc24_k::OPENPGP_PMULL[0], // 1-way (streams=1)
+      crc32_ieee: crc32_k::CRC32_PMULL_EOR3[0], // pmull-eor3-v9s3x2e-s3
+      crc32c: crc32_k::CRC32C_PMULL_EOR3[0],    // pmull-eor3-v9s3x2e-s3
+      crc64_xz: crc64_k::XZ_PMULL_EOR3[0],      // pmull-eor3 (streams=1)
+      crc64_nvme: crc64_k::NVME_PMULL[0],       // 1-way (streams=1)
     },
   };
 
@@ -575,17 +585,18 @@ mod x86_64_tables {
   // ───────────────────────────────────────────────────────────────────────────
   // Zen4 Table
   //
-  // Benchmark source: linux_x86-64_kernels.txt
+  // Benchmark source: Namespace linux-x86 runner (2026-01-20)
   // Features: VPCLMULQDQ + AVX-512
+  // Peak throughputs: CRC-16 ~80 GiB/s, CRC-32 ~78 GiB/s, CRC-64 ~75 GiB/s
   //
-  // Optimal kernels per (variant, size_class):
-  //   crc16/ccitt: xs=pclmul-small, s=vpclmul-2way, m=vpclmul-4way, l=vpclmul-2way
-  //   crc16/ibm:   xs=pclmul-small, s=vpclmul-2way, m=vpclmul-4way, l=vpclmul-4way
-  //   crc24/openpgp: xs=pclmul-small, s=vpclmul-4way, m=vpclmul-7way, l=vpclmul-2way
-  //   crc32/ieee:  xs=vpclmul-small, s=vpclmul-7way, m=vpclmul, l=vpclmul-4way
-  //   crc32c:      xs=hwcrc, s=hwcrc, m=fusion-vpclmul-v3x2, l=fusion-vpclmul-v3x2
-  //   crc64/xz:    xs=pclmul-small, s=vpclmul-8way, m=vpclmul-7way, l=vpclmul-2way
-  //   crc64/nvme:  xs=pclmul-small, s=vpclmul-4x512, m=vpclmul-7way, l=vpclmul-4x512
+  // Optimal kernels per (variant, peak):
+  //   crc16/ccitt: vpclmul, streams=4, 79.87 GiB/s
+  //   crc16/ibm:   vpclmul, streams=4, 77.96 GiB/s
+  //   crc24/openpgp: vpclmul, streams=7, 42.96 GiB/s
+  //   crc32/ieee:  vpclmul, streams=2, 78.29 GiB/s
+  //   crc32c:      fusion-vpclmul-v3x2, streams=1, 72.53 GiB/s
+  //   crc64/xz:    vpclmul, streams=2, 71.56 GiB/s
+  //   crc64/nvme:  vpclmul, streams=2, 75.18 GiB/s
   // ───────────────────────────────────────────────────────────────────────────
   pub static ZEN4_TABLE: KernelTable = KernelTable {
     boundaries: [64, 256, 4096],
@@ -621,13 +632,13 @@ mod x86_64_tables {
     },
 
     l: KernelSet {
-      crc16_ccitt: crc16_k::CCITT_VPCLMUL[1],     // 2-way wins at large
-      crc16_ibm: crc16_k::IBM_VPCLMUL[2],         // 4-way
-      crc24_openpgp: crc24_k::OPENPGP_VPCLMUL[1], // 2-way
-      crc32_ieee: crc32_k::CRC32_VPCLMUL[2],      // 4-way
-      crc32c: crc32_k::CRC32C_FUSION_VPCLMUL[0],
-      crc64_xz: crc64_k::XZ_VPCLMUL[1], // 2-way
-      crc64_nvme: crc64_k::NVME_VPCLMUL_4X512,
+      crc16_ccitt: crc16_k::CCITT_VPCLMUL[2],     // 4-way (streams=4)
+      crc16_ibm: crc16_k::IBM_VPCLMUL[2],         // 4-way (streams=4)
+      crc24_openpgp: crc24_k::OPENPGP_VPCLMUL[3], // 7-way (streams=7)
+      crc32_ieee: crc32_k::CRC32_VPCLMUL[1],      // 2-way (streams=2)
+      crc32c: crc32_k::CRC32C_FUSION_VPCLMUL[0],  // fusion-vpclmul-v3x2
+      crc64_xz: crc64_k::XZ_VPCLMUL[1],           // 2-way (streams=2)
+      crc64_nvme: crc64_k::NVME_VPCLMUL[1],       // 2-way (streams=2)
     },
   };
 
