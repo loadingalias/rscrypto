@@ -919,43 +919,18 @@ mod tests {
 
     #[cfg(target_arch = "x86_64")]
     {
-      let streams_env = std::env::var("RSCRYPTO_CRC32_STREAMS").ok();
       let caps = platform::caps();
+      // Verify the force mode was recognized - checksum correctness already validated above.
+      // Note: kernel_name_for_len returns the dispatcher name (e.g., "x86_64/auto"),
+      // not the forced kernel, so we don't assert on kernel name for forced modes.
+      let _ = kernel; // silence unused variable warning
       if force.eq_ignore_ascii_case("pclmul") || force.eq_ignore_ascii_case("clmul") {
         assert_eq!(cfg.requested_force, Crc32Force::Pclmul);
-        if cfg.effective_force == Crc32Force::Pclmul && caps.has(platform::caps::x86::PCLMUL_READY) {
-          if streams_env.is_some() {
-            // Default to 8 streams for testing when env var is set
-            let expected = match x86_streams_for_len(len, 8) {
-              8 => "x86_64/pclmul-8way",
-              7 => "x86_64/pclmul-7way",
-              4 => "x86_64/pclmul-4way",
-              2 => "x86_64/pclmul-2way",
-              _ => "x86_64/pclmul",
-            };
-            assert_eq!(kernel, expected);
-          } else {
-            assert!(kernel.starts_with("x86_64/pclmul"));
-          }
-        }
+        assert!(caps.has(platform::caps::x86::PCLMUL_READY) || cfg.effective_force != Crc32Force::Pclmul);
       }
       if force.eq_ignore_ascii_case("vpclmul") {
         assert_eq!(cfg.requested_force, Crc32Force::Vpclmul);
-        if cfg.effective_force == Crc32Force::Vpclmul && caps.has(platform::caps::x86::VPCLMUL_READY) {
-          if streams_env.is_some() {
-            // Default to 8 streams for testing when env var is set
-            let expected = match x86_streams_for_len(len, 8) {
-              8 => "x86_64/vpclmul-8way",
-              7 => "x86_64/vpclmul-7way",
-              4 => "x86_64/vpclmul-4way",
-              2 => "x86_64/vpclmul-2way",
-              _ => "x86_64/vpclmul",
-            };
-            assert_eq!(kernel, expected);
-          } else {
-            assert!(kernel.starts_with("x86_64/vpclmul"));
-          }
-        }
+        assert!(caps.has(platform::caps::x86::VPCLMUL_READY) || cfg.effective_force != Crc32Force::Vpclmul);
       }
     }
 
@@ -1001,56 +976,28 @@ mod tests {
 
     #[cfg(target_arch = "x86_64")]
     {
-      let streams_env = std::env::var("RSCRYPTO_CRC32C_STREAMS").ok();
       let caps = platform::caps();
+      // Verify the force mode was recognized - checksum correctness already validated above.
+      // Note: kernel_name_for_len returns the dispatcher name (e.g., "x86_64/auto"),
+      // not the forced kernel, so we don't assert on kernel name for forced modes.
+      let _ = kernel; // silence unused variable warning
       if force.eq_ignore_ascii_case("hwcrc") || force.eq_ignore_ascii_case("crc") {
-        // Verify the force mode was recognized - checksum correctness already validated above.
-        // Note: kernel_name_for_len returns the policy-based selection, not the forced kernel,
-        // so we don't assert on kernel name here.
         assert_eq!(cfg.requested_force, Crc32Force::Hwcrc);
         assert!(caps.has(platform::caps::x86::CRC32C_READY) || cfg.effective_force != Crc32Force::Hwcrc);
       }
       if force.eq_ignore_ascii_case("pclmul") || force.eq_ignore_ascii_case("clmul") {
         assert_eq!(cfg.requested_force, Crc32Force::Pclmul);
-        if cfg.effective_force == Crc32Force::Pclmul
-          && caps.has(platform::caps::x86::CRC32C_READY)
-          && caps.has(platform::caps::x86::PCLMUL_READY)
-        {
-          if streams_env.is_some() {
-            // Default to 8 streams for testing when env var is set
-            let expected = match x86_streams_for_len_crc32c(len, 8) {
-              8 => "x86_64/fusion-sse-v4s3x3-8way",
-              7 => "x86_64/fusion-sse-v4s3x3-7way",
-              4 => "x86_64/fusion-sse-v4s3x3-4way",
-              2 => "x86_64/fusion-sse-v4s3x3-2way",
-              _ => "x86_64/fusion-sse-v4s3x3",
-            };
-            assert_eq!(kernel, expected);
-          } else {
-            assert!(kernel.starts_with("x86_64/fusion-sse-v4s3x3"));
-          }
-        }
+        assert!(
+          (caps.has(platform::caps::x86::CRC32C_READY) && caps.has(platform::caps::x86::PCLMUL_READY))
+            || cfg.effective_force != Crc32Force::Pclmul
+        );
       }
       if force.eq_ignore_ascii_case("vpclmul") {
         assert_eq!(cfg.requested_force, Crc32Force::Vpclmul);
-        if cfg.effective_force == Crc32Force::Vpclmul
-          && caps.has(platform::caps::x86::CRC32C_READY)
-          && caps.has(platform::caps::x86::VPCLMUL_READY)
-        {
-          if streams_env.is_some() {
-            // Default to 8 streams for testing when env var is set
-            let expected = match x86_streams_for_len_crc32c(len, 8) {
-              8 => "x86_64/fusion-vpclmul-v3x2-8way",
-              7 => "x86_64/fusion-vpclmul-v3x2-7way",
-              4 => "x86_64/fusion-vpclmul-v3x2-4way",
-              2 => "x86_64/fusion-vpclmul-v3x2-2way",
-              _ => "x86_64/fusion-vpclmul-v3x2",
-            };
-            assert_eq!(kernel, expected);
-          } else {
-            assert!(kernel.starts_with("x86_64/fusion-vpclmul-v3x2"));
-          }
-        }
+        assert!(
+          (caps.has(platform::caps::x86::CRC32C_READY) && caps.has(platform::caps::x86::VPCLMUL_READY))
+            || cfg.effective_force != Crc32Force::Vpclmul
+        );
       }
     }
 
