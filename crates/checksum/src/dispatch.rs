@@ -448,8 +448,8 @@ mod aarch64_tables {
       crc16_ccitt: crc16_k::CCITT_PMULL_SMALL_KERNEL,
       crc16_ibm: crc16_k::IBM_PMULL_SMALL_KERNEL,
       crc24_openpgp: crc24_k::OPENPGP_PMULL_SMALL_KERNEL,
-      crc32_ieee: crc32_k::CRC32_HWCRC[0], // hwcrc faster than PMULL for tiny buffers
-      crc32c: crc32_k::CRC32C_HWCRC[0],    // hwcrc faster than PMULL for tiny buffers
+      crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL, // pmull-small beats hwcrc @ 13.71 GiB/s
+      crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL,    // pmull-small beats hwcrc @ 13.55 GiB/s
       crc64_xz: crc64_k::XZ_PMULL_SMALL,
       crc64_nvme: crc64_k::NVME_PMULL_SMALL,
     },
@@ -457,31 +457,31 @@ mod aarch64_tables {
     s: KernelSet {
       crc16_ccitt: crc16_k::CCITT_PMULL_SMALL_KERNEL,
       crc16_ibm: crc16_k::IBM_PMULL_SMALL_KERNEL,
-      crc24_openpgp: crc24_k::OPENPGP_PMULL[0], // 1-way
-      crc32_ieee: crc32_k::CRC32_HWCRC[0],      // hwcrc faster than PMULL for small buffers
-      crc32c: crc32_k::CRC32C_HWCRC[0],         // hwcrc faster than PMULL for small buffers
-      crc64_xz: crc64_k::XZ_PMULL[0],           // 1-way
-      crc64_nvme: crc64_k::NVME_PMULL_EOR3[0],  // 1-way eor3
+      crc24_openpgp: crc24_k::OPENPGP_PMULL[1],      // 2-way @ 26.70 GiB/s
+      crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL, // pmull-small @ 34.66 GiB/s
+      crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL,    // pmull-small @ 34.77 GiB/s
+      crc64_xz: crc64_k::XZ_PMULL[0],                // 1-way @ 29.54 GiB/s
+      crc64_nvme: crc64_k::NVME_PMULL[0],            // pmull @ 29.39 GiB/s
     },
 
     m: KernelSet {
-      crc16_ccitt: crc16_k::CCITT_PMULL[1], // 2-way
-      crc16_ibm: crc16_k::IBM_PMULL[2],     // 3-way
-      crc24_openpgp: crc24_k::OPENPGP_PMULL[0],
-      crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL,
-      crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL,
-      crc64_xz: crc64_k::XZ_PMULL_EOR3[0], // 1-way eor3
-      crc64_nvme: crc64_k::NVME_PMULL_EOR3[0],
+      crc16_ccitt: crc16_k::CCITT_PMULL[0],          // 1-way @ 51.39 GiB/s
+      crc16_ibm: crc16_k::IBM_PMULL[1],              // 2-way @ 52.31 GiB/s
+      crc24_openpgp: crc24_k::OPENPGP_PMULL[0],      // 1-way @ 45.67 GiB/s
+      crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL, // pmull-small @ 56.91 GiB/s
+      crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL,    // pmull-small @ 56.91 GiB/s
+      crc64_xz: crc64_k::XZ_PMULL_EOR3[0],           // pmull-eor3 @ 59.28 GiB/s
+      crc64_nvme: crc64_k::NVME_PMULL_EOR3[0],       // pmull-eor3 @ 58.92 GiB/s
     },
 
     l: KernelSet {
-      crc16_ccitt: crc16_k::CCITT_PMULL[2],     // 3-way (streams=3)
-      crc16_ibm: crc16_k::IBM_PMULL[2],         // 3-way (streams=3)
-      crc24_openpgp: crc24_k::OPENPGP_PMULL[2], // 3-way (streams=3)
-      crc32_ieee: crc32_k::CRC32_PMULL_EOR3[0], // pmull-eor3-v9s3x2e-s3
-      crc32c: crc32_k::CRC32C_PMULL_EOR3[0],    // pmull-eor3-v9s3x2e-s3
-      crc64_xz: crc64_k::XZ_PMULL[2],           // 3-way (streams=3)
-      crc64_nvme: crc64_k::NVME_PMULL_EOR3[2],  // 3-way eor3 (streams=3)
+      crc16_ccitt: crc16_k::CCITT_PMULL[2],     // 3-way @ 60.82 GiB/s
+      crc16_ibm: crc16_k::IBM_PMULL[1],         // 2-way @ 61.91 GiB/s
+      crc24_openpgp: crc24_k::OPENPGP_PMULL[0], // 1-way @ 47.70 GiB/s (3-way slower)
+      crc32_ieee: crc32_k::CRC32_PMULL_EOR3[0], // pmull-eor3-v9s3x2e-s3 @ 72.11 GiB/s
+      crc32c: crc32_k::CRC32C_PMULL_EOR3[0],    // pmull-eor3-v9s3x2e-s3 @ 72.05 GiB/s
+      crc64_xz: crc64_k::XZ_PMULL_EOR3[2],      // pmull-eor3-3way @ 63.10 GiB/s
+      crc64_nvme: crc64_k::NVME_PMULL_EOR3[2],  // pmull-eor3-3way @ 62.12 GiB/s
     },
   };
 
@@ -512,8 +512,8 @@ mod aarch64_tables {
       crc16_ccitt: crc16_k::CCITT_PMULL_SMALL_KERNEL,
       crc16_ibm: crc16_k::IBM_PMULL_SMALL_KERNEL,
       crc24_openpgp: crc24_k::OPENPGP_PMULL_SMALL_KERNEL,
-      crc32_ieee: crc32_k::CRC32_HWCRC[0], // hwcrc faster than PMULL for tiny buffers
-      crc32c: crc32_k::CRC32C_HWCRC[0],    // hwcrc faster than PMULL for tiny buffers
+      crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL, // pmull-small beats hwcrc @ 9.53 GiB/s
+      crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL,    // pmull-small beats hwcrc @ 9.54 GiB/s
       crc64_xz: crc64_k::XZ_PMULL_SMALL,
       crc64_nvme: crc64_k::NVME_PMULL_SMALL,
     },
@@ -521,31 +521,31 @@ mod aarch64_tables {
     s: KernelSet {
       crc16_ccitt: crc16_k::CCITT_PMULL_SMALL_KERNEL,
       crc16_ibm: crc16_k::IBM_PMULL_SMALL_KERNEL,
-      crc24_openpgp: crc24_k::OPENPGP_PMULL[0],
-      crc32_ieee: crc32_k::CRC32_HWCRC[0], // hwcrc faster than PMULL for small buffers
-      crc32c: crc32_k::CRC32C_HWCRC[0],    // hwcrc faster than PMULL for small buffers
-      crc64_xz: crc64_k::XZ_PMULL[0],
-      crc64_nvme: crc64_k::NVME_PMULL[0],
+      crc24_openpgp: crc24_k::OPENPGP_PMULL[0],      // 1-way @ 11.08 GiB/s
+      crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL, // pmull-small @ 13.30 GiB/s
+      crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL,    // pmull-small @ 13.30 GiB/s
+      crc64_xz: crc64_k::XZ_PMULL[0],                // pmull @ 13.60 GiB/s
+      crc64_nvme: crc64_k::NVME_PMULL_EOR3[0],       // pmull-eor3 @ 13.58 GiB/s
     },
 
     m: KernelSet {
-      crc16_ccitt: crc16_k::CCITT_PMULL[0], // 1-way
-      crc16_ibm: crc16_k::IBM_PMULL[0],
-      crc24_openpgp: crc24_k::OPENPGP_PMULL[0],
-      crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL,
-      crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL,
-      crc64_xz: crc64_k::XZ_PMULL_EOR3[0],
-      crc64_nvme: crc64_k::NVME_PMULL[0],
+      crc16_ccitt: crc16_k::CCITT_PMULL[0],          // 1-way @ 29.19 GiB/s
+      crc16_ibm: crc16_k::IBM_PMULL[0],              // 1-way @ 29.20 GiB/s
+      crc24_openpgp: crc24_k::OPENPGP_PMULL[0],      // 1-way @ 19.95 GiB/s
+      crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL, // pmull-small @ 28.62 GiB/s
+      crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL,    // pmull-small @ 28.68 GiB/s
+      crc64_xz: crc64_k::XZ_PMULL[0],                // pmull @ 30.39 GiB/s (pmull-eor3 slower here)
+      crc64_nvme: crc64_k::NVME_PMULL[0],            // pmull @ 30.45 GiB/s
     },
 
     l: KernelSet {
-      crc16_ccitt: crc16_k::CCITT_PMULL[0],     // 1-way (streams=1)
-      crc16_ibm: crc16_k::IBM_PMULL[0],         // 1-way (streams=1)
-      crc24_openpgp: crc24_k::OPENPGP_PMULL[0], // 1-way (streams=1)
-      crc32_ieee: crc32_k::CRC32_PMULL_EOR3[0], // pmull-eor3-v9s3x2e-s3
-      crc32c: crc32_k::CRC32C_PMULL_EOR3[0],    // pmull-eor3-v9s3x2e-s3
-      crc64_xz: crc64_k::XZ_PMULL_EOR3[0],      // pmull-eor3 (streams=1)
-      crc64_nvme: crc64_k::NVME_PMULL[0],       // 1-way (streams=1)
+      crc16_ccitt: crc16_k::CCITT_PMULL[0],     // 1-way @ 33.01 GiB/s
+      crc16_ibm: crc16_k::IBM_PMULL[0],         // 1-way @ 32.78 GiB/s
+      crc24_openpgp: crc24_k::OPENPGP_PMULL[0], // 1-way @ 24.88 GiB/s
+      crc32_ieee: crc32_k::CRC32_PMULL_EOR3[0], // pmull-eor3-v9s3x2e-s3 @ 39.82 GiB/s
+      crc32c: crc32_k::CRC32C_PMULL_EOR3[0],    // pmull-eor3-v9s3x2e-s3 @ 39.93 GiB/s
+      crc64_xz: crc64_k::XZ_PMULL_EOR3[0],      // pmull-eor3 @ 33.07 GiB/s
+      crc64_nvme: crc64_k::NVME_PMULL[0],       // pmull @ 33.08 GiB/s
     },
   };
 
@@ -605,40 +605,40 @@ mod x86_64_tables {
       crc16_ccitt: crc16_k::CCITT_PCLMUL_SMALL_KERNEL,
       crc16_ibm: crc16_k::IBM_PCLMUL_SMALL_KERNEL,
       crc24_openpgp: crc24_k::OPENPGP_PCLMUL_SMALL_KERNEL,
-      crc32_ieee: crc32_k::CRC32_VPCLMUL_SMALL_KERNEL,
-      crc32c: crc32_k::CRC32C_HWCRC[0], // hwcrc (SSE4.2)
+      crc32_ieee: crc32_k::CRC32_PCLMUL_SMALL_KERNEL, // pclmul-small @ 9.30 GiB/s
+      crc32c: crc32_k::CRC32C_HWCRC[0],               // hwcrc @ 27.73 GiB/s
       crc64_xz: crc64_k::XZ_PCLMUL_SMALL,
       crc64_nvme: crc64_k::NVME_PCLMUL_SMALL,
     },
 
     s: KernelSet {
-      crc16_ccitt: crc16_k::CCITT_VPCLMUL[1],     // 2-way
-      crc16_ibm: crc16_k::IBM_VPCLMUL[1],         // 2-way
-      crc24_openpgp: crc24_k::OPENPGP_VPCLMUL[2], // 4-way
-      crc32_ieee: crc32_k::CRC32_VPCLMUL[3],      // 7-way
-      crc32c: crc32_k::CRC32C_HWCRC[0],           // hwcrc still wins at small
-      crc64_xz: crc64_k::XZ_VPCLMUL[4],           // 8-way
-      crc64_nvme: crc64_k::NVME_VPCLMUL[4],       // 8-way (was 4x512 - too slow for 256B)
+      crc16_ccitt: crc16_k::CCITT_VPCLMUL[1],     // 2-way @ 18.12 GiB/s
+      crc16_ibm: crc16_k::IBM_VPCLMUL[1],         // 2-way @ 19.90 GiB/s
+      crc24_openpgp: crc24_k::OPENPGP_VPCLMUL[3], // 7-way @ 17.28 GiB/s
+      crc32_ieee: crc32_k::CRC32_VPCLMUL[0],      // 1-way @ 19.15 GiB/s
+      crc32c: crc32_k::CRC32C_HWCRC[0],           // hwcrc @ 23.59 GiB/s
+      crc64_xz: crc64_k::XZ_VPCLMUL[0],           // 1-way @ 19.48 GiB/s
+      crc64_nvme: crc64_k::NVME_VPCLMUL[0],       // 1-way @ 20.70 GiB/s
     },
 
     m: KernelSet {
-      crc16_ccitt: crc16_k::CCITT_VPCLMUL[2],     // 4-way
-      crc16_ibm: crc16_k::IBM_VPCLMUL[2],         // 4-way
-      crc24_openpgp: crc24_k::OPENPGP_VPCLMUL[3], // 7-way
-      crc32_ieee: crc32_k::CRC32_VPCLMUL[0],      // 1-way vpclmul
-      crc32c: crc32_k::CRC32C_FUSION_VPCLMUL[0],  // fusion-vpclmul-v3x2
-      crc64_xz: crc64_k::XZ_VPCLMUL[3],           // 7-way
-      crc64_nvme: crc64_k::NVME_VPCLMUL[3],       // 7-way
+      crc16_ccitt: crc16_k::CCITT_VPCLMUL[1],     // 2-way @ 61.24 GiB/s
+      crc16_ibm: crc16_k::IBM_VPCLMUL[1],         // 2-way @ 64.84 GiB/s
+      crc24_openpgp: crc24_k::OPENPGP_VPCLMUL[4], // 8-way @ 34.82 GiB/s
+      crc32_ieee: crc32_k::CRC32_VPCLMUL[1],      // 2-way @ 63.65 GiB/s
+      crc32c: crc32_k::CRC32C_FUSION_VPCLMUL[0],  // fusion-vpclmul-v3x2 @ 58.96 GiB/s
+      crc64_xz: crc64_k::XZ_VPCLMUL[1],           // 2-way @ 61.37 GiB/s
+      crc64_nvme: crc64_k::NVME_VPCLMUL[1],       // 2-way @ 66.51 GiB/s
     },
 
     l: KernelSet {
-      crc16_ccitt: crc16_k::CCITT_VPCLMUL[2],     // 4-way (streams=4)
-      crc16_ibm: crc16_k::IBM_VPCLMUL[2],         // 4-way (streams=4)
-      crc24_openpgp: crc24_k::OPENPGP_VPCLMUL[3], // 7-way (streams=7)
-      crc32_ieee: crc32_k::CRC32_VPCLMUL[1],      // 2-way (streams=2)
-      crc32c: crc32_k::CRC32C_FUSION_VPCLMUL[0],  // fusion-vpclmul-v3x2
-      crc64_xz: crc64_k::XZ_VPCLMUL[1],           // 2-way (streams=2)
-      crc64_nvme: crc64_k::NVME_VPCLMUL[1],       // 2-way (streams=2)
+      crc16_ccitt: crc16_k::CCITT_VPCLMUL[2],     // 4-way @ 70.52 GiB/s
+      crc16_ibm: crc16_k::IBM_VPCLMUL[1],         // 2-way @ 78.09 GiB/s
+      crc24_openpgp: crc24_k::OPENPGP_VPCLMUL[1], // 2-way @ 38.92 GiB/s
+      crc32_ieee: crc32_k::CRC32_VPCLMUL[1],      // 2-way @ 72.57 GiB/s
+      crc32c: crc32_k::CRC32C_FUSION_VPCLMUL[0],  // fusion-vpclmul-v3x2 @ 70.43 GiB/s
+      crc64_xz: crc64_k::XZ_VPCLMUL_4X512,        // 4x512 @ 72.66 GiB/s
+      crc64_nvme: crc64_k::NVME_VPCLMUL[2],       // 4-way @ 74.10 GiB/s
     },
   };
 
