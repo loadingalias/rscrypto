@@ -42,9 +42,10 @@ pub use config::{Crc24Config, Crc24Force};
 #[allow(unused_imports)]
 pub(super) use traits::{Checksum, ChecksumCombine};
 
+#[cfg(any(test, feature = "force-mode"))]
+use crate::common::reference::crc24_bitwise;
 use crate::common::{
   combine::{Gf2Matrix24, combine_crc24, generate_shift8_matrix_24},
-  reference::crc24_bitwise,
   tables::{CRC24_OPENPGP_POLY, generate_crc24_tables_4, generate_crc24_tables_8},
 };
 
@@ -74,6 +75,8 @@ mod kernel_tables {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Bitwise reference implementation for CRC-24/OPENPGP.
+#[cfg(any(test, feature = "force-mode"))]
+#[allow(dead_code)]
 #[inline]
 fn crc24_openpgp_reference(crc: u32, data: &[u8]) -> u32 {
   crc24_bitwise(CRC24_OPENPGP_POLY, crc, data)
@@ -83,18 +86,27 @@ fn crc24_openpgp_reference(crc: u32, data: &[u8]) -> u32 {
 // Auto Dispatch Function (using new dispatch module)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// CRC-24/OPENPGP dispatch with force mode support.
+/// CRC-24/OPENPGP dispatch - fast path using pre-resolved kernel tables.
+///
+/// Uses the empirically-optimal kernel for the current platform and buffer size.
+/// No per-call overhead: table selection happens once at initialization.
 #[inline]
 fn crc24_openpgp_dispatch(crc: u32, data: &[u8]) -> u32 {
+  let table = crate::dispatch::active_table();
+  let kernel = table.select_set(data.len()).crc24_openpgp;
+  kernel(crc, data)
+}
+
+/// CRC-24/OPENPGP dispatch with force mode support (for testing/debugging).
+#[cfg(any(test, feature = "force-mode"))]
+#[allow(dead_code)]
+#[inline]
+fn crc24_openpgp_dispatch_forced(crc: u32, data: &[u8]) -> u32 {
   let cfg = config::get();
   match cfg.effective_force {
     Crc24Force::Reference => crc24_openpgp_reference(crc, data),
     Crc24Force::Portable => portable::crc24_openpgp_slice8(crc, data),
-    _ => {
-      let table = crate::dispatch::active_table();
-      let kernel = table.select_set(data.len()).crc24_openpgp;
-      kernel(crc, data)
-    }
+    _ => crc24_openpgp_dispatch(crc, data),
   }
 }
 

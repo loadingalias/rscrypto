@@ -46,12 +46,11 @@ pub use config::{Crc64Config, Crc64Force};
 #[allow(unused_imports)]
 pub(super) use traits::{Checksum, ChecksumCombine};
 
+#[cfg(any(test, feature = "force-mode"))]
+use crate::common::reference::crc64_bitwise;
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
 use crate::common::tables::generate_crc64_tables_8;
-use crate::common::{
-  reference::crc64_bitwise,
-  tables::{CRC64_NVME_POLY, CRC64_XZ_POLY, generate_crc64_tables_16},
-};
+use crate::common::tables::{CRC64_NVME_POLY, CRC64_XZ_POLY, generate_crc64_tables_16};
 #[cfg(feature = "diag")]
 use crate::diag::{Crc64Polynomial, Crc64SelectionDiag};
 
@@ -207,11 +206,15 @@ mod kernel_tables {
 }
 
 /// CRC-64-XZ portable kernel wrapper.
+#[cfg(any(test, feature = "force-mode"))]
+#[allow(dead_code)]
 fn crc64_xz_portable(crc: u64, data: &[u8]) -> u64 {
   portable::crc64_slice16_xz(crc, data)
 }
 
 /// CRC-64-NVME portable kernel wrapper.
+#[cfg(any(test, feature = "force-mode"))]
+#[allow(dead_code)]
 fn crc64_nvme_portable(crc: u64, data: &[u8]) -> u64 {
   portable::crc64_slice16_nvme(crc, data)
 }
@@ -220,6 +223,8 @@ fn crc64_nvme_portable(crc: u64, data: &[u8]) -> u64 {
 ///
 /// This is the canonical reference implementation - obviously correct,
 /// audit-friendly, and used for verification of all optimized paths.
+#[cfg(any(test, feature = "force-mode"))]
+#[allow(dead_code)]
 fn crc64_xz_reference(crc: u64, data: &[u8]) -> u64 {
   crc64_bitwise(CRC64_XZ_POLY, crc, data)
 }
@@ -228,6 +233,8 @@ fn crc64_xz_reference(crc: u64, data: &[u8]) -> u64 {
 ///
 /// This is the canonical reference implementation - obviously correct,
 /// audit-friendly, and used for verification of all optimized paths.
+#[cfg(any(test, feature = "force-mode"))]
+#[allow(dead_code)]
 fn crc64_nvme_reference(crc: u64, data: &[u8]) -> u64 {
   crc64_bitwise(CRC64_NVME_POLY, crc, data)
 }
@@ -249,41 +256,57 @@ const CRC64_BUFFERED_THRESHOLD: usize = 64;
 // Auto Kernels (using new dispatch module)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// CRC-64-XZ dispatch with force mode support.
+/// CRC-64-XZ dispatch - fast path using pre-resolved kernel tables.
 ///
-/// Checks force mode from config, then uses dispatch tables for auto selection.
-/// Force mode is cached via OnceLock, so this check is essentially free.
+/// Uses the empirically-optimal kernel for the current platform and buffer size.
+/// No per-call overhead: table selection happens once at initialization.
 #[inline]
 fn crc64_xz_dispatch(crc: u64, data: &[u8]) -> u64 {
+  let table = crate::dispatch::active_table();
+  let kernel = table.select_set(data.len()).crc64_xz;
+  kernel(crc, data)
+}
+
+/// CRC-64-XZ dispatch with force mode support (for testing/debugging).
+///
+/// Checks force mode from config, then uses dispatch tables for auto selection.
+/// Only use this for testing specific kernel paths.
+#[cfg(any(test, feature = "force-mode"))]
+#[allow(dead_code)]
+#[inline]
+fn crc64_xz_dispatch_forced(crc: u64, data: &[u8]) -> u64 {
   let cfg = config::get();
   match cfg.effective_force {
     Crc64Force::Reference => crc64_xz_reference(crc, data),
     Crc64Force::Portable => crc64_xz_portable(crc, data),
-    _ => {
-      // Auto or specific SIMD force - use dispatch tables
-      let table = crate::dispatch::active_table();
-      let kernel = table.select_set(data.len()).crc64_xz;
-      kernel(crc, data)
-    }
+    _ => crc64_xz_dispatch(crc, data),
   }
 }
 
-/// CRC-64-NVME dispatch with force mode support.
+/// CRC-64-NVME dispatch - fast path using pre-resolved kernel tables.
 ///
-/// Checks force mode from config, then uses dispatch tables for auto selection.
-/// Force mode is cached via OnceLock, so this check is essentially free.
+/// Uses the empirically-optimal kernel for the current platform and buffer size.
+/// No per-call overhead: table selection happens once at initialization.
 #[inline]
 fn crc64_nvme_dispatch(crc: u64, data: &[u8]) -> u64 {
+  let table = crate::dispatch::active_table();
+  let kernel = table.select_set(data.len()).crc64_nvme;
+  kernel(crc, data)
+}
+
+/// CRC-64-NVME dispatch with force mode support (for testing/debugging).
+///
+/// Checks force mode from config, then uses dispatch tables for auto selection.
+/// Only use this for testing specific kernel paths.
+#[cfg(any(test, feature = "force-mode"))]
+#[allow(dead_code)]
+#[inline]
+fn crc64_nvme_dispatch_forced(crc: u64, data: &[u8]) -> u64 {
   let cfg = config::get();
   match cfg.effective_force {
     Crc64Force::Reference => crc64_nvme_reference(crc, data),
     Crc64Force::Portable => crc64_nvme_portable(crc, data),
-    _ => {
-      // Auto or specific SIMD force - use dispatch tables
-      let table = crate::dispatch::active_table();
-      let kernel = table.select_set(data.len()).crc64_nvme;
-      kernel(crc, data)
-    }
+    _ => crc64_nvme_dispatch(crc, data),
   }
 }
 

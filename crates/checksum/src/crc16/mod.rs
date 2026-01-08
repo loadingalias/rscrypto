@@ -32,9 +32,10 @@ pub use config::{Crc16Config, Crc16Force};
 #[allow(unused_imports)]
 pub(super) use traits::{Checksum, ChecksumCombine};
 
+#[cfg(any(test, feature = "force-mode"))]
+use crate::common::reference::crc16_bitwise;
 use crate::common::{
   combine::{Gf2Matrix16, combine_crc16, generate_shift8_matrix_16},
-  reference::crc16_bitwise,
   tables::{CRC16_CCITT_POLY, CRC16_IBM_POLY, generate_crc16_tables_4, generate_crc16_tables_8},
 };
 
@@ -68,12 +69,16 @@ mod kernel_tables {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Bitwise reference implementation for CRC-16/CCITT.
+#[cfg(any(test, feature = "force-mode"))]
+#[allow(dead_code)]
 #[inline]
 fn crc16_ccitt_reference(crc: u16, data: &[u8]) -> u16 {
   crc16_bitwise(CRC16_CCITT_POLY, crc, data)
 }
 
 /// Bitwise reference implementation for CRC-16/IBM.
+#[cfg(any(test, feature = "force-mode"))]
+#[allow(dead_code)]
 #[inline]
 fn crc16_ibm_reference(crc: u16, data: &[u8]) -> u16 {
   crc16_bitwise(CRC16_IBM_POLY, crc, data)
@@ -83,33 +88,51 @@ fn crc16_ibm_reference(crc: u16, data: &[u8]) -> u16 {
 // Dispatch Functions (using new dispatch module)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// CRC-16/CCITT dispatch with force mode support.
+/// CRC-16/CCITT dispatch - fast path using pre-resolved kernel tables.
+///
+/// Uses the empirically-optimal kernel for the current platform and buffer size.
+/// No per-call overhead: table selection happens once at initialization.
 #[inline]
 fn crc16_ccitt_dispatch(crc: u16, data: &[u8]) -> u16 {
+  let table = crate::dispatch::active_table();
+  let kernel = table.select_set(data.len()).crc16_ccitt;
+  kernel(crc, data)
+}
+
+/// CRC-16/CCITT dispatch with force mode support (for testing/debugging).
+#[cfg(any(test, feature = "force-mode"))]
+#[allow(dead_code)]
+#[inline]
+fn crc16_ccitt_dispatch_forced(crc: u16, data: &[u8]) -> u16 {
   let cfg = config::get_ccitt();
   match cfg.effective_force {
     Crc16Force::Reference => crc16_ccitt_reference(crc, data),
     Crc16Force::Portable => portable::crc16_ccitt_slice8(crc, data),
-    _ => {
-      let table = crate::dispatch::active_table();
-      let kernel = table.select_set(data.len()).crc16_ccitt;
-      kernel(crc, data)
-    }
+    _ => crc16_ccitt_dispatch(crc, data),
   }
 }
 
-/// CRC-16/IBM dispatch with force mode support.
+/// CRC-16/IBM dispatch - fast path using pre-resolved kernel tables.
+///
+/// Uses the empirically-optimal kernel for the current platform and buffer size.
+/// No per-call overhead: table selection happens once at initialization.
 #[inline]
 fn crc16_ibm_dispatch(crc: u16, data: &[u8]) -> u16 {
+  let table = crate::dispatch::active_table();
+  let kernel = table.select_set(data.len()).crc16_ibm;
+  kernel(crc, data)
+}
+
+/// CRC-16/IBM dispatch with force mode support (for testing/debugging).
+#[cfg(any(test, feature = "force-mode"))]
+#[allow(dead_code)]
+#[inline]
+fn crc16_ibm_dispatch_forced(crc: u16, data: &[u8]) -> u16 {
   let cfg = config::get_ibm();
   match cfg.effective_force {
     Crc16Force::Reference => crc16_ibm_reference(crc, data),
     Crc16Force::Portable => portable::crc16_ibm_slice8(crc, data),
-    _ => {
-      let table = crate::dispatch::active_table();
-      let kernel = table.select_set(data.len()).crc16_ibm;
-      kernel(crc, data)
-    }
+    _ => crc16_ibm_dispatch(crc, data),
   }
 }
 

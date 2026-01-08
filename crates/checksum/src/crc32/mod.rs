@@ -66,9 +66,10 @@ pub use config::{Crc32Config, Crc32Force};
 #[allow(unused_imports)]
 pub(super) use traits::{Checksum, ChecksumCombine};
 
+#[cfg(any(test, feature = "force-mode"))]
+use crate::common::reference::crc32_bitwise;
 use crate::common::{
   combine::{Gf2Matrix32, generate_shift8_matrix_32},
-  reference::crc32_bitwise,
   tables::{CRC32_IEEE_POLY, CRC32C_POLY, generate_crc32_tables_16},
 };
 #[cfg(feature = "diag")]
@@ -93,6 +94,8 @@ pub(crate) const CRC32_FOLD_BLOCK_BYTES: usize = 128;
 // Portable Kernel Wrappers
 // ─────────────────────────────────────────────────────────────────────────────
 
+#[cfg(any(test, feature = "force-mode"))]
+#[allow(dead_code)]
 fn crc32_portable(crc: u32, data: &[u8]) -> u32 {
   const THRESHOLD: usize = 64;
   if data.len() < THRESHOLD {
@@ -102,6 +105,8 @@ fn crc32_portable(crc: u32, data: &[u8]) -> u32 {
   }
 }
 
+#[cfg(any(test, feature = "force-mode"))]
+#[allow(dead_code)]
 fn crc32c_portable(crc: u32, data: &[u8]) -> u32 {
   const THRESHOLD: usize = 64;
   if data.len() < THRESHOLD {
@@ -119,6 +124,8 @@ fn crc32c_portable(crc: u32, data: &[u8]) -> u32 {
 ///
 /// This is the canonical reference implementation - obviously correct,
 /// audit-friendly, and used for verification of all optimized paths.
+#[cfg(any(test, feature = "force-mode"))]
+#[allow(dead_code)]
 fn crc32_reference(crc: u32, data: &[u8]) -> u32 {
   crc32_bitwise(CRC32_IEEE_POLY, crc, data)
 }
@@ -127,6 +134,8 @@ fn crc32_reference(crc: u32, data: &[u8]) -> u32 {
 ///
 /// This is the canonical reference implementation - obviously correct,
 /// audit-friendly, and used for verification of all optimized paths.
+#[cfg(any(test, feature = "force-mode"))]
+#[allow(dead_code)]
 fn crc32c_reference(crc: u32, data: &[u8]) -> u32 {
   crc32_bitwise(CRC32C_POLY, crc, data)
 }
@@ -375,33 +384,51 @@ pub(crate) fn diag_crc32c(len: usize) -> Crc32SelectionDiag {
 // Auto Kernels (using new dispatch module)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// CRC-32 (IEEE) dispatch with force mode support.
+/// CRC-32 (IEEE) dispatch - fast path using pre-resolved kernel tables.
+///
+/// Uses the empirically-optimal kernel for the current platform and buffer size.
+/// No per-call overhead: table selection happens once at initialization.
 #[inline]
 fn crc32_dispatch(crc: u32, data: &[u8]) -> u32 {
+  let table = crate::dispatch::active_table();
+  let kernel = table.select_set(data.len()).crc32_ieee;
+  kernel(crc, data)
+}
+
+/// CRC-32 (IEEE) dispatch with force mode support (for testing/debugging).
+#[cfg(any(test, feature = "force-mode"))]
+#[allow(dead_code)]
+#[inline]
+fn crc32_dispatch_forced(crc: u32, data: &[u8]) -> u32 {
   let cfg = config::get();
   match cfg.effective_force {
     Crc32Force::Reference => crc32_reference(crc, data),
     Crc32Force::Portable => crc32_portable(crc, data),
-    _ => {
-      let table = crate::dispatch::active_table();
-      let kernel = table.select_set(data.len()).crc32_ieee;
-      kernel(crc, data)
-    }
+    _ => crc32_dispatch(crc, data),
   }
 }
 
-/// CRC-32C (Castagnoli) dispatch with force mode support.
+/// CRC-32C (Castagnoli) dispatch - fast path using pre-resolved kernel tables.
+///
+/// Uses the empirically-optimal kernel for the current platform and buffer size.
+/// No per-call overhead: table selection happens once at initialization.
 #[inline]
 fn crc32c_dispatch(crc: u32, data: &[u8]) -> u32 {
+  let table = crate::dispatch::active_table();
+  let kernel = table.select_set(data.len()).crc32c;
+  kernel(crc, data)
+}
+
+/// CRC-32C (Castagnoli) dispatch with force mode support (for testing/debugging).
+#[cfg(any(test, feature = "force-mode"))]
+#[allow(dead_code)]
+#[inline]
+fn crc32c_dispatch_forced(crc: u32, data: &[u8]) -> u32 {
   let cfg = config::get();
   match cfg.effective_force {
     Crc32Force::Reference => crc32c_reference(crc, data),
     Crc32Force::Portable => crc32c_portable(crc, data),
-    _ => {
-      let table = crate::dispatch::active_table();
-      let kernel = table.select_set(data.len()).crc32c;
-      kernel(crc, data)
-    }
+    _ => crc32c_dispatch(crc, data),
   }
 }
 
