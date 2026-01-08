@@ -22,10 +22,10 @@
 //! - `macos_arm64_kernels.txt` → AppleM1M3
 //! - `linux_arm64_kernels.txt` → Graviton2
 //! - `linux_x86-64_kernels.txt` → Zen4
-//! - `windows_x86-64_kernels.txt` → Default (generic x86-64)
 //!
-//! Run `python scripts/gen/kernel_tables.py` to analyze benchmarks and see
-//! optimal kernel selections.
+//! Run `python scripts/gen/kernel_tables.py` to analyze benchmarks and emit a
+//! draft table module at `crates/checksum/src/generated/kernel_tables.rs` for
+//! inspection. The in-crate dispatch tables in this file are authoritative.
 
 #![allow(dead_code)] // Tables for non-current architectures
 
@@ -226,6 +226,11 @@ pub struct KernelSet {
 /// Size class boundaries define when to transition between kernel tiers.
 #[derive(Clone, Copy)]
 pub struct KernelTable {
+  /// Required capabilities for *all* kernels referenced by this table.
+  ///
+  /// `select_table()` must only return a table when `caps.has(requires)` holds.
+  pub requires: Caps,
+
   /// Size class boundaries: [xs_max, s_max, m_max]
   ///
   /// - `len <= xs_max` → use `xs` kernels (tiny: 0-64 bytes)
@@ -274,18 +279,21 @@ impl KernelTable {
 #[inline]
 pub fn select_table(tune_kind: TuneKind, caps: Caps) -> &'static KernelTable {
   // 1. Exact match (benchmarked platforms)
-  if let Some(table) = exact_match(tune_kind) {
+  if let Some(table) = exact_match(tune_kind, caps) {
     return table;
   }
 
   // 2. Family match (inferred from similar hardware)
-  if let Some(table) = family_match(tune_kind) {
+  if let Some(table) = family_match(tune_kind, caps) {
     return table;
   }
 
   // 3. Capability match (conservative defaults)
   if let Some(table) = capability_match(caps) {
-    return table;
+    debug_assert!(caps.has(table.requires), "capability_match returned an unsafe table");
+    if caps.has(table.requires) {
+      return table;
+    }
   }
 
   // 4. Portable fallback
@@ -293,21 +301,35 @@ pub fn select_table(tune_kind: TuneKind, caps: Caps) -> &'static KernelTable {
 }
 
 #[inline]
-fn exact_match(tune_kind: TuneKind) -> Option<&'static KernelTable> {
-  match tune_kind {
+fn exact_match(tune_kind: TuneKind, caps: Caps) -> Option<&'static KernelTable> {
+  let table: Option<&'static KernelTable> = match tune_kind {
     #[cfg(target_arch = "aarch64")]
     TuneKind::AppleM1M3 => Some(&APPLE_M1M3_TABLE),
     #[cfg(target_arch = "aarch64")]
     TuneKind::Graviton2 => Some(&GRAVITON2_TABLE),
     #[cfg(target_arch = "x86_64")]
     TuneKind::Zen4 => Some(&ZEN4_TABLE),
+    #[cfg(target_arch = "s390x")]
+    TuneKind::Z13 => Some(&S390X_Z13_TABLE),
+    #[cfg(target_arch = "s390x")]
+    TuneKind::Z14 => Some(&S390X_Z14_TABLE),
+    #[cfg(target_arch = "s390x")]
+    TuneKind::Z15 => Some(&S390X_Z15_TABLE),
+    #[cfg(target_arch = "powerpc64")]
+    TuneKind::Power8 => Some(&POWER8_TABLE),
+    #[cfg(target_arch = "powerpc64")]
+    TuneKind::Power9 => Some(&POWER9_TABLE),
+    #[cfg(target_arch = "powerpc64")]
+    TuneKind::Power10 => Some(&POWER10_TABLE),
     _ => None,
-  }
+  };
+  let table = table?;
+  if caps.has(table.requires) { Some(table) } else { None }
 }
 
 #[inline]
-fn family_match(tune_kind: TuneKind) -> Option<&'static KernelTable> {
-  match tune_kind {
+fn family_match(tune_kind: TuneKind, caps: Caps) -> Option<&'static KernelTable> {
+  let table: Option<&'static KernelTable> = match tune_kind {
     // Apple Silicon family → use M1-M3 data
     #[cfg(target_arch = "aarch64")]
     TuneKind::AppleM4 | TuneKind::AppleM5 => Some(&APPLE_M1M3_TABLE),
@@ -329,36 +351,103 @@ fn family_match(tune_kind: TuneKind) -> Option<&'static KernelTable> {
     TuneKind::IntelSpr | TuneKind::IntelGnr | TuneKind::IntelIcl => Some(&GENERIC_X86_VPCLMUL_TABLE),
 
     _ => None,
-  }
+  };
+  let table = table?;
+  if caps.has(table.requires) { Some(table) } else { None }
 }
 
 #[inline]
 fn capability_match(caps: Caps) -> Option<&'static KernelTable> {
+  let _ = caps;
+
   #[cfg(target_arch = "aarch64")]
   {
-    use platform::caps::aarch64::{PMULL_READY, SHA3};
+    use platform::caps::aarch64::{CRC_READY, PMULL_EOR3_READY, PMULL_READY};
 
-    // PMULL + SHA3 (EOR3) → use Apple M1-M3 style kernels
-    if caps.has(SHA3) && caps.has(PMULL_READY) {
+    // PMULL + SHA3 (EOR3) + CRC extension → use EOR3-enabled table
+    if caps.has(CRC_READY) && caps.has(PMULL_EOR3_READY) {
       return Some(&GENERIC_ARM_PMULL_EOR3_TABLE);
     }
-    // PMULL only → use Graviton2 style kernels
-    if caps.has(PMULL_READY) {
+    // PMULL + CRC extension (no EOR3) → safe PMULL-only table
+    if caps.has(CRC_READY) && caps.has(PMULL_READY) {
       return Some(&GENERIC_ARM_PMULL_TABLE);
+    }
+    // PMULL only (no CRC extension) → accelerate CRC-16/24/64, keep CRC-32 portable
+    if caps.has(PMULL_READY) {
+      return Some(&GENERIC_ARM_PMULL_NO_CRC_TABLE);
+    }
+    // CRC extension only → accelerate CRC-32/32C, keep others portable
+    if caps.has(CRC_READY) {
+      return Some(&GENERIC_ARM_CRC_ONLY_TABLE);
     }
   }
 
   #[cfg(target_arch = "x86_64")]
   {
-    use platform::caps::x86::{PCLMUL_READY, VPCLMUL_READY};
+    use platform::caps::x86::{CRC32C_READY, PCLMUL_READY, VPCLMUL_READY};
 
-    // VPCLMUL → use Zen4 style kernels
-    if caps.has(VPCLMUL_READY) {
+    // VPCLMUL → prefer VPCLMUL tables (CRC32C uses hwcrc/fusion only if SSE4.2 exists)
+    if caps.has(VPCLMUL_READY) && caps.has(PCLMUL_READY) && caps.has(CRC32C_READY) {
       return Some(&GENERIC_X86_VPCLMUL_TABLE);
     }
-    // PCLMUL only → use conservative PCLMUL kernels
-    if caps.has(PCLMUL_READY) {
+    if caps.has(VPCLMUL_READY) && caps.has(PCLMUL_READY) {
+      return Some(&GENERIC_X86_VPCLMUL_NO_CRC32C_TABLE);
+    }
+
+    // PCLMUL → use PCLMUL tables (CRC32C uses hwcrc/fusion only if SSE4.2 exists)
+    if caps.has(PCLMUL_READY) && caps.has(CRC32C_READY) {
       return Some(&GENERIC_X86_PCLMUL_TABLE);
+    }
+    if caps.has(PCLMUL_READY) {
+      return Some(&GENERIC_X86_PCLMUL_NO_CRC32C_TABLE);
+    }
+
+    // SSE4.2 only: accelerate CRC32C, keep other variants portable.
+    if caps.has(CRC32C_READY) {
+      return Some(&GENERIC_X86_CRC32C_ONLY_TABLE);
+    }
+  }
+
+  #[cfg(target_arch = "s390x")]
+  {
+    use platform::caps::s390x::{Z13_READY, Z14_READY, Z15_READY, Z16_READY};
+    if caps.has(Z16_READY) {
+      return Some(&S390X_Z15_TABLE);
+    }
+    if caps.has(Z15_READY) {
+      return Some(&S390X_Z15_TABLE);
+    }
+    if caps.has(Z14_READY) {
+      return Some(&S390X_Z14_TABLE);
+    }
+    if caps.has(Z13_READY) {
+      return Some(&S390X_Z13_TABLE);
+    }
+  }
+
+  #[cfg(target_arch = "powerpc64")]
+  {
+    use platform::caps::power::{POWER9_READY, POWER10_READY, VPMSUM_READY};
+    if caps.has(POWER10_READY) {
+      return Some(&POWER10_TABLE);
+    }
+    if caps.has(POWER9_READY) {
+      return Some(&POWER9_TABLE);
+    }
+    if caps.has(VPMSUM_READY) {
+      return Some(&POWER8_TABLE);
+    }
+  }
+
+  #[cfg(target_arch = "riscv64")]
+  {
+    use platform::caps::riscv::{V, ZBC, ZVBC};
+    let v_zvbc = V.union(ZVBC);
+    if caps.has(v_zvbc) {
+      return Some(&RISCV64_ZVBC_TABLE);
+    }
+    if caps.has(ZBC) {
+      return Some(&RISCV64_ZBC_TABLE);
     }
   }
 
@@ -372,44 +461,23 @@ fn capability_match(caps: Caps) -> Option<&'static KernelTable> {
 /// Portable table - no SIMD, table-based only.
 ///
 /// Used when no SIMD capabilities are detected.
+const PORTABLE_SET: KernelSet = KernelSet {
+  crc16_ccitt: crate::crc16::portable::crc16_ccitt_slice8,
+  crc16_ibm: crate::crc16::portable::crc16_ibm_slice8,
+  crc24_openpgp: crate::crc24::portable::crc24_openpgp_slice8,
+  crc32_ieee: crate::crc32::portable::crc32_slice16_ieee,
+  crc32c: crate::crc32::portable::crc32c_slice16,
+  crc64_xz: crate::crc64::portable::crc64_slice16_xz,
+  crc64_nvme: crate::crc64::portable::crc64_slice16_nvme,
+};
+
 pub static PORTABLE_TABLE: KernelTable = KernelTable {
+  requires: Caps::NONE,
   boundaries: [64, 256, 4096],
-  xs: KernelSet {
-    crc16_ccitt: crate::crc16::portable::crc16_ccitt_slice8,
-    crc16_ibm: crate::crc16::portable::crc16_ibm_slice8,
-    crc24_openpgp: crate::crc24::portable::crc24_openpgp_slice8,
-    crc32_ieee: crate::crc32::portable::crc32_slice16_ieee,
-    crc32c: crate::crc32::portable::crc32c_slice16,
-    crc64_xz: crate::crc64::portable::crc64_slice16_xz,
-    crc64_nvme: crate::crc64::portable::crc64_slice16_nvme,
-  },
-  s: KernelSet {
-    crc16_ccitt: crate::crc16::portable::crc16_ccitt_slice8,
-    crc16_ibm: crate::crc16::portable::crc16_ibm_slice8,
-    crc24_openpgp: crate::crc24::portable::crc24_openpgp_slice8,
-    crc32_ieee: crate::crc32::portable::crc32_slice16_ieee,
-    crc32c: crate::crc32::portable::crc32c_slice16,
-    crc64_xz: crate::crc64::portable::crc64_slice16_xz,
-    crc64_nvme: crate::crc64::portable::crc64_slice16_nvme,
-  },
-  m: KernelSet {
-    crc16_ccitt: crate::crc16::portable::crc16_ccitt_slice8,
-    crc16_ibm: crate::crc16::portable::crc16_ibm_slice8,
-    crc24_openpgp: crate::crc24::portable::crc24_openpgp_slice8,
-    crc32_ieee: crate::crc32::portable::crc32_slice16_ieee,
-    crc32c: crate::crc32::portable::crc32c_slice16,
-    crc64_xz: crate::crc64::portable::crc64_slice16_xz,
-    crc64_nvme: crate::crc64::portable::crc64_slice16_nvme,
-  },
-  l: KernelSet {
-    crc16_ccitt: crate::crc16::portable::crc16_ccitt_slice8,
-    crc16_ibm: crate::crc16::portable::crc16_ibm_slice8,
-    crc24_openpgp: crate::crc24::portable::crc24_openpgp_slice8,
-    crc32_ieee: crate::crc32::portable::crc32_slice16_ieee,
-    crc32c: crate::crc32::portable::crc32c_slice16,
-    crc64_xz: crate::crc64::portable::crc64_slice16_xz,
-    crc64_nvme: crate::crc64::portable::crc64_slice16_nvme,
-  },
+  xs: PORTABLE_SET,
+  s: PORTABLE_SET,
+  m: PORTABLE_SET,
+  l: PORTABLE_SET,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -442,6 +510,7 @@ mod aarch64_tables {
   //   crc64/nvme:  pmull-eor3, streams=3, 62.57 GiB/s
   // ───────────────────────────────────────────────────────────────────────────
   pub static APPLE_M1M3_TABLE: KernelTable = KernelTable {
+    requires: platform::caps::aarch64::CRC_READY.union(platform::caps::aarch64::PMULL_EOR3_READY),
     boundaries: [64, 256, 4096],
 
     xs: KernelSet {
@@ -506,6 +575,7 @@ mod aarch64_tables {
   // a different path on this hardware.
   // ───────────────────────────────────────────────────────────────────────────
   pub static GRAVITON2_TABLE: KernelTable = KernelTable {
+    requires: platform::caps::aarch64::CRC_READY.union(platform::caps::aarch64::PMULL_EOR3_READY),
     boundaries: [64, 256, 4096],
 
     xs: KernelSet {
@@ -560,10 +630,144 @@ mod aarch64_tables {
   // ───────────────────────────────────────────────────────────────────────────
   // Generic ARM PMULL Table (conservative)
   //
-  // For unknown ARM platforms with only PMULL (no EOR3).
-  // Uses Graviton2 selections (no EOR3 dependency).
+  // For unknown ARM platforms with CRC + PMULL but *without* SHA3/EOR3.
   // ───────────────────────────────────────────────────────────────────────────
-  pub static GENERIC_ARM_PMULL_TABLE: KernelTable = GRAVITON2_TABLE;
+  pub static GENERIC_ARM_PMULL_TABLE: KernelTable = KernelTable {
+    requires: platform::caps::aarch64::CRC_READY.union(platform::caps::aarch64::PMULL_READY),
+    boundaries: [64, 256, 4096],
+
+    xs: KernelSet {
+      crc16_ccitt: crc16_k::CCITT_PMULL_SMALL_KERNEL,
+      crc16_ibm: crc16_k::IBM_PMULL_SMALL_KERNEL,
+      crc24_openpgp: crc24_k::OPENPGP_PMULL_SMALL_KERNEL,
+      crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL,
+      crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL,
+      crc64_xz: crc64_k::XZ_PMULL_SMALL,
+      crc64_nvme: crc64_k::NVME_PMULL_SMALL,
+    },
+
+    s: KernelSet {
+      crc16_ccitt: crc16_k::CCITT_PMULL_SMALL_KERNEL,
+      crc16_ibm: crc16_k::IBM_PMULL_SMALL_KERNEL,
+      crc24_openpgp: crc24_k::OPENPGP_PMULL[0],
+      crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL,
+      crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL,
+      crc64_xz: crc64_k::XZ_PMULL[0],
+      crc64_nvme: crc64_k::NVME_PMULL[0],
+    },
+
+    m: KernelSet {
+      crc16_ccitt: crc16_k::CCITT_PMULL[0],
+      crc16_ibm: crc16_k::IBM_PMULL[0],
+      crc24_openpgp: crc24_k::OPENPGP_PMULL[0],
+      crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL,
+      crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL,
+      crc64_xz: crc64_k::XZ_PMULL[0],
+      crc64_nvme: crc64_k::NVME_PMULL[0],
+    },
+
+    l: KernelSet {
+      crc16_ccitt: crc16_k::CCITT_PMULL[0],
+      crc16_ibm: crc16_k::IBM_PMULL[0],
+      crc24_openpgp: crc24_k::OPENPGP_PMULL[0],
+      crc32_ieee: crc32_k::CRC32_PMULL[0],
+      crc32c: crc32_k::CRC32C_PMULL[0],
+      crc64_xz: crc64_k::XZ_PMULL[0],
+      crc64_nvme: crc64_k::NVME_PMULL[0],
+    },
+  };
+
+  /// PMULL-only table for platforms without the CRC extension.
+  pub static GENERIC_ARM_PMULL_NO_CRC_TABLE: KernelTable = KernelTable {
+    requires: platform::caps::aarch64::PMULL_READY,
+    boundaries: [64, 256, 4096],
+
+    xs: KernelSet {
+      crc16_ccitt: crc16_k::CCITT_PMULL_SMALL_KERNEL,
+      crc16_ibm: crc16_k::IBM_PMULL_SMALL_KERNEL,
+      crc24_openpgp: crc24_k::OPENPGP_PMULL_SMALL_KERNEL,
+      crc32_ieee: crate::crc32::portable::crc32_bytewise_ieee,
+      crc32c: crate::crc32::portable::crc32c_bytewise,
+      crc64_xz: crc64_k::XZ_PMULL_SMALL,
+      crc64_nvme: crc64_k::NVME_PMULL_SMALL,
+    },
+
+    s: KernelSet {
+      crc16_ccitt: crc16_k::CCITT_PMULL_SMALL_KERNEL,
+      crc16_ibm: crc16_k::IBM_PMULL_SMALL_KERNEL,
+      crc24_openpgp: crc24_k::OPENPGP_PMULL[0],
+      crc32_ieee: crate::crc32::portable::crc32_slice16_ieee,
+      crc32c: crate::crc32::portable::crc32c_slice16,
+      crc64_xz: crc64_k::XZ_PMULL[0],
+      crc64_nvme: crc64_k::NVME_PMULL[0],
+    },
+
+    m: KernelSet {
+      crc16_ccitt: crc16_k::CCITT_PMULL[0],
+      crc16_ibm: crc16_k::IBM_PMULL[0],
+      crc24_openpgp: crc24_k::OPENPGP_PMULL[0],
+      crc32_ieee: crate::crc32::portable::crc32_slice16_ieee,
+      crc32c: crate::crc32::portable::crc32c_slice16,
+      crc64_xz: crc64_k::XZ_PMULL[0],
+      crc64_nvme: crc64_k::NVME_PMULL[0],
+    },
+
+    l: KernelSet {
+      crc16_ccitt: crc16_k::CCITT_PMULL[0],
+      crc16_ibm: crc16_k::IBM_PMULL[0],
+      crc24_openpgp: crc24_k::OPENPGP_PMULL[0],
+      crc32_ieee: crate::crc32::portable::crc32_slice16_ieee,
+      crc32c: crate::crc32::portable::crc32c_slice16,
+      crc64_xz: crc64_k::XZ_PMULL[0],
+      crc64_nvme: crc64_k::NVME_PMULL[0],
+    },
+  };
+
+  /// CRC-only table for platforms without PMULL.
+  pub static GENERIC_ARM_CRC_ONLY_TABLE: KernelTable = KernelTable {
+    requires: platform::caps::aarch64::CRC_READY,
+    boundaries: [64, 256, 4096],
+
+    xs: KernelSet {
+      crc16_ccitt: crate::crc16::portable::crc16_ccitt_slice8,
+      crc16_ibm: crate::crc16::portable::crc16_ibm_slice8,
+      crc24_openpgp: crate::crc24::portable::crc24_openpgp_slice8,
+      crc32_ieee: crc32_k::CRC32_HWCRC[0],
+      crc32c: crc32_k::CRC32C_HWCRC[0],
+      crc64_xz: crate::crc64::portable::crc64_slice16_xz,
+      crc64_nvme: crate::crc64::portable::crc64_slice16_nvme,
+    },
+
+    s: KernelSet {
+      crc16_ccitt: crate::crc16::portable::crc16_ccitt_slice8,
+      crc16_ibm: crate::crc16::portable::crc16_ibm_slice8,
+      crc24_openpgp: crate::crc24::portable::crc24_openpgp_slice8,
+      crc32_ieee: crc32_k::CRC32_HWCRC[0],
+      crc32c: crc32_k::CRC32C_HWCRC[0],
+      crc64_xz: crate::crc64::portable::crc64_slice16_xz,
+      crc64_nvme: crate::crc64::portable::crc64_slice16_nvme,
+    },
+
+    m: KernelSet {
+      crc16_ccitt: crate::crc16::portable::crc16_ccitt_slice8,
+      crc16_ibm: crate::crc16::portable::crc16_ibm_slice8,
+      crc24_openpgp: crate::crc24::portable::crc24_openpgp_slice8,
+      crc32_ieee: crc32_k::CRC32_HWCRC[0],
+      crc32c: crc32_k::CRC32C_HWCRC[0],
+      crc64_xz: crate::crc64::portable::crc64_slice16_xz,
+      crc64_nvme: crate::crc64::portable::crc64_slice16_nvme,
+    },
+
+    l: KernelSet {
+      crc16_ccitt: crate::crc16::portable::crc16_ccitt_slice8,
+      crc16_ibm: crate::crc16::portable::crc16_ibm_slice8,
+      crc24_openpgp: crate::crc24::portable::crc24_openpgp_slice8,
+      crc32_ieee: crc32_k::CRC32_HWCRC[0],
+      crc32c: crc32_k::CRC32C_HWCRC[0],
+      crc64_xz: crate::crc64::portable::crc64_slice16_xz,
+      crc64_nvme: crate::crc64::portable::crc64_slice16_nvme,
+    },
+  };
 }
 
 #[cfg(target_arch = "aarch64")]
@@ -599,6 +803,9 @@ mod x86_64_tables {
   //   crc64/nvme:  vpclmul, streams=2, 75.18 GiB/s
   // ───────────────────────────────────────────────────────────────────────────
   pub static ZEN4_TABLE: KernelTable = KernelTable {
+    requires: platform::caps::x86::VPCLMUL_READY
+      .union(platform::caps::x86::PCLMUL_READY)
+      .union(platform::caps::x86::CRC32C_READY),
     boundaries: [64, 256, 4096],
 
     xs: KernelSet {
@@ -650,10 +857,59 @@ mod x86_64_tables {
   // ───────────────────────────────────────────────────────────────────────────
   pub static GENERIC_X86_VPCLMUL_TABLE: KernelTable = ZEN4_TABLE;
 
+  /// VPCLMUL table that never selects SSE4.2 CRC32C instructions/fusion.
+  ///
+  /// Use on systems with VPCLMUL but without SSE4.2 (`CRC32C_READY`).
+  pub static GENERIC_X86_VPCLMUL_NO_CRC32C_TABLE: KernelTable = KernelTable {
+    requires: platform::caps::x86::VPCLMUL_READY.union(platform::caps::x86::PCLMUL_READY),
+    boundaries: [64, 256, 4096],
+
+    xs: KernelSet {
+      crc16_ccitt: crc16_k::CCITT_PCLMUL_SMALL_KERNEL,
+      crc16_ibm: crc16_k::IBM_PCLMUL_SMALL_KERNEL,
+      crc24_openpgp: crc24_k::OPENPGP_PCLMUL_SMALL_KERNEL,
+      crc32_ieee: crc32_k::CRC32_PCLMUL_SMALL_KERNEL,
+      crc32c: crate::crc32::portable::crc32c_bytewise,
+      crc64_xz: crc64_k::XZ_PCLMUL_SMALL,
+      crc64_nvme: crc64_k::NVME_PCLMUL_SMALL,
+    },
+
+    s: KernelSet {
+      crc16_ccitt: crc16_k::CCITT_VPCLMUL[1],
+      crc16_ibm: crc16_k::IBM_VPCLMUL[1],
+      crc24_openpgp: crc24_k::OPENPGP_VPCLMUL[3],
+      crc32_ieee: crc32_k::CRC32_VPCLMUL[0],
+      crc32c: crate::crc32::portable::crc32c_slice16,
+      crc64_xz: crc64_k::XZ_VPCLMUL[0],
+      crc64_nvme: crc64_k::NVME_VPCLMUL[0],
+    },
+
+    m: KernelSet {
+      crc16_ccitt: crc16_k::CCITT_VPCLMUL[1],
+      crc16_ibm: crc16_k::IBM_VPCLMUL[1],
+      crc24_openpgp: crc24_k::OPENPGP_VPCLMUL[4],
+      crc32_ieee: crc32_k::CRC32_VPCLMUL[1],
+      crc32c: crate::crc32::portable::crc32c_slice16,
+      crc64_xz: crc64_k::XZ_VPCLMUL[1],
+      crc64_nvme: crc64_k::NVME_VPCLMUL[1],
+    },
+
+    l: KernelSet {
+      crc16_ccitt: crc16_k::CCITT_VPCLMUL[2],
+      crc16_ibm: crc16_k::IBM_VPCLMUL[1],
+      crc24_openpgp: crc24_k::OPENPGP_VPCLMUL[1],
+      crc32_ieee: crc32_k::CRC32_VPCLMUL[1],
+      crc32c: crate::crc32::portable::crc32c_slice16,
+      crc64_xz: crc64_k::XZ_VPCLMUL_4X512,
+      crc64_nvme: crc64_k::NVME_VPCLMUL[2],
+    },
+  };
+
   // ───────────────────────────────────────────────────────────────────────────
   // Generic x86-64 PCLMUL Table (conservative)
   //
-  // Benchmark source: windows_x86-64_kernels.txt (Default, no AVX-512)
+  // Benchmark source: historical Windows "Default" baseline (no AVX-512).
+  // Note: Windows benchmark baselines are no longer tracked in-tree.
   // Features: PCLMULQDQ only
   //
   // Optimal kernels per (variant, size_class):
@@ -666,6 +922,7 @@ mod x86_64_tables {
   //   crc64/nvme:  xs=pclmul-small, s=pclmul-small, m=pclmul-2way, l=pclmul-2way
   // ───────────────────────────────────────────────────────────────────────────
   pub static GENERIC_X86_PCLMUL_TABLE: KernelTable = KernelTable {
+    requires: platform::caps::x86::PCLMUL_READY.union(platform::caps::x86::CRC32C_READY),
     boundaries: [64, 256, 4096],
 
     xs: KernelSet {
@@ -708,10 +965,352 @@ mod x86_64_tables {
       crc64_nvme: crc64_k::NVME_PCLMUL[1],   // 2-way
     },
   };
+
+  /// PCLMUL table that never selects SSE4.2 CRC32C instructions/fusion.
+  ///
+  /// Use on systems with PCLMUL but without SSE4.2 (`CRC32C_READY`).
+  pub static GENERIC_X86_PCLMUL_NO_CRC32C_TABLE: KernelTable = KernelTable {
+    requires: platform::caps::x86::PCLMUL_READY,
+    boundaries: [64, 256, 4096],
+
+    xs: KernelSet {
+      crc16_ccitt: crc16_k::CCITT_PCLMUL_SMALL_KERNEL,
+      crc16_ibm: crc16_k::IBM_PCLMUL_SMALL_KERNEL,
+      crc24_openpgp: crc24_k::OPENPGP_PCLMUL_SMALL_KERNEL,
+      crc32_ieee: crc32_k::CRC32_PCLMUL_SMALL_KERNEL,
+      crc32c: crate::crc32::portable::crc32c_bytewise,
+      crc64_xz: crc64_k::XZ_PCLMUL_SMALL,
+      crc64_nvme: crc64_k::NVME_PCLMUL_SMALL,
+    },
+
+    s: KernelSet {
+      crc16_ccitt: crc16_k::CCITT_PCLMUL[0],
+      crc16_ibm: crc16_k::IBM_PCLMUL[2],
+      crc24_openpgp: crc24_k::OPENPGP_PCLMUL[0],
+      crc32_ieee: crc32_k::CRC32_PCLMUL[2],
+      crc32c: crate::crc32::portable::crc32c_slice16,
+      crc64_xz: crc64_k::XZ_PCLMUL_SMALL,
+      crc64_nvme: crc64_k::NVME_PCLMUL_SMALL,
+    },
+
+    m: KernelSet {
+      crc16_ccitt: crc16_k::CCITT_PCLMUL[3],
+      crc16_ibm: crc16_k::IBM_PCLMUL[0],
+      crc24_openpgp: crc24_k::OPENPGP_PCLMUL[1],
+      crc32_ieee: crc32_k::CRC32_PCLMUL[0],
+      crc32c: crate::crc32::portable::crc32c_slice16,
+      crc64_xz: crc64_k::XZ_PCLMUL[2],
+      crc64_nvme: crc64_k::NVME_PCLMUL[1],
+    },
+
+    l: KernelSet {
+      crc16_ccitt: crc16_k::CCITT_PCLMUL[0],
+      crc16_ibm: crc16_k::IBM_PCLMUL[1],
+      crc24_openpgp: crc24_k::OPENPGP_PCLMUL[1],
+      crc32_ieee: crc32_k::CRC32_PCLMUL[1],
+      crc32c: crate::crc32::portable::crc32c_slice16,
+      crc64_xz: crc64_k::XZ_PCLMUL[0],
+      crc64_nvme: crc64_k::NVME_PCLMUL[1],
+    },
+  };
+
+  /// SSE4.2-only table: accelerate CRC32C, keep other variants portable.
+  pub static GENERIC_X86_CRC32C_ONLY_TABLE: KernelTable = KernelTable {
+    requires: platform::caps::x86::CRC32C_READY,
+    boundaries: [64, 256, 4096],
+
+    xs: KernelSet {
+      crc16_ccitt: crate::crc16::portable::crc16_ccitt_slice8,
+      crc16_ibm: crate::crc16::portable::crc16_ibm_slice8,
+      crc24_openpgp: crate::crc24::portable::crc24_openpgp_slice8,
+      crc32_ieee: crate::crc32::portable::crc32_bytewise_ieee,
+      crc32c: crc32_k::CRC32C_HWCRC[0],
+      crc64_xz: crate::crc64::portable::crc64_slice16_xz,
+      crc64_nvme: crate::crc64::portable::crc64_slice16_nvme,
+    },
+
+    s: KernelSet {
+      crc16_ccitt: crate::crc16::portable::crc16_ccitt_slice8,
+      crc16_ibm: crate::crc16::portable::crc16_ibm_slice8,
+      crc24_openpgp: crate::crc24::portable::crc24_openpgp_slice8,
+      crc32_ieee: crate::crc32::portable::crc32_slice16_ieee,
+      crc32c: crc32_k::CRC32C_HWCRC[0],
+      crc64_xz: crate::crc64::portable::crc64_slice16_xz,
+      crc64_nvme: crate::crc64::portable::crc64_slice16_nvme,
+    },
+
+    m: KernelSet {
+      crc16_ccitt: crate::crc16::portable::crc16_ccitt_slice8,
+      crc16_ibm: crate::crc16::portable::crc16_ibm_slice8,
+      crc24_openpgp: crate::crc24::portable::crc24_openpgp_slice8,
+      crc32_ieee: crate::crc32::portable::crc32_slice16_ieee,
+      crc32c: crc32_k::CRC32C_HWCRC[1],
+      crc64_xz: crate::crc64::portable::crc64_slice16_xz,
+      crc64_nvme: crate::crc64::portable::crc64_slice16_nvme,
+    },
+
+    l: KernelSet {
+      crc16_ccitt: crate::crc16::portable::crc16_ccitt_slice8,
+      crc16_ibm: crate::crc16::portable::crc16_ibm_slice8,
+      crc24_openpgp: crate::crc24::portable::crc24_openpgp_slice8,
+      crc32_ieee: crate::crc32::portable::crc32_slice16_ieee,
+      crc32c: crc32_k::CRC32C_HWCRC[1],
+      crc64_xz: crate::crc64::portable::crc64_slice16_xz,
+      crc64_nvme: crate::crc64::portable::crc64_slice16_nvme,
+    },
+  };
 }
 
 #[cfg(target_arch = "x86_64")]
 pub use x86_64_tables::*;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// s390x Platform Tables
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[cfg(target_arch = "s390x")]
+mod s390x_tables {
+  use super::*;
+  use crate::{
+    crc16::kernels::s390x as crc16_k, crc24::kernels::s390x as crc24_k, crc32::kernels::s390x as crc32_k,
+    crc64::kernels::s390x as crc64_k,
+  };
+
+  pub static S390X_Z13_TABLE: KernelTable = KernelTable {
+    requires: platform::caps::s390x::Z13_READY,
+    boundaries: [64, 256, 4096],
+    xs: PORTABLE_SET,
+    s: PORTABLE_SET,
+    m: KernelSet {
+      crc16_ccitt: crc16_k::CCITT_VGFM[0],
+      crc16_ibm: crc16_k::IBM_VGFM[0],
+      crc24_openpgp: crc24_k::OPENPGP_VGFM[0],
+      crc32_ieee: crc32_k::CRC32_VGFM[0],
+      crc32c: crc32_k::CRC32C_VGFM[0],
+      crc64_xz: crc64_k::XZ_VGFM[0],
+      crc64_nvme: crc64_k::NVME_VGFM[0],
+    },
+    l: KernelSet {
+      crc16_ccitt: crc16_k::CCITT_VGFM[1],
+      crc16_ibm: crc16_k::IBM_VGFM[1],
+      crc24_openpgp: crc24_k::OPENPGP_VGFM[1],
+      crc32_ieee: crc32_k::CRC32_VGFM[1],
+      crc32c: crc32_k::CRC32C_VGFM[1],
+      crc64_xz: crc64_k::XZ_VGFM[1],
+      crc64_nvme: crc64_k::NVME_VGFM[1],
+    },
+  };
+
+  pub static S390X_Z14_TABLE: KernelTable = KernelTable {
+    requires: platform::caps::s390x::Z13_READY,
+    boundaries: [64, 128, 4096],
+    xs: PORTABLE_SET,
+    s: PORTABLE_SET,
+    m: KernelSet {
+      crc16_ccitt: crc16_k::CCITT_VGFM[0],
+      crc16_ibm: crc16_k::IBM_VGFM[0],
+      crc24_openpgp: crc24_k::OPENPGP_VGFM[0],
+      crc32_ieee: crc32_k::CRC32_VGFM[0],
+      crc32c: crc32_k::CRC32C_VGFM[0],
+      crc64_xz: crc64_k::XZ_VGFM[0],
+      crc64_nvme: crc64_k::NVME_VGFM[0],
+    },
+    l: KernelSet {
+      crc16_ccitt: crc16_k::CCITT_VGFM[1],
+      crc16_ibm: crc16_k::IBM_VGFM[1],
+      crc24_openpgp: crc24_k::OPENPGP_VGFM[1],
+      crc32_ieee: crc32_k::CRC32_VGFM[1],
+      crc32c: crc32_k::CRC32C_VGFM[1],
+      crc64_xz: crc64_k::XZ_VGFM[1],
+      crc64_nvme: crc64_k::NVME_VGFM[1],
+    },
+  };
+
+  pub static S390X_Z15_TABLE: KernelTable = KernelTable {
+    requires: platform::caps::s390x::Z13_READY,
+    boundaries: [64, 64, 4096],
+    xs: PORTABLE_SET,
+    s: PORTABLE_SET,
+    m: KernelSet {
+      crc16_ccitt: crc16_k::CCITT_VGFM[0],
+      crc16_ibm: crc16_k::IBM_VGFM[0],
+      crc24_openpgp: crc24_k::OPENPGP_VGFM[0],
+      crc32_ieee: crc32_k::CRC32_VGFM[0],
+      crc32c: crc32_k::CRC32C_VGFM[0],
+      crc64_xz: crc64_k::XZ_VGFM[0],
+      crc64_nvme: crc64_k::NVME_VGFM[0],
+    },
+    l: KernelSet {
+      crc16_ccitt: crc16_k::CCITT_VGFM[1],
+      crc16_ibm: crc16_k::IBM_VGFM[1],
+      crc24_openpgp: crc24_k::OPENPGP_VGFM[1],
+      crc32_ieee: crc32_k::CRC32_VGFM[1],
+      crc32c: crc32_k::CRC32C_VGFM[1],
+      crc64_xz: crc64_k::XZ_VGFM[1],
+      crc64_nvme: crc64_k::NVME_VGFM[1],
+    },
+  };
+}
+
+#[cfg(target_arch = "s390x")]
+pub use s390x_tables::*;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// powerpc64 Platform Tables
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[cfg(target_arch = "powerpc64")]
+mod power_tables {
+  use super::*;
+  use crate::{
+    crc16::kernels::power as crc16_k, crc24::kernels::power as crc24_k, crc32::kernels::power as crc32_k,
+    crc64::kernels::power as crc64_k,
+  };
+
+  pub static POWER8_TABLE: KernelTable = KernelTable {
+    requires: platform::caps::power::VPMSUM_READY,
+    boundaries: [64, 128, 4096],
+    xs: PORTABLE_SET,
+    s: PORTABLE_SET,
+    m: KernelSet {
+      crc16_ccitt: crc16_k::CCITT_VPMSUM[0],
+      crc16_ibm: crc16_k::IBM_VPMSUM[0],
+      crc24_openpgp: crc24_k::OPENPGP_VPMSUM[0],
+      crc32_ieee: crc32_k::CRC32_VPMSUM[0],
+      crc32c: crc32_k::CRC32C_VPMSUM[0],
+      crc64_xz: crc64_k::XZ_VPMSUM[0],
+      crc64_nvme: crc64_k::NVME_VPMSUM[0],
+    },
+    l: KernelSet {
+      crc16_ccitt: crc16_k::CCITT_VPMSUM[1],
+      crc16_ibm: crc16_k::IBM_VPMSUM[1],
+      crc24_openpgp: crc24_k::OPENPGP_VPMSUM[1],
+      crc32_ieee: crc32_k::CRC32_VPMSUM[1],
+      crc32c: crc32_k::CRC32C_VPMSUM[1],
+      crc64_xz: crc64_k::XZ_VPMSUM[1],
+      crc64_nvme: crc64_k::NVME_VPMSUM[1],
+    },
+  };
+
+  pub static POWER9_TABLE: KernelTable = KernelTable {
+    requires: platform::caps::power::VPMSUM_READY,
+    boundaries: [64, 64, 4096],
+    xs: PORTABLE_SET,
+    s: PORTABLE_SET,
+    m: KernelSet {
+      crc16_ccitt: crc16_k::CCITT_VPMSUM[0],
+      crc16_ibm: crc16_k::IBM_VPMSUM[0],
+      crc24_openpgp: crc24_k::OPENPGP_VPMSUM[0],
+      crc32_ieee: crc32_k::CRC32_VPMSUM[0],
+      crc32c: crc32_k::CRC32C_VPMSUM[0],
+      crc64_xz: crc64_k::XZ_VPMSUM[0],
+      crc64_nvme: crc64_k::NVME_VPMSUM[0],
+    },
+    l: KernelSet {
+      crc16_ccitt: crc16_k::CCITT_VPMSUM[2],
+      crc16_ibm: crc16_k::IBM_VPMSUM[2],
+      crc24_openpgp: crc24_k::OPENPGP_VPMSUM[2],
+      crc32_ieee: crc32_k::CRC32_VPMSUM[2],
+      crc32c: crc32_k::CRC32C_VPMSUM[2],
+      crc64_xz: crc64_k::XZ_VPMSUM[2],
+      crc64_nvme: crc64_k::NVME_VPMSUM[2],
+    },
+  };
+
+  pub static POWER10_TABLE: KernelTable = KernelTable {
+    requires: platform::caps::power::VPMSUM_READY,
+    boundaries: [64, 64, 4096],
+    xs: PORTABLE_SET,
+    s: PORTABLE_SET,
+    m: KernelSet {
+      crc16_ccitt: crc16_k::CCITT_VPMSUM[0],
+      crc16_ibm: crc16_k::IBM_VPMSUM[0],
+      crc24_openpgp: crc24_k::OPENPGP_VPMSUM[0],
+      crc32_ieee: crc32_k::CRC32_VPMSUM[0],
+      crc32c: crc32_k::CRC32C_VPMSUM[0],
+      crc64_xz: crc64_k::XZ_VPMSUM[0],
+      crc64_nvme: crc64_k::NVME_VPMSUM[0],
+    },
+    l: KernelSet {
+      crc16_ccitt: crc16_k::CCITT_VPMSUM[2],
+      crc16_ibm: crc16_k::IBM_VPMSUM[2],
+      crc24_openpgp: crc24_k::OPENPGP_VPMSUM[2],
+      crc32_ieee: crc32_k::CRC32_VPMSUM[2],
+      crc32c: crc32_k::CRC32C_VPMSUM[2],
+      crc64_xz: crc64_k::XZ_VPMSUM[2],
+      crc64_nvme: crc64_k::NVME_VPMSUM[2],
+    },
+  };
+}
+
+#[cfg(target_arch = "powerpc64")]
+pub use power_tables::*;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// riscv64 Platform Tables
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[cfg(target_arch = "riscv64")]
+mod riscv64_tables {
+  use super::*;
+  use crate::{
+    crc16::kernels::riscv64 as crc16_k, crc24::kernels::riscv64 as crc24_k, crc32::kernels::riscv64 as crc32_k,
+    crc64::kernels::riscv64 as crc64_k,
+  };
+
+  pub static RISCV64_ZBC_TABLE: KernelTable = KernelTable {
+    requires: platform::caps::riscv::ZBC,
+    boundaries: [64, 64, 4096],
+    xs: PORTABLE_SET,
+    s: PORTABLE_SET,
+    m: KernelSet {
+      crc16_ccitt: crc16_k::CCITT_ZBC[0],
+      crc16_ibm: crc16_k::IBM_ZBC[0],
+      crc24_openpgp: crc24_k::OPENPGP_ZBC[0],
+      crc32_ieee: crc32_k::CRC32_ZBC[0],
+      crc32c: crc32_k::CRC32C_ZBC[0],
+      crc64_xz: crc64_k::XZ_ZBC[0],
+      crc64_nvme: crc64_k::NVME_ZBC[0],
+    },
+    l: KernelSet {
+      crc16_ccitt: crc16_k::CCITT_ZBC[2],
+      crc16_ibm: crc16_k::IBM_ZBC[2],
+      crc24_openpgp: crc24_k::OPENPGP_ZBC[2],
+      crc32_ieee: crc32_k::CRC32_ZBC[2],
+      crc32c: crc32_k::CRC32C_ZBC[2],
+      crc64_xz: crc64_k::XZ_ZBC[2],
+      crc64_nvme: crc64_k::NVME_ZBC[2],
+    },
+  };
+
+  pub static RISCV64_ZVBC_TABLE: KernelTable = KernelTable {
+    requires: platform::caps::riscv::V.union(platform::caps::riscv::ZVBC),
+    boundaries: [64, 64, 4096],
+    xs: PORTABLE_SET,
+    s: PORTABLE_SET,
+    m: KernelSet {
+      crc16_ccitt: crc16_k::CCITT_ZVBC[0],
+      crc16_ibm: crc16_k::IBM_ZVBC[0],
+      crc24_openpgp: crc24_k::OPENPGP_ZVBC[0],
+      crc32_ieee: crc32_k::CRC32_ZVBC[0],
+      crc32c: crc32_k::CRC32C_ZVBC[0],
+      crc64_xz: crc64_k::XZ_ZVBC[0],
+      crc64_nvme: crc64_k::NVME_ZVBC[0],
+    },
+    l: KernelSet {
+      crc16_ccitt: crc16_k::CCITT_ZVBC[2],
+      crc16_ibm: crc16_k::IBM_ZVBC[2],
+      crc24_openpgp: crc24_k::OPENPGP_ZVBC[2],
+      crc32_ieee: crc32_k::CRC32_ZVBC[2],
+      crc32c: crc32_k::CRC32C_ZVBC[2],
+      crc64_xz: crc64_k::XZ_ZVBC[2],
+      crc64_nvme: crc64_k::NVME_ZVBC[2],
+    },
+  };
+}
+
+#[cfg(target_arch = "riscv64")]
+pub use riscv64_tables::*;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tests
@@ -750,7 +1349,7 @@ mod tests {
   #[test]
   fn test_aarch64_exact_match() {
     // Apple M1-M3 should return the Apple table
-    let table = exact_match(TuneKind::AppleM1M3);
+    let table = exact_match(TuneKind::AppleM1M3, APPLE_M1M3_TABLE.requires);
     assert!(table.is_some());
   }
 
@@ -758,7 +1357,7 @@ mod tests {
   #[test]
   fn test_x86_64_exact_match() {
     // Zen4 should return the Zen4 table
-    let table = exact_match(TuneKind::Zen4);
+    let table = exact_match(TuneKind::Zen4, ZEN4_TABLE.requires);
     assert!(table.is_some());
   }
 

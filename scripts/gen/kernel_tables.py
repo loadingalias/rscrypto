@@ -3,15 +3,20 @@
 Generate kernel tables from Criterion benchmark results.
 
 This script parses *_kernels.txt files from bench_baseline/ and generates
-crates/checksum/src/generated/kernel_tables.rs with optimal kernel selections.
+`crates/checksum/src/generated/kernel_tables.rs` with draft kernel selections.
+
+Note: the checksum crate's production dispatch tables are currently maintained
+in `crates/checksum/src/dispatch.rs`. The generated file is a development aid
+for inspecting benchmark baselines and prototyping table updates; it is not
+wired into the crate build.
 
 Usage:
     python scripts/gen/kernel_tables.py
 
-The generated file contains:
-- KernelTable structs for each benchmarked platform
+The generated file contains a standalone Rust module with:
+- Draft KernelTable structs for each benchmarked platform
 - Size class boundaries (xs/s/m/l/xl mapped to byte thresholds)
-- Direct function pointer assignments for each (variant, size_class)
+- Draft function pointer assignments for each (variant, size_class)
 """
 
 from __future__ import annotations
