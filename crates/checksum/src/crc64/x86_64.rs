@@ -202,7 +202,8 @@ unsafe fn update_simd_2way(
   // Process the largest even prefix with 2-way striping.
   let mut i = 2;
   let even = blocks.len() & !1usize;
-  let double_even = (blocks.len() / 4) * 4;
+  // Account for starting at i=2: we need i+3 < blocks.len() for valid access
+  let double_even = 2usize.strict_add(((blocks.len().strict_sub(2)) / 4).strict_mul(4));
 
   // ═══════════════════════════════════════════════════════════════════════════
   // Double-unrolled main loop: process 4 blocks (512B) per iteration.
@@ -258,7 +259,8 @@ unsafe fn update_simd_4way(
   }
 
   let aligned = (blocks.len() / 4) * 4;
-  let double_aligned = (blocks.len() / 8) * 8;
+  // Account for starting at i=4: we need i+7 < blocks.len() for valid access
+  let double_aligned = 4usize.strict_add(((blocks.len().strict_sub(4)) / 8).strict_mul(8));
 
   let coeff_512 = Simd::new(fold_512b.0, fold_512b.1);
   let coeff_128 = Simd::new(consts.fold_128b.0, consts.fold_128b.1);
@@ -802,7 +804,8 @@ unsafe fn update_simd_vpclmul_2way_impl<const ALIGNED: bool>(
   }
 
   let even = blocks.len() & !1usize;
-  let double_even = (blocks.len() / 4) * 4; // For double-unrolled loop
+  // Account for starting at i=2: we need i+3 < blocks.len() for valid access
+  let double_even = 2usize.strict_add(((blocks.len().strict_sub(2)) / 4).strict_mul(4));
 
   let (mut x0_0, mut x1_0) = load_128b_block::<ALIGNED>(&blocks[0]);
   let (mut x0_1, mut x1_1) = load_128b_block::<ALIGNED>(&blocks[1]);
@@ -916,7 +919,8 @@ unsafe fn update_simd_vpclmul_4way_impl<const ALIGNED: bool>(
   }
 
   let aligned = (blocks.len() / 4) * 4;
-  let double_aligned = (blocks.len() / 8) * 8; // For double-unrolled loop
+  // Account for starting at i=4: we need i+7 < blocks.len() for valid access
+  let double_aligned = 4usize.strict_add(((blocks.len().strict_sub(4)) / 8).strict_mul(8));
 
   let (mut x0_0, mut x1_0) = load_128b_block::<ALIGNED>(&blocks[0]);
   let (mut x0_1, mut x1_1) = load_128b_block::<ALIGNED>(&blocks[1]);
