@@ -183,6 +183,8 @@ unsafe fn update_simd_width32_reflected_2way(
   fold_256b: (u64, u64),
   keys: &[u64; 23],
 ) -> u32 {
+  use crate::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
+
   debug_assert!(blocks.len() >= 2);
 
   let coeff_256b = Simd::new(fold_256b.0, fold_256b.1);
@@ -195,12 +197,35 @@ unsafe fn update_simd_width32_reflected_2way(
   // Inject CRC into stream 0 (block 0).
   s0[0] ^= Simd::new(0, state as u64);
 
-  // Process the largest even prefix with 2-way striping.
-  let mut i = 2;
+  // Double-unrolled main loop: process 4 blocks (512B) per iteration.
+  const BLOCK_SIZE: usize = 128;
+  const DOUBLE_GROUP: usize = 4; // 2 × 2-way = 4 blocks = 512B
+
+  let mut i: usize = 2;
+  let aligned = (blocks.len() / DOUBLE_GROUP) * DOUBLE_GROUP;
+
+  while i.strict_add(DOUBLE_GROUP) <= aligned {
+    let prefetch_idx = i.strict_add(LARGE_BLOCK_DISTANCE / BLOCK_SIZE);
+    if prefetch_idx < blocks.len() {
+      prefetch_read_l1(blocks[prefetch_idx].as_ptr().cast::<u8>());
+    }
+
+    // First iteration (blocks i, i+1)
+    fold_block_128_width32_reflected(&mut s0, &blocks[i], coeff_256b);
+    fold_block_128_width32_reflected(&mut s1, &blocks[i.strict_add(1)], coeff_256b);
+
+    // Second iteration (blocks i+2, i+3)
+    fold_block_128_width32_reflected(&mut s0, &blocks[i.strict_add(2)], coeff_256b);
+    fold_block_128_width32_reflected(&mut s1, &blocks[i.strict_add(3)], coeff_256b);
+
+    i = i.strict_add(DOUBLE_GROUP);
+  }
+
+  // Handle remaining pairs.
   let even = blocks.len() & !1usize;
   while i < even {
     fold_block_128_width32_reflected(&mut s0, &blocks[i], coeff_256b);
-    fold_block_128_width32_reflected(&mut s1, &blocks[i + 1], coeff_256b);
+    fold_block_128_width32_reflected(&mut s1, &blocks[i.strict_add(1)], coeff_256b);
     i = i.strict_add(2);
   }
 
@@ -231,14 +256,14 @@ unsafe fn update_simd_width32_reflected_3way(
   fold_256b: (u64, u64),
   keys: &[u64; 23],
 ) -> u32 {
+  use crate::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
+
   if blocks.len() < 3 {
     let Some((first, rest)) = blocks.split_first() else {
       return state;
     };
     return update_simd_width32_reflected(state, first, rest, keys);
   }
-
-  let aligned = (blocks.len() / 3).strict_mul(3);
 
   let coeff_384b = Simd::new(fold_384b.0, fold_384b.1);
   let coeff_256b = Simd::new(fold_256b.0, fold_256b.1);
@@ -252,12 +277,38 @@ unsafe fn update_simd_width32_reflected_3way(
   // Inject CRC into stream 0 (block 0).
   s0[0] ^= Simd::new(0, state as u64);
 
-  // Process the largest multiple-of-3 prefix with 3-way striping.
-  let mut i = 3;
-  while i < aligned {
+  // Double-unrolled main loop: process 6 blocks (768B) per iteration.
+  const BLOCK_SIZE: usize = 128;
+  const DOUBLE_GROUP: usize = 6; // 2 × 3-way = 6 blocks = 768B
+
+  let mut i: usize = 3;
+  let aligned = (blocks.len() / DOUBLE_GROUP) * DOUBLE_GROUP;
+
+  while i.strict_add(DOUBLE_GROUP) <= aligned {
+    let prefetch_idx = i.strict_add(LARGE_BLOCK_DISTANCE / BLOCK_SIZE);
+    if prefetch_idx < blocks.len() {
+      prefetch_read_l1(blocks[prefetch_idx].as_ptr().cast::<u8>());
+    }
+
+    // First iteration (blocks i, i+1, i+2)
     fold_block_128_width32_reflected(&mut s0, &blocks[i], coeff_384b);
-    fold_block_128_width32_reflected(&mut s1, &blocks[i + 1], coeff_384b);
-    fold_block_128_width32_reflected(&mut s2, &blocks[i + 2], coeff_384b);
+    fold_block_128_width32_reflected(&mut s1, &blocks[i.strict_add(1)], coeff_384b);
+    fold_block_128_width32_reflected(&mut s2, &blocks[i.strict_add(2)], coeff_384b);
+
+    // Second iteration (blocks i+3, i+4, i+5)
+    fold_block_128_width32_reflected(&mut s0, &blocks[i.strict_add(3)], coeff_384b);
+    fold_block_128_width32_reflected(&mut s1, &blocks[i.strict_add(4)], coeff_384b);
+    fold_block_128_width32_reflected(&mut s2, &blocks[i.strict_add(5)], coeff_384b);
+
+    i = i.strict_add(DOUBLE_GROUP);
+  }
+
+  // Handle remaining triplets.
+  let triple_aligned = (blocks.len() / 3) * 3;
+  while i < triple_aligned {
+    fold_block_128_width32_reflected(&mut s0, &blocks[i], coeff_384b);
+    fold_block_128_width32_reflected(&mut s1, &blocks[i.strict_add(1)], coeff_384b);
+    fold_block_128_width32_reflected(&mut s2, &blocks[i.strict_add(2)], coeff_384b);
     i = i.strict_add(3);
   }
 
@@ -283,7 +334,7 @@ unsafe fn update_simd_width32_reflected_3way(
   combined[7] ^= s0[7].fold_16_reflected(coeff_256b, zero);
 
   // Handle any remaining blocks sequentially.
-  for block in &blocks[aligned..] {
+  for block in &blocks[triple_aligned..] {
     fold_block_128_width32_reflected(&mut combined, block, coeff_128b);
   }
 

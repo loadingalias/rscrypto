@@ -178,6 +178,7 @@ unsafe fn merge_lanes_xor(acc: &mut [Simd; 8], stream: &[Simd; 8], coeff: Simd) 
   acc[7] ^= stream[7].fold_16(coeff);
 }
 
+/// 2-way PCLMUL (SSE) kernel with double-unrolling and software prefetch.
 #[target_feature(enable = "sse2", enable = "pclmulqdq")]
 unsafe fn update_simd_2way(
   state: u64,
@@ -185,6 +186,8 @@ unsafe fn update_simd_2way(
   fold_256b: (u64, u64),
   consts: &Crc64ClmulConstants,
 ) -> u64 {
+  use crate::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
+
   debug_assert!(blocks.len() >= 2);
 
   let coeff_256 = Simd::new(fold_256b.0, fold_256b.1);
@@ -199,6 +202,23 @@ unsafe fn update_simd_2way(
   // Process the largest even prefix with 2-way striping.
   let mut i = 2;
   let even = blocks.len() & !1usize;
+  let double_even = (blocks.len() / 4) * 4;
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Double-unrolled main loop: process 4 blocks (512B) per iteration.
+  // ═══════════════════════════════════════════════════════════════════════════
+  while i < double_even {
+    let prefetch_ptr = blocks.as_ptr().add(i).cast::<u8>();
+    prefetch_read_l1(prefetch_ptr.add(LARGE_BLOCK_DISTANCE));
+
+    fold_block_128(&mut s0, &blocks[i], coeff_256);
+    fold_block_128(&mut s1, &blocks[i + 1], coeff_256);
+    fold_block_128(&mut s0, &blocks[i + 2], coeff_256);
+    fold_block_128(&mut s1, &blocks[i + 3], coeff_256);
+    i = i.strict_add(4);
+  }
+
+  // Handle remaining pair.
   while i < even {
     fold_block_128(&mut s0, &blocks[i], coeff_256);
     fold_block_128(&mut s1, &blocks[i + 1], coeff_256);
@@ -217,6 +237,7 @@ unsafe fn update_simd_2way(
   fold_tail(combined, consts)
 }
 
+/// 4-way PCLMUL (SSE) kernel with double-unrolling and software prefetch.
 #[target_feature(enable = "sse2", enable = "pclmulqdq")]
 unsafe fn update_simd_4way(
   state: u64,
@@ -225,6 +246,8 @@ unsafe fn update_simd_4way(
   combine: &[(u64, u64); 3],
   consts: &Crc64ClmulConstants,
 ) -> u64 {
+  use crate::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
+
   debug_assert!(!blocks.is_empty());
 
   if blocks.len() < 4 {
@@ -235,6 +258,7 @@ unsafe fn update_simd_4way(
   }
 
   let aligned = (blocks.len() / 4) * 4;
+  let double_aligned = (blocks.len() / 8) * 8;
 
   let coeff_512 = Simd::new(fold_512b.0, fold_512b.1);
   let coeff_128 = Simd::new(consts.fold_128b.0, consts.fold_128b.1);
@@ -250,7 +274,30 @@ unsafe fn update_simd_4way(
   // Inject CRC into stream 0.
   s0[0] ^= Simd::new(0, state);
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Double-unrolled main loop: process 8 blocks (1KB) per iteration.
+  // ═══════════════════════════════════════════════════════════════════════════
   let mut i = 4;
+  while i < double_aligned {
+    let prefetch_ptr = blocks.as_ptr().add(i).cast::<u8>();
+    prefetch_read_l1(prefetch_ptr.add(LARGE_BLOCK_DISTANCE));
+
+    // First group of 4 blocks
+    fold_block_128(&mut s0, &blocks[i], coeff_512);
+    fold_block_128(&mut s1, &blocks[i + 1], coeff_512);
+    fold_block_128(&mut s2, &blocks[i + 2], coeff_512);
+    fold_block_128(&mut s3, &blocks[i + 3], coeff_512);
+
+    // Second group of 4 blocks
+    fold_block_128(&mut s0, &blocks[i + 4], coeff_512);
+    fold_block_128(&mut s1, &blocks[i + 5], coeff_512);
+    fold_block_128(&mut s2, &blocks[i + 6], coeff_512);
+    fold_block_128(&mut s3, &blocks[i + 7], coeff_512);
+
+    i = i.strict_add(8);
+  }
+
+  // Handle remaining group.
   while i < aligned {
     fold_block_128(&mut s0, &blocks[i], coeff_512);
     fold_block_128(&mut s1, &blocks[i + 1], coeff_512);
@@ -295,6 +342,7 @@ unsafe fn update_simd_4way(
   fold_tail(combined, consts)
 }
 
+/// 7-way PCLMUL (SSE) kernel with software prefetch.
 #[target_feature(enable = "sse2", enable = "pclmulqdq")]
 unsafe fn update_simd_7way(
   state: u64,
@@ -303,6 +351,8 @@ unsafe fn update_simd_7way(
   combine: &[(u64, u64); 6],
   consts: &Crc64ClmulConstants,
 ) -> u64 {
+  use crate::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
+
   debug_assert!(!blocks.is_empty());
 
   if blocks.len() < 7 {
@@ -335,6 +385,9 @@ unsafe fn update_simd_7way(
 
   let mut i = 7;
   while i < aligned {
+    let prefetch_ptr = blocks.as_ptr().add(i).cast::<u8>();
+    prefetch_read_l1(prefetch_ptr.add(LARGE_BLOCK_DISTANCE));
+
     fold_block_128(&mut s0, &blocks[i], coeff_896);
     fold_block_128(&mut s1, &blocks[i + 1], coeff_896);
     fold_block_128(&mut s2, &blocks[i + 2], coeff_896);
@@ -366,6 +419,7 @@ unsafe fn update_simd_7way(
   fold_tail(combined, consts)
 }
 
+/// 8-way PCLMUL (SSE) kernel with software prefetch.
 #[target_feature(enable = "sse2", enable = "pclmulqdq")]
 unsafe fn update_simd_8way(
   state: u64,
@@ -374,6 +428,8 @@ unsafe fn update_simd_8way(
   combine: &[(u64, u64); 7],
   consts: &Crc64ClmulConstants,
 ) -> u64 {
+  use crate::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
+
   debug_assert!(!blocks.is_empty());
 
   if blocks.len() < 8 {
@@ -407,6 +463,9 @@ unsafe fn update_simd_8way(
 
   let mut i = 8;
   while i < aligned {
+    let prefetch_ptr = blocks.as_ptr().add(i).cast::<u8>();
+    prefetch_read_l1(prefetch_ptr.add(LARGE_BLOCK_DISTANCE));
+
     fold_block_128(&mut s0, &blocks[i], coeff_1024);
     fold_block_128(&mut s1, &blocks[i + 1], coeff_1024);
     fold_block_128(&mut s2, &blocks[i + 2], coeff_1024);
@@ -720,6 +779,9 @@ unsafe fn update_simd_vpclmul_2way(
   }
 }
 
+/// 2-way VPCLMUL kernel with double-unrolling and software prefetch.
+///
+/// Processes 512 bytes per iteration (4 × 128B blocks in 2 streams).
 #[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
 unsafe fn update_simd_vpclmul_2way_impl<const ALIGNED: bool>(
   state: u64,
@@ -727,6 +789,8 @@ unsafe fn update_simd_vpclmul_2way_impl<const ALIGNED: bool>(
   fold_256b: (u64, u64),
   consts: &Crc64ClmulConstants,
 ) -> u64 {
+  use crate::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
+
   debug_assert!(!blocks.is_empty());
 
   // Fallback to the single-stream kernel when we don't have enough blocks.
@@ -738,6 +802,7 @@ unsafe fn update_simd_vpclmul_2way_impl<const ALIGNED: bool>(
   }
 
   let even = blocks.len() & !1usize;
+  let double_even = (blocks.len() / 4) * 4; // For double-unrolled loop
 
   let (mut x0_0, mut x1_0) = load_128b_block::<ALIGNED>(&blocks[0]);
   let (mut x0_1, mut x1_1) = load_128b_block::<ALIGNED>(&blocks[1]);
@@ -749,7 +814,43 @@ unsafe fn update_simd_vpclmul_2way_impl<const ALIGNED: bool>(
   let coeff_256 = vpclmul_coeff(fold_256b);
   let coeff_128 = vpclmul_coeff(consts.fold_128b);
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Double-unrolled main loop: process 4 blocks (512B) per iteration.
+  // ═══════════════════════════════════════════════════════════════════════════
   let mut i = 2;
+  while i < double_even {
+    // Prefetch ahead to hide memory latency.
+    let prefetch_ptr = blocks.as_ptr().add(i).cast::<u8>();
+    prefetch_read_l1(prefetch_ptr.add(LARGE_BLOCK_DISTANCE));
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // First pair of blocks (256B)
+    // ─────────────────────────────────────────────────────────────────────────
+    let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i]);
+    x0_0 = fold16_4x_ternlog(x0_0, y0, coeff_256);
+    x1_0 = fold16_4x_ternlog(x1_0, y1, coeff_256);
+
+    let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i + 1]);
+    x0_1 = fold16_4x_ternlog(x0_1, y0, coeff_256);
+    x1_1 = fold16_4x_ternlog(x1_1, y1, coeff_256);
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Second pair of blocks (256B)
+    // ─────────────────────────────────────────────────────────────────────────
+    let (z0, z1) = load_128b_block::<ALIGNED>(&blocks[i + 2]);
+    x0_0 = fold16_4x_ternlog(x0_0, z0, coeff_256);
+    x1_0 = fold16_4x_ternlog(x1_0, z1, coeff_256);
+
+    let (z0, z1) = load_128b_block::<ALIGNED>(&blocks[i + 3]);
+    x0_1 = fold16_4x_ternlog(x0_1, z0, coeff_256);
+    x1_1 = fold16_4x_ternlog(x1_1, z1, coeff_256);
+
+    i = i.strict_add(4);
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Handle remaining pair (if odd number of pairs).
+  // ═══════════════════════════════════════════════════════════════════════════
   while i < even {
     let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i]);
     x0_0 = fold16_4x_ternlog(x0_0, y0, coeff_256);
@@ -792,6 +893,9 @@ unsafe fn update_simd_vpclmul_4way(
   }
 }
 
+/// 4-way VPCLMUL kernel with double-unrolling and software prefetch.
+///
+/// Processes 1024 bytes per iteration (8 × 128B blocks in 4 streams).
 #[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
 unsafe fn update_simd_vpclmul_4way_impl<const ALIGNED: bool>(
   state: u64,
@@ -800,6 +904,8 @@ unsafe fn update_simd_vpclmul_4way_impl<const ALIGNED: bool>(
   combine: &[(u64, u64); 3],
   consts: &Crc64ClmulConstants,
 ) -> u64 {
+  use crate::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
+
   debug_assert!(!blocks.is_empty());
 
   if blocks.len() < 4 {
@@ -810,6 +916,7 @@ unsafe fn update_simd_vpclmul_4way_impl<const ALIGNED: bool>(
   }
 
   let aligned = (blocks.len() / 4) * 4;
+  let double_aligned = (blocks.len() / 8) * 8; // For double-unrolled loop
 
   let (mut x0_0, mut x1_0) = load_128b_block::<ALIGNED>(&blocks[0]);
   let (mut x0_1, mut x1_1) = load_128b_block::<ALIGNED>(&blocks[1]);
@@ -825,7 +932,59 @@ unsafe fn update_simd_vpclmul_4way_impl<const ALIGNED: bool>(
   let c256 = vpclmul_coeff(combine[1]);
   let c128 = vpclmul_coeff(combine[2]);
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Double-unrolled main loop: process 8 blocks (1KB) per iteration.
+  // ═══════════════════════════════════════════════════════════════════════════
   let mut i = 4;
+  while i < double_aligned {
+    // Prefetch ahead to hide memory latency.
+    let prefetch_ptr = blocks.as_ptr().add(i).cast::<u8>();
+    prefetch_read_l1(prefetch_ptr.add(LARGE_BLOCK_DISTANCE));
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // First group of 4 blocks (512B)
+    // ─────────────────────────────────────────────────────────────────────────
+    let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i]);
+    x0_0 = fold16_4x_ternlog(x0_0, y0, coeff_512);
+    x1_0 = fold16_4x_ternlog(x1_0, y1, coeff_512);
+
+    let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i + 1]);
+    x0_1 = fold16_4x_ternlog(x0_1, y0, coeff_512);
+    x1_1 = fold16_4x_ternlog(x1_1, y1, coeff_512);
+
+    let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i + 2]);
+    x0_2 = fold16_4x_ternlog(x0_2, y0, coeff_512);
+    x1_2 = fold16_4x_ternlog(x1_2, y1, coeff_512);
+
+    let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i + 3]);
+    x0_3 = fold16_4x_ternlog(x0_3, y0, coeff_512);
+    x1_3 = fold16_4x_ternlog(x1_3, y1, coeff_512);
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Second group of 4 blocks (512B)
+    // ─────────────────────────────────────────────────────────────────────────
+    let (z0, z1) = load_128b_block::<ALIGNED>(&blocks[i + 4]);
+    x0_0 = fold16_4x_ternlog(x0_0, z0, coeff_512);
+    x1_0 = fold16_4x_ternlog(x1_0, z1, coeff_512);
+
+    let (z0, z1) = load_128b_block::<ALIGNED>(&blocks[i + 5]);
+    x0_1 = fold16_4x_ternlog(x0_1, z0, coeff_512);
+    x1_1 = fold16_4x_ternlog(x1_1, z1, coeff_512);
+
+    let (z0, z1) = load_128b_block::<ALIGNED>(&blocks[i + 6]);
+    x0_2 = fold16_4x_ternlog(x0_2, z0, coeff_512);
+    x1_2 = fold16_4x_ternlog(x1_2, z1, coeff_512);
+
+    let (z0, z1) = load_128b_block::<ALIGNED>(&blocks[i + 7]);
+    x0_3 = fold16_4x_ternlog(x0_3, z0, coeff_512);
+    x1_3 = fold16_4x_ternlog(x1_3, z1, coeff_512);
+
+    i = i.strict_add(8);
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Handle remaining group (if odd number of groups).
+  // ═══════════════════════════════════════════════════════════════════════════
   while i < aligned {
     let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i]);
     x0_0 = fold16_4x_ternlog(x0_0, y0, coeff_512);
@@ -880,6 +1039,10 @@ unsafe fn update_simd_vpclmul_7way(
   }
 }
 
+/// 7-way VPCLMUL kernel with software prefetch.
+///
+/// Processes 896 bytes per iteration (7 × 128B blocks in 7 streams).
+/// Already has high ILP from 7-way parallelism; prefetch helps hide memory latency.
 #[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
 unsafe fn update_simd_vpclmul_7way_impl<const ALIGNED: bool>(
   state: u64,
@@ -888,6 +1051,8 @@ unsafe fn update_simd_vpclmul_7way_impl<const ALIGNED: bool>(
   combine: &[(u64, u64); 6],
   consts: &Crc64ClmulConstants,
 ) -> u64 {
+  use crate::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
+
   debug_assert!(!blocks.is_empty());
 
   if blocks.len() < 7 {
@@ -920,6 +1085,10 @@ unsafe fn update_simd_vpclmul_7way_impl<const ALIGNED: bool>(
 
   let mut i = 7;
   while i < aligned {
+    // Prefetch ahead to hide memory latency.
+    let prefetch_ptr = blocks.as_ptr().add(i).cast::<u8>();
+    prefetch_read_l1(prefetch_ptr.add(LARGE_BLOCK_DISTANCE));
+
     // VPTERNLOGD: fold + XOR in one instruction per vector (7×2 = 14 per iteration)
     let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i]);
     x0_0 = fold16_4x_ternlog(x0_0, y0, coeff_896);
@@ -995,6 +1164,10 @@ unsafe fn update_simd_vpclmul_8way(
   }
 }
 
+/// 8-way VPCLMUL kernel with software prefetch.
+///
+/// Processes 1024 bytes per iteration (8 × 128B blocks in 8 streams).
+/// Already has high ILP from 8-way parallelism; prefetch helps hide memory latency.
 #[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
 unsafe fn update_simd_vpclmul_8way_impl<const ALIGNED: bool>(
   state: u64,
@@ -1003,6 +1176,8 @@ unsafe fn update_simd_vpclmul_8way_impl<const ALIGNED: bool>(
   combine: &[(u64, u64); 7],
   consts: &Crc64ClmulConstants,
 ) -> u64 {
+  use crate::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
+
   debug_assert!(!blocks.is_empty());
 
   if blocks.len() < 8 {
@@ -1036,6 +1211,10 @@ unsafe fn update_simd_vpclmul_8way_impl<const ALIGNED: bool>(
 
   let mut i = 8;
   while i < aligned {
+    // Prefetch ahead to hide memory latency.
+    let prefetch_ptr = blocks.as_ptr().add(i).cast::<u8>();
+    prefetch_read_l1(prefetch_ptr.add(LARGE_BLOCK_DISTANCE));
+
     // VPTERNLOGD: fold + XOR in one instruction per vector (8×2 = 16 per iteration)
     let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i]);
     x0_0 = fold16_4x_ternlog(x0_0, y0, coeff_1024);
@@ -1155,10 +1334,14 @@ unsafe fn finalize_4x512_state(
   res.fold_8(consts.fold_8b).barrett(consts.poly, consts.mu)
 }
 
-/// 4×512-bit VPCLMUL kernel.
+/// 4×512-bit VPCLMUL kernel with double-unrolling and software prefetch.
 ///
-/// Processes 256 bytes per iteration (4 × 64-byte __m512i registers),
+/// Processes 512 bytes per iteration (2 × 4 × 64-byte __m512i registers),
 /// folding at 2048-bit distance for maximum throughput on Ice Lake+/Zen4+.
+///
+/// The double-unroll reduces loop overhead by 50% and improves instruction-level
+/// parallelism. Software prefetch hints ensure data arrives in L1 cache before
+/// the CPU needs it, hiding memory latency.
 #[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
 unsafe fn crc64_vpclmul_4x512(
   mut state: u64,
@@ -1167,7 +1350,10 @@ unsafe fn crc64_vpclmul_4x512(
   consts: &Crc64ClmulConstants,
   tables: &[[u64; 256]; 8],
 ) -> u64 {
+  use crate::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
+
   const BLOCK_SIZE: usize = 256; // 4 × 64 bytes
+  const DOUBLE_BLOCK: usize = 512; // 2 × BLOCK_SIZE (double-unrolled)
 
   if bytes.len() < BLOCK_SIZE {
     // Fall back to standard VPCLMUL for small buffers.
@@ -1209,14 +1395,52 @@ unsafe fn crc64_vpclmul_4x512(
   // Folding distance is 256 bytes (2048 bits) per iteration.
   let coeff_256 = vpclmul_coeff(fold_256b);
 
-  // Main loop: fold 256B per iteration.
-  while ptr.add(BLOCK_SIZE) <= end {
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Double-unrolled main loop: fold 512B (2 blocks) per iteration.
+  // This reduces loop overhead by 50% and improves ILP.
+  // ═══════════════════════════════════════════════════════════════════════════
+  while ptr.add(DOUBLE_BLOCK) <= end {
+    // Prefetch 2 iterations ahead (1KB) to hide memory latency.
+    prefetch_read_l1(ptr.add(LARGE_BLOCK_DISTANCE));
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // First block (256B): load and fold
+    // ─────────────────────────────────────────────────────────────────────────
     let y0 = _mm512_load_si512(ptr.cast::<__m512i>());
     let y1 = _mm512_load_si512(ptr.add(64).cast::<__m512i>());
     let y2 = _mm512_load_si512(ptr.add(128).cast::<__m512i>());
     let y3 = _mm512_load_si512(ptr.add(192).cast::<__m512i>());
 
-    // VPTERNLOGD: fold + XOR in one instruction per register.
+    x0 = fold16_4x_ternlog(x0, y0, coeff_256);
+    x1 = fold16_4x_ternlog(x1, y1, coeff_256);
+    x2 = fold16_4x_ternlog(x2, y2, coeff_256);
+    x3 = fold16_4x_ternlog(x3, y3, coeff_256);
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Second block (256B): load and fold
+    // ─────────────────────────────────────────────────────────────────────────
+    let z0 = _mm512_load_si512(ptr.add(256).cast::<__m512i>());
+    let z1 = _mm512_load_si512(ptr.add(320).cast::<__m512i>());
+    let z2 = _mm512_load_si512(ptr.add(384).cast::<__m512i>());
+    let z3 = _mm512_load_si512(ptr.add(448).cast::<__m512i>());
+
+    x0 = fold16_4x_ternlog(x0, z0, coeff_256);
+    x1 = fold16_4x_ternlog(x1, z1, coeff_256);
+    x2 = fold16_4x_ternlog(x2, z2, coeff_256);
+    x3 = fold16_4x_ternlog(x3, z3, coeff_256);
+
+    ptr = ptr.add(DOUBLE_BLOCK);
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Handle remaining single block (if odd number of blocks).
+  // ═══════════════════════════════════════════════════════════════════════════
+  if ptr.add(BLOCK_SIZE) <= end {
+    let y0 = _mm512_load_si512(ptr.cast::<__m512i>());
+    let y1 = _mm512_load_si512(ptr.add(64).cast::<__m512i>());
+    let y2 = _mm512_load_si512(ptr.add(128).cast::<__m512i>());
+    let y3 = _mm512_load_si512(ptr.add(192).cast::<__m512i>());
+
     x0 = fold16_4x_ternlog(x0, y0, coeff_256);
     x1 = fold16_4x_ternlog(x1, y1, coeff_256);
     x2 = fold16_4x_ternlog(x2, y2, coeff_256);

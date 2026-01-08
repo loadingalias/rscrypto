@@ -8,6 +8,7 @@
 //! - Generic kernel selection and dispatch infrastructure
 //! - Generic test harnesses for CRC property testing
 //! - PCLMULQDQ/PMULL folding constants for hardware acceleration
+//! - Software prefetch helpers for optimal memory access patterns
 
 // CLMUL folding constants and helpers (used by SIMD CRC backends).
 #[cfg(any(
@@ -21,6 +22,7 @@ pub mod clmul;
 pub mod combine;
 pub mod kernels;
 pub mod portable;
+pub mod prefetch;
 pub mod reference;
 pub mod tables;
 #[cfg(test)]

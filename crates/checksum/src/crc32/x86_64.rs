@@ -1311,6 +1311,8 @@ unsafe fn fold_block_128_crc32(x: &mut [Simd128; 8], chunk: &[Simd128; 8], coeff
 
 #[target_feature(enable = "sse2", enable = "ssse3", enable = "pclmulqdq")]
 unsafe fn update_simd_crc32_ieee_2way(state: u32, blocks: &[[Simd128; 8]]) -> u32 {
+  use crate::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
+
   debug_assert!(blocks.len() >= 2);
 
   let coeff_256b = Simd128::new(CRC32_IEEE_STREAM.fold_256b.0, CRC32_IEEE_STREAM.fold_256b.1);
@@ -1322,11 +1324,38 @@ unsafe fn update_simd_crc32_ieee_2way(state: u32, blocks: &[[Simd128; 8]]) -> u3
   // Inject CRC into stream 0 (block 0).
   s0[0] ^= Simd128::new(0, state as u64);
 
+  // Double-unrolled main loop: process 4 blocks (512B) per iteration.
+  // Each [Simd128; 8] block is 128 bytes.
+  const BLOCK_SIZE: usize = 128;
+  const DOUBLE_GROUP: usize = 4; // 2 × 2-way = 4 blocks = 512B
+
   let mut i: usize = 2;
+  let aligned = (blocks.len() / DOUBLE_GROUP) * DOUBLE_GROUP;
+
+  // Double-unrolled loop
+  while i.strict_add(DOUBLE_GROUP) <= aligned {
+    // Prefetch ahead
+    let prefetch_idx = i.strict_add(LARGE_BLOCK_DISTANCE / BLOCK_SIZE);
+    if prefetch_idx < blocks.len() {
+      prefetch_read_l1(blocks[prefetch_idx].as_ptr().cast::<u8>());
+    }
+
+    // First iteration (blocks i, i+1)
+    fold_block_128_crc32(&mut s0, &blocks[i], coeff_256b);
+    fold_block_128_crc32(&mut s1, &blocks[i.strict_add(1)], coeff_256b);
+
+    // Second iteration (blocks i+2, i+3)
+    fold_block_128_crc32(&mut s0, &blocks[i.strict_add(2)], coeff_256b);
+    fold_block_128_crc32(&mut s1, &blocks[i.strict_add(3)], coeff_256b);
+
+    i = i.strict_add(DOUBLE_GROUP);
+  }
+
+  // Handle remaining pairs
   let even = blocks.len() & !1usize;
   while i < even {
     fold_block_128_crc32(&mut s0, &blocks[i], coeff_256b);
-    fold_block_128_crc32(&mut s1, &blocks[i + 1], coeff_256b);
+    fold_block_128_crc32(&mut s1, &blocks[i.strict_add(1)], coeff_256b);
     i = i.strict_add(2);
   }
 
@@ -1350,14 +1379,14 @@ unsafe fn update_simd_crc32_ieee_2way(state: u32, blocks: &[[Simd128; 8]]) -> u3
 
 #[target_feature(enable = "sse2", enable = "ssse3", enable = "pclmulqdq")]
 unsafe fn update_simd_crc32_ieee_4way(state: u32, blocks: &[[Simd128; 8]]) -> u32 {
+  use crate::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
+
   if blocks.len() < 4 {
     let Some((first, rest)) = blocks.split_first() else {
       return state;
     };
     return update_simd_crc32_ieee_reflected(state, first, rest);
   }
-
-  let aligned = (blocks.len() / 4) * 4;
 
   let coeff_512b = Simd128::new(CRC32_IEEE_STREAM.fold_512b.0, CRC32_IEEE_STREAM.fold_512b.1);
   let coeff_128b = Simd128::new(CRC32_IEEE_KEYS_REFLECTED[4], CRC32_IEEE_KEYS_REFLECTED[3]);
@@ -1372,12 +1401,43 @@ unsafe fn update_simd_crc32_ieee_4way(state: u32, blocks: &[[Simd128; 8]]) -> u3
 
   s0[0] ^= Simd128::new(0, state as u64);
 
+  // Double-unrolled main loop: process 8 blocks (1KB) per iteration.
+  const BLOCK_SIZE: usize = 128;
+  const DOUBLE_GROUP: usize = 8; // 2 × 4-way = 8 blocks = 1KB
+
   let mut i: usize = 4;
+  let double_aligned = (blocks.len() / DOUBLE_GROUP) * DOUBLE_GROUP;
+
+  // Double-unrolled loop
+  while i.strict_add(DOUBLE_GROUP) <= double_aligned {
+    // Prefetch ahead
+    let prefetch_idx = i.strict_add(LARGE_BLOCK_DISTANCE / BLOCK_SIZE);
+    if prefetch_idx < blocks.len() {
+      prefetch_read_l1(blocks[prefetch_idx].as_ptr().cast::<u8>());
+    }
+
+    // First iteration (blocks i..i+4)
+    fold_block_128_crc32(&mut s0, &blocks[i], coeff_512b);
+    fold_block_128_crc32(&mut s1, &blocks[i.strict_add(1)], coeff_512b);
+    fold_block_128_crc32(&mut s2, &blocks[i.strict_add(2)], coeff_512b);
+    fold_block_128_crc32(&mut s3, &blocks[i.strict_add(3)], coeff_512b);
+
+    // Second iteration (blocks i+4..i+8)
+    fold_block_128_crc32(&mut s0, &blocks[i.strict_add(4)], coeff_512b);
+    fold_block_128_crc32(&mut s1, &blocks[i.strict_add(5)], coeff_512b);
+    fold_block_128_crc32(&mut s2, &blocks[i.strict_add(6)], coeff_512b);
+    fold_block_128_crc32(&mut s3, &blocks[i.strict_add(7)], coeff_512b);
+
+    i = i.strict_add(DOUBLE_GROUP);
+  }
+
+  // Handle remaining 4-block groups
+  let aligned = (blocks.len() / 4) * 4;
   while i < aligned {
     fold_block_128_crc32(&mut s0, &blocks[i], coeff_512b);
-    fold_block_128_crc32(&mut s1, &blocks[i + 1], coeff_512b);
-    fold_block_128_crc32(&mut s2, &blocks[i + 2], coeff_512b);
-    fold_block_128_crc32(&mut s3, &blocks[i + 3], coeff_512b);
+    fold_block_128_crc32(&mut s1, &blocks[i.strict_add(1)], coeff_512b);
+    fold_block_128_crc32(&mut s2, &blocks[i.strict_add(2)], coeff_512b);
+    fold_block_128_crc32(&mut s3, &blocks[i.strict_add(3)], coeff_512b);
     i = i.strict_add(4);
   }
 
@@ -1397,6 +1457,8 @@ unsafe fn update_simd_crc32_ieee_4way(state: u32, blocks: &[[Simd128; 8]]) -> u3
 
 #[target_feature(enable = "sse2", enable = "ssse3", enable = "pclmulqdq")]
 unsafe fn update_simd_crc32_ieee_7way(state: u32, blocks: &[[Simd128; 8]]) -> u32 {
+  use crate::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
+
   if blocks.len() < 7 {
     let Some((first, rest)) = blocks.split_first() else {
       return state;
@@ -1427,15 +1489,24 @@ unsafe fn update_simd_crc32_ieee_7way(state: u32, blocks: &[[Simd128; 8]]) -> u3
 
   s0[0] ^= Simd128::new(0, state as u64);
 
+  // 7-way already processes 896B/iter - just add prefetch
+  const BLOCK_SIZE: usize = 128;
+
   let mut i: usize = 7;
   while i < aligned {
+    // Prefetch ahead
+    let prefetch_idx = i.strict_add(LARGE_BLOCK_DISTANCE / BLOCK_SIZE);
+    if prefetch_idx < blocks.len() {
+      prefetch_read_l1(blocks[prefetch_idx].as_ptr().cast::<u8>());
+    }
+
     fold_block_128_crc32(&mut s0, &blocks[i], coeff_896b);
-    fold_block_128_crc32(&mut s1, &blocks[i + 1], coeff_896b);
-    fold_block_128_crc32(&mut s2, &blocks[i + 2], coeff_896b);
-    fold_block_128_crc32(&mut s3, &blocks[i + 3], coeff_896b);
-    fold_block_128_crc32(&mut s4, &blocks[i + 4], coeff_896b);
-    fold_block_128_crc32(&mut s5, &blocks[i + 5], coeff_896b);
-    fold_block_128_crc32(&mut s6, &blocks[i + 6], coeff_896b);
+    fold_block_128_crc32(&mut s1, &blocks[i.strict_add(1)], coeff_896b);
+    fold_block_128_crc32(&mut s2, &blocks[i.strict_add(2)], coeff_896b);
+    fold_block_128_crc32(&mut s3, &blocks[i.strict_add(3)], coeff_896b);
+    fold_block_128_crc32(&mut s4, &blocks[i.strict_add(4)], coeff_896b);
+    fold_block_128_crc32(&mut s5, &blocks[i.strict_add(5)], coeff_896b);
+    fold_block_128_crc32(&mut s6, &blocks[i.strict_add(6)], coeff_896b);
     i = i.strict_add(7);
   }
 
@@ -1458,6 +1529,8 @@ unsafe fn update_simd_crc32_ieee_7way(state: u32, blocks: &[[Simd128; 8]]) -> u3
 
 #[target_feature(enable = "sse2", enable = "ssse3", enable = "pclmulqdq")]
 unsafe fn update_simd_crc32_ieee_8way(state: u32, blocks: &[[Simd128; 8]]) -> u32 {
+  use crate::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
+
   if blocks.len() < 8 {
     let Some((first, rest)) = blocks.split_first() else {
       return state;
@@ -1490,16 +1563,25 @@ unsafe fn update_simd_crc32_ieee_8way(state: u32, blocks: &[[Simd128; 8]]) -> u3
 
   s0[0] ^= Simd128::new(0, state as u64);
 
+  // 8-way already processes 1KB/iter - just add prefetch
+  const BLOCK_SIZE: usize = 128;
+
   let mut i: usize = 8;
   while i < aligned {
+    // Prefetch ahead
+    let prefetch_idx = i.strict_add(LARGE_BLOCK_DISTANCE / BLOCK_SIZE);
+    if prefetch_idx < blocks.len() {
+      prefetch_read_l1(blocks[prefetch_idx].as_ptr().cast::<u8>());
+    }
+
     fold_block_128_crc32(&mut s0, &blocks[i], coeff_1024b);
-    fold_block_128_crc32(&mut s1, &blocks[i + 1], coeff_1024b);
-    fold_block_128_crc32(&mut s2, &blocks[i + 2], coeff_1024b);
-    fold_block_128_crc32(&mut s3, &blocks[i + 3], coeff_1024b);
-    fold_block_128_crc32(&mut s4, &blocks[i + 4], coeff_1024b);
-    fold_block_128_crc32(&mut s5, &blocks[i + 5], coeff_1024b);
-    fold_block_128_crc32(&mut s6, &blocks[i + 6], coeff_1024b);
-    fold_block_128_crc32(&mut s7, &blocks[i + 7], coeff_1024b);
+    fold_block_128_crc32(&mut s1, &blocks[i.strict_add(1)], coeff_1024b);
+    fold_block_128_crc32(&mut s2, &blocks[i.strict_add(2)], coeff_1024b);
+    fold_block_128_crc32(&mut s3, &blocks[i.strict_add(3)], coeff_1024b);
+    fold_block_128_crc32(&mut s4, &blocks[i.strict_add(4)], coeff_1024b);
+    fold_block_128_crc32(&mut s5, &blocks[i.strict_add(5)], coeff_1024b);
+    fold_block_128_crc32(&mut s6, &blocks[i.strict_add(6)], coeff_1024b);
+    fold_block_128_crc32(&mut s7, &blocks[i.strict_add(7)], coeff_1024b);
     i = i.strict_add(8);
   }
 
@@ -1771,6 +1853,8 @@ unsafe fn finalize_vpclmul_state(x0: __m512i, x1: __m512i) -> u32 {
 
 #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,ssse3,pclmulqdq,sse2")]
 unsafe fn update_simd_crc32_ieee_vpclmul_2way(state: u32, blocks: &[[Simd128; 8]]) -> u32 {
+  use crate::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
+
   debug_assert!(blocks.len() >= 2);
 
   let coeff_256b = vpclmul_coeff(CRC32_IEEE_STREAM.fold_256b);
@@ -1783,7 +1867,38 @@ unsafe fn update_simd_crc32_ieee_vpclmul_2way(state: u32, blocks: &[[Simd128; 8]
   let injected = _mm512_setr_epi64(state as i64, 0, 0, 0, 0, 0, 0, 0);
   s0_0 = _mm512_xor_si512(s0_0, injected);
 
-  let mut pairs = rest.chunks_exact(2);
+  // Double-unrolled main loop: process 4 blocks (512B) per iteration.
+  const DOUBLE_GROUP: usize = 4; // 2 × 2-way = 4 blocks = 512B
+
+  let mut quad_chunks = rest.chunks_exact(DOUBLE_GROUP);
+  for quad in &mut quad_chunks {
+    let [b0, b1, b2, b3] = quad else { unreachable!() };
+
+    // Prefetch ahead
+    let base_ptr = b0.as_ptr().cast::<u8>();
+    prefetch_read_l1(base_ptr.add(LARGE_BLOCK_DISTANCE));
+
+    // First pair (blocks 0, 1)
+    let (y0, y1) = load_128b_block(b0);
+    s0_0 = fold_16_crc32_reflected_vpclmul(s0_0, coeff_256b, y0);
+    s0_1 = fold_16_crc32_reflected_vpclmul(s0_1, coeff_256b, y1);
+
+    let (y0, y1) = load_128b_block(b1);
+    s1_0 = fold_16_crc32_reflected_vpclmul(s1_0, coeff_256b, y0);
+    s1_1 = fold_16_crc32_reflected_vpclmul(s1_1, coeff_256b, y1);
+
+    // Second pair (blocks 2, 3)
+    let (y0, y1) = load_128b_block(b2);
+    s0_0 = fold_16_crc32_reflected_vpclmul(s0_0, coeff_256b, y0);
+    s0_1 = fold_16_crc32_reflected_vpclmul(s0_1, coeff_256b, y1);
+
+    let (y0, y1) = load_128b_block(b3);
+    s1_0 = fold_16_crc32_reflected_vpclmul(s1_0, coeff_256b, y0);
+    s1_1 = fold_16_crc32_reflected_vpclmul(s1_1, coeff_256b, y1);
+  }
+
+  // Handle remaining pairs
+  let mut pairs = quad_chunks.remainder().chunks_exact(2);
   for pair in &mut pairs {
     let [b0, b1] = pair else { unreachable!() };
     let (y0, y1) = load_128b_block(b0);
@@ -1809,6 +1924,8 @@ unsafe fn update_simd_crc32_ieee_vpclmul_2way(state: u32, blocks: &[[Simd128; 8]
 
 #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,ssse3,pclmulqdq,sse2")]
 unsafe fn update_simd_crc32_ieee_vpclmul_4way(state: u32, blocks: &[[Simd128; 8]]) -> u32 {
+  use crate::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
+
   if blocks.len() < 4 {
     let Some((first, rest)) = blocks.split_first() else {
       return state;
@@ -1832,7 +1949,56 @@ unsafe fn update_simd_crc32_ieee_vpclmul_4way(state: u32, blocks: &[[Simd128; 8]
   let injected = _mm512_setr_epi64(state as i64, 0, 0, 0, 0, 0, 0, 0);
   s0_0 = _mm512_xor_si512(s0_0, injected);
 
-  let mut groups = rest.chunks_exact(4);
+  // Double-unrolled main loop: process 8 blocks (1KB) per iteration.
+  const DOUBLE_GROUP: usize = 8; // 2 × 4-way = 8 blocks = 1KB
+
+  let mut octet_chunks = rest.chunks_exact(DOUBLE_GROUP);
+  for octet in &mut octet_chunks {
+    let [b0, b1, b2, b3, b4, b5, b6, b7] = octet else {
+      unreachable!()
+    };
+
+    // Prefetch ahead
+    let base_ptr = b0.as_ptr().cast::<u8>();
+    prefetch_read_l1(base_ptr.add(LARGE_BLOCK_DISTANCE));
+
+    // First group (blocks 0-3)
+    let (y0, y1) = load_128b_block(b0);
+    s0_0 = fold_16_crc32_reflected_vpclmul(s0_0, coeff_512b, y0);
+    s0_1 = fold_16_crc32_reflected_vpclmul(s0_1, coeff_512b, y1);
+
+    let (y0, y1) = load_128b_block(b1);
+    s1_0 = fold_16_crc32_reflected_vpclmul(s1_0, coeff_512b, y0);
+    s1_1 = fold_16_crc32_reflected_vpclmul(s1_1, coeff_512b, y1);
+
+    let (y0, y1) = load_128b_block(b2);
+    s2_0 = fold_16_crc32_reflected_vpclmul(s2_0, coeff_512b, y0);
+    s2_1 = fold_16_crc32_reflected_vpclmul(s2_1, coeff_512b, y1);
+
+    let (y0, y1) = load_128b_block(b3);
+    s3_0 = fold_16_crc32_reflected_vpclmul(s3_0, coeff_512b, y0);
+    s3_1 = fold_16_crc32_reflected_vpclmul(s3_1, coeff_512b, y1);
+
+    // Second group (blocks 4-7)
+    let (y0, y1) = load_128b_block(b4);
+    s0_0 = fold_16_crc32_reflected_vpclmul(s0_0, coeff_512b, y0);
+    s0_1 = fold_16_crc32_reflected_vpclmul(s0_1, coeff_512b, y1);
+
+    let (y0, y1) = load_128b_block(b5);
+    s1_0 = fold_16_crc32_reflected_vpclmul(s1_0, coeff_512b, y0);
+    s1_1 = fold_16_crc32_reflected_vpclmul(s1_1, coeff_512b, y1);
+
+    let (y0, y1) = load_128b_block(b6);
+    s2_0 = fold_16_crc32_reflected_vpclmul(s2_0, coeff_512b, y0);
+    s2_1 = fold_16_crc32_reflected_vpclmul(s2_1, coeff_512b, y1);
+
+    let (y0, y1) = load_128b_block(b7);
+    s3_0 = fold_16_crc32_reflected_vpclmul(s3_0, coeff_512b, y0);
+    s3_1 = fold_16_crc32_reflected_vpclmul(s3_1, coeff_512b, y1);
+  }
+
+  // Handle remaining 4-block groups
+  let mut groups = octet_chunks.remainder().chunks_exact(4);
   for group in &mut groups {
     let [b0, b1, b2, b3] = group else { unreachable!() };
     let (y0, y1) = load_128b_block(b0);
@@ -1873,6 +2039,8 @@ unsafe fn update_simd_crc32_ieee_vpclmul_4way(state: u32, blocks: &[[Simd128; 8]
 
 #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,ssse3,pclmulqdq,sse2")]
 unsafe fn update_simd_crc32_ieee_vpclmul_7way(state: u32, blocks: &[[Simd128; 8]]) -> u32 {
+  use crate::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
+
   if blocks.len() < 7 {
     let Some((first, rest)) = blocks.split_first() else {
       return state;
@@ -1903,11 +2071,17 @@ unsafe fn update_simd_crc32_ieee_vpclmul_7way(state: u32, blocks: &[[Simd128; 8]
   let injected = _mm512_setr_epi64(state as i64, 0, 0, 0, 0, 0, 0, 0);
   s0_0 = _mm512_xor_si512(s0_0, injected);
 
+  // 7-way already processes 896B/iter - just add prefetch
   let mut groups = rest.chunks_exact(7);
   for group in &mut groups {
     let [b0, b1, b2, b3, b4, b5, b6] = group else {
       unreachable!()
     };
+
+    // Prefetch ahead
+    let base_ptr = b0.as_ptr().cast::<u8>();
+    prefetch_read_l1(base_ptr.add(LARGE_BLOCK_DISTANCE));
+
     let (y0, y1) = load_128b_block(b0);
     s0_0 = fold_16_crc32_reflected_vpclmul(s0_0, coeff_896b, y0);
     s0_1 = fold_16_crc32_reflected_vpclmul(s0_1, coeff_896b, y1);
@@ -1964,6 +2138,8 @@ unsafe fn update_simd_crc32_ieee_vpclmul_7way(state: u32, blocks: &[[Simd128; 8]
 
 #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,ssse3,pclmulqdq,sse2")]
 unsafe fn update_simd_crc32_ieee_vpclmul_8way(state: u32, blocks: &[[Simd128; 8]]) -> u32 {
+  use crate::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
+
   if blocks.len() < 8 {
     let Some((first, rest)) = blocks.split_first() else {
       return state;
@@ -1996,11 +2172,17 @@ unsafe fn update_simd_crc32_ieee_vpclmul_8way(state: u32, blocks: &[[Simd128; 8]
   let injected = _mm512_setr_epi64(state as i64, 0, 0, 0, 0, 0, 0, 0);
   s0_0 = _mm512_xor_si512(s0_0, injected);
 
+  // 8-way already processes 1KB/iter - just add prefetch
   let mut groups = rest.chunks_exact(8);
   for group in &mut groups {
     let [b0, b1, b2, b3, b4, b5, b6, b7] = group else {
       unreachable!()
     };
+
+    // Prefetch ahead
+    let base_ptr = b0.as_ptr().cast::<u8>();
+    prefetch_read_l1(base_ptr.add(LARGE_BLOCK_DISTANCE));
+
     let (y0, y1) = load_128b_block(b0);
     s0_0 = fold_16_crc32_reflected_vpclmul(s0_0, coeff_1024b, y0);
     s0_1 = fold_16_crc32_reflected_vpclmul(s0_1, coeff_1024b, y1);

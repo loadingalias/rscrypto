@@ -234,6 +234,8 @@ unsafe fn update_simd_width32_reflected_bitrev_bytes_2way(
   fold_256b: (u64, u64),
   keys: &[u64; 23],
 ) -> u32 {
+  use crate::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
+
   debug_assert!(!blocks.is_empty());
 
   if blocks.len() < 2 {
@@ -269,7 +271,31 @@ unsafe fn update_simd_width32_reflected_bitrev_bytes_2way(
 
   s0[0] ^= Simd128::new(0, state as u64);
 
+  // Double-unrolled main loop: process 4 blocks (512B) per iteration.
+  const BLOCK_SIZE: usize = 128;
+  const DOUBLE_GROUP: usize = 4; // 2 × 2-way = 4 blocks = 512B
+
   let mut i: usize = 2;
+  let aligned = (blocks.len() / DOUBLE_GROUP) * DOUBLE_GROUP;
+
+  while i.strict_add(DOUBLE_GROUP) <= aligned {
+    let prefetch_idx = i.strict_add(LARGE_BLOCK_DISTANCE / BLOCK_SIZE);
+    if prefetch_idx < blocks.len() {
+      prefetch_read_l1(blocks[prefetch_idx].as_ptr().cast::<u8>());
+    }
+
+    // First iteration (blocks i, i+1)
+    fold_block_128_reflected_bitrev(&mut s0, &blocks[i], coeff_256);
+    fold_block_128_reflected_bitrev(&mut s1, &blocks[i.strict_add(1)], coeff_256);
+
+    // Second iteration (blocks i+2, i+3)
+    fold_block_128_reflected_bitrev(&mut s0, &blocks[i.strict_add(2)], coeff_256);
+    fold_block_128_reflected_bitrev(&mut s1, &blocks[i.strict_add(3)], coeff_256);
+
+    i = i.strict_add(DOUBLE_GROUP);
+  }
+
+  // Handle remaining pairs.
   let even = blocks.len() & !1usize;
   while i < even {
     fold_block_128_reflected_bitrev(&mut s0, &blocks[i], coeff_256);
@@ -303,6 +329,8 @@ unsafe fn update_simd_width32_reflected_bitrev_bytes_4way(
   combine: &[(u64, u64); 3],
   keys: &[u64; 23],
 ) -> u32 {
+  use crate::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
+
   debug_assert!(!blocks.is_empty());
 
   if blocks.len() < 4 {
@@ -311,8 +339,6 @@ unsafe fn update_simd_width32_reflected_bitrev_bytes_4way(
     };
     return update_simd_width32_reflected_bitrev_bytes(state, first, rest, keys);
   }
-
-  let aligned = (blocks.len() / 4) * 4;
 
   let coeff_512 = Simd128::new(fold_512b.0, fold_512b.1);
   let coeff_128 = Simd128::new(keys[4], keys[3]);
@@ -338,8 +364,37 @@ unsafe fn update_simd_width32_reflected_bitrev_bytes_4way(
 
   s0[0] ^= Simd128::new(0, state as u64);
 
+  // Double-unrolled main loop: process 8 blocks (1KB) per iteration.
+  const BLOCK_SIZE: usize = 128;
+  const DOUBLE_GROUP: usize = 8; // 2 × 4-way = 8 blocks = 1KB
+
   let mut i: usize = 4;
-  while i < aligned {
+  let aligned = (blocks.len() / DOUBLE_GROUP) * DOUBLE_GROUP;
+
+  while i.strict_add(DOUBLE_GROUP) <= aligned {
+    let prefetch_idx = i.strict_add(LARGE_BLOCK_DISTANCE / BLOCK_SIZE);
+    if prefetch_idx < blocks.len() {
+      prefetch_read_l1(blocks[prefetch_idx].as_ptr().cast::<u8>());
+    }
+
+    // First iteration (blocks i..i+3)
+    fold_block_128_reflected_bitrev(&mut s0, &blocks[i], coeff_512);
+    fold_block_128_reflected_bitrev(&mut s1, &blocks[i.strict_add(1)], coeff_512);
+    fold_block_128_reflected_bitrev(&mut s2, &blocks[i.strict_add(2)], coeff_512);
+    fold_block_128_reflected_bitrev(&mut s3, &blocks[i.strict_add(3)], coeff_512);
+
+    // Second iteration (blocks i+4..i+7)
+    fold_block_128_reflected_bitrev(&mut s0, &blocks[i.strict_add(4)], coeff_512);
+    fold_block_128_reflected_bitrev(&mut s1, &blocks[i.strict_add(5)], coeff_512);
+    fold_block_128_reflected_bitrev(&mut s2, &blocks[i.strict_add(6)], coeff_512);
+    fold_block_128_reflected_bitrev(&mut s3, &blocks[i.strict_add(7)], coeff_512);
+
+    i = i.strict_add(DOUBLE_GROUP);
+  }
+
+  // Handle remaining quads.
+  let quad_aligned = (blocks.len() / 4) * 4;
+  while i < quad_aligned {
     fold_block_128_reflected_bitrev(&mut s0, &blocks[i], coeff_512);
     fold_block_128_reflected_bitrev(&mut s1, &blocks[i.strict_add(1)], coeff_512);
     fold_block_128_reflected_bitrev(&mut s2, &blocks[i.strict_add(2)], coeff_512);
@@ -391,6 +446,8 @@ unsafe fn update_simd_width32_reflected_bitrev_bytes_7way(
   combine: &[(u64, u64); 6],
   keys: &[u64; 23],
 ) -> u32 {
+  use crate::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
+
   debug_assert!(!blocks.is_empty());
 
   if blocks.len() < 7 {
@@ -432,8 +489,15 @@ unsafe fn update_simd_width32_reflected_bitrev_bytes_7way(
 
   s0[0] ^= Simd128::new(0, state as u64);
 
+  const BLOCK_SIZE: usize = 128;
+
   let mut i: usize = 7;
   while i < aligned {
+    let prefetch_idx = i.strict_add(LARGE_BLOCK_DISTANCE / BLOCK_SIZE);
+    if prefetch_idx < blocks.len() {
+      prefetch_read_l1(blocks[prefetch_idx].as_ptr().cast::<u8>());
+    }
+
     fold_block_128_reflected_bitrev(&mut s0, &blocks[i], coeff_896);
     fold_block_128_reflected_bitrev(&mut s1, &blocks[i.strict_add(1)], coeff_896);
     fold_block_128_reflected_bitrev(&mut s2, &blocks[i.strict_add(2)], coeff_896);
@@ -515,6 +579,8 @@ unsafe fn update_simd_width32_reflected_bitrev_bytes_8way(
   combine: &[(u64, u64); 7],
   keys: &[u64; 23],
 ) -> u32 {
+  use crate::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
+
   debug_assert!(!blocks.is_empty());
 
   if blocks.len() < 8 {
@@ -558,8 +624,15 @@ unsafe fn update_simd_width32_reflected_bitrev_bytes_8way(
 
   s0[0] ^= Simd128::new(0, state as u64);
 
+  const BLOCK_SIZE: usize = 128;
+
   let mut i: usize = 8;
   while i < aligned {
+    let prefetch_idx = i.strict_add(LARGE_BLOCK_DISTANCE / BLOCK_SIZE);
+    if prefetch_idx < blocks.len() {
+      prefetch_read_l1(blocks[prefetch_idx].as_ptr().cast::<u8>());
+    }
+
     fold_block_128_reflected_bitrev(&mut s0, &blocks[i], coeff_1024);
     fold_block_128_reflected_bitrev(&mut s1, &blocks[i.strict_add(1)], coeff_1024);
     fold_block_128_reflected_bitrev(&mut s2, &blocks[i.strict_add(2)], coeff_1024);
@@ -857,6 +930,8 @@ unsafe fn update_simd_width32_reflected_vpclmul_bitrev_bytes_2way(
   fold_256b: (u64, u64),
   keys: &[u64; 23],
 ) -> u32 {
+  use crate::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
+
   debug_assert!(!blocks.is_empty());
 
   if blocks.len() < 2 {
@@ -866,8 +941,6 @@ unsafe fn update_simd_width32_reflected_vpclmul_bitrev_bytes_2way(
     return update_simd_width32_reflected_vpclmul_bitrev_bytes(state, first, rest, keys);
   }
 
-  let even = blocks.len() & !1usize;
-
   let (mut x0_0, mut x1_0) = load_128b_block_bitrev(&blocks[0]);
   let (mut x0_1, mut x1_1) = load_128b_block_bitrev(&blocks[1]);
 
@@ -876,7 +949,42 @@ unsafe fn update_simd_width32_reflected_vpclmul_bitrev_bytes_2way(
   let coeff_256 = vpclmul_coeff(fold_256b);
   let coeff_128 = vpclmul_coeff((keys[4], keys[3]));
 
+  // Double-unrolled main loop: process 4 blocks (512B) per iteration.
+  const BLOCK_SIZE: usize = 128;
+  const DOUBLE_GROUP: usize = 4; // 2 × 2-way = 4 blocks = 512B
+
   let mut i: usize = 2;
+  let aligned = (blocks.len() / DOUBLE_GROUP) * DOUBLE_GROUP;
+
+  while i.strict_add(DOUBLE_GROUP) <= aligned {
+    let prefetch_idx = i.strict_add(LARGE_BLOCK_DISTANCE / BLOCK_SIZE);
+    if prefetch_idx < blocks.len() {
+      prefetch_read_l1(blocks[prefetch_idx].as_ptr().cast::<u8>());
+    }
+
+    // First iteration (blocks i, i+1)
+    let (y0, y1) = load_128b_block_bitrev(&blocks[i]);
+    x0_0 = fold_16_reflected_vpclmul(x0_0, coeff_256, y0);
+    x1_0 = fold_16_reflected_vpclmul(x1_0, coeff_256, y1);
+
+    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(1)]);
+    x0_1 = fold_16_reflected_vpclmul(x0_1, coeff_256, y0);
+    x1_1 = fold_16_reflected_vpclmul(x1_1, coeff_256, y1);
+
+    // Second iteration (blocks i+2, i+3)
+    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(2)]);
+    x0_0 = fold_16_reflected_vpclmul(x0_0, coeff_256, y0);
+    x1_0 = fold_16_reflected_vpclmul(x1_0, coeff_256, y1);
+
+    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(3)]);
+    x0_1 = fold_16_reflected_vpclmul(x0_1, coeff_256, y0);
+    x1_1 = fold_16_reflected_vpclmul(x1_1, coeff_256, y1);
+
+    i = i.strict_add(DOUBLE_GROUP);
+  }
+
+  // Handle remaining pairs.
+  let even = blocks.len() & !1usize;
   while i < even {
     let (y0, y1) = load_128b_block_bitrev(&blocks[i]);
     x0_0 = fold_16_reflected_vpclmul(x0_0, coeff_256, y0);
@@ -910,6 +1018,8 @@ unsafe fn update_simd_width32_reflected_vpclmul_bitrev_bytes_4way(
   combine: &[(u64, u64); 3],
   keys: &[u64; 23],
 ) -> u32 {
+  use crate::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
+
   debug_assert!(!blocks.is_empty());
 
   if blocks.len() < 4 {
@@ -918,8 +1028,6 @@ unsafe fn update_simd_width32_reflected_vpclmul_bitrev_bytes_4way(
     };
     return update_simd_width32_reflected_vpclmul_bitrev_bytes(state, first, rest, keys);
   }
-
-  let aligned = (blocks.len() / 4) * 4;
 
   let (mut x0_0, mut x1_0) = load_128b_block_bitrev(&blocks[0]);
   let (mut x0_1, mut x1_1) = load_128b_block_bitrev(&blocks[1]);
@@ -934,8 +1042,59 @@ unsafe fn update_simd_width32_reflected_vpclmul_bitrev_bytes_4way(
   let c256 = vpclmul_coeff(combine[1]);
   let c128 = vpclmul_coeff(combine[2]);
 
+  // Double-unrolled main loop: process 8 blocks (1KB) per iteration.
+  const BLOCK_SIZE: usize = 128;
+  const DOUBLE_GROUP: usize = 8; // 2 × 4-way = 8 blocks = 1KB
+
   let mut i: usize = 4;
-  while i < aligned {
+  let aligned = (blocks.len() / DOUBLE_GROUP) * DOUBLE_GROUP;
+
+  while i.strict_add(DOUBLE_GROUP) <= aligned {
+    let prefetch_idx = i.strict_add(LARGE_BLOCK_DISTANCE / BLOCK_SIZE);
+    if prefetch_idx < blocks.len() {
+      prefetch_read_l1(blocks[prefetch_idx].as_ptr().cast::<u8>());
+    }
+
+    // First iteration (blocks i..i+3)
+    let (y0, y1) = load_128b_block_bitrev(&blocks[i]);
+    x0_0 = fold_16_reflected_vpclmul(x0_0, coeff_512, y0);
+    x1_0 = fold_16_reflected_vpclmul(x1_0, coeff_512, y1);
+
+    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(1)]);
+    x0_1 = fold_16_reflected_vpclmul(x0_1, coeff_512, y0);
+    x1_1 = fold_16_reflected_vpclmul(x1_1, coeff_512, y1);
+
+    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(2)]);
+    x0_2 = fold_16_reflected_vpclmul(x0_2, coeff_512, y0);
+    x1_2 = fold_16_reflected_vpclmul(x1_2, coeff_512, y1);
+
+    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(3)]);
+    x0_3 = fold_16_reflected_vpclmul(x0_3, coeff_512, y0);
+    x1_3 = fold_16_reflected_vpclmul(x1_3, coeff_512, y1);
+
+    // Second iteration (blocks i+4..i+7)
+    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(4)]);
+    x0_0 = fold_16_reflected_vpclmul(x0_0, coeff_512, y0);
+    x1_0 = fold_16_reflected_vpclmul(x1_0, coeff_512, y1);
+
+    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(5)]);
+    x0_1 = fold_16_reflected_vpclmul(x0_1, coeff_512, y0);
+    x1_1 = fold_16_reflected_vpclmul(x1_1, coeff_512, y1);
+
+    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(6)]);
+    x0_2 = fold_16_reflected_vpclmul(x0_2, coeff_512, y0);
+    x1_2 = fold_16_reflected_vpclmul(x1_2, coeff_512, y1);
+
+    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(7)]);
+    x0_3 = fold_16_reflected_vpclmul(x0_3, coeff_512, y0);
+    x1_3 = fold_16_reflected_vpclmul(x1_3, coeff_512, y1);
+
+    i = i.strict_add(DOUBLE_GROUP);
+  }
+
+  // Handle remaining quads.
+  let quad_aligned = (blocks.len() / 4) * 4;
+  while i < quad_aligned {
     let (y0, y1) = load_128b_block_bitrev(&blocks[i]);
     x0_0 = fold_16_reflected_vpclmul(x0_0, coeff_512, y0);
     x1_0 = fold_16_reflected_vpclmul(x1_0, coeff_512, y1);
@@ -962,7 +1121,7 @@ unsafe fn update_simd_width32_reflected_vpclmul_bitrev_bytes_4way(
   x0 = fold_16_reflected_vpclmul(x0_0, c384, x0);
   x1 = fold_16_reflected_vpclmul(x1_0, c384, x1);
 
-  for block in &blocks[aligned..] {
+  for block in &blocks[quad_aligned..] {
     let (y0, y1) = load_128b_block_bitrev(block);
     x0 = fold_16_reflected_vpclmul(x0, coeff_128, y0);
     x1 = fold_16_reflected_vpclmul(x1, coeff_128, y1);
@@ -980,6 +1139,8 @@ unsafe fn update_simd_width32_reflected_vpclmul_bitrev_bytes_7way(
   combine: &[(u64, u64); 6],
   keys: &[u64; 23],
 ) -> u32 {
+  use crate::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
+
   debug_assert!(!blocks.is_empty());
 
   if blocks.len() < 7 {
@@ -1010,8 +1171,15 @@ unsafe fn update_simd_width32_reflected_vpclmul_bitrev_bytes_7way(
   let c256 = vpclmul_coeff(combine[4]);
   let c128 = vpclmul_coeff(combine[5]);
 
+  const BLOCK_SIZE: usize = 128;
+
   let mut i: usize = 7;
   while i < aligned {
+    let prefetch_idx = i.strict_add(LARGE_BLOCK_DISTANCE / BLOCK_SIZE);
+    if prefetch_idx < blocks.len() {
+      prefetch_read_l1(blocks[prefetch_idx].as_ptr().cast::<u8>());
+    }
+
     let (y0, y1) = load_128b_block_bitrev(&blocks[i]);
     x0_0 = fold_16_reflected_vpclmul(x0_0, coeff_896, y0);
     x1_0 = fold_16_reflected_vpclmul(x1_0, coeff_896, y1);
@@ -1074,6 +1242,8 @@ unsafe fn update_simd_width32_reflected_vpclmul_bitrev_bytes_8way(
   combine: &[(u64, u64); 7],
   keys: &[u64; 23],
 ) -> u32 {
+  use crate::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
+
   debug_assert!(!blocks.is_empty());
 
   if blocks.len() < 8 {
@@ -1106,8 +1276,15 @@ unsafe fn update_simd_width32_reflected_vpclmul_bitrev_bytes_8way(
   let c256 = vpclmul_coeff(combine[5]);
   let c128 = vpclmul_coeff(combine[6]);
 
+  const BLOCK_SIZE: usize = 128;
+
   let mut i: usize = 8;
   while i < aligned {
+    let prefetch_idx = i.strict_add(LARGE_BLOCK_DISTANCE / BLOCK_SIZE);
+    if prefetch_idx < blocks.len() {
+      prefetch_read_l1(blocks[prefetch_idx].as_ptr().cast::<u8>());
+    }
+
     let (y0, y1) = load_128b_block_bitrev(&blocks[i]);
     x0_0 = fold_16_reflected_vpclmul(x0_0, coeff_1024, y0);
     x1_0 = fold_16_reflected_vpclmul(x1_0, coeff_1024, y1);
