@@ -153,7 +153,9 @@ mod x86_64_impl {
   #[inline(always)]
   #[allow(dead_code)]
   pub unsafe fn prefetch_for_next_iteration(ptr: *const u8) {
-    prefetch_read_l1(ptr.add(super::LARGE_BLOCK_DISTANCE));
+    // Use wrapping pointer arithmetic: prefetch addresses are allowed to be
+    // out-of-bounds, but `ptr.add()` would be UB unless in-bounds.
+    prefetch_read_l1(ptr.wrapping_add(super::LARGE_BLOCK_DISTANCE));
   }
 }
 
@@ -229,7 +231,9 @@ mod aarch64_impl {
   #[inline(always)]
   #[allow(dead_code)]
   pub unsafe fn prefetch_for_next_iteration(ptr: *const u8) {
-    prefetch_read_l1(ptr.add(super::LARGE_BLOCK_DISTANCE));
+    // Use wrapping pointer arithmetic: prefetch addresses are allowed to be
+    // out-of-bounds, but `ptr.add()` would be UB unless in-bounds.
+    prefetch_read_l1(ptr.wrapping_add(super::LARGE_BLOCK_DISTANCE));
   }
 }
 

@@ -1876,7 +1876,7 @@ unsafe fn update_simd_crc32_ieee_vpclmul_2way(state: u32, blocks: &[[Simd128; 8]
 
     // Prefetch ahead
     let base_ptr = b0.as_ptr().cast::<u8>();
-    prefetch_read_l1(base_ptr.add(LARGE_BLOCK_DISTANCE));
+    prefetch_read_l1(base_ptr.wrapping_add(LARGE_BLOCK_DISTANCE));
 
     // First pair (blocks 0, 1)
     let (y0, y1) = load_128b_block(b0);
@@ -1960,7 +1960,7 @@ unsafe fn update_simd_crc32_ieee_vpclmul_4way(state: u32, blocks: &[[Simd128; 8]
 
     // Prefetch ahead
     let base_ptr = b0.as_ptr().cast::<u8>();
-    prefetch_read_l1(base_ptr.add(LARGE_BLOCK_DISTANCE));
+    prefetch_read_l1(base_ptr.wrapping_add(LARGE_BLOCK_DISTANCE));
 
     // First group (blocks 0-3)
     let (y0, y1) = load_128b_block(b0);
@@ -2080,7 +2080,7 @@ unsafe fn update_simd_crc32_ieee_vpclmul_7way(state: u32, blocks: &[[Simd128; 8]
 
     // Prefetch ahead
     let base_ptr = b0.as_ptr().cast::<u8>();
-    prefetch_read_l1(base_ptr.add(LARGE_BLOCK_DISTANCE));
+    prefetch_read_l1(base_ptr.wrapping_add(LARGE_BLOCK_DISTANCE));
 
     let (y0, y1) = load_128b_block(b0);
     s0_0 = fold_16_crc32_reflected_vpclmul(s0_0, coeff_896b, y0);
@@ -2181,7 +2181,7 @@ unsafe fn update_simd_crc32_ieee_vpclmul_8way(state: u32, blocks: &[[Simd128; 8]
 
     // Prefetch ahead
     let base_ptr = b0.as_ptr().cast::<u8>();
-    prefetch_read_l1(base_ptr.add(LARGE_BLOCK_DISTANCE));
+    prefetch_read_l1(base_ptr.wrapping_add(LARGE_BLOCK_DISTANCE));
 
     let (y0, y1) = load_128b_block(b0);
     s0_0 = fold_16_crc32_reflected_vpclmul(s0_0, coeff_1024b, y0);

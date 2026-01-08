@@ -209,7 +209,7 @@ unsafe fn update_simd_2way(
   // ═══════════════════════════════════════════════════════════════════════════
   while i < double_even {
     let prefetch_ptr = blocks.as_ptr().add(i).cast::<u8>();
-    prefetch_read_l1(prefetch_ptr.add(LARGE_BLOCK_DISTANCE));
+    prefetch_read_l1(prefetch_ptr.wrapping_add(LARGE_BLOCK_DISTANCE));
 
     fold_block_128(&mut s0, &blocks[i], coeff_256);
     fold_block_128(&mut s1, &blocks[i + 1], coeff_256);
@@ -280,7 +280,7 @@ unsafe fn update_simd_4way(
   let mut i = 4;
   while i < double_aligned {
     let prefetch_ptr = blocks.as_ptr().add(i).cast::<u8>();
-    prefetch_read_l1(prefetch_ptr.add(LARGE_BLOCK_DISTANCE));
+    prefetch_read_l1(prefetch_ptr.wrapping_add(LARGE_BLOCK_DISTANCE));
 
     // First group of 4 blocks
     fold_block_128(&mut s0, &blocks[i], coeff_512);
@@ -386,7 +386,7 @@ unsafe fn update_simd_7way(
   let mut i = 7;
   while i < aligned {
     let prefetch_ptr = blocks.as_ptr().add(i).cast::<u8>();
-    prefetch_read_l1(prefetch_ptr.add(LARGE_BLOCK_DISTANCE));
+    prefetch_read_l1(prefetch_ptr.wrapping_add(LARGE_BLOCK_DISTANCE));
 
     fold_block_128(&mut s0, &blocks[i], coeff_896);
     fold_block_128(&mut s1, &blocks[i + 1], coeff_896);
@@ -464,7 +464,7 @@ unsafe fn update_simd_8way(
   let mut i = 8;
   while i < aligned {
     let prefetch_ptr = blocks.as_ptr().add(i).cast::<u8>();
-    prefetch_read_l1(prefetch_ptr.add(LARGE_BLOCK_DISTANCE));
+    prefetch_read_l1(prefetch_ptr.wrapping_add(LARGE_BLOCK_DISTANCE));
 
     fold_block_128(&mut s0, &blocks[i], coeff_1024);
     fold_block_128(&mut s1, &blocks[i + 1], coeff_1024);
@@ -821,7 +821,7 @@ unsafe fn update_simd_vpclmul_2way_impl<const ALIGNED: bool>(
   while i < double_even {
     // Prefetch ahead to hide memory latency.
     let prefetch_ptr = blocks.as_ptr().add(i).cast::<u8>();
-    prefetch_read_l1(prefetch_ptr.add(LARGE_BLOCK_DISTANCE));
+    prefetch_read_l1(prefetch_ptr.wrapping_add(LARGE_BLOCK_DISTANCE));
 
     // ─────────────────────────────────────────────────────────────────────────
     // First pair of blocks (256B)
@@ -939,7 +939,7 @@ unsafe fn update_simd_vpclmul_4way_impl<const ALIGNED: bool>(
   while i < double_aligned {
     // Prefetch ahead to hide memory latency.
     let prefetch_ptr = blocks.as_ptr().add(i).cast::<u8>();
-    prefetch_read_l1(prefetch_ptr.add(LARGE_BLOCK_DISTANCE));
+    prefetch_read_l1(prefetch_ptr.wrapping_add(LARGE_BLOCK_DISTANCE));
 
     // ─────────────────────────────────────────────────────────────────────────
     // First group of 4 blocks (512B)
@@ -1087,7 +1087,7 @@ unsafe fn update_simd_vpclmul_7way_impl<const ALIGNED: bool>(
   while i < aligned {
     // Prefetch ahead to hide memory latency.
     let prefetch_ptr = blocks.as_ptr().add(i).cast::<u8>();
-    prefetch_read_l1(prefetch_ptr.add(LARGE_BLOCK_DISTANCE));
+    prefetch_read_l1(prefetch_ptr.wrapping_add(LARGE_BLOCK_DISTANCE));
 
     // VPTERNLOGD: fold + XOR in one instruction per vector (7×2 = 14 per iteration)
     let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i]);
@@ -1213,7 +1213,7 @@ unsafe fn update_simd_vpclmul_8way_impl<const ALIGNED: bool>(
   while i < aligned {
     // Prefetch ahead to hide memory latency.
     let prefetch_ptr = blocks.as_ptr().add(i).cast::<u8>();
-    prefetch_read_l1(prefetch_ptr.add(LARGE_BLOCK_DISTANCE));
+    prefetch_read_l1(prefetch_ptr.wrapping_add(LARGE_BLOCK_DISTANCE));
 
     // VPTERNLOGD: fold + XOR in one instruction per vector (8×2 = 16 per iteration)
     let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i]);
@@ -1401,7 +1401,7 @@ unsafe fn crc64_vpclmul_4x512(
   // ═══════════════════════════════════════════════════════════════════════════
   while ptr.add(DOUBLE_BLOCK) <= end {
     // Prefetch 2 iterations ahead (1KB) to hide memory latency.
-    prefetch_read_l1(ptr.add(LARGE_BLOCK_DISTANCE));
+    prefetch_read_l1(ptr.wrapping_add(LARGE_BLOCK_DISTANCE));
 
     // ─────────────────────────────────────────────────────────────────────────
     // First block (256B): load and fold
