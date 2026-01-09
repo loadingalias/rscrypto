@@ -14,6 +14,9 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo "🔍 CI Quality Checks"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
+# Prefer cargo-installed tools over any preinstalled runner tools.
+export PATH="$HOME/.cargo/bin:$PATH"
+
 maybe_disable_sccache() {
   if [[ -n "${RUSTC_WRAPPER:-}" && "${RUSTC_WRAPPER##*/}" == "sccache" ]]; then
     if ! "$RUSTC_WRAPPER" rustc -vV >/dev/null 2>&1; then
@@ -55,7 +58,8 @@ cargo deny check all
 
 echo ""
 echo "🛡️ Running security audit..."
-cargo audit
+command -v cargo-audit >/dev/null 2>&1 && cargo-audit --version || true
+cargo-audit
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Documentation

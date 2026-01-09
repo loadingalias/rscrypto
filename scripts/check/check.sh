@@ -4,6 +4,9 @@ set -euo pipefail
 # Host-only checks: fmt, check, clippy, deny, audit, doc
 # Usage: check.sh [--all] [crate1 crate2 ...]
 
+# Prefer cargo-installed tools over any preinstalled runner tools.
+export PATH="$HOME/.cargo/bin:$PATH"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 source "$SCRIPT_DIR/lib/common.sh"
@@ -61,7 +64,7 @@ if [[ "$FULL_WORKSPACE" == true ]]; then
     show_error "$LOG_DIR/deny.log"
     exit 1
   fi
-  if ! cargo audit >>"$LOG_DIR/deny.log" 2>&1; then
+  if ! cargo-audit >>"$LOG_DIR/deny.log" 2>&1; then
     fail
     show_error "$LOG_DIR/deny.log"
     exit 1
