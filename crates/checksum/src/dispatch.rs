@@ -22,6 +22,8 @@
 //! - `macos_arm64_kernels.txt` → AppleM1M3
 //! - `linux_arm64_kernels.txt` → Graviton2
 //! - `linux_x86-64_kernels.txt` → Zen4
+//! - `linux_x86-64_zen5_kernels.txt` → Zen5
+//! - `linux_x86-64_intel_kernels.txt` → IntelSpr
 //!
 //! Run `python scripts/gen/kernel_tables.py` to analyze benchmarks and emit a
 //! draft table module at `crates/checksum/src/generated/kernel_tables.rs` for
@@ -345,8 +347,14 @@ fn exact_match(tune_kind: TuneKind, caps: Caps) -> Option<&'static KernelTable> 
     TuneKind::AppleM1M3 => Some(&APPLE_M1M3_TABLE),
     #[cfg(target_arch = "aarch64")]
     TuneKind::Graviton2 => Some(&GRAVITON2_TABLE),
+    #[cfg(target_arch = "aarch64")]
+    TuneKind::Graviton3 => Some(&GRAVITON3_TABLE),
     #[cfg(target_arch = "x86_64")]
     TuneKind::Zen4 => Some(&ZEN4_TABLE),
+    #[cfg(target_arch = "x86_64")]
+    TuneKind::Zen5 => Some(&ZEN5_TABLE),
+    #[cfg(target_arch = "x86_64")]
+    TuneKind::IntelSpr => Some(&INTEL_SPR_TABLE),
     #[cfg(target_arch = "s390x")]
     TuneKind::Z13 => Some(&S390X_Z13_TABLE),
     #[cfg(target_arch = "s390x")]
@@ -372,21 +380,23 @@ fn family_match(tune_kind: TuneKind, caps: Caps) -> Option<&'static KernelTable>
     #[cfg(target_arch = "aarch64")]
     TuneKind::AppleM4 | TuneKind::AppleM5 => Some(&APPLE_M1M3_TABLE),
 
-    // AWS Graviton / ARM Neoverse family → use Graviton2 data
+    // AWS Graviton / ARM Neoverse family → use Graviton3 data (better EOR3 tuning)
     #[cfg(target_arch = "aarch64")]
-    TuneKind::Graviton3 | TuneKind::Graviton4 | TuneKind::Graviton5 => Some(&GRAVITON2_TABLE),
+    TuneKind::Graviton4 | TuneKind::Graviton5 => Some(&GRAVITON3_TABLE),
     #[cfg(target_arch = "aarch64")]
-    TuneKind::NeoverseN2 | TuneKind::NeoverseN3 | TuneKind::NeoverseV3 => Some(&GRAVITON2_TABLE),
+    TuneKind::NeoverseN2 | TuneKind::NeoverseN3 | TuneKind::NeoverseV3 => Some(&GRAVITON3_TABLE),
     #[cfg(target_arch = "aarch64")]
-    TuneKind::NvidiaGrace | TuneKind::AmpereAltra => Some(&GRAVITON2_TABLE),
+    TuneKind::NvidiaGrace | TuneKind::AmpereAltra => Some(&GRAVITON3_TABLE),
 
-    // AMD Zen family → use Zen4 data
+    // AMD Zen family → prefer Zen5 table when available
     #[cfg(target_arch = "x86_64")]
-    TuneKind::Zen5 | TuneKind::Zen5c => Some(&ZEN4_TABLE),
+    TuneKind::Zen5 | TuneKind::Zen5c => Some(&ZEN5_TABLE),
 
-    // Intel family → use generic x86 with VPCLMUL
+    // Intel family → prefer Intel SPR table when available
     #[cfg(target_arch = "x86_64")]
-    TuneKind::IntelSpr | TuneKind::IntelGnr | TuneKind::IntelIcl => Some(&GENERIC_X86_VPCLMUL_TABLE),
+    TuneKind::IntelSpr | TuneKind::IntelGnr => Some(&INTEL_SPR_TABLE),
+    #[cfg(target_arch = "x86_64")]
+    TuneKind::IntelIcl => Some(&GENERIC_X86_VPCLMUL_TABLE),
 
     _ => None,
   };
@@ -612,11 +622,11 @@ mod aarch64_tables {
     l: KernelSet {
       crc16_ccitt: crc16_k::CCITT_PMULL[2], // 3-way @ 60.82 GiB/s
       crc16_ccitt_name: "aarch64/pmull-3way",
-      crc16_ibm: crc16_k::IBM_PMULL[1], // 2-way @ 61.91 GiB/s
-      crc16_ibm_name: "aarch64/pmull-2way",
-      crc24_openpgp: crc24_k::OPENPGP_PMULL[0], // 1-way @ 47.70 GiB/s (3-way slower)
+      crc16_ibm: crc16_k::IBM_PMULL[2], // 3-way @ 62.05 GiB/s (bench: pmull-3way beats 2-way)
+      crc16_ibm_name: "aarch64/pmull-3way",
+      crc24_openpgp: crc24_k::OPENPGP_PMULL[0], // 1-way @ 48.00 GiB/s (3-way slower)
       crc24_openpgp_name: "aarch64/pmull",
-      crc32_ieee: crc32_k::CRC32_PMULL_EOR3[0], // pmull-eor3-v9s3x2e-s3 @ 72.11 GiB/s
+      crc32_ieee: crc32_k::CRC32_PMULL_EOR3[0], // pmull-eor3-v9s3x2e-s3 @ 78.51 GiB/s
       crc32_ieee_name: "aarch64/pmull-eor3-v9s3x2e-s3",
       crc32c: crc32_k::CRC32C_PMULL_EOR3[0], // pmull-eor3-v9s3x2e-s3 @ 72.05 GiB/s
       crc32c_name: "aarch64/pmull-eor3-v9s3x2e-s3",
@@ -681,8 +691,8 @@ mod aarch64_tables {
       crc32c_name: "aarch64/pmull-small",
       crc64_xz: crc64_k::XZ_PMULL[0], // pmull @ 13.60 GiB/s
       crc64_xz_name: "aarch64/pmull",
-      crc64_nvme: crc64_k::NVME_PMULL_EOR3[0], // pmull-eor3 @ 13.58 GiB/s
-      crc64_nvme_name: "aarch64/pmull-eor3",
+      crc64_nvme: crc64_k::NVME_PMULL[0], // pmull @ 13.58 GiB/s (bench: pmull beats pmull-eor3)
+      crc64_nvme_name: "aarch64/pmull",
     },
 
     m: KernelSet {
@@ -717,6 +727,90 @@ mod aarch64_tables {
       crc64_xz_name: "aarch64/pmull-eor3",
       crc64_nvme: crc64_k::NVME_PMULL[0], // pmull @ 33.08 GiB/s
       crc64_nvme_name: "aarch64/pmull",
+    },
+  };
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Graviton3 Table
+  //
+  // Benchmark source: `crates/checksum/bench_baseline/linux_arm64_graviton3_kernels.txt`
+  // Features: PMULL + SHA3/EOR3
+  // Peak throughputs: CRC-16 ~38 GiB/s, CRC-32 ~46 GiB/s, CRC-64 ~38 GiB/s
+  //
+  // Key differences vs Graviton2:
+  // - Higher throughput (~25% faster across the board)
+  // - Different optimal kernel choices for CRC16@s and CRC64/NVME
+  // ───────────────────────────────────────────────────────────────────────────
+  pub static GRAVITON3_TABLE: KernelTable = KernelTable {
+    requires: platform::caps::aarch64::CRC_READY.union(platform::caps::aarch64::PMULL_EOR3_READY),
+    boundaries: [64, 256, 4096],
+
+    xs: KernelSet {
+      crc16_ccitt: crc16_k::CCITT_PMULL_SMALL_KERNEL, // pmull-small @ 8.01 GiB/s
+      crc16_ccitt_name: "aarch64/pmull-small",
+      crc16_ibm: crc16_k::IBM_PMULL_SMALL_KERNEL, // pmull-small @ 7.85 GiB/s
+      crc16_ibm_name: "aarch64/pmull-small",
+      crc24_openpgp: crc24_k::OPENPGP_PMULL_SMALL_KERNEL, // pmull-small @ 6.81 GiB/s
+      crc24_openpgp_name: "aarch64/pmull-small",
+      crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL, // pmull-small @ 10.30 GiB/s
+      crc32_ieee_name: "aarch64/pmull-small",
+      crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL, // pmull-small @ 12.49 GiB/s
+      crc32c_name: "aarch64/pmull-small",
+      crc64_xz: crc64_k::XZ_PMULL_SMALL, // pmull-small @ 7.06 GiB/s
+      crc64_xz_name: "aarch64/pmull-small",
+      crc64_nvme: crc64_k::NVME_PMULL_SMALL, // pmull-small @ 7.06 GiB/s
+      crc64_nvme_name: "aarch64/pmull-small",
+    },
+
+    s: KernelSet {
+      crc16_ccitt: crc16_k::CCITT_PMULL[0], // pmull @ 11.97 GiB/s (G3: pmull beats pmull-small)
+      crc16_ccitt_name: "aarch64/pmull",
+      crc16_ibm: crc16_k::IBM_PMULL[0], // pmull @ 12.01 GiB/s (G3: pmull beats pmull-small)
+      crc16_ibm_name: "aarch64/pmull",
+      crc24_openpgp: crc24_k::OPENPGP_PMULL[0], // pmull @ 14.12 GiB/s
+      crc24_openpgp_name: "aarch64/pmull",
+      crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL, // pmull-small @ 8.66 GiB/s
+      crc32_ieee_name: "aarch64/pmull-small",
+      crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL, // pmull-small @ 8.79 GiB/s
+      crc32c_name: "aarch64/pmull-small",
+      crc64_xz: crc64_k::XZ_PMULL[0], // pmull @ 18.05 GiB/s
+      crc64_xz_name: "aarch64/pmull",
+      crc64_nvme: crc64_k::NVME_PMULL[0], // pmull @ 18.01 GiB/s
+      crc64_nvme_name: "aarch64/pmull",
+    },
+
+    m: KernelSet {
+      crc16_ccitt: crc16_k::CCITT_PMULL[0], // pmull @ 32.80 GiB/s
+      crc16_ccitt_name: "aarch64/pmull",
+      crc16_ibm: crc16_k::IBM_PMULL[0], // pmull @ 32.79 GiB/s
+      crc16_ibm_name: "aarch64/pmull",
+      crc24_openpgp: crc24_k::OPENPGP_PMULL[0], // pmull @ 32.78 GiB/s
+      crc24_openpgp_name: "aarch64/pmull",
+      crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL, // pmull-small @ 31.76 GiB/s
+      crc32_ieee_name: "aarch64/pmull-small",
+      crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL, // pmull-small @ 32.26 GiB/s
+      crc32c_name: "aarch64/pmull-small",
+      crc64_xz: crc64_k::XZ_PMULL[0], // pmull @ 35.34 GiB/s
+      crc64_xz_name: "aarch64/pmull",
+      crc64_nvme: crc64_k::NVME_PMULL[1], // pmull-2way @ 34.60 GiB/s (G3: 2way beats 1way)
+      crc64_nvme_name: "aarch64/pmull-2way",
+    },
+
+    l: KernelSet {
+      crc16_ccitt: crc16_k::CCITT_PMULL[0], // pmull @ 37.89 GiB/s
+      crc16_ccitt_name: "aarch64/pmull",
+      crc16_ibm: crc16_k::IBM_PMULL[0], // pmull @ 37.92 GiB/s
+      crc16_ibm_name: "aarch64/pmull",
+      crc24_openpgp: crc24_k::OPENPGP_PMULL[0], // pmull @ 37.90 GiB/s
+      crc24_openpgp_name: "aarch64/pmull",
+      crc32_ieee: crc32_k::CRC32_PMULL_EOR3[0], // pmull-eor3-v9s3x2e-s3 @ 46.29 GiB/s
+      crc32_ieee_name: "aarch64/pmull-eor3-v9s3x2e-s3",
+      crc32c: crc32_k::CRC32C_PMULL_EOR3[0], // pmull-eor3-v9s3x2e-s3 @ 46.08 GiB/s
+      crc32c_name: "aarch64/pmull-eor3-v9s3x2e-s3",
+      crc64_xz: crc64_k::XZ_PMULL_EOR3[0], // pmull-eor3 @ 38.04 GiB/s
+      crc64_xz_name: "aarch64/pmull-eor3",
+      crc64_nvme: crc64_k::NVME_PMULL_EOR3[0], // pmull-eor3 @ 38.05 GiB/s (G3: eor3 beats pmull)
+      crc64_nvme_name: "aarch64/pmull-eor3",
     },
   };
 
@@ -972,6 +1066,98 @@ mod x86_64_tables {
   };
 
   // ───────────────────────────────────────────────────────────────────────────
+  // Zen5 Table
+  //
+  // Benchmark source: `crates/checksum/bench_baseline/linux_x86-64_zen5_kernels.txt`
+  // Features: VPCLMULQDQ + AVX-512
+  //
+  // Key differences vs Zen4:
+  // - Different optimal multi-stream counts for CRC16/24 kernels
+  // - CRC64 (large) prefers VPCLMUL-2way over the 4×512 kernel
+  // ───────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────────────────────────────────────
+  // Zen5 Table
+  //
+  // Benchmark source: `crates/checksum/bench_baseline/linux_x86-64_zen5_kernels.txt`
+  // Features: VPCLMULQDQ + AVX-512
+  // Peak throughputs: CRC-16 ~66 GiB/s, CRC-32C ~66 GiB/s, CRC-64 ~66 GiB/s
+  // ───────────────────────────────────────────────────────────────────────────
+  pub static ZEN5_TABLE: KernelTable = KernelTable {
+    requires: platform::caps::x86::VPCLMUL_READY
+      .union(platform::caps::x86::PCLMUL_READY)
+      .union(platform::caps::x86::CRC32C_READY),
+    boundaries: [64, 256, 4096],
+
+    xs: KernelSet {
+      crc16_ccitt: crc16_k::CCITT_PCLMUL_SMALL_KERNEL, // pclmul-small @ 10.68 GiB/s
+      crc16_ccitt_name: "x86_64/pclmul-small",
+      crc16_ibm: crc16_k::IBM_PCLMUL_SMALL_KERNEL, // pclmul-small @ 9.89 GiB/s
+      crc16_ibm_name: "x86_64/pclmul-small",
+      crc24_openpgp: crc24_k::OPENPGP_PCLMUL_SMALL_KERNEL, // pclmul-small @ 8.39 GiB/s
+      crc24_openpgp_name: "x86_64/pclmul-small",
+      crc32_ieee: crc32_k::CRC32_PCLMUL_SMALL_KERNEL, // pclmul-small @ 9.21 GiB/s
+      crc32_ieee_name: "x86_64/pclmul-small",
+      crc32c: crc32_k::CRC32C_HWCRC[0], // hwcrc @ 25.33 GiB/s
+      crc32c_name: "x86_64/hwcrc",
+      crc64_xz: crc64_k::XZ_PCLMUL_SMALL, // pclmul-small @ 7.82 GiB/s
+      crc64_xz_name: "x86_64/pclmul-small",
+      crc64_nvme: crc64_k::NVME_PCLMUL_SMALL, // pclmul-small @ 7.84 GiB/s
+      crc64_nvme_name: "x86_64/pclmul-small",
+    },
+
+    s: KernelSet {
+      crc16_ccitt: crc16_k::CCITT_VPCLMUL[2], // vpclmul-4way @ 18.38 GiB/s
+      crc16_ccitt_name: "x86_64/vpclmul-4way",
+      crc16_ibm: crc16_k::IBM_VPCLMUL[1], // vpclmul-2way @ 17.52 GiB/s
+      crc16_ibm_name: "x86_64/vpclmul-2way",
+      crc24_openpgp: crc24_k::OPENPGP_VPCLMUL[3], // vpclmul-7way @ 17.78 GiB/s
+      crc24_openpgp_name: "x86_64/vpclmul-7way",
+      crc32_ieee: crc32_k::CRC32_VPCLMUL[0], // vpclmul @ 16.43 GiB/s
+      crc32_ieee_name: "x86_64/vpclmul",
+      crc32c: crc32_k::CRC32C_HWCRC[0], // hwcrc @ 36.14 GiB/s
+      crc32c_name: "x86_64/hwcrc",
+      crc64_xz: crc64_k::XZ_VPCLMUL[0], // vpclmul @ 17.57 GiB/s
+      crc64_xz_name: "x86_64/vpclmul",
+      crc64_nvme: crc64_k::NVME_VPCLMUL[0], // vpclmul @ 17.52 GiB/s
+      crc64_nvme_name: "x86_64/vpclmul",
+    },
+
+    m: KernelSet {
+      crc16_ccitt: crc16_k::CCITT_VPCLMUL[1], // vpclmul-2way @ 56.87 GiB/s
+      crc16_ccitt_name: "x86_64/vpclmul-2way",
+      crc16_ibm: crc16_k::IBM_VPCLMUL[1], // vpclmul-2way @ 56.59 GiB/s
+      crc16_ibm_name: "x86_64/vpclmul-2way",
+      crc24_openpgp: crc24_k::OPENPGP_VPCLMUL[4], // vpclmul-8way @ 53.53 GiB/s
+      crc24_openpgp_name: "x86_64/vpclmul-8way",
+      crc32_ieee: crc32_k::CRC32_VPCLMUL[1], // vpclmul-2way @ 56.20 GiB/s
+      crc32_ieee_name: "x86_64/vpclmul-2way",
+      crc32c: crc32_k::CRC32C_FUSION_VPCLMUL[0], // fusion-vpclmul-v3x2 @ 66.24 GiB/s
+      crc32c_name: "x86_64/fusion-vpclmul-v3x2",
+      crc64_xz: crc64_k::XZ_VPCLMUL[1], // vpclmul-2way @ 56.52 GiB/s
+      crc64_xz_name: "x86_64/vpclmul-2way",
+      crc64_nvme: crc64_k::NVME_VPCLMUL[1], // vpclmul-2way @ 56.53 GiB/s
+      crc64_nvme_name: "x86_64/vpclmul-2way",
+    },
+
+    l: KernelSet {
+      crc16_ccitt: crc16_k::CCITT_VPCLMUL[2], // vpclmul-4way @ 66.09 GiB/s
+      crc16_ccitt_name: "x86_64/vpclmul-4way",
+      crc16_ibm: crc16_k::IBM_VPCLMUL[1], // vpclmul-2way @ 66.01 GiB/s
+      crc16_ibm_name: "x86_64/vpclmul-2way",
+      crc24_openpgp: crc24_k::OPENPGP_VPCLMUL[4], // vpclmul-8way @ 65.97 GiB/s
+      crc24_openpgp_name: "x86_64/vpclmul-8way",
+      crc32_ieee: crc32_k::CRC32_VPCLMUL[1], // vpclmul-2way @ 66.35 GiB/s
+      crc32_ieee_name: "x86_64/vpclmul-2way",
+      crc32c: crc32_k::CRC32C_FUSION_VPCLMUL[0], // fusion-vpclmul-v3x2 @ 66.22 GiB/s
+      crc32c_name: "x86_64/fusion-vpclmul-v3x2",
+      crc64_xz: crc64_k::XZ_VPCLMUL_4X512, // vpclmul-4x512 @ 64.35 GiB/s
+      crc64_xz_name: "x86_64/vpclmul-4x512",
+      crc64_nvme: crc64_k::NVME_VPCLMUL[2], // vpclmul-4way @ 66.21 GiB/s
+      crc64_nvme_name: "x86_64/vpclmul-4way",
+    },
+  };
+
+  // ───────────────────────────────────────────────────────────────────────────
   // Zen4 Table
   //
   // Benchmark source: Namespace linux-x86 runner (2026-01-20)
@@ -1032,33 +1218,117 @@ mod x86_64_tables {
       crc16_ccitt_name: "x86_64/vpclmul-2way",
       crc16_ibm: crc16_k::IBM_VPCLMUL[1], // 2-way @ 64.84 GiB/s
       crc16_ibm_name: "x86_64/vpclmul-2way",
-      crc24_openpgp: crc24_k::OPENPGP_VPCLMUL[4], // 8-way @ 34.82 GiB/s
-      crc24_openpgp_name: "x86_64/vpclmul-8way",
-      crc32_ieee: crc32_k::CRC32_VPCLMUL[1], // 2-way @ 63.65 GiB/s
+      crc24_openpgp: crc24_k::OPENPGP_VPCLMUL[2], // 4-way @ 34.72 GiB/s (bench: 4way beats 8way)
+      crc24_openpgp_name: "x86_64/vpclmul-4way",
+      crc32_ieee: crc32_k::CRC32_VPCLMUL[1], // 2-way @ 64.13 GiB/s
       crc32_ieee_name: "x86_64/vpclmul-2way",
       crc32c: crc32_k::CRC32C_FUSION_VPCLMUL[0], // fusion-vpclmul-v3x2 @ 58.96 GiB/s
       crc32c_name: "x86_64/fusion-vpclmul-v3x2",
-      crc64_xz: crc64_k::XZ_VPCLMUL[1], // 2-way @ 61.37 GiB/s
+      crc64_xz: crc64_k::XZ_VPCLMUL[1], // 2-way @ 66.51 GiB/s
       crc64_xz_name: "x86_64/vpclmul-2way",
       crc64_nvme: crc64_k::NVME_VPCLMUL[1], // 2-way @ 66.51 GiB/s
       crc64_nvme_name: "x86_64/vpclmul-2way",
     },
 
     l: KernelSet {
-      crc16_ccitt: crc16_k::CCITT_VPCLMUL[2], // 4-way @ 70.52 GiB/s
+      crc16_ccitt: crc16_k::CCITT_VPCLMUL[2], // 4-way @ 73.97 GiB/s
       crc16_ccitt_name: "x86_64/vpclmul-4way",
       crc16_ibm: crc16_k::IBM_VPCLMUL[1], // 2-way @ 78.09 GiB/s
       crc16_ibm_name: "x86_64/vpclmul-2way",
-      crc24_openpgp: crc24_k::OPENPGP_VPCLMUL[1], // 2-way @ 38.92 GiB/s
-      crc24_openpgp_name: "x86_64/vpclmul-2way",
+      crc24_openpgp: crc24_k::OPENPGP_VPCLMUL[2], // 4-way @ 71.94 GiB/s (bench: 4way beats 2way)
+      crc24_openpgp_name: "x86_64/vpclmul-4way",
       crc32_ieee: crc32_k::CRC32_VPCLMUL[1], // 2-way @ 72.57 GiB/s
       crc32_ieee_name: "x86_64/vpclmul-2way",
-      crc32c: crc32_k::CRC32C_FUSION_VPCLMUL[0], // fusion-vpclmul-v3x2 @ 70.43 GiB/s
-      crc32c_name: "x86_64/fusion-vpclmul-v3x2",
-      crc64_xz: crc64_k::XZ_VPCLMUL_4X512, // 4x512 @ 72.66 GiB/s
-      crc64_xz_name: "x86_64/vpclmul-4x512",
+      crc32c: crc32_k::CRC32C_FUSION_VPCLMUL[4], // fusion-vpclmul-v3x2-8way @ 75.16 GiB/s
+      crc32c_name: "x86_64/fusion-vpclmul-v3x2-8way",
+      crc64_xz: crc64_k::XZ_VPCLMUL[2], // 4-way @ 74.62 GiB/s (bench: 4way beats 4x512)
+      crc64_xz_name: "x86_64/vpclmul-4way",
       crc64_nvme: crc64_k::NVME_VPCLMUL[2], // 4-way @ 74.10 GiB/s
       crc64_nvme_name: "x86_64/vpclmul-4way",
+    },
+  };
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Intel SPR Table
+  //
+  // Benchmark source: `crates/checksum/bench_baseline/linux_x86-64_intel_kernels.txt`
+  // Features: VPCLMULQDQ + AVX-512
+  //
+  // Intel's optimal selections differ meaningfully from Zen4/Zen5, especially
+  // for CRC-64 and small-buffer thresholds.
+  // ───────────────────────────────────────────────────────────────────────────
+  pub static INTEL_SPR_TABLE: KernelTable = KernelTable {
+    requires: platform::caps::x86::VPCLMUL_READY
+      .union(platform::caps::x86::PCLMUL_READY)
+      .union(platform::caps::x86::CRC32C_READY),
+    boundaries: [64, 256, 4096],
+
+    xs: KernelSet {
+      crc16_ccitt: crc16_k::CCITT_PCLMUL_SMALL_KERNEL,
+      crc16_ccitt_name: "x86_64/pclmul-small",
+      crc16_ibm: crc16_k::IBM_PCLMUL_SMALL_KERNEL,
+      crc16_ibm_name: "x86_64/pclmul-small",
+      crc24_openpgp: crc24_k::OPENPGP_PCLMUL_SMALL_KERNEL,
+      crc24_openpgp_name: "x86_64/pclmul-small",
+      crc32_ieee: crc32_k::CRC32_PCLMUL_SMALL_KERNEL,
+      crc32_ieee_name: "x86_64/pclmul-small",
+      crc32c: crc32_k::CRC32C_HWCRC[0],
+      crc32c_name: "x86_64/hwcrc",
+      crc64_xz: crc64_k::XZ_PCLMUL_SMALL,
+      crc64_xz_name: "x86_64/pclmul-small",
+      crc64_nvme: crc64_k::NVME_PCLMUL_SMALL,
+      crc64_nvme_name: "x86_64/pclmul-small",
+    },
+
+    s: KernelSet {
+      crc16_ccitt: crc16_k::CCITT_PCLMUL_SMALL_KERNEL,
+      crc16_ccitt_name: "x86_64/pclmul-small",
+      crc16_ibm: crc16_k::IBM_PCLMUL_SMALL_KERNEL,
+      crc16_ibm_name: "x86_64/pclmul-small",
+      crc24_openpgp: crc24_k::OPENPGP_VPCLMUL[0],
+      crc24_openpgp_name: "x86_64/vpclmul",
+      crc32_ieee: crc32_k::CRC32_VPCLMUL[4],
+      crc32_ieee_name: "x86_64/vpclmul-8way",
+      crc32c: crc32_k::CRC32C_HWCRC[4],
+      crc32c_name: "x86_64/hwcrc-8way",
+      crc64_xz: crc64_k::XZ_VPCLMUL_4X512,
+      crc64_xz_name: "x86_64/vpclmul-4x512",
+      crc64_nvme: crc64_k::NVME_PCLMUL[0],
+      crc64_nvme_name: "x86_64/pclmul",
+    },
+
+    m: KernelSet {
+      crc16_ccitt: crc16_k::CCITT_VPCLMUL[3],
+      crc16_ccitt_name: "x86_64/vpclmul-7way",
+      crc16_ibm: crc16_k::IBM_VPCLMUL[3],
+      crc16_ibm_name: "x86_64/vpclmul-7way",
+      crc24_openpgp: crc24_k::OPENPGP_VPCLMUL[4],
+      crc24_openpgp_name: "x86_64/vpclmul-8way",
+      crc32_ieee: crc32_k::CRC32_VPCLMUL[4],
+      crc32_ieee_name: "x86_64/vpclmul-8way",
+      crc32c: crc32_k::CRC32C_FUSION_VPCLMUL[0],
+      crc32c_name: "x86_64/fusion-vpclmul-v3x2",
+      crc64_xz: crc64_k::XZ_VPCLMUL_4X512,
+      crc64_xz_name: "x86_64/vpclmul-4x512",
+      crc64_nvme: crc64_k::NVME_VPCLMUL_4X512,
+      crc64_nvme_name: "x86_64/vpclmul-4x512",
+    },
+
+    l: KernelSet {
+      crc16_ccitt: crc16_k::CCITT_VPCLMUL[1], // vpclmul-2way @ 70.08 GiB/s
+      crc16_ccitt_name: "x86_64/vpclmul-2way",
+      crc16_ibm: crc16_k::IBM_VPCLMUL[1], // vpclmul-2way @ 72.97 GiB/s (bench: 2way beats 4way)
+      crc16_ibm_name: "x86_64/vpclmul-2way",
+      crc24_openpgp: crc24_k::OPENPGP_VPCLMUL[0], // vpclmul @ 37.05 GiB/s
+      crc24_openpgp_name: "x86_64/vpclmul",
+      crc32_ieee: crc32_k::CRC32_VPCLMUL[1], // vpclmul-2way @ 72.86 GiB/s (bench: 2way beats 4way)
+      crc32_ieee_name: "x86_64/vpclmul-2way",
+      crc32c: crc32_k::CRC32C_FUSION_VPCLMUL[0], // fusion-vpclmul-v3x2 @ 92.2 GiB/s
+      crc32c_name: "x86_64/fusion-vpclmul-v3x2",
+      crc64_xz: crc64_k::XZ_VPCLMUL[3], // vpclmul-7way @ 87.9 GiB/s
+      crc64_xz_name: "x86_64/vpclmul-7way",
+      crc64_nvme: crc64_k::NVME_VPCLMUL[1], // vpclmul-2way @ 72.5 GiB/s
+      crc64_nvme_name: "x86_64/vpclmul-2way",
     },
   };
 
@@ -1793,9 +2063,12 @@ mod tests {
   #[cfg(target_arch = "x86_64")]
   #[test]
   fn test_x86_64_exact_match() {
-    // Zen4 should return the Zen4 table
-    let table = exact_match(TuneKind::Zen4, ZEN4_TABLE.requires);
-    assert!(table.is_some());
+    // Zen4 should return the Zen4 table.
+    assert!(exact_match(TuneKind::Zen4, ZEN4_TABLE.requires).is_some());
+    // Zen5 should return the Zen5 table.
+    assert!(exact_match(TuneKind::Zen5, ZEN5_TABLE.requires).is_some());
+    // Intel SPR should return the Intel SPR table.
+    assert!(exact_match(TuneKind::IntelSpr, INTEL_SPR_TABLE.requires).is_some());
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
