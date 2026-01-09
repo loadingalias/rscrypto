@@ -16,7 +16,26 @@ install_binstall() {
     fi
 
     echo "Installing cargo-binstall..."
-    curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
+
+    # Detect Windows ARM64 specially - uname -m returns x86_64 due to emulation layer
+    # PROCESSOR_ARCHITECTURE is the reliable way to detect native arch on Windows
+    if [[ "${PROCESSOR_ARCHITECTURE:-}" == "ARM64" ]]; then
+        echo "Detected Windows ARM64 (via PROCESSOR_ARCHITECTURE)"
+        BINSTALL_URL="https://github.com/cargo-bins/cargo-binstall/releases/latest/download/cargo-binstall-aarch64-pc-windows-msvc.zip"
+        BINSTALL_ZIP="cargo-binstall-aarch64-pc-windows-msvc.zip"
+
+        # Download and extract manually
+        curl -L --proto '=https' --tlsv1.2 -sSf -o "$BINSTALL_ZIP" "$BINSTALL_URL"
+        unzip -q "$BINSTALL_ZIP"
+        mkdir -p "$HOME/.cargo/bin"
+        mv cargo-binstall.exe "$HOME/.cargo/bin/"
+        rm -f "$BINSTALL_ZIP"
+        echo "✅ cargo-binstall installed (Windows ARM64)"
+    else
+        # Use upstream bootstrap script for other platforms
+        curl -L --proto '=https' --tlsv1.2 -sSf \
+            https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
+    fi
 }
 
 # Install a tool if not already present
