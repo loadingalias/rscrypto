@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Install cargo tools for CI
-# Usage: install-tools.sh [standard|namespace|bench|minimal]
+# Usage: install-tools.sh [standard|namespace|runson|bench|minimal]
 
 set -euo pipefail
 
@@ -41,8 +41,8 @@ echo "Installing tools for mode: $MODE"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 case "$MODE" in
-    standard)
-        # Standard CI tools for commit workflow
+    standard|namespace|runson)
+        # Standard CI tools (same for all CI runners)
         install_if_missing "cargo-nextest" "cargo-nextest"
         install_if_missing "cargo-rail" "cargo-rail"
         install_if_missing "cargo-deny" "cargo-deny"
@@ -50,17 +50,8 @@ case "$MODE" in
         install_if_missing "just" "just"
         ;;
 
-    namespace)
-        # Namespace runners - same as standard but may have different caching
-        install_if_missing "cargo-nextest" "cargo-nextest"
-        install_if_missing "cargo-rail" "cargo-rail"
-        install_if_missing "cargo-deny" "cargo-deny"
-        install_if_missing "cargo-audit" "cargo-audit"
-        install_if_missing "just" "just"
-        ;;
-
-    bench)
-        # Benchmark tools
+    bench|runson-bench)
+        # Benchmark tools (Criterion + tuning)
         install_if_missing "cargo-criterion" "cargo-criterion"
         install_if_missing "critcmp" "critcmp"
         install_if_missing "just" "just"
@@ -73,7 +64,7 @@ case "$MODE" in
 
     *)
         echo "Unknown mode: $MODE"
-        echo "Usage: install-tools.sh [standard|namespace|bench|minimal]"
+        echo "Usage: install-tools.sh [standard|namespace|runson|bench|runson-bench|minimal]"
         exit 1
         ;;
 esac

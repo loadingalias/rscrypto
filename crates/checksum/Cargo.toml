@@ -14,9 +14,6 @@ default = ["std"]
 std = ["alloc", "traits/std", "backend/std", "platform/std"]
 alloc = ["traits/alloc"]
 diag = []
-# Enable force mode for testing specific kernel paths via RSCRYPTO_CRC*_FORCE env vars.
-# Not needed for production; only enables the _forced() dispatch variants.
-force-mode = []
 
 [dependencies]
 traits = { workspace = true, default-features = false } #unified
@@ -40,6 +37,18 @@ harness = false
 [[bench]]
 name = "kernels"
 harness = false
+
+[[example]]
+name = "basic"
+required-features = ["std"]
+
+[[example]]
+name = "parallel"
+required-features = ["std"]
+
+[[example]]
+name = "introspect"
+required-features = ["std"]
 
 [lints]
 workspace = true

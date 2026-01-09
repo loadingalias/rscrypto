@@ -204,20 +204,28 @@ pub fn crc24_openpgp(data: &[u8]) -> u32 {
 
 /// All kernel function pointers for one size class.
 ///
-/// Contains the optimal kernel for each CRC variant at a specific buffer size.
+/// Contains the optimal kernel for each CRC variant at a specific buffer size,
+/// along with human-readable kernel names for introspection.
 #[derive(Clone, Copy)]
 pub struct KernelSet {
   // CRC-16
   pub crc16_ccitt: Crc16Fn,
+  pub crc16_ccitt_name: &'static str,
   pub crc16_ibm: Crc16Fn,
+  pub crc16_ibm_name: &'static str,
   // CRC-24
   pub crc24_openpgp: Crc24Fn,
+  pub crc24_openpgp_name: &'static str,
   // CRC-32
   pub crc32_ieee: Crc32Fn,
+  pub crc32_ieee_name: &'static str,
   pub crc32c: Crc32Fn,
+  pub crc32c_name: &'static str,
   // CRC-64
   pub crc64_xz: Crc64Fn,
+  pub crc64_xz_name: &'static str,
   pub crc64_nvme: Crc64Fn,
+  pub crc64_nvme_name: &'static str,
 }
 
 /// Complete kernel table for one platform.
@@ -263,6 +271,36 @@ impl KernelTable {
       &self.l
     }
   }
+
+  /// Returns `true` if this table uses hardware-accelerated kernels.
+  ///
+  /// A table is hardware-accelerated if it requires any CPU capabilities
+  /// beyond the baseline (i.e., `requires != Caps::NONE`).
+  #[inline]
+  pub const fn is_hardware_accelerated(&self) -> bool {
+    !self.requires.is_empty()
+  }
+}
+
+/// Returns `true` if the current platform uses hardware-accelerated CRC kernels.
+///
+/// This is a convenience function that checks whether the active dispatch table
+/// requires any SIMD or hardware CRC capabilities.
+///
+/// # Examples
+///
+/// ```rust
+/// use checksum::dispatch::is_hardware_accelerated;
+///
+/// if is_hardware_accelerated() {
+///   println!("CRC operations are hardware-accelerated on this platform");
+/// } else {
+///   println!("Using portable (table-based) CRC implementations");
+/// }
+/// ```
+#[inline]
+pub fn is_hardware_accelerated() -> bool {
+  active_table().is_hardware_accelerated()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -463,12 +501,19 @@ fn capability_match(caps: Caps) -> Option<&'static KernelTable> {
 /// Used when no SIMD capabilities are detected.
 const PORTABLE_SET: KernelSet = KernelSet {
   crc16_ccitt: crate::crc16::portable::crc16_ccitt_slice8,
+  crc16_ccitt_name: "portable/slice8",
   crc16_ibm: crate::crc16::portable::crc16_ibm_slice8,
+  crc16_ibm_name: "portable/slice8",
   crc24_openpgp: crate::crc24::portable::crc24_openpgp_slice8,
+  crc24_openpgp_name: "portable/slice8",
   crc32_ieee: crate::crc32::portable::crc32_slice16_ieee,
+  crc32_ieee_name: "portable/slice16",
   crc32c: crate::crc32::portable::crc32c_slice16,
+  crc32c_name: "portable/slice16",
   crc64_xz: crate::crc64::portable::crc64_slice16_xz,
+  crc64_xz_name: "portable/slice16",
   crc64_nvme: crate::crc64::portable::crc64_slice16_nvme,
+  crc64_nvme_name: "portable/slice16",
 };
 
 pub static PORTABLE_TABLE: KernelTable = KernelTable {
@@ -515,42 +560,70 @@ mod aarch64_tables {
 
     xs: KernelSet {
       crc16_ccitt: crc16_k::CCITT_PMULL_SMALL_KERNEL,
+      crc16_ccitt_name: "aarch64/pmull-small",
       crc16_ibm: crc16_k::IBM_PMULL_SMALL_KERNEL,
+      crc16_ibm_name: "aarch64/pmull-small",
       crc24_openpgp: crc24_k::OPENPGP_PMULL_SMALL_KERNEL,
+      crc24_openpgp_name: "aarch64/pmull-small",
       crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL, // pmull-small beats hwcrc @ 13.71 GiB/s
-      crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL,    // pmull-small beats hwcrc @ 13.55 GiB/s
+      crc32_ieee_name: "aarch64/pmull-small",
+      crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL, // pmull-small beats hwcrc @ 13.55 GiB/s
+      crc32c_name: "aarch64/pmull-small",
       crc64_xz: crc64_k::XZ_PMULL_SMALL,
+      crc64_xz_name: "aarch64/pmull-small",
       crc64_nvme: crc64_k::NVME_PMULL_SMALL,
+      crc64_nvme_name: "aarch64/pmull-small",
     },
 
     s: KernelSet {
       crc16_ccitt: crc16_k::CCITT_PMULL_SMALL_KERNEL,
+      crc16_ccitt_name: "aarch64/pmull-small",
       crc16_ibm: crc16_k::IBM_PMULL_SMALL_KERNEL,
-      crc24_openpgp: crc24_k::OPENPGP_PMULL[1],      // 2-way @ 26.70 GiB/s
+      crc16_ibm_name: "aarch64/pmull-small",
+      crc24_openpgp: crc24_k::OPENPGP_PMULL[1], // 2-way @ 26.70 GiB/s
+      crc24_openpgp_name: "aarch64/pmull-2way",
       crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL, // pmull-small @ 34.66 GiB/s
-      crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL,    // pmull-small @ 34.77 GiB/s
-      crc64_xz: crc64_k::XZ_PMULL[0],                // 1-way @ 29.54 GiB/s
-      crc64_nvme: crc64_k::NVME_PMULL[0],            // pmull @ 29.39 GiB/s
+      crc32_ieee_name: "aarch64/pmull-small",
+      crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL, // pmull-small @ 34.77 GiB/s
+      crc32c_name: "aarch64/pmull-small",
+      crc64_xz: crc64_k::XZ_PMULL[0], // 1-way @ 29.54 GiB/s
+      crc64_xz_name: "aarch64/pmull",
+      crc64_nvme: crc64_k::NVME_PMULL[0], // pmull @ 29.39 GiB/s
+      crc64_nvme_name: "aarch64/pmull",
     },
 
     m: KernelSet {
-      crc16_ccitt: crc16_k::CCITT_PMULL[0],          // 1-way @ 51.39 GiB/s
-      crc16_ibm: crc16_k::IBM_PMULL[1],              // 2-way @ 52.31 GiB/s
-      crc24_openpgp: crc24_k::OPENPGP_PMULL[0],      // 1-way @ 45.67 GiB/s
+      crc16_ccitt: crc16_k::CCITT_PMULL[0], // 1-way @ 51.39 GiB/s
+      crc16_ccitt_name: "aarch64/pmull",
+      crc16_ibm: crc16_k::IBM_PMULL[1], // 2-way @ 52.31 GiB/s
+      crc16_ibm_name: "aarch64/pmull-2way",
+      crc24_openpgp: crc24_k::OPENPGP_PMULL[0], // 1-way @ 45.67 GiB/s
+      crc24_openpgp_name: "aarch64/pmull",
       crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL, // pmull-small @ 56.91 GiB/s
-      crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL,    // pmull-small @ 56.91 GiB/s
-      crc64_xz: crc64_k::XZ_PMULL_EOR3[0],           // pmull-eor3 @ 59.28 GiB/s
-      crc64_nvme: crc64_k::NVME_PMULL_EOR3[0],       // pmull-eor3 @ 58.92 GiB/s
+      crc32_ieee_name: "aarch64/pmull-small",
+      crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL, // pmull-small @ 56.91 GiB/s
+      crc32c_name: "aarch64/pmull-small",
+      crc64_xz: crc64_k::XZ_PMULL_EOR3[0], // pmull-eor3 @ 59.28 GiB/s
+      crc64_xz_name: "aarch64/pmull-eor3",
+      crc64_nvme: crc64_k::NVME_PMULL_EOR3[0], // pmull-eor3 @ 58.92 GiB/s
+      crc64_nvme_name: "aarch64/pmull-eor3",
     },
 
     l: KernelSet {
-      crc16_ccitt: crc16_k::CCITT_PMULL[2],     // 3-way @ 60.82 GiB/s
-      crc16_ibm: crc16_k::IBM_PMULL[1],         // 2-way @ 61.91 GiB/s
+      crc16_ccitt: crc16_k::CCITT_PMULL[2], // 3-way @ 60.82 GiB/s
+      crc16_ccitt_name: "aarch64/pmull-3way",
+      crc16_ibm: crc16_k::IBM_PMULL[1], // 2-way @ 61.91 GiB/s
+      crc16_ibm_name: "aarch64/pmull-2way",
       crc24_openpgp: crc24_k::OPENPGP_PMULL[0], // 1-way @ 47.70 GiB/s (3-way slower)
+      crc24_openpgp_name: "aarch64/pmull",
       crc32_ieee: crc32_k::CRC32_PMULL_EOR3[0], // pmull-eor3-v9s3x2e-s3 @ 72.11 GiB/s
-      crc32c: crc32_k::CRC32C_PMULL_EOR3[0],    // pmull-eor3-v9s3x2e-s3 @ 72.05 GiB/s
-      crc64_xz: crc64_k::XZ_PMULL_EOR3[2],      // pmull-eor3-3way @ 63.10 GiB/s
-      crc64_nvme: crc64_k::NVME_PMULL_EOR3[2],  // pmull-eor3-3way @ 62.12 GiB/s
+      crc32_ieee_name: "aarch64/pmull-eor3-v9s3x2e-s3",
+      crc32c: crc32_k::CRC32C_PMULL_EOR3[0], // pmull-eor3-v9s3x2e-s3 @ 72.05 GiB/s
+      crc32c_name: "aarch64/pmull-eor3-v9s3x2e-s3",
+      crc64_xz: crc64_k::XZ_PMULL_EOR3[2], // pmull-eor3-3way @ 63.10 GiB/s
+      crc64_xz_name: "aarch64/pmull-eor3-3way",
+      crc64_nvme: crc64_k::NVME_PMULL_EOR3[2], // pmull-eor3-3way @ 62.12 GiB/s
+      crc64_nvme_name: "aarch64/pmull-eor3-3way",
     },
   };
 
@@ -580,42 +653,70 @@ mod aarch64_tables {
 
     xs: KernelSet {
       crc16_ccitt: crc16_k::CCITT_PMULL_SMALL_KERNEL,
+      crc16_ccitt_name: "aarch64/pmull-small",
       crc16_ibm: crc16_k::IBM_PMULL_SMALL_KERNEL,
+      crc16_ibm_name: "aarch64/pmull-small",
       crc24_openpgp: crc24_k::OPENPGP_PMULL_SMALL_KERNEL,
+      crc24_openpgp_name: "aarch64/pmull-small",
       crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL, // pmull-small beats hwcrc @ 9.53 GiB/s
-      crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL,    // pmull-small beats hwcrc @ 9.54 GiB/s
+      crc32_ieee_name: "aarch64/pmull-small",
+      crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL, // pmull-small beats hwcrc @ 9.54 GiB/s
+      crc32c_name: "aarch64/pmull-small",
       crc64_xz: crc64_k::XZ_PMULL_SMALL,
+      crc64_xz_name: "aarch64/pmull-small",
       crc64_nvme: crc64_k::NVME_PMULL_SMALL,
+      crc64_nvme_name: "aarch64/pmull-small",
     },
 
     s: KernelSet {
       crc16_ccitt: crc16_k::CCITT_PMULL_SMALL_KERNEL,
+      crc16_ccitt_name: "aarch64/pmull-small",
       crc16_ibm: crc16_k::IBM_PMULL_SMALL_KERNEL,
-      crc24_openpgp: crc24_k::OPENPGP_PMULL[0],      // 1-way @ 11.08 GiB/s
+      crc16_ibm_name: "aarch64/pmull-small",
+      crc24_openpgp: crc24_k::OPENPGP_PMULL[0], // 1-way @ 11.08 GiB/s
+      crc24_openpgp_name: "aarch64/pmull",
       crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL, // pmull-small @ 13.30 GiB/s
-      crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL,    // pmull-small @ 13.30 GiB/s
-      crc64_xz: crc64_k::XZ_PMULL[0],                // pmull @ 13.60 GiB/s
-      crc64_nvme: crc64_k::NVME_PMULL_EOR3[0],       // pmull-eor3 @ 13.58 GiB/s
+      crc32_ieee_name: "aarch64/pmull-small",
+      crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL, // pmull-small @ 13.30 GiB/s
+      crc32c_name: "aarch64/pmull-small",
+      crc64_xz: crc64_k::XZ_PMULL[0], // pmull @ 13.60 GiB/s
+      crc64_xz_name: "aarch64/pmull",
+      crc64_nvme: crc64_k::NVME_PMULL_EOR3[0], // pmull-eor3 @ 13.58 GiB/s
+      crc64_nvme_name: "aarch64/pmull-eor3",
     },
 
     m: KernelSet {
-      crc16_ccitt: crc16_k::CCITT_PMULL[0],          // 1-way @ 29.19 GiB/s
-      crc16_ibm: crc16_k::IBM_PMULL[0],              // 1-way @ 29.20 GiB/s
-      crc24_openpgp: crc24_k::OPENPGP_PMULL[0],      // 1-way @ 19.95 GiB/s
+      crc16_ccitt: crc16_k::CCITT_PMULL[0], // 1-way @ 29.19 GiB/s
+      crc16_ccitt_name: "aarch64/pmull",
+      crc16_ibm: crc16_k::IBM_PMULL[0], // 1-way @ 29.20 GiB/s
+      crc16_ibm_name: "aarch64/pmull",
+      crc24_openpgp: crc24_k::OPENPGP_PMULL[0], // 1-way @ 19.95 GiB/s
+      crc24_openpgp_name: "aarch64/pmull",
       crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL, // pmull-small @ 28.62 GiB/s
-      crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL,    // pmull-small @ 28.68 GiB/s
-      crc64_xz: crc64_k::XZ_PMULL[0],                // pmull @ 30.39 GiB/s (pmull-eor3 slower here)
-      crc64_nvme: crc64_k::NVME_PMULL[0],            // pmull @ 30.45 GiB/s
+      crc32_ieee_name: "aarch64/pmull-small",
+      crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL, // pmull-small @ 28.68 GiB/s
+      crc32c_name: "aarch64/pmull-small",
+      crc64_xz: crc64_k::XZ_PMULL[0], // pmull @ 30.39 GiB/s (pmull-eor3 slower here)
+      crc64_xz_name: "aarch64/pmull",
+      crc64_nvme: crc64_k::NVME_PMULL[0], // pmull @ 30.45 GiB/s
+      crc64_nvme_name: "aarch64/pmull",
     },
 
     l: KernelSet {
-      crc16_ccitt: crc16_k::CCITT_PMULL[0],     // 1-way @ 33.01 GiB/s
-      crc16_ibm: crc16_k::IBM_PMULL[0],         // 1-way @ 32.78 GiB/s
+      crc16_ccitt: crc16_k::CCITT_PMULL[0], // 1-way @ 33.01 GiB/s
+      crc16_ccitt_name: "aarch64/pmull",
+      crc16_ibm: crc16_k::IBM_PMULL[0], // 1-way @ 32.78 GiB/s
+      crc16_ibm_name: "aarch64/pmull",
       crc24_openpgp: crc24_k::OPENPGP_PMULL[0], // 1-way @ 24.88 GiB/s
+      crc24_openpgp_name: "aarch64/pmull",
       crc32_ieee: crc32_k::CRC32_PMULL_EOR3[0], // pmull-eor3-v9s3x2e-s3 @ 39.82 GiB/s
-      crc32c: crc32_k::CRC32C_PMULL_EOR3[0],    // pmull-eor3-v9s3x2e-s3 @ 39.93 GiB/s
-      crc64_xz: crc64_k::XZ_PMULL_EOR3[0],      // pmull-eor3 @ 33.07 GiB/s
-      crc64_nvme: crc64_k::NVME_PMULL[0],       // pmull @ 33.08 GiB/s
+      crc32_ieee_name: "aarch64/pmull-eor3-v9s3x2e-s3",
+      crc32c: crc32_k::CRC32C_PMULL_EOR3[0], // pmull-eor3-v9s3x2e-s3 @ 39.93 GiB/s
+      crc32c_name: "aarch64/pmull-eor3-v9s3x2e-s3",
+      crc64_xz: crc64_k::XZ_PMULL_EOR3[0], // pmull-eor3 @ 33.07 GiB/s
+      crc64_xz_name: "aarch64/pmull-eor3",
+      crc64_nvme: crc64_k::NVME_PMULL[0], // pmull @ 33.08 GiB/s
+      crc64_nvme_name: "aarch64/pmull",
     },
   };
 
@@ -638,42 +739,70 @@ mod aarch64_tables {
 
     xs: KernelSet {
       crc16_ccitt: crc16_k::CCITT_PMULL_SMALL_KERNEL,
+      crc16_ccitt_name: "aarch64/pmull-small",
       crc16_ibm: crc16_k::IBM_PMULL_SMALL_KERNEL,
+      crc16_ibm_name: "aarch64/pmull-small",
       crc24_openpgp: crc24_k::OPENPGP_PMULL_SMALL_KERNEL,
+      crc24_openpgp_name: "aarch64/pmull-small",
       crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL,
+      crc32_ieee_name: "aarch64/pmull-small",
       crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL,
+      crc32c_name: "aarch64/pmull-small",
       crc64_xz: crc64_k::XZ_PMULL_SMALL,
+      crc64_xz_name: "aarch64/pmull-small",
       crc64_nvme: crc64_k::NVME_PMULL_SMALL,
+      crc64_nvme_name: "aarch64/pmull-small",
     },
 
     s: KernelSet {
       crc16_ccitt: crc16_k::CCITT_PMULL_SMALL_KERNEL,
+      crc16_ccitt_name: "aarch64/pmull-small",
       crc16_ibm: crc16_k::IBM_PMULL_SMALL_KERNEL,
+      crc16_ibm_name: "aarch64/pmull-small",
       crc24_openpgp: crc24_k::OPENPGP_PMULL[0],
+      crc24_openpgp_name: "aarch64/pmull",
       crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL,
+      crc32_ieee_name: "aarch64/pmull-small",
       crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL,
+      crc32c_name: "aarch64/pmull-small",
       crc64_xz: crc64_k::XZ_PMULL[0],
+      crc64_xz_name: "aarch64/pmull",
       crc64_nvme: crc64_k::NVME_PMULL[0],
+      crc64_nvme_name: "aarch64/pmull",
     },
 
     m: KernelSet {
       crc16_ccitt: crc16_k::CCITT_PMULL[0],
+      crc16_ccitt_name: "aarch64/pmull",
       crc16_ibm: crc16_k::IBM_PMULL[0],
+      crc16_ibm_name: "aarch64/pmull",
       crc24_openpgp: crc24_k::OPENPGP_PMULL[0],
+      crc24_openpgp_name: "aarch64/pmull",
       crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL,
+      crc32_ieee_name: "aarch64/pmull-small",
       crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL,
+      crc32c_name: "aarch64/pmull-small",
       crc64_xz: crc64_k::XZ_PMULL[0],
+      crc64_xz_name: "aarch64/pmull",
       crc64_nvme: crc64_k::NVME_PMULL[0],
+      crc64_nvme_name: "aarch64/pmull",
     },
 
     l: KernelSet {
       crc16_ccitt: crc16_k::CCITT_PMULL[0],
+      crc16_ccitt_name: "aarch64/pmull",
       crc16_ibm: crc16_k::IBM_PMULL[0],
+      crc16_ibm_name: "aarch64/pmull",
       crc24_openpgp: crc24_k::OPENPGP_PMULL[0],
+      crc24_openpgp_name: "aarch64/pmull",
       crc32_ieee: crc32_k::CRC32_PMULL[0],
+      crc32_ieee_name: "aarch64/pmull-v9s3x2e-s3",
       crc32c: crc32_k::CRC32C_PMULL[0],
+      crc32c_name: "aarch64/pmull-v9s3x2e-s3",
       crc64_xz: crc64_k::XZ_PMULL[0],
+      crc64_xz_name: "aarch64/pmull",
       crc64_nvme: crc64_k::NVME_PMULL[0],
+      crc64_nvme_name: "aarch64/pmull",
     },
   };
 
@@ -684,42 +813,70 @@ mod aarch64_tables {
 
     xs: KernelSet {
       crc16_ccitt: crc16_k::CCITT_PMULL_SMALL_KERNEL,
+      crc16_ccitt_name: "aarch64/pmull-small",
       crc16_ibm: crc16_k::IBM_PMULL_SMALL_KERNEL,
+      crc16_ibm_name: "aarch64/pmull-small",
       crc24_openpgp: crc24_k::OPENPGP_PMULL_SMALL_KERNEL,
+      crc24_openpgp_name: "aarch64/pmull-small",
       crc32_ieee: crate::crc32::portable::crc32_bytewise_ieee,
+      crc32_ieee_name: "reference/bitwise",
       crc32c: crate::crc32::portable::crc32c_bytewise,
+      crc32c_name: "reference/bitwise",
       crc64_xz: crc64_k::XZ_PMULL_SMALL,
+      crc64_xz_name: "aarch64/pmull-small",
       crc64_nvme: crc64_k::NVME_PMULL_SMALL,
+      crc64_nvme_name: "aarch64/pmull-small",
     },
 
     s: KernelSet {
       crc16_ccitt: crc16_k::CCITT_PMULL_SMALL_KERNEL,
+      crc16_ccitt_name: "aarch64/pmull-small",
       crc16_ibm: crc16_k::IBM_PMULL_SMALL_KERNEL,
+      crc16_ibm_name: "aarch64/pmull-small",
       crc24_openpgp: crc24_k::OPENPGP_PMULL[0],
+      crc24_openpgp_name: "aarch64/pmull",
       crc32_ieee: crate::crc32::portable::crc32_slice16_ieee,
+      crc32_ieee_name: "portable/slice16",
       crc32c: crate::crc32::portable::crc32c_slice16,
+      crc32c_name: "portable/slice16",
       crc64_xz: crc64_k::XZ_PMULL[0],
+      crc64_xz_name: "aarch64/pmull",
       crc64_nvme: crc64_k::NVME_PMULL[0],
+      crc64_nvme_name: "aarch64/pmull",
     },
 
     m: KernelSet {
       crc16_ccitt: crc16_k::CCITT_PMULL[0],
+      crc16_ccitt_name: "aarch64/pmull",
       crc16_ibm: crc16_k::IBM_PMULL[0],
+      crc16_ibm_name: "aarch64/pmull",
       crc24_openpgp: crc24_k::OPENPGP_PMULL[0],
+      crc24_openpgp_name: "aarch64/pmull",
       crc32_ieee: crate::crc32::portable::crc32_slice16_ieee,
+      crc32_ieee_name: "portable/slice16",
       crc32c: crate::crc32::portable::crc32c_slice16,
+      crc32c_name: "portable/slice16",
       crc64_xz: crc64_k::XZ_PMULL[0],
+      crc64_xz_name: "aarch64/pmull",
       crc64_nvme: crc64_k::NVME_PMULL[0],
+      crc64_nvme_name: "aarch64/pmull",
     },
 
     l: KernelSet {
       crc16_ccitt: crc16_k::CCITT_PMULL[0],
+      crc16_ccitt_name: "aarch64/pmull",
       crc16_ibm: crc16_k::IBM_PMULL[0],
+      crc16_ibm_name: "aarch64/pmull",
       crc24_openpgp: crc24_k::OPENPGP_PMULL[0],
+      crc24_openpgp_name: "aarch64/pmull",
       crc32_ieee: crate::crc32::portable::crc32_slice16_ieee,
+      crc32_ieee_name: "portable/slice16",
       crc32c: crate::crc32::portable::crc32c_slice16,
+      crc32c_name: "portable/slice16",
       crc64_xz: crc64_k::XZ_PMULL[0],
+      crc64_xz_name: "aarch64/pmull",
       crc64_nvme: crc64_k::NVME_PMULL[0],
+      crc64_nvme_name: "aarch64/pmull",
     },
   };
 
@@ -730,42 +887,70 @@ mod aarch64_tables {
 
     xs: KernelSet {
       crc16_ccitt: crate::crc16::portable::crc16_ccitt_slice8,
+      crc16_ccitt_name: "portable/slice8",
       crc16_ibm: crate::crc16::portable::crc16_ibm_slice8,
+      crc16_ibm_name: "portable/slice8",
       crc24_openpgp: crate::crc24::portable::crc24_openpgp_slice8,
+      crc24_openpgp_name: "portable/slice8",
       crc32_ieee: crc32_k::CRC32_HWCRC[0],
+      crc32_ieee_name: "aarch64/hwcrc",
       crc32c: crc32_k::CRC32C_HWCRC[0],
+      crc32c_name: "aarch64/hwcrc",
       crc64_xz: crate::crc64::portable::crc64_slice16_xz,
+      crc64_xz_name: "portable/slice16",
       crc64_nvme: crate::crc64::portable::crc64_slice16_nvme,
+      crc64_nvme_name: "portable/slice16",
     },
 
     s: KernelSet {
       crc16_ccitt: crate::crc16::portable::crc16_ccitt_slice8,
+      crc16_ccitt_name: "portable/slice8",
       crc16_ibm: crate::crc16::portable::crc16_ibm_slice8,
+      crc16_ibm_name: "portable/slice8",
       crc24_openpgp: crate::crc24::portable::crc24_openpgp_slice8,
+      crc24_openpgp_name: "portable/slice8",
       crc32_ieee: crc32_k::CRC32_HWCRC[0],
+      crc32_ieee_name: "aarch64/hwcrc",
       crc32c: crc32_k::CRC32C_HWCRC[0],
+      crc32c_name: "aarch64/hwcrc",
       crc64_xz: crate::crc64::portable::crc64_slice16_xz,
+      crc64_xz_name: "portable/slice16",
       crc64_nvme: crate::crc64::portable::crc64_slice16_nvme,
+      crc64_nvme_name: "portable/slice16",
     },
 
     m: KernelSet {
       crc16_ccitt: crate::crc16::portable::crc16_ccitt_slice8,
+      crc16_ccitt_name: "portable/slice8",
       crc16_ibm: crate::crc16::portable::crc16_ibm_slice8,
+      crc16_ibm_name: "portable/slice8",
       crc24_openpgp: crate::crc24::portable::crc24_openpgp_slice8,
+      crc24_openpgp_name: "portable/slice8",
       crc32_ieee: crc32_k::CRC32_HWCRC[0],
+      crc32_ieee_name: "aarch64/hwcrc",
       crc32c: crc32_k::CRC32C_HWCRC[0],
+      crc32c_name: "aarch64/hwcrc",
       crc64_xz: crate::crc64::portable::crc64_slice16_xz,
+      crc64_xz_name: "portable/slice16",
       crc64_nvme: crate::crc64::portable::crc64_slice16_nvme,
+      crc64_nvme_name: "portable/slice16",
     },
 
     l: KernelSet {
       crc16_ccitt: crate::crc16::portable::crc16_ccitt_slice8,
+      crc16_ccitt_name: "portable/slice8",
       crc16_ibm: crate::crc16::portable::crc16_ibm_slice8,
+      crc16_ibm_name: "portable/slice8",
       crc24_openpgp: crate::crc24::portable::crc24_openpgp_slice8,
+      crc24_openpgp_name: "portable/slice8",
       crc32_ieee: crc32_k::CRC32_HWCRC[0],
+      crc32_ieee_name: "aarch64/hwcrc",
       crc32c: crc32_k::CRC32C_HWCRC[0],
+      crc32c_name: "aarch64/hwcrc",
       crc64_xz: crate::crc64::portable::crc64_slice16_xz,
+      crc64_xz_name: "portable/slice16",
       crc64_nvme: crate::crc64::portable::crc64_slice16_nvme,
+      crc64_nvme_name: "portable/slice16",
     },
   };
 }
@@ -810,42 +995,70 @@ mod x86_64_tables {
 
     xs: KernelSet {
       crc16_ccitt: crc16_k::CCITT_PCLMUL_SMALL_KERNEL,
+      crc16_ccitt_name: "x86_64/pclmul-small",
       crc16_ibm: crc16_k::IBM_PCLMUL_SMALL_KERNEL,
+      crc16_ibm_name: "x86_64/pclmul-small",
       crc24_openpgp: crc24_k::OPENPGP_PCLMUL_SMALL_KERNEL,
+      crc24_openpgp_name: "x86_64/pclmul-small",
       crc32_ieee: crc32_k::CRC32_PCLMUL_SMALL_KERNEL, // pclmul-small @ 9.30 GiB/s
-      crc32c: crc32_k::CRC32C_HWCRC[0],               // hwcrc @ 27.73 GiB/s
+      crc32_ieee_name: "x86_64/pclmul-small",
+      crc32c: crc32_k::CRC32C_HWCRC[0], // hwcrc @ 27.73 GiB/s
+      crc32c_name: "x86_64/hwcrc",
       crc64_xz: crc64_k::XZ_PCLMUL_SMALL,
+      crc64_xz_name: "x86_64/pclmul-small",
       crc64_nvme: crc64_k::NVME_PCLMUL_SMALL,
+      crc64_nvme_name: "x86_64/pclmul-small",
     },
 
     s: KernelSet {
-      crc16_ccitt: crc16_k::CCITT_VPCLMUL[1],     // 2-way @ 18.12 GiB/s
-      crc16_ibm: crc16_k::IBM_VPCLMUL[1],         // 2-way @ 19.90 GiB/s
+      crc16_ccitt: crc16_k::CCITT_VPCLMUL[1], // 2-way @ 18.12 GiB/s
+      crc16_ccitt_name: "x86_64/vpclmul-2way",
+      crc16_ibm: crc16_k::IBM_VPCLMUL[1], // 2-way @ 19.90 GiB/s
+      crc16_ibm_name: "x86_64/vpclmul-2way",
       crc24_openpgp: crc24_k::OPENPGP_VPCLMUL[3], // 7-way @ 17.28 GiB/s
-      crc32_ieee: crc32_k::CRC32_VPCLMUL[0],      // 1-way @ 19.15 GiB/s
-      crc32c: crc32_k::CRC32C_HWCRC[0],           // hwcrc @ 23.59 GiB/s
-      crc64_xz: crc64_k::XZ_VPCLMUL[0],           // 1-way @ 19.48 GiB/s
-      crc64_nvme: crc64_k::NVME_VPCLMUL[0],       // 1-way @ 20.70 GiB/s
+      crc24_openpgp_name: "x86_64/vpclmul-7way",
+      crc32_ieee: crc32_k::CRC32_VPCLMUL[0], // 1-way @ 19.15 GiB/s
+      crc32_ieee_name: "x86_64/vpclmul",
+      crc32c: crc32_k::CRC32C_HWCRC[0], // hwcrc @ 23.59 GiB/s
+      crc32c_name: "x86_64/hwcrc",
+      crc64_xz: crc64_k::XZ_VPCLMUL[0], // 1-way @ 19.48 GiB/s
+      crc64_xz_name: "x86_64/vpclmul",
+      crc64_nvme: crc64_k::NVME_VPCLMUL[0], // 1-way @ 20.70 GiB/s
+      crc64_nvme_name: "x86_64/vpclmul",
     },
 
     m: KernelSet {
-      crc16_ccitt: crc16_k::CCITT_VPCLMUL[1],     // 2-way @ 61.24 GiB/s
-      crc16_ibm: crc16_k::IBM_VPCLMUL[1],         // 2-way @ 64.84 GiB/s
+      crc16_ccitt: crc16_k::CCITT_VPCLMUL[1], // 2-way @ 61.24 GiB/s
+      crc16_ccitt_name: "x86_64/vpclmul-2way",
+      crc16_ibm: crc16_k::IBM_VPCLMUL[1], // 2-way @ 64.84 GiB/s
+      crc16_ibm_name: "x86_64/vpclmul-2way",
       crc24_openpgp: crc24_k::OPENPGP_VPCLMUL[4], // 8-way @ 34.82 GiB/s
-      crc32_ieee: crc32_k::CRC32_VPCLMUL[1],      // 2-way @ 63.65 GiB/s
-      crc32c: crc32_k::CRC32C_FUSION_VPCLMUL[0],  // fusion-vpclmul-v3x2 @ 58.96 GiB/s
-      crc64_xz: crc64_k::XZ_VPCLMUL[1],           // 2-way @ 61.37 GiB/s
-      crc64_nvme: crc64_k::NVME_VPCLMUL[1],       // 2-way @ 66.51 GiB/s
+      crc24_openpgp_name: "x86_64/vpclmul-8way",
+      crc32_ieee: crc32_k::CRC32_VPCLMUL[1], // 2-way @ 63.65 GiB/s
+      crc32_ieee_name: "x86_64/vpclmul-2way",
+      crc32c: crc32_k::CRC32C_FUSION_VPCLMUL[0], // fusion-vpclmul-v3x2 @ 58.96 GiB/s
+      crc32c_name: "x86_64/fusion-vpclmul-v3x2",
+      crc64_xz: crc64_k::XZ_VPCLMUL[1], // 2-way @ 61.37 GiB/s
+      crc64_xz_name: "x86_64/vpclmul-2way",
+      crc64_nvme: crc64_k::NVME_VPCLMUL[1], // 2-way @ 66.51 GiB/s
+      crc64_nvme_name: "x86_64/vpclmul-2way",
     },
 
     l: KernelSet {
-      crc16_ccitt: crc16_k::CCITT_VPCLMUL[2],     // 4-way @ 70.52 GiB/s
-      crc16_ibm: crc16_k::IBM_VPCLMUL[1],         // 2-way @ 78.09 GiB/s
+      crc16_ccitt: crc16_k::CCITT_VPCLMUL[2], // 4-way @ 70.52 GiB/s
+      crc16_ccitt_name: "x86_64/vpclmul-4way",
+      crc16_ibm: crc16_k::IBM_VPCLMUL[1], // 2-way @ 78.09 GiB/s
+      crc16_ibm_name: "x86_64/vpclmul-2way",
       crc24_openpgp: crc24_k::OPENPGP_VPCLMUL[1], // 2-way @ 38.92 GiB/s
-      crc32_ieee: crc32_k::CRC32_VPCLMUL[1],      // 2-way @ 72.57 GiB/s
-      crc32c: crc32_k::CRC32C_FUSION_VPCLMUL[0],  // fusion-vpclmul-v3x2 @ 70.43 GiB/s
-      crc64_xz: crc64_k::XZ_VPCLMUL_4X512,        // 4x512 @ 72.66 GiB/s
-      crc64_nvme: crc64_k::NVME_VPCLMUL[2],       // 4-way @ 74.10 GiB/s
+      crc24_openpgp_name: "x86_64/vpclmul-2way",
+      crc32_ieee: crc32_k::CRC32_VPCLMUL[1], // 2-way @ 72.57 GiB/s
+      crc32_ieee_name: "x86_64/vpclmul-2way",
+      crc32c: crc32_k::CRC32C_FUSION_VPCLMUL[0], // fusion-vpclmul-v3x2 @ 70.43 GiB/s
+      crc32c_name: "x86_64/fusion-vpclmul-v3x2",
+      crc64_xz: crc64_k::XZ_VPCLMUL_4X512, // 4x512 @ 72.66 GiB/s
+      crc64_xz_name: "x86_64/vpclmul-4x512",
+      crc64_nvme: crc64_k::NVME_VPCLMUL[2], // 4-way @ 74.10 GiB/s
+      crc64_nvme_name: "x86_64/vpclmul-4way",
     },
   };
 
@@ -866,42 +1079,70 @@ mod x86_64_tables {
 
     xs: KernelSet {
       crc16_ccitt: crc16_k::CCITT_PCLMUL_SMALL_KERNEL,
+      crc16_ccitt_name: "x86_64/pclmul-small",
       crc16_ibm: crc16_k::IBM_PCLMUL_SMALL_KERNEL,
+      crc16_ibm_name: "x86_64/pclmul-small",
       crc24_openpgp: crc24_k::OPENPGP_PCLMUL_SMALL_KERNEL,
+      crc24_openpgp_name: "x86_64/pclmul-small",
       crc32_ieee: crc32_k::CRC32_PCLMUL_SMALL_KERNEL,
+      crc32_ieee_name: "x86_64/pclmul-small",
       crc32c: crate::crc32::portable::crc32c_bytewise,
+      crc32c_name: "reference/bytewise",
       crc64_xz: crc64_k::XZ_PCLMUL_SMALL,
+      crc64_xz_name: "x86_64/pclmul-small",
       crc64_nvme: crc64_k::NVME_PCLMUL_SMALL,
+      crc64_nvme_name: "x86_64/pclmul-small",
     },
 
     s: KernelSet {
       crc16_ccitt: crc16_k::CCITT_VPCLMUL[1],
+      crc16_ccitt_name: "x86_64/vpclmul-2way",
       crc16_ibm: crc16_k::IBM_VPCLMUL[1],
+      crc16_ibm_name: "x86_64/vpclmul-2way",
       crc24_openpgp: crc24_k::OPENPGP_VPCLMUL[3],
+      crc24_openpgp_name: "x86_64/vpclmul-7way",
       crc32_ieee: crc32_k::CRC32_VPCLMUL[0],
+      crc32_ieee_name: "x86_64/vpclmul",
       crc32c: crate::crc32::portable::crc32c_slice16,
+      crc32c_name: "portable/slice16",
       crc64_xz: crc64_k::XZ_VPCLMUL[0],
+      crc64_xz_name: "x86_64/vpclmul",
       crc64_nvme: crc64_k::NVME_VPCLMUL[0],
+      crc64_nvme_name: "x86_64/vpclmul",
     },
 
     m: KernelSet {
       crc16_ccitt: crc16_k::CCITT_VPCLMUL[1],
+      crc16_ccitt_name: "x86_64/vpclmul-2way",
       crc16_ibm: crc16_k::IBM_VPCLMUL[1],
+      crc16_ibm_name: "x86_64/vpclmul-2way",
       crc24_openpgp: crc24_k::OPENPGP_VPCLMUL[4],
+      crc24_openpgp_name: "x86_64/vpclmul-8way",
       crc32_ieee: crc32_k::CRC32_VPCLMUL[1],
+      crc32_ieee_name: "x86_64/vpclmul-2way",
       crc32c: crate::crc32::portable::crc32c_slice16,
+      crc32c_name: "portable/slice16",
       crc64_xz: crc64_k::XZ_VPCLMUL[1],
+      crc64_xz_name: "x86_64/vpclmul-2way",
       crc64_nvme: crc64_k::NVME_VPCLMUL[1],
+      crc64_nvme_name: "x86_64/vpclmul-2way",
     },
 
     l: KernelSet {
       crc16_ccitt: crc16_k::CCITT_VPCLMUL[2],
+      crc16_ccitt_name: "x86_64/vpclmul-4way",
       crc16_ibm: crc16_k::IBM_VPCLMUL[1],
+      crc16_ibm_name: "x86_64/vpclmul-2way",
       crc24_openpgp: crc24_k::OPENPGP_VPCLMUL[1],
+      crc24_openpgp_name: "x86_64/vpclmul-2way",
       crc32_ieee: crc32_k::CRC32_VPCLMUL[1],
+      crc32_ieee_name: "x86_64/vpclmul-2way",
       crc32c: crate::crc32::portable::crc32c_slice16,
+      crc32c_name: "portable/slice16",
       crc64_xz: crc64_k::XZ_VPCLMUL_4X512,
+      crc64_xz_name: "x86_64/vpclmul-4x512",
       crc64_nvme: crc64_k::NVME_VPCLMUL[2],
+      crc64_nvme_name: "x86_64/vpclmul-4way",
     },
   };
 
@@ -927,42 +1168,70 @@ mod x86_64_tables {
 
     xs: KernelSet {
       crc16_ccitt: crc16_k::CCITT_PCLMUL_SMALL_KERNEL,
+      crc16_ccitt_name: "x86_64/pclmul-small",
       crc16_ibm: crc16_k::IBM_PCLMUL_SMALL_KERNEL,
+      crc16_ibm_name: "x86_64/pclmul-small",
       crc24_openpgp: crc24_k::OPENPGP_PCLMUL_SMALL_KERNEL,
+      crc24_openpgp_name: "x86_64/pclmul-small",
       crc32_ieee: crc32_k::CRC32_PCLMUL_SMALL_KERNEL,
+      crc32_ieee_name: "x86_64/pclmul-small",
       crc32c: crc32_k::CRC32C_HWCRC[0],
+      crc32c_name: "x86_64/hwcrc",
       crc64_xz: crc64_k::XZ_PCLMUL_SMALL,
+      crc64_xz_name: "x86_64/pclmul-small",
       crc64_nvme: crc64_k::NVME_PCLMUL_SMALL,
+      crc64_nvme_name: "x86_64/pclmul-small",
     },
 
     s: KernelSet {
       crc16_ccitt: crc16_k::CCITT_PCLMUL[0], // 1-way
-      crc16_ibm: crc16_k::IBM_PCLMUL[2],     // 4-way
+      crc16_ccitt_name: "x86_64/pclmul",
+      crc16_ibm: crc16_k::IBM_PCLMUL[2], // 4-way
+      crc16_ibm_name: "x86_64/pclmul-4way",
       crc24_openpgp: crc24_k::OPENPGP_PCLMUL[0],
+      crc24_openpgp_name: "x86_64/pclmul",
       crc32_ieee: crc32_k::CRC32_PCLMUL[2], // 4-way
+      crc32_ieee_name: "x86_64/pclmul-4way",
       crc32c: crc32_k::CRC32C_HWCRC[0],
+      crc32c_name: "x86_64/hwcrc",
       crc64_xz: crc64_k::XZ_PCLMUL_SMALL, // small still wins
+      crc64_xz_name: "x86_64/pclmul-small",
       crc64_nvme: crc64_k::NVME_PCLMUL_SMALL,
+      crc64_nvme_name: "x86_64/pclmul-small",
     },
 
     m: KernelSet {
-      crc16_ccitt: crc16_k::CCITT_PCLMUL[3],     // 7-way
-      crc16_ibm: crc16_k::IBM_PCLMUL[0],         // 1-way
+      crc16_ccitt: crc16_k::CCITT_PCLMUL[3], // 7-way
+      crc16_ccitt_name: "x86_64/pclmul-7way",
+      crc16_ibm: crc16_k::IBM_PCLMUL[0], // 1-way
+      crc16_ibm_name: "x86_64/pclmul",
       crc24_openpgp: crc24_k::OPENPGP_PCLMUL[1], // 2-way
-      crc32_ieee: crc32_k::CRC32_PCLMUL[0],      // 1-way
-      crc32c: crc32_k::CRC32C_HWCRC[1],          // 2-way
-      crc64_xz: crc64_k::XZ_PCLMUL[2],           // 4-way
-      crc64_nvme: crc64_k::NVME_PCLMUL[1],       // 2-way
+      crc24_openpgp_name: "x86_64/pclmul-2way",
+      crc32_ieee: crc32_k::CRC32_PCLMUL[0], // 1-way
+      crc32_ieee_name: "x86_64/pclmul",
+      crc32c: crc32_k::CRC32C_HWCRC[1], // 2-way
+      crc32c_name: "x86_64/hwcrc-2way",
+      crc64_xz: crc64_k::XZ_PCLMUL[2], // 4-way
+      crc64_xz_name: "x86_64/pclmul-4way",
+      crc64_nvme: crc64_k::NVME_PCLMUL[1], // 2-way
+      crc64_nvme_name: "x86_64/pclmul-2way",
     },
 
     l: KernelSet {
       crc16_ccitt: crc16_k::CCITT_PCLMUL[0], // 1-way wins at large
-      crc16_ibm: crc16_k::IBM_PCLMUL[1],     // 2-way
+      crc16_ccitt_name: "x86_64/pclmul",
+      crc16_ibm: crc16_k::IBM_PCLMUL[1], // 2-way
+      crc16_ibm_name: "x86_64/pclmul-2way",
       crc24_openpgp: crc24_k::OPENPGP_PCLMUL[1],
-      crc32_ieee: crc32_k::CRC32_PCLMUL[1],  // 2-way
+      crc24_openpgp_name: "x86_64/pclmul-2way",
+      crc32_ieee: crc32_k::CRC32_PCLMUL[1], // 2-way
+      crc32_ieee_name: "x86_64/pclmul-2way",
       crc32c: crc32_k::CRC32C_FUSION_SSE[1], // fusion-sse-v4s3x3-2way
-      crc64_xz: crc64_k::XZ_PCLMUL[0],       // 1-way
-      crc64_nvme: crc64_k::NVME_PCLMUL[1],   // 2-way
+      crc32c_name: "x86_64/fusion-sse-v4s3x3-2way",
+      crc64_xz: crc64_k::XZ_PCLMUL[0], // 1-way
+      crc64_xz_name: "x86_64/pclmul",
+      crc64_nvme: crc64_k::NVME_PCLMUL[1], // 2-way
+      crc64_nvme_name: "x86_64/pclmul-2way",
     },
   };
 
@@ -975,42 +1244,70 @@ mod x86_64_tables {
 
     xs: KernelSet {
       crc16_ccitt: crc16_k::CCITT_PCLMUL_SMALL_KERNEL,
+      crc16_ccitt_name: "x86_64/pclmul-small",
       crc16_ibm: crc16_k::IBM_PCLMUL_SMALL_KERNEL,
+      crc16_ibm_name: "x86_64/pclmul-small",
       crc24_openpgp: crc24_k::OPENPGP_PCLMUL_SMALL_KERNEL,
+      crc24_openpgp_name: "x86_64/pclmul-small",
       crc32_ieee: crc32_k::CRC32_PCLMUL_SMALL_KERNEL,
+      crc32_ieee_name: "x86_64/pclmul-small",
       crc32c: crate::crc32::portable::crc32c_bytewise,
+      crc32c_name: "reference/bytewise",
       crc64_xz: crc64_k::XZ_PCLMUL_SMALL,
+      crc64_xz_name: "x86_64/pclmul-small",
       crc64_nvme: crc64_k::NVME_PCLMUL_SMALL,
+      crc64_nvme_name: "x86_64/pclmul-small",
     },
 
     s: KernelSet {
       crc16_ccitt: crc16_k::CCITT_PCLMUL[0],
+      crc16_ccitt_name: "x86_64/pclmul",
       crc16_ibm: crc16_k::IBM_PCLMUL[2],
+      crc16_ibm_name: "x86_64/pclmul-4way",
       crc24_openpgp: crc24_k::OPENPGP_PCLMUL[0],
+      crc24_openpgp_name: "x86_64/pclmul",
       crc32_ieee: crc32_k::CRC32_PCLMUL[2],
+      crc32_ieee_name: "x86_64/pclmul-4way",
       crc32c: crate::crc32::portable::crc32c_slice16,
+      crc32c_name: "portable/slice16",
       crc64_xz: crc64_k::XZ_PCLMUL_SMALL,
+      crc64_xz_name: "x86_64/pclmul-small",
       crc64_nvme: crc64_k::NVME_PCLMUL_SMALL,
+      crc64_nvme_name: "x86_64/pclmul-small",
     },
 
     m: KernelSet {
       crc16_ccitt: crc16_k::CCITT_PCLMUL[3],
+      crc16_ccitt_name: "x86_64/pclmul-7way",
       crc16_ibm: crc16_k::IBM_PCLMUL[0],
+      crc16_ibm_name: "x86_64/pclmul",
       crc24_openpgp: crc24_k::OPENPGP_PCLMUL[1],
+      crc24_openpgp_name: "x86_64/pclmul-2way",
       crc32_ieee: crc32_k::CRC32_PCLMUL[0],
+      crc32_ieee_name: "x86_64/pclmul",
       crc32c: crate::crc32::portable::crc32c_slice16,
+      crc32c_name: "portable/slice16",
       crc64_xz: crc64_k::XZ_PCLMUL[2],
+      crc64_xz_name: "x86_64/pclmul-4way",
       crc64_nvme: crc64_k::NVME_PCLMUL[1],
+      crc64_nvme_name: "x86_64/pclmul-2way",
     },
 
     l: KernelSet {
       crc16_ccitt: crc16_k::CCITT_PCLMUL[0],
+      crc16_ccitt_name: "x86_64/pclmul",
       crc16_ibm: crc16_k::IBM_PCLMUL[1],
+      crc16_ibm_name: "x86_64/pclmul-2way",
       crc24_openpgp: crc24_k::OPENPGP_PCLMUL[1],
+      crc24_openpgp_name: "x86_64/pclmul-2way",
       crc32_ieee: crc32_k::CRC32_PCLMUL[1],
+      crc32_ieee_name: "x86_64/pclmul-2way",
       crc32c: crate::crc32::portable::crc32c_slice16,
+      crc32c_name: "portable/slice16",
       crc64_xz: crc64_k::XZ_PCLMUL[0],
+      crc64_xz_name: "x86_64/pclmul",
       crc64_nvme: crc64_k::NVME_PCLMUL[1],
+      crc64_nvme_name: "x86_64/pclmul-2way",
     },
   };
 
@@ -1021,42 +1318,70 @@ mod x86_64_tables {
 
     xs: KernelSet {
       crc16_ccitt: crate::crc16::portable::crc16_ccitt_slice8,
+      crc16_ccitt_name: "portable/slice8",
       crc16_ibm: crate::crc16::portable::crc16_ibm_slice8,
+      crc16_ibm_name: "portable/slice8",
       crc24_openpgp: crate::crc24::portable::crc24_openpgp_slice8,
+      crc24_openpgp_name: "portable/slice8",
       crc32_ieee: crate::crc32::portable::crc32_bytewise_ieee,
+      crc32_ieee_name: "reference/bytewise",
       crc32c: crc32_k::CRC32C_HWCRC[0],
+      crc32c_name: "x86_64/hwcrc",
       crc64_xz: crate::crc64::portable::crc64_slice16_xz,
+      crc64_xz_name: "portable/slice16",
       crc64_nvme: crate::crc64::portable::crc64_slice16_nvme,
+      crc64_nvme_name: "portable/slice16",
     },
 
     s: KernelSet {
       crc16_ccitt: crate::crc16::portable::crc16_ccitt_slice8,
+      crc16_ccitt_name: "portable/slice8",
       crc16_ibm: crate::crc16::portable::crc16_ibm_slice8,
+      crc16_ibm_name: "portable/slice8",
       crc24_openpgp: crate::crc24::portable::crc24_openpgp_slice8,
+      crc24_openpgp_name: "portable/slice8",
       crc32_ieee: crate::crc32::portable::crc32_slice16_ieee,
+      crc32_ieee_name: "portable/slice16",
       crc32c: crc32_k::CRC32C_HWCRC[0],
+      crc32c_name: "x86_64/hwcrc",
       crc64_xz: crate::crc64::portable::crc64_slice16_xz,
+      crc64_xz_name: "portable/slice16",
       crc64_nvme: crate::crc64::portable::crc64_slice16_nvme,
+      crc64_nvme_name: "portable/slice16",
     },
 
     m: KernelSet {
       crc16_ccitt: crate::crc16::portable::crc16_ccitt_slice8,
+      crc16_ccitt_name: "portable/slice8",
       crc16_ibm: crate::crc16::portable::crc16_ibm_slice8,
+      crc16_ibm_name: "portable/slice8",
       crc24_openpgp: crate::crc24::portable::crc24_openpgp_slice8,
+      crc24_openpgp_name: "portable/slice8",
       crc32_ieee: crate::crc32::portable::crc32_slice16_ieee,
+      crc32_ieee_name: "portable/slice16",
       crc32c: crc32_k::CRC32C_HWCRC[1],
+      crc32c_name: "x86_64/hwcrc-2way",
       crc64_xz: crate::crc64::portable::crc64_slice16_xz,
+      crc64_xz_name: "portable/slice16",
       crc64_nvme: crate::crc64::portable::crc64_slice16_nvme,
+      crc64_nvme_name: "portable/slice16",
     },
 
     l: KernelSet {
       crc16_ccitt: crate::crc16::portable::crc16_ccitt_slice8,
+      crc16_ccitt_name: "portable/slice8",
       crc16_ibm: crate::crc16::portable::crc16_ibm_slice8,
+      crc16_ibm_name: "portable/slice8",
       crc24_openpgp: crate::crc24::portable::crc24_openpgp_slice8,
+      crc24_openpgp_name: "portable/slice8",
       crc32_ieee: crate::crc32::portable::crc32_slice16_ieee,
+      crc32_ieee_name: "portable/slice16",
       crc32c: crc32_k::CRC32C_HWCRC[1],
+      crc32c_name: "x86_64/hwcrc-2way",
       crc64_xz: crate::crc64::portable::crc64_slice16_xz,
+      crc64_xz_name: "portable/slice16",
       crc64_nvme: crate::crc64::portable::crc64_slice16_nvme,
+      crc64_nvme_name: "portable/slice16",
     },
   };
 }
@@ -1083,21 +1408,35 @@ mod s390x_tables {
     s: PORTABLE_SET,
     m: KernelSet {
       crc16_ccitt: crc16_k::CCITT_VGFM[0],
+      crc16_ccitt_name: "s390x/vgfm",
       crc16_ibm: crc16_k::IBM_VGFM[0],
+      crc16_ibm_name: "s390x/vgfm",
       crc24_openpgp: crc24_k::OPENPGP_VGFM[0],
+      crc24_openpgp_name: "s390x/vgfm",
       crc32_ieee: crc32_k::CRC32_VGFM[0],
+      crc32_ieee_name: "s390x/vgfm",
       crc32c: crc32_k::CRC32C_VGFM[0],
+      crc32c_name: "s390x/vgfm",
       crc64_xz: crc64_k::XZ_VGFM[0],
+      crc64_xz_name: "s390x/vgfm",
       crc64_nvme: crc64_k::NVME_VGFM[0],
+      crc64_nvme_name: "s390x/vgfm",
     },
     l: KernelSet {
       crc16_ccitt: crc16_k::CCITT_VGFM[1],
+      crc16_ccitt_name: "s390x/vgfm-2way",
       crc16_ibm: crc16_k::IBM_VGFM[1],
+      crc16_ibm_name: "s390x/vgfm-2way",
       crc24_openpgp: crc24_k::OPENPGP_VGFM[1],
+      crc24_openpgp_name: "s390x/vgfm-2way",
       crc32_ieee: crc32_k::CRC32_VGFM[1],
+      crc32_ieee_name: "s390x/vgfm-2way",
       crc32c: crc32_k::CRC32C_VGFM[1],
+      crc32c_name: "s390x/vgfm-2way",
       crc64_xz: crc64_k::XZ_VGFM[1],
+      crc64_xz_name: "s390x/vgfm-2way",
       crc64_nvme: crc64_k::NVME_VGFM[1],
+      crc64_nvme_name: "s390x/vgfm-2way",
     },
   };
 
@@ -1108,21 +1447,35 @@ mod s390x_tables {
     s: PORTABLE_SET,
     m: KernelSet {
       crc16_ccitt: crc16_k::CCITT_VGFM[0],
+      crc16_ccitt_name: "s390x/vgfm",
       crc16_ibm: crc16_k::IBM_VGFM[0],
+      crc16_ibm_name: "s390x/vgfm",
       crc24_openpgp: crc24_k::OPENPGP_VGFM[0],
+      crc24_openpgp_name: "s390x/vgfm",
       crc32_ieee: crc32_k::CRC32_VGFM[0],
+      crc32_ieee_name: "s390x/vgfm",
       crc32c: crc32_k::CRC32C_VGFM[0],
+      crc32c_name: "s390x/vgfm",
       crc64_xz: crc64_k::XZ_VGFM[0],
+      crc64_xz_name: "s390x/vgfm",
       crc64_nvme: crc64_k::NVME_VGFM[0],
+      crc64_nvme_name: "s390x/vgfm",
     },
     l: KernelSet {
       crc16_ccitt: crc16_k::CCITT_VGFM[1],
+      crc16_ccitt_name: "s390x/vgfm-2way",
       crc16_ibm: crc16_k::IBM_VGFM[1],
+      crc16_ibm_name: "s390x/vgfm-2way",
       crc24_openpgp: crc24_k::OPENPGP_VGFM[1],
+      crc24_openpgp_name: "s390x/vgfm-2way",
       crc32_ieee: crc32_k::CRC32_VGFM[1],
+      crc32_ieee_name: "s390x/vgfm-2way",
       crc32c: crc32_k::CRC32C_VGFM[1],
+      crc32c_name: "s390x/vgfm-2way",
       crc64_xz: crc64_k::XZ_VGFM[1],
+      crc64_xz_name: "s390x/vgfm-2way",
       crc64_nvme: crc64_k::NVME_VGFM[1],
+      crc64_nvme_name: "s390x/vgfm-2way",
     },
   };
 
@@ -1133,21 +1486,35 @@ mod s390x_tables {
     s: PORTABLE_SET,
     m: KernelSet {
       crc16_ccitt: crc16_k::CCITT_VGFM[0],
+      crc16_ccitt_name: "s390x/vgfm",
       crc16_ibm: crc16_k::IBM_VGFM[0],
+      crc16_ibm_name: "s390x/vgfm",
       crc24_openpgp: crc24_k::OPENPGP_VGFM[0],
+      crc24_openpgp_name: "s390x/vgfm",
       crc32_ieee: crc32_k::CRC32_VGFM[0],
+      crc32_ieee_name: "s390x/vgfm",
       crc32c: crc32_k::CRC32C_VGFM[0],
+      crc32c_name: "s390x/vgfm",
       crc64_xz: crc64_k::XZ_VGFM[0],
+      crc64_xz_name: "s390x/vgfm",
       crc64_nvme: crc64_k::NVME_VGFM[0],
+      crc64_nvme_name: "s390x/vgfm",
     },
     l: KernelSet {
       crc16_ccitt: crc16_k::CCITT_VGFM[1],
+      crc16_ccitt_name: "s390x/vgfm-2way",
       crc16_ibm: crc16_k::IBM_VGFM[1],
+      crc16_ibm_name: "s390x/vgfm-2way",
       crc24_openpgp: crc24_k::OPENPGP_VGFM[1],
+      crc24_openpgp_name: "s390x/vgfm-2way",
       crc32_ieee: crc32_k::CRC32_VGFM[1],
+      crc32_ieee_name: "s390x/vgfm-2way",
       crc32c: crc32_k::CRC32C_VGFM[1],
+      crc32c_name: "s390x/vgfm-2way",
       crc64_xz: crc64_k::XZ_VGFM[1],
+      crc64_xz_name: "s390x/vgfm-2way",
       crc64_nvme: crc64_k::NVME_VGFM[1],
+      crc64_nvme_name: "s390x/vgfm-2way",
     },
   };
 }
@@ -1174,21 +1541,35 @@ mod power_tables {
     s: PORTABLE_SET,
     m: KernelSet {
       crc16_ccitt: crc16_k::CCITT_VPMSUM[0],
+      crc16_ccitt_name: "power/vpmsum",
       crc16_ibm: crc16_k::IBM_VPMSUM[0],
+      crc16_ibm_name: "power/vpmsum",
       crc24_openpgp: crc24_k::OPENPGP_VPMSUM[0],
+      crc24_openpgp_name: "power/vpmsum",
       crc32_ieee: crc32_k::CRC32_VPMSUM[0],
+      crc32_ieee_name: "power/vpmsum",
       crc32c: crc32_k::CRC32C_VPMSUM[0],
+      crc32c_name: "power/vpmsum",
       crc64_xz: crc64_k::XZ_VPMSUM[0],
+      crc64_xz_name: "power/vpmsum",
       crc64_nvme: crc64_k::NVME_VPMSUM[0],
+      crc64_nvme_name: "power/vpmsum",
     },
     l: KernelSet {
       crc16_ccitt: crc16_k::CCITT_VPMSUM[1],
+      crc16_ccitt_name: "power/vpmsum-2way",
       crc16_ibm: crc16_k::IBM_VPMSUM[1],
+      crc16_ibm_name: "power/vpmsum-2way",
       crc24_openpgp: crc24_k::OPENPGP_VPMSUM[1],
+      crc24_openpgp_name: "power/vpmsum-2way",
       crc32_ieee: crc32_k::CRC32_VPMSUM[1],
+      crc32_ieee_name: "power/vpmsum-2way",
       crc32c: crc32_k::CRC32C_VPMSUM[1],
+      crc32c_name: "power/vpmsum-2way",
       crc64_xz: crc64_k::XZ_VPMSUM[1],
+      crc64_xz_name: "power/vpmsum-2way",
       crc64_nvme: crc64_k::NVME_VPMSUM[1],
+      crc64_nvme_name: "power/vpmsum-2way",
     },
   };
 
@@ -1199,21 +1580,35 @@ mod power_tables {
     s: PORTABLE_SET,
     m: KernelSet {
       crc16_ccitt: crc16_k::CCITT_VPMSUM[0],
+      crc16_ccitt_name: "power/vpmsum",
       crc16_ibm: crc16_k::IBM_VPMSUM[0],
+      crc16_ibm_name: "power/vpmsum",
       crc24_openpgp: crc24_k::OPENPGP_VPMSUM[0],
+      crc24_openpgp_name: "power/vpmsum",
       crc32_ieee: crc32_k::CRC32_VPMSUM[0],
+      crc32_ieee_name: "power/vpmsum",
       crc32c: crc32_k::CRC32C_VPMSUM[0],
+      crc32c_name: "power/vpmsum",
       crc64_xz: crc64_k::XZ_VPMSUM[0],
+      crc64_xz_name: "power/vpmsum",
       crc64_nvme: crc64_k::NVME_VPMSUM[0],
+      crc64_nvme_name: "power/vpmsum",
     },
     l: KernelSet {
       crc16_ccitt: crc16_k::CCITT_VPMSUM[2],
+      crc16_ccitt_name: "power/vpmsum-4way",
       crc16_ibm: crc16_k::IBM_VPMSUM[2],
+      crc16_ibm_name: "power/vpmsum-4way",
       crc24_openpgp: crc24_k::OPENPGP_VPMSUM[2],
+      crc24_openpgp_name: "power/vpmsum-4way",
       crc32_ieee: crc32_k::CRC32_VPMSUM[2],
+      crc32_ieee_name: "power/vpmsum-4way",
       crc32c: crc32_k::CRC32C_VPMSUM[2],
+      crc32c_name: "power/vpmsum-4way",
       crc64_xz: crc64_k::XZ_VPMSUM[2],
+      crc64_xz_name: "power/vpmsum-4way",
       crc64_nvme: crc64_k::NVME_VPMSUM[2],
+      crc64_nvme_name: "power/vpmsum-4way",
     },
   };
 
@@ -1224,21 +1619,35 @@ mod power_tables {
     s: PORTABLE_SET,
     m: KernelSet {
       crc16_ccitt: crc16_k::CCITT_VPMSUM[0],
+      crc16_ccitt_name: "power/vpmsum",
       crc16_ibm: crc16_k::IBM_VPMSUM[0],
+      crc16_ibm_name: "power/vpmsum",
       crc24_openpgp: crc24_k::OPENPGP_VPMSUM[0],
+      crc24_openpgp_name: "power/vpmsum",
       crc32_ieee: crc32_k::CRC32_VPMSUM[0],
+      crc32_ieee_name: "power/vpmsum",
       crc32c: crc32_k::CRC32C_VPMSUM[0],
+      crc32c_name: "power/vpmsum",
       crc64_xz: crc64_k::XZ_VPMSUM[0],
+      crc64_xz_name: "power/vpmsum",
       crc64_nvme: crc64_k::NVME_VPMSUM[0],
+      crc64_nvme_name: "power/vpmsum",
     },
     l: KernelSet {
       crc16_ccitt: crc16_k::CCITT_VPMSUM[2],
+      crc16_ccitt_name: "power/vpmsum-4way",
       crc16_ibm: crc16_k::IBM_VPMSUM[2],
+      crc16_ibm_name: "power/vpmsum-4way",
       crc24_openpgp: crc24_k::OPENPGP_VPMSUM[2],
+      crc24_openpgp_name: "power/vpmsum-4way",
       crc32_ieee: crc32_k::CRC32_VPMSUM[2],
+      crc32_ieee_name: "power/vpmsum-4way",
       crc32c: crc32_k::CRC32C_VPMSUM[2],
+      crc32c_name: "power/vpmsum-4way",
       crc64_xz: crc64_k::XZ_VPMSUM[2],
+      crc64_xz_name: "power/vpmsum-4way",
       crc64_nvme: crc64_k::NVME_VPMSUM[2],
+      crc64_nvme_name: "power/vpmsum-4way",
     },
   };
 }
@@ -1265,21 +1674,35 @@ mod riscv64_tables {
     s: PORTABLE_SET,
     m: KernelSet {
       crc16_ccitt: crc16_k::CCITT_ZBC[0],
+      crc16_ccitt_name: "riscv64/zbc",
       crc16_ibm: crc16_k::IBM_ZBC[0],
+      crc16_ibm_name: "riscv64/zbc",
       crc24_openpgp: crc24_k::OPENPGP_ZBC[0],
+      crc24_openpgp_name: "riscv64/zbc",
       crc32_ieee: crc32_k::CRC32_ZBC[0],
+      crc32_ieee_name: "riscv64/zbc",
       crc32c: crc32_k::CRC32C_ZBC[0],
+      crc32c_name: "riscv64/zbc",
       crc64_xz: crc64_k::XZ_ZBC[0],
+      crc64_xz_name: "riscv64/zbc",
       crc64_nvme: crc64_k::NVME_ZBC[0],
+      crc64_nvme_name: "riscv64/zbc",
     },
     l: KernelSet {
       crc16_ccitt: crc16_k::CCITT_ZBC[2],
+      crc16_ccitt_name: "riscv64/zbc-4way",
       crc16_ibm: crc16_k::IBM_ZBC[2],
+      crc16_ibm_name: "riscv64/zbc-4way",
       crc24_openpgp: crc24_k::OPENPGP_ZBC[2],
+      crc24_openpgp_name: "riscv64/zbc-4way",
       crc32_ieee: crc32_k::CRC32_ZBC[2],
+      crc32_ieee_name: "riscv64/zbc-4way",
       crc32c: crc32_k::CRC32C_ZBC[2],
+      crc32c_name: "riscv64/zbc-4way",
       crc64_xz: crc64_k::XZ_ZBC[2],
+      crc64_xz_name: "riscv64/zbc-4way",
       crc64_nvme: crc64_k::NVME_ZBC[2],
+      crc64_nvme_name: "riscv64/zbc-4way",
     },
   };
 
@@ -1290,21 +1713,35 @@ mod riscv64_tables {
     s: PORTABLE_SET,
     m: KernelSet {
       crc16_ccitt: crc16_k::CCITT_ZVBC[0],
+      crc16_ccitt_name: "riscv64/zvbc",
       crc16_ibm: crc16_k::IBM_ZVBC[0],
+      crc16_ibm_name: "riscv64/zvbc",
       crc24_openpgp: crc24_k::OPENPGP_ZVBC[0],
+      crc24_openpgp_name: "riscv64/zvbc",
       crc32_ieee: crc32_k::CRC32_ZVBC[0],
+      crc32_ieee_name: "riscv64/zvbc",
       crc32c: crc32_k::CRC32C_ZVBC[0],
+      crc32c_name: "riscv64/zvbc",
       crc64_xz: crc64_k::XZ_ZVBC[0],
+      crc64_xz_name: "riscv64/zvbc",
       crc64_nvme: crc64_k::NVME_ZVBC[0],
+      crc64_nvme_name: "riscv64/zvbc",
     },
     l: KernelSet {
       crc16_ccitt: crc16_k::CCITT_ZVBC[2],
+      crc16_ccitt_name: "riscv64/zvbc-4way",
       crc16_ibm: crc16_k::IBM_ZVBC[2],
+      crc16_ibm_name: "riscv64/zvbc-4way",
       crc24_openpgp: crc24_k::OPENPGP_ZVBC[2],
+      crc24_openpgp_name: "riscv64/zvbc-4way",
       crc32_ieee: crc32_k::CRC32_ZVBC[2],
+      crc32_ieee_name: "riscv64/zvbc-4way",
       crc32c: crc32_k::CRC32C_ZVBC[2],
+      crc32c_name: "riscv64/zvbc-4way",
       crc64_xz: crc64_k::XZ_ZVBC[2],
+      crc64_xz_name: "riscv64/zvbc-4way",
       crc64_nvme: crc64_k::NVME_ZVBC[2],
+      crc64_nvme_name: "riscv64/zvbc-4way",
     },
   };
 }

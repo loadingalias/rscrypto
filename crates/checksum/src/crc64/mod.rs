@@ -46,7 +46,7 @@ pub use config::{Crc64Config, Crc64Force};
 #[allow(unused_imports)]
 pub(super) use traits::{Checksum, ChecksumCombine};
 
-#[cfg(any(test, feature = "force-mode"))]
+#[cfg(any(test, feature = "std"))]
 use crate::common::reference::crc64_bitwise;
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
 use crate::common::tables::generate_crc64_tables_8;
@@ -58,13 +58,13 @@ use crate::diag::{Crc64Polynomial, Crc64SelectionDiag};
 // Kernel Name Introspection
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Get the name of the kernel that would be selected for a given buffer length.
+/// Get the name of the CRC-64/XZ kernel that would be selected for a given buffer length.
 ///
 /// This is primarily for diagnostics and testing. The actual kernel selection
 /// happens via the dispatch module's pre-computed tables.
 #[inline]
 #[must_use]
-pub(crate) fn crc64_selected_kernel_name(len: usize) -> &'static str {
+pub(crate) fn crc64_xz_selected_kernel_name(len: usize) -> &'static str {
   let cfg = config::get();
 
   // Handle forced modes
@@ -75,42 +75,31 @@ pub(crate) fn crc64_selected_kernel_name(len: usize) -> &'static str {
     return kernels::PORTABLE;
   }
 
-  // For auto mode, describe based on dispatch table selection
+  // For auto mode, return the specific kernel name from the dispatch table
   let table = crate::dispatch::active_table();
-  let _set = table.select_set(len);
+  table.select_set(len).crc64_xz_name
+}
 
-  // Return a generic name indicating auto dispatch
-  // The exact kernel is determined by the dispatch table
-  #[cfg(target_arch = "x86_64")]
-  {
-    "x86_64/auto"
+/// Get the name of the CRC-64/NVME kernel that would be selected for a given buffer length.
+///
+/// This is primarily for diagnostics and testing. The actual kernel selection
+/// happens via the dispatch module's pre-computed tables.
+#[inline]
+#[must_use]
+pub(crate) fn crc64_nvme_selected_kernel_name(len: usize) -> &'static str {
+  let cfg = config::get();
+
+  // Handle forced modes
+  if cfg.effective_force == Crc64Force::Reference {
+    return kernels::REFERENCE;
   }
-  #[cfg(target_arch = "aarch64")]
-  {
-    "aarch64/auto"
+  if cfg.effective_force == Crc64Force::Portable {
+    return kernels::PORTABLE;
   }
-  #[cfg(target_arch = "powerpc64")]
-  {
-    "power/auto"
-  }
-  #[cfg(target_arch = "s390x")]
-  {
-    "s390x/auto"
-  }
-  #[cfg(target_arch = "riscv64")]
-  {
-    "riscv64/auto"
-  }
-  #[cfg(not(any(
-    target_arch = "x86_64",
-    target_arch = "aarch64",
-    target_arch = "powerpc64",
-    target_arch = "s390x",
-    target_arch = "riscv64"
-  )))]
-  {
-    kernels::PORTABLE
-  }
+
+  // For auto mode, return the specific kernel name from the dispatch table
+  let table = crate::dispatch::active_table();
+  table.select_set(len).crc64_nvme_name
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -123,7 +112,7 @@ pub(crate) fn crc64_selected_kernel_name(len: usize) -> &'static str {
 pub(crate) fn diag_crc64_xz(len: usize) -> Crc64SelectionDiag {
   let tune = platform::tune();
   let cfg = config::get();
-  let selected_kernel = crc64_selected_kernel_name(len);
+  let selected_kernel = crc64_xz_selected_kernel_name(len);
 
   // Dispatch handles size-based kernel selection internally
   let reason = if cfg.effective_force != Crc64Force::Auto {
@@ -158,7 +147,7 @@ pub(crate) fn diag_crc64_xz(len: usize) -> Crc64SelectionDiag {
 pub(crate) fn diag_crc64_nvme(len: usize) -> Crc64SelectionDiag {
   let tune = platform::tune();
   let cfg = config::get();
-  let selected_kernel = crc64_selected_kernel_name(len);
+  let selected_kernel = crc64_nvme_selected_kernel_name(len);
 
   // Dispatch handles size-based kernel selection internally
   let reason = if cfg.effective_force != Crc64Force::Auto {
@@ -206,14 +195,14 @@ mod kernel_tables {
 }
 
 /// CRC-64-XZ portable kernel wrapper.
-#[cfg(any(test, feature = "force-mode"))]
+#[cfg(any(test, feature = "std"))]
 #[allow(dead_code)]
 fn crc64_xz_portable(crc: u64, data: &[u8]) -> u64 {
   portable::crc64_slice16_xz(crc, data)
 }
 
 /// CRC-64-NVME portable kernel wrapper.
-#[cfg(any(test, feature = "force-mode"))]
+#[cfg(any(test, feature = "std"))]
 #[allow(dead_code)]
 fn crc64_nvme_portable(crc: u64, data: &[u8]) -> u64 {
   portable::crc64_slice16_nvme(crc, data)
@@ -223,7 +212,7 @@ fn crc64_nvme_portable(crc: u64, data: &[u8]) -> u64 {
 ///
 /// This is the canonical reference implementation - obviously correct,
 /// audit-friendly, and used for verification of all optimized paths.
-#[cfg(any(test, feature = "force-mode"))]
+#[cfg(any(test, feature = "std"))]
 #[allow(dead_code)]
 fn crc64_xz_reference(crc: u64, data: &[u8]) -> u64 {
   crc64_bitwise(CRC64_XZ_POLY, crc, data)
@@ -233,7 +222,7 @@ fn crc64_xz_reference(crc: u64, data: &[u8]) -> u64 {
 ///
 /// This is the canonical reference implementation - obviously correct,
 /// audit-friendly, and used for verification of all optimized paths.
-#[cfg(any(test, feature = "force-mode"))]
+#[cfg(any(test, feature = "std"))]
 #[allow(dead_code)]
 fn crc64_nvme_reference(crc: u64, data: &[u8]) -> u64 {
   crc64_bitwise(CRC64_NVME_POLY, crc, data)
@@ -259,55 +248,47 @@ const CRC64_BUFFERED_THRESHOLD: usize = 64;
 /// CRC-64-XZ dispatch - fast path using pre-resolved kernel tables.
 ///
 /// Uses the empirically-optimal kernel for the current platform and buffer size.
-/// No per-call overhead: table selection happens once at initialization.
+/// When `std` is enabled, also respects `RSCRYPTO_CRC64_FORCE` env var for
+/// debugging/testing specific kernel paths.
 #[inline]
 fn crc64_xz_dispatch(crc: u64, data: &[u8]) -> u64 {
+  #[cfg(feature = "std")]
+  {
+    let cfg = config::get();
+    if cfg.effective_force == Crc64Force::Reference {
+      return crc64_xz_reference(crc, data);
+    }
+    if cfg.effective_force == Crc64Force::Portable {
+      return crc64_xz_portable(crc, data);
+    }
+  }
+
   let table = crate::dispatch::active_table();
   let kernel = table.select_set(data.len()).crc64_xz;
   kernel(crc, data)
 }
 
-/// CRC-64-XZ dispatch with force mode support (for testing/debugging).
-///
-/// Checks force mode from config, then uses dispatch tables for auto selection.
-/// Only use this for testing specific kernel paths.
-#[cfg(any(test, feature = "force-mode"))]
-#[allow(dead_code)]
-#[inline]
-fn crc64_xz_dispatch_forced(crc: u64, data: &[u8]) -> u64 {
-  let cfg = config::get();
-  match cfg.effective_force {
-    Crc64Force::Reference => crc64_xz_reference(crc, data),
-    Crc64Force::Portable => crc64_xz_portable(crc, data),
-    _ => crc64_xz_dispatch(crc, data),
-  }
-}
-
 /// CRC-64-NVME dispatch - fast path using pre-resolved kernel tables.
 ///
 /// Uses the empirically-optimal kernel for the current platform and buffer size.
-/// No per-call overhead: table selection happens once at initialization.
+/// When `std` is enabled, also respects `RSCRYPTO_CRC64_FORCE` env var for
+/// debugging/testing specific kernel paths.
 #[inline]
 fn crc64_nvme_dispatch(crc: u64, data: &[u8]) -> u64 {
+  #[cfg(feature = "std")]
+  {
+    let cfg = config::get();
+    if cfg.effective_force == Crc64Force::Reference {
+      return crc64_nvme_reference(crc, data);
+    }
+    if cfg.effective_force == Crc64Force::Portable {
+      return crc64_nvme_portable(crc, data);
+    }
+  }
+
   let table = crate::dispatch::active_table();
   let kernel = table.select_set(data.len()).crc64_nvme;
   kernel(crc, data)
-}
-
-/// CRC-64-NVME dispatch with force mode support (for testing/debugging).
-///
-/// Checks force mode from config, then uses dispatch tables for auto selection.
-/// Only use this for testing specific kernel paths.
-#[cfg(any(test, feature = "force-mode"))]
-#[allow(dead_code)]
-#[inline]
-fn crc64_nvme_dispatch_forced(crc: u64, data: &[u8]) -> u64 {
-  let cfg = config::get();
-  match cfg.effective_force {
-    Crc64Force::Reference => crc64_nvme_reference(crc, data),
-    Crc64Force::Portable => crc64_nvme_portable(crc, data),
-    _ => crc64_nvme_dispatch(crc, data),
-  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -377,7 +358,7 @@ impl Crc64 {
     match cfg.effective_force {
       Crc64Force::Reference => kernels::REFERENCE,
       Crc64Force::Portable => kernels::PORTABLE,
-      _ => crc64_selected_kernel_name(1024), // representative size
+      _ => crc64_xz_selected_kernel_name(1024), // representative size
     }
   }
 
@@ -390,7 +371,7 @@ impl Crc64 {
   /// Returns the kernel name that the selector would choose for `len`.
   #[must_use]
   pub fn kernel_name_for_len(len: usize) -> &'static str {
-    crc64_selected_kernel_name(len)
+    crc64_xz_selected_kernel_name(len)
   }
 }
 
@@ -496,7 +477,7 @@ impl Crc64Nvme {
     match cfg.effective_force {
       Crc64Force::Reference => kernels::REFERENCE,
       Crc64Force::Portable => kernels::PORTABLE,
-      _ => crc64_selected_kernel_name(1024), // representative size
+      _ => crc64_nvme_selected_kernel_name(1024), // representative size
     }
   }
 
@@ -509,7 +490,7 @@ impl Crc64Nvme {
   /// Returns the kernel name that the selector would choose for `len`.
   #[must_use]
   pub fn kernel_name_for_len(len: usize) -> &'static str {
-    crc64_selected_kernel_name(len)
+    crc64_nvme_selected_kernel_name(len)
   }
 }
 
@@ -642,6 +623,30 @@ define_buffered_crc! {
   pub struct BufferedCrc64Nvme<Crc64Nvme> {
     buffer_size: BUFFERED_CRC_BUFFER_SIZE,
     threshold_fn: || CRC64_BUFFERED_THRESHOLD,
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Kernel Introspection
+// ─────────────────────────────────────────────────────────────────────────────
+
+impl crate::introspect::KernelIntrospect for Crc64 {
+  fn kernel_name_for_len(len: usize) -> &'static str {
+    Self::kernel_name_for_len(len)
+  }
+
+  fn backend_name() -> &'static str {
+    Self::backend_name()
+  }
+}
+
+impl crate::introspect::KernelIntrospect for Crc64Nvme {
+  fn kernel_name_for_len(len: usize) -> &'static str {
+    Self::kernel_name_for_len(len)
+  }
+
+  fn backend_name() -> &'static str {
+    Self::backend_name()
   }
 }
 
@@ -837,7 +842,12 @@ mod tests {
       if cfg.effective_force == Crc64Force::Portable {
         assert_eq!(name, "portable/slice16");
       } else if caps.has(platform::caps::x86::PCLMUL_READY) || caps.has(platform::caps::x86::VPCLMUL_READY) {
-        assert_eq!(name, "x86_64/auto");
+        // Now returns specific kernel names like "x86_64/vpclmul" or "x86_64/pclmul"
+        assert!(name.starts_with("x86_64/"), "expected x86_64 kernel name, got: {name}");
+        assert!(
+          !name.contains("auto"),
+          "expected specific kernel name, not auto: {name}"
+        );
       } else {
         assert_eq!(name, "portable/slice16");
       }
@@ -851,18 +861,29 @@ mod tests {
       if cfg.effective_force == Crc64Force::Portable {
         assert_eq!(name, "portable/slice16");
       } else if caps.has(platform::caps::aarch64::PMULL_READY) {
-        assert_eq!(name, "aarch64/auto");
+        // Now returns specific kernel names like "aarch64/pmull-eor3" or "aarch64/pmull"
+        assert!(
+          name.starts_with("aarch64/"),
+          "expected aarch64 kernel name, got: {name}"
+        );
+        assert!(
+          !name.contains("auto"),
+          "expected specific kernel name, not auto: {name}"
+        );
       } else {
         assert_eq!(name, "portable/slice16");
       }
     }
 
-    // With the new dispatch system, kernel_name_for_len returns the dispatcher name
-    // (e.g., "aarch64/auto") rather than the specific kernel for each length.
+    // kernel_name_for_len now returns specific kernel names from the dispatch table
     let len0_name = Crc64::kernel_name_for_len(0);
     assert!(
       !len0_name.is_empty(),
       "kernel_name_for_len should return a non-empty name"
+    );
+    assert!(
+      !len0_name.contains("auto"),
+      "expected specific kernel name, not auto: {len0_name}"
     );
   }
 

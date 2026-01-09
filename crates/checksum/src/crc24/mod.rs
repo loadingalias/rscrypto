@@ -42,7 +42,7 @@ pub use config::{Crc24Config, Crc24Force};
 #[allow(unused_imports)]
 pub(super) use traits::{Checksum, ChecksumCombine};
 
-#[cfg(any(test, feature = "force-mode"))]
+#[cfg(any(test, feature = "std"))]
 use crate::common::reference::crc24_bitwise;
 use crate::common::{
   combine::{Gf2Matrix24, combine_crc24, generate_shift8_matrix_24},
@@ -75,7 +75,7 @@ mod kernel_tables {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Bitwise reference implementation for CRC-24/OPENPGP.
-#[cfg(any(test, feature = "force-mode"))]
+#[cfg(any(test, feature = "std"))]
 #[allow(dead_code)]
 #[inline]
 fn crc24_openpgp_reference(crc: u32, data: &[u8]) -> u32 {
@@ -89,36 +89,40 @@ fn crc24_openpgp_reference(crc: u32, data: &[u8]) -> u32 {
 /// CRC-24/OPENPGP dispatch - fast path using pre-resolved kernel tables.
 ///
 /// Uses the empirically-optimal kernel for the current platform and buffer size.
-/// No per-call overhead: table selection happens once at initialization.
+/// When `std` is enabled, also respects `RSCRYPTO_CRC24_FORCE` env var for
+/// debugging/testing specific kernel paths.
 #[inline]
 fn crc24_openpgp_dispatch(crc: u32, data: &[u8]) -> u32 {
+  #[cfg(feature = "std")]
+  {
+    let cfg = config::get();
+    if cfg.effective_force == Crc24Force::Reference {
+      return crc24_openpgp_reference(crc, data);
+    }
+    if cfg.effective_force == Crc24Force::Portable {
+      return portable::crc24_openpgp_slice8(crc, data);
+    }
+  }
+
   let table = crate::dispatch::active_table();
   let kernel = table.select_set(data.len()).crc24_openpgp;
   kernel(crc, data)
-}
-
-/// CRC-24/OPENPGP dispatch with force mode support (for testing/debugging).
-#[cfg(any(test, feature = "force-mode"))]
-#[allow(dead_code)]
-#[inline]
-fn crc24_openpgp_dispatch_forced(crc: u32, data: &[u8]) -> u32 {
-  let cfg = config::get();
-  match cfg.effective_force {
-    Crc24Force::Reference => crc24_openpgp_reference(crc, data),
-    Crc24Force::Portable => portable::crc24_openpgp_slice8(crc, data),
-    _ => crc24_openpgp_dispatch(crc, data),
-  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Introspection
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Get the name of the CRC-24/OPENPGP kernel that would be selected for a given buffer length.
+///
+/// This is primarily for diagnostics and testing. The actual kernel selection
+/// happens via the dispatch module's pre-computed tables.
 #[inline]
 #[must_use]
-pub(crate) fn crc24_selected_kernel_name(len: usize) -> &'static str {
+pub(crate) fn crc24_openpgp_selected_kernel_name(len: usize) -> &'static str {
   let cfg = config::get();
 
+  // Handle forced modes
   if cfg.effective_force == Crc24Force::Reference {
     return kernels::REFERENCE;
   }
@@ -126,39 +130,9 @@ pub(crate) fn crc24_selected_kernel_name(len: usize) -> &'static str {
     return kernels::PORTABLE_SLICE8;
   }
 
+  // For auto mode, return the specific kernel name from the dispatch table
   let table = crate::dispatch::active_table();
-  let _set = table.select_set(len);
-
-  #[cfg(target_arch = "x86_64")]
-  {
-    "x86_64/auto"
-  }
-  #[cfg(target_arch = "aarch64")]
-  {
-    "aarch64/auto"
-  }
-  #[cfg(target_arch = "powerpc64")]
-  {
-    "power/auto"
-  }
-  #[cfg(target_arch = "s390x")]
-  {
-    "s390x/auto"
-  }
-  #[cfg(target_arch = "riscv64")]
-  {
-    "riscv64/auto"
-  }
-  #[cfg(not(any(
-    target_arch = "x86_64",
-    target_arch = "aarch64",
-    target_arch = "powerpc64",
-    target_arch = "s390x",
-    target_arch = "riscv64"
-  )))]
-  {
-    kernels::PORTABLE_SLICE8
-  }
+  table.select_set(len).crc24_openpgp_name
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -214,7 +188,7 @@ impl Crc24OpenPgp {
     match cfg.effective_force {
       Crc24Force::Reference => kernels::REFERENCE,
       Crc24Force::Portable => kernels::PORTABLE_SLICE8,
-      _ => crc24_selected_kernel_name(1024),
+      _ => crc24_openpgp_selected_kernel_name(1024),
     }
   }
 
@@ -233,7 +207,7 @@ impl Crc24OpenPgp {
   /// Returns the kernel name that the selector would choose for `len`.
   #[must_use]
   pub fn kernel_name_for_len(len: usize) -> &'static str {
-    crc24_selected_kernel_name(len)
+    crc24_openpgp_selected_kernel_name(len)
   }
 }
 
@@ -302,6 +276,20 @@ define_buffered_crc! {
   pub struct BufferedCrc24OpenPgp<Crc24OpenPgp> {
     buffer_size: BUFFERED_CRC24_BUFFER_SIZE,
     threshold_fn: crc24_buffered_threshold,
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Kernel Introspection
+// ─────────────────────────────────────────────────────────────────────────────
+
+impl crate::introspect::KernelIntrospect for Crc24OpenPgp {
+  fn kernel_name_for_len(len: usize) -> &'static str {
+    Self::kernel_name_for_len(len)
+  }
+
+  fn backend_name() -> &'static str {
+    Self::backend_name()
   }
 }
 

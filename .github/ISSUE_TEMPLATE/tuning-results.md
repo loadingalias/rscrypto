@@ -13,7 +13,7 @@ labels: ["tuning", "enhancement"]
 
 ## Tuning Output
 
-<!-- Paste the full output from `just tune` below -->
+<!-- Paste the output from `just tune-contribute` below -->
 
 ```
 <paste here>
@@ -21,7 +21,7 @@ labels: ["tuning", "enhancement"]
 
 ## Checklist
 
-- [ ] I ran `just tune` (not `just tune-quick`) for accurate results
+- [ ] I ran `just tune-contribute` for accurate results
 - [ ] The system was mostly idle during benchmarking
 - [ ] Peak throughput numbers look reasonable for my hardware
 - [ ] No excessive "high variance" warnings appeared

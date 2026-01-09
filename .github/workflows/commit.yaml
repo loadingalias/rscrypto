@@ -73,24 +73,31 @@ jobs:
       matrix:
         target:
           # ─────────────────────────────────────────────────────────────────────
-          # Linux (GitHub Free Runners)
+          # Linux x86-64 (GitHub Free Runners)
           # ─────────────────────────────────────────────────────────────────────
           - name: x86_64-unknown-linux-gnu
             runner: ubuntu-latest
             tier: a
 
           # ─────────────────────────────────────────────────────────────────────
-          # Linux ARM64 (Namespace Runners - no free GitHub ARM runners)
+          # Linux ARM64 (GitHub Free Runners)
           # ─────────────────────────────────────────────────────────────────────
           - name: aarch64-unknown-linux-gnu
-            runner: namespace-profile-rscrypto-linux-arm64
+            runner: ubuntu-24.04-arm
             tier: a
 
           # ─────────────────────────────────────────────────────────────────────
-          # Windows (GitHub Free Runners)
+          # Windows x86-64 (GitHub Free Runners)
           # ─────────────────────────────────────────────────────────────────────
           - name: x86_64-pc-windows-msvc
             runner: windows-latest
+            tier: a
+
+          # ─────────────────────────────────────────────────────────────────────
+          # Windows ARM64 (GitHub Free Runners)
+          # ─────────────────────────────────────────────────────────────────────
+          - name: aarch64-pc-windows-msvc
+            runner: windows-11-arm
             tier: a
 
     steps:
@@ -200,6 +207,33 @@ jobs:
         run: cargo test -p checksum test_crc32c_forced_kernel_smoke_from_env --lib
         env:
           RSCRYPTO_CRC32_FORCE: pmull-eor3
+          RSCRYPTO_CRC32_STREAMS: "2"
+
+      # aarch64 Windows: CRC32/CRC32C HWCRC + PMULL
+      - name: CRC32 Tier Smoke (force HWCRC)
+        if: matrix.target.name == 'aarch64-pc-windows-msvc'
+        run: cargo test -p checksum test_crc32_forced_kernel_smoke_from_env --lib
+        env:
+          RSCRYPTO_CRC32_FORCE: hwcrc
+
+      - name: CRC32C Tier Smoke (force HWCRC)
+        if: matrix.target.name == 'aarch64-pc-windows-msvc'
+        run: cargo test -p checksum test_crc32c_forced_kernel_smoke_from_env --lib
+        env:
+          RSCRYPTO_CRC32_FORCE: hwcrc
+
+      - name: CRC32 Tier Smoke (force PMULL, 2-way)
+        if: matrix.target.name == 'aarch64-pc-windows-msvc'
+        run: cargo test -p checksum test_crc32_forced_kernel_smoke_from_env --lib
+        env:
+          RSCRYPTO_CRC32_FORCE: pmull
+          RSCRYPTO_CRC32_STREAMS: "2"
+
+      - name: CRC32C Tier Smoke (force PMULL, 2-way)
+        if: matrix.target.name == 'aarch64-pc-windows-msvc'
+        run: cargo test -p checksum test_crc32c_forced_kernel_smoke_from_env --lib
+        env:
+          RSCRYPTO_CRC32_FORCE: pmull
           RSCRYPTO_CRC32_STREAMS: "2"
 
       # ─────────────────────────────────────────────────────────────────────────

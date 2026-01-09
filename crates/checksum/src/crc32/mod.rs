@@ -66,7 +66,7 @@ pub use config::{Crc32Config, Crc32Force};
 #[allow(unused_imports)]
 pub(super) use traits::{Checksum, ChecksumCombine};
 
-#[cfg(any(test, feature = "force-mode"))]
+#[cfg(any(test, feature = "std"))]
 use crate::common::reference::crc32_bitwise;
 use crate::common::{
   combine::{Gf2Matrix32, generate_shift8_matrix_32},
@@ -94,7 +94,7 @@ pub(crate) const CRC32_FOLD_BLOCK_BYTES: usize = 128;
 // Portable Kernel Wrappers
 // ─────────────────────────────────────────────────────────────────────────────
 
-#[cfg(any(test, feature = "force-mode"))]
+#[cfg(any(test, feature = "std"))]
 #[allow(dead_code)]
 fn crc32_portable(crc: u32, data: &[u8]) -> u32 {
   const THRESHOLD: usize = 64;
@@ -105,7 +105,7 @@ fn crc32_portable(crc: u32, data: &[u8]) -> u32 {
   }
 }
 
-#[cfg(any(test, feature = "force-mode"))]
+#[cfg(any(test, feature = "std"))]
 #[allow(dead_code)]
 fn crc32c_portable(crc: u32, data: &[u8]) -> u32 {
   const THRESHOLD: usize = 64;
@@ -124,7 +124,7 @@ fn crc32c_portable(crc: u32, data: &[u8]) -> u32 {
 ///
 /// This is the canonical reference implementation - obviously correct,
 /// audit-friendly, and used for verification of all optimized paths.
-#[cfg(any(test, feature = "force-mode"))]
+#[cfg(any(test, feature = "std"))]
 #[allow(dead_code)]
 fn crc32_reference(crc: u32, data: &[u8]) -> u32 {
   crc32_bitwise(CRC32_IEEE_POLY, crc, data)
@@ -134,7 +134,7 @@ fn crc32_reference(crc: u32, data: &[u8]) -> u32 {
 ///
 /// This is the canonical reference implementation - obviously correct,
 /// audit-friendly, and used for verification of all optimized paths.
-#[cfg(any(test, feature = "force-mode"))]
+#[cfg(any(test, feature = "std"))]
 #[allow(dead_code)]
 fn crc32c_reference(crc: u32, data: &[u8]) -> u32 {
   crc32_bitwise(CRC32C_POLY, crc, data)
@@ -204,38 +204,7 @@ pub(crate) fn crc32_selected_kernel_name(len: usize) -> &'static str {
   }
 
   let table = crate::dispatch::active_table();
-  let _set = table.select_set(len);
-
-  #[cfg(target_arch = "x86_64")]
-  {
-    "x86_64/auto"
-  }
-  #[cfg(target_arch = "aarch64")]
-  {
-    "aarch64/auto"
-  }
-  #[cfg(target_arch = "powerpc64")]
-  {
-    "power/auto"
-  }
-  #[cfg(target_arch = "s390x")]
-  {
-    "s390x/auto"
-  }
-  #[cfg(target_arch = "riscv64")]
-  {
-    "riscv64/auto"
-  }
-  #[cfg(not(any(
-    target_arch = "x86_64",
-    target_arch = "aarch64",
-    target_arch = "powerpc64",
-    target_arch = "s390x",
-    target_arch = "riscv64"
-  )))]
-  {
-    kernels::PORTABLE
-  }
+  table.select_set(len).crc32_ieee_name
 }
 
 /// Get the name of the kernel that would be selected for a given buffer length.
@@ -252,38 +221,7 @@ pub(crate) fn crc32c_selected_kernel_name(len: usize) -> &'static str {
   }
 
   let table = crate::dispatch::active_table();
-  let _set = table.select_set(len);
-
-  #[cfg(target_arch = "x86_64")]
-  {
-    "x86_64/auto"
-  }
-  #[cfg(target_arch = "aarch64")]
-  {
-    "aarch64/auto"
-  }
-  #[cfg(target_arch = "powerpc64")]
-  {
-    "power/auto"
-  }
-  #[cfg(target_arch = "s390x")]
-  {
-    "s390x/auto"
-  }
-  #[cfg(target_arch = "riscv64")]
-  {
-    "riscv64/auto"
-  }
-  #[cfg(not(any(
-    target_arch = "x86_64",
-    target_arch = "aarch64",
-    target_arch = "powerpc64",
-    target_arch = "s390x",
-    target_arch = "riscv64"
-  )))]
-  {
-    kernels::PORTABLE
-  }
+  table.select_set(len).crc32c_name
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -387,49 +325,47 @@ pub(crate) fn diag_crc32c(len: usize) -> Crc32SelectionDiag {
 /// CRC-32 (IEEE) dispatch - fast path using pre-resolved kernel tables.
 ///
 /// Uses the empirically-optimal kernel for the current platform and buffer size.
-/// No per-call overhead: table selection happens once at initialization.
+/// When `std` is enabled, also respects `RSCRYPTO_CRC32_FORCE` env var for
+/// debugging/testing specific kernel paths.
 #[inline]
 fn crc32_dispatch(crc: u32, data: &[u8]) -> u32 {
+  #[cfg(feature = "std")]
+  {
+    let cfg = config::get();
+    if cfg.effective_force == Crc32Force::Reference {
+      return crc32_reference(crc, data);
+    }
+    if cfg.effective_force == Crc32Force::Portable {
+      return crc32_portable(crc, data);
+    }
+  }
+
   let table = crate::dispatch::active_table();
   let kernel = table.select_set(data.len()).crc32_ieee;
   kernel(crc, data)
 }
 
-/// CRC-32 (IEEE) dispatch with force mode support (for testing/debugging).
-#[cfg(any(test, feature = "force-mode"))]
-#[allow(dead_code)]
-#[inline]
-fn crc32_dispatch_forced(crc: u32, data: &[u8]) -> u32 {
-  let cfg = config::get();
-  match cfg.effective_force {
-    Crc32Force::Reference => crc32_reference(crc, data),
-    Crc32Force::Portable => crc32_portable(crc, data),
-    _ => crc32_dispatch(crc, data),
-  }
-}
-
 /// CRC-32C (Castagnoli) dispatch - fast path using pre-resolved kernel tables.
 ///
 /// Uses the empirically-optimal kernel for the current platform and buffer size.
-/// No per-call overhead: table selection happens once at initialization.
+/// When `std` is enabled, also respects `RSCRYPTO_CRC32_FORCE` env var for
+/// debugging/testing specific kernel paths.
 #[inline]
 fn crc32c_dispatch(crc: u32, data: &[u8]) -> u32 {
+  #[cfg(feature = "std")]
+  {
+    let cfg = config::get();
+    if cfg.effective_force == Crc32Force::Reference {
+      return crc32c_reference(crc, data);
+    }
+    if cfg.effective_force == Crc32Force::Portable {
+      return crc32c_portable(crc, data);
+    }
+  }
+
   let table = crate::dispatch::active_table();
   let kernel = table.select_set(data.len()).crc32c;
   kernel(crc, data)
-}
-
-/// CRC-32C (Castagnoli) dispatch with force mode support (for testing/debugging).
-#[cfg(any(test, feature = "force-mode"))]
-#[allow(dead_code)]
-#[inline]
-fn crc32c_dispatch_forced(crc: u32, data: &[u8]) -> u32 {
-  let cfg = config::get();
-  match cfg.effective_force {
-    Crc32Force::Reference => crc32c_reference(crc, data),
-    Crc32Force::Portable => crc32c_portable(crc, data),
-    _ => crc32c_dispatch(crc, data),
-  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -681,6 +617,30 @@ pub type BufferedCrc32Ieee = BufferedCrc32;
 pub type BufferedCrc32Castagnoli = BufferedCrc32C;
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Kernel Introspection
+// ─────────────────────────────────────────────────────────────────────────────
+
+impl crate::introspect::KernelIntrospect for Crc32 {
+  fn kernel_name_for_len(len: usize) -> &'static str {
+    Self::kernel_name_for_len(len)
+  }
+
+  fn backend_name() -> &'static str {
+    Self::backend_name()
+  }
+}
+
+impl crate::introspect::KernelIntrospect for Crc32C {
+  fn kernel_name_for_len(len: usize) -> &'static str {
+    Self::kernel_name_for_len(len)
+  }
+
+  fn backend_name() -> &'static str {
+    Self::backend_name()
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Tests
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -713,15 +673,23 @@ mod tests {
   }
 
   #[test]
-  fn test_kernel_name_for_len_returns_dispatcher_name() {
-    // With the new dispatch system, kernel_name_for_len returns the dispatcher name
-    // (e.g., "aarch64/auto") rather than the specific kernel for each length.
-    // The actual kernel selection happens inside the dispatch tables.
+  fn test_kernel_name_for_len_returns_specific_kernel_name() {
+    // With the dispatch system, kernel_name_for_len returns the specific kernel name
+    // from the dispatch table (e.g., "aarch64/pmull-small", "x86_64/hwcrc").
     let name = Crc32::kernel_name_for_len(0);
     assert!(!name.is_empty());
+    // Should be a specific kernel name with arch prefix or portable/reference
     assert!(
-      name.contains("auto") || name.contains("portable") || name.contains("reference"),
-      "Expected dispatcher name, got: {name}"
+      name.contains('/') || name.contains("portable") || name.contains("reference"),
+      "Expected specific kernel name, got: {name}"
+    );
+
+    // CRC32C should also return a specific kernel name
+    let name_c = Crc32C::kernel_name_for_len(0);
+    assert!(!name_c.is_empty());
+    assert!(
+      name_c.contains('/') || name_c.contains("portable") || name_c.contains("reference"),
+      "Expected specific kernel name for CRC32C, got: {name_c}"
     );
   }
 

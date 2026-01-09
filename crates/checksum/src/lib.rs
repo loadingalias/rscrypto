@@ -60,6 +60,35 @@
 //! assert_eq!(combined, crc);
 //! ```
 //!
+//! # Introspection
+//!
+//! Verify which kernels are selected for your platform:
+//!
+//! ```rust
+//! use checksum::{Crc64, DispatchInfo};
+//!
+//! // Platform-level info
+//! let info = DispatchInfo::current();
+//! println!("{info}");
+//! // Example output: "Caps(aarch64, [AES, PMULL, ...]) (Apple M1-M3)"
+//!
+//! // Per-algorithm kernel selection
+//! println!("CRC-64 backend: {}", Crc64::backend_name());
+//! println!("CRC-64 @ 4KB: {}", Crc64::kernel_name_for_len(4096));
+//! ```
+//!
+//! For generic introspection across types:
+//!
+//! ```rust
+//! use checksum::{Crc64, KernelIntrospect, kernel_for};
+//!
+//! fn show_kernel<T: KernelIntrospect>(name: &str, len: usize) {
+//!   println!("{name} @ {len}B: {}", kernel_for::<T>(len));
+//! }
+//!
+//! show_kernel::<Crc64>("CRC-64/XZ", 4096);
+//! ```
+//!
 //! # no_std Support
 //!
 //! This crate is `no_std` compatible. Disable the `std` feature for embedded use:
@@ -112,6 +141,7 @@ mod crc64;
 pub mod diag;
 pub mod dispatch;
 pub mod dispatchers;
+mod introspect;
 pub mod tune;
 
 #[doc(hidden)]
@@ -180,5 +210,10 @@ pub use crc32::{Crc32, Crc32C, Crc32Castagnoli, Crc32Config, Crc32Force, Crc32Ie
 #[cfg(feature = "alloc")]
 pub use crc64::{BufferedCrc64, BufferedCrc64Nvme, BufferedCrc64Xz};
 pub use crc64::{Crc64, Crc64Config, Crc64Force, Crc64Nvme, Crc64Xz};
+// Re-export introspection API
+pub use dispatch::is_hardware_accelerated;
+pub use introspect::{DispatchInfo, KernelIntrospect, kernel_for};
+// Re-export platform::describe for convenience
+pub use platform::describe as platform_describe;
 // Re-export traits for convenience
 pub use traits::{Checksum, ChecksumCombine};

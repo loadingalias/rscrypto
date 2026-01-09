@@ -1,0 +1,179 @@
+name: Setup rscrypto Environment (RunsOn)
+description: |
+  Install Rust toolchain, cargo tools, and configure RunsOn caching.
+  Optimized for AWS EC2 runners via runs-on.com with MagicCache support.
+
+inputs:
+  mode:
+    description: Tool installation mode (runson, runson-bench, minimal)
+    required: false
+    default: "runson-bench"
+  enable-cache:
+    description: Enable MagicCache (S3-backed, unlimited)
+    required: false
+    default: "false"
+
+outputs:
+  toolchain:
+    description: Installed Rust toolchain version
+    value: ${{ steps.toolchain.outputs.version }}
+  arch:
+    description: CPU architecture (x86_64 or aarch64)
+    value: ${{ steps.detect.outputs.arch }}
+  uarch:
+    description: Detected CPU microarchitecture
+    value: ${{ steps.detect.outputs.uarch }}
+  vendor:
+    description: CPU vendor (Intel, AMD, or ARM)
+    value: ${{ steps.detect.outputs.vendor }}
+
+runs:
+  using: composite
+  steps:
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # RunsOn MagicCache (optional - for CI, not benchmarks)
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    - name: Setup RunsOn MagicCache
+      if: inputs.enable-cache == 'true'
+      uses: runs-on/action@cd2b598b0515d39d78c38a02d529db87d2196d1e  # v2
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # CPU Detection - Critical for tuning table generation
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    - name: Detect CPU Architecture
+      id: detect
+      shell: bash
+      run: |
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "CPU Detection (RunsOn EC2)"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+        ARCH=$(uname -m)
+        echo "arch=$ARCH" >> "$GITHUB_OUTPUT"
+
+        if [ "$ARCH" = "x86_64" ]; then
+          VENDOR_ID=$(lscpu | grep "Vendor ID" | awk '{print $3}')
+          MODEL=$(lscpu | grep "Model name" | sed 's/Model name:[[:space:]]*//')
+
+          echo "Vendor ID: $VENDOR_ID"
+          echo "Model: $MODEL"
+
+          # Detect vendor
+          if [ "$VENDOR_ID" = "GenuineIntel" ]; then
+            VENDOR="Intel"
+          elif [ "$VENDOR_ID" = "AuthenticAMD" ]; then
+            VENDOR="AMD"
+          else
+            VENDOR="Unknown"
+          fi
+          echo "vendor=$VENDOR" >> "$GITHUB_OUTPUT"
+
+          # Detect Intel microarchitecture
+          if echo "$MODEL" | grep -qE "6975P|Granite"; then
+            UARCH="granite-rapids"
+          elif echo "$MODEL" | grep -qE "8559C|Emerald"; then
+            UARCH="emerald-rapids"
+          elif echo "$MODEL" | grep -qE "8488C|Sapphire"; then
+            UARCH="sapphire-rapids"
+          elif echo "$MODEL" | grep -qE "8375C|Ice"; then
+            UARCH="ice-lake"
+          elif echo "$MODEL" | grep -qE "8252C|Cascade"; then
+            UARCH="cascade-lake"
+          elif echo "$MODEL" | grep -qE "8151|Skylake"; then
+            UARCH="skylake"
+          # Detect AMD microarchitecture
+          elif echo "$MODEL" | grep -qE "9R45|Turin"; then
+            UARCH="zen5-turin"
+          elif echo "$MODEL" | grep -qE "9R14|Genoa"; then
+            UARCH="zen4-genoa"
+          elif echo "$MODEL" | grep -qE "7R13|Milan"; then
+            UARCH="zen3-milan"
+          elif echo "$MODEL" | grep -qE "7R32|Rome"; then
+            UARCH="zen2-rome"
+          else
+            UARCH="unknown-x86"
+          fi
+
+        elif [ "$ARCH" = "aarch64" ]; then
+          VENDOR="ARM"
+          echo "vendor=$VENDOR" >> "$GITHUB_OUTPUT"
+
+          # Detect Graviton generation via MIDR
+          MIDR=$(cat /sys/devices/system/cpu/cpu0/regs/identification/midr_el1 2>/dev/null || echo "unknown")
+          echo "MIDR: $MIDR"
+
+          if echo "$MIDR" | grep -qi "0x00000000410fd4f0\|0x410fd4f"; then
+            UARCH="neoverse-v2"  # Graviton 4
+          elif echo "$MIDR" | grep -qi "0x00000000410fd400\|0x410fd40"; then
+            UARCH="neoverse-v1"  # Graviton 3
+          elif echo "$MIDR" | grep -qi "0x00000000410fd0c0\|0x410fd0c"; then
+            UARCH="neoverse-n1"  # Graviton 2
+          else
+            # Fallback: check /proc/cpuinfo
+            if grep -q "Neoverse-V2" /proc/cpuinfo 2>/dev/null; then
+              UARCH="neoverse-v2"
+            elif grep -q "Neoverse-V1\|Graviton3" /proc/cpuinfo 2>/dev/null; then
+              UARCH="neoverse-v1"
+            elif grep -q "Neoverse-N1\|Graviton2" /proc/cpuinfo 2>/dev/null; then
+              UARCH="neoverse-n1"
+            else
+              UARCH="unknown-arm64"
+            fi
+          fi
+        else
+          VENDOR="Unknown"
+          UARCH="unknown"
+          echo "vendor=$VENDOR" >> "$GITHUB_OUTPUT"
+        fi
+
+        echo "uarch=$UARCH" >> "$GITHUB_OUTPUT"
+
+        echo ""
+        echo "Architecture: $ARCH"
+        echo "Vendor: $VENDOR"
+        echo "Microarchitecture: $UARCH"
+
+        # Print relevant SIMD flags
+        echo ""
+        echo "SIMD Capabilities:"
+        if [ "$ARCH" = "x86_64" ]; then
+          lscpu | grep -i "Flags" | tr ' ' '\n' | \
+            grep -E "(avx512|vpclmulqdq|gfni|pclmul|crc32|sha_ni)" | sort -u | \
+            tr '\n' ' ' || true
+          echo ""
+        else
+          grep Features /proc/cpuinfo 2>/dev/null | head -1 | tr ' ' '\n' | \
+            grep -E "(pmull|sha[0-9]|sve|crc|aes)" | sort -u | \
+            tr '\n' ' ' || true
+          echo ""
+        fi
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # Rust Toolchain
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    - name: Read Toolchain Version
+      id: toolchain
+      shell: bash
+      run: |
+        TOOLCHAIN=$(awk -F'"' '/^channel/ {print $2}' rust-toolchain.toml)
+        echo "version=$TOOLCHAIN" >> "$GITHUB_OUTPUT"
+        echo "Toolchain: $TOOLCHAIN"
+
+    - name: Install Rust Toolchain
+      uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561  # master
+      with:
+        toolchain: ${{ steps.toolchain.outputs.version }}
+        components: clippy, rustfmt
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # Cargo Tools (via cargo-binstall for speed)
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    - name: Cache Cargo Tools
+      uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+      with:
+        path: ~/.cargo/bin
+        key: cargo-tools-${{ runner.os }}-${{ runner.arch }}-v1
+
+    - name: Install Cargo Tools
+      shell: bash
+      run: scripts/ci/install-tools.sh ${{ inputs.mode }}

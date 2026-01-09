@@ -14,23 +14,38 @@ on:
         type: string
         default: ""
 
-      run_linux_x64:
-        description: "Run on Linux x86-64"
+      # ─────────────────────────────────────────────────────────────────────────
+      # Intel x86-64 (RunsOn: Granite/Emerald/Sapphire Rapids)
+      # ─────────────────────────────────────────────────────────────────────────
+      run_intel:
+        description: "Run on Intel (Granite/Emerald/Sapphire Rapids)"
         required: false
         type: boolean
         default: true
 
-      run_linux_arm64:
-        description: "Run on Linux ARM64"
+      # ─────────────────────────────────────────────────────────────────────────
+      # AMD x86-64 (Namespace: Zen4, RunsOn: Zen5)
+      # ─────────────────────────────────────────────────────────────────────────
+      run_amd_zen4:
+        description: "Run on AMD Zen4 (Namespace)"
+        required: false
+        type: boolean
+        default: true
+
+      run_amd_zen5:
+        description: "Run on AMD Zen5 Turin (RunsOn)"
         required: false
         type: boolean
         default: false
 
-      run_windows_x64:
-        description: "Run on Windows x86-64"
+      # ─────────────────────────────────────────────────────────────────────────
+      # ARM64 Graviton (RunsOn)
+      # ─────────────────────────────────────────────────────────────────────────
+      run_graviton:
+        description: "Run on Graviton (Neoverse V2/V1, RunsOn)"
         required: false
         type: boolean
-        default: false
+        default: true
 
       specific_benches:
         description: "Specific benchmark binary names (optional, comma-separated)"
@@ -39,28 +54,10 @@ on:
         default: ""
 
       tune:
-        description: "Run unified tuning only (skip benchmarks, mirrors 'just tune')"
+        description: "Run unified tuning only (skip Criterion benchmarks)"
         required: false
         type: boolean
         default: false
-
-      run_comp_report:
-        description: "Run checksum comp report (bench + analysis artifact)"
-        required: false
-        type: boolean
-        default: false
-
-      comp_report_crc32c_diagnose:
-        description: "For comp report: run CRC32C diagnostics variants (default, streams=1, force=hwcrc) on Linux x86-64"
-        required: false
-        type: boolean
-        default: false
-
-      comp_report_filter:
-        description: "Criterion FILTER for comp bench (e.g. 'crc32c/castagnoli'; empty runs all)"
-        required: false
-        type: string
-        default: ""
 
       regression_baseline:
         description: "Git ref for regression comparison (e.g., main, v1.0.0)"
@@ -73,524 +70,379 @@ env:
   CARGO_TERM_COLOR: always
   RSCRYPTO_BENCH_MODE: ci
   CARGO_INCREMENTAL: 0
-  # Ensure benchmark builds use the host CPU features by construction.
+  # Ensure benchmark builds use the host CPU features
   RUSTFLAGS: "-C target-cpu=native"
 
 # Lock down permissions to read-only by default
 permissions:
-  contents: read # Required for actions/checkout
+  contents: read
 
 jobs:
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # Benchmark Execution - High-performance dedicated runners
+  # AMD ZEN4 BENCHMARKS (Namespace - strong dedicated runners)
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # For scheduled runs: only bench affected crates (cargo-rail change detection)
-  # For manual runs: always run (user controls scope via inputs)
+  # EPYC 9R14 (Genoa) - Namespace provides excellent Zen4 runners
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  benchmark:
-    name: Benchmark (${{ matrix.target.name }})
-    if: github.event_name == 'schedule' || github.event.inputs.tune != 'true' || github.event.inputs.run_comp_report == 'true' || github.event.inputs.comp_report_crc32c_diagnose == 'true'
-    runs-on: ${{ matrix.target.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        target:
-          # Linux x86-64 (Namespace)
-          - name: x86_64-unknown-linux-gnu
-            runner: namespace-profile-rscrypto-linux-x86
-            platform-id: linux-x64
-
-          # Linux ARM64 (Namespace)
-          - name: aarch64-unknown-linux-gnu
-            runner: namespace-profile-rscrypto-linux-arm64
-            platform-id: linux-arm64
-
-          # Windows x86-64 (GitHub free runner)
-          - name: x86_64-pc-windows-msvc
-            runner: windows-latest
-            platform-id: windows-x64
-
+  bench-amd-zen4:
+    name: Benchmark (AMD Zen4)
+    if: |
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' &&
+       github.event.inputs.tune != 'true' &&
+       github.event.inputs.run_amd_zen4 == 'true')
+    runs-on: namespace-profile-rscrypto-linux-x86
+    timeout-minutes: 90
     steps:
-      # Check if this platform should run (for manual triggers)
-      - name: Check Platform Selection
-        id: should-run
-        shell: bash
-        run: |
-          # For scheduled runs, always run all platforms
-          if [ "${{ github.event_name }}" == "schedule" ]; then
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
-            echo "Scheduled run - running all platforms"
-            exit 0
-          fi
-
-          # For manual triggers, check platform-specific flags
-          PLATFORM="${{ matrix.target.platform-id }}"
-
-          case "$PLATFORM" in
-            "linux-x64")
-              if [ "${GITHUB_EVENT_INPUTS_RUN_LINUX_X64}" == "true" ]; then
-                echo "enabled=true" >> "$GITHUB_OUTPUT"
-                echo "Linux x86-64 enabled by manual trigger"
-              else
-                echo "enabled=false" >> "$GITHUB_OUTPUT"
-                echo "Linux x86-64 disabled - skipping"
-              fi
-              ;;
-            "linux-arm64")
-              if [ "${GITHUB_EVENT_INPUTS_RUN_LINUX_ARM64}" == "true" ]; then
-                echo "enabled=true" >> "$GITHUB_OUTPUT"
-                echo "Linux ARM64 enabled by manual trigger"
-              else
-                echo "enabled=false" >> "$GITHUB_OUTPUT"
-                echo "Linux ARM64 disabled - skipping"
-              fi
-              ;;
-            "windows-x64")
-              if [ "${GITHUB_EVENT_INPUTS_RUN_WINDOWS_X64}" == "true" ]; then
-                echo "enabled=true" >> "$GITHUB_OUTPUT"
-                echo "Windows x86-64 enabled by manual trigger"
-              else
-                echo "enabled=false" >> "$GITHUB_OUTPUT"
-                echo "Windows x86-64 disabled - skipping"
-              fi
-              ;;
-            *)
-              echo "enabled=false" >> "$GITHUB_OUTPUT"
-              echo "Unknown platform - skipping"
-              ;;
-          esac
-        env:
-          GITHUB_EVENT_INPUTS_RUN_LINUX_X64: ${{ github.event.inputs.run_linux_x64 }}
-          GITHUB_EVENT_INPUTS_RUN_LINUX_ARM64: ${{ github.event.inputs.run_linux_arm64 }}
-          GITHUB_EVENT_INPUTS_RUN_WINDOWS_X64: ${{ github.event.inputs.run_windows_x64 }}
-
       - name: Checkout
-        if: steps.should-run.outputs.enabled == 'true'
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
-          fetch-depth: 0 # Required for cargo rail affected (needs git history)
+          fetch-depth: 0
 
-      # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-      # Setup: Rust toolchain, performance tools, and caching
-      # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      - name: Setup Namespace Cache
+        uses: namespacelabs/nscloud-cache-action@446d8f390563cd54ca27e8de5bdb816f63c0b706  # v1.2.21
+        with:
+          cache: rust
 
-      # Install Rust toolchain (reads version from rust-toolchain.toml)
+      - name: Detect CPU
+        id: cpu
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "CPU Detection"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          lscpu | grep -E "Model name|Vendor|CPU\(s\)|Thread"
+          echo "uarch=zen4-genoa" >> "$GITHUB_OUTPUT"
+
       - name: Read Toolchain Version
-        if: steps.should-run.outputs.enabled == 'true'
         id: toolchain
-        shell: bash
         run: |
           TOOLCHAIN=$(awk -F'"' '/^channel/ {print $2}' rust-toolchain.toml)
           echo "version=$TOOLCHAIN" >> "$GITHUB_OUTPUT"
 
       - name: Install Rust Toolchain
-        if: steps.should-run.outputs.enabled == 'true'
-        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
+        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561  # master
         with:
           toolchain: ${{ steps.toolchain.outputs.version }}
-          components: clippy, rustfmt
-
-      # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-      # Caching Strategy:
-      # - Linux (Namespace runners): Namespace NVMe cache
-      # - Windows (GitHub larger + Namespace): rust-cache with GitHub backend
-      # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-      - name: Setup Namespace Cache (Linux - instant NVMe cache)
-        if: steps.should-run.outputs.enabled == 'true' && runner.os == 'Linux'
-        uses: namespacelabs/nscloud-cache-action@446d8f390563cd54ca27e8de5bdb816f63c0b706 # v1.2.21
-        with:
-          cache: rust
-
-      # Compute cache key from runner metadata
-      - name: Compute Cache Key
-        if: steps.should-run.outputs.enabled == 'true' && runner.os == 'Windows'
-        id: cache
-        shell: bash
-        run: |
-          OS=$(echo "${{ runner.os }}" | tr '[:upper:]' '[:lower:]')
-          ARCH=$(echo "${{ runner.arch }}" | tr '[:upper:]' '[:lower:]')
-          echo "key=bench-${OS}-${ARCH}" >> "$GITHUB_OUTPUT"
-
-      - name: Setup Rust Cache (Windows)
-        if: steps.should-run.outputs.enabled == 'true' && runner.os == 'Windows'
-        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
-        with:
-          shared-key: "rscrypto-v1"
-          key: ${{ steps.cache.outputs.key }}
-          cache-on-failure: true
 
       - name: Install Benchmarking Tools
-        if: steps.should-run.outputs.enabled == 'true'
-        uses: taiki-e/install-action@de7896b7cd1c7d181266425abbe571b5a8c757bc # v2.65.3
+        uses: taiki-e/install-action@7ea888af71a31437ad4e71c62d021b3bb2728ea9  # v2.49.3
         with:
-          tool: cargo-criterion,critcmp,just
-
-      # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-      # Run Benchmarks
-      # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-      # Install cargo-rail for scheduled runs (change detection)
-      - name: Install cargo-rail (Scheduled runs only)
-        if: steps.should-run.outputs.enabled == 'true' && github.event_name == 'schedule'
-        uses: taiki-e/install-action@de7896b7cd1c7d181266425abbe571b5a8c757bc # v2.65.3
-        with:
-          tool: cargo-rail
+          tool: cargo-criterion,critcmp,just,cargo-rail
 
       - name: Determine Benchmark Scope
-        if: steps.should-run.outputs.enabled == 'true'
         id: scope
-        shell: bash
         run: |
-          CRATES_INPUT="${GITHUB_EVENT_INPUTS_CRATES}"
-          BENCHES_INPUT="${GITHUB_EVENT_INPUTS_SPECIFIC_BENCHES}"
-          EVENT_NAME="${GITHUB_EVENT_NAME}"
-          TUNE="${GITHUB_EVENT_INPUTS_TUNE}"
-          RUN_COMP_REPORT="${GITHUB_EVENT_INPUTS_RUN_COMP_REPORT}"
+          CRATES_INPUT="${{ github.event.inputs.crates }}"
+          BENCHES_INPUT="${{ github.event.inputs.specific_benches }}"
 
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "Determining Benchmark Scope"
-          echo "Event: $EVENT_NAME"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-          # ─────────────────────────────────────────────────────────
-          # SCHEDULED RUNS: Use cargo-rail change detection
-          # ─────────────────────────────────────────────────────────
-          if [ "$EVENT_NAME" == "schedule" ]; then
-            echo "Scheduled run - using cargo-rail change detection"
-
-            # Get affected crates since ~2 weeks of commits
+          if [ "${{ github.event_name }}" == "schedule" ]; then
             AFFECTED=$(cargo rail affected --since HEAD~50 -f names-only 2>/dev/null || echo "")
-
             if [ -z "$AFFECTED" ]; then
-              echo "No crates changed in last ~2 weeks, running full workspace"
               echo "crate_flags=--workspace" >> "$GITHUB_OUTPUT"
-              echo "skip_bench=false" >> "$GITHUB_OUTPUT"
             else
-              # Build -p flags for each affected crate
               CRATE_FLAGS=""
-              CRATE_LIST=""
               while IFS= read -r crate; do
-                if [ -n "$crate" ]; then
-                  CRATE_FLAGS="$CRATE_FLAGS -p $crate"
-                  CRATE_LIST="$CRATE_LIST $crate"
-                fi
+                [ -n "$crate" ] && CRATE_FLAGS="$CRATE_FLAGS -p $crate"
               done <<< "$AFFECTED"
-
-              if [ -n "$CRATE_FLAGS" ]; then
-                echo "crate_flags=$CRATE_FLAGS" >> "$GITHUB_OUTPUT"
-                echo "skip_bench=false" >> "$GITHUB_OUTPUT"
-                echo "Benchmarking changed crates:$CRATE_LIST"
-              else
-                echo "No benchmark-relevant crates changed, skipping"
-                echo "crate_flags=" >> "$GITHUB_OUTPUT"
-                echo "skip_bench=true" >> "$GITHUB_OUTPUT"
-              fi
+              echo "crate_flags=$CRATE_FLAGS" >> "$GITHUB_OUTPUT"
             fi
-
-            # No bench filters for scheduled runs
             echo "bench_flags=" >> "$GITHUB_OUTPUT"
-
-          # ─────────────────────────────────────────────────────────
-          # MANUAL RUNS: Use user-provided inputs (no change detection)
-          # ─────────────────────────────────────────────────────────
           else
-            echo "Manual run - using user-provided scope"
-
-            if [ "$TUNE" == "true" ]; then
-              echo "tune=true - skipping full Criterion benches"
-              echo "skip_bench=true" >> "$GITHUB_OUTPUT"
-              echo "crate_flags=" >> "$GITHUB_OUTPUT"
-              echo "bench_flags=" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-
-            echo "skip_bench=false" >> "$GITHUB_OUTPUT"
-
-            # Build crate flags from user input
             if [ -n "$CRATES_INPUT" ]; then
               CRATE_FLAGS=""
               IFS=',' read -ra CRATES <<< "$CRATES_INPUT"
               for crate in "${CRATES[@]}"; do
-                crate=$(echo "$crate" | xargs)
-                CRATE_FLAGS="$CRATE_FLAGS -p $crate"
+                CRATE_FLAGS="$CRATE_FLAGS -p $(echo "$crate" | xargs)"
               done
               echo "crate_flags=$CRATE_FLAGS" >> "$GITHUB_OUTPUT"
-              echo "Running benchmarks for crates: $CRATES_INPUT"
             else
               echo "crate_flags=--workspace" >> "$GITHUB_OUTPUT"
-              echo "Running benchmarks for all workspace crates"
             fi
-
-            # Build benchmark binary filter flags from user input
             if [ -n "$BENCHES_INPUT" ]; then
               BENCH_FLAGS=""
               IFS=',' read -ra BENCHES <<< "$BENCHES_INPUT"
               for bench in "${BENCHES[@]}"; do
-                bench=$(echo "$bench" | xargs)
-                BENCH_FLAGS="$BENCH_FLAGS --bench $bench"
+                BENCH_FLAGS="$BENCH_FLAGS --bench $(echo "$bench" | xargs)"
               done
               echo "bench_flags=$BENCH_FLAGS" >> "$GITHUB_OUTPUT"
-              echo "Filtering benchmark binaries: $BENCHES_INPUT"
             else
               echo "bench_flags=" >> "$GITHUB_OUTPUT"
-              echo "Running all benchmark binaries"
-            fi
-
-            # If the user is only running the checksum comp bench and also requested a comp report,
-            # skip the generic "Run Criterion Benchmarks" step to avoid double-running `comp`.
-            if [ "$RUN_COMP_REPORT" == "true" ]; then
-              CRATES_TRIMMED=$(echo "$CRATES_INPUT" | tr -d '[:space:]')
-              BENCHES_TRIMMED=$(echo "$BENCHES_INPUT" | tr -d '[:space:]')
-              if [ "$CRATES_TRIMMED" == "checksum" ] && [ "$BENCHES_TRIMMED" == "comp" ]; then
-                echo "Detected crates=checksum and specific_benches=comp with run_comp_report=true; skipping full bench run."
-                echo "skip_bench=true" >> "$GITHUB_OUTPUT"
-              fi
             fi
           fi
-        env:
-          GITHUB_EVENT_INPUTS_CRATES: ${{ github.event.inputs.crates }}
-          GITHUB_EVENT_INPUTS_SPECIFIC_BENCHES: ${{ github.event.inputs.specific_benches }}
-          GITHUB_EVENT_INPUTS_TUNE: ${{ github.event.inputs.tune }}
-          GITHUB_EVENT_INPUTS_RUN_COMP_REPORT: ${{ github.event.inputs.run_comp_report }}
-          GITHUB_EVENT_NAME: ${{ github.event_name }}
-
-      - name: Skip Notice (No Changes Detected)
-        if: steps.should-run.outputs.enabled == 'true' && steps.scope.outputs.skip_bench == 'true'
-        shell: bash
-        run: |
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "SKIPPING BENCHMARKS - No Changes Detected"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo ""
-          echo "This is a scheduled run and no benchmark-relevant crates"
-          echo "have changed in the last ~2 weeks."
-          echo ""
-          echo "To run benchmarks anyway, use the manual trigger."
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
       - name: Clean Old Benchmark Data
-        if: steps.should-run.outputs.enabled == 'true' && steps.scope.outputs.skip_bench != 'true'
-        shell: bash
-        run: |
-          echo "Cleaning Old Benchmark Data"
-          if [ -d "target/criterion" ]; then
-            echo "Removing target/criterion/ to ensure clean results"
-            rm -rf target/criterion
-          else
-            echo "No existing criterion data to clean"
-          fi
-
-      - name: Build Benchmarks (no-run)
-        if: steps.should-run.outputs.enabled == 'true' && steps.scope.outputs.skip_bench != 'true'
-        shell: bash
-        run: |
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "Building Criterion Benchmarks"
-          echo "Platform: ${{ matrix.target.name }}"
-          echo "RUSTFLAGS: ${RUSTFLAGS}"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          # shellcheck disable=SC2086
-          cargo bench --profile bench ${STEPS_SCOPE_OUTPUTS_CRATE_FLAGS} ${STEPS_SCOPE_OUTPUTS_BENCH_FLAGS} --no-run
-        env:
-          STEPS_SCOPE_OUTPUTS_CRATE_FLAGS: ${{ steps.scope.outputs.crate_flags }}
-          STEPS_SCOPE_OUTPUTS_BENCH_FLAGS: ${{ steps.scope.outputs.bench_flags }}
+        run: rm -rf target/criterion
 
       - name: Run Criterion Benchmarks
-        if: steps.should-run.outputs.enabled == 'true' && steps.scope.outputs.skip_bench != 'true'
-        shell: bash
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "Running Criterion Benchmarks"
+          echo "Running Criterion Benchmarks (AMD Zen4)"
           echo "RUSTFLAGS: ${RUSTFLAGS}"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
           mkdir -p benchmark-results
           # shellcheck disable=SC2086
-          cargo bench --profile bench ${STEPS_SCOPE_OUTPUTS_CRATE_FLAGS} ${STEPS_SCOPE_OUTPUTS_BENCH_FLAGS} 2>&1 | tee benchmark-results/benchmark-output.txt
+          cargo bench --profile bench ${{ steps.scope.outputs.crate_flags }} ${{ steps.scope.outputs.bench_flags }} 2>&1 | tee benchmark-results/output.txt
 
-        env:
-          STEPS_SCOPE_OUTPUTS_CRATE_FLAGS: ${{ steps.scope.outputs.crate_flags }}
-          STEPS_SCOPE_OUTPUTS_BENCH_FLAGS: ${{ steps.scope.outputs.bench_flags }}
-
-      - name: Run checksum comp benchmark + report
-        if: steps.should-run.outputs.enabled == 'true' && github.event_name == 'workflow_dispatch' && github.event.inputs.run_comp_report == 'true' && github.event.inputs.comp_report_crc32c_diagnose != 'true' && runner.os == 'Linux' && startsWith(matrix.target.platform-id, 'linux-')
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "Running checksum comp benchmark (report mode)"
-          echo "RUSTFLAGS: ${RUSTFLAGS}"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-          mkdir -p benchmark-results
-          FILTER="${GITHUB_EVENT_INPUTS_COMP_REPORT_FILTER}"
-          ARGS=(--noplot)
-          if [ -n "$FILTER" ]; then
-            ARGS=("$FILTER" "${ARGS[@]}")
-          fi
-          CRITERION_HOME="target/criterion/comp-report"
-          rm -rf "${CRITERION_HOME}"
-          mkdir -p "${CRITERION_HOME}"
-
-          env CRITERION_HOME="${CRITERION_HOME}" cargo bench --profile bench -p checksum --bench comp -- "${ARGS[@]}" 2>&1 | tee benchmark-results/comp-output.txt
-
-          python3 scripts/bench/criterion-summary.py \
-            --root "${CRITERION_HOME}" \
-            --group-prefix "${FILTER}" \
-            --only oneshot \
-            --non-wins \
-            | tee benchmark-results/comp-report.txt
-
-          {
-            echo "comp-report generated at: benchmark-results/comp-report.txt"
-            echo "comp-output captured at:  benchmark-results/comp-output.txt"
-            echo "criterion-home:           ${CRITERION_HOME}"
-          } >> "$GITHUB_STEP_SUMMARY"
-        env:
-          GITHUB_EVENT_INPUTS_COMP_REPORT_FILTER: ${{ github.event.inputs.comp_report_filter }}
-
-      - name: Run checksum comp benchmark + report (CRC32C diagnostics)
-        if: steps.should-run.outputs.enabled == 'true' && github.event_name == 'workflow_dispatch' && github.event.inputs.comp_report_crc32c_diagnose == 'true' && runner.os == 'Linux' && matrix.target.platform-id == 'linux-x64'
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "Running checksum comp benchmark (CRC32C diagnostics)"
-          echo "RUSTFLAGS: ${RUSTFLAGS}"
-          echo "Variants: default, RSCRYPTO_CRC32_STREAMS=1, RSCRYPTO_CRC32_FORCE=hwcrc"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-          mkdir -p benchmark-results
-
-          FILTER="${GITHUB_EVENT_INPUTS_COMP_REPORT_FILTER}"
-          if [ -z "$FILTER" ]; then
-            FILTER="crc32c/castagnoli"
-          fi
-          ARGS=("$FILTER" --noplot)
-
-          run_variant() {
-            local label="$1"
-            shift
-            local out="benchmark-results/comp-output.${label}.txt"
-            local rep="benchmark-results/comp-report.${label}.txt"
-            local criterion_home="target/criterion/comp-crc32c-diagnose/${label}"
-
-            echo "" | tee "$out" >/dev/null
-            echo ">>> variant=${label} env=$*" | tee -a "$out"
-
-            rm -rf "${criterion_home}"
-            mkdir -p "${criterion_home}"
-
-            # shellcheck disable=SC2086
-            env CRITERION_HOME="${criterion_home}" "$@" cargo bench --profile bench -p checksum --bench comp -- "${ARGS[@]}" 2>&1 | tee -a "$out"
-
-            python3 scripts/bench/criterion-summary.py \
-              --root "${criterion_home}" \
-              --group-prefix "${FILTER}" \
-              --only oneshot \
-              --non-wins \
-              | tee "$rep"
-          }
-
-          run_variant "default"
-          run_variant "streams1" RSCRYPTO_CRC32_STREAMS=1
-          run_variant "force-hwcrc" RSCRYPTO_CRC32_FORCE=hwcrc
-
-          {
-            echo "CRC32C diagnostics filter: ${FILTER}"
-            echo ""
-            echo "Artifacts:"
-            echo "- benchmark-results/comp-output.default.txt"
-            echo "- benchmark-results/comp-report.default.txt"
-            echo "- benchmark-results/comp-output.streams1.txt"
-            echo "- benchmark-results/comp-report.streams1.txt"
-            echo "- benchmark-results/comp-output.force-hwcrc.txt"
-            echo "- benchmark-results/comp-report.force-hwcrc.txt"
-            echo ""
-            echo "Criterion roots:"
-            echo "- target/criterion/comp-crc32c-diagnose/default"
-            echo "- target/criterion/comp-crc32c-diagnose/streams1"
-            echo "- target/criterion/comp-crc32c-diagnose/force-hwcrc"
-          } >> "$GITHUB_STEP_SUMMARY"
-        env:
-          GITHUB_EVENT_INPUTS_COMP_REPORT_FILTER: ${{ github.event.inputs.comp_report_filter }}
-
-      # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-      # Upload Results
-      # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-      - name: Generate Benchmark Summary
-        if: steps.should-run.outputs.enabled == 'true' && steps.scope.outputs.skip_bench != 'true' && always()
-        continue-on-error: true
-        shell: bash
-        run: |
-          SUMMARY_FILE="target/criterion/BENCHMARK_SUMMARY.md"
-          mkdir -p target/criterion
-          {
-            echo "# rscrypto Benchmark Report"
-            echo ""
-            echo "## Run Information"
-            echo "- **Platform**: ${{ matrix.target.name }}"
-            echo "- **Runner**: ${{ matrix.target.runner }}"
-            echo "- **Mode**: $RSCRYPTO_BENCH_MODE"
-            echo "- **Date**: $(date -u +"%Y-%m-%d %H:%M:%S UTC")"
-            echo "- **Commit**: ${{ github.sha }}"
-            echo ""
-            echo "## Artifacts"
-            echo "- **benchmark-results-${{ matrix.target.platform-id }}**: Console output"
-            echo "- **criterion-html-${{ matrix.target.platform-id }}**: Interactive HTML reports"
-          } | tee "$SUMMARY_FILE"
-
-      - name: Upload Benchmark Results (Console Output)
-        if: steps.should-run.outputs.enabled == 'true' && steps.scope.outputs.skip_bench != 'true' && always()
-        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+      - name: Upload Benchmark Results
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08  # v4.6.0
         with:
-          name: benchmark-results-${{ matrix.target.platform-id }}
-          path: benchmark-results/
-          retention-days: 90
-          if-no-files-found: warn
-          compression-level: 6
-
-      - name: Upload Criterion HTML Report
-        if: steps.should-run.outputs.enabled == 'true' && steps.scope.outputs.skip_bench != 'true' && always()
-        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
-        with:
-          name: criterion-html-${{ matrix.target.platform-id }}
-          path: target/criterion/
-          retention-days: 90
-          if-no-files-found: ignore
-          compression-level: 6
-
-      - name: Upload checksum comp report
-        if: steps.should-run.outputs.enabled == 'true' && github.event_name == 'workflow_dispatch' && (github.event.inputs.run_comp_report == 'true' || github.event.inputs.comp_report_crc32c_diagnose == 'true') && runner.os == 'Linux' && startsWith(matrix.target.platform-id, 'linux-') && always()
-        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
-        with:
-          name: checksum-comp-report-${{ matrix.target.platform-id }}
+          name: benchmark-amd-zen4
           path: |
-            benchmark-results/comp-output.txt
-            benchmark-results/comp-report.txt
-            benchmark-results/comp-output.*.txt
-            benchmark-results/comp-report.*.txt
-            target/criterion/comp-report/
-            target/criterion/comp-crc32c-diagnose/
+            benchmark-results/
+            target/criterion/
           retention-days: 90
-          if-no-files-found: warn
-          compression-level: 6
 
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # Unified Tuning (Manual Only)
+  # AMD ZEN5 BENCHMARKS (RunsOn - Turin)
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # Runs the unified `rscrypto-tune` binary on selected platforms.
-  # Benchmarks all checksum algorithms (CRC-16/24/32/64) and outputs
-  # recommended RSCRYPTO_CRC*_* environment exports.
-  #
-  # Local equivalent: just tune
+  # EPYC 9R45 @ 4.5GHz - Latest AMD with AVX-512
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  bench-amd-zen5:
+    name: Benchmark (AMD Zen5)
+    if: |
+      github.event_name == 'workflow_dispatch' &&
+      github.event.inputs.tune != 'true' &&
+      github.event.inputs.run_amd_zen5 == 'true'
+    runs-on: runs-on=${{ github.run_id }}/runner=amd-zen5
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Setup RunsOn
+        uses: ./.github/actions/setup-runson
+        with:
+          mode: runson-bench
+
+      - name: Run Criterion Benchmarks
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Running Criterion Benchmarks (AMD Zen5 Turin)"
+          echo "RUSTFLAGS: ${RUSTFLAGS}"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          rm -rf target/criterion
+          mkdir -p benchmark-results
+          CRATES_INPUT="${{ github.event.inputs.crates }}"
+          if [ -n "$CRATES_INPUT" ]; then
+            CRATE_FLAGS=""
+            IFS=',' read -ra CRATES <<< "$CRATES_INPUT"
+            for crate in "${CRATES[@]}"; do
+              CRATE_FLAGS="$CRATE_FLAGS -p $(echo "$crate" | xargs)"
+            done
+          else
+            CRATE_FLAGS="--workspace"
+          fi
+          # shellcheck disable=SC2086
+          cargo bench --profile bench $CRATE_FLAGS 2>&1 | tee benchmark-results/output.txt
+
+      - name: Upload Benchmark Results
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08  # v4.6.0
+        with:
+          name: benchmark-amd-zen5
+          path: |
+            benchmark-results/
+            target/criterion/
+          retention-days: 90
+
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # INTEL BENCHMARKS (RunsOn - Granite/Emerald/Sapphire Rapids)
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # Fallback chain: m8i/r8i → i7i/i7ie → c7i/m7i
+  # All have: AVX-512, VPCLMULQDQ, GFNI (critical for CRC/crypto)
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  bench-intel:
+    name: Benchmark (Intel)
+    if: |
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' &&
+       github.event.inputs.tune != 'true' &&
+       github.event.inputs.run_intel == 'true')
+    runs-on: runs-on=${{ github.run_id }}/runner=intel-bench
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Setup RunsOn
+        uses: ./.github/actions/setup-runson
+        with:
+          mode: runson-bench
+
+      - name: Determine Benchmark Scope
+        id: scope
+        run: |
+          CRATES_INPUT="${{ github.event.inputs.crates }}"
+          BENCHES_INPUT="${{ github.event.inputs.specific_benches }}"
+
+          if [ "${{ github.event_name }}" == "schedule" ]; then
+            AFFECTED=$(cargo rail affected --since HEAD~50 -f names-only 2>/dev/null || echo "")
+            if [ -z "$AFFECTED" ]; then
+              echo "crate_flags=--workspace" >> "$GITHUB_OUTPUT"
+            else
+              CRATE_FLAGS=""
+              while IFS= read -r crate; do
+                [ -n "$crate" ] && CRATE_FLAGS="$CRATE_FLAGS -p $crate"
+              done <<< "$AFFECTED"
+              echo "crate_flags=$CRATE_FLAGS" >> "$GITHUB_OUTPUT"
+            fi
+            echo "bench_flags=" >> "$GITHUB_OUTPUT"
+          else
+            if [ -n "$CRATES_INPUT" ]; then
+              CRATE_FLAGS=""
+              IFS=',' read -ra CRATES <<< "$CRATES_INPUT"
+              for crate in "${CRATES[@]}"; do
+                CRATE_FLAGS="$CRATE_FLAGS -p $(echo "$crate" | xargs)"
+              done
+              echo "crate_flags=$CRATE_FLAGS" >> "$GITHUB_OUTPUT"
+            else
+              echo "crate_flags=--workspace" >> "$GITHUB_OUTPUT"
+            fi
+            if [ -n "$BENCHES_INPUT" ]; then
+              BENCH_FLAGS=""
+              IFS=',' read -ra BENCHES <<< "$BENCHES_INPUT"
+              for bench in "${BENCHES[@]}"; do
+                BENCH_FLAGS="$BENCH_FLAGS --bench $(echo "$bench" | xargs)"
+              done
+              echo "bench_flags=$BENCH_FLAGS" >> "$GITHUB_OUTPUT"
+            else
+              echo "bench_flags=" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+      - name: Install cargo-rail (scheduled runs)
+        if: github.event_name == 'schedule'
+        uses: taiki-e/install-action@7ea888af71a31437ad4e71c62d021b3bb2728ea9  # v2.49.3
+        with:
+          tool: cargo-rail
+
+      - name: Run Criterion Benchmarks
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Running Criterion Benchmarks (Intel)"
+          echo "RUSTFLAGS: ${RUSTFLAGS}"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          rm -rf target/criterion
+          mkdir -p benchmark-results
+          # shellcheck disable=SC2086
+          cargo bench --profile bench ${{ steps.scope.outputs.crate_flags }} ${{ steps.scope.outputs.bench_flags }} 2>&1 | tee benchmark-results/output.txt
+
+      - name: Upload Benchmark Results
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08  # v4.6.0
+        with:
+          name: benchmark-intel
+          path: |
+            benchmark-results/
+            target/criterion/
+          retention-days: 90
+
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # GRAVITON BENCHMARKS (RunsOn - Best Available)
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # Fallback: Graviton 4 (Neoverse V2) → Graviton 3 (Neoverse V1)
+  # NOT Graviton 2 (N1) - GitHub free already provides that
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  bench-graviton:
+    name: Benchmark (Graviton)
+    if: |
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' &&
+       github.event.inputs.tune != 'true' &&
+       github.event.inputs.run_graviton == 'true')
+    runs-on: runs-on=${{ github.run_id }}/runner=graviton
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Setup RunsOn
+        uses: ./.github/actions/setup-runson
+        with:
+          mode: runson-bench
+
+      - name: Determine Benchmark Scope
+        id: scope
+        run: |
+          CRATES_INPUT="${{ github.event.inputs.crates }}"
+          BENCHES_INPUT="${{ github.event.inputs.specific_benches }}"
+
+          if [ "${{ github.event_name }}" == "schedule" ]; then
+            AFFECTED=$(cargo rail affected --since HEAD~50 -f names-only 2>/dev/null || echo "")
+            if [ -z "$AFFECTED" ]; then
+              echo "crate_flags=--workspace" >> "$GITHUB_OUTPUT"
+            else
+              CRATE_FLAGS=""
+              while IFS= read -r crate; do
+                [ -n "$crate" ] && CRATE_FLAGS="$CRATE_FLAGS -p $crate"
+              done <<< "$AFFECTED"
+              echo "crate_flags=$CRATE_FLAGS" >> "$GITHUB_OUTPUT"
+            fi
+            echo "bench_flags=" >> "$GITHUB_OUTPUT"
+          else
+            if [ -n "$CRATES_INPUT" ]; then
+              CRATE_FLAGS=""
+              IFS=',' read -ra CRATES <<< "$CRATES_INPUT"
+              for crate in "${CRATES[@]}"; do
+                CRATE_FLAGS="$CRATE_FLAGS -p $(echo "$crate" | xargs)"
+              done
+              echo "crate_flags=$CRATE_FLAGS" >> "$GITHUB_OUTPUT"
+            else
+              echo "crate_flags=--workspace" >> "$GITHUB_OUTPUT"
+            fi
+            if [ -n "$BENCHES_INPUT" ]; then
+              BENCH_FLAGS=""
+              IFS=',' read -ra BENCHES <<< "$BENCHES_INPUT"
+              for bench in "${BENCHES[@]}"; do
+                BENCH_FLAGS="$BENCH_FLAGS --bench $(echo "$bench" | xargs)"
+              done
+              echo "bench_flags=$BENCH_FLAGS" >> "$GITHUB_OUTPUT"
+            else
+              echo "bench_flags=" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+      - name: Install cargo-rail (scheduled runs)
+        if: github.event_name == 'schedule'
+        uses: taiki-e/install-action@7ea888af71a31437ad4e71c62d021b3bb2728ea9  # v2.49.3
+        with:
+          tool: cargo-rail
+
+      - name: Run Criterion Benchmarks
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Running Criterion Benchmarks (Graviton)"
+          echo "RUSTFLAGS: ${RUSTFLAGS}"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          rm -rf target/criterion
+          mkdir -p benchmark-results
+          # shellcheck disable=SC2086
+          cargo bench --profile bench ${{ steps.scope.outputs.crate_flags }} ${{ steps.scope.outputs.bench_flags }} 2>&1 | tee benchmark-results/output.txt
+
+      - name: Upload Benchmark Results
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08  # v4.6.0
+        with:
+          name: benchmark-graviton
+          path: |
+            benchmark-results/
+            target/criterion/
+          retention-days: 90
+
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # UNIFIED TUNING (Manual Only)
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # Runs `rscrypto-tune` to generate recommended kernel selection tables.
+  # Outputs RSCRYPTO_CRC*_* environment variable recommendations.
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   tuning:
-    name: Unified Tuning (${{ matrix.target.name }})
+    name: Tuning (${{ matrix.target.name }})
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.tune == 'true'
     runs-on: ${{ matrix.target.runner }}
     timeout-minutes: 60
@@ -598,128 +450,84 @@ jobs:
       fail-fast: false
       matrix:
         target:
-          - name: x86_64-unknown-linux-gnu
+          # Intel (RunsOn)
+          - name: Intel
+            runner: runs-on=${{ github.run_id }}/runner=intel-bench
+            platform-id: intel
+            enabled: ${{ github.event.inputs.run_intel }}
+
+          # AMD Zen4 (Namespace)
+          - name: AMD-Zen4
             runner: namespace-profile-rscrypto-linux-x86
-            platform-id: linux-x64
+            platform-id: amd-zen4
+            enabled: ${{ github.event.inputs.run_amd_zen4 }}
 
-          - name: aarch64-unknown-linux-gnu
-            runner: namespace-profile-rscrypto-linux-arm64
-            platform-id: linux-arm64
+          # AMD Zen5 (RunsOn)
+          - name: AMD-Zen5
+            runner: runs-on=${{ github.run_id }}/runner=amd-zen5
+            platform-id: amd-zen5
+            enabled: ${{ github.event.inputs.run_amd_zen5 }}
 
-          - name: x86_64-pc-windows-msvc
-            runner: windows-latest
-            platform-id: windows-x64
+          # Graviton (RunsOn - best available)
+          - name: Graviton
+            runner: runs-on=${{ github.run_id }}/runner=graviton
+            platform-id: graviton
+            enabled: ${{ github.event.inputs.run_graviton }}
 
     steps:
-      - name: Check Platform Selection
-        id: should-run
-        shell: bash
+      - name: Check if enabled
+        id: check
         run: |
-          PLATFORM="${{ matrix.target.platform-id }}"
-
-          case "$PLATFORM" in
-            "linux-x64")
-              if [ "${GITHUB_EVENT_INPUTS_RUN_LINUX_X64}" == "true" ]; then
-                echo "enabled=true" >> "$GITHUB_OUTPUT"
-                echo "Linux x86-64 enabled"
-              else
-                echo "enabled=false" >> "$GITHUB_OUTPUT"
-                echo "Linux x86-64 disabled - skipping"
-              fi
-              ;;
-            "linux-arm64")
-              if [ "${GITHUB_EVENT_INPUTS_RUN_LINUX_ARM64}" == "true" ]; then
-                echo "enabled=true" >> "$GITHUB_OUTPUT"
-                echo "Linux ARM64 enabled"
-              else
-                echo "enabled=false" >> "$GITHUB_OUTPUT"
-                echo "Linux ARM64 disabled - skipping"
-              fi
-              ;;
-            "windows-x64")
-              if [ "${GITHUB_EVENT_INPUTS_RUN_WINDOWS_X64}" == "true" ]; then
-                echo "enabled=true" >> "$GITHUB_OUTPUT"
-                echo "Windows x86-64 enabled"
-              else
-                echo "enabled=false" >> "$GITHUB_OUTPUT"
-                echo "Windows x86-64 disabled - skipping"
-              fi
-              ;;
-            *)
-              echo "enabled=false" >> "$GITHUB_OUTPUT"
-              echo "Unknown platform - skipping"
-              ;;
-          esac
-        env:
-          GITHUB_EVENT_INPUTS_RUN_LINUX_X64: ${{ github.event.inputs.run_linux_x64 }}
-          GITHUB_EVENT_INPUTS_RUN_LINUX_ARM64: ${{ github.event.inputs.run_linux_arm64 }}
-          GITHUB_EVENT_INPUTS_RUN_WINDOWS_X64: ${{ github.event.inputs.run_windows_x64 }}
+          if [ "${{ matrix.target.enabled }}" == "true" ]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Skipping ${{ matrix.target.name }} - not enabled"
+          fi
 
       - name: Checkout
-        if: steps.should-run.outputs.enabled == 'true'
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        if: steps.check.outputs.skip != 'true'
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
-      - name: Read Toolchain Version
-        if: steps.should-run.outputs.enabled == 'true'
-        id: toolchain
-        shell: bash
-        run: |
-          TOOLCHAIN=$(awk -F'"' '/^channel/ {print $2}' rust-toolchain.toml)
-          echo "version=$TOOLCHAIN" >> "$GITHUB_OUTPUT"
-
-      - name: Install Rust Toolchain
-        if: steps.should-run.outputs.enabled == 'true'
-        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
+      - name: Setup (RunsOn)
+        if: steps.check.outputs.skip != 'true' && contains(matrix.target.runner, 'runs-on=')
+        uses: ./.github/actions/setup-runson
         with:
-          toolchain: ${{ steps.toolchain.outputs.version }}
+          mode: runson-bench
 
-      - name: Setup Namespace Cache (Linux)
-        if: steps.should-run.outputs.enabled == 'true' && runner.os == 'Linux'
-        uses: namespacelabs/nscloud-cache-action@446d8f390563cd54ca27e8de5bdb816f63c0b706 # v1.2.21
+      - name: Setup (Namespace)
+        if: steps.check.outputs.skip != 'true' && contains(matrix.target.runner, 'namespace-')
+        run: |
+          # Toolchain
+          TOOLCHAIN=$(awk -F'"' '/^channel/ {print $2}' rust-toolchain.toml)
+          rustup default "$TOOLCHAIN"
+          # Tools
+          scripts/ci/install-tools.sh bench
+
+      - name: Setup Namespace Cache
+        if: steps.check.outputs.skip != 'true' && contains(matrix.target.runner, 'namespace-')
+        uses: namespacelabs/nscloud-cache-action@446d8f390563cd54ca27e8de5bdb816f63c0b706  # v1.2.21
         with:
           cache: rust
 
-      - name: Compute Cache Key
-        if: steps.should-run.outputs.enabled == 'true' && runner.os == 'Windows'
-        id: cache
-        shell: bash
-        run: |
-          OS=$(echo "${{ runner.os }}" | tr '[:upper:]' '[:lower:]')
-          ARCH=$(echo "${{ runner.arch }}" | tr '[:upper:]' '[:lower:]')
-          echo "key=tune-${OS}-${ARCH}" >> "$GITHUB_OUTPUT"
-
-      - name: Setup Rust Cache (Windows)
-        if: steps.should-run.outputs.enabled == 'true' && runner.os == 'Windows'
-        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
-        with:
-          shared-key: "rscrypto-tune-v1"
-          key: ${{ steps.cache.outputs.key }}
-          cache-on-failure: true
-
-      - name: Install Tools
-        if: steps.should-run.outputs.enabled == 'true'
-        uses: taiki-e/install-action@de7896b7cd1c7d181266425abbe571b5a8c757bc # v2.65.3
-        with:
-          tool: just
-
       - name: Run Unified Tuning
-        if: steps.should-run.outputs.enabled == 'true'
-        shell: bash
+        if: steps.check.outputs.skip != 'true'
         run: |
           set -euo pipefail
           mkdir -p tune-results
 
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "Running unified tuning (all algorithms)"
-          echo "Platform: ${{ matrix.target.name }}"
+          echo "Running rscrypto-tune (${{ matrix.target.name }})"
           echo "RUSTFLAGS: -C target-cpu=native"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-          RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p tune --release --bin rscrypto-tune -- --quick 2>&1 | tee tune-results/rscrypto-tune.txt
+          RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
+            cargo run -p tune --release --bin rscrypto-tune -- --quick 2>&1 | \
+            tee tune-results/rscrypto-tune.txt
 
           {
             echo ""
-            echo "## Unified Tuning Results (${{ matrix.target.platform-id }})"
+            echo "## Tuning Results (${{ matrix.target.name }})"
             echo ""
             echo '```'
             cat tune-results/rscrypto-tune.txt
@@ -727,64 +535,58 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload Tuning Results
-        if: steps.should-run.outputs.enabled == 'true' && always()
-        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        if: steps.check.outputs.skip != 'true' && always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08  # v4.6.0
         with:
-          name: rscrypto-tuning-${{ matrix.target.platform-id }}
+          name: tuning-${{ matrix.target.platform-id }}
           path: tune-results/
           retention-days: 90
-          if-no-files-found: warn
-          compression-level: 6
 
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # Regression Detection (Manual Only)
+  # REGRESSION DETECTION (Manual Only)
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # Compares current benchmark results against a baseline using critcmp.
-  # Useful for detecting performance regressions before releases.
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
   regression-check:
     name: Regression Check
-    needs: [benchmark]
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.regression_baseline != '' && github.event.inputs.tune != 'true'
+    if: |
+      github.event_name == 'workflow_dispatch' &&
+      github.event.inputs.regression_baseline != '' &&
+      github.event.inputs.tune != 'true'
     runs-on: namespace-profile-rscrypto-linux-x86
     timeout-minutes: 60
     steps:
       - name: Checkout Current
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
           path: current
 
       - name: Checkout Baseline
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
           ref: ${{ github.event.inputs.regression_baseline }}
           path: baseline
 
       - name: Read Toolchain Version
         id: toolchain
-        shell: bash
         run: |
           TOOLCHAIN=$(awk -F'"' '/^channel/ {print $2}' current/rust-toolchain.toml)
           echo "version=$TOOLCHAIN" >> "$GITHUB_OUTPUT"
 
       - name: Install Rust Toolchain
-        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
+        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561  # master
         with:
           toolchain: ${{ steps.toolchain.outputs.version }}
 
       - name: Setup Namespace Cache
-        uses: namespacelabs/nscloud-cache-action@446d8f390563cd54ca27e8de5bdb816f63c0b706 # v1.2.21
+        uses: namespacelabs/nscloud-cache-action@446d8f390563cd54ca27e8de5bdb816f63c0b706  # v1.2.21
         with:
           cache: rust
 
       - name: Install Benchmarking Tools
-        uses: taiki-e/install-action@de7896b7cd1c7d181266425abbe571b5a8c757bc # v2.65.3
+        uses: taiki-e/install-action@7ea888af71a31437ad4e71c62d021b3bb2728ea9  # v2.49.3
         with:
           tool: cargo-criterion,critcmp
 
       - name: Benchmark Baseline
-        shell: bash
         working-directory: baseline
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -795,7 +597,6 @@ jobs:
           RUSTFLAGS: "-C target-cpu=native"
 
       - name: Benchmark Current
-        shell: bash
         working-directory: current
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -806,7 +607,6 @@ jobs:
           RUSTFLAGS: "-C target-cpu=native"
 
       - name: Compare Results
-        shell: bash
         working-directory: current
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -817,20 +617,17 @@ jobs:
           mkdir -p regression-results
           critcmp baseline current 2>&1 | tee regression-results/comparison.txt
 
-          # Check for significant regressions (>5% slower)
           if grep -E "regressed|slower" regression-results/comparison.txt | grep -v "1\.[0-4][0-9]x"; then
             echo ""
-            echo "⚠️  Potential regressions detected (>5% slower)"
-            echo "Review the comparison above for affected benchmarks."
+            echo "Potential regressions detected (>5% slower)"
           else
             echo ""
-            echo "✅ No significant regressions detected"
+            echo "No significant regressions detected"
           fi
 
       - name: Upload Regression Report
-        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08  # v4.6.0
         with:
           name: regression-report
           path: current/regression-results/
           retention-days: 90
-          if-no-files-found: warn

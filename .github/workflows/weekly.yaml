@@ -34,7 +34,7 @@ jobs:
           - name: x86_64
             runner: ubuntu-latest
           - name: aarch64
-            runner: namespace-profile-rscrypto-linux-arm64
+            runner: ubuntu-24.04-arm
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
@@ -52,7 +52,7 @@ jobs:
           components: miri, rust-src
 
       - name: Install Tools
-        uses: taiki-e/install-action@de7896b7cd1c7d181266425abbe571b5a8c757bc  # v2.65.3
+        uses: taiki-e/install-action@7ea888af71a31437ad4e71c62d021b3bb2728ea9  # v2.49.3
         with:
           tool: just
 
@@ -83,7 +83,7 @@ jobs:
           toolchain: ${{ steps.toolchain.outputs.version }}
 
       - name: Install Tools
-        uses: taiki-e/install-action@de7896b7cd1c7d181266425abbe571b5a8c757bc  # v2.65.3
+        uses: taiki-e/install-action@7ea888af71a31437ad4e71c62d021b3bb2728ea9  # v2.49.3
         with:
           tool: cargo-nextest,just
 
@@ -107,7 +107,7 @@ jobs:
           - name: x86_64
             runner: ubuntu-latest
           - name: aarch64
-            runner: namespace-profile-rscrypto-linux-arm64
+            runner: ubuntu-24.04-arm
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
@@ -124,7 +124,7 @@ jobs:
           toolchain: ${{ steps.toolchain.outputs.version }}
 
       - name: Install Tools
-        uses: taiki-e/install-action@de7896b7cd1c7d181266425abbe571b5a8c757bc  # v2.65.3
+        uses: taiki-e/install-action@7ea888af71a31437ad4e71c62d021b3bb2728ea9  # v2.49.3
         with:
           tool: cargo-fuzz,just
 

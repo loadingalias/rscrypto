@@ -32,7 +32,7 @@ pub use config::{Crc16Config, Crc16Force};
 #[allow(unused_imports)]
 pub(super) use traits::{Checksum, ChecksumCombine};
 
-#[cfg(any(test, feature = "force-mode"))]
+#[cfg(any(test, feature = "std"))]
 use crate::common::reference::crc16_bitwise;
 use crate::common::{
   combine::{Gf2Matrix16, combine_crc16, generate_shift8_matrix_16},
@@ -69,7 +69,7 @@ mod kernel_tables {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Bitwise reference implementation for CRC-16/CCITT.
-#[cfg(any(test, feature = "force-mode"))]
+#[cfg(any(test, feature = "std"))]
 #[allow(dead_code)]
 #[inline]
 fn crc16_ccitt_reference(crc: u16, data: &[u8]) -> u16 {
@@ -77,7 +77,7 @@ fn crc16_ccitt_reference(crc: u16, data: &[u8]) -> u16 {
 }
 
 /// Bitwise reference implementation for CRC-16/IBM.
-#[cfg(any(test, feature = "force-mode"))]
+#[cfg(any(test, feature = "std"))]
 #[allow(dead_code)]
 #[inline]
 fn crc16_ibm_reference(crc: u16, data: &[u8]) -> u16 {
@@ -91,60 +91,63 @@ fn crc16_ibm_reference(crc: u16, data: &[u8]) -> u16 {
 /// CRC-16/CCITT dispatch - fast path using pre-resolved kernel tables.
 ///
 /// Uses the empirically-optimal kernel for the current platform and buffer size.
-/// No per-call overhead: table selection happens once at initialization.
+/// When `std` is enabled, also respects `RSCRYPTO_CRC16_CCITT_FORCE` env var for
+/// debugging/testing specific kernel paths.
 #[inline]
 fn crc16_ccitt_dispatch(crc: u16, data: &[u8]) -> u16 {
+  #[cfg(feature = "std")]
+  {
+    let cfg = config::get_ccitt();
+    if cfg.effective_force == Crc16Force::Reference {
+      return crc16_ccitt_reference(crc, data);
+    }
+    if cfg.effective_force == Crc16Force::Portable {
+      return portable::crc16_ccitt_slice8(crc, data);
+    }
+  }
+
   let table = crate::dispatch::active_table();
   let kernel = table.select_set(data.len()).crc16_ccitt;
   kernel(crc, data)
 }
 
-/// CRC-16/CCITT dispatch with force mode support (for testing/debugging).
-#[cfg(any(test, feature = "force-mode"))]
-#[allow(dead_code)]
-#[inline]
-fn crc16_ccitt_dispatch_forced(crc: u16, data: &[u8]) -> u16 {
-  let cfg = config::get_ccitt();
-  match cfg.effective_force {
-    Crc16Force::Reference => crc16_ccitt_reference(crc, data),
-    Crc16Force::Portable => portable::crc16_ccitt_slice8(crc, data),
-    _ => crc16_ccitt_dispatch(crc, data),
-  }
-}
-
 /// CRC-16/IBM dispatch - fast path using pre-resolved kernel tables.
 ///
 /// Uses the empirically-optimal kernel for the current platform and buffer size.
-/// No per-call overhead: table selection happens once at initialization.
+/// When `std` is enabled, also respects `RSCRYPTO_CRC16_IBM_FORCE` env var for
+/// debugging/testing specific kernel paths.
 #[inline]
 fn crc16_ibm_dispatch(crc: u16, data: &[u8]) -> u16 {
+  #[cfg(feature = "std")]
+  {
+    let cfg = config::get_ibm();
+    if cfg.effective_force == Crc16Force::Reference {
+      return crc16_ibm_reference(crc, data);
+    }
+    if cfg.effective_force == Crc16Force::Portable {
+      return portable::crc16_ibm_slice8(crc, data);
+    }
+  }
+
   let table = crate::dispatch::active_table();
   let kernel = table.select_set(data.len()).crc16_ibm;
   kernel(crc, data)
-}
-
-/// CRC-16/IBM dispatch with force mode support (for testing/debugging).
-#[cfg(any(test, feature = "force-mode"))]
-#[allow(dead_code)]
-#[inline]
-fn crc16_ibm_dispatch_forced(crc: u16, data: &[u8]) -> u16 {
-  let cfg = config::get_ibm();
-  match cfg.effective_force {
-    Crc16Force::Reference => crc16_ibm_reference(crc, data),
-    Crc16Force::Portable => portable::crc16_ibm_slice8(crc, data),
-    _ => crc16_ibm_dispatch(crc, data),
-  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Introspection
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Get the name of the CRC-16/CCITT kernel that would be selected for a given buffer length.
+///
+/// This is primarily for diagnostics and testing. The actual kernel selection
+/// happens via the dispatch module's pre-computed tables.
 #[inline]
 #[must_use]
-pub(crate) fn crc16_selected_kernel_name(len: usize) -> &'static str {
+pub(crate) fn crc16_ccitt_selected_kernel_name(len: usize) -> &'static str {
   let cfg = config::get_ccitt();
 
+  // Handle forced modes
   if cfg.effective_force == Crc16Force::Reference {
     return kernels::REFERENCE;
   }
@@ -152,39 +155,31 @@ pub(crate) fn crc16_selected_kernel_name(len: usize) -> &'static str {
     return kernels::PORTABLE_SLICE8;
   }
 
+  // For auto mode, return the specific kernel name from the dispatch table
   let table = crate::dispatch::active_table();
-  let _set = table.select_set(len);
+  table.select_set(len).crc16_ccitt_name
+}
 
-  #[cfg(target_arch = "x86_64")]
-  {
-    "x86_64/auto"
+/// Get the name of the CRC-16/IBM kernel that would be selected for a given buffer length.
+///
+/// This is primarily for diagnostics and testing. The actual kernel selection
+/// happens via the dispatch module's pre-computed tables.
+#[inline]
+#[must_use]
+pub(crate) fn crc16_ibm_selected_kernel_name(len: usize) -> &'static str {
+  let cfg = config::get_ibm();
+
+  // Handle forced modes
+  if cfg.effective_force == Crc16Force::Reference {
+    return kernels::REFERENCE;
   }
-  #[cfg(target_arch = "aarch64")]
-  {
-    "aarch64/auto"
+  if cfg.effective_force == Crc16Force::Portable {
+    return kernels::PORTABLE_SLICE8;
   }
-  #[cfg(target_arch = "powerpc64")]
-  {
-    "power/auto"
-  }
-  #[cfg(target_arch = "s390x")]
-  {
-    "s390x/auto"
-  }
-  #[cfg(target_arch = "riscv64")]
-  {
-    "riscv64/auto"
-  }
-  #[cfg(not(any(
-    target_arch = "x86_64",
-    target_arch = "aarch64",
-    target_arch = "powerpc64",
-    target_arch = "s390x",
-    target_arch = "riscv64"
-  )))]
-  {
-    kernels::PORTABLE_SLICE8
-  }
+
+  // For auto mode, return the specific kernel name from the dispatch table
+  let table = crate::dispatch::active_table();
+  table.select_set(len).crc16_ibm_name
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -237,7 +232,7 @@ impl Crc16Ccitt {
     match cfg.effective_force {
       Crc16Force::Reference => kernels::REFERENCE,
       Crc16Force::Portable => kernels::PORTABLE_SLICE8,
-      _ => crc16_selected_kernel_name(1024),
+      _ => crc16_ccitt_selected_kernel_name(1024),
     }
   }
 
@@ -250,7 +245,7 @@ impl Crc16Ccitt {
   /// Returns the kernel name that the selector would choose for `len`.
   #[must_use]
   pub fn kernel_name_for_len(len: usize) -> &'static str {
-    crc16_selected_kernel_name(len)
+    crc16_ccitt_selected_kernel_name(len)
   }
 }
 
@@ -344,7 +339,7 @@ impl Crc16Ibm {
     match cfg.effective_force {
       Crc16Force::Reference => kernels::REFERENCE,
       Crc16Force::Portable => kernels::PORTABLE_SLICE8,
-      _ => crc16_selected_kernel_name(1024),
+      _ => crc16_ibm_selected_kernel_name(1024),
     }
   }
 
@@ -357,7 +352,7 @@ impl Crc16Ibm {
   /// Returns the kernel name that the selector would choose for `len`.
   #[must_use]
   pub fn kernel_name_for_len(len: usize) -> &'static str {
-    crc16_selected_kernel_name(len)
+    crc16_ibm_selected_kernel_name(len)
   }
 }
 
@@ -442,6 +437,30 @@ define_buffered_crc! {
   pub struct BufferedCrc16Ibm<Crc16Ibm> {
     buffer_size: BUFFERED_CRC16_BUFFER_SIZE,
     threshold_fn: crc16_ibm_buffered_threshold,
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Kernel Introspection
+// ─────────────────────────────────────────────────────────────────────────────
+
+impl crate::introspect::KernelIntrospect for Crc16Ccitt {
+  fn kernel_name_for_len(len: usize) -> &'static str {
+    Self::kernel_name_for_len(len)
+  }
+
+  fn backend_name() -> &'static str {
+    Self::backend_name()
+  }
+}
+
+impl crate::introspect::KernelIntrospect for Crc16Ibm {
+  fn kernel_name_for_len(len: usize) -> &'static str {
+    Self::kernel_name_for_len(len)
+  }
+
+  fn backend_name() -> &'static str {
+    Self::backend_name()
   }
 }
 

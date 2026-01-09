@@ -4,8 +4,11 @@ use super::kernel_tables;
 use crate::common::portable;
 
 /// CRC-16/CCITT (X25 / IBM-SDLC) slice-by-4 computation.
+///
+/// This is a legacy kernel kept for benchmarking and testing. Prefer `crc16_ccitt_slice8`.
+#[doc(hidden)]
 #[inline]
-pub fn crc16_ccitt_slice4(crc: u16, data: &[u8]) -> u16 {
+pub(crate) fn crc16_ccitt_slice4(crc: u16, data: &[u8]) -> u16 {
   portable::slice4_16(crc, data, &kernel_tables::CCITT_TABLES_4)
 }
 
@@ -16,8 +19,11 @@ pub fn crc16_ccitt_slice8(crc: u16, data: &[u8]) -> u16 {
 }
 
 /// CRC-16/IBM (ARC) slice-by-4 computation.
+///
+/// This is a legacy kernel kept for benchmarking and testing. Prefer `crc16_ibm_slice8`.
+#[doc(hidden)]
 #[inline]
-pub fn crc16_ibm_slice4(crc: u16, data: &[u8]) -> u16 {
+pub(crate) fn crc16_ibm_slice4(crc: u16, data: &[u8]) -> u16 {
   portable::slice4_16(crc, data, &kernel_tables::IBM_TABLES_4)
 }
 
