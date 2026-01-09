@@ -33,6 +33,33 @@ install_if_missing() {
     cargo binstall "$tool" --no-confirm --force 2>/dev/null || cargo install "$tool" --locked
 }
 
+# Install cargo-audit with version validation (requires 0.20+ for CVSS 4.0)
+install_cargo_audit() {
+    local min_major=0
+    local min_minor=20
+
+    if command -v cargo-audit &>/dev/null; then
+        # Extract version: "cargo-audit 0.20.1" -> "0.20.1"
+        local version
+        version=$(cargo audit --version 2>/dev/null | awk '{print $2}')
+        local major minor
+        major=$(echo "$version" | cut -d. -f1)
+        minor=$(echo "$version" | cut -d. -f2)
+
+        if [ "$major" -gt "$min_major" ] 2>/dev/null || \
+           { [ "$major" -eq "$min_major" ] && [ "$minor" -ge "$min_minor" ]; } 2>/dev/null; then
+            echo "  cargo-audit: cached (v$version >= 0.20)"
+            return 0
+        fi
+
+        echo "  cargo-audit: outdated (v$version < 0.20), upgrading..."
+    else
+        echo "  cargo-audit: installing..."
+    fi
+
+    cargo binstall cargo-audit --no-confirm --force 2>/dev/null || cargo install cargo-audit --locked
+}
+
 # Install cargo-binstall first (required for fast installs)
 install_binstall
 
@@ -46,7 +73,7 @@ case "$MODE" in
         install_if_missing "cargo-nextest" "cargo-nextest"
         install_if_missing "cargo-rail" "cargo-rail"
         install_if_missing "cargo-deny" "cargo-deny"
-        install_if_missing "cargo-audit" "cargo-audit"
+        install_cargo_audit  # version-checked (requires 0.20+ for CVSS 4.0)
         install_if_missing "just" "just"
         ;;
 
