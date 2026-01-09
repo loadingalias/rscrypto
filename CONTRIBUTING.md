@@ -2,7 +2,7 @@
 
 Submit tuning results from your hardware. Every contribution helps users on similar platforms get better performance automatically.
 
-## Quick Start (5 minutes)
+## Quick Start
 
 ```bash
 git clone https://github.com/loadingalias/rscrypto.git
