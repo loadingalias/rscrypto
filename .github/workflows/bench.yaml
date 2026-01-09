@@ -657,7 +657,7 @@ jobs:
       github.event_name == 'workflow_dispatch' &&
       github.event.inputs.tune == 'true' &&
       github.event.inputs.run_riscv == 'true'
-    runs-on: [self-hosted, Linux, RISCV64]
+    runs-on: [self-hosted, 2c6cf205228d]
     timeout-minutes: 90
     steps:
       - name: Checkout
