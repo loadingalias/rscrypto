@@ -47,6 +47,15 @@ on:
         type: boolean
         default: true
 
+      # ─────────────────────────────────────────────────────────────────────────
+      # RISC-V 64 (Self-hosted Cloud-V)
+      # ─────────────────────────────────────────────────────────────────────────
+      run_riscv:
+        description: "Run on RISC-V 64 (Self-hosted Cloud-V)"
+        required: false
+        type: boolean
+        default: false
+
       specific_benches:
         description: "Specific benchmark binary names (optional, comma-separated)"
         required: false
@@ -440,84 +449,34 @@ jobs:
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   # Runs `rscrypto-tune` to generate recommended kernel selection tables.
   # Outputs RSCRYPTO_CRC*_* environment variable recommendations.
+  # Each job only runs when tune=true AND the specific platform is enabled,
+  # ensuring runners are only allocated for selected platforms.
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  tuning:
-    name: Tuning (${{ matrix.target.name }})
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.tune == 'true'
-    runs-on: ${{ matrix.target.runner }}
+
+  tune-intel:
+    name: Tuning (Intel)
+    if: |
+      github.event_name == 'workflow_dispatch' &&
+      github.event.inputs.tune == 'true' &&
+      github.event.inputs.run_intel == 'true'
+    runs-on: runs-on=${{ github.run_id }}/runner=intel-bench
     timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        target:
-          # Intel (RunsOn)
-          - name: Intel
-            runner: runs-on=${{ github.run_id }}/runner=intel-bench
-            platform-id: intel
-            enabled: ${{ github.event.inputs.run_intel }}
-
-          # AMD Zen4 (Namespace)
-          - name: AMD-Zen4
-            runner: namespace-profile-rscrypto-linux-x86
-            platform-id: amd-zen4
-            enabled: ${{ github.event.inputs.run_amd_zen4 }}
-
-          # AMD Zen5 (RunsOn)
-          - name: AMD-Zen5
-            runner: runs-on=${{ github.run_id }}/runner=amd-zen5
-            platform-id: amd-zen5
-            enabled: ${{ github.event.inputs.run_amd_zen5 }}
-
-          # Graviton (RunsOn - best available)
-          - name: Graviton
-            runner: runs-on=${{ github.run_id }}/runner=graviton
-            platform-id: graviton
-            enabled: ${{ github.event.inputs.run_graviton }}
-
     steps:
-      - name: Check if enabled
-        id: check
-        run: |
-          if [ "${{ matrix.target.enabled }}" == "true" ]; then
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "Skipping ${{ matrix.target.name }} - not enabled"
-          fi
-
       - name: Checkout
-        if: steps.check.outputs.skip != 'true'
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
-      - name: Setup (RunsOn)
-        if: steps.check.outputs.skip != 'true' && contains(matrix.target.runner, 'runs-on=')
+      - name: Setup RunsOn
         uses: ./.github/actions/setup-runson
         with:
           mode: runson-bench
 
-      - name: Setup (Namespace)
-        if: steps.check.outputs.skip != 'true' && contains(matrix.target.runner, 'namespace-')
-        run: |
-          # Toolchain
-          TOOLCHAIN=$(awk -F'"' '/^channel/ {print $2}' rust-toolchain.toml)
-          rustup default "$TOOLCHAIN"
-          # Tools
-          scripts/ci/install-tools.sh bench
-
-      - name: Setup Namespace Cache
-        if: steps.check.outputs.skip != 'true' && contains(matrix.target.runner, 'namespace-')
-        uses: namespacelabs/nscloud-cache-action@446d8f390563cd54ca27e8de5bdb816f63c0b706  # v1.2.21
-        with:
-          cache: rust
-
       - name: Run Unified Tuning
-        if: steps.check.outputs.skip != 'true'
         run: |
           set -euo pipefail
           mkdir -p tune-results
 
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "Running rscrypto-tune (${{ matrix.target.name }})"
+          echo "Running rscrypto-tune (Intel)"
           echo "RUSTFLAGS: -C target-cpu=native"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
@@ -527,7 +486,7 @@ jobs:
 
           {
             echo ""
-            echo "## Tuning Results (${{ matrix.target.name }})"
+            echo "## Tuning Results (Intel)"
             echo ""
             echo '```'
             cat tune-results/rscrypto-tune.txt
@@ -535,10 +494,216 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload Tuning Results
-        if: steps.check.outputs.skip != 'true' && always()
+        if: always()
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08  # v4.6.0
         with:
-          name: tuning-${{ matrix.target.platform-id }}
+          name: tuning-intel
+          path: tune-results/
+          retention-days: 90
+
+  tune-amd-zen4:
+    name: Tuning (AMD Zen4)
+    if: |
+      github.event_name == 'workflow_dispatch' &&
+      github.event.inputs.tune == 'true' &&
+      github.event.inputs.run_amd_zen4 == 'true'
+    runs-on: namespace-profile-rscrypto-linux-x86
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Setup Namespace Cache
+        uses: namespacelabs/nscloud-cache-action@446d8f390563cd54ca27e8de5bdb816f63c0b706  # v1.2.21
+        with:
+          cache: rust
+
+      - name: Setup Toolchain
+        run: |
+          TOOLCHAIN=$(awk -F'"' '/^channel/ {print $2}' rust-toolchain.toml)
+          rustup default "$TOOLCHAIN"
+          scripts/ci/install-tools.sh bench
+
+      - name: Run Unified Tuning
+        run: |
+          set -euo pipefail
+          mkdir -p tune-results
+
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Running rscrypto-tune (AMD Zen4)"
+          echo "RUSTFLAGS: -C target-cpu=native"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
+            cargo run -p tune --release --bin rscrypto-tune -- --quick 2>&1 | \
+            tee tune-results/rscrypto-tune.txt
+
+          {
+            echo ""
+            echo "## Tuning Results (AMD Zen4)"
+            echo ""
+            echo '```'
+            cat tune-results/rscrypto-tune.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Tuning Results
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08  # v4.6.0
+        with:
+          name: tuning-amd-zen4
+          path: tune-results/
+          retention-days: 90
+
+  tune-amd-zen5:
+    name: Tuning (AMD Zen5)
+    if: |
+      github.event_name == 'workflow_dispatch' &&
+      github.event.inputs.tune == 'true' &&
+      github.event.inputs.run_amd_zen5 == 'true'
+    runs-on: runs-on=${{ github.run_id }}/runner=amd-zen5
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Setup RunsOn
+        uses: ./.github/actions/setup-runson
+        with:
+          mode: runson-bench
+
+      - name: Run Unified Tuning
+        run: |
+          set -euo pipefail
+          mkdir -p tune-results
+
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Running rscrypto-tune (AMD Zen5)"
+          echo "RUSTFLAGS: -C target-cpu=native"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
+            cargo run -p tune --release --bin rscrypto-tune -- --quick 2>&1 | \
+            tee tune-results/rscrypto-tune.txt
+
+          {
+            echo ""
+            echo "## Tuning Results (AMD Zen5)"
+            echo ""
+            echo '```'
+            cat tune-results/rscrypto-tune.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Tuning Results
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08  # v4.6.0
+        with:
+          name: tuning-amd-zen5
+          path: tune-results/
+          retention-days: 90
+
+  tune-graviton:
+    name: Tuning (Graviton)
+    if: |
+      github.event_name == 'workflow_dispatch' &&
+      github.event.inputs.tune == 'true' &&
+      github.event.inputs.run_graviton == 'true'
+    runs-on: runs-on=${{ github.run_id }}/runner=graviton
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Setup RunsOn
+        uses: ./.github/actions/setup-runson
+        with:
+          mode: runson-bench
+
+      - name: Run Unified Tuning
+        run: |
+          set -euo pipefail
+          mkdir -p tune-results
+
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Running rscrypto-tune (Graviton)"
+          echo "RUSTFLAGS: -C target-cpu=native"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
+            cargo run -p tune --release --bin rscrypto-tune -- --quick 2>&1 | \
+            tee tune-results/rscrypto-tune.txt
+
+          {
+            echo ""
+            echo "## Tuning Results (Graviton)"
+            echo ""
+            echo '```'
+            cat tune-results/rscrypto-tune.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Tuning Results
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08  # v4.6.0
+        with:
+          name: tuning-graviton
+          path: tune-results/
+          retention-days: 90
+
+  tune-riscv:
+    name: Tuning (RISC-V 64)
+    if: |
+      github.event_name == 'workflow_dispatch' &&
+      github.event.inputs.tune == 'true' &&
+      github.event.inputs.run_riscv == 'true'
+    runs-on: [self-hosted, Linux, RISCV64]
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Detect CPU
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "RISC-V CPU Detection"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          cat /proc/cpuinfo | head -30 || true
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+      - name: Setup Toolchain
+        run: |
+          TOOLCHAIN=$(awk -F'"' '/^channel/ {print $2}' rust-toolchain.toml)
+          rustup default "$TOOLCHAIN"
+
+      - name: Run Unified Tuning
+        run: |
+          set -euo pipefail
+          mkdir -p tune-results
+
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Running rscrypto-tune (RISC-V 64)"
+          echo "RUSTFLAGS: -C target-cpu=native"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
+            cargo run -p tune --release --bin rscrypto-tune -- --quick 2>&1 | \
+            tee tune-results/rscrypto-tune.txt
+
+          {
+            echo ""
+            echo "## Tuning Results (RISC-V 64)"
+            echo ""
+            echo '```'
+            cat tune-results/rscrypto-tune.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Tuning Results
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08  # v4.6.0
+        with:
+          name: tuning-riscv64
           path: tune-results/
           retention-days: 90
 
