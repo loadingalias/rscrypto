@@ -1,6 +1,10 @@
 # rscrypto
 
-Pure Rust cryptography with hardware acceleration. Zero dependencies.
+Pure Rust cryptography. Zero dependencies. Hardware accelerated.
+
+**Supported:** x86-64, ARM64, Apple Silicon, RISC-V, IBM POWER, s390x.
+
+> **Note:** Only checksums are production-ready. Hash/AEAD/PQC crates are in development.
 
 ## Install
 

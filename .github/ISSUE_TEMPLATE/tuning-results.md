@@ -21,11 +21,10 @@ labels: ["tuning", "enhancement"]
 
 ## Checklist
 
-- [ ] I ran `just tune-contribute` for accurate results
-- [ ] The system was mostly idle during benchmarking
-- [ ] Peak throughput numbers look reasonable for my hardware
-- [ ] No excessive "high variance" warnings appeared
+- [ ] Ran `just tune-contribute` on an idle system
+- [ ] Throughput looks reasonable (30-80 GiB/s for CRC-64)
+- [ ] No excessive variance warnings
 
-## Additional Context
+## Notes
 
-<!-- Optional: Any notes about your setup, BIOS settings, etc. -->
+<!-- Optional: BIOS settings, VM, etc. -->
