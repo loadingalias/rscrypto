@@ -17,10 +17,9 @@ AGENTS.md
 *.key
 
 # Personal - Notes, Docs, Examples, Testing, etc.
-notes/*
-crates/*/bench_baseline/*
-crates/*/tune_baseline/*
-blake3.md
+notes
+crates/*/bench_baseline
+crates/*/tune_baseline
 
 # Fuzzing
 corpus
