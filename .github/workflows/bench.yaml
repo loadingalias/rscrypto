@@ -15,13 +15,19 @@ on:
         default: ""
 
       # ─────────────────────────────────────────────────────────────────────────
-      # Intel x86-64 (RunsOn: Granite/Emerald/Sapphire Rapids)
+      # Intel x86-64 (RunsOn: Granite/Emerald/Sapphire Rapids, Ice Lake)
       # ─────────────────────────────────────────────────────────────────────────
       run_intel:
         description: "Run on Intel (Granite/Emerald/Sapphire Rapids)"
         required: false
         type: boolean
         default: true
+
+      run_intel_icl:
+        description: "Run on Intel Ice Lake (c6i/m6i - 3rd Gen Xeon)"
+        required: false
+        type: boolean
+        default: false
 
       # ─────────────────────────────────────────────────────────────────────────
       # AMD x86-64 (Namespace: Zen4, RunsOn: Zen5)
@@ -103,12 +109,12 @@ jobs:
     timeout-minutes: 90
     steps:
       - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
 
       - name: Setup Namespace Cache
-        uses: namespacelabs/nscloud-cache-action@446d8f390563cd54ca27e8de5bdb816f63c0b706  # v1.2.21
+        uses: namespacelabs/nscloud-cache-action@446d8f390563cd54ca27e8de5bdb816f63c0b706 # v1.2.21
         with:
           cache: rust
 
@@ -128,12 +134,12 @@ jobs:
           echo "version=$TOOLCHAIN" >> "$GITHUB_OUTPUT"
 
       - name: Install Rust Toolchain
-        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561  # master
+        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
         with:
           toolchain: ${{ steps.toolchain.outputs.version }}
 
       - name: Install Benchmarking Tools
-        uses: taiki-e/install-action@7ea888af71a31437ad4e71c62d021b3bb2728ea9  # v2.49.3
+        uses: taiki-e/install-action@7ea888af71a31437ad4e71c62d021b3bb2728ea9 # v2.49.3
         with:
           tool: cargo-criterion,critcmp,just,cargo-rail
 
@@ -193,7 +199,7 @@ jobs:
 
       - name: Upload Benchmark Results
         if: always()
-        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08  # v4.6.0
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
         with:
           name: benchmark-amd-zen4
           path: |
@@ -216,7 +222,7 @@ jobs:
     timeout-minutes: 90
     steps:
       - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
 
@@ -267,7 +273,7 @@ jobs:
 
       - name: Upload Benchmark Results
         if: always()
-        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08  # v4.6.0
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
         with:
           name: benchmark-amd-zen5
           path: |
@@ -292,7 +298,7 @@ jobs:
     timeout-minutes: 90
     steps:
       - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
 
@@ -344,7 +350,7 @@ jobs:
 
       - name: Install cargo-rail (scheduled runs)
         if: github.event_name == 'schedule'
-        uses: taiki-e/install-action@7ea888af71a31437ad4e71c62d021b3bb2728ea9  # v2.49.3
+        uses: taiki-e/install-action@7ea888af71a31437ad4e71c62d021b3bb2728ea9 # v2.49.3
         with:
           tool: cargo-rail
 
@@ -363,7 +369,7 @@ jobs:
 
       - name: Upload Benchmark Results
         if: always()
-        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08  # v4.6.0
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
         with:
           name: benchmark-intel
           path: |
@@ -372,19 +378,18 @@ jobs:
           retention-days: 90
 
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # GRAVITON BENCHMARKS (RunsOn - Best Available)
+  # INTEL ICE LAKE BENCHMARKS (RunsOn - 3rd Gen Xeon)
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # Fallback: Graviton 4 (Neoverse V2) → Graviton 3 (Neoverse V1)
-  # NOT Graviton 2 (N1) - GitHub free already provides that
+  # Xeon Platinum 8375C (Ice Lake) - Different AVX-512 characteristics
+  # Prefers 256-bit ops over 512-bit, validates IntelIcl tuning preset
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  bench-graviton:
-    name: Benchmark (Graviton)
+  bench-intel-icl:
+    name: Benchmark (Intel Ice Lake)
     if: |
-      github.event_name == 'schedule' ||
-      (github.event_name == 'workflow_dispatch' &&
-       github.event.inputs.tune != 'true' &&
-       github.event.inputs.run_graviton == 'true')
-    runs-on: runs-on=${{ github.run_id }}/runner=graviton
+      github.event_name == 'workflow_dispatch' &&
+      github.event.inputs.tune != 'true' &&
+      github.event.inputs.run_intel_icl == 'true'
+    runs-on: runs-on=${{ github.run_id }}/runner=intel-icl-bench
     timeout-minutes: 90
     steps:
       - name: Checkout
@@ -396,110 +401,6 @@ jobs:
         uses: ./.github/actions/setup-runson
         with:
           mode: runson-bench
-
-      - name: Determine Benchmark Scope
-        id: scope
-        run: |
-          CRATES_INPUT="${{ github.event.inputs.crates }}"
-          BENCHES_INPUT="${{ github.event.inputs.specific_benches }}"
-
-          if [ "${{ github.event_name }}" == "schedule" ]; then
-            AFFECTED=$(cargo rail affected --since HEAD~50 -f names-only 2>/dev/null || echo "")
-            if [ -z "$AFFECTED" ]; then
-              echo "crate_flags=--workspace" >> "$GITHUB_OUTPUT"
-            else
-              CRATE_FLAGS=""
-              while IFS= read -r crate; do
-                [ -n "$crate" ] && CRATE_FLAGS="$CRATE_FLAGS -p $crate"
-              done <<< "$AFFECTED"
-              echo "crate_flags=$CRATE_FLAGS" >> "$GITHUB_OUTPUT"
-            fi
-            echo "bench_flags=" >> "$GITHUB_OUTPUT"
-          else
-            if [ -n "$CRATES_INPUT" ]; then
-              CRATE_FLAGS=""
-              IFS=',' read -ra CRATES <<< "$CRATES_INPUT"
-              for crate in "${CRATES[@]}"; do
-                CRATE_FLAGS="$CRATE_FLAGS -p $(echo "$crate" | xargs)"
-              done
-              echo "crate_flags=$CRATE_FLAGS" >> "$GITHUB_OUTPUT"
-            else
-              echo "crate_flags=--workspace" >> "$GITHUB_OUTPUT"
-            fi
-            if [ -n "$BENCHES_INPUT" ]; then
-              BENCH_FLAGS=""
-              IFS=',' read -ra BENCHES <<< "$BENCHES_INPUT"
-              for bench in "${BENCHES[@]}"; do
-                BENCH_FLAGS="$BENCH_FLAGS --bench $(echo "$bench" | xargs)"
-              done
-              echo "bench_flags=$BENCH_FLAGS" >> "$GITHUB_OUTPUT"
-            else
-              echo "bench_flags=" >> "$GITHUB_OUTPUT"
-            fi
-          fi
-
-      - name: Install cargo-rail (scheduled runs)
-        if: github.event_name == 'schedule'
-        uses: taiki-e/install-action@7ea888af71a31437ad4e71c62d021b3bb2728ea9  # v2.49.3
-        with:
-          tool: cargo-rail
-
-      - name: Clean Old Benchmark Data
-        run: rm -rf target/criterion
-
-      - name: Run Criterion Benchmarks
-        run: |
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "Running Criterion Benchmarks (Graviton)"
-          echo "RUSTFLAGS: ${RUSTFLAGS}"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          mkdir -p benchmark-results
-          # shellcheck disable=SC2086
-          cargo bench --profile bench ${{ steps.scope.outputs.crate_flags }} ${{ steps.scope.outputs.bench_flags }} 2>&1 | tee benchmark-results/output.txt
-
-      - name: Upload Benchmark Results
-        if: always()
-        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08  # v4.6.0
-        with:
-          name: benchmark-graviton
-          path: |
-            benchmark-results/
-            target/criterion/
-          retention-days: 90
-
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # RISC-V 64 BENCHMARKS (Self-hosted Cloud-V)
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  bench-riscv:
-    name: Benchmark (RISC-V 64)
-    if: |
-      github.event_name == 'workflow_dispatch' &&
-      github.event.inputs.tune != 'true' &&
-      github.event.inputs.run_riscv == 'true'
-    runs-on: [self-hosted, 2c6cf205228d]
-    timeout-minutes: 120
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
-        with:
-          fetch-depth: 0
-
-      - name: Detect CPU
-        run: |
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "RISC-V CPU Detection"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          cat /proc/cpuinfo | head -30 || true
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-      - name: Setup Toolchain
-        run: |
-          TOOLCHAIN=$(awk -F'"' '/^channel/ {print $2}' rust-toolchain.toml)
-          rustup default "$TOOLCHAIN"
-
-      - name: Install Benchmarking Tools
-        run: |
-          cargo install --locked cargo-criterion critcmp || true
 
       - name: Determine Benchmark Scope
         id: scope
@@ -534,7 +435,7 @@ jobs:
       - name: Run Criterion Benchmarks
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "Running Criterion Benchmarks (RISC-V 64)"
+          echo "Running Criterion Benchmarks (Intel Ice Lake)"
           echo "RUSTFLAGS: ${RUSTFLAGS}"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           mkdir -p benchmark-results
@@ -545,11 +446,193 @@ jobs:
         if: always()
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08  # v4.6.0
         with:
-          name: benchmark-riscv64
+          name: benchmark-intel-icl
           path: |
             benchmark-results/
             target/criterion/
           retention-days: 90
+
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # GRAVITON BENCHMARKS (RunsOn - Best Available)
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # Fallback: Graviton 4 (Neoverse V2) → Graviton 3 (Neoverse V1)
+  # NOT Graviton 2 (N1) - GitHub free already provides that
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  bench-graviton:
+    name: Benchmark (Graviton)
+    if: |
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' &&
+       github.event.inputs.tune != 'true' &&
+       github.event.inputs.run_graviton == 'true')
+    runs-on: runs-on=${{ github.run_id }}/runner=graviton
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Setup RunsOn
+        uses: ./.github/actions/setup-runson
+        with:
+          mode: runson-bench
+
+      - name: Determine Benchmark Scope
+        id: scope
+        run: |
+          CRATES_INPUT="${{ github.event.inputs.crates }}"
+          BENCHES_INPUT="${{ github.event.inputs.specific_benches }}"
+
+          if [ "${{ github.event_name }}" == "schedule" ]; then
+            AFFECTED=$(cargo rail affected --since HEAD~50 -f names-only 2>/dev/null || echo "")
+            if [ -z "$AFFECTED" ]; then
+              echo "crate_flags=--workspace" >> "$GITHUB_OUTPUT"
+            else
+              CRATE_FLAGS=""
+              while IFS= read -r crate; do
+                [ -n "$crate" ] && CRATE_FLAGS="$CRATE_FLAGS -p $crate"
+              done <<< "$AFFECTED"
+              echo "crate_flags=$CRATE_FLAGS" >> "$GITHUB_OUTPUT"
+            fi
+            echo "bench_flags=" >> "$GITHUB_OUTPUT"
+          else
+            if [ -n "$CRATES_INPUT" ]; then
+              CRATE_FLAGS=""
+              IFS=',' read -ra CRATES <<< "$CRATES_INPUT"
+              for crate in "${CRATES[@]}"; do
+                CRATE_FLAGS="$CRATE_FLAGS -p $(echo "$crate" | xargs)"
+              done
+              echo "crate_flags=$CRATE_FLAGS" >> "$GITHUB_OUTPUT"
+            else
+              echo "crate_flags=--workspace" >> "$GITHUB_OUTPUT"
+            fi
+            if [ -n "$BENCHES_INPUT" ]; then
+              BENCH_FLAGS=""
+              IFS=',' read -ra BENCHES <<< "$BENCHES_INPUT"
+              for bench in "${BENCHES[@]}"; do
+                BENCH_FLAGS="$BENCH_FLAGS --bench $(echo "$bench" | xargs)"
+              done
+              echo "bench_flags=$BENCH_FLAGS" >> "$GITHUB_OUTPUT"
+            else
+              echo "bench_flags=" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+      - name: Install cargo-rail (scheduled runs)
+        if: github.event_name == 'schedule'
+        uses: taiki-e/install-action@7ea888af71a31437ad4e71c62d021b3bb2728ea9 # v2.49.3
+        with:
+          tool: cargo-rail
+
+      - name: Clean Old Benchmark Data
+        run: rm -rf target/criterion
+
+      - name: Run Criterion Benchmarks
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Running Criterion Benchmarks (Graviton)"
+          echo "RUSTFLAGS: ${RUSTFLAGS}"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          mkdir -p benchmark-results
+          # shellcheck disable=SC2086
+          cargo bench --profile bench ${{ steps.scope.outputs.crate_flags }} ${{ steps.scope.outputs.bench_flags }} 2>&1 | tee benchmark-results/output.txt
+
+      - name: Upload Benchmark Results
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        with:
+          name: benchmark-graviton
+          path: |
+            benchmark-results/
+            target/criterion/
+          retention-days: 90
+
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # RISC-V 64 BENCHMARKS (Self-hosted Cloud-V)
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # DISABLED: Cloud-V runner is not currently operational.
+  # Uncomment when RISC-V self-hosted runner is available again.
+  # bench-riscv:
+  #   name: Benchmark (RISC-V 64)
+  #   if: |
+  #     github.event_name == 'workflow_dispatch' &&
+  #     github.event.inputs.tune != 'true' &&
+  #     github.event.inputs.run_riscv == 'true'
+  #   runs-on: [self-hosted, 2c6cf205228d]
+  #   timeout-minutes: 120
+  #   steps:
+  #     - name: Checkout
+  #       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+  #       with:
+  #         fetch-depth: 0
+  #
+  #     - name: Detect CPU
+  #       run: |
+  #         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  #         echo "RISC-V CPU Detection"
+  #         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  #         cat /proc/cpuinfo | head -30 || true
+  #         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  #
+  #     - name: Setup Toolchain
+  #       run: |
+  #         TOOLCHAIN=$(awk -F'"' '/^channel/ {print $2}' rust-toolchain.toml)
+  #         rustup default "$TOOLCHAIN"
+  #
+  #     - name: Install Benchmarking Tools
+  #       run: |
+  #         cargo install --locked cargo-criterion critcmp || true
+  #
+  #     - name: Determine Benchmark Scope
+  #       id: scope
+  #       run: |
+  #         CRATES_INPUT="${{ github.event.inputs.crates }}"
+  #         BENCHES_INPUT="${{ github.event.inputs.specific_benches }}"
+  #
+  #         if [ -n "$CRATES_INPUT" ]; then
+  #           CRATE_FLAGS=""
+  #           IFS=',' read -ra CRATES <<< "$CRATES_INPUT"
+  #           for crate in "${CRATES[@]}"; do
+  #             CRATE_FLAGS="$CRATE_FLAGS -p $(echo "$crate" | xargs)"
+  #           done
+  #           echo "crate_flags=$CRATE_FLAGS" >> "$GITHUB_OUTPUT"
+  #         else
+  #           echo "crate_flags=--workspace" >> "$GITHUB_OUTPUT"
+  #         fi
+  #         if [ -n "$BENCHES_INPUT" ]; then
+  #           BENCH_FLAGS=""
+  #           IFS=',' read -ra BENCHES <<< "$BENCHES_INPUT"
+  #           for bench in "${BENCHES[@]}"; do
+  #             BENCH_FLAGS="$BENCH_FLAGS --bench $(echo "$bench" | xargs)"
+  #           done
+  #           echo "bench_flags=$BENCH_FLAGS" >> "$GITHUB_OUTPUT"
+  #         else
+  #           echo "bench_flags=" >> "$GITHUB_OUTPUT"
+  #         fi
+  #
+  #     - name: Clean Old Benchmark Data
+  #       run: rm -rf target/criterion
+  #
+  #     - name: Run Criterion Benchmarks
+  #       run: |
+  #         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  #         echo "Running Criterion Benchmarks (RISC-V 64)"
+  #         echo "RUSTFLAGS: ${RUSTFLAGS}"
+  #         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  #         mkdir -p benchmark-results
+  #         # shellcheck disable=SC2086
+  #         cargo bench --profile bench ${{ steps.scope.outputs.crate_flags }} ${{ steps.scope.outputs.bench_flags }} 2>&1 | tee benchmark-results/output.txt
+  #
+  #     - name: Upload Benchmark Results
+  #       if: always()
+  #       uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+  #       with:
+  #         name: benchmark-riscv64
+  #         path: |
+  #           benchmark-results/
+  #           target/criterion/
+  #         retention-days: 90
 
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   # UNIFIED TUNING (Manual Only)
@@ -570,7 +653,7 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Setup RunsOn
         uses: ./.github/actions/setup-runson
@@ -602,9 +685,57 @@ jobs:
 
       - name: Upload Tuning Results
         if: always()
-        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08  # v4.6.0
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
         with:
           name: tuning-intel
+          path: tune-results/
+          retention-days: 90
+
+  tune-intel-icl:
+    name: Tuning (Intel Ice Lake)
+    if: |
+      github.event_name == 'workflow_dispatch' &&
+      github.event.inputs.tune == 'true' &&
+      github.event.inputs.run_intel_icl == 'true'
+    runs-on: runs-on=${{ github.run_id }}/runner=intel-icl-bench
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Setup RunsOn
+        uses: ./.github/actions/setup-runson
+        with:
+          mode: runson-bench
+
+      - name: Run Unified Tuning
+        run: |
+          set -euo pipefail
+          mkdir -p tune-results
+
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Running rscrypto-tune (Intel Ice Lake)"
+          echo "RUSTFLAGS: -C target-cpu=native"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
+            cargo run -p tune --release --bin rscrypto-tune -- --quick 2>&1 | \
+            tee tune-results/rscrypto-tune.txt
+
+          {
+            echo ""
+            echo "## Tuning Results (Intel Ice Lake)"
+            echo ""
+            echo '```'
+            cat tune-results/rscrypto-tune.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Tuning Results
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08  # v4.6.0
+        with:
+          name: tuning-intel-icl
           path: tune-results/
           retention-days: 90
 
@@ -618,10 +749,10 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Setup Namespace Cache
-        uses: namespacelabs/nscloud-cache-action@446d8f390563cd54ca27e8de5bdb816f63c0b706  # v1.2.21
+        uses: namespacelabs/nscloud-cache-action@446d8f390563cd54ca27e8de5bdb816f63c0b706 # v1.2.21
         with:
           cache: rust
 
@@ -656,7 +787,7 @@ jobs:
 
       - name: Upload Tuning Results
         if: always()
-        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08  # v4.6.0
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
         with:
           name: tuning-amd-zen4
           path: tune-results/
@@ -672,7 +803,7 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Setup RunsOn
         uses: ./.github/actions/setup-runson
@@ -704,7 +835,7 @@ jobs:
 
       - name: Upload Tuning Results
         if: always()
-        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08  # v4.6.0
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
         with:
           name: tuning-amd-zen5
           path: tune-results/
@@ -720,7 +851,7 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Setup RunsOn
         uses: ./.github/actions/setup-runson
@@ -752,67 +883,72 @@ jobs:
 
       - name: Upload Tuning Results
         if: always()
-        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08  # v4.6.0
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
         with:
           name: tuning-graviton
           path: tune-results/
           retention-days: 90
 
-  tune-riscv:
-    name: Tuning (RISC-V 64)
-    if: |
-      github.event_name == 'workflow_dispatch' &&
-      github.event.inputs.tune == 'true' &&
-      github.event.inputs.run_riscv == 'true'
-    runs-on: [self-hosted, 2c6cf205228d]
-    timeout-minutes: 90
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
-
-      - name: Detect CPU
-        run: |
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "RISC-V CPU Detection"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          cat /proc/cpuinfo | head -30 || true
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-      - name: Setup Toolchain
-        run: |
-          TOOLCHAIN=$(awk -F'"' '/^channel/ {print $2}' rust-toolchain.toml)
-          rustup default "$TOOLCHAIN"
-
-      - name: Run Unified Tuning
-        run: |
-          set -euo pipefail
-          mkdir -p tune-results
-
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "Running rscrypto-tune (RISC-V 64)"
-          echo "RUSTFLAGS: -C target-cpu=native"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-          RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
-            cargo run -p tune --release --bin rscrypto-tune -- --quick 2>&1 | \
-            tee tune-results/rscrypto-tune.txt
-
-          {
-            echo ""
-            echo "## Tuning Results (RISC-V 64)"
-            echo ""
-            echo '```'
-            cat tune-results/rscrypto-tune.txt
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload Tuning Results
-        if: always()
-        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08  # v4.6.0
-        with:
-          name: tuning-riscv64
-          path: tune-results/
-          retention-days: 90
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # RISC-V 64 TUNING (Self-hosted Cloud-V)
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # DISABLED: Cloud-V runner is not currently operational.
+  # Uncomment when RISC-V self-hosted runner is available again.
+  # tune-riscv:
+  #   name: Tuning (RISC-V 64)
+  #   if: |
+  #     github.event_name == 'workflow_dispatch' &&
+  #     github.event.inputs.tune == 'true' &&
+  #     github.event.inputs.run_riscv == 'true'
+  #   runs-on: [self-hosted, 2c6cf205228d]
+  #   timeout-minutes: 90
+  #   steps:
+  #     - name: Checkout
+  #       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+  #
+  #     - name: Detect CPU
+  #       run: |
+  #         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  #         echo "RISC-V CPU Detection"
+  #         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  #         cat /proc/cpuinfo | head -30 || true
+  #         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  #
+  #     - name: Setup Toolchain
+  #       run: |
+  #         TOOLCHAIN=$(awk -F'"' '/^channel/ {print $2}' rust-toolchain.toml)
+  #         rustup default "$TOOLCHAIN"
+  #
+  #     - name: Run Unified Tuning
+  #       run: |
+  #         set -euo pipefail
+  #         mkdir -p tune-results
+  #
+  #         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  #         echo "Running rscrypto-tune (RISC-V 64)"
+  #         echo "RUSTFLAGS: -C target-cpu=native"
+  #         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  #
+  #         RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
+  #           cargo run -p tune --release --bin rscrypto-tune -- --quick 2>&1 | \
+  #           tee tune-results/rscrypto-tune.txt
+  #
+  #         {
+  #           echo ""
+  #           echo "## Tuning Results (RISC-V 64)"
+  #           echo ""
+  #           echo '```'
+  #           cat tune-results/rscrypto-tune.txt
+  #           echo '```'
+  #         } >> "$GITHUB_STEP_SUMMARY"
+  #
+  #     - name: Upload Tuning Results
+  #       if: always()
+  #       uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+  #       with:
+  #         name: tuning-riscv64
+  #         path: tune-results/
+  #         retention-days: 90
 
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   # REGRESSION DETECTION (Manual Only)
@@ -827,12 +963,12 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Checkout Current
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           path: current
 
       - name: Checkout Baseline
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ github.event.inputs.regression_baseline }}
           path: baseline
@@ -844,17 +980,17 @@ jobs:
           echo "version=$TOOLCHAIN" >> "$GITHUB_OUTPUT"
 
       - name: Install Rust Toolchain
-        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561  # master
+        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
         with:
           toolchain: ${{ steps.toolchain.outputs.version }}
 
       - name: Setup Namespace Cache
-        uses: namespacelabs/nscloud-cache-action@446d8f390563cd54ca27e8de5bdb816f63c0b706  # v1.2.21
+        uses: namespacelabs/nscloud-cache-action@446d8f390563cd54ca27e8de5bdb816f63c0b706 # v1.2.21
         with:
           cache: rust
 
       - name: Install Benchmarking Tools
-        uses: taiki-e/install-action@7ea888af71a31437ad4e71c62d021b3bb2728ea9  # v2.49.3
+        uses: taiki-e/install-action@7ea888af71a31437ad4e71c62d021b3bb2728ea9 # v2.49.3
         with:
           tool: cargo-criterion,critcmp
 
@@ -898,7 +1034,7 @@ jobs:
           fi
 
       - name: Upload Regression Report
-        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08  # v4.6.0
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
         with:
           name: regression-report
           path: current/regression-results/

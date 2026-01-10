@@ -38,6 +38,30 @@ runners:
       - arch:x86-64
 
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # INTEL ICE LAKE x86-64 BENCHMARK RUNNER
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # Xeon Platinum 8375C (Ice Lake, 3rd Gen Xeon Scalable)
+  # Different AVX-512 characteristics than SPR (prefers 256-bit ops)
+  # Validates IntelIcl tuning preset
+  #
+  # Processors:
+  #   c6i/m6i/r6i: Xeon Platinum 8375C (Ice Lake, 2021)
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  intel-icl-bench:
+    cpu: 8
+    ram: 16
+    family: ["c6i", "m6i", "r6i"]
+    image: ubuntu24-full-x64
+    spot: price-capacity-optimized
+    retry: when-interrupted
+    volume: 60gb:gp3:500mbs:4000iops
+    ssh: true
+    tags:
+      - rscrypto:intel-icl-bench
+      - arch:x86-64
+      - uarch:ice-lake
+
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   # AMD ZEN5 (TURIN) BENCHMARK RUNNER
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   # EPYC 9R45 @ 4.5GHz - Latest AMD with AVX-512
