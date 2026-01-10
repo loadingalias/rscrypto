@@ -445,6 +445,90 @@ jobs:
           retention-days: 90
 
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # RISC-V 64 BENCHMARKS (Self-hosted Cloud-V)
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  bench-riscv:
+    name: Benchmark (RISC-V 64)
+    if: |
+      github.event_name == 'workflow_dispatch' &&
+      github.event.inputs.tune != 'true' &&
+      github.event.inputs.run_riscv == 'true'
+    runs-on: [self-hosted, 2c6cf205228d]
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Detect CPU
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "RISC-V CPU Detection"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          cat /proc/cpuinfo | head -30 || true
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+      - name: Setup Toolchain
+        run: |
+          TOOLCHAIN=$(awk -F'"' '/^channel/ {print $2}' rust-toolchain.toml)
+          rustup default "$TOOLCHAIN"
+
+      - name: Install Benchmarking Tools
+        run: |
+          cargo install --locked cargo-criterion critcmp || true
+
+      - name: Determine Benchmark Scope
+        id: scope
+        run: |
+          CRATES_INPUT="${{ github.event.inputs.crates }}"
+          BENCHES_INPUT="${{ github.event.inputs.specific_benches }}"
+
+          if [ -n "$CRATES_INPUT" ]; then
+            CRATE_FLAGS=""
+            IFS=',' read -ra CRATES <<< "$CRATES_INPUT"
+            for crate in "${CRATES[@]}"; do
+              CRATE_FLAGS="$CRATE_FLAGS -p $(echo "$crate" | xargs)"
+            done
+            echo "crate_flags=$CRATE_FLAGS" >> "$GITHUB_OUTPUT"
+          else
+            echo "crate_flags=--workspace" >> "$GITHUB_OUTPUT"
+          fi
+          if [ -n "$BENCHES_INPUT" ]; then
+            BENCH_FLAGS=""
+            IFS=',' read -ra BENCHES <<< "$BENCHES_INPUT"
+            for bench in "${BENCHES[@]}"; do
+              BENCH_FLAGS="$BENCH_FLAGS --bench $(echo "$bench" | xargs)"
+            done
+            echo "bench_flags=$BENCH_FLAGS" >> "$GITHUB_OUTPUT"
+          else
+            echo "bench_flags=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Clean Old Benchmark Data
+        run: rm -rf target/criterion
+
+      - name: Run Criterion Benchmarks
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Running Criterion Benchmarks (RISC-V 64)"
+          echo "RUSTFLAGS: ${RUSTFLAGS}"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          mkdir -p benchmark-results
+          # shellcheck disable=SC2086
+          cargo bench --profile bench ${{ steps.scope.outputs.crate_flags }} ${{ steps.scope.outputs.bench_flags }} 2>&1 | tee benchmark-results/output.txt
+
+      - name: Upload Benchmark Results
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08  # v4.6.0
+        with:
+          name: benchmark-riscv64
+          path: |
+            benchmark-results/
+            target/criterion/
+          retention-days: 90
+
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   # UNIFIED TUNING (Manual Only)
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   # Runs `rscrypto-tune` to generate recommended kernel selection tables.
