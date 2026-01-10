@@ -225,26 +225,45 @@ jobs:
         with:
           mode: runson-bench
 
-      - name: Run Criterion Benchmarks
+      - name: Determine Benchmark Scope
+        id: scope
         run: |
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "Running Criterion Benchmarks (AMD Zen5 Turin)"
-          echo "RUSTFLAGS: ${RUSTFLAGS}"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          rm -rf target/criterion
-          mkdir -p benchmark-results
           CRATES_INPUT="${{ github.event.inputs.crates }}"
+          BENCHES_INPUT="${{ github.event.inputs.specific_benches }}"
+
           if [ -n "$CRATES_INPUT" ]; then
             CRATE_FLAGS=""
             IFS=',' read -ra CRATES <<< "$CRATES_INPUT"
             for crate in "${CRATES[@]}"; do
               CRATE_FLAGS="$CRATE_FLAGS -p $(echo "$crate" | xargs)"
             done
+            echo "crate_flags=$CRATE_FLAGS" >> "$GITHUB_OUTPUT"
           else
-            CRATE_FLAGS="--workspace"
+            echo "crate_flags=--workspace" >> "$GITHUB_OUTPUT"
           fi
+          if [ -n "$BENCHES_INPUT" ]; then
+            BENCH_FLAGS=""
+            IFS=',' read -ra BENCHES <<< "$BENCHES_INPUT"
+            for bench in "${BENCHES[@]}"; do
+              BENCH_FLAGS="$BENCH_FLAGS --bench $(echo "$bench" | xargs)"
+            done
+            echo "bench_flags=$BENCH_FLAGS" >> "$GITHUB_OUTPUT"
+          else
+            echo "bench_flags=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Clean Old Benchmark Data
+        run: rm -rf target/criterion
+
+      - name: Run Criterion Benchmarks
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Running Criterion Benchmarks (AMD Zen5 Turin)"
+          echo "RUSTFLAGS: ${RUSTFLAGS}"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          mkdir -p benchmark-results
           # shellcheck disable=SC2086
-          cargo bench --profile bench $CRATE_FLAGS 2>&1 | tee benchmark-results/output.txt
+          cargo bench --profile bench ${{ steps.scope.outputs.crate_flags }} ${{ steps.scope.outputs.bench_flags }} 2>&1 | tee benchmark-results/output.txt
 
       - name: Upload Benchmark Results
         if: always()
@@ -329,13 +348,15 @@ jobs:
         with:
           tool: cargo-rail
 
+      - name: Clean Old Benchmark Data
+        run: rm -rf target/criterion
+
       - name: Run Criterion Benchmarks
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "Running Criterion Benchmarks (Intel)"
           echo "RUSTFLAGS: ${RUSTFLAGS}"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          rm -rf target/criterion
           mkdir -p benchmark-results
           # shellcheck disable=SC2086
           cargo bench --profile bench ${{ steps.scope.outputs.crate_flags }} ${{ steps.scope.outputs.bench_flags }} 2>&1 | tee benchmark-results/output.txt
@@ -423,13 +444,15 @@ jobs:
         with:
           tool: cargo-rail
 
+      - name: Clean Old Benchmark Data
+        run: rm -rf target/criterion
+
       - name: Run Criterion Benchmarks
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "Running Criterion Benchmarks (Graviton)"
           echo "RUSTFLAGS: ${RUSTFLAGS}"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          rm -rf target/criterion
           mkdir -p benchmark-results
           # shellcheck disable=SC2086
           cargo bench --profile bench ${{ steps.scope.outputs.crate_flags }} ${{ steps.scope.outputs.bench_flags }} 2>&1 | tee benchmark-results/output.txt
