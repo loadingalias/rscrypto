@@ -59,7 +59,7 @@ cargo deny check all
 echo ""
 echo "🛡️ Running security audit..."
 command -v cargo-audit >/dev/null 2>&1 && cargo-audit --version || true
-cargo-audit
+cargo audit
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Documentation
