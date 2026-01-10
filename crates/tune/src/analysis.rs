@@ -1,17 +1,26 @@
 //! Crossover detection and threshold analysis.
+//!
+//! This module provides algorithms to detect crossover points between kernel
+//! implementations and analyze benchmark measurements for optimal configuration.
+//!
+//! Key concepts:
+//! - **Crossover**: The buffer size where one kernel starts outperforming another
+//! - **Stream selection**: Choosing the optimal ILP stream count
+//! - **Tier transitions**: Detecting portable to SIMD to Wide kernel boundaries
 
 use crate::BenchResult;
 
+/// Strip stream count suffix from kernel names (e.g., "-4way").
 #[inline]
 #[must_use]
 fn strip_stream_suffix(name: &str) -> &str {
+  // Stream suffixes are always at the end
+  for suffix in ["-2way", "-3way", "-4way", "-7way", "-8way"] {
+    if let Some(base) = name.strip_suffix(suffix) {
+      return base;
+    }
+  }
   name
-    .strip_suffix("-2way")
-    .or_else(|| name.strip_suffix("-3way"))
-    .or_else(|| name.strip_suffix("-4way"))
-    .or_else(|| name.strip_suffix("-7way"))
-    .or_else(|| name.strip_suffix("-8way"))
-    .unwrap_or(name)
 }
 
 /// Complete analysis result for an algorithm.
@@ -95,6 +104,23 @@ impl Measurement {
   }
 }
 
+/// Filter measurements by kernel name and stream count.
+fn filter_measurements<'a>(measurements: &'a [Measurement], kernel: &str, streams: u8) -> Vec<&'a Measurement> {
+  measurements
+    .iter()
+    .filter(|m| m.kernel == kernel && m.streams == streams)
+    .collect()
+}
+
+/// Get throughput for a specific size from filtered measurements.
+fn throughput_at_size(data: &[&Measurement], size: usize) -> f64 {
+  data
+    .iter()
+    .find(|m| m.size == size)
+    .map(|m| m.throughput_gib_s)
+    .unwrap_or(0.0)
+}
+
 /// Find the crossover point where kernel B starts consistently beating kernel A.
 ///
 /// Returns the smallest buffer size at which B beats A by at least `margin` percent,
@@ -107,16 +133,8 @@ pub fn find_crossover(
   to_streams: u8,
   margin: f64,
 ) -> Option<Crossover> {
-  // Filter measurements for each kernel
-  let from_data: Vec<_> = measurements
-    .iter()
-    .filter(|m| m.kernel == from_kernel && m.streams == from_streams)
-    .collect();
-
-  let to_data: Vec<_> = measurements
-    .iter()
-    .filter(|m| m.kernel == to_kernel && m.streams == to_streams)
-    .collect();
+  let from_data = filter_measurements(measurements, from_kernel, from_streams);
+  let to_data = filter_measurements(measurements, to_kernel, to_streams);
 
   if from_data.is_empty() || to_data.is_empty() {
     return None;
@@ -136,34 +154,7 @@ pub fn find_crossover(
 
   // Find the crossover point using "sustained by" logic:
   // Scan from largest to smallest, find smallest size where B wins consistently
-  let mut threshold: Option<usize> = None;
-  let mut suffix_ok = true;
-
-  for &size in common_sizes.iter().rev() {
-    let from_tp = from_data
-      .iter()
-      .find(|m| m.size == size)
-      .map(|m| m.throughput_gib_s)
-      .unwrap_or(0.0);
-
-    let to_tp = to_data
-      .iter()
-      .find(|m| m.size == size)
-      .map(|m| m.throughput_gib_s)
-      .unwrap_or(0.0);
-
-    // Check if 'to' beats 'from' by at least margin
-    let ratio = if from_tp > 0.0 { to_tp / from_tp } else { 1.0 };
-
-    if ratio >= margin {
-      if suffix_ok {
-        threshold = Some(size);
-      }
-    } else {
-      suffix_ok = false;
-    }
-  }
-
+  let threshold = find_sustained_threshold(&common_sizes, &from_data, &to_data, margin);
   let crossover_size = threshold?;
 
   // Calculate margin at 2x the crossover size
@@ -180,6 +171,35 @@ pub fn find_crossover(
     margin_percent,
     confidence,
   })
+}
+
+/// Find the smallest size where `to` beats `from` and continues to do so for all larger sizes.
+fn find_sustained_threshold(
+  sizes: &[usize],
+  from_data: &[&Measurement],
+  to_data: &[&Measurement],
+  margin: f64,
+) -> Option<usize> {
+  let mut threshold: Option<usize> = None;
+  let mut suffix_ok = true;
+
+  for &size in sizes.iter().rev() {
+    let from_tp = throughput_at_size(from_data, size);
+    let to_tp = throughput_at_size(to_data, size);
+
+    // Check if 'to' beats 'from' by at least margin
+    let ratio = if from_tp > 0.0 { to_tp / from_tp } else { 1.0 };
+
+    if ratio >= margin {
+      if suffix_ok {
+        threshold = Some(size);
+      }
+    } else {
+      suffix_ok = false;
+    }
+  }
+
+  threshold
 }
 
 /// Calculate the margin of victory at a specific size.
@@ -280,51 +300,22 @@ pub fn estimate_min_bytes_per_lane(measurements: &[Measurement], kernel: &str, t
     return None;
   }
 
-  let single: Vec<_> = measurements
-    .iter()
-    .filter(|m| m.kernel == kernel && m.streams == 1)
-    .collect();
-
-  let multi: Vec<_> = measurements
-    .iter()
-    .filter(|m| m.kernel == kernel && m.streams == target_streams)
-    .collect();
+  let single = filter_measurements(measurements, kernel, 1);
+  let multi = filter_measurements(measurements, kernel, target_streams);
 
   if single.is_empty() || multi.is_empty() {
     return None;
   }
 
-  // Find crossover using sustained logic
-  let mut threshold: Option<usize> = None;
-  let mut suffix_ok = true;
-
+  // Get sizes and find crossover
   let mut sizes: Vec<usize> = single.iter().map(|m| m.size).collect();
   sizes.sort_unstable();
 
-  for &size in sizes.iter().rev() {
-    let single_tp = single
-      .iter()
-      .find(|m| m.size == size)
-      .map(|m| m.throughput_gib_s)
-      .unwrap_or(0.0);
-
-    let multi_tp = multi
-      .iter()
-      .find(|m| m.size == size)
-      .map(|m| m.throughput_gib_s)
-      .unwrap_or(0.0);
-
-    if multi_tp >= single_tp {
-      if suffix_ok {
-        threshold = Some(size);
-      }
-    } else {
-      suffix_ok = false;
-    }
-  }
+  // Find where multi-stream becomes beneficial (margin = 1.0 means "at least as good")
+  let threshold = find_sustained_threshold(&sizes, &single, &multi, 1.0)?;
 
   // Convert total threshold to per-lane
-  threshold.map(|total| total / (target_streams as usize))
+  Some(threshold / (target_streams as usize))
 }
 
 /// Best configuration result: kernel name and stream count.

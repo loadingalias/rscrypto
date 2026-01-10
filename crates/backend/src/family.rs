@@ -1,18 +1,24 @@
 //! Kernel family identification.
 //!
 //! Families represent specific backend implementations across all supported
-//! architectures. Each family maps to exactly one tier and requires specific
-//! CPU capabilities.
+//! architectures. Each family maps to exactly one [`KernelTier`] and requires
+//! specific CPU capabilities.
 //!
-//! # Design Philosophy
+//! # Design
 //!
 //! The `KernelFamily` enum is algorithm-agnostic: the same families apply to
 //! CRC-64, CRC-32, Blake3, and future algorithms. This enables:
 //!
-//! - Unified forcing across algorithms (force PCLMUL for all CRCs)
+//! - Unified forcing across algorithms (e.g., force PCLMUL for all CRCs)
 //! - Introspection without allocation
-//! - Policy caching with family-level granularity
-//! - Consistent dispatch patterns across the codebase
+//! - Policy caching at family-level granularity
+//!
+//! # Naming Convention
+//!
+//! Family names follow the pattern `{Arch}{Instruction}`:
+//! - `X86Pclmul` - x86_64 PCLMULQDQ instruction
+//! - `ArmPmull` - aarch64 PMULL instruction
+//! - `PowerVpmsum` - Power VPMSUMD instruction
 
 use crate::{
   caps::{Arch, Caps},
@@ -22,19 +28,8 @@ use crate::{
 /// Specific backend implementation family.
 ///
 /// Families are algorithm-agnostic identifiers for backend implementations.
-/// Each family:
-/// - Maps to exactly one [`KernelTier`]
-/// - Requires specific CPU capabilities
-/// - Is available only on certain architectures
-///
-/// # Naming Convention
-///
-/// Family names follow the pattern `{Arch}{Instruction}`:
-/// - `X86Pclmul` - x86_64 PCLMULQDQ instruction
-/// - `ArmPmull` - aarch64 PMULL instruction
-/// - `PowerVpmsum` - Power VPMSUMD instruction
-///
-/// # Extensibility
+/// Each family maps to exactly one [`KernelTier`], requires specific CPU
+/// capabilities, and is available only on certain architectures.
 ///
 /// The enum is `#[non_exhaustive]` to allow adding new families without
 /// breaking changes when new architectures or instructions become available.
@@ -133,10 +128,17 @@ impl KernelFamily {
   #[must_use]
   pub const fn tier(self) -> KernelTier {
     match self {
+      // Tier 0-1: Always available
       Self::Reference => KernelTier::Reference,
       Self::Portable => KernelTier::Portable,
+
+      // Tier 2: Hardware CRC
       Self::X86Crc32 | Self::ArmCrc32 => KernelTier::HwCrc,
+
+      // Tier 3: Carryless multiply folding
       Self::X86Pclmul | Self::ArmPmull | Self::PowerVpmsum | Self::S390xVgfm | Self::RiscvZbc => KernelTier::Folding,
+
+      // Tier 4: Wide SIMD
       Self::X86Vpclmul | Self::ArmPmullEor3 | Self::ArmSve2Pmull | Self::RiscvZvbc => KernelTier::Wide,
     }
   }
@@ -345,7 +347,7 @@ impl KernelFamily {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// KernelSubfamily - Algorithm-specific kernel variations
+// KernelSubfamily
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Kernel subfamily for fine-grained dispatch decisions.
@@ -353,20 +355,13 @@ impl KernelFamily {
 /// While [`KernelFamily`] identifies the base instruction set (PCLMUL, PMULL, etc.),
 /// subfamilies capture algorithm-specific variations:
 ///
-/// - **Fusion**: Combining hardware CRC with carryless multiply for CRC-32C
+/// - **Fusion**: Combining hardware CRC with carryless multiply (CRC-32C)
 /// - **Wide**: Using 256/512-bit operations instead of 128-bit
 /// - **Multi-stream**: Parallel processing of multiple buffer lanes
 ///
-/// # Design Rationale
-///
-/// Replaces algorithm-specific booleans with a uniform abstraction.
-///
-/// # Algorithm Agnosticism
-///
-/// The subfamily is structurally algorithm-agnostic: the same fields apply to
-/// CRC-32, CRC-64, Blake3, and future algorithms. The *semantics* of each field
-/// may vary by algorithm (e.g., `uses_hwcrc` only makes sense for CRC), but the
-/// struct provides a uniform interface for policy decisions.
+/// The subfamily is algorithm-agnostic: the same fields apply to CRC-32, CRC-64,
+/// Blake3, and future algorithms. The semantics vary by algorithm (e.g., `uses_hwcrc`
+/// only applies to CRC), but the struct provides a uniform policy interface.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct KernelSubfamily {
   /// Base kernel family (instruction set).

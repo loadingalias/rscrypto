@@ -1,7 +1,7 @@
 //! Unified tuning engine for rscrypto algorithms.
 //!
-//! This crate provides a generic framework for benchmarking and tuning
-//! cryptographic algorithms across different platforms and CPU architectures.
+//! This crate provides a framework for benchmarking and tuning cryptographic
+//! algorithms across different platforms and CPU architectures.
 //!
 //! # Overview
 //!
@@ -9,13 +9,33 @@
 //! It benchmarks available kernels across a range of buffer sizes to determine:
 //!
 //! - Optimal kernel for each buffer size tier
-//! - Crossover points between kernel tiers (e.g., portable → SIMD)
+//! - Crossover points between kernel tiers (e.g., portable to SIMD)
 //! - Optimal parallel stream count for ILP
 //! - Per-lane minimum bytes thresholds
 //!
-//! # Quick Start
+//! # Usage
 //!
 //! Run `just tune` to benchmark all algorithms and print optimal settings.
+//!
+//! ```text
+//! # Standard tuning run
+//! just tune
+//!
+//! # Quick run for development
+//! just tune-quick
+//!
+//! # Output as environment variables
+//! just tune -- --format env
+//! ```
+//!
+//! # Architecture
+//!
+//! The crate is organized around these key components:
+//!
+//! - [`TuneEngine`]: Orchestrates benchmarking for multiple algorithms
+//! - [`BenchRunner`]: Configures warmup and measurement durations
+//! - [`Sampler`]: Collects statistically valid throughput samples
+//! - [`Tunable`]: Trait implemented by algorithms to enable tuning
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
@@ -25,8 +45,25 @@ extern crate std;
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
+// Core infrastructure (std-only)
 #[cfg(feature = "std")]
 mod analysis;
+#[cfg(feature = "std")]
+mod engine;
+#[cfg(feature = "std")]
+mod runner;
+
+// Public modules (std-only)
+#[cfg(feature = "std")]
+pub mod apply;
+#[cfg(feature = "std")]
+pub mod report;
+#[cfg(feature = "std")]
+pub mod sampler;
+#[cfg(feature = "std")]
+pub mod stats;
+
+// CRC tunable implementations (std-only)
 #[cfg(feature = "std")]
 pub mod crc16;
 #[cfg(feature = "std")]
@@ -35,16 +72,6 @@ pub mod crc24;
 pub mod crc32;
 #[cfg(feature = "std")]
 pub mod crc64;
-#[cfg(feature = "std")]
-mod engine;
-#[cfg(feature = "std")]
-pub mod report;
-#[cfg(feature = "std")]
-mod runner;
-#[cfg(feature = "std")]
-pub mod sampler;
-#[cfg(feature = "std")]
-pub mod stats;
 
 use core::fmt;
 
@@ -56,8 +83,6 @@ pub use analysis::{
 };
 #[cfg(feature = "std")]
 pub use engine::TuneEngine;
-#[cfg(feature = "std")]
-pub mod apply;
 use platform::Caps;
 #[cfg(feature = "std")]
 pub use report::{OutputFormat, Report};
@@ -67,6 +92,10 @@ pub use runner::BenchRunner;
 pub use sampler::{SampledResult, Sampler, SamplerConfig};
 #[cfg(feature = "std")]
 pub use stats::{DEFAULT_CV_THRESHOLD, SampleStats, VarianceQuality};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Core Types
+// ─────────────────────────────────────────────────────────────────────────────
 
 /// Kernel tier classification.
 ///

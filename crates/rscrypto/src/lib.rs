@@ -1,24 +1,19 @@
-//! Pure Rust crypto w/ hw-accel.
+//! Pure Rust cryptography with hardware acceleration.
 //!
-//! rscrypto provides high-performance cryptographic primitives with automatic
-//! CPU feature detection and optimal kernel selection.
-//!
-//! # Features
-//!
-//! - **Zero dependencies** — pure Rust, no C, no system libraries
-//! - **Hardware acceleration** — AVX-512, AVX2, NEON, PMULL, and more
-//! - **Automatic dispatch** — detects CPU features at runtime, selects fastest path
-//! - **`no_std` support** — works on embedded and WASM targets
+//! `rscrypto` provides high-performance cryptographic primitives with automatic
+//! CPU feature detection and optimal kernel selection. Zero dependencies, `no_std`
+//! compatible, and hardware-accelerated on x86_64, aarch64, and more.
 //!
 //! # Quick Start
 //!
 //! ```
 //! use rscrypto::{Checksum, Crc32C};
 //!
-//! // One-shot
+//! // One-shot computation
 //! let crc = Crc32C::checksum(b"hello world");
+//! assert_eq!(crc, 0xC99465AA);
 //!
-//! // Streaming
+//! // Streaming computation
 //! let mut hasher = Crc32C::new();
 //! hasher.update(b"hello ");
 //! hasher.update(b"world");
@@ -29,26 +24,28 @@
 //!
 //! | Feature | Default | Description |
 //! |---------|---------|-------------|
-//! | `std` | ✓ | Enables standard library (runtime CPU detection) |
-//! | `alloc` | ✓ | Enables allocator (via `std`) |
-//! | `checksums` | ✓ | CRC16, CRC24, CRC32, CRC64 algorithms |
+//! | `std` | Yes | Enables runtime CPU detection for optimal dispatch |
+//! | `alloc` | Yes | Enables buffered types (implied by `std`) |
+//! | `checksums` | Yes | CRC-16, CRC-24, CRC-32, and CRC-64 algorithms |
 //!
-//! For `no_std` without allocator:
+//! ## `no_std` Usage
 //!
 //! ```toml
 //! [dependencies]
 //! rscrypto = { version = "0.1", default-features = false, features = ["checksums"] }
 //! ```
+//!
+//! Without `std`, hardware acceleration uses compile-time feature detection only.
 #![cfg_attr(not(feature = "std"), no_std)]
 
-// ─────────────────────────────────────────────────────────────────────────────
+// =============================================================================
 // Checksums
-// ─────────────────────────────────────────────────────────────────────────────
+// =============================================================================
 
 #[cfg(all(feature = "checksums", feature = "alloc"))]
 pub use checksum::{
-  BufferedCrc16Ccitt, BufferedCrc16Ibm, BufferedCrc24OpenPgp, BufferedCrc32, BufferedCrc32C, BufferedCrc64Nvme,
-  BufferedCrc64Xz,
+  BufferedCrc16Ccitt, BufferedCrc16Ibm, BufferedCrc24OpenPgp, BufferedCrc32, BufferedCrc32C, BufferedCrc32Castagnoli,
+  BufferedCrc32Ieee, BufferedCrc64, BufferedCrc64Nvme, BufferedCrc64Xz,
 };
 #[cfg(feature = "checksums")]
 pub use checksum::{
@@ -57,13 +54,30 @@ pub use checksum::{
   ChecksumCombine,
   // CRC-16
   Crc16Ccitt,
+  Crc16Config,
+  Crc16Force,
   Crc16Ibm,
   // CRC-24
+  Crc24Config,
+  Crc24Force,
   Crc24OpenPgp,
   // CRC-32
   Crc32,
   Crc32C,
+  Crc32Castagnoli,
+  Crc32Config,
+  Crc32Force,
+  Crc32Ieee,
   // CRC-64
   Crc64,
+  Crc64Config,
+  Crc64Force,
   Crc64Nvme,
+  Crc64Xz,
+  // Introspection
+  DispatchInfo,
+  KernelIntrospect,
+  is_hardware_accelerated,
+  kernel_for,
+  platform_describe,
 };

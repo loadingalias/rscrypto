@@ -1,15 +1,17 @@
-//! Re-exported capability constants and masks.
+//! Re-exported capability constants and masks from `platform`.
 //!
-//! This module re-exports the capability types and constants from `platform`
-//! for convenience. Algorithm crates can import everything they need from
-//! `backend::caps` instead of reaching into `platform` directly.
+//! Algorithm crates can import capabilities from `backend::caps` instead
+//! of reaching into `platform` directly.
 //!
-//! # Examples
+//! # Example
 //!
 //! ```
-//! use backend::caps::Caps;
+//! use backend::caps::{Caps, x86};
+//!
 //! let caps = platform::caps();
-//! assert!(caps.has(Caps::NONE));
+//! if caps.has(x86::PCLMUL_READY) {
+//!   // Use PCLMUL kernel
+//! }
 //! ```
 
 // Re-export core types

@@ -1,27 +1,32 @@
-//! Backend crate: dispatch and SIMD acceleration primitives for rscrypto.
+//! Dispatch and SIMD acceleration primitives for rscrypto.
 //!
 //! This crate provides the foundation for the rscrypto acceleration subsystem:
 //!
 //! - **Dispatch**: Zero-cost (compile-time) or cached (runtime) kernel selection
 //! - **Capabilities**: Re-exports from `platform` for capability-based dispatch
-//! - **Primitives**: Shared SIMD primitives (future: carryless multiply, AES rounds, etc.)
+//! - **Policy**: Pre-computed selection policies with cached thresholds
 //!
 //! # Architecture
 //!
 //! The dispatch system has two paths:
 //!
-//! 1. **Compile-time selection** (zero-cost): When target features are known at compile time (`-C
-//!    target-feature=...`), the dispatcher can resolve to a direct function call with no overhead.
+//! 1. **Compile-time** (zero-cost): When target features are known at compile time (`-C
+//!    target-feature=...`), the dispatcher resolves to a direct function call.
 //!
-//! 2. **Runtime selection** (cached): For generic binaries, the dispatcher detects CPU features
-//!    once and caches the selected kernel. Subsequent calls are a single indirect call.
+//! 2. **Runtime** (cached): For generic binaries, the dispatcher detects CPU features once and
+//!    caches the selected kernel. Subsequent calls are a single indirect call.
+//!
+//! # Key Types
+//!
+//! - [`KernelTier`]: Acceleration levels (Reference, Portable, HwCrc, Folding, Wide)
+//! - [`KernelFamily`]: Specific backend implementations (X86Pclmul, ArmPmull, etc.)
+//! - [`SelectionPolicy`]: Pre-computed dispatch decisions with cached thresholds
+//! - [`OnceCache`]: Thread-safe lazy initialization for kernel selection
 //!
 //! # Usage
 //!
 //! Algorithm crates register kernels via the [`candidates!`] macro.
 //! See [`dispatch`] module for details.
-//!
-//! // Fallibility discipline: deny unwrap/expect in production, allow in tests.
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 #![cfg_attr(not(test), deny(clippy::expect_used))]
 #![cfg_attr(not(test), deny(clippy::indexing_slicing))]

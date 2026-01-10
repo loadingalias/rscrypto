@@ -1,7 +1,7 @@
 //! Error types for cryptographic operations.
 //!
-//! Minimal, timing-safe error types. Individual crates define additional
-//! errors as needed.
+//! Minimal, timing-safe error types designed to prevent information leakage.
+//! Individual crates may define additional errors as needed.
 
 use core::fmt;
 
@@ -9,11 +9,6 @@ use core::fmt;
 ///
 /// Returned when cryptographic verification fails (MAC tags, AEAD tags,
 /// signatures). Intentionally opaque to prevent timing side-channels.
-///
-/// # Security
-///
-/// This error provides no details about the failure. The underlying
-/// verification uses constant-time comparison.
 ///
 /// # Examples
 ///
@@ -25,12 +20,42 @@ use core::fmt;
 ///   if computed == expected {
 ///     Ok(())
 ///   } else {
-///     Err(VerificationError)
+///     Err(VerificationError::new())
 ///   }
 /// }
+///
+/// let a = [0u8; 32];
+/// let b = [1u8; 32];
+/// assert!(verify(&a, &b).is_err());
 /// ```
+///
+/// # Security
+///
+/// This error provides no details about the failure to prevent timing
+/// side-channels. The underlying verification should use constant-time
+/// comparison.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub struct VerificationError;
+
+impl VerificationError {
+  /// Create a new verification error.
+  ///
+  /// This is the only way to construct this error from outside the crate,
+  /// ensuring forward compatibility if fields are added in the future.
+  #[inline]
+  #[must_use]
+  pub const fn new() -> Self {
+    Self
+  }
+}
+
+impl Default for VerificationError {
+  #[inline]
+  fn default() -> Self {
+    Self::new()
+  }
+}
 
 impl fmt::Display for VerificationError {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -65,18 +90,18 @@ mod tests {
 
   #[test]
   fn display_message() {
-    assert_eq!(VerificationError.to_string(), "verification failed");
+    assert_eq!(VerificationError::new().to_string(), "verification failed");
   }
 
   #[test]
   fn debug_impl() {
-    let dbg = format!("{:?}", VerificationError);
+    let dbg = format!("{:?}", VerificationError::new());
     assert_eq!(dbg, "VerificationError");
   }
 
   #[test]
   fn is_copy() {
-    let e = VerificationError;
+    let e = VerificationError::new();
     let e2 = e; // Copy
     let e3 = e; // Still valid
     assert_eq!(e2, e3);
@@ -84,7 +109,7 @@ mod tests {
 
   #[test]
   fn is_clone() {
-    let e = VerificationError;
+    let e = VerificationError::new();
     #[allow(clippy::clone_on_copy)]
     let cloned = e.clone();
     assert_eq!(e, cloned);
@@ -92,8 +117,8 @@ mod tests {
 
   #[test]
   fn equality() {
-    let a = VerificationError;
-    let b = VerificationError;
+    let a = VerificationError::new();
+    let b = VerificationError::new();
     assert_eq!(a, b);
     assert!(a == b); // PartialEq
   }
@@ -106,8 +131,8 @@ mod tests {
       h.finish()
     }
 
-    let a = VerificationError;
-    let b = VerificationError;
+    let a = VerificationError::new();
+    let b = VerificationError::new();
     assert_eq!(hash_one(&a), hash_one(&b));
   }
 
@@ -122,23 +147,22 @@ mod tests {
   #[test]
   fn result_err_path() {
     fn verify_mismatch() -> Result<(), VerificationError> {
-      Err(VerificationError)
+      Err(VerificationError::new())
     }
     let result = verify_mismatch();
     assert!(result.is_err());
-    assert_eq!(result.unwrap_err(), VerificationError);
+    assert_eq!(result.unwrap_err(), VerificationError::new());
   }
 
   #[test]
   fn error_in_result_unwrap_err() {
     fn returns_err() -> Result<(), VerificationError> {
-      Err(VerificationError)
+      Err(VerificationError::new())
     }
     let err = returns_err().unwrap_err();
     assert_eq!(err.to_string(), "verification failed");
   }
 
-  // Compile-time trait bound checks
   #[test]
   fn trait_bounds() {
     fn assert_send<T: Send>() {}
@@ -157,14 +181,18 @@ mod tests {
     fn assert_error<T: core::error::Error>() {}
     assert_error::<VerificationError>();
 
-    // Test Error trait methods
-    let err = VerificationError;
-    assert!(err.source().is_none()); // No source error
+    let err = VerificationError::new();
+    assert!(err.source().is_none());
+  }
+
+  #[test]
+  fn default_impl() {
+    let err: VerificationError = Default::default();
+    assert_eq!(err, VerificationError::new());
   }
 
   #[test]
   fn size_is_zero() {
-    // VerificationError is a unit struct, should be zero-sized
     assert_eq!(core::mem::size_of::<VerificationError>(), 0);
   }
 }

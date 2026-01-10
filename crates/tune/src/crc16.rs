@@ -138,6 +138,7 @@ fn crc16_kernel_specs(caps: &Caps) -> Vec<KernelSpec> {
   specs
 }
 
+/// Map a base kernel name and stream count to the full kernel name with suffix.
 fn kernel_name_with_streams(base: &str, streams: u8) -> &'static str {
   match (base, streams) {
     ("aarch64/pmull", 1) => "aarch64/pmull",
@@ -151,6 +152,33 @@ fn kernel_name_with_streams(base: &str, streams: u8) -> &'static str {
     (b, 1) => Box::leak(b.to_string().into_boxed_str()),
     (b, _) if b.contains("-way") => Box::leak(b.to_string().into_boxed_str()),
     (b, s) => Box::leak(format!("{b}-{s}way").into_boxed_str()),
+  }
+}
+
+/// Validate stream count for a given kernel base name.
+///
+/// Different architectures support different stream counts:
+/// - aarch64/pmull: 1-3 streams
+/// - x86_64 PCLMUL/VPCLMUL: 1, 2, 4, 7, 8 streams
+/// - Other kernels: single stream only
+fn validate_stream_count(forced_kernel: Option<&str>, count: u8) -> Result<(), TuneError> {
+  if count == 0 || count > 16 {
+    return Err(TuneError::InvalidStreamCount(count));
+  }
+
+  let forced_base = forced_kernel.and_then(|name| name.split('-').next());
+
+  let valid = match forced_base {
+    Some("aarch64/pmull") => count <= 3,
+    Some("x86_64/pclmul") | Some("x86_64/vpclmul") => matches!(count, 1 | 2 | 4 | 7 | 8),
+    Some(_) => count == 1, // Unknown kernel only supports single stream
+    None => true,          // No kernel forced, allow any count
+  };
+
+  if valid {
+    Ok(())
+  } else {
+    Err(TuneError::InvalidStreamCount(count))
   }
 }
 
@@ -239,28 +267,7 @@ impl crate::Tunable for Crc16CcittTunable {
   }
 
   fn force_streams(&mut self, count: u8) -> Result<(), TuneError> {
-    if count == 0 || count > 16 {
-      return Err(TuneError::InvalidStreamCount(count));
-    }
-    let forced_base = self.forced_kernel.as_deref().and_then(|name| name.split('-').next());
-
-    match forced_base {
-      Some("aarch64/pmull") => {
-        if count > 3 {
-          return Err(TuneError::InvalidStreamCount(count));
-        }
-      }
-      Some("x86_64/pclmul") | Some("x86_64/vpclmul") => {
-        if !matches!(count, 1 | 2 | 4 | 7 | 8) {
-          return Err(TuneError::InvalidStreamCount(count));
-        }
-      }
-      _ => {
-        if count != 1 {
-          return Err(TuneError::InvalidStreamCount(count));
-        }
-      }
-    }
+    validate_stream_count(self.forced_kernel.as_deref(), count)?;
     self.forced_streams = Some(count);
     self.resolve_kernel();
     Ok(())
@@ -410,28 +417,7 @@ impl crate::Tunable for Crc16IbmTunable {
   }
 
   fn force_streams(&mut self, count: u8) -> Result<(), TuneError> {
-    if count == 0 || count > 16 {
-      return Err(TuneError::InvalidStreamCount(count));
-    }
-    let forced_base = self.forced_kernel.as_deref().and_then(|name| name.split('-').next());
-
-    match forced_base {
-      Some("aarch64/pmull") => {
-        if count > 3 {
-          return Err(TuneError::InvalidStreamCount(count));
-        }
-      }
-      Some("x86_64/pclmul") | Some("x86_64/vpclmul") => {
-        if !matches!(count, 1 | 2 | 4 | 7 | 8) {
-          return Err(TuneError::InvalidStreamCount(count));
-        }
-      }
-      _ => {
-        if count != 1 {
-          return Err(TuneError::InvalidStreamCount(count));
-        }
-      }
-    }
+    validate_stream_count(self.forced_kernel.as_deref(), count)?;
     self.forced_streams = Some(count);
     self.resolve_kernel();
     Ok(())
