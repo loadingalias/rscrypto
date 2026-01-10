@@ -64,7 +64,7 @@ if [[ "$FULL_WORKSPACE" == true ]]; then
     show_error "$LOG_DIR/deny.log"
     exit 1
   fi
-  if ! cargo-audit >>"$LOG_DIR/deny.log" 2>&1; then
+  if ! cargo audit >>"$LOG_DIR/deny.log" 2>&1; then
     fail
     show_error "$LOG_DIR/deny.log"
     exit 1
