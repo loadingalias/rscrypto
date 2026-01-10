@@ -198,12 +198,6 @@ impl Crc24OpenPgp {
     config::get()
   }
 
-  /// Returns diagnostic information about the active dispatch threshold.
-  #[must_use]
-  pub fn diagnostic_threshold() -> usize {
-    crate::dispatch::active_table().boundaries[0]
-  }
-
   /// Returns the kernel name that the selector would choose for `len`.
   #[must_use]
   pub fn kernel_name_for_len(len: usize) -> &'static str {

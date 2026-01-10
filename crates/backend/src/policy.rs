@@ -1,16 +1,21 @@
 //! Pre-computed kernel selection policies.
 //!
-//! A `SelectionPolicy` captures all dispatch decisions at initialization time,
+//! A [`SelectionPolicy`] captures all dispatch decisions at initialization time,
 //! eliminating per-call capability checks and threshold comparisons.
 //!
 //! # Design Goals
 //!
 //! 1. **Zero per-call overhead**: Policy is computed once and cached
-//! 2. **Branchless stream selection**: `streams_for_len()` uses arithmetic
+//! 2. **Per-lane stream selection**: `streams_for_len()` ensures each lane has enough data
 //! 3. **no_std compatible**: All types are `Copy` and heap-free
 //! 4. **Algorithm-agnostic**: Same policy structure works for CRC/hash/AEAD
 //!
-//! See `checksum` crate for usage examples.
+//! # Usage
+//!
+//! ```ignore
+//! let policy = SelectionPolicy::from_platform(caps, &tune);
+//! let streams = policy.streams_for_len(buffer.len());
+//! ```
 
 use platform::{Caps, Tune};
 
@@ -27,26 +32,20 @@ use crate::{
 ///
 /// Policies are computed once from `Caps` + `Tune` and cached for the process
 /// lifetime. They encode:
+///
 /// - Which kernel family and subfamily to use
-/// - Thresholds for tier transitions (e.g., portable → folding)
-/// - Per-lane stream count selection based on `min_bytes_per_lane`
+/// - Thresholds for tier transitions (e.g., portable to folding)
+/// - Per-lane stream count based on `min_bytes_per_lane`
 ///
-/// # Per-Lane Stream Selection
+/// # Stream Selection
 ///
-/// Unlike fixed total-length thresholds, stream selection uses:
-/// `streams = max(s) where len / s >= min_bytes_per_lane`
-///
-/// This ensures each parallel lane has sufficient data to amortize setup.
-///
-/// # Cache-Friendliness
-///
-/// The struct fits in one cache line. All fields are accessed together
-/// during dispatch, maximizing spatial locality.
+/// Stream count is selected per-lane: `streams = max(s) where len / s >= min_bytes_per_lane`.
+/// This ensures each parallel lane has enough data to amortize setup costs.
 ///
 /// # no_std Support
 ///
-/// Policies can be constructed at compile time for embedded/no_std targets
-/// where runtime detection isn't available.
+/// Policies can be constructed at compile time for embedded targets where
+/// runtime detection is unavailable.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SelectionPolicy {
   /// Selected kernel family for this policy.
@@ -385,56 +384,34 @@ impl SelectionPolicy {
 
   /// Select stream count with a custom `min_bytes_per_lane`.
   ///
-  /// This is the core per-lane stream selection logic. Algorithm-specific
-  /// policies can use this to override the default `min_bytes_per_lane`.
-  ///
-  /// # Algorithm
-  ///
-  /// Find the maximum stream count `s` from a family-specific list such that:
-  /// - `s <= max_streams` (architecture limit)
-  /// - `len / s >= min_bytes_per_lane` (each lane has enough data)
-  ///
-  /// Falls back to 1-way if no stream count satisfies the requirement.
+  /// Finds the maximum stream count `s` such that `len / s >= min_bytes_per_lane`
+  /// and `s <= max_streams`. Falls back to 1-way if no count satisfies these.
   #[inline]
   #[must_use]
   pub fn streams_for_len_with_min(&self, len: usize, min_bytes_per_lane: usize) -> u8 {
-    // Early exit for single-stream policies
-    if self.max_streams == 1 {
+    if self.max_streams == 1 || len < min_bytes_per_lane {
       return 1;
     }
 
-    // If buffer is smaller than min_bytes_per_lane, always 1-way
-    if len < min_bytes_per_lane {
-      return 1;
-    }
-
-    // Stream counts supported by the selected backend family.
-    //
-    // This avoids selecting unsupported levels (e.g. 3-way on x86_64, 7-way on Power),
-    // while still letting `max_streams` cap per-arch limits and tunables.
-    const STREAM_LEVELS_X86: [u8; 5] = [8, 7, 4, 2, 1];
-    const STREAM_LEVELS_ARM: [u8; 3] = [3, 2, 1];
-    const STREAM_LEVELS_POWER: [u8; 4] = [8, 4, 2, 1];
-    const STREAM_LEVELS_4WAY: [u8; 3] = [4, 2, 1];
-    const STREAM_LEVELS_NONE: [u8; 1] = [1];
+    // Stream counts supported by each architecture family (descending order).
+    const X86_STREAMS: [u8; 5] = [8, 7, 4, 2, 1];
+    const ARM_STREAMS: [u8; 3] = [3, 2, 1];
+    const POWER_STREAMS: [u8; 4] = [8, 4, 2, 1];
+    const FOUR_WAY_STREAMS: [u8; 3] = [4, 2, 1];
+    const SINGLE_STREAM: [u8; 1] = [1];
 
     let stream_levels: &[u8] = match self.family {
-      KernelFamily::X86Crc32 | KernelFamily::X86Pclmul | KernelFamily::X86Vpclmul => &STREAM_LEVELS_X86,
+      KernelFamily::X86Crc32 | KernelFamily::X86Pclmul | KernelFamily::X86Vpclmul => &X86_STREAMS,
       KernelFamily::ArmCrc32 | KernelFamily::ArmPmull | KernelFamily::ArmPmullEor3 | KernelFamily::ArmSve2Pmull => {
-        &STREAM_LEVELS_ARM
+        &ARM_STREAMS
       }
-      KernelFamily::PowerVpmsum => &STREAM_LEVELS_POWER,
-      KernelFamily::S390xVgfm | KernelFamily::RiscvZbc | KernelFamily::RiscvZvbc => &STREAM_LEVELS_4WAY,
-      _ => &STREAM_LEVELS_NONE,
+      KernelFamily::PowerVpmsum => &POWER_STREAMS,
+      KernelFamily::S390xVgfm | KernelFamily::RiscvZbc | KernelFamily::RiscvZvbc => &FOUR_WAY_STREAMS,
+      _ => &SINGLE_STREAM,
     };
 
     for &s in stream_levels {
-      // Skip if above architecture limit
-      if s > self.max_streams {
-        continue;
-      }
-      // Check if each lane gets at least min_bytes_per_lane
-      if len.strict_div(s as usize) >= min_bytes_per_lane {
+      if s <= self.max_streams && len.strict_div(s as usize) >= min_bytes_per_lane {
         return s;
       }
     }
@@ -529,13 +506,9 @@ impl Default for SelectionPolicy {
 
 /// Force mode for overriding automatic kernel selection.
 ///
-/// This replaces algorithm-specific force enums (like `Crc64Force`) with
-/// a unified system that works across all algorithms.
-///
-/// # Safety
-///
-/// Force modes that specify unavailable families or tiers are safe:
-/// the policy will fall back to the best available alternative.
+/// A unified system for forcing specific backends across all algorithms.
+/// Force modes that specify unavailable families or tiers are safe: the
+/// policy falls back to the best available alternative.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum ForceMode {
   /// Automatic selection based on capabilities and tuning (default).
@@ -567,13 +540,16 @@ impl ForceMode {
   /// Parse from string (for env var support).
   ///
   /// Accepts case-insensitive names:
-  /// - `"auto"` → `Auto`
-  /// - `"reference"`, `"bitwise"` → `Reference`
-  /// - `"portable"`, `"table"` → `Portable`
-  /// - `"pclmul"`, `"vpclmul"`, etc. → `Family(...)`
+  /// - `"auto"` - Automatic selection
+  /// - `"reference"`, `"bitwise"` - Reference implementation
+  /// - `"portable"`, `"table"` - Portable fallback
+  /// - `"pclmul"`, `"vpclmul"`, `"pmull"`, etc. - Specific families
+  /// - `"hwcrc"`, `"folding"`, `"wide"` - Specific tiers
   #[must_use]
   pub fn parse(s: &str) -> Option<Self> {
     let s = s.trim();
+
+    // Mode names (case-insensitive)
     if s.eq_ignore_ascii_case("auto") {
       return Some(Self::Auto);
     }
@@ -582,35 +558,6 @@ impl ForceMode {
     }
     if s.eq_ignore_ascii_case("portable") || s.eq_ignore_ascii_case("table") {
       return Some(Self::Portable);
-    }
-
-    // Family names
-    if s.eq_ignore_ascii_case("pclmul") {
-      return Some(Self::Family(KernelFamily::X86Pclmul));
-    }
-    if s.eq_ignore_ascii_case("vpclmul") {
-      return Some(Self::Family(KernelFamily::X86Vpclmul));
-    }
-    if s.eq_ignore_ascii_case("pmull") {
-      return Some(Self::Family(KernelFamily::ArmPmull));
-    }
-    if s.eq_ignore_ascii_case("pmull-eor3") || s.eq_ignore_ascii_case("pmulleor3") {
-      return Some(Self::Family(KernelFamily::ArmPmullEor3));
-    }
-    if s.eq_ignore_ascii_case("sve2-pmull") || s.eq_ignore_ascii_case("sve2pmull") {
-      return Some(Self::Family(KernelFamily::ArmSve2Pmull));
-    }
-    if s.eq_ignore_ascii_case("vpmsum") {
-      return Some(Self::Family(KernelFamily::PowerVpmsum));
-    }
-    if s.eq_ignore_ascii_case("vgfm") {
-      return Some(Self::Family(KernelFamily::S390xVgfm));
-    }
-    if s.eq_ignore_ascii_case("zbc") {
-      return Some(Self::Family(KernelFamily::RiscvZbc));
-    }
-    if s.eq_ignore_ascii_case("zvbc") {
-      return Some(Self::Family(KernelFamily::RiscvZvbc));
     }
 
     // Tier names
@@ -622,6 +569,45 @@ impl ForceMode {
     }
     if s.eq_ignore_ascii_case("wide") {
       return Some(Self::Tier(KernelTier::Wide));
+    }
+
+    // Family names
+    Self::parse_family(s).map(Self::Family)
+  }
+
+  /// Parse a family name (helper for `parse`).
+  fn parse_family(s: &str) -> Option<KernelFamily> {
+    // x86_64 families
+    if s.eq_ignore_ascii_case("pclmul") {
+      return Some(KernelFamily::X86Pclmul);
+    }
+    if s.eq_ignore_ascii_case("vpclmul") {
+      return Some(KernelFamily::X86Vpclmul);
+    }
+
+    // aarch64 families
+    if s.eq_ignore_ascii_case("pmull") {
+      return Some(KernelFamily::ArmPmull);
+    }
+    if s.eq_ignore_ascii_case("pmull-eor3") || s.eq_ignore_ascii_case("pmulleor3") {
+      return Some(KernelFamily::ArmPmullEor3);
+    }
+    if s.eq_ignore_ascii_case("sve2-pmull") || s.eq_ignore_ascii_case("sve2pmull") {
+      return Some(KernelFamily::ArmSve2Pmull);
+    }
+
+    // Other architectures
+    if s.eq_ignore_ascii_case("vpmsum") {
+      return Some(KernelFamily::PowerVpmsum);
+    }
+    if s.eq_ignore_ascii_case("vgfm") {
+      return Some(KernelFamily::S390xVgfm);
+    }
+    if s.eq_ignore_ascii_case("zbc") {
+      return Some(KernelFamily::RiscvZbc);
+    }
+    if s.eq_ignore_ascii_case("zvbc") {
+      return Some(KernelFamily::RiscvZvbc);
     }
 
     None

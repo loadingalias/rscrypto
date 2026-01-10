@@ -249,10 +249,14 @@ impl BenchRunner {
 }
 
 /// Fill buffer with deterministic pseudo-random data.
-fn fill_data(buf: &mut [u8]) {
+///
+/// Uses a simple but effective pattern that produces varied byte values
+/// without expensive computation. The pattern is reproducible for consistent
+/// benchmarking across runs.
+pub fn fill_data(buf: &mut [u8]) {
   for (i, b) in buf.iter_mut().enumerate() {
-    let x = (i as u8).wrapping_mul(31).wrapping_add((i >> 8) as u8);
-    *b = x;
+    // Mix low and high bits for better distribution
+    *b = (i as u8).wrapping_mul(31).wrapping_add((i >> 8) as u8);
   }
 }
 

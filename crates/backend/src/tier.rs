@@ -4,15 +4,15 @@
 //! implementations to wide SIMD operations. Higher tiers offer better
 //! performance but have stricter hardware requirements.
 //!
-//! # Tier System
+//! # Tier Overview
 //!
-//! | Tier | Name | Description |
-//! |------|------|-------------|
-//! | 0 | Reference | Bitwise implementation - always available, for verification |
-//! | 1 | Portable | Table-based slice-by-N - always available, production fallback |
-//! | 2 | HwCrc | Native CRC instructions - CRC-32/32C only on x86_64, aarch64 |
-//! | 3 | Folding | PCLMUL/PMULL/VPMSUM/VGFM/Zbc - carryless multiply folding |
-//! | 4 | Wide | VPCLMUL/EOR3/SVE2/Zvbc - wide SIMD / advanced folding |
+//! | Tier | Name | Throughput | Description |
+//! |------|------|------------|-------------|
+//! | 0 | Reference | ~100 MB/s | Bitwise - always available, for verification |
+//! | 1 | Portable | 1-3 GB/s | Table-based slice-by-N - production fallback |
+//! | 2 | HwCrc | 15-25 GB/s | Native CRC instructions (CRC-32/32C only) |
+//! | 3 | Folding | 8-15 GB/s | Carryless multiply (PCLMUL/PMULL/VPMSUM/Zbc) |
+//! | 4 | Wide | 20-40 GB/s | Wide SIMD (VPCLMUL/EOR3/SVE2/Zvbc) |
 
 /// Kernel acceleration tier.
 ///
@@ -106,6 +106,9 @@ impl KernelTier {
   }
 
   /// Check if this tier uses SIMD acceleration.
+  ///
+  /// Currently equivalent to [`requires_runtime_detection`](Self::requires_runtime_detection),
+  /// but kept separate for semantic clarity.
   #[inline]
   #[must_use]
   pub const fn is_simd(self) -> bool {

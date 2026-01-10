@@ -3,7 +3,7 @@
 use crate::{
   AlgorithmResult, KernelSpec, KernelTier, PlatformInfo, Tunable, TuneError, TuneResults,
   analysis::{self, CrossoverType, Measurement},
-  runner::{BenchRunner, STREAM_SIZES, THRESHOLD_SIZES, stream_candidates},
+  runner::{BenchRunner, STREAM_SIZES, THRESHOLD_SIZES, fill_data, stream_candidates},
 };
 
 fn is_crc32_algorithm(name: &str) -> bool {
@@ -594,41 +594,54 @@ fn find_best_config(measurements: &[Measurement]) -> (&'static str, u8) {
   }
 }
 
-/// Fill buffer with deterministic data.
-fn fill_data(buf: &mut [u8]) {
-  for (i, b) in buf.iter_mut().enumerate() {
-    let x = (i as u8).wrapping_mul(31).wrapping_add((i >> 8) as u8);
-    *b = x;
-  }
-}
-
-/// Get current timestamp.
+/// Generate an ISO 8601 timestamp for the current time.
+///
+/// Uses a simplified civil calendar calculation. For precise timestamps,
+/// consider using the `time` or `chrono` crate.
 fn get_timestamp() -> String {
-  // Simple ISO 8601 timestamp using std::time
   use std::time::{SystemTime, UNIX_EPOCH};
 
-  let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+  let secs = SystemTime::now()
+    .duration_since(UNIX_EPOCH)
+    .unwrap_or_default()
+    .as_secs();
 
-  // Convert to a simple date string
-  // This is a simplified version; in production you'd use chrono or similar
-  let secs = now.as_secs();
-  let days = secs / 86400;
-  let years = 1970u64.wrapping_add(days / 365);
-  let remaining_days = days % 365;
-  let months = remaining_days / 30;
-  let day = remaining_days % 30;
+  // Days and time-of-day
+  let days_since_epoch = secs / 86400;
+  let time_of_day = secs % 86400;
+  let hours = time_of_day / 3600;
+  let mins = (time_of_day % 3600) / 60;
+  let seconds = time_of_day % 60;
 
-  let hours = (secs % 86400) / 3600;
-  let mins = (secs % 3600) / 60;
-  let seconds = secs % 60;
+  // Civil calendar calculation (handles leap years correctly)
+  let (year, month, day) = days_to_civil(days_since_epoch);
 
-  format!(
-    "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
-    years,
-    months.wrapping_add(1),
-    day.wrapping_add(1),
-    hours,
-    mins,
-    seconds
-  )
+  format!("{year:04}-{month:02}-{day:02}T{hours:02}:{mins:02}:{seconds:02}Z")
+}
+
+/// Convert days since Unix epoch to (year, month, day).
+///
+/// Algorithm from Howard Hinnant's date library.
+fn days_to_civil(days: u64) -> (u32, u32, u32) {
+  // Shift epoch from 1970-01-01 to 0000-03-01
+  let z = days.strict_add(719468);
+  let era = z / 146097;
+  let doe = z.strict_sub(era.strict_mul(146097)); // day of era [0, 146096]
+  let yoe = doe
+    .strict_sub(doe / 1460)
+    .strict_add(doe / 36524)
+    .strict_sub(doe / 146096)
+    / 365; // year of era [0, 399]
+  let y = yoe.strict_add(era.strict_mul(400));
+  let doy = doe
+    .strict_sub(365u64.strict_mul(yoe))
+    .strict_sub(yoe / 4)
+    .strict_add(yoe / 100); // day of year [0, 365]
+  let mp = (5u64.strict_mul(doy).strict_add(2)) / 153; // month in [0, 11]
+  let d = doy.strict_sub((153u64.strict_mul(mp).strict_add(2)) / 5).strict_add(1); // day [1, 31]
+
+  let m = if mp < 10 { mp.strict_add(3) } else { mp.strict_sub(9) };
+  let y = if m <= 2 { y.strict_add(1) } else { y };
+
+  (y as u32, m as u32, d as u32)
 }

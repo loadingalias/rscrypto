@@ -5,27 +5,27 @@
 //!
 //! # Trait Hierarchy
 //!
-//! ```text
-//! Checksum (CRC, xxHash, etc.)
-//!     └── ChecksumCombine (parallel processing support)
+//! | Trait | Purpose | Examples |
+//! |-------|---------|----------|
+//! | [`Checksum`] | Non-cryptographic checksums | CRC32, CRC64, xxHash |
+//! | [`ChecksumCombine`] | Parallel checksum combination | CRC with O(log n) combine |
 //!
-//! Digest (Blake3, SHA2, SHA3)
-//!     └── ExtendableOutput (XOF: SHAKE, Blake3)
+//! Future traits (not yet implemented):
 //!
-//! Mac (HMAC, Poly1305, CMAC)
-//!
-//! Aead (AES-GCM, ChaCha20-Poly1305, AEGIS)
-//!
-//! Cipher (AES, ChaCha20)
-//!
-//! Kdf (HKDF, Argon2, scrypt)
-//! ```
+//! - `Digest` - Cryptographic hash functions (Blake3, SHA-2, SHA-3)
+//! - `Mac` - Message authentication codes (HMAC, Poly1305, CMAC)
+//! - `Aead` - Authenticated encryption (AES-GCM, ChaCha20-Poly1305, AEGIS)
+//! - `Cipher` - Block/stream ciphers (AES, ChaCha20)
+//! - `Kdf` - Key derivation functions (HKDF, Argon2, scrypt)
 //!
 //! # Error Types
 //!
 //! - [`VerificationError`] - Opaque error for MAC/AEAD/signature verification
 //!
-//! // Fallibility discipline: deny unwrap/expect in production, allow in tests.
+//! # Fallibility Discipline
+//!
+//! This crate denies `unwrap`, `expect`, and indexing in non-test code to ensure
+//! all error paths are handled explicitly.
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 #![cfg_attr(not(test), deny(clippy::expect_used))]
 #![cfg_attr(not(test), deny(clippy::indexing_slicing))]

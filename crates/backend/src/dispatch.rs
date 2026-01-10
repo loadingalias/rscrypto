@@ -2,20 +2,21 @@
 //!
 //! This module provides the core dispatch primitives for rscrypto:
 //!
-//! - [`Candidate`]: A kernel with capability requirements
-//! - [`Selected`]: The result of kernel selection
-//! - [`select`]: Choose the best kernel from a candidate list
-//! - Dispatchers: `Crc32Dispatcher`, `Crc64Dispatcher`, etc.
+//! - [`Candidate`] / [`TunedCandidate`]: Kernel with capability requirements
+//! - [`Selected`]: Result of kernel selection
+//! - [`select`] / [`select_tuned`]: Choose best kernel from candidates
+//! - [`candidates!`] / [`tuned_candidates!`]: Macros for defining candidate lists
+//! - `define_dispatcher!`: Macro for generating cached dispatcher types
 //!
 //! # Design
 //!
 //! The dispatch system has two paths:
 //!
-//! 1. **Compile-time selection** (zero-cost): When target features are known at compile time,
-//!    dispatch can be resolved to a direct function call with no overhead.
+//! 1. **Compile-time** (zero-cost): When target features are known at compile time, dispatch
+//!    resolves to a direct function call with no overhead.
 //!
-//! 2. **Runtime selection** (cached): For generic binaries, the dispatcher detects CPU features
-//!    once and caches the selected kernel. Subsequent calls are a single indirect call.
+//! 2. **Runtime** (cached): For generic binaries, the dispatcher detects CPU features once and
+//!    caches the selected kernel. Subsequent calls are a single indirect call.
 
 use platform::{Caps, Tune};
 
@@ -23,21 +24,31 @@ use platform::{Caps, Tune};
 // Candidate List Macro
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Creates a static slice of [`Candidate`]s with concise syntax.
+/// Creates a static slice of [`Candidate`]s for kernel dispatch.
 ///
-/// This macro reduces boilerplate when defining kernel candidate lists for dispatch.
-/// Each entry specifies a name, required capabilities, and the kernel function.
+/// Candidates are ordered best-to-worst. The dispatcher selects the first
+/// candidate whose capability requirements are satisfied.
 ///
 /// # Syntax
 ///
 /// ```text
 /// candidates![
-///     "name" => CAPS_EXPR => kernel_fn,
-///     ...
+///     "name" => CAPS => kernel_fn,
+///     "fallback" => Caps::NONE => fallback_fn,  // Always include a fallback!
 /// ]
 /// ```
 ///
-/// See `checksum` crate for usage examples.
+/// # Example
+///
+/// ```ignore
+/// use backend::{candidates, caps::Caps};
+///
+/// let kernels = candidates![
+///     "x86_64/vpclmul" => x86::VPCLMUL_READY => vpclmul_kernel,
+///     "x86_64/pclmul" => x86::PCLMUL_READY => pclmul_kernel,
+///     "portable" => Caps::NONE => portable_kernel,
+/// ];
+/// ```
 #[macro_export]
 macro_rules! candidates {
   // Match one or more: name => caps => func, with optional trailing comma
@@ -64,20 +75,29 @@ pub use candidates;
 
 /// Creates a static slice of [`TunedCandidate`]s with optional tuning predicates.
 ///
-/// Like [`candidates!`], but each entry may include a `where` clause that filters
-/// candidates based on [`platform::Tune`].
+/// Like [`candidates!`], but entries may include a `where` clause that filters
+/// candidates based on [`platform::Tune`]. This enables microarchitecture-aware
+/// kernel selection.
 ///
 /// # Syntax
 ///
 /// ```text
 /// tuned_candidates![
-///     "name" => CAPS_EXPR => kernel_fn,
-///     "name" => CAPS_EXPR, where |t| <predicate> => kernel_fn,
-///     ...
+///     "name" => CAPS => kernel_fn,
+///     "name" => CAPS, where |t| t.fast_wide_ops => wide_kernel_fn,
+///     "fallback" => Caps::NONE => fallback_fn,
 /// ]
 /// ```
 ///
-/// See `checksum` crate for usage examples.
+/// # Example
+///
+/// ```ignore
+/// let kernels = tuned_candidates![
+///     "x86_64/vpclmul" => x86::VPCLMUL_READY, where |t| t.effective_simd_width >= 256 => vpclmul,
+///     "x86_64/pclmul" => x86::PCLMUL_READY => pclmul,
+///     "portable" => Caps::NONE => portable,
+/// ];
+/// ```
 #[macro_export]
 macro_rules! tuned_candidates {
   [ $( $name:literal => $caps:expr $(, where $pred:expr)? => $func:expr ),+ $(,)? ] => {
@@ -223,24 +243,32 @@ pub fn select_tuned<F: Copy>(caps: Caps, tune: &Tune, candidates: &[TunedCandida
 
 /// Generates a dispatcher type with caching for a specific function signature.
 ///
-/// This macro is designed to be used by algorithm crates to define their own
-/// dispatchers. The backend crate provides the infrastructure; algorithm crates
-/// (checksum, hashes, aead, etc.) define the concrete dispatcher types.
+/// Algorithm crates use this to define their dispatchers. The backend crate
+/// provides the infrastructure; algorithm crates define the concrete types.
 ///
 /// # Generated API
 ///
-/// For each dispatcher, the macro generates:
 /// - `new(selector)` - Create with a selector function
 /// - `get()` - Get the selected kernel (cached after first call)
+/// - `kernel()` - Get the function pointer directly
 /// - `backend_name()` - Get the name of the selected backend
 /// - `call(state, data)` - Call the kernel with given arguments
 ///
 /// # Thread Safety
 ///
 /// Dispatchers are `Send + Sync` and can be used from multiple threads:
-/// - **std**: Uses `OnceCache` backed by `OnceLock` (auto-derives `Send + Sync`)
-/// - **no_std with atomics**: Uses `OnceCache` with atomic state machine
-/// - **no_std without atomics**: Single-threaded targets (no caching)
+/// - **std**: Uses `OnceCache` backed by `OnceLock`
+/// - **no_std + atomics**: Uses `OnceCache` with atomic state machine
+/// - **no_std - atomics**: Per-call computation (single-threaded targets)
+///
+/// # Example
+///
+/// ```ignore
+/// define_dispatcher!(
+///     /// CRC-32 dispatcher with cached kernel selection.
+///     Crc32Dispatcher, fn(u32, &[u8]) -> u32, u32
+/// );
+/// ```
 #[macro_export]
 macro_rules! define_dispatcher {
   (

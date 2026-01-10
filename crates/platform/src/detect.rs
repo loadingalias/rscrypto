@@ -27,15 +27,34 @@ use crate::{
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Detected CPU state: capabilities and tuning hints.
+///
+/// This struct combines all detection results:
+/// - `caps`: Available CPU features (what instructions can run)
+/// - `tune`: Microarchitecture-specific tuning hints (what's optimal)
+/// - `arch`: Target architecture identifier
+///
+/// Use [`get()`] to obtain a cached instance, or [`detect_uncached()`] for
+/// fresh detection (useful for testing/benchmarking).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Detected {
+  /// CPU feature capabilities bitset.
   pub caps: Caps,
+  /// Microarchitecture-specific tuning hints.
   pub tune: Tune,
+  /// Target architecture identifier.
   pub arch: Arch,
 }
 
 impl Detected {
   /// Create a portable fallback detection result.
+  ///
+  /// Returns a conservative configuration with no SIMD features enabled.
+  /// Used as a fallback when:
+  /// - Running under Miri (which cannot interpret SIMD intrinsics)
+  /// - On unsupported architectures
+  /// - When detection fails
+  #[inline]
+  #[must_use]
   pub const fn portable() -> Self {
     Self {
       caps: Caps::NONE,

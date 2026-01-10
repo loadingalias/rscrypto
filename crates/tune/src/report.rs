@@ -1,4 +1,15 @@
 //! Output formatters for tuning results.
+//!
+//! This module provides multiple output formats for tuning results:
+//!
+//! - [`OutputFormat::Summary`]: Human-readable summary (default)
+//! - [`OutputFormat::Env`]: Shell environment variable exports
+//! - [`OutputFormat::Json`]: JSON for programmatic use
+//! - [`OutputFormat::Tsv`]: Tab-separated values for spreadsheets
+//! - [`OutputFormat::Contribute`]: Markdown for GitHub issue submission
+//!
+//! Use the [`Report`] struct for custom output destinations, or the
+//! convenience functions like [`print_summary`] for stdout output.
 
 use std::io::{self, Write};
 
@@ -324,37 +335,33 @@ fn escape_json(s: &str) -> String {
     .replace('\t', "\\t")
 }
 
-/// Print results to stdout.
+/// Write results to stdout in the specified format.
+fn print_with_format(results: &TuneResults, format: OutputFormat) -> io::Result<()> {
+  let stdout = io::stdout();
+  Report::new(stdout.lock(), format).write(results)
+}
+
+/// Print results to stdout as human-readable summary.
 pub fn print_summary(results: &TuneResults) -> io::Result<()> {
-  let stdout = io::stdout();
-  let mut report = Report::new(stdout.lock(), OutputFormat::Summary);
-  report.write(results)
+  print_with_format(results, OutputFormat::Summary)
 }
 
-/// Print env exports to stdout.
+/// Print results to stdout as shell environment variable exports.
 pub fn print_env(results: &TuneResults) -> io::Result<()> {
-  let stdout = io::stdout();
-  let mut report = Report::new(stdout.lock(), OutputFormat::Env);
-  report.write(results)
+  print_with_format(results, OutputFormat::Env)
 }
 
-/// Print JSON to stdout.
+/// Print results to stdout as JSON.
 pub fn print_json(results: &TuneResults) -> io::Result<()> {
-  let stdout = io::stdout();
-  let mut report = Report::new(stdout.lock(), OutputFormat::Json);
-  report.write(results)
+  print_with_format(results, OutputFormat::Json)
 }
 
-/// Print TSV to stdout.
+/// Print results to stdout as tab-separated values.
 pub fn print_tsv(results: &TuneResults) -> io::Result<()> {
-  let stdout = io::stdout();
-  let mut report = Report::new(stdout.lock(), OutputFormat::Tsv);
-  report.write(results)
+  print_with_format(results, OutputFormat::Tsv)
 }
 
-/// Print contribution-ready markdown to stdout.
+/// Print results to stdout as contribution-ready markdown.
 pub fn print_contribute(results: &TuneResults) -> io::Result<()> {
-  let stdout = io::stdout();
-  let mut report = Report::new(stdout.lock(), OutputFormat::Contribute);
-  report.write(results)
+  print_with_format(results, OutputFormat::Contribute)
 }

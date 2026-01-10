@@ -1,15 +1,15 @@
 //! Lazy caching primitives for dispatch and policy tables.
 //!
-//! This module provides cache types that work across std and no_std targets:
-//!
 //! - [`OnceCache<T>`]: Single-value lazy cache (building block for dispatchers)
 //! - [`PolicyCache<P, K>`]: Tuple cache for (Policy, Kernels) pairs
 //!
-//! # Caching Strategy
+//! # Platform Behavior
 //!
-//! - **std**: Uses `OnceLock` for thread-safe lazy initialization
-//! - **no_std with atomics**: Uses atomic state machine with `UnsafeCell<MaybeUninit<T>>`
-//! - **no_std without atomics**: Per-call computation (unavoidable for single-threaded embedded)
+//! | Platform | Implementation | Behavior |
+//! |----------|----------------|----------|
+//! | std | `OnceLock` | Thread-safe, initialized once |
+//! | no_std + atomics | Atomic state machine | Thread-safe, initialized once |
+//! | no_std - atomics | Direct call | Per-call computation |
 
 #[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
 use core::cell::UnsafeCell;
@@ -20,19 +20,16 @@ use core::mem::MaybeUninit;
 // OnceCache<T> - Single-value lazy cache
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// A lazy cache for a single value.
+/// A lazy cache for a single `Copy` value.
 ///
-/// This is the building block for dispatcher caching. It stores a single `Copy`
-/// value with lazy initialization and proper synchronization:
+/// Building block for dispatcher caching with proper synchronization.
+/// See module documentation for platform-specific behavior.
 ///
-/// - **std**: Zero-cost wrapper around `OnceLock<T>`
-/// - **no_std with atomics**: Atomic state machine with spin-wait synchronization
-/// - **no_std without atomics**: Per-call computation (no caching)
-///
-/// # Examples
+/// # Example
 ///
 /// ```
 /// use backend::OnceCache;
+///
 /// static CACHE: OnceCache<u64> = OnceCache::new();
 /// let value = CACHE.get_or_init(|| 42);
 /// assert_eq!(value, 42);
@@ -189,15 +186,9 @@ impl<T: Copy> Default for OnceCache<T> {
 
 /// A cache for (Policy, Kernels) pairs.
 ///
-/// This provides lazy initialization with the following properties:
-/// - Zero-cost after first initialization (just a pointer load)
-/// - Thread-safe on targets with atomics
-/// - Falls back to per-call computation on targets without atomics
-///
-/// # Type Parameters
-///
-/// - `P`: Policy type (must be `Copy`)
-/// - `K`: Kernels type (must be `Copy`)
+/// Used by algorithm crates to cache both the selection policy and the
+/// selected kernel functions together. See module documentation for
+/// platform-specific behavior.
 pub struct PolicyCache<P: Copy, K: Copy> {
   #[cfg(feature = "std")]
   inner: std::sync::OnceLock<(P, K)>,
