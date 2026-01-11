@@ -25,8 +25,8 @@ criterion.workspace = true
 proptest.workspace = true
 crc64fast = "1.1.0"
 crc64fast-nvme = "1.2.1"
-crc-fast = "1.9.0"
-crc = "3.3.0"
+crc-fast = "1.10.0"
+crc = "3.4.0"
 crc32fast = "1.5.0"
 crc32c = "0.6.8"
 

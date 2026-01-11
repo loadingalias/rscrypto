@@ -16,6 +16,9 @@ rustflags = ["-C", "target-feature=+lse"]
 [target.aarch64-apple-darwin]
 rustflags = ["-C", "target-feature=+lse"]
 
+# macOS Intel
+[target.x86_64-apple-darwin]
+
 # Tier B
 # Linux x86_64 MUSL
 [target.x86_64-unknown-linux-musl]
@@ -60,6 +63,9 @@ rustflags = ["-C", "target-feature=+lse"]
 
 # RISC-V 64-bit bare metal (RV64IMAFDC)
 [target.riscv64gc-unknown-none-elf]
+
+# RISC-V 32-bit bare metal (RV32IMAC)
+[target.riscv32imac-unknown-none-elf]
 
 # x86_64 bare metal (kernels, bootloaders, hypervisors)
 [target.x86_64-unknown-none]

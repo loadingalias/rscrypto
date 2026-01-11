@@ -81,3 +81,21 @@ pub use checksum::{
   kernel_for,
   platform_describe,
 };
+
+// =============================================================================
+// Hashes
+// =============================================================================
+
+#[cfg(feature = "hashes")]
+pub mod hashes {
+  pub use ::hashes::{
+    Digest, FastHash, Xof, crypto,
+    crypto::{Blake3, Blake3Xof, Sha3_256, Sha3_512, Sha256},
+    fast,
+  };
+}
+
+#[cfg(feature = "hashes")]
+pub use hashes::crypto::{Blake3, Blake3Xof, Sha3_256, Sha3_512, Sha256};
+#[cfg(feature = "hashes")]
+pub use hashes::{Digest, Xof};

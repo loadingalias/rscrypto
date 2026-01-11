@@ -47,6 +47,7 @@ platform = { path = "crates/platform", version = "^0.1.0", default-features = fa
 backend = { path = "crates/backend", version = "^0.1.0", default-features = false } #unified
 traits = { path = "crates/traits", version = "^0.1.0", default-features = false } #unified
 checksum = { path = "crates/checksum", version = "^0.1.0", default-features = false } #unified
+hashes = { path = "crates/hashes", version = "^0.1.0", default-features = false } #unified
 rscrypto = { path = "crates/rscrypto", version = "^0.1.0", default-features = false } #unified
 
 [profile.dev]

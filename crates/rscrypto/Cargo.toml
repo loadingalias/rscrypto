@@ -12,15 +12,16 @@ categories = ["cryptography", "no-std::no-alloc", "algorithms"]
 
 [features]
 default = ["std", "checksums"]
-std = ["alloc", "checksum?/std"]
+std = ["alloc", "checksum?/std", "hashes?/std"]
 alloc = ["checksum?/alloc"]
 
 checksums = ["dep:checksum"]
-# hashes = ["dep:hashes"]   # future
+hashes = ["dep:hashes"]
 # aead = ["dep:aead"]       # future
 
 [dependencies]
 checksum = { workspace = true, optional = true }
+hashes = { workspace = true, optional = true }
 
 [lints]
 workspace = true
