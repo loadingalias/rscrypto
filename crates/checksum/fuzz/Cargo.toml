@@ -87,3 +87,10 @@ path = "fuzz_targets/kernels_crc24.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "vectored"
+path = "fuzz_targets/vectored.rs"
+test = false
+doc = false
+bench = false

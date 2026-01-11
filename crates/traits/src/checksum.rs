@@ -61,6 +61,29 @@ pub trait Checksum: Clone + Default {
   /// This method can be called multiple times to process data incrementally.
   fn update(&mut self, data: &[u8]);
 
+  /// Update the hasher with multiple non-contiguous buffers.
+  ///
+  /// Semantics are identical to calling [`update`](Self::update) on each buffer
+  /// in order, but implementations may fuse dispatch and reduce per-buffer
+  /// overhead.
+  #[inline]
+  fn update_vectored(&mut self, bufs: &[&[u8]]) {
+    for buf in bufs {
+      self.update(buf);
+    }
+  }
+
+  /// Update the hasher with `std::io::IoSlice` buffers.
+  ///
+  /// This is a convenience for integrating with vectored I/O APIs.
+  #[cfg(feature = "std")]
+  #[inline]
+  fn update_io_slices(&mut self, bufs: &[std::io::IoSlice<'_>]) {
+    for buf in bufs {
+      self.update(buf);
+    }
+  }
+
   /// Finalize and return the checksum.
   ///
   /// This method does not consume the hasher, allowing further updates
@@ -82,6 +105,25 @@ pub trait Checksum: Clone + Default {
   fn checksum(data: &[u8]) -> Self::Output {
     let mut h = Self::new();
     h.update(data);
+    h.finalize()
+  }
+
+  /// Compute the checksum of multiple buffers in one shot.
+  #[inline]
+  #[must_use]
+  fn checksum_vectored(bufs: &[&[u8]]) -> Self::Output {
+    let mut h = Self::new();
+    h.update_vectored(bufs);
+    h.finalize()
+  }
+
+  /// Compute the checksum of `std::io::IoSlice` buffers in one shot.
+  #[cfg(feature = "std")]
+  #[inline]
+  #[must_use]
+  fn checksum_io_slices(bufs: &[std::io::IoSlice<'_>]) -> Self::Output {
+    let mut h = Self::new();
+    h.update_io_slices(bufs);
     h.finalize()
   }
 }

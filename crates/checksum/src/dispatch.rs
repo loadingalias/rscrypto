@@ -201,6 +201,356 @@ pub fn crc24_openpgp(data: &[u8]) -> u32 {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Vectored Oneshot Functions
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Compute CRC-64/XZ checksum of multiple buffers treated as one concatenated stream.
+#[inline]
+pub fn crc64_xz_vectored(bufs: &[&[u8]]) -> u64 {
+  let table = active_table();
+  let mut crc: u64 = !0;
+  let mut last_set: *const KernelSet = core::ptr::null();
+  let mut kernel = table.xs.crc64_xz;
+
+  for &buf in bufs {
+    if buf.is_empty() {
+      continue;
+    }
+    let set = table.select_set(buf.len());
+    let set_ptr: *const KernelSet = core::ptr::from_ref(set);
+    if set_ptr != last_set {
+      last_set = set_ptr;
+      kernel = set.crc64_xz;
+    }
+    crc = kernel(crc, buf);
+  }
+
+  crc ^ !0
+}
+
+/// Compute CRC-64/NVME checksum of multiple buffers treated as one concatenated stream.
+#[inline]
+pub fn crc64_nvme_vectored(bufs: &[&[u8]]) -> u64 {
+  let table = active_table();
+  let mut crc: u64 = !0;
+  let mut last_set: *const KernelSet = core::ptr::null();
+  let mut kernel = table.xs.crc64_nvme;
+
+  for &buf in bufs {
+    if buf.is_empty() {
+      continue;
+    }
+    let set = table.select_set(buf.len());
+    let set_ptr: *const KernelSet = core::ptr::from_ref(set);
+    if set_ptr != last_set {
+      last_set = set_ptr;
+      kernel = set.crc64_nvme;
+    }
+    crc = kernel(crc, buf);
+  }
+
+  crc ^ !0
+}
+
+/// Compute CRC-32 (IEEE) checksum of multiple buffers treated as one concatenated stream.
+#[inline]
+pub fn crc32_ieee_vectored(bufs: &[&[u8]]) -> u32 {
+  let table = active_table();
+  let mut crc: u32 = !0;
+  let mut last_set: *const KernelSet = core::ptr::null();
+  let mut kernel = table.xs.crc32_ieee;
+
+  for &buf in bufs {
+    if buf.is_empty() {
+      continue;
+    }
+    let set = table.select_set(buf.len());
+    let set_ptr: *const KernelSet = core::ptr::from_ref(set);
+    if set_ptr != last_set {
+      last_set = set_ptr;
+      kernel = set.crc32_ieee;
+    }
+    crc = kernel(crc, buf);
+  }
+
+  crc ^ !0
+}
+
+/// Compute CRC-32C (Castagnoli) checksum of multiple buffers treated as one concatenated stream.
+#[inline]
+pub fn crc32c_vectored(bufs: &[&[u8]]) -> u32 {
+  let table = active_table();
+  let mut crc: u32 = !0;
+  let mut last_set: *const KernelSet = core::ptr::null();
+  let mut kernel = table.xs.crc32c;
+
+  for &buf in bufs {
+    if buf.is_empty() {
+      continue;
+    }
+    let set = table.select_set(buf.len());
+    let set_ptr: *const KernelSet = core::ptr::from_ref(set);
+    if set_ptr != last_set {
+      last_set = set_ptr;
+      kernel = set.crc32c;
+    }
+    crc = kernel(crc, buf);
+  }
+
+  crc ^ !0
+}
+
+/// Compute CRC-16/CCITT checksum of multiple buffers treated as one concatenated stream.
+#[inline]
+pub fn crc16_ccitt_vectored(bufs: &[&[u8]]) -> u16 {
+  let table = active_table();
+  let mut crc: u16 = 0xFFFF;
+  let mut last_set: *const KernelSet = core::ptr::null();
+  let mut kernel = table.xs.crc16_ccitt;
+
+  for &buf in bufs {
+    if buf.is_empty() {
+      continue;
+    }
+    let set = table.select_set(buf.len());
+    let set_ptr: *const KernelSet = core::ptr::from_ref(set);
+    if set_ptr != last_set {
+      last_set = set_ptr;
+      kernel = set.crc16_ccitt;
+    }
+    crc = kernel(crc, buf);
+  }
+
+  crc ^ 0xFFFF
+}
+
+/// Compute CRC-16/IBM checksum of multiple buffers treated as one concatenated stream.
+#[inline]
+pub fn crc16_ibm_vectored(bufs: &[&[u8]]) -> u16 {
+  let table = active_table();
+  let mut crc: u16 = 0;
+  let mut last_set: *const KernelSet = core::ptr::null();
+  let mut kernel = table.xs.crc16_ibm;
+
+  for &buf in bufs {
+    if buf.is_empty() {
+      continue;
+    }
+    let set = table.select_set(buf.len());
+    let set_ptr: *const KernelSet = core::ptr::from_ref(set);
+    if set_ptr != last_set {
+      last_set = set_ptr;
+      kernel = set.crc16_ibm;
+    }
+    crc = kernel(crc, buf);
+  }
+
+  crc
+}
+
+/// Compute CRC-24/OpenPGP checksum of multiple buffers treated as one concatenated stream.
+#[inline]
+pub fn crc24_openpgp_vectored(bufs: &[&[u8]]) -> u32 {
+  const INIT: u32 = 0x00B7_04CE;
+  const MASK: u32 = 0x00FF_FFFF;
+  let table = active_table();
+  let mut crc: u32 = INIT;
+  let mut last_set: *const KernelSet = core::ptr::null();
+  let mut kernel = table.xs.crc24_openpgp;
+
+  for &buf in bufs {
+    if buf.is_empty() {
+      continue;
+    }
+    let set = table.select_set(buf.len());
+    let set_ptr: *const KernelSet = core::ptr::from_ref(set);
+    if set_ptr != last_set {
+      last_set = set_ptr;
+      kernel = set.crc24_openpgp;
+    }
+    crc = kernel(crc, buf);
+  }
+
+  crc & MASK
+}
+
+/// `std::io::IoSlice` versions of the vectored one-shot APIs.
+#[cfg(feature = "std")]
+pub mod std_io {
+  use super::*;
+
+  /// Compute CRC-64/XZ checksum of `IoSlice` buffers treated as one concatenated stream.
+  #[inline]
+  pub fn crc64_xz_io_slices(bufs: &[std::io::IoSlice<'_>]) -> u64 {
+    let table = active_table();
+    let mut crc: u64 = !0;
+    let mut last_set: *const KernelSet = core::ptr::null();
+    let mut kernel = table.xs.crc64_xz;
+
+    for buf in bufs {
+      if buf.is_empty() {
+        continue;
+      }
+      let set = table.select_set(buf.len());
+      let set_ptr: *const KernelSet = core::ptr::from_ref(set);
+      if set_ptr != last_set {
+        last_set = set_ptr;
+        kernel = set.crc64_xz;
+      }
+      crc = kernel(crc, buf);
+    }
+
+    crc ^ !0
+  }
+
+  /// Compute CRC-64/NVME checksum of `IoSlice` buffers treated as one concatenated stream.
+  #[inline]
+  pub fn crc64_nvme_io_slices(bufs: &[std::io::IoSlice<'_>]) -> u64 {
+    let table = active_table();
+    let mut crc: u64 = !0;
+    let mut last_set: *const KernelSet = core::ptr::null();
+    let mut kernel = table.xs.crc64_nvme;
+
+    for buf in bufs {
+      if buf.is_empty() {
+        continue;
+      }
+      let set = table.select_set(buf.len());
+      let set_ptr: *const KernelSet = core::ptr::from_ref(set);
+      if set_ptr != last_set {
+        last_set = set_ptr;
+        kernel = set.crc64_nvme;
+      }
+      crc = kernel(crc, buf);
+    }
+
+    crc ^ !0
+  }
+
+  /// Compute CRC-32 (IEEE) checksum of `IoSlice` buffers treated as one concatenated stream.
+  #[inline]
+  pub fn crc32_ieee_io_slices(bufs: &[std::io::IoSlice<'_>]) -> u32 {
+    let table = active_table();
+    let mut crc: u32 = !0;
+    let mut last_set: *const KernelSet = core::ptr::null();
+    let mut kernel = table.xs.crc32_ieee;
+
+    for buf in bufs {
+      if buf.is_empty() {
+        continue;
+      }
+      let set = table.select_set(buf.len());
+      let set_ptr: *const KernelSet = core::ptr::from_ref(set);
+      if set_ptr != last_set {
+        last_set = set_ptr;
+        kernel = set.crc32_ieee;
+      }
+      crc = kernel(crc, buf);
+    }
+
+    crc ^ !0
+  }
+
+  /// Compute CRC-32C checksum of `IoSlice` buffers treated as one concatenated stream.
+  #[inline]
+  pub fn crc32c_io_slices(bufs: &[std::io::IoSlice<'_>]) -> u32 {
+    let table = active_table();
+    let mut crc: u32 = !0;
+    let mut last_set: *const KernelSet = core::ptr::null();
+    let mut kernel = table.xs.crc32c;
+
+    for buf in bufs {
+      if buf.is_empty() {
+        continue;
+      }
+      let set = table.select_set(buf.len());
+      let set_ptr: *const KernelSet = core::ptr::from_ref(set);
+      if set_ptr != last_set {
+        last_set = set_ptr;
+        kernel = set.crc32c;
+      }
+      crc = kernel(crc, buf);
+    }
+
+    crc ^ !0
+  }
+
+  /// Compute CRC-16/CCITT checksum of `IoSlice` buffers treated as one concatenated stream.
+  #[inline]
+  pub fn crc16_ccitt_io_slices(bufs: &[std::io::IoSlice<'_>]) -> u16 {
+    let table = active_table();
+    let mut crc: u16 = 0xFFFF;
+    let mut last_set: *const KernelSet = core::ptr::null();
+    let mut kernel = table.xs.crc16_ccitt;
+
+    for buf in bufs {
+      if buf.is_empty() {
+        continue;
+      }
+      let set = table.select_set(buf.len());
+      let set_ptr: *const KernelSet = core::ptr::from_ref(set);
+      if set_ptr != last_set {
+        last_set = set_ptr;
+        kernel = set.crc16_ccitt;
+      }
+      crc = kernel(crc, buf);
+    }
+
+    crc ^ 0xFFFF
+  }
+
+  /// Compute CRC-16/IBM checksum of `IoSlice` buffers treated as one concatenated stream.
+  #[inline]
+  pub fn crc16_ibm_io_slices(bufs: &[std::io::IoSlice<'_>]) -> u16 {
+    let table = active_table();
+    let mut crc: u16 = 0;
+    let mut last_set: *const KernelSet = core::ptr::null();
+    let mut kernel = table.xs.crc16_ibm;
+
+    for buf in bufs {
+      if buf.is_empty() {
+        continue;
+      }
+      let set = table.select_set(buf.len());
+      let set_ptr: *const KernelSet = core::ptr::from_ref(set);
+      if set_ptr != last_set {
+        last_set = set_ptr;
+        kernel = set.crc16_ibm;
+      }
+      crc = kernel(crc, buf);
+    }
+
+    crc
+  }
+
+  /// Compute CRC-24/OpenPGP checksum of `IoSlice` buffers treated as one concatenated stream.
+  #[inline]
+  pub fn crc24_openpgp_io_slices(bufs: &[std::io::IoSlice<'_>]) -> u32 {
+    const INIT: u32 = 0x00B7_04CE;
+    const MASK: u32 = 0x00FF_FFFF;
+    let table = active_table();
+    let mut crc: u32 = INIT;
+    let mut last_set: *const KernelSet = core::ptr::null();
+    let mut kernel = table.xs.crc24_openpgp;
+
+    for buf in bufs {
+      if buf.is_empty() {
+        continue;
+      }
+      let set = table.select_set(buf.len());
+      let set_ptr: *const KernelSet = core::ptr::from_ref(set);
+      if set_ptr != last_set {
+        last_set = set_ptr;
+        kernel = set.crc24_openpgp;
+      }
+      crc = kernel(crc, buf);
+    }
+
+    crc & MASK
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Data Structures
 // ─────────────────────────────────────────────────────────────────────────────
 

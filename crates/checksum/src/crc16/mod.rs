@@ -111,6 +111,50 @@ fn crc16_ccitt_dispatch(crc: u16, data: &[u8]) -> u16 {
   kernel(crc, data)
 }
 
+/// CRC-16/CCITT vectored dispatch (processes multiple buffers in order).
+#[inline]
+fn crc16_ccitt_dispatch_vectored(mut crc: u16, bufs: &[&[u8]]) -> u16 {
+  #[cfg(feature = "std")]
+  {
+    let cfg = config::get_ccitt();
+    if cfg.effective_force == Crc16Force::Reference {
+      for &buf in bufs {
+        if !buf.is_empty() {
+          crc = crc16_ccitt_reference(crc, buf);
+        }
+      }
+      return crc;
+    }
+    if cfg.effective_force == Crc16Force::Portable {
+      for &buf in bufs {
+        if !buf.is_empty() {
+          crc = portable::crc16_ccitt_slice8(crc, buf);
+        }
+      }
+      return crc;
+    }
+  }
+
+  let table = crate::dispatch::active_table();
+  let mut last_set: *const crate::dispatch::KernelSet = core::ptr::null();
+  let mut kernel = table.xs.crc16_ccitt;
+
+  for &buf in bufs {
+    if buf.is_empty() {
+      continue;
+    }
+    let set = table.select_set(buf.len());
+    let set_ptr: *const crate::dispatch::KernelSet = core::ptr::from_ref(set);
+    if set_ptr != last_set {
+      last_set = set_ptr;
+      kernel = set.crc16_ccitt;
+    }
+    crc = kernel(crc, buf);
+  }
+
+  crc
+}
+
 /// CRC-16/IBM dispatch - fast path using pre-resolved kernel tables.
 ///
 /// Uses the empirically-optimal kernel for the current platform and buffer size.
@@ -132,6 +176,50 @@ fn crc16_ibm_dispatch(crc: u16, data: &[u8]) -> u16 {
   let table = crate::dispatch::active_table();
   let kernel = table.select_set(data.len()).crc16_ibm;
   kernel(crc, data)
+}
+
+/// CRC-16/IBM vectored dispatch (processes multiple buffers in order).
+#[inline]
+fn crc16_ibm_dispatch_vectored(mut crc: u16, bufs: &[&[u8]]) -> u16 {
+  #[cfg(feature = "std")]
+  {
+    let cfg = config::get_ibm();
+    if cfg.effective_force == Crc16Force::Reference {
+      for &buf in bufs {
+        if !buf.is_empty() {
+          crc = crc16_ibm_reference(crc, buf);
+        }
+      }
+      return crc;
+    }
+    if cfg.effective_force == Crc16Force::Portable {
+      for &buf in bufs {
+        if !buf.is_empty() {
+          crc = portable::crc16_ibm_slice8(crc, buf);
+        }
+      }
+      return crc;
+    }
+  }
+
+  let table = crate::dispatch::active_table();
+  let mut last_set: *const crate::dispatch::KernelSet = core::ptr::null();
+  let mut kernel = table.xs.crc16_ibm;
+
+  for &buf in bufs {
+    if buf.is_empty() {
+      continue;
+    }
+    let set = table.select_set(buf.len());
+    let set_ptr: *const crate::dispatch::KernelSet = core::ptr::from_ref(set);
+    if set_ptr != last_set {
+      last_set = set_ptr;
+      kernel = set.crc16_ibm;
+    }
+    crc = kernel(crc, buf);
+  }
+
+  crc
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -271,6 +359,11 @@ impl traits::Checksum for Crc16Ccitt {
   }
 
   #[inline]
+  fn update_vectored(&mut self, bufs: &[&[u8]]) {
+    self.state = crc16_ccitt_dispatch_vectored(self.state, bufs);
+  }
+
+  #[inline]
   fn finalize(&self) -> u16 {
     self.state ^ Self::XOROUT
   }
@@ -375,6 +468,11 @@ impl traits::Checksum for Crc16Ibm {
   #[inline]
   fn update(&mut self, data: &[u8]) {
     self.state = crc16_ibm_dispatch(self.state, data);
+  }
+
+  #[inline]
+  fn update_vectored(&mut self, bufs: &[&[u8]]) {
+    self.state = crc16_ibm_dispatch_vectored(self.state, bufs);
   }
 
   #[inline]

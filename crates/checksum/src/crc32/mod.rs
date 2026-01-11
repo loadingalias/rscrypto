@@ -345,6 +345,50 @@ fn crc32_dispatch(crc: u32, data: &[u8]) -> u32 {
   kernel(crc, data)
 }
 
+/// CRC-32 (IEEE) vectored dispatch (processes multiple buffers in order).
+#[inline]
+fn crc32_dispatch_vectored(mut crc: u32, bufs: &[&[u8]]) -> u32 {
+  #[cfg(feature = "std")]
+  {
+    let cfg = config::get();
+    if cfg.effective_force == Crc32Force::Reference {
+      for &buf in bufs {
+        if !buf.is_empty() {
+          crc = crc32_reference(crc, buf);
+        }
+      }
+      return crc;
+    }
+    if cfg.effective_force == Crc32Force::Portable {
+      for &buf in bufs {
+        if !buf.is_empty() {
+          crc = crc32_portable(crc, buf);
+        }
+      }
+      return crc;
+    }
+  }
+
+  let table = crate::dispatch::active_table();
+  let mut last_set: *const crate::dispatch::KernelSet = core::ptr::null();
+  let mut kernel = table.xs.crc32_ieee;
+
+  for &buf in bufs {
+    if buf.is_empty() {
+      continue;
+    }
+    let set = table.select_set(buf.len());
+    let set_ptr: *const crate::dispatch::KernelSet = core::ptr::from_ref(set);
+    if set_ptr != last_set {
+      last_set = set_ptr;
+      kernel = set.crc32_ieee;
+    }
+    crc = kernel(crc, buf);
+  }
+
+  crc
+}
+
 /// CRC-32C (Castagnoli) dispatch - fast path using pre-resolved kernel tables.
 ///
 /// Uses the empirically-optimal kernel for the current platform and buffer size.
@@ -366,6 +410,50 @@ fn crc32c_dispatch(crc: u32, data: &[u8]) -> u32 {
   let table = crate::dispatch::active_table();
   let kernel = table.select_set(data.len()).crc32c;
   kernel(crc, data)
+}
+
+/// CRC-32C (Castagnoli) vectored dispatch (processes multiple buffers in order).
+#[inline]
+fn crc32c_dispatch_vectored(mut crc: u32, bufs: &[&[u8]]) -> u32 {
+  #[cfg(feature = "std")]
+  {
+    let cfg = config::get();
+    if cfg.effective_force == Crc32Force::Reference {
+      for &buf in bufs {
+        if !buf.is_empty() {
+          crc = crc32c_reference(crc, buf);
+        }
+      }
+      return crc;
+    }
+    if cfg.effective_force == Crc32Force::Portable {
+      for &buf in bufs {
+        if !buf.is_empty() {
+          crc = crc32c_portable(crc, buf);
+        }
+      }
+      return crc;
+    }
+  }
+
+  let table = crate::dispatch::active_table();
+  let mut last_set: *const crate::dispatch::KernelSet = core::ptr::null();
+  let mut kernel = table.xs.crc32c;
+
+  for &buf in bufs {
+    if buf.is_empty() {
+      continue;
+    }
+    let set = table.select_set(buf.len());
+    let set_ptr: *const crate::dispatch::KernelSet = core::ptr::from_ref(set);
+    if set_ptr != last_set {
+      last_set = set_ptr;
+      kernel = set.crc32c;
+    }
+    crc = kernel(crc, buf);
+  }
+
+  crc
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -451,6 +539,11 @@ impl traits::Checksum for Crc32 {
   #[inline]
   fn update(&mut self, data: &[u8]) {
     self.state = crc32_dispatch(self.state, data);
+  }
+
+  #[inline]
+  fn update_vectored(&mut self, bufs: &[&[u8]]) {
+    self.state = crc32_dispatch_vectored(self.state, bufs);
   }
 
   #[inline]
@@ -555,6 +648,11 @@ impl traits::Checksum for Crc32C {
   #[inline]
   fn update(&mut self, data: &[u8]) {
     self.state = crc32c_dispatch(self.state, data);
+  }
+
+  #[inline]
+  fn update_vectored(&mut self, bufs: &[&[u8]]) {
+    self.state = crc32c_dispatch_vectored(self.state, bufs);
   }
 
   #[inline]
