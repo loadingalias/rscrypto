@@ -1,0 +1,47 @@
+[package]
+name = "hashes-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4.10"
+arbitrary = { version = "1.4.2", features = ["derive"] }
+
+# Differential fuzzing oracles (fuzz-only)
+sha2 = "0.10.8"
+sha3 = "0.10.8"
+blake3 = "1.5.5"
+
+[dependencies.hashes]
+path = ".."
+
+[dependencies.traits]
+path = "../../traits"
+
+[[bin]]
+name = "sha256"
+path = "fuzz_targets/sha256.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sha3"
+path = "fuzz_targets/sha3.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "blake3"
+path = "fuzz_targets/blake3.rs"
+test = false
+doc = false
+bench = false
+

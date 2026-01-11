@@ -1,0 +1,42 @@
+[package]
+name = "hashes"
+description = "Cryptographic hashes and fast non-cryptographic hashes for rscrypto"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[features]
+default = ["std"]
+std = ["traits/std"]
+
+[dependencies]
+traits = { workspace = true, default-features = false } #unified
+
+[dev-dependencies]
+# Dev-only correctness oracles (not used by library code).
+blake3 = { version = "1.8.3", default-features = false, features = ["std", "pure"] }
+sha2 = { version = "0.10.9", default-features = false, features = ["std", "force-soft"] }
+sha3 = "0.10.8"
+xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
+rapidhash = "1.4.0"
+
+criterion.workspace = true
+digest = { version = "0.10", features = ["dev"] }
+proptest.workspace = true
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[[bench]]
+name = "comp"
+harness = false
+
+[[bench]]
+name = "kernels"
+harness = false
+
+[lints]
+workspace = true

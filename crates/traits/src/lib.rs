@@ -9,10 +9,12 @@
 //! |-------|---------|----------|
 //! | [`Checksum`] | Non-cryptographic checksums | CRC32, CRC64, xxHash |
 //! | [`ChecksumCombine`] | Parallel checksum combination | CRC with O(log n) combine |
+//! | [`Digest`] | Cryptographic digests | BLAKE3, SHA-2 |
+//! | [`Xof`] | Extendable-output functions | BLAKE3 XOF |
+//! | [`FastHash`] | Fast non-cryptographic hashes (**NOT CRYPTO**) | XXH3, rapidhash |
 //!
 //! Future traits (not yet implemented):
 //!
-//! - `Digest` - Cryptographic hash functions (Blake3, SHA-2, SHA-3)
 //! - `Mac` - Message authentication codes (HMAC, Poly1305, CMAC)
 //! - `Aead` - Authenticated encryption (AES-GCM, ChaCha20-Poly1305, AEGIS)
 //! - `Cipher` - Block/stream ciphers (AES, ChaCha20)
@@ -35,7 +37,13 @@
 extern crate std;
 
 mod checksum;
+mod digest;
 pub mod error;
+mod fast_hash;
+mod xof;
 
 pub use checksum::{Checksum, ChecksumCombine};
+pub use digest::Digest;
 pub use error::VerificationError;
+pub use fast_hash::FastHash;
+pub use xof::Xof;
