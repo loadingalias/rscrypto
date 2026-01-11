@@ -109,6 +109,50 @@ fn crc24_openpgp_dispatch(crc: u32, data: &[u8]) -> u32 {
   kernel(crc, data)
 }
 
+/// CRC-24/OPENPGP vectored dispatch (processes multiple buffers in order).
+#[inline]
+fn crc24_openpgp_dispatch_vectored(mut crc: u32, bufs: &[&[u8]]) -> u32 {
+  #[cfg(feature = "std")]
+  {
+    let cfg = config::get();
+    if cfg.effective_force == Crc24Force::Reference {
+      for &buf in bufs {
+        if !buf.is_empty() {
+          crc = crc24_openpgp_reference(crc, buf);
+        }
+      }
+      return crc;
+    }
+    if cfg.effective_force == Crc24Force::Portable {
+      for &buf in bufs {
+        if !buf.is_empty() {
+          crc = portable::crc24_openpgp_slice8(crc, buf);
+        }
+      }
+      return crc;
+    }
+  }
+
+  let table = crate::dispatch::active_table();
+  let mut last_set: *const crate::dispatch::KernelSet = core::ptr::null();
+  let mut kernel = table.xs.crc24_openpgp;
+
+  for &buf in bufs {
+    if buf.is_empty() {
+      continue;
+    }
+    let set = table.select_set(buf.len());
+    let set_ptr: *const crate::dispatch::KernelSet = core::ptr::from_ref(set);
+    if set_ptr != last_set {
+      last_set = set_ptr;
+      kernel = set.crc24_openpgp;
+    }
+    crc = kernel(crc, buf);
+  }
+
+  crc
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Introspection
 // ─────────────────────────────────────────────────────────────────────────────
@@ -224,6 +268,11 @@ impl traits::Checksum for Crc24OpenPgp {
   #[inline]
   fn update(&mut self, data: &[u8]) {
     self.state = crc24_openpgp_dispatch(self.state, data) & Self::MASK;
+  }
+
+  #[inline]
+  fn update_vectored(&mut self, bufs: &[&[u8]]) {
+    self.state = crc24_openpgp_dispatch_vectored(self.state, bufs) & Self::MASK;
   }
 
   #[inline]

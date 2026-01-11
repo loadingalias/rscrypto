@@ -238,6 +238,31 @@ fn apply_chunking<C: Checksum>(data: &[u8], chunk_pattern: &[usize]) -> C::Outpu
   hasher.finalize()
 }
 
+/// Apply an arbitrary chunk pattern, but feed all produced chunks in one `update_vectored` call.
+fn apply_chunking_vectored<C: Checksum>(data: &[u8], chunk_pattern: &[usize]) -> C::Output {
+  let mut hasher = C::new();
+
+  if chunk_pattern.is_empty() || data.is_empty() {
+    hasher.update(data);
+    return hasher.finalize();
+  }
+
+  let mut chunks: Vec<&[u8]> = Vec::new();
+  let mut offset = 0;
+  let mut pattern_idx = 0;
+
+  while offset < data.len() {
+    let chunk_size = chunk_pattern[pattern_idx].max(1); // Ensure at least 1 byte
+    let end = (offset.strict_add(chunk_size)).min(data.len());
+    chunks.push(&data[offset..end]);
+    offset = end;
+    pattern_idx = pattern_idx.strict_add(1) % chunk_pattern.len();
+  }
+
+  hasher.update_vectored(&chunks);
+  hasher.finalize()
+}
+
 proptest! {
   #![proptest_config(ProptestConfig::with_cases(256))]
 
@@ -252,7 +277,9 @@ proptest! {
   ) {
     let oneshot = Crc16Ccitt::checksum(&data);
     let streamed = apply_chunking::<Crc16Ccitt>(&data, &chunk_pattern);
+    let vectored = apply_chunking_vectored::<Crc16Ccitt>(&data, &chunk_pattern);
     prop_assert_eq!(streamed, oneshot, "chunking pattern {:?} produced different result", chunk_pattern);
+    prop_assert_eq!(vectored, oneshot, "vectored chunking pattern {:?} produced different result", chunk_pattern);
   }
 
   #[test]
@@ -262,7 +289,9 @@ proptest! {
   ) {
     let oneshot = Crc16Ibm::checksum(&data);
     let streamed = apply_chunking::<Crc16Ibm>(&data, &chunk_pattern);
+    let vectored = apply_chunking_vectored::<Crc16Ibm>(&data, &chunk_pattern);
     prop_assert_eq!(streamed, oneshot, "chunking pattern {:?} produced different result", chunk_pattern);
+    prop_assert_eq!(vectored, oneshot, "vectored chunking pattern {:?} produced different result", chunk_pattern);
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -276,7 +305,9 @@ proptest! {
   ) {
     let oneshot = Crc24OpenPgp::checksum(&data);
     let streamed = apply_chunking::<Crc24OpenPgp>(&data, &chunk_pattern);
+    let vectored = apply_chunking_vectored::<Crc24OpenPgp>(&data, &chunk_pattern);
     prop_assert_eq!(streamed, oneshot, "chunking pattern {:?} produced different result", chunk_pattern);
+    prop_assert_eq!(vectored, oneshot, "vectored chunking pattern {:?} produced different result", chunk_pattern);
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -290,7 +321,9 @@ proptest! {
   ) {
     let oneshot = Crc32::checksum(&data);
     let streamed = apply_chunking::<Crc32>(&data, &chunk_pattern);
+    let vectored = apply_chunking_vectored::<Crc32>(&data, &chunk_pattern);
     prop_assert_eq!(streamed, oneshot, "chunking pattern {:?} produced different result", chunk_pattern);
+    prop_assert_eq!(vectored, oneshot, "vectored chunking pattern {:?} produced different result", chunk_pattern);
   }
 
   #[test]
@@ -300,7 +333,9 @@ proptest! {
   ) {
     let oneshot = Crc32C::checksum(&data);
     let streamed = apply_chunking::<Crc32C>(&data, &chunk_pattern);
+    let vectored = apply_chunking_vectored::<Crc32C>(&data, &chunk_pattern);
     prop_assert_eq!(streamed, oneshot, "chunking pattern {:?} produced different result", chunk_pattern);
+    prop_assert_eq!(vectored, oneshot, "vectored chunking pattern {:?} produced different result", chunk_pattern);
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -314,7 +349,9 @@ proptest! {
   ) {
     let oneshot = Crc64::checksum(&data);
     let streamed = apply_chunking::<Crc64>(&data, &chunk_pattern);
+    let vectored = apply_chunking_vectored::<Crc64>(&data, &chunk_pattern);
     prop_assert_eq!(streamed, oneshot, "chunking pattern {:?} produced different result", chunk_pattern);
+    prop_assert_eq!(vectored, oneshot, "vectored chunking pattern {:?} produced different result", chunk_pattern);
   }
 
   #[test]
@@ -324,7 +361,9 @@ proptest! {
   ) {
     let oneshot = Crc64Nvme::checksum(&data);
     let streamed = apply_chunking::<Crc64Nvme>(&data, &chunk_pattern);
+    let vectored = apply_chunking_vectored::<Crc64Nvme>(&data, &chunk_pattern);
     prop_assert_eq!(streamed, oneshot, "chunking pattern {:?} produced different result", chunk_pattern);
+    prop_assert_eq!(vectored, oneshot, "vectored chunking pattern {:?} produced different result", chunk_pattern);
   }
 }
 

@@ -85,6 +85,23 @@ macro_rules! define_buffered_crc {
         }
       }
 
+      /// Update the CRC with multiple non-contiguous buffers.
+      #[inline]
+      pub fn update_vectored(&mut self, bufs: &[&[u8]]) {
+        for &buf in bufs {
+          self.update(buf);
+        }
+      }
+
+      /// Update the CRC with `std::io::IoSlice` buffers.
+      #[cfg(feature = "std")]
+      #[inline]
+      pub fn update_io_slices(&mut self, bufs: &[std::io::IoSlice<'_>]) {
+        for buf in bufs {
+          self.update(buf);
+        }
+      }
+
       /// Finalize and return the CRC value.
       ///
       /// Flushes any remaining buffered data before computing the final CRC.

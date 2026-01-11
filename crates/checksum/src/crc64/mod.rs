@@ -268,6 +268,50 @@ fn crc64_xz_dispatch(crc: u64, data: &[u8]) -> u64 {
   kernel(crc, data)
 }
 
+/// CRC-64/XZ vectored dispatch (processes multiple buffers in order).
+#[inline]
+fn crc64_xz_dispatch_vectored(mut crc: u64, bufs: &[&[u8]]) -> u64 {
+  #[cfg(feature = "std")]
+  {
+    let cfg = config::get();
+    if cfg.effective_force == Crc64Force::Reference {
+      for &buf in bufs {
+        if !buf.is_empty() {
+          crc = crc64_xz_reference(crc, buf);
+        }
+      }
+      return crc;
+    }
+    if cfg.effective_force == Crc64Force::Portable {
+      for &buf in bufs {
+        if !buf.is_empty() {
+          crc = crc64_xz_portable(crc, buf);
+        }
+      }
+      return crc;
+    }
+  }
+
+  let table = crate::dispatch::active_table();
+  let mut last_set: *const crate::dispatch::KernelSet = core::ptr::null();
+  let mut kernel = table.xs.crc64_xz;
+
+  for &buf in bufs {
+    if buf.is_empty() {
+      continue;
+    }
+    let set = table.select_set(buf.len());
+    let set_ptr: *const crate::dispatch::KernelSet = core::ptr::from_ref(set);
+    if set_ptr != last_set {
+      last_set = set_ptr;
+      kernel = set.crc64_xz;
+    }
+    crc = kernel(crc, buf);
+  }
+
+  crc
+}
+
 /// CRC-64-NVME dispatch - fast path using pre-resolved kernel tables.
 ///
 /// Uses the empirically-optimal kernel for the current platform and buffer size.
@@ -289,6 +333,50 @@ fn crc64_nvme_dispatch(crc: u64, data: &[u8]) -> u64 {
   let table = crate::dispatch::active_table();
   let kernel = table.select_set(data.len()).crc64_nvme;
   kernel(crc, data)
+}
+
+/// CRC-64/NVME vectored dispatch (processes multiple buffers in order).
+#[inline]
+fn crc64_nvme_dispatch_vectored(mut crc: u64, bufs: &[&[u8]]) -> u64 {
+  #[cfg(feature = "std")]
+  {
+    let cfg = config::get();
+    if cfg.effective_force == Crc64Force::Reference {
+      for &buf in bufs {
+        if !buf.is_empty() {
+          crc = crc64_nvme_reference(crc, buf);
+        }
+      }
+      return crc;
+    }
+    if cfg.effective_force == Crc64Force::Portable {
+      for &buf in bufs {
+        if !buf.is_empty() {
+          crc = crc64_nvme_portable(crc, buf);
+        }
+      }
+      return crc;
+    }
+  }
+
+  let table = crate::dispatch::active_table();
+  let mut last_set: *const crate::dispatch::KernelSet = core::ptr::null();
+  let mut kernel = table.xs.crc64_nvme;
+
+  for &buf in bufs {
+    if buf.is_empty() {
+      continue;
+    }
+    let set = table.select_set(buf.len());
+    let set_ptr: *const crate::dispatch::KernelSet = core::ptr::from_ref(set);
+    if set_ptr != last_set {
+      last_set = set_ptr;
+      kernel = set.crc64_nvme;
+    }
+    crc = kernel(crc, buf);
+  }
+
+  crc
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -392,6 +480,11 @@ impl traits::Checksum for Crc64 {
   #[inline]
   fn update(&mut self, data: &[u8]) {
     self.state = crc64_xz_dispatch(self.state, data);
+  }
+
+  #[inline]
+  fn update_vectored(&mut self, bufs: &[&[u8]]) {
+    self.state = crc64_xz_dispatch_vectored(self.state, bufs);
   }
 
   #[inline]
@@ -511,6 +604,11 @@ impl traits::Checksum for Crc64Nvme {
   #[inline]
   fn update(&mut self, data: &[u8]) {
     self.state = crc64_nvme_dispatch(self.state, data);
+  }
+
+  #[inline]
+  fn update_vectored(&mut self, bufs: &[&[u8]]) {
+    self.state = crc64_nvme_dispatch_vectored(self.state, bufs);
   }
 
   #[inline]
