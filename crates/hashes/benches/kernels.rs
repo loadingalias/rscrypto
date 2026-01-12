@@ -1,30 +1,17 @@
-use std::hint::black_box;
+use core::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use hashes::crypto::{Blake3, Sha3_256, Sha3_512, Sha256};
 use traits::Digest as _;
 
-fn inputs() -> Vec<(usize, Vec<u8>)> {
-  // Sizes chosen to exercise small inputs, one block, and large throughput.
-  let sizes = [0usize, 1, 3, 8, 16, 31, 32, 63, 64, 65, 1024, 16 * 1024, 1024 * 1024];
-  sizes
-    .into_iter()
-    .map(|len| {
-      let mut v = vec![0u8; len];
-      for (i, b) in v.iter_mut().enumerate() {
-        *b = (i as u8).wrapping_mul(31).wrapping_add(7);
-      }
-      (len, v)
-    })
-    .collect()
-}
+mod common;
 
 fn oneshot(c: &mut Criterion) {
-  let inputs = inputs();
+  let inputs = common::sized_inputs();
   let mut group = c.benchmark_group("hashes/oneshot");
 
   for (len, data) in &inputs {
-    group.throughput(Throughput::Bytes(*len as u64));
+    common::set_throughput(&mut group, *len);
 
     group.bench_with_input(BenchmarkId::new("sha256", len), data, |b, d| {
       b.iter(|| black_box(Sha256::digest(black_box(d))))
@@ -45,33 +32,84 @@ fn oneshot(c: &mut Criterion) {
 
 fn streaming(c: &mut Criterion) {
   let mut group = c.benchmark_group("hashes/streaming");
-  let data = vec![0u8; 1024 * 1024];
+  let data = common::pseudo_random_bytes(1024 * 1024, 0xA11C_E5ED_5EED_0001);
+  let data = black_box(data);
   group.throughput(Throughput::Bytes(data.len() as u64));
 
   group.bench_function("sha256/64B-chunks", |b| {
     b.iter(|| {
       let mut h = Sha256::new();
-      for chunk in black_box(&data).chunks(64) {
+      for chunk in data.chunks(64) {
         h.update(chunk);
       }
       black_box(h.finalize())
     })
   });
 
-  group.bench_function("sha3_256/136B-chunks", |b| {
+  group.bench_function("sha256/4KiB-chunks", |b| {
+    b.iter(|| {
+      let mut h = Sha256::new();
+      for chunk in data.chunks(4 * 1024) {
+        h.update(chunk);
+      }
+      black_box(h.finalize())
+    })
+  });
+
+  group.bench_function("sha3_256/64B-chunks", |b| {
     b.iter(|| {
       let mut h = Sha3_256::new();
-      for chunk in black_box(&data).chunks(136) {
+      for chunk in data.chunks(64) {
         h.update(chunk);
       }
       black_box(h.finalize())
     })
   });
 
-  group.bench_function("blake3/1024B-chunks", |b| {
+  group.bench_function("sha3_256/4KiB-chunks", |b| {
+    b.iter(|| {
+      let mut h = Sha3_256::new();
+      for chunk in data.chunks(4 * 1024) {
+        h.update(chunk);
+      }
+      black_box(h.finalize())
+    })
+  });
+
+  group.bench_function("sha3_512/64B-chunks", |b| {
+    b.iter(|| {
+      let mut h = Sha3_512::new();
+      for chunk in data.chunks(64) {
+        h.update(chunk);
+      }
+      black_box(h.finalize())
+    })
+  });
+
+  group.bench_function("sha3_512/4KiB-chunks", |b| {
+    b.iter(|| {
+      let mut h = Sha3_512::new();
+      for chunk in data.chunks(4 * 1024) {
+        h.update(chunk);
+      }
+      black_box(h.finalize())
+    })
+  });
+
+  group.bench_function("blake3/64B-chunks", |b| {
     b.iter(|| {
       let mut h = Blake3::new();
-      for chunk in black_box(&data).chunks(1024) {
+      for chunk in data.chunks(64) {
+        h.update(chunk);
+      }
+      black_box(h.finalize())
+    })
+  });
+
+  group.bench_function("blake3/4KiB-chunks", |b| {
+    b.iter(|| {
+      let mut h = Blake3::new();
+      for chunk in data.chunks(4 * 1024) {
         h.update(chunk);
       }
       black_box(h.finalize())

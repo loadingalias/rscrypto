@@ -1,6 +1,6 @@
 //! SHA-3 (FIPS 202) - SHA3-256 and SHA3-512.
 //!
-//! Portable, `no_std`, pure Rust Keccak-f[1600] sponge.
+//! Portable, `no_std`, pure Rust Keccak-f\[1600\] sponge.
 
 #![allow(clippy::indexing_slicing)] // Keccak state is fixed-size; indexing is audited
 
@@ -292,8 +292,8 @@ impl<const RATE: usize> Sha3Core<RATE> {
     debug_assert!(OUT <= RATE);
     let state = self.finalize_state();
 
-    for i in 0..(OUT + 7) / 8 {
-      let bytes = state[i].to_le_bytes();
+    for (i, &word) in state.iter().enumerate().take(OUT.div_ceil(8)) {
+      let bytes = word.to_le_bytes();
       let start = i * 8;
       let end = core::cmp::min(start + 8, OUT);
       out[start..end].copy_from_slice(&bytes[..end - start]);
