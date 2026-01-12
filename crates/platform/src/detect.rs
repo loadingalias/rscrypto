@@ -2162,6 +2162,8 @@ fn detect_apple_sme_tile_size() -> u16 {
     let mut size = core::mem::size_of::<u32>();
 
     #[allow(unsafe_code)]
+    // SAFETY: `sysctlbyname` expects `name` to be a valid NUL-terminated C string (caller provides this),
+    // `oldp`/`oldlenp` point to writable locals, and `newp` is null with `newlen = 0` (no write).
     let ret = unsafe {
       sysctlbyname(
         name.as_ptr(),
@@ -2319,8 +2321,8 @@ fn read_midr_el1() -> Option<u64> {
   }
 
   // Fallback: try to read MIDR directly via inline asm
-  // SAFETY: Reading MIDR_EL1 is always safe on AArch64
   let midr: u64;
+  // SAFETY: `asm!` writes only to the `midr` output register and declares `nomem, nostack`.
   unsafe {
     core::arch::asm!("mrs {}, midr_el1", out(reg) midr, options(nomem, nostack));
   }

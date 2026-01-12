@@ -1543,6 +1543,8 @@ unsafe fn crc64_vpclmul_8way(
 /// Requires PCLMULQDQ. Caller must verify via `platform::caps().has(x86::PCLMUL_READY)`.
 #[target_feature(enable = "sse2", enable = "pclmulqdq")]
 pub unsafe fn crc64_xz_pclmul(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: This wrapper relies on the function's safety contract (caller ensures PCLMULQDQ is
+  // available).
   unsafe {
     crc64_pclmul(
       crc,
@@ -1560,6 +1562,8 @@ pub unsafe fn crc64_xz_pclmul(crc: u64, data: &[u8]) -> u64 {
 /// Requires PCLMULQDQ. Caller must verify via `platform::caps().has(x86::PCLMUL_READY)`.
 #[target_feature(enable = "sse2", enable = "pclmulqdq")]
 pub unsafe fn crc64_xz_pclmul_small(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: This wrapper relies on the function's safety contract (caller ensures PCLMULQDQ is
+  // available).
   unsafe {
     crc64_pclmul_small(
       crc,
@@ -1577,6 +1581,8 @@ pub unsafe fn crc64_xz_pclmul_small(crc: u64, data: &[u8]) -> u64 {
 /// Requires PCLMULQDQ. Caller must verify via `platform::caps().has(x86::PCLMUL_READY)`.
 #[target_feature(enable = "sse2", enable = "pclmulqdq")]
 pub unsafe fn crc64_xz_pclmul_2way(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: This wrapper relies on the function's safety contract (caller ensures PCLMULQDQ is
+  // available).
   unsafe {
     crc64_pclmul_2way(
       crc,
@@ -1595,6 +1601,8 @@ pub unsafe fn crc64_xz_pclmul_2way(crc: u64, data: &[u8]) -> u64 {
 /// Requires PCLMULQDQ. Caller must verify via `platform::caps().has(x86::PCLMUL_READY)`.
 #[target_feature(enable = "sse2", enable = "pclmulqdq")]
 pub unsafe fn crc64_xz_pclmul_4way(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: This wrapper relies on the function's safety contract (caller ensures PCLMULQDQ is
+  // available).
   unsafe {
     crc64_pclmul_4way(
       crc,
@@ -1614,6 +1622,8 @@ pub unsafe fn crc64_xz_pclmul_4way(crc: u64, data: &[u8]) -> u64 {
 /// Requires PCLMULQDQ. Caller must verify via `platform::caps().has(x86::PCLMUL_READY)`.
 #[target_feature(enable = "sse2", enable = "pclmulqdq")]
 pub unsafe fn crc64_xz_pclmul_7way(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: This wrapper relies on the function's safety contract (caller ensures PCLMULQDQ is
+  // available).
   unsafe {
     crc64_pclmul_7way(
       crc,
@@ -1633,6 +1643,8 @@ pub unsafe fn crc64_xz_pclmul_7way(crc: u64, data: &[u8]) -> u64 {
 /// Requires PCLMULQDQ. Caller must verify via `platform::caps().has(x86::PCLMUL_READY)`.
 #[target_feature(enable = "sse2", enable = "pclmulqdq")]
 pub unsafe fn crc64_xz_pclmul_8way(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: This wrapper relies on the function's safety contract (caller ensures PCLMULQDQ is
+  // available).
   unsafe {
     crc64_pclmul_8way(
       crc,
@@ -1653,6 +1665,8 @@ pub unsafe fn crc64_xz_pclmul_8way(crc: u64, data: &[u8]) -> u64 {
 /// `platform::caps().has(x86::VPCLMUL_READY)`.
 #[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
 pub unsafe fn crc64_xz_vpclmul(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: This wrapper relies on the function's safety contract (caller ensures VPCLMULQDQ/AVX-512
+  // is available).
   unsafe {
     crc64_vpclmul(
       crc,
@@ -1671,6 +1685,8 @@ pub unsafe fn crc64_xz_vpclmul(crc: u64, data: &[u8]) -> u64 {
 /// `platform::caps().has(x86::VPCLMUL_READY)`.
 #[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
 pub unsafe fn crc64_xz_vpclmul_2way(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: This wrapper relies on the function's safety contract (caller ensures VPCLMULQDQ/AVX-512
+  // is available).
   unsafe {
     crc64_vpclmul_2way(
       crc,
@@ -1690,6 +1706,8 @@ pub unsafe fn crc64_xz_vpclmul_2way(crc: u64, data: &[u8]) -> u64 {
 /// `platform::caps().has(x86::VPCLMUL_READY)`.
 #[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
 pub unsafe fn crc64_xz_vpclmul_4way(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: This wrapper relies on the function's safety contract (caller ensures VPCLMULQDQ/AVX-512
+  // is available).
   unsafe {
     crc64_vpclmul_4way(
       crc,
@@ -1710,6 +1728,8 @@ pub unsafe fn crc64_xz_vpclmul_4way(crc: u64, data: &[u8]) -> u64 {
 /// `platform::caps().has(x86::VPCLMUL_READY)`.
 #[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
 pub unsafe fn crc64_xz_vpclmul_7way(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: This wrapper relies on the function's safety contract (caller ensures VPCLMULQDQ/AVX-512
+  // is available).
   unsafe {
     crc64_vpclmul_7way(
       crc,
@@ -1730,6 +1750,8 @@ pub unsafe fn crc64_xz_vpclmul_7way(crc: u64, data: &[u8]) -> u64 {
 /// `platform::caps().has(x86::VPCLMUL_READY)`.
 #[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
 pub unsafe fn crc64_xz_vpclmul_8way(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: This wrapper relies on the function's safety contract (caller ensures VPCLMULQDQ/AVX-512
+  // is available).
   unsafe {
     crc64_vpclmul_8way(
       crc,
@@ -1753,6 +1775,8 @@ pub unsafe fn crc64_xz_vpclmul_8way(crc: u64, data: &[u8]) -> u64 {
 /// `platform::caps().has(x86::VPCLMUL_READY)`.
 #[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
 pub unsafe fn crc64_xz_vpclmul_4x512(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: This wrapper relies on the function's safety contract (caller ensures VPCLMULQDQ/AVX-512
+  // is available).
   unsafe {
     crc64_vpclmul_4x512(
       crc,
@@ -1771,6 +1795,8 @@ pub unsafe fn crc64_xz_vpclmul_4x512(crc: u64, data: &[u8]) -> u64 {
 /// Requires PCLMULQDQ. Caller must verify via `platform::caps().has(x86::PCLMUL_READY)`.
 #[target_feature(enable = "sse2", enable = "pclmulqdq")]
 pub unsafe fn crc64_nvme_pclmul(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: This wrapper relies on the function's safety contract (caller ensures PCLMULQDQ is
+  // available).
   unsafe {
     crc64_pclmul(
       crc,
@@ -1788,6 +1814,8 @@ pub unsafe fn crc64_nvme_pclmul(crc: u64, data: &[u8]) -> u64 {
 /// Requires PCLMULQDQ. Caller must verify via `platform::caps().has(x86::PCLMUL_READY)`.
 #[target_feature(enable = "sse2", enable = "pclmulqdq")]
 pub unsafe fn crc64_nvme_pclmul_small(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: This wrapper relies on the function's safety contract (caller ensures PCLMULQDQ is
+  // available).
   unsafe {
     crc64_pclmul_small(
       crc,
@@ -1805,6 +1833,8 @@ pub unsafe fn crc64_nvme_pclmul_small(crc: u64, data: &[u8]) -> u64 {
 /// Requires PCLMULQDQ. Caller must verify via `platform::caps().has(x86::PCLMUL_READY)`.
 #[target_feature(enable = "sse2", enable = "pclmulqdq")]
 pub unsafe fn crc64_nvme_pclmul_2way(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: This wrapper relies on the function's safety contract (caller ensures PCLMULQDQ is
+  // available).
   unsafe {
     crc64_pclmul_2way(
       crc,
@@ -1823,6 +1853,8 @@ pub unsafe fn crc64_nvme_pclmul_2way(crc: u64, data: &[u8]) -> u64 {
 /// Requires PCLMULQDQ. Caller must verify via `platform::caps().has(x86::PCLMUL_READY)`.
 #[target_feature(enable = "sse2", enable = "pclmulqdq")]
 pub unsafe fn crc64_nvme_pclmul_4way(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: This wrapper relies on the function's safety contract (caller ensures PCLMULQDQ is
+  // available).
   unsafe {
     crc64_pclmul_4way(
       crc,
@@ -1842,6 +1874,8 @@ pub unsafe fn crc64_nvme_pclmul_4way(crc: u64, data: &[u8]) -> u64 {
 /// Requires PCLMULQDQ. Caller must verify via `platform::caps().has(x86::PCLMUL_READY)`.
 #[target_feature(enable = "sse2", enable = "pclmulqdq")]
 pub unsafe fn crc64_nvme_pclmul_7way(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: This wrapper relies on the function's safety contract (caller ensures PCLMULQDQ is
+  // available).
   unsafe {
     crc64_pclmul_7way(
       crc,
@@ -1861,6 +1895,8 @@ pub unsafe fn crc64_nvme_pclmul_7way(crc: u64, data: &[u8]) -> u64 {
 /// Requires PCLMULQDQ. Caller must verify via `platform::caps().has(x86::PCLMUL_READY)`.
 #[target_feature(enable = "sse2", enable = "pclmulqdq")]
 pub unsafe fn crc64_nvme_pclmul_8way(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: This wrapper relies on the function's safety contract (caller ensures PCLMULQDQ is
+  // available).
   unsafe {
     crc64_pclmul_8way(
       crc,
@@ -1881,6 +1917,8 @@ pub unsafe fn crc64_nvme_pclmul_8way(crc: u64, data: &[u8]) -> u64 {
 /// `platform::caps().has(x86::VPCLMUL_READY)`.
 #[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
 pub unsafe fn crc64_nvme_vpclmul(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: This wrapper relies on the function's safety contract (caller ensures VPCLMULQDQ/AVX-512
+  // is available).
   unsafe {
     crc64_vpclmul(
       crc,
@@ -1899,6 +1937,8 @@ pub unsafe fn crc64_nvme_vpclmul(crc: u64, data: &[u8]) -> u64 {
 /// `platform::caps().has(x86::VPCLMUL_READY)`.
 #[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
 pub unsafe fn crc64_nvme_vpclmul_2way(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: This wrapper relies on the function's safety contract (caller ensures VPCLMULQDQ/AVX-512
+  // is available).
   unsafe {
     crc64_vpclmul_2way(
       crc,
@@ -1918,6 +1958,8 @@ pub unsafe fn crc64_nvme_vpclmul_2way(crc: u64, data: &[u8]) -> u64 {
 /// `platform::caps().has(x86::VPCLMUL_READY)`.
 #[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
 pub unsafe fn crc64_nvme_vpclmul_4way(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: This wrapper relies on the function's safety contract (caller ensures VPCLMULQDQ/AVX-512
+  // is available).
   unsafe {
     crc64_vpclmul_4way(
       crc,
@@ -1938,6 +1980,8 @@ pub unsafe fn crc64_nvme_vpclmul_4way(crc: u64, data: &[u8]) -> u64 {
 /// `platform::caps().has(x86::VPCLMUL_READY)`.
 #[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
 pub unsafe fn crc64_nvme_vpclmul_7way(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: This wrapper relies on the function's safety contract (caller ensures VPCLMULQDQ/AVX-512
+  // is available).
   unsafe {
     crc64_vpclmul_7way(
       crc,
@@ -1958,6 +2002,8 @@ pub unsafe fn crc64_nvme_vpclmul_7way(crc: u64, data: &[u8]) -> u64 {
 /// `platform::caps().has(x86::VPCLMUL_READY)`.
 #[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
 pub unsafe fn crc64_nvme_vpclmul_8way(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: This wrapper relies on the function's safety contract (caller ensures VPCLMULQDQ/AVX-512
+  // is available).
   unsafe {
     crc64_vpclmul_8way(
       crc,
@@ -1981,6 +2027,8 @@ pub unsafe fn crc64_nvme_vpclmul_8way(crc: u64, data: &[u8]) -> u64 {
 /// `platform::caps().has(x86::VPCLMUL_READY)`.
 #[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
 pub unsafe fn crc64_nvme_vpclmul_4x512(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: This wrapper relies on the function's safety contract (caller ensures VPCLMULQDQ/AVX-512
+  // is available).
   unsafe {
     crc64_vpclmul_4x512(
       crc,

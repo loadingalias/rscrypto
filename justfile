@@ -82,6 +82,9 @@ bench-compare group="" ours="rscrypto/checksum" min_pct="0":
     RUSTC_WRAPPER= cargo bench -p checksum --bench comp
     @python3 scripts/bench/criterion-summary.py --group-prefix '{{group}}' --non-wins --ours '{{ours}}' --min-improvement-pct {{min_pct}}
 
+comp-check path:
+    @python3 scripts/bench/comp-check.py {{path}}
+
 
 update:
     cargo update --workspace
