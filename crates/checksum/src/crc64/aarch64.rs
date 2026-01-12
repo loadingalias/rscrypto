@@ -743,6 +743,8 @@ unsafe fn crc64_pmull_small(
 /// `platform::caps().has(aarch64::PMULL_READY)`.
 #[target_feature(enable = "aes", enable = "neon")]
 pub unsafe fn crc64_xz_pmull(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: this function requires PMULL+NEON via `target_feature`; the caller guarantees the CPU
+  // supports it (via `PMULL_READY`), and `crc64_pmull` is called with valid references.
   unsafe {
     crc64_pmull(
       crc,
@@ -761,6 +763,8 @@ pub unsafe fn crc64_xz_pmull(crc: u64, data: &[u8]) -> u64 {
 /// `platform::caps().has(aarch64::PMULL_READY)`.
 #[target_feature(enable = "aes", enable = "neon")]
 pub unsafe fn crc64_xz_pmull_small(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: this function requires PMULL+NEON via `target_feature`; the caller guarantees the CPU
+  // supports it (via `PMULL_READY`), and `crc64_pmull_small` is called with valid references.
   unsafe {
     crc64_pmull_small(
       crc,
@@ -782,6 +786,7 @@ pub unsafe fn crc64_xz_pmull_small(crc: u64, data: &[u8]) -> u64 {
 /// `platform::caps().has(aarch64::SVE2_PMULL)` and `PMULL_READY` before selecting.
 #[target_feature(enable = "aes", enable = "neon")]
 pub unsafe fn crc64_xz_sve2_pmull_2way(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: the caller guarantees `SVE2_PMULL` and `PMULL_READY` before selecting this kernel.
   unsafe { crc64_xz_pmull_2way(crc, data) }
 }
 
@@ -796,6 +801,7 @@ pub unsafe fn crc64_xz_sve2_pmull_2way(crc: u64, data: &[u8]) -> u64 {
 /// `platform::caps().has(aarch64::SVE2_PMULL)` and `PMULL_READY` before selecting.
 #[target_feature(enable = "aes", enable = "neon")]
 pub unsafe fn crc64_xz_sve2_pmull_3way(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: the caller guarantees `SVE2_PMULL` and `PMULL_READY` before selecting this kernel.
   unsafe { crc64_xz_pmull_3way(crc, data) }
 }
 
@@ -807,6 +813,8 @@ pub unsafe fn crc64_xz_sve2_pmull_3way(crc: u64, data: &[u8]) -> u64 {
 /// `platform::caps().has(aarch64::PMULL_READY)`.
 #[target_feature(enable = "aes", enable = "neon")]
 pub unsafe fn crc64_nvme_pmull(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: this function requires PMULL+NEON via `target_feature`; the caller guarantees the CPU
+  // supports it (via `PMULL_READY`), and `crc64_pmull` is called with valid references.
   unsafe {
     crc64_pmull(
       crc,
@@ -825,6 +833,8 @@ pub unsafe fn crc64_nvme_pmull(crc: u64, data: &[u8]) -> u64 {
 /// `platform::caps().has(aarch64::PMULL_READY)`.
 #[target_feature(enable = "aes", enable = "neon")]
 pub unsafe fn crc64_nvme_pmull_small(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: this function requires PMULL+NEON via `target_feature`; the caller guarantees the CPU
+  // supports it (via `PMULL_READY`), and `crc64_pmull_small` is called with valid references.
   unsafe {
     crc64_pmull_small(
       crc,
@@ -846,6 +856,7 @@ pub unsafe fn crc64_nvme_pmull_small(crc: u64, data: &[u8]) -> u64 {
 /// `platform::caps().has(aarch64::SVE2_PMULL)` and `PMULL_READY` before selecting.
 #[target_feature(enable = "aes", enable = "neon")]
 pub unsafe fn crc64_nvme_sve2_pmull_2way(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: the caller guarantees `SVE2_PMULL` and `PMULL_READY` before selecting this kernel.
   unsafe { crc64_nvme_pmull_2way(crc, data) }
 }
 
@@ -860,6 +871,7 @@ pub unsafe fn crc64_nvme_sve2_pmull_2way(crc: u64, data: &[u8]) -> u64 {
 /// `platform::caps().has(aarch64::SVE2_PMULL)` and `PMULL_READY` before selecting.
 #[target_feature(enable = "aes", enable = "neon")]
 pub unsafe fn crc64_nvme_sve2_pmull_3way(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: the caller guarantees `SVE2_PMULL` and `PMULL_READY` before selecting this kernel.
   unsafe { crc64_nvme_pmull_3way(crc, data) }
 }
 
@@ -878,6 +890,9 @@ pub unsafe fn crc64_nvme_sve2_pmull_3way(crc: u64, data: &[u8]) -> u64 {
 /// `platform::caps().has(aarch64::PMULL_EOR3_READY)`.
 #[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
 pub unsafe fn crc64_xz_pmull_eor3(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: this function requires PMULL+NEON+SHA3 via `target_feature`; the caller guarantees
+  // the CPU supports it (via `PMULL_EOR3_READY`), and `crc64_pmull_eor3` is called with valid
+  // references.
   unsafe {
     crc64_pmull_eor3(
       crc,
@@ -899,6 +914,9 @@ pub unsafe fn crc64_xz_pmull_eor3(crc: u64, data: &[u8]) -> u64 {
 /// `platform::caps().has(aarch64::PMULL_EOR3_READY)`.
 #[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
 pub unsafe fn crc64_nvme_pmull_eor3(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: this function requires PMULL+NEON+SHA3 via `target_feature`; the caller guarantees
+  // the CPU supports it (via `PMULL_EOR3_READY`), and `crc64_pmull_eor3` is called with valid
+  // references.
   unsafe {
     crc64_pmull_eor3(
       crc,
@@ -921,6 +939,8 @@ pub unsafe fn crc64_nvme_pmull_eor3(crc: u64, data: &[u8]) -> u64 {
 /// `platform::caps().has(aarch64::PMULL_EOR3_READY)`.
 #[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
 pub unsafe fn crc64_xz_pmull_eor3_2way(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: this function requires PMULL+NEON+SHA3 via `target_feature`; the caller guarantees
+  // the CPU supports it (via `PMULL_EOR3_READY`), and the called kernel is passed valid references.
   unsafe {
     crc64_pmull_eor3_2way(
       crc,
@@ -944,6 +964,8 @@ pub unsafe fn crc64_xz_pmull_eor3_2way(crc: u64, data: &[u8]) -> u64 {
 /// `platform::caps().has(aarch64::PMULL_EOR3_READY)`.
 #[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
 pub unsafe fn crc64_xz_pmull_eor3_3way(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: this function requires PMULL+NEON+SHA3 via `target_feature`; the caller guarantees
+  // the CPU supports it (via `PMULL_EOR3_READY`), and the called kernel is passed valid references.
   unsafe {
     crc64_pmull_eor3_3way(
       crc,
@@ -968,6 +990,8 @@ pub unsafe fn crc64_xz_pmull_eor3_3way(crc: u64, data: &[u8]) -> u64 {
 /// `platform::caps().has(aarch64::PMULL_EOR3_READY)`.
 #[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
 pub unsafe fn crc64_nvme_pmull_eor3_2way(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: this function requires PMULL+NEON+SHA3 via `target_feature`; the caller guarantees
+  // the CPU supports it (via `PMULL_EOR3_READY`), and the called kernel is passed valid references.
   unsafe {
     crc64_pmull_eor3_2way(
       crc,
@@ -991,6 +1015,8 @@ pub unsafe fn crc64_nvme_pmull_eor3_2way(crc: u64, data: &[u8]) -> u64 {
 /// `platform::caps().has(aarch64::PMULL_EOR3_READY)`.
 #[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
 pub unsafe fn crc64_nvme_pmull_eor3_3way(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: this function requires PMULL+NEON+SHA3 via `target_feature`; the caller guarantees
+  // the CPU supports it (via `PMULL_EOR3_READY`), and the called kernel is passed valid references.
   unsafe {
     crc64_pmull_eor3_3way(
       crc,
@@ -1140,6 +1166,8 @@ pub fn crc64_nvme_pmull_eor3_3way_safe(crc: u64, data: &[u8]) -> u64 {
 /// `platform::caps().has(aarch64::PMULL_READY)`.
 #[target_feature(enable = "aes", enable = "neon")]
 pub unsafe fn crc64_xz_pmull_2way(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: this function requires PMULL+NEON via `target_feature`; the caller guarantees the CPU
+  // supports it (via `PMULL_READY`), and the called kernel is passed valid references.
   unsafe {
     crc64_pmull_2way(
       crc,
@@ -1162,6 +1190,8 @@ pub unsafe fn crc64_xz_pmull_2way(crc: u64, data: &[u8]) -> u64 {
 /// `platform::caps().has(aarch64::PMULL_READY)`.
 #[target_feature(enable = "aes", enable = "neon")]
 pub unsafe fn crc64_xz_pmull_3way(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: this function requires PMULL+NEON via `target_feature`; the caller guarantees the CPU
+  // supports it (via `PMULL_READY`), and the called kernel is passed valid references.
   unsafe {
     crc64_pmull_3way(
       crc,
@@ -1182,6 +1212,8 @@ pub unsafe fn crc64_xz_pmull_3way(crc: u64, data: &[u8]) -> u64 {
 /// `platform::caps().has(aarch64::PMULL_READY)`.
 #[target_feature(enable = "aes", enable = "neon")]
 pub unsafe fn crc64_nvme_pmull_2way(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: this function requires PMULL+NEON via `target_feature`; the caller guarantees the CPU
+  // supports it (via `PMULL_READY`), and the called kernel is passed valid references.
   unsafe {
     crc64_pmull_2way(
       crc,
@@ -1201,6 +1233,8 @@ pub unsafe fn crc64_nvme_pmull_2way(crc: u64, data: &[u8]) -> u64 {
 /// `platform::caps().has(aarch64::PMULL_READY)`.
 #[target_feature(enable = "aes", enable = "neon")]
 pub unsafe fn crc64_nvme_pmull_3way(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: this function requires PMULL+NEON via `target_feature`; the caller guarantees the CPU
+  // supports it (via `PMULL_READY`), and the called kernel is passed valid references.
   unsafe {
     crc64_pmull_3way(
       crc,

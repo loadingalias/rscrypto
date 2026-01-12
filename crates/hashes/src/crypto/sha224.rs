@@ -6,10 +6,19 @@ use crate::util::rotr32;
 
 const BLOCK_LEN: usize = 64;
 
+// SHA-224 initial hash value (FIPS 180-4).
 const H0: [u32; 8] = [
-  0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
+  0xc105_9ed8,
+  0x367c_d507,
+  0x3070_dd17,
+  0xf70e_5939,
+  0xffc0_0b31,
+  0x6858_1511,
+  0x64f9_8fa7,
+  0xbefa_4fa4,
 ];
 
+// SHA-256 K constants (shared by SHA-224).
 const K: [u32; 64] = [
   0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98,
   0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786,
@@ -52,14 +61,14 @@ fn small_sigma1(x: u32) -> u32 {
 }
 
 #[derive(Clone)]
-pub struct Sha256 {
+pub struct Sha224 {
   state: [u32; 8],
   block: [u8; BLOCK_LEN],
   block_len: usize,
   bytes_hashed: u64,
 }
 
-impl Default for Sha256 {
+impl Default for Sha224 {
   #[inline]
   fn default() -> Self {
     Self {
@@ -71,69 +80,11 @@ impl Default for Sha256 {
   }
 }
 
-impl Sha256 {
-  /// Compute the digest of `data` in one shot.
-  ///
-  /// This specializes inputs that fit in ≤ 2 compression blocks to avoid the
-  /// streaming buffer and finalize overhead for tiny messages.
-  #[inline]
-  #[must_use]
-  pub fn digest(data: &[u8]) -> [u8; 32] {
-    // Two-block limit:
-    // - If `len < 64`, padding uses 1 or 2 blocks.
-    // - If `64 <= len < 64 + 56`, we have exactly one full block + a final block (remainder < 56), i.e.
-    //   2 blocks total.
-    if data.len() < 120 {
-      let mut state = H0;
-
-      let total_len = data.len() as u64;
-      let bit_len = total_len.wrapping_mul(8);
-
-      let (blocks, rest) = data.as_chunks::<BLOCK_LEN>();
-      if !blocks.is_empty() {
-        // For `len < 120`, there can be at most one full block here.
-        Self::compress_block(&mut state, &blocks[0]);
-      }
-
-      let mut block0 = [0u8; BLOCK_LEN];
-      block0[..rest.len()].copy_from_slice(rest);
-      block0[rest.len()] = 0x80;
-
-      if data.len() < 56 {
-        block0[56..64].copy_from_slice(&bit_len.to_be_bytes());
-        Self::compress_block(&mut state, &block0);
-      } else if blocks.is_empty() {
-        // `56 <= len < 64`: padding spills into a second block.
-        Self::compress_block(&mut state, &block0);
-        let mut block1 = [0u8; BLOCK_LEN];
-        block1[56..64].copy_from_slice(&bit_len.to_be_bytes());
-        Self::compress_block(&mut state, &block1);
-      } else {
-        // `64 <= len < 120`: remainder < 56, so length fits in the final block.
-        block0[56..64].copy_from_slice(&bit_len.to_be_bytes());
-        Self::compress_block(&mut state, &block0);
-      }
-
-      let mut out = [0u8; 32];
-      for (i, word) in state.iter().copied().enumerate() {
-        let offset = i * 4;
-        out[offset..offset + 4].copy_from_slice(&word.to_be_bytes());
-      }
-      out
-    } else {
-      let mut h = Self::new();
-      h.update(data);
-      h.finalize()
-    }
-  }
-
+impl Sha224 {
   #[inline(always)]
   fn compress_block(state: &mut [u32; 8], block: &[u8; BLOCK_LEN]) {
     // 16-word ring buffer message schedule (lower memory traffic than a full
-    // 64-word schedule, and typically faster in practice).
-    //
-    // This is fully unrolled to avoid bounds checks and allow better
-    // instruction scheduling in the scalar core.
+    // 64-word schedule).
     let mut w = [0u32; 16];
     let (chunks, _) = block.as_chunks::<4>();
     for (i, c) in chunks.iter().enumerate() {
@@ -327,7 +278,7 @@ impl Sha256 {
   }
 
   #[inline]
-  fn finalize_inner(&self) -> [u8; 32] {
+  fn finalize_inner(&self) -> [u8; 28] {
     let mut state = self.state;
     let mut block = self.block;
     let mut block_len = self.block_len;
@@ -349,8 +300,8 @@ impl Sha256 {
     block[56..64].copy_from_slice(&bit_len.to_be_bytes());
     Self::compress_block(&mut state, &block);
 
-    let mut out = [0u8; 32];
-    for (i, word) in state.iter().copied().enumerate() {
+    let mut out = [0u8; 28];
+    for (i, word) in state.iter().copied().enumerate().take(7) {
       let offset = i * 4;
       out[offset..offset + 4].copy_from_slice(&word.to_be_bytes());
     }
@@ -358,9 +309,9 @@ impl Sha256 {
   }
 }
 
-impl Digest for Sha256 {
-  const OUTPUT_SIZE: usize = 32;
-  type Output = [u8; 32];
+impl Digest for Sha224 {
+  const OUTPUT_SIZE: usize = 28;
+  type Output = [u8; 28];
 
   #[inline]
   fn new() -> Self {
@@ -407,49 +358,5 @@ impl Digest for Sha256 {
   #[inline]
   fn reset(&mut self) {
     *self = Self::default();
-  }
-}
-
-#[cfg(test)]
-mod tests {
-  use super::Sha256;
-
-  fn hex32(bytes: &[u8; 32]) -> alloc::string::String {
-    use alloc::string::String;
-    use core::fmt::Write;
-    let mut s = String::new();
-    for &b in bytes {
-      write!(&mut s, "{:02x}", b).unwrap();
-    }
-    s
-  }
-
-  extern crate alloc;
-
-  #[test]
-  fn known_vectors() {
-    // NIST FIPS 180-4 test vectors (short messages).
-    assert_eq!(
-      hex32(&Sha256::digest(b"")),
-      "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    );
-    assert_eq!(
-      hex32(&Sha256::digest(b"abc")),
-      "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
-    );
-    assert_eq!(
-      hex32(&Sha256::digest(
-        b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"
-      )),
-      "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"
-    );
-
-    // 1,000,000 repetitions of 'a'.
-    let mut million_a = alloc::vec![b'a'; 1_000_000];
-    assert_eq!(
-      hex32(&Sha256::digest(&million_a)),
-      "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0"
-    );
-    million_a.clear();
   }
 }

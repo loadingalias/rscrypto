@@ -15,7 +15,8 @@ authors = ["loadingalias"]
 repository = "https://github.com/loadingalias/rscrypto"
 
 [workspace.lints.rust]
-unsafe_code = "deny"
+# `unsafe` is allowed in rscrypto, but must be narrow and well-documented.
+unsafe_code = "allow"
 unsafe_op_in_unsafe_fn = "deny"
 dangling_pointers_from_locals = "deny"
 integer_to_ptr_transmutes = "deny"
@@ -35,6 +36,12 @@ std_instead_of_alloc = "warn"
 unwrap_used = "allow"
 expect_used = "allow"
 indexing_slicing = "allow"
+
+# Safety discipline:
+# - `unsafe {}` blocks must have a `// SAFETY:` comment explaining why they’re sound.
+# - `unsafe fn` must document its safety contract.
+undocumented_unsafe_blocks = "deny"
+missing_safety_doc = "deny"
 
 [workspace.lints.rustdoc]
 broken_intra_doc_links = "deny"

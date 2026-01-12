@@ -2,64 +2,145 @@
 
 use traits::Digest;
 
-use crate::util::rotr32;
+use crate::util::rotr64;
 
-const BLOCK_LEN: usize = 64;
+const BLOCK_LEN: usize = 128;
 
-const H0: [u32; 8] = [
-  0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
+// SHA-512/224 initial hash value (FIPS 180-4).
+const H0: [u64; 8] = [
+  0x8c3d_37c8_1954_4da2,
+  0x73e1_9966_89dc_d4d6,
+  0x1dfa_b7ae_32ff_9c82,
+  0x679d_d514_582f_9fcf,
+  0x0f6d_2b69_7bd4_4da8,
+  0x77e3_6f73_04c4_8942,
+  0x3f9d_85a8_6a1d_36c8,
+  0x1112_e6ad_91d6_92a1,
 ];
 
-const K: [u32; 64] = [
-  0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98,
-  0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786,
-  0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8,
-  0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13,
-  0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819,
-  0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a,
-  0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7,
-  0xc67178f2,
+// SHA-512 K constants (shared).
+const K: [u64; 80] = [
+  0x428a_2f98_d728_ae22,
+  0x7137_4491_23ef_65cd,
+  0xb5c0_fbcf_ec4d_3b2f,
+  0xe9b5_dba5_8189_dbbc,
+  0x3956_c25b_f348_b538,
+  0x59f1_11f1_b605_d019,
+  0x923f_82a4_af19_4f9b,
+  0xab1c_5ed5_da6d_8118,
+  0xd807_aa98_a303_0242,
+  0x1283_5b01_4570_6fbe,
+  0x2431_85be_4ee4_b28c,
+  0x550c_7dc3_d5ff_b4e2,
+  0x72be_5d74_f27b_896f,
+  0x80de_b1fe_3b16_96b1,
+  0x9bdc_06a7_25c7_1235,
+  0xc19b_f174_cf69_2694,
+  0xe49b_69c1_9ef1_4ad2,
+  0xefbe_4786_384f_25e3,
+  0x0fc1_9dc6_8b8c_d5b5,
+  0x240c_a1cc_77ac_9c65,
+  0x2de9_2c6f_592b_0275,
+  0x4a74_84aa_6ea6_e483,
+  0x5cb0_a9dc_bd41_fbd4,
+  0x76f9_88da_8311_53b5,
+  0x983e_5152_ee66_dfab,
+  0xa831_c66d_2db4_3210,
+  0xb003_27c8_98fb_213f,
+  0xbf59_7fc7_beef_0ee4,
+  0xc6e0_0bf3_3da8_8fc2,
+  0xd5a7_9147_930a_a725,
+  0x06ca_6351_e003_826f,
+  0x1429_2967_0a0e_6e70,
+  0x27b7_0a85_46d2_2ffc,
+  0x2e1b_2138_5c26_c926,
+  0x4d2c_6dfc_5ac4_2aed,
+  0x5338_0d13_9d95_b3df,
+  0x650a_7354_8baf_63de,
+  0x766a_0abb_3c77_b2a8,
+  0x81c2_c92e_47ed_aee6,
+  0x9272_2c85_1482_353b,
+  0xa2bf_e8a1_4cf1_0364,
+  0xa81a_664b_bc42_3001,
+  0xc24b_8b70_d0f8_9791,
+  0xc76c_51a3_0654_be30,
+  0xd192_e819_d6ef_5218,
+  0xd699_0624_5565_a910,
+  0xf40e_3585_5771_202a,
+  0x106a_a070_32bb_d1b8,
+  0x19a4_c116_b8d2_d0c8,
+  0x1e37_6c08_5141_ab53,
+  0x2748_774c_df8e_eb99,
+  0x34b0_bcb5_e19b_48a8,
+  0x391c_0cb3_c5c9_5a63,
+  0x4ed8_aa4a_e341_8acb,
+  0x5b9c_ca4f_7763_e373,
+  0x682e_6ff3_d6b2_b8a3,
+  0x748f_82ee_5def_b2fc,
+  0x78a5_636f_4317_2f60,
+  0x84c8_7814_a1f0_ab72,
+  0x8cc7_0208_1a64_39ec,
+  0x90be_fffa_2363_1e28,
+  0xa450_6ceb_de82_bde9,
+  0xbef9_a3f7_b2c6_7915,
+  0xc671_78f2_e372_532b,
+  0xca27_3ece_ea26_619c,
+  0xd186_b8c7_21c0_c207,
+  0xeada_7dd6_cde0_eb1e,
+  0xf57d_4f7f_ee6e_d178,
+  0x06f0_67aa_7217_6fba,
+  0x0a63_7dc5_a2c8_98a6,
+  0x113f_9804_bef9_0dae,
+  0x1b71_0b35_131c_471b,
+  0x28db_77f5_2304_7d84,
+  0x32ca_ab7b_40c7_2493,
+  0x3c9e_be0a_15c9_bebc,
+  0x431d_67c4_9c10_0d4c,
+  0x4cc5_d4be_cb3e_42b6,
+  0x597f_299c_fc65_7e2a,
+  0x5fcb_6fab_3ad6_faec,
+  0x6c44_198c_4a47_5817,
 ];
 
 #[inline(always)]
-fn ch(x: u32, y: u32, z: u32) -> u32 {
+fn ch(x: u64, y: u64, z: u64) -> u64 {
   (x & y) ^ (!x & z)
 }
 
 #[inline(always)]
-fn maj(x: u32, y: u32, z: u32) -> u32 {
+fn maj(x: u64, y: u64, z: u64) -> u64 {
   (x & y) ^ (x & z) ^ (y & z)
 }
 
 #[inline(always)]
-fn big_sigma0(x: u32) -> u32 {
-  rotr32(x, 2) ^ rotr32(x, 13) ^ rotr32(x, 22)
+fn big_sigma0(x: u64) -> u64 {
+  rotr64(x, 28) ^ rotr64(x, 34) ^ rotr64(x, 39)
 }
 
 #[inline(always)]
-fn big_sigma1(x: u32) -> u32 {
-  rotr32(x, 6) ^ rotr32(x, 11) ^ rotr32(x, 25)
+fn big_sigma1(x: u64) -> u64 {
+  rotr64(x, 14) ^ rotr64(x, 18) ^ rotr64(x, 41)
 }
 
 #[inline(always)]
-fn small_sigma0(x: u32) -> u32 {
-  rotr32(x, 7) ^ rotr32(x, 18) ^ (x >> 3)
+fn small_sigma0(x: u64) -> u64 {
+  rotr64(x, 1) ^ rotr64(x, 8) ^ (x >> 7)
 }
 
 #[inline(always)]
-fn small_sigma1(x: u32) -> u32 {
-  rotr32(x, 17) ^ rotr32(x, 19) ^ (x >> 10)
+fn small_sigma1(x: u64) -> u64 {
+  rotr64(x, 19) ^ rotr64(x, 61) ^ (x >> 6)
 }
 
 #[derive(Clone)]
-pub struct Sha256 {
-  state: [u32; 8],
+pub struct Sha512_224 {
+  state: [u64; 8],
   block: [u8; BLOCK_LEN],
   block_len: usize,
-  bytes_hashed: u64,
+  bytes_hashed: u128,
 }
 
-impl Default for Sha256 {
+impl Default for Sha512_224 {
   #[inline]
   fn default() -> Self {
     Self {
@@ -71,73 +152,13 @@ impl Default for Sha256 {
   }
 }
 
-impl Sha256 {
-  /// Compute the digest of `data` in one shot.
-  ///
-  /// This specializes inputs that fit in ≤ 2 compression blocks to avoid the
-  /// streaming buffer and finalize overhead for tiny messages.
-  #[inline]
-  #[must_use]
-  pub fn digest(data: &[u8]) -> [u8; 32] {
-    // Two-block limit:
-    // - If `len < 64`, padding uses 1 or 2 blocks.
-    // - If `64 <= len < 64 + 56`, we have exactly one full block + a final block (remainder < 56), i.e.
-    //   2 blocks total.
-    if data.len() < 120 {
-      let mut state = H0;
-
-      let total_len = data.len() as u64;
-      let bit_len = total_len.wrapping_mul(8);
-
-      let (blocks, rest) = data.as_chunks::<BLOCK_LEN>();
-      if !blocks.is_empty() {
-        // For `len < 120`, there can be at most one full block here.
-        Self::compress_block(&mut state, &blocks[0]);
-      }
-
-      let mut block0 = [0u8; BLOCK_LEN];
-      block0[..rest.len()].copy_from_slice(rest);
-      block0[rest.len()] = 0x80;
-
-      if data.len() < 56 {
-        block0[56..64].copy_from_slice(&bit_len.to_be_bytes());
-        Self::compress_block(&mut state, &block0);
-      } else if blocks.is_empty() {
-        // `56 <= len < 64`: padding spills into a second block.
-        Self::compress_block(&mut state, &block0);
-        let mut block1 = [0u8; BLOCK_LEN];
-        block1[56..64].copy_from_slice(&bit_len.to_be_bytes());
-        Self::compress_block(&mut state, &block1);
-      } else {
-        // `64 <= len < 120`: remainder < 56, so length fits in the final block.
-        block0[56..64].copy_from_slice(&bit_len.to_be_bytes());
-        Self::compress_block(&mut state, &block0);
-      }
-
-      let mut out = [0u8; 32];
-      for (i, word) in state.iter().copied().enumerate() {
-        let offset = i * 4;
-        out[offset..offset + 4].copy_from_slice(&word.to_be_bytes());
-      }
-      out
-    } else {
-      let mut h = Self::new();
-      h.update(data);
-      h.finalize()
-    }
-  }
-
+impl Sha512_224 {
   #[inline(always)]
-  fn compress_block(state: &mut [u32; 8], block: &[u8; BLOCK_LEN]) {
-    // 16-word ring buffer message schedule (lower memory traffic than a full
-    // 64-word schedule, and typically faster in practice).
-    //
-    // This is fully unrolled to avoid bounds checks and allow better
-    // instruction scheduling in the scalar core.
-    let mut w = [0u32; 16];
-    let (chunks, _) = block.as_chunks::<4>();
+  fn compress_block(state: &mut [u64; 8], block: &[u8; BLOCK_LEN]) {
+    let mut w = [0u64; 16];
+    let (chunks, _) = block.as_chunks::<8>();
     for (i, c) in chunks.iter().enumerate() {
-      w[i] = u32::from_be_bytes(*c);
+      w[i] = u64::from_be_bytes(*c);
     }
     let [
       mut w0,
@@ -309,6 +330,38 @@ impl Sha256 {
     round!(K[62], w14);
     w15 = sched!(w13, w8, w0, w15);
     round!(K[63], w15);
+    w0 = sched!(w14, w9, w1, w0);
+    round!(K[64], w0);
+    w1 = sched!(w15, w10, w2, w1);
+    round!(K[65], w1);
+    w2 = sched!(w0, w11, w3, w2);
+    round!(K[66], w2);
+    w3 = sched!(w1, w12, w4, w3);
+    round!(K[67], w3);
+    w4 = sched!(w2, w13, w5, w4);
+    round!(K[68], w4);
+    w5 = sched!(w3, w14, w6, w5);
+    round!(K[69], w5);
+    w6 = sched!(w4, w15, w7, w6);
+    round!(K[70], w6);
+    w7 = sched!(w5, w0, w8, w7);
+    round!(K[71], w7);
+    w8 = sched!(w6, w1, w9, w8);
+    round!(K[72], w8);
+    w9 = sched!(w7, w2, w10, w9);
+    round!(K[73], w9);
+    w10 = sched!(w8, w3, w11, w10);
+    round!(K[74], w10);
+    w11 = sched!(w9, w4, w12, w11);
+    round!(K[75], w11);
+    w12 = sched!(w10, w5, w13, w12);
+    round!(K[76], w12);
+    w13 = sched!(w11, w6, w14, w13);
+    round!(K[77], w13);
+    w14 = sched!(w12, w7, w15, w14);
+    round!(K[78], w14);
+    w15 = sched!(w13, w8, w0, w15);
+    round!(K[79], w15);
 
     state[0] = state[0].wrapping_add(a);
     state[1] = state[1].wrapping_add(b);
@@ -321,46 +374,47 @@ impl Sha256 {
   }
 
   #[inline]
-  fn update_block(state: &mut [u32; 8], bytes_hashed: &mut u64, block: &[u8; BLOCK_LEN]) {
+  fn update_block(state: &mut [u64; 8], bytes_hashed: &mut u128, block: &[u8; BLOCK_LEN]) {
     Self::compress_block(state, block);
-    *bytes_hashed = (*bytes_hashed).wrapping_add(BLOCK_LEN as u64);
+    *bytes_hashed = (*bytes_hashed).wrapping_add(BLOCK_LEN as u128);
   }
 
   #[inline]
-  fn finalize_inner(&self) -> [u8; 32] {
+  fn finalize_inner(&self) -> [u8; 28] {
     let mut state = self.state;
     let mut block = self.block;
     let mut block_len = self.block_len;
-    let total_len = self.bytes_hashed.wrapping_add(block_len as u64);
+    let total_len = self.bytes_hashed.wrapping_add(block_len as u128);
 
     block[block_len] = 0x80;
     block_len += 1;
 
-    if block_len > 56 {
+    if block_len > 112 {
       block[block_len..].fill(0);
       Self::compress_block(&mut state, &block);
       block = [0u8; BLOCK_LEN];
       block_len = 0;
     }
 
-    block[block_len..56].fill(0);
+    block[block_len..112].fill(0);
 
-    let bit_len = total_len.wrapping_mul(8);
-    block[56..64].copy_from_slice(&bit_len.to_be_bytes());
+    let bit_len = total_len << 3;
+    block[112..128].copy_from_slice(&bit_len.to_be_bytes());
     Self::compress_block(&mut state, &block);
 
-    let mut out = [0u8; 32];
-    for (i, word) in state.iter().copied().enumerate() {
-      let offset = i * 4;
-      out[offset..offset + 4].copy_from_slice(&word.to_be_bytes());
+    let mut out = [0u8; 28];
+    for (i, word) in state.iter().copied().enumerate().take(3) {
+      let offset = i * 8;
+      out[offset..offset + 8].copy_from_slice(&word.to_be_bytes());
     }
+    out[24..28].copy_from_slice(&state[3].to_be_bytes()[..4]);
     out
   }
 }
 
-impl Digest for Sha256 {
-  const OUTPUT_SIZE: usize = 32;
-  type Output = [u8; 32];
+impl Digest for Sha512_224 {
+  const OUTPUT_SIZE: usize = 28;
+  type Output = [u8; 28];
 
   #[inline]
   fn new() -> Self {
@@ -389,7 +443,7 @@ impl Digest for Sha256 {
       for block in blocks {
         Self::compress_block(&mut self.state, block);
       }
-      self.bytes_hashed = self.bytes_hashed.wrapping_add((blocks.len() * BLOCK_LEN) as u64);
+      self.bytes_hashed = self.bytes_hashed.wrapping_add((blocks.len() * BLOCK_LEN) as u128);
     }
     data = rest;
 
@@ -407,49 +461,5 @@ impl Digest for Sha256 {
   #[inline]
   fn reset(&mut self) {
     *self = Self::default();
-  }
-}
-
-#[cfg(test)]
-mod tests {
-  use super::Sha256;
-
-  fn hex32(bytes: &[u8; 32]) -> alloc::string::String {
-    use alloc::string::String;
-    use core::fmt::Write;
-    let mut s = String::new();
-    for &b in bytes {
-      write!(&mut s, "{:02x}", b).unwrap();
-    }
-    s
-  }
-
-  extern crate alloc;
-
-  #[test]
-  fn known_vectors() {
-    // NIST FIPS 180-4 test vectors (short messages).
-    assert_eq!(
-      hex32(&Sha256::digest(b"")),
-      "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    );
-    assert_eq!(
-      hex32(&Sha256::digest(b"abc")),
-      "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
-    );
-    assert_eq!(
-      hex32(&Sha256::digest(
-        b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"
-      )),
-      "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"
-    );
-
-    // 1,000,000 repetitions of 'a'.
-    let mut million_a = alloc::vec![b'a'; 1_000_000];
-    assert_eq!(
-      hex32(&Sha256::digest(&million_a)),
-      "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0"
-    );
-    million_a.clear();
   }
 }

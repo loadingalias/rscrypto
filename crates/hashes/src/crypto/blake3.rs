@@ -4,7 +4,7 @@
 
 #![allow(clippy::indexing_slicing)] // Fixed-size arrays + internal block parsing
 
-use core::cmp::min;
+use core::{cmp::min, ptr};
 
 use traits::{Digest, Xof};
 
@@ -34,38 +34,30 @@ const IV: [u32; 8] = [
 
 #[inline(always)]
 fn words8_from_le_bytes_32(bytes: &[u8; 32]) -> [u32; 8] {
-  [
-    u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
-    u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]),
-    u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]),
-    u32::from_le_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]),
-    u32::from_le_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]),
-    u32::from_le_bytes([bytes[20], bytes[21], bytes[22], bytes[23]]),
-    u32::from_le_bytes([bytes[24], bytes[25], bytes[26], bytes[27]]),
-    u32::from_le_bytes([bytes[28], bytes[29], bytes[30], bytes[31]]),
-  ]
+  let src = bytes.as_ptr() as *const u32;
+  let mut out = [0u32; 8];
+  let mut i = 0usize;
+  while i < 8 {
+    // SAFETY: `bytes` is exactly 32 bytes, so it contains 8 `u32` values;
+    // `read_unaligned` supports the 1-byte alignment of `[u8; 32]`.
+    out[i] = u32::from_le(unsafe { ptr::read_unaligned(src.add(i)) });
+    i += 1;
+  }
+  out
 }
 
 #[inline(always)]
 fn words16_from_le_bytes_64(bytes: &[u8; 64]) -> [u32; 16] {
-  [
-    u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
-    u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]),
-    u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]),
-    u32::from_le_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]),
-    u32::from_le_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]),
-    u32::from_le_bytes([bytes[20], bytes[21], bytes[22], bytes[23]]),
-    u32::from_le_bytes([bytes[24], bytes[25], bytes[26], bytes[27]]),
-    u32::from_le_bytes([bytes[28], bytes[29], bytes[30], bytes[31]]),
-    u32::from_le_bytes([bytes[32], bytes[33], bytes[34], bytes[35]]),
-    u32::from_le_bytes([bytes[36], bytes[37], bytes[38], bytes[39]]),
-    u32::from_le_bytes([bytes[40], bytes[41], bytes[42], bytes[43]]),
-    u32::from_le_bytes([bytes[44], bytes[45], bytes[46], bytes[47]]),
-    u32::from_le_bytes([bytes[48], bytes[49], bytes[50], bytes[51]]),
-    u32::from_le_bytes([bytes[52], bytes[53], bytes[54], bytes[55]]),
-    u32::from_le_bytes([bytes[56], bytes[57], bytes[58], bytes[59]]),
-    u32::from_le_bytes([bytes[60], bytes[61], bytes[62], bytes[63]]),
-  ]
+  let src = bytes.as_ptr() as *const u32;
+  let mut out = [0u32; 16];
+  let mut i = 0usize;
+  while i < 16 {
+    // SAFETY: `bytes` is exactly 64 bytes, so it contains 16 `u32` values;
+    // `read_unaligned` supports the 1-byte alignment of `[u8; 64]`.
+    out[i] = u32::from_le(unsafe { ptr::read_unaligned(src.add(i)) });
+    i += 1;
+  }
+  out
 }
 
 #[inline]
@@ -366,9 +358,9 @@ fn single_chunk_output(key_words: [u32; 8], chunk_counter: u64, flags: u32, inpu
 
   let mut chaining_value = key_words;
 
-  for i in 0..full_blocks {
-    let offset = i * BLOCK_LEN;
-    let block_bytes: &[u8; BLOCK_LEN] = &input[offset..offset + BLOCK_LEN].as_chunks::<BLOCK_LEN>().0[0];
+  let full_bytes = full_blocks * BLOCK_LEN;
+  let (full_block_slices, _) = input[..full_bytes].as_chunks::<BLOCK_LEN>();
+  for (i, block_bytes) in full_block_slices.iter().enumerate() {
     let block_words = words16_from_le_bytes_64(block_bytes);
     let start = if i == 0 { CHUNK_START } else { 0 };
     chaining_value = first_8_words(compress(

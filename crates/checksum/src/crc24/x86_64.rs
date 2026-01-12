@@ -1438,6 +1438,7 @@ pub fn crc24_openpgp_pclmul_small_safe(crc: u32, data: &[u8]) -> u32 {
 #[inline]
 pub fn crc24_openpgp_pclmul_2way_safe(crc: u32, data: &[u8]) -> u32 {
   let mut state = to_reflected_state(crc);
+  // SAFETY: Dispatcher verifies SSSE3 + PCLMULQDQ before selecting this kernel.
   state = unsafe {
     crc24_width32_pclmul_stream(
       state,
@@ -1454,6 +1455,7 @@ pub fn crc24_openpgp_pclmul_2way_safe(crc: u32, data: &[u8]) -> u32 {
 #[inline]
 pub fn crc24_openpgp_pclmul_4way_safe(crc: u32, data: &[u8]) -> u32 {
   let mut state = to_reflected_state(crc);
+  // SAFETY: Dispatcher verifies SSSE3 + PCLMULQDQ before selecting this kernel.
   state = unsafe {
     crc24_width32_pclmul_stream(
       state,
@@ -1470,6 +1472,7 @@ pub fn crc24_openpgp_pclmul_4way_safe(crc: u32, data: &[u8]) -> u32 {
 #[inline]
 pub fn crc24_openpgp_pclmul_7way_safe(crc: u32, data: &[u8]) -> u32 {
   let mut state = to_reflected_state(crc);
+  // SAFETY: Dispatcher verifies SSSE3 + PCLMULQDQ before selecting this kernel.
   state = unsafe {
     crc24_width32_pclmul_stream(
       state,
@@ -1486,6 +1489,7 @@ pub fn crc24_openpgp_pclmul_7way_safe(crc: u32, data: &[u8]) -> u32 {
 #[inline]
 pub fn crc24_openpgp_pclmul_8way_safe(crc: u32, data: &[u8]) -> u32 {
   let mut state = to_reflected_state(crc);
+  // SAFETY: Dispatcher verifies SSSE3 + PCLMULQDQ before selecting this kernel.
   state = unsafe {
     crc24_width32_pclmul_stream(
       state,
@@ -1515,6 +1519,7 @@ pub fn crc24_openpgp_vpclmul_safe(crc: u32, data: &[u8]) -> u32 {
 #[inline]
 pub fn crc24_openpgp_vpclmul_2way_safe(crc: u32, data: &[u8]) -> u32 {
   let mut state = to_reflected_state(crc);
+  // SAFETY: Dispatcher verifies VPCLMULQDQ + AVX-512 before selecting this kernel.
   state = unsafe {
     crc24_width32_vpclmul_stream(
       state,
@@ -1531,6 +1536,7 @@ pub fn crc24_openpgp_vpclmul_2way_safe(crc: u32, data: &[u8]) -> u32 {
 #[inline]
 pub fn crc24_openpgp_vpclmul_4way_safe(crc: u32, data: &[u8]) -> u32 {
   let mut state = to_reflected_state(crc);
+  // SAFETY: Dispatcher verifies VPCLMULQDQ + AVX-512 before selecting this kernel.
   state = unsafe {
     crc24_width32_vpclmul_stream(
       state,
@@ -1547,6 +1553,7 @@ pub fn crc24_openpgp_vpclmul_4way_safe(crc: u32, data: &[u8]) -> u32 {
 #[inline]
 pub fn crc24_openpgp_vpclmul_7way_safe(crc: u32, data: &[u8]) -> u32 {
   let mut state = to_reflected_state(crc);
+  // SAFETY: Dispatcher verifies VPCLMULQDQ + AVX-512 before selecting this kernel.
   state = unsafe {
     crc24_width32_vpclmul_stream(
       state,
@@ -1563,6 +1570,7 @@ pub fn crc24_openpgp_vpclmul_7way_safe(crc: u32, data: &[u8]) -> u32 {
 #[inline]
 pub fn crc24_openpgp_vpclmul_8way_safe(crc: u32, data: &[u8]) -> u32 {
   let mut state = to_reflected_state(crc);
+  // SAFETY: Dispatcher verifies VPCLMULQDQ + AVX-512 before selecting this kernel.
   state = unsafe {
     crc24_width32_vpclmul_stream(
       state,

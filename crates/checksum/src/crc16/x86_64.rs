@@ -1316,6 +1316,7 @@ pub fn crc16_ccitt_pclmul_small_safe(crc: u16, data: &[u8]) -> u16 {
 /// CRC-16/CCITT PCLMULQDQ kernel (2-way multi-stream).
 #[inline]
 pub fn crc16_ccitt_pclmul_2way_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: Dispatcher verifies SSSE3 + PCLMULQDQ before selecting this kernel.
   unsafe {
     crc16_width32_pclmul_stream(
       crc,
@@ -1331,6 +1332,7 @@ pub fn crc16_ccitt_pclmul_2way_safe(crc: u16, data: &[u8]) -> u16 {
 /// CRC-16/CCITT PCLMULQDQ kernel (4-way multi-stream).
 #[inline]
 pub fn crc16_ccitt_pclmul_4way_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: Dispatcher verifies SSSE3 + PCLMULQDQ before selecting this kernel.
   unsafe {
     crc16_width32_pclmul_stream(
       crc,
@@ -1346,6 +1348,7 @@ pub fn crc16_ccitt_pclmul_4way_safe(crc: u16, data: &[u8]) -> u16 {
 /// CRC-16/CCITT PCLMULQDQ kernel (7-way multi-stream).
 #[inline]
 pub fn crc16_ccitt_pclmul_7way_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: Dispatcher verifies SSSE3 + PCLMULQDQ before selecting this kernel.
   unsafe {
     crc16_width32_pclmul_stream(
       crc,
@@ -1361,6 +1364,7 @@ pub fn crc16_ccitt_pclmul_7way_safe(crc: u16, data: &[u8]) -> u16 {
 /// CRC-16/CCITT PCLMULQDQ kernel (8-way multi-stream).
 #[inline]
 pub fn crc16_ccitt_pclmul_8way_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: Dispatcher verifies SSSE3 + PCLMULQDQ before selecting this kernel.
   unsafe {
     crc16_width32_pclmul_stream(
       crc,
@@ -1394,6 +1398,7 @@ pub fn crc16_ccitt_vpclmul_safe(crc: u16, data: &[u8]) -> u16 {
 /// CRC-16/CCITT VPCLMULQDQ kernel (2-way multi-stream).
 #[inline]
 pub fn crc16_ccitt_vpclmul_2way_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: Dispatcher verifies VPCLMULQDQ + AVX-512 before selecting this kernel.
   unsafe {
     crc16_width32_vpclmul_stream(
       crc,
@@ -1409,6 +1414,7 @@ pub fn crc16_ccitt_vpclmul_2way_safe(crc: u16, data: &[u8]) -> u16 {
 /// CRC-16/CCITT VPCLMULQDQ kernel (4-way multi-stream).
 #[inline]
 pub fn crc16_ccitt_vpclmul_4way_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: Dispatcher verifies VPCLMULQDQ + AVX-512 before selecting this kernel.
   unsafe {
     crc16_width32_vpclmul_stream(
       crc,
@@ -1424,6 +1430,7 @@ pub fn crc16_ccitt_vpclmul_4way_safe(crc: u16, data: &[u8]) -> u16 {
 /// CRC-16/CCITT VPCLMULQDQ kernel (7-way multi-stream).
 #[inline]
 pub fn crc16_ccitt_vpclmul_7way_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: Dispatcher verifies VPCLMULQDQ + AVX-512 before selecting this kernel.
   unsafe {
     crc16_width32_vpclmul_stream(
       crc,
@@ -1439,6 +1446,7 @@ pub fn crc16_ccitt_vpclmul_7way_safe(crc: u16, data: &[u8]) -> u16 {
 /// CRC-16/CCITT VPCLMULQDQ kernel (8-way multi-stream).
 #[inline]
 pub fn crc16_ccitt_vpclmul_8way_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: Dispatcher verifies VPCLMULQDQ + AVX-512 before selecting this kernel.
   unsafe {
     crc16_width32_vpclmul_stream(
       crc,
@@ -1478,6 +1486,7 @@ pub fn crc16_ibm_pclmul_small_safe(crc: u16, data: &[u8]) -> u16 {
 /// CRC-16/IBM PCLMULQDQ kernel (2-way multi-stream).
 #[inline]
 pub fn crc16_ibm_pclmul_2way_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: Dispatcher verifies SSSE3 + PCLMULQDQ before selecting this kernel.
   unsafe {
     crc16_width32_pclmul_stream(
       crc,
@@ -1493,6 +1502,7 @@ pub fn crc16_ibm_pclmul_2way_safe(crc: u16, data: &[u8]) -> u16 {
 /// CRC-16/IBM PCLMULQDQ kernel (4-way multi-stream).
 #[inline]
 pub fn crc16_ibm_pclmul_4way_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: Dispatcher verifies SSSE3 + PCLMULQDQ before selecting this kernel.
   unsafe {
     crc16_width32_pclmul_stream(
       crc,
@@ -1508,6 +1518,7 @@ pub fn crc16_ibm_pclmul_4way_safe(crc: u16, data: &[u8]) -> u16 {
 /// CRC-16/IBM PCLMULQDQ kernel (7-way multi-stream).
 #[inline]
 pub fn crc16_ibm_pclmul_7way_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: Dispatcher verifies SSSE3 + PCLMULQDQ before selecting this kernel.
   unsafe {
     crc16_width32_pclmul_stream(
       crc,
@@ -1523,6 +1534,7 @@ pub fn crc16_ibm_pclmul_7way_safe(crc: u16, data: &[u8]) -> u16 {
 /// CRC-16/IBM PCLMULQDQ kernel (8-way multi-stream).
 #[inline]
 pub fn crc16_ibm_pclmul_8way_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: Dispatcher verifies SSSE3 + PCLMULQDQ before selecting this kernel.
   unsafe {
     crc16_width32_pclmul_stream(
       crc,
@@ -1549,6 +1561,7 @@ pub fn crc16_ibm_vpclmul_safe(crc: u16, data: &[u8]) -> u16 {
 /// CRC-16/IBM VPCLMULQDQ kernel (2-way multi-stream).
 #[inline]
 pub fn crc16_ibm_vpclmul_2way_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: Dispatcher verifies VPCLMULQDQ + AVX-512 before selecting this kernel.
   unsafe {
     crc16_width32_vpclmul_stream(
       crc,
@@ -1564,6 +1577,7 @@ pub fn crc16_ibm_vpclmul_2way_safe(crc: u16, data: &[u8]) -> u16 {
 /// CRC-16/IBM VPCLMULQDQ kernel (4-way multi-stream).
 #[inline]
 pub fn crc16_ibm_vpclmul_4way_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: Dispatcher verifies VPCLMULQDQ + AVX-512 before selecting this kernel.
   unsafe {
     crc16_width32_vpclmul_stream(
       crc,
@@ -1579,6 +1593,7 @@ pub fn crc16_ibm_vpclmul_4way_safe(crc: u16, data: &[u8]) -> u16 {
 /// CRC-16/IBM VPCLMULQDQ kernel (7-way multi-stream).
 #[inline]
 pub fn crc16_ibm_vpclmul_7way_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: Dispatcher verifies VPCLMULQDQ + AVX-512 before selecting this kernel.
   unsafe {
     crc16_width32_vpclmul_stream(
       crc,
@@ -1594,6 +1609,7 @@ pub fn crc16_ibm_vpclmul_7way_safe(crc: u16, data: &[u8]) -> u16 {
 /// CRC-16/IBM VPCLMULQDQ kernel (8-way multi-stream).
 #[inline]
 pub fn crc16_ibm_vpclmul_8way_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: Dispatcher verifies VPCLMULQDQ + AVX-512 before selecting this kernel.
   unsafe {
     crc16_width32_vpclmul_stream(
       crc,

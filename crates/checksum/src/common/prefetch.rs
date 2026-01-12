@@ -285,6 +285,7 @@ mod tests {
   fn prefetch_does_not_crash_on_null() {
     // Prefetch should be safe to call with any pointer, including null.
     // The CPU silently ignores invalid prefetch addresses.
+    // SAFETY: the prefetch intrinsics are explicitly documented as safe for any pointer value.
     unsafe {
       prefetch_read_l1(core::ptr::null());
       prefetch_read_l2(core::ptr::null());
@@ -295,6 +296,7 @@ mod tests {
   #[test]
   fn prefetch_does_not_crash_on_unaligned() {
     let data = [0u8; 256];
+    // SAFETY: the prefetch intrinsics are explicitly documented as safe for any pointer value.
     unsafe {
       // Test various unaligned addresses
       prefetch_read_l1(data.as_ptr().add(1));

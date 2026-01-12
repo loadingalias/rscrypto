@@ -17,6 +17,12 @@ arbitrary = { version = "1.4.2", features = ["derive"] }
 sha2 = "0.10.8"
 sha3 = "0.10.8"
 blake3 = "1.5.5"
+blake2 = "0.10.6"
+xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
+rapidhash = "4.2.1"
+siphasher = "0.3"
+tiny-keccak = { version = "2.0.2", features = ["kmac"] }
+ascon-hash256 = "0.5.0-rc.0"
 
 [dependencies.hashes]
 path = ".."
@@ -45,3 +51,86 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "xxh3"
+path = "fuzz_targets/xxh3.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "rapidhash"
+path = "fuzz_targets/rapidhash.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sha512"
+path = "fuzz_targets/sha512.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "shake256"
+path = "fuzz_targets/shake256.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "siphash"
+path = "fuzz_targets/siphash.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sha2_family"
+path = "fuzz_targets/sha2_family.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sha3_family"
+path = "fuzz_targets/sha3_family.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "shake"
+path = "fuzz_targets/shake.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "blake2"
+path = "fuzz_targets/blake2.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ascon"
+path = "fuzz_targets/ascon.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cshake"
+path = "fuzz_targets/cshake.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "kmac"
+path = "fuzz_targets/kmac.rs"
+test = false
+doc = false
+bench = false
