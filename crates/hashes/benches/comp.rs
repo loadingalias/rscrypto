@@ -1,29 +1,17 @@
-use std::hint::black_box;
+use core::hint::black_box;
 
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use hashes::crypto::{Blake3, Sha3_256, Sha3_512, Sha256};
 use traits::Digest as _;
 
-fn inputs() -> Vec<(usize, Vec<u8>)> {
-  let sizes = [0usize, 1, 3, 8, 16, 31, 32, 63, 64, 65, 1024, 16 * 1024, 1024 * 1024];
-  sizes
-    .into_iter()
-    .map(|len| {
-      let mut v = vec![0u8; len];
-      for (i, b) in v.iter_mut().enumerate() {
-        *b = (i as u8).wrapping_mul(31).wrapping_add(7);
-      }
-      (len, v)
-    })
-    .collect()
-}
+mod common;
 
 fn comp(c: &mut Criterion) {
-  let inputs = inputs();
+  let inputs = common::sized_inputs();
   let mut group = c.benchmark_group("hashes/comp");
 
   for (len, data) in &inputs {
-    group.throughput(Throughput::Bytes(*len as u64));
+    common::set_throughput(&mut group, *len);
 
     group.bench_with_input(BenchmarkId::new("sha256/rscrypto", len), data, |b, d| {
       b.iter(|| black_box(Sha256::digest(black_box(d))))

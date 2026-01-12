@@ -277,7 +277,7 @@ impl ChunkState {
       if self.block_len == 0 && self.blocks_compressed < 15 && input.len() >= BLOCK_LEN {
         let max_blocks = 15usize - self.blocks_compressed as usize;
         let blocks_available = input.len() / BLOCK_LEN;
-        let has_partial = (input.len() % BLOCK_LEN) != 0;
+        let has_partial = !input.len().is_multiple_of(BLOCK_LEN);
         // Leave one block buffered when the input ends exactly on a block
         // boundary, so that finalize can apply CHUNK_END to the last block.
         let mut blocks_to_compress = if has_partial {
@@ -355,10 +355,10 @@ fn single_chunk_output(key_words: [u32; 8], chunk_counter: u64, flags: u32, inpu
 
   // We always emit an OutputState for the last chunk block, even when the
   // input is empty (which is treated as a single, 0-length block).
-  let blocks = core::cmp::max(1usize, (input.len() + BLOCK_LEN - 1) / BLOCK_LEN);
+  let blocks = core::cmp::max(1usize, input.len().div_ceil(BLOCK_LEN));
   let (full_blocks, last_len) = if input.is_empty() {
     (0usize, 0usize)
-  } else if input.len() % BLOCK_LEN == 0 {
+  } else if input.len().is_multiple_of(BLOCK_LEN) {
     (blocks - 1, BLOCK_LEN)
   } else {
     (blocks - 1, input.len() % BLOCK_LEN)
@@ -368,7 +368,7 @@ fn single_chunk_output(key_words: [u32; 8], chunk_counter: u64, flags: u32, inpu
 
   for i in 0..full_blocks {
     let offset = i * BLOCK_LEN;
-    let block_bytes: &[u8; BLOCK_LEN] = &(&input[offset..offset + BLOCK_LEN]).as_chunks::<BLOCK_LEN>().0[0];
+    let block_bytes: &[u8; BLOCK_LEN] = &input[offset..offset + BLOCK_LEN].as_chunks::<BLOCK_LEN>().0[0];
     let block_words = words16_from_le_bytes_64(block_bytes);
     let start = if i == 0 { CHUNK_START } else { 0 };
     chaining_value = first_8_words(compress(
