@@ -122,6 +122,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "kernels"
+path = "fuzz_targets/kernels.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "cshake"
 path = "fuzz_targets/cshake.rs"
 test = false

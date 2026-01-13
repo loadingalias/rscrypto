@@ -10,9 +10,11 @@
 //! |------|------|------------|-------------|
 //! | 0 | Reference | ~100 MB/s | Bitwise - always available, for verification |
 //! | 1 | Portable | 1-3 GB/s | Table-based slice-by-N - production fallback |
-//! | 2 | HwCrc | 15-25 GB/s | Native CRC instructions (CRC-32/32C only) |
+//! | 2 | HwCrc | 15-25 GB/s | Hardware instructions (CRC32, SHA extensions, etc.) |
 //! | 3 | Folding | 8-15 GB/s | Carryless multiply (PCLMUL/PMULL/VPMSUM/Zbc) |
 //! | 4 | Wide | 20-40 GB/s | Wide SIMD (VPCLMUL/EOR3/SVE2/Zvbc) |
+
+use core::fmt;
 
 /// Kernel acceleration tier.
 ///
@@ -48,7 +50,11 @@ pub enum KernelTier {
   /// - x86_64: SSE4.2 `crc32` (CRC-32C only, poly-locked)
   /// - aarch64: CRC extension (CRC-32 and CRC-32C)
   ///
-  /// Performance: 15-25 GB/s. Not available for CRC-16, CRC-24, or CRC-64.
+  /// More generally, this tier is reserved for dedicated ISA extensions that
+  /// accelerate an algorithm's inner loop without full SIMD "folding" kernels
+  /// (e.g., SHA extensions, CRC32 instructions).
+  ///
+  /// Performance: 15-25 GB/s for CRC. Availability varies by algorithm.
   HwCrc = 2,
 
   /// Tier 3: Carryless multiply folding.
@@ -75,6 +81,13 @@ pub enum KernelTier {
 }
 
 impl KernelTier {
+  /// Alias for [`KernelTier::HwCrc`] with a generic name.
+  ///
+  /// Many algorithms use dedicated hardware instruction extensions (not just CRC),
+  /// and it is often useful to talk about this tier generically as "hardware".
+  #[allow(non_upper_case_globals)]
+  pub const Hardware: Self = Self::HwCrc;
+
   /// Convert to numeric value.
   #[inline]
   #[must_use]
@@ -117,6 +130,13 @@ impl KernelTier {
 
   /// All tiers in ascending order.
   pub const ALL: [Self; 5] = [Self::Reference, Self::Portable, Self::HwCrc, Self::Folding, Self::Wide];
+}
+
+impl fmt::Display for KernelTier {
+  #[inline]
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    f.write_str(self.name())
+  }
 }
 
 #[cfg(test)]

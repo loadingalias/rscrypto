@@ -6,6 +6,15 @@
 
 use traits::Digest;
 
+use self::kernels::CompressFn;
+use crate::crypto::dispatch_util::{SizeClassDispatch, len_hint_from_u128};
+
+#[doc(hidden)]
+pub mod dispatch;
+#[doc(hidden)]
+pub mod dispatch_tables;
+pub(crate) mod kernels;
+
 const BLOCK_LEN: usize = 128;
 
 const IV: [u64; 8] = [
@@ -122,33 +131,64 @@ pub struct Blake2b512 {
   buf: [u8; BLOCK_LEN],
   buf_len: usize,
   bytes_hashed: u128,
+  compress: CompressFn,
+  dispatch: Option<SizeClassDispatch<CompressFn>>,
 }
 
-impl Default for Blake2b512 {
+impl Blake2b512 {
+  /// Compute the digest of `data` in one shot.
+  ///
+  /// This selects the best available kernel for the current platform and input
+  /// length (cached after first use).
   #[inline]
-  fn default() -> Self {
-    let mut h = IV;
-    // Parameter block: outlen=64, keylen=0, fanout=1, depth=1.
-    h[0] ^= 0x0101_0040;
-    Self {
-      h,
-      buf: [0u8; BLOCK_LEN],
-      buf_len: 0,
-      bytes_hashed: 0,
+  #[must_use]
+  pub fn digest(data: &[u8]) -> [u8; 64] {
+    dispatch::digest(data)
+  }
+
+  #[inline]
+  #[must_use]
+  pub(crate) fn digest_portable(data: &[u8]) -> [u8; 64] {
+    let mut h = Self::default();
+    h.update_with(data, Self::compress_portable);
+    h.finalize_with(Self::compress_portable)
+  }
+
+  #[inline]
+  pub(crate) fn compress_portable(
+    h: &mut [u64; 8],
+    blocks: &[u8],
+    bytes_hashed: &mut u128,
+    is_last: bool,
+    last_block_len: u32,
+  ) {
+    debug_assert_eq!(blocks.len() % BLOCK_LEN, 0);
+    if blocks.is_empty() {
+      return;
     }
-  }
-}
 
-impl Digest for Blake2b512 {
-  const OUTPUT_SIZE: usize = 64;
-  type Output = [u8; 64];
+    if is_last {
+      debug_assert_eq!(blocks.len(), BLOCK_LEN);
+      debug_assert!(last_block_len as usize <= BLOCK_LEN);
+      *bytes_hashed = (*bytes_hashed).wrapping_add(last_block_len as u128);
+      // SAFETY: `blocks` is exactly `BLOCK_LEN` bytes (asserted above).
+      let block = unsafe { &*(blocks.as_ptr() as *const [u8; BLOCK_LEN]) };
+      compress(h, block, *bytes_hashed, true);
+      return;
+    }
+
+    let mut chunks = blocks.chunks_exact(BLOCK_LEN);
+    for chunk in &mut chunks {
+      *bytes_hashed = (*bytes_hashed).wrapping_add(BLOCK_LEN as u128);
+      // SAFETY: `chunks_exact(BLOCK_LEN)` yields slices of exactly `BLOCK_LEN` bytes.
+      let block = unsafe { &*(chunk.as_ptr() as *const [u8; BLOCK_LEN]) };
+      compress(h, block, *bytes_hashed, false);
+    }
+    debug_assert!(chunks.remainder().is_empty());
+  }
 
   #[inline]
-  fn new() -> Self {
-    Self::default()
-  }
-
-  fn update(&mut self, mut data: &[u8]) {
+  fn update_with(&mut self, mut data: &[u8], compress: CompressFn) {
     if data.is_empty() {
       return;
     }
@@ -162,32 +202,26 @@ impl Digest for Blake2b512 {
       // Keep a full block buffered until we know there is more input, so the
       // final block can be marked with the `is_last` flag.
       if self.buf_len == BLOCK_LEN && !data.is_empty() {
-        self.bytes_hashed = self.bytes_hashed.wrapping_add(BLOCK_LEN as u128);
-        compress(&mut self.h, &self.buf, self.bytes_hashed, false);
+        compress(&mut self.h, &self.buf, &mut self.bytes_hashed, false, 0);
         self.buf_len = 0;
       }
     }
 
-    let (blocks, rest) = data.as_chunks::<BLOCK_LEN>();
-    if !blocks.is_empty() {
-      // If `rest` is empty, hold back the last full block for finalization.
-      let (to_compress, last_full) = if rest.is_empty() {
-        (&blocks[..blocks.len() - 1], Some(blocks[blocks.len() - 1]))
-      } else {
-        (blocks, None)
-      };
-
-      for block in to_compress {
-        self.bytes_hashed = self.bytes_hashed.wrapping_add(BLOCK_LEN as u128);
-        compress(&mut self.h, block, self.bytes_hashed, false);
-      }
-
-      if let Some(last) = last_full {
-        self.buf.copy_from_slice(&last);
+    let full_len = data.len() - (data.len() % BLOCK_LEN);
+    if full_len != 0 {
+      let (full, rest) = data.split_at(full_len);
+      if rest.is_empty() {
+        // Hold back the last full block for finalization.
+        let split = full_len - BLOCK_LEN;
+        let (to_compress, last_full) = full.split_at(split);
+        compress(&mut self.h, to_compress, &mut self.bytes_hashed, false, 0);
+        self.buf.copy_from_slice(last_full);
         self.buf_len = BLOCK_LEN;
+      } else {
+        compress(&mut self.h, full, &mut self.bytes_hashed, false, 0);
       }
+      data = rest;
     }
-    data = rest;
 
     if !data.is_empty() {
       self.buf[..data.len()].copy_from_slice(data);
@@ -195,14 +229,15 @@ impl Digest for Blake2b512 {
     }
   }
 
-  fn finalize(&self) -> Self::Output {
+  #[inline]
+  fn finalize_with(&self, compress: CompressFn) -> [u8; 64] {
     let mut h = self.h;
     let mut buf = self.buf;
     let len = self.buf_len;
 
     buf[len..].fill(0);
-    let t = self.bytes_hashed.wrapping_add(len as u128);
-    compress(&mut h, &buf, t, true);
+    let mut t = self.bytes_hashed;
+    compress(&mut h, &buf, &mut t, true, len as u32);
 
     let mut out = [0u8; 64];
     for (i, word) in h.iter().copied().enumerate() {
@@ -210,9 +245,64 @@ impl Digest for Blake2b512 {
     }
     out
   }
+}
+
+impl Default for Blake2b512 {
+  #[inline]
+  fn default() -> Self {
+    let mut h = IV;
+    // Parameter block: outlen=64, keylen=0, fanout=1, depth=1.
+    h[0] ^= 0x0101_0040;
+    Self {
+      h,
+      buf: [0u8; BLOCK_LEN],
+      buf_len: 0,
+      bytes_hashed: 0,
+      compress: Blake2b512::compress_portable,
+      dispatch: None,
+    }
+  }
+}
+
+impl Digest for Blake2b512 {
+  const OUTPUT_SIZE: usize = 64;
+  type Output = [u8; 64];
+
+  #[inline]
+  fn new() -> Self {
+    Self::default()
+  }
+
+  fn update(&mut self, data: &[u8]) {
+    if data.is_empty() {
+      return;
+    }
+    let dispatch = match self.dispatch {
+      Some(d) => d,
+      None => {
+        let d = dispatch::compress_dispatch();
+        self.dispatch = Some(d);
+        d
+      }
+    };
+
+    let total = self
+      .bytes_hashed
+      .saturating_add(self.buf_len as u128)
+      .saturating_add(data.len() as u128);
+    self.compress = dispatch.select(len_hint_from_u128(total));
+    self.update_with(data, self.compress);
+  }
+
+  fn finalize(&self) -> Self::Output {
+    self.finalize_with(self.compress)
+  }
 
   #[inline]
   fn reset(&mut self) {
     *self = Self::default();
   }
 }
+
+#[cfg(feature = "std")]
+pub(crate) mod kernel_test;

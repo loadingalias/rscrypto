@@ -3,7 +3,9 @@
 use crate::{
   AlgorithmResult, KernelSpec, KernelTier, PlatformInfo, Tunable, TuneError, TuneResults,
   analysis::{self, CrossoverType, Measurement},
-  runner::{BenchRunner, STREAM_SIZES, THRESHOLD_SIZES, fill_data, stream_candidates},
+  runner::{
+    BenchRunner, SIZE_CLASS_NAMES, SIZE_CLASS_SIZES, STREAM_SIZES, THRESHOLD_SIZES, fill_data, stream_candidates,
+  },
 };
 
 fn is_crc32_algorithm(name: &str) -> bool {
@@ -136,6 +138,9 @@ fn tune_algorithm_impl(
 
   // Find best kernel/stream combination at large sizes
   let (best_kernel, best_streams) = find_best_config(&stream_measurements);
+
+  // Phase A2: Pick best kernel per size class (xs/s/m/l).
+  let size_class_best = benchmark_size_class_best(runner, algorithm, &available_kernels, &stream_measurements)?;
 
   // Phase B: Threshold curves - portable vs best SIMD
   let portable_names: Vec<&'static str> = portable_kernels.iter().map(|k| k.name).collect();
@@ -343,6 +348,7 @@ fn tune_algorithm_impl(
       best_kernel,
       recommended_streams: best_streams,
       peak_throughput_gib_s: result_analysis.peak_throughput_gib_s,
+      size_class_best,
       thresholds: mapped_thresholds,
       analysis: result_analysis,
     });
@@ -419,6 +425,7 @@ fn tune_algorithm_impl(
     best_kernel,
     recommended_streams: best_streams,
     peak_throughput_gib_s: result_analysis.peak_throughput_gib_s,
+    size_class_best,
     thresholds: mapped_thresholds,
     analysis: result_analysis,
   })
@@ -577,6 +584,76 @@ fn benchmark_single_kernel(
 
   algorithm.reset();
   Ok(measurements)
+}
+
+fn benchmark_size_class_best(
+  runner: &BenchRunner,
+  algorithm: &mut dyn Tunable,
+  kernels: &[KernelSpec],
+  stream_measurements: &[Measurement],
+) -> Result<Vec<crate::SizeClassBest>, TuneError> {
+  struct Point {
+    size: usize,
+    kernel: String,
+    streams: u8,
+    throughput_gib_s: f64,
+  }
+
+  let mut points: Vec<Point> = Vec::new();
+
+  for kernel in kernels {
+    // Determine best stream count for this kernel from the stream-selection phase.
+    let streams = match kernel.streams {
+      Some(_) => analysis::select_best_streams(stream_measurements, kernel.name),
+      None => 1,
+    };
+
+    algorithm.reset();
+    if algorithm.force_kernel(kernel.name).is_err() {
+      continue;
+    }
+    if streams > 1 && algorithm.force_streams(streams).is_err() {
+      continue;
+    }
+
+    for &size in SIZE_CLASS_SIZES.iter() {
+      let result = benchmark_at_size(runner, algorithm, size)?;
+      points.push(Point {
+        size,
+        kernel: kernel.name.to_string(),
+        streams,
+        throughput_gib_s: result.throughput_gib_s,
+      });
+    }
+  }
+
+  algorithm.reset();
+
+  let mut best = Vec::with_capacity(SIZE_CLASS_SIZES.len());
+  for (class, &size) in SIZE_CLASS_NAMES.iter().copied().zip(SIZE_CLASS_SIZES.iter()) {
+    let Some(winner) = points
+      .iter()
+      .filter(|p| p.size == size)
+      .max_by(|a, b| a.throughput_gib_s.partial_cmp(&b.throughput_gib_s).unwrap())
+    else {
+      best.push(crate::SizeClassBest {
+        class,
+        kernel: "portable".to_string(),
+        streams: 1,
+        throughput_gib_s: 0.0,
+      });
+      continue;
+    };
+
+    best.push(crate::SizeClassBest {
+      class,
+      kernel: winner.kernel.clone(),
+      streams: winner.streams,
+      throughput_gib_s: winner.throughput_gib_s,
+    });
+  }
+
+  Ok(best)
 }
 
 /// Find the best kernel/stream configuration from measurements.

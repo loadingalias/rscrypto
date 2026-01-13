@@ -14,6 +14,7 @@ use tune::{
   crc24::Crc24OpenPgpTunable,
   crc32::{Crc32IeeeTunable, Crc32cTunable},
   crc64::{Crc64NvmeTunable, Crc64XzTunable},
+  hash::HashTunable,
 };
 
 /// CLI arguments.
@@ -181,6 +182,136 @@ fn main() -> ExitCode {
   engine.add(Box::new(Crc32cTunable::new()));
   engine.add(Box::new(Crc64XzTunable::new()));
   engine.add(Box::new(Crc64NvmeTunable::new()));
+  engine.add(Box::new(HashTunable::new("sha224", "RSCRYPTO_SHA224")));
+  engine.add(Box::new(HashTunable::new("sha256", "RSCRYPTO_SHA256")));
+  engine.add(Box::new(HashTunable::new("sha384", "RSCRYPTO_SHA384")));
+  engine.add(Box::new(HashTunable::new("sha512", "RSCRYPTO_SHA512")));
+  engine.add(Box::new(HashTunable::new("sha512-224", "RSCRYPTO_SHA512_224")));
+  engine.add(Box::new(HashTunable::new("sha512-256", "RSCRYPTO_SHA512_256")));
+  engine.add(Box::new(HashTunable::new("blake2b-512", "RSCRYPTO_BLAKE2B_512")));
+  engine.add(Box::new(HashTunable::new("blake2s-256", "RSCRYPTO_BLAKE2S_256")));
+  engine.add(Box::new(HashTunable::new("blake3", "RSCRYPTO_BLAKE3")));
+  engine.add(Box::new(HashTunable::new("sha3-224", "RSCRYPTO_SHA3_224")));
+  engine.add(Box::new(HashTunable::new("sha3-256", "RSCRYPTO_SHA3_256")));
+  engine.add(Box::new(HashTunable::new("sha3-384", "RSCRYPTO_SHA3_384")));
+  engine.add(Box::new(HashTunable::new("sha3-512", "RSCRYPTO_SHA3_512")));
+  engine.add(Box::new(HashTunable::new("shake128", "RSCRYPTO_SHAKE128")));
+  engine.add(Box::new(HashTunable::new("shake256", "RSCRYPTO_SHAKE256")));
+  engine.add(Box::new(HashTunable::new("cshake128", "RSCRYPTO_CSHAKE128")));
+  engine.add(Box::new(HashTunable::new("cshake256", "RSCRYPTO_CSHAKE256")));
+  engine.add(Box::new(HashTunable::new("kmac128", "RSCRYPTO_KMAC128")));
+  engine.add(Box::new(HashTunable::new("kmac256", "RSCRYPTO_KMAC256")));
+  engine.add(Box::new(HashTunable::new("xxh3", "RSCRYPTO_XXH3")));
+  engine.add(Box::new(HashTunable::new("rapidhash", "RSCRYPTO_RAPIDHASH")));
+  engine.add(Box::new(HashTunable::new("siphash", "RSCRYPTO_SIPHASH")));
+  engine.add(Box::new(HashTunable::new("keccakf1600", "RSCRYPTO_KECCAKF1600")));
+  engine.add(Box::new(HashTunable::new("ascon-hash256", "RSCRYPTO_ASCON_HASH256")));
+  engine.add(Box::new(HashTunable::new("ascon-xof128", "RSCRYPTO_ASCON_XOF128")));
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // Kernel-loop microbenches (drive SIMD work; no effect on runtime env vars)
+  //
+  // These are intentionally registered as separate "algorithms" so tuning output
+  // can report steady-state kernel throughput, tail/finalization, and different
+  // update chunking profiles independently.
+  // ────────────────────────────────────────────────────────────────────────────
+  engine.add(Box::new(HashTunable::new(
+    "sha224-compress",
+    "RSCRYPTO_BENCH_SHA224_COMPRESS",
+  )));
+  engine.add(Box::new(HashTunable::new(
+    "sha256-compress",
+    "RSCRYPTO_BENCH_SHA256_COMPRESS",
+  )));
+  engine.add(Box::new(HashTunable::new(
+    "sha256-compress-unaligned",
+    "RSCRYPTO_BENCH_SHA256_COMPRESS_UNALIGNED",
+  )));
+  engine.add(Box::new(HashTunable::new(
+    "sha384-compress",
+    "RSCRYPTO_BENCH_SHA384_COMPRESS",
+  )));
+  engine.add(Box::new(HashTunable::new(
+    "sha512-compress",
+    "RSCRYPTO_BENCH_SHA512_COMPRESS",
+  )));
+  engine.add(Box::new(HashTunable::new(
+    "sha512-compress-unaligned",
+    "RSCRYPTO_BENCH_SHA512_COMPRESS_UNALIGNED",
+  )));
+  engine.add(Box::new(HashTunable::new(
+    "sha512-224-compress",
+    "RSCRYPTO_BENCH_SHA512_224_COMPRESS",
+  )));
+  engine.add(Box::new(HashTunable::new(
+    "sha512-256-compress",
+    "RSCRYPTO_BENCH_SHA512_256_COMPRESS",
+  )));
+
+  engine.add(Box::new(HashTunable::new(
+    "blake2b-512-compress",
+    "RSCRYPTO_BENCH_BLAKE2B_512_COMPRESS",
+  )));
+  engine.add(Box::new(HashTunable::new(
+    "blake2s-256-compress",
+    "RSCRYPTO_BENCH_BLAKE2S_256_COMPRESS",
+  )));
+
+  engine.add(Box::new(HashTunable::new(
+    "blake3-chunk",
+    "RSCRYPTO_BENCH_BLAKE3_CHUNK",
+  )));
+  engine.add(Box::new(HashTunable::new(
+    "blake3-parent",
+    "RSCRYPTO_BENCH_BLAKE3_PARENT",
+  )));
+
+  engine.add(Box::new(HashTunable::new(
+    "keccakf1600-permute",
+    "RSCRYPTO_BENCH_KECCAKF1600_PERMUTE",
+  )));
+
+  // Chunking pattern profiles (many small updates vs few large updates).
+  engine.add(Box::new(HashTunable::new(
+    "sha256-stream64",
+    "RSCRYPTO_BENCH_SHA256_STREAM64",
+  )));
+  engine.add(Box::new(HashTunable::new(
+    "sha256-stream4k",
+    "RSCRYPTO_BENCH_SHA256_STREAM4K",
+  )));
+  engine.add(Box::new(HashTunable::new(
+    "sha512-stream64",
+    "RSCRYPTO_BENCH_SHA512_STREAM64",
+  )));
+  engine.add(Box::new(HashTunable::new(
+    "sha512-stream4k",
+    "RSCRYPTO_BENCH_SHA512_STREAM4K",
+  )));
+  engine.add(Box::new(HashTunable::new(
+    "blake2b-512-stream64",
+    "RSCRYPTO_BENCH_BLAKE2B_512_STREAM64",
+  )));
+  engine.add(Box::new(HashTunable::new(
+    "blake2b-512-stream4k",
+    "RSCRYPTO_BENCH_BLAKE2B_512_STREAM4K",
+  )));
+  engine.add(Box::new(HashTunable::new(
+    "blake2s-256-stream64",
+    "RSCRYPTO_BENCH_BLAKE2S_256_STREAM64",
+  )));
+  engine.add(Box::new(HashTunable::new(
+    "blake2s-256-stream4k",
+    "RSCRYPTO_BENCH_BLAKE2S_256_STREAM4K",
+  )));
+  engine.add(Box::new(HashTunable::new(
+    "blake3-stream64",
+    "RSCRYPTO_BENCH_BLAKE3_STREAM64",
+  )));
+  engine.add(Box::new(HashTunable::new(
+    "blake3-stream4k",
+    "RSCRYPTO_BENCH_BLAKE3_STREAM4K",
+  )));
 
   // Print header
   let platform = PlatformInfo::collect();

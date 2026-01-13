@@ -276,6 +276,15 @@ pub const THRESHOLD_SIZES: &[usize] = &[
   1024 * 1024,
 ];
 
+/// Representative sizes for the default dispatch size classes.
+///
+/// These sizes are intended to be "pivot points" for selecting a best kernel
+/// per class while keeping benchmarking cost bounded.
+pub const SIZE_CLASS_SIZES: &[usize; 4] = &[64, 256, 4096, 1024 * 1024];
+
+/// Names for the default dispatch size classes, aligned with [`SIZE_CLASS_SIZES`].
+pub const SIZE_CLASS_NAMES: &[&str; 4] = &["xs", "s", "m", "l"];
+
 /// Buffer sizes for stream count selection.
 ///
 /// We intentionally benchmark multiple "large-ish" sizes to avoid overfitting

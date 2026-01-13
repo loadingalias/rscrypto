@@ -1,32 +1,6 @@
-use hashes::crypto::Blake3;
-use serde::Deserialize;
-use traits::{Digest as _, Xof as _};
-
-#[derive(Deserialize)]
-struct Vectors {
-  key: String,
-  context_string: String,
-  cases: Vec<Case>,
-}
-
-#[derive(Deserialize)]
-struct Case {
-  input_len: usize,
-  hash: String,
-  keyed_hash: String,
-  derive_key: String,
-}
-
-fn decode_hex(hex: &str) -> Vec<u8> {
-  assert_eq!(hex.len() % 2, 0);
-  let mut out = vec![0u8; hex.len() / 2];
-  for (i, chunk) in hex.as_bytes().chunks_exact(2).enumerate() {
-    let hi = (chunk[0] as char).to_digit(16).unwrap() as u8;
-    let lo = (chunk[1] as char).to_digit(16).unwrap() as u8;
-    out[i] = (hi << 4) | lo;
-  }
-  out
-}
+use digest::dev::blobby::Blob6Iterator;
+use hashes::{Digest, crypto::Blake3};
+use traits::Xof as _;
 
 fn update_input_pattern(hasher: &mut Blake3, len: usize) {
   let mut remaining = len;
@@ -43,55 +17,66 @@ fn update_input_pattern(hasher: &mut Blake3, len: usize) {
   }
 }
 
+fn decode_u64_le(bytes: &[u8]) -> u64 {
+  let arr: [u8; 8] = bytes.try_into().expect("expected 8-byte little-endian u64");
+  u64::from_le_bytes(arr)
+}
+
 #[test]
 fn blake3_official_test_vectors() {
-  let json = include_str!("../testdata/blake3/test_vectors.json");
-  let vectors: Vectors = serde_json::from_str(json).unwrap();
+  let blb = include_bytes!("../testdata/blake3/test_vectors.blb");
 
-  let key_bytes = vectors.key.as_bytes();
-  assert_eq!(key_bytes.len(), 32);
-  let mut key = [0u8; 32];
-  key.copy_from_slice(key_bytes);
+  for (i, row) in Blob6Iterator::new(blb).unwrap().enumerate() {
+    let [
+      key_bytes,
+      context_bytes,
+      input_len_bytes,
+      hash_xof,
+      keyed_hash_xof,
+      derive_key_xof,
+    ] = row.unwrap();
 
-  for (i, case) in vectors.cases.iter().enumerate() {
-    let expected_hash_xof = decode_hex(&case.hash);
-    let expected_keyed_xof = decode_hex(&case.keyed_hash);
-    let expected_derive_xof = decode_hex(&case.derive_key);
+    assert_eq!(key_bytes.len(), 32, "blake3 key length mismatch at case {i}");
+    let mut key = [0u8; 32];
+    key.copy_from_slice(key_bytes);
+
+    let context = core::str::from_utf8(context_bytes).expect("blake3 context_string is valid UTF-8");
+    let input_len = decode_u64_le(input_len_bytes) as usize;
 
     // Hash mode
     {
       let mut h = Blake3::new();
-      update_input_pattern(&mut h, case.input_len);
-      assert_eq!(&h.finalize()[..], &expected_hash_xof[..32], "hash digest case {i}");
+      update_input_pattern(&mut h, input_len);
+      assert_eq!(&h.finalize()[..], &hash_xof[..32], "hash digest case {i}");
 
       let mut xof = h.finalize_xof();
-      let mut out = vec![0u8; expected_hash_xof.len()];
+      let mut out = vec![0u8; hash_xof.len()];
       xof.squeeze(&mut out);
-      assert_eq!(out, expected_hash_xof, "hash xof case {i}");
+      assert_eq!(out, hash_xof, "hash xof case {i}");
     }
 
     // Keyed hash mode
     {
       let mut h = Blake3::new_keyed(&key);
-      update_input_pattern(&mut h, case.input_len);
-      assert_eq!(&h.finalize()[..], &expected_keyed_xof[..32], "keyed digest case {i}");
+      update_input_pattern(&mut h, input_len);
+      assert_eq!(&h.finalize()[..], &keyed_hash_xof[..32], "keyed digest case {i}");
 
       let mut xof = h.finalize_xof();
-      let mut out = vec![0u8; expected_keyed_xof.len()];
+      let mut out = vec![0u8; keyed_hash_xof.len()];
       xof.squeeze(&mut out);
-      assert_eq!(out, expected_keyed_xof, "keyed xof case {i}");
+      assert_eq!(out, keyed_hash_xof, "keyed xof case {i}");
     }
 
     // Derive key mode
     {
-      let mut h = Blake3::new_derive_key(&vectors.context_string);
-      update_input_pattern(&mut h, case.input_len);
-      assert_eq!(&h.finalize()[..], &expected_derive_xof[..32], "derive digest case {i}");
+      let mut h = Blake3::new_derive_key(context);
+      update_input_pattern(&mut h, input_len);
+      assert_eq!(&h.finalize()[..], &derive_key_xof[..32], "derive digest case {i}");
 
       let mut xof = h.finalize_xof();
-      let mut out = vec![0u8; expected_derive_xof.len()];
+      let mut out = vec![0u8; derive_key_xof.len()];
       xof.squeeze(&mut out);
-      assert_eq!(out, expected_derive_xof, "derive xof case {i}");
+      assert_eq!(out, derive_key_xof, "derive xof case {i}");
     }
   }
 }

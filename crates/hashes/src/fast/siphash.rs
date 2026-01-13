@@ -7,6 +7,12 @@
 
 use traits::FastHash;
 
+#[doc(hidden)]
+pub mod dispatch;
+#[doc(hidden)]
+pub mod dispatch_tables;
+pub(crate) mod kernels;
+
 #[derive(Clone, Default)]
 pub struct SipHash13;
 
@@ -203,7 +209,7 @@ impl FastHash for SipHash13 {
 
   #[inline]
   fn hash_with_seed(seed: Self::Seed, data: &[u8]) -> Self::Output {
-    siphash13(seed, data)
+    dispatch::hash13_with_seed(seed, data)
   }
 }
 
@@ -214,6 +220,6 @@ impl FastHash for SipHash24 {
 
   #[inline]
   fn hash_with_seed(seed: Self::Seed, data: &[u8]) -> Self::Output {
-    siphash24(seed, data)
+    dispatch::hash24_with_seed(seed, data)
   }
 }

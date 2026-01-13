@@ -8,6 +8,12 @@ use core::mem;
 
 use traits::FastHash;
 
+#[doc(hidden)]
+pub mod dispatch;
+#[doc(hidden)]
+pub mod dispatch_tables;
+pub(crate) mod kernels;
+
 #[derive(Clone, Default)]
 pub struct Xxh3_64;
 
@@ -639,7 +645,7 @@ impl FastHash for Xxh3_64 {
 
   #[inline]
   fn hash_with_seed(seed: Self::Seed, data: &[u8]) -> Self::Output {
-    xxh3_64_with_seed(data, seed)
+    dispatch::hash64_with_seed(seed, data)
   }
 }
 
@@ -650,7 +656,7 @@ impl FastHash for Xxh3_128 {
 
   #[inline]
   fn hash_with_seed(seed: Self::Seed, data: &[u8]) -> Self::Output {
-    xxh3_128_with_seed(data, seed)
+    dispatch::hash128_with_seed(seed, data)
   }
 }
 

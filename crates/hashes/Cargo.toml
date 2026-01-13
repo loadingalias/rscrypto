@@ -11,10 +11,12 @@ repository.workspace = true
 
 [features]
 default = ["std"]
-std = ["traits/std"]
+std = ["traits/std", "backend/std", "platform/std"]
 
 [dependencies]
 traits = { workspace = true, default-features = false } #unified
+backend = { workspace = true, default-features = false } #unified
+platform = { workspace = true, default-features = false } #unified
 
 [dev-dependencies]
 # Dev-only correctness oracles (not used by library code).
@@ -31,8 +33,6 @@ ascon-hash256 = "0.5.0-rc.0"
 criterion.workspace = true
 digest = { version = "0.10", features = ["dev"] }
 proptest.workspace = true
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
 
 [[bench]]
 name = "comp"

@@ -11,13 +11,14 @@ repository.workspace = true
 
 [features]
 default = ["std"]
-std = ["alloc", "platform/std", "backend/std", "checksum/std"]
+std = ["alloc", "platform/std", "backend/std", "checksum/std", "hashes/std"]
 alloc = ["checksum/alloc"]
 
 [dependencies]
 platform = { workspace = true, default-features = false }
 backend = { workspace = true, default-features = false }
 checksum = { workspace = true, default-features = false }
+hashes = { workspace = true, default-features = false }
 
 [[bin]]
 name = "rscrypto-tune"
