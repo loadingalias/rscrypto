@@ -4,7 +4,7 @@
 
 use traits::{Digest, Xof};
 
-use super::keccak::{KeccakCore, KeccakXof};
+use super::keccak::{KeccakCore, KeccakCorePortable, KeccakXof};
 
 /// SHA3-256.
 #[derive(Clone, Default)]
@@ -45,6 +45,18 @@ impl Digest for Sha3_224 {
   }
 }
 
+impl Sha3_224 {
+  #[inline]
+  #[must_use]
+  pub(crate) fn digest_portable(data: &[u8]) -> [u8; 28] {
+    let mut core = KeccakCorePortable::<144>::default();
+    core.update(data);
+    let mut out = [0u8; 28];
+    core.finalize_into_fixed(0x06, &mut out);
+    out
+  }
+}
+
 impl Digest for Sha3_256 {
   const OUTPUT_SIZE: usize = 32;
   type Output = [u8; 32];
@@ -69,6 +81,18 @@ impl Digest for Sha3_256 {
   #[inline]
   fn reset(&mut self) {
     *self = Self::default();
+  }
+}
+
+impl Sha3_256 {
+  #[inline]
+  #[must_use]
+  pub(crate) fn digest_portable(data: &[u8]) -> [u8; 32] {
+    let mut core = KeccakCorePortable::<136>::default();
+    core.update(data);
+    let mut out = [0u8; 32];
+    core.finalize_into_fixed(0x06, &mut out);
+    out
   }
 }
 
@@ -111,6 +135,18 @@ impl Digest for Sha3_384 {
   }
 }
 
+impl Sha3_384 {
+  #[inline]
+  #[must_use]
+  pub(crate) fn digest_portable(data: &[u8]) -> [u8; 48] {
+    let mut core = KeccakCorePortable::<104>::default();
+    core.update(data);
+    let mut out = [0u8; 48];
+    core.finalize_into_fixed(0x06, &mut out);
+    out
+  }
+}
+
 impl Digest for Sha3_512 {
   const OUTPUT_SIZE: usize = 64;
   type Output = [u8; 64];
@@ -135,6 +171,18 @@ impl Digest for Sha3_512 {
   #[inline]
   fn reset(&mut self) {
     *self = Self::default();
+  }
+}
+
+impl Sha3_512 {
+  #[inline]
+  #[must_use]
+  pub(crate) fn digest_portable(data: &[u8]) -> [u8; 64] {
+    let mut core = KeccakCorePortable::<72>::default();
+    core.update(data);
+    let mut out = [0u8; 64];
+    core.finalize_into_fixed(0x06, &mut out);
+    out
   }
 }
 
@@ -181,6 +229,13 @@ impl Shake128 {
     h.update(data);
     h.core.finalize_xof_into(0x1F, out);
   }
+
+  #[inline]
+  pub(crate) fn hash_into_portable(data: &[u8], out: &mut [u8]) {
+    let mut core = KeccakCorePortable::<168>::default();
+    core.update(data);
+    core.finalize_xof_into(0x1F, out);
+  }
 }
 
 #[derive(Clone)]
@@ -225,6 +280,13 @@ impl Shake256 {
     let mut h = Self::new();
     h.update(data);
     h.core.finalize_xof_into(0x1F, out);
+  }
+
+  #[inline]
+  pub(crate) fn hash_into_portable(data: &[u8], out: &mut [u8]) {
+    let mut core = KeccakCorePortable::<136>::default();
+    core.update(data);
+    core.finalize_xof_into(0x1F, out);
   }
 }
 

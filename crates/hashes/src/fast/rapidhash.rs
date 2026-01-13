@@ -9,6 +9,12 @@
 
 use traits::FastHash;
 
+#[doc(hidden)]
+pub mod dispatch;
+#[doc(hidden)]
+pub mod dispatch_tables;
+pub(crate) mod kernels;
+
 #[derive(Clone, Default)]
 pub struct RapidHash64;
 
@@ -273,7 +279,7 @@ impl FastHash for RapidHash64 {
 
   #[inline]
   fn hash_with_seed(seed: Self::Seed, data: &[u8]) -> Self::Output {
-    rapidhash_v3_with_seed(data, seed)
+    dispatch::hash64_with_seed(seed, data)
   }
 }
 
@@ -284,10 +290,7 @@ impl FastHash for RapidHash128 {
 
   #[inline]
   fn hash_with_seed(seed: Self::Seed, data: &[u8]) -> Self::Output {
-    // rapidhash defines a 64-bit output; derive 128-bit from two independent seeds.
-    let lo = rapidhash_v3_with_seed(data, seed);
-    let hi = rapidhash_v3_with_seed(data, seed ^ 0x9E37_79B9_7F4A_7C15);
-    (lo as u128) | ((hi as u128) << 64)
+    dispatch::hash128_with_seed(seed, data)
   }
 }
 

@@ -2,7 +2,17 @@
 
 use traits::Digest;
 
-use crate::util::rotr64;
+use self::kernels::CompressBlocksFn;
+use crate::{
+  crypto::dispatch_util::{SizeClassDispatch, len_hint_from_u128},
+  util::rotr64,
+};
+
+#[doc(hidden)]
+pub mod dispatch;
+#[doc(hidden)]
+pub mod dispatch_tables;
+pub(crate) mod kernels;
 
 const BLOCK_LEN: usize = 128;
 
@@ -138,6 +148,28 @@ pub struct Sha512_256 {
   block: [u8; BLOCK_LEN],
   block_len: usize,
   bytes_hashed: u128,
+  compress_blocks: CompressBlocksFn,
+  dispatch: Option<SizeClassDispatch<CompressBlocksFn>>,
+}
+
+impl Sha512_256 {
+  /// Compute the digest of `data` in one shot.
+  ///
+  /// This selects the best available kernel for the current platform and input
+  /// length (cached after first use).
+  #[inline]
+  #[must_use]
+  pub fn digest(data: &[u8]) -> [u8; 32] {
+    dispatch::digest(data)
+  }
+
+  #[inline]
+  #[must_use]
+  pub(crate) fn digest_portable(data: &[u8]) -> [u8; 32] {
+    let mut h = Self::default();
+    h.update_with(data, Self::compress_blocks_portable);
+    h.finalize_inner_with(Self::compress_blocks_portable)
+  }
 }
 
 impl Default for Sha512_256 {
@@ -148,6 +180,8 @@ impl Default for Sha512_256 {
       block: [0u8; BLOCK_LEN],
       block_len: 0,
       bytes_hashed: 0,
+      compress_blocks: Sha512_256::compress_blocks_portable,
+      dispatch: None,
     }
   }
 }
@@ -374,13 +408,72 @@ impl Sha512_256 {
   }
 
   #[inline]
-  fn update_block(state: &mut [u64; 8], bytes_hashed: &mut u128, block: &[u8; BLOCK_LEN]) {
-    Self::compress_block(state, block);
-    *bytes_hashed = (*bytes_hashed).wrapping_add(BLOCK_LEN as u128);
+  pub(crate) fn compress_blocks_portable(state: &mut [u64; 8], blocks: &[u8]) {
+    debug_assert_eq!(blocks.len() % BLOCK_LEN, 0);
+    let mut chunks = blocks.chunks_exact(BLOCK_LEN);
+    for chunk in &mut chunks {
+      // SAFETY: `chunks_exact(BLOCK_LEN)` yields slices of exactly `BLOCK_LEN` bytes.
+      let block = unsafe { &*(chunk.as_ptr() as *const [u8; BLOCK_LEN]) };
+      Self::compress_block(state, block);
+    }
+    debug_assert!(chunks.remainder().is_empty());
   }
 
   #[inline]
-  fn finalize_inner(&self) -> [u8; 32] {
+  fn select_compress(&mut self, incoming_len: usize) -> CompressBlocksFn {
+    let dispatch = match self.dispatch {
+      Some(d) => d,
+      None => {
+        let d = dispatch::compress_dispatch();
+        self.dispatch = Some(d);
+        d
+      }
+    };
+
+    let total = self
+      .bytes_hashed
+      .saturating_add(self.block_len as u128)
+      .saturating_add(incoming_len as u128);
+    let compress = dispatch.select(len_hint_from_u128(total));
+    self.compress_blocks = compress;
+    compress
+  }
+
+  #[inline]
+  fn update_with(&mut self, mut data: &[u8], compress_blocks: CompressBlocksFn) {
+    if data.is_empty() {
+      return;
+    }
+
+    if self.block_len != 0 {
+      let take = core::cmp::min(BLOCK_LEN - self.block_len, data.len());
+      self.block[self.block_len..self.block_len + take].copy_from_slice(&data[..take]);
+      self.block_len += take;
+      data = &data[take..];
+
+      if self.block_len == BLOCK_LEN {
+        compress_blocks(&mut self.state, &self.block);
+        self.bytes_hashed = self.bytes_hashed.wrapping_add(BLOCK_LEN as u128);
+        self.block_len = 0;
+      }
+    }
+
+    let full_len = data.len() - (data.len() % BLOCK_LEN);
+    if full_len != 0 {
+      let (blocks, rest) = data.split_at(full_len);
+      compress_blocks(&mut self.state, blocks);
+      self.bytes_hashed = self.bytes_hashed.wrapping_add(blocks.len() as u128);
+      data = rest;
+    }
+
+    if !data.is_empty() {
+      self.block[..data.len()].copy_from_slice(data);
+      self.block_len = data.len();
+    }
+  }
+
+  #[inline]
+  fn finalize_inner_with(&self, compress_blocks: CompressBlocksFn) -> [u8; 32] {
     let mut state = self.state;
     let mut block = self.block;
     let mut block_len = self.block_len;
@@ -391,7 +484,7 @@ impl Sha512_256 {
 
     if block_len > 112 {
       block[block_len..].fill(0);
-      Self::compress_block(&mut state, &block);
+      compress_blocks(&mut state, &block);
       block = [0u8; BLOCK_LEN];
       block_len = 0;
     }
@@ -400,7 +493,7 @@ impl Sha512_256 {
 
     let bit_len = total_len << 3;
     block[112..128].copy_from_slice(&bit_len.to_be_bytes());
-    Self::compress_block(&mut state, &block);
+    compress_blocks(&mut state, &block);
 
     let mut out = [0u8; 32];
     for (i, word) in state.iter().copied().enumerate().take(4) {
@@ -420,41 +513,17 @@ impl Digest for Sha512_256 {
     Self::default()
   }
 
-  fn update(&mut self, mut data: &[u8]) {
+  fn update(&mut self, data: &[u8]) {
     if data.is_empty() {
       return;
     }
-
-    if self.block_len != 0 {
-      let take = core::cmp::min(BLOCK_LEN - self.block_len, data.len());
-      self.block[self.block_len..self.block_len + take].copy_from_slice(&data[..take]);
-      self.block_len += take;
-      data = &data[take..];
-
-      if self.block_len == BLOCK_LEN {
-        Self::update_block(&mut self.state, &mut self.bytes_hashed, &self.block);
-        self.block_len = 0;
-      }
-    }
-
-    let (blocks, rest) = data.as_chunks::<BLOCK_LEN>();
-    if !blocks.is_empty() {
-      for block in blocks {
-        Self::compress_block(&mut self.state, block);
-      }
-      self.bytes_hashed = self.bytes_hashed.wrapping_add((blocks.len() * BLOCK_LEN) as u128);
-    }
-    data = rest;
-
-    if !data.is_empty() {
-      self.block[..data.len()].copy_from_slice(data);
-      self.block_len = data.len();
-    }
+    let compress = self.select_compress(data.len());
+    self.update_with(data, compress);
   }
 
   #[inline]
   fn finalize(&self) -> Self::Output {
-    self.finalize_inner()
+    self.finalize_inner_with(self.compress_blocks)
   }
 
   #[inline]
@@ -462,3 +531,6 @@ impl Digest for Sha512_256 {
     *self = Self::default();
   }
 }
+
+#[cfg(feature = "std")]
+pub(crate) mod kernel_test;

@@ -412,6 +412,109 @@ fn dispatch_path(repo_root: &Path) -> PathBuf {
   repo_root.join("crates/checksum/src/dispatch.rs")
 }
 
+struct HashDispatchTarget {
+  algo: &'static str,
+  aliases: &'static [&'static str],
+  rel_path: &'static str,
+}
+
+const HASH_DISPATCH_TARGETS: &[HashDispatchTarget] = &[
+  HashDispatchTarget {
+    algo: "sha224-compress",
+    aliases: &["sha224"],
+    rel_path: "crates/hashes/src/crypto/sha224/dispatch_tables.rs",
+  },
+  HashDispatchTarget {
+    algo: "sha256-compress",
+    aliases: &["sha256"],
+    rel_path: "crates/hashes/src/crypto/sha256/dispatch_tables.rs",
+  },
+  HashDispatchTarget {
+    algo: "sha384-compress",
+    aliases: &["sha384"],
+    rel_path: "crates/hashes/src/crypto/sha384/dispatch_tables.rs",
+  },
+  HashDispatchTarget {
+    algo: "sha512-compress",
+    aliases: &["sha512"],
+    rel_path: "crates/hashes/src/crypto/sha512/dispatch_tables.rs",
+  },
+  HashDispatchTarget {
+    algo: "sha512-224-compress",
+    aliases: &["sha512-224"],
+    rel_path: "crates/hashes/src/crypto/sha512_224/dispatch_tables.rs",
+  },
+  HashDispatchTarget {
+    algo: "sha512-256-compress",
+    aliases: &["sha512-256"],
+    rel_path: "crates/hashes/src/crypto/sha512_256/dispatch_tables.rs",
+  },
+  HashDispatchTarget {
+    algo: "blake2b-512-compress",
+    aliases: &["blake2b-512"],
+    rel_path: "crates/hashes/src/crypto/blake2b/dispatch_tables.rs",
+  },
+  HashDispatchTarget {
+    algo: "blake2s-256-compress",
+    aliases: &["blake2s-256"],
+    rel_path: "crates/hashes/src/crypto/blake2s/dispatch_tables.rs",
+  },
+  HashDispatchTarget {
+    algo: "blake3-chunk",
+    aliases: &["blake3"],
+    rel_path: "crates/hashes/src/crypto/blake3/dispatch_tables.rs",
+  },
+  HashDispatchTarget {
+    algo: "xxh3",
+    aliases: &[],
+    rel_path: "crates/hashes/src/fast/xxh3/dispatch_tables.rs",
+  },
+  HashDispatchTarget {
+    algo: "rapidhash",
+    aliases: &[],
+    rel_path: "crates/hashes/src/fast/rapidhash/dispatch_tables.rs",
+  },
+  HashDispatchTarget {
+    algo: "siphash",
+    aliases: &[],
+    rel_path: "crates/hashes/src/fast/siphash/dispatch_tables.rs",
+  },
+  HashDispatchTarget {
+    algo: "keccakf1600-permute",
+    aliases: &[
+      "keccakf1600",
+      "sha3-224",
+      "sha3-256",
+      "sha3-384",
+      "sha3-512",
+      "shake128",
+      "shake256",
+      "cshake128",
+      "cshake256",
+      "kmac128",
+      "kmac256",
+    ],
+    rel_path: "crates/hashes/src/crypto/keccak/dispatch_tables.rs",
+  },
+  HashDispatchTarget {
+    algo: "ascon-hash256",
+    aliases: &["ascon-xof128"],
+    rel_path: "crates/hashes/src/crypto/ascon/dispatch_tables.rs",
+  },
+];
+
+fn find_hash_algo<'a>(results: &'a TuneResults, target: &HashDispatchTarget) -> Option<&'a AlgorithmResult> {
+  let primary = results.algorithms.iter().find(|a| a.name == target.algo);
+  if primary.is_some() {
+    return primary;
+  }
+
+  target
+    .aliases
+    .iter()
+    .find_map(|&name| results.algorithms.iter().find(|a| a.name == name))
+}
+
 fn read_file(path: &Path) -> io::Result<String> {
   fs::read_to_string(path)
 }
@@ -458,6 +561,130 @@ fn update_dispatch_file(content: &str, tune_kind: TuneKind, table_code: &str) ->
   Ok(content.to_string())
 }
 
+fn update_hash_dispatch_tables_file(content: &str, tune_kind: TuneKind, table_code: &str) -> io::Result<String> {
+  let kind_name = format!("{tune_kind:?}");
+  let section_marker = format!("// {kind_name} Table");
+
+  let Some(start_idx) = content.find(&section_marker) else {
+    return Err(io::Error::new(
+      io::ErrorKind::InvalidData,
+      format!("dispatch_tables.rs missing marker: {section_marker}"),
+    ));
+  };
+
+  let rest = &content[start_idx..];
+  let end_offset = rest
+    .find("\n// ")
+    .or_else(|| rest.find("\n\n#[inline]"))
+    .or_else(|| rest.find("\n\npub fn "))
+    .unwrap_or(rest.len());
+
+  let before = &content[..start_idx];
+  let after = &content[start_idx.strict_add(end_offset)..];
+  Ok(format!("{before}{table_code}{after}"))
+}
+
+fn tune_kind_table_ident(tune_kind: TuneKind) -> &'static str {
+  match tune_kind {
+    TuneKind::Custom => "CUSTOM_TABLE",
+    TuneKind::Default => "DEFAULT_KIND_TABLE",
+    TuneKind::Portable => "PORTABLE_TABLE",
+    TuneKind::Zen4 => "ZEN4_TABLE",
+    TuneKind::Zen5 => "ZEN5_TABLE",
+    TuneKind::Zen5c => "ZEN5C_TABLE",
+    TuneKind::IntelSpr => "INTELSPR_TABLE",
+    TuneKind::IntelGnr => "INTELGNR_TABLE",
+    TuneKind::IntelIcl => "INTELICL_TABLE",
+    TuneKind::AppleM1M3 => "APPLEM1M3_TABLE",
+    TuneKind::AppleM4 => "APPLEM4_TABLE",
+    TuneKind::AppleM5 => "APPLEM5_TABLE",
+    TuneKind::Graviton2 => "GRAVITON2_TABLE",
+    TuneKind::Graviton3 => "GRAVITON3_TABLE",
+    TuneKind::Graviton4 => "GRAVITON4_TABLE",
+    TuneKind::Graviton5 => "GRAVITON5_TABLE",
+    TuneKind::NeoverseN2 => "NEOVERSEN2_TABLE",
+    TuneKind::NeoverseN3 => "NEOVERSEN3_TABLE",
+    TuneKind::NeoverseV3 => "NEOVERSEV3_TABLE",
+    TuneKind::NvidiaGrace => "NVIDIAGRACE_TABLE",
+    TuneKind::AmpereAltra => "AMPEREALTRA_TABLE",
+    TuneKind::Aarch64Pmull => "AARCH64PMULL_TABLE",
+    TuneKind::Z13 => "Z13_TABLE",
+    TuneKind::Z14 => "Z14_TABLE",
+    TuneKind::Z15 => "Z15_TABLE",
+    TuneKind::Power7 => "POWER7_TABLE",
+    TuneKind::Power8 => "POWER8_TABLE",
+    TuneKind::Power9 => "POWER9_TABLE",
+    TuneKind::Power10 => "POWER10_TABLE",
+  }
+}
+
+fn hash_kernel_expr(kernel_name: &str) -> &'static str {
+  match kernel_name {
+    "portable" => "KernelId::Portable",
+    _ => "KernelId::Portable",
+  }
+}
+
+fn generate_hash_table(tune_kind: TuneKind, algo: &AlgorithmResult) -> String {
+  // Defaults if size-class data isn't present (older results / partial runs).
+  let mut xs = "portable";
+  let mut s = "portable";
+  let mut m = "portable";
+  let mut l = "portable";
+
+  for entry in &algo.size_class_best {
+    match entry.class {
+      "xs" => xs = entry.kernel.as_str(),
+      "s" => s = entry.kernel.as_str(),
+      "m" => m = entry.kernel.as_str(),
+      "l" => l = entry.kernel.as_str(),
+      _ => {}
+    }
+  }
+
+  let kind_name = format!("{tune_kind:?}");
+  let table_ident = tune_kind_table_ident(tune_kind);
+
+  format!(
+    "\
+// {kind_name} Table
+pub static {table_ident}: DispatchTable = DispatchTable {{
+  boundaries: DEFAULT_BOUNDARIES,
+  xs: {xs_id},
+  s: {s_id},
+  m: {m_id},
+  l: {l_id},
+}};
+",
+    xs_id = hash_kernel_expr(xs),
+    s_id = hash_kernel_expr(s),
+    m_id = hash_kernel_expr(m),
+    l_id = hash_kernel_expr(l),
+  )
+}
+
+fn apply_hash_dispatch_tables(repo_root: &Path, results: &TuneResults) -> io::Result<()> {
+  let tune_kind = results.platform.tune_kind;
+
+  for target in HASH_DISPATCH_TARGETS {
+    let Some(algo) = find_hash_algo(results, target) else {
+      continue;
+    };
+
+    let table_code = generate_hash_table(tune_kind, algo);
+    let path = repo_root.join(target.rel_path);
+    let content = read_file(&path)?;
+    let updated = update_hash_dispatch_tables_file(&content, tune_kind, &table_code)?;
+
+    if updated != content {
+      write_file(&path, &updated)?;
+      eprintln!("Updated: {}", path.display());
+    }
+  }
+
+  Ok(())
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Public API
 // ─────────────────────────────────────────────────────────────────────────────
@@ -486,6 +713,8 @@ pub fn apply_tuned_defaults(repo_root: &Path, results: &TuneResults) -> io::Resu
     write_file(&dispatch_path, &updated)?;
     eprintln!("Updated: {}", dispatch_path.display());
   }
+
+  apply_hash_dispatch_tables(repo_root, results)?;
 
   Ok(())
 }

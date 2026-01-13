@@ -3,8 +3,8 @@ use core::hint::black_box;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use hashes::{
   crypto::{
-    AsconHash256, AsconXof128, Blake2b512, Blake2s256, Blake3, CShake128, CShake256, Kmac128, Kmac256, Sha3_224,
-    Sha3_256, Sha3_384, Sha3_512, Sha224, Sha256, Sha384, Sha512, Sha512_224, Sha512_256, Shake128, Shake256,
+    AsconHash256, AsconXof128, Blake2b512, Blake2s256, Blake3, Sha3_224, Sha3_256, Sha3_384, Sha3_512, Sha224, Sha256,
+    Sha384, Sha512, Sha512_224, Sha512_256, Shake128, Shake256,
   },
   fast::{RapidHash64, SipHash13, SipHash24, Xxh3_64, Xxh3_128},
 };
@@ -15,10 +15,6 @@ mod common;
 fn comp(c: &mut Criterion) {
   let inputs = common::sized_inputs();
   let mut group = c.benchmark_group("hashes/comp");
-  let cshake_fn = b"rscrypto";
-  let cshake_custom = b"bench";
-  let kmac_key = b"rscrypto kmac bench key (32 bytes)";
-  let kmac_custom = b"bench";
 
   for (len, data) in &inputs {
     common::set_throughput(&mut group, *len);
@@ -167,86 +163,6 @@ fn comp(c: &mut Criterion) {
         let mut reader = h.finalize_xof();
         let mut out = [0u8; 32];
         reader.read(&mut out);
-        black_box(out)
-      })
-    });
-
-    group.bench_with_input(BenchmarkId::new("cshake128/rscrypto/32B-out", len), data, |b, d| {
-      b.iter(|| {
-        let mut out = [0u8; 32];
-        CShake128::hash_into(cshake_fn, cshake_custom, black_box(d), &mut out);
-        black_box(out)
-      })
-    });
-    group.bench_with_input(BenchmarkId::new("cshake128/sha3/32B-out", len), data, |b, d| {
-      b.iter(|| {
-        use sha3::digest::{ExtendableOutput, Update, XofReader};
-        let core = sha3::CShake128Core::new_with_function_name(cshake_fn, cshake_custom);
-        let mut h = sha3::CShake128::from_core(core);
-        h.update(black_box(d));
-        let mut reader = h.finalize_xof();
-        let mut out = [0u8; 32];
-        reader.read(&mut out);
-        black_box(out)
-      })
-    });
-
-    group.bench_with_input(BenchmarkId::new("cshake256/rscrypto/32B-out", len), data, |b, d| {
-      b.iter(|| {
-        let mut out = [0u8; 32];
-        CShake256::hash_into(cshake_fn, cshake_custom, black_box(d), &mut out);
-        black_box(out)
-      })
-    });
-    group.bench_with_input(BenchmarkId::new("cshake256/sha3/32B-out", len), data, |b, d| {
-      b.iter(|| {
-        use sha3::digest::{ExtendableOutput, Update, XofReader};
-        let core = sha3::CShake256Core::new_with_function_name(cshake_fn, cshake_custom);
-        let mut h = sha3::CShake256::from_core(core);
-        h.update(black_box(d));
-        let mut reader = h.finalize_xof();
-        let mut out = [0u8; 32];
-        reader.read(&mut out);
-        black_box(out)
-      })
-    });
-
-    group.bench_with_input(BenchmarkId::new("kmac128/rscrypto/32B-out", len), data, |b, d| {
-      b.iter(|| {
-        let mut out = [0u8; 32];
-        let mut h = Kmac128::new(kmac_key, kmac_custom);
-        h.update(black_box(d));
-        h.finalize_into(&mut out);
-        black_box(out)
-      })
-    });
-    group.bench_with_input(BenchmarkId::new("kmac128/tiny-keccak/32B-out", len), data, |b, d| {
-      b.iter(|| {
-        use tiny_keccak::{Hasher, Kmac};
-        let mut out = [0u8; 32];
-        let mut h = Kmac::v128(kmac_key, kmac_custom);
-        h.update(black_box(d));
-        h.finalize(&mut out);
-        black_box(out)
-      })
-    });
-
-    group.bench_with_input(BenchmarkId::new("kmac256/rscrypto/32B-out", len), data, |b, d| {
-      b.iter(|| {
-        let mut out = [0u8; 32];
-        let mut h = Kmac256::new(kmac_key, kmac_custom);
-        h.update(black_box(d));
-        h.finalize_into(&mut out);
-        black_box(out)
-      })
-    });
-    group.bench_with_input(BenchmarkId::new("kmac256/tiny-keccak/32B-out", len), data, |b, d| {
-      b.iter(|| {
-        use tiny_keccak::{Hasher, Kmac};
-        let mut out = [0u8; 32];
-        let mut h = Kmac::v256(kmac_key, kmac_custom);
-        h.update(black_box(d));
-        h.finalize(&mut out);
         black_box(out)
       })
     });

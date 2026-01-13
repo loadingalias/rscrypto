@@ -464,14 +464,14 @@ name = "hashes"
 version = "0.1.0"
 dependencies = [
  "ascon-hash256",
+ "backend",
  "blake2",
  "blake3",
  "criterion",
  "digest 0.10.7",
+ "platform",
  "proptest",
  "rapidhash",
- "serde",
- "serde_json",
  "sha2",
  "sha3",
  "siphasher",
@@ -951,6 +951,7 @@ version = "0.1.0"
 dependencies = [
  "backend",
  "checksum",
+ "hashes",
  "platform",
 ]
 

@@ -72,6 +72,8 @@ pub mod crc24;
 pub mod crc32;
 #[cfg(feature = "std")]
 pub mod crc64;
+#[cfg(feature = "std")]
+pub mod hash;
 
 use core::fmt;
 
@@ -81,6 +83,14 @@ pub use analysis::{
   find_best_config_across_sizes, find_best_large_config, find_best_large_kernel, find_tier_crossover,
   select_best_streams,
 };
+// ─────────────────────────────────────────────────────────────────────────────
+// Core Types
+// ─────────────────────────────────────────────────────────────────────────────
+/// Kernel tier classification used by the tuning engine.
+///
+/// This is shared with the runtime dispatch subsystem in `backend` to ensure
+/// tiers mean the same thing across the entire repository.
+pub use backend::KernelTier;
 #[cfg(feature = "std")]
 pub use engine::TuneEngine;
 use platform::Caps;
@@ -92,42 +102,6 @@ pub use runner::BenchRunner;
 pub use sampler::{SampledResult, Sampler, SamplerConfig};
 #[cfg(feature = "std")]
 pub use stats::{DEFAULT_CV_THRESHOLD, SampleStats, VarianceQuality};
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Core Types
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Kernel tier classification.
-///
-/// Kernels are organized into tiers based on their complexity and overhead.
-/// Higher tiers generally provide better throughput for larger buffers but
-/// have higher setup overhead.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[non_exhaustive]
-pub enum KernelTier {
-  /// Bitwise reference implementation (slowest, always available).
-  Reference,
-  /// Table-based portable implementation (no SIMD).
-  Portable,
-  /// Hardware-accelerated instructions (e.g., CRC32 instruction).
-  Hardware,
-  /// SIMD folding/carryless-multiply (e.g., PCLMUL, PMULL).
-  Folding,
-  /// Wide SIMD with extended instructions (e.g., VPCLMUL, EOR3).
-  Wide,
-}
-
-impl fmt::Display for KernelTier {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    match self {
-      Self::Reference => write!(f, "reference"),
-      Self::Portable => write!(f, "portable"),
-      Self::Hardware => write!(f, "hardware"),
-      Self::Folding => write!(f, "folding"),
-      Self::Wide => write!(f, "wide"),
-    }
-  }
-}
 
 /// Specification of an available kernel for an algorithm.
 #[derive(Clone, Debug)]
@@ -441,6 +415,20 @@ pub struct TuneResults {
   pub timestamp: String,
 }
 
+/// Best kernel selection for a particular size class.
+#[cfg(feature = "std")]
+#[derive(Clone, Debug)]
+pub struct SizeClassBest {
+  /// Size class label (e.g., "xs", "s", "m", "l").
+  pub class: &'static str,
+  /// Selected base kernel name (e.g., "x86_64/vpclmul").
+  pub kernel: String,
+  /// Selected stream count (1 if the kernel has no stream variants).
+  pub streams: u8,
+  /// Throughput at the representative class size (GiB/s).
+  pub throughput_gib_s: f64,
+}
+
 /// Tuning results for a single algorithm.
 #[cfg(feature = "std")]
 #[derive(Clone, Debug)]
@@ -459,6 +447,9 @@ pub struct AlgorithmResult {
 
   /// Peak throughput in GiB/s.
   pub peak_throughput_gib_s: f64,
+
+  /// Best kernel per default size class (xs/s/m/l).
+  pub size_class_best: Vec<SizeClassBest>,
 
   /// Recommended thresholds as (env_suffix, value) pairs.
   ///

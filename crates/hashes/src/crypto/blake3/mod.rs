@@ -8,6 +8,15 @@ use core::{cmp::min, ptr};
 
 use traits::{Digest, Xof};
 
+#[doc(hidden)]
+pub mod dispatch;
+#[doc(hidden)]
+pub mod dispatch_tables;
+pub(crate) mod kernels;
+
+use self::kernels::Kernel;
+use crate::crypto::dispatch_util::{SizeClassDispatch, len_hint_from_u128};
+
 const OUT_LEN: usize = 32;
 const KEY_LEN: usize = 32;
 const BLOCK_LEN: usize = 64;
@@ -171,6 +180,7 @@ fn first_8_words(words: [u32; 16]) -> [u32; 8] {
 
 #[derive(Clone, Copy)]
 struct OutputState {
+  kernel: Kernel,
   input_chaining_value: [u32; 8],
   block_words: [u32; 16],
   counter: u64,
@@ -181,7 +191,7 @@ struct OutputState {
 impl OutputState {
   #[inline]
   fn chaining_value(&self) -> [u32; 8] {
-    first_8_words(compress(
+    first_8_words((self.kernel.compress)(
       &self.input_chaining_value,
       &self.block_words,
       self.counter,
@@ -192,7 +202,7 @@ impl OutputState {
 
   #[inline]
   fn root_output_block_bytes(&self, output_block_counter: u64) -> [u8; 2 * OUT_LEN] {
-    let words = compress(
+    let words = (self.kernel.compress)(
       &self.input_chaining_value,
       &self.block_words,
       output_block_counter,
@@ -211,6 +221,7 @@ impl OutputState {
 
 #[derive(Clone, Copy)]
 struct ChunkState {
+  kernel: Kernel,
   chaining_value: [u32; 8],
   chunk_counter: u64,
   block: [u8; BLOCK_LEN],
@@ -221,8 +232,9 @@ struct ChunkState {
 
 impl ChunkState {
   #[inline]
-  fn new(key_words: [u32; 8], chunk_counter: u64, flags: u32) -> Self {
+  fn new(key_words: [u32; 8], chunk_counter: u64, flags: u32, kernel: Kernel) -> Self {
     Self {
+      kernel,
       chaining_value: key_words,
       chunk_counter,
       block: [0u8; BLOCK_LEN],
@@ -249,15 +261,13 @@ impl ChunkState {
           self.blocks_compressed < 15,
           "last chunk block stays buffered until output()"
         );
-        let block_words = words16_from_le_bytes_64(&self.block);
-        self.chaining_value = first_8_words(compress(
-          &self.chaining_value,
-          &block_words,
+        (self.kernel.chunk_compress_blocks)(
+          &mut self.chaining_value,
           self.chunk_counter,
-          BLOCK_LEN as u32,
-          self.flags | self.start_flag(),
-        ));
-        self.blocks_compressed = self.blocks_compressed.wrapping_add(1);
+          self.flags,
+          &mut self.blocks_compressed,
+          &self.block,
+        );
         self.block_len = 0;
       }
 
@@ -280,18 +290,13 @@ impl ChunkState {
         blocks_to_compress = core::cmp::min(blocks_to_compress, max_blocks);
         if blocks_to_compress != 0 {
           let bytes = blocks_to_compress * BLOCK_LEN;
-          let (blocks, _) = input[..bytes].as_chunks::<BLOCK_LEN>();
-          for block_bytes in blocks {
-            let block_words = words16_from_le_bytes_64(block_bytes);
-            self.chaining_value = first_8_words(compress(
-              &self.chaining_value,
-              &block_words,
-              self.chunk_counter,
-              BLOCK_LEN as u32,
-              self.flags | self.start_flag(),
-            ));
-            self.blocks_compressed = self.blocks_compressed.wrapping_add(1);
-          }
+          (self.kernel.chunk_compress_blocks)(
+            &mut self.chaining_value,
+            self.chunk_counter,
+            self.flags,
+            &mut self.blocks_compressed,
+            &input[..bytes],
+          );
           input = &input[bytes..];
           continue;
         }
@@ -313,6 +318,7 @@ impl ChunkState {
     }
     let block_words = words16_from_le_bytes_64(&block);
     OutputState {
+      kernel: self.kernel,
       input_chaining_value: self.chaining_value,
       block_words,
       counter: self.chunk_counter,
@@ -323,11 +329,18 @@ impl ChunkState {
 }
 
 #[inline]
-fn parent_output(left_child_cv: [u32; 8], right_child_cv: [u32; 8], key_words: [u32; 8], flags: u32) -> OutputState {
+fn parent_output(
+  kernel: Kernel,
+  left_child_cv: [u32; 8],
+  right_child_cv: [u32; 8],
+  key_words: [u32; 8],
+  flags: u32,
+) -> OutputState {
   let mut block_words = [0u32; 16];
   block_words[..8].copy_from_slice(&left_child_cv);
   block_words[8..].copy_from_slice(&right_child_cv);
   OutputState {
+    kernel,
     input_chaining_value: key_words,
     block_words,
     counter: 0,
@@ -337,12 +350,13 @@ fn parent_output(left_child_cv: [u32; 8], right_child_cv: [u32; 8], key_words: [
 }
 
 #[inline]
-fn parent_cv(left_child_cv: [u32; 8], right_child_cv: [u32; 8], key_words: [u32; 8], flags: u32) -> [u32; 8] {
-  parent_output(left_child_cv, right_child_cv, key_words, flags).chaining_value()
-}
-
-#[inline]
-fn single_chunk_output(key_words: [u32; 8], chunk_counter: u64, flags: u32, input: &[u8]) -> OutputState {
+fn single_chunk_output(
+  kernel: Kernel,
+  key_words: [u32; 8],
+  chunk_counter: u64,
+  flags: u32,
+  input: &[u8],
+) -> OutputState {
   debug_assert!(input.len() <= CHUNK_LEN);
 
   // We always emit an OutputState for the last chunk block, even when the
@@ -357,20 +371,15 @@ fn single_chunk_output(key_words: [u32; 8], chunk_counter: u64, flags: u32, inpu
   };
 
   let mut chaining_value = key_words;
-
+  let mut blocks_compressed: u8 = 0;
   let full_bytes = full_blocks * BLOCK_LEN;
-  let (full_block_slices, _) = input[..full_bytes].as_chunks::<BLOCK_LEN>();
-  for (i, block_bytes) in full_block_slices.iter().enumerate() {
-    let block_words = words16_from_le_bytes_64(block_bytes);
-    let start = if i == 0 { CHUNK_START } else { 0 };
-    chaining_value = first_8_words(compress(
-      &chaining_value,
-      &block_words,
-      chunk_counter,
-      BLOCK_LEN as u32,
-      flags | start,
-    ));
-  }
+  (kernel.chunk_compress_blocks)(
+    &mut chaining_value,
+    chunk_counter,
+    flags,
+    &mut blocks_compressed,
+    &input[..full_bytes],
+  );
 
   let mut last_block = [0u8; BLOCK_LEN];
   if !input.is_empty() {
@@ -378,9 +387,10 @@ fn single_chunk_output(key_words: [u32; 8], chunk_counter: u64, flags: u32, inpu
     last_block[..last_len].copy_from_slice(&input[offset..offset + last_len]);
   }
   let block_words = words16_from_le_bytes_64(&last_block);
-  let start = if full_blocks == 0 { CHUNK_START } else { 0 };
+  let start = if blocks_compressed == 0 { CHUNK_START } else { 0 };
 
   OutputState {
+    kernel,
     input_chaining_value: chaining_value,
     block_words,
     counter: chunk_counter,
@@ -391,6 +401,8 @@ fn single_chunk_output(key_words: [u32; 8], chunk_counter: u64, flags: u32, inpu
 
 #[derive(Clone)]
 pub struct Blake3 {
+  kernel: Kernel,
+  dispatch: Option<SizeClassDispatch<Kernel>>,
   chunk_state: ChunkState,
   key_words: [u32; 8],
   cv_stack: [[u32; 8]; 54],
@@ -408,32 +420,66 @@ impl Default for Blake3 {
 impl Blake3 {
   /// Compute the hash of `data` in one shot.
   ///
-  /// This specializes the single-chunk case (≤ 1024 bytes) to avoid CV-stack
-  /// bookkeeping and extra buffering branches in the hot path.
+  /// This selects the best available kernel for the current platform and input
+  /// length (cached after first use).
   #[inline]
   #[must_use]
   pub fn digest(data: &[u8]) -> [u8; OUT_LEN] {
+    dispatch::digest(data)
+  }
+
+  #[inline]
+  #[must_use]
+  pub(crate) fn digest_portable(data: &[u8]) -> [u8; OUT_LEN] {
+    let kernel = kernels::kernel(kernels::Blake3KernelId::Portable);
     if data.len() <= CHUNK_LEN {
-      let output = single_chunk_output(IV, 0, 0, data);
+      let output = single_chunk_output(kernel, IV, 0, 0, data);
       let block = output.root_output_block_bytes(0);
       let mut out = [0u8; OUT_LEN];
       out.copy_from_slice(&block[..OUT_LEN]);
       out
     } else {
-      let mut h = Self::new();
-      h.update(data);
+      let mut h = Self::new_internal_with(IV, 0, kernel);
+      h.update_with(data, kernel);
       h.finalize()
     }
   }
 
   #[inline]
   fn new_internal(key_words: [u32; 8], flags: u32) -> Self {
+    let kernel = kernels::kernel(kernels::Blake3KernelId::Portable);
+    Self::new_internal_with(key_words, flags, kernel)
+  }
+
+  #[inline]
+  fn new_internal_with(key_words: [u32; 8], flags: u32, kernel: Kernel) -> Self {
     Self {
-      chunk_state: ChunkState::new(key_words, 0, flags),
+      kernel,
+      dispatch: None,
+      chunk_state: ChunkState::new(key_words, 0, flags, kernel),
       key_words,
       cv_stack: [[0u32; 8]; 54],
       cv_stack_len: 0,
       flags,
+    }
+  }
+
+  fn update_with(&mut self, mut input: &[u8], kernel: Kernel) {
+    self.kernel = kernel;
+    self.chunk_state.kernel = kernel;
+
+    while !input.is_empty() {
+      if self.chunk_state.len() == CHUNK_LEN {
+        let chunk_cv = self.chunk_state.output().chaining_value();
+        let total_chunks = self.chunk_state.chunk_counter + 1;
+        self.add_chunk_chaining_value(chunk_cv, total_chunks);
+        self.chunk_state = ChunkState::new(self.key_words, total_chunks, self.flags, self.kernel);
+      }
+
+      let want = CHUNK_LEN - self.chunk_state.len();
+      let take = min(want, input.len());
+      self.chunk_state.update(&input[..take]);
+      input = &input[take..];
     }
   }
 
@@ -468,7 +514,7 @@ impl Blake3 {
 
   fn add_chunk_chaining_value(&mut self, mut new_cv: [u32; 8], mut total_chunks: u64) {
     while total_chunks & 1 == 0 {
-      new_cv = parent_cv(self.pop_stack(), new_cv, self.key_words, self.flags);
+      new_cv = (self.kernel.parent_cv)(self.pop_stack(), new_cv, self.key_words, self.flags);
       total_chunks >>= 1;
     }
     self.push_stack(new_cv);
@@ -480,6 +526,7 @@ impl Blake3 {
     while parent_nodes_remaining > 0 {
       parent_nodes_remaining -= 1;
       output = parent_output(
+        self.kernel,
         self.cv_stack[parent_nodes_remaining],
         output.chaining_value(),
         self.key_words,
@@ -505,20 +552,26 @@ impl Digest for Blake3 {
     Self::new_internal(IV, 0)
   }
 
-  fn update(&mut self, mut input: &[u8]) {
-    while !input.is_empty() {
-      if self.chunk_state.len() == CHUNK_LEN {
-        let chunk_cv = self.chunk_state.output().chaining_value();
-        let total_chunks = self.chunk_state.chunk_counter + 1;
-        self.add_chunk_chaining_value(chunk_cv, total_chunks);
-        self.chunk_state = ChunkState::new(self.key_words, total_chunks, self.flags);
-      }
-
-      let want = CHUNK_LEN - self.chunk_state.len();
-      let take = min(want, input.len());
-      self.chunk_state.update(&input[..take]);
-      input = &input[take..];
+  fn update(&mut self, input: &[u8]) {
+    if input.is_empty() {
+      return;
     }
+
+    let dispatch = match self.dispatch {
+      Some(d) => d,
+      None => {
+        let d = dispatch::kernel_dispatch();
+        self.dispatch = Some(d);
+        d
+      }
+    };
+
+    let bytes_so_far = (self.chunk_state.chunk_counter as u128)
+      .saturating_mul(CHUNK_LEN as u128)
+      .saturating_add(self.chunk_state.len() as u128);
+    let len_hint = bytes_so_far.saturating_add(input.len() as u128);
+    let kernel = dispatch.select(len_hint_from_u128(len_hint));
+    self.update_with(input, kernel);
   }
 
   fn finalize(&self) -> Self::Output {
@@ -575,6 +628,9 @@ impl Xof for Blake3Xof {
     }
   }
 }
+
+#[cfg(feature = "std")]
+pub(crate) mod kernel_test;
 
 #[cfg(test)]
 mod tests {

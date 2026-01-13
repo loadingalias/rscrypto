@@ -5,6 +5,16 @@
 
 #![allow(clippy::indexing_slicing)] // Keccak state is fixed-size; indexing is audited
 
+use core::marker::PhantomData;
+
+use crate::crypto::dispatch_util::SizeClassDispatch;
+
+#[doc(hidden)]
+pub(crate) mod dispatch;
+#[doc(hidden)]
+pub(crate) mod dispatch_tables;
+pub(crate) mod kernels;
+
 const KECCAKF_ROUNDS: usize = 24;
 
 // Round constants.
@@ -36,7 +46,7 @@ const RC: [u64; KECCAKF_ROUNDS] = [
 ];
 
 #[inline(always)]
-fn keccakf(state: &mut [u64; 25]) {
+pub(crate) fn keccakf_portable(state: &mut [u64; 25]) {
   let mut a0 = state[0];
   let mut a1 = state[1];
   let mut a2 = state[2];
@@ -227,27 +237,129 @@ fn keccakf(state: &mut [u64; 25]) {
   state[24] = a24;
 }
 
+pub(crate) type KeccakCore<const RATE: usize> = KeccakCoreImpl<RATE, DispatchPermuter>;
+
+pub(crate) type KeccakCorePortable<const RATE: usize> = KeccakCoreImpl<RATE, PortablePermuter>;
+
+pub(crate) type KeccakXof<const RATE: usize> = KeccakXofImpl<RATE, DispatchPermuter>;
+
+#[allow(dead_code)]
+pub(crate) type KeccakXofPortable<const RATE: usize> = KeccakXofImpl<RATE, PortablePermuter>;
+
+#[derive(Clone, Copy)]
+#[allow(dead_code)]
+pub(crate) struct FnPermuter {
+  f: fn(&mut [u64; 25]),
+}
+
+#[allow(dead_code)]
+impl FnPermuter {
+  #[inline]
+  #[must_use]
+  pub(crate) const fn new(f: fn(&mut [u64; 25])) -> Self {
+    Self { f }
+  }
+}
+
+pub(crate) trait Permuter: Copy {
+  fn permute(self, state: &mut [u64; 25], len_hint: usize);
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct DispatchPermuter {
+  dispatch: SizeClassDispatch<fn(&mut [u64; 25])>,
+}
+
+impl Default for DispatchPermuter {
+  #[inline]
+  fn default() -> Self {
+    Self {
+      dispatch: dispatch::permute_dispatch(),
+    }
+  }
+}
+
+impl Permuter for DispatchPermuter {
+  #[inline(always)]
+  fn permute(self, state: &mut [u64; 25], len_hint: usize) {
+    (self.dispatch.select(len_hint))(state);
+  }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct PortablePermuter;
+
+impl Permuter for PortablePermuter {
+  #[inline(always)]
+  fn permute(self, state: &mut [u64; 25], _len_hint: usize) {
+    keccakf_portable(state);
+  }
+}
+
+impl Permuter for FnPermuter {
+  #[inline(always)]
+  fn permute(self, state: &mut [u64; 25], _len_hint: usize) {
+    (self.f)(state);
+  }
+}
+
 #[derive(Clone)]
-pub(crate) struct KeccakCore<const RATE: usize> {
+pub(crate) struct KeccakCoreImpl<const RATE: usize, P: Permuter> {
   state: [u64; 25],
   buf: [u8; RATE],
   buf_len: usize,
+  bytes_hint: usize,
+  permuter: P,
+  _p: PhantomData<P>,
 }
 
-impl<const RATE: usize> Default for KeccakCore<RATE> {
+impl<const RATE: usize> Default for KeccakCoreImpl<RATE, DispatchPermuter> {
   #[inline]
   fn default() -> Self {
     Self {
       state: [0u64; 25],
       buf: [0u8; RATE],
       buf_len: 0,
+      bytes_hint: 0,
+      permuter: DispatchPermuter::default(),
+      _p: PhantomData,
     }
   }
 }
 
-impl<const RATE: usize> KeccakCore<RATE> {
+impl<const RATE: usize> Default for KeccakCoreImpl<RATE, PortablePermuter> {
+  #[inline]
+  fn default() -> Self {
+    Self {
+      state: [0u64; 25],
+      buf: [0u8; RATE],
+      buf_len: 0,
+      bytes_hint: 0,
+      permuter: PortablePermuter,
+      _p: PhantomData,
+    }
+  }
+}
+
+#[allow(dead_code)]
+impl<const RATE: usize> KeccakCoreImpl<RATE, FnPermuter> {
+  #[inline]
+  #[must_use]
+  pub(crate) const fn new(permuter: FnPermuter) -> Self {
+    Self {
+      state: [0u64; 25],
+      buf: [0u8; RATE],
+      buf_len: 0,
+      bytes_hint: 0,
+      permuter,
+      _p: PhantomData,
+    }
+  }
+}
+
+impl<const RATE: usize, P: Permuter> KeccakCoreImpl<RATE, P> {
   #[inline(always)]
-  fn absorb_block(state: &mut [u64; 25], block: &[u8; RATE]) {
+  fn absorb_block(permuter: P, len_hint: usize, state: &mut [u64; 25], block: &[u8; RATE]) {
     debug_assert_eq!(RATE % 8, 0);
     let lanes = RATE / 8;
     let mut i = 0usize;
@@ -259,7 +371,7 @@ impl<const RATE: usize> KeccakCore<RATE> {
       state[i] ^= u64::from_le(v);
       i += 1;
     }
-    keccakf(state);
+    permuter.permute(state, len_hint);
   }
 
   pub(crate) fn update(&mut self, mut data: &[u8]) {
@@ -267,6 +379,9 @@ impl<const RATE: usize> KeccakCore<RATE> {
       return;
     }
 
+    self.bytes_hint = self.bytes_hint.wrapping_add(data.len());
+    let permuter = self.permuter;
+    let len_hint = self.bytes_hint;
     if self.buf_len != 0 {
       let take = core::cmp::min(RATE - self.buf_len, data.len());
       self.buf[self.buf_len..self.buf_len + take].copy_from_slice(&data[..take]);
@@ -276,7 +391,7 @@ impl<const RATE: usize> KeccakCore<RATE> {
       if self.buf_len == RATE {
         let state = &mut self.state;
         let block = &self.buf;
-        Self::absorb_block(state, block);
+        Self::absorb_block(permuter, len_hint, state, block);
         self.buf_len = 0;
       }
     }
@@ -284,7 +399,7 @@ impl<const RATE: usize> KeccakCore<RATE> {
     let state = &mut self.state;
     let (blocks, rest) = data.as_chunks::<RATE>();
     for block in blocks {
-      Self::absorb_block(state, block);
+      Self::absorb_block(permuter, len_hint, state, block);
     }
     data = rest;
 
@@ -296,18 +411,23 @@ impl<const RATE: usize> KeccakCore<RATE> {
 
   #[inline(always)]
   fn finalize_state(&self, ds: u8) -> [u64; 25] {
+    let permuter = self.permuter;
+    let len_hint = self.bytes_hint;
     let mut state = self.state;
     let mut buf = self.buf;
     let buf_len = self.buf_len;
+
+    debug_assert!(buf_len < RATE, "buf_len={} should be < RATE={}", buf_len, RATE);
 
     // Ensure padding happens over a zero-padded block.
     buf[buf_len..].fill(0);
 
     // Domain separator, then pad10*1 with final 0x80.
+    // SAFETY: buf_len < RATE is guaranteed by the assertion above.
     buf[buf_len] ^= ds;
     buf[RATE - 1] ^= 0x80;
 
-    Self::absorb_block(&mut state, &buf);
+    Self::absorb_block(permuter, len_hint, &mut state, &buf);
     state
   }
 
@@ -323,14 +443,25 @@ impl<const RATE: usize> KeccakCore<RATE> {
     }
   }
 
-  pub(crate) fn finalize_xof(&self, ds: u8) -> KeccakXof<RATE> {
+  pub(crate) fn finalize_xof(&self, ds: u8) -> KeccakXofImpl<RATE, P> {
+    let permuter = self.permuter;
     let state = self.finalize_state(ds);
     let mut buf = [0u8; RATE];
-    KeccakXof::<RATE>::fill_buf(&state, &mut buf);
-    KeccakXof { state, buf, pos: 0 }
+    KeccakXofImpl::<RATE, P>::fill_buf(&state, &mut buf);
+    KeccakXofImpl {
+      state,
+      buf,
+      pos: 0,
+      bytes_hint: self.bytes_hint,
+      bytes_out: 0,
+      permuter,
+      _p: PhantomData,
+    }
   }
 
   pub(crate) fn finalize_xof_into(&self, ds: u8, mut out: &mut [u8]) {
+    let permuter = self.permuter;
+    let len_hint = self.bytes_hint.wrapping_add(out.len());
     let mut state = self.finalize_state(ds);
 
     debug_assert_eq!(RATE % 8, 0);
@@ -360,20 +491,24 @@ impl<const RATE: usize> KeccakCore<RATE> {
       }
 
       if !out.is_empty() {
-        keccakf(&mut state);
+        permuter.permute(&mut state, len_hint);
       }
     }
   }
 }
 
 #[derive(Clone)]
-pub(crate) struct KeccakXof<const RATE: usize> {
+pub(crate) struct KeccakXofImpl<const RATE: usize, P: Permuter> {
   state: [u64; 25],
   buf: [u8; RATE],
   pos: usize,
+  bytes_hint: usize,
+  bytes_out: usize,
+  permuter: P,
+  _p: PhantomData<P>,
 }
 
-impl<const RATE: usize> KeccakXof<RATE> {
+impl<const RATE: usize, P: Permuter> KeccakXofImpl<RATE, P> {
   #[inline(always)]
   fn fill_buf(state: &[u64; 25], out: &mut [u8; RATE]) {
     debug_assert_eq!(RATE % 8, 0);
@@ -389,15 +524,21 @@ impl<const RATE: usize> KeccakXof<RATE> {
   pub(crate) fn squeeze_into(&mut self, mut out: &mut [u8]) {
     while !out.is_empty() {
       if self.pos == RATE {
-        keccakf(&mut self.state);
+        let permuter = self.permuter;
+        let len_hint = self.bytes_hint.wrapping_add(self.bytes_out);
+        permuter.permute(&mut self.state, len_hint);
         Self::fill_buf(&self.state, &mut self.buf);
         self.pos = 0;
       }
 
       let take = core::cmp::min(RATE - self.pos, out.len());
       out[..take].copy_from_slice(&self.buf[self.pos..self.pos + take]);
+      self.bytes_out = self.bytes_out.wrapping_add(take);
       self.pos += take;
       out = &mut out[take..];
     }
   }
 }
+
+#[cfg(feature = "std")]
+pub(crate) mod kernel_test;

@@ -40,6 +40,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "backend"
+version = "0.1.0"
+dependencies = [
+ "platform",
+]
+
+[[package]]
 name = "blake2"
 version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -202,6 +209,8 @@ dependencies = [
 name = "hashes"
 version = "0.1.0"
 dependencies = [
+ "backend",
+ "platform",
  "traits",
 ]
 
@@ -267,6 +276,10 @@ dependencies = [
  "arbitrary",
  "cc",
 ]
+
+[[package]]
+name = "platform"
+version = "0.1.0"
 
 [[package]]
 name = "proc-macro2"
