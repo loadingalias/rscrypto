@@ -60,47 +60,61 @@ pub(crate) const MSG_SCHEDULE: [[usize; 16]; 7] = [
 
 #[inline(always)]
 fn words8_from_le_bytes_32(bytes: &[u8; 32]) -> [u32; 8] {
-  let src = bytes.as_ptr() as *const u32;
-  // SAFETY: `bytes` is exactly 32 bytes; `read_unaligned` supports the
-  // 1-byte alignment of `[u8; 32]`.
-  unsafe {
-    [
-      u32::from_le(ptr::read_unaligned(src.add(0))),
-      u32::from_le(ptr::read_unaligned(src.add(1))),
-      u32::from_le(ptr::read_unaligned(src.add(2))),
-      u32::from_le(ptr::read_unaligned(src.add(3))),
-      u32::from_le(ptr::read_unaligned(src.add(4))),
-      u32::from_le(ptr::read_unaligned(src.add(5))),
-      u32::from_le(ptr::read_unaligned(src.add(6))),
-      u32::from_le(ptr::read_unaligned(src.add(7))),
-    ]
+  if cfg!(target_endian = "little") {
+    let mut out = [0u32; 8];
+    // SAFETY: `bytes` is exactly 32 bytes; `out` is exactly 32 bytes.
+    unsafe { ptr::copy_nonoverlapping(bytes.as_ptr(), out.as_mut_ptr().cast::<u8>(), 32) };
+    out
+  } else {
+    let src = bytes.as_ptr() as *const u32;
+    // SAFETY: `bytes` is exactly 32 bytes; `read_unaligned` supports the
+    // 1-byte alignment of `[u8; 32]`.
+    unsafe {
+      [
+        u32::from_le(ptr::read_unaligned(src.add(0))),
+        u32::from_le(ptr::read_unaligned(src.add(1))),
+        u32::from_le(ptr::read_unaligned(src.add(2))),
+        u32::from_le(ptr::read_unaligned(src.add(3))),
+        u32::from_le(ptr::read_unaligned(src.add(4))),
+        u32::from_le(ptr::read_unaligned(src.add(5))),
+        u32::from_le(ptr::read_unaligned(src.add(6))),
+        u32::from_le(ptr::read_unaligned(src.add(7))),
+      ]
+    }
   }
 }
 
 #[inline(always)]
 fn words16_from_le_bytes_64(bytes: &[u8; 64]) -> [u32; 16] {
-  let src = bytes.as_ptr() as *const u32;
-  // SAFETY: `bytes` is exactly 64 bytes; `read_unaligned` supports the
-  // 1-byte alignment of `[u8; 64]`.
-  unsafe {
-    [
-      u32::from_le(ptr::read_unaligned(src.add(0))),
-      u32::from_le(ptr::read_unaligned(src.add(1))),
-      u32::from_le(ptr::read_unaligned(src.add(2))),
-      u32::from_le(ptr::read_unaligned(src.add(3))),
-      u32::from_le(ptr::read_unaligned(src.add(4))),
-      u32::from_le(ptr::read_unaligned(src.add(5))),
-      u32::from_le(ptr::read_unaligned(src.add(6))),
-      u32::from_le(ptr::read_unaligned(src.add(7))),
-      u32::from_le(ptr::read_unaligned(src.add(8))),
-      u32::from_le(ptr::read_unaligned(src.add(9))),
-      u32::from_le(ptr::read_unaligned(src.add(10))),
-      u32::from_le(ptr::read_unaligned(src.add(11))),
-      u32::from_le(ptr::read_unaligned(src.add(12))),
-      u32::from_le(ptr::read_unaligned(src.add(13))),
-      u32::from_le(ptr::read_unaligned(src.add(14))),
-      u32::from_le(ptr::read_unaligned(src.add(15))),
-    ]
+  if cfg!(target_endian = "little") {
+    let mut out = [0u32; 16];
+    // SAFETY: `bytes` is exactly 64 bytes; `out` is exactly 64 bytes.
+    unsafe { ptr::copy_nonoverlapping(bytes.as_ptr(), out.as_mut_ptr().cast::<u8>(), 64) };
+    out
+  } else {
+    let src = bytes.as_ptr() as *const u32;
+    // SAFETY: `bytes` is exactly 64 bytes; `read_unaligned` supports the
+    // 1-byte alignment of `[u8; 64]`.
+    unsafe {
+      [
+        u32::from_le(ptr::read_unaligned(src.add(0))),
+        u32::from_le(ptr::read_unaligned(src.add(1))),
+        u32::from_le(ptr::read_unaligned(src.add(2))),
+        u32::from_le(ptr::read_unaligned(src.add(3))),
+        u32::from_le(ptr::read_unaligned(src.add(4))),
+        u32::from_le(ptr::read_unaligned(src.add(5))),
+        u32::from_le(ptr::read_unaligned(src.add(6))),
+        u32::from_le(ptr::read_unaligned(src.add(7))),
+        u32::from_le(ptr::read_unaligned(src.add(8))),
+        u32::from_le(ptr::read_unaligned(src.add(9))),
+        u32::from_le(ptr::read_unaligned(src.add(10))),
+        u32::from_le(ptr::read_unaligned(src.add(11))),
+        u32::from_le(ptr::read_unaligned(src.add(12))),
+        u32::from_le(ptr::read_unaligned(src.add(13))),
+        u32::from_le(ptr::read_unaligned(src.add(14))),
+        u32::from_le(ptr::read_unaligned(src.add(15))),
+      ]
+    }
   }
 }
 
