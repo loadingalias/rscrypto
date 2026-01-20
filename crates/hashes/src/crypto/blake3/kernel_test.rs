@@ -224,32 +224,31 @@ mod tests {
   }
 
   /// Test that all hash_many kernel implementations produce identical output.
-  /// This tests the parallel hashing path against the portable reference.
+  /// This tests the multi-chunk throughput path against the portable reference.
   #[test]
   fn hash_many_kernels_agree() {
-    use super::super::{CHUNK_END, CHUNK_LEN, CHUNK_START, IV, OUT_LEN};
+    use super::super::{CHUNK_LEN, IV, OUT_LEN};
 
     let caps = platform::caps();
 
-    // Create test chunks (each CHUNK_LEN = 1024 bytes)
-    let chunks: Vec<Vec<u8>> = (0..8)
-      .map(|i| pattern(CHUNK_LEN).iter().map(|b| b.wrapping_add(i as u8)).collect())
-      .collect();
-    let chunk_refs: Vec<&[u8]> = chunks.iter().map(|c| c.as_slice()).collect();
+    let num_chunks = 8usize;
+
+    // One contiguous buffer containing `num_chunks` full chunks.
+    let mut input = vec![0u8; num_chunks * CHUNK_LEN];
+    for chunk_idx in 0..num_chunks {
+      let base = chunk_idx * CHUNK_LEN;
+      for i in 0..CHUNK_LEN {
+        input[base + i] = ((i % 251) as u8).wrapping_add(chunk_idx as u8);
+      }
+    }
 
     // Get portable kernel output as reference
     let portable_kernel = kernel_for_id(Blake3KernelId::Portable);
-    let mut reference_out = vec![0u8; chunks.len() * OUT_LEN];
-    (portable_kernel.hash_many)(
-      &chunk_refs,
-      &IV,
-      0,    // counter
-      true, // increment_counter
-      0,    // flags
-      CHUNK_START,
-      CHUNK_END,
-      &mut reference_out,
-    );
+    let mut reference_out = vec![0u8; num_chunks * OUT_LEN];
+    // SAFETY: `input` contains `num_chunks` full chunks, and `reference_out` is `num_chunks * OUT_LEN`.
+    unsafe {
+      (portable_kernel.hash_many_contiguous)(input.as_ptr(), num_chunks, &IV, 0, 0, reference_out.as_mut_ptr());
+    }
 
     // Compare all other kernels against portable
     for &id in ALL {
@@ -261,22 +260,14 @@ mod tests {
       }
 
       let k = kernel_for_id(id);
-      let mut out = vec![0u8; chunks.len() * OUT_LEN];
-      (k.hash_many)(
-        &chunk_refs,
-        &IV,
-        0,    // counter
-        true, // increment_counter
-        0,    // flags
-        CHUNK_START,
-        CHUNK_END,
-        &mut out,
-      );
+      let mut out = vec![0u8; num_chunks * OUT_LEN];
+      // SAFETY: `input` contains `num_chunks` full chunks, and `out` is `num_chunks * OUT_LEN`.
+      unsafe { (k.hash_many_contiguous)(input.as_ptr(), num_chunks, &IV, 0, 0, out.as_mut_ptr()) };
 
       assert_eq!(
         out,
         reference_out,
-        "hash_many mismatch: kernel={} differs from portable",
+        "hash_many_contiguous mismatch: kernel={} differs from portable",
         id.as_str()
       );
     }
@@ -285,21 +276,27 @@ mod tests {
   /// Test hash_many with various input sizes and configurations.
   #[test]
   fn hash_many_various_sizes() {
-    use super::super::{CHUNK_END, CHUNK_LEN, CHUNK_START, IV, OUT_LEN};
+    use super::super::{CHUNK_LEN, IV, OUT_LEN};
 
     let caps = platform::caps();
 
     // Test with 1, 2, 3, 4, 5, 7, 8 chunks to cover edge cases
     for num_chunks in [1, 2, 3, 4, 5, 7, 8] {
-      let chunks: Vec<Vec<u8>> = (0..num_chunks)
-        .map(|i| pattern(CHUNK_LEN).iter().map(|b| b.wrapping_add(i as u8)).collect())
-        .collect();
-      let chunk_refs: Vec<&[u8]> = chunks.iter().map(|c| c.as_slice()).collect();
+      let mut input = vec![0u8; num_chunks * CHUNK_LEN];
+      for chunk_idx in 0..num_chunks {
+        let base = chunk_idx * CHUNK_LEN;
+        for i in 0..CHUNK_LEN {
+          input[base + i] = ((i % 251) as u8).wrapping_add(chunk_idx as u8);
+        }
+      }
 
       // Get portable reference
       let portable_kernel = kernel_for_id(Blake3KernelId::Portable);
       let mut reference_out = vec![0u8; num_chunks * OUT_LEN];
-      (portable_kernel.hash_many)(&chunk_refs, &IV, 0, true, 0, CHUNK_START, CHUNK_END, &mut reference_out);
+      // SAFETY: `input` contains `num_chunks` full chunks, and `reference_out` is `num_chunks * OUT_LEN`.
+      unsafe {
+        (portable_kernel.hash_many_contiguous)(input.as_ptr(), num_chunks, &IV, 0, 0, reference_out.as_mut_ptr());
+      }
 
       // Compare all kernels
       for &id in ALL {
@@ -309,64 +306,17 @@ mod tests {
 
         let k = kernel_for_id(id);
         let mut out = vec![0u8; num_chunks * OUT_LEN];
-        (k.hash_many)(&chunk_refs, &IV, 0, true, 0, CHUNK_START, CHUNK_END, &mut out);
+        // SAFETY: `input` contains `num_chunks` full chunks, and `out` is `num_chunks * OUT_LEN`.
+        unsafe { (k.hash_many_contiguous)(input.as_ptr(), num_chunks, &IV, 0, 0, out.as_mut_ptr()) };
 
         assert_eq!(
           out,
           reference_out,
-          "hash_many mismatch: kernel={} num_chunks={}",
+          "hash_many_contiguous mismatch: kernel={} num_chunks={}",
           id.as_str(),
           num_chunks
         );
       }
-    }
-  }
-
-  /// Ensure the contiguous throughput API matches the slice-of-slices API for
-  /// full chunks across all enabled kernels.
-  #[test]
-  fn hash_many_contiguous_matches_hash_many_full_chunks() {
-    use super::super::{CHUNK_END, CHUNK_LEN, CHUNK_START, IV, OUT_LEN};
-
-    let caps = platform::caps();
-    let num_chunks = 8usize;
-
-    // Build one contiguous buffer containing `num_chunks` full chunks.
-    let mut input = vec![0u8; num_chunks * CHUNK_LEN];
-    for (i, b) in input.iter_mut().enumerate() {
-      *b = (i % 251) as u8;
-    }
-
-    // Also expose it as chunk slices for the legacy API.
-    let mut refs = Vec::with_capacity(num_chunks);
-    for i in 0..num_chunks {
-      let start = i * CHUNK_LEN;
-      refs.push(&input[start..start + CHUNK_LEN]);
-    }
-
-    for &id in ALL {
-      if !caps.has(required_caps(id)) {
-        continue;
-      }
-      let k = kernel_for_id(id);
-
-      let mut out_many = vec![0u8; num_chunks * OUT_LEN];
-      (k.hash_many)(&refs, &IV, 0, true, 0, CHUNK_START, CHUNK_END, &mut out_many);
-
-      let mut out_contig = vec![0u8; num_chunks * OUT_LEN];
-      // SAFETY: `out_contig` is `num_chunks * OUT_LEN` bytes and
-      // `hash_many_contiguous` writes exactly that much when given a pointer
-      // to `input` and `num_chunks`.
-      unsafe {
-        (k.hash_many_contiguous)(input.as_ptr(), num_chunks, &IV, 0, 0, out_contig.as_mut_ptr());
-      }
-
-      assert_eq!(
-        out_contig,
-        out_many,
-        "hash_many_contiguous mismatch kernel={}",
-        id.as_str()
-      );
     }
   }
 }

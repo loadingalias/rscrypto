@@ -183,6 +183,174 @@ pub unsafe fn compress_ssse3(
   out
 }
 
+/// BLAKE3 compress function using AVX2-enabled codegen.
+///
+/// Note: This is still a single-block (dependency-chained) compressor. AVX2
+/// doesn't unlock extra parallelism inside the algorithm, but it does allow
+/// the compiler to use VEX-encoded integer ops and avoid AVX<->SSE transition
+/// penalties when interleaving with AVX2 throughput kernels.
+///
+/// # Safety
+/// Caller must ensure AVX2 is available.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+pub unsafe fn compress_avx2(
+  chaining_value: &[u32; 8],
+  block_words: &[u32; 16],
+  counter: u64,
+  block_len: u32,
+  flags: u32,
+) -> [u32; 16] {
+  // Load rotation shuffle masks
+  let rot16 = _mm_loadu_si128(ROT16_SHUFFLE.as_ptr().cast());
+  let rot8 = _mm_loadu_si128(ROT8_SHUFFLE.as_ptr().cast());
+
+  // Load state into 4 vectors (rows of the BLAKE3 state matrix)
+  // row0 = [v0, v1, v2, v3] = cv[0..4]
+  // row1 = [v4, v5, v6, v7] = cv[4..8]
+  // row2 = [v8, v9, v10, v11] = IV[0..4]
+  // row3 = [v12, v13, v14, v15] = [counter_lo, counter_hi, block_len, flags]
+  let mut row0 = _mm_loadu_si128(chaining_value.as_ptr().cast());
+  let mut row1 = _mm_loadu_si128(chaining_value.as_ptr().add(4).cast());
+  let mut row2 = _mm_loadu_si128(IV.as_ptr().cast());
+  let mut row3 = _mm_set_epi32(flags as i32, block_len as i32, (counter >> 32) as i32, counter as i32);
+
+  // Load message words
+  let m0 = _mm_loadu_si128(block_words.as_ptr().cast());
+  let m1 = _mm_loadu_si128(block_words.as_ptr().add(4).cast());
+  let m2 = _mm_loadu_si128(block_words.as_ptr().add(8).cast());
+  let m3 = _mm_loadu_si128(block_words.as_ptr().add(12).cast());
+
+  // Macro for the quarter-round G function on a single column
+  macro_rules! g {
+    ($a:expr, $b:expr, $c:expr, $d:expr, $mx:expr, $my:expr) => {{
+      // a = a + b + mx
+      $a = _mm_add_epi32($a, $b);
+      $a = _mm_add_epi32($a, $mx);
+      // d = (d ^ a) >>> 16
+      $d = _mm_xor_si128($d, $a);
+      $d = _mm_shuffle_epi8($d, rot16);
+      // c = c + d
+      $c = _mm_add_epi32($c, $d);
+      // b = (b ^ c) >>> 12
+      $b = _mm_xor_si128($b, $c);
+      $b = _mm_or_si128(_mm_srli_epi32($b, 12), _mm_slli_epi32($b, 20));
+      // a = a + b + my
+      $a = _mm_add_epi32($a, $b);
+      $a = _mm_add_epi32($a, $my);
+      // d = (d ^ a) >>> 8
+      $d = _mm_xor_si128($d, $a);
+      $d = _mm_shuffle_epi8($d, rot8);
+      // c = c + d
+      $c = _mm_add_epi32($c, $d);
+      // b = (b ^ c) >>> 7
+      $b = _mm_xor_si128($b, $c);
+      $b = _mm_or_si128(_mm_srli_epi32($b, 7), _mm_slli_epi32($b, 25));
+    }};
+  }
+
+  // One round: column step + diagonal step
+  macro_rules! round {
+    ($m0:expr, $m1:expr, $m2:expr, $m3:expr) => {{
+      g!(row0, row1, row2, row3, $m0, $m1);
+
+      row1 = _mm_shuffle_epi32(row1, 0b00_11_10_01); // rotate left 1
+      row2 = _mm_shuffle_epi32(row2, 0b01_00_11_10); // rotate left 2
+      row3 = _mm_shuffle_epi32(row3, 0b10_01_00_11); // rotate left 3
+
+      g!(row0, row1, row2, row3, $m2, $m3);
+
+      row1 = _mm_shuffle_epi32(row1, 0b10_01_00_11); // rotate right 1 = left 3
+      row2 = _mm_shuffle_epi32(row2, 0b01_00_11_10); // rotate right 2 = left 2
+      row3 = _mm_shuffle_epi32(row3, 0b00_11_10_01); // rotate right 3 = left 1
+    }};
+  }
+
+  let (mx0, my0, mx1, my1) = permute_round_0(m0, m1, m2, m3);
+  round!(mx0, my0, mx1, my1);
+  let (mx0, my0, mx1, my1) = permute_round_1(m0, m1, m2, m3);
+  round!(mx0, my0, mx1, my1);
+  let (mx0, my0, mx1, my1) = permute_round_2(m0, m1, m2, m3);
+  round!(mx0, my0, mx1, my1);
+  let (mx0, my0, mx1, my1) = permute_round_3(m0, m1, m2, m3);
+  round!(mx0, my0, mx1, my1);
+  let (mx0, my0, mx1, my1) = permute_round_4(m0, m1, m2, m3);
+  round!(mx0, my0, mx1, my1);
+  let (mx0, my0, mx1, my1) = permute_round_5(m0, m1, m2, m3);
+  round!(mx0, my0, mx1, my1);
+  let (mx0, my0, mx1, my1) = permute_round_6(m0, m1, m2, m3);
+  round!(mx0, my0, mx1, my1);
+
+  let cv_lo = _mm_loadu_si128(chaining_value.as_ptr().cast());
+  let cv_hi = _mm_loadu_si128(chaining_value.as_ptr().add(4).cast());
+
+  row0 = _mm_xor_si128(row0, row2);
+  row1 = _mm_xor_si128(row1, row3);
+  row2 = _mm_xor_si128(row2, cv_lo);
+  row3 = _mm_xor_si128(row3, cv_hi);
+
+  let mut out = [0u32; 16];
+  _mm_storeu_si128(out.as_mut_ptr().cast(), row0);
+  _mm_storeu_si128(out.as_mut_ptr().add(4).cast(), row1);
+  _mm_storeu_si128(out.as_mut_ptr().add(8).cast(), row2);
+  _mm_storeu_si128(out.as_mut_ptr().add(12).cast(), row3);
+  out
+}
+
+/// BLAKE3 compress function using SSE4.1-enabled codegen.
+///
+/// This is a thin wrapper around the SSSE3 row-wise compressor. SSE4.1 implies
+/// (and our dispatcher requires) SSSE3, and this keeps the per-block hot path
+/// fully SIMD without maintaining duplicate implementations.
+///
+/// # Safety
+/// Caller must ensure SSE4.1 + SSSE3 are available.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "sse4.1,ssse3")]
+pub unsafe fn compress_sse41(
+  chaining_value: &[u32; 8],
+  block_words: &[u32; 16],
+  counter: u64,
+  block_len: u32,
+  flags: u32,
+) -> [u32; 16] {
+  // SAFETY: caller guarantees SSSE3; this function is only a feature-gated entrypoint.
+  unsafe { compress_ssse3(chaining_value, block_words, counter, block_len, flags) }
+}
+
+/// SSE4.1 chunk compression: process multiple 64-byte blocks.
+///
+/// # Safety
+/// Caller must ensure SSE4.1 + SSSE3 are available.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "sse4.1,ssse3")]
+pub unsafe fn chunk_compress_blocks_sse41(
+  chaining_value: &mut [u32; 8],
+  chunk_counter: u64,
+  flags: u32,
+  blocks_compressed: &mut u8,
+  blocks: &[u8],
+) {
+  // SAFETY: caller guarantees SSSE3; forward to the SSSE3 implementation.
+  unsafe { chunk_compress_blocks_ssse3(chaining_value, chunk_counter, flags, blocks_compressed, blocks) }
+}
+
+/// SSE4.1 parent CV computation.
+///
+/// # Safety
+/// Caller must ensure SSE4.1 + SSSE3 are available.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "sse4.1,ssse3")]
+pub unsafe fn parent_cv_sse41(
+  left_child_cv: [u32; 8],
+  right_child_cv: [u32; 8],
+  key_words: [u32; 8],
+  flags: u32,
+) -> [u32; 8] {
+  // SAFETY: caller guarantees SSSE3; forward to the SSSE3 implementation.
+  unsafe { parent_cv_ssse3(left_child_cv, right_child_cv, key_words, flags) }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Message permutation helpers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -233,10 +401,10 @@ unsafe fn permute_round_1(m0: __m128i, m1: __m128i, m2: __m128i, m3: __m128i) ->
   // Schedule: [2,6,3,10,7,0,4,13,1,11,12,5,9,14,15,8]
   // Column: (2,6), (3,10), (7,0), (4,13) -> mx0=[2,3,7,4], my0=[6,10,0,13]
   // Diagonal: (1,11), (12,5), (9,14), (15,8) -> mx1=[1,12,9,15], my1=[11,5,14,8]
-  let mx0 = blend_words(m0, m1, m2, m3, 2, 3, 7, 4);
-  let my0 = blend_words(m0, m1, m2, m3, 6, 10, 0, 13);
-  let mx1 = blend_words(m0, m1, m2, m3, 1, 12, 9, 15);
-  let my1 = blend_words(m0, m1, m2, m3, 11, 5, 14, 8);
+  let mx0 = gather4::<2, 3, 7, 4>(m0, m1, m2, m3);
+  let my0 = gather4::<6, 10, 0, 13>(m0, m1, m2, m3);
+  let mx1 = gather4::<1, 12, 9, 15>(m0, m1, m2, m3);
+  let my1 = gather4::<11, 5, 14, 8>(m0, m1, m2, m3);
   (mx0, my0, mx1, my1)
 }
 
@@ -244,10 +412,10 @@ unsafe fn permute_round_1(m0: __m128i, m1: __m128i, m2: __m128i, m3: __m128i) ->
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 unsafe fn permute_round_2(m0: __m128i, m1: __m128i, m2: __m128i, m3: __m128i) -> (__m128i, __m128i, __m128i, __m128i) {
-  let mx0 = blend_words(m0, m1, m2, m3, 3, 10, 13, 7);
-  let my0 = blend_words(m0, m1, m2, m3, 4, 12, 2, 14);
-  let mx1 = blend_words(m0, m1, m2, m3, 6, 9, 11, 8);
-  let my1 = blend_words(m0, m1, m2, m3, 5, 0, 15, 1);
+  let mx0 = gather4::<3, 10, 13, 7>(m0, m1, m2, m3);
+  let my0 = gather4::<4, 12, 2, 14>(m0, m1, m2, m3);
+  let mx1 = gather4::<6, 9, 11, 8>(m0, m1, m2, m3);
+  let my1 = gather4::<5, 0, 15, 1>(m0, m1, m2, m3);
   (mx0, my0, mx1, my1)
 }
 
@@ -255,10 +423,10 @@ unsafe fn permute_round_2(m0: __m128i, m1: __m128i, m2: __m128i, m3: __m128i) ->
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 unsafe fn permute_round_3(m0: __m128i, m1: __m128i, m2: __m128i, m3: __m128i) -> (__m128i, __m128i, __m128i, __m128i) {
-  let mx0 = blend_words(m0, m1, m2, m3, 10, 12, 14, 13);
-  let my0 = blend_words(m0, m1, m2, m3, 7, 9, 3, 15);
-  let mx1 = blend_words(m0, m1, m2, m3, 4, 11, 5, 1);
-  let my1 = blend_words(m0, m1, m2, m3, 0, 2, 8, 6);
+  let mx0 = gather4::<10, 12, 14, 13>(m0, m1, m2, m3);
+  let my0 = gather4::<7, 9, 3, 15>(m0, m1, m2, m3);
+  let mx1 = gather4::<4, 11, 5, 1>(m0, m1, m2, m3);
+  let my1 = gather4::<0, 2, 8, 6>(m0, m1, m2, m3);
   (mx0, my0, mx1, my1)
 }
 
@@ -266,10 +434,10 @@ unsafe fn permute_round_3(m0: __m128i, m1: __m128i, m2: __m128i, m3: __m128i) ->
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 unsafe fn permute_round_4(m0: __m128i, m1: __m128i, m2: __m128i, m3: __m128i) -> (__m128i, __m128i, __m128i, __m128i) {
-  let mx0 = blend_words(m0, m1, m2, m3, 12, 9, 15, 14);
-  let my0 = blend_words(m0, m1, m2, m3, 13, 11, 10, 8);
-  let mx1 = blend_words(m0, m1, m2, m3, 7, 5, 0, 6);
-  let my1 = blend_words(m0, m1, m2, m3, 2, 3, 1, 4);
+  let mx0 = gather4::<12, 9, 15, 14>(m0, m1, m2, m3);
+  let my0 = gather4::<13, 11, 10, 8>(m0, m1, m2, m3);
+  let mx1 = gather4::<7, 5, 0, 6>(m0, m1, m2, m3);
+  let my1 = gather4::<2, 3, 1, 4>(m0, m1, m2, m3);
   (mx0, my0, mx1, my1)
 }
 
@@ -277,10 +445,10 @@ unsafe fn permute_round_4(m0: __m128i, m1: __m128i, m2: __m128i, m3: __m128i) ->
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 unsafe fn permute_round_5(m0: __m128i, m1: __m128i, m2: __m128i, m3: __m128i) -> (__m128i, __m128i, __m128i, __m128i) {
-  let mx0 = blend_words(m0, m1, m2, m3, 9, 11, 8, 15);
-  let my0 = blend_words(m0, m1, m2, m3, 14, 5, 12, 1);
-  let mx1 = blend_words(m0, m1, m2, m3, 13, 0, 2, 4);
-  let my1 = blend_words(m0, m1, m2, m3, 3, 10, 6, 7);
+  let mx0 = gather4::<9, 11, 8, 15>(m0, m1, m2, m3);
+  let my0 = gather4::<14, 5, 12, 1>(m0, m1, m2, m3);
+  let mx1 = gather4::<13, 0, 2, 4>(m0, m1, m2, m3);
+  let my1 = gather4::<3, 10, 6, 7>(m0, m1, m2, m3);
   (mx0, my0, mx1, my1)
 }
 
@@ -288,59 +456,53 @@ unsafe fn permute_round_5(m0: __m128i, m1: __m128i, m2: __m128i, m3: __m128i) ->
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 unsafe fn permute_round_6(m0: __m128i, m1: __m128i, m2: __m128i, m3: __m128i) -> (__m128i, __m128i, __m128i, __m128i) {
-  let mx0 = blend_words(m0, m1, m2, m3, 11, 5, 1, 8);
-  let my0 = blend_words(m0, m1, m2, m3, 15, 0, 9, 6);
-  let mx1 = blend_words(m0, m1, m2, m3, 14, 2, 3, 7);
-  let my1 = blend_words(m0, m1, m2, m3, 10, 12, 4, 13);
+  let mx0 = gather4::<11, 5, 1, 8>(m0, m1, m2, m3);
+  let my0 = gather4::<15, 0, 9, 6>(m0, m1, m2, m3);
+  let mx1 = gather4::<14, 2, 3, 7>(m0, m1, m2, m3);
+  let my1 = gather4::<10, 12, 4, 13>(m0, m1, m2, m3);
   (mx0, my0, mx1, my1)
 }
 
-/// Helper to blend 4 specific words from the message vectors.
-/// Each index is 0-15, mapping to m0[0-3], m1[4-7], m2[8-11], m3[12-15].
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
-unsafe fn blend_words(
+unsafe fn bcast_word<const I: usize>(m0: __m128i, m1: __m128i, m2: __m128i, m3: __m128i) -> __m128i {
+  debug_assert!(I < 16);
+  match I {
+    0 => _mm_shuffle_epi32(m0, 0x00),
+    1 => _mm_shuffle_epi32(m0, 0x55),
+    2 => _mm_shuffle_epi32(m0, 0xAA),
+    3 => _mm_shuffle_epi32(m0, 0xFF),
+    4 => _mm_shuffle_epi32(m1, 0x00),
+    5 => _mm_shuffle_epi32(m1, 0x55),
+    6 => _mm_shuffle_epi32(m1, 0xAA),
+    7 => _mm_shuffle_epi32(m1, 0xFF),
+    8 => _mm_shuffle_epi32(m2, 0x00),
+    9 => _mm_shuffle_epi32(m2, 0x55),
+    10 => _mm_shuffle_epi32(m2, 0xAA),
+    11 => _mm_shuffle_epi32(m2, 0xFF),
+    12 => _mm_shuffle_epi32(m3, 0x00),
+    13 => _mm_shuffle_epi32(m3, 0x55),
+    14 => _mm_shuffle_epi32(m3, 0xAA),
+    15 => _mm_shuffle_epi32(m3, 0xFF),
+    _ => core::hint::unreachable_unchecked(),
+  }
+}
+
+/// Gather 4 specific message words into one vector, without scalar extraction.
+///
+/// Output lanes are `[A, B, C, D]` (u32 lane order).
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+unsafe fn gather4<const A: usize, const B: usize, const C: usize, const D: usize>(
   m0: __m128i,
   m1: __m128i,
   m2: __m128i,
   m3: __m128i,
-  i0: usize,
-  i1: usize,
-  i2: usize,
-  i3: usize,
 ) -> __m128i {
-  // Extract individual words - this is not the most efficient but is correct
-  // A production implementation would use more clever shuffles
-  let words = [
-    _mm_extract_epi32(m0, 0) as u32,
-    _mm_extract_epi32(m0, 1) as u32,
-    _mm_extract_epi32(m0, 2) as u32,
-    _mm_extract_epi32(m0, 3) as u32,
-    _mm_extract_epi32(m1, 0) as u32,
-    _mm_extract_epi32(m1, 1) as u32,
-    _mm_extract_epi32(m1, 2) as u32,
-    _mm_extract_epi32(m1, 3) as u32,
-    _mm_extract_epi32(m2, 0) as u32,
-    _mm_extract_epi32(m2, 1) as u32,
-    _mm_extract_epi32(m2, 2) as u32,
-    _mm_extract_epi32(m2, 3) as u32,
-    _mm_extract_epi32(m3, 0) as u32,
-    _mm_extract_epi32(m3, 1) as u32,
-    _mm_extract_epi32(m3, 2) as u32,
-    _mm_extract_epi32(m3, 3) as u32,
-  ];
-  _mm_set_epi32(words[i3] as i32, words[i2] as i32, words[i1] as i32, words[i0] as i32)
-}
-
-/// Unused helper - kept for reference
-#[cfg(target_arch = "x86_64")]
-#[inline(always)]
-#[allow(dead_code)]
-unsafe fn interleave_low_high(a: __m128i, b: __m128i) -> __m128i {
-  // Interleave: [a0, a2, b0, b2]
-  let a_even = _mm_shuffle_epi32(a, 0b10_00_10_00); // [a0, a0, a2, a2]
-  let b_even = _mm_shuffle_epi32(b, 0b10_00_10_00); // [b0, b0, b2, b2]
-  _mm_unpacklo_epi32(a_even, b_even) // [a0, b0, a2, b2] - not quite right
+  debug_assert!(A < 16 && B < 16 && C < 16 && D < 16);
+  let ab = _mm_unpacklo_epi32(bcast_word::<A>(m0, m1, m2, m3), bcast_word::<B>(m0, m1, m2, m3));
+  let cd = _mm_unpacklo_epi32(bcast_word::<C>(m0, m1, m2, m3), bcast_word::<D>(m0, m1, m2, m3));
+  _mm_unpacklo_epi64(ab, cd)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -401,6 +563,114 @@ pub unsafe fn parent_cv_ssse3(
     BLOCK_LEN as u32,
     PARENT | flags,
   ))
+}
+
+/// AVX2 chunk compression: process multiple 64-byte blocks.
+///
+/// # Safety
+/// Caller must ensure AVX2 is available.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+pub unsafe fn chunk_compress_blocks_avx2(
+  chaining_value: &mut [u32; 8],
+  chunk_counter: u64,
+  flags: u32,
+  blocks_compressed: &mut u8,
+  blocks: &[u8],
+) {
+  debug_assert_eq!(blocks.len() % BLOCK_LEN, 0);
+  let (block_slices, remainder) = blocks.as_chunks::<BLOCK_LEN>();
+  debug_assert!(remainder.is_empty());
+  for block_bytes in block_slices {
+    let start = if *blocks_compressed == 0 { CHUNK_START } else { 0 };
+    let block_words = words16_from_le_bytes_64(block_bytes);
+    *chaining_value = first_8_words(compress_avx2(
+      chaining_value,
+      &block_words,
+      chunk_counter,
+      BLOCK_LEN as u32,
+      flags | start,
+    ));
+    *blocks_compressed = blocks_compressed.wrapping_add(1);
+  }
+}
+
+/// AVX2 parent CV computation.
+///
+/// # Safety
+/// Caller must ensure AVX2 is available.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+pub unsafe fn parent_cv_avx2(
+  left_child_cv: [u32; 8],
+  right_child_cv: [u32; 8],
+  key_words: [u32; 8],
+  flags: u32,
+) -> [u32; 8] {
+  let mut block_words = [0u32; 16];
+  block_words[..8].copy_from_slice(&left_child_cv);
+  block_words[8..].copy_from_slice(&right_child_cv);
+  first_8_words(compress_avx2(
+    &key_words,
+    &block_words,
+    0,
+    BLOCK_LEN as u32,
+    PARENT | flags,
+  ))
+}
+
+/// BLAKE3 compress function using AVX-512-enabled codegen.
+///
+/// Like the AVX2 entrypoint, this is still a single-block compressor. The
+/// primary benefit is avoiding transition penalties when the surrounding
+/// workload uses AVX-512 throughput kernels.
+///
+/// # Safety
+/// Caller must ensure AVX-512 + AVX2 are available.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f,avx512vl,avx2")]
+pub unsafe fn compress_avx512(
+  chaining_value: &[u32; 8],
+  block_words: &[u32; 16],
+  counter: u64,
+  block_len: u32,
+  flags: u32,
+) -> [u32; 16] {
+  // SAFETY: caller guarantees AVX2 (and thus `compress_avx2`'s requirements).
+  unsafe { compress_avx2(chaining_value, block_words, counter, block_len, flags) }
+}
+
+/// AVX-512 chunk compression: process multiple 64-byte blocks.
+///
+/// # Safety
+/// Caller must ensure AVX-512 + AVX2 are available.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f,avx512vl,avx2")]
+pub unsafe fn chunk_compress_blocks_avx512(
+  chaining_value: &mut [u32; 8],
+  chunk_counter: u64,
+  flags: u32,
+  blocks_compressed: &mut u8,
+  blocks: &[u8],
+) {
+  // SAFETY: caller guarantees AVX2; forward to the AVX2 implementation.
+  unsafe { chunk_compress_blocks_avx2(chaining_value, chunk_counter, flags, blocks_compressed, blocks) }
+}
+
+/// AVX-512 parent CV computation.
+///
+/// # Safety
+/// Caller must ensure AVX-512 + AVX2 are available.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f,avx512vl,avx2")]
+pub unsafe fn parent_cv_avx512(
+  left_child_cv: [u32; 8],
+  right_child_cv: [u32; 8],
+  key_words: [u32; 8],
+  flags: u32,
+) -> [u32; 8] {
+  // SAFETY: caller guarantees AVX2; forward to the AVX2 implementation.
+  unsafe { parent_cv_avx2(left_child_cv, right_child_cv, key_words, flags) }
 }
 
 /// Hash many contiguous full chunks using the SSSE3 single-block compressor.
