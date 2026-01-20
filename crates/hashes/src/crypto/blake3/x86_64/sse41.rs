@@ -13,6 +13,11 @@ use super::super::{BLOCK_LEN, IV, MSG_SCHEDULE};
 pub const DEGREE: usize = 4;
 
 #[inline(always)]
+unsafe fn lane0_u32(v: __m128i) -> u32 {
+  unsafe { _mm_cvtsi128_si32(v) as u32 }
+}
+
+#[inline(always)]
 unsafe fn loadu(src: *const u8) -> __m128i {
   unsafe { _mm_loadu_si128(src.cast()) }
 }
@@ -389,5 +394,107 @@ pub unsafe fn hash4(
     storeu(hi[2], out.add(5 * stride));
     storeu(lo[3], out.add(6 * stride));
     storeu(hi[3], out.add(7 * stride));
+  }
+}
+
+/// Single-block compression using the SSE4.1 vector core.
+///
+/// This computes the full 16-word compression output (both halves), matching
+/// the portable `compress` semantics.
+///
+/// # Safety
+/// Caller must ensure SSE4.1 is available.
+#[target_feature(enable = "sse4.1")]
+pub unsafe fn compress(
+  chaining_value: &[u32; 8],
+  block_words: &[u32; 16],
+  counter: u64,
+  block_len: u32,
+  flags: u32,
+) -> [u32; 16] {
+  unsafe {
+    let msg_vecs: [__m128i; 16] = [
+      set1(block_words[0]),
+      set1(block_words[1]),
+      set1(block_words[2]),
+      set1(block_words[3]),
+      set1(block_words[4]),
+      set1(block_words[5]),
+      set1(block_words[6]),
+      set1(block_words[7]),
+      set1(block_words[8]),
+      set1(block_words[9]),
+      set1(block_words[10]),
+      set1(block_words[11]),
+      set1(block_words[12]),
+      set1(block_words[13]),
+      set1(block_words[14]),
+      set1(block_words[15]),
+    ];
+
+    let mut v = [
+      set1(chaining_value[0]),
+      set1(chaining_value[1]),
+      set1(chaining_value[2]),
+      set1(chaining_value[3]),
+      set1(chaining_value[4]),
+      set1(chaining_value[5]),
+      set1(chaining_value[6]),
+      set1(chaining_value[7]),
+      set1(IV[0]),
+      set1(IV[1]),
+      set1(IV[2]),
+      set1(IV[3]),
+      set1(counter_low(counter)),
+      set1(counter_high(counter)),
+      set1(block_len),
+      set1(flags),
+    ];
+
+    round(&mut v, &msg_vecs, 0);
+    round(&mut v, &msg_vecs, 1);
+    round(&mut v, &msg_vecs, 2);
+    round(&mut v, &msg_vecs, 3);
+    round(&mut v, &msg_vecs, 4);
+    round(&mut v, &msg_vecs, 5);
+    round(&mut v, &msg_vecs, 6);
+
+    // Finalization, matching the portable `compress` output layout.
+    v[0] = xor(v[0], v[8]);
+    v[1] = xor(v[1], v[9]);
+    v[2] = xor(v[2], v[10]);
+    v[3] = xor(v[3], v[11]);
+    v[4] = xor(v[4], v[12]);
+    v[5] = xor(v[5], v[13]);
+    v[6] = xor(v[6], v[14]);
+    v[7] = xor(v[7], v[15]);
+
+    v[8] = xor(v[8], set1(chaining_value[0]));
+    v[9] = xor(v[9], set1(chaining_value[1]));
+    v[10] = xor(v[10], set1(chaining_value[2]));
+    v[11] = xor(v[11], set1(chaining_value[3]));
+    v[12] = xor(v[12], set1(chaining_value[4]));
+    v[13] = xor(v[13], set1(chaining_value[5]));
+    v[14] = xor(v[14], set1(chaining_value[6]));
+    v[15] = xor(v[15], set1(chaining_value[7]));
+
+    [
+      lane0_u32(v[0]),
+      lane0_u32(v[1]),
+      lane0_u32(v[2]),
+      lane0_u32(v[3]),
+      lane0_u32(v[4]),
+      lane0_u32(v[5]),
+      lane0_u32(v[6]),
+      lane0_u32(v[7]),
+      lane0_u32(v[8]),
+      lane0_u32(v[9]),
+      lane0_u32(v[10]),
+      lane0_u32(v[11]),
+      lane0_u32(v[12]),
+      lane0_u32(v[13]),
+      lane0_u32(v[14]),
+      lane0_u32(v[15]),
+    ]
   }
 }
