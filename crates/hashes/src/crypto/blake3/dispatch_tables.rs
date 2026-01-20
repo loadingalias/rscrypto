@@ -9,6 +9,34 @@ pub use super::kernels::Blake3KernelId as KernelId;
 
 pub const DEFAULT_BOUNDARIES: [usize; 3] = [64, 256, 4096];
 
+// A conservative "best available" SIMD kernel per target architecture.
+//
+// The runtime dispatcher (`dispatch::resolve`) will still validate CPU feature
+// availability and fall back to Portable when needed.
+#[cfg(target_arch = "x86_64")]
+const SIMD_KERNEL: KernelId = KernelId::X86Avx512;
+#[cfg(target_arch = "aarch64")]
+const SIMD_KERNEL: KernelId = KernelId::Aarch64Neon;
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+const SIMD_KERNEL: KernelId = KernelId::Portable;
+
+const DEFAULT_XS: KernelId = KernelId::Portable;
+const DEFAULT_S: KernelId = KernelId::Portable;
+const DEFAULT_M: KernelId = SIMD_KERNEL;
+const DEFAULT_L: KernelId = SIMD_KERNEL;
+
+#[inline]
+#[must_use]
+const fn default_kind_table() -> DispatchTable {
+  DispatchTable {
+    boundaries: DEFAULT_BOUNDARIES,
+    xs: DEFAULT_XS,
+    s: DEFAULT_S,
+    m: DEFAULT_M,
+    l: DEFAULT_L,
+  }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct DispatchTable {
   pub boundaries: [usize; 3],
@@ -46,61 +74,61 @@ pub static DEFAULT_TABLE: DispatchTable = DispatchTable {
 // Custom Table
 pub static CUSTOM_TABLE: DispatchTable = DEFAULT_TABLE;
 // Default Table
-pub static DEFAULT_KIND_TABLE: DispatchTable = DEFAULT_TABLE;
+pub static DEFAULT_KIND_TABLE: DispatchTable = default_kind_table();
 // Portable Table
 pub static PORTABLE_TABLE: DispatchTable = DEFAULT_TABLE;
 // Zen4 Table
-pub static ZEN4_TABLE: DispatchTable = DEFAULT_TABLE;
+pub static ZEN4_TABLE: DispatchTable = default_kind_table();
 // Zen5 Table
-pub static ZEN5_TABLE: DispatchTable = DEFAULT_TABLE;
+pub static ZEN5_TABLE: DispatchTable = default_kind_table();
 // Zen5c Table
-pub static ZEN5C_TABLE: DispatchTable = DEFAULT_TABLE;
+pub static ZEN5C_TABLE: DispatchTable = default_kind_table();
 // IntelSpr Table
-pub static INTELSPR_TABLE: DispatchTable = DEFAULT_TABLE;
+pub static INTELSPR_TABLE: DispatchTable = default_kind_table();
 // IntelGnr Table
-pub static INTELGNR_TABLE: DispatchTable = DEFAULT_TABLE;
+pub static INTELGNR_TABLE: DispatchTable = default_kind_table();
 // IntelIcl Table
-pub static INTELICL_TABLE: DispatchTable = DEFAULT_TABLE;
+pub static INTELICL_TABLE: DispatchTable = default_kind_table();
 // AppleM1M3 Table
-pub static APPLEM1M3_TABLE: DispatchTable = DEFAULT_TABLE;
+pub static APPLEM1M3_TABLE: DispatchTable = default_kind_table();
 // AppleM4 Table
-pub static APPLEM4_TABLE: DispatchTable = DEFAULT_TABLE;
+pub static APPLEM4_TABLE: DispatchTable = default_kind_table();
 // AppleM5 Table
-pub static APPLEM5_TABLE: DispatchTable = DEFAULT_TABLE;
+pub static APPLEM5_TABLE: DispatchTable = default_kind_table();
 // Graviton2 Table
-pub static GRAVITON2_TABLE: DispatchTable = DEFAULT_TABLE;
+pub static GRAVITON2_TABLE: DispatchTable = default_kind_table();
 // Graviton3 Table
-pub static GRAVITON3_TABLE: DispatchTable = DEFAULT_TABLE;
+pub static GRAVITON3_TABLE: DispatchTable = default_kind_table();
 // Graviton4 Table
-pub static GRAVITON4_TABLE: DispatchTable = DEFAULT_TABLE;
+pub static GRAVITON4_TABLE: DispatchTable = default_kind_table();
 // Graviton5 Table
-pub static GRAVITON5_TABLE: DispatchTable = DEFAULT_TABLE;
+pub static GRAVITON5_TABLE: DispatchTable = default_kind_table();
 // NeoverseN2 Table
-pub static NEOVERSEN2_TABLE: DispatchTable = DEFAULT_TABLE;
+pub static NEOVERSEN2_TABLE: DispatchTable = default_kind_table();
 // NeoverseN3 Table
-pub static NEOVERSEN3_TABLE: DispatchTable = DEFAULT_TABLE;
+pub static NEOVERSEN3_TABLE: DispatchTable = default_kind_table();
 // NeoverseV3 Table
-pub static NEOVERSEV3_TABLE: DispatchTable = DEFAULT_TABLE;
+pub static NEOVERSEV3_TABLE: DispatchTable = default_kind_table();
 // NvidiaGrace Table
-pub static NVIDIAGRACE_TABLE: DispatchTable = DEFAULT_TABLE;
+pub static NVIDIAGRACE_TABLE: DispatchTable = default_kind_table();
 // AmpereAltra Table
-pub static AMPEREALTRA_TABLE: DispatchTable = DEFAULT_TABLE;
+pub static AMPEREALTRA_TABLE: DispatchTable = default_kind_table();
 // Aarch64Pmull Table
-pub static AARCH64PMULL_TABLE: DispatchTable = DEFAULT_TABLE;
+pub static AARCH64PMULL_TABLE: DispatchTable = default_kind_table();
 // Z13 Table
-pub static Z13_TABLE: DispatchTable = DEFAULT_TABLE;
+pub static Z13_TABLE: DispatchTable = default_kind_table();
 // Z14 Table
-pub static Z14_TABLE: DispatchTable = DEFAULT_TABLE;
+pub static Z14_TABLE: DispatchTable = default_kind_table();
 // Z15 Table
-pub static Z15_TABLE: DispatchTable = DEFAULT_TABLE;
+pub static Z15_TABLE: DispatchTable = default_kind_table();
 // Power7 Table
-pub static POWER7_TABLE: DispatchTable = DEFAULT_TABLE;
+pub static POWER7_TABLE: DispatchTable = default_kind_table();
 // Power8 Table
-pub static POWER8_TABLE: DispatchTable = DEFAULT_TABLE;
+pub static POWER8_TABLE: DispatchTable = default_kind_table();
 // Power9 Table
-pub static POWER9_TABLE: DispatchTable = DEFAULT_TABLE;
+pub static POWER9_TABLE: DispatchTable = default_kind_table();
 // Power10 Table
-pub static POWER10_TABLE: DispatchTable = DEFAULT_TABLE;
+pub static POWER10_TABLE: DispatchTable = default_kind_table();
 
 #[inline]
 #[must_use]

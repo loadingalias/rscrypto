@@ -20,6 +20,8 @@ AGENTS.md
 notes
 crates/*/bench_baseline
 crates/checksum/tuning_results.txt
+crates/hashes/src/crypto/blake3/TASK.md
+crates/*/src/*/*/bench_baseline
 
 # Fuzzing
 corpus

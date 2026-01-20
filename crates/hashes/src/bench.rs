@@ -671,6 +671,16 @@ fn blake3_chunk_compress_portable(data: &[u8]) -> u64 {
   blake3_chunk_compress_kernel(crypto::blake3::kernels::Blake3KernelId::Portable, data)
 }
 
+#[cfg(target_arch = "x86_64")]
+fn blake3_chunk_compress_x86_64_ssse3(data: &[u8]) -> u64 {
+  blake3_chunk_compress_kernel(crypto::blake3::kernels::Blake3KernelId::X86Ssse3, data)
+}
+
+#[cfg(target_arch = "aarch64")]
+fn blake3_chunk_compress_aarch64_neon(data: &[u8]) -> u64 {
+  blake3_chunk_compress_kernel(crypto::blake3::kernels::Blake3KernelId::Aarch64Neon, data)
+}
+
 fn blake3_chunk_compress_auto(data: &[u8]) -> u64 {
   let dispatch = crypto::blake3::dispatch::kernel_dispatch();
   let kernel = dispatch.select(data.len());
@@ -763,6 +773,16 @@ fn blake3_parent_cv_kernel(id: crypto::blake3::kernels::Blake3KernelId, data: &[
 
 fn blake3_parent_cv_portable(data: &[u8]) -> u64 {
   blake3_parent_cv_kernel(crypto::blake3::kernels::Blake3KernelId::Portable, data)
+}
+
+#[cfg(target_arch = "x86_64")]
+fn blake3_parent_cv_x86_64_ssse3(data: &[u8]) -> u64 {
+  blake3_parent_cv_kernel(crypto::blake3::kernels::Blake3KernelId::X86Ssse3, data)
+}
+
+#[cfg(target_arch = "aarch64")]
+fn blake3_parent_cv_aarch64_neon(data: &[u8]) -> u64 {
+  blake3_parent_cv_kernel(crypto::blake3::kernels::Blake3KernelId::Aarch64Neon, data)
 }
 
 fn blake3_parent_cv_auto(data: &[u8]) -> u64 {
@@ -915,9 +935,29 @@ pub fn get_kernel(algo: &str, name: &str) -> Option<Kernel> {
       name: "portable",
       func: blake3_chunk_compress_portable,
     }),
+    #[cfg(target_arch = "x86_64")]
+    ("blake3-chunk", "x86_64/ssse3") => Some(Kernel {
+      name: "x86_64/ssse3",
+      func: blake3_chunk_compress_x86_64_ssse3,
+    }),
+    #[cfg(target_arch = "aarch64")]
+    ("blake3-chunk", "aarch64/neon") => Some(Kernel {
+      name: "aarch64/neon",
+      func: blake3_chunk_compress_aarch64_neon,
+    }),
     ("blake3-parent", "portable") => Some(Kernel {
       name: "portable",
       func: blake3_parent_cv_portable,
+    }),
+    #[cfg(target_arch = "x86_64")]
+    ("blake3-parent", "x86_64/ssse3") => Some(Kernel {
+      name: "x86_64/ssse3",
+      func: blake3_parent_cv_x86_64_ssse3,
+    }),
+    #[cfg(target_arch = "aarch64")]
+    ("blake3-parent", "aarch64/neon") => Some(Kernel {
+      name: "aarch64/neon",
+      func: blake3_parent_cv_aarch64_neon,
     }),
     ("keccakf1600-permute", "portable") => Some(Kernel {
       name: "portable",
