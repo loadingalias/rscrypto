@@ -8,7 +8,7 @@
 
 use core::arch::x86_64::*;
 
-use super::super::{BLOCK_LEN, IV, MSG_SCHEDULE, OUT_LEN};
+use super::super::{BLOCK_LEN, IV, MSG_SCHEDULE};
 
 pub const DEGREE: usize = 4;
 
@@ -214,33 +214,34 @@ unsafe fn transpose_vecs(vecs: &mut [__m128i; DEGREE]) {
 #[inline(always)]
 unsafe fn transpose_msg_vecs(inputs: &[*const u8; DEGREE], block_offset: usize) -> [__m128i; 16] {
   unsafe {
+    let stride = 4 * DEGREE;
     let mut quarter0 = [
-      loadu(inputs[0].add(block_offset + 0 * 4 * DEGREE)),
-      loadu(inputs[1].add(block_offset + 0 * 4 * DEGREE)),
-      loadu(inputs[2].add(block_offset + 0 * 4 * DEGREE)),
-      loadu(inputs[3].add(block_offset + 0 * 4 * DEGREE)),
+      loadu(inputs[0].add(block_offset)),
+      loadu(inputs[1].add(block_offset)),
+      loadu(inputs[2].add(block_offset)),
+      loadu(inputs[3].add(block_offset)),
     ];
     let mut quarter1 = [
-      loadu(inputs[0].add(block_offset + 1 * 4 * DEGREE)),
-      loadu(inputs[1].add(block_offset + 1 * 4 * DEGREE)),
-      loadu(inputs[2].add(block_offset + 1 * 4 * DEGREE)),
-      loadu(inputs[3].add(block_offset + 1 * 4 * DEGREE)),
+      loadu(inputs[0].add(block_offset + stride)),
+      loadu(inputs[1].add(block_offset + stride)),
+      loadu(inputs[2].add(block_offset + stride)),
+      loadu(inputs[3].add(block_offset + stride)),
     ];
     let mut quarter2 = [
-      loadu(inputs[0].add(block_offset + 2 * 4 * DEGREE)),
-      loadu(inputs[1].add(block_offset + 2 * 4 * DEGREE)),
-      loadu(inputs[2].add(block_offset + 2 * 4 * DEGREE)),
-      loadu(inputs[3].add(block_offset + 2 * 4 * DEGREE)),
+      loadu(inputs[0].add(block_offset + 2 * stride)),
+      loadu(inputs[1].add(block_offset + 2 * stride)),
+      loadu(inputs[2].add(block_offset + 2 * stride)),
+      loadu(inputs[3].add(block_offset + 2 * stride)),
     ];
     let mut quarter3 = [
-      loadu(inputs[0].add(block_offset + 3 * 4 * DEGREE)),
-      loadu(inputs[1].add(block_offset + 3 * 4 * DEGREE)),
-      loadu(inputs[2].add(block_offset + 3 * 4 * DEGREE)),
-      loadu(inputs[3].add(block_offset + 3 * 4 * DEGREE)),
+      loadu(inputs[0].add(block_offset + 3 * stride)),
+      loadu(inputs[1].add(block_offset + 3 * stride)),
+      loadu(inputs[2].add(block_offset + 3 * stride)),
+      loadu(inputs[3].add(block_offset + 3 * stride)),
     ];
 
-    for i in 0..DEGREE {
-      _mm_prefetch(inputs[i].wrapping_add(block_offset + 256).cast::<i8>(), _MM_HINT_T0);
+    for &input in inputs.iter() {
+      _mm_prefetch(input.wrapping_add(block_offset + 256).cast::<i8>(), _MM_HINT_T0);
     }
 
     transpose_vecs(&mut quarter0);
@@ -275,13 +276,13 @@ unsafe fn load_counters(counter: u64, increment_counter: bool) -> (__m128i, __m1
   unsafe {
     (
       set4(
-        counter_low(counter + (mask & 0)),
+        counter_low(counter),
         counter_low(counter + (mask & 1)),
         counter_low(counter + (mask & 2)),
         counter_low(counter + (mask & 3)),
       ),
       set4(
-        counter_high(counter + (mask & 0)),
+        counter_high(counter),
         counter_high(counter + (mask & 1)),
         counter_high(counter + (mask & 2)),
         counter_high(counter + (mask & 3)),
@@ -379,13 +380,14 @@ pub unsafe fn hash4(
     // After transpose, `lo[i]` and `hi[i]` each contain one u32 word from all
     // lanes. Store in the layout expected by the rest of the implementation:
     // `OUT_LEN` bytes per chunk.
-    storeu(lo[0], out.add(0 * 4 * DEGREE));
-    storeu(hi[0], out.add(1 * 4 * DEGREE));
-    storeu(lo[1], out.add(2 * 4 * DEGREE));
-    storeu(hi[1], out.add(3 * 4 * DEGREE));
-    storeu(lo[2], out.add(4 * 4 * DEGREE));
-    storeu(hi[2], out.add(5 * 4 * DEGREE));
-    storeu(lo[3], out.add(6 * 4 * DEGREE));
-    storeu(hi[3], out.add(7 * 4 * DEGREE));
+    let stride = 4 * DEGREE;
+    storeu(lo[0], out);
+    storeu(hi[0], out.add(stride));
+    storeu(lo[1], out.add(2 * stride));
+    storeu(hi[1], out.add(3 * stride));
+    storeu(lo[2], out.add(4 * stride));
+    storeu(hi[2], out.add(5 * stride));
+    storeu(lo[3], out.add(6 * stride));
+    storeu(hi[3], out.add(7 * stride));
   }
 }

@@ -171,40 +171,40 @@ unsafe fn counter_vec(counter: u64, increment_counter: bool) -> (__m512i, __m512
   let mask = if increment_counter { !0u64 } else { 0u64 };
   unsafe {
     let lo = _mm512_setr_epi32(
-      (counter_low(counter + (mask & 0)) as i32),
-      (counter_low(counter + (mask & 1)) as i32),
-      (counter_low(counter + (mask & 2)) as i32),
-      (counter_low(counter + (mask & 3)) as i32),
-      (counter_low(counter + (mask & 4)) as i32),
-      (counter_low(counter + (mask & 5)) as i32),
-      (counter_low(counter + (mask & 6)) as i32),
-      (counter_low(counter + (mask & 7)) as i32),
-      (counter_low(counter + (mask & 8)) as i32),
-      (counter_low(counter + (mask & 9)) as i32),
-      (counter_low(counter + (mask & 10)) as i32),
-      (counter_low(counter + (mask & 11)) as i32),
-      (counter_low(counter + (mask & 12)) as i32),
-      (counter_low(counter + (mask & 13)) as i32),
-      (counter_low(counter + (mask & 14)) as i32),
-      (counter_low(counter + (mask & 15)) as i32),
+      counter_low(counter) as i32,
+      counter_low(counter + (mask & 1)) as i32,
+      counter_low(counter + (mask & 2)) as i32,
+      counter_low(counter + (mask & 3)) as i32,
+      counter_low(counter + (mask & 4)) as i32,
+      counter_low(counter + (mask & 5)) as i32,
+      counter_low(counter + (mask & 6)) as i32,
+      counter_low(counter + (mask & 7)) as i32,
+      counter_low(counter + (mask & 8)) as i32,
+      counter_low(counter + (mask & 9)) as i32,
+      counter_low(counter + (mask & 10)) as i32,
+      counter_low(counter + (mask & 11)) as i32,
+      counter_low(counter + (mask & 12)) as i32,
+      counter_low(counter + (mask & 13)) as i32,
+      counter_low(counter + (mask & 14)) as i32,
+      counter_low(counter + (mask & 15)) as i32,
     );
     let hi = _mm512_setr_epi32(
-      (counter_high(counter + (mask & 0)) as i32),
-      (counter_high(counter + (mask & 1)) as i32),
-      (counter_high(counter + (mask & 2)) as i32),
-      (counter_high(counter + (mask & 3)) as i32),
-      (counter_high(counter + (mask & 4)) as i32),
-      (counter_high(counter + (mask & 5)) as i32),
-      (counter_high(counter + (mask & 6)) as i32),
-      (counter_high(counter + (mask & 7)) as i32),
-      (counter_high(counter + (mask & 8)) as i32),
-      (counter_high(counter + (mask & 9)) as i32),
-      (counter_high(counter + (mask & 10)) as i32),
-      (counter_high(counter + (mask & 11)) as i32),
-      (counter_high(counter + (mask & 12)) as i32),
-      (counter_high(counter + (mask & 13)) as i32),
-      (counter_high(counter + (mask & 14)) as i32),
-      (counter_high(counter + (mask & 15)) as i32),
+      counter_high(counter) as i32,
+      counter_high(counter + (mask & 1)) as i32,
+      counter_high(counter + (mask & 2)) as i32,
+      counter_high(counter + (mask & 3)) as i32,
+      counter_high(counter + (mask & 4)) as i32,
+      counter_high(counter + (mask & 5)) as i32,
+      counter_high(counter + (mask & 6)) as i32,
+      counter_high(counter + (mask & 7)) as i32,
+      counter_high(counter + (mask & 8)) as i32,
+      counter_high(counter + (mask & 9)) as i32,
+      counter_high(counter + (mask & 10)) as i32,
+      counter_high(counter + (mask & 11)) as i32,
+      counter_high(counter + (mask & 12)) as i32,
+      counter_high(counter + (mask & 13)) as i32,
+      counter_high(counter + (mask & 14)) as i32,
+      counter_high(counter + (mask & 15)) as i32,
     );
     (lo, hi)
   }
@@ -263,8 +263,8 @@ pub unsafe fn hash16_contiguous(input: *const u8, key: &[u32; 8], counter: u64, 
       // Gather message words across 16 chunks.
       let block_word_base: i32 = (block * (BLOCK_LEN / 4)) as i32;
       let lane_base = _mm512_setr_epi32(
-        0 * stride_words,
-        1 * stride_words,
+        0,
+        stride_words,
         2 * stride_words,
         3 * stride_words,
         4 * stride_words,
@@ -282,9 +282,9 @@ pub unsafe fn hash16_contiguous(input: *const u8, key: &[u32; 8], counter: u64, 
       );
 
       let mut m = [set1(0); 16];
-      for word in 0..16 {
+      for (word, m_word) in m.iter_mut().enumerate() {
         let idx = _mm512_add_epi32(lane_base, _mm512_set1_epi32(block_word_base + word as i32));
-        m[word] = _mm512_i32gather_epi32(idx, input_words, 4);
+        *m_word = _mm512_i32gather_epi32(idx, input_words, 4);
       }
 
       let mut v = [
@@ -328,8 +328,8 @@ pub unsafe fn hash16_contiguous(input: *const u8, key: &[u32; 8], counter: u64, 
     // Output stride is OUT_LEN bytes = 8 u32 words per chunk.
     let out_stride_words: i32 = (OUT_LEN / 4) as i32;
     let out_lane_base = _mm512_setr_epi32(
-      0 * out_stride_words,
-      1 * out_stride_words,
+      0,
+      out_stride_words,
       2 * out_stride_words,
       3 * out_stride_words,
       4 * out_stride_words,
@@ -346,9 +346,9 @@ pub unsafe fn hash16_contiguous(input: *const u8, key: &[u32; 8], counter: u64, 
       15 * out_stride_words,
     );
 
-    for word in 0..8 {
+    for (word, &word_vec) in h_vecs.iter().enumerate() {
       let idx = _mm512_add_epi32(out_lane_base, _mm512_set1_epi32(word as i32));
-      _mm512_i32scatter_epi32(out_words, idx, h_vecs[word], 4);
+      _mm512_i32scatter_epi32(out_words, idx, word_vec, 4);
     }
   }
 }
