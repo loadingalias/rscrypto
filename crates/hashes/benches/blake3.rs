@@ -3,8 +3,7 @@
 //! This benchmark file focuses exclusively on BLAKE3 to enable detailed
 //! performance analysis and comparison with the official blake3 crate.
 
-use core::hint::black_box;
-use std::time::Duration;
+use core::{hint::black_box, time::Duration};
 
 use criterion::{BenchmarkId, Criterion, SamplingMode, Throughput, criterion_group, criterion_main};
 use hashes::crypto::Blake3;

@@ -153,10 +153,12 @@ unsafe fn transpose_vecs(vecs: &mut [uint32x4_t; 4]) {
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
 unsafe fn load_msg_vecs_transposed(inputs: [*const u8; 4], block_offset: usize, block_len: usize) -> [uint32x4_t; 16] {
-  debug_assert!(
-    cfg!(target_endian = "little"),
-    "aarch64 NEON implementation assumes little-endian"
-  );
+  const {
+    assert!(
+      cfg!(target_endian = "little"),
+      "aarch64 NEON implementation assumes little-endian"
+    );
+  }
 
   #[inline(always)]
   unsafe fn loadu_128(src: *const u8) -> uint32x4_t {
@@ -178,7 +180,7 @@ unsafe fn load_msg_vecs_transposed(inputs: [*const u8; 4], block_offset: usize, 
         loadu_128(inputs[3].add(off)),
       ];
       transpose_vecs(&mut vecs);
-      out[lane_block * 4 + 0] = vecs[0];
+      out[lane_block * 4] = vecs[0];
       out[lane_block * 4 + 1] = vecs[1];
       out[lane_block * 4 + 2] = vecs[2];
       out[lane_block * 4 + 3] = vecs[3];
@@ -528,35 +530,23 @@ unsafe fn round4(v: &mut [uint32x4_t; 16], m: &[uint32x4_t; 16], r: usize) {
   // `r` is always 0..7 in all callers.
   debug_assert!(r < MSG_SCHEDULE.len());
   // Avoid bounds checks when indexing `m` with schedule-driven indices.
+  // SAFETY: `r < MSG_SCHEDULE.len()` (asserted above).
   let s = unsafe { MSG_SCHEDULE.get_unchecked(r) };
 
   // Column step: G(0,4,8,12), G(1,5,9,13), G(2,6,10,14), G(3,7,11,15)
-  g4(v, 0, 4, 8, 12, unsafe { *m.get_unchecked(s[0]) }, unsafe {
-    *m.get_unchecked(s[1])
-  });
-  g4(v, 1, 5, 9, 13, unsafe { *m.get_unchecked(s[2]) }, unsafe {
-    *m.get_unchecked(s[3])
-  });
-  g4(v, 2, 6, 10, 14, unsafe { *m.get_unchecked(s[4]) }, unsafe {
-    *m.get_unchecked(s[5])
-  });
-  g4(v, 3, 7, 11, 15, unsafe { *m.get_unchecked(s[6]) }, unsafe {
-    *m.get_unchecked(s[7])
-  });
+  // SAFETY: `s` contains fixed schedule indices in 0..16, and `m` is `[T; 16]`.
+  unsafe {
+    g4(v, 0, 4, 8, 12, *m.get_unchecked(s[0]), *m.get_unchecked(s[1]));
+    g4(v, 1, 5, 9, 13, *m.get_unchecked(s[2]), *m.get_unchecked(s[3]));
+    g4(v, 2, 6, 10, 14, *m.get_unchecked(s[4]), *m.get_unchecked(s[5]));
+    g4(v, 3, 7, 11, 15, *m.get_unchecked(s[6]), *m.get_unchecked(s[7]));
 
-  // Diagonal step: G(0,5,10,15), G(1,6,11,12), G(2,7,8,13), G(3,4,9,14)
-  g4(v, 0, 5, 10, 15, unsafe { *m.get_unchecked(s[8]) }, unsafe {
-    *m.get_unchecked(s[9])
-  });
-  g4(v, 1, 6, 11, 12, unsafe { *m.get_unchecked(s[10]) }, unsafe {
-    *m.get_unchecked(s[11])
-  });
-  g4(v, 2, 7, 8, 13, unsafe { *m.get_unchecked(s[12]) }, unsafe {
-    *m.get_unchecked(s[13])
-  });
-  g4(v, 3, 4, 9, 14, unsafe { *m.get_unchecked(s[14]) }, unsafe {
-    *m.get_unchecked(s[15])
-  });
+    // Diagonal step: G(0,5,10,15), G(1,6,11,12), G(2,7,8,13), G(3,4,9,14)
+    g4(v, 0, 5, 10, 15, *m.get_unchecked(s[8]), *m.get_unchecked(s[9]));
+    g4(v, 1, 6, 11, 12, *m.get_unchecked(s[10]), *m.get_unchecked(s[11]));
+    g4(v, 2, 7, 8, 13, *m.get_unchecked(s[12]), *m.get_unchecked(s[13]));
+    g4(v, 3, 4, 9, 14, *m.get_unchecked(s[14]), *m.get_unchecked(s[15]));
+  }
 }
 
 /// Hash 4 complete chunks in parallel.
@@ -582,7 +572,7 @@ pub unsafe fn hash4_neon(
   debug_assert!(input_len > 0);
   debug_assert!(input_len <= CHUNK_LEN);
 
-  let num_blocks = (input_len + BLOCK_LEN - 1) / BLOCK_LEN;
+  let num_blocks = input_len.div_ceil(BLOCK_LEN);
 
   #[inline(always)]
   unsafe fn storeu_128(src: uint32x4_t, dest: *mut u8) {
@@ -633,7 +623,7 @@ pub unsafe fn hash4_neon(
     let is_last = block_idx == num_blocks - 1;
 
     // Calculate block length for last block
-    let block_len = if is_last && (input_len % BLOCK_LEN != 0) {
+    let block_len = if is_last && !input_len.is_multiple_of(BLOCK_LEN) {
       (input_len % BLOCK_LEN) as u32
     } else {
       BLOCK_LEN as u32
@@ -770,7 +760,7 @@ pub unsafe fn hash_many_neon(
     let input = inputs[input_idx];
     let mut cv = *key;
 
-    let num_blocks = (input.len() + BLOCK_LEN - 1) / BLOCK_LEN;
+    let num_blocks = input.len().div_ceil(BLOCK_LEN);
 
     for block_idx in 0..num_blocks {
       let block_offset = block_idx * BLOCK_LEN;
@@ -833,12 +823,15 @@ pub unsafe fn hash_many_contiguous_neon(
   let mut idx = 0usize;
 
   while idx + 4 <= num_chunks {
-    let input_ptrs = [
-      unsafe { input.add((idx + 0) * CHUNK_LEN) },
-      unsafe { input.add((idx + 1) * CHUNK_LEN) },
-      unsafe { input.add((idx + 2) * CHUNK_LEN) },
-      unsafe { input.add((idx + 3) * CHUNK_LEN) },
-    ];
+    // SAFETY: caller guarantees `input` is valid for `num_chunks * CHUNK_LEN`.
+    let input_ptrs = unsafe {
+      [
+        input.add(idx * CHUNK_LEN),
+        input.add((idx + 1) * CHUNK_LEN),
+        input.add((idx + 2) * CHUNK_LEN),
+        input.add((idx + 3) * CHUNK_LEN),
+      ]
+    };
 
     // SAFETY: the caller guarantees `out` is valid for `num_chunks * OUT_LEN`
     // bytes. Here we write exactly `4 * OUT_LEN` bytes starting at
@@ -869,17 +862,20 @@ pub unsafe fn hash_many_contiguous_neon(
   // it's better to run one extra (duplicate) lane than to fall back to the
   // scalar compressor for most streaming workloads (notably 4096B updates).
   if remaining >= 2 {
-    let last_ptr = unsafe { input.add((idx + remaining - 1) * CHUNK_LEN) };
-    let input_ptrs = [
-      unsafe { input.add((idx + 0) * CHUNK_LEN) },
-      unsafe { input.add((idx + 1) * CHUNK_LEN) },
-      if remaining >= 3 {
-        unsafe { input.add((idx + 2) * CHUNK_LEN) }
-      } else {
-        last_ptr
-      },
-      last_ptr,
-    ];
+    // SAFETY: caller guarantees `input` is valid for `num_chunks * CHUNK_LEN`.
+    let input_ptrs = unsafe {
+      let last_ptr = input.add((idx + remaining - 1) * CHUNK_LEN);
+      [
+        input.add(idx * CHUNK_LEN),
+        input.add((idx + 1) * CHUNK_LEN),
+        if remaining >= 3 {
+          input.add((idx + 2) * CHUNK_LEN)
+        } else {
+          last_ptr
+        },
+        last_ptr,
+      ]
+    };
 
     let mut out_buf = [[0u8; OUT_LEN]; 4];
     hash4_neon(
@@ -894,8 +890,10 @@ pub unsafe fn hash_many_contiguous_neon(
       &mut out_buf,
     );
 
-    for lane in 0..remaining {
-      unsafe { core::ptr::copy_nonoverlapping(out_buf[lane].as_ptr(), out.add((idx + lane) * OUT_LEN), OUT_LEN) };
+    for (lane, lane_out) in out_buf.iter().take(remaining).enumerate() {
+      // SAFETY: `lane < remaining` and `remaining <= num_chunks - idx`, so
+      // `out.add((idx + lane) * OUT_LEN)` stays within `num_chunks * OUT_LEN`.
+      unsafe { core::ptr::copy_nonoverlapping(lane_out.as_ptr(), out.add((idx + lane) * OUT_LEN), OUT_LEN) };
     }
     return;
   }
@@ -905,9 +903,11 @@ pub unsafe fn hash_many_contiguous_neon(
   debug_assert_eq!(remaining, 1);
   let mut cv = *key;
   for block_idx in 0..(CHUNK_LEN / BLOCK_LEN) {
-    let src = unsafe { input.add(idx * CHUNK_LEN + block_idx * BLOCK_LEN) };
     // SAFETY: caller guarantees `input` is valid for `num_chunks * CHUNK_LEN`.
-    let block_bytes: &[u8; BLOCK_LEN] = unsafe { &*(src as *const [u8; BLOCK_LEN]) };
+    let block_bytes: &[u8; BLOCK_LEN] = unsafe {
+      let src = input.add(idx * CHUNK_LEN + block_idx * BLOCK_LEN);
+      &*(src as *const [u8; BLOCK_LEN])
+    };
     let block_words = words16_from_le_bytes_64(block_bytes);
 
     let start = if block_idx == 0 { CHUNK_START } else { 0 };
@@ -927,6 +927,7 @@ pub unsafe fn hash_many_contiguous_neon(
 
   for (j, &word) in cv.iter().enumerate() {
     let bytes = word.to_le_bytes();
+    // SAFETY: caller guarantees `out` is valid for `num_chunks * OUT_LEN`.
     unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), out.add(idx * OUT_LEN + j * 4), 4) };
   }
 }

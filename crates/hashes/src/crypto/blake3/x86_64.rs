@@ -13,6 +13,7 @@
 #![allow(clippy::inline_always)]
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::many_single_char_names)]
+#![allow(clippy::undocumented_unsafe_blocks)]
 
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::*;

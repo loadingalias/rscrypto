@@ -551,7 +551,10 @@ fn root_output_oneshot(kernel: Kernel, key_words: [u32; 8], flags: u32, input: &
   } else {
     // `input.len() > CHUNK_LEN` implies there are at least 2 chunks total, so
     // the root output is always derived from parent nodes rather than a chunk.
-    last_full_chunk_cv.expect("missing last full chunk cv")
+    match last_full_chunk_cv {
+      Some(cv) => cv,
+      None => unreachable!("missing last full chunk cv"),
+    }
   };
 
   let mut parent_nodes_remaining = cv_stack_len;
@@ -699,11 +702,11 @@ impl Blake3 {
     // stored the last full chunk's CV instead of keeping a fully-buffered
     // `ChunkState`. As soon as more input arrives, that chunk is no longer
     // terminal and can be committed to the tree.
-    if !input.is_empty() {
-      if let Some(cv) = self.pending_chunk_cv.take() {
-        let total_chunks = self.chunk_state.chunk_counter;
-        self.add_chunk_chaining_value(cv, total_chunks);
-      }
+    if !input.is_empty()
+      && let Some(cv) = self.pending_chunk_cv.take()
+    {
+      let total_chunks = self.chunk_state.chunk_counter;
+      self.add_chunk_chaining_value(cv, total_chunks);
     }
 
     // When we're at a chunk boundary and we have more than one whole chunk

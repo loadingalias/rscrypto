@@ -399,9 +399,11 @@ unsafe fn hash_many_contiguous_portable(
 
     for block_idx in 0..(CHUNK_LEN / BLOCK_LEN) {
       let mut block = [0u8; BLOCK_LEN];
-      let src = unsafe { input.add(chunk_idx * CHUNK_LEN + block_idx * BLOCK_LEN) };
-      // SAFETY: caller guarantees input is valid for `num_chunks * CHUNK_LEN`.
-      unsafe { core::ptr::copy_nonoverlapping(src, block.as_mut_ptr(), BLOCK_LEN) };
+      // SAFETY: caller guarantees `input` is valid for `num_chunks * CHUNK_LEN`.
+      unsafe {
+        let src = input.add(chunk_idx * CHUNK_LEN + block_idx * BLOCK_LEN);
+        core::ptr::copy_nonoverlapping(src, block.as_mut_ptr(), BLOCK_LEN);
+      }
       let block_words = words16_from_le_bytes_64(&block);
 
       let start = if block_idx == 0 { CHUNK_START } else { 0 };
@@ -429,6 +431,7 @@ unsafe fn hash_many_contiguous_portable(
 }
 
 /// Portable hash_many: processes chunks one at a time (no SIMD parallelism).
+#[allow(clippy::too_many_arguments)]
 fn hash_many_portable(
   inputs: &[&[u8]],
   key: &[u32; 8],
@@ -457,7 +460,7 @@ fn hash_many_portable(
     }
 
     let mut cv = *key;
-    let num_blocks = (input.len() + BLOCK_LEN - 1) / BLOCK_LEN;
+    let num_blocks = input.len().div_ceil(BLOCK_LEN);
 
     for block_idx in 0..num_blocks {
       let block_offset = block_idx * BLOCK_LEN;
@@ -537,6 +540,7 @@ fn parent_cv_ssse3_wrapper(
 }
 
 #[cfg(target_arch = "x86_64")]
+#[allow(clippy::too_many_arguments)]
 fn hash_many_ssse3_wrapper(
   inputs: &[&[u8]],
   key: &[u32; 8],
@@ -571,6 +575,7 @@ unsafe fn hash_many_contiguous_ssse3_wrapper(
   out: *mut u8,
 ) {
   // For now, process chunks serially using the SSSE3 single-block compressor.
+  // SAFETY: This function is only called when SSSE3 is available (checked by dispatch).
   unsafe { super::x86_64::hash_many_contiguous_ssse3(input, num_chunks, key, counter, flags, out) }
 }
 
@@ -579,6 +584,7 @@ unsafe fn hash_many_contiguous_ssse3_wrapper(
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_arch = "x86_64")]
+#[allow(clippy::too_many_arguments)]
 fn hash_many_sse41_wrapper(
   inputs: &[&[u8]],
   key: &[u32; 8],
@@ -662,12 +668,19 @@ unsafe fn hash_many_contiguous_sse41_wrapper(
 ) {
   let mut input = input;
   while num_chunks >= super::x86_64::sse41::DEGREE {
-    let ptrs = [
-      input,
-      input.add(CHUNK_LEN),
-      input.add(2 * CHUNK_LEN),
-      input.add(3 * CHUNK_LEN),
-    ];
+    // SAFETY: `num_chunks >= DEGREE` means there are at least `DEGREE` full
+    // chunks remaining. The caller guarantees `input` is valid for the full
+    // input buffer, so each `input.add(k * CHUNK_LEN)` stays in-bounds.
+    let ptrs = unsafe {
+      [
+        input,
+        input.add(CHUNK_LEN),
+        input.add(2 * CHUNK_LEN),
+        input.add(3 * CHUNK_LEN),
+      ]
+    };
+    // SAFETY: dispatch selects this kernel only when SSE4.1 is available; the
+    // caller guarantees `input`/`out` cover the full `num_chunks` buffer.
     unsafe {
       super::x86_64::sse41::hash4(
         &ptrs,
@@ -679,20 +692,24 @@ unsafe fn hash_many_contiguous_sse41_wrapper(
         CHUNK_START,
         super::CHUNK_END,
         out,
-      )
-    };
-    input = unsafe { input.add(super::x86_64::sse41::DEGREE * CHUNK_LEN) };
-    out = unsafe { out.add(super::x86_64::sse41::DEGREE * OUT_LEN) };
+      );
+      input = input.add(super::x86_64::sse41::DEGREE * CHUNK_LEN);
+      out = out.add(super::x86_64::sse41::DEGREE * OUT_LEN);
+    }
     counter = counter.wrapping_add(super::x86_64::sse41::DEGREE as u64);
     num_chunks -= super::x86_64::sse41::DEGREE;
   }
 
   if num_chunks != 0 {
+    // SAFETY: the remaining chunk pointers are in-bounds for the caller's
+    // `input`/`out` buffer, and the portable implementation writes `OUT_LEN`
+    // bytes per chunk.
     unsafe { hash_many_contiguous_portable(input, num_chunks, key, counter, flags, out) };
   }
 }
 
 #[cfg(target_arch = "x86_64")]
+#[allow(clippy::too_many_arguments)]
 fn hash_many_avx2_wrapper(
   inputs: &[&[u8]],
   key: &[u32; 8],
@@ -732,6 +749,7 @@ fn hash_many_avx2_wrapper(
       inputs[in_idx + 6].as_ptr(),
       inputs[in_idx + 7].as_ptr(),
     ];
+    // SAFETY: dispatch validates CPU caps; inputs are full chunks; out is sized.
     unsafe {
       super::x86_64::avx2::hash8(
         &ptrs,
@@ -777,16 +795,23 @@ unsafe fn hash_many_contiguous_avx2_wrapper(
 ) {
   let mut input = input;
   while num_chunks >= super::x86_64::avx2::DEGREE {
-    let ptrs = [
-      input,
-      input.add(CHUNK_LEN),
-      input.add(2 * CHUNK_LEN),
-      input.add(3 * CHUNK_LEN),
-      input.add(4 * CHUNK_LEN),
-      input.add(5 * CHUNK_LEN),
-      input.add(6 * CHUNK_LEN),
-      input.add(7 * CHUNK_LEN),
-    ];
+    // SAFETY: `num_chunks >= DEGREE` means there are at least `DEGREE` full
+    // chunks remaining. The caller guarantees `input` is valid for the full
+    // input buffer, so each `input.add(k * CHUNK_LEN)` stays in-bounds.
+    let ptrs = unsafe {
+      [
+        input,
+        input.add(CHUNK_LEN),
+        input.add(2 * CHUNK_LEN),
+        input.add(3 * CHUNK_LEN),
+        input.add(4 * CHUNK_LEN),
+        input.add(5 * CHUNK_LEN),
+        input.add(6 * CHUNK_LEN),
+        input.add(7 * CHUNK_LEN),
+      ]
+    };
+    // SAFETY: dispatch selects this kernel only when AVX2 is available; the
+    // caller guarantees `input`/`out` cover the full `num_chunks` buffer.
     unsafe {
       super::x86_64::avx2::hash8(
         &ptrs,
@@ -798,20 +823,23 @@ unsafe fn hash_many_contiguous_avx2_wrapper(
         CHUNK_START,
         super::CHUNK_END,
         out,
-      )
-    };
-    input = unsafe { input.add(super::x86_64::avx2::DEGREE * CHUNK_LEN) };
-    out = unsafe { out.add(super::x86_64::avx2::DEGREE * OUT_LEN) };
+      );
+      input = input.add(super::x86_64::avx2::DEGREE * CHUNK_LEN);
+      out = out.add(super::x86_64::avx2::DEGREE * OUT_LEN);
+    }
     counter = counter.wrapping_add(super::x86_64::avx2::DEGREE as u64);
     num_chunks -= super::x86_64::avx2::DEGREE;
   }
 
   if num_chunks != 0 {
+    // SAFETY: the remaining chunk pointers are in-bounds for the caller's
+    // `input`/`out` buffer, and SSE4.1 is always available when AVX2 is.
     unsafe { hash_many_contiguous_sse41_wrapper(input, num_chunks, key, counter, flags, out) };
   }
 }
 
 #[cfg(target_arch = "x86_64")]
+#[allow(clippy::too_many_arguments)]
 fn hash_many_avx512_wrapper(
   inputs: &[&[u8]],
   key: &[u32; 8],
@@ -846,14 +874,20 @@ unsafe fn hash_many_contiguous_avx512_wrapper(
 ) {
   let mut input = input;
   while num_chunks >= super::x86_64::avx512::DEGREE {
-    unsafe { super::x86_64::avx512::hash16_contiguous(input, key, counter, flags, out) };
-    input = unsafe { input.add(super::x86_64::avx512::DEGREE * CHUNK_LEN) };
-    out = unsafe { out.add(super::x86_64::avx512::DEGREE * OUT_LEN) };
+    // SAFETY: dispatch selects this kernel only when AVX-512 is available; the
+    // caller guarantees `input`/`out` cover the full `num_chunks` buffer.
+    unsafe {
+      super::x86_64::avx512::hash16_contiguous(input, key, counter, flags, out);
+      input = input.add(super::x86_64::avx512::DEGREE * CHUNK_LEN);
+      out = out.add(super::x86_64::avx512::DEGREE * OUT_LEN);
+    }
     counter = counter.wrapping_add(super::x86_64::avx512::DEGREE as u64);
     num_chunks -= super::x86_64::avx512::DEGREE;
   }
 
   if num_chunks != 0 {
+    // SAFETY: the remaining chunk pointers are in-bounds for the caller's
+    // `input`/`out` buffer, and AVX2 is available when AVX-512 is.
     unsafe { hash_many_contiguous_avx2_wrapper(input, num_chunks, key, counter, flags, out) };
   }
 }
@@ -901,6 +935,7 @@ fn parent_cv_neon_wrapper(
 }
 
 #[cfg(target_arch = "aarch64")]
+#[allow(clippy::too_many_arguments)]
 fn hash_many_neon_wrapper(
   inputs: &[&[u8]],
   key: &[u32; 8],

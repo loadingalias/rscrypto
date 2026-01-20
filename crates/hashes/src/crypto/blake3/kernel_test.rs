@@ -354,6 +354,9 @@ mod tests {
       (k.hash_many)(&refs, &IV, 0, true, 0, CHUNK_START, CHUNK_END, &mut out_many);
 
       let mut out_contig = vec![0u8; num_chunks * OUT_LEN];
+      // SAFETY: `out_contig` is `num_chunks * OUT_LEN` bytes and
+      // `hash_many_contiguous` writes exactly that much when given a pointer
+      // to `input` and `num_chunks`.
       unsafe {
         (k.hash_many_contiguous)(input.as_ptr(), num_chunks, &IV, 0, 0, out_contig.as_mut_ptr());
       }
