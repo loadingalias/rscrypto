@@ -197,9 +197,9 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
     #[cfg(target_arch = "x86_64")]
     Blake3KernelId::X86Sse41 => Kernel {
       id,
-      compress: compress_ssse3_wrapper,
-      chunk_compress_blocks: chunk_compress_blocks_ssse3_wrapper,
-      parent_cv: parent_cv_ssse3_wrapper,
+      compress: compress_sse41_wrapper,
+      chunk_compress_blocks: chunk_compress_blocks_sse41_wrapper,
+      parent_cv: parent_cv_sse41_wrapper,
       hash_many: hash_many_sse41_wrapper,
       hash_many_contiguous: hash_many_contiguous_sse41_wrapper,
       simd_degree: 4,
@@ -208,9 +208,9 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
     #[cfg(target_arch = "x86_64")]
     Blake3KernelId::X86Avx2 => Kernel {
       id,
-      compress: compress_ssse3_wrapper,
-      chunk_compress_blocks: chunk_compress_blocks_ssse3_wrapper,
-      parent_cv: parent_cv_ssse3_wrapper,
+      compress: compress_sse41_wrapper,
+      chunk_compress_blocks: chunk_compress_blocks_sse41_wrapper,
+      parent_cv: parent_cv_sse41_wrapper,
       hash_many: hash_many_avx2_wrapper,
       hash_many_contiguous: hash_many_contiguous_avx2_wrapper,
       simd_degree: 8,
@@ -219,9 +219,9 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
     #[cfg(target_arch = "x86_64")]
     Blake3KernelId::X86Avx512 => Kernel {
       id,
-      compress: compress_ssse3_wrapper,
-      chunk_compress_blocks: chunk_compress_blocks_ssse3_wrapper,
-      parent_cv: parent_cv_ssse3_wrapper,
+      compress: compress_sse41_wrapper,
+      chunk_compress_blocks: chunk_compress_blocks_sse41_wrapper,
+      parent_cv: parent_cv_sse41_wrapper,
       hash_many: hash_many_avx512_wrapper,
       hash_many_contiguous: hash_many_contiguous_avx512_wrapper,
       simd_degree: 16,
@@ -264,15 +264,15 @@ pub(crate) fn chunk_compress_blocks_inline(
     }
     #[cfg(target_arch = "x86_64")]
     Blake3KernelId::X86Sse41 => {
-      chunk_compress_blocks_ssse3_wrapper(chaining_value, chunk_counter, flags, blocks_compressed, blocks)
+      chunk_compress_blocks_sse41_wrapper(chaining_value, chunk_counter, flags, blocks_compressed, blocks)
     }
     #[cfg(target_arch = "x86_64")]
     Blake3KernelId::X86Avx2 => {
-      chunk_compress_blocks_ssse3_wrapper(chaining_value, chunk_counter, flags, blocks_compressed, blocks)
+      chunk_compress_blocks_sse41_wrapper(chaining_value, chunk_counter, flags, blocks_compressed, blocks)
     }
     #[cfg(target_arch = "x86_64")]
     Blake3KernelId::X86Avx512 => {
-      chunk_compress_blocks_ssse3_wrapper(chaining_value, chunk_counter, flags, blocks_compressed, blocks)
+      chunk_compress_blocks_sse41_wrapper(chaining_value, chunk_counter, flags, blocks_compressed, blocks)
     }
     #[cfg(target_arch = "aarch64")]
     Blake3KernelId::Aarch64Neon => {
@@ -294,11 +294,11 @@ pub(crate) fn parent_cv_inline(
     #[cfg(target_arch = "x86_64")]
     Blake3KernelId::X86Ssse3 => parent_cv_ssse3_wrapper(left_child_cv, right_child_cv, key_words, flags),
     #[cfg(target_arch = "x86_64")]
-    Blake3KernelId::X86Sse41 => parent_cv_ssse3_wrapper(left_child_cv, right_child_cv, key_words, flags),
+    Blake3KernelId::X86Sse41 => parent_cv_sse41_wrapper(left_child_cv, right_child_cv, key_words, flags),
     #[cfg(target_arch = "x86_64")]
-    Blake3KernelId::X86Avx2 => parent_cv_ssse3_wrapper(left_child_cv, right_child_cv, key_words, flags),
+    Blake3KernelId::X86Avx2 => parent_cv_sse41_wrapper(left_child_cv, right_child_cv, key_words, flags),
     #[cfg(target_arch = "x86_64")]
-    Blake3KernelId::X86Avx512 => parent_cv_ssse3_wrapper(left_child_cv, right_child_cv, key_words, flags),
+    Blake3KernelId::X86Avx512 => parent_cv_sse41_wrapper(left_child_cv, right_child_cv, key_words, flags),
     #[cfg(target_arch = "aarch64")]
     Blake3KernelId::Aarch64Neon => parent_cv_portable(left_child_cv, right_child_cv, key_words, flags),
   }
@@ -537,6 +537,67 @@ fn parent_cv_ssse3_wrapper(
 ) -> [u32; 8] {
   // SAFETY: This function is only called when SSSE3 is available (checked by dispatch).
   unsafe { super::x86_64::parent_cv_ssse3(left_child_cv, right_child_cv, key_words, flags) }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// x86_64 SSE4.1 wrappers (single-block / streaming hot paths)
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[cfg(target_arch = "x86_64")]
+fn compress_sse41_wrapper(
+  chaining_value: &[u32; 8],
+  block_words: &[u32; 16],
+  counter: u64,
+  block_len: u32,
+  flags: u32,
+) -> [u32; 16] {
+  // SAFETY: This function is only called when SSE4.1 is available (checked by dispatch).
+  unsafe { super::x86_64::sse41::compress(chaining_value, block_words, counter, block_len, flags) }
+}
+
+#[cfg(target_arch = "x86_64")]
+fn chunk_compress_blocks_sse41_wrapper(
+  chaining_value: &mut [u32; 8],
+  chunk_counter: u64,
+  flags: u32,
+  blocks_compressed: &mut u8,
+  blocks: &[u8],
+) {
+  debug_assert_eq!(blocks.len() % BLOCK_LEN, 0);
+  let (block_slices, remainder) = blocks.as_chunks::<BLOCK_LEN>();
+  debug_assert!(remainder.is_empty());
+
+  for block_bytes in block_slices {
+    let start = if *blocks_compressed == 0 { CHUNK_START } else { 0 };
+    let block_words = words16_from_le_bytes_64(block_bytes);
+    *chaining_value = first_8_words(compress_sse41_wrapper(
+      chaining_value,
+      &block_words,
+      chunk_counter,
+      BLOCK_LEN as u32,
+      flags | start,
+    ));
+    *blocks_compressed = blocks_compressed.wrapping_add(1);
+  }
+}
+
+#[cfg(target_arch = "x86_64")]
+fn parent_cv_sse41_wrapper(
+  left_child_cv: [u32; 8],
+  right_child_cv: [u32; 8],
+  key_words: [u32; 8],
+  flags: u32,
+) -> [u32; 8] {
+  let mut block_words = [0u32; 16];
+  block_words[..8].copy_from_slice(&left_child_cv);
+  block_words[8..].copy_from_slice(&right_child_cv);
+  first_8_words(compress_sse41_wrapper(
+    &key_words,
+    &block_words,
+    0,
+    BLOCK_LEN as u32,
+    PARENT | flags,
+  ))
 }
 
 #[cfg(target_arch = "x86_64")]
