@@ -16,6 +16,7 @@
 #[cfg(feature = "std")]
 extern crate std;
 
+pub mod common;
 pub mod crypto;
 pub mod fast;
 

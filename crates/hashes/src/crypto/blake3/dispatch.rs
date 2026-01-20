@@ -26,10 +26,66 @@ static ACTIVE: OnceCache<ActiveDispatch> = OnceCache::new();
 #[inline]
 #[must_use]
 fn resolve(id: Blake3KernelId, caps: Caps) -> Blake3KernelId {
-  if caps.has(required_caps(id)) {
-    id
-  } else {
-    Blake3KernelId::Portable
+  // Tables express *preferences*. Here we enforce correctness (required CPU
+  // features) and apply a conservative, architecture-aware fallback order.
+  //
+  // Important: avoid a "missing feature => Portable" cliff when a higher-tier
+  // kernel is requested (e.g. AVX-512) but a lower-tier kernel (e.g. AVX2)
+  // would work.
+  match id {
+    Blake3KernelId::Portable => Blake3KernelId::Portable,
+    #[cfg(target_arch = "x86_64")]
+    Blake3KernelId::X86Avx512 => {
+      if caps.has(required_caps(Blake3KernelId::X86Avx512)) {
+        Blake3KernelId::X86Avx512
+      } else if caps.has(required_caps(Blake3KernelId::X86Avx2)) {
+        Blake3KernelId::X86Avx2
+      } else if caps.has(required_caps(Blake3KernelId::X86Sse41)) {
+        Blake3KernelId::X86Sse41
+      } else if caps.has(required_caps(Blake3KernelId::X86Ssse3)) {
+        Blake3KernelId::X86Ssse3
+      } else {
+        Blake3KernelId::Portable
+      }
+    }
+    #[cfg(target_arch = "x86_64")]
+    Blake3KernelId::X86Avx2 => {
+      if caps.has(required_caps(Blake3KernelId::X86Avx2)) {
+        Blake3KernelId::X86Avx2
+      } else if caps.has(required_caps(Blake3KernelId::X86Sse41)) {
+        Blake3KernelId::X86Sse41
+      } else if caps.has(required_caps(Blake3KernelId::X86Ssse3)) {
+        Blake3KernelId::X86Ssse3
+      } else {
+        Blake3KernelId::Portable
+      }
+    }
+    #[cfg(target_arch = "x86_64")]
+    Blake3KernelId::X86Sse41 => {
+      if caps.has(required_caps(Blake3KernelId::X86Sse41)) {
+        Blake3KernelId::X86Sse41
+      } else if caps.has(required_caps(Blake3KernelId::X86Ssse3)) {
+        Blake3KernelId::X86Ssse3
+      } else {
+        Blake3KernelId::Portable
+      }
+    }
+    #[cfg(target_arch = "x86_64")]
+    Blake3KernelId::X86Ssse3 => {
+      if caps.has(required_caps(Blake3KernelId::X86Ssse3)) {
+        Blake3KernelId::X86Ssse3
+      } else {
+        Blake3KernelId::Portable
+      }
+    }
+    #[cfg(target_arch = "aarch64")]
+    Blake3KernelId::Aarch64Neon => {
+      if caps.has(required_caps(Blake3KernelId::Aarch64Neon)) {
+        Blake3KernelId::Aarch64Neon
+      } else {
+        Blake3KernelId::Portable
+      }
+    }
   }
 }
 
@@ -81,10 +137,19 @@ pub fn kernel_name_for_len(len: usize) -> &'static str {
 #[inline]
 #[must_use]
 pub fn digest(data: &[u8]) -> [u8; 32] {
-  use traits::Digest;
-  let mut h = super::Blake3::default();
-  h.update(data);
-  h.finalize()
+  let d = active();
+  let kernel = select(&d, data.len()).kernel;
+
+  super::digest_oneshot(kernel, super::IV, 0, data)
+}
+
+#[inline]
+#[must_use]
+pub fn xof(data: &[u8]) -> super::Blake3Xof {
+  let d = active();
+  let kernel = select(&d, data.len()).kernel;
+  let output = super::root_output_oneshot(kernel, super::IV, 0, data);
+  super::Blake3Xof::new(output)
 }
 
 #[inline]

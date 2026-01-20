@@ -4,6 +4,10 @@ use alloc::{string::String, vec, vec::Vec};
 
 use hashes::bench::{self, Kernel};
 use platform::Caps;
+#[cfg(target_arch = "aarch64")]
+use platform::caps::aarch64;
+#[cfg(target_arch = "x86_64")]
+use platform::caps::x86;
 
 use crate::{
   BenchResult, KernelSpec, KernelTier, TunableParam, TuneError,
@@ -12,8 +16,23 @@ use crate::{
 
 const HASH_PARAMS: &[TunableParam] = &[];
 
-fn kernel_specs(_caps: &Caps) -> Vec<KernelSpec> {
-  vec![KernelSpec::new("portable", KernelTier::Portable, Caps::NONE)]
+fn kernel_specs(algo: &'static str, caps: &Caps) -> Vec<KernelSpec> {
+  let mut out = vec![KernelSpec::new("portable", KernelTier::Portable, Caps::NONE)];
+
+  // BLAKE3 primitives: allow forcing SIMD kernels so `rscrypto-tune` can
+  // generate real dispatch tables (and validate crossovers) per platform.
+  if algo == "blake3-chunk" || algo == "blake3-parent" {
+    #[cfg(target_arch = "x86_64")]
+    if caps.has(x86::SSSE3) {
+      out.push(KernelSpec::new("x86_64/ssse3", KernelTier::Wide, x86::SSSE3));
+    }
+    #[cfg(target_arch = "aarch64")]
+    if caps.has(aarch64::NEON) {
+      out.push(KernelSpec::new("aarch64/neon", KernelTier::Wide, aarch64::NEON));
+    }
+  }
+
+  out
 }
 
 /// One-shot hash tunable backed by `hashes::bench`.
@@ -57,7 +76,7 @@ impl crate::Tunable for HashTunable {
   }
 
   fn available_kernels(&self, caps: &Caps) -> Vec<KernelSpec> {
-    kernel_specs(caps)
+    kernel_specs(self.algo, caps)
   }
 
   fn force_kernel(&mut self, name: &str) -> Result<(), TuneError> {
