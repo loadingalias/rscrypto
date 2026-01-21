@@ -1503,18 +1503,21 @@ fn is_intel_hybrid(is_amd: bool, family: u32, model: u32) -> bool {
 fn select_x86_tune(caps: Caps, is_amd: bool, family: u32, model: u32) -> Tune {
   use crate::caps::x86;
 
-  if caps.has(x86::VPCLMUL_READY) {
-    // Check for hybrid Intel CPUs where AVX-512 is problematic
-    #[cfg(feature = "std")]
-    {
-      if is_intel_hybrid(is_amd, family, model) && !hybrid_avx512_override() {
-        // Hybrid Intel with AVX-512 reported but E-cores don't support it.
-        // Fall back to AVX2 path unless user explicitly overrides.
-        // Use INTEL_ICL tuning which prefers 256-bit operations.
-        return Tune::INTEL_ICL;
-      }
-    }
+  // Hybrid Intel note:
+  // `detect_x86_64` will clear AVX-512 caps on known hybrid Intel CPUs unless
+  // the user explicitly overrides. For tune selection we still want to prefer
+  // 256-bit strategies on those systems when AVX2 is available.
+  #[cfg(feature = "std")]
+  if is_intel_hybrid(is_amd, family, model) && !hybrid_avx512_override() && caps.has(x86::AVX2) {
+    return Tune::INTEL_ICL;
+  }
 
+  // BLAKE3 (and other vectorized kernels) benefit from AVX-512 on CPUs that
+  // support the *base* AVX-512 feature set. Do not gate microarchitecture
+  // classification on VPCLMUL/VAES; those are kernel-specific capabilities.
+  let has_avx512 = caps.has(x86::AVX512F) && caps.has(x86::AVX512VL);
+
+  if has_avx512 {
     if is_amd {
       // Zen 5/5c is family 26, Zen 4 is family 25 (models 96-127)
       // Note: Currently no way to differentiate Zen 5c from Zen 5 via CPUID alone.
@@ -1522,7 +1525,13 @@ fn select_x86_tune(caps: Caps, is_amd: bool, family: u32, model: u32) -> Tune {
       // Strix Point APUs with hybrid configurations. For now, use ZEN5 tuning
       // for all Family 26 CPUs. Future: may need OS topology detection or
       // per-core CPUID to identify compact cores in hybrid SKUs.
-      if family == 26 { Tune::ZEN5 } else { Tune::ZEN4 }
+      if family == 26 {
+        Tune::ZEN5
+      } else if family == 25 {
+        Tune::ZEN4
+      } else {
+        Tune::DEFAULT
+      }
     } else {
       // Intel: Check for Granite Rapids via AMX extensions
       // Granite Rapids has AMX_FP16 and AMX_COMPLEX (leaf 7.1, EAX bits 21 & 8)
@@ -1532,7 +1541,7 @@ fn select_x86_tune(caps: Caps, is_amd: bool, family: u32, model: u32) -> Tune {
         Tune::INTEL_SPR
       }
     }
-  } else if caps.has(x86::PCLMUL_READY) {
+  } else if caps.has(x86::AVX2) || caps.has(x86::PCLMUL_READY) {
     Tune::DEFAULT
   } else {
     Tune::PORTABLE
