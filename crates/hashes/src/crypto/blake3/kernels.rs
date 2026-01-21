@@ -841,7 +841,9 @@ unsafe fn hash_many_contiguous_avx2_wrapper(
   mut out: *mut u8,
 ) {
   let mut input = input;
+  let mut processed_any = false;
   while num_chunks >= super::x86_64::avx2::DEGREE {
+    processed_any = true;
     // SAFETY: `num_chunks >= DEGREE` means there are at least `DEGREE` full
     // chunks remaining. The caller guarantees `input` is valid for the full
     // input buffer, so each `input.add(k * CHUNK_LEN)` stays in-bounds.
@@ -881,6 +883,20 @@ unsafe fn hash_many_contiguous_avx2_wrapper(
   }
 
   if num_chunks != 0 {
+    if !processed_any {
+      // If we haven't executed any AVX2 yet, avoid wasting lanes for small
+      // totals (e.g. 4 chunks for a 4KiB oneshot, or 4096B streaming updates).
+      //
+      // AVX2 implies SSE4.1 on all platforms we target, and dispatch enforces
+      // feature availability. Using SSE4.1 here is also free of AVX->SSE
+      // transition penalties because we haven't issued any AVX2 instructions.
+      // SAFETY: this wrapper is only selected when AVX2 is available, which
+      // implies SSE4.1, and the caller guarantees `input`/`out` cover the full
+      // `num_chunks` buffer.
+      unsafe { hash_many_contiguous_sse41_wrapper(input, num_chunks, key, counter, flags, out) };
+      return;
+    }
+
     // Avoid AVX2→SSE/portable cliffs for tails (1–7 chunks) by hashing an
     // 8-lane batch with duplicated final pointers and copying only the needed
     // outputs.
@@ -930,7 +946,9 @@ unsafe fn hash_many_contiguous_avx512_wrapper(
   mut out: *mut u8,
 ) {
   let mut input = input;
+  let mut processed_any = false;
   while num_chunks >= super::x86_64::avx512::DEGREE {
+    processed_any = true;
     // SAFETY: dispatch selects this kernel only when AVX-512 is available; the
     // caller guarantees `input`/`out` cover the full `num_chunks` buffer.
     unsafe {
@@ -943,9 +961,96 @@ unsafe fn hash_many_contiguous_avx512_wrapper(
   }
 
   if num_chunks != 0 {
-    // SAFETY: the remaining chunk pointers are in-bounds for the caller's
-    // `input`/`out` buffer, and AVX2 is available when AVX-512 is.
-    unsafe { hash_many_contiguous_avx2_wrapper(input, num_chunks, key, counter, flags, out) };
+    if !processed_any {
+      // For small totals (e.g. <= 15 chunks), delegate to the AVX2 wrapper.
+      // It will pick the best strategy for < 8 chunks without wasting lanes.
+      //
+      // SAFETY: the remaining chunk pointers are in-bounds for the caller's
+      // `input`/`out` buffer, and AVX2 is available when AVX-512 is.
+      unsafe { hash_many_contiguous_avx2_wrapper(input, num_chunks, key, counter, flags, out) };
+      return;
+    }
+
+    // We've already executed AVX-512 code. Keep the tail in AVX2 (which is
+    // always available with AVX-512) to avoid AVX->SSE transition penalties,
+    // and because this tail is at most 15 chunks.
+    if num_chunks >= super::x86_64::avx2::DEGREE {
+      // SAFETY: `num_chunks >= 8` means there are at least 8 full chunks
+      // remaining, all within the caller-provided buffer.
+      let ptrs = unsafe {
+        [
+          input,
+          input.add(CHUNK_LEN),
+          input.add(2 * CHUNK_LEN),
+          input.add(3 * CHUNK_LEN),
+          input.add(4 * CHUNK_LEN),
+          input.add(5 * CHUNK_LEN),
+          input.add(6 * CHUNK_LEN),
+          input.add(7 * CHUNK_LEN),
+        ]
+      };
+      // SAFETY: AVX2 is available when AVX-512 is; `ptrs` are in-bounds for
+      // full chunks; and `out` is large enough for `8 * OUT_LEN` bytes.
+      unsafe {
+        super::x86_64::avx2::hash8(
+          &ptrs,
+          CHUNK_LEN / BLOCK_LEN,
+          key,
+          counter,
+          true,
+          flags,
+          CHUNK_START,
+          super::CHUNK_END,
+          out,
+        );
+      }
+      // SAFETY: we just hashed exactly `DEGREE` full chunks, and the caller
+      // guarantees the overall `input`/`out` buffers are large enough.
+      input = unsafe { input.add(super::x86_64::avx2::DEGREE * CHUNK_LEN) };
+      // SAFETY: we just wrote exactly `DEGREE` outputs, and the caller
+      // guarantees the overall `out` buffer is large enough.
+      out = unsafe { out.add(super::x86_64::avx2::DEGREE * OUT_LEN) };
+      counter = counter.wrapping_add(super::x86_64::avx2::DEGREE as u64);
+      num_chunks -= super::x86_64::avx2::DEGREE;
+    }
+
+    if num_chunks != 0 {
+      // For tails (1–7 chunks), hash an 8-lane batch with duplicated final
+      // pointers and copy only the needed outputs.
+      // SAFETY: `num_chunks != 0`, and `input` is valid for `num_chunks * CHUNK_LEN` bytes.
+      let last = unsafe { input.add((num_chunks - 1) * CHUNK_LEN) };
+      // SAFETY: all pointers are within the caller-provided `input` buffer.
+      let ptrs = unsafe {
+        [
+          input,
+          if num_chunks > 1 { input.add(CHUNK_LEN) } else { last },
+          if num_chunks > 2 { input.add(2 * CHUNK_LEN) } else { last },
+          if num_chunks > 3 { input.add(3 * CHUNK_LEN) } else { last },
+          if num_chunks > 4 { input.add(4 * CHUNK_LEN) } else { last },
+          if num_chunks > 5 { input.add(5 * CHUNK_LEN) } else { last },
+          if num_chunks > 6 { input.add(6 * CHUNK_LEN) } else { last },
+          last,
+        ]
+      };
+
+      let mut tmp = [0u8; super::x86_64::avx2::DEGREE * OUT_LEN];
+      // SAFETY: AVX2 is available here, `ptrs` are in-bounds for full chunks,
+      // and `tmp`/`out` are large enough for the copied outputs.
+      unsafe {
+        super::x86_64::avx2::hash8(
+          &ptrs,
+          CHUNK_LEN / BLOCK_LEN,
+          key,
+          counter,
+          true,
+          flags,
+          CHUNK_START,
+          super::CHUNK_END,
+          tmp.as_mut_ptr(),
+        );
+        core::ptr::copy_nonoverlapping(tmp.as_ptr(), out, num_chunks * OUT_LEN);
+      }
+    }
   }
 }
 
