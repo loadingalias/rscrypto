@@ -618,10 +618,22 @@ fn tune_kind_table_ident(tune_kind: TuneKind) -> &'static str {
   }
 }
 
-fn hash_kernel_expr(kernel_name: &str) -> &'static str {
-  match kernel_name {
-    "portable" => "KernelId::Portable",
-    _ => "KernelId::Portable",
+fn hash_kernel_expr(algo: &str, kernel_name: &str) -> &'static str {
+  match algo {
+    // BLAKE3 dispatch tables select a full kernel bundle (compress + chunk + parent + hash_many).
+    "blake3-chunk" | "blake3" => match kernel_name {
+      "portable" => "KernelId::Portable",
+      "x86_64/ssse3" => "KernelId::X86Ssse3",
+      "x86_64/sse4.1" => "KernelId::X86Sse41",
+      "x86_64/avx2" => "KernelId::X86Avx2",
+      "x86_64/avx512" => "KernelId::X86Avx512",
+      "aarch64/neon" => "KernelId::Aarch64Neon",
+      _ => "KernelId::Portable",
+    },
+    _ => match kernel_name {
+      "portable" => "KernelId::Portable",
+      _ => "KernelId::Portable",
+    },
   }
 }
 
@@ -645,6 +657,52 @@ fn generate_hash_table(tune_kind: TuneKind, algo: &AlgorithmResult) -> String {
   let kind_name = format!("{tune_kind:?}");
   let table_ident = tune_kind_table_ident(tune_kind);
 
+  // Some hash dispatch tables (notably BLAKE3) use architecture-gated kernel IDs.
+  // When we apply tuned results from (say) an x86_64 runner, we must not emit
+  // `KernelId::X86*` into builds for other targets, because the enum variants
+  // are `#[cfg(target_arch)]`-gated.
+  //
+  // For now, we handle BLAKE3 explicitly by emitting a cfg-gated table plus a
+  // fallback definition for other targets.
+  if matches!(algo.name, "blake3-chunk" | "blake3") {
+    let kernels = [xs, s, m, l];
+    let arch = if kernels.iter().any(|k| k.starts_with("x86_64/")) {
+      Some("x86_64")
+    } else if kernels.iter().any(|k| k.starts_with("aarch64/")) {
+      Some("aarch64")
+    } else {
+      None
+    };
+
+    if let Some(arch) = arch {
+      let cfg_expr = match arch {
+        "x86_64" => "target_arch = \"x86_64\"",
+        "aarch64" => "target_arch = \"aarch64\"",
+        _ => unreachable!("unsupported arch tag"),
+      };
+
+      return format!(
+        "\
+// {kind_name} Table
+#[cfg({cfg_expr})]
+pub static {table_ident}: DispatchTable = DispatchTable {{
+  boundaries: DEFAULT_BOUNDARIES,
+  xs: {xs_id},
+  s: {s_id},
+  m: {m_id},
+  l: {l_id},
+}};
+#[cfg(not({cfg_expr}))]
+pub static {table_ident}: DispatchTable = default_kind_table();
+",
+        xs_id = hash_kernel_expr(algo.name, xs),
+        s_id = hash_kernel_expr(algo.name, s),
+        m_id = hash_kernel_expr(algo.name, m),
+        l_id = hash_kernel_expr(algo.name, l),
+      );
+    }
+  }
+
   format!(
     "\
 // {kind_name} Table
@@ -656,10 +714,10 @@ pub static {table_ident}: DispatchTable = DispatchTable {{
   l: {l_id},
 }};
 ",
-    xs_id = hash_kernel_expr(xs),
-    s_id = hash_kernel_expr(s),
-    m_id = hash_kernel_expr(m),
-    l_id = hash_kernel_expr(l),
+    xs_id = hash_kernel_expr(algo.name, xs),
+    s_id = hash_kernel_expr(algo.name, s),
+    m_id = hash_kernel_expr(algo.name, m),
+    l_id = hash_kernel_expr(algo.name, l),
   )
 }
 
@@ -717,4 +775,46 @@ pub fn apply_tuned_defaults(repo_root: &Path, results: &TuneResults) -> io::Resu
   apply_hash_dispatch_tables(repo_root, results)?;
 
   Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+  use platform::TuneKind;
+
+  use super::generate_hash_table;
+  use crate::{AlgorithmResult, SizeClassBest, analysis::AnalysisResult};
+
+  #[test]
+  fn blake3_hash_tables_are_cfg_gated_for_arch_specific_kernels() {
+    let algo = AlgorithmResult {
+      name: "blake3-chunk",
+      env_prefix: "RSCRYPTO_BENCH_BLAKE3_CHUNK",
+      best_kernel: "x86_64/avx2",
+      recommended_streams: 1,
+      peak_throughput_gib_s: 0.0,
+      size_class_best: vec![
+        SizeClassBest {
+          class: "m",
+          kernel: "x86_64/avx2".to_string(),
+          streams: 1,
+          throughput_gib_s: 0.0,
+        },
+        SizeClassBest {
+          class: "l",
+          kernel: "x86_64/avx512".to_string(),
+          streams: 1,
+          throughput_gib_s: 0.0,
+        },
+      ],
+      thresholds: vec![],
+      analysis: AnalysisResult::default(),
+    };
+
+    let code = generate_hash_table(TuneKind::Zen4, &algo);
+    assert!(code.contains("#[cfg(target_arch = \"x86_64\")]"));
+    assert!(code.contains("#[cfg(not(target_arch = \"x86_64\"))]"));
+    assert!(code.contains("default_kind_table()"));
+    assert!(code.contains("KernelId::X86Avx2"));
+    assert!(code.contains("KernelId::X86Avx512"));
+  }
 }
