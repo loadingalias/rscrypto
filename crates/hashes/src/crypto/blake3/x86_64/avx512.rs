@@ -28,6 +28,16 @@ unsafe fn set1(x: u32) -> __m512i {
 }
 
 #[inline(always)]
+unsafe fn loadu256(src: *const u8) -> __m256i {
+  unsafe { _mm256_loadu_si256(src.cast()) }
+}
+
+#[inline(always)]
+unsafe fn storeu256(src: __m256i, dest: *mut u8) {
+  unsafe { _mm256_storeu_si256(dest.cast(), src) }
+}
+
+#[inline(always)]
 unsafe fn rot16(x: __m512i) -> __m512i {
   unsafe { _mm512_or_si512(_mm512_srli_epi32(x, 16), _mm512_slli_epi32(x, 16)) }
 }
@@ -220,6 +230,116 @@ const fn counter_high(counter: u64) -> u32 {
   (counter >> 32) as u32
 }
 
+#[inline(always)]
+unsafe fn interleave128(a: __m256i, b: __m256i) -> (__m256i, __m256i) {
+  unsafe {
+    (
+      _mm256_permute2x128_si256(a, b, 0x20),
+      _mm256_permute2x128_si256(a, b, 0x31),
+    )
+  }
+}
+
+#[inline(always)]
+unsafe fn transpose8x8(vecs: &mut [__m256i; 8]) {
+  unsafe {
+    let ab_0145 = _mm256_unpacklo_epi32(vecs[0], vecs[1]);
+    let ab_2367 = _mm256_unpackhi_epi32(vecs[0], vecs[1]);
+    let cd_0145 = _mm256_unpacklo_epi32(vecs[2], vecs[3]);
+    let cd_2367 = _mm256_unpackhi_epi32(vecs[2], vecs[3]);
+    let ef_0145 = _mm256_unpacklo_epi32(vecs[4], vecs[5]);
+    let ef_2367 = _mm256_unpackhi_epi32(vecs[4], vecs[5]);
+    let gh_0145 = _mm256_unpacklo_epi32(vecs[6], vecs[7]);
+    let gh_2367 = _mm256_unpackhi_epi32(vecs[6], vecs[7]);
+
+    let abcd_04 = _mm256_unpacklo_epi64(ab_0145, cd_0145);
+    let abcd_15 = _mm256_unpackhi_epi64(ab_0145, cd_0145);
+    let abcd_26 = _mm256_unpacklo_epi64(ab_2367, cd_2367);
+    let abcd_37 = _mm256_unpackhi_epi64(ab_2367, cd_2367);
+    let efgh_04 = _mm256_unpacklo_epi64(ef_0145, gh_0145);
+    let efgh_15 = _mm256_unpackhi_epi64(ef_0145, gh_0145);
+    let efgh_26 = _mm256_unpacklo_epi64(ef_2367, gh_2367);
+    let efgh_37 = _mm256_unpackhi_epi64(ef_2367, gh_2367);
+
+    let (abcdefgh_0, abcdefgh_4) = interleave128(abcd_04, efgh_04);
+    let (abcdefgh_1, abcdefgh_5) = interleave128(abcd_15, efgh_15);
+    let (abcdefgh_2, abcdefgh_6) = interleave128(abcd_26, efgh_26);
+    let (abcdefgh_3, abcdefgh_7) = interleave128(abcd_37, efgh_37);
+
+    vecs[0] = abcdefgh_0;
+    vecs[1] = abcdefgh_1;
+    vecs[2] = abcdefgh_2;
+    vecs[3] = abcdefgh_3;
+    vecs[4] = abcdefgh_4;
+    vecs[5] = abcdefgh_5;
+    vecs[6] = abcdefgh_6;
+    vecs[7] = abcdefgh_7;
+  }
+}
+
+#[inline(always)]
+unsafe fn transpose_msg_vecs8(inputs: &[*const u8; 8], block_offset: usize) -> [__m256i; 16] {
+  unsafe {
+    let stride = 4 * 8;
+    let mut half0 = [
+      loadu256(inputs[0].add(block_offset)),
+      loadu256(inputs[1].add(block_offset)),
+      loadu256(inputs[2].add(block_offset)),
+      loadu256(inputs[3].add(block_offset)),
+      loadu256(inputs[4].add(block_offset)),
+      loadu256(inputs[5].add(block_offset)),
+      loadu256(inputs[6].add(block_offset)),
+      loadu256(inputs[7].add(block_offset)),
+    ];
+    let mut half1 = [
+      loadu256(inputs[0].add(block_offset + stride)),
+      loadu256(inputs[1].add(block_offset + stride)),
+      loadu256(inputs[2].add(block_offset + stride)),
+      loadu256(inputs[3].add(block_offset + stride)),
+      loadu256(inputs[4].add(block_offset + stride)),
+      loadu256(inputs[5].add(block_offset + stride)),
+      loadu256(inputs[6].add(block_offset + stride)),
+      loadu256(inputs[7].add(block_offset + stride)),
+    ];
+
+    for &input in inputs.iter() {
+      _mm_prefetch(input.wrapping_add(block_offset + 256).cast::<i8>(), _MM_HINT_T0);
+    }
+
+    transpose8x8(&mut half0);
+    transpose8x8(&mut half1);
+
+    [
+      half0[0], half0[1], half0[2], half0[3], half0[4], half0[5], half0[6], half0[7], half1[0], half1[1], half1[2],
+      half1[3], half1[4], half1[5], half1[6], half1[7],
+    ]
+  }
+}
+
+#[inline(always)]
+unsafe fn transpose_msg_vecs16(inputs: &[*const u8; 16], block_offset: usize) -> [__m512i; 16] {
+  unsafe {
+    let lo_ptrs = [
+      inputs[0], inputs[1], inputs[2], inputs[3], inputs[4], inputs[5], inputs[6], inputs[7],
+    ];
+    let hi_ptrs = [
+      inputs[8], inputs[9], inputs[10], inputs[11], inputs[12], inputs[13], inputs[14], inputs[15],
+    ];
+
+    let lo = transpose_msg_vecs8(&lo_ptrs, block_offset);
+    let hi = transpose_msg_vecs8(&hi_ptrs, block_offset);
+
+    let mut out = [set1(0); 16];
+    for i in 0..16 {
+      let mut v = _mm512_castsi256_si512(lo[i]);
+      v = _mm512_inserti64x4(v, hi[i], 1);
+      out[i] = v;
+    }
+
+    out
+  }
+}
+
 /// Hash 16 contiguous independent inputs in parallel.
 ///
 /// This is optimized for the contiguous chunk hashing hot path, where inputs
@@ -228,7 +348,7 @@ const fn counter_high(counter: u64) -> u32 {
 /// # Safety
 /// Caller must ensure AVX-512 is available, and `input`/`out` are valid for
 /// `DEGREE * CHUNK_LEN` and `DEGREE * OUT_LEN` bytes respectively.
-#[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq")]
+#[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,avx2")]
 pub unsafe fn hash16_contiguous(input: *const u8, key: &[u32; 8], counter: u64, flags: u32, out: *mut u8) {
   unsafe {
     let mut h_vecs = [
@@ -242,10 +362,26 @@ pub unsafe fn hash16_contiguous(input: *const u8, key: &[u32; 8], counter: u64, 
       set1(key[7]),
     ];
 
+    let inputs = [
+      input,
+      input.add(CHUNK_LEN),
+      input.add(2 * CHUNK_LEN),
+      input.add(3 * CHUNK_LEN),
+      input.add(4 * CHUNK_LEN),
+      input.add(5 * CHUNK_LEN),
+      input.add(6 * CHUNK_LEN),
+      input.add(7 * CHUNK_LEN),
+      input.add(8 * CHUNK_LEN),
+      input.add(9 * CHUNK_LEN),
+      input.add(10 * CHUNK_LEN),
+      input.add(11 * CHUNK_LEN),
+      input.add(12 * CHUNK_LEN),
+      input.add(13 * CHUNK_LEN),
+      input.add(14 * CHUNK_LEN),
+      input.add(15 * CHUNK_LEN),
+    ];
+
     let (counter_low_vec, counter_high_vec) = counter_vec(counter, true);
-    let stride_words: i32 = (CHUNK_LEN / 4) as i32; // u32 words per chunk
-    let input_words: *const i32 = input.cast();
-    let out_words: *mut i32 = out.cast();
 
     let blocks = CHUNK_LEN / BLOCK_LEN;
     for block in 0..blocks {
@@ -260,32 +396,7 @@ pub unsafe fn hash16_contiguous(input: *const u8, key: &[u32; 8], counter: u64, 
       let block_len_vec = set1(BLOCK_LEN as u32);
       let block_flags_vec = set1(block_flags);
 
-      // Gather message words across 16 chunks.
-      let block_word_base: i32 = (block * (BLOCK_LEN / 4)) as i32;
-      let lane_base = _mm512_setr_epi32(
-        0,
-        stride_words,
-        2 * stride_words,
-        3 * stride_words,
-        4 * stride_words,
-        5 * stride_words,
-        6 * stride_words,
-        7 * stride_words,
-        8 * stride_words,
-        9 * stride_words,
-        10 * stride_words,
-        11 * stride_words,
-        12 * stride_words,
-        13 * stride_words,
-        14 * stride_words,
-        15 * stride_words,
-      );
-
-      let mut m = [set1(0); 16];
-      for (word, m_word) in m.iter_mut().enumerate() {
-        let idx = _mm512_add_epi32(lane_base, _mm512_set1_epi32(block_word_base + word as i32));
-        *m_word = _mm512_i32gather_epi32(idx, input_words, 4);
-      }
+      let m = transpose_msg_vecs16(&inputs, block * BLOCK_LEN);
 
       let mut v = [
         h_vecs[0],
@@ -324,31 +435,20 @@ pub unsafe fn hash16_contiguous(input: *const u8, key: &[u32; 8], counter: u64, 
       h_vecs[7] = xor(v[7], v[15]);
     }
 
-    // Scatter output as u32 words into `[chunk][word]` order.
-    // Output stride is OUT_LEN bytes = 8 u32 words per chunk.
-    let out_stride_words: i32 = (OUT_LEN / 4) as i32;
-    let out_lane_base = _mm512_setr_epi32(
-      0,
-      out_stride_words,
-      2 * out_stride_words,
-      3 * out_stride_words,
-      4 * out_stride_words,
-      5 * out_stride_words,
-      6 * out_stride_words,
-      7 * out_stride_words,
-      8 * out_stride_words,
-      9 * out_stride_words,
-      10 * out_stride_words,
-      11 * out_stride_words,
-      12 * out_stride_words,
-      13 * out_stride_words,
-      14 * out_stride_words,
-      15 * out_stride_words,
-    );
+    // Convert word-major vectors into `[chunk][word]` order without scatter.
+    let mut lo = [_mm256_setzero_si256(); 8];
+    let mut hi = [_mm256_setzero_si256(); 8];
+    for i in 0..8 {
+      lo[i] = _mm512_castsi512_si256(h_vecs[i]);
+      hi[i] = _mm512_extracti64x4_epi64(h_vecs[i], 1);
+    }
 
-    for (word, &word_vec) in h_vecs.iter().enumerate() {
-      let idx = _mm512_add_epi32(out_lane_base, _mm512_set1_epi32(word as i32));
-      _mm512_i32scatter_epi32(out_words, idx, word_vec, 4);
+    transpose8x8(&mut lo);
+    transpose8x8(&mut hi);
+
+    for chunk in 0..8 {
+      storeu256(lo[chunk], out.add(chunk * OUT_LEN));
+      storeu256(hi[chunk], out.add((chunk + 8) * OUT_LEN));
     }
   }
 }
