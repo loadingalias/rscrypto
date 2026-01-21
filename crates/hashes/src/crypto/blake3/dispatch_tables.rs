@@ -89,7 +89,7 @@ pub static ZEN4_TABLE: DispatchTable = DispatchTable {
   xs: DEFAULT_XS,
   s: DEFAULT_S,
   m: SIMD_KERNEL,
-  l: SIMD_KERNEL,
+  l: AVX512_KERNEL,
 };
 #[cfg(not(target_arch = "x86_64"))]
 pub static ZEN4_TABLE: DispatchTable = default_kind_table();
@@ -100,7 +100,7 @@ pub static ZEN5_TABLE: DispatchTable = DispatchTable {
   xs: DEFAULT_XS,
   s: DEFAULT_S,
   m: SIMD_KERNEL,
-  l: SIMD_KERNEL,
+  l: AVX512_KERNEL,
 };
 #[cfg(not(target_arch = "x86_64"))]
 pub static ZEN5_TABLE: DispatchTable = default_kind_table();
@@ -111,7 +111,7 @@ pub static ZEN5C_TABLE: DispatchTable = DispatchTable {
   xs: DEFAULT_XS,
   s: DEFAULT_S,
   m: SIMD_KERNEL,
-  l: SIMD_KERNEL,
+  l: AVX512_KERNEL,
 };
 #[cfg(not(target_arch = "x86_64"))]
 pub static ZEN5C_TABLE: DispatchTable = default_kind_table();

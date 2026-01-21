@@ -5,6 +5,10 @@
 #![allow(clippy::inline_always)]
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::many_single_char_names)]
+// On Linux we currently prefer the upstream asm implementation; keep the
+// intrinsic fallback compiled but don't let `-D warnings` turn it into a build
+// failure.
+#![cfg_attr(target_os = "linux", allow(dead_code, unused_imports))]
 
 use core::arch::x86_64::*;
 
@@ -352,6 +356,59 @@ unsafe fn transpose_msg_vecs16(inputs: &[*const u8; 16], block_offset: usize) ->
 /// # Safety
 /// Caller must ensure AVX-512 is available, and `input`/`out` are valid for
 /// `DEGREE * CHUNK_LEN` and `DEGREE * OUT_LEN` bytes respectively.
+#[cfg(target_os = "linux")]
+#[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,avx2")]
+pub unsafe fn hash16_contiguous(input: *const u8, key: &[u32; 8], counter: u64, flags: u32, out: *mut u8) {
+  // Delegate to the upstream-grade AVX-512 asm implementation on Linux.
+  //
+  // The upstream function accepts an array of input pointers, so we build it
+  // from the contiguous layout.
+  debug_assert!(flags <= u8::MAX as u32);
+  unsafe {
+    let inputs = [
+      input,
+      input.add(CHUNK_LEN),
+      input.add(2 * CHUNK_LEN),
+      input.add(3 * CHUNK_LEN),
+      input.add(4 * CHUNK_LEN),
+      input.add(5 * CHUNK_LEN),
+      input.add(6 * CHUNK_LEN),
+      input.add(7 * CHUNK_LEN),
+      input.add(8 * CHUNK_LEN),
+      input.add(9 * CHUNK_LEN),
+      input.add(10 * CHUNK_LEN),
+      input.add(11 * CHUNK_LEN),
+      input.add(12 * CHUNK_LEN),
+      input.add(13 * CHUNK_LEN),
+      input.add(14 * CHUNK_LEN),
+      input.add(15 * CHUNK_LEN),
+    ];
+    let flags_start = (flags | super::super::CHUNK_START) as u8;
+    let flags_end = (flags | super::super::CHUNK_END) as u8;
+    super::asm_linux::rscrypto_blake3_hash_many_avx512(
+      inputs.as_ptr(),
+      DEGREE,
+      CHUNK_LEN / BLOCK_LEN,
+      key.as_ptr(),
+      counter,
+      true,
+      flags as u8,
+      flags_start,
+      flags_end,
+      out,
+    );
+  }
+}
+
+/// Hash 16 contiguous independent inputs in parallel.
+///
+/// This is optimized for the contiguous chunk hashing hot path, where inputs
+/// are arranged as `CHUNK_LEN`-byte blocks back-to-back.
+///
+/// # Safety
+/// Caller must ensure AVX-512 is available, and `input`/`out` are valid for
+/// `DEGREE * CHUNK_LEN` and `DEGREE * OUT_LEN` bytes respectively.
+#[cfg(not(target_os = "linux"))]
 #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,avx2")]
 pub unsafe fn hash16_contiguous(input: *const u8, key: &[u32; 8], counter: u64, flags: u32, out: *mut u8) {
   unsafe {
