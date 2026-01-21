@@ -118,6 +118,113 @@ fn words16_from_le_bytes_64(bytes: &[u8; 64]) -> [u32; 16] {
   }
 }
 
+#[inline(always)]
+fn pow2_floor(n: usize) -> usize {
+  debug_assert!(n != 0);
+  1usize << (usize::BITS - 1 - n.leading_zeros())
+}
+
+#[inline]
+fn reduce_power_of_two_chunk_cvs(kernel: Kernel, key_words: [u32; 8], flags: u32, cvs: &[[u32; 8]]) -> [u32; 8] {
+  debug_assert!(cvs.len().is_power_of_two());
+  debug_assert!(cvs.len() <= 16);
+
+  if cvs.len() == 1 {
+    return cvs[0];
+  }
+
+  let mut cur = [[0u32; 8]; 16];
+  let mut next = [[0u32; 8]; 16];
+  cur[..cvs.len()].copy_from_slice(cvs);
+  let mut cur_len = cvs.len();
+
+  while cur_len > 1 {
+    let pairs = cur_len / 2;
+    debug_assert!(pairs <= 8);
+
+    let mut parent_blocks = [[0u32; 16]; 8];
+    for i in 0..pairs {
+      parent_blocks[i][..8].copy_from_slice(&cur[2 * i]);
+      parent_blocks[i][8..].copy_from_slice(&cur[2 * i + 1]);
+    }
+
+    kernels::parent_cvs_many_inline(kernel.id, &parent_blocks[..pairs], key_words, flags, &mut next[..pairs]);
+    cur[..pairs].copy_from_slice(&next[..pairs]);
+    cur_len = pairs;
+  }
+
+  cur[0]
+}
+
+#[inline]
+fn add_chunk_cvs_batched(
+  kernel: Kernel,
+  stack: &mut [MaybeUninit<[u32; 8]>; 54],
+  stack_len: &mut usize,
+  base_counter: u64,
+  cvs: &[[u32; 8]],
+  key_words: [u32; 8],
+  flags: u32,
+) {
+  if cvs.is_empty() {
+    return;
+  }
+
+  debug_assert!(cvs.len() <= 16);
+
+  #[inline]
+  fn push_stack(stack: &mut [MaybeUninit<[u32; 8]>; 54], len: &mut usize, cv: [u32; 8]) {
+    stack[*len].write(cv);
+    *len += 1;
+  }
+
+  #[inline]
+  fn pop_stack(stack: &mut [MaybeUninit<[u32; 8]>; 54], len: &mut usize) -> [u32; 8] {
+    *len -= 1;
+    // SAFETY: `len` tracks the number of initialized entries.
+    unsafe { stack[*len].assume_init_read() }
+  }
+
+  let mut offset = 0usize;
+  let mut chunk_counter = base_counter;
+
+  while offset < cvs.len() {
+    let remaining = cvs.len() - offset;
+    let mut size = pow2_floor(remaining);
+
+    let aligned_max = if chunk_counter == 0 {
+      usize::MAX
+    } else {
+      let tz = chunk_counter.trailing_zeros() as usize;
+      if tz >= (usize::BITS as usize) {
+        usize::MAX
+      } else {
+        1usize << tz
+      }
+    };
+
+    size = size.min(aligned_max).min(remaining);
+    debug_assert!(size.is_power_of_two());
+
+    let subtree_cv = reduce_power_of_two_chunk_cvs(kernel, key_words, flags, &cvs[offset..offset + size]);
+    chunk_counter = chunk_counter.wrapping_add(size as u64);
+
+    // Merge this subtree into the global stack. Because `size` is a power of two
+    // that divides `base_counter + offset`, there are no pending nodes below
+    // this subtree's level, and popping proceeds in correct level order.
+    let level = size.trailing_zeros();
+    let mut total = chunk_counter >> level;
+    let mut cv = subtree_cv;
+    while total & 1 == 0 {
+      cv = kernels::parent_cv_inline(kernel.id, pop_stack(stack, stack_len), cv, key_words, flags);
+      total >>= 1;
+    }
+    push_stack(stack, stack_len, cv);
+
+    offset += size;
+  }
+}
+
 #[inline]
 fn compress(chaining_value: &[u32; 8], block_words: &[u32; 16], counter: u64, block_len: u32, flags: u32) -> [u32; 16] {
   let m0 = block_words[0];
@@ -483,36 +590,6 @@ fn root_output_oneshot(kernel: Kernel, key_words: [u32; 8], flags: u32, input: &
   // always a parent node).
   let mut last_full_chunk_cv = None;
 
-  #[inline]
-  fn push_stack(stack: &mut [MaybeUninit<[u32; 8]>; 54], len: &mut usize, cv: [u32; 8]) {
-    stack[*len].write(cv);
-    *len += 1;
-  }
-
-  #[inline]
-  fn pop_stack(stack: &mut [MaybeUninit<[u32; 8]>; 54], len: &mut usize) -> [u32; 8] {
-    *len -= 1;
-    // SAFETY: `len` tracks the number of initialized entries.
-    unsafe { stack[*len].assume_init_read() }
-  }
-
-  #[inline]
-  fn add_chunk_chaining_value(
-    kernel: Kernel,
-    stack: &mut [MaybeUninit<[u32; 8]>; 54],
-    len: &mut usize,
-    mut new_cv: [u32; 8],
-    mut total_chunks: u64,
-    key_words: [u32; 8],
-    flags: u32,
-  ) {
-    while total_chunks & 1 == 0 {
-      new_cv = kernels::parent_cv_inline(kernel.id, pop_stack(stack, len), new_cv, key_words, flags);
-      total_chunks >>= 1;
-    }
-    push_stack(stack, len, new_cv);
-  }
-
   let mut chunk_counter = 0u64;
   let mut offset = 0usize;
   while chunk_counter < full_chunks as u64 {
@@ -532,27 +609,31 @@ fn root_output_oneshot(kernel: Kernel, key_words: [u32; 8], flags: u32, input: &
       )
     };
 
-    for i in 0..batch {
-      let this_chunk = chunk_counter + i as u64;
+    let mut cvs = [[0u32; 8]; MAX_SIMD_DEGREE];
+    for (i, slot) in cvs.iter_mut().take(batch).enumerate() {
       let off = i * OUT_LEN;
       // SAFETY: `out_buf` is sized to `MAX_SIMD_DEGREE * OUT_LEN` and `off`
       // is `i * OUT_LEN` with `i < batch <= MAX_SIMD_DEGREE`.
       let cv = unsafe { words8_from_le_bytes_32(&*(out_buf.as_ptr().add(off) as *const [u8; OUT_LEN])) };
-      let total_chunks = this_chunk + 1;
-      let is_last_full_chunk = remainder == 0 && total_chunks == full_chunks as u64;
-      if is_last_full_chunk {
-        last_full_chunk_cv = Some(cv);
-      } else {
-        add_chunk_chaining_value(
-          kernel,
-          &mut cv_stack,
-          &mut cv_stack_len,
-          cv,
-          total_chunks,
-          key_words,
-          flags,
-        );
-      }
+      *slot = cv;
+    }
+
+    let mut commit = batch;
+    if remainder == 0 && chunk_counter + batch as u64 == full_chunks as u64 {
+      last_full_chunk_cv = Some(cvs[batch - 1]);
+      commit -= 1;
+    }
+
+    if commit != 0 {
+      add_chunk_cvs_batched(
+        kernel,
+        &mut cv_stack,
+        &mut cv_stack_len,
+        chunk_counter,
+        &cvs[..commit],
+        key_words,
+        flags,
+      );
     }
 
     chunk_counter += batch as u64;
@@ -765,13 +846,27 @@ impl Blake3 {
 
             let keep_last_full_chunk = input.len().is_multiple_of(CHUNK_LEN) && batch == full_chunks;
             let commit = if keep_last_full_chunk { batch - 1 } else { batch };
-            for i in 0..commit {
-              let offset = i * OUT_LEN;
-              // SAFETY: `out_buf` is `OUT_LEN * MAX_SIMD_DEGREE`, and `offset`
-              // is `i * OUT_LEN` with `i < batch <= MAX_SIMD_DEGREE`.
-              let cv = unsafe { words8_from_le_bytes_32(&*(out_buf.as_ptr().add(offset) as *const [u8; OUT_LEN])) };
-              let total_chunks = base_counter + (i as u64) + 1;
-              self.add_chunk_chaining_value(cv, total_chunks);
+            if commit != 0 {
+              let mut cvs = [[0u32; 8]; MAX_SIMD_DEGREE];
+              for (i, slot) in cvs.iter_mut().take(commit).enumerate() {
+                let offset = i * OUT_LEN;
+                // SAFETY: `out_buf` is `OUT_LEN * MAX_SIMD_DEGREE`, and `offset`
+                // is `i * OUT_LEN` with `i < batch <= MAX_SIMD_DEGREE`.
+                let cv = unsafe { words8_from_le_bytes_32(&*(out_buf.as_ptr().add(offset) as *const [u8; OUT_LEN])) };
+                *slot = cv;
+              }
+
+              let mut stack_len = self.cv_stack_len as usize;
+              add_chunk_cvs_batched(
+                self.kernel,
+                &mut self.cv_stack,
+                &mut stack_len,
+                base_counter,
+                &cvs[..commit],
+                self.key_words,
+                self.flags,
+              );
+              self.cv_stack_len = stack_len as u8;
             }
 
             let new_counter = base_counter + batch as u64;

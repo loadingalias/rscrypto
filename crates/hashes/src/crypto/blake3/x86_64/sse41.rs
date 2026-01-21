@@ -53,18 +53,8 @@ const fn counter_high(counter: u64) -> u32 {
 }
 
 #[inline(always)]
-unsafe fn rot16(a: __m128i) -> __m128i {
-  unsafe { _mm_or_si128(_mm_srli_epi32(a, 16), _mm_slli_epi32(a, 16)) }
-}
-
-#[inline(always)]
 unsafe fn rot12(a: __m128i) -> __m128i {
   unsafe { _mm_or_si128(_mm_srli_epi32(a, 12), _mm_slli_epi32(a, 20)) }
-}
-
-#[inline(always)]
-unsafe fn rot8(a: __m128i) -> __m128i {
-  unsafe { _mm_or_si128(_mm_srli_epi32(a, 8), _mm_slli_epi32(a, 24)) }
 }
 
 #[inline(always)]
@@ -73,7 +63,7 @@ unsafe fn rot7(a: __m128i) -> __m128i {
 }
 
 #[inline(always)]
-unsafe fn round(v: &mut [__m128i; 16], m: &[__m128i; 16], r: usize) {
+unsafe fn round(v: &mut [__m128i; 16], m: &[__m128i; 16], r: usize, rot16_mask: __m128i, rot8_mask: __m128i) {
   unsafe {
     v[0] = add(v[0], m[MSG_SCHEDULE[r][0]]);
     v[1] = add(v[1], m[MSG_SCHEDULE[r][2]]);
@@ -87,10 +77,10 @@ unsafe fn round(v: &mut [__m128i; 16], m: &[__m128i; 16], r: usize) {
     v[13] = xor(v[13], v[1]);
     v[14] = xor(v[14], v[2]);
     v[15] = xor(v[15], v[3]);
-    v[12] = rot16(v[12]);
-    v[13] = rot16(v[13]);
-    v[14] = rot16(v[14]);
-    v[15] = rot16(v[15]);
+    v[12] = _mm_shuffle_epi8(v[12], rot16_mask);
+    v[13] = _mm_shuffle_epi8(v[13], rot16_mask);
+    v[14] = _mm_shuffle_epi8(v[14], rot16_mask);
+    v[15] = _mm_shuffle_epi8(v[15], rot16_mask);
     v[8] = add(v[8], v[12]);
     v[9] = add(v[9], v[13]);
     v[10] = add(v[10], v[14]);
@@ -115,10 +105,10 @@ unsafe fn round(v: &mut [__m128i; 16], m: &[__m128i; 16], r: usize) {
     v[13] = xor(v[13], v[1]);
     v[14] = xor(v[14], v[2]);
     v[15] = xor(v[15], v[3]);
-    v[12] = rot8(v[12]);
-    v[13] = rot8(v[13]);
-    v[14] = rot8(v[14]);
-    v[15] = rot8(v[15]);
+    v[12] = _mm_shuffle_epi8(v[12], rot8_mask);
+    v[13] = _mm_shuffle_epi8(v[13], rot8_mask);
+    v[14] = _mm_shuffle_epi8(v[14], rot8_mask);
+    v[15] = _mm_shuffle_epi8(v[15], rot8_mask);
     v[8] = add(v[8], v[12]);
     v[9] = add(v[9], v[13]);
     v[10] = add(v[10], v[14]);
@@ -144,10 +134,10 @@ unsafe fn round(v: &mut [__m128i; 16], m: &[__m128i; 16], r: usize) {
     v[12] = xor(v[12], v[1]);
     v[13] = xor(v[13], v[2]);
     v[14] = xor(v[14], v[3]);
-    v[15] = rot16(v[15]);
-    v[12] = rot16(v[12]);
-    v[13] = rot16(v[13]);
-    v[14] = rot16(v[14]);
+    v[15] = _mm_shuffle_epi8(v[15], rot16_mask);
+    v[12] = _mm_shuffle_epi8(v[12], rot16_mask);
+    v[13] = _mm_shuffle_epi8(v[13], rot16_mask);
+    v[14] = _mm_shuffle_epi8(v[14], rot16_mask);
     v[10] = add(v[10], v[15]);
     v[11] = add(v[11], v[12]);
     v[8] = add(v[8], v[13]);
@@ -172,10 +162,10 @@ unsafe fn round(v: &mut [__m128i; 16], m: &[__m128i; 16], r: usize) {
     v[12] = xor(v[12], v[1]);
     v[13] = xor(v[13], v[2]);
     v[14] = xor(v[14], v[3]);
-    v[15] = rot8(v[15]);
-    v[12] = rot8(v[12]);
-    v[13] = rot8(v[13]);
-    v[14] = rot8(v[14]);
+    v[15] = _mm_shuffle_epi8(v[15], rot8_mask);
+    v[12] = _mm_shuffle_epi8(v[12], rot8_mask);
+    v[13] = _mm_shuffle_epi8(v[13], rot8_mask);
+    v[14] = _mm_shuffle_epi8(v[14], rot8_mask);
     v[10] = add(v[10], v[15]);
     v[11] = add(v[11], v[12]);
     v[8] = add(v[8], v[13]);
@@ -296,7 +286,7 @@ unsafe fn load_counters(counter: u64, increment_counter: bool) -> (__m128i, __m1
 /// # Safety
 /// Caller must ensure SSE4.1 is available and that all input pointers are valid
 /// for `blocks * BLOCK_LEN` bytes.
-#[target_feature(enable = "sse4.1")]
+#[target_feature(enable = "sse4.1,ssse3")]
 pub unsafe fn hash4(
   inputs: &[*const u8; DEGREE],
   blocks: usize,
@@ -309,6 +299,15 @@ pub unsafe fn hash4(
   out: *mut u8,
 ) {
   unsafe {
+    let rot16_mask = _mm_setr_epi8(2, 3, 0, 1, 6, 7, 4, 5, 10, 11, 8, 9, 14, 15, 12, 13);
+    let rot8_mask = _mm_setr_epi8(1, 2, 3, 0, 5, 6, 7, 4, 9, 10, 11, 8, 13, 14, 15, 12);
+
+    let block_len_vec = set1(BLOCK_LEN as u32);
+    let iv0 = set1(IV[0]);
+    let iv1 = set1(IV[1]);
+    let iv2 = set1(IV[2]);
+    let iv3 = set1(IV[3]);
+
     let mut h_vecs = [
       set1(key[0]),
       set1(key[1]),
@@ -331,7 +330,6 @@ pub unsafe fn hash4(
         block_flags |= flags_end;
       }
 
-      let block_len_vec = set1(BLOCK_LEN as u32);
       let block_flags_vec = set1(block_flags);
       let msg_vecs = transpose_msg_vecs(inputs, block * BLOCK_LEN);
 
@@ -344,23 +342,23 @@ pub unsafe fn hash4(
         h_vecs[5],
         h_vecs[6],
         h_vecs[7],
-        set1(IV[0]),
-        set1(IV[1]),
-        set1(IV[2]),
-        set1(IV[3]),
+        iv0,
+        iv1,
+        iv2,
+        iv3,
         counter_low_vec,
         counter_high_vec,
         block_len_vec,
         block_flags_vec,
       ];
 
-      round(&mut v, &msg_vecs, 0);
-      round(&mut v, &msg_vecs, 1);
-      round(&mut v, &msg_vecs, 2);
-      round(&mut v, &msg_vecs, 3);
-      round(&mut v, &msg_vecs, 4);
-      round(&mut v, &msg_vecs, 5);
-      round(&mut v, &msg_vecs, 6);
+      round(&mut v, &msg_vecs, 0, rot16_mask, rot8_mask);
+      round(&mut v, &msg_vecs, 1, rot16_mask, rot8_mask);
+      round(&mut v, &msg_vecs, 2, rot16_mask, rot8_mask);
+      round(&mut v, &msg_vecs, 3, rot16_mask, rot8_mask);
+      round(&mut v, &msg_vecs, 4, rot16_mask, rot8_mask);
+      round(&mut v, &msg_vecs, 5, rot16_mask, rot8_mask);
+      round(&mut v, &msg_vecs, 6, rot16_mask, rot8_mask);
 
       h_vecs[0] = xor(v[0], v[8]);
       h_vecs[1] = xor(v[1], v[9]);

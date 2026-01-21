@@ -14,11 +14,16 @@ pub const DEFAULT_BOUNDARIES: [usize; 3] = [64, 256, 4096];
 // The runtime dispatcher (`dispatch::resolve`) will still validate CPU feature
 // availability and fall back to Portable when needed.
 #[cfg(target_arch = "x86_64")]
-const SIMD_KERNEL: KernelId = KernelId::X86Avx512;
+const SIMD_KERNEL: KernelId = KernelId::X86Avx2;
 #[cfg(target_arch = "aarch64")]
 const SIMD_KERNEL: KernelId = KernelId::Aarch64Neon;
 #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
 const SIMD_KERNEL: KernelId = KernelId::Portable;
+
+// AVX-512 is not always the best default on x86_64 (notably on some AMD CPUs),
+// so we only opt into it for tune kinds where it is known to win.
+#[cfg(target_arch = "x86_64")]
+const AVX512_KERNEL: KernelId = KernelId::X86Avx512;
 
 const DEFAULT_XS: KernelId = KernelId::Portable;
 const DEFAULT_S: KernelId = KernelId::Portable;
@@ -78,14 +83,59 @@ pub static DEFAULT_KIND_TABLE: DispatchTable = default_kind_table();
 // Portable Table
 pub static PORTABLE_TABLE: DispatchTable = DEFAULT_TABLE;
 // Zen4 Table
+#[cfg(target_arch = "x86_64")]
+pub static ZEN4_TABLE: DispatchTable = DispatchTable {
+  boundaries: DEFAULT_BOUNDARIES,
+  xs: DEFAULT_XS,
+  s: DEFAULT_S,
+  m: SIMD_KERNEL,
+  l: SIMD_KERNEL,
+};
+#[cfg(not(target_arch = "x86_64"))]
 pub static ZEN4_TABLE: DispatchTable = default_kind_table();
 // Zen5 Table
+#[cfg(target_arch = "x86_64")]
+pub static ZEN5_TABLE: DispatchTable = DispatchTable {
+  boundaries: DEFAULT_BOUNDARIES,
+  xs: DEFAULT_XS,
+  s: DEFAULT_S,
+  m: SIMD_KERNEL,
+  l: SIMD_KERNEL,
+};
+#[cfg(not(target_arch = "x86_64"))]
 pub static ZEN5_TABLE: DispatchTable = default_kind_table();
 // Zen5c Table
+#[cfg(target_arch = "x86_64")]
+pub static ZEN5C_TABLE: DispatchTable = DispatchTable {
+  boundaries: DEFAULT_BOUNDARIES,
+  xs: DEFAULT_XS,
+  s: DEFAULT_S,
+  m: SIMD_KERNEL,
+  l: SIMD_KERNEL,
+};
+#[cfg(not(target_arch = "x86_64"))]
 pub static ZEN5C_TABLE: DispatchTable = default_kind_table();
 // IntelSpr Table
+#[cfg(target_arch = "x86_64")]
+pub static INTELSPR_TABLE: DispatchTable = DispatchTable {
+  boundaries: DEFAULT_BOUNDARIES,
+  xs: DEFAULT_XS,
+  s: DEFAULT_S,
+  m: AVX512_KERNEL,
+  l: AVX512_KERNEL,
+};
+#[cfg(not(target_arch = "x86_64"))]
 pub static INTELSPR_TABLE: DispatchTable = default_kind_table();
 // IntelGnr Table
+#[cfg(target_arch = "x86_64")]
+pub static INTELGNR_TABLE: DispatchTable = DispatchTable {
+  boundaries: DEFAULT_BOUNDARIES,
+  xs: DEFAULT_XS,
+  s: DEFAULT_S,
+  m: AVX512_KERNEL,
+  l: AVX512_KERNEL,
+};
+#[cfg(not(target_arch = "x86_64"))]
 pub static INTELGNR_TABLE: DispatchTable = default_kind_table();
 // IntelIcl Table
 pub static INTELICL_TABLE: DispatchTable = default_kind_table();
