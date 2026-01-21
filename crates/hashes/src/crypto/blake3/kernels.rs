@@ -462,7 +462,16 @@ pub const fn required_caps(id: Blake3KernelId) -> Caps {
     #[cfg(target_arch = "x86_64")]
     Blake3KernelId::X86Avx2 => x86::AVX2.union(x86::SSE41).union(x86::SSSE3),
     #[cfg(target_arch = "x86_64")]
-    Blake3KernelId::X86Avx512 => x86::AVX512_READY.union(x86::AVX2).union(x86::SSE41).union(x86::SSSE3),
+    // Important: BLAKE3's AVX-512 backend (including upstream asm) only
+    // requires AVX-512 F + VL for 512-bit mask/register support. Do not gate on
+    // BW/DQ here, or we'll incorrectly disable AVX-512 on CPUs where it is
+    // present and fast (notably some AMD parts), forcing an AVX2 fallback and
+    // leaving multiple-GB/s on the table.
+    Blake3KernelId::X86Avx512 => x86::AVX512F
+      .union(x86::AVX512VL)
+      .union(x86::AVX2)
+      .union(x86::SSE41)
+      .union(x86::SSSE3),
     #[cfg(target_arch = "aarch64")]
     Blake3KernelId::Aarch64Neon => aarch64::NEON,
   }

@@ -357,7 +357,10 @@ unsafe fn transpose_msg_vecs16(inputs: &[*const u8; 16], block_offset: usize) ->
 /// Caller must ensure AVX-512 is available, and `input`/`out` are valid for
 /// `DEGREE * CHUNK_LEN` and `DEGREE * OUT_LEN` bytes respectively.
 #[cfg(target_os = "linux")]
-#[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,avx2")]
+// Match upstream: AVX-512 detection is based on `avx512f` + `avx512vl`.
+// The Linux backend delegates to upstream-grade asm, so we intentionally do
+// not require BW/DQ here.
+#[target_feature(enable = "avx512f,avx512vl,avx2")]
 pub unsafe fn hash16_contiguous(input: *const u8, key: &[u32; 8], counter: u64, flags: u32, out: *mut u8) {
   // Delegate to the upstream-grade AVX-512 asm implementation on Linux.
   //
