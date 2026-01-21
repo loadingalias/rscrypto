@@ -183,6 +183,169 @@ pub unsafe fn compress_ssse3(
   out
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// CV-only compression helpers (avoid `[u32; 16]` materialization)
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+unsafe fn load_msg_vecs(block: *const u8) -> (__m128i, __m128i, __m128i, __m128i) {
+  // SAFETY: caller guarantees `block` is valid for 64 bytes.
+  unsafe {
+    let m0 = _mm_loadu_si128(block.cast());
+    let m1 = _mm_loadu_si128(block.add(16).cast());
+    let m2 = _mm_loadu_si128(block.add(32).cast());
+    let m3 = _mm_loadu_si128(block.add(48).cast());
+    (m0, m1, m2, m3)
+  }
+}
+
+#[cfg(target_arch = "x86_64")]
+macro_rules! compress_cv_common_body {
+  ($cv:expr, $m0:expr, $m1:expr, $m2:expr, $m3:expr, $counter:expr, $block_len:expr, $flags:expr) => {{
+    let chaining_value = $cv;
+    let m0 = $m0;
+    let m1 = $m1;
+    let m2 = $m2;
+    let m3 = $m3;
+    let counter = $counter;
+    let block_len = $block_len;
+    let flags = $flags;
+
+    let rot16 = _mm_loadu_si128(ROT16_SHUFFLE.as_ptr().cast());
+    let rot8 = _mm_loadu_si128(ROT8_SHUFFLE.as_ptr().cast());
+
+    let cv_lo = _mm_loadu_si128(chaining_value.as_ptr().cast());
+    let cv_hi = _mm_loadu_si128(chaining_value.as_ptr().add(4).cast());
+
+    let mut row0 = cv_lo;
+    let mut row1 = cv_hi;
+    let mut row2 = _mm_loadu_si128(IV.as_ptr().cast());
+    let mut row3 = _mm_set_epi32(flags as i32, block_len as i32, (counter >> 32) as i32, counter as i32);
+
+    macro_rules! g {
+      ($a:expr, $b:expr, $c:expr, $d:expr, $mx:expr, $my:expr) => {{
+        $a = _mm_add_epi32($a, $b);
+        $a = _mm_add_epi32($a, $mx);
+        $d = _mm_xor_si128($d, $a);
+        $d = _mm_shuffle_epi8($d, rot16);
+        $c = _mm_add_epi32($c, $d);
+        $b = _mm_xor_si128($b, $c);
+        $b = _mm_or_si128(_mm_srli_epi32($b, 12), _mm_slli_epi32($b, 20));
+        $a = _mm_add_epi32($a, $b);
+        $a = _mm_add_epi32($a, $my);
+        $d = _mm_xor_si128($d, $a);
+        $d = _mm_shuffle_epi8($d, rot8);
+        $c = _mm_add_epi32($c, $d);
+        $b = _mm_xor_si128($b, $c);
+        $b = _mm_or_si128(_mm_srli_epi32($b, 7), _mm_slli_epi32($b, 25));
+      }};
+    }
+
+    macro_rules! round {
+      ($mx0:expr, $my0:expr, $mx1:expr, $my1:expr) => {{
+        g!(row0, row1, row2, row3, $mx0, $my0);
+
+        row1 = _mm_shuffle_epi32(row1, 0b00_11_10_01);
+        row2 = _mm_shuffle_epi32(row2, 0b01_00_11_10);
+        row3 = _mm_shuffle_epi32(row3, 0b10_01_00_11);
+
+        g!(row0, row1, row2, row3, $mx1, $my1);
+
+        row1 = _mm_shuffle_epi32(row1, 0b10_01_00_11);
+        row2 = _mm_shuffle_epi32(row2, 0b01_00_11_10);
+        row3 = _mm_shuffle_epi32(row3, 0b00_11_10_01);
+      }};
+    }
+
+    let (mx0, my0, mx1, my1) = permute_round_0(m0, m1, m2, m3);
+    round!(mx0, my0, mx1, my1);
+    let (mx0, my0, mx1, my1) = permute_round_1(m0, m1, m2, m3);
+    round!(mx0, my0, mx1, my1);
+    let (mx0, my0, mx1, my1) = permute_round_2(m0, m1, m2, m3);
+    round!(mx0, my0, mx1, my1);
+    let (mx0, my0, mx1, my1) = permute_round_3(m0, m1, m2, m3);
+    round!(mx0, my0, mx1, my1);
+    let (mx0, my0, mx1, my1) = permute_round_4(m0, m1, m2, m3);
+    round!(mx0, my0, mx1, my1);
+    let (mx0, my0, mx1, my1) = permute_round_5(m0, m1, m2, m3);
+    round!(mx0, my0, mx1, my1);
+    let (mx0, my0, mx1, my1) = permute_round_6(m0, m1, m2, m3);
+    round!(mx0, my0, mx1, my1);
+
+    row0 = _mm_xor_si128(row0, row2);
+    row1 = _mm_xor_si128(row1, row3);
+
+    let mut out = [0u32; 8];
+    _mm_storeu_si128(out.as_mut_ptr().cast(), row0);
+    _mm_storeu_si128(out.as_mut_ptr().add(4).cast(), row1);
+    out
+  }};
+}
+
+/// SSSE3 compress that returns only the chaining value (first 8 words).
+///
+/// This avoids storing the full 16-word output and avoids building a
+/// temporary `[u32; 16]` message array when the caller already has bytes.
+///
+/// # Safety
+/// Caller must ensure SSSE3 is available.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "ssse3")]
+unsafe fn compress_cv_ssse3(
+  chaining_value: &[u32; 8],
+  m0: __m128i,
+  m1: __m128i,
+  m2: __m128i,
+  m3: __m128i,
+  counter: u64,
+  block_len: u32,
+  flags: u32,
+) -> [u32; 8] {
+  compress_cv_common_body!(chaining_value, m0, m1, m2, m3, counter, block_len, flags)
+}
+
+/// AVX2+SSSE3 compress that returns only the chaining value (first 8 words).
+///
+/// This mirrors `compress_cv_ssse3`, but is compiled under AVX2 to encourage
+/// VEX-encoded 128-bit operations for better mixed-workload behavior.
+///
+/// # Safety
+/// Caller must ensure AVX2 + SSSE3 are available.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,ssse3")]
+unsafe fn compress_cv_avx2(
+  chaining_value: &[u32; 8],
+  m0: __m128i,
+  m1: __m128i,
+  m2: __m128i,
+  m3: __m128i,
+  counter: u64,
+  block_len: u32,
+  flags: u32,
+) -> [u32; 8] {
+  compress_cv_common_body!(chaining_value, m0, m1, m2, m3, counter, block_len, flags)
+}
+
+/// AVX-512+AVX2+SSSE3 compress that returns only the chaining value (first 8 words).
+///
+/// # Safety
+/// Caller must ensure the declared AVX-512 + AVX2 + SSSE3 features are available.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f,avx512vl,avx2,ssse3")]
+unsafe fn compress_cv_avx512(
+  chaining_value: &[u32; 8],
+  m0: __m128i,
+  m1: __m128i,
+  m2: __m128i,
+  m3: __m128i,
+  counter: u64,
+  block_len: u32,
+  flags: u32,
+) -> [u32; 8] {
+  compress_cv_common_body!(chaining_value, m0, m1, m2, m3, counter, block_len, flags)
+}
+
 /// BLAKE3 compress function using AVX2-enabled codegen.
 ///
 /// Note: This is still a single-block (dependency-chained) compressor. AVX2
@@ -193,7 +356,7 @@ pub unsafe fn compress_ssse3(
 /// # Safety
 /// Caller must ensure AVX2 is available.
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx2")]
+#[target_feature(enable = "avx2,ssse3")]
 pub unsafe fn compress_avx2(
   chaining_value: &[u32; 8],
   block_words: &[u32; 16],
@@ -524,18 +687,46 @@ pub unsafe fn chunk_compress_blocks_ssse3(
   blocks: &[u8],
 ) {
   debug_assert_eq!(blocks.len() % BLOCK_LEN, 0);
+
+  // Hot path for streaming callers that feed one full block at a time.
+  if blocks.len() == BLOCK_LEN {
+    // SAFETY: `blocks` is exactly one full block.
+    let block_bytes: &[u8; BLOCK_LEN] = unsafe { &*(blocks.as_ptr().cast()) };
+    let start = if *blocks_compressed == 0 { CHUNK_START } else { 0 };
+    let (m0, m1, m2, m3) = unsafe { load_msg_vecs(block_bytes.as_ptr()) };
+    *chaining_value = unsafe {
+      compress_cv_ssse3(
+        chaining_value,
+        m0,
+        m1,
+        m2,
+        m3,
+        chunk_counter,
+        BLOCK_LEN as u32,
+        flags | start,
+      )
+    };
+    *blocks_compressed = blocks_compressed.wrapping_add(1);
+    return;
+  }
+
   let (block_slices, remainder) = blocks.as_chunks::<BLOCK_LEN>();
   debug_assert!(remainder.is_empty());
   for block_bytes in block_slices {
     let start = if *blocks_compressed == 0 { CHUNK_START } else { 0 };
-    let block_words = words16_from_le_bytes_64(block_bytes);
-    *chaining_value = first_8_words(compress_ssse3(
-      chaining_value,
-      &block_words,
-      chunk_counter,
-      BLOCK_LEN as u32,
-      flags | start,
-    ));
+    let (m0, m1, m2, m3) = unsafe { load_msg_vecs(block_bytes.as_ptr()) };
+    *chaining_value = unsafe {
+      compress_cv_ssse3(
+        chaining_value,
+        m0,
+        m1,
+        m2,
+        m3,
+        chunk_counter,
+        BLOCK_LEN as u32,
+        flags | start,
+      )
+    };
     *blocks_compressed = blocks_compressed.wrapping_add(1);
   }
 }
@@ -553,16 +744,11 @@ pub unsafe fn parent_cv_ssse3(
   key_words: [u32; 8],
   flags: u32,
 ) -> [u32; 8] {
-  let mut block_words = [0u32; 16];
-  block_words[..8].copy_from_slice(&left_child_cv);
-  block_words[8..].copy_from_slice(&right_child_cv);
-  first_8_words(compress_ssse3(
-    &key_words,
-    &block_words,
-    0,
-    BLOCK_LEN as u32,
-    PARENT | flags,
-  ))
+  let m0 = _mm_loadu_si128(left_child_cv.as_ptr().cast());
+  let m1 = _mm_loadu_si128(left_child_cv.as_ptr().add(4).cast());
+  let m2 = _mm_loadu_si128(right_child_cv.as_ptr().cast());
+  let m3 = _mm_loadu_si128(right_child_cv.as_ptr().add(4).cast());
+  unsafe { compress_cv_ssse3(&key_words, m0, m1, m2, m3, 0, BLOCK_LEN as u32, PARENT | flags) }
 }
 
 /// AVX2 chunk compression: process multiple 64-byte blocks.
@@ -570,7 +756,7 @@ pub unsafe fn parent_cv_ssse3(
 /// # Safety
 /// Caller must ensure AVX2 is available.
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx2")]
+#[target_feature(enable = "avx2,ssse3")]
 pub unsafe fn chunk_compress_blocks_avx2(
   chaining_value: &mut [u32; 8],
   chunk_counter: u64,
@@ -578,19 +764,51 @@ pub unsafe fn chunk_compress_blocks_avx2(
   blocks_compressed: &mut u8,
   blocks: &[u8],
 ) {
+  // For now, keep the AVX2 per-block path identical to SSSE3 but with AVX2
+  // enabled so the compiler can emit VEX-encoded 128-bit ops and avoid
+  // AVX<->SSE transition penalties in mixed workloads.
   debug_assert_eq!(blocks.len() % BLOCK_LEN, 0);
+
+  if blocks.len() == BLOCK_LEN {
+    // SAFETY: `blocks` is exactly one full block.
+    let block_bytes: &[u8; BLOCK_LEN] = unsafe { &*(blocks.as_ptr().cast()) };
+    let start = if *blocks_compressed == 0 { CHUNK_START } else { 0 };
+    let (m0, m1, m2, m3) = unsafe { load_msg_vecs(block_bytes.as_ptr()) };
+    // SAFETY: this function is AVX2+SSSE3-gated.
+    *chaining_value = unsafe {
+      compress_cv_avx2(
+        chaining_value,
+        m0,
+        m1,
+        m2,
+        m3,
+        chunk_counter,
+        BLOCK_LEN as u32,
+        flags | start,
+      )
+    };
+    *blocks_compressed = blocks_compressed.wrapping_add(1);
+    return;
+  }
+
   let (block_slices, remainder) = blocks.as_chunks::<BLOCK_LEN>();
   debug_assert!(remainder.is_empty());
   for block_bytes in block_slices {
     let start = if *blocks_compressed == 0 { CHUNK_START } else { 0 };
-    let block_words = words16_from_le_bytes_64(block_bytes);
-    *chaining_value = first_8_words(compress_avx2(
-      chaining_value,
-      &block_words,
-      chunk_counter,
-      BLOCK_LEN as u32,
-      flags | start,
-    ));
+    let (m0, m1, m2, m3) = unsafe { load_msg_vecs(block_bytes.as_ptr()) };
+    // SAFETY: this function is AVX2+SSSE3-gated.
+    *chaining_value = unsafe {
+      compress_cv_avx2(
+        chaining_value,
+        m0,
+        m1,
+        m2,
+        m3,
+        chunk_counter,
+        BLOCK_LEN as u32,
+        flags | start,
+      )
+    };
     *blocks_compressed = blocks_compressed.wrapping_add(1);
   }
 }
@@ -600,23 +818,18 @@ pub unsafe fn chunk_compress_blocks_avx2(
 /// # Safety
 /// Caller must ensure AVX2 is available.
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx2")]
+#[target_feature(enable = "avx2,ssse3")]
 pub unsafe fn parent_cv_avx2(
   left_child_cv: [u32; 8],
   right_child_cv: [u32; 8],
   key_words: [u32; 8],
   flags: u32,
 ) -> [u32; 8] {
-  let mut block_words = [0u32; 16];
-  block_words[..8].copy_from_slice(&left_child_cv);
-  block_words[8..].copy_from_slice(&right_child_cv);
-  first_8_words(compress_avx2(
-    &key_words,
-    &block_words,
-    0,
-    BLOCK_LEN as u32,
-    PARENT | flags,
-  ))
+  let m0 = _mm_loadu_si128(left_child_cv.as_ptr().cast());
+  let m1 = _mm_loadu_si128(left_child_cv.as_ptr().add(4).cast());
+  let m2 = _mm_loadu_si128(right_child_cv.as_ptr().cast());
+  let m3 = _mm_loadu_si128(right_child_cv.as_ptr().add(4).cast());
+  unsafe { compress_cv_avx2(&key_words, m0, m1, m2, m3, 0, BLOCK_LEN as u32, PARENT | flags) }
 }
 
 /// BLAKE3 compress function using AVX-512-enabled codegen.
@@ -628,7 +841,7 @@ pub unsafe fn parent_cv_avx2(
 /// # Safety
 /// Caller must ensure AVX-512 + AVX2 are available.
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx512f,avx512vl,avx2")]
+#[target_feature(enable = "avx512f,avx512vl,avx2,ssse3")]
 pub unsafe fn compress_avx512(
   chaining_value: &[u32; 8],
   block_words: &[u32; 16],
@@ -645,7 +858,7 @@ pub unsafe fn compress_avx512(
 /// # Safety
 /// Caller must ensure AVX-512 + AVX2 are available.
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx512f,avx512vl,avx2")]
+#[target_feature(enable = "avx512f,avx512vl,avx2,ssse3")]
 pub unsafe fn chunk_compress_blocks_avx512(
   chaining_value: &mut [u32; 8],
   chunk_counter: u64,
@@ -653,8 +866,48 @@ pub unsafe fn chunk_compress_blocks_avx512(
   blocks_compressed: &mut u8,
   blocks: &[u8],
 ) {
-  // SAFETY: caller guarantees AVX2; forward to the AVX2 implementation.
-  unsafe { chunk_compress_blocks_avx2(chaining_value, chunk_counter, flags, blocks_compressed, blocks) }
+  debug_assert_eq!(blocks.len() % BLOCK_LEN, 0);
+
+  if blocks.len() == BLOCK_LEN {
+    // SAFETY: `blocks` is exactly one full block.
+    let block_bytes: &[u8; BLOCK_LEN] = unsafe { &*(blocks.as_ptr().cast()) };
+    let start = if *blocks_compressed == 0 { CHUNK_START } else { 0 };
+    let (m0, m1, m2, m3) = unsafe { load_msg_vecs(block_bytes.as_ptr()) };
+    *chaining_value = unsafe {
+      compress_cv_avx512(
+        chaining_value,
+        m0,
+        m1,
+        m2,
+        m3,
+        chunk_counter,
+        BLOCK_LEN as u32,
+        flags | start,
+      )
+    };
+    *blocks_compressed = blocks_compressed.wrapping_add(1);
+    return;
+  }
+
+  let (block_slices, remainder) = blocks.as_chunks::<BLOCK_LEN>();
+  debug_assert!(remainder.is_empty());
+  for block_bytes in block_slices {
+    let start = if *blocks_compressed == 0 { CHUNK_START } else { 0 };
+    let (m0, m1, m2, m3) = unsafe { load_msg_vecs(block_bytes.as_ptr()) };
+    *chaining_value = unsafe {
+      compress_cv_avx512(
+        chaining_value,
+        m0,
+        m1,
+        m2,
+        m3,
+        chunk_counter,
+        BLOCK_LEN as u32,
+        flags | start,
+      )
+    };
+    *blocks_compressed = blocks_compressed.wrapping_add(1);
+  }
 }
 
 /// AVX-512 parent CV computation.
@@ -662,15 +915,18 @@ pub unsafe fn chunk_compress_blocks_avx512(
 /// # Safety
 /// Caller must ensure AVX-512 + AVX2 are available.
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx512f,avx512vl,avx2")]
+#[target_feature(enable = "avx512f,avx512vl,avx2,ssse3")]
 pub unsafe fn parent_cv_avx512(
   left_child_cv: [u32; 8],
   right_child_cv: [u32; 8],
   key_words: [u32; 8],
   flags: u32,
 ) -> [u32; 8] {
-  // SAFETY: caller guarantees AVX2; forward to the AVX2 implementation.
-  unsafe { parent_cv_avx2(left_child_cv, right_child_cv, key_words, flags) }
+  let m0 = _mm_loadu_si128(left_child_cv.as_ptr().cast());
+  let m1 = _mm_loadu_si128(left_child_cv.as_ptr().add(4).cast());
+  let m2 = _mm_loadu_si128(right_child_cv.as_ptr().cast());
+  let m3 = _mm_loadu_si128(right_child_cv.as_ptr().add(4).cast());
+  unsafe { compress_cv_avx512(&key_words, m0, m1, m2, m3, 0, BLOCK_LEN as u32, PARENT | flags) }
 }
 
 /// Hash many contiguous full chunks using the SSSE3 single-block compressor.

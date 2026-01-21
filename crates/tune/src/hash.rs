@@ -26,6 +26,30 @@ fn kernel_specs(algo: &'static str, caps: &Caps) -> Vec<KernelSpec> {
     if caps.has(x86::SSSE3) {
       out.push(KernelSpec::new("x86_64/ssse3", KernelTier::Wide, x86::SSSE3));
     }
+    #[cfg(target_arch = "x86_64")]
+    if caps.has(x86::SSE41.union(x86::SSSE3)) {
+      out.push(KernelSpec::new(
+        "x86_64/sse4.1",
+        KernelTier::Wide,
+        x86::SSE41.union(x86::SSSE3),
+      ));
+    }
+    #[cfg(target_arch = "x86_64")]
+    if caps.has(x86::AVX2.union(x86::SSE41).union(x86::SSSE3)) {
+      out.push(KernelSpec::new(
+        "x86_64/avx2",
+        KernelTier::Wide,
+        x86::AVX2.union(x86::SSE41).union(x86::SSSE3),
+      ));
+    }
+    #[cfg(target_arch = "x86_64")]
+    if caps.has(x86::AVX512_READY.union(x86::AVX2).union(x86::SSE41).union(x86::SSSE3)) {
+      out.push(KernelSpec::new(
+        "x86_64/avx512",
+        KernelTier::Wide,
+        x86::AVX512_READY.union(x86::AVX2).union(x86::SSE41).union(x86::SSSE3),
+      ));
+    }
     #[cfg(target_arch = "aarch64")]
     if caps.has(aarch64::NEON) {
       out.push(KernelSpec::new("aarch64/neon", KernelTier::Wide, aarch64::NEON));

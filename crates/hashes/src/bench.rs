@@ -595,11 +595,24 @@ fn blake2s_256_compress_auto(data: &[u8]) -> u64 {
 }
 
 fn blake3_words16_from_le_bytes_64(bytes: &[u8; 64]) -> [u32; 16] {
-  let (chunks, rem) = bytes.as_chunks::<4>();
-  debug_assert!(rem.is_empty());
   let mut out = [0u32; 16];
-  for (dst, src) in out.iter_mut().zip(chunks.iter()) {
-    *dst = u32::from_le_bytes(*src);
+  for (i, dst) in out.iter_mut().enumerate() {
+    // SAFETY: `bytes` is 64 bytes, and `i < 16` so `i * 4` stays in-bounds.
+    // We use `read_unaligned` because the input slice has 1-byte alignment.
+    let w = unsafe { core::ptr::read_unaligned(bytes.as_ptr().add(i * 4).cast::<u32>()) };
+    *dst = u32::from_le(w);
+  }
+  out
+}
+
+#[inline(always)]
+fn blake3_words8_from_le_bytes_32(bytes: &[u8; 32]) -> [u32; 8] {
+  let mut out = [0u32; 8];
+  for (i, dst) in out.iter_mut().enumerate() {
+    // SAFETY: `bytes` is 32 bytes, and `i < 8` so `i * 4` stays in-bounds.
+    // We use `read_unaligned` because the input slice has 1-byte alignment.
+    let w = unsafe { core::ptr::read_unaligned(bytes.as_ptr().add(i * 4).cast::<u32>()) };
+    *dst = u32::from_le(w);
   }
   out
 }
@@ -676,6 +689,21 @@ fn blake3_chunk_compress_x86_64_ssse3(data: &[u8]) -> u64 {
   blake3_chunk_compress_kernel(crypto::blake3::kernels::Blake3KernelId::X86Ssse3, data)
 }
 
+#[cfg(target_arch = "x86_64")]
+fn blake3_chunk_compress_x86_64_sse41(data: &[u8]) -> u64 {
+  blake3_chunk_compress_kernel(crypto::blake3::kernels::Blake3KernelId::X86Sse41, data)
+}
+
+#[cfg(target_arch = "x86_64")]
+fn blake3_chunk_compress_x86_64_avx2(data: &[u8]) -> u64 {
+  blake3_chunk_compress_kernel(crypto::blake3::kernels::Blake3KernelId::X86Avx2, data)
+}
+
+#[cfg(target_arch = "x86_64")]
+fn blake3_chunk_compress_x86_64_avx512(data: &[u8]) -> u64 {
+  blake3_chunk_compress_kernel(crypto::blake3::kernels::Blake3KernelId::X86Avx512, data)
+}
+
 #[cfg(target_arch = "aarch64")]
 fn blake3_chunk_compress_aarch64_neon(data: &[u8]) -> u64 {
   blake3_chunk_compress_kernel(crypto::blake3::kernels::Blake3KernelId::Aarch64Neon, data)
@@ -748,21 +776,13 @@ fn blake3_parent_cv_kernel(id: crypto::blake3::kernels::Blake3KernelId, data: &[
   let pairs = data.len() / 64;
   for i in 0..pairs {
     let base = i * 64;
-    let left = &data[base..base + 32];
-    let right = &data[base + 32..base + 64];
+    // SAFETY: `base + 64` is in-bounds by construction (`pairs = len/64`).
+    let left: &[u8; 32] = unsafe { &*(data.as_ptr().add(base).cast()) };
+    // SAFETY: `base + 64` is in-bounds by construction (`pairs = len/64`).
+    let right: &[u8; 32] = unsafe { &*(data.as_ptr().add(base + 32).cast()) };
 
-    let mut l = [0u32; 8];
-    let mut r = [0u32; 8];
-    for (j, chunk) in left.chunks_exact(4).enumerate() {
-      let mut tmp = [0u8; 4];
-      tmp.copy_from_slice(chunk);
-      l[j] = u32::from_le_bytes(tmp);
-    }
-    for (j, chunk) in right.chunks_exact(4).enumerate() {
-      let mut tmp = [0u8; 4];
-      tmp.copy_from_slice(chunk);
-      r[j] = u32::from_le_bytes(tmp);
-    }
+    let l = blake3_words8_from_le_bytes_32(left);
+    let r = blake3_words8_from_le_bytes_32(right);
 
     let out = (kernel.parent_cv)(l, r, key_words, 0);
     acc ^= out[0];
@@ -780,6 +800,21 @@ fn blake3_parent_cv_x86_64_ssse3(data: &[u8]) -> u64 {
   blake3_parent_cv_kernel(crypto::blake3::kernels::Blake3KernelId::X86Ssse3, data)
 }
 
+#[cfg(target_arch = "x86_64")]
+fn blake3_parent_cv_x86_64_sse41(data: &[u8]) -> u64 {
+  blake3_parent_cv_kernel(crypto::blake3::kernels::Blake3KernelId::X86Sse41, data)
+}
+
+#[cfg(target_arch = "x86_64")]
+fn blake3_parent_cv_x86_64_avx2(data: &[u8]) -> u64 {
+  blake3_parent_cv_kernel(crypto::blake3::kernels::Blake3KernelId::X86Avx2, data)
+}
+
+#[cfg(target_arch = "x86_64")]
+fn blake3_parent_cv_x86_64_avx512(data: &[u8]) -> u64 {
+  blake3_parent_cv_kernel(crypto::blake3::kernels::Blake3KernelId::X86Avx512, data)
+}
+
 #[cfg(target_arch = "aarch64")]
 fn blake3_parent_cv_aarch64_neon(data: &[u8]) -> u64 {
   blake3_parent_cv_kernel(crypto::blake3::kernels::Blake3KernelId::Aarch64Neon, data)
@@ -794,21 +829,13 @@ fn blake3_parent_cv_auto(data: &[u8]) -> u64 {
   let pairs = data.len() / 64;
   for i in 0..pairs {
     let base = i * 64;
-    let left = &data[base..base + 32];
-    let right = &data[base + 32..base + 64];
+    // SAFETY: `base + 64` is in-bounds by construction (`pairs = len/64`).
+    let left: &[u8; 32] = unsafe { &*(data.as_ptr().add(base).cast()) };
+    // SAFETY: `base + 64` is in-bounds by construction (`pairs = len/64`).
+    let right: &[u8; 32] = unsafe { &*(data.as_ptr().add(base + 32).cast()) };
 
-    let mut l = [0u32; 8];
-    let mut r = [0u32; 8];
-    for (j, chunk) in left.chunks_exact(4).enumerate() {
-      let mut tmp = [0u8; 4];
-      tmp.copy_from_slice(chunk);
-      l[j] = u32::from_le_bytes(tmp);
-    }
-    for (j, chunk) in right.chunks_exact(4).enumerate() {
-      let mut tmp = [0u8; 4];
-      tmp.copy_from_slice(chunk);
-      r[j] = u32::from_le_bytes(tmp);
-    }
+    let l = blake3_words8_from_le_bytes_32(left);
+    let r = blake3_words8_from_le_bytes_32(right);
 
     let out = (kernel.parent_cv)(l, r, key_words, 0);
     acc ^= out[0];
@@ -940,6 +967,21 @@ pub fn get_kernel(algo: &str, name: &str) -> Option<Kernel> {
       name: "x86_64/ssse3",
       func: blake3_chunk_compress_x86_64_ssse3,
     }),
+    #[cfg(target_arch = "x86_64")]
+    ("blake3-chunk", "x86_64/sse4.1") => Some(Kernel {
+      name: "x86_64/sse4.1",
+      func: blake3_chunk_compress_x86_64_sse41,
+    }),
+    #[cfg(target_arch = "x86_64")]
+    ("blake3-chunk", "x86_64/avx2") => Some(Kernel {
+      name: "x86_64/avx2",
+      func: blake3_chunk_compress_x86_64_avx2,
+    }),
+    #[cfg(target_arch = "x86_64")]
+    ("blake3-chunk", "x86_64/avx512") => Some(Kernel {
+      name: "x86_64/avx512",
+      func: blake3_chunk_compress_x86_64_avx512,
+    }),
     #[cfg(target_arch = "aarch64")]
     ("blake3-chunk", "aarch64/neon") => Some(Kernel {
       name: "aarch64/neon",
@@ -953,6 +995,21 @@ pub fn get_kernel(algo: &str, name: &str) -> Option<Kernel> {
     ("blake3-parent", "x86_64/ssse3") => Some(Kernel {
       name: "x86_64/ssse3",
       func: blake3_parent_cv_x86_64_ssse3,
+    }),
+    #[cfg(target_arch = "x86_64")]
+    ("blake3-parent", "x86_64/sse4.1") => Some(Kernel {
+      name: "x86_64/sse4.1",
+      func: blake3_parent_cv_x86_64_sse41,
+    }),
+    #[cfg(target_arch = "x86_64")]
+    ("blake3-parent", "x86_64/avx2") => Some(Kernel {
+      name: "x86_64/avx2",
+      func: blake3_parent_cv_x86_64_avx2,
+    }),
+    #[cfg(target_arch = "x86_64")]
+    ("blake3-parent", "x86_64/avx512") => Some(Kernel {
+      name: "x86_64/avx512",
+      func: blake3_parent_cv_x86_64_avx512,
     }),
     #[cfg(target_arch = "aarch64")]
     ("blake3-parent", "aarch64/neon") => Some(Kernel {
