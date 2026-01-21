@@ -39,22 +39,26 @@ unsafe fn storeu256(src: __m256i, dest: *mut u8) {
 
 #[inline(always)]
 unsafe fn rot16(x: __m512i) -> __m512i {
-  unsafe { _mm512_or_si512(_mm512_srli_epi32(x, 16), _mm512_slli_epi32(x, 16)) }
+  // 32-bit rotate by 16. Prefer `vprold` over shift/or.
+  unsafe { _mm512_rol_epi32(x, 16) }
 }
 
 #[inline(always)]
 unsafe fn rot12(x: __m512i) -> __m512i {
-  unsafe { _mm512_or_si512(_mm512_srli_epi32(x, 12), _mm512_slli_epi32(x, 20)) }
+  // Rotate right by 12 == rotate left by 20.
+  unsafe { _mm512_rol_epi32(x, 20) }
 }
 
 #[inline(always)]
 unsafe fn rot8(x: __m512i) -> __m512i {
-  unsafe { _mm512_or_si512(_mm512_srli_epi32(x, 8), _mm512_slli_epi32(x, 24)) }
+  // Rotate right by 8 == rotate left by 24.
+  unsafe { _mm512_rol_epi32(x, 24) }
 }
 
 #[inline(always)]
 unsafe fn rot7(x: __m512i) -> __m512i {
-  unsafe { _mm512_or_si512(_mm512_srli_epi32(x, 7), _mm512_slli_epi32(x, 25)) }
+  // Rotate right by 7 == rotate left by 25.
+  unsafe { _mm512_rol_epi32(x, 25) }
 }
 
 #[inline(always)]
@@ -351,6 +355,12 @@ unsafe fn transpose_msg_vecs16(inputs: &[*const u8; 16], block_offset: usize) ->
 #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,avx2")]
 pub unsafe fn hash16_contiguous(input: *const u8, key: &[u32; 8], counter: u64, flags: u32, out: *mut u8) {
   unsafe {
+    let block_len_vec = set1(BLOCK_LEN as u32);
+    let iv0 = set1(IV[0]);
+    let iv1 = set1(IV[1]);
+    let iv2 = set1(IV[2]);
+    let iv3 = set1(IV[3]);
+
     let mut h_vecs = [
       set1(key[0]),
       set1(key[1]),
@@ -393,7 +403,6 @@ pub unsafe fn hash16_contiguous(input: *const u8, key: &[u32; 8], counter: u64, 
         block_flags |= super::super::CHUNK_END;
       }
 
-      let block_len_vec = set1(BLOCK_LEN as u32);
       let block_flags_vec = set1(block_flags);
 
       let m = transpose_msg_vecs16(&inputs, block * BLOCK_LEN);
@@ -407,10 +416,10 @@ pub unsafe fn hash16_contiguous(input: *const u8, key: &[u32; 8], counter: u64, 
         h_vecs[5],
         h_vecs[6],
         h_vecs[7],
-        set1(IV[0]),
-        set1(IV[1]),
-        set1(IV[2]),
-        set1(IV[3]),
+        iv0,
+        iv1,
+        iv2,
+        iv3,
         counter_low_vec,
         counter_high_vec,
         block_len_vec,

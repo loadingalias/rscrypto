@@ -4,6 +4,8 @@ use platform::caps::aarch64;
 #[cfg(target_arch = "x86_64")]
 use platform::caps::x86;
 
+#[cfg(target_arch = "x86_64")]
+use super::words8_from_le_bytes_32;
 use super::{BLOCK_LEN, CHUNK_LEN, CHUNK_START, OUT_LEN, PARENT, first_8_words, words16_from_le_bytes_64};
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -259,6 +261,192 @@ pub(crate) fn parent_cv_inline(
     Blake3KernelId::X86Avx512 => parent_cv_avx512_wrapper(left_child_cv, right_child_cv, key_words, flags),
     #[cfg(target_arch = "aarch64")]
     Blake3KernelId::Aarch64Neon => parent_cv_portable(left_child_cv, right_child_cv, key_words, flags),
+  }
+}
+
+/// Compute many parent CVs from pre-packed parent blocks.
+///
+/// Each entry in `parents` is a `[u32; 16]` message block representing
+/// `[left_cv (8 words), right_cv (8 words)]`.
+#[inline]
+pub(crate) fn parent_cvs_many_inline(
+  id: Blake3KernelId,
+  parents: &[[u32; 16]],
+  key_words: [u32; 8],
+  flags: u32,
+  out: &mut [[u32; 8]],
+) {
+  debug_assert_eq!(parents.len(), out.len());
+  if parents.is_empty() {
+    return;
+  }
+
+  match id {
+    Blake3KernelId::Portable => {}
+    #[cfg(target_arch = "aarch64")]
+    Blake3KernelId::Aarch64Neon => {}
+    #[cfg(target_arch = "x86_64")]
+    Blake3KernelId::X86Ssse3 => {}
+    #[cfg(target_arch = "x86_64")]
+    Blake3KernelId::X86Sse41 => {
+      let mut i = 0usize;
+      let parent_flags = PARENT | flags;
+
+      while parents.len() - i >= super::x86_64::sse41::DEGREE {
+        let ptrs: [*const u8; super::x86_64::sse41::DEGREE] = [
+          parents[i].as_ptr().cast(),
+          parents[i + 1].as_ptr().cast(),
+          parents[i + 2].as_ptr().cast(),
+          parents[i + 3].as_ptr().cast(),
+        ];
+
+        let mut tmp = [0u8; super::x86_64::sse41::DEGREE * OUT_LEN];
+        // SAFETY: `id` is SSE4.1, so SSE4.1 is available; each pointer is
+        // valid for one 64-byte block, and `tmp` is large enough.
+        unsafe {
+          super::x86_64::sse41::hash4(&ptrs, 1, &key_words, 0, false, parent_flags, 0, 0, tmp.as_mut_ptr());
+        }
+
+        for lane in 0..super::x86_64::sse41::DEGREE {
+          // SAFETY: `tmp` is `DEGREE * OUT_LEN` bytes, and `lane < DEGREE`.
+          let bytes: &[u8; OUT_LEN] = unsafe { &*(tmp.as_ptr().add(lane * OUT_LEN).cast()) };
+          out[i + lane] = words8_from_le_bytes_32(bytes);
+        }
+
+        i += super::x86_64::sse41::DEGREE;
+      }
+
+      let rem = parents.len() - i;
+      if rem != 0 {
+        // Hash a 4-lane batch with duplicated final pointers and copy only the
+        // required outputs.
+        let last_ptr: *const u8 = parents[parents.len() - 1].as_ptr().cast();
+        let ptrs: [*const u8; super::x86_64::sse41::DEGREE] = [
+          parents[i].as_ptr().cast(),
+          if rem > 1 {
+            parents[i + 1].as_ptr().cast()
+          } else {
+            last_ptr
+          },
+          if rem > 2 {
+            parents[i + 2].as_ptr().cast()
+          } else {
+            last_ptr
+          },
+          last_ptr,
+        ];
+
+        let mut tmp = [0u8; super::x86_64::sse41::DEGREE * OUT_LEN];
+        // SAFETY: SSE4.1 is available for this wrapper; pointers and outputs are valid.
+        unsafe {
+          super::x86_64::sse41::hash4(&ptrs, 1, &key_words, 0, false, parent_flags, 0, 0, tmp.as_mut_ptr());
+        }
+
+        for lane in 0..rem {
+          // SAFETY: `lane < rem <= DEGREE`, so this is in-bounds.
+          let bytes: &[u8; OUT_LEN] = unsafe { &*(tmp.as_ptr().add(lane * OUT_LEN).cast()) };
+          out[i + lane] = words8_from_le_bytes_32(bytes);
+        }
+      }
+      return;
+    }
+    #[cfg(target_arch = "x86_64")]
+    Blake3KernelId::X86Avx2 | Blake3KernelId::X86Avx512 => {
+      let mut i = 0usize;
+      let parent_flags = PARENT | flags;
+
+      while parents.len() - i >= super::x86_64::avx2::DEGREE {
+        let ptrs: [*const u8; super::x86_64::avx2::DEGREE] = [
+          parents[i].as_ptr().cast(),
+          parents[i + 1].as_ptr().cast(),
+          parents[i + 2].as_ptr().cast(),
+          parents[i + 3].as_ptr().cast(),
+          parents[i + 4].as_ptr().cast(),
+          parents[i + 5].as_ptr().cast(),
+          parents[i + 6].as_ptr().cast(),
+          parents[i + 7].as_ptr().cast(),
+        ];
+
+        let mut tmp = [0u8; super::x86_64::avx2::DEGREE * OUT_LEN];
+        // SAFETY: `id` is AVX2/AVX-512, so AVX2 is available; pointers and outputs are valid.
+        unsafe {
+          super::x86_64::avx2::hash8(&ptrs, 1, &key_words, 0, false, parent_flags, 0, 0, tmp.as_mut_ptr());
+        }
+
+        for lane in 0..super::x86_64::avx2::DEGREE {
+          // SAFETY: `tmp` is `DEGREE * OUT_LEN` bytes, and `lane < DEGREE`.
+          let bytes: &[u8; OUT_LEN] = unsafe { &*(tmp.as_ptr().add(lane * OUT_LEN).cast()) };
+          out[i + lane] = words8_from_le_bytes_32(bytes);
+        }
+
+        i += super::x86_64::avx2::DEGREE;
+      }
+
+      let rem = parents.len() - i;
+      if rem != 0 {
+        // Hash an 8-lane batch with duplicated final pointers and copy only the
+        // required outputs.
+        let last_ptr: *const u8 = parents[parents.len() - 1].as_ptr().cast();
+        let ptrs: [*const u8; super::x86_64::avx2::DEGREE] = [
+          parents[i].as_ptr().cast(),
+          if rem > 1 {
+            parents[i + 1].as_ptr().cast()
+          } else {
+            last_ptr
+          },
+          if rem > 2 {
+            parents[i + 2].as_ptr().cast()
+          } else {
+            last_ptr
+          },
+          if rem > 3 {
+            parents[i + 3].as_ptr().cast()
+          } else {
+            last_ptr
+          },
+          if rem > 4 {
+            parents[i + 4].as_ptr().cast()
+          } else {
+            last_ptr
+          },
+          if rem > 5 {
+            parents[i + 5].as_ptr().cast()
+          } else {
+            last_ptr
+          },
+          if rem > 6 {
+            parents[i + 6].as_ptr().cast()
+          } else {
+            last_ptr
+          },
+          last_ptr,
+        ];
+
+        let mut tmp = [0u8; super::x86_64::avx2::DEGREE * OUT_LEN];
+        // SAFETY: AVX2 is available for this wrapper; pointers and outputs are valid.
+        unsafe {
+          super::x86_64::avx2::hash8(&ptrs, 1, &key_words, 0, false, parent_flags, 0, 0, tmp.as_mut_ptr());
+        }
+
+        for lane in 0..rem {
+          // SAFETY: `lane < rem <= DEGREE`, so this is in-bounds.
+          let bytes: &[u8; OUT_LEN] = unsafe { &*(tmp.as_ptr().add(lane * OUT_LEN).cast()) };
+          out[i + lane] = words8_from_le_bytes_32(bytes);
+        }
+      }
+      return;
+    }
+  }
+
+  // Portable/scalar fallback.
+  for (i, parent_words) in parents.iter().enumerate() {
+    out[i] = first_8_words((super::compress)(
+      &key_words,
+      parent_words,
+      0,
+      BLOCK_LEN as u32,
+      PARENT | flags,
+    ));
   }
 }
 
@@ -608,10 +796,38 @@ unsafe fn hash_many_contiguous_sse41_wrapper(
   }
 
   if num_chunks != 0 {
-    // SAFETY: the remaining chunk pointers are in-bounds for the caller's
-    // `input`/`out` buffer, and the portable implementation writes `OUT_LEN`
-    // bytes per chunk.
-    unsafe { hash_many_contiguous_portable(input, num_chunks, key, counter, flags, out) };
+    // For small tails (1–3 chunks), avoid falling back to portable. Duplicate
+    // the final chunk pointer into unused lanes and only copy the needed
+    // outputs.
+    // SAFETY: `num_chunks != 0`, and `input` is valid for `num_chunks * CHUNK_LEN` bytes.
+    let last = unsafe { input.add((num_chunks - 1) * CHUNK_LEN) };
+    // SAFETY: all pointers are within the caller-provided `input` buffer.
+    let ptrs = unsafe {
+      [
+        input,
+        if num_chunks > 1 { input.add(CHUNK_LEN) } else { last },
+        if num_chunks > 2 { input.add(2 * CHUNK_LEN) } else { last },
+        last,
+      ]
+    };
+
+    let mut tmp = [0u8; super::x86_64::sse41::DEGREE * OUT_LEN];
+    // SAFETY: SSE4.1 is available for this wrapper, `ptrs` are in-bounds for
+    // full chunks, and `tmp`/`out` are large enough for the copied outputs.
+    unsafe {
+      super::x86_64::sse41::hash4(
+        &ptrs,
+        CHUNK_LEN / BLOCK_LEN,
+        key,
+        counter,
+        true,
+        flags,
+        CHUNK_START,
+        super::CHUNK_END,
+        tmp.as_mut_ptr(),
+      );
+      core::ptr::copy_nonoverlapping(tmp.as_ptr(), out, num_chunks * OUT_LEN);
+    }
   }
 }
 
@@ -643,6 +859,8 @@ unsafe fn hash_many_contiguous_avx2_wrapper(
     };
     // SAFETY: dispatch selects this kernel only when AVX2 is available; the
     // caller guarantees `input`/`out` cover the full `num_chunks` buffer.
+    // SAFETY: AVX2 is available for this wrapper, `ptrs` are in-bounds for
+    // full chunks, and `out` is large enough for `DEGREE * OUT_LEN` bytes.
     unsafe {
       super::x86_64::avx2::hash8(
         &ptrs,
@@ -663,9 +881,42 @@ unsafe fn hash_many_contiguous_avx2_wrapper(
   }
 
   if num_chunks != 0 {
-    // SAFETY: the remaining chunk pointers are in-bounds for the caller's
-    // `input`/`out` buffer, and SSE4.1 is always available when AVX2 is.
-    unsafe { hash_many_contiguous_sse41_wrapper(input, num_chunks, key, counter, flags, out) };
+    // Avoid AVX2→SSE/portable cliffs for tails (1–7 chunks) by hashing an
+    // 8-lane batch with duplicated final pointers and copying only the needed
+    // outputs.
+    // SAFETY: `num_chunks != 0`, and `input` is valid for `num_chunks * CHUNK_LEN` bytes.
+    let last = unsafe { input.add((num_chunks - 1) * CHUNK_LEN) };
+    // SAFETY: all pointers are within the caller-provided `input` buffer.
+    let ptrs = unsafe {
+      [
+        input,
+        if num_chunks > 1 { input.add(CHUNK_LEN) } else { last },
+        if num_chunks > 2 { input.add(2 * CHUNK_LEN) } else { last },
+        if num_chunks > 3 { input.add(3 * CHUNK_LEN) } else { last },
+        if num_chunks > 4 { input.add(4 * CHUNK_LEN) } else { last },
+        if num_chunks > 5 { input.add(5 * CHUNK_LEN) } else { last },
+        if num_chunks > 6 { input.add(6 * CHUNK_LEN) } else { last },
+        last,
+      ]
+    };
+
+    let mut tmp = [0u8; super::x86_64::avx2::DEGREE * OUT_LEN];
+    // SAFETY: AVX2 is available for this wrapper, `ptrs` are in-bounds for
+    // full chunks, and `tmp`/`out` are large enough for the copied outputs.
+    unsafe {
+      super::x86_64::avx2::hash8(
+        &ptrs,
+        CHUNK_LEN / BLOCK_LEN,
+        key,
+        counter,
+        true,
+        flags,
+        CHUNK_START,
+        super::CHUNK_END,
+        tmp.as_mut_ptr(),
+      );
+      core::ptr::copy_nonoverlapping(tmp.as_ptr(), out, num_chunks * OUT_LEN);
+    }
   }
 }
 
