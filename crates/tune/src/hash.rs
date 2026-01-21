@@ -43,11 +43,24 @@ fn kernel_specs(algo: &'static str, caps: &Caps) -> Vec<KernelSpec> {
       ));
     }
     #[cfg(target_arch = "x86_64")]
-    if caps.has(x86::AVX512_READY.union(x86::AVX2).union(x86::SSE41).union(x86::SSSE3)) {
+    // Match upstream BLAKE3: AVX-512 backends are gated by `avx512f` + `avx512vl`
+    // (plus AVX2/SSE4.1/SSSE3 as baseline). Do not over-gate on BW/DQ here,
+    // or Zen-class AVX-512 will be incorrectly excluded from tuning results.
+    if caps.has(
+      x86::AVX512F
+        .union(x86::AVX512VL)
+        .union(x86::AVX2)
+        .union(x86::SSE41)
+        .union(x86::SSSE3),
+    ) {
       out.push(KernelSpec::new(
         "x86_64/avx512",
         KernelTier::Wide,
-        x86::AVX512_READY.union(x86::AVX2).union(x86::SSE41).union(x86::SSSE3),
+        x86::AVX512F
+          .union(x86::AVX512VL)
+          .union(x86::AVX2)
+          .union(x86::SSE41)
+          .union(x86::SSSE3),
       ));
     }
     #[cfg(target_arch = "aarch64")]
