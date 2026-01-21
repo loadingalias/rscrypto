@@ -351,7 +351,192 @@ pub(crate) fn parent_cvs_many_inline(
       return;
     }
     #[cfg(target_arch = "x86_64")]
-    Blake3KernelId::X86Avx2 | Blake3KernelId::X86Avx512 => {
+    Blake3KernelId::X86Avx512 => {
+      let parent_flags = PARENT | flags;
+
+      #[cfg(target_os = "linux")]
+      {
+        // Use the upstream-grade AVX-512 asm `hash_many` backend for parent
+        // folding too. This avoids an AVX-512 -> AVX2 downgrade in the tree
+        // reduction path, which shows up clearly in large-input benchmarks.
+        const DEGREE: usize = 16;
+        debug_assert!(parents.len() <= 16, "parent folding batches are capped at 16");
+
+        let mut i = 0usize;
+        while parents.len() - i >= DEGREE {
+          let ptrs: [*const u8; DEGREE] = [
+            parents[i].as_ptr().cast(),
+            parents[i + 1].as_ptr().cast(),
+            parents[i + 2].as_ptr().cast(),
+            parents[i + 3].as_ptr().cast(),
+            parents[i + 4].as_ptr().cast(),
+            parents[i + 5].as_ptr().cast(),
+            parents[i + 6].as_ptr().cast(),
+            parents[i + 7].as_ptr().cast(),
+            parents[i + 8].as_ptr().cast(),
+            parents[i + 9].as_ptr().cast(),
+            parents[i + 10].as_ptr().cast(),
+            parents[i + 11].as_ptr().cast(),
+            parents[i + 12].as_ptr().cast(),
+            parents[i + 13].as_ptr().cast(),
+            parents[i + 14].as_ptr().cast(),
+            parents[i + 15].as_ptr().cast(),
+          ];
+
+          let mut tmp = [0u8; DEGREE * OUT_LEN];
+          // SAFETY: `id` is AVX-512, so required AVX-512 features are present
+          // per dispatch. Each pointer is valid for one 64-byte parent block,
+          // and `tmp` is large enough for `DEGREE` outputs.
+          unsafe {
+            super::x86_64::asm_linux::rscrypto_blake3_hash_many_avx512(
+              ptrs.as_ptr(),
+              DEGREE,
+              1,
+              key_words.as_ptr(),
+              0,
+              false,
+              parent_flags as u8,
+              0,
+              0,
+              tmp.as_mut_ptr(),
+            );
+          }
+
+          for lane in 0..DEGREE {
+            // SAFETY: `tmp` is `DEGREE * OUT_LEN` bytes, and `lane < DEGREE`.
+            let bytes: &[u8; OUT_LEN] = unsafe { &*(tmp.as_ptr().add(lane * OUT_LEN).cast()) };
+            out[i + lane] = words8_from_le_bytes_32(bytes);
+          }
+
+          i += DEGREE;
+        }
+
+        let rem = parents.len() - i;
+        if rem != 0 {
+          let last_ptr: *const u8 = parents[parents.len() - 1].as_ptr().cast();
+          let mut ptrs = [last_ptr; DEGREE];
+          for lane in 0..rem {
+            ptrs[lane] = parents[i + lane].as_ptr().cast();
+          }
+
+          let mut tmp = [0u8; DEGREE * OUT_LEN];
+          // SAFETY: same as the main loop; we duplicate the final pointer to
+          // fill the 16-lane batch and only read the first `rem` outputs.
+          unsafe {
+            super::x86_64::asm_linux::rscrypto_blake3_hash_many_avx512(
+              ptrs.as_ptr(),
+              DEGREE,
+              1,
+              key_words.as_ptr(),
+              0,
+              false,
+              parent_flags as u8,
+              0,
+              0,
+              tmp.as_mut_ptr(),
+            );
+          }
+
+          for lane in 0..rem {
+            // SAFETY: `tmp` is `DEGREE * OUT_LEN` bytes, and `lane < rem <= DEGREE`.
+            let bytes: &[u8; OUT_LEN] = unsafe { &*(tmp.as_ptr().add(lane * OUT_LEN).cast()) };
+            out[i + lane] = words8_from_le_bytes_32(bytes);
+          }
+        }
+
+        return;
+      }
+
+      #[cfg(not(target_os = "linux"))]
+      {
+        // Non-Linux fallback: treat AVX-512 as AVX2 for parent folding.
+        let mut i = 0usize;
+        while parents.len() - i >= super::x86_64::avx2::DEGREE {
+          let ptrs: [*const u8; super::x86_64::avx2::DEGREE] = [
+            parents[i].as_ptr().cast(),
+            parents[i + 1].as_ptr().cast(),
+            parents[i + 2].as_ptr().cast(),
+            parents[i + 3].as_ptr().cast(),
+            parents[i + 4].as_ptr().cast(),
+            parents[i + 5].as_ptr().cast(),
+            parents[i + 6].as_ptr().cast(),
+            parents[i + 7].as_ptr().cast(),
+          ];
+
+          let mut tmp = [0u8; super::x86_64::avx2::DEGREE * OUT_LEN];
+          // SAFETY: `id` is AVX-512 and the caller ensured required CPU
+          // features. The AVX2 routine is safe to call (AVX-512 implies AVX2 per
+          // dispatch), all pointers are valid for one block, and `tmp` is large
+          // enough for `DEGREE` outputs.
+          unsafe {
+            super::x86_64::avx2::hash8(&ptrs, 1, &key_words, 0, false, parent_flags, 0, 0, tmp.as_mut_ptr());
+          }
+
+          for lane in 0..super::x86_64::avx2::DEGREE {
+            // SAFETY: `tmp` is `DEGREE * OUT_LEN` bytes, and `lane < DEGREE`.
+            let bytes: &[u8; OUT_LEN] = unsafe { &*(tmp.as_ptr().add(lane * OUT_LEN).cast()) };
+            out[i + lane] = words8_from_le_bytes_32(bytes);
+          }
+
+          i += super::x86_64::avx2::DEGREE;
+        }
+
+        let rem = parents.len() - i;
+        if rem != 0 {
+          let last_ptr: *const u8 = parents[parents.len() - 1].as_ptr().cast();
+          let ptrs: [*const u8; super::x86_64::avx2::DEGREE] = [
+            parents[i].as_ptr().cast(),
+            if rem > 1 {
+              parents[i + 1].as_ptr().cast()
+            } else {
+              last_ptr
+            },
+            if rem > 2 {
+              parents[i + 2].as_ptr().cast()
+            } else {
+              last_ptr
+            },
+            if rem > 3 {
+              parents[i + 3].as_ptr().cast()
+            } else {
+              last_ptr
+            },
+            if rem > 4 {
+              parents[i + 4].as_ptr().cast()
+            } else {
+              last_ptr
+            },
+            if rem > 5 {
+              parents[i + 5].as_ptr().cast()
+            } else {
+              last_ptr
+            },
+            if rem > 6 {
+              parents[i + 6].as_ptr().cast()
+            } else {
+              last_ptr
+            },
+            last_ptr,
+          ];
+
+          let mut tmp = [0u8; super::x86_64::avx2::DEGREE * OUT_LEN];
+          // SAFETY: AVX2 is available per dispatch; pointers are valid for one
+          // block each, and `tmp` is large enough for the outputs we read.
+          unsafe {
+            super::x86_64::avx2::hash8(&ptrs, 1, &key_words, 0, false, parent_flags, 0, 0, tmp.as_mut_ptr());
+          }
+
+          for lane in 0..rem {
+            // SAFETY: `tmp` is `DEGREE * OUT_LEN` bytes, and `lane < rem <= DEGREE`.
+            let bytes: &[u8; OUT_LEN] = unsafe { &*(tmp.as_ptr().add(lane * OUT_LEN).cast()) };
+            out[i + lane] = words8_from_le_bytes_32(bytes);
+          }
+        }
+        return;
+      }
+    }
+    #[cfg(target_arch = "x86_64")]
+    Blake3KernelId::X86Avx2 => {
       let mut i = 0usize;
       let parent_flags = PARENT | flags;
 
