@@ -28,12 +28,12 @@ rscrypto_blake3_hash_many_avx512:
         vpbroadcastd ymm1, xmm1
         vmovdqa ymm4, ymm1
         vmovdqa ymm5, ymm1
-        vpaddd  ymm2, ymm0, ymmword ptr [ADD0+rip]
-        vpaddd  ymm3, ymm0, ymmword ptr [ADD0+32+rip]
+        vpaddd  ymm2, ymm0, ymmword ptr [RSCRYPTO_AVX512_ADD0+rip]
+        vpaddd  ymm3, ymm0, ymmword ptr [RSCRYPTO_AVX512_ADD0+32+rip]
         vpcmpltud k2, ymm2, ymm0
         vpcmpltud k3, ymm3, ymm0
-        vpaddd  ymm4 {{k2}}, ymm4, dword ptr [ADD1+rip] {{1to8}}
-        vpaddd  ymm5 {{k3}}, ymm5, dword ptr [ADD1+rip] {{1to8}}
+        vpaddd  ymm4 {{k2}}, ymm4, dword ptr [RSCRYPTO_AVX512_ADD1+rip] {{1to8}}
+        vpaddd  ymm5 {{k3}}, ymm5, dword ptr [RSCRYPTO_AVX512_ADD1+rip] {{1to8}}
         knotw   k2, k1
         vmovdqa32 ymm2 {{k2}}, ymm0
         vmovdqa32 ymm3 {{k2}}, ymm0
@@ -205,13 +205,13 @@ rscrypto_blake3_hash_many_avx512:
         vshufps zmm10, zmm13, zmm15, 221
         vpermi2d zmm27, zmm8, zmm10
         vpermi2d zmm31, zmm8, zmm10
-        vpbroadcastd zmm8, dword ptr [BLAKE3_IV_0+rip]
-        vpbroadcastd zmm9, dword ptr [BLAKE3_IV_1+rip]
-        vpbroadcastd zmm10, dword ptr [BLAKE3_IV_2+rip]
-        vpbroadcastd zmm11, dword ptr [BLAKE3_IV_3+rip]
+        vpbroadcastd zmm8, dword ptr [RSCRYPTO_AVX512_BLAKE3_IV_0+rip]
+        vpbroadcastd zmm9, dword ptr [RSCRYPTO_AVX512_BLAKE3_IV_1+rip]
+        vpbroadcastd zmm10, dword ptr [RSCRYPTO_AVX512_BLAKE3_IV_2+rip]
+        vpbroadcastd zmm11, dword ptr [RSCRYPTO_AVX512_BLAKE3_IV_3+rip]
         vmovdqa32 zmm12, zmmword ptr [rsp]
         vmovdqa32 zmm13, zmmword ptr [rsp+0x1*0x40]
-        vpbroadcastd zmm14, dword ptr [BLAKE3_BLOCK_LEN+rip]
+        vpbroadcastd zmm14, dword ptr [RSCRYPTO_AVX512_BLAKE3_BLOCK_LEN+rip]
         vpbroadcastd zmm15, dword ptr [rsp+0x22*0x4]
         vpaddd  zmm0, zmm0, zmm16
         vpaddd  zmm1, zmm1, zmm18
@@ -1053,7 +1053,7 @@ rscrypto_blake3_hash_many_avx512:
         vmovdqa32 zmm2, zmm0
         vpaddd  zmm2{{k1}}, zmm0, dword ptr [ADD16+rip] {{1to16}}
         vpcmpltud k2, zmm2, zmm0
-        vpaddd  zmm1 {{k2}}, zmm1, dword ptr [ADD1+rip] {{1to16}}
+        vpaddd  zmm1 {{k2}}, zmm1, dword ptr [RSCRYPTO_AVX512_ADD1+rip] {{1to16}}
         vmovdqa32 zmmword ptr [rsp], zmm2
         vmovdqa32 zmmword ptr [rsp+0x1*0x40], zmm1
         add     rdi, 128
@@ -1169,13 +1169,13 @@ rscrypto_blake3_hash_many_avx512:
         vshufps ymm29, ymm12, ymm14, 221
         vshufps ymm30, ymm13, ymm15, 136
         vshufps ymm31, ymm13, ymm15, 221
-        vpbroadcastd ymm8, dword ptr [BLAKE3_IV_0+rip]
-        vpbroadcastd ymm9, dword ptr [BLAKE3_IV_1+rip]
-        vpbroadcastd ymm10, dword ptr [BLAKE3_IV_2+rip]
-        vpbroadcastd ymm11, dword ptr [BLAKE3_IV_3+rip]
+        vpbroadcastd ymm8, dword ptr [RSCRYPTO_AVX512_BLAKE3_IV_0+rip]
+        vpbroadcastd ymm9, dword ptr [RSCRYPTO_AVX512_BLAKE3_IV_1+rip]
+        vpbroadcastd ymm10, dword ptr [RSCRYPTO_AVX512_BLAKE3_IV_2+rip]
+        vpbroadcastd ymm11, dword ptr [RSCRYPTO_AVX512_BLAKE3_IV_3+rip]
         vmovdqa ymm12, ymmword ptr [rsp]
         vmovdqa ymm13, ymmword ptr [rsp+0x40]
-        vpbroadcastd ymm14, dword ptr [BLAKE3_BLOCK_LEN+rip]
+        vpbroadcastd ymm14, dword ptr [RSCRYPTO_AVX512_BLAKE3_BLOCK_LEN+rip]
         vpbroadcastd ymm15, dword ptr [rsp+0x88]
         vpaddd  ymm0, ymm0, ymm16
         vpaddd  ymm1, ymm1, ymm18
@@ -2033,12 +2033,12 @@ rscrypto_blake3_hash_many_avx512:
         vpunpckhdq xmm15, xmm12, xmm13
         vpermq  ymm14, ymm14, 0xDC
         vpermq  ymm15, ymm15, 0xDC
-        vpbroadcastd zmm12, dword ptr [BLAKE3_BLOCK_LEN+rip]
+        vpbroadcastd zmm12, dword ptr [RSCRYPTO_AVX512_BLAKE3_BLOCK_LEN+rip]
         vinserti64x4 zmm13, zmm14, ymm15, 0x01
         mov     eax, 17476
         kmovw   k2, eax
         vpblendmd zmm13 {{k2}}, zmm13, zmm12
-        vbroadcasti32x4 zmm15, xmmword ptr [BLAKE3_IV+rip]
+        vbroadcasti32x4 zmm15, xmmword ptr [RSCRYPTO_AVX512_BLAKE3_IV+rip]
         mov     r8, qword ptr [rdi]
         mov     r9, qword ptr [rdi+0x8]
         mov     r10, qword ptr [rdi+0x10]
@@ -2165,10 +2165,10 @@ rscrypto_blake3_hash_many_avx512:
         vbroadcasti128 ymm1, xmmword ptr [rcx+0x10]
         vmovd   xmm13, dword ptr [rsp]
         vpinsrd xmm13, xmm13, dword ptr [rsp+0x40], 1
-        vpinsrd xmm13, xmm13, dword ptr [BLAKE3_BLOCK_LEN+rip], 2
+        vpinsrd xmm13, xmm13, dword ptr [RSCRYPTO_AVX512_BLAKE3_BLOCK_LEN+rip], 2
         vmovd   xmm14, dword ptr [rsp+0x4]
         vpinsrd xmm14, xmm14, dword ptr [rsp+0x44], 1
-        vpinsrd xmm14, xmm14, dword ptr [BLAKE3_BLOCK_LEN+rip], 2
+        vpinsrd xmm14, xmm14, dword ptr [RSCRYPTO_AVX512_BLAKE3_BLOCK_LEN+rip], 2
         vinserti128 ymm13, ymm13, xmm14, 0x01
         mov     r8, qword ptr [rdi]
         mov     r9, qword ptr [rdi+0x8]
@@ -2183,7 +2183,7 @@ rscrypto_blake3_hash_many_avx512:
         cmp     rdx, r15
         cmovne  eax, r14d
         mov     dword ptr [rsp+0x88], eax
-        vbroadcasti128 ymm2, xmmword ptr [BLAKE3_IV+rip]
+        vbroadcasti128 ymm2, xmmword ptr [RSCRYPTO_AVX512_BLAKE3_IV+rip]
         vpbroadcastd ymm8, dword ptr [rsp+0x88]
         vpblendd ymm3, ymm13, ymm8, 0x88
         vmovups ymm8, ymmword ptr [r8+rdx-0x40]
@@ -2278,8 +2278,8 @@ rscrypto_blake3_hash_many_avx512:
         vmovdqu xmm1, xmmword ptr [rcx+0x10]
         vmovd   xmm14, dword ptr [rsp]
         vpinsrd xmm14, xmm14, dword ptr [rsp+0x40], 1
-        vpinsrd xmm14, xmm14, dword ptr [BLAKE3_BLOCK_LEN+rip], 2
-        vmovdqa xmm15, xmmword ptr [BLAKE3_IV+rip]
+        vpinsrd xmm14, xmm14, dword ptr [RSCRYPTO_AVX512_BLAKE3_BLOCK_LEN+rip], 2
+        vmovdqa xmm15, xmmword ptr [RSCRYPTO_AVX512_BLAKE3_IV+rip]
         mov     r8, qword ptr [rdi]
         movzx   eax, byte ptr [rbp+0x40]
         or      eax, r13d
@@ -2375,7 +2375,7 @@ rscrypto_blake3_compress_in_place_avx512:
         vmovq   xmm3, rcx
         vmovq   xmm4, rdx
         vpunpcklqdq xmm3, xmm3, xmm4
-        vmovaps xmm2, xmmword ptr [BLAKE3_IV+rip]
+        vmovaps xmm2, xmmword ptr [RSCRYPTO_AVX512_BLAKE3_IV+rip]
         vmovups xmm8, xmmword ptr [rsi]
         vmovups xmm9, xmmword ptr [rsi+0x10]
         vshufps xmm4, xmm8, xmm9, 136
@@ -2456,7 +2456,7 @@ rscrypto_blake3_compress_xof_avx512:
         vmovq   xmm3, rcx
         vmovq   xmm4, rdx
         vpunpcklqdq xmm3, xmm3, xmm4
-        vmovaps xmm2, xmmword ptr [BLAKE3_IV+rip]
+        vmovaps xmm2, xmmword ptr [RSCRYPTO_AVX512_BLAKE3_IV+rip]
         vmovups xmm8, xmmword ptr [rsi]
         vmovups xmm9, xmmword ptr [rsi+0x10]
         vshufps xmm4, xmm8, xmm9, 136
@@ -2544,7 +2544,7 @@ rscrypto_blake3_xof_many_avx512:
         vmovq  xmm3,rcx
         vmovq  xmm4,rdx
         vpunpcklqdq xmm3,xmm3,xmm4
-        vmovaps xmm2,XMMWORD PTR [BLAKE3_IV+rip]
+        vmovaps xmm2,XMMWORD PTR [RSCRYPTO_AVX512_BLAKE3_IV+rip]
         vmovups xmm8,XMMWORD PTR [rsi]
         vmovups xmm9,XMMWORD PTR [rsi+0x10]
         vshufps xmm4,xmm8,xmm9,0x88
@@ -2626,9 +2626,9 @@ rscrypto_blake3_xof_many_avx512:
         vpbroadcastd zmm0,ecx
         shr    rcx,0x20
         vpbroadcastd zmm1,ecx
-        vpaddd zmm2,zmm0,ZMMWORD PTR [ADD0+rip]
+        vpaddd zmm2,zmm0,ZMMWORD PTR [RSCRYPTO_AVX512_ADD0+rip]
         vpcmpltud k1,zmm2,zmm0
-        vpaddd zmm1{{k1}},zmm1,DWORD PTR [ADD1+rip]{{1to16}}
+        vpaddd zmm1{{k1}},zmm1,DWORD PTR [RSCRYPTO_AVX512_ADD1+rip]{{1to16}}
         vmovdqa32 ZMMWORD PTR [rsp],zmm2
         vmovdqa32 ZMMWORD PTR [rsp+0x40],zmm1
         cmp    r10,0x10
@@ -2658,10 +2658,10 @@ rscrypto_blake3_xof_many_avx512:
         vpbroadcastd zmm5,DWORD PTR [rdi+0x14]
         vpbroadcastd zmm6,DWORD PTR [rdi+0x18]
         vpbroadcastd zmm7,DWORD PTR [rdi+0x1c]
-        vpbroadcastd zmm8,DWORD PTR [BLAKE3_IV_0+rip]
-        vpbroadcastd zmm9,DWORD PTR [BLAKE3_IV_1+rip]
-        vpbroadcastd zmm10,DWORD PTR [BLAKE3_IV_2+rip]
-        vpbroadcastd zmm11,DWORD PTR [BLAKE3_IV_3+rip]
+        vpbroadcastd zmm8,DWORD PTR [RSCRYPTO_AVX512_BLAKE3_IV_0+rip]
+        vpbroadcastd zmm9,DWORD PTR [RSCRYPTO_AVX512_BLAKE3_IV_1+rip]
+        vpbroadcastd zmm10,DWORD PTR [RSCRYPTO_AVX512_BLAKE3_IV_2+rip]
+        vpbroadcastd zmm11,DWORD PTR [RSCRYPTO_AVX512_BLAKE3_IV_3+rip]
         vmovdqa32 zmm12,ZMMWORD PTR [rsp]
         vmovdqa32 zmm13,ZMMWORD PTR [rsp+0x40]
         vpbroadcastd zmm14,edx
@@ -3550,7 +3550,7 @@ rscrypto_blake3_xof_many_avx512:
         vmovdqa32 zmm1,ZMMWORD PTR [rsp+0x40]
         vpaddd zmm2,zmm0,DWORD PTR [ADD16+rip]{{1to16}}
         vpcmpltud k1,zmm2,zmm0
-        vpaddd zmm1{{k1}},zmm1,DWORD PTR [ADD1+rip]{{1to16}}
+        vpaddd zmm1{{k1}},zmm1,DWORD PTR [RSCRYPTO_AVX512_ADD1+rip]{{1to16}}
         vmovdqa32 ZMMWORD PTR [rsp],zmm2
         vmovdqa32 ZMMWORD PTR [rsp+0x40],zmm1
         add    r9,0x400
@@ -3591,10 +3591,10 @@ rscrypto_blake3_xof_many_avx512:
         vpbroadcastd ymm5,DWORD PTR [rdi+0x14]
         vpbroadcastd ymm6,DWORD PTR [rdi+0x18]
         vpbroadcastd ymm7,DWORD PTR [rdi+0x1c]
-        vpbroadcastd ymm8,DWORD PTR [BLAKE3_IV_0+rip]
-        vpbroadcastd ymm9,DWORD PTR [BLAKE3_IV_1+rip]
-        vpbroadcastd ymm10,DWORD PTR [BLAKE3_IV_2+rip]
-        vpbroadcastd ymm11,DWORD PTR [BLAKE3_IV_3+rip]
+        vpbroadcastd ymm8,DWORD PTR [RSCRYPTO_AVX512_BLAKE3_IV_0+rip]
+        vpbroadcastd ymm9,DWORD PTR [RSCRYPTO_AVX512_BLAKE3_IV_1+rip]
+        vpbroadcastd ymm10,DWORD PTR [RSCRYPTO_AVX512_BLAKE3_IV_2+rip]
+        vpbroadcastd ymm11,DWORD PTR [RSCRYPTO_AVX512_BLAKE3_IV_3+rip]
         vmovdqa ymm12,YMMWORD PTR [rsp]
         vmovdqa ymm13,YMMWORD PTR [rsp+0x40]
         vpbroadcastd ymm14,edx
@@ -4474,7 +4474,7 @@ rscrypto_blake3_xof_many_avx512:
         je     2f
         vbroadcasti32x4 zmm0,XMMWORD PTR [rdi]
         vbroadcasti32x4 zmm1,XMMWORD PTR [rdi+0x10]
-        vbroadcasti32x4 zmm2,XMMWORD PTR [BLAKE3_IV+rip]
+        vbroadcasti32x4 zmm2,XMMWORD PTR [RSCRYPTO_AVX512_BLAKE3_IV+rip]
         vmovdqa xmm12,XMMWORD PTR [rsp]
         vmovdqa xmm13,XMMWORD PTR [rsp+0x40]
         vpunpckldq xmm14,xmm12,xmm13
@@ -4595,7 +4595,7 @@ rscrypto_blake3_xof_many_avx512:
         vpinsrd xmm14,xmm14,DWORD PTR [rsp+0x44],0x1
         vpinsrd xmm14,xmm14,edx,0x2
         vinserti128 ymm13,ymm13,xmm14,0x1
-        vbroadcasti128 ymm2,XMMWORD PTR [BLAKE3_IV+rip]
+        vbroadcasti128 ymm2,XMMWORD PTR [RSCRYPTO_AVX512_BLAKE3_IV+rip]
         vpbroadcastd ymm8,r8d
         vpblendd ymm3,ymm13,ymm8,0x88
         vbroadcasti128 ymm8,XMMWORD PTR [rsi]
@@ -4689,7 +4689,7 @@ rscrypto_blake3_xof_many_avx512:
         vmovd  xmm14,DWORD PTR [rsp]
         vpinsrd xmm14,xmm14,DWORD PTR [rsp+0x40],0x1
         vpinsrd xmm14,xmm14,edx,0x2
-        vmovdqa xmm2,XMMWORD PTR [BLAKE3_IV+rip]
+        vmovdqa xmm2,XMMWORD PTR [RSCRYPTO_AVX512_BLAKE3_IV+rip]
         vpinsrd xmm3,xmm14,r8d,0x3
         vmovups xmm8,XMMWORD PTR [rsi]
         vmovups xmm9,XMMWORD PTR [rsi+0x10]
@@ -4773,21 +4773,21 @@ INDEX0:
 INDEX1:
         .long    4,  5,  6,  7, 20, 21, 22, 23
         .long   12, 13, 14, 15, 28, 29, 30, 31
-ADD0:
+RSCRYPTO_AVX512_ADD0:
         .long    0,  1,  2,  3,  4,  5,  6,  7
         .long    8,  9, 10, 11, 12, 13, 14, 15
-ADD1:   .long    1
+RSCRYPTO_AVX512_ADD1:   .long    1
 
 ADD16:  .long   16
-BLAKE3_BLOCK_LEN:
+RSCRYPTO_AVX512_BLAKE3_BLOCK_LEN:
         .long   64
 .p2align 6
-BLAKE3_IV:
-BLAKE3_IV_0:
+RSCRYPTO_AVX512_BLAKE3_IV:
+RSCRYPTO_AVX512_BLAKE3_IV_0:
         .long   0x6A09E667
-BLAKE3_IV_1:
+RSCRYPTO_AVX512_BLAKE3_IV_1:
         .long   0xBB67AE85
-BLAKE3_IV_2:
+RSCRYPTO_AVX512_BLAKE3_IV_2:
         .long   0x3C6EF372
-BLAKE3_IV_3:
+RSCRYPTO_AVX512_BLAKE3_IV_3:
         .long   0xA54FF53A
