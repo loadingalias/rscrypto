@@ -23,6 +23,9 @@ struct Args {
   /// Quick mode (faster, noisier).
   quick: bool,
 
+  /// Only run a subset of algorithms (repeatable, comma-separated).
+  only: Vec<String>,
+
   /// Output format.
   format: OutputFormat,
 
@@ -46,6 +49,7 @@ impl Default for Args {
   fn default() -> Self {
     Self {
       quick: false,
+      only: Vec::new(),
       format: OutputFormat::Summary,
       verbose: false,
       apply: false,
@@ -67,6 +71,17 @@ fn parse_args() -> Result<Args, String> {
       "--verbose" | "-v" => args.verbose = true,
       "--help" | "-h" => args.help = true,
       "--apply" => args.apply = true,
+      "--only" => {
+        let Some(value) = iter.next() else {
+          return Err("--only requires a value".to_string());
+        };
+        for part in value.split(',') {
+          let name = part.trim();
+          if !name.is_empty() {
+            args.only.push(name.to_string());
+          }
+        }
+      }
       "--format" | "-f" => {
         let Some(value) = iter.next() else {
           return Err("--format requires a value".to_string());
@@ -109,6 +124,7 @@ OPTIONS:
     -q, --quick           Quick mode (faster, noisier measurements)
     -v, --verbose         Verbose output during tuning
     -f, --format FORMAT   Output format: summary (default), env, json, tsv, contribute
+        --only ALGO(S)    Only run selected algorithm(s). Repeatable; value may be comma-separated.
     --apply               Generate dispatch.rs table entry for this TuneKind
     --warmup-ms MS        Custom warmup duration (default: 150, quick: 75)
     --measure-ms MS       Custom measurement duration (default: 250, quick: 125)
@@ -127,6 +143,9 @@ EXAMPLES:
 
     # Quick run for development
     just tune-quick
+
+    # Tune only BLAKE3-related algorithms
+    just tune-quick -- --only blake3,blake3-chunk,blake3-parent,blake3-stream64,blake3-stream4k
 
     # Generate markdown for contributing your results
     just tune -- --format contribute
@@ -323,6 +342,14 @@ fn main() -> ExitCode {
   eprintln!();
 
   // Run the tuning engine
+  if !args.only.is_empty() {
+    let kept = engine.retain_only(&args.only);
+    if kept == 0 {
+      eprintln!("Error: --only did not match any registered algorithms.");
+      eprintln!("Tip: run without --only (or use --verbose) to see the full list.");
+      return ExitCode::FAILURE;
+    }
+  }
   let results = match engine.run() {
     Ok(results) => results,
     Err(err) => {
