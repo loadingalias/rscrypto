@@ -89,7 +89,9 @@ pub static ZEN4_TABLE: DispatchTable = DispatchTable {
   xs: DEFAULT_XS,
   s: DEFAULT_S,
   m: SIMD_KERNEL,
-  l: AVX512_KERNEL,
+  // Zen4 can be slower with AVX-512 (frequency/µarch effects). Keep AVX2 as
+  // the default until per-runner tuning proves otherwise.
+  l: SIMD_KERNEL,
 };
 #[cfg(not(target_arch = "x86_64"))]
 pub static ZEN4_TABLE: DispatchTable = default_kind_table();

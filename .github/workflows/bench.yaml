@@ -74,6 +74,18 @@ on:
         type: boolean
         default: false
 
+      tune_apply:
+        description: "Apply tuning results into dispatch tables and upload a patch"
+        required: false
+        type: boolean
+        default: false
+
+      tune_only:
+        description: "Tune only specific algorithms (comma-separated, optional)"
+        required: false
+        type: string
+        default: ""
+
       regression_baseline:
         description: "Git ref for regression comparison (e.g., main, v1.0.0)"
         required: false
@@ -670,9 +682,23 @@ jobs:
           echo "RUSTFLAGS: -C target-cpu=native"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
+          ONLY_INPUT="${{ github.event.inputs.tune_only }}"
+          APPLY_INPUT="${{ github.event.inputs.tune_apply }}"
+          ONLY_ARGS=()
+          APPLY_ARGS=()
+          if [ -n "$ONLY_INPUT" ]; then
+            ONLY_ARGS=(--only "$ONLY_INPUT")
+          fi
+          if [ "$APPLY_INPUT" = "true" ]; then
+            APPLY_ARGS=(--apply)
+          fi
+
           RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
-            cargo run -p tune --release --bin rscrypto-tune -- --quick 2>&1 | \
+            cargo run -p tune --release --bin rscrypto-tune -- --quick "${ONLY_ARGS[@]}" "${APPLY_ARGS[@]}" 2>&1 | \
             tee tune-results/rscrypto-tune.txt
+          if [ "$APPLY_INPUT" = "true" ]; then
+            git diff > tune-results/patch.diff || true
+          fi
 
           {
             echo ""
@@ -718,9 +744,23 @@ jobs:
           echo "RUSTFLAGS: -C target-cpu=native"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
+          ONLY_INPUT="${{ github.event.inputs.tune_only }}"
+          APPLY_INPUT="${{ github.event.inputs.tune_apply }}"
+          ONLY_ARGS=()
+          APPLY_ARGS=()
+          if [ -n "$ONLY_INPUT" ]; then
+            ONLY_ARGS=(--only "$ONLY_INPUT")
+          fi
+          if [ "$APPLY_INPUT" = "true" ]; then
+            APPLY_ARGS=(--apply)
+          fi
+
           RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
-            cargo run -p tune --release --bin rscrypto-tune -- --quick 2>&1 | \
+            cargo run -p tune --release --bin rscrypto-tune -- --quick "${ONLY_ARGS[@]}" "${APPLY_ARGS[@]}" 2>&1 | \
             tee tune-results/rscrypto-tune.txt
+          if [ "$APPLY_INPUT" = "true" ]; then
+            git diff > tune-results/patch.diff || true
+          fi
 
           {
             echo ""
@@ -772,9 +812,23 @@ jobs:
           echo "RUSTFLAGS: -C target-cpu=native"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
+          ONLY_INPUT="${{ github.event.inputs.tune_only }}"
+          APPLY_INPUT="${{ github.event.inputs.tune_apply }}"
+          ONLY_ARGS=()
+          APPLY_ARGS=()
+          if [ -n "$ONLY_INPUT" ]; then
+            ONLY_ARGS=(--only "$ONLY_INPUT")
+          fi
+          if [ "$APPLY_INPUT" = "true" ]; then
+            APPLY_ARGS=(--apply)
+          fi
+
           RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
-            cargo run -p tune --release --bin rscrypto-tune -- --quick 2>&1 | \
+            cargo run -p tune --release --bin rscrypto-tune -- --quick "${ONLY_ARGS[@]}" "${APPLY_ARGS[@]}" 2>&1 | \
             tee tune-results/rscrypto-tune.txt
+          if [ "$APPLY_INPUT" = "true" ]; then
+            git diff > tune-results/patch.diff || true
+          fi
 
           {
             echo ""
@@ -820,9 +874,23 @@ jobs:
           echo "RUSTFLAGS: -C target-cpu=native"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
+          ONLY_INPUT="${{ github.event.inputs.tune_only }}"
+          APPLY_INPUT="${{ github.event.inputs.tune_apply }}"
+          ONLY_ARGS=()
+          APPLY_ARGS=()
+          if [ -n "$ONLY_INPUT" ]; then
+            ONLY_ARGS=(--only "$ONLY_INPUT")
+          fi
+          if [ "$APPLY_INPUT" = "true" ]; then
+            APPLY_ARGS=(--apply)
+          fi
+
           RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
-            cargo run -p tune --release --bin rscrypto-tune -- --quick 2>&1 | \
+            cargo run -p tune --release --bin rscrypto-tune -- --quick "${ONLY_ARGS[@]}" "${APPLY_ARGS[@]}" 2>&1 | \
             tee tune-results/rscrypto-tune.txt
+          if [ "$APPLY_INPUT" = "true" ]; then
+            git diff > tune-results/patch.diff || true
+          fi
 
           {
             echo ""
@@ -868,9 +936,23 @@ jobs:
           echo "RUSTFLAGS: -C target-cpu=native"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
+          ONLY_INPUT="${{ github.event.inputs.tune_only }}"
+          APPLY_INPUT="${{ github.event.inputs.tune_apply }}"
+          ONLY_ARGS=()
+          APPLY_ARGS=()
+          if [ -n "$ONLY_INPUT" ]; then
+            ONLY_ARGS=(--only "$ONLY_INPUT")
+          fi
+          if [ "$APPLY_INPUT" = "true" ]; then
+            APPLY_ARGS=(--apply)
+          fi
+
           RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
-            cargo run -p tune --release --bin rscrypto-tune -- --quick 2>&1 | \
+            cargo run -p tune --release --bin rscrypto-tune -- --quick "${ONLY_ARGS[@]}" "${APPLY_ARGS[@]}" 2>&1 | \
             tee tune-results/rscrypto-tune.txt
+          if [ "$APPLY_INPUT" = "true" ]; then
+            git diff > tune-results/patch.diff || true
+          fi
 
           {
             echo ""

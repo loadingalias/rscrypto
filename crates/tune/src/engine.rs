@@ -1,5 +1,7 @@
 //! Tuning engine orchestrator.
 
+use std::collections::HashSet;
+
 use crate::{
   AlgorithmResult, KernelSpec, KernelTier, PlatformInfo, Tunable, TuneError, TuneResults,
   analysis::{self, CrossoverType, Measurement},
@@ -68,6 +70,23 @@ impl TuneEngine {
   /// Add an algorithm to tune.
   pub fn add(&mut self, algorithm: Box<dyn Tunable>) {
     self.algorithms.push(algorithm);
+  }
+
+  /// Retain only the requested algorithms by name.
+  ///
+  /// `only` is a list of algorithm names as reported by `Tunable::name()`
+  /// (e.g., `"blake3"`, `"blake3-chunk"`, `"blake3-stream4k"`).
+  ///
+  /// Returns the number of algorithms remaining after filtering.
+  #[must_use]
+  pub fn retain_only(&mut self, only: &[String]) -> usize {
+    if only.is_empty() {
+      return self.algorithms.len();
+    }
+
+    let wanted: HashSet<String> = only.iter().cloned().collect();
+    self.algorithms.retain(|a| wanted.contains(a.name()));
+    self.algorithms.len()
   }
 
   /// Run the complete tuning suite.
