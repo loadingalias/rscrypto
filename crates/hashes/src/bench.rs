@@ -424,6 +424,68 @@ fn blake3_stream4k_auto(data: &[u8]) -> u64 {
   blake3_stream_chunks_auto(data, 4 * 1024)
 }
 
+fn blake3_stream_chunks_kernel(id: crypto::blake3::kernels::Blake3KernelId, data: &[u8], chunk_size: usize) -> u64 {
+  u64_from_prefix(&crypto::Blake3::stream_chunks_with_kernel_id(id, chunk_size, data))
+}
+
+fn blake3_stream64_portable(data: &[u8]) -> u64 {
+  blake3_stream_chunks_kernel(crypto::blake3::kernels::Blake3KernelId::Portable, data, 64)
+}
+
+#[cfg(target_arch = "x86_64")]
+fn blake3_stream64_x86_64_ssse3(data: &[u8]) -> u64 {
+  blake3_stream_chunks_kernel(crypto::blake3::kernels::Blake3KernelId::X86Ssse3, data, 64)
+}
+
+#[cfg(target_arch = "x86_64")]
+fn blake3_stream64_x86_64_sse41(data: &[u8]) -> u64 {
+  blake3_stream_chunks_kernel(crypto::blake3::kernels::Blake3KernelId::X86Sse41, data, 64)
+}
+
+#[cfg(target_arch = "x86_64")]
+fn blake3_stream64_x86_64_avx2(data: &[u8]) -> u64 {
+  blake3_stream_chunks_kernel(crypto::blake3::kernels::Blake3KernelId::X86Avx2, data, 64)
+}
+
+#[cfg(target_arch = "x86_64")]
+fn blake3_stream64_x86_64_avx512(data: &[u8]) -> u64 {
+  blake3_stream_chunks_kernel(crypto::blake3::kernels::Blake3KernelId::X86Avx512, data, 64)
+}
+
+#[cfg(target_arch = "aarch64")]
+fn blake3_stream64_aarch64_neon(data: &[u8]) -> u64 {
+  blake3_stream_chunks_kernel(crypto::blake3::kernels::Blake3KernelId::Aarch64Neon, data, 64)
+}
+
+fn blake3_stream4k_portable(data: &[u8]) -> u64 {
+  blake3_stream_chunks_kernel(crypto::blake3::kernels::Blake3KernelId::Portable, data, 4 * 1024)
+}
+
+#[cfg(target_arch = "x86_64")]
+fn blake3_stream4k_x86_64_ssse3(data: &[u8]) -> u64 {
+  blake3_stream_chunks_kernel(crypto::blake3::kernels::Blake3KernelId::X86Ssse3, data, 4 * 1024)
+}
+
+#[cfg(target_arch = "x86_64")]
+fn blake3_stream4k_x86_64_sse41(data: &[u8]) -> u64 {
+  blake3_stream_chunks_kernel(crypto::blake3::kernels::Blake3KernelId::X86Sse41, data, 4 * 1024)
+}
+
+#[cfg(target_arch = "x86_64")]
+fn blake3_stream4k_x86_64_avx2(data: &[u8]) -> u64 {
+  blake3_stream_chunks_kernel(crypto::blake3::kernels::Blake3KernelId::X86Avx2, data, 4 * 1024)
+}
+
+#[cfg(target_arch = "x86_64")]
+fn blake3_stream4k_x86_64_avx512(data: &[u8]) -> u64 {
+  blake3_stream_chunks_kernel(crypto::blake3::kernels::Blake3KernelId::X86Avx512, data, 4 * 1024)
+}
+
+#[cfg(target_arch = "aarch64")]
+fn blake3_stream4k_aarch64_neon(data: &[u8]) -> u64 {
+  blake3_stream_chunks_kernel(crypto::blake3::kernels::Blake3KernelId::Aarch64Neon, data, 4 * 1024)
+}
+
 fn blake2b_512_compress_kernel(id: crypto::blake2b::kernels::Blake2b512KernelId, data: &[u8]) -> u64 {
   const BLOCK_LEN: usize = 128;
   let compress = crypto::blake2b::kernels::compress_fn(id);
@@ -605,243 +667,113 @@ fn blake3_words16_from_le_bytes_64(bytes: &[u8; 64]) -> [u32; 16] {
   out
 }
 
-#[inline(always)]
-fn blake3_words8_from_le_bytes_32(bytes: &[u8; 32]) -> [u32; 8] {
-  let mut out = [0u32; 8];
-  for (i, dst) in out.iter_mut().enumerate() {
-    // SAFETY: `bytes` is 32 bytes, and `i < 8` so `i * 4` stays in-bounds.
-    // We use `read_unaligned` because the input slice has 1-byte alignment.
-    let w = unsafe { core::ptr::read_unaligned(bytes.as_ptr().add(i * 4).cast::<u32>()) };
-    *dst = u32::from_le(w);
-  }
-  out
+fn blake3_oneshot_kernel(id: crypto::blake3::kernels::Blake3KernelId, data: &[u8]) -> u64 {
+  u64_from_prefix(&crypto::Blake3::digest_with_kernel_id(id, data))
 }
 
-fn blake3_first_8_words(words: [u32; 16]) -> [u32; 8] {
-  [
-    words[0], words[1], words[2], words[3], words[4], words[5], words[6], words[7],
-  ]
-}
-
-fn blake3_chunk_compress_kernel(id: crypto::blake3::kernels::Blake3KernelId, data: &[u8]) -> u64 {
-  const BLOCK_LEN: usize = 64;
-  const CHUNK_LEN: usize = 1024;
-  const CHUNK_START: u32 = 1 << 0;
-  const CHUNK_END: u32 = 1 << 1;
-
-  let kernel = crypto::blake3::kernels::kernel(id);
-  let mut acc: u32 = 0;
-  let key_words = [u64_from_prefix(data) as u32; 8];
-  let mut chunk_counter: u64 = 0;
-  let flags: u32 = 0;
-
-  for chunk in data.chunks(CHUNK_LEN) {
-    let blocks = core::cmp::max(1usize, chunk.len().div_ceil(BLOCK_LEN));
-    let (full_blocks, last_len) = if chunk.is_empty() {
-      (0usize, 0usize)
-    } else if chunk.len().is_multiple_of(BLOCK_LEN) {
-      (blocks - 1, BLOCK_LEN)
-    } else {
-      (blocks - 1, chunk.len() % BLOCK_LEN)
-    };
-
-    let mut cv = key_words;
-    let mut blocks_compressed: u8 = 0;
-    let full_bytes = full_blocks * BLOCK_LEN;
-    (kernel.chunk_compress_blocks)(
-      &mut cv,
-      chunk_counter,
-      flags,
-      &mut blocks_compressed,
-      &chunk[..full_bytes],
-    );
-
-    let mut last_block = [0u8; BLOCK_LEN];
-    if !chunk.is_empty() {
-      let offset = full_blocks * BLOCK_LEN;
-      last_block[..last_len].copy_from_slice(&chunk[offset..offset + last_len]);
-    }
-
-    let block_words = blake3_words16_from_le_bytes_64(&last_block);
-    let start = if blocks_compressed == 0 { CHUNK_START } else { 0 };
-    let words = (kernel.compress)(
-      &cv,
-      &block_words,
-      chunk_counter,
-      last_len as u32,
-      flags | start | CHUNK_END,
-    );
-    let out_cv = blake3_first_8_words(words);
-    acc ^= out_cv[0];
-
-    chunk_counter = chunk_counter.wrapping_add(1);
-  }
-
-  acc as u64
-}
-
-fn blake3_chunk_compress_portable(data: &[u8]) -> u64 {
-  blake3_chunk_compress_kernel(crypto::blake3::kernels::Blake3KernelId::Portable, data)
+fn blake3_oneshot_portable(data: &[u8]) -> u64 {
+  blake3_oneshot_kernel(crypto::blake3::kernels::Blake3KernelId::Portable, data)
 }
 
 #[cfg(target_arch = "x86_64")]
-fn blake3_chunk_compress_x86_64_ssse3(data: &[u8]) -> u64 {
-  blake3_chunk_compress_kernel(crypto::blake3::kernels::Blake3KernelId::X86Ssse3, data)
+fn blake3_oneshot_x86_64_ssse3(data: &[u8]) -> u64 {
+  blake3_oneshot_kernel(crypto::blake3::kernels::Blake3KernelId::X86Ssse3, data)
 }
 
 #[cfg(target_arch = "x86_64")]
-fn blake3_chunk_compress_x86_64_sse41(data: &[u8]) -> u64 {
-  blake3_chunk_compress_kernel(crypto::blake3::kernels::Blake3KernelId::X86Sse41, data)
+fn blake3_oneshot_x86_64_sse41(data: &[u8]) -> u64 {
+  blake3_oneshot_kernel(crypto::blake3::kernels::Blake3KernelId::X86Sse41, data)
 }
 
 #[cfg(target_arch = "x86_64")]
-fn blake3_chunk_compress_x86_64_avx2(data: &[u8]) -> u64 {
-  blake3_chunk_compress_kernel(crypto::blake3::kernels::Blake3KernelId::X86Avx2, data)
+fn blake3_oneshot_x86_64_avx2(data: &[u8]) -> u64 {
+  blake3_oneshot_kernel(crypto::blake3::kernels::Blake3KernelId::X86Avx2, data)
 }
 
 #[cfg(target_arch = "x86_64")]
-fn blake3_chunk_compress_x86_64_avx512(data: &[u8]) -> u64 {
-  blake3_chunk_compress_kernel(crypto::blake3::kernels::Blake3KernelId::X86Avx512, data)
+fn blake3_oneshot_x86_64_avx512(data: &[u8]) -> u64 {
+  blake3_oneshot_kernel(crypto::blake3::kernels::Blake3KernelId::X86Avx512, data)
 }
 
 #[cfg(target_arch = "aarch64")]
-fn blake3_chunk_compress_aarch64_neon(data: &[u8]) -> u64 {
-  blake3_chunk_compress_kernel(crypto::blake3::kernels::Blake3KernelId::Aarch64Neon, data)
+fn blake3_oneshot_aarch64_neon(data: &[u8]) -> u64 {
+  blake3_oneshot_kernel(crypto::blake3::kernels::Blake3KernelId::Aarch64Neon, data)
 }
 
-fn blake3_chunk_compress_auto(data: &[u8]) -> u64 {
-  let dispatch = crypto::blake3::dispatch::kernel_dispatch();
-  let kernel = dispatch.select(data.len());
-  let mut acc: u32 = 0;
+fn blake3_oneshot_auto(data: &[u8]) -> u64 {
+  u64_from_prefix(&crypto::Blake3::digest(data))
+}
 
-  const BLOCK_LEN: usize = 64;
-  const CHUNK_LEN: usize = 1024;
-  const CHUNK_START: u32 = 1 << 0;
-  const CHUNK_END: u32 = 1 << 1;
+fn blake3_parent_cvs_many_kernel(id: crypto::blake3::kernels::Blake3KernelId, data: &[u8]) -> u64 {
+  const PARENT_BLOCK_LEN: usize = 64;
+  const BATCH: usize = 64;
 
   let key_words = [u64_from_prefix(data) as u32; 8];
-  let mut chunk_counter: u64 = 0;
   let flags: u32 = 0;
-
-  for chunk in data.chunks(CHUNK_LEN) {
-    let blocks = core::cmp::max(1usize, chunk.len().div_ceil(BLOCK_LEN));
-    let (full_blocks, last_len) = if chunk.is_empty() {
-      (0usize, 0usize)
-    } else if chunk.len().is_multiple_of(BLOCK_LEN) {
-      (blocks - 1, BLOCK_LEN)
-    } else {
-      (blocks - 1, chunk.len() % BLOCK_LEN)
-    };
-
-    let mut cv = key_words;
-    let mut blocks_compressed: u8 = 0;
-    let full_bytes = full_blocks * BLOCK_LEN;
-    (kernel.chunk_compress_blocks)(
-      &mut cv,
-      chunk_counter,
-      flags,
-      &mut blocks_compressed,
-      &chunk[..full_bytes],
-    );
-
-    let mut last_block = [0u8; BLOCK_LEN];
-    if !chunk.is_empty() {
-      let offset = full_blocks * BLOCK_LEN;
-      last_block[..last_len].copy_from_slice(&chunk[offset..offset + last_len]);
-    }
-
-    let block_words = blake3_words16_from_le_bytes_64(&last_block);
-    let start = if blocks_compressed == 0 { CHUNK_START } else { 0 };
-    let words = (kernel.compress)(
-      &cv,
-      &block_words,
-      chunk_counter,
-      last_len as u32,
-      flags | start | CHUNK_END,
-    );
-    let out_cv = blake3_first_8_words(words);
-    acc ^= out_cv[0];
-
-    chunk_counter = chunk_counter.wrapping_add(1);
-  }
-
-  acc as u64
-}
-
-fn blake3_parent_cv_kernel(id: crypto::blake3::kernels::Blake3KernelId, data: &[u8]) -> u64 {
-  let kernel = crypto::blake3::kernels::kernel(id);
-  let key_words = [u64_from_prefix(data) as u32; 8];
   let mut acc: u32 = 0;
 
-  let pairs = data.len() / 64;
-  for i in 0..pairs {
-    let base = i * 64;
-    // SAFETY: `base + 64` is in-bounds by construction (`pairs = len/64`).
-    let left: &[u8; 32] = unsafe { &*(data.as_ptr().add(base).cast()) };
-    // SAFETY: `base + 64` is in-bounds by construction (`pairs = len/64`).
-    let right: &[u8; 32] = unsafe { &*(data.as_ptr().add(base + 32).cast()) };
+  let mut parents = [[0u32; 16]; BATCH];
+  let mut out = [[0u32; 8]; BATCH];
+  let mut filled = 0usize;
 
-    let l = blake3_words8_from_le_bytes_32(left);
-    let r = blake3_words8_from_le_bytes_32(right);
+  for parent_bytes in data.chunks(PARENT_BLOCK_LEN) {
+    let mut block = [0u8; PARENT_BLOCK_LEN];
+    block[..parent_bytes.len()].copy_from_slice(parent_bytes);
+    parents[filled] = blake3_words16_from_le_bytes_64(&block);
+    filled += 1;
 
-    let out = (kernel.parent_cv)(l, r, key_words, 0);
-    acc ^= out[0];
+    if filled == BATCH {
+      crypto::blake3::kernels::parent_cvs_many_inline(id, &parents[..filled], key_words, flags, &mut out[..filled]);
+      for slot in out.iter().take(filled) {
+        acc ^= slot[0];
+      }
+      filled = 0;
+    }
+  }
+
+  if filled != 0 {
+    crypto::blake3::kernels::parent_cvs_many_inline(id, &parents[..filled], key_words, flags, &mut out[..filled]);
+    for slot in out.iter().take(filled) {
+      acc ^= slot[0];
+    }
   }
 
   acc as u64
 }
 
-fn blake3_parent_cv_portable(data: &[u8]) -> u64 {
-  blake3_parent_cv_kernel(crypto::blake3::kernels::Blake3KernelId::Portable, data)
+fn blake3_parent_cvs_many_portable(data: &[u8]) -> u64 {
+  blake3_parent_cvs_many_kernel(crypto::blake3::kernels::Blake3KernelId::Portable, data)
 }
 
 #[cfg(target_arch = "x86_64")]
-fn blake3_parent_cv_x86_64_ssse3(data: &[u8]) -> u64 {
-  blake3_parent_cv_kernel(crypto::blake3::kernels::Blake3KernelId::X86Ssse3, data)
+fn blake3_parent_cvs_many_x86_64_ssse3(data: &[u8]) -> u64 {
+  blake3_parent_cvs_many_kernel(crypto::blake3::kernels::Blake3KernelId::X86Ssse3, data)
 }
 
 #[cfg(target_arch = "x86_64")]
-fn blake3_parent_cv_x86_64_sse41(data: &[u8]) -> u64 {
-  blake3_parent_cv_kernel(crypto::blake3::kernels::Blake3KernelId::X86Sse41, data)
+fn blake3_parent_cvs_many_x86_64_sse41(data: &[u8]) -> u64 {
+  blake3_parent_cvs_many_kernel(crypto::blake3::kernels::Blake3KernelId::X86Sse41, data)
 }
 
 #[cfg(target_arch = "x86_64")]
-fn blake3_parent_cv_x86_64_avx2(data: &[u8]) -> u64 {
-  blake3_parent_cv_kernel(crypto::blake3::kernels::Blake3KernelId::X86Avx2, data)
+fn blake3_parent_cvs_many_x86_64_avx2(data: &[u8]) -> u64 {
+  blake3_parent_cvs_many_kernel(crypto::blake3::kernels::Blake3KernelId::X86Avx2, data)
 }
 
 #[cfg(target_arch = "x86_64")]
-fn blake3_parent_cv_x86_64_avx512(data: &[u8]) -> u64 {
-  blake3_parent_cv_kernel(crypto::blake3::kernels::Blake3KernelId::X86Avx512, data)
+fn blake3_parent_cvs_many_x86_64_avx512(data: &[u8]) -> u64 {
+  blake3_parent_cvs_many_kernel(crypto::blake3::kernels::Blake3KernelId::X86Avx512, data)
 }
 
 #[cfg(target_arch = "aarch64")]
-fn blake3_parent_cv_aarch64_neon(data: &[u8]) -> u64 {
-  blake3_parent_cv_kernel(crypto::blake3::kernels::Blake3KernelId::Aarch64Neon, data)
+fn blake3_parent_cvs_many_aarch64_neon(data: &[u8]) -> u64 {
+  blake3_parent_cvs_many_kernel(crypto::blake3::kernels::Blake3KernelId::Aarch64Neon, data)
 }
 
-fn blake3_parent_cv_auto(data: &[u8]) -> u64 {
+fn blake3_parent_cvs_many_auto(data: &[u8]) -> u64 {
   let dispatch = crypto::blake3::dispatch::kernel_dispatch();
   let kernel = dispatch.select(data.len());
-  let key_words = [u64_from_prefix(data) as u32; 8];
-  let mut acc: u32 = 0;
-
-  let pairs = data.len() / 64;
-  for i in 0..pairs {
-    let base = i * 64;
-    // SAFETY: `base + 64` is in-bounds by construction (`pairs = len/64`).
-    let left: &[u8; 32] = unsafe { &*(data.as_ptr().add(base).cast()) };
-    // SAFETY: `base + 64` is in-bounds by construction (`pairs = len/64`).
-    let right: &[u8; 32] = unsafe { &*(data.as_ptr().add(base + 32).cast()) };
-
-    let l = blake3_words8_from_le_bytes_32(left);
-    let r = blake3_words8_from_le_bytes_32(right);
-
-    let out = (kernel.parent_cv)(l, r, key_words, 0);
-    acc ^= out[0];
-  }
-
-  acc as u64
+  blake3_parent_cvs_many_kernel(kernel.id, data)
 }
 
 fn keccakf1600_kernel(id: crypto::keccak::kernels::Keccakf1600KernelId, data: &[u8]) -> u64 {
@@ -960,67 +892,67 @@ pub fn get_kernel(algo: &str, name: &str) -> Option<Kernel> {
     }),
     ("blake3-chunk", "portable") => Some(Kernel {
       name: "portable",
-      func: blake3_chunk_compress_portable,
+      func: blake3_oneshot_portable,
     }),
     #[cfg(target_arch = "x86_64")]
     ("blake3-chunk", "x86_64/ssse3") => Some(Kernel {
       name: "x86_64/ssse3",
-      func: blake3_chunk_compress_x86_64_ssse3,
+      func: blake3_oneshot_x86_64_ssse3,
     }),
     #[cfg(target_arch = "x86_64")]
     ("blake3-chunk", "x86_64/sse4.1") => Some(Kernel {
       name: "x86_64/sse4.1",
-      func: blake3_chunk_compress_x86_64_sse41,
+      func: blake3_oneshot_x86_64_sse41,
     }),
     #[cfg(target_arch = "x86_64")]
     ("blake3-chunk", "x86_64/avx2") => Some(Kernel {
       name: "x86_64/avx2",
-      func: blake3_chunk_compress_x86_64_avx2,
+      func: blake3_oneshot_x86_64_avx2,
     }),
     #[cfg(target_arch = "x86_64")]
     ("blake3-chunk", "x86_64/avx512") => Some(Kernel {
       name: "x86_64/avx512",
-      func: blake3_chunk_compress_x86_64_avx512,
+      func: blake3_oneshot_x86_64_avx512,
     }),
     #[cfg(target_arch = "aarch64")]
     ("blake3-chunk", "aarch64/neon") => Some(Kernel {
       name: "aarch64/neon",
-      func: blake3_chunk_compress_aarch64_neon,
+      func: blake3_oneshot_aarch64_neon,
     }),
     ("blake3-parent", "portable") => Some(Kernel {
       name: "portable",
-      func: blake3_parent_cv_portable,
+      func: blake3_parent_cvs_many_portable,
     }),
     #[cfg(target_arch = "x86_64")]
     ("blake3-parent", "x86_64/ssse3") => Some(Kernel {
       name: "x86_64/ssse3",
-      func: blake3_parent_cv_x86_64_ssse3,
+      func: blake3_parent_cvs_many_x86_64_ssse3,
     }),
     #[cfg(target_arch = "x86_64")]
     ("blake3-parent", "x86_64/sse4.1") => Some(Kernel {
       name: "x86_64/sse4.1",
-      func: blake3_parent_cv_x86_64_sse41,
+      func: blake3_parent_cvs_many_x86_64_sse41,
     }),
     #[cfg(target_arch = "x86_64")]
     ("blake3-parent", "x86_64/avx2") => Some(Kernel {
       name: "x86_64/avx2",
-      func: blake3_parent_cv_x86_64_avx2,
+      func: blake3_parent_cvs_many_x86_64_avx2,
     }),
     #[cfg(target_arch = "x86_64")]
     ("blake3-parent", "x86_64/avx512") => Some(Kernel {
       name: "x86_64/avx512",
-      func: blake3_parent_cv_x86_64_avx512,
+      func: blake3_parent_cvs_many_x86_64_avx512,
     }),
     #[cfg(target_arch = "aarch64")]
     ("blake3-parent", "aarch64/neon") => Some(Kernel {
       name: "aarch64/neon",
-      func: blake3_parent_cv_aarch64_neon,
+      func: blake3_parent_cvs_many_aarch64_neon,
     }),
     ("keccakf1600-permute", "portable") => Some(Kernel {
       name: "portable",
       func: keccakf1600_portable,
     }),
-    // Streaming chunking profiles (currently always dispatch/auto; forcing is a no-op until multiple kernels exist).
+    // Streaming chunking profiles (some algos only have dispatch/auto today).
     ("sha256-stream64", "portable") => Some(Kernel {
       name: "portable",
       func: sha256_stream64_auto,
@@ -1055,11 +987,61 @@ pub fn get_kernel(algo: &str, name: &str) -> Option<Kernel> {
     }),
     ("blake3-stream64", "portable") => Some(Kernel {
       name: "portable",
-      func: blake3_stream64_auto,
+      func: blake3_stream64_portable,
+    }),
+    #[cfg(target_arch = "x86_64")]
+    ("blake3-stream64", "x86_64/ssse3") => Some(Kernel {
+      name: "x86_64/ssse3",
+      func: blake3_stream64_x86_64_ssse3,
+    }),
+    #[cfg(target_arch = "x86_64")]
+    ("blake3-stream64", "x86_64/sse4.1") => Some(Kernel {
+      name: "x86_64/sse4.1",
+      func: blake3_stream64_x86_64_sse41,
+    }),
+    #[cfg(target_arch = "x86_64")]
+    ("blake3-stream64", "x86_64/avx2") => Some(Kernel {
+      name: "x86_64/avx2",
+      func: blake3_stream64_x86_64_avx2,
+    }),
+    #[cfg(target_arch = "x86_64")]
+    ("blake3-stream64", "x86_64/avx512") => Some(Kernel {
+      name: "x86_64/avx512",
+      func: blake3_stream64_x86_64_avx512,
+    }),
+    #[cfg(target_arch = "aarch64")]
+    ("blake3-stream64", "aarch64/neon") => Some(Kernel {
+      name: "aarch64/neon",
+      func: blake3_stream64_aarch64_neon,
     }),
     ("blake3-stream4k", "portable") => Some(Kernel {
       name: "portable",
-      func: blake3_stream4k_auto,
+      func: blake3_stream4k_portable,
+    }),
+    #[cfg(target_arch = "x86_64")]
+    ("blake3-stream4k", "x86_64/ssse3") => Some(Kernel {
+      name: "x86_64/ssse3",
+      func: blake3_stream4k_x86_64_ssse3,
+    }),
+    #[cfg(target_arch = "x86_64")]
+    ("blake3-stream4k", "x86_64/sse4.1") => Some(Kernel {
+      name: "x86_64/sse4.1",
+      func: blake3_stream4k_x86_64_sse41,
+    }),
+    #[cfg(target_arch = "x86_64")]
+    ("blake3-stream4k", "x86_64/avx2") => Some(Kernel {
+      name: "x86_64/avx2",
+      func: blake3_stream4k_x86_64_avx2,
+    }),
+    #[cfg(target_arch = "x86_64")]
+    ("blake3-stream4k", "x86_64/avx512") => Some(Kernel {
+      name: "x86_64/avx512",
+      func: blake3_stream4k_x86_64_avx512,
+    }),
+    #[cfg(target_arch = "aarch64")]
+    ("blake3-stream4k", "aarch64/neon") => Some(Kernel {
+      name: "aarch64/neon",
+      func: blake3_stream4k_aarch64_neon,
     }),
     ("sha224", "portable") => Some(Kernel {
       name: "portable",
@@ -1162,8 +1144,8 @@ pub fn run_auto(algo: &str, data: &[u8]) -> Option<u64> {
     "sha512-256-compress" => Some(sha512_256_compress_auto(data)),
     "blake2b-512-compress" => Some(blake2b_512_compress_auto(data)),
     "blake2s-256-compress" => Some(blake2s_256_compress_auto(data)),
-    "blake3-chunk" => Some(blake3_chunk_compress_auto(data)),
-    "blake3-parent" => Some(blake3_parent_cv_auto(data)),
+    "blake3-chunk" => Some(blake3_oneshot_auto(data)),
+    "blake3-parent" => Some(blake3_parent_cvs_many_auto(data)),
     "keccakf1600-permute" => Some(keccakf1600_auto(data)),
     "sha256-stream64" => Some(sha256_stream64_auto(data)),
     "sha256-stream4k" => Some(sha256_stream4k_auto(data)),

@@ -21,7 +21,10 @@ fn kernel_specs(algo: &'static str, caps: &Caps) -> Vec<KernelSpec> {
 
   // BLAKE3 primitives: allow forcing SIMD kernels so `rscrypto-tune` can
   // generate real dispatch tables (and validate crossovers) per platform.
-  if algo == "blake3-chunk" || algo == "blake3-parent" {
+  if matches!(
+    algo,
+    "blake3" | "blake3-chunk" | "blake3-parent" | "blake3-stream64" | "blake3-stream4k"
+  ) {
     #[cfg(target_arch = "x86_64")]
     if caps.has(x86::SSSE3) {
       out.push(KernelSpec::new("x86_64/ssse3", KernelTier::Wide, x86::SSSE3));
