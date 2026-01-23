@@ -43,8 +43,10 @@ pub(crate) struct Kernel {
   /// Compress single block (for streaming/small inputs).
   pub(crate) compress: CompressFn,
   /// Compress multiple blocks within a chunk.
+  #[allow(dead_code)] // Kept for bench-level introspection / future refactors.
   pub(crate) chunk_compress_blocks: ChunkCompressBlocksFn,
   /// Compute parent CV from two child CVs.
+  #[allow(dead_code)] // Kept for bench-level introspection / future refactors.
   pub(crate) parent_cv: ParentCvFn,
   /// Hash many contiguous full chunks (for throughput, no pointer chasing).
   pub(crate) hash_many_contiguous: HashManyContiguousFn,

@@ -155,6 +155,42 @@ mod tests {
   }
 
   #[test]
+  fn bench_helpers_match_forced_kernel_streaming() {
+    let caps = platform::caps();
+    let msg = pattern(4096 + 17);
+
+    for &id in ALL {
+      if !caps.has(required_caps(id)) {
+        continue;
+      }
+
+      let oneshot = Blake3::digest_with_kernel_id(id, &msg);
+      assert_eq!(
+        oneshot,
+        digest_with_kernel(id, &msg),
+        "digest_with_kernel_id mismatch for kernel={}",
+        id.as_str()
+      );
+
+      for &chunk in &[64usize, 4096] {
+        let helper_stream = Blake3::stream_chunks_with_kernel_id(id, chunk, &msg);
+
+        let mut h = hasher_for_kernel(id);
+        for part in msg.chunks(chunk) {
+          h.update(part);
+        }
+        assert_eq!(
+          helper_stream,
+          h.finalize(),
+          "stream_chunks_with_kernel_id mismatch for kernel={} chunk={}",
+          id.as_str(),
+          chunk
+        );
+      }
+    }
+  }
+
+  #[test]
   fn xof_prefix_matches_official_crate() {
     let caps = platform::caps();
     let data = pattern(1234);

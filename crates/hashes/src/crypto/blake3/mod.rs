@@ -752,6 +752,34 @@ impl Blake3 {
     digest_oneshot(kernel_km, context_key_words, DERIVE_KEY_MATERIAL, key_material)
   }
 
+  /// One-shot hash using an explicitly selected kernel.
+  ///
+  /// This is crate-internal glue for `hashes::bench` / `rscrypto-tune`.
+  #[inline]
+  #[must_use]
+  pub(crate) fn digest_with_kernel_id(id: kernels::Blake3KernelId, data: &[u8]) -> [u8; OUT_LEN] {
+    let kernel = kernels::kernel(id);
+    digest_oneshot(kernel, IV, 0, data)
+  }
+
+  /// Streaming hash with fixed update chunking, using an explicitly selected kernel.
+  ///
+  /// This is crate-internal glue for `hashes::bench` / `rscrypto-tune`.
+  #[inline]
+  #[must_use]
+  pub(crate) fn stream_chunks_with_kernel_id(
+    id: kernels::Blake3KernelId,
+    chunk_size: usize,
+    data: &[u8],
+  ) -> [u8; OUT_LEN] {
+    let kernel = kernels::kernel(id);
+    let mut h = Self::new_internal_with(IV, 0, kernel);
+    for chunk in data.chunks(chunk_size) {
+      h.update_with(chunk, kernel);
+    }
+    h.finalize()
+  }
+
   #[inline]
   #[must_use]
   pub(crate) fn digest_portable(data: &[u8]) -> [u8; OUT_LEN] {
