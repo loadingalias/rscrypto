@@ -103,6 +103,18 @@ pub use sampler::{SampledResult, Sampler, SamplerConfig};
 #[cfg(feature = "std")]
 pub use stats::{DEFAULT_CV_THRESHOLD, SampleStats, VarianceQuality};
 
+/// High-level tuning domain.
+///
+/// Checksums and hashes have different performance profiles and measurement
+/// noise characteristics. The tuning engine may use different benchmarking
+/// settings per domain (e.g. longer measurement windows for hashes).
+#[cfg(feature = "std")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TuningDomain {
+  Checksum,
+  Hash,
+}
+
 /// Specification of an available kernel for an algorithm.
 #[derive(Clone, Debug)]
 pub struct KernelSpec {
@@ -338,9 +350,8 @@ pub trait Tunable: Send + Sync {
   /// Run benchmark with the given data.
   ///
   /// Returns the benchmark result including throughput measurement.
-  /// The `iterations` parameter suggests how many times to run the algorithm,
-  /// but implementations may adjust this for statistical validity.
-  fn benchmark(&self, data: &[u8], iterations: usize) -> BenchResult;
+  /// The provided sampler config controls warmup/measurement durations.
+  fn benchmark(&self, data: &[u8], config: &sampler::SamplerConfig) -> BenchResult;
 
   /// Get the current kernel name (after forcing or auto-selection).
   fn current_kernel(&self) -> &'static str;
@@ -350,6 +361,14 @@ pub trait Tunable: Send + Sync {
 
   /// Environment variable prefix for this algorithm (e.g., "RSCRYPTO_CRC64").
   fn env_prefix(&self) -> &'static str;
+
+  /// Which tuning domain this algorithm belongs to.
+  ///
+  /// The engine uses this to select domain-appropriate benchmarking settings.
+  #[inline]
+  fn tuning_domain(&self) -> TuningDomain {
+    TuningDomain::Checksum
+  }
 
   /// Map a generic threshold name to its environment variable suffix.
   ///

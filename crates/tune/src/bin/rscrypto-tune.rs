@@ -41,6 +41,18 @@ struct Args {
   /// Custom measurement duration in ms.
   measure_ms: Option<u64>,
 
+  /// Custom checksum warmup duration in ms.
+  checksum_warmup_ms: Option<u64>,
+
+  /// Custom checksum measurement duration in ms.
+  checksum_measure_ms: Option<u64>,
+
+  /// Custom hash warmup duration in ms.
+  hash_warmup_ms: Option<u64>,
+
+  /// Custom hash measurement duration in ms.
+  hash_measure_ms: Option<u64>,
+
   /// Show help.
   help: bool,
 }
@@ -55,6 +67,10 @@ impl Default for Args {
       apply: false,
       warmup_ms: None,
       measure_ms: None,
+      checksum_warmup_ms: None,
+      checksum_measure_ms: None,
+      hash_warmup_ms: None,
+      hash_measure_ms: None,
       help: false,
     }
   }
@@ -76,7 +92,12 @@ fn parse_args() -> Result<Args, String> {
           return Err("--only requires a value".to_string());
         };
         for part in value.split(',') {
-          let name = part.trim();
+          let mut name = part.trim();
+          if let Some((_, rhs)) = name.rsplit_once('=')
+            && !rhs.is_empty()
+          {
+            name = rhs;
+          }
           if !name.is_empty() {
             args.only.push(name.to_string());
           }
@@ -99,6 +120,38 @@ fn parse_args() -> Result<Args, String> {
           return Err("--measure-ms requires a value".to_string());
         };
         args.measure_ms = Some(value.parse().map_err(|_| format!("Invalid measure-ms: {value}"))?);
+      }
+      "--checksum-warmup-ms" => {
+        let Some(value) = iter.next() else {
+          return Err("--checksum-warmup-ms requires a value".to_string());
+        };
+        args.checksum_warmup_ms = Some(
+          value
+            .parse()
+            .map_err(|_| format!("Invalid checksum-warmup-ms: {value}"))?,
+        );
+      }
+      "--checksum-measure-ms" => {
+        let Some(value) = iter.next() else {
+          return Err("--checksum-measure-ms requires a value".to_string());
+        };
+        args.checksum_measure_ms = Some(
+          value
+            .parse()
+            .map_err(|_| format!("Invalid checksum-measure-ms: {value}"))?,
+        );
+      }
+      "--hash-warmup-ms" => {
+        let Some(value) = iter.next() else {
+          return Err("--hash-warmup-ms requires a value".to_string());
+        };
+        args.hash_warmup_ms = Some(value.parse().map_err(|_| format!("Invalid hash-warmup-ms: {value}"))?);
+      }
+      "--hash-measure-ms" => {
+        let Some(value) = iter.next() else {
+          return Err("--hash-measure-ms requires a value".to_string());
+        };
+        args.hash_measure_ms = Some(value.parse().map_err(|_| format!("Invalid hash-measure-ms: {value}"))?);
       }
       other => {
         return Err(format!("Unknown argument: {other}"));
@@ -126,8 +179,12 @@ OPTIONS:
     -f, --format FORMAT   Output format: summary (default), env, json, tsv, contribute
         --only ALGO(S)    Only run selected algorithm(s). Repeatable; value may be comma-separated.
     --apply               Generate dispatch.rs table entry for this TuneKind
-    --warmup-ms MS        Custom warmup duration (default: 150, quick: 75)
-    --measure-ms MS       Custom measurement duration (default: 250, quick: 125)
+    --warmup-ms MS        Override warmup duration for all domains
+    --measure-ms MS       Override measurement duration for all domains
+    --checksum-warmup-ms MS   Override checksum warmup duration (defaults: 150, quick: 75)
+    --checksum-measure-ms MS  Override checksum measurement duration (defaults: 250, quick: 125)
+    --hash-warmup-ms MS       Override hash warmup duration (defaults: 200, quick: 100)
+    --hash-measure-ms MS      Override hash measurement duration (defaults: 400, quick: 250)
     -h, --help            Show this help message
 
 FORMATS:
@@ -174,24 +231,62 @@ fn main() -> ExitCode {
     return ExitCode::SUCCESS;
   }
 
-  // Build the runner
-  let runner = if args.quick {
-    BenchRunner::quick()
+  // Build runners (checksums and hashes can use different measurement windows).
+  let (mut checksum_runner, mut hash_runner) = if args.quick {
+    (BenchRunner::quick(), BenchRunner::quick_hash())
   } else {
-    BenchRunner::new()
+    (BenchRunner::new(), BenchRunner::hash())
   };
 
-  let runner = match (args.warmup_ms, args.measure_ms) {
-    (Some(w), Some(m)) => runner
-      .with_warmup(Duration::from_millis(w))
-      .with_measure(Duration::from_millis(m)),
-    (Some(w), None) => runner.with_warmup(Duration::from_millis(w)),
-    (None, Some(m)) => runner.with_measure(Duration::from_millis(m)),
-    (None, None) => runner,
+  // Global overrides apply to both domains.
+  match (args.warmup_ms, args.measure_ms) {
+    (Some(w), Some(m)) => {
+      checksum_runner = checksum_runner
+        .with_warmup(Duration::from_millis(w))
+        .with_measure(Duration::from_millis(m));
+      hash_runner = hash_runner
+        .with_warmup(Duration::from_millis(w))
+        .with_measure(Duration::from_millis(m));
+    }
+    (Some(w), None) => {
+      checksum_runner = checksum_runner.with_warmup(Duration::from_millis(w));
+      hash_runner = hash_runner.with_warmup(Duration::from_millis(w));
+    }
+    (None, Some(m)) => {
+      checksum_runner = checksum_runner.with_measure(Duration::from_millis(m));
+      hash_runner = hash_runner.with_measure(Duration::from_millis(m));
+    }
+    (None, None) => {}
+  }
+
+  // Domain-specific overrides apply after the global overrides.
+  match (args.checksum_warmup_ms, args.checksum_measure_ms) {
+    (Some(w), Some(m)) => {
+      checksum_runner = checksum_runner
+        .with_warmup(Duration::from_millis(w))
+        .with_measure(Duration::from_millis(m));
+    }
+    (Some(w), None) => checksum_runner = checksum_runner.with_warmup(Duration::from_millis(w)),
+    (None, Some(m)) => checksum_runner = checksum_runner.with_measure(Duration::from_millis(m)),
+    (None, None) => {}
+  }
+
+  match (args.hash_warmup_ms, args.hash_measure_ms) {
+    (Some(w), Some(m)) => {
+      hash_runner = hash_runner
+        .with_warmup(Duration::from_millis(w))
+        .with_measure(Duration::from_millis(m));
+    }
+    (Some(w), None) => hash_runner = hash_runner.with_warmup(Duration::from_millis(w)),
+    (None, Some(m)) => hash_runner = hash_runner.with_measure(Duration::from_millis(m)),
+    (None, None) => {}
   };
 
   // Build the engine
-  let mut engine = TuneEngine::new().with_runner(runner).with_verbose(args.verbose);
+  let mut engine = TuneEngine::new()
+    .with_checksum_runner(checksum_runner)
+    .with_hash_runner(hash_runner)
+    .with_verbose(args.verbose);
 
   // Register all checksum tunables
   engine.add(Box::new(Crc16CcittTunable::new()));

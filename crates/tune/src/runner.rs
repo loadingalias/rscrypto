@@ -16,6 +16,16 @@ const QUICK_WARMUP_MS: u64 = 75;
 /// Quick mode measurement duration.
 const QUICK_MEASURE_MS: u64 = 125;
 
+/// Hash tuning warmup duration.
+///
+/// Hash kernels are often sensitive to instruction cache, front-end effects,
+/// and inlining/dispatch overhead. A slightly longer window reduces flip-flops
+/// in CI without requiring algorithm-specific special-casing in the engine.
+const HASH_WARMUP_MS: u64 = 100;
+
+/// Hash tuning measurement duration.
+const HASH_MEASURE_MS: u64 = 250;
+
 /// Benchmark runner configuration.
 #[derive(Clone, Debug)]
 pub struct BenchRunner {
@@ -56,6 +66,27 @@ impl BenchRunner {
     Self {
       warmup: Duration::from_millis(QUICK_WARMUP_MS),
       measure: Duration::from_millis(QUICK_MEASURE_MS),
+      ..Default::default()
+    }
+  }
+
+  /// Create a runner with hash-oriented defaults (more stable than `quick()`).
+  #[must_use]
+  pub fn quick_hash() -> Self {
+    Self {
+      warmup: Duration::from_millis(HASH_WARMUP_MS),
+      measure: Duration::from_millis(HASH_MEASURE_MS),
+      ..Default::default()
+    }
+  }
+
+  /// Create a runner with hash-oriented defaults (slightly longer windows).
+  #[must_use]
+  pub fn hash() -> Self {
+    // Scale from the non-quick defaults to keep scheduled tuning runs stable.
+    Self {
+      warmup: Duration::from_millis(DEFAULT_WARMUP_MS + 50),
+      measure: Duration::from_millis(DEFAULT_MEASURE_MS + 150),
       ..Default::default()
     }
   }
@@ -185,13 +216,24 @@ impl BenchRunner {
   /// If variance warnings are enabled and the result has high CV, a warning
   /// is emitted to stderr.
   pub fn measure_single(&self, algorithm: &dyn Tunable, data: &[u8]) -> Result<BenchResult, TuneError> {
-    // The algorithm's benchmark() method handles warmup and measurement internally.
-    let result = algorithm.benchmark(data, 0);
+    let config = self.sampler_config();
+    let result = algorithm.benchmark(data, &config);
 
     // Emit warning if high variance
     self.warn_if_high_variance(&result, result.kernel, data.len());
 
     Ok(result)
+  }
+
+  #[inline]
+  #[must_use]
+  fn sampler_config(&self) -> crate::sampler::SamplerConfig {
+    crate::sampler::SamplerConfig {
+      warmup: self.warmup,
+      measure: self.measure,
+      cv_threshold: self.cv_threshold,
+      ..crate::sampler::SamplerConfig::default()
+    }
   }
 
   /// Run benchmarks for multiple kernel/stream configurations.

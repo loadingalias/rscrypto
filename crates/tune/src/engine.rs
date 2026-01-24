@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 
 use crate::{
-  AlgorithmResult, KernelSpec, KernelTier, PlatformInfo, Tunable, TuneError, TuneResults,
+  AlgorithmResult, KernelSpec, KernelTier, PlatformInfo, Tunable, TuneError, TuneResults, TuningDomain,
   analysis::{self, CrossoverType, Measurement},
   runner::{
     BenchRunner, SIZE_CLASS_NAMES, SIZE_CLASS_SIZES, STREAM_SIZES, THRESHOLD_SIZES, fill_data, stream_candidates,
@@ -19,8 +19,11 @@ pub struct TuneEngine {
   /// Algorithms to tune.
   algorithms: Vec<Box<dyn Tunable>>,
 
-  /// Benchmark runner configuration.
-  runner: BenchRunner,
+  /// Benchmark runner configuration for checksum-style algorithms.
+  checksum_runner: BenchRunner,
+
+  /// Benchmark runner configuration for hash-style algorithms.
+  hash_runner: BenchRunner,
 
   /// Whether to run in verbose mode.
   verbose: bool,
@@ -38,7 +41,8 @@ impl TuneEngine {
   pub fn new() -> Self {
     Self {
       algorithms: Vec::new(),
-      runner: BenchRunner::default(),
+      checksum_runner: BenchRunner::default(),
+      hash_runner: BenchRunner::hash(),
       verbose: false,
     }
   }
@@ -48,15 +52,31 @@ impl TuneEngine {
   pub fn quick() -> Self {
     Self {
       algorithms: Vec::new(),
-      runner: BenchRunner::quick(),
+      checksum_runner: BenchRunner::quick(),
+      hash_runner: BenchRunner::quick_hash(),
       verbose: false,
     }
   }
 
-  /// Set the benchmark runner.
+  /// Set the benchmark runner for all domains.
   #[must_use]
   pub fn with_runner(mut self, runner: BenchRunner) -> Self {
-    self.runner = runner;
+    self.checksum_runner = runner.clone();
+    self.hash_runner = runner;
+    self
+  }
+
+  /// Set the benchmark runner for checksum-style algorithms.
+  #[must_use]
+  pub fn with_checksum_runner(mut self, runner: BenchRunner) -> Self {
+    self.checksum_runner = runner;
+    self
+  }
+
+  /// Set the benchmark runner for hash-style algorithms.
+  #[must_use]
+  pub fn with_hash_runner(mut self, runner: BenchRunner) -> Self {
+    self.hash_runner = runner;
     self
   }
 
@@ -109,7 +129,11 @@ impl TuneEngine {
         eprintln!("Tuning {}...", algorithm.name());
       }
 
-      let result = tune_algorithm_impl(&self.runner, algorithm.as_mut(), &platform)?;
+      let runner = match algorithm.tuning_domain() {
+        TuningDomain::Checksum => &self.checksum_runner,
+        TuningDomain::Hash => &self.hash_runner,
+      };
+      let result = tune_algorithm_impl(runner, algorithm.as_mut(), &platform)?;
 
       if verbose {
         eprintln!("  Best kernel: {}", result.best_kernel);

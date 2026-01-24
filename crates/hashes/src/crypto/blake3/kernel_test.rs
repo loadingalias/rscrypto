@@ -8,7 +8,6 @@ use super::{
   Blake3,
   kernels::{ALL, Blake3KernelId, kernel as kernel_for_id, required_caps},
 };
-use crate::crypto::dispatch_util::SizeClassDispatch;
 
 #[derive(Clone, Debug)]
 pub struct KernelResult {
@@ -19,12 +18,10 @@ pub struct KernelResult {
 fn force_hasher_kernel(mut h: Blake3, id: Blake3KernelId) -> Blake3 {
   let kernel = kernel_for_id(id);
   h.kernel = kernel;
-  h.dispatch = Some(SizeClassDispatch {
-    boundaries: [usize::MAX; 3],
-    xs: kernel,
-    s: kernel,
-    m: kernel,
-    l: kernel,
+  h.bulk_kernel = kernel;
+  h.dispatch = Some(super::dispatch::StreamingDispatch {
+    stream: kernel,
+    bulk: kernel,
   });
   h.chunk_state.kernel = kernel;
   h

@@ -19,7 +19,6 @@ pub(crate) mod kernels;
 pub(crate) mod x86_64;
 
 use self::kernels::Kernel;
-use crate::crypto::dispatch_util::{SizeClassDispatch, len_hint_from_u64};
 
 const OUT_LEN: usize = 32;
 const KEY_LEN: usize = 32;
@@ -61,10 +60,21 @@ pub(crate) const MSG_SCHEDULE: [[usize; 16]; 7] = [
 #[inline(always)]
 fn words8_from_le_bytes_32(bytes: &[u8; 32]) -> [u32; 8] {
   if cfg!(target_endian = "little") {
-    let mut out = [0u32; 8];
-    // SAFETY: `bytes` is exactly 32 bytes; `out` is exactly 32 bytes.
-    unsafe { ptr::copy_nonoverlapping(bytes.as_ptr(), out.as_mut_ptr().cast::<u8>(), 32) };
-    out
+    let src = bytes.as_ptr() as *const u32;
+    // SAFETY: `bytes` is exactly 32 bytes; `read_unaligned` supports the
+    // 1-byte alignment of `[u8; 32]`.
+    unsafe {
+      [
+        ptr::read_unaligned(src.add(0)),
+        ptr::read_unaligned(src.add(1)),
+        ptr::read_unaligned(src.add(2)),
+        ptr::read_unaligned(src.add(3)),
+        ptr::read_unaligned(src.add(4)),
+        ptr::read_unaligned(src.add(5)),
+        ptr::read_unaligned(src.add(6)),
+        ptr::read_unaligned(src.add(7)),
+      ]
+    }
   } else {
     let src = bytes.as_ptr() as *const u32;
     // SAFETY: `bytes` is exactly 32 bytes; `read_unaligned` supports the
@@ -87,10 +97,29 @@ fn words8_from_le_bytes_32(bytes: &[u8; 32]) -> [u32; 8] {
 #[inline(always)]
 fn words16_from_le_bytes_64(bytes: &[u8; 64]) -> [u32; 16] {
   if cfg!(target_endian = "little") {
-    let mut out = [0u32; 16];
-    // SAFETY: `bytes` is exactly 64 bytes; `out` is exactly 64 bytes.
-    unsafe { ptr::copy_nonoverlapping(bytes.as_ptr(), out.as_mut_ptr().cast::<u8>(), 64) };
-    out
+    let src = bytes.as_ptr() as *const u32;
+    // SAFETY: `bytes` is exactly 64 bytes; `read_unaligned` supports the
+    // 1-byte alignment of `[u8; 64]`.
+    unsafe {
+      [
+        ptr::read_unaligned(src.add(0)),
+        ptr::read_unaligned(src.add(1)),
+        ptr::read_unaligned(src.add(2)),
+        ptr::read_unaligned(src.add(3)),
+        ptr::read_unaligned(src.add(4)),
+        ptr::read_unaligned(src.add(5)),
+        ptr::read_unaligned(src.add(6)),
+        ptr::read_unaligned(src.add(7)),
+        ptr::read_unaligned(src.add(8)),
+        ptr::read_unaligned(src.add(9)),
+        ptr::read_unaligned(src.add(10)),
+        ptr::read_unaligned(src.add(11)),
+        ptr::read_unaligned(src.add(12)),
+        ptr::read_unaligned(src.add(13)),
+        ptr::read_unaligned(src.add(14)),
+        ptr::read_unaligned(src.add(15)),
+      ]
+    }
   } else {
     let src = bytes.as_ptr() as *const u32;
     // SAFETY: `bytes` is exactly 64 bytes; `read_unaligned` supports the
@@ -680,7 +709,8 @@ fn digest_oneshot(kernel: Kernel, key_words: [u32; 8], flags: u32, input: &[u8])
 #[derive(Clone)]
 pub struct Blake3 {
   kernel: Kernel,
-  dispatch: Option<SizeClassDispatch<Kernel>>,
+  bulk_kernel: Kernel,
+  dispatch: Option<dispatch::StreamingDispatch>,
   chunk_state: ChunkState,
   pending_chunk_cv: Option<[u32; 8]>,
   key_words: [u32; 8],
@@ -775,7 +805,7 @@ impl Blake3 {
     let kernel = kernels::kernel(id);
     let mut h = Self::new_internal_with(IV, 0, kernel);
     for chunk in data.chunks(chunk_size) {
-      h.update_with(chunk, kernel);
+      h.update_with(chunk, kernel, kernel);
     }
     h.finalize()
   }
@@ -792,7 +822,7 @@ impl Blake3 {
       out
     } else {
       let mut h = Self::new_internal_with(IV, 0, kernel);
-      h.update_with(data, kernel);
+      h.update_with(data, kernel, kernel);
       h.finalize()
     }
   }
@@ -807,6 +837,7 @@ impl Blake3 {
   fn new_internal_with(key_words: [u32; 8], flags: u32, kernel: Kernel) -> Self {
     Self {
       kernel,
+      bulk_kernel: kernel,
       dispatch: None,
       chunk_state: ChunkState::new(key_words, 0, flags, kernel),
       pending_chunk_cv: None,
@@ -817,9 +848,10 @@ impl Blake3 {
     }
   }
 
-  fn update_with(&mut self, mut input: &[u8], kernel: Kernel) {
-    self.kernel = kernel;
-    self.chunk_state.kernel = kernel;
+  fn update_with(&mut self, mut input: &[u8], stream_kernel: Kernel, bulk_kernel: Kernel) {
+    self.kernel = stream_kernel;
+    self.bulk_kernel = bulk_kernel;
+    self.chunk_state.kernel = stream_kernel;
 
     // If the previous update ended exactly on a chunk boundary, we may have
     // stored the last full chunk's CV instead of keeping a fully-buffered
@@ -851,10 +883,13 @@ impl Blake3 {
         self.chunk_state = ChunkState::new(self.key_words, total_chunks, self.flags, self.kernel);
       }
 
-      if self.chunk_state.len() == 0 && self.kernel.simd_degree > 1 && input.len() > CHUNK_LEN {
+      if self.chunk_state.len() == 0 && self.bulk_kernel.simd_degree > 1 && input.len() > CHUNK_LEN {
         let full_chunks = input.len() / CHUNK_LEN;
         if full_chunks > 1 {
-          let batch = core::cmp::min(full_chunks, core::cmp::min(self.kernel.simd_degree, MAX_SIMD_DEGREE));
+          let batch = core::cmp::min(
+            full_chunks,
+            core::cmp::min(self.bulk_kernel.simd_degree, MAX_SIMD_DEGREE),
+          );
 
           if batch != 0 {
             let base_counter = self.chunk_state.chunk_counter;
@@ -862,7 +897,7 @@ impl Blake3 {
             // has at least `batch * OUT_LEN` bytes, and this kernel was selected
             // only when its required CPU features are available.
             unsafe {
-              (self.kernel.hash_many_contiguous)(
+              (self.bulk_kernel.hash_many_contiguous)(
                 input.as_ptr(),
                 batch,
                 &self.key_words,
@@ -886,7 +921,7 @@ impl Blake3 {
 
               let mut stack_len = self.cv_stack_len as usize;
               add_chunk_cvs_batched(
-                self.kernel,
+                self.bulk_kernel,
                 &mut self.cv_stack,
                 &mut stack_len,
                 base_counter,
@@ -1005,20 +1040,13 @@ impl Digest for Blake3 {
     let dispatch = match self.dispatch {
       Some(d) => d,
       None => {
-        let d = dispatch::kernel_dispatch();
+        let d = dispatch::streaming_dispatch();
         self.dispatch = Some(d);
         d
       }
     };
 
-    let bytes_so_far = self
-      .chunk_state
-      .chunk_counter
-      .wrapping_mul(CHUNK_LEN as u64)
-      .wrapping_add(self.chunk_state.len() as u64);
-    let len_hint = bytes_so_far.wrapping_add(input.len() as u64);
-    let kernel = dispatch.select(len_hint_from_u64(len_hint));
-    self.update_with(input, kernel);
+    self.update_with(input, dispatch.stream, dispatch.bulk);
   }
 
   fn finalize(&self) -> Self::Output {

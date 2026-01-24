@@ -391,9 +391,8 @@ impl crate::Tunable for Crc64XzTunable {
     self.effective_kernel_name = "auto";
   }
 
-  fn benchmark(&self, data: &[u8], _iterations: usize) -> BenchResult {
-    let config = SamplerConfig::default();
-    let sampler = Sampler::new(&config);
+  fn benchmark(&self, data: &[u8], config: &SamplerConfig) -> BenchResult {
+    let sampler = Sampler::new(config);
 
     // Use the forced kernel if available, otherwise fall back to auto
     let (kernel_name, result) = if let Some(ref kernel) = self.cached_kernel {
@@ -556,9 +555,8 @@ impl crate::Tunable for Crc64NvmeTunable {
     self.effective_kernel_name = "auto";
   }
 
-  fn benchmark(&self, data: &[u8], _iterations: usize) -> BenchResult {
-    let config = SamplerConfig::default();
-    let sampler = Sampler::new(&config);
+  fn benchmark(&self, data: &[u8], config: &SamplerConfig) -> BenchResult {
+    let sampler = Sampler::new(config);
 
     let (kernel_name, result) = if let Some(ref kernel) = self.cached_kernel {
       let func = kernel.func;

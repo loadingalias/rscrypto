@@ -57,7 +57,10 @@ pub struct Crossover {
   /// Buffer size at which the crossover occurs.
   pub crossover_size: usize,
 
-  /// Margin of victory at 2x the crossover size (percentage).
+  /// Margin of victory at ~2x the crossover size (percentage).
+  ///
+  /// When 2x exceeds the largest common benchmark size, we report the margin
+  /// at that largest size instead.
   pub margin_percent: f64,
 
   /// Statistical confidence in this crossover (0.0 to 1.0).
@@ -157,9 +160,16 @@ pub fn find_crossover(
   let threshold = find_sustained_threshold(&common_sizes, &from_data, &to_data, margin);
   let crossover_size = threshold?;
 
-  // Calculate margin at 2x the crossover size
+  // Calculate margin at 2x the crossover size (or the largest measured common size,
+  // if 2x exceeds the dataset). This avoids reporting a misleading 0.0% margin
+  // when the crossover occurs at the maximum benchmarked size.
   let double_size = crossover_size.strict_mul(2);
-  let margin_percent = calculate_margin_at_size(&from_data, &to_data, double_size);
+  let eval_size = common_sizes
+    .iter()
+    .copied()
+    .find(|&s| s >= double_size)
+    .unwrap_or_else(|| *common_sizes.last().unwrap_or(&crossover_size));
+  let margin_percent = calculate_margin_at_size(&from_data, &to_data, eval_size);
 
   // Calculate confidence based on consistency
   let confidence = calculate_confidence(&from_data, &to_data, crossover_size);
@@ -204,19 +214,8 @@ fn find_sustained_threshold(
 
 /// Calculate the margin of victory at a specific size.
 fn calculate_margin_at_size(from_data: &[&Measurement], to_data: &[&Measurement], size: usize) -> f64 {
-  let from_tp = from_data
-    .iter()
-    .filter(|m| m.size >= size)
-    .map(|m| m.throughput_gib_s)
-    .next()
-    .unwrap_or(0.0);
-
-  let to_tp = to_data
-    .iter()
-    .filter(|m| m.size >= size)
-    .map(|m| m.throughput_gib_s)
-    .next()
-    .unwrap_or(0.0);
+  let from_tp = throughput_at_size(from_data, size);
+  let to_tp = throughput_at_size(to_data, size);
 
   if from_tp > 0.0 {
     ((to_tp / from_tp) - 1.0) * 100.0
@@ -531,4 +530,46 @@ pub fn analyze(measurements: &[Measurement], portable_kernel: &str) -> AnalysisR
   }
 
   result
+}
+
+#[cfg(test)]
+mod tests {
+  use super::{Measurement, find_crossover};
+
+  #[test]
+  fn crossover_margin_uses_largest_common_size_when_2x_exceeds_dataset() {
+    let measurements = vec![
+      Measurement {
+        kernel: "portable".to_string(),
+        streams: 1,
+        size: 64,
+        throughput_gib_s: 1.0,
+      },
+      Measurement {
+        kernel: "portable".to_string(),
+        streams: 1,
+        size: 128,
+        throughput_gib_s: 1.0,
+      },
+      Measurement {
+        kernel: "simd".to_string(),
+        streams: 1,
+        size: 64,
+        throughput_gib_s: 0.9,
+      },
+      Measurement {
+        kernel: "simd".to_string(),
+        streams: 1,
+        size: 128,
+        throughput_gib_s: 1.1,
+      },
+    ];
+
+    let crossover = find_crossover(&measurements, "portable", 1, "simd", 1, 1.0).expect("expected crossover");
+    assert_eq!(crossover.crossover_size, 128);
+    assert!(
+      crossover.margin_percent > 0.0,
+      "margin should not be forced to 0 at max size"
+    );
+  }
 }
