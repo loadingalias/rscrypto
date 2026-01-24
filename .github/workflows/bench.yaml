@@ -86,6 +86,18 @@ on:
         type: string
         default: ""
 
+      tune_warmup_ms:
+        description: "rscrypto-tune warmup duration in ms (optional)"
+        required: false
+        type: string
+        default: ""
+
+      tune_measure_ms:
+        description: "rscrypto-tune measurement duration in ms (optional)"
+        required: false
+        type: string
+        default: ""
+
       regression_baseline:
         description: "Git ref for regression comparison (e.g., main, v1.0.0)"
         required: false
@@ -683,18 +695,27 @@ jobs:
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
           ONLY_INPUT="${{ github.event.inputs.tune_only }}"
+          WARMUP_INPUT="${{ github.event.inputs.tune_warmup_ms }}"
+          MEASURE_INPUT="${{ github.event.inputs.tune_measure_ms }}"
           APPLY_INPUT="${{ github.event.inputs.tune_apply }}"
           ONLY_ARGS=()
+          TIMING_ARGS=()
           APPLY_ARGS=()
           if [ -n "$ONLY_INPUT" ]; then
             ONLY_ARGS=(--only "$ONLY_INPUT")
+          fi
+          if [ -n "$WARMUP_INPUT" ]; then
+            TIMING_ARGS+=(--warmup-ms "$WARMUP_INPUT")
+          fi
+          if [ -n "$MEASURE_INPUT" ]; then
+            TIMING_ARGS+=(--measure-ms "$MEASURE_INPUT")
           fi
           if [ "$APPLY_INPUT" = "true" ]; then
             APPLY_ARGS=(--apply)
           fi
 
           RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
-            cargo run -p tune --release --bin rscrypto-tune -- --quick "${ONLY_ARGS[@]}" "${APPLY_ARGS[@]}" 2>&1 | \
+            cargo run -p tune --release --bin rscrypto-tune -- --quick "${ONLY_ARGS[@]}" "${TIMING_ARGS[@]}" "${APPLY_ARGS[@]}" 2>&1 | \
             tee tune-results/rscrypto-tune.txt
           if [ "$APPLY_INPUT" = "true" ]; then
             git diff > tune-results/patch.diff || true
@@ -745,18 +766,27 @@ jobs:
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
           ONLY_INPUT="${{ github.event.inputs.tune_only }}"
+          WARMUP_INPUT="${{ github.event.inputs.tune_warmup_ms }}"
+          MEASURE_INPUT="${{ github.event.inputs.tune_measure_ms }}"
           APPLY_INPUT="${{ github.event.inputs.tune_apply }}"
           ONLY_ARGS=()
+          TIMING_ARGS=()
           APPLY_ARGS=()
           if [ -n "$ONLY_INPUT" ]; then
             ONLY_ARGS=(--only "$ONLY_INPUT")
+          fi
+          if [ -n "$WARMUP_INPUT" ]; then
+            TIMING_ARGS+=(--warmup-ms "$WARMUP_INPUT")
+          fi
+          if [ -n "$MEASURE_INPUT" ]; then
+            TIMING_ARGS+=(--measure-ms "$MEASURE_INPUT")
           fi
           if [ "$APPLY_INPUT" = "true" ]; then
             APPLY_ARGS=(--apply)
           fi
 
           RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
-            cargo run -p tune --release --bin rscrypto-tune -- --quick "${ONLY_ARGS[@]}" "${APPLY_ARGS[@]}" 2>&1 | \
+            cargo run -p tune --release --bin rscrypto-tune -- --quick "${ONLY_ARGS[@]}" "${TIMING_ARGS[@]}" "${APPLY_ARGS[@]}" 2>&1 | \
             tee tune-results/rscrypto-tune.txt
           if [ "$APPLY_INPUT" = "true" ]; then
             git diff > tune-results/patch.diff || true
@@ -813,18 +843,27 @@ jobs:
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
           ONLY_INPUT="${{ github.event.inputs.tune_only }}"
+          WARMUP_INPUT="${{ github.event.inputs.tune_warmup_ms }}"
+          MEASURE_INPUT="${{ github.event.inputs.tune_measure_ms }}"
           APPLY_INPUT="${{ github.event.inputs.tune_apply }}"
           ONLY_ARGS=()
+          TIMING_ARGS=()
           APPLY_ARGS=()
           if [ -n "$ONLY_INPUT" ]; then
             ONLY_ARGS=(--only "$ONLY_INPUT")
+          fi
+          if [ -n "$WARMUP_INPUT" ]; then
+            TIMING_ARGS+=(--warmup-ms "$WARMUP_INPUT")
+          fi
+          if [ -n "$MEASURE_INPUT" ]; then
+            TIMING_ARGS+=(--measure-ms "$MEASURE_INPUT")
           fi
           if [ "$APPLY_INPUT" = "true" ]; then
             APPLY_ARGS=(--apply)
           fi
 
           RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
-            cargo run -p tune --release --bin rscrypto-tune -- --quick "${ONLY_ARGS[@]}" "${APPLY_ARGS[@]}" 2>&1 | \
+            cargo run -p tune --release --bin rscrypto-tune -- --quick "${ONLY_ARGS[@]}" "${TIMING_ARGS[@]}" "${APPLY_ARGS[@]}" 2>&1 | \
             tee tune-results/rscrypto-tune.txt
           if [ "$APPLY_INPUT" = "true" ]; then
             git diff > tune-results/patch.diff || true
@@ -875,18 +914,27 @@ jobs:
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
           ONLY_INPUT="${{ github.event.inputs.tune_only }}"
+          WARMUP_INPUT="${{ github.event.inputs.tune_warmup_ms }}"
+          MEASURE_INPUT="${{ github.event.inputs.tune_measure_ms }}"
           APPLY_INPUT="${{ github.event.inputs.tune_apply }}"
           ONLY_ARGS=()
+          TIMING_ARGS=()
           APPLY_ARGS=()
           if [ -n "$ONLY_INPUT" ]; then
             ONLY_ARGS=(--only "$ONLY_INPUT")
+          fi
+          if [ -n "$WARMUP_INPUT" ]; then
+            TIMING_ARGS+=(--warmup-ms "$WARMUP_INPUT")
+          fi
+          if [ -n "$MEASURE_INPUT" ]; then
+            TIMING_ARGS+=(--measure-ms "$MEASURE_INPUT")
           fi
           if [ "$APPLY_INPUT" = "true" ]; then
             APPLY_ARGS=(--apply)
           fi
 
           RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
-            cargo run -p tune --release --bin rscrypto-tune -- --quick "${ONLY_ARGS[@]}" "${APPLY_ARGS[@]}" 2>&1 | \
+            cargo run -p tune --release --bin rscrypto-tune -- --quick "${ONLY_ARGS[@]}" "${TIMING_ARGS[@]}" "${APPLY_ARGS[@]}" 2>&1 | \
             tee tune-results/rscrypto-tune.txt
           if [ "$APPLY_INPUT" = "true" ]; then
             git diff > tune-results/patch.diff || true
@@ -937,18 +985,27 @@ jobs:
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
           ONLY_INPUT="${{ github.event.inputs.tune_only }}"
+          WARMUP_INPUT="${{ github.event.inputs.tune_warmup_ms }}"
+          MEASURE_INPUT="${{ github.event.inputs.tune_measure_ms }}"
           APPLY_INPUT="${{ github.event.inputs.tune_apply }}"
           ONLY_ARGS=()
+          TIMING_ARGS=()
           APPLY_ARGS=()
           if [ -n "$ONLY_INPUT" ]; then
             ONLY_ARGS=(--only "$ONLY_INPUT")
+          fi
+          if [ -n "$WARMUP_INPUT" ]; then
+            TIMING_ARGS+=(--warmup-ms "$WARMUP_INPUT")
+          fi
+          if [ -n "$MEASURE_INPUT" ]; then
+            TIMING_ARGS+=(--measure-ms "$MEASURE_INPUT")
           fi
           if [ "$APPLY_INPUT" = "true" ]; then
             APPLY_ARGS=(--apply)
           fi
 
           RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
-            cargo run -p tune --release --bin rscrypto-tune -- --quick "${ONLY_ARGS[@]}" "${APPLY_ARGS[@]}" 2>&1 | \
+            cargo run -p tune --release --bin rscrypto-tune -- --quick "${ONLY_ARGS[@]}" "${TIMING_ARGS[@]}" "${APPLY_ARGS[@]}" 2>&1 | \
             tee tune-results/rscrypto-tune.txt
           if [ "$APPLY_INPUT" = "true" ]; then
             git diff > tune-results/patch.diff || true

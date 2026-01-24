@@ -2,7 +2,7 @@ use backend::OnceCache;
 use platform::Caps;
 
 use super::{
-  dispatch_tables::DispatchTable,
+  dispatch_tables::{DispatchTable, StreamingTable},
   kernels::{Blake3KernelId, Kernel, kernel, required_caps},
 };
 use crate::crypto::dispatch_util::SizeClassDispatch;
@@ -22,6 +22,13 @@ struct ActiveDispatch {
 }
 
 static ACTIVE: OnceCache<ActiveDispatch> = OnceCache::new();
+static ACTIVE_STREAMING: OnceCache<StreamingDispatch> = OnceCache::new();
+
+#[derive(Clone, Copy)]
+pub(crate) struct StreamingDispatch {
+  pub(crate) stream: Kernel,
+  pub(crate) bulk: Kernel,
+}
 
 #[inline]
 #[must_use]
@@ -114,6 +121,24 @@ fn active() -> ActiveDispatch {
 
 #[inline]
 #[must_use]
+fn active_streaming() -> StreamingDispatch {
+  ACTIVE_STREAMING.get_or_init(|| {
+    let tune = platform::tune();
+    let caps = platform::caps();
+    let table: &'static StreamingTable = super::dispatch_tables::select_streaming_table(tune.kind);
+
+    let stream_id = resolve(table.stream, caps);
+    let bulk_id = resolve(table.bulk, caps);
+
+    StreamingDispatch {
+      stream: kernel(stream_id),
+      bulk: kernel(bulk_id),
+    }
+  })
+}
+
+#[inline]
+#[must_use]
 fn select(d: &ActiveDispatch, len: usize) -> Entry {
   let [xs_max, s_max, m_max] = d.boundaries;
   if len <= xs_max {
@@ -163,4 +188,10 @@ pub(crate) fn kernel_dispatch() -> SizeClassDispatch<Kernel> {
     m: d.m.kernel,
     l: d.l.kernel,
   }
+}
+
+#[inline]
+#[must_use]
+pub(crate) fn streaming_dispatch() -> StreamingDispatch {
+  active_streaming()
 }

@@ -294,6 +294,16 @@ struct AlgoSet<'a> {
   crc64_nvme: &'a AlgorithmResult,
 }
 
+const CRC_ALGO_NAMES: &[&str] = &[
+  "crc16-ccitt",
+  "crc16-ibm",
+  "crc24-openpgp",
+  "crc32-ieee",
+  "crc32c",
+  "crc64-xz",
+  "crc64-nvme",
+];
+
 fn algos(results: &TuneResults) -> Result<AlgoSet<'_>, io::Error> {
   fn find<'a>(results: &'a TuneResults, name: &str) -> Option<&'a AlgorithmResult> {
     results.algorithms.iter().find(|a| a.name == name)
@@ -320,6 +330,39 @@ fn algos(results: &TuneResults) -> Result<AlgoSet<'_>, io::Error> {
 
 fn missing(name: &str) -> io::Error {
   io::Error::new(io::ErrorKind::InvalidData, format!("missing algorithm result: {name}"))
+}
+
+fn should_apply_checksum_dispatch(results: &TuneResults) -> bool {
+  results.algorithms.iter().any(|a| CRC_ALGO_NAMES.contains(&a.name))
+}
+
+fn apply_checksum_dispatch_tables(repo_root: &Path, results: &TuneResults) -> io::Result<()> {
+  let tune_kind = results.platform.tune_kind;
+
+  let missing: Vec<&'static str> = CRC_ALGO_NAMES
+    .iter()
+    .copied()
+    .filter(|name| !results.algorithms.iter().any(|a| a.name == *name))
+    .collect();
+  if !missing.is_empty() {
+    return Err(io::Error::new(
+      io::ErrorKind::InvalidData,
+      format!("incomplete CRC tuning results; missing: {}", missing.join(", ")),
+    ));
+  }
+
+  let a = algos(results)?;
+  let table_code = generate_kernel_table(tune_kind, &a);
+
+  let dispatch_path = dispatch_path(repo_root);
+  let content = read_file(&dispatch_path)?;
+  let updated = update_dispatch_file(&content, tune_kind, &table_code)?;
+  if updated != content {
+    write_file(&dispatch_path, &updated)?;
+    eprintln!("Updated: {}", dispatch_path.display());
+  }
+
+  Ok(())
 }
 
 /// Generate a KernelSet entry for one size class.
@@ -565,7 +608,11 @@ fn update_hash_dispatch_tables_file(content: &str, tune_kind: TuneKind, table_co
   let kind_name = format!("{tune_kind:?}");
   let section_marker = format!("// {kind_name} Table");
 
-  let Some(start_idx) = content.find(&section_marker) else {
+  update_hash_dispatch_tables_section(content, &section_marker, table_code)
+}
+
+fn update_hash_dispatch_tables_section(content: &str, section_marker: &str, table_code: &str) -> io::Result<String> {
+  let Some(start_idx) = content.find(section_marker) else {
     return Err(io::Error::new(
       io::ErrorKind::InvalidData,
       format!("dispatch_tables.rs missing marker: {section_marker}"),
@@ -615,6 +662,40 @@ fn tune_kind_table_ident(tune_kind: TuneKind) -> &'static str {
     TuneKind::Power8 => "POWER8_TABLE",
     TuneKind::Power9 => "POWER9_TABLE",
     TuneKind::Power10 => "POWER10_TABLE",
+  }
+}
+
+fn tune_kind_streaming_table_ident(tune_kind: TuneKind) -> &'static str {
+  match tune_kind {
+    TuneKind::Custom => "CUSTOM_STREAMING_TABLE",
+    TuneKind::Default => "DEFAULT_KIND_STREAMING_TABLE",
+    TuneKind::Portable => "PORTABLE_STREAMING_TABLE",
+    TuneKind::Zen4 => "ZEN4_STREAMING_TABLE",
+    TuneKind::Zen5 => "ZEN5_STREAMING_TABLE",
+    TuneKind::Zen5c => "ZEN5C_STREAMING_TABLE",
+    TuneKind::IntelSpr => "INTELSPR_STREAMING_TABLE",
+    TuneKind::IntelGnr => "INTELGNR_STREAMING_TABLE",
+    TuneKind::IntelIcl => "INTELICL_STREAMING_TABLE",
+    TuneKind::AppleM1M3 => "APPLEM1M3_STREAMING_TABLE",
+    TuneKind::AppleM4 => "APPLEM4_STREAMING_TABLE",
+    TuneKind::AppleM5 => "APPLEM5_STREAMING_TABLE",
+    TuneKind::Graviton2 => "GRAVITON2_STREAMING_TABLE",
+    TuneKind::Graviton3 => "GRAVITON3_STREAMING_TABLE",
+    TuneKind::Graviton4 => "GRAVITON4_STREAMING_TABLE",
+    TuneKind::Graviton5 => "GRAVITON5_STREAMING_TABLE",
+    TuneKind::NeoverseN2 => "NEOVERSEN2_STREAMING_TABLE",
+    TuneKind::NeoverseN3 => "NEOVERSEN3_STREAMING_TABLE",
+    TuneKind::NeoverseV3 => "NEOVERSEV3_STREAMING_TABLE",
+    TuneKind::NvidiaGrace => "NVIDIAGRACE_STREAMING_TABLE",
+    TuneKind::AmpereAltra => "AMPEREALTRA_STREAMING_TABLE",
+    TuneKind::Aarch64Pmull => "AARCH64PMULL_STREAMING_TABLE",
+    TuneKind::Z13 => "Z13_STREAMING_TABLE",
+    TuneKind::Z14 => "Z14_STREAMING_TABLE",
+    TuneKind::Z15 => "Z15_STREAMING_TABLE",
+    TuneKind::Power7 => "POWER7_STREAMING_TABLE",
+    TuneKind::Power8 => "POWER8_STREAMING_TABLE",
+    TuneKind::Power9 => "POWER9_STREAMING_TABLE",
+    TuneKind::Power10 => "POWER10_STREAMING_TABLE",
   }
 }
 
@@ -721,6 +802,61 @@ pub static {table_ident}: DispatchTable = DispatchTable {{
   )
 }
 
+fn generate_blake3_streaming_table(
+  tune_kind: TuneKind,
+  stream64: &AlgorithmResult,
+  stream4k: &AlgorithmResult,
+) -> String {
+  let kind_name = format!("{tune_kind:?}");
+  let table_ident = tune_kind_streaming_table_ident(tune_kind);
+
+  let stream = stream64.best_kernel;
+  let bulk = stream4k.best_kernel;
+
+  let arch = if stream.starts_with("x86_64/") || bulk.starts_with("x86_64/") {
+    Some("x86_64")
+  } else if stream.starts_with("aarch64/") || bulk.starts_with("aarch64/") {
+    Some("aarch64")
+  } else {
+    None
+  };
+
+  if let Some(arch) = arch {
+    let cfg_expr = match arch {
+      "x86_64" => "target_arch = \"x86_64\"",
+      "aarch64" => "target_arch = \"aarch64\"",
+      _ => unreachable!("unsupported arch tag"),
+    };
+
+    return format!(
+      "\
+// {kind_name} Streaming Table
+#[cfg({cfg_expr})]
+pub static {table_ident}: StreamingTable = StreamingTable {{
+  stream: {stream_id},
+  bulk: {bulk_id},
+}};
+#[cfg(not({cfg_expr}))]
+pub static {table_ident}: StreamingTable = default_kind_streaming_table();
+",
+      stream_id = hash_kernel_expr("blake3-chunk", stream),
+      bulk_id = hash_kernel_expr("blake3-chunk", bulk),
+    );
+  }
+
+  format!(
+    "\
+// {kind_name} Streaming Table
+pub static {table_ident}: StreamingTable = StreamingTable {{
+  stream: {stream_id},
+  bulk: {bulk_id},
+}};
+",
+    stream_id = hash_kernel_expr("blake3-chunk", stream),
+    bulk_id = hash_kernel_expr("blake3-chunk", bulk),
+  )
+}
+
 fn apply_hash_dispatch_tables(repo_root: &Path, results: &TuneResults) -> io::Result<()> {
   let tune_kind = results.platform.tune_kind;
 
@@ -732,7 +868,19 @@ fn apply_hash_dispatch_tables(repo_root: &Path, results: &TuneResults) -> io::Re
     let table_code = generate_hash_table(tune_kind, algo);
     let path = repo_root.join(target.rel_path);
     let content = read_file(&path)?;
-    let updated = update_hash_dispatch_tables_file(&content, tune_kind, &table_code)?;
+    let mut updated = update_hash_dispatch_tables_file(&content, tune_kind, &table_code)?;
+
+    // BLAKE3: also apply streaming dispatch preferences (stream kernel vs bulk kernel).
+    if target.algo == "blake3-chunk" {
+      let stream64 = results.algorithms.iter().find(|a| a.name == "blake3-stream64");
+      let stream4k = results.algorithms.iter().find(|a| a.name == "blake3-stream4k");
+      if let (Some(stream64), Some(stream4k)) = (stream64, stream4k) {
+        let streaming_code = generate_blake3_streaming_table(tune_kind, stream64, stream4k);
+        let kind_name = format!("{tune_kind:?}");
+        let marker = format!("// {kind_name} Streaming Table");
+        updated = update_hash_dispatch_tables_section(&updated, &marker, &streaming_code)?;
+      }
+    }
 
     if updated != content {
       write_file(&path, &updated)?;
@@ -753,23 +901,8 @@ fn apply_hash_dispatch_tables(repo_root: &Path, results: &TuneResults) -> io::Re
 /// either updates `dispatch.rs` or prints the generated code for manual
 /// insertion.
 pub fn apply_tuned_defaults(repo_root: &Path, results: &TuneResults) -> io::Result<()> {
-  let tune_kind = results.platform.tune_kind;
-  let a = algos(results)?;
-
-  // Generate the kernel table code
-  let table_code = generate_kernel_table(tune_kind, &a);
-
-  // Read the existing dispatch.rs
-  let dispatch_path = dispatch_path(repo_root);
-  let content = read_file(&dispatch_path)?;
-
-  // Update or print the generated code
-  let updated = update_dispatch_file(&content, tune_kind, &table_code)?;
-
-  // Only write if we actually modified the content
-  if updated != content {
-    write_file(&dispatch_path, &updated)?;
-    eprintln!("Updated: {}", dispatch_path.display());
+  if should_apply_checksum_dispatch(results) {
+    apply_checksum_dispatch_tables(repo_root, results)?;
   }
 
   apply_hash_dispatch_tables(repo_root, results)?;
@@ -779,10 +912,12 @@ pub fn apply_tuned_defaults(repo_root: &Path, results: &TuneResults) -> io::Resu
 
 #[cfg(test)]
 mod tests {
+  use std::path::Path;
+
   use platform::TuneKind;
 
-  use super::generate_hash_table;
-  use crate::{AlgorithmResult, SizeClassBest, analysis::AnalysisResult};
+  use super::{generate_blake3_streaming_table, generate_hash_table};
+  use crate::{AlgorithmResult, PlatformInfo, SizeClassBest, TuneResults, analysis::AnalysisResult};
 
   #[test]
   fn blake3_hash_tables_are_cfg_gated_for_arch_specific_kernels() {
@@ -816,5 +951,92 @@ mod tests {
     assert!(code.contains("default_kind_table()"));
     assert!(code.contains("KernelId::X86Avx2"));
     assert!(code.contains("KernelId::X86Avx512"));
+  }
+
+  #[test]
+  fn blake3_streaming_tables_are_cfg_gated_for_arch_specific_kernels() {
+    let stream64 = AlgorithmResult {
+      name: "blake3-stream64",
+      env_prefix: "RSCRYPTO_BENCH_BLAKE3_STREAM64",
+      best_kernel: "x86_64/sse4.1",
+      recommended_streams: 1,
+      peak_throughput_gib_s: 0.0,
+      size_class_best: vec![],
+      thresholds: vec![],
+      analysis: AnalysisResult::default(),
+    };
+
+    let stream4k = AlgorithmResult {
+      name: "blake3-stream4k",
+      env_prefix: "RSCRYPTO_BENCH_BLAKE3_STREAM4K",
+      best_kernel: "x86_64/avx512",
+      recommended_streams: 1,
+      peak_throughput_gib_s: 0.0,
+      size_class_best: vec![],
+      thresholds: vec![],
+      analysis: AnalysisResult::default(),
+    };
+
+    let code = generate_blake3_streaming_table(TuneKind::IntelSpr, &stream64, &stream4k);
+    assert!(code.contains("#[cfg(target_arch = \"x86_64\")]"));
+    assert!(code.contains("#[cfg(not(target_arch = \"x86_64\"))]"));
+    assert!(code.contains("default_kind_streaming_table()"));
+    assert!(code.contains("KernelId::X86Sse41"));
+    assert!(code.contains("KernelId::X86Avx512"));
+  }
+
+  #[test]
+  fn apply_skips_checksum_dispatch_when_no_crc_results_exist() {
+    let results = TuneResults {
+      platform: PlatformInfo {
+        arch: "x86_64",
+        os: "linux",
+        caps: platform::Caps::NONE,
+        tune_kind: TuneKind::Zen4,
+        description: String::new(),
+      },
+      algorithms: vec![AlgorithmResult {
+        name: "blake3-chunk",
+        env_prefix: "RSCRYPTO_BENCH_BLAKE3_CHUNK",
+        best_kernel: "portable",
+        recommended_streams: 1,
+        peak_throughput_gib_s: 0.0,
+        size_class_best: vec![],
+        thresholds: vec![],
+        analysis: AnalysisResult::default(),
+      }],
+      timestamp: String::new(),
+    };
+
+    assert!(!super::should_apply_checksum_dispatch(&results));
+  }
+
+  #[test]
+  fn apply_errors_on_partial_crc_results() {
+    let results = TuneResults {
+      platform: PlatformInfo {
+        arch: "x86_64",
+        os: "linux",
+        caps: platform::Caps::NONE,
+        tune_kind: TuneKind::Zen4,
+        description: String::new(),
+      },
+      algorithms: vec![AlgorithmResult {
+        name: "crc32c",
+        env_prefix: "RSCRYPTO_BENCH_CRC32C",
+        best_kernel: "portable",
+        recommended_streams: 1,
+        peak_throughput_gib_s: 0.0,
+        size_class_best: vec![],
+        thresholds: vec![],
+        analysis: AnalysisResult::default(),
+      }],
+      timestamp: String::new(),
+    };
+
+    assert!(super::should_apply_checksum_dispatch(&results));
+    let err = super::apply_checksum_dispatch_tables(Path::new("."), &results).unwrap_err();
+    assert!(err.to_string().contains("incomplete CRC tuning results"));
+    assert!(err.to_string().contains("crc16-ccitt"));
   }
 }

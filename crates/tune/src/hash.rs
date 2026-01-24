@@ -10,7 +10,7 @@ use platform::caps::aarch64;
 use platform::caps::x86;
 
 use crate::{
-  BenchResult, KernelSpec, KernelTier, TunableParam, TuneError,
+  BenchResult, KernelSpec, KernelTier, TunableParam, TuneError, TuningDomain,
   sampler::{Sampler, SamplerConfig},
 };
 
@@ -152,9 +152,8 @@ impl crate::Tunable for HashTunable {
     self.resolve_kernel();
   }
 
-  fn benchmark(&self, data: &[u8], _iterations: usize) -> BenchResult {
-    let config = SamplerConfig::default();
-    let sampler = Sampler::new(&config);
+  fn benchmark(&self, data: &[u8], config: &SamplerConfig) -> BenchResult {
+    let sampler = Sampler::new(config);
 
     let (kernel_name, result) = if let Some(kernel) = self.cached_kernel {
       let func = kernel.func;
@@ -199,5 +198,9 @@ impl crate::Tunable for HashTunable {
 
   fn env_prefix(&self) -> &'static str {
     self.env_prefix
+  }
+
+  fn tuning_domain(&self) -> TuningDomain {
+    TuningDomain::Hash
   }
 }
