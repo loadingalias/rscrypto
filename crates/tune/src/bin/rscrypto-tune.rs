@@ -35,6 +35,9 @@ struct Args {
   /// Apply results into dispatch.rs kernel tables.
   apply: bool,
 
+  /// Validate that tuned results can be safely applied on this host.
+  self_check: bool,
+
   /// Custom warmup duration in ms.
   warmup_ms: Option<u64>,
 
@@ -65,6 +68,7 @@ impl Default for Args {
       format: OutputFormat::Summary,
       verbose: false,
       apply: false,
+      self_check: false,
       warmup_ms: None,
       measure_ms: None,
       checksum_warmup_ms: None,
@@ -87,6 +91,7 @@ fn parse_args() -> Result<Args, String> {
       "--verbose" | "-v" => args.verbose = true,
       "--help" | "-h" => args.help = true,
       "--apply" => args.apply = true,
+      "--self-check" => args.self_check = true,
       "--only" => {
         let Some(value) = iter.next() else {
           return Err("--only requires a value".to_string());
@@ -179,6 +184,7 @@ OPTIONS:
     -f, --format FORMAT   Output format: summary (default), env, json, tsv, contribute
         --only ALGO(S)    Only run selected algorithm(s). Repeatable; value may be comma-separated.
     --apply               Generate dispatch.rs table entry for this TuneKind
+    --self-check          Validate that tuned results can be safely applied on this host
     --warmup-ms MS        Override warmup duration for all domains
     --measure-ms MS       Override measurement duration for all domains
     --checksum-warmup-ms MS   Override checksum warmup duration (defaults: 150, quick: 75)
@@ -212,6 +218,9 @@ EXAMPLES:
 
     # Generate dispatch table entry (outputs to crates/checksum/src/dispatch.rs)
     just tune-apply
+
+    # Validate kernel mapping on this host (recommended with --apply)
+    cargo run --release -p tune --bin rscrypto-tune -- --self-check
 "
   );
 }
@@ -485,6 +494,13 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
       }
     }
+  }
+
+  if args.self_check
+    && let Err(err) = tune::apply::self_check(&results)
+  {
+    eprintln!("Self-check failed: {err}");
+    return ExitCode::FAILURE;
   }
 
   if args.apply {

@@ -334,6 +334,21 @@ pub const SIZE_CLASS_NAMES: &[&str; 4] = &["xs", "s", "m", "l"];
 /// additional ILP stops being beneficial (or becomes beneficial later).
 pub const STREAM_SIZES: &[usize] = &[32 * 1024, 64 * 1024, 128 * 1024, 256 * 1024, 512 * 1024, 1024 * 1024];
 
+/// Buffer sizes for stream benchmarking.
+///
+/// This superset includes the `m` size-class pivot (4096) so size-class winners
+/// can select different stream counts for `m` vs `l` without adding a second
+/// stream-benchmark pass.
+pub const STREAM_SIZES_BENCH: &[usize] = &[
+  4096,
+  32 * 1024,
+  64 * 1024,
+  128 * 1024,
+  256 * 1024,
+  512 * 1024,
+  1024 * 1024,
+];
+
 /// Get stream candidates for the current architecture.
 #[must_use]
 pub fn stream_candidates() -> &'static [u8] {

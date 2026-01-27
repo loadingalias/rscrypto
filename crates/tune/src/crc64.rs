@@ -89,6 +89,11 @@ fn crc64_kernel_specs(caps: &Caps) -> Vec<KernelSpec> {
   {
     use platform::caps::x86;
     if caps.has(x86::PCLMUL_READY) {
+      specs.push(KernelSpec::new(
+        "x86_64/pclmul-small",
+        KernelTier::Folding,
+        x86::PCLMUL_READY,
+      ));
       specs.push(KernelSpec::with_streams(
         "x86_64/pclmul",
         KernelTier::Folding,
@@ -98,6 +103,11 @@ fn crc64_kernel_specs(caps: &Caps) -> Vec<KernelSpec> {
       ));
     }
     if caps.has(x86::VPCLMUL_READY) {
+      specs.push(KernelSpec::new(
+        "x86_64/vpclmul-4x512",
+        KernelTier::Wide,
+        x86::VPCLMUL_READY,
+      ));
       specs.push(KernelSpec::with_streams(
         "x86_64/vpclmul",
         KernelTier::Wide,
@@ -112,6 +122,11 @@ fn crc64_kernel_specs(caps: &Caps) -> Vec<KernelSpec> {
   {
     use platform::caps::aarch64;
     if caps.has(aarch64::PMULL_READY) {
+      specs.push(KernelSpec::new(
+        "aarch64/pmull-small",
+        KernelTier::Folding,
+        aarch64::PMULL_READY,
+      ));
       specs.push(KernelSpec::with_streams(
         "aarch64/pmull",
         KernelTier::Folding,
@@ -130,6 +145,11 @@ fn crc64_kernel_specs(caps: &Caps) -> Vec<KernelSpec> {
       ));
     }
     if caps.has(aarch64::SVE2_PMULL) && caps.has(aarch64::PMULL_READY) {
+      specs.push(KernelSpec::new(
+        "aarch64/sve2-pmull-small",
+        KernelTier::Wide,
+        aarch64::SVE2_PMULL,
+      ));
       specs.push(KernelSpec::with_streams(
         "aarch64/sve2-pmull",
         KernelTier::Wide,
