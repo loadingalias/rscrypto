@@ -59,6 +59,11 @@ fn crc24_kernel_specs(caps: &Caps) -> Vec<KernelSpec> {
   {
     use platform::caps::x86;
     if caps.has(x86::PCLMUL_READY) {
+      specs.push(KernelSpec::new(
+        "x86_64/pclmul-small",
+        KernelTier::Folding,
+        x86::PCLMUL_READY,
+      ));
       specs.push(KernelSpec::with_streams(
         "x86_64/pclmul",
         KernelTier::Folding,
@@ -82,6 +87,11 @@ fn crc24_kernel_specs(caps: &Caps) -> Vec<KernelSpec> {
   {
     use platform::caps::aarch64;
     if caps.has(aarch64::PMULL_READY) {
+      specs.push(KernelSpec::new(
+        "aarch64/pmull-small",
+        KernelTier::Folding,
+        aarch64::PMULL_READY,
+      ));
       specs.push(KernelSpec::with_streams(
         "aarch64/pmull",
         KernelTier::Folding,

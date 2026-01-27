@@ -18,6 +18,7 @@
 //! };
 //! ```
 
+use alloc::collections::BTreeSet;
 use std::{
   collections::HashMap,
   fs, io,
@@ -41,242 +42,435 @@ const SIZE_CLASS_M_MAX: usize = 4096;
 const SIZE_CLASSES: [&str; 4] = ["xs", "s", "m", "l"];
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Kernel Name Mapping
+// Kernel Expression Mapping (tune results → dispatch.rs initializers)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Map kernel names from tuning output to dispatch.rs constant references.
+#[derive(Clone, Debug)]
+struct KernelChoice {
+  base: String,
+  streams: u8,
+}
+
+#[derive(Clone, Debug)]
+struct KernelExpr {
+  func: String,
+  name: String,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum CrcVariant {
+  Crc16Ccitt,
+  Crc16Ibm,
+  Crc24OpenPgp,
+  Crc32Ieee,
+  Crc32c,
+  Crc64Xz,
+  Crc64Nvme,
+}
+
+impl CrcVariant {
+  fn module_ident(self) -> &'static str {
+    match self {
+      Self::Crc16Ccitt | Self::Crc16Ibm => "crc16_k",
+      Self::Crc24OpenPgp => "crc24_k",
+      Self::Crc32Ieee | Self::Crc32c => "crc32_k",
+      Self::Crc64Xz | Self::Crc64Nvme => "crc64_k",
+    }
+  }
+
+  fn const_prefix(self) -> &'static str {
+    match self {
+      Self::Crc16Ccitt => "CCITT",
+      Self::Crc16Ibm => "IBM",
+      Self::Crc24OpenPgp => "OPENPGP",
+      Self::Crc32Ieee => "CRC32",
+      Self::Crc32c => "CRC32C",
+      Self::Crc64Xz => "XZ",
+      Self::Crc64Nvme => "NVME",
+    }
+  }
+}
+
+/// Stream count → array index mapping used by checksum kernel arrays.
 ///
-/// The tuning engine outputs kernel names like "aarch64/pmull-eor3-3way".
-/// We need to map these to Rust constant references like `crc64_k::XZ_PMULL_EOR3[2]`.
-struct KernelMapper {
-  /// Maps (arch, base_kernel, streams) -> Rust constant reference
-  mappings: HashMap<(&'static str, &'static str, u8), &'static str>,
+/// Arrays are ordered `[1-way, 2-way, 3/4-way, 7-way, 8-way]`, with duplicates
+/// for architectures that don't implement all widths.
+#[inline]
+#[must_use]
+const fn stream_to_index(streams: u8) -> usize {
+  match streams {
+    8 => 4,
+    7 => 3,
+    3 | 4 => 2,
+    2 => 1,
+    _ => 0,
+  }
 }
 
-impl KernelMapper {
-  fn new() -> Self {
-    let mut m = HashMap::new();
+fn parse_arch_and_impl(base: &str) -> io::Result<(&str, &str)> {
+  let (arch, imp) = base.split_once('/').ok_or_else(|| {
+    io::Error::new(
+      io::ErrorKind::InvalidData,
+      format!("invalid kernel name (expected arch/impl): {base}"),
+    )
+  })?;
+  Ok((arch, imp))
+}
 
-    // ─── aarch64 CRC64 kernels ───
-    // PMULL
-    m.insert(("aarch64", "pmull", 1), "[0]");
-    m.insert(("aarch64", "pmull", 2), "[1]");
-    m.insert(("aarch64", "pmull", 3), "[2]");
-    // PMULL-EOR3
-    m.insert(("aarch64", "pmull-eor3", 1), "[0]");
-    m.insert(("aarch64", "pmull-eor3", 2), "[1]");
-    m.insert(("aarch64", "pmull-eor3", 3), "[2]");
-    // SVE2-PMULL
-    m.insert(("aarch64", "sve2-pmull", 1), "[0]");
-    m.insert(("aarch64", "sve2-pmull", 2), "[1]");
-    m.insert(("aarch64", "sve2-pmull", 3), "[2]");
+fn canonical_kernel_name(base: &str, streams: u8) -> String {
+  if base == "reference" || base.starts_with("reference/") {
+    return "reference".to_string();
+  }
+  if base == "portable" || base.starts_with("portable/") {
+    return base.to_string();
+  }
+  if base.ends_with("-small") {
+    return base.to_string();
+  }
+  if streams <= 1 || base.contains("-way") {
+    return base.to_string();
+  }
+  format!("{base}-{streams}way")
+}
 
-    // ─── x86_64 CRC64 kernels ───
-    // PCLMUL
-    m.insert(("x86_64", "pclmul", 1), "[0]");
-    m.insert(("x86_64", "pclmul", 2), "[1]");
-    m.insert(("x86_64", "pclmul", 4), "[2]");
-    m.insert(("x86_64", "pclmul", 7), "[3]");
-    m.insert(("x86_64", "pclmul", 8), "[4]");
-    // VPCLMUL
-    m.insert(("x86_64", "vpclmul", 1), "[0]");
-    m.insert(("x86_64", "vpclmul", 2), "[1]");
-    m.insert(("x86_64", "vpclmul", 4), "[2]");
-    m.insert(("x86_64", "vpclmul", 7), "[3]");
-    m.insert(("x86_64", "vpclmul", 8), "[4]");
+fn family_const_suffix(imp: &str) -> Option<&'static str> {
+  if imp == "vpclmul-4x512" {
+    return Some("VPCLMUL_4X512");
+  }
+  let imp = imp.strip_suffix("-small").unwrap_or(imp);
+  if imp.starts_with("sve2-pmull") {
+    return Some("SVE2_PMULL");
+  }
+  if imp.starts_with("pmull-eor3") {
+    return Some("PMULL_EOR3");
+  }
+  if imp.starts_with("pmull") {
+    return Some("PMULL");
+  }
+  if imp.starts_with("fusion-vpclmul") {
+    return Some("FUSION_VPCLMUL");
+  }
+  if imp.starts_with("fusion-avx512") {
+    return Some("FUSION_AVX512");
+  }
+  if imp.starts_with("fusion-sse") {
+    return Some("FUSION_SSE");
+  }
+  if imp.starts_with("vpclmul") {
+    return Some("VPCLMUL");
+  }
+  if imp.starts_with("pclmul") {
+    return Some("PCLMUL");
+  }
+  if imp.starts_with("hwcrc") {
+    return Some("HWCRC");
+  }
+  if imp.starts_with("vpmsum") {
+    return Some("VPMSUM");
+  }
+  if imp.starts_with("vgfm") {
+    return Some("VGFM");
+  }
+  if imp.starts_with("zvbc") {
+    return Some("ZVBC");
+  }
+  if imp.starts_with("zbc") {
+    return Some("ZBC");
+  }
+  None
+}
 
-    Self { mappings: m }
+fn portable_kernel_expr(variant: CrcVariant, base: &str) -> io::Result<KernelExpr> {
+  let func = match (variant, base) {
+    (CrcVariant::Crc16Ccitt, "portable/slice4") => "crate::crc16::portable::crc16_ccitt_slice4",
+    (CrcVariant::Crc16Ccitt, "portable/slice8") => "crate::crc16::portable::crc16_ccitt_slice8",
+    (CrcVariant::Crc16Ibm, "portable/slice4") => "crate::crc16::portable::crc16_ibm_slice4",
+    (CrcVariant::Crc16Ibm, "portable/slice8") => "crate::crc16::portable::crc16_ibm_slice8",
+    (CrcVariant::Crc24OpenPgp, "portable/slice4") => "crate::crc24::portable::crc24_openpgp_slice4",
+    (CrcVariant::Crc24OpenPgp, "portable/slice8") => "crate::crc24::portable::crc24_openpgp_slice8",
+    (CrcVariant::Crc32Ieee, "portable/bytewise") => "crate::crc32::portable::crc32_bytewise_ieee",
+    (CrcVariant::Crc32Ieee, "portable/slice16") => "crate::crc32::portable::crc32_slice16_ieee",
+    (CrcVariant::Crc32c, "portable/bytewise") => "crate::crc32::portable::crc32c_bytewise",
+    (CrcVariant::Crc32c, "portable/slice16") => "crate::crc32::portable::crc32c_slice16",
+    (CrcVariant::Crc64Xz, "portable/slice16") => "crate::crc64::portable::crc64_slice16_xz",
+    (CrcVariant::Crc64Nvme, "portable/slice16") => "crate::crc64::portable::crc64_slice16_nvme",
+    // Fallbacks (older results / partial runs).
+    (CrcVariant::Crc16Ccitt, "portable") => "crate::crc16::portable::crc16_ccitt_slice8",
+    (CrcVariant::Crc16Ibm, "portable") => "crate::crc16::portable::crc16_ibm_slice8",
+    (CrcVariant::Crc24OpenPgp, "portable") => "crate::crc24::portable::crc24_openpgp_slice8",
+    (CrcVariant::Crc32Ieee, "portable") => "crate::crc32::portable::crc32_slice16_ieee",
+    (CrcVariant::Crc32c, "portable") => "crate::crc32::portable::crc32c_slice16",
+    (CrcVariant::Crc64Xz, "portable") => "crate::crc64::portable::crc64_slice16_xz",
+    (CrcVariant::Crc64Nvme, "portable") => "crate::crc64::portable::crc64_slice16_nvme",
+    _ => {
+      return Err(io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!("unsupported portable kernel for {variant:?}: {base}"),
+      ));
+    }
+  };
+
+  let name = match (variant, base) {
+    (CrcVariant::Crc16Ccitt | CrcVariant::Crc16Ibm | CrcVariant::Crc24OpenPgp, "portable") => "portable/slice8",
+    (CrcVariant::Crc32Ieee | CrcVariant::Crc32c | CrcVariant::Crc64Xz | CrcVariant::Crc64Nvme, "portable") => {
+      "portable/slice16"
+    }
+    _ => base,
+  };
+
+  Ok(KernelExpr {
+    func: func.to_string(),
+    name: format!("\"{name}\""),
+  })
+}
+
+fn kernel_expr(variant: CrcVariant, base: &str, streams: u8) -> io::Result<KernelExpr> {
+  if base == "portable" || base.starts_with("portable/") {
+    return portable_kernel_expr(variant, base);
   }
 
-  /// Parse a kernel name like "aarch64/pmull-eor3-3way" into (arch, base, streams).
-  fn parse_kernel_name(name: &str) -> Option<(&str, &str, u8)> {
-    let parts: Vec<&str> = name.split('/').collect();
-    if parts.len() != 2 {
-      return None;
-    }
+  // We intentionally do not allow reference kernels in dispatch tables; they are
+  // for verification and are not available as stable, addressable symbols from
+  // `dispatch.rs`. If tuning ever selects one, treat it as an analysis bug.
+  if base == "reference" || base.starts_with("reference/") {
+    return Err(io::Error::new(
+      io::ErrorKind::InvalidData,
+      format!("reference kernel selected for {variant:?}; dispatch tables must not use reference kernels"),
+    ));
+  }
 
-    let arch = parts[0];
-    let kernel = parts[1];
+  let (_arch, imp) = parse_arch_and_impl(base)?;
+  let Some(family) = family_const_suffix(imp) else {
+    return Err(io::Error::new(
+      io::ErrorKind::InvalidData,
+      format!("unrecognized kernel family for {variant:?}: {base}"),
+    ));
+  };
 
-    // Extract stream count from suffix
-    let (base, streams) = if kernel.ends_with("-2way") {
-      (kernel.strip_suffix("-2way")?, 2)
-    } else if kernel.ends_with("-3way") {
-      (kernel.strip_suffix("-3way")?, 3)
-    } else if kernel.ends_with("-4way") {
-      (kernel.strip_suffix("-4way")?, 4)
-    } else if kernel.ends_with("-7way") {
-      (kernel.strip_suffix("-7way")?, 7)
-    } else if kernel.ends_with("-8way") {
-      (kernel.strip_suffix("-8way")?, 8)
+  let module = variant.module_ident();
+  let prefix = variant.const_prefix();
+
+  // Special case: x86_64 VPCLMUL 4×512-bit CRC64 kernels.
+  if matches!(variant, CrcVariant::Crc64Xz | CrcVariant::Crc64Nvme) && family == "VPCLMUL_4X512" {
+    let func = format!("{module}::{prefix}_{family}");
+    return Ok(KernelExpr {
+      func,
+      name: format!("\"{}\"", canonical_kernel_name(base, 1)),
+    });
+  }
+
+  // Small kernel constants.
+  if imp.ends_with("-small") {
+    let func = if matches!(variant, CrcVariant::Crc64Xz | CrcVariant::Crc64Nvme) {
+      format!("{module}::{prefix}_{family}_SMALL")
     } else {
-      (kernel, 1)
+      format!("{module}::{prefix}_{family}_SMALL_KERNEL")
     };
-
-    Some((arch, base, streams))
+    return Ok(KernelExpr {
+      func,
+      name: format!("\"{}\"", canonical_kernel_name(base, 1)),
+    });
   }
 
-  /// Get the Rust constant reference for a kernel name and variant.
-  fn get_constant(&self, kernel_name: &str, variant: &str) -> String {
-    // Handle portable kernels
-    if kernel_name.starts_with("portable/") || kernel_name == "portable" {
-      return self.portable_constant(variant);
-    }
-
-    // Handle small kernels (no stream suffix, special constant)
-    if kernel_name.ends_with("-small") {
-      return self.small_constant(kernel_name, variant);
-    }
-
-    // Parse the kernel name
-    let Some((arch, base, streams)) = Self::parse_kernel_name(kernel_name) else {
-      return self.fallback_constant(variant);
-    };
-
-    // Get the array index suffix
-    let idx_suffix = self.mappings.get(&(arch, base, streams)).copied().unwrap_or("[0]");
-
-    // Build the full constant reference
-    self.build_constant(arch, base, variant, idx_suffix)
-  }
-
-  fn portable_constant(&self, variant: &str) -> String {
-    match variant {
-      "crc16-ccitt" => "crate::crc16::portable::crc16_ccitt_slice8".to_string(),
-      "crc16-ibm" => "crate::crc16::portable::crc16_ibm_slice8".to_string(),
-      "crc24-openpgp" => "crate::crc24::portable::crc24_openpgp_slice8".to_string(),
-      "crc32-ieee" => "crate::crc32::portable::crc32_slice16_ieee".to_string(),
-      "crc32c" => "crate::crc32::portable::crc32c_slice16".to_string(),
-      "crc64-xz" => "crate::crc64::portable::crc64_slice16_xz".to_string(),
-      "crc64-nvme" => "crate::crc64::portable::crc64_slice16_nvme".to_string(),
-      _ => format!("/* unknown portable variant: {variant} */"),
-    }
-  }
-
-  fn small_constant(&self, kernel_name: &str, variant: &str) -> String {
-    let parts: Vec<&str> = kernel_name.split('/').collect();
-    if parts.len() != 2 {
-      return self.fallback_constant(variant);
-    }
-
-    let arch = parts[0];
-    let kernel_module = self.arch_to_module(arch);
-    let variant_prefix = self.variant_to_prefix(variant);
-
-    // e.g., crc64_k::XZ_PMULL_SMALL
-    format!("{kernel_module}::{variant_prefix}_SMALL")
-  }
-
-  fn build_constant(&self, arch: &str, base: &str, variant: &str, idx_suffix: &str) -> String {
-    let kernel_module = self.arch_to_module(arch);
-    let variant_prefix = self.variant_to_prefix(variant);
-    let kernel_suffix = self.base_to_suffix(base);
-
-    // e.g., crc64_k::XZ_PMULL_EOR3[2]
-    format!("{kernel_module}::{variant_prefix}_{kernel_suffix}{idx_suffix}")
-  }
-
-  fn arch_to_module(&self, arch: &str) -> &'static str {
-    match arch {
-      "aarch64" => "crc64_k",
-      "x86_64" => "crc64_k",
-      "power" | "powerpc64" => "crc64_k::power",
-      "s390x" => "crc64_k::s390x",
-      "riscv64" => "crc64_k::riscv64",
-      _ => "crc64_k",
-    }
-  }
-
-  fn variant_to_prefix(&self, variant: &str) -> &'static str {
-    match variant {
-      "crc64-xz" => "XZ",
-      "crc64-nvme" => "NVME",
-      "crc32-ieee" => "CRC32",
-      "crc32c" => "CRC32C",
-      "crc16-ccitt" => "CCITT",
-      "crc16-ibm" => "IBM",
-      "crc24-openpgp" => "OPENPGP",
-      _ => "UNKNOWN",
-    }
-  }
-
-  fn base_to_suffix(&self, base: &str) -> &'static str {
-    match base {
-      "pmull" => "PMULL",
-      "pmull-eor3" => "PMULL_EOR3",
-      "sve2-pmull" => "SVE2_PMULL",
-      "pclmul" => "PCLMUL",
-      "vpclmul" => "VPCLMUL",
-      "vpmsum" => "VPMSUM",
-      "vgfm" => "VGFM",
-      "zbc" => "ZBC",
-      "zvbc" => "ZVBC",
-      "hwcrc" => "HWCRC",
-      "fusion-sse" => "FUSION_SSE",
-      "fusion-vpclmul" => "FUSION_VPCLMUL",
-      _ => "UNKNOWN",
-    }
-  }
-
-  fn fallback_constant(&self, variant: &str) -> String {
-    self.portable_constant(variant)
-  }
+  // Streamed kernel array selection.
+  let idx = stream_to_index(streams);
+  let func = format!("{module}::{prefix}_{family}[{idx}]");
+  Ok(KernelExpr {
+    func,
+    name: format!("\"{}\"", canonical_kernel_name(base, streams)),
+  })
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Size Class Best Kernel Selection
-// ─────────────────────────────────────────────────────────────────────────────
+fn best_by_size_class(algo: &AlgorithmResult) -> HashMap<&'static str, KernelChoice> {
+  let mut best: HashMap<&'static str, KernelChoice> = HashMap::new();
 
-/// Find the best kernel for each size class from the analysis results.
-fn best_kernels_per_size_class(algo: &AlgorithmResult) -> HashMap<String, String> {
-  let mut best = HashMap::new();
-
-  // Use the best large kernel as default for all size classes
-  let default_kernel = algo.best_kernel;
-
-  for class in SIZE_CLASSES {
-    // For now, use the best large kernel for all size classes.
-    // A more sophisticated version would analyze crossover points
-    // to determine the best kernel for each size class.
-    //
-    // TODO: Extend analysis to track per-size-class winners.
-    best.insert(class.to_string(), default_kernel.to_string());
+  for entry in &algo.size_class_best {
+    best.insert(
+      entry.class,
+      KernelChoice {
+        base: entry.kernel.clone(),
+        streams: entry.streams,
+      },
+    );
   }
 
-  // Apply crossover logic: if we have a portable_to_clmul threshold,
-  // use portable/slice for sizes below the threshold.
-  if let Some((_, threshold)) = algo.thresholds.iter().find(|(k, _)| k.contains("PORTABLE_TO_CLMUL")) {
-    let class = size_to_class(*threshold);
-    if class == "xs" || class == "s" {
-      // Use small kernel variant for tiny buffers
-      // Construct proper small kernel name
-      let parts: Vec<&str> = algo.best_kernel.split('/').collect();
-      if parts.len() == 2 {
-        let arch = parts[0];
-        let base = parts[1]
-          .split('-')
-          .take_while(|p| !["2way", "3way", "4way", "7way", "8way", "small"].contains(p))
-          .collect::<Vec<_>>()
-          .join("-");
-        best.insert("xs".to_string(), format!("{arch}/{base}-small"));
-      }
+  // Fallback (older results / partial runs).
+  if best.is_empty() {
+    for class in SIZE_CLASSES {
+      best.insert(
+        class,
+        KernelChoice {
+          base: algo.best_kernel.to_string(),
+          streams: algo.recommended_streams,
+        },
+      );
+    }
+  } else {
+    for class in SIZE_CLASSES {
+      best.entry(class).or_insert_with(|| KernelChoice {
+        base: algo.best_kernel.to_string(),
+        streams: algo.recommended_streams,
+      });
     }
   }
 
   best
 }
 
-/// Map a size threshold to a size class.
-fn size_to_class(size: usize) -> &'static str {
-  if size <= SIZE_CLASS_XS_MAX {
-    "xs"
-  } else if size <= SIZE_CLASS_S_MAX {
-    "s"
-  } else if size <= SIZE_CLASS_M_MAX {
-    "m"
-  } else {
-    "l"
+fn cap_terms_for_kernel(variant: CrcVariant, base: &str) -> io::Result<Vec<&'static str>> {
+  if base == "portable" || base.starts_with("portable/") {
+    return Ok(vec![]);
   }
+  if base == "reference" || base.starts_with("reference/") {
+    return Ok(vec![]);
+  }
+
+  let (arch, imp) = parse_arch_and_impl(base)?;
+  let imp = imp.strip_suffix("-small").unwrap_or(imp);
+
+  let terms = match arch {
+    "x86_64" => {
+      if imp.starts_with("pclmul") {
+        vec!["platform::caps::x86::PCLMUL_READY"]
+      } else if imp.starts_with("vpclmul") {
+        vec!["platform::caps::x86::VPCLMUL_READY"]
+      } else if imp.starts_with("hwcrc") {
+        vec!["platform::caps::x86::CRC32C_READY"]
+      } else if imp.starts_with("fusion-sse") {
+        vec!["platform::caps::x86::CRC32C_READY", "platform::caps::x86::PCLMUL_READY"]
+      } else if imp.starts_with("fusion-avx512") {
+        vec![
+          "platform::caps::x86::CRC32C_READY",
+          "platform::caps::x86::PCLMUL_READY",
+          "platform::caps::x86::AVX512_READY",
+        ]
+      } else if imp.starts_with("fusion-vpclmul") {
+        vec![
+          "platform::caps::x86::CRC32C_READY",
+          "platform::caps::x86::VPCLMUL_READY",
+        ]
+      } else {
+        vec![]
+      }
+    }
+    "aarch64" => {
+      if imp.starts_with("hwcrc") {
+        vec!["platform::caps::aarch64::CRC_READY"]
+      } else if imp.starts_with("pmull-eor3") {
+        let mut t = vec!["platform::caps::aarch64::PMULL_EOR3_READY"];
+        if matches!(variant, CrcVariant::Crc32Ieee | CrcVariant::Crc32c) {
+          t.push("platform::caps::aarch64::CRC_READY");
+        }
+        t
+      } else if imp.starts_with("sve2-pmull") {
+        let mut t = vec![
+          "platform::caps::aarch64::SVE2_PMULL",
+          "platform::caps::aarch64::PMULL_READY",
+        ];
+        if matches!(variant, CrcVariant::Crc32Ieee | CrcVariant::Crc32c) {
+          t.push("platform::caps::aarch64::CRC_READY");
+        }
+        t
+      } else if imp.starts_with("pmull") {
+        let mut t = vec!["platform::caps::aarch64::PMULL_READY"];
+        if matches!(variant, CrcVariant::Crc32Ieee | CrcVariant::Crc32c) {
+          t.push("platform::caps::aarch64::CRC_READY");
+        }
+        t
+      } else {
+        vec![]
+      }
+    }
+    "power" => {
+      if imp.starts_with("vpmsum") {
+        vec!["platform::caps::power::VPMSUM_READY"]
+      } else {
+        vec![]
+      }
+    }
+    "s390x" => {
+      if imp.starts_with("vgfm") {
+        vec!["platform::caps::s390x::VECTOR"]
+      } else {
+        vec![]
+      }
+    }
+    "riscv64" => {
+      if imp.starts_with("zvbc") {
+        vec!["platform::caps::riscv::V", "platform::caps::riscv::ZVBC"]
+      } else if imp.starts_with("zbc") {
+        vec!["platform::caps::riscv::ZBC"]
+      } else {
+        vec![]
+      }
+    }
+    _ => vec![],
+  };
+
+  Ok(terms)
+}
+
+fn requires_expr_for_crc_table(
+  ccitt: &HashMap<&'static str, KernelChoice>,
+  ibm: &HashMap<&'static str, KernelChoice>,
+  openpgp: &HashMap<&'static str, KernelChoice>,
+  crc32: &HashMap<&'static str, KernelChoice>,
+  crc32c: &HashMap<&'static str, KernelChoice>,
+  xz: &HashMap<&'static str, KernelChoice>,
+  nvme: &HashMap<&'static str, KernelChoice>,
+) -> io::Result<String> {
+  let mut terms: BTreeSet<&'static str> = BTreeSet::new();
+
+  let add = |variant: CrcVariant, choice: &KernelChoice, terms: &mut BTreeSet<&'static str>| -> io::Result<()> {
+    for t in cap_terms_for_kernel(variant, &choice.base)? {
+      terms.insert(t);
+    }
+    Ok(())
+  };
+
+  for class in SIZE_CLASSES {
+    add(
+      CrcVariant::Crc16Ccitt,
+      ccitt.get(class).expect("missing class"),
+      &mut terms,
+    )?;
+    add(CrcVariant::Crc16Ibm, ibm.get(class).expect("missing class"), &mut terms)?;
+    add(
+      CrcVariant::Crc24OpenPgp,
+      openpgp.get(class).expect("missing class"),
+      &mut terms,
+    )?;
+    add(
+      CrcVariant::Crc32Ieee,
+      crc32.get(class).expect("missing class"),
+      &mut terms,
+    )?;
+    add(
+      CrcVariant::Crc32c,
+      crc32c.get(class).expect("missing class"),
+      &mut terms,
+    )?;
+    add(CrcVariant::Crc64Xz, xz.get(class).expect("missing class"), &mut terms)?;
+    add(
+      CrcVariant::Crc64Nvme,
+      nvme.get(class).expect("missing class"),
+      &mut terms,
+    )?;
+  }
+
+  if terms.is_empty() {
+    return Ok("Caps::NONE".to_string());
+  }
+
+  let mut iter = terms.into_iter();
+  let first = iter.next().unwrap();
+  let mut expr = first.to_string();
+  for t in iter {
+    expr.push_str(".union(");
+    expr.push_str(t);
+    expr.push(')');
+  }
+  Ok(expr)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -292,6 +486,16 @@ struct AlgoSet<'a> {
   crc32c: &'a AlgorithmResult,
   crc64_xz: &'a AlgorithmResult,
   crc64_nvme: &'a AlgorithmResult,
+}
+
+struct CrcBestMaps<'a> {
+  ccitt: &'a HashMap<&'static str, KernelChoice>,
+  ibm: &'a HashMap<&'static str, KernelChoice>,
+  openpgp: &'a HashMap<&'static str, KernelChoice>,
+  crc32: &'a HashMap<&'static str, KernelChoice>,
+  crc32c: &'a HashMap<&'static str, KernelChoice>,
+  xz: &'a HashMap<&'static str, KernelChoice>,
+  nvme: &'a HashMap<&'static str, KernelChoice>,
 }
 
 const CRC_ALGO_NAMES: &[&str] = &[
@@ -332,6 +536,45 @@ fn missing(name: &str) -> io::Error {
   io::Error::new(io::ErrorKind::InvalidData, format!("missing algorithm result: {name}"))
 }
 
+fn checksum_table_ident(tune_kind: TuneKind) -> Option<&'static str> {
+  // Keep this in sync with `checksum::dispatch::{exact_match,family_match,capability_match}`.
+  Some(match tune_kind {
+    TuneKind::Portable => "PORTABLE_TABLE",
+
+    // aarch64 exact + family matches
+    TuneKind::AppleM1M3 | TuneKind::AppleM4 | TuneKind::AppleM5 => "APPLE_M1M3_TABLE",
+    TuneKind::Graviton2 => "GRAVITON2_TABLE",
+    TuneKind::Graviton3
+    | TuneKind::Graviton4
+    | TuneKind::Graviton5
+    | TuneKind::NeoverseN2
+    | TuneKind::NeoverseN3
+    | TuneKind::NeoverseV3
+    | TuneKind::NvidiaGrace
+    | TuneKind::AmpereAltra => "GRAVITON3_TABLE",
+    TuneKind::Aarch64Pmull => "GENERIC_ARM_PMULL_TABLE",
+
+    // x86_64 exact + family matches
+    TuneKind::Zen4 => "ZEN4_TABLE",
+    TuneKind::Zen5 | TuneKind::Zen5c => "ZEN5_TABLE",
+    TuneKind::IntelSpr | TuneKind::IntelGnr => "INTEL_SPR_TABLE",
+    TuneKind::IntelIcl => "GENERIC_X86_VPCLMUL_TABLE",
+
+    // s390x exact matches
+    TuneKind::Z13 => "S390X_Z13_TABLE",
+    TuneKind::Z14 => "S390X_Z14_TABLE",
+    TuneKind::Z15 => "S390X_Z15_TABLE",
+
+    // power exact matches (Power7 maps to the conservative POWER8 table)
+    TuneKind::Power7 | TuneKind::Power8 => "POWER8_TABLE",
+    TuneKind::Power9 => "POWER9_TABLE",
+    TuneKind::Power10 => "POWER10_TABLE",
+
+    // Default/Custom are policy-driven and do not have a unique checksum table.
+    TuneKind::Custom | TuneKind::Default => return None,
+  })
+}
+
 fn should_apply_checksum_dispatch(results: &TuneResults) -> bool {
   results.algorithms.iter().any(|a| CRC_ALGO_NAMES.contains(&a.name))
 }
@@ -352,11 +595,17 @@ fn apply_checksum_dispatch_tables(repo_root: &Path, results: &TuneResults) -> io
   }
 
   let a = algos(results)?;
-  let table_code = generate_kernel_table(tune_kind, &a);
+  let table_code = generate_kernel_table(tune_kind, &a)?;
+  let table_ident = checksum_table_ident(tune_kind).ok_or_else(|| {
+    io::Error::new(
+      io::ErrorKind::InvalidData,
+      format!("no checksum dispatch table identifier known for TuneKind::{tune_kind:?}"),
+    )
+  })?;
 
   let dispatch_path = dispatch_path(repo_root);
   let content = read_file(&dispatch_path)?;
-  let updated = update_dispatch_file(&content, tune_kind, &table_code)?;
+  let updated = update_dispatch_file(&content, table_ident, &table_code)?;
   if updated != content {
     write_file(&dispatch_path, &updated)?;
     eprintln!("Updated: {}", dispatch_path.display());
@@ -366,79 +615,101 @@ fn apply_checksum_dispatch_tables(repo_root: &Path, results: &TuneResults) -> io
 }
 
 /// Generate a KernelSet entry for one size class.
-fn generate_kernel_set(size_class: &str, algos: &AlgoSet<'_>, mapper: &KernelMapper, indent: &str) -> String {
-  let crc16_ccitt_best = best_kernels_per_size_class(algos.crc16_ccitt);
-  let crc16_ibm_best = best_kernels_per_size_class(algos.crc16_ibm);
-  let crc24_openpgp_best = best_kernels_per_size_class(algos.crc24_openpgp);
-  let crc32_ieee_best = best_kernels_per_size_class(algos.crc32_ieee);
-  let crc32c_best = best_kernels_per_size_class(algos.crc32c);
-  let crc64_xz_best = best_kernels_per_size_class(algos.crc64_xz);
-  let crc64_nvme_best = best_kernels_per_size_class(algos.crc64_nvme);
+fn generate_kernel_set(size_class: &'static str, best: &CrcBestMaps<'_>, indent: &str) -> io::Result<String> {
+  let ccitt_k = best.ccitt.get(size_class).ok_or_else(|| missing("crc16-ccitt"))?;
+  let ibm_k = best.ibm.get(size_class).ok_or_else(|| missing("crc16-ibm"))?;
+  let openpgp_k = best.openpgp.get(size_class).ok_or_else(|| missing("crc24-openpgp"))?;
+  let crc32_k = best.crc32.get(size_class).ok_or_else(|| missing("crc32-ieee"))?;
+  let crc32c_k = best.crc32c.get(size_class).ok_or_else(|| missing("crc32c"))?;
+  let xz_k = best.xz.get(size_class).ok_or_else(|| missing("crc64-xz"))?;
+  let nvme_k = best.nvme.get(size_class).ok_or_else(|| missing("crc64-nvme"))?;
 
-  let crc16_ccitt_kernel = crc16_ccitt_best
-    .get(size_class)
-    .map(|s| s.as_str())
-    .unwrap_or("portable");
-  let crc16_ibm_kernel = crc16_ibm_best.get(size_class).map(|s| s.as_str()).unwrap_or("portable");
-  let crc24_openpgp_kernel = crc24_openpgp_best
-    .get(size_class)
-    .map(|s| s.as_str())
-    .unwrap_or("portable");
-  let crc32_ieee_kernel = crc32_ieee_best
-    .get(size_class)
-    .map(|s| s.as_str())
-    .unwrap_or("portable");
-  let crc32c_kernel = crc32c_best.get(size_class).map(|s| s.as_str()).unwrap_or("portable");
-  let crc64_xz_kernel = crc64_xz_best.get(size_class).map(|s| s.as_str()).unwrap_or("portable");
-  let crc64_nvme_kernel = crc64_nvme_best
-    .get(size_class)
-    .map(|s| s.as_str())
-    .unwrap_or("portable");
+  let ccitt_e = kernel_expr(CrcVariant::Crc16Ccitt, &ccitt_k.base, ccitt_k.streams)?;
+  let ibm_e = kernel_expr(CrcVariant::Crc16Ibm, &ibm_k.base, ibm_k.streams)?;
+  let openpgp_e = kernel_expr(CrcVariant::Crc24OpenPgp, &openpgp_k.base, openpgp_k.streams)?;
+  let crc32_e = kernel_expr(CrcVariant::Crc32Ieee, &crc32_k.base, crc32_k.streams)?;
+  let crc32c_e = kernel_expr(CrcVariant::Crc32c, &crc32c_k.base, crc32c_k.streams)?;
+  let xz_e = kernel_expr(CrcVariant::Crc64Xz, &xz_k.base, xz_k.streams)?;
+  let nvme_e = kernel_expr(CrcVariant::Crc64Nvme, &nvme_k.base, nvme_k.streams)?;
 
-  format!(
-    "{indent}KernelSet {{\n{indent}  crc16_ccitt: {crc16_ccitt},\n{indent}  crc16_ibm: {crc16_ibm},\n{indent}  \
-     crc24_openpgp: {crc24_openpgp},\n{indent}  crc32_ieee: {crc32_ieee},\n{indent}  crc32c: {crc32c},\n{indent}  \
-     crc64_xz: {crc64_xz},\n{indent}  crc64_nvme: {crc64_nvme},\n{indent}}}",
-    crc16_ccitt = mapper.get_constant(crc16_ccitt_kernel, "crc16-ccitt"),
-    crc16_ibm = mapper.get_constant(crc16_ibm_kernel, "crc16-ibm"),
-    crc24_openpgp = mapper.get_constant(crc24_openpgp_kernel, "crc24-openpgp"),
-    crc32_ieee = mapper.get_constant(crc32_ieee_kernel, "crc32-ieee"),
-    crc32c = mapper.get_constant(crc32c_kernel, "crc32c"),
-    crc64_xz = mapper.get_constant(crc64_xz_kernel, "crc64-xz"),
-    crc64_nvme = mapper.get_constant(crc64_nvme_kernel, "crc64-nvme"),
-  )
+  Ok(format!(
+    "{indent}KernelSet {{\n{indent}  crc16_ccitt: {ccitt_func},\n{indent}  crc16_ccitt_name: {ccitt_name},\n{indent}  \
+     crc16_ibm: {ibm_func},\n{indent}  crc16_ibm_name: {ibm_name},\n{indent}  crc24_openpgp: \
+     {openpgp_func},\n{indent}  crc24_openpgp_name: {openpgp_name},\n{indent}  crc32_ieee: {crc32_func},\n{indent}  \
+     crc32_ieee_name: {crc32_name},\n{indent}  crc32c: {crc32c_func},\n{indent}  crc32c_name: \
+     {crc32c_name},\n{indent}  crc64_xz: {xz_func},\n{indent}  crc64_xz_name: {xz_name},\n{indent}  crc64_nvme: \
+     {nvme_func},\n{indent}  crc64_nvme_name: {nvme_name},\n{indent}}}",
+    ccitt_func = ccitt_e.func,
+    ccitt_name = ccitt_e.name,
+    ibm_func = ibm_e.func,
+    ibm_name = ibm_e.name,
+    openpgp_func = openpgp_e.func,
+    openpgp_name = openpgp_e.name,
+    crc32_func = crc32_e.func,
+    crc32_name = crc32_e.name,
+    crc32c_func = crc32c_e.func,
+    crc32c_name = crc32c_e.name,
+    xz_func = xz_e.func,
+    xz_name = xz_e.name,
+    nvme_func = nvme_e.func,
+    nvme_name = nvme_e.name,
+  ))
 }
 
 /// Generate a complete KernelTable entry.
-fn generate_kernel_table(tune_kind: TuneKind, algos: &AlgoSet<'_>) -> String {
-  let mapper = KernelMapper::new();
+fn generate_kernel_table(tune_kind: TuneKind, algos: &AlgoSet<'_>) -> io::Result<String> {
+  let ccitt = best_by_size_class(algos.crc16_ccitt);
+  let ibm = best_by_size_class(algos.crc16_ibm);
+  let openpgp = best_by_size_class(algos.crc24_openpgp);
+  let crc32 = best_by_size_class(algos.crc32_ieee);
+  let crc32c = best_by_size_class(algos.crc32c);
+  let xz = best_by_size_class(algos.crc64_xz);
+  let nvme = best_by_size_class(algos.crc64_nvme);
+  let best = CrcBestMaps {
+    ccitt: &ccitt,
+    ibm: &ibm,
+    openpgp: &openpgp,
+    crc32: &crc32,
+    crc32c: &crc32c,
+    xz: &xz,
+    nvme: &nvme,
+  };
+
   let kind_name = format!("{tune_kind:?}");
-  let table_name = format!("{}_TABLE", kind_name.to_uppercase());
+  let table_name = checksum_table_ident(tune_kind).ok_or_else(|| {
+    io::Error::new(
+      io::ErrorKind::InvalidData,
+      format!("no checksum dispatch table identifier known for TuneKind::{kind_name}"),
+    )
+  })?;
 
-  let xs_set = generate_kernel_set("xs", algos, &mapper, "    ");
-  let s_set = generate_kernel_set("s", algos, &mapper, "    ");
-  let m_set = generate_kernel_set("m", algos, &mapper, "    ");
-  let l_set = generate_kernel_set("l", algos, &mapper, "    ");
+  let requires = requires_expr_for_crc_table(&ccitt, &ibm, &openpgp, &crc32, &crc32c, &xz, &nvme)?;
 
-  format!(
-    "// ───────────────────────────────────────────────────────────────────────────
-// {kind_name} Table
-//
-// Generated by rscrypto-tune. Do not edit manually.
-// ───────────────────────────────────────────────────────────────────────────
-pub static {table_name}: KernelTable = KernelTable {{
-  boundaries: [{SIZE_CLASS_XS_MAX}, {SIZE_CLASS_S_MAX}, {SIZE_CLASS_M_MAX}],
+  let xs_set = generate_kernel_set("xs", &best, "    ")?;
+  let s_set = generate_kernel_set("s", &best, "    ")?;
+  let m_set = generate_kernel_set("m", &best, "    ")?;
+  let l_set = generate_kernel_set("l", &best, "    ")?;
 
-  xs: {xs_set},
+  Ok(format!(
+    "  // ───────────────────────────────────────────────────────────────────────────
+  // {kind_name} Table
+  //
+  // Generated by rscrypto-tune. Do not edit manually.
+  // ───────────────────────────────────────────────────────────────────────────
+  pub static {table_name}: KernelTable = KernelTable {{
+    requires: {requires},
+    boundaries: [{SIZE_CLASS_XS_MAX}, {SIZE_CLASS_S_MAX}, {SIZE_CLASS_M_MAX}],
 
-  s: {s_set},
+    xs: {xs_set},
 
-  m: {m_set},
+    s: {s_set},
 
-  l: {l_set},
-}};
+    m: {m_set},
+
+    l: {l_set},
+  }};
 "
-  )
+  ))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -566,42 +837,115 @@ fn write_file(path: &Path, contents: &str) -> io::Result<()> {
   fs::write(path, contents)
 }
 
-/// Insert or update a generated table in dispatch.rs.
-///
-/// The generated table is placed between BEGIN/END markers in the
-/// appropriate architecture section.
-fn update_dispatch_file(content: &str, tune_kind: TuneKind, table_code: &str) -> io::Result<String> {
-  let kind_name = format!("{tune_kind:?}");
+fn checksum_arch_module_name() -> Option<&'static str> {
+  if cfg!(target_arch = "aarch64") {
+    Some("aarch64_tables")
+  } else if cfg!(target_arch = "x86_64") {
+    Some("x86_64_tables")
+  } else if cfg!(target_arch = "s390x") {
+    Some("s390x_tables")
+  } else if cfg!(target_arch = "powerpc64") {
+    Some("power_tables")
+  } else if cfg!(target_arch = "riscv64") {
+    Some("riscv64_tables")
+  } else {
+    None
+  }
+}
 
-  // Look for existing marker for this TuneKind
-  let section_marker = format!("// {kind_name} Table");
+fn find_matching_brace(bytes: &[u8], open: usize) -> Option<usize> {
+  let mut depth: usize = 0;
+  for (i, &b) in bytes.iter().enumerate().skip(open) {
+    match b {
+      b'{' => depth = depth.strict_add(1),
+      b'}' => {
+        depth = depth.strict_sub(1);
+        if depth == 0 {
+          return Some(i);
+        }
+      }
+      _ => {}
+    }
+  }
+  None
+}
 
-  // If we have an existing section for this TuneKind, replace it
-  if let Some(start_idx) = content.find(&section_marker) {
-    // Find the end of this table (next "pub static" or end of module)
-    let rest = &content[start_idx..];
-    let end_offset = rest
-      .find("\n\npub static ")
-      .or_else(|| rest.find("\n\n// ───"))
-      .or_else(|| rest.find("\n\n#[cfg"))
-      .unwrap_or(rest.len());
+fn find_kernel_table_section(content: &str, table_ident: &str) -> Option<(usize, usize)> {
+  let needle = format!("pub static {table_ident}: KernelTable");
+  let start_idx = content.find(&needle)?;
 
-    let before = &content[..start_idx];
-    let after = &content[start_idx.strict_add(end_offset)..];
+  // Expand backwards to include the header line if present.
+  let section_start = content[..start_idx]
+    .rfind("\n  // ───────────────────────────────────────────────────────────────────────────")
+    .map(|i| i.strict_add(1))
+    .unwrap_or(start_idx);
 
+  // Find the opening brace of the KernelTable initializer.
+  let init_idx = content[start_idx..].find("= KernelTable {")?.strict_add(start_idx);
+  let open_brace = content[init_idx..].find('{')?.strict_add(init_idx);
+
+  let bytes = content.as_bytes();
+  let close_brace = find_matching_brace(bytes, open_brace)?;
+
+  // Include trailing `;` and one newline if present.
+  let mut end = close_brace.strict_add(1);
+  while end < bytes.len() && (bytes[end] == b' ' || bytes[end] == b'\t' || bytes[end] == b'\r') {
+    end += 1;
+  }
+  if end < bytes.len() && bytes[end] == b';' {
+    end += 1;
+  }
+  if end < bytes.len() && bytes[end] == b'\n' {
+    end += 1;
+  }
+
+  Some((section_start, end))
+}
+
+fn insert_into_module(content: &str, module_name: &str, table_code: &str) -> io::Result<String> {
+  let needle = format!("mod {module_name} {{");
+  let start = content.find(&needle).ok_or_else(|| {
+    io::Error::new(
+      io::ErrorKind::InvalidData,
+      format!("failed to find checksum dispatch module: {module_name}"),
+    )
+  })?;
+
+  let open_brace = content[start..]
+    .find('{')
+    .map(|off| start.strict_add(off))
+    .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "malformed module declaration"))?;
+
+  let bytes = content.as_bytes();
+  let close_brace = find_matching_brace(bytes, open_brace).ok_or_else(|| {
+    io::Error::new(
+      io::ErrorKind::InvalidData,
+      format!("failed to parse module body for: {module_name}"),
+    )
+  })?;
+
+  let before = &content[..close_brace];
+  let after = &content[close_brace..];
+  Ok(format!("{before}\n\n{table_code}{after}"))
+}
+
+/// Insert or update a generated checksum table in `crates/checksum/src/dispatch.rs`.
+fn update_dispatch_file(content: &str, table_ident: &str, table_code: &str) -> io::Result<String> {
+  if let Some((start, end)) = find_kernel_table_section(content, table_ident) {
+    let before = &content[..start];
+    let after = &content[end..];
     return Ok(format!("{before}{table_code}{after}"));
   }
 
-  // No existing section - append to the appropriate architecture module
-  // For now, just print the generated code for manual insertion
-  eprintln!("\n=== Generated KernelTable for {kind_name} ===");
-  eprintln!("{table_code}");
-  eprintln!("=== End Generated Code ===\n");
-  eprintln!(
-    "Please manually insert the above code into the appropriate section of:\n  crates/checksum/src/dispatch.rs"
-  );
+  // No existing section - insert into the architecture module for this host.
+  let Some(module_name) = checksum_arch_module_name() else {
+    return Err(io::Error::new(
+      io::ErrorKind::InvalidInput,
+      "checksum dispatch apply is not supported on this architecture",
+    ));
+  };
 
-  Ok(content.to_string())
+  insert_into_module(content, module_name, table_code)
 }
 
 fn update_hash_dispatch_tables_file(content: &str, tune_kind: TuneKind, table_code: &str) -> io::Result<String> {
@@ -766,7 +1110,8 @@ fn generate_hash_table(tune_kind: TuneKind, algo: &AlgorithmResult) -> String {
         "\
 // {kind_name} Table
 #[cfg({cfg_expr})]
-pub static {table_ident}: DispatchTable = DispatchTable {{
+pub static {table_ident}: KernelTable = KernelTable {{
+  requires: Caps::NONE,
   boundaries: DEFAULT_BOUNDARIES,
   xs: {xs_id},
   s: {s_id},
@@ -774,7 +1119,7 @@ pub static {table_ident}: DispatchTable = DispatchTable {{
   l: {l_id},
 }};
 #[cfg(not({cfg_expr}))]
-pub static {table_ident}: DispatchTable = default_kind_table();
+pub static {table_ident}: KernelTable = default_kind_table();
 ",
         xs_id = hash_kernel_expr(algo.name, xs),
         s_id = hash_kernel_expr(algo.name, s),
@@ -787,7 +1132,8 @@ pub static {table_ident}: DispatchTable = default_kind_table();
   format!(
     "\
 // {kind_name} Table
-pub static {table_ident}: DispatchTable = DispatchTable {{
+pub static {table_ident}: KernelTable = KernelTable {{
+  requires: Caps::NONE,
   boundaries: DEFAULT_BOUNDARIES,
   xs: {xs_id},
   s: {s_id},
@@ -910,13 +1256,82 @@ pub fn apply_tuned_defaults(repo_root: &Path, results: &TuneResults) -> io::Resu
   Ok(())
 }
 
+/// Validate that tuning results can be safely applied on this host.
+///
+/// This is intended as a fast, "pre-flight" check for `--apply` that catches:
+/// - Unknown/unmappable kernel families
+/// - Missing per-size-class winners
+/// - Kernel names that don't exist in the checksum bench registry for this host
+pub fn self_check(results: &TuneResults) -> io::Result<()> {
+  if !should_apply_checksum_dispatch(results) {
+    return Ok(());
+  }
+
+  let a = algos(results)?;
+
+  // Ensure we can generate the table for this TuneKind.
+  let _ = generate_kernel_table(results.platform.tune_kind, &a)?;
+
+  let ccitt = best_by_size_class(a.crc16_ccitt);
+  let ibm = best_by_size_class(a.crc16_ibm);
+  let openpgp = best_by_size_class(a.crc24_openpgp);
+  let crc32 = best_by_size_class(a.crc32_ieee);
+  let crc32c = best_by_size_class(a.crc32c);
+  let xz = best_by_size_class(a.crc64_xz);
+  let nvme = best_by_size_class(a.crc64_nvme);
+
+  let crc16_avail = checksum::bench::available_crc16_kernels();
+  let crc24_avail = checksum::bench::available_crc24_kernels();
+  let crc32_ieee_avail = checksum::bench::available_crc32_ieee_kernels();
+  let crc32c_avail = checksum::bench::available_crc32c_kernels();
+  let crc64_avail = checksum::bench::available_crc64_kernels();
+
+  fn ensure_in(avail: &[&'static str], name: &str, variant: CrcVariant) -> io::Result<()> {
+    if avail.contains(&name) {
+      return Ok(());
+    }
+    Err(io::Error::new(
+      io::ErrorKind::InvalidData,
+      format!("kernel not available on this host for {variant:?}: {name}"),
+    ))
+  }
+
+  for class in SIZE_CLASSES {
+    let ccitt_e = kernel_expr(CrcVariant::Crc16Ccitt, &ccitt[class].base, ccitt[class].streams)?;
+    let ibm_e = kernel_expr(CrcVariant::Crc16Ibm, &ibm[class].base, ibm[class].streams)?;
+    let openpgp_e = kernel_expr(CrcVariant::Crc24OpenPgp, &openpgp[class].base, openpgp[class].streams)?;
+    let crc32_e = kernel_expr(CrcVariant::Crc32Ieee, &crc32[class].base, crc32[class].streams)?;
+    let crc32c_e = kernel_expr(CrcVariant::Crc32c, &crc32c[class].base, crc32c[class].streams)?;
+    let xz_e = kernel_expr(CrcVariant::Crc64Xz, &xz[class].base, xz[class].streams)?;
+    let nvme_e = kernel_expr(CrcVariant::Crc64Nvme, &nvme[class].base, nvme[class].streams)?;
+
+    let ccitt_name = ccitt_e.name.trim_matches('"');
+    let ibm_name = ibm_e.name.trim_matches('"');
+    let openpgp_name = openpgp_e.name.trim_matches('"');
+    let crc32_name = crc32_e.name.trim_matches('"');
+    let crc32c_name = crc32c_e.name.trim_matches('"');
+    let xz_name = xz_e.name.trim_matches('"');
+    let nvme_name = nvme_e.name.trim_matches('"');
+
+    ensure_in(&crc16_avail, ccitt_name, CrcVariant::Crc16Ccitt)?;
+    ensure_in(&crc16_avail, ibm_name, CrcVariant::Crc16Ibm)?;
+    ensure_in(&crc24_avail, openpgp_name, CrcVariant::Crc24OpenPgp)?;
+    ensure_in(&crc32_ieee_avail, crc32_name, CrcVariant::Crc32Ieee)?;
+    ensure_in(&crc32c_avail, crc32c_name, CrcVariant::Crc32c)?;
+    ensure_in(&crc64_avail, xz_name, CrcVariant::Crc64Xz)?;
+    ensure_in(&crc64_avail, nvme_name, CrcVariant::Crc64Nvme)?;
+  }
+
+  Ok(())
+}
+
 #[cfg(test)]
 mod tests {
   use std::path::Path;
 
   use platform::TuneKind;
 
-  use super::{generate_blake3_streaming_table, generate_hash_table};
+  use super::{CrcVariant, generate_blake3_streaming_table, generate_hash_table, kernel_expr};
   use crate::{AlgorithmResult, PlatformInfo, SizeClassBest, TuneResults, analysis::AnalysisResult};
 
   #[test]
@@ -1038,5 +1453,35 @@ mod tests {
     let err = super::apply_checksum_dispatch_tables(Path::new("."), &results).unwrap_err();
     assert!(err.to_string().contains("incomplete CRC tuning results"));
     assert!(err.to_string().contains("crc16-ccitt"));
+  }
+
+  #[test]
+  fn checksum_kernel_expr_handles_non_x86_stream_kernels() {
+    let e = kernel_expr(CrcVariant::Crc64Xz, "power/vpmsum", 8).unwrap();
+    assert_eq!(e.func, "crc64_k::XZ_VPMSUM[4]");
+    assert_eq!(e.name, "\"power/vpmsum-8way\"");
+
+    let e = kernel_expr(CrcVariant::Crc64Nvme, "s390x/vgfm", 4).unwrap();
+    assert_eq!(e.func, "crc64_k::NVME_VGFM[2]");
+    assert_eq!(e.name, "\"s390x/vgfm-4way\"");
+
+    let e = kernel_expr(CrcVariant::Crc32Ieee, "riscv64/zvbc", 2).unwrap();
+    assert_eq!(e.func, "crc32_k::CRC32_ZVBC[1]");
+    assert_eq!(e.name, "\"riscv64/zvbc-2way\"");
+  }
+
+  #[test]
+  fn checksum_kernel_expr_handles_versioned_kernels_and_small_kernels() {
+    let e = kernel_expr(CrcVariant::Crc32c, "x86_64/fusion-avx512-v4s3x3", 8).unwrap();
+    assert_eq!(e.func, "crc32_k::CRC32C_FUSION_AVX512[4]");
+    assert_eq!(e.name, "\"x86_64/fusion-avx512-v4s3x3-8way\"");
+
+    let e = kernel_expr(CrcVariant::Crc32Ieee, "aarch64/pmull-eor3-v9s3x2e-s3", 3).unwrap();
+    assert_eq!(e.func, "crc32_k::CRC32_PMULL_EOR3[2]");
+    assert_eq!(e.name, "\"aarch64/pmull-eor3-v9s3x2e-s3-3way\"");
+
+    let e = kernel_expr(CrcVariant::Crc24OpenPgp, "x86_64/pclmul-small", 1).unwrap();
+    assert_eq!(e.func, "crc24_k::OPENPGP_PCLMUL_SMALL_KERNEL");
+    assert_eq!(e.name, "\"x86_64/pclmul-small\"");
   }
 }

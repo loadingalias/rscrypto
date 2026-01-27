@@ -6,7 +6,8 @@ use crate::{
   AlgorithmResult, KernelSpec, KernelTier, PlatformInfo, Tunable, TuneError, TuneResults, TuningDomain,
   analysis::{self, CrossoverType, Measurement},
   runner::{
-    BenchRunner, SIZE_CLASS_NAMES, SIZE_CLASS_SIZES, STREAM_SIZES, THRESHOLD_SIZES, fill_data, stream_candidates,
+    BenchRunner, SIZE_CLASS_NAMES, SIZE_CLASS_SIZES, STREAM_SIZES, STREAM_SIZES_BENCH, THRESHOLD_SIZES, fill_data,
+    stream_candidates,
   },
 };
 
@@ -527,7 +528,7 @@ fn benchmark_streams(
         algorithm.force_streams(streams)?;
       }
 
-      for &size in STREAM_SIZES {
+      for &size in STREAM_SIZES_BENCH {
         let result = benchmark_at_size(runner, algorithm, size)?;
         measurements.push(Measurement::with_streams(&result, streams));
       }
@@ -635,50 +636,74 @@ fn benchmark_size_class_best(
   kernels: &[KernelSpec],
   stream_measurements: &[Measurement],
 ) -> Result<Vec<crate::SizeClassBest>, TuneError> {
-  struct Point {
-    size: usize,
-    kernel: String,
-    streams: u8,
-    throughput_gib_s: f64,
+  fn winner_from_measurements(measurements: &[Measurement], size: usize) -> Option<(String, u8, f64)> {
+    measurements
+      .iter()
+      .filter(|m| m.size == size)
+      .max_by(|a, b| a.throughput_gib_s.partial_cmp(&b.throughput_gib_s).unwrap())
+      .map(|m| (m.kernel.clone(), m.streams, m.throughput_gib_s))
   }
 
-  let mut points: Vec<Point> = Vec::new();
+  // Size classes whose pivot sizes are included in the stream benchmark pass.
+  // These will select both the best kernel and best stream count directly from
+  // the stream measurement dataset.
+  let mut best = Vec::with_capacity(SIZE_CLASS_SIZES.len());
 
-  for kernel in kernels {
-    // Determine best stream count for this kernel from the stream-selection phase.
-    let streams = match kernel.streams {
-      Some(_) => analysis::select_best_streams(stream_measurements, kernel.name),
-      None => 1,
-    };
+  for (class, &size) in SIZE_CLASS_NAMES.iter().copied().zip(SIZE_CLASS_SIZES.iter()) {
+    // Prefer using the already-collected stream measurements when available.
+    // This allows different stream selections for `m` vs `l`.
+    if let Some((kernel, streams, throughput_gib_s)) = winner_from_measurements(stream_measurements, size) {
+      best.push(crate::SizeClassBest {
+        class,
+        kernel,
+        streams,
+        throughput_gib_s,
+      });
+      continue;
+    }
+
+    // Otherwise (xs/s), benchmark each kernel at the pivot size, including
+    // stream variants when available. This is important: many CRC kernels have
+    // different optimal stream counts for `s` vs `m/l`.
+    let mut winner: Option<(String, u8, f64)> = None;
+    for kernel in kernels {
+      if kernel.tier == crate::KernelTier::Reference {
+        continue;
+      }
+
+      let streams_to_test = match kernel.streams {
+        Some((min, max)) => stream_candidates()
+          .iter()
+          .filter(|&&s| s >= min && s <= max)
+          .copied()
+          .collect::<Vec<_>>(),
+        None => vec![1],
+      };
+
+      for &streams in &streams_to_test {
+        algorithm.reset();
+        if algorithm.force_kernel(kernel.name).is_err() {
+          continue;
+        }
+        if streams > 1 && algorithm.force_streams(streams).is_err() {
+          continue;
+        }
+
+        let result = benchmark_at_size(runner, algorithm, size)?;
+        let candidate = (kernel.name.to_string(), streams, result.throughput_gib_s);
+        if let Some((_, _, best_tp)) = winner {
+          if candidate.2 > best_tp {
+            winner = Some(candidate);
+          }
+        } else {
+          winner = Some(candidate);
+        }
+      }
+    }
 
     algorithm.reset();
-    if algorithm.force_kernel(kernel.name).is_err() {
-      continue;
-    }
-    if streams > 1 && algorithm.force_streams(streams).is_err() {
-      continue;
-    }
 
-    for &size in SIZE_CLASS_SIZES.iter() {
-      let result = benchmark_at_size(runner, algorithm, size)?;
-      points.push(Point {
-        size,
-        kernel: kernel.name.to_string(),
-        streams,
-        throughput_gib_s: result.throughput_gib_s,
-      });
-    }
-  }
-
-  algorithm.reset();
-
-  let mut best = Vec::with_capacity(SIZE_CLASS_SIZES.len());
-  for (class, &size) in SIZE_CLASS_NAMES.iter().copied().zip(SIZE_CLASS_SIZES.iter()) {
-    let Some(winner) = points
-      .iter()
-      .filter(|p| p.size == size)
-      .max_by(|a, b| a.throughput_gib_s.partial_cmp(&b.throughput_gib_s).unwrap())
-    else {
+    let Some((kernel, streams, throughput_gib_s)) = winner else {
       best.push(crate::SizeClassBest {
         class,
         kernel: "portable".to_string(),
@@ -690,9 +715,9 @@ fn benchmark_size_class_best(
 
     best.push(crate::SizeClassBest {
       class,
-      kernel: winner.kernel.clone(),
-      streams: winner.streams,
-      throughput_gib_s: winner.throughput_gib_s,
+      kernel,
+      streams,
+      throughput_gib_s,
     });
   }
 

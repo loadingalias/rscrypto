@@ -384,11 +384,32 @@ pub const fn caps_static() -> Caps {
   {
     use crate::caps::s390x;
 
+    // Features that map to multiple caps (avoid non-const `|` in const fn).
+    if cfg!(target_feature = "message-security-assist-extension4") {
+      result = result.union(s390x::MSA).union(s390x::MSA4);
+    }
+    if cfg!(target_feature = "message-security-assist-extension5") {
+      result = result.union(s390x::MSA).union(s390x::MSA5);
+    }
+    if cfg!(target_feature = "message-security-assist-extension8") {
+      result = result.union(s390x::MSA).union(s390x::MSA8);
+    }
+    if cfg!(target_feature = "message-security-assist-extension9") {
+      result = result.union(s390x::MSA).union(s390x::MSA9);
+    }
+
     detect!(result;
       "vector" => s390x::VECTOR,
       "vector-enhancements-1" => s390x::VECTOR_ENH1,
       "vector-enhancements-2" => s390x::VECTOR_ENH2,
       "vector-enhancements-3" => s390x::VECTOR_ENH3,
+      "vector-packed-decimal" => s390x::VECTOR_PD,
+      "nnp-assist" => s390x::NNP_ASSIST,
+      "miscellaneous-extensions-2" => s390x::MISC_EXT2,
+      "miscellaneous-extensions-3" => s390x::MISC_EXT3,
+      "message-security-assist-extension3" => s390x::MSA,
+      "deflate-conversion" => s390x::DEFLATE,
+      "enhanced-sort" => s390x::ENHANCED_SORT,
     );
   }
 
@@ -2501,14 +2522,10 @@ fn select_aarch64_tune(caps: Caps) -> Tune {
 
 #[cfg(target_arch = "riscv64")]
 fn detect_riscv64() -> Detected {
-  let mut caps = Caps::NONE;
-
-  caps |= compile_time_riscv();
-
   #[cfg(feature = "std")]
-  {
-    caps |= runtime_riscv();
-  }
+  let caps = caps_static() | runtime_riscv();
+  #[cfg(not(feature = "std"))]
+  let caps = caps_static();
 
   Detected {
     caps,
@@ -2523,14 +2540,10 @@ fn detect_riscv64() -> Detected {
 
 #[cfg(target_arch = "riscv32")]
 fn detect_riscv32() -> Detected {
-  let mut caps = Caps::NONE;
-
-  caps |= compile_time_riscv();
-
   #[cfg(feature = "std")]
-  {
-    caps |= runtime_riscv();
-  }
+  let caps = caps_static() | runtime_riscv();
+  #[cfg(not(feature = "std"))]
+  let caps = caps_static();
 
   Detected {
     caps,
@@ -2543,58 +2556,65 @@ fn detect_riscv32() -> Detected {
   }
 }
 
-#[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
-fn compile_time_riscv() -> Caps {
+#[cfg(all(
+  any(target_arch = "riscv64", target_arch = "riscv32"),
+  feature = "std",
+  any(target_os = "linux", target_os = "android")
+))]
+fn runtime_riscv() -> Caps {
   use crate::caps::riscv;
 
   let mut caps = Caps::NONE;
 
-  macro_rules! ct {
+  macro_rules! rt {
     ($f:literal => $c:expr) => {
-      if cfg!(target_feature = $f) {
+      if std::arch::is_riscv_feature_detected!($f) {
         caps |= $c;
       }
     };
   }
 
   // ─── Vector Extension ───
-  ct!("v" => riscv::V);
+  rt!("v" => riscv::V);
 
   // ─── Bit Manipulation ───
-  ct!("zbb" => riscv::ZBB);
-  ct!("zbs" => riscv::ZBS);
-  ct!("zba" => riscv::ZBA);
-  ct!("zbc" => riscv::ZBC);
+  rt!("zbb" => riscv::ZBB);
+  rt!("zbs" => riscv::ZBS);
+  rt!("zba" => riscv::ZBA);
+  rt!("zbc" => riscv::ZBC);
 
   // ─── Scalar Crypto ───
-  ct!("zbkb" => riscv::ZBKB);
-  ct!("zbkc" => riscv::ZBKC);
-  ct!("zbkx" => riscv::ZBKX);
-  ct!("zknd" => riscv::ZKND);
-  ct!("zkne" => riscv::ZKNE);
-  ct!("zknh" => riscv::ZKNH);
-  ct!("zksed" => riscv::ZKSED);
-  ct!("zksh" => riscv::ZKSH);
+  rt!("zbkb" => riscv::ZBKB);
+  rt!("zbkc" => riscv::ZBKC);
+  rt!("zbkx" => riscv::ZBKX);
+  rt!("zknd" => riscv::ZKND);
+  rt!("zkne" => riscv::ZKNE);
+  rt!("zknh" => riscv::ZKNH);
+  rt!("zksed" => riscv::ZKSED);
+  rt!("zksh" => riscv::ZKSH);
 
   // ─── Vector Crypto ───
-  ct!("zvbb" => riscv::ZVBB);
-  ct!("zvbc" => riscv::ZVBC);
-  ct!("zvkb" => riscv::ZVKB);
-  ct!("zvkg" => riscv::ZVKG);
-  ct!("zvkned" => riscv::ZVKNED);
-  ct!("zvknha" => riscv::ZVKNHA);
-  ct!("zvknhb" => riscv::ZVKNHB);
-  ct!("zvksed" => riscv::ZVKSED);
-  ct!("zvksh" => riscv::ZVKSH);
+  rt!("zvbb" => riscv::ZVBB);
+  rt!("zvbc" => riscv::ZVBC);
+  rt!("zvkb" => riscv::ZVKB);
+  rt!("zvkg" => riscv::ZVKG);
+  rt!("zvkned" => riscv::ZVKNED);
+  rt!("zvknha" => riscv::ZVKNHA);
+  rt!("zvknhb" => riscv::ZVKNHB);
+  rt!("zvksed" => riscv::ZVKSED);
+  rt!("zvksh" => riscv::ZVKSH);
 
   caps
 }
 
-#[cfg(all(any(target_arch = "riscv64", target_arch = "riscv32"), feature = "std"))]
+#[cfg(all(
+  any(target_arch = "riscv64", target_arch = "riscv32"),
+  feature = "std",
+  not(any(target_os = "linux", target_os = "android"))
+))]
 fn runtime_riscv() -> Caps {
-  // `std::arch::is_riscv_feature_detected!` is currently unstable and does not
-  // cover the full extension surface used by rscrypto. For now, rely on
-  // compile-time `-C target-feature` (captured by `compile_time_riscv()`).
+  // `std::arch::is_riscv_feature_detected!` is only implemented on Linux-like
+  // platforms today.
   Caps::NONE
 }
 
@@ -2604,14 +2624,11 @@ fn runtime_riscv() -> Caps {
 
 #[cfg(target_arch = "s390x")]
 fn detect_s390x() -> Detected {
-  let mut caps = Caps::NONE;
-
-  // Compile-time detection (works on stable for vector)
-  caps |= compile_time_s390x();
-
-  // Runtime detection (stabilizing in Rust)
-  // Note: is_s390x_feature_detected! is stabilizing, for now use compile-time
-  // When stable, add runtime detection here
+  // Start with compile-time detected features.
+  #[cfg(feature = "std")]
+  let caps = caps_static() | runtime_s390x();
+  #[cfg(not(feature = "std"))]
+  let caps = caps_static();
 
   let tune = select_s390x_tune(caps);
 
@@ -2622,39 +2639,42 @@ fn detect_s390x() -> Detected {
   }
 }
 
-#[cfg(target_arch = "s390x")]
-fn compile_time_s390x() -> Caps {
+#[cfg(all(target_arch = "s390x", feature = "std"))]
+fn runtime_s390x() -> Caps {
   use crate::caps::s390x;
 
   let mut caps = Caps::NONE;
 
-  // ─── Vector Facilities ───
-  if cfg!(target_feature = "vector") {
-    caps |= s390x::VECTOR;
-  }
-  if cfg!(target_feature = "vector-enhancements-1") {
-    caps |= s390x::VECTOR_ENH1;
-  }
-  if cfg!(target_feature = "vector-enhancements-2") {
-    caps |= s390x::VECTOR_ENH2;
-  }
-  if cfg!(target_feature = "vector-enhancements-3") {
-    caps |= s390x::VECTOR_ENH3;
-  }
-  if cfg!(target_feature = "vector-packed-decimal") {
-    caps |= s390x::VECTOR_PD;
-  }
-  if cfg!(target_feature = "nnp-assist") {
-    caps |= s390x::NNP_ASSIST;
+  macro_rules! rt {
+    ($f:literal => $c:expr) => {
+      if std::arch::is_s390x_feature_detected!($f) {
+        caps |= $c;
+      }
+    };
   }
 
+  // ─── Vector Facilities ───
+  rt!("vector" => s390x::VECTOR);
+  rt!("vector-enhancements-1" => s390x::VECTOR_ENH1);
+  rt!("vector-enhancements-2" => s390x::VECTOR_ENH2);
+  rt!("vector-enhancements-3" => s390x::VECTOR_ENH3);
+  rt!("vector-packed-decimal" => s390x::VECTOR_PD);
+  rt!("nnp-assist" => s390x::NNP_ASSIST);
+
   // ─── Miscellaneous Extensions ───
-  if cfg!(target_feature = "miscellaneous-extensions-2") {
-    caps |= s390x::MISC_EXT2;
-  }
-  if cfg!(target_feature = "miscellaneous-extensions-3") {
-    caps |= s390x::MISC_EXT3;
-  }
+  rt!("miscellaneous-extensions-2" => s390x::MISC_EXT2);
+  rt!("miscellaneous-extensions-3" => s390x::MISC_EXT3);
+
+  // ─── Crypto (CPACF - Message Security Assist) ───
+  rt!("message-security-assist-extension3" => s390x::MSA);
+  rt!("message-security-assist-extension4" => s390x::MSA | s390x::MSA4);
+  rt!("message-security-assist-extension5" => s390x::MSA | s390x::MSA5);
+  rt!("message-security-assist-extension8" => s390x::MSA | s390x::MSA8);
+  rt!("message-security-assist-extension9" => s390x::MSA | s390x::MSA9);
+
+  // ─── Other Facilities ───
+  rt!("deflate-conversion" => s390x::DEFLATE);
+  rt!("enhanced-sort" => s390x::ENHANCED_SORT);
 
   caps
 }
