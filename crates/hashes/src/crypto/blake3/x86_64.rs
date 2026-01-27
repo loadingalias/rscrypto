@@ -18,8 +18,8 @@
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::*;
 
-#[cfg(target_os = "linux")]
-pub(crate) mod asm_linux;
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+pub(crate) mod asm;
 pub(crate) mod avx2;
 pub(crate) mod avx512;
 pub(crate) mod sse41;

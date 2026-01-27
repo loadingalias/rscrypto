@@ -356,7 +356,7 @@ pub(crate) fn parent_cvs_many_inline(
     Blake3KernelId::X86Avx512 => {
       let parent_flags = PARENT | flags;
 
-      #[cfg(target_os = "linux")]
+      #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
       {
         // Use the upstream-grade AVX-512 asm `hash_many` backend for parent
         // folding too. This avoids an AVX-512 -> AVX2 downgrade in the tree
@@ -390,7 +390,7 @@ pub(crate) fn parent_cvs_many_inline(
           // per dispatch. Each pointer is valid for one 64-byte parent block,
           // and `tmp` is large enough for `DEGREE` outputs.
           unsafe {
-            super::x86_64::asm_linux::rscrypto_blake3_hash_many_avx512(
+            super::x86_64::asm::rscrypto_blake3_hash_many_avx512(
               ptrs.as_ptr(),
               DEGREE,
               1,
@@ -425,7 +425,7 @@ pub(crate) fn parent_cvs_many_inline(
           // SAFETY: same as the main loop; we duplicate the final pointer to
           // fill the 16-lane batch and only read the first `rem` outputs.
           unsafe {
-            super::x86_64::asm_linux::rscrypto_blake3_hash_many_avx512(
+            super::x86_64::asm::rscrypto_blake3_hash_many_avx512(
               ptrs.as_ptr(),
               DEGREE,
               1,
@@ -449,7 +449,7 @@ pub(crate) fn parent_cvs_many_inline(
         return;
       }
 
-      #[cfg(not(target_os = "linux"))]
+      #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
       {
         // Non-Linux fallback: treat AVX-512 as AVX2 for parent folding.
         let mut i = 0usize;
@@ -649,16 +649,30 @@ pub const fn required_caps(id: Blake3KernelId) -> Caps {
     #[cfg(target_arch = "x86_64")]
     Blake3KernelId::X86Avx2 => x86::AVX2.union(x86::SSE41).union(x86::SSSE3),
     #[cfg(target_arch = "x86_64")]
-    // Important: BLAKE3's AVX-512 backend (including upstream asm) only
-    // requires AVX-512 F + VL for 512-bit mask/register support. Do not gate on
-    // BW/DQ here, or we'll incorrectly disable AVX-512 on CPUs where it is
-    // present and fast (notably some AMD parts), forcing an AVX2 fallback and
-    // leaving multiple-GB/s on the table.
-    Blake3KernelId::X86Avx512 => x86::AVX512F
-      .union(x86::AVX512VL)
-      .union(x86::AVX2)
-      .union(x86::SSE41)
-      .union(x86::SSSE3),
+    // Important: the upstream BLAKE3 asm backend only requires AVX-512 F + VL.
+    //
+    // However, our non-asm *intrinsics* backend uses AVX-512DQ-only lane
+    // extract/insert helpers. On targets where we don't ship the asm backend,
+    // we must require AVX-512DQ for correctness.
+    Blake3KernelId::X86Avx512 => {
+      #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+      {
+        x86::AVX512F
+          .union(x86::AVX512VL)
+          .union(x86::AVX2)
+          .union(x86::SSE41)
+          .union(x86::SSSE3)
+      }
+      #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+      {
+        x86::AVX512F
+          .union(x86::AVX512VL)
+          .union(x86::AVX512DQ)
+          .union(x86::AVX2)
+          .union(x86::SSE41)
+          .union(x86::SSSE3)
+      }
+    }
     #[cfg(target_arch = "aarch64")]
     Blake3KernelId::Aarch64Neon => aarch64::NEON,
   }
@@ -1037,7 +1051,13 @@ unsafe fn hash_many_contiguous_avx2_wrapper(
   mut out: *mut u8,
 ) {
   let mut input = input;
+  #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+  let mut processed_any = false;
   while num_chunks >= super::x86_64::avx2::DEGREE {
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+      processed_any = true;
+    }
     // SAFETY: `num_chunks >= DEGREE` means there are at least `DEGREE` full
     // chunks remaining. The caller guarantees `input` is valid for the full
     // input buffer, so each `input.add(k * CHUNK_LEN)` stays in-bounds.
@@ -1077,7 +1097,7 @@ unsafe fn hash_many_contiguous_avx2_wrapper(
   }
 
   if num_chunks != 0 {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     {
       debug_assert!(num_chunks < super::x86_64::avx2::DEGREE);
       debug_assert!(flags <= u8::MAX as u32);
@@ -1100,7 +1120,7 @@ unsafe fn hash_many_contiguous_avx2_wrapper(
       // to `num_chunks` valid chunk inputs, and `out` is valid for
       // `num_chunks * OUT_LEN` bytes.
       unsafe {
-        super::x86_64::asm_linux::rscrypto_blake3_hash_many_avx2(
+        super::x86_64::asm::rscrypto_blake3_hash_many_avx2(
           ptrs.as_ptr(),
           num_chunks,
           CHUNK_LEN / BLOCK_LEN,
@@ -1115,8 +1135,22 @@ unsafe fn hash_many_contiguous_avx2_wrapper(
       }
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     {
+      // For small totals (<= 4 chunks), avoid wasting AVX2 lanes by delegating
+      // to the 4-way SSE4.1 backend. This is a key lever for closing gaps at
+      // 2–4KiB oneshot sizes and mid-size streaming updates on non-Linux OSes.
+      //
+      // Only do this when we haven't executed any AVX2 code yet, to avoid
+      // AVX->SSE transition penalties in the common "large input with tail"
+      // case.
+      if !processed_any && num_chunks <= super::x86_64::sse41::DEGREE {
+        // SAFETY: AVX2 dispatch implies SSE4.1 + SSSE3 (see `required_caps`),
+        // and `input`/`out` are valid for `num_chunks` full chunks.
+        unsafe { hash_many_contiguous_sse41_wrapper(input, num_chunks, key, counter, flags, out) };
+        return;
+      }
+
       // Non-Linux fallback: hash an 8-lane batch with duplicated final pointers
       // and copy only the needed outputs.
       // SAFETY: `num_chunks != 0`, and `input` is valid for `num_chunks * CHUNK_LEN` bytes.
@@ -1166,10 +1200,10 @@ unsafe fn hash_many_contiguous_avx512_wrapper(
   mut out: *mut u8,
 ) {
   let mut input = input;
-  #[cfg(not(target_os = "linux"))]
+  #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
   let mut processed_any = false;
   while num_chunks >= super::x86_64::avx512::DEGREE {
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     {
       processed_any = true;
     }
@@ -1185,7 +1219,7 @@ unsafe fn hash_many_contiguous_avx512_wrapper(
   }
 
   if num_chunks != 0 {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     {
       debug_assert!(num_chunks < super::x86_64::avx512::DEGREE);
       debug_assert!(flags <= u8::MAX as u32);
@@ -1207,7 +1241,7 @@ unsafe fn hash_many_contiguous_avx512_wrapper(
       // points to `num_chunks` valid chunk inputs, and `out` is valid for
       // `num_chunks * OUT_LEN` bytes.
       unsafe {
-        super::x86_64::asm_linux::rscrypto_blake3_hash_many_avx512(
+        super::x86_64::asm::rscrypto_blake3_hash_many_avx512(
           ptrs.as_ptr(),
           num_chunks,
           CHUNK_LEN / BLOCK_LEN,
@@ -1222,7 +1256,7 @@ unsafe fn hash_many_contiguous_avx512_wrapper(
       }
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     {
       if !processed_any {
         // For small totals (e.g. <= 15 chunks), delegate to the AVX2 wrapper.

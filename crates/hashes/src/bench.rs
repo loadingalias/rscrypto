@@ -1071,6 +1071,31 @@ pub fn get_kernel(algo: &str, name: &str) -> Option<Kernel> {
       name: "portable",
       func: blake3_portable,
     }),
+    #[cfg(target_arch = "x86_64")]
+    ("blake3", "x86_64/ssse3") => Some(Kernel {
+      name: "x86_64/ssse3",
+      func: blake3_oneshot_x86_64_ssse3,
+    }),
+    #[cfg(target_arch = "x86_64")]
+    ("blake3", "x86_64/sse4.1") => Some(Kernel {
+      name: "x86_64/sse4.1",
+      func: blake3_oneshot_x86_64_sse41,
+    }),
+    #[cfg(target_arch = "x86_64")]
+    ("blake3", "x86_64/avx2") => Some(Kernel {
+      name: "x86_64/avx2",
+      func: blake3_oneshot_x86_64_avx2,
+    }),
+    #[cfg(target_arch = "x86_64")]
+    ("blake3", "x86_64/avx512") => Some(Kernel {
+      name: "x86_64/avx512",
+      func: blake3_oneshot_x86_64_avx512,
+    }),
+    #[cfg(target_arch = "aarch64")]
+    ("blake3", "aarch64/neon") => Some(Kernel {
+      name: "aarch64/neon",
+      func: blake3_oneshot_aarch64_neon,
+    }),
     ("blake2b-512", "portable") => Some(Kernel {
       name: "portable",
       func: blake2b_512_portable,

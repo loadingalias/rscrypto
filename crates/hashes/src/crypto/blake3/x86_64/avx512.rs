@@ -8,7 +8,10 @@
 // On Linux we currently prefer the upstream asm implementation; keep the
 // intrinsic fallback compiled but don't let `-D warnings` turn it into a build
 // failure.
-#![cfg_attr(target_os = "linux", allow(dead_code, unused_imports))]
+#![cfg_attr(
+  any(target_os = "linux", target_os = "macos", target_os = "windows"),
+  allow(dead_code, unused_imports)
+)]
 
 use core::arch::x86_64::*;
 
@@ -356,7 +359,7 @@ unsafe fn transpose_msg_vecs16(inputs: &[*const u8; 16], block_offset: usize) ->
 /// # Safety
 /// Caller must ensure AVX-512 is available, and `input`/`out` are valid for
 /// `DEGREE * CHUNK_LEN` and `DEGREE * OUT_LEN` bytes respectively.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 // Match upstream: AVX-512 detection is based on `avx512f` + `avx512vl`.
 // The Linux backend delegates to upstream-grade asm, so we intentionally do
 // not require BW/DQ here.
@@ -388,7 +391,7 @@ pub unsafe fn hash16_contiguous(input: *const u8, key: &[u32; 8], counter: u64, 
     ];
     let flags_start = (flags | super::super::CHUNK_START) as u8;
     let flags_end = (flags | super::super::CHUNK_END) as u8;
-    super::asm_linux::rscrypto_blake3_hash_many_avx512(
+    super::asm::rscrypto_blake3_hash_many_avx512(
       inputs.as_ptr(),
       DEGREE,
       CHUNK_LEN / BLOCK_LEN,
@@ -411,8 +414,8 @@ pub unsafe fn hash16_contiguous(input: *const u8, key: &[u32; 8], counter: u64, 
 /// # Safety
 /// Caller must ensure AVX-512 is available, and `input`/`out` are valid for
 /// `DEGREE * CHUNK_LEN` and `DEGREE * OUT_LEN` bytes respectively.
-#[cfg(not(target_os = "linux"))]
-#[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,avx2")]
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+#[target_feature(enable = "avx512f,avx512vl,avx512dq,avx2")]
 pub unsafe fn hash16_contiguous(input: *const u8, key: &[u32; 8], counter: u64, flags: u32, out: *mut u8) {
   unsafe {
     let block_len_vec = set1(BLOCK_LEN as u32);

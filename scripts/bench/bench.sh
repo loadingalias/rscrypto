@@ -2,6 +2,7 @@
 set -euo pipefail
 
 CRATE="${1:-}"
+BENCH="${2:-}"
 
 echo "Running Criterion Benchmarks..."
 
@@ -14,9 +15,17 @@ fi
 
 if [ -n "$CRATE" ]; then
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo "Running benchmarks for: $CRATE"
+  if [ -n "$BENCH" ]; then
+    echo "Running benchmarks for: $CRATE ($BENCH)"
+  else
+    echo "Running benchmarks for: $CRATE"
+  fi
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  cargo bench -p "$CRATE"
+  if [ -n "$BENCH" ]; then
+    cargo bench -p "$CRATE" --bench "$BENCH"
+  else
+    cargo bench -p "$CRATE"
+  fi
 else
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   echo "Running all benchmarks"
