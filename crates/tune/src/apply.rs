@@ -1110,8 +1110,7 @@ fn generate_hash_table(tune_kind: TuneKind, algo: &AlgorithmResult) -> String {
         "\
 // {kind_name} Table
 #[cfg({cfg_expr})]
-pub static {table_ident}: KernelTable = KernelTable {{
-  requires: Caps::NONE,
+pub static {table_ident}: DispatchTable = DispatchTable {{
   boundaries: DEFAULT_BOUNDARIES,
   xs: {xs_id},
   s: {s_id},
@@ -1119,7 +1118,7 @@ pub static {table_ident}: KernelTable = KernelTable {{
   l: {l_id},
 }};
 #[cfg(not({cfg_expr}))]
-pub static {table_ident}: KernelTable = default_kind_table();
+pub static {table_ident}: DispatchTable = default_kind_table();
 ",
         xs_id = hash_kernel_expr(algo.name, xs),
         s_id = hash_kernel_expr(algo.name, s),
@@ -1132,8 +1131,7 @@ pub static {table_ident}: KernelTable = default_kind_table();
   format!(
     "\
 // {kind_name} Table
-pub static {table_ident}: KernelTable = KernelTable {{
-  requires: Caps::NONE,
+pub static {table_ident}: DispatchTable = DispatchTable {{
   boundaries: DEFAULT_BOUNDARIES,
   xs: {xs_id},
   s: {s_id},

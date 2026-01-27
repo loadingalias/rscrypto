@@ -232,7 +232,7 @@ pub static INTELICL_STREAMING_TABLE: StreamingTable = default_kind_streaming_tab
 pub static APPLEM1M3_TABLE: DispatchTable = DispatchTable {
   boundaries: DEFAULT_BOUNDARIES,
   xs: KernelId::Aarch64Neon,
-  s: KernelId::Aarch64Neon,
+  s: KernelId::Portable,
   m: KernelId::Aarch64Neon,
   l: KernelId::Aarch64Neon,
 };
@@ -242,7 +242,7 @@ pub static APPLEM1M3_TABLE: DispatchTable = default_kind_table();
 // AppleM1M3 Streaming Table
 #[cfg(target_arch = "aarch64")]
 pub static APPLEM1M3_STREAMING_TABLE: StreamingTable = StreamingTable {
-  stream: KernelId::Aarch64Neon,
+  stream: KernelId::Portable,
   bulk: KernelId::Aarch64Neon,
 };
 #[cfg(not(target_arch = "aarch64"))]

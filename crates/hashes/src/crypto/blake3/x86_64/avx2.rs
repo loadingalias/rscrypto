@@ -8,7 +8,10 @@
 // On Linux we currently prefer the upstream asm implementation; keep the
 // intrinsic fallback compiled but don't let `-D warnings` turn it into a build
 // failure.
-#![cfg_attr(target_os = "linux", allow(dead_code, unused_imports))]
+#![cfg_attr(
+  any(target_os = "linux", target_os = "macos", target_os = "windows"),
+  allow(dead_code, unused_imports)
+)]
 
 use core::arch::x86_64::*;
 
@@ -309,7 +312,7 @@ unsafe fn load_counters(counter: u64, increment_counter: bool) -> (__m256i, __m2
 /// # Safety
 /// Caller must ensure AVX2 is available and that all input pointers are valid
 /// for `blocks * BLOCK_LEN` bytes.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 #[target_feature(enable = "avx2")]
 pub unsafe fn hash8(
   inputs: &[*const u8; DEGREE],
@@ -326,7 +329,7 @@ pub unsafe fn hash8(
   debug_assert!(flags_start <= u8::MAX as u32);
   debug_assert!(flags_end <= u8::MAX as u32);
   unsafe {
-    super::asm_linux::rscrypto_blake3_hash_many_avx2(
+    super::asm::rscrypto_blake3_hash_many_avx2(
       inputs.as_ptr(),
       DEGREE,
       blocks,
@@ -346,7 +349,7 @@ pub unsafe fn hash8(
 /// # Safety
 /// Caller must ensure AVX2 is available and that all input pointers are valid
 /// for `blocks * BLOCK_LEN` bytes.
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 #[target_feature(enable = "avx2")]
 pub unsafe fn hash8(
   inputs: &[*const u8; DEGREE],

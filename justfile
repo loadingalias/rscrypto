@@ -39,11 +39,11 @@ test-all:
     just test-fuzz
     just test-miri
 
-bench crate="":
-    @scripts/bench/bench.sh "{{crate}}"
+bench crate="" bench="":
+    @scripts/bench/bench.sh "{{crate}}" "{{bench}}"
 
-bench-native crate="":
-    RUSTFLAGS='-C target-cpu=native' scripts/bench/bench.sh "{{crate}}"
+bench-native crate="" bench="":
+    @RUSTFLAGS='-C target-cpu=native' scripts/bench/bench.sh "{{crate}}" "{{bench}}"
 
 
 # Tuning
@@ -88,6 +88,9 @@ bench-blake3-compare min_pct="0":
 
 comp-check path:
     @python3 scripts/bench/comp-check.py {{path}}
+
+gen-blake3-x86-asm-ports:
+    @scripts/gen_blake3_x86_asm_ports.py
 
 
 update:
