@@ -320,10 +320,6 @@ fn main() -> ExitCode {
   engine.add(Box::new(HashTunable::new("sha3-512", "RSCRYPTO_SHA3_512")));
   engine.add(Box::new(HashTunable::new("shake128", "RSCRYPTO_SHAKE128")));
   engine.add(Box::new(HashTunable::new("shake256", "RSCRYPTO_SHAKE256")));
-  engine.add(Box::new(HashTunable::new("cshake128", "RSCRYPTO_CSHAKE128")));
-  engine.add(Box::new(HashTunable::new("cshake256", "RSCRYPTO_CSHAKE256")));
-  engine.add(Box::new(HashTunable::new("kmac128", "RSCRYPTO_KMAC128")));
-  engine.add(Box::new(HashTunable::new("kmac256", "RSCRYPTO_KMAC256")));
   engine.add(Box::new(HashTunable::new("xxh3", "RSCRYPTO_XXH3")));
   engine.add(Box::new(HashTunable::new("rapidhash", "RSCRYPTO_RAPIDHASH")));
   engine.add(Box::new(HashTunable::new("siphash", "RSCRYPTO_SIPHASH")));
