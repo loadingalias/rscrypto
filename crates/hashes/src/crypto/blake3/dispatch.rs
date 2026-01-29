@@ -195,3 +195,10 @@ pub(crate) fn kernel_dispatch() -> SizeClassDispatch<Kernel> {
 pub(crate) fn streaming_dispatch() -> StreamingDispatch {
   active_streaming()
 }
+
+#[inline]
+#[must_use]
+pub fn streaming_kernel_names() -> (&'static str, &'static str) {
+  let d = active_streaming();
+  (d.stream.name, d.bulk.name)
+}
