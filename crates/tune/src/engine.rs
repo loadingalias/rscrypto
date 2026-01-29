@@ -533,15 +533,15 @@ fn benchmark_streams(
         );
         continue;
       }
-      if streams > 1 {
-        if let Err(err) = algorithm.force_streams(streams) {
-          eprintln!(
-            "warning: skipping {} kernel {} (streams={streams}): {err}",
-            algorithm.name(),
-            kernel.name
-          );
-          continue;
-        }
+      if streams > 1
+        && let Err(err) = algorithm.force_streams(streams)
+      {
+        eprintln!(
+          "warning: skipping {} kernel {} (streams={streams}): {err}",
+          algorithm.name(),
+          kernel.name
+        );
+        continue;
       }
 
       for &size in STREAM_SIZES_BENCH {
@@ -640,16 +640,16 @@ fn benchmark_single_kernel(
     algorithm.reset();
     return Ok(measurements);
   }
-  if streams > 1 {
-    if let Err(err) = algorithm.force_streams(streams) {
-      eprintln!(
-        "warning: skipping {} kernel {} (streams={streams}): {err}",
-        algorithm.name(),
-        kernel
-      );
-      algorithm.reset();
-      return Ok(measurements);
-    }
+  if streams > 1
+    && let Err(err) = algorithm.force_streams(streams)
+  {
+    eprintln!(
+      "warning: skipping {} kernel {} (streams={streams}): {err}",
+      algorithm.name(),
+      kernel
+    );
+    algorithm.reset();
+    return Ok(measurements);
   }
 
   for &size in THRESHOLD_SIZES {
@@ -825,9 +825,10 @@ fn days_to_civil(days: u64) -> (u32, u32, u32) {
 
 #[cfg(test)]
 mod tests {
+  use platform::Caps;
+
   use super::*;
   use crate::{BenchResult, SamplerConfig, TunableParam};
-  use platform::Caps;
 
   struct BrokenKernelTunable {
     current: &'static str,
