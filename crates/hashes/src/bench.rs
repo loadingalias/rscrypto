@@ -866,6 +866,10 @@ pub fn get_kernel(algo: &str, name: &str) -> Option<Kernel> {
       name: "portable",
       func: sha256_compress_portable,
     }),
+    ("sha256-compress-unaligned", "portable") => Some(Kernel {
+      name: "portable",
+      func: sha256_compress_unaligned_auto,
+    }),
     ("sha384-compress", "portable") => Some(Kernel {
       name: "portable",
       func: sha384_compress_portable,
@@ -873,6 +877,10 @@ pub fn get_kernel(algo: &str, name: &str) -> Option<Kernel> {
     ("sha512-compress", "portable") => Some(Kernel {
       name: "portable",
       func: sha512_compress_portable,
+    }),
+    ("sha512-compress-unaligned", "portable") => Some(Kernel {
+      name: "portable",
+      func: sha512_compress_unaligned_auto,
     }),
     ("sha512-224-compress", "portable") => Some(Kernel {
       name: "portable",

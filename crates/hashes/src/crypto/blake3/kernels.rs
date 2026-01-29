@@ -198,7 +198,7 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
       // compression, the portable scalar compressor is competitive (and avoids
       // NEON message permutation overhead).
       compress: super::compress,
-      chunk_compress_blocks: chunk_compress_blocks_portable,
+      chunk_compress_blocks: chunk_compress_blocks_neon_wrapper,
       parent_cv: parent_cv_portable,
       hash_many_contiguous: hash_many_contiguous_neon_wrapper,
       simd_degree: 4,
@@ -238,7 +238,7 @@ pub(crate) fn chunk_compress_blocks_inline(
     }
     #[cfg(target_arch = "aarch64")]
     Blake3KernelId::Aarch64Neon => {
-      chunk_compress_blocks_portable(chaining_value, chunk_counter, flags, blocks_compressed, blocks)
+      chunk_compress_blocks_neon_wrapper(chaining_value, chunk_counter, flags, blocks_compressed, blocks)
     }
   }
 }

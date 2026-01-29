@@ -5,13 +5,34 @@ use hashes::{
   crypto::{Blake3, Sha3_256, Sha3_512, Sha256, Sha512, Shake256},
   fast::{RapidHash64, RapidHash128, SipHash13, SipHash24, Xxh3_64, Xxh3_128},
 };
+use platform as _;
 use traits::{Digest as _, FastHash as _, Xof as _};
 
 mod common;
 
+fn print_blake3_dispatch_info(oneshot_lens: impl Iterator<Item = usize>) {
+  let tune = platform::tune();
+  let caps = platform::caps();
+  let (stream, bulk) = hashes::crypto::blake3::dispatch::streaming_kernel_names();
+  eprintln!(
+    "BLAKE3 dispatch: tune.kind={:?} ({}) caps={:?}",
+    tune.kind,
+    tune.kind.name(),
+    caps
+  );
+  eprintln!("BLAKE3 streaming dispatch: stream={stream} bulk={bulk}");
+
+  for len in oneshot_lens {
+    let kernel = hashes::crypto::blake3::dispatch::kernel_name_for_len(len);
+    eprintln!("BLAKE3 oneshot dispatch: len={len} kernel={kernel}");
+  }
+}
+
 fn oneshot(c: &mut Criterion) {
   let inputs = common::sized_inputs();
   let mut group = c.benchmark_group("hashes/oneshot");
+
+  print_blake3_dispatch_info(inputs.iter().map(|(len, _)| *len));
 
   for (len, data) in &inputs {
     common::set_throughput(&mut group, *len);
@@ -78,6 +99,11 @@ fn streaming(c: &mut Criterion) {
   let data = common::pseudo_random_bytes(1024 * 1024, 0xA11C_E5ED_5EED_0001);
   let data = black_box(data);
   group.throughput(Throughput::Bytes(data.len() as u64));
+
+  {
+    let (stream, bulk) = hashes::crypto::blake3::dispatch::streaming_kernel_names();
+    eprintln!("BLAKE3 streaming dispatch (for benches): stream={stream} bulk={bulk}");
+  }
 
   group.bench_function("sha256/64B-chunks", |b| {
     b.iter(|| {
