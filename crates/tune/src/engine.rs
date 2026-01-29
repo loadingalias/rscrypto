@@ -523,9 +523,25 @@ fn benchmark_streams(
 
     for &streams in &streams_to_test {
       algorithm.reset();
-      algorithm.force_kernel(kernel.name)?;
+      if let Err(err) = algorithm.force_kernel(kernel.name) {
+        // Don't fail the whole tuning run if a kernel spec is stale or the
+        // bench registry doesn't expose it for this build/target.
+        eprintln!(
+          "warning: skipping {} kernel {} (streams={streams}): {err}",
+          algorithm.name(),
+          kernel.name
+        );
+        continue;
+      }
       if streams > 1 {
-        algorithm.force_streams(streams)?;
+        if let Err(err) = algorithm.force_streams(streams) {
+          eprintln!(
+            "warning: skipping {} kernel {} (streams={streams}): {err}",
+            algorithm.name(),
+            kernel.name
+          );
+          continue;
+        }
       }
 
       for &size in STREAM_SIZES_BENCH {
@@ -615,9 +631,25 @@ fn benchmark_single_kernel(
   let mut measurements = Vec::new();
 
   algorithm.reset();
-  algorithm.force_kernel(kernel)?;
+  if let Err(err) = algorithm.force_kernel(kernel) {
+    eprintln!(
+      "warning: skipping {} kernel {} (streams={streams}): {err}",
+      algorithm.name(),
+      kernel
+    );
+    algorithm.reset();
+    return Ok(measurements);
+  }
   if streams > 1 {
-    algorithm.force_streams(streams)?;
+    if let Err(err) = algorithm.force_streams(streams) {
+      eprintln!(
+        "warning: skipping {} kernel {} (streams={streams}): {err}",
+        algorithm.name(),
+        kernel
+      );
+      algorithm.reset();
+      return Ok(measurements);
+    }
   }
 
   for &size in THRESHOLD_SIZES {
@@ -789,4 +821,103 @@ fn days_to_civil(days: u64) -> (u32, u32, u32) {
   let y = if m <= 2 { y.strict_add(1) } else { y };
 
   (y as u32, m as u32, d as u32)
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::{BenchResult, SamplerConfig, TunableParam};
+  use platform::Caps;
+
+  struct BrokenKernelTunable {
+    current: &'static str,
+  }
+
+  impl BrokenKernelTunable {
+    fn new() -> Self {
+      Self { current: "auto" }
+    }
+  }
+
+  impl Tunable for BrokenKernelTunable {
+    fn name(&self) -> &'static str {
+      "broken-kernel"
+    }
+
+    fn available_kernels(&self, _caps: &Caps) -> Vec<KernelSpec> {
+      vec![
+        KernelSpec::new("portable", KernelTier::Portable, Caps::NONE),
+        KernelSpec::new("broken", KernelTier::Wide, Caps::NONE),
+      ]
+    }
+
+    fn force_kernel(&mut self, name: &str) -> Result<(), TuneError> {
+      match name {
+        "portable" => {
+          self.current = "portable";
+          Ok(())
+        }
+        "broken" => Err(TuneError::KernelNotAvailable(
+          "kernel name did not resolve to a bench kernel",
+        )),
+        _ => Err(TuneError::KernelNotAvailable("kernel not available on this platform")),
+      }
+    }
+
+    fn force_streams(&mut self, count: u8) -> Result<(), TuneError> {
+      if count == 1 {
+        Ok(())
+      } else {
+        Err(TuneError::InvalidStreamCount(count))
+      }
+    }
+
+    fn reset(&mut self) {
+      self.current = "auto";
+    }
+
+    fn benchmark(&self, data: &[u8], _config: &SamplerConfig) -> BenchResult {
+      BenchResult {
+        kernel: self.current,
+        buffer_size: data.len(),
+        iterations: 1,
+        bytes_processed: data.len() as u64,
+        throughput_gib_s: 1.0,
+        elapsed_secs: 0.001,
+        sample_count: None,
+        std_dev: None,
+        cv: None,
+        outliers_rejected: None,
+        min_throughput_gib_s: None,
+        max_throughput_gib_s: None,
+      }
+    }
+
+    fn current_kernel(&self) -> &'static str {
+      self.current
+    }
+
+    fn tunable_params(&self) -> &[TunableParam] {
+      &[]
+    }
+
+    fn env_prefix(&self) -> &'static str {
+      "RSCRYPTO_BROKEN_KERNEL"
+    }
+
+    fn tuning_domain(&self) -> TuningDomain {
+      TuningDomain::Checksum
+    }
+  }
+
+  #[test]
+  fn tuning_skips_kernels_that_dont_resolve() {
+    let mut engine = TuneEngine::new().with_runner(BenchRunner::quick()).with_verbose(true);
+    engine.add(Box::new(BrokenKernelTunable::new()));
+
+    let results = engine.run().expect("tuning should not fail");
+    assert_eq!(results.algorithms.len(), 1);
+    assert_eq!(results.algorithms[0].name, "broken-kernel");
+    assert_eq!(results.algorithms[0].best_kernel, "portable");
+  }
 }
