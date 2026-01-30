@@ -128,29 +128,30 @@ pub static PORTABLE_STREAMING_TABLE: StreamingTable = DEFAULT_STREAMING_TABLE;
 #[cfg(target_arch = "x86_64")]
 pub static ZEN4_TABLE: DispatchTable = DispatchTable {
   boundaries: DEFAULT_BOUNDARIES,
-  xs: DEFAULT_XS,
-  s: DEFAULT_S,
-  m: SIMD_KERNEL,
-  // Zen4 can be slower with AVX-512 (frequency/µarch effects). Keep AVX2 as
-  // the default until per-runner tuning proves otherwise.
-  l: SIMD_KERNEL,
+  xs: KernelId::X86Avx2,
+  s: KernelId::X86Sse41,
+  m: KernelId::X86Avx512,
+  l: KernelId::X86Avx512,
 };
 #[cfg(not(target_arch = "x86_64"))]
 pub static ZEN4_TABLE: DispatchTable = default_kind_table();
 
 // Zen4 Streaming Table
 #[cfg(target_arch = "x86_64")]
-pub static ZEN4_STREAMING_TABLE: StreamingTable = default_kind_streaming_table();
+pub static ZEN4_STREAMING_TABLE: StreamingTable = StreamingTable {
+  stream: KernelId::X86Sse41,
+  bulk: KernelId::X86Avx2,
+};
 #[cfg(not(target_arch = "x86_64"))]
 pub static ZEN4_STREAMING_TABLE: StreamingTable = default_kind_streaming_table();
 // Zen5 Table
 #[cfg(target_arch = "x86_64")]
 pub static ZEN5_TABLE: DispatchTable = DispatchTable {
   boundaries: DEFAULT_BOUNDARIES,
-  xs: DEFAULT_XS,
-  s: DEFAULT_S,
-  m: SIMD_KERNEL,
-  l: AVX512_KERNEL,
+  xs: KernelId::X86Avx2,
+  s: KernelId::X86Sse41,
+  m: KernelId::X86Avx512,
+  l: KernelId::X86Avx512,
 };
 #[cfg(not(target_arch = "x86_64"))]
 pub static ZEN5_TABLE: DispatchTable = default_kind_table();
@@ -158,8 +159,8 @@ pub static ZEN5_TABLE: DispatchTable = default_kind_table();
 // Zen5 Streaming Table
 #[cfg(target_arch = "x86_64")]
 pub static ZEN5_STREAMING_TABLE: StreamingTable = StreamingTable {
-  stream: DEFAULT_STREAM_KERNEL,
-  bulk: AVX512_KERNEL,
+  stream: KernelId::X86Sse41,
+  bulk: KernelId::X86Avx512,
 };
 #[cfg(not(target_arch = "x86_64"))]
 pub static ZEN5_STREAMING_TABLE: StreamingTable = default_kind_streaming_table();
@@ -187,10 +188,10 @@ pub static ZEN5C_STREAMING_TABLE: StreamingTable = default_kind_streaming_table(
 #[cfg(target_arch = "x86_64")]
 pub static INTELSPR_TABLE: DispatchTable = DispatchTable {
   boundaries: DEFAULT_BOUNDARIES,
-  xs: DEFAULT_XS,
-  s: DEFAULT_S,
-  m: AVX512_KERNEL,
-  l: AVX512_KERNEL,
+  xs: KernelId::X86Avx512,
+  s: KernelId::X86Sse41,
+  m: KernelId::X86Avx512,
+  l: KernelId::X86Avx512,
 };
 #[cfg(not(target_arch = "x86_64"))]
 pub static INTELSPR_TABLE: DispatchTable = default_kind_table();
@@ -198,8 +199,8 @@ pub static INTELSPR_TABLE: DispatchTable = default_kind_table();
 // IntelSpr Streaming Table
 #[cfg(target_arch = "x86_64")]
 pub static INTELSPR_STREAMING_TABLE: StreamingTable = StreamingTable {
-  stream: DEFAULT_STREAM_KERNEL,
-  bulk: AVX512_KERNEL,
+  stream: KernelId::X86Sse41,
+  bulk: KernelId::X86Avx512,
 };
 #[cfg(not(target_arch = "x86_64"))]
 pub static INTELSPR_STREAMING_TABLE: StreamingTable = default_kind_streaming_table();
@@ -224,8 +225,23 @@ pub static INTELGNR_STREAMING_TABLE: StreamingTable = StreamingTable {
 #[cfg(not(target_arch = "x86_64"))]
 pub static INTELGNR_STREAMING_TABLE: StreamingTable = default_kind_streaming_table();
 // IntelIcl Table
+#[cfg(target_arch = "x86_64")]
+pub static INTELICL_TABLE: DispatchTable = DispatchTable {
+  boundaries: DEFAULT_BOUNDARIES,
+  xs: KernelId::X86Avx2,
+  s: KernelId::X86Sse41,
+  m: KernelId::X86Avx512,
+  l: KernelId::X86Avx512,
+};
+#[cfg(not(target_arch = "x86_64"))]
 pub static INTELICL_TABLE: DispatchTable = default_kind_table();
 // IntelIcl Streaming Table
+#[cfg(target_arch = "x86_64")]
+pub static INTELICL_STREAMING_TABLE: StreamingTable = StreamingTable {
+  stream: KernelId::X86Avx2,
+  bulk: KernelId::X86Avx512,
+};
+#[cfg(not(target_arch = "x86_64"))]
 pub static INTELICL_STREAMING_TABLE: StreamingTable = default_kind_streaming_table();
 // AppleM1M3 Table
 #[cfg(target_arch = "aarch64")]
@@ -285,8 +301,23 @@ pub static NEOVERSEV3_TABLE: DispatchTable = default_kind_table();
 // NeoverseV3 Streaming Table
 pub static NEOVERSEV3_STREAMING_TABLE: StreamingTable = default_kind_streaming_table();
 // NvidiaGrace Table
+#[cfg(target_arch = "aarch64")]
+pub static NVIDIAGRACE_TABLE: DispatchTable = DispatchTable {
+  boundaries: DEFAULT_BOUNDARIES,
+  xs: KernelId::Aarch64Neon,
+  s: KernelId::Portable,
+  m: KernelId::Aarch64Neon,
+  l: KernelId::Aarch64Neon,
+};
+#[cfg(not(target_arch = "aarch64"))]
 pub static NVIDIAGRACE_TABLE: DispatchTable = default_kind_table();
 // NvidiaGrace Streaming Table
+#[cfg(target_arch = "aarch64")]
+pub static NVIDIAGRACE_STREAMING_TABLE: StreamingTable = StreamingTable {
+  stream: KernelId::Portable,
+  bulk: KernelId::Aarch64Neon,
+};
+#[cfg(not(target_arch = "aarch64"))]
 pub static NVIDIAGRACE_STREAMING_TABLE: StreamingTable = default_kind_streaming_table();
 // AmpereAltra Table
 pub static AMPEREALTRA_TABLE: DispatchTable = default_kind_table();
