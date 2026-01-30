@@ -1,11 +1,32 @@
 use backend::OnceCache;
 use platform::Caps;
+#[cfg(target_arch = "x86_64")]
+use platform::TuneKind;
+#[cfg(target_arch = "x86_64")]
+use platform::caps::x86;
 
 use super::{
   dispatch_tables::{DispatchTable, StreamingTable},
   kernels::{Blake3KernelId, Kernel, kernel, required_caps},
 };
 use crate::crypto::dispatch_util::SizeClassDispatch;
+
+#[cfg(target_arch = "x86_64")]
+#[inline]
+#[must_use]
+fn prefer_intel_icl_tables(caps: Caps, kind: TuneKind) -> bool {
+  // `platform` currently groups many AVX-512 Intel server CPUs under the
+  // IntelSpr preset. BLAKE3 kernel selection is sensitive to AVX-512 warmup
+  // overhead, so we split "SPR-like" into:
+  // - IntelSpr: AMX-capable (SPR/EMR-class)
+  // - IntelIcl: no-AMX (ICL-SP and older AVX-512 servers)
+  kind == TuneKind::IntelSpr
+    && !caps.has(x86::AMX_TILE)
+    && !caps.has(x86::AMX_INT8)
+    && !caps.has(x86::AMX_BF16)
+    && !caps.has(x86::AMX_FP16)
+    && !caps.has(x86::AMX_COMPLEX)
+}
 
 #[derive(Clone, Copy)]
 struct Entry {
@@ -102,7 +123,21 @@ fn active() -> ActiveDispatch {
   ACTIVE.get_or_init(|| {
     let tune = platform::tune();
     let caps = platform::caps();
-    let table: &'static DispatchTable = super::dispatch_tables::select_table(tune.kind);
+    let kind = {
+      #[cfg(target_arch = "x86_64")]
+      {
+        if prefer_intel_icl_tables(caps, tune.kind) {
+          TuneKind::IntelIcl
+        } else {
+          tune.kind
+        }
+      }
+      #[cfg(not(target_arch = "x86_64"))]
+      {
+        tune.kind
+      }
+    };
+    let table: &'static DispatchTable = super::dispatch_tables::select_table(kind);
 
     let xs_id = resolve(table.xs, caps);
     let s_id = resolve(table.s, caps);
@@ -125,7 +160,21 @@ fn active_streaming() -> StreamingDispatch {
   ACTIVE_STREAMING.get_or_init(|| {
     let tune = platform::tune();
     let caps = platform::caps();
-    let table: &'static StreamingTable = super::dispatch_tables::select_streaming_table(tune.kind);
+    let kind = {
+      #[cfg(target_arch = "x86_64")]
+      {
+        if prefer_intel_icl_tables(caps, tune.kind) {
+          TuneKind::IntelIcl
+        } else {
+          tune.kind
+        }
+      }
+      #[cfg(not(target_arch = "x86_64"))]
+      {
+        tune.kind
+      }
+    };
+    let table: &'static StreamingTable = super::dispatch_tables::select_streaming_table(kind);
 
     let stream_id = resolve(table.stream, caps);
     let bulk_id = resolve(table.bulk, caps);
