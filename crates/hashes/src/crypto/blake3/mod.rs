@@ -1037,16 +1037,38 @@ impl Digest for Blake3 {
       return;
     }
 
-    let dispatch = match self.dispatch {
-      Some(d) => d,
-      None => {
-        let d = dispatch::streaming_dispatch();
-        self.dispatch = Some(d);
-        d
+    // Streaming has two competing goals:
+    // - Be very fast for large updates (file hashing, storage, etc.).
+    // - Avoid SIMD setup overhead for tiny one-off updates (keyed/derive/tiny inputs).
+    //
+    // We start in portable mode and only "lock in" streaming dispatch once we
+    // have enough data to amortize kernel setup costs.
+    if self.dispatch.is_none()
+      && self.chunk_state.chunk_counter == 0
+      && self.cv_stack_len == 0
+      && self.pending_chunk_cv.is_none()
+    {
+      let simd_enable_min = core::cmp::max(platform::tune().simd_threshold, 256);
+      if self.chunk_state.len().saturating_add(input.len()) < simd_enable_min {
+        self.update_with(input, self.kernel, self.bulk_kernel);
+        return;
       }
+    }
+
+    let (stream, table_bulk) = {
+      let d = self.dispatch.get_or_insert_with(dispatch::streaming_dispatch);
+      (d.stream, d.bulk)
     };
 
-    self.update_with(input, dispatch.stream, dispatch.bulk);
+    let bulk = if input.len() >= 8 * 1024 {
+      // For large updates, prefer the size-class tuned throughput kernel. This
+      // keeps the streaming API competitive with one-shot hashing.
+      dispatch::kernel_dispatch().select(input.len())
+    } else {
+      table_bulk
+    };
+
+    self.update_with(input, stream, bulk);
   }
 
   fn finalize(&self) -> Self::Output {
