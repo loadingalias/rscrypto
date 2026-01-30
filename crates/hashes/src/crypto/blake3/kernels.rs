@@ -1073,11 +1073,34 @@ unsafe fn hash_many_contiguous_avx2_wrapper(
         input.add(7 * CHUNK_LEN),
       ]
     };
-    // SAFETY: dispatch selects this kernel only when AVX2 is available; the
-    // caller guarantees `input`/`out` cover the full `num_chunks` buffer.
-    // SAFETY: AVX2 is available for this wrapper, `ptrs` are in-bounds for
-    // full chunks, and `out` is large enough for `DEGREE * OUT_LEN` bytes.
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+    // SAFETY: this wrapper is only selected when AVX2 is available (checked by
+    // dispatch), `ptrs` point to `DEGREE` in-bounds chunk inputs, and `out` is
+    // valid for `DEGREE * OUT_LEN` bytes.
     unsafe {
+      debug_assert!(flags <= u8::MAX as u32);
+      super::x86_64::asm::rscrypto_blake3_hash_many_avx2(
+        ptrs.as_ptr(),
+        super::x86_64::avx2::DEGREE,
+        CHUNK_LEN / BLOCK_LEN,
+        key.as_ptr(),
+        counter,
+        true,
+        flags as u8,
+        CHUNK_START as u8,
+        super::CHUNK_END as u8,
+        out,
+      );
+      input = input.add(super::x86_64::avx2::DEGREE * CHUNK_LEN);
+      out = out.add(super::x86_64::avx2::DEGREE * OUT_LEN);
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    unsafe {
+      // SAFETY: dispatch selects this kernel only when AVX2 is available; the
+      // caller guarantees `input`/`out` cover the full `num_chunks` buffer.
+      // SAFETY: AVX2 is available for this wrapper, `ptrs` are in-bounds for
+      // full chunks, and `out` is large enough for `DEGREE * OUT_LEN` bytes.
       super::x86_64::avx2::hash8(
         &ptrs,
         CHUNK_LEN / BLOCK_LEN,
@@ -1207,9 +1230,50 @@ unsafe fn hash_many_contiguous_avx512_wrapper(
     {
       processed_any = true;
     }
-    // SAFETY: dispatch selects this kernel only when AVX-512 is available; the
-    // caller guarantees `input`/`out` cover the full `num_chunks` buffer.
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+    // SAFETY: this wrapper is only selected when AVX-512 is available (checked
+    // by dispatch), the constructed `ptrs` all stay in-bounds for full chunks,
+    // and `out` is valid for `DEGREE * OUT_LEN` bytes.
     unsafe {
+      debug_assert!(flags <= u8::MAX as u32);
+      let ptrs = [
+        input,
+        input.add(CHUNK_LEN),
+        input.add(2 * CHUNK_LEN),
+        input.add(3 * CHUNK_LEN),
+        input.add(4 * CHUNK_LEN),
+        input.add(5 * CHUNK_LEN),
+        input.add(6 * CHUNK_LEN),
+        input.add(7 * CHUNK_LEN),
+        input.add(8 * CHUNK_LEN),
+        input.add(9 * CHUNK_LEN),
+        input.add(10 * CHUNK_LEN),
+        input.add(11 * CHUNK_LEN),
+        input.add(12 * CHUNK_LEN),
+        input.add(13 * CHUNK_LEN),
+        input.add(14 * CHUNK_LEN),
+        input.add(15 * CHUNK_LEN),
+      ];
+      super::x86_64::asm::rscrypto_blake3_hash_many_avx512(
+        ptrs.as_ptr(),
+        super::x86_64::avx512::DEGREE,
+        CHUNK_LEN / BLOCK_LEN,
+        key.as_ptr(),
+        counter,
+        true,
+        flags as u8,
+        CHUNK_START as u8,
+        super::CHUNK_END as u8,
+        out,
+      );
+      input = input.add(super::x86_64::avx512::DEGREE * CHUNK_LEN);
+      out = out.add(super::x86_64::avx512::DEGREE * OUT_LEN);
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    unsafe {
+      // SAFETY: dispatch selects this kernel only when AVX-512 is available;
+      // the caller guarantees `input`/`out` cover the full `num_chunks` buffer.
       super::x86_64::avx512::hash16_contiguous(input, key, counter, flags, out);
       input = input.add(super::x86_64::avx512::DEGREE * CHUNK_LEN);
       out = out.add(super::x86_64::avx512::DEGREE * OUT_LEN);
