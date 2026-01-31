@@ -29,6 +29,8 @@ self-hosted-runner:
     - runs-on=${{ github.run_id }}/runner=linux-arm64-ci
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    # RISC-V 64 Self-hosted Runner (Cloud-V)
+    # IBM GitHub Actions on Power/Z (ActionsPZ)
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    - 2c6cf205228d
+    - ubuntu-24.04-s390x
+    - ubuntu-24.04-ppc64le
+    - ubuntu-24.04-ppc64le-p10
