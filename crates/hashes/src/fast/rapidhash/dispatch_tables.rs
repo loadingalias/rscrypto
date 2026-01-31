@@ -56,7 +56,14 @@ pub static ZEN5_TABLE: DispatchTable = DEFAULT_TABLE;
 // Zen5c Table
 pub static ZEN5C_TABLE: DispatchTable = DEFAULT_TABLE;
 // IntelSpr Table
-pub static INTELSPR_TABLE: DispatchTable = DEFAULT_TABLE;
+pub static INTELSPR_TABLE: DispatchTable = DispatchTable {
+  boundaries: DEFAULT_BOUNDARIES,
+  xs: KernelId::Portable,
+  s: KernelId::Portable,
+  m: KernelId::Portable,
+  l: KernelId::Portable,
+};
+
 // IntelGnr Table
 pub static INTELGNR_TABLE: DispatchTable = DEFAULT_TABLE;
 // IntelIcl Table

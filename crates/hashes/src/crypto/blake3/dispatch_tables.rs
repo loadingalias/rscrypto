@@ -188,7 +188,7 @@ pub static ZEN5C_STREAMING_TABLE: StreamingTable = default_kind_streaming_table(
 #[cfg(target_arch = "x86_64")]
 pub static INTELSPR_TABLE: DispatchTable = DispatchTable {
   boundaries: DEFAULT_BOUNDARIES,
-  xs: KernelId::X86Avx512,
+  xs: KernelId::X86Avx2,
   s: KernelId::X86Sse41,
   m: KernelId::X86Avx512,
   l: KernelId::X86Avx512,
@@ -204,6 +204,7 @@ pub static INTELSPR_STREAMING_TABLE: StreamingTable = StreamingTable {
 };
 #[cfg(not(target_arch = "x86_64"))]
 pub static INTELSPR_STREAMING_TABLE: StreamingTable = default_kind_streaming_table();
+
 // IntelGnr Table
 #[cfg(target_arch = "x86_64")]
 pub static INTELGNR_TABLE: DispatchTable = DispatchTable {
