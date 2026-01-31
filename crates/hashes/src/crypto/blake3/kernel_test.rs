@@ -19,10 +19,6 @@ fn force_hasher_kernel(mut h: Blake3, id: Blake3KernelId) -> Blake3 {
   let kernel = kernel_for_id(id);
   h.kernel = kernel;
   h.bulk_kernel = kernel;
-  h.dispatch = Some(super::dispatch::StreamingDispatch {
-    stream: kernel,
-    bulk: kernel,
-  });
   h.chunk_state.kernel = kernel;
   h
 }
@@ -32,8 +28,9 @@ fn hasher_for_kernel(id: Blake3KernelId) -> Blake3 {
 }
 
 fn digest_with_kernel(id: Blake3KernelId, data: &[u8]) -> [u8; 32] {
+  let kernel = kernel_for_id(id);
   let mut h = hasher_for_kernel(id);
-  h.update(data);
+  h.update_with(data, kernel, kernel);
   h.finalize()
 }
 
@@ -98,6 +95,7 @@ mod tests {
         continue;
       }
 
+      let kernel = kernel_for_id(id);
       for &len in &lens {
         let msg = pattern(len);
 
@@ -110,7 +108,7 @@ mod tests {
         for &chunk in &[1usize, 7, 31, 32, 63, 64, 65, 256, 1024, 4096] {
           let mut h = hasher_for_kernel(id);
           for part in msg.chunks(chunk) {
-            h.update(part);
+            h.update_with(part, kernel, kernel);
           }
           assert_eq!(
             h.finalize(),
@@ -126,7 +124,7 @@ mod tests {
         {
           let mut h = keyed_hasher_for_kernel(id, KEY);
           for part in msg.chunks(63) {
-            h.update(part);
+            h.update_with(part, kernel, kernel);
           }
           let ours = h.finalize();
           let expected = *blake3::keyed_hash(KEY, &msg).as_bytes();
@@ -137,7 +135,7 @@ mod tests {
         {
           let mut h = derive_hasher_for_kernel(id, CONTEXT);
           for part in msg.chunks(65) {
-            h.update(part);
+            h.update_with(part, kernel, kernel);
           }
           let ours = h.finalize();
           let expected = {
@@ -172,9 +170,10 @@ mod tests {
       for &chunk in &[64usize, 4096] {
         let helper_stream = Blake3::stream_chunks_with_kernel_id(id, chunk, &msg);
 
+        let kernel = kernel_for_id(id);
         let mut h = hasher_for_kernel(id);
         for part in msg.chunks(chunk) {
-          h.update(part);
+          h.update_with(part, kernel, kernel);
         }
         assert_eq!(
           helper_stream,
@@ -199,8 +198,9 @@ mod tests {
 
       let mut ours = [0u8; 131];
       {
+        let kernel = kernel_for_id(id);
         let mut h = hasher_for_kernel(id);
-        h.update(&data);
+        h.update_with(&data, kernel, kernel);
         let mut xof = h.finalize_xof();
         xof.squeeze(&mut ours);
       }

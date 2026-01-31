@@ -58,6 +58,13 @@ pub(crate) const MSG_SCHEDULE: [[usize; 16]; 7] = [
 ];
 
 #[inline(always)]
+fn uninit_cv_stack() -> [MaybeUninit<[u32; 8]>; 54] {
+  // SAFETY: An uninitialized `[MaybeUninit<_>; N]` is valid, because
+  // `MaybeUninit<T>` permits any bit pattern.
+  unsafe { MaybeUninit::<[MaybeUninit<[u32; 8]>; 54]>::uninit().assume_init() }
+}
+
+#[inline(always)]
 fn words8_from_le_bytes_32(bytes: &[u8; 32]) -> [u32; 8] {
   if cfg!(target_endian = "little") {
     let src = bytes.as_ptr() as *const u32;
@@ -364,6 +371,21 @@ fn first_8_words(words: [u32; 16]) -> [u32; 8] {
 }
 
 #[inline(always)]
+fn words8_to_le_bytes(words: &[u32; 8]) -> [u8; OUT_LEN] {
+  let mut out = [0u8; OUT_LEN];
+  if cfg!(target_endian = "little") {
+    // SAFETY: `words` is 8 u32s = 32 bytes, and `out` is 32 bytes.
+    unsafe { ptr::copy_nonoverlapping(words.as_ptr().cast::<u8>(), out.as_mut_ptr(), OUT_LEN) };
+  } else {
+    for (i, word) in words.iter().copied().enumerate() {
+      let offset = i * 4;
+      out[offset..offset + 4].copy_from_slice(&word.to_le_bytes());
+    }
+  }
+  out
+}
+
+#[inline(always)]
 fn words16_to_le_bytes(words: &[u32; 16]) -> [u8; 2 * OUT_LEN] {
   let mut out = [0u8; 2 * OUT_LEN];
   if cfg!(target_endian = "little") {
@@ -398,6 +420,18 @@ impl OutputState {
       self.block_len,
       self.flags,
     ))
+  }
+
+  #[inline]
+  fn root_hash_bytes(&self) -> [u8; OUT_LEN] {
+    let cv = first_8_words((self.kernel.compress)(
+      &self.input_chaining_value,
+      &self.block_words,
+      0,
+      self.block_len,
+      self.flags | ROOT,
+    ));
+    words8_to_le_bytes(&cv)
   }
 
   #[inline]
@@ -607,7 +641,7 @@ fn root_output_oneshot(kernel: Kernel, key_words: [u32; 8], flags: u32, input: &
   let remainder = input.len() % CHUNK_LEN;
 
   // Local CV stack to avoid constructing a full streaming hasher.
-  let mut cv_stack: [MaybeUninit<[u32; 8]>; 54] = [MaybeUninit::uninit(); 54];
+  let mut cv_stack: [MaybeUninit<[u32; 8]>; 54] = uninit_cv_stack();
   let mut cv_stack_len = 0usize;
 
   const MAX_SIMD_DEGREE: usize = 16;
@@ -700,17 +734,13 @@ fn root_output_oneshot(kernel: Kernel, key_words: [u32; 8], flags: u32, input: &
 #[inline]
 fn digest_oneshot(kernel: Kernel, key_words: [u32; 8], flags: u32, input: &[u8]) -> [u8; OUT_LEN] {
   let output = root_output_oneshot(kernel, key_words, flags, input);
-  let block = output.root_output_block_bytes(0);
-  let mut out = [0u8; OUT_LEN];
-  out.copy_from_slice(&block[..OUT_LEN]);
-  out
+  output.root_hash_bytes()
 }
 
 #[derive(Clone)]
 pub struct Blake3 {
   kernel: Kernel,
   bulk_kernel: Kernel,
-  dispatch: Option<dispatch::StreamingDispatch>,
   chunk_state: ChunkState,
   pending_chunk_cv: Option<[u32; 8]>,
   key_words: [u32; 8],
@@ -816,10 +846,7 @@ impl Blake3 {
     let kernel = kernels::kernel(kernels::Blake3KernelId::Portable);
     if data.len() <= CHUNK_LEN {
       let output = single_chunk_output(kernel, IV, 0, 0, data);
-      let block = output.root_output_block_bytes(0);
-      let mut out = [0u8; OUT_LEN];
-      out.copy_from_slice(&block[..OUT_LEN]);
-      out
+      output.root_hash_bytes()
     } else {
       let mut h = Self::new_internal_with(IV, 0, kernel);
       h.update_with(data, kernel, kernel);
@@ -838,11 +865,10 @@ impl Blake3 {
     Self {
       kernel,
       bulk_kernel: kernel,
-      dispatch: None,
       chunk_state: ChunkState::new(key_words, 0, flags, kernel),
       pending_chunk_cv: None,
       key_words,
-      cv_stack: [MaybeUninit::uninit(); 54],
+      cv_stack: uninit_cv_stack(),
       cv_stack_len: 0,
       flags,
     }
@@ -956,6 +982,7 @@ impl Blake3 {
 
   /// Construct a new hasher for the keyed hash function.
   #[must_use]
+  #[inline]
   pub fn new_keyed(key: &[u8; KEY_LEN]) -> Self {
     let key_words = words8_from_le_bytes_32(key);
     Self::new_internal(key_words, KEYED_HASH)
@@ -963,6 +990,7 @@ impl Blake3 {
 
   /// Construct a new hasher for the key derivation function.
   #[must_use]
+  #[inline]
   pub fn new_derive_key(context: &str) -> Self {
     let mut context_hasher = Self::new_internal(IV, DERIVE_KEY_CONTEXT);
     context_hasher.update(context.as_bytes());
@@ -1018,11 +1046,11 @@ impl Blake3 {
 
   /// Finalize into an extendable output state (XOF).
   #[must_use]
+  #[inline]
   pub fn finalize_xof(&self) -> Blake3Xof {
     // Mirror `finalize()` for the empty-input case: don't stay pinned to the
     // portable default when we could use the tuned streaming kernel.
-    if self.dispatch.is_none()
-      && self.chunk_state.chunk_counter == 0
+    if self.chunk_state.chunk_counter == 0
       && self.chunk_state.len() == 0
       && self.cv_stack_len == 0
       && self.pending_chunk_cv.is_none()
@@ -1044,6 +1072,7 @@ impl Digest for Blake3 {
     Self::new_internal(IV, 0)
   }
 
+  #[inline]
   fn update(&mut self, input: &[u8]) {
     if input.is_empty() {
       return;
@@ -1061,7 +1090,7 @@ impl Digest for Blake3 {
     // tiny updates. Do not delay dispatch there.
     let is_plain_hash = self.flags == 0;
     if is_plain_hash
-      && self.dispatch.is_none()
+      && self.kernel.id == kernels::Blake3KernelId::Portable
       && self.chunk_state.chunk_counter == 0
       && self.cv_stack_len == 0
       && self.pending_chunk_cv.is_none()
@@ -1074,7 +1103,7 @@ impl Digest for Blake3 {
     }
 
     let (stream, table_bulk) = {
-      let d = self.dispatch.get_or_insert_with(dispatch::streaming_dispatch);
+      let d = dispatch::streaming_dispatch();
       (d.stream, d.bulk)
     };
 
@@ -1089,12 +1118,12 @@ impl Digest for Blake3 {
     self.update_with(input, stream, bulk);
   }
 
+  #[inline]
   fn finalize(&self) -> Self::Output {
     // If the caller never provided any input (or only provided empty updates),
     // we still want to use the tuned streaming kernel rather than staying
     // pinned to the portable default.
-    let output = if self.dispatch.is_none()
-      && self.chunk_state.chunk_counter == 0
+    let output = if self.chunk_state.chunk_counter == 0
       && self.chunk_state.len() == 0
       && self.cv_stack_len == 0
       && self.pending_chunk_cv.is_none()
@@ -1104,10 +1133,7 @@ impl Digest for Blake3 {
     } else {
       self.root_output()
     };
-    let block = output.root_output_block_bytes(0);
-    let mut out = [0u8; OUT_LEN];
-    out.copy_from_slice(&block[..OUT_LEN]);
-    out
+    output.root_hash_bytes()
   }
 
   #[inline]
