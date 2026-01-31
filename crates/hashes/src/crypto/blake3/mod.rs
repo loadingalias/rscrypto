@@ -1019,7 +1019,19 @@ impl Blake3 {
   /// Finalize into an extendable output state (XOF).
   #[must_use]
   pub fn finalize_xof(&self) -> Blake3Xof {
-    Blake3Xof::new(self.root_output())
+    // Mirror `finalize()` for the empty-input case: don't stay pinned to the
+    // portable default when we could use the tuned streaming kernel.
+    if self.dispatch.is_none()
+      && self.chunk_state.chunk_counter == 0
+      && self.chunk_state.len() == 0
+      && self.cv_stack_len == 0
+      && self.pending_chunk_cv.is_none()
+    {
+      let d = dispatch::streaming_dispatch();
+      Blake3Xof::new(single_chunk_output(d.stream, self.key_words, 0, self.flags, &[]))
+    } else {
+      Blake3Xof::new(self.root_output())
+    }
   }
 }
 
@@ -1043,12 +1055,18 @@ impl Digest for Blake3 {
     //
     // We start in portable mode and only "lock in" streaming dispatch once we
     // have enough data to amortize kernel setup costs.
-    if self.dispatch.is_none()
+    //
+    // Important: keyed/derive modes are extremely sensitive to small-input
+    // performance, and upstream implementations routinely use SIMD even for
+    // tiny updates. Do not delay dispatch there.
+    let is_plain_hash = self.flags == 0;
+    if is_plain_hash
+      && self.dispatch.is_none()
       && self.chunk_state.chunk_counter == 0
       && self.cv_stack_len == 0
       && self.pending_chunk_cv.is_none()
     {
-      let simd_enable_min = core::cmp::max(platform::tune().simd_threshold, 256);
+      let simd_enable_min = platform::tune().simd_threshold;
       if self.chunk_state.len().saturating_add(input.len()) < simd_enable_min {
         self.update_with(input, self.kernel, self.bulk_kernel);
         return;
@@ -1072,7 +1090,20 @@ impl Digest for Blake3 {
   }
 
   fn finalize(&self) -> Self::Output {
-    let output = self.root_output();
+    // If the caller never provided any input (or only provided empty updates),
+    // we still want to use the tuned streaming kernel rather than staying
+    // pinned to the portable default.
+    let output = if self.dispatch.is_none()
+      && self.chunk_state.chunk_counter == 0
+      && self.chunk_state.len() == 0
+      && self.cv_stack_len == 0
+      && self.pending_chunk_cv.is_none()
+    {
+      let d = dispatch::streaming_dispatch();
+      single_chunk_output(d.stream, self.key_words, 0, self.flags, &[])
+    } else {
+      self.root_output()
+    };
     let block = output.root_output_block_bytes(0);
     let mut out = [0u8; OUT_LEN];
     out.copy_from_slice(&block[..OUT_LEN]);

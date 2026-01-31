@@ -194,12 +194,12 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
     Blake3KernelId::Aarch64Neon => Kernel {
       id,
       // On aarch64, the 4-way NEON `hash_many`/`hash_many_contiguous` kernels
-      // are the throughput workhorses. For single-block / streaming chunk
-      // compression, the portable scalar compressor is competitive (and avoids
-      // NEON message permutation overhead).
-      compress: super::compress,
+      // are the throughput workhorses. We also need a NEON single-block
+      // compressor to avoid a "last block is scalar" cliff on 1-chunk inputs
+      // (e.g. 1024B oneshot) and XOF/output-generation workloads.
+      compress: compress_neon_wrapper,
       chunk_compress_blocks: chunk_compress_blocks_neon_wrapper,
-      parent_cv: parent_cv_portable,
+      parent_cv: parent_cv_neon_wrapper,
       hash_many_contiguous: hash_many_contiguous_neon_wrapper,
       simd_degree: 4,
       name: id.as_str(),
@@ -262,7 +262,7 @@ pub(crate) fn parent_cv_inline(
     #[cfg(target_arch = "x86_64")]
     Blake3KernelId::X86Avx512 => parent_cv_avx512_wrapper(left_child_cv, right_child_cv, key_words, flags),
     #[cfg(target_arch = "aarch64")]
-    Blake3KernelId::Aarch64Neon => parent_cv_portable(left_child_cv, right_child_cv, key_words, flags),
+    Blake3KernelId::Aarch64Neon => parent_cv_neon_wrapper(left_child_cv, right_child_cv, key_words, flags),
   }
 }
 
