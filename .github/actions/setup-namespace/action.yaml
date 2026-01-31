@@ -12,11 +12,17 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Detect Host Architecture
+      id: host
+      shell: bash
+      run: |
+        echo "uname_m=$(uname -m)" >> "$GITHUB_OUTPUT"
+
     # Install Rust toolchain (reads version from rust-toolchain.toml)
     - name: Setup Toolchain
       uses: ./.github/actions/setup-toolchain
       with:
-        components: clippy, rustfmt, miri, rust-src
+        components: clippy, rustfmt, rust-src
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # Cache installed cargo tools separately (very stable, saves 30-90 seconds)
@@ -26,7 +32,7 @@ runs:
       uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
       with:
         path: ~/.cargo/bin
-        key: cargo-tools-${{ runner.os }}-${{ runner.arch }}-v4
+        key: cargo-tools-${{ runner.os }}-${{ steps.host.outputs.uname_m }}-v5
         # v4: force refresh (cargo-audit install now uses `cargo install --force` when needed)
 
     # Install all required cargo tools via cargo-binstall (parallel, pre-built binaries)

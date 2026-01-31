@@ -7,6 +7,22 @@ on:
 
   # Allow manual trigger
   workflow_dispatch:
+    inputs:
+      run_ibm_s390x:
+        description: "Run IBM Z (s390x) CI (ActionsPZ)"
+        required: false
+        type: boolean
+        default: false
+      run_ibm_power9:
+        description: "Run IBM POWER9 (ppc64le) CI (ActionsPZ)"
+        required: false
+        type: boolean
+        default: false
+      run_ibm_power10:
+        description: "Run IBM POWER10 (ppc64le) CI (ActionsPZ)"
+        required: false
+        type: boolean
+        default: false
 
 # Cancel in-progress runs for the same branch
 concurrency:
@@ -255,6 +271,142 @@ jobs:
       - name: Ensure Cache Directories
         shell: bash
         run: mkdir -p target/tests/trybuild target/tests/target
+
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # IBM Hardware Validation (ActionsPZ - Manual Only)
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # These jobs are manual-only to be respectful of the shared free runner pool.
+  # They provide correctness validation on real IBM Z and IBM POWER hardware.
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ibm-s390x:
+    name: IBM CI (s390x)
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.run_ibm_s390x == 'true'
+    runs-on: ubuntu-24.04-s390x
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Compute Cache Key
+        id: cache
+        shell: bash
+        run: |
+          OS=$(echo "${{ runner.os }}" | tr '[:upper:]' '[:lower:]')
+          ARCH=$(uname -m | tr '[:upper:]' '[:lower:]')
+          echo "key=${{ env.RSCRYPTO_TEST_MODE }}-ibm-${OS}-${ARCH}" >> "$GITHUB_OUTPUT"
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          cache-key: ${{ steps.cache.outputs.key }}
+
+      - name: Detect CPU
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "IBM Z CPU Detection"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          uname -a || true
+          lscpu || true
+          cat /proc/cpuinfo | head -50 || true
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+      - name: Quality Checks
+        run: just ci-check
+
+      - name: Build
+        run: just build
+
+      - name: Tests
+        run: just test --all
+
+  ibm-power9:
+    name: IBM CI (POWER9 / ppc64le)
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.run_ibm_power9 == 'true'
+    runs-on: ubuntu-24.04-ppc64le
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Compute Cache Key
+        id: cache
+        shell: bash
+        run: |
+          OS=$(echo "${{ runner.os }}" | tr '[:upper:]' '[:lower:]')
+          ARCH=$(uname -m | tr '[:upper:]' '[:lower:]')
+          echo "key=${{ env.RSCRYPTO_TEST_MODE }}-ibm-${OS}-${ARCH}" >> "$GITHUB_OUTPUT"
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          cache-key: ${{ steps.cache.outputs.key }}
+
+      - name: Detect CPU
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "IBM POWER9 CPU Detection"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          uname -a || true
+          lscpu || true
+          cat /proc/cpuinfo | head -50 || true
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+      - name: Quality Checks
+        run: just ci-check
+
+      - name: Build
+        run: just build
+
+      - name: Tests
+        run: just test --all
+
+  ibm-power10:
+    name: IBM CI (POWER10 / ppc64le)
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.run_ibm_power10 == 'true'
+    runs-on: ubuntu-24.04-ppc64le-p10
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Compute Cache Key
+        id: cache
+        shell: bash
+        run: |
+          OS=$(echo "${{ runner.os }}" | tr '[:upper:]' '[:lower:]')
+          ARCH=$(uname -m | tr '[:upper:]' '[:lower:]')
+          echo "key=${{ env.RSCRYPTO_TEST_MODE }}-ibm-${OS}-${ARCH}" >> "$GITHUB_OUTPUT"
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          cache-key: ${{ steps.cache.outputs.key }}
+
+      - name: Detect CPU
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "IBM POWER10 CPU Detection"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          uname -a || true
+          lscpu || true
+          cat /proc/cpuinfo | head -50 || true
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+      - name: Quality Checks
+        run: just ci-check
+
+      - name: Build
+        run: just build
+
+      - name: Tests
+        run: just test --all
 
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   # no_std Targets (Cross-compile verification)

@@ -54,10 +54,22 @@ on:
         default: true
 
       # ─────────────────────────────────────────────────────────────────────────
-      # RISC-V 64 (Self-hosted Cloud-V)
+      # IBM Z / POWER (ActionsPZ - Manual Only)
       # ─────────────────────────────────────────────────────────────────────────
-      run_riscv:
-        description: "Run on RISC-V 64 (Self-hosted Cloud-V)"
+      run_ibm_s390x:
+        description: "Run on IBM Z (s390x, ActionsPZ)"
+        required: false
+        type: boolean
+        default: false
+
+      run_ibm_power9:
+        description: "Run on IBM POWER9 (ppc64le, ActionsPZ)"
+        required: false
+        type: boolean
+        default: false
+
+      run_ibm_power10:
+        description: "Run on IBM POWER10 (ppc64le, ActionsPZ)"
         required: false
         type: boolean
         default: false
@@ -573,90 +585,293 @@ jobs:
           retention-days: 90
 
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # RISC-V 64 BENCHMARKS (Self-hosted Cloud-V)
+  # IBM POWER/Z BENCHMARKS (ActionsPZ - Manual Only)
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # DISABLED: Cloud-V runner is not currently operational.
-  # Uncomment when RISC-V self-hosted runner is available again.
-  # bench-riscv:
-  #   name: Benchmark (RISC-V 64)
-  #   if: |
-  #     github.event_name == 'workflow_dispatch' &&
-  #     github.event.inputs.tune != 'true' &&
-  #     github.event.inputs.run_riscv == 'true'
-  #   runs-on: [self-hosted, 2c6cf205228d]
-  #   timeout-minutes: 120
-  #   steps:
-  #     - name: Checkout
-  #       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-  #       with:
-  #         fetch-depth: 0
-  #
-  #     - name: Detect CPU
-  #       run: |
-  #         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  #         echo "RISC-V CPU Detection"
-  #         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  #         cat /proc/cpuinfo | head -30 || true
-  #         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  #
-  #     - name: Setup Toolchain
-  #       run: |
-  #         TOOLCHAIN=$(awk -F'"' '/^channel/ {print $2}' rust-toolchain.toml)
-  #         rustup default "$TOOLCHAIN"
-  #
-  #     - name: Install Benchmarking Tools
-  #       run: |
-  #         cargo install --locked cargo-criterion critcmp || true
-  #
-  #     - name: Determine Benchmark Scope
-  #       id: scope
-  #       run: |
-  #         CRATES_INPUT="${{ github.event.inputs.crates }}"
-  #         BENCHES_INPUT="${{ github.event.inputs.specific_benches }}"
-  #
-  #         if [ -n "$CRATES_INPUT" ]; then
-  #           CRATE_FLAGS=""
-  #           IFS=',' read -ra CRATES <<< "$CRATES_INPUT"
-  #           for crate in "${CRATES[@]}"; do
-  #             CRATE_FLAGS="$CRATE_FLAGS -p $(echo "$crate" | xargs)"
-  #           done
-  #           echo "crate_flags=$CRATE_FLAGS" >> "$GITHUB_OUTPUT"
-  #         else
-  #           echo "crate_flags=--workspace" >> "$GITHUB_OUTPUT"
-  #         fi
-  #         if [ -n "$BENCHES_INPUT" ]; then
-  #           BENCH_FLAGS=""
-  #           IFS=',' read -ra BENCHES <<< "$BENCHES_INPUT"
-  #           for bench in "${BENCHES[@]}"; do
-  #             BENCH_FLAGS="$BENCH_FLAGS --bench $(echo "$bench" | xargs)"
-  #           done
-  #           echo "bench_flags=$BENCH_FLAGS" >> "$GITHUB_OUTPUT"
-  #         else
-  #           echo "bench_flags=" >> "$GITHUB_OUTPUT"
-  #         fi
-  #
-  #     - name: Clean Old Benchmark Data
-  #       run: rm -rf target/criterion
-  #
-  #     - name: Run Criterion Benchmarks
-  #       run: |
-  #         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  #         echo "Running Criterion Benchmarks (RISC-V 64)"
-  #         echo "RUSTFLAGS: ${RUSTFLAGS}"
-  #         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  #         mkdir -p benchmark-results
-  #         # shellcheck disable=SC2086
-  #         cargo bench --profile bench ${{ steps.scope.outputs.crate_flags }} ${{ steps.scope.outputs.bench_flags }} 2>&1 | tee benchmark-results/output.txt
-  #
-  #     - name: Upload Benchmark Results
-  #       if: always()
-  #       uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
-  #       with:
-  #         name: benchmark-riscv64
-  #         path: |
-  #           benchmark-results/
-  #           target/criterion/
-  #         retention-days: 90
+  # Manual-only to be respectful of the shared free runner pool.
+  # These jobs validate correctness + performance on real IBM hardware.
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  bench-ibm-s390x:
+    name: Benchmark (IBM Z / s390x)
+    if: |
+      github.event_name == 'workflow_dispatch' &&
+      github.event.inputs.tune != 'true' &&
+      github.event.inputs.run_ibm_s390x == 'true'
+    runs-on: ubuntu-24.04-s390x
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Compute Cache Key
+        id: cache
+        shell: bash
+        run: |
+          OS=$(echo "${{ runner.os }}" | tr '[:upper:]' '[:lower:]')
+          ARCH=$(uname -m | tr '[:upper:]' '[:lower:]')
+          echo "key=${{ env.RSCRYPTO_BENCH_MODE }}-ibm-${OS}-${ARCH}" >> "$GITHUB_OUTPUT"
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          cache-key: ${{ steps.cache.outputs.key }}
+
+      - name: Detect CPU
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "IBM Z CPU Detection"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          uname -a || true
+          lscpu || true
+          cat /proc/cpuinfo | head -50 || true
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+      - name: Quality Checks (Correctness + Clean)
+        run: just ci-check
+
+      - name: Tests (Correctness)
+        run: just test --all
+
+      - name: Determine Benchmark Scope
+        id: scope
+        run: |
+          CRATES_INPUT="${{ github.event.inputs.crates }}"
+          BENCHES_INPUT="${{ github.event.inputs.specific_benches }}"
+
+          if [ -n "$CRATES_INPUT" ]; then
+            CRATE_FLAGS=""
+            IFS=',' read -ra CRATES <<< "$CRATES_INPUT"
+            for crate in "${CRATES[@]}"; do
+              CRATE_FLAGS="$CRATE_FLAGS -p $(echo "$crate" | xargs)"
+            done
+            echo "crate_flags=$CRATE_FLAGS" >> "$GITHUB_OUTPUT"
+          else
+            echo "crate_flags=--workspace" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [ -n "$BENCHES_INPUT" ]; then
+            BENCH_FLAGS=""
+            IFS=',' read -ra BENCHES <<< "$BENCHES_INPUT"
+            for bench in "${BENCHES[@]}"; do
+              BENCH_FLAGS="$BENCH_FLAGS --bench $(echo "$bench" | xargs)"
+            done
+            echo "bench_flags=$BENCH_FLAGS" >> "$GITHUB_OUTPUT"
+          else
+            echo "bench_flags=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Clean Old Benchmark Data
+        run: rm -rf target/criterion
+
+      - name: Run Criterion Benchmarks
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Running Criterion Benchmarks (IBM Z / s390x)"
+          echo "RUSTFLAGS: ${RUSTFLAGS}"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          mkdir -p benchmark-results
+          # shellcheck disable=SC2086
+          cargo bench --profile bench ${{ steps.scope.outputs.crate_flags }} ${{ steps.scope.outputs.bench_flags }} 2>&1 | tee benchmark-results/output.txt
+
+      - name: Upload Benchmark Results
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        with:
+          name: benchmark-ibm-s390x
+          path: |
+            benchmark-results/
+            target/criterion/
+          retention-days: 90
+
+  bench-ibm-power9:
+    name: Benchmark (IBM POWER9 / ppc64le)
+    if: |
+      github.event_name == 'workflow_dispatch' &&
+      github.event.inputs.tune != 'true' &&
+      github.event.inputs.run_ibm_power9 == 'true'
+    runs-on: ubuntu-24.04-ppc64le
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Compute Cache Key
+        id: cache
+        shell: bash
+        run: |
+          OS=$(echo "${{ runner.os }}" | tr '[:upper:]' '[:lower:]')
+          ARCH=$(uname -m | tr '[:upper:]' '[:lower:]')
+          echo "key=${{ env.RSCRYPTO_BENCH_MODE }}-ibm-${OS}-${ARCH}" >> "$GITHUB_OUTPUT"
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          cache-key: ${{ steps.cache.outputs.key }}
+
+      - name: Detect CPU
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "IBM POWER9 CPU Detection"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          uname -a || true
+          lscpu || true
+          cat /proc/cpuinfo | head -50 || true
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+      - name: Quality Checks (Correctness + Clean)
+        run: just ci-check
+
+      - name: Tests (Correctness)
+        run: just test --all
+
+      - name: Determine Benchmark Scope
+        id: scope
+        run: |
+          CRATES_INPUT="${{ github.event.inputs.crates }}"
+          BENCHES_INPUT="${{ github.event.inputs.specific_benches }}"
+
+          if [ -n "$CRATES_INPUT" ]; then
+            CRATE_FLAGS=""
+            IFS=',' read -ra CRATES <<< "$CRATES_INPUT"
+            for crate in "${CRATES[@]}"; do
+              CRATE_FLAGS="$CRATE_FLAGS -p $(echo "$crate" | xargs)"
+            done
+            echo "crate_flags=$CRATE_FLAGS" >> "$GITHUB_OUTPUT"
+          else
+            echo "crate_flags=--workspace" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [ -n "$BENCHES_INPUT" ]; then
+            BENCH_FLAGS=""
+            IFS=',' read -ra BENCHES <<< "$BENCHES_INPUT"
+            for bench in "${BENCHES[@]}"; do
+              BENCH_FLAGS="$BENCH_FLAGS --bench $(echo "$bench" | xargs)"
+            done
+            echo "bench_flags=$BENCH_FLAGS" >> "$GITHUB_OUTPUT"
+          else
+            echo "bench_flags=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Clean Old Benchmark Data
+        run: rm -rf target/criterion
+
+      - name: Run Criterion Benchmarks
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Running Criterion Benchmarks (IBM POWER9 / ppc64le)"
+          echo "RUSTFLAGS: ${RUSTFLAGS}"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          mkdir -p benchmark-results
+          # shellcheck disable=SC2086
+          cargo bench --profile bench ${{ steps.scope.outputs.crate_flags }} ${{ steps.scope.outputs.bench_flags }} 2>&1 | tee benchmark-results/output.txt
+
+      - name: Upload Benchmark Results
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        with:
+          name: benchmark-ibm-power9
+          path: |
+            benchmark-results/
+            target/criterion/
+          retention-days: 90
+
+  bench-ibm-power10:
+    name: Benchmark (IBM POWER10 / ppc64le)
+    if: |
+      github.event_name == 'workflow_dispatch' &&
+      github.event.inputs.tune != 'true' &&
+      github.event.inputs.run_ibm_power10 == 'true'
+    runs-on: ubuntu-24.04-ppc64le-p10
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Compute Cache Key
+        id: cache
+        shell: bash
+        run: |
+          OS=$(echo "${{ runner.os }}" | tr '[:upper:]' '[:lower:]')
+          ARCH=$(uname -m | tr '[:upper:]' '[:lower:]')
+          echo "key=${{ env.RSCRYPTO_BENCH_MODE }}-ibm-${OS}-${ARCH}" >> "$GITHUB_OUTPUT"
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          cache-key: ${{ steps.cache.outputs.key }}
+
+      - name: Detect CPU
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "IBM POWER10 CPU Detection"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          uname -a || true
+          lscpu || true
+          cat /proc/cpuinfo | head -50 || true
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+      - name: Quality Checks (Correctness + Clean)
+        run: just ci-check
+
+      - name: Tests (Correctness)
+        run: just test --all
+
+      - name: Determine Benchmark Scope
+        id: scope
+        run: |
+          CRATES_INPUT="${{ github.event.inputs.crates }}"
+          BENCHES_INPUT="${{ github.event.inputs.specific_benches }}"
+
+          if [ -n "$CRATES_INPUT" ]; then
+            CRATE_FLAGS=""
+            IFS=',' read -ra CRATES <<< "$CRATES_INPUT"
+            for crate in "${CRATES[@]}"; do
+              CRATE_FLAGS="$CRATE_FLAGS -p $(echo "$crate" | xargs)"
+            done
+            echo "crate_flags=$CRATE_FLAGS" >> "$GITHUB_OUTPUT"
+          else
+            echo "crate_flags=--workspace" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [ -n "$BENCHES_INPUT" ]; then
+            BENCH_FLAGS=""
+            IFS=',' read -ra BENCHES <<< "$BENCHES_INPUT"
+            for bench in "${BENCHES[@]}"; do
+              BENCH_FLAGS="$BENCH_FLAGS --bench $(echo "$bench" | xargs)"
+            done
+            echo "bench_flags=$BENCH_FLAGS" >> "$GITHUB_OUTPUT"
+          else
+            echo "bench_flags=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Clean Old Benchmark Data
+        run: rm -rf target/criterion
+
+      - name: Run Criterion Benchmarks
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Running Criterion Benchmarks (IBM POWER10 / ppc64le)"
+          echo "RUSTFLAGS: ${RUSTFLAGS}"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          mkdir -p benchmark-results
+          # shellcheck disable=SC2086
+          cargo bench --profile bench ${{ steps.scope.outputs.crate_flags }} ${{ steps.scope.outputs.bench_flags }} 2>&1 | tee benchmark-results/output.txt
+
+      - name: Upload Benchmark Results
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        with:
+          name: benchmark-ibm-power10
+          path: |
+            benchmark-results/
+            target/criterion/
+          retention-days: 90
 
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   # UNIFIED TUNING (Manual Only)
@@ -1028,66 +1243,242 @@ jobs:
           path: tune-results/
           retention-days: 90
 
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # RISC-V 64 TUNING (Self-hosted Cloud-V)
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # DISABLED: Cloud-V runner is not currently operational.
-  # Uncomment when RISC-V self-hosted runner is available again.
-  # tune-riscv:
-  #   name: Tuning (RISC-V 64)
-  #   if: |
-  #     github.event_name == 'workflow_dispatch' &&
-  #     github.event.inputs.tune == 'true' &&
-  #     github.event.inputs.run_riscv == 'true'
-  #   runs-on: [self-hosted, 2c6cf205228d]
-  #   timeout-minutes: 90
-  #   steps:
-  #     - name: Checkout
-  #       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-  #
-  #     - name: Detect CPU
-  #       run: |
-  #         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  #         echo "RISC-V CPU Detection"
-  #         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  #         cat /proc/cpuinfo | head -30 || true
-  #         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  #
-  #     - name: Setup Toolchain
-  #       run: |
-  #         TOOLCHAIN=$(awk -F'"' '/^channel/ {print $2}' rust-toolchain.toml)
-  #         rustup default "$TOOLCHAIN"
-  #
-  #     - name: Run Unified Tuning
-  #       run: |
-  #         set -euo pipefail
-  #         mkdir -p tune-results
-  #
-  #         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  #         echo "Running rscrypto-tune (RISC-V 64)"
-  #         echo "RUSTFLAGS: -C target-cpu=native"
-  #         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  #
-  #         RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
-  #           cargo run -p tune --release --bin rscrypto-tune -- --quick 2>&1 | \
-  #           tee tune-results/rscrypto-tune.txt
-  #
-  #         {
-  #           echo ""
-  #           echo "## Tuning Results (RISC-V 64)"
-  #           echo ""
-  #           echo '```'
-  #           cat tune-results/rscrypto-tune.txt
-  #           echo '```'
-  #         } >> "$GITHUB_STEP_SUMMARY"
-  #
-  #     - name: Upload Tuning Results
-  #       if: always()
-  #       uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
-  #       with:
-  #         name: tuning-riscv64
-  #         path: tune-results/
-  #         retention-days: 90
+  tune-ibm-s390x:
+    name: Tuning (IBM Z / s390x)
+    if: |
+      github.event_name == 'workflow_dispatch' &&
+      github.event.inputs.tune == 'true' &&
+      github.event.inputs.run_ibm_s390x == 'true'
+    runs-on: ubuntu-24.04-s390x
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Compute Cache Key
+        id: cache
+        shell: bash
+        run: |
+          OS=$(echo "${{ runner.os }}" | tr '[:upper:]' '[:lower:]')
+          ARCH=$(uname -m | tr '[:upper:]' '[:lower:]')
+          echo "key=${{ env.RSCRYPTO_BENCH_MODE }}-ibm-${OS}-${ARCH}" >> "$GITHUB_OUTPUT"
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          cache-key: ${{ steps.cache.outputs.key }}
+
+      - name: Run Unified Tuning
+        run: |
+          set -euo pipefail
+          mkdir -p tune-results
+
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Running rscrypto-tune (IBM Z / s390x)"
+          echo "RUSTFLAGS: -C target-cpu=native"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          ONLY_INPUT="${{ github.event.inputs.tune_only }}"
+          WARMUP_INPUT="${{ github.event.inputs.tune_warmup_ms }}"
+          MEASURE_INPUT="${{ github.event.inputs.tune_measure_ms }}"
+          APPLY_INPUT="${{ github.event.inputs.tune_apply }}"
+          ONLY_ARGS=()
+          TIMING_ARGS=()
+          APPLY_ARGS=()
+          if [ -n "$ONLY_INPUT" ]; then
+            ONLY_ARGS=(--only "$ONLY_INPUT")
+          fi
+          if [ -n "$WARMUP_INPUT" ]; then
+            TIMING_ARGS+=(--warmup-ms "$WARMUP_INPUT")
+          fi
+          if [ -n "$MEASURE_INPUT" ]; then
+            TIMING_ARGS+=(--measure-ms "$MEASURE_INPUT")
+          fi
+          if [ "$APPLY_INPUT" = "true" ]; then
+            APPLY_ARGS=(--apply)
+          fi
+
+          RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
+            cargo run -p tune --release --bin rscrypto-tune -- --quick "${ONLY_ARGS[@]}" "${TIMING_ARGS[@]}" "${APPLY_ARGS[@]}" 2>&1 | \
+            tee tune-results/rscrypto-tune.txt
+          if [ "$APPLY_INPUT" = "true" ]; then
+            git diff > tune-results/patch.diff || true
+          fi
+
+          {
+            echo ""
+            echo "## Tuning Results (IBM Z / s390x)"
+            echo ""
+            echo '```'
+            cat tune-results/rscrypto-tune.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Tuning Results
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        with:
+          name: tuning-ibm-s390x
+          path: tune-results/
+          retention-days: 90
+
+  tune-ibm-power9:
+    name: Tuning (IBM POWER9 / ppc64le)
+    if: |
+      github.event_name == 'workflow_dispatch' &&
+      github.event.inputs.tune == 'true' &&
+      github.event.inputs.run_ibm_power9 == 'true'
+    runs-on: ubuntu-24.04-ppc64le
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Compute Cache Key
+        id: cache
+        shell: bash
+        run: |
+          OS=$(echo "${{ runner.os }}" | tr '[:upper:]' '[:lower:]')
+          ARCH=$(uname -m | tr '[:upper:]' '[:lower:]')
+          echo "key=${{ env.RSCRYPTO_BENCH_MODE }}-ibm-${OS}-${ARCH}" >> "$GITHUB_OUTPUT"
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          cache-key: ${{ steps.cache.outputs.key }}
+
+      - name: Run Unified Tuning
+        run: |
+          set -euo pipefail
+          mkdir -p tune-results
+
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Running rscrypto-tune (IBM POWER9 / ppc64le)"
+          echo "RUSTFLAGS: -C target-cpu=native"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          ONLY_INPUT="${{ github.event.inputs.tune_only }}"
+          WARMUP_INPUT="${{ github.event.inputs.tune_warmup_ms }}"
+          MEASURE_INPUT="${{ github.event.inputs.tune_measure_ms }}"
+          APPLY_INPUT="${{ github.event.inputs.tune_apply }}"
+          ONLY_ARGS=()
+          TIMING_ARGS=()
+          APPLY_ARGS=()
+          if [ -n "$ONLY_INPUT" ]; then
+            ONLY_ARGS=(--only "$ONLY_INPUT")
+          fi
+          if [ -n "$WARMUP_INPUT" ]; then
+            TIMING_ARGS+=(--warmup-ms "$WARMUP_INPUT")
+          fi
+          if [ -n "$MEASURE_INPUT" ]; then
+            TIMING_ARGS+=(--measure-ms "$MEASURE_INPUT")
+          fi
+          if [ "$APPLY_INPUT" = "true" ]; then
+            APPLY_ARGS=(--apply)
+          fi
+
+          RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
+            cargo run -p tune --release --bin rscrypto-tune -- --quick "${ONLY_ARGS[@]}" "${TIMING_ARGS[@]}" "${APPLY_ARGS[@]}" 2>&1 | \
+            tee tune-results/rscrypto-tune.txt
+          if [ "$APPLY_INPUT" = "true" ]; then
+            git diff > tune-results/patch.diff || true
+          fi
+
+          {
+            echo ""
+            echo "## Tuning Results (IBM POWER9 / ppc64le)"
+            echo ""
+            echo '```'
+            cat tune-results/rscrypto-tune.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Tuning Results
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        with:
+          name: tuning-ibm-power9
+          path: tune-results/
+          retention-days: 90
+
+  tune-ibm-power10:
+    name: Tuning (IBM POWER10 / ppc64le)
+    if: |
+      github.event_name == 'workflow_dispatch' &&
+      github.event.inputs.tune == 'true' &&
+      github.event.inputs.run_ibm_power10 == 'true'
+    runs-on: ubuntu-24.04-ppc64le-p10
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Compute Cache Key
+        id: cache
+        shell: bash
+        run: |
+          OS=$(echo "${{ runner.os }}" | tr '[:upper:]' '[:lower:]')
+          ARCH=$(uname -m | tr '[:upper:]' '[:lower:]')
+          echo "key=${{ env.RSCRYPTO_BENCH_MODE }}-ibm-${OS}-${ARCH}" >> "$GITHUB_OUTPUT"
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          cache-key: ${{ steps.cache.outputs.key }}
+
+      - name: Run Unified Tuning
+        run: |
+          set -euo pipefail
+          mkdir -p tune-results
+
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Running rscrypto-tune (IBM POWER10 / ppc64le)"
+          echo "RUSTFLAGS: -C target-cpu=native"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          ONLY_INPUT="${{ github.event.inputs.tune_only }}"
+          WARMUP_INPUT="${{ github.event.inputs.tune_warmup_ms }}"
+          MEASURE_INPUT="${{ github.event.inputs.tune_measure_ms }}"
+          APPLY_INPUT="${{ github.event.inputs.tune_apply }}"
+          ONLY_ARGS=()
+          TIMING_ARGS=()
+          APPLY_ARGS=()
+          if [ -n "$ONLY_INPUT" ]; then
+            ONLY_ARGS=(--only "$ONLY_INPUT")
+          fi
+          if [ -n "$WARMUP_INPUT" ]; then
+            TIMING_ARGS+=(--warmup-ms "$WARMUP_INPUT")
+          fi
+          if [ -n "$MEASURE_INPUT" ]; then
+            TIMING_ARGS+=(--measure-ms "$MEASURE_INPUT")
+          fi
+          if [ "$APPLY_INPUT" = "true" ]; then
+            APPLY_ARGS=(--apply)
+          fi
+
+          RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
+            cargo run -p tune --release --bin rscrypto-tune -- --quick "${ONLY_ARGS[@]}" "${TIMING_ARGS[@]}" "${APPLY_ARGS[@]}" 2>&1 | \
+            tee tune-results/rscrypto-tune.txt
+          if [ "$APPLY_INPUT" = "true" ]; then
+            git diff > tune-results/patch.diff || true
+          fi
+
+          {
+            echo ""
+            echo "## Tuning Results (IBM POWER10 / ppc64le)"
+            echo ""
+            echo '```'
+            cat tune-results/rscrypto-tune.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Tuning Results
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        with:
+          name: tuning-ibm-power10
+          path: tune-results/
+          retention-days: 90
 
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   # REGRESSION DETECTION (Manual Only)

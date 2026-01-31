@@ -172,7 +172,7 @@ runs:
       uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
       with:
         path: ~/.cargo/bin
-        key: cargo-tools-${{ runner.os }}-${{ runner.arch }}-v4
+        key: cargo-tools-${{ runner.os }}-${{ steps.detect.outputs.arch }}-v5
         # v4: force refresh (cargo-audit install now uses `cargo install --force` when needed)
 
     - name: Install Cargo Tools
