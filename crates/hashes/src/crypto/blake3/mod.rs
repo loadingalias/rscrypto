@@ -733,6 +733,14 @@ fn root_output_oneshot(kernel: Kernel, key_words: [u32; 8], flags: u32, input: &
 
 #[inline]
 fn digest_oneshot(kernel: Kernel, key_words: [u32; 8], flags: u32, input: &[u8]) -> [u8; OUT_LEN] {
+  #[cfg(target_arch = "aarch64")]
+  {
+    if kernel.id == kernels::Blake3KernelId::Aarch64Neon && input.len() == CHUNK_LEN {
+      // SAFETY: aarch64 NEON is validated by dispatch before selecting this kernel.
+      return unsafe { aarch64::root_hash_one_chunk_root_aarch64(input.as_ptr(), &key_words, flags) };
+    }
+  }
+
   let output = root_output_oneshot(kernel, key_words, flags, input);
   output.root_hash_bytes()
 }

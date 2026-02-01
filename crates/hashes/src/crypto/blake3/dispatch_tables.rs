@@ -35,7 +35,21 @@ const SIMD_KERNEL: KernelId = KernelId::Portable;
 #[cfg(target_arch = "x86_64")]
 const AVX512_KERNEL: KernelId = KernelId::X86Avx512;
 
+// Tiny/short inputs are frequently dominated by per-block compression. Default
+// to the stable streaming kernel (rather than Portable or a throughput-only
+// kernel) to avoid tiny-input cliffs (notably keyed/derive).
+#[cfg(target_arch = "x86_64")]
+const DEFAULT_XS: KernelId = KernelId::X86Sse41;
+#[cfg(target_arch = "aarch64")]
 const DEFAULT_XS: KernelId = KernelId::Portable;
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+const DEFAULT_XS: KernelId = KernelId::Portable;
+
+#[cfg(target_arch = "x86_64")]
+const DEFAULT_S: KernelId = KernelId::X86Sse41;
+#[cfg(target_arch = "aarch64")]
+const DEFAULT_S: KernelId = KernelId::Portable;
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
 const DEFAULT_S: KernelId = KernelId::Portable;
 const DEFAULT_M: KernelId = SIMD_KERNEL;
 const DEFAULT_L: KernelId = SIMD_KERNEL;
@@ -128,7 +142,7 @@ pub static PORTABLE_STREAMING_TABLE: StreamingTable = DEFAULT_STREAMING_TABLE;
 #[cfg(target_arch = "x86_64")]
 pub static ZEN4_TABLE: DispatchTable = DispatchTable {
   boundaries: DEFAULT_BOUNDARIES,
-  xs: KernelId::X86Avx2,
+  xs: KernelId::X86Sse41,
   s: KernelId::X86Sse41,
   m: KernelId::X86Avx512,
   l: KernelId::X86Avx512,
@@ -148,7 +162,7 @@ pub static ZEN4_STREAMING_TABLE: StreamingTable = default_kind_streaming_table()
 #[cfg(target_arch = "x86_64")]
 pub static ZEN5_TABLE: DispatchTable = DispatchTable {
   boundaries: DEFAULT_BOUNDARIES,
-  xs: KernelId::X86Avx2,
+  xs: KernelId::X86Sse41,
   s: KernelId::X86Sse41,
   m: KernelId::X86Avx512,
   l: KernelId::X86Avx512,
@@ -188,7 +202,7 @@ pub static ZEN5C_STREAMING_TABLE: StreamingTable = default_kind_streaming_table(
 #[cfg(target_arch = "x86_64")]
 pub static INTELSPR_TABLE: DispatchTable = DispatchTable {
   boundaries: DEFAULT_BOUNDARIES,
-  xs: KernelId::X86Avx2,
+  xs: KernelId::X86Sse41,
   s: KernelId::X86Sse41,
   m: KernelId::X86Avx512,
   l: KernelId::X86Avx512,
@@ -229,7 +243,7 @@ pub static INTELGNR_STREAMING_TABLE: StreamingTable = default_kind_streaming_tab
 #[cfg(target_arch = "x86_64")]
 pub static INTELICL_TABLE: DispatchTable = DispatchTable {
   boundaries: DEFAULT_BOUNDARIES,
-  xs: KernelId::X86Avx2,
+  xs: KernelId::X86Sse41,
   s: KernelId::X86Sse41,
   m: KernelId::X86Avx512,
   l: KernelId::X86Avx512,
@@ -239,7 +253,7 @@ pub static INTELICL_TABLE: DispatchTable = default_kind_table();
 // IntelIcl Streaming Table
 #[cfg(target_arch = "x86_64")]
 pub static INTELICL_STREAMING_TABLE: StreamingTable = StreamingTable {
-  stream: KernelId::X86Avx2,
+  stream: KernelId::X86Sse41,
   bulk: KernelId::X86Avx512,
 };
 #[cfg(not(target_arch = "x86_64"))]

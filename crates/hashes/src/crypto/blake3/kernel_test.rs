@@ -186,6 +186,37 @@ mod tests {
     }
   }
 
+  #[cfg(target_arch = "aarch64")]
+  #[test]
+  fn oneshot_1024_fast_path_matches_official_crate() {
+    let caps = platform::caps();
+    let id = Blake3KernelId::Aarch64Neon;
+    if !caps.has(required_caps(id)) {
+      return;
+    }
+
+    let msg = pattern(1024);
+
+    // Forced-kernel oneshot (exercises the len==1024 fast path).
+    let ours = Blake3::digest_with_kernel_id(id, &msg);
+    let expected = *blake3::hash(&msg).as_bytes();
+    assert_eq!(ours, expected, "blake3 oneshot mismatch kernel={}", id.as_str());
+
+    // Keyed oneshot (uses length-based dispatch).
+    let ours_keyed = Blake3::keyed_digest(KEY, &msg);
+    let expected_keyed = *blake3::keyed_hash(KEY, &msg).as_bytes();
+    assert_eq!(ours_keyed, expected_keyed, "blake3 keyed oneshot mismatch");
+
+    // Derive-key oneshot (uses length-based dispatch for key material).
+    let ours_derived = Blake3::derive_key(CONTEXT, &msg);
+    let expected_derived = {
+      let mut h = blake3::Hasher::new_derive_key(CONTEXT);
+      h.update(&msg);
+      *h.finalize().as_bytes()
+    };
+    assert_eq!(ours_derived, expected_derived, "blake3 derive-key oneshot mismatch");
+  }
+
   #[test]
   fn xof_prefix_matches_official_crate() {
     let caps = platform::caps();

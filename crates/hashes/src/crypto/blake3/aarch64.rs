@@ -24,11 +24,15 @@
 #[cfg(target_arch = "aarch64")]
 use core::arch::aarch64::*;
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod asm;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
-use super::MSG_SCHEDULE;
-use super::{BLOCK_LEN, CHUNK_LEN, CHUNK_START, IV, OUT_LEN, PARENT, first_8_words, words16_from_le_bytes_64};
+use super::{
+  BLOCK_LEN, CHUNK_LEN, CHUNK_START, IV, MSG_SCHEDULE, OUT_LEN, PARENT, first_8_words, words16_from_le_bytes_64,
+};
 
 /// SIMD degree for NEON (4 parallel lanes).
 #[allow(dead_code)]
@@ -68,9 +72,7 @@ unsafe fn rotr12(v: uint32x4_t) -> uint32x4_t {
 /// Uses vqtbl1q_u8 (table lookup) for byte-level rotation - single cycle.
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
-unsafe fn rotr8(v: uint32x4_t) -> uint32x4_t {
-  // Load shuffle table from static - compiler will hoist this out of loops
-  let tbl: uint8x16_t = vld1q_u8(ROT8_TABLE.as_ptr());
+unsafe fn rotr8_tbl(v: uint32x4_t, tbl: uint8x16_t) -> uint32x4_t {
   let bytes = vreinterpretq_u8_u32(v);
   let rotated = vqtbl1q_u8(bytes, tbl);
   vreinterpretq_u32_u8(rotated)
@@ -227,6 +229,26 @@ pub unsafe fn compress_neon(
   block_len: u32,
   flags: u32,
 ) -> [u32; 16] {
+  // SAFETY: `block_words` is exactly 16 u32s, i.e. 64 bytes.
+  unsafe { compress_neon_bytes(chaining_value, block_words.as_ptr().cast(), counter, block_len, flags) }
+}
+
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn compress_neon_bytes(
+  chaining_value: &[u32; 8],
+  block: *const u8,
+  counter: u64,
+  block_len: u32,
+  flags: u32,
+) -> [u32; 16] {
+  const {
+    assert!(
+      cfg!(target_endian = "little"),
+      "aarch64 NEON implementation assumes little-endian"
+    );
+  }
+
   // Load state into 4 vectors (rows of the BLAKE3 state matrix)
   let mut row0 = vld1q_u32(chaining_value.as_ptr());
   let mut row1 = vld1q_u32(chaining_value.as_ptr().add(4));
@@ -238,11 +260,14 @@ pub unsafe fn compress_neon(
   let row3_arr: [u32; 4] = [counter_lo, counter_hi, block_len, flags];
   let mut row3 = vld1q_u32(row3_arr.as_ptr());
 
-  // Load message words
-  let m0 = vld1q_u32(block_words.as_ptr());
-  let m1 = vld1q_u32(block_words.as_ptr().add(4));
-  let m2 = vld1q_u32(block_words.as_ptr().add(8));
-  let m3 = vld1q_u32(block_words.as_ptr().add(12));
+  // Load message words.
+  let m0 = vld1q_u32(block.cast());
+  let m1 = vld1q_u32(block.add(16).cast());
+  let m2 = vld1q_u32(block.add(32).cast());
+  let m3 = vld1q_u32(block.add(48).cast());
+
+  // Rot8 shuffle table (hoisted once per compression).
+  let rot8_tbl = vld1q_u8(ROT8_TABLE.as_ptr());
 
   // G function macro
   macro_rules! g {
@@ -257,7 +282,7 @@ pub unsafe fn compress_neon(
       $a = vaddq_u32($a, $b);
       $a = vaddq_u32($a, $my);
       $d = veorq_u32($d, $a);
-      $d = rotr8($d);
+      $d = rotr8_tbl($d, rot8_tbl);
       $c = vaddq_u32($c, $d);
       $b = veorq_u32($b, $c);
       $b = rotr7($b);
@@ -285,7 +310,7 @@ pub unsafe fn compress_neon(
     }};
   }
 
-  // Execute all 7 rounds with the BLAKE3 message schedule
+  // Execute all 7 rounds with the BLAKE3 message schedule.
   let (mx0, my0, mx1, my1) = permute_round_0(m0, m1, m2, m3);
   round!(mx0, my0, mx1, my1);
 
@@ -498,7 +523,16 @@ unsafe fn permute_round_6(
 /// - Each vector lane i corresponds to chunk i
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
-unsafe fn g4(v: &mut [uint32x4_t; 16], a: usize, b: usize, c: usize, d: usize, mx: uint32x4_t, my: uint32x4_t) {
+unsafe fn g4(
+  v: &mut [uint32x4_t; 16],
+  a: usize,
+  b: usize,
+  c: usize,
+  d: usize,
+  mx: uint32x4_t,
+  my: uint32x4_t,
+  rot8_tbl: uint8x16_t,
+) {
   // a = a + b + mx
   v[a] = vaddq_u32(v[a], v[b]);
   v[a] = vaddq_u32(v[a], mx);
@@ -515,7 +549,7 @@ unsafe fn g4(v: &mut [uint32x4_t; 16], a: usize, b: usize, c: usize, d: usize, m
   v[a] = vaddq_u32(v[a], my);
   // d = (d ^ a) >>> 8
   v[d] = veorq_u32(v[d], v[a]);
-  v[d] = rotr8(v[d]);
+  v[d] = rotr8_tbl(v[d], rot8_tbl);
   // c = c + d
   v[c] = vaddq_u32(v[c], v[d]);
   // b = (b ^ c) >>> 7
@@ -526,7 +560,7 @@ unsafe fn g4(v: &mut [uint32x4_t; 16], a: usize, b: usize, c: usize, d: usize, m
 /// One round of the parallel compression function for 4 chunks.
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
-unsafe fn round4(v: &mut [uint32x4_t; 16], m: &[uint32x4_t; 16], r: usize) {
+unsafe fn round4(v: &mut [uint32x4_t; 16], m: &[uint32x4_t; 16], r: usize, rot8_tbl: uint8x16_t) {
   // `r` is always 0..7 in all callers.
   debug_assert!(r < MSG_SCHEDULE.len());
   // Avoid bounds checks when indexing `m` with schedule-driven indices.
@@ -536,16 +570,70 @@ unsafe fn round4(v: &mut [uint32x4_t; 16], m: &[uint32x4_t; 16], r: usize) {
   // Column step: G(0,4,8,12), G(1,5,9,13), G(2,6,10,14), G(3,7,11,15)
   // SAFETY: `s` contains fixed schedule indices in 0..16, and `m` is `[T; 16]`.
   unsafe {
-    g4(v, 0, 4, 8, 12, *m.get_unchecked(s[0]), *m.get_unchecked(s[1]));
-    g4(v, 1, 5, 9, 13, *m.get_unchecked(s[2]), *m.get_unchecked(s[3]));
-    g4(v, 2, 6, 10, 14, *m.get_unchecked(s[4]), *m.get_unchecked(s[5]));
-    g4(v, 3, 7, 11, 15, *m.get_unchecked(s[6]), *m.get_unchecked(s[7]));
+    g4(v, 0, 4, 8, 12, *m.get_unchecked(s[0]), *m.get_unchecked(s[1]), rot8_tbl);
+    g4(v, 1, 5, 9, 13, *m.get_unchecked(s[2]), *m.get_unchecked(s[3]), rot8_tbl);
+    g4(
+      v,
+      2,
+      6,
+      10,
+      14,
+      *m.get_unchecked(s[4]),
+      *m.get_unchecked(s[5]),
+      rot8_tbl,
+    );
+    g4(
+      v,
+      3,
+      7,
+      11,
+      15,
+      *m.get_unchecked(s[6]),
+      *m.get_unchecked(s[7]),
+      rot8_tbl,
+    );
 
     // Diagonal step: G(0,5,10,15), G(1,6,11,12), G(2,7,8,13), G(3,4,9,14)
-    g4(v, 0, 5, 10, 15, *m.get_unchecked(s[8]), *m.get_unchecked(s[9]));
-    g4(v, 1, 6, 11, 12, *m.get_unchecked(s[10]), *m.get_unchecked(s[11]));
-    g4(v, 2, 7, 8, 13, *m.get_unchecked(s[12]), *m.get_unchecked(s[13]));
-    g4(v, 3, 4, 9, 14, *m.get_unchecked(s[14]), *m.get_unchecked(s[15]));
+    g4(
+      v,
+      0,
+      5,
+      10,
+      15,
+      *m.get_unchecked(s[8]),
+      *m.get_unchecked(s[9]),
+      rot8_tbl,
+    );
+    g4(
+      v,
+      1,
+      6,
+      11,
+      12,
+      *m.get_unchecked(s[10]),
+      *m.get_unchecked(s[11]),
+      rot8_tbl,
+    );
+    g4(
+      v,
+      2,
+      7,
+      8,
+      13,
+      *m.get_unchecked(s[12]),
+      *m.get_unchecked(s[13]),
+      rot8_tbl,
+    );
+    g4(
+      v,
+      3,
+      4,
+      9,
+      14,
+      *m.get_unchecked(s[14]),
+      *m.get_unchecked(s[15]),
+      rot8_tbl,
+    );
   }
 }
 
@@ -618,6 +706,7 @@ pub unsafe fn hash4_neon(
 
   // Process each block
   let mut block_flags = flags | flags_start;
+  let rot8_tbl = vld1q_u8(ROT8_TABLE.as_ptr());
   for block_idx in 0..num_blocks {
     let block_offset = block_idx * BLOCK_LEN;
     let is_last = block_idx == num_blocks - 1;
@@ -658,13 +747,13 @@ pub unsafe fn hash4_neon(
       block_flags_vec,
     ];
 
-    round4(&mut v, &msg, 0);
-    round4(&mut v, &msg, 1);
-    round4(&mut v, &msg, 2);
-    round4(&mut v, &msg, 3);
-    round4(&mut v, &msg, 4);
-    round4(&mut v, &msg, 5);
-    round4(&mut v, &msg, 6);
+    round4(&mut v, &msg, 0, rot8_tbl);
+    round4(&mut v, &msg, 1, rot8_tbl);
+    round4(&mut v, &msg, 2, rot8_tbl);
+    round4(&mut v, &msg, 3, rot8_tbl);
+    round4(&mut v, &msg, 4, rot8_tbl);
+    round4(&mut v, &msg, 5, rot8_tbl);
+    round4(&mut v, &msg, 6, rot8_tbl);
 
     h_vecs[0] = veorq_u32(v[0], v[8]);
     h_vecs[1] = veorq_u32(v[1], v[9]);
@@ -689,6 +778,113 @@ pub unsafe fn hash4_neon(
     storeu_128(lo[lane], dst.add(0));
     storeu_128(hi[lane], dst.add(16));
   }
+}
+
+/// Hash exactly one full chunk (1024B) and return the *root* hash bytes.
+///
+/// This is a dedicated aarch64 fast path for `len == 1024` oneshot hashing.
+///
+/// # Safety
+///
+/// - `input` must point to exactly `CHUNK_LEN` readable bytes.
+#[inline]
+pub unsafe fn root_hash_one_chunk_root_aarch64(input: *const u8, key: &[u32; 8], flags: u32) -> [u8; OUT_LEN] {
+  #[cfg(any(target_os = "linux", target_os = "macos"))]
+  {
+    let mut out = [0u8; OUT_LEN];
+    #[cfg(target_os = "linux")]
+    asm::rscrypto_blake3_hash1_chunk_root_aarch64_unix_linux(input, key.as_ptr(), flags, out.as_mut_ptr());
+    #[cfg(target_os = "macos")]
+    asm::rscrypto_blake3_hash1_chunk_root_aarch64_apple_darwin(input, key.as_ptr(), flags, out.as_mut_ptr());
+    out
+  }
+
+  #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+  {
+    // Fallback: reuse the 4-lane NEON chunk kernel (duplicates lanes).
+    root_hash_one_chunk_neon(input, key, flags)
+  }
+}
+
+/// Hash exactly one full chunk (1024B) and write the resulting *chunk CV* bytes.
+///
+/// This is used to avoid per-block compression in remainder paths.
+///
+/// # Safety
+///
+/// - `input` must point to exactly `CHUNK_LEN` readable bytes.
+/// - `out` must point to at least `OUT_LEN` writable bytes.
+#[inline]
+pub unsafe fn chunk_cv_one_chunk_aarch64_out(input: *const u8, key: &[u32; 8], counter: u64, flags: u32, out: *mut u8) {
+  #[cfg(any(target_os = "linux", target_os = "macos"))]
+  {
+    #[cfg(target_os = "linux")]
+    asm::rscrypto_blake3_hash1_chunk_cv_aarch64_unix_linux(input, key.as_ptr(), counter, flags, out);
+    #[cfg(target_os = "macos")]
+    asm::rscrypto_blake3_hash1_chunk_cv_aarch64_apple_darwin(input, key.as_ptr(), counter, flags, out);
+  }
+
+  #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+  {
+    // Fallback: per-block NEON compressor.
+    let mut cv = *key;
+    for block_idx in 0..(CHUNK_LEN / BLOCK_LEN) {
+      let block_bytes: &[u8; BLOCK_LEN] = {
+        let src = input.add(block_idx * BLOCK_LEN);
+        &*(src as *const [u8; BLOCK_LEN])
+      };
+
+      let start = if block_idx == 0 { CHUNK_START } else { 0 };
+      let end = if block_idx + 1 == (CHUNK_LEN / BLOCK_LEN) {
+        super::CHUNK_END
+      } else {
+        0
+      };
+      cv = first_8_words(compress_neon_bytes(
+        &cv,
+        block_bytes.as_ptr(),
+        counter,
+        BLOCK_LEN as u32,
+        flags | start | end,
+      ));
+    }
+
+    for (j, &word) in cv.iter().enumerate() {
+      let bytes = word.to_le_bytes();
+      core::ptr::copy_nonoverlapping(bytes.as_ptr(), out.add(j * 4), 4);
+    }
+  }
+}
+
+/// Hash exactly one full chunk (1024B) and return the *root* hash bytes.
+///
+/// This is a specialized fast path for the aarch64 "exactly one chunk" cliff:
+/// we reuse the 4-lane chunk kernel, duplicating the input pointer across lanes
+/// but setting `ROOT` on the last block so the resulting CV is directly the
+/// root hash.
+///
+/// # Safety
+///
+/// Caller must ensure NEON is available, and `input` is valid for `CHUNK_LEN`
+/// readable bytes.
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+pub unsafe fn root_hash_one_chunk_neon(input: *const u8, key: &[u32; 8], flags: u32) -> [u8; OUT_LEN] {
+  let inputs = [input, input, input, input];
+  let mut out = [[0u8; OUT_LEN]; 4];
+  hash4_neon(
+    inputs,
+    CHUNK_LEN,
+    key,
+    0,
+    false,
+    flags,
+    CHUNK_START,
+    super::CHUNK_END | super::ROOT,
+    &mut out,
+  );
+  out[0]
 }
 
 /// Hash many contiguous full chunks, dispatching to hash4 as much as possible.
@@ -788,37 +984,16 @@ pub unsafe fn hash_many_contiguous_neon(
     return;
   }
 
-  // Single-chunk remainder: scalar is fine here (and avoids the fixed overhead
-  // of setting up a 4-lane state).
+  // Single-chunk remainder: avoid falling back to the portable compressor.
+  // This shows up in both large-input tails and "exactly one chunk" cases.
   debug_assert_eq!(remaining, 1);
-  let mut cv = *key;
-  for block_idx in 0..(CHUNK_LEN / BLOCK_LEN) {
-    // SAFETY: caller guarantees `input` is valid for `num_chunks * CHUNK_LEN`.
-    let block_bytes: &[u8; BLOCK_LEN] = unsafe {
-      let src = input.add(idx * CHUNK_LEN + block_idx * BLOCK_LEN);
-      &*(src as *const [u8; BLOCK_LEN])
-    };
-    let block_words = words16_from_le_bytes_64(block_bytes);
 
-    let start = if block_idx == 0 { CHUNK_START } else { 0 };
-    let end = if block_idx + 1 == (CHUNK_LEN / BLOCK_LEN) {
-      super::CHUNK_END
-    } else {
-      0
-    };
-    cv = first_8_words(super::compress(
-      &cv,
-      &block_words,
-      counter,
-      BLOCK_LEN as u32,
-      flags | start | end,
-    ));
-  }
-
-  for (j, &word) in cv.iter().enumerate() {
-    let bytes = word.to_le_bytes();
-    // SAFETY: caller guarantees `out` is valid for `num_chunks * OUT_LEN`.
-    unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), out.add(idx * OUT_LEN + j * 4), 4) };
+  // SAFETY: caller guarantees `input` is valid for `num_chunks * CHUNK_LEN`, and
+  // `out` is valid for `num_chunks * OUT_LEN`.
+  unsafe {
+    let src = input.add(idx * CHUNK_LEN);
+    let dst = out.add(idx * OUT_LEN);
+    chunk_cv_one_chunk_aarch64_out(src, key, counter, flags, dst);
   }
 }
 
@@ -846,10 +1021,9 @@ pub unsafe fn chunk_compress_blocks_neon(
   debug_assert!(remainder.is_empty());
   for block_bytes in block_slices {
     let start = if *blocks_compressed == 0 { CHUNK_START } else { 0 };
-    let block_words = words16_from_le_bytes_64(block_bytes);
-    *chaining_value = first_8_words(compress_neon(
+    *chaining_value = first_8_words(compress_neon_bytes(
       chaining_value,
-      &block_words,
+      block_bytes.as_ptr(),
       chunk_counter,
       BLOCK_LEN as u32,
       flags | start,
