@@ -23,7 +23,7 @@ fn kernel_specs(algo: &'static str, caps: &Caps) -> Vec<KernelSpec> {
   // generate real dispatch tables (and validate crossovers) per platform.
   if matches!(
     algo,
-    "blake3" | "blake3-chunk" | "blake3-parent" | "blake3-stream64" | "blake3-stream4k"
+    "blake3" | "blake3-chunk" | "blake3-parent" | "blake3-parent-fold" | "blake3-stream64" | "blake3-stream4k"
   ) {
     #[cfg(target_arch = "x86_64")]
     if caps.has(x86::SSSE3) {

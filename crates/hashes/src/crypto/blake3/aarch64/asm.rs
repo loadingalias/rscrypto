@@ -29,6 +29,15 @@ unsafe extern "C" {
     flags: u32,
     out: *mut u8,
   );
+
+  pub fn rscrypto_blake3_hash1_chunk_state_aarch64_unix_linux(
+    input: *const u8,
+    key: *const u32,
+    counter: u64,
+    flags: u32,
+    out_cv: *mut u32,
+    out_last_block: *mut u8,
+  );
 }
 
 #[cfg(target_os = "macos")]
@@ -45,5 +54,14 @@ unsafe extern "C" {
     counter: u64,
     flags: u32,
     out: *mut u8,
+  );
+
+  pub fn rscrypto_blake3_hash1_chunk_state_aarch64_apple_darwin(
+    input: *const u8,
+    key: *const u32,
+    counter: u64,
+    flags: u32,
+    out_cv: *mut u32,
+    out_last_block: *mut u8,
   );
 }

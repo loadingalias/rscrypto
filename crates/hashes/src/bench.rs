@@ -5,6 +5,10 @@
 
 #![allow(clippy::indexing_slicing)] // Benchmark harness uses deliberate slicing patterns
 
+extern crate alloc;
+
+use alloc::{vec, vec::Vec};
+
 use traits::Digest;
 
 use crate::{crypto, fast};
@@ -667,6 +671,17 @@ fn blake3_words16_from_le_bytes_64(bytes: &[u8; 64]) -> [u32; 16] {
   out
 }
 
+fn blake3_words8_from_le_bytes_32(bytes: &[u8; 32]) -> [u32; 8] {
+  let mut out = [0u32; 8];
+  for (i, dst) in out.iter_mut().enumerate() {
+    // SAFETY: `bytes` is 32 bytes, and `i < 8` so `i * 4` stays in-bounds.
+    // We use `read_unaligned` because the input slice has 1-byte alignment.
+    let w = unsafe { core::ptr::read_unaligned(bytes.as_ptr().add(i * 4).cast::<u32>()) };
+    *dst = u32::from_le(w);
+  }
+  out
+}
+
 fn blake3_oneshot_kernel(id: crypto::blake3::kernels::Blake3KernelId, data: &[u8]) -> u64 {
   u64_from_prefix(&crypto::Blake3::digest_with_kernel_id(id, data))
 }
@@ -774,6 +789,84 @@ fn blake3_parent_cvs_many_auto(data: &[u8]) -> u64 {
   let dispatch = crypto::blake3::dispatch::kernel_dispatch();
   let kernel = dispatch.select(data.len());
   blake3_parent_cvs_many_kernel(kernel.id, data)
+}
+
+fn blake3_parent_fold_root_kernel(id: crypto::blake3::kernels::Blake3KernelId, data: &[u8]) -> u64 {
+  const CV_BYTES: usize = 32;
+
+  let key_words = [u64_from_prefix(data) as u32; 8];
+  let flags: u32 = 0;
+
+  let mut cur: Vec<[u32; 8]> = Vec::with_capacity(data.len().div_ceil(CV_BYTES));
+  for cv_bytes in data.chunks(CV_BYTES) {
+    let mut tmp = [0u8; CV_BYTES];
+    tmp[..cv_bytes.len()].copy_from_slice(cv_bytes);
+    cur.push(blake3_words8_from_le_bytes_32(&tmp));
+  }
+
+  if cur.is_empty() {
+    return 0;
+  }
+
+  let mut next = vec![[0u32; 8]; cur.len()];
+  let mut cur_len = cur.len();
+
+  while cur_len > 1 {
+    let pairs = cur_len / 2;
+    crypto::blake3::kernels::parent_cvs_many_from_cvs_inline(
+      id,
+      &cur[..2 * pairs],
+      key_words,
+      flags,
+      &mut next[..pairs],
+    );
+
+    if (cur_len & 1) != 0 {
+      next[pairs] = cur[cur_len - 1];
+      cur_len = pairs + 1;
+    } else {
+      cur_len = pairs;
+    }
+
+    core::mem::swap(&mut cur, &mut next);
+  }
+
+  cur[0][0] as u64
+}
+
+fn blake3_parent_fold_root_portable(data: &[u8]) -> u64 {
+  blake3_parent_fold_root_kernel(crypto::blake3::kernels::Blake3KernelId::Portable, data)
+}
+
+#[cfg(target_arch = "x86_64")]
+fn blake3_parent_fold_root_x86_64_ssse3(data: &[u8]) -> u64 {
+  blake3_parent_fold_root_kernel(crypto::blake3::kernels::Blake3KernelId::X86Ssse3, data)
+}
+
+#[cfg(target_arch = "x86_64")]
+fn blake3_parent_fold_root_x86_64_sse41(data: &[u8]) -> u64 {
+  blake3_parent_fold_root_kernel(crypto::blake3::kernels::Blake3KernelId::X86Sse41, data)
+}
+
+#[cfg(target_arch = "x86_64")]
+fn blake3_parent_fold_root_x86_64_avx2(data: &[u8]) -> u64 {
+  blake3_parent_fold_root_kernel(crypto::blake3::kernels::Blake3KernelId::X86Avx2, data)
+}
+
+#[cfg(target_arch = "x86_64")]
+fn blake3_parent_fold_root_x86_64_avx512(data: &[u8]) -> u64 {
+  blake3_parent_fold_root_kernel(crypto::blake3::kernels::Blake3KernelId::X86Avx512, data)
+}
+
+#[cfg(target_arch = "aarch64")]
+fn blake3_parent_fold_root_aarch64_neon(data: &[u8]) -> u64 {
+  blake3_parent_fold_root_kernel(crypto::blake3::kernels::Blake3KernelId::Aarch64Neon, data)
+}
+
+fn blake3_parent_fold_root_auto(data: &[u8]) -> u64 {
+  let dispatch = crypto::blake3::dispatch::kernel_dispatch();
+  let kernel = dispatch.select(data.len());
+  blake3_parent_fold_root_kernel(kernel.id, data)
 }
 
 fn keccakf1600_kernel(id: crypto::keccak::kernels::Keccakf1600KernelId, data: &[u8]) -> u64 {
@@ -955,6 +1048,35 @@ pub fn get_kernel(algo: &str, name: &str) -> Option<Kernel> {
     ("blake3-parent", "aarch64/neon") => Some(Kernel {
       name: "aarch64/neon",
       func: blake3_parent_cvs_many_aarch64_neon,
+    }),
+    ("blake3-parent-fold", "portable") => Some(Kernel {
+      name: "portable",
+      func: blake3_parent_fold_root_portable,
+    }),
+    #[cfg(target_arch = "x86_64")]
+    ("blake3-parent-fold", "x86_64/ssse3") => Some(Kernel {
+      name: "x86_64/ssse3",
+      func: blake3_parent_fold_root_x86_64_ssse3,
+    }),
+    #[cfg(target_arch = "x86_64")]
+    ("blake3-parent-fold", "x86_64/sse4.1") => Some(Kernel {
+      name: "x86_64/sse4.1",
+      func: blake3_parent_fold_root_x86_64_sse41,
+    }),
+    #[cfg(target_arch = "x86_64")]
+    ("blake3-parent-fold", "x86_64/avx2") => Some(Kernel {
+      name: "x86_64/avx2",
+      func: blake3_parent_fold_root_x86_64_avx2,
+    }),
+    #[cfg(target_arch = "x86_64")]
+    ("blake3-parent-fold", "x86_64/avx512") => Some(Kernel {
+      name: "x86_64/avx512",
+      func: blake3_parent_fold_root_x86_64_avx512,
+    }),
+    #[cfg(target_arch = "aarch64")]
+    ("blake3-parent-fold", "aarch64/neon") => Some(Kernel {
+      name: "aarch64/neon",
+      func: blake3_parent_fold_root_aarch64_neon,
     }),
     ("keccakf1600-permute", "portable") => Some(Kernel {
       name: "portable",
@@ -1179,6 +1301,7 @@ pub fn run_auto(algo: &str, data: &[u8]) -> Option<u64> {
     "blake2s-256-compress" => Some(blake2s_256_compress_auto(data)),
     "blake3-chunk" => Some(blake3_oneshot_auto(data)),
     "blake3-parent" => Some(blake3_parent_cvs_many_auto(data)),
+    "blake3-parent-fold" => Some(blake3_parent_fold_root_auto(data)),
     "keccakf1600-permute" => Some(keccakf1600_auto(data)),
     "sha256-stream64" => Some(sha256_stream64_auto(data)),
     "sha256-stream4k" => Some(sha256_stream4k_auto(data)),
@@ -1238,7 +1361,7 @@ pub fn kernel_name_for_len(algo: &str, len: usize) -> Option<&'static str> {
     "sha512-256-compress" => Some(crypto::sha512_256::dispatch::kernel_name_for_len(len)),
     "blake2b-512-compress" => Some(crypto::blake2b::dispatch::kernel_name_for_len(len)),
     "blake2s-256-compress" => Some(crypto::blake2s::dispatch::kernel_name_for_len(len)),
-    "blake3-chunk" | "blake3-parent" => Some(crypto::blake3::dispatch::kernel_name_for_len(len)),
+    "blake3-chunk" | "blake3-parent" | "blake3-parent-fold" => Some(crypto::blake3::dispatch::kernel_name_for_len(len)),
     "keccakf1600-permute" => Some(crypto::keccak::dispatch::kernel_name_for_len(len)),
     "sha256-stream64" | "sha256-stream4k" => Some(crypto::sha256::dispatch::kernel_name_for_len(len)),
     "sha512-stream64" | "sha512-stream4k" => Some(crypto::sha512::dispatch::kernel_name_for_len(len)),

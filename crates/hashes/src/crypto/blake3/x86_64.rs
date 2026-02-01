@@ -202,6 +202,52 @@ unsafe fn load_msg_vecs(block: *const u8) -> (__m128i, __m128i, __m128i, __m128i
   }
 }
 
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "sse4.1,ssse3")]
+pub(crate) unsafe fn compress_cv_sse41_bytes(
+  chaining_value: &[u32; 8],
+  block: *const u8,
+  counter: u64,
+  block_len: u32,
+  flags: u32,
+) -> [u32; 8] {
+  let (m0, m1, m2, m3) = load_msg_vecs(block);
+  let [row0, row1, row2, row3] = compress_pre_sse41_impl(chaining_value, m0, m1, m2, m3, counter, block_len, flags);
+  let row0 = _mm_xor_si128(row0, row2);
+  let row1 = _mm_xor_si128(row1, row3);
+
+  let mut out = [0u32; 8];
+  _mm_storeu_si128(out.as_mut_ptr().cast(), row0);
+  _mm_storeu_si128(out.as_mut_ptr().add(4).cast(), row1);
+  out
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,sse4.1,ssse3")]
+pub(crate) unsafe fn compress_cv_avx2_bytes(
+  chaining_value: &[u32; 8],
+  block: *const u8,
+  counter: u64,
+  block_len: u32,
+  flags: u32,
+) -> [u32; 8] {
+  let (m0, m1, m2, m3) = load_msg_vecs(block);
+  compress_cv_avx2(chaining_value, m0, m1, m2, m3, counter, block_len, flags)
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f,avx512vl,avx2,sse4.1,ssse3")]
+pub(crate) unsafe fn compress_cv_avx512_bytes(
+  chaining_value: &[u32; 8],
+  block: *const u8,
+  counter: u64,
+  block_len: u32,
+  flags: u32,
+) -> [u32; 8] {
+  let (m0, m1, m2, m3) = load_msg_vecs(block);
+  compress_cv_avx512(chaining_value, m0, m1, m2, m3, counter, block_len, flags)
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // SSE4.1 / AVX2 / AVX-512 per-block compressor (world-class schedule)
 // ─────────────────────────────────────────────────────────────────────────────

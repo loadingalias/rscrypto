@@ -266,6 +266,347 @@ pub(crate) fn parent_cv_inline(
   }
 }
 
+/// Compute many parent CVs from adjacent child CV pairs.
+///
+/// `children` is interpreted as `[left0, right0, left1, right1, ...]`.
+#[inline]
+pub(crate) fn parent_cvs_many_from_cvs_inline(
+  id: Blake3KernelId,
+  children: &[[u32; 8]],
+  key_words: [u32; 8],
+  flags: u32,
+  out: &mut [[u32; 8]],
+) {
+  debug_assert_eq!(children.len(), out.len() * 2);
+  if out.is_empty() {
+    return;
+  }
+
+  match id {
+    Blake3KernelId::Portable => {}
+    #[cfg(target_arch = "aarch64")]
+    Blake3KernelId::Aarch64Neon => {
+      let parent_flags = PARENT | flags;
+      debug_assert!(parent_flags <= u8::MAX as u32);
+
+      let mut i = 0usize;
+      while out.len() - i >= 4 {
+        let ptrs: [*const u8; 4] = [
+          children[2 * i].as_ptr().cast(),
+          children[2 * (i + 1)].as_ptr().cast(),
+          children[2 * (i + 2)].as_ptr().cast(),
+          children[2 * (i + 3)].as_ptr().cast(),
+        ];
+
+        let mut tmp = [[0u8; OUT_LEN]; 4];
+        // SAFETY: NEON is available per dispatch; each pointer is valid for
+        // one 64-byte parent block (`left_cv || right_cv`).
+        unsafe { super::aarch64::hash4_neon(ptrs, BLOCK_LEN, &key_words, 0, false, parent_flags, 0, 0, &mut tmp) };
+
+        for lane in 0..4 {
+          out[i + lane] = words8_from_le_bytes_32(&tmp[lane]);
+        }
+
+        i += 4;
+      }
+
+      let rem = out.len() - i;
+      if rem != 0 {
+        let last_ptr: *const u8 = children[2 * (out.len() - 1)].as_ptr().cast();
+        let ptrs: [*const u8; 4] = [
+          children[2 * i].as_ptr().cast(),
+          if rem > 1 {
+            children[2 * (i + 1)].as_ptr().cast()
+          } else {
+            last_ptr
+          },
+          if rem > 2 {
+            children[2 * (i + 2)].as_ptr().cast()
+          } else {
+            last_ptr
+          },
+          last_ptr,
+        ];
+
+        let mut tmp = [[0u8; OUT_LEN]; 4];
+        // SAFETY: Same as the main loop; we duplicate pointers to fill lanes.
+        unsafe { super::aarch64::hash4_neon(ptrs, BLOCK_LEN, &key_words, 0, false, parent_flags, 0, 0, &mut tmp) };
+
+        for lane in 0..rem {
+          out[i + lane] = words8_from_le_bytes_32(&tmp[lane]);
+        }
+      }
+
+      return;
+    }
+    #[cfg(target_arch = "x86_64")]
+    Blake3KernelId::X86Ssse3 => {}
+    #[cfg(target_arch = "x86_64")]
+    Blake3KernelId::X86Sse41 => {
+      let parent_flags = PARENT | flags;
+      let mut i = 0usize;
+
+      while out.len() - i >= super::x86_64::sse41::DEGREE {
+        let ptrs: [*const u8; super::x86_64::sse41::DEGREE] = [
+          children[2 * i].as_ptr().cast(),
+          children[2 * (i + 1)].as_ptr().cast(),
+          children[2 * (i + 2)].as_ptr().cast(),
+          children[2 * (i + 3)].as_ptr().cast(),
+        ];
+
+        let mut tmp = [0u8; super::x86_64::sse41::DEGREE * OUT_LEN];
+        // SAFETY: `id` is SSE4.1, so SSE4.1 is available; each pointer is
+        // valid for one 64-byte parent block, and `tmp` is large enough.
+        unsafe {
+          super::x86_64::sse41::hash4(&ptrs, 1, &key_words, 0, false, parent_flags, 0, 0, tmp.as_mut_ptr());
+        }
+
+        for lane in 0..super::x86_64::sse41::DEGREE {
+          // SAFETY: `tmp` is `DEGREE * OUT_LEN` bytes, and `lane < DEGREE`.
+          let bytes: &[u8; OUT_LEN] = unsafe { &*(tmp.as_ptr().add(lane * OUT_LEN).cast()) };
+          out[i + lane] = words8_from_le_bytes_32(bytes);
+        }
+
+        i += super::x86_64::sse41::DEGREE;
+      }
+
+      let rem = out.len() - i;
+      if rem != 0 {
+        let last_ptr: *const u8 = children[2 * (out.len() - 1)].as_ptr().cast();
+        let ptrs: [*const u8; super::x86_64::sse41::DEGREE] = [
+          children[2 * i].as_ptr().cast(),
+          if rem > 1 {
+            children[2 * (i + 1)].as_ptr().cast()
+          } else {
+            last_ptr
+          },
+          if rem > 2 {
+            children[2 * (i + 2)].as_ptr().cast()
+          } else {
+            last_ptr
+          },
+          last_ptr,
+        ];
+
+        let mut tmp = [0u8; super::x86_64::sse41::DEGREE * OUT_LEN];
+        // SAFETY: SSE4.1 is available for this wrapper; pointers and outputs are valid.
+        unsafe {
+          super::x86_64::sse41::hash4(&ptrs, 1, &key_words, 0, false, parent_flags, 0, 0, tmp.as_mut_ptr());
+        }
+
+        for lane in 0..rem {
+          // SAFETY: `lane < rem <= DEGREE`, so this is in-bounds.
+          let bytes: &[u8; OUT_LEN] = unsafe { &*(tmp.as_ptr().add(lane * OUT_LEN).cast()) };
+          out[i + lane] = words8_from_le_bytes_32(bytes);
+        }
+      }
+
+      return;
+    }
+    #[cfg(target_arch = "x86_64")]
+    Blake3KernelId::X86Avx512 => {
+      let parent_flags = PARENT | flags;
+
+      #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+      {
+        const DEGREE: usize = 16;
+        let mut i = 0usize;
+
+        while out.len() - i >= DEGREE {
+          let ptrs: [*const u8; DEGREE] = [
+            children[2 * i].as_ptr().cast(),
+            children[2 * (i + 1)].as_ptr().cast(),
+            children[2 * (i + 2)].as_ptr().cast(),
+            children[2 * (i + 3)].as_ptr().cast(),
+            children[2 * (i + 4)].as_ptr().cast(),
+            children[2 * (i + 5)].as_ptr().cast(),
+            children[2 * (i + 6)].as_ptr().cast(),
+            children[2 * (i + 7)].as_ptr().cast(),
+            children[2 * (i + 8)].as_ptr().cast(),
+            children[2 * (i + 9)].as_ptr().cast(),
+            children[2 * (i + 10)].as_ptr().cast(),
+            children[2 * (i + 11)].as_ptr().cast(),
+            children[2 * (i + 12)].as_ptr().cast(),
+            children[2 * (i + 13)].as_ptr().cast(),
+            children[2 * (i + 14)].as_ptr().cast(),
+            children[2 * (i + 15)].as_ptr().cast(),
+          ];
+
+          let mut tmp = [0u8; DEGREE * OUT_LEN];
+          // SAFETY: `id` is AVX-512, so required AVX-512 features are present
+          // per dispatch. Each pointer is valid for one 64-byte parent block,
+          // and `tmp` is large enough for `DEGREE` outputs.
+          unsafe {
+            super::x86_64::asm::rscrypto_blake3_hash_many_avx512(
+              ptrs.as_ptr(),
+              DEGREE,
+              1,
+              key_words.as_ptr(),
+              0,
+              false,
+              parent_flags as u8,
+              0,
+              0,
+              tmp.as_mut_ptr(),
+            );
+          }
+
+          for lane in 0..DEGREE {
+            // SAFETY: `tmp` is `DEGREE * OUT_LEN` bytes, and `lane < DEGREE`.
+            let bytes: &[u8; OUT_LEN] = unsafe { &*(tmp.as_ptr().add(lane * OUT_LEN).cast()) };
+            out[i + lane] = words8_from_le_bytes_32(bytes);
+          }
+
+          i += DEGREE;
+        }
+
+        let rem = out.len() - i;
+        if rem != 0 {
+          let last_ptr: *const u8 = children[2 * (out.len() - 1)].as_ptr().cast();
+          let mut ptrs = [last_ptr; DEGREE];
+          for lane in 0..rem {
+            ptrs[lane] = children[2 * (i + lane)].as_ptr().cast();
+          }
+
+          let mut tmp = [0u8; DEGREE * OUT_LEN];
+          // SAFETY: same as the main loop; we duplicate the final pointer to
+          // fill the 16-lane batch and only read the first `rem` outputs.
+          unsafe {
+            super::x86_64::asm::rscrypto_blake3_hash_many_avx512(
+              ptrs.as_ptr(),
+              rem,
+              1,
+              key_words.as_ptr(),
+              0,
+              false,
+              parent_flags as u8,
+              0,
+              0,
+              tmp.as_mut_ptr(),
+            );
+          }
+
+          for lane in 0..rem {
+            // SAFETY: `tmp` is `DEGREE * OUT_LEN` bytes, and `lane < rem <= DEGREE`.
+            let bytes: &[u8; OUT_LEN] = unsafe { &*(tmp.as_ptr().add(lane * OUT_LEN).cast()) };
+            out[i + lane] = words8_from_le_bytes_32(bytes);
+          }
+        }
+
+        return;
+      }
+
+      #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+      {
+        // Non-Linux fallback: treat AVX-512 as AVX2 for parent folding.
+        parent_cvs_many_from_cvs_inline(Blake3KernelId::X86Avx2, children, key_words, flags, out);
+        return;
+      }
+    }
+    #[cfg(target_arch = "x86_64")]
+    Blake3KernelId::X86Avx2 => {
+      let parent_flags = PARENT | flags;
+      let mut i = 0usize;
+
+      while out.len() - i >= super::x86_64::avx2::DEGREE {
+        let ptrs: [*const u8; super::x86_64::avx2::DEGREE] = [
+          children[2 * i].as_ptr().cast(),
+          children[2 * (i + 1)].as_ptr().cast(),
+          children[2 * (i + 2)].as_ptr().cast(),
+          children[2 * (i + 3)].as_ptr().cast(),
+          children[2 * (i + 4)].as_ptr().cast(),
+          children[2 * (i + 5)].as_ptr().cast(),
+          children[2 * (i + 6)].as_ptr().cast(),
+          children[2 * (i + 7)].as_ptr().cast(),
+        ];
+
+        let mut tmp = [0u8; super::x86_64::avx2::DEGREE * OUT_LEN];
+        // SAFETY: `id` is AVX2, so required AVX2 features are present per
+        // dispatch. Each pointer is valid for one 64-byte parent block.
+        unsafe {
+          super::x86_64::avx2::hash8(&ptrs, 1, &key_words, 0, false, parent_flags, 0, 0, tmp.as_mut_ptr());
+        }
+
+        for lane in 0..super::x86_64::avx2::DEGREE {
+          // SAFETY: `tmp` is `DEGREE * OUT_LEN` bytes, and `lane < DEGREE`.
+          let bytes: &[u8; OUT_LEN] = unsafe { &*(tmp.as_ptr().add(lane * OUT_LEN).cast()) };
+          out[i + lane] = words8_from_le_bytes_32(bytes);
+        }
+
+        i += super::x86_64::avx2::DEGREE;
+      }
+
+      let rem = out.len() - i;
+      if rem != 0 {
+        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+        {
+          debug_assert!(parent_flags <= u8::MAX as u32);
+          let last_ptr: *const u8 = children[2 * (out.len() - 1)].as_ptr().cast();
+          let mut ptrs = [last_ptr; super::x86_64::avx2::DEGREE];
+          for lane in 0..rem {
+            ptrs[lane] = children[2 * (i + lane)].as_ptr().cast();
+          }
+
+          let mut tmp = [0u8; super::x86_64::avx2::DEGREE * OUT_LEN];
+          // SAFETY: `id` is AVX2, so required AVX2 features are present per
+          // dispatch. Each pointer is valid for one 64-byte parent block.
+          // `num_inputs = rem <= DEGREE`, and `tmp` is large enough.
+          unsafe {
+            super::x86_64::asm::rscrypto_blake3_hash_many_avx2(
+              ptrs.as_ptr(),
+              rem,
+              1,
+              key_words.as_ptr(),
+              0,
+              false,
+              parent_flags as u8,
+              0,
+              0,
+              tmp.as_mut_ptr(),
+            );
+          }
+
+          for lane in 0..rem {
+            // SAFETY: `tmp` is `DEGREE * OUT_LEN` bytes, and `lane < rem <= DEGREE`.
+            let bytes: &[u8; OUT_LEN] = unsafe { &*(tmp.as_ptr().add(lane * OUT_LEN).cast()) };
+            out[i + lane] = words8_from_le_bytes_32(bytes);
+          }
+        }
+
+        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+        {
+          // Hash an 8-lane batch with duplicated final pointers and copy only the
+          // required outputs.
+          let last_ptr: *const u8 = children[2 * (out.len() - 1)].as_ptr().cast();
+          let mut ptrs = [last_ptr; super::x86_64::avx2::DEGREE];
+          for lane in 0..rem {
+            ptrs[lane] = children[2 * (i + lane)].as_ptr().cast();
+          }
+
+          let mut tmp = [0u8; super::x86_64::avx2::DEGREE * OUT_LEN];
+          // SAFETY: AVX2 is available for this wrapper; pointers and outputs are valid.
+          unsafe {
+            super::x86_64::avx2::hash8(&ptrs, 1, &key_words, 0, false, parent_flags, 0, 0, tmp.as_mut_ptr());
+          }
+
+          for lane in 0..rem {
+            // SAFETY: `tmp` is `DEGREE * OUT_LEN` bytes, and `lane < rem <= DEGREE`.
+            let bytes: &[u8; OUT_LEN] = unsafe { &*(tmp.as_ptr().add(lane * OUT_LEN).cast()) };
+            out[i + lane] = words8_from_le_bytes_32(bytes);
+          }
+        }
+      }
+
+      return;
+    }
+  }
+
+  // Scalar fallback.
+  for i in 0..out.len() {
+    out[i] = parent_cv_inline(id, children[2 * i], children[2 * i + 1], key_words, flags);
+  }
+}
+
 /// Compute many parent CVs from pre-packed parent blocks.
 ///
 /// Each entry in `parents` is a `[u32; 16]` message block representing
@@ -340,7 +681,19 @@ pub(crate) fn parent_cvs_many_inline(
       return;
     }
     #[cfg(target_arch = "x86_64")]
-    Blake3KernelId::X86Ssse3 => {}
+    Blake3KernelId::X86Ssse3 => {
+      let parent_flags = PARENT | flags;
+      for (i, parent_words) in parents.iter().enumerate() {
+        out[i] = first_8_words(compress_ssse3_wrapper(
+          &key_words,
+          parent_words,
+          0,
+          BLOCK_LEN as u32,
+          parent_flags,
+        ));
+      }
+      return;
+    }
     #[cfg(target_arch = "x86_64")]
     Blake3KernelId::X86Sse41 => {
       let mut i = 0usize;
