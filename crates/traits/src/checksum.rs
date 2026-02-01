@@ -126,6 +126,53 @@ pub trait Checksum: Clone + Default {
     h.update_io_slices(bufs);
     h.finalize()
   }
+
+  /// Wrap a reader to compute checksum transparently during I/O.
+  ///
+  /// # Example
+  ///
+  /// ```rust,ignore
+  /// use checksum::Crc32C;
+  /// use std::fs::File;
+  ///
+  /// let file = File::open("data.bin")?;
+  /// let mut reader = Crc32C::reader(file);
+  /// std::io::copy(&mut reader, &mut std::io::sink())?;
+  /// println!("CRC: {:08x}", reader.crc());
+  /// ```
+  #[cfg(feature = "std")]
+  #[inline]
+  #[must_use]
+  fn reader<R>(inner: R) -> crate::io::ChecksumReader<R, Self>
+  where
+    Self: Sized,
+  {
+    crate::io::ChecksumReader::new(inner)
+  }
+
+  /// Wrap a writer to compute checksum transparently during I/O.
+  ///
+  /// # Example
+  ///
+  /// ```rust,ignore
+  /// use checksum::Crc32C;
+  /// use std::fs::File;
+  ///
+  /// let file = File::create("output.bin")?;
+  /// let mut writer = Crc32C::writer(file);
+  /// writer.write_all(b"hello world")?;
+  /// let (file, crc) = writer.into_parts();
+  /// println!("CRC: {:08x}", crc);
+  /// ```
+  #[cfg(feature = "std")]
+  #[inline]
+  #[must_use]
+  fn writer<W>(inner: W) -> crate::io::ChecksumWriter<W, Self>
+  where
+    Self: Sized,
+  {
+    crate::io::ChecksumWriter::new(inner)
+  }
 }
 
 /// Checksums that support parallel computation via combination.

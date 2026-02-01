@@ -77,4 +77,75 @@ pub trait Digest: Clone + Default {
     h.update_io_slices(bufs);
     h.finalize()
   }
+
+  /// Wrap a reader to compute digest transparently during I/O.
+  ///
+  /// # Example
+  ///
+  /// ```rust,ignore
+  /// use hashes::crypto::blake3::Blake3;
+  /// use std::fs::File;
+  ///
+  /// let file = File::open("data.bin")?;
+  /// let mut reader = Blake3::reader(file);
+  /// std::io::copy(&mut reader, &mut std::io::sink())?;
+  /// println!("Digest: {:?}", reader.digest());
+  /// ```
+  #[cfg(feature = "std")]
+  #[inline]
+  #[must_use]
+  fn reader<R>(inner: R) -> crate::io::DigestReader<R, Self>
+  where
+    Self: Sized,
+  {
+    crate::io::DigestReader::new(inner)
+  }
+
+  /// Wrap a writer to compute digest transparently during I/O.
+  ///
+  /// # Example
+  ///
+  /// ```rust,ignore
+  /// use hashes::crypto::blake3::Blake3;
+  /// use std::fs::File;
+  ///
+  /// let file = File::create("output.bin")?;
+  /// let mut writer = Blake3::writer(file);
+  /// writer.write_all(b"hello world")?;
+  /// let (file, digest) = writer.into_parts();
+  /// println!("Digest: {:?}", digest);
+  /// ```
+  #[cfg(feature = "std")]
+  #[inline]
+  #[must_use]
+  fn writer<W>(inner: W) -> crate::io::DigestWriter<W, Self>
+  where
+    Self: Sized,
+  {
+    crate::io::DigestWriter::new(inner)
+  }
+}
+
+// Sealed trait implementations for I/O support
+#[cfg(feature = "std")]
+impl<T: Digest> crate::io::SealedMarker for T {}
+
+#[cfg(feature = "std")]
+impl<T: Digest> crate::io::Hashable for T {
+  type Output = T::Output;
+
+  #[inline(always)]
+  fn new_hasher() -> Self {
+    T::new()
+  }
+
+  #[inline(always)]
+  fn update(&mut self, data: &[u8]) {
+    T::update(self, data);
+  }
+
+  #[inline(always)]
+  fn finalize(&self) -> Self::Output {
+    T::finalize(self)
+  }
 }

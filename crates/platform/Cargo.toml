@@ -11,8 +11,9 @@ repository.workspace = true
 
 [features]
 default = ["std"]
+# std: Runtime CPU detection via CPUID/sysctl (requires std::sync::OnceLock)
 std = []
-# Enable test-only APIs (from_raw, as_raw) for external testing/fuzzing
+# testing: Enable test-only APIs (from_raw, as_raw) for external testing/fuzzing
 testing = []
 
 [dev-dependencies]

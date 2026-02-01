@@ -11,13 +11,20 @@ keywords = ["crypto", "crc", "checksum", "simd", "no-std"]
 categories = ["cryptography", "no-std::no-alloc", "algorithms"]
 
 [features]
+# Default: Full functionality with runtime detection
 default = ["std", "checksums"]
+
+# Feature hierarchy (each implies the one below):
+# std → runtime CPU detection + buffered APIs + introspection
+# alloc → buffered APIs (useful for no_std + alloc environments)
+# none → compile-time detection only, minimal code size
 std = ["alloc", "checksum?/std", "hashes?/std"]
 alloc = ["checksum?/alloc"]
 
-checksums = ["dep:checksum"]
-hashes = ["dep:hashes"]
-# aead = ["dep:aead"]       # future
+# Algorithm modules (optional, additive)
+checksums = ["dep:checksum"]  # CRC-16, CRC-24, CRC-32, CRC-64
+hashes = ["dep:hashes"]       # SHA-2, SHA-3, Blake2, Blake3, etc.
+# aead = ["dep:aead"]         # Future: AES-GCM, ChaCha20-Poly1305
 
 [dependencies]
 checksum = { workspace = true, optional = true }

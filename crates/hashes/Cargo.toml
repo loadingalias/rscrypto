@@ -11,6 +11,7 @@ repository.workspace = true
 
 [features]
 default = ["std"]
+# std: Runtime CPU detection + all hash APIs
 std = ["traits/std", "backend/std", "platform/std"]
 
 [dependencies]
