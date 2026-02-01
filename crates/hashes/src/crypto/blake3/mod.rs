@@ -1333,6 +1333,101 @@ impl Blake3 {
       Blake3Xof::new(self.root_output())
     }
   }
+
+  /// Finalize into an extendable output state (XOF) with output-size-aware kernel selection.
+  ///
+  /// This is the world-class XOF entry point: it uses the expected output size to select
+  /// the optimal kernel. For small inputs with large expected outputs, this ensures we
+  /// use SIMD kernels for the XOF squeeze phase, avoiding the "+500% XOF slowdown" that
+  /// occurs when tiny inputs pin us to portable kernels.
+  ///
+  /// # Arguments
+  /// * `expected_output_bytes` - The expected number of bytes to squeeze from this XOF. This is
+  ///   used as a hint for kernel selection. The actual squeezed amount can differ.
+  ///
+  /// # Example
+  /// ```ignore
+  /// use rscrypto::hashes::Blake3;
+  /// use traits::Xof;
+  ///
+  /// let mut hasher = Blake3::new();
+  /// hasher.update(b"small input");
+  /// // Even though input is small, we'll use SIMD for the 1KB output
+  /// let mut xof = hasher.finalize_xof_sized(1024);
+  /// let mut out = [0u8; 1024];
+  /// xof.squeeze(&mut out);
+  /// ```
+  #[must_use]
+  #[inline]
+  pub fn finalize_xof_sized(&self, expected_output_bytes: usize) -> Blake3Xof {
+    // World-class XOF: select kernel based on output size, not just input size.
+    // This is the fix for the "+500% XOF slowdown" on x86_64.
+    let kernel = if expected_output_bytes >= 512 {
+      // For large expected outputs, force SIMD kernel regardless of input size.
+      // The throughput benefit outweighs any setup overhead.
+      dispatch::kernel_dispatch().select(expected_output_bytes)
+    } else {
+      // For small outputs, use streaming dispatch (input-size-aware).
+      dispatch::streaming_dispatch().stream
+    };
+
+    // Re-create the root output with the selected kernel for optimal squeeze performance.
+    let output = if self.chunk_state.chunk_counter == 0
+      && self.chunk_state.len() == 0
+      && self.cv_stack_len == 0
+      && self.pending_chunk_cv.is_none()
+    {
+      // Empty input: single chunk output
+      single_chunk_output(kernel, self.key_words, 0, self.flags, &[])
+    } else if self.chunk_state.chunk_counter == 0 && self.pending_chunk_cv.is_none() {
+      // Single chunk input: re-create output with the SIMD kernel
+      let mut temp_chunk_state = ChunkState::new(self.key_words, 0, self.flags, kernel);
+      // Copy the accumulated state
+      temp_chunk_state.chaining_value = self.chunk_state.chaining_value;
+      temp_chunk_state.block = self.chunk_state.block;
+      temp_chunk_state.block_len = self.chunk_state.block_len;
+      temp_chunk_state.blocks_compressed = self.chunk_state.blocks_compressed;
+      temp_chunk_state.output()
+    } else {
+      // Multi-chunk: use root output (tree structure is already built)
+      // But we need to rebuild parent outputs with the selected kernel
+      self.root_output_with_kernel(kernel)
+    };
+
+    Blake3Xof::new_with_kernel(output, kernel)
+  }
+
+  /// Get root output with a specific kernel (for XOF kernel switching).
+  #[inline]
+  fn root_output_with_kernel(&self, kernel: Kernel) -> OutputState {
+    let mut parent_nodes_remaining = self.cv_stack_len as usize;
+    let mut output = if let Some(right_cv) = self.pending_chunk_cv {
+      debug_assert!(
+        parent_nodes_remaining > 0,
+        "pending full chunk implies multi-chunk input"
+      );
+      parent_nodes_remaining -= 1;
+      // SAFETY: `cv_stack_len` tracks the number of initialized entries.
+      let left = unsafe { *self.cv_stack[parent_nodes_remaining].assume_init_ref() };
+      parent_output(kernel, left, right_cv, self.key_words, self.flags)
+    } else {
+      // Re-create chunk state output with the new kernel
+      let mut temp_chunk_state = ChunkState::new(self.key_words, self.chunk_state.chunk_counter, self.flags, kernel);
+      temp_chunk_state.chaining_value = self.chunk_state.chaining_value;
+      temp_chunk_state.block = self.chunk_state.block;
+      temp_chunk_state.block_len = self.chunk_state.block_len;
+      temp_chunk_state.blocks_compressed = self.chunk_state.blocks_compressed;
+      temp_chunk_state.output()
+    };
+
+    while parent_nodes_remaining > 0 {
+      parent_nodes_remaining -= 1;
+      // SAFETY: `cv_stack_len` tracks the number of initialized entries.
+      let left = unsafe { *self.cv_stack[parent_nodes_remaining].assume_init_ref() };
+      output = parent_output(kernel, left, output.chaining_value(), self.key_words, self.flags);
+    }
+    output
+  }
 }
 
 impl Digest for Blake3 {
@@ -1420,16 +1515,32 @@ pub struct Blake3Xof {
   block_counter: u64,
   buf: [u8; OUTPUT_BLOCK_LEN],
   buf_pos: usize,
+  /// Kernel used for XOF squeeze operations. Stored to enable dynamic upgrade
+  /// when large squeezes are requested with a suboptimal kernel.
+  kernel: Kernel,
 }
 
 impl Blake3Xof {
   #[inline]
   fn new(output: OutputState) -> Self {
+    let kernel = output.kernel;
     Self {
       output,
       block_counter: 0,
       buf: [0u8; OUTPUT_BLOCK_LEN],
       buf_pos: OUTPUT_BLOCK_LEN,
+      kernel,
+    }
+  }
+
+  #[inline]
+  fn new_with_kernel(output: OutputState, kernel: Kernel) -> Self {
+    Self {
+      output,
+      block_counter: 0,
+      buf: [0u8; OUTPUT_BLOCK_LEN],
+      buf_pos: OUTPUT_BLOCK_LEN,
+      kernel,
     }
   }
 
@@ -1439,12 +1550,65 @@ impl Blake3Xof {
     self.block_counter = self.block_counter.wrapping_add(1);
     self.buf_pos = 0;
   }
+
+  /// Upgrade the internal kernel to a SIMD kernel for better squeeze performance.
+  /// This is called automatically when a large squeeze is requested.
+  #[inline]
+  #[cfg(target_arch = "x86_64")]
+  fn upgrade_to_simd_kernel(&mut self, _output_len: usize) {
+    // Only upgrade if currently using portable kernel and we have SIMD available
+    if self.kernel.id == kernels::Blake3KernelId::Portable {
+      use platform::caps::x86;
+      let caps = platform::caps();
+      let simd_kernel_id = if caps.has(x86::AVX512F.union(x86::AVX512VL)) {
+        kernels::Blake3KernelId::X86Avx512
+      } else if caps.has(x86::AVX2) {
+        kernels::Blake3KernelId::X86Avx2
+      } else if caps.has(x86::SSE41) {
+        kernels::Blake3KernelId::X86Sse41
+      } else {
+        return; // No SIMD available
+      };
+
+      // Upgrade the kernel in the output state
+      self.kernel = kernels::kernel(simd_kernel_id);
+      self.output.kernel = self.kernel;
+    }
+  }
+
+  #[inline]
+  #[cfg(target_arch = "aarch64")]
+  fn upgrade_to_simd_kernel(&mut self, _output_len: usize) {
+    // Only upgrade if currently using portable kernel and we have NEON available
+    if self.kernel.id == kernels::Blake3KernelId::Portable {
+      use platform::caps::aarch64;
+      let caps = platform::caps();
+      if caps.has(aarch64::NEON) {
+        self.kernel = kernels::kernel(kernels::Blake3KernelId::Aarch64Neon);
+        self.output.kernel = self.kernel;
+      }
+    }
+  }
+
+  #[inline]
+  #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+  fn upgrade_to_simd_kernel(&mut self, _output_len: usize) {
+    // No SIMD available on other platforms
+  }
 }
 
 impl Xof for Blake3Xof {
   fn squeeze(&mut self, mut out: &mut [u8]) {
     if out.is_empty() {
       return;
+    }
+
+    // World-class: if this is a large squeeze with portable kernel, upgrade to SIMD.
+    // This is the runtime safety net for XOF performance - even if the caller didn't
+    // use finalize_xof_sized(), we can still recover and use SIMD for large outputs.
+    const LARGE_SQUEEZE_THRESHOLD: usize = 512;
+    if out.len() >= LARGE_SQUEEZE_THRESHOLD && self.kernel.id == kernels::Blake3KernelId::Portable {
+      self.upgrade_to_simd_kernel(out.len());
     }
 
     // Drain any buffered bytes first.
@@ -1564,6 +1728,45 @@ mod tests {
   use traits::{Digest, Xof};
 
   use super::{Blake3, OUT_LEN};
+
+  #[test]
+  fn xof_sized_matches_standard() {
+    use alloc::vec;
+
+    // Test that finalize_xof_sized produces identical results to finalize_xof
+    let test_cases = [
+      (1usize, 1024usize),
+      (64, 1024),
+      (64, 512),
+      (0, 512),
+      (1024, 256),
+      (4096, 1024),
+    ];
+
+    for (input_len, output_len) in test_cases {
+      let input = vec![0xabu8; input_len];
+      let mut out_standard = vec![0u8; output_len];
+      let mut out_sized = vec![0u8; output_len];
+
+      // Standard finalize_xof
+      let mut h1 = Blake3::new();
+      h1.update(&input);
+      let mut xof1 = h1.finalize_xof();
+      xof1.squeeze(&mut out_standard);
+
+      // New finalize_xof_sized
+      let mut h2 = Blake3::new();
+      h2.update(&input);
+      let mut xof2 = h2.finalize_xof_sized(output_len);
+      xof2.squeeze(&mut out_sized);
+
+      assert_eq!(
+        out_standard, out_sized,
+        "XOF outputs should match for {}B input -> {}B output",
+        input_len, output_len
+      );
+    }
+  }
 
   const KEY: &[u8; 32] = b"whats the Elvish word for friend";
   const CONTEXT: &str = "BLAKE3 2019-12-27 16:29:52 test vectors context";

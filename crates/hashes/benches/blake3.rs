@@ -516,6 +516,70 @@ fn blake3_latency(c: &mut Criterion) {
   group.finish();
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// XOF Sized Comparison Benchmark (Phase 1 Fix Verification)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Benchmark to verify the XOF dispatch fix: compares `finalize_xof()` vs `finalize_xof_sized()`
+/// on small inputs with large outputs. This is the critical case that showed +500% slowdown.
+fn blake3_xof_sized_comparison(c: &mut Criterion) {
+  let mut group = c.benchmark_group("blake3/xof-sized-comparison");
+  group.sample_size(30);
+  group.warm_up_time(Duration::from_secs(2));
+  group.measurement_time(Duration::from_secs(4));
+  group.sampling_mode(SamplingMode::Flat);
+
+  // These are the critical cases from TASK.md showing +500% slowdown
+  let input_sizes: &[usize] = &[1, 64];
+  let output_sizes: &[usize] = &[512, 1024];
+
+  for &input_len in input_sizes {
+    for &output_size in output_sizes {
+      let data = common::pseudo_random_bytes(input_len, 0xB1AE_E3B1_A1E3_0006 ^ (input_len as u64));
+      let name = format!("{input_len}B-in/{output_size}B-out");
+      group.throughput(Throughput::Bytes((input_len + output_size) as u64));
+
+      // Baseline: standard finalize_xof() - may use portable kernel for small inputs
+      group.bench_function(format!("standard/{name}"), |b| {
+        let mut out = vec![0u8; output_size];
+        b.iter(|| {
+          let mut h = Blake3::new();
+          h.update(black_box(&data));
+          let mut xof = h.finalize_xof();
+          xof.squeeze(&mut out);
+          black_box(&out);
+        })
+      });
+
+      // Fixed: finalize_xof_sized() - uses output size to select kernel
+      group.bench_function(format!("sized/{name}"), |b| {
+        let mut out = vec![0u8; output_size];
+        b.iter(|| {
+          let mut h = Blake3::new();
+          h.update(black_box(&data));
+          let mut xof = h.finalize_xof_sized(output_size);
+          xof.squeeze(&mut out);
+          black_box(&out);
+        })
+      });
+
+      // Official implementation for comparison
+      group.bench_function(format!("official/{name}"), |b| {
+        let mut out = vec![0u8; output_size];
+        b.iter(|| {
+          let mut h = blake3::Hasher::new();
+          h.update(black_box(&data));
+          let mut reader = h.finalize_xof();
+          reader.fill(&mut out);
+          black_box(&out);
+        })
+      });
+    }
+  }
+
+  group.finish();
+}
+
 criterion_group!(
   benches,
   blake3_oneshot_comparison,
@@ -524,6 +588,7 @@ criterion_group!(
   blake3_parent_folding_only,
   blake3_xof,
   blake3_xof_oneshot,
+  blake3_xof_sized_comparison,
   blake3_keyed,
   blake3_keyed_oneshot,
   blake3_derive_key,
