@@ -59,6 +59,16 @@ unsafe extern "sysv64" {
     flags_end: u8,
     out: *mut u8,
   );
+
+  pub fn rscrypto_blake3_xof_many_avx512(
+    cv: *const u32,
+    block: *const u8,
+    block_len: u8,
+    counter: u64,
+    flags: u8,
+    out: *mut u8,
+    outblocks: usize,
+  );
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -87,5 +97,15 @@ unsafe extern "C" {
     flags_start: u8,
     flags_end: u8,
     out: *mut u8,
+  );
+
+  pub fn rscrypto_blake3_xof_many_avx512(
+    cv: *const u32,
+    block: *const u8,
+    block_len: u8,
+    counter: u64,
+    flags: u8,
+    out: *mut u8,
+    outblocks: usize,
   );
 }
