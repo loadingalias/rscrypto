@@ -856,6 +856,77 @@ pub unsafe fn chunk_cv_one_chunk_aarch64_out(input: *const u8, key: &[u32; 8], c
   }
 }
 
+/// Hash exactly one full chunk (1024B) and write the *pre-final-block* CV plus the last block
+/// bytes.
+///
+/// This produces the internal state needed to build an `OutputState` for a full chunk:
+/// - `out_cv` receives the chaining value after blocks 0..14.
+/// - `out_last_block` receives the raw bytes of block 15 (64B).
+///
+/// # Safety
+///
+/// - `input` must point to exactly `CHUNK_LEN` readable bytes.
+/// - `out_cv` must point to at least 8 writable `u32`s.
+/// - `out_last_block` must point to at least `BLOCK_LEN` writable bytes.
+#[inline]
+pub unsafe fn chunk_state_one_chunk_aarch64_out(
+  input: *const u8,
+  key: &[u32; 8],
+  counter: u64,
+  flags: u32,
+  out_cv: *mut u32,
+  out_last_block: *mut u8,
+) {
+  #[cfg(any(target_os = "linux", target_os = "macos"))]
+  {
+    #[cfg(target_os = "linux")]
+    asm::rscrypto_blake3_hash1_chunk_state_aarch64_unix_linux(
+      input,
+      key.as_ptr(),
+      counter,
+      flags,
+      out_cv,
+      out_last_block,
+    );
+    #[cfg(target_os = "macos")]
+    asm::rscrypto_blake3_hash1_chunk_state_aarch64_apple_darwin(
+      input,
+      key.as_ptr(),
+      counter,
+      flags,
+      out_cv,
+      out_last_block,
+    );
+  }
+
+  #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+  {
+    // Fallback: per-block NEON compressor for blocks 0..14, then copy the final block bytes.
+    let mut cv = *key;
+    for block_idx in 0..15 {
+      let block_bytes: &[u8; BLOCK_LEN] = {
+        let src = input.add(block_idx * BLOCK_LEN);
+        &*(src as *const [u8; BLOCK_LEN])
+      };
+
+      let start = if block_idx == 0 { CHUNK_START } else { 0 };
+      cv = first_8_words(compress_neon_bytes(
+        &cv,
+        block_bytes.as_ptr(),
+        counter,
+        BLOCK_LEN as u32,
+        flags | start,
+      ));
+    }
+
+    // Store cv.
+    core::ptr::copy_nonoverlapping(cv.as_ptr(), out_cv, 8);
+
+    // Copy final block bytes.
+    core::ptr::copy_nonoverlapping(input.add(15 * BLOCK_LEN), out_last_block, BLOCK_LEN);
+  }
+}
+
 /// Hash exactly one full chunk (1024B) and return the *root* hash bytes.
 ///
 /// This is a specialized fast path for the aarch64 "exactly one chunk" cliff:
@@ -1056,4 +1127,149 @@ pub unsafe fn parent_cv_neon(
     BLOCK_LEN as u32,
     PARENT | flags,
   ))
+}
+
+/// Generate 4 root output blocks (64 bytes each) in parallel.
+///
+/// Each lane uses an independent `output_block_counter` (`counter + lane`), but
+/// shares the same `chaining_value`, `block_words`, `block_len`, and `flags`.
+///
+/// # Safety
+/// Caller must ensure NEON is available and that `out` is valid for `4 * 64`
+/// writable bytes.
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+pub unsafe fn root_output_blocks4_neon(
+  chaining_value: &[u32; 8],
+  block_words: &[u32; 16],
+  counter: u64,
+  block_len: u32,
+  flags: u32,
+  out: *mut u8,
+) {
+  #[inline(always)]
+  unsafe fn storeu_128(src: uint32x4_t, dest: *mut u8) {
+    vst1q_u8(dest, vreinterpretq_u8_u32(src))
+  }
+
+  let cv_vecs = [
+    vdupq_n_u32(chaining_value[0]),
+    vdupq_n_u32(chaining_value[1]),
+    vdupq_n_u32(chaining_value[2]),
+    vdupq_n_u32(chaining_value[3]),
+    vdupq_n_u32(chaining_value[4]),
+    vdupq_n_u32(chaining_value[5]),
+    vdupq_n_u32(chaining_value[6]),
+    vdupq_n_u32(chaining_value[7]),
+  ];
+
+  let m = [
+    vdupq_n_u32(block_words[0]),
+    vdupq_n_u32(block_words[1]),
+    vdupq_n_u32(block_words[2]),
+    vdupq_n_u32(block_words[3]),
+    vdupq_n_u32(block_words[4]),
+    vdupq_n_u32(block_words[5]),
+    vdupq_n_u32(block_words[6]),
+    vdupq_n_u32(block_words[7]),
+    vdupq_n_u32(block_words[8]),
+    vdupq_n_u32(block_words[9]),
+    vdupq_n_u32(block_words[10]),
+    vdupq_n_u32(block_words[11]),
+    vdupq_n_u32(block_words[12]),
+    vdupq_n_u32(block_words[13]),
+    vdupq_n_u32(block_words[14]),
+    vdupq_n_u32(block_words[15]),
+  ];
+
+  let counter_low_vec = vld1q_u32(
+    [
+      counter as u32,
+      counter.wrapping_add(1) as u32,
+      counter.wrapping_add(2) as u32,
+      counter.wrapping_add(3) as u32,
+    ]
+    .as_ptr(),
+  );
+  let counter_high_vec = vld1q_u32(
+    [
+      (counter >> 32) as u32,
+      (counter.wrapping_add(1) >> 32) as u32,
+      (counter.wrapping_add(2) >> 32) as u32,
+      (counter.wrapping_add(3) >> 32) as u32,
+    ]
+    .as_ptr(),
+  );
+
+  let block_len_vec = vdupq_n_u32(block_len);
+  let flags_vec = vdupq_n_u32(flags);
+
+  let iv0 = vdupq_n_u32(IV[0]);
+  let iv1 = vdupq_n_u32(IV[1]);
+  let iv2 = vdupq_n_u32(IV[2]);
+  let iv3 = vdupq_n_u32(IV[3]);
+
+  let rot8_tbl = vld1q_u8(ROT8_TABLE.as_ptr());
+  let mut v = [
+    cv_vecs[0],
+    cv_vecs[1],
+    cv_vecs[2],
+    cv_vecs[3],
+    cv_vecs[4],
+    cv_vecs[5],
+    cv_vecs[6],
+    cv_vecs[7],
+    iv0,
+    iv1,
+    iv2,
+    iv3,
+    counter_low_vec,
+    counter_high_vec,
+    block_len_vec,
+    flags_vec,
+  ];
+
+  round4(&mut v, &m, 0, rot8_tbl);
+  round4(&mut v, &m, 1, rot8_tbl);
+  round4(&mut v, &m, 2, rot8_tbl);
+  round4(&mut v, &m, 3, rot8_tbl);
+  round4(&mut v, &m, 4, rot8_tbl);
+  round4(&mut v, &m, 5, rot8_tbl);
+  round4(&mut v, &m, 6, rot8_tbl);
+
+  let out_words = [
+    veorq_u32(v[0], v[8]),
+    veorq_u32(v[1], v[9]),
+    veorq_u32(v[2], v[10]),
+    veorq_u32(v[3], v[11]),
+    veorq_u32(v[4], v[12]),
+    veorq_u32(v[5], v[13]),
+    veorq_u32(v[6], v[14]),
+    veorq_u32(v[7], v[15]),
+    veorq_u32(v[8], cv_vecs[0]),
+    veorq_u32(v[9], cv_vecs[1]),
+    veorq_u32(v[10], cv_vecs[2]),
+    veorq_u32(v[11], cv_vecs[3]),
+    veorq_u32(v[12], cv_vecs[4]),
+    veorq_u32(v[13], cv_vecs[5]),
+    veorq_u32(v[14], cv_vecs[6]),
+    veorq_u32(v[15], cv_vecs[7]),
+  ];
+
+  let mut g0 = [out_words[0], out_words[1], out_words[2], out_words[3]];
+  let mut g1 = [out_words[4], out_words[5], out_words[6], out_words[7]];
+  let mut g2 = [out_words[8], out_words[9], out_words[10], out_words[11]];
+  let mut g3 = [out_words[12], out_words[13], out_words[14], out_words[15]];
+  transpose_vecs(&mut g0);
+  transpose_vecs(&mut g1);
+  transpose_vecs(&mut g2);
+  transpose_vecs(&mut g3);
+
+  for lane in 0..4 {
+    let base = out.add(lane * 64);
+    storeu_128(g0[lane], base);
+    storeu_128(g1[lane], base.add(16));
+    storeu_128(g2[lane], base.add(32));
+    storeu_128(g3[lane], base.add(48));
+  }
 }

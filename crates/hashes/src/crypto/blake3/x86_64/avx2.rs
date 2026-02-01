@@ -452,3 +452,126 @@ pub unsafe fn hash8(
     storeu(h_vecs[7], out.add(7 * stride));
   }
 }
+
+/// Generate 8 root output blocks (64 bytes each) in parallel.
+///
+/// Each lane uses an independent `output_block_counter` (`counter + lane`), but
+/// shares the same `chaining_value`, `block_words`, `block_len`, and `flags`.
+///
+/// # Safety
+/// Caller must ensure AVX2 is available and that `out` is valid for `8 * 64`
+/// writable bytes.
+#[target_feature(enable = "avx2")]
+pub unsafe fn root_output_blocks8(
+  chaining_value: &[u32; 8],
+  block_words: &[u32; 16],
+  counter: u64,
+  block_len: u32,
+  flags: u32,
+  out: *mut u8,
+) {
+  unsafe {
+    let rot16_mask = _mm256_setr_epi8(
+      2, 3, 0, 1, 6, 7, 4, 5, 10, 11, 8, 9, 14, 15, 12, 13, 2, 3, 0, 1, 6, 7, 4, 5, 10, 11, 8, 9, 14, 15, 12, 13,
+    );
+    let rot8_mask = _mm256_setr_epi8(
+      1, 2, 3, 0, 5, 6, 7, 4, 9, 10, 11, 8, 13, 14, 15, 12, 1, 2, 3, 0, 5, 6, 7, 4, 9, 10, 11, 8, 13, 14, 15, 12,
+    );
+
+    let cv_vecs = [
+      set1(chaining_value[0]),
+      set1(chaining_value[1]),
+      set1(chaining_value[2]),
+      set1(chaining_value[3]),
+      set1(chaining_value[4]),
+      set1(chaining_value[5]),
+      set1(chaining_value[6]),
+      set1(chaining_value[7]),
+    ];
+
+    let msg_vecs = [
+      set1(block_words[0]),
+      set1(block_words[1]),
+      set1(block_words[2]),
+      set1(block_words[3]),
+      set1(block_words[4]),
+      set1(block_words[5]),
+      set1(block_words[6]),
+      set1(block_words[7]),
+      set1(block_words[8]),
+      set1(block_words[9]),
+      set1(block_words[10]),
+      set1(block_words[11]),
+      set1(block_words[12]),
+      set1(block_words[13]),
+      set1(block_words[14]),
+      set1(block_words[15]),
+    ];
+
+    let (counter_low_vec, counter_high_vec) = load_counters(counter, true);
+    let block_len_vec = set1(block_len);
+    let flags_vec = set1(flags);
+
+    let iv0 = set1(IV[0]);
+    let iv1 = set1(IV[1]);
+    let iv2 = set1(IV[2]);
+    let iv3 = set1(IV[3]);
+
+    let mut v = [
+      cv_vecs[0],
+      cv_vecs[1],
+      cv_vecs[2],
+      cv_vecs[3],
+      cv_vecs[4],
+      cv_vecs[5],
+      cv_vecs[6],
+      cv_vecs[7],
+      iv0,
+      iv1,
+      iv2,
+      iv3,
+      counter_low_vec,
+      counter_high_vec,
+      block_len_vec,
+      flags_vec,
+    ];
+
+    round(&mut v, &msg_vecs, 0, rot16_mask, rot8_mask);
+    round(&mut v, &msg_vecs, 1, rot16_mask, rot8_mask);
+    round(&mut v, &msg_vecs, 2, rot16_mask, rot8_mask);
+    round(&mut v, &msg_vecs, 3, rot16_mask, rot8_mask);
+    round(&mut v, &msg_vecs, 4, rot16_mask, rot8_mask);
+    round(&mut v, &msg_vecs, 5, rot16_mask, rot8_mask);
+    round(&mut v, &msg_vecs, 6, rot16_mask, rot8_mask);
+
+    let mut out_lo = [
+      xor(v[0], v[8]),
+      xor(v[1], v[9]),
+      xor(v[2], v[10]),
+      xor(v[3], v[11]),
+      xor(v[4], v[12]),
+      xor(v[5], v[13]),
+      xor(v[6], v[14]),
+      xor(v[7], v[15]),
+    ];
+    let mut out_hi = [
+      xor(v[8], cv_vecs[0]),
+      xor(v[9], cv_vecs[1]),
+      xor(v[10], cv_vecs[2]),
+      xor(v[11], cv_vecs[3]),
+      xor(v[12], cv_vecs[4]),
+      xor(v[13], cv_vecs[5]),
+      xor(v[14], cv_vecs[6]),
+      xor(v[15], cv_vecs[7]),
+    ];
+
+    transpose_vecs(&mut out_lo);
+    transpose_vecs(&mut out_hi);
+
+    for lane in 0..DEGREE {
+      let base = out.add(lane * 64);
+      storeu(out_lo[lane], base);
+      storeu(out_hi[lane], base.add(32));
+    }
+  }
+}

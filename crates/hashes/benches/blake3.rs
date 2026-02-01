@@ -6,7 +6,7 @@
 use core::{hint::black_box, time::Duration};
 
 use criterion::{BenchmarkId, Criterion, SamplingMode, Throughput, criterion_group, criterion_main};
-use hashes::crypto::Blake3;
+use hashes::{bench as microbench, crypto::Blake3};
 use traits::{Digest as _, Xof as _};
 
 mod common;
@@ -78,6 +78,76 @@ fn blake3_streaming(c: &mut Criterion) {
         }
         black_box(*h.finalize().as_bytes())
       })
+    });
+  }
+
+  group.finish();
+}
+
+fn blake3_update_overhead(c: &mut Criterion) {
+  let data_1mb = common::pseudo_random_bytes(1024 * 1024, 0xB1AE_E3B1_A1E3_0002);
+  let data_1mb = black_box(data_1mb);
+
+  let mut group = c.benchmark_group("blake3/update-overhead");
+  group.sample_size(30);
+  group.warm_up_time(Duration::from_secs(2));
+  group.measurement_time(Duration::from_secs(4));
+  group.sampling_mode(SamplingMode::Flat);
+  group.throughput(Throughput::Bytes(data_1mb.len() as u64));
+
+  for chunk_size in [64, 128, 256, 512, 1024, 4096, 16384, 65536] {
+    group.bench_function(format!("{chunk_size}B-chunks"), |b| {
+      b.iter(|| {
+        let mut h = Blake3::new();
+        for chunk in data_1mb.chunks(chunk_size) {
+          h.update(chunk);
+        }
+        black_box(h.finalize())
+      })
+    });
+  }
+
+  group.finish();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Parent Folding (CVs -> Root) Benchmarks
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn blake3_parent_folding_only(c: &mut Criterion) {
+  // 1 MiB worth of chaining values (CVs): 32 bytes each -> 32768 CVs.
+  let data = common::pseudo_random_bytes(1024 * 1024, 0xB1AE_E3B1_A1E3_7001);
+  let data = black_box(data);
+
+  let mut group = c.benchmark_group("blake3/parent-folding");
+  group.sample_size(30);
+  group.warm_up_time(Duration::from_secs(2));
+  group.measurement_time(Duration::from_secs(4));
+  group.sampling_mode(SamplingMode::Flat);
+  group.throughput(Throughput::Bytes(data.len() as u64));
+
+  group.bench_function("rscrypto/auto", |b| {
+    b.iter(|| black_box(microbench::run_auto("blake3-parent-fold", black_box(&data)).unwrap_or(0)))
+  });
+
+  for name in [
+    "portable",
+    #[cfg(target_arch = "x86_64")]
+    "x86_64/ssse3",
+    #[cfg(target_arch = "x86_64")]
+    "x86_64/sse4.1",
+    #[cfg(target_arch = "x86_64")]
+    "x86_64/avx2",
+    #[cfg(target_arch = "x86_64")]
+    "x86_64/avx512",
+    #[cfg(target_arch = "aarch64")]
+    "aarch64/neon",
+  ] {
+    let Some(k) = microbench::get_kernel("blake3-parent-fold", name) else {
+      continue;
+    };
+    group.bench_function(format!("rscrypto/{}", k.name), |b| {
+      b.iter(|| black_box((k.func)(black_box(&data))))
     });
   }
 
@@ -450,6 +520,8 @@ criterion_group!(
   benches,
   blake3_oneshot_comparison,
   blake3_streaming,
+  blake3_update_overhead,
+  blake3_parent_folding_only,
   blake3_xof,
   blake3_xof_oneshot,
   blake3_keyed,

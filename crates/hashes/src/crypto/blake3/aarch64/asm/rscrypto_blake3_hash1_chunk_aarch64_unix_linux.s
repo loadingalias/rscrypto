@@ -397,3 +397,97 @@ rscrypto_blake3_hash1_chunk_cv_aarch64_unix_linux:
     ldp x21, x22, [sp], #16
     ldp x19, x20, [sp], #16
     ret
+
+
+    .p2align 4
+    .globl rscrypto_blake3_hash1_chunk_state_aarch64_unix_linux
+rscrypto_blake3_hash1_chunk_state_aarch64_unix_linux:
+    stp x19, x20, [sp, #-16]!
+    stp x21, x22, [sp, #-16]!
+    stp x23, x24, [sp, #-16]!
+    stp x25, x26, [sp, #-16]!
+    stp x27, x28, [sp, #-16]!
+
+    sub sp, sp, #32
+    str w3, [sp, #0]
+    str x5, [sp, #8]
+    str x2, [sp, #16]
+
+    mov x16, x0
+    mov x17, x4
+
+    mov x9, x1
+
+    // Load initial chaining value (key) into w0..w7.
+    // Note: do not load from x1 directly, because loading w1 would clobber x1.
+    ldr w0, [x9, #0]
+    ldr w1, [x9, #4]
+    ldr w2, [x9, #8]
+    ldr w3, [x9, #12]
+    ldr w4, [x9, #16]
+    ldr w5, [x9, #20]
+    ldr w6, [x9, #24]
+    ldr w7, [x9, #28]
+
+    // Blocks 0..14 (no CHUNK_END)
+    // Block 0 (CHUNK_START)
+    LOAD_MSG
+    LOAD_IV
+    ldr w12, [sp, #16]
+    ldr w13, [sp, #20]
+    mov w14, #64
+    ldr w15, [sp, #0]
+    orr w15, w15, #1
+    COMPRESS_7ROUNDS
+
+    // Blocks 1..14
+    .rept 14
+        LOAD_MSG
+        LOAD_IV
+        ldr w12, [sp, #16]
+        ldr w13, [sp, #20]
+        mov w14, #64
+        ldr w15, [sp, #0]
+        COMPRESS_7ROUNDS
+    .endr
+
+    // Store the chaining value *before* the final chunk block.
+    str w0, [x17, #0]
+    str w1, [x17, #4]
+    str w2, [x17, #8]
+    str w3, [x17, #12]
+    str w4, [x17, #16]
+    str w5, [x17, #20]
+    str w6, [x17, #24]
+    str w7, [x17, #28]
+
+    // Store the final chunk block bytes (64B) without compressing it.
+    // At this point, x16 points to input + 15*64.
+    ldr x19, [x16, #0]
+    ldr x20, [x16, #8]
+    ldr x21, [x16, #16]
+    ldr x22, [x16, #24]
+    ldr x23, [x16, #32]
+    ldr x24, [x16, #40]
+    ldr x25, [x16, #48]
+    ldr x26, [x16, #56]
+
+    ldr x10, [sp, #8]
+
+    str x19, [x10, #0]
+    str x20, [x10, #8]
+    str x21, [x10, #16]
+    str x22, [x10, #24]
+    str x23, [x10, #32]
+    str x24, [x10, #40]
+    str x25, [x10, #48]
+    str x26, [x10, #56]
+
+    add sp, sp, #32
+
+    ldp x27, x28, [sp], #16
+    ldp x25, x26, [sp], #16
+    ldp x23, x24, [sp], #16
+    ldp x21, x22, [sp], #16
+    ldp x19, x20, [sp], #16
+    ret

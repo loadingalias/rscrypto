@@ -24,6 +24,7 @@ const OUT_LEN: usize = 32;
 const KEY_LEN: usize = 32;
 const BLOCK_LEN: usize = 64;
 const CHUNK_LEN: usize = 1024;
+const OUTPUT_BLOCK_LEN: usize = 2 * OUT_LEN;
 
 const CHUNK_START: u32 = 1 << 0;
 const CHUNK_END: u32 = 1 << 1;
@@ -177,14 +178,7 @@ fn reduce_power_of_two_chunk_cvs(kernel: Kernel, key_words: [u32; 8], flags: u32
   while cur_len > 1 {
     let pairs = cur_len / 2;
     debug_assert!(pairs <= 8);
-
-    let mut parent_blocks = [[0u32; 16]; 8];
-    for i in 0..pairs {
-      parent_blocks[i][..8].copy_from_slice(&cur[2 * i]);
-      parent_blocks[i][8..].copy_from_slice(&cur[2 * i + 1]);
-    }
-
-    kernels::parent_cvs_many_inline(kernel.id, &parent_blocks[..pairs], key_words, flags, &mut next[..pairs]);
+    kernels::parent_cvs_many_from_cvs_inline(kernel.id, &cur[..2 * pairs], key_words, flags, &mut next[..pairs]);
     cur[..pairs].copy_from_slice(&next[..pairs]);
     cur_len = pairs;
   }
@@ -423,27 +417,171 @@ impl OutputState {
   }
 
   #[inline]
-  fn root_hash_bytes(&self) -> [u8; OUT_LEN] {
-    let cv = first_8_words((self.kernel.compress)(
+  fn root_hash_words(&self) -> [u32; 8] {
+    first_8_words((self.kernel.compress)(
       &self.input_chaining_value,
       &self.block_words,
       0,
       self.block_len,
       self.flags | ROOT,
-    ));
-    words8_to_le_bytes(&cv)
+    ))
   }
 
   #[inline]
-  fn root_output_block_bytes(&self, output_block_counter: u64) -> [u8; 2 * OUT_LEN] {
-    let words = (self.kernel.compress)(
-      &self.input_chaining_value,
-      &self.block_words,
-      output_block_counter,
-      self.block_len,
-      self.flags | ROOT,
-    );
-    words16_to_le_bytes(&words)
+  fn root_hash_bytes(&self) -> [u8; OUT_LEN] {
+    words8_to_le_bytes(&self.root_hash_words())
+  }
+
+  #[inline]
+  fn root_output_blocks_into(&self, mut output_block_counter: u64, mut out: &mut [u8]) {
+    debug_assert!(out.len().is_multiple_of(OUTPUT_BLOCK_LEN));
+    let flags = self.flags | ROOT;
+
+    while !out.is_empty() {
+      let blocks_remaining = out.len() / OUTPUT_BLOCK_LEN;
+
+      #[cfg(target_arch = "x86_64")]
+      {
+        match self.kernel.id {
+          kernels::Blake3KernelId::X86Avx512 if blocks_remaining >= 16 => {
+            // SAFETY: required CPU features are validated by dispatch before
+            // selecting this kernel, and `out` has at least 16 blocks.
+            unsafe {
+              x86_64::avx512::root_output_blocks16(
+                &self.input_chaining_value,
+                &self.block_words,
+                output_block_counter,
+                self.block_len,
+                flags,
+                out.as_mut_ptr(),
+              );
+            }
+            output_block_counter = output_block_counter.wrapping_add(16);
+            out = &mut out[16 * OUTPUT_BLOCK_LEN..];
+            continue;
+          }
+          kernels::Blake3KernelId::X86Avx512 if blocks_remaining >= 8 => {
+            // SAFETY: AVX-512 implies AVX2 on the platforms we care about, and
+            // dispatch only selects AVX-512 when the required caps are present.
+            unsafe {
+              x86_64::avx2::root_output_blocks8(
+                &self.input_chaining_value,
+                &self.block_words,
+                output_block_counter,
+                self.block_len,
+                flags,
+                out.as_mut_ptr(),
+              );
+            }
+            output_block_counter = output_block_counter.wrapping_add(8);
+            out = &mut out[8 * OUTPUT_BLOCK_LEN..];
+            continue;
+          }
+          kernels::Blake3KernelId::X86Avx512 if blocks_remaining >= 4 => {
+            // SAFETY: AVX-512 implies SSE4.1 on the platforms we care about, and
+            // dispatch only selects AVX-512 when the required caps are present.
+            unsafe {
+              x86_64::sse41::root_output_blocks4(
+                &self.input_chaining_value,
+                &self.block_words,
+                output_block_counter,
+                self.block_len,
+                flags,
+                out.as_mut_ptr(),
+              );
+            }
+            output_block_counter = output_block_counter.wrapping_add(4);
+            out = &mut out[4 * OUTPUT_BLOCK_LEN..];
+            continue;
+          }
+          kernels::Blake3KernelId::X86Avx2 if blocks_remaining >= 8 => {
+            // SAFETY: required CPU features are validated by dispatch before
+            // selecting this kernel, and `out` has at least 8 blocks.
+            unsafe {
+              x86_64::avx2::root_output_blocks8(
+                &self.input_chaining_value,
+                &self.block_words,
+                output_block_counter,
+                self.block_len,
+                flags,
+                out.as_mut_ptr(),
+              );
+            }
+            output_block_counter = output_block_counter.wrapping_add(8);
+            out = &mut out[8 * OUTPUT_BLOCK_LEN..];
+            continue;
+          }
+          kernels::Blake3KernelId::X86Avx2 if blocks_remaining >= 4 => {
+            // SAFETY: AVX2 implies SSE4.1 on the platforms we care about, and
+            // dispatch only selects AVX2 when the required caps are present.
+            unsafe {
+              x86_64::sse41::root_output_blocks4(
+                &self.input_chaining_value,
+                &self.block_words,
+                output_block_counter,
+                self.block_len,
+                flags,
+                out.as_mut_ptr(),
+              );
+            }
+            output_block_counter = output_block_counter.wrapping_add(4);
+            out = &mut out[4 * OUTPUT_BLOCK_LEN..];
+            continue;
+          }
+          kernels::Blake3KernelId::X86Sse41 if blocks_remaining >= 4 => {
+            // SAFETY: required CPU features are validated by dispatch before
+            // selecting this kernel, and `out` has at least 4 blocks.
+            unsafe {
+              x86_64::sse41::root_output_blocks4(
+                &self.input_chaining_value,
+                &self.block_words,
+                output_block_counter,
+                self.block_len,
+                flags,
+                out.as_mut_ptr(),
+              );
+            }
+            output_block_counter = output_block_counter.wrapping_add(4);
+            out = &mut out[4 * OUTPUT_BLOCK_LEN..];
+            continue;
+          }
+          _ => {}
+        }
+      }
+
+      #[cfg(target_arch = "aarch64")]
+      {
+        if self.kernel.id == kernels::Blake3KernelId::Aarch64Neon && blocks_remaining >= 4 {
+          // SAFETY: required CPU features are validated by dispatch before
+          // selecting this kernel, and `out` has at least 4 blocks.
+          unsafe {
+            aarch64::root_output_blocks4_neon(
+              &self.input_chaining_value,
+              &self.block_words,
+              output_block_counter,
+              self.block_len,
+              flags,
+              out.as_mut_ptr(),
+            );
+          }
+          output_block_counter = output_block_counter.wrapping_add(4);
+          out = &mut out[4 * OUTPUT_BLOCK_LEN..];
+          continue;
+        }
+      }
+
+      // Scalar fallback: generate one block at a time.
+      let words = (self.kernel.compress)(
+        &self.input_chaining_value,
+        &self.block_words,
+        output_block_counter,
+        self.block_len,
+        flags,
+      );
+      out[..OUTPUT_BLOCK_LEN].copy_from_slice(&words16_to_le_bytes(&words));
+      output_block_counter = output_block_counter.wrapping_add(1);
+      out = &mut out[OUTPUT_BLOCK_LEN..];
+    }
   }
 }
 
@@ -483,7 +621,56 @@ impl ChunkState {
   }
 
   fn update(&mut self, mut input: &[u8]) {
-    while !input.is_empty() {
+    // Streaming fast path: when we receive exactly one whole chunk at a chunk
+    // boundary, compute the internal state in one shot.
+    #[cfg(target_arch = "aarch64")]
+    {
+      if self.kernel.id == kernels::Blake3KernelId::Aarch64Neon
+        && self.blocks_compressed == 0
+        && self.block_len == 0
+        && input.len() == CHUNK_LEN
+      {
+        let mut cv_words = [0u32; 8];
+        let mut last_block = [0u8; BLOCK_LEN];
+
+        // SAFETY: input is exactly one full chunk.
+        unsafe {
+          aarch64::chunk_state_one_chunk_aarch64_out(
+            input.as_ptr(),
+            &self.chaining_value,
+            self.chunk_counter,
+            self.flags,
+            cv_words.as_mut_ptr(),
+            last_block.as_mut_ptr(),
+          );
+        }
+
+        self.chaining_value = cv_words;
+        self.block = last_block;
+        self.block_len = BLOCK_LEN as u8;
+        self.blocks_compressed = 15;
+        return;
+      }
+    }
+
+    // Phase 1: if we already have a buffered (partial or full) block, fill it
+    // (or, if it's already full, compress it) before touching the caller
+    // slice. This keeps the hot "many full blocks" path branch-light.
+    if self.block_len != 0 {
+      let want = BLOCK_LEN - self.block_len as usize;
+      let take = min(want, input.len());
+      self.block[self.block_len as usize..][..take].copy_from_slice(&input[..take]);
+      self.block_len = self.block_len.wrapping_add(take as u8);
+      input = &input[take..];
+
+      // If the caller ended mid-block, we're done. Note that this also covers
+      // the (rare) case where we just filled the final block of a chunk
+      // (blocks_compressed == 15), in which case the full block must remain
+      // buffered until output().
+      if input.is_empty() {
+        return;
+      }
+
       if self.block_len as usize == BLOCK_LEN {
         debug_assert!(
           self.blocks_compressed < 15,
@@ -499,24 +686,32 @@ impl ChunkState {
         );
         self.block_len = 0;
       }
+    }
 
-      // Fast path: compress full blocks directly from the caller slice.
-      //
-      // We intentionally leave the *last* block of a full chunk buffered so
-      // that the caller can decide whether this chunk is terminal (and thus
-      // needs CHUNK_END at finalize) or will be followed by more input.
-      if self.block_len == 0 && self.blocks_compressed < 15 && input.len() >= BLOCK_LEN {
+    // Phase 2: we are block-aligned. Compress as many full blocks as possible
+    // directly from the caller slice, leaving exactly one full block buffered
+    // when the caller ends on a block boundary.
+    debug_assert_eq!(self.block_len, 0);
+    while !input.is_empty() {
+      // Once we've compressed 15 blocks, the final block stays buffered.
+      if self.blocks_compressed == 15 {
+        debug_assert!(input.len() <= BLOCK_LEN);
+        self.block[..input.len()].copy_from_slice(input);
+        self.block_len = input.len() as u8;
+        return;
+      }
+
+      let full_blocks = input.len() / BLOCK_LEN;
+      if full_blocks != 0 {
         let max_blocks = 15usize - self.blocks_compressed as usize;
-        let blocks_available = input.len() / BLOCK_LEN;
-        let has_partial = !input.len().is_multiple_of(BLOCK_LEN);
-        // Leave one block buffered when the input ends exactly on a block
-        // boundary, so that finalize can apply CHUNK_END to the last block.
-        let mut blocks_to_compress = if has_partial {
-          blocks_available
-        } else {
-          blocks_available.saturating_sub(1)
-        };
-        blocks_to_compress = core::cmp::min(blocks_to_compress, max_blocks);
+        let mut blocks_to_compress = full_blocks.min(max_blocks);
+
+        // If we'd consume the entire input as full blocks, leave one block
+        // buffered so finalize can apply CHUNK_END if the caller stops here.
+        if input.len().is_multiple_of(BLOCK_LEN) && blocks_to_compress == full_blocks {
+          blocks_to_compress = blocks_to_compress.saturating_sub(1);
+        }
+
         if blocks_to_compress != 0 {
           let bytes = blocks_to_compress * BLOCK_LEN;
           kernels::chunk_compress_blocks_inline(
@@ -532,11 +727,11 @@ impl ChunkState {
         }
       }
 
-      let want = BLOCK_LEN - self.block_len as usize;
-      let take = min(want, input.len());
-      self.block[self.block_len as usize..][..take].copy_from_slice(&input[..take]);
-      self.block_len = self.block_len.wrapping_add(take as u8);
-      input = &input[take..];
+      // Remainder: buffer <= 64 bytes and return.
+      let take = min(BLOCK_LEN, input.len());
+      self.block[..take].copy_from_slice(&input[..take]);
+      self.block_len = take as u8;
+      return;
     }
   }
 
@@ -589,6 +784,41 @@ fn single_chunk_output(
 ) -> OutputState {
   debug_assert!(input.len() <= CHUNK_LEN);
 
+  // aarch64 fast path for a full chunk.
+  //
+  // This is used by oneshot XOF (and any other oneshot path that needs an OutputState)
+  // to avoid per-block compression for 1024B inputs.
+  #[cfg(target_arch = "aarch64")]
+  {
+    if kernel.id == kernels::Blake3KernelId::Aarch64Neon && input.len() == CHUNK_LEN {
+      let mut cv_words = [0u32; 8];
+      let mut last_block = [0u8; BLOCK_LEN];
+
+      // SAFETY: `input` is exactly one full chunk, and this kernel is only selected
+      // when its required CPU features are available.
+      unsafe {
+        aarch64::chunk_state_one_chunk_aarch64_out(
+          input.as_ptr(),
+          &key_words,
+          chunk_counter,
+          flags,
+          cv_words.as_mut_ptr(),
+          last_block.as_mut_ptr(),
+        );
+      }
+
+      let block_words = words16_from_le_bytes_64(&last_block);
+      return OutputState {
+        kernel,
+        input_chaining_value: cv_words,
+        block_words,
+        counter: chunk_counter,
+        block_len: BLOCK_LEN as u32,
+        flags: flags | CHUNK_END,
+      };
+    }
+  }
+
   // We always emit an OutputState for the last chunk block, even when the
   // input is empty (which is treated as a single, 0-length block).
   let blocks = core::cmp::max(1usize, input.len().div_ceil(BLOCK_LEN));
@@ -612,12 +842,24 @@ fn single_chunk_output(
     &input[..full_bytes],
   );
 
-  let mut last_block = [0u8; BLOCK_LEN];
-  if !input.is_empty() {
-    let offset = full_blocks * BLOCK_LEN;
-    last_block[..last_len].copy_from_slice(&input[offset..offset + last_len]);
-  }
-  let block_words = words16_from_le_bytes_64(&last_block);
+  let block_words = if cfg!(target_endian = "little") {
+    let mut out = [0u32; 16];
+    if !input.is_empty() {
+      let offset = full_blocks * BLOCK_LEN;
+      // SAFETY: `out` is 64 bytes, and `last_len <= 64`.
+      unsafe {
+        ptr::copy_nonoverlapping(input.as_ptr().add(offset), out.as_mut_ptr().cast::<u8>(), last_len);
+      }
+    }
+    out
+  } else {
+    let mut last_block = [0u8; BLOCK_LEN];
+    if !input.is_empty() {
+      let offset = full_blocks * BLOCK_LEN;
+      last_block[..last_len].copy_from_slice(&input[offset..offset + last_len]);
+    }
+    words16_from_le_bytes_64(&last_block)
+  };
   let start = if blocks_compressed == 0 { CHUNK_START } else { 0 };
 
   OutputState {
@@ -732,6 +974,26 @@ fn root_output_oneshot(kernel: Kernel, key_words: [u32; 8], flags: u32, input: &
 }
 
 #[inline]
+fn digest_oneshot_words(kernel: Kernel, key_words: [u32; 8], flags: u32, input: &[u8]) -> [u32; 8] {
+  #[cfg(target_arch = "x86_64")]
+  {
+    if input.len() <= CHUNK_LEN {
+      match kernel.id {
+        kernels::Blake3KernelId::X86Sse41 | kernels::Blake3KernelId::X86Avx2 | kernels::Blake3KernelId::X86Avx512 => {
+          // SAFETY: x86 SIMD availability is validated by dispatch before selecting these kernels.
+          return unsafe { digest_one_chunk_root_hash_words_x86(kernel, key_words, flags, input) };
+        }
+        _ => {}
+      }
+    }
+  }
+
+  // Fallback: construct the root output and extract the root hash words.
+  let output = root_output_oneshot(kernel, key_words, flags, input);
+  output.root_hash_words()
+}
+
+#[inline]
 fn digest_oneshot(kernel: Kernel, key_words: [u32; 8], flags: u32, input: &[u8]) -> [u8; OUT_LEN] {
   #[cfg(target_arch = "aarch64")]
   {
@@ -741,8 +1003,7 @@ fn digest_oneshot(kernel: Kernel, key_words: [u32; 8], flags: u32, input: &[u8])
     }
   }
 
-  let output = root_output_oneshot(kernel, key_words, flags, input);
-  output.root_hash_bytes()
+  words8_to_le_bytes(&digest_oneshot_words(kernel, key_words, flags, input))
 }
 
 #[derive(Clone)]
@@ -811,13 +1072,17 @@ impl Blake3 {
     // derived key context key.
     let context_bytes = context.as_bytes();
     let kernel_ctx = dispatch::kernel_dispatch().select(context_bytes.len());
-    let context_key = digest_oneshot(kernel_ctx, IV, DERIVE_KEY_CONTEXT, context_bytes);
-    let context_key_words = words8_from_le_bytes_32(&context_key);
+    let context_key_words = digest_oneshot_words(kernel_ctx, IV, DERIVE_KEY_CONTEXT, context_bytes);
 
     // Step 2: hash the key material under DERIVE_KEY_MATERIAL with the derived
     // context key.
     let kernel_km = dispatch::kernel_dispatch().select(key_material.len());
-    digest_oneshot(kernel_km, context_key_words, DERIVE_KEY_MATERIAL, key_material)
+    words8_to_le_bytes(&digest_oneshot_words(
+      kernel_km,
+      context_key_words,
+      DERIVE_KEY_MATERIAL,
+      key_material,
+    ))
   }
 
   /// One-shot hash using an explicitly selected kernel.
@@ -1000,10 +1265,9 @@ impl Blake3 {
   #[must_use]
   #[inline]
   pub fn new_derive_key(context: &str) -> Self {
-    let mut context_hasher = Self::new_internal(IV, DERIVE_KEY_CONTEXT);
-    context_hasher.update(context.as_bytes());
-    let context_key = context_hasher.finalize();
-    let key_words = words8_from_le_bytes_32(&context_key);
+    let context_bytes = context.as_bytes();
+    let kernel_ctx = dispatch::kernel_dispatch().select(context_bytes.len());
+    let key_words = digest_oneshot_words(kernel_ctx, IV, DERIVE_KEY_CONTEXT, context_bytes);
     Self::new_internal(key_words, DERIVE_KEY_MATERIAL)
   }
 
@@ -1154,7 +1418,7 @@ impl Digest for Blake3 {
 pub struct Blake3Xof {
   output: OutputState,
   block_counter: u64,
-  buf: [u8; 2 * OUT_LEN],
+  buf: [u8; 4 * OUTPUT_BLOCK_LEN],
   buf_pos: usize,
 }
 
@@ -1164,30 +1428,141 @@ impl Blake3Xof {
     Self {
       output,
       block_counter: 0,
-      buf: [0u8; 2 * OUT_LEN],
-      buf_pos: 2 * OUT_LEN,
+      buf: [0u8; 4 * OUTPUT_BLOCK_LEN],
+      buf_pos: 4 * OUTPUT_BLOCK_LEN,
     }
   }
 
   #[inline]
   fn refill(&mut self) {
-    self.buf = self.output.root_output_block_bytes(self.block_counter);
-    self.block_counter = self.block_counter.wrapping_add(1);
+    let blocks = (self.buf.len() / OUTPUT_BLOCK_LEN) as u64;
+    self.output.root_output_blocks_into(self.block_counter, &mut self.buf);
+    self.block_counter = self.block_counter.wrapping_add(blocks);
     self.buf_pos = 0;
   }
 }
 
 impl Xof for Blake3Xof {
   fn squeeze(&mut self, mut out: &mut [u8]) {
-    while !out.is_empty() {
-      if self.buf_pos == self.buf.len() {
-        self.refill();
-      }
+    if out.is_empty() {
+      return;
+    }
+
+    // Drain any buffered bytes first.
+    if self.buf_pos != self.buf.len() {
       let take = min(self.buf.len() - self.buf_pos, out.len());
       out[..take].copy_from_slice(&self.buf[self.buf_pos..self.buf_pos + take]);
       self.buf_pos += take;
       out = &mut out[take..];
+      if out.is_empty() {
+        return;
+      }
     }
+
+    // Large writes: generate directly into the caller buffer in big batches.
+    while out.len() >= self.buf.len() {
+      let blocks = (self.buf.len() / OUTPUT_BLOCK_LEN) as u64;
+      self
+        .output
+        .root_output_blocks_into(self.block_counter, &mut out[..self.buf.len()]);
+      self.block_counter = self.block_counter.wrapping_add(blocks);
+      out = &mut out[self.buf.len()..];
+    }
+
+    // Then handle any remaining full output blocks.
+    let full = out.len() / OUTPUT_BLOCK_LEN * OUTPUT_BLOCK_LEN;
+    if full != 0 {
+      let blocks = (full / OUTPUT_BLOCK_LEN) as u64;
+      self
+        .output
+        .root_output_blocks_into(self.block_counter, &mut out[..full]);
+      self.block_counter = self.block_counter.wrapping_add(blocks);
+      out = &mut out[full..];
+    }
+
+    // Tail: refill once and copy the remaining bytes.
+    if !out.is_empty() {
+      self.refill();
+      let take = out.len();
+      out.copy_from_slice(&self.buf[..take]);
+      self.buf_pos = take;
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// x86_64 tiny one-shot helpers (keyed/derive sensitive)
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[cfg(target_arch = "x86_64")]
+#[inline]
+unsafe fn digest_one_chunk_root_hash_words_x86(
+  kernel: Kernel,
+  key_words: [u32; 8],
+  flags: u32,
+  input: &[u8],
+) -> [u32; 8] {
+  debug_assert!(input.len() <= CHUNK_LEN);
+
+  // We always have a "last block", even for the empty input (treated as a
+  // single 0-length block).
+  let blocks = core::cmp::max(1usize, input.len().div_ceil(BLOCK_LEN));
+  let (full_blocks, last_len) = if input.is_empty() {
+    (0usize, 0usize)
+  } else if input.len().is_multiple_of(BLOCK_LEN) {
+    (blocks - 1, BLOCK_LEN)
+  } else {
+    (blocks - 1, input.len() % BLOCK_LEN)
+  };
+
+  // Hash all full blocks except the final block, updating the CV. This keeps
+  // ROOT out of the dependency chain until the last compress.
+  let mut cv = key_words;
+  let mut blocks_compressed: u8 = 0;
+  let full_bytes = full_blocks * BLOCK_LEN;
+  kernels::chunk_compress_blocks_inline(
+    kernel.id,
+    &mut cv,
+    0,
+    flags,
+    &mut blocks_compressed,
+    &input[..full_bytes],
+  );
+
+  let start = if blocks_compressed == 0 { CHUNK_START } else { 0 };
+  let final_flags = flags | start | CHUNK_END | ROOT;
+
+  // For partial blocks (including empty), pad to 64 bytes.
+  let mut padded = [0u8; BLOCK_LEN];
+  let block_ptr = if last_len == BLOCK_LEN && !input.is_empty() {
+    // SAFETY: `full_blocks * BLOCK_LEN + BLOCK_LEN <= input.len()`.
+    unsafe { input.as_ptr().add(full_blocks * BLOCK_LEN) }
+  } else {
+    if last_len != 0 {
+      let offset = full_blocks * BLOCK_LEN;
+      // SAFETY: `padded` is 64 bytes, and `last_len < 64` here.
+      unsafe { ptr::copy_nonoverlapping(input.as_ptr().add(offset), padded.as_mut_ptr(), last_len) };
+    }
+    padded.as_ptr()
+  };
+
+  match kernel.id {
+    kernels::Blake3KernelId::X86Sse41 => {
+      // SAFETY: `block_ptr` points to 64 bytes (either into `input` or `padded`),
+      // and dispatch only selects SSE4.1 when the required CPU features are present.
+      unsafe { x86_64::compress_cv_sse41_bytes(&cv, block_ptr, 0, last_len as u32, final_flags) }
+    }
+    kernels::Blake3KernelId::X86Avx2 => {
+      // SAFETY: `block_ptr` points to 64 bytes (either into `input` or `padded`),
+      // and dispatch only selects AVX2 when the required CPU features are present.
+      unsafe { x86_64::compress_cv_avx2_bytes(&cv, block_ptr, 0, last_len as u32, final_flags) }
+    }
+    kernels::Blake3KernelId::X86Avx512 => {
+      // SAFETY: `block_ptr` points to 64 bytes (either into `input` or `padded`),
+      // and dispatch only selects AVX-512 when the required CPU features are present.
+      unsafe { x86_64::compress_cv_avx512_bytes(&cv, block_ptr, 0, last_len as u32, final_flags) }
+    }
+    _ => unreachable!("x86 tiny helper called for non-x86 SIMD kernel"),
   }
 }
 

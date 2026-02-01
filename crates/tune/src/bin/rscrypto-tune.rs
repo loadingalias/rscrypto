@@ -208,7 +208,7 @@ EXAMPLES:
     just tune-quick
 
     # Tune only BLAKE3-related algorithms
-    just tune-quick -- --only blake3,blake3-chunk,blake3-parent,blake3-stream64,blake3-stream4k
+    just tune-quick -- --only blake3,blake3-chunk,blake3-parent,blake3-parent-fold,blake3-stream64,blake3-stream4k
 
     # Generate markdown for contributing your results
     just tune -- --format contribute
@@ -383,6 +383,10 @@ fn main() -> ExitCode {
   engine.add(Box::new(HashTunable::new(
     "blake3-parent",
     "RSCRYPTO_BENCH_BLAKE3_PARENT",
+  )));
+  engine.add(Box::new(HashTunable::new(
+    "blake3-parent-fold",
+    "RSCRYPTO_BENCH_BLAKE3_PARENT_FOLD",
   )));
 
   engine.add(Box::new(HashTunable::new(
