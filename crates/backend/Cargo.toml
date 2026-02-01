@@ -11,6 +11,7 @@ repository.workspace = true
 
 [features]
 default = ["std"]
+# std: Runtime CPU detection + all dispatch modes
 std = ["platform/std"]
 
 [dependencies]

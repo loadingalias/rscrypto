@@ -19,9 +19,14 @@ extern crate std;
 pub mod common;
 pub mod crypto;
 pub mod fast;
+#[cfg(feature = "std")]
+pub mod io;
 
 mod util;
 
+// Re-export I/O adapters (requires std)
+#[cfg(feature = "std")]
+pub use io::{DigestReader, DigestWriter};
 pub use traits::{Digest, FastHash, Xof};
 
 // Tuning and benchmarking hooks (std-only).

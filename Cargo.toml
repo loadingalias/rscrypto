@@ -1,6 +1,23 @@
 [workspace]
 resolver = "3"
-members = ["crates/*"]
+members = [
+  "crates/rscrypto",
+  "crates/checksum",
+  "crates/hashes",
+  "crates/platform",
+  "crates/traits",
+  "crates/backend",
+  "crates/tune",  # Dev-only, excluded from default builds via default-members
+]
+# Only build core crates by default (faster builds, tune is on-demand)
+default-members = [
+  "crates/rscrypto",
+  "crates/checksum",
+  "crates/hashes",
+  "crates/platform",
+  "crates/traits",
+  "crates/backend",
+]
 
 [workspace.metadata.docs.rs]
 all-features = true

@@ -142,6 +142,8 @@ pub mod diag;
 pub mod dispatch;
 pub mod dispatchers;
 mod introspect;
+#[cfg(feature = "std")]
+pub mod io;
 pub mod tune;
 
 #[doc(hidden)]
@@ -213,6 +215,9 @@ pub use crc64::{Crc64, Crc64Config, Crc64Force, Crc64Nvme, Crc64Xz};
 // Re-export introspection API
 pub use dispatch::is_hardware_accelerated;
 pub use introspect::{DispatchInfo, KernelIntrospect, kernel_for};
+// Re-export I/O adapters (requires std)
+#[cfg(feature = "std")]
+pub use io::{ChecksumReader, ChecksumWriter};
 // Re-export platform::describe for convenience
 pub use platform::describe as platform_describe;
 // Re-export traits for convenience

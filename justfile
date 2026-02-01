@@ -47,7 +47,9 @@ bench-native crate="" bench="":
 
 
 # Tuning
-# Unified tuning engine - benchmarks all checksum algorithms and finds optimal settings
+# NOTE: The 'tune' crate is dev-only and not part of the workspace build.
+# It's built on-demand when these commands are run, keeping workspace builds fast.
+#
 # Usage: just tune            - Full tuning run with detailed output
 #        just tune --quick    - Faster, noisier measurements
 #        just tune --verbose  - Show progress during tuning

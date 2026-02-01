@@ -11,7 +11,9 @@ repository.workspace = true
 
 [features]
 default = ["std"]
+# std: Runtime CPU detection + all APIs (implies alloc)
 std = ["alloc"]
+# alloc: Buffered/streaming APIs without runtime detection
 alloc = []
 
 [lints]

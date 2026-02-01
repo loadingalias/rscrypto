@@ -11,8 +11,11 @@ repository.workspace = true
 
 [features]
 default = ["std"]
+# std: Runtime CPU detection + buffered APIs + introspection
 std = ["alloc", "traits/std", "backend/std", "platform/std"]
+# alloc: Buffered/streaming APIs without runtime detection
 alloc = ["traits/alloc"]
+# diag: Enable selection diagnostics (for debugging kernel choices)
 diag = []
 
 [dependencies]

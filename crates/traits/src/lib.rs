@@ -40,6 +40,8 @@ mod checksum;
 mod digest;
 pub mod error;
 mod fast_hash;
+#[cfg(feature = "std")]
+pub mod io;
 mod xof;
 
 pub use checksum::{Checksum, ChecksumCombine};
