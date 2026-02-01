@@ -542,6 +542,26 @@ pub unsafe fn root_output_blocks16(
   flags: u32,
   out: *mut u8,
 ) {
+  #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+  {
+    debug_assert!(flags <= u8::MAX as u32);
+    debug_assert!(block_len <= u8::MAX as u32);
+    // SAFETY: AVX-512 is available (checked by dispatch), and `out` is valid
+    // for `16 * 64` writable bytes per this function's contract.
+    unsafe {
+      super::asm::rscrypto_blake3_xof_many_avx512(
+        chaining_value.as_ptr(),
+        block_words.as_ptr().cast(),
+        block_len as u8,
+        counter,
+        flags as u8,
+        out,
+        16,
+      );
+    }
+  }
+
+  #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
   unsafe {
     let cv_vecs = [
       set1(chaining_value[0]),

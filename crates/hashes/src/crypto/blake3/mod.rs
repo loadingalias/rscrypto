@@ -1418,7 +1418,7 @@ impl Digest for Blake3 {
 pub struct Blake3Xof {
   output: OutputState,
   block_counter: u64,
-  buf: [u8; 4 * OUTPUT_BLOCK_LEN],
+  buf: [u8; OUTPUT_BLOCK_LEN],
   buf_pos: usize,
 }
 
@@ -1428,16 +1428,15 @@ impl Blake3Xof {
     Self {
       output,
       block_counter: 0,
-      buf: [0u8; 4 * OUTPUT_BLOCK_LEN],
-      buf_pos: 4 * OUTPUT_BLOCK_LEN,
+      buf: [0u8; OUTPUT_BLOCK_LEN],
+      buf_pos: OUTPUT_BLOCK_LEN,
     }
   }
 
   #[inline]
   fn refill(&mut self) {
-    let blocks = (self.buf.len() / OUTPUT_BLOCK_LEN) as u64;
     self.output.root_output_blocks_into(self.block_counter, &mut self.buf);
-    self.block_counter = self.block_counter.wrapping_add(blocks);
+    self.block_counter = self.block_counter.wrapping_add(1);
     self.buf_pos = 0;
   }
 }
@@ -1459,17 +1458,8 @@ impl Xof for Blake3Xof {
       }
     }
 
-    // Large writes: generate directly into the caller buffer in big batches.
-    while out.len() >= self.buf.len() {
-      let blocks = (self.buf.len() / OUTPUT_BLOCK_LEN) as u64;
-      self
-        .output
-        .root_output_blocks_into(self.block_counter, &mut out[..self.buf.len()]);
-      self.block_counter = self.block_counter.wrapping_add(blocks);
-      out = &mut out[self.buf.len()..];
-    }
-
-    // Then handle any remaining full output blocks.
+    // Generate any remaining full output blocks directly into the caller
+    // buffer (lets the kernel choose its best batch size).
     let full = out.len() / OUTPUT_BLOCK_LEN * OUTPUT_BLOCK_LEN;
     if full != 0 {
       let blocks = (full / OUTPUT_BLOCK_LEN) as u64;
