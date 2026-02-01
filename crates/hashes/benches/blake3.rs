@@ -301,6 +301,9 @@ fn blake3_xof_oneshot(c: &mut Criterion) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 fn blake3_keyed(c: &mut Criterion) {
+  // Streaming-vs-streaming comparison: both use new_keyed + update + finalize
+  // This fixes the previous apples-to-oranges comparison where official used
+  // one-shot keyed_hash while rscrypto used streaming.
   let inputs = common::sized_inputs();
   let key: [u8; 32] = *b"rscrypto-blake3-benchmark-key!!_";
   let mut group = c.benchmark_group("blake3/keyed");
@@ -320,8 +323,14 @@ fn blake3_keyed(c: &mut Criterion) {
       })
     });
 
+    // Official: streaming mode (new_keyed + update + finalize)
+    // This matches rscrypto's streaming API for fair comparison
     group.bench_with_input(BenchmarkId::new("official", len), data, |b, d| {
-      b.iter(|| black_box(*blake3::keyed_hash(&key, black_box(d)).as_bytes()))
+      b.iter(|| {
+        let mut h = blake3::Hasher::new_keyed(&key);
+        h.update(black_box(d));
+        black_box(*h.finalize().as_bytes())
+      })
     });
   }
 
