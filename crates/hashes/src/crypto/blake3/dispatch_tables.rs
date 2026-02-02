@@ -262,8 +262,8 @@ pub static INTELICL_STREAMING_TABLE: StreamingTable = default_kind_streaming_tab
 #[cfg(target_arch = "aarch64")]
 pub static APPLEM1M3_TABLE: DispatchTable = DispatchTable {
   boundaries: DEFAULT_BOUNDARIES,
-  xs: KernelId::Portable,
-  s: KernelId::Portable,
+  xs: KernelId::Aarch64Neon,
+  s: KernelId::Aarch64Neon,
   m: KernelId::Aarch64Neon,
   l: KernelId::Aarch64Neon,
 };
@@ -273,7 +273,7 @@ pub static APPLEM1M3_TABLE: DispatchTable = default_kind_table();
 // AppleM1M3 Streaming Table
 #[cfg(target_arch = "aarch64")]
 pub static APPLEM1M3_STREAMING_TABLE: StreamingTable = StreamingTable {
-  stream: KernelId::Portable,
+  stream: KernelId::Aarch64Neon,
   bulk: KernelId::Aarch64Neon,
 };
 #[cfg(not(target_arch = "aarch64"))]
@@ -288,32 +288,137 @@ pub static APPLEM5_TABLE: DispatchTable = default_kind_table();
 // AppleM5 Streaming Table
 pub static APPLEM5_STREAMING_TABLE: StreamingTable = default_kind_streaming_table();
 // Graviton2 Table
+#[cfg(target_arch = "aarch64")]
+pub static GRAVITON2_TABLE: DispatchTable = DispatchTable {
+  boundaries: DEFAULT_BOUNDARIES,
+  xs: KernelId::Aarch64Neon,
+  s: KernelId::Aarch64Neon,
+  m: KernelId::Aarch64Neon,
+  l: KernelId::Aarch64Neon,
+};
+#[cfg(not(target_arch = "aarch64"))]
 pub static GRAVITON2_TABLE: DispatchTable = default_kind_table();
 // Graviton2 Streaming Table
+#[cfg(target_arch = "aarch64")]
+pub static GRAVITON2_STREAMING_TABLE: StreamingTable = StreamingTable {
+  stream: KernelId::Aarch64Neon,
+  bulk: KernelId::Aarch64Neon,
+};
+#[cfg(not(target_arch = "aarch64"))]
 pub static GRAVITON2_STREAMING_TABLE: StreamingTable = default_kind_streaming_table();
 // Graviton3 Table
+#[cfg(target_arch = "aarch64")]
+pub static GRAVITON3_TABLE: DispatchTable = DispatchTable {
+  boundaries: DEFAULT_BOUNDARIES,
+  xs: KernelId::Aarch64Neon,
+  s: KernelId::Aarch64Neon,
+  m: KernelId::Aarch64Neon,
+  l: KernelId::Aarch64Neon,
+};
+#[cfg(not(target_arch = "aarch64"))]
 pub static GRAVITON3_TABLE: DispatchTable = default_kind_table();
 // Graviton3 Streaming Table
+#[cfg(target_arch = "aarch64")]
+pub static GRAVITON3_STREAMING_TABLE: StreamingTable = StreamingTable {
+  stream: KernelId::Aarch64Neon,
+  bulk: KernelId::Aarch64Neon,
+};
+#[cfg(not(target_arch = "aarch64"))]
 pub static GRAVITON3_STREAMING_TABLE: StreamingTable = default_kind_streaming_table();
 // Graviton4 Table
+#[cfg(target_arch = "aarch64")]
+pub static GRAVITON4_TABLE: DispatchTable = DispatchTable {
+  boundaries: DEFAULT_BOUNDARIES,
+  xs: KernelId::Aarch64Neon,
+  s: KernelId::Aarch64Neon,
+  m: KernelId::Aarch64Neon,
+  l: KernelId::Aarch64Neon,
+};
+#[cfg(not(target_arch = "aarch64"))]
 pub static GRAVITON4_TABLE: DispatchTable = default_kind_table();
 // Graviton4 Streaming Table
+#[cfg(target_arch = "aarch64")]
+pub static GRAVITON4_STREAMING_TABLE: StreamingTable = StreamingTable {
+  stream: KernelId::Aarch64Neon,
+  bulk: KernelId::Aarch64Neon,
+};
+#[cfg(not(target_arch = "aarch64"))]
 pub static GRAVITON4_STREAMING_TABLE: StreamingTable = default_kind_streaming_table();
 // Graviton5 Table
+#[cfg(target_arch = "aarch64")]
+pub static GRAVITON5_TABLE: DispatchTable = DispatchTable {
+  boundaries: DEFAULT_BOUNDARIES,
+  xs: KernelId::Aarch64Neon,
+  s: KernelId::Aarch64Neon,
+  m: KernelId::Aarch64Neon,
+  l: KernelId::Aarch64Neon,
+};
+#[cfg(not(target_arch = "aarch64"))]
 pub static GRAVITON5_TABLE: DispatchTable = default_kind_table();
 // Graviton5 Streaming Table
+#[cfg(target_arch = "aarch64")]
+pub static GRAVITON5_STREAMING_TABLE: StreamingTable = StreamingTable {
+  stream: KernelId::Aarch64Neon,
+  bulk: KernelId::Aarch64Neon,
+};
+#[cfg(not(target_arch = "aarch64"))]
 pub static GRAVITON5_STREAMING_TABLE: StreamingTable = default_kind_streaming_table();
 // NeoverseN2 Table
+#[cfg(target_arch = "aarch64")]
+pub static NEOVERSEN2_TABLE: DispatchTable = DispatchTable {
+  boundaries: DEFAULT_BOUNDARIES,
+  xs: KernelId::Aarch64Neon,
+  s: KernelId::Aarch64Neon,
+  m: KernelId::Aarch64Neon,
+  l: KernelId::Aarch64Neon,
+};
+#[cfg(not(target_arch = "aarch64"))]
 pub static NEOVERSEN2_TABLE: DispatchTable = default_kind_table();
 // NeoverseN2 Streaming Table
+#[cfg(target_arch = "aarch64")]
+pub static NEOVERSEN2_STREAMING_TABLE: StreamingTable = StreamingTable {
+  stream: KernelId::Aarch64Neon,
+  bulk: KernelId::Aarch64Neon,
+};
+#[cfg(not(target_arch = "aarch64"))]
 pub static NEOVERSEN2_STREAMING_TABLE: StreamingTable = default_kind_streaming_table();
 // NeoverseN3 Table
+#[cfg(target_arch = "aarch64")]
+pub static NEOVERSEN3_TABLE: DispatchTable = DispatchTable {
+  boundaries: DEFAULT_BOUNDARIES,
+  xs: KernelId::Aarch64Neon,
+  s: KernelId::Aarch64Neon,
+  m: KernelId::Aarch64Neon,
+  l: KernelId::Aarch64Neon,
+};
+#[cfg(not(target_arch = "aarch64"))]
 pub static NEOVERSEN3_TABLE: DispatchTable = default_kind_table();
 // NeoverseN3 Streaming Table
+#[cfg(target_arch = "aarch64")]
+pub static NEOVERSEN3_STREAMING_TABLE: StreamingTable = StreamingTable {
+  stream: KernelId::Aarch64Neon,
+  bulk: KernelId::Aarch64Neon,
+};
+#[cfg(not(target_arch = "aarch64"))]
 pub static NEOVERSEN3_STREAMING_TABLE: StreamingTable = default_kind_streaming_table();
 // NeoverseV3 Table
+#[cfg(target_arch = "aarch64")]
+pub static NEOVERSEV3_TABLE: DispatchTable = DispatchTable {
+  boundaries: DEFAULT_BOUNDARIES,
+  xs: KernelId::Aarch64Neon,
+  s: KernelId::Aarch64Neon,
+  m: KernelId::Aarch64Neon,
+  l: KernelId::Aarch64Neon,
+};
+#[cfg(not(target_arch = "aarch64"))]
 pub static NEOVERSEV3_TABLE: DispatchTable = default_kind_table();
 // NeoverseV3 Streaming Table
+#[cfg(target_arch = "aarch64")]
+pub static NEOVERSEV3_STREAMING_TABLE: StreamingTable = StreamingTable {
+  stream: KernelId::Aarch64Neon,
+  bulk: KernelId::Aarch64Neon,
+};
+#[cfg(not(target_arch = "aarch64"))]
 pub static NEOVERSEV3_STREAMING_TABLE: StreamingTable = default_kind_streaming_table();
 // NvidiaGrace Table
 #[cfg(target_arch = "aarch64")]
