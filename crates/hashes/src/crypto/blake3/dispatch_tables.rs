@@ -41,14 +41,14 @@ const AVX512_KERNEL: KernelId = KernelId::X86Avx512;
 #[cfg(target_arch = "x86_64")]
 const DEFAULT_XS: KernelId = KernelId::X86Sse41;
 #[cfg(target_arch = "aarch64")]
-const DEFAULT_XS: KernelId = KernelId::Portable;
+const DEFAULT_XS: KernelId = KernelId::Aarch64Neon;
 #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
 const DEFAULT_XS: KernelId = KernelId::Portable;
 
 #[cfg(target_arch = "x86_64")]
 const DEFAULT_S: KernelId = KernelId::X86Sse41;
 #[cfg(target_arch = "aarch64")]
-const DEFAULT_S: KernelId = KernelId::Portable;
+const DEFAULT_S: KernelId = KernelId::Aarch64Neon;
 #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
 const DEFAULT_S: KernelId = KernelId::Portable;
 const DEFAULT_M: KernelId = SIMD_KERNEL;
@@ -262,8 +262,11 @@ pub static INTELICL_STREAMING_TABLE: StreamingTable = default_kind_streaming_tab
 #[cfg(target_arch = "aarch64")]
 pub static APPLEM1M3_TABLE: DispatchTable = DispatchTable {
   boundaries: DEFAULT_BOUNDARIES,
-  xs: KernelId::Aarch64Neon,
-  s: KernelId::Aarch64Neon,
+  // Apple M-series: our current NEON per-block compressor is not competitive for
+  // tiny inputs (sub-1KiB, especially <= 64B). Prefer portable for XS/S and use
+  // NEON for medium/large where throughput wins dominate.
+  xs: KernelId::Portable,
+  s: KernelId::Portable,
   m: KernelId::Aarch64Neon,
   l: KernelId::Aarch64Neon,
 };
@@ -273,19 +276,51 @@ pub static APPLEM1M3_TABLE: DispatchTable = default_kind_table();
 // AppleM1M3 Streaming Table
 #[cfg(target_arch = "aarch64")]
 pub static APPLEM1M3_STREAMING_TABLE: StreamingTable = StreamingTable {
-  stream: KernelId::Aarch64Neon,
+  // Streaming workloads often look like many tiny `update()` calls. Until our
+  // NEON per-block path is stronger, use portable for stream and NEON for bulk.
+  stream: KernelId::Portable,
   bulk: KernelId::Aarch64Neon,
 };
 #[cfg(not(target_arch = "aarch64"))]
 pub static APPLEM1M3_STREAMING_TABLE: StreamingTable = default_kind_streaming_table();
 
 // AppleM4 Table
+#[cfg(target_arch = "aarch64")]
+pub static APPLEM4_TABLE: DispatchTable = DispatchTable {
+  boundaries: DEFAULT_BOUNDARIES,
+  xs: KernelId::Portable,
+  s: KernelId::Portable,
+  m: KernelId::Aarch64Neon,
+  l: KernelId::Aarch64Neon,
+};
+#[cfg(not(target_arch = "aarch64"))]
 pub static APPLEM4_TABLE: DispatchTable = default_kind_table();
 // AppleM4 Streaming Table
+#[cfg(target_arch = "aarch64")]
+pub static APPLEM4_STREAMING_TABLE: StreamingTable = StreamingTable {
+  stream: KernelId::Portable,
+  bulk: KernelId::Aarch64Neon,
+};
+#[cfg(not(target_arch = "aarch64"))]
 pub static APPLEM4_STREAMING_TABLE: StreamingTable = default_kind_streaming_table();
 // AppleM5 Table
+#[cfg(target_arch = "aarch64")]
+pub static APPLEM5_TABLE: DispatchTable = DispatchTable {
+  boundaries: DEFAULT_BOUNDARIES,
+  xs: KernelId::Portable,
+  s: KernelId::Portable,
+  m: KernelId::Aarch64Neon,
+  l: KernelId::Aarch64Neon,
+};
+#[cfg(not(target_arch = "aarch64"))]
 pub static APPLEM5_TABLE: DispatchTable = default_kind_table();
 // AppleM5 Streaming Table
+#[cfg(target_arch = "aarch64")]
+pub static APPLEM5_STREAMING_TABLE: StreamingTable = StreamingTable {
+  stream: KernelId::Portable,
+  bulk: KernelId::Aarch64Neon,
+};
+#[cfg(not(target_arch = "aarch64"))]
 pub static APPLEM5_STREAMING_TABLE: StreamingTable = default_kind_streaming_table();
 // Graviton2 Table
 #[cfg(target_arch = "aarch64")]

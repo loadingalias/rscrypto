@@ -30,9 +30,7 @@ mod asm;
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
-use super::{
-  BLOCK_LEN, CHUNK_LEN, CHUNK_START, IV, MSG_SCHEDULE, OUT_LEN, PARENT, first_8_words, words16_from_le_bytes_64,
-};
+use super::{BLOCK_LEN, CHUNK_LEN, CHUNK_START, IV, MSG_SCHEDULE, OUT_LEN, PARENT, words16_from_le_bytes_64};
 
 /// SIMD degree for NEON (4 parallel lanes).
 #[allow(dead_code)]
@@ -76,6 +74,17 @@ unsafe fn rotr8_tbl(v: uint32x4_t, tbl: uint8x16_t) -> uint32x4_t {
   let bytes = vreinterpretq_u8_u32(v);
   let rotated = vqtbl1q_u8(bytes, tbl);
   vreinterpretq_u32_u8(rotated)
+}
+
+/// Rotate right by 8 bits (each u32 lane), shift/or variant.
+///
+/// Some cores have relatively high-latency `tbl`/`vtbl` paths; for the per-block
+/// compressor (latency-sensitive), prefer a shift/or implementation.
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+unsafe fn rotr8(v: uint32x4_t) -> uint32x4_t {
+  // rotr(x, 8) = (x >> 8) | (x << 24)
+  vsliq_n_u32(vshrq_n_u32(v, 8), v, 24)
 }
 
 /// Rotate right by 7 bits (each u32 lane).
@@ -215,6 +224,147 @@ unsafe fn load_msg_vecs_transposed(inputs: [*const u8; 4], block_offset: usize, 
 // Single-block compression (NEON accelerated)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Helper: take the low 64-bit lane (2x u32) from each input and concatenate.
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+unsafe fn concat_low64_u32(a: uint32x4_t, b: uint32x4_t) -> uint32x4_t {
+  let a64 = vreinterpretq_u64_u32(a);
+  let b64 = vreinterpretq_u64_u32(b);
+  vreinterpretq_u32_u64(vcombine_u64(vget_low_u64(a64), vget_low_u64(b64)))
+}
+
+/// Message word permutation for BLAKE3.
+///
+/// This applies the fixed permutation:
+/// `[2,6,3,10,7,0,4,13,1,11,12,5,9,14,15,8]`.
+///
+/// Each round uses the same access pattern for message words, and the message
+/// vectors are permuted between rounds. This avoids the expensive per-round
+/// gather/extract machinery that dominated the previous per-block compressor.
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+unsafe fn permute_msg(m0: uint32x4_t, m1: uint32x4_t, m2: uint32x4_t, m3: uint32x4_t) -> [uint32x4_t; 4] {
+  // Rotations within each 4-word vector.
+  let m0r1 = vextq_u32(m0, m0, 1);
+  let m0r2 = vextq_u32(m0, m0, 2);
+  let m0r3 = vextq_u32(m0, m0, 3);
+
+  let m1r1 = vextq_u32(m1, m1, 1);
+  let m1r2 = vextq_u32(m1, m1, 2);
+  let m1r3 = vextq_u32(m1, m1, 3);
+
+  let m2r1 = vextq_u32(m2, m2, 1);
+  let m2r2 = vextq_u32(m2, m2, 2);
+  let m2r3 = vextq_u32(m2, m2, 3);
+
+  let m3r1 = vextq_u32(m3, m3, 1);
+  let m3r2 = vextq_u32(m3, m3, 2);
+  let m3r3 = vextq_u32(m3, m3, 3);
+
+  // Build each output vector as two 64-bit lanes (2x u32).
+  let p0 = concat_low64_u32(vzip1q_u32(m0r2, m1r2), vzip1q_u32(m0r3, m2r2)); // [2,6,3,10]
+  let p1 = concat_low64_u32(vzip1q_u32(m1r3, m0), vzip1q_u32(m1, m3r1)); // [7,0,4,13]
+  let p2 = concat_low64_u32(vzip1q_u32(m0r1, m2r3), vzip1q_u32(m3, m1r1)); // [1,11,12,5]
+  let p3 = concat_low64_u32(vzip1q_u32(m2r1, m3r2), vzip1q_u32(m3r3, m2)); // [9,14,15,8]
+  [p0, p1, p2, p3]
+}
+
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+#[inline]
+unsafe fn compress_neon_core(
+  chaining_value: &[u32; 8],
+  block: *const u8,
+  counter: u64,
+  block_len: u32,
+  flags: u32,
+) -> (uint32x4_t, uint32x4_t, uint32x4_t, uint32x4_t, uint32x4_t, uint32x4_t) {
+  const {
+    assert!(
+      cfg!(target_endian = "little"),
+      "aarch64 NEON implementation assumes little-endian"
+    );
+  }
+
+  // Load state into 4 vectors (rows of the BLAKE3 state matrix)
+  let mut row0 = vld1q_u32(chaining_value.as_ptr());
+  let mut row1 = vld1q_u32(chaining_value.as_ptr().add(4));
+  let mut row2 = vld1q_u32(IV.as_ptr());
+
+  // Build row3 from counter, block_len, and flags.
+  let counter_lo = counter as u32;
+  let counter_hi = (counter >> 32) as u32;
+  let row3_arr: [u32; 4] = [counter_lo, counter_hi, block_len, flags];
+  let mut row3 = vld1q_u32(row3_arr.as_ptr());
+
+  // Load message words into 4 vectors (standard order).
+  let mut m0 = vld1q_u32(block.cast());
+  let mut m1 = vld1q_u32(block.add(16).cast());
+  let mut m2 = vld1q_u32(block.add(32).cast());
+  let mut m3 = vld1q_u32(block.add(48).cast());
+
+  macro_rules! g {
+    ($a:expr, $b:expr, $c:expr, $d:expr, $mx:expr, $my:expr) => {{
+      $a = vaddq_u32($a, $b);
+      $a = vaddq_u32($a, $mx);
+      $d = veorq_u32($d, $a);
+      $d = rotr16($d);
+      $c = vaddq_u32($c, $d);
+      $b = veorq_u32($b, $c);
+      $b = rotr12($b);
+      $a = vaddq_u32($a, $b);
+      $a = vaddq_u32($a, $my);
+      $d = veorq_u32($d, $a);
+      $d = rotr8($d);
+      $c = vaddq_u32($c, $d);
+      $b = veorq_u32($b, $c);
+      $b = rotr7($b);
+    }};
+  }
+
+  macro_rules! round {
+    ($mx0:expr, $my0:expr, $mx1:expr, $my1:expr) => {{
+      // Column step
+      g!(row0, row1, row2, row3, $mx0, $my0);
+
+      // Diagonalize
+      row1 = rot_lanes_left_1(row1);
+      row2 = rot_lanes_left_2(row2);
+      row3 = rot_lanes_left_3(row3);
+
+      // Diagonal step
+      g!(row0, row1, row2, row3, $mx1, $my1);
+
+      // Undiagonalize
+      row1 = rot_lanes_left_3(row1);
+      row2 = rot_lanes_left_2(row2);
+      row3 = rot_lanes_left_1(row3);
+    }};
+  }
+
+  // Round 0 uses the message as-loaded. Between rounds, permute the message.
+  // For each round, build `(mx0,my0)` from words 0..7 and `(mx1,my1)` from 8..15.
+  for r in 0..7 {
+    let mx0 = vuzp1q_u32(m0, m1);
+    let my0 = vuzp2q_u32(m0, m1);
+    let mx1 = vuzp1q_u32(m2, m3);
+    let my1 = vuzp2q_u32(m2, m3);
+    round!(mx0, my0, mx1, my1);
+
+    if r != 6 {
+      let [p0, p1, p2, p3] = permute_msg(m0, m1, m2, m3);
+      m0 = p0;
+      m1 = p1;
+      m2 = p2;
+      m3 = p3;
+    }
+  }
+
+  let cv_lo = vld1q_u32(chaining_value.as_ptr());
+  let cv_hi = vld1q_u32(chaining_value.as_ptr().add(4));
+  (row0, row1, row2, row3, cv_lo, cv_hi)
+}
+
 /// BLAKE3 compress function using NEON intrinsics.
 ///
 /// # Safety
@@ -242,99 +392,8 @@ unsafe fn compress_neon_bytes(
   block_len: u32,
   flags: u32,
 ) -> [u32; 16] {
-  const {
-    assert!(
-      cfg!(target_endian = "little"),
-      "aarch64 NEON implementation assumes little-endian"
-    );
-  }
-
-  // Load state into 4 vectors (rows of the BLAKE3 state matrix)
-  let mut row0 = vld1q_u32(chaining_value.as_ptr());
-  let mut row1 = vld1q_u32(chaining_value.as_ptr().add(4));
-  let mut row2 = vld1q_u32(IV.as_ptr());
-
-  // Build row3 from counter, block_len, and flags
-  let counter_lo = counter as u32;
-  let counter_hi = (counter >> 32) as u32;
-  let row3_arr: [u32; 4] = [counter_lo, counter_hi, block_len, flags];
-  let mut row3 = vld1q_u32(row3_arr.as_ptr());
-
-  // Load message words.
-  let m0 = vld1q_u32(block.cast());
-  let m1 = vld1q_u32(block.add(16).cast());
-  let m2 = vld1q_u32(block.add(32).cast());
-  let m3 = vld1q_u32(block.add(48).cast());
-
-  // Rot8 shuffle table (hoisted once per compression).
-  let rot8_tbl = vld1q_u8(ROT8_TABLE.as_ptr());
-
-  // G function macro
-  macro_rules! g {
-    ($a:expr, $b:expr, $c:expr, $d:expr, $mx:expr, $my:expr) => {{
-      $a = vaddq_u32($a, $b);
-      $a = vaddq_u32($a, $mx);
-      $d = veorq_u32($d, $a);
-      $d = rotr16($d);
-      $c = vaddq_u32($c, $d);
-      $b = veorq_u32($b, $c);
-      $b = rotr12($b);
-      $a = vaddq_u32($a, $b);
-      $a = vaddq_u32($a, $my);
-      $d = veorq_u32($d, $a);
-      $d = rotr8_tbl($d, rot8_tbl);
-      $c = vaddq_u32($c, $d);
-      $b = veorq_u32($b, $c);
-      $b = rotr7($b);
-    }};
-  }
-
-  // One round: column step + diagonal step
-  macro_rules! round {
-    ($mx0:expr, $my0:expr, $mx1:expr, $my1:expr) => {{
-      // Column step
-      g!(row0, row1, row2, row3, $mx0, $my0);
-
-      // Diagonalize
-      row1 = rot_lanes_left_1(row1);
-      row2 = rot_lanes_left_2(row2);
-      row3 = rot_lanes_left_3(row3);
-
-      // Diagonal step
-      g!(row0, row1, row2, row3, $mx1, $my1);
-
-      // Undiagonalize
-      row1 = rot_lanes_left_3(row1);
-      row2 = rot_lanes_left_2(row2);
-      row3 = rot_lanes_left_1(row3);
-    }};
-  }
-
-  // Execute all 7 rounds with the BLAKE3 message schedule.
-  let (mx0, my0, mx1, my1) = permute_round_0(m0, m1, m2, m3);
-  round!(mx0, my0, mx1, my1);
-
-  let (mx0, my0, mx1, my1) = permute_round_1(m0, m1, m2, m3);
-  round!(mx0, my0, mx1, my1);
-
-  let (mx0, my0, mx1, my1) = permute_round_2(m0, m1, m2, m3);
-  round!(mx0, my0, mx1, my1);
-
-  let (mx0, my0, mx1, my1) = permute_round_3(m0, m1, m2, m3);
-  round!(mx0, my0, mx1, my1);
-
-  let (mx0, my0, mx1, my1) = permute_round_4(m0, m1, m2, m3);
-  round!(mx0, my0, mx1, my1);
-
-  let (mx0, my0, mx1, my1) = permute_round_5(m0, m1, m2, m3);
-  round!(mx0, my0, mx1, my1);
-
-  let (mx0, my0, mx1, my1) = permute_round_6(m0, m1, m2, m3);
-  round!(mx0, my0, mx1, my1);
-
-  // Finalization
-  let cv_lo = vld1q_u32(chaining_value.as_ptr());
-  let cv_hi = vld1q_u32(chaining_value.as_ptr().add(4));
+  let (mut row0, mut row1, mut row2, mut row3, cv_lo, cv_hi) =
+    compress_neon_core(chaining_value, block, counter, block_len, flags);
 
   row0 = veorq_u32(row0, row2);
   row1 = veorq_u32(row1, row3);
@@ -348,168 +407,6 @@ unsafe fn compress_neon_bytes(
   vst1q_u32(out.as_mut_ptr().add(8), row2);
   vst1q_u32(out.as_mut_ptr().add(12), row3);
   out
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Message permutation helpers (for single-block compression)
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Helper to extract a single word from the message vectors.
-#[cfg(target_arch = "aarch64")]
-#[inline(always)]
-unsafe fn extract_word(m0: uint32x4_t, m1: uint32x4_t, m2: uint32x4_t, m3: uint32x4_t, idx: usize) -> u32 {
-  match idx {
-    0 => vgetq_lane_u32(m0, 0),
-    1 => vgetq_lane_u32(m0, 1),
-    2 => vgetq_lane_u32(m0, 2),
-    3 => vgetq_lane_u32(m0, 3),
-    4 => vgetq_lane_u32(m1, 0),
-    5 => vgetq_lane_u32(m1, 1),
-    6 => vgetq_lane_u32(m1, 2),
-    7 => vgetq_lane_u32(m1, 3),
-    8 => vgetq_lane_u32(m2, 0),
-    9 => vgetq_lane_u32(m2, 1),
-    10 => vgetq_lane_u32(m2, 2),
-    11 => vgetq_lane_u32(m2, 3),
-    12 => vgetq_lane_u32(m3, 0),
-    13 => vgetq_lane_u32(m3, 1),
-    14 => vgetq_lane_u32(m3, 2),
-    _ => vgetq_lane_u32(m3, 3),
-  }
-}
-
-/// Build a vector from 4 specific message word indices.
-#[cfg(target_arch = "aarch64")]
-#[inline(always)]
-unsafe fn blend_words(
-  m0: uint32x4_t,
-  m1: uint32x4_t,
-  m2: uint32x4_t,
-  m3: uint32x4_t,
-  i0: usize,
-  i1: usize,
-  i2: usize,
-  i3: usize,
-) -> uint32x4_t {
-  let arr: [u32; 4] = [
-    extract_word(m0, m1, m2, m3, i0),
-    extract_word(m0, m1, m2, m3, i1),
-    extract_word(m0, m1, m2, m3, i2),
-    extract_word(m0, m1, m2, m3, i3),
-  ];
-  vld1q_u32(arr.as_ptr())
-}
-
-/// Round 0: identity permutation
-#[cfg(target_arch = "aarch64")]
-#[inline(always)]
-unsafe fn permute_round_0(
-  m0: uint32x4_t,
-  m1: uint32x4_t,
-  m2: uint32x4_t,
-  m3: uint32x4_t,
-) -> (uint32x4_t, uint32x4_t, uint32x4_t, uint32x4_t) {
-  let mx0 = blend_words(m0, m1, m2, m3, 0, 2, 4, 6);
-  let my0 = blend_words(m0, m1, m2, m3, 1, 3, 5, 7);
-  let mx1 = blend_words(m0, m1, m2, m3, 8, 10, 12, 14);
-  let my1 = blend_words(m0, m1, m2, m3, 9, 11, 13, 15);
-  (mx0, my0, mx1, my1)
-}
-
-/// Round 1: m[2,6,3,10,7,0,4,13,1,11,12,5,9,14,15,8]
-#[cfg(target_arch = "aarch64")]
-#[inline(always)]
-unsafe fn permute_round_1(
-  m0: uint32x4_t,
-  m1: uint32x4_t,
-  m2: uint32x4_t,
-  m3: uint32x4_t,
-) -> (uint32x4_t, uint32x4_t, uint32x4_t, uint32x4_t) {
-  let mx0 = blend_words(m0, m1, m2, m3, 2, 3, 7, 4);
-  let my0 = blend_words(m0, m1, m2, m3, 6, 10, 0, 13);
-  let mx1 = blend_words(m0, m1, m2, m3, 1, 12, 9, 15);
-  let my1 = blend_words(m0, m1, m2, m3, 11, 5, 14, 8);
-  (mx0, my0, mx1, my1)
-}
-
-/// Round 2: m[3,4,10,12,13,2,7,14,6,5,9,0,11,15,8,1]
-#[cfg(target_arch = "aarch64")]
-#[inline(always)]
-unsafe fn permute_round_2(
-  m0: uint32x4_t,
-  m1: uint32x4_t,
-  m2: uint32x4_t,
-  m3: uint32x4_t,
-) -> (uint32x4_t, uint32x4_t, uint32x4_t, uint32x4_t) {
-  let mx0 = blend_words(m0, m1, m2, m3, 3, 10, 13, 7);
-  let my0 = blend_words(m0, m1, m2, m3, 4, 12, 2, 14);
-  let mx1 = blend_words(m0, m1, m2, m3, 6, 9, 11, 8);
-  let my1 = blend_words(m0, m1, m2, m3, 5, 0, 15, 1);
-  (mx0, my0, mx1, my1)
-}
-
-/// Round 3: m[10,7,12,9,14,3,13,15,4,0,11,2,5,8,1,6]
-#[cfg(target_arch = "aarch64")]
-#[inline(always)]
-unsafe fn permute_round_3(
-  m0: uint32x4_t,
-  m1: uint32x4_t,
-  m2: uint32x4_t,
-  m3: uint32x4_t,
-) -> (uint32x4_t, uint32x4_t, uint32x4_t, uint32x4_t) {
-  let mx0 = blend_words(m0, m1, m2, m3, 10, 12, 14, 13);
-  let my0 = blend_words(m0, m1, m2, m3, 7, 9, 3, 15);
-  let mx1 = blend_words(m0, m1, m2, m3, 4, 11, 5, 1);
-  let my1 = blend_words(m0, m1, m2, m3, 0, 2, 8, 6);
-  (mx0, my0, mx1, my1)
-}
-
-/// Round 4: m[12,13,9,11,15,10,14,8,7,2,5,3,0,1,6,4]
-#[cfg(target_arch = "aarch64")]
-#[inline(always)]
-unsafe fn permute_round_4(
-  m0: uint32x4_t,
-  m1: uint32x4_t,
-  m2: uint32x4_t,
-  m3: uint32x4_t,
-) -> (uint32x4_t, uint32x4_t, uint32x4_t, uint32x4_t) {
-  let mx0 = blend_words(m0, m1, m2, m3, 12, 9, 15, 14);
-  let my0 = blend_words(m0, m1, m2, m3, 13, 11, 10, 8);
-  let mx1 = blend_words(m0, m1, m2, m3, 7, 5, 0, 6);
-  let my1 = blend_words(m0, m1, m2, m3, 2, 3, 1, 4);
-  (mx0, my0, mx1, my1)
-}
-
-/// Round 5: m[9,14,11,5,8,12,15,1,13,3,0,10,2,6,4,7]
-#[cfg(target_arch = "aarch64")]
-#[inline(always)]
-unsafe fn permute_round_5(
-  m0: uint32x4_t,
-  m1: uint32x4_t,
-  m2: uint32x4_t,
-  m3: uint32x4_t,
-) -> (uint32x4_t, uint32x4_t, uint32x4_t, uint32x4_t) {
-  let mx0 = blend_words(m0, m1, m2, m3, 9, 11, 8, 15);
-  let my0 = blend_words(m0, m1, m2, m3, 14, 5, 12, 1);
-  let mx1 = blend_words(m0, m1, m2, m3, 13, 0, 2, 4);
-  let my1 = blend_words(m0, m1, m2, m3, 3, 10, 6, 7);
-  (mx0, my0, mx1, my1)
-}
-
-/// Round 6: m[11,15,5,0,1,9,8,6,14,10,2,12,3,4,7,13]
-#[cfg(target_arch = "aarch64")]
-#[inline(always)]
-unsafe fn permute_round_6(
-  m0: uint32x4_t,
-  m1: uint32x4_t,
-  m2: uint32x4_t,
-  m3: uint32x4_t,
-) -> (uint32x4_t, uint32x4_t, uint32x4_t, uint32x4_t) {
-  let mx0 = blend_words(m0, m1, m2, m3, 11, 5, 1, 8);
-  let my0 = blend_words(m0, m1, m2, m3, 15, 0, 9, 6);
-  let mx1 = blend_words(m0, m1, m2, m3, 14, 2, 3, 7);
-  let my1 = blend_words(m0, m1, m2, m3, 10, 12, 4, 13);
-  (mx0, my0, mx1, my1)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -840,13 +737,13 @@ pub unsafe fn chunk_cv_one_chunk_aarch64_out(input: *const u8, key: &[u32; 8], c
       } else {
         0
       };
-      cv = first_8_words(compress_neon_bytes(
+      cv = compress_cv_neon_bytes(
         &cv,
         block_bytes.as_ptr(),
         counter,
         BLOCK_LEN as u32,
         flags | start | end,
-      ));
+      );
     }
 
     for (j, &word) in cv.iter().enumerate() {
@@ -910,13 +807,7 @@ pub unsafe fn chunk_state_one_chunk_aarch64_out(
       };
 
       let start = if block_idx == 0 { CHUNK_START } else { 0 };
-      cv = first_8_words(compress_neon_bytes(
-        &cv,
-        block_bytes.as_ptr(),
-        counter,
-        BLOCK_LEN as u32,
-        flags | start,
-      ));
+      cv = compress_cv_neon_bytes(&cv, block_bytes.as_ptr(), counter, BLOCK_LEN as u32, flags | start);
     }
 
     // Store cv.
@@ -1088,19 +979,71 @@ pub unsafe fn chunk_compress_blocks_neon(
   blocks: &[u8],
 ) {
   debug_assert_eq!(blocks.len() % BLOCK_LEN, 0);
+
+  // aarch64 per-block hot path:
+  // Use the scalar assembly backend for tight block-compress loops. This avoids
+  // the current Rust/NEON per-block cliffs (message permutation overhead), and
+  // is especially important for server-class cores (Neoverse/Graviton) and
+  // streaming workloads with many full blocks.
+  #[cfg(target_os = "linux")]
+  {
+    if !blocks.is_empty() {
+      let num_blocks = blocks.len() / BLOCK_LEN;
+      debug_assert_ne!(num_blocks, 0);
+      // SAFETY: `blocks` is `num_blocks * 64` bytes, `chaining_value` is 8 u32
+      // words, `blocks_compressed` is a valid pointer to a `u8`, and this is
+      // only compiled on Linux aarch64 where the symbol is available.
+      unsafe {
+        asm::rscrypto_blake3_chunk_compress_blocks_aarch64_unix_linux(
+          blocks.as_ptr(),
+          chaining_value.as_mut_ptr(),
+          chunk_counter,
+          flags,
+          blocks_compressed as *mut u8,
+          num_blocks,
+        );
+      }
+      return;
+    }
+  }
+
   let (block_slices, remainder) = blocks.as_chunks::<BLOCK_LEN>();
   debug_assert!(remainder.is_empty());
   for block_bytes in block_slices {
     let start = if *blocks_compressed == 0 { CHUNK_START } else { 0 };
-    *chaining_value = first_8_words(compress_neon_bytes(
+    *chaining_value = compress_cv_neon_bytes(
       chaining_value,
       block_bytes.as_ptr(),
       chunk_counter,
       BLOCK_LEN as u32,
       flags | start,
-    ));
+    );
     *blocks_compressed = blocks_compressed.wrapping_add(1);
   }
+}
+
+/// NEON CV-only compression.
+///
+/// Returns the 8-word chaining value result (row0^row2, row1^row3), avoiding
+/// materializing the full 16-word compression output.
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn compress_cv_neon_bytes(
+  chaining_value: &[u32; 8],
+  block: *const u8,
+  counter: u64,
+  block_len: u32,
+  flags: u32,
+) -> [u32; 8] {
+  let (mut row0, mut row1, row2, row3, _cv_lo, _cv_hi) =
+    compress_neon_core(chaining_value, block, counter, block_len, flags);
+  row0 = veorq_u32(row0, row2);
+  row1 = veorq_u32(row1, row3);
+
+  let mut out = [0u32; 8];
+  vst1q_u32(out.as_mut_ptr(), row0);
+  vst1q_u32(out.as_mut_ptr().add(4), row1);
+  out
 }
 
 /// NEON parent CV computation.
@@ -1120,13 +1063,13 @@ pub unsafe fn parent_cv_neon(
   let mut block_words = [0u32; 16];
   block_words[..8].copy_from_slice(&left_child_cv);
   block_words[8..].copy_from_slice(&right_child_cv);
-  first_8_words(compress_neon(
+  compress_cv_neon_bytes(
     &key_words,
-    &block_words,
+    block_words.as_ptr().cast(),
     0,
     BLOCK_LEN as u32,
     PARENT | flags,
-  ))
+  )
 }
 
 /// Generate 4 root output blocks (64 bytes each) in parallel.
