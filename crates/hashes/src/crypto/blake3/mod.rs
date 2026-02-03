@@ -1487,6 +1487,49 @@ impl Digest for Blake3 {
 
   #[inline]
   fn finalize(&self) -> Self::Output {
+    // Keyed/derive tiny sizes: avoid materializing `[u32; 16]` and the generic
+    // `OutputState` machinery when the entire input fits in a single chunk.
+    //
+    // The upstream BLAKE3 implementations treat these as latency-critical and
+    // compute just the root CV (8 words) for the first output block.
+    #[cfg(target_arch = "x86_64")]
+    {
+      if self.chunk_state.chunk_counter == 0 && self.cv_stack_len == 0 && self.pending_chunk_cv.is_none() {
+        match self.kernel.id {
+          kernels::Blake3KernelId::X86Sse41 | kernels::Blake3KernelId::X86Avx2 | kernels::Blake3KernelId::X86Avx512 => {
+            let mut block = self.chunk_state.block;
+            let block_len = self.chunk_state.block_len as usize;
+            if block_len != BLOCK_LEN {
+              block[block_len..].fill(0);
+            }
+
+            let flags = self.flags | self.chunk_state.start_flag() | CHUNK_END | ROOT;
+            let cv = self.chunk_state.chaining_value;
+
+            // SAFETY: dispatch only selects these kernels when the required CPU
+            // features are available.
+            let out_words = unsafe {
+              match self.kernel.id {
+                kernels::Blake3KernelId::X86Sse41 => {
+                  x86_64::compress_cv_sse41_bytes(&cv, block.as_ptr(), 0, block_len as u32, flags)
+                }
+                kernels::Blake3KernelId::X86Avx2 => {
+                  x86_64::compress_cv_avx2_bytes(&cv, block.as_ptr(), 0, block_len as u32, flags)
+                }
+                kernels::Blake3KernelId::X86Avx512 => {
+                  x86_64::compress_cv_avx512_bytes(&cv, block.as_ptr(), 0, block_len as u32, flags)
+                }
+                _ => unreachable!(),
+              }
+            };
+
+            return words8_to_le_bytes(&out_words);
+          }
+          _ => {}
+        }
+      }
+    }
+
     // If the caller never provided any input (or only provided empty updates),
     // we still want to use the tuned streaming kernel rather than staying
     // pinned to the portable default.
@@ -1550,51 +1593,6 @@ impl Blake3Xof {
     self.block_counter = self.block_counter.wrapping_add(1);
     self.buf_pos = 0;
   }
-
-  /// Upgrade the internal kernel to a SIMD kernel for better squeeze performance.
-  /// This is called automatically when a large squeeze is requested.
-  #[inline]
-  #[cfg(target_arch = "x86_64")]
-  fn upgrade_to_simd_kernel(&mut self, _output_len: usize) {
-    // Only upgrade if currently using portable kernel and we have SIMD available
-    if self.kernel.id == kernels::Blake3KernelId::Portable {
-      use platform::caps::x86;
-      let caps = platform::caps();
-      let simd_kernel_id = if caps.has(x86::AVX512F.union(x86::AVX512VL)) {
-        kernels::Blake3KernelId::X86Avx512
-      } else if caps.has(x86::AVX2) {
-        kernels::Blake3KernelId::X86Avx2
-      } else if caps.has(x86::SSE41) {
-        kernels::Blake3KernelId::X86Sse41
-      } else {
-        return; // No SIMD available
-      };
-
-      // Upgrade the kernel in the output state
-      self.kernel = kernels::kernel(simd_kernel_id);
-      self.output.kernel = self.kernel;
-    }
-  }
-
-  #[inline]
-  #[cfg(target_arch = "aarch64")]
-  fn upgrade_to_simd_kernel(&mut self, _output_len: usize) {
-    // Only upgrade if currently using portable kernel and we have NEON available
-    if self.kernel.id == kernels::Blake3KernelId::Portable {
-      use platform::caps::aarch64;
-      let caps = platform::caps();
-      if caps.has(aarch64::NEON) {
-        self.kernel = kernels::kernel(kernels::Blake3KernelId::Aarch64Neon);
-        self.output.kernel = self.kernel;
-      }
-    }
-  }
-
-  #[inline]
-  #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-  fn upgrade_to_simd_kernel(&mut self, _output_len: usize) {
-    // No SIMD available on other platforms
-  }
 }
 
 impl Xof for Blake3Xof {
@@ -1603,12 +1601,21 @@ impl Xof for Blake3Xof {
       return;
     }
 
-    // World-class: if this is a large squeeze with portable kernel, upgrade to SIMD.
-    // This is the runtime safety net for XOF performance - even if the caller didn't
-    // use finalize_xof_sized(), we can still recover and use SIMD for large outputs.
+    // World-class: XOF output generation is dominated by the squeeze phase, not the
+    // input hashing phase. Tiny inputs can select a "streaming" kernel (e.g. SSE4.1)
+    // that is great for per-block updates but suboptimal for generating many output
+    // blocks. For large squeezes, upgrade to the best available bulk kernel.
+    //
+    // This is the runtime safety net: even if the caller didn't use
+    // `finalize_xof_sized()`, we can still avoid being pinned to a small-input
+    // kernel for a large output request.
     const LARGE_SQUEEZE_THRESHOLD: usize = 512;
-    if out.len() >= LARGE_SQUEEZE_THRESHOLD && self.kernel.id == kernels::Blake3KernelId::Portable {
-      self.upgrade_to_simd_kernel(out.len());
+    if out.len() >= LARGE_SQUEEZE_THRESHOLD {
+      let desired = dispatch::kernel_dispatch().select(out.len());
+      if desired.id != self.kernel.id {
+        self.kernel = desired;
+        self.output.kernel = desired;
+      }
     }
 
     // Drain any buffered bytes first.
@@ -1825,5 +1832,43 @@ mod tests {
     let mut expected_dk = [0u8; OUT_LEN];
     hex_to_bytes(expected_dk_hex, &mut expected_dk);
     assert_eq!(dk.finalize(), expected_dk);
+  }
+
+  #[test]
+  fn keyed_and_derive_streaming_tiny_matches_oneshot() {
+    const KEY: &[u8; 32] = b"whats the Elvish word for friend";
+    const CONTEXT: &str = "BLAKE3 2019-12-27 16:29:52 test vectors context";
+
+    for len in [0usize, 1, 3, 8, 16, 31, 32, 63, 64, 65, 127, 255, 1024] {
+      let input = input_pattern(len);
+
+      // Keyed: streaming vs one-shot.
+      let expected_keyed = Blake3::keyed_digest(KEY, &input);
+      for split in [1usize, 7, 13, 64, 255, 1024] {
+        let mut h = Blake3::new_keyed(KEY);
+        for chunk in input.chunks(split) {
+          h.update(chunk);
+        }
+        assert_eq!(
+          h.finalize(),
+          expected_keyed,
+          "keyed streaming mismatch len={len} split={split}"
+        );
+      }
+
+      // Derive: streaming vs one-shot.
+      let expected_derive = Blake3::derive_key(CONTEXT, &input);
+      for split in [1usize, 7, 13, 64, 255, 1024] {
+        let mut h = Blake3::new_derive_key(CONTEXT);
+        for chunk in input.chunks(split) {
+          h.update(chunk);
+        }
+        assert_eq!(
+          h.finalize(),
+          expected_derive,
+          "derive streaming mismatch len={len} split={split}"
+        );
+      }
+    }
   }
 }

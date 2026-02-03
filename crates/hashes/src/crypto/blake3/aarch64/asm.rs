@@ -38,6 +38,15 @@ unsafe extern "C" {
     out_cv: *mut u32,
     out_last_block: *mut u8,
   );
+
+  pub fn rscrypto_blake3_chunk_compress_blocks_aarch64_unix_linux(
+    blocks: *const u8,
+    chaining_value: *mut u32,
+    chunk_counter: u64,
+    flags: u32,
+    blocks_compressed: *mut u8,
+    num_blocks: usize,
+  );
 }
 
 #[cfg(target_os = "macos")]
