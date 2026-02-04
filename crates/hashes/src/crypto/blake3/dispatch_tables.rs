@@ -9,6 +9,23 @@ pub use super::kernels::Blake3KernelId as KernelId;
 
 pub const DEFAULT_BOUNDARIES: [usize; 3] = [64, 256, 4096];
 
+/// Parallel hashing policy for large inputs (std-only).
+///
+/// This controls when BLAKE3 will automatically use multi-core hashing and how
+/// many threads it will use at most.
+#[derive(Clone, Copy, Debug)]
+pub struct ParallelTable {
+  /// Minimum total input bytes before parallel hashing is considered.
+  pub min_bytes: usize,
+  /// Minimum number of full chunks to commit in one batch.
+  pub min_chunks: usize,
+  /// Maximum total threads to use (including the caller thread).
+  ///
+  /// - `0` means "no explicit cap" (use all available hardware threads).
+  /// - `1` disables parallel hashing.
+  pub max_threads: u8,
+}
+
 /// Streaming dispatch preferences.
 ///
 /// `stream` is used for the per-block / ChunkState hot path (many small updates).
@@ -87,6 +104,17 @@ const fn default_kind_streaming_table() -> StreamingTable {
   }
 }
 
+#[inline]
+#[must_use]
+const fn default_kind_parallel_table() -> ParallelTable {
+  // Conservative defaults that avoid overhead on medium-sized inputs.
+  ParallelTable {
+    min_bytes: 512 * 1024,
+    min_chunks: 256,
+    max_threads: 0,
+  }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct DispatchTable {
   pub boundaries: [usize; 3],
@@ -126,18 +154,30 @@ pub static DEFAULT_STREAMING_TABLE: StreamingTable = StreamingTable {
   bulk: KernelId::Portable,
 };
 
+pub static DEFAULT_PARALLEL_TABLE: ParallelTable = ParallelTable {
+  min_bytes: 512 * 1024,
+  min_chunks: 256,
+  max_threads: 0,
+};
+
 // Custom Table
 pub static CUSTOM_TABLE: DispatchTable = DEFAULT_TABLE;
 // Custom Streaming Table
 pub static CUSTOM_STREAMING_TABLE: StreamingTable = DEFAULT_STREAMING_TABLE;
+// Custom Parallel Table
+pub static CUSTOM_PARALLEL_TABLE: ParallelTable = DEFAULT_PARALLEL_TABLE;
 // Default Table
 pub static DEFAULT_KIND_TABLE: DispatchTable = default_kind_table();
 // Default Streaming Table
 pub static DEFAULT_KIND_STREAMING_TABLE: StreamingTable = default_kind_streaming_table();
+// Default Parallel Table
+pub static DEFAULT_KIND_PARALLEL_TABLE: ParallelTable = default_kind_parallel_table();
 // Portable Table
 pub static PORTABLE_TABLE: DispatchTable = DEFAULT_TABLE;
 // Portable Streaming Table
 pub static PORTABLE_STREAMING_TABLE: StreamingTable = DEFAULT_STREAMING_TABLE;
+// Portable Parallel Table
+pub static PORTABLE_PARALLEL_TABLE: ParallelTable = DEFAULT_PARALLEL_TABLE;
 // Zen4 Table
 #[cfg(target_arch = "x86_64")]
 pub static ZEN4_TABLE: DispatchTable = DispatchTable {
@@ -158,6 +198,8 @@ pub static ZEN4_STREAMING_TABLE: StreamingTable = StreamingTable {
 };
 #[cfg(not(target_arch = "x86_64"))]
 pub static ZEN4_STREAMING_TABLE: StreamingTable = default_kind_streaming_table();
+// Zen4 Parallel Table
+pub static ZEN4_PARALLEL_TABLE: ParallelTable = default_kind_parallel_table();
 // Zen5 Table
 #[cfg(target_arch = "x86_64")]
 pub static ZEN5_TABLE: DispatchTable = DispatchTable {
@@ -178,6 +220,8 @@ pub static ZEN5_STREAMING_TABLE: StreamingTable = StreamingTable {
 };
 #[cfg(not(target_arch = "x86_64"))]
 pub static ZEN5_STREAMING_TABLE: StreamingTable = default_kind_streaming_table();
+// Zen5 Parallel Table
+pub static ZEN5_PARALLEL_TABLE: ParallelTable = default_kind_parallel_table();
 // Zen5c Table
 #[cfg(target_arch = "x86_64")]
 pub static ZEN5C_TABLE: DispatchTable = DispatchTable {
@@ -198,6 +242,8 @@ pub static ZEN5C_STREAMING_TABLE: StreamingTable = StreamingTable {
 };
 #[cfg(not(target_arch = "x86_64"))]
 pub static ZEN5C_STREAMING_TABLE: StreamingTable = default_kind_streaming_table();
+// Zen5c Parallel Table
+pub static ZEN5C_PARALLEL_TABLE: ParallelTable = default_kind_parallel_table();
 // IntelSpr Table
 #[cfg(target_arch = "x86_64")]
 pub static INTELSPR_TABLE: DispatchTable = DispatchTable {
@@ -218,6 +264,57 @@ pub static INTELSPR_STREAMING_TABLE: StreamingTable = StreamingTable {
 };
 #[cfg(not(target_arch = "x86_64"))]
 pub static INTELSPR_STREAMING_TABLE: StreamingTable = default_kind_streaming_table();
+// IntelSpr Parallel Table
+pub static INTELSPR_PARALLEL_TABLE: ParallelTable = default_kind_parallel_table();
+// IntelGnr Parallel Table
+pub static INTELGNR_PARALLEL_TABLE: ParallelTable = default_kind_parallel_table();
+// IntelIcl Parallel Table
+pub static INTELICL_PARALLEL_TABLE: ParallelTable = default_kind_parallel_table();
+// AppleM1M3 Parallel Table
+pub static APPLEM1M3_PARALLEL_TABLE: ParallelTable = ParallelTable {
+  min_bytes: 65536,
+  min_chunks: 63,
+  max_threads: 8,
+};
+
+// AppleM4 Parallel Table
+pub static APPLEM4_PARALLEL_TABLE: ParallelTable = default_kind_parallel_table();
+// AppleM5 Parallel Table
+pub static APPLEM5_PARALLEL_TABLE: ParallelTable = default_kind_parallel_table();
+// Graviton2 Parallel Table
+pub static GRAVITON2_PARALLEL_TABLE: ParallelTable = default_kind_parallel_table();
+// Graviton3 Parallel Table
+pub static GRAVITON3_PARALLEL_TABLE: ParallelTable = default_kind_parallel_table();
+// Graviton4 Parallel Table
+pub static GRAVITON4_PARALLEL_TABLE: ParallelTable = default_kind_parallel_table();
+// Graviton5 Parallel Table
+pub static GRAVITON5_PARALLEL_TABLE: ParallelTable = default_kind_parallel_table();
+// NeoverseN2 Parallel Table
+pub static NEOVERSEN2_PARALLEL_TABLE: ParallelTable = default_kind_parallel_table();
+// NeoverseN3 Parallel Table
+pub static NEOVERSEN3_PARALLEL_TABLE: ParallelTable = default_kind_parallel_table();
+// NeoverseV3 Parallel Table
+pub static NEOVERSEV3_PARALLEL_TABLE: ParallelTable = default_kind_parallel_table();
+// NvidiaGrace Parallel Table
+pub static NVIDIAGRACE_PARALLEL_TABLE: ParallelTable = default_kind_parallel_table();
+// AmpereAltra Parallel Table
+pub static AMPEREALTRA_PARALLEL_TABLE: ParallelTable = default_kind_parallel_table();
+// Aarch64Pmull Parallel Table
+pub static AARCH64PMULL_PARALLEL_TABLE: ParallelTable = default_kind_parallel_table();
+// Z13 Parallel Table
+pub static Z13_PARALLEL_TABLE: ParallelTable = default_kind_parallel_table();
+// Z14 Parallel Table
+pub static Z14_PARALLEL_TABLE: ParallelTable = default_kind_parallel_table();
+// Z15 Parallel Table
+pub static Z15_PARALLEL_TABLE: ParallelTable = default_kind_parallel_table();
+// Power7 Parallel Table
+pub static POWER7_PARALLEL_TABLE: ParallelTable = default_kind_parallel_table();
+// Power8 Parallel Table
+pub static POWER8_PARALLEL_TABLE: ParallelTable = default_kind_parallel_table();
+// Power9 Parallel Table
+pub static POWER9_PARALLEL_TABLE: ParallelTable = default_kind_parallel_table();
+// Power10 Parallel Table
+pub static POWER10_PARALLEL_TABLE: ParallelTable = default_kind_parallel_table();
 
 // IntelGnr Table
 #[cfg(target_arch = "x86_64")]
@@ -262,9 +359,6 @@ pub static INTELICL_STREAMING_TABLE: StreamingTable = default_kind_streaming_tab
 #[cfg(target_arch = "aarch64")]
 pub static APPLEM1M3_TABLE: DispatchTable = DispatchTable {
   boundaries: DEFAULT_BOUNDARIES,
-  // Apple M-series: our current NEON per-block compressor is not competitive for
-  // tiny inputs (sub-1KiB, especially <= 64B). Prefer portable for XS/S and use
-  // NEON for medium/large where throughput wins dominate.
   xs: KernelId::Portable,
   s: KernelId::Portable,
   m: KernelId::Aarch64Neon,
@@ -276,8 +370,6 @@ pub static APPLEM1M3_TABLE: DispatchTable = default_kind_table();
 // AppleM1M3 Streaming Table
 #[cfg(target_arch = "aarch64")]
 pub static APPLEM1M3_STREAMING_TABLE: StreamingTable = StreamingTable {
-  // Streaming workloads often look like many tiny `update()` calls. Until our
-  // NEON per-block path is stronger, use portable for stream and NEON for bulk.
   stream: KernelId::Portable,
   bulk: KernelId::Aarch64Neon,
 };
@@ -580,5 +672,41 @@ pub fn select_streaming_table(kind: TuneKind) -> &'static StreamingTable {
     TuneKind::Power8 => &POWER8_STREAMING_TABLE,
     TuneKind::Power9 => &POWER9_STREAMING_TABLE,
     TuneKind::Power10 => &POWER10_STREAMING_TABLE,
+  }
+}
+
+#[inline]
+#[must_use]
+pub fn select_parallel_table(kind: TuneKind) -> &'static ParallelTable {
+  match kind {
+    TuneKind::Custom => &CUSTOM_PARALLEL_TABLE,
+    TuneKind::Default => &DEFAULT_KIND_PARALLEL_TABLE,
+    TuneKind::Portable => &PORTABLE_PARALLEL_TABLE,
+    TuneKind::Zen4 => &ZEN4_PARALLEL_TABLE,
+    TuneKind::Zen5 => &ZEN5_PARALLEL_TABLE,
+    TuneKind::Zen5c => &ZEN5C_PARALLEL_TABLE,
+    TuneKind::IntelSpr => &INTELSPR_PARALLEL_TABLE,
+    TuneKind::IntelGnr => &INTELGNR_PARALLEL_TABLE,
+    TuneKind::IntelIcl => &INTELICL_PARALLEL_TABLE,
+    TuneKind::AppleM1M3 => &APPLEM1M3_PARALLEL_TABLE,
+    TuneKind::AppleM4 => &APPLEM4_PARALLEL_TABLE,
+    TuneKind::AppleM5 => &APPLEM5_PARALLEL_TABLE,
+    TuneKind::Graviton2 => &GRAVITON2_PARALLEL_TABLE,
+    TuneKind::Graviton3 => &GRAVITON3_PARALLEL_TABLE,
+    TuneKind::Graviton4 => &GRAVITON4_PARALLEL_TABLE,
+    TuneKind::Graviton5 => &GRAVITON5_PARALLEL_TABLE,
+    TuneKind::NeoverseN2 => &NEOVERSEN2_PARALLEL_TABLE,
+    TuneKind::NeoverseN3 => &NEOVERSEN3_PARALLEL_TABLE,
+    TuneKind::NeoverseV3 => &NEOVERSEV3_PARALLEL_TABLE,
+    TuneKind::NvidiaGrace => &NVIDIAGRACE_PARALLEL_TABLE,
+    TuneKind::AmpereAltra => &AMPEREALTRA_PARALLEL_TABLE,
+    TuneKind::Aarch64Pmull => &AARCH64PMULL_PARALLEL_TABLE,
+    TuneKind::Z13 => &Z13_PARALLEL_TABLE,
+    TuneKind::Z14 => &Z14_PARALLEL_TABLE,
+    TuneKind::Z15 => &Z15_PARALLEL_TABLE,
+    TuneKind::Power7 => &POWER7_PARALLEL_TABLE,
+    TuneKind::Power8 => &POWER8_PARALLEL_TABLE,
+    TuneKind::Power9 => &POWER9_PARALLEL_TABLE,
+    TuneKind::Power10 => &POWER10_PARALLEL_TABLE,
   }
 }

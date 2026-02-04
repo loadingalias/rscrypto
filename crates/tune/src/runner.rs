@@ -227,7 +227,7 @@ impl BenchRunner {
 
   #[inline]
   #[must_use]
-  fn sampler_config(&self) -> crate::sampler::SamplerConfig {
+  pub(crate) fn sampler_config(&self) -> crate::sampler::SamplerConfig {
     crate::sampler::SamplerConfig {
       warmup: self.warmup,
       measure: self.measure,

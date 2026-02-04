@@ -203,4 +203,13 @@ impl crate::Tunable for HashTunable {
   fn tuning_domain(&self) -> TuningDomain {
     TuningDomain::Hash
   }
+
+  fn threshold_to_env_suffix(&self, threshold_name: &str) -> Option<&'static str> {
+    match (self.algo, threshold_name) {
+      ("blake3", "parallel_min_bytes") => Some("PARALLEL_MIN_BYTES"),
+      ("blake3", "parallel_min_chunks") => Some("PARALLEL_MIN_CHUNKS"),
+      ("blake3", "parallel_max_threads") => Some("PARALLEL_MAX_THREADS"),
+      _ => None,
+    }
+  }
 }

@@ -1,5 +1,9 @@
 //! Cryptographic hash functions.
 
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
+#![cfg_attr(not(test), deny(clippy::expect_used))]
+#![cfg_attr(not(test), deny(clippy::indexing_slicing))]
+
 pub mod ascon;
 pub mod blake2b;
 pub mod blake2s;

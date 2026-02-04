@@ -6,7 +6,7 @@ use platform::TuneKind;
 use platform::caps::x86;
 
 use super::{
-  dispatch_tables::{DispatchTable, StreamingTable},
+  dispatch_tables::{DispatchTable, ParallelTable, StreamingTable},
   kernels::{Blake3KernelId, Kernel, kernel, required_caps},
 };
 use crate::crypto::dispatch_util::SizeClassDispatch;
@@ -44,11 +44,35 @@ struct ActiveDispatch {
 
 static ACTIVE: OnceCache<ActiveDispatch> = OnceCache::new();
 static ACTIVE_STREAMING: OnceCache<StreamingDispatch> = OnceCache::new();
+static ACTIVE_PARALLEL: OnceCache<ParallelDispatch> = OnceCache::new();
 
 #[derive(Clone, Copy)]
 pub(crate) struct StreamingDispatch {
   pub(crate) stream: Kernel,
   pub(crate) bulk: Kernel,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct ParallelDispatch {
+  pub(crate) table: ParallelTable,
+}
+
+#[inline]
+#[must_use]
+fn effective_tune_kind(caps: Caps, tune: platform::Tune) -> platform::TuneKind {
+  #[cfg(target_arch = "x86_64")]
+  {
+    if prefer_intel_icl_tables(caps, tune.kind) {
+      TuneKind::IntelIcl
+    } else {
+      tune.kind
+    }
+  }
+  #[cfg(not(target_arch = "x86_64"))]
+  {
+    let _ = caps;
+    tune.kind
+  }
 }
 
 #[inline]
@@ -123,20 +147,7 @@ fn active() -> ActiveDispatch {
   ACTIVE.get_or_init(|| {
     let tune = platform::tune();
     let caps = platform::caps();
-    let kind = {
-      #[cfg(target_arch = "x86_64")]
-      {
-        if prefer_intel_icl_tables(caps, tune.kind) {
-          TuneKind::IntelIcl
-        } else {
-          tune.kind
-        }
-      }
-      #[cfg(not(target_arch = "x86_64"))]
-      {
-        tune.kind
-      }
-    };
+    let kind = effective_tune_kind(caps, tune);
     let table: &'static DispatchTable = super::dispatch_tables::select_table(kind);
 
     let xs_id = resolve(table.xs, caps);
@@ -160,20 +171,7 @@ fn active_streaming() -> StreamingDispatch {
   ACTIVE_STREAMING.get_or_init(|| {
     let tune = platform::tune();
     let caps = platform::caps();
-    let kind = {
-      #[cfg(target_arch = "x86_64")]
-      {
-        if prefer_intel_icl_tables(caps, tune.kind) {
-          TuneKind::IntelIcl
-        } else {
-          tune.kind
-        }
-      }
-      #[cfg(not(target_arch = "x86_64"))]
-      {
-        tune.kind
-      }
-    };
+    let kind = effective_tune_kind(caps, tune);
     let table: &'static StreamingTable = super::dispatch_tables::select_streaming_table(kind);
 
     let stream_id = resolve(table.stream, caps);
@@ -183,6 +181,18 @@ fn active_streaming() -> StreamingDispatch {
       stream: kernel(stream_id),
       bulk: kernel(bulk_id),
     }
+  })
+}
+
+#[inline]
+#[must_use]
+fn active_parallel() -> ParallelDispatch {
+  ACTIVE_PARALLEL.get_or_init(|| {
+    let tune = platform::tune();
+    let caps = platform::caps();
+    let kind = effective_tune_kind(caps, tune);
+    let table: &'static ParallelTable = super::dispatch_tables::select_parallel_table(kind);
+    ParallelDispatch { table: *table }
   })
 }
 
@@ -243,6 +253,12 @@ pub(crate) fn kernel_dispatch() -> SizeClassDispatch<Kernel> {
 #[must_use]
 pub(crate) fn streaming_dispatch() -> StreamingDispatch {
   active_streaming()
+}
+
+#[inline]
+#[must_use]
+pub(crate) fn parallel_dispatch() -> ParallelDispatch {
+  active_parallel()
 }
 
 #[inline]
