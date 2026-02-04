@@ -175,9 +175,15 @@ impl<'a> Sampler<'a> {
       };
     }
 
-    // Calculate batch size to hit target batch duration.
-    // Start with an estimate based on typical throughput (10 GiB/s).
-    let batch_size = self.estimate_batch_size(buffer_size);
+    // Choose a batch size that roughly hits `batch_target`.
+    //
+    // We start with a coarse estimate, but then calibrate it against the
+    // actual closure cost. This avoids pathologically large batches when
+    // per-call overhead dominates (tiny buffers / heavy setup), which can
+    // otherwise make tuning appear to "hang" by overshooting the warmup/measure
+    // windows by seconds.
+    let batch_est = self.estimate_batch_size(buffer_size);
+    let batch_size = self.calibrate_batch_size(data, &mut run, batch_est);
 
     // Warmup phase
     self.warmup(data, &mut run, batch_size);
@@ -212,6 +218,54 @@ impl<'a> Sampler<'a> {
     let bytes_per_batch = assumed_throughput * self.config.batch_target.as_secs_f64();
     let iters = bytes_per_batch / buffer_size as f64;
     (iters as u32).clamp(1, 10_000)
+  }
+
+  /// Calibrate `batch_size` against the observed per-iteration cost.
+  ///
+  /// This is a small preflight run that chooses a batch size targeting
+  /// `config.batch_target` in wall-clock time. It is intentionally conservative
+  /// and bounded; it should not materially affect overall measurement time.
+  fn calibrate_batch_size<F>(&self, data: &[u8], run: &mut F, batch_est: u32) -> u32
+  where
+    F: FnMut(&[u8]),
+  {
+    let target = self.config.batch_target;
+    if target.is_zero() {
+      return batch_est.max(1);
+    }
+
+    // Probe: grow iterations until we get a measurable elapsed time, but keep
+    // it bounded so huge buffers don't add noticeable extra work.
+    const MIN_ELAPSED: Duration = Duration::from_micros(50);
+    const MAX_ITERS: u32 = 64;
+
+    let mut iters: u32 = 1;
+    let elapsed = loop {
+      let start = Instant::now();
+      for _ in 0..iters {
+        run(core::hint::black_box(data));
+        core::hint::black_box(());
+      }
+      let elapsed = start.elapsed();
+      if elapsed >= MIN_ELAPSED || iters >= MAX_ITERS {
+        break elapsed;
+      }
+      iters = iters.saturating_mul(2);
+    };
+
+    // If the probe timer resolution is too coarse to measure, keep the estimate.
+    let secs = elapsed.as_secs_f64();
+    if secs <= 0.0 {
+      return batch_est.max(1);
+    }
+
+    let per_iter = secs / (iters as f64);
+    if per_iter <= 0.0 {
+      return batch_est.max(1);
+    }
+
+    let want = (target.as_secs_f64() / per_iter).round() as u32;
+    want.clamp(1, 10_000)
   }
 
   /// Run warmup iterations.

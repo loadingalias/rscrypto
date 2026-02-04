@@ -383,4 +383,42 @@ mod tests {
       }
     }
   }
+
+  #[cfg(feature = "std")]
+  #[test]
+  fn large_inputs_match_official_crate() {
+    // This is sized to reliably cross the std-only parallelization thresholds.
+    // If the test runner only exposes 1 CPU, we still validate correctness,
+    // but the parallel path may not execute.
+    let lens = [512 * 1024 + 123, 4 * 1024 * 1024 + 17];
+
+    for &len in &lens {
+      let msg = pattern(len);
+
+      // One-shot hashing (may take the parallel path).
+      let ours = Blake3::digest(&msg);
+      let expected = *blake3::hash(&msg).as_bytes();
+      assert_eq!(ours, expected, "blake3 oneshot mismatch len={}", len);
+
+      // Streaming hashing with a single large update (may take the parallel path).
+      let mut h = Blake3::new();
+      h.update(&msg);
+      let ours_stream = h.finalize();
+      assert_eq!(ours_stream, expected, "blake3 streaming mismatch len={}", len);
+
+      // Keyed hash one-shot.
+      let ours_keyed = Blake3::keyed_digest(KEY, &msg);
+      let expected_keyed = *blake3::keyed_hash(KEY, &msg).as_bytes();
+      assert_eq!(ours_keyed, expected_keyed, "blake3 keyed mismatch len={}", len);
+
+      // Derive-key one-shot.
+      let ours_derived = Blake3::derive_key(CONTEXT, &msg);
+      let expected_derived = {
+        let mut hh = blake3::Hasher::new_derive_key(CONTEXT);
+        hh.update(&msg);
+        *hh.finalize().as_bytes()
+      };
+      assert_eq!(ours_derived, expected_derived, "blake3 derive-key mismatch len={}", len);
+    }
+  }
 }

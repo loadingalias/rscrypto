@@ -1,6 +1,6 @@
 //! Tuning engine orchestrator.
 
-use std::collections::HashSet;
+use std::{collections::HashSet, time::Instant};
 
 use crate::{
   AlgorithmResult, KernelSpec, KernelTier, PlatformInfo, Tunable, TuneError, TuneResults, TuningDomain,
@@ -122,13 +122,13 @@ impl TuneEngine {
 
     let mut algorithm_results = Vec::with_capacity(self.algorithms.len());
     let verbose = self.verbose;
+    let total = self.algorithms.len();
 
     for i in 0..self.algorithms.len() {
       let algorithm = &mut self.algorithms[i];
 
-      if verbose {
-        eprintln!("Tuning {}...", algorithm.name());
-      }
+      let start = Instant::now();
+      eprintln!("Tuning {} ({}/{})...", algorithm.name(), i + 1, total);
 
       let runner = match algorithm.tuning_domain() {
         TuningDomain::Checksum => &self.checksum_runner,
@@ -139,6 +139,9 @@ impl TuneEngine {
       if verbose {
         eprintln!("  Best kernel: {}", result.best_kernel);
         eprintln!("  Peak throughput: {:.2} GiB/s", result.peak_throughput_gib_s);
+      }
+      eprintln!("  Done in {:.1}s", start.elapsed().as_secs_f64());
+      if verbose {
         eprintln!();
       }
 
@@ -457,6 +460,15 @@ fn tune_algorithm_impl(
     thresholds.push(("min_bytes_per_lane".to_string(), min_bpl));
   }
 
+  // BLAKE3: tune the automatic multi-core cutoff (std-only) for this host.
+  if algorithm.name() == "blake3"
+    && let Some((min_bytes, min_chunks, max_threads)) = tune_blake3_parallel_policy(runner, algorithm, best_kernel)?
+  {
+    thresholds.push(("parallel_min_bytes".to_string(), min_bytes));
+    thresholds.push(("parallel_min_chunks".to_string(), min_chunks));
+    thresholds.push(("parallel_max_threads".to_string(), max_threads));
+  }
+
   // Sort thresholds by size for consistent output
   thresholds.sort_by_key(|(_, size)| *size);
 
@@ -473,6 +485,131 @@ fn tune_algorithm_impl(
     thresholds: mapped_thresholds,
     analysis: result_analysis,
   })
+}
+
+fn tune_blake3_parallel_policy(
+  runner: &BenchRunner,
+  algorithm: &mut dyn Tunable,
+  best_kernel: &str,
+) -> Result<Option<(usize, usize, usize)>, TuneError> {
+  use hashes::crypto::blake3::{dispatch_tables::ParallelTable, tune::override_blake3_parallel_policy};
+
+  let Ok(ap) = std::thread::available_parallelism() else {
+    return Ok(None);
+  };
+  let avail = ap.get();
+  if avail <= 1 {
+    return Ok(Some((usize::MAX, usize::MAX, 1)));
+  }
+
+  // Stabilize results: tune against the best kernel for large sizes.
+  algorithm.reset();
+  let _ = algorithm.force_kernel(best_kernel);
+
+  // Include >1MiB sizes so the crossover isn't forced to land at 1MiB.
+  const SIZES: &[usize] = &[
+    64 * 1024,
+    128 * 1024,
+    256 * 1024,
+    512 * 1024,
+    1024 * 1024,
+    2 * 1024 * 1024,
+    4 * 1024 * 1024,
+    8 * 1024 * 1024,
+  ];
+
+  let max_size = *SIZES.last().unwrap_or(&0);
+  let mut buffer = vec![0u8; max_size];
+  fill_data(&mut buffer);
+
+  // Baseline (forced single-thread).
+  let mut single_tp: Vec<(usize, f64)> = Vec::with_capacity(SIZES.len());
+  {
+    let _g = override_blake3_parallel_policy(ParallelTable {
+      min_bytes: usize::MAX,
+      min_chunks: usize::MAX,
+      max_threads: 1,
+    });
+    for &size in SIZES {
+      let r = runner.measure_single(algorithm, &buffer[..size])?;
+      single_tp.push((size, r.throughput_gib_s));
+    }
+  }
+
+  // Candidate thread caps (including the caller thread).
+  let max_cap = avail.min(32);
+  let mut candidates: Vec<usize> = if max_cap <= 8 {
+    (2..=max_cap).collect()
+  } else {
+    vec![2, 4, 8, 12, 16, max_cap]
+  };
+  candidates.sort_unstable();
+  candidates.dedup();
+
+  // Pick best max_threads at the largest size.
+  let mut best_threads = 2usize;
+  let mut best_tp = 0.0f64;
+  for t in candidates {
+    let _g = override_blake3_parallel_policy(ParallelTable {
+      min_bytes: 0,
+      min_chunks: 0,
+      max_threads: t as u8,
+    });
+    let r = runner.measure_single(algorithm, &buffer[..max_size])?;
+    let tp = r.throughput_gib_s;
+    if tp > best_tp || (tp == best_tp && t < best_threads) {
+      best_tp = tp;
+      best_threads = t;
+    }
+  }
+
+  // Measure the chosen multi-core mode across sizes.
+  let mut parallel_tp: Vec<(usize, f64)> = Vec::with_capacity(SIZES.len());
+  {
+    let _g = override_blake3_parallel_policy(ParallelTable {
+      min_bytes: 0,
+      min_chunks: 0,
+      max_threads: best_threads as u8,
+    });
+    for &size in SIZES {
+      let r = runner.measure_single(algorithm, &buffer[..size])?;
+      parallel_tp.push((size, r.throughput_gib_s));
+    }
+  }
+
+  // Find a sustained crossover where parallel stays >= single at larger sizes.
+  // Require a small margin to avoid flip-flops on noisy hosts.
+  let mut measurements = Vec::with_capacity(SIZES.len() * 2);
+  for &(size, tp) in &single_tp {
+    measurements.push(analysis::Measurement {
+      kernel: "single".to_string(),
+      streams: 1,
+      size,
+      throughput_gib_s: tp,
+    });
+  }
+  for &(size, tp) in &parallel_tp {
+    measurements.push(analysis::Measurement {
+      kernel: "parallel".to_string(),
+      streams: 1,
+      size,
+      throughput_gib_s: tp,
+    });
+  }
+
+  let Some(crossover) = analysis::find_crossover(&measurements, "single", 1, "parallel", 1, 1.02) else {
+    // Parallel never wins consistently on this host/config.
+    return Ok(Some((usize::MAX, usize::MAX, 1)));
+  };
+
+  let min_bytes = crossover.crossover_size;
+  let min_chunks = if min_bytes.is_multiple_of(1024) {
+    (min_bytes / 1024).saturating_sub(1)
+  } else {
+    min_bytes / 1024
+  };
+
+  Ok(Some((min_bytes, min_chunks, best_threads)))
 }
 
 /// Map generic threshold names to algorithm-specific env var suffixes.

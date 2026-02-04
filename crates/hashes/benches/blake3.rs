@@ -6,7 +6,13 @@
 use core::{hint::black_box, time::Duration};
 
 use criterion::{BenchmarkId, Criterion, SamplingMode, Throughput, criterion_group, criterion_main};
-use hashes::{bench as microbench, crypto::Blake3};
+use hashes::{
+  bench as microbench,
+  crypto::{
+    Blake3,
+    blake3::{dispatch_tables, tune},
+  },
+};
 use traits::{Digest as _, Xof as _};
 
 mod common;
@@ -14,6 +20,15 @@ mod common;
 #[inline]
 fn official_hash_bytes(input: &[u8]) -> [u8; 32] {
   *blake3::hash(input).as_bytes()
+}
+
+#[inline]
+fn official_hash_bytes_rayon(input: &[u8]) -> [u8; 32] {
+  // NOTE: `blake3::hash()` is always single-threaded, even when built with the `rayon` feature.
+  // The official crate’s parallel API is `Hasher::update_rayon`.
+  let mut h = blake3::Hasher::new();
+  h.update_rayon(input);
+  *h.finalize().as_bytes()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -37,6 +52,10 @@ fn blake3_oneshot_comparison(c: &mut Criterion) {
 
     group.bench_with_input(BenchmarkId::new("official", len), data, |b, d| {
       b.iter(|| black_box(official_hash_bytes(black_box(d))))
+    });
+
+    group.bench_with_input(BenchmarkId::new("official-rayon", len), data, |b, d| {
+      b.iter(|| black_box(official_hash_bytes_rayon(black_box(d))))
     });
   }
 
@@ -486,6 +505,53 @@ fn blake3_large_inputs(c: &mut Criterion) {
     group.bench_function(format!("official/{size_mb}MB"), |b| {
       b.iter(|| black_box(official_hash_bytes(black_box(&data))))
     });
+
+    group.bench_function(format!("official-rayon/{size_mb}MB"), |b| {
+      b.iter(|| black_box(official_hash_bytes_rayon(black_box(&data))))
+    });
+  }
+
+  group.finish();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Parallel Scaling (forced thread caps)
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn blake3_rscrypto_threads(c: &mut Criterion) {
+  let Ok(ap) = std::thread::available_parallelism() else {
+    return;
+  };
+
+  let mut group = c.benchmark_group("blake3/rscrypto-threads");
+  group.sample_size(20);
+  group.warm_up_time(Duration::from_secs(2));
+  group.measurement_time(Duration::from_secs(4));
+  group.sampling_mode(SamplingMode::Flat);
+
+  let sizes = [64 * 1024usize, 128 * 1024, 1024 * 1024, 8 * 1024 * 1024];
+  let thread_caps = [1usize, 2, 4, 8, 12, 16];
+
+  for size in sizes {
+    let data = common::pseudo_random_bytes(size, 0xB1A8_3C11_0000 + size as u64);
+    let data = black_box(data);
+    group.throughput(Throughput::Bytes(size as u64));
+
+    for threads_total in thread_caps {
+      if threads_total > ap.get() {
+        continue;
+      }
+      let table = dispatch_tables::ParallelTable {
+        min_bytes: 0,
+        min_chunks: 0,
+        max_threads: threads_total as u8,
+      };
+
+      group.bench_function(BenchmarkId::new(format!("rscrypto/t{threads_total}"), size), |b| {
+        let _guard = tune::override_blake3_parallel_policy(table);
+        b.iter(|| black_box(Blake3::digest(black_box(&data))))
+      });
+    }
   }
 
   group.finish();
@@ -604,6 +670,7 @@ criterion_group!(
   blake3_derive_key_oneshot,
   blake3_active_kernel,
   blake3_large_inputs,
+  blake3_rscrypto_threads,
   blake3_latency,
 );
 criterion_main!(benches);

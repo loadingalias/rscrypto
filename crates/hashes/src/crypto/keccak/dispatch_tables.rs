@@ -70,7 +70,14 @@ pub static INTELGNR_TABLE: DispatchTable = DEFAULT_TABLE;
 // IntelIcl Table
 pub static INTELICL_TABLE: DispatchTable = DEFAULT_TABLE;
 // AppleM1M3 Table
-pub static APPLEM1M3_TABLE: DispatchTable = DEFAULT_TABLE;
+pub static APPLEM1M3_TABLE: DispatchTable = DispatchTable {
+  boundaries: DEFAULT_BOUNDARIES,
+  xs: KernelId::Portable,
+  s: KernelId::Portable,
+  m: KernelId::Portable,
+  l: KernelId::Portable,
+};
+
 // AppleM4 Table
 pub static APPLEM4_TABLE: DispatchTable = DEFAULT_TABLE;
 // AppleM5 Table

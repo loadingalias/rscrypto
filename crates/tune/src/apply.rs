@@ -1039,6 +1039,40 @@ fn tune_kind_streaming_table_ident(tune_kind: TuneKind) -> &'static str {
   }
 }
 
+fn tune_kind_parallel_table_ident(tune_kind: TuneKind) -> &'static str {
+  match tune_kind {
+    TuneKind::Custom => "CUSTOM_PARALLEL_TABLE",
+    TuneKind::Default => "DEFAULT_KIND_PARALLEL_TABLE",
+    TuneKind::Portable => "PORTABLE_PARALLEL_TABLE",
+    TuneKind::Zen4 => "ZEN4_PARALLEL_TABLE",
+    TuneKind::Zen5 => "ZEN5_PARALLEL_TABLE",
+    TuneKind::Zen5c => "ZEN5C_PARALLEL_TABLE",
+    TuneKind::IntelSpr => "INTELSPR_PARALLEL_TABLE",
+    TuneKind::IntelGnr => "INTELGNR_PARALLEL_TABLE",
+    TuneKind::IntelIcl => "INTELICL_PARALLEL_TABLE",
+    TuneKind::AppleM1M3 => "APPLEM1M3_PARALLEL_TABLE",
+    TuneKind::AppleM4 => "APPLEM4_PARALLEL_TABLE",
+    TuneKind::AppleM5 => "APPLEM5_PARALLEL_TABLE",
+    TuneKind::Graviton2 => "GRAVITON2_PARALLEL_TABLE",
+    TuneKind::Graviton3 => "GRAVITON3_PARALLEL_TABLE",
+    TuneKind::Graviton4 => "GRAVITON4_PARALLEL_TABLE",
+    TuneKind::Graviton5 => "GRAVITON5_PARALLEL_TABLE",
+    TuneKind::NeoverseN2 => "NEOVERSEN2_PARALLEL_TABLE",
+    TuneKind::NeoverseN3 => "NEOVERSEN3_PARALLEL_TABLE",
+    TuneKind::NeoverseV3 => "NEOVERSEV3_PARALLEL_TABLE",
+    TuneKind::NvidiaGrace => "NVIDIAGRACE_PARALLEL_TABLE",
+    TuneKind::AmpereAltra => "AMPEREALTRA_PARALLEL_TABLE",
+    TuneKind::Aarch64Pmull => "AARCH64PMULL_PARALLEL_TABLE",
+    TuneKind::Z13 => "Z13_PARALLEL_TABLE",
+    TuneKind::Z14 => "Z14_PARALLEL_TABLE",
+    TuneKind::Z15 => "Z15_PARALLEL_TABLE",
+    TuneKind::Power7 => "POWER7_PARALLEL_TABLE",
+    TuneKind::Power8 => "POWER8_PARALLEL_TABLE",
+    TuneKind::Power9 => "POWER9_PARALLEL_TABLE",
+    TuneKind::Power10 => "POWER10_PARALLEL_TABLE",
+  }
+}
+
 fn hash_kernel_expr(algo: &str, kernel_name: &str) -> &'static str {
   match algo {
     // BLAKE3 dispatch tables select a full kernel bundle (compress + chunk + parent + hash_many).
@@ -1056,6 +1090,38 @@ fn hash_kernel_expr(algo: &str, kernel_name: &str) -> &'static str {
       _ => "KernelId::Portable",
     },
   }
+}
+
+fn generate_blake3_parallel_table(tune_kind: TuneKind, algo: &AlgorithmResult) -> String {
+  let kind_name = format!("{tune_kind:?}");
+  let table_ident = tune_kind_parallel_table_ident(tune_kind);
+
+  let mut min_bytes: usize = 512 * 1024;
+  let mut min_chunks: usize = 256;
+  let mut max_threads: u8 = 0;
+
+  for (suffix, value) in &algo.thresholds {
+    match suffix.as_str() {
+      "PARALLEL_MIN_BYTES" => min_bytes = *value,
+      "PARALLEL_MIN_CHUNKS" => min_chunks = *value,
+      "PARALLEL_MAX_THREADS" => {
+        let v = (*value).min(u8::MAX as usize) as u8;
+        max_threads = v;
+      }
+      _ => {}
+    }
+  }
+
+  format!(
+    "\
+// {kind_name} Parallel Table
+pub static {table_ident}: ParallelTable = ParallelTable {{
+  min_bytes: {min_bytes},
+  min_chunks: {min_chunks},
+  max_threads: {max_threads},
+}};
+"
+  )
 }
 
 fn generate_hash_table(tune_kind: TuneKind, algo: &AlgorithmResult) -> String {
@@ -1220,6 +1286,15 @@ fn apply_hash_dispatch_tables(repo_root: &Path, results: &TuneResults) -> io::Re
         let marker = format!("// {kind_name} Streaming Table");
         updated = update_hash_dispatch_tables_section(&updated, &marker, &streaming_code)?;
       }
+
+      // BLAKE3: apply the tuned multi-core policy (if present) from the `blake3`
+      // oneshot result. If it isn't present (partial run), fall back to this
+      // target's thresholds or leave defaults unchanged.
+      let policy_source = results.algorithms.iter().find(|a| a.name == "blake3").unwrap_or(algo);
+      let parallel_code = generate_blake3_parallel_table(tune_kind, policy_source);
+      let kind_name = format!("{tune_kind:?}");
+      let marker = format!("// {kind_name} Parallel Table");
+      updated = update_hash_dispatch_tables_section(&updated, &marker, &parallel_code)?;
     }
 
     if updated != content {

@@ -50,6 +50,13 @@ fn blake3_comp(c: &mut Criterion) {
       group.bench_with_input(BenchmarkId::new("official/blake3", len), &data, |b, d| {
         b.iter(|| black_box(*blake3::hash(black_box(d)).as_bytes()))
       });
+      group.bench_with_input(BenchmarkId::new("official/blake3-rayon", len), &data, |b, d| {
+        b.iter(|| {
+          let mut h = blake3::Hasher::new();
+          h.update_rayon(black_box(d));
+          black_box(*h.finalize().as_bytes())
+        })
+      });
     }
 
     group.finish();
