@@ -543,11 +543,11 @@ pub mod aarch64 {
   /// SM3 + SM4 combined
   pub const SM3_SM4: Caps = Caps([0, SM3.0[1] | SM4.0[1], 0, 0]);
 
-  /// PMULL-ready: AES (includes PMULL on most implementations)
-  pub const PMULL_READY: Caps = Caps([0, AES.0[1], 0, 0]);
+  /// PMULL-ready: polynomial multiply long (PMULL).
+  pub const PMULL_READY: Caps = PMULL;
 
-  /// PMULL+EOR3-ready: AES + SHA3 (SHA3 provides EOR3 for faster GHASH)
-  pub const PMULL_EOR3_READY: Caps = Caps([0, AES.0[1] | SHA3.0[1], 0, 0]);
+  /// PMULL+EOR3-ready: PMULL + SHA3 (SHA3 provides EOR3 for faster GHASH).
+  pub const PMULL_EOR3_READY: Caps = PMULL.union(SHA3);
 
   /// CRC32C-ready: CRC extension
   pub const CRC_READY: Caps = Caps([0, CRC.0[1], 0, 0]);
@@ -1043,8 +1043,9 @@ mod tests {
   #[test]
   fn test_aarch64_combined_masks() {
     let pmull_eor3 = aarch64::PMULL_EOR3_READY;
-    assert!(pmull_eor3.has(aarch64::AES));
+    assert!(pmull_eor3.has(aarch64::PMULL));
     assert!(pmull_eor3.has(aarch64::SHA3));
+    assert!(!pmull_eor3.has(aarch64::AES));
   }
 
   #[test]

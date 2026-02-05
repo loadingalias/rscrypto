@@ -1860,7 +1860,10 @@ fn runtime_aarch64() -> Caps {
 
   // ─── Crypto Extensions ───
   if std::arch::is_aarch64_feature_detected!("aes") {
-    caps |= aarch64::AES | aarch64::PMULL;
+    caps |= aarch64::AES;
+  }
+  if std::arch::is_aarch64_feature_detected!("pmull") {
+    caps |= aarch64::PMULL;
   }
   if std::arch::is_aarch64_feature_detected!("sha2") {
     caps |= aarch64::SHA2;
