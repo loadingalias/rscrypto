@@ -24,6 +24,9 @@
 #[cfg(target_arch = "aarch64")]
 use core::arch::aarch64::*;
 
+// aarch64 assembly backends for the "exactly one chunk" cliff and tight
+// per-block compression loops. These are optional fast paths; all call sites
+// must conservatively validate pointer alignment before using them.
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod asm;
 
@@ -705,11 +708,21 @@ pub unsafe fn root_hash_one_chunk_root_aarch64(input: *const u8, key: &[u32; 8],
     // The asm backend uses 64-bit loads/stores; avoid potentially faulting
     // unaligned pointers by falling back to the NEON implementation.
     if ptr_is_aligned(input, 8) {
-      let mut out = [0u8; OUT_LEN];
+      // The asm backend stores 32-bit words (`str wN, [...]`). Some Linux
+      // aarch64 environments enable strict alignment checking, and `[u8; 32]`
+      // has alignment 1 (so a stack slot is not guaranteed 4-byte aligned).
+      // Store into an aligned `[u32; 8]` scratch buffer and convert to bytes.
+      let mut out_words = [0u32; OUT_LEN / 4];
+      let out_ptr = out_words.as_mut_ptr().cast::<u8>();
       #[cfg(target_os = "linux")]
-      asm::rscrypto_blake3_hash1_chunk_root_aarch64_unix_linux(input, key.as_ptr(), flags, out.as_mut_ptr());
+      asm::rscrypto_blake3_hash1_chunk_root_aarch64_unix_linux(input, key.as_ptr(), flags, out_ptr);
       #[cfg(target_os = "macos")]
-      asm::rscrypto_blake3_hash1_chunk_root_aarch64_apple_darwin(input, key.as_ptr(), flags, out.as_mut_ptr());
+      asm::rscrypto_blake3_hash1_chunk_root_aarch64_apple_darwin(input, key.as_ptr(), flags, out_ptr);
+
+      let mut out = [0u8; OUT_LEN];
+      for (j, word) in out_words.iter().copied().enumerate() {
+        out[j * 4..j * 4 + 4].copy_from_slice(&word.to_le_bytes());
+      }
       return out;
     }
   }
@@ -1000,35 +1013,29 @@ pub unsafe fn chunk_compress_blocks_neon(
 ) {
   debug_assert_eq!(blocks.len() % BLOCK_LEN, 0);
 
-  // aarch64 per-block hot path:
-  // Use the scalar assembly backend for tight block-compress loops. This avoids
-  // the current Rust/NEON per-block cliffs (message permutation overhead), and
-  // is especially important for server-class cores (Neoverse/Graviton) and
-  // streaming workloads with many full blocks.
+  // Linux-only asm fast path for tight per-block compression loops.
+  //
+  // This uses 64-bit loads, so require 8-byte alignment to avoid potentially
+  // faulting unaligned accesses when strict alignment checking is enabled.
   #[cfg(target_os = "linux")]
   {
-    if !blocks.is_empty() {
-      if !ptr_is_aligned(blocks.as_ptr(), 8) {
-        // Avoid potentially faulting unaligned 64-bit loads in the asm backend.
-        // The NEON fallback below handles arbitrary alignment.
-      } else {
-        let num_blocks = blocks.len() / BLOCK_LEN;
-        debug_assert_ne!(num_blocks, 0);
-        // SAFETY: `blocks` is `num_blocks * 64` bytes, `chaining_value` is 8 u32
-        // words, `blocks_compressed` is a valid pointer to a `u8`, and this is
-        // only compiled on Linux aarch64 where the symbol is available.
-        unsafe {
-          asm::rscrypto_blake3_chunk_compress_blocks_aarch64_unix_linux(
-            blocks.as_ptr(),
-            chaining_value.as_mut_ptr(),
-            chunk_counter,
-            flags,
-            blocks_compressed as *mut u8,
-            num_blocks,
-          );
-        }
-        return;
+    if !blocks.is_empty() && ptr_is_aligned(blocks.as_ptr(), 8) {
+      let num_blocks = blocks.len() / BLOCK_LEN;
+      debug_assert_ne!(num_blocks, 0);
+      // SAFETY: `blocks` is `num_blocks * 64` bytes, `chaining_value` is 8 u32
+      // words, `blocks_compressed` is valid, and this is only compiled on
+      // Linux aarch64 where the symbol is available.
+      unsafe {
+        asm::rscrypto_blake3_chunk_compress_blocks_aarch64_unix_linux(
+          blocks.as_ptr(),
+          chaining_value.as_mut_ptr(),
+          chunk_counter,
+          flags,
+          blocks_compressed as *mut u8,
+          num_blocks,
+        );
       }
+      return;
     }
   }
 
