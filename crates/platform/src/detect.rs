@@ -1539,7 +1539,7 @@ fn select_x86_tune(caps: Caps, is_amd: bool, family: u32, model: u32) -> Tune {
   let has_avx512 = caps.has(x86::AVX512F) && caps.has(x86::AVX512VL);
 
   if has_avx512 {
-    if is_amd {
+    return if is_amd {
       // Zen 5/5c is family 26, Zen 4 is family 25 (models 96-127)
       // Note: Currently no way to differentiate Zen 5c from Zen 5 via CPUID alone.
       // Both share Family 26 (0x1A). Zen 5c is used in EPYC 9005 series and
@@ -1561,12 +1561,34 @@ fn select_x86_tune(caps: Caps, is_amd: bool, family: u32, model: u32) -> Tune {
       } else {
         Tune::INTEL_SPR
       }
-    }
-  } else if caps.has(x86::AVX2) || caps.has(x86::PCLMUL_READY) {
-    Tune::DEFAULT
-  } else {
-    Tune::PORTABLE
+    };
   }
+
+  // AVX2-only systems need finer classification than the generic default:
+  // - Intel AVX2 parts typically align better with IntelIcl thresholds/policies.
+  // - AMD Family 25/26 should stay on Zen-class presets even when AVX-512 is unavailable (e.g.
+  //   BIOS-disabled AVX-512, virtualization masks).
+  if caps.has(x86::AVX2) {
+    if is_amd {
+      if family == 26 {
+        return Tune::ZEN5;
+      }
+      if family == 25 {
+        return Tune::ZEN4;
+      }
+      return Tune::DEFAULT;
+    }
+    return Tune::INTEL_ICL;
+  }
+
+  if caps.has(x86::PCLMUL_READY) {
+    if !is_amd {
+      return Tune::INTEL_ICL;
+    }
+    return Tune::DEFAULT;
+  }
+
+  Tune::PORTABLE
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2362,6 +2384,83 @@ fn read_midr_el1() -> Option<u64> {
   Some(midr)
 }
 
+#[cfg(all(target_arch = "aarch64", target_os = "linux", feature = "std"))]
+const MIDR_IMPL_ARM: u8 = 0x41;
+#[cfg(all(target_arch = "aarch64", target_os = "linux", feature = "std"))]
+const MIDR_IMPL_NVIDIA: u8 = 0x4E;
+#[cfg(all(target_arch = "aarch64", target_os = "linux", feature = "std"))]
+const MIDR_IMPL_AMPERE: u8 = 0xC0;
+
+#[cfg(all(target_arch = "aarch64", target_os = "linux", feature = "std"))]
+const MIDR_PART_NEOVERSE_N1: u16 = 0xD0C;
+#[cfg(all(target_arch = "aarch64", target_os = "linux", feature = "std"))]
+const MIDR_PART_NEOVERSE_V1: u16 = 0xD40;
+#[cfg(all(target_arch = "aarch64", target_os = "linux", feature = "std"))]
+const MIDR_PART_NEOVERSE_N2: u16 = 0xD49;
+#[cfg(all(target_arch = "aarch64", target_os = "linux", feature = "std"))]
+const MIDR_PART_NEOVERSE_V2: u16 = 0xD4F;
+#[cfg(all(target_arch = "aarch64", target_os = "linux", feature = "std"))]
+const MIDR_PART_NEOVERSE_N3: u16 = 0xD8E;
+
+#[cfg(all(target_arch = "aarch64", target_os = "linux", feature = "std"))]
+#[derive(Clone, Copy, Debug)]
+struct MidrInfo {
+  implementer: u8,
+  part: u16,
+}
+
+#[cfg(all(target_arch = "aarch64", target_os = "linux", feature = "std"))]
+#[inline]
+#[must_use]
+const fn decode_midr(midr: u64) -> MidrInfo {
+  MidrInfo {
+    implementer: ((midr >> 24) & 0xFF) as u8,
+    part: ((midr >> 4) & 0xFFF) as u16,
+  }
+}
+
+#[cfg(all(target_arch = "aarch64", target_os = "linux", feature = "std"))]
+#[inline]
+#[must_use]
+fn tune_from_midr_sve2(midr: u64) -> Option<Tune> {
+  let info = decode_midr(midr);
+  match (info.implementer, info.part) {
+    (MIDR_IMPL_NVIDIA, _) => Some(Tune::NVIDIA_GRACE),
+    (MIDR_IMPL_AMPERE, _) => Some(Tune::AMPERE_ALTRA),
+    (MIDR_IMPL_ARM, MIDR_PART_NEOVERSE_N3) => Some(Tune::NEOVERSE_N3),
+    (MIDR_IMPL_ARM, MIDR_PART_NEOVERSE_N2) => Some(Tune::NEOVERSE_N2),
+    (MIDR_IMPL_ARM, MIDR_PART_NEOVERSE_V2) => Some(Tune::GRAVITON4),
+    (MIDR_IMPL_ARM, MIDR_PART_NEOVERSE_V1) => Some(Tune::GRAVITON3),
+    _ => None,
+  }
+}
+
+#[cfg(all(target_arch = "aarch64", target_os = "linux", feature = "std"))]
+#[inline]
+#[must_use]
+fn tune_from_midr_sve(midr: u64) -> Option<Tune> {
+  let info = decode_midr(midr);
+  match (info.implementer, info.part) {
+    (MIDR_IMPL_NVIDIA, _) => Some(Tune::NVIDIA_GRACE),
+    (MIDR_IMPL_AMPERE, _) => Some(Tune::AMPERE_ALTRA),
+    (MIDR_IMPL_ARM, MIDR_PART_NEOVERSE_N2) => Some(Tune::NEOVERSE_N2),
+    (MIDR_IMPL_ARM, MIDR_PART_NEOVERSE_V1) => Some(Tune::GRAVITON3),
+    _ => None,
+  }
+}
+
+#[cfg(all(target_arch = "aarch64", target_os = "linux", feature = "std"))]
+#[inline]
+#[must_use]
+fn tune_from_midr_pmull_eor3(midr: u64) -> Option<Tune> {
+  let info = decode_midr(midr);
+  match (info.implementer, info.part) {
+    (MIDR_IMPL_AMPERE, _) => Some(Tune::AMPERE_ALTRA),
+    (MIDR_IMPL_ARM, MIDR_PART_NEOVERSE_N1) => Some(Tune::GRAVITON2),
+    _ => None,
+  }
+}
+
 #[cfg(target_arch = "aarch64")]
 fn select_aarch64_tune(caps: Caps) -> Tune {
   use crate::caps::aarch64;
@@ -2455,19 +2554,14 @@ fn select_aarch64_tune(caps: Caps) -> Tune {
       return Tune::GRAVITON5; // or NEOVERSE_V3
     }
 
-    // Try to detect specific chips by MIDR if available
+    // Try MIDR classification first: this is more precise than SVE VL-only
+    // heuristics and distinguishes implementer-specific cores.
     #[cfg(all(feature = "std", target_os = "linux"))]
     {
-      if let Some(midr) = read_midr_el1() {
-        let part = (midr >> 4) & 0xFFF;
-        // NVIDIA Grace uses Neoverse V2 cores (part 0xd4f)
-        if part == 0xd4f {
-          return Tune::NVIDIA_GRACE;
-        }
-        // Neoverse N3 (part 0xd8e)
-        if part == 0xd8e {
-          return Tune::NEOVERSE_N3;
-        }
+      if let Some(midr) = read_midr_el1()
+        && let Some(tune) = tune_from_midr_sve2(midr)
+      {
+        return tune;
       }
     }
 
@@ -2476,6 +2570,9 @@ fn select_aarch64_tune(caps: Caps) -> Tune {
     if vlen > 0 && vlen <= 128 {
       return Tune::GRAVITON4; // 128-bit SVE2
     }
+    if vlen > 128 {
+      return Tune::NEOVERSE_V3;
+    }
     // Default for SVE2 with unknown or wider VL
     return Tune::GRAVITON4;
   }
@@ -2483,6 +2580,14 @@ fn select_aarch64_tune(caps: Caps) -> Tune {
   // SVE (Graviton 3, Neoverse V1) with runtime VL detection
   if caps.has(aarch64::SVE) {
     let vlen = detect_sve_vlen();
+    #[cfg(all(feature = "std", target_os = "linux"))]
+    {
+      if let Some(midr) = read_midr_el1()
+        && let Some(tune) = tune_from_midr_sve(midr)
+      {
+        return tune;
+      }
+    }
     // Return a tune with the detected SVE vector length
     if vlen >= 256 {
       return Tune::GRAVITON3; // 256-bit SVE
@@ -2497,15 +2602,13 @@ fn select_aarch64_tune(caps: Caps) -> Tune {
 
   // PMULL + EOR3 (non-Apple, non-SVE) - Graviton2 or Ampere Altra
   if caps.has(aarch64::PMULL_EOR3_READY) {
-    // Try to detect Ampere Altra (Neoverse N1-based, part 0xd0c)
+    // Use MIDR implementer + part to separate Arm N1 (Graviton2) from Ampere.
     #[cfg(all(feature = "std", target_os = "linux"))]
     {
-      if let Some(midr) = read_midr_el1() {
-        let part = (midr >> 4) & 0xFFF;
-        // Ampere Altra uses Neoverse N1 cores (part 0xd0c)
-        if part == 0xd0c {
-          return Tune::AMPERE_ALTRA;
-        }
+      if let Some(midr) = read_midr_el1()
+        && let Some(tune) = tune_from_midr_pmull_eor3(midr)
+      {
+        return tune;
       }
     }
     return Tune::GRAVITON2;

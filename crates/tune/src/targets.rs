@@ -1,0 +1,127 @@
+//! Performance target contracts for tuning outputs.
+//!
+//! These targets are "must-meet" throughput floors by algorithm, architecture,
+//! and size bucket. They provide a stable contract for tuning output quality
+//! and prevent silent regressions while iterating kernel policy.
+use platform::TuneKind;
+
+#[cfg(feature = "std")]
+use crate::TuneResults;
+use crate::hash::is_blake3_tuning_algo;
+
+/// Resolve a throughput floor (GiB/s) for an algorithm/architecture/size class.
+///
+/// Returns `None` when no explicit target is defined.
+#[must_use]
+pub fn class_target_gib_s(algo: &str, arch: &str, tune_kind: TuneKind, class: &str) -> Option<f64> {
+  if !is_blake3_tuning_algo(algo) {
+    return None;
+  }
+
+  let (xs, s, m, l) = match (arch, tune_kind) {
+    // x86_64
+    ("x86_64", TuneKind::Zen5 | TuneKind::Zen5c) => (1.20, 2.40, 6.00, 10.00),
+    ("x86_64", TuneKind::Zen4) => (1.00, 2.00, 5.00, 8.50),
+    ("x86_64", TuneKind::IntelGnr | TuneKind::IntelSpr) => (0.95, 1.90, 4.80, 8.00),
+    ("x86_64", TuneKind::IntelIcl) => (0.90, 1.80, 4.20, 7.00),
+    ("x86_64", TuneKind::Default | TuneKind::Portable) => (0.60, 1.20, 2.50, 4.00),
+    // aarch64
+    ("aarch64", TuneKind::AppleM5) => (0.90, 1.70, 4.00, 6.80),
+    ("aarch64", TuneKind::AppleM4) => (0.85, 1.60, 3.80, 6.20),
+    ("aarch64", TuneKind::AppleM1M3) => (0.75, 1.40, 3.30, 5.50),
+    ("aarch64", TuneKind::Graviton5 | TuneKind::NeoverseV3) => (0.80, 1.50, 3.60, 5.80),
+    ("aarch64", TuneKind::Graviton4 | TuneKind::NeoverseN3 | TuneKind::NvidiaGrace) => (0.75, 1.40, 3.20, 5.20),
+    ("aarch64", TuneKind::Graviton3 | TuneKind::NeoverseN2 | TuneKind::AmpereAltra) => (0.65, 1.20, 2.80, 4.60),
+    ("aarch64", TuneKind::Graviton2 | TuneKind::Aarch64Pmull) => (0.55, 1.00, 2.20, 3.80),
+    ("aarch64", TuneKind::Default | TuneKind::Portable) => (0.50, 0.90, 2.00, 3.50),
+    _ => return None,
+  };
+
+  let class_base = match class {
+    "xs" => xs,
+    "s" => s,
+    "m" => m,
+    "l" => l,
+    _ => return None,
+  };
+
+  let algo_factor = if algo == "blake3-parent-fold" {
+    1.15
+  } else if algo == "blake3-parent" {
+    1.10
+  } else if algo == "blake3-chunk" {
+    1.05
+  } else if matches!(
+    algo,
+    "blake3-stream4k" | "blake3-stream4k-keyed" | "blake3-stream4k-derive"
+  ) {
+    0.95
+  } else if matches!(
+    algo,
+    "blake3-stream64" | "blake3-stream64-keyed" | "blake3-stream64-derive"
+  ) {
+    0.55
+  } else {
+    1.00
+  };
+
+  Some(class_base * algo_factor)
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn targets_are_tunekind_and_algo_sensitive() {
+    let zen5 = class_target_gib_s("blake3", "x86_64", TuneKind::Zen5, "l").unwrap();
+    let icl = class_target_gib_s("blake3", "x86_64", TuneKind::IntelIcl, "l").unwrap();
+    assert!(zen5 > icl);
+
+    let stream64 = class_target_gib_s("blake3-stream64", "x86_64", TuneKind::Zen5, "s").unwrap();
+    let stream4k = class_target_gib_s("blake3-stream4k", "x86_64", TuneKind::Zen5, "s").unwrap();
+    assert!(stream4k > stream64);
+
+    let parent = class_target_gib_s("blake3-parent-fold", "x86_64", TuneKind::Zen5, "m").unwrap();
+    let digest = class_target_gib_s("blake3", "x86_64", TuneKind::Zen5, "m").unwrap();
+    assert!(parent > digest);
+  }
+}
+
+/// A class-level target miss (measured throughput below required floor).
+#[cfg(feature = "std")]
+#[derive(Clone, Debug)]
+pub struct TargetMiss {
+  pub algo: &'static str,
+  pub class: &'static str,
+  pub measured_gib_s: f64,
+  pub target_gib_s: f64,
+}
+
+/// Collect all class-level target misses in this tuning result set.
+#[cfg(feature = "std")]
+#[must_use]
+pub fn collect_target_misses(results: &TuneResults) -> Vec<TargetMiss> {
+  let mut misses = Vec::new();
+  let arch = results.platform.arch;
+  let tune_kind = results.platform.tune_kind;
+
+  for algo in &results.algorithms {
+    for class_best in &algo.size_class_best {
+      let Some(target) = class_target_gib_s(algo.name, arch, tune_kind, class_best.class) else {
+        continue;
+      };
+
+      if class_best.throughput_gib_s < target {
+        misses.push(TargetMiss {
+          algo: algo.name,
+          class: class_best.class,
+          measured_gib_s: class_best.throughput_gib_s,
+          target_gib_s: target,
+        });
+      }
+    }
+  }
+
+  misses
+}

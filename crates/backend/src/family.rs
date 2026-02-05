@@ -20,6 +20,8 @@
 //! - `ArmPmull` - aarch64 PMULL instruction
 //! - `PowerVpmsum` - Power VPMSUMD instruction
 
+use platform::Tune;
+
 use crate::{
   caps::{Arch, Caps},
   tier::KernelTier,
@@ -267,6 +269,63 @@ impl KernelFamily {
       Self::ArmPmullEor3 => 256, // EOR3 is still 128-bit NEON operations
       Self::ArmSve2Pmull => 512,
       Self::RiscvZvbc => 512,
+    }
+  }
+
+  /// Tune-aware minimum bytes per lane for multi-stream folding.
+  ///
+  /// This refines [`min_bytes_per_lane`](Self::min_bytes_per_lane) using the
+  /// detected microarchitecture tuning preset so runtime policy can avoid
+  /// overly conservative static defaults.
+  #[inline]
+  #[must_use]
+  pub fn min_bytes_per_lane_for_tune(self, tune: &Tune) -> usize {
+    match self {
+      Self::Reference | Self::Portable => usize::MAX,
+      // Memory-bound HWCRC platforms can scale streams with less per-lane work.
+      Self::X86Crc32 | Self::ArmCrc32 => {
+        if tune.memory_bound_hwcrc {
+          64
+        } else {
+          128
+        }
+      }
+      // Folding tier follows tune-specific CLMUL crossover behavior.
+      Self::X86Pclmul | Self::ArmPmull | Self::PowerVpmsum | Self::S390xVgfm | Self::RiscvZbc => {
+        if tune.pclmul_threshold <= 64 {
+          128
+        } else if tune.pclmul_threshold <= 128 {
+          192
+        } else {
+          256
+        }
+      }
+      // Wide x86 benefits the most from fast-wide presets.
+      Self::X86Vpclmul => {
+        if tune.fast_wide_ops {
+          256
+        } else if tune.effective_simd_width >= 512 {
+          384
+        } else {
+          512
+        }
+      }
+      // PMULL+EOR3 is still 128-bit NEON, but fast microarchitectures can run
+      // with lower per-lane requirements.
+      Self::ArmPmullEor3 => {
+        if tune.fast_wide_ops {
+          128
+        } else {
+          192
+        }
+      }
+      Self::ArmSve2Pmull | Self::RiscvZvbc => {
+        if tune.fast_wide_ops {
+          384
+        } else {
+          512
+        }
+      }
     }
   }
 
@@ -595,6 +654,18 @@ mod tests {
         );
       }
     }
+  }
+
+  #[test]
+  fn tuned_min_bytes_per_lane_values() {
+    let zen5 = platform::Tune::ZEN5;
+    let icl = platform::Tune::INTEL_ICL;
+
+    assert_eq!(KernelFamily::Reference.min_bytes_per_lane_for_tune(&zen5), usize::MAX);
+    assert_eq!(KernelFamily::X86Crc32.min_bytes_per_lane_for_tune(&zen5), 64);
+    assert_eq!(KernelFamily::X86Crc32.min_bytes_per_lane_for_tune(&icl), 128);
+    assert_eq!(KernelFamily::X86Vpclmul.min_bytes_per_lane_for_tune(&zen5), 256);
+    assert_eq!(KernelFamily::X86Vpclmul.min_bytes_per_lane_for_tune(&icl), 512);
   }
 
   // ─── KernelSubfamily Tests ─────────────────────────────────────────────────

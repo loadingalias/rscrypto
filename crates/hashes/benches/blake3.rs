@@ -10,7 +10,7 @@ use hashes::{
   bench as microbench,
   crypto::{
     Blake3,
-    blake3::{dispatch_tables, tune},
+    blake3::{dispatch, dispatch_tables, tune},
   },
 };
 use traits::{Digest as _, Xof as _};
@@ -655,6 +655,77 @@ fn blake3_xof_sized_comparison(c: &mut Criterion) {
   group.finish();
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Streaming Dispatch Observability
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn blake3_streaming_dispatch(c: &mut Criterion) {
+  let inputs = common::sized_inputs();
+  let modes: &[(&str, u32)] = &[
+    ("plain", 0),
+    ("keyed", dispatch::FLAGS_KEYED_HASH),
+    ("derive-key", dispatch::FLAGS_DERIVE_KEY_MATERIAL),
+  ];
+
+  // Print full dispatch table (the real value of this bench)
+  eprintln!("\n=== BLAKE3 Streaming Dispatch Decisions ===");
+  for (mode_name, flags) in modes {
+    eprintln!("\n--- {mode_name} (flags={flags:#x}) ---");
+    for (len, _) in &inputs {
+      let info = dispatch::streaming_dispatch_info(*flags, *len);
+      eprintln!(
+        "  len={len:>8}: stream={:<12} bulk={:<12} parallel={} (min_bytes={}, max_threads={}, actual_threads={})",
+        info.stream_kernel,
+        info.bulk_kernel,
+        if info.would_parallelize { "YES" } else { "no " },
+        info.parallel_min_bytes,
+        info.parallel_max_threads,
+        info.parallel_threads,
+      );
+    }
+  }
+  eprintln!();
+
+  // Minimal Criterion group — the eprintln output above is the real deliverable
+  let key: [u8; 32] = *b"rscrypto-blake3-benchmark-key!!_";
+  let context = "rscrypto benchmark 2024-01-01 derive key context";
+
+  let mut group = c.benchmark_group("blake3/streaming-dispatch");
+  group.sample_size(10);
+  group.warm_up_time(Duration::from_millis(200));
+  group.measurement_time(Duration::from_millis(500));
+
+  for (mode_name, flags) in modes {
+    for (len, data) in &inputs {
+      let info = dispatch::streaming_dispatch_info(*flags, *len);
+      let label = format!("{mode_name}/{}+{}", info.stream_kernel, info.bulk_kernel);
+      common::set_throughput(&mut group, *len);
+
+      group.bench_with_input(BenchmarkId::new(&label, len), data, |b, d| {
+        b.iter(|| match *mode_name {
+          "plain" => {
+            let mut h = Blake3::new();
+            h.update(black_box(d));
+            black_box(h.finalize())
+          }
+          "keyed" => {
+            let mut h = Blake3::new_keyed(&key);
+            h.update(black_box(d));
+            black_box(h.finalize())
+          }
+          "derive-key" => {
+            let mut h = Blake3::new_derive_key(context);
+            h.update(black_box(d));
+            black_box(h.finalize())
+          }
+          _ => unreachable!(),
+        })
+      });
+    }
+  }
+  group.finish();
+}
+
 criterion_group!(
   benches,
   blake3_oneshot_comparison,
@@ -672,5 +743,6 @@ criterion_group!(
   blake3_large_inputs,
   blake3_rscrypto_threads,
   blake3_latency,
+  blake3_streaming_dispatch,
 );
 criterion_main!(benches);

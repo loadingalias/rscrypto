@@ -460,8 +460,9 @@ fn tune_algorithm_impl(
     thresholds.push(("min_bytes_per_lane".to_string(), min_bpl));
   }
 
-  // BLAKE3: tune the automatic multi-core cutoff (std-only) for this host.
-  if algorithm.name() == "blake3"
+  // BLAKE3: tune automatic multi-core policy cutoffs for one-shot and
+  // streaming workloads separately.
+  if (algorithm.name() == "blake3" || algorithm.name().starts_with("blake3-stream4k"))
     && let Some((min_bytes, min_chunks, max_threads)) = tune_blake3_parallel_policy(runner, algorithm, best_kernel)?
   {
     thresholds.push(("parallel_min_bytes".to_string(), min_bytes));
@@ -487,6 +488,156 @@ fn tune_algorithm_impl(
   })
 }
 
+const BLAKE3_CHUNK_BYTES: usize = 1024;
+const BLAKE3_PAR_MARGIN: f64 = 1.02;
+const BLAKE3_PAR_SIZES: &[usize] = &[
+  64 * 1024,
+  96 * 1024,
+  128 * 1024,
+  192 * 1024,
+  256 * 1024,
+  384 * 1024,
+  512 * 1024,
+  768 * 1024,
+  1024 * 1024,
+  1536 * 1024,
+  2 * 1024 * 1024,
+  4 * 1024 * 1024,
+  8 * 1024 * 1024,
+];
+
+#[derive(Clone, Debug)]
+struct Blake3ParallelFit {
+  max_threads: usize,
+  min_bytes: usize,
+  min_chunks: usize,
+  weighted_ratio: f64,
+  peak_tp: f64,
+}
+
+fn build_blake3_crossover_measurements(
+  single: &[(usize, f64)],
+  parallel: &[(usize, f64)],
+  size_scale: usize,
+) -> Vec<analysis::Measurement> {
+  let mut measurements = Vec::with_capacity(single.len().strict_add(parallel.len()));
+  for &(size, tp) in single {
+    measurements.push(analysis::Measurement {
+      kernel: "single".to_string(),
+      streams: 1,
+      size: size / size_scale,
+      throughput_gib_s: tp,
+    });
+  }
+  for &(size, tp) in parallel {
+    measurements.push(analysis::Measurement {
+      kernel: "parallel".to_string(),
+      streams: 1,
+      size: size / size_scale,
+      throughput_gib_s: tp,
+    });
+  }
+  measurements
+}
+
+fn weighted_parallel_ratio(single: &[(usize, f64)], parallel: &[(usize, f64)], min_size: usize) -> f64 {
+  let mut weighted = 0.0f64;
+  let mut total_weight = 0.0f64;
+
+  for ((single_size, single_tp), (parallel_size, parallel_tp)) in single.iter().zip(parallel.iter()) {
+    if single_size != parallel_size || *single_size < min_size {
+      continue;
+    }
+
+    let ratio = if *single_tp > 0.0 { parallel_tp / single_tp } else { 1.0 };
+    let weight = *single_size as f64;
+    weighted += ratio * weight;
+    total_weight += weight;
+  }
+
+  if total_weight > 0.0 {
+    weighted / total_weight
+  } else {
+    1.0
+  }
+}
+
+fn fit_blake3_parallel_curve(
+  single: &[(usize, f64)],
+  parallel: &[(usize, f64)],
+  max_threads: usize,
+) -> Option<Blake3ParallelFit> {
+  let byte_measurements = build_blake3_crossover_measurements(single, parallel, 1);
+  let byte_crossover = analysis::find_crossover(&byte_measurements, "single", 1, "parallel", 1, BLAKE3_PAR_MARGIN)?;
+
+  let chunk_measurements = build_blake3_crossover_measurements(single, parallel, BLAKE3_CHUNK_BYTES);
+  let chunk_crossover = analysis::find_crossover(&chunk_measurements, "single", 1, "parallel", 1, BLAKE3_PAR_MARGIN)?;
+
+  let weighted_ratio = weighted_parallel_ratio(single, parallel, byte_crossover.crossover_size);
+  let peak_tp = parallel.last().map(|(_, tp)| *tp).unwrap_or(0.0);
+
+  Some(Blake3ParallelFit {
+    max_threads,
+    min_bytes: byte_crossover.crossover_size,
+    min_chunks: chunk_crossover.crossover_size.max(1),
+    weighted_ratio,
+    peak_tp,
+  })
+}
+
+fn select_best_blake3_parallel_fit(fits: &[Blake3ParallelFit]) -> Option<Blake3ParallelFit> {
+  let mut best: Option<Blake3ParallelFit> = None;
+  for fit in fits {
+    let replace = if let Some(current) = &best {
+      const EPS: f64 = 1e-6;
+      if fit.weighted_ratio > current.weighted_ratio + EPS {
+        true
+      } else if fit.weighted_ratio + EPS < current.weighted_ratio {
+        false
+      } else if fit.peak_tp > current.peak_tp + EPS {
+        true
+      } else if fit.peak_tp + EPS < current.peak_tp {
+        false
+      } else if fit.min_bytes < current.min_bytes {
+        true
+      } else if fit.min_bytes > current.min_bytes {
+        false
+      } else {
+        fit.max_threads < current.max_threads
+      }
+    } else {
+      true
+    };
+
+    if replace {
+      best = Some(fit.clone());
+    }
+  }
+  best
+}
+
+fn measure_blake3_curve(
+  runner: &BenchRunner,
+  algorithm: &mut dyn Tunable,
+  buffer: &[u8],
+  sizes: &[usize],
+  max_threads: usize,
+) -> Result<Vec<(usize, f64)>, TuneError> {
+  use hashes::crypto::blake3::{dispatch_tables::ParallelTable, tune::override_blake3_parallel_policy};
+
+  let mut out = Vec::with_capacity(sizes.len());
+  let _g = override_blake3_parallel_policy(ParallelTable {
+    min_bytes: 0,
+    min_chunks: 0,
+    max_threads: max_threads.min(u8::MAX as usize) as u8,
+  });
+  for &size in sizes {
+    let r = runner.measure_single(algorithm, &buffer[..size])?;
+    out.push((size, r.throughput_gib_s));
+  }
+  Ok(out)
+}
+
 fn tune_blake3_parallel_policy(
   runner: &BenchRunner,
   algorithm: &mut dyn Tunable,
@@ -506,31 +657,19 @@ fn tune_blake3_parallel_policy(
   algorithm.reset();
   let _ = algorithm.force_kernel(best_kernel);
 
-  // Include >1MiB sizes so the crossover isn't forced to land at 1MiB.
-  const SIZES: &[usize] = &[
-    64 * 1024,
-    128 * 1024,
-    256 * 1024,
-    512 * 1024,
-    1024 * 1024,
-    2 * 1024 * 1024,
-    4 * 1024 * 1024,
-    8 * 1024 * 1024,
-  ];
-
-  let max_size = *SIZES.last().unwrap_or(&0);
+  let max_size = *BLAKE3_PAR_SIZES.last().unwrap_or(&0);
   let mut buffer = vec![0u8; max_size];
   fill_data(&mut buffer);
 
   // Baseline (forced single-thread).
-  let mut single_tp: Vec<(usize, f64)> = Vec::with_capacity(SIZES.len());
+  let mut single_tp: Vec<(usize, f64)> = Vec::with_capacity(BLAKE3_PAR_SIZES.len());
   {
     let _g = override_blake3_parallel_policy(ParallelTable {
       min_bytes: usize::MAX,
       min_chunks: usize::MAX,
       max_threads: 1,
     });
-    for &size in SIZES {
+    for &size in BLAKE3_PAR_SIZES {
       let r = runner.measure_single(algorithm, &buffer[..size])?;
       single_tp.push((size, r.throughput_gib_s));
     }
@@ -546,70 +685,21 @@ fn tune_blake3_parallel_policy(
   candidates.sort_unstable();
   candidates.dedup();
 
-  // Pick best max_threads at the largest size.
-  let mut best_threads = 2usize;
-  let mut best_tp = 0.0f64;
-  for t in candidates {
-    let _g = override_blake3_parallel_policy(ParallelTable {
-      min_bytes: 0,
-      min_chunks: 0,
-      max_threads: t as u8,
-    });
-    let r = runner.measure_single(algorithm, &buffer[..max_size])?;
-    let tp = r.throughput_gib_s;
-    if tp > best_tp || (tp == best_tp && t < best_threads) {
-      best_tp = tp;
-      best_threads = t;
+  // Fit curve-derived policy values for each thread candidate.
+  let mut fits = Vec::new();
+  for threads in candidates {
+    let parallel_tp = measure_blake3_curve(runner, algorithm, &buffer, BLAKE3_PAR_SIZES, threads)?;
+    if let Some(fit) = fit_blake3_parallel_curve(&single_tp, &parallel_tp, threads) {
+      fits.push(fit);
     }
   }
 
-  // Measure the chosen multi-core mode across sizes.
-  let mut parallel_tp: Vec<(usize, f64)> = Vec::with_capacity(SIZES.len());
-  {
-    let _g = override_blake3_parallel_policy(ParallelTable {
-      min_bytes: 0,
-      min_chunks: 0,
-      max_threads: best_threads as u8,
-    });
-    for &size in SIZES {
-      let r = runner.measure_single(algorithm, &buffer[..size])?;
-      parallel_tp.push((size, r.throughput_gib_s));
-    }
-  }
-
-  // Find a sustained crossover where parallel stays >= single at larger sizes.
-  // Require a small margin to avoid flip-flops on noisy hosts.
-  let mut measurements = Vec::with_capacity(SIZES.len() * 2);
-  for &(size, tp) in &single_tp {
-    measurements.push(analysis::Measurement {
-      kernel: "single".to_string(),
-      streams: 1,
-      size,
-      throughput_gib_s: tp,
-    });
-  }
-  for &(size, tp) in &parallel_tp {
-    measurements.push(analysis::Measurement {
-      kernel: "parallel".to_string(),
-      streams: 1,
-      size,
-      throughput_gib_s: tp,
-    });
-  }
-
-  let Some(crossover) = analysis::find_crossover(&measurements, "single", 1, "parallel", 1, 1.02) else {
+  let Some(best_fit) = select_best_blake3_parallel_fit(&fits) else {
     // Parallel never wins consistently on this host/config.
     return Ok(Some((usize::MAX, usize::MAX, 1)));
   };
 
-  let min_bytes = crossover.crossover_size;
-  let min_chunks = if min_bytes.is_multiple_of(1024) {
-    (min_bytes / 1024).saturating_sub(1)
-  } else {
-    min_bytes / 1024
-  };
-
-  Ok(Some((min_bytes, min_chunks, best_threads)))
+  Ok(Some((best_fit.min_bytes, best_fit.min_chunks, best_fit.max_threads)))
 }
 
 /// Map generic threshold names to algorithm-specific env var suffixes.
@@ -1057,5 +1147,61 @@ mod tests {
     assert_eq!(results.algorithms.len(), 1);
     assert_eq!(results.algorithms[0].name, "broken-kernel");
     assert_eq!(results.algorithms[0].best_kernel, "portable");
+  }
+
+  #[test]
+  fn blake3_parallel_curve_fit_uses_curve_for_min_chunks() {
+    let single = vec![
+      (64 * 1024, 4.00),
+      (96 * 1024, 4.05),
+      (128 * 1024, 4.10),
+      (192 * 1024, 4.15),
+      (256 * 1024, 4.20),
+    ];
+    let parallel = vec![
+      (64 * 1024, 3.40),
+      (96 * 1024, 3.95),
+      (128 * 1024, 4.30),
+      (192 * 1024, 4.55),
+      (256 * 1024, 4.75),
+    ];
+
+    let fit = fit_blake3_parallel_curve(&single, &parallel, 8).expect("parallel should win at larger sizes");
+
+    assert_eq!(fit.min_bytes, 128 * 1024);
+    assert_eq!(fit.min_chunks, 128);
+    assert_eq!(fit.max_threads, 8);
+  }
+
+  #[test]
+  fn blake3_parallel_curve_fit_returns_none_when_parallel_never_wins() {
+    let single = vec![(64 * 1024, 4.0), (128 * 1024, 4.1), (256 * 1024, 4.2)];
+    let parallel = vec![(64 * 1024, 3.0), (128 * 1024, 3.2), (256 * 1024, 3.5)];
+
+    assert!(fit_blake3_parallel_curve(&single, &parallel, 4).is_none());
+  }
+
+  #[test]
+  fn select_best_blake3_parallel_fit_prefers_lower_threshold_on_tie() {
+    let fits = vec![
+      Blake3ParallelFit {
+        max_threads: 8,
+        min_bytes: 256 * 1024,
+        min_chunks: 256,
+        weighted_ratio: 1.100,
+        peak_tp: 9.0,
+      },
+      Blake3ParallelFit {
+        max_threads: 12,
+        min_bytes: 128 * 1024,
+        min_chunks: 128,
+        weighted_ratio: 1.100,
+        peak_tp: 9.0,
+      },
+    ];
+
+    let best = select_best_blake3_parallel_fit(&fits).expect("expected best fit");
+    assert_eq!(best.min_bytes, 128 * 1024);
+    assert_eq!(best.min_chunks, 128);
   }
 }

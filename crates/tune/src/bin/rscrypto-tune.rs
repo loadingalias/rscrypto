@@ -6,16 +6,41 @@
 //!   cargo run --release -p tune --bin rscrypto-tune -- --format env
 
 use core::time::Duration;
-use std::{env, process::ExitCode};
+use std::{
+  collections::HashSet,
+  env,
+  fs::{self, File},
+  io::BufWriter,
+  path::Path,
+  process::ExitCode,
+};
 
 use tune::{
-  BenchRunner, OutputFormat, PlatformInfo, TuneEngine,
+  BenchRunner, OutputFormat, PlatformInfo, Report, TuneEngine, TuneResults,
   crc16::{Crc16CcittTunable, Crc16IbmTunable},
   crc24::Crc24OpenPgpTunable,
   crc32::{Crc32IeeeTunable, Crc32cTunable},
   crc64::{Crc64NvmeTunable, Crc64XzTunable},
-  hash::HashTunable,
+  hash::{
+    BLAKE3_TUNING_CORPUS, HASH_CORE_TUNING_CORPUS, HASH_MICRO_TUNING_CORPUS, HASH_STREAM_PROFILE_TUNING_CORPUS,
+    HashTunable,
+  },
 };
+
+const CRATE_CHECKSUM: &str = "checksum";
+const CRATE_HASHES: &str = "hashes";
+const CRATE_HASHES_BENCH: &str = "hashes-bench";
+const VALID_CRATE_FILTERS: &[&str] = &[CRATE_CHECKSUM, CRATE_HASHES, CRATE_HASHES_BENCH];
+
+const CHECKSUM_ALGOS: &[&str] = &[
+  "crc16-ccitt",
+  "crc16-ibm",
+  "crc24-openpgp",
+  "crc32-ieee",
+  "crc32c",
+  "crc64-xz",
+  "crc64-nvme",
+];
 
 /// CLI arguments.
 #[derive(Debug)]
@@ -26,8 +51,17 @@ struct Args {
   /// Only run a subset of algorithms (repeatable, comma-separated).
   only: Vec<String>,
 
+  /// Only run selected algorithm crates/surfaces.
+  crate_filters: Vec<String>,
+
+  /// List available algorithm crate filters and algorithms.
+  list: bool,
+
   /// Output format.
   format: OutputFormat,
+
+  /// Optional directory for writing report artifacts.
+  report_dir: Option<String>,
 
   /// Verbose output.
   verbose: bool,
@@ -37,6 +71,9 @@ struct Args {
 
   /// Validate that tuned results can be safely applied on this host.
   self_check: bool,
+
+  /// Enforce throughput targets and fail when any class misses.
+  enforce_targets: bool,
 
   /// Custom warmup duration in ms.
   warmup_ms: Option<u64>,
@@ -65,10 +102,14 @@ impl Default for Args {
     Self {
       quick: false,
       only: Vec::new(),
+      crate_filters: Vec::new(),
+      list: false,
       format: OutputFormat::Summary,
+      report_dir: None,
       verbose: false,
       apply: false,
       self_check: false,
+      enforce_targets: false,
       warmup_ms: None,
       measure_ms: None,
       checksum_warmup_ms: None,
@@ -76,6 +117,25 @@ impl Default for Args {
       hash_warmup_ms: None,
       hash_measure_ms: None,
       help: false,
+    }
+  }
+}
+
+fn parse_csv_values(value: &str, out: &mut Vec<String>, lowercase: bool) {
+  for part in value.split(',') {
+    let mut item = part.trim();
+    if let Some((_, rhs)) = item.rsplit_once('=')
+      && !rhs.is_empty()
+    {
+      item = rhs;
+    }
+    if item.is_empty() {
+      continue;
+    }
+    if lowercase {
+      out.push(item.to_ascii_lowercase());
+    } else {
+      out.push(item.to_string());
     }
   }
 }
@@ -90,29 +150,36 @@ fn parse_args() -> Result<Args, String> {
       "--quick" | "-q" => args.quick = true,
       "--verbose" | "-v" => args.verbose = true,
       "--help" | "-h" => args.help = true,
+      "--list" => args.list = true,
       "--apply" => args.apply = true,
       "--self-check" => args.self_check = true,
+      "--enforce-targets" => args.enforce_targets = true,
       "--only" => {
         let Some(value) = iter.next() else {
           return Err("--only requires a value".to_string());
         };
-        for part in value.split(',') {
-          let mut name = part.trim();
-          if let Some((_, rhs)) = name.rsplit_once('=')
-            && !rhs.is_empty()
-          {
-            name = rhs;
-          }
-          if !name.is_empty() {
-            args.only.push(name.to_string());
-          }
-        }
+        parse_csv_values(&value, &mut args.only, false);
+      }
+      "--crate" => {
+        let Some(value) = iter.next() else {
+          return Err("--crate requires a value".to_string());
+        };
+        parse_csv_values(&value, &mut args.crate_filters, true);
       }
       "--format" | "-f" => {
         let Some(value) = iter.next() else {
           return Err("--format requires a value".to_string());
         };
         args.format = OutputFormat::parse(&value).ok_or_else(|| format!("Unknown format: {value}"))?;
+      }
+      "--report-dir" => {
+        let Some(value) = iter.next() else {
+          return Err("--report-dir requires a value".to_string());
+        };
+        if value.trim().is_empty() {
+          return Err("--report-dir requires a non-empty value".to_string());
+        }
+        args.report_dir = Some(value);
       }
       "--warmup-ms" => {
         let Some(value) = iter.next() else {
@@ -181,8 +248,12 @@ USAGE:
 OPTIONS:
     -q, --quick           Quick mode (faster, noisier measurements)
     -v, --verbose         Verbose output during tuning
-    -f, --format FORMAT   Output format: summary (default), env, json, tsv, contribute
+    --list                List registered algorithms and exit
+    --crate NAME(S)       Restrict tuning corpus by crate/surface (checksum, hashes, hashes-bench)
         --only ALGO(S)    Only run selected algorithm(s). Repeatable; value may be comma-separated.
+    -f, --format FORMAT   Output format: summary (default), env, json, tsv, contribute
+    --report-dir DIR      Write summary/env/json/tsv/contribute artifacts into DIR
+    --enforce-targets     Fail if any defined per-class throughput target is missed
     --apply               Generate dispatch.rs table entry for this TuneKind
     --self-check          Validate that tuned results can be safely applied on this host
     --warmup-ms MS        Override warmup duration for all domains
@@ -204,25 +275,119 @@ EXAMPLES:
     # Standard tuning run
     just tune
 
-    # Quick run for development
-    just tune-quick
+    # Tune only hashes crate algorithms
+    just tune -- --crate hashes
 
-    # Tune only BLAKE3-related algorithms
-    just tune-quick -- --only blake3,blake3-chunk,blake3-parent,blake3-parent-fold,blake3-stream64,blake3-stream4k
+    # Tune only BLAKE3 corpus and write report artifacts
+    just tune-quick -- --only blake3,blake3-chunk,blake3-parent,blake3-parent-fold,blake3-stream64,blake3-stream4k \
+     --report-dir target/tune
 
-    # Generate markdown for contributing your results
-    just tune -- --format contribute
+    # Enforce throughput targets in CI
+    just tune-quick -- --enforce-targets
 
-    # Output as JSON
-    just tune -- --format json
-
-    # Generate dispatch table entry (outputs to crates/checksum/src/dispatch.rs)
+    # Generate dispatch table entry (writes into dispatch tables)
     just tune-apply
-
-    # Validate kernel mapping on this host (recommended with --apply)
-    cargo run --release -p tune --bin rscrypto-tune -- --self-check
 "
   );
+}
+
+fn print_catalog() {
+  println!("Available crate filters:");
+  for name in VALID_CRATE_FILTERS {
+    println!("  - {name}");
+  }
+
+  println!();
+  println!("[{CRATE_CHECKSUM}]");
+  for algo in CHECKSUM_ALGOS {
+    println!("  - {algo}");
+  }
+
+  println!();
+  println!("[{CRATE_HASHES}] core");
+  for (algo, _) in HASH_CORE_TUNING_CORPUS {
+    println!("  - {algo}");
+  }
+  println!("[{CRATE_HASHES}] blake3 corpus");
+  for (algo, _) in BLAKE3_TUNING_CORPUS {
+    println!("  - {algo}");
+  }
+
+  println!();
+  println!("[{CRATE_HASHES_BENCH}] micro");
+  for (algo, _) in HASH_MICRO_TUNING_CORPUS {
+    println!("  - {algo}");
+  }
+  println!("[{CRATE_HASHES_BENCH}] stream profiles");
+  for (algo, _) in HASH_STREAM_PROFILE_TUNING_CORPUS {
+    println!("  - {algo}");
+  }
+}
+
+fn wants_crate(crate_filters: &[String], name: &str) -> bool {
+  crate_filters.is_empty() || crate_filters.iter().any(|v| v == name)
+}
+
+fn add_hash_corpus(engine: &mut TuneEngine, seen: &mut HashSet<&'static str>, corpus: &[(&'static str, &'static str)]) {
+  for &(algo, env_prefix) in corpus {
+    if seen.insert(algo) {
+      engine.add(Box::new(HashTunable::new(algo, env_prefix)));
+    }
+  }
+}
+
+fn register_algorithms(engine: &mut TuneEngine, crate_filters: &[String]) {
+  if wants_crate(crate_filters, CRATE_CHECKSUM) {
+    engine.add(Box::new(Crc16CcittTunable::new()));
+    engine.add(Box::new(Crc16IbmTunable::new()));
+    engine.add(Box::new(Crc24OpenPgpTunable::new()));
+    engine.add(Box::new(Crc32IeeeTunable::new()));
+    engine.add(Box::new(Crc32cTunable::new()));
+    engine.add(Box::new(Crc64XzTunable::new()));
+    engine.add(Box::new(Crc64NvmeTunable::new()));
+  }
+
+  let mut seen = HashSet::new();
+  if wants_crate(crate_filters, CRATE_HASHES) {
+    add_hash_corpus(engine, &mut seen, HASH_CORE_TUNING_CORPUS);
+    add_hash_corpus(engine, &mut seen, BLAKE3_TUNING_CORPUS);
+  }
+  if wants_crate(crate_filters, CRATE_HASHES_BENCH) {
+    add_hash_corpus(engine, &mut seen, HASH_MICRO_TUNING_CORPUS);
+    add_hash_corpus(engine, &mut seen, HASH_STREAM_PROFILE_TUNING_CORPUS);
+  }
+}
+
+fn print_output(results: &TuneResults, format: OutputFormat) -> Result<(), String> {
+  match format {
+    OutputFormat::Summary => tune::report::print_summary(results).map_err(|e| format!("Failed to print summary: {e}")),
+    OutputFormat::Env => tune::report::print_env(results).map_err(|e| format!("Failed to print env: {e}")),
+    OutputFormat::Json => tune::report::print_json(results).map_err(|e| format!("Failed to print json: {e}")),
+    OutputFormat::Tsv => tune::report::print_tsv(results).map_err(|e| format!("Failed to print tsv: {e}")),
+    OutputFormat::Contribute => {
+      tune::report::print_contribute(results).map_err(|e| format!("Failed to print contribute: {e}"))
+    }
+  }
+}
+
+fn write_report_file(path: &Path, format: OutputFormat, results: &TuneResults) -> Result<(), String> {
+  let file = File::create(path).map_err(|e| format!("Failed to create {}: {e}", path.display()))?;
+  let mut report = Report::new(BufWriter::new(file), format);
+  report
+    .write(results)
+    .map_err(|e| format!("Failed to write {}: {e}", path.display()))
+}
+
+fn write_report_artifacts(path: &Path, results: &TuneResults) -> Result<(), String> {
+  fs::create_dir_all(path).map_err(|e| format!("Failed to create {}: {e}", path.display()))?;
+
+  write_report_file(&path.join("summary.txt"), OutputFormat::Summary, results)?;
+  write_report_file(&path.join("env.sh"), OutputFormat::Env, results)?;
+  write_report_file(&path.join("results.json"), OutputFormat::Json, results)?;
+  write_report_file(&path.join("results.tsv"), OutputFormat::Tsv, results)?;
+  write_report_file(&path.join("contribute.md"), OutputFormat::Contribute, results)?;
+
+  Ok(())
 }
 
 fn main() -> ExitCode {
@@ -238,6 +403,19 @@ fn main() -> ExitCode {
   if args.help {
     print_help();
     return ExitCode::SUCCESS;
+  }
+
+  if args.list {
+    print_catalog();
+    return ExitCode::SUCCESS;
+  }
+
+  for filter in &args.crate_filters {
+    if !VALID_CRATE_FILTERS.contains(&filter.as_str()) {
+      eprintln!("Error: unknown --crate filter '{filter}'");
+      eprintln!("Valid values: {}", VALID_CRATE_FILTERS.join(", "));
+      return ExitCode::FAILURE;
+    }
   }
 
   // Build runners (checksums and hashes can use different measurement windows).
@@ -291,152 +469,14 @@ fn main() -> ExitCode {
     (None, None) => {}
   };
 
-  // Build the engine
+  // Build and populate the engine.
   let mut engine = TuneEngine::new()
     .with_checksum_runner(checksum_runner)
     .with_hash_runner(hash_runner)
     .with_verbose(args.verbose);
+  register_algorithms(&mut engine, &args.crate_filters);
 
-  // Register all checksum tunables
-  engine.add(Box::new(Crc16CcittTunable::new()));
-  engine.add(Box::new(Crc16IbmTunable::new()));
-  engine.add(Box::new(Crc24OpenPgpTunable::new()));
-  engine.add(Box::new(Crc32IeeeTunable::new()));
-  engine.add(Box::new(Crc32cTunable::new()));
-  engine.add(Box::new(Crc64XzTunable::new()));
-  engine.add(Box::new(Crc64NvmeTunable::new()));
-  engine.add(Box::new(HashTunable::new("sha224", "RSCRYPTO_SHA224")));
-  engine.add(Box::new(HashTunable::new("sha256", "RSCRYPTO_SHA256")));
-  engine.add(Box::new(HashTunable::new("sha384", "RSCRYPTO_SHA384")));
-  engine.add(Box::new(HashTunable::new("sha512", "RSCRYPTO_SHA512")));
-  engine.add(Box::new(HashTunable::new("sha512-224", "RSCRYPTO_SHA512_224")));
-  engine.add(Box::new(HashTunable::new("sha512-256", "RSCRYPTO_SHA512_256")));
-  engine.add(Box::new(HashTunable::new("blake2b-512", "RSCRYPTO_BLAKE2B_512")));
-  engine.add(Box::new(HashTunable::new("blake2s-256", "RSCRYPTO_BLAKE2S_256")));
-  engine.add(Box::new(HashTunable::new("blake3", "RSCRYPTO_BLAKE3")));
-  engine.add(Box::new(HashTunable::new("sha3-224", "RSCRYPTO_SHA3_224")));
-  engine.add(Box::new(HashTunable::new("sha3-256", "RSCRYPTO_SHA3_256")));
-  engine.add(Box::new(HashTunable::new("sha3-384", "RSCRYPTO_SHA3_384")));
-  engine.add(Box::new(HashTunable::new("sha3-512", "RSCRYPTO_SHA3_512")));
-  engine.add(Box::new(HashTunable::new("shake128", "RSCRYPTO_SHAKE128")));
-  engine.add(Box::new(HashTunable::new("shake256", "RSCRYPTO_SHAKE256")));
-  engine.add(Box::new(HashTunable::new("xxh3", "RSCRYPTO_XXH3")));
-  engine.add(Box::new(HashTunable::new("rapidhash", "RSCRYPTO_RAPIDHASH")));
-  engine.add(Box::new(HashTunable::new("siphash", "RSCRYPTO_SIPHASH")));
-  engine.add(Box::new(HashTunable::new("keccakf1600", "RSCRYPTO_KECCAKF1600")));
-  engine.add(Box::new(HashTunable::new("ascon-hash256", "RSCRYPTO_ASCON_HASH256")));
-  engine.add(Box::new(HashTunable::new("ascon-xof128", "RSCRYPTO_ASCON_XOF128")));
-
-  // ────────────────────────────────────────────────────────────────────────────
-  // Kernel-loop microbenches (drive SIMD work; no effect on runtime env vars)
-  //
-  // These are intentionally registered as separate "algorithms" so tuning output
-  // can report steady-state kernel throughput, tail/finalization, and different
-  // update chunking profiles independently.
-  // ────────────────────────────────────────────────────────────────────────────
-  engine.add(Box::new(HashTunable::new(
-    "sha224-compress",
-    "RSCRYPTO_BENCH_SHA224_COMPRESS",
-  )));
-  engine.add(Box::new(HashTunable::new(
-    "sha256-compress",
-    "RSCRYPTO_BENCH_SHA256_COMPRESS",
-  )));
-  engine.add(Box::new(HashTunable::new(
-    "sha256-compress-unaligned",
-    "RSCRYPTO_BENCH_SHA256_COMPRESS_UNALIGNED",
-  )));
-  engine.add(Box::new(HashTunable::new(
-    "sha384-compress",
-    "RSCRYPTO_BENCH_SHA384_COMPRESS",
-  )));
-  engine.add(Box::new(HashTunable::new(
-    "sha512-compress",
-    "RSCRYPTO_BENCH_SHA512_COMPRESS",
-  )));
-  engine.add(Box::new(HashTunable::new(
-    "sha512-compress-unaligned",
-    "RSCRYPTO_BENCH_SHA512_COMPRESS_UNALIGNED",
-  )));
-  engine.add(Box::new(HashTunable::new(
-    "sha512-224-compress",
-    "RSCRYPTO_BENCH_SHA512_224_COMPRESS",
-  )));
-  engine.add(Box::new(HashTunable::new(
-    "sha512-256-compress",
-    "RSCRYPTO_BENCH_SHA512_256_COMPRESS",
-  )));
-
-  engine.add(Box::new(HashTunable::new(
-    "blake2b-512-compress",
-    "RSCRYPTO_BENCH_BLAKE2B_512_COMPRESS",
-  )));
-  engine.add(Box::new(HashTunable::new(
-    "blake2s-256-compress",
-    "RSCRYPTO_BENCH_BLAKE2S_256_COMPRESS",
-  )));
-
-  engine.add(Box::new(HashTunable::new(
-    "blake3-chunk",
-    "RSCRYPTO_BENCH_BLAKE3_CHUNK",
-  )));
-  engine.add(Box::new(HashTunable::new(
-    "blake3-parent",
-    "RSCRYPTO_BENCH_BLAKE3_PARENT",
-  )));
-  engine.add(Box::new(HashTunable::new(
-    "blake3-parent-fold",
-    "RSCRYPTO_BENCH_BLAKE3_PARENT_FOLD",
-  )));
-
-  engine.add(Box::new(HashTunable::new(
-    "keccakf1600-permute",
-    "RSCRYPTO_BENCH_KECCAKF1600_PERMUTE",
-  )));
-
-  // Chunking pattern profiles (many small updates vs few large updates).
-  engine.add(Box::new(HashTunable::new(
-    "sha256-stream64",
-    "RSCRYPTO_BENCH_SHA256_STREAM64",
-  )));
-  engine.add(Box::new(HashTunable::new(
-    "sha256-stream4k",
-    "RSCRYPTO_BENCH_SHA256_STREAM4K",
-  )));
-  engine.add(Box::new(HashTunable::new(
-    "sha512-stream64",
-    "RSCRYPTO_BENCH_SHA512_STREAM64",
-  )));
-  engine.add(Box::new(HashTunable::new(
-    "sha512-stream4k",
-    "RSCRYPTO_BENCH_SHA512_STREAM4K",
-  )));
-  engine.add(Box::new(HashTunable::new(
-    "blake2b-512-stream64",
-    "RSCRYPTO_BENCH_BLAKE2B_512_STREAM64",
-  )));
-  engine.add(Box::new(HashTunable::new(
-    "blake2b-512-stream4k",
-    "RSCRYPTO_BENCH_BLAKE2B_512_STREAM4K",
-  )));
-  engine.add(Box::new(HashTunable::new(
-    "blake2s-256-stream64",
-    "RSCRYPTO_BENCH_BLAKE2S_256_STREAM64",
-  )));
-  engine.add(Box::new(HashTunable::new(
-    "blake2s-256-stream4k",
-    "RSCRYPTO_BENCH_BLAKE2S_256_STREAM4K",
-  )));
-  engine.add(Box::new(HashTunable::new(
-    "blake3-stream64",
-    "RSCRYPTO_BENCH_BLAKE3_STREAM64",
-  )));
-  engine.add(Box::new(HashTunable::new(
-    "blake3-stream4k",
-    "RSCRYPTO_BENCH_BLAKE3_STREAM4K",
-  )));
-
-  // Print header
+  // Print header.
   let platform = PlatformInfo::collect();
   eprintln!("rscrypto-tune");
   eprintln!("=============");
@@ -445,15 +485,16 @@ fn main() -> ExitCode {
   eprintln!("Tune preset: {:?}", platform.tune_kind);
   eprintln!();
 
-  // Run the tuning engine
+  // Run the tuning engine.
   if !args.only.is_empty() {
     let kept = engine.retain_only(&args.only);
     if kept == 0 {
       eprintln!("Error: --only did not match any registered algorithms.");
-      eprintln!("Tip: run without --only (or use --verbose) to see the full list.");
+      eprintln!("Tip: run with --list to see available algorithms.");
       return ExitCode::FAILURE;
     }
   }
+
   let results = match engine.run() {
     Ok(results) => results,
     Err(err) => {
@@ -462,38 +503,32 @@ fn main() -> ExitCode {
     }
   };
 
-  // Output results in requested format
-  match args.format {
-    OutputFormat::Summary => {
-      if let Err(err) = tune::report::print_summary(&results) {
-        eprintln!("Failed to print summary: {err}");
-        return ExitCode::FAILURE;
-      }
+  if let Err(err) = print_output(&results, args.format) {
+    eprintln!("{err}");
+    return ExitCode::FAILURE;
+  }
+
+  if let Some(dir) = &args.report_dir {
+    if let Err(err) = write_report_artifacts(Path::new(dir), &results) {
+      eprintln!("{err}");
+      return ExitCode::FAILURE;
     }
-    OutputFormat::Env => {
-      if let Err(err) = tune::report::print_env(&results) {
-        eprintln!("Failed to print env: {err}");
-        return ExitCode::FAILURE;
+    eprintln!("Wrote tune report artifacts: {dir}");
+  }
+
+  if args.enforce_targets {
+    let misses = tune::targets::collect_target_misses(&results);
+    if !misses.is_empty() {
+      eprintln!("Target check failed ({} miss(es)):", misses.len());
+      for miss in misses {
+        eprintln!(
+          "  {} {}: {:.2} GiB/s < target {:.2} GiB/s",
+          miss.algo, miss.class, miss.measured_gib_s, miss.target_gib_s
+        );
       }
+      return ExitCode::FAILURE;
     }
-    OutputFormat::Json => {
-      if let Err(err) = tune::report::print_json(&results) {
-        eprintln!("Failed to print json: {err}");
-        return ExitCode::FAILURE;
-      }
-    }
-    OutputFormat::Tsv => {
-      if let Err(err) = tune::report::print_tsv(&results) {
-        eprintln!("Failed to print tsv: {err}");
-        return ExitCode::FAILURE;
-      }
-    }
-    OutputFormat::Contribute => {
-      if let Err(err) = tune::report::print_contribute(&results) {
-        eprintln!("Failed to print contribute: {err}");
-        return ExitCode::FAILURE;
-      }
-    }
+    eprintln!("Target check passed.");
   }
 
   if args.self_check

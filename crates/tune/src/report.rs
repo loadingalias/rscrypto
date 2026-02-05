@@ -13,7 +13,7 @@
 
 use std::io::{self, Write};
 
-use crate::{AlgorithmResult, TuneResults};
+use crate::{AlgorithmResult, TuneResults, targets};
 
 /// Output format for tuning results.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -87,7 +87,7 @@ impl<W: Write> Report<W> {
 
     // Algorithm results
     for algo in &results.algorithms {
-      self.write_algorithm_summary(algo)?;
+      self.write_algorithm_summary(algo, results.platform.arch, results.platform.tune_kind)?;
       writeln!(self.writer)?;
     }
 
@@ -95,11 +95,37 @@ impl<W: Write> Report<W> {
   }
 
   /// Write summary for a single algorithm.
-  fn write_algorithm_summary(&mut self, algo: &AlgorithmResult) -> io::Result<()> {
+  fn write_algorithm_summary(
+    &mut self,
+    algo: &AlgorithmResult,
+    arch: &str,
+    tune_kind: platform::TuneKind,
+  ) -> io::Result<()> {
     writeln!(self.writer, "=== {} ===", algo.name)?;
     writeln!(self.writer, "Best kernel: {}", algo.best_kernel)?;
     writeln!(self.writer, "Recommended streams: {}", algo.recommended_streams)?;
     writeln!(self.writer, "Peak throughput: {:.2} GiB/s", algo.peak_throughput_gib_s)?;
+
+    let mut wrote_perf_targets = false;
+    for class_best in &algo.size_class_best {
+      let Some(target_gib_s) = targets::class_target_gib_s(algo.name, arch, tune_kind, class_best.class) else {
+        continue;
+      };
+      if !wrote_perf_targets {
+        writeln!(self.writer, "Perf targets ({arch}):")?;
+        wrote_perf_targets = true;
+      }
+      let status = if class_best.throughput_gib_s >= target_gib_s {
+        "ok"
+      } else {
+        "MISS"
+      };
+      writeln!(
+        self.writer,
+        "  {}: {:.2} GiB/s (target >= {:.2}) [{status}]",
+        class_best.class, class_best.throughput_gib_s, target_gib_s
+      )?;
+    }
 
     if !algo.thresholds.is_empty() {
       writeln!(self.writer, "Recommended thresholds:")?;

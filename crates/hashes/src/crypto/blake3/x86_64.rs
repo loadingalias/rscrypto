@@ -1108,8 +1108,8 @@ pub unsafe fn compress_avx512(
   block_len: u32,
   flags: u32,
 ) -> [u32; 16] {
-  // SAFETY: caller guarantees AVX2 (and thus `compress_avx2`'s requirements).
-  unsafe { compress_avx2(chaining_value, block_words, counter, block_len, flags) }
+  // SAFETY: caller guarantees AVX-512 + AVX2 support.
+  unsafe { avx512::compress_block(chaining_value, block_words, counter, block_len, flags) }
 }
 
 /// AVX-512 chunk compression: process multiple 64-byte blocks.
@@ -1128,17 +1128,11 @@ pub unsafe fn chunk_compress_blocks_avx512(
   debug_assert_eq!(blocks.len() % BLOCK_LEN, 0);
 
   if blocks.len() == BLOCK_LEN {
-    // SAFETY: `blocks` is exactly one full block.
-    let block_bytes: &[u8; BLOCK_LEN] = unsafe { &*(blocks.as_ptr().cast()) };
     let start = if *blocks_compressed == 0 { CHUNK_START } else { 0 };
-    let (m0, m1, m2, m3) = unsafe { load_msg_vecs(block_bytes.as_ptr()) };
     *chaining_value = unsafe {
-      compress_cv_avx512(
+      compress_cv_avx512_bytes(
         chaining_value,
-        m0,
-        m1,
-        m2,
-        m3,
+        blocks.as_ptr(),
         chunk_counter,
         BLOCK_LEN as u32,
         flags | start,
@@ -1152,14 +1146,10 @@ pub unsafe fn chunk_compress_blocks_avx512(
   debug_assert!(remainder.is_empty());
   for block_bytes in block_slices {
     let start = if *blocks_compressed == 0 { CHUNK_START } else { 0 };
-    let (m0, m1, m2, m3) = unsafe { load_msg_vecs(block_bytes.as_ptr()) };
     *chaining_value = unsafe {
-      compress_cv_avx512(
+      compress_cv_avx512_bytes(
         chaining_value,
-        m0,
-        m1,
-        m2,
-        m3,
+        block_bytes.as_ptr(),
         chunk_counter,
         BLOCK_LEN as u32,
         flags | start,
