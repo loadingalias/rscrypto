@@ -22,9 +22,10 @@ install_binstall() {
 
     install_binstall_from_release() {
         local target="$1"
-        local tmpdir
+        local tmpdir oldpwd
         tmpdir="$(mktemp -d)"
-        trap 'rm -rf "$tmpdir"' RETURN
+        oldpwd="$PWD"
+        trap 'cd "$oldpwd" >/dev/null 2>&1 || true; rm -rf "$tmpdir"' RETURN
 
         local base_url
         if [[ -n "${BINSTALL_VERSION:-}" ]]; then
@@ -36,13 +37,17 @@ install_binstall() {
         local url="${base_url}${target}.tgz"
 
         echo "  trying $target"
-        (
-            cd "$tmpdir"
-            curl -L --proto '=https' --tlsv1.2 -sSf "$url" | tar -xzf -
-            mkdir -p "$HOME/.cargo/bin"
-            mv cargo-binstall "$HOME/.cargo/bin/"
-            chmod +x "$HOME/.cargo/bin/cargo-binstall"
-        )
+        cd "$tmpdir"
+
+        # Avoid `curl | tar` here: with `set -euo pipefail`, a 404 can terminate the whole script
+        # on some bash versions even when the function is invoked under `if ...; then`.
+        if ! curl -L --proto '=https' --tlsv1.2 -sSf -o cargo-binstall.tgz "$url"; then
+            return 1
+        fi
+        tar -xzf cargo-binstall.tgz
+        mkdir -p "$HOME/.cargo/bin"
+        mv cargo-binstall "$HOME/.cargo/bin/"
+        chmod +x "$HOME/.cargo/bin/cargo-binstall"
     }
 
     # Detect Windows ARM64 specially - uname -m returns x86_64 due to emulation layer
