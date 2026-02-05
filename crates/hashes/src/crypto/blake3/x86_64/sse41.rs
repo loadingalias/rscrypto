@@ -260,15 +260,15 @@ unsafe fn load_counters(counter: u64, increment_counter: bool) -> (__m128i, __m1
     (
       set4(
         counter_low(counter),
-        counter_low(counter + (mask & 1)),
-        counter_low(counter + (mask & 2)),
-        counter_low(counter + (mask & 3)),
+        counter_low(counter.wrapping_add(mask & 1)),
+        counter_low(counter.wrapping_add(mask & 2)),
+        counter_low(counter.wrapping_add(mask & 3)),
       ),
       set4(
         counter_high(counter),
-        counter_high(counter + (mask & 1)),
-        counter_high(counter + (mask & 2)),
-        counter_high(counter + (mask & 3)),
+        counter_high(counter.wrapping_add(mask & 1)),
+        counter_high(counter.wrapping_add(mask & 2)),
+        counter_high(counter.wrapping_add(mask & 3)),
       ),
     )
   }

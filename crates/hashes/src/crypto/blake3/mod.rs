@@ -443,6 +443,7 @@ fn hash_full_chunks_cvs_parallel_rayon(
   }
 }
 
+#[cfg(feature = "std")]
 fn parent_cvs_many_from_cvs_parallel_rayon(
   kernel: Kernel,
   key_words: [u32; 8],
