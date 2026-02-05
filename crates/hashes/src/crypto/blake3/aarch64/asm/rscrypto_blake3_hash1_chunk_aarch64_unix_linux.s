@@ -255,18 +255,18 @@ rscrypto_blake3_hash1_chunk_root_aarch64_unix_linux:
     mov x16, x0
     mov x17, x3
 
-    mov x9, x1
+    mov x20, x1
 
     // Load initial chaining value (key) into w0..w7.
     // Use 32-bit loads to avoid any alignment requirements.
-    ldr w0, [x9, #0]
-    ldr w1, [x9, #4]
-    ldr w2, [x9, #8]
-    ldr w3, [x9, #12]
-    ldr w4, [x9, #16]
-    ldr w5, [x9, #20]
-    ldr w6, [x9, #24]
-    ldr w7, [x9, #28]
+    ldr w0, [x20, #0]
+    ldr w1, [x20, #4]
+    ldr w2, [x20, #8]
+    ldr w3, [x20, #12]
+    ldr w4, [x20, #16]
+    ldr w5, [x20, #20]
+    ldr w6, [x20, #24]
+    ldr w7, [x20, #28]
 
     // Block 0 (CHUNK_START)
     LOAD_MSG
@@ -335,18 +335,18 @@ rscrypto_blake3_hash1_chunk_cv_aarch64_unix_linux:
     mov x16, x0
     mov x17, x4
 
-    mov x9, x1
+    mov x20, x1
 
     // Load initial chaining value (key) into w0..w7.
     // Use 32-bit loads to avoid any alignment requirements.
-    ldr w0, [x9, #0]
-    ldr w1, [x9, #4]
-    ldr w2, [x9, #8]
-    ldr w3, [x9, #12]
-    ldr w4, [x9, #16]
-    ldr w5, [x9, #20]
-    ldr w6, [x9, #24]
-    ldr w7, [x9, #28]
+    ldr w0, [x20, #0]
+    ldr w1, [x20, #4]
+    ldr w2, [x20, #8]
+    ldr w3, [x20, #12]
+    ldr w4, [x20, #16]
+    ldr w5, [x20, #20]
+    ldr w6, [x20, #24]
+    ldr w7, [x20, #28]
 
     // Block 0 (CHUNK_START)
     LOAD_MSG
@@ -416,18 +416,18 @@ rscrypto_blake3_hash1_chunk_state_aarch64_unix_linux:
     mov x16, x0
     mov x17, x4
 
-    mov x9, x1
+    mov x20, x1
 
     // Load initial chaining value (key) into w0..w7.
     // Note: do not load from x1 directly, because loading w1 would clobber x1.
-    ldr w0, [x9, #0]
-    ldr w1, [x9, #4]
-    ldr w2, [x9, #8]
-    ldr w3, [x9, #12]
-    ldr w4, [x9, #16]
-    ldr w5, [x9, #20]
-    ldr w6, [x9, #24]
-    ldr w7, [x9, #28]
+    ldr w0, [x20, #0]
+    ldr w1, [x20, #4]
+    ldr w2, [x20, #8]
+    ldr w3, [x20, #12]
+    ldr w4, [x20, #16]
+    ldr w5, [x20, #20]
+    ldr w6, [x20, #24]
+    ldr w7, [x20, #28]
 
     // Blocks 0..14 (no CHUNK_END)
     // Block 0 (CHUNK_START)
@@ -531,7 +531,7 @@ rscrypto_blake3_chunk_compress_blocks_aarch64_unix_linux:
 
     // Move pointers/counters to safe registers (not overlapped by w0..w15).
     mov x16, x0        // message pointer for LOAD_MSG
-    mov x9, x1         // chaining value pointer
+    mov x20, x1         // chaining value pointer
     mov x29, x4        // blocks_compressed pointer (in/out)
     mov x30, x5        // num_blocks loop counter
 
@@ -539,14 +539,14 @@ rscrypto_blake3_chunk_compress_blocks_aarch64_unix_linux:
     cbz x30, 3f
 
     // Load chaining value into w0..w7.
-    ldr w0, [x9, #0]
-    ldr w1, [x9, #4]
-    ldr w2, [x9, #8]
-    ldr w3, [x9, #12]
-    ldr w4, [x9, #16]
-    ldr w5, [x9, #20]
-    ldr w6, [x9, #24]
-    ldr w7, [x9, #28]
+    ldr w0, [x20, #0]
+    ldr w1, [x20, #4]
+    ldr w2, [x20, #8]
+    ldr w3, [x20, #12]
+    ldr w4, [x20, #16]
+    ldr w5, [x20, #20]
+    ldr w6, [x20, #24]
+    ldr w7, [x20, #28]
 
     // Load blocks_compressed (u8) into w17.
     ldrb w17, [x29]
@@ -575,14 +575,14 @@ rscrypto_blake3_chunk_compress_blocks_aarch64_unix_linux:
     bne 1b
 
     // Store updated chaining value and blocks_compressed.
-    str w0, [x9, #0]
-    str w1, [x9, #4]
-    str w2, [x9, #8]
-    str w3, [x9, #12]
-    str w4, [x9, #16]
-    str w5, [x9, #20]
-    str w6, [x9, #24]
-    str w7, [x9, #28]
+    str w0, [x20, #0]
+    str w1, [x20, #4]
+    str w2, [x20, #8]
+    str w3, [x20, #12]
+    str w4, [x20, #16]
+    str w5, [x20, #20]
+    str w6, [x20, #24]
+    str w7, [x20, #28]
     strb w17, [x29]
 
 3:

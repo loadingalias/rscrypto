@@ -8,6 +8,14 @@ inputs:
     description: Additional cache key suffix
     required: false
     default: ""
+  tools-mode:
+    description: Tool installation mode (standard, ibm, minimal, none)
+    required: false
+    default: "standard"
+  toolchain-components:
+    description: Comma-separated list of toolchain components to install
+    required: false
+    default: "clippy, rustfmt, rust-src"
 
 runs:
   using: composite
@@ -22,24 +30,26 @@ runs:
     - name: Setup Toolchain
       uses: ./.github/actions/setup-toolchain
       with:
-        components: clippy, rustfmt, rust-src
+        components: ${{ inputs.toolchain-components }}
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # Cache installed cargo tools separately (very stable, saves 30-90 seconds)
     # Tools rarely change, so this cache hits almost always
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     - name: Cache Cargo Tools
+      if: inputs.tools-mode != 'none'
       uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
       with:
         path: ~/.cargo/bin
-        key: cargo-tools-${{ runner.os }}-${{ steps.host.outputs.uname_m }}-v5
+        key: cargo-tools-${{ runner.os }}-${{ steps.host.outputs.uname_m }}-${{ inputs.tools-mode }}-v5
         # v4: force refresh (cargo-audit install now uses `cargo install --force` when needed)
 
     # Install all required cargo tools via cargo-binstall (parallel, pre-built binaries)
     # Skip if already in cache (install-tools.sh checks if tools exist)
     - name: Install Cargo Tools
+      if: inputs.tools-mode != 'none'
       shell: bash
-      run: scripts/ci/install-tools.sh standard
+      run: scripts/ci/install-tools.sh ${{ inputs.tools-mode }}
 
     - name: Setup Rust Cache
       uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5  # v2.8.2
