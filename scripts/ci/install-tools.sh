@@ -20,6 +20,31 @@ install_binstall() {
 
     echo "Installing cargo-binstall..."
 
+    install_binstall_from_release() {
+        local target="$1"
+        local tmpdir
+        tmpdir="$(mktemp -d)"
+        trap 'rm -rf "$tmpdir"' RETURN
+
+        local base_url
+        if [[ -n "${BINSTALL_VERSION:-}" ]]; then
+            base_url="https://github.com/cargo-bins/cargo-binstall/releases/download/v${BINSTALL_VERSION}/cargo-binstall-"
+        else
+            base_url="https://github.com/cargo-bins/cargo-binstall/releases/latest/download/cargo-binstall-"
+        fi
+
+        local url="${base_url}${target}.tgz"
+
+        echo "  trying $target"
+        (
+            cd "$tmpdir"
+            curl -L --proto '=https' --tlsv1.2 -sSf "$url" | tar -xzf -
+            mkdir -p "$HOME/.cargo/bin"
+            mv cargo-binstall "$HOME/.cargo/bin/"
+            chmod +x "$HOME/.cargo/bin/cargo-binstall"
+        )
+    }
+
     # Detect Windows ARM64 specially - uname -m returns x86_64 due to emulation layer
     # PROCESSOR_ARCHITECTURE is the reliable way to detect native arch on Windows
     if [[ "${PROCESSOR_ARCHITECTURE:-}" == "ARM64" ]]; then
@@ -35,9 +60,51 @@ install_binstall() {
         rm -f "$BINSTALL_ZIP"
         echo "✅ cargo-binstall installed (Windows ARM64)"
     else
-        # Use upstream bootstrap script for other platforms
-        curl -L --proto '=https' --tlsv1.2 -sSf \
-            https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
+        # The upstream bootstrap script tries `*-unknown-linux-musl` on many arches;
+        # cargo-binstall doesn't publish MUSL binaries for all CI targets (notably s390x/ppc64le).
+        # Prefer a release binary when available; otherwise fall back to `cargo install`.
+
+        local os machine
+        local -a targets
+        os="$(uname -s)"
+        machine="$(uname -m)"
+
+        case "$os" in
+            Linux)
+                case "$machine" in
+                    x86_64) targets=(x86_64-unknown-linux-musl x86_64-unknown-linux-gnu) ;;
+                    aarch64) targets=(aarch64-unknown-linux-musl aarch64-unknown-linux-gnu) ;;
+                    armv7l) targets=(armv7-unknown-linux-musleabihf armv7-unknown-linux-gnueabihf) ;;
+                    s390x) targets=(s390x-unknown-linux-gnu) ;;
+                    ppc64le|powerpc64le) targets=(powerpc64le-unknown-linux-gnu) ;;
+                    *) targets=() ;;
+                esac
+                ;;
+            Darwin)
+                case "$machine" in
+                    x86_64) targets=(x86_64-apple-darwin) ;;
+                    arm64) targets=(aarch64-apple-darwin) ;;
+                    *) targets=() ;;
+                esac
+                ;;
+            *)
+                targets=()
+                ;;
+        esac
+
+        for t in "${targets[@]}"; do
+            if install_binstall_from_release "$t"; then
+                echo "✅ cargo-binstall installed ($t)"
+                return 0
+            fi
+        done
+
+        echo "  no prebuilt cargo-binstall for ${os}/${machine}; building from source..."
+        if [[ -n "${BINSTALL_VERSION:-}" ]]; then
+            cargo install cargo-binstall --locked --version "${BINSTALL_VERSION}"
+        else
+            cargo install cargo-binstall --locked
+        fi
     fi
 }
 
