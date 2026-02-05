@@ -36,6 +36,13 @@ use super::{BLOCK_LEN, CHUNK_LEN, CHUNK_START, IV, MSG_SCHEDULE, OUT_LEN, PARENT
 #[allow(dead_code)]
 pub const SIMD_DEGREE: usize = 4;
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[inline(always)]
+fn ptr_is_aligned(ptr: *const u8, align: usize) -> bool {
+  debug_assert!(align.is_power_of_two());
+  (ptr as usize) & (align - 1) == 0
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Rotation helpers for NEON - Optimized versions
 // ─────────────────────────────────────────────────────────────────────────────
@@ -695,19 +702,20 @@ pub unsafe fn hash4_neon(
 pub unsafe fn root_hash_one_chunk_root_aarch64(input: *const u8, key: &[u32; 8], flags: u32) -> [u8; OUT_LEN] {
   #[cfg(any(target_os = "linux", target_os = "macos"))]
   {
-    let mut out = [0u8; OUT_LEN];
-    #[cfg(target_os = "linux")]
-    asm::rscrypto_blake3_hash1_chunk_root_aarch64_unix_linux(input, key.as_ptr(), flags, out.as_mut_ptr());
-    #[cfg(target_os = "macos")]
-    asm::rscrypto_blake3_hash1_chunk_root_aarch64_apple_darwin(input, key.as_ptr(), flags, out.as_mut_ptr());
-    out
+    // The asm backend uses 64-bit loads/stores; avoid potentially faulting
+    // unaligned pointers by falling back to the NEON implementation.
+    if ptr_is_aligned(input, 8) {
+      let mut out = [0u8; OUT_LEN];
+      #[cfg(target_os = "linux")]
+      asm::rscrypto_blake3_hash1_chunk_root_aarch64_unix_linux(input, key.as_ptr(), flags, out.as_mut_ptr());
+      #[cfg(target_os = "macos")]
+      asm::rscrypto_blake3_hash1_chunk_root_aarch64_apple_darwin(input, key.as_ptr(), flags, out.as_mut_ptr());
+      return out;
+    }
   }
 
-  #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-  {
-    // Fallback: reuse the 4-lane NEON chunk kernel (duplicates lanes).
-    root_hash_one_chunk_neon(input, key, flags)
-  }
+  // Fallback: reuse the 4-lane NEON chunk kernel (duplicates lanes).
+  root_hash_one_chunk_neon(input, key, flags)
 }
 
 /// Hash exactly one full chunk (1024B) and write the resulting *chunk CV* bytes.
@@ -723,40 +731,43 @@ pub unsafe fn chunk_cv_one_chunk_aarch64_out(input: *const u8, key: &[u32; 8], c
   #[cfg(any(target_os = "linux", target_os = "macos"))]
   {
     #[cfg(target_os = "linux")]
-    asm::rscrypto_blake3_hash1_chunk_cv_aarch64_unix_linux(input, key.as_ptr(), counter, flags, out);
+    if ptr_is_aligned(input, 8) && ptr_is_aligned(out, 4) {
+      asm::rscrypto_blake3_hash1_chunk_cv_aarch64_unix_linux(input, key.as_ptr(), counter, flags, out);
+      return;
+    }
     #[cfg(target_os = "macos")]
-    asm::rscrypto_blake3_hash1_chunk_cv_aarch64_apple_darwin(input, key.as_ptr(), counter, flags, out);
+    if ptr_is_aligned(input, 8) && ptr_is_aligned(out, 4) {
+      asm::rscrypto_blake3_hash1_chunk_cv_aarch64_apple_darwin(input, key.as_ptr(), counter, flags, out);
+      return;
+    }
   }
 
-  #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-  {
-    // Fallback: per-block NEON compressor.
-    let mut cv = *key;
-    for block_idx in 0..(CHUNK_LEN / BLOCK_LEN) {
-      let block_bytes: &[u8; BLOCK_LEN] = {
-        let src = input.add(block_idx * BLOCK_LEN);
-        &*(src as *const [u8; BLOCK_LEN])
-      };
+  // Fallback: per-block NEON compressor.
+  let mut cv = *key;
+  for block_idx in 0..(CHUNK_LEN / BLOCK_LEN) {
+    let block_bytes: &[u8; BLOCK_LEN] = {
+      let src = input.add(block_idx * BLOCK_LEN);
+      &*(src as *const [u8; BLOCK_LEN])
+    };
 
-      let start = if block_idx == 0 { CHUNK_START } else { 0 };
-      let end = if block_idx + 1 == (CHUNK_LEN / BLOCK_LEN) {
-        super::CHUNK_END
-      } else {
-        0
-      };
-      cv = compress_cv_neon_bytes(
-        &cv,
-        block_bytes.as_ptr(),
-        counter,
-        BLOCK_LEN as u32,
-        flags | start | end,
-      );
-    }
+    let start = if block_idx == 0 { CHUNK_START } else { 0 };
+    let end = if block_idx + 1 == (CHUNK_LEN / BLOCK_LEN) {
+      super::CHUNK_END
+    } else {
+      0
+    };
+    cv = compress_cv_neon_bytes(
+      &cv,
+      block_bytes.as_ptr(),
+      counter,
+      BLOCK_LEN as u32,
+      flags | start | end,
+    );
+  }
 
-    for (j, &word) in cv.iter().enumerate() {
-      let bytes = word.to_le_bytes();
-      core::ptr::copy_nonoverlapping(bytes.as_ptr(), out.add(j * 4), 4);
-    }
+  for (j, &word) in cv.iter().enumerate() {
+    let bytes = word.to_le_bytes();
+    core::ptr::copy_nonoverlapping(bytes.as_ptr(), out.add(j * 4), 4);
   }
 }
 
@@ -784,45 +795,48 @@ pub unsafe fn chunk_state_one_chunk_aarch64_out(
   #[cfg(any(target_os = "linux", target_os = "macos"))]
   {
     #[cfg(target_os = "linux")]
-    asm::rscrypto_blake3_hash1_chunk_state_aarch64_unix_linux(
-      input,
-      key.as_ptr(),
-      counter,
-      flags,
-      out_cv,
-      out_last_block,
-    );
-    #[cfg(target_os = "macos")]
-    asm::rscrypto_blake3_hash1_chunk_state_aarch64_apple_darwin(
-      input,
-      key.as_ptr(),
-      counter,
-      flags,
-      out_cv,
-      out_last_block,
-    );
-  }
-
-  #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-  {
-    // Fallback: per-block NEON compressor for blocks 0..14, then copy the final block bytes.
-    let mut cv = *key;
-    for block_idx in 0..15 {
-      let block_bytes: &[u8; BLOCK_LEN] = {
-        let src = input.add(block_idx * BLOCK_LEN);
-        &*(src as *const [u8; BLOCK_LEN])
-      };
-
-      let start = if block_idx == 0 { CHUNK_START } else { 0 };
-      cv = compress_cv_neon_bytes(&cv, block_bytes.as_ptr(), counter, BLOCK_LEN as u32, flags | start);
+    if ptr_is_aligned(input, 8) && ptr_is_aligned(out_cv.cast::<u8>(), 4) && ptr_is_aligned(out_last_block, 8) {
+      asm::rscrypto_blake3_hash1_chunk_state_aarch64_unix_linux(
+        input,
+        key.as_ptr(),
+        counter,
+        flags,
+        out_cv,
+        out_last_block,
+      );
+      return;
     }
-
-    // Store cv.
-    core::ptr::copy_nonoverlapping(cv.as_ptr(), out_cv, 8);
-
-    // Copy final block bytes.
-    core::ptr::copy_nonoverlapping(input.add(15 * BLOCK_LEN), out_last_block, BLOCK_LEN);
+    #[cfg(target_os = "macos")]
+    if ptr_is_aligned(input, 8) && ptr_is_aligned(out_cv.cast::<u8>(), 4) && ptr_is_aligned(out_last_block, 8) {
+      asm::rscrypto_blake3_hash1_chunk_state_aarch64_apple_darwin(
+        input,
+        key.as_ptr(),
+        counter,
+        flags,
+        out_cv,
+        out_last_block,
+      );
+      return;
+    }
   }
+
+  // Fallback: per-block NEON compressor for blocks 0..14, then copy the final block bytes.
+  let mut cv = *key;
+  for block_idx in 0..15 {
+    let block_bytes: &[u8; BLOCK_LEN] = {
+      let src = input.add(block_idx * BLOCK_LEN);
+      &*(src as *const [u8; BLOCK_LEN])
+    };
+
+    let start = if block_idx == 0 { CHUNK_START } else { 0 };
+    cv = compress_cv_neon_bytes(&cv, block_bytes.as_ptr(), counter, BLOCK_LEN as u32, flags | start);
+  }
+
+  // Store cv.
+  core::ptr::copy_nonoverlapping(cv.as_ptr(), out_cv, 8);
+
+  // Copy final block bytes.
+  core::ptr::copy_nonoverlapping(input.add(15 * BLOCK_LEN), out_last_block, BLOCK_LEN);
 }
 
 /// Hash exactly one full chunk (1024B) and return the *root* hash bytes.
@@ -836,7 +850,6 @@ pub unsafe fn chunk_state_one_chunk_aarch64_out(
 ///
 /// Caller must ensure NEON is available, and `input` is valid for `CHUNK_LEN`
 /// readable bytes.
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
 pub unsafe fn root_hash_one_chunk_neon(input: *const u8, key: &[u32; 8], flags: u32) -> [u8; OUT_LEN] {
@@ -995,22 +1008,27 @@ pub unsafe fn chunk_compress_blocks_neon(
   #[cfg(target_os = "linux")]
   {
     if !blocks.is_empty() {
-      let num_blocks = blocks.len() / BLOCK_LEN;
-      debug_assert_ne!(num_blocks, 0);
-      // SAFETY: `blocks` is `num_blocks * 64` bytes, `chaining_value` is 8 u32
-      // words, `blocks_compressed` is a valid pointer to a `u8`, and this is
-      // only compiled on Linux aarch64 where the symbol is available.
-      unsafe {
-        asm::rscrypto_blake3_chunk_compress_blocks_aarch64_unix_linux(
-          blocks.as_ptr(),
-          chaining_value.as_mut_ptr(),
-          chunk_counter,
-          flags,
-          blocks_compressed as *mut u8,
-          num_blocks,
-        );
+      if !ptr_is_aligned(blocks.as_ptr(), 8) {
+        // Avoid potentially faulting unaligned 64-bit loads in the asm backend.
+        // The NEON fallback below handles arbitrary alignment.
+      } else {
+        let num_blocks = blocks.len() / BLOCK_LEN;
+        debug_assert_ne!(num_blocks, 0);
+        // SAFETY: `blocks` is `num_blocks * 64` bytes, `chaining_value` is 8 u32
+        // words, `blocks_compressed` is a valid pointer to a `u8`, and this is
+        // only compiled on Linux aarch64 where the symbol is available.
+        unsafe {
+          asm::rscrypto_blake3_chunk_compress_blocks_aarch64_unix_linux(
+            blocks.as_ptr(),
+            chaining_value.as_mut_ptr(),
+            chunk_counter,
+            flags,
+            blocks_compressed as *mut u8,
+            num_blocks,
+          );
+        }
+        return;
       }
-      return;
     }
   }
 
