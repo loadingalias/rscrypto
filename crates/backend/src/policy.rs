@@ -91,8 +91,8 @@ pub struct SelectionPolicy {
   /// Stream selection uses: `streams = max(s) where len / s >= min_bytes_per_lane`.
   /// This ensures each parallel lane has enough data to amortize setup costs.
   ///
-  /// Initialized from `KernelFamily::min_bytes_per_lane()` but can be overridden
-  /// by algorithm-specific tunables.
+  /// Initialized from `KernelFamily::min_bytes_per_lane_for_tune()` and can be
+  /// overridden by algorithm-specific tunables.
   pub min_bytes_per_lane: usize,
 }
 
@@ -155,7 +155,7 @@ impl SelectionPolicy {
 
     // Compute stream parameters for multi-way folding
     let max_streams = Self::compute_max_streams(family, tune);
-    let min_bytes_per_lane = family.min_bytes_per_lane();
+    let min_bytes_per_lane = family.min_bytes_per_lane_for_tune(tune);
 
     Self {
       family,
@@ -184,7 +184,7 @@ impl SelectionPolicy {
     let subfamily = Self::compute_subfamily(effective_family);
     let (small_threshold, fold_threshold, wide_threshold) = Self::compute_thresholds(effective_family, tune);
     let max_streams = Self::compute_max_streams(effective_family, tune);
-    let min_bytes_per_lane = effective_family.min_bytes_per_lane();
+    let min_bytes_per_lane = effective_family.min_bytes_per_lane_for_tune(tune);
 
     Self {
       family: effective_family,
@@ -206,7 +206,7 @@ impl SelectionPolicy {
     let family = subfamily.family;
     let (small_threshold, fold_threshold, wide_threshold) = Self::compute_thresholds(family, tune);
     let max_streams = Self::compute_max_streams(family, tune);
-    let min_bytes_per_lane = family.min_bytes_per_lane();
+    let min_bytes_per_lane = family.min_bytes_per_lane_for_tune(tune);
 
     Self {
       family,

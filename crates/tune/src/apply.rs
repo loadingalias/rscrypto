@@ -27,7 +27,7 @@ use std::{
 
 use platform::TuneKind;
 
-use crate::{AlgorithmResult, TuneResults};
+use crate::{AlgorithmResult, TuneResults, hash::BLAKE3_TUNING_CORPUS};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Size Class Boundaries
@@ -1073,6 +1073,40 @@ fn tune_kind_parallel_table_ident(tune_kind: TuneKind) -> &'static str {
   }
 }
 
+fn tune_kind_streaming_parallel_table_ident(tune_kind: TuneKind) -> &'static str {
+  match tune_kind {
+    TuneKind::Custom => "CUSTOM_STREAMING_PARALLEL_TABLE",
+    TuneKind::Default => "DEFAULT_KIND_STREAMING_PARALLEL_TABLE",
+    TuneKind::Portable => "PORTABLE_STREAMING_PARALLEL_TABLE",
+    TuneKind::Zen4 => "ZEN4_STREAMING_PARALLEL_TABLE",
+    TuneKind::Zen5 => "ZEN5_STREAMING_PARALLEL_TABLE",
+    TuneKind::Zen5c => "ZEN5C_STREAMING_PARALLEL_TABLE",
+    TuneKind::IntelSpr => "INTELSPR_STREAMING_PARALLEL_TABLE",
+    TuneKind::IntelGnr => "INTELGNR_STREAMING_PARALLEL_TABLE",
+    TuneKind::IntelIcl => "INTELICL_STREAMING_PARALLEL_TABLE",
+    TuneKind::AppleM1M3 => "APPLEM1M3_STREAMING_PARALLEL_TABLE",
+    TuneKind::AppleM4 => "APPLEM4_STREAMING_PARALLEL_TABLE",
+    TuneKind::AppleM5 => "APPLEM5_STREAMING_PARALLEL_TABLE",
+    TuneKind::Graviton2 => "GRAVITON2_STREAMING_PARALLEL_TABLE",
+    TuneKind::Graviton3 => "GRAVITON3_STREAMING_PARALLEL_TABLE",
+    TuneKind::Graviton4 => "GRAVITON4_STREAMING_PARALLEL_TABLE",
+    TuneKind::Graviton5 => "GRAVITON5_STREAMING_PARALLEL_TABLE",
+    TuneKind::NeoverseN2 => "NEOVERSEN2_STREAMING_PARALLEL_TABLE",
+    TuneKind::NeoverseN3 => "NEOVERSEN3_STREAMING_PARALLEL_TABLE",
+    TuneKind::NeoverseV3 => "NEOVERSEV3_STREAMING_PARALLEL_TABLE",
+    TuneKind::NvidiaGrace => "NVIDIAGRACE_STREAMING_PARALLEL_TABLE",
+    TuneKind::AmpereAltra => "AMPEREALTRA_STREAMING_PARALLEL_TABLE",
+    TuneKind::Aarch64Pmull => "AARCH64PMULL_STREAMING_PARALLEL_TABLE",
+    TuneKind::Z13 => "Z13_STREAMING_PARALLEL_TABLE",
+    TuneKind::Z14 => "Z14_STREAMING_PARALLEL_TABLE",
+    TuneKind::Z15 => "Z15_STREAMING_PARALLEL_TABLE",
+    TuneKind::Power7 => "POWER7_STREAMING_PARALLEL_TABLE",
+    TuneKind::Power8 => "POWER8_STREAMING_PARALLEL_TABLE",
+    TuneKind::Power9 => "POWER9_STREAMING_PARALLEL_TABLE",
+    TuneKind::Power10 => "POWER10_STREAMING_PARALLEL_TABLE",
+  }
+}
+
 fn hash_kernel_expr(algo: &str, kernel_name: &str) -> &'static str {
   match algo {
     // BLAKE3 dispatch tables select a full kernel bundle (compress + chunk + parent + hash_many).
@@ -1092,19 +1126,92 @@ fn hash_kernel_expr(algo: &str, kernel_name: &str) -> &'static str {
   }
 }
 
+fn find_threshold_value(algo: &AlgorithmResult, keys: &[&str]) -> Option<usize> {
+  algo
+    .thresholds
+    .iter()
+    .find_map(|(name, value)| (keys.iter().any(|k| *k == name) && *value != usize::MAX).then_some(*value))
+}
+
+fn median(values: &mut [usize]) -> Option<usize> {
+  if values.is_empty() {
+    return None;
+  }
+  values.sort_unstable();
+  Some(values[values.len() / 2])
+}
+
+fn collect_blake3_threshold(results: &TuneResults, fallback: &AlgorithmResult, keys: &[&str]) -> Option<usize> {
+  let mut values = Vec::new();
+
+  for &(algo_name, _) in BLAKE3_TUNING_CORPUS {
+    if algo_name.starts_with("blake3-stream") {
+      continue;
+    }
+    if let Some(algo) = results.algorithms.iter().find(|a| a.name == algo_name)
+      && let Some(v) = find_threshold_value(algo, keys)
+    {
+      values.push(v);
+    }
+  }
+
+  if values.is_empty()
+    && let Some(v) = find_threshold_value(fallback, keys)
+  {
+    values.push(v);
+  }
+
+  median(&mut values)
+}
+
+fn blake3_boundaries(results: &TuneResults, algo: &AlgorithmResult) -> [usize; 3] {
+  let xs_max = SIZE_CLASS_XS_MAX;
+  let mut s_max = SIZE_CLASS_S_MAX;
+  let mut m_max = SIZE_CLASS_M_MAX;
+
+  if let Some(crossover) = collect_blake3_threshold(results, algo, &["THRESHOLD_PORTABLE_TO_SIMD", "PORTABLE_TO_SIMD"])
+  {
+    s_max = crossover.saturating_sub(1);
+  }
+  if let Some(crossover) = collect_blake3_threshold(results, algo, &["THRESHOLD_SIMD_TO_WIDE", "SIMD_TO_WIDE"]) {
+    m_max = crossover.saturating_sub(1);
+  }
+
+  // Keep monotonic size classes valid even when measured curves are noisy.
+  s_max = s_max.max(xs_max);
+  m_max = m_max.max(s_max);
+
+  [xs_max, s_max, m_max]
+}
+
 fn generate_blake3_parallel_table(tune_kind: TuneKind, algo: &AlgorithmResult) -> String {
   let kind_name = format!("{tune_kind:?}");
   let table_ident = tune_kind_parallel_table_ident(tune_kind);
+  generate_blake3_parallel_table_inner(&kind_name, table_ident, "Parallel Table", blake3_parallel_values(algo))
+}
 
-  let mut min_bytes: usize = 512 * 1024;
-  let mut min_chunks: usize = 256;
+fn generate_blake3_streaming_parallel_table(tune_kind: TuneKind, algos: &[&AlgorithmResult]) -> String {
+  let kind_name = format!("{tune_kind:?}");
+  let table_ident = tune_kind_streaming_parallel_table_ident(tune_kind);
+  generate_blake3_parallel_table_inner(
+    &kind_name,
+    table_ident,
+    "Streaming Parallel Table",
+    aggregate_blake3_parallel_values(algos),
+  )
+}
+
+fn blake3_parallel_values(algo: &AlgorithmResult) -> (usize, usize, u8) {
+  // Keep generator fallbacks aligned with runtime defaults.
+  let mut min_bytes: usize = 128 * 1024;
+  let mut min_chunks: usize = 64;
   let mut max_threads: u8 = 0;
 
   for (suffix, value) in &algo.thresholds {
     match suffix.as_str() {
-      "PARALLEL_MIN_BYTES" => min_bytes = *value,
-      "PARALLEL_MIN_CHUNKS" => min_chunks = *value,
-      "PARALLEL_MAX_THREADS" => {
+      "PARALLEL_MIN_BYTES" | "THRESHOLD_PARALLEL_MIN_BYTES" => min_bytes = *value,
+      "PARALLEL_MIN_CHUNKS" | "THRESHOLD_PARALLEL_MIN_CHUNKS" => min_chunks = *value,
+      "PARALLEL_MAX_THREADS" | "THRESHOLD_PARALLEL_MAX_THREADS" => {
         let v = (*value).min(u8::MAX as usize) as u8;
         max_threads = v;
       }
@@ -1112,9 +1219,40 @@ fn generate_blake3_parallel_table(tune_kind: TuneKind, algo: &AlgorithmResult) -
     }
   }
 
+  (min_bytes, min_chunks, max_threads)
+}
+
+fn aggregate_blake3_parallel_values(algos: &[&AlgorithmResult]) -> (usize, usize, u8) {
+  if algos.is_empty() {
+    return (128 * 1024, 64, 0);
+  }
+
+  let mut min_bytes = Vec::with_capacity(algos.len());
+  let mut min_chunks = Vec::with_capacity(algos.len());
+  let mut max_threads = Vec::with_capacity(algos.len());
+  for algo in algos {
+    let (bytes, chunks, threads) = blake3_parallel_values(algo);
+    min_bytes.push(bytes);
+    min_chunks.push(chunks);
+    max_threads.push(threads as usize);
+  }
+
+  (
+    median(&mut min_bytes).unwrap_or(128 * 1024),
+    median(&mut min_chunks).unwrap_or(64),
+    median(&mut max_threads).unwrap_or(0).min(u8::MAX as usize) as u8,
+  )
+}
+
+fn generate_blake3_parallel_table_inner(
+  kind_name: &str,
+  table_ident: &str,
+  table_label: &str,
+  (min_bytes, min_chunks, max_threads): (usize, usize, u8),
+) -> String {
   format!(
     "\
-// {kind_name} Parallel Table
+// {kind_name} {table_label}
 pub static {table_ident}: ParallelTable = ParallelTable {{
   min_bytes: {min_bytes},
   min_chunks: {min_chunks},
@@ -1124,7 +1262,7 @@ pub static {table_ident}: ParallelTable = ParallelTable {{
   )
 }
 
-fn generate_hash_table(tune_kind: TuneKind, algo: &AlgorithmResult) -> String {
+fn generate_hash_table(tune_kind: TuneKind, algo: &AlgorithmResult, results: Option<&TuneResults>) -> String {
   // Defaults if size-class data isn't present (older results / partial runs).
   let mut xs = "portable";
   let mut s = "portable";
@@ -1143,6 +1281,21 @@ fn generate_hash_table(tune_kind: TuneKind, algo: &AlgorithmResult) -> String {
 
   let kind_name = format!("{tune_kind:?}");
   let table_ident = tune_kind_table_ident(tune_kind);
+  let use_tuned_boundaries = matches!(algo.name, "blake3-chunk" | "blake3");
+  let [xs_max, s_max, m_max] = if use_tuned_boundaries {
+    if let Some(results) = results {
+      blake3_boundaries(results, algo)
+    } else {
+      [SIZE_CLASS_XS_MAX, SIZE_CLASS_S_MAX, SIZE_CLASS_M_MAX]
+    }
+  } else {
+    [SIZE_CLASS_XS_MAX, SIZE_CLASS_S_MAX, SIZE_CLASS_M_MAX]
+  };
+  let boundaries_expr = if use_tuned_boundaries {
+    format!("[{xs_max}, {s_max}, {m_max}]")
+  } else {
+    "DEFAULT_BOUNDARIES".to_string()
+  };
 
   // Some hash dispatch tables (notably BLAKE3) use architecture-gated kernel IDs.
   // When we apply tuned results from (say) an x86_64 runner, we must not emit
@@ -1173,7 +1326,7 @@ fn generate_hash_table(tune_kind: TuneKind, algo: &AlgorithmResult) -> String {
 // {kind_name} Table
 #[cfg({cfg_expr})]
 pub static {table_ident}: DispatchTable = DispatchTable {{
-  boundaries: DEFAULT_BOUNDARIES,
+  boundaries: {boundaries_expr},
   xs: {xs_id},
   s: {s_id},
   m: {m_id},
@@ -1182,6 +1335,7 @@ pub static {table_ident}: DispatchTable = DispatchTable {{
 #[cfg(not({cfg_expr}))]
 pub static {table_ident}: DispatchTable = default_kind_table();
 ",
+        boundaries_expr = boundaries_expr,
         xs_id = hash_kernel_expr(algo.name, xs),
         s_id = hash_kernel_expr(algo.name, s),
         m_id = hash_kernel_expr(algo.name, m),
@@ -1194,13 +1348,14 @@ pub static {table_ident}: DispatchTable = default_kind_table();
     "\
 // {kind_name} Table
 pub static {table_ident}: DispatchTable = DispatchTable {{
-  boundaries: DEFAULT_BOUNDARIES,
+  boundaries: {boundaries_expr},
   xs: {xs_id},
   s: {s_id},
   m: {m_id},
   l: {l_id},
 }};
 ",
+    boundaries_expr = boundaries_expr,
     xs_id = hash_kernel_expr(algo.name, xs),
     s_id = hash_kernel_expr(algo.name, s),
     m_id = hash_kernel_expr(algo.name, m),
@@ -1208,16 +1363,38 @@ pub static {table_ident}: DispatchTable = DispatchTable {{
   )
 }
 
+fn blake3_split_pair(kernel: &str) -> (&str, &str) {
+  if let Some((stream, bulk)) = kernel.split_once('+') {
+    (stream, bulk)
+  } else {
+    (kernel, kernel)
+  }
+}
+
+fn choose_blake3_pair_component(results: &[&AlgorithmResult], pick_stream: bool) -> Option<String> {
+  let mut counts: HashMap<String, (usize, usize)> = HashMap::new();
+  for (idx, result) in results.iter().enumerate() {
+    let (stream, bulk) = blake3_split_pair(result.best_kernel);
+    let chosen = if pick_stream { stream } else { bulk };
+    let entry = counts.entry(chosen.to_string()).or_insert((0, idx));
+    entry.0 = entry.0.saturating_add(1);
+  }
+  counts
+    .into_iter()
+    .max_by(|a, b| a.1.0.cmp(&b.1.0).then_with(|| b.1.1.cmp(&a.1.1)))
+    .map(|(kernel, _)| kernel)
+}
+
 fn generate_blake3_streaming_table(
   tune_kind: TuneKind,
-  stream64: &AlgorithmResult,
-  stream4k: &AlgorithmResult,
+  stream64_modes: &[&AlgorithmResult],
+  stream4k_modes: &[&AlgorithmResult],
 ) -> String {
   let kind_name = format!("{tune_kind:?}");
   let table_ident = tune_kind_streaming_table_ident(tune_kind);
 
-  let stream = stream64.best_kernel;
-  let bulk = stream4k.best_kernel;
+  let stream = choose_blake3_pair_component(stream64_modes, true).unwrap_or_else(|| "portable".to_string());
+  let bulk = choose_blake3_pair_component(stream4k_modes, false).unwrap_or_else(|| "portable".to_string());
 
   let arch = if stream.starts_with("x86_64/") || bulk.starts_with("x86_64/") {
     Some("x86_64")
@@ -1245,8 +1422,8 @@ pub static {table_ident}: StreamingTable = StreamingTable {{
 #[cfg(not({cfg_expr}))]
 pub static {table_ident}: StreamingTable = default_kind_streaming_table();
 ",
-      stream_id = hash_kernel_expr("blake3-chunk", stream),
-      bulk_id = hash_kernel_expr("blake3-chunk", bulk),
+      stream_id = hash_kernel_expr("blake3-chunk", stream.as_str()),
+      bulk_id = hash_kernel_expr("blake3-chunk", bulk.as_str()),
     );
   }
 
@@ -1258,8 +1435,8 @@ pub static {table_ident}: StreamingTable = StreamingTable {{
   bulk: {bulk_id},
 }};
 ",
-    stream_id = hash_kernel_expr("blake3-chunk", stream),
-    bulk_id = hash_kernel_expr("blake3-chunk", bulk),
+    stream_id = hash_kernel_expr("blake3-chunk", stream.as_str()),
+    bulk_id = hash_kernel_expr("blake3-chunk", bulk.as_str()),
   )
 }
 
@@ -1271,30 +1448,45 @@ fn apply_hash_dispatch_tables(repo_root: &Path, results: &TuneResults) -> io::Re
       continue;
     };
 
-    let table_code = generate_hash_table(tune_kind, algo);
+    let table_code = generate_hash_table(tune_kind, algo, Some(results));
     let path = repo_root.join(target.rel_path);
     let content = read_file(&path)?;
     let mut updated = update_hash_dispatch_tables_file(&content, tune_kind, &table_code)?;
 
     // BLAKE3: also apply streaming dispatch preferences (stream kernel vs bulk kernel).
     if target.algo == "blake3-chunk" {
-      let stream64 = results.algorithms.iter().find(|a| a.name == "blake3-stream64");
-      let stream4k = results.algorithms.iter().find(|a| a.name == "blake3-stream4k");
-      if let (Some(stream64), Some(stream4k)) = (stream64, stream4k) {
-        let streaming_code = generate_blake3_streaming_table(tune_kind, stream64, stream4k);
+      let stream64_modes: Vec<&AlgorithmResult> =
+        ["blake3-stream64", "blake3-stream64-keyed", "blake3-stream64-derive"]
+          .iter()
+          .filter_map(|name| results.algorithms.iter().find(|a| a.name == *name))
+          .collect();
+      let stream4k_modes: Vec<&AlgorithmResult> =
+        ["blake3-stream4k", "blake3-stream4k-keyed", "blake3-stream4k-derive"]
+          .iter()
+          .filter_map(|name| results.algorithms.iter().find(|a| a.name == *name))
+          .collect();
+
+      if !stream64_modes.is_empty() && !stream4k_modes.is_empty() {
+        let streaming_code = generate_blake3_streaming_table(tune_kind, &stream64_modes, &stream4k_modes);
         let kind_name = format!("{tune_kind:?}");
         let marker = format!("// {kind_name} Streaming Table");
         updated = update_hash_dispatch_tables_section(&updated, &marker, &streaming_code)?;
       }
 
-      // BLAKE3: apply the tuned multi-core policy (if present) from the `blake3`
-      // oneshot result. If it isn't present (partial run), fall back to this
-      // target's thresholds or leave defaults unchanged.
+      // BLAKE3 oneshot parallel policy.
       let policy_source = results.algorithms.iter().find(|a| a.name == "blake3").unwrap_or(algo);
       let parallel_code = generate_blake3_parallel_table(tune_kind, policy_source);
       let kind_name = format!("{tune_kind:?}");
       let marker = format!("// {kind_name} Parallel Table");
       updated = update_hash_dispatch_tables_section(&updated, &marker, &parallel_code)?;
+
+      // BLAKE3 streaming parallel policy.
+      if !stream4k_modes.is_empty() {
+        let streaming_parallel_code = generate_blake3_streaming_parallel_table(tune_kind, &stream4k_modes);
+        let kind_name = format!("{tune_kind:?}");
+        let marker = format!("// {kind_name} Streaming Parallel Table");
+        updated = update_hash_dispatch_tables_section(&updated, &marker, &streaming_parallel_code)?;
+      }
     }
 
     if updated != content {
@@ -1429,7 +1621,7 @@ mod tests {
       analysis: AnalysisResult::default(),
     };
 
-    let code = generate_hash_table(TuneKind::Zen4, &algo);
+    let code = generate_hash_table(TuneKind::Zen4, &algo, None);
     assert!(code.contains("#[cfg(target_arch = \"x86_64\")]"));
     assert!(code.contains("#[cfg(not(target_arch = \"x86_64\"))]"));
     assert!(code.contains("default_kind_table()"));
@@ -1461,12 +1653,54 @@ mod tests {
       analysis: AnalysisResult::default(),
     };
 
-    let code = generate_blake3_streaming_table(TuneKind::IntelSpr, &stream64, &stream4k);
+    let code = generate_blake3_streaming_table(TuneKind::IntelSpr, &[&stream64], &[&stream4k]);
     assert!(code.contains("#[cfg(target_arch = \"x86_64\")]"));
     assert!(code.contains("#[cfg(not(target_arch = \"x86_64\"))]"));
     assert!(code.contains("default_kind_streaming_table()"));
     assert!(code.contains("KernelId::X86Sse41"));
     assert!(code.contains("KernelId::X86Avx512"));
+  }
+
+  #[test]
+  fn blake3_hash_tables_use_curve_derived_boundaries_when_available() {
+    let blake3_chunk = AlgorithmResult {
+      name: "blake3-chunk",
+      env_prefix: "RSCRYPTO_BENCH_BLAKE3_CHUNK",
+      best_kernel: "x86_64/avx2",
+      recommended_streams: 1,
+      peak_throughput_gib_s: 0.0,
+      size_class_best: vec![],
+      thresholds: vec![("THRESHOLD_PORTABLE_TO_SIMD".to_string(), 320)],
+      analysis: AnalysisResult::default(),
+    };
+
+    let results = TuneResults {
+      platform: PlatformInfo {
+        arch: "x86_64",
+        os: "linux",
+        caps: platform::Caps::NONE,
+        tune_kind: TuneKind::Zen4,
+        description: String::new(),
+      },
+      algorithms: vec![
+        blake3_chunk.clone(),
+        AlgorithmResult {
+          name: "blake3-parent",
+          env_prefix: "RSCRYPTO_BENCH_BLAKE3_PARENT",
+          best_kernel: "x86_64/avx2",
+          recommended_streams: 1,
+          peak_throughput_gib_s: 0.0,
+          size_class_best: vec![],
+          thresholds: vec![("THRESHOLD_PORTABLE_TO_SIMD".to_string(), 256)],
+          analysis: AnalysisResult::default(),
+        },
+      ],
+      timestamp: String::new(),
+    };
+
+    let code = generate_hash_table(TuneKind::Zen4, &blake3_chunk, Some(&results));
+    // Median(320, 256) = 320 (upper median), then boundary is crossover-1.
+    assert!(code.contains("boundaries: [64, 319, 4096]"));
   }
 
   #[test]

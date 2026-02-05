@@ -115,11 +115,27 @@ const IV: [u32; 8] = [
 ];
 
 #[cfg(feature = "std")]
-static PARALLEL_OVERRIDE: OnceLock<Mutex<Option<dispatch_tables::ParallelTable>>> = OnceLock::new();
+static PARALLEL_OVERRIDE: OnceLock<Mutex<Option<ParallelPolicyOverride>>> = OnceLock::new();
+#[cfg(feature = "std")]
+static AVAILABLE_PARALLELISM: OnceLock<Option<usize>> = OnceLock::new();
+
+#[cfg(feature = "std")]
+#[derive(Clone, Copy, Debug)]
+struct ParallelPolicyOverride {
+  oneshot: dispatch_tables::ParallelTable,
+  streaming: dispatch_tables::ParallelTable,
+}
+
+#[cfg(feature = "std")]
+#[derive(Clone, Copy)]
+enum ParallelPolicyKind {
+  Oneshot,
+  Streaming,
+}
 
 #[cfg(feature = "std")]
 #[inline]
-fn parallel_override() -> Option<dispatch_tables::ParallelTable> {
+fn parallel_override() -> Option<ParallelPolicyOverride> {
   PARALLEL_OVERRIDE
     .get_or_init(|| Mutex::new(None))
     .lock()
@@ -129,8 +145,25 @@ fn parallel_override() -> Option<dispatch_tables::ParallelTable> {
 
 #[cfg(feature = "std")]
 #[inline]
-fn parallel_policy_threads(input_bytes: usize, commit_full_chunks: usize) -> Option<usize> {
-  let policy = parallel_override().unwrap_or_else(|| dispatch::parallel_dispatch().table);
+fn available_parallelism_cached() -> Option<usize> {
+  *AVAILABLE_PARALLELISM.get_or_init(|| thread::available_parallelism().ok().map(|v| v.get()))
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn parallel_policy_threads(mode: ParallelPolicyKind, input_bytes: usize, commit_full_chunks: usize) -> Option<usize> {
+  let policy = if let Some(override_policy) = parallel_override() {
+    match mode {
+      ParallelPolicyKind::Oneshot => override_policy.oneshot,
+      ParallelPolicyKind::Streaming => override_policy.streaming,
+    }
+  } else {
+    let dispatch_policy = dispatch::parallel_dispatch();
+    match mode {
+      ParallelPolicyKind::Oneshot => dispatch_policy.oneshot,
+      ParallelPolicyKind::Streaming => dispatch_policy.streaming,
+    }
+  };
 
   if policy.max_threads == 1 || policy.min_bytes == usize::MAX {
     return None;
@@ -140,11 +173,7 @@ fn parallel_policy_threads(input_bytes: usize, commit_full_chunks: usize) -> Opt
     return None;
   }
 
-  let Ok(ap) = thread::available_parallelism() else {
-    return None;
-  };
-
-  let mut threads = ap.get();
+  let mut threads = available_parallelism_cached()?;
   if policy.max_threads != 0 {
     threads = threads.min(policy.max_threads as usize);
   }
@@ -695,16 +724,16 @@ fn hash_power_of_two_subtree_roots_parallel_rayon(req: SubtreeRootsRequest<'_>) 
 #[cfg(feature = "std")]
 #[doc(hidden)]
 pub mod tune {
-  use super::{Mutex, PARALLEL_OVERRIDE, dispatch_tables};
+  use super::{Mutex, PARALLEL_OVERRIDE, ParallelPolicyOverride, dispatch_tables};
 
   #[derive(Debug)]
   pub struct Blake3ParallelOverrideGuard {
-    prev: Option<dispatch_tables::ParallelTable>,
+    prev: Option<ParallelPolicyOverride>,
   }
 
   impl Drop for Blake3ParallelOverrideGuard {
     fn drop(&mut self) {
-      let lock: &Mutex<Option<dispatch_tables::ParallelTable>> = PARALLEL_OVERRIDE.get_or_init(|| Mutex::new(None));
+      let lock: &Mutex<Option<ParallelPolicyOverride>> = PARALLEL_OVERRIDE.get_or_init(|| Mutex::new(None));
       if let Ok(mut g) = lock.lock() {
         *g = self.prev;
       }
@@ -717,11 +746,14 @@ pub mod tune {
   /// behavior without relying on user-facing environment variables.
   #[must_use]
   pub fn override_blake3_parallel_policy(table: dispatch_tables::ParallelTable) -> Blake3ParallelOverrideGuard {
-    let lock: &Mutex<Option<dispatch_tables::ParallelTable>> = PARALLEL_OVERRIDE.get_or_init(|| Mutex::new(None));
+    let lock: &Mutex<Option<ParallelPolicyOverride>> = PARALLEL_OVERRIDE.get_or_init(|| Mutex::new(None));
     let mut prev = None;
     if let Ok(mut g) = lock.lock() {
       prev = *g;
-      *g = Some(table);
+      *g = Some(ParallelPolicyOverride {
+        oneshot: table,
+        streaming: table,
+      });
     };
     Blake3ParallelOverrideGuard { prev }
   }
@@ -1976,7 +2008,7 @@ fn root_output_oneshot(kernel: Kernel, key_words: [u32; 8], flags: u32, input: &
     // This is intentionally conservative to avoid overhead on latency-critical
     // small inputs (including keyed/derive).
     let commit_full_chunks = if remainder == 0 { full_chunks - 1 } else { full_chunks };
-    if let Some(threads) = parallel_policy_threads(input.len(), commit_full_chunks) {
+    if let Some(threads) = parallel_policy_threads(ParallelPolicyKind::Oneshot, input.len(), commit_full_chunks) {
       return root_output_oneshot_join_parallel(kernel, key_words, flags, input, threads);
     }
   }
@@ -2233,22 +2265,79 @@ impl Blake3 {
     digest_oneshot(kernel, IV, 0, data)
   }
 
-  /// Streaming hash with fixed update chunking, using an explicitly selected kernel.
+  #[inline]
+  fn stream_chunks_with_kernel_pair_and_state(
+    stream_id: kernels::Blake3KernelId,
+    bulk_id: kernels::Blake3KernelId,
+    chunk_size: usize,
+    key_words: [u32; 8],
+    flags: u32,
+    data: &[u8],
+  ) -> [u8; OUT_LEN] {
+    let stream = kernels::kernel(stream_id);
+    let bulk = kernels::kernel(bulk_id);
+    let mut h = Self::new_internal_with(key_words, flags, stream);
+    for chunk in data.chunks(chunk_size) {
+      h.update_with(chunk, stream, bulk);
+    }
+    h.finalize()
+  }
+
+  /// Streaming hash with explicit `(stream, bulk)` kernel IDs.
   ///
   /// This is crate-internal glue for `hashes::bench` / `rscrypto-tune`.
   #[inline]
   #[must_use]
-  pub(crate) fn stream_chunks_with_kernel_id(
-    id: kernels::Blake3KernelId,
+  pub(crate) fn stream_chunks_with_kernel_pair_id(
+    stream_id: kernels::Blake3KernelId,
+    bulk_id: kernels::Blake3KernelId,
     chunk_size: usize,
     data: &[u8],
   ) -> [u8; OUT_LEN] {
-    let kernel = kernels::kernel(id);
-    let mut h = Self::new_internal_with(IV, 0, kernel);
-    for chunk in data.chunks(chunk_size) {
-      h.update_with(chunk, kernel, kernel);
-    }
-    h.finalize()
+    Self::stream_chunks_with_kernel_pair_and_state(stream_id, bulk_id, chunk_size, IV, 0, data)
+  }
+
+  /// Keyed streaming hash with explicit `(stream, bulk)` kernel IDs.
+  ///
+  /// This is crate-internal glue for `hashes::bench` / `rscrypto-tune`.
+  #[inline]
+  #[must_use]
+  pub(crate) fn stream_chunks_keyed_with_kernel_pair_id(
+    stream_id: kernels::Blake3KernelId,
+    bulk_id: kernels::Blake3KernelId,
+    chunk_size: usize,
+    data: &[u8],
+  ) -> [u8; OUT_LEN] {
+    const STREAM_BENCH_KEY: [u8; KEY_LEN] = [
+      0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12,
+      0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
+    ];
+    let key_words = words8_from_le_bytes_32(&STREAM_BENCH_KEY);
+    Self::stream_chunks_with_kernel_pair_and_state(stream_id, bulk_id, chunk_size, key_words, KEYED_HASH, data)
+  }
+
+  /// Derive-key-material streaming hash with explicit `(stream, bulk)` kernel IDs.
+  ///
+  /// This is crate-internal glue for `hashes::bench` / `rscrypto-tune`.
+  #[inline]
+  #[must_use]
+  pub(crate) fn stream_chunks_derive_with_kernel_pair_id(
+    stream_id: kernels::Blake3KernelId,
+    bulk_id: kernels::Blake3KernelId,
+    chunk_size: usize,
+    data: &[u8],
+  ) -> [u8; OUT_LEN] {
+    const STREAM_BENCH_CONTEXT: &str = "rscrypto-blake3-stream-bench";
+    let stream = kernels::kernel(stream_id);
+    let context_key_words = digest_oneshot_words(stream, IV, DERIVE_KEY_CONTEXT, STREAM_BENCH_CONTEXT.as_bytes());
+    Self::stream_chunks_with_kernel_pair_and_state(
+      stream_id,
+      bulk_id,
+      chunk_size,
+      context_key_words,
+      DERIVE_KEY_MATERIAL,
+      data,
+    )
   }
 
   #[inline]
@@ -2339,13 +2428,13 @@ impl Blake3 {
             let commit = if keep_last_full_chunk { batch - 1 } else { batch };
             if commit != 0 {
               let bytes = batch * CHUNK_LEN;
-              if let Some(mut threads) = parallel_policy_threads(bytes, commit) {
+              if let Some(mut threads) = parallel_policy_threads(ParallelPolicyKind::Streaming, bytes, commit) {
                 // Streaming updates can arrive in relatively small "big chunks"
                 // (e.g. 64 KiB) where per-update parallel coordination costs
                 // dominate. Require a minimum amount of work per thread to
                 // keep the streaming API competitive with one-shot hashing.
-                const MIN_CHUNKS_PER_THREAD: usize = 64; // 64 KiB per thread
-                let max_threads_by_work = commit / MIN_CHUNKS_PER_THREAD;
+                let min_chunks_per_thread = dispatch::STREAM_PARALLEL_MIN_CHUNKS_PER_THREAD;
+                let max_threads_by_work = commit / min_chunks_per_thread;
                 if max_threads_by_work <= 1 {
                   // Fall back to the SIMD (single-thread) path below.
                 } else {
@@ -2770,7 +2859,7 @@ impl Digest for Blake3 {
       && self.cv_stack_len == 0
       && self.pending_chunk_cv.is_none()
     {
-      let simd_enable_min = platform::tune().simd_threshold;
+      let simd_enable_min = dispatch::streaming_simd_threshold();
       if self.chunk_state.len().saturating_add(input.len()) < simd_enable_min {
         self.update_with(input, self.kernel, self.bulk_kernel);
         return;

@@ -107,12 +107,20 @@ const fn default_kind_streaming_table() -> StreamingTable {
 #[inline]
 #[must_use]
 const fn default_kind_parallel_table() -> ParallelTable {
-  // Conservative defaults that avoid overhead on medium-sized inputs.
+  // Fire earlier than the old 512KiB/256-chunk gate so users get automatic
+  // multi-core speedups on typical "large buffer" workloads without manual
+  // tuning.
   ParallelTable {
-    min_bytes: 512 * 1024,
-    min_chunks: 256,
+    min_bytes: 128 * 1024,
+    min_chunks: 64,
     max_threads: 0,
   }
+}
+
+#[inline]
+#[must_use]
+const fn default_kind_streaming_parallel_table() -> ParallelTable {
+  default_kind_parallel_table()
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -155,10 +163,11 @@ pub static DEFAULT_STREAMING_TABLE: StreamingTable = StreamingTable {
 };
 
 pub static DEFAULT_PARALLEL_TABLE: ParallelTable = ParallelTable {
-  min_bytes: 512 * 1024,
-  min_chunks: 256,
+  min_bytes: 128 * 1024,
+  min_chunks: 64,
   max_threads: 0,
 };
+pub static DEFAULT_STREAMING_PARALLEL_TABLE: ParallelTable = DEFAULT_PARALLEL_TABLE;
 
 // Custom Table
 pub static CUSTOM_TABLE: DispatchTable = DEFAULT_TABLE;
@@ -166,18 +175,24 @@ pub static CUSTOM_TABLE: DispatchTable = DEFAULT_TABLE;
 pub static CUSTOM_STREAMING_TABLE: StreamingTable = DEFAULT_STREAMING_TABLE;
 // Custom Parallel Table
 pub static CUSTOM_PARALLEL_TABLE: ParallelTable = DEFAULT_PARALLEL_TABLE;
+// Custom Streaming Parallel Table
+pub static CUSTOM_STREAMING_PARALLEL_TABLE: ParallelTable = DEFAULT_STREAMING_PARALLEL_TABLE;
 // Default Table
 pub static DEFAULT_KIND_TABLE: DispatchTable = default_kind_table();
 // Default Streaming Table
 pub static DEFAULT_KIND_STREAMING_TABLE: StreamingTable = default_kind_streaming_table();
 // Default Parallel Table
 pub static DEFAULT_KIND_PARALLEL_TABLE: ParallelTable = default_kind_parallel_table();
+// Default Streaming Parallel Table
+pub static DEFAULT_KIND_STREAMING_PARALLEL_TABLE: ParallelTable = default_kind_streaming_parallel_table();
 // Portable Table
 pub static PORTABLE_TABLE: DispatchTable = DEFAULT_TABLE;
 // Portable Streaming Table
 pub static PORTABLE_STREAMING_TABLE: StreamingTable = DEFAULT_STREAMING_TABLE;
 // Portable Parallel Table
 pub static PORTABLE_PARALLEL_TABLE: ParallelTable = DEFAULT_PARALLEL_TABLE;
+// Portable Streaming Parallel Table
+pub static PORTABLE_STREAMING_PARALLEL_TABLE: ParallelTable = PORTABLE_PARALLEL_TABLE;
 // Zen4 Table
 #[cfg(target_arch = "x86_64")]
 pub static ZEN4_TABLE: DispatchTable = DispatchTable {
@@ -197,7 +212,7 @@ pub static ZEN4_STREAMING_TABLE: StreamingTable = StreamingTable {
   bulk: KernelId::X86Avx2,
 };
 #[cfg(not(target_arch = "x86_64"))]
-pub static ZEN4_STREAMING_TABLE: StreamingTable = default_kind_streaming_table();
+pub static ZEN4_STREAMING_TABLE: StreamingTable = DEFAULT_STREAMING_TABLE;
 // Zen4 Parallel Table
 pub static ZEN4_PARALLEL_TABLE: ParallelTable = default_kind_parallel_table();
 // Zen5 Table
@@ -219,7 +234,7 @@ pub static ZEN5_STREAMING_TABLE: StreamingTable = StreamingTable {
   bulk: KernelId::X86Avx512,
 };
 #[cfg(not(target_arch = "x86_64"))]
-pub static ZEN5_STREAMING_TABLE: StreamingTable = default_kind_streaming_table();
+pub static ZEN5_STREAMING_TABLE: StreamingTable = DEFAULT_STREAMING_TABLE;
 // Zen5 Parallel Table
 pub static ZEN5_PARALLEL_TABLE: ParallelTable = default_kind_parallel_table();
 // Zen5c Table
@@ -241,7 +256,7 @@ pub static ZEN5C_STREAMING_TABLE: StreamingTable = StreamingTable {
   bulk: AVX512_KERNEL,
 };
 #[cfg(not(target_arch = "x86_64"))]
-pub static ZEN5C_STREAMING_TABLE: StreamingTable = default_kind_streaming_table();
+pub static ZEN5C_STREAMING_TABLE: StreamingTable = DEFAULT_STREAMING_TABLE;
 // Zen5c Parallel Table
 pub static ZEN5C_PARALLEL_TABLE: ParallelTable = default_kind_parallel_table();
 // IntelSpr Table
@@ -263,7 +278,7 @@ pub static INTELSPR_STREAMING_TABLE: StreamingTable = StreamingTable {
   bulk: KernelId::X86Avx512,
 };
 #[cfg(not(target_arch = "x86_64"))]
-pub static INTELSPR_STREAMING_TABLE: StreamingTable = default_kind_streaming_table();
+pub static INTELSPR_STREAMING_TABLE: StreamingTable = DEFAULT_STREAMING_TABLE;
 // IntelSpr Parallel Table
 pub static INTELSPR_PARALLEL_TABLE: ParallelTable = default_kind_parallel_table();
 // IntelGnr Parallel Table
@@ -316,6 +331,59 @@ pub static POWER9_PARALLEL_TABLE: ParallelTable = default_kind_parallel_table();
 // Power10 Parallel Table
 pub static POWER10_PARALLEL_TABLE: ParallelTable = default_kind_parallel_table();
 
+// Zen4 Streaming Parallel Table
+pub static ZEN4_STREAMING_PARALLEL_TABLE: ParallelTable = ZEN4_PARALLEL_TABLE;
+// Zen5 Streaming Parallel Table
+pub static ZEN5_STREAMING_PARALLEL_TABLE: ParallelTable = ZEN5_PARALLEL_TABLE;
+// Zen5c Streaming Parallel Table
+pub static ZEN5C_STREAMING_PARALLEL_TABLE: ParallelTable = ZEN5C_PARALLEL_TABLE;
+// IntelSpr Streaming Parallel Table
+pub static INTELSPR_STREAMING_PARALLEL_TABLE: ParallelTable = INTELSPR_PARALLEL_TABLE;
+// IntelGnr Streaming Parallel Table
+pub static INTELGNR_STREAMING_PARALLEL_TABLE: ParallelTable = INTELGNR_PARALLEL_TABLE;
+// IntelIcl Streaming Parallel Table
+pub static INTELICL_STREAMING_PARALLEL_TABLE: ParallelTable = INTELICL_PARALLEL_TABLE;
+// AppleM1M3 Streaming Parallel Table
+pub static APPLEM1M3_STREAMING_PARALLEL_TABLE: ParallelTable = APPLEM1M3_PARALLEL_TABLE;
+// AppleM4 Streaming Parallel Table
+pub static APPLEM4_STREAMING_PARALLEL_TABLE: ParallelTable = APPLEM4_PARALLEL_TABLE;
+// AppleM5 Streaming Parallel Table
+pub static APPLEM5_STREAMING_PARALLEL_TABLE: ParallelTable = APPLEM5_PARALLEL_TABLE;
+// Graviton2 Streaming Parallel Table
+pub static GRAVITON2_STREAMING_PARALLEL_TABLE: ParallelTable = GRAVITON2_PARALLEL_TABLE;
+// Graviton3 Streaming Parallel Table
+pub static GRAVITON3_STREAMING_PARALLEL_TABLE: ParallelTable = GRAVITON3_PARALLEL_TABLE;
+// Graviton4 Streaming Parallel Table
+pub static GRAVITON4_STREAMING_PARALLEL_TABLE: ParallelTable = GRAVITON4_PARALLEL_TABLE;
+// Graviton5 Streaming Parallel Table
+pub static GRAVITON5_STREAMING_PARALLEL_TABLE: ParallelTable = GRAVITON5_PARALLEL_TABLE;
+// NeoverseN2 Streaming Parallel Table
+pub static NEOVERSEN2_STREAMING_PARALLEL_TABLE: ParallelTable = NEOVERSEN2_PARALLEL_TABLE;
+// NeoverseN3 Streaming Parallel Table
+pub static NEOVERSEN3_STREAMING_PARALLEL_TABLE: ParallelTable = NEOVERSEN3_PARALLEL_TABLE;
+// NeoverseV3 Streaming Parallel Table
+pub static NEOVERSEV3_STREAMING_PARALLEL_TABLE: ParallelTable = NEOVERSEV3_PARALLEL_TABLE;
+// NvidiaGrace Streaming Parallel Table
+pub static NVIDIAGRACE_STREAMING_PARALLEL_TABLE: ParallelTable = NVIDIAGRACE_PARALLEL_TABLE;
+// AmpereAltra Streaming Parallel Table
+pub static AMPEREALTRA_STREAMING_PARALLEL_TABLE: ParallelTable = AMPEREALTRA_PARALLEL_TABLE;
+// Aarch64Pmull Streaming Parallel Table
+pub static AARCH64PMULL_STREAMING_PARALLEL_TABLE: ParallelTable = AARCH64PMULL_PARALLEL_TABLE;
+// Z13 Streaming Parallel Table
+pub static Z13_STREAMING_PARALLEL_TABLE: ParallelTable = Z13_PARALLEL_TABLE;
+// Z14 Streaming Parallel Table
+pub static Z14_STREAMING_PARALLEL_TABLE: ParallelTable = Z14_PARALLEL_TABLE;
+// Z15 Streaming Parallel Table
+pub static Z15_STREAMING_PARALLEL_TABLE: ParallelTable = Z15_PARALLEL_TABLE;
+// Power7 Streaming Parallel Table
+pub static POWER7_STREAMING_PARALLEL_TABLE: ParallelTable = POWER7_PARALLEL_TABLE;
+// Power8 Streaming Parallel Table
+pub static POWER8_STREAMING_PARALLEL_TABLE: ParallelTable = POWER8_PARALLEL_TABLE;
+// Power9 Streaming Parallel Table
+pub static POWER9_STREAMING_PARALLEL_TABLE: ParallelTable = POWER9_PARALLEL_TABLE;
+// Power10 Streaming Parallel Table
+pub static POWER10_STREAMING_PARALLEL_TABLE: ParallelTable = POWER10_PARALLEL_TABLE;
+
 // IntelGnr Table
 #[cfg(target_arch = "x86_64")]
 pub static INTELGNR_TABLE: DispatchTable = DispatchTable {
@@ -335,7 +403,7 @@ pub static INTELGNR_STREAMING_TABLE: StreamingTable = StreamingTable {
   bulk: AVX512_KERNEL,
 };
 #[cfg(not(target_arch = "x86_64"))]
-pub static INTELGNR_STREAMING_TABLE: StreamingTable = default_kind_streaming_table();
+pub static INTELGNR_STREAMING_TABLE: StreamingTable = DEFAULT_STREAMING_TABLE;
 // IntelIcl Table
 #[cfg(target_arch = "x86_64")]
 pub static INTELICL_TABLE: DispatchTable = DispatchTable {
@@ -351,10 +419,10 @@ pub static INTELICL_TABLE: DispatchTable = default_kind_table();
 #[cfg(target_arch = "x86_64")]
 pub static INTELICL_STREAMING_TABLE: StreamingTable = StreamingTable {
   stream: KernelId::X86Sse41,
-  bulk: KernelId::X86Avx512,
+  bulk: KernelId::X86Avx2,
 };
 #[cfg(not(target_arch = "x86_64"))]
-pub static INTELICL_STREAMING_TABLE: StreamingTable = default_kind_streaming_table();
+pub static INTELICL_STREAMING_TABLE: StreamingTable = DEFAULT_STREAMING_TABLE;
 // AppleM1M3 Table
 #[cfg(target_arch = "aarch64")]
 pub static APPLEM1M3_TABLE: DispatchTable = DispatchTable {
@@ -370,11 +438,11 @@ pub static APPLEM1M3_TABLE: DispatchTable = default_kind_table();
 // AppleM1M3 Streaming Table
 #[cfg(target_arch = "aarch64")]
 pub static APPLEM1M3_STREAMING_TABLE: StreamingTable = StreamingTable {
-  stream: KernelId::Portable,
+  stream: KernelId::Aarch64Neon,
   bulk: KernelId::Aarch64Neon,
 };
 #[cfg(not(target_arch = "aarch64"))]
-pub static APPLEM1M3_STREAMING_TABLE: StreamingTable = default_kind_streaming_table();
+pub static APPLEM1M3_STREAMING_TABLE: StreamingTable = DEFAULT_STREAMING_TABLE;
 
 // AppleM4 Table
 #[cfg(target_arch = "aarch64")]
@@ -390,11 +458,11 @@ pub static APPLEM4_TABLE: DispatchTable = default_kind_table();
 // AppleM4 Streaming Table
 #[cfg(target_arch = "aarch64")]
 pub static APPLEM4_STREAMING_TABLE: StreamingTable = StreamingTable {
-  stream: KernelId::Portable,
+  stream: KernelId::Aarch64Neon,
   bulk: KernelId::Aarch64Neon,
 };
 #[cfg(not(target_arch = "aarch64"))]
-pub static APPLEM4_STREAMING_TABLE: StreamingTable = default_kind_streaming_table();
+pub static APPLEM4_STREAMING_TABLE: StreamingTable = DEFAULT_STREAMING_TABLE;
 // AppleM5 Table
 #[cfg(target_arch = "aarch64")]
 pub static APPLEM5_TABLE: DispatchTable = DispatchTable {
@@ -409,11 +477,11 @@ pub static APPLEM5_TABLE: DispatchTable = default_kind_table();
 // AppleM5 Streaming Table
 #[cfg(target_arch = "aarch64")]
 pub static APPLEM5_STREAMING_TABLE: StreamingTable = StreamingTable {
-  stream: KernelId::Portable,
+  stream: KernelId::Aarch64Neon,
   bulk: KernelId::Aarch64Neon,
 };
 #[cfg(not(target_arch = "aarch64"))]
-pub static APPLEM5_STREAMING_TABLE: StreamingTable = default_kind_streaming_table();
+pub static APPLEM5_STREAMING_TABLE: StreamingTable = DEFAULT_STREAMING_TABLE;
 // Graviton2 Table
 #[cfg(target_arch = "aarch64")]
 pub static GRAVITON2_TABLE: DispatchTable = DispatchTable {
@@ -432,7 +500,7 @@ pub static GRAVITON2_STREAMING_TABLE: StreamingTable = StreamingTable {
   bulk: KernelId::Aarch64Neon,
 };
 #[cfg(not(target_arch = "aarch64"))]
-pub static GRAVITON2_STREAMING_TABLE: StreamingTable = default_kind_streaming_table();
+pub static GRAVITON2_STREAMING_TABLE: StreamingTable = DEFAULT_STREAMING_TABLE;
 // Graviton3 Table
 #[cfg(target_arch = "aarch64")]
 pub static GRAVITON3_TABLE: DispatchTable = DispatchTable {
@@ -451,7 +519,7 @@ pub static GRAVITON3_STREAMING_TABLE: StreamingTable = StreamingTable {
   bulk: KernelId::Aarch64Neon,
 };
 #[cfg(not(target_arch = "aarch64"))]
-pub static GRAVITON3_STREAMING_TABLE: StreamingTable = default_kind_streaming_table();
+pub static GRAVITON3_STREAMING_TABLE: StreamingTable = DEFAULT_STREAMING_TABLE;
 // Graviton4 Table
 #[cfg(target_arch = "aarch64")]
 pub static GRAVITON4_TABLE: DispatchTable = DispatchTable {
@@ -470,7 +538,7 @@ pub static GRAVITON4_STREAMING_TABLE: StreamingTable = StreamingTable {
   bulk: KernelId::Aarch64Neon,
 };
 #[cfg(not(target_arch = "aarch64"))]
-pub static GRAVITON4_STREAMING_TABLE: StreamingTable = default_kind_streaming_table();
+pub static GRAVITON4_STREAMING_TABLE: StreamingTable = DEFAULT_STREAMING_TABLE;
 // Graviton5 Table
 #[cfg(target_arch = "aarch64")]
 pub static GRAVITON5_TABLE: DispatchTable = DispatchTable {
@@ -489,7 +557,7 @@ pub static GRAVITON5_STREAMING_TABLE: StreamingTable = StreamingTable {
   bulk: KernelId::Aarch64Neon,
 };
 #[cfg(not(target_arch = "aarch64"))]
-pub static GRAVITON5_STREAMING_TABLE: StreamingTable = default_kind_streaming_table();
+pub static GRAVITON5_STREAMING_TABLE: StreamingTable = DEFAULT_STREAMING_TABLE;
 // NeoverseN2 Table
 #[cfg(target_arch = "aarch64")]
 pub static NEOVERSEN2_TABLE: DispatchTable = DispatchTable {
@@ -508,7 +576,7 @@ pub static NEOVERSEN2_STREAMING_TABLE: StreamingTable = StreamingTable {
   bulk: KernelId::Aarch64Neon,
 };
 #[cfg(not(target_arch = "aarch64"))]
-pub static NEOVERSEN2_STREAMING_TABLE: StreamingTable = default_kind_streaming_table();
+pub static NEOVERSEN2_STREAMING_TABLE: StreamingTable = DEFAULT_STREAMING_TABLE;
 // NeoverseN3 Table
 #[cfg(target_arch = "aarch64")]
 pub static NEOVERSEN3_TABLE: DispatchTable = DispatchTable {
@@ -527,7 +595,7 @@ pub static NEOVERSEN3_STREAMING_TABLE: StreamingTable = StreamingTable {
   bulk: KernelId::Aarch64Neon,
 };
 #[cfg(not(target_arch = "aarch64"))]
-pub static NEOVERSEN3_STREAMING_TABLE: StreamingTable = default_kind_streaming_table();
+pub static NEOVERSEN3_STREAMING_TABLE: StreamingTable = DEFAULT_STREAMING_TABLE;
 // NeoverseV3 Table
 #[cfg(target_arch = "aarch64")]
 pub static NEOVERSEV3_TABLE: DispatchTable = DispatchTable {
@@ -546,13 +614,13 @@ pub static NEOVERSEV3_STREAMING_TABLE: StreamingTable = StreamingTable {
   bulk: KernelId::Aarch64Neon,
 };
 #[cfg(not(target_arch = "aarch64"))]
-pub static NEOVERSEV3_STREAMING_TABLE: StreamingTable = default_kind_streaming_table();
+pub static NEOVERSEV3_STREAMING_TABLE: StreamingTable = DEFAULT_STREAMING_TABLE;
 // NvidiaGrace Table
 #[cfg(target_arch = "aarch64")]
 pub static NVIDIAGRACE_TABLE: DispatchTable = DispatchTable {
   boundaries: DEFAULT_BOUNDARIES,
   xs: KernelId::Aarch64Neon,
-  s: KernelId::Portable,
+  s: KernelId::Aarch64Neon,
   m: KernelId::Aarch64Neon,
   l: KernelId::Aarch64Neon,
 };
@@ -561,47 +629,98 @@ pub static NVIDIAGRACE_TABLE: DispatchTable = default_kind_table();
 // NvidiaGrace Streaming Table
 #[cfg(target_arch = "aarch64")]
 pub static NVIDIAGRACE_STREAMING_TABLE: StreamingTable = StreamingTable {
-  stream: KernelId::Portable,
+  stream: KernelId::Aarch64Neon,
   bulk: KernelId::Aarch64Neon,
 };
 #[cfg(not(target_arch = "aarch64"))]
-pub static NVIDIAGRACE_STREAMING_TABLE: StreamingTable = default_kind_streaming_table();
+pub static NVIDIAGRACE_STREAMING_TABLE: StreamingTable = DEFAULT_STREAMING_TABLE;
 // AmpereAltra Table
+#[cfg(target_arch = "aarch64")]
+pub static AMPEREALTRA_TABLE: DispatchTable = DispatchTable {
+  boundaries: DEFAULT_BOUNDARIES,
+  xs: KernelId::Aarch64Neon,
+  s: KernelId::Aarch64Neon,
+  m: KernelId::Aarch64Neon,
+  l: KernelId::Aarch64Neon,
+};
+#[cfg(not(target_arch = "aarch64"))]
 pub static AMPEREALTRA_TABLE: DispatchTable = default_kind_table();
 // AmpereAltra Streaming Table
-pub static AMPEREALTRA_STREAMING_TABLE: StreamingTable = default_kind_streaming_table();
+#[cfg(target_arch = "aarch64")]
+pub static AMPEREALTRA_STREAMING_TABLE: StreamingTable = StreamingTable {
+  stream: KernelId::Aarch64Neon,
+  bulk: KernelId::Aarch64Neon,
+};
+#[cfg(not(target_arch = "aarch64"))]
+pub static AMPEREALTRA_STREAMING_TABLE: StreamingTable = DEFAULT_STREAMING_TABLE;
 // Aarch64Pmull Table
+#[cfg(target_arch = "aarch64")]
+pub static AARCH64PMULL_TABLE: DispatchTable = DispatchTable {
+  boundaries: DEFAULT_BOUNDARIES,
+  xs: KernelId::Aarch64Neon,
+  s: KernelId::Aarch64Neon,
+  m: KernelId::Aarch64Neon,
+  l: KernelId::Aarch64Neon,
+};
+#[cfg(not(target_arch = "aarch64"))]
 pub static AARCH64PMULL_TABLE: DispatchTable = default_kind_table();
 // Aarch64Pmull Streaming Table
-pub static AARCH64PMULL_STREAMING_TABLE: StreamingTable = default_kind_streaming_table();
+#[cfg(target_arch = "aarch64")]
+pub static AARCH64PMULL_STREAMING_TABLE: StreamingTable = StreamingTable {
+  stream: KernelId::Aarch64Neon,
+  bulk: KernelId::Aarch64Neon,
+};
+#[cfg(not(target_arch = "aarch64"))]
+pub static AARCH64PMULL_STREAMING_TABLE: StreamingTable = DEFAULT_STREAMING_TABLE;
 // Z13 Table
 pub static Z13_TABLE: DispatchTable = default_kind_table();
 // Z13 Streaming Table
-pub static Z13_STREAMING_TABLE: StreamingTable = default_kind_streaming_table();
+pub static Z13_STREAMING_TABLE: StreamingTable = StreamingTable {
+  stream: KernelId::Portable,
+  bulk: KernelId::Portable,
+};
 // Z14 Table
 pub static Z14_TABLE: DispatchTable = default_kind_table();
 // Z14 Streaming Table
-pub static Z14_STREAMING_TABLE: StreamingTable = default_kind_streaming_table();
+pub static Z14_STREAMING_TABLE: StreamingTable = StreamingTable {
+  stream: KernelId::Portable,
+  bulk: KernelId::Portable,
+};
 // Z15 Table
 pub static Z15_TABLE: DispatchTable = default_kind_table();
 // Z15 Streaming Table
-pub static Z15_STREAMING_TABLE: StreamingTable = default_kind_streaming_table();
+pub static Z15_STREAMING_TABLE: StreamingTable = StreamingTable {
+  stream: KernelId::Portable,
+  bulk: KernelId::Portable,
+};
 // Power7 Table
 pub static POWER7_TABLE: DispatchTable = default_kind_table();
 // Power7 Streaming Table
-pub static POWER7_STREAMING_TABLE: StreamingTable = default_kind_streaming_table();
+pub static POWER7_STREAMING_TABLE: StreamingTable = StreamingTable {
+  stream: KernelId::Portable,
+  bulk: KernelId::Portable,
+};
 // Power8 Table
 pub static POWER8_TABLE: DispatchTable = default_kind_table();
 // Power8 Streaming Table
-pub static POWER8_STREAMING_TABLE: StreamingTable = default_kind_streaming_table();
+pub static POWER8_STREAMING_TABLE: StreamingTable = StreamingTable {
+  stream: KernelId::Portable,
+  bulk: KernelId::Portable,
+};
 // Power9 Table
 pub static POWER9_TABLE: DispatchTable = default_kind_table();
 // Power9 Streaming Table
-pub static POWER9_STREAMING_TABLE: StreamingTable = default_kind_streaming_table();
+pub static POWER9_STREAMING_TABLE: StreamingTable = StreamingTable {
+  stream: KernelId::Portable,
+  bulk: KernelId::Portable,
+};
 // Power10 Table
 pub static POWER10_TABLE: DispatchTable = default_kind_table();
 // Power10 Streaming Table
-pub static POWER10_STREAMING_TABLE: StreamingTable = default_kind_streaming_table();
+pub static POWER10_STREAMING_TABLE: StreamingTable = StreamingTable {
+  stream: KernelId::Portable,
+  bulk: KernelId::Portable,
+};
 
 #[inline]
 #[must_use]
@@ -708,5 +827,41 @@ pub fn select_parallel_table(kind: TuneKind) -> &'static ParallelTable {
     TuneKind::Power8 => &POWER8_PARALLEL_TABLE,
     TuneKind::Power9 => &POWER9_PARALLEL_TABLE,
     TuneKind::Power10 => &POWER10_PARALLEL_TABLE,
+  }
+}
+
+#[inline]
+#[must_use]
+pub fn select_streaming_parallel_table(kind: TuneKind) -> &'static ParallelTable {
+  match kind {
+    TuneKind::Custom => &CUSTOM_STREAMING_PARALLEL_TABLE,
+    TuneKind::Default => &DEFAULT_KIND_STREAMING_PARALLEL_TABLE,
+    TuneKind::Portable => &PORTABLE_STREAMING_PARALLEL_TABLE,
+    TuneKind::Zen4 => &ZEN4_STREAMING_PARALLEL_TABLE,
+    TuneKind::Zen5 => &ZEN5_STREAMING_PARALLEL_TABLE,
+    TuneKind::Zen5c => &ZEN5C_STREAMING_PARALLEL_TABLE,
+    TuneKind::IntelSpr => &INTELSPR_STREAMING_PARALLEL_TABLE,
+    TuneKind::IntelGnr => &INTELGNR_STREAMING_PARALLEL_TABLE,
+    TuneKind::IntelIcl => &INTELICL_STREAMING_PARALLEL_TABLE,
+    TuneKind::AppleM1M3 => &APPLEM1M3_STREAMING_PARALLEL_TABLE,
+    TuneKind::AppleM4 => &APPLEM4_STREAMING_PARALLEL_TABLE,
+    TuneKind::AppleM5 => &APPLEM5_STREAMING_PARALLEL_TABLE,
+    TuneKind::Graviton2 => &GRAVITON2_STREAMING_PARALLEL_TABLE,
+    TuneKind::Graviton3 => &GRAVITON3_STREAMING_PARALLEL_TABLE,
+    TuneKind::Graviton4 => &GRAVITON4_STREAMING_PARALLEL_TABLE,
+    TuneKind::Graviton5 => &GRAVITON5_STREAMING_PARALLEL_TABLE,
+    TuneKind::NeoverseN2 => &NEOVERSEN2_STREAMING_PARALLEL_TABLE,
+    TuneKind::NeoverseN3 => &NEOVERSEN3_STREAMING_PARALLEL_TABLE,
+    TuneKind::NeoverseV3 => &NEOVERSEV3_STREAMING_PARALLEL_TABLE,
+    TuneKind::NvidiaGrace => &NVIDIAGRACE_STREAMING_PARALLEL_TABLE,
+    TuneKind::AmpereAltra => &AMPEREALTRA_STREAMING_PARALLEL_TABLE,
+    TuneKind::Aarch64Pmull => &AARCH64PMULL_STREAMING_PARALLEL_TABLE,
+    TuneKind::Z13 => &Z13_STREAMING_PARALLEL_TABLE,
+    TuneKind::Z14 => &Z14_STREAMING_PARALLEL_TABLE,
+    TuneKind::Z15 => &Z15_STREAMING_PARALLEL_TABLE,
+    TuneKind::Power7 => &POWER7_STREAMING_PARALLEL_TABLE,
+    TuneKind::Power8 => &POWER8_STREAMING_PARALLEL_TABLE,
+    TuneKind::Power9 => &POWER9_STREAMING_PARALLEL_TABLE,
+    TuneKind::Power10 => &POWER10_STREAMING_PARALLEL_TABLE,
   }
 }

@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+KNOWN_IMPLS = frozenset({"rscrypto", "official", "official-rayon"})
+
 
 @dataclass(frozen=True)
 class Metric:
@@ -110,9 +112,19 @@ def _case_key_and_impl(bench_id: str) -> Optional[tuple[str, str]]:
   parts = bench_id.split("/")
   if len(parts) < 3:
     return None
-  impl = parts[-2]
-  case_key = "/".join(parts[:-2] + [parts[-1]])
-  return (case_key, impl)
+  for i, p in enumerate(parts):
+    if p in KNOWN_IMPLS:
+      case_parts = parts[:i] + parts[i + 1 :]
+      return ("/".join(case_parts), p)
+  return None
+
+
+def _parse_size_suffix(segment: str) -> Optional[int]:
+  """Try to parse a trailing size from a bench-id segment (e.g. '1048576' or '65536')."""
+  try:
+    return int(segment)
+  except ValueError:
+    return None
 
 
 def iter_entries(text: str, prefer: str) -> list[Entry]:
@@ -184,6 +196,17 @@ def main(argv: list[str]) -> int:
     choices=["thrpt", "time"],
     help="Prefer comparing throughput or time if both are present (default: thrpt)",
   )
+  parser.add_argument(
+    "--parallel-threshold",
+    type=int,
+    default=524288,
+    help="Input size (bytes) at which rscrypto may auto-parallelize (default: 524288 = 512 KiB)",
+  )
+  parser.add_argument(
+    "--require-groups",
+    default=None,
+    help="Comma-separated group prefixes; exit 1 if any prefix has no rscrypto entries",
+  )
   args = parser.parse_args(argv)
 
   path = Path(args.path)
@@ -197,6 +220,19 @@ def main(argv: list[str]) -> int:
   by_case: dict[str, list[Entry]] = {}
   for e in entries:
     by_case.setdefault(e.case_key, []).append(e)
+
+  # --require-groups validation
+  if args.require_groups:
+    required = [p.strip() for p in args.require_groups.split(",") if p.strip()]
+    all_rscrypto_keys = {e.case_key for e in entries if e.impl == args.ours}
+    missing: list[str] = []
+    for prefix in required:
+      if not any(k.startswith(prefix) for k in all_rscrypto_keys):
+        missing.append(prefix)
+    if missing:
+      for m in missing:
+        print(f"error: --require-groups: no {args.ours} entries for group prefix '{m}'", file=sys.stderr)
+      return 1
 
   losses: list[str] = []
   for case_key in sorted(by_case.keys()):
@@ -220,9 +256,28 @@ def main(argv: list[str]) -> int:
 
   if losses:
     sys.stdout.write("\n".join(losses) + "\n")
+
+  # --parallel-threshold warnings
+  threshold = args.parallel_threshold
+  for case_key in sorted(by_case.keys()):
+    case_entries = by_case[case_key]
+    impls_present = {e.impl for e in case_entries}
+    if args.ours not in impls_present or "official" not in impls_present:
+      continue
+    if "official-rayon" in impls_present:
+      continue
+
+    # Check if the last segment of the case_key is a size >= threshold
+    last_seg = case_key.rsplit("/", 1)[-1]
+    size = _parse_size_suffix(last_seg)
+    if size is not None and size >= threshold:
+      print(
+        f"WARNING: {case_key}: missing official-rayon (rscrypto may auto-parallelize at {size} bytes)",
+        file=sys.stderr,
+      )
+
   return 0
 
 
 if __name__ == "__main__":
   raise SystemExit(main(sys.argv[1:]))
-

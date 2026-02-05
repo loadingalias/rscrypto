@@ -1,0 +1,164 @@
+name: Tune
+
+on:
+  workflow_dispatch:
+    inputs:
+      targets:
+        description: "Targets to tune (comma-separated: intel,intel-icl,amd-zen4,amd-zen5,graviton,ibm-s390x,ibm-power9,ibm-power10 or all)"
+        required: false
+        type: string
+        default: "intel,amd-zen4,graviton"
+      crates:
+        description: "Tune crates/surfaces (comma-separated: checksum,hashes,hashes-bench)"
+        required: false
+        type: string
+        default: "checksum,hashes"
+      only:
+        description: "Tune only specific algorithms (comma-separated, optional)"
+        required: false
+        type: string
+        default: ""
+      quick:
+        description: "Quick mode (faster, noisier)"
+        required: false
+        type: boolean
+        default: true
+      apply:
+        description: "Apply tuning output into dispatch tables and emit patch artifact"
+        required: false
+        type: boolean
+        default: false
+      self_check:
+        description: "Run tuner self-check before success"
+        required: false
+        type: boolean
+        default: false
+      enforce_targets:
+        description: "Fail run if any defined perf target is missed"
+        required: false
+        type: boolean
+        default: false
+      warmup_ms:
+        description: "Custom warmup duration in ms (optional)"
+        required: false
+        type: string
+        default: ""
+      measure_ms:
+        description: "Custom measure duration in ms (optional)"
+        required: false
+        type: string
+        default: ""
+
+env:
+  RUST_BACKTRACE: 1
+  CARGO_TERM_COLOR: always
+  RSCRYPTO_TUNE_MODE: ci
+  CARGO_INCREMENTAL: 0
+
+permissions:
+  contents: read
+
+jobs:
+  tune:
+    name: Tune (${{ matrix.target }})
+    if: |
+      contains(format(',{0},', replace(github.event.inputs.targets, ' ', '')), ',all,') ||
+      contains(format(',{0},', replace(github.event.inputs.targets, ' ', '')), format(',{0},', matrix.target))
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: intel
+            runner_type: runson
+            runner_id: intel-bench
+            setup: runson
+            timeout: 60
+          - target: intel-icl
+            runner_type: runson
+            runner_id: intel-icl-bench
+            setup: runson
+            timeout: 60
+          - target: amd-zen4
+            runner_type: standard
+            runner: namespace-profile-rscrypto-linux-x86
+            setup: namespace
+            timeout: 60
+          - target: amd-zen5
+            runner_type: runson
+            runner_id: amd-zen5
+            setup: runson
+            timeout: 60
+          - target: graviton
+            runner_type: runson
+            runner_id: graviton
+            setup: runson
+            timeout: 60
+          - target: ibm-s390x
+            runner_type: standard
+            runner: ubuntu-24.04-s390x
+            setup: default
+            timeout: 90
+          - target: ibm-power9
+            runner_type: standard
+            runner: ubuntu-24.04-ppc64le
+            setup: default
+            timeout: 90
+          - target: ibm-power10
+            runner_type: standard
+            runner: ubuntu-24.04-ppc64le-p10
+            setup: default
+            timeout: 90
+    runs-on: ${{ matrix.runner_type == 'runson' && format('runs-on={0}/runner={1}', github.run_id, matrix.runner_id) || matrix.runner }}
+    timeout-minutes: ${{ matrix.timeout }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Setup RunsOn
+        if: matrix.setup == 'runson'
+        uses: ./.github/actions/setup-runson
+        with:
+          mode: runson-bench
+
+      - name: Setup Namespace
+        if: matrix.setup == 'namespace'
+        uses: ./.github/actions/setup-namespace
+
+      - name: Setup Host Toolchain
+        if: matrix.setup == 'default'
+        uses: ./.github/actions/setup
+        with:
+          cache-key: tune-${{ matrix.target }}
+          tools-mode: none
+          toolchain-components: ""
+
+      - name: Record Host Details
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Tune host: ${{ matrix.target }}"
+          uname -a || true
+          lscpu || true
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+      - name: Run Unified Tuning
+        env:
+          TUNE_OUTPUT_DIR: tune-results
+          TUNE_QUICK: ${{ github.event.inputs.quick }}
+          TUNE_CRATES: ${{ github.event.inputs.crates }}
+          TUNE_ONLY: ${{ github.event.inputs.only }}
+          TUNE_APPLY: ${{ github.event.inputs.apply }}
+          TUNE_SELF_CHECK: ${{ github.event.inputs.self_check }}
+          TUNE_ENFORCE_TARGETS: ${{ github.event.inputs.enforce_targets }}
+          TUNE_WARMUP_MS: ${{ github.event.inputs.warmup_ms }}
+          TUNE_MEASURE_MS: ${{ github.event.inputs.measure_ms }}
+        run: scripts/ci/run-tune.sh
+
+      - name: Upload Tuning Results
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        with:
+          name: tuning-${{ matrix.target }}
+          path: tune-results/
+          retention-days: 90

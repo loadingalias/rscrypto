@@ -168,7 +168,7 @@ mod tests {
       );
 
       for &chunk in &[64usize, 4096] {
-        let helper_stream = Blake3::stream_chunks_with_kernel_id(id, chunk, &msg);
+        let helper_stream = Blake3::stream_chunks_with_kernel_pair_id(id, id, chunk, &msg);
 
         let kernel = kernel_for_id(id);
         let mut h = hasher_for_kernel(id);
@@ -178,7 +178,7 @@ mod tests {
         assert_eq!(
           helper_stream,
           h.finalize(),
-          "stream_chunks_with_kernel_id mismatch for kernel={} chunk={}",
+          "stream_chunks_with_kernel_pair_id mismatch for kernel={} chunk={}",
           id.as_str(),
           chunk
         );

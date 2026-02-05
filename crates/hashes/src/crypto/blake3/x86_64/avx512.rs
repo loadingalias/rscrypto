@@ -624,3 +624,68 @@ pub unsafe fn root_output_blocks16(
     }
   }
 }
+
+/// Compress one BLAKE3 block with a latency-oriented schedule.
+///
+/// This uses the same dependency-chain schedule as the SSE4.1/AVX2 single-block
+/// path (no 16-lane broadcast + lane extraction), while keeping this entrypoint
+/// AVX-512-gated for mixed-workload dispatching.
+///
+/// # Safety
+/// Caller must ensure AVX-512F + AVX-512VL + AVX2 + SSE4.1 + SSSE3 are available.
+#[target_feature(enable = "avx512f,avx512vl,avx2,sse4.1,ssse3")]
+pub(crate) unsafe fn compress_block(
+  chaining_value: &[u32; 8],
+  block_words: &[u32; 16],
+  counter: u64,
+  block_len: u32,
+  flags: u32,
+) -> [u32; 16] {
+  let m0 = _mm_loadu_si128(block_words.as_ptr().cast());
+  let m1 = _mm_loadu_si128(block_words.as_ptr().add(4).cast());
+  let m2 = _mm_loadu_si128(block_words.as_ptr().add(8).cast());
+  let m3 = _mm_loadu_si128(block_words.as_ptr().add(12).cast());
+  let [mut row0, mut row1, mut row2, mut row3] =
+    super::compress_pre_sse41_impl(chaining_value, m0, m1, m2, m3, counter, block_len, flags);
+
+  let cv_lo = _mm_loadu_si128(chaining_value.as_ptr().cast());
+  let cv_hi = _mm_loadu_si128(chaining_value.as_ptr().add(4).cast());
+
+  row0 = _mm_xor_si128(row0, row2);
+  row1 = _mm_xor_si128(row1, row3);
+  row2 = _mm_xor_si128(row2, cv_lo);
+  row3 = _mm_xor_si128(row3, cv_hi);
+
+  let mut out = [0u32; 16];
+  _mm_storeu_si128(out.as_mut_ptr().cast(), row0);
+  _mm_storeu_si128(out.as_mut_ptr().add(4).cast(), row1);
+  _mm_storeu_si128(out.as_mut_ptr().add(8).cast(), row2);
+  _mm_storeu_si128(out.as_mut_ptr().add(12).cast(), row3);
+  out
+}
+
+/// Compress one BLAKE3 block and return only the chaining value (8 words).
+///
+/// # Safety
+/// Caller must ensure AVX-512F + AVX-512VL + AVX2 + SSE4.1 + SSSE3 are available.
+#[target_feature(enable = "avx512f,avx512vl,avx2,sse4.1,ssse3")]
+pub(crate) unsafe fn compress_cv_block(
+  chaining_value: &[u32; 8],
+  block_words: &[u32; 16],
+  counter: u64,
+  block_len: u32,
+  flags: u32,
+) -> [u32; 8] {
+  let m0 = _mm_loadu_si128(block_words.as_ptr().cast());
+  let m1 = _mm_loadu_si128(block_words.as_ptr().add(4).cast());
+  let m2 = _mm_loadu_si128(block_words.as_ptr().add(8).cast());
+  let m3 = _mm_loadu_si128(block_words.as_ptr().add(12).cast());
+  let [row0, row1, row2, row3] =
+    super::compress_pre_sse41_impl(chaining_value, m0, m1, m2, m3, counter, block_len, flags);
+  let row0 = _mm_xor_si128(row0, row2);
+  let row1 = _mm_xor_si128(row1, row3);
+  let mut out = [0u32; 8];
+  _mm_storeu_si128(out.as_mut_ptr().cast(), row0);
+  _mm_storeu_si128(out.as_mut_ptr().add(4).cast(), row1);
+  out
+}

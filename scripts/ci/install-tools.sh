@@ -26,11 +26,14 @@ install_binstall() {
 
 	echo "Installing cargo-binstall..."
 
-	install_binstall_from_release() {
+	# Downloads and installs cargo-binstall from a GitHub release.
+	# Uses a subshell to isolate the EXIT trap and temporary directory handling.
+	install_binstall_from_release() (
+		set -euo pipefail
 		local target="$1"
-		local tmpdir="$(mktemp -d)"
-		local oldpwd="${PWD:-}"
-		trap 'cd "'"${oldpwd:-.}"'" >/dev/null 2>&1 || true; rm -rf "'"${tmpdir:-}"'"' RETURN
+		local tmpdir
+		tmpdir="$(mktemp -d)"
+		trap 'rm -rf "$tmpdir"' EXIT
 
 		local base_url
 		if [[ -n "${BINSTALL_VERSION:-}" ]]; then
@@ -47,13 +50,13 @@ install_binstall() {
 		# Avoid `curl | tar` here: with `set -euo pipefail`, a 404 can terminate the whole script
 		# on some bash versions even when the function is invoked under `if ...; then`.
 		if ! curl -L --proto '=https' --tlsv1.2 -sSf -o cargo-binstall.tgz "$url"; then
-			return 1
+			exit 1
 		fi
 		tar -xzf cargo-binstall.tgz
 		mkdir -p "$HOME/.cargo/bin"
 		mv cargo-binstall "$HOME/.cargo/bin/"
 		chmod +x "$HOME/.cargo/bin/cargo-binstall"
-	}
+	)
 
 	# Detect Windows ARM64 specially - uname -m returns x86_64 due to emulation layer
 	# PROCESSOR_ARCHITECTURE is the reliable way to detect native arch on Windows

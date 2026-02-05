@@ -62,6 +62,8 @@ pub mod report;
 pub mod sampler;
 #[cfg(feature = "std")]
 pub mod stats;
+#[cfg(feature = "std")]
+pub mod targets;
 
 // CRC tunable implementations (std-only)
 #[cfg(feature = "std")]

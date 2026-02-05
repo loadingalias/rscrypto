@@ -49,30 +49,34 @@ bench-native crate="" bench="":
 # Tuning
 # NOTE: The 'tune' crate is dev-only and not part of the workspace build.
 # It's built on-demand when these commands are run, keeping workspace builds fast.
-#
-# Usage: just tune            - Full tuning run with detailed output
-#        just tune --quick    - Faster, noisier measurements
-#        just tune --verbose  - Show progress during tuning
-#        just tune --format env   - Output as shell export statements
-#        just tune --format json  - Output as JSON
+# Usage:
+#   just tune
+#   just tune-quick -- --crate hashes --only blake3
+#   just tune-report dir=target/tune -- --enforce-targets
+#   just tune-list
 tune *args="":
     RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p tune --release --bin rscrypto-tune -- {{args}}
 
-# Quick tune alias (faster measurements, still useful for development)
 tune-quick *args="":
     RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p tune --release --bin rscrypto-tune -- --quick {{args}}
 
-# Apply tuned defaults into the repo for this machine (writes into crates/checksum)
 tune-apply *args="":
     RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p tune --release --bin rscrypto-tune -- --apply {{args}}
 
-# Quick mode + apply (faster, noisier; still useful for iterative tuning)
 tune-quick-apply *args="":
     RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p tune --release --bin rscrypto-tune -- --quick --apply {{args}}
 
-# Generate markdown for contributing tuning results (copy-paste to GitHub issue)
-tune-contribute:
-    RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p tune --release --bin rscrypto-tune -- --format contribute
+tune-list:
+    RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p tune --release --bin rscrypto-tune -- --list
+
+tune-crate crate *args="":
+    RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p tune --release --bin rscrypto-tune -- --crate "{{crate}}" {{args}}
+
+tune-report dir="target/tune" *args="":
+    RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p tune --release --bin rscrypto-tune -- --quick --report-dir "{{dir}}" {{args}}
+
+tune-contribute *args="":
+    RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p tune --release --bin rscrypto-tune -- --format contribute {{args}}
 
 
 # Summarize Criterion results as TSV

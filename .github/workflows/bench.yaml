@@ -1,4 +1,5 @@
 name: Benchmark
+# NOTE: unified tuning moved to .github/workflows/tune.yaml.
 
 on:
   schedule:
@@ -80,36 +81,6 @@ on:
         type: string
         default: ""
 
-      tune:
-        description: "Run unified tuning only (skip Criterion benchmarks)"
-        required: false
-        type: boolean
-        default: false
-
-      tune_apply:
-        description: "Apply tuning results into dispatch tables and upload a patch"
-        required: false
-        type: boolean
-        default: false
-
-      tune_only:
-        description: "Tune only specific algorithms (comma-separated, optional)"
-        required: false
-        type: string
-        default: ""
-
-      tune_warmup_ms:
-        description: "rscrypto-tune warmup duration in ms (optional)"
-        required: false
-        type: string
-        default: ""
-
-      tune_measure_ms:
-        description: "rscrypto-tune measurement duration in ms (optional)"
-        required: false
-        type: string
-        default: ""
-
       regression_baseline:
         description: "Git ref for regression comparison (e.g., main, v1.0.0)"
         required: false
@@ -139,7 +110,6 @@ jobs:
     if: |
       github.event_name == 'schedule' ||
       (github.event_name == 'workflow_dispatch' &&
-       github.event.inputs.tune != 'true' &&
        github.event.inputs.run_amd_zen4 == 'true')
     runs-on: namespace-profile-rscrypto-linux-x86
     timeout-minutes: 90
@@ -252,7 +222,6 @@ jobs:
     name: Benchmark (AMD Zen5)
     if: |
       github.event_name == 'workflow_dispatch' &&
-      github.event.inputs.tune != 'true' &&
       github.event.inputs.run_amd_zen5 == 'true'
     runs-on: runs-on=${{ github.run_id }}/runner=amd-zen5
     timeout-minutes: 90
@@ -328,7 +297,6 @@ jobs:
     if: |
       github.event_name == 'schedule' ||
       (github.event_name == 'workflow_dispatch' &&
-       github.event.inputs.tune != 'true' &&
        github.event.inputs.run_intel == 'true')
     runs-on: runs-on=${{ github.run_id }}/runner=intel-bench
     timeout-minutes: 90
@@ -423,7 +391,6 @@ jobs:
     name: Benchmark (Intel Ice Lake)
     if: |
       github.event_name == 'workflow_dispatch' &&
-      github.event.inputs.tune != 'true' &&
       github.event.inputs.run_intel_icl == 'true'
     runs-on: runs-on=${{ github.run_id }}/runner=intel-icl-bench
     timeout-minutes: 90
@@ -499,7 +466,6 @@ jobs:
     if: |
       github.event_name == 'schedule' ||
       (github.event_name == 'workflow_dispatch' &&
-       github.event.inputs.tune != 'true' &&
        github.event.inputs.run_graviton == 'true')
     runs-on: runs-on=${{ github.run_id }}/runner=graviton
     timeout-minutes: 90
@@ -595,7 +561,6 @@ jobs:
     name: Benchmark (IBM Z / s390x)
     if: |
       github.event_name == 'workflow_dispatch' &&
-      github.event.inputs.tune != 'true' &&
       github.event.inputs.run_ibm_s390x == 'true'
     runs-on: ubuntu-24.04-s390x
     timeout-minutes: 120
@@ -691,7 +656,6 @@ jobs:
     name: Benchmark (IBM POWER9 / ppc64le)
     if: |
       github.event_name == 'workflow_dispatch' &&
-      github.event.inputs.tune != 'true' &&
       github.event.inputs.run_ibm_power9 == 'true'
     runs-on: ubuntu-24.04-ppc64le
     timeout-minutes: 120
@@ -787,7 +751,6 @@ jobs:
     name: Benchmark (IBM POWER10 / ppc64le)
     if: |
       github.event_name == 'workflow_dispatch' &&
-      github.event.inputs.tune != 'true' &&
       github.event.inputs.run_ibm_power10 == 'true'
     runs-on: ubuntu-24.04-ppc64le-p10
     timeout-minutes: 120
@@ -880,627 +843,13 @@ jobs:
           retention-days: 90
 
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # UNIFIED TUNING (Manual Only)
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # Runs `rscrypto-tune` to generate recommended kernel selection tables.
-  # Outputs RSCRYPTO_CRC*_* environment variable recommendations.
-  # Each job only runs when tune=true AND the specific platform is enabled,
-  # ensuring runners are only allocated for selected platforms.
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-  tune-intel:
-    name: Tuning (Intel)
-    if: |
-      github.event_name == 'workflow_dispatch' &&
-      github.event.inputs.tune == 'true' &&
-      github.event.inputs.run_intel == 'true'
-    runs-on: runs-on=${{ github.run_id }}/runner=intel-bench
-    timeout-minutes: 60
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-
-      - name: Setup RunsOn
-        uses: ./.github/actions/setup-runson
-        with:
-          mode: runson-bench
-
-      - name: Run Unified Tuning
-        run: |
-          set -euo pipefail
-          mkdir -p tune-results
-
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "Running rscrypto-tune (Intel)"
-          echo "RUSTFLAGS: -C target-cpu=native"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-          ONLY_INPUT="${{ github.event.inputs.tune_only }}"
-          WARMUP_INPUT="${{ github.event.inputs.tune_warmup_ms }}"
-          MEASURE_INPUT="${{ github.event.inputs.tune_measure_ms }}"
-          APPLY_INPUT="${{ github.event.inputs.tune_apply }}"
-          ONLY_ARGS=()
-          TIMING_ARGS=()
-          APPLY_ARGS=()
-          if [ -n "$ONLY_INPUT" ]; then
-            ONLY_ARGS=(--only "$ONLY_INPUT")
-          fi
-          if [ -n "$WARMUP_INPUT" ]; then
-            TIMING_ARGS+=(--warmup-ms "$WARMUP_INPUT")
-          fi
-          if [ -n "$MEASURE_INPUT" ]; then
-            TIMING_ARGS+=(--measure-ms "$MEASURE_INPUT")
-          fi
-          if [ "$APPLY_INPUT" = "true" ]; then
-            APPLY_ARGS=(--apply)
-          fi
-
-          RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
-            cargo run -p tune --release --bin rscrypto-tune -- --quick "${ONLY_ARGS[@]}" "${TIMING_ARGS[@]}" "${APPLY_ARGS[@]}" 2>&1 | \
-            tee tune-results/rscrypto-tune.txt
-          if [ "$APPLY_INPUT" = "true" ]; then
-            git diff > tune-results/patch.diff || true
-          fi
-
-          {
-            echo ""
-            echo "## Tuning Results (Intel)"
-            echo ""
-            echo '```'
-            cat tune-results/rscrypto-tune.txt
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload Tuning Results
-        if: always()
-        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
-        with:
-          name: tuning-intel
-          path: tune-results/
-          retention-days: 90
-
-  tune-intel-icl:
-    name: Tuning (Intel Ice Lake)
-    if: |
-      github.event_name == 'workflow_dispatch' &&
-      github.event.inputs.tune == 'true' &&
-      github.event.inputs.run_intel_icl == 'true'
-    runs-on: runs-on=${{ github.run_id }}/runner=intel-icl-bench
-    timeout-minutes: 60
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
-
-      - name: Setup RunsOn
-        uses: ./.github/actions/setup-runson
-        with:
-          mode: runson-bench
-
-      - name: Run Unified Tuning
-        run: |
-          set -euo pipefail
-          mkdir -p tune-results
-
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "Running rscrypto-tune (Intel Ice Lake)"
-          echo "RUSTFLAGS: -C target-cpu=native"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-          ONLY_INPUT="${{ github.event.inputs.tune_only }}"
-          WARMUP_INPUT="${{ github.event.inputs.tune_warmup_ms }}"
-          MEASURE_INPUT="${{ github.event.inputs.tune_measure_ms }}"
-          APPLY_INPUT="${{ github.event.inputs.tune_apply }}"
-          ONLY_ARGS=()
-          TIMING_ARGS=()
-          APPLY_ARGS=()
-          if [ -n "$ONLY_INPUT" ]; then
-            ONLY_ARGS=(--only "$ONLY_INPUT")
-          fi
-          if [ -n "$WARMUP_INPUT" ]; then
-            TIMING_ARGS+=(--warmup-ms "$WARMUP_INPUT")
-          fi
-          if [ -n "$MEASURE_INPUT" ]; then
-            TIMING_ARGS+=(--measure-ms "$MEASURE_INPUT")
-          fi
-          if [ "$APPLY_INPUT" = "true" ]; then
-            APPLY_ARGS=(--apply)
-          fi
-
-          RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
-            cargo run -p tune --release --bin rscrypto-tune -- --quick "${ONLY_ARGS[@]}" "${TIMING_ARGS[@]}" "${APPLY_ARGS[@]}" 2>&1 | \
-            tee tune-results/rscrypto-tune.txt
-          if [ "$APPLY_INPUT" = "true" ]; then
-            git diff > tune-results/patch.diff || true
-          fi
-
-          {
-            echo ""
-            echo "## Tuning Results (Intel Ice Lake)"
-            echo ""
-            echo '```'
-            cat tune-results/rscrypto-tune.txt
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload Tuning Results
-        if: always()
-        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08  # v4.6.0
-        with:
-          name: tuning-intel-icl
-          path: tune-results/
-          retention-days: 90
-
-  tune-amd-zen4:
-    name: Tuning (AMD Zen4)
-    if: |
-      github.event_name == 'workflow_dispatch' &&
-      github.event.inputs.tune == 'true' &&
-      github.event.inputs.run_amd_zen4 == 'true'
-    runs-on: namespace-profile-rscrypto-linux-x86
-    timeout-minutes: 60
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-
-      - name: Setup Namespace Cache
-        uses: namespacelabs/nscloud-cache-action@446d8f390563cd54ca27e8de5bdb816f63c0b706 # v1.2.21
-        with:
-          cache: rust
-
-      - name: Setup Toolchain
-        run: |
-          TOOLCHAIN=$(awk -F'"' '/^channel/ {print $2}' rust-toolchain.toml)
-          rustup default "$TOOLCHAIN"
-          scripts/ci/install-tools.sh bench
-
-      - name: Run Unified Tuning
-        run: |
-          set -euo pipefail
-          mkdir -p tune-results
-
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "Running rscrypto-tune (AMD Zen4)"
-          echo "RUSTFLAGS: -C target-cpu=native"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-          ONLY_INPUT="${{ github.event.inputs.tune_only }}"
-          WARMUP_INPUT="${{ github.event.inputs.tune_warmup_ms }}"
-          MEASURE_INPUT="${{ github.event.inputs.tune_measure_ms }}"
-          APPLY_INPUT="${{ github.event.inputs.tune_apply }}"
-          ONLY_ARGS=()
-          TIMING_ARGS=()
-          APPLY_ARGS=()
-          if [ -n "$ONLY_INPUT" ]; then
-            ONLY_ARGS=(--only "$ONLY_INPUT")
-          fi
-          if [ -n "$WARMUP_INPUT" ]; then
-            TIMING_ARGS+=(--warmup-ms "$WARMUP_INPUT")
-          fi
-          if [ -n "$MEASURE_INPUT" ]; then
-            TIMING_ARGS+=(--measure-ms "$MEASURE_INPUT")
-          fi
-          if [ "$APPLY_INPUT" = "true" ]; then
-            APPLY_ARGS=(--apply)
-          fi
-
-          RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
-            cargo run -p tune --release --bin rscrypto-tune -- --quick "${ONLY_ARGS[@]}" "${TIMING_ARGS[@]}" "${APPLY_ARGS[@]}" 2>&1 | \
-            tee tune-results/rscrypto-tune.txt
-          if [ "$APPLY_INPUT" = "true" ]; then
-            git diff > tune-results/patch.diff || true
-          fi
-
-          {
-            echo ""
-            echo "## Tuning Results (AMD Zen4)"
-            echo ""
-            echo '```'
-            cat tune-results/rscrypto-tune.txt
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload Tuning Results
-        if: always()
-        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
-        with:
-          name: tuning-amd-zen4
-          path: tune-results/
-          retention-days: 90
-
-  tune-amd-zen5:
-    name: Tuning (AMD Zen5)
-    if: |
-      github.event_name == 'workflow_dispatch' &&
-      github.event.inputs.tune == 'true' &&
-      github.event.inputs.run_amd_zen5 == 'true'
-    runs-on: runs-on=${{ github.run_id }}/runner=amd-zen5
-    timeout-minutes: 60
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-
-      - name: Setup RunsOn
-        uses: ./.github/actions/setup-runson
-        with:
-          mode: runson-bench
-
-      - name: Run Unified Tuning
-        run: |
-          set -euo pipefail
-          mkdir -p tune-results
-
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "Running rscrypto-tune (AMD Zen5)"
-          echo "RUSTFLAGS: -C target-cpu=native"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-          ONLY_INPUT="${{ github.event.inputs.tune_only }}"
-          WARMUP_INPUT="${{ github.event.inputs.tune_warmup_ms }}"
-          MEASURE_INPUT="${{ github.event.inputs.tune_measure_ms }}"
-          APPLY_INPUT="${{ github.event.inputs.tune_apply }}"
-          ONLY_ARGS=()
-          TIMING_ARGS=()
-          APPLY_ARGS=()
-          if [ -n "$ONLY_INPUT" ]; then
-            ONLY_ARGS=(--only "$ONLY_INPUT")
-          fi
-          if [ -n "$WARMUP_INPUT" ]; then
-            TIMING_ARGS+=(--warmup-ms "$WARMUP_INPUT")
-          fi
-          if [ -n "$MEASURE_INPUT" ]; then
-            TIMING_ARGS+=(--measure-ms "$MEASURE_INPUT")
-          fi
-          if [ "$APPLY_INPUT" = "true" ]; then
-            APPLY_ARGS=(--apply)
-          fi
-
-          RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
-            cargo run -p tune --release --bin rscrypto-tune -- --quick "${ONLY_ARGS[@]}" "${TIMING_ARGS[@]}" "${APPLY_ARGS[@]}" 2>&1 | \
-            tee tune-results/rscrypto-tune.txt
-          if [ "$APPLY_INPUT" = "true" ]; then
-            git diff > tune-results/patch.diff || true
-          fi
-
-          {
-            echo ""
-            echo "## Tuning Results (AMD Zen5)"
-            echo ""
-            echo '```'
-            cat tune-results/rscrypto-tune.txt
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload Tuning Results
-        if: always()
-        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
-        with:
-          name: tuning-amd-zen5
-          path: tune-results/
-          retention-days: 90
-
-  tune-graviton:
-    name: Tuning (Graviton)
-    if: |
-      github.event_name == 'workflow_dispatch' &&
-      github.event.inputs.tune == 'true' &&
-      github.event.inputs.run_graviton == 'true'
-    runs-on: runs-on=${{ github.run_id }}/runner=graviton
-    timeout-minutes: 60
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-
-      - name: Setup RunsOn
-        uses: ./.github/actions/setup-runson
-        with:
-          mode: runson-bench
-
-      - name: Run Unified Tuning
-        run: |
-          set -euo pipefail
-          mkdir -p tune-results
-
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "Running rscrypto-tune (Graviton)"
-          echo "RUSTFLAGS: -C target-cpu=native"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-          ONLY_INPUT="${{ github.event.inputs.tune_only }}"
-          WARMUP_INPUT="${{ github.event.inputs.tune_warmup_ms }}"
-          MEASURE_INPUT="${{ github.event.inputs.tune_measure_ms }}"
-          APPLY_INPUT="${{ github.event.inputs.tune_apply }}"
-          ONLY_ARGS=()
-          TIMING_ARGS=()
-          APPLY_ARGS=()
-          if [ -n "$ONLY_INPUT" ]; then
-            ONLY_ARGS=(--only "$ONLY_INPUT")
-          fi
-          if [ -n "$WARMUP_INPUT" ]; then
-            TIMING_ARGS+=(--warmup-ms "$WARMUP_INPUT")
-          fi
-          if [ -n "$MEASURE_INPUT" ]; then
-            TIMING_ARGS+=(--measure-ms "$MEASURE_INPUT")
-          fi
-          if [ "$APPLY_INPUT" = "true" ]; then
-            APPLY_ARGS=(--apply)
-          fi
-
-          RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
-            cargo run -p tune --release --bin rscrypto-tune -- --quick "${ONLY_ARGS[@]}" "${TIMING_ARGS[@]}" "${APPLY_ARGS[@]}" 2>&1 | \
-            tee tune-results/rscrypto-tune.txt
-          if [ "$APPLY_INPUT" = "true" ]; then
-            git diff > tune-results/patch.diff || true
-          fi
-
-          {
-            echo ""
-            echo "## Tuning Results (Graviton)"
-            echo ""
-            echo '```'
-            cat tune-results/rscrypto-tune.txt
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload Tuning Results
-        if: always()
-        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
-        with:
-          name: tuning-graviton
-          path: tune-results/
-          retention-days: 90
-
-  tune-ibm-s390x:
-    name: Tuning (IBM Z / s390x)
-    if: |
-      github.event_name == 'workflow_dispatch' &&
-      github.event.inputs.tune == 'true' &&
-      github.event.inputs.run_ibm_s390x == 'true'
-    runs-on: ubuntu-24.04-s390x
-    timeout-minutes: 90
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-
-      - name: Compute Cache Key
-        id: cache
-        shell: bash
-        run: |
-          OS=$(echo "${{ runner.os }}" | tr '[:upper:]' '[:lower:]')
-          ARCH=$(uname -m | tr '[:upper:]' '[:lower:]')
-          echo "key=${{ env.RSCRYPTO_BENCH_MODE }}-ibm-${OS}-${ARCH}" >> "$GITHUB_OUTPUT"
-
-      - name: Setup
-        uses: ./.github/actions/setup
-        with:
-          cache-key: ${{ steps.cache.outputs.key }}
-          tools-mode: none
-          toolchain-components: ""
-
-      - name: Run Unified Tuning
-        run: |
-          set -euo pipefail
-          mkdir -p tune-results
-
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "Running rscrypto-tune (IBM Z / s390x)"
-          echo "RUSTFLAGS: -C target-cpu=native"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-          ONLY_INPUT="${{ github.event.inputs.tune_only }}"
-          WARMUP_INPUT="${{ github.event.inputs.tune_warmup_ms }}"
-          MEASURE_INPUT="${{ github.event.inputs.tune_measure_ms }}"
-          APPLY_INPUT="${{ github.event.inputs.tune_apply }}"
-          ONLY_ARGS=()
-          TIMING_ARGS=()
-          APPLY_ARGS=()
-          if [ -n "$ONLY_INPUT" ]; then
-            ONLY_ARGS=(--only "$ONLY_INPUT")
-          fi
-          if [ -n "$WARMUP_INPUT" ]; then
-            TIMING_ARGS+=(--warmup-ms "$WARMUP_INPUT")
-          fi
-          if [ -n "$MEASURE_INPUT" ]; then
-            TIMING_ARGS+=(--measure-ms "$MEASURE_INPUT")
-          fi
-          if [ "$APPLY_INPUT" = "true" ]; then
-            APPLY_ARGS=(--apply)
-          fi
-
-          RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
-            cargo run -p tune --release --bin rscrypto-tune -- --quick "${ONLY_ARGS[@]}" "${TIMING_ARGS[@]}" "${APPLY_ARGS[@]}" 2>&1 | \
-            tee tune-results/rscrypto-tune.txt
-          if [ "$APPLY_INPUT" = "true" ]; then
-            git diff > tune-results/patch.diff || true
-          fi
-
-          {
-            echo ""
-            echo "## Tuning Results (IBM Z / s390x)"
-            echo ""
-            echo '```'
-            cat tune-results/rscrypto-tune.txt
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload Tuning Results
-        if: always()
-        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
-        with:
-          name: tuning-ibm-s390x
-          path: tune-results/
-          retention-days: 90
-
-  tune-ibm-power9:
-    name: Tuning (IBM POWER9 / ppc64le)
-    if: |
-      github.event_name == 'workflow_dispatch' &&
-      github.event.inputs.tune == 'true' &&
-      github.event.inputs.run_ibm_power9 == 'true'
-    runs-on: ubuntu-24.04-ppc64le
-    timeout-minutes: 90
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-
-      - name: Compute Cache Key
-        id: cache
-        shell: bash
-        run: |
-          OS=$(echo "${{ runner.os }}" | tr '[:upper:]' '[:lower:]')
-          ARCH=$(uname -m | tr '[:upper:]' '[:lower:]')
-          echo "key=${{ env.RSCRYPTO_BENCH_MODE }}-ibm-${OS}-${ARCH}" >> "$GITHUB_OUTPUT"
-
-      - name: Setup
-        uses: ./.github/actions/setup
-        with:
-          cache-key: ${{ steps.cache.outputs.key }}
-          tools-mode: none
-          toolchain-components: ""
-
-      - name: Run Unified Tuning
-        run: |
-          set -euo pipefail
-          mkdir -p tune-results
-
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "Running rscrypto-tune (IBM POWER9 / ppc64le)"
-          echo "RUSTFLAGS: -C target-cpu=native"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-          ONLY_INPUT="${{ github.event.inputs.tune_only }}"
-          WARMUP_INPUT="${{ github.event.inputs.tune_warmup_ms }}"
-          MEASURE_INPUT="${{ github.event.inputs.tune_measure_ms }}"
-          APPLY_INPUT="${{ github.event.inputs.tune_apply }}"
-          ONLY_ARGS=()
-          TIMING_ARGS=()
-          APPLY_ARGS=()
-          if [ -n "$ONLY_INPUT" ]; then
-            ONLY_ARGS=(--only "$ONLY_INPUT")
-          fi
-          if [ -n "$WARMUP_INPUT" ]; then
-            TIMING_ARGS+=(--warmup-ms "$WARMUP_INPUT")
-          fi
-          if [ -n "$MEASURE_INPUT" ]; then
-            TIMING_ARGS+=(--measure-ms "$MEASURE_INPUT")
-          fi
-          if [ "$APPLY_INPUT" = "true" ]; then
-            APPLY_ARGS=(--apply)
-          fi
-
-          RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
-            cargo run -p tune --release --bin rscrypto-tune -- --quick "${ONLY_ARGS[@]}" "${TIMING_ARGS[@]}" "${APPLY_ARGS[@]}" 2>&1 | \
-            tee tune-results/rscrypto-tune.txt
-          if [ "$APPLY_INPUT" = "true" ]; then
-            git diff > tune-results/patch.diff || true
-          fi
-
-          {
-            echo ""
-            echo "## Tuning Results (IBM POWER9 / ppc64le)"
-            echo ""
-            echo '```'
-            cat tune-results/rscrypto-tune.txt
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload Tuning Results
-        if: always()
-        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
-        with:
-          name: tuning-ibm-power9
-          path: tune-results/
-          retention-days: 90
-
-  tune-ibm-power10:
-    name: Tuning (IBM POWER10 / ppc64le)
-    if: |
-      github.event_name == 'workflow_dispatch' &&
-      github.event.inputs.tune == 'true' &&
-      github.event.inputs.run_ibm_power10 == 'true'
-    runs-on: ubuntu-24.04-ppc64le-p10
-    timeout-minutes: 90
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-
-      - name: Compute Cache Key
-        id: cache
-        shell: bash
-        run: |
-          OS=$(echo "${{ runner.os }}" | tr '[:upper:]' '[:lower:]')
-          ARCH=$(uname -m | tr '[:upper:]' '[:lower:]')
-          echo "key=${{ env.RSCRYPTO_BENCH_MODE }}-ibm-${OS}-${ARCH}" >> "$GITHUB_OUTPUT"
-
-      - name: Setup
-        uses: ./.github/actions/setup
-        with:
-          cache-key: ${{ steps.cache.outputs.key }}
-          tools-mode: none
-          toolchain-components: ""
-
-      - name: Run Unified Tuning
-        run: |
-          set -euo pipefail
-          mkdir -p tune-results
-
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "Running rscrypto-tune (IBM POWER10 / ppc64le)"
-          echo "RUSTFLAGS: -C target-cpu=native"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-          ONLY_INPUT="${{ github.event.inputs.tune_only }}"
-          WARMUP_INPUT="${{ github.event.inputs.tune_warmup_ms }}"
-          MEASURE_INPUT="${{ github.event.inputs.tune_measure_ms }}"
-          APPLY_INPUT="${{ github.event.inputs.tune_apply }}"
-          ONLY_ARGS=()
-          TIMING_ARGS=()
-          APPLY_ARGS=()
-          if [ -n "$ONLY_INPUT" ]; then
-            ONLY_ARGS=(--only "$ONLY_INPUT")
-          fi
-          if [ -n "$WARMUP_INPUT" ]; then
-            TIMING_ARGS+=(--warmup-ms "$WARMUP_INPUT")
-          fi
-          if [ -n "$MEASURE_INPUT" ]; then
-            TIMING_ARGS+=(--measure-ms "$MEASURE_INPUT")
-          fi
-          if [ "$APPLY_INPUT" = "true" ]; then
-            APPLY_ARGS=(--apply)
-          fi
-
-          RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
-            cargo run -p tune --release --bin rscrypto-tune -- --quick "${ONLY_ARGS[@]}" "${TIMING_ARGS[@]}" "${APPLY_ARGS[@]}" 2>&1 | \
-            tee tune-results/rscrypto-tune.txt
-          if [ "$APPLY_INPUT" = "true" ]; then
-            git diff > tune-results/patch.diff || true
-          fi
-
-          {
-            echo ""
-            echo "## Tuning Results (IBM POWER10 / ppc64le)"
-            echo ""
-            echo '```'
-            cat tune-results/rscrypto-tune.txt
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload Tuning Results
-        if: always()
-        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
-        with:
-          name: tuning-ibm-power10
-          path: tune-results/
-          retention-days: 90
-
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   # REGRESSION DETECTION (Manual Only)
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   regression-check:
     name: Regression Check
     if: |
       github.event_name == 'workflow_dispatch' &&
-      github.event.inputs.regression_baseline != '' &&
-      github.event.inputs.tune != 'true'
+      github.event.inputs.regression_baseline != ''
     runs-on: namespace-profile-rscrypto-linux-x86
     timeout-minutes: 60
     steps:
