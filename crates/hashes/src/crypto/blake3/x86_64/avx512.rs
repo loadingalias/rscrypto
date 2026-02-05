@@ -15,7 +15,11 @@
 
 use core::arch::x86_64::*;
 
-use super::super::{BLOCK_LEN, CHUNK_LEN, IV, MSG_SCHEDULE, OUT_LEN};
+use super::{
+  super::{BLOCK_LEN, CHUNK_LEN, IV, MSG_SCHEDULE, OUT_LEN},
+  avx2::transpose8x8,
+  counter_high, counter_low,
+};
 
 pub const DEGREE: usize = 16;
 
@@ -228,63 +232,6 @@ unsafe fn counter_vec(counter: u64, increment_counter: bool) -> (__m512i, __m512
       counter_high(counter + (mask & 15)) as i32,
     );
     (lo, hi)
-  }
-}
-
-#[inline(always)]
-const fn counter_low(counter: u64) -> u32 {
-  counter as u32
-}
-
-#[inline(always)]
-const fn counter_high(counter: u64) -> u32 {
-  (counter >> 32) as u32
-}
-
-#[inline(always)]
-unsafe fn interleave128(a: __m256i, b: __m256i) -> (__m256i, __m256i) {
-  unsafe {
-    (
-      _mm256_permute2x128_si256(a, b, 0x20),
-      _mm256_permute2x128_si256(a, b, 0x31),
-    )
-  }
-}
-
-#[inline(always)]
-unsafe fn transpose8x8(vecs: &mut [__m256i; 8]) {
-  unsafe {
-    let ab_0145 = _mm256_unpacklo_epi32(vecs[0], vecs[1]);
-    let ab_2367 = _mm256_unpackhi_epi32(vecs[0], vecs[1]);
-    let cd_0145 = _mm256_unpacklo_epi32(vecs[2], vecs[3]);
-    let cd_2367 = _mm256_unpackhi_epi32(vecs[2], vecs[3]);
-    let ef_0145 = _mm256_unpacklo_epi32(vecs[4], vecs[5]);
-    let ef_2367 = _mm256_unpackhi_epi32(vecs[4], vecs[5]);
-    let gh_0145 = _mm256_unpacklo_epi32(vecs[6], vecs[7]);
-    let gh_2367 = _mm256_unpackhi_epi32(vecs[6], vecs[7]);
-
-    let abcd_04 = _mm256_unpacklo_epi64(ab_0145, cd_0145);
-    let abcd_15 = _mm256_unpackhi_epi64(ab_0145, cd_0145);
-    let abcd_26 = _mm256_unpacklo_epi64(ab_2367, cd_2367);
-    let abcd_37 = _mm256_unpackhi_epi64(ab_2367, cd_2367);
-    let efgh_04 = _mm256_unpacklo_epi64(ef_0145, gh_0145);
-    let efgh_15 = _mm256_unpackhi_epi64(ef_0145, gh_0145);
-    let efgh_26 = _mm256_unpacklo_epi64(ef_2367, gh_2367);
-    let efgh_37 = _mm256_unpackhi_epi64(ef_2367, gh_2367);
-
-    let (abcdefgh_0, abcdefgh_4) = interleave128(abcd_04, efgh_04);
-    let (abcdefgh_1, abcdefgh_5) = interleave128(abcd_15, efgh_15);
-    let (abcdefgh_2, abcdefgh_6) = interleave128(abcd_26, efgh_26);
-    let (abcdefgh_3, abcdefgh_7) = interleave128(abcd_37, efgh_37);
-
-    vecs[0] = abcdefgh_0;
-    vecs[1] = abcdefgh_1;
-    vecs[2] = abcdefgh_2;
-    vecs[3] = abcdefgh_3;
-    vecs[4] = abcdefgh_4;
-    vecs[5] = abcdefgh_5;
-    vecs[6] = abcdefgh_6;
-    vecs[7] = abcdefgh_7;
   }
 }
 

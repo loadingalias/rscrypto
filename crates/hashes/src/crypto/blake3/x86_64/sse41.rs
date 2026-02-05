@@ -8,7 +8,10 @@
 
 use core::arch::x86_64::*;
 
-use super::super::{BLOCK_LEN, IV, MSG_SCHEDULE};
+use super::{
+  super::{BLOCK_LEN, IV, MSG_SCHEDULE},
+  counter_high, counter_low,
+};
 
 pub const DEGREE: usize = 4;
 
@@ -40,16 +43,6 @@ unsafe fn set1(x: u32) -> __m128i {
 #[inline(always)]
 unsafe fn set4(a: u32, b: u32, c: u32, d: u32) -> __m128i {
   unsafe { _mm_setr_epi32(a as i32, b as i32, c as i32, d as i32) }
-}
-
-#[inline(always)]
-const fn counter_low(counter: u64) -> u32 {
-  counter as u32
-}
-
-#[inline(always)]
-const fn counter_high(counter: u64) -> u32 {
-  (counter >> 32) as u32
 }
 
 #[inline(always)]

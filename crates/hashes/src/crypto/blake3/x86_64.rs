@@ -26,6 +26,18 @@ pub(crate) mod sse41;
 
 use super::{BLOCK_LEN, CHUNK_LEN, CHUNK_START, IV, OUT_LEN, PARENT, first_8_words, words16_from_le_bytes_64};
 
+// Shared helpers for SIMD kernels.
+
+#[inline(always)]
+pub(crate) const fn counter_low(counter: u64) -> u32 {
+  counter as u32
+}
+
+#[inline(always)]
+pub(crate) const fn counter_high(counter: u64) -> u32 {
+  (counter >> 32) as u32
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Rotation shuffle masks for SSSE3
 // ─────────────────────────────────────────────────────────────────────────────
