@@ -15,7 +15,10 @@
 
 use core::arch::x86_64::*;
 
-use super::super::{BLOCK_LEN, IV, MSG_SCHEDULE};
+use super::{
+  super::{BLOCK_LEN, IV, MSG_SCHEDULE},
+  counter_high, counter_low,
+};
 
 pub const DEGREE: usize = 8;
 
@@ -51,16 +54,6 @@ unsafe fn set8(a: u32, b: u32, c: u32, d: u32, e: u32, f: u32, g: u32, h: u32) -
       a as i32, b as i32, c as i32, d as i32, e as i32, f as i32, g as i32, h as i32,
     )
   }
-}
-
-#[inline(always)]
-const fn counter_low(counter: u64) -> u32 {
-  counter as u32
-}
-
-#[inline(always)]
-const fn counter_high(counter: u64) -> u32 {
-  (counter >> 32) as u32
 }
 
 #[inline(always)]
@@ -203,7 +196,7 @@ unsafe fn interleave128(a: __m256i, b: __m256i) -> (__m256i, __m256i) {
 }
 
 #[inline(always)]
-unsafe fn transpose_vecs(vecs: &mut [__m256i; DEGREE]) {
+pub(super) unsafe fn transpose8x8(vecs: &mut [__m256i; 8]) {
   unsafe {
     let ab_0145 = _mm256_unpacklo_epi32(vecs[0], vecs[1]);
     let ab_2367 = _mm256_unpackhi_epi32(vecs[0], vecs[1]);
@@ -268,8 +261,8 @@ unsafe fn transpose_msg_vecs(inputs: &[*const u8; DEGREE], block_offset: usize) 
       _mm_prefetch(input.wrapping_add(block_offset + 256).cast::<i8>(), _MM_HINT_T0);
     }
 
-    transpose_vecs(&mut half0);
-    transpose_vecs(&mut half1);
+    transpose8x8(&mut half0);
+    transpose8x8(&mut half1);
 
     [
       half0[0], half0[1], half0[2], half0[3], half0[4], half0[5], half0[6], half0[7], half1[0], half1[1], half1[2],
@@ -439,7 +432,7 @@ pub unsafe fn hash8(
     }
 
     // Unlike SSE4.1, this transpose yields output vecs already ordered by word.
-    transpose_vecs(&mut h_vecs);
+    transpose8x8(&mut h_vecs);
 
     let stride = 4 * DEGREE;
     storeu(h_vecs[0], out);
@@ -565,8 +558,8 @@ pub unsafe fn root_output_blocks8(
       xor(v[15], cv_vecs[7]),
     ];
 
-    transpose_vecs(&mut out_lo);
-    transpose_vecs(&mut out_hi);
+    transpose8x8(&mut out_lo);
+    transpose8x8(&mut out_hi);
 
     for lane in 0..DEGREE {
       let base = out.add(lane * 64);

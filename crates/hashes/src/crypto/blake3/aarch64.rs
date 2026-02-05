@@ -1028,7 +1028,7 @@ pub unsafe fn chunk_compress_blocks_neon(
 /// materializing the full 16-word compression output.
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
-unsafe fn compress_cv_neon_bytes(
+pub(crate) unsafe fn compress_cv_neon_bytes(
   chaining_value: &[u32; 8],
   block: *const u8,
   counter: u64,

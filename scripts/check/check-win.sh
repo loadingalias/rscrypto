@@ -44,6 +44,16 @@ if ! XWIN_CACHE_DIR="$XWIN_CACHE_DIR_DEFAULT" \
      CARGO_TARGET_DIR="target/cross-check/xwin-init" \
      cargo xwin check -p traits --lib --target x86_64-pc-windows-msvc \
      >"$LOG_DIR/xwin-init.log" 2>&1; then
+  # In sandboxed/offline environments, cargo-xwin can't fetch the MSVC CRT / SDK.
+  # Treat that as a skip rather than a hard failure, while still surfacing
+  # unexpected errors.
+  if tail -80 "$LOG_DIR/xwin-init.log" | grep -Eq \
+      'failed to lookup address information|Could not resolve host|Name or service not known|Temporary failure in name resolution|HTTP GET request .* failed'; then
+    printf " ${YELLOW}○${RESET}\n"
+    skip "Windows targets" "SDK cache init requires network downloads"
+    exit 0
+  fi
+
   fail
   show_error "$LOG_DIR/xwin-init.log"
   exit 1

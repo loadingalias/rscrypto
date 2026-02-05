@@ -10,12 +10,13 @@ use core::{cmp::min, mem::MaybeUninit, ptr, slice};
 #[cfg(feature = "std")]
 extern crate alloc;
 #[cfg(feature = "std")]
+use core::cell::RefCell;
+#[cfg(all(feature = "std", test))]
 use core::{
-  cell::RefCell,
   panic::AssertUnwindSafe,
   sync::atomic::{AtomicBool, Ordering},
 };
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", test))]
 use std::panic;
 #[cfg(feature = "std")]
 use std::sync::{Mutex, OnceLock};
@@ -43,6 +44,56 @@ const KEY_LEN: usize = 32;
 const BLOCK_LEN: usize = 64;
 const CHUNK_LEN: usize = 1024;
 const OUTPUT_BLOCK_LEN: usize = 2 * OUT_LEN;
+// Max CV stack depth for incremental hashing.
+//
+// BLAKE3 chunk size is 1024 bytes. If we cap the total input length at `u64`
+// bytes, then the maximum number of chunks is `2^64 / 2^10 = 2^54`, i.e. a
+// 54-level binary reduction tree.
+const CV_STACK_LEN: usize = 54;
+
+type CvBytes = [u8; OUT_LEN];
+
+#[cfg(feature = "std")]
+mod join {
+  pub(super) trait Join {
+    fn join<A, B, RA, RB>(oper_a: A, oper_b: B) -> (RA, RB)
+    where
+      A: FnOnce() -> RA + Send,
+      B: FnOnce() -> RB + Send,
+      RA: Send,
+      RB: Send;
+  }
+
+  pub(super) enum SerialJoin {}
+
+  impl Join for SerialJoin {
+    #[inline]
+    fn join<A, B, RA, RB>(oper_a: A, oper_b: B) -> (RA, RB)
+    where
+      A: FnOnce() -> RA + Send,
+      B: FnOnce() -> RB + Send,
+      RA: Send,
+      RB: Send,
+    {
+      (oper_a(), oper_b())
+    }
+  }
+
+  pub(super) enum RayonJoin {}
+
+  impl Join for RayonJoin {
+    #[inline]
+    fn join<A, B, RA, RB>(oper_a: A, oper_b: B) -> (RA, RB)
+    where
+      A: FnOnce() -> RA + Send,
+      B: FnOnce() -> RB + Send,
+      RA: Send,
+      RB: Send,
+    {
+      rayon::join(oper_a, oper_b)
+    }
+  }
+}
 
 const CHUNK_START: u32 = 1 << 0;
 const CHUNK_END: u32 = 1 << 1;
@@ -160,15 +211,48 @@ fn force_parallel_panic(enabled: bool) -> ForceParallelPanicGuard {
   ForceParallelPanicGuard { prev }
 }
 
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", test))]
 #[inline]
 fn maybe_force_parallel_panic() {
-  #[cfg(all(feature = "std", test))]
-  {
-    if FORCE_PARALLEL_PANIC.load(Ordering::Relaxed) {
-      panic!("forced parallel panic (test-only)");
-    }
+  if FORCE_PARALLEL_PANIC.load(Ordering::Relaxed) {
+    panic!("forced parallel panic (test-only)");
   }
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn run_parallel_task(task: impl FnOnce()) -> bool {
+  #[cfg(test)]
+  {
+    panic::catch_unwind(AssertUnwindSafe(|| {
+      maybe_force_parallel_panic();
+      task();
+    }))
+    .is_ok()
+  }
+  #[cfg(not(test))]
+  {
+    task();
+    true
+  }
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn with_subtree_scratch<R>(subtree_chunks: usize, f: impl FnOnce(&mut [[u32; 8]], &mut [[u32; 8]]) -> R) -> R {
+  BLAKE3_SUBTREE_SCRATCH0.with(|s0| {
+    BLAKE3_SUBTREE_SCRATCH1.with(|s1| {
+      let mut scratch0 = s0.borrow_mut();
+      let mut scratch1 = s1.borrow_mut();
+      if scratch0.len() != subtree_chunks {
+        scratch0.resize(subtree_chunks, [0u32; 8]);
+      }
+      if scratch1.len() != subtree_chunks {
+        scratch1.resize(subtree_chunks, [0u32; 8]);
+      }
+      f(scratch0.as_mut_slice(), scratch1.as_mut_slice())
+    })
+  })
 }
 
 #[inline]
@@ -281,11 +365,13 @@ fn hash_full_chunks_cvs_parallel_rayon(
   }
 
   let threads_total = threads_total.min(out.len()).max(1);
+  #[cfg(test)]
   let failed = AtomicBool::new(false);
   let out_ptr = SendPtr(out.as_mut_ptr());
   let out_len = out.len();
 
   rayon::scope(|s| {
+    #[cfg(test)]
     let failed = &failed;
     for t in 1..threads_total {
       let (start, end) = thread_range(t, threads_total, out_len);
@@ -295,23 +381,32 @@ fn hash_full_chunks_cvs_parallel_rayon(
       let input = &input[start * CHUNK_LEN..end * CHUNK_LEN];
       let counter = base_counter.wrapping_add(start as u64);
       s.spawn(move |_| {
-        let ok = panic::catch_unwind(AssertUnwindSafe(|| {
-          maybe_force_parallel_panic();
+        #[cfg(test)]
+        let ok = run_parallel_task(|| {
           // SAFETY: `out_ptr` is valid for `out_len` elements and this task's
           // range is disjoint from every other task.
           let out = unsafe { slice::from_raw_parts_mut(out_ptr.get().add(start), end - start) };
           hash_full_chunks_cvs_serial(kernel, key_words, flags, counter, input, out);
-        }))
-        .is_ok();
+        });
+        #[cfg(test)]
         if !ok {
           failed.store(true, Ordering::Relaxed);
+        }
+        #[cfg(not(test))]
+        {
+          run_parallel_task(|| {
+            // SAFETY: `out_ptr` is valid for `out_len` elements and this task's
+            // range is disjoint from every other task.
+            let out = unsafe { slice::from_raw_parts_mut(out_ptr.get().add(start), end - start) };
+            hash_full_chunks_cvs_serial(kernel, key_words, flags, counter, input, out);
+          });
         }
       });
     }
 
     let (start, end) = thread_range(0, threads_total, out_len);
-    let ok = panic::catch_unwind(AssertUnwindSafe(|| {
-      maybe_force_parallel_panic();
+    #[cfg(test)]
+    let ok = run_parallel_task(|| {
       hash_full_chunks_cvs_serial(
         kernel,
         key_words,
@@ -321,19 +416,33 @@ fn hash_full_chunks_cvs_parallel_rayon(
         // SAFETY: disjoint partition for thread 0.
         unsafe { slice::from_raw_parts_mut(out_ptr.get().add(start), end - start) },
       );
-    }))
-    .is_ok();
+    });
+    #[cfg(test)]
     if !ok {
       failed.store(true, Ordering::Relaxed);
     }
+    #[cfg(not(test))]
+    {
+      run_parallel_task(|| {
+        hash_full_chunks_cvs_serial(
+          kernel,
+          key_words,
+          flags,
+          base_counter.wrapping_add(start as u64),
+          &input[start * CHUNK_LEN..end * CHUNK_LEN],
+          // SAFETY: disjoint partition for thread 0.
+          unsafe { slice::from_raw_parts_mut(out_ptr.get().add(start), end - start) },
+        );
+      });
+    }
   });
 
+  #[cfg(test)]
   if failed.load(Ordering::Relaxed) {
     hash_full_chunks_cvs_serial(kernel, key_words, flags, base_counter, input, out);
   }
 }
 
-#[cfg(feature = "std")]
 fn parent_cvs_many_from_cvs_parallel_rayon(
   kernel: Kernel,
   key_words: [u32; 8],
@@ -351,10 +460,12 @@ fn parent_cvs_many_from_cvs_parallel_rayon(
 
   let pairs = out.len();
   let threads_total = threads_total.min(pairs).max(1);
+  #[cfg(test)]
   let failed = AtomicBool::new(false);
   let out_ptr = SendPtr(out.as_mut_ptr());
 
   rayon::scope(|s| {
+    #[cfg(test)]
     let failed = &failed;
     for t in 1..threads_total {
       let (start, end) = thread_range(t, threads_total, pairs);
@@ -363,23 +474,32 @@ fn parent_cvs_many_from_cvs_parallel_rayon(
       }
       let children = &children[2 * start..2 * end];
       s.spawn(move |_| {
-        let ok = panic::catch_unwind(AssertUnwindSafe(|| {
-          maybe_force_parallel_panic();
+        #[cfg(test)]
+        let ok = run_parallel_task(|| {
           // SAFETY: `out_ptr` is valid for `pairs` outputs and this task's
           // range is disjoint from every other task.
           let out = unsafe { slice::from_raw_parts_mut(out_ptr.get().add(start), end - start) };
           kernels::parent_cvs_many_from_cvs_inline(kernel.id, children, key_words, flags, out);
-        }))
-        .is_ok();
+        });
+        #[cfg(test)]
         if !ok {
           failed.store(true, Ordering::Relaxed);
+        }
+        #[cfg(not(test))]
+        {
+          run_parallel_task(|| {
+            // SAFETY: `out_ptr` is valid for `pairs` outputs and this task's
+            // range is disjoint from every other task.
+            let out = unsafe { slice::from_raw_parts_mut(out_ptr.get().add(start), end - start) };
+            kernels::parent_cvs_many_from_cvs_inline(kernel.id, children, key_words, flags, out);
+          });
         }
       });
     }
 
     let (start, end) = thread_range(0, threads_total, pairs);
-    let ok = panic::catch_unwind(AssertUnwindSafe(|| {
-      maybe_force_parallel_panic();
+    #[cfg(test)]
+    let ok = run_parallel_task(|| {
       kernels::parent_cvs_many_from_cvs_inline(
         kernel.id,
         &children[2 * start..2 * end],
@@ -388,13 +508,27 @@ fn parent_cvs_many_from_cvs_parallel_rayon(
         // SAFETY: disjoint partition for thread 0.
         unsafe { slice::from_raw_parts_mut(out_ptr.get().add(start), end - start) },
       );
-    }))
-    .is_ok();
+    });
+    #[cfg(test)]
     if !ok {
       failed.store(true, Ordering::Relaxed);
     }
+    #[cfg(not(test))]
+    {
+      run_parallel_task(|| {
+        kernels::parent_cvs_many_from_cvs_inline(
+          kernel.id,
+          &children[2 * start..2 * end],
+          key_words,
+          flags,
+          // SAFETY: disjoint partition for thread 0.
+          unsafe { slice::from_raw_parts_mut(out_ptr.get().add(start), end - start) },
+        );
+      });
+    }
   });
 
+  #[cfg(test)]
   if failed.load(Ordering::Relaxed) {
     kernels::parent_cvs_many_from_cvs_inline(kernel.id, children, key_words, flags, out);
   }
@@ -415,30 +549,13 @@ fn hash_power_of_two_subtree_roots_serial(
   debug_assert_ne!(subtree_chunks, 0);
   debug_assert_eq!(input.len(), out.len() * subtree_chunks * CHUNK_LEN);
 
-  BLAKE3_SUBTREE_SCRATCH0.with(|s0| {
-    BLAKE3_SUBTREE_SCRATCH1.with(|s1| {
-      let mut scratch0 = s0.borrow_mut();
-      let mut scratch1 = s1.borrow_mut();
-      if scratch0.len() != subtree_chunks {
-        scratch0.resize(subtree_chunks, [0u32; 8]);
-      }
-      if scratch1.len() != subtree_chunks {
-        scratch1.resize(subtree_chunks, [0u32; 8]);
-      }
-
-      for (i, slot) in out.iter_mut().enumerate() {
-        let chunk_base = base_counter.wrapping_add((i * subtree_chunks) as u64);
-        let bytes = &input[i * subtree_chunks * CHUNK_LEN..(i + 1) * subtree_chunks * CHUNK_LEN];
-        hash_full_chunks_cvs_serial(kernel, key_words, flags, chunk_base, bytes, scratch0.as_mut_slice());
-        *slot = reduce_power_of_two_cvs_in_place(
-          kernel,
-          key_words,
-          flags,
-          scratch0.as_mut_slice(),
-          scratch1.as_mut_slice(),
-        );
-      }
-    })
+  with_subtree_scratch(subtree_chunks, |scratch0, scratch1| {
+    for (i, slot) in out.iter_mut().enumerate() {
+      let chunk_base = base_counter.wrapping_add((i * subtree_chunks) as u64);
+      let bytes = &input[i * subtree_chunks * CHUNK_LEN..(i + 1) * subtree_chunks * CHUNK_LEN];
+      hash_full_chunks_cvs_serial(kernel, key_words, flags, chunk_base, bytes, scratch0);
+      *slot = reduce_power_of_two_cvs_in_place(kernel, key_words, flags, scratch0, scratch1);
+    }
   });
 }
 
@@ -476,11 +593,13 @@ fn hash_power_of_two_subtree_roots_parallel_rayon(req: SubtreeRootsRequest<'_>) 
   }
 
   let threads_total = threads_total.min(out.len()).max(1);
+  #[cfg(test)]
   let failed = AtomicBool::new(false);
   let out_ptr = SendPtr(out.as_mut_ptr());
   let out_len = out.len();
 
   rayon::scope(|s| {
+    #[cfg(test)]
     let failed = &failed;
     for t in 1..threads_total {
       let (start, end) = thread_range(t, threads_total, out_len);
@@ -491,82 +610,81 @@ fn hash_power_of_two_subtree_roots_parallel_rayon(req: SubtreeRootsRequest<'_>) 
       let counter = base_counter.wrapping_add((start * subtree_chunks) as u64);
 
       s.spawn(move |_| {
-        let ok = panic::catch_unwind(AssertUnwindSafe(|| {
-          maybe_force_parallel_panic();
-          BLAKE3_SUBTREE_SCRATCH0.with(|s0| {
-            BLAKE3_SUBTREE_SCRATCH1.with(|s1| {
-              let mut scratch0 = s0.borrow_mut();
-              let mut scratch1 = s1.borrow_mut();
-              if scratch0.len() != subtree_chunks {
-                scratch0.resize(subtree_chunks, [0u32; 8]);
-              }
-              if scratch1.len() != subtree_chunks {
-                scratch1.resize(subtree_chunks, [0u32; 8]);
-              }
-
+        #[cfg(test)]
+        let ok = run_parallel_task(|| {
+          with_subtree_scratch(subtree_chunks, |scratch0, scratch1| {
+            // SAFETY: `out_ptr` is valid for `out_len` outputs and this task's
+            // range is disjoint from every other task.
+            let out = unsafe { slice::from_raw_parts_mut(out_ptr.get().add(start), end - start) };
+            for (i, slot) in out.iter_mut().enumerate() {
+              let chunk_base = counter + (i * subtree_chunks) as u64;
+              let bytes = &input[i * subtree_chunks * CHUNK_LEN..(i + 1) * subtree_chunks * CHUNK_LEN];
+              hash_full_chunks_cvs_serial(kernel, key_words, flags, chunk_base, bytes, scratch0);
+              *slot = reduce_power_of_two_cvs_in_place(kernel, key_words, flags, scratch0, scratch1);
+            }
+          });
+        });
+        #[cfg(test)]
+        if !ok {
+          failed.store(true, Ordering::Relaxed);
+        }
+        #[cfg(not(test))]
+        {
+          run_parallel_task(|| {
+            with_subtree_scratch(subtree_chunks, |scratch0, scratch1| {
               // SAFETY: `out_ptr` is valid for `out_len` outputs and this task's
               // range is disjoint from every other task.
               let out = unsafe { slice::from_raw_parts_mut(out_ptr.get().add(start), end - start) };
               for (i, slot) in out.iter_mut().enumerate() {
                 let chunk_base = counter + (i * subtree_chunks) as u64;
                 let bytes = &input[i * subtree_chunks * CHUNK_LEN..(i + 1) * subtree_chunks * CHUNK_LEN];
-                hash_full_chunks_cvs_serial(kernel, key_words, flags, chunk_base, bytes, scratch0.as_mut_slice());
-                *slot = reduce_power_of_two_cvs_in_place(
-                  kernel,
-                  key_words,
-                  flags,
-                  scratch0.as_mut_slice(),
-                  scratch1.as_mut_slice(),
-                );
+                hash_full_chunks_cvs_serial(kernel, key_words, flags, chunk_base, bytes, scratch0);
+                *slot = reduce_power_of_two_cvs_in_place(kernel, key_words, flags, scratch0, scratch1);
               }
-            })
+            });
           });
-        }))
-        .is_ok();
-        if !ok {
-          failed.store(true, Ordering::Relaxed);
         }
       });
     }
 
     let (start, end) = thread_range(0, threads_total, out_len);
-    let ok = panic::catch_unwind(AssertUnwindSafe(|| {
-      maybe_force_parallel_panic();
-      BLAKE3_SUBTREE_SCRATCH0.with(|s0| {
-        BLAKE3_SUBTREE_SCRATCH1.with(|s1| {
-          let mut scratch0 = s0.borrow_mut();
-          let mut scratch1 = s1.borrow_mut();
-          if scratch0.len() != subtree_chunks {
-            scratch0.resize(subtree_chunks, [0u32; 8]);
-          }
-          if scratch1.len() != subtree_chunks {
-            scratch1.resize(subtree_chunks, [0u32; 8]);
-          }
-
+    #[cfg(test)]
+    let ok = run_parallel_task(|| {
+      with_subtree_scratch(subtree_chunks, |scratch0, scratch1| {
+        let counter = base_counter.wrapping_add((start * subtree_chunks) as u64);
+        // SAFETY: disjoint partition for thread 0.
+        let out = unsafe { slice::from_raw_parts_mut(out_ptr.get().add(start), end - start) };
+        for (i, slot) in out.iter_mut().enumerate() {
+          let chunk_base = counter + (i * subtree_chunks) as u64;
+          let bytes = &input[(start + i) * subtree_chunks * CHUNK_LEN..(start + i + 1) * subtree_chunks * CHUNK_LEN];
+          hash_full_chunks_cvs_serial(kernel, key_words, flags, chunk_base, bytes, scratch0);
+          *slot = reduce_power_of_two_cvs_in_place(kernel, key_words, flags, scratch0, scratch1);
+        }
+      });
+    });
+    #[cfg(test)]
+    if !ok {
+      failed.store(true, Ordering::Relaxed);
+    }
+    #[cfg(not(test))]
+    {
+      run_parallel_task(|| {
+        with_subtree_scratch(subtree_chunks, |scratch0, scratch1| {
           let counter = base_counter.wrapping_add((start * subtree_chunks) as u64);
           // SAFETY: disjoint partition for thread 0.
           let out = unsafe { slice::from_raw_parts_mut(out_ptr.get().add(start), end - start) };
           for (i, slot) in out.iter_mut().enumerate() {
             let chunk_base = counter + (i * subtree_chunks) as u64;
             let bytes = &input[(start + i) * subtree_chunks * CHUNK_LEN..(start + i + 1) * subtree_chunks * CHUNK_LEN];
-            hash_full_chunks_cvs_serial(kernel, key_words, flags, chunk_base, bytes, scratch0.as_mut_slice());
-            *slot = reduce_power_of_two_cvs_in_place(
-              kernel,
-              key_words,
-              flags,
-              scratch0.as_mut_slice(),
-              scratch1.as_mut_slice(),
-            );
+            hash_full_chunks_cvs_serial(kernel, key_words, flags, chunk_base, bytes, scratch0);
+            *slot = reduce_power_of_two_cvs_in_place(kernel, key_words, flags, scratch0, scratch1);
           }
-        })
+        });
       });
-    }))
-    .is_ok();
-    if !ok {
-      failed.store(true, Ordering::Relaxed);
     }
   });
 
+  #[cfg(test)]
   if failed.load(Ordering::Relaxed) {
     hash_power_of_two_subtree_roots_serial(kernel, key_words, flags, base_counter, input, subtree_chunks, out);
   }
@@ -625,10 +743,10 @@ pub(crate) const MSG_SCHEDULE: [[usize; 16]; 7] = [
 ];
 
 #[inline(always)]
-fn uninit_cv_stack() -> [MaybeUninit<[u32; 8]>; 54] {
+fn uninit_cv_stack() -> [MaybeUninit<[u32; 8]>; CV_STACK_LEN] {
   // SAFETY: An uninitialized `[MaybeUninit<_>; N]` is valid, because
   // `MaybeUninit<T>` permits any bit pattern.
-  unsafe { MaybeUninit::<[MaybeUninit<[u32; 8]>; 54]>::uninit().assume_init() }
+  unsafe { MaybeUninit::<[MaybeUninit<[u32; 8]>; CV_STACK_LEN]>::uninit().assume_init() }
 }
 
 #[inline(always)]
@@ -752,6 +870,31 @@ fn reduce_power_of_two_chunk_cvs(kernel: Kernel, key_words: [u32; 8], flags: u32
   cur[0]
 }
 
+#[inline]
+fn reduce_power_of_two_chunk_cvs_bytes(kernel: Kernel, key_words: [u32; 8], flags: u32, cvs: &[CvBytes]) -> CvBytes {
+  debug_assert!(cvs.len().is_power_of_two());
+  debug_assert!(cvs.len() <= 16);
+
+  if cvs.len() == 1 {
+    return cvs[0];
+  }
+
+  let mut cur = [[0u8; OUT_LEN]; 16];
+  let mut next = [[0u8; OUT_LEN]; 16];
+  cur[..cvs.len()].copy_from_slice(cvs);
+  let mut cur_len = cvs.len();
+
+  while cur_len > 1 {
+    let pairs = cur_len / 2;
+    debug_assert!(pairs <= 8);
+    kernels::parent_cvs_many_from_bytes_inline(kernel.id, &cur[..2 * pairs], key_words, flags, &mut next[..pairs]);
+    cur[..pairs].copy_from_slice(&next[..pairs]);
+    cur_len = pairs;
+  }
+
+  cur[0]
+}
+
 #[cfg(feature = "std")]
 #[inline]
 fn reduce_power_of_two_chunk_cvs_any(
@@ -773,10 +916,8 @@ fn reduce_power_of_two_chunk_cvs_any(
 
   let threads_total = threads_total.max(1);
 
-  let mut buf0 = alloc::vec::Vec::with_capacity(cvs.len() / 2);
-  buf0.resize(cvs.len() / 2, [0u32; 8]);
-  let mut buf1 = alloc::vec::Vec::with_capacity(cvs.len() / 2);
-  buf1.resize(cvs.len() / 2, [0u32; 8]);
+  let mut buf0 = alloc::vec![[0u32; 8]; cvs.len() / 2];
+  let mut buf1 = alloc::vec![[0u32; 8]; cvs.len() / 2];
 
   enum Cur<'a> {
     Input(&'a [[u32; 8]]),
@@ -797,6 +938,9 @@ fn reduce_power_of_two_chunk_cvs_any(
     // Note: at 1 MiB (1024 chunks), the first reduction level is 512 pairs. If
     // we require a huge minimum here, we'd never parallelize parent folding on
     // common “large input” sizes.
+    //
+    // 256 pairs = 512 child CVs. That's enough work (and memory traffic) to
+    // amortize Rayon scheduling overhead on typical desktop/server CPUs.
     const MIN_PAIRS_FOR_PARALLEL: usize = 256;
 
     let out0: [u32; 8] = match cur {
@@ -845,7 +989,7 @@ fn reduce_power_of_two_chunk_cvs_any(
 #[inline]
 fn add_chunk_cvs_batched(
   kernel: Kernel,
-  stack: &mut [MaybeUninit<[u32; 8]>; 54],
+  stack: &mut [MaybeUninit<[u32; 8]>; CV_STACK_LEN],
   stack_len: &mut usize,
   base_counter: u64,
   cvs: &[[u32; 8]],
@@ -859,13 +1003,13 @@ fn add_chunk_cvs_batched(
   debug_assert!(cvs.len() <= 16);
 
   #[inline]
-  fn push_stack(stack: &mut [MaybeUninit<[u32; 8]>; 54], len: &mut usize, cv: [u32; 8]) {
+  fn push_stack(stack: &mut [MaybeUninit<[u32; 8]>; CV_STACK_LEN], len: &mut usize, cv: [u32; 8]) {
     stack[*len].write(cv);
     *len += 1;
   }
 
   #[inline]
-  fn pop_stack(stack: &mut [MaybeUninit<[u32; 8]>; 54], len: &mut usize) -> [u32; 8] {
+  fn pop_stack(stack: &mut [MaybeUninit<[u32; 8]>; CV_STACK_LEN], len: &mut usize) -> [u32; 8] {
     *len -= 1;
     // SAFETY: `len` tracks the number of initialized entries.
     unsafe { stack[*len].assume_init_read() }
@@ -893,6 +1037,76 @@ fn add_chunk_cvs_batched(
     debug_assert!(size.is_power_of_two());
 
     let subtree_cv = reduce_power_of_two_chunk_cvs(kernel, key_words, flags, &cvs[offset..offset + size]);
+    chunk_counter = chunk_counter.wrapping_add(size as u64);
+
+    // Merge this subtree into the global stack. Because `size` is a power of two
+    // that divides `base_counter + offset`, there are no pending nodes below
+    // this subtree's level, and popping proceeds in correct level order.
+    let level = size.trailing_zeros();
+    let mut total = chunk_counter >> level;
+    let mut cv = subtree_cv;
+    while total & 1 == 0 {
+      cv = kernels::parent_cv_inline(kernel.id, pop_stack(stack, stack_len), cv, key_words, flags);
+      total >>= 1;
+    }
+    push_stack(stack, stack_len, cv);
+
+    offset += size;
+  }
+}
+
+#[inline]
+fn add_chunk_cvs_batched_bytes(
+  kernel: Kernel,
+  stack: &mut [MaybeUninit<[u32; 8]>; CV_STACK_LEN],
+  stack_len: &mut usize,
+  base_counter: u64,
+  cvs: &[CvBytes],
+  key_words: [u32; 8],
+  flags: u32,
+) {
+  if cvs.is_empty() {
+    return;
+  }
+
+  debug_assert!(cvs.len() <= 16);
+
+  #[inline]
+  fn push_stack(stack: &mut [MaybeUninit<[u32; 8]>; CV_STACK_LEN], len: &mut usize, cv: [u32; 8]) {
+    stack[*len].write(cv);
+    *len += 1;
+  }
+
+  #[inline]
+  fn pop_stack(stack: &mut [MaybeUninit<[u32; 8]>; CV_STACK_LEN], len: &mut usize) -> [u32; 8] {
+    *len -= 1;
+    // SAFETY: `len` tracks the number of initialized entries.
+    unsafe { stack[*len].assume_init_read() }
+  }
+
+  let mut offset = 0usize;
+  let mut chunk_counter = base_counter;
+
+  while offset < cvs.len() {
+    let remaining = cvs.len() - offset;
+    let mut size = pow2_floor(remaining);
+
+    let aligned_max = if chunk_counter == 0 {
+      usize::MAX
+    } else {
+      let tz = chunk_counter.trailing_zeros() as usize;
+      if tz >= (usize::BITS as usize) {
+        usize::MAX
+      } else {
+        1usize << tz
+      }
+    };
+
+    size = size.min(aligned_max).min(remaining);
+    debug_assert!(size.is_power_of_two());
+
+    let subtree_cv_bytes = reduce_power_of_two_chunk_cvs_bytes(kernel, key_words, flags, &cvs[offset..offset + size]);
+    let subtree_cv = words8_from_le_bytes_32(&subtree_cv_bytes);
     chunk_counter = chunk_counter.wrapping_add(size as u64);
 
     // Merge this subtree into the global stack. Because `size` is a power of two
@@ -1010,6 +1224,221 @@ fn compress(chaining_value: &[u32; 8], block_words: &[u32; 16], counter: u64, bl
   v15 ^= chaining_value[7];
 
   [v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15]
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn left_subtree_len_bytes(input_len: usize) -> usize {
+  debug_assert!(input_len > CHUNK_LEN);
+  let full_chunks = input_len / CHUNK_LEN;
+  let has_partial = !input_len.is_multiple_of(CHUNK_LEN);
+  let total_chunks = full_chunks + has_partial as usize;
+  debug_assert!(total_chunks >= 2);
+
+  let left_chunks = if total_chunks.is_power_of_two() {
+    total_chunks / 2
+  } else {
+    pow2_floor(total_chunks)
+  };
+  debug_assert!(left_chunks >= 1 && left_chunks < total_chunks);
+  left_chunks * CHUNK_LEN
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn compress_parents_parallel_bytes(
+  kernel: Kernel,
+  child_cvs: &[CvBytes],
+  key_words: [u32; 8],
+  flags: u32,
+  out: &mut [CvBytes],
+) -> usize {
+  debug_assert!(child_cvs.len() >= 2);
+  debug_assert!(out.len() >= child_cvs.len().div_ceil(2));
+
+  let pairs = child_cvs.len() / 2;
+  kernels::parent_cvs_many_from_bytes_inline(kernel.id, &child_cvs[..pairs * 2], key_words, flags, &mut out[..pairs]);
+  if (child_cvs.len() & 1) == 1 {
+    out[pairs] = child_cvs[child_cvs.len() - 1];
+    pairs + 1
+  } else {
+    pairs
+  }
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn compress_subtree_wide_bytes<J: join::Join>(
+  kernel: Kernel,
+  key_words: [u32; 8],
+  chunk_counter: u64,
+  flags: u32,
+  input: &[u8],
+  out: &mut [CvBytes],
+  par_budget: usize,
+) -> usize {
+  debug_assert!(!input.is_empty());
+
+  let max_leaf_bytes = kernel.simd_degree * CHUNK_LEN;
+  if input.len() <= max_leaf_bytes {
+    let chunks_exact = input.chunks_exact(CHUNK_LEN);
+    let full_chunks = chunks_exact.len();
+    debug_assert!(full_chunks <= kernel.simd_degree);
+    debug_assert!(out.len() >= full_chunks + (!chunks_exact.remainder().is_empty()) as usize);
+
+    if full_chunks != 0 {
+      // SAFETY: `input` has at least `full_chunks * CHUNK_LEN` bytes and
+      // `out` has at least `full_chunks * OUT_LEN` bytes.
+      unsafe {
+        (kernel.hash_many_contiguous)(
+          input.as_ptr(),
+          full_chunks,
+          &key_words,
+          chunk_counter,
+          flags,
+          out.as_mut_ptr().cast::<u8>(),
+        );
+      }
+    }
+
+    let mut out_len = full_chunks;
+    let rem = chunks_exact.remainder();
+    if !rem.is_empty() {
+      let cv_words =
+        single_chunk_output(kernel, key_words, chunk_counter + full_chunks as u64, flags, rem).chaining_value();
+      out[out_len] = words8_to_le_bytes(&cv_words);
+      out_len += 1;
+    }
+
+    return out_len;
+  }
+
+  debug_assert!(out.len() >= kernel.simd_degree.max(2));
+  let left_len = left_subtree_len_bytes(input.len());
+  let (left, right) = input.split_at(left_len);
+  let right_chunk_counter = chunk_counter + (left.len() / CHUNK_LEN) as u64;
+
+  const MAX_SIMD_DEGREE: usize = 16;
+  let mut cv_array = [[0u8; OUT_LEN]; 2 * MAX_SIMD_DEGREE];
+
+  let simd = kernel.simd_degree;
+  let degree = if simd == 1 && left.len() == CHUNK_LEN {
+    1
+  } else {
+    simd.max(2)
+  };
+  let (left_out, right_out) = cv_array.split_at_mut(degree);
+
+  let next_budget = par_budget.saturating_sub(1);
+  let (left_n, right_n) = if par_budget == 0 {
+    (
+      compress_subtree_wide_bytes::<join::SerialJoin>(kernel, key_words, chunk_counter, flags, left, left_out, 0),
+      compress_subtree_wide_bytes::<join::SerialJoin>(
+        kernel,
+        key_words,
+        right_chunk_counter,
+        flags,
+        right,
+        right_out,
+        0,
+      ),
+    )
+  } else {
+    J::join(
+      || compress_subtree_wide_bytes::<J>(kernel, key_words, chunk_counter, flags, left, left_out, next_budget),
+      || {
+        compress_subtree_wide_bytes::<J>(
+          kernel,
+          key_words,
+          right_chunk_counter,
+          flags,
+          right,
+          right_out,
+          next_budget,
+        )
+      },
+    )
+  };
+
+  debug_assert_eq!(left_n, degree);
+  debug_assert!(right_n >= 1 && right_n <= left_n);
+
+  if left_n == 1 {
+    out[0] = left_out[0];
+    out[1] = right_out[0];
+    return 2;
+  }
+
+  let num_children = left_n + right_n;
+  compress_parents_parallel_bytes(kernel, &cv_array[..num_children], key_words, flags, out)
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn compress_subtree_to_parent_node_bytes<J: join::Join>(
+  kernel: Kernel,
+  key_words: [u32; 8],
+  chunk_counter: u64,
+  flags: u32,
+  input: &[u8],
+  par_budget: usize,
+) -> [u8; BLOCK_LEN] {
+  debug_assert!(input.len() > CHUNK_LEN);
+
+  const MAX_SIMD_DEGREE: usize = 16;
+  let mut cv_array = [[0u8; OUT_LEN]; MAX_SIMD_DEGREE];
+  let mut num_cvs = compress_subtree_wide_bytes::<J>(
+    kernel,
+    key_words,
+    chunk_counter,
+    flags,
+    input,
+    &mut cv_array,
+    par_budget,
+  );
+  debug_assert!(num_cvs >= 2);
+
+  let mut out_array = [[0u8; OUT_LEN]; MAX_SIMD_DEGREE / 2];
+  while num_cvs > 2 {
+    let cv_slice = &cv_array[..num_cvs];
+    let new_n = compress_parents_parallel_bytes(kernel, cv_slice, key_words, flags, &mut out_array);
+    cv_array[..new_n].copy_from_slice(&out_array[..new_n]);
+    num_cvs = new_n;
+  }
+
+  let mut out = [0u8; BLOCK_LEN];
+  out[..OUT_LEN].copy_from_slice(&cv_array[0]);
+  out[OUT_LEN..].copy_from_slice(&cv_array[1]);
+  out
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn root_output_oneshot_join_parallel(
+  kernel: Kernel,
+  key_words: [u32; 8],
+  flags: u32,
+  input: &[u8],
+  threads: usize,
+) -> OutputState {
+  debug_assert!(input.len() > CHUNK_LEN);
+  debug_assert!(threads > 1);
+
+  // Cap Rayon recursion depth to approximately match `threads` leaves.
+  let depth = (usize::BITS - 1 - threads.leading_zeros()) as usize;
+  let budget = depth.max(1);
+
+  let parent_block =
+    compress_subtree_to_parent_node_bytes::<join::RayonJoin>(kernel, key_words, 0, flags, input, budget);
+  let block_words = words16_from_le_bytes_64(&parent_block);
+  OutputState {
+    kernel,
+    input_chaining_value: key_words,
+    block_words,
+    counter: 0,
+    block_len: BLOCK_LEN as u32,
+    flags: PARENT | flags,
+  }
 }
 
 #[inline(always)]
@@ -1547,22 +1976,22 @@ fn root_output_oneshot(kernel: Kernel, key_words: [u32; 8], flags: u32, input: &
     // small inputs (including keyed/derive).
     let commit_full_chunks = if remainder == 0 { full_chunks - 1 } else { full_chunks };
     if let Some(threads) = parallel_policy_threads(input.len(), commit_full_chunks) {
-      return root_output_oneshot_parallel(kernel, key_words, flags, input, full_chunks, remainder, threads);
+      return root_output_oneshot_join_parallel(kernel, key_words, flags, input, threads);
     }
   }
 
   // Local CV stack to avoid constructing a full streaming hasher.
-  let mut cv_stack: [MaybeUninit<[u32; 8]>; 54] = uninit_cv_stack();
+  let mut cv_stack: [MaybeUninit<[u32; 8]>; CV_STACK_LEN] = uninit_cv_stack();
   let mut cv_stack_len = 0usize;
 
   const MAX_SIMD_DEGREE: usize = 16;
-  let mut out_buf = [0u8; OUT_LEN * MAX_SIMD_DEGREE];
+  let mut cvs = [[0u8; OUT_LEN]; MAX_SIMD_DEGREE];
 
   // Hash all full chunks. If there is no remainder, we still hash the final
   // full chunk here, but we keep its CV as the "right child" instead of
   // pushing it to the stack (because the root output for multi-chunk inputs is
   // always a parent node).
-  let mut last_full_chunk_cv = None;
+  let mut last_full_chunk_cv: Option<CvBytes> = None;
 
   let mut chunk_counter = 0u64;
   let mut offset = 0usize;
@@ -1571,7 +2000,7 @@ fn root_output_oneshot(kernel: Kernel, key_words: [u32; 8], flags: u32, input: &
     let batch = core::cmp::min(remaining, core::cmp::min(kernel.simd_degree, MAX_SIMD_DEGREE));
     debug_assert!(batch != 0);
 
-    // SAFETY: `offset` is within `input`, and `out_buf` is large enough for `batch`.
+    // SAFETY: `offset` is within `input`, and `cvs` is large enough for `batch`.
     unsafe {
       (kernel.hash_many_contiguous)(
         input.as_ptr().add(offset),
@@ -1579,18 +2008,9 @@ fn root_output_oneshot(kernel: Kernel, key_words: [u32; 8], flags: u32, input: &
         &key_words,
         chunk_counter,
         flags,
-        out_buf.as_mut_ptr(),
+        cvs.as_mut_ptr().cast::<u8>(),
       )
     };
-
-    let mut cvs = [[0u32; 8]; MAX_SIMD_DEGREE];
-    for (i, slot) in cvs.iter_mut().take(batch).enumerate() {
-      let off = i * OUT_LEN;
-      // SAFETY: `out_buf` is sized to `MAX_SIMD_DEGREE * OUT_LEN` and `off`
-      // is `i * OUT_LEN` with `i < batch <= MAX_SIMD_DEGREE`.
-      let cv = unsafe { words8_from_le_bytes_32(&*(out_buf.as_ptr().add(off) as *const [u8; OUT_LEN])) };
-      *slot = cv;
-    }
 
     let mut commit = batch;
     if remainder == 0 && chunk_counter + batch as u64 == full_chunks as u64 {
@@ -1599,7 +2019,7 @@ fn root_output_oneshot(kernel: Kernel, key_words: [u32; 8], flags: u32, input: &
     }
 
     if commit != 0 {
-      add_chunk_cvs_batched(
+      add_chunk_cvs_batched_bytes(
         kernel,
         &mut cv_stack,
         &mut cv_stack_len,
@@ -1621,193 +2041,9 @@ fn root_output_oneshot(kernel: Kernel, key_words: [u32; 8], flags: u32, input: &
     // `input.len() > CHUNK_LEN` implies there are at least 2 chunks total, so
     // the root output is always derived from parent nodes rather than a chunk.
     match last_full_chunk_cv {
-      Some(cv) => cv,
+      Some(cv) => words8_from_le_bytes_32(&cv),
       None => unreachable!("missing last full chunk cv"),
     }
-  };
-
-  let mut parent_nodes_remaining = cv_stack_len;
-  debug_assert!(parent_nodes_remaining > 0);
-  parent_nodes_remaining -= 1;
-  // SAFETY: `cv_stack_len` tracks the number of initialized entries.
-  let left = unsafe { cv_stack[parent_nodes_remaining].assume_init_read() };
-  let mut output = parent_output(kernel, left, right_cv, key_words, flags);
-  while parent_nodes_remaining > 0 {
-    parent_nodes_remaining -= 1;
-    // SAFETY: `cv_stack_len` tracks the number of initialized entries.
-    let left = unsafe { cv_stack[parent_nodes_remaining].assume_init_read() };
-    output = parent_output(kernel, left, output.chaining_value(), key_words, flags);
-  }
-
-  output
-}
-
-#[cfg(feature = "std")]
-#[inline]
-fn root_output_oneshot_parallel(
-  kernel: Kernel,
-  key_words: [u32; 8],
-  flags: u32,
-  input: &[u8],
-  full_chunks: usize,
-  remainder: usize,
-  threads: usize,
-) -> OutputState {
-  debug_assert!(input.len() > CHUNK_LEN);
-  debug_assert!(full_chunks >= 1);
-  debug_assert!(threads > 1);
-
-  // Local CV stack to avoid constructing a full streaming hasher.
-  let mut cv_stack: [MaybeUninit<[u32; 8]>; 54] = uninit_cv_stack();
-  let mut cv_stack_len = 0usize;
-
-  // Commit all full chunks except the terminal chunk when there is no remainder
-  // (multi-chunk roots are always parent nodes).
-  let commit_full_chunks = if remainder == 0 { full_chunks - 1 } else { full_chunks };
-
-  // Bound memory while still amortizing thread startup and per-thread scratch.
-  const MAX_PASS_CHUNKS: usize = 1 << 16; // 65536 chunks = 64 MiB input, 2 MiB CVs
-
-  #[inline]
-  fn push_stack(stack: &mut [MaybeUninit<[u32; 8]>; 54], len: &mut usize, cv: [u32; 8]) {
-    stack[*len].write(cv);
-    *len += 1;
-  }
-
-  #[inline]
-  fn pop_stack(stack: &mut [MaybeUninit<[u32; 8]>; 54], len: &mut usize) -> [u32; 8] {
-    *len -= 1;
-    // SAFETY: `len` tracks the number of initialized entries.
-    unsafe { stack[*len].assume_init_read() }
-  }
-
-  let mut base_counter = 0u64;
-  let mut offset_bytes = 0usize;
-  let mut remaining = commit_full_chunks;
-
-  while remaining != 0 {
-    // Hash a bounded number of leaf chunks in parallel, then merge them into
-    // the global CV stack using the canonical BLAKE3 subtree boundaries.
-    let pass_chunks = core::cmp::min(remaining, MAX_PASS_CHUNKS);
-
-    let pass_bytes = pass_chunks * CHUNK_LEN;
-    let pass_input = &input[offset_bytes..offset_bytes + pass_bytes];
-
-    // Fast path: when this pass covers a canonical, chunk-aligned power-of-two
-    // subtree, compute its root directly without materializing all leaf CVs.
-    //
-    // This reduces memory traffic and avoids an extra full-width reduction
-    // pass, which matters a lot for multi-core throughput.
-    let pass_chunks_u64 = pass_chunks as u64;
-    if pass_chunks.is_power_of_two()
-      && (base_counter == 0 || (base_counter & (pass_chunks_u64 - 1)) == 0)
-      && pass_chunks >= threads
-    {
-      const MAX_SUBTREE_CHUNKS: usize = 1 << 12; // 4096 chunks = 4 MiB per subtree
-
-      let mut subtree_chunks = pass_chunks / threads;
-      subtree_chunks = subtree_chunks.max(1);
-      subtree_chunks = pow2_floor(subtree_chunks);
-      subtree_chunks = subtree_chunks.min(MAX_SUBTREE_CHUNKS).min(pass_chunks);
-
-      let roots_len = pass_chunks / subtree_chunks;
-      debug_assert!(roots_len.is_power_of_two());
-      debug_assert_eq!(roots_len * subtree_chunks, pass_chunks);
-
-      let mut roots = alloc::vec![[0u32; 8]; roots_len];
-      hash_power_of_two_subtree_roots_parallel_rayon(SubtreeRootsRequest {
-        kernel,
-        key_words,
-        flags,
-        base_counter,
-        input: pass_input,
-        subtree_chunks,
-        out: &mut roots,
-        threads_total: threads,
-      });
-
-      let subtree_cv = reduce_power_of_two_chunk_cvs_any(kernel, key_words, flags, &roots, threads);
-      let counter = base_counter.wrapping_add(pass_chunks_u64);
-
-      let level = pass_chunks.trailing_zeros();
-      let mut total = counter >> level;
-      let mut cv = subtree_cv;
-      while total & 1 == 0 {
-        cv = kernels::parent_cv_inline(
-          kernel.id,
-          pop_stack(&mut cv_stack, &mut cv_stack_len),
-          cv,
-          key_words,
-          flags,
-        );
-        total >>= 1;
-      }
-      push_stack(&mut cv_stack, &mut cv_stack_len, cv);
-
-      base_counter = counter;
-      offset_bytes += pass_bytes;
-      remaining -= pass_chunks;
-      continue;
-    }
-
-    let mut cvs = alloc::vec::Vec::with_capacity(pass_chunks);
-    cvs.resize(pass_chunks, [0u32; 8]);
-    hash_full_chunks_cvs_scoped(kernel, key_words, flags, base_counter, pass_input, &mut cvs, threads);
-
-    let mut offset = 0usize;
-    let mut counter = base_counter;
-
-    while offset < cvs.len() {
-      let remaining = cvs.len() - offset;
-      let mut size = pow2_floor(remaining);
-
-      let aligned_max = if counter == 0 {
-        usize::MAX
-      } else {
-        let tz = counter.trailing_zeros() as usize;
-        if tz >= (usize::BITS as usize) {
-          usize::MAX
-        } else {
-          1usize << tz
-        }
-      };
-
-      size = size.min(aligned_max).min(remaining);
-      debug_assert!(size.is_power_of_two());
-
-      let subtree_cv =
-        reduce_power_of_two_chunk_cvs_any(kernel, key_words, flags, &cvs[offset..offset + size], threads);
-      counter = counter.wrapping_add(size as u64);
-
-      let level = size.trailing_zeros();
-      let mut total = counter >> level;
-      let mut cv = subtree_cv;
-      while total & 1 == 0 {
-        cv = kernels::parent_cv_inline(
-          kernel.id,
-          pop_stack(&mut cv_stack, &mut cv_stack_len),
-          cv,
-          key_words,
-          flags,
-        );
-        total >>= 1;
-      }
-      push_stack(&mut cv_stack, &mut cv_stack_len, cv);
-
-      offset += size;
-    }
-
-    base_counter = counter;
-    offset_bytes += pass_bytes;
-    remaining -= pass_chunks;
-  }
-
-  let right_cv = if remainder != 0 {
-    let chunk_bytes = &input[full_chunks * CHUNK_LEN..];
-    single_chunk_output(kernel, key_words, full_chunks as u64, flags, chunk_bytes).chaining_value()
-  } else {
-    let last_full = &input[(full_chunks - 1) * CHUNK_LEN..full_chunks * CHUNK_LEN];
-    hash_one_full_chunk_cv(kernel, key_words, flags, (full_chunks - 1) as u64, last_full)
   };
 
   let mut parent_nodes_remaining = cv_stack_len;
@@ -1881,6 +2117,14 @@ fn digest_oneshot_words(kernel: Kernel, key_words: [u32; 8], flags: u32, input: 
     }
   }
 
+  #[cfg(target_arch = "aarch64")]
+  {
+    if input.len() <= CHUNK_LEN && kernel.id == kernels::Blake3KernelId::Aarch64Neon {
+      // SAFETY: aarch64 NEON availability is validated by dispatch before selecting this kernel.
+      return unsafe { digest_one_chunk_root_hash_words_aarch64(kernel, key_words, flags, input) };
+    }
+  }
+
   // Fallback: construct the root output and extract the root hash words.
   let output = root_output_oneshot(kernel, key_words, flags, input);
   output.root_hash_words()
@@ -1906,7 +2150,7 @@ pub struct Blake3 {
   chunk_state: ChunkState,
   pending_chunk_cv: Option<[u32; 8]>,
   key_words: [u32; 8],
-  cv_stack: [MaybeUninit<[u32; 8]>; 54],
+  cv_stack: [MaybeUninit<[u32; 8]>; CV_STACK_LEN],
   cv_stack_len: u8,
   flags: u32,
 }
@@ -2108,13 +2352,13 @@ impl Blake3 {
                   let batch_input = &input[..bytes];
 
                   #[inline]
-                  fn push_stack(stack: &mut [MaybeUninit<[u32; 8]>; 54], len: &mut usize, cv: [u32; 8]) {
+                  fn push_stack(stack: &mut [MaybeUninit<[u32; 8]>; CV_STACK_LEN], len: &mut usize, cv: [u32; 8]) {
                     stack[*len].write(cv);
                     *len += 1;
                   }
 
                   #[inline]
-                  fn pop_stack(stack: &mut [MaybeUninit<[u32; 8]>; 54], len: &mut usize) -> [u32; 8] {
+                  fn pop_stack(stack: &mut [MaybeUninit<[u32; 8]>; CV_STACK_LEN], len: &mut usize) -> [u32; 8] {
                     *len -= 1;
                     // SAFETY: `len` tracks the number of initialized entries.
                     unsafe { stack[*len].assume_init_read() }
@@ -2664,6 +2908,15 @@ impl Xof for Blake3Xof {
       return;
     }
 
+    // Fast path: the first 32 output bytes are the root hash. Avoid generating
+    // a full 64-byte output block (and touching the internal buffer) when the
+    // caller only needs up to one hash output.
+    if self.block_counter == 0 && self.buf_pos == self.buf.len() && out.len() <= OUT_LEN {
+      let rh = self.output.root_hash_bytes();
+      out.copy_from_slice(&rh[..out.len()]);
+      return;
+    }
+
     // World-class: XOF output generation is dominated by the squeeze phase, not the
     // input hashing phase. Tiny inputs can select a "streaming" kernel (e.g. SSE4.1)
     // that is great for per-block updates but suboptimal for generating many output
@@ -2788,6 +3041,68 @@ unsafe fn digest_one_chunk_root_hash_words_x86(
     }
     _ => unreachable!("x86 tiny helper called for non-x86 SIMD kernel"),
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// aarch64 tiny one-shot helpers (keyed/derive sensitive)
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+unsafe fn digest_one_chunk_root_hash_words_aarch64(
+  kernel: Kernel,
+  key_words: [u32; 8],
+  flags: u32,
+  input: &[u8],
+) -> [u32; 8] {
+  debug_assert!(input.len() <= CHUNK_LEN);
+  debug_assert_eq!(kernel.id, kernels::Blake3KernelId::Aarch64Neon);
+
+  // We always have a "last block", even for the empty input (treated as a
+  // single 0-length block).
+  let blocks = core::cmp::max(1usize, input.len().div_ceil(BLOCK_LEN));
+  let (full_blocks, last_len) = if input.is_empty() {
+    (0usize, 0usize)
+  } else if input.len().is_multiple_of(BLOCK_LEN) {
+    (blocks - 1, BLOCK_LEN)
+  } else {
+    (blocks - 1, input.len() % BLOCK_LEN)
+  };
+
+  // Hash all full blocks except the final block, updating the CV. This keeps
+  // ROOT out of the dependency chain until the last compress.
+  let mut cv = key_words;
+  let mut blocks_compressed: u8 = 0;
+  let full_bytes = full_blocks * BLOCK_LEN;
+  kernels::chunk_compress_blocks_inline(
+    kernel.id,
+    &mut cv,
+    0,
+    flags,
+    &mut blocks_compressed,
+    &input[..full_bytes],
+  );
+
+  let start = if blocks_compressed == 0 { CHUNK_START } else { 0 };
+  let final_flags = flags | start | CHUNK_END | ROOT;
+
+  // For partial blocks (including empty), pad to 64 bytes.
+  let mut padded = [0u8; BLOCK_LEN];
+  let block_ptr = if last_len == BLOCK_LEN && !input.is_empty() {
+    // SAFETY: `full_blocks * BLOCK_LEN + BLOCK_LEN <= input.len()`.
+    unsafe { input.as_ptr().add(full_blocks * BLOCK_LEN) }
+  } else {
+    if last_len != 0 {
+      let offset = full_blocks * BLOCK_LEN;
+      // SAFETY: `padded` is 64 bytes, and `last_len < 64` here.
+      unsafe { ptr::copy_nonoverlapping(input.as_ptr().add(offset), padded.as_mut_ptr(), last_len) };
+    }
+    padded.as_ptr()
+  };
+
+  // SAFETY: `block_ptr` points to 64 bytes (either into `input` or `padded`),
+  // and dispatch only selects NEON when the required CPU features are present.
+  unsafe { aarch64::compress_cv_neon_bytes(&cv, block_ptr, 0, last_len as u32, final_flags) }
 }
 
 #[cfg(feature = "std")]
