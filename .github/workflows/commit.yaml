@@ -304,6 +304,8 @@ jobs:
         uses: ./.github/actions/setup
         with:
           cache-key: ${{ steps.cache.outputs.key }}
+          tools-mode: ibm
+          toolchain-components: "clippy, rustfmt"
 
       - name: Detect CPU
         run: |
@@ -347,6 +349,8 @@ jobs:
         uses: ./.github/actions/setup
         with:
           cache-key: ${{ steps.cache.outputs.key }}
+          tools-mode: ibm
+          toolchain-components: "clippy, rustfmt"
 
       - name: Detect CPU
         run: |
@@ -390,6 +394,8 @@ jobs:
         uses: ./.github/actions/setup
         with:
           cache-key: ${{ steps.cache.outputs.key }}
+          tools-mode: ibm
+          toolchain-components: "clippy, rustfmt"
 
       - name: Detect CPU
         run: |

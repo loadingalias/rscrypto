@@ -1,12 +1,18 @@
 #!/usr/bin/env bash
 # Install cargo tools for CI
-# Usage: install-tools.sh [standard|namespace|runson|bench|minimal]
+# Usage: install-tools.sh [standard|namespace|runson|bench|ibm|minimal|none]
 
 set -euo pipefail
 
 MODE="${1:-standard}"
 
 echo "Installing cargo tools (mode: $MODE)"
+
+# Tool-free jobs: do nothing (fast path).
+if [[ "$MODE" == "none" ]]; then
+    echo "Skipping tool installation (mode: none)"
+    exit 0
+fi
 
 # Prefer cargo-installed tools over any preinstalled runner tools.
 export PATH="$HOME/.cargo/bin:$PATH"
@@ -174,6 +180,16 @@ case "$MODE" in
         install_if_missing "just" "just"
         ;;
 
+    ibm|ci-lite)
+        # IBM runners: only what our IBM CI actually uses (ci-check + test --all).
+        # - ci-check requires: cargo-deny, cargo-audit
+        # - test --all requires: cargo-nextest
+        install_if_missing "cargo-nextest" "cargo-nextest"
+        install_if_missing "cargo-deny" "cargo-deny"
+        install_cargo_audit  # version-checked (requires 0.22+ for CVSS 4.0)
+        install_if_missing "just" "just"
+        ;;
+
     bench|runson-bench)
         # Benchmark tools (Criterion + tuning)
         install_if_missing "cargo-criterion" "cargo-criterion"
@@ -186,9 +202,13 @@ case "$MODE" in
         install_if_missing "just" "just"
         ;;
 
+    none)
+        # Tool-free jobs: use whatever is already present in the toolchain image.
+        ;;
+
     *)
         echo "Unknown mode: $MODE"
-        echo "Usage: install-tools.sh [standard|namespace|runson|bench|runson-bench|minimal]"
+        echo "Usage: install-tools.sh [standard|namespace|runson|bench|runson-bench|ibm|minimal|none]"
         exit 1
         ;;
 esac

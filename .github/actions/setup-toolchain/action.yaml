@@ -25,8 +25,15 @@ runs:
         echo "toolchain=$TOOLCHAIN" >> "$GITHUB_OUTPUT"
         echo "Using toolchain: $TOOLCHAIN"
 
-    - name: Install Rust Toolchain
+    - name: Install Rust Toolchain (with components)
+      if: inputs.components != ''
       uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561  # master
       with:
         toolchain: ${{ steps.read-toolchain.outputs.toolchain }}
         components: ${{ inputs.components }}
+
+    - name: Install Rust Toolchain (no components)
+      if: inputs.components == ''
+      uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561  # master
+      with:
+        toolchain: ${{ steps.read-toolchain.outputs.toolchain }}
