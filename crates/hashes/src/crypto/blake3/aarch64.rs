@@ -297,11 +297,18 @@ unsafe fn compress_neon_core(
   let row3_arr: [u32; 4] = [counter_lo, counter_hi, block_len, flags];
   let mut row3 = vld1q_u32(row3_arr.as_ptr());
 
+  #[inline(always)]
+  unsafe fn loadu_u32x4(src: *const u8) -> uint32x4_t {
+    // Load as bytes to avoid alignment requirements. The BLAKE3 message block
+    // can be arbitrarily aligned (e.g., buffered `[u8; 64]` on the stack).
+    vreinterpretq_u32_u8(vld1q_u8(src))
+  }
+
   // Load message words into 4 vectors (standard order).
-  let mut m0 = vld1q_u32(block.cast());
-  let mut m1 = vld1q_u32(block.add(16).cast());
-  let mut m2 = vld1q_u32(block.add(32).cast());
-  let mut m3 = vld1q_u32(block.add(48).cast());
+  let mut m0 = loadu_u32x4(block);
+  let mut m1 = loadu_u32x4(block.add(16));
+  let mut m2 = loadu_u32x4(block.add(32));
+  let mut m3 = loadu_u32x4(block.add(48));
 
   macro_rules! g {
     ($a:expr, $b:expr, $c:expr, $d:expr, $mx:expr, $my:expr) => {{
