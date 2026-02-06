@@ -26,22 +26,22 @@
 actions/checkout:
   ref: v4.2.2
   sha: "11bd71901bbe5b1630ceea73d27597364c9af683"
-  updated: "2026-01-09T03:34:54Z"
+  updated: "2026-02-06T23:17:10Z"
   notes: "Repository checkout - used in every workflow"
 actions/upload-artifact:
   ref: v4.6.0
   sha: "65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08"
-  updated: "2026-01-09T03:34:56Z"
+  updated: "2026-02-06T23:17:11Z"
   notes: "Upload build artifacts and test results"
 actions/download-artifact:
   ref: v4.3.0
   sha: "d3f86a106a0bac45b974a628896c90dbdf5c8093"
-  updated: "2026-01-09T03:34:56Z"
+  updated: "2026-02-06T23:17:11Z"
   notes: "Download build artifacts"
 actions/cache:
   ref: v4.2.3
   sha: "5a3ec84eff668545956fd18022155c47e93e2684"
-  updated: "2026-01-09T03:34:57Z"
+  updated: "2026-02-06T23:17:12Z"
   notes: "Cache dependencies and build artifacts"
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Testing & Reporting
@@ -49,7 +49,7 @@ actions/cache:
 mikepenz/action-junit-report:
   ref: v6.0.1
   sha: "e08919a3b1fb83a78393dfb775a9c37f17d8eea6"
-  updated: "2026-01-09T03:34:58Z"
+  updated: "2026-02-06T23:17:13Z"
   notes: "Publish JUnit test reports as GitHub Checks"
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Rust Toolchain & Ecosystem
@@ -57,22 +57,22 @@ mikepenz/action-junit-report:
 dtolnay/rust-toolchain:
   ref: master
   sha: "f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561"
-  updated: "2026-01-09T03:34:59Z"
+  updated: "2026-02-06T23:17:14Z"
   notes: "Rust toolchain installation - always tracks latest nightly"
 taiki-e/install-action:
   ref: v2.49.3
   sha: "7ea888af71a31437ad4e71c62d021b3bb2728ea9"
-  updated: "2026-01-09T03:35:00Z"
+  updated: "2026-02-06T23:17:14Z"
   notes: "Install cargo tools (nextest, just, deny, audit)"
 Swatinem/rust-cache:
   ref: v2.8.2
   sha: "779680da715d629ac1d338a641029a2f4372abb5"
-  updated: "2026-01-09T03:35:01Z"
+  updated: "2026-02-06T23:17:15Z"
   notes: "GitHub runner Rust cache"
 namespacelabs/nscloud-cache-action:
   ref: v1.2.21
   sha: "446d8f390563cd54ca27e8de5bdb816f63c0b706"
-  updated: "2026-01-09T03:35:02Z"
+  updated: "2026-02-06T23:17:16Z"
   notes: "Namespace runner NVMe cache (instant restore)"
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # RunsOn (AWS EC2 Runners)
@@ -80,7 +80,7 @@ namespacelabs/nscloud-cache-action:
 runs-on/action:
   ref: v2
   sha: "cd2b598b0515d39d78c38a02d529db87d2196d1e"
-  updated: "2026-01-09T03:35:02Z"
+  updated: "2026-02-06T23:17:17Z"
   notes: "RunsOn MagicCache - S3-backed unlimited cache for AWS EC2 runners"
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Release Workflow Actions
@@ -88,15 +88,15 @@ runs-on/action:
 taiki-e/create-gh-release-action:
   ref: v1.8.4
   sha: "b7abb0cf5e72cb5500307b577f9ca3fd4c5be9d2"
-  updated: "2026-01-09T03:35:03Z"
+  updated: "2026-02-06T23:17:17Z"
   notes: "Create GitHub releases from CHANGELOG.md"
 taiki-e/setup-cross-toolchain-action:
   ref: v1.26.0
   sha: "bdeb9ca6f0f909ea36bb94e1e3ec916b2ceb35fc"
-  updated: "2026-01-09T03:35:04Z"
+  updated: "2026-02-06T23:17:18Z"
   notes: "Cross-compilation toolchain setup for multi-target builds"
 taiki-e/upload-rust-binary-action:
   ref: v1.24.0
   sha: "e7953b6078194a4ae5f5619632e3715db6275561"
-  updated: "2026-01-09T03:35:05Z"
+  updated: "2026-02-06T23:17:19Z"
   notes: "Build and upload pre-built binaries to GitHub Releases"

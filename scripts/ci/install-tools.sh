@@ -151,9 +151,9 @@ standard | namespace | runson)
 	;;
 
 ibm)
-	# IBM runners: keep installs minimal to avoid expensive source builds.
-	# Policy/security checks run locally via `just check-all`.
-	install_if_missing "cargo-nextest" "cargo-nextest"
+	# IBM runners: keep installs minimal.
+	# `cargo-nextest` often lacks prebuilt binaries on s390x/ppc64le and falls
+	# back to expensive source builds; test.sh will use `cargo test` fallback.
 	install_if_missing "just" "just"
 	;;
 
