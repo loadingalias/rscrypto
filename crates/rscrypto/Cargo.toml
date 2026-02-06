@@ -19,7 +19,7 @@ default = ["std", "checksums"]
 # alloc → buffered APIs (useful for no_std + alloc environments)
 # none → compile-time detection only, minimal code size
 std = ["alloc", "checksum?/std", "hashes?/std"]
-alloc = ["checksum?/alloc"]
+alloc = ["checksum?/alloc", "hashes?/alloc"]
 
 # Algorithm modules (optional, additive)
 checksums = ["dep:checksum"]  # CRC-16, CRC-24, CRC-32, CRC-64

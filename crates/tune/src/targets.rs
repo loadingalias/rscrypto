@@ -3,11 +3,43 @@
 //! These targets are "must-meet" throughput floors by algorithm, architecture,
 //! and size bucket. They provide a stable contract for tuning output quality
 //! and prevent silent regressions while iterating kernel policy.
+use std::sync::OnceLock;
+
 use platform::TuneKind;
 
 #[cfg(feature = "std")]
 use crate::TuneResults;
 use crate::hash::is_blake3_tuning_algo;
+
+const TARGET_MATRIX_MANIFEST: &str = include_str!("../../../config/target-matrix.toml");
+static TUNE_ARCHES: OnceLock<Vec<&'static str>> = OnceLock::new();
+
+fn parse_tune_arches_from_manifest() -> Vec<&'static str> {
+  for line in TARGET_MATRIX_MANIFEST.lines() {
+    let trimmed = line.trim();
+    if !trimmed.starts_with("arches") {
+      continue;
+    }
+    let Some((_, rhs)) = trimmed.split_once('=') else {
+      continue;
+    };
+    let rhs = rhs.trim();
+    let rhs = rhs.trim_start_matches('[').trim_end_matches(']');
+    let mut arches = Vec::new();
+    for token in rhs.split(',') {
+      let token = token.trim().trim_matches('"');
+      if !token.is_empty() {
+        arches.push(token);
+      }
+    }
+    return arches;
+  }
+  Vec::new()
+}
+
+fn tune_arches() -> &'static [&'static str] {
+  TUNE_ARCHES.get_or_init(parse_tune_arches_from_manifest).as_slice()
+}
 
 /// Resolve a throughput floor (GiB/s) for an algorithm/architecture/size class.
 ///
@@ -15,6 +47,9 @@ use crate::hash::is_blake3_tuning_algo;
 #[must_use]
 pub fn class_target_gib_s(algo: &str, arch: &str, tune_kind: TuneKind, class: &str) -> Option<f64> {
   if !is_blake3_tuning_algo(algo) {
+    return None;
+  }
+  if !tune_arches().contains(&arch) {
     return None;
   }
 
@@ -85,6 +120,12 @@ mod tests {
     let parent = class_target_gib_s("blake3-parent-fold", "x86_64", TuneKind::Zen5, "m").unwrap();
     let digest = class_target_gib_s("blake3", "x86_64", TuneKind::Zen5, "m").unwrap();
     assert!(parent > digest);
+  }
+
+  #[test]
+  fn tune_arches_match_target_manifest() {
+    assert!(tune_arches().contains(&"x86_64"));
+    assert!(tune_arches().contains(&"aarch64"));
   }
 }
 

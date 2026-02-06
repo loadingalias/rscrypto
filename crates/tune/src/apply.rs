@@ -40,6 +40,12 @@ const SIZE_CLASS_M_MAX: usize = 4096;
 /// Size classes used in tuning and dispatch.
 const SIZE_CLASSES: [&str; 4] = ["xs", "s", "m", "l"];
 
+#[derive(Clone, Debug)]
+struct GeneratedArtifact {
+  path: PathBuf,
+  contents: String,
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Kernel Expression Mapping (tune results → dispatch.rs initializers)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -589,7 +595,7 @@ fn generated_apply_path(repo_root: &Path, family: &str, name: &str, tune_kind: T
     .join(format!("{tune_kind:?}.rs").to_lowercase())
 }
 
-fn apply_checksum_dispatch_tables(repo_root: &Path, results: &TuneResults) -> io::Result<()> {
+fn apply_checksum_dispatch_tables(repo_root: &Path, results: &TuneResults) -> io::Result<Vec<GeneratedArtifact>> {
   let tune_kind = results.platform.tune_kind;
 
   let missing: Vec<&'static str> = CRC_ALGO_NAMES
@@ -614,10 +620,10 @@ fn apply_checksum_dispatch_tables(repo_root: &Path, results: &TuneResults) -> io
   })?;
 
   let output_path = generated_apply_path(repo_root, "checksum", table_ident, tune_kind);
-  write_file(&output_path, &table_code)?;
-  eprintln!("Generated: {}", output_path.display());
-
-  Ok(())
+  Ok(vec![GeneratedArtifact {
+    path: output_path,
+    contents: table_code,
+  }])
 }
 
 /// Generate a KernelSet entry for one size class.
@@ -806,11 +812,59 @@ fn find_hash_algo<'a>(results: &'a TuneResults, target: &HashDispatchTarget) -> 
     .find_map(|&name| results.algorithms.iter().find(|a| a.name == name))
 }
 
-fn write_file(path: &Path, contents: &str) -> io::Result<()> {
+fn write_artifact(path: &Path, contents: &str) -> io::Result<()> {
   if let Some(parent) = path.parent() {
     fs::create_dir_all(parent)?;
   }
-  fs::write(path, contents)
+
+  let mut temp_path = path.to_path_buf();
+  let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("tmp");
+  temp_path.set_extension(format!("{ext}.rscrypto-tmp"));
+  fs::write(&temp_path, contents)?;
+  fs::rename(&temp_path, path)?;
+  Ok(())
+}
+
+fn rollback_artifacts(backups: &[(PathBuf, Option<Vec<u8>>)]) {
+  for (path, backup) in backups.iter().rev() {
+    match backup {
+      Some(bytes) => {
+        if let Some(parent) = path.parent() {
+          let _ = fs::create_dir_all(parent);
+        }
+        let _ = fs::write(path, bytes);
+      }
+      None => {
+        let _ = fs::remove_file(path);
+      }
+    }
+  }
+}
+
+fn write_artifacts_transactional(artifacts: &[GeneratedArtifact]) -> io::Result<()> {
+  let mut backups: Vec<(PathBuf, Option<Vec<u8>>)> = Vec::with_capacity(artifacts.len());
+
+  for artifact in artifacts {
+    let previous = fs::read(&artifact.path).ok();
+    backups.push((artifact.path.clone(), previous));
+
+    if let Err(err) = write_artifact(&artifact.path, &artifact.contents) {
+      rollback_artifacts(&backups);
+      return Err(io::Error::new(
+        err.kind(),
+        format!(
+          "failed to write generated artifact '{}': {err}",
+          artifact.path.display()
+        ),
+      ));
+    }
+  }
+
+  for artifact in artifacts {
+    eprintln!("Generated: {}", artifact.path.display());
+  }
+
+  Ok(())
 }
 
 fn tune_kind_table_ident(tune_kind: TuneKind) -> &'static str {
@@ -1500,8 +1554,9 @@ pub static {profile_ident}: FamilyProfile = default_kind_profile();
   }
 }
 
-fn apply_hash_dispatch_tables(repo_root: &Path, results: &TuneResults) -> io::Result<()> {
+fn apply_hash_dispatch_tables(repo_root: &Path, results: &TuneResults) -> io::Result<Vec<GeneratedArtifact>> {
   let tune_kind = results.platform.tune_kind;
+  let mut artifacts = Vec::new();
 
   for target in HASH_DISPATCH_TARGETS {
     let Some(algo) = find_hash_algo(results, target) else {
@@ -1545,23 +1600,72 @@ fn apply_hash_dispatch_tables(repo_root: &Path, results: &TuneResults) -> io::Re
       );
       let spec = blake3_family_spec(tune_kind);
       let path = generated_apply_path(repo_root, "hashes", spec.profile_ident, tune_kind);
-      write_file(&path, &profile_code)?;
-      eprintln!("Generated: {}", path.display());
+      artifacts.push(GeneratedArtifact {
+        path,
+        contents: profile_code,
+      });
       continue;
     }
 
     let table_code = generate_hash_table(tune_kind, algo, Some(results));
     let path = generated_apply_path(repo_root, "hashes", target.algo, tune_kind);
-    write_file(&path, &table_code)?;
-    eprintln!("Generated: {}", path.display());
+    artifacts.push(GeneratedArtifact {
+      path,
+      contents: table_code,
+    });
   }
 
-  Ok(())
+  Ok(artifacts)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Public API
 // ─────────────────────────────────────────────────────────────────────────────
+
+fn validate_apply_input(results: &TuneResults) -> io::Result<()> {
+  if results.platform.arch.is_empty() {
+    return Err(io::Error::new(
+      io::ErrorKind::InvalidData,
+      "invalid tuning artifact: platform.arch must not be empty",
+    ));
+  }
+  if results.platform.os.is_empty() {
+    return Err(io::Error::new(
+      io::ErrorKind::InvalidData,
+      "invalid tuning artifact: platform.os must not be empty",
+    ));
+  }
+  if results.algorithms.is_empty() {
+    return Err(io::Error::new(
+      io::ErrorKind::InvalidData,
+      "invalid tuning artifact: no algorithm results present",
+    ));
+  }
+
+  let mut names = BTreeSet::new();
+  for algo in &results.algorithms {
+    if !names.insert(algo.name) {
+      return Err(io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!("invalid tuning artifact: duplicate algorithm result '{}'", algo.name),
+      ));
+    }
+
+    for class in &algo.size_class_best {
+      if !SIZE_CLASSES.contains(&class.class) {
+        return Err(io::Error::new(
+          io::ErrorKind::InvalidData,
+          format!(
+            "invalid tuning artifact: algorithm '{}' has unknown size class '{}'",
+            algo.name, class.class
+          ),
+        ));
+      }
+    }
+  }
+
+  Ok(())
+}
 
 /// Apply tuning results to generate dispatch table entries.
 ///
@@ -1569,11 +1673,15 @@ fn apply_hash_dispatch_tables(repo_root: &Path, results: &TuneResults) -> io::Re
 /// either updates `dispatch.rs` or prints the generated code for manual
 /// insertion.
 pub fn apply_tuned_defaults(repo_root: &Path, results: &TuneResults) -> io::Result<()> {
+  validate_apply_input(results)?;
+
+  let mut artifacts = Vec::new();
   if should_apply_checksum_dispatch(results) {
-    apply_checksum_dispatch_tables(repo_root, results)?;
+    artifacts.extend(apply_checksum_dispatch_tables(repo_root, results)?);
   }
 
-  apply_hash_dispatch_tables(repo_root, results)?;
+  artifacts.extend(apply_hash_dispatch_tables(repo_root, results)?);
+  write_artifacts_transactional(&artifacts)?;
 
   Ok(())
 }

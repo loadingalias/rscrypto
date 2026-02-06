@@ -179,6 +179,7 @@ standard | namespace | runson)
 	install_if_missing "cargo-rail" "cargo-rail"
 	install_if_missing "cargo-deny" "cargo-deny"
 	install_cargo_audit # version-checked (requires 0.22+ for CVSS 4.0)
+	install_if_missing "actionlint" "actionlint"
 	install_if_missing "just" "just"
 	;;
 
@@ -189,6 +190,7 @@ ibm | ci-lite)
 	install_if_missing "cargo-nextest" "cargo-nextest"
 	install_if_missing "cargo-deny" "cargo-deny"
 	install_cargo_audit # version-checked (requires 0.22+ for CVSS 4.0)
+	install_if_missing "actionlint" "actionlint"
 	install_if_missing "just" "just"
 	;;
 

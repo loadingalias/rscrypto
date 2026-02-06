@@ -13,6 +13,9 @@ check-all *args="":
 ci-check:
     @scripts/ci/ci-check.sh
 
+ci-infra-check:
+    @scripts/ci/check-infra.sh
+
 test *crates="":
     @scripts/test/test.sh {{crates}}
 

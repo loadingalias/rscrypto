@@ -78,6 +78,70 @@ pub trait DigestMarker: private::Sealed {
   fn digest(&self) -> Self::Output;
 }
 
+#[cfg(feature = "std")]
+#[inline]
+fn read_and_update<R>(inner: &mut R, buf: &mut [u8], mut on_data: impl FnMut(&[u8])) -> std::io::Result<usize>
+where
+  R: std::io::Read,
+{
+  let n = inner.read(buf)?;
+  if let Some(data) = buf.get(..n) {
+    on_data(data);
+  }
+  Ok(n)
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn read_vectored_and_update<R>(
+  inner: &mut R,
+  bufs: &mut [std::io::IoSliceMut<'_>],
+  mut on_data: impl FnMut(&[u8]),
+) -> std::io::Result<usize>
+where
+  R: std::io::Read,
+{
+  let n = inner.read_vectored(bufs)?;
+  let mut remaining = n;
+  for buf in bufs {
+    let to_hash = remaining.min(buf.len());
+    if to_hash == 0 {
+      break;
+    }
+    if let Some(data) = buf.get(..to_hash) {
+      on_data(data);
+    }
+    remaining -= to_hash;
+  }
+  Ok(n)
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn write_and_update<W>(inner: &mut W, buf: &[u8], mut on_data: impl FnMut(&[u8])) -> std::io::Result<usize>
+where
+  W: std::io::Write,
+{
+  on_data(buf);
+  inner.write(buf)
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn write_vectored_and_update<W>(
+  inner: &mut W,
+  bufs: &[std::io::IoSlice<'_>],
+  mut on_data: impl FnMut(&[u8]),
+) -> std::io::Result<usize>
+where
+  W: std::io::Write,
+{
+  for buf in bufs {
+    on_data(buf);
+  }
+  inner.write_vectored(bufs)
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Checksum I/O Adapters
 // ─────────────────────────────────────────────────────────────────────────────
@@ -181,29 +245,12 @@ impl<R, C: crate::Checksum> ChecksumReader<R, C> {
 impl<R: std::io::Read, C: crate::Checksum> std::io::Read for ChecksumReader<R, C> {
   #[inline]
   fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-    let n = self.inner.read(buf)?;
-    if let Some(data) = buf.get(..n) {
-      self.hasher.update(data);
-    }
-    Ok(n)
+    read_and_update(&mut self.inner, buf, |data| self.hasher.update(data))
   }
 
   #[inline]
   fn read_vectored(&mut self, bufs: &mut [std::io::IoSliceMut<'_>]) -> std::io::Result<usize> {
-    let n = self.inner.read_vectored(bufs)?;
-    let mut remaining = n;
-    for buf in bufs {
-      let to_hash = remaining.min(buf.len());
-      if to_hash > 0 {
-        if let Some(data) = buf.get(..to_hash) {
-          self.hasher.update(data);
-        }
-        remaining -= to_hash;
-      } else {
-        break;
-      }
-    }
-    Ok(n)
+    read_vectored_and_update(&mut self.inner, bufs, |data| self.hasher.update(data))
   }
 }
 
@@ -306,8 +353,7 @@ impl<W, C: crate::Checksum> ChecksumWriter<W, C> {
 impl<W: std::io::Write, C: crate::Checksum> std::io::Write for ChecksumWriter<W, C> {
   #[inline]
   fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-    self.hasher.update(buf);
-    self.inner.write(buf)
+    write_and_update(&mut self.inner, buf, |data| self.hasher.update(data))
   }
 
   #[inline]
@@ -317,10 +363,7 @@ impl<W: std::io::Write, C: crate::Checksum> std::io::Write for ChecksumWriter<W,
 
   #[inline]
   fn write_vectored(&mut self, bufs: &[std::io::IoSlice<'_>]) -> std::io::Result<usize> {
-    for buf in bufs {
-      self.hasher.update(buf);
-    }
-    self.inner.write_vectored(bufs)
+    write_vectored_and_update(&mut self.inner, bufs, |data| self.hasher.update(data))
   }
 }
 
@@ -415,29 +458,12 @@ impl<R, D: crate::Digest> DigestReader<R, D> {
 impl<R: std::io::Read, D: crate::Digest> std::io::Read for DigestReader<R, D> {
   #[inline]
   fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-    let n = self.inner.read(buf)?;
-    if let Some(data) = buf.get(..n) {
-      self.hasher.update(data);
-    }
-    Ok(n)
+    read_and_update(&mut self.inner, buf, |data| self.hasher.update(data))
   }
 
   #[inline]
   fn read_vectored(&mut self, bufs: &mut [std::io::IoSliceMut<'_>]) -> std::io::Result<usize> {
-    let n = self.inner.read_vectored(bufs)?;
-    let mut remaining = n;
-    for buf in bufs {
-      let to_hash = remaining.min(buf.len());
-      if to_hash > 0 {
-        if let Some(data) = buf.get(..to_hash) {
-          self.hasher.update(data);
-        }
-        remaining -= to_hash;
-      } else {
-        break;
-      }
-    }
-    Ok(n)
+    read_vectored_and_update(&mut self.inner, bufs, |data| self.hasher.update(data))
   }
 }
 
@@ -530,8 +556,7 @@ impl<W, D: crate::Digest> DigestWriter<W, D> {
 impl<W: std::io::Write, D: crate::Digest> std::io::Write for DigestWriter<W, D> {
   #[inline]
   fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-    self.hasher.update(buf);
-    self.inner.write(buf)
+    write_and_update(&mut self.inner, buf, |data| self.hasher.update(data))
   }
 
   #[inline]
@@ -541,9 +566,6 @@ impl<W: std::io::Write, D: crate::Digest> std::io::Write for DigestWriter<W, D> 
 
   #[inline]
   fn write_vectored(&mut self, bufs: &[std::io::IoSlice<'_>]) -> std::io::Result<usize> {
-    for buf in bufs {
-      self.hasher.update(buf);
-    }
-    self.inner.write_vectored(bufs)
+    write_vectored_and_update(&mut self.inner, bufs, |data| self.hasher.update(data))
   }
 }

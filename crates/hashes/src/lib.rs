@@ -13,6 +13,9 @@
 #![cfg_attr(not(test), deny(clippy::indexing_slicing))]
 #![no_std]
 
+#[cfg(feature = "alloc")]
+extern crate alloc;
+
 #[cfg(feature = "std")]
 extern crate std;
 
