@@ -61,7 +61,8 @@ jobs:
       timeout_minutes: 35
       setup_kind: default
       cache_key: full-main-${{ matrix.target.name }}
-      tools_mode: standard
+      tools_mode: ${{ contains(matrix.target.name, 'windows-msvc') && 'none' || 'standard' }}
+      toolchain_components: ${{ contains(matrix.target.name, 'windows-msvc') && '' || 'clippy, rustfmt, rust-src' }}
       run_script: |
         case "${{ matrix.target.name }}" in
           *windows-msvc)
