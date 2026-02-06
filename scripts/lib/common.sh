@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Shared utilities for check scripts
+# Shared utilities for repository scripts.
 
 # Colors (disabled if not a terminal)
 if [[ -t 1 ]]; then
@@ -12,27 +12,22 @@ else
   RED='' GREEN='' YELLOW='' DIM='' RESET=''
 fi
 
-# Print step start
 step() {
   printf "  → %s..." "$1"
 }
 
-# Print success (completes the line)
 ok() {
   printf " ${GREEN}✓${RESET}\n"
 }
 
-# Print failure (completes the line)
 fail() {
   printf " ${RED}✗${RESET}\n"
 }
 
-# Print skip
 skip() {
   echo "  ${YELLOW}○${RESET} $1 ${DIM}($2)${RESET}"
 }
 
-# Print error details (indented)
 show_error() {
   local log_file=$1
   echo ""
@@ -43,7 +38,7 @@ show_error() {
   echo ""
 }
 
-# Parse args into CRATE_FLAGS and SCOPE_DESC
+# Parse args into CRATE_FLAGS and SCOPE_DESC.
 # Usage: get_crate_flags "$@"
 # Sets: CRATE_FLAGS, SCOPE_DESC
 get_crate_flags() {
@@ -95,17 +90,15 @@ get_crate_flags() {
   fi
 }
 
-# Disable sccache if configured but unusable
 maybe_disable_sccache() {
   if [[ -n "${RUSTC_WRAPPER:-}" && "${RUSTC_WRAPPER##*/}" == "sccache" ]]; then
     if ! "$RUSTC_WRAPPER" rustc -vV >/dev/null 2>&1; then
-      echo "⚠️  WARNING: sccache is configured but not usable; disabling RUSTC_WRAPPER for this run."
+      echo "WARNING: sccache is configured but not usable; disabling RUSTC_WRAPPER for this run."
       export RUSTC_WRAPPER=
     fi
   fi
 }
 
-# Ensure a rust target is installed
 ensure_target() {
   local target=$1
   if ! rustup target list --installed 2>/dev/null | grep -q "^${target}$"; then

@@ -5,10 +5,10 @@ set -euo pipefail
 # Usage: check-win.sh [--all] [crate1 crate2 ...]
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=lib/common.sh
-source "$SCRIPT_DIR/lib/common.sh"
-# shellcheck source=lib/targets.sh
-source "$SCRIPT_DIR/lib/targets.sh"
+# shellcheck source=../lib/common.sh
+source "$SCRIPT_DIR/../lib/common.sh"
+# shellcheck source=../lib/targets.sh
+source "$SCRIPT_DIR/../lib/targets.sh"
 
 # Check for cargo-xwin
 if ! cargo xwin --version >/dev/null 2>&1; then

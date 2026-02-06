@@ -23,6 +23,27 @@
 
 use crate::{Caps, Tune, detect};
 
+/// Shared decision graph for choosing the dispatch path.
+///
+/// Keeping this in one place guarantees `dispatch_auto()` and
+/// `has_static_features()` always agree.
+#[inline(always)]
+#[must_use]
+#[allow(unreachable_code)] // cfg branches may return early on some targets.
+const fn use_static_dispatch_path() -> bool {
+  #[cfg(all(target_arch = "x86_64", target_feature = "avx512f", target_feature = "vpclmulqdq"))]
+  {
+    return true;
+  }
+
+  #[cfg(all(target_arch = "aarch64", target_feature = "aes", target_feature = "sha3"))]
+  {
+    return true;
+  }
+
+  false
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Dispatch Functions
 // ─────────────────────────────────────────────────────────────────────────────
@@ -114,24 +135,9 @@ pub fn dispatch_auto<F, R>(f: F) -> R
 where
   F: FnOnce(Caps, Tune) -> R,
 {
-  // x86_64 with AVX-512 crypto features: use static dispatch
-  #[cfg(all(target_arch = "x86_64", target_feature = "avx512f", target_feature = "vpclmulqdq"))]
-  {
-    return dispatch_static(f);
-  }
-
-  // aarch64 with PMULL+EOR3 (SHA3 implies EOR3): use static dispatch
-  #[cfg(all(target_arch = "aarch64", target_feature = "aes", target_feature = "sha3"))]
-  {
+  if use_static_dispatch_path() {
     dispatch_static(f)
-  }
-
-  // Fallback: use runtime detection
-  #[cfg(not(any(
-    all(target_arch = "x86_64", target_feature = "avx512f", target_feature = "vpclmulqdq"),
-    all(target_arch = "aarch64", target_feature = "aes", target_feature = "sha3")
-  )))]
-  {
+  } else {
     dispatch(f)
   }
 }
@@ -146,23 +152,7 @@ where
 #[inline(always)]
 #[must_use]
 pub const fn has_static_features() -> bool {
-  #[cfg(all(target_arch = "x86_64", target_feature = "avx512f", target_feature = "vpclmulqdq"))]
-  {
-    return true;
-  }
-
-  #[cfg(all(target_arch = "aarch64", target_feature = "aes", target_feature = "sha3"))]
-  {
-    true
-  }
-
-  #[cfg(not(any(
-    all(target_arch = "x86_64", target_feature = "avx512f", target_feature = "vpclmulqdq"),
-    all(target_arch = "aarch64", target_feature = "aes", target_feature = "sha3")
-  )))]
-  {
-    false
-  }
+  use_static_dispatch_path()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

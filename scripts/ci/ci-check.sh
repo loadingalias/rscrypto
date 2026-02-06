@@ -17,14 +17,9 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 # Prefer cargo-installed tools over any preinstalled runner tools.
 export PATH="$HOME/.cargo/bin:$PATH"
 
-maybe_disable_sccache() {
-  if [[ -n "${RUSTC_WRAPPER:-}" && "${RUSTC_WRAPPER##*/}" == "sccache" ]]; then
-    if ! "$RUSTC_WRAPPER" rustc -vV >/dev/null 2>&1; then
-      echo "⚠️  WARNING: sccache is configured but not usable; disabling RUSTC_WRAPPER for this run."
-      export RUSTC_WRAPPER=
-    fi
-  fi
-}
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../lib/common.sh
+source "$SCRIPT_DIR/../lib/common.sh"
 
 maybe_disable_sccache
 

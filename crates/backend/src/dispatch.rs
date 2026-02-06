@@ -4,7 +4,8 @@
 //!
 //! - [`Candidate`] / [`TunedCandidate`]: Kernel with capability requirements
 //! - [`Selected`]: Result of kernel selection
-//! - [`select`] / [`select_tuned`]: Choose best kernel from candidates
+//! - [`try_select`] / [`try_select_tuned`]: Typed non-panicking selection
+//! - [`select_or`] / [`select_tuned_or`]: Total selection with explicit fallback
 //! - [`candidates!`] / [`tuned_candidates!`]: Macros for defining candidate lists
 //! - `define_dispatcher!`: Macro for generating cached dispatcher types
 //!
@@ -196,20 +197,45 @@ impl<F> Selected<F> {
   }
 }
 
+/// Typed selection failure from candidate lists.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SelectionError {
+  /// Candidate list was empty.
+  EmptyCandidateList,
+  /// No candidate requirements matched the detected capabilities.
+  NoMatchingCandidate,
+}
+
 /// Select the best kernel from a candidate list.
 ///
 /// Returns the first candidate whose `requires` is satisfied by `caps`.
-/// Panics if no candidate matches (the last candidate should always have
-/// `requires = Caps::NONE` as a fallback).
+///
+/// This API is non-panicking and returns a typed error if selection fails.
 #[inline(always)]
-#[must_use]
-pub fn select<F: Copy>(caps: Caps, candidates: &[Candidate<F>]) -> Selected<F> {
+pub fn try_select<F: Copy>(caps: Caps, candidates: &[Candidate<F>]) -> Result<Selected<F>, SelectionError> {
+  if candidates.is_empty() {
+    return Err(SelectionError::EmptyCandidateList);
+  }
+
   for candidate in candidates {
     if caps.has(candidate.requires) {
-      return Selected::new(candidate.name, candidate.func);
+      return Ok(Selected::new(candidate.name, candidate.func));
     }
   }
-  panic!("No matching kernel found! Candidate list must include a portable fallback.");
+  Err(SelectionError::NoMatchingCandidate)
+}
+
+/// Select the best kernel from a candidate list with a total fallback guarantee.
+///
+/// Returns the first matching candidate; if none match, returns `fallback`.
+#[inline(always)]
+#[must_use]
+pub fn select_or<F: Copy>(caps: Caps, candidates: &[Candidate<F>], fallback: Candidate<F>) -> Selected<F> {
+  if let Ok(selected) = try_select(caps, candidates) {
+    selected
+  } else {
+    Selected::new(fallback.name, fallback.func)
+  }
 }
 
 /// Predicate used for tuned candidates without an explicit `where` clause.
@@ -224,17 +250,41 @@ pub fn always_tuned(_: &Tune) -> bool {
 /// Returns the first candidate whose `requires` is satisfied by `caps` and whose
 /// tuning predicate returns `true` for `tune`.
 ///
-/// Panics if no candidate matches (the last candidate should always have
-/// `requires = Caps::NONE` as a fallback with an always-true predicate).
+/// This API is non-panicking and returns a typed error if selection fails.
 #[inline(always)]
-#[must_use]
-pub fn select_tuned<F: Copy>(caps: Caps, tune: &Tune, candidates: &[TunedCandidate<F>]) -> Selected<F> {
+pub fn try_select_tuned<F: Copy>(
+  caps: Caps,
+  tune: &Tune,
+  candidates: &[TunedCandidate<F>],
+) -> Result<Selected<F>, SelectionError> {
+  if candidates.is_empty() {
+    return Err(SelectionError::EmptyCandidateList);
+  }
+
   for candidate in candidates {
     if caps.has(candidate.requires) && (candidate.predicate)(tune) {
-      return Selected::new(candidate.name, candidate.func);
+      return Ok(Selected::new(candidate.name, candidate.func));
     }
   }
-  panic!("No matching kernel found! Candidate list must include a portable fallback.");
+  Err(SelectionError::NoMatchingCandidate)
+}
+
+/// Select the best tuned candidate with a total fallback guarantee.
+///
+/// Returns the first matching candidate; if none match, returns `fallback`.
+#[inline(always)]
+#[must_use]
+pub fn select_tuned_or<F: Copy>(
+  caps: Caps,
+  tune: &Tune,
+  candidates: &[TunedCandidate<F>],
+  fallback: TunedCandidate<F>,
+) -> Selected<F> {
+  if let Ok(selected) = try_select_tuned(caps, tune, candidates) {
+    selected
+  } else {
+    Selected::new(fallback.name, fallback.func)
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -431,7 +481,7 @@ mod tests {
       Candidate::new("fast", Caps::bit(0), fast_crc32),
       Candidate::new("portable", Caps::NONE, portable_crc32),
     ];
-    let selected = select(caps, candidates);
+    let selected = try_select(caps, candidates).expect("portable fallback should always match");
     assert_eq!(selected.name, "portable");
   }
 
@@ -442,7 +492,7 @@ mod tests {
       Candidate::new("fast", Caps::bit(0), fast_crc32),
       Candidate::new("portable", Caps::NONE, portable_crc32),
     ];
-    let selected = select(caps, candidates);
+    let selected = try_select(caps, candidates).expect("fast candidate should match");
     assert_eq!(selected.name, "fast");
   }
 
@@ -454,16 +504,25 @@ mod tests {
       Candidate::new("second", Caps::bit(1), fastest_crc32),
       Candidate::new("portable", Caps::NONE, portable_crc32),
     ];
-    let selected = select(caps, candidates);
+    let selected = try_select(caps, candidates).expect("first matching candidate should be selected");
     assert_eq!(selected.name, "first");
   }
 
   #[test]
-  #[should_panic(expected = "No matching kernel found")]
-  fn test_select_no_fallback_panics() {
+  fn test_select_no_fallback_returns_error() {
     let caps = Caps::NONE;
     let candidates: &[Candidate<Crc32Fn>] = &[Candidate::new("needs_bit0", Caps::bit(0), fast_crc32)];
-    let _ = select(caps, candidates);
+    let err = try_select(caps, candidates).expect_err("selection should fail without fallback");
+    assert_eq!(err, SelectionError::NoMatchingCandidate);
+  }
+
+  #[test]
+  fn test_select_or_total_fallback() {
+    let caps = Caps::NONE;
+    let candidates: &[Candidate<Crc32Fn>] = &[Candidate::new("needs_bit0", Caps::bit(0), fast_crc32)];
+    let fallback: Candidate<Crc32Fn> = Candidate::new("portable", Caps::NONE, portable_crc32 as Crc32Fn);
+    let selected = select_or(caps, candidates, fallback);
+    assert_eq!(selected.name, "portable");
   }
 
   fn test_selector() -> Selected<Crc32Fn> {
@@ -627,18 +686,19 @@ mod tests {
       assert_eq!(list.len(), 1);
     }
 
-    // ─── Integration with select() ───
+    // ─── Integration with try_select() ───
 
     #[test]
     fn test_candidates_macro_with_select_fallback() {
       let caps = Caps::NONE;
-      let selected: Selected<Crc32Fn> = select(
+      let selected: Selected<Crc32Fn> = try_select(
         caps,
         candidates![
           "fast" => Caps::bit(0) => fast_crc32,
           "portable" => Caps::NONE => portable_crc32,
         ],
-      );
+      )
+      .expect("portable fallback should match");
 
       assert_eq!(selected.name, "portable");
       assert_eq!((selected.func)(0, &[]), 0xDEADBEEF);
@@ -647,13 +707,14 @@ mod tests {
     #[test]
     fn test_candidates_macro_with_select_match() {
       let caps = Caps::bit(0);
-      let selected: Selected<Crc32Fn> = select(
+      let selected: Selected<Crc32Fn> = try_select(
         caps,
         candidates![
           "fast" => Caps::bit(0) => fast_crc32,
           "portable" => Caps::NONE => portable_crc32,
         ],
-      );
+      )
+      .expect("fast candidate should match");
 
       assert_eq!(selected.name, "fast");
       assert_eq!((selected.func)(0, &[]), 0xCAFEBABE);
@@ -663,14 +724,15 @@ mod tests {
     fn test_candidates_macro_with_select_priority() {
       // When multiple candidates match, first one wins
       let caps = Caps::bit(0) | Caps::bit(1);
-      let selected: Selected<Crc32Fn> = select(
+      let selected: Selected<Crc32Fn> = try_select(
         caps,
         candidates![
           "first" => Caps::bit(0) => fast_crc32,
           "second" => Caps::bit(1) => fastest_crc32,
           "portable" => Caps::NONE => portable_crc32,
         ],
-      );
+      )
+      .expect("first matching candidate should be selected");
 
       assert_eq!(selected.name, "first");
     }
@@ -752,12 +814,13 @@ mod tests {
     #[test]
     fn test_candidates_macro_in_static_context() {
       fn make_selector() -> Selected<Crc32Fn> {
-        select(
+        select_or(
           Caps::NONE,
           candidates![
             "fast" => Caps::bit(0) => fast_crc32,
             "portable" => Caps::NONE => portable_crc32,
           ],
+          Candidate::new("portable", Caps::NONE, portable_crc32),
         )
       }
 
