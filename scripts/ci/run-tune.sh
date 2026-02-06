@@ -13,6 +13,52 @@ SELF_CHECK_INPUT="${TUNE_SELF_CHECK:-false}"
 ENFORCE_TARGETS_INPUT="${TUNE_ENFORCE_TARGETS:-false}"
 QUICK_INPUT="${TUNE_QUICK:-true}"
 
+# `--apply` for blake3 requires stream-profile results.
+# If caller asks for `--only blake3`, auto-include the required stream variants
+# so apply can succeed without forcing users to remember the full list.
+if [[ "$APPLY_INPUT" == "true" && -n "$ONLY_INPUT" ]]; then
+  declare -a only_items=()
+  IFS=',' read -ra raw_only_items <<< "$ONLY_INPUT"
+  for raw in "${raw_only_items[@]}"; do
+    item="$(echo "$raw" | xargs)"
+    [[ -n "$item" ]] && only_items+=("$item")
+  done
+
+  has_blake3=false
+  has_stream64=false
+  has_stream4k=false
+  for item in "${only_items[@]}"; do
+    case "$item" in
+      blake3) has_blake3=true ;;
+      blake3-stream64|blake3-stream64-keyed|blake3-stream64-derive) has_stream64=true ;;
+      blake3-stream4k|blake3-stream4k-keyed|blake3-stream4k-derive) has_stream4k=true ;;
+    esac
+  done
+
+  if [[ "$has_blake3" == "true" && ( "$has_stream64" == "false" || "$has_stream4k" == "false" ) ]]; then
+    echo "note: --apply + --only=blake3 requires stream tuning results; adding blake3 stream variants automatically"
+    only_items+=(
+      "blake3-stream64"
+      "blake3-stream64-keyed"
+      "blake3-stream64-derive"
+      "blake3-stream4k"
+      "blake3-stream4k-keyed"
+      "blake3-stream4k-derive"
+    )
+
+    # De-duplicate while preserving stable order.
+    declare -A seen=()
+    declare -a deduped=()
+    for item in "${only_items[@]}"; do
+      if [[ -z "${seen[$item]+x}" ]]; then
+        seen["$item"]=1
+        deduped+=("$item")
+      fi
+    done
+    ONLY_INPUT="$(IFS=','; echo "${deduped[*]}")"
+  fi
+fi
+
 ARGS=()
 if [[ "$QUICK_INPUT" == "true" ]]; then
   ARGS+=(--quick)
