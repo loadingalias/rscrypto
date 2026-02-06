@@ -119,8 +119,7 @@ struct CpuidBatch {
 /// Without this check, using AVX/AVX-512 instructions could cause SIGILL.
 ///
 /// # Safety
-/// Uses CPUID and XGETBV instructions which require unsafe, but are always safe
-/// to call on x86_64 when OSXSAVE is set.
+/// Uses XGETBV, which requires `unsafe` and is only called when OSXSAVE is set.
 #[cfg(all(target_arch = "x86_64", feature = "std"))]
 #[allow(unsafe_code)]
 fn cpuid_batch_x86_64() -> CpuidBatch {
@@ -137,14 +136,12 @@ fn cpuid_batch_x86_64() -> CpuidBatch {
   let mut caps = Caps::NONE;
 
   // CPUID leaf 0: vendor string
-  // SAFETY: CPUID is always safe on x86_64
-  let cpuid0 = unsafe { __cpuid(0) };
+  let cpuid0 = __cpuid(0);
   // "AuthenticAMD" has ebx = 0x68747541 ("Auth")
   let is_amd = cpuid0.ebx == 0x6874_7541;
 
   // CPUID leaf 1: processor info and feature bits
-  // SAFETY: CPUID is always safe on x86_64
-  let cpuid1 = unsafe { __cpuid(1) };
+  let cpuid1 = __cpuid(1);
 
   // Extract extended family (bits 27:20) + base family (bits 11:8)
   let base_family = (cpuid1.eax >> 8) & 0xF;
@@ -227,8 +224,7 @@ fn cpuid_batch_x86_64() -> CpuidBatch {
   }
 
   // Extended feature flags (leaf 7, subleaf 0)
-  // SAFETY: CPUID is always safe on x86_64
-  let cpuid7 = unsafe { __cpuid_count(7, 0) };
+  let cpuid7 = __cpuid_count(7, 0);
 
   // ─────────────────────────────────────────────────────────────────────────────
   // EBX features (leaf 7) - non-AVX features (no OS gating needed)
@@ -322,8 +318,7 @@ fn cpuid_batch_x86_64() -> CpuidBatch {
   }
 
   // Extended feature flags (leaf 7, subleaf 1)
-  // SAFETY: CPUID is always safe on x86_64
-  let cpuid7_1 = unsafe { __cpuid_count(7, 1) };
+  let cpuid7_1 = __cpuid_count(7, 1);
 
   // ─────────────────────────────────────────────────────────────────────────────
   // EAX features (leaf 7, subleaf 1)
@@ -356,8 +351,7 @@ fn cpuid_batch_x86_64() -> CpuidBatch {
   // AVX10 detection via CPUID leaf 0x24 (requires OS AVX-512 support)
   // AVX10 is Intel's unified vector ISA that subsumes AVX-512
   if os_avx512 && cpuid0.eax >= 0x24 {
-    // SAFETY: CPUID is always safe on x86_64
-    let cpuid24 = unsafe { __cpuid_count(0x24, 0) };
+    let cpuid24 = __cpuid_count(0x24, 0);
     let avx10_version = cpuid24.ebx & 0xFF;
     if avx10_version >= 1 {
       caps |= x86::AVX10_1;
@@ -370,8 +364,7 @@ fn cpuid_batch_x86_64() -> CpuidBatch {
   // APX detection via CPUID leaf 0x29
   // APX doubles GPRs from 16 to 32 (R16-R31) on Granite Rapids+
   if cpuid0.eax >= 0x29 {
-    // SAFETY: CPUID is always safe on x86_64
-    let cpuid29 = unsafe { __cpuid_count(0x29, 0) };
+    let cpuid29 = __cpuid_count(0x29, 0);
     // APX_NCI_NDD_NF is bit 0 of EBX
     if cpuid29.ebx & 1 != 0 {
       caps |= x86::APX;
@@ -379,8 +372,7 @@ fn cpuid_batch_x86_64() -> CpuidBatch {
   }
 
   // Extended CPUID (leaf 0x80000001) for AMD-specific features
-  // SAFETY: CPUID is always safe on x86_64
-  let cpuid_ext = unsafe { __cpuid(0x8000_0001) };
+  let cpuid_ext = __cpuid(0x8000_0001);
   if cpuid_ext.ecx & (1 << 5) != 0 {
     caps |= x86::LZCNT;
   }
@@ -566,4 +558,3 @@ fn select_x86_tune(caps: Caps, is_amd: bool, family: u32, model: u32) -> Tune {
 
   Tune::PORTABLE
 }
-

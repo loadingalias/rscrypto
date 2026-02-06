@@ -71,6 +71,6 @@ runs:
         # Cache even on test failures (build artifacts still useful)
         cache-on-failure: true
 
-        # Only save from main branch (prevents cache thrashing)
-        # Feature branches READ from main's cache but don't WRITE new ones
-        save-if: ${{ github.ref == 'refs/heads/main' }}
+        # Save from main, and also from manual IBM workflow_dispatch runs
+        # to speed up repeated debug/bring-up on IBM runners.
+        save-if: ${{ github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && github.workflow == 'IBM') }}
