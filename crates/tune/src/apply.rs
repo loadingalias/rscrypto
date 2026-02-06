@@ -1502,15 +1502,39 @@ fn blake3_family_spec(tune_kind: TuneKind) -> Blake3FamilySpec {
       profile_ident: "PROFILE_AARCH64_SERVER_NEON",
       cfg_expr: Some("target_arch = \"aarch64\""),
     },
-    TuneKind::Z13
-    | TuneKind::Z14
-    | TuneKind::Z15
-    | TuneKind::Power7
-    | TuneKind::Power8
-    | TuneKind::Power9
-    | TuneKind::Power10 => Blake3FamilySpec {
-      marker: "// Family Profile: SCALAR_LEGACY",
-      profile_ident: "PROFILE_SCALAR_LEGACY",
+    TuneKind::Z13 => Blake3FamilySpec {
+      marker: "// Family Profile: Z13",
+      profile_ident: "PROFILE_Z13",
+      cfg_expr: None,
+    },
+    TuneKind::Z14 => Blake3FamilySpec {
+      marker: "// Family Profile: Z14",
+      profile_ident: "PROFILE_Z14",
+      cfg_expr: None,
+    },
+    TuneKind::Z15 => Blake3FamilySpec {
+      marker: "// Family Profile: Z15",
+      profile_ident: "PROFILE_Z15",
+      cfg_expr: None,
+    },
+    TuneKind::Power7 => Blake3FamilySpec {
+      marker: "// Family Profile: POWER7",
+      profile_ident: "PROFILE_POWER7",
+      cfg_expr: None,
+    },
+    TuneKind::Power8 => Blake3FamilySpec {
+      marker: "// Family Profile: POWER8",
+      profile_ident: "PROFILE_POWER8",
+      cfg_expr: None,
+    },
+    TuneKind::Power9 => Blake3FamilySpec {
+      marker: "// Family Profile: POWER9",
+      profile_ident: "PROFILE_POWER9",
+      cfg_expr: None,
+    },
+    TuneKind::Power10 => Blake3FamilySpec {
+      marker: "// Family Profile: POWER10",
+      profile_ident: "PROFILE_POWER10",
       cfg_expr: None,
     },
   }

@@ -68,10 +68,6 @@ fn can_use_asm_last_block_out(ptr: *const u8) -> bool {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-#[repr(align(8))]
-struct AlignedAsmInput<const N: usize>([u8; N]);
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[inline(always)]
 unsafe fn chunk_compress_blocks_asm(
   blocks: *const u8,
@@ -1139,9 +1135,8 @@ pub unsafe fn chunk_compress_blocks_neon(
   // asm fast path for tight per-block compression loops.
   //
   // The asm kernel uses 64-bit loads, so direct calls require 8-byte aligned
-  // inputs. When `blocks` is unaligned, block-wise peeling cannot fix it,
-  // because BLOCK_LEN (64) preserves address modulo 8. Stage through an
-  // aligned scratch buffer so we can still run asm for the bulk loop.
+  // inputs. When `blocks` is unaligned, run the direct NEON loop below instead
+  // of staging through a copy buffer.
   #[cfg(any(target_os = "linux", target_os = "macos"))]
   {
     let num_blocks = blocks.len() / BLOCK_LEN;
@@ -1156,38 +1151,6 @@ pub unsafe fn chunk_compress_blocks_neon(
           blocks_compressed as *mut u8,
           num_blocks,
         );
-      }
-      return;
-    }
-
-    if num_blocks != 0 {
-      const ASM_STAGE_BLOCKS: usize = 8;
-      const ASM_STAGE_BYTES: usize = ASM_STAGE_BLOCKS * BLOCK_LEN;
-      let mut staged = AlignedAsmInput::<ASM_STAGE_BYTES>([0u8; ASM_STAGE_BYTES]);
-      debug_assert!(can_use_asm_input(staged.0.as_ptr()));
-
-      let mut done = 0usize;
-      while done < num_blocks {
-        let stage_blocks = core::cmp::min(ASM_STAGE_BLOCKS, num_blocks - done);
-        let stage_bytes = stage_blocks * BLOCK_LEN;
-
-        // SAFETY: source and destination are valid for `stage_bytes`.
-        unsafe {
-          core::ptr::copy_nonoverlapping(
-            blocks.as_ptr().add(done * BLOCK_LEN),
-            staged.0.as_mut_ptr(),
-            stage_bytes,
-          );
-          chunk_compress_blocks_asm(
-            staged.0.as_ptr(),
-            chaining_value.as_mut_ptr(),
-            chunk_counter,
-            flags,
-            blocks_compressed as *mut u8,
-            stage_blocks,
-          );
-        }
-        done += stage_blocks;
       }
       return;
     }
