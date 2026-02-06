@@ -160,13 +160,41 @@ jobs:
             fi
           done
 
+  windows:
+    name: Windows Full (${{ matrix.target.name }})
+    runs-on: ${{ matrix.target.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - name: x86_64-pc-windows-msvc
+            runner: windows-latest
+          - name: aarch64-pc-windows-msvc
+            runner: windows-11-arm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          cache-key: weekly-windows-${{ matrix.target.name }}
+          tools-mode: standard
+
+      - name: Full Windows CI
+        run: |
+          just ci-check
+          just build
+          just test --all
+
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   # Summary
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   complete:
     name: Weekly Complete
-    needs: [miri, proptests, fuzzing, wasm64]
+    needs: [miri, proptests, fuzzing, wasm64, windows]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -177,11 +205,13 @@ jobs:
           echo "  Property Tests: ${{ needs.proptests.result }}"
           echo "  Fuzzing: ${{ needs.fuzzing.result }}"
           echo "  WASM64 (experimental): ${{ needs.wasm64.result }}"
+          echo "  Windows: ${{ needs.windows.result }}"
 
           # Core jobs must pass
           if [ "${{ needs.miri.result }}" == "failure" ] || \
              [ "${{ needs.proptests.result }}" == "failure" ] || \
-             [ "${{ needs.fuzzing.result }}" == "failure" ]; then
+             [ "${{ needs.fuzzing.result }}" == "failure" ] || \
+             [ "${{ needs.windows.result }}" == "failure" ]; then
             echo ""
             echo "One or more core jobs failed"
             exit 1
