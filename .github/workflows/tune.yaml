@@ -3,11 +3,58 @@ name: Tune
 on:
   workflow_dispatch:
     inputs:
-      targets:
-        description: "Targets to tune (comma-separated: intel,intel-icl,amd-zen4,amd-zen5,graviton,ibm-s390x,ibm-power9,ibm-power10 or all)"
+      # ─────────────────────────────────────────────────────────────────────────
+      # Intel x86-64
+      # ─────────────────────────────────────────────────────────────────────────
+      run_intel:
+        description: "Run tune on Intel (Granite/Emerald/Sapphire Rapids)"
         required: false
-        type: string
-        default: "intel,amd-zen4,graviton"
+        type: boolean
+        default: true
+      run_intel_icl:
+        description: "Run tune on Intel Ice Lake (c6i/m6i)"
+        required: false
+        type: boolean
+        default: false
+      # ─────────────────────────────────────────────────────────────────────────
+      # AMD x86-64
+      # ─────────────────────────────────────────────────────────────────────────
+      run_amd_zen4:
+        description: "Run tune on AMD Zen4 (Namespace)"
+        required: false
+        type: boolean
+        default: true
+      run_amd_zen5:
+        description: "Run tune on AMD Zen5 Turin (RunsOn)"
+        required: false
+        type: boolean
+        default: false
+      # ─────────────────────────────────────────────────────────────────────────
+      # ARM64 Graviton
+      # ─────────────────────────────────────────────────────────────────────────
+      run_graviton:
+        description: "Run tune on Graviton (Neoverse)"
+        required: false
+        type: boolean
+        default: true
+      # ─────────────────────────────────────────────────────────────────────────
+      # IBM Z / POWER
+      # ─────────────────────────────────────────────────────────────────────────
+      run_ibm_s390x:
+        description: "Run tune on IBM Z (s390x)"
+        required: false
+        type: boolean
+        default: false
+      run_ibm_power9:
+        description: "Run tune on IBM POWER9 (ppc64le)"
+        required: false
+        type: boolean
+        default: false
+      run_ibm_power10:
+        description: "Run tune on IBM POWER10 (ppc64le)"
+        required: false
+        type: boolean
+        default: false
       crates:
         description: "Tune crates/surfaces (comma-separated: checksum,hashes,hashes-bench)"
         required: false
@@ -62,8 +109,14 @@ jobs:
   tune:
     name: Tune (${{ matrix.target }})
     if: |
-      contains(format(',{0},', replace(github.event.inputs.targets, ' ', '')), ',all,') ||
-      contains(format(',{0},', replace(github.event.inputs.targets, ' ', '')), format(',{0},', matrix.target))
+      (matrix.target == 'intel' && github.event.inputs.run_intel == 'true') ||
+      (matrix.target == 'intel-icl' && github.event.inputs.run_intel_icl == 'true') ||
+      (matrix.target == 'amd-zen4' && github.event.inputs.run_amd_zen4 == 'true') ||
+      (matrix.target == 'amd-zen5' && github.event.inputs.run_amd_zen5 == 'true') ||
+      (matrix.target == 'graviton' && github.event.inputs.run_graviton == 'true') ||
+      (matrix.target == 'ibm-s390x' && github.event.inputs.run_ibm_s390x == 'true') ||
+      (matrix.target == 'ibm-power9' && github.event.inputs.run_ibm_power9 == 'true') ||
+      (matrix.target == 'ibm-power10' && github.event.inputs.run_ibm_power10 == 'true')
     strategy:
       fail-fast: false
       matrix:
