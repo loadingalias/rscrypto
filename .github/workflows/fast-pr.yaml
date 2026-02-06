@@ -1,0 +1,87 @@
+name: fast-pr
+
+on:
+  pull_request:
+
+concurrency:
+  group: fast-pr-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUST_BACKTRACE: 1
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+permissions:
+  contents: read
+
+jobs:
+  lane-contract:
+    name: Lane Contract (fast-pr)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assert lane
+        run: |
+          test "${{ github.event_name }}" = "pull_request"
+          echo "lane=fast-pr"
+
+  ci:
+    name: CI (fast)
+    needs: lane-contract
+    uses: ./.github/workflows/_rust-job.yaml
+    with:
+      runner: ubuntu-latest
+      timeout_minutes: 25
+      setup_kind: default
+      cache_key: fast-pr-linux
+      tools_mode: standard
+      run_script: |
+        just ci-check
+        just build
+        just test
+
+  no-std:
+    name: no_std smoke
+    needs: lane-contract
+    uses: ./.github/workflows/_rust-job.yaml
+    with:
+      runner: ubuntu-latest
+      timeout_minutes: 10
+      setup_kind: default
+      cache_key: fast-pr-no-std
+      tools_mode: minimal
+      run_script: |
+        rustup target add thumbv6m-none-eabi
+        cargo check -p platform -p traits -p backend --target thumbv6m-none-eabi --no-default-features --lib
+
+  wasm:
+    name: wasm smoke
+    needs: lane-contract
+    uses: ./.github/workflows/_rust-job.yaml
+    with:
+      runner: ubuntu-latest
+      timeout_minutes: 10
+      setup_kind: default
+      cache_key: fast-pr-wasm
+      tools_mode: minimal
+      run_script: |
+        rustup target add wasm32-unknown-unknown
+        cargo check -p platform -p traits -p backend --target wasm32-unknown-unknown --no-default-features --features alloc --lib
+
+  complete:
+    name: Complete (fast-pr)
+    needs: [ci, no-std, wasm]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assert required lanes
+        run: |
+          if [ "${{ needs.ci.result }}" != "success" ]; then
+            exit 1
+          fi
+          if [ "${{ needs.no-std.result }}" != "success" ]; then
+            exit 1
+          fi
+          if [ "${{ needs.wasm.result }}" != "success" ]; then
+            exit 1
+          fi

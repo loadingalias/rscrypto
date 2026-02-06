@@ -1,618 +1,144 @@
-name: Commit
+name: full-main
 
 on:
   push:
     branches:
-      - "**"
-
-  # Allow manual trigger
+      - main
   workflow_dispatch:
-    inputs:
-      run_ibm_s390x:
-        description: "Run IBM Z (s390x) CI (ActionsPZ)"
-        required: false
-        type: boolean
-        default: false
-      run_ibm_power9:
-        description: "Run IBM POWER9 (ppc64le) CI (ActionsPZ)"
-        required: false
-        type: boolean
-        default: false
-      run_ibm_power10:
-        description: "Run IBM POWER10 (ppc64le) CI (ActionsPZ)"
-        required: false
-        type: boolean
-        default: false
 
-# Cancel in-progress runs for the same branch
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: full-main-${{ github.ref }}
   cancel-in-progress: true
 
 env:
   RUST_BACKTRACE: 1
   CARGO_TERM_COLOR: always
-  RSCRYPTO_TEST_MODE: commit
   CARGO_INCREMENTAL: 0
 
-# Lock down permissions to read-only by default
 permissions:
-  contents: read  # Required for actions/checkout
+  contents: read
 
 jobs:
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # Change Detection (cargo-rail)
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  detect:
-    name: Detect Changes
+  lane-contract:
+    name: Lane Contract (full-main)
     runs-on: ubuntu-latest
-    outputs:
-      count: ${{ steps.rail.outputs.count }}
-      docs-only: ${{ steps.rail.outputs.docs-only }}
-      rebuild-all: ${{ steps.rail.outputs.rebuild-all }}
-      cargo-args: ${{ steps.rail.outputs.cargo-args }}
-      matrix: ${{ steps.rail.outputs.matrix }}
-      base-ref: ${{ steps.rail.outputs.base-ref }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
-        with:
-          fetch-depth: 0  # Required for change detection
+      - name: Assert lane
+        run: |
+          test "${{ github.event_name }}" = "push" -o "${{ github.event_name }}" = "workflow_dispatch"
+          echo "lane=full-main"
 
-      - name: Detect Changes
-        id: rail
-        uses: loadingalias/cargo-rail-action@6c5c295be5d51edbf8f88bfd9540acd460027f4a  # v1.0.3
-        with:
-          since: ${{ github.event.before }}
-
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # Core Platform Testing (GitHub Free Runners)
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # Full CI on all platforms: quality checks, build, and test
-  # Uses GitHub free runners wherever possible
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   ci:
     name: CI (${{ matrix.target.name }})
-    needs: [detect]
-    if: |
-      github.event_name == 'workflow_dispatch' ||
-      needs.detect.outputs.rebuild-all == 'true' ||
-      (needs.detect.outputs.count != '0' &&
-       needs.detect.outputs.docs-only != 'true')
-    runs-on: ${{ matrix.target.runner }}
-    env:
-      # Pass base-ref to scripts for consistent change detection
-      RAIL_SINCE: ${{ needs.detect.outputs.base-ref }}
-    timeout-minutes: 30
+    needs: lane-contract
     strategy:
       fail-fast: false
       matrix:
         target:
-          # ─────────────────────────────────────────────────────────────────────
-          # Linux x86-64 (GitHub Free Runners)
-          # ─────────────────────────────────────────────────────────────────────
           - name: x86_64-unknown-linux-gnu
             runner: ubuntu-latest
-            tier: a
-
-          # ─────────────────────────────────────────────────────────────────────
-          # Linux ARM64 (GitHub Free Runners)
-          # ─────────────────────────────────────────────────────────────────────
           - name: aarch64-unknown-linux-gnu
             runner: ubuntu-24.04-arm
-            tier: a
-
-          # ─────────────────────────────────────────────────────────────────────
-          # Windows x86-64 (GitHub Free Runners)
-          # ─────────────────────────────────────────────────────────────────────
           - name: x86_64-pc-windows-msvc
             runner: windows-latest
-            tier: a
-
-          # ─────────────────────────────────────────────────────────────────────
-          # Windows ARM64 (GitHub Free Runners)
-          # ─────────────────────────────────────────────────────────────────────
           - name: aarch64-pc-windows-msvc
             runner: windows-11-arm
-            tier: a
+    uses: ./.github/workflows/_rust-job.yaml
+    with:
+      runner: ${{ matrix.target.runner }}
+      timeout_minutes: 35
+      setup_kind: default
+      cache_key: full-main-${{ matrix.target.name }}
+      tools_mode: standard
+      run_script: |
+        just ci-check
+        just build
+        just test
 
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
-        with:
-          fetch-depth: 0  # Required for cargo rail affected (needs git history)
-
-      # Compute cache key from environment and runner metadata
-      - name: Compute Cache Key
-        id: cache
-        shell: bash
-        run: |
-          OS=$(echo "${{ runner.os }}" | tr '[:upper:]' '[:lower:]')
-          ARCH=$(echo "${{ runner.arch }}" | tr '[:upper:]' '[:lower:]')
-          echo "key=${{ env.RSCRYPTO_TEST_MODE }}-${OS}-${ARCH}" >> "$GITHUB_OUTPUT"
-
-      - name: Setup
-        uses: ./.github/actions/setup
-        with:
-          cache-key: ${{ steps.cache.outputs.key }}
-
-      - name: Quality Checks
-        run: just ci-check
-
-      - name: Build
-        run: just build
-
-      - name: Tests
-        run: just test
-
-      # ─────────────────────────────────────────────────────────────────────────
-      # CRC32/CRC32C Tier Smoke Tests - Platform-specific kernel verification
-      # ─────────────────────────────────────────────────────────────────────────
-
-      # x86_64: CRC32(IEEE) CLMUL
-      - name: CRC32 Tier Smoke (force PCLMUL, 4-way)
-        if: matrix.target.name == 'x86_64-unknown-linux-gnu'
-        run: cargo test -p checksum test_crc32_forced_kernel_smoke_from_env --lib
-        env:
-          RSCRYPTO_CRC32_FORCE: pclmul
-          RSCRYPTO_CRC32_STREAMS: "4"
-
-      - name: CRC32 Tier Smoke (force PCLMUL, 4-way)
-        if: matrix.target.name == 'x86_64-pc-windows-msvc'
-        run: cargo test -p checksum test_crc32_forced_kernel_smoke_from_env --lib
-        env:
-          RSCRYPTO_CRC32_FORCE: pclmul
-          RSCRYPTO_CRC32_STREAMS: "4"
-
-      # x86_64: CRC32C HWCRC + fusion tiers
-      - name: CRC32C Tier Smoke (force HWCRC)
-        if: matrix.target.name == 'x86_64-unknown-linux-gnu'
-        run: cargo test -p checksum test_crc32c_forced_kernel_smoke_from_env --lib
-        env:
-          RSCRYPTO_CRC32_FORCE: hwcrc
-
-      - name: CRC32C Tier Smoke (force HWCRC)
-        if: matrix.target.name == 'x86_64-pc-windows-msvc'
-        run: cargo test -p checksum test_crc32c_forced_kernel_smoke_from_env --lib
-        env:
-          RSCRYPTO_CRC32_FORCE: hwcrc
-
-      - name: CRC32C Tier Smoke (force PCLMUL, 4-way)
-        if: matrix.target.name == 'x86_64-unknown-linux-gnu'
-        run: cargo test -p checksum test_crc32c_forced_kernel_smoke_from_env --lib
-        env:
-          RSCRYPTO_CRC32_FORCE: pclmul
-          RSCRYPTO_CRC32_STREAMS: "4"
-
-      # aarch64: CRC32/CRC32C HWCRC + PMULL (+EOR3 where available)
-      - name: CRC32 Tier Smoke (force HWCRC)
-        if: matrix.target.name == 'aarch64-unknown-linux-gnu'
-        run: cargo test -p checksum test_crc32_forced_kernel_smoke_from_env --lib
-        env:
-          RSCRYPTO_CRC32_FORCE: hwcrc
-
-      - name: CRC32C Tier Smoke (force HWCRC)
-        if: matrix.target.name == 'aarch64-unknown-linux-gnu'
-        run: cargo test -p checksum test_crc32c_forced_kernel_smoke_from_env --lib
-        env:
-          RSCRYPTO_CRC32_FORCE: hwcrc
-
-      - name: CRC32 Tier Smoke (force PMULL, 2-way)
-        if: matrix.target.name == 'aarch64-unknown-linux-gnu'
-        run: cargo test -p checksum test_crc32_forced_kernel_smoke_from_env --lib
-        env:
-          RSCRYPTO_CRC32_FORCE: pmull
-          RSCRYPTO_CRC32_STREAMS: "2"
-
-      - name: CRC32C Tier Smoke (force PMULL, 2-way)
-        if: matrix.target.name == 'aarch64-unknown-linux-gnu'
-        run: cargo test -p checksum test_crc32c_forced_kernel_smoke_from_env --lib
-        env:
-          RSCRYPTO_CRC32_FORCE: pmull
-          RSCRYPTO_CRC32_STREAMS: "2"
-
-      - name: CRC32 Tier Smoke (force PMULL+EOR3, 2-way)
-        if: matrix.target.name == 'aarch64-unknown-linux-gnu'
-        run: cargo test -p checksum test_crc32_forced_kernel_smoke_from_env --lib
-        env:
-          RSCRYPTO_CRC32_FORCE: pmull-eor3
-          RSCRYPTO_CRC32_STREAMS: "2"
-
-      - name: CRC32C Tier Smoke (force PMULL+EOR3, 2-way)
-        if: matrix.target.name == 'aarch64-unknown-linux-gnu'
-        run: cargo test -p checksum test_crc32c_forced_kernel_smoke_from_env --lib
-        env:
-          RSCRYPTO_CRC32_FORCE: pmull-eor3
-          RSCRYPTO_CRC32_STREAMS: "2"
-
-      # aarch64 Windows: CRC32/CRC32C HWCRC + PMULL
-      - name: CRC32 Tier Smoke (force HWCRC)
-        if: matrix.target.name == 'aarch64-pc-windows-msvc'
-        run: cargo test -p checksum test_crc32_forced_kernel_smoke_from_env --lib
-        env:
-          RSCRYPTO_CRC32_FORCE: hwcrc
-
-      - name: CRC32C Tier Smoke (force HWCRC)
-        if: matrix.target.name == 'aarch64-pc-windows-msvc'
-        run: cargo test -p checksum test_crc32c_forced_kernel_smoke_from_env --lib
-        env:
-          RSCRYPTO_CRC32_FORCE: hwcrc
-
-      - name: CRC32 Tier Smoke (force PMULL, 2-way)
-        if: matrix.target.name == 'aarch64-pc-windows-msvc'
-        run: cargo test -p checksum test_crc32_forced_kernel_smoke_from_env --lib
-        env:
-          RSCRYPTO_CRC32_FORCE: pmull
-          RSCRYPTO_CRC32_STREAMS: "2"
-
-      - name: CRC32C Tier Smoke (force PMULL, 2-way)
-        if: matrix.target.name == 'aarch64-pc-windows-msvc'
-        run: cargo test -p checksum test_crc32c_forced_kernel_smoke_from_env --lib
-        env:
-          RSCRYPTO_CRC32_FORCE: pmull
-          RSCRYPTO_CRC32_STREAMS: "2"
-
-      # ─────────────────────────────────────────────────────────────────────────
-      # Static Linking Verification (MUSL - Linux only)
-      # ─────────────────────────────────────────────────────────────────────────
-      - name: Build Verification (MUSL x86-64)
-        if: matrix.target.name == 'x86_64-unknown-linux-gnu'
-        run: |
-          rustup target add x86_64-unknown-linux-musl
-          cargo build --workspace --target x86_64-unknown-linux-musl
-
-      - name: Build Verification (MUSL ARM64)
-        if: matrix.target.name == 'aarch64-unknown-linux-gnu'
-        env:
-          RUSTFLAGS: "-C linker=rust-lld -C link-self-contained=yes"
-        run: |
-          rustup target add aarch64-unknown-linux-musl
-          cargo build --workspace --target aarch64-unknown-linux-musl
-
-      # Ensure cache directories exist to avoid ENOENT warnings from rust-cache
-      - name: Ensure Cache Directories
-        shell: bash
-        run: mkdir -p target/tests/trybuild target/tests/target
-
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # IBM Hardware Validation (ActionsPZ - Manual Only)
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # These jobs are manual-only to be respectful of the shared free runner pool.
-  # They provide correctness validation on real IBM Z and IBM POWER hardware.
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-  ibm-s390x:
-    name: IBM CI (s390x)
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.run_ibm_s390x == 'true'
-    runs-on: ubuntu-24.04-s390x
-    timeout-minutes: 90
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
-        with:
-          fetch-depth: 0
-
-      - name: Compute Cache Key
-        id: cache
-        shell: bash
-        run: |
-          OS=$(echo "${{ runner.os }}" | tr '[:upper:]' '[:lower:]')
-          ARCH=$(uname -m | tr '[:upper:]' '[:lower:]')
-          echo "key=${{ env.RSCRYPTO_TEST_MODE }}-ibm-${OS}-${ARCH}" >> "$GITHUB_OUTPUT"
-
-      - name: Setup
-        uses: ./.github/actions/setup
-        with:
-          cache-key: ${{ steps.cache.outputs.key }}
-          tools-mode: ibm
-          toolchain-components: "clippy, rustfmt"
-
-      - name: Detect CPU
-        run: |
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "IBM Z CPU Detection"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          uname -a || true
-          lscpu || true
-          cat /proc/cpuinfo | head -50 || true
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-      - name: Quality Checks
-        run: just ci-check
-
-      - name: Build
-        run: just build
-
-      - name: Tests
-        run: just test --all
-
-  ibm-power9:
-    name: IBM CI (POWER9 / ppc64le)
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.run_ibm_power9 == 'true'
-    runs-on: ubuntu-24.04-ppc64le
-    timeout-minutes: 90
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
-        with:
-          fetch-depth: 0
-
-      - name: Compute Cache Key
-        id: cache
-        shell: bash
-        run: |
-          OS=$(echo "${{ runner.os }}" | tr '[:upper:]' '[:lower:]')
-          ARCH=$(uname -m | tr '[:upper:]' '[:lower:]')
-          echo "key=${{ env.RSCRYPTO_TEST_MODE }}-ibm-${OS}-${ARCH}" >> "$GITHUB_OUTPUT"
-
-      - name: Setup
-        uses: ./.github/actions/setup
-        with:
-          cache-key: ${{ steps.cache.outputs.key }}
-          tools-mode: ibm
-          toolchain-components: "clippy, rustfmt"
-
-      - name: Detect CPU
-        run: |
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "IBM POWER9 CPU Detection"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          uname -a || true
-          lscpu || true
-          cat /proc/cpuinfo | head -50 || true
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-      - name: Quality Checks
-        run: just ci-check
-
-      - name: Build
-        run: just build
-
-      - name: Tests
-        run: just test --all
-
-  ibm-power10:
-    name: IBM CI (POWER10 / ppc64le)
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.run_ibm_power10 == 'true'
-    runs-on: ubuntu-24.04-ppc64le-p10
-    timeout-minutes: 90
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
-        with:
-          fetch-depth: 0
-
-      - name: Compute Cache Key
-        id: cache
-        shell: bash
-        run: |
-          OS=$(echo "${{ runner.os }}" | tr '[:upper:]' '[:lower:]')
-          ARCH=$(uname -m | tr '[:upper:]' '[:lower:]')
-          echo "key=${{ env.RSCRYPTO_TEST_MODE }}-ibm-${OS}-${ARCH}" >> "$GITHUB_OUTPUT"
-
-      - name: Setup
-        uses: ./.github/actions/setup
-        with:
-          cache-key: ${{ steps.cache.outputs.key }}
-          tools-mode: ibm
-          toolchain-components: "clippy, rustfmt"
-
-      - name: Detect CPU
-        run: |
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "IBM POWER10 CPU Detection"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          uname -a || true
-          lscpu || true
-          cat /proc/cpuinfo | head -50 || true
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-      - name: Quality Checks
-        run: just ci-check
-
-      - name: Build
-        run: just build
-
-      - name: Tests
-        run: just test --all
-
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # no_std Targets (Cross-compile verification)
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # Strategic target selection:
-  #   - thumbv6m-none-eabi: Smallest Cortex-M (M0/M0+), if this works, M3/M4/M7/M33 work
-  #   - riscv32imac-unknown-none-elf: RISC-V 32-bit, different ISA coverage
-  #   - aarch64-unknown-none: ARM64 bare metal
-  #   - x86_64-unknown-none: x86_64 bare metal
-  #
-  # These can't run tests (no OS), but cargo check/build verifies:
-  #   - no_std compatibility
-  #   - no accidental std dependencies
-  #   - Feature flag combinations work
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   no-std:
     name: no_std (${{ matrix.target }})
-    needs: [detect]
-    if: |
-      github.event_name == 'workflow_dispatch' ||
-      needs.detect.outputs.rebuild-all == 'true' ||
-      (needs.detect.outputs.count != '0' &&
-       needs.detect.outputs.docs-only != 'true')
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    needs: lane-contract
     strategy:
       fail-fast: false
       matrix:
         target:
-          # ARM Cortex-M0/M0+ (smallest, most restrictive - proves all larger Cortex-M work)
           - thumbv6m-none-eabi
-          # RISC-V 32-bit (different ISA, atomics via 'a' extension)
           - riscv32imac-unknown-none-elf
-          # ARM64 bare metal (bootloaders, hypervisors, secure enclaves)
           - aarch64-unknown-none
-          # x86_64 bare metal (kernels, bootloaders, hypervisors)
           - x86_64-unknown-none
+    uses: ./.github/workflows/_rust-job.yaml
+    with:
+      runner: ubuntu-latest
+      timeout_minutes: 20
+      setup_kind: default
+      cache_key: full-main-no-std-${{ matrix.target }}
+      tools_mode: minimal
+      run_script: |
+        rustup target add ${{ matrix.target }}
+        cargo check -p platform -p traits -p backend --target ${{ matrix.target }} --no-default-features --lib
+        cargo check -p platform -p traits -p backend --target ${{ matrix.target }} --no-default-features --features alloc --lib
+        cargo build -p platform -p traits -p backend --target ${{ matrix.target }} --no-default-features --lib --release
+        cargo build -p platform -p traits -p backend --target ${{ matrix.target }} --no-default-features --features alloc --lib --release
 
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
-
-      # Install Rust toolchain (reads version from rust-toolchain.toml)
-      - name: Read Toolchain Version
-        id: toolchain
-        run: |
-          TOOLCHAIN=$(awk -F'"' '/^channel/ {print $2}' rust-toolchain.toml)
-          echo "version=$TOOLCHAIN" >> "$GITHUB_OUTPUT"
-
-      - name: Install Rust Toolchain
-        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561  # master
-        with:
-          toolchain: ${{ steps.toolchain.outputs.version }}
-
-      # Explicit target installation (rust-toolchain.toml doesn't include no_std targets)
-      - name: Install Target
-        run: rustup target add ${{ matrix.target }}
-
-      - name: Setup Rust Cache
-        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5  # v2.8.2
-        with:
-          shared-key: "rscrypto-v1"
-          key: no-std-${{ matrix.target }}
-          cache-on-failure: true
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      # ─────────────────────────────────────────────────────────────────────────
-      # no_std Feature Matrix Verification
-      # Note: Use -p instead of --workspace to properly disable default features
-      # ─────────────────────────────────────────────────────────────────────────
-      - name: Check no_std (no features - pure no_std)
-        run: cargo check -p platform -p traits -p backend --target ${{ matrix.target }} --no-default-features --lib
-
-      - name: Check no_std with alloc
-        run: cargo check -p platform -p traits -p backend --target ${{ matrix.target }} --no-default-features --features alloc --lib
-
-      - name: Build no_std release (pure no_std)
-        run: cargo build -p platform -p traits -p backend --target ${{ matrix.target }} --no-default-features --lib --release
-
-      - name: Build no_std release with alloc
-        run: cargo build -p platform -p traits -p backend --target ${{ matrix.target }} --no-default-features --features alloc --lib --release
-
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # WASM Targets (Cross-compile verification)
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # Strategic target selection:
-  #   - wasm32-unknown-unknown: Core browser WASM (most common)
-  #   - wasm32-wasip1: WASI preview 1 (server-side WASM)
-  #
-  # Verifies:
-  #   - WASM compatibility
-  #   - No accidental WASM-incompatible dependencies
-  #   - Feature flag combinations work in WASM context
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   wasm:
-    name: WASM (${{ matrix.target }})
-    needs: [detect]
-    if: |
-      github.event_name == 'workflow_dispatch' ||
-      needs.detect.outputs.rebuild-all == 'true' ||
-      (needs.detect.outputs.count != '0' &&
-       needs.detect.outputs.docs-only != 'true')
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    name: wasm (${{ matrix.target }})
+    needs: lane-contract
     strategy:
       fail-fast: false
       matrix:
         target:
-          # Core browser WASM (most common deployment target)
           - wasm32-unknown-unknown
-          # WASI preview 1 (server-side WASM, Wasmtime/Wasmer)
           - wasm32-wasip1
+    uses: ./.github/workflows/_rust-job.yaml
+    with:
+      runner: ubuntu-latest
+      timeout_minutes: 20
+      setup_kind: default
+      cache_key: full-main-wasm-${{ matrix.target }}
+      tools_mode: minimal
+      run_script: |
+        rustup target add ${{ matrix.target }}
+        cargo check -p platform -p traits -p backend --target ${{ matrix.target }} --no-default-features --lib
+        cargo check -p platform -p traits -p backend --target ${{ matrix.target }} --no-default-features --features alloc --lib
+        cargo build -p platform -p traits -p backend --target ${{ matrix.target }} --no-default-features --lib --release
+        cargo build -p platform -p traits -p backend --target ${{ matrix.target }} --no-default-features --features alloc --lib --release
 
+  wasm-pack-optional:
+    name: wasm-pack smoke (optional)
+    needs: lane-contract
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 20
     steps:
       - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-      # Install Rust toolchain (reads version from rust-toolchain.toml)
-      - name: Read Toolchain Version
-        id: toolchain
-        run: |
-          TOOLCHAIN=$(awk -F'"' '/^channel/ {print $2}' rust-toolchain.toml)
-          echo "version=$TOOLCHAIN" >> "$GITHUB_OUTPUT"
-
-      - name: Install Rust Toolchain
-        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561  # master
+      - name: Setup
+        uses: ./.github/actions/setup
         with:
-          toolchain: ${{ steps.toolchain.outputs.version }}
+          cache-key: full-main-wasm-pack
+          tools-mode: minimal
 
-      # Explicit target installation (rust-toolchain.toml doesn't include WASM targets)
-      - name: Install Target
-        run: rustup target add ${{ matrix.target }}
-
-      - name: Setup Rust Cache
-        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5  # v2.8.2
-        with:
-          shared-key: "rscrypto-v1"
-          key: wasm-${{ matrix.target }}
-          cache-on-failure: true
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      # ─────────────────────────────────────────────────────────────────────────
-      # WASM Feature Matrix Verification
-      # Note: Use -p instead of --workspace to properly disable default features
-      # ─────────────────────────────────────────────────────────────────────────
-      - name: Check WASM (no features - pure no_std)
-        run: cargo check -p platform -p traits -p backend --target ${{ matrix.target }} --no-default-features --lib
-
-      - name: Check WASM with alloc
-        run: cargo check -p platform -p traits -p backend --target ${{ matrix.target }} --no-default-features --features alloc --lib
-
-      - name: Build WASM release (no features)
-        run: cargo build -p platform -p traits -p backend --target ${{ matrix.target }} --no-default-features --lib --release
-
-      - name: Build WASM release with alloc
-        run: cargo build -p platform -p traits -p backend --target ${{ matrix.target }} --no-default-features --features alloc --lib --release
-
-      # Additional wasm-pack verification for browser target
       - name: Install wasm-pack
-        if: matrix.target == 'wasm32-unknown-unknown'
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
-      - name: Build with wasm-pack (browser target)
-        if: matrix.target == 'wasm32-unknown-unknown'
-        run: |
-          # Build each library crate with wasm-pack
-          for crate in crates/*/; do
-            if [ -f "${crate}Cargo.toml" ]; then
-              echo "Building $(basename "$crate") with wasm-pack..."
-              wasm-pack build "$crate" --target web --no-default-features --features alloc 2>/dev/null || true
-            fi
-          done
+      - name: wasm-pack build
+        run: wasm-pack build crates/rscrypto --target web --no-default-features --features alloc
 
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # Summary Job
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   complete:
-    name: All checks complete
-    needs: [detect, ci, no-std, wasm]
+    name: Complete (full-main)
+    needs: [ci, no-std, wasm]
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Check results
+      - name: Assert required lanes
         run: |
-          echo "Checking workflow results..."
-          echo "Should skip (docs-only): ${{ needs.detect.outputs.docs-only }}"
-
-          if [ "${{ needs.detect.outputs.docs-only }}" == "true" ]; then
-            echo "Documentation-only changes - no CI required"
-            exit 0
-          fi
-
-          # Check if any job failed
-          if [ "${{ needs.ci.result }}" == "failure" ] || \
-             [ "${{ needs.no-std.result }}" == "failure" ] || \
-             [ "${{ needs.wasm.result }}" == "failure" ]; then
-            echo "One or more jobs failed"
+          if [ "${{ needs.ci.result }}" != "success" ]; then
             exit 1
           fi
-
-          echo "All jobs passed"
+          if [ "${{ needs.no-std.result }}" != "success" ]; then
+            exit 1
+          fi
+          if [ "${{ needs.wasm.result }}" != "success" ]; then
+            exit 1
+          fi
