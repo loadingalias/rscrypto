@@ -545,6 +545,13 @@ fn blake3_rscrypto_threads(c: &mut Criterion) {
         min_bytes: 0,
         min_chunks: 0,
         max_threads: threads_total as u8,
+        spawn_cost_bytes: 0,
+        merge_cost_bytes: 0,
+        bytes_per_core_small: 0,
+        bytes_per_core_medium: 0,
+        bytes_per_core_large: 0,
+        small_limit_bytes: 0,
+        medium_limit_bytes: 0,
       };
 
       group.bench_function(BenchmarkId::new(format!("rscrypto/t{threads_total}"), size), |b| {

@@ -3,6 +3,11 @@
 //! This module provides SIMD-accelerated compression functions for BLAKE3 using
 //! x86_64 intrinsics (SSSE3, AVX2, AVX-512).
 //!
+//! Runtime strategy contract:
+//! - AVX-512 > AVX2 > SSE4.1 > scalar (portable)
+//! - SSSE3 entrypoints remain as legacy/verification code paths and are not in the main runtime
+//!   fallback hierarchy.
+//!
 //! # Safety
 //!
 //! All functions in this module are marked `unsafe` and require specific CPU
@@ -1180,8 +1185,8 @@ pub unsafe fn parent_cv_avx512(
 
 /// Hash many contiguous full chunks using the SSSE3 single-block compressor.
 ///
-/// This is a correctness-preserving throughput baseline until a true hash4/hash8
-/// multi-lane x86 kernel is implemented.
+/// This is a legacy compatibility path. The main runtime hierarchy uses
+/// AVX-512/AVX2/SSE4.1 and falls back directly to scalar.
 ///
 /// # Safety
 ///

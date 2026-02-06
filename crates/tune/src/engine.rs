@@ -630,6 +630,13 @@ fn measure_blake3_curve(
     min_bytes: 0,
     min_chunks: 0,
     max_threads: max_threads.min(u8::MAX as usize) as u8,
+    spawn_cost_bytes: 0,
+    merge_cost_bytes: 0,
+    bytes_per_core_small: 0,
+    bytes_per_core_medium: 0,
+    bytes_per_core_large: 0,
+    small_limit_bytes: 0,
+    medium_limit_bytes: 0,
   });
   for &size in sizes {
     let r = runner.measure_single(algorithm, &buffer[..size])?;
@@ -668,6 +675,13 @@ fn tune_blake3_parallel_policy(
       min_bytes: usize::MAX,
       min_chunks: usize::MAX,
       max_threads: 1,
+      spawn_cost_bytes: 0,
+      merge_cost_bytes: 0,
+      bytes_per_core_small: 0,
+      bytes_per_core_medium: 0,
+      bytes_per_core_large: 0,
+      small_limit_bytes: 0,
+      medium_limit_bytes: 0,
     });
     for &size in BLAKE3_PAR_SIZES {
       let r = runner.measure_single(algorithm, &buffer[..size])?;

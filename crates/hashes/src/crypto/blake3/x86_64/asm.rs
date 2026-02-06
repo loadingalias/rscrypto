@@ -109,3 +109,63 @@ unsafe extern "C" {
     outblocks: usize,
   );
 }
+
+#[inline(always)]
+pub(crate) unsafe fn hash_many_avx2(
+  inputs: *const *const u8,
+  num_inputs: usize,
+  blocks: usize,
+  key: *const u32,
+  counter: u64,
+  increment_counter: bool,
+  flags: u8,
+  flags_start: u8,
+  flags_end: u8,
+  out: *mut u8,
+) {
+  // SAFETY: callsites validate CPU features and pointer contracts.
+  unsafe {
+    rscrypto_blake3_hash_many_avx2(
+      inputs,
+      num_inputs,
+      blocks,
+      key,
+      counter,
+      increment_counter,
+      flags,
+      flags_start,
+      flags_end,
+      out,
+    )
+  };
+}
+
+#[inline(always)]
+pub(crate) unsafe fn hash_many_avx512(
+  inputs: *const *const u8,
+  num_inputs: usize,
+  blocks: usize,
+  key: *const u32,
+  counter: u64,
+  increment_counter: bool,
+  flags: u8,
+  flags_start: u8,
+  flags_end: u8,
+  out: *mut u8,
+) {
+  // SAFETY: callsites validate CPU features and pointer contracts.
+  unsafe {
+    rscrypto_blake3_hash_many_avx512(
+      inputs,
+      num_inputs,
+      blocks,
+      key,
+      counter,
+      increment_counter,
+      flags,
+      flags_start,
+      flags_end,
+      out,
+    )
+  };
+}

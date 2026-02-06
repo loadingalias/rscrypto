@@ -329,6 +329,74 @@ impl KernelFamily {
     }
   }
 
+  /// Maximum stream count supported by this family on the current architecture.
+  #[inline]
+  #[must_use]
+  pub const fn arch_max_streams(self) -> u8 {
+    match self {
+      Self::Reference | Self::Portable => 1,
+      Self::ArmPmull | Self::ArmPmullEor3 | Self::ArmSve2Pmull | Self::ArmCrc32 => 3,
+      Self::S390xVgfm | Self::RiscvZbc | Self::RiscvZvbc => 4,
+      _ => 8, // x86, power
+    }
+  }
+
+  /// Tune-aware maximum stream count for this family.
+  #[inline]
+  #[must_use]
+  pub fn max_streams_for_tune(self, tune: &Tune) -> u8 {
+    tune.parallel_streams.min(self.arch_max_streams())
+  }
+
+  /// Preferred stream levels in descending order for this family.
+  #[inline]
+  #[must_use]
+  pub const fn stream_levels(self) -> &'static [u8] {
+    const X86_STREAMS: [u8; 5] = [8, 7, 4, 2, 1];
+    const ARM_STREAMS: [u8; 3] = [3, 2, 1];
+    const POWER_STREAMS: [u8; 4] = [8, 4, 2, 1];
+    const FOUR_WAY_STREAMS: [u8; 3] = [4, 2, 1];
+    const SINGLE_STREAM: [u8; 1] = [1];
+
+    match self {
+      Self::X86Crc32 | Self::X86Pclmul | Self::X86Vpclmul => &X86_STREAMS,
+      Self::ArmCrc32 | Self::ArmPmull | Self::ArmPmullEor3 | Self::ArmSve2Pmull => &ARM_STREAMS,
+      Self::PowerVpmsum => &POWER_STREAMS,
+      Self::S390xVgfm | Self::RiscvZbc | Self::RiscvZvbc => &FOUR_WAY_STREAMS,
+      _ => &SINGLE_STREAM,
+    }
+  }
+
+  /// Select the best available family for a platform.
+  ///
+  /// Families are checked in architecture-preferred order (descending tier),
+  /// then filtered by capability and tune constraints.
+  #[must_use]
+  pub fn select_for_platform(caps: Caps, tune: &Tune) -> Self {
+    for &family in Self::families_for_current_arch() {
+      if family == Self::Reference {
+        continue;
+      }
+      if !family.is_available(caps) {
+        continue;
+      }
+      if family.tier() == KernelTier::Wide && family.requires_simd_width_256() && tune.effective_simd_width < 256 {
+        continue;
+      }
+      return family;
+    }
+    Self::Portable
+  }
+
+  /// Best available family in a specific tier for the provided capabilities.
+  #[must_use]
+  pub fn best_available_in_tier(tier: KernelTier, caps: Caps) -> Option<Self> {
+    Self::families_in_tier(tier)
+      .iter()
+      .find(|&&family| family.is_available(caps))
+      .copied()
+  }
+
   /// All families in the given tier.
   #[must_use]
   pub const fn families_in_tier(tier: KernelTier) -> &'static [Self] {

@@ -347,6 +347,13 @@ impl crate::Tunable for HashTunable {
       ("blake3", "parallel_min_bytes") => Some("PARALLEL_MIN_BYTES"),
       ("blake3", "parallel_min_chunks") => Some("PARALLEL_MIN_CHUNKS"),
       ("blake3", "parallel_max_threads") => Some("PARALLEL_MAX_THREADS"),
+      ("blake3", "parallel_spawn_cost_bytes") => Some("PARALLEL_SPAWN_COST_BYTES"),
+      ("blake3", "parallel_merge_cost_bytes") => Some("PARALLEL_MERGE_COST_BYTES"),
+      ("blake3", "parallel_bytes_per_core_small") => Some("PARALLEL_BYTES_PER_CORE_SMALL"),
+      ("blake3", "parallel_bytes_per_core_medium") => Some("PARALLEL_BYTES_PER_CORE_MEDIUM"),
+      ("blake3", "parallel_bytes_per_core_large") => Some("PARALLEL_BYTES_PER_CORE_LARGE"),
+      ("blake3", "parallel_small_limit_bytes") => Some("PARALLEL_SMALL_LIMIT_BYTES"),
+      ("blake3", "parallel_medium_limit_bytes") => Some("PARALLEL_MEDIUM_LIMIT_BYTES"),
       _ => None,
     }
   }
