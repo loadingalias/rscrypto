@@ -155,7 +155,7 @@ runs:
       id: toolchain
       shell: bash
       run: |
-        TOOLCHAIN=$(scripts/lib/toolchain.sh)
+        TOOLCHAIN=$(bash scripts/lib/toolchain.sh)
         echo "version=$TOOLCHAIN" >> "$GITHUB_OUTPUT"
         echo "Toolchain: $TOOLCHAIN"
 
