@@ -255,7 +255,9 @@ fn run_power_kernels_ccitt(data: &[u8], results: &mut alloc::vec::Vec<KernelResu
   let caps = platform::caps();
 
   if caps.has(platform::caps::power::VPMSUM_READY) {
-    run_single_kernel_ccitt(data, CCITT_VPMSUM, VPMSUM, results);
+    for (&name, &func) in VPMSUM_NAMES.iter().zip(CCITT_VPMSUM.iter()) {
+      run_single_kernel_ccitt(data, func, name, results);
+    }
   }
 }
 
@@ -265,7 +267,9 @@ fn run_power_kernels_ibm(data: &[u8], results: &mut alloc::vec::Vec<KernelResult
   let caps = platform::caps();
 
   if caps.has(platform::caps::power::VPMSUM_READY) {
-    run_single_kernel_ibm(data, IBM_VPMSUM, VPMSUM, results);
+    for (&name, &func) in VPMSUM_NAMES.iter().zip(IBM_VPMSUM.iter()) {
+      run_single_kernel_ibm(data, func, name, results);
+    }
   }
 }
 
