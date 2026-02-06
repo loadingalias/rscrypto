@@ -1677,7 +1677,21 @@ fn apply_hash_dispatch_tables(repo_root: &Path, results: &TuneResults) -> io::Re
           .iter()
           .filter_map(|name| results.algorithms.iter().find(|a| a.name == *name))
           .collect();
-      let policy_source = results.algorithms.iter().find(|a| a.name == "blake3").unwrap_or(algo);
+      let policy_source = results.algorithms.iter().find(|a| a.name == "blake3").ok_or_else(|| {
+        io::Error::new(
+          io::ErrorKind::InvalidData,
+          "applying blake3 profiles requires `blake3` tuning results (missing algorithm `blake3`)",
+        )
+      })?;
+
+      if stream64_modes.is_empty() || stream4k_modes.is_empty() {
+        return Err(io::Error::new(
+          io::ErrorKind::InvalidData,
+          "applying blake3 profiles requires stream tuning results; missing one or more of: blake3-stream64, \
+           blake3-stream64-keyed, blake3-stream64-derive, blake3-stream4k, blake3-stream4k-keyed, \
+           blake3-stream4k-derive",
+        ));
+      }
 
       let profile_code = generate_blake3_family_profile(
         tune_kind,
