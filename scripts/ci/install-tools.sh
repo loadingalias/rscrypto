@@ -135,36 +135,6 @@ install_if_missing() {
 	cargo binstall "$tool" --no-confirm --force 2>/dev/null || cargo install "$tool" --locked
 }
 
-# Install cargo-audit with version validation (requires 0.22+ for CVSS 4.0)
-install_cargo_audit() {
-	local min_major=0
-	local min_minor=22
-
-	if command -v cargo-audit &>/dev/null; then
-		# Extract version: "cargo-audit 0.20.1" -> "0.20.1"
-		local version
-		version=$(cargo-audit --version 2>/dev/null | awk '{print $2}')
-		local major minor
-		major=$(echo "$version" | cut -d. -f1)
-		minor=$(echo "$version" | cut -d. -f2)
-
-		if [ "$major" -gt "$min_major" ] 2>/dev/null ||
-			{ [ "$major" -eq "$min_major" ] && [ "$minor" -ge "$min_minor" ]; } 2>/dev/null; then
-			echo "  cargo-audit: cached (v$version >= 0.22)"
-			return 0
-		fi
-
-		echo "  cargo-audit: outdated (v$version < 0.22), upgrading..."
-	else
-		echo "  cargo-audit: installing..."
-	fi
-
-	# NOTE: On some runners (notably Windows ARM64), `cargo binstall` may not have a matching binary.
-	# If `cargo install` runs without `--force` and an old cargo-audit is already present (image/cache),
-	# Cargo will *not* replace it; that leads to CVSS 4.0 parse failures when the advisory-db updates.
-	cargo binstall cargo-audit --no-confirm --force 2>/dev/null || cargo install cargo-audit --locked --force
-}
-
 # Install cargo-binstall first (required for fast installs)
 install_binstall
 
@@ -177,13 +147,11 @@ standard | namespace | runson)
 	# Standard CI tools (same for all CI runners)
 	install_if_missing "cargo-nextest" "cargo-nextest"
 	install_if_missing "cargo-rail" "cargo-rail"
-	install_if_missing "cargo-deny" "cargo-deny"
-	install_cargo_audit # version-checked (requires 0.22+ for CVSS 4.0)
 	install_if_missing "just" "just"
 	;;
 
-ibm | ci-lite)
-	# IBM/CI-lite runners: keep installs minimal to avoid expensive source builds.
+ibm)
+	# IBM runners: keep installs minimal to avoid expensive source builds.
 	# Policy/security checks run locally via `just check-all`.
 	install_if_missing "cargo-nextest" "cargo-nextest"
 	install_if_missing "just" "just"
@@ -213,7 +181,7 @@ none)
 
 *)
 	echo "Unknown mode: $MODE"
-	echo "Usage: install-tools.sh [standard|namespace|runson|bench|runson-bench|ibm|ci-lite|fuzz|minimal|none]"
+	echo "Usage: install-tools.sh [standard|namespace|runson|bench|runson-bench|ibm|fuzz|minimal|none]"
 	exit 1
 	;;
 esac
