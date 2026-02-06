@@ -97,7 +97,23 @@ RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
   cargo run -p tune --release --bin rscrypto-tune -- "${ARGS[@]}" 2>&1 | tee "$OUT_DIR/rscrypto-tune.txt"
 
 if [[ "$APPLY_INPUT" == "true" ]]; then
-  git diff > "$OUT_DIR/patch.diff" || true
+  {
+    # Capture tracked changes first.
+    git diff --binary --full-index || true
+
+    # `rscrypto-tune --apply` emits new files under crates/tune/generated.
+    # Plain `git diff` ignores untracked files, so include them explicitly.
+    git ls-files --others --exclude-standard -z -- crates/tune/generated \
+      | while IFS= read -r -d '' path; do
+          git diff --binary --full-index --no-index /dev/null "$path" || true
+        done
+  } > "$OUT_DIR/patch.diff"
+
+  if [[ -s "$OUT_DIR/patch.diff" ]]; then
+    echo "Generated non-empty patch: $OUT_DIR/patch.diff"
+  else
+    echo "Generated empty patch (no tracked or generated-file changes): $OUT_DIR/patch.diff"
+  fi
 fi
 
 if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
