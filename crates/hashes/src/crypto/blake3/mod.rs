@@ -2062,7 +2062,7 @@ fn root_output_oneshot(kernel: Kernel, key_words: [u32; 8], flags: u32, input: &
   let mut offset = 0usize;
   while chunk_counter < full_chunks as u64 {
     let remaining = (full_chunks as u64 - chunk_counter) as usize;
-    let batch = core::cmp::min(remaining, core::cmp::min(kernel.simd_degree, MAX_SIMD_DEGREE));
+    let batch = core::cmp::min(remaining, MAX_SIMD_DEGREE);
     debug_assert!(batch != 0);
 
     // SAFETY: `offset` is within `input`, and `cvs` is large enough for `batch`.
@@ -2623,10 +2623,7 @@ impl Blake3 {
       if self.chunk_state.len() == 0 && self.bulk_kernel.simd_degree > 1 && input.len() > CHUNK_LEN {
         let full_chunks = input.len() / CHUNK_LEN;
         if full_chunks > 1 {
-          let batch = core::cmp::min(
-            full_chunks,
-            core::cmp::min(self.bulk_kernel.simd_degree, MAX_SIMD_DEGREE),
-          );
+          let batch = core::cmp::min(full_chunks, MAX_SIMD_DEGREE);
 
           if batch != 0 {
             let base_counter = self.chunk_state.chunk_counter;

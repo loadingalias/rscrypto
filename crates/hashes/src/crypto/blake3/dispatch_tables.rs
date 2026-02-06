@@ -352,13 +352,13 @@ pub static PROFILE_X86_INTEL_ICL: FamilyProfile = default_kind_profile();
 pub static PROFILE_AARCH64_APPLE_M1M3: FamilyProfile = FamilyProfile {
   dispatch: DispatchTable {
     boundaries: DEFAULT_BOUNDARIES,
-    xs: KernelId::Aarch64Neon,
-    s: KernelId::Aarch64Neon,
+    xs: KernelId::Portable,
+    s: KernelId::Portable,
     m: KernelId::Aarch64Neon,
     l: KernelId::Aarch64Neon,
   },
   streaming: StreamingTable {
-    stream: KernelId::Aarch64Neon,
+    stream: KernelId::Portable,
     bulk: KernelId::Aarch64Neon,
   },
   parallel: default_parallel_costs(64 * 1024, 63, 8),
@@ -372,13 +372,13 @@ pub static PROFILE_AARCH64_APPLE_M1M3: FamilyProfile = default_kind_profile();
 pub static PROFILE_AARCH64_APPLE_M4: FamilyProfile = FamilyProfile {
   dispatch: DispatchTable {
     boundaries: DEFAULT_BOUNDARIES,
-    xs: KernelId::Aarch64Neon,
-    s: KernelId::Aarch64Neon,
+    xs: KernelId::Portable,
+    s: KernelId::Portable,
     m: KernelId::Aarch64Neon,
     l: KernelId::Aarch64Neon,
   },
   streaming: StreamingTable {
-    stream: KernelId::Aarch64Neon,
+    stream: KernelId::Portable,
     bulk: KernelId::Aarch64Neon,
   },
   parallel: default_kind_parallel_table(),
@@ -392,13 +392,13 @@ pub static PROFILE_AARCH64_APPLE_M4: FamilyProfile = default_kind_profile();
 pub static PROFILE_AARCH64_APPLE_M5: FamilyProfile = FamilyProfile {
   dispatch: DispatchTable {
     boundaries: DEFAULT_BOUNDARIES,
-    xs: KernelId::Aarch64Neon,
-    s: KernelId::Aarch64Neon,
+    xs: KernelId::Portable,
+    s: KernelId::Portable,
     m: KernelId::Aarch64Neon,
     l: KernelId::Aarch64Neon,
   },
   streaming: StreamingTable {
-    stream: KernelId::Aarch64Neon,
+    stream: KernelId::Portable,
     bulk: KernelId::Aarch64Neon,
   },
   parallel: default_kind_parallel_table(),
