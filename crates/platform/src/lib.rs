@@ -91,7 +91,7 @@ pub mod tune;
 // ─────────────────────────────────────────────────────────────────────────────
 
 pub use caps::{Arch, Caps};
-pub use detect::Detected;
+pub use detect::{Detected, OverrideError};
 pub use dispatch::{dispatch, dispatch_auto, dispatch_static, has_static_features};
 pub use tune::{Tune, TuneKind};
 
@@ -167,6 +167,14 @@ pub fn arch() -> Arch {
 #[inline]
 pub fn set_override(value: Option<Detected>) {
   detect::set_override(value);
+}
+
+/// Try to set detection override.
+///
+/// Returns an explicit error if detection has already been initialized.
+#[inline]
+pub fn try_set_override(value: Option<Detected>) -> Result<(), OverrideError> {
+  detect::try_set_override(value)
 }
 
 /// Clear the detection override.

@@ -1,8 +1,7 @@
 //! Apply `rscrypto-tune` results into dispatch kernel tables.
 //!
 //! This is the "pipeline" step: a machine can run `rscrypto-tune --apply`,
-//! and the repo's `dispatch.rs` tables get updated for that platform's
-//! [`platform::TuneKind`].
+//! and generated artifacts are emitted for that platform's [`platform::TuneKind`].
 //!
 //! # Output Format
 //!
@@ -579,6 +578,17 @@ fn should_apply_checksum_dispatch(results: &TuneResults) -> bool {
   results.algorithms.iter().any(|a| CRC_ALGO_NAMES.contains(&a.name))
 }
 
+fn generated_dir(repo_root: &Path) -> PathBuf {
+  repo_root.join("crates/tune/generated")
+}
+
+fn generated_apply_path(repo_root: &Path, family: &str, name: &str, tune_kind: TuneKind) -> PathBuf {
+  generated_dir(repo_root)
+    .join(family)
+    .join(name)
+    .join(format!("{tune_kind:?}.rs").to_lowercase())
+}
+
 fn apply_checksum_dispatch_tables(repo_root: &Path, results: &TuneResults) -> io::Result<()> {
   let tune_kind = results.platform.tune_kind;
 
@@ -603,13 +613,9 @@ fn apply_checksum_dispatch_tables(repo_root: &Path, results: &TuneResults) -> io
     )
   })?;
 
-  let dispatch_path = dispatch_path(repo_root);
-  let content = read_file(&dispatch_path)?;
-  let updated = update_dispatch_file(&content, table_ident, &table_code)?;
-  if updated != content {
-    write_file(&dispatch_path, &updated)?;
-    eprintln!("Updated: {}", dispatch_path.display());
-  }
+  let output_path = generated_apply_path(repo_root, "checksum", table_ident, tune_kind);
+  write_file(&output_path, &table_code)?;
+  eprintln!("Generated: {}", output_path.display());
 
   Ok(())
 }
@@ -713,85 +719,62 @@ fn generate_kernel_table(tune_kind: TuneKind, algos: &AlgoSet<'_>) -> io::Result
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// File Update Logic
+// Generated Artifact Mapping
 // ─────────────────────────────────────────────────────────────────────────────
-
-// Markers for future auto-update support (not currently used).
-#[allow(dead_code)]
-const BEGIN_MARKER: &str = "// BEGIN GENERATED (rscrypto-tune)";
-#[allow(dead_code)]
-const END_MARKER: &str = "// END GENERATED (rscrypto-tune)";
-
-fn dispatch_path(repo_root: &Path) -> PathBuf {
-  repo_root.join("crates/checksum/src/dispatch.rs")
-}
 
 struct HashDispatchTarget {
   algo: &'static str,
   aliases: &'static [&'static str],
-  rel_path: &'static str,
 }
 
 const HASH_DISPATCH_TARGETS: &[HashDispatchTarget] = &[
   HashDispatchTarget {
     algo: "sha224-compress",
     aliases: &["sha224"],
-    rel_path: "crates/hashes/src/crypto/sha224/dispatch_tables.rs",
   },
   HashDispatchTarget {
     algo: "sha256-compress",
     aliases: &["sha256"],
-    rel_path: "crates/hashes/src/crypto/sha256/dispatch_tables.rs",
   },
   HashDispatchTarget {
     algo: "sha384-compress",
     aliases: &["sha384"],
-    rel_path: "crates/hashes/src/crypto/sha384/dispatch_tables.rs",
   },
   HashDispatchTarget {
     algo: "sha512-compress",
     aliases: &["sha512"],
-    rel_path: "crates/hashes/src/crypto/sha512/dispatch_tables.rs",
   },
   HashDispatchTarget {
     algo: "sha512-224-compress",
     aliases: &["sha512-224"],
-    rel_path: "crates/hashes/src/crypto/sha512_224/dispatch_tables.rs",
   },
   HashDispatchTarget {
     algo: "sha512-256-compress",
     aliases: &["sha512-256"],
-    rel_path: "crates/hashes/src/crypto/sha512_256/dispatch_tables.rs",
   },
   HashDispatchTarget {
     algo: "blake2b-512-compress",
     aliases: &["blake2b-512"],
-    rel_path: "crates/hashes/src/crypto/blake2b/dispatch_tables.rs",
   },
   HashDispatchTarget {
     algo: "blake2s-256-compress",
     aliases: &["blake2s-256"],
-    rel_path: "crates/hashes/src/crypto/blake2s/dispatch_tables.rs",
   },
   HashDispatchTarget {
     algo: "blake3-chunk",
     aliases: &["blake3"],
-    rel_path: "crates/hashes/src/crypto/blake3/dispatch_tables.rs",
   },
   HashDispatchTarget {
     algo: "xxh3",
     aliases: &[],
-    rel_path: "crates/hashes/src/fast/xxh3/dispatch_tables.rs",
   },
   HashDispatchTarget {
     algo: "rapidhash",
     aliases: &[],
-    rel_path: "crates/hashes/src/fast/rapidhash/dispatch_tables.rs",
   },
   HashDispatchTarget {
     algo: "siphash",
     aliases: &[],
-    rel_path: "crates/hashes/src/fast/siphash/dispatch_tables.rs",
   },
   HashDispatchTarget {
     algo: "keccakf1600-permute",
@@ -804,12 +787,10 @@ const HASH_DISPATCH_TARGETS: &[HashDispatchTarget] = &[
       "shake128",
       "shake256",
     ],
-    rel_path: "crates/hashes/src/crypto/keccak/dispatch_tables.rs",
   },
   HashDispatchTarget {
     algo: "ascon-hash256",
     aliases: &["ascon-xof128"],
-    rel_path: "crates/hashes/src/crypto/ascon/dispatch_tables.rs",
   },
 ];
 
@@ -825,150 +806,11 @@ fn find_hash_algo<'a>(results: &'a TuneResults, target: &HashDispatchTarget) -> 
     .find_map(|&name| results.algorithms.iter().find(|a| a.name == name))
 }
 
-fn read_file(path: &Path) -> io::Result<String> {
-  fs::read_to_string(path)
-}
-
 fn write_file(path: &Path, contents: &str) -> io::Result<()> {
+  if let Some(parent) = path.parent() {
+    fs::create_dir_all(parent)?;
+  }
   fs::write(path, contents)
-}
-
-fn checksum_arch_module_name() -> Option<&'static str> {
-  if cfg!(target_arch = "aarch64") {
-    Some("aarch64_tables")
-  } else if cfg!(target_arch = "x86_64") {
-    Some("x86_64_tables")
-  } else if cfg!(target_arch = "s390x") {
-    Some("s390x_tables")
-  } else if cfg!(target_arch = "powerpc64") {
-    Some("power_tables")
-  } else if cfg!(target_arch = "riscv64") {
-    Some("riscv64_tables")
-  } else {
-    None
-  }
-}
-
-fn find_matching_brace(bytes: &[u8], open: usize) -> Option<usize> {
-  let mut depth: usize = 0;
-  for (i, &b) in bytes.iter().enumerate().skip(open) {
-    match b {
-      b'{' => depth = depth.strict_add(1),
-      b'}' => {
-        depth = depth.strict_sub(1);
-        if depth == 0 {
-          return Some(i);
-        }
-      }
-      _ => {}
-    }
-  }
-  None
-}
-
-fn find_kernel_table_section(content: &str, table_ident: &str) -> Option<(usize, usize)> {
-  let needle = format!("pub static {table_ident}: KernelTable");
-  let start_idx = content.find(&needle)?;
-
-  // Expand backwards to include the header line if present.
-  let section_start = content[..start_idx]
-    .rfind("\n  // ───────────────────────────────────────────────────────────────────────────")
-    .map(|i| i.strict_add(1))
-    .unwrap_or(start_idx);
-
-  // Find the opening brace of the KernelTable initializer.
-  let init_idx = content[start_idx..].find("= KernelTable {")?.strict_add(start_idx);
-  let open_brace = content[init_idx..].find('{')?.strict_add(init_idx);
-
-  let bytes = content.as_bytes();
-  let close_brace = find_matching_brace(bytes, open_brace)?;
-
-  // Include trailing `;` and one newline if present.
-  let mut end = close_brace.strict_add(1);
-  while end < bytes.len() && (bytes[end] == b' ' || bytes[end] == b'\t' || bytes[end] == b'\r') {
-    end += 1;
-  }
-  if end < bytes.len() && bytes[end] == b';' {
-    end += 1;
-  }
-  if end < bytes.len() && bytes[end] == b'\n' {
-    end += 1;
-  }
-
-  Some((section_start, end))
-}
-
-fn insert_into_module(content: &str, module_name: &str, table_code: &str) -> io::Result<String> {
-  let needle = format!("mod {module_name} {{");
-  let start = content.find(&needle).ok_or_else(|| {
-    io::Error::new(
-      io::ErrorKind::InvalidData,
-      format!("failed to find checksum dispatch module: {module_name}"),
-    )
-  })?;
-
-  let open_brace = content[start..]
-    .find('{')
-    .map(|off| start.strict_add(off))
-    .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "malformed module declaration"))?;
-
-  let bytes = content.as_bytes();
-  let close_brace = find_matching_brace(bytes, open_brace).ok_or_else(|| {
-    io::Error::new(
-      io::ErrorKind::InvalidData,
-      format!("failed to parse module body for: {module_name}"),
-    )
-  })?;
-
-  let before = &content[..close_brace];
-  let after = &content[close_brace..];
-  Ok(format!("{before}\n\n{table_code}{after}"))
-}
-
-/// Insert or update a generated checksum table in `crates/checksum/src/dispatch.rs`.
-fn update_dispatch_file(content: &str, table_ident: &str, table_code: &str) -> io::Result<String> {
-  if let Some((start, end)) = find_kernel_table_section(content, table_ident) {
-    let before = &content[..start];
-    let after = &content[end..];
-    return Ok(format!("{before}{table_code}{after}"));
-  }
-
-  // No existing section - insert into the architecture module for this host.
-  let Some(module_name) = checksum_arch_module_name() else {
-    return Err(io::Error::new(
-      io::ErrorKind::InvalidInput,
-      "checksum dispatch apply is not supported on this architecture",
-    ));
-  };
-
-  insert_into_module(content, module_name, table_code)
-}
-
-fn update_hash_dispatch_tables_file(content: &str, tune_kind: TuneKind, table_code: &str) -> io::Result<String> {
-  let kind_name = format!("{tune_kind:?}");
-  let section_marker = format!("// {kind_name} Table");
-
-  update_hash_dispatch_tables_section(content, &section_marker, table_code)
-}
-
-fn update_hash_dispatch_tables_section(content: &str, section_marker: &str, table_code: &str) -> io::Result<String> {
-  let Some(start_idx) = content.find(section_marker) else {
-    return Err(io::Error::new(
-      io::ErrorKind::InvalidData,
-      format!("dispatch_tables.rs missing marker: {section_marker}"),
-    ));
-  };
-
-  let rest = &content[start_idx..];
-  let end_offset = rest
-    .find("\n// ")
-    .or_else(|| rest.find("\n\n#[inline]"))
-    .or_else(|| rest.find("\n\npub fn "))
-    .unwrap_or(rest.len());
-
-  let before = &content[..start_idx];
-  let after = &content[start_idx.strict_add(end_offset)..];
-  Ok(format!("{before}{table_code}{after}"))
 }
 
 fn tune_kind_table_ident(tune_kind: TuneKind) -> &'static str {
@@ -1702,26 +1544,16 @@ fn apply_hash_dispatch_tables(repo_root: &Path, results: &TuneResults) -> io::Re
         results,
       );
       let spec = blake3_family_spec(tune_kind);
-
-      let path = repo_root.join(target.rel_path);
-      let content = read_file(&path)?;
-      let updated = update_hash_dispatch_tables_section(&content, spec.marker, &profile_code)?;
-      if updated != content {
-        write_file(&path, &updated)?;
-        eprintln!("Updated: {}", path.display());
-      }
+      let path = generated_apply_path(repo_root, "hashes", spec.profile_ident, tune_kind);
+      write_file(&path, &profile_code)?;
+      eprintln!("Generated: {}", path.display());
       continue;
     }
 
     let table_code = generate_hash_table(tune_kind, algo, Some(results));
-    let path = repo_root.join(target.rel_path);
-    let content = read_file(&path)?;
-    let updated = update_hash_dispatch_tables_file(&content, tune_kind, &table_code)?;
-
-    if updated != content {
-      write_file(&path, &updated)?;
-      eprintln!("Updated: {}", path.display());
-    }
+    let path = generated_apply_path(repo_root, "hashes", target.algo, tune_kind);
+    write_file(&path, &table_code)?;
+    eprintln!("Generated: {}", path.display());
   }
 
   Ok(())
