@@ -1,11 +1,36 @@
-name: scheduled-bench
+name: manual-bench
 
 on:
-  schedule:
-    - cron: "0 4 1,15 * *"
+  workflow_dispatch:
+    inputs:
+      run_amd_zen4:
+        description: "Run benchmarks on AMD Zen4 (Namespace)"
+        required: false
+        type: boolean
+        default: true
+      run_intel:
+        description: "Run benchmarks on Intel (RunsOn)"
+        required: false
+        type: boolean
+        default: true
+      run_graviton:
+        description: "Run benchmarks on Graviton (RunsOn)"
+        required: false
+        type: boolean
+        default: true
+      crates:
+        description: "Benchmark crates (comma-separated, empty = workspace)"
+        required: false
+        type: string
+        default: ""
+      benches:
+        description: "Specific benches (comma-separated, optional)"
+        required: false
+        type: string
+        default: ""
 
 concurrency:
-  group: scheduled-bench-${{ github.ref }}
+  group: manual-bench-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -20,16 +45,17 @@ permissions:
 
 jobs:
   lane-contract:
-    name: Lane Contract (scheduled-bench)
+    name: Lane Contract (manual-bench)
     runs-on: ubuntu-latest
     steps:
       - name: Assert lane
         run: |
-          test "${{ github.event_name }}" = "schedule"
-          echo "lane=scheduled-bench"
+          test "${{ github.event_name }}" = "workflow_dispatch"
+          echo "lane=manual-bench"
 
   bench-amd-zen4:
     name: Benchmark (AMD Zen4)
+    if: github.event.inputs.run_amd_zen4 == 'true'
     needs: lane-contract
     uses: ./.github/workflows/_rust-job.yaml
     with:
@@ -37,9 +63,27 @@ jobs:
       timeout_minutes: 90
       setup_kind: namespace
       run_script: |
+        CRATES_INPUT="${{ github.event.inputs.crates }}"
+        BENCHES_INPUT="${{ github.event.inputs.benches }}"
+        CRATE_FLAGS="--workspace"
+        BENCH_FLAGS=""
+        if [ -n "$CRATES_INPUT" ]; then
+          CRATE_FLAGS=""
+          IFS=',' read -ra CRATES <<< "$CRATES_INPUT"
+          for crate in "${CRATES[@]}"; do
+            CRATE_FLAGS="$CRATE_FLAGS -p $(echo "$crate" | xargs)"
+          done
+        fi
+        if [ -n "$BENCHES_INPUT" ]; then
+          IFS=',' read -ra BENCHES <<< "$BENCHES_INPUT"
+          for bench in "${BENCHES[@]}"; do
+            BENCH_FLAGS="$BENCH_FLAGS --bench $(echo "$bench" | xargs)"
+          done
+        fi
         rm -rf target/criterion
         mkdir -p benchmark-results
-        cargo bench --profile bench --workspace 2>&1 | tee benchmark-results/output.txt
+        # shellcheck disable=SC2086
+        cargo bench --profile bench $CRATE_FLAGS $BENCH_FLAGS 2>&1 | tee benchmark-results/output.txt
       artifact_name: benchmark-amd-zen4
       artifact_path: |
         benchmark-results/
@@ -47,6 +91,7 @@ jobs:
 
   bench-intel:
     name: Benchmark (Intel)
+    if: github.event.inputs.run_intel == 'true'
     needs: lane-contract
     uses: ./.github/workflows/_rust-job.yaml
     with:
@@ -55,9 +100,27 @@ jobs:
       setup_kind: runson
       runson_mode: runson-bench
       run_script: |
+        CRATES_INPUT="${{ github.event.inputs.crates }}"
+        BENCHES_INPUT="${{ github.event.inputs.benches }}"
+        CRATE_FLAGS="--workspace"
+        BENCH_FLAGS=""
+        if [ -n "$CRATES_INPUT" ]; then
+          CRATE_FLAGS=""
+          IFS=',' read -ra CRATES <<< "$CRATES_INPUT"
+          for crate in "${CRATES[@]}"; do
+            CRATE_FLAGS="$CRATE_FLAGS -p $(echo "$crate" | xargs)"
+          done
+        fi
+        if [ -n "$BENCHES_INPUT" ]; then
+          IFS=',' read -ra BENCHES <<< "$BENCHES_INPUT"
+          for bench in "${BENCHES[@]}"; do
+            BENCH_FLAGS="$BENCH_FLAGS --bench $(echo "$bench" | xargs)"
+          done
+        fi
         rm -rf target/criterion
         mkdir -p benchmark-results
-        cargo bench --profile bench --workspace 2>&1 | tee benchmark-results/output.txt
+        # shellcheck disable=SC2086
+        cargo bench --profile bench $CRATE_FLAGS $BENCH_FLAGS 2>&1 | tee benchmark-results/output.txt
       artifact_name: benchmark-intel
       artifact_path: |
         benchmark-results/
@@ -65,6 +128,7 @@ jobs:
 
   bench-graviton:
     name: Benchmark (Graviton)
+    if: github.event.inputs.run_graviton == 'true'
     needs: lane-contract
     uses: ./.github/workflows/_rust-job.yaml
     with:
@@ -73,9 +137,27 @@ jobs:
       setup_kind: runson
       runson_mode: runson-bench
       run_script: |
+        CRATES_INPUT="${{ github.event.inputs.crates }}"
+        BENCHES_INPUT="${{ github.event.inputs.benches }}"
+        CRATE_FLAGS="--workspace"
+        BENCH_FLAGS=""
+        if [ -n "$CRATES_INPUT" ]; then
+          CRATE_FLAGS=""
+          IFS=',' read -ra CRATES <<< "$CRATES_INPUT"
+          for crate in "${CRATES[@]}"; do
+            CRATE_FLAGS="$CRATE_FLAGS -p $(echo "$crate" | xargs)"
+          done
+        fi
+        if [ -n "$BENCHES_INPUT" ]; then
+          IFS=',' read -ra BENCHES <<< "$BENCHES_INPUT"
+          for bench in "${BENCHES[@]}"; do
+            BENCH_FLAGS="$BENCH_FLAGS --bench $(echo "$bench" | xargs)"
+          done
+        fi
         rm -rf target/criterion
         mkdir -p benchmark-results
-        cargo bench --profile bench --workspace 2>&1 | tee benchmark-results/output.txt
+        # shellcheck disable=SC2086
+        cargo bench --profile bench $CRATE_FLAGS $BENCH_FLAGS 2>&1 | tee benchmark-results/output.txt
       artifact_name: benchmark-graviton
       artifact_path: |
         benchmark-results/
