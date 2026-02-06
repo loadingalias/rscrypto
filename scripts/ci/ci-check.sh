@@ -55,13 +55,17 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 # Dependency & Security Checks
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""
-echo "🔒 Running cargo deny..."
-cargo deny check all
+if [[ "${RSCRYPTO_SKIP_POLICY_CHECKS:-}" == "true" ]]; then
+  echo "🔒 Skipping cargo deny/audit (RSCRYPTO_SKIP_POLICY_CHECKS=true)"
+else
+  echo "🔒 Running cargo deny..."
+  cargo deny check all
 
-echo ""
-echo "🛡️ Running security audit..."
-command -v cargo-audit >/dev/null 2>&1 && cargo-audit --version || true
-cargo audit
+  echo ""
+  echo "🛡️ Running security audit..."
+  command -v cargo-audit >/dev/null 2>&1 && cargo-audit --version || true
+  cargo audit
+fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Documentation
