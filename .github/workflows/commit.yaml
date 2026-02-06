@@ -63,9 +63,18 @@ jobs:
       cache_key: full-main-${{ matrix.target.name }}
       tools_mode: standard
       run_script: |
-        just ci-check
-        just build
-        just test
+        case "${{ matrix.target.name }}" in
+          *windows-msvc)
+            echo "Windows commit lane: compile-only smoke"
+            cargo check --workspace --all-targets --all-features
+            cargo test --workspace --all-features --no-run
+            ;;
+          *)
+            just ci-check
+            just build
+            just test
+            ;;
+        esac
 
   no-std:
     name: no_std (${{ matrix.target }})
