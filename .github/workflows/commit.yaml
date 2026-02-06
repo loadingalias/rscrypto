@@ -129,7 +129,7 @@ jobs:
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
       - name: wasm-pack build
-        run: wasm-pack build crates/rscrypto --target web --no-default-features --features alloc
+        run: wasm-pack build crates/rscrypto --target web --no-default-features --features std
 
   complete:
     name: Complete (full-main)

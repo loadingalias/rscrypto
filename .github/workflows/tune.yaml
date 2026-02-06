@@ -48,26 +48,6 @@ on:
         required: false
         type: boolean
         default: false
-      self_check:
-        description: "Run tuner self-check before success"
-        required: false
-        type: boolean
-        default: false
-      enforce_targets:
-        description: "Fail run if any defined perf target is missed"
-        required: false
-        type: boolean
-        default: false
-      warmup_ms:
-        description: "Custom warmup duration in ms (optional)"
-        required: false
-        type: string
-        default: ""
-      measure_ms:
-        description: "Custom measure duration in ms (optional)"
-        required: false
-        type: string
-        default: ""
 
 env:
   RUST_BACKTRACE: 1
@@ -97,10 +77,10 @@ jobs:
         TUNE_CRATES="${{ github.event.inputs.crates }}" \
         TUNE_ONLY="${{ github.event.inputs.only }}" \
         TUNE_APPLY=${{ github.event.inputs.apply }} \
-        TUNE_SELF_CHECK=${{ github.event.inputs.self_check }} \
-        TUNE_ENFORCE_TARGETS=${{ github.event.inputs.enforce_targets }} \
-        TUNE_WARMUP_MS="${{ github.event.inputs.warmup_ms }}" \
-        TUNE_MEASURE_MS="${{ github.event.inputs.measure_ms }}" \
+        TUNE_SELF_CHECK=false \
+        TUNE_ENFORCE_TARGETS=false \
+        TUNE_WARMUP_MS="" \
+        TUNE_MEASURE_MS="" \
         scripts/ci/run-tune.sh
       artifact_name: tuning-intel
       artifact_path: tune-results/
@@ -123,10 +103,10 @@ jobs:
         TUNE_CRATES="${{ github.event.inputs.crates }}" \
         TUNE_ONLY="${{ github.event.inputs.only }}" \
         TUNE_APPLY=${{ github.event.inputs.apply }} \
-        TUNE_SELF_CHECK=${{ github.event.inputs.self_check }} \
-        TUNE_ENFORCE_TARGETS=${{ github.event.inputs.enforce_targets }} \
-        TUNE_WARMUP_MS="${{ github.event.inputs.warmup_ms }}" \
-        TUNE_MEASURE_MS="${{ github.event.inputs.measure_ms }}" \
+        TUNE_SELF_CHECK=false \
+        TUNE_ENFORCE_TARGETS=false \
+        TUNE_WARMUP_MS="" \
+        TUNE_MEASURE_MS="" \
         scripts/ci/run-tune.sh
       artifact_name: tuning-intel-icl
       artifact_path: tune-results/
@@ -148,10 +128,10 @@ jobs:
         TUNE_CRATES="${{ github.event.inputs.crates }}" \
         TUNE_ONLY="${{ github.event.inputs.only }}" \
         TUNE_APPLY=${{ github.event.inputs.apply }} \
-        TUNE_SELF_CHECK=${{ github.event.inputs.self_check }} \
-        TUNE_ENFORCE_TARGETS=${{ github.event.inputs.enforce_targets }} \
-        TUNE_WARMUP_MS="${{ github.event.inputs.warmup_ms }}" \
-        TUNE_MEASURE_MS="${{ github.event.inputs.measure_ms }}" \
+        TUNE_SELF_CHECK=false \
+        TUNE_ENFORCE_TARGETS=false \
+        TUNE_WARMUP_MS="" \
+        TUNE_MEASURE_MS="" \
         scripts/ci/run-tune.sh
       artifact_name: tuning-amd-zen4
       artifact_path: tune-results/
@@ -174,10 +154,10 @@ jobs:
         TUNE_CRATES="${{ github.event.inputs.crates }}" \
         TUNE_ONLY="${{ github.event.inputs.only }}" \
         TUNE_APPLY=${{ github.event.inputs.apply }} \
-        TUNE_SELF_CHECK=${{ github.event.inputs.self_check }} \
-        TUNE_ENFORCE_TARGETS=${{ github.event.inputs.enforce_targets }} \
-        TUNE_WARMUP_MS="${{ github.event.inputs.warmup_ms }}" \
-        TUNE_MEASURE_MS="${{ github.event.inputs.measure_ms }}" \
+        TUNE_SELF_CHECK=false \
+        TUNE_ENFORCE_TARGETS=false \
+        TUNE_WARMUP_MS="" \
+        TUNE_MEASURE_MS="" \
         scripts/ci/run-tune.sh
       artifact_name: tuning-amd-zen5
       artifact_path: tune-results/
@@ -200,10 +180,10 @@ jobs:
         TUNE_CRATES="${{ github.event.inputs.crates }}" \
         TUNE_ONLY="${{ github.event.inputs.only }}" \
         TUNE_APPLY=${{ github.event.inputs.apply }} \
-        TUNE_SELF_CHECK=${{ github.event.inputs.self_check }} \
-        TUNE_ENFORCE_TARGETS=${{ github.event.inputs.enforce_targets }} \
-        TUNE_WARMUP_MS="${{ github.event.inputs.warmup_ms }}" \
-        TUNE_MEASURE_MS="${{ github.event.inputs.measure_ms }}" \
+        TUNE_SELF_CHECK=false \
+        TUNE_ENFORCE_TARGETS=false \
+        TUNE_WARMUP_MS="" \
+        TUNE_MEASURE_MS="" \
         scripts/ci/run-tune.sh
       artifact_name: tuning-graviton
       artifact_path: tune-results/
