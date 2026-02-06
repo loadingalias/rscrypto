@@ -1,4 +1,4 @@
-name: manual-bench
+name: Bench
 
 on:
   workflow_dispatch:

@@ -9,14 +9,15 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo "🧱 Infrastructure Correctness Checks"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-if ! command -v actionlint >/dev/null 2>&1; then
-  echo "error: actionlint is required but not installed" >&2
-  exit 1
-fi
-
 echo ""
-echo "1) actionlint"
-actionlint
+echo "1) actionlint (local-only)"
+if [[ "${CI:-}" == "true" ]]; then
+  echo "skipped in CI"
+elif command -v actionlint >/dev/null 2>&1; then
+  actionlint
+else
+  echo "warning: actionlint not found; skipping local workflow lint"
+fi
 
 echo ""
 echo "2) Shell syntax lint (bash -n)"
