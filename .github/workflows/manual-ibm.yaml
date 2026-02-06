@@ -8,11 +8,6 @@ on:
         required: false
         type: boolean
         default: false
-      run_ci_power9:
-        description: "Run CI on IBM POWER9 (ppc64le)"
-        required: false
-        type: boolean
-        default: false
       run_ci_power10:
         description: "Run CI on IBM POWER10 (ppc64le)"
         required: false
@@ -23,11 +18,6 @@ on:
         required: false
         type: boolean
         default: false
-      run_bench_power9:
-        description: "Run benchmarks on IBM POWER9 (ppc64le)"
-        required: false
-        type: boolean
-        default: false
       run_bench_power10:
         description: "Run benchmarks on IBM POWER10 (ppc64le)"
         required: false
@@ -35,11 +25,6 @@ on:
         default: false
       run_tune_s390x:
         description: "Run tune on IBM Z (s390x)"
-        required: false
-        type: boolean
-        default: false
-      run_tune_power9:
-        description: "Run tune on IBM POWER9 (ppc64le)"
         required: false
         type: boolean
         default: false
@@ -81,26 +66,6 @@ jobs:
       timeout_minutes: 90
       setup_kind: default
       cache_key: manual-ibm-ci-s390x
-      tools_mode: ibm
-      toolchain_components: "clippy, rustfmt"
-      pre_script: |
-        uname -a
-        lscpu
-        cat /proc/cpuinfo | head -50
-      run_script: |
-        just ci-check
-        just build
-        just test --all
-
-  ci-power9:
-    if: github.event.inputs.run_ci_power9 == 'true'
-    needs: lane-contract
-    uses: ./.github/workflows/_rust-job.yaml
-    with:
-      runner: ubuntu-24.04-ppc64le
-      timeout_minutes: 90
-      setup_kind: default
-      cache_key: manual-ibm-ci-power9
       tools_mode: ibm
       toolchain_components: "clippy, rustfmt"
       pre_script: |
@@ -174,48 +139,6 @@ jobs:
         benchmark-results/
         target/criterion/
 
-  bench-power9:
-    if: github.event.inputs.run_bench_power9 == 'true'
-    needs: lane-contract
-    uses: ./.github/workflows/_rust-job.yaml
-    with:
-      runner: ubuntu-24.04-ppc64le
-      timeout_minutes: 120
-      setup_kind: default
-      cache_key: manual-ibm-bench-power9
-      tools_mode: bench
-      toolchain_components: "clippy, rustfmt"
-      pre_script: |
-        uname -a
-        lscpu
-        cat /proc/cpuinfo | head -50
-      run_script: |
-        CRATES_INPUT=""
-        BENCHES_INPUT=""
-        CRATE_FLAGS="--workspace"
-        BENCH_FLAGS=""
-        if [ -n "$CRATES_INPUT" ]; then
-          CRATE_FLAGS=""
-          IFS=',' read -ra CRATES <<< "$CRATES_INPUT"
-          for crate in "${CRATES[@]}"; do
-            CRATE_FLAGS="$CRATE_FLAGS -p $(echo "$crate" | xargs)"
-          done
-        fi
-        if [ -n "$BENCHES_INPUT" ]; then
-          IFS=',' read -ra BENCHES <<< "$BENCHES_INPUT"
-          for bench in "${BENCHES[@]}"; do
-            BENCH_FLAGS="$BENCH_FLAGS --bench $(echo "$bench" | xargs)"
-          done
-        fi
-        rm -rf target/criterion
-        mkdir -p benchmark-results
-        # shellcheck disable=SC2086
-        cargo bench --profile bench $CRATE_FLAGS $BENCH_FLAGS 2>&1 | tee benchmark-results/output.txt
-      artifact_name: benchmark-ibm-power9
-      artifact_path: |
-        benchmark-results/
-        target/criterion/
-
   bench-power10:
     if: github.event.inputs.run_bench_power10 == 'true'
     needs: lane-contract
@@ -279,29 +202,6 @@ jobs:
         TUNE_ONLY="" \
         scripts/ci/run-tune.sh
       artifact_name: tuning-ibm-s390x
-      artifact_path: tune-results/
-
-  tune-power9:
-    if: github.event.inputs.run_tune_power9 == 'true'
-    needs: lane-contract
-    uses: ./.github/workflows/_rust-job.yaml
-    with:
-      runner: ubuntu-24.04-ppc64le
-      timeout_minutes: 120
-      setup_kind: default
-      cache_key: manual-ibm-tune-power9
-      tools_mode: bench
-      toolchain_components: ""
-      pre_script: |
-        uname -a
-        lscpu
-      run_script: |
-        TUNE_OUTPUT_DIR=tune-results \
-        TUNE_QUICK=true \
-        TUNE_CRATES="${{ github.event.inputs.tune_crates }}" \
-        TUNE_ONLY="" \
-        scripts/ci/run-tune.sh
-      artifact_name: tuning-ibm-power9
       artifact_path: tune-results/
 
   tune-power10:
