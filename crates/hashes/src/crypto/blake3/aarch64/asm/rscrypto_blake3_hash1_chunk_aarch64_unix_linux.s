@@ -523,15 +523,16 @@ rscrypto_blake3_chunk_compress_blocks_aarch64_unix_linux:
     stp x27, x28, [sp, #-16]!
 
     // Stack locals:
-    // - [sp, #0]: flags (u32)
-    // - [sp, #8]: chunk_counter (u64)
-    sub sp, sp, #16
+    // - [sp, #0]:  flags (u32)
+    // - [sp, #8]:  chunk_counter (u64)
+    // - [sp, #16]: chaining_value ptr (u32[8], in/out)
+    sub sp, sp, #32
     str w3, [sp, #0]
     str x2, [sp, #8]
+    str x1, [sp, #16]
 
     // Move pointers/counters to safe registers (not overlapped by w0..w15).
     mov x16, x0        // message pointer for LOAD_MSG
-    mov x20, x1         // chaining value pointer
     mov x29, x4        // blocks_compressed pointer (in/out)
     mov x30, x5        // num_blocks loop counter
 
@@ -539,6 +540,7 @@ rscrypto_blake3_chunk_compress_blocks_aarch64_unix_linux:
     cbz x30, 3f
 
     // Load chaining value into w0..w7.
+    ldr x20, [sp, #16]
     ldr w0, [x20, #0]
     ldr w1, [x20, #4]
     ldr w2, [x20, #8]
@@ -575,6 +577,8 @@ rscrypto_blake3_chunk_compress_blocks_aarch64_unix_linux:
     bne 1b
 
     // Store updated chaining value and blocks_compressed.
+    // `LOAD_MSG` reuses x20 for message words, so reload the CV pointer.
+    ldr x20, [sp, #16]
     str w0, [x20, #0]
     str w1, [x20, #4]
     str w2, [x20, #8]
@@ -586,7 +590,7 @@ rscrypto_blake3_chunk_compress_blocks_aarch64_unix_linux:
     strb w17, [x29]
 
 3:
-    add sp, sp, #16
+    add sp, sp, #32
 
     ldp x27, x28, [sp], #16
     ldp x25, x26, [sp], #16

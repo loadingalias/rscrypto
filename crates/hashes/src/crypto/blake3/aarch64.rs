@@ -67,6 +67,44 @@ fn can_use_asm_last_block_out(ptr: *const u8) -> bool {
   ptr_is_aligned(ptr, asm::ASM_ALIGN_LAST_BLOCK_OUT)
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[repr(align(8))]
+struct AlignedAsmInput<const N: usize>([u8; N]);
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[inline(always)]
+unsafe fn chunk_compress_blocks_asm(
+  blocks: *const u8,
+  chaining_value: *mut u32,
+  chunk_counter: u64,
+  flags: u32,
+  blocks_compressed: *mut u8,
+  num_blocks: usize,
+) {
+  #[cfg(target_os = "linux")]
+  {
+    asm::rscrypto_blake3_chunk_compress_blocks_aarch64_unix_linux(
+      blocks,
+      chaining_value,
+      chunk_counter,
+      flags,
+      blocks_compressed,
+      num_blocks,
+    );
+  }
+  #[cfg(target_os = "macos")]
+  {
+    asm::rscrypto_blake3_chunk_compress_blocks_aarch64_apple_darwin(
+      blocks,
+      chaining_value,
+      chunk_counter,
+      flags,
+      blocks_compressed,
+      num_blocks,
+    );
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Rotation helpers for NEON - Optimized versions
 // ─────────────────────────────────────────────────────────────────────────────
@@ -248,6 +286,56 @@ unsafe fn load_msg_vecs_transposed(inputs: [*const u8; 4], block_offset: usize, 
   for i in 0..16 {
     out[i] = vld1q_u32(msg_words[i].as_ptr());
   }
+  out
+}
+
+/// Load and transpose message words for 4 contiguous chunks.
+///
+/// The input layout is:
+/// - lane 0: `base + 0 * CHUNK_LEN`
+/// - lane 1: `base + 1 * CHUNK_LEN`
+/// - lane 2: `base + 2 * CHUNK_LEN`
+/// - lane 3: `base + 3 * CHUNK_LEN`
+///
+/// This path is only valid for full 64-byte blocks.
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+unsafe fn load_msg_vecs_transposed_contiguous(base: *const u8, block_offset: usize) -> [uint32x4_t; 16] {
+  const {
+    assert!(
+      cfg!(target_endian = "little"),
+      "aarch64 NEON implementation assumes little-endian"
+    );
+  }
+
+  #[inline(always)]
+  unsafe fn loadu_128(src: *const u8) -> uint32x4_t {
+    // `vld1q_u8` has no alignment requirements.
+    vreinterpretq_u32_u8(vld1q_u8(src))
+  }
+
+  let mut out = [vdupq_n_u32(0); 16];
+  macro_rules! load_and_transpose {
+    ($dst:expr, $off:expr) => {{
+      let off = block_offset + $off;
+      let mut vecs = [
+        loadu_128(base.add(off)),
+        loadu_128(base.add(CHUNK_LEN + off)),
+        loadu_128(base.add(2 * CHUNK_LEN + off)),
+        loadu_128(base.add(3 * CHUNK_LEN + off)),
+      ];
+      transpose_vecs(&mut vecs);
+      out[$dst] = vecs[0];
+      out[$dst + 1] = vecs[1];
+      out[$dst + 2] = vecs[2];
+      out[$dst + 3] = vecs[3];
+    }};
+  }
+
+  load_and_transpose!(0, 0);
+  load_and_transpose!(4, 16);
+  load_and_transpose!(8, 32);
+  load_and_transpose!(12, 48);
   out
 }
 
@@ -596,6 +684,12 @@ pub unsafe fn hash4_neon(
   debug_assert!(input_len <= CHUNK_LEN);
 
   let num_blocks = input_len.div_ceil(BLOCK_LEN);
+  // `hash_many_contiguous_neon` feeds 4 adjacent chunks. In that hot path we
+  // can skip the generic load/pad path and use a tighter contiguous loader.
+  let contiguous_full_chunks = input_len == CHUNK_LEN
+    && (inputs[1] as usize).wrapping_sub(inputs[0] as usize) == CHUNK_LEN
+    && (inputs[2] as usize).wrapping_sub(inputs[0] as usize) == 2 * CHUNK_LEN
+    && (inputs[3] as usize).wrapping_sub(inputs[0] as usize) == 3 * CHUNK_LEN;
 
   #[inline(always)]
   unsafe fn storeu_128(src: uint32x4_t, dest: *mut u8) {
@@ -658,7 +752,11 @@ pub unsafe fn hash4_neon(
     }
 
     // Load and transpose message blocks (pads the last block if needed).
-    let msg = load_msg_vecs_transposed(inputs, block_offset, block_len as usize);
+    let msg = if contiguous_full_chunks {
+      load_msg_vecs_transposed_contiguous(inputs[0], block_offset)
+    } else {
+      load_msg_vecs_transposed(inputs, block_offset, block_len as usize)
+    };
 
     let block_len_vec = vdupq_n_u32(block_len);
     let block_flags_vec = vdupq_n_u32(block_flags);
@@ -964,56 +1062,19 @@ pub unsafe fn hash_many_contiguous_neon(
     return;
   }
 
-  // `hash4_neon` is our world-class fast path. For a remainder of 2–3 chunks,
-  // it's better to run one extra (duplicate) lane than to fall back to the
-  // scalar compressor for most streaming workloads (notably 4096B updates).
-  if remaining >= 2 {
-    // SAFETY: caller guarantees `input` is valid for `num_chunks * CHUNK_LEN`.
-    let input_ptrs = unsafe {
-      let last_ptr = input.add((idx + remaining - 1) * CHUNK_LEN);
-      [
-        input.add(idx * CHUNK_LEN),
-        input.add((idx + 1) * CHUNK_LEN),
-        if remaining >= 3 {
-          input.add((idx + 2) * CHUNK_LEN)
-        } else {
-          last_ptr
-        },
-        last_ptr,
-      ]
-    };
-
-    let mut out_buf = [[0u8; OUT_LEN]; 4];
-    hash4_neon(
-      input_ptrs,
-      CHUNK_LEN,
-      key,
-      counter,
-      true,
-      flags,
-      CHUNK_START,
-      super::CHUNK_END,
-      &mut out_buf,
-    );
-
-    for (lane, lane_out) in out_buf.iter().take(remaining).enumerate() {
-      // SAFETY: `lane < remaining` and `remaining <= num_chunks - idx`, so
-      // `out.add((idx + lane) * OUT_LEN)` stays within `num_chunks * OUT_LEN`.
-      unsafe { core::ptr::copy_nonoverlapping(lane_out.as_ptr(), out.add((idx + lane) * OUT_LEN), OUT_LEN) };
+  // Tail path: hash each leftover chunk directly. This avoids paying 4-lane
+  // transpose/compression cost when only 1-3 chunks remain.
+  //
+  // SAFETY: caller guarantees `input`/`out` cover `num_chunks` chunks.
+  for lane in 0..remaining {
+    // SAFETY: `lane < remaining <= num_chunks - idx`, so per-lane source and
+    // destination pointers are within caller-provided buffers.
+    unsafe {
+      let src = input.add((idx + lane) * CHUNK_LEN);
+      let dst = out.add((idx + lane) * OUT_LEN);
+      let chunk_counter = counter.wrapping_add(lane as u64);
+      chunk_cv_one_chunk_aarch64_out(src, key, chunk_counter, flags, dst);
     }
-    return;
-  }
-
-  // Single-chunk remainder: avoid falling back to the portable compressor.
-  // This shows up in both large-input tails and "exactly one chunk" cases.
-  debug_assert_eq!(remaining, 1);
-
-  // SAFETY: caller guarantees `input` is valid for `num_chunks * CHUNK_LEN`, and
-  // `out` is valid for `num_chunks * OUT_LEN`.
-  unsafe {
-    let src = input.add(idx * CHUNK_LEN);
-    let dst = out.add(idx * OUT_LEN);
-    chunk_cv_one_chunk_aarch64_out(src, key, counter, flags, dst);
   }
 }
 
@@ -1075,20 +1136,19 @@ pub unsafe fn chunk_compress_blocks_neon(
 ) {
   debug_assert_eq!(blocks.len() % BLOCK_LEN, 0);
 
-  // Linux-only asm fast path for tight per-block compression loops.
+  // asm fast path for tight per-block compression loops.
   //
-  // This uses 64-bit loads, so require 8-byte alignment to avoid potentially
-  // faulting unaligned accesses when strict alignment checking is enabled.
-  #[cfg(target_os = "linux")]
+  // The asm kernel uses 64-bit loads, so direct calls require 8-byte aligned
+  // inputs. When `blocks` is unaligned, block-wise peeling cannot fix it,
+  // because BLOCK_LEN (64) preserves address modulo 8. Stage through an
+  // aligned scratch buffer so we can still run asm for the bulk loop.
+  #[cfg(any(target_os = "linux", target_os = "macos"))]
   {
-    if !blocks.is_empty() && can_use_asm_input(blocks.as_ptr()) {
-      let num_blocks = blocks.len() / BLOCK_LEN;
-      debug_assert_ne!(num_blocks, 0);
-      // SAFETY: `blocks` is `num_blocks * 64` bytes, `chaining_value` is 8 u32
-      // words, `blocks_compressed` is valid, and this is only compiled on
-      // Linux aarch64 where the symbol is available.
+    let num_blocks = blocks.len() / BLOCK_LEN;
+    if num_blocks != 0 && can_use_asm_input(blocks.as_ptr()) {
+      // SAFETY: pointers/length satisfy asm contract.
       unsafe {
-        asm::rscrypto_blake3_chunk_compress_blocks_aarch64_unix_linux(
+        chunk_compress_blocks_asm(
           blocks.as_ptr(),
           chaining_value.as_mut_ptr(),
           chunk_counter,
@@ -1096,6 +1156,38 @@ pub unsafe fn chunk_compress_blocks_neon(
           blocks_compressed as *mut u8,
           num_blocks,
         );
+      }
+      return;
+    }
+
+    if num_blocks != 0 {
+      const ASM_STAGE_BLOCKS: usize = 8;
+      const ASM_STAGE_BYTES: usize = ASM_STAGE_BLOCKS * BLOCK_LEN;
+      let mut staged = AlignedAsmInput::<ASM_STAGE_BYTES>([0u8; ASM_STAGE_BYTES]);
+      debug_assert!(can_use_asm_input(staged.0.as_ptr()));
+
+      let mut done = 0usize;
+      while done < num_blocks {
+        let stage_blocks = core::cmp::min(ASM_STAGE_BLOCKS, num_blocks - done);
+        let stage_bytes = stage_blocks * BLOCK_LEN;
+
+        // SAFETY: source and destination are valid for `stage_bytes`.
+        unsafe {
+          core::ptr::copy_nonoverlapping(
+            blocks.as_ptr().add(done * BLOCK_LEN),
+            staged.0.as_mut_ptr(),
+            stage_bytes,
+          );
+          chunk_compress_blocks_asm(
+            staged.0.as_ptr(),
+            chaining_value.as_mut_ptr(),
+            chunk_counter,
+            flags,
+            blocks_compressed as *mut u8,
+            stage_blocks,
+          );
+        }
+        done += stage_blocks;
       }
       return;
     }

@@ -491,3 +491,111 @@ _rscrypto_blake3_hash1_chunk_state_aarch64_apple_darwin:
     ldp x21, x22, [sp], #16
     ldp x19, x20, [sp], #16
     ret
+
+
+    // Compress `num_blocks` full 64-byte blocks into an existing chunk chaining
+    // value, updating `*blocks_compressed`.
+    //
+    // Signature:
+    //   void rscrypto_blake3_chunk_compress_blocks_aarch64_apple_darwin(
+    //     const uint8_t* blocks,        // x0
+    //     uint32_t*      chaining_value,// x1 (8 u32 words, in/out)
+    //     uint64_t       chunk_counter, // x2
+    //     uint32_t       flags,         // w3
+    //     uint8_t*       blocks_comp,   // x4 (in/out)
+    //     size_t         num_blocks     // x5
+    //   );
+    //
+    // Notes:
+    // - Applies CHUNK_START (bit 0) iff *blocks_comp == 0 for the first block.
+    // - Does NOT apply CHUNK_END; callers keep the final chunk block buffered.
+    .p2align 4
+    .globl _rscrypto_blake3_chunk_compress_blocks_aarch64_apple_darwin
+_rscrypto_blake3_chunk_compress_blocks_aarch64_apple_darwin:
+    // NOTE: This function can't keep pointers/counters in x0..x7, because
+    // COMPRESS_7ROUNDS uses w0..w15 heavily, and writing to wN clobbers xN.
+
+    stp x29, x30, [sp, #-16]!
+    stp x19, x20, [sp, #-16]!
+    stp x21, x22, [sp, #-16]!
+    stp x23, x24, [sp, #-16]!
+    stp x25, x26, [sp, #-16]!
+    stp x27, x28, [sp, #-16]!
+
+    // Stack locals:
+    // - [sp, #0]:  flags (u32)
+    // - [sp, #8]:  chunk_counter (u64)
+    // - [sp, #16]: chaining_value ptr (u32[8], in/out)
+    sub sp, sp, #32
+    str w3, [sp, #0]
+    str x2, [sp, #8]
+    str x1, [sp, #16]
+
+    // Move pointers/counters to safe registers (not overlapped by w0..w15).
+    mov x16, x0        // message pointer for LOAD_MSG
+    mov x29, x4        // blocks_compressed pointer (in/out)
+    mov x30, x5        // num_blocks loop counter
+
+    // Early out for num_blocks == 0.
+    cbz x30, 3f
+
+    // Load chaining value into w0..w7.
+    ldr x20, [sp, #16]
+    ldr w0, [x20, #0]
+    ldr w1, [x20, #4]
+    ldr w2, [x20, #8]
+    ldr w3, [x20, #12]
+    ldr w4, [x20, #16]
+    ldr w5, [x20, #20]
+    ldr w6, [x20, #24]
+    ldr w7, [x20, #28]
+
+    // Load blocks_compressed (u8) into w17.
+    ldrb w17, [x29]
+
+1:
+    LOAD_MSG
+    LOAD_IV
+
+    // Reload row3 for each compression (compression mutates w12..w15).
+    ldr w12, [sp, #8]
+    ldr w13, [sp, #12]
+    mov w14, #64
+    ldr w15, [sp, #0]
+
+    // Apply CHUNK_START on the first block of the chunk.
+    cbnz w17, 2f
+    orr w15, w15, #1
+2:
+    COMPRESS_7ROUNDS
+
+    // blocks_compressed++
+    add w17, w17, #1
+
+    // Loop.
+    subs x30, x30, #1
+    bne 1b
+
+    // Store updated chaining value and blocks_compressed.
+    // `LOAD_MSG` reuses x20 for message words, so reload the CV pointer.
+    ldr x20, [sp, #16]
+    str w0, [x20, #0]
+    str w1, [x20, #4]
+    str w2, [x20, #8]
+    str w3, [x20, #12]
+    str w4, [x20, #16]
+    str w5, [x20, #20]
+    str w6, [x20, #24]
+    str w7, [x20, #28]
+    strb w17, [x29]
+
+3:
+    add sp, sp, #32
+
+    ldp x27, x28, [sp], #16
+    ldp x25, x26, [sp], #16
+    ldp x23, x24, [sp], #16
+    ldp x21, x22, [sp], #16
+    ldp x19, x20, [sp], #16
+    ldp x29, x30, [sp], #16
+    ret
