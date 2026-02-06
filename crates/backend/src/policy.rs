@@ -21,7 +21,7 @@ use platform::{Caps, Tune};
 
 use crate::{
   family::{KernelFamily, KernelSubfamily},
-  tier::KernelTier,
+  tier::{KernelTier, TierThresholds},
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -145,16 +145,20 @@ impl SelectionPolicy {
   #[must_use]
   pub fn from_platform(caps: Caps, tune: &Tune) -> Self {
     // Select the best available family
-    let family = Self::select_family(caps, tune);
+    let family = KernelFamily::select_for_platform(caps, tune);
 
     // Compute subfamily based on family and tier
     let subfamily = Self::compute_subfamily(family);
 
     // Compute thresholds based on tune preset
-    let (small_threshold, fold_threshold, wide_threshold) = Self::compute_thresholds(family, tune);
+    let TierThresholds {
+      small: small_threshold,
+      fold: fold_threshold,
+      wide: wide_threshold,
+    } = family.tier().policy_thresholds(tune);
 
     // Compute stream parameters for multi-way folding
-    let max_streams = Self::compute_max_streams(family, tune);
+    let max_streams = family.max_streams_for_tune(tune);
     let min_bytes_per_lane = family.min_bytes_per_lane_for_tune(tune);
 
     Self {
@@ -178,12 +182,16 @@ impl SelectionPolicy {
     let effective_family = if family.is_available(caps) {
       family
     } else {
-      Self::select_family(caps, tune)
+      KernelFamily::select_for_platform(caps, tune)
     };
 
     let subfamily = Self::compute_subfamily(effective_family);
-    let (small_threshold, fold_threshold, wide_threshold) = Self::compute_thresholds(effective_family, tune);
-    let max_streams = Self::compute_max_streams(effective_family, tune);
+    let TierThresholds {
+      small: small_threshold,
+      fold: fold_threshold,
+      wide: wide_threshold,
+    } = effective_family.tier().policy_thresholds(tune);
+    let max_streams = effective_family.max_streams_for_tune(tune);
     let min_bytes_per_lane = effective_family.min_bytes_per_lane_for_tune(tune);
 
     Self {
@@ -204,8 +212,12 @@ impl SelectionPolicy {
   #[must_use]
   pub fn with_subfamily(caps: Caps, tune: &Tune, subfamily: KernelSubfamily) -> Self {
     let family = subfamily.family;
-    let (small_threshold, fold_threshold, wide_threshold) = Self::compute_thresholds(family, tune);
-    let max_streams = Self::compute_max_streams(family, tune);
+    let TierThresholds {
+      small: small_threshold,
+      fold: fold_threshold,
+      wide: wide_threshold,
+    } = family.tier().policy_thresholds(tune);
+    let max_streams = family.max_streams_for_tune(tune);
     let min_bytes_per_lane = family.min_bytes_per_lane_for_tune(tune);
 
     Self {
@@ -231,78 +243,6 @@ impl SelectionPolicy {
       KernelTier::Folding => KernelSubfamily::folding(family),
       KernelTier::Wide => KernelSubfamily::wide(family, false), // Algorithm can override uses_hwcrc
     }
-  }
-
-  /// Select the best kernel family for the given capabilities and tune.
-  fn select_family(caps: Caps, tune: &Tune) -> KernelFamily {
-    // Try families in descending tier order
-    for &family in KernelFamily::families_for_current_arch() {
-      // Skip reference - we want the best *usable* family
-      if family == KernelFamily::Reference {
-        continue;
-      }
-
-      // Check if family is available
-      if !family.is_available(caps) {
-        continue;
-      }
-
-      // For wide tier, check if wide SIMD is worth it.
-      //
-      // Note: some "wide tier" families (e.g. aarch64 PMULL+EOR3) are still
-      // 128-bit NEON and should not be gated on SIMD width.
-      if family.tier() == KernelTier::Wide && family.requires_simd_width_256() && tune.effective_simd_width < 256 {
-        continue;
-      }
-
-      return family;
-    }
-
-    // Portable is always available
-    KernelFamily::Portable
-  }
-
-  /// Compute tier transition thresholds.
-  fn compute_thresholds(family: KernelFamily, tune: &Tune) -> (usize, usize, usize) {
-    let tier = family.tier();
-
-    match tier {
-      KernelTier::Reference | KernelTier::Portable => (usize::MAX, usize::MAX, usize::MAX),
-      KernelTier::HwCrc => {
-        // HW CRC is effective even for tiny buffers
-        (tune.hwcrc_threshold, usize::MAX, usize::MAX)
-      }
-      KernelTier::Folding => {
-        // Folding needs setup, use pclmul_threshold
-        (tune.pclmul_threshold, tune.pclmul_threshold, usize::MAX)
-      }
-      KernelTier::Wide => {
-        // Wide tier: different threshold for folding->wide transition
-        let fold_to_wide = if tune.fast_wide_ops { 512 } else { 2048 };
-        (tune.pclmul_threshold, tune.pclmul_threshold, fold_to_wide)
-      }
-    }
-  }
-
-  /// Compute maximum stream count for multi-way folding.
-  ///
-  /// Returns the architecture-specific limit capped by tune's parallel_streams.
-  fn compute_max_streams(family: KernelFamily, tune: &Tune) -> u8 {
-    let tier = family.tier();
-
-    if !matches!(tier, KernelTier::HwCrc | KernelTier::Folding | KernelTier::Wide) {
-      return 1;
-    }
-
-    // Architecture-specific stream limits
-    let arch_max: u8 = match family {
-      KernelFamily::ArmPmull | KernelFamily::ArmPmullEor3 | KernelFamily::ArmSve2Pmull | KernelFamily::ArmCrc32 => 3,
-      KernelFamily::S390xVgfm => 4,
-      KernelFamily::RiscvZbc | KernelFamily::RiscvZvbc => 4,
-      _ => 8, // x86, powerpc
-    };
-
-    tune.parallel_streams.min(arch_max)
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -393,24 +333,7 @@ impl SelectionPolicy {
       return 1;
     }
 
-    // Stream counts supported by each architecture family (descending order).
-    const X86_STREAMS: [u8; 5] = [8, 7, 4, 2, 1];
-    const ARM_STREAMS: [u8; 3] = [3, 2, 1];
-    const POWER_STREAMS: [u8; 4] = [8, 4, 2, 1];
-    const FOUR_WAY_STREAMS: [u8; 3] = [4, 2, 1];
-    const SINGLE_STREAM: [u8; 1] = [1];
-
-    let stream_levels: &[u8] = match self.family {
-      KernelFamily::X86Crc32 | KernelFamily::X86Pclmul | KernelFamily::X86Vpclmul => &X86_STREAMS,
-      KernelFamily::ArmCrc32 | KernelFamily::ArmPmull | KernelFamily::ArmPmullEor3 | KernelFamily::ArmSve2Pmull => {
-        &ARM_STREAMS
-      }
-      KernelFamily::PowerVpmsum => &POWER_STREAMS,
-      KernelFamily::S390xVgfm | KernelFamily::RiscvZbc | KernelFamily::RiscvZvbc => &FOUR_WAY_STREAMS,
-      _ => &SINGLE_STREAM,
-    };
-
-    for &s in stream_levels {
+    for &s in self.family.stream_levels() {
       if s <= self.max_streams && len.strict_div(s as usize) >= min_bytes_per_lane {
         return s;
       }
@@ -453,13 +376,8 @@ impl SelectionPolicy {
   }
 
   fn force_to_tier(&self, tier: KernelTier, tune: &Tune) -> Self {
-    // Find best available family in the requested tier
-    let families = KernelFamily::families_in_tier(tier);
-
-    for &family in families {
-      if family.is_available(self.caps) {
-        return Self::with_family(self.caps, tune, family);
-      }
+    if let Some(family) = KernelFamily::best_available_in_tier(tier, self.caps) {
+      return Self::with_family(self.caps, tune, family);
     }
 
     // Fall back to portable if tier unavailable
@@ -481,12 +399,7 @@ impl SelectionPolicy {
     let cap = cap.max(1);
 
     // Architecture-specific stream limits.
-    let arch_max: u8 = match self.family {
-      KernelFamily::ArmPmull | KernelFamily::ArmPmullEor3 | KernelFamily::ArmSve2Pmull | KernelFamily::ArmCrc32 => 3,
-      KernelFamily::S390xVgfm => 4,
-      KernelFamily::RiscvZbc | KernelFamily::RiscvZvbc => 4,
-      _ => 8, // x86, power
-    };
+    let arch_max = self.family.arch_max_streams();
 
     self.max_streams = cap.min(arch_max);
   }

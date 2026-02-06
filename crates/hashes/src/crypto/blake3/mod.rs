@@ -130,7 +130,6 @@ struct ParallelPolicyOverride {
 #[derive(Clone, Copy)]
 enum ParallelPolicyKind {
   Oneshot,
-  Streaming,
 }
 
 #[cfg(feature = "std")]
@@ -155,16 +154,24 @@ fn parallel_policy_threads(mode: ParallelPolicyKind, input_bytes: usize, commit_
   let policy = if let Some(override_policy) = parallel_override() {
     match mode {
       ParallelPolicyKind::Oneshot => override_policy.oneshot,
-      ParallelPolicyKind::Streaming => override_policy.streaming,
     }
   } else {
     let dispatch_policy = dispatch::parallel_dispatch();
     match mode {
       ParallelPolicyKind::Oneshot => dispatch_policy.oneshot,
-      ParallelPolicyKind::Streaming => dispatch_policy.streaming,
     }
   };
 
+  parallel_threads_for_policy(policy, input_bytes, commit_full_chunks)
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn parallel_threads_for_policy(
+  policy: dispatch_tables::ParallelTable,
+  input_bytes: usize,
+  commit_full_chunks: usize,
+) -> Option<usize> {
   if policy.max_threads == 1 || policy.min_bytes == usize::MAX {
     return None;
   }
@@ -178,7 +185,32 @@ fn parallel_policy_threads(mode: ParallelPolicyKind, input_bytes: usize, commit_
     threads = threads.min(policy.max_threads as usize);
   }
 
-  if threads > 1 { Some(threads) } else { None }
+  if threads <= 1 {
+    return None;
+  }
+
+  let bytes_per_core = if input_bytes <= policy.small_limit_bytes {
+    policy.bytes_per_core_small
+  } else if input_bytes <= policy.medium_limit_bytes {
+    policy.bytes_per_core_medium
+  } else {
+    policy.bytes_per_core_large
+  };
+
+  let mut candidate = threads.min(commit_full_chunks);
+  while candidate > 1 {
+    let spawn_cost = policy.spawn_cost_bytes.saturating_mul(candidate - 1);
+    let work_cost = bytes_per_core.saturating_mul(candidate);
+    let required = policy
+      .merge_cost_bytes
+      .saturating_add(spawn_cost)
+      .saturating_add(work_cost);
+    if input_bytes >= required {
+      return Some(candidate);
+    }
+    candidate -= 1;
+  }
+  None
 }
 
 #[cfg(feature = "std")]
@@ -2178,6 +2210,7 @@ fn digest_oneshot(kernel: Kernel, key_words: [u32; 8], flags: u32, input: &[u8])
 
 #[derive(Clone)]
 pub struct Blake3 {
+  dispatch_plan: dispatch::HasherDispatch,
   kernel: Kernel,
   bulk_kernel: Kernel,
   chunk_state: ChunkState,
@@ -2221,7 +2254,7 @@ impl Blake3 {
   #[must_use]
   pub fn keyed_digest(key: &[u8; KEY_LEN], data: &[u8]) -> [u8; OUT_LEN] {
     let key_words = words8_from_le_bytes_32(key);
-    let kernel = dispatch::kernel_dispatch().select(data.len());
+    let kernel = dispatch::hasher_dispatch().size_class_kernel(data.len());
     digest_oneshot(kernel, key_words, KEYED_HASH, data)
   }
 
@@ -2230,8 +2263,9 @@ impl Blake3 {
   #[must_use]
   pub fn keyed_xof(key: &[u8; KEY_LEN], data: &[u8]) -> Blake3Xof {
     let key_words = words8_from_le_bytes_32(key);
-    let kernel = dispatch::kernel_dispatch().select(data.len());
-    Blake3Xof::new(root_output_oneshot(kernel, key_words, KEYED_HASH, data))
+    let plan = dispatch::hasher_dispatch();
+    let kernel = plan.size_class_kernel(data.len());
+    Blake3Xof::new(root_output_oneshot(kernel, key_words, KEYED_HASH, data), plan)
   }
 
   /// Compute the derived key for `key_material` under `context`, in one shot.
@@ -2241,12 +2275,13 @@ impl Blake3 {
     // Step 1: hash the context string under DERIVE_KEY_CONTEXT to get the
     // derived key context key.
     let context_bytes = context.as_bytes();
-    let kernel_ctx = dispatch::kernel_dispatch().select(context_bytes.len());
+    let dispatch = dispatch::hasher_dispatch();
+    let kernel_ctx = dispatch.size_class_kernel(context_bytes.len());
     let context_key_words = digest_oneshot_words(kernel_ctx, IV, DERIVE_KEY_CONTEXT, context_bytes);
 
     // Step 2: hash the key material under DERIVE_KEY_MATERIAL with the derived
     // context key.
-    let kernel_km = dispatch::kernel_dispatch().select(key_material.len());
+    let kernel_km = dispatch.size_class_kernel(key_material.len());
     words8_to_le_bytes(&digest_oneshot_words(
       kernel_km,
       context_key_words,
@@ -2362,7 +2397,9 @@ impl Blake3 {
 
   #[inline]
   fn new_internal_with(key_words: [u32; 8], flags: u32, kernel: Kernel) -> Self {
+    let dispatch_plan = dispatch::hasher_dispatch();
     Self {
+      dispatch_plan,
       kernel,
       bulk_kernel: kernel,
       chunk_state: ChunkState::new(key_words, 0, flags, kernel),
@@ -2372,6 +2409,17 @@ impl Blake3 {
       cv_stack_len: 0,
       flags,
     }
+  }
+
+  #[cfg(feature = "std")]
+  #[inline]
+  fn streaming_parallel_threads(&self, input_bytes: usize, commit_full_chunks: usize) -> Option<usize> {
+    let policy = if let Some(override_policy) = parallel_override() {
+      override_policy.streaming
+    } else {
+      self.dispatch_plan.parallel_streaming()
+    };
+    parallel_threads_for_policy(policy, input_bytes, commit_full_chunks)
   }
 
   fn update_with(&mut self, mut input: &[u8], stream_kernel: Kernel, bulk_kernel: Kernel) {
@@ -2428,17 +2476,10 @@ impl Blake3 {
             let commit = if keep_last_full_chunk { batch - 1 } else { batch };
             if commit != 0 {
               let bytes = batch * CHUNK_LEN;
-              if let Some(mut threads) = parallel_policy_threads(ParallelPolicyKind::Streaming, bytes, commit) {
-                // Streaming updates can arrive in relatively small "big chunks"
-                // (e.g. 64 KiB) where per-update parallel coordination costs
-                // dominate. Require a minimum amount of work per thread to
-                // keep the streaming API competitive with one-shot hashing.
-                let min_chunks_per_thread = dispatch::STREAM_PARALLEL_MIN_CHUNKS_PER_THREAD;
-                let max_threads_by_work = commit / min_chunks_per_thread;
-                if max_threads_by_work <= 1 {
+              if let Some(threads) = self.streaming_parallel_threads(bytes, commit) {
+                if threads <= 1 {
                   // Fall back to the SIMD (single-thread) path below.
                 } else {
-                  threads = threads.min(max_threads_by_work);
                   let batch_input = &input[..bytes];
 
                   #[inline]
@@ -2663,7 +2704,7 @@ impl Blake3 {
   #[inline]
   pub fn new_derive_key(context: &str) -> Self {
     let context_bytes = context.as_bytes();
-    let kernel_ctx = dispatch::kernel_dispatch().select(context_bytes.len());
+    let kernel_ctx = dispatch::hasher_dispatch().size_class_kernel(context_bytes.len());
     let key_words = digest_oneshot_words(kernel_ctx, IV, DERIVE_KEY_CONTEXT, context_bytes);
     Self::new_internal(key_words, DERIVE_KEY_MATERIAL)
   }
@@ -2724,10 +2765,12 @@ impl Blake3 {
       && self.cv_stack_len == 0
       && self.pending_chunk_cv.is_none()
     {
-      let d = dispatch::streaming_dispatch();
-      Blake3Xof::new(single_chunk_output(d.stream, self.key_words, 0, self.flags, &[]))
+      Blake3Xof::new(
+        single_chunk_output(self.dispatch_plan.stream_kernel(), self.key_words, 0, self.flags, &[]),
+        self.dispatch_plan,
+      )
     } else {
-      Blake3Xof::new(self.root_output())
+      Blake3Xof::new(self.root_output(), self.dispatch_plan)
     }
   }
 
@@ -2762,10 +2805,10 @@ impl Blake3 {
     let kernel = if expected_output_bytes >= 512 {
       // For large expected outputs, force SIMD kernel regardless of input size.
       // The throughput benefit outweighs any setup overhead.
-      dispatch::kernel_dispatch().select(expected_output_bytes)
+      self.dispatch_plan.size_class_kernel(expected_output_bytes)
     } else {
       // For small outputs, use streaming dispatch (input-size-aware).
-      dispatch::streaming_dispatch().stream
+      self.dispatch_plan.stream_kernel()
     };
 
     // Re-create the root output with the selected kernel for optimal squeeze performance.
@@ -2791,7 +2834,7 @@ impl Blake3 {
       self.root_output_with_kernel(kernel)
     };
 
-    Blake3Xof::new_with_kernel(output, kernel)
+    Blake3Xof::new_with_kernel(output, kernel, self.dispatch_plan)
   }
 
   /// Get root output with a specific kernel (for XOF kernel switching).
@@ -2858,26 +2901,16 @@ impl Digest for Blake3 {
       && self.chunk_state.chunk_counter == 0
       && self.cv_stack_len == 0
       && self.pending_chunk_cv.is_none()
+      && self
+        .dispatch_plan
+        .should_defer_plain_simd(self.chunk_state.len(), input.len())
     {
-      let simd_enable_min = dispatch::streaming_simd_threshold();
-      if self.chunk_state.len().saturating_add(input.len()) < simd_enable_min {
-        self.update_with(input, self.kernel, self.bulk_kernel);
-        return;
-      }
+      self.update_with(input, self.kernel, self.bulk_kernel);
+      return;
     }
 
-    let (stream, table_bulk) = {
-      let d = dispatch::streaming_dispatch();
-      (d.stream, d.bulk)
-    };
-
-    let bulk = if input.len() >= 8 * 1024 {
-      // For large updates, prefer the size-class tuned throughput kernel. This
-      // keeps the streaming API competitive with one-shot hashing.
-      dispatch::kernel_dispatch().select(input.len())
-    } else {
-      table_bulk
-    };
+    let stream = self.dispatch_plan.stream_kernel();
+    let bulk = self.dispatch_plan.bulk_kernel_for_update(input.len());
 
     self.update_with(input, stream, bulk);
   }
@@ -2935,8 +2968,7 @@ impl Digest for Blake3 {
       && self.cv_stack_len == 0
       && self.pending_chunk_cv.is_none()
     {
-      let d = dispatch::streaming_dispatch();
-      single_chunk_output(d.stream, self.key_words, 0, self.flags, &[])
+      single_chunk_output(self.dispatch_plan.stream_kernel(), self.key_words, 0, self.flags, &[])
     } else {
       self.root_output()
     };
@@ -2958,11 +2990,12 @@ pub struct Blake3Xof {
   /// Kernel used for XOF squeeze operations. Stored to enable dynamic upgrade
   /// when large squeezes are requested with a suboptimal kernel.
   kernel: Kernel,
+  dispatch_plan: dispatch::HasherDispatch,
 }
 
 impl Blake3Xof {
   #[inline]
-  fn new(output: OutputState) -> Self {
+  fn new(output: OutputState, dispatch_plan: dispatch::HasherDispatch) -> Self {
     let kernel = output.kernel;
     Self {
       output,
@@ -2970,17 +3003,19 @@ impl Blake3Xof {
       buf: [0u8; OUTPUT_BLOCK_LEN],
       buf_pos: OUTPUT_BLOCK_LEN,
       kernel,
+      dispatch_plan,
     }
   }
 
   #[inline]
-  fn new_with_kernel(output: OutputState, kernel: Kernel) -> Self {
+  fn new_with_kernel(output: OutputState, kernel: Kernel, dispatch_plan: dispatch::HasherDispatch) -> Self {
     Self {
       output,
       block_counter: 0,
       buf: [0u8; OUTPUT_BLOCK_LEN],
       buf_pos: OUTPUT_BLOCK_LEN,
       kernel,
+      dispatch_plan,
     }
   }
 
@@ -3017,7 +3052,7 @@ impl Xof for Blake3Xof {
     // kernel for a large output request.
     const LARGE_SQUEEZE_THRESHOLD: usize = 512;
     if out.len() >= LARGE_SQUEEZE_THRESHOLD {
-      let desired = dispatch::kernel_dispatch().select(out.len());
+      let desired = self.dispatch_plan.size_class_kernel(out.len());
       if desired.id != self.kernel.id {
         self.kernel = desired;
         self.output.kernel = desired;
@@ -3362,6 +3397,13 @@ mod tests {
         min_bytes: 0,
         min_chunks: 0,
         max_threads,
+        spawn_cost_bytes: 0,
+        merge_cost_bytes: 0,
+        bytes_per_core_small: 0,
+        bytes_per_core_medium: 0,
+        bytes_per_core_large: 0,
+        small_limit_bytes: 0,
+        medium_limit_bytes: 0,
       }
     }
 

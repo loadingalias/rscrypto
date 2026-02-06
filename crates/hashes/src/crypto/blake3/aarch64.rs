@@ -46,6 +46,27 @@ fn ptr_is_aligned(ptr: *const u8, align: usize) -> bool {
   (ptr as usize) & (align - 1) == 0
 }
 
+// Strategy:
+// - If pointers satisfy the asm alignment contract, use assembly fast paths.
+// - Otherwise run NEON implementations, which accept unaligned pointers safely.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[inline(always)]
+fn can_use_asm_input(ptr: *const u8) -> bool {
+  ptr_is_aligned(ptr, asm::ASM_ALIGN_INPUT)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[inline(always)]
+fn can_use_asm_u32_out(ptr: *const u8) -> bool {
+  ptr_is_aligned(ptr, asm::ASM_ALIGN_U32_OUT)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[inline(always)]
+fn can_use_asm_last_block_out(ptr: *const u8) -> bool {
+  ptr_is_aligned(ptr, asm::ASM_ALIGN_LAST_BLOCK_OUT)
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Rotation helpers for NEON - Optimized versions
 // ─────────────────────────────────────────────────────────────────────────────
@@ -705,9 +726,7 @@ pub unsafe fn hash4_neon(
 pub unsafe fn root_hash_one_chunk_root_aarch64(input: *const u8, key: &[u32; 8], flags: u32) -> [u8; OUT_LEN] {
   #[cfg(any(target_os = "linux", target_os = "macos"))]
   {
-    // The asm backend uses 64-bit loads/stores; avoid potentially faulting
-    // unaligned pointers by falling back to the NEON implementation.
-    if ptr_is_aligned(input, 8) {
+    if can_use_asm_input(input) {
       // The asm backend stores 32-bit words (`str wN, [...]`). Some Linux
       // aarch64 environments enable strict alignment checking, and `[u8; 32]`
       // has alignment 1 (so a stack slot is not guaranteed 4-byte aligned).
@@ -744,12 +763,12 @@ pub unsafe fn chunk_cv_one_chunk_aarch64_out(input: *const u8, key: &[u32; 8], c
   #[cfg(any(target_os = "linux", target_os = "macos"))]
   {
     #[cfg(target_os = "linux")]
-    if ptr_is_aligned(input, 8) && ptr_is_aligned(out, 4) {
+    if can_use_asm_input(input) && can_use_asm_u32_out(out) {
       asm::rscrypto_blake3_hash1_chunk_cv_aarch64_unix_linux(input, key.as_ptr(), counter, flags, out);
       return;
     }
     #[cfg(target_os = "macos")]
-    if ptr_is_aligned(input, 8) && ptr_is_aligned(out, 4) {
+    if can_use_asm_input(input) && can_use_asm_u32_out(out) {
       asm::rscrypto_blake3_hash1_chunk_cv_aarch64_apple_darwin(input, key.as_ptr(), counter, flags, out);
       return;
     }
@@ -808,7 +827,10 @@ pub unsafe fn chunk_state_one_chunk_aarch64_out(
   #[cfg(any(target_os = "linux", target_os = "macos"))]
   {
     #[cfg(target_os = "linux")]
-    if ptr_is_aligned(input, 8) && ptr_is_aligned(out_cv.cast::<u8>(), 4) && ptr_is_aligned(out_last_block, 8) {
+    if can_use_asm_input(input)
+      && can_use_asm_u32_out(out_cv.cast::<u8>())
+      && can_use_asm_last_block_out(out_last_block)
+    {
       asm::rscrypto_blake3_hash1_chunk_state_aarch64_unix_linux(
         input,
         key.as_ptr(),
@@ -820,7 +842,10 @@ pub unsafe fn chunk_state_one_chunk_aarch64_out(
       return;
     }
     #[cfg(target_os = "macos")]
-    if ptr_is_aligned(input, 8) && ptr_is_aligned(out_cv.cast::<u8>(), 4) && ptr_is_aligned(out_last_block, 8) {
+    if can_use_asm_input(input)
+      && can_use_asm_u32_out(out_cv.cast::<u8>())
+      && can_use_asm_last_block_out(out_last_block)
+    {
       asm::rscrypto_blake3_hash1_chunk_state_aarch64_apple_darwin(
         input,
         key.as_ptr(),
@@ -992,6 +1017,43 @@ pub unsafe fn hash_many_contiguous_neon(
   }
 }
 
+/// Compute many parent CVs from child-CV bytes using the NEON hash4 kernel.
+///
+/// `children` is interpreted as `[left0, right0, left1, right1, ...]`.
+/// This path is alignment-agnostic and is the canonical aarch64 parent combine
+/// fast path (asm is only used for chunk-state loops).
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+pub unsafe fn parent_cvs_many_neon(
+  children: &[[u8; OUT_LEN]],
+  key_words: [u32; 8],
+  flags: u32,
+  out: &mut [[u8; OUT_LEN]],
+) {
+  debug_assert_eq!(children.len(), out.len() * 2);
+  if out.is_empty() {
+    return;
+  }
+
+  let parent_flags = PARENT | flags;
+  debug_assert!(parent_flags <= u8::MAX as u32);
+
+  let mut idx = 0usize;
+  while idx < out.len() {
+    let rem = core::cmp::min(4usize, out.len() - idx);
+    let last_ptr = children[2 * (idx + rem - 1)].as_ptr();
+    let mut ptrs = [last_ptr; 4];
+    for lane in 0..rem {
+      ptrs[lane] = children[2 * (idx + lane)].as_ptr();
+    }
+
+    let mut tmp = [[0u8; OUT_LEN]; 4];
+    hash4_neon(ptrs, BLOCK_LEN, &key_words, 0, false, parent_flags, 0, 0, &mut tmp);
+    out[idx..idx + rem].copy_from_slice(&tmp[..rem]);
+    idx += rem;
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // High-level kernel wrappers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1019,7 +1081,7 @@ pub unsafe fn chunk_compress_blocks_neon(
   // faulting unaligned accesses when strict alignment checking is enabled.
   #[cfg(target_os = "linux")]
   {
-    if !blocks.is_empty() && ptr_is_aligned(blocks.as_ptr(), 8) {
+    if !blocks.is_empty() && can_use_asm_input(blocks.as_ptr()) {
       let num_blocks = blocks.len() / BLOCK_LEN;
       debug_assert_ne!(num_blocks, 0);
       // SAFETY: `blocks` is `num_blocks * 64` bytes, `chaining_value` is 8 u32

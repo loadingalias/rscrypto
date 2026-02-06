@@ -2356,6 +2356,9 @@ fn detect_sme_vlen() -> u16 {
 
 /// Read MIDR_EL1 (Main ID Register) to identify the CPU part number.
 ///
+/// Linux userspace must not execute privileged `mrs midr_el1` reads.
+/// We only use kernel-exposed sysfs data and return `None` when unavailable.
+///
 /// Returns the full MIDR value, where bits [15:4] contain the part number.
 /// Common part numbers:
 /// - 0xd0c: Neoverse N1 (Ampere Altra, Graviton 2)
@@ -2364,7 +2367,6 @@ fn detect_sme_vlen() -> u16 {
 /// - 0xd4f: Neoverse V2 (NVIDIA Grace, Graviton 4)
 /// - 0xd8e: Neoverse N3
 #[cfg(all(target_arch = "aarch64", target_os = "linux", feature = "std"))]
-#[allow(unsafe_code)]
 fn read_midr_el1() -> Option<u64> {
   use std::fs;
 
@@ -2375,13 +2377,7 @@ fn read_midr_el1() -> Option<u64> {
     return Some(midr);
   }
 
-  // Fallback: try to read MIDR directly via inline asm
-  let midr: u64;
-  // SAFETY: `asm!` writes only to the `midr` output register and declares `nomem, nostack`.
-  unsafe {
-    core::arch::asm!("mrs {}, midr_el1", out(reg) midr, options(nomem, nostack));
-  }
-  Some(midr)
+  None
 }
 
 #[cfg(all(target_arch = "aarch64", target_os = "linux", feature = "std"))]
@@ -2573,8 +2569,8 @@ fn select_aarch64_tune(caps: Caps) -> Tune {
     if vlen > 128 {
       return Tune::NEOVERSE_V3;
     }
-    // Default for SVE2 with unknown or wider VL
-    return Tune::GRAVITON4;
+    // MIDR unavailable and SVE VL unknown: degrade to unknown family.
+    return Tune::DEFAULT;
   }
 
   // SVE (Graviton 3, Neoverse V1) with runtime VL detection
@@ -2596,8 +2592,8 @@ fn select_aarch64_tune(caps: Caps) -> Tune {
     if vlen > 0 && vlen < 256 {
       return Tune::NEOVERSE_N2;
     }
-    // Unknown VL - default to Graviton3
-    return Tune::GRAVITON3;
+    // MIDR unavailable and SVE VL unknown: degrade to unknown family.
+    return Tune::DEFAULT;
   }
 
   // PMULL + EOR3 (non-Apple, non-SVE) - Graviton2 or Ampere Altra
@@ -2611,7 +2607,9 @@ fn select_aarch64_tune(caps: Caps) -> Tune {
         return tune;
       }
     }
-    return Tune::GRAVITON2;
+    // MIDR unavailable: keep PMULL-capable generic tune, avoid misclassifying
+    // to a specific microarchitecture family.
+    return Tune::AARCH64_PMULL;
   }
 
   // PMULL only
