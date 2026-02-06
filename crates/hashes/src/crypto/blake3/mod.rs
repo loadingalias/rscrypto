@@ -375,12 +375,39 @@ fn hash_full_chunks_cvs_serial(
   debug_assert_eq!(input.len(), out.len() * CHUNK_LEN);
 
   const MAX_SIMD_DEGREE: usize = 16;
-  let mut out_buf = [0u8; OUT_LEN * MAX_SIMD_DEGREE];
 
   let mut written = 0usize;
   let mut chunk_counter = base_counter;
   let mut input_ptr = input.as_ptr();
 
+  #[cfg(target_endian = "little")]
+  {
+    while written < out.len() {
+      let remaining = out.len() - written;
+      let batch = remaining.min(MAX_SIMD_DEGREE);
+
+      // SAFETY:
+      // - `input_ptr` points into `input`, which is at least `batch * CHUNK_LEN` bytes.
+      // - `out[written..]` has at least `batch` CV slots (= `batch * OUT_LEN` bytes).
+      let out_ptr = unsafe { out.as_mut_ptr().add(written).cast::<u8>() };
+      // SAFETY: pointers and lengths are validated in the comments above.
+      unsafe {
+        (kernel.hash_many_contiguous)(input_ptr, batch, &key_words, chunk_counter, flags, out_ptr);
+      }
+
+      written += batch;
+      chunk_counter = chunk_counter.wrapping_add(batch as u64);
+      // SAFETY: advancing within `input` by whole chunks.
+      unsafe {
+        input_ptr = input_ptr.add(batch * CHUNK_LEN);
+      }
+    }
+  }
+
+  #[cfg(not(target_endian = "little"))]
+  let mut out_buf = [0u8; OUT_LEN * MAX_SIMD_DEGREE];
+
+  #[cfg(not(target_endian = "little"))]
   while written < out.len() {
     let remaining = out.len() - written;
     let batch = remaining.min(MAX_SIMD_DEGREE);
@@ -2050,64 +2077,124 @@ fn root_output_oneshot(kernel: Kernel, key_words: [u32; 8], flags: u32, input: &
   let mut cv_stack_len = 0usize;
 
   const MAX_SIMD_DEGREE: usize = 16;
-  let mut cvs = [[0u8; OUT_LEN]; MAX_SIMD_DEGREE];
+  let right_cv = {
+    #[cfg(target_endian = "little")]
+    {
+      let mut cvs = [[0u32; 8]; MAX_SIMD_DEGREE];
+      let mut last_full_chunk_cv: Option<[u32; 8]> = None;
 
-  // Hash all full chunks. If there is no remainder, we still hash the final
-  // full chunk here, but we keep its CV as the "right child" instead of
-  // pushing it to the stack (because the root output for multi-chunk inputs is
-  // always a parent node).
-  let mut last_full_chunk_cv: Option<CvBytes> = None;
+      let mut chunk_counter = 0u64;
+      let mut offset = 0usize;
+      while chunk_counter < full_chunks as u64 {
+        let remaining = (full_chunks as u64 - chunk_counter) as usize;
+        let batch = core::cmp::min(remaining, MAX_SIMD_DEGREE);
+        debug_assert!(batch != 0);
 
-  let mut chunk_counter = 0u64;
-  let mut offset = 0usize;
-  while chunk_counter < full_chunks as u64 {
-    let remaining = (full_chunks as u64 - chunk_counter) as usize;
-    let batch = core::cmp::min(remaining, MAX_SIMD_DEGREE);
-    debug_assert!(batch != 0);
+        // SAFETY: `offset` is within `input`, and `cvs` has at least `batch`
+        // CV slots (`batch * OUT_LEN` bytes).
+        unsafe {
+          (kernel.hash_many_contiguous)(
+            input.as_ptr().add(offset),
+            batch,
+            &key_words,
+            chunk_counter,
+            flags,
+            cvs.as_mut_ptr().cast::<u8>(),
+          )
+        };
 
-    // SAFETY: `offset` is within `input`, and `cvs` is large enough for `batch`.
-    unsafe {
-      (kernel.hash_many_contiguous)(
-        input.as_ptr().add(offset),
-        batch,
-        &key_words,
-        chunk_counter,
-        flags,
-        cvs.as_mut_ptr().cast::<u8>(),
-      )
-    };
+        let mut commit = batch;
+        if remainder == 0 && chunk_counter + batch as u64 == full_chunks as u64 {
+          last_full_chunk_cv = Some(cvs[batch - 1]);
+          commit -= 1;
+        }
 
-    let mut commit = batch;
-    if remainder == 0 && chunk_counter + batch as u64 == full_chunks as u64 {
-      last_full_chunk_cv = Some(cvs[batch - 1]);
-      commit -= 1;
+        if commit != 0 {
+          add_chunk_cvs_batched(
+            kernel,
+            &mut cv_stack,
+            &mut cv_stack_len,
+            chunk_counter,
+            &cvs[..commit],
+            key_words,
+            flags,
+          );
+        }
+
+        chunk_counter += batch as u64;
+        offset += batch * CHUNK_LEN;
+      }
+
+      if remainder != 0 {
+        let chunk_bytes = &input[full_chunks * CHUNK_LEN..];
+        single_chunk_output(kernel, key_words, full_chunks as u64, flags, chunk_bytes).chaining_value()
+      } else {
+        // `input.len() > CHUNK_LEN` implies there are at least 2 chunks total,
+        // so the root output is always derived from parent nodes.
+        match last_full_chunk_cv {
+          Some(cv) => cv,
+          None => unreachable!("missing last full chunk cv"),
+        }
+      }
     }
 
-    if commit != 0 {
-      add_chunk_cvs_batched_bytes(
-        kernel,
-        &mut cv_stack,
-        &mut cv_stack_len,
-        chunk_counter,
-        &cvs[..commit],
-        key_words,
-        flags,
-      );
-    }
+    #[cfg(not(target_endian = "little"))]
+    {
+      let mut cvs = [[0u8; OUT_LEN]; MAX_SIMD_DEGREE];
+      let mut last_full_chunk_cv: Option<CvBytes> = None;
 
-    chunk_counter += batch as u64;
-    offset += batch * CHUNK_LEN;
-  }
+      let mut chunk_counter = 0u64;
+      let mut offset = 0usize;
+      while chunk_counter < full_chunks as u64 {
+        let remaining = (full_chunks as u64 - chunk_counter) as usize;
+        let batch = core::cmp::min(remaining, MAX_SIMD_DEGREE);
+        debug_assert!(batch != 0);
 
-  let right_cv = if remainder != 0 {
-    let chunk_bytes = &input[full_chunks * CHUNK_LEN..];
-    single_chunk_output(kernel, key_words, full_chunks as u64, flags, chunk_bytes).chaining_value()
-  } else {
-    // `input.len() > CHUNK_LEN` implies there are at least 2 chunks total, so
-    // the root output is always derived from parent nodes rather than a chunk.
-    match last_full_chunk_cv {
-      Some(cv) => words8_from_le_bytes_32(&cv),
-      None => unreachable!("missing last full chunk cv"),
+        // SAFETY: `offset` is within `input`, and `cvs` is large enough for `batch`.
+        unsafe {
+          (kernel.hash_many_contiguous)(
+            input.as_ptr().add(offset),
+            batch,
+            &key_words,
+            chunk_counter,
+            flags,
+            cvs.as_mut_ptr().cast::<u8>(),
+          )
+        };
+
+        let mut commit = batch;
+        if remainder == 0 && chunk_counter + batch as u64 == full_chunks as u64 {
+          last_full_chunk_cv = Some(cvs[batch - 1]);
+          commit -= 1;
+        }
+
+        if commit != 0 {
+          add_chunk_cvs_batched_bytes(
+            kernel,
+            &mut cv_stack,
+            &mut cv_stack_len,
+            chunk_counter,
+            &cvs[..commit],
+            key_words,
+            flags,
+          );
+        }
+
+        chunk_counter += batch as u64;
+        offset += batch * CHUNK_LEN;
+      }
+
+      if remainder != 0 {
+        let chunk_bytes = &input[full_chunks * CHUNK_LEN..];
+        single_chunk_output(kernel, key_words, full_chunks as u64, flags, chunk_bytes).chaining_value()
+      } else {
+        // `input.len() > CHUNK_LEN` implies there are at least 2 chunks total, so
+        // the root output is always derived from parent nodes rather than a chunk.
+        match last_full_chunk_cv {
+          Some(cv) => words8_from_le_bytes_32(&cv),
+          None => unreachable!("missing last full chunk cv"),
+        }
+      }
     }
   };
 
@@ -2218,6 +2305,10 @@ pub struct Blake3 {
   key_words: [u32; 8],
   cv_stack: [MaybeUninit<[u32; 8]>; CV_STACK_LEN],
   cv_stack_len: u8,
+  #[cfg(feature = "std")]
+  parallel_roots_scratch: alloc::vec::Vec<[u32; 8]>,
+  #[cfg(feature = "std")]
+  parallel_leaf_cvs_scratch: alloc::vec::Vec<[u32; 8]>,
   flags: u32,
 }
 
@@ -2407,6 +2498,10 @@ impl Blake3 {
       key_words,
       cv_stack: uninit_cv_stack(),
       cv_stack_len: 0,
+      #[cfg(feature = "std")]
+      parallel_roots_scratch: alloc::vec::Vec::new(),
+      #[cfg(feature = "std")]
+      parallel_leaf_cvs_scratch: alloc::vec::Vec::new(),
       flags,
     }
   }
@@ -2420,6 +2515,185 @@ impl Blake3 {
       self.dispatch_plan.parallel_streaming()
     };
     parallel_threads_for_policy(policy, input_bytes, commit_full_chunks)
+  }
+
+  #[cfg(feature = "std")]
+  #[inline]
+  fn commit_parallel_batch(
+    &mut self,
+    batch_input: &[u8],
+    base_counter: u64,
+    batch: usize,
+    commit: usize,
+    threads: usize,
+    keep_last_full_chunk: bool,
+  ) {
+    #[inline]
+    fn push_stack(stack: &mut [MaybeUninit<[u32; 8]>; CV_STACK_LEN], len: &mut usize, cv: [u32; 8]) {
+      stack[*len].write(cv);
+      *len += 1;
+    }
+
+    #[inline]
+    fn pop_stack(stack: &mut [MaybeUninit<[u32; 8]>; CV_STACK_LEN], len: &mut usize) -> [u32; 8] {
+      *len -= 1;
+      // SAFETY: `len` tracks the number of initialized entries.
+      unsafe { stack[*len].assume_init_read() }
+    }
+
+    let mut stack_len = self.cv_stack_len as usize;
+    let mut counter = base_counter;
+    let mut offset_chunks = 0usize;
+    let mut remaining_commit = commit;
+
+    self.parallel_roots_scratch.clear();
+    self.parallel_leaf_cvs_scratch.clear();
+
+    while remaining_commit != 0 {
+      let mut size = pow2_floor(remaining_commit);
+
+      let aligned_max = if counter == 0 {
+        usize::MAX
+      } else {
+        let tz = counter.trailing_zeros() as usize;
+        if tz >= (usize::BITS as usize) {
+          usize::MAX
+        } else {
+          1usize << tz
+        }
+      };
+      size = size.min(aligned_max).min(remaining_commit);
+      debug_assert!(size.is_power_of_two());
+
+      let bytes_base = offset_chunks * CHUNK_LEN;
+      let subtree_bytes = size * CHUNK_LEN;
+      let subtree_input = &batch_input[bytes_base..bytes_base + subtree_bytes];
+
+      // Fast path: hash this power-of-two subtree without materializing all
+      // leaf CVs. Fallback: hash leaf CVs directly and reduce.
+      let subtree_cv = if size >= threads && (counter == 0 || (counter & (size as u64 - 1)) == 0) {
+        const MAX_SUBTREE_CHUNKS: usize = 1 << 12; // 4096 chunks = 4 MiB per subtree
+
+        let mut subtree_chunks = size / threads;
+        subtree_chunks = subtree_chunks.max(1);
+        subtree_chunks = pow2_floor(subtree_chunks);
+        subtree_chunks = subtree_chunks.min(MAX_SUBTREE_CHUNKS).min(size);
+
+        let roots_len = size / subtree_chunks;
+        debug_assert!(roots_len.is_power_of_two());
+        debug_assert_eq!(roots_len * subtree_chunks, size);
+
+        self.parallel_roots_scratch.resize(roots_len, [0u32; 8]);
+        hash_power_of_two_subtree_roots_parallel_rayon(SubtreeRootsRequest {
+          kernel: self.bulk_kernel,
+          key_words: self.key_words,
+          flags: self.flags,
+          base_counter: counter,
+          input: subtree_input,
+          subtree_chunks,
+          out: &mut self.parallel_roots_scratch,
+          threads_total: threads,
+        });
+
+        reduce_power_of_two_chunk_cvs_any(
+          self.bulk_kernel,
+          self.key_words,
+          self.flags,
+          &self.parallel_roots_scratch,
+          threads,
+        )
+      } else {
+        self.parallel_leaf_cvs_scratch.resize(size, [0u32; 8]);
+        hash_full_chunks_cvs_scoped(
+          self.bulk_kernel,
+          self.key_words,
+          self.flags,
+          counter,
+          subtree_input,
+          &mut self.parallel_leaf_cvs_scratch,
+          threads,
+        );
+        reduce_power_of_two_chunk_cvs_any(
+          self.bulk_kernel,
+          self.key_words,
+          self.flags,
+          &self.parallel_leaf_cvs_scratch,
+          threads,
+        )
+      };
+
+      counter = counter.wrapping_add(size as u64);
+      let level = size.trailing_zeros();
+      let mut total = counter >> level;
+      let mut cv = subtree_cv;
+      while total & 1 == 0 {
+        cv = kernels::parent_cv_inline(
+          self.bulk_kernel.id,
+          pop_stack(&mut self.cv_stack, &mut stack_len),
+          cv,
+          self.key_words,
+          self.flags,
+        );
+        total >>= 1;
+      }
+      push_stack(&mut self.cv_stack, &mut stack_len, cv);
+
+      offset_chunks += size;
+      remaining_commit -= size;
+    }
+
+    self.cv_stack_len = stack_len as u8;
+
+    let new_counter = base_counter + batch as u64;
+    self.chunk_state = ChunkState::new(self.key_words, new_counter, self.flags, self.kernel);
+    if keep_last_full_chunk {
+      let last = &batch_input[(batch - 1) * CHUNK_LEN..batch * CHUNK_LEN];
+      self.pending_chunk_cv = Some(hash_one_full_chunk_cv(
+        self.bulk_kernel,
+        self.key_words,
+        self.flags,
+        new_counter - 1,
+        last,
+      ));
+    }
+  }
+
+  #[cfg(feature = "std")]
+  #[inline]
+  fn try_parallel_update_batch(&mut self, input: &[u8]) -> Option<usize> {
+    // Large updates: multi-thread full-chunk hashing.
+    //
+    // Prefer subtree-root batching for large, chunk-aligned power-of-two
+    // subtrees. This avoids materializing all leaf CVs and reduces memory
+    // traffic, while preserving the canonical BLAKE3 tree shape.
+    const MAX_PASS_CHUNKS: usize = 1 << 16; // 64 MiB input per pass
+
+    if self.chunk_state.len() != 0 || input.len() <= CHUNK_LEN {
+      return None;
+    }
+    let full_chunks = input.len() / CHUNK_LEN;
+    if full_chunks <= 1 {
+      return None;
+    }
+
+    let batch = core::cmp::min(full_chunks, MAX_PASS_CHUNKS);
+    let base_counter = self.chunk_state.chunk_counter;
+
+    let keep_last_full_chunk = input.len().is_multiple_of(CHUNK_LEN) && batch == full_chunks;
+    let commit = if keep_last_full_chunk { batch - 1 } else { batch };
+    if commit == 0 {
+      return None;
+    }
+
+    let bytes = batch * CHUNK_LEN;
+    let threads = self.streaming_parallel_threads(bytes, commit)?;
+    if threads <= 1 {
+      return None;
+    }
+
+    let batch_input = &input[..bytes];
+    self.commit_parallel_batch(batch_input, base_counter, batch, commit, threads, keep_last_full_chunk);
+    Some(bytes)
   }
 
   fn update_with(&mut self, mut input: &[u8], stream_kernel: Kernel, bulk_kernel: Kernel) {
@@ -2459,164 +2733,9 @@ impl Blake3 {
 
       #[cfg(feature = "std")]
       {
-        // Large updates: multi-thread full-chunk hashing.
-        //
-        // Prefer subtree-root batching for large, chunk-aligned power-of-two
-        // subtrees. This avoids materializing all leaf CVs and reduces memory
-        // traffic, while preserving the canonical BLAKE3 tree shape.
-        const MAX_PASS_CHUNKS: usize = 1 << 16; // 64 MiB input per pass
-
-        if self.chunk_state.len() == 0 && input.len() > CHUNK_LEN {
-          let full_chunks = input.len() / CHUNK_LEN;
-          if full_chunks > 1 {
-            let batch = core::cmp::min(full_chunks, MAX_PASS_CHUNKS);
-            let base_counter = self.chunk_state.chunk_counter;
-
-            let keep_last_full_chunk = input.len().is_multiple_of(CHUNK_LEN) && batch == full_chunks;
-            let commit = if keep_last_full_chunk { batch - 1 } else { batch };
-            if commit != 0 {
-              let bytes = batch * CHUNK_LEN;
-              if let Some(threads) = self.streaming_parallel_threads(bytes, commit) {
-                if threads <= 1 {
-                  // Fall back to the SIMD (single-thread) path below.
-                } else {
-                  let batch_input = &input[..bytes];
-
-                  #[inline]
-                  fn push_stack(stack: &mut [MaybeUninit<[u32; 8]>; CV_STACK_LEN], len: &mut usize, cv: [u32; 8]) {
-                    stack[*len].write(cv);
-                    *len += 1;
-                  }
-
-                  #[inline]
-                  fn pop_stack(stack: &mut [MaybeUninit<[u32; 8]>; CV_STACK_LEN], len: &mut usize) -> [u32; 8] {
-                    *len -= 1;
-                    // SAFETY: `len` tracks the number of initialized entries.
-                    unsafe { stack[*len].assume_init_read() }
-                  }
-
-                  // Merge the committed full-chunk CVs into the global CV stack.
-                  // We split into power-of-two subtrees aligned to `base_counter`
-                  // (same shape as the canonical BLAKE3 tree), hashing each
-                  // subtree either via subtree-root batching (preferred) or via
-                  // leaf CV materialization (fallback).
-                  let mut stack_len = self.cv_stack_len as usize;
-                  let mut counter = base_counter;
-                  let mut offset_chunks = 0usize;
-                  let mut remaining_commit = commit;
-
-                  let mut roots = alloc::vec::Vec::new();
-                  let mut leaf_cvs = alloc::vec::Vec::new();
-
-                  while remaining_commit != 0 {
-                    let mut size = pow2_floor(remaining_commit);
-
-                    let aligned_max = if counter == 0 {
-                      usize::MAX
-                    } else {
-                      let tz = counter.trailing_zeros() as usize;
-                      if tz >= (usize::BITS as usize) {
-                        usize::MAX
-                      } else {
-                        1usize << tz
-                      }
-                    };
-                    size = size.min(aligned_max).min(remaining_commit);
-                    debug_assert!(size.is_power_of_two());
-
-                    let bytes_base = offset_chunks * CHUNK_LEN;
-                    let subtree_bytes = size * CHUNK_LEN;
-                    let subtree_input = &batch_input[bytes_base..bytes_base + subtree_bytes];
-
-                    // Fast path: hash this power-of-two subtree without
-                    // materializing all leaf CVs.
-                    let subtree_cv = if size >= threads && (counter == 0 || (counter & (size as u64 - 1)) == 0) {
-                      const MAX_SUBTREE_CHUNKS: usize = 1 << 12; // 4096 chunks = 4 MiB per subtree
-
-                      let mut subtree_chunks = size / threads;
-                      subtree_chunks = subtree_chunks.max(1);
-                      subtree_chunks = pow2_floor(subtree_chunks);
-                      subtree_chunks = subtree_chunks.min(MAX_SUBTREE_CHUNKS).min(size);
-
-                      let roots_len = size / subtree_chunks;
-                      debug_assert!(roots_len.is_power_of_two());
-                      debug_assert_eq!(roots_len * subtree_chunks, size);
-
-                      roots.resize(roots_len, [0u32; 8]);
-                      hash_power_of_two_subtree_roots_parallel_rayon(SubtreeRootsRequest {
-                        kernel: self.bulk_kernel,
-                        key_words: self.key_words,
-                        flags: self.flags,
-                        base_counter: counter,
-                        input: subtree_input,
-                        subtree_chunks,
-                        out: &mut roots,
-                        threads_total: threads,
-                      });
-
-                      reduce_power_of_two_chunk_cvs_any(self.bulk_kernel, self.key_words, self.flags, &roots, threads)
-                    } else {
-                      // Fallback: hash leaf CVs directly, then reduce.
-                      leaf_cvs.resize(size, [0u32; 8]);
-                      hash_full_chunks_cvs_scoped(
-                        self.bulk_kernel,
-                        self.key_words,
-                        self.flags,
-                        counter,
-                        subtree_input,
-                        &mut leaf_cvs,
-                        threads,
-                      );
-                      reduce_power_of_two_chunk_cvs_any(
-                        self.bulk_kernel,
-                        self.key_words,
-                        self.flags,
-                        &leaf_cvs,
-                        threads,
-                      )
-                    };
-
-                    counter = counter.wrapping_add(size as u64);
-                    let level = size.trailing_zeros();
-                    let mut total = counter >> level;
-                    let mut cv = subtree_cv;
-                    while total & 1 == 0 {
-                      cv = kernels::parent_cv_inline(
-                        self.bulk_kernel.id,
-                        pop_stack(&mut self.cv_stack, &mut stack_len),
-                        cv,
-                        self.key_words,
-                        self.flags,
-                      );
-                      total >>= 1;
-                    }
-                    push_stack(&mut self.cv_stack, &mut stack_len, cv);
-
-                    offset_chunks += size;
-                    remaining_commit -= size;
-                  }
-
-                  self.cv_stack_len = stack_len as u8;
-
-                  let new_counter = base_counter + batch as u64;
-                  self.chunk_state = ChunkState::new(self.key_words, new_counter, self.flags, self.kernel);
-                  if keep_last_full_chunk {
-                    let last = &batch_input[(batch - 1) * CHUNK_LEN..batch * CHUNK_LEN];
-                    self.pending_chunk_cv = Some(hash_one_full_chunk_cv(
-                      self.bulk_kernel,
-                      self.key_words,
-                      self.flags,
-                      new_counter - 1,
-                      last,
-                    ));
-                  }
-
-                  input = &input[bytes..];
-                  continue;
-                }
-              }
-            }
-          }
+        if let Some(consumed) = self.try_parallel_update_batch(input) {
+          input = &input[consumed..];
+          continue;
         }
       }
 
@@ -2644,22 +2763,17 @@ impl Blake3 {
             let keep_last_full_chunk = input.len().is_multiple_of(CHUNK_LEN) && batch == full_chunks;
             let commit = if keep_last_full_chunk { batch - 1 } else { batch };
             if commit != 0 {
-              let mut cvs = [[0u32; 8]; MAX_SIMD_DEGREE];
-              for (i, slot) in cvs.iter_mut().take(commit).enumerate() {
-                let offset = i * OUT_LEN;
-                // SAFETY: `out_buf` is `OUT_LEN * MAX_SIMD_DEGREE`, and `offset`
-                // is `i * OUT_LEN` with `i < batch <= MAX_SIMD_DEGREE`.
-                let cv = unsafe { words8_from_le_bytes_32(&*(out_buf.as_ptr().add(offset) as *const [u8; OUT_LEN])) };
-                *slot = cv;
-              }
-
+              // SAFETY: `out_buf` stores `batch` contiguous CV outputs, and
+              // `commit <= batch <= MAX_SIMD_DEGREE`.
+              let cvs_bytes: &[[u8; OUT_LEN]] =
+                unsafe { slice::from_raw_parts(out_buf.as_ptr().cast::<[u8; OUT_LEN]>(), commit) };
               let mut stack_len = self.cv_stack_len as usize;
-              add_chunk_cvs_batched(
+              add_chunk_cvs_batched_bytes(
                 self.bulk_kernel,
                 &mut self.cv_stack,
                 &mut stack_len,
                 base_counter,
-                &cvs[..commit],
+                cvs_bytes,
                 self.key_words,
                 self.flags,
               );

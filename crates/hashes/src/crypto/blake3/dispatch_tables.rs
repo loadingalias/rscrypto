@@ -134,20 +134,179 @@ const DEFAULT_STREAM_KERNEL: KernelId = KernelId::Portable;
 
 const DEFAULT_BULK_KERNEL: KernelId = SIMD_KERNEL;
 
+#[derive(Clone, Copy, Debug)]
+struct ParallelCostModel {
+  spawn_cost_bytes: usize,
+  merge_cost_bytes: usize,
+  bytes_per_core_small: usize,
+  bytes_per_core_medium: usize,
+  bytes_per_core_large: usize,
+  small_limit_bytes: usize,
+  medium_limit_bytes: usize,
+}
+
 #[inline]
 #[must_use]
-const fn default_parallel_costs(min_bytes: usize, min_chunks: usize, max_threads: u8) -> ParallelTable {
+const fn parallel_cost_model(
+  spawn_cost_bytes: usize,
+  merge_cost_bytes: usize,
+  bytes_per_core_small: usize,
+  bytes_per_core_medium: usize,
+  bytes_per_core_large: usize,
+  small_limit_bytes: usize,
+  medium_limit_bytes: usize,
+) -> ParallelCostModel {
+  ParallelCostModel {
+    spawn_cost_bytes,
+    merge_cost_bytes,
+    bytes_per_core_small,
+    bytes_per_core_medium,
+    bytes_per_core_large,
+    small_limit_bytes,
+    medium_limit_bytes,
+  }
+}
+
+#[inline]
+#[must_use]
+const fn parallel_table(
+  min_bytes: usize,
+  min_chunks: usize,
+  max_threads: u8,
+  cost: ParallelCostModel,
+) -> ParallelTable {
   ParallelTable {
     min_bytes,
     min_chunks,
     max_threads,
-    spawn_cost_bytes: DEFAULT_PAR_SPAWN_COST_BYTES,
-    merge_cost_bytes: DEFAULT_PAR_MERGE_COST_BYTES,
-    bytes_per_core_small: DEFAULT_PAR_BYTES_PER_CORE_SMALL,
-    bytes_per_core_medium: DEFAULT_PAR_BYTES_PER_CORE_MEDIUM,
-    bytes_per_core_large: DEFAULT_PAR_BYTES_PER_CORE_LARGE,
-    small_limit_bytes: DEFAULT_PAR_SMALL_LIMIT_BYTES,
-    medium_limit_bytes: DEFAULT_PAR_MEDIUM_LIMIT_BYTES,
+    spawn_cost_bytes: cost.spawn_cost_bytes,
+    merge_cost_bytes: cost.merge_cost_bytes,
+    bytes_per_core_small: cost.bytes_per_core_small,
+    bytes_per_core_medium: cost.bytes_per_core_medium,
+    bytes_per_core_large: cost.bytes_per_core_large,
+    small_limit_bytes: cost.small_limit_bytes,
+    medium_limit_bytes: cost.medium_limit_bytes,
+  }
+}
+
+macro_rules! parallel_costs {
+  (
+    $min_bytes:expr,
+    $min_chunks:expr,
+    $max_threads:expr,
+    $spawn_cost_bytes:expr,
+    $merge_cost_bytes:expr,
+    $bytes_per_core_small:expr,
+    $bytes_per_core_medium:expr,
+    $bytes_per_core_large:expr,
+    $small_limit_bytes:expr,
+    $medium_limit_bytes:expr $(,)?
+  ) => {
+    parallel_table(
+      $min_bytes,
+      $min_chunks,
+      $max_threads,
+      parallel_cost_model(
+        $spawn_cost_bytes,
+        $merge_cost_bytes,
+        $bytes_per_core_small,
+        $bytes_per_core_medium,
+        $bytes_per_core_large,
+        $small_limit_bytes,
+        $medium_limit_bytes,
+      ),
+    )
+  };
+}
+
+#[inline]
+#[must_use]
+const fn default_parallel_costs(min_bytes: usize, min_chunks: usize, max_threads: u8) -> ParallelTable {
+  parallel_table(
+    min_bytes,
+    min_chunks,
+    max_threads,
+    parallel_cost_model(
+      DEFAULT_PAR_SPAWN_COST_BYTES,
+      DEFAULT_PAR_MERGE_COST_BYTES,
+      DEFAULT_PAR_BYTES_PER_CORE_SMALL,
+      DEFAULT_PAR_BYTES_PER_CORE_MEDIUM,
+      DEFAULT_PAR_BYTES_PER_CORE_LARGE,
+      DEFAULT_PAR_SMALL_LIMIT_BYTES,
+      DEFAULT_PAR_MEDIUM_LIMIT_BYTES,
+    ),
+  )
+}
+
+#[inline]
+#[must_use]
+const fn scalar_profile_parallel(
+  min_bytes: usize,
+  min_chunks: usize,
+  max_threads: u8,
+  generation: u8,
+) -> ParallelTable {
+  match generation {
+    0 => parallel_costs!(
+      min_bytes,
+      min_chunks,
+      max_threads,
+      64 * 1024,
+      48 * 1024,
+      384 * 1024,
+      256 * 1024,
+      192 * 1024,
+      512 * 1024,
+      4 * 1024 * 1024,
+    ),
+    1 => parallel_costs!(
+      min_bytes,
+      min_chunks,
+      max_threads,
+      56 * 1024,
+      40 * 1024,
+      320 * 1024,
+      224 * 1024,
+      160 * 1024,
+      384 * 1024,
+      3 * 1024 * 1024,
+    ),
+    2 => parallel_costs!(
+      min_bytes,
+      min_chunks,
+      max_threads,
+      48 * 1024,
+      32 * 1024,
+      256 * 1024,
+      192 * 1024,
+      128 * 1024,
+      320 * 1024,
+      3 * 1024 * 1024,
+    ),
+    3 => parallel_costs!(
+      min_bytes,
+      min_chunks,
+      max_threads,
+      40 * 1024,
+      28 * 1024,
+      256 * 1024,
+      160 * 1024,
+      96 * 1024,
+      256 * 1024,
+      2 * 1024 * 1024,
+    ),
+    _ => parallel_costs!(
+      min_bytes,
+      min_chunks,
+      max_threads,
+      32 * 1024,
+      24 * 1024,
+      224 * 1024,
+      128 * 1024,
+      80 * 1024,
+      256 * 1024,
+      2 * 1024 * 1024,
+    ),
   }
 }
 
@@ -241,8 +400,30 @@ pub static PROFILE_X86_ZEN4: FamilyProfile = FamilyProfile {
     stream: KernelId::X86Sse41,
     bulk: KernelId::X86Avx2,
   },
-  parallel: default_kind_parallel_table(),
-  streaming_parallel: default_kind_streaming_parallel_table(),
+  parallel: parallel_costs!(
+    96 * 1024,
+    48,
+    0,
+    20 * 1024,
+    14 * 1024,
+    192 * 1024,
+    112 * 1024,
+    56 * 1024,
+    256 * 1024,
+    2 * 1024 * 1024,
+  ),
+  streaming_parallel: parallel_costs!(
+    96 * 1024,
+    48,
+    0,
+    20 * 1024,
+    14 * 1024,
+    192 * 1024,
+    112 * 1024,
+    56 * 1024,
+    256 * 1024,
+    2 * 1024 * 1024,
+  ),
 };
 #[cfg(not(target_arch = "x86_64"))]
 pub static PROFILE_X86_ZEN4: FamilyProfile = default_kind_profile();
@@ -261,8 +442,30 @@ pub static PROFILE_X86_ZEN5: FamilyProfile = FamilyProfile {
     stream: KernelId::X86Sse41,
     bulk: KernelId::X86Avx512,
   },
-  parallel: default_kind_parallel_table(),
-  streaming_parallel: default_kind_streaming_parallel_table(),
+  parallel: parallel_costs!(
+    64 * 1024,
+    32,
+    0,
+    16 * 1024,
+    10 * 1024,
+    160 * 1024,
+    96 * 1024,
+    48 * 1024,
+    256 * 1024,
+    2 * 1024 * 1024,
+  ),
+  streaming_parallel: parallel_costs!(
+    64 * 1024,
+    32,
+    0,
+    16 * 1024,
+    10 * 1024,
+    160 * 1024,
+    96 * 1024,
+    48 * 1024,
+    256 * 1024,
+    2 * 1024 * 1024,
+  ),
 };
 #[cfg(not(target_arch = "x86_64"))]
 pub static PROFILE_X86_ZEN5: FamilyProfile = default_kind_profile();
@@ -281,8 +484,30 @@ pub static PROFILE_X86_ZEN5C: FamilyProfile = FamilyProfile {
     stream: DEFAULT_STREAM_KERNEL,
     bulk: AVX512_KERNEL,
   },
-  parallel: default_kind_parallel_table(),
-  streaming_parallel: default_kind_streaming_parallel_table(),
+  parallel: parallel_costs!(
+    80 * 1024,
+    40,
+    0,
+    18 * 1024,
+    12 * 1024,
+    176 * 1024,
+    104 * 1024,
+    52 * 1024,
+    256 * 1024,
+    2 * 1024 * 1024,
+  ),
+  streaming_parallel: parallel_costs!(
+    80 * 1024,
+    40,
+    0,
+    18 * 1024,
+    12 * 1024,
+    176 * 1024,
+    104 * 1024,
+    52 * 1024,
+    256 * 1024,
+    2 * 1024 * 1024,
+  ),
 };
 #[cfg(not(target_arch = "x86_64"))]
 pub static PROFILE_X86_ZEN5C: FamilyProfile = default_kind_profile();
@@ -301,8 +526,30 @@ pub static PROFILE_X86_INTEL_SPR: FamilyProfile = FamilyProfile {
     stream: KernelId::X86Sse41,
     bulk: KernelId::X86Avx512,
   },
-  parallel: default_kind_parallel_table(),
-  streaming_parallel: default_kind_streaming_parallel_table(),
+  parallel: parallel_costs!(
+    128 * 1024,
+    64,
+    0,
+    24 * 1024,
+    16 * 1024,
+    256 * 1024,
+    128 * 1024,
+    64 * 1024,
+    256 * 1024,
+    2 * 1024 * 1024,
+  ),
+  streaming_parallel: parallel_costs!(
+    128 * 1024,
+    64,
+    0,
+    24 * 1024,
+    16 * 1024,
+    256 * 1024,
+    128 * 1024,
+    64 * 1024,
+    256 * 1024,
+    2 * 1024 * 1024,
+  ),
 };
 #[cfg(not(target_arch = "x86_64"))]
 pub static PROFILE_X86_INTEL_SPR: FamilyProfile = default_kind_profile();
@@ -321,8 +568,30 @@ pub static PROFILE_X86_INTEL_GNR: FamilyProfile = FamilyProfile {
     stream: DEFAULT_STREAM_KERNEL,
     bulk: AVX512_KERNEL,
   },
-  parallel: default_kind_parallel_table(),
-  streaming_parallel: default_kind_streaming_parallel_table(),
+  parallel: parallel_costs!(
+    96 * 1024,
+    48,
+    0,
+    20 * 1024,
+    14 * 1024,
+    208 * 1024,
+    120 * 1024,
+    60 * 1024,
+    256 * 1024,
+    2 * 1024 * 1024,
+  ),
+  streaming_parallel: parallel_costs!(
+    96 * 1024,
+    48,
+    0,
+    20 * 1024,
+    14 * 1024,
+    208 * 1024,
+    120 * 1024,
+    60 * 1024,
+    256 * 1024,
+    2 * 1024 * 1024,
+  ),
 };
 #[cfg(not(target_arch = "x86_64"))]
 pub static PROFILE_X86_INTEL_GNR: FamilyProfile = default_kind_profile();
@@ -341,8 +610,30 @@ pub static PROFILE_X86_INTEL_ICL: FamilyProfile = FamilyProfile {
     stream: KernelId::X86Sse41,
     bulk: KernelId::X86Avx2,
   },
-  parallel: default_kind_parallel_table(),
-  streaming_parallel: default_kind_streaming_parallel_table(),
+  parallel: parallel_costs!(
+    160 * 1024,
+    80,
+    0,
+    28 * 1024,
+    20 * 1024,
+    288 * 1024,
+    160 * 1024,
+    80 * 1024,
+    384 * 1024,
+    3 * 1024 * 1024,
+  ),
+  streaming_parallel: parallel_costs!(
+    160 * 1024,
+    80,
+    0,
+    28 * 1024,
+    20 * 1024,
+    288 * 1024,
+    160 * 1024,
+    80 * 1024,
+    384 * 1024,
+    3 * 1024 * 1024,
+  ),
 };
 #[cfg(not(target_arch = "x86_64"))]
 pub static PROFILE_X86_INTEL_ICL: FamilyProfile = default_kind_profile();
@@ -361,8 +652,30 @@ pub static PROFILE_AARCH64_APPLE_M1M3: FamilyProfile = FamilyProfile {
     stream: KernelId::Portable,
     bulk: KernelId::Aarch64Neon,
   },
-  parallel: default_parallel_costs(64 * 1024, 63, 8),
-  streaming_parallel: default_parallel_costs(64 * 1024, 63, 8),
+  parallel: parallel_costs!(
+    64 * 1024,
+    63,
+    8,
+    12 * 1024,
+    10 * 1024,
+    128 * 1024,
+    96 * 1024,
+    64 * 1024,
+    256 * 1024,
+    2 * 1024 * 1024,
+  ),
+  streaming_parallel: parallel_costs!(
+    64 * 1024,
+    63,
+    8,
+    12 * 1024,
+    10 * 1024,
+    128 * 1024,
+    96 * 1024,
+    64 * 1024,
+    256 * 1024,
+    2 * 1024 * 1024,
+  ),
 };
 #[cfg(not(target_arch = "aarch64"))]
 pub static PROFILE_AARCH64_APPLE_M1M3: FamilyProfile = default_kind_profile();
@@ -381,8 +694,30 @@ pub static PROFILE_AARCH64_APPLE_M4: FamilyProfile = FamilyProfile {
     stream: KernelId::Portable,
     bulk: KernelId::Aarch64Neon,
   },
-  parallel: default_kind_parallel_table(),
-  streaming_parallel: default_kind_streaming_parallel_table(),
+  parallel: parallel_costs!(
+    64 * 1024,
+    32,
+    12,
+    8 * 1024,
+    8 * 1024,
+    96 * 1024,
+    80 * 1024,
+    48 * 1024,
+    256 * 1024,
+    2 * 1024 * 1024,
+  ),
+  streaming_parallel: parallel_costs!(
+    64 * 1024,
+    32,
+    12,
+    8 * 1024,
+    8 * 1024,
+    96 * 1024,
+    80 * 1024,
+    48 * 1024,
+    256 * 1024,
+    2 * 1024 * 1024,
+  ),
 };
 #[cfg(not(target_arch = "aarch64"))]
 pub static PROFILE_AARCH64_APPLE_M4: FamilyProfile = default_kind_profile();
@@ -401,8 +736,30 @@ pub static PROFILE_AARCH64_APPLE_M5: FamilyProfile = FamilyProfile {
     stream: KernelId::Portable,
     bulk: KernelId::Aarch64Neon,
   },
-  parallel: default_kind_parallel_table(),
-  streaming_parallel: default_kind_streaming_parallel_table(),
+  parallel: parallel_costs!(
+    64 * 1024,
+    32,
+    16,
+    8 * 1024,
+    8 * 1024,
+    96 * 1024,
+    72 * 1024,
+    40 * 1024,
+    256 * 1024,
+    2 * 1024 * 1024,
+  ),
+  streaming_parallel: parallel_costs!(
+    64 * 1024,
+    32,
+    16,
+    8 * 1024,
+    8 * 1024,
+    96 * 1024,
+    72 * 1024,
+    40 * 1024,
+    256 * 1024,
+    2 * 1024 * 1024,
+  ),
 };
 #[cfg(not(target_arch = "aarch64"))]
 pub static PROFILE_AARCH64_APPLE_M5: FamilyProfile = default_kind_profile();
@@ -421,8 +778,30 @@ pub static PROFILE_AARCH64_GRAVITON2: FamilyProfile = FamilyProfile {
     stream: KernelId::Aarch64Neon,
     bulk: KernelId::Aarch64Neon,
   },
-  parallel: default_kind_parallel_table(),
-  streaming_parallel: default_kind_streaming_parallel_table(),
+  parallel: parallel_costs!(
+    128 * 1024,
+    64,
+    16,
+    24 * 1024,
+    16 * 1024,
+    256 * 1024,
+    160 * 1024,
+    96 * 1024,
+    256 * 1024,
+    2 * 1024 * 1024,
+  ),
+  streaming_parallel: parallel_costs!(
+    128 * 1024,
+    64,
+    16,
+    24 * 1024,
+    16 * 1024,
+    256 * 1024,
+    160 * 1024,
+    96 * 1024,
+    256 * 1024,
+    2 * 1024 * 1024,
+  ),
 };
 #[cfg(not(target_arch = "aarch64"))]
 pub static PROFILE_AARCH64_GRAVITON2: FamilyProfile = default_kind_profile();
@@ -441,21 +820,109 @@ pub static PROFILE_AARCH64_SERVER_NEON: FamilyProfile = FamilyProfile {
     stream: KernelId::Aarch64Neon,
     bulk: KernelId::Aarch64Neon,
   },
-  parallel: default_kind_parallel_table(),
-  streaming_parallel: default_kind_streaming_parallel_table(),
+  parallel: parallel_costs!(
+    96 * 1024,
+    48,
+    16,
+    20 * 1024,
+    14 * 1024,
+    224 * 1024,
+    144 * 1024,
+    88 * 1024,
+    256 * 1024,
+    2 * 1024 * 1024,
+  ),
+  streaming_parallel: parallel_costs!(
+    96 * 1024,
+    48,
+    16,
+    20 * 1024,
+    14 * 1024,
+    224 * 1024,
+    144 * 1024,
+    88 * 1024,
+    256 * 1024,
+    2 * 1024 * 1024,
+  ),
 };
 #[cfg(not(target_arch = "aarch64"))]
 pub static PROFILE_AARCH64_SERVER_NEON: FamilyProfile = default_kind_profile();
 
-// Family Profile: SCALAR_LEGACY
-pub static PROFILE_SCALAR_LEGACY: FamilyProfile = FamilyProfile {
+// Family Profile: Z13
+pub static PROFILE_Z13: FamilyProfile = FamilyProfile {
   dispatch: default_kind_table(),
   streaming: StreamingTable {
     stream: KernelId::Portable,
     bulk: KernelId::Portable,
   },
-  parallel: default_kind_parallel_table(),
-  streaming_parallel: default_kind_streaming_parallel_table(),
+  parallel: scalar_profile_parallel(256 * 1024, 128, 8, 0),
+  streaming_parallel: scalar_profile_parallel(256 * 1024, 128, 8, 0),
+};
+
+// Family Profile: Z14
+pub static PROFILE_Z14: FamilyProfile = FamilyProfile {
+  dispatch: default_kind_table(),
+  streaming: StreamingTable {
+    stream: KernelId::Portable,
+    bulk: KernelId::Portable,
+  },
+  parallel: scalar_profile_parallel(192 * 1024, 96, 8, 1),
+  streaming_parallel: scalar_profile_parallel(192 * 1024, 96, 8, 1),
+};
+
+// Family Profile: Z15
+pub static PROFILE_Z15: FamilyProfile = FamilyProfile {
+  dispatch: default_kind_table(),
+  streaming: StreamingTable {
+    stream: KernelId::Portable,
+    bulk: KernelId::Portable,
+  },
+  parallel: scalar_profile_parallel(160 * 1024, 80, 12, 2),
+  streaming_parallel: scalar_profile_parallel(160 * 1024, 80, 12, 2),
+};
+
+// Family Profile: POWER7
+pub static PROFILE_POWER7: FamilyProfile = FamilyProfile {
+  dispatch: default_kind_table(),
+  streaming: StreamingTable {
+    stream: KernelId::Portable,
+    bulk: KernelId::Portable,
+  },
+  parallel: scalar_profile_parallel(256 * 1024, 128, 8, 0),
+  streaming_parallel: scalar_profile_parallel(256 * 1024, 128, 8, 0),
+};
+
+// Family Profile: POWER8
+pub static PROFILE_POWER8: FamilyProfile = FamilyProfile {
+  dispatch: default_kind_table(),
+  streaming: StreamingTable {
+    stream: KernelId::Portable,
+    bulk: KernelId::Portable,
+  },
+  parallel: scalar_profile_parallel(192 * 1024, 96, 8, 1),
+  streaming_parallel: scalar_profile_parallel(192 * 1024, 96, 8, 1),
+};
+
+// Family Profile: POWER9
+pub static PROFILE_POWER9: FamilyProfile = FamilyProfile {
+  dispatch: default_kind_table(),
+  streaming: StreamingTable {
+    stream: KernelId::Portable,
+    bulk: KernelId::Portable,
+  },
+  parallel: scalar_profile_parallel(128 * 1024, 64, 16, 3),
+  streaming_parallel: scalar_profile_parallel(128 * 1024, 64, 16, 3),
+};
+
+// Family Profile: POWER10
+pub static PROFILE_POWER10: FamilyProfile = FamilyProfile {
+  dispatch: default_kind_table(),
+  streaming: StreamingTable {
+    stream: KernelId::Portable,
+    bulk: KernelId::Portable,
+  },
+  parallel: scalar_profile_parallel(96 * 1024, 48, 16, 4),
+  streaming_parallel: scalar_profile_parallel(96 * 1024, 48, 16, 4),
 };
 
 #[inline]
@@ -484,13 +951,13 @@ fn select_profile(kind: TuneKind) -> &'static FamilyProfile {
     | TuneKind::NvidiaGrace
     | TuneKind::AmpereAltra
     | TuneKind::Aarch64Pmull => &PROFILE_AARCH64_SERVER_NEON,
-    TuneKind::Z13
-    | TuneKind::Z14
-    | TuneKind::Z15
-    | TuneKind::Power7
-    | TuneKind::Power8
-    | TuneKind::Power9
-    | TuneKind::Power10 => &PROFILE_SCALAR_LEGACY,
+    TuneKind::Z13 => &PROFILE_Z13,
+    TuneKind::Z14 => &PROFILE_Z14,
+    TuneKind::Z15 => &PROFILE_Z15,
+    TuneKind::Power7 => &PROFILE_POWER7,
+    TuneKind::Power8 => &PROFILE_POWER8,
+    TuneKind::Power9 => &PROFILE_POWER9,
+    TuneKind::Power10 => &PROFILE_POWER10,
   }
 }
 

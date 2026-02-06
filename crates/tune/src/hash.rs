@@ -343,18 +343,21 @@ impl crate::Tunable for HashTunable {
   }
 
   fn threshold_to_env_suffix(&self, threshold_name: &str) -> Option<&'static str> {
-    match (self.algo, threshold_name) {
-      ("blake3", "parallel_min_bytes") => Some("PARALLEL_MIN_BYTES"),
-      ("blake3", "parallel_min_chunks") => Some("PARALLEL_MIN_CHUNKS"),
-      ("blake3", "parallel_max_threads") => Some("PARALLEL_MAX_THREADS"),
-      ("blake3", "parallel_spawn_cost_bytes") => Some("PARALLEL_SPAWN_COST_BYTES"),
-      ("blake3", "parallel_merge_cost_bytes") => Some("PARALLEL_MERGE_COST_BYTES"),
-      ("blake3", "parallel_bytes_per_core_small") => Some("PARALLEL_BYTES_PER_CORE_SMALL"),
-      ("blake3", "parallel_bytes_per_core_medium") => Some("PARALLEL_BYTES_PER_CORE_MEDIUM"),
-      ("blake3", "parallel_bytes_per_core_large") => Some("PARALLEL_BYTES_PER_CORE_LARGE"),
-      ("blake3", "parallel_small_limit_bytes") => Some("PARALLEL_SMALL_LIMIT_BYTES"),
-      ("blake3", "parallel_medium_limit_bytes") => Some("PARALLEL_MEDIUM_LIMIT_BYTES"),
-      _ => None,
+    if self.algo == "blake3" || self.algo.starts_with("blake3-stream4k") {
+      return match threshold_name {
+        "parallel_min_bytes" => Some("PARALLEL_MIN_BYTES"),
+        "parallel_min_chunks" => Some("PARALLEL_MIN_CHUNKS"),
+        "parallel_max_threads" => Some("PARALLEL_MAX_THREADS"),
+        "parallel_spawn_cost_bytes" => Some("PARALLEL_SPAWN_COST_BYTES"),
+        "parallel_merge_cost_bytes" => Some("PARALLEL_MERGE_COST_BYTES"),
+        "parallel_bytes_per_core_small" => Some("PARALLEL_BYTES_PER_CORE_SMALL"),
+        "parallel_bytes_per_core_medium" => Some("PARALLEL_BYTES_PER_CORE_MEDIUM"),
+        "parallel_bytes_per_core_large" => Some("PARALLEL_BYTES_PER_CORE_LARGE"),
+        "parallel_small_limit_bytes" => Some("PARALLEL_SMALL_LIMIT_BYTES"),
+        "parallel_medium_limit_bytes" => Some("PARALLEL_MEDIUM_LIMIT_BYTES"),
+        _ => None,
+      };
     }
+    None
   }
 }

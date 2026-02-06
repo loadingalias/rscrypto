@@ -308,6 +308,13 @@ pub(crate) fn parent_cvs_many_from_cvs_inline(
     return;
   }
 
+  if id == Blake3KernelId::Portable {
+    for i in 0..out.len() {
+      out[i] = parent_cv_inline(id, children[2 * i], children[2 * i + 1], key_words, flags);
+    }
+    return;
+  }
+
   #[cfg(target_endian = "little")]
   {
     // Fast path on little-endian targets: SIMD parent kernels naturally produce
