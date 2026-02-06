@@ -1,0 +1,105 @@
+name: _rust-job
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        required: true
+        type: string
+      timeout_minutes:
+        required: false
+        type: number
+        default: 30
+      setup_kind:
+        required: false
+        type: string
+        default: default
+      cache_key:
+        required: false
+        type: string
+        default: ""
+      tools_mode:
+        required: false
+        type: string
+        default: standard
+      toolchain_components:
+        required: false
+        type: string
+        default: "clippy, rustfmt, rust-src"
+      runson_mode:
+        required: false
+        type: string
+        default: runson-bench
+      pre_script:
+        required: false
+        type: string
+        default: ""
+      run_script:
+        required: true
+        type: string
+      artifact_name:
+        required: false
+        type: string
+        default: ""
+      artifact_path:
+        required: false
+        type: string
+        default: ""
+      artifact_always:
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Setup Host
+        if: inputs.setup_kind == 'default'
+        uses: ./.github/actions/setup
+        with:
+          cache-key: ${{ inputs.cache_key }}
+          tools-mode: ${{ inputs.tools_mode }}
+          toolchain-components: ${{ inputs.toolchain_components }}
+
+      - name: Setup RunsOn
+        if: inputs.setup_kind == 'runson'
+        uses: ./.github/actions/setup-runson
+        with:
+          mode: ${{ inputs.runson_mode }}
+
+      - name: Setup Namespace
+        if: inputs.setup_kind == 'namespace'
+        uses: ./.github/actions/setup-namespace
+
+      - name: Pre Run
+        if: inputs.pre_script != ''
+        run: ${{ inputs.pre_script }}
+
+      - name: Run
+        run: ${{ inputs.run_script }}
+
+      - name: Upload Artifact (always)
+        if: inputs.artifact_name != '' && inputs.artifact_path != '' && inputs.artifact_always
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08  # v4.6.0
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: ${{ inputs.artifact_path }}
+          retention-days: 90
+
+      - name: Upload Artifact (success)
+        if: inputs.artifact_name != '' && inputs.artifact_path != '' && !inputs.artifact_always
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08  # v4.6.0
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: ${{ inputs.artifact_path }}
+          retention-days: 90

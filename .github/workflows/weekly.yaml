@@ -39,16 +39,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
-      - name: Read Toolchain Version
-        id: toolchain
-        run: |
-          TOOLCHAIN=$(awk -F'"' '/^channel/ {print $2}' rust-toolchain.toml)
-          echo "version=$TOOLCHAIN" >> "$GITHUB_OUTPUT"
-
-      - name: Install Rust Toolchain
-        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561  # master
+      - name: Setup Toolchain
+        uses: ./.github/actions/setup-toolchain
         with:
-          toolchain: ${{ steps.toolchain.outputs.version }}
           components: miri, rust-src
 
       - name: Install Tools
@@ -71,16 +64,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
-      - name: Read Toolchain Version
-        id: toolchain
-        run: |
-          TOOLCHAIN=$(awk -F'"' '/^channel/ {print $2}' rust-toolchain.toml)
-          echo "version=$TOOLCHAIN" >> "$GITHUB_OUTPUT"
-
-      - name: Install Rust Toolchain
-        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561  # master
-        with:
-          toolchain: ${{ steps.toolchain.outputs.version }}
+      - name: Setup Toolchain
+        uses: ./.github/actions/setup-toolchain
 
       - name: Install Tools
         uses: taiki-e/install-action@7ea888af71a31437ad4e71c62d021b3bb2728ea9  # v2.49.3
@@ -112,16 +97,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
-      - name: Read Toolchain Version
-        id: toolchain
-        run: |
-          TOOLCHAIN=$(awk -F'"' '/^channel/ {print $2}' rust-toolchain.toml)
-          echo "version=$TOOLCHAIN" >> "$GITHUB_OUTPUT"
-
-      - name: Install Rust Toolchain
-        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561  # master
-        with:
-          toolchain: ${{ steps.toolchain.outputs.version }}
+      - name: Setup Toolchain
+        uses: ./.github/actions/setup-toolchain
 
       - name: Install Tools
         uses: taiki-e/install-action@7ea888af71a31437ad4e71c62d021b3bb2728ea9  # v2.49.3
@@ -158,16 +135,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
-      - name: Read Toolchain Version
-        id: toolchain
-        run: |
-          TOOLCHAIN=$(awk -F'"' '/^channel/ {print $2}' rust-toolchain.toml)
-          echo "version=$TOOLCHAIN" >> "$GITHUB_OUTPUT"
-
-      - name: Install Rust Toolchain
-        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561  # master
+      - name: Setup Toolchain
+        uses: ./.github/actions/setup-toolchain
         with:
-          toolchain: ${{ steps.toolchain.outputs.version }}
           components: rust-src
 
       - name: Build for wasm64-unknown-unknown
