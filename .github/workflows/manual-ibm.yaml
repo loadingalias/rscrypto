@@ -53,26 +53,6 @@ on:
         required: false
         type: string
         default: "checksum,hashes"
-      tune_only:
-        description: "Tune only these algorithms (optional)"
-        required: false
-        type: string
-        default: ""
-      tune_quick:
-        description: "Tune quick mode"
-        required: false
-        type: boolean
-        default: true
-      bench_crates:
-        description: "Benchmark crates (comma-separated, empty = workspace)"
-        required: false
-        type: string
-        default: ""
-      bench_specific:
-        description: "Specific benches (comma-separated)"
-        required: false
-        type: string
-        default: ""
 
 env:
   RUST_BACKTRACE: 1
@@ -168,8 +148,8 @@ jobs:
         lscpu
         cat /proc/cpuinfo | head -50
       run_script: |
-        CRATES_INPUT="${{ github.event.inputs.bench_crates }}"
-        BENCHES_INPUT="${{ github.event.inputs.bench_specific }}"
+        CRATES_INPUT=""
+        BENCHES_INPUT=""
         CRATE_FLAGS="--workspace"
         BENCH_FLAGS=""
         if [ -n "$CRATES_INPUT" ]; then
@@ -210,8 +190,8 @@ jobs:
         lscpu
         cat /proc/cpuinfo | head -50
       run_script: |
-        CRATES_INPUT="${{ github.event.inputs.bench_crates }}"
-        BENCHES_INPUT="${{ github.event.inputs.bench_specific }}"
+        CRATES_INPUT=""
+        BENCHES_INPUT=""
         CRATE_FLAGS="--workspace"
         BENCH_FLAGS=""
         if [ -n "$CRATES_INPUT" ]; then
@@ -252,8 +232,8 @@ jobs:
         lscpu
         cat /proc/cpuinfo | head -50
       run_script: |
-        CRATES_INPUT="${{ github.event.inputs.bench_crates }}"
-        BENCHES_INPUT="${{ github.event.inputs.bench_specific }}"
+        CRATES_INPUT=""
+        BENCHES_INPUT=""
         CRATE_FLAGS="--workspace"
         BENCH_FLAGS=""
         if [ -n "$CRATES_INPUT" ]; then
@@ -294,9 +274,9 @@ jobs:
         lscpu
       run_script: |
         TUNE_OUTPUT_DIR=tune-results \
-        TUNE_QUICK=${{ github.event.inputs.tune_quick }} \
+        TUNE_QUICK=true \
         TUNE_CRATES="${{ github.event.inputs.tune_crates }}" \
-        TUNE_ONLY="${{ github.event.inputs.tune_only }}" \
+        TUNE_ONLY="" \
         scripts/ci/run-tune.sh
       artifact_name: tuning-ibm-s390x
       artifact_path: tune-results/
@@ -317,9 +297,9 @@ jobs:
         lscpu
       run_script: |
         TUNE_OUTPUT_DIR=tune-results \
-        TUNE_QUICK=${{ github.event.inputs.tune_quick }} \
+        TUNE_QUICK=true \
         TUNE_CRATES="${{ github.event.inputs.tune_crates }}" \
-        TUNE_ONLY="${{ github.event.inputs.tune_only }}" \
+        TUNE_ONLY="" \
         scripts/ci/run-tune.sh
       artifact_name: tuning-ibm-power9
       artifact_path: tune-results/
@@ -340,9 +320,9 @@ jobs:
         lscpu
       run_script: |
         TUNE_OUTPUT_DIR=tune-results \
-        TUNE_QUICK=${{ github.event.inputs.tune_quick }} \
+        TUNE_QUICK=true \
         TUNE_CRATES="${{ github.event.inputs.tune_crates }}" \
-        TUNE_ONLY="${{ github.event.inputs.tune_only }}" \
+        TUNE_ONLY="" \
         scripts/ci/run-tune.sh
       artifact_name: tuning-ibm-power10
       artifact_path: tune-results/
