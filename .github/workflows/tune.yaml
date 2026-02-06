@@ -1,65 +1,71 @@
 name: Tune
 
 on:
+  # Manual trigger with options
   workflow_dispatch:
     inputs:
+      crates:
+        description: "Crate(s) to tune (comma-separated, leave empty for all)"
+        required: false
+        type: string
+        default: "checksum,hashes"
+
       # ─────────────────────────────────────────────────────────────────────────
-      # Intel x86-64
+      # Intel x86-64 (RunsOn: Granite/Emerald/Sapphire Rapids, Ice Lake)
       # ─────────────────────────────────────────────────────────────────────────
       run_intel:
-        description: "Run tune on Intel (Granite/Emerald/Sapphire Rapids)"
+        description: "Run on Intel (Granite/Emerald/Sapphire Rapids)"
         required: false
         type: boolean
         default: true
       run_intel_icl:
-        description: "Run tune on Intel Ice Lake (c6i/m6i)"
+        description: "Run on Intel Ice Lake (c6i/m6i - 3rd Gen Xeon)"
         required: false
         type: boolean
         default: false
+
       # ─────────────────────────────────────────────────────────────────────────
-      # AMD x86-64
+      # AMD x86-64 (Namespace: Zen4, RunsOn: Zen5)
       # ─────────────────────────────────────────────────────────────────────────
       run_amd_zen4:
-        description: "Run tune on AMD Zen4 (Namespace)"
+        description: "Run on AMD Zen4 (Namespace)"
         required: false
         type: boolean
         default: true
       run_amd_zen5:
-        description: "Run tune on AMD Zen5 Turin (RunsOn)"
+        description: "Run on AMD Zen5 Turin (RunsOn)"
         required: false
         type: boolean
         default: false
+
       # ─────────────────────────────────────────────────────────────────────────
-      # ARM64 Graviton
+      # ARM64 Graviton (RunsOn)
       # ─────────────────────────────────────────────────────────────────────────
       run_graviton:
-        description: "Run tune on Graviton (Neoverse)"
+        description: "Run on Graviton (Neoverse V2/V1, RunsOn)"
         required: false
         type: boolean
         default: true
+
       # ─────────────────────────────────────────────────────────────────────────
-      # IBM Z / POWER
+      # IBM Z / POWER (ActionsPZ - Manual Only)
       # ─────────────────────────────────────────────────────────────────────────
       run_ibm_s390x:
-        description: "Run tune on IBM Z (s390x)"
+        description: "Run on IBM Z (s390x, ActionsPZ)"
         required: false
         type: boolean
         default: false
       run_ibm_power9:
-        description: "Run tune on IBM POWER9 (ppc64le)"
+        description: "Run on IBM POWER9 (ppc64le, ActionsPZ)"
         required: false
         type: boolean
         default: false
       run_ibm_power10:
-        description: "Run tune on IBM POWER10 (ppc64le)"
+        description: "Run on IBM POWER10 (ppc64le, ActionsPZ)"
         required: false
         type: boolean
         default: false
-      crates:
-        description: "Tune crates/surfaces (comma-separated: checksum,hashes,hashes-bench)"
-        required: false
-        type: string
-        default: "checksum,hashes"
+
       only:
         description: "Tune only specific algorithms (comma-separated, optional)"
         required: false
@@ -108,15 +114,6 @@ permissions:
 jobs:
   tune:
     name: Tune (${{ matrix.target }})
-    if: |
-      (matrix.target == 'intel' && github.event.inputs.run_intel == 'true') ||
-      (matrix.target == 'intel-icl' && github.event.inputs.run_intel_icl == 'true') ||
-      (matrix.target == 'amd-zen4' && github.event.inputs.run_amd_zen4 == 'true') ||
-      (matrix.target == 'amd-zen5' && github.event.inputs.run_amd_zen5 == 'true') ||
-      (matrix.target == 'graviton' && github.event.inputs.run_graviton == 'true') ||
-      (matrix.target == 'ibm-s390x' && github.event.inputs.run_ibm_s390x == 'true') ||
-      (matrix.target == 'ibm-power9' && github.event.inputs.run_ibm_power9 == 'true') ||
-      (matrix.target == 'ibm-power10' && github.event.inputs.run_ibm_power10 == 'true')
     strategy:
       fail-fast: false
       matrix:
@@ -164,23 +161,43 @@ jobs:
     runs-on: ${{ matrix.runner_type == 'runson' && format('runs-on={0}/runner={1}', github.run_id, matrix.runner_id) || matrix.runner }}
     timeout-minutes: ${{ matrix.timeout }}
     steps:
+      - name: Determine Target Selection
+        id: target
+        run: |
+          enabled=false
+          case "${{ matrix.target }}" in
+            intel) enabled="${{ github.event.inputs.run_intel }}" ;;
+            intel-icl) enabled="${{ github.event.inputs.run_intel_icl }}" ;;
+            amd-zen4) enabled="${{ github.event.inputs.run_amd_zen4 }}" ;;
+            amd-zen5) enabled="${{ github.event.inputs.run_amd_zen5 }}" ;;
+            graviton) enabled="${{ github.event.inputs.run_graviton }}" ;;
+            ibm-s390x) enabled="${{ github.event.inputs.run_ibm_s390x }}" ;;
+            ibm-power9) enabled="${{ github.event.inputs.run_ibm_power9 }}" ;;
+            ibm-power10) enabled="${{ github.event.inputs.run_ibm_power10 }}" ;;
+          esac
+          echo "enabled=$enabled" >> "$GITHUB_OUTPUT"
+          if [ "$enabled" != "true" ]; then
+            echo "Skipping tune on target '${{ matrix.target }}' (manual toggle disabled)."
+          fi
+
       - name: Checkout
+        if: steps.target.outputs.enabled == 'true'
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
 
       - name: Setup RunsOn
-        if: matrix.setup == 'runson'
+        if: steps.target.outputs.enabled == 'true' && matrix.setup == 'runson'
         uses: ./.github/actions/setup-runson
         with:
           mode: runson-bench
 
       - name: Setup Namespace
-        if: matrix.setup == 'namespace'
+        if: steps.target.outputs.enabled == 'true' && matrix.setup == 'namespace'
         uses: ./.github/actions/setup-namespace
 
       - name: Setup Host Toolchain
-        if: matrix.setup == 'default'
+        if: steps.target.outputs.enabled == 'true' && matrix.setup == 'default'
         uses: ./.github/actions/setup
         with:
           cache-key: tune-${{ matrix.target }}
@@ -188,6 +205,7 @@ jobs:
           toolchain-components: ""
 
       - name: Record Host Details
+        if: steps.target.outputs.enabled == 'true'
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "Tune host: ${{ matrix.target }}"
@@ -196,6 +214,7 @@ jobs:
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
       - name: Run Unified Tuning
+        if: steps.target.outputs.enabled == 'true'
         env:
           TUNE_OUTPUT_DIR: tune-results
           TUNE_QUICK: ${{ github.event.inputs.quick }}
@@ -209,7 +228,7 @@ jobs:
         run: scripts/ci/run-tune.sh
 
       - name: Upload Tuning Results
-        if: always()
+        if: always() && steps.target.outputs.enabled == 'true'
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
         with:
           name: tuning-${{ matrix.target }}
