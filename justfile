@@ -7,12 +7,6 @@ build-release:
 check *args="":
     @scripts/check/check.sh {{args}}
 
-check-win *args="":
-    @scripts/check/check-win.sh {{args}}
-
-check-linux *args="":
-    @scripts/check/check-linux.sh {{args}}
-
 check-all *args="":
     @scripts/check/check-all.sh {{args}}
 
@@ -57,20 +51,8 @@ bench-native crate="" bench="":
 tune *args="":
     RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p tune --release --bin rscrypto-tune -- {{args}}
 
-tune-quick *args="":
-    RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p tune --release --bin rscrypto-tune -- --quick {{args}}
-
 tune-apply *args="":
     RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p tune --release --bin rscrypto-tune -- --apply {{args}}
-
-tune-quick-apply *args="":
-    RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p tune --release --bin rscrypto-tune -- --quick --apply {{args}}
-
-tune-list:
-    RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p tune --release --bin rscrypto-tune -- --list
-
-tune-crate crate *args="":
-    RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p tune --release --bin rscrypto-tune -- --crate "{{crate}}" {{args}}
 
 tune-report dir="target/tune" *args="":
     RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p tune --release --bin rscrypto-tune -- --quick --report-dir "{{dir}}" {{args}}
@@ -99,15 +81,26 @@ gen-blake3-x86-asm-ports:
     @scripts/gen_blake3_x86_asm_ports.py
 
 
+ci-pin-actions:
+    @scripts/ci/pin-actions.sh --update-lock
+
+ci-verify-actions:
+    @scripts/ci/pin-actions.sh --verify-only
+
+# Update Rust dependencies in the lockfile and manifests.
 update:
     cargo update --workspace
     cargo upgrade --recursive
 
+# Legacy convenience wrappers used in contributor docs.
 pin-actions:
-    @scripts/ci/pin-actions.sh --update-lock
+    @just ci-pin-actions
 
 verify-actions:
-    @scripts/ci/pin-actions.sh --verify-only
+    @just ci-verify-actions
+
+ci-pre-push:
+    @scripts/ci/pre-push.sh
 
 fuzz-coverage target:
     @scripts/test/test-fuzz.sh --coverage {{target}}

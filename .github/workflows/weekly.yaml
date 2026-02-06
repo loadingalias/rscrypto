@@ -39,15 +39,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
-      - name: Setup Toolchain
-        uses: ./.github/actions/setup-toolchain
+      - name: Setup
+        uses: ./.github/actions/setup
         with:
-          components: miri, rust-src
-
-      - name: Install Tools
-        uses: taiki-e/install-action@7ea888af71a31437ad4e71c62d021b3bb2728ea9  # v2.49.3
-        with:
-          tool: just
+          cache-key: weekly-miri-${{ matrix.target.name }}
+          tools-mode: minimal
+          toolchain-components: "miri, rust-src"
 
       - name: Miri Memory Safety Tests
         run: just test-miri --all
@@ -64,13 +61,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
-      - name: Setup Toolchain
-        uses: ./.github/actions/setup-toolchain
-
-      - name: Install Tools
-        uses: taiki-e/install-action@7ea888af71a31437ad4e71c62d021b3bb2728ea9  # v2.49.3
+      - name: Setup
+        uses: ./.github/actions/setup
         with:
-          tool: cargo-nextest,just
+          cache-key: weekly-proptests
+          tools-mode: standard
 
       - name: Extended Property Tests
         run: cargo nextest run --workspace --all-features -E 'test(/proptest/)' --test-threads=1
@@ -97,13 +92,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
-      - name: Setup Toolchain
-        uses: ./.github/actions/setup-toolchain
-
-      - name: Install Tools
-        uses: taiki-e/install-action@7ea888af71a31437ad4e71c62d021b3bb2728ea9  # v2.49.3
+      - name: Setup
+        uses: ./.github/actions/setup
         with:
-          tool: cargo-fuzz,just
+          cache-key: weekly-fuzz-${{ matrix.target.name }}
+          tools-mode: fuzz
 
       - name: Fuzz Testing
         env:

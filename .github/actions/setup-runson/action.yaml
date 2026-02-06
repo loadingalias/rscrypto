@@ -155,7 +155,7 @@ runs:
       id: toolchain
       shell: bash
       run: |
-        TOOLCHAIN=$(awk -F'"' '/^channel/ {print $2}' rust-toolchain.toml)
+        TOOLCHAIN=$(scripts/lib/toolchain.sh)
         echo "version=$TOOLCHAIN" >> "$GITHUB_OUTPUT"
         echo "Toolchain: $TOOLCHAIN"
 

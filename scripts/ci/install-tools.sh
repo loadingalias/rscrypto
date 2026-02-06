@@ -199,6 +199,12 @@ bench | runson-bench)
 	install_if_missing "just" "just"
 	;;
 
+fuzz)
+	# Weekly fuzz lane: keep tool set minimal and explicit.
+	install_if_missing "cargo-fuzz" "cargo-fuzz"
+	install_if_missing "just" "just"
+	;;
+
 minimal)
 	# Minimal set for quick jobs
 	install_if_missing "just" "just"
@@ -210,7 +216,7 @@ none)
 
 *)
 	echo "Unknown mode: $MODE"
-	echo "Usage: install-tools.sh [standard|namespace|runson|bench|runson-bench|ibm|minimal|none]"
+	echo "Usage: install-tools.sh [standard|namespace|runson|bench|runson-bench|ibm|ci-lite|fuzz|minimal|none]"
 	exit 1
 	;;
 esac

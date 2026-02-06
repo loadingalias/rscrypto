@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../lib/common.sh
+source "$SCRIPT_DIR/../lib/common.sh"
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Miri Memory Safety Tests for rscrypto
 #
@@ -22,6 +26,8 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo "Running Memory Safety Tests via Miri..."
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
+
+maybe_disable_sccache
 
 # Crates that work with Miri (have #[cfg(miri)] portable fallbacks)
 # - backend: Has dispatch with unsafe transmute (needs Miri testing)

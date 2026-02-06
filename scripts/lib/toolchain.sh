@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Extract toolchain version from rust-toolchain.toml
+# Extract toolchain channel from rust-toolchain.toml.
 #
 # Usage:
-#   source scripts/ci/toolchain.sh  # Sets RUST_TOOLCHAIN env var
-#   scripts/ci/toolchain.sh         # Prints toolchain version
+#   scripts/lib/toolchain.sh         # prints channel
+#   RUST_TOOLCHAIN=$(scripts/lib/toolchain.sh)
 
 set -euo pipefail
 
@@ -16,8 +16,6 @@ if [ ! -f "$TOOLCHAIN_FILE" ]; then
   exit 1
 fi
 
-# Extract channel value (e.g., "nightly-2025-12-14")
-# Uses awk for cross-platform compatibility (macOS sed differs from GNU sed)
 RUST_TOOLCHAIN=$(awk -F'"' '/^channel/ {print $2}' "$TOOLCHAIN_FILE")
 
 if [ -z "$RUST_TOOLCHAIN" ]; then
@@ -25,5 +23,4 @@ if [ -z "$RUST_TOOLCHAIN" ]; then
   exit 1
 fi
 
-export RUST_TOOLCHAIN
 echo "$RUST_TOOLCHAIN"
