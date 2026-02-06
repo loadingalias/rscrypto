@@ -165,6 +165,81 @@ install_cargo_audit() {
 	cargo binstall cargo-audit --no-confirm --force 2>/dev/null || cargo install cargo-audit --locked --force
 }
 
+install_actionlint() {
+	if command -v actionlint &>/dev/null; then
+		echo "  actionlint: cached"
+		return 0
+	fi
+
+	echo "  actionlint: installing..."
+
+	local version os machine arch asset url tmpdir
+	version="${ACTIONLINT_VERSION:-1.7.7}"
+	os="$(uname -s)"
+	machine="$(uname -m)"
+
+	case "$os" in
+	Linux)
+		case "$machine" in
+		x86_64) arch="amd64" ;;
+		aarch64) arch="arm64" ;;
+		*)
+			echo "error: unsupported Linux arch for actionlint: $machine" >&2
+			return 1
+			;;
+		esac
+		asset="actionlint_${version}_linux_${arch}.tar.gz"
+		;;
+	Darwin)
+		case "$machine" in
+		x86_64) arch="amd64" ;;
+		arm64) arch="arm64" ;;
+		*)
+			echo "error: unsupported macOS arch for actionlint: $machine" >&2
+			return 1
+			;;
+		esac
+		asset="actionlint_${version}_darwin_${arch}.tar.gz"
+		;;
+	MINGW* | MSYS* | CYGWIN*)
+		case "$machine" in
+		x86_64) arch="amd64" ;;
+		aarch64) arch="arm64" ;;
+		*)
+			echo "error: unsupported Windows arch for actionlint: $machine" >&2
+			return 1
+			;;
+		esac
+		asset="actionlint_${version}_windows_${arch}.zip"
+		;;
+	*)
+		echo "error: unsupported OS for actionlint install: $os" >&2
+		return 1
+		;;
+	esac
+
+	url="https://github.com/rhysd/actionlint/releases/download/v${version}/${asset}"
+	tmpdir="$(mktemp -d)"
+
+	mkdir -p "$HOME/.cargo/bin"
+	if [[ "$asset" == *.zip ]]; then
+		curl -L --proto '=https' --tlsv1.2 -sSf -o "$tmpdir/actionlint.zip" "$url"
+		unzip -q "$tmpdir/actionlint.zip" -d "$tmpdir"
+		mv "$tmpdir/actionlint.exe" "$HOME/.cargo/bin/actionlint.exe"
+		cat >"$HOME/.cargo/bin/actionlint" <<'EOF'
+#!/usr/bin/env bash
+exec "$(dirname "$0")/actionlint.exe" "$@"
+EOF
+		chmod +x "$HOME/.cargo/bin/actionlint"
+	else
+		curl -L --proto '=https' --tlsv1.2 -sSf -o "$tmpdir/actionlint.tgz" "$url"
+		tar -xzf "$tmpdir/actionlint.tgz" -C "$tmpdir"
+		mv "$tmpdir/actionlint" "$HOME/.cargo/bin/actionlint"
+		chmod +x "$HOME/.cargo/bin/actionlint"
+	fi
+	rm -rf "$tmpdir"
+}
+
 # Install cargo-binstall first (required for fast installs)
 install_binstall
 
@@ -179,7 +254,7 @@ standard | namespace | runson)
 	install_if_missing "cargo-rail" "cargo-rail"
 	install_if_missing "cargo-deny" "cargo-deny"
 	install_cargo_audit # version-checked (requires 0.22+ for CVSS 4.0)
-	install_if_missing "actionlint" "actionlint"
+	install_actionlint
 	install_if_missing "just" "just"
 	;;
 
@@ -190,7 +265,7 @@ ibm | ci-lite)
 	install_if_missing "cargo-nextest" "cargo-nextest"
 	install_if_missing "cargo-deny" "cargo-deny"
 	install_cargo_audit # version-checked (requires 0.22+ for CVSS 4.0)
-	install_if_missing "actionlint" "actionlint"
+	install_actionlint
 	install_if_missing "just" "just"
 	;;
 
