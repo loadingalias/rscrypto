@@ -74,7 +74,6 @@ jobs:
         cat /proc/cpuinfo | head -50
       run_script: |
         just ci-check
-        just build
         just test --all
 
   ci-power10:
@@ -94,7 +93,6 @@ jobs:
         cat /proc/cpuinfo | head -50
       run_script: |
         just ci-check
-        just build
         just test --all
 
   bench-s390x:
@@ -106,8 +104,8 @@ jobs:
       timeout_minutes: 120
       setup_kind: default
       cache_key: manual-ibm-bench-s390x
-      tools_mode: bench
-      toolchain_components: "clippy, rustfmt"
+      tools_mode: none
+      toolchain_components: ""
       pre_script: |
         uname -a
         lscpu
@@ -148,8 +146,8 @@ jobs:
       timeout_minutes: 120
       setup_kind: default
       cache_key: manual-ibm-bench-power10
-      tools_mode: bench
-      toolchain_components: "clippy, rustfmt"
+      tools_mode: none
+      toolchain_components: ""
       pre_script: |
         uname -a
         lscpu
@@ -190,7 +188,7 @@ jobs:
       timeout_minutes: 120
       setup_kind: default
       cache_key: manual-ibm-tune-s390x
-      tools_mode: bench
+      tools_mode: none
       toolchain_components: ""
       pre_script: |
         uname -a
@@ -213,7 +211,7 @@ jobs:
       timeout_minutes: 120
       setup_kind: default
       cache_key: manual-ibm-tune-power10
-      tools_mode: bench
+      tools_mode: none
       toolchain_components: ""
       pre_script: |
         uname -a
