@@ -38,6 +38,7 @@ Automatic dispatch: AVX-512, VPCLMUL, PMULL, EOR3, hardware CRC.
 | Feature | Default | Description |
 |---------|---------|-------------|
 | `checksums` | yes | CRC-16, CRC-24, CRC-32, CRC-64 |
+| `hashes` | no | SHA-2, SHA-3, BLAKE3, and fast hash families |
 | `std` | yes | Runtime CPU detection |
 | `alloc` | yes | Buffered streaming APIs |
 

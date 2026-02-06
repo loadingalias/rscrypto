@@ -28,21 +28,33 @@ jobs:
           test "${{ github.event_name }}" = "push" -o "${{ github.event_name }}" = "workflow_dispatch"
           echo "lane=full-main"
 
+  target-matrix:
+    name: Resolve Target Matrix
+    needs: lane-contract
+    runs-on: ubuntu-latest
+    outputs:
+      full_main_ci: ${{ steps.matrix.outputs.full_main_ci }}
+      full_main_no_std: ${{ steps.matrix.outputs.full_main_no_std }}
+      full_main_wasm: ${{ steps.matrix.outputs.full_main_wasm }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - name: Load matrix from manifest
+        id: matrix
+        run: |
+          {
+            echo "full_main_ci=$(python3 scripts/lib/target-matrix.py --format json --key full_main_ci)"
+            echo "full_main_no_std=$(python3 scripts/lib/target-matrix.py --format json --key full_main_no_std)"
+            echo "full_main_wasm=$(python3 scripts/lib/target-matrix.py --format json --key full_main_wasm)"
+          } >> "$GITHUB_OUTPUT"
+
   ci:
     name: CI (${{ matrix.target.name }})
-    needs: lane-contract
+    needs: [lane-contract, target-matrix]
     strategy:
       fail-fast: false
       matrix:
-        target:
-          - name: x86_64-unknown-linux-gnu
-            runner: ubuntu-latest
-          - name: aarch64-unknown-linux-gnu
-            runner: ubuntu-24.04-arm
-          - name: x86_64-pc-windows-msvc
-            runner: windows-latest
-          - name: aarch64-pc-windows-msvc
-            runner: windows-11-arm
+        target: ${{ fromJSON(needs.target-matrix.outputs.full_main_ci) }}
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: ${{ matrix.target.runner }}
@@ -57,15 +69,11 @@ jobs:
 
   no-std:
     name: no_std (${{ matrix.target }})
-    needs: lane-contract
+    needs: [lane-contract, target-matrix]
     strategy:
       fail-fast: false
       matrix:
-        target:
-          - thumbv6m-none-eabi
-          - riscv32imac-unknown-none-elf
-          - aarch64-unknown-none
-          - x86_64-unknown-none
+        target: ${{ fromJSON(needs.target-matrix.outputs.full_main_no_std) }}
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: ubuntu-latest
@@ -82,13 +90,11 @@ jobs:
 
   wasm:
     name: wasm (${{ matrix.target }})
-    needs: lane-contract
+    needs: [lane-contract, target-matrix]
     strategy:
       fail-fast: false
       matrix:
-        target:
-          - wasm32-unknown-unknown
-          - wasm32-wasip1
+        target: ${{ fromJSON(needs.target-matrix.outputs.full_main_wasm) }}
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: ubuntu-latest

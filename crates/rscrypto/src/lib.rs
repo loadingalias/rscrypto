@@ -27,6 +27,7 @@
 //! | `std` | Yes | Enables runtime CPU detection for optimal dispatch |
 //! | `alloc` | Yes | Enables buffered types (implied by `std`) |
 //! | `checksums` | Yes | CRC-16, CRC-24, CRC-32, and CRC-64 algorithms |
+//! | `hashes` | No | Cryptographic and fast hash families |
 //!
 //! ## `no_std` Usage
 //!

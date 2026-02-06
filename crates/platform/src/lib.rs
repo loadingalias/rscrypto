@@ -84,6 +84,7 @@ extern crate std;
 pub mod caps;
 pub mod detect;
 pub mod dispatch;
+pub mod target_matrix;
 pub mod tune;
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -22,6 +22,8 @@ This file is the caller map for `scripts/`.
   - Called by: `just bench`
 - `scripts/ci/ci-check.sh`
   - Called by: `just ci-check`, CI workflows
+- `scripts/ci/check-infra.sh`
+  - Called by: `scripts/ci/ci-check.sh`
 - `scripts/ci/install-tools.sh`
   - Called by: `.github/actions/setup/action.yaml`, `.github/actions/setup-runson/action.yaml`, `.github/actions/setup-namespace/action.yaml`
 - `scripts/ci/pin-actions.sh`
@@ -37,6 +39,8 @@ This file is the caller map for `scripts/`.
   - Sourced by: `scripts/check/*.sh`, `scripts/test/*.sh`, `scripts/ci/ci-check.sh`
 - `scripts/lib/targets.sh`
   - Sourced by: `scripts/check/check-all.sh`, `scripts/check/check-win.sh`, `scripts/check/check-linux.sh`
+- `scripts/lib/target-matrix.py`
+  - Called by: `scripts/lib/targets.sh`, `.github/workflows/commit.yaml`, `.github/workflows/fast-pr.yaml`
 - `scripts/lib/toolchain.sh`
   - Called by: `.github/actions/setup-toolchain/action.yaml`, `.github/actions/setup-runson/action.yaml`
 

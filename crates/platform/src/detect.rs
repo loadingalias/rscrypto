@@ -103,21 +103,30 @@ pub fn get() -> Detected {
 
   #[cfg(not(miri))]
   {
-    #[cfg(feature = "std")]
-    {
-      *STD_CACHE.get_or_init(detect_with_override)
-    }
+    #[allow(unused_mut)]
+    let mut det = {
+      #[cfg(feature = "std")]
+      {
+        *STD_CACHE.get_or_init(detect_with_override)
+      }
 
-    #[cfg(all(not(feature = "std"), target_has_atomic = "64"))]
-    {
-      atomic_cache::get_or_init(detect_with_override)
-    }
+      #[cfg(all(not(feature = "std"), target_has_atomic = "64"))]
+      {
+        atomic_cache::get_or_init(detect_with_override)
+      }
 
-    #[cfg(all(not(feature = "std"), not(target_has_atomic = "64")))]
-    {
-      // Constrained targets: always call detect (no caching)
-      detect_with_override()
-    }
+      #[cfg(all(not(feature = "std"), not(target_has_atomic = "64")))]
+      {
+        // Constrained targets: always call detect (no caching)
+        detect_with_override()
+      }
+    };
+
+    debug_assert!(
+      crate::target_matrix::tune_manifest_has_arch(det.arch),
+      "detected arch policy drifted from config/target-matrix.toml"
+    );
+    det
   }
 }
 

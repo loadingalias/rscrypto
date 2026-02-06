@@ -25,12 +25,26 @@ jobs:
           test "${{ github.event_name }}" = "pull_request"
           echo "lane=fast-pr"
 
+  target-matrix:
+    name: Resolve Target Matrix
+    needs: lane-contract
+    runs-on: ubuntu-latest
+    outputs:
+      fast_pr: ${{ steps.matrix.outputs.fast_pr }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - name: Load matrix from manifest
+        id: matrix
+        run: |
+          echo "fast_pr=$(python3 scripts/lib/target-matrix.py --format json --key fast_pr)" >> "$GITHUB_OUTPUT"
+
   ci:
     name: CI (fast)
-    needs: lane-contract
+    needs: [lane-contract, target-matrix]
     uses: ./.github/workflows/_rust-job.yaml
     with:
-      runner: ubuntu-latest
+      runner: ${{ fromJSON(needs.target-matrix.outputs.fast_pr).host_runner }}
       timeout_minutes: 25
       setup_kind: default
       cache_key: fast-pr-linux
@@ -42,31 +56,33 @@ jobs:
 
   no-std:
     name: no_std smoke
-    needs: lane-contract
+    needs: [lane-contract, target-matrix]
     uses: ./.github/workflows/_rust-job.yaml
     with:
-      runner: ubuntu-latest
+      runner: ${{ fromJSON(needs.target-matrix.outputs.fast_pr).host_runner }}
       timeout_minutes: 10
       setup_kind: default
       cache_key: fast-pr-no-std
       tools_mode: minimal
       run_script: |
-        rustup target add thumbv6m-none-eabi
-        cargo check -p platform -p traits -p backend --target thumbv6m-none-eabi --no-default-features --lib
+        TARGET="${{ fromJSON(needs.target-matrix.outputs.fast_pr).no_std_smoke }}"
+        rustup target add "$TARGET"
+        cargo check -p platform -p traits -p backend --target "$TARGET" --no-default-features --lib
 
   wasm:
     name: wasm smoke
-    needs: lane-contract
+    needs: [lane-contract, target-matrix]
     uses: ./.github/workflows/_rust-job.yaml
     with:
-      runner: ubuntu-latest
+      runner: ${{ fromJSON(needs.target-matrix.outputs.fast_pr).host_runner }}
       timeout_minutes: 10
       setup_kind: default
       cache_key: fast-pr-wasm
       tools_mode: minimal
       run_script: |
-        rustup target add wasm32-unknown-unknown
-        cargo check -p platform -p traits -p backend --target wasm32-unknown-unknown --no-default-features --features alloc --lib
+        TARGET="${{ fromJSON(needs.target-matrix.outputs.fast_pr).wasm_smoke }}"
+        rustup target add "$TARGET"
+        cargo check -p platform -p traits -p backend --target "$TARGET" --no-default-features --features alloc --lib
 
   complete:
     name: Complete (fast-pr)
