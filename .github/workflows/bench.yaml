@@ -13,11 +13,21 @@ on:
         required: false
         type: boolean
         default: true
+      run_intel_icl:
+        description: "Run benchmarks on Intel Ice Lake (RunsOn)"
+        required: false
+        type: boolean
+        default: false
       run_graviton:
         description: "Run benchmarks on Graviton (RunsOn)"
         required: false
         type: boolean
         default: true
+      run_amd_zen5:
+        description: "Run benchmarks on AMD Zen5 (RunsOn)"
+        required: false
+        type: boolean
+        default: false
       crates:
         description: "Benchmark crates (comma-separated, empty = workspace)"
         required: false
@@ -122,6 +132,80 @@ jobs:
         # shellcheck disable=SC2086
         cargo bench --profile bench $CRATE_FLAGS $BENCH_FLAGS 2>&1 | tee benchmark-results/output.txt
       artifact_name: benchmark-intel
+      artifact_path: |
+        benchmark-results/
+        target/criterion/
+
+  bench-intel-icl:
+    name: Benchmark (Intel ICL)
+    if: github.event.inputs.run_intel_icl == 'true'
+    needs: lane-contract
+    uses: ./.github/workflows/_rust-job.yaml
+    with:
+      runner: runs-on=${{ github.run_id }}/runner=intel-icl-bench
+      timeout_minutes: 90
+      setup_kind: runson
+      runson_mode: runson-bench
+      run_script: |
+        CRATES_INPUT="${{ github.event.inputs.crates }}"
+        BENCHES_INPUT="${{ github.event.inputs.benches }}"
+        CRATE_FLAGS="--workspace"
+        BENCH_FLAGS=""
+        if [ -n "$CRATES_INPUT" ]; then
+          CRATE_FLAGS=""
+          IFS=',' read -ra CRATES <<< "$CRATES_INPUT"
+          for crate in "${CRATES[@]}"; do
+            CRATE_FLAGS="$CRATE_FLAGS -p $(echo "$crate" | xargs)"
+          done
+        fi
+        if [ -n "$BENCHES_INPUT" ]; then
+          IFS=',' read -ra BENCHES <<< "$BENCHES_INPUT"
+          for bench in "${BENCHES[@]}"; do
+            BENCH_FLAGS="$BENCH_FLAGS --bench $(echo "$bench" | xargs)"
+          done
+        fi
+        rm -rf target/criterion
+        mkdir -p benchmark-results
+        # shellcheck disable=SC2086
+        cargo bench --profile bench $CRATE_FLAGS $BENCH_FLAGS 2>&1 | tee benchmark-results/output.txt
+      artifact_name: benchmark-intel-icl
+      artifact_path: |
+        benchmark-results/
+        target/criterion/
+
+  bench-amd-zen5:
+    name: Benchmark (AMD Zen5)
+    if: github.event.inputs.run_amd_zen5 == 'true'
+    needs: lane-contract
+    uses: ./.github/workflows/_rust-job.yaml
+    with:
+      runner: runs-on=${{ github.run_id }}/runner=amd-zen5
+      timeout_minutes: 90
+      setup_kind: runson
+      runson_mode: runson-bench
+      run_script: |
+        CRATES_INPUT="${{ github.event.inputs.crates }}"
+        BENCHES_INPUT="${{ github.event.inputs.benches }}"
+        CRATE_FLAGS="--workspace"
+        BENCH_FLAGS=""
+        if [ -n "$CRATES_INPUT" ]; then
+          CRATE_FLAGS=""
+          IFS=',' read -ra CRATES <<< "$CRATES_INPUT"
+          for crate in "${CRATES[@]}"; do
+            CRATE_FLAGS="$CRATE_FLAGS -p $(echo "$crate" | xargs)"
+          done
+        fi
+        if [ -n "$BENCHES_INPUT" ]; then
+          IFS=',' read -ra BENCHES <<< "$BENCHES_INPUT"
+          for bench in "${BENCHES[@]}"; do
+            BENCH_FLAGS="$BENCH_FLAGS --bench $(echo "$bench" | xargs)"
+          done
+        fi
+        rm -rf target/criterion
+        mkdir -p benchmark-results
+        # shellcheck disable=SC2086
+        cargo bench --profile bench $CRATE_FLAGS $BENCH_FLAGS 2>&1 | tee benchmark-results/output.txt
+      artifact_name: benchmark-amd-zen5
       artifact_path: |
         benchmark-results/
         target/criterion/
