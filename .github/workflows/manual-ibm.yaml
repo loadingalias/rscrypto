@@ -88,7 +88,7 @@ jobs:
         lscpu
         cat /proc/cpuinfo | head -50
       run_script: |
-        RSCRYPTO_SKIP_POLICY_CHECKS=true just ci-check
+        just ci-check
         just build
         just test --all
 
@@ -108,7 +108,7 @@ jobs:
         lscpu
         cat /proc/cpuinfo | head -50
       run_script: |
-        RSCRYPTO_SKIP_POLICY_CHECKS=true just ci-check
+        just ci-check
         just build
         just test --all
 
@@ -128,7 +128,7 @@ jobs:
         lscpu
         cat /proc/cpuinfo | head -50
       run_script: |
-        RSCRYPTO_SKIP_POLICY_CHECKS=true just ci-check
+        just ci-check
         just build
         just test --all
 
