@@ -20,7 +20,7 @@ alloc = ["traits/alloc"]
 traits = { workspace = true, default-features = false } #unified
 backend = { workspace = true, default-features = false } #unified
 platform = { workspace = true, default-features = false } #unified
-rayon = { version = "1", optional = true }
+rayon = { version = "1.11.0", optional = true }
 
 [dev-dependencies]
 # Dev-only correctness oracles (not used by library code).
@@ -29,13 +29,13 @@ sha2 = { version = "0.10.9", default-features = false, features = ["std", "force
 sha3 = "0.10.8"
 xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
 rapidhash = "4.2.2"
-siphasher = "0.3"
+siphasher = "1.0.2"
 tiny-keccak = { version = "2.0.2", features = ["kmac"] }
-blake2 = "0.10"
+blake2 = "0.10.6"
 ascon-hash256 = "0.5.0-rc.2"
 
 criterion.workspace = true
-digest = { version = "0.10", features = ["dev"] }
+digest = { version = "0.10.7", features = ["dev"] }
 proptest.workspace = true
 
 [[bench]]

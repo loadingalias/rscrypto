@@ -126,10 +126,11 @@ struct ParallelPolicyOverride {
   streaming: dispatch_tables::ParallelTable,
 }
 
-#[cfg(feature = "std")]
 #[derive(Clone, Copy)]
 enum ParallelPolicyKind {
   Oneshot,
+  Update,
+  Xof,
 }
 
 #[cfg(feature = "std")]
@@ -150,33 +151,42 @@ fn available_parallelism_cached() -> Option<usize> {
 
 #[cfg(feature = "std")]
 #[inline]
-fn parallel_policy_threads(mode: ParallelPolicyKind, input_bytes: usize, commit_full_chunks: usize) -> Option<usize> {
+fn parallel_policy_threads_with_admission(
+  mode: ParallelPolicyKind,
+  input_bytes: usize,
+  admission_full_chunks: usize,
+  commit_full_chunks: usize,
+) -> Option<usize> {
   let policy = if let Some(override_policy) = parallel_override() {
     match mode {
-      ParallelPolicyKind::Oneshot => override_policy.oneshot,
+      ParallelPolicyKind::Oneshot | ParallelPolicyKind::Xof => override_policy.oneshot,
+      ParallelPolicyKind::Update => override_policy.streaming,
     }
   } else {
     let dispatch_policy = dispatch::parallel_dispatch();
     match mode {
-      ParallelPolicyKind::Oneshot => dispatch_policy.oneshot,
+      ParallelPolicyKind::Oneshot | ParallelPolicyKind::Xof => dispatch_policy.oneshot,
+      ParallelPolicyKind::Update => dispatch_policy.streaming,
     }
   };
 
-  parallel_threads_for_policy(policy, input_bytes, commit_full_chunks)
+  parallel_threads_for_policy(mode, policy, input_bytes, admission_full_chunks, commit_full_chunks)
 }
 
 #[cfg(feature = "std")]
 #[inline]
 fn parallel_threads_for_policy(
+  mode: ParallelPolicyKind,
   policy: dispatch_tables::ParallelTable,
   input_bytes: usize,
+  admission_full_chunks: usize,
   commit_full_chunks: usize,
 ) -> Option<usize> {
   if policy.max_threads == 1 || policy.min_bytes == usize::MAX {
     return None;
   }
 
-  if input_bytes < policy.min_bytes || commit_full_chunks < policy.min_chunks {
+  if input_bytes < policy.min_bytes || admission_full_chunks < policy.min_chunks {
     return None;
   }
 
@@ -199,18 +209,43 @@ fn parallel_threads_for_policy(
 
   let mut candidate = threads.min(commit_full_chunks);
   while candidate > 1 {
+    let merge_divisor = parallel_merge_divisor(mode, commit_full_chunks, candidate);
+    let merge_cost = policy.merge_cost_bytes.saturating_add(merge_divisor - 1) / merge_divisor;
     let spawn_cost = policy.spawn_cost_bytes.saturating_mul(candidate - 1);
     let work_cost = bytes_per_core.saturating_mul(candidate);
-    let required = policy
-      .merge_cost_bytes
-      .saturating_add(spawn_cost)
-      .saturating_add(work_cost);
+    let fitted_required = merge_cost.saturating_add(spawn_cost).saturating_add(work_cost);
+    let required = scale_parallel_required_bytes(mode, fitted_required);
     if input_bytes >= required {
       return Some(candidate);
     }
     candidate -= 1;
   }
   None
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn parallel_merge_divisor(mode: ParallelPolicyKind, commit_full_chunks: usize, threads: usize) -> usize {
+  let chunk_depth = (commit_full_chunks.max(2)).ilog2() as usize;
+  let thread_depth = (threads.max(2)).ilog2() as usize;
+  let mode_bias = match mode {
+    ParallelPolicyKind::Oneshot => 2,
+    ParallelPolicyKind::Update => 1,
+    ParallelPolicyKind::Xof => 3,
+  };
+  1 + chunk_depth + thread_depth + mode_bias
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn scale_parallel_required_bytes(mode: ParallelPolicyKind, required: usize) -> usize {
+  let (num, den) = match mode {
+    // Fitted from crossover data: one-shot/XOF benefit earlier than update.
+    ParallelPolicyKind::Oneshot => (13usize, 10usize),
+    ParallelPolicyKind::Update => (15usize, 10usize),
+    ParallelPolicyKind::Xof => (12usize, 10usize),
+  };
+  required.saturating_mul(num).saturating_add(den - 1) / den
 }
 
 #[cfg(feature = "std")]
@@ -2053,7 +2088,13 @@ fn single_chunk_output(
 }
 
 #[inline]
-fn root_output_oneshot(kernel: Kernel, key_words: [u32; 8], flags: u32, input: &[u8]) -> OutputState {
+fn root_output_oneshot(
+  kernel: Kernel,
+  key_words: [u32; 8],
+  flags: u32,
+  mode: ParallelPolicyKind,
+  input: &[u8],
+) -> OutputState {
   // Fast path for <= 1 chunk (root is the chunk itself).
   if input.len() <= CHUNK_LEN {
     return single_chunk_output(kernel, key_words, 0, flags, input);
@@ -2070,7 +2111,7 @@ fn root_output_oneshot(kernel: Kernel, key_words: [u32; 8], flags: u32, input: &
     // This is intentionally conservative to avoid overhead on latency-critical
     // small inputs (including keyed/derive).
     let commit_full_chunks = if remainder == 0 { full_chunks - 1 } else { full_chunks };
-    if let Some(threads) = parallel_policy_threads(ParallelPolicyKind::Oneshot, input.len(), commit_full_chunks) {
+    if let Some(threads) = parallel_policy_threads_with_admission(mode, input.len(), full_chunks, commit_full_chunks) {
       return root_output_oneshot_join_parallel(kernel, key_words, flags, input, threads);
     }
   }
@@ -2281,7 +2322,7 @@ fn digest_oneshot_words(kernel: Kernel, key_words: [u32; 8], flags: u32, input: 
   }
 
   // Fallback: construct the root output and extract the root hash words.
-  let output = root_output_oneshot(kernel, key_words, flags, input);
+  let output = root_output_oneshot(kernel, key_words, flags, ParallelPolicyKind::Oneshot, input);
   output.root_hash_words()
 }
 
@@ -2359,7 +2400,10 @@ impl Blake3 {
     let key_words = words8_from_le_bytes_32(key);
     let plan = dispatch::hasher_dispatch();
     let kernel = plan.size_class_kernel(data.len());
-    Blake3Xof::new(root_output_oneshot(kernel, key_words, KEYED_HASH, data), plan)
+    Blake3Xof::new(
+      root_output_oneshot(kernel, key_words, KEYED_HASH, ParallelPolicyKind::Xof, data),
+      plan,
+    )
   }
 
   /// Compute the derived key for `key_material` under `context`, in one shot.
@@ -2511,13 +2555,24 @@ impl Blake3 {
 
   #[cfg(feature = "std")]
   #[inline]
-  fn streaming_parallel_threads(&self, input_bytes: usize, commit_full_chunks: usize) -> Option<usize> {
+  fn streaming_parallel_threads(
+    &self,
+    input_bytes: usize,
+    admission_full_chunks: usize,
+    commit_full_chunks: usize,
+  ) -> Option<usize> {
     let policy = if let Some(override_policy) = parallel_override() {
       override_policy.streaming
     } else {
       self.dispatch_plan.parallel_streaming()
     };
-    parallel_threads_for_policy(policy, input_bytes, commit_full_chunks)
+    parallel_threads_for_policy(
+      ParallelPolicyKind::Update,
+      policy,
+      input_bytes,
+      admission_full_chunks,
+      commit_full_chunks,
+    )
   }
 
   #[cfg(feature = "std")]
@@ -2689,7 +2744,7 @@ impl Blake3 {
     }
 
     let bytes = batch * CHUNK_LEN;
-    let threads = self.streaming_parallel_threads(bytes, commit)?;
+    let threads = self.streaming_parallel_threads(bytes, batch, commit)?;
     if threads <= 1 {
       return None;
     }

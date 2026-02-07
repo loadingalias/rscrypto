@@ -317,7 +317,7 @@ pub fn digest(data: &[u8]) -> [u8; 32] {
 pub fn xof(data: &[u8]) -> super::Blake3Xof {
   let d = active();
   let kernel = select(&d, data.len()).kernel;
-  let output = super::root_output_oneshot(kernel, super::IV, 0, data);
+  let output = super::root_output_oneshot(kernel, super::IV, 0, super::ParallelPolicyKind::Xof, data);
   super::Blake3Xof::new(output, hasher_dispatch())
 }
 
@@ -477,12 +477,14 @@ fn parallel_threads_for(table: &ParallelTable, input_bytes: usize, commit_chunks
     let bytes_per_core = bytes_per_core_for_payload(table, input_bytes);
     let mut candidate = threads.min(commit_chunks);
     while candidate > 1 {
+      let chunk_depth = (commit_chunks.max(2)).ilog2() as usize;
+      let thread_depth = (candidate.max(2)).ilog2() as usize;
+      let merge_divisor = 1 + chunk_depth + thread_depth + 1;
+      let merge_cost = table.merge_cost_bytes.saturating_add(merge_divisor - 1) / merge_divisor;
       let spawn_cost = table.spawn_cost_bytes.saturating_mul(candidate - 1);
       let work_cost = bytes_per_core.saturating_mul(candidate);
-      let required = table
-        .merge_cost_bytes
-        .saturating_add(spawn_cost)
-        .saturating_add(work_cost);
+      let fitted_required = merge_cost.saturating_add(spawn_cost).saturating_add(work_cost);
+      let required = fitted_required.saturating_mul(15).saturating_add(10 - 1) / 10;
       if input_bytes >= required {
         return (true, candidate);
       }
