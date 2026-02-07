@@ -135,9 +135,6 @@ install_if_missing() {
 	cargo binstall "$tool" --no-confirm --force 2>/dev/null || cargo install "$tool" --locked
 }
 
-# Install cargo-binstall first (required for fast installs)
-install_binstall
-
 echo ""
 echo "Installing tools for mode: $MODE"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -145,20 +142,29 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 case "$MODE" in
 standard | namespace | runson)
 	# Standard CI tools (same for all CI runners)
+	install_binstall
 	install_if_missing "cargo-nextest" "cargo-nextest"
 	install_if_missing "cargo-rail" "cargo-rail"
 	install_if_missing "just" "just"
 	;;
 
 ibm)
-	# IBM runners: keep installs minimal.
+	# IBM runners: keep installs minimal and fast.
+	# Skip cargo-binstall entirely on these platforms since it requires source
+	# compilation; just install 'just' directly via cargo.
 	# `cargo-nextest` often lacks prebuilt binaries on s390x/ppc64le and falls
 	# back to expensive source builds; test.sh will use `cargo test` fallback.
-	install_if_missing "just" "just"
+	if command -v just &>/dev/null; then
+		echo "  just: cached"
+	else
+		echo "  just: installing via cargo (skipping binstall for speed)..."
+		cargo install just --locked
+	fi
 	;;
 
 bench | runson-bench)
 	# Benchmark tools (Criterion + tuning)
+	install_binstall
 	install_if_missing "cargo-criterion" "cargo-criterion"
 	install_if_missing "critcmp" "critcmp"
 	install_if_missing "just" "just"
@@ -166,12 +172,14 @@ bench | runson-bench)
 
 fuzz)
 	# Weekly fuzz lane: keep tool set minimal and explicit.
+	install_binstall
 	install_if_missing "cargo-fuzz" "cargo-fuzz"
 	install_if_missing "just" "just"
 	;;
 
 minimal)
 	# Minimal set for quick jobs
+	install_binstall
 	install_if_missing "just" "just"
 	;;
 
