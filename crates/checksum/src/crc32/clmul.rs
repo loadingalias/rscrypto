@@ -234,8 +234,8 @@ mod tests {
 
   #[test]
   fn mu_is_33_bit() {
-    assert!(CRC32_IEEE_CLMUL.mu < (1u64 << 33));
-    assert!(CRC32C_CLMUL.mu < (1u64 << 33));
+    const { assert!(CRC32_IEEE_CLMUL.mu < (1u64 << 33)) };
+    const { assert!(CRC32C_CLMUL.mu < (1u64 << 33)) };
   }
 
   #[test]
