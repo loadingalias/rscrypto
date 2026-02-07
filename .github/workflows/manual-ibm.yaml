@@ -23,6 +23,16 @@ on:
         required: false
         type: boolean
         default: false
+      bench_crates:
+        description: "Benchmark crates (comma-separated, empty = workspace)"
+        required: false
+        type: string
+        default: ""
+      bench_benches:
+        description: "Specific benches (comma-separated, optional)"
+        required: false
+        type: string
+        default: ""
       run_tune_s390x:
         description: "Run tune on IBM Z (s390x)"
         required: false
@@ -111,8 +121,8 @@ jobs:
         lscpu
         cat /proc/cpuinfo | head -50
       run_script: |
-        CRATES_INPUT=""
-        BENCHES_INPUT=""
+        CRATES_INPUT="${{ github.event.inputs.bench_crates }}"
+        BENCHES_INPUT="${{ github.event.inputs.bench_benches }}"
         CRATE_FLAGS="--workspace"
         BENCH_FLAGS=""
         if [ -n "$CRATES_INPUT" ]; then
@@ -153,8 +163,8 @@ jobs:
         lscpu
         cat /proc/cpuinfo | head -50
       run_script: |
-        CRATES_INPUT=""
-        BENCHES_INPUT=""
+        CRATES_INPUT="${{ github.event.inputs.bench_crates }}"
+        BENCHES_INPUT="${{ github.event.inputs.bench_benches }}"
         CRATE_FLAGS="--workspace"
         BENCH_FLAGS=""
         if [ -n "$CRATES_INPUT" ]; then

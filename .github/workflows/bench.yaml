@@ -8,13 +8,18 @@ on:
         required: false
         type: boolean
         default: true
-      run_intel:
-        description: "Run benchmarks on Intel (RunsOn)"
+      run_intel_spr:
+        description: "Run benchmarks on Intel Sapphire Rapids (World Record contender)"
         required: false
         type: boolean
         default: true
+      run_intel_latest:
+        description: "Run benchmarks on Intel Latest (Granite/Emerald/Sapphire)"
+        required: false
+        type: boolean
+        default: false
       run_intel_icl:
-        description: "Run benchmarks on Intel Ice Lake (RunsOn)"
+        description: "Run benchmarks on Intel Ice Lake (SSE validation)"
         required: false
         type: boolean
         default: false
@@ -99,13 +104,13 @@ jobs:
         benchmark-results/
         target/criterion/
 
-  bench-intel:
-    name: Benchmark (Intel)
-    if: github.event.inputs.run_intel == 'true'
+  bench-intel-spr:
+    name: Benchmark (Intel Sapphire Rapids)
+    if: github.event.inputs.run_intel_spr == 'true'
     needs: lane-contract
     uses: ./.github/workflows/_rust-job.yaml
     with:
-      runner: runs-on=${{ github.run_id }}/runner=intel-bench
+      runner: runs-on=${{ github.run_id }}/runner=intel-spr
       timeout_minutes: 90
       setup_kind: runson
       runson_mode: runson-bench
@@ -131,13 +136,50 @@ jobs:
         mkdir -p benchmark-results
         # shellcheck disable=SC2086
         cargo bench --profile bench $CRATE_FLAGS $BENCH_FLAGS 2>&1 | tee benchmark-results/output.txt
-      artifact_name: benchmark-intel
+      artifact_name: benchmark-intel-spr
+      artifact_path: |
+        benchmark-results/
+        target/criterion/
+
+  bench-intel-latest:
+    name: Benchmark (Intel Latest)
+    if: github.event.inputs.run_intel_latest == 'true'
+    needs: lane-contract
+    uses: ./.github/workflows/_rust-job.yaml
+    with:
+      runner: runs-on=${{ github.run_id }}/runner=intel-latest
+      timeout_minutes: 90
+      setup_kind: runson
+      runson_mode: runson-bench
+      run_script: |
+        CRATES_INPUT="${{ github.event.inputs.crates }}"
+        BENCHES_INPUT="${{ github.event.inputs.benches }}"
+        CRATE_FLAGS="--workspace"
+        BENCH_FLAGS=""
+        if [ -n "$CRATES_INPUT" ]; then
+          CRATE_FLAGS=""
+          IFS=',' read -ra CRATES <<< "$CRATES_INPUT"
+          for crate in "${CRATES[@]}"; do
+            CRATE_FLAGS="$CRATE_FLAGS -p $(echo "$crate" | xargs)"
+          done
+        fi
+        if [ -n "$BENCHES_INPUT" ]; then
+          IFS=',' read -ra BENCHES <<< "$BENCHES_INPUT"
+          for bench in "${BENCHES[@]}"; do
+            BENCH_FLAGS="$BENCH_FLAGS --bench $(echo "$bench" | xargs)"
+          done
+        fi
+        rm -rf target/criterion
+        mkdir -p benchmark-results
+        # shellcheck disable=SC2086
+        cargo bench --profile bench $CRATE_FLAGS $BENCH_FLAGS 2>&1 | tee benchmark-results/output.txt
+      artifact_name: benchmark-intel-latest
       artifact_path: |
         benchmark-results/
         target/criterion/
 
   bench-intel-icl:
-    name: Benchmark (Intel ICL)
+    name: Benchmark (Intel Ice Lake - SSE validation)
     if: github.event.inputs.run_intel_icl == 'true'
     needs: lane-contract
     uses: ./.github/workflows/_rust-job.yaml
