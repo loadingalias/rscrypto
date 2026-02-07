@@ -13,6 +13,10 @@ linux = [
   "x86_64-unknown-linux-musl",
   "aarch64-unknown-linux-musl",
 ]
+ibm = [
+  "s390x-unknown-linux-gnu",
+  "powerpc64le-unknown-linux-gnu",
+]
 no_std = [
   "thumbv6m-none-eabi",
   "riscv32imac-unknown-none-elf",

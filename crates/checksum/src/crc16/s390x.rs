@@ -433,6 +433,7 @@ pub fn crc16_ccitt_vgfm_safe(crc: u16, data: &[u8]) -> u16 {
 
 #[inline]
 pub fn crc16_ccitt_vgfm_2way_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: Dispatcher verifies VECTOR facility before selecting this kernel.
   unsafe {
     crc16_width32_vgfm_2way(
       crc,
@@ -446,6 +447,7 @@ pub fn crc16_ccitt_vgfm_2way_safe(crc: u16, data: &[u8]) -> u16 {
 
 #[inline]
 pub fn crc16_ccitt_vgfm_4way_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: Dispatcher verifies VECTOR facility before selecting this kernel.
   unsafe {
     crc16_width32_vgfm_4way(
       crc,
@@ -470,6 +472,7 @@ pub fn crc16_ibm_vgfm_safe(crc: u16, data: &[u8]) -> u16 {
 
 #[inline]
 pub fn crc16_ibm_vgfm_2way_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: Dispatcher verifies VECTOR facility before selecting this kernel.
   unsafe {
     crc16_width32_vgfm_2way(
       crc,
@@ -483,6 +486,7 @@ pub fn crc16_ibm_vgfm_2way_safe(crc: u16, data: &[u8]) -> u16 {
 
 #[inline]
 pub fn crc16_ibm_vgfm_4way_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: Dispatcher verifies VECTOR facility before selecting this kernel.
   unsafe {
     crc16_width32_vgfm_4way(
       crc,
