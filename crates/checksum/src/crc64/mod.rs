@@ -1017,7 +1017,6 @@ mod tests {
     if force.eq_ignore_ascii_case("portable") {
       assert_eq!(cfg.requested_force, Crc64Force::Portable);
       assert_eq!(kernel, "portable/slice16");
-      return;
     }
 
     #[cfg(target_arch = "x86_64")]
