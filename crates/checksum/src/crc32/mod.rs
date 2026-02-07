@@ -910,6 +910,8 @@ mod tests {
 
     let cfg = Crc32::config();
     let kernel = Crc32::kernel_name_for_len(len);
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    let _ = (cfg, kernel);
 
     #[cfg(target_arch = "x86_64")]
     {
@@ -967,6 +969,8 @@ mod tests {
 
     let cfg = Crc32C::config();
     let kernel = Crc32C::kernel_name_for_len(len);
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    let _ = (cfg, kernel);
 
     #[cfg(target_arch = "x86_64")]
     {

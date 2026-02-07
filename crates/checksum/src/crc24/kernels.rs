@@ -143,9 +143,6 @@ pub mod power {
   use super::super::power as arch;
   use crate::dispatchers::Crc24Fn;
 
-  /// VPMSUM kernel name (POWER8+ carryless multiply).
-  pub const VPMSUM: &str = "power/vpmsum";
-
   /// VPMSUM kernel names: [1-way, 2-way, 4-way, 8-way, 8-way(dup)].
   pub const VPMSUM_NAMES: &[&str] = &[
     "power/vpmsum",

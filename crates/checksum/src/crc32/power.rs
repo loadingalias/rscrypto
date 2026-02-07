@@ -683,6 +683,7 @@ pub fn crc32_ieee_vpmsum_safe(crc: u32, data: &[u8]) -> u32 {
 
 #[inline]
 pub fn crc32_ieee_vpmsum_2way_safe(crc: u32, data: &[u8]) -> u32 {
+  // SAFETY: Dispatcher verifies VPMSUM-ready CPU features before selecting this kernel.
   unsafe {
     crc32_fold_kernel_nway::<2>(
       crc,
@@ -695,6 +696,7 @@ pub fn crc32_ieee_vpmsum_2way_safe(crc: u32, data: &[u8]) -> u32 {
 
 #[inline]
 pub fn crc32_ieee_vpmsum_4way_safe(crc: u32, data: &[u8]) -> u32 {
+  // SAFETY: Dispatcher verifies VPMSUM-ready CPU features before selecting this kernel.
   unsafe {
     crc32_fold_kernel_nway::<4>(
       crc,
@@ -707,6 +709,7 @@ pub fn crc32_ieee_vpmsum_4way_safe(crc: u32, data: &[u8]) -> u32 {
 
 #[inline]
 pub fn crc32_ieee_vpmsum_8way_safe(crc: u32, data: &[u8]) -> u32 {
+  // SAFETY: Dispatcher verifies VPMSUM-ready CPU features before selecting this kernel.
   unsafe {
     crc32_fold_kernel_nway::<8>(
       crc,
@@ -725,16 +728,19 @@ pub fn crc32c_vpmsum_safe(crc: u32, data: &[u8]) -> u32 {
 
 #[inline]
 pub fn crc32c_vpmsum_2way_safe(crc: u32, data: &[u8]) -> u32 {
+  // SAFETY: Dispatcher verifies VPMSUM-ready CPU features before selecting this kernel.
   unsafe { crc32c_fold_kernel_nway::<2>(crc, data, &super::clmul::CRC32C_STREAM, &super::clmul::CRC32C_CLMUL) }
 }
 
 #[inline]
 pub fn crc32c_vpmsum_4way_safe(crc: u32, data: &[u8]) -> u32 {
+  // SAFETY: Dispatcher verifies VPMSUM-ready CPU features before selecting this kernel.
   unsafe { crc32c_fold_kernel_nway::<4>(crc, data, &super::clmul::CRC32C_STREAM, &super::clmul::CRC32C_CLMUL) }
 }
 
 #[inline]
 pub fn crc32c_vpmsum_8way_safe(crc: u32, data: &[u8]) -> u32 {
+  // SAFETY: Dispatcher verifies VPMSUM-ready CPU features before selecting this kernel.
   unsafe { crc32c_fold_kernel_nway::<8>(crc, data, &super::clmul::CRC32C_STREAM, &super::clmul::CRC32C_CLMUL) }
 }
 

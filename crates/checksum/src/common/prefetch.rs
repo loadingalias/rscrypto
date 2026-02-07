@@ -249,21 +249,36 @@ pub use aarch64_impl::{prefetch_for_next_iteration, prefetch_read_l1, prefetch_r
 pub use x86_64_impl::{prefetch_for_next_iteration, prefetch_read_l1, prefetch_read_l2};
 
 // Fallback for other architectures (no-op)
-#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(all(not(any(target_arch = "x86_64", target_arch = "aarch64")), test))]
 pub const LARGE_BLOCK_DISTANCE: usize = 512;
-#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(all(not(any(target_arch = "x86_64", target_arch = "aarch64")), test))]
 pub const MEDIUM_BLOCK_DISTANCE: usize = 256;
 
-#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(all(not(any(target_arch = "x86_64", target_arch = "aarch64")), test))]
 #[inline(always)]
+/// No-op prefetch fallback used only by tests on unsupported architectures.
+///
+/// # Safety
+///
+/// This function performs no memory access and is always safe to call.
 pub unsafe fn prefetch_read_l1(_ptr: *const u8) {}
 
-#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(all(not(any(target_arch = "x86_64", target_arch = "aarch64")), test))]
 #[inline(always)]
+/// No-op prefetch fallback used only by tests on unsupported architectures.
+///
+/// # Safety
+///
+/// This function performs no memory access and is always safe to call.
 pub unsafe fn prefetch_read_l2(_ptr: *const u8) {}
 
-#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(all(not(any(target_arch = "x86_64", target_arch = "aarch64")), test))]
 #[inline(always)]
+/// No-op prefetch fallback used only by tests on unsupported architectures.
+///
+/// # Safety
+///
+/// This function performs no memory access and is always safe to call.
 pub unsafe fn prefetch_for_next_iteration(_ptr: *const u8) {}
 
 // ─────────────────────────────────────────────────────────────────────────────

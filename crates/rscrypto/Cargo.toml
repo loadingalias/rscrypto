@@ -31,7 +31,7 @@ checksum = { workspace = true, optional = true }
 hashes = { workspace = true, optional = true }
 
 [lib]
-crate-type = ["cdylib", "rlib"]
+crate-type = ["rlib"]
 
 [lints]
 workspace = true

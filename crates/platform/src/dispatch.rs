@@ -167,6 +167,9 @@ mod tests {
   #[cfg(not(miri))] // dispatch() returns portable caps under Miri
   fn test_dispatch_returns_caps() {
     dispatch(|caps, _tune| {
+      #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+      let _ = caps;
+
       // Should have at least baseline features for the architecture
       #[cfg(target_arch = "x86_64")]
       {
@@ -185,6 +188,9 @@ mod tests {
   #[test]
   fn test_dispatch_static_returns_caps() {
     dispatch_static(|caps, _tune| {
+      #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+      let _ = caps;
+
       // Should have at least baseline features for the architecture
       #[cfg(target_arch = "x86_64")]
       {
@@ -207,6 +213,9 @@ mod tests {
       // Just verify it returns something
       caps.count()
     });
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    let _ = result;
+
     // Should have at least baseline features
     #[cfg(target_arch = "x86_64")]
     assert!(result >= 1); // At least SSE2
@@ -229,6 +238,8 @@ mod tests {
   fn test_caps_static_is_const() {
     // caps_static should be evaluable at compile time
     const CAPS: Caps = detect::caps_static();
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    let _ = CAPS;
 
     #[cfg(target_arch = "x86_64")]
     {

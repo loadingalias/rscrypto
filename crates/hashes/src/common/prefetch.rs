@@ -282,18 +282,38 @@ pub const SHA_PREFETCH_DISTANCE: usize = 128;
 
 #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
 #[inline(always)]
+/// No-op prefetch fallback on architectures without explicit prefetch support.
+///
+/// # Safety
+///
+/// This function performs no memory access and is always safe to call.
 pub unsafe fn prefetch_read_l1(_ptr: *const u8) {}
 
 #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
 #[inline(always)]
+/// No-op prefetch fallback on architectures without explicit prefetch support.
+///
+/// # Safety
+///
+/// This function performs no memory access and is always safe to call.
 pub unsafe fn prefetch_read_l2(_ptr: *const u8) {}
 
 #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
 #[inline(always)]
+/// No-op prefetch fallback on architectures without explicit prefetch support.
+///
+/// # Safety
+///
+/// This function performs no memory access and is always safe to call.
 pub unsafe fn prefetch_hash_block(_ptr: *const u8) {}
 
 #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
 #[inline(always)]
+/// No-op prefetch fallback on architectures without explicit prefetch support.
+///
+/// # Safety
+///
+/// This function performs no memory access and is always safe to call.
 pub unsafe fn prefetch_next_chunk(_ptr: *const u8) {}
 
 // ─────────────────────────────────────────────────────────────────────────────

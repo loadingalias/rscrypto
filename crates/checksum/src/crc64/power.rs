@@ -959,40 +959,48 @@ pub unsafe fn crc64_nvme_vpmsum_8way(crc: u64, data: &[u8]) -> u64 {
 
 #[inline]
 pub fn crc64_xz_vpmsum_safe(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Dispatcher verifies VPMSUM-ready CPU features before selecting this kernel.
   unsafe { crc64_xz_vpmsum(crc, data) }
 }
 
 #[inline]
 pub fn crc64_xz_vpmsum_2way_safe(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Dispatcher verifies VPMSUM-ready CPU features before selecting this kernel.
   unsafe { crc64_xz_vpmsum_2way(crc, data) }
 }
 
 #[inline]
 pub fn crc64_xz_vpmsum_4way_safe(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Dispatcher verifies VPMSUM-ready CPU features before selecting this kernel.
   unsafe { crc64_xz_vpmsum_4way(crc, data) }
 }
 
 #[inline]
 pub fn crc64_xz_vpmsum_8way_safe(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Dispatcher verifies VPMSUM-ready CPU features before selecting this kernel.
   unsafe { crc64_xz_vpmsum_8way(crc, data) }
 }
 
 #[inline]
 pub fn crc64_nvme_vpmsum_safe(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Dispatcher verifies VPMSUM-ready CPU features before selecting this kernel.
   unsafe { crc64_nvme_vpmsum(crc, data) }
 }
 
 #[inline]
 pub fn crc64_nvme_vpmsum_2way_safe(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Dispatcher verifies VPMSUM-ready CPU features before selecting this kernel.
   unsafe { crc64_nvme_vpmsum_2way(crc, data) }
 }
 
 #[inline]
 pub fn crc64_nvme_vpmsum_4way_safe(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Dispatcher verifies VPMSUM-ready CPU features before selecting this kernel.
   unsafe { crc64_nvme_vpmsum_4way(crc, data) }
 }
 
 #[inline]
 pub fn crc64_nvme_vpmsum_8way_safe(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Dispatcher verifies VPMSUM-ready CPU features before selecting this kernel.
   unsafe { crc64_nvme_vpmsum_8way(crc, data) }
 }

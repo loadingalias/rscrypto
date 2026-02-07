@@ -5,9 +5,11 @@ use platform::TuneKind;
 #[cfg(target_arch = "x86_64")]
 use platform::caps::x86;
 
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+use super::kernels::required_caps;
 use super::{
   dispatch_tables::{DispatchTable, ParallelTable, StreamingTable},
-  kernels::{Blake3KernelId, Kernel, kernel, required_caps},
+  kernels::{Blake3KernelId, Kernel, kernel},
 };
 use crate::crypto::dispatch_util::SizeClassDispatch;
 
@@ -138,6 +140,9 @@ fn effective_tune_kind(caps: Caps, tune: platform::Tune) -> platform::TuneKind {
 #[inline]
 #[must_use]
 fn resolve(id: Blake3KernelId, caps: Caps) -> Blake3KernelId {
+  #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+  let _ = caps;
+
   // Tables express *preferences*. Here we enforce correctness (required CPU
   // features) and apply a conservative, architecture-aware fallback order.
   //

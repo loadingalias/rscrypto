@@ -824,6 +824,7 @@ pub mod tune {
 /// BLAKE3 message schedule.
 ///
 /// `MSG_SCHEDULE[round][i]` gives the index of the message word to use.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) const MSG_SCHEDULE: [[usize; 16]; 7] = [
   [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
   [2, 6, 3, 10, 7, 0, 4, 13, 1, 11, 12, 5, 9, 14, 15, 8],
@@ -1616,6 +1617,8 @@ impl OutputState {
 
     while !out.is_empty() {
       let blocks_remaining = out.len() / OUTPUT_BLOCK_LEN;
+      #[cfg(not(target_arch = "x86_64"))]
+      let _ = blocks_remaining;
 
       #[cfg(target_arch = "x86_64")]
       {
