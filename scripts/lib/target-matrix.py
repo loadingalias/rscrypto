@@ -35,6 +35,7 @@ def print_shell(manifest: dict) -> None:
     print("# Generated from config/target-matrix.toml")
     print(bash_array("WIN_TARGETS", groups["win"]))
     print(bash_array("LINUX_TARGETS", groups["linux"]))
+    print(bash_array("IBM_TARGETS", groups.get("ibm", [])))
     print(bash_array("NOSTD_TARGETS", groups["no_std"]))
     print(bash_array("WASM_TARGETS", groups["wasm"]))
 

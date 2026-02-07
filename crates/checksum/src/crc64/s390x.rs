@@ -549,30 +549,36 @@ pub unsafe fn crc64_nvme_vgfm_4way(crc: u64, data: &[u8]) -> u64 {
 
 #[inline]
 pub fn crc64_xz_vgfm_safe(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Dispatcher verifies VECTOR facility before selecting this kernel.
   unsafe { crc64_xz_vgfm(crc, data) }
 }
 
 #[inline]
 pub fn crc64_xz_vgfm_2way_safe(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Dispatcher verifies VECTOR facility before selecting this kernel.
   unsafe { crc64_xz_vgfm_2way(crc, data) }
 }
 
 #[inline]
 pub fn crc64_xz_vgfm_4way_safe(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Dispatcher verifies VECTOR facility before selecting this kernel.
   unsafe { crc64_xz_vgfm_4way(crc, data) }
 }
 
 #[inline]
 pub fn crc64_nvme_vgfm_safe(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Dispatcher verifies VECTOR facility before selecting this kernel.
   unsafe { crc64_nvme_vgfm(crc, data) }
 }
 
 #[inline]
 pub fn crc64_nvme_vgfm_2way_safe(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Dispatcher verifies VECTOR facility before selecting this kernel.
   unsafe { crc64_nvme_vgfm_2way(crc, data) }
 }
 
 #[inline]
 pub fn crc64_nvme_vgfm_4way_safe(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Dispatcher verifies VECTOR facility before selecting this kernel.
   unsafe { crc64_nvme_vgfm_4way(crc, data) }
 }

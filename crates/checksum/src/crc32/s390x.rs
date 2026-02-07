@@ -441,6 +441,7 @@ pub fn crc32_ieee_vgfm_safe(crc: u32, data: &[u8]) -> u32 {
 
 #[inline]
 pub fn crc32_ieee_vgfm_2way_safe(crc: u32, data: &[u8]) -> u32 {
+  // SAFETY: Dispatcher verifies vector support before selecting this kernel.
   unsafe {
     crc32_kernel_nway::<2>(
       crc,
@@ -453,6 +454,7 @@ pub fn crc32_ieee_vgfm_2way_safe(crc: u32, data: &[u8]) -> u32 {
 
 #[inline]
 pub fn crc32_ieee_vgfm_4way_safe(crc: u32, data: &[u8]) -> u32 {
+  // SAFETY: Dispatcher verifies vector support before selecting this kernel.
   unsafe {
     crc32_kernel_nway::<4>(
       crc,
@@ -471,11 +473,13 @@ pub fn crc32c_vgfm_safe(crc: u32, data: &[u8]) -> u32 {
 
 #[inline]
 pub fn crc32c_vgfm_2way_safe(crc: u32, data: &[u8]) -> u32 {
+  // SAFETY: Dispatcher verifies vector support before selecting this kernel.
   unsafe { crc32c_kernel_nway::<2>(crc, data, &super::clmul::CRC32C_STREAM, &super::clmul::CRC32C_CLMUL) }
 }
 
 #[inline]
 pub fn crc32c_vgfm_4way_safe(crc: u32, data: &[u8]) -> u32 {
+  // SAFETY: Dispatcher verifies vector support before selecting this kernel.
   unsafe { crc32c_kernel_nway::<4>(crc, data, &super::clmul::CRC32C_STREAM, &super::clmul::CRC32C_CLMUL) }
 }
 
