@@ -13,7 +13,32 @@
 
 runners:
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # INTEL x86-64 BENCHMARK RUNNER
+  # INTEL SAPPHIRE RAPIDS - Dedicated CRC world record contender
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # EXACT same instance crc-fast uses: c7i/m7i (Sapphire Rapids)
+  # No fallback - we want pure SPR numbers to beat their 111 GiB/s claim
+  #
+  # Processors:
+  #   c7i/m7i: Xeon Platinum 8488C (Sapphire Rapids, 2023)
+  #   r7iz: Xeon Platinum 8488C (Sapphire Rapids high freq, 2023)
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  intel-spr:
+    cpu: 8
+    ram: 16
+    family: ["c7i", "m7i", "r7iz"]
+    image: ubuntu24-full-x64
+    spot: price-capacity-optimized
+    retry: when-interrupted
+    volume: 60gb:gp3:500mbs:4000iops
+    ssh: true
+    tags:
+      - rscrypto:intel-spr
+      - arch:x86-64
+      - uarch:sapphire-rapids
+      - purpose:crc-world-record
+
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # INTEL LATEST (Granite/Emerald/Sapphire) - General purpose benchmarking
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   # Fallback chain: Granite Rapids → Emerald Rapids → Sapphire Rapids
   # All have: AVX-512, VPCLMULQDQ, GFNI (critical for CRC/crypto)
@@ -23,7 +48,7 @@ runners:
   #   i7i/i7ie: Xeon Platinum 8559C (Emerald Rapids, 2024)
   #   c7i/m7i: Xeon Platinum 8488C (Sapphire Rapids, 2023)
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  intel-bench:
+  intel-latest:
     cpu: 8
     ram: 16
     # Fallback chain: newest → older (all have VPCLMULQDQ+GFNI)
@@ -34,7 +59,7 @@ runners:
     volume: 60gb:gp3:500mbs:4000iops
     ssh: true
     tags:
-      - rscrypto:intel-bench
+      - rscrypto:intel-latest
       - arch:x86-64
 
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
