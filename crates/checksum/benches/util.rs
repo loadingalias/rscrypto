@@ -3,7 +3,9 @@ use std::sync::Once;
 use checksum::{Crc16Ccitt, Crc16Ibm, Crc24OpenPgp, Crc32, Crc32C, Crc64, Crc64Nvme};
 
 #[allow(dead_code)] // Used by `benches/comp.rs` (but not by `benches/kernels.rs`).
-pub const BUFFERED_CHUNK_BYTES: usize = 31;
+// 8KB is a typical disk block size and matches realistic I/O patterns.
+// Previously was 31 bytes which caused excessive function call overhead.
+pub const BUFFERED_CHUNK_BYTES: usize = 8192;
 
 pub const CASES: &[(&str, usize)] = &[
   ("xs", 64),
