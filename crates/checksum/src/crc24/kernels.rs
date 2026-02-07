@@ -169,6 +169,7 @@ pub mod s390x {
   use crate::dispatchers::Crc24Fn;
 
   /// VGFM kernel name (s390x vector Galois field multiply).
+  #[allow(dead_code)] // Used by bench + policy dispatch on s390x.
   pub const VGFM: &str = "s390x/vgfm";
 
   /// VGFM kernel names: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)].

@@ -192,8 +192,10 @@ impl Crc32ClmulConstants {
 pub(super) struct Crc32StreamConstants {
   pub fold_256b: (u64, u64),
   pub fold_512b: (u64, u64),
+  #[allow(dead_code)] // Used by x86_64/power 8-way folding; not used on s390x (VGFM).
   pub fold_1024b: (u64, u64),
   pub combine_4way: [(u64, u64); 3],
+  #[allow(dead_code)] // Used by x86_64/power 8-way combining; not used on s390x (VGFM).
   pub combine_8way: [(u64, u64); 7],
 }
 

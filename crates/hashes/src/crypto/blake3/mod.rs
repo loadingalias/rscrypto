@@ -1114,6 +1114,7 @@ fn reduce_power_of_two_chunk_cvs_any(
   }
 }
 
+#[cfg_attr(not(target_endian = "little"), allow(dead_code))]
 #[inline]
 fn add_chunk_cvs_batched(
   kernel: Kernel,

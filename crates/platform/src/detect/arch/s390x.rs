@@ -70,7 +70,12 @@ fn runtime_s390x_linux() -> Caps {
 
   #[inline(always)]
   fn has_facility(words: &[u64; 4], bit: usize) -> bool {
-    words[bit / 64] & (1u64 << (63 - (bit % 64))) != 0
+    // SAFETY: Facility bits are 0-255; words[bit/64] accesses indices 0-3 in a 4-element array.
+    // Using get() satisfies clippy::indexing_slicing while maintaining performance.
+    words
+      .get(bit / 64)
+      .map(|w| w & (1u64 << (63 - (bit % 64))) != 0)
+      .unwrap_or(false)
   }
 
   let mut caps = Caps::NONE;

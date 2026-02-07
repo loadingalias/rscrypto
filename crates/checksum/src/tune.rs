@@ -116,12 +116,17 @@ mod tests {
 
   #[test]
   fn test_hwcrc_le_pclmul() {
-    assert!(
-      hwcrc_threshold() <= pclmul_threshold(),
-      "hwcrc_threshold ({}) should be <= pclmul_threshold ({})",
-      hwcrc_threshold(),
-      pclmul_threshold()
-    );
+    // This invariant only applies when hardware CRC is available.
+    // Platforms without hardware CRC (POWER, s390x) set hwcrc_threshold to MAX.
+    let hwcrc = hwcrc_threshold();
+    if hwcrc != usize::MAX {
+      assert!(
+        hwcrc <= pclmul_threshold(),
+        "hwcrc_threshold ({}) should be <= pclmul_threshold ({})",
+        hwcrc,
+        pclmul_threshold()
+      );
+    }
   }
 
   #[test]
