@@ -268,7 +268,8 @@ pub(crate) const CRC64_NVME_CLMUL: Crc64ClmulConstants = Crc64ClmulConstants::ne
 /// - `combine_7way`: merge coefficients for 7-way (x86_64)
 /// - `combine_8way`: merge coefficients for 8-way (x86_64)
 // Some fields are only used on specific architectures.
-#[allow(dead_code)]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[allow(dead_code)] // Field use is architecture-dependent (x86_64 vs aarch64 stream widths).
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Crc64StreamConstants {
   /// 2-way fold coefficient (256B = 2×128B).
@@ -289,6 +290,7 @@ pub(crate) struct Crc64StreamConstants {
   pub combine_8way: [(u64, u64); 7],
 }
 
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 impl Crc64StreamConstants {
   /// Compute all multi-stream folding constants for a given polynomial.
   #[must_use]
@@ -326,7 +328,9 @@ impl Crc64StreamConstants {
 }
 
 // Pre-computed multi-stream constants for CRC-64.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) const CRC64_XZ_STREAM: Crc64StreamConstants = Crc64StreamConstants::new(CRC64_XZ_POLY);
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) const CRC64_NVME_STREAM: Crc64StreamConstants = Crc64StreamConstants::new(CRC64_NVME_POLY);
 
 // ─────────────────────────────────────────────────────────────────────────────

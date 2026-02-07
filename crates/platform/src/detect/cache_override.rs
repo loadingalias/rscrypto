@@ -114,7 +114,6 @@ mod atomic_cache {
   };
 
   use super::*;
-  use crate::tune::TuneKind;
 
   const STATE_UNINIT: u8 = 0;
   const STATE_INITING: u8 = 1;

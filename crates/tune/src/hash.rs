@@ -106,7 +106,13 @@ fn is_blake3_stream_tuning_algo(algo: &str) -> bool {
 }
 
 fn kernel_specs(algo: &'static str, caps: &Caps) -> Vec<KernelSpec> {
+  #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+  let _ = caps;
+
+  #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
   let mut base = vec![KernelSpec::new("portable", KernelTier::Portable, Caps::NONE)];
+  #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+  let base = vec![KernelSpec::new("portable", KernelTier::Portable, Caps::NONE)];
 
   // BLAKE3 primitives: allow forcing SIMD kernels so `rscrypto-tune` can
   // generate real dispatch tables (and validate crossovers) per platform.

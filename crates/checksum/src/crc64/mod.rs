@@ -931,6 +931,8 @@ mod tests {
   #[test]
   fn test_backend_selection() {
     let name = Crc64::backend_name();
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    let _ = name;
 
     #[cfg(target_arch = "x86_64")]
     {

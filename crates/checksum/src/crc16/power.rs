@@ -684,6 +684,7 @@ pub fn crc16_ccitt_vpmsum_safe(crc: u16, data: &[u8]) -> u16 {
 
 #[inline]
 pub fn crc16_ccitt_vpmsum_2way_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: Dispatcher verifies VPMSUMD before selecting this kernel.
   unsafe {
     crc16_width32_vpmsum_2way(
       crc,
@@ -697,6 +698,7 @@ pub fn crc16_ccitt_vpmsum_2way_safe(crc: u16, data: &[u8]) -> u16 {
 
 #[inline]
 pub fn crc16_ccitt_vpmsum_4way_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: Dispatcher verifies VPMSUMD before selecting this kernel.
   unsafe {
     crc16_width32_vpmsum_4way(
       crc,
@@ -711,6 +713,7 @@ pub fn crc16_ccitt_vpmsum_4way_safe(crc: u16, data: &[u8]) -> u16 {
 
 #[inline]
 pub fn crc16_ccitt_vpmsum_8way_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: Dispatcher verifies VPMSUMD before selecting this kernel.
   unsafe {
     crc16_width32_vpmsum_8way(
       crc,
@@ -736,6 +739,7 @@ pub fn crc16_ibm_vpmsum_safe(crc: u16, data: &[u8]) -> u16 {
 
 #[inline]
 pub fn crc16_ibm_vpmsum_2way_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: Dispatcher verifies VPMSUMD before selecting this kernel.
   unsafe {
     crc16_width32_vpmsum_2way(
       crc,
@@ -749,6 +753,7 @@ pub fn crc16_ibm_vpmsum_2way_safe(crc: u16, data: &[u8]) -> u16 {
 
 #[inline]
 pub fn crc16_ibm_vpmsum_4way_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: Dispatcher verifies VPMSUMD before selecting this kernel.
   unsafe {
     crc16_width32_vpmsum_4way(
       crc,
@@ -763,6 +768,7 @@ pub fn crc16_ibm_vpmsum_4way_safe(crc: u16, data: &[u8]) -> u16 {
 
 #[inline]
 pub fn crc16_ibm_vpmsum_8way_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: Dispatcher verifies VPMSUMD before selecting this kernel.
   unsafe {
     crc16_width32_vpmsum_8way(
       crc,

@@ -1059,11 +1059,65 @@ mod tests {
 
   #[test]
   fn test_arch_current() {
-    let arch = Arch::current();
-    #[cfg(target_arch = "x86_64")]
-    assert_eq!(arch, Arch::X86_64);
-    #[cfg(target_arch = "aarch64")]
-    assert_eq!(arch, Arch::Aarch64);
+    let expected = {
+      #[cfg(target_arch = "x86_64")]
+      {
+        Arch::X86_64
+      }
+      #[cfg(target_arch = "x86")]
+      {
+        Arch::X86
+      }
+      #[cfg(target_arch = "aarch64")]
+      {
+        Arch::Aarch64
+      }
+      #[cfg(target_arch = "arm")]
+      {
+        Arch::Arm
+      }
+      #[cfg(target_arch = "riscv64")]
+      {
+        Arch::Riscv64
+      }
+      #[cfg(target_arch = "riscv32")]
+      {
+        Arch::Riscv32
+      }
+      #[cfg(target_arch = "powerpc64")]
+      {
+        Arch::Power
+      }
+      #[cfg(target_arch = "s390x")]
+      {
+        Arch::S390x
+      }
+      #[cfg(target_arch = "wasm32")]
+      {
+        Arch::Wasm32
+      }
+      #[cfg(target_arch = "wasm64")]
+      {
+        Arch::Wasm64
+      }
+      #[cfg(not(any(
+        target_arch = "x86_64",
+        target_arch = "x86",
+        target_arch = "aarch64",
+        target_arch = "arm",
+        target_arch = "riscv64",
+        target_arch = "riscv32",
+        target_arch = "powerpc64",
+        target_arch = "s390x",
+        target_arch = "wasm32",
+        target_arch = "wasm64"
+      )))]
+      {
+        Arch::Other
+      }
+    };
+
+    assert_eq!(Arch::current(), expected);
   }
 
   #[test]
