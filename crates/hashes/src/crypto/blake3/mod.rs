@@ -10,12 +10,16 @@ use core::{cmp::min, mem::MaybeUninit, ptr, slice};
 #[cfg(feature = "std")]
 extern crate alloc;
 #[cfg(feature = "std")]
+use alloc::string::{String, ToString};
+#[cfg(feature = "std")]
 use core::cell::RefCell;
 #[cfg(all(feature = "std", test))]
 use core::{
   panic::AssertUnwindSafe,
   sync::atomic::{AtomicBool, Ordering},
 };
+#[cfg(feature = "std")]
+use std::collections::HashMap;
 #[cfg(all(feature = "std", test))]
 use std::panic;
 #[cfg(feature = "std")]
@@ -118,6 +122,18 @@ const IV: [u32; 8] = [
 static PARALLEL_OVERRIDE: OnceLock<Mutex<Option<ParallelPolicyOverride>>> = OnceLock::new();
 #[cfg(feature = "std")]
 static AVAILABLE_PARALLELISM: OnceLock<Option<usize>> = OnceLock::new();
+
+/// Cache for derive-key context hashes to avoid re-hashing the same context
+/// string repeatedly. This is a performance optimization for workloads that
+/// derive multiple keys under the same context.
+#[cfg(feature = "std")]
+static DERIVE_KEY_CONTEXT_CACHE: OnceLock<Mutex<HashMap<String, [u32; 8]>>> = OnceLock::new();
+
+#[cfg(feature = "std")]
+#[inline]
+fn get_derive_key_context_cache() -> &'static Mutex<HashMap<String, [u32; 8]>> {
+  DERIVE_KEY_CONTEXT_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
 
 #[cfg(feature = "std")]
 #[derive(Clone, Copy, Debug)]
@@ -2301,6 +2317,13 @@ fn hash_full_chunks_cvs_scoped(
 
 #[inline]
 fn digest_oneshot_words(kernel: Kernel, key_words: [u32; 8], flags: u32, input: &[u8]) -> [u32; 8] {
+  // Ultra-fast path for tiny inputs (≤64B): use unified helper
+  if input.len() <= BLOCK_LEN {
+    let bytes = hash_tiny_to_root_bytes(kernel, key_words, flags, input);
+    return words8_from_le_bytes_32(&bytes);
+  }
+
+  // Fast path for single-chunk inputs (≤1024B): use platform-specific helpers
   #[cfg(target_arch = "x86_64")]
   {
     if input.len() <= CHUNK_LEN {
@@ -2386,10 +2409,47 @@ impl Blake3 {
   }
 
   /// Compute the keyed hash of `data` in one shot.
+  ///
+  /// This uses dedicated fast paths for tiny inputs (≤64B) to minimize dispatch
+  /// and finalize overhead, which is critical for latency-sensitive keyed hashing.
   #[inline]
   #[must_use]
   pub fn keyed_digest(key: &[u8; KEY_LEN], data: &[u8]) -> [u8; OUT_LEN] {
     let key_words = words8_from_le_bytes_32(key);
+
+    // Fast path for tiny keyed inputs (≤64 bytes): bypass generic machinery
+    // and use the x86 SIMD fast path directly when available.
+    #[cfg(target_arch = "x86_64")]
+    {
+      if data.len() <= BLOCK_LEN {
+        let dispatch_plan = dispatch::hasher_dispatch();
+        // For tiny inputs, use the streaming kernel (optimized for latency)
+        let kernel = dispatch_plan.stream_kernel();
+        match kernel.id {
+          kernels::Blake3KernelId::X86Sse41 | kernels::Blake3KernelId::X86Avx2 | kernels::Blake3KernelId::X86Avx512 => {
+            // SAFETY: x86 SIMD availability validated by dispatch.
+            let words = unsafe { digest_one_chunk_root_hash_words_x86(kernel, key_words, KEYED_HASH, data) };
+            return words8_to_le_bytes(&words);
+          }
+          _ => {}
+        }
+      }
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    {
+      if data.len() <= BLOCK_LEN {
+        let dispatch_plan = dispatch::hasher_dispatch();
+        let kernel = dispatch_plan.stream_kernel();
+        if kernel.id == kernels::Blake3KernelId::Aarch64Neon {
+          // SAFETY: NEON availability validated by dispatch.
+          let words = unsafe { digest_one_chunk_root_hash_words_aarch64(kernel, key_words, KEYED_HASH, data) };
+          return words8_to_le_bytes(&words);
+        }
+      }
+    }
+
+    // Standard path for larger inputs
     let kernel = dispatch::hasher_dispatch().size_class_kernel(data.len());
     digest_oneshot(kernel, key_words, KEYED_HASH, data)
   }
@@ -2408,19 +2468,88 @@ impl Blake3 {
   }
 
   /// Compute the derived key for `key_material` under `context`, in one shot.
+  ///
+  /// This uses context caching to avoid re-hashing the same context string
+  /// repeatedly, which is a common pattern in practice. Tiny key material
+  /// inputs (≤64B) also use dedicated fast paths to minimize latency.
   #[inline]
   #[must_use]
   pub fn derive_key(context: &str, key_material: &[u8]) -> [u8; OUT_LEN] {
-    // Step 1: hash the context string under DERIVE_KEY_CONTEXT to get the
-    // derived key context key.
-    let context_bytes = context.as_bytes();
-    let dispatch = dispatch::hasher_dispatch();
-    let kernel_ctx = dispatch.size_class_kernel(context_bytes.len());
-    let context_key_words = digest_oneshot_words(kernel_ctx, IV, DERIVE_KEY_CONTEXT, context_bytes);
+    // Step 1: Get or compute the context key words (cached for std builds)
+    let context_key_words = {
+      #[cfg(feature = "std")]
+      {
+        // Try to get from cache first
+        let cache = get_derive_key_context_cache();
+        if let Ok(guard) = cache.lock() {
+          if let Some(&cached) = guard.get(context) {
+            cached
+          } else {
+            // Not in cache: compute and store
+            drop(guard); // Drop lock before computation
+            let context_bytes = context.as_bytes();
+            let kernel_ctx = dispatch::hasher_dispatch().size_class_kernel(context_bytes.len());
+            let computed = digest_oneshot_words(kernel_ctx, IV, DERIVE_KEY_CONTEXT, context_bytes);
+            if let Ok(mut guard) = cache.lock() {
+              // Limit cache size to prevent unbounded growth
+              if guard.len() < 64 {
+                guard.insert(context.to_string(), computed);
+              }
+            }
+            computed
+          }
+        } else {
+          // Lock failed: compute without caching
+          let context_bytes = context.as_bytes();
+          let kernel_ctx = dispatch::hasher_dispatch().size_class_kernel(context_bytes.len());
+          digest_oneshot_words(kernel_ctx, IV, DERIVE_KEY_CONTEXT, context_bytes)
+        }
+      }
+      #[cfg(not(feature = "std"))]
+      {
+        let context_bytes = context.as_bytes();
+        let kernel_ctx = dispatch::hasher_dispatch().size_class_kernel(context_bytes.len());
+        digest_oneshot_words(kernel_ctx, IV, DERIVE_KEY_CONTEXT, context_bytes)
+      }
+    };
 
     // Step 2: hash the key material under DERIVE_KEY_MATERIAL with the derived
-    // context key.
-    let kernel_km = dispatch.size_class_kernel(key_material.len());
+    // context key. Use tiny-input fast path when available.
+    #[cfg(target_arch = "x86_64")]
+    {
+      if key_material.len() <= BLOCK_LEN {
+        let dispatch_plan = dispatch::hasher_dispatch();
+        let kernel = dispatch_plan.stream_kernel();
+        match kernel.id {
+          kernels::Blake3KernelId::X86Sse41 | kernels::Blake3KernelId::X86Avx2 | kernels::Blake3KernelId::X86Avx512 => {
+            // SAFETY: x86 SIMD availability validated by dispatch.
+            let words = unsafe {
+              digest_one_chunk_root_hash_words_x86(kernel, context_key_words, DERIVE_KEY_MATERIAL, key_material)
+            };
+            return words8_to_le_bytes(&words);
+          }
+          _ => {}
+        }
+      }
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    {
+      if key_material.len() <= BLOCK_LEN {
+        let dispatch_plan = dispatch::hasher_dispatch();
+        let kernel = dispatch_plan.stream_kernel();
+        if kernel.id == kernels::Blake3KernelId::Aarch64Neon {
+          // SAFETY: NEON availability validated by dispatch.
+          let words = unsafe {
+            digest_one_chunk_root_hash_words_aarch64(kernel, context_key_words, DERIVE_KEY_MATERIAL, key_material)
+          };
+          return words8_to_le_bytes(&words);
+        }
+      }
+    }
+
+    // Standard path for larger inputs
+    let kernel_km = dispatch::hasher_dispatch().size_class_kernel(key_material.len());
     words8_to_le_bytes(&digest_oneshot_words(
       kernel_km,
       context_key_words,
@@ -3087,18 +3216,33 @@ impl Digest for Blake3 {
 
   #[inline]
   fn finalize(&self) -> Self::Output {
-    // Keyed/derive tiny sizes: avoid materializing `[u32; 16]` and the generic
-    // `OutputState` machinery when the entire input fits in a single chunk.
+    // Keyed/derive tiny sizes: use the unified tiny-input fast path when the
+    // entire input fits in a single chunk (≤1024B, but most beneficial for ≤64B).
     //
     // The upstream BLAKE3 implementations treat these as latency-critical and
     // compute just the root CV (8 words) for the first output block.
-    #[cfg(target_arch = "x86_64")]
-    {
-      if self.chunk_state.chunk_counter == 0 && self.cv_stack_len == 0 && self.pending_chunk_cv.is_none() {
+    if self.chunk_state.chunk_counter == 0 && self.cv_stack_len == 0 && self.pending_chunk_cv.is_none() {
+      let block_len = self.chunk_state.block_len as usize;
+
+      // For truly tiny inputs (≤64B), use the direct fast path
+      if block_len <= BLOCK_LEN && self.chunk_state.blocks_compressed == 0 {
+        // Input fits in one block with no prior compression: use unified helper
+        let mut block = [0u8; BLOCK_LEN];
+        block[..block_len].copy_from_slice(&self.chunk_state.block[..block_len]);
+        return hash_tiny_to_root_bytes(
+          self.kernel,
+          self.chunk_state.chaining_value,
+          self.flags,
+          &block[..block_len],
+        );
+      }
+
+      // For larger single-chunk inputs, use the x86-specific fast path if available
+      #[cfg(target_arch = "x86_64")]
+      {
         match self.kernel.id {
           kernels::Blake3KernelId::X86Sse41 | kernels::Blake3KernelId::X86Avx2 | kernels::Blake3KernelId::X86Avx512 => {
             let mut block = self.chunk_state.block;
-            let block_len = self.chunk_state.block_len as usize;
             if block_len != BLOCK_LEN {
               block[block_len..].fill(0);
             }
@@ -3106,23 +3250,8 @@ impl Digest for Blake3 {
             let flags = self.flags | self.chunk_state.start_flag() | CHUNK_END | ROOT;
             let cv = self.chunk_state.chaining_value;
 
-            // SAFETY: dispatch only selects these kernels when the required CPU
-            // features are available.
-            let out_words = unsafe {
-              match self.kernel.id {
-                kernels::Blake3KernelId::X86Sse41 => {
-                  x86_64::compress_cv_sse41_bytes(&cv, block.as_ptr(), 0, block_len as u32, flags)
-                }
-                kernels::Blake3KernelId::X86Avx2 => {
-                  x86_64::compress_cv_avx2_bytes(&cv, block.as_ptr(), 0, block_len as u32, flags)
-                }
-                kernels::Blake3KernelId::X86Avx512 => {
-                  x86_64::compress_cv_avx512_bytes(&cv, block.as_ptr(), 0, block_len as u32, flags)
-                }
-                _ => unreachable!(),
-              }
-            };
-
+            // Use the unified compress_to_root_words helper
+            let out_words = compress_to_root_words(self.kernel, cv, &block, block_len, self.flags);
             return words8_to_le_bytes(&out_words);
           }
           _ => {}
@@ -3260,6 +3389,89 @@ impl Xof for Blake3Xof {
       self.buf_pos = take;
     }
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Unified tiny-input fast path helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Compress a single block directly to the root hash words (8 words).
+///
+/// This is the unified fast path for tiny inputs (≤64B) used by both streaming
+/// finalize() and oneshot operations. It bypasses the generic OutputState
+/// machinery to minimize latency for keyed/derive modes.
+///
+/// # Arguments
+/// * `kernel` - The kernel to use (must be a SIMD kernel on supported platforms)
+/// * `cv` - The chaining value (key words for keyed mode, IV for plain)
+/// * `block` - The input block (must be ≤64 bytes, zero-padded if shorter)
+/// * `block_len` - Actual length of data in block (0-64)
+/// * `flags` - Mode flags (KEYED_HASH, DERIVE_KEY_MATERIAL, etc.)
+///
+/// # Returns
+/// The root hash as 8 u32 words (little-endian).
+#[inline]
+#[must_use]
+fn compress_to_root_words(
+  kernel: Kernel,
+  cv: [u32; 8],
+  block: &[u8; BLOCK_LEN],
+  block_len: usize,
+  flags: u32,
+) -> [u32; 8] {
+  let final_flags = flags | CHUNK_START | CHUNK_END | ROOT;
+
+  #[cfg(target_arch = "x86_64")]
+  {
+    match kernel.id {
+      kernels::Blake3KernelId::X86Sse41 | kernels::Blake3KernelId::X86Avx2 | kernels::Blake3KernelId::X86Avx512 => {
+        // SAFETY: dispatch only selects these kernels when CPU features are available
+        return unsafe {
+          match kernel.id {
+            kernels::Blake3KernelId::X86Sse41 => {
+              x86_64::compress_cv_sse41_bytes(&cv, block.as_ptr(), 0, block_len as u32, final_flags)
+            }
+            kernels::Blake3KernelId::X86Avx2 => {
+              x86_64::compress_cv_avx2_bytes(&cv, block.as_ptr(), 0, block_len as u32, final_flags)
+            }
+            kernels::Blake3KernelId::X86Avx512 => {
+              x86_64::compress_cv_avx512_bytes(&cv, block.as_ptr(), 0, block_len as u32, final_flags)
+            }
+            _ => unreachable!(),
+          }
+        };
+      }
+      _ => {}
+    }
+  }
+
+  #[cfg(target_arch = "aarch64")]
+  {
+    if kernel.id == kernels::Blake3KernelId::Aarch64Neon {
+      // SAFETY: NEON availability validated by dispatch
+      return unsafe { aarch64::compress_cv_neon_bytes(&cv, block.as_ptr(), 0, block_len as u32, final_flags) };
+    }
+  }
+
+  // Portable fallback
+  let block_words = words16_from_le_bytes_64(block);
+  first_8_words((kernel.compress)(&cv, &block_words, 0, block_len as u32, final_flags))
+}
+
+/// Hash tiny input (≤64B) directly to the root hash bytes.
+///
+/// This is the primary entry point for tiny-input keyed/derive hashing.
+/// It handles input padding and dispatches to the appropriate kernel.
+#[inline]
+#[must_use]
+fn hash_tiny_to_root_bytes(kernel: Kernel, key_words: [u32; 8], flags: u32, input: &[u8]) -> [u8; OUT_LEN] {
+  debug_assert!(input.len() <= BLOCK_LEN);
+
+  let mut block = [0u8; BLOCK_LEN];
+  block[..input.len()].copy_from_slice(input);
+
+  let words = compress_to_root_words(kernel, key_words, &block, input.len(), flags);
+  words8_to_le_bytes(&words)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
