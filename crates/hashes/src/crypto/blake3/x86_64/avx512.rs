@@ -625,6 +625,42 @@ pub unsafe fn root_output_blocks16(
   }
 }
 
+/// Generate 1 root output block (64 bytes).
+/// Delegates to SSE4.1 implementation (AVX-512 is overkill for single block).
+///
+/// # Safety
+/// Caller must ensure AVX-512 is available and that `out` is valid for `64` writable bytes.
+#[target_feature(enable = "avx512f,avx512vl,avx2")]
+pub unsafe fn root_output_blocks1(
+  chaining_value: &[u32; 8],
+  block_words: &[u32; 16],
+  counter: u64,
+  block_len: u32,
+  flags: u32,
+  out: *mut u8,
+) {
+  // AVX-512 implies SSE4.1, so delegate to the SSE4.1 implementation
+  unsafe { super::sse41::root_output_blocks1(chaining_value, block_words, counter, block_len, flags, out) }
+}
+
+/// Generate 2 root output blocks (128 bytes) with consecutive counters.
+/// Delegates to SSE4.1 implementation.
+///
+/// # Safety
+/// Caller must ensure AVX-512 is available and that `out` is valid for `128` writable bytes.
+#[target_feature(enable = "avx512f,avx512vl,avx2")]
+pub unsafe fn root_output_blocks2(
+  chaining_value: &[u32; 8],
+  block_words: &[u32; 16],
+  counter: u64,
+  block_len: u32,
+  flags: u32,
+  out: *mut u8,
+) {
+  // AVX-512 implies SSE4.1, so delegate to the SSE4.1 implementation
+  unsafe { super::sse41::root_output_blocks2(chaining_value, block_words, counter, block_len, flags, out) }
+}
+
 /// Compress one BLAKE3 block with a latency-oriented schedule.
 ///
 /// This uses the same dependency-chain schedule as the SSE4.1/AVX2 single-block
