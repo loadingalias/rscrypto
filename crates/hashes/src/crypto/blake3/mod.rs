@@ -3251,7 +3251,7 @@ impl Digest for Blake3 {
             let cv = self.chunk_state.chaining_value;
 
             // Use the unified compress_to_root_words helper
-            let out_words = compress_to_root_words(self.kernel, cv, &block, block_len, self.flags);
+            let out_words = compress_to_root_words(self.kernel, cv, &block, block_len, flags);
             return words8_to_le_bytes(&out_words);
           }
           _ => {}
