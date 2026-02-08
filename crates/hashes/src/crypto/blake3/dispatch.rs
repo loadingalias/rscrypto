@@ -67,7 +67,8 @@ pub(crate) struct ParallelDispatch {
   pub(crate) streaming: ParallelTable,
 }
 
-const STREAMING_BULK_SIZECLASS_MIN_LEN: usize = 8 * 1024;
+// Note: STREAMING_BULK_SIZECLASS_MIN_LEN is now table-driven per profile.
+// See StreamingTable::bulk_sizeclass_threshold in dispatch_tables.rs
 
 /// Immutable per-hasher dispatch snapshot.
 ///
@@ -81,6 +82,7 @@ pub(crate) struct HasherDispatch {
   table_bulk_kernel: Kernel,
   parallel_streaming: ParallelTable,
   simd_threshold: usize,
+  bulk_sizeclass_threshold: usize,
 }
 
 impl HasherDispatch {
@@ -93,7 +95,7 @@ impl HasherDispatch {
   #[inline]
   #[must_use]
   pub(crate) fn bulk_kernel_for_update(self, input_len: usize) -> Kernel {
-    if input_len >= STREAMING_BULK_SIZECLASS_MIN_LEN {
+    if input_len >= self.bulk_sizeclass_threshold {
       self.size_classes.select(input_len)
     } else {
       self.table_bulk_kernel
@@ -108,7 +110,7 @@ impl HasherDispatch {
 
   #[inline]
   #[must_use]
-  pub(crate) fn should_defer_plain_simd(self, buffered_len: usize, incoming_len: usize) -> bool {
+  pub(crate) fn should_defer_simd(self, buffered_len: usize, incoming_len: usize) -> bool {
     buffered_len.saturating_add(incoming_len) < self.simd_threshold
   }
 
@@ -116,6 +118,12 @@ impl HasherDispatch {
   #[must_use]
   pub(crate) fn parallel_streaming(self) -> ParallelTable {
     self.parallel_streaming
+  }
+
+  #[inline]
+  #[must_use]
+  pub(crate) fn bulk_sizeclass_threshold(self) -> usize {
+    self.bulk_sizeclass_threshold
   }
 }
 
@@ -251,6 +259,7 @@ fn resolved() -> ResolvedDispatch {
       table_bulk_kernel: streaming.bulk,
       parallel_streaming: parallel.streaming,
       simd_threshold: tune.simd_threshold,
+      bulk_sizeclass_threshold: stream_table.bulk_sizeclass_threshold,
     };
 
     ResolvedDispatch {
@@ -317,7 +326,7 @@ pub fn digest(data: &[u8]) -> [u8; 32] {
 pub fn xof(data: &[u8]) -> super::Blake3Xof {
   let d = active();
   let kernel = select(&d, data.len()).kernel;
-  let output = super::root_output_oneshot(kernel, super::IV, 0, super::ParallelPolicyKind::Xof, data);
+  let output = super::root_output_oneshot(kernel, super::IV, 0, super::policy_kind_from_flags(0, true), data);
   super::Blake3Xof::new(output, hasher_dispatch())
 }
 
@@ -404,11 +413,12 @@ pub fn streaming_dispatch_info(flags: u32, input_len: usize) -> StreamingDispatc
   // Mirror the lazy-SIMD gate in `update()`: plain hashes stay portable for
   // tiny inputs below the platform's simd_threshold.
   let is_plain = flags == 0;
+  let hd = hasher_dispatch();
   let (stream_kernel, bulk_kernel) = if is_plain && input_len < streaming_simd_threshold() {
     ("portable", "portable")
   } else {
     let sd = active_streaming();
-    let bulk = if input_len >= 8 * 1024 {
+    let bulk = if input_len >= hd.bulk_sizeclass_threshold() {
       kernel_dispatch().select(input_len).name
     } else {
       sd.bulk.name

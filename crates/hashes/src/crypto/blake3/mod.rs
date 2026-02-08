@@ -137,16 +137,47 @@ fn get_derive_key_context_cache() -> &'static Mutex<HashMap<String, [u32; 8]>> {
 
 #[cfg(feature = "std")]
 #[derive(Clone, Copy, Debug)]
-struct ParallelPolicyOverride {
-  oneshot: dispatch_tables::ParallelTable,
-  streaming: dispatch_tables::ParallelTable,
+pub struct ParallelPolicyOverride {
+  pub oneshot: dispatch_tables::ParallelTable,
+  pub keyed_oneshot: dispatch_tables::ParallelTable,
+  pub derive_oneshot: dispatch_tables::ParallelTable,
+  pub xof: dispatch_tables::ParallelTable,
+  pub keyed_xof: dispatch_tables::ParallelTable,
+  pub derive_xof: dispatch_tables::ParallelTable,
+  pub streaming: dispatch_tables::ParallelTable,
+  pub keyed_streaming: dispatch_tables::ParallelTable,
+  pub derive_streaming: dispatch_tables::ParallelTable,
+}
+
+#[cfg(feature = "std")]
+impl ParallelPolicyOverride {
+  #[inline]
+  fn new(table: dispatch_tables::ParallelTable) -> Self {
+    Self {
+      oneshot: table,
+      keyed_oneshot: table,
+      derive_oneshot: table,
+      xof: table,
+      keyed_xof: table,
+      derive_xof: table,
+      streaming: table,
+      keyed_streaming: table,
+      derive_streaming: table,
+    }
+  }
 }
 
 #[derive(Clone, Copy)]
 enum ParallelPolicyKind {
   Oneshot,
-  Update,
+  KeyedOneshot,
+  DeriveOneshot,
   Xof,
+  KeyedXof,
+  DeriveXof,
+  Update,
+  KeyedUpdate,
+  DeriveUpdate,
 }
 
 #[cfg(feature = "std")]
@@ -175,14 +206,28 @@ fn parallel_policy_threads_with_admission(
 ) -> Option<usize> {
   let policy = if let Some(override_policy) = parallel_override() {
     match mode {
-      ParallelPolicyKind::Oneshot | ParallelPolicyKind::Xof => override_policy.oneshot,
+      ParallelPolicyKind::Oneshot => override_policy.oneshot,
+      ParallelPolicyKind::KeyedOneshot => override_policy.keyed_oneshot,
+      ParallelPolicyKind::DeriveOneshot => override_policy.derive_oneshot,
+      ParallelPolicyKind::Xof => override_policy.xof,
+      ParallelPolicyKind::KeyedXof => override_policy.keyed_xof,
+      ParallelPolicyKind::DeriveXof => override_policy.derive_xof,
       ParallelPolicyKind::Update => override_policy.streaming,
+      ParallelPolicyKind::KeyedUpdate => override_policy.keyed_streaming,
+      ParallelPolicyKind::DeriveUpdate => override_policy.derive_streaming,
     }
   } else {
     let dispatch_policy = dispatch::parallel_dispatch();
     match mode {
-      ParallelPolicyKind::Oneshot | ParallelPolicyKind::Xof => dispatch_policy.oneshot,
+      ParallelPolicyKind::Oneshot => dispatch_policy.oneshot,
+      ParallelPolicyKind::KeyedOneshot => dispatch_policy.oneshot,
+      ParallelPolicyKind::DeriveOneshot => dispatch_policy.oneshot,
+      ParallelPolicyKind::Xof => dispatch_policy.oneshot,
+      ParallelPolicyKind::KeyedXof => dispatch_policy.oneshot,
+      ParallelPolicyKind::DeriveXof => dispatch_policy.oneshot,
       ParallelPolicyKind::Update => dispatch_policy.streaming,
+      ParallelPolicyKind::KeyedUpdate => dispatch_policy.streaming,
+      ParallelPolicyKind::DeriveUpdate => dispatch_policy.streaming,
     }
   };
 
@@ -245,9 +290,9 @@ fn parallel_merge_divisor(mode: ParallelPolicyKind, commit_full_chunks: usize, t
   let chunk_depth = (commit_full_chunks.max(2)).ilog2() as usize;
   let thread_depth = (threads.max(2)).ilog2() as usize;
   let mode_bias = match mode {
-    ParallelPolicyKind::Oneshot => 2,
-    ParallelPolicyKind::Update => 1,
-    ParallelPolicyKind::Xof => 3,
+    ParallelPolicyKind::Oneshot | ParallelPolicyKind::KeyedOneshot | ParallelPolicyKind::DeriveOneshot => 2,
+    ParallelPolicyKind::Update | ParallelPolicyKind::KeyedUpdate | ParallelPolicyKind::DeriveUpdate => 1,
+    ParallelPolicyKind::Xof | ParallelPolicyKind::KeyedXof | ParallelPolicyKind::DeriveXof => 3,
   };
   1 + chunk_depth + thread_depth + mode_bias
 }
@@ -257,9 +302,13 @@ fn parallel_merge_divisor(mode: ParallelPolicyKind, commit_full_chunks: usize, t
 fn scale_parallel_required_bytes(mode: ParallelPolicyKind, required: usize) -> usize {
   let (num, den) = match mode {
     // Fitted from crossover data: one-shot/XOF benefit earlier than update.
-    ParallelPolicyKind::Oneshot => (13usize, 10usize),
-    ParallelPolicyKind::Update => (15usize, 10usize),
-    ParallelPolicyKind::Xof => (12usize, 10usize),
+    ParallelPolicyKind::Oneshot | ParallelPolicyKind::KeyedOneshot | ParallelPolicyKind::DeriveOneshot => {
+      (13usize, 10usize)
+    }
+    ParallelPolicyKind::Update | ParallelPolicyKind::KeyedUpdate | ParallelPolicyKind::DeriveUpdate => {
+      (15usize, 10usize)
+    }
+    ParallelPolicyKind::Xof | ParallelPolicyKind::KeyedXof | ParallelPolicyKind::DeriveXof => (12usize, 10usize),
   };
   required.saturating_mul(num).saturating_add(den - 1) / den
 }
@@ -834,7 +883,9 @@ fn hash_power_of_two_subtree_roots_parallel_rayon(req: SubtreeRootsRequest<'_>) 
 #[cfg(feature = "std")]
 #[doc(hidden)]
 pub mod tune {
-  use super::{Mutex, PARALLEL_OVERRIDE, ParallelPolicyOverride, dispatch_tables};
+  // Re-export types needed for policy construction
+  use super::{Mutex, PARALLEL_OVERRIDE, dispatch, dispatch_tables};
+  pub use super::{ParallelPolicyOverride, dispatch_tables::ParallelTable};
 
   #[derive(Debug)]
   pub struct Blake3ParallelOverrideGuard {
@@ -852,20 +903,46 @@ pub mod tune {
 
   /// Override the active BLAKE3 parallel policy for the duration of the guard.
   ///
+  /// This sets all variants to the same table. For per-variant control,
+  /// use `override_blake3_parallel_policy_full()`.
+  ///
   /// This is used by `rscrypto-tune` to benchmark single-thread vs multi-thread
   /// behavior without relying on user-facing environment variables.
   #[must_use]
   pub fn override_blake3_parallel_policy(table: dispatch_tables::ParallelTable) -> Blake3ParallelOverrideGuard {
+    override_blake3_parallel_policy_full(ParallelPolicyOverride::new(table))
+  }
+
+  /// Override the active BLAKE3 parallel policy with per-variant control.
+  ///
+  /// This allows independent tuning of:
+  /// - oneshot: regular one-shot hashing (`digest`, `xof`)
+  /// - keyed_oneshot: keyed one-shot hashing (`keyed_digest`, `keyed_xof`)
+  /// - derive_oneshot: derive-key one-shot hashing (`derive_key`)
+  /// - streaming: regular streaming updates
+  /// - keyed_streaming: keyed streaming updates
+  /// - derive_streaming: derive-key streaming updates
+  ///
+  /// This is used by `rscrypto-tune` for fine-grained threshold tuning.
+  #[must_use]
+  pub fn override_blake3_parallel_policy_full(policy: ParallelPolicyOverride) -> Blake3ParallelOverrideGuard {
     let lock: &Mutex<Option<ParallelPolicyOverride>> = PARALLEL_OVERRIDE.get_or_init(|| Mutex::new(None));
     let mut prev = None;
     if let Ok(mut g) = lock.lock() {
       prev = *g;
-      *g = Some(ParallelPolicyOverride {
-        oneshot: table,
-        streaming: table,
-      });
+      *g = Some(policy);
     };
     Blake3ParallelOverrideGuard { prev }
+  }
+
+  /// Return the current SIMD threshold for streaming operations.
+  ///
+  /// This is used by `rscrypto-tune` to ensure consistent SIMD threshold
+  /// tuning across all operation variants.
+  #[inline]
+  #[must_use]
+  pub fn streaming_simd_threshold() -> usize {
+    dispatch::streaming_simd_threshold()
   }
 
   // NOTE: std parallelism is implemented via Rayon; there is no longer an
@@ -2218,6 +2295,8 @@ fn root_output_oneshot(
   let full_chunks = input.len() / CHUNK_LEN;
   let remainder = input.len() % CHUNK_LEN;
 
+  #[cfg(not(feature = "std"))]
+  let _ = mode;
   #[cfg(feature = "std")]
   {
     // Large input throughput: compute full-chunk CVs in parallel, but keep the
@@ -2444,8 +2523,22 @@ fn digest_oneshot_words(kernel: Kernel, key_words: [u32; 8], flags: u32, input: 
   }
 
   // Fallback: construct the root output and extract the root hash words.
-  let output = root_output_oneshot(kernel, key_words, flags, ParallelPolicyKind::Oneshot, input);
+  let mode = policy_kind_from_flags(flags, false); // is_xof = false
+  let output = root_output_oneshot(kernel, key_words, flags, mode, input);
   output.root_hash_words()
+}
+
+#[inline]
+fn policy_kind_from_flags(flags: u32, is_xof: bool) -> ParallelPolicyKind {
+  match (is_xof, flags) {
+    (false, 0) => ParallelPolicyKind::Oneshot,
+    (false, KEYED_HASH) => ParallelPolicyKind::KeyedOneshot,
+    (false, DERIVE_KEY_MATERIAL) => ParallelPolicyKind::DeriveOneshot,
+    (true, 0) => ParallelPolicyKind::Xof,
+    (true, KEYED_HASH) => ParallelPolicyKind::KeyedXof,
+    (true, DERIVE_KEY_MATERIAL) => ParallelPolicyKind::DeriveXof,
+    _ => ParallelPolicyKind::Oneshot, // Fallback for unknown flag combinations
+  }
 }
 
 #[inline]
@@ -2560,7 +2653,13 @@ impl Blake3 {
     let plan = dispatch::hasher_dispatch();
     let kernel = plan.size_class_kernel(data.len());
     Blake3Xof::new(
-      root_output_oneshot(kernel, key_words, KEYED_HASH, ParallelPolicyKind::Xof, data),
+      root_output_oneshot(
+        kernel,
+        key_words,
+        KEYED_HASH,
+        policy_kind_from_flags(KEYED_HASH, true),
+        data,
+      ),
       plan,
     )
   }
@@ -2789,18 +2888,24 @@ impl Blake3 {
     admission_full_chunks: usize,
     commit_full_chunks: usize,
   ) -> Option<usize> {
-    let policy = if let Some(override_policy) = parallel_override() {
-      override_policy.streaming
+    let (policy, mode) = if let Some(override_policy) = parallel_override() {
+      let mode = match self.flags {
+        0 => ParallelPolicyKind::Update,
+        KEYED_HASH => ParallelPolicyKind::KeyedUpdate,
+        DERIVE_KEY_MATERIAL => ParallelPolicyKind::DeriveUpdate,
+        _ => ParallelPolicyKind::Update,
+      };
+      let policy = match mode {
+        ParallelPolicyKind::Update => override_policy.streaming,
+        ParallelPolicyKind::KeyedUpdate => override_policy.keyed_streaming,
+        ParallelPolicyKind::DeriveUpdate => override_policy.derive_streaming,
+        _ => override_policy.streaming,
+      };
+      (policy, mode)
     } else {
-      self.dispatch_plan.parallel_streaming()
+      (self.dispatch_plan.parallel_streaming(), ParallelPolicyKind::Update)
     };
-    parallel_threads_for_policy(
-      ParallelPolicyKind::Update,
-      policy,
-      input_bytes,
-      admission_full_chunks,
-      commit_full_chunks,
-    )
+    parallel_threads_for_policy(mode, policy, input_bytes, admission_full_chunks, commit_full_chunks)
   }
 
   #[cfg(feature = "std")]
@@ -3284,23 +3389,19 @@ impl Digest for Blake3 {
 
     // Streaming has two competing goals:
     // - Be very fast for large updates (file hashing, storage, etc.).
-    // - Avoid SIMD setup overhead for tiny one-off updates (keyed/derive/tiny inputs).
+    // - Avoid SIMD setup overhead for tiny one-off updates.
     //
     // We start in portable mode and only "lock in" streaming dispatch once we
-    // have enough data to amortize kernel setup costs.
-    //
-    // Important: keyed/derive modes are extremely sensitive to small-input
-    // performance, and upstream implementations routinely use SIMD even for
-    // tiny updates. Do not delay dispatch there.
-    let is_plain_hash = self.flags == 0;
-    if is_plain_hash
-      && self.kernel.id == kernels::Blake3KernelId::Portable
+    // have enough data to amortize kernel setup costs. This applies uniformly
+    // to all modes (plain, keyed, derive) - the defer heuristic improves
+    // small-input latency across the board.
+    if self.kernel.id == kernels::Blake3KernelId::Portable
       && self.chunk_state.chunk_counter == 0
       && self.cv_stack_len == 0
       && self.pending_chunk_cv.is_none()
       && self
         .dispatch_plan
-        .should_defer_plain_simd(self.chunk_state.len(), input.len())
+        .should_defer_simd(self.chunk_state.len(), input.len())
     {
       self.update_with(input, self.kernel, self.bulk_kernel);
       return;
