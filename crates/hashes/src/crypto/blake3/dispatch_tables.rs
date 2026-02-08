@@ -9,6 +9,16 @@ pub use super::kernels::Blake3KernelId as KernelId;
 
 pub const DEFAULT_BOUNDARIES: [usize; 3] = [64, 256, 4096];
 
+// Architecture-specific thresholds for when to switch from table bulk kernel to size-class
+// selection. These are tuned based on SIMD width and latency characteristics.
+#[cfg(target_arch = "x86_64")]
+const THRESHOLD_AVX512: usize = 4 * 1024; // AVX-512 is very fast, switch early
+#[cfg(target_arch = "x86_64")]
+const THRESHOLD_AVX2: usize = 8 * 1024; // AVX2 - used for fallback/default x86_64 profile
+#[cfg(target_arch = "aarch64")]
+const THRESHOLD_NEON: usize = 16 * 1024; // NEON - slightly higher due to different characteristics
+const THRESHOLD_PORTABLE: usize = 32 * 1024; // Conservative for scalar
+
 const DEFAULT_PAR_SPAWN_COST_BYTES: usize = 24 * 1024;
 const DEFAULT_PAR_MERGE_COST_BYTES: usize = 16 * 1024;
 const DEFAULT_PAR_BYTES_PER_CORE_SMALL: usize = 256 * 1024;
@@ -53,10 +63,13 @@ pub struct ParallelTable {
 ///
 /// `stream` is used for the per-block / ChunkState hot path (many small updates).
 /// `bulk` is used for multi-chunk hashing (`hash_many_contiguous`) and batched parent reductions.
+/// `bulk_sizeclass_threshold` is the minimum input length to use size-class-based bulk kernel
+/// selection instead of the table's default bulk kernel. This is architecture-specific.
 #[derive(Clone, Copy, Debug)]
 pub struct StreamingTable {
   pub stream: KernelId,
   pub bulk: KernelId,
+  pub bulk_sizeclass_threshold: usize,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -322,12 +335,21 @@ const fn default_kind_table() -> DispatchTable {
   }
 }
 
+// Default threshold matches the default SIMD tier for each architecture.
+#[cfg(target_arch = "x86_64")]
+const DEFAULT_BULK_THRESHOLD: usize = THRESHOLD_AVX2;
+#[cfg(target_arch = "aarch64")]
+const DEFAULT_BULK_THRESHOLD: usize = THRESHOLD_NEON;
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+const DEFAULT_BULK_THRESHOLD: usize = THRESHOLD_PORTABLE;
+
 #[inline]
 #[must_use]
 const fn default_kind_streaming_table() -> StreamingTable {
   StreamingTable {
     stream: DEFAULT_STREAM_KERNEL,
     bulk: DEFAULT_BULK_KERNEL,
+    bulk_sizeclass_threshold: DEFAULT_BULK_THRESHOLD,
   }
 }
 
@@ -368,6 +390,7 @@ const fn portable_profile() -> FamilyProfile {
     streaming: StreamingTable {
       stream: KernelId::Portable,
       bulk: KernelId::Portable,
+      bulk_sizeclass_threshold: THRESHOLD_PORTABLE,
     },
     parallel: default_parallel_costs(128 * 1024, 64, 0),
     streaming_parallel: default_parallel_costs(128 * 1024, 64, 0),
@@ -399,6 +422,7 @@ pub static PROFILE_X86_ZEN4: FamilyProfile = FamilyProfile {
   streaming: StreamingTable {
     stream: KernelId::X86Sse41,
     bulk: KernelId::X86Avx512,
+    bulk_sizeclass_threshold: THRESHOLD_AVX512,
   },
   parallel: ParallelTable {
     min_bytes: 131072,
@@ -441,6 +465,7 @@ pub static PROFILE_X86_ZEN5: FamilyProfile = FamilyProfile {
   streaming: StreamingTable {
     stream: KernelId::X86Sse41,
     bulk: KernelId::X86Avx512,
+    bulk_sizeclass_threshold: THRESHOLD_AVX512,
   },
   parallel: ParallelTable {
     min_bytes: 98304,
@@ -483,6 +508,7 @@ pub static PROFILE_X86_ZEN5C: FamilyProfile = FamilyProfile {
   streaming: StreamingTable {
     stream: DEFAULT_STREAM_KERNEL,
     bulk: AVX512_KERNEL,
+    bulk_sizeclass_threshold: THRESHOLD_AVX512,
   },
   parallel: parallel_costs!(
     80 * 1024,
@@ -525,6 +551,7 @@ pub static PROFILE_X86_INTEL_SPR: FamilyProfile = FamilyProfile {
   streaming: StreamingTable {
     stream: KernelId::X86Sse41,
     bulk: KernelId::X86Avx512,
+    bulk_sizeclass_threshold: THRESHOLD_AVX512,
   },
   parallel: ParallelTable {
     min_bytes: 1048576,
@@ -567,6 +594,7 @@ pub static PROFILE_X86_INTEL_GNR: FamilyProfile = FamilyProfile {
   streaming: StreamingTable {
     stream: DEFAULT_STREAM_KERNEL,
     bulk: AVX512_KERNEL,
+    bulk_sizeclass_threshold: THRESHOLD_AVX512,
   },
   parallel: parallel_costs!(
     96 * 1024,
@@ -609,6 +637,7 @@ pub static PROFILE_X86_INTEL_ICL: FamilyProfile = FamilyProfile {
   streaming: StreamingTable {
     stream: KernelId::X86Sse41,
     bulk: KernelId::X86Avx512,
+    bulk_sizeclass_threshold: THRESHOLD_AVX512,
   },
   parallel: ParallelTable {
     min_bytes: 131072,
@@ -651,6 +680,7 @@ pub static PROFILE_AARCH64_APPLE_M1M3: FamilyProfile = FamilyProfile {
   streaming: StreamingTable {
     stream: KernelId::Portable,
     bulk: KernelId::Aarch64Neon,
+    bulk_sizeclass_threshold: THRESHOLD_NEON,
   },
   parallel: parallel_costs!(
     64 * 1024,
@@ -693,6 +723,7 @@ pub static PROFILE_AARCH64_APPLE_M4: FamilyProfile = FamilyProfile {
   streaming: StreamingTable {
     stream: KernelId::Portable,
     bulk: KernelId::Aarch64Neon,
+    bulk_sizeclass_threshold: THRESHOLD_NEON,
   },
   parallel: parallel_costs!(
     64 * 1024,
@@ -735,6 +766,7 @@ pub static PROFILE_AARCH64_APPLE_M5: FamilyProfile = FamilyProfile {
   streaming: StreamingTable {
     stream: KernelId::Portable,
     bulk: KernelId::Aarch64Neon,
+    bulk_sizeclass_threshold: THRESHOLD_NEON,
   },
   parallel: parallel_costs!(
     64 * 1024,
@@ -777,6 +809,7 @@ pub static PROFILE_AARCH64_GRAVITON2: FamilyProfile = FamilyProfile {
   streaming: StreamingTable {
     stream: KernelId::Aarch64Neon,
     bulk: KernelId::Aarch64Neon,
+    bulk_sizeclass_threshold: THRESHOLD_NEON,
   },
   parallel: parallel_costs!(
     128 * 1024,
@@ -819,6 +852,7 @@ pub static PROFILE_AARCH64_SERVER_NEON: FamilyProfile = FamilyProfile {
   streaming: StreamingTable {
     stream: KernelId::Portable,
     bulk: KernelId::Aarch64Neon,
+    bulk_sizeclass_threshold: THRESHOLD_NEON,
   },
   parallel: ParallelTable {
     min_bytes: 65536,
@@ -854,6 +888,7 @@ pub static PROFILE_Z13: FamilyProfile = FamilyProfile {
   streaming: StreamingTable {
     stream: KernelId::Portable,
     bulk: KernelId::Portable,
+    bulk_sizeclass_threshold: THRESHOLD_PORTABLE,
   },
   parallel: scalar_profile_parallel(256 * 1024, 128, 8, 0),
   streaming_parallel: scalar_profile_parallel(256 * 1024, 128, 8, 0),
@@ -865,6 +900,7 @@ pub static PROFILE_Z14: FamilyProfile = FamilyProfile {
   streaming: StreamingTable {
     stream: KernelId::Portable,
     bulk: KernelId::Portable,
+    bulk_sizeclass_threshold: THRESHOLD_PORTABLE,
   },
   parallel: scalar_profile_parallel(192 * 1024, 96, 8, 1),
   streaming_parallel: scalar_profile_parallel(192 * 1024, 96, 8, 1),
@@ -876,6 +912,7 @@ pub static PROFILE_Z15: FamilyProfile = FamilyProfile {
   streaming: StreamingTable {
     stream: KernelId::Portable,
     bulk: KernelId::Portable,
+    bulk_sizeclass_threshold: THRESHOLD_PORTABLE,
   },
   parallel: scalar_profile_parallel(160 * 1024, 80, 12, 2),
   streaming_parallel: scalar_profile_parallel(160 * 1024, 80, 12, 2),
@@ -887,6 +924,7 @@ pub static PROFILE_POWER7: FamilyProfile = FamilyProfile {
   streaming: StreamingTable {
     stream: KernelId::Portable,
     bulk: KernelId::Portable,
+    bulk_sizeclass_threshold: THRESHOLD_PORTABLE,
   },
   parallel: scalar_profile_parallel(256 * 1024, 128, 8, 0),
   streaming_parallel: scalar_profile_parallel(256 * 1024, 128, 8, 0),
@@ -898,6 +936,7 @@ pub static PROFILE_POWER8: FamilyProfile = FamilyProfile {
   streaming: StreamingTable {
     stream: KernelId::Portable,
     bulk: KernelId::Portable,
+    bulk_sizeclass_threshold: THRESHOLD_PORTABLE,
   },
   parallel: scalar_profile_parallel(192 * 1024, 96, 8, 1),
   streaming_parallel: scalar_profile_parallel(192 * 1024, 96, 8, 1),
@@ -909,6 +948,7 @@ pub static PROFILE_POWER9: FamilyProfile = FamilyProfile {
   streaming: StreamingTable {
     stream: KernelId::Portable,
     bulk: KernelId::Portable,
+    bulk_sizeclass_threshold: THRESHOLD_PORTABLE,
   },
   parallel: scalar_profile_parallel(128 * 1024, 64, 16, 3),
   streaming_parallel: scalar_profile_parallel(128 * 1024, 64, 16, 3),
@@ -920,6 +960,7 @@ pub static PROFILE_POWER10: FamilyProfile = FamilyProfile {
   streaming: StreamingTable {
     stream: KernelId::Portable,
     bulk: KernelId::Portable,
+    bulk_sizeclass_threshold: THRESHOLD_PORTABLE,
   },
   parallel: scalar_profile_parallel(96 * 1024, 48, 16, 4),
   streaming_parallel: scalar_profile_parallel(96 * 1024, 48, 16, 4),

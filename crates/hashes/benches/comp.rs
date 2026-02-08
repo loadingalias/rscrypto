@@ -95,6 +95,18 @@ fn blake3_comp(c: &mut Criterion) {
           black_box(*h.finalize().as_bytes())
         })
       });
+
+      group.bench_with_input(
+        BenchmarkId::new("official-rayon/blake3", &case),
+        &chunk_size,
+        |b, &_cs| {
+          b.iter(|| {
+            let mut h = blake3::Hasher::new();
+            h.update_rayon(&data_1mb[..]);
+            black_box(*h.finalize().as_bytes())
+          })
+        },
+      );
     }
 
     group.finish();
@@ -139,6 +151,20 @@ fn blake3_comp(c: &mut Criterion) {
             black_box(&out);
           })
         });
+
+        // Add official-rayon comparison for larger inputs where parallelization matters
+        if len >= 1024 {
+          group.bench_with_input(BenchmarkId::new("official-rayon/blake3", &case), &data, |b, d| {
+            let mut out = vec![0u8; output_size];
+            b.iter(|| {
+              let mut h = blake3::Hasher::new();
+              h.update_rayon(black_box(d));
+              let mut reader = h.finalize_xof();
+              reader.fill(&mut out);
+              black_box(&out);
+            })
+          });
+        }
       }
     }
 
@@ -165,6 +191,17 @@ fn blake3_comp(c: &mut Criterion) {
       group.bench_with_input(BenchmarkId::new("official/blake3", len), &data, |b, d| {
         b.iter(|| black_box(*blake3::keyed_hash(&key, black_box(d)).as_bytes()))
       });
+
+      // Add official-rayon comparison for larger inputs where parallelization matters
+      if len >= 1024 {
+        group.bench_with_input(BenchmarkId::new("official-rayon/blake3", len), &data, |b, d| {
+          b.iter(|| {
+            let mut h = blake3::Hasher::new_keyed(&key);
+            h.update_rayon(black_box(d));
+            black_box(*h.finalize().as_bytes())
+          })
+        });
+      }
     }
 
     group.finish();
@@ -190,6 +227,17 @@ fn blake3_comp(c: &mut Criterion) {
       group.bench_with_input(BenchmarkId::new("official/blake3", len), &data, |b, d| {
         b.iter(|| black_box(blake3::derive_key(context, black_box(d))))
       });
+
+      // Add official-rayon comparison for larger inputs where parallelization matters
+      if len >= 1024 {
+        group.bench_with_input(BenchmarkId::new("official-rayon/blake3", len), &data, |b, d| {
+          b.iter(|| {
+            let mut h = blake3::Hasher::new_derive_key(context);
+            h.update_rayon(black_box(d));
+            black_box(h.finalize())
+          })
+        });
+      }
     }
 
     group.finish();
