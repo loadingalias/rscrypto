@@ -507,3 +507,217 @@ pub unsafe fn root_output_blocks4(
     }
   }
 }
+
+/// Generate 1 root output block (64 bytes).
+///
+/// # Safety
+/// Caller must ensure SSE4.1+SSSE3 is available and that `out` is valid for
+/// `64` writable bytes.
+#[target_feature(enable = "sse4.1,ssse3")]
+pub unsafe fn root_output_blocks1(
+  chaining_value: &[u32; 8],
+  block_words: &[u32; 16],
+  counter: u64,
+  block_len: u32,
+  flags: u32,
+  out: *mut u8,
+) {
+  unsafe {
+    let rot16_mask = _mm_setr_epi8(2, 3, 0, 1, 6, 7, 4, 5, 10, 11, 8, 9, 14, 15, 12, 13);
+    let rot8_mask = _mm_setr_epi8(1, 2, 3, 0, 5, 6, 7, 4, 9, 10, 11, 8, 13, 14, 15, 12);
+
+    let mut v = [
+      set1(chaining_value[0]),
+      set1(chaining_value[1]),
+      set1(chaining_value[2]),
+      set1(chaining_value[3]),
+      set1(chaining_value[4]),
+      set1(chaining_value[5]),
+      set1(chaining_value[6]),
+      set1(chaining_value[7]),
+      set1(IV[0]),
+      set1(IV[1]),
+      set1(IV[2]),
+      set1(IV[3]),
+      set1(counter_low(counter)),
+      set1(counter_high(counter)),
+      set1(block_len),
+      set1(flags),
+    ];
+
+    // Load message words as vectors
+    let msg_vecs: [__m128i; 16] = core::array::from_fn(|i| set1(block_words[i]));
+
+    round(&mut v, &msg_vecs, 0, rot16_mask, rot8_mask);
+    round(&mut v, &msg_vecs, 1, rot16_mask, rot8_mask);
+    round(&mut v, &msg_vecs, 2, rot16_mask, rot8_mask);
+    round(&mut v, &msg_vecs, 3, rot16_mask, rot8_mask);
+    round(&mut v, &msg_vecs, 4, rot16_mask, rot8_mask);
+    round(&mut v, &msg_vecs, 5, rot16_mask, rot8_mask);
+    round(&mut v, &msg_vecs, 6, rot16_mask, rot8_mask);
+
+    // XOR and store result (only 64 bytes for single block)
+    let cv_vecs = [
+      set1(chaining_value[0]),
+      set1(chaining_value[1]),
+      set1(chaining_value[2]),
+      set1(chaining_value[3]),
+      set1(chaining_value[4]),
+      set1(chaining_value[5]),
+      set1(chaining_value[6]),
+      set1(chaining_value[7]),
+    ];
+
+    let words_out = [
+      xor(xor(v[0], v[8]), cv_vecs[0]),
+      xor(xor(v[1], v[9]), cv_vecs[1]),
+      xor(xor(v[2], v[10]), cv_vecs[2]),
+      xor(xor(v[3], v[11]), cv_vecs[3]),
+      xor(xor(v[4], v[12]), cv_vecs[4]),
+      xor(xor(v[5], v[13]), cv_vecs[5]),
+      xor(xor(v[6], v[14]), cv_vecs[6]),
+      xor(xor(v[7], v[15]), cv_vecs[7]),
+    ];
+
+    storeu(words_out[0], out);
+    storeu(words_out[1], out.add(16));
+    storeu(words_out[2], out.add(32));
+    storeu(words_out[3], out.add(48));
+  }
+}
+
+/// Generate 2 root output blocks (128 bytes) with consecutive counters.
+///
+/// # Safety
+/// Caller must ensure SSE4.1+SSSE3 is available and that `out` is valid for
+/// `128` writable bytes.
+#[target_feature(enable = "sse4.1,ssse3")]
+pub unsafe fn root_output_blocks2(
+  chaining_value: &[u32; 8],
+  block_words: &[u32; 16],
+  counter: u64,
+  block_len: u32,
+  flags: u32,
+  out: *mut u8,
+) {
+  unsafe {
+    let rot16_mask = _mm_setr_epi8(2, 3, 0, 1, 6, 7, 4, 5, 10, 11, 8, 9, 14, 15, 12, 13);
+    let rot8_mask = _mm_setr_epi8(1, 2, 3, 0, 5, 6, 7, 4, 9, 10, 11, 8, 13, 14, 15, 12);
+
+    let cv_vecs = [
+      set1(chaining_value[0]),
+      set1(chaining_value[1]),
+      set1(chaining_value[2]),
+      set1(chaining_value[3]),
+      set1(chaining_value[4]),
+      set1(chaining_value[5]),
+      set1(chaining_value[6]),
+      set1(chaining_value[7]),
+    ];
+
+    let msg_vecs: [__m128i; 16] = core::array::from_fn(|i| set1(block_words[i]));
+    let iv0 = set1(IV[0]);
+    let iv1 = set1(IV[1]);
+    let iv2 = set1(IV[2]);
+    let iv3 = set1(IV[3]);
+    let block_len_vec = set1(block_len);
+    let flags_vec = set1(flags);
+
+    // Generate first block
+    let mut v0 = [
+      cv_vecs[0],
+      cv_vecs[1],
+      cv_vecs[2],
+      cv_vecs[3],
+      cv_vecs[4],
+      cv_vecs[5],
+      cv_vecs[6],
+      cv_vecs[7],
+      iv0,
+      iv1,
+      iv2,
+      iv3,
+      set1(counter_low(counter)),
+      set1(counter_high(counter)),
+      block_len_vec,
+      flags_vec,
+    ];
+
+    round(&mut v0, &msg_vecs, 0, rot16_mask, rot8_mask);
+    round(&mut v0, &msg_vecs, 1, rot16_mask, rot8_mask);
+    round(&mut v0, &msg_vecs, 2, rot16_mask, rot8_mask);
+    round(&mut v0, &msg_vecs, 3, rot16_mask, rot8_mask);
+    round(&mut v0, &msg_vecs, 4, rot16_mask, rot8_mask);
+    round(&mut v0, &msg_vecs, 5, rot16_mask, rot8_mask);
+    round(&mut v0, &msg_vecs, 6, rot16_mask, rot8_mask);
+
+    // Generate second block
+    let mut v1 = [
+      cv_vecs[0],
+      cv_vecs[1],
+      cv_vecs[2],
+      cv_vecs[3],
+      cv_vecs[4],
+      cv_vecs[5],
+      cv_vecs[6],
+      cv_vecs[7],
+      iv0,
+      iv1,
+      iv2,
+      iv3,
+      set1(counter_low(counter.wrapping_add(1))),
+      set1(counter_high(counter.wrapping_add(1))),
+      block_len_vec,
+      flags_vec,
+    ];
+
+    round(&mut v1, &msg_vecs, 0, rot16_mask, rot8_mask);
+    round(&mut v1, &msg_vecs, 1, rot16_mask, rot8_mask);
+    round(&mut v1, &msg_vecs, 2, rot16_mask, rot8_mask);
+    round(&mut v1, &msg_vecs, 3, rot16_mask, rot8_mask);
+    round(&mut v1, &msg_vecs, 4, rot16_mask, rot8_mask);
+    round(&mut v1, &msg_vecs, 5, rot16_mask, rot8_mask);
+    round(&mut v1, &msg_vecs, 6, rot16_mask, rot8_mask);
+
+    // Store both blocks with proper XOR
+    let out_words0 = [
+      xor(xor(v0[0], v0[8]), cv_vecs[0]),
+      xor(xor(v0[1], v0[9]), cv_vecs[1]),
+      xor(xor(v0[2], v0[10]), cv_vecs[2]),
+      xor(xor(v0[3], v0[11]), cv_vecs[3]),
+      xor(xor(v0[4], v0[12]), cv_vecs[4]),
+      xor(xor(v0[5], v0[13]), cv_vecs[5]),
+      xor(xor(v0[6], v0[14]), cv_vecs[6]),
+      xor(xor(v0[7], v0[15]), cv_vecs[7]),
+    ];
+
+    let out_words1 = [
+      xor(xor(v1[0], v1[8]), cv_vecs[0]),
+      xor(xor(v1[1], v1[9]), cv_vecs[1]),
+      xor(xor(v1[2], v1[10]), cv_vecs[2]),
+      xor(xor(v1[3], v1[11]), cv_vecs[3]),
+      xor(xor(v1[4], v1[12]), cv_vecs[4]),
+      xor(xor(v1[5], v1[13]), cv_vecs[5]),
+      xor(xor(v1[6], v1[14]), cv_vecs[6]),
+      xor(xor(v1[7], v1[15]), cv_vecs[7]),
+    ];
+
+    storeu(out_words0[0], out);
+    storeu(out_words0[1], out.add(16));
+    storeu(out_words0[2], out.add(32));
+    storeu(out_words0[3], out.add(48));
+    storeu(out_words0[4], out.add(64));
+    storeu(out_words0[5], out.add(80));
+    storeu(out_words0[6], out.add(96));
+    storeu(out_words0[7], out.add(112));
+
+    storeu(out_words1[0], out.add(128));
+    storeu(out_words1[1], out.add(144));
+    storeu(out_words1[2], out.add(160));
+    storeu(out_words1[3], out.add(176));
+    storeu(out_words1[4], out.add(192));
+    storeu(out_words1[5], out.add(208));
+    storeu(out_words1[6], out.add(224));
+    storeu(out_words1[7], out.add(240));
+  }
+}

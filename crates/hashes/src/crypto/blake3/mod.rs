@@ -1726,6 +1726,38 @@ impl OutputState {
             out = &mut out[4 * OUTPUT_BLOCK_LEN..];
             continue;
           }
+          kernels::Blake3KernelId::X86Avx512 if blocks_remaining >= 2 => {
+            // SAFETY: AVX-512 implies SSE4.1, and dispatch validates CPU features.
+            unsafe {
+              x86_64::avx512::root_output_blocks2(
+                &self.input_chaining_value,
+                &self.block_words,
+                output_block_counter,
+                self.block_len,
+                flags,
+                out.as_mut_ptr(),
+              );
+            }
+            output_block_counter = output_block_counter.wrapping_add(2);
+            out = &mut out[2 * OUTPUT_BLOCK_LEN..];
+            continue;
+          }
+          kernels::Blake3KernelId::X86Avx512 if blocks_remaining >= 1 => {
+            // SAFETY: AVX-512 implies SSE4.1, and dispatch validates CPU features.
+            unsafe {
+              x86_64::avx512::root_output_blocks1(
+                &self.input_chaining_value,
+                &self.block_words,
+                output_block_counter,
+                self.block_len,
+                flags,
+                out.as_mut_ptr(),
+              );
+            }
+            output_block_counter = output_block_counter.wrapping_add(1);
+            out = &mut out[OUTPUT_BLOCK_LEN..];
+            continue;
+          }
           kernels::Blake3KernelId::X86Avx2 if blocks_remaining >= 8 => {
             // SAFETY: required CPU features are validated by dispatch before
             // selecting this kernel, and `out` has at least 8 blocks.
@@ -1760,6 +1792,38 @@ impl OutputState {
             out = &mut out[4 * OUTPUT_BLOCK_LEN..];
             continue;
           }
+          kernels::Blake3KernelId::X86Avx2 if blocks_remaining >= 2 => {
+            // SAFETY: AVX2 implies SSE4.1, and dispatch validates CPU features.
+            unsafe {
+              x86_64::avx2::root_output_blocks2(
+                &self.input_chaining_value,
+                &self.block_words,
+                output_block_counter,
+                self.block_len,
+                flags,
+                out.as_mut_ptr(),
+              );
+            }
+            output_block_counter = output_block_counter.wrapping_add(2);
+            out = &mut out[2 * OUTPUT_BLOCK_LEN..];
+            continue;
+          }
+          kernels::Blake3KernelId::X86Avx2 if blocks_remaining >= 1 => {
+            // SAFETY: AVX2 implies SSE4.1, and dispatch validates CPU features.
+            unsafe {
+              x86_64::avx2::root_output_blocks1(
+                &self.input_chaining_value,
+                &self.block_words,
+                output_block_counter,
+                self.block_len,
+                flags,
+                out.as_mut_ptr(),
+              );
+            }
+            output_block_counter = output_block_counter.wrapping_add(1);
+            out = &mut out[OUTPUT_BLOCK_LEN..];
+            continue;
+          }
           kernels::Blake3KernelId::X86Sse41 if blocks_remaining >= 4 => {
             // SAFETY: required CPU features are validated by dispatch before
             // selecting this kernel, and `out` has at least 4 blocks.
@@ -1775,6 +1839,40 @@ impl OutputState {
             }
             output_block_counter = output_block_counter.wrapping_add(4);
             out = &mut out[4 * OUTPUT_BLOCK_LEN..];
+            continue;
+          }
+          kernels::Blake3KernelId::X86Sse41 if blocks_remaining >= 2 => {
+            // SAFETY: required CPU features are validated by dispatch before
+            // selecting this kernel, and `out` has at least 2 blocks.
+            unsafe {
+              x86_64::sse41::root_output_blocks2(
+                &self.input_chaining_value,
+                &self.block_words,
+                output_block_counter,
+                self.block_len,
+                flags,
+                out.as_mut_ptr(),
+              );
+            }
+            output_block_counter = output_block_counter.wrapping_add(2);
+            out = &mut out[2 * OUTPUT_BLOCK_LEN..];
+            continue;
+          }
+          kernels::Blake3KernelId::X86Sse41 if blocks_remaining >= 1 => {
+            // SAFETY: required CPU features are validated by dispatch before
+            // selecting this kernel, and `out` has at least 1 block.
+            unsafe {
+              x86_64::sse41::root_output_blocks1(
+                &self.input_chaining_value,
+                &self.block_words,
+                output_block_counter,
+                self.block_len,
+                flags,
+                out.as_mut_ptr(),
+              );
+            }
+            output_block_counter = output_block_counter.wrapping_add(1);
+            out = &mut out[OUTPUT_BLOCK_LEN..];
             continue;
           }
           _ => {}
@@ -3247,11 +3345,11 @@ impl Digest for Blake3 {
               block[block_len..].fill(0);
             }
 
-            let flags = self.flags | self.chunk_state.start_flag() | CHUNK_END | ROOT;
             let cv = self.chunk_state.chaining_value;
 
             // Use the unified compress_to_root_words helper
-            let out_words = compress_to_root_words(self.kernel, cv, &block, block_len, flags);
+            // Note: compress_to_root_words adds CHUNK_START | CHUNK_END | ROOT internally
+            let out_words = compress_to_root_words(self.kernel, cv, &block, block_len, self.flags);
             return words8_to_le_bytes(&out_words);
           }
           _ => {}

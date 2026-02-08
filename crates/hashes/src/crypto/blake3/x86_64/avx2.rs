@@ -568,3 +568,39 @@ pub unsafe fn root_output_blocks8(
     }
   }
 }
+
+/// Generate 1 root output block (64 bytes).
+/// Delegates to SSE4.1 implementation (AVX2 is overkill for single block).
+///
+/// # Safety
+/// Caller must ensure AVX2 is available and that `out` is valid for `64` writable bytes.
+#[target_feature(enable = "avx2")]
+pub unsafe fn root_output_blocks1(
+  chaining_value: &[u32; 8],
+  block_words: &[u32; 16],
+  counter: u64,
+  block_len: u32,
+  flags: u32,
+  out: *mut u8,
+) {
+  // AVX2 implies SSE4.1, so delegate to the SSE4.1 implementation
+  unsafe { super::sse41::root_output_blocks1(chaining_value, block_words, counter, block_len, flags, out) }
+}
+
+/// Generate 2 root output blocks (128 bytes) with consecutive counters.
+/// Delegates to SSE4.1 implementation.
+///
+/// # Safety
+/// Caller must ensure AVX2 is available and that `out` is valid for `128` writable bytes.
+#[target_feature(enable = "avx2")]
+pub unsafe fn root_output_blocks2(
+  chaining_value: &[u32; 8],
+  block_words: &[u32; 16],
+  counter: u64,
+  block_len: u32,
+  flags: u32,
+  out: *mut u8,
+) {
+  // AVX2 implies SSE4.1, so delegate to the SSE4.1 implementation
+  unsafe { super::sse41::root_output_blocks2(chaining_value, block_words, counter, block_len, flags, out) }
+}

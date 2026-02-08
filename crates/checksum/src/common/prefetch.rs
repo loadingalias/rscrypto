@@ -297,6 +297,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg_attr(miri, ignore)] // Miri does not support inline assembly (aarch64 PRFM)
   fn prefetch_does_not_crash_on_null() {
     // Prefetch should be safe to call with any pointer, including null.
     // The CPU silently ignores invalid prefetch addresses.
@@ -309,6 +310,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg_attr(miri, ignore)] // Miri does not support inline assembly (aarch64 PRFM)
   fn prefetch_does_not_crash_on_unaligned() {
     let data = [0u8; 256];
     // SAFETY: the prefetch intrinsics are explicitly documented as safe for any pointer value.

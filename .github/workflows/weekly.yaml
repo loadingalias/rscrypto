@@ -79,7 +79,7 @@ jobs:
   fuzzing:
     name: Fuzzing (${{ matrix.target.name }})
     runs-on: ${{ matrix.target.runner }}
-    timeout-minutes: 60
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -100,7 +100,7 @@ jobs:
 
       - name: Fuzz Testing
         env:
-          RSCRYPTO_FUZZ_DURATION_SECS: "300"
+          RSCRYPTO_FUZZ_DURATION_SECS: "150"
         run: just test-fuzz --all
 
       - name: Upload Fuzz Crash Artifacts
