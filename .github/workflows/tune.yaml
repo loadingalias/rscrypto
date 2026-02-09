@@ -47,12 +47,42 @@ on:
         description: "Quick mode (faster, noisier)"
         required: false
         type: boolean
-        default: true
+        default: false
       apply:
         description: "Apply tuning output into dispatch tables and emit patch artifact"
         required: false
         type: boolean
         default: false
+      warmup_ms:
+        description: "Global warmup duration override in ms (optional)"
+        required: false
+        type: string
+        default: ""
+      measure_ms:
+        description: "Global measurement duration override in ms (optional)"
+        required: false
+        type: string
+        default: ""
+      checksum_warmup_ms:
+        description: "Checksum-only warmup override in ms (optional)"
+        required: false
+        type: string
+        default: ""
+      checksum_measure_ms:
+        description: "Checksum-only measurement override in ms (optional)"
+        required: false
+        type: string
+        default: ""
+      hash_warmup_ms:
+        description: "Hash-only warmup override in ms (optional)"
+        required: false
+        type: string
+        default: ""
+      hash_measure_ms:
+        description: "Hash-only measurement override in ms (optional)"
+        required: false
+        type: string
+        default: ""
 
 env:
   RUST_BACKTRACE: 1
@@ -65,7 +95,7 @@ permissions:
 
 jobs:
   tune-intel:
-    if: github.event.inputs.run_intel == 'true'
+    if: inputs.run_intel
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: runs-on=${{ github.run_id }}/runner=intel-bench
@@ -78,20 +108,24 @@ jobs:
         lscpu
       run_script: |
         TUNE_OUTPUT_DIR=tune-results \
-        TUNE_QUICK=${{ github.event.inputs.quick }} \
-        TUNE_CRATES="${{ github.event.inputs.crates }}" \
-        TUNE_ONLY="${{ github.event.inputs.only }}" \
-        TUNE_APPLY=${{ github.event.inputs.apply }} \
+        TUNE_QUICK=${{ inputs.quick && 'true' || 'false' }} \
+        TUNE_CRATES="${{ inputs.crates }}" \
+        TUNE_ONLY="${{ inputs.only }}" \
+        TUNE_APPLY=${{ inputs.apply && 'true' || 'false' }} \
         TUNE_SELF_CHECK=false \
         TUNE_ENFORCE_TARGETS=false \
-        TUNE_WARMUP_MS="" \
-        TUNE_MEASURE_MS="" \
+        TUNE_WARMUP_MS="${{ inputs.warmup_ms }}" \
+        TUNE_MEASURE_MS="${{ inputs.measure_ms }}" \
+        TUNE_CHECKSUM_WARMUP_MS="${{ inputs.checksum_warmup_ms }}" \
+        TUNE_CHECKSUM_MEASURE_MS="${{ inputs.checksum_measure_ms }}" \
+        TUNE_HASH_WARMUP_MS="${{ inputs.hash_warmup_ms }}" \
+        TUNE_HASH_MEASURE_MS="${{ inputs.hash_measure_ms }}" \
         scripts/ci/run-tune.sh
       artifact_name: tuning-intel
       artifact_path: tune-results/
 
   tune-intel-spr:
-    if: github.event.inputs.run_intel_spr == 'true'
+    if: inputs.run_intel_spr
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: runs-on=${{ github.run_id }}/runner=intel-spr
@@ -104,20 +138,24 @@ jobs:
         lscpu
       run_script: |
         TUNE_OUTPUT_DIR=tune-results \
-        TUNE_QUICK=${{ github.event.inputs.quick }} \
-        TUNE_CRATES="${{ github.event.inputs.crates }}" \
-        TUNE_ONLY="${{ github.event.inputs.only }}" \
-        TUNE_APPLY=${{ github.event.inputs.apply }} \
+        TUNE_QUICK=${{ inputs.quick && 'true' || 'false' }} \
+        TUNE_CRATES="${{ inputs.crates }}" \
+        TUNE_ONLY="${{ inputs.only }}" \
+        TUNE_APPLY=${{ inputs.apply && 'true' || 'false' }} \
         TUNE_SELF_CHECK=false \
         TUNE_ENFORCE_TARGETS=false \
-        TUNE_WARMUP_MS="" \
-        TUNE_MEASURE_MS="" \
+        TUNE_WARMUP_MS="${{ inputs.warmup_ms }}" \
+        TUNE_MEASURE_MS="${{ inputs.measure_ms }}" \
+        TUNE_CHECKSUM_WARMUP_MS="${{ inputs.checksum_warmup_ms }}" \
+        TUNE_CHECKSUM_MEASURE_MS="${{ inputs.checksum_measure_ms }}" \
+        TUNE_HASH_WARMUP_MS="${{ inputs.hash_warmup_ms }}" \
+        TUNE_HASH_MEASURE_MS="${{ inputs.hash_measure_ms }}" \
         scripts/ci/run-tune.sh
       artifact_name: tuning-intel-spr
       artifact_path: tune-results/
 
   tune-intel-icl:
-    if: github.event.inputs.run_intel_icl == 'true'
+    if: inputs.run_intel_icl
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: runs-on=${{ github.run_id }}/runner=intel-icl-bench
@@ -130,20 +168,24 @@ jobs:
         lscpu
       run_script: |
         TUNE_OUTPUT_DIR=tune-results \
-        TUNE_QUICK=${{ github.event.inputs.quick }} \
-        TUNE_CRATES="${{ github.event.inputs.crates }}" \
-        TUNE_ONLY="${{ github.event.inputs.only }}" \
-        TUNE_APPLY=${{ github.event.inputs.apply }} \
+        TUNE_QUICK=${{ inputs.quick && 'true' || 'false' }} \
+        TUNE_CRATES="${{ inputs.crates }}" \
+        TUNE_ONLY="${{ inputs.only }}" \
+        TUNE_APPLY=${{ inputs.apply && 'true' || 'false' }} \
         TUNE_SELF_CHECK=false \
         TUNE_ENFORCE_TARGETS=false \
-        TUNE_WARMUP_MS="" \
-        TUNE_MEASURE_MS="" \
+        TUNE_WARMUP_MS="${{ inputs.warmup_ms }}" \
+        TUNE_MEASURE_MS="${{ inputs.measure_ms }}" \
+        TUNE_CHECKSUM_WARMUP_MS="${{ inputs.checksum_warmup_ms }}" \
+        TUNE_CHECKSUM_MEASURE_MS="${{ inputs.checksum_measure_ms }}" \
+        TUNE_HASH_WARMUP_MS="${{ inputs.hash_warmup_ms }}" \
+        TUNE_HASH_MEASURE_MS="${{ inputs.hash_measure_ms }}" \
         scripts/ci/run-tune.sh
       artifact_name: tuning-intel-icl
       artifact_path: tune-results/
 
   tune-amd-zen4:
-    if: github.event.inputs.run_amd_zen4 == 'true'
+    if: inputs.run_amd_zen4
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: namespace-profile-rscrypto-linux-x86
@@ -155,20 +197,24 @@ jobs:
         lscpu
       run_script: |
         TUNE_OUTPUT_DIR=tune-results \
-        TUNE_QUICK=${{ github.event.inputs.quick }} \
-        TUNE_CRATES="${{ github.event.inputs.crates }}" \
-        TUNE_ONLY="${{ github.event.inputs.only }}" \
-        TUNE_APPLY=${{ github.event.inputs.apply }} \
+        TUNE_QUICK=${{ inputs.quick && 'true' || 'false' }} \
+        TUNE_CRATES="${{ inputs.crates }}" \
+        TUNE_ONLY="${{ inputs.only }}" \
+        TUNE_APPLY=${{ inputs.apply && 'true' || 'false' }} \
         TUNE_SELF_CHECK=false \
         TUNE_ENFORCE_TARGETS=false \
-        TUNE_WARMUP_MS="" \
-        TUNE_MEASURE_MS="" \
+        TUNE_WARMUP_MS="${{ inputs.warmup_ms }}" \
+        TUNE_MEASURE_MS="${{ inputs.measure_ms }}" \
+        TUNE_CHECKSUM_WARMUP_MS="${{ inputs.checksum_warmup_ms }}" \
+        TUNE_CHECKSUM_MEASURE_MS="${{ inputs.checksum_measure_ms }}" \
+        TUNE_HASH_WARMUP_MS="${{ inputs.hash_warmup_ms }}" \
+        TUNE_HASH_MEASURE_MS="${{ inputs.hash_measure_ms }}" \
         scripts/ci/run-tune.sh
       artifact_name: tuning-amd-zen4
       artifact_path: tune-results/
 
   tune-amd-zen5:
-    if: github.event.inputs.run_amd_zen5 == 'true'
+    if: inputs.run_amd_zen5
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: runs-on=${{ github.run_id }}/runner=amd-zen5
@@ -181,20 +227,24 @@ jobs:
         lscpu
       run_script: |
         TUNE_OUTPUT_DIR=tune-results \
-        TUNE_QUICK=${{ github.event.inputs.quick }} \
-        TUNE_CRATES="${{ github.event.inputs.crates }}" \
-        TUNE_ONLY="${{ github.event.inputs.only }}" \
-        TUNE_APPLY=${{ github.event.inputs.apply }} \
+        TUNE_QUICK=${{ inputs.quick && 'true' || 'false' }} \
+        TUNE_CRATES="${{ inputs.crates }}" \
+        TUNE_ONLY="${{ inputs.only }}" \
+        TUNE_APPLY=${{ inputs.apply && 'true' || 'false' }} \
         TUNE_SELF_CHECK=false \
         TUNE_ENFORCE_TARGETS=false \
-        TUNE_WARMUP_MS="" \
-        TUNE_MEASURE_MS="" \
+        TUNE_WARMUP_MS="${{ inputs.warmup_ms }}" \
+        TUNE_MEASURE_MS="${{ inputs.measure_ms }}" \
+        TUNE_CHECKSUM_WARMUP_MS="${{ inputs.checksum_warmup_ms }}" \
+        TUNE_CHECKSUM_MEASURE_MS="${{ inputs.checksum_measure_ms }}" \
+        TUNE_HASH_WARMUP_MS="${{ inputs.hash_warmup_ms }}" \
+        TUNE_HASH_MEASURE_MS="${{ inputs.hash_measure_ms }}" \
         scripts/ci/run-tune.sh
       artifact_name: tuning-amd-zen5
       artifact_path: tune-results/
 
   tune-graviton:
-    if: github.event.inputs.run_graviton == 'true'
+    if: inputs.run_graviton
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: runs-on=${{ github.run_id }}/runner=graviton
@@ -207,14 +257,18 @@ jobs:
         lscpu
       run_script: |
         TUNE_OUTPUT_DIR=tune-results \
-        TUNE_QUICK=${{ github.event.inputs.quick }} \
-        TUNE_CRATES="${{ github.event.inputs.crates }}" \
-        TUNE_ONLY="${{ github.event.inputs.only }}" \
-        TUNE_APPLY=${{ github.event.inputs.apply }} \
+        TUNE_QUICK=${{ inputs.quick && 'true' || 'false' }} \
+        TUNE_CRATES="${{ inputs.crates }}" \
+        TUNE_ONLY="${{ inputs.only }}" \
+        TUNE_APPLY=${{ inputs.apply && 'true' || 'false' }} \
         TUNE_SELF_CHECK=false \
         TUNE_ENFORCE_TARGETS=false \
-        TUNE_WARMUP_MS="" \
-        TUNE_MEASURE_MS="" \
+        TUNE_WARMUP_MS="${{ inputs.warmup_ms }}" \
+        TUNE_MEASURE_MS="${{ inputs.measure_ms }}" \
+        TUNE_CHECKSUM_WARMUP_MS="${{ inputs.checksum_warmup_ms }}" \
+        TUNE_CHECKSUM_MEASURE_MS="${{ inputs.checksum_measure_ms }}" \
+        TUNE_HASH_WARMUP_MS="${{ inputs.hash_warmup_ms }}" \
+        TUNE_HASH_MEASURE_MS="${{ inputs.hash_measure_ms }}" \
         scripts/ci/run-tune.sh
       artifact_name: tuning-graviton
       artifact_path: tune-results/
