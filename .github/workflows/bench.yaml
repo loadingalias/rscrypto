@@ -70,7 +70,7 @@ jobs:
 
   bench-amd-zen4:
     name: Benchmark (AMD Zen4)
-    if: github.event.inputs.run_amd_zen4 == 'true'
+    if: inputs.run_amd_zen4
     needs: lane-contract
     uses: ./.github/workflows/_rust-job.yaml
     with:
@@ -78,8 +78,8 @@ jobs:
       timeout_minutes: 90
       setup_kind: namespace
       run_script: |
-        CRATES_INPUT="${{ github.event.inputs.crates }}"
-        BENCHES_INPUT="${{ github.event.inputs.benches }}"
+        CRATES_INPUT="${{ inputs.crates }}"
+        BENCHES_INPUT="${{ inputs.benches }}"
         CRATE_FLAGS="--workspace"
         BENCH_FLAGS=""
         if [ -n "$CRATES_INPUT" ]; then
@@ -106,7 +106,7 @@ jobs:
 
   bench-intel-spr:
     name: Benchmark (Intel Sapphire Rapids)
-    if: github.event.inputs.run_intel_spr == 'true'
+    if: inputs.run_intel_spr
     needs: lane-contract
     uses: ./.github/workflows/_rust-job.yaml
     with:
@@ -115,8 +115,8 @@ jobs:
       setup_kind: runson
       runson_mode: runson-bench
       run_script: |
-        CRATES_INPUT="${{ github.event.inputs.crates }}"
-        BENCHES_INPUT="${{ github.event.inputs.benches }}"
+        CRATES_INPUT="${{ inputs.crates }}"
+        BENCHES_INPUT="${{ inputs.benches }}"
         CRATE_FLAGS="--workspace"
         BENCH_FLAGS=""
         if [ -n "$CRATES_INPUT" ]; then
@@ -143,7 +143,7 @@ jobs:
 
   bench-intel-latest:
     name: Benchmark (Intel Latest)
-    if: github.event.inputs.run_intel_latest == 'true'
+    if: inputs.run_intel_latest
     needs: lane-contract
     uses: ./.github/workflows/_rust-job.yaml
     with:
@@ -152,8 +152,8 @@ jobs:
       setup_kind: runson
       runson_mode: runson-bench
       run_script: |
-        CRATES_INPUT="${{ github.event.inputs.crates }}"
-        BENCHES_INPUT="${{ github.event.inputs.benches }}"
+        CRATES_INPUT="${{ inputs.crates }}"
+        BENCHES_INPUT="${{ inputs.benches }}"
         CRATE_FLAGS="--workspace"
         BENCH_FLAGS=""
         if [ -n "$CRATES_INPUT" ]; then
@@ -180,7 +180,7 @@ jobs:
 
   bench-intel-icl:
     name: Benchmark (Intel Ice Lake - SSE validation)
-    if: github.event.inputs.run_intel_icl == 'true'
+    if: inputs.run_intel_icl
     needs: lane-contract
     uses: ./.github/workflows/_rust-job.yaml
     with:
@@ -189,8 +189,8 @@ jobs:
       setup_kind: runson
       runson_mode: runson-bench
       run_script: |
-        CRATES_INPUT="${{ github.event.inputs.crates }}"
-        BENCHES_INPUT="${{ github.event.inputs.benches }}"
+        CRATES_INPUT="${{ inputs.crates }}"
+        BENCHES_INPUT="${{ inputs.benches }}"
         CRATE_FLAGS="--workspace"
         BENCH_FLAGS=""
         if [ -n "$CRATES_INPUT" ]; then
@@ -217,7 +217,7 @@ jobs:
 
   bench-amd-zen5:
     name: Benchmark (AMD Zen5)
-    if: github.event.inputs.run_amd_zen5 == 'true'
+    if: inputs.run_amd_zen5
     needs: lane-contract
     uses: ./.github/workflows/_rust-job.yaml
     with:
@@ -226,8 +226,8 @@ jobs:
       setup_kind: runson
       runson_mode: runson-bench
       run_script: |
-        CRATES_INPUT="${{ github.event.inputs.crates }}"
-        BENCHES_INPUT="${{ github.event.inputs.benches }}"
+        CRATES_INPUT="${{ inputs.crates }}"
+        BENCHES_INPUT="${{ inputs.benches }}"
         CRATE_FLAGS="--workspace"
         BENCH_FLAGS=""
         if [ -n "$CRATES_INPUT" ]; then
@@ -254,7 +254,7 @@ jobs:
 
   bench-graviton:
     name: Benchmark (Graviton)
-    if: github.event.inputs.run_graviton == 'true'
+    if: inputs.run_graviton
     needs: lane-contract
     uses: ./.github/workflows/_rust-job.yaml
     with:
@@ -263,8 +263,8 @@ jobs:
       setup_kind: runson
       runson_mode: runson-bench
       run_script: |
-        CRATES_INPUT="${{ github.event.inputs.crates }}"
-        BENCHES_INPUT="${{ github.event.inputs.benches }}"
+        CRATES_INPUT="${{ inputs.crates }}"
+        BENCHES_INPUT="${{ inputs.benches }}"
         CRATE_FLAGS="--workspace"
         BENCH_FLAGS=""
         if [ -n "$CRATES_INPUT" ]; then

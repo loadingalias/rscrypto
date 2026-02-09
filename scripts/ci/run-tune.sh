@@ -4,14 +4,31 @@ set -euo pipefail
 OUT_DIR="${TUNE_OUTPUT_DIR:-tune-results}"
 mkdir -p "$OUT_DIR"
 
+to_bool() {
+  local raw="${1:-}"
+  raw="$(echo "$raw" | tr '[:upper:]' '[:lower:]' | xargs)"
+  case "$raw" in
+    1|true|yes|on|y) echo "true" ;;
+    0|false|no|off|n|"") echo "false" ;;
+    *)
+      echo "warning: unrecognized boolean value '$1'; treating as false" >&2
+      echo "false"
+      ;;
+  esac
+}
+
 ONLY_INPUT="${TUNE_ONLY:-}"
 CRATES_INPUT="${TUNE_CRATES:-}"
 WARMUP_INPUT="${TUNE_WARMUP_MS:-}"
 MEASURE_INPUT="${TUNE_MEASURE_MS:-}"
-APPLY_INPUT="${TUNE_APPLY:-false}"
-SELF_CHECK_INPUT="${TUNE_SELF_CHECK:-false}"
-ENFORCE_TARGETS_INPUT="${TUNE_ENFORCE_TARGETS:-false}"
-QUICK_INPUT="${TUNE_QUICK:-true}"
+CHECKSUM_WARMUP_INPUT="${TUNE_CHECKSUM_WARMUP_MS:-}"
+CHECKSUM_MEASURE_INPUT="${TUNE_CHECKSUM_MEASURE_MS:-}"
+HASH_WARMUP_INPUT="${TUNE_HASH_WARMUP_MS:-}"
+HASH_MEASURE_INPUT="${TUNE_HASH_MEASURE_MS:-}"
+APPLY_INPUT="$(to_bool "${TUNE_APPLY:-false}")"
+SELF_CHECK_INPUT="$(to_bool "${TUNE_SELF_CHECK:-false}")"
+ENFORCE_TARGETS_INPUT="$(to_bool "${TUNE_ENFORCE_TARGETS:-false}")"
+QUICK_INPUT="$(to_bool "${TUNE_QUICK:-false}")"
 
 # `--apply` for blake3 requires stream-profile results.
 # If caller asks for `--only blake3`, auto-include the required stream variants
@@ -46,12 +63,17 @@ if [[ "$APPLY_INPUT" == "true" && -n "$ONLY_INPUT" ]]; then
       "blake3-stream4k-derive"
     )
 
-    # De-duplicate while preserving stable order.
-    declare -A seen=()
+    # De-duplicate while preserving stable order (bash 3.2 compatible).
     declare -a deduped=()
     for item in "${only_items[@]}"; do
-      if [[ -z "${seen[$item]+x}" ]]; then
-        seen["$item"]=1
+      already_seen=false
+      for existing in "${deduped[@]-}"; do
+        if [[ "$existing" == "$item" ]]; then
+          already_seen=true
+          break
+        fi
+      done
+      if [[ "$already_seen" == "false" ]]; then
         deduped+=("$item")
       fi
     done
@@ -75,6 +97,18 @@ fi
 if [[ -n "$MEASURE_INPUT" ]]; then
   ARGS+=(--measure-ms "$MEASURE_INPUT")
 fi
+if [[ -n "$CHECKSUM_WARMUP_INPUT" ]]; then
+  ARGS+=(--checksum-warmup-ms "$CHECKSUM_WARMUP_INPUT")
+fi
+if [[ -n "$CHECKSUM_MEASURE_INPUT" ]]; then
+  ARGS+=(--checksum-measure-ms "$CHECKSUM_MEASURE_INPUT")
+fi
+if [[ -n "$HASH_WARMUP_INPUT" ]]; then
+  ARGS+=(--hash-warmup-ms "$HASH_WARMUP_INPUT")
+fi
+if [[ -n "$HASH_MEASURE_INPUT" ]]; then
+  ARGS+=(--hash-measure-ms "$HASH_MEASURE_INPUT")
+fi
 if [[ "$SELF_CHECK_INPUT" == "true" ]]; then
   ARGS+=(--self-check)
 fi
@@ -90,6 +124,7 @@ ARGS+=(--report-dir "$OUT_DIR")
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "Running rscrypto-tune"
 echo "RUSTFLAGS: -C target-cpu=native"
+echo "Quick mode: $QUICK_INPUT"
 echo "Args: ${ARGS[*]}"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 

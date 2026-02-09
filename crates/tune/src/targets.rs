@@ -41,6 +41,26 @@ fn tune_arches() -> &'static [&'static str] {
   TUNE_ARCHES.get_or_init(parse_tune_arches_from_manifest).as_slice()
 }
 
+#[inline]
+#[must_use]
+fn blake3_algo_factor(algo: &str) -> f64 {
+  match algo {
+    "blake3-parent-fold" => 1.15,
+    "blake3-parent" => 1.10,
+    "blake3-chunk" => 1.05,
+    // Streaming (`Hasher::update`) carries materially different overhead than
+    // oneshot hashing. Keep explicit stream floors rather than deriving from
+    // oneshot with optimistic multipliers.
+    "blake3-stream4k" => 0.40,
+    "blake3-stream4k-keyed" => 0.38,
+    "blake3-stream4k-derive" => 0.36,
+    "blake3-stream64" => 0.10,
+    "blake3-stream64-keyed" => 0.09,
+    "blake3-stream64-derive" => 0.085,
+    _ => 1.00,
+  }
+}
+
 /// Resolve a throughput floor (GiB/s) for an algorithm/architecture/size class.
 ///
 /// Returns `None` when no explicit target is defined.
@@ -80,25 +100,7 @@ pub fn class_target_gib_s(algo: &str, arch: &str, tune_kind: TuneKind, class: &s
     _ => return None,
   };
 
-  let algo_factor = if algo == "blake3-parent-fold" {
-    1.15
-  } else if algo == "blake3-parent" {
-    1.10
-  } else if algo == "blake3-chunk" {
-    1.05
-  } else if matches!(
-    algo,
-    "blake3-stream4k" | "blake3-stream4k-keyed" | "blake3-stream4k-derive"
-  ) {
-    0.95
-  } else if matches!(
-    algo,
-    "blake3-stream64" | "blake3-stream64-keyed" | "blake3-stream64-derive"
-  ) {
-    0.55
-  } else {
-    1.00
-  };
+  let algo_factor = blake3_algo_factor(algo);
 
   Some(class_base * algo_factor)
 }
@@ -120,6 +122,18 @@ mod tests {
     let parent = class_target_gib_s("blake3-parent-fold", "x86_64", TuneKind::Zen5, "m").unwrap();
     let digest = class_target_gib_s("blake3", "x86_64", TuneKind::Zen5, "m").unwrap();
     assert!(parent > digest);
+  }
+
+  #[test]
+  fn streaming_targets_are_not_oneshot_scaled() {
+    let oneshot_l = class_target_gib_s("blake3", "x86_64", TuneKind::IntelSpr, "l").unwrap();
+    let stream4k_l = class_target_gib_s("blake3-stream4k", "x86_64", TuneKind::IntelSpr, "l").unwrap();
+    let stream64_l = class_target_gib_s("blake3-stream64", "x86_64", TuneKind::IntelSpr, "l").unwrap();
+
+    assert!(stream4k_l < oneshot_l);
+    assert!(stream64_l < stream4k_l);
+    // Guard against regressing back to the old overly optimistic floor.
+    assert!(stream64_l < oneshot_l * 0.2);
   }
 
   #[test]

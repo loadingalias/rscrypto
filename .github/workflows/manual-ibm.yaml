@@ -48,6 +48,21 @@ on:
         required: false
         type: string
         default: "checksum,hashes"
+      tune_quick:
+        description: "Quick mode for tuning (faster, noisier)"
+        required: false
+        type: boolean
+        default: false
+      tune_warmup_ms:
+        description: "Global warmup duration override in ms (optional)"
+        required: false
+        type: string
+        default: ""
+      tune_measure_ms:
+        description: "Global measurement duration override in ms (optional)"
+        required: false
+        type: string
+        default: ""
 
 env:
   RUST_BACKTRACE: 1
@@ -68,7 +83,7 @@ jobs:
           echo "lane=manual-ibm"
 
   ci-s390x:
-    if: github.event.inputs.run_ci_s390x == 'true'
+    if: inputs.run_ci_s390x
     needs: lane-contract
     uses: ./.github/workflows/_rust-job.yaml
     with:
@@ -87,7 +102,7 @@ jobs:
         just test --all
 
   ci-power10:
-    if: github.event.inputs.run_ci_power10 == 'true'
+    if: inputs.run_ci_power10
     needs: lane-contract
     uses: ./.github/workflows/_rust-job.yaml
     with:
@@ -106,7 +121,7 @@ jobs:
         just test --all
 
   bench-s390x:
-    if: github.event.inputs.run_bench_s390x == 'true'
+    if: inputs.run_bench_s390x
     needs: lane-contract
     uses: ./.github/workflows/_rust-job.yaml
     with:
@@ -121,8 +136,8 @@ jobs:
         lscpu
         cat /proc/cpuinfo | head -50
       run_script: |
-        CRATES_INPUT="${{ github.event.inputs.bench_crates }}"
-        BENCHES_INPUT="${{ github.event.inputs.bench_benches }}"
+        CRATES_INPUT="${{ inputs.bench_crates }}"
+        BENCHES_INPUT="${{ inputs.bench_benches }}"
         CRATE_FLAGS="--workspace"
         BENCH_FLAGS=""
         if [ -n "$CRATES_INPUT" ]; then
@@ -148,7 +163,7 @@ jobs:
         target/criterion/
 
   bench-power10:
-    if: github.event.inputs.run_bench_power10 == 'true'
+    if: inputs.run_bench_power10
     needs: lane-contract
     uses: ./.github/workflows/_rust-job.yaml
     with:
@@ -163,8 +178,8 @@ jobs:
         lscpu
         cat /proc/cpuinfo | head -50
       run_script: |
-        CRATES_INPUT="${{ github.event.inputs.bench_crates }}"
-        BENCHES_INPUT="${{ github.event.inputs.bench_benches }}"
+        CRATES_INPUT="${{ inputs.bench_crates }}"
+        BENCHES_INPUT="${{ inputs.bench_benches }}"
         CRATE_FLAGS="--workspace"
         BENCH_FLAGS=""
         if [ -n "$CRATES_INPUT" ]; then
@@ -190,7 +205,7 @@ jobs:
         target/criterion/
 
   tune-s390x:
-    if: github.event.inputs.run_tune_s390x == 'true'
+    if: inputs.run_tune_s390x
     needs: lane-contract
     uses: ./.github/workflows/_rust-job.yaml
     with:
@@ -205,15 +220,17 @@ jobs:
         lscpu
       run_script: |
         TUNE_OUTPUT_DIR=tune-results \
-        TUNE_QUICK=true \
-        TUNE_CRATES="${{ github.event.inputs.tune_crates }}" \
+        TUNE_QUICK=${{ inputs.tune_quick && 'true' || 'false' }} \
+        TUNE_CRATES="${{ inputs.tune_crates }}" \
         TUNE_ONLY="" \
+        TUNE_WARMUP_MS="${{ inputs.tune_warmup_ms }}" \
+        TUNE_MEASURE_MS="${{ inputs.tune_measure_ms }}" \
         scripts/ci/run-tune.sh
       artifact_name: tuning-ibm-s390x
       artifact_path: tune-results/
 
   tune-power10:
-    if: github.event.inputs.run_tune_power10 == 'true'
+    if: inputs.run_tune_power10
     needs: lane-contract
     uses: ./.github/workflows/_rust-job.yaml
     with:
@@ -228,9 +245,11 @@ jobs:
         lscpu
       run_script: |
         TUNE_OUTPUT_DIR=tune-results \
-        TUNE_QUICK=true \
-        TUNE_CRATES="${{ github.event.inputs.tune_crates }}" \
+        TUNE_QUICK=${{ inputs.tune_quick && 'true' || 'false' }} \
+        TUNE_CRATES="${{ inputs.tune_crates }}" \
         TUNE_ONLY="" \
+        TUNE_WARMUP_MS="${{ inputs.tune_warmup_ms }}" \
+        TUNE_MEASURE_MS="${{ inputs.tune_measure_ms }}" \
         scripts/ci/run-tune.sh
       artifact_name: tuning-ibm-power10
       artifact_path: tune-results/
