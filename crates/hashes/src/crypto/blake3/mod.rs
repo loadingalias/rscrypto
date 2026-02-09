@@ -136,6 +136,71 @@ fn get_derive_key_context_cache() -> &'static Mutex<HashMap<String, [u32; 8]>> {
 }
 
 #[cfg(feature = "std")]
+#[inline]
+fn compute_derive_context_key_words(context: &str) -> [u32; 8] {
+  let context_bytes = context.as_bytes();
+  let kernel_ctx = dispatch::hasher_dispatch().size_class_kernel(context_bytes.len());
+  digest_oneshot_words(kernel_ctx, IV, DERIVE_KEY_CONTEXT, context_bytes)
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn derive_context_key_words_cached(context: &str) -> [u32; 8] {
+  // Hot path: same context repeated on the same thread.
+  if let Some(words) = DERIVE_KEY_CONTEXT_LOCAL_CACHE.with(|slot| {
+    let borrowed = slot.borrow();
+    borrowed
+      .as_ref()
+      .and_then(|(cached_context, cached_words)| (cached_context.as_str() == context).then_some(*cached_words))
+  }) {
+    return words;
+  }
+
+  let cache = get_derive_key_context_cache();
+  if let Ok(guard) = cache.lock()
+    && let Some(&cached) = guard.get(context)
+  {
+    DERIVE_KEY_CONTEXT_LOCAL_CACHE.with(|slot| {
+      *slot.borrow_mut() = Some((context.to_string(), cached));
+    });
+    return cached;
+  }
+
+  let computed = compute_derive_context_key_words(context);
+
+  DERIVE_KEY_CONTEXT_LOCAL_CACHE.with(|slot| {
+    *slot.borrow_mut() = Some((context.to_string(), computed));
+  });
+
+  if let Ok(mut guard) = cache.lock()
+    && guard.len() < 64
+  {
+    guard.insert(context.to_string(), computed);
+  }
+
+  computed
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn keyed_words_cached(key: &[u8; KEY_LEN]) -> [u32; 8] {
+  if let Some(words) = KEYED_WORDS_LOCAL_CACHE.with(|slot| {
+    let borrowed = slot.borrow();
+    borrowed
+      .as_ref()
+      .and_then(|(cached_key, cached_words)| (cached_key == key).then_some(*cached_words))
+  }) {
+    return words;
+  }
+
+  let words = words8_from_le_bytes_32(key);
+  KEYED_WORDS_LOCAL_CACHE.with(|slot| {
+    *slot.borrow_mut() = Some((*key, words));
+  });
+  words
+}
+
+#[cfg(feature = "std")]
 #[derive(Clone, Copy, Debug)]
 pub struct ParallelPolicyOverride {
   pub oneshot: dispatch_tables::ParallelTable,
@@ -220,14 +285,14 @@ fn parallel_policy_threads_with_admission(
     let dispatch_policy = dispatch::parallel_dispatch();
     match mode {
       ParallelPolicyKind::Oneshot => dispatch_policy.oneshot,
-      ParallelPolicyKind::KeyedOneshot => dispatch_policy.oneshot,
-      ParallelPolicyKind::DeriveOneshot => dispatch_policy.oneshot,
-      ParallelPolicyKind::Xof => dispatch_policy.oneshot,
-      ParallelPolicyKind::KeyedXof => dispatch_policy.oneshot,
-      ParallelPolicyKind::DeriveXof => dispatch_policy.oneshot,
+      ParallelPolicyKind::KeyedOneshot => dispatch_policy.keyed_oneshot,
+      ParallelPolicyKind::DeriveOneshot => dispatch_policy.derive_oneshot,
+      ParallelPolicyKind::Xof => dispatch_policy.xof,
+      ParallelPolicyKind::KeyedXof => dispatch_policy.keyed_xof,
+      ParallelPolicyKind::DeriveXof => dispatch_policy.derive_xof,
       ParallelPolicyKind::Update => dispatch_policy.streaming,
-      ParallelPolicyKind::KeyedUpdate => dispatch_policy.streaming,
-      ParallelPolicyKind::DeriveUpdate => dispatch_policy.streaming,
+      ParallelPolicyKind::KeyedUpdate => dispatch_policy.keyed_streaming,
+      ParallelPolicyKind::DeriveUpdate => dispatch_policy.derive_streaming,
     }
   };
 
@@ -275,7 +340,7 @@ fn parallel_threads_for_policy(
     let spawn_cost = policy.spawn_cost_bytes.saturating_mul(candidate - 1);
     let work_cost = bytes_per_core.saturating_mul(candidate);
     let fitted_required = merge_cost.saturating_add(spawn_cost).saturating_add(work_cost);
-    let required = scale_parallel_required_bytes(mode, fitted_required);
+    let required = scale_parallel_required_bytes(mode, fitted_required, input_bytes);
     if input_bytes >= required {
       return Some(candidate);
     }
@@ -299,11 +364,15 @@ fn parallel_merge_divisor(mode: ParallelPolicyKind, commit_full_chunks: usize, t
 
 #[cfg(feature = "std")]
 #[inline]
-fn scale_parallel_required_bytes(mode: ParallelPolicyKind, required: usize) -> usize {
+fn scale_parallel_required_bytes(mode: ParallelPolicyKind, required: usize, input_bytes: usize) -> usize {
   let (num, den) = match mode {
     // Fitted from crossover data: one-shot/XOF benefit earlier than update.
     ParallelPolicyKind::Oneshot | ParallelPolicyKind::KeyedOneshot | ParallelPolicyKind::DeriveOneshot => {
-      (13usize, 10usize)
+      if input_bytes >= (1024 * 1024) {
+        (10usize, 10usize)
+      } else {
+        (12usize, 10usize)
+      }
     }
     ParallelPolicyKind::Update | ParallelPolicyKind::KeyedUpdate | ParallelPolicyKind::DeriveUpdate => {
       (15usize, 10usize)
@@ -317,6 +386,8 @@ fn scale_parallel_required_bytes(mode: ParallelPolicyKind, required: usize) -> u
 thread_local! {
   static BLAKE3_SUBTREE_SCRATCH0: RefCell<alloc::vec::Vec<[u32; 8]>> = const { RefCell::new(alloc::vec::Vec::new()) };
   static BLAKE3_SUBTREE_SCRATCH1: RefCell<alloc::vec::Vec<[u32; 8]>> = const { RefCell::new(alloc::vec::Vec::new()) };
+  static DERIVE_KEY_CONTEXT_LOCAL_CACHE: RefCell<Option<(String, [u32; 8])>> = const { RefCell::new(None) };
+  static KEYED_WORDS_LOCAL_CACHE: RefCell<Option<([u8; KEY_LEN], [u32; 8])>> = const { RefCell::new(None) };
 }
 
 #[cfg(feature = "std")]
@@ -2606,6 +2677,9 @@ impl Blake3 {
   #[inline]
   #[must_use]
   pub fn keyed_digest(key: &[u8; KEY_LEN], data: &[u8]) -> [u8; OUT_LEN] {
+    #[cfg(feature = "std")]
+    let key_words = keyed_words_cached(key);
+    #[cfg(not(feature = "std"))]
     let key_words = words8_from_le_bytes_32(key);
 
     // Fast path for tiny keyed inputs (≤64 bytes): bypass generic machinery
@@ -2672,35 +2746,10 @@ impl Blake3 {
   #[inline]
   #[must_use]
   pub fn derive_key(context: &str, key_material: &[u8]) -> [u8; OUT_LEN] {
-    // Step 1: Get or compute the context key words (cached for std builds)
     let context_key_words = {
       #[cfg(feature = "std")]
       {
-        // Try to get from cache first
-        let cache = get_derive_key_context_cache();
-        if let Ok(guard) = cache.lock() {
-          if let Some(&cached) = guard.get(context) {
-            cached
-          } else {
-            // Not in cache: compute and store
-            drop(guard); // Drop lock before computation
-            let context_bytes = context.as_bytes();
-            let kernel_ctx = dispatch::hasher_dispatch().size_class_kernel(context_bytes.len());
-            let computed = digest_oneshot_words(kernel_ctx, IV, DERIVE_KEY_CONTEXT, context_bytes);
-            if let Ok(mut guard) = cache.lock() {
-              // Limit cache size to prevent unbounded growth
-              if guard.len() < 64 {
-                guard.insert(context.to_string(), computed);
-              }
-            }
-            computed
-          }
-        } else {
-          // Lock failed: compute without caching
-          let context_bytes = context.as_bytes();
-          let kernel_ctx = dispatch::hasher_dispatch().size_class_kernel(context_bytes.len());
-          digest_oneshot_words(kernel_ctx, IV, DERIVE_KEY_CONTEXT, context_bytes)
-        }
+        derive_context_key_words_cached(context)
       }
       #[cfg(not(feature = "std"))]
       {

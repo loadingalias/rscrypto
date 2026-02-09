@@ -809,6 +809,116 @@ pub unsafe fn hash4_neon(
   }
 }
 
+/// Hash exactly 4 contiguous full chunks (4 * 1024 bytes) and write 4 CVs.
+///
+/// This is the hot-path worker used by `hash_many_contiguous_neon` to avoid
+/// generic variable-size handling and repeated contiguous-shape checks.
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn hash4_contiguous_full_chunks_neon_to_out(
+  input0: *const u8,
+  key: &[u32; 8],
+  counter: u64,
+  flags: u32,
+  out: *mut u8,
+) {
+  #[inline(always)]
+  unsafe fn storeu_128(src: uint32x4_t, dest: *mut u8) {
+    vst1q_u8(dest, vreinterpretq_u8_u32(src));
+  }
+
+  let mut h_vecs = [
+    vdupq_n_u32(key[0]),
+    vdupq_n_u32(key[1]),
+    vdupq_n_u32(key[2]),
+    vdupq_n_u32(key[3]),
+    vdupq_n_u32(key[4]),
+    vdupq_n_u32(key[5]),
+    vdupq_n_u32(key[6]),
+    vdupq_n_u32(key[7]),
+  ];
+
+  let counter_low_vec = vld1q_u32(
+    [
+      counter as u32,
+      counter.wrapping_add(1) as u32,
+      counter.wrapping_add(2) as u32,
+      counter.wrapping_add(3) as u32,
+    ]
+    .as_ptr(),
+  );
+  let counter_high_vec = vld1q_u32(
+    [
+      (counter >> 32) as u32,
+      (counter.wrapping_add(1) >> 32) as u32,
+      (counter.wrapping_add(2) >> 32) as u32,
+      (counter.wrapping_add(3) >> 32) as u32,
+    ]
+    .as_ptr(),
+  );
+
+  let block_len_vec = vdupq_n_u32(BLOCK_LEN as u32);
+  let mut block_flags = flags | CHUNK_START;
+  let rot8_tbl = vld1q_u8(ROT8_TABLE.as_ptr());
+
+  for block_idx in 0..(CHUNK_LEN / BLOCK_LEN) {
+    if block_idx + 1 == (CHUNK_LEN / BLOCK_LEN) {
+      block_flags |= super::CHUNK_END;
+    }
+    let msg = load_msg_vecs_transposed_contiguous(input0, block_idx * BLOCK_LEN);
+    let block_flags_vec = vdupq_n_u32(block_flags);
+
+    let mut v = [
+      h_vecs[0],
+      h_vecs[1],
+      h_vecs[2],
+      h_vecs[3],
+      h_vecs[4],
+      h_vecs[5],
+      h_vecs[6],
+      h_vecs[7],
+      vdupq_n_u32(IV[0]),
+      vdupq_n_u32(IV[1]),
+      vdupq_n_u32(IV[2]),
+      vdupq_n_u32(IV[3]),
+      counter_low_vec,
+      counter_high_vec,
+      block_len_vec,
+      block_flags_vec,
+    ];
+
+    round4(&mut v, &msg, 0, rot8_tbl);
+    round4(&mut v, &msg, 1, rot8_tbl);
+    round4(&mut v, &msg, 2, rot8_tbl);
+    round4(&mut v, &msg, 3, rot8_tbl);
+    round4(&mut v, &msg, 4, rot8_tbl);
+    round4(&mut v, &msg, 5, rot8_tbl);
+    round4(&mut v, &msg, 6, rot8_tbl);
+
+    h_vecs[0] = veorq_u32(v[0], v[8]);
+    h_vecs[1] = veorq_u32(v[1], v[9]);
+    h_vecs[2] = veorq_u32(v[2], v[10]);
+    h_vecs[3] = veorq_u32(v[3], v[11]);
+    h_vecs[4] = veorq_u32(v[4], v[12]);
+    h_vecs[5] = veorq_u32(v[5], v[13]);
+    h_vecs[6] = veorq_u32(v[6], v[14]);
+    h_vecs[7] = veorq_u32(v[7], v[15]);
+
+    block_flags = flags;
+  }
+
+  let mut lo = [h_vecs[0], h_vecs[1], h_vecs[2], h_vecs[3]];
+  let mut hi = [h_vecs[4], h_vecs[5], h_vecs[6], h_vecs[7]];
+  transpose_vecs(&mut lo);
+  transpose_vecs(&mut hi);
+
+  for lane in 0..4 {
+    let dst = out.add(lane * OUT_LEN);
+    storeu_128(lo[lane], dst.add(0));
+    storeu_128(hi[lane], dst.add(16));
+  }
+}
+
 /// Hash exactly one full chunk (1024B) and return the *root* hash bytes.
 ///
 /// This is a dedicated aarch64 fast path for `len == 1024` oneshot hashing.
@@ -1022,33 +1132,31 @@ pub unsafe fn hash_many_contiguous_neon(
 
   let mut idx = 0usize;
 
+  // Process 8 chunks per loop iteration when possible: two specialized 4-chunk
+  // kernels with fixed contiguous/full-chunk shape.
+  while idx + 8 <= num_chunks {
+    // SAFETY: caller guarantees `input` is valid for `num_chunks * CHUNK_LEN`.
+    let src0 = unsafe { input.add(idx * CHUNK_LEN) };
+    // SAFETY: caller guarantees `out` is valid for `num_chunks * OUT_LEN`.
+    let dst0 = unsafe { out.add(idx * OUT_LEN) };
+    hash4_contiguous_full_chunks_neon_to_out(src0, key, counter, flags, dst0);
+    hash4_contiguous_full_chunks_neon_to_out(
+      src0.add(4 * CHUNK_LEN),
+      key,
+      counter.wrapping_add(4),
+      flags,
+      dst0.add(4 * OUT_LEN),
+    );
+    idx += 8;
+    counter = counter.wrapping_add(8);
+  }
+
   while idx + 4 <= num_chunks {
     // SAFETY: caller guarantees `input` is valid for `num_chunks * CHUNK_LEN`.
-    let input_ptrs = unsafe {
-      [
-        input.add(idx * CHUNK_LEN),
-        input.add((idx + 1) * CHUNK_LEN),
-        input.add((idx + 2) * CHUNK_LEN),
-        input.add((idx + 3) * CHUNK_LEN),
-      ]
-    };
-
-    // SAFETY: the caller guarantees `out` is valid for `num_chunks * OUT_LEN`
-    // bytes. Here we write exactly `4 * OUT_LEN` bytes starting at
-    // `idx * OUT_LEN`.
-    let out_buf: &mut [[u8; OUT_LEN]; 4] = unsafe { &mut *(out.add(idx * OUT_LEN) as *mut [[u8; OUT_LEN]; 4]) };
-    hash4_neon(
-      input_ptrs,
-      CHUNK_LEN,
-      key,
-      counter,
-      true,
-      flags,
-      CHUNK_START,
-      super::CHUNK_END,
-      out_buf,
-    );
-
+    let src = unsafe { input.add(idx * CHUNK_LEN) };
+    // SAFETY: caller guarantees `out` is valid for `num_chunks * OUT_LEN`.
+    let dst = unsafe { out.add(idx * OUT_LEN) };
+    hash4_contiguous_full_chunks_neon_to_out(src, key, counter, flags, dst);
     idx += 4;
     counter = counter.wrapping_add(4);
   }
