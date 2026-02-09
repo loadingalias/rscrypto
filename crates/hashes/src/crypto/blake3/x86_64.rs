@@ -252,7 +252,13 @@ pub(crate) unsafe fn compress_cv_avx2_bytes(
   compress_cv_avx2(chaining_value, m0, m1, m2, m3, counter, block_len, flags)
 }
 
+// On ASM-supported platforms, we prefer the handwritten assembly. This intrinsics
+// version is kept as fallback for other x86_64 platforms (e.g., FreeBSD, illumos).
 #[cfg(target_arch = "x86_64")]
+#[cfg_attr(
+  any(target_os = "linux", target_os = "macos", target_os = "windows"),
+  allow(dead_code)
+)]
 #[target_feature(enable = "avx512f,avx512vl,avx2,sse4.1,ssse3")]
 pub(crate) unsafe fn compress_cv_avx512_bytes(
   chaining_value: &[u32; 8],
@@ -1134,15 +1140,30 @@ pub unsafe fn chunk_compress_blocks_avx512(
 
   if blocks.len() == BLOCK_LEN {
     let start = if *blocks_compressed == 0 { CHUNK_START } else { 0 };
-    *chaining_value = unsafe {
-      compress_cv_avx512_bytes(
-        chaining_value,
-        blocks.as_ptr(),
-        chunk_counter,
-        BLOCK_LEN as u32,
-        flags | start,
-      )
-    };
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+    {
+      *chaining_value = unsafe {
+        asm::compress_in_place_avx512(
+          chaining_value,
+          blocks.as_ptr(),
+          chunk_counter,
+          BLOCK_LEN as u32,
+          flags | start,
+        )
+      };
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+      *chaining_value = unsafe {
+        compress_cv_avx512_bytes(
+          chaining_value,
+          blocks.as_ptr(),
+          chunk_counter,
+          BLOCK_LEN as u32,
+          flags | start,
+        )
+      };
+    }
     *blocks_compressed = blocks_compressed.wrapping_add(1);
     return;
   }
@@ -1151,15 +1172,30 @@ pub unsafe fn chunk_compress_blocks_avx512(
   debug_assert!(remainder.is_empty());
   for block_bytes in block_slices {
     let start = if *blocks_compressed == 0 { CHUNK_START } else { 0 };
-    *chaining_value = unsafe {
-      compress_cv_avx512_bytes(
-        chaining_value,
-        block_bytes.as_ptr(),
-        chunk_counter,
-        BLOCK_LEN as u32,
-        flags | start,
-      )
-    };
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+    {
+      *chaining_value = unsafe {
+        asm::compress_in_place_avx512(
+          chaining_value,
+          block_bytes.as_ptr(),
+          chunk_counter,
+          BLOCK_LEN as u32,
+          flags | start,
+        )
+      };
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+      *chaining_value = unsafe {
+        compress_cv_avx512_bytes(
+          chaining_value,
+          block_bytes.as_ptr(),
+          chunk_counter,
+          BLOCK_LEN as u32,
+          flags | start,
+        )
+      };
+    }
     *blocks_compressed = blocks_compressed.wrapping_add(1);
   }
 }
