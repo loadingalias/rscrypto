@@ -840,17 +840,20 @@ pub static PROFILE_AARCH64_GRAVITON2: FamilyProfile = FamilyProfile {
 pub static PROFILE_AARCH64_GRAVITON2: FamilyProfile = default_kind_profile();
 
 // Family Profile: AARCH64_SERVER_NEON
+// Server ARM profile: use NEON everywhere like Graviton2. Server workloads
+// prioritize throughput over latency, and NEON is faster for all sizes on
+// modern server ARM cores (Neoverse N1/N2/V1, Graviton, Ampere Altra, etc.).
 #[cfg(target_arch = "aarch64")]
 pub static PROFILE_AARCH64_SERVER_NEON: FamilyProfile = FamilyProfile {
   dispatch: DispatchTable {
-    boundaries: [64, 4095, 4096],
-    xs: KernelId::Portable,
-    s: KernelId::Portable,
+    boundaries: DEFAULT_BOUNDARIES,
+    xs: KernelId::Aarch64Neon,
+    s: KernelId::Aarch64Neon,
     m: KernelId::Aarch64Neon,
     l: KernelId::Aarch64Neon,
   },
   streaming: StreamingTable {
-    stream: KernelId::Portable,
+    stream: KernelId::Aarch64Neon,
     bulk: KernelId::Aarch64Neon,
     bulk_sizeclass_threshold: THRESHOLD_NEON,
   },
