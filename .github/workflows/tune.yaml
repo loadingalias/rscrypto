@@ -13,6 +13,11 @@ on:
         required: false
         type: boolean
         default: true
+      run_intel_spr:
+        description: "Run on Intel Sapphire Rapids (crc-fast competitive runner)"
+        required: false
+        type: boolean
+        default: false
       run_intel_icl:
         description: "Run on Intel Ice Lake"
         required: false
@@ -83,6 +88,32 @@ jobs:
         TUNE_MEASURE_MS="" \
         scripts/ci/run-tune.sh
       artifact_name: tuning-intel
+      artifact_path: tune-results/
+
+  tune-intel-spr:
+    if: github.event.inputs.run_intel_spr == 'true'
+    uses: ./.github/workflows/_rust-job.yaml
+    with:
+      runner: runs-on=${{ github.run_id }}/runner=intel-spr
+      timeout_minutes: 60
+      setup_kind: runson
+      runson_mode: runson-bench
+      pre_script: |
+        echo "Tune host: intel-spr"
+        uname -a
+        lscpu
+      run_script: |
+        TUNE_OUTPUT_DIR=tune-results \
+        TUNE_QUICK=${{ github.event.inputs.quick }} \
+        TUNE_CRATES="${{ github.event.inputs.crates }}" \
+        TUNE_ONLY="${{ github.event.inputs.only }}" \
+        TUNE_APPLY=${{ github.event.inputs.apply }} \
+        TUNE_SELF_CHECK=false \
+        TUNE_ENFORCE_TARGETS=false \
+        TUNE_WARMUP_MS="" \
+        TUNE_MEASURE_MS="" \
+        scripts/ci/run-tune.sh
+      artifact_name: tuning-intel-spr
       artifact_path: tune-results/
 
   tune-intel-icl:
