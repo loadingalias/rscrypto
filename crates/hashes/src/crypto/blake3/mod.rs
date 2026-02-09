@@ -1804,7 +1804,8 @@ impl OutputState {
             continue;
           }
           kernels::Blake3KernelId::X86Avx512 if blocks_remaining >= 2 => {
-            // SAFETY: AVX-512 implies SSE4.1, and dispatch validates CPU features.
+            // SAFETY: AVX-512 is available, and dispatch validates CPU features.
+            // On ASM platforms this uses AVX-512 asm; on others it falls back to SSE4.1.
             unsafe {
               x86_64::avx512::root_output_blocks2(
                 &self.input_chaining_value,
@@ -1820,7 +1821,8 @@ impl OutputState {
             continue;
           }
           kernels::Blake3KernelId::X86Avx512 if blocks_remaining >= 1 => {
-            // SAFETY: AVX-512 implies SSE4.1, and dispatch validates CPU features.
+            // SAFETY: AVX-512 is available, and dispatch validates CPU features.
+            // On ASM platforms this uses AVX-512 asm; on others it falls back to SSE4.1.
             unsafe {
               x86_64::avx512::root_output_blocks1(
                 &self.input_chaining_value,
@@ -1870,7 +1872,7 @@ impl OutputState {
             continue;
           }
           kernels::Blake3KernelId::X86Avx2 if blocks_remaining >= 2 => {
-            // SAFETY: AVX2 implies SSE4.1, and dispatch validates CPU features.
+            // SAFETY: AVX2 implies SSE4.1 on the platforms we care about.
             unsafe {
               x86_64::avx2::root_output_blocks2(
                 &self.input_chaining_value,
@@ -1886,7 +1888,7 @@ impl OutputState {
             continue;
           }
           kernels::Blake3KernelId::X86Avx2 if blocks_remaining >= 1 => {
-            // SAFETY: AVX2 implies SSE4.1, and dispatch validates CPU features.
+            // SAFETY: AVX2 implies SSE4.1 on the platforms we care about.
             unsafe {
               x86_64::avx2::root_output_blocks1(
                 &self.input_chaining_value,
@@ -1919,8 +1921,7 @@ impl OutputState {
             continue;
           }
           kernels::Blake3KernelId::X86Sse41 if blocks_remaining >= 2 => {
-            // SAFETY: required CPU features are validated by dispatch before
-            // selecting this kernel, and `out` has at least 2 blocks.
+            // SAFETY: required CPU features are validated by dispatch.
             unsafe {
               x86_64::sse41::root_output_blocks2(
                 &self.input_chaining_value,
@@ -1936,8 +1937,7 @@ impl OutputState {
             continue;
           }
           kernels::Blake3KernelId::X86Sse41 if blocks_remaining >= 1 => {
-            // SAFETY: required CPU features are validated by dispatch before
-            // selecting this kernel, and `out` has at least 1 block.
+            // SAFETY: required CPU features are validated by dispatch.
             unsafe {
               x86_64::sse41::root_output_blocks1(
                 &self.input_chaining_value,
@@ -3436,24 +3436,31 @@ impl Digest for Blake3 {
         );
       }
 
-      // For larger single-chunk inputs, use the x86-specific fast path if available
+      // For larger single-chunk inputs with blocks_compressed == 0, use x86-specific fast path.
+      // Note: We can only use compress_to_root_words when blocks_compressed == 0 because
+      // it unconditionally adds CHUNK_START. For inputs > 64 bytes where we've already
+      // compressed some blocks, we must use the standard path with correct flags.
       #[cfg(target_arch = "x86_64")]
       {
-        match self.kernel.id {
-          kernels::Blake3KernelId::X86Sse41 | kernels::Blake3KernelId::X86Avx2 | kernels::Blake3KernelId::X86Avx512 => {
-            let mut block = self.chunk_state.block;
-            if block_len != BLOCK_LEN {
-              block[block_len..].fill(0);
+        if self.chunk_state.blocks_compressed == 0 {
+          match self.kernel.id {
+            kernels::Blake3KernelId::X86Sse41
+            | kernels::Blake3KernelId::X86Avx2
+            | kernels::Blake3KernelId::X86Avx512 => {
+              let mut block = self.chunk_state.block;
+              if block_len != BLOCK_LEN {
+                block[block_len..].fill(0);
+              }
+
+              let cv = self.chunk_state.chaining_value;
+
+              // Use the unified compress_to_root_words helper
+              // Note: compress_to_root_words adds CHUNK_START | CHUNK_END | ROOT internally
+              let out_words = compress_to_root_words(self.kernel, cv, &block, block_len, self.flags);
+              return words8_to_le_bytes(&out_words);
             }
-
-            let cv = self.chunk_state.chaining_value;
-
-            // Use the unified compress_to_root_words helper
-            // Note: compress_to_root_words adds CHUNK_START | CHUNK_END | ROOT internally
-            let out_words = compress_to_root_words(self.kernel, cv, &block, block_len, self.flags);
-            return words8_to_le_bytes(&out_words);
+            _ => {}
           }
-          _ => {}
         }
       }
     }
