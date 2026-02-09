@@ -508,7 +508,13 @@ pub unsafe fn root_output_blocks4(
   }
 }
 
-/// Generate 1 root output block (64 bytes).
+/// Generate 1 root output block (64 bytes) using row-wise SIMD.
+///
+/// This uses the same row-wise representation as compress_ssse3:
+/// - row0 = [v0, v1, v2, v3] = cv[0..4]
+/// - row1 = [v4, v5, v6, v7] = cv[4..8]
+/// - row2 = [v8, v9, v10, v11] = IV[0..4]
+/// - row3 = [v12, v13, v14, v15] = [counter_lo, counter_hi, block_len, flags]
 ///
 /// # Safety
 /// Caller must ensure SSE4.1+SSSE3 is available and that `out` is valid for
@@ -523,66 +529,171 @@ pub unsafe fn root_output_blocks1(
   out: *mut u8,
 ) {
   unsafe {
-    let rot16_mask = _mm_setr_epi8(2, 3, 0, 1, 6, 7, 4, 5, 10, 11, 8, 9, 14, 15, 12, 13);
-    let rot8_mask = _mm_setr_epi8(1, 2, 3, 0, 5, 6, 7, 4, 9, 10, 11, 8, 13, 14, 15, 12);
+    let rot16 = _mm_setr_epi8(2, 3, 0, 1, 6, 7, 4, 5, 10, 11, 8, 9, 14, 15, 12, 13);
+    let rot8 = _mm_setr_epi8(1, 2, 3, 0, 5, 6, 7, 4, 9, 10, 11, 8, 13, 14, 15, 12);
 
-    let mut v = [
-      set1(chaining_value[0]),
-      set1(chaining_value[1]),
-      set1(chaining_value[2]),
-      set1(chaining_value[3]),
-      set1(chaining_value[4]),
-      set1(chaining_value[5]),
-      set1(chaining_value[6]),
-      set1(chaining_value[7]),
-      set1(IV[0]),
-      set1(IV[1]),
-      set1(IV[2]),
-      set1(IV[3]),
-      set1(counter_low(counter)),
-      set1(counter_high(counter)),
-      set1(block_len),
-      set1(flags),
-    ];
+    // Load state row-wise (4 words per 128-bit register)
+    let cv_lo = _mm_loadu_si128(chaining_value.as_ptr().cast());
+    let cv_hi = _mm_loadu_si128(chaining_value.as_ptr().add(4).cast());
 
-    // Load message words as vectors
-    let msg_vecs: [__m128i; 16] = core::array::from_fn(|i| set1(block_words[i]));
+    let mut row0 = cv_lo;
+    let mut row1 = cv_hi;
+    let mut row2 = _mm_loadu_si128(IV.as_ptr().cast());
+    let mut row3 = _mm_set_epi32(flags as i32, block_len as i32, (counter >> 32) as i32, counter as i32);
 
-    round(&mut v, &msg_vecs, 0, rot16_mask, rot8_mask);
-    round(&mut v, &msg_vecs, 1, rot16_mask, rot8_mask);
-    round(&mut v, &msg_vecs, 2, rot16_mask, rot8_mask);
-    round(&mut v, &msg_vecs, 3, rot16_mask, rot8_mask);
-    round(&mut v, &msg_vecs, 4, rot16_mask, rot8_mask);
-    round(&mut v, &msg_vecs, 5, rot16_mask, rot8_mask);
-    round(&mut v, &msg_vecs, 6, rot16_mask, rot8_mask);
+    // Load message words row-wise
+    let m0 = _mm_loadu_si128(block_words.as_ptr().cast());
+    let m1 = _mm_loadu_si128(block_words.as_ptr().add(4).cast());
+    let m2 = _mm_loadu_si128(block_words.as_ptr().add(8).cast());
+    let m3 = _mm_loadu_si128(block_words.as_ptr().add(12).cast());
 
-    // XOR and store result (only 64 bytes for single block)
-    let cv_vecs = [
-      set1(chaining_value[0]),
-      set1(chaining_value[1]),
-      set1(chaining_value[2]),
-      set1(chaining_value[3]),
-      set1(chaining_value[4]),
-      set1(chaining_value[5]),
-      set1(chaining_value[6]),
-      set1(chaining_value[7]),
-    ];
+    // G function macro for row-wise operation
+    macro_rules! g {
+      ($a:expr, $b:expr, $c:expr, $d:expr, $mx:expr, $my:expr) => {{
+        $a = _mm_add_epi32($a, $b);
+        $a = _mm_add_epi32($a, $mx);
+        $d = _mm_xor_si128($d, $a);
+        $d = _mm_shuffle_epi8($d, rot16);
+        $c = _mm_add_epi32($c, $d);
+        $b = _mm_xor_si128($b, $c);
+        $b = _mm_or_si128(_mm_srli_epi32($b, 12), _mm_slli_epi32($b, 20));
+        $a = _mm_add_epi32($a, $b);
+        $a = _mm_add_epi32($a, $my);
+        $d = _mm_xor_si128($d, $a);
+        $d = _mm_shuffle_epi8($d, rot8);
+        $c = _mm_add_epi32($c, $d);
+        $b = _mm_xor_si128($b, $c);
+        $b = _mm_or_si128(_mm_srli_epi32($b, 7), _mm_slli_epi32($b, 25));
+      }};
+    }
 
-    let words_out = [
-      xor(xor(v[0], v[8]), cv_vecs[0]),
-      xor(xor(v[1], v[9]), cv_vecs[1]),
-      xor(xor(v[2], v[10]), cv_vecs[2]),
-      xor(xor(v[3], v[11]), cv_vecs[3]),
-      xor(xor(v[4], v[12]), cv_vecs[4]),
-      xor(xor(v[5], v[13]), cv_vecs[5]),
-      xor(xor(v[6], v[14]), cv_vecs[6]),
-      xor(xor(v[7], v[15]), cv_vecs[7]),
-    ];
+    // Round macro with diagonalization
+    macro_rules! round_row {
+      ($mx0:expr, $my0:expr, $mx1:expr, $my1:expr) => {{
+        // Column step
+        g!(row0, row1, row2, row3, $mx0, $my0);
 
-    storeu(words_out[0], out);
-    storeu(words_out[1], out.add(16));
-    storeu(words_out[2], out.add(32));
-    storeu(words_out[3], out.add(48));
+        // Diagonalize
+        row1 = _mm_shuffle_epi32(row1, 0b00_11_10_01); // rotate left 1
+        row2 = _mm_shuffle_epi32(row2, 0b01_00_11_10); // rotate left 2
+        row3 = _mm_shuffle_epi32(row3, 0b10_01_00_11); // rotate left 3
+
+        // Diagonal step
+        g!(row0, row1, row2, row3, $mx1, $my1);
+
+        // Undiagonalize
+        row1 = _mm_shuffle_epi32(row1, 0b10_01_00_11); // rotate right 1
+        row2 = _mm_shuffle_epi32(row2, 0b01_00_11_10); // rotate right 2
+        row3 = _mm_shuffle_epi32(row3, 0b00_11_10_01); // rotate right 3
+      }};
+    }
+
+    // Message permutation helpers (same pattern as compress_ssse3)
+    // Round 0: identity
+    let t0 = _mm_shuffle_epi32(m0, 0b10_00_10_00);
+    let t1 = _mm_shuffle_epi32(m1, 0b10_00_10_00);
+    let mx0 = _mm_unpacklo_epi64(t0, t1);
+    let t0 = _mm_shuffle_epi32(m0, 0b11_01_11_01);
+    let t1 = _mm_shuffle_epi32(m1, 0b11_01_11_01);
+    let my0 = _mm_unpacklo_epi64(t0, t1);
+    let t0 = _mm_shuffle_epi32(m2, 0b10_00_10_00);
+    let t1 = _mm_shuffle_epi32(m3, 0b10_00_10_00);
+    let mx1 = _mm_unpacklo_epi64(t0, t1);
+    let t0 = _mm_shuffle_epi32(m2, 0b11_01_11_01);
+    let t1 = _mm_shuffle_epi32(m3, 0b11_01_11_01);
+    let my1 = _mm_unpacklo_epi64(t0, t1);
+    round_row!(mx0, my0, mx1, my1);
+
+    // Rounds 1-6: use the same permutation schedule as compress_ssse3
+    // We inline the gather4 pattern for each round's message schedule
+    macro_rules! gather_word {
+      ($idx:expr) => {{
+        match $idx {
+          0 => _mm_shuffle_epi32(m0, 0x00),
+          1 => _mm_shuffle_epi32(m0, 0x55),
+          2 => _mm_shuffle_epi32(m0, 0xAA),
+          3 => _mm_shuffle_epi32(m0, 0xFF),
+          4 => _mm_shuffle_epi32(m1, 0x00),
+          5 => _mm_shuffle_epi32(m1, 0x55),
+          6 => _mm_shuffle_epi32(m1, 0xAA),
+          7 => _mm_shuffle_epi32(m1, 0xFF),
+          8 => _mm_shuffle_epi32(m2, 0x00),
+          9 => _mm_shuffle_epi32(m2, 0x55),
+          10 => _mm_shuffle_epi32(m2, 0xAA),
+          11 => _mm_shuffle_epi32(m2, 0xFF),
+          12 => _mm_shuffle_epi32(m3, 0x00),
+          13 => _mm_shuffle_epi32(m3, 0x55),
+          14 => _mm_shuffle_epi32(m3, 0xAA),
+          15 => _mm_shuffle_epi32(m3, 0xFF),
+          _ => core::hint::unreachable_unchecked(),
+        }
+      }};
+    }
+
+    macro_rules! gather4 {
+      ($a:expr, $b:expr, $c:expr, $d:expr) => {{
+        let ab = _mm_unpacklo_epi32(gather_word!($a), gather_word!($b));
+        let cd = _mm_unpacklo_epi32(gather_word!($c), gather_word!($d));
+        _mm_unpacklo_epi64(ab, cd)
+      }};
+    }
+
+    // Round 1: [2,6,3,10,7,0,4,13,1,11,12,5,9,14,15,8]
+    let mx0 = gather4!(2, 3, 7, 4);
+    let my0 = gather4!(6, 10, 0, 13);
+    let mx1 = gather4!(1, 12, 9, 15);
+    let my1 = gather4!(11, 5, 14, 8);
+    round_row!(mx0, my0, mx1, my1);
+
+    // Round 2: [3,4,10,12,13,2,7,14,6,5,9,0,11,15,8,1]
+    let mx0 = gather4!(3, 10, 13, 7);
+    let my0 = gather4!(4, 12, 2, 14);
+    let mx1 = gather4!(6, 9, 11, 8);
+    let my1 = gather4!(5, 0, 15, 1);
+    round_row!(mx0, my0, mx1, my1);
+
+    // Round 3: [10,7,12,9,14,3,13,15,4,0,11,2,5,8,1,6]
+    let mx0 = gather4!(10, 12, 14, 13);
+    let my0 = gather4!(7, 9, 3, 15);
+    let mx1 = gather4!(4, 11, 5, 1);
+    let my1 = gather4!(0, 2, 8, 6);
+    round_row!(mx0, my0, mx1, my1);
+
+    // Round 4: [12,13,9,11,15,10,14,8,7,2,5,3,0,1,6,4]
+    let mx0 = gather4!(12, 9, 15, 14);
+    let my0 = gather4!(13, 11, 10, 8);
+    let mx1 = gather4!(7, 5, 0, 6);
+    let my1 = gather4!(2, 3, 1, 4);
+    round_row!(mx0, my0, mx1, my1);
+
+    // Round 5: [9,14,11,5,8,12,15,1,13,3,0,10,2,6,4,7]
+    let mx0 = gather4!(9, 11, 8, 15);
+    let my0 = gather4!(14, 5, 12, 1);
+    let mx1 = gather4!(13, 0, 2, 4);
+    let my1 = gather4!(3, 10, 6, 7);
+    round_row!(mx0, my0, mx1, my1);
+
+    // Round 6: [11,15,5,0,1,9,8,6,14,10,2,12,3,4,7,13]
+    let mx0 = gather4!(11, 5, 1, 8);
+    let my0 = gather4!(15, 0, 9, 6);
+    let mx1 = gather4!(14, 2, 3, 7);
+    let my1 = gather4!(10, 12, 4, 13);
+    round_row!(mx0, my0, mx1, my1);
+
+    // Full finalization for XOF output (all 16 words = 64 bytes)
+    // out[0..4]   = row0 ^ row2
+    // out[4..8]   = row1 ^ row3
+    // out[8..12]  = row2 ^ cv_lo
+    // out[12..16] = row3 ^ cv_hi
+    let out0 = _mm_xor_si128(row0, row2);
+    let out1 = _mm_xor_si128(row1, row3);
+    let out2 = _mm_xor_si128(row2, cv_lo);
+    let out3 = _mm_xor_si128(row3, cv_hi);
+
+    _mm_storeu_si128(out.cast(), out0);
+    _mm_storeu_si128(out.add(16).cast(), out1);
+    _mm_storeu_si128(out.add(32).cast(), out2);
+    _mm_storeu_si128(out.add(48).cast(), out3);
   }
 }
 
@@ -600,124 +711,16 @@ pub unsafe fn root_output_blocks2(
   flags: u32,
   out: *mut u8,
 ) {
+  // Call root_output_blocks1 twice with consecutive counters
   unsafe {
-    let rot16_mask = _mm_setr_epi8(2, 3, 0, 1, 6, 7, 4, 5, 10, 11, 8, 9, 14, 15, 12, 13);
-    let rot8_mask = _mm_setr_epi8(1, 2, 3, 0, 5, 6, 7, 4, 9, 10, 11, 8, 13, 14, 15, 12);
-
-    let cv_vecs = [
-      set1(chaining_value[0]),
-      set1(chaining_value[1]),
-      set1(chaining_value[2]),
-      set1(chaining_value[3]),
-      set1(chaining_value[4]),
-      set1(chaining_value[5]),
-      set1(chaining_value[6]),
-      set1(chaining_value[7]),
-    ];
-
-    let msg_vecs: [__m128i; 16] = core::array::from_fn(|i| set1(block_words[i]));
-    let iv0 = set1(IV[0]);
-    let iv1 = set1(IV[1]);
-    let iv2 = set1(IV[2]);
-    let iv3 = set1(IV[3]);
-    let block_len_vec = set1(block_len);
-    let flags_vec = set1(flags);
-
-    // Generate first block
-    let mut v0 = [
-      cv_vecs[0],
-      cv_vecs[1],
-      cv_vecs[2],
-      cv_vecs[3],
-      cv_vecs[4],
-      cv_vecs[5],
-      cv_vecs[6],
-      cv_vecs[7],
-      iv0,
-      iv1,
-      iv2,
-      iv3,
-      set1(counter_low(counter)),
-      set1(counter_high(counter)),
-      block_len_vec,
-      flags_vec,
-    ];
-
-    round(&mut v0, &msg_vecs, 0, rot16_mask, rot8_mask);
-    round(&mut v0, &msg_vecs, 1, rot16_mask, rot8_mask);
-    round(&mut v0, &msg_vecs, 2, rot16_mask, rot8_mask);
-    round(&mut v0, &msg_vecs, 3, rot16_mask, rot8_mask);
-    round(&mut v0, &msg_vecs, 4, rot16_mask, rot8_mask);
-    round(&mut v0, &msg_vecs, 5, rot16_mask, rot8_mask);
-    round(&mut v0, &msg_vecs, 6, rot16_mask, rot8_mask);
-
-    // Generate second block
-    let mut v1 = [
-      cv_vecs[0],
-      cv_vecs[1],
-      cv_vecs[2],
-      cv_vecs[3],
-      cv_vecs[4],
-      cv_vecs[5],
-      cv_vecs[6],
-      cv_vecs[7],
-      iv0,
-      iv1,
-      iv2,
-      iv3,
-      set1(counter_low(counter.wrapping_add(1))),
-      set1(counter_high(counter.wrapping_add(1))),
-      block_len_vec,
-      flags_vec,
-    ];
-
-    round(&mut v1, &msg_vecs, 0, rot16_mask, rot8_mask);
-    round(&mut v1, &msg_vecs, 1, rot16_mask, rot8_mask);
-    round(&mut v1, &msg_vecs, 2, rot16_mask, rot8_mask);
-    round(&mut v1, &msg_vecs, 3, rot16_mask, rot8_mask);
-    round(&mut v1, &msg_vecs, 4, rot16_mask, rot8_mask);
-    round(&mut v1, &msg_vecs, 5, rot16_mask, rot8_mask);
-    round(&mut v1, &msg_vecs, 6, rot16_mask, rot8_mask);
-
-    // Store both blocks with proper XOR
-    let out_words0 = [
-      xor(xor(v0[0], v0[8]), cv_vecs[0]),
-      xor(xor(v0[1], v0[9]), cv_vecs[1]),
-      xor(xor(v0[2], v0[10]), cv_vecs[2]),
-      xor(xor(v0[3], v0[11]), cv_vecs[3]),
-      xor(xor(v0[4], v0[12]), cv_vecs[4]),
-      xor(xor(v0[5], v0[13]), cv_vecs[5]),
-      xor(xor(v0[6], v0[14]), cv_vecs[6]),
-      xor(xor(v0[7], v0[15]), cv_vecs[7]),
-    ];
-
-    let out_words1 = [
-      xor(xor(v1[0], v1[8]), cv_vecs[0]),
-      xor(xor(v1[1], v1[9]), cv_vecs[1]),
-      xor(xor(v1[2], v1[10]), cv_vecs[2]),
-      xor(xor(v1[3], v1[11]), cv_vecs[3]),
-      xor(xor(v1[4], v1[12]), cv_vecs[4]),
-      xor(xor(v1[5], v1[13]), cv_vecs[5]),
-      xor(xor(v1[6], v1[14]), cv_vecs[6]),
-      xor(xor(v1[7], v1[15]), cv_vecs[7]),
-    ];
-
-    storeu(out_words0[0], out);
-    storeu(out_words0[1], out.add(16));
-    storeu(out_words0[2], out.add(32));
-    storeu(out_words0[3], out.add(48));
-    storeu(out_words0[4], out.add(64));
-    storeu(out_words0[5], out.add(80));
-    storeu(out_words0[6], out.add(96));
-    storeu(out_words0[7], out.add(112));
-
-    storeu(out_words1[0], out.add(128));
-    storeu(out_words1[1], out.add(144));
-    storeu(out_words1[2], out.add(160));
-    storeu(out_words1[3], out.add(176));
-    storeu(out_words1[4], out.add(192));
-    storeu(out_words1[5], out.add(208));
-    storeu(out_words1[6], out.add(224));
-    storeu(out_words1[7], out.add(240));
+    root_output_blocks1(chaining_value, block_words, counter, block_len, flags, out);
+    root_output_blocks1(
+      chaining_value,
+      block_words,
+      counter.wrapping_add(1),
+      block_len,
+      flags,
+      out.add(64),
+    );
   }
 }
