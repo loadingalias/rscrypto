@@ -38,7 +38,7 @@ const CRC16_PARAMS: &[TunableParam] = &[TunableParam::new(
 ///
 /// This translates analysis-generated threshold names to the env var names
 /// expected by the CRC-16 config module.
-fn crc16_threshold_to_env_suffix(threshold_name: &str) -> Option<&'static str> {
+pub(crate) fn crc16_threshold_to_env_suffix(threshold_name: &str) -> Option<&'static str> {
   match threshold_name {
     "portable_to_simd" => Some("THRESHOLD_PORTABLE_TO_CLMUL"),
     "slice4_to_slice8" => Some("THRESHOLD_SLICE4_TO_SLICE8"),

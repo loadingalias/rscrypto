@@ -11,7 +11,7 @@ use std::{
   env,
   fs::{self, File},
   io::BufWriter,
-  path::Path,
+  path::{Path, PathBuf},
   process::ExitCode,
 };
 
@@ -63,6 +63,15 @@ struct Args {
   /// Optional directory for writing report artifacts.
   report_dir: Option<String>,
 
+  /// Path to write raw measurement artifact JSON.
+  raw_output: Option<String>,
+
+  /// Derive policy/results from existing raw artifact JSON.
+  derive_from: Option<String>,
+
+  /// Run only measurement phase, emit raw artifact, and exit.
+  measure_only: bool,
+
   /// Verbose output.
   verbose: bool,
 
@@ -106,6 +115,9 @@ impl Default for Args {
       list: false,
       format: OutputFormat::Summary,
       report_dir: None,
+      raw_output: None,
+      derive_from: None,
+      measure_only: false,
       verbose: false,
       apply: false,
       self_check: false,
@@ -154,6 +166,7 @@ fn parse_args() -> Result<Args, String> {
       "--apply" => args.apply = true,
       "--self-check" => args.self_check = true,
       "--enforce-targets" => args.enforce_targets = true,
+      "--measure-only" => args.measure_only = true,
       "--only" => {
         let Some(value) = iter.next() else {
           return Err("--only requires a value".to_string());
@@ -180,6 +193,24 @@ fn parse_args() -> Result<Args, String> {
           return Err("--report-dir requires a non-empty value".to_string());
         }
         args.report_dir = Some(value);
+      }
+      "--raw-output" => {
+        let Some(value) = iter.next() else {
+          return Err("--raw-output requires a value".to_string());
+        };
+        if value.trim().is_empty() {
+          return Err("--raw-output requires a non-empty value".to_string());
+        }
+        args.raw_output = Some(value);
+      }
+      "--derive-from" => {
+        let Some(value) = iter.next() else {
+          return Err("--derive-from requires a value".to_string());
+        };
+        if value.trim().is_empty() {
+          return Err("--derive-from requires a non-empty value".to_string());
+        }
+        args.derive_from = Some(value);
       }
       "--warmup-ms" => {
         let Some(value) = iter.next() else {
@@ -253,6 +284,10 @@ OPTIONS:
         --only ALGO(S)    Only run selected algorithm(s). Repeatable; value may be comma-separated.
     -f, --format FORMAT   Output format: summary (default), env, json, tsv, contribute
     --report-dir DIR      Write summary/env/json/tsv/contribute artifacts into DIR
+    --raw-output PATH     Write raw measurement artifact to PATH (default: <report-dir>/raw-results.json or \
+     target/tune/raw-results.json)
+    --derive-from PATH    Skip measurement and derive policy/results from PATH
+    --measure-only        Run measurement only, emit raw artifact, skip derivation/apply
     --enforce-targets     Fail if any defined per-class throughput target is missed
     --apply               Generate dispatch.rs table entry for this TuneKind
     --self-check          Validate that tuned results can be safely applied on this host
@@ -272,8 +307,12 @@ FORMATS:
     contribute  Markdown ready for GitHub issue submission
 
 EXAMPLES:
-    # Standard tuning run
+    # Standard end-to-end run (measure -> derive)
     just tune
+
+    # Measure once, derive later
+    just tune-measure
+    just tune-derive raw=target/tune/raw-results.json
 
     # Tune only hashes crate algorithms
     just tune -- --crate hashes
@@ -281,6 +320,9 @@ EXAMPLES:
     # Tune only BLAKE3 corpus and write report artifacts
     just tune-quick -- --only blake3,blake3-chunk,blake3-parent,blake3-parent-fold,blake3-stream64,blake3-stream4k \
      --report-dir target/tune
+
+    # Derive from existing raw artifact without rerunning benches
+    just tune -- --derive-from target/tune/raw-results.json --report-dir target/tune
 
     # Enforce throughput targets in CI
     just tune -- --enforce-targets
@@ -390,6 +432,28 @@ fn write_report_artifacts(path: &Path, results: &TuneResults) -> Result<(), Stri
   Ok(())
 }
 
+fn resolve_raw_output_path(args: &Args) -> PathBuf {
+  if let Some(path) = &args.raw_output {
+    return PathBuf::from(path);
+  }
+  if let Some(dir) = &args.report_dir {
+    return Path::new(dir).join("raw-results.json");
+  }
+  PathBuf::from("target/tune/raw-results.json")
+}
+
+fn has_measurement_overrides(args: &Args) -> bool {
+  args.quick
+    || !args.only.is_empty()
+    || !args.crate_filters.is_empty()
+    || args.warmup_ms.is_some()
+    || args.measure_ms.is_some()
+    || args.checksum_warmup_ms.is_some()
+    || args.checksum_measure_ms.is_some()
+    || args.hash_warmup_ms.is_some()
+    || args.hash_measure_ms.is_some()
+}
+
 fn main() -> ExitCode {
   let args = match parse_args() {
     Ok(args) => args,
@@ -418,99 +482,164 @@ fn main() -> ExitCode {
     }
   }
 
-  if args.quick && args.apply {
-    eprintln!("Error: --quick is developer preview mode and cannot be used with --apply.");
-    eprintln!("Run a full-quality tune (without --quick) before applying dispatch defaults.");
+  if args.measure_only && args.derive_from.is_some() {
+    eprintln!("Error: --measure-only and --derive-from are mutually exclusive.");
     return ExitCode::FAILURE;
   }
 
-  // Build runners (checksums and hashes can use different measurement windows).
-  let (mut checksum_runner, mut hash_runner) = if args.quick {
-    (BenchRunner::quick(), BenchRunner::quick_hash())
-  } else {
-    (BenchRunner::new(), BenchRunner::hash())
-  };
-
-  // Global overrides apply to both domains.
-  match (args.warmup_ms, args.measure_ms) {
-    (Some(w), Some(m)) => {
-      checksum_runner = checksum_runner
-        .with_warmup(Duration::from_millis(w))
-        .with_measure(Duration::from_millis(m));
-      hash_runner = hash_runner
-        .with_warmup(Duration::from_millis(w))
-        .with_measure(Duration::from_millis(m));
-    }
-    (Some(w), None) => {
-      checksum_runner = checksum_runner.with_warmup(Duration::from_millis(w));
-      hash_runner = hash_runner.with_warmup(Duration::from_millis(w));
-    }
-    (None, Some(m)) => {
-      checksum_runner = checksum_runner.with_measure(Duration::from_millis(m));
-      hash_runner = hash_runner.with_measure(Duration::from_millis(m));
-    }
-    (None, None) => {}
+  if args.measure_only && (args.apply || args.self_check || args.enforce_targets) {
+    eprintln!("Error: --measure-only cannot be combined with --apply/--self-check/--enforce-targets.");
+    return ExitCode::FAILURE;
   }
 
-  // Domain-specific overrides apply after the global overrides.
-  match (args.checksum_warmup_ms, args.checksum_measure_ms) {
-    (Some(w), Some(m)) => {
-      checksum_runner = checksum_runner
-        .with_warmup(Duration::from_millis(w))
-        .with_measure(Duration::from_millis(m));
-    }
-    (Some(w), None) => checksum_runner = checksum_runner.with_warmup(Duration::from_millis(w)),
-    (None, Some(m)) => checksum_runner = checksum_runner.with_measure(Duration::from_millis(m)),
-    (None, None) => {}
+  if args.derive_from.is_some() && has_measurement_overrides(&args) {
+    eprintln!(
+      "Error: --derive-from cannot be combined with measurement options (--quick/--crate/--only/measurement \
+       overrides)."
+    );
+    return ExitCode::FAILURE;
   }
 
-  match (args.hash_warmup_ms, args.hash_measure_ms) {
-    (Some(w), Some(m)) => {
-      hash_runner = hash_runner
-        .with_warmup(Duration::from_millis(w))
-        .with_measure(Duration::from_millis(m));
-    }
-    (Some(w), None) => hash_runner = hash_runner.with_warmup(Duration::from_millis(w)),
-    (None, Some(m)) => hash_runner = hash_runner.with_measure(Duration::from_millis(m)),
-    (None, None) => {}
-  };
+  let raw_output_path = resolve_raw_output_path(&args);
 
-  // Build and populate the engine.
-  let mut engine = TuneEngine::new()
-    .with_checksum_runner(checksum_runner)
-    .with_hash_runner(hash_runner)
-    .with_verbose(args.verbose);
-  register_algorithms(&mut engine, &args.crate_filters);
-
-  // Print header.
-  let platform = PlatformInfo::collect();
-  eprintln!("rscrypto-tune");
-  eprintln!("=============");
-  eprintln!();
-  eprintln!("Platform: {}", platform.description);
-  eprintln!("Tune preset: {:?}", platform.tune_kind);
-  if args.quick {
-    eprintln!("Mode: quick developer preview (not dispatch-eligible)");
-  } else {
-    eprintln!("Mode: full-quality (dispatch-eligible)");
-  }
-  eprintln!();
-
-  // Run the tuning engine.
-  if !args.only.is_empty() {
-    let kept = engine.retain_only(&args.only);
-    if kept == 0 {
-      eprintln!("Error: --only did not match any registered algorithms.");
-      eprintln!("Tip: run with --list to see available algorithms.");
+  let results = if let Some(raw_input) = &args.derive_from {
+    let raw = match tune::read_raw_results(Path::new(raw_input)) {
+      Ok(raw) => raw,
+      Err(err) => {
+        eprintln!("Failed to read raw artifact {}: {err}", raw_input);
+        return ExitCode::FAILURE;
+      }
+    };
+    if raw.quick_mode && args.apply {
+      eprintln!("Error: raw artifact was measured in quick mode and cannot be used with --apply.");
+      eprintln!("Run a full-quality measurement (without --quick) before applying dispatch defaults.");
       return ExitCode::FAILURE;
     }
-  }
-
-  let results = match engine.run() {
-    Ok(results) => results,
-    Err(err) => {
-      eprintln!("Tuning failed: {err}");
+    match TuneEngine::derive_from_raw(&raw) {
+      Ok(results) => results,
+      Err(err) => {
+        eprintln!("Derivation failed: {err}");
+        return ExitCode::FAILURE;
+      }
+    }
+  } else {
+    if args.quick && args.apply {
+      eprintln!("Error: --quick is developer preview mode and cannot be used with --apply.");
+      eprintln!("Run a full-quality tune (without --quick) before applying dispatch defaults.");
       return ExitCode::FAILURE;
+    }
+
+    // Build runners (checksums and hashes can use different measurement windows).
+    let (mut checksum_runner, mut hash_runner) = if args.quick {
+      (BenchRunner::quick(), BenchRunner::quick_hash())
+    } else {
+      (BenchRunner::new(), BenchRunner::hash())
+    };
+
+    // Global overrides apply to both domains.
+    match (args.warmup_ms, args.measure_ms) {
+      (Some(w), Some(m)) => {
+        checksum_runner = checksum_runner
+          .with_warmup(Duration::from_millis(w))
+          .with_measure(Duration::from_millis(m));
+        hash_runner = hash_runner
+          .with_warmup(Duration::from_millis(w))
+          .with_measure(Duration::from_millis(m));
+      }
+      (Some(w), None) => {
+        checksum_runner = checksum_runner.with_warmup(Duration::from_millis(w));
+        hash_runner = hash_runner.with_warmup(Duration::from_millis(w));
+      }
+      (None, Some(m)) => {
+        checksum_runner = checksum_runner.with_measure(Duration::from_millis(m));
+        hash_runner = hash_runner.with_measure(Duration::from_millis(m));
+      }
+      (None, None) => {}
+    }
+
+    // Domain-specific overrides apply after the global overrides.
+    match (args.checksum_warmup_ms, args.checksum_measure_ms) {
+      (Some(w), Some(m)) => {
+        checksum_runner = checksum_runner
+          .with_warmup(Duration::from_millis(w))
+          .with_measure(Duration::from_millis(m));
+      }
+      (Some(w), None) => checksum_runner = checksum_runner.with_warmup(Duration::from_millis(w)),
+      (None, Some(m)) => checksum_runner = checksum_runner.with_measure(Duration::from_millis(m)),
+      (None, None) => {}
+    }
+
+    match (args.hash_warmup_ms, args.hash_measure_ms) {
+      (Some(w), Some(m)) => {
+        hash_runner = hash_runner
+          .with_warmup(Duration::from_millis(w))
+          .with_measure(Duration::from_millis(m));
+      }
+      (Some(w), None) => hash_runner = hash_runner.with_warmup(Duration::from_millis(w)),
+      (None, Some(m)) => hash_runner = hash_runner.with_measure(Duration::from_millis(m)),
+      (None, None) => {}
+    };
+
+    // Build and populate the engine.
+    let mut engine = TuneEngine::new()
+      .with_checksum_runner(checksum_runner)
+      .with_hash_runner(hash_runner)
+      .with_verbose(args.verbose);
+    register_algorithms(&mut engine, &args.crate_filters);
+
+    // Print header.
+    let platform = PlatformInfo::collect();
+    eprintln!("rscrypto-tune");
+    eprintln!("=============");
+    eprintln!();
+    eprintln!("Platform: {}", platform.description);
+    eprintln!("Tune preset: {:?}", platform.tune_kind);
+    if args.quick {
+      eprintln!("Mode: quick developer preview (not dispatch-eligible)");
+    } else {
+      eprintln!("Mode: full-quality (dispatch-eligible)");
+    }
+    eprintln!();
+
+    if !args.only.is_empty() {
+      let kept = engine.retain_only(&args.only);
+      if kept == 0 {
+        eprintln!("Error: --only did not match any registered algorithms.");
+        eprintln!("Tip: run with --list to see available algorithms.");
+        return ExitCode::FAILURE;
+      }
+    }
+
+    let raw = match engine.measure(args.quick) {
+      Ok(raw) => raw,
+      Err(err) => {
+        eprintln!("Measurement failed: {err}");
+        return ExitCode::FAILURE;
+      }
+    };
+
+    if let Some(parent) = raw_output_path.parent()
+      && let Err(err) = fs::create_dir_all(parent)
+    {
+      eprintln!("Failed to create {}: {err}", parent.display());
+      return ExitCode::FAILURE;
+    }
+    if let Err(err) = tune::write_raw_results(raw_output_path.as_path(), &raw) {
+      eprintln!("Failed to write raw artifact {}: {err}", raw_output_path.display());
+      return ExitCode::FAILURE;
+    }
+    eprintln!("Wrote raw measurement artifact: {}", raw_output_path.display());
+
+    if args.measure_only {
+      return ExitCode::SUCCESS;
+    }
+
+    match TuneEngine::derive_from_raw(&raw) {
+      Ok(results) => results,
+      Err(err) => {
+        eprintln!("Derivation failed: {err}");
+        return ExitCode::FAILURE;
+      }
     }
   };
 

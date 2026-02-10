@@ -105,6 +105,27 @@ fn is_blake3_stream_tuning_algo(algo: &str) -> bool {
   )
 }
 
+/// Map generic threshold names to hash-specific env var suffixes.
+#[must_use]
+pub(crate) fn hash_threshold_to_env_suffix(algo: &str, threshold_name: &str) -> Option<&'static str> {
+  if algo == "blake3" || algo.starts_with("blake3-stream4k") {
+    return match threshold_name {
+      "parallel_min_bytes" => Some("PARALLEL_MIN_BYTES"),
+      "parallel_min_chunks" => Some("PARALLEL_MIN_CHUNKS"),
+      "parallel_max_threads" => Some("PARALLEL_MAX_THREADS"),
+      "parallel_spawn_cost_bytes" => Some("PARALLEL_SPAWN_COST_BYTES"),
+      "parallel_merge_cost_bytes" => Some("PARALLEL_MERGE_COST_BYTES"),
+      "parallel_bytes_per_core_small" => Some("PARALLEL_BYTES_PER_CORE_SMALL"),
+      "parallel_bytes_per_core_medium" => Some("PARALLEL_BYTES_PER_CORE_MEDIUM"),
+      "parallel_bytes_per_core_large" => Some("PARALLEL_BYTES_PER_CORE_LARGE"),
+      "parallel_small_limit_bytes" => Some("PARALLEL_SMALL_LIMIT_BYTES"),
+      "parallel_medium_limit_bytes" => Some("PARALLEL_MEDIUM_LIMIT_BYTES"),
+      _ => None,
+    };
+  }
+  None
+}
+
 fn kernel_specs(algo: &'static str, caps: &Caps) -> Vec<KernelSpec> {
   #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
   let _ = caps;
@@ -349,21 +370,6 @@ impl crate::Tunable for HashTunable {
   }
 
   fn threshold_to_env_suffix(&self, threshold_name: &str) -> Option<&'static str> {
-    if self.algo == "blake3" || self.algo.starts_with("blake3-stream4k") {
-      return match threshold_name {
-        "parallel_min_bytes" => Some("PARALLEL_MIN_BYTES"),
-        "parallel_min_chunks" => Some("PARALLEL_MIN_CHUNKS"),
-        "parallel_max_threads" => Some("PARALLEL_MAX_THREADS"),
-        "parallel_spawn_cost_bytes" => Some("PARALLEL_SPAWN_COST_BYTES"),
-        "parallel_merge_cost_bytes" => Some("PARALLEL_MERGE_COST_BYTES"),
-        "parallel_bytes_per_core_small" => Some("PARALLEL_BYTES_PER_CORE_SMALL"),
-        "parallel_bytes_per_core_medium" => Some("PARALLEL_BYTES_PER_CORE_MEDIUM"),
-        "parallel_bytes_per_core_large" => Some("PARALLEL_BYTES_PER_CORE_LARGE"),
-        "parallel_small_limit_bytes" => Some("PARALLEL_SMALL_LIMIT_BYTES"),
-        "parallel_medium_limit_bytes" => Some("PARALLEL_MEDIUM_LIMIT_BYTES"),
-        _ => None,
-      };
-    }
-    None
+    hash_threshold_to_env_suffix(self.algo, threshold_name)
   }
 }

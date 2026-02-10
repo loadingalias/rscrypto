@@ -48,6 +48,8 @@ bench-native crate="" bench="":
 # It's built on-demand when these commands are run, keeping workspace builds fast.
 # Usage:
 #   just tune
+#   just tune-measure dir=target/tune
+#   just tune-derive raw=target/tune/raw-results.json
 #   just tune-quick -- --crate hashes --only blake3
 #   just tune-report dir=target/tune -- --enforce-targets
 #   just tune-list
@@ -61,8 +63,14 @@ tune-quick *args="":
 tune-apply *args="":
     RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p tune --release --bin rscrypto-tune -- --apply {{args}}
 
-tune-report dir="target/tune" *args="":
-    RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p tune --release --bin rscrypto-tune -- --report-dir "{{dir}}" {{args}}
+tune-measure dir="target/tune" *args="":
+    RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p tune --release --bin rscrypto-tune -- --measure-only --report-dir "{{dir}}" --raw-output "{{dir}}/raw-results.json" {{args}}
+
+tune-derive raw="target/tune/raw-results.json" dir="target/tune" *args="":
+    RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p tune --release --bin rscrypto-tune -- --derive-from "{{raw}}" --report-dir "{{dir}}" {{args}}
+
+tune-report dir="target/tune" raw="target/tune/raw-results.json" *args="":
+    RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p tune --release --bin rscrypto-tune -- --derive-from "{{raw}}" --report-dir "{{dir}}" {{args}}
 
 tune-contribute *args="":
     RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p tune --release --bin rscrypto-tune -- --format contribute {{args}}

@@ -140,6 +140,20 @@ impl BenchRunner {
     self.warn_high_variance
   }
 
+  /// Returns warmup duration in milliseconds.
+  #[inline]
+  #[must_use]
+  pub fn warmup_ms(&self) -> u64 {
+    self.warmup.as_millis() as u64
+  }
+
+  /// Returns measurement duration in milliseconds.
+  #[inline]
+  #[must_use]
+  pub fn measure_ms(&self) -> u64 {
+    self.measure.as_millis() as u64
+  }
+
   /// Returns the CV threshold for warnings.
   #[inline]
   #[must_use]

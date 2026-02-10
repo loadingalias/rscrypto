@@ -1,5 +1,5 @@
 use crate::{
-  Tunable, TuneError, analysis,
+  RawBlake3ParallelCurve, RawBlake3ParallelData, RawThroughputPoint, Tunable, TuneError, analysis,
   runner::{BenchRunner, fill_data},
 };
 
@@ -55,45 +55,49 @@ pub(crate) struct Blake3ParallelPolicy {
 #[derive(Clone, Debug)]
 struct Blake3ParallelCurve {
   fit: Blake3ParallelFit,
-  throughput: Vec<(usize, f64)>,
+  throughput: Vec<RawThroughputPoint>,
 }
 
 fn build_blake3_crossover_measurements(
-  single: &[(usize, f64)],
-  parallel: &[(usize, f64)],
+  single: &[RawThroughputPoint],
+  parallel: &[RawThroughputPoint],
   size_scale: usize,
 ) -> Vec<analysis::Measurement> {
   let mut measurements = Vec::with_capacity(single.len().strict_add(parallel.len()));
-  for &(size, tp) in single {
+  for p in single {
     measurements.push(analysis::Measurement {
       kernel: "single".to_string(),
       streams: 1,
-      size: size / size_scale,
-      throughput_gib_s: tp,
+      size: p.size / size_scale,
+      throughput_gib_s: p.throughput_gib_s,
     });
   }
-  for &(size, tp) in parallel {
+  for p in parallel {
     measurements.push(analysis::Measurement {
       kernel: "parallel".to_string(),
       streams: 1,
-      size: size / size_scale,
-      throughput_gib_s: tp,
+      size: p.size / size_scale,
+      throughput_gib_s: p.throughput_gib_s,
     });
   }
   measurements
 }
 
-fn weighted_parallel_ratio(single: &[(usize, f64)], parallel: &[(usize, f64)], min_size: usize) -> f64 {
+fn weighted_parallel_ratio(single: &[RawThroughputPoint], parallel: &[RawThroughputPoint], min_size: usize) -> f64 {
   let mut weighted = 0.0f64;
   let mut total_weight = 0.0f64;
 
-  for ((single_size, single_tp), (parallel_size, parallel_tp)) in single.iter().zip(parallel.iter()) {
-    if single_size != parallel_size || *single_size < min_size {
+  for (single_p, parallel_p) in single.iter().zip(parallel.iter()) {
+    if single_p.size != parallel_p.size || single_p.size < min_size {
       continue;
     }
 
-    let ratio = if *single_tp > 0.0 { parallel_tp / single_tp } else { 1.0 };
-    let weight = *single_size as f64;
+    let ratio = if single_p.throughput_gib_s > 0.0 {
+      parallel_p.throughput_gib_s / single_p.throughput_gib_s
+    } else {
+      1.0
+    };
+    let weight = single_p.size as f64;
     weighted += ratio * weight;
     total_weight += weight;
   }
@@ -158,24 +162,24 @@ fn fit_line_thread_bytes(samples: &[(usize, usize)]) -> Option<(f64, f64)> {
   Some((slope, intercept))
 }
 
-fn pick_best_threads_by_size(single: &[(usize, f64)], curves: &[Blake3ParallelCurve]) -> Vec<(usize, usize)> {
+fn pick_best_threads_by_size(single: &[RawThroughputPoint], curves: &[Blake3ParallelCurve]) -> Vec<(usize, usize)> {
   let mut out = Vec::with_capacity(single.len());
-  for (idx, &(size, single_tp)) in single.iter().enumerate() {
+  for (idx, single_p) in single.iter().enumerate() {
     let mut best_threads = 1usize;
-    let mut best_tp = single_tp;
+    let mut best_tp = single_p.throughput_gib_s;
     for curve in curves {
-      let Some((parallel_size, parallel_tp)) = curve.throughput.get(idx).copied() else {
+      let Some(parallel_p) = curve.throughput.get(idx) else {
         continue;
       };
-      if parallel_size != size {
+      if parallel_p.size != single_p.size {
         continue;
       }
-      if parallel_tp > best_tp * BLAKE3_THREAD_PICK_MARGIN {
-        best_tp = parallel_tp;
+      if parallel_p.throughput_gib_s > best_tp * BLAKE3_THREAD_PICK_MARGIN {
+        best_tp = parallel_p.throughput_gib_s;
         best_threads = curve.fit.max_threads;
       }
     }
-    out.push((size, best_threads));
+    out.push((single_p.size, best_threads));
   }
   out
 }
@@ -202,7 +206,7 @@ fn bytes_per_core_from_threads(
 }
 
 fn blake3_policy_from_curves(
-  single: &[(usize, f64)],
+  single: &[RawThroughputPoint],
   curves: &[Blake3ParallelCurve],
   best_fit: Blake3ParallelFit,
 ) -> Blake3ParallelPolicy {
@@ -295,8 +299,8 @@ fn blake3_policy_from_curves(
 }
 
 fn fit_blake3_parallel_curve(
-  single: &[(usize, f64)],
-  parallel: &[(usize, f64)],
+  single: &[RawThroughputPoint],
+  parallel: &[RawThroughputPoint],
   max_threads: usize,
 ) -> Option<Blake3ParallelFit> {
   let byte_measurements = build_blake3_crossover_measurements(single, parallel, 1);
@@ -306,7 +310,7 @@ fn fit_blake3_parallel_curve(
   let chunk_crossover = analysis::find_crossover(&chunk_measurements, "single", 1, "parallel", 1, BLAKE3_PAR_MARGIN)?;
 
   let weighted_ratio = weighted_parallel_ratio(single, parallel, byte_crossover.crossover_size);
-  let peak_tp = parallel.last().map(|(_, tp)| *tp).unwrap_or(0.0);
+  let peak_tp = parallel.last().map(|p| p.throughput_gib_s).unwrap_or(0.0);
 
   Some(Blake3ParallelFit {
     max_threads,
@@ -354,7 +358,7 @@ fn measure_blake3_curve(
   buffer: &[u8],
   sizes: &[usize],
   max_threads: usize,
-) -> Result<Vec<(usize, f64)>, TuneError> {
+) -> Result<Vec<RawThroughputPoint>, TuneError> {
   use hashes::crypto::blake3::{dispatch_tables::ParallelTable, tune::override_blake3_parallel_policy};
 
   let mut out = Vec::with_capacity(sizes.len());
@@ -372,16 +376,17 @@ fn measure_blake3_curve(
   });
   for &size in sizes {
     let r = runner.measure_single(algorithm, &buffer[..size])?;
-    out.push((size, r.throughput_gib_s));
+    out.push(RawThroughputPoint::from_result(&r));
   }
   Ok(out)
 }
 
-pub(crate) fn tune_blake3_parallel_policy(
+/// Measure BLAKE3 parallel curves needed for offline policy derivation.
+pub(crate) fn measure_blake3_parallel_data(
   runner: &BenchRunner,
   algorithm: &mut dyn Tunable,
   best_kernel: &str,
-) -> Result<Option<Blake3ParallelPolicy>, TuneError> {
+) -> Result<Option<RawBlake3ParallelData>, TuneError> {
   use hashes::crypto::blake3::{dispatch_tables::ParallelTable, tune::override_blake3_parallel_policy};
 
   let Ok(ap) = std::thread::available_parallelism() else {
@@ -389,11 +394,11 @@ pub(crate) fn tune_blake3_parallel_policy(
   };
   let avail = ap.get();
   if avail <= 1 {
-    let mut policy = default_blake3_parallel_policy();
-    policy.min_bytes = usize::MAX;
-    policy.min_chunks = usize::MAX;
-    policy.max_threads = 1;
-    return Ok(Some(policy));
+    return Ok(Some(RawBlake3ParallelData {
+      available_parallelism: avail,
+      single: Vec::new(),
+      curves: Vec::new(),
+    }));
   }
 
   algorithm.reset();
@@ -403,7 +408,7 @@ pub(crate) fn tune_blake3_parallel_policy(
   let mut buffer = vec![0u8; max_size];
   fill_data(&mut buffer);
 
-  let mut single_tp: Vec<(usize, f64)> = Vec::with_capacity(BLAKE3_PAR_SIZES.len());
+  let mut single_tp: Vec<RawThroughputPoint> = Vec::with_capacity(BLAKE3_PAR_SIZES.len());
   {
     let _g = override_blake3_parallel_policy(ParallelTable {
       min_bytes: usize::MAX,
@@ -419,7 +424,7 @@ pub(crate) fn tune_blake3_parallel_policy(
     });
     for &size in BLAKE3_PAR_SIZES {
       let r = runner.measure_single(algorithm, &buffer[..size])?;
-      single_tp.push((size, r.throughput_gib_s));
+      single_tp.push(RawThroughputPoint::from_result(&r));
     }
   }
 
@@ -435,45 +440,89 @@ pub(crate) fn tune_blake3_parallel_policy(
   let mut curves = Vec::new();
   for threads in candidates {
     let parallel_tp = measure_blake3_curve(runner, algorithm, &buffer, BLAKE3_PAR_SIZES, threads)?;
-    if let Some(fit) = fit_blake3_parallel_curve(&single_tp, &parallel_tp, threads) {
+    curves.push(RawBlake3ParallelCurve {
+      max_threads: threads,
+      throughput: parallel_tp,
+    });
+  }
+
+  Ok(Some(RawBlake3ParallelData {
+    available_parallelism: avail,
+    single: single_tp,
+    curves,
+  }))
+}
+
+/// Derive BLAKE3 parallel policy from pre-measured raw curves.
+#[must_use]
+pub(crate) fn derive_blake3_parallel_policy(data: &RawBlake3ParallelData) -> Option<Blake3ParallelPolicy> {
+  if data.available_parallelism <= 1 {
+    let mut policy = default_blake3_parallel_policy();
+    policy.min_bytes = usize::MAX;
+    policy.min_chunks = usize::MAX;
+    policy.max_threads = 1;
+    return Some(policy);
+  }
+
+  if data.single.is_empty() || data.curves.is_empty() {
+    return None;
+  }
+
+  let mut fits = Vec::new();
+  let mut curves = Vec::new();
+  for curve in &data.curves {
+    if let Some(fit) = fit_blake3_parallel_curve(&data.single, &curve.throughput, curve.max_threads) {
+      fits.push(fit.clone());
       curves.push(Blake3ParallelCurve {
         fit,
-        throughput: parallel_tp,
+        throughput: curve.throughput.clone(),
       });
     }
   }
 
-  let fits: Vec<Blake3ParallelFit> = curves.iter().map(|c| c.fit.clone()).collect();
   let Some(best_fit) = select_best_blake3_parallel_fit(&fits) else {
     let mut policy = default_blake3_parallel_policy();
     policy.min_bytes = usize::MAX;
     policy.min_chunks = usize::MAX;
     policy.max_threads = 1;
-    return Ok(Some(policy));
+    return Some(policy);
   };
 
-  Ok(Some(blake3_policy_from_curves(&single_tp, &curves, best_fit)))
+  Some(blake3_policy_from_curves(&data.single, &curves, best_fit))
 }
 
 #[cfg(test)]
 mod tests {
   use super::*;
 
+  fn tp(size: usize, throughput_gib_s: f64) -> RawThroughputPoint {
+    RawThroughputPoint {
+      size,
+      throughput_gib_s,
+      sample_count: None,
+      std_dev: None,
+      cv: None,
+      outliers_rejected: None,
+      min_throughput_gib_s: None,
+      max_throughput_gib_s: None,
+    }
+  }
+
   #[test]
   fn blake3_parallel_curve_fit_uses_curve_for_min_chunks() {
     let single = vec![
-      (64 * 1024, 4.00),
-      (96 * 1024, 4.05),
-      (128 * 1024, 4.10),
-      (192 * 1024, 4.15),
-      (256 * 1024, 4.20),
+      tp(64 * 1024, 4.00),
+      tp(96 * 1024, 4.05),
+      tp(128 * 1024, 4.10),
+      tp(192 * 1024, 4.15),
+      tp(256 * 1024, 4.20),
     ];
     let parallel = vec![
-      (64 * 1024, 3.40),
-      (96 * 1024, 3.95),
-      (128 * 1024, 4.30),
-      (192 * 1024, 4.55),
-      (256 * 1024, 4.75),
+      tp(64 * 1024, 3.40),
+      tp(96 * 1024, 3.95),
+      tp(128 * 1024, 4.30),
+      tp(192 * 1024, 4.55),
+      tp(256 * 1024, 4.75),
     ];
 
     let fit = fit_blake3_parallel_curve(&single, &parallel, 8).expect("parallel should win at larger sizes");
@@ -485,8 +534,8 @@ mod tests {
 
   #[test]
   fn blake3_parallel_curve_fit_returns_none_when_parallel_never_wins() {
-    let single = vec![(64 * 1024, 4.0), (128 * 1024, 4.1), (256 * 1024, 4.2)];
-    let parallel = vec![(64 * 1024, 3.0), (128 * 1024, 3.2), (256 * 1024, 3.5)];
+    let single = vec![tp(64 * 1024, 4.0), tp(128 * 1024, 4.1), tp(256 * 1024, 4.2)];
+    let parallel = vec![tp(64 * 1024, 3.0), tp(128 * 1024, 3.2), tp(256 * 1024, 3.5)];
 
     assert!(fit_blake3_parallel_curve(&single, &parallel, 4).is_none());
   }
