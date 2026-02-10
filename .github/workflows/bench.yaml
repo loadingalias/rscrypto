@@ -13,6 +13,11 @@ on:
         required: false
         type: boolean
         default: true
+      run_intel:
+        description: "Run benchmarks on Intel Latest (alias for run_intel_latest)"
+        required: false
+        type: boolean
+        default: false
       run_intel_latest:
         description: "Run benchmarks on Intel Latest (Granite/Emerald/Sapphire)"
         required: false
@@ -40,6 +45,41 @@ on:
         default: ""
       benches:
         description: "Specific benches (comma-separated, optional)"
+        required: false
+        type: string
+        default: ""
+      only:
+        description: "Algorithm selector(s), comma-separated (e.g. blake3, crc32c, crc64nvme)"
+        required: false
+        type: string
+        default: ""
+      filter:
+        description: "Raw Criterion filter token(s), comma-separated (advanced)"
+        required: false
+        type: string
+        default: ""
+      quick:
+        description: "Quick benchmark mode (Criterion --quick + shorter defaults)"
+        required: false
+        type: boolean
+        default: false
+      warmup_ms:
+        description: "Warmup duration override in ms (optional)"
+        required: false
+        type: string
+        default: ""
+      measure_ms:
+        description: "Measurement duration override in ms (optional)"
+        required: false
+        type: string
+        default: ""
+      sample_size:
+        description: "Criterion sample size override (optional, >=10)"
+        required: false
+        type: string
+        default: ""
+      profile_time_secs:
+        description: "Criterion profile-time override in seconds (optional)"
         required: false
         type: string
         default: ""
@@ -78,27 +118,17 @@ jobs:
       timeout_minutes: 360
       setup_kind: namespace
       run_script: |
-        CRATES_INPUT="${{ inputs.crates }}"
-        BENCHES_INPUT="${{ inputs.benches }}"
-        CRATE_FLAGS="--workspace"
-        BENCH_FLAGS=""
-        if [ -n "$CRATES_INPUT" ]; then
-          CRATE_FLAGS=""
-          IFS=',' read -ra CRATES <<< "$CRATES_INPUT"
-          for crate in "${CRATES[@]}"; do
-            CRATE_FLAGS="$CRATE_FLAGS -p $(echo "$crate" | xargs)"
-          done
-        fi
-        if [ -n "$BENCHES_INPUT" ]; then
-          IFS=',' read -ra BENCHES <<< "$BENCHES_INPUT"
-          for bench in "${BENCHES[@]}"; do
-            BENCH_FLAGS="$BENCH_FLAGS --bench $(echo "$bench" | xargs)"
-          done
-        fi
-        rm -rf target/criterion
-        mkdir -p benchmark-results
-        # shellcheck disable=SC2086
-        cargo bench --profile bench $CRATE_FLAGS $BENCH_FLAGS 2>&1 | tee benchmark-results/output.txt
+        BENCH_OUTPUT_DIR=benchmark-results \
+        BENCH_CRATES="${{ inputs.crates }}" \
+        BENCH_BENCHES="${{ inputs.benches }}" \
+        BENCH_ONLY="${{ inputs.only }}" \
+        BENCH_FILTER="${{ inputs.filter }}" \
+        BENCH_QUICK=${{ inputs.quick && 'true' || 'false' }} \
+        BENCH_WARMUP_MS="${{ inputs.warmup_ms }}" \
+        BENCH_MEASURE_MS="${{ inputs.measure_ms }}" \
+        BENCH_SAMPLE_SIZE="${{ inputs.sample_size }}" \
+        BENCH_PROFILE_TIME_SECS="${{ inputs.profile_time_secs }}" \
+        scripts/ci/run-bench.sh
       artifact_name: benchmark-amd-zen4
       artifact_path: |
         benchmark-results/
@@ -115,27 +145,17 @@ jobs:
       setup_kind: runson
       runson_mode: runson-bench
       run_script: |
-        CRATES_INPUT="${{ inputs.crates }}"
-        BENCHES_INPUT="${{ inputs.benches }}"
-        CRATE_FLAGS="--workspace"
-        BENCH_FLAGS=""
-        if [ -n "$CRATES_INPUT" ]; then
-          CRATE_FLAGS=""
-          IFS=',' read -ra CRATES <<< "$CRATES_INPUT"
-          for crate in "${CRATES[@]}"; do
-            CRATE_FLAGS="$CRATE_FLAGS -p $(echo "$crate" | xargs)"
-          done
-        fi
-        if [ -n "$BENCHES_INPUT" ]; then
-          IFS=',' read -ra BENCHES <<< "$BENCHES_INPUT"
-          for bench in "${BENCHES[@]}"; do
-            BENCH_FLAGS="$BENCH_FLAGS --bench $(echo "$bench" | xargs)"
-          done
-        fi
-        rm -rf target/criterion
-        mkdir -p benchmark-results
-        # shellcheck disable=SC2086
-        cargo bench --profile bench $CRATE_FLAGS $BENCH_FLAGS 2>&1 | tee benchmark-results/output.txt
+        BENCH_OUTPUT_DIR=benchmark-results \
+        BENCH_CRATES="${{ inputs.crates }}" \
+        BENCH_BENCHES="${{ inputs.benches }}" \
+        BENCH_ONLY="${{ inputs.only }}" \
+        BENCH_FILTER="${{ inputs.filter }}" \
+        BENCH_QUICK=${{ inputs.quick && 'true' || 'false' }} \
+        BENCH_WARMUP_MS="${{ inputs.warmup_ms }}" \
+        BENCH_MEASURE_MS="${{ inputs.measure_ms }}" \
+        BENCH_SAMPLE_SIZE="${{ inputs.sample_size }}" \
+        BENCH_PROFILE_TIME_SECS="${{ inputs.profile_time_secs }}" \
+        scripts/ci/run-bench.sh
       artifact_name: benchmark-intel-spr
       artifact_path: |
         benchmark-results/
@@ -143,7 +163,7 @@ jobs:
 
   bench-intel-latest:
     name: Benchmark (Intel Latest)
-    if: inputs.run_intel_latest
+    if: inputs.run_intel_latest || inputs.run_intel
     needs: lane-contract
     uses: ./.github/workflows/_rust-job.yaml
     with:
@@ -152,27 +172,17 @@ jobs:
       setup_kind: runson
       runson_mode: runson-bench
       run_script: |
-        CRATES_INPUT="${{ inputs.crates }}"
-        BENCHES_INPUT="${{ inputs.benches }}"
-        CRATE_FLAGS="--workspace"
-        BENCH_FLAGS=""
-        if [ -n "$CRATES_INPUT" ]; then
-          CRATE_FLAGS=""
-          IFS=',' read -ra CRATES <<< "$CRATES_INPUT"
-          for crate in "${CRATES[@]}"; do
-            CRATE_FLAGS="$CRATE_FLAGS -p $(echo "$crate" | xargs)"
-          done
-        fi
-        if [ -n "$BENCHES_INPUT" ]; then
-          IFS=',' read -ra BENCHES <<< "$BENCHES_INPUT"
-          for bench in "${BENCHES[@]}"; do
-            BENCH_FLAGS="$BENCH_FLAGS --bench $(echo "$bench" | xargs)"
-          done
-        fi
-        rm -rf target/criterion
-        mkdir -p benchmark-results
-        # shellcheck disable=SC2086
-        cargo bench --profile bench $CRATE_FLAGS $BENCH_FLAGS 2>&1 | tee benchmark-results/output.txt
+        BENCH_OUTPUT_DIR=benchmark-results \
+        BENCH_CRATES="${{ inputs.crates }}" \
+        BENCH_BENCHES="${{ inputs.benches }}" \
+        BENCH_ONLY="${{ inputs.only }}" \
+        BENCH_FILTER="${{ inputs.filter }}" \
+        BENCH_QUICK=${{ inputs.quick && 'true' || 'false' }} \
+        BENCH_WARMUP_MS="${{ inputs.warmup_ms }}" \
+        BENCH_MEASURE_MS="${{ inputs.measure_ms }}" \
+        BENCH_SAMPLE_SIZE="${{ inputs.sample_size }}" \
+        BENCH_PROFILE_TIME_SECS="${{ inputs.profile_time_secs }}" \
+        scripts/ci/run-bench.sh
       artifact_name: benchmark-intel-latest
       artifact_path: |
         benchmark-results/
@@ -189,27 +199,17 @@ jobs:
       setup_kind: runson
       runson_mode: runson-bench
       run_script: |
-        CRATES_INPUT="${{ inputs.crates }}"
-        BENCHES_INPUT="${{ inputs.benches }}"
-        CRATE_FLAGS="--workspace"
-        BENCH_FLAGS=""
-        if [ -n "$CRATES_INPUT" ]; then
-          CRATE_FLAGS=""
-          IFS=',' read -ra CRATES <<< "$CRATES_INPUT"
-          for crate in "${CRATES[@]}"; do
-            CRATE_FLAGS="$CRATE_FLAGS -p $(echo "$crate" | xargs)"
-          done
-        fi
-        if [ -n "$BENCHES_INPUT" ]; then
-          IFS=',' read -ra BENCHES <<< "$BENCHES_INPUT"
-          for bench in "${BENCHES[@]}"; do
-            BENCH_FLAGS="$BENCH_FLAGS --bench $(echo "$bench" | xargs)"
-          done
-        fi
-        rm -rf target/criterion
-        mkdir -p benchmark-results
-        # shellcheck disable=SC2086
-        cargo bench --profile bench $CRATE_FLAGS $BENCH_FLAGS 2>&1 | tee benchmark-results/output.txt
+        BENCH_OUTPUT_DIR=benchmark-results \
+        BENCH_CRATES="${{ inputs.crates }}" \
+        BENCH_BENCHES="${{ inputs.benches }}" \
+        BENCH_ONLY="${{ inputs.only }}" \
+        BENCH_FILTER="${{ inputs.filter }}" \
+        BENCH_QUICK=${{ inputs.quick && 'true' || 'false' }} \
+        BENCH_WARMUP_MS="${{ inputs.warmup_ms }}" \
+        BENCH_MEASURE_MS="${{ inputs.measure_ms }}" \
+        BENCH_SAMPLE_SIZE="${{ inputs.sample_size }}" \
+        BENCH_PROFILE_TIME_SECS="${{ inputs.profile_time_secs }}" \
+        scripts/ci/run-bench.sh
       artifact_name: benchmark-intel-icl
       artifact_path: |
         benchmark-results/
@@ -226,27 +226,17 @@ jobs:
       setup_kind: runson
       runson_mode: runson-bench
       run_script: |
-        CRATES_INPUT="${{ inputs.crates }}"
-        BENCHES_INPUT="${{ inputs.benches }}"
-        CRATE_FLAGS="--workspace"
-        BENCH_FLAGS=""
-        if [ -n "$CRATES_INPUT" ]; then
-          CRATE_FLAGS=""
-          IFS=',' read -ra CRATES <<< "$CRATES_INPUT"
-          for crate in "${CRATES[@]}"; do
-            CRATE_FLAGS="$CRATE_FLAGS -p $(echo "$crate" | xargs)"
-          done
-        fi
-        if [ -n "$BENCHES_INPUT" ]; then
-          IFS=',' read -ra BENCHES <<< "$BENCHES_INPUT"
-          for bench in "${BENCHES[@]}"; do
-            BENCH_FLAGS="$BENCH_FLAGS --bench $(echo "$bench" | xargs)"
-          done
-        fi
-        rm -rf target/criterion
-        mkdir -p benchmark-results
-        # shellcheck disable=SC2086
-        cargo bench --profile bench $CRATE_FLAGS $BENCH_FLAGS 2>&1 | tee benchmark-results/output.txt
+        BENCH_OUTPUT_DIR=benchmark-results \
+        BENCH_CRATES="${{ inputs.crates }}" \
+        BENCH_BENCHES="${{ inputs.benches }}" \
+        BENCH_ONLY="${{ inputs.only }}" \
+        BENCH_FILTER="${{ inputs.filter }}" \
+        BENCH_QUICK=${{ inputs.quick && 'true' || 'false' }} \
+        BENCH_WARMUP_MS="${{ inputs.warmup_ms }}" \
+        BENCH_MEASURE_MS="${{ inputs.measure_ms }}" \
+        BENCH_SAMPLE_SIZE="${{ inputs.sample_size }}" \
+        BENCH_PROFILE_TIME_SECS="${{ inputs.profile_time_secs }}" \
+        scripts/ci/run-bench.sh
       artifact_name: benchmark-amd-zen5
       artifact_path: |
         benchmark-results/
@@ -263,27 +253,17 @@ jobs:
       setup_kind: runson
       runson_mode: runson-bench
       run_script: |
-        CRATES_INPUT="${{ inputs.crates }}"
-        BENCHES_INPUT="${{ inputs.benches }}"
-        CRATE_FLAGS="--workspace"
-        BENCH_FLAGS=""
-        if [ -n "$CRATES_INPUT" ]; then
-          CRATE_FLAGS=""
-          IFS=',' read -ra CRATES <<< "$CRATES_INPUT"
-          for crate in "${CRATES[@]}"; do
-            CRATE_FLAGS="$CRATE_FLAGS -p $(echo "$crate" | xargs)"
-          done
-        fi
-        if [ -n "$BENCHES_INPUT" ]; then
-          IFS=',' read -ra BENCHES <<< "$BENCHES_INPUT"
-          for bench in "${BENCHES[@]}"; do
-            BENCH_FLAGS="$BENCH_FLAGS --bench $(echo "$bench" | xargs)"
-          done
-        fi
-        rm -rf target/criterion
-        mkdir -p benchmark-results
-        # shellcheck disable=SC2086
-        cargo bench --profile bench $CRATE_FLAGS $BENCH_FLAGS 2>&1 | tee benchmark-results/output.txt
+        BENCH_OUTPUT_DIR=benchmark-results \
+        BENCH_CRATES="${{ inputs.crates }}" \
+        BENCH_BENCHES="${{ inputs.benches }}" \
+        BENCH_ONLY="${{ inputs.only }}" \
+        BENCH_FILTER="${{ inputs.filter }}" \
+        BENCH_QUICK=${{ inputs.quick && 'true' || 'false' }} \
+        BENCH_WARMUP_MS="${{ inputs.warmup_ms }}" \
+        BENCH_MEASURE_MS="${{ inputs.measure_ms }}" \
+        BENCH_SAMPLE_SIZE="${{ inputs.sample_size }}" \
+        BENCH_PROFILE_TIME_SECS="${{ inputs.profile_time_secs }}" \
+        scripts/ci/run-bench.sh
       artifact_name: benchmark-graviton
       artifact_path: |
         benchmark-results/

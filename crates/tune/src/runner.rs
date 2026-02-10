@@ -16,15 +16,17 @@ const QUICK_WARMUP_MS: u64 = 75;
 /// Quick mode measurement duration.
 const QUICK_MEASURE_MS: u64 = 125;
 
+/// Quick hash warmup duration.
+const QUICK_HASH_WARMUP_MS: u64 = 50;
+
+/// Quick hash measurement duration.
+const QUICK_HASH_MEASURE_MS: u64 = 100;
+
 /// Hash tuning warmup duration.
-///
-/// Hash kernels are often sensitive to instruction cache, front-end effects,
-/// and inlining/dispatch overhead. A slightly longer window reduces flip-flops
-/// in CI without requiring algorithm-specific special-casing in the engine.
 const HASH_WARMUP_MS: u64 = 100;
 
 /// Hash tuning measurement duration.
-const HASH_MEASURE_MS: u64 = 250;
+const HASH_MEASURE_MS: u64 = 180;
 
 /// Benchmark runner configuration.
 #[derive(Clone, Debug)]
@@ -74,8 +76,8 @@ impl BenchRunner {
   #[must_use]
   pub fn quick_hash() -> Self {
     Self {
-      warmup: Duration::from_millis(HASH_WARMUP_MS),
-      measure: Duration::from_millis(HASH_MEASURE_MS),
+      warmup: Duration::from_millis(QUICK_HASH_WARMUP_MS),
+      measure: Duration::from_millis(QUICK_HASH_MEASURE_MS),
       ..Default::default()
     }
   }
@@ -83,10 +85,9 @@ impl BenchRunner {
   /// Create a runner with hash-oriented defaults (slightly longer windows).
   #[must_use]
   pub fn hash() -> Self {
-    // Scale from the non-quick defaults to keep scheduled tuning runs stable.
     Self {
-      warmup: Duration::from_millis(DEFAULT_WARMUP_MS + 50),
-      measure: Duration::from_millis(DEFAULT_MEASURE_MS + 150),
+      warmup: Duration::from_millis(HASH_WARMUP_MS),
+      measure: Duration::from_millis(HASH_MEASURE_MS),
       ..Default::default()
     }
   }

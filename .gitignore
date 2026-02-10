@@ -17,16 +17,17 @@ AGENTS.md
 *.key
 
 # Personal - Notes, Docs, Examples, Testing, etc.
-notes
 crates/*/bench_baseline
 crates/checksum/tuning_results.txt
 crates/hashes/src/crypto/blake3/TASK.md
 crates/*/src/*/*/bench_baseline
+ARCHITECTURE_MATRIX.md
 
 # Fuzzing
 corpus
 artifacts
 coverage
+dictionary
 
 # Testing
 crates/checksum/proptest-regressions

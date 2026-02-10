@@ -5,6 +5,9 @@
 //!   cargo run --release -p tune --bin rscrypto-tune -- --quick
 //!   cargo run --release -p tune --bin rscrypto-tune -- --format env
 
+extern crate alloc;
+
+use alloc::collections::BTreeMap;
 use core::time::Duration;
 use std::{
   collections::HashSet,
@@ -31,20 +34,8 @@ const CRATE_CHECKSUM: &str = "checksum";
 const CRATE_HASHES: &str = "hashes";
 const CRATE_HASHES_BENCH: &str = "hashes-bench";
 const VALID_CRATE_FILTERS: &[&str] = &[CRATE_CHECKSUM, CRATE_HASHES, CRATE_HASHES_BENCH];
-const BLAKE3_APPLY_REQUIRED_STREAM_SURFACES: &[&str] = &[
-  "blake3-stream64",
-  "blake3-stream256",
-  "blake3-stream1k",
-  "blake3-stream-mixed",
-  "blake3-stream64-keyed",
-  "blake3-stream64-derive",
-  "blake3-stream64-xof",
-  "blake3-stream-mixed-xof",
-  "blake3-stream4k",
-  "blake3-stream4k-keyed",
-  "blake3-stream4k-derive",
-  "blake3-stream4k-xof",
-];
+const DEFAULT_CRATE_FILTERS: &[&str] = &[CRATE_CHECKSUM, CRATE_HASHES];
+const DEFAULT_APPLY_CRATE_FILTERS: &[&str] = &[CRATE_CHECKSUM, CRATE_HASHES, CRATE_HASHES_BENCH];
 
 const CHECKSUM_ALGOS: &[&str] = &[
   "crc16-ccitt",
@@ -209,7 +200,7 @@ fn parse_args() -> Result<Args, String> {
         let Some(value) = iter.next() else {
           return Err("--only requires a value".to_string());
         };
-        parse_csv_values(&value, &mut args.only, false);
+        parse_csv_values(&value, &mut args.only, true);
       }
       "--crate" => {
         let Some(value) = iter.next() else {
@@ -295,12 +286,243 @@ fn parse_args() -> Result<Args, String> {
         args.hash_measure_ms = Some(value.parse().map_err(|_| format!("Invalid hash-measure-ms: {value}"))?);
       }
       other => {
-        return Err(format!("Unknown argument: {other}"));
+        if other.starts_with('-') {
+          return Err(format!("Unknown argument: {other}"));
+        }
+        parse_csv_values(other, &mut args.only, true);
       }
     }
   }
 
   Ok(args)
+}
+
+fn normalize_selector(value: &str) -> String {
+  value
+    .chars()
+    .filter(|ch| ch.is_ascii_alphanumeric())
+    .map(|ch| ch.to_ascii_lowercase())
+    .collect()
+}
+
+fn push_unique(values: &mut Vec<String>, value: &str) {
+  if !values.iter().any(|current| current == value) {
+    values.push(value.to_string());
+  }
+}
+
+fn all_algorithms() -> Vec<&'static str> {
+  let mut all = Vec::new();
+  let mut seen = HashSet::new();
+
+  for &algo in CHECKSUM_ALGOS {
+    if seen.insert(algo) {
+      all.push(algo);
+    }
+  }
+  for &(algo, _) in HASH_CORE_TUNING_CORPUS {
+    if seen.insert(algo) {
+      all.push(algo);
+    }
+  }
+  for &(algo, _) in BLAKE3_TUNING_CORPUS {
+    if seen.insert(algo) {
+      all.push(algo);
+    }
+  }
+  for &(algo, _) in HASH_MICRO_TUNING_CORPUS {
+    if seen.insert(algo) {
+      all.push(algo);
+    }
+  }
+  for &(algo, _) in HASH_STREAM_PROFILE_TUNING_CORPUS {
+    if seen.insert(algo) {
+      all.push(algo);
+    }
+  }
+
+  all
+}
+
+fn family_key_for_algorithm(algo: &str) -> String {
+  if algo.starts_with("blake3") {
+    return "blake3".to_string();
+  }
+  if algo.starts_with("crc64-") {
+    return "crc64".to_string();
+  }
+  if algo == "crc32c" || algo.starts_with("crc32-") {
+    return "crc32".to_string();
+  }
+  if algo.starts_with("crc16-") {
+    return "crc16".to_string();
+  }
+  if algo.starts_with("crc24-") {
+    return "crc24".to_string();
+  }
+
+  let mut key = algo;
+  for suffix in ["-compress-unaligned", "-compress", "-permute"] {
+    if let Some(base) = key.strip_suffix(suffix) {
+      key = base;
+      break;
+    }
+  }
+  if let Some((base, _)) = key.split_once("-stream") {
+    key = base;
+  }
+  if let Some(base) = key.strip_suffix("-keyed") {
+    key = base;
+  }
+  if let Some(base) = key.strip_suffix("-derive") {
+    key = base;
+  }
+  if let Some(base) = key.strip_suffix("-xof") {
+    key = base;
+  }
+
+  key.to_string()
+}
+
+fn checksum_contains(algo: &str) -> bool {
+  CHECKSUM_ALGOS.contains(&algo)
+}
+
+fn hashes_contains(algo: &str) -> bool {
+  HASH_CORE_TUNING_CORPUS.iter().any(|(name, _)| *name == algo)
+    || BLAKE3_TUNING_CORPUS.iter().any(|(name, _)| *name == algo)
+}
+
+fn hashes_bench_contains(algo: &str) -> bool {
+  HASH_MICRO_TUNING_CORPUS.iter().any(|(name, _)| *name == algo)
+    || HASH_STREAM_PROFILE_TUNING_CORPUS.iter().any(|(name, _)| *name == algo)
+}
+
+fn resolve_selector(raw: &str, family_map: &BTreeMap<String, Vec<&'static str>>) -> Result<Vec<&'static str>, String> {
+  let key = normalize_selector(raw);
+  if key.is_empty() {
+    return Ok(Vec::new());
+  }
+
+  let explicit = match key.as_str() {
+    "all" => Some(all_algorithms()),
+    "checksum" | "checksums" => Some(CHECKSUM_ALGOS.to_vec()),
+    "hash" | "hashes" => {
+      let mut out: Vec<&'static str> = HASH_CORE_TUNING_CORPUS.iter().map(|(name, _)| *name).collect();
+      out.extend(BLAKE3_TUNING_CORPUS.iter().map(|(name, _)| *name));
+      Some(out)
+    }
+    "hashesbench" | "hashbench" | "bench" => {
+      let mut out: Vec<&'static str> = HASH_MICRO_TUNING_CORPUS.iter().map(|(name, _)| *name).collect();
+      out.extend(HASH_STREAM_PROFILE_TUNING_CORPUS.iter().map(|(name, _)| *name));
+      Some(out)
+    }
+    "blake3" => Some(BLAKE3_TUNING_CORPUS.iter().map(|(name, _)| *name).collect()),
+    "crc64" | "crc64nvme" | "crc64xz" => Some(vec!["crc64-xz", "crc64-nvme"]),
+    "crc32" => Some(vec!["crc32-ieee", "crc32c"]),
+    "crc16" => Some(vec!["crc16-ccitt", "crc16-ibm"]),
+    _ => None,
+  };
+  if let Some(expanded) = explicit {
+    return Ok(expanded);
+  }
+
+  if let Some(family) = family_map.get(&key) {
+    return Ok(family.clone());
+  }
+
+  for algo in all_algorithms() {
+    if normalize_selector(algo) == key {
+      return Ok(vec![algo]);
+    }
+  }
+
+  Err(format!("Unknown algorithm selector: {raw}"))
+}
+
+fn resolve_algorithm_selection(raw_only: &[String], apply: bool) -> Result<(Vec<String>, Vec<String>), String> {
+  if raw_only.is_empty() {
+    return Ok((Vec::new(), Vec::new()));
+  }
+
+  let mut family_map: BTreeMap<String, Vec<&'static str>> = BTreeMap::new();
+  for algo in all_algorithms() {
+    family_map
+      .entry(normalize_selector(family_key_for_algorithm(algo).as_str()))
+      .or_default()
+      .push(algo);
+  }
+
+  let mut resolved = Vec::new();
+  for raw in raw_only {
+    let expanded = resolve_selector(raw, &family_map)?;
+    for algo in expanded {
+      push_unique(&mut resolved, algo);
+    }
+  }
+
+  let mut notes = Vec::new();
+
+  if apply && resolved.iter().any(|algo| checksum_contains(algo.as_str())) {
+    let mut added = false;
+    for &algo in CHECKSUM_ALGOS {
+      if !resolved.iter().any(|current| current == algo) {
+        resolved.push(algo.to_string());
+        added = true;
+      }
+    }
+    if added {
+      notes.push(
+        "--apply + checksum selector requires full checksum corpus; auto-added remaining checksum algorithms"
+          .to_string(),
+      );
+    }
+  }
+
+  if apply && resolved.iter().any(|algo| algo.starts_with("blake3")) {
+    let mut added = false;
+    for &(algo, _) in BLAKE3_TUNING_CORPUS {
+      if !resolved.iter().any(|current| current == algo) {
+        resolved.push(algo.to_string());
+        added = true;
+      }
+    }
+    if added {
+      notes.push("--apply + blake3 selector requires full blake3 corpus; auto-added missing surfaces".to_string());
+    }
+  }
+
+  Ok((resolved, notes))
+}
+
+fn infer_crate_filters(only: &[String], apply: bool) -> Vec<String> {
+  if only.is_empty() {
+    return if apply {
+      DEFAULT_APPLY_CRATE_FILTERS
+        .iter()
+        .map(|value| (*value).to_string())
+        .collect()
+    } else {
+      DEFAULT_CRATE_FILTERS.iter().map(|value| (*value).to_string()).collect()
+    };
+  }
+
+  let mut inferred = Vec::new();
+  if only.iter().any(|algo| checksum_contains(algo.as_str())) {
+    inferred.push(CRATE_CHECKSUM.to_string());
+  }
+  if only.iter().any(|algo| hashes_contains(algo.as_str())) {
+    inferred.push(CRATE_HASHES.to_string());
+  }
+  if only.iter().any(|algo| hashes_bench_contains(algo.as_str())) {
+    inferred.push(CRATE_HASHES_BENCH.to_string());
+  }
+
+  if inferred.is_empty() {
+    DEFAULT_CRATE_FILTERS.iter().map(|value| (*value).to_string()).collect()
+  } else {
+    inferred
+  }
 }
 
 fn print_help() {
@@ -318,15 +540,16 @@ OPTIONS:
     -q, --quick           Developer preview mode (faster, noisier; cannot be used with --apply)
     -v, --verbose         Verbose output during tuning
     --list                List registered algorithms and exit
+    ALGO(S)               Optional positional selector(s), e.g. `blake3` or `crc64nvme`
     --crate NAME(S)       Restrict tuning corpus by crate/surface (checksum, hashes, hashes-bench)
-        --only ALGO(S)    Only run selected algorithm(s). Repeatable; value may be comma-separated.
+    --only ALGO(S)        Only run selected algorithm(s). Repeatable; value may be comma-separated.
     -f, --format FORMAT   Output format: summary (default), env, json, tsv, contribute
     --report-dir DIR      Write summary/env/json/tsv/contribute artifacts into DIR
     --raw-output PATH     Write raw measurement artifact to PATH (default: <report-dir>/raw-results.json or \
      target/tune/raw-results.json)
     --derive-from PATH    Skip measurement and derive policy/results from PATH
     --measure-only        Run measurement only, emit raw artifact, skip derivation/apply
-    --repeats N           Repeat measurement N times before derivation (default: full-quality=3, quick=1)
+    --repeats N           Repeat measurement N times before derivation (default: 1)
     --aggregate MODE      Repeated-run aggregation mode: auto (default), median, trimmed-mean
     --enforce-targets     Fail if any defined per-class throughput target is missed
     --apply               Generate dispatch.rs table entry for this TuneKind
@@ -335,8 +558,8 @@ OPTIONS:
     --measure-ms MS       Override measurement duration for all domains
     --checksum-warmup-ms MS   Override checksum warmup duration (defaults: 150, quick: 75)
     --checksum-measure-ms MS  Override checksum measurement duration (defaults: 250, quick: 125)
-    --hash-warmup-ms MS       Override hash warmup duration (defaults: 200, quick: 100)
-    --hash-measure-ms MS      Override hash measurement duration (defaults: 400, quick: 250)
+    --hash-warmup-ms MS       Override hash warmup duration (defaults: 100, quick: 50)
+    --hash-measure-ms MS      Override hash measurement duration (defaults: 180, quick: 100)
     -h, --help            Show this help message
 
 FORMATS:
@@ -350,16 +573,21 @@ EXAMPLES:
     # Standard end-to-end run (measure -> derive)
     just tune
 
+    # Selector-first run: all CRC64 variants, apply results
+    just tune crc64nvme --apply
+
+    # Selector-first run: full BLAKE3 corpus
+    just tune blake3 --apply
+
     # Measure once, derive later
     just tune-measure
     just tune-derive raw=target/tune/raw-results.json
 
-    # Tune only hashes crate algorithms
-    just tune -- --crate hashes
+    # Explicit crate scope when needed
+    just tune -- --crate hashes-bench
 
-    # Tune only BLAKE3 corpus and write report artifacts
-    just tune-quick -- --only blake3,blake3-chunk,blake3-parent,blake3-parent-fold,blake3-stream64,blake3-stream4k \
-     --report-dir target/tune
+    # Write report artifacts to a specific directory
+    just tune blake3 --report-dir target/tune
 
     # Derive from existing raw artifact without rerunning benches
     just tune -- --derive-from target/tune/raw-results.json --report-dir target/tune
@@ -372,9 +600,6 @@ EXAMPLES:
 
     # Generate dispatch table entry (writes into dispatch tables)
     just tune-apply
-
-    # Apply BLAKE3 with minimal input; stream surfaces are auto-expanded
-    just tune-apply -- --crate hashes --only blake3
 "
   );
 }
@@ -410,6 +635,14 @@ fn print_catalog() {
   for (algo, _) in HASH_STREAM_PROFILE_TUNING_CORPUS {
     println!("  - {algo}");
   }
+
+  println!();
+  println!("Common selector families:");
+  println!("  - blake3 (all blake3 surfaces)");
+  println!("  - crc64 / crc64nvme / crc64xz (crc64-xz + crc64-nvme)");
+  println!("  - crc32 (crc32-ieee + crc32c)");
+  println!("  - crc16 (crc16-ccitt + crc16-ibm)");
+  println!("  - checksum, hashes, hashes-bench");
 }
 
 fn wants_crate(crate_filters: &[String], name: &str) -> bool {
@@ -503,22 +736,7 @@ fn has_measurement_overrides(args: &Args) -> bool {
 }
 
 fn effective_repeats(args: &Args) -> usize {
-  args.repeats.unwrap_or(if args.quick { 1 } else { 3 })
-}
-
-fn expand_blake3_apply_only(only: &mut Vec<String>) -> bool {
-  if !only.iter().any(|algo| algo == "blake3") {
-    return false;
-  }
-
-  let mut changed = false;
-  for required in BLAKE3_APPLY_REQUIRED_STREAM_SURFACES {
-    if !only.iter().any(|algo| algo == required) {
-      only.push((*required).to_string());
-      changed = true;
-    }
-  }
-  changed
+  args.repeats.unwrap_or(1)
 }
 
 fn main() -> ExitCode {
@@ -540,6 +758,9 @@ fn main() -> ExitCode {
     print_catalog();
     return ExitCode::SUCCESS;
   }
+
+  let explicit_crate_filters = !args.crate_filters.is_empty();
+  let raw_selectors = args.only.clone();
 
   for filter in &args.crate_filters {
     if !VALID_CRATE_FILTERS.contains(&filter.as_str()) {
@@ -567,11 +788,28 @@ fn main() -> ExitCode {
     return ExitCode::FAILURE;
   }
 
-  if args.apply && expand_blake3_apply_only(&mut args.only) {
-    eprintln!(
-      "note: --apply + --only=blake3 requires full stream-surface tuning; added required blake3 stream surfaces \
-       automatically"
-    );
+  if args.derive_from.is_none() {
+    if !args.only.is_empty() {
+      let (resolved, notes) = match resolve_algorithm_selection(&args.only, args.apply) {
+        Ok(value) => value,
+        Err(err) => {
+          eprintln!("Error: {err}");
+          eprintln!("Tip: run with --list to see available selectors.");
+          return ExitCode::FAILURE;
+        }
+      };
+      args.only = resolved;
+      if args.only != raw_selectors {
+        eprintln!("Algorithm selection expanded to: {}", args.only.join(", "));
+      }
+      for note in notes {
+        eprintln!("note: {note}");
+      }
+    }
+
+    if !explicit_crate_filters {
+      args.crate_filters = infer_crate_filters(&args.only, args.apply);
+    }
   }
 
   let raw_output_path = resolve_raw_output_path(&args);
@@ -672,6 +910,12 @@ fn main() -> ExitCode {
       eprintln!("Mode: quick developer preview (not dispatch-eligible)");
     } else {
       eprintln!("Mode: full-quality (dispatch-eligible)");
+    }
+    if !args.crate_filters.is_empty() {
+      eprintln!("Crates: {}", args.crate_filters.join(", "));
+    }
+    if !args.only.is_empty() {
+      eprintln!("Algorithms: {}", args.only.join(", "));
     }
     let repeats = effective_repeats(&args);
     eprintln!("Repeats: {repeats}");
@@ -798,4 +1042,48 @@ fn main() -> ExitCode {
   }
 
   ExitCode::SUCCESS
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn selector_blake3_expands_full_family() {
+    let (resolved, notes) =
+      resolve_algorithm_selection(&["blake3".to_string()], false).expect("selector should resolve");
+    assert!(notes.is_empty());
+    assert_eq!(resolved.len(), BLAKE3_TUNING_CORPUS.len());
+    assert!(resolved.iter().any(|name| name == "blake3"));
+    assert!(resolved.iter().any(|name| name == "blake3-stream4k-xof"));
+  }
+
+  #[test]
+  fn selector_crc64nvme_expands_crc64_pair() {
+    let (resolved, _notes) =
+      resolve_algorithm_selection(&["crc64nvme".to_string()], false).expect("selector should resolve");
+    assert_eq!(resolved, vec!["crc64-xz".to_string(), "crc64-nvme".to_string()]);
+  }
+
+  #[test]
+  fn apply_with_checksum_selector_expands_full_checksum_corpus() {
+    let (resolved, notes) =
+      resolve_algorithm_selection(&["crc64nvme".to_string()], true).expect("selector should resolve");
+    assert!(resolved.iter().any(|name| name == "crc64-nvme"));
+    assert!(resolved.iter().any(|name| name == "crc32c"));
+    assert_eq!(resolved.len(), CHECKSUM_ALGOS.len());
+    assert!(notes.iter().any(|note| note.contains("full checksum corpus")));
+  }
+
+  #[test]
+  fn infer_crates_from_blake3_is_hashes_only() {
+    let crates = infer_crate_filters(&["blake3".to_string()], false);
+    assert_eq!(crates, vec![CRATE_HASHES.to_string()]);
+  }
+
+  #[test]
+  fn default_repeats_is_one() {
+    let args = Args::default();
+    assert_eq!(effective_repeats(&args), 1);
+  }
 }
