@@ -17,6 +17,41 @@ to_bool() {
   esac
 }
 
+array_contains() {
+  local needle="${1:-}"
+  shift
+  local item
+  for item in "$@"; do
+    if [[ "$item" == "$needle" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+normalize_csv() {
+  local raw="${1:-}"
+  local -a parts=()
+  local -a normalized=()
+  local token
+  IFS=',' read -r -a parts <<< "$raw"
+  for token in "${parts[@]-}"; do
+    token="$(echo "$token" | xargs)"
+    if [[ -z "$token" ]]; then
+      continue
+    fi
+    if ! array_contains "$token" "${normalized[@]-}"; then
+      normalized+=("$token")
+    fi
+  done
+
+  if [[ -z "${normalized[*]-}" ]]; then
+    echo ""
+  else
+    (IFS=','; echo "${normalized[*]-}")
+  fi
+}
+
 ONLY_INPUT="${TUNE_ONLY:-}"
 CRATES_INPUT="${TUNE_CRATES:-}"
 WARMUP_INPUT="${TUNE_WARMUP_MS:-}"
@@ -33,6 +68,38 @@ ENFORCE_TARGETS_INPUT="$(to_bool "${TUNE_ENFORCE_TARGETS:-false}")"
 QUICK_INPUT="$(to_bool "${TUNE_QUICK:-false}")"
 MEASURE_ONLY_INPUT="$(to_bool "${TUNE_MEASURE_ONLY:-false}")"
 DERIVE_FROM_INPUT="${TUNE_DERIVE_FROM:-}"
+ONLY_INPUT="$(normalize_csv "$ONLY_INPUT")"
+CRATES_INPUT="$(normalize_csv "$CRATES_INPUT")"
+
+if [[ "$APPLY_INPUT" == "true" && -n "$ONLY_INPUT" ]]; then
+  IFS=',' read -r -a only_values <<< "$ONLY_INPUT"
+  if array_contains "blake3" "${only_values[@]}"; then
+    changed="false"
+    for required in \
+      blake3-stream64 \
+      blake3-stream256 \
+      blake3-stream1k \
+      blake3-stream-mixed \
+      blake3-stream64-keyed \
+      blake3-stream64-derive \
+      blake3-stream64-xof \
+      blake3-stream-mixed-xof \
+      blake3-stream4k \
+      blake3-stream4k-keyed \
+      blake3-stream4k-derive \
+      blake3-stream4k-xof
+    do
+      if ! array_contains "$required" "${only_values[@]}"; then
+        only_values+=("$required")
+        changed="true"
+      fi
+    done
+    if [[ "$changed" == "true" ]]; then
+      ONLY_INPUT="$(IFS=','; echo "${only_values[*]}")"
+      echo "note: TUNE_APPLY=true + TUNE_ONLY includes blake3; added required blake3 stream surfaces automatically"
+    fi
+  fi
+fi
 
 if [[ -z "$REPEATS_INPUT" ]]; then
   if [[ "$QUICK_INPUT" == "true" ]]; then
