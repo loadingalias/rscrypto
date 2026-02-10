@@ -29,8 +29,10 @@ APPLY_INPUT="$(to_bool "${TUNE_APPLY:-false}")"
 SELF_CHECK_INPUT="$(to_bool "${TUNE_SELF_CHECK:-false}")"
 ENFORCE_TARGETS_INPUT="$(to_bool "${TUNE_ENFORCE_TARGETS:-false}")"
 QUICK_INPUT="$(to_bool "${TUNE_QUICK:-false}")"
+MEASURE_ONLY_INPUT="$(to_bool "${TUNE_MEASURE_ONLY:-false}")"
+DERIVE_FROM_INPUT="${TUNE_DERIVE_FROM:-}"
 
-if [[ "$QUICK_INPUT" == "true" && "$APPLY_INPUT" == "true" ]]; then
+if [[ -z "$DERIVE_FROM_INPUT" && "$QUICK_INPUT" == "true" && "$APPLY_INPUT" == "true" ]]; then
   echo "error: quick mode is developer preview only and cannot be used with --apply" >&2
   exit 2
 fi
@@ -86,45 +88,46 @@ if [[ "$APPLY_INPUT" == "true" && -n "$ONLY_INPUT" ]]; then
   fi
 fi
 
-ARGS=()
+MEASURE_ARGS=()
 if [[ "$QUICK_INPUT" == "true" ]]; then
-  ARGS+=(--quick)
+  MEASURE_ARGS+=(--quick)
 fi
 if [[ -n "$ONLY_INPUT" ]]; then
-  ARGS+=(--only "$ONLY_INPUT")
+  MEASURE_ARGS+=(--only "$ONLY_INPUT")
 fi
 if [[ -n "$CRATES_INPUT" ]]; then
-  ARGS+=(--crate "$CRATES_INPUT")
+  MEASURE_ARGS+=(--crate "$CRATES_INPUT")
 fi
 if [[ -n "$WARMUP_INPUT" ]]; then
-  ARGS+=(--warmup-ms "$WARMUP_INPUT")
+  MEASURE_ARGS+=(--warmup-ms "$WARMUP_INPUT")
 fi
 if [[ -n "$MEASURE_INPUT" ]]; then
-  ARGS+=(--measure-ms "$MEASURE_INPUT")
+  MEASURE_ARGS+=(--measure-ms "$MEASURE_INPUT")
 fi
 if [[ -n "$CHECKSUM_WARMUP_INPUT" ]]; then
-  ARGS+=(--checksum-warmup-ms "$CHECKSUM_WARMUP_INPUT")
+  MEASURE_ARGS+=(--checksum-warmup-ms "$CHECKSUM_WARMUP_INPUT")
 fi
 if [[ -n "$CHECKSUM_MEASURE_INPUT" ]]; then
-  ARGS+=(--checksum-measure-ms "$CHECKSUM_MEASURE_INPUT")
+  MEASURE_ARGS+=(--checksum-measure-ms "$CHECKSUM_MEASURE_INPUT")
 fi
 if [[ -n "$HASH_WARMUP_INPUT" ]]; then
-  ARGS+=(--hash-warmup-ms "$HASH_WARMUP_INPUT")
+  MEASURE_ARGS+=(--hash-warmup-ms "$HASH_WARMUP_INPUT")
 fi
 if [[ -n "$HASH_MEASURE_INPUT" ]]; then
-  ARGS+=(--hash-measure-ms "$HASH_MEASURE_INPUT")
-fi
-if [[ "$SELF_CHECK_INPUT" == "true" ]]; then
-  ARGS+=(--self-check)
-fi
-if [[ "$ENFORCE_TARGETS_INPUT" == "true" ]]; then
-  ARGS+=(--enforce-targets)
-fi
-if [[ "$APPLY_INPUT" == "true" ]]; then
-  ARGS+=(--apply)
+  MEASURE_ARGS+=(--hash-measure-ms "$HASH_MEASURE_INPUT")
 fi
 
-ARGS+=(--report-dir "$OUT_DIR")
+DERIVE_ARGS=()
+if [[ "$SELF_CHECK_INPUT" == "true" ]]; then
+  DERIVE_ARGS+=(--self-check)
+fi
+if [[ "$ENFORCE_TARGETS_INPUT" == "true" ]]; then
+  DERIVE_ARGS+=(--enforce-targets)
+fi
+if [[ "$APPLY_INPUT" == "true" ]]; then
+  DERIVE_ARGS+=(--apply)
+fi
+DERIVE_ARGS+=(--report-dir "$OUT_DIR")
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "Running rscrypto-tune"
@@ -135,11 +138,31 @@ if [[ "$QUICK_INPUT" == "true" ]]; then
 else
   echo "Mode: full-quality (dispatch eligible)"
 fi
-echo "Args: ${ARGS[*]}"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
+RAW_ARTIFACT_PATH="$OUT_DIR/raw-results.json"
+LOG_PATH="$OUT_DIR/rscrypto-tune.txt"
+: > "$LOG_PATH"
+
+if [[ -n "$DERIVE_FROM_INPUT" ]]; then
+  RAW_ARTIFACT_PATH="$DERIVE_FROM_INPUT"
+  echo "Derive source: existing raw artifact ($RAW_ARTIFACT_PATH)"
+else
+  echo "Measure args: ${MEASURE_ARGS[*]} --measure-only --raw-output $RAW_ARTIFACT_PATH"
+  RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
+    cargo run -p tune --release --bin rscrypto-tune -- "${MEASURE_ARGS[@]}" --measure-only --raw-output "$RAW_ARTIFACT_PATH" \
+    2>&1 | tee -a "$LOG_PATH"
+fi
+
+if [[ "$MEASURE_ONLY_INPUT" == "true" ]]; then
+  echo "Measurement-only mode enabled; skipping derivation/apply."
+  exit 0
+fi
+
+echo "Derive args: --derive-from $RAW_ARTIFACT_PATH ${DERIVE_ARGS[*]}"
 RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
-  cargo run -p tune --release --bin rscrypto-tune -- "${ARGS[@]}" 2>&1 | tee "$OUT_DIR/rscrypto-tune.txt"
+  cargo run -p tune --release --bin rscrypto-tune -- --derive-from "$RAW_ARTIFACT_PATH" "${DERIVE_ARGS[@]}" \
+  2>&1 | tee -a "$LOG_PATH"
 
 if [[ "$APPLY_INPUT" == "true" ]]; then
   {

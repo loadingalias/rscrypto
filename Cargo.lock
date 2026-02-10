@@ -994,6 +994,8 @@ dependencies = [
  "checksum",
  "hashes",
  "platform",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

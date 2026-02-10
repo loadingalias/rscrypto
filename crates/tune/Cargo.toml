@@ -11,7 +11,7 @@ repository.workspace = true
 
 [features]
 default = ["std"]
-std = ["alloc", "platform/std", "backend/std", "checksum/std", "hashes/std"]
+std = ["alloc", "platform/std", "backend/std", "checksum/std", "hashes/std", "dep:serde", "dep:serde_json"]
 alloc = ["checksum/alloc"]
 
 [dependencies]
@@ -19,6 +19,8 @@ platform = { workspace = true, default-features = false }
 backend = { workspace = true, default-features = false }
 checksum = { workspace = true, default-features = false }
 hashes = { workspace = true, default-features = false }
+serde = { version = "1.0", features = ["derive"], optional = true }
+serde_json = { version = "1.0", optional = true }
 
 [[bin]]
 name = "rscrypto-tune"

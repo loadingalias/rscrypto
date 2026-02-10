@@ -32,7 +32,7 @@ const CRC32_FOLD_BLOCK_BYTES: usize = 128;
 /// - Portable → PCLMUL folding (on x86 without CRC32)
 /// - Hardware CRC → Fusion (on Intel x86_64)
 /// - Fusion → VPCLMUL (on AVX-512 x86_64)
-fn crc32_threshold_to_env_suffix(threshold_name: &str) -> Option<&'static str> {
+pub(crate) fn crc32_threshold_to_env_suffix(threshold_name: &str) -> Option<&'static str> {
   match threshold_name {
     "portable_bytewise_to_slice16" => Some("THRESHOLD_PORTABLE_BYTEWISE_TO_SLICE16"),
     // Policy-specific thresholds (match `checksum::crc32::config` env vars).

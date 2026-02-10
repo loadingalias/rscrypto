@@ -57,6 +57,8 @@ mod runner;
 #[cfg(feature = "std")]
 pub mod apply;
 #[cfg(feature = "std")]
+pub mod raw;
+#[cfg(feature = "std")]
 pub mod report;
 #[cfg(feature = "std")]
 pub mod sampler;
@@ -96,6 +98,12 @@ pub use backend::KernelTier;
 #[cfg(feature = "std")]
 pub use engine::TuneEngine;
 use platform::Caps;
+#[cfg(feature = "std")]
+pub use raw::{
+  RAW_SCHEMA_VERSION, RawAlgorithmMeasurements, RawBenchPoint, RawBlake3ParallelCurve, RawBlake3ParallelData,
+  RawKernelSpec, RawPlatformInfo, RawRunnerConfig, RawThroughputPoint, RawTuneResults, read_raw_results,
+  write_raw_results,
+};
 #[cfg(feature = "std")]
 pub use report::{OutputFormat, Report};
 #[cfg(feature = "std")]

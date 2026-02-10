@@ -25,7 +25,7 @@ use crate::{
 ///
 /// This translates the generic analysis names to the env var names
 /// expected by the CRC-64 config module.
-fn crc64_threshold_to_env_suffix(threshold_name: &str) -> Option<&'static str> {
+pub(crate) fn crc64_threshold_to_env_suffix(threshold_name: &str) -> Option<&'static str> {
   match threshold_name {
     // Portable → SIMD crossover
     "portable_to_simd" => Some("THRESHOLD_PORTABLE_TO_CLMUL"),
