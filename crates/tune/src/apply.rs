@@ -1564,16 +1564,28 @@ fn apply_hash_dispatch_tables(repo_root: &Path, results: &TuneResults) -> io::Re
     };
 
     if target.algo == "blake3-chunk" {
-      let stream64_modes: Vec<&AlgorithmResult> =
-        ["blake3-stream64", "blake3-stream64-keyed", "blake3-stream64-derive"]
-          .iter()
-          .filter_map(|name| results.algorithms.iter().find(|a| a.name == *name))
-          .collect();
-      let stream4k_modes: Vec<&AlgorithmResult> =
-        ["blake3-stream4k", "blake3-stream4k-keyed", "blake3-stream4k-derive"]
-          .iter()
-          .filter_map(|name| results.algorithms.iter().find(|a| a.name == *name))
-          .collect();
+      let stream64_modes: Vec<&AlgorithmResult> = [
+        "blake3-stream64",
+        "blake3-stream256",
+        "blake3-stream1k",
+        "blake3-stream-mixed",
+        "blake3-stream64-keyed",
+        "blake3-stream64-derive",
+        "blake3-stream64-xof",
+        "blake3-stream-mixed-xof",
+      ]
+      .iter()
+      .filter_map(|name| results.algorithms.iter().find(|a| a.name == *name))
+      .collect();
+      let stream4k_modes: Vec<&AlgorithmResult> = [
+        "blake3-stream4k",
+        "blake3-stream4k-keyed",
+        "blake3-stream4k-derive",
+        "blake3-stream4k-xof",
+      ]
+      .iter()
+      .filter_map(|name| results.algorithms.iter().find(|a| a.name == *name))
+      .collect();
       let policy_source = results.algorithms.iter().find(|a| a.name == "blake3").ok_or_else(|| {
         io::Error::new(
           io::ErrorKind::InvalidData,
@@ -1584,9 +1596,8 @@ fn apply_hash_dispatch_tables(repo_root: &Path, results: &TuneResults) -> io::Re
       if stream64_modes.is_empty() || stream4k_modes.is_empty() {
         return Err(io::Error::new(
           io::ErrorKind::InvalidData,
-          "applying blake3 profiles requires stream tuning results; missing one or more of: blake3-stream64, \
-           blake3-stream64-keyed, blake3-stream64-derive, blake3-stream4k, blake3-stream4k-keyed, \
-           blake3-stream4k-derive",
+          "applying blake3 profiles requires stream tuning results; missing one or more required stream surfaces \
+           (small-update or 4k-update modes)",
         ));
       }
 

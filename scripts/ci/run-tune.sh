@@ -25,6 +25,8 @@ CHECKSUM_WARMUP_INPUT="${TUNE_CHECKSUM_WARMUP_MS:-}"
 CHECKSUM_MEASURE_INPUT="${TUNE_CHECKSUM_MEASURE_MS:-}"
 HASH_WARMUP_INPUT="${TUNE_HASH_WARMUP_MS:-}"
 HASH_MEASURE_INPUT="${TUNE_HASH_MEASURE_MS:-}"
+REPEATS_INPUT="${TUNE_REPEATS:-}"
+AGGREGATION_INPUT="${TUNE_AGGREGATION:-auto}"
 APPLY_INPUT="$(to_bool "${TUNE_APPLY:-false}")"
 SELF_CHECK_INPUT="$(to_bool "${TUNE_SELF_CHECK:-false}")"
 ENFORCE_TARGETS_INPUT="$(to_bool "${TUNE_ENFORCE_TARGETS:-false}")"
@@ -32,60 +34,32 @@ QUICK_INPUT="$(to_bool "${TUNE_QUICK:-false}")"
 MEASURE_ONLY_INPUT="$(to_bool "${TUNE_MEASURE_ONLY:-false}")"
 DERIVE_FROM_INPUT="${TUNE_DERIVE_FROM:-}"
 
-if [[ -z "$DERIVE_FROM_INPUT" && "$QUICK_INPUT" == "true" && "$APPLY_INPUT" == "true" ]]; then
-  echo "error: quick mode is developer preview only and cannot be used with --apply" >&2
+if [[ -z "$REPEATS_INPUT" ]]; then
+  if [[ "$QUICK_INPUT" == "true" ]]; then
+    REPEATS_INPUT="1"
+  else
+    REPEATS_INPUT="3"
+  fi
+fi
+
+if ! [[ "$REPEATS_INPUT" =~ ^[0-9]+$ ]] || [[ "$REPEATS_INPUT" -lt 1 ]]; then
+  echo "error: TUNE_REPEATS must be an integer >= 1 (got '$REPEATS_INPUT')" >&2
   exit 2
 fi
 
-# `--apply` for blake3 requires stream-profile results.
-# If caller asks for `--only blake3`, auto-include the required stream variants
-# so apply can succeed without forcing users to remember the full list.
-if [[ "$APPLY_INPUT" == "true" && -n "$ONLY_INPUT" ]]; then
-  declare -a only_items=()
-  IFS=',' read -ra raw_only_items <<< "$ONLY_INPUT"
-  for raw in "${raw_only_items[@]}"; do
-    item="$(echo "$raw" | xargs)"
-    [[ -n "$item" ]] && only_items+=("$item")
-  done
+AGGREGATION_INPUT="$(echo "$AGGREGATION_INPUT" | tr '[:upper:]' '[:lower:]' | xargs)"
+case "$AGGREGATION_INPUT" in
+  auto|median) ;;
+  trimmed-mean|trimmed_mean|trimmedmean|trim) AGGREGATION_INPUT="trimmed-mean" ;;
+  *)
+    echo "error: TUNE_AGGREGATION must be one of auto|median|trimmed-mean (got '$AGGREGATION_INPUT')" >&2
+    exit 2
+    ;;
+esac
 
-  has_blake3=false
-  has_stream64=false
-  has_stream4k=false
-  for item in "${only_items[@]}"; do
-    case "$item" in
-      blake3) has_blake3=true ;;
-      blake3-stream64|blake3-stream64-keyed|blake3-stream64-derive) has_stream64=true ;;
-      blake3-stream4k|blake3-stream4k-keyed|blake3-stream4k-derive) has_stream4k=true ;;
-    esac
-  done
-
-  if [[ "$has_blake3" == "true" && ( "$has_stream64" == "false" || "$has_stream4k" == "false" ) ]]; then
-    echo "note: --apply + --only=blake3 requires stream tuning results; adding blake3 stream variants automatically"
-    only_items+=(
-      "blake3-stream64"
-      "blake3-stream64-keyed"
-      "blake3-stream64-derive"
-      "blake3-stream4k"
-      "blake3-stream4k-keyed"
-      "blake3-stream4k-derive"
-    )
-
-    # De-duplicate while preserving stable order (bash 3.2 compatible).
-    declare -a deduped=()
-    for item in "${only_items[@]}"; do
-      already_seen=false
-      for existing in "${deduped[@]-}"; do
-        if [[ "$existing" == "$item" ]]; then
-          already_seen=true
-          break
-        fi
-      done
-      if [[ "$already_seen" == "false" ]]; then
-        deduped+=("$item")
-      fi
-    done
-    ONLY_INPUT="$(IFS=','; echo "${deduped[*]}")"
-  fi
+if [[ -z "$DERIVE_FROM_INPUT" && "$QUICK_INPUT" == "true" && "$APPLY_INPUT" == "true" ]]; then
+  echo "error: quick mode is developer preview only and cannot be used with --apply" >&2
+  exit 2
 fi
 
 MEASURE_ARGS=()
@@ -116,6 +90,7 @@ fi
 if [[ -n "$HASH_MEASURE_INPUT" ]]; then
   MEASURE_ARGS+=(--hash-measure-ms "$HASH_MEASURE_INPUT")
 fi
+MEASURE_ARGS+=(--repeats "$REPEATS_INPUT" --aggregate "$AGGREGATION_INPUT")
 
 DERIVE_ARGS=()
 if [[ "$SELF_CHECK_INPUT" == "true" ]]; then
@@ -138,6 +113,8 @@ if [[ "$QUICK_INPUT" == "true" ]]; then
 else
   echo "Mode: full-quality (dispatch eligible)"
 fi
+echo "Repeats: $REPEATS_INPUT"
+echo "Aggregation: $AGGREGATION_INPUT"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 RAW_ARTIFACT_PATH="$OUT_DIR/raw-results.json"
@@ -165,23 +142,116 @@ RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
   2>&1 | tee -a "$LOG_PATH"
 
 if [[ "$APPLY_INPUT" == "true" ]]; then
+  TARGET_PATCH_PATHS=("crates/tune/generated")
+  PATCH_PATHS_FILE="$OUT_DIR/patch-paths.txt"
+  PATCH_PATH="$OUT_DIR/patch.diff"
+  MANIFEST_PATH="$OUT_DIR/apply-manifest.json"
+  : > "$PATCH_PATHS_FILE"
+
+  append_unique_path() {
+    local path="$1"
+    [[ -z "$path" ]] && return 0
+    if ! grep -Fxq "$path" "$PATCH_PATHS_FILE"; then
+      echo "$path" >> "$PATCH_PATHS_FILE"
+    fi
+  }
+
+  while IFS= read -r path; do
+    append_unique_path "$path"
+  done < <(git diff --name-only -- "${TARGET_PATCH_PATHS[@]}" || true)
+
+  while IFS= read -r path; do
+    append_unique_path "$path"
+  done < <(git ls-files --others --exclude-standard -- "${TARGET_PATCH_PATHS[@]}" || true)
+
   {
-    # Capture tracked changes first.
-    git diff --binary --full-index || true
+    # Capture tracked apply-target changes only.
+    git diff --binary --full-index -- "${TARGET_PATCH_PATHS[@]}" || true
 
     # `rscrypto-tune --apply` emits new files under crates/tune/generated.
     # Plain `git diff` ignores untracked files, so include them explicitly.
-    git ls-files --others --exclude-standard -z -- crates/tune/generated \
+    git ls-files --others --exclude-standard -z -- "${TARGET_PATCH_PATHS[@]}" \
       | while IFS= read -r -d '' path; do
           git diff --binary --full-index --no-index /dev/null "$path" || true
         done
-  } > "$OUT_DIR/patch.diff"
+  } > "$PATCH_PATH"
 
-  if [[ -s "$OUT_DIR/patch.diff" ]]; then
-    echo "Generated non-empty patch: $OUT_DIR/patch.diff"
+  if [[ -s "$PATCH_PATH" ]]; then
+    echo "Generated non-empty patch: $PATCH_PATH"
   else
-    echo "Generated empty patch (no tracked or generated-file changes): $OUT_DIR/patch.diff"
+    echo "Generated empty patch (no apply-target changes): $PATCH_PATH"
   fi
+
+  RAW_ARTIFACT_PATH="$RAW_ARTIFACT_PATH" \
+  RESULTS_ARTIFACT_PATH="$OUT_DIR/results.json" \
+  PATCH_PATH="$PATCH_PATH" \
+  PATCH_PATHS_FILE="$PATCH_PATHS_FILE" \
+  MANIFEST_PATH="$MANIFEST_PATH" \
+  python3 - <<'PY'
+import datetime as dt
+import json
+import os
+from pathlib import Path
+
+
+def load_json(path: str):
+    p = Path(path)
+    if not p.exists():
+        return None
+    try:
+        return json.loads(p.read_text())
+    except Exception:
+        return None
+
+
+raw_path = os.environ.get("RAW_ARTIFACT_PATH", "")
+results_path = os.environ.get("RESULTS_ARTIFACT_PATH", "")
+patch_path = os.environ.get("PATCH_PATH", "")
+paths_file = os.environ.get("PATCH_PATHS_FILE", "")
+manifest_path = os.environ.get("MANIFEST_PATH", "")
+
+raw = load_json(raw_path) if raw_path else None
+results = load_json(results_path) if results_path else None
+
+changed_files = []
+if paths_file and Path(paths_file).exists():
+    changed_files = [line.strip() for line in Path(paths_file).read_text().splitlines() if line.strip()]
+
+changed_profiles = []
+for path in changed_files:
+    parts = path.replace("\\", "/").split("/")
+    if len(parts) >= 6 and parts[0] == "crates" and parts[1] == "tune" and parts[2] == "generated":
+        changed_profiles.append(
+            {
+                "family": parts[3],
+                "profile": parts[4],
+                "tune_kind_file": parts[5],
+                "path": path,
+            }
+        )
+
+manifest = {
+    "generated_at_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
+    "source_run": {
+        "raw_artifact": raw_path,
+        "results_artifact": results_path,
+        "patch_artifact": patch_path,
+        "raw_schema_version": raw.get("schema_version") if isinstance(raw, dict) else None,
+        "quick_mode": raw.get("quick_mode") if isinstance(raw, dict) else None,
+        "run_count": raw.get("run_count") if isinstance(raw, dict) else None,
+        "aggregation": raw.get("aggregation") if isinstance(raw, dict) else None,
+        "measurement_timestamp": raw.get("timestamp") if isinstance(raw, dict) else None,
+        "derived_timestamp": results.get("timestamp") if isinstance(results, dict) else None,
+        "platform": raw.get("platform") if isinstance(raw, dict) else None,
+    },
+    "changed_files": changed_files,
+    "changed_profiles": changed_profiles,
+}
+
+Path(manifest_path).write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+PY
+
+  echo "Generated apply manifest: $MANIFEST_PATH"
 fi
 
 if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then

@@ -16,7 +16,7 @@ use std::{
 };
 
 use tune::{
-  BenchRunner, OutputFormat, PlatformInfo, Report, TuneEngine, TuneResults,
+  AggregationMode, BenchRunner, OutputFormat, PlatformInfo, Report, TuneEngine, TuneResults, aggregate_raw_results,
   crc16::{Crc16CcittTunable, Crc16IbmTunable},
   crc24::Crc24OpenPgpTunable,
   crc32::{Crc32IeeeTunable, Crc32cTunable},
@@ -31,6 +31,20 @@ const CRATE_CHECKSUM: &str = "checksum";
 const CRATE_HASHES: &str = "hashes";
 const CRATE_HASHES_BENCH: &str = "hashes-bench";
 const VALID_CRATE_FILTERS: &[&str] = &[CRATE_CHECKSUM, CRATE_HASHES, CRATE_HASHES_BENCH];
+const BLAKE3_APPLY_REQUIRED_STREAM_SURFACES: &[&str] = &[
+  "blake3-stream64",
+  "blake3-stream256",
+  "blake3-stream1k",
+  "blake3-stream-mixed",
+  "blake3-stream64-keyed",
+  "blake3-stream64-derive",
+  "blake3-stream64-xof",
+  "blake3-stream-mixed-xof",
+  "blake3-stream4k",
+  "blake3-stream4k-keyed",
+  "blake3-stream4k-derive",
+  "blake3-stream4k-xof",
+];
 
 const CHECKSUM_ALGOS: &[&str] = &[
   "crc16-ccitt",
@@ -71,6 +85,12 @@ struct Args {
 
   /// Run only measurement phase, emit raw artifact, and exit.
   measure_only: bool,
+
+  /// Number of repeated measurement runs before aggregation.
+  repeats: Option<usize>,
+
+  /// Aggregation mode for repeated runs.
+  aggregate: AggregationMode,
 
   /// Verbose output.
   verbose: bool,
@@ -118,6 +138,8 @@ impl Default for Args {
       raw_output: None,
       derive_from: None,
       measure_only: false,
+      repeats: None,
+      aggregate: AggregationMode::Auto,
       verbose: false,
       apply: false,
       self_check: false,
@@ -167,6 +189,22 @@ fn parse_args() -> Result<Args, String> {
       "--self-check" => args.self_check = true,
       "--enforce-targets" => args.enforce_targets = true,
       "--measure-only" => args.measure_only = true,
+      "--repeats" => {
+        let Some(value) = iter.next() else {
+          return Err("--repeats requires a value".to_string());
+        };
+        let repeats: usize = value.parse().map_err(|_| format!("Invalid repeats: {value}"))?;
+        if repeats == 0 {
+          return Err("--repeats must be >= 1".to_string());
+        }
+        args.repeats = Some(repeats);
+      }
+      "--aggregate" => {
+        let Some(value) = iter.next() else {
+          return Err("--aggregate requires a value".to_string());
+        };
+        args.aggregate = AggregationMode::parse(&value).ok_or_else(|| format!("Unknown aggregation mode: {value}"))?;
+      }
       "--only" => {
         let Some(value) = iter.next() else {
           return Err("--only requires a value".to_string());
@@ -288,6 +326,8 @@ OPTIONS:
      target/tune/raw-results.json)
     --derive-from PATH    Skip measurement and derive policy/results from PATH
     --measure-only        Run measurement only, emit raw artifact, skip derivation/apply
+    --repeats N           Repeat measurement N times before derivation (default: full-quality=3, quick=1)
+    --aggregate MODE      Repeated-run aggregation mode: auto (default), median, trimmed-mean
     --enforce-targets     Fail if any defined per-class throughput target is missed
     --apply               Generate dispatch.rs table entry for this TuneKind
     --self-check          Validate that tuned results can be safely applied on this host
@@ -324,11 +364,17 @@ EXAMPLES:
     # Derive from existing raw artifact without rerunning benches
     just tune -- --derive-from target/tune/raw-results.json --report-dir target/tune
 
+    # Increase stability with more repeated runs
+    just tune -- --repeats 5 --aggregate trimmed-mean
+
     # Enforce throughput targets in CI
     just tune -- --enforce-targets
 
     # Generate dispatch table entry (writes into dispatch tables)
     just tune-apply
+
+    # Apply BLAKE3 with minimal input; stream surfaces are auto-expanded
+    just tune-apply -- --crate hashes --only blake3
 "
   );
 }
@@ -444,6 +490,8 @@ fn resolve_raw_output_path(args: &Args) -> PathBuf {
 
 fn has_measurement_overrides(args: &Args) -> bool {
   args.quick
+    || args.repeats.is_some()
+    || args.aggregate != AggregationMode::Auto
     || !args.only.is_empty()
     || !args.crate_filters.is_empty()
     || args.warmup_ms.is_some()
@@ -454,8 +502,27 @@ fn has_measurement_overrides(args: &Args) -> bool {
     || args.hash_measure_ms.is_some()
 }
 
+fn effective_repeats(args: &Args) -> usize {
+  args.repeats.unwrap_or(if args.quick { 1 } else { 3 })
+}
+
+fn expand_blake3_apply_only(only: &mut Vec<String>) -> bool {
+  if !only.iter().any(|algo| algo == "blake3") {
+    return false;
+  }
+
+  let mut changed = false;
+  for required in BLAKE3_APPLY_REQUIRED_STREAM_SURFACES {
+    if !only.iter().any(|algo| algo == required) {
+      only.push((*required).to_string());
+      changed = true;
+    }
+  }
+  changed
+}
+
 fn main() -> ExitCode {
-  let args = match parse_args() {
+  let mut args = match parse_args() {
     Ok(args) => args,
     Err(msg) => {
       eprintln!("Error: {msg}");
@@ -494,10 +561,17 @@ fn main() -> ExitCode {
 
   if args.derive_from.is_some() && has_measurement_overrides(&args) {
     eprintln!(
-      "Error: --derive-from cannot be combined with measurement options (--quick/--crate/--only/measurement \
-       overrides)."
+      "Error: --derive-from cannot be combined with measurement options \
+       (--quick/--repeats/--crate/--only/--aggregate/measurement overrides)."
     );
     return ExitCode::FAILURE;
+  }
+
+  if args.apply && expand_blake3_apply_only(&mut args.only) {
+    eprintln!(
+      "note: --apply + --only=blake3 requires full stream-surface tuning; added required blake3 stream surfaces \
+       automatically"
+    );
   }
 
   let raw_output_path = resolve_raw_output_path(&args);
@@ -599,6 +673,9 @@ fn main() -> ExitCode {
     } else {
       eprintln!("Mode: full-quality (dispatch-eligible)");
     }
+    let repeats = effective_repeats(&args);
+    eprintln!("Repeats: {repeats}");
+    eprintln!("Aggregation: {}", args.aggregate.as_str());
     eprintln!();
 
     if !args.only.is_empty() {
@@ -610,11 +687,38 @@ fn main() -> ExitCode {
       }
     }
 
-    let raw = match engine.measure(args.quick) {
-      Ok(raw) => raw,
-      Err(err) => {
-        eprintln!("Measurement failed: {err}");
-        return ExitCode::FAILURE;
+    let repeats = effective_repeats(&args);
+    let mut runs = Vec::with_capacity(repeats);
+    for run_idx in 0..repeats {
+      if repeats > 1 {
+        eprintln!("Measurement run {}/{}...", run_idx + 1, repeats);
+      }
+      let raw = match engine.measure(args.quick) {
+        Ok(raw) => raw,
+        Err(err) => {
+          eprintln!("Measurement failed on run {}: {err}", run_idx + 1);
+          return ExitCode::FAILURE;
+        }
+      };
+      runs.push(raw);
+    }
+
+    let raw = if repeats == 1 {
+      runs.remove(0)
+    } else {
+      match aggregate_raw_results(&runs, args.aggregate) {
+        Ok(aggregated) => {
+          eprintln!(
+            "Aggregated {} measurement runs with mode {}.",
+            repeats,
+            args.aggregate.as_str()
+          );
+          aggregated
+        }
+        Err(err) => {
+          eprintln!("Failed to aggregate repeated measurements: {err}");
+          return ExitCode::FAILURE;
+        }
       }
     };
 

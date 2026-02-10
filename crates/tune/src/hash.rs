@@ -50,11 +50,17 @@ pub const BLAKE3_TUNING_CORPUS: &[(&str, &str)] = &[
   ("blake3-parent", "RSCRYPTO_BENCH_BLAKE3_PARENT"),
   ("blake3-parent-fold", "RSCRYPTO_BENCH_BLAKE3_PARENT_FOLD"),
   ("blake3-stream64", "RSCRYPTO_BENCH_BLAKE3_STREAM64"),
+  ("blake3-stream256", "RSCRYPTO_BENCH_BLAKE3_STREAM256"),
+  ("blake3-stream1k", "RSCRYPTO_BENCH_BLAKE3_STREAM1K"),
   ("blake3-stream4k", "RSCRYPTO_BENCH_BLAKE3_STREAM4K"),
+  ("blake3-stream-mixed", "RSCRYPTO_BENCH_BLAKE3_STREAM_MIXED"),
   ("blake3-stream64-keyed", "RSCRYPTO_BENCH_BLAKE3_STREAM64_KEYED"),
   ("blake3-stream4k-keyed", "RSCRYPTO_BENCH_BLAKE3_STREAM4K_KEYED"),
   ("blake3-stream64-derive", "RSCRYPTO_BENCH_BLAKE3_STREAM64_DERIVE"),
   ("blake3-stream4k-derive", "RSCRYPTO_BENCH_BLAKE3_STREAM4K_DERIVE"),
+  ("blake3-stream64-xof", "RSCRYPTO_BENCH_BLAKE3_STREAM64_XOF"),
+  ("blake3-stream4k-xof", "RSCRYPTO_BENCH_BLAKE3_STREAM4K_XOF"),
+  ("blake3-stream-mixed-xof", "RSCRYPTO_BENCH_BLAKE3_STREAM_MIXED_XOF"),
 ];
 
 /// Hash kernel-loop microbench corpus.
@@ -97,11 +103,17 @@ fn is_blake3_stream_tuning_algo(algo: &str) -> bool {
   matches!(
     algo,
     "blake3-stream64"
+      | "blake3-stream256"
+      | "blake3-stream1k"
       | "blake3-stream4k"
+      | "blake3-stream-mixed"
       | "blake3-stream64-keyed"
       | "blake3-stream4k-keyed"
       | "blake3-stream64-derive"
       | "blake3-stream4k-derive"
+      | "blake3-stream64-xof"
+      | "blake3-stream4k-xof"
+      | "blake3-stream-mixed-xof"
   )
 }
 

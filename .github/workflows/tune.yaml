@@ -83,6 +83,16 @@ on:
         required: false
         type: string
         default: ""
+      repeats:
+        description: "Measurement repeats per platform lane (full-quality default: 3, quick default: 1)"
+        required: false
+        type: string
+        default: ""
+      aggregation:
+        description: "Repeated-run aggregation mode (auto, median, trimmed-mean)"
+        required: false
+        type: string
+        default: "auto"
 
 env:
   RUST_BACKTRACE: 1
@@ -120,6 +130,8 @@ jobs:
         TUNE_CHECKSUM_MEASURE_MS="${{ inputs.checksum_measure_ms }}" \
         TUNE_HASH_WARMUP_MS="${{ inputs.hash_warmup_ms }}" \
         TUNE_HASH_MEASURE_MS="${{ inputs.hash_measure_ms }}" \
+        TUNE_REPEATS="${{ inputs.repeats }}" \
+        TUNE_AGGREGATION="${{ inputs.aggregation }}" \
         scripts/ci/run-tune.sh
       artifact_name: tuning-intel
       artifact_path: tune-results/
@@ -150,6 +162,8 @@ jobs:
         TUNE_CHECKSUM_MEASURE_MS="${{ inputs.checksum_measure_ms }}" \
         TUNE_HASH_WARMUP_MS="${{ inputs.hash_warmup_ms }}" \
         TUNE_HASH_MEASURE_MS="${{ inputs.hash_measure_ms }}" \
+        TUNE_REPEATS="${{ inputs.repeats }}" \
+        TUNE_AGGREGATION="${{ inputs.aggregation }}" \
         scripts/ci/run-tune.sh
       artifact_name: tuning-intel-spr
       artifact_path: tune-results/
@@ -180,6 +194,8 @@ jobs:
         TUNE_CHECKSUM_MEASURE_MS="${{ inputs.checksum_measure_ms }}" \
         TUNE_HASH_WARMUP_MS="${{ inputs.hash_warmup_ms }}" \
         TUNE_HASH_MEASURE_MS="${{ inputs.hash_measure_ms }}" \
+        TUNE_REPEATS="${{ inputs.repeats }}" \
+        TUNE_AGGREGATION="${{ inputs.aggregation }}" \
         scripts/ci/run-tune.sh
       artifact_name: tuning-intel-icl
       artifact_path: tune-results/
@@ -209,6 +225,8 @@ jobs:
         TUNE_CHECKSUM_MEASURE_MS="${{ inputs.checksum_measure_ms }}" \
         TUNE_HASH_WARMUP_MS="${{ inputs.hash_warmup_ms }}" \
         TUNE_HASH_MEASURE_MS="${{ inputs.hash_measure_ms }}" \
+        TUNE_REPEATS="${{ inputs.repeats }}" \
+        TUNE_AGGREGATION="${{ inputs.aggregation }}" \
         scripts/ci/run-tune.sh
       artifact_name: tuning-amd-zen4
       artifact_path: tune-results/
@@ -239,6 +257,8 @@ jobs:
         TUNE_CHECKSUM_MEASURE_MS="${{ inputs.checksum_measure_ms }}" \
         TUNE_HASH_WARMUP_MS="${{ inputs.hash_warmup_ms }}" \
         TUNE_HASH_MEASURE_MS="${{ inputs.hash_measure_ms }}" \
+        TUNE_REPEATS="${{ inputs.repeats }}" \
+        TUNE_AGGREGATION="${{ inputs.aggregation }}" \
         scripts/ci/run-tune.sh
       artifact_name: tuning-amd-zen5
       artifact_path: tune-results/
@@ -269,6 +289,8 @@ jobs:
         TUNE_CHECKSUM_MEASURE_MS="${{ inputs.checksum_measure_ms }}" \
         TUNE_HASH_WARMUP_MS="${{ inputs.hash_warmup_ms }}" \
         TUNE_HASH_MEASURE_MS="${{ inputs.hash_measure_ms }}" \
+        TUNE_REPEATS="${{ inputs.repeats }}" \
+        TUNE_AGGREGATION="${{ inputs.aggregation }}" \
         scripts/ci/run-tune.sh
       artifact_name: tuning-graviton
       artifact_path: tune-results/

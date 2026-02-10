@@ -100,9 +100,9 @@ pub use engine::TuneEngine;
 use platform::Caps;
 #[cfg(feature = "std")]
 pub use raw::{
-  RAW_SCHEMA_VERSION, RawAlgorithmMeasurements, RawBenchPoint, RawBlake3ParallelCurve, RawBlake3ParallelData,
-  RawKernelSpec, RawPlatformInfo, RawRunnerConfig, RawThroughputPoint, RawTuneResults, read_raw_results,
-  write_raw_results,
+  AggregationMode, RAW_SCHEMA_VERSION, RawAlgorithmMeasurements, RawBenchPoint, RawBlake3ParallelCurve,
+  RawBlake3ParallelData, RawKernelSpec, RawPlatformInfo, RawRunnerConfig, RawThroughputPoint, RawTuneResults,
+  aggregate_raw_results, read_raw_results, write_raw_results,
 };
 #[cfg(feature = "std")]
 pub use report::{OutputFormat, Report};

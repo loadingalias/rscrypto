@@ -51,8 +51,8 @@ bench-native crate="" bench="":
 #   just tune-measure dir=target/tune
 #   just tune-derive raw=target/tune/raw-results.json
 #   just tune-quick -- --crate hashes --only blake3
+#   just tune -- --repeats 5 --aggregate trimmed-mean
 #   just tune-report dir=target/tune -- --enforce-targets
-#   just tune-list
 tune *args="":
     RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p tune --release --bin rscrypto-tune -- {{args}}
 
