@@ -246,7 +246,7 @@ USAGE:
     RUSTFLAGS='-C target-cpu=native' cargo run --release -p tune --bin rscrypto-tune
 
 OPTIONS:
-    -q, --quick           Quick mode (faster, noisier measurements)
+    -q, --quick           Developer preview mode (faster, noisier; cannot be used with --apply)
     -v, --verbose         Verbose output during tuning
     --list                List registered algorithms and exit
     --crate NAME(S)       Restrict tuning corpus by crate/surface (checksum, hashes, hashes-bench)
@@ -283,7 +283,7 @@ EXAMPLES:
      --report-dir target/tune
 
     # Enforce throughput targets in CI
-    just tune-quick -- --enforce-targets
+    just tune -- --enforce-targets
 
     # Generate dispatch table entry (writes into dispatch tables)
     just tune-apply
@@ -418,6 +418,12 @@ fn main() -> ExitCode {
     }
   }
 
+  if args.quick && args.apply {
+    eprintln!("Error: --quick is developer preview mode and cannot be used with --apply.");
+    eprintln!("Run a full-quality tune (without --quick) before applying dispatch defaults.");
+    return ExitCode::FAILURE;
+  }
+
   // Build runners (checksums and hashes can use different measurement windows).
   let (mut checksum_runner, mut hash_runner) = if args.quick {
     (BenchRunner::quick(), BenchRunner::quick_hash())
@@ -483,6 +489,11 @@ fn main() -> ExitCode {
   eprintln!();
   eprintln!("Platform: {}", platform.description);
   eprintln!("Tune preset: {:?}", platform.tune_kind);
+  if args.quick {
+    eprintln!("Mode: quick developer preview (not dispatch-eligible)");
+  } else {
+    eprintln!("Mode: full-quality (dispatch-eligible)");
+  }
   eprintln!();
 
   // Run the tuning engine.

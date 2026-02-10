@@ -54,11 +54,15 @@ bench-native crate="" bench="":
 tune *args="":
     RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p tune --release --bin rscrypto-tune -- {{args}}
 
+# Developer preview only (faster, noisier). Not for dispatch decisions.
+tune-quick *args="":
+    RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p tune --release --bin rscrypto-tune -- --quick {{args}}
+
 tune-apply *args="":
     RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p tune --release --bin rscrypto-tune -- --apply {{args}}
 
 tune-report dir="target/tune" *args="":
-    RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p tune --release --bin rscrypto-tune -- --quick --report-dir "{{dir}}" {{args}}
+    RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p tune --release --bin rscrypto-tune -- --report-dir "{{dir}}" {{args}}
 
 tune-contribute *args="":
     RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p tune --release --bin rscrypto-tune -- --format contribute {{args}}
