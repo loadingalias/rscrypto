@@ -167,6 +167,8 @@ impl TuneEngine {
       schema_version: RAW_SCHEMA_VERSION,
       timestamp,
       quick_mode,
+      run_count: 1,
+      aggregation: "single".to_string(),
       platform: RawPlatformInfo {
         arch: platform.arch.to_string(),
         os: platform.os.to_string(),

@@ -9,7 +9,7 @@ extern crate alloc;
 
 use alloc::{vec, vec::Vec};
 
-use traits::Digest;
+use traits::{Digest, Xof};
 
 use crate::{crypto, fast};
 
@@ -416,6 +416,13 @@ enum Blake3StreamMode {
   Plain,
   Keyed,
   Derive,
+  Xof,
+}
+
+#[derive(Clone, Copy)]
+enum Blake3ChunkPattern {
+  Fixed(usize),
+  MixedBursty,
 }
 
 const BLAKE3_STREAM_BENCH_KEY: [u8; 32] = [
@@ -423,42 +430,122 @@ const BLAKE3_STREAM_BENCH_KEY: [u8; 32] = [
   0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
 ];
 const BLAKE3_STREAM_BENCH_CONTEXT: &str = "rscrypto-blake3-stream-bench";
+const BLAKE3_STREAM_MIXED_BURSTY_PATTERN: &[usize] = &[64, 64, 256, 1024, 4096, 256, 64, 1024, 4096, 64, 256];
 
-fn blake3_stream_chunks_auto_mode(data: &[u8], chunk_size: usize, mode: Blake3StreamMode) -> u64 {
+#[inline]
+fn blake3_update_with_pattern(h: &mut crypto::Blake3, data: &[u8], pattern: Blake3ChunkPattern) {
+  match pattern {
+    Blake3ChunkPattern::Fixed(chunk_size) => {
+      for chunk in data.chunks(chunk_size.max(1)) {
+        h.update(chunk);
+      }
+    }
+    Blake3ChunkPattern::MixedBursty => {
+      let mut offset = 0usize;
+      let mut idx = 0usize;
+      while offset < data.len() {
+        let step = BLAKE3_STREAM_MIXED_BURSTY_PATTERN[idx % BLAKE3_STREAM_MIXED_BURSTY_PATTERN.len()].max(1);
+        let end = offset.saturating_add(step).min(data.len());
+        h.update(&data[offset..end]);
+        offset = end;
+        idx = idx.saturating_add(1);
+      }
+    }
+  }
+}
+
+fn blake3_stream_auto_mode(data: &[u8], pattern: Blake3ChunkPattern, mode: Blake3StreamMode) -> u64 {
   use traits::Digest as _;
   let mut h = match mode {
     Blake3StreamMode::Plain => crypto::Blake3::new(),
     Blake3StreamMode::Keyed => crypto::Blake3::new_keyed(&BLAKE3_STREAM_BENCH_KEY),
     Blake3StreamMode::Derive => crypto::Blake3::new_derive_key(BLAKE3_STREAM_BENCH_CONTEXT),
+    Blake3StreamMode::Xof => crypto::Blake3::new(),
   };
-  for chunk in data.chunks(chunk_size) {
-    h.update(chunk);
+  blake3_update_with_pattern(&mut h, data, pattern);
+
+  match mode {
+    Blake3StreamMode::Xof => {
+      let mut xof = h.finalize_xof();
+      let mut out = [0u8; 32];
+      xof.squeeze(&mut out);
+      u64_from_prefix(&out)
+    }
+    _ => u64_from_prefix(&h.finalize()),
   }
-  u64_from_prefix(&h.finalize())
 }
 
 fn blake3_stream64_auto(data: &[u8]) -> u64 {
-  blake3_stream_chunks_auto_mode(data, 64, Blake3StreamMode::Plain)
+  blake3_stream_auto_mode(data, Blake3ChunkPattern::Fixed(64), Blake3StreamMode::Plain)
+}
+
+fn blake3_stream256_auto(data: &[u8]) -> u64 {
+  blake3_stream_auto_mode(data, Blake3ChunkPattern::Fixed(256), Blake3StreamMode::Plain)
+}
+
+fn blake3_stream1k_auto(data: &[u8]) -> u64 {
+  blake3_stream_auto_mode(data, Blake3ChunkPattern::Fixed(1024), Blake3StreamMode::Plain)
 }
 
 fn blake3_stream4k_auto(data: &[u8]) -> u64 {
-  blake3_stream_chunks_auto_mode(data, 4 * 1024, Blake3StreamMode::Plain)
+  blake3_stream_auto_mode(data, Blake3ChunkPattern::Fixed(4 * 1024), Blake3StreamMode::Plain)
+}
+
+fn blake3_stream_mixed_auto(data: &[u8]) -> u64 {
+  blake3_stream_auto_mode(data, Blake3ChunkPattern::MixedBursty, Blake3StreamMode::Plain)
 }
 
 fn blake3_stream64_keyed_auto(data: &[u8]) -> u64 {
-  blake3_stream_chunks_auto_mode(data, 64, Blake3StreamMode::Keyed)
+  blake3_stream_auto_mode(data, Blake3ChunkPattern::Fixed(64), Blake3StreamMode::Keyed)
 }
 
 fn blake3_stream4k_keyed_auto(data: &[u8]) -> u64 {
-  blake3_stream_chunks_auto_mode(data, 4 * 1024, Blake3StreamMode::Keyed)
+  blake3_stream_auto_mode(data, Blake3ChunkPattern::Fixed(4 * 1024), Blake3StreamMode::Keyed)
 }
 
 fn blake3_stream64_derive_auto(data: &[u8]) -> u64 {
-  blake3_stream_chunks_auto_mode(data, 64, Blake3StreamMode::Derive)
+  blake3_stream_auto_mode(data, Blake3ChunkPattern::Fixed(64), Blake3StreamMode::Derive)
 }
 
 fn blake3_stream4k_derive_auto(data: &[u8]) -> u64 {
-  blake3_stream_chunks_auto_mode(data, 4 * 1024, Blake3StreamMode::Derive)
+  blake3_stream_auto_mode(data, Blake3ChunkPattern::Fixed(4 * 1024), Blake3StreamMode::Derive)
+}
+
+fn blake3_stream64_xof_auto(data: &[u8]) -> u64 {
+  blake3_stream_auto_mode(data, Blake3ChunkPattern::Fixed(64), Blake3StreamMode::Xof)
+}
+
+fn blake3_stream4k_xof_auto(data: &[u8]) -> u64 {
+  blake3_stream_auto_mode(data, Blake3ChunkPattern::Fixed(4 * 1024), Blake3StreamMode::Xof)
+}
+
+fn blake3_stream_mixed_xof_auto(data: &[u8]) -> u64 {
+  blake3_stream_auto_mode(data, Blake3ChunkPattern::MixedBursty, Blake3StreamMode::Xof)
+}
+
+#[must_use]
+fn parse_blake3_stream_algo(algo: &str) -> Option<(Blake3StreamMode, Blake3ChunkPattern)> {
+  let suffix = algo.strip_prefix("blake3-stream")?;
+  let (pattern_str, mode) = if let Some(rest) = suffix.strip_suffix("-keyed") {
+    (rest, Blake3StreamMode::Keyed)
+  } else if let Some(rest) = suffix.strip_suffix("-derive") {
+    (rest, Blake3StreamMode::Derive)
+  } else if let Some(rest) = suffix.strip_suffix("-xof") {
+    (rest, Blake3StreamMode::Xof)
+  } else {
+    (suffix, Blake3StreamMode::Plain)
+  };
+
+  let pattern = match pattern_str {
+    "64" => Blake3ChunkPattern::Fixed(64),
+    "256" => Blake3ChunkPattern::Fixed(256),
+    "1k" | "1024" => Blake3ChunkPattern::Fixed(1024),
+    "4k" => Blake3ChunkPattern::Fixed(4 * 1024),
+    "mixed" | "-mixed" => Blake3ChunkPattern::MixedBursty,
+    _ => return None,
+  };
+
+  Some((mode, pattern))
 }
 
 fn blake3_kernel_id_from_name(name: &str) -> Option<crypto::blake3::kernels::Blake3KernelId> {
@@ -496,38 +583,73 @@ fn blake3_stream_chunks_kernel_pair(
   bulk_id: crypto::blake3::kernels::Blake3KernelId,
   mode: Blake3StreamMode,
   data: &[u8],
-  chunk_size: usize,
+  pattern: Blake3ChunkPattern,
 ) -> u64 {
-  let out = match mode {
-    Blake3StreamMode::Plain => crypto::Blake3::stream_chunks_with_kernel_pair_id(stream_id, bulk_id, chunk_size, data),
-    Blake3StreamMode::Keyed => {
+  let out = match (mode, pattern) {
+    (Blake3StreamMode::Plain, Blake3ChunkPattern::Fixed(chunk_size)) => {
+      crypto::Blake3::stream_chunks_with_kernel_pair_id(stream_id, bulk_id, chunk_size, data)
+    }
+    (Blake3StreamMode::Keyed, Blake3ChunkPattern::Fixed(chunk_size)) => {
       crypto::Blake3::stream_chunks_keyed_with_kernel_pair_id(stream_id, bulk_id, chunk_size, data)
     }
-    Blake3StreamMode::Derive => {
+    (Blake3StreamMode::Derive, Blake3ChunkPattern::Fixed(chunk_size)) => {
       crypto::Blake3::stream_chunks_derive_with_kernel_pair_id(stream_id, bulk_id, chunk_size, data)
+    }
+    (Blake3StreamMode::Xof, Blake3ChunkPattern::Fixed(chunk_size)) => {
+      crypto::Blake3::stream_chunks_xof_with_kernel_pair_id(stream_id, bulk_id, chunk_size, data)
+    }
+    (Blake3StreamMode::Plain, Blake3ChunkPattern::MixedBursty) => {
+      crypto::Blake3::stream_chunks_mixed_with_kernel_pair_id(
+        stream_id,
+        bulk_id,
+        BLAKE3_STREAM_MIXED_BURSTY_PATTERN,
+        data,
+      )
+    }
+    (Blake3StreamMode::Keyed, Blake3ChunkPattern::MixedBursty) => {
+      crypto::Blake3::stream_chunks_mixed_keyed_with_kernel_pair_id(
+        stream_id,
+        bulk_id,
+        BLAKE3_STREAM_MIXED_BURSTY_PATTERN,
+        data,
+      )
+    }
+    (Blake3StreamMode::Derive, Blake3ChunkPattern::MixedBursty) => {
+      crypto::Blake3::stream_chunks_mixed_derive_with_kernel_pair_id(
+        stream_id,
+        bulk_id,
+        BLAKE3_STREAM_MIXED_BURSTY_PATTERN,
+        data,
+      )
+    }
+    (Blake3StreamMode::Xof, Blake3ChunkPattern::MixedBursty) => {
+      crypto::Blake3::stream_chunks_mixed_xof_with_kernel_pair_id(
+        stream_id,
+        bulk_id,
+        BLAKE3_STREAM_MIXED_BURSTY_PATTERN,
+        data,
+      )
     }
   };
   u64_from_prefix(&out)
 }
 
 fn blake3_stream_chunks_kernel(id: crypto::blake3::kernels::Blake3KernelId, data: &[u8], chunk_size: usize) -> u64 {
-  blake3_stream_chunks_kernel_pair(id, id, Blake3StreamMode::Plain, data, chunk_size)
+  blake3_stream_chunks_kernel_pair(
+    id,
+    id,
+    Blake3StreamMode::Plain,
+    data,
+    Blake3ChunkPattern::Fixed(chunk_size),
+  )
 }
 
 #[must_use]
 pub fn run_blake3_stream_forced(algo: &str, kernel_name: &str, data: &[u8]) -> Option<u64> {
-  let (mode, chunk_size) = match algo {
-    "blake3-stream64" => (Blake3StreamMode::Plain, 64),
-    "blake3-stream4k" => (Blake3StreamMode::Plain, 4 * 1024),
-    "blake3-stream64-keyed" => (Blake3StreamMode::Keyed, 64),
-    "blake3-stream4k-keyed" => (Blake3StreamMode::Keyed, 4 * 1024),
-    "blake3-stream64-derive" => (Blake3StreamMode::Derive, 64),
-    "blake3-stream4k-derive" => (Blake3StreamMode::Derive, 4 * 1024),
-    _ => return None,
-  };
+  let (mode, pattern) = parse_blake3_stream_algo(algo)?;
   let (stream_id, bulk_id) = blake3_parse_kernel_pair(kernel_name)?;
   Some(blake3_stream_chunks_kernel_pair(
-    stream_id, bulk_id, mode, data, chunk_size,
+    stream_id, bulk_id, mode, data, pattern,
   ))
 }
 
@@ -1387,6 +1509,10 @@ pub fn get_kernel(algo: &str, name: &str) -> Option<Kernel> {
 
 #[must_use]
 pub fn run_auto(algo: &str, data: &[u8]) -> Option<u64> {
+  if let Some((mode, pattern)) = parse_blake3_stream_algo(algo) {
+    return Some(blake3_stream_auto_mode(data, pattern, mode));
+  }
+
   match algo {
     "sha224-compress" => Some(sha224_compress_auto(data)),
     "sha256-compress" => Some(sha256_compress_auto(data)),
@@ -1411,11 +1537,17 @@ pub fn run_auto(algo: &str, data: &[u8]) -> Option<u64> {
     "blake2s-256-stream64" => Some(blake2s_256_stream64_auto(data)),
     "blake2s-256-stream4k" => Some(blake2s_256_stream4k_auto(data)),
     "blake3-stream64" => Some(blake3_stream64_auto(data)),
+    "blake3-stream256" => Some(blake3_stream256_auto(data)),
+    "blake3-stream1k" => Some(blake3_stream1k_auto(data)),
     "blake3-stream4k" => Some(blake3_stream4k_auto(data)),
+    "blake3-stream-mixed" => Some(blake3_stream_mixed_auto(data)),
     "blake3-stream64-keyed" => Some(blake3_stream64_keyed_auto(data)),
     "blake3-stream4k-keyed" => Some(blake3_stream4k_keyed_auto(data)),
     "blake3-stream64-derive" => Some(blake3_stream64_derive_auto(data)),
     "blake3-stream4k-derive" => Some(blake3_stream4k_derive_auto(data)),
+    "blake3-stream64-xof" => Some(blake3_stream64_xof_auto(data)),
+    "blake3-stream4k-xof" => Some(blake3_stream4k_xof_auto(data)),
+    "blake3-stream-mixed-xof" => Some(blake3_stream_mixed_xof_auto(data)),
     "sha224" => Some(u64_from_prefix(&<crypto::Sha224 as Digest>::digest(data))),
     "sha256" => Some(u64_from_prefix(&<crypto::Sha256 as Digest>::digest(data))),
     "sha384" => Some(u64_from_prefix(&<crypto::Sha384 as Digest>::digest(data))),
@@ -1455,6 +1587,10 @@ pub fn run_auto(algo: &str, data: &[u8]) -> Option<u64> {
 
 #[must_use]
 pub fn kernel_name_for_len(algo: &str, len: usize) -> Option<&'static str> {
+  if parse_blake3_stream_algo(algo).is_some() {
+    return Some(crypto::blake3::dispatch::kernel_name_for_len(len));
+  }
+
   match algo {
     "sha224-compress" => Some(crypto::sha224::dispatch::kernel_name_for_len(len)),
     "sha256-compress" | "sha256-compress-unaligned" => Some(crypto::sha256::dispatch::kernel_name_for_len(len)),
@@ -1471,11 +1607,17 @@ pub fn kernel_name_for_len(algo: &str, len: usize) -> Option<&'static str> {
     "blake2b-512-stream64" | "blake2b-512-stream4k" => Some(crypto::blake2b::dispatch::kernel_name_for_len(len)),
     "blake2s-256-stream64" | "blake2s-256-stream4k" => Some(crypto::blake2s::dispatch::kernel_name_for_len(len)),
     "blake3-stream64"
+    | "blake3-stream256"
+    | "blake3-stream1k"
     | "blake3-stream4k"
+    | "blake3-stream-mixed"
     | "blake3-stream64-keyed"
     | "blake3-stream4k-keyed"
     | "blake3-stream64-derive"
-    | "blake3-stream4k-derive" => Some(crypto::blake3::dispatch::kernel_name_for_len(len)),
+    | "blake3-stream4k-derive"
+    | "blake3-stream64-xof"
+    | "blake3-stream4k-xof"
+    | "blake3-stream-mixed-xof" => Some(crypto::blake3::dispatch::kernel_name_for_len(len)),
     "sha224" => Some(crypto::sha224::dispatch::kernel_name_for_len(len)),
     "sha256" => Some(crypto::sha256::dispatch::kernel_name_for_len(len)),
     "sha384" => Some(crypto::sha384::dispatch::kernel_name_for_len(len)),
