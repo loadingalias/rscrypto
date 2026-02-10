@@ -40,6 +40,7 @@ normalize_csv() {
     if [[ -z "$token" ]]; then
       continue
     fi
+    token="$(echo "$token" | tr '[:upper:]' '[:lower:]')"
     if ! array_contains "$token" "${normalized[@]-}"; then
       normalized+=("$token")
     fi
@@ -73,8 +74,27 @@ CRATES_INPUT="$(normalize_csv "$CRATES_INPUT")"
 
 if [[ "$APPLY_INPUT" == "true" && -n "$ONLY_INPUT" ]]; then
   IFS=',' read -r -a only_values <<< "$ONLY_INPUT"
-  if array_contains "blake3" "${only_values[@]}"; then
+  if array_contains "blake3" "${only_values[@]}" \
+    || array_contains "blake3-chunk" "${only_values[@]}" \
+    || array_contains "blake3-stream64" "${only_values[@]}" \
+    || array_contains "blake3-stream256" "${only_values[@]}" \
+    || array_contains "blake3-stream1k" "${only_values[@]}" \
+    || array_contains "blake3-stream-mixed" "${only_values[@]}" \
+    || array_contains "blake3-stream64-keyed" "${only_values[@]}" \
+    || array_contains "blake3-stream64-derive" "${only_values[@]}" \
+    || array_contains "blake3-stream64-xof" "${only_values[@]}" \
+    || array_contains "blake3-stream-mixed-xof" "${only_values[@]}" \
+    || array_contains "blake3-stream4k" "${only_values[@]}" \
+    || array_contains "blake3-stream4k-keyed" "${only_values[@]}" \
+    || array_contains "blake3-stream4k-derive" "${only_values[@]}" \
+    || array_contains "blake3-stream4k-xof" "${only_values[@]}"; then
     changed="false"
+    for required in blake3 blake3-chunk; do
+      if ! array_contains "$required" "${only_values[@]}"; then
+        only_values+=("$required")
+        changed="true"
+      fi
+    done
     for required in \
       blake3-stream64 \
       blake3-stream256 \
@@ -96,7 +116,7 @@ if [[ "$APPLY_INPUT" == "true" && -n "$ONLY_INPUT" ]]; then
     done
     if [[ "$changed" == "true" ]]; then
       ONLY_INPUT="$(IFS=','; echo "${only_values[*]}")"
-      echo "note: TUNE_APPLY=true + TUNE_ONLY includes blake3; added required blake3 stream surfaces automatically"
+      echo "note: TUNE_APPLY=true + TUNE_ONLY includes a blake3 surface; added required blake3 apply corpus automatically"
     fi
   fi
 fi
