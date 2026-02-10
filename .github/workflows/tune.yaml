@@ -13,6 +13,11 @@ on:
         required: false
         type: boolean
         default: true
+      run_intel_latest:
+        description: "Run on Intel Latest (alias for run_intel)"
+        required: false
+        type: boolean
+        default: false
       run_intel_spr:
         description: "Run on Intel Sapphire Rapids (crc-fast competitive runner)"
         required: false
@@ -39,7 +44,7 @@ on:
         type: boolean
         default: true
       only:
-        description: "Tune only specific algorithms (comma-separated, optional)"
+        description: "Algorithm selector(s), comma-separated (e.g. blake3, crc64nvme)"
         required: false
         type: string
         default: ""
@@ -84,7 +89,7 @@ on:
         type: string
         default: ""
       repeats:
-        description: "Measurement repeats per platform lane (full-quality default: 3, quick default: 1)"
+        description: "Measurement repeats per platform lane (default: 1)"
         required: false
         type: string
         default: ""
@@ -105,7 +110,7 @@ permissions:
 
 jobs:
   tune-intel:
-    if: inputs.run_intel
+    if: inputs.run_intel || inputs.run_intel_latest
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: runs-on=${{ github.run_id }}/runner=intel-bench

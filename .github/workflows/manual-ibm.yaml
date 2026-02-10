@@ -33,6 +33,46 @@ on:
         required: false
         type: string
         default: ""
+      bench_only:
+        description: "Algorithm selector(s), comma-separated (recommended: checksum,blake3)"
+        required: false
+        type: string
+        default: "checksum,blake3"
+      bench_filter:
+        description: "Raw Criterion filter token(s), comma-separated (advanced)"
+        required: false
+        type: string
+        default: ""
+      bench_quick:
+        description: "Quick benchmark mode (Criterion --quick + shorter defaults)"
+        required: false
+        type: boolean
+        default: true
+      bench_warmup_ms:
+        description: "Warmup duration override in ms (optional)"
+        required: false
+        type: string
+        default: ""
+      bench_measure_ms:
+        description: "Measurement duration override in ms (optional)"
+        required: false
+        type: string
+        default: ""
+      bench_sample_size:
+        description: "Criterion sample size override (optional, >=10)"
+        required: false
+        type: string
+        default: ""
+      bench_profile_time_secs:
+        description: "Criterion profile-time override in seconds (optional)"
+        required: false
+        type: string
+        default: ""
+      bench_allow_full_run:
+        description: "Allow unfiltered full benchmark runs on IBM (expensive)"
+        required: false
+        type: boolean
+        default: false
       run_tune_s390x:
         description: "Run tune on IBM Z (s390x)"
         required: false
@@ -48,8 +88,18 @@ on:
         required: false
         type: string
         default: "checksum,hashes"
+      tune_only:
+        description: "Algorithm selector(s), comma-separated (recommended: checksum,blake3)"
+        required: false
+        type: string
+        default: "checksum,blake3"
       tune_quick:
         description: "Quick developer preview only (faster, noisier; never for dispatch apply)"
+        required: false
+        type: boolean
+        default: false
+      tune_apply:
+        description: "Apply tuning output into dispatch tables and emit patch artifact"
         required: false
         type: boolean
         default: false
@@ -63,11 +113,52 @@ on:
         required: false
         type: string
         default: ""
+      tune_checksum_warmup_ms:
+        description: "Checksum-only warmup override in ms (optional)"
+        required: false
+        type: string
+        default: ""
+      tune_checksum_measure_ms:
+        description: "Checksum-only measurement override in ms (optional)"
+        required: false
+        type: string
+        default: ""
+      tune_hash_warmup_ms:
+        description: "Hash-only warmup override in ms (optional)"
+        required: false
+        type: string
+        default: ""
+      tune_hash_measure_ms:
+        description: "Hash-only measurement override in ms (optional)"
+        required: false
+        type: string
+        default: ""
+      tune_repeats:
+        description: "Measurement repeats per platform lane (default: 1)"
+        required: false
+        type: string
+        default: ""
+      tune_aggregation:
+        description: "Repeated-run aggregation mode (auto, median, trimmed-mean)"
+        required: false
+        type: string
+        default: "auto"
+      tune_allow_full_run:
+        description: "Allow unfiltered full tune runs on IBM (expensive)"
+        required: false
+        type: boolean
+        default: false
 
 env:
   RUST_BACKTRACE: 1
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
+  RSCRYPTO_BENCH_MODE: ci
+  RSCRYPTO_TUNE_MODE: ci
+
+concurrency:
+  group: manual-ibm-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -136,27 +227,23 @@ jobs:
         lscpu
         cat /proc/cpuinfo | head -50
       run_script: |
-        CRATES_INPUT="${{ inputs.bench_crates }}"
-        BENCHES_INPUT="${{ inputs.bench_benches }}"
-        CRATE_FLAGS="--workspace"
-        BENCH_FLAGS=""
-        if [ -n "$CRATES_INPUT" ]; then
-          CRATE_FLAGS=""
-          IFS=',' read -ra CRATES <<< "$CRATES_INPUT"
-          for crate in "${CRATES[@]}"; do
-            CRATE_FLAGS="$CRATE_FLAGS -p $(echo "$crate" | xargs)"
-          done
+        if [[ "${{ inputs.bench_allow_full_run && 'true' || 'false' }}" != "true" ]] \
+          && [[ -z "${{ inputs.bench_only }}" ]] \
+          && [[ -z "${{ inputs.bench_filter }}" ]]; then
+          echo "error: IBM bench requires targeted input. Set bench_only (recommended) or bench_filter, or set bench_allow_full_run=true."
+          exit 2
         fi
-        if [ -n "$BENCHES_INPUT" ]; then
-          IFS=',' read -ra BENCHES <<< "$BENCHES_INPUT"
-          for bench in "${BENCHES[@]}"; do
-            BENCH_FLAGS="$BENCH_FLAGS --bench $(echo "$bench" | xargs)"
-          done
-        fi
-        rm -rf target/criterion
-        mkdir -p benchmark-results
-        # shellcheck disable=SC2086
-        cargo bench --profile bench $CRATE_FLAGS $BENCH_FLAGS 2>&1 | tee benchmark-results/output.txt
+        BENCH_OUTPUT_DIR=benchmark-results \
+        BENCH_CRATES="${{ inputs.bench_crates }}" \
+        BENCH_BENCHES="${{ inputs.bench_benches }}" \
+        BENCH_ONLY="${{ inputs.bench_only }}" \
+        BENCH_FILTER="${{ inputs.bench_filter }}" \
+        BENCH_QUICK=${{ inputs.bench_quick && 'true' || 'false' }} \
+        BENCH_WARMUP_MS="${{ inputs.bench_warmup_ms }}" \
+        BENCH_MEASURE_MS="${{ inputs.bench_measure_ms }}" \
+        BENCH_SAMPLE_SIZE="${{ inputs.bench_sample_size }}" \
+        BENCH_PROFILE_TIME_SECS="${{ inputs.bench_profile_time_secs }}" \
+        scripts/ci/run-bench.sh
       artifact_name: benchmark-ibm-s390x
       artifact_path: |
         benchmark-results/
@@ -178,27 +265,23 @@ jobs:
         lscpu
         cat /proc/cpuinfo | head -50
       run_script: |
-        CRATES_INPUT="${{ inputs.bench_crates }}"
-        BENCHES_INPUT="${{ inputs.bench_benches }}"
-        CRATE_FLAGS="--workspace"
-        BENCH_FLAGS=""
-        if [ -n "$CRATES_INPUT" ]; then
-          CRATE_FLAGS=""
-          IFS=',' read -ra CRATES <<< "$CRATES_INPUT"
-          for crate in "${CRATES[@]}"; do
-            CRATE_FLAGS="$CRATE_FLAGS -p $(echo "$crate" | xargs)"
-          done
+        if [[ "${{ inputs.bench_allow_full_run && 'true' || 'false' }}" != "true" ]] \
+          && [[ -z "${{ inputs.bench_only }}" ]] \
+          && [[ -z "${{ inputs.bench_filter }}" ]]; then
+          echo "error: IBM bench requires targeted input. Set bench_only (recommended) or bench_filter, or set bench_allow_full_run=true."
+          exit 2
         fi
-        if [ -n "$BENCHES_INPUT" ]; then
-          IFS=',' read -ra BENCHES <<< "$BENCHES_INPUT"
-          for bench in "${BENCHES[@]}"; do
-            BENCH_FLAGS="$BENCH_FLAGS --bench $(echo "$bench" | xargs)"
-          done
-        fi
-        rm -rf target/criterion
-        mkdir -p benchmark-results
-        # shellcheck disable=SC2086
-        cargo bench --profile bench $CRATE_FLAGS $BENCH_FLAGS 2>&1 | tee benchmark-results/output.txt
+        BENCH_OUTPUT_DIR=benchmark-results \
+        BENCH_CRATES="${{ inputs.bench_crates }}" \
+        BENCH_BENCHES="${{ inputs.bench_benches }}" \
+        BENCH_ONLY="${{ inputs.bench_only }}" \
+        BENCH_FILTER="${{ inputs.bench_filter }}" \
+        BENCH_QUICK=${{ inputs.bench_quick && 'true' || 'false' }} \
+        BENCH_WARMUP_MS="${{ inputs.bench_warmup_ms }}" \
+        BENCH_MEASURE_MS="${{ inputs.bench_measure_ms }}" \
+        BENCH_SAMPLE_SIZE="${{ inputs.bench_sample_size }}" \
+        BENCH_PROFILE_TIME_SECS="${{ inputs.bench_profile_time_secs }}" \
+        scripts/ci/run-bench.sh
       artifact_name: benchmark-ibm-power10
       artifact_path: |
         benchmark-results/
@@ -219,12 +302,26 @@ jobs:
         uname -a
         lscpu
       run_script: |
+        if [[ "${{ inputs.tune_allow_full_run && 'true' || 'false' }}" != "true" ]] \
+          && [[ -z "${{ inputs.tune_only }}" ]]; then
+          echo "error: IBM tune requires targeted input. Set tune_only (recommended) or set tune_allow_full_run=true."
+          exit 2
+        fi
         TUNE_OUTPUT_DIR=tune-results \
         TUNE_QUICK=${{ inputs.tune_quick && 'true' || 'false' }} \
         TUNE_CRATES="${{ inputs.tune_crates }}" \
-        TUNE_ONLY="" \
+        TUNE_ONLY="${{ inputs.tune_only }}" \
+        TUNE_APPLY=${{ inputs.tune_apply && 'true' || 'false' }} \
+        TUNE_SELF_CHECK=false \
+        TUNE_ENFORCE_TARGETS=false \
         TUNE_WARMUP_MS="${{ inputs.tune_warmup_ms }}" \
         TUNE_MEASURE_MS="${{ inputs.tune_measure_ms }}" \
+        TUNE_CHECKSUM_WARMUP_MS="${{ inputs.tune_checksum_warmup_ms }}" \
+        TUNE_CHECKSUM_MEASURE_MS="${{ inputs.tune_checksum_measure_ms }}" \
+        TUNE_HASH_WARMUP_MS="${{ inputs.tune_hash_warmup_ms }}" \
+        TUNE_HASH_MEASURE_MS="${{ inputs.tune_hash_measure_ms }}" \
+        TUNE_REPEATS="${{ inputs.tune_repeats }}" \
+        TUNE_AGGREGATION="${{ inputs.tune_aggregation }}" \
         scripts/ci/run-tune.sh
       artifact_name: tuning-ibm-s390x
       artifact_path: tune-results/
@@ -244,12 +341,26 @@ jobs:
         uname -a
         lscpu
       run_script: |
+        if [[ "${{ inputs.tune_allow_full_run && 'true' || 'false' }}" != "true" ]] \
+          && [[ -z "${{ inputs.tune_only }}" ]]; then
+          echo "error: IBM tune requires targeted input. Set tune_only (recommended) or set tune_allow_full_run=true."
+          exit 2
+        fi
         TUNE_OUTPUT_DIR=tune-results \
         TUNE_QUICK=${{ inputs.tune_quick && 'true' || 'false' }} \
         TUNE_CRATES="${{ inputs.tune_crates }}" \
-        TUNE_ONLY="" \
+        TUNE_ONLY="${{ inputs.tune_only }}" \
+        TUNE_APPLY=${{ inputs.tune_apply && 'true' || 'false' }} \
+        TUNE_SELF_CHECK=false \
+        TUNE_ENFORCE_TARGETS=false \
         TUNE_WARMUP_MS="${{ inputs.tune_warmup_ms }}" \
         TUNE_MEASURE_MS="${{ inputs.tune_measure_ms }}" \
+        TUNE_CHECKSUM_WARMUP_MS="${{ inputs.tune_checksum_warmup_ms }}" \
+        TUNE_CHECKSUM_MEASURE_MS="${{ inputs.tune_checksum_measure_ms }}" \
+        TUNE_HASH_WARMUP_MS="${{ inputs.tune_hash_warmup_ms }}" \
+        TUNE_HASH_MEASURE_MS="${{ inputs.tune_hash_measure_ms }}" \
+        TUNE_REPEATS="${{ inputs.tune_repeats }}" \
+        TUNE_AGGREGATION="${{ inputs.tune_aggregation }}" \
         scripts/ci/run-tune.sh
       artifact_name: tuning-ibm-power10
       artifact_path: tune-results/

@@ -72,61 +72,8 @@ DERIVE_FROM_INPUT="${TUNE_DERIVE_FROM:-}"
 ONLY_INPUT="$(normalize_csv "$ONLY_INPUT")"
 CRATES_INPUT="$(normalize_csv "$CRATES_INPUT")"
 
-if [[ "$APPLY_INPUT" == "true" && -n "$ONLY_INPUT" ]]; then
-  IFS=',' read -r -a only_values <<< "$ONLY_INPUT"
-  if array_contains "blake3" "${only_values[@]}" \
-    || array_contains "blake3-chunk" "${only_values[@]}" \
-    || array_contains "blake3-stream64" "${only_values[@]}" \
-    || array_contains "blake3-stream256" "${only_values[@]}" \
-    || array_contains "blake3-stream1k" "${only_values[@]}" \
-    || array_contains "blake3-stream-mixed" "${only_values[@]}" \
-    || array_contains "blake3-stream64-keyed" "${only_values[@]}" \
-    || array_contains "blake3-stream64-derive" "${only_values[@]}" \
-    || array_contains "blake3-stream64-xof" "${only_values[@]}" \
-    || array_contains "blake3-stream-mixed-xof" "${only_values[@]}" \
-    || array_contains "blake3-stream4k" "${only_values[@]}" \
-    || array_contains "blake3-stream4k-keyed" "${only_values[@]}" \
-    || array_contains "blake3-stream4k-derive" "${only_values[@]}" \
-    || array_contains "blake3-stream4k-xof" "${only_values[@]}"; then
-    changed="false"
-    for required in blake3 blake3-chunk; do
-      if ! array_contains "$required" "${only_values[@]}"; then
-        only_values+=("$required")
-        changed="true"
-      fi
-    done
-    for required in \
-      blake3-stream64 \
-      blake3-stream256 \
-      blake3-stream1k \
-      blake3-stream-mixed \
-      blake3-stream64-keyed \
-      blake3-stream64-derive \
-      blake3-stream64-xof \
-      blake3-stream-mixed-xof \
-      blake3-stream4k \
-      blake3-stream4k-keyed \
-      blake3-stream4k-derive \
-      blake3-stream4k-xof
-    do
-      if ! array_contains "$required" "${only_values[@]}"; then
-        only_values+=("$required")
-        changed="true"
-      fi
-    done
-    if [[ "$changed" == "true" ]]; then
-      ONLY_INPUT="$(IFS=','; echo "${only_values[*]}")"
-      echo "note: TUNE_APPLY=true + TUNE_ONLY includes a blake3 surface; added required blake3 apply corpus automatically"
-    fi
-  fi
-fi
-
 if [[ -z "$REPEATS_INPUT" ]]; then
-  if [[ "$QUICK_INPUT" == "true" ]]; then
-    REPEATS_INPUT="1"
-  else
-    REPEATS_INPUT="3"
-  fi
+  REPEATS_INPUT="1"
 fi
 
 if ! [[ "$REPEATS_INPUT" =~ ^[0-9]+$ ]] || [[ "$REPEATS_INPUT" -lt 1 ]]; then
@@ -146,6 +93,11 @@ esac
 
 if [[ -z "$DERIVE_FROM_INPUT" && "$QUICK_INPUT" == "true" && "$APPLY_INPUT" == "true" ]]; then
   echo "error: quick mode is developer preview only and cannot be used with --apply" >&2
+  exit 2
+fi
+
+if [[ -n "$DERIVE_FROM_INPUT" && "$MEASURE_ONLY_INPUT" == "true" ]]; then
+  echo "error: TUNE_MEASURE_ONLY cannot be combined with TUNE_DERIVE_FROM" >&2
   exit 2
 fi
 
@@ -211,22 +163,27 @@ LOG_PATH="$OUT_DIR/rscrypto-tune.txt"
 if [[ -n "$DERIVE_FROM_INPUT" ]]; then
   RAW_ARTIFACT_PATH="$DERIVE_FROM_INPUT"
   echo "Derive source: existing raw artifact ($RAW_ARTIFACT_PATH)"
-else
+elif [[ "$MEASURE_ONLY_INPUT" == "true" ]]; then
   echo "Measure args: ${MEASURE_ARGS[*]} --measure-only --raw-output $RAW_ARTIFACT_PATH"
   RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
     cargo run -p tune --release --bin rscrypto-tune -- "${MEASURE_ARGS[@]}" --measure-only --raw-output "$RAW_ARTIFACT_PATH" \
     2>&1 | tee -a "$LOG_PATH"
-fi
-
-if [[ "$MEASURE_ONLY_INPUT" == "true" ]]; then
   echo "Measurement-only mode enabled; skipping derivation/apply."
   exit 0
 fi
 
-echo "Derive args: --derive-from $RAW_ARTIFACT_PATH ${DERIVE_ARGS[*]}"
-RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
-  cargo run -p tune --release --bin rscrypto-tune -- --derive-from "$RAW_ARTIFACT_PATH" "${DERIVE_ARGS[@]}" \
-  2>&1 | tee -a "$LOG_PATH"
+if [[ -n "$DERIVE_FROM_INPUT" ]]; then
+  echo "Derive args: --derive-from $RAW_ARTIFACT_PATH ${DERIVE_ARGS[*]}"
+  RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
+    cargo run -p tune --release --bin rscrypto-tune -- --derive-from "$RAW_ARTIFACT_PATH" "${DERIVE_ARGS[@]}" \
+    2>&1 | tee -a "$LOG_PATH"
+else
+  RUN_ARGS=("${MEASURE_ARGS[@]}" "${DERIVE_ARGS[@]}" --raw-output "$RAW_ARTIFACT_PATH")
+  echo "Run args: ${RUN_ARGS[*]}"
+  RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
+    cargo run -p tune --release --bin rscrypto-tune -- "${RUN_ARGS[@]}" \
+    2>&1 | tee -a "$LOG_PATH"
+fi
 
 if [[ "$APPLY_INPUT" == "true" ]]; then
   TARGET_PATCH_PATHS=("crates/tune/generated")

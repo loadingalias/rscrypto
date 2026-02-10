@@ -51,6 +51,7 @@ rscrypto = { version = "0.1", default-features = false, features = ["checksums"]
 ## Contributing
 
 Run `just tune-contribute` and submit via [GitHub issue](../../issues/new?template=tuning-results.md).
+Runner/architecture policy for CI/bench/tune is pinned in `ARCHITECTURE_MATRIX.md`.
 
 ## License
 

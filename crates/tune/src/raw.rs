@@ -233,21 +233,6 @@ struct ThroughputKey {
   size: usize,
 }
 
-fn collect_bench_keys(points: &[RawBenchPoint]) -> BTreeSet<BenchKey> {
-  points
-    .iter()
-    .map(|point| BenchKey {
-      kernel: point.kernel.clone(),
-      streams: point.streams,
-      size: point.size,
-    })
-    .collect()
-}
-
-fn collect_throughput_keys(points: &[RawThroughputPoint]) -> BTreeSet<ThroughputKey> {
-  points.iter().map(|point| ThroughputKey { size: point.size }).collect()
-}
-
 fn aggregate_f64(mut values: Vec<f64>, mode: AggregationMode) -> f64 {
   if values.is_empty() {
     return 0.0;
@@ -380,52 +365,9 @@ fn aggregate_blake3_parallel(
   data_sets: &[&RawBlake3ParallelData],
   mode: AggregationMode,
 ) -> io::Result<RawBlake3ParallelData> {
-  let first = data_sets
+  data_sets
     .first()
     .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "no blake3 parallel data sets to aggregate"))?;
-  let first_single_keys = collect_throughput_keys(&first.single);
-  let first_curve_threads: BTreeSet<usize> = first.curves.iter().map(|curve| curve.max_threads).collect();
-  let mut first_curve_keys: BTreeMap<usize, BTreeSet<ThroughputKey>> = BTreeMap::new();
-  for curve in &first.curves {
-    first_curve_keys.insert(curve.max_threads, collect_throughput_keys(&curve.throughput));
-  }
-
-  for data in &data_sets[1..] {
-    let single_keys = collect_throughput_keys(&data.single);
-    if single_keys != first_single_keys {
-      return Err(io::Error::new(
-        io::ErrorKind::InvalidData,
-        "blake3 single-curve point set mismatch during aggregation",
-      ));
-    }
-
-    let curve_threads: BTreeSet<usize> = data.curves.iter().map(|curve| curve.max_threads).collect();
-    if curve_threads != first_curve_threads {
-      return Err(io::Error::new(
-        io::ErrorKind::InvalidData,
-        "blake3 thread-curve set mismatch during aggregation",
-      ));
-    }
-
-    for curve in &data.curves {
-      let Some(expected_keys) = first_curve_keys.get(&curve.max_threads) else {
-        return Err(io::Error::new(
-          io::ErrorKind::InvalidData,
-          "blake3 curve key mismatch during aggregation",
-        ));
-      };
-      let keys = collect_throughput_keys(&curve.throughput);
-      if &keys != expected_keys {
-        return Err(io::Error::new(
-          io::ErrorKind::InvalidData,
-          format!(
-            "blake3 throughput point set mismatch for thread cap {} during aggregation",
-            curve.max_threads
-          ),
-        ));
-      }
-    }
-  }
 
   let available_parallelism = data_sets.iter().map(|d| d.available_parallelism).min().unwrap_or(1);
 
@@ -477,9 +419,6 @@ fn aggregate_algorithm_runs(
   let first = runs
     .first()
     .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "no algorithm runs to aggregate"))?;
-  let first_stream_keys = collect_bench_keys(&first.stream_measurements);
-  let first_threshold_keys = collect_bench_keys(&first.threshold_measurements);
-  let first_probe_keys = collect_bench_keys(&first.size_class_probe_measurements);
 
   for run in &runs[1..] {
     if run.name != first.name {
@@ -498,33 +437,6 @@ fn aggregate_algorithm_runs(
       return Err(io::Error::new(
         io::ErrorKind::InvalidData,
         format!("kernel set mismatch during aggregation for algorithm {}", first.name),
-      ));
-    }
-    if collect_bench_keys(&run.stream_measurements) != first_stream_keys {
-      return Err(io::Error::new(
-        io::ErrorKind::InvalidData,
-        format!(
-          "stream measurement point set mismatch during aggregation for algorithm {}",
-          first.name
-        ),
-      ));
-    }
-    if collect_bench_keys(&run.threshold_measurements) != first_threshold_keys {
-      return Err(io::Error::new(
-        io::ErrorKind::InvalidData,
-        format!(
-          "threshold measurement point set mismatch during aggregation for algorithm {}",
-          first.name
-        ),
-      ));
-    }
-    if collect_bench_keys(&run.size_class_probe_measurements) != first_probe_keys {
-      return Err(io::Error::new(
-        io::ErrorKind::InvalidData,
-        format!(
-          "size-class probe measurement point set mismatch during aggregation for algorithm {}",
-          first.name
-        ),
       ));
     }
   }
@@ -764,9 +676,9 @@ mod tests {
   }
 
   #[test]
-  fn aggregate_rejects_point_set_mismatch() {
+  fn aggregate_accepts_point_set_mismatch() {
     let runs = vec![run_with_throughput(10.0, None), run_with_throughput(11.0, Some(2048))];
-    let err = aggregate_raw_results(&runs, AggregationMode::Median).expect_err("aggregation should fail");
-    assert!(err.to_string().contains("point set mismatch"));
+    let aggregated = aggregate_raw_results(&runs, AggregationMode::Median).expect("aggregation should succeed");
+    assert_eq!(aggregated.algorithms[0].stream_measurements.len(), 2);
   }
 }

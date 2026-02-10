@@ -36,11 +36,21 @@ test-all:
     just test-fuzz
     just test-miri
 
-bench crate="" bench="":
-    @scripts/bench/bench.sh "{{crate}}" "{{bench}}"
+# Bench frontdoor (local + CI parity via scripts/ci/run-bench.sh).
+# Usage:
+#   just bench
+#   just bench blake3
+#   just bench crc32c quick=true
+#   just bench checksum
+#   just bench blake3 crates=hashes benches=blake3 filter=streaming
+bench *args="":
+    @scripts/bench/bench.sh {{args}}
 
-bench-native crate="" bench="":
-    @RUSTFLAGS='-C target-cpu=native' scripts/bench/bench.sh "{{crate}}" "{{bench}}"
+bench-native *args="":
+    @RUSTFLAGS='-C target-cpu=native' scripts/bench/bench.sh {{args}}
+
+bench-quick *args="":
+    @BENCH_QUICK=true scripts/bench/bench.sh {{args}}
 
 
 # Tuning
@@ -48,9 +58,11 @@ bench-native crate="" bench="":
 # It's built on-demand when these commands are run, keeping workspace builds fast.
 # Usage:
 #   just tune
+#   just tune blake3 --apply
+#   just tune crc64nvme --apply
 #   just tune-measure dir=target/tune
 #   just tune-derive raw=target/tune/raw-results.json
-#   just tune-quick -- --crate hashes --only blake3
+#   just tune-quick -- --only blake3
 #   just tune -- --repeats 5 --aggregate trimmed-mean
 #   just tune-report dir=target/tune -- --enforce-targets
 tune *args="":

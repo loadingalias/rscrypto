@@ -221,96 +221,19 @@ fn measure_algorithm_impl(
     return Err(TuneError::BenchmarkFailed("no kernels available"));
   }
 
-  // Classify kernels by tier
-  let portable_kernels: Vec<&KernelSpec> = available_kernels
-    .iter()
-    .filter(|k| k.tier == KernelTier::Portable)
-    .collect();
-  let folding_kernel = find_kernel_by_tier(&available_kernels, KernelTier::Folding);
-  let wide_kernel = find_kernel_by_tier(&available_kernels, KernelTier::Wide);
-
   // Phase A: stream scan for each kernel.
   let stream_measurements = benchmark_streams(runner, algorithm, &available_kernels)?;
   let stream_measurements_view = to_measurements(&stream_measurements);
 
   // Select best kernel/streams from stream measurements.
-  let (best_kernel, best_streams) = find_best_config(&stream_measurements_view);
+  let (best_kernel, _best_streams) = find_best_config(&stream_measurements_view);
 
   // Phase A2: collect explicit class probes (xs/s fallbacks).
   let size_class_probe_measurements =
     benchmark_size_class_probes(runner, algorithm, &available_kernels, &stream_measurements_view)?;
 
-  // Phase B: threshold curves.
-  let portable_names: Vec<&'static str> = portable_kernels.iter().map(|k| k.name).collect();
-  let mut threshold_measurements = benchmark_thresholds(runner, algorithm, &portable_names, best_kernel, best_streams)?;
-
-  // CRC-64: benchmark the small-buffer SIMD kernel explicitly so:
-  // - portable→SIMD crossovers reflect the real small-kernel behavior
-  // - we can tune the small-kernel window (small→best crossover)
-  if matches!(algorithm.name(), "crc64-xz" | "crc64-nvme") {
-    // Ensure we have a single-stream curve for the best kernel (small kernel is single-stream).
-    if best_streams != 1 && !has_measurement(&threshold_measurements, best_kernel, 1) {
-      let curve = benchmark_single_kernel(runner, algorithm, best_kernel, 1)?;
-      threshold_measurements.extend(curve);
-    }
-
-    let small_name = if best_kernel.starts_with("x86_64/") {
-      Some("x86_64/pclmul-small")
-    } else if best_kernel.starts_with("aarch64/sve2-pmull") {
-      Some("aarch64/sve2-pmull-small")
-    } else if best_kernel.starts_with("aarch64/") {
-      Some("aarch64/pmull-small")
-    } else {
-      None
-    };
-
-    if let Some(name) = small_name
-      && !has_measurement(&threshold_measurements, name, 1)
-      && let Ok(curve) = benchmark_single_kernel(runner, algorithm, name, 1)
-    {
-      threshold_measurements.extend(curve);
-    }
-  }
-
-  // Phase C: Additional threshold curves for tier-based crossovers
-  // If we have both folding and wide kernels, benchmark the folding kernel
-  // to detect SIMD→wide crossover
-  if let (Some(folding), Some(_wide)) = (&folding_kernel, &wide_kernel) {
-    // Only benchmark folding if it's not the same as best_kernel
-    if folding.name != best_kernel {
-      let folding_streams = analysis::select_best_streams(&stream_measurements_view, folding.name);
-      let folding_measurements = benchmark_single_kernel(runner, algorithm, folding.name, folding_streams)?;
-      threshold_measurements.extend(folding_measurements);
-    }
-  }
-
-  // CRC-32: benchmark all non-portable tiers across THRESHOLD_SIZES so we can
-  // compute policy-specific crossovers (portable→hwcrc, hwcrc→fusion, fusion→wide).
-  if crc_adapter::is_crc32_algorithm(algorithm.name()) {
-    for kernel in &available_kernels {
-      if matches!(kernel.tier, KernelTier::Reference | KernelTier::Portable) {
-        continue;
-      }
-
-      // CRC-32 crossovers are tier boundaries, not stream-selection boundaries.
-      // Benchmark all tiers at single-stream so crossover points match the policy:
-      // multi-stream enters via `min_bytes_per_lane`, not via the tier thresholds.
-      let streams = 1;
-      if has_measurement(&threshold_measurements, kernel.name, streams) {
-        continue;
-      }
-
-      let curve = benchmark_single_kernel(runner, algorithm, kernel.name, streams)?;
-      threshold_measurements.extend(curve);
-    }
-  }
-
-  // Phase D: Single-stream vs multi-stream comparison for min_bytes_per_lane
-  // Only if best_streams > 1
-  if best_streams > 1 && !has_measurement(&threshold_measurements, best_kernel, 1) {
-    let single_stream_measurements = benchmark_single_kernel(runner, algorithm, best_kernel, 1)?;
-    threshold_measurements.extend(single_stream_measurements);
-  }
+  // Phase B: deterministic threshold corpus.
+  let threshold_measurements = benchmark_thresholds(runner, algorithm, &available_kernels)?;
 
   let blake3_parallel = if algorithm.name() == "blake3" || algorithm.name().starts_with("blake3-stream4k") {
     blake3_adapter::measure_blake3_parallel_data(runner, algorithm, best_kernel)?
@@ -359,7 +282,7 @@ fn derive_algorithm_from_raw(raw: &RawAlgorithmMeasurements) -> Result<Algorithm
   let wide_kernel = find_raw_kernel_by_tier(&raw.kernels, KernelTier::Wide);
 
   let min_bytes_per_lane = if best_streams > 1 {
-    analysis::estimate_min_bytes_per_lane(&threshold_measurements, best_kernel, best_streams)
+    analysis::estimate_min_bytes_per_lane(&stream_measurements, best_kernel, best_streams)
   } else {
     None
   };
@@ -535,25 +458,22 @@ fn derive_algorithm_from_raw(raw: &RawAlgorithmMeasurements) -> Result<Algorithm
     result_analysis.crossovers.push(crossover);
   }
 
-  if let (Some(folding), Some(wide)) = (folding_kernel, wide_kernel) {
-    let folding_streams = analysis::select_best_streams(&stream_measurements, folding.name.as_str());
-    let wide_streams = analysis::select_best_streams(&stream_measurements, wide.name.as_str());
-
-    if let Some(typed_crossover) = analysis::find_tier_crossover(
+  if let (Some(folding), Some(wide)) = (folding_kernel, wide_kernel)
+    && let Some(typed_crossover) = analysis::find_tier_crossover(
       &threshold_measurements,
       folding.name.as_str(),
-      folding_streams,
+      1,
       wide.name.as_str(),
-      wide_streams,
+      1,
       CrossoverType::SimdToWide,
       1.0,
-    ) {
-      thresholds.push((
-        CrossoverType::SimdToWide.threshold_name().to_string(),
-        typed_crossover.crossover.crossover_size,
-      ));
-      result_analysis.crossovers.push(typed_crossover.crossover);
-    }
+    )
+  {
+    thresholds.push((
+      CrossoverType::SimdToWide.threshold_name().to_string(),
+      typed_crossover.crossover.crossover_size,
+    ));
+    result_analysis.crossovers.push(typed_crossover.crossover);
   }
 
   if let Some(min_bpl) = min_bytes_per_lane {
@@ -671,11 +591,6 @@ fn tune_kind_from_u8(value: u8) -> Option<platform::TuneKind> {
   })
 }
 
-/// Find the first kernel of a specific tier.
-fn find_kernel_by_tier(kernels: &[KernelSpec], tier: KernelTier) -> Option<&KernelSpec> {
-  kernels.iter().find(|k| k.tier == tier)
-}
-
 fn find_raw_kernel_by_tier(kernels: &[RawKernelSpec], tier: KernelTier) -> Option<&RawKernelSpec> {
   kernels.iter().find(|k| matches!(k.tier(), Some(t) if t == tier))
 }
@@ -691,11 +606,6 @@ fn detect_crc64_small_kernel(best_kernel: &str) -> Option<&'static str> {
   } else {
     None
   }
-}
-
-#[must_use]
-fn has_measurement(measurements: &[RawBenchPoint], kernel: &str, streams: u8) -> bool {
-  measurements.iter().any(|m| m.kernel == kernel && m.streams == streams)
 }
 
 #[must_use]
@@ -761,55 +671,38 @@ fn benchmark_streams(
   Ok(measurements)
 }
 
-/// Benchmark threshold curve (portable vs SIMD across sizes).
+/// Benchmark deterministic threshold curves for crossover derivation.
 fn benchmark_thresholds(
   runner: &BenchRunner,
   algorithm: &mut dyn Tunable,
-  portable_kernels: &[&'static str],
-  best_kernel: &str,
-  best_streams: u8,
+  kernels: &[KernelSpec],
 ) -> Result<Vec<RawBenchPoint>, TuneError> {
-  let mut measurements = Vec::new();
+  let algo_name = algorithm.name();
+  let domain = algorithm.tuning_domain();
+  let measure_hash_thresholds = algo_name.starts_with("blake3") && !algo_name.starts_with("blake3-stream");
+  if matches!(domain, TuningDomain::Hash) && !measure_hash_thresholds {
+    return Ok(Vec::new());
+  }
 
-  // Benchmark portable kernels
-  for &portable in portable_kernels {
-    algorithm.reset();
-    if algorithm.force_kernel(portable).is_err() {
+  let mut measurements = Vec::new();
+  let mut planned = HashSet::new();
+
+  for kernel in kernels {
+    if kernel.tier == KernelTier::Reference {
       continue;
     }
-
-    for &size in THRESHOLD_SIZES {
-      if let Ok(result) = benchmark_at_size(runner, algorithm, size) {
-        measurements.push(RawBenchPoint::from_result(portable, 1, &result));
-      }
+    if !planned.insert(kernel.name) {
+      continue;
     }
+    let curve = benchmark_single_kernel(runner, algorithm, kernel.name, 1)?;
+    measurements.extend(curve);
   }
 
-  // Fallback if the algorithm doesn't expose portable kernel names.
-  if portable_kernels.is_empty() {
-    algorithm.reset();
-    algorithm.force_kernel("portable").ok(); // May not exist, that's ok
-
-    for &size in THRESHOLD_SIZES {
-      if let Ok(result) = benchmark_at_size(runner, algorithm, size) {
-        measurements.push(RawBenchPoint::from_result("portable", 1, &result));
-      }
-    }
+  // Fallback for algorithms that do not expose explicit kernel tables.
+  if measurements.is_empty() {
+    measurements.extend(benchmark_single_kernel(runner, algorithm, "portable", 1)?);
   }
 
-  // Benchmark best SIMD kernel
-  algorithm.reset();
-  algorithm.force_kernel(best_kernel)?;
-  if best_streams > 1 {
-    algorithm.force_streams(best_streams)?;
-  }
-
-  for &size in THRESHOLD_SIZES {
-    let result = benchmark_at_size(runner, algorithm, size)?;
-    measurements.push(RawBenchPoint::from_result(best_kernel, best_streams, &result));
-  }
-
-  algorithm.reset();
   Ok(measurements)
 }
 
