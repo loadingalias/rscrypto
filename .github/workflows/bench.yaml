@@ -75,7 +75,7 @@ jobs:
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: namespace-profile-rscrypto-linux-x86
-      timeout_minutes: 90
+      timeout_minutes: 360
       setup_kind: namespace
       run_script: |
         CRATES_INPUT="${{ inputs.crates }}"
@@ -111,7 +111,7 @@ jobs:
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: runs-on=${{ github.run_id }}/runner=intel-spr
-      timeout_minutes: 90
+      timeout_minutes: 360
       setup_kind: runson
       runson_mode: runson-bench
       run_script: |
@@ -148,7 +148,7 @@ jobs:
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: runs-on=${{ github.run_id }}/runner=intel-latest
-      timeout_minutes: 90
+      timeout_minutes: 360
       setup_kind: runson
       runson_mode: runson-bench
       run_script: |
@@ -185,7 +185,7 @@ jobs:
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: runs-on=${{ github.run_id }}/runner=intel-icl-bench
-      timeout_minutes: 90
+      timeout_minutes: 360
       setup_kind: runson
       runson_mode: runson-bench
       run_script: |
@@ -222,7 +222,7 @@ jobs:
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: runs-on=${{ github.run_id }}/runner=amd-zen5
-      timeout_minutes: 90
+      timeout_minutes: 360
       setup_kind: runson
       runson_mode: runson-bench
       run_script: |
@@ -259,7 +259,7 @@ jobs:
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: runs-on=${{ github.run_id }}/runner=graviton
-      timeout_minutes: 90
+      timeout_minutes: 360
       setup_kind: runson
       runson_mode: runson-bench
       run_script: |

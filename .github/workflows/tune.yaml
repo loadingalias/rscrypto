@@ -109,7 +109,7 @@ jobs:
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: runs-on=${{ github.run_id }}/runner=intel-bench
-      timeout_minutes: 60
+      timeout_minutes: 360
       setup_kind: runson
       runson_mode: runson-bench
       pre_script: |
@@ -141,7 +141,7 @@ jobs:
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: runs-on=${{ github.run_id }}/runner=intel-spr
-      timeout_minutes: 60
+      timeout_minutes: 360
       setup_kind: runson
       runson_mode: runson-bench
       pre_script: |
@@ -173,7 +173,7 @@ jobs:
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: runs-on=${{ github.run_id }}/runner=intel-icl-bench
-      timeout_minutes: 60
+      timeout_minutes: 360
       setup_kind: runson
       runson_mode: runson-bench
       pre_script: |
@@ -205,7 +205,7 @@ jobs:
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: namespace-profile-rscrypto-linux-x86
-      timeout_minutes: 60
+      timeout_minutes: 360
       setup_kind: namespace
       pre_script: |
         echo "Tune host: amd-zen4"
@@ -236,7 +236,7 @@ jobs:
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: runs-on=${{ github.run_id }}/runner=amd-zen5
-      timeout_minutes: 60
+      timeout_minutes: 360
       setup_kind: runson
       runson_mode: runson-bench
       pre_script: |
@@ -268,7 +268,7 @@ jobs:
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: runs-on=${{ github.run_id }}/runner=graviton
-      timeout_minutes: 60
+      timeout_minutes: 360
       setup_kind: runson
       runson_mode: runson-bench
       pre_script: |
