@@ -49,7 +49,7 @@ on:
         type: string
         default: "checksum,hashes"
       tune_quick:
-        description: "Quick mode for tuning (faster, noisier)"
+        description: "Quick developer preview only (faster, noisier; never for dispatch apply)"
         required: false
         type: boolean
         default: false

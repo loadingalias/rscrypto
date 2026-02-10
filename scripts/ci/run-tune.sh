@@ -30,6 +30,11 @@ SELF_CHECK_INPUT="$(to_bool "${TUNE_SELF_CHECK:-false}")"
 ENFORCE_TARGETS_INPUT="$(to_bool "${TUNE_ENFORCE_TARGETS:-false}")"
 QUICK_INPUT="$(to_bool "${TUNE_QUICK:-false}")"
 
+if [[ "$QUICK_INPUT" == "true" && "$APPLY_INPUT" == "true" ]]; then
+  echo "error: quick mode is developer preview only and cannot be used with --apply" >&2
+  exit 2
+fi
+
 # `--apply` for blake3 requires stream-profile results.
 # If caller asks for `--only blake3`, auto-include the required stream variants
 # so apply can succeed without forcing users to remember the full list.
@@ -125,6 +130,11 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo "Running rscrypto-tune"
 echo "RUSTFLAGS: -C target-cpu=native"
 echo "Quick mode: $QUICK_INPUT"
+if [[ "$QUICK_INPUT" == "true" ]]; then
+  echo "Mode: developer preview (not for dispatch decisions)"
+else
+  echo "Mode: full-quality (dispatch eligible)"
+fi
 echo "Args: ${ARGS[*]}"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
