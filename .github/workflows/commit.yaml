@@ -4,10 +4,11 @@ on:
   push:
     branches:
       - main
+  pull_request:
   workflow_dispatch:
 
 concurrency:
-  group: full-main-${{ github.ref }}
+  group: commit-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 env:
@@ -20,22 +21,22 @@ permissions:
 
 jobs:
   lane-contract:
-    name: Lane Contract (full-main)
+    name: Lane Contract (commit)
     runs-on: ubuntu-latest
     steps:
       - name: Assert lane
         run: |
-          test "${{ github.event_name }}" = "push" -o "${{ github.event_name }}" = "workflow_dispatch"
-          echo "lane=full-main"
+          test "${{ github.event_name }}" = "push" -o "${{ github.event_name }}" = "pull_request" -o "${{ github.event_name }}" = "workflow_dispatch"
+          echo "lane=commit"
 
   target-matrix:
     name: Resolve Target Matrix
     needs: lane-contract
     runs-on: ubuntu-latest
     outputs:
-      full_main_ci: ${{ steps.matrix.outputs.full_main_ci }}
-      full_main_no_std: ${{ steps.matrix.outputs.full_main_no_std }}
-      full_main_wasm: ${{ steps.matrix.outputs.full_main_wasm }}
+      commit_ci: ${{ steps.matrix.outputs.commit_ci }}
+      commit_no_std: ${{ steps.matrix.outputs.commit_no_std }}
+      commit_wasm: ${{ steps.matrix.outputs.commit_wasm }}
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
@@ -43,9 +44,9 @@ jobs:
         id: matrix
         run: |
           {
-            echo "full_main_ci=$(python3 scripts/lib/target-matrix.py --format json --key full_main_ci)"
-            echo "full_main_no_std=$(python3 scripts/lib/target-matrix.py --format json --key full_main_no_std)"
-            echo "full_main_wasm=$(python3 scripts/lib/target-matrix.py --format json --key full_main_wasm)"
+            echo "commit_ci=$(python3 scripts/lib/target-matrix.py --format json --key commit_ci)"
+            echo "commit_no_std=$(python3 scripts/lib/target-matrix.py --format json --key commit_no_std)"
+            echo "commit_wasm=$(python3 scripts/lib/target-matrix.py --format json --key commit_wasm)"
           } >> "$GITHUB_OUTPUT"
 
   ci:
@@ -54,13 +55,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: ${{ fromJSON(needs.target-matrix.outputs.full_main_ci) }}
+        target: ${{ fromJSON(needs.target-matrix.outputs.commit_ci) }}
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: ${{ matrix.target.runner }}
       timeout_minutes: 35
       setup_kind: default
-      cache_key: full-main-${{ matrix.target.name }}
+      cache_key: commit-${{ matrix.target.name }}
       tools_mode: ${{ contains(matrix.target.name, 'windows-msvc') && 'none' || 'standard' }}
       toolchain_components: ${{ contains(matrix.target.name, 'windows-msvc') && '' || 'clippy, rustfmt, rust-src' }}
       run_script: |
@@ -77,19 +78,57 @@ jobs:
             ;;
         esac
 
+  ci-ibm-s390x:
+    name: CI (IBM Z s390x)
+    needs: lane-contract
+    uses: ./.github/workflows/_rust-job.yaml
+    with:
+      runner: ubuntu-24.04-s390x
+      timeout_minutes: 90
+      setup_kind: default
+      cache_key: commit-ci-s390x
+      tools_mode: ibm
+      toolchain_components: "clippy, rustfmt"
+      pre_script: |
+        uname -a
+        lscpu
+        cat /proc/cpuinfo | head -50
+      run_script: |
+        just ci-check
+        just test --all
+
+  ci-ibm-power10:
+    name: CI (IBM POWER10 ppc64le)
+    needs: lane-contract
+    uses: ./.github/workflows/_rust-job.yaml
+    with:
+      runner: ubuntu-24.04-ppc64le-p10
+      timeout_minutes: 90
+      setup_kind: default
+      cache_key: commit-ci-power10
+      tools_mode: ibm
+      toolchain_components: "clippy, rustfmt"
+      pre_script: |
+        uname -a
+        lscpu
+        cat /proc/cpuinfo | head -50
+      run_script: |
+        just ci-check
+        just test --all
+
   no-std:
     name: no_std (${{ matrix.target }})
     needs: [lane-contract, target-matrix]
     strategy:
       fail-fast: false
       matrix:
-        target: ${{ fromJSON(needs.target-matrix.outputs.full_main_no_std) }}
+        target: ${{ fromJSON(needs.target-matrix.outputs.commit_no_std) }}
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: ubuntu-latest
       timeout_minutes: 20
       setup_kind: default
-      cache_key: full-main-no-std-${{ matrix.target }}
+      cache_key: commit-no-std-${{ matrix.target }}
       tools_mode: minimal
       run_script: |
         rustup target add ${{ matrix.target }}
@@ -104,13 +143,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: ${{ fromJSON(needs.target-matrix.outputs.full_main_wasm) }}
+        target: ${{ fromJSON(needs.target-matrix.outputs.commit_wasm) }}
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: ubuntu-latest
       timeout_minutes: 20
       setup_kind: default
-      cache_key: full-main-wasm-${{ matrix.target }}
+      cache_key: commit-wasm-${{ matrix.target }}
       tools_mode: minimal
       run_script: |
         rustup target add ${{ matrix.target }}
@@ -132,7 +171,7 @@ jobs:
       - name: Setup
         uses: ./.github/actions/setup
         with:
-          cache-key: full-main-wasm-pack
+          cache-key: commit-wasm-pack
           tools-mode: minimal
 
       - name: Install wasm-pack
@@ -142,14 +181,20 @@ jobs:
         run: wasm-pack build crates/rscrypto --target web --no-default-features --features std
 
   complete:
-    name: Complete (full-main)
-    needs: [ci, no-std, wasm]
+    name: Complete (commit)
+    needs: [ci, ci-ibm-s390x, ci-ibm-power10, no-std, wasm]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Assert required lanes
         run: |
           if [ "${{ needs.ci.result }}" != "success" ]; then
+            exit 1
+          fi
+          if [ "${{ needs.ci-ibm-s390x.result }}" != "success" ]; then
+            exit 1
+          fi
+          if [ "${{ needs.ci-ibm-power10.result }}" != "success" ]; then
             exit 1
           fi
           if [ "${{ needs.no-std.result }}" != "success" ]; then

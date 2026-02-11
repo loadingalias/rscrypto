@@ -1,27 +1,8 @@
 # .github/runs-on.yml
-# RunsOn configuration for rscrypto multi-architecture benchmarking
-#
-# Documentation: https://runs-on.com/configuration/repo-config/
-#
-# Strategy:
-#   - Benchmarking: On-demand instances for consistent, reproducible results
-#   - Intel: Spot with fallback chain (Granite → Emerald → Sapphire)
-#   - AMD: Zen5 (Turin) on RunsOn, Zen4 on Namespace
-#   - ARM: Graviton 4 (Neoverse V2) - best available
-#   - No Windows (emulated CPUs are meaningless for tuning)
-#   - All benchmark runners: 8 CPU x 16GB RAM (matches Namespace)
+# RunsOn configuration for rscrypto benchmark and tuning lanes.
 
 runners:
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # INTEL SAPPHIRE RAPIDS - Dedicated CRC world record contender
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # EXACT same instance crc-fast uses: c7i/m7i (Sapphire Rapids)
-  # No fallback - we want pure SPR numbers to beat their 111 GiB/s claim
-  #
-  # Processors:
-  #   c7i/m7i: Xeon Platinum 8488C (Sapphire Rapids, 2023)
-  #   r7iz: Xeon Platinum 8488C (Sapphire Rapids high freq, 2023)
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # Intel Sapphire Rapids: primary Intel lane for high-end AVX-512 tuning/benching.
   intel-spr:
     cpu: 8
     ram: 16
@@ -35,44 +16,9 @@ runners:
       - rscrypto:intel-spr
       - arch:x86-64
       - uarch:sapphire-rapids
-      - purpose:crc-world-record
 
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # INTEL LATEST (Granite/Emerald/Sapphire) - General purpose benchmarking
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # Fallback chain: Granite Rapids → Emerald Rapids → Sapphire Rapids
-  # All have: AVX-512, VPCLMULQDQ, GFNI (critical for CRC/crypto)
-  #
-  # Processors:
-  #   m8i/r8i: Xeon 6975P-C (Granite Rapids, 2025)
-  #   i7i/i7ie: Xeon Platinum 8559C (Emerald Rapids, 2024)
-  #   c7i/m7i: Xeon Platinum 8488C (Sapphire Rapids, 2023)
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  intel-latest:
-    cpu: 8
-    ram: 16
-    # Fallback chain: newest → older (all have VPCLMULQDQ+GFNI)
-    family: ["m8i", "r8i", "i7i", "i7ie", "c7i", "m7i"]
-    image: ubuntu24-full-x64
-    spot: price-capacity-optimized
-    retry: when-interrupted
-    volume: 60gb:gp3:500mbs:4000iops
-    ssh: true
-    tags:
-      - rscrypto:intel-latest
-      - arch:x86-64
-
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # INTEL ICE LAKE x86-64 BENCHMARK RUNNER
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # Xeon Platinum 8375C (Ice Lake, 3rd Gen Xeon Scalable)
-  # Different AVX-512 characteristics than SPR (prefers 256-bit ops)
-  # Validates IntelIcl tuning preset
-  #
-  # Processors:
-  #   c6i/m6i/r6i: Xeon Platinum 8375C (Ice Lake, 2021)
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  intel-icl-bench:
+  # Intel Ice Lake: stable lower-gen Intel lane for cross-generation signal.
+  intel-icl:
     cpu: 8
     ram: 16
     family: ["c6i", "m6i", "r6i"]
@@ -82,16 +28,11 @@ runners:
     volume: 60gb:gp3:500mbs:4000iops
     ssh: true
     tags:
-      - rscrypto:intel-icl-bench
+      - rscrypto:intel-icl
       - arch:x86-64
       - uarch:ice-lake
 
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # AMD ZEN5 (TURIN) BENCHMARK RUNNER
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # EPYC 9R45 @ 4.5GHz - Latest AMD with AVX-512
-  # Namespace provides Zen4, this adds Zen5 coverage
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # AMD Zen5 (Turin).
   amd-zen5:
     cpu: 8
     ram: 16
@@ -106,37 +47,37 @@ runners:
       - arch:x86-64
       - uarch:zen5-turin
 
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # AWS GRAVITON BENCHMARK RUNNER (Best Available)
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # Fallback: Graviton 4 (V2) → Graviton 3 (V1)
-  # NOT Graviton 2 (N1) - GitHub free runners already provide that
-  #
-  # Processors:
-  #   c8g/m8g/r8g: Graviton 4 (Neoverse V2) - PMULL, SHA3, SVE2 (best)
-  #   c7g/m7g/r7g: Graviton 3 (Neoverse V1) - PMULL, SHA3, SVE (fallback)
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  graviton:
+  # AWS Graviton3 explicit lane.
+  graviton3:
     cpu: 8
     ram: 16
-    # Graviton 4 first (best), then Graviton 3 (fallback for spot availability)
-    family: ["c8g", "m8g", "r8g", "c7g", "m7g", "r7g"]
+    family: ["c7g", "m7g", "r7g"]
     image: ubuntu24-full-arm64
     spot: price-capacity-optimized
     retry: when-interrupted
     volume: 60gb:gp3:500mbs:4000iops
     ssh: true
     tags:
-      - rscrypto:graviton
+      - rscrypto:graviton3
       - arch:aarch64
+      - uarch:neoverse-v1
 
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # GENERAL CI RUNNERS (for future use if needed)
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # Note: Correctness CI uses GitHub free runners primarily.
-  # These are defined for backup/overflow scenarios only.
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # AWS Graviton4 explicit lane.
+  graviton4:
+    cpu: 8
+    ram: 16
+    family: ["c8g", "m8g", "r8g"]
+    image: ubuntu24-full-arm64
+    spot: price-capacity-optimized
+    retry: when-interrupted
+    volume: 60gb:gp3:500mbs:4000iops
+    ssh: true
+    tags:
+      - rscrypto:graviton4
+      - arch:aarch64
+      - uarch:neoverse-v2
 
+  # General CI runners (backup/overflow only).
   linux-x64-ci:
     cpu: [2, 4]
     ram: [4, 8]

@@ -481,6 +481,52 @@ fn is_intel_hybrid(is_amd: bool, family: u32, model: u32) -> bool {
   )
 }
 
+/// Detect Intel Ice Lake family models.
+///
+/// We use model-based identification here because feature-only identification
+/// cannot reliably separate Ice Lake AVX-512 parts from newer Intel AVX-512
+/// generations in all environments.
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+fn is_intel_icl_model(family: u32, model: u32) -> bool {
+  // Intel uses family 6 for modern server/client generations.
+  if family != 6 {
+    return false;
+  }
+
+  // Ice Lake known models:
+  // - 0x6A, 0x6C: Ice Lake-SP / Ice Lake-D server parts
+  // - 0x7D, 0x7E: Ice Lake client derivatives
+  matches!(model, 0x6A | 0x6C | 0x7D | 0x7E)
+}
+
+/// Detect Intel Sapphire Rapids / Emerald Rapids family models.
+///
+/// Model-based detection protects tune kind stability when hypervisors mask
+/// BF16/AMX capability bits.
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+fn is_intel_spr_model(family: u32, model: u32) -> bool {
+  if family != 6 {
+    return false;
+  }
+
+  // Sapphire Rapids (0x8F), Emerald Rapids (0xCF)
+  matches!(model, 0x8F | 0xCF)
+}
+
+/// Detect Intel Granite Rapids family models.
+///
+/// Model-based detection protects tune kind stability when AMX FP16/COMPLEX
+/// bits are masked by virtualization.
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+fn is_intel_gnr_model(family: u32, model: u32) -> bool {
+  if family != 6 {
+    return false;
+  }
+
+  // Granite Rapids (0xAD)
+  matches!(model, 0xAD)
+}
+
 /// Select tuning preset based on features and pre-extracted CPU info.
 ///
 /// Takes vendor/family/model info extracted from batch CPUID to avoid redundant calls.
@@ -522,12 +568,26 @@ fn select_x86_tune(caps: Caps, is_amd: bool, family: u32, model: u32) -> Tune {
         Tune::DEFAULT
       }
     } else {
-      // Intel: Check for Granite Rapids via AMX extensions
-      // Granite Rapids has AMX_FP16 and AMX_COMPLEX (leaf 7.1, EAX bits 21 & 8)
-      if caps.has(x86::AMX_FP16) || caps.has(x86::AMX_COMPLEX) {
+      // Intel AVX-512 classification order:
+      // 1) Explicit known models (ICL / SPR / GNR)
+      // 2) Feature-led fallback (AMX FP16/COMPLEX => GNR; BF16/AMX => SPR)
+      // 3) Final fallback => Intel ICL
+      if is_intel_icl_model(family, model) {
+        Tune::INTEL_ICL
+      } else if is_intel_gnr_model(family, model) {
         Tune::INTEL_GNR
-      } else {
+      } else if is_intel_spr_model(family, model) {
         Tune::INTEL_SPR
+      } else if caps.has(x86::AMX_FP16) || caps.has(x86::AMX_COMPLEX) {
+        Tune::INTEL_GNR
+      } else if caps.has(x86::AVX512BF16)
+        || caps.has(x86::AMX_TILE)
+        || caps.has(x86::AMX_BF16)
+        || caps.has(x86::AMX_INT8)
+      {
+        Tune::INTEL_SPR
+      } else {
+        Tune::INTEL_ICL
       }
     };
   }

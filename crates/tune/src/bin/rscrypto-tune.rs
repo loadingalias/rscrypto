@@ -598,8 +598,11 @@ EXAMPLES:
     # Enforce throughput targets in CI
     just tune -- --enforce-targets
 
-    # Generate dispatch table entry (writes into dispatch tables)
-    just tune-apply
+    # Apply downloaded tuning artifact(s) into dispatch tables
+    just tune-apply ~/Downloads/tuning-amd-zen4
+
+    # Generate dispatch tables directly from local measurement
+    just tune-apply-local
 "
   );
 }

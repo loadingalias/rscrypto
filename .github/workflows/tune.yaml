@@ -8,41 +8,46 @@ on:
         required: false
         type: string
         default: "checksum,hashes"
-      run_intel:
-        description: "Run on Intel (Granite/Emerald/Sapphire Rapids)"
-        required: false
-        type: boolean
-        default: true
-      run_intel_latest:
-        description: "Run on Intel Latest (alias for run_intel)"
-        required: false
-        type: boolean
-        default: false
-      run_intel_spr:
-        description: "Run on Intel Sapphire Rapids (crc-fast competitive runner)"
-        required: false
-        type: boolean
-        default: false
-      run_intel_icl:
-        description: "Run on Intel Ice Lake"
-        required: false
-        type: boolean
-        default: false
       run_amd_zen4:
-        description: "Run on AMD Zen4 (Namespace)"
+        description: "Run tune on AMD Zen4 (Namespace)"
         required: false
         type: boolean
         default: true
-      run_amd_zen5:
-        description: "Run on AMD Zen5 (RunsOn)"
+      run_intel_spr:
+        description: "Run tune on Intel Sapphire Rapids (RunsOn)"
+        required: false
+        type: boolean
+        default: true
+      run_intel_icl:
+        description: "Run tune on Intel Ice Lake (RunsOn)"
         required: false
         type: boolean
         default: false
-      run_graviton:
-        description: "Run on Graviton (RunsOn)"
+      run_amd_zen5:
+        description: "Run tune on AMD Zen5 (RunsOn)"
+        required: false
+        type: boolean
+        default: false
+      run_graviton3:
+        description: "Run tune on AWS Graviton3 (RunsOn)"
         required: false
         type: boolean
         default: true
+      run_graviton4:
+        description: "Run tune on AWS Graviton4 (RunsOn)"
+        required: false
+        type: boolean
+        default: false
+      run_ibm_s390x:
+        description: "Run tune on IBM Z (s390x)"
+        required: false
+        type: boolean
+        default: false
+      run_ibm_power10:
+        description: "Run tune on IBM POWER10 (ppc64le)"
+        required: false
+        type: boolean
+        default: false
       only:
         description: "Algorithm selector(s), comma-separated (e.g. blake3, crc64nvme)"
         required: false
@@ -109,16 +114,15 @@ permissions:
   contents: read
 
 jobs:
-  tune-intel:
-    if: inputs.run_intel || inputs.run_intel_latest
+  tune-amd-zen4:
+    if: inputs.run_amd_zen4
     uses: ./.github/workflows/_rust-job.yaml
     with:
-      runner: runs-on=${{ github.run_id }}/runner=intel-bench
+      runner: namespace-profile-rscrypto-linux-x86
       timeout_minutes: 360
-      setup_kind: runson
-      runson_mode: runson-bench
+      setup_kind: namespace
       pre_script: |
-        echo "Tune host: intel"
+        echo "Tune host: amd-zen4"
         uname -a
         lscpu
       run_script: |
@@ -138,7 +142,7 @@ jobs:
         TUNE_REPEATS="${{ inputs.repeats }}" \
         TUNE_AGGREGATION="${{ inputs.aggregation }}" \
         scripts/ci/run-tune.sh
-      artifact_name: tuning-intel
+      artifact_name: tuning-amd-zen4
       artifact_path: tune-results/
 
   tune-intel-spr:
@@ -177,7 +181,7 @@ jobs:
     if: inputs.run_intel_icl
     uses: ./.github/workflows/_rust-job.yaml
     with:
-      runner: runs-on=${{ github.run_id }}/runner=intel-icl-bench
+      runner: runs-on=${{ github.run_id }}/runner=intel-icl
       timeout_minutes: 360
       setup_kind: runson
       runson_mode: runson-bench
@@ -203,37 +207,6 @@ jobs:
         TUNE_AGGREGATION="${{ inputs.aggregation }}" \
         scripts/ci/run-tune.sh
       artifact_name: tuning-intel-icl
-      artifact_path: tune-results/
-
-  tune-amd-zen4:
-    if: inputs.run_amd_zen4
-    uses: ./.github/workflows/_rust-job.yaml
-    with:
-      runner: namespace-profile-rscrypto-linux-x86
-      timeout_minutes: 360
-      setup_kind: namespace
-      pre_script: |
-        echo "Tune host: amd-zen4"
-        uname -a
-        lscpu
-      run_script: |
-        TUNE_OUTPUT_DIR=tune-results \
-        TUNE_QUICK=${{ inputs.quick && 'true' || 'false' }} \
-        TUNE_CRATES="${{ inputs.crates }}" \
-        TUNE_ONLY="${{ inputs.only }}" \
-        TUNE_APPLY=${{ inputs.apply && 'true' || 'false' }} \
-        TUNE_SELF_CHECK=false \
-        TUNE_ENFORCE_TARGETS=false \
-        TUNE_WARMUP_MS="${{ inputs.warmup_ms }}" \
-        TUNE_MEASURE_MS="${{ inputs.measure_ms }}" \
-        TUNE_CHECKSUM_WARMUP_MS="${{ inputs.checksum_warmup_ms }}" \
-        TUNE_CHECKSUM_MEASURE_MS="${{ inputs.checksum_measure_ms }}" \
-        TUNE_HASH_WARMUP_MS="${{ inputs.hash_warmup_ms }}" \
-        TUNE_HASH_MEASURE_MS="${{ inputs.hash_measure_ms }}" \
-        TUNE_REPEATS="${{ inputs.repeats }}" \
-        TUNE_AGGREGATION="${{ inputs.aggregation }}" \
-        scripts/ci/run-tune.sh
-      artifact_name: tuning-amd-zen4
       artifact_path: tune-results/
 
   tune-amd-zen5:
@@ -268,16 +241,16 @@ jobs:
       artifact_name: tuning-amd-zen5
       artifact_path: tune-results/
 
-  tune-graviton:
-    if: inputs.run_graviton
+  tune-graviton3:
+    if: inputs.run_graviton3
     uses: ./.github/workflows/_rust-job.yaml
     with:
-      runner: runs-on=${{ github.run_id }}/runner=graviton
+      runner: runs-on=${{ github.run_id }}/runner=graviton3
       timeout_minutes: 360
       setup_kind: runson
       runson_mode: runson-bench
       pre_script: |
-        echo "Tune host: graviton"
+        echo "Tune host: graviton3"
         uname -a
         lscpu
       run_script: |
@@ -297,5 +270,103 @@ jobs:
         TUNE_REPEATS="${{ inputs.repeats }}" \
         TUNE_AGGREGATION="${{ inputs.aggregation }}" \
         scripts/ci/run-tune.sh
-      artifact_name: tuning-graviton
+      artifact_name: tuning-graviton3
+      artifact_path: tune-results/
+
+  tune-graviton4:
+    if: inputs.run_graviton4
+    uses: ./.github/workflows/_rust-job.yaml
+    with:
+      runner: runs-on=${{ github.run_id }}/runner=graviton4
+      timeout_minutes: 360
+      setup_kind: runson
+      runson_mode: runson-bench
+      pre_script: |
+        echo "Tune host: graviton4"
+        uname -a
+        lscpu
+      run_script: |
+        TUNE_OUTPUT_DIR=tune-results \
+        TUNE_QUICK=${{ inputs.quick && 'true' || 'false' }} \
+        TUNE_CRATES="${{ inputs.crates }}" \
+        TUNE_ONLY="${{ inputs.only }}" \
+        TUNE_APPLY=${{ inputs.apply && 'true' || 'false' }} \
+        TUNE_SELF_CHECK=false \
+        TUNE_ENFORCE_TARGETS=false \
+        TUNE_WARMUP_MS="${{ inputs.warmup_ms }}" \
+        TUNE_MEASURE_MS="${{ inputs.measure_ms }}" \
+        TUNE_CHECKSUM_WARMUP_MS="${{ inputs.checksum_warmup_ms }}" \
+        TUNE_CHECKSUM_MEASURE_MS="${{ inputs.checksum_measure_ms }}" \
+        TUNE_HASH_WARMUP_MS="${{ inputs.hash_warmup_ms }}" \
+        TUNE_HASH_MEASURE_MS="${{ inputs.hash_measure_ms }}" \
+        TUNE_REPEATS="${{ inputs.repeats }}" \
+        TUNE_AGGREGATION="${{ inputs.aggregation }}" \
+        scripts/ci/run-tune.sh
+      artifact_name: tuning-graviton4
+      artifact_path: tune-results/
+
+  tune-ibm-s390x:
+    if: inputs.run_ibm_s390x
+    uses: ./.github/workflows/_rust-job.yaml
+    with:
+      runner: ubuntu-24.04-s390x
+      timeout_minutes: 120
+      setup_kind: default
+      cache_key: manual-ibm-tune-s390x
+      tools_mode: none
+      toolchain_components: ""
+      pre_script: |
+        uname -a
+        lscpu
+      run_script: |
+        TUNE_OUTPUT_DIR=tune-results \
+        TUNE_QUICK=${{ inputs.quick && 'true' || 'false' }} \
+        TUNE_CRATES="${{ inputs.crates }}" \
+        TUNE_ONLY="${{ inputs.only }}" \
+        TUNE_APPLY=${{ inputs.apply && 'true' || 'false' }} \
+        TUNE_SELF_CHECK=false \
+        TUNE_ENFORCE_TARGETS=false \
+        TUNE_WARMUP_MS="${{ inputs.warmup_ms }}" \
+        TUNE_MEASURE_MS="${{ inputs.measure_ms }}" \
+        TUNE_CHECKSUM_WARMUP_MS="${{ inputs.checksum_warmup_ms }}" \
+        TUNE_CHECKSUM_MEASURE_MS="${{ inputs.checksum_measure_ms }}" \
+        TUNE_HASH_WARMUP_MS="${{ inputs.hash_warmup_ms }}" \
+        TUNE_HASH_MEASURE_MS="${{ inputs.hash_measure_ms }}" \
+        TUNE_REPEATS="${{ inputs.repeats }}" \
+        TUNE_AGGREGATION="${{ inputs.aggregation }}" \
+        scripts/ci/run-tune.sh
+      artifact_name: tuning-ibm-s390x
+      artifact_path: tune-results/
+
+  tune-ibm-power10:
+    if: inputs.run_ibm_power10
+    uses: ./.github/workflows/_rust-job.yaml
+    with:
+      runner: ubuntu-24.04-ppc64le-p10
+      timeout_minutes: 120
+      setup_kind: default
+      cache_key: manual-ibm-tune-power10
+      tools_mode: none
+      toolchain_components: ""
+      pre_script: |
+        uname -a
+        lscpu
+      run_script: |
+        TUNE_OUTPUT_DIR=tune-results \
+        TUNE_QUICK=${{ inputs.quick && 'true' || 'false' }} \
+        TUNE_CRATES="${{ inputs.crates }}" \
+        TUNE_ONLY="${{ inputs.only }}" \
+        TUNE_APPLY=${{ inputs.apply && 'true' || 'false' }} \
+        TUNE_SELF_CHECK=false \
+        TUNE_ENFORCE_TARGETS=false \
+        TUNE_WARMUP_MS="${{ inputs.warmup_ms }}" \
+        TUNE_MEASURE_MS="${{ inputs.measure_ms }}" \
+        TUNE_CHECKSUM_WARMUP_MS="${{ inputs.checksum_warmup_ms }}" \
+        TUNE_CHECKSUM_MEASURE_MS="${{ inputs.checksum_measure_ms }}" \
+        TUNE_HASH_WARMUP_MS="${{ inputs.hash_warmup_ms }}" \
+        TUNE_HASH_MEASURE_MS="${{ inputs.hash_measure_ms }}" \
+        TUNE_REPEATS="${{ inputs.repeats }}" \
+        TUNE_AGGREGATION="${{ inputs.aggregation }}" \
+        scripts/ci/run-tune.sh
+      artifact_name: tuning-ibm-power10
       artifact_path: tune-results/

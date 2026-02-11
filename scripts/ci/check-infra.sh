@@ -32,8 +32,8 @@ scripts/ci/pin-actions.sh --verify-only
 echo ""
 echo "4) No masked failures in required workflows"
 required_workflows=(
-  ".github/workflows/fast-pr.yaml"
   ".github/workflows/commit.yaml"
+  ".github/workflows/weekly.yaml"
 )
 for wf in "${required_workflows[@]}"; do
   if rg -n '\|\|[[:space:]]*true' "$wf" >/dev/null 2>&1; then

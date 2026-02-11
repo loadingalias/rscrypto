@@ -185,6 +185,12 @@ else
     2>&1 | tee -a "$LOG_PATH"
 fi
 
+# Keep the raw artifact inside OUT_DIR so uploaded artifacts are self-contained.
+if [[ "$RAW_ARTIFACT_PATH" != "$OUT_DIR/raw-results.json" ]]; then
+  cp "$RAW_ARTIFACT_PATH" "$OUT_DIR/raw-results.json"
+  RAW_ARTIFACT_PATH="$OUT_DIR/raw-results.json"
+fi
+
 if [[ "$APPLY_INPUT" == "true" ]]; then
   TARGET_PATCH_PATHS=("crates/tune/generated")
   PATCH_PATHS_FILE="$OUT_DIR/patch-paths.txt"
@@ -308,3 +314,43 @@ if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
     echo '```'
   } >> "$GITHUB_STEP_SUMMARY"
 fi
+
+prune_tune_artifacts() {
+  local -a keep=("$OUT_DIR/raw-results.json")
+  local -a retained=()
+  local path
+  local keep_path
+  local should_keep
+
+  if [[ "$APPLY_INPUT" == "true" ]]; then
+    keep+=("$OUT_DIR/patch.diff" "$OUT_DIR/apply-manifest.json")
+  else
+    keep+=("$OUT_DIR/results.json" "$OUT_DIR/summary.txt")
+  fi
+
+  shopt -s nullglob
+  for path in "$OUT_DIR"/*; do
+    [[ -f "$path" ]] || continue
+    should_keep="false"
+    for keep_path in "${keep[@]}"; do
+      if [[ "$path" == "$keep_path" ]]; then
+        should_keep="true"
+        break
+      fi
+    done
+    if [[ "$should_keep" == "true" ]]; then
+      retained+=("$(basename "$path")")
+    else
+      rm -f "$path"
+    fi
+  done
+  shopt -u nullglob
+
+  if [[ -n "${retained[*]-}" ]]; then
+    echo "Retained artifacts: ${retained[*]}"
+  else
+    echo "warning: no retained artifacts found in $OUT_DIR"
+  fi
+}
+
+prune_tune_artifacts
