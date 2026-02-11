@@ -36,8 +36,8 @@ append_unique() {
   local item
   [[ -z "$value" ]] && return 0
   [[ -z "$array_name" ]] && return 0
-  eval "current=(\"\${${array_name}[@]-}\")"
-  for item in "${current[@]-}"; do
+  eval "current=(\"\${${array_name}[@]:+\${${array_name}[@]}}\")"
+  for item in "${current[@]:+${current[@]}}"; do
     if [[ "$item" == "$value" ]]; then
       return 0
     fi
@@ -51,17 +51,17 @@ normalize_csv_lower() {
   local -a normalized=()
   local token
   IFS=',' read -r -a parts <<< "$raw"
-  for token in "${parts[@]-}"; do
+  for token in "${parts[@]:+${parts[@]}}"; do
     token="$(echo "$token" | xargs)"
     [[ -z "$token" ]] && continue
     token="$(echo "$token" | tr '[:upper:]' '[:lower:]')"
     append_unique "$token" normalized
   done
 
-  if [[ -z "${normalized[*]-}" ]]; then
+  if [[ "${#normalized[@]}" -eq 0 ]]; then
     echo ""
   else
-    (IFS=','; echo "${normalized[*]-}")
+    (IFS=','; echo "${normalized[*]}")
   fi
 }
 
@@ -71,16 +71,16 @@ normalize_csv_raw() {
   local -a normalized=()
   local token
   IFS=',' read -r -a parts <<< "$raw"
-  for token in "${parts[@]-}"; do
+  for token in "${parts[@]:+${parts[@]}}"; do
     token="$(echo "$token" | xargs)"
     [[ -z "$token" ]] && continue
     append_unique "$token" normalized
   done
 
-  if [[ -z "${normalized[*]-}" ]]; then
+  if [[ "${#normalized[@]}" -eq 0 ]]; then
     echo ""
   else
-    (IFS=','; echo "${normalized[*]-}")
+    (IFS=','; echo "${normalized[*]}")
   fi
 }
 
@@ -209,10 +209,10 @@ build_algo_plan_rows() {
 dedupe_plan_rows() {
   local -a unique=()
   local row
-  for row in "${PLAN_ROWS[@]-}"; do
+  for row in "${PLAN_ROWS[@]:+${PLAN_ROWS[@]}}"; do
     append_unique "$row" unique
   done
-  PLAN_ROWS=("${unique[@]-}")
+  PLAN_ROWS=("${unique[@]:+${unique[@]}}")
 }
 
 CRATES_INPUT="$(normalize_csv_lower "${BENCH_CRATES:-}")"
@@ -298,7 +298,7 @@ SELECTED_ALGOS=()
 
 if [[ -n "$ONLY_INPUT" ]]; then
   IFS=',' read -r -a only_values <<< "$ONLY_INPUT"
-  for selector in "${only_values[@]-}"; do
+  for selector in "${only_values[@]:+${only_values[@]}}"; do
     key="$(normalize_selector "$selector")"
     case "$key" in
       all)
@@ -341,14 +341,14 @@ if [[ -n "$ONLY_INPUT" ]]; then
     esac
   done
 
-  for algo in "${SELECTED_ALGOS[@]-}"; do
+  for algo in "${SELECTED_ALGOS[@]:+${SELECTED_ALGOS[@]}}"; do
     build_algo_plan_rows "$algo"
   done
 fi
 
 if [[ -n "$FILTER_INPUT" ]]; then
   IFS=',' read -r -a raw_filter_values <<< "$FILTER_INPUT"
-  for f in "${raw_filter_values[@]-}"; do
+  for f in "${raw_filter_values[@]:+${raw_filter_values[@]}}"; do
     append_unique "$f" RAW_FILTERS
   done
 fi
@@ -373,7 +373,7 @@ if [[ "${#RAW_FILTERS[@]}" -gt 0 ]]; then
   fi
 
   for filter in "${RAW_FILTERS[@]}"; do
-    for crate in "${raw_crates[@]-}"; do
+    for crate in "${raw_crates[@]:+${raw_crates[@]}}"; do
       benches_csv=""
       if [[ "${#raw_benches[@]}" -gt 0 ]]; then
         benches_csv="$(IFS=','; echo "${raw_benches[*]}")"
@@ -387,7 +387,7 @@ if [[ "${#RAW_FILTERS[@]}" -gt 0 ]]; then
       fi
 
       IFS=',' read -r -a benches_values <<< "$benches_csv"
-      for bench in "${benches_values[@]-}"; do
+      for bench in "${benches_values[@]:+${benches_values[@]}}"; do
         PLAN_ROWS+=("$crate|$bench|$filter")
       done
     done
@@ -405,7 +405,7 @@ if [[ -n "$CRATES_INPUT" && "${#PLAN_ROWS[@]}" -gt 0 ]]; then
       filtered+=("$crate|$bench|$filter")
     fi
   done
-  PLAN_ROWS=("${filtered[@]-}")
+  PLAN_ROWS=("${filtered[@]:+${filtered[@]}}")
 fi
 
 if [[ -n "$BENCHES_INPUT" && "${#PLAN_ROWS[@]}" -gt 0 ]]; then
@@ -417,7 +417,7 @@ if [[ -n "$BENCHES_INPUT" && "${#PLAN_ROWS[@]}" -gt 0 ]]; then
       filtered+=("$crate|$bench|$filter")
     fi
   done
-  PLAN_ROWS=("${filtered[@]-}")
+  PLAN_ROWS=("${filtered[@]:+${filtered[@]}}")
 fi
 
 run_bench_cmd() {
@@ -459,7 +459,7 @@ CRATE_FLAGS=()
 BENCH_FLAGS=()
 if [[ -n "$CRATES_INPUT" ]]; then
   IFS=',' read -r -a crates_values <<< "$CRATES_INPUT"
-  for crate in "${crates_values[@]-}"; do
+  for crate in "${crates_values[@]:+${crates_values[@]}}"; do
     CRATE_FLAGS+=(-p "$crate")
   done
 else
@@ -468,7 +468,7 @@ fi
 
 if [[ -n "$BENCHES_INPUT" ]]; then
   IFS=',' read -r -a benches_values <<< "$BENCHES_INPUT"
-  for bench in "${benches_values[@]-}"; do
+  for bench in "${benches_values[@]:+${benches_values[@]}}"; do
     BENCH_FLAGS+=(--bench "$bench")
   done
 fi
