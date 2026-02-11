@@ -290,6 +290,75 @@ mod tests {
   }
 
   #[test]
+  #[cfg(all(any(target_arch = "x86_64", target_arch = "x86"), feature = "std"))]
+  fn test_is_intel_icl_model_known_models() {
+    assert!(is_intel_icl_model(6, 0x6A)); // Ice Lake-SP
+    assert!(is_intel_icl_model(6, 0x6C)); // Ice Lake-D
+    assert!(is_intel_icl_model(6, 0x7D)); // Ice Lake client family
+    assert!(is_intel_icl_model(6, 0x7E)); // Ice Lake client family
+
+    assert!(!is_intel_icl_model(6, 0x8F)); // Sapphire Rapids
+    assert!(!is_intel_icl_model(6, 0xAD)); // Granite Rapids
+    assert!(!is_intel_icl_model(25, 0x6A)); // AMD family value (invalid for Intel detect)
+  }
+
+  #[test]
+  #[cfg(all(any(target_arch = "x86_64", target_arch = "x86"), feature = "std"))]
+  fn test_is_intel_spr_model_known_models() {
+    assert!(is_intel_spr_model(6, 0x8F)); // Sapphire Rapids
+    assert!(is_intel_spr_model(6, 0xCF)); // Emerald Rapids
+
+    assert!(!is_intel_spr_model(6, 0x6A)); // Ice Lake-SP
+    assert!(!is_intel_spr_model(6, 0xAD)); // Granite Rapids
+    assert!(!is_intel_spr_model(25, 0x8F)); // AMD family value (invalid for Intel detect)
+  }
+
+  #[test]
+  #[cfg(all(any(target_arch = "x86_64", target_arch = "x86"), feature = "std"))]
+  fn test_is_intel_gnr_model_known_models() {
+    assert!(is_intel_gnr_model(6, 0xAD)); // Granite Rapids
+
+    assert!(!is_intel_gnr_model(6, 0x8F)); // Sapphire Rapids
+    assert!(!is_intel_gnr_model(6, 0x6A)); // Ice Lake-SP
+    assert!(!is_intel_gnr_model(25, 0xAD)); // AMD family value (invalid for Intel detect)
+  }
+
+  #[test]
+  #[cfg(all(any(target_arch = "x86_64", target_arch = "x86"), feature = "std"))]
+  fn test_select_x86_tune_classifies_intel_icl_spr_gnr() {
+    use crate::caps::x86;
+
+    let avx512_base = x86::AVX512F | x86::AVX512VL;
+
+    // Ice Lake model must map to Intel ICL and never Intel SPR.
+    let icl = select_x86_tune(avx512_base | x86::AVX2, false, 6, 0x6A);
+    assert_eq!(icl, crate::tune::Tune::INTEL_ICL);
+
+    // Sapphire Rapids class (BF16/AMX feature set without AMX FP16/COMPLEX).
+    let spr = select_x86_tune(avx512_base | x86::AVX512BF16, false, 6, 0x8F);
+    assert_eq!(spr, crate::tune::Tune::INTEL_SPR);
+
+    // Granite Rapids class (AMX FP16/COMPLEX).
+    let gnr = select_x86_tune(avx512_base | x86::AMX_FP16, false, 6, 0xAD);
+    assert_eq!(gnr, crate::tune::Tune::INTEL_GNR);
+  }
+
+  #[test]
+  #[cfg(all(any(target_arch = "x86_64", target_arch = "x86"), feature = "std"))]
+  fn test_select_x86_tune_model_fallback_when_features_masked() {
+    use crate::caps::x86;
+
+    let avx512_base = x86::AVX512F | x86::AVX512VL;
+
+    // Even with masked AMX/BF16 bits, SPR/GNR models should not collapse to Intel ICL.
+    let spr_masked = select_x86_tune(avx512_base, false, 6, 0x8F);
+    assert_eq!(spr_masked, crate::tune::Tune::INTEL_SPR);
+
+    let gnr_masked = select_x86_tune(avx512_base, false, 6, 0xAD);
+    assert_eq!(gnr_masked, crate::tune::Tune::INTEL_GNR);
+  }
+
+  #[test]
   #[allow(unsafe_code)]
   #[cfg(all(any(target_arch = "x86_64", target_arch = "x86"), feature = "std"))]
   fn test_hybrid_avx512_override_default() {

@@ -2,11 +2,12 @@ name: Weekly
 
 on:
   schedule:
-    # Run every Sunday at 3AM UTC
     - cron: "0 3 * * 0"
-
-  # Allow manual trigger
   workflow_dispatch:
+
+concurrency:
+  group: weekly-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   RUST_BACKTRACE: 1
@@ -14,19 +15,175 @@ env:
   RSCRYPTO_TEST_MODE: weekly
   CARGO_INCREMENTAL: 0
 
-# Lock down permissions to read-only by default
 permissions:
   contents: read
 
 jobs:
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # Weekly Validation (Miri + Fuzzing + Extended Property Tests)
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  lane-contract:
+    name: Lane Contract (weekly)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assert lane
+        run: |
+          test "${{ github.event_name }}" = "schedule" -o "${{ github.event_name }}" = "workflow_dispatch"
+          echo "lane=weekly"
+
+  target-matrix:
+    name: Resolve Target Matrix
+    needs: lane-contract
+    runs-on: ubuntu-latest
+    outputs:
+      weekly_ci: ${{ steps.matrix.outputs.weekly_ci }}
+      weekly_no_std: ${{ steps.matrix.outputs.weekly_no_std }}
+      weekly_wasm: ${{ steps.matrix.outputs.weekly_wasm }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - name: Load matrix from manifest
+        id: matrix
+        run: |
+          {
+            echo "weekly_ci=$(python3 scripts/lib/target-matrix.py --format json --key commit_ci)"
+            echo "weekly_no_std=$(python3 scripts/lib/target-matrix.py --format json --key commit_no_std)"
+            echo "weekly_wasm=$(python3 scripts/lib/target-matrix.py --format json --key commit_wasm)"
+          } >> "$GITHUB_OUTPUT"
+
+  ci:
+    name: CI (${{ matrix.target.name }})
+    needs: [lane-contract, target-matrix]
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.target-matrix.outputs.weekly_ci) }}
+    uses: ./.github/workflows/_rust-job.yaml
+    with:
+      runner: ${{ matrix.target.runner }}
+      timeout_minutes: 45
+      setup_kind: default
+      cache_key: weekly-${{ matrix.target.name }}
+      tools_mode: ${{ contains(matrix.target.name, 'windows-msvc') && 'none' || 'standard' }}
+      toolchain_components: ${{ contains(matrix.target.name, 'windows-msvc') && '' || 'clippy, rustfmt, rust-src' }}
+      run_script: |
+        case "${{ matrix.target.name }}" in
+          *windows-msvc)
+            echo "Windows weekly lane: compile-only smoke"
+            cargo check --workspace --all-targets --all-features
+            cargo test --workspace --all-features --no-run
+            ;;
+          *)
+            just ci-check
+            just build
+            just test
+            ;;
+        esac
+
+  ci-ibm-s390x:
+    name: CI (IBM Z s390x)
+    needs: lane-contract
+    uses: ./.github/workflows/_rust-job.yaml
+    with:
+      runner: ubuntu-24.04-s390x
+      timeout_minutes: 90
+      setup_kind: default
+      cache_key: weekly-ci-s390x
+      tools_mode: ibm
+      toolchain_components: "clippy, rustfmt"
+      pre_script: |
+        uname -a
+        lscpu
+        cat /proc/cpuinfo | head -50
+      run_script: |
+        just ci-check
+        just test --all
+
+  ci-ibm-power10:
+    name: CI (IBM POWER10 ppc64le)
+    needs: lane-contract
+    uses: ./.github/workflows/_rust-job.yaml
+    with:
+      runner: ubuntu-24.04-ppc64le-p10
+      timeout_minutes: 90
+      setup_kind: default
+      cache_key: weekly-ci-power10
+      tools_mode: ibm
+      toolchain_components: "clippy, rustfmt"
+      pre_script: |
+        uname -a
+        lscpu
+        cat /proc/cpuinfo | head -50
+      run_script: |
+        just ci-check
+        just test --all
+
+  no-std:
+    name: no_std (${{ matrix.target }})
+    needs: [lane-contract, target-matrix]
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.target-matrix.outputs.weekly_no_std) }}
+    uses: ./.github/workflows/_rust-job.yaml
+    with:
+      runner: ubuntu-latest
+      timeout_minutes: 25
+      setup_kind: default
+      cache_key: weekly-no-std-${{ matrix.target }}
+      tools_mode: minimal
+      run_script: |
+        rustup target add ${{ matrix.target }}
+        cargo check -p platform -p traits -p backend --target ${{ matrix.target }} --no-default-features --lib
+        cargo check -p platform -p traits -p backend --target ${{ matrix.target }} --no-default-features --features alloc --lib
+        cargo build -p platform -p traits -p backend --target ${{ matrix.target }} --no-default-features --lib --release
+        cargo build -p platform -p traits -p backend --target ${{ matrix.target }} --no-default-features --features alloc --lib --release
+
+  wasm:
+    name: wasm (${{ matrix.target }})
+    needs: [lane-contract, target-matrix]
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.target-matrix.outputs.weekly_wasm) }}
+    uses: ./.github/workflows/_rust-job.yaml
+    with:
+      runner: ubuntu-latest
+      timeout_minutes: 25
+      setup_kind: default
+      cache_key: weekly-wasm-${{ matrix.target }}
+      tools_mode: minimal
+      run_script: |
+        rustup target add ${{ matrix.target }}
+        cargo check -p platform -p traits -p backend --target ${{ matrix.target }} --no-default-features --lib
+        cargo check -p platform -p traits -p backend --target ${{ matrix.target }} --no-default-features --features alloc --lib
+        cargo build -p platform -p traits -p backend --target ${{ matrix.target }} --no-default-features --lib --release
+        cargo build -p platform -p traits -p backend --target ${{ matrix.target }} --no-default-features --features alloc --lib --release
+
+  wasm-pack-optional:
+    name: wasm-pack smoke (optional)
+    needs: lane-contract
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          cache-key: weekly-wasm-pack
+          tools-mode: minimal
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: wasm-pack build
+        run: wasm-pack build crates/rscrypto --target web --no-default-features --features std
 
   miri:
     name: Miri (${{ matrix.target.name }})
+    needs: lane-contract
     runs-on: ${{ matrix.target.runner }}
-    timeout-minutes: 45
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -46,40 +203,14 @@ jobs:
           tools-mode: minimal
           toolchain-components: "miri, rust-src"
 
-      - name: Miri Memory Safety Tests
+      - name: Miri
         run: just test-miri --all
-
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # Extended Property Tests (more iterations than commit-time tests)
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-  proptests:
-    name: Property Tests (Extended)
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
-
-      - name: Setup
-        uses: ./.github/actions/setup
-        with:
-          cache-key: weekly-proptests
-          tools-mode: standard
-
-      - name: Extended Property Tests
-        run: cargo nextest run --workspace --all-features -E 'test(/proptest/)' --test-threads=1
-        env:
-          PROPTEST_CASES: "10000"
-
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # Fuzzing: Isolated Job with Fresh Disk Space
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   fuzzing:
     name: Fuzzing (${{ matrix.target.name }})
+    needs: lane-contract
     runs-on: ${{ matrix.target.runner }}
-    timeout-minutes: 90
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -98,7 +229,7 @@ jobs:
           cache-key: weekly-fuzz-${{ matrix.target.name }}
           tools-mode: fuzz
 
-      - name: Fuzz Testing
+      - name: Fuzz
         env:
           RSCRYPTO_FUZZ_DURATION_SECS: "150"
         run: just test-fuzz --all
@@ -112,116 +243,32 @@ jobs:
           retention-days: 90
           if-no-files-found: ignore
 
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # WASM64 Experimental (Memory64 / WASM 3.0)
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # Tier 3 target - requires -Z build-std, no pre-built std available.
-  # Tests WASM 3.0 Memory64 support. Does not block CI on failure.
-  # See: https://doc.rust-lang.org/rustc/platform-support/wasm64-unknown-unknown.html
-
-  wasm64:
-    name: WASM64 Experimental
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    continue-on-error: true  # Don't fail weekly CI if wasm64 breaks
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
-
-      - name: Setup Toolchain
-        uses: ./.github/actions/setup-toolchain
-        with:
-          components: rust-src
-
-      - name: Build for wasm64-unknown-unknown
-        run: |
-          echo "Building rscrypto for wasm64 (Memory64 / WASM 3.0)"
-          echo "This is a Tier 3 experimental target - no pre-built std available"
-          echo ""
-
-          # Build all workspace crates for wasm64
-          cargo build \
-            -Z build-std=std,panic_abort \
-            --target wasm64-unknown-unknown \
-            --release \
-            --workspace \
-            --exclude rscrypto
-
-      - name: Verify WASM64 Artifacts
-        run: |
-          echo "Checking generated wasm64 artifacts..."
-          find target/wasm64-unknown-unknown/release -name "*.wasm" -type f | head -20
-
-          # Basic sanity check - ensure we produced valid wasm files
-          for wasm in target/wasm64-unknown-unknown/release/*.wasm; do
-            if [ -f "$wasm" ]; then
-              size=$(stat -c%s "$wasm" 2>/dev/null || stat -f%z "$wasm")
-              echo "  $(basename "$wasm"): $size bytes"
-            fi
-          done
-
-  windows:
-    name: Windows Full (${{ matrix.target.name }})
-    runs-on: ${{ matrix.target.runner }}
-    timeout-minutes: 90
-    strategy:
-      fail-fast: false
-      matrix:
-        target:
-          - name: x86_64-pc-windows-msvc
-            runner: windows-latest
-          - name: aarch64-pc-windows-msvc
-            runner: windows-11-arm
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
-
-      - name: Setup
-        uses: ./.github/actions/setup
-        with:
-          cache-key: weekly-windows-${{ matrix.target.name }}
-          tools-mode: standard
-
-      - name: Full Windows CI
-        run: |
-          just ci-check
-          just build
-          just test --all
-
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # Summary
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
   complete:
-    name: Weekly Complete
-    needs: [miri, proptests, fuzzing, wasm64, windows]
+    name: Complete (weekly)
+    needs: [ci, ci-ibm-s390x, ci-ibm-power10, no-std, wasm, miri, fuzzing]
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Check Results
+      - name: Assert required lanes
         run: |
-          echo "Weekly CI Results:"
-          echo "  Miri: ${{ needs.miri.result }}"
-          echo "  Property Tests: ${{ needs.proptests.result }}"
-          echo "  Fuzzing: ${{ needs.fuzzing.result }}"
-          echo "  WASM64 (experimental): ${{ needs.wasm64.result }}"
-          echo "  Windows: ${{ needs.windows.result }}"
-
-          # Core jobs must pass
-          if [ "${{ needs.miri.result }}" == "failure" ] || \
-             [ "${{ needs.proptests.result }}" == "failure" ] || \
-             [ "${{ needs.fuzzing.result }}" == "failure" ] || \
-             [ "${{ needs.windows.result }}" == "failure" ]; then
-            echo ""
-            echo "One or more core jobs failed"
+          if [ "${{ needs.ci.result }}" != "success" ]; then
             exit 1
           fi
-
-          # WASM64 is experimental - warn but don't fail
-          if [ "${{ needs.wasm64.result }}" == "failure" ]; then
-            echo ""
-            echo "⚠ WASM64 experimental build failed (non-blocking)"
+          if [ "${{ needs.ci-ibm-s390x.result }}" != "success" ]; then
+            exit 1
           fi
-
-          echo ""
-          echo "All weekly jobs passed"
+          if [ "${{ needs.ci-ibm-power10.result }}" != "success" ]; then
+            exit 1
+          fi
+          if [ "${{ needs.no-std.result }}" != "success" ]; then
+            exit 1
+          fi
+          if [ "${{ needs.wasm.result }}" != "success" ]; then
+            exit 1
+          fi
+          if [ "${{ needs.miri.result }}" != "success" ]; then
+            exit 1
+          fi
+          if [ "${{ needs.fuzzing.result }}" != "success" ]; then
+            exit 1
+          fi

@@ -9,32 +9,37 @@ on:
         type: boolean
         default: true
       run_intel_spr:
-        description: "Run benchmarks on Intel Sapphire Rapids (World Record contender)"
+        description: "Run benchmarks on Intel Sapphire Rapids (RunsOn)"
         required: false
         type: boolean
         default: true
-      run_intel:
-        description: "Run benchmarks on Intel Latest (alias for run_intel_latest)"
-        required: false
-        type: boolean
-        default: false
-      run_intel_latest:
-        description: "Run benchmarks on Intel Latest (Granite/Emerald/Sapphire)"
-        required: false
-        type: boolean
-        default: false
       run_intel_icl:
-        description: "Run benchmarks on Intel Ice Lake (SSE validation)"
+        description: "Run benchmarks on Intel Ice Lake (RunsOn)"
         required: false
         type: boolean
         default: false
-      run_graviton:
-        description: "Run benchmarks on Graviton (RunsOn)"
-        required: false
-        type: boolean
-        default: true
       run_amd_zen5:
         description: "Run benchmarks on AMD Zen5 (RunsOn)"
+        required: false
+        type: boolean
+        default: false
+      run_graviton3:
+        description: "Run benchmarks on AWS Graviton3 (RunsOn)"
+        required: false
+        type: boolean
+        default: true
+      run_graviton4:
+        description: "Run benchmarks on AWS Graviton4 (RunsOn)"
+        required: false
+        type: boolean
+        default: false
+      run_ibm_s390x:
+        description: "Run benchmarks on IBM Z (s390x)"
+        required: false
+        type: boolean
+        default: false
+      run_ibm_power10:
+        description: "Run benchmarks on IBM POWER10 (ppc64le)"
         required: false
         type: boolean
         default: false
@@ -99,19 +104,9 @@ permissions:
   contents: read
 
 jobs:
-  lane-contract:
-    name: Lane Contract (manual-bench)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Assert lane
-        run: |
-          test "${{ github.event_name }}" = "workflow_dispatch"
-          echo "lane=manual-bench"
-
   bench-amd-zen4:
     name: Benchmark (AMD Zen4)
     if: inputs.run_amd_zen4
-    needs: lane-contract
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: namespace-profile-rscrypto-linux-x86
@@ -137,7 +132,6 @@ jobs:
   bench-intel-spr:
     name: Benchmark (Intel Sapphire Rapids)
     if: inputs.run_intel_spr
-    needs: lane-contract
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: runs-on=${{ github.run_id }}/runner=intel-spr
@@ -161,40 +155,12 @@ jobs:
         benchmark-results/
         target/criterion/
 
-  bench-intel-latest:
-    name: Benchmark (Intel Latest)
-    if: inputs.run_intel_latest || inputs.run_intel
-    needs: lane-contract
-    uses: ./.github/workflows/_rust-job.yaml
-    with:
-      runner: runs-on=${{ github.run_id }}/runner=intel-latest
-      timeout_minutes: 360
-      setup_kind: runson
-      runson_mode: runson-bench
-      run_script: |
-        BENCH_OUTPUT_DIR=benchmark-results \
-        BENCH_CRATES="${{ inputs.crates }}" \
-        BENCH_BENCHES="${{ inputs.benches }}" \
-        BENCH_ONLY="${{ inputs.only }}" \
-        BENCH_FILTER="${{ inputs.filter }}" \
-        BENCH_QUICK=${{ inputs.quick && 'true' || 'false' }} \
-        BENCH_WARMUP_MS="${{ inputs.warmup_ms }}" \
-        BENCH_MEASURE_MS="${{ inputs.measure_ms }}" \
-        BENCH_SAMPLE_SIZE="${{ inputs.sample_size }}" \
-        BENCH_PROFILE_TIME_SECS="${{ inputs.profile_time_secs }}" \
-        scripts/ci/run-bench.sh
-      artifact_name: benchmark-intel-latest
-      artifact_path: |
-        benchmark-results/
-        target/criterion/
-
   bench-intel-icl:
-    name: Benchmark (Intel Ice Lake - SSE validation)
+    name: Benchmark (Intel Ice Lake)
     if: inputs.run_intel_icl
-    needs: lane-contract
     uses: ./.github/workflows/_rust-job.yaml
     with:
-      runner: runs-on=${{ github.run_id }}/runner=intel-icl-bench
+      runner: runs-on=${{ github.run_id }}/runner=intel-icl
       timeout_minutes: 360
       setup_kind: runson
       runson_mode: runson-bench
@@ -218,7 +184,6 @@ jobs:
   bench-amd-zen5:
     name: Benchmark (AMD Zen5)
     if: inputs.run_amd_zen5
-    needs: lane-contract
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: runs-on=${{ github.run_id }}/runner=amd-zen5
@@ -242,13 +207,12 @@ jobs:
         benchmark-results/
         target/criterion/
 
-  bench-graviton:
-    name: Benchmark (Graviton)
-    if: inputs.run_graviton
-    needs: lane-contract
+  bench-graviton3:
+    name: Benchmark (AWS Graviton3)
+    if: inputs.run_graviton3
     uses: ./.github/workflows/_rust-job.yaml
     with:
-      runner: runs-on=${{ github.run_id }}/runner=graviton
+      runner: runs-on=${{ github.run_id }}/runner=graviton3
       timeout_minutes: 360
       setup_kind: runson
       runson_mode: runson-bench
@@ -264,7 +228,97 @@ jobs:
         BENCH_SAMPLE_SIZE="${{ inputs.sample_size }}" \
         BENCH_PROFILE_TIME_SECS="${{ inputs.profile_time_secs }}" \
         scripts/ci/run-bench.sh
-      artifact_name: benchmark-graviton
+      artifact_name: benchmark-graviton3
+      artifact_path: |
+        benchmark-results/
+        target/criterion/
+
+  bench-graviton4:
+    name: Benchmark (AWS Graviton4)
+    if: inputs.run_graviton4
+    uses: ./.github/workflows/_rust-job.yaml
+    with:
+      runner: runs-on=${{ github.run_id }}/runner=graviton4
+      timeout_minutes: 360
+      setup_kind: runson
+      runson_mode: runson-bench
+      run_script: |
+        BENCH_OUTPUT_DIR=benchmark-results \
+        BENCH_CRATES="${{ inputs.crates }}" \
+        BENCH_BENCHES="${{ inputs.benches }}" \
+        BENCH_ONLY="${{ inputs.only }}" \
+        BENCH_FILTER="${{ inputs.filter }}" \
+        BENCH_QUICK=${{ inputs.quick && 'true' || 'false' }} \
+        BENCH_WARMUP_MS="${{ inputs.warmup_ms }}" \
+        BENCH_MEASURE_MS="${{ inputs.measure_ms }}" \
+        BENCH_SAMPLE_SIZE="${{ inputs.sample_size }}" \
+        BENCH_PROFILE_TIME_SECS="${{ inputs.profile_time_secs }}" \
+        scripts/ci/run-bench.sh
+      artifact_name: benchmark-graviton4
+      artifact_path: |
+        benchmark-results/
+        target/criterion/
+
+  bench-ibm-s390x:
+    name: Benchmark (IBM Z s390x)
+    if: inputs.run_ibm_s390x
+    uses: ./.github/workflows/_rust-job.yaml
+    with:
+      runner: ubuntu-24.04-s390x
+      timeout_minutes: 120
+      setup_kind: default
+      cache_key: manual-ibm-bench-s390x
+      tools_mode: none
+      toolchain_components: ""
+      pre_script: |
+        uname -a
+        lscpu
+        cat /proc/cpuinfo | head -50
+      run_script: |
+        BENCH_OUTPUT_DIR=benchmark-results \
+        BENCH_CRATES="${{ inputs.crates }}" \
+        BENCH_BENCHES="${{ inputs.benches }}" \
+        BENCH_ONLY="${{ inputs.only }}" \
+        BENCH_FILTER="${{ inputs.filter }}" \
+        BENCH_QUICK=${{ inputs.quick && 'true' || 'false' }} \
+        BENCH_WARMUP_MS="${{ inputs.warmup_ms }}" \
+        BENCH_MEASURE_MS="${{ inputs.measure_ms }}" \
+        BENCH_SAMPLE_SIZE="${{ inputs.sample_size }}" \
+        BENCH_PROFILE_TIME_SECS="${{ inputs.profile_time_secs }}" \
+        scripts/ci/run-bench.sh
+      artifact_name: benchmark-ibm-s390x
+      artifact_path: |
+        benchmark-results/
+        target/criterion/
+
+  bench-ibm-power10:
+    name: Benchmark (IBM POWER10 ppc64le)
+    if: inputs.run_ibm_power10
+    uses: ./.github/workflows/_rust-job.yaml
+    with:
+      runner: ubuntu-24.04-ppc64le-p10
+      timeout_minutes: 120
+      setup_kind: default
+      cache_key: manual-ibm-bench-power10
+      tools_mode: none
+      toolchain_components: ""
+      pre_script: |
+        uname -a
+        lscpu
+        cat /proc/cpuinfo | head -50
+      run_script: |
+        BENCH_OUTPUT_DIR=benchmark-results \
+        BENCH_CRATES="${{ inputs.crates }}" \
+        BENCH_BENCHES="${{ inputs.benches }}" \
+        BENCH_ONLY="${{ inputs.only }}" \
+        BENCH_FILTER="${{ inputs.filter }}" \
+        BENCH_QUICK=${{ inputs.quick && 'true' || 'false' }} \
+        BENCH_WARMUP_MS="${{ inputs.warmup_ms }}" \
+        BENCH_MEASURE_MS="${{ inputs.measure_ms }}" \
+        BENCH_SAMPLE_SIZE="${{ inputs.sample_size }}" \
+        BENCH_PROFILE_TIME_SECS="${{ inputs.profile_time_secs }}" \
+        scripts/ci/run-bench.sh
+      artifact_name: benchmark-ibm-power10
       artifact_path: |
         benchmark-results/
         target/criterion/

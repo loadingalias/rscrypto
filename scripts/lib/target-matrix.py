@@ -41,14 +41,12 @@ def print_shell(manifest: dict) -> None:
 
 
 def get_json_view(manifest: dict, key: str):
-    if key == "full_main_ci":
-        return manifest["ci"]["full_main"]
-    if key == "full_main_no_std":
+    if key == "commit_ci":
+        return manifest["ci"]["commit"]
+    if key == "commit_no_std":
         return manifest["groups"]["no_std"]
-    if key == "full_main_wasm":
+    if key == "commit_wasm":
         return manifest["groups"]["wasm"]
-    if key == "fast_pr":
-        return manifest["ci"]["fast_pr"]
     if key == "tune_arches":
         return manifest["tune"]["arches"]
     raise KeyError(f"unknown json key: {key}")

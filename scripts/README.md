@@ -12,6 +12,8 @@ This file is the caller map for `scripts/`.
   - Called by: `just check-win`, `scripts/check/check-all.sh`
 - `scripts/check/check-linux.sh`
   - Called by: `just check-linux`, `scripts/check/check-all.sh`
+- `scripts/check/check-ibm.sh`
+  - Called by: `scripts/check/check-all.sh`
 - `scripts/test/test.sh`
   - Called by: `just test`
 - `scripts/test/test-miri.sh`
@@ -29,7 +31,9 @@ This file is the caller map for `scripts/`.
 - `scripts/ci/pin-actions.sh`
   - Called by: `just pin-actions`, `just verify-actions`
 - `scripts/ci/run-tune.sh`
-  - Called by: `.github/workflows/tune.yaml`, `.github/workflows/manual-ibm.yaml`
+  - Called by: `.github/workflows/tune.yaml`, `scripts/tune/apply.sh`
+- `scripts/tune/apply.sh`
+  - Called by: `just tune-apply`
 - `scripts/ci/pre-push.sh`
   - Called by: optional local Git hook (`.git/hooks/pre-push`)
 
@@ -40,7 +44,7 @@ This file is the caller map for `scripts/`.
 - `scripts/lib/targets.sh`
   - Sourced by: `scripts/check/check-all.sh`, `scripts/check/check-win.sh`, `scripts/check/check-linux.sh`
 - `scripts/lib/target-matrix.py`
-  - Called by: `scripts/lib/targets.sh`, `.github/workflows/commit.yaml`, `.github/workflows/fast-pr.yaml`
+  - Called by: `scripts/lib/targets.sh`, `.github/workflows/commit.yaml`, `.github/workflows/weekly.yaml`
 - `scripts/lib/toolchain.sh`
   - Called by: `.github/actions/setup-toolchain/action.yaml`, `.github/actions/setup-runson/action.yaml`
 

@@ -3,34 +3,23 @@
 
 self-hosted-runner:
   labels:
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    # Namespace Runners (AMD Zen4 - strong for CI and benchmarking)
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # Namespace runners
     - namespace-profile-rscrypto
     - namespace-profile-rscrypto-linux-x86
     - namespace-profile-rscrypto-linux-arm64
 
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    # RunsOn Benchmark Runners (AWS EC2 via runs-on.com)
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    # Intel x86-64 (Granite/Emerald/Sapphire Rapids)
-    - runs-on=${{ github.run_id }}/runner=intel-bench
-    # Intel x86-64 Ice Lake (3rd Gen Xeon)
-    - runs-on=${{ github.run_id }}/runner=intel-icl-bench
-    # AMD Zen5 (Turin)
+    # RunsOn benchmark/tune runners
+    - runs-on=${{ github.run_id }}/runner=intel-spr
+    - runs-on=${{ github.run_id }}/runner=intel-icl
     - runs-on=${{ github.run_id }}/runner=amd-zen5
-    # AWS Graviton (Neoverse V2/V1 with fallback)
-    - runs-on=${{ github.run_id }}/runner=graviton
+    - runs-on=${{ github.run_id }}/runner=graviton3
+    - runs-on=${{ github.run_id }}/runner=graviton4
 
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    # RunsOn CI Runners (backup/overflow only)
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # RunsOn CI runners
     - runs-on=${{ github.run_id }}/runner=linux-x64-ci
     - runs-on=${{ github.run_id }}/runner=linux-arm64-ci
 
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # IBM GitHub Actions on Power/Z (ActionsPZ)
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     - ubuntu-24.04-s390x
     - ubuntu-24.04-ppc64le
     - ubuntu-24.04-ppc64le-p10

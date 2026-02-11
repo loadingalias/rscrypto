@@ -60,6 +60,7 @@ bench-quick *args="":
 #   just tune
 #   just tune blake3 --apply
 #   just tune crc64nvme --apply
+#   just tune-apply ~/Downloads/tuning-amd-zen4
 #   just tune-measure dir=target/tune
 #   just tune-derive raw=target/tune/raw-results.json
 #   just tune-quick -- --only blake3
@@ -72,7 +73,10 @@ tune *args="":
 tune-quick *args="":
     RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p tune --release --bin rscrypto-tune -- --quick {{args}}
 
-tune-apply *args="":
+tune-apply *artifacts="":
+    @scripts/tune/apply.sh {{artifacts}}
+
+tune-apply-local *args="":
     RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p tune --release --bin rscrypto-tune -- --apply {{args}}
 
 tune-measure dir="target/tune" *args="":

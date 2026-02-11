@@ -28,7 +28,7 @@ blake3 = { version = "1.8.3", default-features = false, features = ["std", "rayo
 sha2 = { version = "0.10.9", default-features = false, features = ["std", "force-soft"] }
 sha3 = "0.10.8"
 xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
-rapidhash = "4.2.2"
+rapidhash = "4.3.0"
 siphasher = "1.0.2"
 tiny-keccak = { version = "2.0.2", features = ["kmac"] }
 blake2 = "0.10.6"
