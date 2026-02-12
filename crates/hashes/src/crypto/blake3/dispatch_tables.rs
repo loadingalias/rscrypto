@@ -414,8 +414,8 @@ pub static PROFILE_PORTABLE: FamilyProfile = portable_profile();
 pub static PROFILE_X86_ZEN4: FamilyProfile = FamilyProfile {
   dispatch: DispatchTable {
     boundaries: [64, 64, 4096],
-    xs: KernelId::X86Avx512,
-    s: KernelId::X86Avx512,
+    xs: KernelId::X86Sse41,
+    s: KernelId::X86Sse41,
     m: KernelId::X86Avx512,
     l: KernelId::X86Avx512,
   },
@@ -428,30 +428,29 @@ pub static PROFILE_X86_ZEN4: FamilyProfile = FamilyProfile {
     min_bytes: 131072,
     min_chunks: 128,
     max_threads: 8,
-    spawn_cost_bytes: 1,
-    merge_cost_bytes: 451730,
+    spawn_cost_bytes: 24576,
+    merge_cost_bytes: 16384,
     bytes_per_core_small: 24576,
-    bytes_per_core_medium: 74604,
-    bytes_per_core_large: 992108,
+    bytes_per_core_medium: 107520,
+    bytes_per_core_large: 1025024,
     small_limit_bytes: 262144,
     medium_limit_bytes: 2097152,
   },
   streaming_parallel: ParallelTable {
-    min_bytes: 131072,
-    min_chunks: 128,
-    max_threads: 8,
-    spawn_cost_bytes: 1,
-    merge_cost_bytes: 451730,
-    bytes_per_core_small: 24576,
-    bytes_per_core_medium: 74604,
-    bytes_per_core_large: 992108,
+    min_bytes: 18446744073709551615,
+    min_chunks: 18446744073709551615,
+    max_threads: 1,
+    spawn_cost_bytes: 24576,
+    merge_cost_bytes: 16384,
+    bytes_per_core_small: 262144,
+    bytes_per_core_medium: 131072,
+    bytes_per_core_large: 65536,
     small_limit_bytes: 262144,
     medium_limit_bytes: 2097152,
   },
 };
 #[cfg(not(target_arch = "x86_64"))]
 pub static PROFILE_X86_ZEN4: FamilyProfile = default_kind_profile();
-
 // Family Profile: X86_ZEN5
 #[cfg(target_arch = "x86_64")]
 pub static PROFILE_X86_ZEN5: FamilyProfile = FamilyProfile {
@@ -471,30 +470,29 @@ pub static PROFILE_X86_ZEN5: FamilyProfile = FamilyProfile {
     min_bytes: 98304,
     min_chunks: 96,
     max_threads: 8,
-    spawn_cost_bytes: 1,
-    merge_cost_bytes: 99474,
+    spawn_cost_bytes: 24576,
+    merge_cost_bytes: 16384,
     bytes_per_core_small: 16384,
-    bytes_per_core_medium: 118636,
-    bytes_per_core_large: 1036140,
+    bytes_per_core_medium: 131072,
+    bytes_per_core_large: 173056,
     small_limit_bytes: 262144,
-    medium_limit_bytes: 2097152,
+    medium_limit_bytes: 262145,
   },
   streaming_parallel: ParallelTable {
-    min_bytes: 98304,
-    min_chunks: 96,
-    max_threads: 8,
-    spawn_cost_bytes: 1,
-    merge_cost_bytes: 99474,
-    bytes_per_core_small: 16384,
-    bytes_per_core_medium: 118636,
-    bytes_per_core_large: 1036140,
+    min_bytes: 18446744073709551615,
+    min_chunks: 18446744073709551615,
+    max_threads: 1,
+    spawn_cost_bytes: 24576,
+    merge_cost_bytes: 16384,
+    bytes_per_core_small: 262144,
+    bytes_per_core_medium: 131072,
+    bytes_per_core_large: 65536,
     small_limit_bytes: 262144,
     medium_limit_bytes: 2097152,
   },
 };
 #[cfg(not(target_arch = "x86_64"))]
 pub static PROFILE_X86_ZEN5: FamilyProfile = default_kind_profile();
-
 // Family Profile: X86_ZEN5C
 #[cfg(target_arch = "x86_64")]
 pub static PROFILE_X86_ZEN5C: FamilyProfile = FamilyProfile {
@@ -543,7 +541,7 @@ pub static PROFILE_X86_ZEN5C: FamilyProfile = default_kind_profile();
 pub static PROFILE_X86_INTEL_SPR: FamilyProfile = FamilyProfile {
   dispatch: DispatchTable {
     boundaries: [64, 64, 4096],
-    xs: KernelId::X86Avx2,
+    xs: KernelId::X86Avx512,
     s: KernelId::X86Avx2,
     m: KernelId::X86Avx512,
     l: KernelId::X86Avx512,
@@ -557,30 +555,29 @@ pub static PROFILE_X86_INTEL_SPR: FamilyProfile = FamilyProfile {
     min_bytes: 1048576,
     min_chunks: 1024,
     max_threads: 8,
-    spawn_cost_bytes: 1,
-    merge_cost_bytes: 1778834,
+    spawn_cost_bytes: 24576,
+    merge_cost_bytes: 131072,
     bytes_per_core_small: 32768,
-    bytes_per_core_medium: 39788,
-    bytes_per_core_large: 826220,
+    bytes_per_core_medium: 224256,
+    bytes_per_core_large: 1010688,
     small_limit_bytes: 1048576,
     medium_limit_bytes: 2097152,
   },
   streaming_parallel: ParallelTable {
-    min_bytes: 1048576,
-    min_chunks: 1024,
-    max_threads: 8,
-    spawn_cost_bytes: 1,
-    merge_cost_bytes: 1778834,
-    bytes_per_core_small: 32768,
-    bytes_per_core_medium: 39788,
-    bytes_per_core_large: 826220,
+    min_bytes: 18446744073709551615,
+    min_chunks: 18446744073709551615,
+    max_threads: 1,
+    spawn_cost_bytes: 24576,
+    merge_cost_bytes: 16384,
+    bytes_per_core_small: 262144,
+    bytes_per_core_medium: 131072,
+    bytes_per_core_large: 65536,
     small_limit_bytes: 262144,
     medium_limit_bytes: 2097152,
   },
 };
 #[cfg(not(target_arch = "x86_64"))]
 pub static PROFILE_X86_INTEL_SPR: FamilyProfile = default_kind_profile();
-
 // Family Profile: X86_INTEL_GNR
 #[cfg(target_arch = "x86_64")]
 pub static PROFILE_X86_INTEL_GNR: FamilyProfile = FamilyProfile {
@@ -629,13 +626,13 @@ pub static PROFILE_X86_INTEL_GNR: FamilyProfile = default_kind_profile();
 pub static PROFILE_X86_INTEL_ICL: FamilyProfile = FamilyProfile {
   dispatch: DispatchTable {
     boundaries: [64, 64, 4096],
-    xs: KernelId::X86Sse41,
+    xs: KernelId::X86Avx512,
     s: KernelId::X86Sse41,
     m: KernelId::X86Avx512,
     l: KernelId::X86Avx512,
   },
   streaming: StreamingTable {
-    stream: KernelId::X86Sse41,
+    stream: KernelId::X86Avx512,
     bulk: KernelId::X86Avx512,
     bulk_sizeclass_threshold: THRESHOLD_AVX512,
   },
@@ -643,35 +640,34 @@ pub static PROFILE_X86_INTEL_ICL: FamilyProfile = FamilyProfile {
     min_bytes: 131072,
     min_chunks: 128,
     max_threads: 8,
-    spawn_cost_bytes: 1,
-    merge_cost_bytes: 613230,
+    spawn_cost_bytes: 24576,
+    merge_cost_bytes: 16384,
     bytes_per_core_small: 24576,
-    bytes_per_core_medium: 119953,
-    bytes_per_core_large: 971921,
+    bytes_per_core_medium: 107520,
+    bytes_per_core_large: 1025024,
     small_limit_bytes: 262144,
     medium_limit_bytes: 2097152,
   },
   streaming_parallel: ParallelTable {
-    min_bytes: 131072,
-    min_chunks: 128,
-    max_threads: 8,
-    spawn_cost_bytes: 1,
-    merge_cost_bytes: 613230,
-    bytes_per_core_small: 24576,
-    bytes_per_core_medium: 119953,
-    bytes_per_core_large: 971921,
+    min_bytes: 18446744073709551615,
+    min_chunks: 18446744073709551615,
+    max_threads: 1,
+    spawn_cost_bytes: 24576,
+    merge_cost_bytes: 16384,
+    bytes_per_core_small: 262144,
+    bytes_per_core_medium: 131072,
+    bytes_per_core_large: 65536,
     small_limit_bytes: 262144,
     medium_limit_bytes: 2097152,
   },
 };
 #[cfg(not(target_arch = "x86_64"))]
 pub static PROFILE_X86_INTEL_ICL: FamilyProfile = default_kind_profile();
-
 // Family Profile: AARCH64_APPLE_M1M3
 #[cfg(target_arch = "aarch64")]
 pub static PROFILE_AARCH64_APPLE_M1M3: FamilyProfile = FamilyProfile {
   dispatch: DispatchTable {
-    boundaries: DEFAULT_BOUNDARIES,
+    boundaries: [64, 4095, 4096],
     xs: KernelId::Portable,
     s: KernelId::Portable,
     m: KernelId::Aarch64Neon,
@@ -682,34 +678,33 @@ pub static PROFILE_AARCH64_APPLE_M1M3: FamilyProfile = FamilyProfile {
     bulk: KernelId::Aarch64Neon,
     bulk_sizeclass_threshold: THRESHOLD_NEON,
   },
-  parallel: parallel_costs!(
-    64 * 1024,
-    63,
-    8,
-    12 * 1024,
-    10 * 1024,
-    128 * 1024,
-    96 * 1024,
-    64 * 1024,
-    256 * 1024,
-    2 * 1024 * 1024,
-  ),
-  streaming_parallel: parallel_costs!(
-    64 * 1024,
-    63,
-    8,
-    12 * 1024,
-    10 * 1024,
-    128 * 1024,
-    96 * 1024,
-    64 * 1024,
-    256 * 1024,
-    2 * 1024 * 1024,
-  ),
+  parallel: ParallelTable {
+    min_bytes: 65536,
+    min_chunks: 64,
+    max_threads: 12,
+    spawn_cost_bytes: 24576,
+    merge_cost_bytes: 16384,
+    bytes_per_core_small: 10922,
+    bytes_per_core_medium: 41984,
+    bytes_per_core_large: 325632,
+    small_limit_bytes: 262144,
+    medium_limit_bytes: 1048576,
+  },
+  streaming_parallel: ParallelTable {
+    min_bytes: 18446744073709551615,
+    min_chunks: 18446744073709551615,
+    max_threads: 1,
+    spawn_cost_bytes: 24576,
+    merge_cost_bytes: 16384,
+    bytes_per_core_small: 262144,
+    bytes_per_core_medium: 131072,
+    bytes_per_core_large: 65536,
+    small_limit_bytes: 262144,
+    medium_limit_bytes: 2097152,
+  },
 };
 #[cfg(not(target_arch = "aarch64"))]
 pub static PROFILE_AARCH64_APPLE_M1M3: FamilyProfile = default_kind_profile();
-
 // Family Profile: AARCH64_APPLE_M4
 #[cfg(target_arch = "aarch64")]
 pub static PROFILE_AARCH64_APPLE_M4: FamilyProfile = FamilyProfile {
@@ -840,20 +835,17 @@ pub static PROFILE_AARCH64_GRAVITON2: FamilyProfile = FamilyProfile {
 pub static PROFILE_AARCH64_GRAVITON2: FamilyProfile = default_kind_profile();
 
 // Family Profile: AARCH64_SERVER_NEON
-// Server ARM profile: use NEON everywhere like Graviton2. Server workloads
-// prioritize throughput over latency, and NEON is faster for all sizes on
-// modern server ARM cores (Neoverse N1/N2/V1, Graviton, Ampere Altra, etc.).
 #[cfg(target_arch = "aarch64")]
 pub static PROFILE_AARCH64_SERVER_NEON: FamilyProfile = FamilyProfile {
   dispatch: DispatchTable {
-    boundaries: DEFAULT_BOUNDARIES,
-    xs: KernelId::Aarch64Neon,
-    s: KernelId::Aarch64Neon,
+    boundaries: [64, 4095, 4096],
+    xs: KernelId::Portable,
+    s: KernelId::Portable,
     m: KernelId::Aarch64Neon,
     l: KernelId::Aarch64Neon,
   },
   streaming: StreamingTable {
-    stream: KernelId::Aarch64Neon,
+    stream: KernelId::Portable,
     bulk: KernelId::Aarch64Neon,
     bulk_sizeclass_threshold: THRESHOLD_NEON,
   },
@@ -861,17 +853,17 @@ pub static PROFILE_AARCH64_SERVER_NEON: FamilyProfile = FamilyProfile {
     min_bytes: 65536,
     min_chunks: 64,
     max_threads: 8,
-    spawn_cost_bytes: 1,
-    merge_cost_bytes: 65536,
+    spawn_cost_bytes: 24576,
+    merge_cost_bytes: 16384,
     bytes_per_core_small: 16384,
-    bytes_per_core_medium: 122879,
-    bytes_per_core_large: 1040383,
+    bytes_per_core_medium: 107520,
+    bytes_per_core_large: 1025024,
     small_limit_bytes: 262144,
     medium_limit_bytes: 2097152,
   },
   streaming_parallel: ParallelTable {
-    min_bytes: usize::MAX,
-    min_chunks: usize::MAX,
+    min_bytes: 18446744073709551615,
+    min_chunks: 18446744073709551615,
     max_threads: 1,
     spawn_cost_bytes: 24576,
     merge_cost_bytes: 16384,
@@ -884,7 +876,6 @@ pub static PROFILE_AARCH64_SERVER_NEON: FamilyProfile = FamilyProfile {
 };
 #[cfg(not(target_arch = "aarch64"))]
 pub static PROFILE_AARCH64_SERVER_NEON: FamilyProfile = default_kind_profile();
-
 // Family Profile: Z13
 pub static PROFILE_Z13: FamilyProfile = FamilyProfile {
   dispatch: default_kind_table(),
