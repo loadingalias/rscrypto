@@ -38,6 +38,11 @@ trap 'rm -rf "$LOG_DIR"' EXIT
 
 echo "Windows targets ${DIM}($SCOPE_DESC)${RESET}"
 
+if [[ ${#WIN_TARGETS[@]} -eq 0 ]]; then
+  skip "no Windows targets configured" "config/target-matrix.toml"
+  exit 0
+fi
+
 # Initialize xwin cache once (avoids race conditions)
 step "Initializing SDK cache"
 if ! XWIN_CACHE_DIR="$XWIN_CACHE_DIR_DEFAULT" \

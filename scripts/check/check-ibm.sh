@@ -27,6 +27,11 @@ trap 'rm -rf "$LOG_DIR"' EXIT
 
 echo "IBM targets ${DIM}($SCOPE_DESC)${RESET}"
 
+if [[ ${#IBM_TARGETS[@]} -eq 0 ]]; then
+	skip "no IBM targets configured" "config/target-matrix.toml"
+	exit 0
+fi
+
 for target in "${IBM_TARGETS[@]}"; do
 	# Shorten: s390x-unknown-linux-gnu -> s390x-gnu
 	short_name="${target/unknown-linux-/}"

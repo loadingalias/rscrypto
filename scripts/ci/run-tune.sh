@@ -192,7 +192,11 @@ if [[ "$RAW_ARTIFACT_PATH" != "$OUT_DIR/raw-results.json" ]]; then
 fi
 
 if [[ "$APPLY_INPUT" == "true" ]]; then
-  TARGET_PATCH_PATHS=("crates/tune/generated")
+  TARGET_PATCH_PATHS=(
+    "crates/checksum/src/dispatch.rs"
+    "crates/hashes/src/crypto"
+    "crates/hashes/src/fast"
+  )
   PATCH_PATHS_FILE="$OUT_DIR/patch-paths.txt"
   PATCH_PATH="$OUT_DIR/patch.diff"
   MANIFEST_PATH="$OUT_DIR/apply-manifest.json"
@@ -218,7 +222,6 @@ if [[ "$APPLY_INPUT" == "true" ]]; then
     # Capture tracked apply-target changes only.
     git diff --binary --full-index -- "${TARGET_PATCH_PATHS[@]}" || true
 
-    # `rscrypto-tune --apply` emits new files under crates/tune/generated.
     # Plain `git diff` ignores untracked files, so include them explicitly.
     git ls-files --others --exclude-standard -z -- "${TARGET_PATCH_PATHS[@]}" \
       | while IFS= read -r -d '' path; do

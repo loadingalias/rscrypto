@@ -46,6 +46,8 @@ pub const HASH_CORE_TUNING_CORPUS: &[(&str, &str)] = &[
 /// and target evaluation stay in sync.
 pub const BLAKE3_TUNING_CORPUS: &[(&str, &str)] = &[
   ("blake3", "RSCRYPTO_BLAKE3"),
+  ("blake3-keyed", "RSCRYPTO_BLAKE3_KEYED"),
+  ("blake3-derive", "RSCRYPTO_BLAKE3_DERIVE"),
   ("blake3-chunk", "RSCRYPTO_BENCH_BLAKE3_CHUNK"),
   ("blake3-parent", "RSCRYPTO_BENCH_BLAKE3_PARENT"),
   ("blake3-parent-fold", "RSCRYPTO_BENCH_BLAKE3_PARENT_FOLD"),
@@ -117,10 +119,16 @@ fn is_blake3_stream_tuning_algo(algo: &str) -> bool {
   )
 }
 
+#[inline]
+#[must_use]
+fn is_blake3_oneshot_policy_algo(algo: &str) -> bool {
+  matches!(algo, "blake3" | "blake3-keyed" | "blake3-derive")
+}
+
 /// Map generic threshold names to hash-specific env var suffixes.
 #[must_use]
 pub(crate) fn hash_threshold_to_env_suffix(algo: &str, threshold_name: &str) -> Option<&'static str> {
-  if algo == "blake3" || algo.starts_with("blake3-stream4k") {
+  if is_blake3_oneshot_policy_algo(algo) || is_blake3_stream_tuning_algo(algo) {
     return match threshold_name {
       "parallel_min_bytes" => Some("PARALLEL_MIN_BYTES"),
       "parallel_min_chunks" => Some("PARALLEL_MIN_CHUNKS"),
@@ -383,5 +391,46 @@ impl crate::Tunable for HashTunable {
 
   fn threshold_to_env_suffix(&self, threshold_name: &str) -> Option<&'static str> {
     hash_threshold_to_env_suffix(self.algo, threshold_name)
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::{BLAKE3_TUNING_CORPUS, hash_threshold_to_env_suffix};
+
+  #[test]
+  fn blake3_parallel_threshold_mapping_covers_all_stream_surfaces() {
+    let parallel_thresholds = [
+      "parallel_min_bytes",
+      "parallel_min_chunks",
+      "parallel_max_threads",
+      "parallel_spawn_cost_bytes",
+      "parallel_merge_cost_bytes",
+      "parallel_bytes_per_core_small",
+      "parallel_bytes_per_core_medium",
+      "parallel_bytes_per_core_large",
+      "parallel_small_limit_bytes",
+      "parallel_medium_limit_bytes",
+    ];
+
+    for (algo, _) in BLAKE3_TUNING_CORPUS.iter().copied().filter(|(name, _)| {
+      *name == "blake3" || *name == "blake3-keyed" || *name == "blake3-derive" || name.starts_with("blake3-stream")
+    }) {
+      for threshold in parallel_thresholds {
+        assert!(
+          hash_threshold_to_env_suffix(algo, threshold).is_some(),
+          "missing threshold mapping for algo={algo} threshold={threshold}"
+        );
+      }
+    }
+  }
+
+  #[test]
+  fn non_blake3_algorithms_do_not_claim_blake3_parallel_thresholds() {
+    assert_eq!(hash_threshold_to_env_suffix("sha256", "parallel_min_bytes"), None);
+    assert_eq!(
+      hash_threshold_to_env_suffix("crc32c", "parallel_merge_cost_bytes"),
+      None
+    );
   }
 }

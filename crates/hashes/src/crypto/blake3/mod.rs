@@ -2814,6 +2814,32 @@ impl Blake3 {
     digest_oneshot(kernel, IV, 0, data)
   }
 
+  /// One-shot keyed hash using an explicitly selected kernel.
+  ///
+  /// This is crate-internal glue for `hashes::bench` / `rscrypto-tune`.
+  #[inline]
+  #[must_use]
+  pub(crate) fn keyed_digest_with_kernel_id(id: kernels::Blake3KernelId, key: &[u8; 32], data: &[u8]) -> [u8; OUT_LEN] {
+    let kernel = kernels::kernel(id);
+    let key_words = words8_from_le_bytes_32(key);
+    digest_oneshot(kernel, key_words, KEYED_HASH, data)
+  }
+
+  /// One-shot derive-key hash using an explicitly selected kernel.
+  ///
+  /// This is crate-internal glue for `hashes::bench` / `rscrypto-tune`.
+  #[inline]
+  #[must_use]
+  pub(crate) fn derive_key_with_kernel_id(
+    id: kernels::Blake3KernelId,
+    context: &str,
+    key_material: &[u8],
+  ) -> [u8; OUT_LEN] {
+    let kernel = kernels::kernel(id);
+    let context_key_words = digest_oneshot_words(kernel, IV, DERIVE_KEY_CONTEXT, context.as_bytes());
+    digest_oneshot(kernel, context_key_words, DERIVE_KEY_MATERIAL, key_material)
+  }
+
   #[inline]
   fn stream_chunks_pattern_with_kernel_pair_and_state(
     stream_id: kernels::Blake3KernelId,

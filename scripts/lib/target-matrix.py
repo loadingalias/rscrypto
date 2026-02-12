@@ -11,8 +11,14 @@ import sys
 
 try:
     import tomllib
-except ModuleNotFoundError as exc:  # pragma: no cover
-    raise SystemExit(f"python >= 3.11 required (tomllib missing): {exc}")
+except ModuleNotFoundError:  # pragma: no cover
+    try:
+        import tomli as tomllib  # type: ignore[no-redef]
+    except ModuleNotFoundError as exc:  # pragma: no cover
+        raise SystemExit(
+            "TOML parser not available. Use Python >= 3.11 (tomllib) "
+            "or install tomli for older Python."
+        ) from exc
 
 
 def repo_root() -> pathlib.Path:

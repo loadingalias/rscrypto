@@ -151,6 +151,11 @@ run_constrained_checks() {
 	echo ""
 	echo "Constrained targets ${DIM}($CONSTRAINED_SCOPE)${RESET}"
 
+	if [[ ${#NOSTD_TARGETS[@]} -eq 0 && ${#WASM_TARGETS[@]} -eq 0 ]]; then
+		skip "no constrained targets configured" "config/target-matrix.toml"
+		return 0
+	fi
+
 	for target in "${NOSTD_TARGETS[@]}"; do
 		if ! run_constrained_target "$target" "$log_dir"; then
 			return 1

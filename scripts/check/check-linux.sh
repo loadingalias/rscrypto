@@ -32,6 +32,11 @@ trap 'rm -rf "$LOG_DIR"' EXIT
 
 echo "Linux targets ${DIM}($SCOPE_DESC)${RESET}"
 
+if [[ ${#LINUX_TARGETS[@]} -eq 0 ]]; then
+  skip "no Linux targets configured" "config/target-matrix.toml"
+  exit 0
+fi
+
 for target in "${LINUX_TARGETS[@]}"; do
   # Shorten: x86_64-unknown-linux-gnu -> x86_64-gnu
   short_name="${target/unknown-linux-/}"
