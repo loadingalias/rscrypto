@@ -74,60 +74,6 @@ pub(crate) struct ParallelDispatch {
   pub(crate) derive_streaming: ParallelTable,
 }
 
-#[derive(Clone, Copy)]
-enum ParallelOperation {
-  Plain,
-  Keyed,
-  Derive,
-  Xof,
-}
-
-#[inline]
-#[must_use]
-fn adjust_parallel_thresholds(base: ParallelTable, mode: ParallelOperation, streaming: bool) -> ParallelTable {
-  if base.max_threads == 1 || base.min_bytes == usize::MAX {
-    return base;
-  }
-
-  let mut out = base;
-  match (streaming, mode) {
-    (false, ParallelOperation::Plain) => {}
-    (false, ParallelOperation::Keyed) => {
-      out.min_bytes = out.min_bytes.saturating_add(16 * 1024);
-      out.min_chunks = out.min_chunks.saturating_add(16);
-      out.spawn_cost_bytes = out.spawn_cost_bytes.saturating_add(2 * 1024);
-    }
-    (false, ParallelOperation::Derive) => {
-      out.min_bytes = out.min_bytes.saturating_add(32 * 1024);
-      out.min_chunks = out.min_chunks.saturating_add(32);
-      out.spawn_cost_bytes = out.spawn_cost_bytes.saturating_add(4 * 1024);
-      out.merge_cost_bytes = out.merge_cost_bytes.saturating_add(4 * 1024);
-    }
-    (false, ParallelOperation::Xof) => {
-      out.min_bytes = out.min_bytes.saturating_sub(8 * 1024).max(1);
-      out.min_chunks = out.min_chunks.saturating_sub(8).max(1);
-      out.merge_cost_bytes = out.merge_cost_bytes.saturating_sub(2 * 1024);
-    }
-    (true, ParallelOperation::Plain) => {}
-    (true, ParallelOperation::Keyed) => {
-      out.min_bytes = out.min_bytes.saturating_add(8 * 1024);
-      out.min_chunks = out.min_chunks.saturating_add(8);
-      out.spawn_cost_bytes = out.spawn_cost_bytes.saturating_add(1024);
-    }
-    (true, ParallelOperation::Derive) => {
-      out.min_bytes = out.min_bytes.saturating_add(16 * 1024);
-      out.min_chunks = out.min_chunks.saturating_add(16);
-      out.spawn_cost_bytes = out.spawn_cost_bytes.saturating_add(2 * 1024);
-      out.merge_cost_bytes = out.merge_cost_bytes.saturating_add(1024);
-    }
-    (true, ParallelOperation::Xof) => {
-      out.min_bytes = out.min_bytes.saturating_sub(4 * 1024).max(1);
-      out.min_chunks = out.min_chunks.saturating_sub(4).max(1);
-    }
-  }
-  out
-}
-
 // Note: STREAMING_BULK_SIZECLASS_MIN_LEN is now table-driven per profile.
 // See StreamingTable::bulk_sizeclass_threshold in dispatch_tables.rs
 
@@ -305,16 +251,18 @@ fn resolved() -> ResolvedDispatch {
     };
     let oneshot_base = *oneshot_parallel_table;
     let streaming_base = *streaming_parallel_table;
+    // Keep runtime policy selection table-driven only. Mode-specific parallel
+    // behavior must come from tuned/applied tables, not post-hoc heuristics.
     let parallel = ParallelDispatch {
-      oneshot: adjust_parallel_thresholds(oneshot_base, ParallelOperation::Plain, false),
-      keyed_oneshot: adjust_parallel_thresholds(oneshot_base, ParallelOperation::Keyed, false),
-      derive_oneshot: adjust_parallel_thresholds(oneshot_base, ParallelOperation::Derive, false),
-      xof: adjust_parallel_thresholds(oneshot_base, ParallelOperation::Xof, false),
-      keyed_xof: adjust_parallel_thresholds(oneshot_base, ParallelOperation::Keyed, false),
-      derive_xof: adjust_parallel_thresholds(oneshot_base, ParallelOperation::Derive, false),
-      streaming: adjust_parallel_thresholds(streaming_base, ParallelOperation::Plain, true),
-      keyed_streaming: adjust_parallel_thresholds(streaming_base, ParallelOperation::Keyed, true),
-      derive_streaming: adjust_parallel_thresholds(streaming_base, ParallelOperation::Derive, true),
+      oneshot: oneshot_base,
+      keyed_oneshot: oneshot_base,
+      derive_oneshot: oneshot_base,
+      xof: oneshot_base,
+      keyed_xof: oneshot_base,
+      derive_xof: oneshot_base,
+      streaming: streaming_base,
+      keyed_streaming: streaming_base,
+      derive_streaming: streaming_base,
     };
     let size_classes = SizeClassDispatch {
       boundaries: active.boundaries,

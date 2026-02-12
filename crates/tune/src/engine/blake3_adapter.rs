@@ -136,30 +136,158 @@ fn median_usize(values: &mut [usize]) -> Option<usize> {
 }
 
 #[inline]
-fn fit_line_thread_bytes(samples: &[(usize, usize)]) -> Option<(f64, f64)> {
+fn median_f64(values: &mut [f64]) -> Option<f64> {
+  if values.is_empty() {
+    return None;
+  }
+  values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
+  Some(values[values.len() / 2])
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ThreadByteFit {
+  slope: f64,
+  intercept: f64,
+  median_abs_pct_err: f64,
+  max_abs_pct_err: f64,
+}
+
+#[inline]
+fn fit_line_thread_bytes_robust(samples: &[(usize, usize)]) -> Option<ThreadByteFit> {
   if samples.len() < 2 {
     return None;
   }
-  let n = samples.len() as f64;
-  let mut sum_t = 0.0;
-  let mut sum_y = 0.0;
-  let mut sum_tt = 0.0;
-  let mut sum_ty = 0.0;
+
+  let mut slopes = Vec::new();
+  for (i, (t0, y0)) in samples.iter().enumerate() {
+    for (t1, y1) in samples.iter().skip(i + 1) {
+      if t0 == t1 {
+        continue;
+      }
+      let dt = *t1 as f64 - *t0 as f64;
+      slopes.push((*y1 as f64 - *y0 as f64) / dt);
+    }
+  }
+  let slope = median_f64(&mut slopes)?;
+  let mut intercepts = Vec::with_capacity(samples.len());
   for (threads, bytes) in samples {
-    let t = *threads as f64;
-    let y = *bytes as f64;
-    sum_t += t;
-    sum_y += y;
-    sum_tt += t * t;
-    sum_ty += t * y;
+    intercepts.push(*bytes as f64 - slope * *threads as f64);
   }
-  let denom = n * sum_tt - sum_t * sum_t;
-  if denom.abs() < f64::EPSILON {
-    return None;
+  let intercept = median_f64(&mut intercepts)?;
+
+  let mut pct_errs = Vec::with_capacity(samples.len());
+  let mut max_abs_pct_err = 0.0f64;
+  for (threads, bytes) in samples {
+    let y = (*bytes).max(1) as f64;
+    let predicted = slope * *threads as f64 + intercept;
+    let abs_pct_err = ((predicted - y).abs() / y).max(0.0);
+    pct_errs.push(abs_pct_err);
+    max_abs_pct_err = max_abs_pct_err.max(abs_pct_err);
   }
-  let slope = (n * sum_ty - sum_t * sum_y) / denom;
-  let intercept = (sum_y - slope * sum_t) / n;
-  Some((slope, intercept))
+  let median_abs_pct_err = median_f64(&mut pct_errs).unwrap_or(1.0);
+
+  Some(ThreadByteFit {
+    slope,
+    intercept,
+    median_abs_pct_err,
+    max_abs_pct_err,
+  })
+}
+
+#[inline]
+fn reject_thread_byte_outliers(samples: &[(usize, usize)]) -> Vec<(usize, usize)> {
+  if samples.len() < 4 {
+    return samples.to_vec();
+  }
+
+  let mut ys: Vec<f64> = samples.iter().map(|(_, y)| *y as f64).collect();
+  let Some(median_y) = median_f64(&mut ys) else {
+    return samples.to_vec();
+  };
+  let mut abs_dev: Vec<f64> = samples.iter().map(|(_, y)| (*y as f64 - median_y).abs()).collect();
+  let Some(mad) = median_f64(&mut abs_dev) else {
+    return samples.to_vec();
+  };
+  if mad == 0.0 {
+    return samples.to_vec();
+  }
+
+  let keep: Vec<(usize, usize)> = samples
+    .iter()
+    .copied()
+    .filter(|(_, y)| ((*y as f64 - median_y).abs()) <= mad * 3.0)
+    .collect();
+  if keep.len() >= 2 { keep } else { samples.to_vec() }
+}
+
+#[inline]
+fn fit_is_confident(fit: &ThreadByteFit, sample_count: usize) -> bool {
+  sample_count >= 3
+    && fit.slope.is_finite()
+    && fit.intercept.is_finite()
+    && fit.slope >= 0.0
+    && fit.intercept >= 0.0
+    && fit.median_abs_pct_err <= 0.25
+    && fit.max_abs_pct_err <= 0.60
+}
+
+#[inline]
+fn fallback_parallel_costs(defaults: Blake3ParallelPolicy, best_fit: &Blake3ParallelFit) -> (usize, usize) {
+  let spawn = defaults.spawn_cost_bytes;
+  let merge_floor = defaults.merge_cost_bytes / 2;
+  let merge = defaults
+    .merge_cost_bytes
+    .max(best_fit.min_bytes / 8)
+    .max(merge_floor)
+    .min(defaults.merge_cost_bytes.saturating_mul(8));
+  (spawn, merge.max(1))
+}
+
+#[inline]
+fn derive_parallel_costs_from_crossover_samples(
+  defaults: Blake3ParallelPolicy,
+  bpc_small: usize,
+  best_fit: &Blake3ParallelFit,
+  crossover_samples: &[(usize, usize)],
+) -> (usize, usize) {
+  let filtered = reject_thread_byte_outliers(crossover_samples);
+  let Some(fit) = fit_line_thread_bytes_robust(&filtered) else {
+    return fallback_parallel_costs(defaults, best_fit);
+  };
+  if !fit_is_confident(&fit, filtered.len()) {
+    return fallback_parallel_costs(defaults, best_fit);
+  }
+
+  let slope_usize = fit.slope.round().max(0.0) as usize;
+  let intercept_usize = fit.intercept.round().max(0.0) as usize;
+
+  let spawn_min = (defaults.spawn_cost_bytes / 4).max(1);
+  let spawn_max = defaults.spawn_cost_bytes.saturating_mul(4).max(spawn_min);
+  let mut spawn = slope_usize.saturating_sub(bpc_small).clamp(spawn_min, spawn_max);
+
+  let merge_min = (defaults.merge_cost_bytes / 4).max(1);
+  let merge_max = defaults
+    .merge_cost_bytes
+    .saturating_mul(8)
+    .max(best_fit.min_bytes.saturating_mul(2))
+    .max(merge_min);
+  let mut merge = intercept_usize.saturating_add(spawn).clamp(merge_min, merge_max);
+
+  let overhead_cap = best_fit.min_bytes.saturating_mul(3) / 4;
+  if best_fit.max_threads > 1 && overhead_cap > 0 {
+    let overhead = merge.saturating_add(spawn.saturating_mul(best_fit.max_threads.saturating_sub(1)));
+    if overhead > overhead_cap {
+      return fallback_parallel_costs(defaults, best_fit);
+    }
+  }
+
+  if spawn == 0 {
+    spawn = spawn_min;
+  }
+  if merge == 0 {
+    merge = merge_min;
+  }
+  (spawn, merge)
 }
 
 fn pick_best_threads_by_size(single: &[RawThroughputPoint], curves: &[Blake3ParallelCurve]) -> Vec<(usize, usize)> {
@@ -226,23 +354,8 @@ fn blake3_policy_from_curves(
   }
   let bpc_small = median_usize(&mut small_bpc_samples).unwrap_or(defaults.bytes_per_core_small);
 
-  let (spawn_cost_bytes, merge_cost_bytes) = if let Some((slope, intercept)) = fit_line_thread_bytes(&crossover_samples)
-  {
-    let slope_usize = slope.max(0.0).round() as usize;
-    let mut spawn = slope_usize.saturating_sub(bpc_small);
-    let spawn_cap = defaults.spawn_cost_bytes.saturating_mul(4);
-    spawn = spawn.min(spawn_cap);
-    let merge = (intercept.max(0.0).round() as usize).saturating_add(spawn);
-    (spawn.max(1), merge.max(1))
-  } else {
-    (
-      defaults.spawn_cost_bytes,
-      best_fit
-        .min_bytes
-        .saturating_sub(bpc_small.saturating_mul(2))
-        .max(defaults.merge_cost_bytes / 2),
-    )
-  };
+  let (spawn_cost_bytes, merge_cost_bytes) =
+    derive_parallel_costs_from_crossover_samples(defaults, bpc_small, &best_fit, &crossover_samples);
 
   let mut small_limit_bytes = defaults.small_limit_bytes;
   let mut medium_limit_bytes = defaults.medium_limit_bytes;
@@ -562,5 +675,42 @@ mod tests {
     let best = select_best_blake3_parallel_fit(&fits).expect("expected best fit");
     assert_eq!(best.min_bytes, 128 * 1024);
     assert_eq!(best.min_chunks, 128);
+  }
+
+  #[test]
+  fn derive_parallel_costs_rejects_pathological_fit_and_falls_back() {
+    let defaults = default_blake3_parallel_policy();
+    let best_fit = Blake3ParallelFit {
+      max_threads: 8,
+      min_bytes: 128 * 1024,
+      min_chunks: 128,
+      weighted_ratio: 1.1,
+      peak_tp: 8.0,
+    };
+    // Deliberately inconsistent crossover data; robust fit quality check should reject it.
+    let samples = vec![(2, 128 * 1024), (4, 1024 * 1024), (8, 96 * 1024), (16, 2 * 1024 * 1024)];
+    let (spawn, merge) =
+      derive_parallel_costs_from_crossover_samples(defaults, defaults.bytes_per_core_small, &best_fit, &samples);
+    assert_eq!(spawn, defaults.spawn_cost_bytes);
+    assert!(merge >= defaults.merge_cost_bytes / 2);
+    assert!(merge <= defaults.merge_cost_bytes * 8);
+  }
+
+  #[test]
+  fn derive_parallel_costs_clamps_spawn_and_merge_to_sane_bounds() {
+    let defaults = default_blake3_parallel_policy();
+    let best_fit = Blake3ParallelFit {
+      max_threads: 8,
+      min_bytes: 512 * 1024,
+      min_chunks: 512,
+      weighted_ratio: 1.2,
+      peak_tp: 9.0,
+    };
+    let samples = vec![(2, 420 * 1024), (4, 560 * 1024), (8, 740 * 1024), (12, 900 * 1024)];
+    let (spawn, merge) = derive_parallel_costs_from_crossover_samples(defaults, 16 * 1024, &best_fit, &samples);
+    assert!(spawn >= defaults.spawn_cost_bytes / 4);
+    assert!(spawn <= defaults.spawn_cost_bytes * 4);
+    assert!(merge >= defaults.merge_cost_bytes / 4);
+    assert!(merge <= defaults.merge_cost_bytes * 8.max(best_fit.min_bytes * 2));
   }
 }
