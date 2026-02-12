@@ -12,7 +12,7 @@
 //!
 //! # Usage
 //!
-//! ```ignore
+//! ```text
 //! let policy = SelectionPolicy::from_platform(caps, &tune);
 //! let streams = policy.streams_for_len(buffer.len());
 //! ```

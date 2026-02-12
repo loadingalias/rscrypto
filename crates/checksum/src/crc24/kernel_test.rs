@@ -33,7 +33,7 @@ pub fn run_all_crc24_openpgp_kernels(data: &[u8]) -> alloc::vec::Vec<KernelResul
 
   use crate::common::{reference::crc24_bitwise, tables::CRC24_OPENPGP_POLY};
 
-  let mut results = Vec::new();
+  let mut results = Vec::with_capacity(12);
 
   // Oracle: bitwise reference
   let reference = crc24_bitwise(CRC24_OPENPGP_POLY, INIT, data) & MASK;

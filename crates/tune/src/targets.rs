@@ -25,7 +25,7 @@ fn parse_tune_arches_from_manifest() -> Vec<&'static str> {
     };
     let rhs = rhs.trim();
     let rhs = rhs.trim_start_matches('[').trim_end_matches(']');
-    let mut arches = Vec::new();
+    let mut arches = Vec::with_capacity(rhs.split(',').count());
     for token in rhs.split(',') {
       let token = token.trim().trim_matches('"');
       if !token.is_empty() {
@@ -340,7 +340,7 @@ pub struct TargetMiss {
 #[cfg(feature = "std")]
 #[must_use]
 pub fn collect_target_misses(results: &TuneResults) -> Vec<TargetMiss> {
-  let mut misses = Vec::new();
+  let mut misses = Vec::with_capacity(results.algorithms.len().saturating_mul(4));
   let arch = results.platform.arch;
   let tune_kind = results.platform.tune_kind;
 

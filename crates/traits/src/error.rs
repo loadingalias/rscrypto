@@ -149,9 +149,8 @@ mod tests {
     fn verify_mismatch() -> Result<(), VerificationError> {
       Err(VerificationError::new())
     }
-    let result = verify_mismatch();
-    assert!(result.is_err());
-    assert_eq!(result.unwrap_err(), VerificationError::new());
+    let err = verify_mismatch().expect_err("verify_mismatch must return VerificationError");
+    assert_eq!(err, VerificationError::new());
   }
 
   #[test]

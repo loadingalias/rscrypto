@@ -25,7 +25,7 @@
 //!
 //! # Usage Pattern
 //!
-//! ```ignore
+//! ```text
 //! use crate::common::prefetch::{prefetch_read, HASH_PREFETCH_DISTANCE};
 //!
 //! // In a multi-block hash loop:

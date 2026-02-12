@@ -41,7 +41,7 @@ use platform::{Caps, Tune};
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```text
 /// use backend::{candidates, caps::Caps};
 ///
 /// let kernels = candidates![
@@ -92,7 +92,7 @@ pub use candidates;
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```text
 /// let kernels = tuned_candidates![
 ///     "x86_64/vpclmul" => x86::VPCLMUL_READY, where |t| t.effective_simd_width >= 256 => vpclmul,
 ///     "x86_64/pclmul" => x86::PCLMUL_READY => pclmul,
@@ -313,7 +313,7 @@ pub fn select_tuned_or<F: Copy>(
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```text
 /// define_dispatcher!(
 ///     /// CRC-32 dispatcher with cached kernel selection.
 ///     Crc32Dispatcher, fn(u32, &[u8]) -> u32, u32

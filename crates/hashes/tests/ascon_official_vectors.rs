@@ -5,8 +5,10 @@ use traits::Digest as _;
 #[test]
 fn ascon_hash256_official_vectors() {
   let data = include_bytes!("../testdata/ascon/asconhash.blb");
-  for (i, row) in Blob2Iterator::new(data).unwrap().enumerate() {
-    let [input, output] = row.unwrap();
+  let iter = Blob2Iterator::new(data).expect("ascon hash vector corpus must parse");
+  for (i, row) in iter.enumerate() {
+    let [input, output] =
+      row.unwrap_or_else(|err| panic!("ascon-hash256 vector row decode failed at case {i}: {err:?}"));
     let actual = AsconHash256::digest(input);
     assert_eq!(
       &actual[..],
@@ -20,8 +22,10 @@ fn ascon_hash256_official_vectors() {
 #[test]
 fn ascon_xof128_official_vectors() {
   let data = include_bytes!("../testdata/ascon/asconxof.blb");
-  for (i, row) in Blob2Iterator::new(data).unwrap().enumerate() {
-    let [input, output] = row.unwrap();
+  let iter = Blob2Iterator::new(data).expect("ascon xof vector corpus must parse");
+  for (i, row) in iter.enumerate() {
+    let [input, output] =
+      row.unwrap_or_else(|err| panic!("ascon-xof128 vector row decode failed at case {i}: {err:?}"));
     let mut actual = vec![0u8; output.len()];
     AsconXof128::hash_into(input, &mut actual);
     assert_eq!(

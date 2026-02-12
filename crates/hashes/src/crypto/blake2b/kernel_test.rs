@@ -40,7 +40,7 @@ fn digest_with_kernel(id: Blake2b512KernelId, data: &[u8]) -> [u8; 64] {
 #[must_use]
 pub fn run_all_blake2b_512_kernels(data: &[u8]) -> Vec<KernelResult> {
   let caps = platform::caps();
-  let mut out = Vec::new();
+  let mut out = Vec::with_capacity(ALL.len());
   for &id in ALL {
     if caps.has(required_caps(id)) {
       out.push(KernelResult {

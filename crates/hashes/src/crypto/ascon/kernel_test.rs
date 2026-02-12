@@ -28,7 +28,7 @@ fn state_from_bytes(data: &[u8]) -> [u64; 5] {
 #[must_use]
 pub fn run_all_ascon_p12_kernels(data: &[u8]) -> Vec<KernelResult> {
   let caps = platform::caps();
-  let mut out = Vec::new();
+  let mut out = Vec::with_capacity(ALL.len());
   let init = state_from_bytes(data);
 
   for &id in ALL {

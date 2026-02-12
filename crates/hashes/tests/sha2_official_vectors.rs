@@ -2,8 +2,9 @@ use digest::dev::blobby::Blob2Iterator;
 use hashes::crypto::{Sha224, Sha384, Sha512, Sha512_224, Sha512_256};
 
 fn run_fixed_vectors<const OUT: usize>(data: &'static [u8], name: &str, mut digest: impl FnMut(&[u8]) -> [u8; OUT]) {
-  for (i, row) in Blob2Iterator::new(data).unwrap().enumerate() {
-    let [input, output] = row.unwrap();
+  let iter = Blob2Iterator::new(data).expect("sha2 vector corpus must parse");
+  for (i, row) in iter.enumerate() {
+    let [input, output] = row.unwrap_or_else(|err| panic!("{name} vector row decode failed at case {i}: {err:?}"));
     let actual = digest(input);
     assert_eq!(
       &actual[..],

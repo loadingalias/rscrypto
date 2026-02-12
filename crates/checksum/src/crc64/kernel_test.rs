@@ -32,7 +32,7 @@ pub fn run_all_crc64_xz_kernels(data: &[u8]) -> alloc::vec::Vec<KernelResult> {
 
   use crate::common::{reference::crc64_bitwise, tables::CRC64_XZ_POLY};
 
-  let mut results = Vec::new();
+  let mut results = Vec::with_capacity(12);
 
   // Oracle: bitwise reference
   let reference = crc64_bitwise(CRC64_XZ_POLY, !0u64, data) ^ !0u64;
@@ -84,7 +84,7 @@ pub fn run_all_crc64_nvme_kernels(data: &[u8]) -> alloc::vec::Vec<KernelResult> 
 
   use crate::common::{reference::crc64_bitwise, tables::CRC64_NVME_POLY};
 
-  let mut results = Vec::new();
+  let mut results = Vec::with_capacity(12);
 
   // Oracle: bitwise reference
   let reference = crc64_bitwise(CRC64_NVME_POLY, !0u64, data) ^ !0u64;

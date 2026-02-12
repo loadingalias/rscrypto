@@ -4,8 +4,9 @@ use hashes::crypto::{Blake2b512, Blake2s256};
 #[test]
 fn blake2b_512_official_vectors() {
   let data = include_bytes!("../testdata/blake2/blake2b_fixed.blb");
-  for (i, row) in Blob2Iterator::new(data).unwrap().enumerate() {
-    let [input, output] = row.unwrap();
+  let iter = Blob2Iterator::new(data).expect("blake2b vector corpus must parse");
+  for (i, row) in iter.enumerate() {
+    let [input, output] = row.unwrap_or_else(|err| panic!("blake2b-512 vector row decode failed at case {i}: {err:?}"));
     let actual = Blake2b512::digest(input);
     assert_eq!(
       &actual[..],
@@ -22,9 +23,10 @@ fn blake2s_256_official_vectors() {
   // we filter it down to the fixed 32-byte (256-bit) variant.
   let data = include_bytes!("../testdata/blake2/blake2s_variable.blb");
   let mut matched = 0usize;
+  let iter = Blob2Iterator::new(data).expect("blake2s vector corpus must parse");
 
-  for (i, row) in Blob2Iterator::new(data).unwrap().enumerate() {
-    let [input, output] = row.unwrap();
+  for (i, row) in iter.enumerate() {
+    let [input, output] = row.unwrap_or_else(|err| panic!("blake2s-256 vector row decode failed at case {i}: {err:?}"));
     if output.len() != 32 {
       continue;
     }

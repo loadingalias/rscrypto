@@ -66,50 +66,68 @@ fi
 ok
 
 for target in "${WIN_TARGETS[@]}"; do
-  short_name="${target%-pc-windows-msvc}"  # x86_64 or aarch64
-
-  step "$short_name check"
   ensure_target "$target"
+done
 
+for target in "${WIN_TARGETS[@]}"; do
+  mkdir -p "target/cross-check/$target"
+done
+
+pids=()
+logs=()
+targets=()
+
+for i in "${!WIN_TARGETS[@]}"; do
+  target="${WIN_TARGETS[$i]}"
   target_dir="target/cross-check/$target"
-  mkdir -p "$target_dir"
+  target_cache_dir="$XWIN_CACHE_DIR_DEFAULT/$target"
+  mkdir -p "$target_cache_dir"
+  log_file="$LOG_DIR/$target.log"
+  logs[$i]="$log_file"
+  targets[$i]="$target"
 
-  # Check
-  # shellcheck disable=SC2086
-  if ! XWIN_CACHE_DIR="$XWIN_CACHE_DIR_DEFAULT" \
-       CARGO_TARGET_DIR="$target_dir" \
-       cargo xwin check $CRATE_FLAGS --lib --all-features --target "$target" \
-       >"$LOG_DIR/$target.log" 2>&1; then
-    fail
-    show_error "$LOG_DIR/$target.log"
-    exit 1
-  fi
-  ok
-
-  step "$short_name clippy"
-  # shellcheck disable=SC2086
-  if ! XWIN_CACHE_DIR="$XWIN_CACHE_DIR_DEFAULT" \
-       CARGO_TARGET_DIR="$target_dir" \
-       cargo xwin clippy $CRATE_FLAGS --lib --all-features --target "$target" -- -D warnings \
-       >>"$LOG_DIR/$target.log" 2>&1; then
-    fail
-    show_error "$LOG_DIR/$target.log"
-    exit 1
-  fi
-  ok
-
-  if [[ "$TUNE_IN_SCOPE" == true && "$target" == "x86_64-pc-windows-msvc" ]]; then
-    step "$short_name rscrypto-tune"
-    if ! XWIN_CACHE_DIR="$XWIN_CACHE_DIR_DEFAULT" \
+  (
+    # shellcheck disable=SC2086
+    if ! XWIN_CACHE_DIR="$target_cache_dir" \
          CARGO_TARGET_DIR="$target_dir" \
-         cargo xwin clippy -p tune --bin rscrypto-tune --all-features --target "$target" -- -D warnings \
-         >>"$LOG_DIR/$target.log" 2>&1; then
-      fail
-      show_error "$LOG_DIR/$target.log"
+         cargo xwin clippy $CRATE_FLAGS --lib --all-features --target "$target" -- -D warnings \
+         >"$log_file" 2>&1; then
       exit 1
     fi
+
+    if [[ "$TUNE_IN_SCOPE" == true && "$target" == "x86_64-pc-windows-msvc" ]]; then
+      if ! XWIN_CACHE_DIR="$target_cache_dir" \
+           CARGO_TARGET_DIR="$target_dir" \
+           cargo xwin clippy -p tune --bin rscrypto-tune --all-features --target "$target" -- -D warnings \
+           >>"$log_file" 2>&1; then
+        exit 1
+      fi
+    fi
+  ) &
+  pids[$i]=$!
+done
+
+FAILED=0
+for i in "${!targets[@]}"; do
+  target="${targets[$i]}"
+  short_name="${target%-pc-windows-msvc}" # x86_64 or aarch64
+
+  step "$short_name clippy"
+  if wait "${pids[$i]}"; then
     ok
+    if [[ "$TUNE_IN_SCOPE" == true && "$target" == "x86_64-pc-windows-msvc" ]]; then
+      step "$short_name rscrypto-tune"
+      ok
+    fi
+  else
+    fail
+    show_error "${logs[$i]}"
+    FAILED=1
   fi
 done
+
+if [ $FAILED -ne 0 ]; then
+  exit 1
+fi
 
 echo "${GREEN}✓${RESET} Windows targets passed"

@@ -158,7 +158,7 @@ fn fit_line_thread_bytes_robust(samples: &[(usize, usize)]) -> Option<ThreadByte
     return None;
   }
 
-  let mut slopes = Vec::new();
+  let mut slopes = Vec::with_capacity(samples.len().saturating_mul(samples.len().saturating_sub(1)) / 2);
   for (i, (t0, y0)) in samples.iter().enumerate() {
     for (t1, y1) in samples.iter().skip(i + 1) {
       if t0 == t1 {
@@ -319,7 +319,7 @@ fn bytes_per_core_from_threads(
   spawn_cost_bytes: usize,
   merge_cost_bytes: usize,
 ) -> Option<usize> {
-  let mut candidates = Vec::new();
+  let mut candidates = Vec::with_capacity(best_threads_by_size.len());
   for (size, threads) in best_threads_by_size {
     if *threads <= 1 || *size < min_size || *size > max_size {
       continue;
@@ -341,12 +341,12 @@ fn blake3_policy_from_curves(
   let defaults = default_blake3_parallel_policy();
   let best_threads_by_size = pick_best_threads_by_size(single, curves);
 
-  let mut crossover_samples = Vec::new();
+  let mut crossover_samples = Vec::with_capacity(curves.len());
   for curve in curves {
     crossover_samples.push((curve.fit.max_threads, curve.fit.min_bytes));
   }
 
-  let mut small_bpc_samples = Vec::new();
+  let mut small_bpc_samples = Vec::with_capacity(best_threads_by_size.len());
   for (size, threads) in &best_threads_by_size {
     if *threads > 1 && *size <= BLAKE3_DEFAULT_PAR_SMALL_LIMIT_BYTES {
       small_bpc_samples.push(*size / *threads);
@@ -550,7 +550,7 @@ pub(crate) fn measure_blake3_parallel_data(
   candidates.sort_unstable();
   candidates.dedup();
 
-  let mut curves = Vec::new();
+  let mut curves = Vec::with_capacity(candidates.len());
   for threads in candidates {
     let parallel_tp = measure_blake3_curve(runner, algorithm, &buffer, BLAKE3_PAR_SIZES, threads)?;
     curves.push(RawBlake3ParallelCurve {
@@ -581,8 +581,8 @@ pub(crate) fn derive_blake3_parallel_policy(data: &RawBlake3ParallelData) -> Opt
     return None;
   }
 
-  let mut fits = Vec::new();
-  let mut curves = Vec::new();
+  let mut fits = Vec::with_capacity(data.curves.len());
+  let mut curves = Vec::with_capacity(data.curves.len());
   for curve in &data.curves {
     if let Some(fit) = fit_blake3_parallel_curve(&data.single, &curve.throughput, curve.max_threads) {
       fits.push(fit.clone());

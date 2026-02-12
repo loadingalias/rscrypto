@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Complete cross-platform check: host + windows + linux + constrained targets (sequential)
+# Complete cross-platform check: host + windows + linux + constrained targets.
 # Usage: check-all.sh [--all] [crate1 crate2 ...]
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -148,25 +148,42 @@ run_constrained_checks() {
 	log_dir=$(mktemp -d)
 	trap 'rm -rf "$log_dir"' RETURN
 
+	local constrained_targets=("${NOSTD_TARGETS[@]}" "${WASM_TARGETS[@]}")
+
 	echo ""
 	echo "Constrained targets ${DIM}($CONSTRAINED_SCOPE)${RESET}"
 
-	if [[ ${#NOSTD_TARGETS[@]} -eq 0 && ${#WASM_TARGETS[@]} -eq 0 ]]; then
+	if [[ ${#constrained_targets[@]} -eq 0 ]]; then
 		skip "no constrained targets configured" "config/target-matrix.toml"
 		return 0
 	fi
 
-	for target in "${NOSTD_TARGETS[@]}"; do
-		if ! run_constrained_target "$target" "$log_dir"; then
-			return 1
+	local pids=()
+	local targets=()
+	for i in "${!constrained_targets[@]}"; do
+		target="${constrained_targets[$i]}"
+		targets[$i]="$target"
+		(
+			run_constrained_target "$target" "$log_dir"
+		) &
+		pids[$i]=$!
+	done
+
+	local failures=0
+	for i in "${!targets[@]}"; do
+		target="${targets[$i]}"
+		step "$target group"
+		if wait "${pids[$i]}"; then
+			ok
+		else
+			fail
+			failures=1
 		fi
 	done
 
-	for target in "${WASM_TARGETS[@]}"; do
-		if ! run_constrained_target "$target" "$log_dir"; then
-			return 1
-		fi
-	done
+	if [[ $failures -ne 0 ]]; then
+		return 1
+	fi
 
 	echo "${GREEN}✓${RESET} Constrained targets passed"
 }
@@ -183,20 +200,53 @@ select_constrained_crates "$@"
 "$SCRIPT_DIR/check.sh" "$@"
 echo ""
 
-# Windows targets
-"$SCRIPT_DIR/check-win.sh" "$@"
-echo ""
+echo "Cross targets ${DIM}(parallel)${RESET}"
+log_dir=$(mktemp -d)
+trap 'rm -rf "$log_dir"' EXIT
 
-# Linux targets
-"$SCRIPT_DIR/check-linux.sh" "$@"
-echo ""
+(
+	"$SCRIPT_DIR/check-win.sh" "$@"
+) >"$log_dir/windows.log" 2>&1 &
+pid_windows=$!
 
-# IBM targets (s390x, POWER)
-"$SCRIPT_DIR/check-ibm.sh" "$@"
-echo ""
+(
+	"$SCRIPT_DIR/check-linux.sh" "$@"
+) >"$log_dir/linux.log" 2>&1 &
+pid_linux=$!
 
-# Constrained targets (no_std/WASM)
-run_constrained_checks
+(
+	"$SCRIPT_DIR/check-ibm.sh" "$@"
+) >"$log_dir/ibm.log" 2>&1 &
+pid_ibm=$!
+
+(
+	run_constrained_checks
+) >"$log_dir/constrained.log" 2>&1 &
+pid_constrained=$!
+
+failures=0
+for job in windows linux ibm constrained; do
+	pid_var="pid_${job}"
+	log_file="$log_dir/$job.log"
+	case "$job" in
+	windows) display="Windows group" ;;
+	linux) display="Linux group" ;;
+	ibm) display="IBM group" ;;
+	constrained) display="Constrained group" ;;
+	esac
+	step "$display"
+	if wait "${!pid_var}"; then
+		ok
+	else
+		fail
+		show_error "$log_file"
+		failures=1
+	fi
+done
+
+if [[ $failures -ne 0 ]]; then
+	exit 1
+fi
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

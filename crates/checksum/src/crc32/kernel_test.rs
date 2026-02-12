@@ -32,7 +32,7 @@ pub fn run_all_crc32_ieee_kernels(data: &[u8]) -> alloc::vec::Vec<KernelResult> 
 
   use crate::common::{reference::crc32_bitwise, tables::CRC32_IEEE_POLY};
 
-  let mut results = Vec::new();
+  let mut results = Vec::with_capacity(12);
 
   // Oracle: bitwise reference
   let reference = crc32_bitwise(CRC32_IEEE_POLY, !0u32, data) ^ !0u32;
@@ -84,7 +84,7 @@ pub fn run_all_crc32c_kernels(data: &[u8]) -> alloc::vec::Vec<KernelResult> {
 
   use crate::common::{reference::crc32_bitwise, tables::CRC32C_POLY};
 
-  let mut results = Vec::new();
+  let mut results = Vec::with_capacity(12);
 
   // Oracle: bitwise reference
   let reference = crc32_bitwise(CRC32C_POLY, !0u32, data) ^ !0u32;

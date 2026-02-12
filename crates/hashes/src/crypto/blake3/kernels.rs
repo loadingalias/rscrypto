@@ -309,8 +309,8 @@ pub(crate) fn parent_cvs_many_from_cvs_inline(
   }
 
   if id == Blake3KernelId::Portable {
-    for i in 0..out.len() {
-      out[i] = parent_cv_inline(id, children[2 * i], children[2 * i + 1], key_words, flags);
+    for (pair, out_cv) in children.chunks_exact(2).zip(out.iter_mut()) {
+      *out_cv = parent_cv_inline(id, pair[0], pair[1], key_words, flags);
     }
     return;
   }
@@ -332,8 +332,8 @@ pub(crate) fn parent_cvs_many_from_cvs_inline(
   #[cfg(not(target_endian = "little"))]
   {
     // Big-endian fallback keeps explicit LE conversion.
-    for i in 0..out.len() {
-      out[i] = parent_cv_inline(id, children[2 * i], children[2 * i + 1], key_words, flags);
+    for (pair, out_cv) in children.chunks_exact(2).zip(out.iter_mut()) {
+      *out_cv = parent_cv_inline(id, pair[0], pair[1], key_words, flags);
     }
   }
 }
@@ -434,10 +434,10 @@ pub(crate) fn parent_cvs_many_from_bytes_inline(
         // Keep AVX-512 semantics on non-asm targets as well: run the parent
         // fold through the AVX-512 per-parent entrypoint instead of delegating
         // into AVX2.
-        for i in 0..out.len() {
-          let left = words8_from_le_bytes_32(&children[2 * i]);
-          let right = words8_from_le_bytes_32(&children[2 * i + 1]);
-          out[i] = super::words8_to_le_bytes(&parent_cv_inline(
+        for (pair, out_cv) in children.chunks_exact(2).zip(out.iter_mut()) {
+          let left = words8_from_le_bytes_32(&pair[0]);
+          let right = words8_from_le_bytes_32(&pair[1]);
+          *out_cv = super::words8_to_le_bytes(&parent_cv_inline(
             Blake3KernelId::X86Avx512,
             left,
             right,
@@ -502,10 +502,10 @@ pub(crate) fn parent_cvs_many_from_bytes_inline(
   }
 
   // Scalar fallback.
-  for i in 0..out.len() {
-    let left = words8_from_le_bytes_32(&children[2 * i]);
-    let right = words8_from_le_bytes_32(&children[2 * i + 1]);
-    out[i] = super::words8_to_le_bytes(&parent_cv_inline(id, left, right, key_words, flags));
+  for (pair, out_cv) in children.chunks_exact(2).zip(out.iter_mut()) {
+    let left = words8_from_le_bytes_32(&pair[0]);
+    let right = words8_from_le_bytes_32(&pair[1]);
+    *out_cv = super::words8_to_le_bytes(&parent_cv_inline(id, left, right, key_words, flags));
   }
 }
 

@@ -32,7 +32,7 @@ pub fn run_all_crc16_ccitt_kernels(data: &[u8]) -> alloc::vec::Vec<KernelResult>
 
   use crate::common::{reference::crc16_bitwise, tables::CRC16_CCITT_POLY};
 
-  let mut results = Vec::new();
+  let mut results = Vec::with_capacity(12);
 
   // Oracle: bitwise reference
   // CRC-16/CCITT uses init=0xFFFF, xorout=0xFFFF
@@ -92,7 +92,7 @@ pub fn run_all_crc16_ibm_kernels(data: &[u8]) -> alloc::vec::Vec<KernelResult> {
 
   use crate::common::{reference::crc16_bitwise, tables::CRC16_IBM_POLY};
 
-  let mut results = Vec::new();
+  let mut results = Vec::with_capacity(12);
 
   // Oracle: bitwise reference
   // CRC-16/IBM uses init=0x0000, xorout=0x0000
