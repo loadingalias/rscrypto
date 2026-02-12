@@ -15,17 +15,32 @@ use core::fmt::Debug;
 ///
 /// # Usage
 ///
-/// ```rust,ignore
-/// use checksum::{Checksum, Crc32C};
+/// ```rust
+/// # use traits::Checksum;
+/// # #[derive(Clone, Default)]
+/// # struct Sum(u32);
+/// # impl Checksum for Sum {
+/// #   const OUTPUT_SIZE: usize = 4;
+/// #   type Output = u32;
+/// #   fn new() -> Self { Self(0) }
+/// #   fn with_initial(initial: Self::Output) -> Self { Self(initial) }
+/// #   fn update(&mut self, data: &[u8]) {
+/// #     self.0 = data.iter().fold(self.0, |acc, &b| acc.wrapping_add(u32::from(b)));
+/// #   }
+/// #   fn finalize(&self) -> Self::Output { self.0 }
+/// #   fn reset(&mut self) { self.0 = 0; }
+/// # }
 ///
 /// // One-shot (fastest for data already in memory)
-/// let crc = Crc32C::checksum(b"hello world");
+/// let checksum = Sum::checksum(b"hello world");
 ///
 /// // Streaming (for incremental or large data)
-/// let mut hasher = Crc32C::new();
+/// let mut hasher = Sum::new();
 /// hasher.update(b"hello ");
 /// hasher.update(b"world");
-/// let crc = hasher.finalize();
+/// let streaming = hasher.finalize();
+///
+/// assert_eq!(checksum, streaming);
 /// ```
 ///
 /// # Implementor Requirements
@@ -131,14 +146,30 @@ pub trait Checksum: Clone + Default {
   ///
   /// # Example
   ///
-  /// ```rust,ignore
-  /// use checksum::Crc32C;
-  /// use std::fs::File;
+  /// ```rust
+  /// # use traits::Checksum;
+  /// # #[derive(Clone, Default)]
+  /// # struct Sum(u32);
+  /// # impl Checksum for Sum {
+  /// #   const OUTPUT_SIZE: usize = 4;
+  /// #   type Output = u32;
+  /// #   fn new() -> Self { Self(0) }
+  /// #   fn with_initial(initial: Self::Output) -> Self { Self(initial) }
+  /// #   fn update(&mut self, data: &[u8]) {
+  /// #     self.0 = data.iter().fold(self.0, |acc, &b| acc.wrapping_add(u32::from(b)));
+  /// #   }
+  /// #   fn finalize(&self) -> Self::Output { self.0 }
+  /// #   fn reset(&mut self) { self.0 = 0; }
+  /// # }
+  /// # use std::io::Cursor;
   ///
-  /// let file = File::open("data.bin")?;
-  /// let mut reader = Crc32C::reader(file);
+  /// let mut reader = Sum::reader(Cursor::new(b"abc".to_vec()));
   /// std::io::copy(&mut reader, &mut std::io::sink())?;
-  /// println!("CRC: {:08x}", reader.crc());
+  /// assert_eq!(
+  ///   reader.crc(),
+  ///   u32::from(b'a') + u32::from(b'b') + u32::from(b'c')
+  /// );
+  /// # Ok::<(), std::io::Error>(())
   /// ```
   #[cfg(feature = "std")]
   #[inline]
@@ -154,15 +185,34 @@ pub trait Checksum: Clone + Default {
   ///
   /// # Example
   ///
-  /// ```rust,ignore
-  /// use checksum::Crc32C;
-  /// use std::fs::File;
+  /// ```rust
+  /// # use traits::Checksum;
+  /// # #[derive(Clone, Default)]
+  /// # struct Sum(u32);
+  /// # impl Checksum for Sum {
+  /// #   const OUTPUT_SIZE: usize = 4;
+  /// #   type Output = u32;
+  /// #   fn new() -> Self { Self(0) }
+  /// #   fn with_initial(initial: Self::Output) -> Self { Self(initial) }
+  /// #   fn update(&mut self, data: &[u8]) {
+  /// #     self.0 = data.iter().fold(self.0, |acc, &b| acc.wrapping_add(u32::from(b)));
+  /// #   }
+  /// #   fn finalize(&self) -> Self::Output { self.0 }
+  /// #   fn reset(&mut self) { self.0 = 0; }
+  /// # }
+  /// # use std::io::Write;
   ///
-  /// let file = File::create("output.bin")?;
-  /// let mut writer = Crc32C::writer(file);
+  /// let mut writer = Sum::writer(Vec::new());
   /// writer.write_all(b"hello world")?;
-  /// let (file, crc) = writer.into_parts();
-  /// println!("CRC: {:08x}", crc);
+  /// let (out, checksum) = writer.into_parts();
+  /// assert_eq!(out, b"hello world".to_vec());
+  /// assert_eq!(
+  ///   checksum,
+  ///   b"hello world"
+  ///     .iter()
+  ///     .fold(0u32, |acc, &b| acc.wrapping_add(u32::from(b)))
+  /// );
+  /// # Ok::<(), std::io::Error>(())
   /// ```
   #[cfg(feature = "std")]
   #[inline]
@@ -196,18 +246,36 @@ pub trait Checksum: Clone + Default {
 ///
 /// # Usage
 ///
-/// ```rust,ignore
-/// use checksum::{Checksum, ChecksumCombine, Crc32C};
+/// ```rust
+/// # use traits::{Checksum, ChecksumCombine};
+/// # #[derive(Clone, Default)]
+/// # struct Sum(u32);
+/// # impl Checksum for Sum {
+/// #   const OUTPUT_SIZE: usize = 4;
+/// #   type Output = u32;
+/// #   fn new() -> Self { Self(0) }
+/// #   fn with_initial(initial: Self::Output) -> Self { Self(initial) }
+/// #   fn update(&mut self, data: &[u8]) {
+/// #     self.0 = data.iter().fold(self.0, |acc, &b| acc.wrapping_add(u32::from(b)));
+/// #   }
+/// #   fn finalize(&self) -> Self::Output { self.0 }
+/// #   fn reset(&mut self) { self.0 = 0; }
+/// # }
+/// # impl ChecksumCombine for Sum {
+/// #   fn combine(crc_a: Self::Output, crc_b: Self::Output, _len_b: usize) -> Self::Output {
+/// #     crc_a.wrapping_add(crc_b)
+/// #   }
+/// # }
 ///
 /// let data = b"hello world";
 /// let (a, b) = data.split_at(6);
 ///
-/// let crc_a = Crc32C::checksum(a);
-/// let crc_b = Crc32C::checksum(b);
+/// let crc_a = Sum::checksum(a);
+/// let crc_b = Sum::checksum(b);
 ///
 /// // Combine produces crc(a || b)
-/// let combined = Crc32C::combine(crc_a, crc_b, b.len());
-/// assert_eq!(combined, Crc32C::checksum(data));
+/// let combined = Sum::combine(crc_a, crc_b, b.len());
+/// assert_eq!(combined, Sum::checksum(data));
 /// ```
 pub trait ChecksumCombine: Checksum {
   /// Combine two checksums.

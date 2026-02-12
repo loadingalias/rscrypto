@@ -25,8 +25,9 @@ fn decode_u64_le(bytes: &[u8]) -> u64 {
 #[test]
 fn blake3_official_test_vectors() {
   let blb = include_bytes!("../testdata/blake3/test_vectors.blb");
+  let iter = Blob6Iterator::new(blb).expect("blake3 vector corpus must parse");
 
-  for (i, row) in Blob6Iterator::new(blb).unwrap().enumerate() {
+  for (i, row) in iter.enumerate() {
     let [
       key_bytes,
       context_bytes,
@@ -34,7 +35,7 @@ fn blake3_official_test_vectors() {
       hash_xof,
       keyed_hash_xof,
       derive_key_xof,
-    ] = row.unwrap();
+    ] = row.unwrap_or_else(|err| panic!("blake3 vector row decode failed at case {i}: {err:?}"));
 
     assert_eq!(key_bytes.len(), 32, "blake3 key length mismatch at case {i}");
     let mut key = [0u8; 32];

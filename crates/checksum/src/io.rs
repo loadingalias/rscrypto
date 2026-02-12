@@ -12,16 +12,18 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
-//! use checksum::{Crc32C, ChecksumReader};
-//! use std::fs::File;
-//! use std::io::Read;
+//! ```rust
+//! use std::io::{Cursor, Read};
 //!
-//! let file = File::open("data.bin")?;
-//! let mut reader = Crc32C::reader(file);
+//! use checksum::{ChecksumReader, Crc32C};
+//! use traits::Checksum as _;
+//!
+//! let mut reader = Crc32C::reader(Cursor::new(b"hello world".to_vec()));
 //! let mut contents = Vec::new();
 //! reader.read_to_end(&mut contents)?;
-//! println!("CRC: {:08x}", reader.crc());
+//! assert_eq!(contents, b"hello world");
+//! assert_eq!(reader.crc(), Crc32C::checksum(&contents));
+//! # Ok::<(), std::io::Error>(())
 //! ```
 
 pub use traits::io::{ChecksumReader, ChecksumWriter};

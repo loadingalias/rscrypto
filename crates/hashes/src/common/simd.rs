@@ -20,7 +20,7 @@
 //! then write generic code against the traits. The compiler specializes
 //! for each platform.
 //!
-//! ```ignore
+//! ```text
 //! fn blake3_g<V: Simd128>(state: &mut [V; 4], m: V) {
 //!     state[0] = state[0].add32(state[1]).add32(m);
 //!     state[3] = state[3].xor(state[0]).rotr32::<16>();

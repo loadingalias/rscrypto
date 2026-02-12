@@ -12,16 +12,18 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
-//! use hashes::crypto::blake3::Blake3;
-//! use std::fs::File;
-//! use std::io::Read;
+//! ```rust
+//! use std::io::{Cursor, Read};
 //!
-//! let file = File::open("data.bin")?;
-//! let mut reader = Blake3::reader(file);
+//! use hashes::crypto::Blake3;
+//! use traits::Digest as _;
+//!
+//! let mut reader = Blake3::reader(Cursor::new(b"hello world".to_vec()));
 //! let mut contents = Vec::new();
 //! reader.read_to_end(&mut contents)?;
-//! println!("Blake3: {:?}", reader.digest());
+//! assert_eq!(contents, b"hello world");
+//! assert_eq!(reader.digest(), Blake3::digest(&contents));
+//! # Ok::<(), std::io::Error>(())
 //! ```
 
 pub use traits::io::{DigestReader, DigestWriter};

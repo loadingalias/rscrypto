@@ -5,8 +5,9 @@ use hashes::{
 };
 
 fn run_fixed_vectors<const OUT: usize>(data: &'static [u8], name: &str, mut digest: impl FnMut(&[u8]) -> [u8; OUT]) {
-  for (i, row) in Blob2Iterator::new(data).unwrap().enumerate() {
-    let [input, output] = row.unwrap();
+  let iter = Blob2Iterator::new(data).expect("sha3 vector corpus must parse");
+  for (i, row) in iter.enumerate() {
+    let [input, output] = row.unwrap_or_else(|err| panic!("{name} vector row decode failed at case {i}: {err:?}"));
     let actual = digest(input);
     assert_eq!(
       &actual[..],
@@ -42,8 +43,9 @@ fn sha3_384_official_vectors() {
 }
 
 fn run_xof_vectors(data: &'static [u8], name: &str, mut hash_into: impl FnMut(&[u8], &mut [u8])) {
-  for (i, row) in Blob2Iterator::new(data).unwrap().enumerate() {
-    let [input, output] = row.unwrap();
+  let iter = Blob2Iterator::new(data).expect("sha3 xof vector corpus must parse");
+  for (i, row) in iter.enumerate() {
+    let [input, output] = row.unwrap_or_else(|err| panic!("{name} vector row decode failed at case {i}: {err:?}"));
     let mut out = vec![0u8; output.len()];
     hash_into(input, &mut out);
     assert_eq!(

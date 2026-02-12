@@ -856,7 +856,7 @@ mod tests {
     let table = crate::dispatch::active_table();
 
     // Use boundaries from the active dispatch table
-    let mut crc32_thresholds = Vec::new();
+    let mut crc32_thresholds = Vec::with_capacity(table.boundaries.len());
     for &boundary in &table.boundaries {
       if boundary > 0 && boundary <= (1 << 20) {
         crc32_thresholds.push(boundary);

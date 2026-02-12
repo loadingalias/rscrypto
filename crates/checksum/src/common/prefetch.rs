@@ -32,7 +32,7 @@
 //!
 //! # Usage Pattern
 //!
-//! ```ignore
+//! ```text
 //! use crate::common::prefetch::{prefetch_read, LARGE_BLOCK_DISTANCE};
 //!
 //! // In a double-unrolled loop processing 512B per iteration:

@@ -136,9 +136,7 @@ impl TuneEngine {
     let verbose = self.verbose;
     let total = self.algorithms.len();
 
-    for i in 0..self.algorithms.len() {
-      let algorithm = &mut self.algorithms[i];
-
+    for (i, algorithm) in self.algorithms.iter_mut().enumerate() {
       let start = Instant::now();
       eprintln!("Tuning {} ({}/{})...", algorithm.name(), i + 1, total);
 
@@ -613,14 +611,55 @@ fn to_measurements(points: &[RawBenchPoint]) -> Vec<Measurement> {
   points.iter().map(RawBenchPoint::to_measurement).collect()
 }
 
+#[inline]
+fn force_kernel_and_streams_with_warning(algorithm: &mut dyn Tunable, kernel: &str, streams: u8) -> Result<(), ()> {
+  if let Err(err) = algorithm.force_kernel(kernel) {
+    // Don't fail the whole tuning run if a kernel spec is stale or the
+    // bench registry doesn't expose it for this build/target.
+    eprintln!(
+      "warning: skipping {} kernel {} (streams={streams}): {err}",
+      algorithm.name(),
+      kernel
+    );
+    return Err(());
+  }
+  if streams > 1
+    && let Err(err) = algorithm.force_streams(streams)
+  {
+    eprintln!(
+      "warning: skipping {} kernel {} (streams={streams}): {err}",
+      algorithm.name(),
+      kernel
+    );
+    return Err(());
+  }
+  Ok(())
+}
+
+#[inline]
+fn force_kernel_and_streams(algorithm: &mut dyn Tunable, kernel: &str, streams: u8) -> bool {
+  if algorithm.force_kernel(kernel).is_err() {
+    return false;
+  }
+  if streams > 1 && algorithm.force_streams(streams).is_err() {
+    return false;
+  }
+  true
+}
+
 /// Benchmark different stream counts for each kernel.
 fn benchmark_streams(
   runner: &BenchRunner,
   algorithm: &mut dyn Tunable,
   kernels: &[crate::KernelSpec],
 ) -> Result<Vec<RawBenchPoint>, TuneError> {
-  let mut measurements = Vec::new();
   let stream_candidates = stream_candidates();
+  let mut measurements = Vec::with_capacity(
+    kernels
+      .len()
+      .saturating_mul(stream_candidates.len())
+      .saturating_mul(STREAM_SIZES_BENCH.len()),
+  );
 
   for kernel in kernels {
     // Skip reference kernel for stream benchmarks
@@ -628,41 +667,30 @@ fn benchmark_streams(
       continue;
     }
 
-    let streams_to_test = match kernel.streams {
-      Some((min, max)) => stream_candidates
-        .iter()
-        .filter(|&&s| s >= min && s <= max)
-        .copied()
-        .collect::<Vec<_>>(),
-      None => vec![1],
-    };
+    match kernel.streams {
+      Some((min, max)) => {
+        for &streams in stream_candidates.iter().filter(|&&s| s >= min && s <= max) {
+          algorithm.reset();
+          if force_kernel_and_streams_with_warning(algorithm, kernel.name, streams).is_err() {
+            continue;
+          }
 
-    for &streams in &streams_to_test {
-      algorithm.reset();
-      if let Err(err) = algorithm.force_kernel(kernel.name) {
-        // Don't fail the whole tuning run if a kernel spec is stale or the
-        // bench registry doesn't expose it for this build/target.
-        eprintln!(
-          "warning: skipping {} kernel {} (streams={streams}): {err}",
-          algorithm.name(),
-          kernel.name
-        );
-        continue;
+          for &size in STREAM_SIZES_BENCH {
+            let result = benchmark_at_size(runner, algorithm, size)?;
+            measurements.push(RawBenchPoint::from_result(kernel.name, streams, &result));
+          }
+        }
       }
-      if streams > 1
-        && let Err(err) = algorithm.force_streams(streams)
-      {
-        eprintln!(
-          "warning: skipping {} kernel {} (streams={streams}): {err}",
-          algorithm.name(),
-          kernel.name
-        );
-        continue;
-      }
-
-      for &size in STREAM_SIZES_BENCH {
-        let result = benchmark_at_size(runner, algorithm, size)?;
-        measurements.push(RawBenchPoint::from_result(kernel.name, streams, &result));
+      None => {
+        let streams = 1;
+        algorithm.reset();
+        if force_kernel_and_streams_with_warning(algorithm, kernel.name, streams).is_err() {
+          continue;
+        }
+        for &size in STREAM_SIZES_BENCH {
+          let result = benchmark_at_size(runner, algorithm, size)?;
+          measurements.push(RawBenchPoint::from_result(kernel.name, streams, &result));
+        }
       }
     }
   }
@@ -684,8 +712,8 @@ fn benchmark_thresholds(
     return Ok(Vec::new());
   }
 
-  let mut measurements = Vec::new();
-  let mut planned = HashSet::new();
+  let mut measurements = Vec::with_capacity(kernels.len().saturating_mul(THRESHOLD_SIZES.len()));
+  let mut planned = HashSet::with_capacity(kernels.len());
 
   for kernel in kernels {
     if kernel.tier == KernelTier::Reference {
@@ -727,26 +755,10 @@ fn benchmark_single_kernel(
   kernel: &str,
   streams: u8,
 ) -> Result<Vec<RawBenchPoint>, TuneError> {
-  let mut measurements = Vec::new();
+  let mut measurements = Vec::with_capacity(THRESHOLD_SIZES.len());
 
   algorithm.reset();
-  if let Err(err) = algorithm.force_kernel(kernel) {
-    eprintln!(
-      "warning: skipping {} kernel {} (streams={streams}): {err}",
-      algorithm.name(),
-      kernel
-    );
-    algorithm.reset();
-    return Ok(measurements);
-  }
-  if streams > 1
-    && let Err(err) = algorithm.force_streams(streams)
-  {
-    eprintln!(
-      "warning: skipping {} kernel {} (streams={streams}): {err}",
-      algorithm.name(),
-      kernel
-    );
+  if force_kernel_and_streams_with_warning(algorithm, kernel, streams).is_err() {
     algorithm.reset();
     return Ok(measurements);
   }
@@ -767,7 +779,13 @@ fn benchmark_size_class_probes(
   kernels: &[KernelSpec],
   stream_measurements: &[Measurement],
 ) -> Result<Vec<RawBenchPoint>, TuneError> {
-  let mut probes = Vec::new();
+  let stream_candidates = stream_candidates();
+  let mut probes = Vec::with_capacity(
+    SIZE_CLASS_SIZES
+      .len()
+      .saturating_mul(kernels.len())
+      .saturating_mul(stream_candidates.len()),
+  );
 
   for (_class, &size) in SIZE_CLASS_NAMES.iter().copied().zip(SIZE_CLASS_SIZES.iter()) {
     // m/l are covered by stream measurements. Keep only explicit probe points.
@@ -783,26 +801,27 @@ fn benchmark_size_class_probes(
         continue;
       }
 
-      let streams_to_test = match kernel.streams {
-        Some((min, max)) => stream_candidates()
-          .iter()
-          .filter(|&&s| s >= min && s <= max)
-          .copied()
-          .collect::<Vec<_>>(),
-        None => vec![1],
-      };
+      match kernel.streams {
+        Some((min, max)) => {
+          for &streams in stream_candidates.iter().filter(|&&s| s >= min && s <= max) {
+            algorithm.reset();
+            if !force_kernel_and_streams(algorithm, kernel.name, streams) {
+              continue;
+            }
 
-      for &streams in &streams_to_test {
-        algorithm.reset();
-        if algorithm.force_kernel(kernel.name).is_err() {
-          continue;
+            let result = benchmark_at_size(runner, algorithm, size)?;
+            probes.push(RawBenchPoint::from_result(kernel.name, streams, &result));
+          }
         }
-        if streams > 1 && algorithm.force_streams(streams).is_err() {
-          continue;
+        None => {
+          let streams = 1;
+          algorithm.reset();
+          if !force_kernel_and_streams(algorithm, kernel.name, streams) {
+            continue;
+          }
+          let result = benchmark_at_size(runner, algorithm, size)?;
+          probes.push(RawBenchPoint::from_result(kernel.name, streams, &result));
         }
-
-        let result = benchmark_at_size(runner, algorithm, size)?;
-        probes.push(RawBenchPoint::from_result(kernel.name, streams, &result));
       }
     }
 

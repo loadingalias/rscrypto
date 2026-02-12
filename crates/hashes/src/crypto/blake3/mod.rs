@@ -3504,9 +3504,9 @@ impl Blake3 {
   ///   used as a hint for kernel selection. The actual squeezed amount can differ.
   ///
   /// # Example
-  /// ```ignore
-  /// use rscrypto::hashes::Blake3;
-  /// use traits::Xof;
+  /// ```rust
+  /// use hashes::crypto::Blake3;
+  /// use traits::{Digest as _, Xof};
   ///
   /// let mut hasher = Blake3::new();
   /// hasher.update(b"small input");
@@ -3514,6 +3514,7 @@ impl Blake3 {
   /// let mut xof = hasher.finalize_xof_sized(1024);
   /// let mut out = [0u8; 1024];
   /// xof.squeeze(&mut out);
+  /// assert_ne!(out, [0u8; 1024]);
   /// ```
   #[must_use]
   #[inline]

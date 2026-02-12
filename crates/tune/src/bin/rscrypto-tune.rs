@@ -311,9 +311,26 @@ fn push_unique(values: &mut Vec<String>, value: &str) {
   }
 }
 
+fn extend_missing<'a>(values: &mut Vec<String>, candidates: impl IntoIterator<Item = &'a str>) -> bool {
+  let mut added = false;
+  for algo in candidates {
+    if !values.iter().any(|current| current == algo) {
+      values.push(algo.to_string());
+      added = true;
+    }
+  }
+  added
+}
+
 fn all_algorithms() -> Vec<&'static str> {
-  let mut all = Vec::new();
-  let mut seen = HashSet::new();
+  let mut all = Vec::with_capacity(
+    CHECKSUM_ALGOS.len()
+      + HASH_CORE_TUNING_CORPUS.len()
+      + BLAKE3_TUNING_CORPUS.len()
+      + HASH_MICRO_TUNING_CORPUS.len()
+      + HASH_STREAM_PROFILE_TUNING_CORPUS.len(),
+  );
+  let mut seen = HashSet::with_capacity(all.capacity());
 
   for &algo in CHECKSUM_ALGOS {
     if seen.insert(algo) {
@@ -453,7 +470,7 @@ fn resolve_algorithm_selection(raw_only: &[String], apply: bool) -> Result<(Vec<
       .push(algo);
   }
 
-  let mut resolved = Vec::new();
+  let mut resolved = Vec::with_capacity(raw_only.len());
   for raw in raw_only {
     let expanded = resolve_selector(raw, &family_map)?;
     for algo in expanded {
@@ -461,35 +478,22 @@ fn resolve_algorithm_selection(raw_only: &[String], apply: bool) -> Result<(Vec<
     }
   }
 
-  let mut notes = Vec::new();
+  let mut notes = Vec::with_capacity(2);
 
-  if apply && resolved.iter().any(|algo| checksum_contains(algo.as_str())) {
-    let mut added = false;
-    for &algo in CHECKSUM_ALGOS {
-      if !resolved.iter().any(|current| current == algo) {
-        resolved.push(algo.to_string());
-        added = true;
-      }
-    }
-    if added {
-      notes.push(
-        "--apply + checksum selector requires full checksum corpus; auto-added remaining checksum algorithms"
-          .to_string(),
-      );
-    }
+  if apply
+    && resolved.iter().any(|algo| checksum_contains(algo.as_str()))
+    && extend_missing(&mut resolved, CHECKSUM_ALGOS.iter().copied())
+  {
+    notes.push(
+      "--apply + checksum selector requires full checksum corpus; auto-added remaining checksum algorithms".to_string(),
+    );
   }
 
-  if apply && resolved.iter().any(|algo| algo.starts_with("blake3")) {
-    let mut added = false;
-    for &(algo, _) in BLAKE3_TUNING_CORPUS {
-      if !resolved.iter().any(|current| current == algo) {
-        resolved.push(algo.to_string());
-        added = true;
-      }
-    }
-    if added {
-      notes.push("--apply + blake3 selector requires full blake3 corpus; auto-added missing surfaces".to_string());
-    }
+  if apply
+    && resolved.iter().any(|algo| algo.starts_with("blake3"))
+    && extend_missing(&mut resolved, BLAKE3_TUNING_CORPUS.iter().map(|(algo, _)| *algo))
+  {
+    notes.push("--apply + blake3 selector requires full blake3 corpus; auto-added missing surfaces".to_string());
   }
 
   Ok((resolved, notes))

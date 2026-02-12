@@ -381,9 +381,9 @@ fn aggregate_blake3_parallel(
     }
   }
 
-  let mut curves = Vec::new();
+  let mut curves = Vec::with_capacity(max_threads_set.len());
   for max_threads in max_threads_set {
-    let mut throughput_sets = Vec::new();
+    let mut throughput_sets = Vec::with_capacity(data_sets.len());
     for data in data_sets {
       if let Some(curve) = data.curves.iter().find(|c| c.max_threads == max_threads) {
         throughput_sets.push(curve.throughput.as_slice());

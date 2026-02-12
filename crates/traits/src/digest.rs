@@ -82,14 +82,29 @@ pub trait Digest: Clone + Default {
   ///
   /// # Example
   ///
-  /// ```rust,ignore
-  /// use hashes::crypto::blake3::Blake3;
-  /// use std::fs::File;
+  /// ```rust
+  /// # use traits::Digest;
+  /// # #[derive(Clone, Default)]
+  /// # struct SumDigest(u8);
+  /// # impl Digest for SumDigest {
+  /// #   const OUTPUT_SIZE: usize = 4;
+  /// #   type Output = [u8; 4];
+  /// #   fn new() -> Self { Self(0) }
+  /// #   fn update(&mut self, data: &[u8]) {
+  /// #     self.0 = data.iter().fold(self.0, |acc, &b| acc.wrapping_add(b));
+  /// #   }
+  /// #   fn finalize(&self) -> Self::Output { [self.0; 4] }
+  /// #   fn reset(&mut self) { self.0 = 0; }
+  /// # }
+  /// # use std::io::Cursor;
   ///
-  /// let file = File::open("data.bin")?;
-  /// let mut reader = Blake3::reader(file);
+  /// let mut reader = SumDigest::reader(Cursor::new(b"abc".to_vec()));
   /// std::io::copy(&mut reader, &mut std::io::sink())?;
-  /// println!("Digest: {:?}", reader.digest());
+  /// assert_eq!(
+  ///   reader.digest(),
+  ///   [b'a'.wrapping_add(b'b').wrapping_add(b'c'); 4]
+  /// );
+  /// # Ok::<(), std::io::Error>(())
   /// ```
   #[cfg(feature = "std")]
   #[inline]
@@ -105,15 +120,33 @@ pub trait Digest: Clone + Default {
   ///
   /// # Example
   ///
-  /// ```rust,ignore
-  /// use hashes::crypto::blake3::Blake3;
-  /// use std::fs::File;
+  /// ```rust
+  /// # use traits::Digest;
+  /// # #[derive(Clone, Default)]
+  /// # struct SumDigest(u8);
+  /// # impl Digest for SumDigest {
+  /// #   const OUTPUT_SIZE: usize = 4;
+  /// #   type Output = [u8; 4];
+  /// #   fn new() -> Self { Self(0) }
+  /// #   fn update(&mut self, data: &[u8]) {
+  /// #     self.0 = data.iter().fold(self.0, |acc, &b| acc.wrapping_add(b));
+  /// #   }
+  /// #   fn finalize(&self) -> Self::Output { [self.0; 4] }
+  /// #   fn reset(&mut self) { self.0 = 0; }
+  /// # }
+  /// # use std::io::Write;
   ///
-  /// let file = File::create("output.bin")?;
-  /// let mut writer = Blake3::writer(file);
+  /// let mut writer = SumDigest::writer(Vec::new());
   /// writer.write_all(b"hello world")?;
-  /// let (file, digest) = writer.into_parts();
-  /// println!("Digest: {:?}", digest);
+  /// let (out, digest) = writer.into_parts();
+  /// assert_eq!(out, b"hello world".to_vec());
+  /// assert_eq!(
+  ///   digest,
+  ///   [b"hello world"
+  ///     .iter()
+  ///     .fold(0u8, |acc, &b| acc.wrapping_add(b)); 4]
+  /// );
+  /// # Ok::<(), std::io::Error>(())
   /// ```
   #[cfg(feature = "std")]
   #[inline]

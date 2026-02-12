@@ -7,7 +7,7 @@
 //!
 //! Generates a `KernelTable` entry for `crates/checksum/src/dispatch.rs`:
 //!
-//! ```rust,ignore
+//! ```text
 //! pub static PLATFORM_TABLE: KernelTable = KernelTable {
 //!   boundaries: [64, 256, 4096],
 //!   xs: KernelSet { crc16_ccitt: ..., crc64_xz: ..., ... },
@@ -1062,7 +1062,7 @@ fn median(values: &mut [usize]) -> Option<usize> {
 }
 
 fn collect_blake3_threshold(results: &TuneResults, fallback: &AlgorithmResult, keys: &[&str]) -> Option<usize> {
-  let mut values = Vec::new();
+  let mut values = Vec::with_capacity(BLAKE3_TUNING_CORPUS.len());
 
   for &(algo_name, _) in BLAKE3_TUNING_CORPUS {
     if algo_name.starts_with("blake3-stream") {

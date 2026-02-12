@@ -12,14 +12,29 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
-//! use checksum::{Crc32C, ChecksumReader};
-//! use std::fs::File;
-//!
-//! let file = File::open("data.bin")?;
-//! let mut reader = Crc32C::reader(file);
+//! ```rust
+//! # use traits::Checksum;
+//! # #[derive(Clone, Default)]
+//! # struct Sum(u32);
+//! # impl Checksum for Sum {
+//! #   const OUTPUT_SIZE: usize = 4;
+//! #   type Output = u32;
+//! #   fn new() -> Self { Self(0) }
+//! #   fn with_initial(initial: Self::Output) -> Self { Self(initial) }
+//! #   fn update(&mut self, data: &[u8]) {
+//! #     self.0 = data.iter().fold(self.0, |acc, &b| acc.wrapping_add(u32::from(b)));
+//! #   }
+//! #   fn finalize(&self) -> Self::Output { self.0 }
+//! #   fn reset(&mut self) { self.0 = 0; }
+//! # }
+//! # use std::io::Cursor;
+//! let mut reader = Sum::reader(Cursor::new(b"abc".to_vec()));
 //! std::io::copy(&mut reader, &mut std::io::sink())?;
-//! let crc = reader.crc();
+//! assert_eq!(
+//!   reader.crc(),
+//!   u32::from(b'a') + u32::from(b'b') + u32::from(b'c')
+//! );
+//! # Ok::<(), std::io::Error>(())
 //! ```
 
 /// Sealed trait marker - not implementable outside rscrypto.
@@ -158,14 +173,29 @@ where
 ///
 /// # Example
 ///
-/// ```rust,ignore
-/// use checksum::Crc32C;
-/// use std::fs::File;
-///
-/// let file = File::open("large.iso")?;
-/// let mut reader = Crc32C::reader(file);
+/// ```rust
+/// # use traits::Checksum;
+/// # #[derive(Clone, Default)]
+/// # struct Sum(u32);
+/// # impl Checksum for Sum {
+/// #   const OUTPUT_SIZE: usize = 4;
+/// #   type Output = u32;
+/// #   fn new() -> Self { Self(0) }
+/// #   fn with_initial(initial: Self::Output) -> Self { Self(initial) }
+/// #   fn update(&mut self, data: &[u8]) {
+/// #     self.0 = data.iter().fold(self.0, |acc, &b| acc.wrapping_add(u32::from(b)));
+/// #   }
+/// #   fn finalize(&self) -> Self::Output { self.0 }
+/// #   fn reset(&mut self) { self.0 = 0; }
+/// # }
+/// # use std::io::Cursor;
+/// let mut reader = Sum::reader(Cursor::new(b"abc".to_vec()));
 /// std::io::copy(&mut reader, &mut std::io::sink())?;
-/// assert_eq!(reader.crc(), expected_crc);
+/// assert_eq!(
+///   reader.crc(),
+///   u32::from(b'a') + u32::from(b'b') + u32::from(b'c')
+/// );
+/// # Ok::<(), std::io::Error>(())
 /// ```
 #[cfg(feature = "std")]
 #[derive(Clone)]
@@ -272,15 +302,33 @@ impl<R: std::io::Read, C: crate::Checksum> std::io::Read for ChecksumReader<R, C
 ///
 /// # Example
 ///
-/// ```rust,ignore
-/// use checksum::Crc32C;
-/// use std::fs::File;
-///
-/// let file = File::create("output.bin")?;
-/// let mut writer = Crc32C::writer(file);
+/// ```rust
+/// # use traits::Checksum;
+/// # #[derive(Clone, Default)]
+/// # struct Sum(u32);
+/// # impl Checksum for Sum {
+/// #   const OUTPUT_SIZE: usize = 4;
+/// #   type Output = u32;
+/// #   fn new() -> Self { Self(0) }
+/// #   fn with_initial(initial: Self::Output) -> Self { Self(initial) }
+/// #   fn update(&mut self, data: &[u8]) {
+/// #     self.0 = data.iter().fold(self.0, |acc, &b| acc.wrapping_add(u32::from(b)));
+/// #   }
+/// #   fn finalize(&self) -> Self::Output { self.0 }
+/// #   fn reset(&mut self) { self.0 = 0; }
+/// # }
+/// # use std::io::Write;
+/// let mut writer = Sum::writer(Vec::new());
 /// writer.write_all(b"hello world")?;
-/// let (file, crc) = writer.into_parts();
-/// println!("Wrote file with CRC: {:08x}", crc);
+/// let (out, checksum) = writer.into_parts();
+/// assert_eq!(out, b"hello world".to_vec());
+/// assert_eq!(
+///   checksum,
+///   b"hello world"
+///     .iter()
+///     .fold(0u32, |acc, &b| acc.wrapping_add(u32::from(b)))
+/// );
+/// # Ok::<(), std::io::Error>(())
 /// ```
 #[cfg(feature = "std")]
 #[derive(Clone)]
@@ -383,14 +431,28 @@ impl<W: std::io::Write, C: crate::Checksum> std::io::Write for ChecksumWriter<W,
 ///
 /// # Example
 ///
-/// ```rust,ignore
-/// use hashes::crypto::blake3::Blake3;
-/// use std::fs::File;
-///
-/// let file = File::open("large.iso")?;
-/// let mut reader = Blake3::reader(file);
+/// ```rust
+/// # use traits::Digest;
+/// # #[derive(Clone, Default)]
+/// # struct SumDigest(u8);
+/// # impl Digest for SumDigest {
+/// #   const OUTPUT_SIZE: usize = 4;
+/// #   type Output = [u8; 4];
+/// #   fn new() -> Self { Self(0) }
+/// #   fn update(&mut self, data: &[u8]) {
+/// #     self.0 = data.iter().fold(self.0, |acc, &b| acc.wrapping_add(b));
+/// #   }
+/// #   fn finalize(&self) -> Self::Output { [self.0; 4] }
+/// #   fn reset(&mut self) { self.0 = 0; }
+/// # }
+/// # use std::io::Cursor;
+/// let mut reader = SumDigest::reader(Cursor::new(b"abc".to_vec()));
 /// std::io::copy(&mut reader, &mut std::io::sink())?;
-/// assert_eq!(reader.digest(), expected_hash);
+/// assert_eq!(
+///   reader.digest(),
+///   [b'a'.wrapping_add(b'b').wrapping_add(b'c'); 4]
+/// );
+/// # Ok::<(), std::io::Error>(())
 /// ```
 #[cfg(feature = "std")]
 #[derive(Clone)]
@@ -485,15 +547,32 @@ impl<R: std::io::Read, D: crate::Digest> std::io::Read for DigestReader<R, D> {
 ///
 /// # Example
 ///
-/// ```rust,ignore
-/// use hashes::crypto::blake3::Blake3;
-/// use std::fs::File;
-///
-/// let file = File::create("output.bin")?;
-/// let mut writer = Blake3::writer(file);
+/// ```rust
+/// # use traits::Digest;
+/// # #[derive(Clone, Default)]
+/// # struct SumDigest(u8);
+/// # impl Digest for SumDigest {
+/// #   const OUTPUT_SIZE: usize = 4;
+/// #   type Output = [u8; 4];
+/// #   fn new() -> Self { Self(0) }
+/// #   fn update(&mut self, data: &[u8]) {
+/// #     self.0 = data.iter().fold(self.0, |acc, &b| acc.wrapping_add(b));
+/// #   }
+/// #   fn finalize(&self) -> Self::Output { [self.0; 4] }
+/// #   fn reset(&mut self) { self.0 = 0; }
+/// # }
+/// # use std::io::Write;
+/// let mut writer = SumDigest::writer(Vec::new());
 /// writer.write_all(b"hello world")?;
-/// let (file, digest) = writer.into_parts();
-/// println!("Blake3: {:?}", digest);
+/// let (out, digest) = writer.into_parts();
+/// assert_eq!(out, b"hello world".to_vec());
+/// assert_eq!(
+///   digest,
+///   [b"hello world"
+///     .iter()
+///     .fold(0u8, |acc, &b| acc.wrapping_add(b)); 4]
+/// );
+/// # Ok::<(), std::io::Error>(())
 /// ```
 #[cfg(feature = "std")]
 #[derive(Clone)]
