@@ -18,8 +18,6 @@ use core::{
   panic::AssertUnwindSafe,
   sync::atomic::{AtomicBool, Ordering},
 };
-#[cfg(feature = "std")]
-use std::collections::HashMap;
 #[cfg(all(feature = "std", test))]
 use std::panic;
 #[cfg(feature = "std")]
@@ -123,18 +121,6 @@ static PARALLEL_OVERRIDE: OnceLock<Mutex<Option<ParallelPolicyOverride>>> = Once
 #[cfg(feature = "std")]
 static AVAILABLE_PARALLELISM: OnceLock<Option<usize>> = OnceLock::new();
 
-/// Cache for derive-key context hashes to avoid re-hashing the same context
-/// string repeatedly. This is a performance optimization for workloads that
-/// derive multiple keys under the same context.
-#[cfg(feature = "std")]
-static DERIVE_KEY_CONTEXT_CACHE: OnceLock<Mutex<HashMap<String, [u32; 8]>>> = OnceLock::new();
-
-#[cfg(feature = "std")]
-#[inline]
-fn get_derive_key_context_cache() -> &'static Mutex<HashMap<String, [u32; 8]>> {
-  DERIVE_KEY_CONTEXT_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
 #[cfg(feature = "std")]
 #[inline]
 fn compute_derive_context_key_words(context: &str) -> [u32; 8] {
@@ -156,28 +142,10 @@ fn derive_context_key_words_cached(context: &str) -> [u32; 8] {
     return words;
   }
 
-  let cache = get_derive_key_context_cache();
-  if let Ok(guard) = cache.lock()
-    && let Some(&cached) = guard.get(context)
-  {
-    DERIVE_KEY_CONTEXT_LOCAL_CACHE.with(|slot| {
-      *slot.borrow_mut() = Some((context.to_string(), cached));
-    });
-    return cached;
-  }
-
   let computed = compute_derive_context_key_words(context);
-
   DERIVE_KEY_CONTEXT_LOCAL_CACHE.with(|slot| {
     *slot.borrow_mut() = Some((context.to_string(), computed));
   });
-
-  if let Ok(mut guard) = cache.lock()
-    && guard.len() < 64
-  {
-    guard.insert(context.to_string(), computed);
-  }
-
   computed
 }
 
@@ -2138,7 +2106,7 @@ impl ChunkState {
       let want = BLOCK_LEN - self.block_len as usize;
       let take = min(want, input.len());
       self.block[self.block_len as usize..][..take].copy_from_slice(&input[..take]);
-      self.block_len = self.block_len.wrapping_add(take as u8);
+      self.block_len = self.block_len.strict_add(take as u8);
       input = &input[take..];
 
       // If the caller ended mid-block, we're done. Note that this also covers
@@ -2186,8 +2154,8 @@ impl ChunkState {
 
         // If we'd consume the entire input as full blocks, leave one block
         // buffered so finalize can apply CHUNK_END if the caller stops here.
-        if input.len().is_multiple_of(BLOCK_LEN) && blocks_to_compress == full_blocks {
-          blocks_to_compress = blocks_to_compress.saturating_sub(1);
+        if input.len().is_multiple_of(BLOCK_LEN) && blocks_to_compress == full_blocks && blocks_to_compress > 0 {
+          blocks_to_compress = blocks_to_compress.strict_sub(1);
         }
 
         if blocks_to_compress != 0 {
@@ -3125,7 +3093,8 @@ impl Blake3 {
   }
 
   #[cfg(feature = "std")]
-  #[inline]
+  #[cold]
+  #[inline(never)]
   fn commit_parallel_batch(
     &mut self,
     batch_input: &[u8],
@@ -3266,7 +3235,8 @@ impl Blake3 {
   }
 
   #[cfg(feature = "std")]
-  #[inline]
+  #[cold]
+  #[inline(never)]
   fn try_parallel_update_batch(&mut self, input: &[u8]) -> Option<usize> {
     // Large updates: multi-thread full-chunk hashing.
     //
@@ -3340,7 +3310,10 @@ impl Blake3 {
 
       #[cfg(feature = "std")]
       {
-        if let Some(consumed) = self.try_parallel_update_batch(input) {
+        if self.chunk_state.len() == 0
+          && input.len() > CHUNK_LEN
+          && let Some(consumed) = self.try_parallel_update_batch(input)
+        {
           input = &input[consumed..];
           continue;
         }
@@ -3421,9 +3394,14 @@ impl Blake3 {
   #[must_use]
   #[inline]
   pub fn new_derive_key(context: &str) -> Self {
-    let context_bytes = context.as_bytes();
-    let kernel_ctx = dispatch::hasher_dispatch().size_class_kernel(context_bytes.len());
-    let key_words = digest_oneshot_words(kernel_ctx, IV, DERIVE_KEY_CONTEXT, context_bytes);
+    #[cfg(feature = "std")]
+    let key_words = derive_context_key_words_cached(context);
+    #[cfg(not(feature = "std"))]
+    let key_words = {
+      let context_bytes = context.as_bytes();
+      let kernel_ctx = dispatch::hasher_dispatch().size_class_kernel(context_bytes.len());
+      digest_oneshot_words(kernel_ctx, IV, DERIVE_KEY_CONTEXT, context_bytes)
+    };
     Self::new_internal(key_words, DERIVE_KEY_MATERIAL)
   }
 
@@ -3601,6 +3579,20 @@ impl Digest for Blake3 {
   #[inline]
   fn update(&mut self, input: &[u8]) {
     if input.is_empty() {
+      return;
+    }
+
+    // Ultra-tiny first update fast path: avoid `update_with` dispatch and loop
+    // machinery when we can satisfy the call with a single block copy.
+    if self.chunk_state.chunk_counter == 0
+      && self.cv_stack_len == 0
+      && self.pending_chunk_cv.is_none()
+      && self.chunk_state.blocks_compressed == 0
+      && self.chunk_state.block_len == 0
+      && input.len() <= BLOCK_LEN
+    {
+      self.chunk_state.block[..input.len()].copy_from_slice(input);
+      self.chunk_state.block_len = input.len() as u8;
       return;
     }
 
