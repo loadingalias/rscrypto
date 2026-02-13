@@ -1022,6 +1022,280 @@ fn blake3_derive_oneshot_auto(data: &[u8]) -> u64 {
   u64_from_prefix(&crypto::Blake3::derive_key(BLAKE3_STREAM_BENCH_CONTEXT, data))
 }
 
+fn blake3_latency_auto_mode(data: &[u8], mode: Blake3StreamMode) -> u64 {
+  use traits::Digest as _;
+  let mut h = match mode {
+    Blake3StreamMode::Plain => crypto::Blake3::new(),
+    Blake3StreamMode::Keyed => crypto::Blake3::new_keyed(&BLAKE3_STREAM_BENCH_KEY),
+    Blake3StreamMode::Derive => crypto::Blake3::new_derive_key(BLAKE3_STREAM_BENCH_CONTEXT),
+    Blake3StreamMode::Xof => crypto::Blake3::new(),
+  };
+  h.update(data);
+  match mode {
+    Blake3StreamMode::Xof => {
+      let mut xof = h.finalize_xof();
+      let mut out = [0u8; 32];
+      xof.squeeze(&mut out);
+      u64_from_prefix(&out)
+    }
+    _ => u64_from_prefix(&h.finalize()),
+  }
+}
+
+fn blake3_latency_kernel_pair(
+  stream_id: crypto::blake3::kernels::Blake3KernelId,
+  bulk_id: crypto::blake3::kernels::Blake3KernelId,
+  mode: Blake3StreamMode,
+  data: &[u8],
+) -> u64 {
+  let chunk_size = data.len().max(1);
+  let out = match mode {
+    Blake3StreamMode::Plain => crypto::Blake3::stream_chunks_with_kernel_pair_id(stream_id, bulk_id, chunk_size, data),
+    Blake3StreamMode::Keyed => {
+      crypto::Blake3::stream_chunks_keyed_with_kernel_pair_id(stream_id, bulk_id, chunk_size, data)
+    }
+    Blake3StreamMode::Derive => {
+      crypto::Blake3::stream_chunks_derive_with_kernel_pair_id(stream_id, bulk_id, chunk_size, data)
+    }
+    Blake3StreamMode::Xof => {
+      crypto::Blake3::stream_chunks_xof_with_kernel_pair_id(stream_id, bulk_id, chunk_size, data)
+    }
+  };
+  u64_from_prefix(&out)
+}
+
+fn blake3_latency_kernel(id: crypto::blake3::kernels::Blake3KernelId, mode: Blake3StreamMode, data: &[u8]) -> u64 {
+  blake3_latency_kernel_pair(id, id, mode, data)
+}
+
+fn blake3_latency_portable(data: &[u8]) -> u64 {
+  blake3_latency_kernel(
+    crypto::blake3::kernels::Blake3KernelId::Portable,
+    Blake3StreamMode::Plain,
+    data,
+  )
+}
+
+fn blake3_latency_keyed_portable(data: &[u8]) -> u64 {
+  blake3_latency_kernel(
+    crypto::blake3::kernels::Blake3KernelId::Portable,
+    Blake3StreamMode::Keyed,
+    data,
+  )
+}
+
+fn blake3_latency_derive_portable(data: &[u8]) -> u64 {
+  blake3_latency_kernel(
+    crypto::blake3::kernels::Blake3KernelId::Portable,
+    Blake3StreamMode::Derive,
+    data,
+  )
+}
+
+fn blake3_latency_xof_portable(data: &[u8]) -> u64 {
+  blake3_latency_kernel(
+    crypto::blake3::kernels::Blake3KernelId::Portable,
+    Blake3StreamMode::Xof,
+    data,
+  )
+}
+
+#[cfg(target_arch = "x86_64")]
+fn blake3_latency_x86_64_ssse3(data: &[u8]) -> u64 {
+  blake3_latency_kernel(
+    crypto::blake3::kernels::Blake3KernelId::X86Ssse3,
+    Blake3StreamMode::Plain,
+    data,
+  )
+}
+
+#[cfg(target_arch = "x86_64")]
+fn blake3_latency_keyed_x86_64_ssse3(data: &[u8]) -> u64 {
+  blake3_latency_kernel(
+    crypto::blake3::kernels::Blake3KernelId::X86Ssse3,
+    Blake3StreamMode::Keyed,
+    data,
+  )
+}
+
+#[cfg(target_arch = "x86_64")]
+fn blake3_latency_derive_x86_64_ssse3(data: &[u8]) -> u64 {
+  blake3_latency_kernel(
+    crypto::blake3::kernels::Blake3KernelId::X86Ssse3,
+    Blake3StreamMode::Derive,
+    data,
+  )
+}
+
+#[cfg(target_arch = "x86_64")]
+fn blake3_latency_xof_x86_64_ssse3(data: &[u8]) -> u64 {
+  blake3_latency_kernel(
+    crypto::blake3::kernels::Blake3KernelId::X86Ssse3,
+    Blake3StreamMode::Xof,
+    data,
+  )
+}
+
+#[cfg(target_arch = "x86_64")]
+fn blake3_latency_x86_64_sse41(data: &[u8]) -> u64 {
+  blake3_latency_kernel(
+    crypto::blake3::kernels::Blake3KernelId::X86Sse41,
+    Blake3StreamMode::Plain,
+    data,
+  )
+}
+
+#[cfg(target_arch = "x86_64")]
+fn blake3_latency_keyed_x86_64_sse41(data: &[u8]) -> u64 {
+  blake3_latency_kernel(
+    crypto::blake3::kernels::Blake3KernelId::X86Sse41,
+    Blake3StreamMode::Keyed,
+    data,
+  )
+}
+
+#[cfg(target_arch = "x86_64")]
+fn blake3_latency_derive_x86_64_sse41(data: &[u8]) -> u64 {
+  blake3_latency_kernel(
+    crypto::blake3::kernels::Blake3KernelId::X86Sse41,
+    Blake3StreamMode::Derive,
+    data,
+  )
+}
+
+#[cfg(target_arch = "x86_64")]
+fn blake3_latency_xof_x86_64_sse41(data: &[u8]) -> u64 {
+  blake3_latency_kernel(
+    crypto::blake3::kernels::Blake3KernelId::X86Sse41,
+    Blake3StreamMode::Xof,
+    data,
+  )
+}
+
+#[cfg(target_arch = "x86_64")]
+fn blake3_latency_x86_64_avx2(data: &[u8]) -> u64 {
+  blake3_latency_kernel(
+    crypto::blake3::kernels::Blake3KernelId::X86Avx2,
+    Blake3StreamMode::Plain,
+    data,
+  )
+}
+
+#[cfg(target_arch = "x86_64")]
+fn blake3_latency_keyed_x86_64_avx2(data: &[u8]) -> u64 {
+  blake3_latency_kernel(
+    crypto::blake3::kernels::Blake3KernelId::X86Avx2,
+    Blake3StreamMode::Keyed,
+    data,
+  )
+}
+
+#[cfg(target_arch = "x86_64")]
+fn blake3_latency_derive_x86_64_avx2(data: &[u8]) -> u64 {
+  blake3_latency_kernel(
+    crypto::blake3::kernels::Blake3KernelId::X86Avx2,
+    Blake3StreamMode::Derive,
+    data,
+  )
+}
+
+#[cfg(target_arch = "x86_64")]
+fn blake3_latency_xof_x86_64_avx2(data: &[u8]) -> u64 {
+  blake3_latency_kernel(
+    crypto::blake3::kernels::Blake3KernelId::X86Avx2,
+    Blake3StreamMode::Xof,
+    data,
+  )
+}
+
+#[cfg(target_arch = "x86_64")]
+fn blake3_latency_x86_64_avx512(data: &[u8]) -> u64 {
+  blake3_latency_kernel(
+    crypto::blake3::kernels::Blake3KernelId::X86Avx512,
+    Blake3StreamMode::Plain,
+    data,
+  )
+}
+
+#[cfg(target_arch = "x86_64")]
+fn blake3_latency_keyed_x86_64_avx512(data: &[u8]) -> u64 {
+  blake3_latency_kernel(
+    crypto::blake3::kernels::Blake3KernelId::X86Avx512,
+    Blake3StreamMode::Keyed,
+    data,
+  )
+}
+
+#[cfg(target_arch = "x86_64")]
+fn blake3_latency_derive_x86_64_avx512(data: &[u8]) -> u64 {
+  blake3_latency_kernel(
+    crypto::blake3::kernels::Blake3KernelId::X86Avx512,
+    Blake3StreamMode::Derive,
+    data,
+  )
+}
+
+#[cfg(target_arch = "x86_64")]
+fn blake3_latency_xof_x86_64_avx512(data: &[u8]) -> u64 {
+  blake3_latency_kernel(
+    crypto::blake3::kernels::Blake3KernelId::X86Avx512,
+    Blake3StreamMode::Xof,
+    data,
+  )
+}
+
+#[cfg(target_arch = "aarch64")]
+fn blake3_latency_aarch64_neon(data: &[u8]) -> u64 {
+  blake3_latency_kernel(
+    crypto::blake3::kernels::Blake3KernelId::Aarch64Neon,
+    Blake3StreamMode::Plain,
+    data,
+  )
+}
+
+#[cfg(target_arch = "aarch64")]
+fn blake3_latency_keyed_aarch64_neon(data: &[u8]) -> u64 {
+  blake3_latency_kernel(
+    crypto::blake3::kernels::Blake3KernelId::Aarch64Neon,
+    Blake3StreamMode::Keyed,
+    data,
+  )
+}
+
+#[cfg(target_arch = "aarch64")]
+fn blake3_latency_derive_aarch64_neon(data: &[u8]) -> u64 {
+  blake3_latency_kernel(
+    crypto::blake3::kernels::Blake3KernelId::Aarch64Neon,
+    Blake3StreamMode::Derive,
+    data,
+  )
+}
+
+#[cfg(target_arch = "aarch64")]
+fn blake3_latency_xof_aarch64_neon(data: &[u8]) -> u64 {
+  blake3_latency_kernel(
+    crypto::blake3::kernels::Blake3KernelId::Aarch64Neon,
+    Blake3StreamMode::Xof,
+    data,
+  )
+}
+
+fn blake3_latency_auto(data: &[u8]) -> u64 {
+  blake3_latency_auto_mode(data, Blake3StreamMode::Plain)
+}
+
+fn blake3_latency_keyed_auto(data: &[u8]) -> u64 {
+  blake3_latency_auto_mode(data, Blake3StreamMode::Keyed)
+}
+
+fn blake3_latency_derive_auto(data: &[u8]) -> u64 {
+  blake3_latency_auto_mode(data, Blake3StreamMode::Derive)
+}
+
+fn blake3_latency_xof_auto(data: &[u8]) -> u64 {
+  blake3_latency_auto_mode(data, Blake3StreamMode::Xof)
+}
+
 fn blake3_parent_cvs_many_kernel(id: crypto::blake3::kernels::Blake3KernelId, data: &[u8]) -> u64 {
   const PARENT_BLOCK_LEN: usize = 64;
   const BATCH: usize = 64;
@@ -1504,13 +1778,29 @@ pub fn get_kernel(algo: &str, name: &str) -> Option<Kernel> {
       name: "portable",
       func: blake3_portable,
     }),
+    ("blake3-latency", "portable") => Some(Kernel {
+      name: "portable",
+      func: blake3_latency_portable,
+    }),
     ("blake3-keyed", "portable") => Some(Kernel {
       name: "portable",
       func: blake3_keyed_oneshot_portable,
     }),
+    ("blake3-latency-keyed", "portable") => Some(Kernel {
+      name: "portable",
+      func: blake3_latency_keyed_portable,
+    }),
     ("blake3-derive", "portable") => Some(Kernel {
       name: "portable",
       func: blake3_derive_oneshot_portable,
+    }),
+    ("blake3-latency-derive", "portable") => Some(Kernel {
+      name: "portable",
+      func: blake3_latency_derive_portable,
+    }),
+    ("blake3-latency-xof", "portable") => Some(Kernel {
+      name: "portable",
+      func: blake3_latency_xof_portable,
     }),
     #[cfg(target_arch = "x86_64")]
     ("blake3", "x86_64/ssse3") => Some(Kernel {
@@ -1518,9 +1808,19 @@ pub fn get_kernel(algo: &str, name: &str) -> Option<Kernel> {
       func: blake3_oneshot_x86_64_ssse3,
     }),
     #[cfg(target_arch = "x86_64")]
+    ("blake3-latency", "x86_64/ssse3") => Some(Kernel {
+      name: "x86_64/ssse3",
+      func: blake3_latency_x86_64_ssse3,
+    }),
+    #[cfg(target_arch = "x86_64")]
     ("blake3-keyed", "x86_64/ssse3") => Some(Kernel {
       name: "x86_64/ssse3",
       func: blake3_keyed_oneshot_x86_64_ssse3,
+    }),
+    #[cfg(target_arch = "x86_64")]
+    ("blake3-latency-keyed", "x86_64/ssse3") => Some(Kernel {
+      name: "x86_64/ssse3",
+      func: blake3_latency_keyed_x86_64_ssse3,
     }),
     #[cfg(target_arch = "x86_64")]
     ("blake3-derive", "x86_64/ssse3") => Some(Kernel {
@@ -1528,9 +1828,24 @@ pub fn get_kernel(algo: &str, name: &str) -> Option<Kernel> {
       func: blake3_derive_oneshot_x86_64_ssse3,
     }),
     #[cfg(target_arch = "x86_64")]
+    ("blake3-latency-derive", "x86_64/ssse3") => Some(Kernel {
+      name: "x86_64/ssse3",
+      func: blake3_latency_derive_x86_64_ssse3,
+    }),
+    #[cfg(target_arch = "x86_64")]
+    ("blake3-latency-xof", "x86_64/ssse3") => Some(Kernel {
+      name: "x86_64/ssse3",
+      func: blake3_latency_xof_x86_64_ssse3,
+    }),
+    #[cfg(target_arch = "x86_64")]
     ("blake3", "x86_64/sse4.1") => Some(Kernel {
       name: "x86_64/sse4.1",
       func: blake3_oneshot_x86_64_sse41,
+    }),
+    #[cfg(target_arch = "x86_64")]
+    ("blake3-latency", "x86_64/sse4.1") => Some(Kernel {
+      name: "x86_64/sse4.1",
+      func: blake3_latency_x86_64_sse41,
     }),
     #[cfg(target_arch = "x86_64")]
     ("blake3-keyed", "x86_64/sse4.1") => Some(Kernel {
@@ -1538,9 +1853,24 @@ pub fn get_kernel(algo: &str, name: &str) -> Option<Kernel> {
       func: blake3_keyed_oneshot_x86_64_sse41,
     }),
     #[cfg(target_arch = "x86_64")]
+    ("blake3-latency-keyed", "x86_64/sse4.1") => Some(Kernel {
+      name: "x86_64/sse4.1",
+      func: blake3_latency_keyed_x86_64_sse41,
+    }),
+    #[cfg(target_arch = "x86_64")]
     ("blake3-derive", "x86_64/sse4.1") => Some(Kernel {
       name: "x86_64/sse4.1",
       func: blake3_derive_oneshot_x86_64_sse41,
+    }),
+    #[cfg(target_arch = "x86_64")]
+    ("blake3-latency-derive", "x86_64/sse4.1") => Some(Kernel {
+      name: "x86_64/sse4.1",
+      func: blake3_latency_derive_x86_64_sse41,
+    }),
+    #[cfg(target_arch = "x86_64")]
+    ("blake3-latency-xof", "x86_64/sse4.1") => Some(Kernel {
+      name: "x86_64/sse4.1",
+      func: blake3_latency_xof_x86_64_sse41,
     }),
     #[cfg(target_arch = "x86_64")]
     ("blake3", "x86_64/avx2") => Some(Kernel {
@@ -1548,9 +1878,19 @@ pub fn get_kernel(algo: &str, name: &str) -> Option<Kernel> {
       func: blake3_oneshot_x86_64_avx2,
     }),
     #[cfg(target_arch = "x86_64")]
+    ("blake3-latency", "x86_64/avx2") => Some(Kernel {
+      name: "x86_64/avx2",
+      func: blake3_latency_x86_64_avx2,
+    }),
+    #[cfg(target_arch = "x86_64")]
     ("blake3-keyed", "x86_64/avx2") => Some(Kernel {
       name: "x86_64/avx2",
       func: blake3_keyed_oneshot_x86_64_avx2,
+    }),
+    #[cfg(target_arch = "x86_64")]
+    ("blake3-latency-keyed", "x86_64/avx2") => Some(Kernel {
+      name: "x86_64/avx2",
+      func: blake3_latency_keyed_x86_64_avx2,
     }),
     #[cfg(target_arch = "x86_64")]
     ("blake3-derive", "x86_64/avx2") => Some(Kernel {
@@ -1558,9 +1898,24 @@ pub fn get_kernel(algo: &str, name: &str) -> Option<Kernel> {
       func: blake3_derive_oneshot_x86_64_avx2,
     }),
     #[cfg(target_arch = "x86_64")]
+    ("blake3-latency-derive", "x86_64/avx2") => Some(Kernel {
+      name: "x86_64/avx2",
+      func: blake3_latency_derive_x86_64_avx2,
+    }),
+    #[cfg(target_arch = "x86_64")]
+    ("blake3-latency-xof", "x86_64/avx2") => Some(Kernel {
+      name: "x86_64/avx2",
+      func: blake3_latency_xof_x86_64_avx2,
+    }),
+    #[cfg(target_arch = "x86_64")]
     ("blake3", "x86_64/avx512") => Some(Kernel {
       name: "x86_64/avx512",
       func: blake3_oneshot_x86_64_avx512,
+    }),
+    #[cfg(target_arch = "x86_64")]
+    ("blake3-latency", "x86_64/avx512") => Some(Kernel {
+      name: "x86_64/avx512",
+      func: blake3_latency_x86_64_avx512,
     }),
     #[cfg(target_arch = "x86_64")]
     ("blake3-keyed", "x86_64/avx512") => Some(Kernel {
@@ -1568,9 +1923,24 @@ pub fn get_kernel(algo: &str, name: &str) -> Option<Kernel> {
       func: blake3_keyed_oneshot_x86_64_avx512,
     }),
     #[cfg(target_arch = "x86_64")]
+    ("blake3-latency-keyed", "x86_64/avx512") => Some(Kernel {
+      name: "x86_64/avx512",
+      func: blake3_latency_keyed_x86_64_avx512,
+    }),
+    #[cfg(target_arch = "x86_64")]
     ("blake3-derive", "x86_64/avx512") => Some(Kernel {
       name: "x86_64/avx512",
       func: blake3_derive_oneshot_x86_64_avx512,
+    }),
+    #[cfg(target_arch = "x86_64")]
+    ("blake3-latency-derive", "x86_64/avx512") => Some(Kernel {
+      name: "x86_64/avx512",
+      func: blake3_latency_derive_x86_64_avx512,
+    }),
+    #[cfg(target_arch = "x86_64")]
+    ("blake3-latency-xof", "x86_64/avx512") => Some(Kernel {
+      name: "x86_64/avx512",
+      func: blake3_latency_xof_x86_64_avx512,
     }),
     #[cfg(target_arch = "aarch64")]
     ("blake3", "aarch64/neon") => Some(Kernel {
@@ -1578,14 +1948,34 @@ pub fn get_kernel(algo: &str, name: &str) -> Option<Kernel> {
       func: blake3_oneshot_aarch64_neon,
     }),
     #[cfg(target_arch = "aarch64")]
+    ("blake3-latency", "aarch64/neon") => Some(Kernel {
+      name: "aarch64/neon",
+      func: blake3_latency_aarch64_neon,
+    }),
+    #[cfg(target_arch = "aarch64")]
     ("blake3-keyed", "aarch64/neon") => Some(Kernel {
       name: "aarch64/neon",
       func: blake3_keyed_oneshot_aarch64_neon,
     }),
     #[cfg(target_arch = "aarch64")]
+    ("blake3-latency-keyed", "aarch64/neon") => Some(Kernel {
+      name: "aarch64/neon",
+      func: blake3_latency_keyed_aarch64_neon,
+    }),
+    #[cfg(target_arch = "aarch64")]
     ("blake3-derive", "aarch64/neon") => Some(Kernel {
       name: "aarch64/neon",
       func: blake3_derive_oneshot_aarch64_neon,
+    }),
+    #[cfg(target_arch = "aarch64")]
+    ("blake3-latency-derive", "aarch64/neon") => Some(Kernel {
+      name: "aarch64/neon",
+      func: blake3_latency_derive_aarch64_neon,
+    }),
+    #[cfg(target_arch = "aarch64")]
+    ("blake3-latency-xof", "aarch64/neon") => Some(Kernel {
+      name: "aarch64/neon",
+      func: blake3_latency_xof_aarch64_neon,
     }),
     ("blake2b-512", "portable") => Some(Kernel {
       name: "portable",
@@ -1695,8 +2085,12 @@ pub fn run_auto(algo: &str, data: &[u8]) -> Option<u64> {
     "sha512-224" => Some(u64_from_prefix(&<crypto::Sha512_224 as Digest>::digest(data))),
     "sha512-256" => Some(u64_from_prefix(&<crypto::Sha512_256 as Digest>::digest(data))),
     "blake3" => Some(u64_from_prefix(&<crypto::Blake3 as Digest>::digest(data))),
+    "blake3-latency" => Some(blake3_latency_auto(data)),
     "blake3-keyed" => Some(blake3_keyed_oneshot_auto(data)),
+    "blake3-latency-keyed" => Some(blake3_latency_keyed_auto(data)),
     "blake3-derive" => Some(blake3_derive_oneshot_auto(data)),
+    "blake3-latency-derive" => Some(blake3_latency_derive_auto(data)),
+    "blake3-latency-xof" => Some(blake3_latency_xof_auto(data)),
     "blake2b-512" => Some(u64_from_prefix(&<crypto::Blake2b512 as Digest>::digest(data))),
     "blake2s-256" => Some(u64_from_prefix(&<crypto::Blake2s256 as Digest>::digest(data))),
     "sha3-224" => Some(u64_from_prefix(&<crypto::Sha3_224 as Digest>::digest(data))),
@@ -1766,7 +2160,13 @@ pub fn kernel_name_for_len(algo: &str, len: usize) -> Option<&'static str> {
     "sha512" => Some(crypto::sha512::dispatch::kernel_name_for_len(len)),
     "sha512-224" => Some(crypto::sha512_224::dispatch::kernel_name_for_len(len)),
     "sha512-256" => Some(crypto::sha512_256::dispatch::kernel_name_for_len(len)),
-    "blake3" | "blake3-keyed" | "blake3-derive" => Some(crypto::blake3::dispatch::kernel_name_for_len(len)),
+    "blake3"
+    | "blake3-latency"
+    | "blake3-keyed"
+    | "blake3-latency-keyed"
+    | "blake3-derive"
+    | "blake3-latency-derive"
+    | "blake3-latency-xof" => Some(crypto::blake3::dispatch::kernel_name_for_len(len)),
     "blake2b-512" => Some(crypto::blake2b::dispatch::kernel_name_for_len(len)),
     "blake2s-256" => Some(crypto::blake2s::dispatch::kernel_name_for_len(len)),
     "sha3-224" | "sha3-256" | "sha3-384" | "sha3-512" | "shake128" | "shake256" => {

@@ -1351,7 +1351,19 @@ enum Blake3PairObjective {
 fn blake3_surface_weight(algo_name: &str, objective: Blake3PairObjective) -> f64 {
   match objective {
     Blake3PairObjective::StreamKernel => {
-      if algo_name.starts_with("blake3-stream64") {
+      if algo_name.starts_with("blake3-latency-keyed")
+        || algo_name.starts_with("blake3-latency-derive")
+        || algo_name.starts_with("blake3-latency-xof")
+      {
+        1.30
+      } else if algo_name == "blake3-latency" {
+        1.15
+      } else if algo_name.starts_with("blake3-stream64-keyed")
+        || algo_name.starts_with("blake3-stream64-derive")
+        || algo_name.starts_with("blake3-stream64-xof")
+      {
+        1.10
+      } else if algo_name.starts_with("blake3-stream64") {
         1.00
       } else if algo_name == "blake3-stream256" {
         0.65
@@ -1366,7 +1378,9 @@ fn blake3_surface_weight(algo_name: &str, objective: Blake3PairObjective) -> f64
       }
     }
     Blake3PairObjective::BulkKernel => {
-      if algo_name.starts_with("blake3-stream4k") {
+      if algo_name.starts_with("blake3-latency") {
+        0.02
+      } else if algo_name.starts_with("blake3-stream4k") {
         1.00
       } else if algo_name.starts_with("blake3-stream-mixed") {
         0.80
@@ -1398,6 +1412,46 @@ fn blake3_bulk_sizeclass_threshold_expr(stream: &str, bulk: &str) -> &'static st
   }
 }
 
+#[inline]
+#[must_use]
+fn blake3_class_weight(class: &str, objective: Blake3PairObjective) -> f64 {
+  match objective {
+    Blake3PairObjective::StreamKernel => match class {
+      "xs" => 1.50,
+      "s" => 1.20,
+      "m" => 0.45,
+      "l" => 0.10,
+      _ => 0.0,
+    },
+    Blake3PairObjective::BulkKernel => match class {
+      "xs" => 0.05,
+      "s" => 0.20,
+      "m" => 0.80,
+      "l" => 1.20,
+      _ => 0.0,
+    },
+  }
+}
+
+#[inline]
+#[must_use]
+fn blake3_objective_throughput(result: &AlgorithmResult, objective: Blake3PairObjective) -> f64 {
+  let mut weighted = 0.0f64;
+  let mut total = 0.0f64;
+  for class_best in &result.size_class_best {
+    let w = blake3_class_weight(class_best.class, objective);
+    if w > 0.0 && class_best.throughput_gib_s.is_finite() && class_best.throughput_gib_s > 0.0 {
+      weighted += class_best.throughput_gib_s * w;
+      total += w;
+    }
+  }
+  if total > 0.0 {
+    weighted / total
+  } else {
+    result.peak_throughput_gib_s.max(0.0)
+  }
+}
+
 fn choose_blake3_pair_component(results: &[&AlgorithmResult], objective: Blake3PairObjective) -> Option<String> {
   #[derive(Clone, Copy, Default)]
   struct KernelScore {
@@ -1417,7 +1471,7 @@ fn choose_blake3_pair_component(results: &[&AlgorithmResult], objective: Blake3P
       Blake3PairObjective::BulkKernel => bulk,
     };
     let weight = blake3_surface_weight(result.name, objective).max(0.0);
-    let tp = result.peak_throughput_gib_s.max(0.0);
+    let tp = blake3_objective_throughput(result, objective).max(0.0);
 
     let entry = scores.entry(chosen.to_string()).or_insert(KernelScore {
       first_idx: idx,
@@ -1822,6 +1876,10 @@ fn apply_hash_dispatch_tables(repo_root: &Path, results: &TuneResults) -> io::Re
 
     if target.algo == "blake3-chunk" {
       let stream64_modes: Vec<&AlgorithmResult> = [
+        "blake3-latency",
+        "blake3-latency-keyed",
+        "blake3-latency-derive",
+        "blake3-latency-xof",
         "blake3-stream64",
         "blake3-stream256",
         "blake3-stream1k",
@@ -2367,6 +2425,70 @@ mod tests {
 
     let code = generate_blake3_streaming_table(TuneKind::IntelSpr, &[&stream], &[&bulk4k, &bulk4k_keyed, &mixed_xof]);
     assert!(code.contains("bulk: KernelId::X86Avx512"));
+  }
+
+  #[test]
+  fn blake3_stream_selection_prefers_xs_s_when_objective_is_stream_kernel() {
+    let mut small_fast = AlgorithmResult {
+      name: "blake3-stream64",
+      env_prefix: "RSCRYPTO_BENCH_BLAKE3_STREAM64",
+      best_kernel: "x86_64/sse4.1+x86_64/avx2",
+      recommended_streams: 1,
+      peak_throughput_gib_s: 6.0,
+      size_class_best: vec![],
+      thresholds: vec![],
+      analysis: AnalysisResult::default(),
+    };
+    small_fast.size_class_best.push(crate::SizeClassBest {
+      class: "xs",
+      kernel: "x86_64/sse4.1+x86_64/avx2".to_string(),
+      streams: 1,
+      throughput_gib_s: 1.40,
+    });
+    small_fast.size_class_best.push(crate::SizeClassBest {
+      class: "s",
+      kernel: "x86_64/sse4.1+x86_64/avx2".to_string(),
+      streams: 1,
+      throughput_gib_s: 2.00,
+    });
+
+    let mut large_fast = AlgorithmResult {
+      name: "blake3-stream4k",
+      env_prefix: "RSCRYPTO_BENCH_BLAKE3_STREAM4K",
+      best_kernel: "x86_64/avx512+x86_64/avx512",
+      recommended_streams: 1,
+      peak_throughput_gib_s: 20.0,
+      size_class_best: vec![],
+      thresholds: vec![],
+      analysis: AnalysisResult::default(),
+    };
+    large_fast.size_class_best.push(crate::SizeClassBest {
+      class: "xs",
+      kernel: "x86_64/avx512+x86_64/avx512".to_string(),
+      streams: 1,
+      throughput_gib_s: 0.70,
+    });
+    large_fast.size_class_best.push(crate::SizeClassBest {
+      class: "s",
+      kernel: "x86_64/avx512+x86_64/avx512".to_string(),
+      streams: 1,
+      throughput_gib_s: 1.10,
+    });
+    large_fast.size_class_best.push(crate::SizeClassBest {
+      class: "m",
+      kernel: "x86_64/avx512+x86_64/avx512".to_string(),
+      streams: 1,
+      throughput_gib_s: 9.50,
+    });
+    large_fast.size_class_best.push(crate::SizeClassBest {
+      class: "l",
+      kernel: "x86_64/avx512+x86_64/avx512".to_string(),
+      streams: 1,
+      throughput_gib_s: 16.0,
+    });
+
+    let code = generate_blake3_streaming_table(TuneKind::IntelSpr, &[&small_fast, &large_fast], &[&large_fast]);
+    assert!(code.contains("stream: KernelId::X86Sse41"));
   }
 
   #[test]

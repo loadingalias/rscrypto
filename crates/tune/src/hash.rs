@@ -46,8 +46,12 @@ pub const HASH_CORE_TUNING_CORPUS: &[(&str, &str)] = &[
 /// and target evaluation stay in sync.
 pub const BLAKE3_TUNING_CORPUS: &[(&str, &str)] = &[
   ("blake3", "RSCRYPTO_BLAKE3"),
+  ("blake3-latency", "RSCRYPTO_BLAKE3_LATENCY"),
   ("blake3-keyed", "RSCRYPTO_BLAKE3_KEYED"),
+  ("blake3-latency-keyed", "RSCRYPTO_BLAKE3_LATENCY_KEYED"),
   ("blake3-derive", "RSCRYPTO_BLAKE3_DERIVE"),
+  ("blake3-latency-derive", "RSCRYPTO_BLAKE3_LATENCY_DERIVE"),
+  ("blake3-latency-xof", "RSCRYPTO_BLAKE3_LATENCY_XOF"),
   ("blake3-chunk", "RSCRYPTO_BENCH_BLAKE3_CHUNK"),
   ("blake3-parent", "RSCRYPTO_BENCH_BLAKE3_PARENT"),
   ("blake3-parent-fold", "RSCRYPTO_BENCH_BLAKE3_PARENT_FOLD"),
@@ -122,7 +126,16 @@ fn is_blake3_stream_tuning_algo(algo: &str) -> bool {
 #[inline]
 #[must_use]
 fn is_blake3_oneshot_policy_algo(algo: &str) -> bool {
-  matches!(algo, "blake3" | "blake3-keyed" | "blake3-derive")
+  matches!(
+    algo,
+    "blake3"
+      | "blake3-latency"
+      | "blake3-keyed"
+      | "blake3-latency-keyed"
+      | "blake3-derive"
+      | "blake3-latency-derive"
+      | "blake3-latency-xof"
+  )
 }
 
 /// Map generic threshold names to hash-specific env var suffixes.
@@ -414,7 +427,14 @@ mod tests {
     ];
 
     for (algo, _) in BLAKE3_TUNING_CORPUS.iter().copied().filter(|(name, _)| {
-      *name == "blake3" || *name == "blake3-keyed" || *name == "blake3-derive" || name.starts_with("blake3-stream")
+      *name == "blake3"
+        || *name == "blake3-latency"
+        || *name == "blake3-keyed"
+        || *name == "blake3-latency-keyed"
+        || *name == "blake3-derive"
+        || *name == "blake3-latency-derive"
+        || *name == "blake3-latency-xof"
+        || name.starts_with("blake3-stream")
     }) {
       for threshold in parallel_thresholds {
         assert!(

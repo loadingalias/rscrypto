@@ -68,18 +68,15 @@ enum Blake3Surface {
 fn blake3_surface(algo: &str) -> Option<Blake3Surface> {
   Some(match algo {
     "blake3" | "blake3-chunk" | "blake3-parent" | "blake3-parent-fold" => Blake3Surface::Oneshot,
-    "blake3-stream64"
-    | "blake3-stream256"
-    | "blake3-stream1k"
-    | "blake3-stream-mixed"
-    | "blake3-stream64-keyed"
-    | "blake3-stream64-derive"
-    | "blake3-stream64-xof"
-    | "blake3-stream-mixed-xof" => Blake3Surface::Stream64,
+    "blake3-latency" => Blake3Surface::Stream64,
+    "blake3-latency-keyed" => Blake3Surface::Keyed,
+    "blake3-latency-derive" => Blake3Surface::Derive,
+    "blake3-latency-xof" => Blake3Surface::Xof,
+    "blake3-stream64" | "blake3-stream256" | "blake3-stream1k" | "blake3-stream-mixed" => Blake3Surface::Stream64,
     "blake3-stream4k" => Blake3Surface::Stream4k,
-    "blake3-stream4k-keyed" => Blake3Surface::Keyed,
-    "blake3-stream4k-derive" => Blake3Surface::Derive,
-    "blake3-stream4k-xof" => Blake3Surface::Xof,
+    "blake3-stream64-keyed" | "blake3-stream4k-keyed" => Blake3Surface::Keyed,
+    "blake3-stream64-derive" | "blake3-stream4k-derive" => Blake3Surface::Derive,
+    "blake3-stream64-xof" | "blake3-stream4k-xof" | "blake3-stream-mixed-xof" => Blake3Surface::Xof,
     _ => return None,
   })
 }

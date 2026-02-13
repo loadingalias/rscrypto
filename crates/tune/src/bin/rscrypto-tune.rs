@@ -148,12 +148,7 @@ impl Default for Args {
 
 fn parse_csv_values(value: &str, out: &mut Vec<String>, lowercase: bool) {
   for part in value.split(',') {
-    let mut item = part.trim();
-    if let Some((_, rhs)) = item.rsplit_once('=')
-      && !rhs.is_empty()
-    {
-      item = rhs;
-    }
+    let item = part.trim();
     if item.is_empty() {
       continue;
     }
@@ -163,6 +158,83 @@ fn parse_csv_values(value: &str, out: &mut Vec<String>, lowercase: bool) {
       out.push(item.to_string());
     }
   }
+}
+
+fn parse_bool_flag(value: &str, flag: &str) -> Result<bool, String> {
+  match value.trim().to_ascii_lowercase().as_str() {
+    "1" | "true" | "yes" | "on" => Ok(true),
+    "0" | "false" | "no" | "off" => Ok(false),
+    other => Err(format!("Invalid boolean for {flag}: {other}")),
+  }
+}
+
+fn parse_shorthand_arg(arg: &str, args: &mut Args) -> Result<bool, String> {
+  let Some((raw_key, raw_value)) = arg.split_once('=') else {
+    return Ok(false);
+  };
+  let key = raw_key.trim().to_ascii_lowercase();
+  let value = raw_value.trim();
+  if value.is_empty() {
+    return Err(format!("Missing value for {raw_key}"));
+  }
+
+  match key.as_str() {
+    "only" => parse_csv_values(value, &mut args.only, true),
+    "crate" | "crates" => parse_csv_values(value, &mut args.crate_filters, true),
+    "repeats" => {
+      let repeats: usize = value.parse().map_err(|_| format!("Invalid repeats: {value}"))?;
+      if repeats == 0 {
+        return Err("--repeats must be >= 1".to_string());
+      }
+      args.repeats = Some(repeats);
+    }
+    "aggregate" | "aggregation" => {
+      args.aggregate = AggregationMode::parse(value).ok_or_else(|| format!("Unknown aggregation mode: {value}"))?;
+    }
+    "format" => {
+      args.format = OutputFormat::parse(value).ok_or_else(|| format!("Unknown format: {value}"))?;
+    }
+    "report-dir" | "report_dir" => args.report_dir = Some(value.to_string()),
+    "raw-output" | "raw_output" => args.raw_output = Some(value.to_string()),
+    "derive-from" | "derive_from" => args.derive_from = Some(value.to_string()),
+    "warmup-ms" | "warmup_ms" => {
+      args.warmup_ms = Some(value.parse().map_err(|_| format!("Invalid warmup-ms: {value}"))?);
+    }
+    "measure-ms" | "measure_ms" => {
+      args.measure_ms = Some(value.parse().map_err(|_| format!("Invalid measure-ms: {value}"))?);
+    }
+    "checksum-warmup-ms" | "checksum_warmup_ms" => {
+      args.checksum_warmup_ms = Some(
+        value
+          .parse()
+          .map_err(|_| format!("Invalid checksum-warmup-ms: {value}"))?,
+      );
+    }
+    "checksum-measure-ms" | "checksum_measure_ms" => {
+      args.checksum_measure_ms = Some(
+        value
+          .parse()
+          .map_err(|_| format!("Invalid checksum-measure-ms: {value}"))?,
+      );
+    }
+    "hash-warmup-ms" | "hash_warmup_ms" => {
+      args.hash_warmup_ms = Some(value.parse().map_err(|_| format!("Invalid hash-warmup-ms: {value}"))?);
+    }
+    "hash-measure-ms" | "hash_measure_ms" => {
+      args.hash_measure_ms = Some(value.parse().map_err(|_| format!("Invalid hash-measure-ms: {value}"))?);
+    }
+    "quick" => args.quick = parse_bool_flag(value, "quick")?,
+    "verbose" => args.verbose = parse_bool_flag(value, "verbose")?,
+    "help" => args.help = parse_bool_flag(value, "help")?,
+    "list" => args.list = parse_bool_flag(value, "list")?,
+    "apply" => args.apply = parse_bool_flag(value, "apply")?,
+    "self-check" | "self_check" => args.self_check = parse_bool_flag(value, "self-check")?,
+    "enforce-targets" | "enforce_targets" => args.enforce_targets = parse_bool_flag(value, "enforce-targets")?,
+    "measure-only" | "measure_only" => args.measure_only = parse_bool_flag(value, "measure-only")?,
+    _ => return Ok(false),
+  }
+
+  Ok(true)
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -286,6 +358,9 @@ fn parse_args() -> Result<Args, String> {
         args.hash_measure_ms = Some(value.parse().map_err(|_| format!("Invalid hash-measure-ms: {value}"))?);
       }
       other => {
+        if parse_shorthand_arg(other, &mut args)? {
+          continue;
+        }
         if other.starts_with('-') {
           return Err(format!("Unknown argument: {other}"));
         }
@@ -1092,5 +1167,21 @@ mod tests {
   fn default_repeats_is_one() {
     let args = Args::default();
     assert_eq!(effective_repeats(&args), 1);
+  }
+
+  #[test]
+  fn shorthand_crate_and_only_are_parsed_without_positional_expansion() {
+    let mut args = Args::default();
+    assert!(parse_shorthand_arg("crate=hashes", &mut args).expect("crate shorthand should parse"));
+    assert!(parse_shorthand_arg("only=blake3", &mut args).expect("only shorthand should parse"));
+    assert_eq!(args.crate_filters, vec!["hashes".to_string()]);
+    assert_eq!(args.only, vec!["blake3".to_string()]);
+  }
+
+  #[test]
+  fn csv_parser_keeps_literal_values() {
+    let mut out = Vec::new();
+    parse_csv_values("blake3,crate=hashes", &mut out, true);
+    assert_eq!(out, vec!["blake3".to_string(), "crate=hashes".to_string()]);
   }
 }
