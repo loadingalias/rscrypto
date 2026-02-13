@@ -3273,6 +3273,72 @@ impl Blake3 {
     Some(bytes)
   }
 
+  #[inline(never)]
+  fn try_simd_update_batch(&mut self, input: &[u8]) -> Option<usize> {
+    if self.chunk_state.len() != 0 || self.bulk_kernel.simd_degree <= 1 || input.len() <= CHUNK_LEN {
+      return None;
+    }
+
+    let full_chunks = input.len() / CHUNK_LEN;
+    if full_chunks <= 1 {
+      return None;
+    }
+
+    const MAX_SIMD_DEGREE: usize = 16;
+    let batch = core::cmp::min(full_chunks, MAX_SIMD_DEGREE);
+    if batch == 0 {
+      return None;
+    }
+
+    let mut out_buf = [0u8; OUT_LEN * MAX_SIMD_DEGREE];
+    let base_counter = self.chunk_state.chunk_counter;
+    // SAFETY: `input` has at least `batch * CHUNK_LEN` bytes, `out_buf`
+    // has at least `batch * OUT_LEN` bytes, and this kernel was selected
+    // only when its required CPU features are available.
+    unsafe {
+      (self.bulk_kernel.hash_many_contiguous)(
+        input.as_ptr(),
+        batch,
+        &self.key_words,
+        base_counter,
+        self.flags,
+        out_buf.as_mut_ptr(),
+      )
+    };
+
+    let keep_last_full_chunk = input.len().is_multiple_of(CHUNK_LEN) && batch == full_chunks;
+    let commit = if keep_last_full_chunk { batch - 1 } else { batch };
+    if commit != 0 {
+      // SAFETY: `out_buf` stores `batch` contiguous CV outputs, and
+      // `commit <= batch <= MAX_SIMD_DEGREE`.
+      let cvs_bytes: &[[u8; OUT_LEN]] =
+        unsafe { slice::from_raw_parts(out_buf.as_ptr().cast::<[u8; OUT_LEN]>(), commit) };
+      let mut stack_len = self.cv_stack_len as usize;
+      add_chunk_cvs_batched_bytes(
+        self.bulk_kernel,
+        &mut self.cv_stack,
+        &mut stack_len,
+        base_counter,
+        cvs_bytes,
+        self.key_words,
+        self.flags,
+      );
+      self.cv_stack_len = stack_len as u8;
+    }
+
+    let new_counter = base_counter + batch as u64;
+    self.chunk_state = ChunkState::new(self.key_words, new_counter, self.flags, self.kernel);
+    if keep_last_full_chunk {
+      let offset = (batch - 1) * OUT_LEN;
+      // SAFETY: `out_buf` is `OUT_LEN * MAX_SIMD_DEGREE`, and `offset`
+      // is `(batch - 1) * OUT_LEN` with `batch <= MAX_SIMD_DEGREE`.
+      let cv = unsafe { words8_from_le_bytes_32(&*(out_buf.as_ptr().add(offset) as *const [u8; OUT_LEN])) };
+      self.pending_chunk_cv = Some(cv);
+    }
+
+    Some(batch * CHUNK_LEN)
+  }
+
   fn update_with(&mut self, mut input: &[u8], stream_kernel: Kernel, bulk_kernel: Kernel) {
     self.kernel = stream_kernel;
     self.bulk_kernel = bulk_kernel;
@@ -3297,9 +3363,6 @@ impl Blake3 {
     // processed by `ChunkState::update`, so that the streaming state retains
     // the "buffer the last block" invariant needed when the caller stops at
     // a block boundary and later calls `finalize`.
-    const MAX_SIMD_DEGREE: usize = 16;
-    let mut out_buf = [0u8; OUT_LEN * MAX_SIMD_DEGREE];
-
     while !input.is_empty() {
       if self.chunk_state.len() == CHUNK_LEN {
         let chunk_cv = self.chunk_state.output().chaining_value();
@@ -3319,60 +3382,9 @@ impl Blake3 {
         }
       }
 
-      if self.chunk_state.len() == 0 && self.bulk_kernel.simd_degree > 1 && input.len() > CHUNK_LEN {
-        let full_chunks = input.len() / CHUNK_LEN;
-        if full_chunks > 1 {
-          let batch = core::cmp::min(full_chunks, MAX_SIMD_DEGREE);
-
-          if batch != 0 {
-            let base_counter = self.chunk_state.chunk_counter;
-            // SAFETY: `input` has at least `batch * CHUNK_LEN` bytes, `out_buf`
-            // has at least `batch * OUT_LEN` bytes, and this kernel was selected
-            // only when its required CPU features are available.
-            unsafe {
-              (self.bulk_kernel.hash_many_contiguous)(
-                input.as_ptr(),
-                batch,
-                &self.key_words,
-                base_counter,
-                self.flags,
-                out_buf.as_mut_ptr(),
-              )
-            };
-
-            let keep_last_full_chunk = input.len().is_multiple_of(CHUNK_LEN) && batch == full_chunks;
-            let commit = if keep_last_full_chunk { batch - 1 } else { batch };
-            if commit != 0 {
-              // SAFETY: `out_buf` stores `batch` contiguous CV outputs, and
-              // `commit <= batch <= MAX_SIMD_DEGREE`.
-              let cvs_bytes: &[[u8; OUT_LEN]] =
-                unsafe { slice::from_raw_parts(out_buf.as_ptr().cast::<[u8; OUT_LEN]>(), commit) };
-              let mut stack_len = self.cv_stack_len as usize;
-              add_chunk_cvs_batched_bytes(
-                self.bulk_kernel,
-                &mut self.cv_stack,
-                &mut stack_len,
-                base_counter,
-                cvs_bytes,
-                self.key_words,
-                self.flags,
-              );
-              self.cv_stack_len = stack_len as u8;
-            }
-
-            let new_counter = base_counter + batch as u64;
-            self.chunk_state = ChunkState::new(self.key_words, new_counter, self.flags, self.kernel);
-            if keep_last_full_chunk {
-              let offset = (batch - 1) * OUT_LEN;
-              // SAFETY: `out_buf` is `OUT_LEN * MAX_SIMD_DEGREE`, and `offset`
-              // is `(batch - 1) * OUT_LEN` with `batch <= MAX_SIMD_DEGREE`.
-              let cv = unsafe { words8_from_le_bytes_32(&*(out_buf.as_ptr().add(offset) as *const [u8; OUT_LEN])) };
-              self.pending_chunk_cv = Some(cv);
-            }
-            input = &input[batch * CHUNK_LEN..];
-            continue;
-          }
-        }
+      if let Some(consumed) = self.try_simd_update_batch(input) {
+        input = &input[consumed..];
+        continue;
       }
 
       let want = CHUNK_LEN - self.chunk_state.len();
