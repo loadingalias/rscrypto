@@ -21,6 +21,38 @@ use crate::{
   },
 };
 
+const BLAKE3_LATENCY_BENCH_SIZES: &[usize] = &[1, 16, 32, 64, 128, 256, 4096, 1024 * 1024];
+const BLAKE3_LATENCY_SELECTION_SIZES: &[usize] = &[1, 16, 32, 64, 128, 256];
+
+#[inline]
+#[must_use]
+fn is_blake3_latency_algo(algo: &str) -> bool {
+  matches!(
+    algo,
+    "blake3-latency" | "blake3-latency-keyed" | "blake3-latency-derive" | "blake3-latency-xof"
+  )
+}
+
+#[inline]
+#[must_use]
+fn stream_bench_sizes_for_algo(algo: &str) -> &'static [usize] {
+  if is_blake3_latency_algo(algo) {
+    BLAKE3_LATENCY_BENCH_SIZES
+  } else {
+    STREAM_SIZES_BENCH
+  }
+}
+
+#[inline]
+#[must_use]
+fn selection_sizes_for_algo(algo: &str) -> &'static [usize] {
+  if is_blake3_latency_algo(algo) {
+    BLAKE3_LATENCY_SELECTION_SIZES
+  } else {
+    STREAM_SIZES
+  }
+}
+
 /// Main tuning engine that orchestrates benchmarking for multiple algorithms.
 pub struct TuneEngine {
   /// Algorithms to tune.
@@ -148,7 +180,7 @@ impl TuneEngine {
 
       if verbose {
         let stream_measurements = to_measurements(&raw.stream_measurements);
-        let (best_kernel, best_streams) = find_best_config(&stream_measurements);
+        let (best_kernel, best_streams) = find_best_config(raw.name.as_str(), &stream_measurements);
         eprintln!("  Best kernel: {best_kernel} ({best_streams} stream(s))");
       }
       eprintln!("  Done in {:.1}s", start.elapsed().as_secs_f64());
@@ -224,7 +256,7 @@ fn measure_algorithm_impl(
   let stream_measurements_view = to_measurements(&stream_measurements);
 
   // Select best kernel/streams from stream measurements.
-  let (best_kernel, _best_streams) = find_best_config(&stream_measurements_view);
+  let (best_kernel, _best_streams) = find_best_config(algorithm.name(), &stream_measurements_view);
 
   // Phase A2: collect explicit class probes (xs/s fallbacks).
   let size_class_probe_measurements =
@@ -266,7 +298,7 @@ fn derive_algorithm_from_raw(raw: &RawAlgorithmMeasurements) -> Result<Algorithm
     return Err(TuneError::BenchmarkFailed("raw stream measurements are empty"));
   }
 
-  let (best_kernel, best_streams) = find_best_config(&stream_measurements);
+  let (best_kernel, best_streams) = find_best_config(raw.name.as_str(), &stream_measurements);
   let size_class_best = derive_size_class_best(&stream_measurements, &raw.size_class_probe_measurements);
 
   let portable_names: Vec<&str> = raw
@@ -653,12 +685,13 @@ fn benchmark_streams(
   algorithm: &mut dyn Tunable,
   kernels: &[crate::KernelSpec],
 ) -> Result<Vec<RawBenchPoint>, TuneError> {
+  let bench_sizes = stream_bench_sizes_for_algo(algorithm.name());
   let stream_candidates = stream_candidates();
   let mut measurements = Vec::with_capacity(
     kernels
       .len()
       .saturating_mul(stream_candidates.len())
-      .saturating_mul(STREAM_SIZES_BENCH.len()),
+      .saturating_mul(bench_sizes.len()),
   );
 
   for kernel in kernels {
@@ -675,7 +708,7 @@ fn benchmark_streams(
             continue;
           }
 
-          for &size in STREAM_SIZES_BENCH {
+          for &size in bench_sizes {
             let result = benchmark_at_size(runner, algorithm, size)?;
             measurements.push(RawBenchPoint::from_result(kernel.name, streams, &result));
           }
@@ -687,7 +720,7 @@ fn benchmark_streams(
         if force_kernel_and_streams_with_warning(algorithm, kernel.name, streams).is_err() {
           continue;
         }
-        for &size in STREAM_SIZES_BENCH {
+        for &size in bench_sizes {
           let result = benchmark_at_size(runner, algorithm, size)?;
           measurements.push(RawBenchPoint::from_result(kernel.name, streams, &result));
         }
@@ -879,8 +912,9 @@ fn derive_size_class_best(stream_measurements: &[Measurement], probes: &[RawBenc
 ///
 /// Delegates to `analysis::find_best_large_config` and converts the result
 /// to static strings for use in the engine.
-fn find_best_config(measurements: &[Measurement]) -> (&'static str, u8) {
-  match analysis::find_best_config_across_sizes(measurements, STREAM_SIZES) {
+fn find_best_config(algo_name: &str, measurements: &[Measurement]) -> (&'static str, u8) {
+  let sizes = selection_sizes_for_algo(algo_name);
+  match analysis::find_best_config_across_sizes(measurements, sizes) {
     Some(config) => {
       // Convert borrowed str to 'static by leaking (one-time operation during tuning)
       let name: &'static str = Box::leak(config.kernel.to_string().into_boxed_str());
