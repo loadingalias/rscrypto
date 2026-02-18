@@ -11,6 +11,12 @@
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 #![cfg_attr(not(test), deny(clippy::expect_used))]
 #![cfg_attr(not(test), deny(clippy::indexing_slicing))]
+#![cfg_attr(
+  any(target_arch = "powerpc64", target_arch = "s390x", target_arch = "riscv64"),
+  feature(portable_simd)
+)]
+#![cfg_attr(target_arch = "powerpc64", feature(powerpc_target_feature))]
+#![cfg_attr(target_arch = "riscv64", feature(riscv_target_feature))]
 #![no_std]
 
 #[cfg(feature = "alloc")]

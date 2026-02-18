@@ -11,7 +11,7 @@ for inspecting benchmark baselines and prototyping table updates; it is not
 wired into the crate build.
 
 Usage:
-    python scripts/gen/kernel_tables.py
+    just gen-kernel-tables
 
 The generated file contains a standalone Rust module with:
 - Draft KernelTable structs for each benchmarked platform

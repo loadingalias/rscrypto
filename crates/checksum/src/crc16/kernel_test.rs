@@ -305,11 +305,15 @@ fn run_riscv64_kernels_ccitt(data: &[u8], results: &mut alloc::vec::Vec<KernelRe
   let caps = platform::caps();
 
   if caps.has(riscv::ZBC) {
-    run_single_kernel_ccitt(data, CCITT_ZBC, ZBC, results);
+    for (&name, &func) in ZBC_NAMES.iter().zip(CCITT_ZBC.iter()) {
+      run_single_kernel_ccitt(data, func, name, results);
+    }
   }
 
   if caps.has(riscv::ZVBC) {
-    run_single_kernel_ccitt(data, CCITT_ZVBC, ZVBC, results);
+    for (&name, &func) in ZVBC_NAMES.iter().zip(CCITT_ZVBC.iter()) {
+      run_single_kernel_ccitt(data, func, name, results);
+    }
   }
 }
 
@@ -321,11 +325,15 @@ fn run_riscv64_kernels_ibm(data: &[u8], results: &mut alloc::vec::Vec<KernelResu
   let caps = platform::caps();
 
   if caps.has(riscv::ZBC) {
-    run_single_kernel_ibm(data, IBM_ZBC, ZBC, results);
+    for (&name, &func) in ZBC_NAMES.iter().zip(IBM_ZBC.iter()) {
+      run_single_kernel_ibm(data, func, name, results);
+    }
   }
 
   if caps.has(riscv::ZVBC) {
-    run_single_kernel_ibm(data, IBM_ZVBC, ZVBC, results);
+    for (&name, &func) in ZVBC_NAMES.iter().zip(IBM_ZVBC.iter()) {
+      run_single_kernel_ibm(data, func, name, results);
+    }
   }
 }
 

@@ -1,4 +1,14 @@
 #!/usr/bin/env python3
+"""Generate binary hash testdata blobs under crates/hashes/testdata.
+
+This is a manual regeneration utility for vector fixtures consumed by tests.
+Inputs come from:
+- checked-in sources (for BLAKE3/KMAC)
+- locally cached cargo registry crates (for some Ascon/Blake2 vectors)
+
+Run via:
+  just gen-hashes-testdata
+"""
 from __future__ import annotations
 
 import glob

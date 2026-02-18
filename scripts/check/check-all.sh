@@ -15,6 +15,7 @@ DEFAULT_CONSTRAINED_CRATES=(
 	"backend"
 	"traits"
 	"checksum"
+	"hashes"
 )
 
 CONSTRAINED_CRATES=()
@@ -44,14 +45,8 @@ select_constrained_crates() {
 		return 0
 	fi
 
-	local since_arg=""
-	if [[ -n "${RAIL_SINCE:-}" ]]; then
-		since_arg="--since $RAIL_SINCE"
-	fi
-
-	# shellcheck disable=SC2086
 	local affected
-	affected=$(cargo rail affected $since_arg -f names-only 2>/dev/null || echo "")
+	affected="$(rail_plan_crates)"
 
 	if [[ -z "$affected" ]]; then
 		CONSTRAINED_CRATES=("${DEFAULT_CONSTRAINED_CRATES[@]}")

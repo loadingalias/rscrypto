@@ -1062,6 +1062,22 @@ fn median(values: &mut [usize]) -> Option<usize> {
 }
 
 fn collect_blake3_threshold(results: &TuneResults, fallback: &AlgorithmResult, keys: &[&str]) -> Option<usize> {
+  // Prefer canonical oneshot threshold producers first. These are the
+  // intended sources for dispatch size-class boundaries.
+  let mut preferred_values = Vec::with_capacity(2);
+  for algo_name in ["blake3-chunk", "blake3"] {
+    if let Some(algo) = results.algorithms.iter().find(|a| a.name == algo_name)
+      && let Some(v) = find_threshold_value(algo, keys)
+    {
+      preferred_values.push(v);
+    }
+  }
+  if !preferred_values.is_empty() {
+    return median(&mut preferred_values);
+  }
+
+  // Fallback path for partial/older artifacts: aggregate from the broader
+  // non-stream BLAKE3 corpus.
   let mut values = Vec::with_capacity(BLAKE3_TUNING_CORPUS.len());
 
   for &(algo_name, _) in BLAKE3_TUNING_CORPUS {
@@ -1102,6 +1118,63 @@ fn blake3_boundaries(results: &TuneResults, algo: &AlgorithmResult) -> [usize; 3
   m_max = m_max.max(s_max);
 
   [xs_max, s_max, m_max]
+}
+
+#[inline]
+#[must_use]
+fn is_blake3_x86_avx512_kernel(kernel: &str) -> bool {
+  kernel == "x86_64/avx512"
+}
+
+#[inline]
+#[must_use]
+fn is_blake3_x86_sse41_kernel(kernel: &str) -> bool {
+  kernel == "x86_64/sse4.1"
+}
+
+#[inline]
+#[must_use]
+fn is_blake3_x86_profile_kind(tune_kind: TuneKind) -> bool {
+  matches!(
+    tune_kind,
+    TuneKind::Zen4 | TuneKind::Zen5 | TuneKind::Zen5c | TuneKind::IntelSpr | TuneKind::IntelGnr | TuneKind::IntelIcl
+  )
+}
+
+#[inline]
+fn sanitize_blake3_dispatch_profile(
+  tune_kind: TuneKind,
+  boundaries: &mut [usize; 3],
+  xs: &str,
+  s: &mut &str,
+  m: &str,
+  l: &str,
+) {
+  if !is_blake3_x86_profile_kind(tune_kind) {
+    return;
+  }
+  if !xs.starts_with("x86_64/") || !s.starts_with("x86_64/") || !m.starts_with("x86_64/") || !l.starts_with("x86_64/") {
+    return;
+  }
+
+  let wide_uses_avx512 = is_blake3_x86_avx512_kernel(m) || is_blake3_x86_avx512_kernel(l);
+  if !wide_uses_avx512 {
+    return;
+  }
+
+  // Guardrail: do not let apply emit the degenerate profile where
+  // s_max == 64 and 65..m_max goes directly to AVX-512. This creates a
+  // reproducible 64->65 cliff on tuned x86 targets.
+  if boundaries[1] <= 64 {
+    boundaries[1] = 1024;
+  }
+  boundaries[2] = boundaries[2].max(boundaries[1]);
+
+  // Guardrail: when wide tier is AVX-512, keep the small SIMD tier at AVX2
+  // rather than SSE4.1 to avoid avoidable throughput loss in 65..1024B.
+  if is_blake3_x86_sse41_kernel(s) {
+    *s = "x86_64/avx2";
+  }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1727,7 +1800,8 @@ fn generate_blake3_family_profile(
       _ => {}
     }
   }
-  let boundaries = blake3_boundaries(results, algo);
+  let mut boundaries = blake3_boundaries(results, algo);
+  sanitize_blake3_dispatch_profile(tune_kind, &mut boundaries, xs, &mut s, m, l);
   let stream = choose_blake3_pair_component(stream64_modes, Blake3PairObjective::StreamKernel)
     .unwrap_or_else(|| "portable".to_string());
   let bulk =
@@ -2531,6 +2605,102 @@ mod tests {
     let code = generate_hash_table(TuneKind::Zen4, &blake3_chunk, Some(&results));
     // Median(320, 256) = 320 (upper median), then boundary is crossover-1.
     assert!(code.contains("boundaries: [64, 319, 4096]"));
+  }
+
+  #[test]
+  fn blake3_apply_guardrail_prevents_64_to_65_avx512_cliff_profiles() {
+    let mk_algo =
+      |name: &'static str, best_kernel: &'static str, size_class_best: Vec<SizeClassBest>| AlgorithmResult {
+        name,
+        env_prefix: "RSCRYPTO_BENCH_BLAKE3",
+        best_kernel,
+        recommended_streams: 1,
+        peak_throughput_gib_s: 0.0,
+        size_class_best,
+        thresholds: vec![("THRESHOLD_PORTABLE_TO_SIMD".to_string(), 65)],
+        analysis: AnalysisResult::default(),
+      };
+
+    let blake3_chunk = mk_algo(
+      "blake3-chunk",
+      "x86_64/avx512",
+      vec![
+        SizeClassBest {
+          class: "xs",
+          kernel: "x86_64/sse4.1".to_string(),
+          streams: 1,
+          throughput_gib_s: 0.0,
+        },
+        SizeClassBest {
+          class: "s",
+          kernel: "x86_64/sse4.1".to_string(),
+          streams: 1,
+          throughput_gib_s: 0.0,
+        },
+        SizeClassBest {
+          class: "m",
+          kernel: "x86_64/avx512".to_string(),
+          streams: 1,
+          throughput_gib_s: 0.0,
+        },
+        SizeClassBest {
+          class: "l",
+          kernel: "x86_64/avx512".to_string(),
+          streams: 1,
+          throughput_gib_s: 0.0,
+        },
+      ],
+    );
+    let blake3_policy = mk_algo("blake3", "x86_64/avx512", vec![]);
+    let stream64 = mk_algo("blake3-stream64", "x86_64/sse4.1+x86_64/avx512", vec![]);
+    let stream4k = mk_algo("blake3-stream4k", "x86_64/sse4.1+x86_64/avx512", vec![]);
+    let stream4k_keyed = mk_algo("blake3-stream4k-keyed", "x86_64/sse4.1+x86_64/avx512", vec![]);
+    let stream4k_derive = mk_algo("blake3-stream4k-derive", "x86_64/sse4.1+x86_64/avx512", vec![]);
+    let stream4k_xof = mk_algo("blake3-stream4k-xof", "x86_64/sse4.1+x86_64/avx512", vec![]);
+    let stream_mixed = mk_algo("blake3-stream-mixed", "x86_64/sse4.1+x86_64/avx512", vec![]);
+    let stream_mixed_xof = mk_algo("blake3-stream-mixed-xof", "x86_64/sse4.1+x86_64/avx512", vec![]);
+
+    let results = TuneResults {
+      platform: PlatformInfo {
+        arch: "x86_64",
+        os: "linux",
+        caps: platform::Caps::NONE,
+        tune_kind: TuneKind::Zen5,
+        description: String::new(),
+      },
+      algorithms: vec![
+        blake3_chunk.clone(),
+        blake3_policy,
+        stream64.clone(),
+        stream4k.clone(),
+        stream4k_keyed.clone(),
+        stream4k_derive.clone(),
+        stream4k_xof.clone(),
+        stream_mixed.clone(),
+        stream_mixed_xof.clone(),
+      ],
+      timestamp: String::new(),
+    };
+
+    let code = super::generate_blake3_family_profile(
+      TuneKind::Zen5,
+      &blake3_chunk,
+      &results.algorithms[1],
+      &[&stream64, &stream4k],
+      &[&stream4k, &stream4k_keyed, &stream4k_derive, &stream4k_xof],
+      &[
+        &stream4k,
+        &stream4k_keyed,
+        &stream4k_derive,
+        &stream4k_xof,
+        &stream_mixed,
+        &stream_mixed_xof,
+      ],
+      &results,
+    );
+
+    assert!(code.contains("boundaries: [64, 1024, 4096]"));
+    assert!(code.contains("s: KernelId::X86Avx2"));
   }
 
   #[test]

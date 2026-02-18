@@ -44,7 +44,7 @@ This file is the caller map for `scripts/`.
 - `scripts/lib/targets.sh`
   - Sourced by: `scripts/check/check-all.sh`, `scripts/check/check-win.sh`, `scripts/check/check-linux.sh`
 - `scripts/lib/target-matrix.py`
-  - Called by: `scripts/lib/targets.sh`, `.github/workflows/commit.yaml`, `.github/workflows/weekly.yaml`
+  - Called by: `scripts/lib/targets.sh`, `.github/workflows/commit.yaml`, `.github/workflows/weekly.yaml`, `just target-matrix-shell`, `just target-matrix-json`
 - `scripts/lib/toolchain.sh`
   - Called by: `.github/actions/setup-toolchain/action.yaml`, `.github/actions/setup-runson/action.yaml`
 
@@ -54,11 +54,13 @@ This file is the caller map for `scripts/`.
   - Called by: `scripts/check/check-linux.sh`
 - `scripts/bench/criterion-summary.py`
   - Called by: `just bench-summary`, `just bench-compare`, `just bench-blake3-compare`
+- `scripts/bench/blake3-codegen-audit.sh`
+  - Called by: `just blake3-codegen-audit`
 - `scripts/bench/comp-check.py`
   - Called by: `just comp-check`
 - `scripts/gen_blake3_x86_asm_ports.py`
   - Called by: `just gen-blake3-x86-asm-ports`
 - `scripts/gen/kernel_tables.py`
-  - Called by: manual generation step documented in `crates/checksum/src/dispatch.rs` and `crates/checksum/src/generated/README.md`
+  - Called by: `just gen-kernel-tables`; also documented in `crates/checksum/src/dispatch.rs` and `crates/checksum/src/generated/README.md`
 - `scripts/gen_hashes_testdata.py`
-  - Called by: manual testdata generation (developer utility)
+  - Called by: `just gen-hashes-testdata` (manual developer utility)

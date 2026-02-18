@@ -54,9 +54,12 @@ fn blake3_oneshot_comparison(c: &mut Criterion) {
       b.iter(|| black_box(official_hash_bytes(black_box(d))))
     });
 
-    group.bench_with_input(BenchmarkId::new("official-rayon", len), data, |b, d| {
-      b.iter(|| black_box(official_hash_bytes_rayon(black_box(d))))
-    });
+    // Rayon is only meaningful past tiny payloads.
+    if *len >= 1024 {
+      group.bench_with_input(BenchmarkId::new("official-rayon", len), data, |b, d| {
+        b.iter(|| black_box(official_hash_bytes_rayon(black_box(d))))
+      });
+    }
   }
 
   group.finish();

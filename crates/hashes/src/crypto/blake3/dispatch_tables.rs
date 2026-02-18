@@ -115,7 +115,19 @@ pub struct FamilyProfile {
 const SIMD_KERNEL: KernelId = KernelId::X86Avx2;
 #[cfg(target_arch = "aarch64")]
 const SIMD_KERNEL: KernelId = KernelId::Aarch64Neon;
-#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(target_arch = "s390x")]
+const SIMD_KERNEL: KernelId = KernelId::S390xVector;
+#[cfg(target_arch = "powerpc64")]
+const SIMD_KERNEL: KernelId = KernelId::PowerVsx;
+#[cfg(target_arch = "riscv64")]
+const SIMD_KERNEL: KernelId = KernelId::RiscvV;
+#[cfg(not(any(
+  target_arch = "x86_64",
+  target_arch = "aarch64",
+  target_arch = "s390x",
+  target_arch = "powerpc64",
+  target_arch = "riscv64"
+)))]
 const SIMD_KERNEL: KernelId = KernelId::Portable;
 
 #[cfg(target_arch = "x86_64")]
@@ -413,9 +425,11 @@ pub static PROFILE_PORTABLE: FamilyProfile = portable_profile();
 #[cfg(target_arch = "x86_64")]
 pub static PROFILE_X86_ZEN4: FamilyProfile = FamilyProfile {
   dispatch: DispatchTable {
-    boundaries: [64, 64, 4096],
+    // Keep <=64B on the low-latency path, but avoid AVX-512 startup cost for
+    // tiny multi-block inputs (65..1024B), which has shown clear regressions.
+    boundaries: [64, 1024, 4096],
     xs: KernelId::X86Sse41,
-    s: KernelId::X86Sse41,
+    s: KernelId::X86Avx2,
     m: KernelId::X86Avx512,
     l: KernelId::X86Avx512,
   },
@@ -455,9 +469,11 @@ pub static PROFILE_X86_ZEN4: FamilyProfile = default_kind_profile();
 #[cfg(target_arch = "x86_64")]
 pub static PROFILE_X86_ZEN5: FamilyProfile = FamilyProfile {
   dispatch: DispatchTable {
-    boundaries: [64, 64, 4096],
+    // Keep <=64B on the low-latency path, but avoid AVX-512 startup cost for
+    // tiny multi-block inputs (65..1024B), which has shown clear regressions.
+    boundaries: [64, 1024, 4096],
     xs: KernelId::X86Sse41,
-    s: KernelId::X86Sse41,
+    s: KernelId::X86Avx2,
     m: KernelId::X86Avx512,
     l: KernelId::X86Avx512,
   },
@@ -540,7 +556,9 @@ pub static PROFILE_X86_ZEN5C: FamilyProfile = default_kind_profile();
 #[cfg(target_arch = "x86_64")]
 pub static PROFILE_X86_INTEL_SPR: FamilyProfile = FamilyProfile {
   dispatch: DispatchTable {
-    boundaries: [64, 64, 4096],
+    // Keep the strongest <=64B path, but route 65..1024B to AVX2 to avoid a
+    // measurable AVX-512 small-input cliff.
+    boundaries: [64, 1024, 4096],
     xs: KernelId::X86Avx512,
     s: KernelId::X86Avx2,
     m: KernelId::X86Avx512,
@@ -625,9 +643,11 @@ pub static PROFILE_X86_INTEL_GNR: FamilyProfile = default_kind_profile();
 #[cfg(target_arch = "x86_64")]
 pub static PROFILE_X86_INTEL_ICL: FamilyProfile = FamilyProfile {
   dispatch: DispatchTable {
-    boundaries: [64, 64, 4096],
+    // Keep the strongest <=64B path, but route 65..1024B to AVX2 to avoid a
+    // measurable AVX-512 small-input cliff.
+    boundaries: [64, 1024, 4096],
     xs: KernelId::X86Avx512,
-    s: KernelId::X86Sse41,
+    s: KernelId::X86Avx2,
     m: KernelId::X86Avx512,
     l: KernelId::X86Avx512,
   },
@@ -681,14 +701,14 @@ pub static PROFILE_AARCH64_APPLE_M1M3: FamilyProfile = FamilyProfile {
   parallel: ParallelTable {
     min_bytes: 65536,
     min_chunks: 64,
-    max_threads: 12,
+    max_threads: 10,
     spawn_cost_bytes: 24576,
     merge_cost_bytes: 16384,
     bytes_per_core_small: 10922,
-    bytes_per_core_medium: 41984,
-    bytes_per_core_large: 325632,
+    bytes_per_core_medium: 63488,
+    bytes_per_core_large: 815104,
     small_limit_bytes: 262144,
-    medium_limit_bytes: 1048576,
+    medium_limit_bytes: 2097152,
   },
   streaming_parallel: ParallelTable {
     min_bytes: 18446744073709551615,

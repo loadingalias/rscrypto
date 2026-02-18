@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # Shared utilities for repository scripts.
 
+COMMON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=rail-plan.sh
+source "$COMMON_DIR/rail-plan.sh"
+
 # Colors (disabled if not a terminal)
 if [[ -t 1 ]]; then
   RED=$'\033[0;31m'
@@ -70,14 +74,8 @@ get_crate_flags() {
     return 0
   fi
 
-  local since_arg=""
-  if [[ -n "${RAIL_SINCE:-}" ]]; then
-    since_arg="--since $RAIL_SINCE"
-  fi
-
-  # shellcheck disable=SC2086
   local affected
-  affected=$(cargo rail affected $since_arg -f names-only 2>/dev/null || echo "")
+  affected="$(rail_plan_crates)"
 
   if [[ -z "$affected" ]]; then
     CRATE_FLAGS="--workspace"
