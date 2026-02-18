@@ -52,6 +52,9 @@ bench-native *args="":
 bench-quick *args="":
     @BENCH_QUICK=true scripts/bench/bench.sh {{args}}
 
+blake3-codegen-audit target="x86_64-unknown-linux-gnu" out="target/blake3-codegen":
+    @scripts/bench/blake3-codegen-audit.sh {{target}} {{out}}
+
 
 # Tuning
 # NOTE: The 'tune' crate is dev-only and not part of the workspace build.
@@ -111,6 +114,18 @@ comp-check path:
 gen-blake3-x86-asm-ports:
     @scripts/gen_blake3_x86_asm_ports.py
 
+target-matrix-shell:
+    @python3 scripts/lib/target-matrix.py --format shell
+
+target-matrix-json key:
+    @python3 scripts/lib/target-matrix.py --format json --key "{{key}}"
+
+gen-kernel-tables:
+    @python3 scripts/gen/kernel_tables.py
+
+gen-hashes-testdata:
+    @python3 scripts/gen_hashes_testdata.py
+
 
 ci-pin-actions:
     @scripts/ci/pin-actions.sh --update-lock
@@ -120,8 +135,10 @@ ci-verify-actions:
 
 # Update Rust dependencies in the lockfile and manifests.
 update:
-    cargo update --workspace
-    cargo upgrade --recursive
+    @scripts/update/update-all.sh
+
+update-check:
+    @scripts/update/update-all.sh --check
 
 # Legacy convenience wrappers used in contributor docs.
 pin-actions:

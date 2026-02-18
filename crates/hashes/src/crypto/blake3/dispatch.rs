@@ -5,7 +5,13 @@ use platform::TuneKind;
 #[cfg(target_arch = "x86_64")]
 use platform::caps::x86;
 
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[cfg(any(
+  target_arch = "x86_64",
+  target_arch = "aarch64",
+  target_arch = "s390x",
+  target_arch = "powerpc64",
+  target_arch = "riscv64"
+))]
 use super::kernels::required_caps;
 use super::{
   dispatch_tables::{DispatchTable, ParallelTable, StreamingTable},
@@ -208,6 +214,30 @@ fn resolve(id: Blake3KernelId, caps: Caps) -> Blake3KernelId {
     Blake3KernelId::Aarch64Neon => {
       if caps.has(required_caps(Blake3KernelId::Aarch64Neon)) {
         Blake3KernelId::Aarch64Neon
+      } else {
+        Blake3KernelId::Portable
+      }
+    }
+    #[cfg(target_arch = "s390x")]
+    Blake3KernelId::S390xVector => {
+      if caps.has(required_caps(Blake3KernelId::S390xVector)) {
+        Blake3KernelId::S390xVector
+      } else {
+        Blake3KernelId::Portable
+      }
+    }
+    #[cfg(target_arch = "powerpc64")]
+    Blake3KernelId::PowerVsx => {
+      if caps.has(required_caps(Blake3KernelId::PowerVsx)) {
+        Blake3KernelId::PowerVsx
+      } else {
+        Blake3KernelId::Portable
+      }
+    }
+    #[cfg(target_arch = "riscv64")]
+    Blake3KernelId::RiscvV => {
+      if caps.has(required_caps(Blake3KernelId::RiscvV)) {
+        Blake3KernelId::RiscvV
       } else {
         Blake3KernelId::Portable
       }

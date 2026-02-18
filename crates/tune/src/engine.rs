@@ -333,6 +333,14 @@ fn derive_algorithm_from_raw(raw: &RawAlgorithmMeasurements) -> Result<Algorithm
   let mut result_analysis = analysis::analyze(&threshold_measurements, portable_name.as_str());
   result_analysis.best_large_kernel = Some(best_kernel);
   result_analysis.recommended_streams = best_streams;
+  if result_analysis.peak_throughput_gib_s <= 0.0
+    && let Some(peak) = size_class_best
+      .iter()
+      .map(|class_best| class_best.throughput_gib_s)
+      .reduce(f64::max)
+  {
+    result_analysis.peak_throughput_gib_s = peak;
+  }
 
   let mut thresholds = Vec::new();
 

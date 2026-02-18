@@ -8,10 +8,15 @@
 extern crate alloc;
 
 use alloc::{vec, vec::Vec};
+#[cfg(feature = "std")]
+use std::sync::OnceLock;
 
 use traits::{Digest, Xof};
 
 use crate::{crypto, fast};
+
+#[cfg(feature = "std")]
+static BLAKE3_FORCE_KERNEL_ENV: OnceLock<Option<&'static str>> = OnceLock::new();
 
 #[derive(Clone, Copy)]
 pub struct Kernel {
@@ -521,6 +526,52 @@ fn blake3_stream4k_xof_auto(data: &[u8]) -> u64 {
 
 fn blake3_stream_mixed_xof_auto(data: &[u8]) -> u64 {
   blake3_stream_auto_mode(data, Blake3ChunkPattern::MixedBursty, Blake3StreamMode::Xof)
+}
+
+#[inline]
+#[must_use]
+fn normalize_blake3_kernel_name(name: &str) -> Option<&'static str> {
+  match name {
+    "portable" => Some("portable"),
+    #[cfg(target_arch = "x86_64")]
+    "x86_64/ssse3" | "ssse3" => Some("x86_64/ssse3"),
+    #[cfg(target_arch = "x86_64")]
+    "x86_64/sse4.1" | "sse4.1" | "sse41" => Some("x86_64/sse4.1"),
+    #[cfg(target_arch = "x86_64")]
+    "x86_64/avx2" | "avx2" => Some("x86_64/avx2"),
+    #[cfg(target_arch = "x86_64")]
+    "x86_64/avx512" | "avx512" => Some("x86_64/avx512"),
+    #[cfg(target_arch = "aarch64")]
+    "aarch64/neon" | "neon" => Some("aarch64/neon"),
+    _ => None,
+  }
+}
+
+#[cfg(feature = "std")]
+#[inline]
+#[must_use]
+fn blake3_forced_kernel_from_env() -> Option<&'static str> {
+  *BLAKE3_FORCE_KERNEL_ENV.get_or_init(|| {
+    let raw = std::env::var("RSCRYPTO_BLAKE3_FORCE_KERNEL").ok()?;
+    let lowered = raw.trim().to_ascii_lowercase();
+    normalize_blake3_kernel_name(lowered.as_str())
+  })
+}
+
+#[cfg(not(feature = "std"))]
+#[inline]
+#[must_use]
+fn blake3_forced_kernel_from_env() -> Option<&'static str> {
+  None
+}
+
+#[inline]
+#[must_use]
+fn run_blake3_forced_auto(algo: &str, kernel_name: &'static str, data: &[u8]) -> Option<u64> {
+  if parse_blake3_stream_algo(algo).is_some() {
+    return run_blake3_stream_forced(algo, kernel_name, data);
+  }
+  Some(((get_kernel(algo, kernel_name)?).func)(data))
 }
 
 #[must_use]
@@ -2039,6 +2090,13 @@ pub fn get_kernel(algo: &str, name: &str) -> Option<Kernel> {
 
 #[must_use]
 pub fn run_auto(algo: &str, data: &[u8]) -> Option<u64> {
+  if algo.starts_with("blake3")
+    && let Some(kernel_name) = blake3_forced_kernel_from_env()
+    && let Some(out) = run_blake3_forced_auto(algo, kernel_name, data)
+  {
+    return Some(out);
+  }
+
   if let Some((mode, pattern)) = parse_blake3_stream_algo(algo) {
     return Some(blake3_stream_auto_mode(data, pattern, mode));
   }
@@ -2123,6 +2181,12 @@ pub fn run_auto(algo: &str, data: &[u8]) -> Option<u64> {
 
 #[must_use]
 pub fn kernel_name_for_len(algo: &str, len: usize) -> Option<&'static str> {
+  if algo.starts_with("blake3")
+    && let Some(kernel_name) = blake3_forced_kernel_from_env()
+  {
+    return Some(kernel_name);
+  }
+
   if parse_blake3_stream_algo(algo).is_some() {
     return Some(crypto::blake3::dispatch::kernel_name_for_len(len));
   }

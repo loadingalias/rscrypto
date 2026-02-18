@@ -4,6 +4,11 @@
 //! and size bucket. They provide a stable contract for tuning output quality
 //! and prevent silent regressions while iterating kernel policy.
 use std::sync::OnceLock;
+#[cfg(feature = "std")]
+use std::{
+  fs, io,
+  path::{Path, PathBuf},
+};
 
 use platform::TuneKind;
 
@@ -13,6 +18,8 @@ use crate::hash::is_blake3_tuning_algo;
 
 const TARGET_MATRIX_MANIFEST: &str = include_str!("../../../config/target-matrix.toml");
 static TUNE_ARCHES: OnceLock<Vec<&'static str>> = OnceLock::new();
+#[cfg(feature = "std")]
+const BLAKE3_BASELINE_REL_DIR: &str = "crates/hashes/src/crypto/blake3/bench_baseline";
 
 fn parse_tune_arches_from_manifest() -> Vec<&'static str> {
   for line in TARGET_MATRIX_MANIFEST.lines() {
@@ -104,12 +111,60 @@ fn surface_value(surface: Blake3Surface, idx: usize, floors: SurfaceFloors) -> f
   }
 }
 
+/// How strictly class throughput floors should be enforced for a tuning surface.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ContractMode {
+  Strict,
+  Informational,
+}
+
+impl ContractMode {
+  #[must_use]
+  pub const fn as_str(self) -> &'static str {
+    match self {
+      Self::Strict => "strict",
+      Self::Informational => "informational",
+    }
+  }
+}
+
+#[inline]
+#[must_use]
+fn has_strict_class_contract(algo: &str) -> bool {
+  matches!(
+    algo,
+    "blake3"
+      | "blake3-chunk"
+      | "blake3-latency"
+      | "blake3-latency-keyed"
+      | "blake3-latency-derive"
+      | "blake3-latency-xof"
+      | "blake3-stream4k"
+      | "blake3-stream4k-keyed"
+      | "blake3-stream4k-derive"
+      | "blake3-stream4k-xof"
+  )
+}
+
+/// Resolve contract mode for an algorithm surface.
+#[must_use]
+pub fn contract_mode(algo: &str) -> ContractMode {
+  if has_strict_class_contract(algo) {
+    ContractMode::Strict
+  } else {
+    ContractMode::Informational
+  }
+}
+
 /// Resolve a throughput floor (GiB/s) for an algorithm/architecture/size class.
 ///
 /// Returns `None` when no explicit target is defined.
 #[must_use]
 pub fn class_target_gib_s(algo: &str, arch: &str, tune_kind: TuneKind, class: &str) -> Option<f64> {
   if !is_blake3_tuning_algo(algo) {
+    return None;
+  }
+  if !has_strict_class_contract(algo) {
     return None;
   }
   if !tune_arches().contains(&arch) {
@@ -291,7 +346,7 @@ mod tests {
     let icl = class_target_gib_s("blake3", "x86_64", TuneKind::IntelIcl, "l").unwrap();
     assert!(zen5 > icl);
 
-    let stream64 = class_target_gib_s("blake3-stream64", "x86_64", TuneKind::Zen5, "s").unwrap();
+    let stream64 = class_target_gib_s("blake3-latency", "x86_64", TuneKind::Zen5, "s").unwrap();
     let stream4k = class_target_gib_s("blake3-stream4k", "x86_64", TuneKind::Zen5, "s").unwrap();
     assert!(stream4k > stream64);
   }
@@ -309,7 +364,7 @@ mod tests {
   fn streaming_targets_are_explicit_and_conservative() {
     let oneshot_l = class_target_gib_s("blake3", "x86_64", TuneKind::IntelSpr, "l").unwrap();
     let stream4k_l = class_target_gib_s("blake3-stream4k", "x86_64", TuneKind::IntelSpr, "l").unwrap();
-    let stream64_l = class_target_gib_s("blake3-stream64", "x86_64", TuneKind::IntelSpr, "l").unwrap();
+    let stream64_l = class_target_gib_s("blake3-latency", "x86_64", TuneKind::IntelSpr, "l").unwrap();
 
     assert!(stream4k_l < oneshot_l);
     assert!(stream64_l < stream4k_l);
@@ -317,9 +372,20 @@ mod tests {
   }
 
   #[test]
+  fn informational_surfaces_do_not_emit_class_contracts() {
+    assert_eq!(contract_mode("blake3-parent"), ContractMode::Informational);
+    assert!(class_target_gib_s("blake3-parent", "aarch64", TuneKind::AppleM1M3, "l").is_none());
+    assert!(class_target_gib_s("blake3-stream64", "x86_64", TuneKind::Zen5, "m").is_none());
+    assert!(class_target_gib_s("blake3-stream-mixed-xof", "aarch64", TuneKind::AppleM4, "s").is_none());
+  }
+
+  #[test]
   fn tune_arches_match_target_manifest() {
     assert!(tune_arches().contains(&"x86_64"));
     assert!(tune_arches().contains(&"aarch64"));
+    assert!(tune_arches().contains(&"s390x"));
+    assert!(tune_arches().contains(&"powerpc64le"));
+    assert!(tune_arches().contains(&"riscv64"));
   }
 }
 
@@ -359,4 +425,123 @@ pub fn collect_target_misses(results: &TuneResults) -> Vec<TargetMiss> {
   }
 
   misses
+}
+
+/// A required BLAKE3 baseline file class is missing for an architecture.
+#[cfg(feature = "std")]
+#[derive(Clone, Debug)]
+pub struct Blake3BaselineParityMiss {
+  pub arch: &'static str,
+  pub baseline_dir: PathBuf,
+  pub expected_prefixes: &'static [&'static str],
+}
+
+#[cfg(feature = "std")]
+#[inline]
+#[must_use]
+fn blake3_baseline_prefixes_for_arch(arch: &str) -> &'static [&'static str] {
+  match arch {
+    "x86_64" => &["linux_x86_"],
+    "aarch64" => &["linux_arm_", "linux_aarch64_", "mac_arm_", "mac_aarch64_"],
+    "s390x" => &["linux_s390x_", "linux_ibm_s390x_"],
+    "powerpc64le" => &[
+      "linux_powerpc64le_",
+      "linux_ppc64le_",
+      "linux_ibm_power10_",
+      "linux_power10_",
+    ],
+    "riscv64" => &["linux_riscv64_", "linux_riscv64gc_"],
+    _ => &[],
+  }
+}
+
+#[cfg(feature = "std")]
+fn collect_blake3_baseline_parity_misses_for_arches(
+  repo_root: &Path,
+  arches: &[&'static str],
+) -> io::Result<Vec<Blake3BaselineParityMiss>> {
+  let baseline_dir = repo_root.join(BLAKE3_BASELINE_REL_DIR);
+  let mut baseline_files = Vec::new();
+  for entry in fs::read_dir(&baseline_dir)? {
+    let entry = entry?;
+    if entry.file_type()?.is_file()
+      && let Some(name) = entry.file_name().to_str()
+    {
+      baseline_files.push(name.to_string());
+    }
+  }
+
+  let mut misses = Vec::new();
+  for &arch in arches {
+    let expected_prefixes = blake3_baseline_prefixes_for_arch(arch);
+    if expected_prefixes.is_empty() {
+      continue;
+    }
+    let present = baseline_files
+      .iter()
+      .any(|name| name.ends_with(".txt") && expected_prefixes.iter().any(|prefix| name.starts_with(prefix)));
+    if !present {
+      misses.push(Blake3BaselineParityMiss {
+        arch,
+        baseline_dir: baseline_dir.clone(),
+        expected_prefixes,
+      });
+    }
+  }
+
+  Ok(misses)
+}
+
+/// Collect missing BLAKE3 baseline parity files for required tune arches.
+#[cfg(feature = "std")]
+pub fn collect_blake3_baseline_parity_misses(repo_root: &Path) -> io::Result<Vec<Blake3BaselineParityMiss>> {
+  collect_blake3_baseline_parity_misses_for_arches(repo_root, tune_arches())
+}
+
+#[cfg(all(test, feature = "std"))]
+mod std_tests {
+  use std::time::{SystemTime, UNIX_EPOCH};
+
+  use super::*;
+
+  fn mk_temp_dir() -> PathBuf {
+    let ts = SystemTime::now()
+      .duration_since(UNIX_EPOCH)
+      .expect("clock should be after unix epoch")
+      .as_nanos();
+    let root = std::env::temp_dir().join(format!("rscrypto-targets-test-{ts}"));
+    fs::create_dir_all(&root).expect("temp root should be creatable");
+    root
+  }
+
+  #[test]
+  fn baseline_parity_misses_when_arch_files_absent() {
+    let root = mk_temp_dir();
+    let baseline_dir = root.join(BLAKE3_BASELINE_REL_DIR);
+    fs::create_dir_all(&baseline_dir).expect("baseline dir should be creatable");
+    fs::write(baseline_dir.join("linux_x86_zen5.txt"), "x86").expect("baseline should be writable");
+
+    let misses =
+      collect_blake3_baseline_parity_misses_for_arches(&root, &["x86_64", "aarch64"]).expect("parity check should run");
+    assert_eq!(misses.len(), 1);
+    assert_eq!(misses[0].arch, "aarch64");
+    assert!(misses[0].expected_prefixes.contains(&"linux_arm_"));
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn baseline_parity_passes_when_required_arch_files_exist() {
+    let root = mk_temp_dir();
+    let baseline_dir = root.join(BLAKE3_BASELINE_REL_DIR);
+    fs::create_dir_all(&baseline_dir).expect("baseline dir should be creatable");
+    fs::write(baseline_dir.join("linux_x86_zen5.txt"), "x86").expect("baseline should be writable");
+    fs::write(baseline_dir.join("linux_arm_graviton4.txt"), "arm").expect("baseline should be writable");
+
+    let misses =
+      collect_blake3_baseline_parity_misses_for_arches(&root, &["x86_64", "aarch64"]).expect("parity check should run");
+    assert!(misses.is_empty());
+
+    let _ = fs::remove_dir_all(root);
+  }
 }

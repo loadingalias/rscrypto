@@ -69,12 +69,7 @@ if [ ${#CRATES[@]} -gt 0 ]; then
 elif [ "$ALL_FLAG" = true ]; then
   CRATES_TO_TEST="$MIRI_CRATES"
 else
-  SINCE_ARG=""
-  if [ -n "${RAIL_SINCE:-}" ]; then
-    SINCE_ARG="--since $RAIL_SINCE"
-  fi
-  # shellcheck disable=SC2086
-  CRATES_TO_TEST=$(cargo rail affected $SINCE_ARG -f names-only 2>/dev/null || echo "")
+  CRATES_TO_TEST="$(rail_plan_crates)"
 
   if [ -z "$CRATES_TO_TEST" ]; then
     echo "No changes detected - skipping Miri tests"

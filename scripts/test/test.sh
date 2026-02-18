@@ -72,20 +72,20 @@ elif [ "$ALL_FLAG" = true ]; then
     cargo test --workspace --all-features
   fi
 else
-  SINCE_ARG=""
+  RAIL_SCOPE_ARGS=()
   if [ -n "${RAIL_SINCE:-}" ]; then
-    SINCE_ARG="--since $RAIL_SINCE"
+    RAIL_SCOPE_ARGS=(--since "$RAIL_SINCE")
     echo "Using base ref from CI: $RAIL_SINCE"
+  else
+    RAIL_SCOPE_ARGS=(--merge-base)
   fi
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo "Running tests for affected crates (cargo rail change detection)"
+  echo "Running tests for changed crates (cargo rail plan/run)"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   if [ "$HAS_NEXTEST" = true ]; then
-    # shellcheck disable=SC2086
-    cargo rail test $SINCE_ARG -- -P "$PROFILE" --all-features --config-file .config/nextest.toml
+    cargo rail run "${RAIL_SCOPE_ARGS[@]}" --surface test -- -P "$PROFILE" --all-features --config-file .config/nextest.toml
   else
-    # shellcheck disable=SC2086
-    affected="$(cargo rail affected $SINCE_ARG -f names-only 2>/dev/null || echo "")"
+    affected="$(rail_plan_crates)"
     if [ -z "$affected" ]; then
       cargo test --workspace --all-features
     else

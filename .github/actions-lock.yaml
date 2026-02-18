@@ -74,6 +74,11 @@ namespacelabs/nscloud-cache-action:
   sha: "446d8f390563cd54ca27e8de5bdb816f63c0b706"
   updated: "2026-02-06T23:17:16Z"
   notes: "Namespace runner NVMe cache (instant restore)"
+loadingalias/cargo-rail-action:
+  ref: v3.1.1
+  sha: "5c8c63658ad8aae2be592d791702773bfc215fc4"
+  updated: "2026-02-17T00:00:00Z"
+  notes: "cargo-rail plan outputs for CI base-ref and surfaces"
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # RunsOn (AWS EC2 Runners)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

@@ -15,7 +15,7 @@ mod common;
 fn blake3_comp(c: &mut Criterion) {
   // Keep the comparison matrix crisp and stable across CI runners.
   // This is intentionally aligned with the BLAKE3-specific matrix in
-  // `crates/hashes/src/crypto/blake3/TASK.md`.
+  // `crates/hashes/src/crypto/blake3/final.md`.
   let oneshot_sizes = [
     0usize,
     1,
@@ -50,13 +50,17 @@ fn blake3_comp(c: &mut Criterion) {
       group.bench_with_input(BenchmarkId::new("official/blake3", len), &data, |b, d| {
         b.iter(|| black_box(*blake3::hash(black_box(d)).as_bytes()))
       });
-      group.bench_with_input(BenchmarkId::new("official/blake3-rayon", len), &data, |b, d| {
-        b.iter(|| {
-          let mut h = blake3::Hasher::new();
-          h.update_rayon(black_box(d));
-          black_box(*h.finalize().as_bytes())
-        })
-      });
+      // Rayon only makes sense at non-tiny sizes; including it on tiny inputs
+      // mostly measures parallel setup overhead instead of hash throughput.
+      if len >= 1024 {
+        group.bench_with_input(BenchmarkId::new("official/blake3-rayon", len), &data, |b, d| {
+          b.iter(|| {
+            let mut h = blake3::Hasher::new();
+            h.update_rayon(black_box(d));
+            black_box(*h.finalize().as_bytes())
+          })
+        });
+      }
     }
 
     group.finish();
@@ -95,19 +99,18 @@ fn blake3_comp(c: &mut Criterion) {
           black_box(*h.finalize().as_bytes())
         })
       });
-
-      group.bench_with_input(
-        BenchmarkId::new("official-rayon/blake3", &case),
-        &chunk_size,
-        |b, &_cs| {
-          b.iter(|| {
-            let mut h = blake3::Hasher::new();
-            h.update_rayon(&data_1mb[..]);
-            black_box(*h.finalize().as_bytes())
-          })
-        },
-      );
     }
+
+    // Keep rayon as a separate full-buffer streaming case. This avoids a
+    // misleading per-chunk label, since `update_rayon` does not use our
+    // external chunk-size loop.
+    group.bench_function("official-rayon/blake3/full-buffer", |b| {
+      b.iter(|| {
+        let mut h = blake3::Hasher::new();
+        h.update_rayon(black_box(&data_1mb[..]));
+        black_box(*h.finalize().as_bytes())
+      })
+    });
 
     group.finish();
   }

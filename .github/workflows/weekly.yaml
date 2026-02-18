@@ -28,6 +28,30 @@ jobs:
           test "${{ github.event_name }}" = "schedule" -o "${{ github.event_name }}" = "workflow_dispatch"
           echo "lane=weekly"
 
+  rail-plan:
+    name: Build Plan
+    needs: lane-contract
+    runs-on: ubuntu-latest
+    outputs:
+      base_ref: ${{ steps.rail.outputs.base-ref || steps.manual.outputs.base_ref }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Manual dispatch (no change detection)
+        if: github.event_name == 'workflow_dispatch'
+        id: manual
+        run: echo "base_ref=" >> "$GITHUB_OUTPUT"
+
+      - name: Build Plan
+        if: github.event_name != 'workflow_dispatch'
+        id: rail
+        uses: loadingalias/cargo-rail-action@5c8c63658ad8aae2be592d791702773bfc215fc4  # v3.1.1
+        with:
+          args: "--explain"
+
   target-matrix:
     name: Resolve Target Matrix
     needs: lane-contract
@@ -50,7 +74,7 @@ jobs:
 
   ci:
     name: CI (${{ matrix.target.name }})
-    needs: [lane-contract, target-matrix]
+    needs: [lane-contract, rail-plan, target-matrix]
     strategy:
       fail-fast: false
       matrix:
@@ -73,13 +97,18 @@ jobs:
           *)
             just ci-check
             just build
-            just test
+            if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+              just test --all
+            else
+              export RAIL_SINCE="${{ needs.rail-plan.outputs.base_ref }}"
+              just test
+            fi
             ;;
         esac
 
   ci-ibm-s390x:
     name: CI (IBM Z s390x)
-    needs: lane-contract
+    needs: [lane-contract, rail-plan]
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: ubuntu-24.04-s390x
@@ -98,7 +127,7 @@ jobs:
 
   ci-ibm-power10:
     name: CI (IBM POWER10 ppc64le)
-    needs: lane-contract
+    needs: [lane-contract, rail-plan]
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: ubuntu-24.04-ppc64le-p10
@@ -131,10 +160,10 @@ jobs:
       tools_mode: minimal
       run_script: |
         rustup target add ${{ matrix.target }}
-        cargo check -p platform -p traits -p backend --target ${{ matrix.target }} --no-default-features --lib
-        cargo check -p platform -p traits -p backend --target ${{ matrix.target }} --no-default-features --features alloc --lib
-        cargo build -p platform -p traits -p backend --target ${{ matrix.target }} --no-default-features --lib --release
-        cargo build -p platform -p traits -p backend --target ${{ matrix.target }} --no-default-features --features alloc --lib --release
+        cargo check -p platform -p traits -p backend -p checksum -p hashes --target ${{ matrix.target }} --no-default-features --lib
+        cargo check -p platform -p traits -p backend -p checksum -p hashes --target ${{ matrix.target }} --no-default-features --features alloc --lib
+        cargo build -p platform -p traits -p backend -p checksum -p hashes --target ${{ matrix.target }} --no-default-features --lib --release
+        cargo build -p platform -p traits -p backend -p checksum -p hashes --target ${{ matrix.target }} --no-default-features --features alloc --lib --release
 
   wasm:
     name: wasm (${{ matrix.target }})
@@ -152,10 +181,10 @@ jobs:
       tools_mode: minimal
       run_script: |
         rustup target add ${{ matrix.target }}
-        cargo check -p platform -p traits -p backend --target ${{ matrix.target }} --no-default-features --lib
-        cargo check -p platform -p traits -p backend --target ${{ matrix.target }} --no-default-features --features alloc --lib
-        cargo build -p platform -p traits -p backend --target ${{ matrix.target }} --no-default-features --lib --release
-        cargo build -p platform -p traits -p backend --target ${{ matrix.target }} --no-default-features --features alloc --lib --release
+        cargo check -p platform -p traits -p backend -p checksum -p hashes --target ${{ matrix.target }} --no-default-features --lib
+        cargo check -p platform -p traits -p backend -p checksum -p hashes --target ${{ matrix.target }} --no-default-features --features alloc --lib
+        cargo build -p platform -p traits -p backend -p checksum -p hashes --target ${{ matrix.target }} --no-default-features --lib --release
+        cargo build -p platform -p traits -p backend -p checksum -p hashes --target ${{ matrix.target }} --no-default-features --features alloc --lib --release
 
   wasm-pack-optional:
     name: wasm-pack smoke (optional)

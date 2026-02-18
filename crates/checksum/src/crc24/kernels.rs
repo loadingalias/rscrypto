@@ -197,12 +197,6 @@ pub mod riscv64 {
   use super::super::riscv64 as arch;
   use crate::dispatchers::Crc24Fn;
 
-  /// Zbc kernel name (scalar carryless multiply).
-  pub const ZBC: &str = "riscv64/zbc";
-
-  /// Zvbc kernel name (vector carryless multiply).
-  pub const ZVBC: &str = "riscv64/zvbc";
-
   /// Zbc kernel names: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)].
   pub const ZBC_NAMES: &[&str] = &[
     "riscv64/zbc",

@@ -1098,7 +1098,39 @@ fn main() -> ExitCode {
       }
       return ExitCode::FAILURE;
     }
-    eprintln!("Target check passed.");
+    let repo_root = match std::env::current_dir() {
+      Ok(dir) => dir,
+      Err(err) => {
+        eprintln!("Target check failed (cannot resolve current directory): {err}");
+        return ExitCode::FAILURE;
+      }
+    };
+    let baseline_misses = match tune::targets::collect_blake3_baseline_parity_misses(&repo_root) {
+      Ok(misses) => misses,
+      Err(err) => {
+        eprintln!(
+          "Target check failed (cannot scan BLAKE3 baselines under {}): {err}",
+          repo_root.display()
+        );
+        return ExitCode::FAILURE;
+      }
+    };
+    if !baseline_misses.is_empty() {
+      eprintln!(
+        "Target check failed ({} BLAKE3 baseline parity miss(es)):",
+        baseline_misses.len()
+      );
+      for miss in baseline_misses {
+        eprintln!(
+          "  arch={} missing baseline in {} (expected filename prefix: {})",
+          miss.arch,
+          miss.baseline_dir.display(),
+          miss.expected_prefixes.join(" | ")
+        );
+      }
+      return ExitCode::FAILURE;
+    }
+    eprintln!("Target check passed (throughput + BLAKE3 baseline parity).");
   }
 
   if args.self_check

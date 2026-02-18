@@ -27,5 +27,10 @@ name = "rscrypto-tune"
 path = "src/bin/rscrypto-tune.rs"
 required-features = ["std"]
 
+[[bin]]
+name = "rscrypto-blake3-boundary"
+path = "src/bin/rscrypto-blake3-boundary.rs"
+required-features = ["std"]
+
 [lints]
 workspace = true

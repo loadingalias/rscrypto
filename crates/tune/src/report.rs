@@ -102,29 +102,39 @@ impl<W: Write> Report<W> {
     tune_kind: platform::TuneKind,
   ) -> io::Result<()> {
     writeln!(self.writer, "=== {} ===", algo.name)?;
+    writeln!(
+      self.writer,
+      "contract_mode: {}",
+      targets::contract_mode(algo.name).as_str()
+    )?;
     writeln!(self.writer, "Best kernel: {}", algo.best_kernel)?;
     writeln!(self.writer, "Recommended streams: {}", algo.recommended_streams)?;
     writeln!(self.writer, "Peak throughput: {:.2} GiB/s", algo.peak_throughput_gib_s)?;
 
     let mut wrote_perf_targets = false;
     for class_best in &algo.size_class_best {
-      let Some(target_gib_s) = targets::class_target_gib_s(algo.name, arch, tune_kind, class_best.class) else {
-        continue;
-      };
       if !wrote_perf_targets {
         writeln!(self.writer, "Perf targets ({arch}):")?;
         wrote_perf_targets = true;
       }
-      let status = if class_best.throughput_gib_s >= target_gib_s {
-        "ok"
+      if let Some(target_gib_s) = targets::class_target_gib_s(algo.name, arch, tune_kind, class_best.class) {
+        let status = if class_best.throughput_gib_s >= target_gib_s {
+          "ok"
+        } else {
+          "MISS"
+        };
+        writeln!(
+          self.writer,
+          "  {}: {:.2} GiB/s (target >= {:.2}) [{status}]",
+          class_best.class, class_best.throughput_gib_s, target_gib_s
+        )?;
       } else {
-        "MISS"
-      };
-      writeln!(
-        self.writer,
-        "  {}: {:.2} GiB/s (target >= {:.2}) [{status}]",
-        class_best.class, class_best.throughput_gib_s, target_gib_s
-      )?;
+        writeln!(
+          self.writer,
+          "  {}: {:.2} GiB/s (target: N/A)",
+          class_best.class, class_best.throughput_gib_s
+        )?;
+      }
     }
 
     if !algo.thresholds.is_empty() {

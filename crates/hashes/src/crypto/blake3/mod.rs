@@ -2279,8 +2279,7 @@ fn single_chunk_output(
   let mut chaining_value = key_words;
   let mut blocks_compressed: u8 = 0;
   let full_bytes = full_blocks * BLOCK_LEN;
-  kernels::chunk_compress_blocks_inline(
-    kernel.id,
+  (kernel.chunk_compress_blocks)(
     &mut chaining_value,
     chunk_counter,
     flags,
@@ -3938,14 +3937,7 @@ unsafe fn digest_one_chunk_root_hash_words_x86(
   let mut cv = key_words;
   let mut blocks_compressed: u8 = 0;
   let full_bytes = full_blocks * BLOCK_LEN;
-  kernels::chunk_compress_blocks_inline(
-    kernel.id,
-    &mut cv,
-    0,
-    flags,
-    &mut blocks_compressed,
-    &input[..full_bytes],
-  );
+  (kernel.chunk_compress_blocks)(&mut cv, 0, flags, &mut blocks_compressed, &input[..full_bytes]);
 
   let start = if blocks_compressed == 0 { CHUNK_START } else { 0 };
   let final_flags = flags | start | CHUNK_END | ROOT;
@@ -3964,33 +3956,9 @@ unsafe fn digest_one_chunk_root_hash_words_x86(
     padded.as_ptr()
   };
 
-  match kernel.id {
-    kernels::Blake3KernelId::X86Sse41 => {
-      // SAFETY: `block_ptr` points to 64 bytes (either into `input` or `padded`),
-      // and dispatch only selects SSE4.1 when the required CPU features are present.
-      unsafe { x86_64::compress_cv_sse41_bytes(&cv, block_ptr, 0, last_len as u32, final_flags) }
-    }
-    kernels::Blake3KernelId::X86Avx2 => {
-      // SAFETY: `block_ptr` points to 64 bytes (either into `input` or `padded`),
-      // and dispatch only selects AVX2 when the required CPU features are present.
-      unsafe { x86_64::compress_cv_avx2_bytes(&cv, block_ptr, 0, last_len as u32, final_flags) }
-    }
-    kernels::Blake3KernelId::X86Avx512 => {
-      // SAFETY: `block_ptr` points to 64 bytes (either into `input` or `padded`),
-      // and dispatch only selects AVX-512 when the required CPU features are present.
-      #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-      // SAFETY: AVX-512 feature availability validated by dispatch, block_ptr valid for 64 bytes.
-      unsafe {
-        x86_64::asm::compress_in_place_avx512(&cv, block_ptr, 0, last_len as u32, final_flags)
-      }
-      #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-      // SAFETY: AVX-512 feature availability validated by dispatch, block_ptr valid for 64 bytes.
-      unsafe {
-        x86_64::compress_cv_avx512_bytes(&cv, block_ptr, 0, last_len as u32, final_flags)
-      }
-    }
-    _ => unreachable!("x86 tiny helper called for non-x86 SIMD kernel"),
-  }
+  // SAFETY: x86 dispatch selects only kernels with a matching byte compressor,
+  // and `block_ptr` is valid for a full 64-byte block.
+  unsafe { (kernel.x86_compress_cv_bytes)(&cv, block_ptr, 0, last_len as u32, final_flags) }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
