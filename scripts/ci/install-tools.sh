@@ -5,6 +5,7 @@
 set -euo pipefail
 
 MODE="${1:-standard}"
+CARGO_RAIL_VERSION="${CARGO_RAIL_VERSION:-0.10.12}"
 
 echo "Installing cargo tools (mode: $MODE)"
 
@@ -135,6 +136,53 @@ install_if_missing() {
 	cargo binstall "$tool" --no-confirm --force 2>/dev/null || cargo install "$tool" --locked
 }
 
+# Compare dot-separated numeric versions. Returns 0 when $1 >= $2.
+version_gte() {
+	local lhs="$1"
+	local rhs="$2"
+	local IFS=.
+	local -a a b
+
+	read -r -a a <<<"$lhs"
+	read -r -a b <<<"$rhs"
+
+	local i max len_a len_b
+	len_a=${#a[@]}
+	len_b=${#b[@]}
+	max=$((len_a > len_b ? len_a : len_b))
+
+	for ((i = 0; i < max; i++)); do
+		local ai="${a[i]:-0}"
+		local bi="${b[i]:-0}"
+		if ((10#$ai > 10#$bi)); then
+			return 0
+		fi
+		if ((10#$ai < 10#$bi)); then
+			return 1
+		fi
+	done
+
+	return 0
+}
+
+ensure_cargo_rail() {
+	local required="$1"
+	local installed=""
+
+	if command -v cargo-rail &>/dev/null; then
+		installed="$(cargo rail --version 2>/dev/null | awk '{print $2}' || true)"
+		if [[ -n "$installed" ]] && version_gte "$installed" "$required"; then
+			echo "  cargo-rail: cached ($installed)"
+			return 0
+		fi
+		echo "  cargo-rail: stale ($installed), upgrading to >= $required"
+	else
+		echo "  cargo-rail: installing (required >= $required)"
+	fi
+
+	cargo binstall "cargo-rail@${required}" --no-confirm --force 2>/dev/null || cargo install cargo-rail --locked --version "$required" --force
+}
+
 echo ""
 echo "Installing tools for mode: $MODE"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -144,7 +192,7 @@ standard | namespace | runson)
 	# Standard CI tools (same for all CI runners)
 	install_binstall
 	install_if_missing "cargo-nextest" "cargo-nextest"
-	install_if_missing "cargo-rail" "cargo-rail"
+	ensure_cargo_rail "$CARGO_RAIL_VERSION"
 	install_if_missing "just" "just"
 	;;
 
