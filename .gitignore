@@ -24,6 +24,7 @@ crates/hashes/src/crypto/blake3/TASK.md
 crates/*/src/*/*/bench_baseline
 ARCHITECTURE_MATRIX.md
 crates/hashes/src/crypto/blake3/final_work.md
+tune-results/
 
 # Fuzzing
 corpus

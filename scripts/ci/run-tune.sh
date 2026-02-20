@@ -63,6 +63,7 @@ HASH_WARMUP_INPUT="${TUNE_HASH_WARMUP_MS:-}"
 HASH_MEASURE_INPUT="${TUNE_HASH_MEASURE_MS:-}"
 REPEATS_INPUT="${TUNE_REPEATS:-}"
 AGGREGATION_INPUT="${TUNE_AGGREGATION:-auto}"
+CARGO_BUILD_JOBS_INPUT="${TUNE_CARGO_BUILD_JOBS:-4}"
 APPLY_INPUT="$(to_bool "${TUNE_APPLY:-false}")"
 SELF_CHECK_INPUT="$(to_bool "${TUNE_SELF_CHECK:-false}")"
 ENFORCE_TARGETS_INPUT="$(to_bool "${TUNE_ENFORCE_TARGETS:-false}")"
@@ -82,6 +83,11 @@ fi
 
 if ! [[ "$REPEATS_INPUT" =~ ^[0-9]+$ ]] || [[ "$REPEATS_INPUT" -lt 1 ]]; then
   echo "error: TUNE_REPEATS must be an integer >= 1 (got '$REPEATS_INPUT')" >&2
+  exit 2
+fi
+
+if ! [[ "$CARGO_BUILD_JOBS_INPUT" =~ ^[0-9]+$ ]] || [[ "$CARGO_BUILD_JOBS_INPUT" -lt 1 ]]; then
+  echo "error: TUNE_CARGO_BUILD_JOBS must be an integer >= 1 (got '$CARGO_BUILD_JOBS_INPUT')" >&2
   exit 2
 fi
 
@@ -175,7 +181,7 @@ run_boundary_capture() {
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
   echo "Boundary run: auto"
-  RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
+  CARGO_BUILD_JOBS="$CARGO_BUILD_JOBS_INPUT" RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
     "${boundary_cmd_base[@]}" --output "$boundary_dir/auto.csv" 2>&1 | tee -a "$LOG_PATH"
 
   local -a forced_kernels=("portable")
@@ -191,7 +197,7 @@ run_boundary_capture() {
   local kernel
   for kernel in "${forced_kernels[@]}"; do
     echo "Boundary run: forced kernel=$kernel"
-    RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
+    CARGO_BUILD_JOBS="$CARGO_BUILD_JOBS_INPUT" RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
       "${boundary_cmd_base[@]}" --force-kernel "$kernel" --output "$boundary_dir/$kernel.csv" 2>&1 | tee -a "$LOG_PATH"
   done
 
@@ -218,6 +224,7 @@ echo "BLAKE3 boundary capture: $BOUNDARY_INPUT"
 echo "Boundary-only mode: $BOUNDARY_ONLY_INPUT"
 echo "Repeats: $REPEATS_INPUT"
 echo "Aggregation: $AGGREGATION_INPUT"
+echo "Cargo build jobs: $CARGO_BUILD_JOBS_INPUT"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 RAW_ARTIFACT_PATH="$OUT_DIR/raw-results.json"
@@ -233,7 +240,7 @@ if [[ "$BOUNDARY_ONLY_INPUT" != "true" && -n "$DERIVE_FROM_INPUT" ]]; then
   echo "Derive source: existing raw artifact ($RAW_ARTIFACT_PATH)"
 elif [[ "$BOUNDARY_ONLY_INPUT" != "true" && "$MEASURE_ONLY_INPUT" == "true" ]]; then
   echo "Measure args: ${MEASURE_ARGS[*]} --measure-only --raw-output $RAW_ARTIFACT_PATH"
-  RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
+  CARGO_BUILD_JOBS="$CARGO_BUILD_JOBS_INPUT" RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
     cargo run -p tune --release --bin rscrypto-tune -- "${MEASURE_ARGS[@]}" --measure-only --raw-output "$RAW_ARTIFACT_PATH" \
     2>&1 | tee -a "$LOG_PATH"
   echo "Measurement-only mode enabled; skipping derivation/apply."
@@ -242,13 +249,13 @@ fi
 
 if [[ "$BOUNDARY_ONLY_INPUT" != "true" && -n "$DERIVE_FROM_INPUT" ]]; then
   echo "Derive args: --derive-from $RAW_ARTIFACT_PATH ${DERIVE_ARGS[*]}"
-  RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
+  CARGO_BUILD_JOBS="$CARGO_BUILD_JOBS_INPUT" RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
     cargo run -p tune --release --bin rscrypto-tune -- --derive-from "$RAW_ARTIFACT_PATH" "${DERIVE_ARGS[@]}" \
     2>&1 | tee -a "$LOG_PATH"
 elif [[ "$BOUNDARY_ONLY_INPUT" != "true" ]]; then
   RUN_ARGS=("${MEASURE_ARGS[@]}" "${DERIVE_ARGS[@]}" --raw-output "$RAW_ARTIFACT_PATH")
   echo "Run args: ${RUN_ARGS[*]}"
-  RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
+  CARGO_BUILD_JOBS="$CARGO_BUILD_JOBS_INPUT" RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
     cargo run -p tune --release --bin rscrypto-tune -- "${RUN_ARGS[@]}" \
     2>&1 | tee -a "$LOG_PATH"
 else
