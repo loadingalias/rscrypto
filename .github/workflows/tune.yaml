@@ -110,22 +110,6 @@ on:
         description: "Global measurement override in ms (optional)."
         required: false
         type: string
-      checksum_warmup_ms:
-        description: "Checksum warmup override in ms (optional)."
-        required: false
-        type: string
-      checksum_measure_ms:
-        description: "Checksum measurement override in ms (optional)."
-        required: false
-        type: string
-      hash_warmup_ms:
-        description: "Hash warmup override in ms (optional)."
-        required: false
-        type: string
-      hash_measure_ms:
-        description: "Hash measurement override in ms (optional)."
-        required: false
-        type: string
 
 env:
   RUST_BACKTRACE: 1
@@ -204,10 +188,6 @@ jobs:
         TUNE_BOUNDARY_MEASURE_MS="${{ inputs.boundary_measure_ms }}" \
         TUNE_WARMUP_MS="${{ inputs.warmup_ms }}" \
         TUNE_MEASURE_MS="${{ inputs.measure_ms }}" \
-        TUNE_CHECKSUM_WARMUP_MS="${{ inputs.checksum_warmup_ms }}" \
-        TUNE_CHECKSUM_MEASURE_MS="${{ inputs.checksum_measure_ms }}" \
-        TUNE_HASH_WARMUP_MS="${{ inputs.hash_warmup_ms }}" \
-        TUNE_HASH_MEASURE_MS="${{ inputs.hash_measure_ms }}" \
         TUNE_REPEATS="${{ inputs.repeats }}" \
         TUNE_AGGREGATION="${{ inputs.aggregation }}" \
         bash -euo pipefail -c '
