@@ -3,11 +3,6 @@ name: Tune
 on:
   workflow_dispatch:
     inputs:
-      crates:
-        description: "Crate(s), comma-separated (e.g. checksum,hashes). Empty = all."
-        required: false
-        type: string
-        default: "hashes"
       run_amd_zen4:
         description: "AMD Zen4 (RunsOn)"
         required: false
@@ -41,10 +36,20 @@ on:
         required: false
         type: boolean
       only:
-        description: "Algorithm selector(s), comma-separated (e.g. blake3, crc64nvme). Empty = all."
+        description: "Optional override selector(s). If set, overrides slice."
         required: false
         type: string
-        default: "blake3"
+        default: ""
+      slice:
+        description: "BLAKE3 tuning slice."
+        required: false
+        type: choice
+        default: "core"
+        options:
+          - core
+          - strict
+          - informational
+          - all
       quick:
         description: "Quick mode. Faster, noisier. Not for final dispatch decisions."
         required: false
@@ -77,7 +82,7 @@ on:
         type: boolean
         default: true
       boundary_only:
-        description: "Run only BLAKE3 boundary capture (skip rscrypto-tune)."
+        description: "Run only BLAKE3 boundary capture (skip rscrypto-tune). Used only with preset=custom."
         required: false
         type: boolean
         default: true
@@ -175,9 +180,10 @@ jobs:
         lscpu
       run_script: |
         TUNE_PRESET="${{ inputs.preset }}" \
+        TUNE_SLICE="${{ inputs.slice }}" \
         TUNE_OUTPUT_DIR=tune-results \
         TUNE_QUICK=${{ inputs.quick && 'true' || 'false' }} \
-        TUNE_CRATES="${{ inputs.crates }}" \
+        TUNE_CRATES="hashes" \
         TUNE_ONLY="${{ inputs.only }}" \
         TUNE_APPLY=${{ inputs.apply && 'true' || 'false' }} \
         TUNE_SELF_CHECK=${{ inputs.self_check && 'true' || 'false' }} \
@@ -188,9 +194,31 @@ jobs:
         TUNE_BOUNDARY_MEASURE_MS="${{ inputs.boundary_measure_ms }}" \
         TUNE_WARMUP_MS="${{ inputs.warmup_ms }}" \
         TUNE_MEASURE_MS="${{ inputs.measure_ms }}" \
+        TUNE_CARGO_BUILD_JOBS=4 \
         TUNE_REPEATS="${{ inputs.repeats }}" \
         TUNE_AGGREGATION="${{ inputs.aggregation }}" \
         bash -euo pipefail -c '
+          if [[ -z "${TUNE_ONLY:-}" ]]; then
+            case "${TUNE_SLICE:-core}" in
+              core)
+                TUNE_ONLY="blake3,blake3-latency,blake3-chunk,blake3-stream4k"
+                ;;
+              strict)
+                TUNE_ONLY="blake3-latency-keyed,blake3-latency-derive,blake3-latency-xof,blake3-stream4k-keyed,blake3-stream4k-derive,blake3-stream4k-xof"
+                ;;
+              informational)
+                TUNE_ONLY="blake3-keyed,blake3-derive,blake3-parent,blake3-parent-fold,blake3-stream64,blake3-stream256,blake3-stream1k,blake3-stream-mixed,blake3-stream64-keyed,blake3-stream64-derive,blake3-stream64-xof,blake3-stream-mixed-xof"
+                ;;
+              all)
+                TUNE_ONLY="blake3"
+                ;;
+              *)
+                echo "error: unknown slice: ${TUNE_SLICE}" >&2
+                exit 2
+                ;;
+            esac
+          fi
+          export TUNE_ONLY
           case "${TUNE_PRESET:-boundary-first}" in
             boundary-first)
               TUNE_APPLY=false
