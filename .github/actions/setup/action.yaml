@@ -41,15 +41,15 @@ runs:
       uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
       with:
         path: ~/.cargo/bin
-        key: cargo-tools-${{ runner.os }}-${{ steps.host.outputs.uname_m }}-${{ inputs.tools-mode }}-v6
-        # v6: fixed IBM cache save condition, ibm mode skips binstall
+        key: cargo-tools-${{ runner.os }}-${{ steps.host.outputs.uname_m }}-${{ inputs.tools-mode }}-v7
+        # v7: bust stale cargo-rail cache entries from pre-v0.10 installs
 
     # Debug: show cache state before install
     - name: Debug Cache State
       if: inputs.tools-mode != 'none'
       shell: bash
       run: |
-        echo "Cache key: cargo-tools-${{ runner.os }}-${{ steps.host.outputs.uname_m }}-${{ inputs.tools-mode }}-v6"
+        echo "Cache key: cargo-tools-${{ runner.os }}-${{ steps.host.outputs.uname_m }}-${{ inputs.tools-mode }}-v7"
         echo "Tools in ~/.cargo/bin:"
         ls -la ~/.cargo/bin/ 2>/dev/null || echo "  (cache miss - directory empty or missing)"
 
@@ -58,6 +58,8 @@ runs:
     - name: Install Cargo Tools
       if: inputs.tools-mode != 'none'
       shell: bash
+      env:
+        CARGO_RAIL_VERSION: "0.10.12"
       run: scripts/ci/install-tools.sh ${{ inputs.tools-mode }}
 
     - name: Setup Rust Cache
