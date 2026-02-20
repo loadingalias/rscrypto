@@ -518,7 +518,7 @@ fn bytes_per_core_for_payload(table: &ParallelTable, input_bytes: usize) -> usiz
 
 /// Compute (would_parallelize, thread_count) mirroring runtime policy checks.
 fn parallel_threads_for(table: &ParallelTable, input_bytes: usize, commit_chunks: usize) -> (bool, usize) {
-  if table.max_threads == 1 || table.min_bytes == usize::MAX {
+  if table.max_threads == 1 {
     return (false, 1);
   }
   if input_bytes < table.min_bytes || commit_chunks < table.min_chunks {

@@ -69,6 +69,9 @@ ENFORCE_TARGETS_INPUT="$(to_bool "${TUNE_ENFORCE_TARGETS:-false}")"
 QUICK_INPUT="$(to_bool "${TUNE_QUICK:-false}")"
 MEASURE_ONLY_INPUT="$(to_bool "${TUNE_MEASURE_ONLY:-false}")"
 DERIVE_FROM_INPUT="${TUNE_DERIVE_FROM:-}"
+BOUNDARY_INPUT="$(to_bool "${TUNE_BLAKE3_BOUNDARY:-false}")"
+BOUNDARY_WARMUP_INPUT="${TUNE_BOUNDARY_WARMUP_MS:-}"
+BOUNDARY_MEASURE_INPUT="${TUNE_BOUNDARY_MEASURE_MS:-}"
 ONLY_INPUT="$(normalize_csv "$ONLY_INPUT")"
 CRATES_INPUT="$(normalize_csv "$CRATES_INPUT")"
 
@@ -152,6 +155,7 @@ if [[ "$QUICK_INPUT" == "true" ]]; then
 else
   echo "Mode: full-quality (dispatch eligible)"
 fi
+echo "BLAKE3 boundary capture: $BOUNDARY_INPUT"
 echo "Repeats: $REPEATS_INPUT"
 echo "Aggregation: $AGGREGATION_INPUT"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -305,6 +309,53 @@ Path(manifest_path).write_text(json.dumps(manifest, indent=2, sort_keys=True) + 
 PY
 
   echo "Generated apply manifest: $MANIFEST_PATH"
+fi
+
+if [[ "$BOUNDARY_INPUT" == "true" ]]; then
+  BOUNDARY_DIR="$OUT_DIR/boundary"
+  mkdir -p "$BOUNDARY_DIR"
+
+  boundary_cmd_base=(cargo run -p tune --release --bin rscrypto-blake3-boundary --)
+  if [[ -n "$BOUNDARY_WARMUP_INPUT" ]]; then
+    boundary_cmd_base+=(--warmup-ms "$BOUNDARY_WARMUP_INPUT")
+  fi
+  if [[ -n "$BOUNDARY_MEASURE_INPUT" ]]; then
+    boundary_cmd_base+=(--measure-ms "$BOUNDARY_MEASURE_INPUT")
+  fi
+
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "Running BLAKE3 boundary capture"
+  echo "Boundary output dir: $BOUNDARY_DIR"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  echo "Boundary run: auto"
+  RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
+    "${boundary_cmd_base[@]}" --output "$BOUNDARY_DIR/auto.csv" 2>&1 | tee -a "$LOG_PATH"
+
+  forced_kernels=("portable")
+  case "$(uname -m)" in
+    x86_64|amd64)
+      forced_kernels+=("sse41" "avx2" "avx512")
+      ;;
+    aarch64|arm64)
+      forced_kernels+=("neon")
+      ;;
+  esac
+
+  for kernel in "${forced_kernels[@]}"; do
+    echo "Boundary run: forced kernel=$kernel"
+    RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
+      "${boundary_cmd_base[@]}" --force-kernel "$kernel" --output "$BOUNDARY_DIR/$kernel.csv" 2>&1 | tee -a "$LOG_PATH"
+  done
+
+  summary_inputs=("$BOUNDARY_DIR/auto.csv")
+  for kernel in "${forced_kernels[@]}"; do
+    summary_inputs+=("$BOUNDARY_DIR/$kernel.csv")
+  done
+
+  python3 scripts/bench/blake3-boundary-report.py "${summary_inputs[@]}" \
+    | tee "$BOUNDARY_DIR/summary.txt" \
+    | tee -a "$LOG_PATH" >/dev/null
 fi
 
 if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then

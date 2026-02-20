@@ -524,8 +524,8 @@ pub(crate) fn measure_blake3_parallel_data(
   let mut single_tp: Vec<RawThroughputPoint> = Vec::with_capacity(BLAKE3_PAR_SIZES.len());
   {
     let _g = override_blake3_parallel_policy(ParallelTable {
-      min_bytes: usize::MAX,
-      min_chunks: usize::MAX,
+      min_bytes: 0,
+      min_chunks: 0,
       max_threads: 1,
       spawn_cost_bytes: 0,
       merge_cost_bytes: 0,
@@ -571,8 +571,8 @@ pub(crate) fn measure_blake3_parallel_data(
 pub(crate) fn derive_blake3_parallel_policy(data: &RawBlake3ParallelData) -> Option<Blake3ParallelPolicy> {
   if data.available_parallelism <= 1 {
     let mut policy = default_blake3_parallel_policy();
-    policy.min_bytes = usize::MAX;
-    policy.min_chunks = usize::MAX;
+    policy.min_bytes = 0;
+    policy.min_chunks = 0;
     policy.max_threads = 1;
     return Some(policy);
   }
@@ -595,8 +595,8 @@ pub(crate) fn derive_blake3_parallel_policy(data: &RawBlake3ParallelData) -> Opt
 
   let Some(best_fit) = select_best_blake3_parallel_fit(&fits) else {
     let mut policy = default_blake3_parallel_policy();
-    policy.min_bytes = usize::MAX;
-    policy.min_chunks = usize::MAX;
+    policy.min_bytes = 0;
+    policy.min_chunks = 0;
     policy.max_threads = 1;
     return Some(policy);
   };
