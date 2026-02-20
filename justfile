@@ -108,6 +108,9 @@ bench-blake3-compare min_pct="0":
     RUSTC_WRAPPER= cargo bench -p hashes --bench comp
     @python3 scripts/bench/criterion-summary.py --group-prefix 'blake3/' --non-wins --ours 'rscrypto/blake3' --min-improvement-pct {{min_pct}}
 
+blake3-boundary-report *csv:
+    @python3 scripts/bench/blake3-boundary-report.py {{csv}}
+
 comp-check path:
     @python3 scripts/bench/comp-check.py {{path}}
 

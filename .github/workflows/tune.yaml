@@ -47,10 +47,30 @@ on:
         description: "Quick mode. Faster, noisier. Not for final dispatch decisions."
         required: false
         type: boolean
+      self_check:
+        description: "Run post-derive self checks."
+        required: false
+        type: boolean
+      enforce_targets:
+        description: "Enforce baseline/target parity checks."
+        required: false
+        type: boolean
       apply:
         description: "Apply output to dispatch tables and emit patch artifact."
         required: false
         type: boolean
+      run_blake3_boundary:
+        description: "Capture BLAKE3 boundary CSVs (auto + forced kernels) and summary."
+        required: false
+        type: boolean
+      boundary_warmup_ms:
+        description: "Boundary runner warmup override in ms (optional)."
+        required: false
+        type: string
+      boundary_measure_ms:
+        description: "Boundary runner measurement override in ms (optional)."
+        required: false
+        type: string
       repeats:
         description: "Measurement repeats per lane (e.g. 3). Default: 1."
         required: false
@@ -147,8 +167,11 @@ jobs:
         TUNE_CRATES="${{ inputs.crates }}" \
         TUNE_ONLY="${{ inputs.only }}" \
         TUNE_APPLY=${{ inputs.apply && 'true' || 'false' }} \
-        TUNE_SELF_CHECK=false \
-        TUNE_ENFORCE_TARGETS=false \
+        TUNE_SELF_CHECK=${{ inputs.self_check && 'true' || 'false' }} \
+        TUNE_ENFORCE_TARGETS=${{ inputs.enforce_targets && 'true' || 'false' }} \
+        TUNE_BLAKE3_BOUNDARY=${{ inputs.run_blake3_boundary && 'true' || 'false' }} \
+        TUNE_BOUNDARY_WARMUP_MS="${{ inputs.boundary_warmup_ms }}" \
+        TUNE_BOUNDARY_MEASURE_MS="${{ inputs.boundary_measure_ms }}" \
         TUNE_WARMUP_MS="${{ inputs.warmup_ms }}" \
         TUNE_MEASURE_MS="${{ inputs.measure_ms }}" \
         TUNE_CHECKSUM_WARMUP_MS="${{ inputs.checksum_warmup_ms }}" \

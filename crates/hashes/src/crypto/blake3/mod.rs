@@ -276,7 +276,7 @@ fn parallel_threads_for_policy(
   admission_full_chunks: usize,
   commit_full_chunks: usize,
 ) -> Option<usize> {
-  if policy.max_threads == 1 || policy.min_bytes == usize::MAX {
+  if policy.max_threads == 1 {
     return None;
   }
 

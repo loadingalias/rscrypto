@@ -1916,10 +1916,19 @@ fn replace_marked_section(source: &str, marker: &str, replacement: &str, next_ma
       end = end.min(start + marker.len() + rel);
     }
   }
-  if end == source.len()
-    && let Some(rel) = after_start.find("\n#[inline]\n#[must_use]\npub fn select_profile")
-  {
-    end = start + marker.len() + rel;
+  if end == source.len() {
+    for selector_anchor in [
+      "\n#[inline]\n#[must_use]\nfn select_profile",
+      "\n#[inline]\n#[must_use]\npub fn select_profile",
+      "\n#[inline]\n#[must_use]\npub fn select_table",
+      "\n#[inline]\n#[must_use]\npub fn select_streaming_table",
+      "\n#[inline]\n#[must_use]\npub fn select_parallel_table",
+      "\n#[inline]\n#[must_use]\npub fn select_streaming_parallel_table",
+    ] {
+      if let Some(rel) = after_start.find(selector_anchor) {
+        end = end.min(start + marker.len() + rel);
+      }
+    }
   }
 
   if end <= start {
@@ -2885,6 +2894,88 @@ pub fn select_profile() {}
 
     let old_generated_path = repo_root.join("crates/tune/generated/hashes/PROFILE_X86_ZEN4/zen4.rs");
     assert!(!old_generated_path.exists());
+
+    let _ = fs::remove_dir_all(&repo_root);
+  }
+
+  #[test]
+  fn apply_blake3_last_profile_rewrite_preserves_selector_tail() {
+    let repo_root = temp_repo_root("apply-blake3-tail-preserve");
+    let dispatch_path = repo_root.join("crates/hashes/src/crypto/blake3/dispatch_tables.rs");
+    fs::create_dir_all(dispatch_path.parent().expect("dispatch path should have parent")).expect("create test dirs");
+    fs::write(
+      &dispatch_path,
+      "\
+// fixture prelude
+// Family Profile: POWER10
+OLD_POWER10_BODY
+#[inline]
+#[must_use]
+pub fn select_table(kind: TuneKind) -> &'static DispatchTable { unreachable!() }
+",
+    )
+    .expect("write seed dispatch file");
+
+    let mk_algo = |name: &'static str, best_kernel: &'static str, thresholds: Vec<(String, usize)>| AlgorithmResult {
+      name,
+      env_prefix: "RSCRYPTO_BENCH_BLAKE3",
+      best_kernel,
+      recommended_streams: 1,
+      peak_throughput_gib_s: 0.0,
+      size_class_best: vec![
+        SizeClassBest {
+          class: "xs",
+          kernel: "portable".to_string(),
+          streams: 1,
+          throughput_gib_s: 0.0,
+        },
+        SizeClassBest {
+          class: "s",
+          kernel: "portable".to_string(),
+          streams: 1,
+          throughput_gib_s: 0.0,
+        },
+        SizeClassBest {
+          class: "m",
+          kernel: "portable".to_string(),
+          streams: 1,
+          throughput_gib_s: 0.0,
+        },
+        SizeClassBest {
+          class: "l",
+          kernel: "portable".to_string(),
+          streams: 1,
+          throughput_gib_s: 0.0,
+        },
+      ],
+      thresholds,
+      analysis: AnalysisResult::default(),
+    };
+
+    let results = TuneResults {
+      platform: PlatformInfo {
+        arch: "powerpc64",
+        os: "linux",
+        caps: platform::Caps::NONE,
+        tune_kind: TuneKind::Power10,
+        description: String::new(),
+      },
+      algorithms: vec![
+        mk_algo("blake3-chunk", "portable", vec![]),
+        mk_algo("blake3", "portable", vec![]),
+        mk_algo("blake3-stream64", "portable+portable", vec![]),
+        mk_algo("blake3-stream4k", "portable+portable", vec![]),
+      ],
+      timestamp: String::new(),
+    };
+
+    super::apply_tuned_defaults(&repo_root, &results).expect("apply should rewrite power10 profile");
+
+    let updated = fs::read_to_string(&dispatch_path).expect("read updated dispatch file");
+    assert!(!updated.contains("OLD_POWER10_BODY"));
+    assert!(updated.contains("// Family Profile: POWER10"));
+    assert!(updated.contains("pub static PROFILE_POWER10: FamilyProfile"));
+    assert!(updated.contains("pub fn select_table(kind: TuneKind) -> &'static DispatchTable"));
 
     let _ = fs::remove_dir_all(&repo_root);
   }
