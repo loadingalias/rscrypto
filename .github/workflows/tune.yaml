@@ -7,8 +7,9 @@ on:
         description: "Crate(s), comma-separated (e.g. checksum,hashes). Empty = all."
         required: false
         type: string
+        default: "hashes"
       run_amd_zen4:
-        description: "AMD Zen4 (Namespace)"
+        description: "AMD Zen4 (RunsOn)"
         required: false
         type: boolean
       run_intel_spr:
@@ -40,13 +41,24 @@ on:
         required: false
         type: boolean
       only:
-        description: "Algorithm selector(s), comma-separated (e.g. blake3, crc64nvme)."
+        description: "Algorithm selector(s), comma-separated (e.g. blake3, crc64nvme). Empty = all."
         required: false
         type: string
+        default: "blake3"
       quick:
         description: "Quick mode. Faster, noisier. Not for final dispatch decisions."
         required: false
         type: boolean
+      preset:
+        description: "Execution preset: boundary-first (discovery), full-tune (measure+derive), apply (apply tuned tables), custom (use toggles below)."
+        required: false
+        type: choice
+        default: "boundary-first"
+        options:
+          - boundary-first
+          - full-tune
+          - apply
+          - custom
       self_check:
         description: "Run post-derive self checks."
         required: false
@@ -63,6 +75,17 @@ on:
         description: "Capture BLAKE3 boundary CSVs (auto + forced kernels) and summary."
         required: false
         type: boolean
+        default: true
+      boundary_only:
+        description: "Run only BLAKE3 boundary capture (skip rscrypto-tune)."
+        required: false
+        type: boolean
+        default: true
+      max_parallel:
+        description: "Maximum tune lanes in flight at once (cost guardrail)."
+        required: false
+        type: string
+        default: "2"
       boundary_warmup_ms:
         description: "Boundary runner warmup override in ms (optional)."
         required: false
@@ -113,6 +136,10 @@ env:
 permissions:
   contents: read
 
+concurrency:
+  group: manual-tune-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   plan:
     runs-on: ubuntu-latest
@@ -146,6 +173,7 @@ jobs:
     if: ${{ needs.plan.outputs.has_targets == 'true' }}
     strategy:
       fail-fast: false
+      max-parallel: ${{ fromJSON(inputs.max_parallel) }}
       matrix:
         include: ${{ fromJSON(needs.plan.outputs.matrix) }}
     uses: ./.github/workflows/_rust-job.yaml
@@ -162,6 +190,7 @@ jobs:
         uname -a
         lscpu
       run_script: |
+        TUNE_PRESET="${{ inputs.preset }}" \
         TUNE_OUTPUT_DIR=tune-results \
         TUNE_QUICK=${{ inputs.quick && 'true' || 'false' }} \
         TUNE_CRATES="${{ inputs.crates }}" \
@@ -170,6 +199,7 @@ jobs:
         TUNE_SELF_CHECK=${{ inputs.self_check && 'true' || 'false' }} \
         TUNE_ENFORCE_TARGETS=${{ inputs.enforce_targets && 'true' || 'false' }} \
         TUNE_BLAKE3_BOUNDARY=${{ inputs.run_blake3_boundary && 'true' || 'false' }} \
+        TUNE_BOUNDARY_ONLY=${{ inputs.boundary_only && 'true' || 'false' }} \
         TUNE_BOUNDARY_WARMUP_MS="${{ inputs.boundary_warmup_ms }}" \
         TUNE_BOUNDARY_MEASURE_MS="${{ inputs.boundary_measure_ms }}" \
         TUNE_WARMUP_MS="${{ inputs.warmup_ms }}" \
@@ -180,6 +210,38 @@ jobs:
         TUNE_HASH_MEASURE_MS="${{ inputs.hash_measure_ms }}" \
         TUNE_REPEATS="${{ inputs.repeats }}" \
         TUNE_AGGREGATION="${{ inputs.aggregation }}" \
-        scripts/ci/run-tune.sh
+        bash -euo pipefail -c '
+          case "${TUNE_PRESET:-boundary-first}" in
+            boundary-first)
+              TUNE_APPLY=false
+              TUNE_SELF_CHECK=false
+              TUNE_ENFORCE_TARGETS=false
+              TUNE_BLAKE3_BOUNDARY=true
+              TUNE_BOUNDARY_ONLY=true
+              ;;
+            full-tune)
+              TUNE_APPLY=false
+              TUNE_SELF_CHECK=false
+              TUNE_ENFORCE_TARGETS=false
+              TUNE_BLAKE3_BOUNDARY=true
+              TUNE_BOUNDARY_ONLY=false
+              ;;
+            apply)
+              TUNE_APPLY=true
+              TUNE_SELF_CHECK=true
+              TUNE_ENFORCE_TARGETS=true
+              TUNE_BLAKE3_BOUNDARY=false
+              TUNE_BOUNDARY_ONLY=false
+              ;;
+            custom)
+              ;;
+            *)
+              echo "error: unknown preset: ${TUNE_PRESET}" >&2
+              exit 2
+              ;;
+          esac
+          export TUNE_APPLY TUNE_SELF_CHECK TUNE_ENFORCE_TARGETS TUNE_BLAKE3_BOUNDARY TUNE_BOUNDARY_ONLY
+          scripts/ci/run-tune.sh
+        '
       artifact_name: tuning-${{ matrix.artifact_suffix }}
       artifact_path: tune-results/

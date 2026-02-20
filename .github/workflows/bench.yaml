@@ -12,7 +12,7 @@ on:
         required: false
         type: string
       run_amd_zen4:
-        description: "AMD Zen4 (Namespace)"
+        description: "AMD Zen4 (RunsOn)"
         required: false
         type: boolean
       run_intel_spr:
@@ -71,6 +71,11 @@ on:
         description: "Advanced raw Criterion filter(s), comma-separated."
         required: false
         type: string
+      upload_raw_criterion:
+        description: "Attach raw Criterion directory in artifact (large)."
+        required: false
+        type: boolean
+        default: false
 
 concurrency:
   group: manual-bench-${{ github.ref }}
@@ -148,8 +153,7 @@ jobs:
         BENCH_MEASURE_MS="${{ inputs.measure_ms }}" \
         BENCH_SAMPLE_SIZE="${{ inputs.sample_size }}" \
         BENCH_PROFILE_TIME_SECS="${{ inputs.profile_time_secs }}" \
+        BENCH_ATTACH_CRITERION=${{ inputs.upload_raw_criterion && 'true' || 'false' }} \
         scripts/ci/run-bench.sh
       artifact_name: benchmark-${{ matrix.artifact_suffix }}
-      artifact_path: |
-        benchmark-results/
-        target/criterion/
+      artifact_path: benchmark-results/

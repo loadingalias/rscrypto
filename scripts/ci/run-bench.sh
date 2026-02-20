@@ -225,6 +225,7 @@ WARMUP_MS_INPUT="${BENCH_WARMUP_MS:-}"
 MEASURE_MS_INPUT="${BENCH_MEASURE_MS:-}"
 SAMPLE_SIZE_INPUT="${BENCH_SAMPLE_SIZE:-}"
 PROFILE_TIME_SECS_INPUT="${BENCH_PROFILE_TIME_SECS:-}"
+ATTACH_CRITERION_INPUT="$(to_bool "${BENCH_ATTACH_CRITERION:-false}")"
 
 if [[ -n "$WARMUP_MS_INPUT" && ! "$WARMUP_MS_INPUT" =~ ^[0-9]+$ ]]; then
   echo "error: BENCH_WARMUP_MS must be an integer >= 0 (got '$WARMUP_MS_INPUT')" >&2
@@ -290,7 +291,21 @@ if [[ -n "$FILTER_INPUT" ]]; then
   echo "Filter override: $FILTER_INPUT"
 fi
 echo "Criterion args: ${CRITERION_ARGS[*]-<none>}"
+echo "Attach raw Criterion: $ATTACH_CRITERION_INPUT"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+maybe_attach_criterion() {
+  if [[ "$ATTACH_CRITERION_INPUT" != "true" ]]; then
+    return 0
+  fi
+  if [[ ! -d target/criterion ]]; then
+    echo "note: BENCH_ATTACH_CRITERION=true but target/criterion does not exist" | tee -a "$LOG_PATH"
+    return 0
+  fi
+  local archive_path="$OUT_DIR/criterion.tgz"
+  tar -C target -czf "$archive_path" criterion
+  echo "Packed raw Criterion artifact: $archive_path" | tee -a "$LOG_PATH"
+}
 
 PLAN_ROWS=()
 RAW_FILTERS=()
@@ -452,6 +467,7 @@ if [[ "${#PLAN_ROWS[@]}" -gt 0 ]]; then
     run_bench_cmd "$crate" "$bench" "$filter"
   done
 
+  maybe_attach_criterion
   exit 0
 fi
 
@@ -497,3 +513,4 @@ fi
 
 echo "Running: ${cmd[*]}" | tee -a "$LOG_PATH"
 "${cmd[@]}" 2>&1 | tee -a "$LOG_PATH"
+maybe_attach_criterion

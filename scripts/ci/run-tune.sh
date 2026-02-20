@@ -70,6 +70,7 @@ QUICK_INPUT="$(to_bool "${TUNE_QUICK:-false}")"
 MEASURE_ONLY_INPUT="$(to_bool "${TUNE_MEASURE_ONLY:-false}")"
 DERIVE_FROM_INPUT="${TUNE_DERIVE_FROM:-}"
 BOUNDARY_INPUT="$(to_bool "${TUNE_BLAKE3_BOUNDARY:-false}")"
+BOUNDARY_ONLY_INPUT="$(to_bool "${TUNE_BOUNDARY_ONLY:-false}")"
 BOUNDARY_WARMUP_INPUT="${TUNE_BOUNDARY_WARMUP_MS:-}"
 BOUNDARY_MEASURE_INPUT="${TUNE_BOUNDARY_MEASURE_MS:-}"
 ONLY_INPUT="$(normalize_csv "$ONLY_INPUT")"
@@ -101,6 +102,16 @@ fi
 
 if [[ -n "$DERIVE_FROM_INPUT" && "$MEASURE_ONLY_INPUT" == "true" ]]; then
   echo "error: TUNE_MEASURE_ONLY cannot be combined with TUNE_DERIVE_FROM" >&2
+  exit 2
+fi
+
+if [[ "$BOUNDARY_ONLY_INPUT" == "true" && "$BOUNDARY_INPUT" != "true" ]]; then
+  echo "error: TUNE_BOUNDARY_ONLY=true requires TUNE_BLAKE3_BOUNDARY=true" >&2
+  exit 2
+fi
+
+if [[ "$BOUNDARY_ONLY_INPUT" == "true" && "$APPLY_INPUT" == "true" ]]; then
+  echo "error: TUNE_BOUNDARY_ONLY=true cannot be combined with TUNE_APPLY=true" >&2
   exit 2
 fi
 
@@ -146,6 +157,54 @@ if [[ "$APPLY_INPUT" == "true" ]]; then
 fi
 DERIVE_ARGS+=(--report-dir "$OUT_DIR")
 
+run_boundary_capture() {
+  local boundary_dir="$OUT_DIR/boundary"
+  mkdir -p "$boundary_dir"
+
+  local -a boundary_cmd_base=(cargo run -p tune --release --bin rscrypto-blake3-boundary --)
+  if [[ -n "$BOUNDARY_WARMUP_INPUT" ]]; then
+    boundary_cmd_base+=(--warmup-ms "$BOUNDARY_WARMUP_INPUT")
+  fi
+  if [[ -n "$BOUNDARY_MEASURE_INPUT" ]]; then
+    boundary_cmd_base+=(--measure-ms "$BOUNDARY_MEASURE_INPUT")
+  fi
+
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "Running BLAKE3 boundary capture"
+  echo "Boundary output dir: $boundary_dir"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  echo "Boundary run: auto"
+  RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
+    "${boundary_cmd_base[@]}" --output "$boundary_dir/auto.csv" 2>&1 | tee -a "$LOG_PATH"
+
+  local -a forced_kernels=("portable")
+  case "$(uname -m)" in
+    x86_64|amd64)
+      forced_kernels+=("sse41" "avx2" "avx512")
+      ;;
+    aarch64|arm64)
+      forced_kernels+=("neon")
+      ;;
+  esac
+
+  local kernel
+  for kernel in "${forced_kernels[@]}"; do
+    echo "Boundary run: forced kernel=$kernel"
+    RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
+      "${boundary_cmd_base[@]}" --force-kernel "$kernel" --output "$boundary_dir/$kernel.csv" 2>&1 | tee -a "$LOG_PATH"
+  done
+
+  local -a summary_inputs=("$boundary_dir/auto.csv")
+  for kernel in "${forced_kernels[@]}"; do
+    summary_inputs+=("$boundary_dir/$kernel.csv")
+  done
+
+  python3 scripts/bench/blake3-boundary-report.py "${summary_inputs[@]}" \
+    | tee "$boundary_dir/summary.txt" \
+    | tee -a "$LOG_PATH" >/dev/null
+}
+
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "Running rscrypto-tune"
 echo "RUSTFLAGS: -C target-cpu=native"
@@ -156,6 +215,7 @@ else
   echo "Mode: full-quality (dispatch eligible)"
 fi
 echo "BLAKE3 boundary capture: $BOUNDARY_INPUT"
+echo "Boundary-only mode: $BOUNDARY_ONLY_INPUT"
 echo "Repeats: $REPEATS_INPUT"
 echo "Aggregation: $AGGREGATION_INPUT"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -164,10 +224,14 @@ RAW_ARTIFACT_PATH="$OUT_DIR/raw-results.json"
 LOG_PATH="$OUT_DIR/rscrypto-tune.txt"
 : > "$LOG_PATH"
 
-if [[ -n "$DERIVE_FROM_INPUT" ]]; then
+if [[ "$BOUNDARY_INPUT" == "true" ]]; then
+  run_boundary_capture
+fi
+
+if [[ "$BOUNDARY_ONLY_INPUT" != "true" && -n "$DERIVE_FROM_INPUT" ]]; then
   RAW_ARTIFACT_PATH="$DERIVE_FROM_INPUT"
   echo "Derive source: existing raw artifact ($RAW_ARTIFACT_PATH)"
-elif [[ "$MEASURE_ONLY_INPUT" == "true" ]]; then
+elif [[ "$BOUNDARY_ONLY_INPUT" != "true" && "$MEASURE_ONLY_INPUT" == "true" ]]; then
   echo "Measure args: ${MEASURE_ARGS[*]} --measure-only --raw-output $RAW_ARTIFACT_PATH"
   RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
     cargo run -p tune --release --bin rscrypto-tune -- "${MEASURE_ARGS[@]}" --measure-only --raw-output "$RAW_ARTIFACT_PATH" \
@@ -176,26 +240,28 @@ elif [[ "$MEASURE_ONLY_INPUT" == "true" ]]; then
   exit 0
 fi
 
-if [[ -n "$DERIVE_FROM_INPUT" ]]; then
+if [[ "$BOUNDARY_ONLY_INPUT" != "true" && -n "$DERIVE_FROM_INPUT" ]]; then
   echo "Derive args: --derive-from $RAW_ARTIFACT_PATH ${DERIVE_ARGS[*]}"
   RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
     cargo run -p tune --release --bin rscrypto-tune -- --derive-from "$RAW_ARTIFACT_PATH" "${DERIVE_ARGS[@]}" \
     2>&1 | tee -a "$LOG_PATH"
-else
+elif [[ "$BOUNDARY_ONLY_INPUT" != "true" ]]; then
   RUN_ARGS=("${MEASURE_ARGS[@]}" "${DERIVE_ARGS[@]}" --raw-output "$RAW_ARTIFACT_PATH")
   echo "Run args: ${RUN_ARGS[*]}"
   RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
     cargo run -p tune --release --bin rscrypto-tune -- "${RUN_ARGS[@]}" \
     2>&1 | tee -a "$LOG_PATH"
+else
+  echo "Skipping rscrypto-tune: boundary-only mode enabled."
 fi
 
 # Keep the raw artifact inside OUT_DIR so uploaded artifacts are self-contained.
-if [[ "$RAW_ARTIFACT_PATH" != "$OUT_DIR/raw-results.json" ]]; then
+if [[ "$BOUNDARY_ONLY_INPUT" != "true" && "$RAW_ARTIFACT_PATH" != "$OUT_DIR/raw-results.json" ]]; then
   cp "$RAW_ARTIFACT_PATH" "$OUT_DIR/raw-results.json"
   RAW_ARTIFACT_PATH="$OUT_DIR/raw-results.json"
 fi
 
-if [[ "$APPLY_INPUT" == "true" ]]; then
+if [[ "$BOUNDARY_ONLY_INPUT" != "true" && "$APPLY_INPUT" == "true" ]]; then
   TARGET_PATCH_PATHS=(
     "crates/checksum/src/dispatch.rs"
     "crates/hashes/src/crypto"
@@ -309,53 +375,6 @@ Path(manifest_path).write_text(json.dumps(manifest, indent=2, sort_keys=True) + 
 PY
 
   echo "Generated apply manifest: $MANIFEST_PATH"
-fi
-
-if [[ "$BOUNDARY_INPUT" == "true" ]]; then
-  BOUNDARY_DIR="$OUT_DIR/boundary"
-  mkdir -p "$BOUNDARY_DIR"
-
-  boundary_cmd_base=(cargo run -p tune --release --bin rscrypto-blake3-boundary --)
-  if [[ -n "$BOUNDARY_WARMUP_INPUT" ]]; then
-    boundary_cmd_base+=(--warmup-ms "$BOUNDARY_WARMUP_INPUT")
-  fi
-  if [[ -n "$BOUNDARY_MEASURE_INPUT" ]]; then
-    boundary_cmd_base+=(--measure-ms "$BOUNDARY_MEASURE_INPUT")
-  fi
-
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo "Running BLAKE3 boundary capture"
-  echo "Boundary output dir: $BOUNDARY_DIR"
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-  echo "Boundary run: auto"
-  RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
-    "${boundary_cmd_base[@]}" --output "$BOUNDARY_DIR/auto.csv" 2>&1 | tee -a "$LOG_PATH"
-
-  forced_kernels=("portable")
-  case "$(uname -m)" in
-    x86_64|amd64)
-      forced_kernels+=("sse41" "avx2" "avx512")
-      ;;
-    aarch64|arm64)
-      forced_kernels+=("neon")
-      ;;
-  esac
-
-  for kernel in "${forced_kernels[@]}"; do
-    echo "Boundary run: forced kernel=$kernel"
-    RUSTC_WRAPPER='' RUSTFLAGS='-C target-cpu=native' \
-      "${boundary_cmd_base[@]}" --force-kernel "$kernel" --output "$BOUNDARY_DIR/$kernel.csv" 2>&1 | tee -a "$LOG_PATH"
-  done
-
-  summary_inputs=("$BOUNDARY_DIR/auto.csv")
-  for kernel in "${forced_kernels[@]}"; do
-    summary_inputs+=("$BOUNDARY_DIR/$kernel.csv")
-  done
-
-  python3 scripts/bench/blake3-boundary-report.py "${summary_inputs[@]}" \
-    | tee "$BOUNDARY_DIR/summary.txt" \
-    | tee -a "$LOG_PATH" >/dev/null
 fi
 
 if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then

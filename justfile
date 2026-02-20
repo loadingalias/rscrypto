@@ -111,6 +111,28 @@ bench-blake3-compare min_pct="0":
 blake3-boundary-report *csv:
     @python3 scripts/bench/blake3-boundary-report.py {{csv}}
 
+tune-blake3-boundary warmup_ms="80" measure_ms="120":
+    @TUNE_OUTPUT_DIR=tune-results \
+    TUNE_BLAKE3_BOUNDARY=true \
+    TUNE_BOUNDARY_ONLY=true \
+    TUNE_BOUNDARY_WARMUP_MS={{warmup_ms}} \
+    TUNE_BOUNDARY_MEASURE_MS={{measure_ms}} \
+    scripts/ci/run-tune.sh
+
+tune-blake3-full warmup_ms="" measure_ms="" repeats="1":
+    @TUNE_OUTPUT_DIR=tune-results \
+    TUNE_CRATES=hashes \
+    TUNE_ONLY=blake3 \
+    TUNE_BLAKE3_BOUNDARY=true \
+    TUNE_BOUNDARY_ONLY=false \
+    TUNE_ENFORCE_TARGETS=false \
+    TUNE_SELF_CHECK=false \
+    TUNE_APPLY=false \
+    TUNE_WARMUP_MS={{warmup_ms}} \
+    TUNE_MEASURE_MS={{measure_ms}} \
+    TUNE_REPEATS={{repeats}} \
+    scripts/ci/run-tune.sh
+
 comp-check path:
     @python3 scripts/bench/comp-check.py {{path}}
 
