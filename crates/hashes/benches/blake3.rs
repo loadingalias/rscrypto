@@ -786,11 +786,12 @@ fn blake3_kernel_ab(c: &mut Criterion) {
   group.sampling_mode(SamplingMode::Flat);
 
   let sizes = [256usize, 1024, 4096, 16384, 65536];
-  let mut kernels: Vec<&str> = vec!["portable"];
   #[cfg(target_arch = "aarch64")]
-  kernels.push("aarch64/neon");
+  let kernels: Vec<&str> = vec!["portable", "aarch64/neon"];
   #[cfg(target_arch = "x86_64")]
-  kernels.extend(["x86_64/sse4.1", "x86_64/avx2", "x86_64/avx512"]);
+  let kernels: Vec<&str> = vec!["portable", "x86_64/sse4.1", "x86_64/avx2", "x86_64/avx512"];
+  #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+  let kernels: Vec<&str> = vec!["portable"];
 
   for size in sizes {
     let data = common::pseudo_random_bytes(size, 0xB1AE_E3B1_A1E3_7A8B ^ size as u64);
