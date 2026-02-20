@@ -448,7 +448,7 @@ impl Tune {
   /// Slightly higher parallelism than M4 due to architectural improvements.
   ///
   /// Values extrapolated from M4 + architectural docs.
-  /// Run `just tune` on M5 hardware to get measured values.
+  /// Re-validate on M5 hardware using local benches before updating defaults.
   pub const APPLE_M5: Self = Self {
     kind: TuneKind::AppleM5,
     simd_threshold: 64,
@@ -528,7 +528,7 @@ impl Tune {
   /// Expected late 2025, uses Poseidon cores with enhanced ILP.
   ///
   /// Values extrapolated from Graviton4 + Neoverse V3 docs.
-  /// Run `just tune` on Graviton5 hardware to get measured values.
+  /// Re-validate on Graviton5 hardware using local benches before updating defaults.
   pub const GRAVITON5: Self = Self {
     kind: TuneKind::Graviton5,
     simd_threshold: 64,

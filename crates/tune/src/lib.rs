@@ -15,17 +15,14 @@
 //!
 //! # Usage
 //!
-//! Run `just tune` to benchmark all algorithms and print optimal settings.
+//! Active frontdoor: run `just tune` (Blake3 boundary capture).
 //!
 //! ```text
-//! # Standard tuning run
+//! # Active path: Blake3 boundary capture
 //! just tune
 //!
-//! # Quick run for development
-//! just tune-quick
-//!
-//! # Output as environment variables
-//! just tune -- --format env
+//! # Alternate window sizes
+//! just tune 120 200
 //! ```
 //!
 //! # Architecture

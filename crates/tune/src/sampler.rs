@@ -12,7 +12,7 @@
 //! 3. Applies outlier rejection to filter system noise
 //! 4. Computes CV to validate measurement quality
 //!
-//! Used internally by the tuning engine. See `rscrypto-tune` binary for usage.
+//! Used internally by the tuning engine and boundary diagnostics tooling.
 
 use alloc::vec::Vec;
 use core::time::Duration;

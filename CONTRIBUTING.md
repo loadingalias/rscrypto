@@ -7,10 +7,12 @@ Submit tuning results from your hardware. Every contribution helps users on simi
 ```bash
 git clone https://github.com/loadingalias/rscrypto.git
 cd rscrypto
-just tune-contribute
+just tune
 ```
 
-Paste the output into a [new issue](../../issues/new?template=tuning-results.md).
+Open `tune-results/boundary/summary.txt`, then paste the summary into a [new issue](../../issues/new?template=tuning-results.md).
+Detailed workflow and artifact layout: `docs/tuning.md`.
+For Blake3 perf regressions or gap-closing, start with `just bench-blake3-core`.
 
 ## Platform Coverage
 

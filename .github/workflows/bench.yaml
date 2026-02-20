@@ -76,6 +76,16 @@ on:
         required: false
         type: boolean
         default: false
+      enforce_blake3_gap_gate:
+        description: "Fail when pinned BLAKE3 oneshot gap thresholds are exceeded (requires quick=false)."
+        required: false
+        type: boolean
+        default: false
+      enforce_blake3_x86_kernel_gate:
+        description: "Fail when best x86 kernel-ab BLAKE3 gaps exceed lane thresholds (requires quick=false)."
+        required: false
+        type: boolean
+        default: false
 
 concurrency:
   group: manual-bench-${{ github.ref }}
@@ -154,6 +164,9 @@ jobs:
         BENCH_SAMPLE_SIZE="${{ inputs.sample_size }}" \
         BENCH_PROFILE_TIME_SECS="${{ inputs.profile_time_secs }}" \
         BENCH_ATTACH_CRITERION=${{ inputs.upload_raw_criterion && 'true' || 'false' }} \
+        BENCH_ENFORCE_BLAKE3_GAP_GATE=${{ inputs.enforce_blake3_gap_gate && 'true' || 'false' }} \
+        BENCH_ENFORCE_BLAKE3_X86_KERNEL_GATE=${{ inputs.enforce_blake3_x86_kernel_gate && 'true' || 'false' }} \
+        BENCH_PLATFORM="${{ matrix.platform }}" \
         scripts/ci/run-bench.sh
       artifact_name: benchmark-${{ matrix.artifact_suffix }}
       artifact_path: benchmark-results/

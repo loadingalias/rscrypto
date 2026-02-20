@@ -168,7 +168,7 @@ fn kernel_specs(algo: &'static str, caps: &Caps) -> Vec<KernelSpec> {
   #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
   let base = vec![KernelSpec::new("portable", KernelTier::Portable, Caps::NONE)];
 
-  // BLAKE3 primitives: allow forcing SIMD kernels so `rscrypto-tune` can
+  // BLAKE3 primitives: allow forcing SIMD kernels so tuning tooling can
   // generate real dispatch tables (and validate crossovers) per platform.
   if is_blake3_tuning_algo(algo) {
     #[cfg(target_arch = "x86_64")]

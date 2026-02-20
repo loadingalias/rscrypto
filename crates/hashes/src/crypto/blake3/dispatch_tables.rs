@@ -1,6 +1,6 @@
 //! Tuned dispatch tables for BLAKE3.
 //!
-//! This module is the integration point for `rscrypto-tune --apply`.
+//! This module is the integration point for offline dispatch-table generation tooling.
 //! The tuning engine updates compact per-family profiles in this file.
 
 use platform::TuneKind;
@@ -814,7 +814,7 @@ pub static PROFILE_AARCH64_GRAVITON2: FamilyProfile = FamilyProfile {
     l: KernelId::Aarch64Neon,
   },
   streaming: StreamingTable {
-    stream: KernelId::Aarch64Neon,
+    stream: KernelId::Portable,
     bulk: KernelId::Aarch64Neon,
     bulk_sizeclass_threshold: THRESHOLD_NEON,
   },
@@ -857,7 +857,7 @@ pub static PROFILE_AARCH64_SERVER_NEON: FamilyProfile = FamilyProfile {
     l: KernelId::Aarch64Neon,
   },
   streaming: StreamingTable {
-    stream: KernelId::Portable,
+    stream: KernelId::Aarch64Neon,
     bulk: KernelId::Aarch64Neon,
     bulk_sizeclass_threshold: THRESHOLD_NEON,
   },

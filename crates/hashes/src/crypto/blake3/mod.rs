@@ -945,7 +945,7 @@ pub mod tune {
   /// This sets all variants to the same table. For per-variant control,
   /// use `override_blake3_parallel_policy_full()`.
   ///
-  /// This is used by `rscrypto-tune` to benchmark single-thread vs multi-thread
+  /// This is used by legacy tuning tooling to benchmark single-thread vs multi-thread
   /// behavior without relying on user-facing environment variables.
   #[must_use]
   pub fn override_blake3_parallel_policy(table: dispatch_tables::ParallelTable) -> Blake3ParallelOverrideGuard {
@@ -962,7 +962,7 @@ pub mod tune {
   /// - keyed_streaming: keyed streaming updates
   /// - derive_streaming: derive-key streaming updates
   ///
-  /// This is used by `rscrypto-tune` for fine-grained threshold tuning.
+  /// This is used by legacy tuning tooling for fine-grained threshold tuning.
   #[must_use]
   pub fn override_blake3_parallel_policy_full(policy: ParallelPolicyOverride) -> Blake3ParallelOverrideGuard {
     let lock: &Mutex<Option<ParallelPolicyOverride>> = PARALLEL_OVERRIDE.get_or_init(|| Mutex::new(None));
@@ -976,7 +976,7 @@ pub mod tune {
 
   /// Return the current SIMD threshold for streaming operations.
   ///
-  /// This is used by `rscrypto-tune` to ensure consistent SIMD threshold
+  /// This is used by legacy tuning tooling to ensure consistent SIMD threshold
   /// tuning across all operation variants.
   #[inline]
   #[must_use]
@@ -2332,6 +2332,8 @@ fn root_output_oneshot(
 
   let full_chunks = input.len() / CHUNK_LEN;
   let remainder = input.len() % CHUNK_LEN;
+  const MAX_SIMD_DEGREE: usize = 16;
+  const FAST_TREE_MAX_CHUNKS: usize = 128;
 
   #[cfg(not(feature = "std"))]
   let _ = mode;
@@ -2348,11 +2350,71 @@ fn root_output_oneshot(
     }
   }
 
+  // Small exact trees are common in oneshot benchmarks (4KiB/16KiB). For these,
+  // bypass the generic CV-stack builder and reduce the leaves directly.
+  if remainder == 0 && full_chunks.is_power_of_two() && full_chunks <= FAST_TREE_MAX_CHUNKS {
+    #[cfg(target_endian = "little")]
+    {
+      let mut cur = [[0u32; 8]; FAST_TREE_MAX_CHUNKS];
+      let mut next = [[0u32; 8]; FAST_TREE_MAX_CHUNKS / 2];
+
+      // SAFETY: input has exactly `full_chunks * CHUNK_LEN` bytes and `cur` has
+      // `full_chunks` CV slots (`full_chunks * OUT_LEN` bytes).
+      unsafe {
+        (kernel.hash_many_contiguous)(
+          input.as_ptr(),
+          full_chunks,
+          &key_words,
+          0,
+          flags,
+          cur.as_mut_ptr().cast::<u8>(),
+        )
+      };
+
+      let mut cur_len = full_chunks;
+      while cur_len > 2 {
+        let pairs = cur_len / 2;
+        kernels::parent_cvs_many_from_cvs_inline(kernel.id, &cur[..cur_len], key_words, flags, &mut next[..pairs]);
+        cur[..pairs].copy_from_slice(&next[..pairs]);
+        cur_len = pairs;
+      }
+      return parent_output(kernel, cur[0], cur[1], key_words, flags);
+    }
+
+    #[cfg(not(target_endian = "little"))]
+    {
+      let mut cur = [[0u8; OUT_LEN]; FAST_TREE_MAX_CHUNKS];
+      let mut next = [[0u8; OUT_LEN]; FAST_TREE_MAX_CHUNKS / 2];
+
+      // SAFETY: input has exactly `full_chunks * CHUNK_LEN` bytes and `cur` has
+      // `full_chunks` CV slots (`full_chunks * OUT_LEN` bytes).
+      unsafe {
+        (kernel.hash_many_contiguous)(
+          input.as_ptr(),
+          full_chunks,
+          &key_words,
+          0,
+          flags,
+          cur.as_mut_ptr().cast::<u8>(),
+        )
+      };
+
+      let mut cur_len = full_chunks;
+      while cur_len > 2 {
+        let pairs = cur_len / 2;
+        kernels::parent_cvs_many_from_bytes_inline(kernel.id, &cur[..cur_len], key_words, flags, &mut next[..pairs]);
+        cur[..pairs].copy_from_slice(&next[..pairs]);
+        cur_len = pairs;
+      }
+      let left = words8_from_le_bytes_32(&cur[0]);
+      let right = words8_from_le_bytes_32(&cur[1]);
+      return parent_output(kernel, left, right, key_words, flags);
+    }
+  }
+
   // Local CV stack to avoid constructing a full streaming hasher.
   let mut cv_stack: [MaybeUninit<[u32; 8]>; CV_STACK_LEN] = uninit_cv_stack();
   let mut cv_stack_len = 0usize;
-
-  const MAX_SIMD_DEGREE: usize = 16;
   let right_cv = {
     #[cfg(target_endian = "little")]
     {
@@ -2773,7 +2835,7 @@ impl Blake3 {
 
   /// One-shot hash using an explicitly selected kernel.
   ///
-  /// This is crate-internal glue for `hashes::bench` / `rscrypto-tune`.
+  /// This is crate-internal glue for `hashes::bench` / legacy tuning tooling.
   #[inline]
   #[must_use]
   pub(crate) fn digest_with_kernel_id(id: kernels::Blake3KernelId, data: &[u8]) -> [u8; OUT_LEN] {
@@ -2783,7 +2845,7 @@ impl Blake3 {
 
   /// One-shot keyed hash using an explicitly selected kernel.
   ///
-  /// This is crate-internal glue for `hashes::bench` / `rscrypto-tune`.
+  /// This is crate-internal glue for `hashes::bench` / legacy tuning tooling.
   #[inline]
   #[must_use]
   pub(crate) fn keyed_digest_with_kernel_id(id: kernels::Blake3KernelId, key: &[u8; 32], data: &[u8]) -> [u8; OUT_LEN] {
@@ -2794,7 +2856,7 @@ impl Blake3 {
 
   /// One-shot derive-key hash using an explicitly selected kernel.
   ///
-  /// This is crate-internal glue for `hashes::bench` / `rscrypto-tune`.
+  /// This is crate-internal glue for `hashes::bench` / legacy tuning tooling.
   #[inline]
   #[must_use]
   pub(crate) fn derive_key_with_kernel_id(
@@ -2866,7 +2928,7 @@ impl Blake3 {
 
   /// Streaming hash with explicit `(stream, bulk)` kernel IDs.
   ///
-  /// This is crate-internal glue for `hashes::bench` / `rscrypto-tune`.
+  /// This is crate-internal glue for `hashes::bench` / legacy tuning tooling.
   #[inline]
   #[must_use]
   pub(crate) fn stream_chunks_with_kernel_pair_id(
@@ -2880,7 +2942,7 @@ impl Blake3 {
 
   /// Keyed streaming hash with explicit `(stream, bulk)` kernel IDs.
   ///
-  /// This is crate-internal glue for `hashes::bench` / `rscrypto-tune`.
+  /// This is crate-internal glue for `hashes::bench` / legacy tuning tooling.
   #[inline]
   #[must_use]
   pub(crate) fn stream_chunks_keyed_with_kernel_pair_id(
@@ -2899,7 +2961,7 @@ impl Blake3 {
 
   /// Derive-key-material streaming hash with explicit `(stream, bulk)` kernel IDs.
   ///
-  /// This is crate-internal glue for `hashes::bench` / `rscrypto-tune`.
+  /// This is crate-internal glue for `hashes::bench` / legacy tuning tooling.
   #[inline]
   #[must_use]
   pub(crate) fn stream_chunks_derive_with_kernel_pair_id(
@@ -2923,7 +2985,7 @@ impl Blake3 {
 
   /// Streaming XOF with explicit `(stream, bulk)` kernel IDs.
   ///
-  /// This is crate-internal glue for `hashes::bench` / `rscrypto-tune`.
+  /// This is crate-internal glue for `hashes::bench` / legacy tuning tooling.
   #[inline]
   #[must_use]
   pub(crate) fn stream_chunks_xof_with_kernel_pair_id(
@@ -2945,7 +3007,7 @@ impl Blake3 {
 
   /// Streaming mixed-pattern hash with explicit `(stream, bulk)` kernel IDs.
   ///
-  /// This is crate-internal glue for `hashes::bench` / `rscrypto-tune`.
+  /// This is crate-internal glue for `hashes::bench` / legacy tuning tooling.
   #[inline]
   #[must_use]
   pub(crate) fn stream_chunks_mixed_with_kernel_pair_id(
@@ -2959,7 +3021,7 @@ impl Blake3 {
 
   /// Keyed streaming mixed-pattern hash with explicit `(stream, bulk)` kernel IDs.
   ///
-  /// This is crate-internal glue for `hashes::bench` / `rscrypto-tune`.
+  /// This is crate-internal glue for `hashes::bench` / legacy tuning tooling.
   #[inline]
   #[must_use]
   pub(crate) fn stream_chunks_mixed_keyed_with_kernel_pair_id(
@@ -2986,7 +3048,7 @@ impl Blake3 {
 
   /// Derive-key-material streaming mixed-pattern hash with explicit `(stream, bulk)` kernel IDs.
   ///
-  /// This is crate-internal glue for `hashes::bench` / `rscrypto-tune`.
+  /// This is crate-internal glue for `hashes::bench` / legacy tuning tooling.
   #[inline]
   #[must_use]
   pub(crate) fn stream_chunks_mixed_derive_with_kernel_pair_id(
@@ -3011,7 +3073,7 @@ impl Blake3 {
 
   /// Streaming mixed-pattern XOF with explicit `(stream, bulk)` kernel IDs.
   ///
-  /// This is crate-internal glue for `hashes::bench` / `rscrypto-tune`.
+  /// This is crate-internal glue for `hashes::bench` / legacy tuning tooling.
   #[inline]
   #[must_use]
   pub(crate) fn stream_chunks_mixed_xof_with_kernel_pair_id(

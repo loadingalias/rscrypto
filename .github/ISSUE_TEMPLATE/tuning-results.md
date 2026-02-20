@@ -13,7 +13,7 @@ labels: ["tuning", "enhancement"]
 
 ## Tuning Output
 
-<!-- Paste the output from `just tune-contribute` below -->
+<!-- Paste tune-results/boundary/summary.txt from `just tune` -->
 
 ```
 <paste here>
@@ -21,8 +21,8 @@ labels: ["tuning", "enhancement"]
 
 ## Checklist
 
-- [ ] Ran `just tune-contribute` on an idle system
-- [ ] Throughput looks reasonable (30-80 GiB/s for CRC-64)
+- [ ] Ran `just tune` on an idle system
+- [ ] Summary includes best-kernel table and suggested plain dispatch boundaries
 - [ ] No excessive variance warnings
 
 ## Notes

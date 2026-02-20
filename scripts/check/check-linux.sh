@@ -66,7 +66,7 @@ for i in "${!LINUX_TARGETS[@]}"; do
 
     if [[ "$TUNE_IN_SCOPE" == true && "$target" == x86_64-* ]]; then
       if ! CC="$ZIG_CC" RUSTC_WRAPPER="" CARGO_TARGET_DIR="$target_dir" \
-           cargo clippy -p tune --bin rscrypto-tune --all-features --target "$target" -- -D warnings \
+           cargo clippy -p tune --bin rscrypto-blake3-boundary --all-features --target "$target" -- -D warnings \
            >>"$log_file" 2>&1; then
         exit 1
       fi
@@ -84,7 +84,7 @@ for i in "${!targets[@]}"; do
   if wait "${pids[$i]}"; then
     ok
     if [[ "$TUNE_IN_SCOPE" == true && "$target" == x86_64-* ]]; then
-      step "$short_name rscrypto-tune"
+      step "$short_name rscrypto-blake3-boundary"
       ok
     fi
   else
