@@ -47,6 +47,21 @@ runners:
       - arch:x86-64
       - uarch:zen5-turin
 
+  # AMD Zen4 (Genoa).
+  amd-zen4:
+    cpu: 8
+    ram: 16
+    family: ["m7a", "c7a", "r7a"]
+    image: ubuntu24-full-x64
+    spot: price-capacity-optimized
+    retry: when-interrupted
+    volume: 60gb:gp3:500mbs:4000iops
+    ssh: true
+    tags:
+      - rscrypto:amd-zen4
+      - arch:x86-64
+      - uarch:zen4-genoa
+
   # AWS Graviton3 explicit lane.
   graviton3:
     cpu: 8

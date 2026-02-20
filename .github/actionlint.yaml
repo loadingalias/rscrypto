@@ -11,6 +11,7 @@ self-hosted-runner:
     # RunsOn benchmark/tune runners
     - runs-on=${{ github.run_id }}/runner=intel-spr
     - runs-on=${{ github.run_id }}/runner=intel-icl
+    - runs-on=${{ github.run_id }}/runner=amd-zen4
     - runs-on=${{ github.run_id }}/runner=amd-zen5
     - runs-on=${{ github.run_id }}/runner=graviton3
     - runs-on=${{ github.run_id }}/runner=graviton4
