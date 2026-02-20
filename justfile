@@ -87,8 +87,8 @@ bench-blake3-diag:
 bench-blake3-gate:
     @BENCH_ENFORCE_BLAKE3_GAP_GATE=true scripts/bench/bench.sh crates=hashes benches=blake3 filter=oneshot quick=false
 
-bench-blake3-x86-kernel-gate platform="intel-icl":
-    @BENCH_ENFORCE_BLAKE3_X86_KERNEL_GATE=true BENCH_PLATFORM={{platform}} scripts/bench/bench.sh crates=hashes benches=blake3 filter=kernel-ab quick=false
+bench-blake3-kernel-gate platform="intel-icl":
+    @BENCH_ENFORCE_BLAKE3_KERNEL_GATE=true BENCH_PLATFORM={{platform}} scripts/bench/bench.sh crates=hashes benches=blake3 filter=kernel-ab quick=false
 
 comp-check path:
     @python3 scripts/bench/comp-check.py {{path}}
