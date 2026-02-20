@@ -18,7 +18,7 @@
   - `scripts/bench/blake3-codegen-audit.sh`
 - Baseline parity enforcement now includes IBM + RISC-V tune arches:
   - `config/target-matrix.toml` `[tune].arches` now includes `s390x`, `powerpc64le`, `riscv64`.
-  - `rscrypto-tune --enforce-targets` now fails until matching BLAKE3 baseline files exist.
+  - legacy tune enforcement required matching BLAKE3 baseline files.
 
 ## Priority Order
 

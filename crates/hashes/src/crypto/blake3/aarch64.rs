@@ -1212,9 +1212,19 @@ pub unsafe fn parent_cvs_many_neon(
       ptrs[lane] = children[2 * (idx + lane)].as_ptr();
     }
 
-    let mut tmp = [[0u8; OUT_LEN]; 4];
-    hash4_neon(ptrs, BLOCK_LEN, &key_words, 0, false, parent_flags, 0, 0, &mut tmp);
-    out[idx..idx + rem].copy_from_slice(&tmp[..rem]);
+    if rem == 4 {
+      // SAFETY:
+      // - `idx + 4 <= out.len()` by `rem == 4`.
+      // - `out` is `[[u8; OUT_LEN]]`, so taking a 4-element window as
+      //   `[[u8; OUT_LEN]; 4]` is layout-compatible.
+      // - We write exactly those 4 outputs.
+      let out4 = unsafe { &mut *(out.as_mut_ptr().add(idx) as *mut [[u8; OUT_LEN]; 4]) };
+      hash4_neon(ptrs, BLOCK_LEN, &key_words, 0, false, parent_flags, 0, 0, out4);
+    } else {
+      let mut tmp = [[0u8; OUT_LEN]; 4];
+      hash4_neon(ptrs, BLOCK_LEN, &key_words, 0, false, parent_flags, 0, 0, &mut tmp);
+      out[idx..idx + rem].copy_from_slice(&tmp[..rem]);
+    }
     idx += rem;
   }
 }

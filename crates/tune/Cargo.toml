@@ -23,11 +23,6 @@ serde = { version = "1.0", features = ["derive"], optional = true }
 serde_json = { version = "1.0", optional = true }
 
 [[bin]]
-name = "rscrypto-tune"
-path = "src/bin/rscrypto-tune.rs"
-required-features = ["std"]
-
-[[bin]]
 name = "rscrypto-blake3-boundary"
 path = "src/bin/rscrypto-blake3-boundary.rs"
 required-features = ["std"]

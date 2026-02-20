@@ -1,7 +1,7 @@
 //! Benchmark-only kernel accessors.
 //!
 //! This module exposes stable function-pointer "kernels" for use by the
-//! `rscrypto-tune` binary. Production code should not depend on this API.
+//! tuning tooling. Production code should not depend on this API.
 
 #![allow(clippy::indexing_slicing)] // Benchmark harness uses deliberate slicing patterns
 

@@ -1,6 +1,6 @@
 //! Tuned dispatch tables for SHA-512/224.
 //!
-//! This module is the integration point for `rscrypto-tune --apply`.
+//! This module is the integration point for offline dispatch-table generation tooling.
 //! The tuning engine updates the per-`TuneKind` tables in this file.
 
 use platform::TuneKind;

@@ -18,6 +18,16 @@ use traits::{Digest as _, Xof as _};
 mod common;
 
 #[inline]
+fn extended_enabled() -> bool {
+  std::env::var("RSCRYPTO_BLAKE3_BENCH_EXTENDED").is_ok()
+}
+
+#[inline]
+fn diagnostics_enabled() -> bool {
+  std::env::var("RSCRYPTO_BLAKE3_BENCH_DIAGNOSTICS").is_ok()
+}
+
+#[inline]
 fn official_hash_bytes(input: &[u8]) -> [u8; 32] {
   *blake3::hash(input).as_bytes()
 }
@@ -107,6 +117,10 @@ fn blake3_streaming(c: &mut Criterion) {
 }
 
 fn blake3_update_overhead(c: &mut Criterion) {
+  if !diagnostics_enabled() {
+    return;
+  }
+
   let data_1mb = common::pseudo_random_bytes(1024 * 1024, 0xB1AE_E3B1_A1E3_0002);
   let data_1mb = black_box(data_1mb);
 
@@ -137,6 +151,10 @@ fn blake3_update_overhead(c: &mut Criterion) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 fn blake3_parent_folding_only(c: &mut Criterion) {
+  if !diagnostics_enabled() {
+    return;
+  }
+
   // 1 MiB worth of chaining values (CVs): 32 bytes each -> 32768 CVs.
   let data = common::pseudo_random_bytes(1024 * 1024, 0xB1AE_E3B1_A1E3_7001);
   let data = black_box(data);
@@ -189,7 +207,7 @@ fn blake3_xof(c: &mut Criterion) {
   group.sampling_mode(SamplingMode::Flat);
 
   // Keep the default XOF matrix small; it otherwise dominates total runtime.
-  let extended = std::env::var("RSCRYPTO_BLAKE3_BENCH_EXTENDED").is_ok();
+  let extended = extended_enabled();
   let read_only = extended || std::env::var("RSCRYPTO_BLAKE3_BENCH_READ_ONLY").is_ok();
   let output_sizes: &[usize] = if extended {
     &[32, 64, 128, 256, 512, 1024]
@@ -272,7 +290,7 @@ fn blake3_xof(c: &mut Criterion) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 fn blake3_xof_oneshot(c: &mut Criterion) {
-  if std::env::var("RSCRYPTO_BLAKE3_BENCH_EXTENDED").is_err() {
+  if !extended_enabled() {
     return;
   }
 
@@ -360,7 +378,7 @@ fn blake3_keyed(c: &mut Criterion) {
 }
 
 fn blake3_keyed_oneshot(c: &mut Criterion) {
-  if std::env::var("RSCRYPTO_BLAKE3_BENCH_EXTENDED").is_err() {
+  if !extended_enabled() {
     return;
   }
 
@@ -424,7 +442,7 @@ fn blake3_derive_key(c: &mut Criterion) {
 }
 
 fn blake3_derive_key_oneshot(c: &mut Criterion) {
-  if std::env::var("RSCRYPTO_BLAKE3_BENCH_EXTENDED").is_err() {
+  if !extended_enabled() {
     return;
   }
 
@@ -456,6 +474,10 @@ fn blake3_derive_key_oneshot(c: &mut Criterion) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 fn blake3_active_kernel(c: &mut Criterion) {
+  if !diagnostics_enabled() {
+    return;
+  }
+
   use hashes::crypto::blake3::dispatch::kernel_name_for_len;
 
   let inputs = common::sized_inputs();
@@ -483,7 +505,7 @@ fn blake3_active_kernel(c: &mut Criterion) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 fn blake3_large_inputs(c: &mut Criterion) {
-  if std::env::var("RSCRYPTO_BLAKE3_BENCH_EXTENDED").is_err() {
+  if !extended_enabled() {
     return;
   }
 
@@ -522,6 +544,10 @@ fn blake3_large_inputs(c: &mut Criterion) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 fn blake3_rscrypto_threads(c: &mut Criterion) {
+  if !diagnostics_enabled() {
+    return;
+  }
+
   let Ok(ap) = std::thread::available_parallelism() else {
     return;
   };
@@ -572,7 +598,7 @@ fn blake3_rscrypto_threads(c: &mut Criterion) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 fn blake3_latency(c: &mut Criterion) {
-  if std::env::var("RSCRYPTO_BLAKE3_BENCH_EXTENDED").is_err() {
+  if !extended_enabled() {
     return;
   }
 
@@ -608,6 +634,10 @@ fn blake3_latency(c: &mut Criterion) {
 /// Benchmark to verify the XOF dispatch fix: compares `finalize_xof()` vs `finalize_xof_sized()`
 /// on small inputs with large outputs. This is the critical case that showed +500% slowdown.
 fn blake3_xof_sized_comparison(c: &mut Criterion) {
+  if !diagnostics_enabled() {
+    return;
+  }
+
   let mut group = c.benchmark_group("blake3/xof-sized-comparison");
   group.sample_size(30);
   group.warm_up_time(Duration::from_secs(2));
@@ -670,6 +700,10 @@ fn blake3_xof_sized_comparison(c: &mut Criterion) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 fn blake3_streaming_dispatch(c: &mut Criterion) {
+  if !diagnostics_enabled() {
+    return;
+  }
+
   let inputs = common::sized_inputs();
   let modes: &[(&str, u32)] = &[
     ("plain", 0),
@@ -736,6 +770,49 @@ fn blake3_streaming_dispatch(c: &mut Criterion) {
   group.finish();
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Kernel A/B Diagnostics (dispatch-independent)
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn blake3_kernel_ab(c: &mut Criterion) {
+  if !diagnostics_enabled() {
+    return;
+  }
+
+  let mut group = c.benchmark_group("blake3/kernel-ab");
+  group.sample_size(25);
+  group.warm_up_time(Duration::from_secs(1));
+  group.measurement_time(Duration::from_secs(3));
+  group.sampling_mode(SamplingMode::Flat);
+
+  let sizes = [256usize, 1024, 4096, 16384, 65536];
+  let mut kernels: Vec<&str> = vec!["portable"];
+  #[cfg(target_arch = "aarch64")]
+  kernels.push("aarch64/neon");
+  #[cfg(target_arch = "x86_64")]
+  kernels.extend(["x86_64/sse4.1", "x86_64/avx2", "x86_64/avx512"]);
+
+  for size in sizes {
+    let data = common::pseudo_random_bytes(size, 0xB1AE_E3B1_A1E3_7A8B ^ size as u64);
+    group.throughput(Throughput::Bytes(size as u64));
+
+    for name in &kernels {
+      let Some(k) = microbench::get_kernel("blake3", name) else {
+        continue;
+      };
+      group.bench_function(BenchmarkId::new(format!("rscrypto/{}", k.name), size), |b| {
+        b.iter(|| black_box((k.func)(black_box(&data))))
+      });
+    }
+
+    group.bench_function(BenchmarkId::new("official", size), |b| {
+      b.iter(|| black_box(official_hash_bytes(black_box(&data))))
+    });
+  }
+
+  group.finish();
+}
+
 criterion_group!(
   benches,
   blake3_oneshot_comparison,
@@ -754,5 +831,6 @@ criterion_group!(
   blake3_rscrypto_threads,
   blake3_latency,
   blake3_streaming_dispatch,
+  blake3_kernel_ab,
 );
 criterion_main!(benches);

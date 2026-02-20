@@ -56,43 +56,13 @@ blake3-codegen-audit target="x86_64-unknown-linux-gnu" out="target/blake3-codege
     @scripts/bench/blake3-codegen-audit.sh {{target}} {{out}}
 
 
-# Tuning
-# NOTE: The 'tune' crate is dev-only and not part of the workspace build.
-# It's built on-demand when these commands are run, keeping workspace builds fast.
-# Usage:
-#   just tune
-#   just tune blake3 --apply
-#   just tune crc64nvme --apply
-#   just tune-apply ~/Downloads/tuning-amd-zen4
-#   just tune-measure dir=target/tune
-#   just tune-derive raw=target/tune/raw-results.json
-#   just tune-quick -- --only blake3
-#   just tune -- --repeats 5 --aggregate trimmed-mean
-#   just tune-report dir=target/tune -- --enforce-targets
-tune *args="":
-    RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p tune --release --bin rscrypto-tune -- {{args}}
-
-# Developer preview only (faster, noisier). Not for dispatch decisions.
-tune-quick *args="":
-    RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p tune --release --bin rscrypto-tune -- --quick {{args}}
-
-tune-apply *artifacts="":
-    @scripts/tune/apply.sh {{artifacts}}
-
-tune-apply-local *args="":
-    RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p tune --release --bin rscrypto-tune -- --apply {{args}}
-
-tune-measure dir="target/tune" *args="":
-    RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p tune --release --bin rscrypto-tune -- --measure-only --report-dir "{{dir}}" --raw-output "{{dir}}/raw-results.json" {{args}}
-
-tune-derive raw="target/tune/raw-results.json" dir="target/tune" *args="":
-    RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p tune --release --bin rscrypto-tune -- --derive-from "{{raw}}" --report-dir "{{dir}}" {{args}}
-
-tune-report dir="target/tune" raw="target/tune/raw-results.json" *args="":
-    RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p tune --release --bin rscrypto-tune -- --derive-from "{{raw}}" --report-dir "{{dir}}" {{args}}
-
-tune-contribute *args="":
-    RUSTC_WRAPPER= RUSTFLAGS='-C target-cpu=native' cargo run -p tune --release --bin rscrypto-tune -- --format contribute {{args}}
+# Tuning (active path): Blake3 boundary capture only.
+# This keeps the tuning surface tiny and cheap while Blake3 ships.
+tune warmup_ms="80" measure_ms="120":
+    @TUNE_OUTPUT_DIR=tune-results \
+    TUNE_BOUNDARY_WARMUP_MS={{warmup_ms}} \
+    TUNE_BOUNDARY_MEASURE_MS={{measure_ms}} \
+    scripts/ci/run-tune.sh
 
 
 # Summarize Criterion results as TSV
@@ -108,30 +78,17 @@ bench-blake3-compare min_pct="0":
     RUSTC_WRAPPER= cargo bench -p hashes --bench comp
     @python3 scripts/bench/criterion-summary.py --group-prefix 'blake3/' --non-wins --ours 'rscrypto/blake3' --min-improvement-pct {{min_pct}}
 
-blake3-boundary-report *csv:
-    @python3 scripts/bench/blake3-boundary-report.py {{csv}}
+bench-blake3-core:
+    @scripts/bench/bench.sh crates=hashes benches=blake3 filter=oneshot,streaming,keyed,derive-key,xof
 
-tune-blake3-boundary warmup_ms="80" measure_ms="120":
-    @TUNE_OUTPUT_DIR=tune-results \
-    TUNE_BLAKE3_BOUNDARY=true \
-    TUNE_BOUNDARY_ONLY=true \
-    TUNE_BOUNDARY_WARMUP_MS={{warmup_ms}} \
-    TUNE_BOUNDARY_MEASURE_MS={{measure_ms}} \
-    scripts/ci/run-tune.sh
+bench-blake3-diag:
+    @RSCRYPTO_BLAKE3_BENCH_DIAGNOSTICS=1 scripts/bench/bench.sh crates=hashes benches=blake3
 
-tune-blake3-full warmup_ms="" measure_ms="" repeats="1":
-    @TUNE_OUTPUT_DIR=tune-results \
-    TUNE_CRATES=hashes \
-    TUNE_ONLY=blake3 \
-    TUNE_BLAKE3_BOUNDARY=true \
-    TUNE_BOUNDARY_ONLY=false \
-    TUNE_ENFORCE_TARGETS=false \
-    TUNE_SELF_CHECK=false \
-    TUNE_APPLY=false \
-    TUNE_WARMUP_MS={{warmup_ms}} \
-    TUNE_MEASURE_MS={{measure_ms}} \
-    TUNE_REPEATS={{repeats}} \
-    scripts/ci/run-tune.sh
+bench-blake3-gate:
+    @BENCH_ENFORCE_BLAKE3_GAP_GATE=true scripts/bench/bench.sh crates=hashes benches=blake3 filter=oneshot quick=false
+
+bench-blake3-x86-kernel-gate platform="intel-icl":
+    @BENCH_ENFORCE_BLAKE3_X86_KERNEL_GATE=true BENCH_PLATFORM={{platform}} scripts/bench/bench.sh crates=hashes benches=blake3 filter=kernel-ab quick=false
 
 comp-check path:
     @python3 scripts/bench/comp-check.py {{path}}

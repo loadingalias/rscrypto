@@ -227,6 +227,10 @@ SAMPLE_SIZE_INPUT="${BENCH_SAMPLE_SIZE:-}"
 PROFILE_TIME_SECS_INPUT="${BENCH_PROFILE_TIME_SECS:-}"
 ATTACH_CRITERION_INPUT="$(to_bool "${BENCH_ATTACH_CRITERION:-false}")"
 
+ENFORCE_BLAKE3_GAP_GATE_INPUT="$(to_bool "${BENCH_ENFORCE_BLAKE3_GAP_GATE:-false}")"
+ENFORCE_BLAKE3_X86_KERNEL_GATE_INPUT="$(to_bool "${BENCH_ENFORCE_BLAKE3_X86_KERNEL_GATE:-false}")"
+PLATFORM_INPUT="$(echo "${BENCH_PLATFORM:-}" | tr '[:upper:]' '[:lower:]' | xargs)"
+
 if [[ -n "$WARMUP_MS_INPUT" && ! "$WARMUP_MS_INPUT" =~ ^[0-9]+$ ]]; then
   echo "error: BENCH_WARMUP_MS must be an integer >= 0 (got '$WARMUP_MS_INPUT')" >&2
   exit 2
@@ -269,7 +273,17 @@ else
 fi
 
 if [[ "$CLEAN_INPUT" == "true" ]]; then
-  rm -rf target/criterion
+  rm -rf target/criterion || true
+fi
+
+if [[ "$ENFORCE_BLAKE3_GAP_GATE_INPUT" == "true" && "$QUICK_INPUT" == "true" ]]; then
+  echo "error: BENCH_ENFORCE_BLAKE3_GAP_GATE=true requires BENCH_QUICK=false" >&2
+  exit 2
+fi
+
+if [[ "$ENFORCE_BLAKE3_X86_KERNEL_GATE_INPUT" == "true" && "$QUICK_INPUT" == "true" ]]; then
+  echo "error: BENCH_ENFORCE_BLAKE3_X86_KERNEL_GATE=true requires BENCH_QUICK=false" >&2
+  exit 2
 fi
 
 LOG_PATH="$OUT_DIR/output.txt"
@@ -292,7 +306,30 @@ if [[ -n "$FILTER_INPUT" ]]; then
 fi
 echo "Criterion args: ${CRITERION_ARGS[*]-<none>}"
 echo "Attach raw Criterion: $ATTACH_CRITERION_INPUT"
+echo "Enforce BLAKE3 gap gate: $ENFORCE_BLAKE3_GAP_GATE_INPUT"
+echo "Enforce BLAKE3 x86 kernel gate: $ENFORCE_BLAKE3_X86_KERNEL_GATE_INPUT"
+if [[ -n "$PLATFORM_INPUT" ]]; then
+  echo "Bench platform: $PLATFORM_INPUT"
+fi
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+platform_is_x86_lane() {
+  case "$1" in
+    intel-icl|intel-spr|amd-zen4|amd-zen5) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+blake3_x86_kernel_gate_thresholds() {
+  local platform="$1"
+  case "$platform" in
+    intel-spr) echo "256=8.0,1024=7.0,4096=6.0,16384=6.0,65536=6.0" ;;
+    intel-icl) echo "256=9.0,1024=8.0,4096=7.0,16384=7.0,65536=7.0" ;;
+    amd-zen5) echo "256=9.0,1024=8.0,4096=7.0,16384=7.0,65536=7.0" ;;
+    amd-zen4) echo "256=9.0,1024=8.0,4096=7.0,16384=7.0,65536=7.0" ;;
+    *) echo "256=9.0,1024=8.0,4096=7.0,16384=7.0,65536=7.0" ;;
+  esac
+}
 
 maybe_attach_criterion() {
   if [[ "$ATTACH_CRITERION_INPUT" != "true" ]]; then
@@ -467,6 +504,30 @@ if [[ "${#PLAN_ROWS[@]}" -gt 0 ]]; then
     run_bench_cmd "$crate" "$bench" "$filter"
   done
 
+  if [[ "$ENFORCE_BLAKE3_GAP_GATE_INPUT" == "true" ]]; then
+    python3 scripts/bench/blake3-gap-gate.py | tee -a "$LOG_PATH"
+  fi
+  if [[ "$ENFORCE_BLAKE3_X86_KERNEL_GATE_INPUT" == "true" ]]; then
+    if platform_is_x86_lane "$PLATFORM_INPUT"; then
+      local_thresholds="$(blake3_x86_kernel_gate_thresholds "$PLATFORM_INPUT")"
+      echo "" | tee -a "$LOG_PATH"
+      echo "Running x86 kernel diagnostics for BLAKE3 gate..." | tee -a "$LOG_PATH"
+      cmd=(cargo bench --profile bench -p hashes --bench blake3 -- kernel-ab)
+      if [[ "${#CRITERION_ARGS[@]}" -gt 0 ]]; then
+        cmd+=("${CRITERION_ARGS[@]}")
+      fi
+      echo "Running: RSCRYPTO_BLAKE3_BENCH_DIAGNOSTICS=1 ${cmd[*]}" | tee -a "$LOG_PATH"
+      RSCRYPTO_BLAKE3_BENCH_DIAGNOSTICS=1 "${cmd[@]}" 2>&1 | tee -a "$LOG_PATH"
+      python3 scripts/bench/blake3-gap-gate.py \
+        --group blake3/kernel-ab \
+        --ours-prefix rscrypto/x86_64/ \
+        --rival official \
+        --max-gap-case "$local_thresholds" \
+        --label "blake3/kernel-ab ($PLATFORM_INPUT)" | tee -a "$LOG_PATH"
+    else
+      echo "Skipping BLAKE3 x86 kernel gate on non-x86 lane '$PLATFORM_INPUT'." | tee -a "$LOG_PATH"
+    fi
+  fi
   maybe_attach_criterion
   exit 0
 fi
@@ -513,4 +574,28 @@ fi
 
 echo "Running: ${cmd[*]}" | tee -a "$LOG_PATH"
 "${cmd[@]}" 2>&1 | tee -a "$LOG_PATH"
+if [[ "$ENFORCE_BLAKE3_GAP_GATE_INPUT" == "true" ]]; then
+  python3 scripts/bench/blake3-gap-gate.py | tee -a "$LOG_PATH"
+fi
+if [[ "$ENFORCE_BLAKE3_X86_KERNEL_GATE_INPUT" == "true" ]]; then
+  if platform_is_x86_lane "$PLATFORM_INPUT"; then
+    local_thresholds="$(blake3_x86_kernel_gate_thresholds "$PLATFORM_INPUT")"
+    echo "" | tee -a "$LOG_PATH"
+    echo "Running x86 kernel diagnostics for BLAKE3 gate..." | tee -a "$LOG_PATH"
+    cmd=(cargo bench --profile bench -p hashes --bench blake3 -- kernel-ab)
+    if [[ "${#CRITERION_ARGS[@]}" -gt 0 ]]; then
+      cmd+=("${CRITERION_ARGS[@]}")
+    fi
+    echo "Running: RSCRYPTO_BLAKE3_BENCH_DIAGNOSTICS=1 ${cmd[*]}" | tee -a "$LOG_PATH"
+    RSCRYPTO_BLAKE3_BENCH_DIAGNOSTICS=1 "${cmd[@]}" 2>&1 | tee -a "$LOG_PATH"
+    python3 scripts/bench/blake3-gap-gate.py \
+      --group blake3/kernel-ab \
+      --ours-prefix rscrypto/x86_64/ \
+      --rival official \
+      --max-gap-case "$local_thresholds" \
+      --label "blake3/kernel-ab ($PLATFORM_INPUT)" | tee -a "$LOG_PATH"
+  else
+    echo "Skipping BLAKE3 x86 kernel gate on non-x86 lane '$PLATFORM_INPUT'." | tee -a "$LOG_PATH"
+  fi
+fi
 maybe_attach_criterion

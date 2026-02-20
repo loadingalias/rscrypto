@@ -25,6 +25,9 @@ crates/*/src/*/*/bench_baseline
 ARCHITECTURE_MATRIX.md
 crates/hashes/src/crypto/blake3/final_work.md
 tune-results/
+benchmark-results
+__pycache__
+
 
 # Fuzzing
 corpus
