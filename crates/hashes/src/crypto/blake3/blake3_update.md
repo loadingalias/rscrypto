@@ -107,6 +107,36 @@ Close the remaining BLAKE3 gaps so `rscrypto` is consistently at or ahead of off
 - Keyed/derive overhead inside rscrypto is not the dominant short-input penalty on this host.
 - Auto-dispatch/control-path overhead is significant at short sizes and must be reduced before kernel-level changes.
 
+### Phase 2 CI Capture (all enforced lanes, 2026-02-21)
+- Canonical CI run: `22260772858` on `main` at `664401e` (`crates=hashes`, `benches=blake3_short_input_attribution`, `quick=false`, gates disabled).
+- Earlier run `22260482068` failed only because the new bench target was not yet present on `main` at that SHA.
+
+#### CI Summary (kernel-aware dispatch overhead)
+
+| Lane | rs gap 256 | rs gap 1024 | oneshot kernel (256/1024) | oneshot dispatch overhead (256/1024) | stream kernel (256/1024) | stream dispatch overhead (256/1024) |
+|---|---:|---:|---|---:|---|---:|
+| amd-zen4 | +23.10% | +9.75% | `x86_64/avx2` / `x86_64/avx2` | +14.49% / -4.21% | `x86_64/sse4.1` / `x86_64/sse4.1` | +2.88% / +6.52% |
+| intel-spr | +51.47% | +31.68% | `x86_64/avx2` / `x86_64/avx2` | +17.76% / -0.81% | `x86_64/sse4.1` / `x86_64/sse4.1` | +7.23% / +9.09% |
+| intel-icl | +58.16% | +35.87% | `x86_64/avx2` / `x86_64/avx2` | +21.18% / +0.33% | `x86_64/sse4.1` / `x86_64/sse4.1` | +12.56% / +8.73% |
+| amd-zen5 | +37.07% | +23.19% | `x86_64/avx2` / `x86_64/avx2` | +11.25% / -0.62% | `x86_64/sse4.1` / `x86_64/sse4.1` | -0.37% / -0.36% |
+| graviton3 | +45.53% | +22.15% | `portable` / `portable` | +43.66% / +18.66% | `aarch64/neon` / `aarch64/neon` | +1.15% / +4.79% |
+| graviton4 | +46.12% | +22.56% | `portable` / `portable` | +45.12% / +19.47% | `aarch64/neon` / `aarch64/neon` | +3.09% / +5.85% |
+| ibm-power10 | +25.81% | +14.77% | `portable` / `powerpc64/vsx` | +22.03% / +27.50% | `portable` / `portable` | +2.35% / +7.87% |
+| ibm-s390x | +17.66% | +6.03% | `portable` / `portable` | +18.82% / +4.31% | `portable` / `portable` | +1.62% / +6.00% |
+
+#### CI Conclusions
+- x86: short-input deficit remains severe; oneshot dispatch overhead at 256 is material (+11% to +21%), but cannot explain all gap alone.
+- arm64: oneshot path is selecting `portable` at 256/1024 while stream path is already `neon`; this is a primary dispatch-policy target.
+- power/s390x: both oneshot and stream frequently remain portable at short sizes; dispatch/path policy dominates before kernel micro-optimizations.
+- 1024 overhead is often lower than 256, confirming Phase 3 should prioritize tiny/short path first.
+
+### Phase 3 Progress (2026-02-21)
+- Implemented (local): `PROFILE_AARCH64_SERVER_NEON` now maps oneshot size classes `xs/s` to `Aarch64Neon` (previously `Portable`), aligning Graviton-family oneshot short-input dispatch with lane-native SIMD capability.
+- Rationale: CI Phase 2 showed Graviton3/4 oneshot selecting `portable` at `256/1024` while streaming already selected `neon`.
+- Validation required on `main` after push:
+  - run `Bench` workflow on `graviton3,graviton4` with `crates=hashes`, `benches=blake3`, `filter=oneshot,kernel-ab,streaming-dispatch`, `quick=false`, gates disabled.
+  - compare `256/1024` oneshot gap and selected kernel vs run `22259222437` / `22260772858`.
+
 ## Hard Targets
 - Pass `blake3/oneshot` gap gate on all enforced platforms.
 - Pass `blake3/kernel-ab` gate on all enforced platforms.
@@ -128,8 +158,8 @@ Close the remaining BLAKE3 gaps so `rscrypto` is consistently at or ahead of off
   - finalize cost
   - keyed/derive branch overhead
 - [x] Collect and summarize initial local Phase 2 measurements from `blake3_short_input_attribution` bench target.
-- [ ] Quantify dispatch overhead vs compute for lengths: `64, 128, 256, 512, 1024` on CI lanes.
-- [ ] Validate threshold behavior from `streaming_dispatch_info` for small inputs on CI lanes.
+- [x] Quantify dispatch overhead vs compute for lengths: `64, 128, 256, 512, 1024` on CI lanes.
+- [x] Validate threshold behavior from `streaming_dispatch_info` for small inputs on CI lanes.
 
 ### Phase 3: Code Optimizations (Short Path First)
 - [ ] Reduce oneshot setup overhead for tiny inputs.
