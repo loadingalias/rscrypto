@@ -179,6 +179,44 @@ Close the remaining BLAKE3 gaps so `rscrypto` is consistently at or ahead of off
 - Next required measurement:
   - CI `Bench` workflow on pushed SHA with `crates=hashes`, `benches=blake3_short_input_attribution`, `quick=false`, x86 lanes first (`amd-zen4`, `intel-spr`, `intel-icl`, `amd-zen5`), then arm64 to check for collateral deltas.
 
+### Phase 3 Candidate A CI Validation (2026-02-21)
+- Run: `22263080239` on `main` at `857485f` (`crates=hashes`, `benches=blake3_short_input_attribution`, all 8 enforced lanes, gates disabled).
+
+| Lane | rs gap 256 | rs gap 1024 | oneshot kernel (256/1024) | oneshot dispatch overhead (256/1024) | stream kernel (256/1024) | stream dispatch overhead (256/1024) |
+|---|---:|---:|---|---:|---|---:|
+| amd-zen4 | +21.40% | +9.01% | `x86_64/avx2` / `x86_64/avx2` | +13.65% / -4.54% | `x86_64/sse4.1` / `x86_64/sse4.1` | +10.03% / +13.71% |
+| intel-spr | +55.40% | +31.74% | `x86_64/avx2` / `x86_64/avx2` | +17.69% / -2.45% | `x86_64/sse4.1` / `x86_64/sse4.1` | +7.25% / +8.87% |
+| intel-icl | +59.35% | +35.91% | `x86_64/avx2` / `x86_64/avx2` | +20.22% / -0.38% | `x86_64/sse4.1` / `x86_64/sse4.1` | +14.00% / +12.33% |
+| amd-zen5 | +37.60% | +23.26% | `x86_64/avx2` / `x86_64/avx2` | +10.47% / -1.15% | `x86_64/sse4.1` / `x86_64/sse4.1` | -1.06% / -0.09% |
+| graviton3 | +44.77% | +22.05% | `aarch64/neon` / `aarch64/neon` | +10.16% / +8.07% | `aarch64/neon` / `aarch64/neon` | +1.24% / +5.09% |
+| graviton4 | +45.93% | +22.49% | `aarch64/neon` / `aarch64/neon` | +10.24% / +7.94% | `aarch64/neon` / `aarch64/neon` | +2.21% / +5.30% |
+| ibm-power10 | +26.70% | +13.98% | `portable` / `powerpc64/vsx` | +20.95% / +27.77% | `portable` / `portable` | +4.82% / +9.23% |
+| ibm-s390x | +16.51% | +6.84% | `portable` / `portable` | +18.07% / +4.17% | `portable` / `portable` | +1.38% / +4.14% |
+
+#### Candidate A vs Prior CI (`22260772858` / arm compare note)
+- Candidate A did **not** produce a cross-lane, repeatable short-gap improvement.
+- Improvements were limited/partial:
+  - `amd-zen4`: rs gap improved at `256/1024` (`+23.10 -> +21.40`, `+9.75 -> +9.01`).
+  - `graviton3/4`: modest rs gap improvement at both sizes (~`0.3` to `1.7` points).
+  - `ibm-s390x`: improved at `256` (`+17.66 -> +16.51`).
+- Regressions/flat lanes remain:
+  - `intel-spr` and `intel-icl` worsened at `256`.
+  - `amd-zen5` worsened slightly at `256/1024`.
+  - `ibm-power10` worsened at `256`.
+- Conclusion: keep Candidate A as a correctness-preserving cleanup, but it is insufficient for gate closure; next gains must come from deeper short-input compute/setup improvements (especially x86 `avx2` one-chunk path) and lane-specific policy tuning backed by lane data.
+
+### Phase 3 Candidate B (local-only, pending CI validation)
+- Implemented on local workspace:
+  - rewired x86 one-chunk root path (`digest_one_chunk_root_hash_words_x86`) to process prefix full blocks via direct `x86_compress_cv_bytes` loop instead of the generic `chunk_compress_blocks` function-pointer wrapper.
+- Rationale:
+  - this is a targeted short-input compute/setup reduction in the exact hotspot identified by Phase 2/3 x86 data (`avx2` one-shot path at `256/1024`).
+  - no dispatch-table retune and no large-input path edits.
+- Local verification:
+  - `cargo fmt --all --check`: pass
+  - `cargo test -p hashes blake3:: --quiet`: pass
+- Next required measurement:
+  - rerun CI `blake3_short_input_attribution` on pushed SHA, x86 lanes first (`amd-zen4`, `intel-spr`, `intel-icl`, `amd-zen5`), then full enforced matrix for parity/regression check.
+
 ## Hard Targets
 - Pass `blake3/oneshot` gap gate on all enforced platforms.
 - Pass `blake3/kernel-ab` gate on all enforced platforms.
