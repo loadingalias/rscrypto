@@ -50,5 +50,9 @@ harness = false
 name = "blake3"
 harness = false
 
+[[bench]]
+name = "blake3_short_input_attribution"
+harness = false
+
 [lints]
 workspace = true

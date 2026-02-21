@@ -27,6 +27,7 @@ crates/hashes/src/crypto/blake3/final_work.md
 tune-results/
 benchmark-results
 __pycache__
+crates/hashes/src/crypto/blake3/blake3_update.md
 
 
 # Fuzzing
