@@ -851,8 +851,8 @@ pub static PROFILE_AARCH64_GRAVITON2: FamilyProfile = default_kind_profile();
 pub static PROFILE_AARCH64_SERVER_NEON: FamilyProfile = FamilyProfile {
   dispatch: DispatchTable {
     boundaries: [64, 4095, 4096],
-    xs: KernelId::Portable,
-    s: KernelId::Portable,
+    xs: KernelId::Aarch64Neon,
+    s: KernelId::Aarch64Neon,
     m: KernelId::Aarch64Neon,
     l: KernelId::Aarch64Neon,
   },
