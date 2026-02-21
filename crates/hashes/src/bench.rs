@@ -17,6 +17,8 @@ use crate::{crypto, fast};
 
 #[cfg(feature = "std")]
 static BLAKE3_FORCE_KERNEL_ENV: OnceLock<Option<&'static str>> = OnceLock::new();
+#[cfg(feature = "std")]
+static BLAKE3_FORCE_KERNEL_LOG_ONCE: OnceLock<()> = OnceLock::new();
 
 #[derive(Clone, Copy)]
 pub struct Kernel {
@@ -551,11 +553,17 @@ fn normalize_blake3_kernel_name(name: &str) -> Option<&'static str> {
 #[inline]
 #[must_use]
 fn blake3_forced_kernel_from_env() -> Option<&'static str> {
-  *BLAKE3_FORCE_KERNEL_ENV.get_or_init(|| {
+  let forced = *BLAKE3_FORCE_KERNEL_ENV.get_or_init(|| {
     let raw = std::env::var("RSCRYPTO_BLAKE3_FORCE_KERNEL").ok()?;
     let lowered = raw.trim().to_ascii_lowercase();
     normalize_blake3_kernel_name(lowered.as_str())
-  })
+  });
+  if let Some(name) = forced {
+    BLAKE3_FORCE_KERNEL_LOG_ONCE.get_or_init(|| {
+      std::eprintln!("BLAKE3 forced kernel override active: {name}");
+    });
+  }
+  forced
 }
 
 #[cfg(not(feature = "std"))]
@@ -985,6 +993,21 @@ fn blake3_oneshot_x86_64_avx512(data: &[u8]) -> u64 {
 #[cfg(target_arch = "aarch64")]
 fn blake3_oneshot_aarch64_neon(data: &[u8]) -> u64 {
   blake3_oneshot_kernel(crypto::blake3::kernels::Blake3KernelId::Aarch64Neon, data)
+}
+
+#[cfg(target_arch = "s390x")]
+fn blake3_oneshot_s390x_vector(data: &[u8]) -> u64 {
+  blake3_oneshot_kernel(crypto::blake3::kernels::Blake3KernelId::S390xVector, data)
+}
+
+#[cfg(target_arch = "powerpc64")]
+fn blake3_oneshot_powerpc64_vsx(data: &[u8]) -> u64 {
+  blake3_oneshot_kernel(crypto::blake3::kernels::Blake3KernelId::PowerVsx, data)
+}
+
+#[cfg(target_arch = "riscv64")]
+fn blake3_oneshot_riscv64_v(data: &[u8]) -> u64 {
+  blake3_oneshot_kernel(crypto::blake3::kernels::Blake3KernelId::RiscvV, data)
 }
 
 fn blake3_oneshot_auto(data: &[u8]) -> u64 {
@@ -1648,6 +1671,21 @@ pub fn get_kernel(algo: &str, name: &str) -> Option<Kernel> {
       name: "aarch64/neon",
       func: blake3_oneshot_aarch64_neon,
     }),
+    #[cfg(target_arch = "s390x")]
+    ("blake3-chunk", "s390x/vector") => Some(Kernel {
+      name: "s390x/vector",
+      func: blake3_oneshot_s390x_vector,
+    }),
+    #[cfg(target_arch = "powerpc64")]
+    ("blake3-chunk", "powerpc64/vsx") => Some(Kernel {
+      name: "powerpc64/vsx",
+      func: blake3_oneshot_powerpc64_vsx,
+    }),
+    #[cfg(target_arch = "riscv64")]
+    ("blake3-chunk", "riscv64/v") => Some(Kernel {
+      name: "riscv64/v",
+      func: blake3_oneshot_riscv64_v,
+    }),
     ("blake3-parent", "portable") => Some(Kernel {
       name: "portable",
       func: blake3_parent_cvs_many_portable,
@@ -1997,6 +2035,21 @@ pub fn get_kernel(algo: &str, name: &str) -> Option<Kernel> {
     ("blake3", "aarch64/neon") => Some(Kernel {
       name: "aarch64/neon",
       func: blake3_oneshot_aarch64_neon,
+    }),
+    #[cfg(target_arch = "s390x")]
+    ("blake3", "s390x/vector") => Some(Kernel {
+      name: "s390x/vector",
+      func: blake3_oneshot_s390x_vector,
+    }),
+    #[cfg(target_arch = "powerpc64")]
+    ("blake3", "powerpc64/vsx") => Some(Kernel {
+      name: "powerpc64/vsx",
+      func: blake3_oneshot_powerpc64_vsx,
+    }),
+    #[cfg(target_arch = "riscv64")]
+    ("blake3", "riscv64/v") => Some(Kernel {
+      name: "riscv64/v",
+      func: blake3_oneshot_riscv64_v,
     }),
     #[cfg(target_arch = "aarch64")]
     ("blake3-latency", "aarch64/neon") => Some(Kernel {
