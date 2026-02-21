@@ -2596,8 +2596,7 @@ fn hash_full_chunks_cvs_scoped(
 fn digest_oneshot_words(kernel: Kernel, key_words: [u32; 8], flags: u32, input: &[u8]) -> [u32; 8] {
   // Ultra-fast path for tiny inputs (≤64B): use unified helper
   if input.len() <= BLOCK_LEN {
-    let bytes = hash_tiny_to_root_bytes(kernel, key_words, flags, input);
-    return words8_from_le_bytes_32(&bytes);
+    return hash_tiny_to_root_words(kernel, key_words, flags, input);
   }
 
   // Fast path for single-chunk inputs (≤1024B): use platform-specific helpers
@@ -3959,14 +3958,19 @@ fn compress_to_root_words(
 /// It handles input padding and dispatches to the appropriate kernel.
 #[inline]
 #[must_use]
-fn hash_tiny_to_root_bytes(kernel: Kernel, key_words: [u32; 8], flags: u32, input: &[u8]) -> [u8; OUT_LEN] {
+fn hash_tiny_to_root_words(kernel: Kernel, key_words: [u32; 8], flags: u32, input: &[u8]) -> [u32; 8] {
   debug_assert!(input.len() <= BLOCK_LEN);
 
   let mut block = [0u8; BLOCK_LEN];
   block[..input.len()].copy_from_slice(input);
 
-  let words = compress_to_root_words(kernel, key_words, &block, input.len(), flags);
-  words8_to_le_bytes(&words)
+  compress_to_root_words(kernel, key_words, &block, input.len(), flags)
+}
+
+#[inline]
+#[must_use]
+fn hash_tiny_to_root_bytes(kernel: Kernel, key_words: [u32; 8], flags: u32, input: &[u8]) -> [u8; OUT_LEN] {
+  words8_to_le_bytes(&hash_tiny_to_root_words(kernel, key_words, flags, input))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3983,25 +3987,27 @@ unsafe fn digest_one_chunk_root_hash_words_x86(
 ) -> [u32; 8] {
   debug_assert!(input.len() <= CHUNK_LEN);
 
-  // We always have a "last block", even for the empty input (treated as a
-  // single 0-length block).
-  let blocks = core::cmp::max(1usize, input.len().div_ceil(BLOCK_LEN));
+  // Keep one final block for CHUNK_END|ROOT. For aligned inputs we process
+  // `len/BLOCK_LEN - 1` full blocks and finish on the last full block.
   let (full_blocks, last_len) = if input.is_empty() {
     (0usize, 0usize)
-  } else if input.len().is_multiple_of(BLOCK_LEN) {
-    (blocks - 1, BLOCK_LEN)
   } else {
-    (blocks - 1, input.len() % BLOCK_LEN)
+    let rem = input.len() % BLOCK_LEN;
+    if rem == 0 {
+      (input.len() / BLOCK_LEN - 1, BLOCK_LEN)
+    } else {
+      (input.len() / BLOCK_LEN, rem)
+    }
   };
 
   // Hash all full blocks except the final block, updating the CV. This keeps
   // ROOT out of the dependency chain until the last compress.
   let mut cv = key_words;
-  let mut blocks_compressed: u8 = 0;
+  let mut blocks_compressed = 0u8;
   let full_bytes = full_blocks * BLOCK_LEN;
   (kernel.chunk_compress_blocks)(&mut cv, 0, flags, &mut blocks_compressed, &input[..full_bytes]);
 
-  let start = if blocks_compressed == 0 { CHUNK_START } else { 0 };
+  let start = if full_blocks == 0 { CHUNK_START } else { 0 };
   let final_flags = flags | start | CHUNK_END | ROOT;
 
   // For partial blocks (including empty), pad to 64 bytes.
@@ -4038,15 +4044,17 @@ unsafe fn digest_one_chunk_root_hash_words_aarch64(
   debug_assert!(input.len() <= CHUNK_LEN);
   debug_assert_eq!(kernel.id, kernels::Blake3KernelId::Aarch64Neon);
 
-  // We always have a "last block", even for the empty input (treated as a
-  // single 0-length block).
-  let blocks = core::cmp::max(1usize, input.len().div_ceil(BLOCK_LEN));
+  // Keep one final block for CHUNK_END|ROOT. For aligned inputs we process
+  // `len/BLOCK_LEN - 1` full blocks and finish on the last full block.
   let (full_blocks, last_len) = if input.is_empty() {
     (0usize, 0usize)
-  } else if input.len().is_multiple_of(BLOCK_LEN) {
-    (blocks - 1, BLOCK_LEN)
   } else {
-    (blocks - 1, input.len() % BLOCK_LEN)
+    let rem = input.len() % BLOCK_LEN;
+    if rem == 0 {
+      (input.len() / BLOCK_LEN - 1, BLOCK_LEN)
+    } else {
+      (input.len() / BLOCK_LEN, rem)
+    }
   };
 
   // Hash all full blocks except the final block, updating the CV. This keeps
@@ -4063,7 +4071,7 @@ unsafe fn digest_one_chunk_root_hash_words_aarch64(
     &input[..full_bytes],
   );
 
-  let start = if blocks_compressed == 0 { CHUNK_START } else { 0 };
+  let start = if full_blocks == 0 { CHUNK_START } else { 0 };
   let final_flags = flags | start | CHUNK_END | ROOT;
 
   // For partial blocks (including empty), pad to 64 bytes.
