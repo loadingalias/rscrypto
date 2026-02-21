@@ -217,6 +217,39 @@ Close the remaining BLAKE3 gaps so `rscrypto` is consistently at or ahead of off
 - Next required measurement:
   - rerun CI `blake3_short_input_attribution` on pushed SHA, x86 lanes first (`amd-zen4`, `intel-spr`, `intel-icl`, `amd-zen5`), then full enforced matrix for parity/regression check.
 
+### Phase 3 Candidate B x86 CI Validation (2026-02-21)
+- Run: `22263827674` on `main` at `a39e33a` (`crates=hashes`, `benches=blake3_short_input_attribution`, x86 lanes only: `amd-zen4`, `intel-spr`, `intel-icl`, `amd-zen5`).
+
+| Lane | rs gap 256 (A → B) | rs gap 1024 (A → B) | oneshot dispatch overhead 256 (A → B) | oneshot dispatch overhead 1024 (A → B) |
+|---|---:|---:|---:|---:|
+| amd-zen4 | `+21.40% -> +22.26%` | `+9.01% -> +9.27%` | `+13.65% -> +17.58%` | `-4.54% -> -0.18%` |
+| intel-spr | `+55.40% -> +51.60%` | `+31.74% -> +30.50%` | `+17.69% -> +24.87%` | `-2.45% -> +3.98%` |
+| intel-icl | `+59.35% -> +58.64%` | `+35.91% -> +35.82%` | `+20.22% -> +27.13%` | `-0.38% -> +6.28%` |
+| amd-zen5 | `+37.60% -> +37.60%` | `+23.26% -> +23.44%` | `+10.47% -> +12.62%` | `-1.15% -> +0.74%` |
+
+#### Candidate B x86 Conclusion
+- Not accepted as-is.
+- Although `spr/icl` showed small absolute rs-gap improvement, one-shot auto-vs-direct overhead worsened materially on **all** x86 lanes at `256/1024`.
+- Net signal is inconsistent and does not advance reliable gate closure.
+- Next action: revert to Candidate A baseline for x86 short path and pursue a lower-risk improvement that reduces one-shot control/setup overhead without increasing auto-vs-direct deltas.
+
+### Phase 3 Candidate C (local-only, pending CI validation)
+- Status:
+  - Candidate B loop rewrite has been reverted in code.
+  - New Candidate C is now implemented on top of Candidate A baseline.
+- Implemented on local workspace:
+  - x86 one-chunk root path keeps existing prefix processing (`chunk_compress_blocks`) but optimizes final-block handling:
+    - remove unconditional zero-init of a 64-byte padded block on aligned-final-block path,
+    - replace indirect final compress function-pointer call with direct kernel-specific calls (`sse4.1` / `avx2` / `avx512`, including AVX-512 asm path where enabled).
+- Rationale:
+  - target fixed overhead in the exact final-block step of short one-shot hashing without changing dispatch policy or widening per-block loop control paths.
+  - lower risk than Candidate B: fewer moving parts and no multi-call rewrite of prefix blocks.
+- Local verification:
+  - `cargo fmt --all --check`: pass
+  - `cargo test -p hashes blake3:: --quiet`: pass
+- Next required measurement:
+  - CI `blake3_short_input_attribution` on pushed SHA, x86 lanes first (`amd-zen4`, `intel-spr`, `intel-icl`, `amd-zen5`), compare against Candidate A run `22263080239`.
+
 ## Hard Targets
 - Pass `blake3/oneshot` gap gate on all enforced platforms.
 - Pass `blake3/kernel-ab` gate on all enforced platforms.

@@ -4003,37 +4003,71 @@ unsafe fn digest_one_chunk_root_hash_words_x86(
   // Hash all full blocks except the final block, updating the CV. This keeps
   // ROOT out of the dependency chain until the last compress.
   let mut cv = key_words;
-  let mut block_idx = 0usize;
-  while block_idx < full_blocks {
-    let start = if block_idx == 0 { CHUNK_START } else { 0 };
-    let block_flags = flags | start;
-    // SAFETY: `block_idx < full_blocks` and `full_blocks * BLOCK_LEN <= input.len()`.
-    let block_ptr = unsafe { input.as_ptr().add(block_idx * BLOCK_LEN) };
-    // SAFETY: `block_ptr` points to a full 64-byte block in `input`.
-    cv = unsafe { (kernel.x86_compress_cv_bytes)(&cv, block_ptr, 0, BLOCK_LEN as u32, block_flags) };
-    block_idx += 1;
-  }
+  let mut blocks_compressed = 0u8;
+  let full_bytes = full_blocks * BLOCK_LEN;
+  (kernel.chunk_compress_blocks)(&mut cv, 0, flags, &mut blocks_compressed, &input[..full_bytes]);
 
   let start = if full_blocks == 0 { CHUNK_START } else { 0 };
   let final_flags = flags | start | CHUNK_END | ROOT;
 
-  // For partial blocks (including empty), pad to 64 bytes.
-  let mut padded = [0u8; BLOCK_LEN];
-  let block_ptr = if last_len == BLOCK_LEN && !input.is_empty() {
+  if last_len == BLOCK_LEN && !input.is_empty() {
     // SAFETY: `full_blocks * BLOCK_LEN + BLOCK_LEN <= input.len()`.
-    unsafe { input.as_ptr().add(full_blocks * BLOCK_LEN) }
-  } else {
-    if last_len != 0 {
-      let offset = full_blocks * BLOCK_LEN;
-      // SAFETY: `padded` is 64 bytes, and `last_len < 64` here.
-      unsafe { ptr::copy_nonoverlapping(input.as_ptr().add(offset), padded.as_mut_ptr(), last_len) };
-    }
-    padded.as_ptr()
-  };
+    let block_ptr = unsafe { input.as_ptr().add(full_blocks * BLOCK_LEN) };
+    // SAFETY: x86 dispatch selected this function only for x86 SIMD kernels.
+    return unsafe {
+      match kernel.id {
+        kernels::Blake3KernelId::X86Sse41 => {
+          x86_64::compress_cv_sse41_bytes(&cv, block_ptr, 0, BLOCK_LEN as u32, final_flags)
+        }
+        kernels::Blake3KernelId::X86Avx2 => {
+          x86_64::compress_cv_avx2_bytes(&cv, block_ptr, 0, BLOCK_LEN as u32, final_flags)
+        }
+        kernels::Blake3KernelId::X86Avx512 => {
+          #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+          {
+            x86_64::asm::compress_in_place_avx512(&cv, block_ptr, 0, BLOCK_LEN as u32, final_flags)
+          }
+          #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+          {
+            x86_64::compress_cv_avx512_bytes(&cv, block_ptr, 0, BLOCK_LEN as u32, final_flags)
+          }
+        }
+        _ => unreachable!(),
+      }
+    };
+  }
 
-  // SAFETY: x86 dispatch selects only kernels with a matching byte compressor,
-  // and `block_ptr` is valid for a full 64-byte block.
-  unsafe { (kernel.x86_compress_cv_bytes)(&cv, block_ptr, 0, last_len as u32, final_flags) }
+  // Partial final block (including empty): pad to 64 bytes.
+  let mut padded = [0u8; BLOCK_LEN];
+  if last_len != 0 {
+    let offset = full_blocks * BLOCK_LEN;
+    // SAFETY: `padded` is 64 bytes, and `last_len < 64` here.
+    unsafe { ptr::copy_nonoverlapping(input.as_ptr().add(offset), padded.as_mut_ptr(), last_len) };
+  }
+  let block_ptr = padded.as_ptr();
+
+  // SAFETY: x86 dispatch selected this function only for x86 SIMD kernels.
+  unsafe {
+    match kernel.id {
+      kernels::Blake3KernelId::X86Sse41 => {
+        x86_64::compress_cv_sse41_bytes(&cv, block_ptr, 0, last_len as u32, final_flags)
+      }
+      kernels::Blake3KernelId::X86Avx2 => {
+        x86_64::compress_cv_avx2_bytes(&cv, block_ptr, 0, last_len as u32, final_flags)
+      }
+      kernels::Blake3KernelId::X86Avx512 => {
+        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+        {
+          x86_64::asm::compress_in_place_avx512(&cv, block_ptr, 0, last_len as u32, final_flags)
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+        {
+          x86_64::compress_cv_avx512_bytes(&cv, block_ptr, 0, last_len as u32, final_flags)
+        }
+      }
+      _ => unreachable!(),
+    }
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
