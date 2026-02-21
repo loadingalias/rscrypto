@@ -67,6 +67,10 @@ on:
         description: "Profile-time override in seconds (optional)."
         required: false
         type: string
+      blake3_force_kernel:
+        description: "Optional BLAKE3 forced kernel override (e.g. x86_64/avx512, aarch64/neon, s390x/vector, powerpc64/vsx)."
+        required: false
+        type: string
       filter:
         description: "Advanced raw Criterion filter(s), comma-separated."
         required: false
@@ -163,6 +167,7 @@ jobs:
         BENCH_MEASURE_MS="${{ inputs.measure_ms }}" \
         BENCH_SAMPLE_SIZE="${{ inputs.sample_size }}" \
         BENCH_PROFILE_TIME_SECS="${{ inputs.profile_time_secs }}" \
+        RSCRYPTO_BLAKE3_FORCE_KERNEL="${{ inputs.blake3_force_kernel }}" \
         BENCH_ATTACH_CRITERION=${{ inputs.upload_raw_criterion && 'true' || 'false' }} \
         BENCH_ENFORCE_BLAKE3_GAP_GATE=${{ inputs.enforce_blake3_gap_gate && 'true' || 'false' }} \
         BENCH_ENFORCE_BLAKE3_KERNEL_GATE=${{ inputs.enforce_blake3_kernel_gate && 'true' || 'false' }} \

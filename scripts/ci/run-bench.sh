@@ -359,6 +359,48 @@ maybe_attach_criterion() {
   echo "Packed raw Criterion artifact: $archive_path" | tee -a "$LOG_PATH"
 }
 
+run_blake3_enforced_gates() {
+  local failed=0
+
+  if [[ "$ENFORCE_BLAKE3_GAP_GATE_INPUT" == "true" ]]; then
+    if ! python3 scripts/bench/blake3-gap-gate.py | tee -a "$LOG_PATH"; then
+      failed=1
+    fi
+  fi
+
+  if [[ "$ENFORCE_BLAKE3_KERNEL_GATE_INPUT" == "true" ]]; then
+    if platform_is_supported_kernel_gate_lane "$PLATFORM_INPUT"; then
+      local local_thresholds
+      local ours_prefix
+      local -a cmd
+      local_thresholds="$(blake3_kernel_gate_thresholds "$PLATFORM_INPUT")"
+      ours_prefix="$(blake3_kernel_gate_prefix "$PLATFORM_INPUT")"
+      echo "" | tee -a "$LOG_PATH"
+      echo "Running kernel diagnostics for BLAKE3 gate..." | tee -a "$LOG_PATH"
+      cmd=(cargo bench --profile bench -p hashes --bench blake3 -- kernel-ab)
+      if [[ "${#CRITERION_ARGS[@]}" -gt 0 ]]; then
+        cmd+=("${CRITERION_ARGS[@]}")
+      fi
+      echo "Running: RSCRYPTO_BLAKE3_BENCH_DIAGNOSTICS=1 ${cmd[*]}" | tee -a "$LOG_PATH"
+      if ! RSCRYPTO_BLAKE3_BENCH_DIAGNOSTICS=1 "${cmd[@]}" 2>&1 | tee -a "$LOG_PATH"; then
+        failed=1
+      fi
+      if ! python3 scripts/bench/blake3-gap-gate.py \
+        --group blake3/kernel-ab \
+        --ours-prefix "$ours_prefix" \
+        --rival official \
+        --max-gap-case "$local_thresholds" \
+        --label "blake3/kernel-ab ($PLATFORM_INPUT)" | tee -a "$LOG_PATH"; then
+        failed=1
+      fi
+    else
+      echo "Skipping BLAKE3 kernel gate on unsupported lane '$PLATFORM_INPUT'." | tee -a "$LOG_PATH"
+    fi
+  fi
+
+  return "$failed"
+}
+
 PLAN_ROWS=()
 RAW_FILTERS=()
 SELECTED_ALGOS=()
@@ -519,30 +561,9 @@ if [[ "${#PLAN_ROWS[@]}" -gt 0 ]]; then
     run_bench_cmd "$crate" "$bench" "$filter"
   done
 
-  if [[ "$ENFORCE_BLAKE3_GAP_GATE_INPUT" == "true" ]]; then
-    python3 scripts/bench/blake3-gap-gate.py | tee -a "$LOG_PATH"
-  fi
-  if [[ "$ENFORCE_BLAKE3_KERNEL_GATE_INPUT" == "true" ]]; then
-    if platform_is_supported_kernel_gate_lane "$PLATFORM_INPUT"; then
-      local_thresholds="$(blake3_kernel_gate_thresholds "$PLATFORM_INPUT")"
-      ours_prefix="$(blake3_kernel_gate_prefix "$PLATFORM_INPUT")"
-      echo "" | tee -a "$LOG_PATH"
-      echo "Running kernel diagnostics for BLAKE3 gate..." | tee -a "$LOG_PATH"
-      cmd=(cargo bench --profile bench -p hashes --bench blake3 -- kernel-ab)
-      if [[ "${#CRITERION_ARGS[@]}" -gt 0 ]]; then
-        cmd+=("${CRITERION_ARGS[@]}")
-      fi
-      echo "Running: RSCRYPTO_BLAKE3_BENCH_DIAGNOSTICS=1 ${cmd[*]}" | tee -a "$LOG_PATH"
-      RSCRYPTO_BLAKE3_BENCH_DIAGNOSTICS=1 "${cmd[@]}" 2>&1 | tee -a "$LOG_PATH"
-      python3 scripts/bench/blake3-gap-gate.py \
-        --group blake3/kernel-ab \
-        --ours-prefix "$ours_prefix" \
-        --rival official \
-        --max-gap-case "$local_thresholds" \
-        --label "blake3/kernel-ab ($PLATFORM_INPUT)" | tee -a "$LOG_PATH"
-    else
-      echo "Skipping BLAKE3 kernel gate on unsupported lane '$PLATFORM_INPUT'." | tee -a "$LOG_PATH"
-    fi
+  if ! run_blake3_enforced_gates; then
+    maybe_attach_criterion
+    exit 1
   fi
   maybe_attach_criterion
   exit 0
@@ -590,29 +611,8 @@ fi
 
 echo "Running: ${cmd[*]}" | tee -a "$LOG_PATH"
 "${cmd[@]}" 2>&1 | tee -a "$LOG_PATH"
-if [[ "$ENFORCE_BLAKE3_GAP_GATE_INPUT" == "true" ]]; then
-  python3 scripts/bench/blake3-gap-gate.py | tee -a "$LOG_PATH"
-fi
-if [[ "$ENFORCE_BLAKE3_KERNEL_GATE_INPUT" == "true" ]]; then
-  if platform_is_supported_kernel_gate_lane "$PLATFORM_INPUT"; then
-    local_thresholds="$(blake3_kernel_gate_thresholds "$PLATFORM_INPUT")"
-    ours_prefix="$(blake3_kernel_gate_prefix "$PLATFORM_INPUT")"
-    echo "" | tee -a "$LOG_PATH"
-    echo "Running kernel diagnostics for BLAKE3 gate..." | tee -a "$LOG_PATH"
-    cmd=(cargo bench --profile bench -p hashes --bench blake3 -- kernel-ab)
-    if [[ "${#CRITERION_ARGS[@]}" -gt 0 ]]; then
-      cmd+=("${CRITERION_ARGS[@]}")
-    fi
-    echo "Running: RSCRYPTO_BLAKE3_BENCH_DIAGNOSTICS=1 ${cmd[*]}" | tee -a "$LOG_PATH"
-    RSCRYPTO_BLAKE3_BENCH_DIAGNOSTICS=1 "${cmd[@]}" 2>&1 | tee -a "$LOG_PATH"
-    python3 scripts/bench/blake3-gap-gate.py \
-      --group blake3/kernel-ab \
-      --ours-prefix "$ours_prefix" \
-      --rival official \
-      --max-gap-case "$local_thresholds" \
-      --label "blake3/kernel-ab ($PLATFORM_INPUT)" | tee -a "$LOG_PATH"
-  else
-    echo "Skipping BLAKE3 kernel gate on unsupported lane '$PLATFORM_INPUT'." | tee -a "$LOG_PATH"
-  fi
+if ! run_blake3_enforced_gates; then
+  maybe_attach_criterion
+  exit 1
 fi
 maybe_attach_criterion

@@ -790,7 +790,19 @@ fn blake3_kernel_ab(c: &mut Criterion) {
   let kernels: Vec<&str> = vec!["portable", "aarch64/neon"];
   #[cfg(target_arch = "x86_64")]
   let kernels: Vec<&str> = vec!["portable", "x86_64/sse4.1", "x86_64/avx2", "x86_64/avx512"];
-  #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+  #[cfg(target_arch = "s390x")]
+  let kernels: Vec<&str> = vec!["portable", "s390x/vector"];
+  #[cfg(target_arch = "powerpc64")]
+  let kernels: Vec<&str> = vec!["portable", "powerpc64/vsx"];
+  #[cfg(target_arch = "riscv64")]
+  let kernels: Vec<&str> = vec!["portable", "riscv64/v"];
+  #[cfg(not(any(
+    target_arch = "aarch64",
+    target_arch = "x86_64",
+    target_arch = "s390x",
+    target_arch = "powerpc64",
+    target_arch = "riscv64"
+  )))]
   let kernels: Vec<&str> = vec!["portable"];
 
   for size in sizes {
