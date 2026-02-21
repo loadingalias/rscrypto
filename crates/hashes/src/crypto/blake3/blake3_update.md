@@ -282,6 +282,37 @@ Close the remaining BLAKE3 gaps so `rscrypto` is consistently at or ahead of off
 - Next required measurement:
   - CI `blake3_short_input_attribution` on pushed SHA with x86 lanes first (`amd-zen4`, `intel-spr`, `intel-icl`, `amd-zen5`), then full enforced matrix if x86 signal is positive.
 
+### Phase 3 Candidate D x86 CI Validation (2026-02-21)
+- Run: `22264961125` on `main` (x86 lanes only: `amd-zen4`, `intel-spr`, `intel-icl`, `amd-zen5`).
+
+| Lane | rs gap 256 (A -> D) | rs gap 1024 (A -> D) | oneshot dispatch overhead 256 (A -> D) | oneshot dispatch overhead 1024 (A -> D) |
+|---|---:|---:|---:|---:|
+| amd-zen4 | `+21.40% -> +26.07%` | `+9.01% -> +19.31%` | `+13.65% -> +17.82%` | `-4.54% -> +4.14%` |
+| intel-spr | `+55.40% -> +59.52%` | `+31.74% -> +42.23%` | `+17.69% -> +18.46%` | `-2.45% -> +2.41%` |
+| intel-icl | `+59.35% -> +65.32%` | `+35.91% -> +44.88%` | `+20.22% -> +23.65%` | `-0.38% -> +6.17%` |
+| amd-zen5 | `+37.60% -> +40.33%` | `+23.26% -> +28.38%` | `+10.47% -> +12.67%` | `-1.15% -> +3.50%` |
+
+#### Candidate D x86 Conclusion
+- Rejected.
+- Candidate D regresses absolute rs-vs-official short gaps at both `256` and `1024` on every tested x86 lane.
+- One-shot auto-vs-direct overhead also worsens broadly and flips `1024` from negative/near-zero overhead to positive overhead on all lanes.
+- Next action: revert Candidate D and pursue Candidate E that keeps short streaming on the proven low-latency stream kernel path while targeting finalize/setup overhead without kernel-tier escalation on first short update.
+
+### Phase 3 Candidate E (local-only, pending CI validation)
+- Implemented on local workspace:
+  - reverted Candidate D update-path behavior in `Digest::update()`:
+    - removed pristine short-update kernel-tier escalation (`size_class_kernel` bootstrap on first short update),
+    - restored prior ultra-tiny first-update block-copy fast path and existing streaming defer/dispatch flow.
+  - retained tiny finalize copy-elision in `finalize()` (single-block tiny path uses `chunk_state.block` directly with `compress_to_root_words`).
+- Rationale:
+  - remove the confirmed regression vector from Candidate D while preserving low-risk setup cleanup.
+  - keep short streaming dispatch on proven stream-kernel policy (`sse4.1 -> avx512` pair on x86 lanes) until data proves a better crossover strategy.
+- Local verification:
+  - `just check-all`: pass
+  - `just test`: pass
+- Next required measurement:
+  - CI `blake3_short_input_attribution` on pushed SHA, x86 lanes first (`amd-zen4`, `intel-spr`, `intel-icl`, `amd-zen5`), compare directly against Candidate A (`22263080239`) and Candidate D (`22264961125`).
+
 ## Hard Targets
 - Pass `blake3/oneshot` gap gate on all enforced platforms.
 - Pass `blake3/kernel-ab` gate on all enforced platforms.
