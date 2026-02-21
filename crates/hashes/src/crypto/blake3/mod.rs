@@ -3654,24 +3654,17 @@ impl Digest for Blake3 {
       return;
     }
 
-    let pristine_single_chunk = self.chunk_state.chunk_counter == 0
+    // Ultra-tiny first update fast path: avoid `update_with` dispatch and loop
+    // machinery when we can satisfy the call with a single block copy.
+    if self.chunk_state.chunk_counter == 0
       && self.cv_stack_len == 0
       && self.pending_chunk_cv.is_none()
       && self.chunk_state.blocks_compressed == 0
       && self.chunk_state.block_len == 0
-      && input.len() <= CHUNK_LEN;
-
-    if pristine_single_chunk {
-      // First-update short path: avoid `update_with` loop/dispatch machinery.
-      // If SIMD is not deferred, pick the size-class kernel so single 1-chunk
-      // updates can use the same fast kernel tier as one-shot hashing.
-      if self.kernel.id == kernels::Blake3KernelId::Portable && !self.dispatch_plan.should_defer_simd(0, input.len()) {
-        let kernel = self.dispatch_plan.size_class_kernel(input.len());
-        self.kernel = kernel;
-        self.bulk_kernel = kernel;
-        self.chunk_state.kernel = kernel;
-      }
-      self.chunk_state.update(input);
+      && input.len() <= BLOCK_LEN
+    {
+      self.chunk_state.block[..input.len()].copy_from_slice(input);
+      self.chunk_state.block_len = input.len() as u8;
       return;
     }
 
