@@ -313,6 +313,39 @@ Close the remaining BLAKE3 gaps so `rscrypto` is consistently at or ahead of off
 - Next required measurement:
   - CI `blake3_short_input_attribution` on pushed SHA, x86 lanes first (`amd-zen4`, `intel-spr`, `intel-icl`, `amd-zen5`), compare directly against Candidate A (`22263080239`) and Candidate D (`22264961125`).
 
+### Phase 3 Candidate E x86 CI Validation (2026-02-21)
+- Run: `22265323736` on `main` (x86 lanes only: `amd-zen4`, `intel-spr`, `intel-icl`, `amd-zen5`).
+
+| Lane | rs gap 256 (A -> E) | rs gap 1024 (A -> E) | oneshot dispatch overhead 256 (A -> E) | oneshot dispatch overhead 1024 (A -> E) |
+|---|---:|---:|---:|---:|
+| amd-zen4 | `+21.40% -> +24.60%` | `+9.01% -> +10.35%` | `+13.65% -> +12.31%` | `-4.54% -> -4.98%` |
+| intel-spr | `+55.40% -> +55.45%` | `+31.74% -> +32.77%` | `+17.69% -> +16.92%` | `-2.45% -> -1.76%` |
+| intel-icl | `+59.35% -> +59.42%` | `+35.91% -> +36.20%` | `+20.22% -> +19.59%` | `-0.38% -> -0.89%` |
+| amd-zen5 | `+37.60% -> +37.54%` | `+23.26% -> +23.34%` | `+10.47% -> +11.87%` | `-1.15% -> -0.77%` |
+
+#### Candidate E x86 Conclusion
+- Better than Candidate D, but not better than Candidate A.
+- Relative to A, Candidate E is mostly flat-to-worse in absolute rs-vs-official short gap (largest regression on `amd-zen4`; smaller regressions on `spr/icl` and `spr` at `1024`; near-flat on `amd-zen5`).
+- One-shot overhead improves slightly on `zen4/spr/icl` at `256`, but this does not translate into net short-gap wins.
+- Decision: do not promote Candidate E as the new baseline; keep Candidate A baseline for follow-on work.
+
+### Phase 3 Candidate F (local-only, pending CI validation)
+- Implemented on local workspace:
+  - generalized root-tail compressor helper:
+    - replaced `compress_to_root_words` with `compress_chunk_tail_to_root_words(..., add_chunk_start)` so single-chunk finalization can set flags precisely (`CHUNK_START` only when needed).
+  - added a broader single-chunk finalize fast path in `Digest::finalize()`:
+    - when state is single chunk (`chunk_counter == 0`, empty stack, no pending CV), compute root bytes directly from current chunk tail for both tiny and non-tiny (`<= CHUNK_LEN`) cases,
+    - bypasses `OutputState` construction and words-conversion path on short streaming finalization.
+  - retained Candidate A dispatch behavior (no first-update kernel-tier escalation).
+- Rationale:
+  - target short streaming `new + update + finalize` control/setup cost directly, especially at `256/1024`, without changing kernel policy selection.
+  - keep changes local to single-chunk finalize mechanics and avoid large-input/tree-path edits.
+- Local verification:
+  - `just check-all`: pass
+  - `just test`: pass
+- Next required measurement:
+  - CI `blake3_short_input_attribution` on pushed SHA, x86 lanes first (`amd-zen4`, `intel-spr`, `intel-icl`, `amd-zen5`), compare against Candidate A (`22263080239`) and Candidate E (`22265323736`).
+
 ## Hard Targets
 - Pass `blake3/oneshot` gap gate on all enforced platforms.
 - Pass `blake3/kernel-ab` gate on all enforced platforms.

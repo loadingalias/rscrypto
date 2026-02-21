@@ -3696,56 +3696,31 @@ impl Digest for Blake3 {
 
   #[inline]
   fn finalize(&self) -> Self::Output {
-    // Keyed/derive tiny sizes: use the unified tiny-input fast path when the
-    // entire input fits in a single chunk (≤1024B, but most beneficial for ≤64B).
-    //
-    // The upstream BLAKE3 implementations treat these as latency-critical and
-    // compute just the root CV (8 words) for the first output block.
+    // Single-chunk fast path: compute root bytes directly from the current
+    // chunk tail. This avoids OutputState construction and bytes<->words
+    // conversion on short streaming finalization.
     if self.chunk_state.chunk_counter == 0 && self.cv_stack_len == 0 && self.pending_chunk_cv.is_none() {
       let block_len = self.chunk_state.block_len as usize;
+      let add_chunk_start = self.chunk_state.blocks_compressed == 0;
+      let cv = self.chunk_state.chaining_value;
 
-      // For truly tiny inputs (≤64B), use the direct fast path
-      if block_len <= BLOCK_LEN && self.chunk_state.blocks_compressed == 0 {
-        // Input fits in one block with no prior compression.
-        // Reuse the existing chunk buffer directly (already zero-initialized
-        // and only written up to `block_len`) to avoid an extra stack copy.
-        let out_words = compress_to_root_words(
+      if block_len == BLOCK_LEN {
+        let out_words = compress_chunk_tail_to_root_words(
           self.kernel,
-          self.chunk_state.chaining_value,
+          cv,
           &self.chunk_state.block,
           block_len,
           self.flags,
+          add_chunk_start,
         );
         return words8_to_le_bytes(&out_words);
       }
 
-      // For larger single-chunk inputs with blocks_compressed == 0, use x86-specific fast path.
-      // Note: We can only use compress_to_root_words when blocks_compressed == 0 because
-      // it unconditionally adds CHUNK_START. For inputs > 64 bytes where we've already
-      // compressed some blocks, we must use the standard path with correct flags.
-      #[cfg(target_arch = "x86_64")]
-      {
-        if self.chunk_state.blocks_compressed == 0 {
-          match self.kernel.id {
-            kernels::Blake3KernelId::X86Sse41
-            | kernels::Blake3KernelId::X86Avx2
-            | kernels::Blake3KernelId::X86Avx512 => {
-              let mut block = self.chunk_state.block;
-              if block_len != BLOCK_LEN {
-                block[block_len..].fill(0);
-              }
-
-              let cv = self.chunk_state.chaining_value;
-
-              // Use the unified compress_to_root_words helper
-              // Note: compress_to_root_words adds CHUNK_START | CHUNK_END | ROOT internally
-              let out_words = compress_to_root_words(self.kernel, cv, &block, block_len, self.flags);
-              return words8_to_le_bytes(&out_words);
-            }
-            _ => {}
-          }
-        }
-      }
+      let mut block = self.chunk_state.block;
+      block[block_len..].fill(0);
+      let out_words =
+        compress_chunk_tail_to_root_words(self.kernel, cv, &block, block_len, self.flags, add_chunk_start);
+      return words8_to_le_bytes(&out_words);
     }
 
     // If the caller never provided any input (or only provided empty updates),
@@ -3901,14 +3876,18 @@ impl Xof for Blake3Xof {
 /// The root hash as 8 u32 words (little-endian).
 #[inline]
 #[must_use]
-fn compress_to_root_words(
+fn compress_chunk_tail_to_root_words(
   kernel: Kernel,
   cv: [u32; 8],
   block: &[u8; BLOCK_LEN],
   block_len: usize,
   flags: u32,
+  add_chunk_start: bool,
 ) -> [u32; 8] {
-  let final_flags = flags | CHUNK_START | CHUNK_END | ROOT;
+  let mut final_flags = flags | CHUNK_END | ROOT;
+  if add_chunk_start {
+    final_flags |= CHUNK_START;
+  }
 
   #[cfg(target_arch = "x86_64")]
   {
@@ -3950,7 +3929,7 @@ fn hash_tiny_to_root_words(kernel: Kernel, key_words: [u32; 8], flags: u32, inpu
   let mut block = [0u8; BLOCK_LEN];
   block[..input.len()].copy_from_slice(input);
 
-  compress_to_root_words(kernel, key_words, &block, input.len(), flags)
+  compress_chunk_tail_to_root_words(kernel, key_words, &block, input.len(), flags, true)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
