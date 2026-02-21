@@ -133,9 +133,51 @@ Close the remaining BLAKE3 gaps so `rscrypto` is consistently at or ahead of off
 ### Phase 3 Progress (2026-02-21)
 - Implemented (local): `PROFILE_AARCH64_SERVER_NEON` now maps oneshot size classes `xs/s` to `Aarch64Neon` (previously `Portable`), aligning Graviton-family oneshot short-input dispatch with lane-native SIMD capability.
 - Rationale: CI Phase 2 showed Graviton3/4 oneshot selecting `portable` at `256/1024` while streaming already selected `neon`.
-- Validation required on `main` after push:
-  - run `Bench` workflow on `graviton3,graviton4` with `crates=hashes`, `benches=blake3`, `filter=oneshot,kernel-ab,streaming-dispatch`, `quick=false`, gates disabled.
-  - compare `256/1024` oneshot gap and selected kernel vs run `22259222437` / `22260772858`.
+- Validation completed on `main`:
+  - run `22261409598` (`blake3_short_input_attribution`, lanes: `graviton3`, `graviton4`, `quick=false`)
+  - commit under test: `main` at `66457ee`
+
+#### Arm64 Post-Change Snapshot (run `22261409598`)
+
+| Lane | rs gap 256 | rs gap 1024 | oneshot kernel (256/1024) | oneshot dispatch overhead (256/1024) | stream kernel (256/1024) | stream dispatch overhead (256/1024) |
+|---|---:|---:|---|---:|---|---:|
+| graviton3 | +45.65% | +23.75% | `aarch64/neon` / `aarch64/neon` | +12.24% / +8.17% | `aarch64/neon` / `aarch64/neon` | +1.00% / +4.67% |
+| graviton4 | +46.24% | +22.80% | `aarch64/neon` / `aarch64/neon` | +10.84% / +7.92% | `aarch64/neon` / `aarch64/neon` | +2.77% / +5.65% |
+
+#### Arm64 Delta vs Prior Phase-2 CI (`22260772858`)
+- Fixed: oneshot kernel selection at `256/1024` is now `neon` (was `portable` on both G3/G4).
+- Fixed: oneshot auto-vs-direct overhead dropped from ~`+44-45% / +19%` to ~`+11-12% / +8%`.
+- Remaining issue: absolute rs-vs-official gap at `256/1024` is still large (~`+46% / +23%`), so next gains must come from short-input compute path and/or oneshot setup work beyond kernel selection.
+
+#### X86 Forced-SSE4.1 Sweep (run `22262543115`, 2026-02-21)
+- Validation run completed on `main` at `66457ee` with `blake3_force_kernel=x86_64/sse4.1` and lanes: `amd-zen4`, `amd-zen5`, `intel-icl`, `intel-spr`.
+- Purpose: isolate whether replacing current x86 oneshot short-input `avx2` choice with `sse4.1` should be a global dispatch-table retune.
+
+| Lane | rs gap 256 (old → forced-sse4.1) | rs gap 1024 (old → forced-sse4.1) | oneshot dispatch overhead 256 (old → forced-sse4.1) | oneshot dispatch overhead 1024 (old → forced-sse4.1) |
+|---|---:|---:|---:|---:|
+| amd-zen4 | `+23.10% -> +21.06%` | `+9.75% -> +9.08%` | `+14.49% -> +0.46%` | `-4.21% -> -0.02%` |
+| intel-spr | `+51.47% -> +56.77%` | `+31.68% -> +30.06%` | `+17.76% -> +2.52%` | `-0.81% -> -0.85%` |
+| intel-icl | `+58.16% -> +58.16%` | `+35.87% -> +35.85%` | `+21.18% -> +3.36%` | `+0.33% -> +0.86%` |
+| amd-zen5 | `+37.07% -> +38.92%` | `+23.19% -> +23.65%` | `+11.25% -> -0.04%` | `-0.62% -> +0.45%` |
+
+#### X86 Sweep Conclusions
+- Forcing `sse4.1` removes most measured auto-dispatch overhead at `256` on all x86 lanes.
+- But absolute rs-vs-official short-input gap does **not** improve consistently: `zen4` improves, `icl` is flat, `spr` and `zen5` regress at `256`.
+- Decision: do **not** apply a global x86 `avx2 -> sse4.1` short-size dispatch retune.
+- Next action: optimize x86 short-input compute/setup path (`digest_one_chunk_root_hash_words_x86`) and then consider lane-specific threshold/kernel splits only where the data supports them.
+
+### Phase 3 Candidate A (local-only, pending CI validation)
+- Implemented on local workspace:
+  - simplified one-chunk setup math in `digest_one_chunk_root_hash_words_x86` and `digest_one_chunk_root_hash_words_aarch64` (remove `div_ceil/max` path and derive `CHUNK_START` directly from `full_blocks == 0`),
+  - removed tiny-input conversion roundtrip (`words -> bytes -> words`) in `digest_oneshot_words` by introducing `hash_tiny_to_root_words`.
+- Guardrails:
+  - no dispatch-table or threshold changes,
+  - no large-input tree/reduction path changes.
+- Local verification:
+  - `cargo fmt --all --check`: pass
+  - `cargo test -p hashes blake3:: --quiet`: pass
+- Next required measurement:
+  - CI `Bench` workflow on pushed SHA with `crates=hashes`, `benches=blake3_short_input_attribution`, `quick=false`, x86 lanes first (`amd-zen4`, `intel-spr`, `intel-icl`, `amd-zen5`), then arm64 to check for collateral deltas.
 
 ## Hard Targets
 - Pass `blake3/oneshot` gap gate on all enforced platforms.
