@@ -3654,17 +3654,24 @@ impl Digest for Blake3 {
       return;
     }
 
-    // Ultra-tiny first update fast path: avoid `update_with` dispatch and loop
-    // machinery when we can satisfy the call with a single block copy.
-    if self.chunk_state.chunk_counter == 0
+    let pristine_single_chunk = self.chunk_state.chunk_counter == 0
       && self.cv_stack_len == 0
       && self.pending_chunk_cv.is_none()
       && self.chunk_state.blocks_compressed == 0
       && self.chunk_state.block_len == 0
-      && input.len() <= BLOCK_LEN
-    {
-      self.chunk_state.block[..input.len()].copy_from_slice(input);
-      self.chunk_state.block_len = input.len() as u8;
+      && input.len() <= CHUNK_LEN;
+
+    if pristine_single_chunk {
+      // First-update short path: avoid `update_with` loop/dispatch machinery.
+      // If SIMD is not deferred, pick the size-class kernel so single 1-chunk
+      // updates can use the same fast kernel tier as one-shot hashing.
+      if self.kernel.id == kernels::Blake3KernelId::Portable && !self.dispatch_plan.should_defer_simd(0, input.len()) {
+        let kernel = self.dispatch_plan.size_class_kernel(input.len());
+        self.kernel = kernel;
+        self.bulk_kernel = kernel;
+        self.chunk_state.kernel = kernel;
+      }
+      self.chunk_state.update(input);
       return;
     }
 
@@ -3706,15 +3713,17 @@ impl Digest for Blake3 {
 
       // For truly tiny inputs (≤64B), use the direct fast path
       if block_len <= BLOCK_LEN && self.chunk_state.blocks_compressed == 0 {
-        // Input fits in one block with no prior compression: use unified helper
-        let mut block = [0u8; BLOCK_LEN];
-        block[..block_len].copy_from_slice(&self.chunk_state.block[..block_len]);
-        return hash_tiny_to_root_bytes(
+        // Input fits in one block with no prior compression.
+        // Reuse the existing chunk buffer directly (already zero-initialized
+        // and only written up to `block_len`) to avoid an extra stack copy.
+        let out_words = compress_to_root_words(
           self.kernel,
           self.chunk_state.chaining_value,
+          &self.chunk_state.block,
+          block_len,
           self.flags,
-          &block[..block_len],
         );
+        return words8_to_le_bytes(&out_words);
       }
 
       // For larger single-chunk inputs with blocks_compressed == 0, use x86-specific fast path.
@@ -3911,29 +3920,13 @@ fn compress_to_root_words(
   #[cfg(target_arch = "x86_64")]
   {
     match kernel.id {
-      kernels::Blake3KernelId::X86Sse41 | kernels::Blake3KernelId::X86Avx2 | kernels::Blake3KernelId::X86Avx512 => {
-        // SAFETY: dispatch only selects these kernels when CPU features are available
-        return unsafe {
-          match kernel.id {
-            kernels::Blake3KernelId::X86Sse41 => {
-              x86_64::compress_cv_sse41_bytes(&cv, block.as_ptr(), 0, block_len as u32, final_flags)
-            }
-            kernels::Blake3KernelId::X86Avx2 => {
-              x86_64::compress_cv_avx2_bytes(&cv, block.as_ptr(), 0, block_len as u32, final_flags)
-            }
-            kernels::Blake3KernelId::X86Avx512 => {
-              #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-              {
-                x86_64::asm::compress_in_place_avx512(&cv, block.as_ptr(), 0, block_len as u32, final_flags)
-              }
-              #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-              {
-                x86_64::compress_cv_avx512_bytes(&cv, block.as_ptr(), 0, block_len as u32, final_flags)
-              }
-            }
-            _ => unreachable!(),
-          }
-        };
+      kernels::Blake3KernelId::X86Ssse3
+      | kernels::Blake3KernelId::X86Sse41
+      | kernels::Blake3KernelId::X86Avx2
+      | kernels::Blake3KernelId::X86Avx512 => {
+        // SAFETY: dispatch validates required CPU features before selecting
+        // each x86 kernel; `block` is a readable 64-byte buffer.
+        return unsafe { (kernel.x86_compress_cv_bytes)(&cv, block.as_ptr(), 0, block_len as u32, final_flags) };
       }
       _ => {}
     }
@@ -3965,12 +3958,6 @@ fn hash_tiny_to_root_words(kernel: Kernel, key_words: [u32; 8], flags: u32, inpu
   block[..input.len()].copy_from_slice(input);
 
   compress_to_root_words(kernel, key_words, &block, input.len(), flags)
-}
-
-#[inline]
-#[must_use]
-fn hash_tiny_to_root_bytes(kernel: Kernel, key_words: [u32; 8], flags: u32, input: &[u8]) -> [u8; OUT_LEN] {
-  words8_to_le_bytes(&hash_tiny_to_root_words(kernel, key_words, flags, input))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

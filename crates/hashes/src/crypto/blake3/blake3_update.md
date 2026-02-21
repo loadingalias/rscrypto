@@ -250,6 +250,38 @@ Close the remaining BLAKE3 gaps so `rscrypto` is consistently at or ahead of off
 - Next required measurement:
   - CI `blake3_short_input_attribution` on pushed SHA, x86 lanes first (`amd-zen4`, `intel-spr`, `intel-icl`, `amd-zen5`), compare against Candidate A run `22263080239`.
 
+### Phase 3 Candidate C x86 CI Validation (2026-02-21)
+- Run: `22264253466` on `main` at `8b9f3d1` (`crates=hashes`, `benches=blake3_short_input_attribution`, x86 lanes only: `amd-zen4`, `intel-spr`, `intel-icl`, `amd-zen5`).
+
+| Lane | rs gap 256 (A → C) | rs gap 1024 (A → C) | oneshot dispatch overhead 256 (A → C) | oneshot dispatch overhead 1024 (A → C) |
+|---|---:|---:|---:|---:|
+| amd-zen4 | `+21.40% -> +21.24%` | `+9.01% -> +8.93%` | `+13.65% -> +13.55%` | `-4.54% -> -4.75%` |
+| intel-spr | `+55.40% -> +55.72%` | `+31.74% -> +32.04%` | `+17.69% -> +17.17%` | `-2.45% -> -1.60%` |
+| intel-icl | `+59.35% -> +60.58%` | `+35.91% -> +36.44%` | `+20.22% -> +18.88%` | `-0.38% -> -1.13%` |
+| amd-zen5 | `+37.60% -> +37.41%` | `+23.26% -> +23.45%` | `+10.47% -> +10.39%` | `-1.15% -> -1.55%` |
+
+#### Candidate C x86 Conclusion
+- Not accepted as-is.
+- Candidate C improves overhead consistency versus Candidate B and gives small wins on `amd-zen4`/`amd-zen5`, but `intel-spr` and especially `intel-icl` regress in absolute rs-vs-official short gap.
+- Net effect is mixed and does not provide the repeatable cross-lane improvement needed for gate closure.
+- Next action: keep Candidate A baseline and move to Candidate D focused on x86 one-shot kernel policy/setup interaction (likely `avx2` short-size behavior), with lane-specific measurement baked into the change plan.
+
+### Phase 3 Candidate D (local-only, pending CI validation)
+- Implemented on local workspace:
+  - optimized pristine single-update streaming path in `Digest::update()` for `<= CHUNK_LEN` inputs:
+    - bypass `update_with` loop/dispatch machinery for the first short update,
+    - when SIMD is not deferred, bootstrap the short update with `size_class_kernel(input.len())` so `1024`-byte first updates can use the same kernel tier as one-shot (`avx2` on x86 lanes where selected), instead of being pinned to streaming `sse4.1`.
+  - tiny finalize copy-elision:
+    - in `finalize()` tiny single-block path (`blocks_compressed == 0`), remove extra stack block copy and call `compress_to_root_words` directly on `chunk_state.block`.
+- Rationale:
+  - directly targets the measured `new + single update + finalize` overhead and x86 short-size kernel-tier mismatch without retuning tables or touching large-input tree paths.
+  - keeps changes constrained to first-update short path mechanics and tiny finalize setup.
+- Local verification:
+  - `just check-all`: pass
+  - `just test`: pass
+- Next required measurement:
+  - CI `blake3_short_input_attribution` on pushed SHA with x86 lanes first (`amd-zen4`, `intel-spr`, `intel-icl`, `amd-zen5`), then full enforced matrix if x86 signal is positive.
+
 ## Hard Targets
 - Pass `blake3/oneshot` gap gate on all enforced platforms.
 - Pass `blake3/kernel-ab` gate on all enforced platforms.
