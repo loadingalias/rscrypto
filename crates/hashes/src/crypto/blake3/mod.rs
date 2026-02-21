@@ -4003,9 +4003,16 @@ unsafe fn digest_one_chunk_root_hash_words_x86(
   // Hash all full blocks except the final block, updating the CV. This keeps
   // ROOT out of the dependency chain until the last compress.
   let mut cv = key_words;
-  let mut blocks_compressed = 0u8;
-  let full_bytes = full_blocks * BLOCK_LEN;
-  (kernel.chunk_compress_blocks)(&mut cv, 0, flags, &mut blocks_compressed, &input[..full_bytes]);
+  let mut block_idx = 0usize;
+  while block_idx < full_blocks {
+    let start = if block_idx == 0 { CHUNK_START } else { 0 };
+    let block_flags = flags | start;
+    // SAFETY: `block_idx < full_blocks` and `full_blocks * BLOCK_LEN <= input.len()`.
+    let block_ptr = unsafe { input.as_ptr().add(block_idx * BLOCK_LEN) };
+    // SAFETY: `block_ptr` points to a full 64-byte block in `input`.
+    cv = unsafe { (kernel.x86_compress_cv_bytes)(&cv, block_ptr, 0, BLOCK_LEN as u32, block_flags) };
+    block_idx += 1;
+  }
 
   let start = if full_blocks == 0 { CHUNK_START } else { 0 };
   let final_flags = flags | start | CHUNK_END | ROOT;
