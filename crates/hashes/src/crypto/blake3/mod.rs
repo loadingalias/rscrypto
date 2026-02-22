@@ -2099,6 +2099,29 @@ impl ChunkState {
       }
     }
 
+    // Block-aligned short-chunk fast path (128/256/512/1024B): compress all
+    // but the last block in one call and keep the final full block buffered so
+    // finalize can apply CHUNK_END.
+    if self.blocks_compressed == 0
+      && self.block_len == 0
+      && input.len() > BLOCK_LEN
+      && input.len() <= CHUNK_LEN
+      && input.len().is_multiple_of(BLOCK_LEN)
+    {
+      let prefix_len = input.len().strict_sub(BLOCK_LEN);
+      kernels::chunk_compress_blocks_inline(
+        self.kernel.id,
+        &mut self.chaining_value,
+        self.chunk_counter,
+        self.flags,
+        &mut self.blocks_compressed,
+        &input[..prefix_len],
+      );
+      self.block.copy_from_slice(&input[prefix_len..]);
+      self.block_len = BLOCK_LEN as u8;
+      return;
+    }
+
     // Phase 1: if we already have a buffered (partial or full) block, fill it
     // (or, if it's already full, compress it) before touching the caller
     // slice. This keeps the hot "many full blocks" path branch-light.
