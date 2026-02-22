@@ -395,6 +395,39 @@ Close the remaining BLAKE3 gaps so `rscrypto` is consistently at or ahead of off
 - Next required measurement:
   - CI `blake3_short_input_attribution` with at least `ibm-s390x`, plus one x86 control lane (for example `intel-spr`) to confirm no collateral x86 impact.
 
+### Phase 3 Candidate G Targeted CI Validation (2026-02-22)
+- Run: `22266924998` on `main` (targeted lanes: `ibm-s390x`, `intel-spr`).
+- Comparison baseline:
+  - Candidate A full-lane run: `22263080239`
+  - Candidate F full-lane run: `22266336024`
+
+| Lane | rs gap 256 (A -> F -> G) | rs gap 1024 (A -> F -> G) | oneshot dispatch overhead 256 (A -> F -> G) | oneshot dispatch overhead 1024 (A -> F -> G) |
+|---|---:|---:|---:|---:|
+| intel-spr | `+55.40% -> +43.25% -> +43.10%` | `+31.74% -> +30.27% -> +32.25%` | `+17.69% -> +12.73% -> +10.14%` | `-2.45% -> -4.00% -> -5.12%` |
+| ibm-s390x | `+16.51% -> +9.43% -> +11.03%` | `+6.84% -> +7.40% -> +7.08%` | `+18.07% -> +15.82% -> +15.79%` | `+4.17% -> +4.47% -> +4.35%` |
+
+#### Candidate G Targeted Conclusion
+- Candidate G is rejected.
+- It partially recovers the `ibm-s390x` `1024` regression from Candidate F (`+7.40% -> +7.08%`) but remains worse than Candidate A (`+6.84%`).
+- It gives back meaningful `ibm-s390x` `256` gains from Candidate F (`+9.43% -> +11.03%`), and targeted x86 control shows an unfavorable `1024` shift.
+- Decision: keep Candidate F as the active baseline and move to a different optimization direction.
+
+### Phase 3 Candidate H (local-only, pending CI validation)
+- Implemented on local workspace:
+  - removed Candidate G `s390x`-specific finalize fallback (`blocks_compressed == 15 && block_len == 64`) and restored architecture-neutral Candidate F finalize behavior.
+  - added a first-update single-chunk direct path in `Digest::update()`:
+    - applies when state is pristine and input length is `<= CHUNK_LEN`,
+    - selects stream/bulk kernels once,
+    - updates `ChunkState` directly, bypassing `update_with` loop and batch probes for this latency-critical case.
+- Rationale:
+  - target short streaming overhead at `256/1024` by reducing control-path overhead without architecture-specific behavior.
+  - keep implementation pure Rust, simple, and globally consistent across lanes.
+- Local verification:
+  - `just check-all`: pass
+  - `just test`: pass
+- Next required measurement:
+  - CI `blake3_short_input_attribution` on x86 controls first (`intel-spr`, `amd-zen4`, optionally `intel-icl`, `amd-zen5`), then full-lane run if positive.
+
 ## Hard Targets
 - Pass `blake3/oneshot` gap gate on all enforced platforms.
 - Pass `blake3/kernel-ab` gate on all enforced platforms.
