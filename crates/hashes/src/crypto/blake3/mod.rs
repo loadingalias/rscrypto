@@ -2666,7 +2666,6 @@ fn digest_public_oneshot(key_words: [u32; 8], flags: u32, input: &[u8]) -> [u8; 
   digest_oneshot(kernel, key_words, flags, input)
 }
 
-#[derive(Clone)]
 pub struct Blake3 {
   dispatch_plan: dispatch::HasherDispatch,
   kernel: Kernel,
@@ -2681,6 +2680,35 @@ pub struct Blake3 {
   #[cfg(feature = "std")]
   parallel_leaf_cvs_scratch: alloc::vec::Vec<[u32; 8]>,
   flags: u32,
+}
+
+impl Clone for Blake3 {
+  #[inline]
+  fn clone(&self) -> Self {
+    let mut cv_stack = uninit_cv_stack();
+    let used = self.cv_stack_len as usize;
+    for (dst, src) in cv_stack.iter_mut().zip(self.cv_stack.iter()).take(used) {
+      // SAFETY: `cv_stack_len` tracks initialized entries.
+      let cv = unsafe { *src.assume_init_ref() };
+      dst.write(cv);
+    }
+
+    Self {
+      dispatch_plan: self.dispatch_plan,
+      kernel: self.kernel,
+      bulk_kernel: self.bulk_kernel,
+      chunk_state: self.chunk_state,
+      pending_chunk_cv: self.pending_chunk_cv,
+      key_words: self.key_words,
+      cv_stack,
+      cv_stack_len: self.cv_stack_len,
+      #[cfg(feature = "std")]
+      parallel_roots_scratch: alloc::vec::Vec::new(),
+      #[cfg(feature = "std")]
+      parallel_leaf_cvs_scratch: alloc::vec::Vec::new(),
+      flags: self.flags,
+    }
+  }
 }
 
 impl Default for Blake3 {
@@ -4187,6 +4215,31 @@ mod tests {
           "derive streaming mismatch len={len} split={split}"
         );
       }
+    }
+  }
+
+  #[test]
+  fn clone_preserves_hash_state() {
+    const KEY: &[u8; 32] = b"whats the Elvish word for friend";
+    const CONTEXT: &str = "BLAKE3 2019-12-27 16:29:52 test vectors context";
+
+    for len in [0usize, 1, 63, 64, 65, 127, 128, 255, 256, 512, 1024, 4096] {
+      let input = input_pattern(len);
+
+      let mut plain = Blake3::new();
+      plain.update(&input);
+      let plain_clone = plain.clone();
+      assert_eq!(plain.finalize(), plain_clone.finalize(), "plain clone mismatch len={len}");
+
+      let mut keyed = Blake3::new_keyed(KEY);
+      keyed.update(&input);
+      let keyed_clone = keyed.clone();
+      assert_eq!(keyed.finalize(), keyed_clone.finalize(), "keyed clone mismatch len={len}");
+
+      let mut derive = Blake3::new_derive_key(CONTEXT);
+      derive.update(&input);
+      let derive_clone = derive.clone();
+      assert_eq!(derive.finalize(), derive_clone.finalize(), "derive clone mismatch len={len}");
     }
   }
 
