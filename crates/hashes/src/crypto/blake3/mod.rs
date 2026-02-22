@@ -2099,33 +2099,6 @@ impl ChunkState {
       }
     }
 
-    // x86 exact-chunk fast path: avoid per-iteration loop/branch overhead for
-    // the common 1024B single-update case while preserving the "last block
-    // stays buffered for CHUNK_END" invariant.
-    #[cfg(target_arch = "x86_64")]
-    {
-      if matches!(
-        self.kernel.id,
-        kernels::Blake3KernelId::X86Sse41 | kernels::Blake3KernelId::X86Avx2 | kernels::Blake3KernelId::X86Avx512
-      ) && self.blocks_compressed == 0
-        && self.block_len == 0
-        && input.len() == CHUNK_LEN
-      {
-        let prefix_len = CHUNK_LEN.strict_sub(BLOCK_LEN);
-        kernels::chunk_compress_blocks_inline(
-          self.kernel.id,
-          &mut self.chaining_value,
-          self.chunk_counter,
-          self.flags,
-          &mut self.blocks_compressed,
-          &input[..prefix_len],
-        );
-        self.block.copy_from_slice(&input[prefix_len..]);
-        self.block_len = BLOCK_LEN as u8;
-        return;
-      }
-    }
-
     // Phase 1: if we already have a buffered (partial or full) block, fill it
     // (or, if it's already full, compress it) before touching the caller
     // slice. This keeps the hot "many full blocks" path branch-light.
