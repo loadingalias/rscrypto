@@ -4014,14 +4014,11 @@ unsafe fn digest_one_chunk_root_hash_words_aarch64(
   let mut cv = key_words;
   let mut blocks_compressed: u8 = 0;
   let full_bytes = full_blocks * BLOCK_LEN;
-  kernels::chunk_compress_blocks_inline(
-    kernel.id,
-    &mut cv,
-    0,
-    flags,
-    &mut blocks_compressed,
-    &input[..full_bytes],
-  );
+  // This helper is only used for the aarch64 NEON kernel; call it directly to
+  // avoid an extra kernel-id dispatch in the short-input hot path.
+  // SAFETY: this function is aarch64-only, dispatch selected the NEON kernel,
+  // and `input[..full_bytes]` is in-bounds by construction.
+  unsafe { aarch64::chunk_compress_blocks_neon(&mut cv, 0, flags, &mut blocks_compressed, &input[..full_bytes]) };
 
   let start = if full_blocks == 0 { CHUNK_START } else { 0 };
   let final_flags = flags | start | CHUNK_END | ROOT;
