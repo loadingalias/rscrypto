@@ -2596,7 +2596,7 @@ fn hash_full_chunks_cvs_scoped(
 fn digest_oneshot_words(kernel: Kernel, key_words: [u32; 8], flags: u32, input: &[u8]) -> [u32; 8] {
   // Ultra-fast path for tiny inputs (≤64B): use unified helper
   if input.len() <= BLOCK_LEN {
-    return hash_tiny_to_root_words(kernel, key_words, flags, input);
+    return digest_oneshot_words_tiny(kernel, key_words, flags, input);
   }
 
   // Fast path for single-chunk inputs (≤1024B): use platform-specific helpers
@@ -2624,6 +2624,11 @@ fn digest_oneshot_words(kernel: Kernel, key_words: [u32; 8], flags: u32, input: 
   // Fallback: keep the large-input path in a cold function to avoid
   // inflating short-input codegen in this hot entry point.
   digest_oneshot_words_fallback(kernel, key_words, flags, input)
+}
+
+#[inline(never)]
+fn digest_oneshot_words_tiny(kernel: Kernel, key_words: [u32; 8], flags: u32, input: &[u8]) -> [u32; 8] {
+  hash_tiny_to_root_words(kernel, key_words, flags, input)
 }
 
 #[cold]
@@ -3889,7 +3894,7 @@ fn hash_tiny_to_root_words(kernel: Kernel, key_words: [u32; 8], flags: u32, inpu
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_arch = "x86_64")]
-#[inline]
+#[inline(never)]
 unsafe fn digest_one_chunk_root_hash_words_x86(
   kernel: Kernel,
   key_words: [u32; 8],
@@ -3986,7 +3991,7 @@ unsafe fn digest_one_chunk_root_hash_words_x86(
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_arch = "aarch64")]
-#[inline]
+#[inline(never)]
 unsafe fn digest_one_chunk_root_hash_words_aarch64(
   kernel: Kernel,
   key_words: [u32; 8],
