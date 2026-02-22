@@ -84,3 +84,19 @@ Optional tools only with a specific question they uniquely answer:
 - Decision:
   - Keep as partial progress (POWER kernel-ab is now green and medium/large are ahead), but not a win.
   - Next candidate must target shared short-input oneshot overhead across architectures (not IBM-only).
+
+### 2026-02-22 - Candidate Q (planned)
+- Hypothesis:
+  - The shared one-chunk generic path pays avoidable overhead on block-aligned inputs (`64/128/256/512/1024`) by always materializing/copying the final 64-byte block.
+  - This overhead is hit on non-x86/aarch64 fast-path kernels and on portable short-input lanes; reducing it should help `oneshot` and `kernel-ab` short sizes, especially `256`/`1024`.
+- Planned change:
+  - In `digest_one_chunk_root_hash_words_generic`:
+    - switch pre-tail compression to `kernels::chunk_compress_blocks_inline(kernel.id, ...)` (avoid function-pointer indirection on this hot path),
+    - use zero-copy final-block handling when `last_len == 64` (read directly from input instead of staging into a stack buffer),
+    - keep partial-tail behavior unchanged (still pad and compress with the existing root flags contract).
+- Validation plan:
+  - `just check-all && just test`
+  - CI benches (granular first):
+    - `blake3/oneshot` gate
+    - `blake3/kernel-ab` gate
+  - Keep only if cross-lane trend is positive; otherwise revert immediately.
