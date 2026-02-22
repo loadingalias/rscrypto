@@ -851,13 +851,17 @@ pub static PROFILE_AARCH64_GRAVITON2: FamilyProfile = default_kind_profile();
 pub static PROFILE_AARCH64_SERVER_NEON: FamilyProfile = FamilyProfile {
   dispatch: DispatchTable {
     boundaries: [64, 4095, 4096],
-    xs: KernelId::Aarch64Neon,
-    s: KernelId::Aarch64Neon,
+    // Graviton-class attribution shows that for short inputs (<4KiB), the
+    // portable path has lower latency than the NEON one-shot path.
+    xs: KernelId::Portable,
+    s: KernelId::Portable,
     m: KernelId::Aarch64Neon,
     l: KernelId::Aarch64Neon,
   },
   streaming: StreamingTable {
-    stream: KernelId::Aarch64Neon,
+    // Match the short-input policy used by oneshot dispatch: stay portable for
+    // stream setup/finalize-sensitive small updates and switch bulk to NEON.
+    stream: KernelId::Portable,
     bulk: KernelId::Aarch64Neon,
     bulk_sizeclass_threshold: THRESHOLD_NEON,
   },
