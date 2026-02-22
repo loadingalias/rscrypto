@@ -2317,7 +2317,7 @@ fn single_chunk_output(
   }
 }
 
-#[inline(never)]
+#[inline]
 fn root_output_oneshot(
   kernel: Kernel,
   key_words: [u32; 8],
@@ -2621,7 +2621,14 @@ fn digest_oneshot_words(kernel: Kernel, key_words: [u32; 8], flags: u32, input: 
     }
   }
 
-  // Fallback: construct the root output and extract the root hash words.
+  // Fallback: keep the large-input path in a cold function to avoid
+  // inflating short-input codegen in this hot entry point.
+  digest_oneshot_words_fallback(kernel, key_words, flags, input)
+}
+
+#[cold]
+#[inline(never)]
+fn digest_oneshot_words_fallback(kernel: Kernel, key_words: [u32; 8], flags: u32, input: &[u8]) -> [u32; 8] {
   let mode = policy_kind_from_flags(flags, false); // is_xof = false
   let output = root_output_oneshot(kernel, key_words, flags, mode, input);
   output.root_hash_words()
