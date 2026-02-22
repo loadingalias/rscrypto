@@ -1,122 +1,84 @@
-# BLAKE3 Performance Plan (Locked Baseline + Next Work)
+# BLAKE3 Performance Plan (Locked State + Next Move)
 
 ## Objective
-Ship a clean, maintainable, world-class BLAKE3 implementation that wins `oneshot` and `kernel-ab` against upstream across enforced CI lanes, without adding usage complexity or ornamental code.
+Beat upstream BLAKE3 on enforced `kernel-ab` and `oneshot` gates with simpler code, no API complexity, and no policy noise.
 
-## Current Baseline (Locked)
-- Active baseline: **Candidate I line** (latest accepted simplification/perf baseline before rejected N/O policy experiments).
-- Status: Candidate N and Candidate O were tested, rejected, and rolled back because they did not provide stable cross-lane wins.
-- Validation on this rollback state:
+## Current Locked State
+- Keep commit `1434fa2` (`hashes: split blake3 oneshot fallback into cold helper`).
+- Reject commit `d21f59a` (`#[inline(never)]` on `root_output_oneshot`) because it regressed too many lanes.
+- Validation on kept state:
   - `just check-all`: pass
   - `just test`: pass
+  - CI `commit.yaml` run `22280869114`: success
+  - CI `bench.yaml` run `22280874270` (`filter=kernel-ab`, `quick=false`, kernel gate enforced): fail
 
-## What We Have Proven
-- Main remaining deficit is still short input (`256`, `1024`) competitiveness, not broad large-input throughput.
-- We have already captured enough evidence that random boundary-policy churn is low ROI.
-- Some short-path/control-path cleanups helped, but they did not close the gap alone.
-- Kernel-policy changes that improve one lane often regress others; global x86 retunes were unstable.
+Why we keep `1434fa2` anyway:
+- It is cleaner than the rejected variant and did not add policy complexity.
+- It recovered part of the damage from `d21f59a` (notably restored `amd-zen4` gate pass).
+- It is a better stable base for kernel work than continuing boundary-policy churn.
 
-## Locked Boundary/Policy Decisions
-These are frozen until new data proves otherwise.
+## What Is Proven and Frozen
+1. Main deficit is short-input kernel performance (`256`, `1024`), not large-input throughput.
+2. Boundary-policy alphabet search has diminishing returns and unstable cross-lane behavior.
+3. Global x86 boundary retunes are frozen until kernel quality improves.
+4. No new runtime special-case policy without repeatable cross-lane wins.
+5. Kernel-first rule: kernel-only evidence before API-path/policy changes.
 
-1. Keep current dispatch boundary policy from the accepted baseline.
-2. Do **not** globally retune x86 short-size boundaries (no blanket `avx2 -> sse4.1` shift).
-3. Do **not** merge per-lane special cases into runtime policy unless they are repeatably net-positive across reruns.
-4. Keep large-input behavior stable while we optimize short-input compute paths.
-5. Any future boundary change must be justified by kernel-only data first, then full API-path data.
+## Latest Gate Snapshot (Run `22280874270`)
+- Passed lanes:
+  - `amd-zen4`
+  - `ibm-power10`
+- Failed lanes (kernel-ab):
+  - `intel-spr`: `256 +18.60%`, `1024 +16.23%`, `4096 +6.94%` (limit +6%)
+  - `intel-icl`: `256 +18.96%`, `1024 +17.11%`, `4096 +8.02%`
+  - `amd-zen5`: `256 +15.01%`, `1024 +9.38%`
+  - `graviton3`: `256 +30.77%`, `1024 +13.51%`
+  - `graviton4`: `256 +33.16%`, `1024 +13.90%`
+  - `ibm-s390x`: `256 +12.25%` (limit +12%, near miss)
 
-## What We Explicitly Ruled Out
-- More alphabet-style policy candidates without a hard kernel root-cause target.
-- Changes that only move dispatch overhead around without improving API-level short-size gaps.
-- Architecture-specific one-off exceptions that complicate the code but do not hold up in reruns.
+Interpretation:
+- Short-size kernel gap is still the blocker.
+- ARM short-size gap is now the largest and most consistent loss across enforced ARM lanes.
 
-## Working Hypothesis (Forward)
-The remaining gap is primarily **kernel compute quality and generated code quality** on hot short-size paths, not missing dispatch knobs.
+## Next Logical Improvement (Immediate)
+Focus first on **aarch64 NEON short-size kernel quality** before any more policy edits.
 
-## Tooling Stack (Rust Ecosystem, macOS M1 Compatible)
-We will use this exact stack unless a tool is demonstrably better.
+Why this is next:
+- Biggest absolute gap is on `graviton3/graviton4` at `256/1024`.
+- Same loss pattern on both ARM lanes means high confidence, not runner noise.
+- We can iterate locally on macOS M1 (aarch64) with the same ISA family.
 
-1. `cargo bench` (Criterion harness in-repo)
-   - Why: canonical, reproducible benchmark surface already wired into CI/gates.
-   - Host support: native on macOS aarch64.
-2. `cargo-asm`
-   - Why: fastest way to inspect emitted assembly for specific Rust symbols on host target.
-   - Host support: works on macOS M1 for aarch64 output.
-3. `cargo-show-asm`
-   - Why: complementary assembly/LLVM/MIR views and better ergonomics for some symbol flows.
-   - Host support: works on macOS M1.
-4. `cargo-llvm-lines`
-   - Why: quantify code-size/inlining bloat in hot paths; prevents accidental complexity inflation.
-   - Host support: works on macOS M1.
-5. `cargo-samply` (sample profiler)
-   - Why: low-friction CPU sampling to identify real time sinks in short-path code.
-   - Host support: supported on macOS; good first-pass profiler.
+Scope:
+1. Audit hot NEON symbols used by `kernel-ab` `256/1024`.
+2. Remove avoidable front-end waste: extra shuffles, spills, and setup overhead.
+3. Keep large-input path behavior unchanged.
+4. Avoid dispatch or API changes in this phase.
 
-Optional additions only if needed and justified:
-- Linux CI perf tools (`perf`, `pmu-tools`) for cycle/uop-level confirmation on x86 runners.
-- VTune or `llvm-mca` only when specific microarchitectural questions remain unanswered by the above.
+First candidate to try:
+- In `digest_one_chunk_root_hash_words_aarch64` (`crates/hashes/src/crypto/blake3/mod.rs`), remove the generic
+  `kernels::chunk_compress_blocks_inline(kernel.id, ...)` call and invoke the aarch64 NEON path directly.
+- Rationale: this helper is already aarch64-only and guarded to `Aarch64Neon`; keeping an extra kernel-id dispatch
+  in the hot short-input path is likely pure overhead.
 
-## Execution Model (Host vs CI)
-- Host machine (macOS M1):
-  - Fast inner loop for correctness, short-path microbench trends, codegen inspection, and profiling.
-- CI runners (Linux/Windows/IBM):
-  - Source of truth for cross-arch competitiveness and final pass/fail decisions.
-  - Kernel-only and full API-path comparisons must run on the same runner classes as gates.
+## Tooling (Approved Baseline, macOS M1 Safe)
+- `cargo bench`: canonical perf harness used by CI.
+- `cargo-asm`: inspect emitted assembly for hot symbols.
+- `cargo-show-asm`: alternate asm/LLVM/MIR views.
+- `cargo-llvm-lines`: detect code-size and inlining bloat.
+- `cargo-samply`: local sampling profiler for short paths.
 
-## Immediate Work Plan
+Optional only with explicit need:
+- `perf`/PMU tools on Linux runners for cycle/uop confirmation.
+- `llvm-mca` when instruction-level throughput modeling is required.
 
-### Phase 1: Reconfirm Kernel Truth (No Policy Edits)
-1. Run kernel-only A/B (`filter=kernel-ab`, `quick=false`) on enforced x86 and arm lanes.
-2. Compare rscrypto kernels vs upstream on identical runners.
-3. Produce per-lane table: throughput + cycles (where available), by key sizes (`256`, `1024`, `4096+`).
-
-Exit criteria:
-- We can state exactly which kernels lose, by how much, on which lanes.
-
-### Phase 2: Kernel Quality Audit
-1. For losing kernels, inspect hot symbols with `cargo-asm` and `cargo-show-asm`.
-2. Audit instruction mix, register pressure, spills, branch shape, and unnecessary flag/setup overhead.
-3. Use `cargo-llvm-lines` to detect inlining/code-size issues hurting I-cache/front-end.
-4. Profile short-path benchmarks with `cargo-samply` to confirm top cycle consumers.
-
-Exit criteria:
-- Ranked list of concrete kernel/codegen defects with expected impact.
-
-### Phase 3: Targeted Kernel Improvements
-1. Implement minimal, high-impact changes per kernel family (x86 AVX2/AVX512, SSE4.1 where relevant; aarch64 NEON).
-2. Keep API surface unchanged and avoid new dispatch complexity.
-3. Validate each change in this order:
-   - correctness (`just check-all`, `just test`)
-   - kernel-only bench
-   - oneshot/API bench
-   - full-lane CI confirmation
-
-Exit criteria:
-- Cross-lane net win at `256/1024` with no meaningful regression at `4096+`.
-
-### Phase 4: Only Then Revisit Policy (If Needed)
-- Reopen boundary/policy tuning only if kernel improvements plateau and data shows a clear, repeatable opportunity.
-
-## Benchmark Protocol (Required)
-For every candidate:
-1. `just check-all && just test`
-2. CI kernel-only bench on same runners as upstream comparison
-3. CI oneshot/API-path bench (`blake3_short_input_attribution`, `oneshot-apples` where relevant)
-4. At least one stability rerun for ambiguous deltas
-5. Decision: keep, revert, or iterate
+## Candidate Protocol (Non-Negotiable)
+1. One focused kernel change per commit.
+2. Run `just check-all && just test`.
+3. Run CI kernel-only (`kernel-ab`, `quick=false`, enforced lanes).
+4. If kernel result is promising, run API-path benches.
+5. Keep/revert decision based on repeatable cross-lane net effect.
 
 ## Definition of Done
-- `blake3/kernel-ab` and `blake3/oneshot` gates pass on enforced lanes.
-- Wins are repeatable (no fragile one-run artifacts).
-- Code remains simpler or equal in complexity vs baseline.
-- No new public API complexity.
-
-## Commit Discipline
-- One candidate per commit.
-- Commit message format: `hashes: <short action summary>`.
-- Every candidate commit must include linked CI run IDs and a keep/reject decision in PR notes.
-
-## Non-Negotiables
-- Measure first, optimize second.
-- No ornamental abstractions in hot paths.
-- If a change is not clearly faster and cleaner, it does not ship.
+- `blake3/kernel-ab` and `blake3/oneshot` pass on enforced lanes.
+- Short-size wins are repeatable.
+- Complexity is equal or lower than current baseline.
