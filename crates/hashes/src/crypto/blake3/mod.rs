@@ -3654,11 +3654,11 @@ impl Digest for Blake3 {
       return;
     }
 
+    let first_update = self.chunk_state.chunk_counter == 0 && self.cv_stack_len == 0 && self.pending_chunk_cv.is_none();
+
     // Ultra-tiny first update fast path: avoid `update_with` dispatch and loop
     // machinery when we can satisfy the call with a single block copy.
-    if self.chunk_state.chunk_counter == 0
-      && self.cv_stack_len == 0
-      && self.pending_chunk_cv.is_none()
+    if first_update
       && self.chunk_state.blocks_compressed == 0
       && self.chunk_state.block_len == 0
       && input.len() <= BLOCK_LEN
@@ -3676,15 +3676,25 @@ impl Digest for Blake3 {
     // have enough data to amortize kernel setup costs. This applies uniformly
     // to all modes (plain, keyed, derive) - the defer heuristic improves
     // small-input latency across the board.
-    if self.kernel.id == kernels::Blake3KernelId::Portable
-      && self.chunk_state.chunk_counter == 0
-      && self.cv_stack_len == 0
-      && self.pending_chunk_cv.is_none()
-      && self
-        .dispatch_plan
-        .should_defer_simd(self.chunk_state.len(), input.len())
+    if first_update
+      && self.chunk_state.blocks_compressed == 0
+      && self.chunk_state.block_len == 0
+      && input.len() <= CHUNK_LEN
     {
-      self.update_with(input, self.kernel, self.bulk_kernel);
+      let stream = if self.kernel.id == kernels::Blake3KernelId::Portable
+        && self
+          .dispatch_plan
+          .should_defer_simd(self.chunk_state.len(), input.len())
+      {
+        self.kernel
+      } else {
+        self.dispatch_plan.stream_kernel()
+      };
+      let bulk = self.dispatch_plan.bulk_kernel_for_update(input.len());
+      self.kernel = stream;
+      self.bulk_kernel = bulk;
+      self.chunk_state.kernel = stream;
+      self.chunk_state.update(input);
       return;
     }
 
@@ -3701,17 +3711,6 @@ impl Digest for Blake3 {
     // conversion on short streaming finalization.
     if self.chunk_state.chunk_counter == 0 && self.cv_stack_len == 0 && self.pending_chunk_cv.is_none() {
       let block_len = self.chunk_state.block_len as usize;
-
-      #[cfg(target_arch = "s390x")]
-      {
-        // Observed in CI: Candidate F improved s390x at 256 but regressed
-        // slightly at 1024. Keep the old root-output finalize path for the
-        // exact one-chunk-full state (15 compressed blocks + final full block)
-        // to preserve that 1024 behavior while retaining F elsewhere.
-        if self.chunk_state.blocks_compressed == 15 && block_len == BLOCK_LEN {
-          return self.root_output().root_hash_bytes();
-        }
-      }
 
       let add_chunk_start = self.chunk_state.blocks_compressed == 0;
       let cv = self.chunk_state.chaining_value;
