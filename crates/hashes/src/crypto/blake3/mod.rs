@@ -3613,22 +3613,6 @@ impl Digest for Blake3 {
     if first_update
       && self.chunk_state.blocks_compressed == 0
       && self.chunk_state.block_len == 0
-      && self.flags == 0
-      && input.len() == CHUNK_LEN
-      && let Some(kernel) = self.dispatch_plan.plain_first_update_1024_kernel()
-    {
-      // Intel server-only narrow override: allow plain 1024B first updates to
-      // use AVX-512 where lane data shows it wins.
-      self.kernel = kernel;
-      self.bulk_kernel = kernel;
-      self.chunk_state.kernel = kernel;
-      self.chunk_state.update(input);
-      return;
-    }
-
-    if first_update
-      && self.chunk_state.blocks_compressed == 0
-      && self.chunk_state.block_len == 0
       && input.len() <= CHUNK_LEN
     {
       let stream = if self.kernel.id == kernels::Blake3KernelId::Portable

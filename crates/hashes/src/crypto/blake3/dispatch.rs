@@ -91,7 +91,6 @@ pub(crate) struct ParallelDispatch {
 #[derive(Clone, Copy)]
 pub(crate) struct HasherDispatch {
   size_classes: SizeClassDispatch<Kernel>,
-  plain_stream_1024_kernel: Option<Kernel>,
   stream_kernel: Kernel,
   table_bulk_kernel: Kernel,
   parallel_streaming: ParallelTable,
@@ -120,12 +119,6 @@ impl HasherDispatch {
   #[must_use]
   pub(crate) fn size_class_kernel(self, len: usize) -> Kernel {
     self.size_classes.select(len)
-  }
-
-  #[inline]
-  #[must_use]
-  pub(crate) fn plain_first_update_1024_kernel(self) -> Option<Kernel> {
-    self.plain_stream_1024_kernel
   }
 
   #[inline]
@@ -308,26 +301,8 @@ fn resolved() -> ResolvedDispatch {
       m: active.m.kernel,
       l: active.l.kernel,
     };
-    let plain_stream_1024_kernel = {
-      #[cfg(target_arch = "x86_64")]
-      {
-        if matches!(kind, TuneKind::IntelSpr | TuneKind::IntelIcl)
-          && active.s.kernel.id == Blake3KernelId::X86Avx2
-          && active.m.kernel.id == Blake3KernelId::X86Avx512
-        {
-          Some(active.m.kernel)
-        } else {
-          None
-        }
-      }
-      #[cfg(not(target_arch = "x86_64"))]
-      {
-        None
-      }
-    };
     let hasher = HasherDispatch {
       size_classes,
-      plain_stream_1024_kernel,
       stream_kernel: streaming.stream,
       table_bulk_kernel: streaming.bulk,
       parallel_streaming: parallel.streaming,
