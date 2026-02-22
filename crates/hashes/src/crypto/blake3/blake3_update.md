@@ -600,6 +600,89 @@ Keyed API gap vs official (`rscrypto/keyed/api`):
   - keep API surface and dependency policy unchanged,
   - validate first with `oneshot-apples`, then full-lane attribution.
 
+### Phase 4 Candidate J (local-only, pending CI validation)
+- Implemented on local workspace:
+  - x86 one-chunk root helper (`digest_one_chunk_root_hash_words_x86`) now uses:
+    - `kernels::chunk_compress_blocks_inline(kernel.id, ...)`
+    - instead of indirect function-pointer call `kernel.chunk_compress_blocks(...)`.
+- Rationale:
+  - remove avoidable indirection in the `<= CHUNK_LEN` one-shot compute path (not dispatch/API),
+  - align x86 helper behavior with aarch64 helper pattern,
+  - target `256/1024` hot path directly.
+- Local verification:
+  - `just check-all`: pass
+  - `just test`: pass
+- Next required measurement:
+  - CI `Bench`:
+    - `crates=hashes`
+    - `benches=blake3_short_input_attribution`
+    - `filter=oneshot-apples`
+    - `quick=false`
+    - lanes: `intel-spr`, `amd-zen4`
+  - Compare against Candidate I rerun baseline (`22269244541`) on:
+    - `rscrypto/plain/api` gap @ `256/1024`
+    - `rscrypto/keyed/api` gap @ `256/1024`
+
+### Phase 4 Candidate J x86 CI Validation (2026-02-22)
+- Run: `22269413034` (`oneshot-apples`, lanes: `amd-zen4`, `intel-spr`)
+- Comparison baseline: Candidate I rerun `22269244541`
+
+`plain` API gap vs official (`rscrypto/plain/api`):
+
+| Lane | 256 (I -> J) | 1024 (I -> J) |
+|---|---:|---:|
+| amd-zen4 | `+13.89% -> +14.33%` | `+7.22% -> +7.19%` |
+| intel-spr | `+38.18% -> +31.47%` | `+24.06% -> +27.41%` |
+
+`keyed` API gap vs official (`rscrypto/keyed/api`):
+
+| Lane | 256 (I -> J) | 1024 (I -> J) |
+|---|---:|---:|
+| amd-zen4 | `+13.44% -> +13.29%` | `+7.03% -> +7.03%` |
+| intel-spr | `+33.42% -> +31.13%` | `+27.03% -> +33.42%` |
+
+#### Candidate J Conclusion
+- Candidate J is rejected as a performance candidate (kept only as a local experiment reference).
+- The signal is mixed and unstable across the critical cells:
+  - `intel-spr` shows improvement at `256`, but clear regression at `1024` (plain/keyed gaps worsen).
+  - `amd-zen4` is neutral-to-slightly-worse.
+- Decision: keep Candidate I as active baseline and move to a larger compute-path restructuring candidate (not micro-indirection tweaks).
+
+### Phase 4 Candidate J x86 Stability Rerun (2026-02-22)
+- Run: `22269639518` (`oneshot-apples`, lanes: `amd-zen4`, `intel-spr`)
+- Comparison baseline: Candidate I rerun `22269244541`
+
+`plain` API gap vs official (`rscrypto/plain/api`):
+
+| Lane | 256 (I -> J -> J rerun) | 1024 (I -> J -> J rerun) |
+|---|---:|---:|
+| amd-zen4 | `+13.89% -> +14.33% -> +14.07%` | `+7.22% -> +7.19% -> +7.15%` |
+| intel-spr | `+38.18% -> +31.47% -> +39.25%` | `+24.06% -> +27.41% -> +28.07%` |
+
+`keyed` API gap vs official (`rscrypto/keyed/api`):
+
+| Lane | 256 (I -> J -> J rerun) | 1024 (I -> J -> J rerun) |
+|---|---:|---:|
+| amd-zen4 | `+13.44% -> +13.29% -> +13.40%` | `+7.03% -> +7.03% -> +7.13%` |
+| intel-spr | `+33.42% -> +31.13% -> +35.26%` | `+27.03% -> +33.42% -> +26.80%` |
+
+#### Candidate J Stability Conclusion
+- `amd-zen4` remains effectively neutral/slightly worse vs Candidate I.
+- `intel-spr` remains unstable and does not support promotion.
+- Decision stands: Candidate J rejected. Revert code to Candidate I baseline before new compute-path work.
+
+### Phase 4 Candidate K Attempt (local, reverted)
+- Attempted optimization:
+  - special exact-`CHUNK_LEN` one-shot path using `hash_many_contiguous(..., flags | ROOT, ...)`.
+- Result:
+  - correctness failure (ROOT leaked into non-final chunk-compress stages).
+  - deterministic test failures at `len=1024` in one-shot parity tests.
+- Actions:
+  - reverted immediately.
+  - re-ran targeted BLAKE3 one-shot parity tests; all passed after revert.
+- Rule locked for next candidates:
+  - never apply `ROOT` through leaf/chunk batch hashing primitives; `ROOT` must remain final-block-only.
+
 ## Hard Targets
 - Pass `blake3/oneshot` gap gate on all enforced platforms.
 - Pass `blake3/kernel-ab` gate on all enforced platforms.

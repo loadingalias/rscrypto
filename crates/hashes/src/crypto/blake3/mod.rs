@@ -3909,14 +3909,7 @@ unsafe fn digest_one_chunk_root_hash_words_x86(
   let mut cv = key_words;
   let mut blocks_compressed = 0u8;
   let full_bytes = full_blocks * BLOCK_LEN;
-  kernels::chunk_compress_blocks_inline(
-    kernel.id,
-    &mut cv,
-    0,
-    flags,
-    &mut blocks_compressed,
-    &input[..full_bytes],
-  );
+  (kernel.chunk_compress_blocks)(&mut cv, 0, flags, &mut blocks_compressed, &input[..full_bytes]);
 
   let start = if full_blocks == 0 { CHUNK_START } else { 0 };
   let final_flags = flags | start | CHUNK_END | ROOT;
