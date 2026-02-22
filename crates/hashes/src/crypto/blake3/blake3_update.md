@@ -66,3 +66,21 @@ Optional tools only with a specific question they uniquely answer:
 - One candidate per commit.
 - Subject format: `hashes: <short action summary>`.
 - Every candidate carries CI run IDs and explicit keep/reject outcome in notes.
+
+## Progress
+### 2026-02-22 - Candidate P (`3a57016`)
+- Change:
+  - Enabled lane-native vector bulk kernels in BLAKE3 dispatch tables for IBM Z (`s390x`) and POWER (`powerpc64`) families.
+- Validation:
+  - Local: `just check-all && just test` passed (`166/166` tests).
+  - CI Bench run: `22284378402` (targeted lanes only: `ibm-s390x`, `ibm-power10`).
+- CI outcomes:
+  - `ibm-power10`
+    - `blake3/oneshot` gate failed at `256`: need `+9.68%` vs `+4.80%` limit.
+    - `blake3/kernel-ab` gate passed for `powerpc64/vsx`.
+  - `ibm-s390x`
+    - `blake3/oneshot` gate failed at `1024`: need `+10.08%` vs `+6.80%` limit.
+    - `blake3/kernel-ab` gate failed at `256`: need `+13.40%` vs `+12.00%` limit.
+- Decision:
+  - Keep as partial progress (POWER kernel-ab is now green and medium/large are ahead), but not a win.
+  - Next candidate must target shared short-input oneshot overhead across architectures (not IBM-only).

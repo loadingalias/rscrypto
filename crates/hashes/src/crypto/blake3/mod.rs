@@ -2621,6 +2621,10 @@ fn digest_oneshot_words(kernel: Kernel, key_words: [u32; 8], flags: u32, input: 
     }
   }
 
+  if input.len() <= CHUNK_LEN {
+    return digest_one_chunk_root_hash_words_generic(kernel, key_words, flags, input);
+  }
+
   // Fallback: keep the large-input path in a cold function to avoid
   // inflating short-input codegen in this hot entry point.
   digest_oneshot_words_fallback(kernel, key_words, flags, input)
@@ -3882,6 +3886,43 @@ fn hash_tiny_to_root_words(kernel: Kernel, key_words: [u32; 8], flags: u32, inpu
   block[..input.len()].copy_from_slice(input);
 
   compress_chunk_tail_to_root_words(kernel, key_words, &block, input.len(), flags, true)
+}
+
+/// Hash one chunk-or-less input directly to root words.
+///
+/// This shared path is used by architectures without dedicated one-chunk
+/// assembly/intrinsics helpers.
+#[inline]
+#[must_use]
+fn digest_one_chunk_root_hash_words_generic(kernel: Kernel, key_words: [u32; 8], flags: u32, input: &[u8]) -> [u32; 8] {
+  debug_assert!(input.len() <= CHUNK_LEN);
+
+  let (full_blocks, last_len) = if input.is_empty() {
+    (0usize, 0usize)
+  } else {
+    let rem = input.len() % BLOCK_LEN;
+    if rem == 0 {
+      (input.len() / BLOCK_LEN - 1, BLOCK_LEN)
+    } else {
+      (input.len() / BLOCK_LEN, rem)
+    }
+  };
+
+  let mut cv = key_words;
+  let mut blocks_compressed = 0u8;
+  let full_bytes = full_blocks * BLOCK_LEN;
+  (kernel.chunk_compress_blocks)(&mut cv, 0, flags, &mut blocks_compressed, &input[..full_bytes]);
+
+  let mut final_block = [0u8; BLOCK_LEN];
+  if last_len != 0 {
+    let offset = full_blocks * BLOCK_LEN;
+    final_block[..last_len].copy_from_slice(&input[offset..offset + last_len]);
+  }
+
+  let start = if full_blocks == 0 { CHUNK_START } else { 0 };
+  let final_flags = flags | start | CHUNK_END | ROOT;
+  let final_words = words16_from_le_bytes_64(&final_block);
+  first_8_words((kernel.compress)(&cv, &final_words, 0, last_len as u32, final_flags))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
