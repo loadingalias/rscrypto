@@ -3911,16 +3911,32 @@ fn digest_one_chunk_root_hash_words_generic(kernel: Kernel, key_words: [u32; 8],
   let mut cv = key_words;
   let mut blocks_compressed = 0u8;
   let full_bytes = full_blocks * BLOCK_LEN;
-  (kernel.chunk_compress_blocks)(&mut cv, 0, flags, &mut blocks_compressed, &input[..full_bytes]);
+  kernels::chunk_compress_blocks_inline(
+    kernel.id,
+    &mut cv,
+    0,
+    flags,
+    &mut blocks_compressed,
+    &input[..full_bytes],
+  );
+
+  let start = if full_blocks == 0 { CHUNK_START } else { 0 };
+  let final_flags = flags | start | CHUNK_END | ROOT;
+
+  if last_len == BLOCK_LEN && !input.is_empty() {
+    let offset = full_blocks * BLOCK_LEN;
+    // SAFETY: `offset + BLOCK_LEN <= input.len()` by construction.
+    let block_words = unsafe { words16_from_le_bytes_64(&*input.as_ptr().add(offset).cast::<[u8; BLOCK_LEN]>()) };
+    return first_8_words((kernel.compress)(&cv, &block_words, 0, BLOCK_LEN as u32, final_flags));
+  }
 
   let mut final_block = [0u8; BLOCK_LEN];
   if last_len != 0 {
     let offset = full_blocks * BLOCK_LEN;
-    final_block[..last_len].copy_from_slice(&input[offset..offset + last_len]);
+    // SAFETY: `last_len < BLOCK_LEN` here, and source range is in-bounds.
+    unsafe { ptr::copy_nonoverlapping(input.as_ptr().add(offset), final_block.as_mut_ptr(), last_len) };
   }
 
-  let start = if full_blocks == 0 { CHUNK_START } else { 0 };
-  let final_flags = flags | start | CHUNK_END | ROOT;
   let final_words = words16_from_le_bytes_64(&final_block);
   first_8_words((kernel.compress)(&cv, &final_words, 0, last_len as u32, final_flags))
 }
