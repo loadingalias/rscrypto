@@ -91,7 +91,7 @@ pub(crate) struct ParallelDispatch {
 #[derive(Clone, Copy)]
 pub(crate) struct HasherDispatch {
   size_classes: SizeClassDispatch<Kernel>,
-  plain_size_classes: SizeClassDispatch<Kernel>,
+  plain_stream_1024_kernel: Option<Kernel>,
   stream_kernel: Kernel,
   table_bulk_kernel: Kernel,
   parallel_streaming: ParallelTable,
@@ -124,8 +124,8 @@ impl HasherDispatch {
 
   #[inline]
   #[must_use]
-  pub(crate) fn size_class_kernel_plain(self, len: usize) -> Kernel {
-    self.plain_size_classes.select(len)
+  pub(crate) fn plain_first_update_1024_kernel(self) -> Option<Kernel> {
+    self.plain_stream_1024_kernel
   }
 
   #[inline]
@@ -308,36 +308,26 @@ fn resolved() -> ResolvedDispatch {
       m: active.m.kernel,
       l: active.l.kernel,
     };
-    let plain_boundaries = {
+    let plain_stream_1024_kernel = {
       #[cfg(target_arch = "x86_64")]
       {
-        let mut b = active.boundaries;
-        // Plain-mode short policy split on AVX-512 Intel server families:
-        // keep AVX2 for 256/512, but move 1024 to AVX-512.
         if matches!(kind, TuneKind::IntelSpr | TuneKind::IntelIcl)
-          && b[1] >= 1024
           && active.s.kernel.id == Blake3KernelId::X86Avx2
           && active.m.kernel.id == Blake3KernelId::X86Avx512
         {
-          b[1] = 512;
+          Some(active.m.kernel)
+        } else {
+          None
         }
-        b
       }
       #[cfg(not(target_arch = "x86_64"))]
       {
-        active.boundaries
+        None
       }
-    };
-    let plain_size_classes = SizeClassDispatch {
-      boundaries: plain_boundaries,
-      xs: active.xs.kernel,
-      s: active.s.kernel,
-      m: active.m.kernel,
-      l: active.l.kernel,
     };
     let hasher = HasherDispatch {
       size_classes,
-      plain_size_classes,
+      plain_stream_1024_kernel,
       stream_kernel: streaming.stream,
       table_bulk_kernel: streaming.bulk,
       parallel_streaming: parallel.streaming,
