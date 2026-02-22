@@ -346,6 +346,55 @@ Close the remaining BLAKE3 gaps so `rscrypto` is consistently at or ahead of off
 - Next required measurement:
   - CI `blake3_short_input_attribution` on pushed SHA, x86 lanes first (`amd-zen4`, `intel-spr`, `intel-icl`, `amd-zen5`), compare against Candidate A (`22263080239`) and Candidate E (`22265323736`).
 
+### Phase 3 Candidate F x86 CI Validation (2026-02-21)
+- Run: `22265986460` on `main` (x86 lanes only: `amd-zen4`, `intel-spr`, `intel-icl`, `amd-zen5`).
+
+| Lane | rs gap 256 (A -> F) | rs gap 1024 (A -> F) | oneshot dispatch overhead 256 (A -> F) | oneshot dispatch overhead 1024 (A -> F) |
+|---|---:|---:|---:|---:|
+| amd-zen4 | `+21.40% -> +15.99%` | `+9.01% -> +7.83%` | `+13.65% -> +7.07%` | `-4.54% -> -6.17%` |
+| intel-spr | `+55.40% -> +43.06%` | `+31.74% -> +29.04%` | `+17.69% -> +10.47%` | `-2.45% -> -4.13%` |
+| intel-icl | `+59.35% -> +49.41%` | `+35.91% -> +34.21%` | `+20.22% -> +12.26%` | `-0.38% -> -2.76%` |
+| amd-zen5 | `+37.60% -> +32.88%` | `+23.26% -> +22.43%` | `+10.47% -> +7.29%` | `-1.15% -> -2.56%` |
+
+#### Candidate F x86 Conclusion
+- Accepted as new baseline for short-path work.
+- Candidate F improves absolute rs-vs-official short gap at both `256` and `1024` on every x86 lane tested.
+- One-shot auto-vs-direct overhead drops materially at `256` across all x86 lanes, matching the intended target for this phase.
+- Next action: run full enforced-lane `blake3_short_input_attribution` CI (arm64/s390x/power included) to validate no collateral regressions, then continue with short-gap closure from the new baseline.
+
+### Phase 3 Candidate F Full-Lane CI Validation (2026-02-21)
+- Run: `22266336024` on `main` (all enforced lanes).
+
+| Lane | rs gap 256 (A -> F) | rs gap 1024 (A -> F) | oneshot dispatch overhead 256 (A -> F) | oneshot dispatch overhead 1024 (A -> F) |
+|---|---:|---:|---:|---:|
+| amd-zen4 | `+21.40% -> +16.18%` | `+9.01% -> +7.80%` | `+13.65% -> +7.55%` | `-4.54% -> -6.02%` |
+| intel-spr | `+55.40% -> +43.25%` | `+31.74% -> +30.27%` | `+17.69% -> +12.73%` | `-2.45% -> -4.00%` |
+| intel-icl | `+59.35% -> +52.66%` | `+35.91% -> +34.56%` | `+20.22% -> +12.14%` | `-0.38% -> -2.70%` |
+| amd-zen5 | `+37.60% -> +34.30%` | `+23.26% -> +22.80%` | `+10.47% -> +8.19%` | `-1.15% -> -1.80%` |
+| graviton3 | `+44.77% -> +41.31%` | `+22.05% -> +21.23%` | `+10.16% -> +7.65%` | `+8.07% -> +7.35%` |
+| graviton4 | `+45.93% -> +42.53%` | `+22.49% -> +21.78%` | `+10.24% -> +7.67%` | `+7.94% -> +7.45%` |
+| ibm-power10 | `+26.70% -> +22.65%` | `+13.98% -> +12.89%` | `+20.95% -> +18.31%` | `+27.77% -> +26.47%` |
+| ibm-s390x | `+16.51% -> +9.43%` | `+6.84% -> +7.40%` | `+18.07% -> +15.82%` | `+4.17% -> +4.47%` |
+
+#### Candidate F Full-Lane Conclusion
+- Candidate F is accepted as the new global baseline for this phase.
+- Net effect is strongly positive: rs short-gap improves at `256` on all lanes and at `1024` on 7/8 lanes.
+- Residual watch item: `ibm-s390x` shows a small `1024` regression (`+0.56` points) despite a large `256` gain.
+
+### Phase 3 Candidate G (local-only, pending CI validation)
+- Implemented on local workspace:
+  - s390x-only finalize refinement on top of Candidate F:
+    - in single-chunk finalize path, if state is exactly one full chunk tail (`blocks_compressed == 15` and `block_len == 64`) on `s390x`, use prior `root_output().root_hash_bytes()` path.
+    - all other arches/sizes keep Candidate F fast path unchanged.
+- Rationale:
+  - target the only observed collateral regression from F (`ibm-s390x` at `1024`) with a minimal, architecture-scoped fallback.
+  - avoid perturbing the cross-lane wins achieved by Candidate F.
+- Local verification:
+  - `just check-all`: pass
+  - `just test`: pass
+- Next required measurement:
+  - CI `blake3_short_input_attribution` with at least `ibm-s390x`, plus one x86 control lane (for example `intel-spr`) to confirm no collateral x86 impact.
+
 ## Hard Targets
 - Pass `blake3/oneshot` gap gate on all enforced platforms.
 - Pass `blake3/kernel-ab` gate on all enforced platforms.
