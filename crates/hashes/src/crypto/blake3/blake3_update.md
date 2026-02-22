@@ -683,6 +683,44 @@ Keyed API gap vs official (`rscrypto/keyed/api`):
 - Rule locked for next candidates:
   - never apply `ROOT` through leaf/chunk batch hashing primitives; `ROOT` must remain final-block-only.
 
+### Phase 4 Candidate M (local-only, rejected after CI, 2026-02-22)
+- Implemented on local workspace:
+  - x86-only exact-`CHUNK_LEN` fast path in `ChunkState::update()`:
+    - for first-block-aligned `1024`-byte update on x86 SIMD kernels (`sse4.1/avx2/avx512`), compress first `960` bytes in one call and buffer final `64`-byte block.
+- Rationale:
+  - reduce loop/branch overhead in `new + update + finalize` short API path at `1024` without changing dispatch policy.
+- Local verification:
+  - `just check-all`: pass
+  - `just test`: pass
+
+### Phase 4 Candidate M x86 CI Validation (2026-02-22)
+- Runs:
+  - `22270291403` (`oneshot-apples`, lanes: `amd-zen4`, `intel-spr`)
+  - `22270384909` (stability rerun, same lanes/filter)
+- Comparison baseline:
+  - Candidate I rerun: `22269244541`
+
+`plain` API gap vs official (`rscrypto/plain/api`):
+
+| Lane | 256 (I -> M -> M rerun) | 1024 (I -> M -> M rerun) |
+|---|---:|---:|
+| amd-zen4 | `+13.89% -> +14.23% -> +15.73%` | `+7.22% -> +7.14% -> +7.37%` |
+| intel-spr | `+38.18% -> +39.63% -> +43.37%` | `+24.06% -> +29.24% -> +28.32%` |
+
+`keyed` API gap vs official (`rscrypto/keyed/api`):
+
+| Lane | 256 (I -> M -> M rerun) | 1024 (I -> M -> M rerun) |
+|---|---:|---:|
+| amd-zen4 | `+13.44% -> +13.65% -> +15.30%` | `+7.03% -> +7.00% -> +7.08%` |
+| intel-spr | `+33.42% -> +35.78% -> +33.28%` | `+27.03% -> +29.31% -> +29.42%` |
+
+#### Candidate M Conclusion
+- Rejected.
+- Regression is repeatable in the most important cells:
+  - `intel-spr` plain `1024` worsens materially in both runs.
+  - `amd-zen4` trends worse on rerun at `256`.
+- Decision: revert Candidate M and return to Candidate I baseline before trying the next candidate.
+
 ## Hard Targets
 - Pass `blake3/oneshot` gap gate on all enforced platforms.
 - Pass `blake3/kernel-ab` gate on all enforced platforms.
