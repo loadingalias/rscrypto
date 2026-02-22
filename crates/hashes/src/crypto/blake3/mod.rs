@@ -2655,7 +2655,12 @@ fn digest_oneshot(kernel: Kernel, key_words: [u32; 8], flags: u32, input: &[u8])
 
 #[inline]
 fn digest_public_oneshot(key_words: [u32; 8], flags: u32, input: &[u8]) -> [u8; OUT_LEN] {
-  let kernel = dispatch::hasher_dispatch().size_class_kernel(input.len());
+  let plan = dispatch::hasher_dispatch();
+  let kernel = if flags == 0 {
+    plan.size_class_kernel_plain(input.len())
+  } else {
+    plan.size_class_kernel(input.len())
+  };
   digest_oneshot(kernel, key_words, flags, input)
 }
 
@@ -3610,6 +3615,23 @@ impl Digest for Blake3 {
     // have enough data to amortize kernel setup costs. This applies uniformly
     // to all modes (plain, keyed, derive) - the defer heuristic improves
     // small-input latency across the board.
+    if first_update
+      && self.chunk_state.blocks_compressed == 0
+      && self.chunk_state.block_len == 0
+      && self.flags == 0
+      && input.len() == CHUNK_LEN
+    {
+      // Keep plain-mode 1024B first updates aligned with one-shot size-class
+      // policy so AVX-512 capable Intel server lanes can use AVX-512 at 1024
+      // while retaining AVX2 at smaller short sizes.
+      let kernel = self.dispatch_plan.size_class_kernel_plain(input.len());
+      self.kernel = kernel;
+      self.bulk_kernel = kernel;
+      self.chunk_state.kernel = kernel;
+      self.chunk_state.update(input);
+      return;
+    }
+
     if first_update
       && self.chunk_state.blocks_compressed == 0
       && self.chunk_state.block_len == 0
