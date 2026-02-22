@@ -2317,7 +2317,7 @@ fn single_chunk_output(
   }
 }
 
-#[inline]
+#[inline(never)]
 fn root_output_oneshot(
   kernel: Kernel,
   key_words: [u32; 8],
