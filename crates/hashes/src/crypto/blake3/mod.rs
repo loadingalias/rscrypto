@@ -3701,6 +3701,18 @@ impl Digest for Blake3 {
     // conversion on short streaming finalization.
     if self.chunk_state.chunk_counter == 0 && self.cv_stack_len == 0 && self.pending_chunk_cv.is_none() {
       let block_len = self.chunk_state.block_len as usize;
+
+      #[cfg(target_arch = "s390x")]
+      {
+        // Observed in CI: Candidate F improved s390x at 256 but regressed
+        // slightly at 1024. Keep the old root-output finalize path for the
+        // exact one-chunk-full state (15 compressed blocks + final full block)
+        // to preserve that 1024 behavior while retaining F elsewhere.
+        if self.chunk_state.blocks_compressed == 15 && block_len == BLOCK_LEN {
+          return self.root_output().root_hash_bytes();
+        }
+      }
+
       let add_chunk_start = self.chunk_state.blocks_compressed == 0;
       let cv = self.chunk_state.chaining_value;
 
