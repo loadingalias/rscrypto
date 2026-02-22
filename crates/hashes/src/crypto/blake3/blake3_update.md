@@ -567,6 +567,39 @@ Supplemental absolute rscrypto times (`ns`, lower is better):
     - lanes: `intel-spr`, `amd-zen4`
   - Accept/reject based on `rscrypto/plain/api` and `rscrypto/keyed/api` deltas at `256/1024`.
 
+### Phase 4 Candidate I x86 CI Validation (2026-02-22)
+- Runs:
+  - `22269152954` (`oneshot-apples`, lanes: `amd-zen4`, `intel-spr`)
+  - `22269244541` (stability rerun, same lanes/filter)
+- Comparison baseline:
+  - Candidate H apples run: `22268829858`
+
+Plain API gap vs official (`rscrypto/plain/api`):
+
+| Lane | 256 (H -> I -> I rerun) | 1024 (H -> I -> I rerun) |
+|---|---:|---:|
+| amd-zen4 | `+13.84% -> +14.27% -> +13.89%` | `+7.15% -> +7.27% -> +7.22%` |
+| intel-spr | `+39.85% -> +29.53% -> +38.18%` | `+26.79% -> +26.22% -> +24.06%` |
+
+Keyed API gap vs official (`rscrypto/keyed/api`):
+
+| Lane | 256 (H -> I -> I rerun) | 1024 (H -> I -> I rerun) |
+|---|---:|---:|
+| amd-zen4 | `+13.42% -> +13.94% -> +13.44%` | `+6.99% -> +7.17% -> +7.03%` |
+| intel-spr | `+34.82% -> +33.68% -> +33.42%` | `+27.27% -> +27.64% -> +27.03%` |
+
+#### Candidate I Conclusion
+- Candidate I is accepted as a simplification/cleanup baseline with neutral-to-slightly-positive performance.
+- `amd-zen4`: essentially neutral vs H (within measurement noise at both `256` and `1024`).
+- `intel-spr`: repeatable modest improvement in most tracked cells (strongest at plain `1024`; keyed `256` also improved).
+- Main value: one unified public one-shot lane (`plain/keyed/derive`) with reduced hot-path complexity and no observed regression trend.
+
+### Next Step (updated)
+- Move below API/control simplification and target compute competitiveness directly for `<= CHUNK_LEN`:
+  - optimize one-chunk root-hash path internals for keyed/derive/plain with focus on `intel-spr` and `intel-icl`,
+  - keep API surface and dependency policy unchanged,
+  - validate first with `oneshot-apples`, then full-lane attribution.
+
 ## Hard Targets
 - Pass `blake3/oneshot` gap gate on all enforced platforms.
 - Pass `blake3/kernel-ab` gate on all enforced platforms.
