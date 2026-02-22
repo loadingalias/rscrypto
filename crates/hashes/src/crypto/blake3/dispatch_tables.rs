@@ -133,6 +133,16 @@ const SIMD_KERNEL: KernelId = KernelId::Portable;
 #[cfg(target_arch = "x86_64")]
 const AVX512_KERNEL: KernelId = KernelId::X86Avx512;
 
+#[cfg(target_arch = "s390x")]
+const S390X_VECTOR_KERNEL: KernelId = KernelId::S390xVector;
+#[cfg(not(target_arch = "s390x"))]
+const S390X_VECTOR_KERNEL: KernelId = KernelId::Portable;
+
+#[cfg(target_arch = "powerpc64")]
+const POWER_VSX_KERNEL: KernelId = KernelId::PowerVsx;
+#[cfg(not(target_arch = "powerpc64"))]
+const POWER_VSX_KERNEL: KernelId = KernelId::Portable;
+
 #[cfg(target_arch = "x86_64")]
 const DEFAULT_XS: KernelId = KernelId::X86Sse41;
 #[cfg(target_arch = "aarch64")]
@@ -897,7 +907,7 @@ pub static PROFILE_Z13: FamilyProfile = FamilyProfile {
   dispatch: default_kind_table(),
   streaming: StreamingTable {
     stream: KernelId::Portable,
-    bulk: KernelId::Portable,
+    bulk: S390X_VECTOR_KERNEL,
     bulk_sizeclass_threshold: THRESHOLD_PORTABLE,
   },
   parallel: scalar_profile_parallel(256 * 1024, 128, 8, 0),
@@ -909,7 +919,7 @@ pub static PROFILE_Z14: FamilyProfile = FamilyProfile {
   dispatch: default_kind_table(),
   streaming: StreamingTable {
     stream: KernelId::Portable,
-    bulk: KernelId::Portable,
+    bulk: S390X_VECTOR_KERNEL,
     bulk_sizeclass_threshold: THRESHOLD_PORTABLE,
   },
   parallel: scalar_profile_parallel(192 * 1024, 96, 8, 1),
@@ -922,12 +932,12 @@ pub static PROFILE_Z15: FamilyProfile = FamilyProfile {
     boundaries: [64, 256, 4096],
     xs: KernelId::Portable,
     s: KernelId::Portable,
-    m: KernelId::Portable,
-    l: KernelId::Portable,
+    m: S390X_VECTOR_KERNEL,
+    l: S390X_VECTOR_KERNEL,
   },
   streaming: StreamingTable {
     stream: KernelId::Portable,
-    bulk: KernelId::Portable,
+    bulk: S390X_VECTOR_KERNEL,
     bulk_sizeclass_threshold: THRESHOLD_PORTABLE,
   },
   parallel: ParallelTable {
@@ -960,7 +970,7 @@ pub static PROFILE_POWER7: FamilyProfile = FamilyProfile {
   dispatch: default_kind_table(),
   streaming: StreamingTable {
     stream: KernelId::Portable,
-    bulk: KernelId::Portable,
+    bulk: POWER_VSX_KERNEL,
     bulk_sizeclass_threshold: THRESHOLD_PORTABLE,
   },
   parallel: scalar_profile_parallel(256 * 1024, 128, 8, 0),
@@ -972,7 +982,7 @@ pub static PROFILE_POWER8: FamilyProfile = FamilyProfile {
   dispatch: default_kind_table(),
   streaming: StreamingTable {
     stream: KernelId::Portable,
-    bulk: KernelId::Portable,
+    bulk: POWER_VSX_KERNEL,
     bulk_sizeclass_threshold: THRESHOLD_PORTABLE,
   },
   parallel: scalar_profile_parallel(192 * 1024, 96, 8, 1),
@@ -984,7 +994,7 @@ pub static PROFILE_POWER9: FamilyProfile = FamilyProfile {
   dispatch: default_kind_table(),
   streaming: StreamingTable {
     stream: KernelId::Portable,
-    bulk: KernelId::Portable,
+    bulk: POWER_VSX_KERNEL,
     bulk_sizeclass_threshold: THRESHOLD_PORTABLE,
   },
   parallel: scalar_profile_parallel(128 * 1024, 64, 16, 3),
@@ -997,12 +1007,12 @@ pub static PROFILE_POWER10: FamilyProfile = FamilyProfile {
     boundaries: [64, 256, 4096],
     xs: KernelId::Portable,
     s: KernelId::Portable,
-    m: KernelId::Portable,
-    l: KernelId::Portable,
+    m: POWER_VSX_KERNEL,
+    l: POWER_VSX_KERNEL,
   },
   streaming: StreamingTable {
     stream: KernelId::Portable,
-    bulk: KernelId::Portable,
+    bulk: POWER_VSX_KERNEL,
     bulk_sizeclass_threshold: THRESHOLD_PORTABLE,
   },
   parallel: ParallelTable {

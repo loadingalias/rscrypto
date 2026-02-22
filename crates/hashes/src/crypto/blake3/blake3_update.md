@@ -19,6 +19,7 @@ Beat upstream on enforced `kernel-ab` and `oneshot` lanes with simpler or equal 
 3. No per-lane runtime exceptions unless they are repeatably net-positive across reruns.
 4. Keep large-input behavior stable while improving short-input compute quality.
 5. Any policy change requires kernel-only evidence first, API-path evidence second.
+6. We're allowed to update the dispatch_tables.rs for Blake3 but this can't be our only path. Once we're at the point where we're pretty sure our dispatch is clean and ideal... we should stop and focus on more impactful code updates.
 
 ## Locked Optimization Loop
 This loop is mandatory for every candidate and is now the default process.
