@@ -428,6 +428,90 @@ Close the remaining BLAKE3 gaps so `rscrypto` is consistently at or ahead of off
 - Next required measurement:
   - CI `blake3_short_input_attribution` on x86 controls first (`intel-spr`, `amd-zen4`, optionally `intel-icl`, `amd-zen5`), then full-lane run if positive.
 
+### Phase 3 Candidate H x86 CI Validation (2026-02-22)
+- Run: `22267677008` on `main` (x86 control lanes: `amd-zen4`, `intel-spr`).
+- Comparison baseline:
+  - Candidate A full-lane run: `22263080239`
+  - Candidate F full-lane run: `22266336024`
+
+| Lane | rs gap 256 (A -> F -> H) | rs gap 1024 (A -> F -> H) |
+|---|---:|---:|
+| amd-zen4 | `+21.40% -> +16.18% -> +14.33%` | `+9.01% -> +7.80% -> +7.18%` |
+| intel-spr | `+55.40% -> +43.25% -> +39.88%` | `+31.74% -> +30.27% -> +29.06%` |
+
+Supplemental absolute rscrypto times (`ns`, lower is better):
+
+| Lane | rs full 256 (A -> F -> H) | rs full 1024 (A -> F -> H) |
+|---|---:|---:|
+| amd-zen4 | `330.40 -> 316.32 -> 310.89` | `1141.90 -> 1128.90 -> 1122.80` |
+| intel-spr | `352.96 -> 320.46 -> 314.44` | `1195.50 -> 1138.70 -> 1161.60` |
+
+#### Candidate H x86 Conclusion
+- Candidate H is directionally positive and improves short-gap at `256` on both x86 control lanes.
+- `amd-zen4` is cleanly positive at both `256` and `1024`.
+- `intel-spr` `1024` is ambiguous:
+  - relative gap vs official improves in this run,
+  - but absolute rscrypto time regresses vs Candidate F (`1138.70ns -> 1161.60ns`), indicating possible noise or sensitivity.
+- Next action: rerun targeted `intel-spr` (and ideally `amd-zen4`) for stability; if repeated positive/neutral, proceed to full-lane validation.
+
+### Phase 3 Candidate H x86 Stability Rerun (2026-02-22)
+- Run: `22268148355` on `main` (lanes: `amd-zen4`, `intel-spr`; filter: `short-path-split`).
+- Compared with prior Candidate H x86 run `22267677008`:
+
+| Lane | rs gap 256 (H -> H rerun) | rs gap 1024 (H -> H rerun) | rs full 256 ns (H -> H rerun) | rs full 1024 ns (H -> H rerun) |
+|---|---:|---:|---:|---:|
+| amd-zen4 | `+14.33% -> +15.59%` | `+7.18% -> +7.64%` | `310.89 -> 314.66` | `1122.80 -> 1126.80` |
+| intel-spr | `+39.88% -> +38.17%` | `+29.06% -> +23.22%` | `314.44 -> 306.03` | `1161.60 -> 1094.20` |
+
+#### Candidate H Stability Conclusion
+- Candidate H remains positive on x86 overall.
+- `intel-spr` `1024` no longer appears regressed in the rerun; it is materially better than the prior H run.
+- `amd-zen4` is slightly noisier in rerun but remains substantially improved vs Candidate A baseline.
+- Decision: proceed to full-lane Candidate H validation next.
+
+### Phase 3 Candidate H Full-Lane CI Validation (2026-02-22)
+- Run: `22268280116` on `main` (all enforced lanes).
+- Comparison baseline:
+  - Candidate A full-lane run: `22263080239`
+  - Candidate F full-lane run: `22266336024`
+
+| Lane | rs gap 256 (A -> F -> H) | rs gap 1024 (A -> F -> H) | oneshot dispatch overhead 256 (A -> F -> H) | oneshot dispatch overhead 1024 (A -> F -> H) |
+|---|---:|---:|---:|---:|
+| amd-zen4 | `+21.40% -> +16.18% -> +14.16%` | `+9.01% -> +7.80% -> +7.20%` | `-3.78% -> -9.01% -> -3.69%` | `-15.82% -> -16.84% -> -15.15%` |
+| intel-spr | `+55.40% -> +43.25% -> +39.73%` | `+31.74% -> +30.27% -> +28.83%` | `+0.06% -> -5.73% -> -6.94%` | `-14.41% -> -17.96% -> -15.59%` |
+| intel-icl | `+59.35% -> +52.66% -> +49.82%` | `+35.91% -> +34.56% -> +33.60%` | `-8.57% -> -13.98% -> -14.53%` | `-21.99% -> -23.38% -> -23.70%` |
+| amd-zen5 | `+37.60% -> +34.30% -> +32.48%` | `+23.26% -> +22.80% -> +22.22%` | `+82.06% -> +77.90% -> +75.32%` | `+71.60% -> +70.62% -> +71.11%` |
+| graviton3 | `+44.77% -> +41.31% -> +39.31%` | `+22.05% -> +21.23% -> +20.89%` | `+42.85% -> +39.66% -> +37.58%` | `+18.61% -> +17.88% -> +17.40%` |
+| graviton4 | `+45.93% -> +42.53% -> +41.21%` | `+22.49% -> +21.78% -> +21.80%` | `+44.54% -> +41.50% -> +40.16%` | `+19.48% -> +18.93% -> +19.17%` |
+| ibm-power10 | `+26.70% -> +22.65% -> +18.64%` | `+13.98% -> +12.89% -> +11.54%` | `+20.95% -> +18.31% -> +13.55%` | `+6.19% -> +5.56% -> +4.27%` |
+| ibm-s390x | `+16.51% -> +9.43% -> +10.10%` | `+6.84% -> +7.40% -> +4.12%` | `+18.07% -> +15.82% -> +10.88%` | `+4.17% -> +4.47% -> +4.62%` |
+
+#### Candidate H Full-Lane Conclusion
+- Candidate H is accepted as the new global baseline.
+- Net effect:
+  - `256`: improved vs Candidate F on all 8 lanes.
+  - `1024`: improved vs Candidate F on 7/8 lanes (`graviton4` is effectively flat within noise).
+- Remaining gap profile is still largest on x86 short lengths (`intel-icl`, `intel-spr`) and aarch64 short lengths (`graviton3/4`), despite steady reductions.
+
+### Phase 4 Measurement Track: Oneshot Apples-to-Apples (local)
+- Added a dedicated benchmark group to `crates/hashes/benches/blake3_short_input_attribution.rs`:
+  - `blake3/short-input/oneshot-apples`
+- Purpose:
+  - isolate API-path overhead vs direct auto-kernel cost at the same sizes (`64..1024`) with the same inputs.
+  - provide clean comparability against official API for plain/keyed oneshot without split-phase attribution noise.
+- Cases measured:
+  - `rscrypto/plain/api`
+  - `rscrypto/plain/auto-kernel`
+  - `official/plain/api`
+  - `official/plain/reuse-hasher`
+  - `rscrypto/keyed/api`
+  - `rscrypto/keyed/auto-kernel`
+  - `official/keyed/api`
+- Local verification:
+  - `cargo bench --profile bench -p hashes --bench blake3_short_input_attribution --no-run`: pass
+- Next required measurement:
+  - CI `Bench` with `crates=hashes`, `benches=blake3_short_input_attribution`, `filter=oneshot-apples`, `quick=false` on `intel-spr` + `amd-zen4` first.
+
 ## Hard Targets
 - Pass `blake3/oneshot` gap gate on all enforced platforms.
 - Pass `blake3/kernel-ab` gate on all enforced platforms.

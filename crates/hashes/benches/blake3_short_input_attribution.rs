@@ -218,10 +218,69 @@ fn blake3_stream_dispatch_overhead(c: &mut Criterion) {
   group.finish();
 }
 
+fn blake3_oneshot_apples(c: &mut Criterion) {
+  let mut group = c.benchmark_group("blake3/short-input/oneshot-apples");
+  configure_group(&mut group);
+
+  for len in SHORT_SIZES {
+    let data = common::pseudo_random_bytes(len, 0xB1AE_E3B1_A1E3_2004 ^ len as u64);
+    common::set_throughput(&mut group, len);
+
+    let plain_auto_kernel = microbench::kernel_name_for_len("blake3", len).unwrap_or("unknown");
+    eprintln!("[short-input][apples] len={len} mode=plain auto_kernel={plain_auto_kernel}");
+
+    group.bench_with_input(BenchmarkId::new("rscrypto/plain/api", len), &data, |b, d| {
+      b.iter(|| {
+        let mut h = Blake3::new();
+        h.update(black_box(d));
+        black_box(h.finalize())
+      })
+    });
+
+    group.bench_with_input(BenchmarkId::new("rscrypto/plain/auto-kernel", len), &data, |b, d| {
+      b.iter(|| black_box(microbench::run_auto("blake3", black_box(d)).unwrap_or(0)))
+    });
+
+    group.bench_with_input(BenchmarkId::new("official/plain/api", len), &data, |b, d| {
+      b.iter(|| black_box(*blake3::hash(black_box(d)).as_bytes()))
+    });
+
+    group.bench_with_input(BenchmarkId::new("official/plain/reuse-hasher", len), &data, |b, d| {
+      b.iter(|| {
+        let mut h = blake3::Hasher::new();
+        h.update(black_box(d));
+        black_box(*h.finalize().as_bytes())
+      })
+    });
+
+    let keyed_auto_kernel = microbench::kernel_name_for_len("blake3-keyed", len).unwrap_or("unknown");
+    eprintln!("[short-input][apples] len={len} mode=keyed auto_kernel={keyed_auto_kernel}");
+
+    group.bench_with_input(BenchmarkId::new("rscrypto/keyed/api", len), &data, |b, d| {
+      b.iter(|| {
+        let mut h = Blake3::new_keyed(&KEY);
+        h.update(black_box(d));
+        black_box(h.finalize())
+      })
+    });
+
+    group.bench_with_input(BenchmarkId::new("rscrypto/keyed/auto-kernel", len), &data, |b, d| {
+      b.iter(|| black_box(microbench::run_auto("blake3-keyed", black_box(d)).unwrap_or(0)))
+    });
+
+    group.bench_with_input(BenchmarkId::new("official/keyed/api", len), &data, |b, d| {
+      b.iter(|| black_box(*blake3::keyed_hash(&KEY, black_box(d)).as_bytes()))
+    });
+  }
+
+  group.finish();
+}
+
 criterion_group!(
   benches,
   blake3_short_path_split,
   blake3_oneshot_dispatch_overhead,
   blake3_stream_dispatch_overhead,
+  blake3_oneshot_apples,
 );
 criterion_main!(benches);
