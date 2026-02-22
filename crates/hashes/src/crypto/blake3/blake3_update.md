@@ -512,6 +512,61 @@ Supplemental absolute rscrypto times (`ns`, lower is better):
 - Next required measurement:
   - CI `Bench` with `crates=hashes`, `benches=blake3_short_input_attribution`, `filter=oneshot-apples`, `quick=false` on `intel-spr` + `amd-zen4` first.
 
+### Phase 4 Oneshot Apples CI Validation (2026-02-22)
+- Run: `22268829858` on `main` (lanes: `amd-zen4`, `intel-spr`; filter: `oneshot-apples`).
+
+`plain` API-path results (`rscrypto/plain/api` vs `official/plain/api`):
+
+| Lane | gap @256 | gap @1024 | rs api vs rs auto-kernel | official api vs official reuse-hasher |
+|---|---:|---:|---:|---:|
+| amd-zen4 | `+13.84%` | `+7.15%` | `-0.26%` / `-0.08%` | `+6.00%` / `+1.41%` |
+| intel-spr | `+39.85%` | `+26.79%` | `-2.01%` / `-1.78%` | `-0.03%` / `-0.18%` |
+
+`keyed` API-path results (`rscrypto/keyed/api` vs `official/keyed/api`):
+
+| Lane | keyed gap @256 | keyed gap @1024 | rs keyed api vs rs keyed auto-kernel |
+|---|---:|---:|---:|
+| amd-zen4 | `+13.42%` | `+6.99%` | `+1.62%` / `-7.66%` |
+| intel-spr | `+34.82%` | `+27.27%` | `-1.92%` / `-7.07%` |
+
+#### Phase 4 Apples Conclusion
+- The new apples track confirms the short-path gap is real at API level, not an artifact of the split benchmark harness.
+- For plain mode, `rscrypto/api` is very close to `rscrypto/auto-kernel` (within about `0%..2%`), so most remaining gap is not coming from dispatch overhead alone.
+- Remaining deficit is concentrated in short single-chunk compute path competitiveness, especially on `intel-spr`.
+- Keyed `auto-kernel` at `1024` is slower than keyed API on both lanes, indicating additional overhead in the microbench adapter path for keyed mode; keyed API comparisons should be treated as canonical.
+
+### Next Step (locked)
+- Implement a dedicated single-chunk oneshot fast lane for `<= CHUNK_LEN` in the public API path (plain/keyed/derive), minimizing flag/state plumbing while preserving behavior and keeping the same cross-platform dispatch policy.
+- Validate with:
+  - `oneshot-apples` (x86 controls first),
+  - then full-lane `blake3_short_input_attribution`,
+  - then gate runs.
+
+### Phase 4 Candidate I (local-only, pending CI validation)
+- Implemented on local workspace:
+  - Added unified public one-shot helper in `blake3/mod.rs`:
+    - `digest_public_oneshot(key_words, flags, input)` -> `size_class_kernel(len)` + `digest_oneshot(...)`.
+  - Routed public one-shot API paths through the same lane:
+    - `Blake3::digest`
+    - `Blake3::keyed_digest`
+    - `Blake3::derive_key` (second phase: key material hash)
+  - Removed duplicate tiny-input architecture branches from `keyed_digest` and `derive_key` to reduce control-path complexity.
+  - Overrode `Digest::digest` for `Blake3` to use the inherent one-shot path directly.
+- Rationale:
+  - enforce one minimal public one-shot path for plain/keyed/derive with `<= CHUNK_LEN` fast handling through `digest_oneshot` internals.
+  - simplify and de-duplicate hot path logic while preserving dispatch policy and pure-Rust constraints.
+- Local verification:
+  - `just check-all`: pass
+  - `just test`: pass
+- Next required measurement:
+  - CI `Bench`:
+    - `crates=hashes`
+    - `benches=blake3_short_input_attribution`
+    - `filter=oneshot-apples`
+    - `quick=false`
+    - lanes: `intel-spr`, `amd-zen4`
+  - Accept/reject based on `rscrypto/plain/api` and `rscrypto/keyed/api` deltas at `256/1024`.
+
 ## Hard Targets
 - Pass `blake3/oneshot` gap gate on all enforced platforms.
 - Pass `blake3/kernel-ab` gate on all enforced platforms.

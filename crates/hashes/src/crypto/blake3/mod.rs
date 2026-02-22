@@ -2653,6 +2653,12 @@ fn digest_oneshot(kernel: Kernel, key_words: [u32; 8], flags: u32, input: &[u8])
   words8_to_le_bytes(&digest_oneshot_words(kernel, key_words, flags, input))
 }
 
+#[inline]
+fn digest_public_oneshot(key_words: [u32; 8], flags: u32, input: &[u8]) -> [u8; OUT_LEN] {
+  let kernel = dispatch::hasher_dispatch().size_class_kernel(input.len());
+  digest_oneshot(kernel, key_words, flags, input)
+}
+
 #[derive(Clone)]
 pub struct Blake3 {
   dispatch_plan: dispatch::HasherDispatch,
@@ -2685,7 +2691,7 @@ impl Blake3 {
   #[inline]
   #[must_use]
   pub fn digest(data: &[u8]) -> [u8; OUT_LEN] {
-    dispatch::digest(data)
+    digest_public_oneshot(IV, 0, data)
   }
 
   /// Compute the XOF output state of `data` in one shot.
@@ -2709,42 +2715,7 @@ impl Blake3 {
     let key_words = keyed_words_cached(key);
     #[cfg(not(feature = "std"))]
     let key_words = words8_from_le_bytes_32(key);
-
-    // Fast path for tiny keyed inputs (≤64 bytes): bypass generic machinery
-    // and use the x86 SIMD fast path directly when available.
-    #[cfg(target_arch = "x86_64")]
-    {
-      if data.len() <= BLOCK_LEN {
-        let dispatch_plan = dispatch::hasher_dispatch();
-        // For tiny inputs, use the streaming kernel (optimized for latency)
-        let kernel = dispatch_plan.stream_kernel();
-        match kernel.id {
-          kernels::Blake3KernelId::X86Sse41 | kernels::Blake3KernelId::X86Avx2 | kernels::Blake3KernelId::X86Avx512 => {
-            // SAFETY: x86 SIMD availability validated by dispatch.
-            let words = unsafe { digest_one_chunk_root_hash_words_x86(kernel, key_words, KEYED_HASH, data) };
-            return words8_to_le_bytes(&words);
-          }
-          _ => {}
-        }
-      }
-    }
-
-    #[cfg(target_arch = "aarch64")]
-    {
-      if data.len() <= BLOCK_LEN {
-        let dispatch_plan = dispatch::hasher_dispatch();
-        let kernel = dispatch_plan.stream_kernel();
-        if kernel.id == kernels::Blake3KernelId::Aarch64Neon {
-          // SAFETY: NEON availability validated by dispatch.
-          let words = unsafe { digest_one_chunk_root_hash_words_aarch64(kernel, key_words, KEYED_HASH, data) };
-          return words8_to_le_bytes(&words);
-        }
-      }
-    }
-
-    // Standard path for larger inputs
-    let kernel = dispatch::hasher_dispatch().size_class_kernel(data.len());
-    digest_oneshot(kernel, key_words, KEYED_HASH, data)
+    digest_public_oneshot(key_words, KEYED_HASH, data)
   }
 
   /// Compute the keyed XOF output state of `data` in one shot.
@@ -2787,49 +2758,7 @@ impl Blake3 {
       }
     };
 
-    // Step 2: hash the key material under DERIVE_KEY_MATERIAL with the derived
-    // context key. Use tiny-input fast path when available.
-    #[cfg(target_arch = "x86_64")]
-    {
-      if key_material.len() <= BLOCK_LEN {
-        let dispatch_plan = dispatch::hasher_dispatch();
-        let kernel = dispatch_plan.stream_kernel();
-        match kernel.id {
-          kernels::Blake3KernelId::X86Sse41 | kernels::Blake3KernelId::X86Avx2 | kernels::Blake3KernelId::X86Avx512 => {
-            // SAFETY: x86 SIMD availability validated by dispatch.
-            let words = unsafe {
-              digest_one_chunk_root_hash_words_x86(kernel, context_key_words, DERIVE_KEY_MATERIAL, key_material)
-            };
-            return words8_to_le_bytes(&words);
-          }
-          _ => {}
-        }
-      }
-    }
-
-    #[cfg(target_arch = "aarch64")]
-    {
-      if key_material.len() <= BLOCK_LEN {
-        let dispatch_plan = dispatch::hasher_dispatch();
-        let kernel = dispatch_plan.stream_kernel();
-        if kernel.id == kernels::Blake3KernelId::Aarch64Neon {
-          // SAFETY: NEON availability validated by dispatch.
-          let words = unsafe {
-            digest_one_chunk_root_hash_words_aarch64(kernel, context_key_words, DERIVE_KEY_MATERIAL, key_material)
-          };
-          return words8_to_le_bytes(&words);
-        }
-      }
-    }
-
-    // Standard path for larger inputs
-    let kernel_km = dispatch::hasher_dispatch().size_class_kernel(key_material.len());
-    words8_to_le_bytes(&digest_oneshot_words(
-      kernel_km,
-      context_key_words,
-      DERIVE_KEY_MATERIAL,
-      key_material,
-    ))
+    digest_public_oneshot(context_key_words, DERIVE_KEY_MATERIAL, key_material)
   }
 
   /// One-shot hash using an explicitly selected kernel.
@@ -3642,6 +3571,11 @@ impl Blake3 {
 impl Digest for Blake3 {
   const OUTPUT_SIZE: usize = OUT_LEN;
   type Output = [u8; OUT_LEN];
+
+  #[inline]
+  fn digest(data: &[u8]) -> Self::Output {
+    Blake3::digest(data)
+  }
 
   #[inline]
   fn new() -> Self {
