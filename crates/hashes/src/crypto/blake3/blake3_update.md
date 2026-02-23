@@ -122,15 +122,21 @@ Optional tools only with a specific question they uniquely answer:
   - Reject and revert.
   - Net result is not a cross-lane win, and the Graviton kernel-ab `256` regression is unacceptable.
 
-### 2026-02-23 - Candidate T (planned)
+### 2026-02-23 - Candidate T (`77997e4`)
 - Hypothesis:
   - Candidate S improved Intel `256` but hurt Intel `1024`, and broke Graviton due to a broad short-path switch.
   - Restricting the AVX-512 non-asm short path to only very small batches (`<=4` blocks, i.e. 256B) should preserve the Intel `256` gain while avoiding the `1024` regression and eliminating cross-arch risk.
-- Planned change:
+- Change:
   - `x86_64` only: in `chunk_compress_blocks_avx512`, use `compress_cv_avx512_bytes` only when `num_blocks <= 4`.
   - Keep asm path for `num_blocks >= 5` (including 1024B = 16 blocks).
   - No `aarch64`/IBM code changes.
-- Validation plan:
-  - `just check-all && just test`
-  - CI benches (targeted first): `intel-spr` only, with `blake3/oneshot` + kernel gate diagnostics.
-  - Follow-up guard lane only if Intel is positive: `graviton4` unchanged-code verification.
+- Validation:
+  - Local: `just check-all && just test` passed.
+  - CI bench run: `22311267431` (targeted lane only: `intel-spr`; `blake3/oneshot` + kernel gate diagnostics).
+- CI outcomes:
+  - `intel-spr`
+    - `blake3/oneshot`: regressed at short sizes (`256 +29.75%`, `1024 +34.85%`).
+    - `blake3/kernel-ab`: `256` slightly improved (`+12.10%` vs prior `+12.87%`), but `1024` regressed (`+16.59%` vs prior `+16.29%`) and `4096` regressed past gate (`+7.14%` vs `+6.00%` limit).
+- Decision:
+  - Reject and revert.
+  - Not a net win on Intel, and it introduces a new kernel gate failure at `4096`.
