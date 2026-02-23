@@ -100,3 +100,18 @@ Optional tools only with a specific question they uniquely answer:
     - `blake3/oneshot` gate
     - `blake3/kernel-ab` gate
   - Keep only if cross-lane trend is positive; otherwise revert immediately.
+
+### 2026-02-23 - Candidate S (planned)
+- Hypothesis:
+  - Short-input losses on `intel-spr` (`256/1024`) and `graviton4` kernel-ab are dominated by per-call asm/trampoline overhead in chunk block compression, not by large-input SIMD throughput.
+  - For one-chunk-or-less work (<=16 blocks), direct inlined CV compression loops should reduce fixed overhead and improve short-size competitiveness.
+- Planned change:
+  - `x86_64` AVX-512: in `chunk_compress_blocks_avx512`, use `compress_cv_avx512_bytes` for short block batches (`<=16` blocks), keep asm path for larger batches.
+  - `aarch64` NEON: in `chunk_compress_blocks_neon`, skip chunk-loop asm path for short block batches (`<=16` blocks), keep asm path for larger aligned batches.
+- Validation plan:
+  - `just check-all && just test`
+  - CI benches (targeted):
+    - `intel-spr`: `blake3/oneshot` + `blake3/kernel-ab`
+    - `graviton4`: `blake3/oneshot` + `blake3/kernel-ab`
+  - Follow-up guard run only if positive:
+    - `ibm-s390x`, `ibm-power10` same two gates.
