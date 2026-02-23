@@ -40,6 +40,9 @@ use super::{BLOCK_LEN, CHUNK_LEN, CHUNK_START, IV, MSG_SCHEDULE, OUT_LEN, PARENT
 pub const SIMD_DEGREE: usize = 4;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+const NEON_SHORT_BLOCK_FAST_PATH_MAX_BLOCKS: usize = CHUNK_LEN / BLOCK_LEN;
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[inline(always)]
 fn ptr_is_aligned(ptr: *const u8, align: usize) -> bool {
   debug_assert!(align.is_power_of_two());
@@ -1258,7 +1261,7 @@ pub unsafe fn chunk_compress_blocks_neon(
   #[cfg(any(target_os = "linux", target_os = "macos"))]
   {
     let num_blocks = blocks.len() / BLOCK_LEN;
-    if num_blocks != 0 && can_use_asm_input(blocks.as_ptr()) {
+    if num_blocks > NEON_SHORT_BLOCK_FAST_PATH_MAX_BLOCKS && can_use_asm_input(blocks.as_ptr()) {
       // SAFETY: pointers/length satisfy asm contract.
       unsafe {
         chunk_compress_blocks_asm(
