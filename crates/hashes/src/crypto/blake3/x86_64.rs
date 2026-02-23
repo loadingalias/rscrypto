@@ -31,6 +31,9 @@ pub(crate) mod sse41;
 
 use super::{BLOCK_LEN, CHUNK_LEN, CHUNK_START, IV, OUT_LEN, PARENT, first_8_words, words16_from_le_bytes_64};
 
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+const AVX512_SHORT_BLOCK_FAST_PATH_MAX_BLOCKS: usize = 4;
+
 // Shared helpers for SIMD kernels.
 
 #[inline(always)]
@@ -1138,64 +1141,55 @@ pub unsafe fn chunk_compress_blocks_avx512(
 ) {
   debug_assert_eq!(blocks.len() % BLOCK_LEN, 0);
 
-  if blocks.len() == BLOCK_LEN {
-    let start = if *blocks_compressed == 0 { CHUNK_START } else { 0 };
-    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-    {
-      *chaining_value = unsafe {
-        asm::compress_in_place_avx512(
-          chaining_value,
-          blocks.as_ptr(),
-          chunk_counter,
-          BLOCK_LEN as u32,
-          flags | start,
-        )
-      };
-    }
-    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-    {
+  let num_blocks = blocks.len() / BLOCK_LEN;
+  let (block_slices, remainder) = blocks.as_chunks::<BLOCK_LEN>();
+  debug_assert!(remainder.is_empty());
+
+  #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+  if num_blocks <= AVX512_SHORT_BLOCK_FAST_PATH_MAX_BLOCKS {
+    for block_bytes in block_slices {
+      let start = if *blocks_compressed == 0 { CHUNK_START } else { 0 };
       *chaining_value = unsafe {
         compress_cv_avx512_bytes(
           chaining_value,
-          blocks.as_ptr(),
+          block_bytes.as_ptr(),
           chunk_counter,
           BLOCK_LEN as u32,
           flags | start,
         )
       };
+      *blocks_compressed = blocks_compressed.wrapping_add(1);
     }
-    *blocks_compressed = blocks_compressed.wrapping_add(1);
     return;
   }
 
-  let (block_slices, remainder) = blocks.as_chunks::<BLOCK_LEN>();
-  debug_assert!(remainder.is_empty());
+  #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
   for block_bytes in block_slices {
     let start = if *blocks_compressed == 0 { CHUNK_START } else { 0 };
-    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-    {
-      *chaining_value = unsafe {
-        asm::compress_in_place_avx512(
-          chaining_value,
-          block_bytes.as_ptr(),
-          chunk_counter,
-          BLOCK_LEN as u32,
-          flags | start,
-        )
-      };
-    }
-    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-    {
-      *chaining_value = unsafe {
-        compress_cv_avx512_bytes(
-          chaining_value,
-          block_bytes.as_ptr(),
-          chunk_counter,
-          BLOCK_LEN as u32,
-          flags | start,
-        )
-      };
-    }
+    *chaining_value = unsafe {
+      asm::compress_in_place_avx512(
+        chaining_value,
+        block_bytes.as_ptr(),
+        chunk_counter,
+        BLOCK_LEN as u32,
+        flags | start,
+      )
+    };
+    *blocks_compressed = blocks_compressed.wrapping_add(1);
+  }
+
+  #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+  for block_bytes in block_slices {
+    let start = if *blocks_compressed == 0 { CHUNK_START } else { 0 };
+    *chaining_value = unsafe {
+      compress_cv_avx512_bytes(
+        chaining_value,
+        block_bytes.as_ptr(),
+        chunk_counter,
+        BLOCK_LEN as u32,
+        flags | start,
+      )
+    };
     *blocks_compressed = blocks_compressed.wrapping_add(1);
   }
 }
