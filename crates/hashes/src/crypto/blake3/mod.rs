@@ -3973,7 +3973,14 @@ unsafe fn digest_one_chunk_root_hash_words_x86(
   let mut cv = key_words;
   let mut blocks_compressed = 0u8;
   let full_bytes = full_blocks * BLOCK_LEN;
-  (kernel.chunk_compress_blocks)(&mut cv, 0, flags, &mut blocks_compressed, &input[..full_bytes]);
+  kernels::chunk_compress_blocks_inline(
+    kernel.id,
+    &mut cv,
+    0,
+    flags,
+    &mut blocks_compressed,
+    &input[..full_bytes],
+  );
 
   let start = if full_blocks == 0 { CHUNK_START } else { 0 };
   let final_flags = flags | start | CHUNK_END | ROOT;
@@ -4071,14 +4078,8 @@ unsafe fn digest_one_chunk_root_hash_words_aarch64(
   let mut cv = key_words;
   let mut blocks_compressed: u8 = 0;
   let full_bytes = full_blocks * BLOCK_LEN;
-  kernels::chunk_compress_blocks_inline(
-    kernel.id,
-    &mut cv,
-    0,
-    flags,
-    &mut blocks_compressed,
-    &input[..full_bytes],
-  );
+  // SAFETY: this helper is only used when `kernel.id == Aarch64Neon`.
+  unsafe { aarch64::chunk_compress_blocks_neon(&mut cv, 0, flags, &mut blocks_compressed, &input[..full_bytes]) };
 
   let start = if full_blocks == 0 { CHUNK_START } else { 0 };
   let final_flags = flags | start | CHUNK_END | ROOT;
