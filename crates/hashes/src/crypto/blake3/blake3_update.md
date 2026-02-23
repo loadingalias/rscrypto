@@ -101,17 +101,23 @@ Optional tools only with a specific question they uniquely answer:
     - `blake3/kernel-ab` gate
   - Keep only if cross-lane trend is positive; otherwise revert immediately.
 
-### 2026-02-23 - Candidate S (planned)
+### 2026-02-23 - Candidate S (`9f4459a`)
 - Hypothesis:
   - Short-input losses on `intel-spr` (`256/1024`) and `graviton4` kernel-ab are dominated by per-call asm/trampoline overhead in chunk block compression, not by large-input SIMD throughput.
   - For one-chunk-or-less work (<=16 blocks), direct inlined CV compression loops should reduce fixed overhead and improve short-size competitiveness.
-- Planned change:
+- Change:
   - `x86_64` AVX-512: in `chunk_compress_blocks_avx512`, use `compress_cv_avx512_bytes` for short block batches (`<=16` blocks), keep asm path for larger batches.
   - `aarch64` NEON: in `chunk_compress_blocks_neon`, skip chunk-loop asm path for short block batches (`<=16` blocks), keep asm path for larger aligned batches.
-- Validation plan:
-  - `just check-all && just test`
-  - CI benches (targeted):
-    - `intel-spr`: `blake3/oneshot` + `blake3/kernel-ab`
-    - `graviton4`: `blake3/oneshot` + `blake3/kernel-ab`
-  - Follow-up guard run only if positive:
-    - `ibm-s390x`, `ibm-power10` same two gates.
+- Validation:
+  - Local: `just check-all && just test` passed.
+  - CI bench run: `22292690228` (targeted lanes only: `intel-spr`, `graviton4`; `blake3/oneshot` + kernel gate diagnostics).
+- CI outcomes:
+  - `intel-spr`
+    - `blake3/oneshot`: `256` improved (`+23.95%` vs prior `+28.38%`), `1024` regressed (`+33.44%` vs prior `+32.28%`).
+    - `blake3/kernel-ab`: `256` improved (`+12.87%` vs prior `+16.23%`), `1024` regressed (`+16.29%` vs prior `+15.21%`).
+  - `graviton4`
+    - `blake3/oneshot`: roughly flat (`256 +1.55%`, `1024 +2.60%`).
+    - `blake3/kernel-ab`: severe regression at `256` (`+88.00%` vs prior `+33.44%`), `1024` effectively unchanged (`+13.91%`).
+- Decision:
+  - Reject and revert.
+  - Net result is not a cross-lane win, and the Graviton kernel-ab `256` regression is unacceptable.
