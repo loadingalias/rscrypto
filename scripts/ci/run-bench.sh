@@ -229,7 +229,6 @@ ATTACH_CRITERION_INPUT="$(to_bool "${BENCH_ATTACH_CRITERION:-false}")"
 
 ENFORCE_BLAKE3_GAP_GATE_INPUT="$(to_bool "${BENCH_ENFORCE_BLAKE3_GAP_GATE:-false}")"
 ENFORCE_BLAKE3_KERNEL_GATE_INPUT="$(to_bool "${BENCH_ENFORCE_BLAKE3_KERNEL_GATE:-false}")"
-ENFORCE_BLAKE3_PARALLEL_GATE_INPUT="$(to_bool "${BENCH_ENFORCE_BLAKE3_PARALLEL_GATE:-false}")"
 PLATFORM_INPUT="$(echo "${BENCH_PLATFORM:-}" | tr '[:upper:]' '[:lower:]' | xargs)"
 
 if [[ -n "$WARMUP_MS_INPUT" && ! "$WARMUP_MS_INPUT" =~ ^[0-9]+$ ]]; then
@@ -287,11 +286,6 @@ if [[ "$ENFORCE_BLAKE3_KERNEL_GATE_INPUT" == "true" && "$QUICK_INPUT" == "true" 
   exit 2
 fi
 
-if [[ "$ENFORCE_BLAKE3_PARALLEL_GATE_INPUT" == "true" && "$QUICK_INPUT" == "true" ]]; then
-  echo "error: BENCH_ENFORCE_BLAKE3_PARALLEL_GATE=true requires BENCH_QUICK=false" >&2
-  exit 2
-fi
-
 LOG_PATH="$OUT_DIR/output.txt"
 : > "$LOG_PATH"
 
@@ -314,7 +308,6 @@ echo "Criterion args: ${CRITERION_ARGS[*]-<none>}"
 echo "Attach raw Criterion: $ATTACH_CRITERION_INPUT"
 echo "Enforce BLAKE3 gap gate: $ENFORCE_BLAKE3_GAP_GATE_INPUT"
 echo "Enforce BLAKE3 kernel gate: $ENFORCE_BLAKE3_KERNEL_GATE_INPUT"
-echo "Enforce BLAKE3 parallel gate: $ENFORCE_BLAKE3_PARALLEL_GATE_INPUT"
 if [[ -n "$PLATFORM_INPUT" ]]; then
   echo "Bench platform: $PLATFORM_INPUT"
 fi
@@ -402,17 +395,6 @@ run_blake3_enforced_gates() {
       fi
     else
       echo "Skipping BLAKE3 kernel gate on unsupported lane '$PLATFORM_INPUT'." | tee -a "$LOG_PATH"
-    fi
-  fi
-
-  if [[ "$ENFORCE_BLAKE3_PARALLEL_GATE_INPUT" == "true" ]]; then
-    if ! python3 scripts/bench/comp-check.py \
-      "$LOG_PATH" \
-      --require-groups blake3/oneshot \
-      --gate-single-thread off \
-      --gate-parallel fail \
-      --parallel-threshold 1048576 | tee -a "$LOG_PATH"; then
-      failed=1
     fi
   fi
 

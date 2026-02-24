@@ -4,9 +4,9 @@
 Beat upstream on enforced `kernel-ab` and `oneshot` lanes with simpler or equal complexity, no API churn, and repeatable results. If we see a win that makes our code more complex, it's fine... but it must be a real win over the 'official Blake3' crate/implementation/benches.
 
 ## Locked Baseline
-- Baseline is Candidate X (`848ff14`) with CI run `22356342311`.
+- Baseline is the last accepted pre-N/O line (Candidate I family).
 - Candidate N and Candidate O were rejected and rolled back.
-- Baseline validation passed: `just check-all`, `just test`.
+- Baseline validation already passed: `just check-all`, `just test`.
 
 ## What Is Settled
 - Biggest deficit is short sizes (`256`, `1024`), not large-size throughput.
@@ -214,7 +214,7 @@ Optional tools only with a specific question they uniquely answer:
   - Keep as new baseline.
   - This restores wins on `zen4` and preserves/extends the Intel SPR win while reducing the `zen5`/`icl` short-size deficit.
 
-### 2026-02-24 - Candidate X (`848ff14`)
+### 2026-02-24 - Candidate X (in progress)
 - Hypothesis:
   - Remaining misses are concentrated at `256/1024` on `zen5` and `intel-icl`, where size-class `s` still routes through AVX2.
   - Promoting `s` to AVX-512 for these two families should force short exact-block one-chunk inputs onto the AVX-512 asm fast path and close the residual gap.
@@ -225,29 +225,3 @@ Optional tools only with a specific question they uniquely answer:
 - Validation:
   - Local: `just check-all && just test` passed.
   - CI plan (targeted): `intel-icl`, `amd-zen5`, plus `amd-zen4`/`intel-spr` guard lanes.
-- CI outcomes:
-  - CI run: `22356342311`
-  - `amd-zen5`: gate passed (`256 -1.68%`, `1024 -2.19%`, `4096 +5.80%`, `16384 +3.69%`, `65536 +1.39%`).
-  - `intel-icl`: gate passed (`256 -0.56%`, `1024 -1.90%`, `4096 +6.92%`, `16384 +4.61%`, `65536 +2.57%`).
-  - `amd-zen4`: gate passed (`256 -4.63%`, `1024 -0.77%`, `4096 +6.35%`, `16384 +3.74%`, `65536 +0.83%`).
-  - `intel-spr`: gate passed (`256 -4.08%`, `1024 -2.60%`, `4096 +5.10%`, `16384 +0.93%`, `65536 +0.90%`).
-- Decision:
-  - Keep as new baseline.
-  - This closes the short-size `256/1024` gap on all targeted x86 lanes while preserving prior wins.
-
-### 2026-02-24 - Candidate Y (in progress)
-- Hypothesis:
-  - Remaining high-value miss is large-input competitiveness against `official-rayon` (especially `blake3/oneshot/1048576` on `intel-spr`).
-  - Our parallel admission currently keys off host-reported parallelism only, while execution is on Rayon workers; mismatched sizing can over-partition work.
-  - Capping admission by Rayon pool width and increasing SPR small-payload per-thread cost should improve 1 MiB behavior without perturbing short-size gates.
-- Change:
-  - `mod.rs`: make `available_parallelism_cached()` Rayon-aware (`min(host_parallelism, rayon::current_num_threads())` with robust fallback).
-  - `dispatch.rs`: mirror the same Rayon-aware thread-cap logic in `parallel_threads_for()` diagnostics path.
-  - `dispatch_tables.rs`: retune `PROFILE_X86_INTEL_SPR.parallel.bytes_per_core_small` from `32768` to `393216` to prefer fewer threads at 1 MiB admission.
-  - CI tooling:
-    - add optional `enforce_blake3_parallel_gate` workflow input in `.github/workflows/bench.yaml`,
-    - wire `BENCH_ENFORCE_BLAKE3_PARALLEL_GATE` into `scripts/ci/run-bench.sh`,
-    - enforce with `scripts/bench/comp-check.py` on `blake3/oneshot` using `--gate-parallel fail --parallel-threshold 1048576`.
-- Validation:
-  - Local: pending (`just check-all && just test`).
-  - CI plan (targeted next): `intel-spr` oneshot with parallel gate enabled, then cross-check `intel-icl`, `amd-zen5`, `amd-zen4` short-gap guard lanes.

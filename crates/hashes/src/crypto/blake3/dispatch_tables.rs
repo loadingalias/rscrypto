@@ -579,7 +579,7 @@ pub static PROFILE_X86_INTEL_SPR: FamilyProfile = FamilyProfile {
     max_threads: 8,
     spawn_cost_bytes: 24576,
     merge_cost_bytes: 131072,
-    bytes_per_core_small: 393216,
+    bytes_per_core_small: 32768,
     bytes_per_core_medium: 224256,
     bytes_per_core_large: 1010688,
     small_limit_bytes: 1048576,
