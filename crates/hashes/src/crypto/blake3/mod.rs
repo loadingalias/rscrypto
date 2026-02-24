@@ -226,16 +226,7 @@ fn parallel_override() -> Option<ParallelPolicyOverride> {
 #[cfg(feature = "std")]
 #[inline]
 fn available_parallelism_cached() -> Option<usize> {
-  *AVAILABLE_PARALLELISM.get_or_init(|| {
-    let host_threads = thread::available_parallelism().ok().map(|v| v.get());
-    let rayon_threads = Some(rayon::current_num_threads()).filter(|threads| *threads != 0);
-    match (host_threads, rayon_threads) {
-      (Some(host), Some(rayon)) => Some(host.min(rayon)),
-      (Some(host), None) => Some(host),
-      (None, Some(rayon)) => Some(rayon),
-      (None, None) => None,
-    }
-  })
+  *AVAILABLE_PARALLELISM.get_or_init(|| thread::available_parallelism().ok().map(|v| v.get()))
 }
 
 #[cfg(feature = "std")]
