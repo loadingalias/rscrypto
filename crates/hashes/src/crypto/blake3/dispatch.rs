@@ -57,6 +57,8 @@ struct ResolvedDispatch {
   parallel: ParallelDispatch,
   simd_threshold: usize,
   hasher: HasherDispatch,
+  #[cfg(target_arch = "x86_64")]
+  tune_kind: TuneKind,
 }
 
 static RESOLVED: OnceCache<ResolvedDispatch> = OnceCache::new();
@@ -316,6 +318,8 @@ fn resolved() -> ResolvedDispatch {
       parallel,
       simd_threshold: tune.simd_threshold,
       hasher,
+      #[cfg(target_arch = "x86_64")]
+      tune_kind: kind,
     }
   })
 }
@@ -407,6 +411,13 @@ pub(crate) fn parallel_dispatch() -> ParallelDispatch {
 #[must_use]
 pub(crate) fn streaming_simd_threshold() -> usize {
   resolved().simd_threshold
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline]
+#[must_use]
+pub(crate) fn tune_kind() -> TuneKind {
+  resolved().tune_kind
 }
 
 #[inline]

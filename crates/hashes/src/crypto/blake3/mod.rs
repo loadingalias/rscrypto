@@ -3947,6 +3947,16 @@ fn digest_one_chunk_root_hash_words_generic(kernel: Kernel, key_words: [u32; 8],
 
 #[cfg(target_arch = "x86_64")]
 #[inline]
+#[must_use]
+fn use_avx2_hash_many_one_chunk_fast_path() -> bool {
+  matches!(
+    dispatch::tune_kind(),
+    platform::TuneKind::Zen4 | platform::TuneKind::Zen5 | platform::TuneKind::Zen5c | platform::TuneKind::IntelIcl
+  )
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline]
 unsafe fn digest_one_chunk_root_hash_words_x86(
   kernel: Kernel,
   key_words: [u32; 8],
@@ -3954,6 +3964,42 @@ unsafe fn digest_one_chunk_root_hash_words_x86(
   input: &[u8],
 ) -> [u32; 8] {
   debug_assert!(input.len() <= CHUNK_LEN);
+
+  // AVX2 exact-block one-chunk fast path. Keep this on a narrow allowlist
+  // only where CI has shown the path helps short inputs.
+  #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+  if kernel.id == kernels::Blake3KernelId::X86Avx2
+    && use_avx2_hash_many_one_chunk_fast_path()
+    && !input.is_empty()
+    && input.len().is_multiple_of(BLOCK_LEN)
+  {
+    let blocks = input.len() / BLOCK_LEN;
+    debug_assert!((1..=CHUNK_LEN / BLOCK_LEN).contains(&blocks));
+    let flags_start = flags | CHUNK_START;
+    let flags_end = flags | CHUNK_END | ROOT;
+    debug_assert!(flags <= u8::MAX as u32);
+    debug_assert!(flags_start <= u8::MAX as u32);
+    debug_assert!(flags_end <= u8::MAX as u32);
+    let input_ptrs = [input.as_ptr()];
+    let mut out = [0u8; OUT_LEN];
+    // SAFETY: AVX2 dispatch selected this kernel; input is one contiguous
+    // full-chunk-or-less buffer; output points to one OUT_LEN digest lane.
+    unsafe {
+      x86_64::asm::hash_many_avx2(
+        input_ptrs.as_ptr(),
+        1,
+        blocks,
+        key_words.as_ptr(),
+        0,
+        false,
+        flags as u8,
+        flags_start as u8,
+        flags_end as u8,
+        out.as_mut_ptr(),
+      );
+    }
+    return words8_from_le_bytes_32(&out);
+  }
 
   #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
   if kernel.id == kernels::Blake3KernelId::X86Avx512 && !input.is_empty() && input.len().is_multiple_of(BLOCK_LEN) {
