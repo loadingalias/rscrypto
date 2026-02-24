@@ -141,7 +141,7 @@ Optional tools only with a specific question they uniquely answer:
   - Reject and revert.
   - Not a net win on Intel, and it introduces a new kernel gate failure at `4096`.
 
-### 2026-02-24 - Candidate U (in progress)
+### 2026-02-24 - Candidate U (`f2c61ad`..`main`)
 - Hypothesis:
   - Current Intel SPR short-input losses are partly self-inflicted by oneshot size-class routing (`65..1024 -> AVX2`) and by per-block AVX-512 one-chunk compression overhead.
   - Reusing the existing AVX-512 asm `hash_many` backend for exact-block one-chunk inputs (`64/128/256/512/1024`) should reduce fixed overhead for kernel-ab short sizes.
@@ -154,4 +154,23 @@ Optional tools only with a specific question they uniquely answer:
     - Intel SPR profile only: set oneshot size-class `s` kernel to `KernelId::X86Avx512` (was `KernelId::X86Avx2`).
 - Validation:
   - Local: `just check-all && just test` passed.
-  - CI targeted bench lane pending: `intel-spr` with `blake3/oneshot` + kernel gate diagnostics.
+  - CI targeted bench lane: `22331493553` (`intel-spr`, `blake3/oneshot` + kernel diagnostics/gates).
+- CI outcomes:
+  - `intel-spr`
+    - `blake3/oneshot`: gate passed (`256 -3.41%`, `1024 -2.95%`, `4096 +6.35%`).
+    - `blake3/kernel-ab`: gate passed (`256 -3.94%`, `1024 -2.85%`, `4096 +5.93%`).
+- Decision:
+  - Keep.
+  - This is the first clear short-size win on Intel SPR in the current loop.
+
+### 2026-02-24 - Candidate V (in progress)
+- Hypothesis:
+  - Candidate U's AVX-512 one-chunk fast path is SPR-specific in practice because Zen4/Zen5/ICL still route `65..1024` through AVX2.
+  - Adding the same exact-block one-chunk fast path for AVX2 (`hash_many_avx2` with `num_inputs=1`) should reduce fixed overhead at `256/1024` for non-SPR x86 lanes without touching ARM64 behavior.
+- Change:
+  - `x86_64` one-chunk path:
+    - in `digest_one_chunk_root_hash_words_x86`, add AVX2 exact-block fast path (`64..1024`, block-aligned) using asm `hash_many_avx2`.
+    - keep existing partial-tail and non-AVX2 behavior unchanged.
+- Validation:
+  - Local: `just check-all && just test` passed.
+  - CI plan (targeted): `intel-icl`, `amd-zen4`, `amd-zen5` oneshot gap-gate lanes.

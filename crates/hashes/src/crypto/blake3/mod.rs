@@ -3959,6 +3959,36 @@ unsafe fn digest_one_chunk_root_hash_words_x86(
   // `hash_many` backend for a single input to keep the full block loop in
   // assembly and reduce per-block call overhead at 64..1024B.
   #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+  if kernel.id == kernels::Blake3KernelId::X86Avx2 && !input.is_empty() && input.len().is_multiple_of(BLOCK_LEN) {
+    let blocks = input.len() / BLOCK_LEN;
+    debug_assert!((1..=CHUNK_LEN / BLOCK_LEN).contains(&blocks));
+    let flags_start = flags | CHUNK_START;
+    let flags_end = flags | CHUNK_END | ROOT;
+    debug_assert!(flags <= u8::MAX as u32);
+    debug_assert!(flags_start <= u8::MAX as u32);
+    debug_assert!(flags_end <= u8::MAX as u32);
+    let input_ptrs = [input.as_ptr()];
+    let mut out = [0u8; OUT_LEN];
+    // SAFETY: AVX2 dispatch selected this kernel; input is one contiguous
+    // full-chunk-or-less buffer; output points to one OUT_LEN digest lane.
+    unsafe {
+      x86_64::asm::hash_many_avx2(
+        input_ptrs.as_ptr(),
+        1,
+        blocks,
+        key_words.as_ptr(),
+        0,
+        false,
+        flags as u8,
+        flags_start as u8,
+        flags_end as u8,
+        out.as_mut_ptr(),
+      );
+    }
+    return words8_from_le_bytes_32(&out);
+  }
+
+  #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
   if kernel.id == kernels::Blake3KernelId::X86Avx512 && !input.is_empty() && input.len().is_multiple_of(BLOCK_LEN) {
     let blocks = input.len() / BLOCK_LEN;
     debug_assert!((1..=CHUNK_LEN / BLOCK_LEN).contains(&blocks));
