@@ -538,10 +538,16 @@ fn parallel_threads_for(table: &ParallelTable, input_bytes: usize, commit_chunks
 
   #[cfg(feature = "std")]
   {
-    let Ok(ap) = std::thread::available_parallelism() else {
+    let host_threads = std::thread::available_parallelism().ok().map(|v| v.get());
+    let rayon_threads = Some(rayon::current_num_threads()).filter(|threads| *threads != 0);
+    let Some(mut threads) = (match (host_threads, rayon_threads) {
+      (Some(host), Some(rayon)) => Some(host.min(rayon)),
+      (Some(host), None) => Some(host),
+      (None, Some(rayon)) => Some(rayon),
+      (None, None) => None,
+    }) else {
       return (false, 1);
     };
-    let mut threads = ap.get();
     if table.max_threads != 0 {
       threads = threads.min(table.max_threads as usize);
     }

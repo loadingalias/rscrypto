@@ -90,6 +90,11 @@ on:
         required: false
         type: boolean
         default: false
+      enforce_blake3_parallel_gate:
+        description: "Fail when rscrypto loses to official-rayon on blake3/oneshot parallel-sized cases (requires quick=false)."
+        required: false
+        type: boolean
+        default: false
 
 concurrency:
   group: manual-bench-${{ github.ref }}
@@ -171,6 +176,7 @@ jobs:
         BENCH_ATTACH_CRITERION=${{ inputs.upload_raw_criterion && 'true' || 'false' }} \
         BENCH_ENFORCE_BLAKE3_GAP_GATE=${{ inputs.enforce_blake3_gap_gate && 'true' || 'false' }} \
         BENCH_ENFORCE_BLAKE3_KERNEL_GATE=${{ inputs.enforce_blake3_kernel_gate && 'true' || 'false' }} \
+        BENCH_ENFORCE_BLAKE3_PARALLEL_GATE=${{ inputs.enforce_blake3_parallel_gate && 'true' || 'false' }} \
         BENCH_PLATFORM="${{ matrix.platform }}" \
         scripts/ci/run-bench.sh
       artifact_name: benchmark-${{ matrix.artifact_suffix }}

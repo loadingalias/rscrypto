@@ -245,53 +245,28 @@ const CRC64_BUFFERED_THRESHOLD: usize = 64;
 // Auto Kernels (using new dispatch module)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// CRC-64-XZ dispatch - fast path using pre-resolved kernel tables.
-///
-/// Uses the empirically-optimal kernel for the current platform and buffer size.
-/// When `std` is enabled, also respects `RSCRYPTO_CRC64_FORCE` env var for
-/// debugging/testing specific kernel paths.
+type Crc64DispatchFn = crate::dispatchers::Crc64Fn;
+type Crc64DispatchVectoredFn = fn(u64, &[&[u8]]) -> u64;
+
 #[inline]
-fn crc64_xz_dispatch(crc: u64, data: &[u8]) -> u64 {
-  #[cfg(feature = "std")]
-  {
-    let cfg = config::get();
-    if cfg.effective_force == Crc64Force::Reference {
-      return crc64_xz_reference(crc, data);
-    }
-    if cfg.effective_force == Crc64Force::Portable {
-      return crc64_xz_portable(crc, data);
+fn crc64_apply_kernel_vectored(mut crc: u64, bufs: &[&[u8]], kernel: Crc64DispatchFn) -> u64 {
+  for &buf in bufs {
+    if !buf.is_empty() {
+      crc = kernel(crc, buf);
     }
   }
+  crc
+}
 
+#[inline]
+fn crc64_xz_dispatch_auto(crc: u64, data: &[u8]) -> u64 {
   let table = crate::dispatch::active_table();
   let kernel = table.select_set(data.len()).crc64_xz;
   kernel(crc, data)
 }
 
-/// CRC-64/XZ vectored dispatch (processes multiple buffers in order).
 #[inline]
-fn crc64_xz_dispatch_vectored(mut crc: u64, bufs: &[&[u8]]) -> u64 {
-  #[cfg(feature = "std")]
-  {
-    let cfg = config::get();
-    if cfg.effective_force == Crc64Force::Reference {
-      for &buf in bufs {
-        if !buf.is_empty() {
-          crc = crc64_xz_reference(crc, buf);
-        }
-      }
-      return crc;
-    }
-    if cfg.effective_force == Crc64Force::Portable {
-      for &buf in bufs {
-        if !buf.is_empty() {
-          crc = crc64_xz_portable(crc, buf);
-        }
-      }
-      return crc;
-    }
-  }
-
+fn crc64_xz_dispatch_auto_vectored(mut crc: u64, bufs: &[&[u8]]) -> u64 {
   let table = crate::dispatch::active_table();
   let mut last_set: *const crate::dispatch::KernelSet = core::ptr::null();
   let mut kernel = table.xs.crc64_xz;
@@ -312,53 +287,15 @@ fn crc64_xz_dispatch_vectored(mut crc: u64, bufs: &[&[u8]]) -> u64 {
   crc
 }
 
-/// CRC-64-NVME dispatch - fast path using pre-resolved kernel tables.
-///
-/// Uses the empirically-optimal kernel for the current platform and buffer size.
-/// When `std` is enabled, also respects `RSCRYPTO_CRC64_FORCE` env var for
-/// debugging/testing specific kernel paths.
 #[inline]
-fn crc64_nvme_dispatch(crc: u64, data: &[u8]) -> u64 {
-  #[cfg(feature = "std")]
-  {
-    let cfg = config::get();
-    if cfg.effective_force == Crc64Force::Reference {
-      return crc64_nvme_reference(crc, data);
-    }
-    if cfg.effective_force == Crc64Force::Portable {
-      return crc64_nvme_portable(crc, data);
-    }
-  }
-
+fn crc64_nvme_dispatch_auto(crc: u64, data: &[u8]) -> u64 {
   let table = crate::dispatch::active_table();
   let kernel = table.select_set(data.len()).crc64_nvme;
   kernel(crc, data)
 }
 
-/// CRC-64/NVME vectored dispatch (processes multiple buffers in order).
 #[inline]
-fn crc64_nvme_dispatch_vectored(mut crc: u64, bufs: &[&[u8]]) -> u64 {
-  #[cfg(feature = "std")]
-  {
-    let cfg = config::get();
-    if cfg.effective_force == Crc64Force::Reference {
-      for &buf in bufs {
-        if !buf.is_empty() {
-          crc = crc64_nvme_reference(crc, buf);
-        }
-      }
-      return crc;
-    }
-    if cfg.effective_force == Crc64Force::Portable {
-      for &buf in bufs {
-        if !buf.is_empty() {
-          crc = crc64_nvme_portable(crc, buf);
-        }
-      }
-      return crc;
-    }
-  }
-
+fn crc64_nvme_dispatch_auto_vectored(mut crc: u64, bufs: &[&[u8]]) -> u64 {
   let table = crate::dispatch::active_table();
   let mut last_set: *const crate::dispatch::KernelSet = core::ptr::null();
   let mut kernel = table.xs.crc64_nvme;
@@ -377,6 +314,163 @@ fn crc64_nvme_dispatch_vectored(mut crc: u64, bufs: &[&[u8]]) -> u64 {
   }
 
   crc
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn crc64_xz_dispatch_reference(crc: u64, data: &[u8]) -> u64 {
+  crc64_xz_reference(crc, data)
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn crc64_xz_dispatch_portable(crc: u64, data: &[u8]) -> u64 {
+  crc64_xz_portable(crc, data)
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn crc64_xz_dispatch_reference_vectored(crc: u64, bufs: &[&[u8]]) -> u64 {
+  crc64_apply_kernel_vectored(crc, bufs, crc64_xz_reference)
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn crc64_xz_dispatch_portable_vectored(crc: u64, bufs: &[&[u8]]) -> u64 {
+  crc64_apply_kernel_vectored(crc, bufs, crc64_xz_portable)
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn crc64_nvme_dispatch_reference(crc: u64, data: &[u8]) -> u64 {
+  crc64_nvme_reference(crc, data)
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn crc64_nvme_dispatch_portable(crc: u64, data: &[u8]) -> u64 {
+  crc64_nvme_portable(crc, data)
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn crc64_nvme_dispatch_reference_vectored(crc: u64, bufs: &[&[u8]]) -> u64 {
+  crc64_apply_kernel_vectored(crc, bufs, crc64_nvme_reference)
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn crc64_nvme_dispatch_portable_vectored(crc: u64, bufs: &[&[u8]]) -> u64 {
+  crc64_apply_kernel_vectored(crc, bufs, crc64_nvme_portable)
+}
+
+#[cfg(feature = "std")]
+static CRC64_XZ_DISPATCH: backend::OnceCache<Crc64DispatchFn> = backend::OnceCache::new();
+#[cfg(feature = "std")]
+static CRC64_XZ_DISPATCH_VECTORED: backend::OnceCache<Crc64DispatchVectoredFn> = backend::OnceCache::new();
+#[cfg(feature = "std")]
+static CRC64_NVME_DISPATCH: backend::OnceCache<Crc64DispatchFn> = backend::OnceCache::new();
+#[cfg(feature = "std")]
+static CRC64_NVME_DISPATCH_VECTORED: backend::OnceCache<Crc64DispatchVectoredFn> = backend::OnceCache::new();
+
+#[cfg(feature = "std")]
+#[inline]
+fn resolve_crc64_xz_dispatch() -> Crc64DispatchFn {
+  match config::get().effective_force {
+    Crc64Force::Reference => crc64_xz_dispatch_reference,
+    Crc64Force::Portable => crc64_xz_dispatch_portable,
+    _ => crc64_xz_dispatch_auto,
+  }
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn resolve_crc64_xz_dispatch_vectored() -> Crc64DispatchVectoredFn {
+  match config::get().effective_force {
+    Crc64Force::Reference => crc64_xz_dispatch_reference_vectored,
+    Crc64Force::Portable => crc64_xz_dispatch_portable_vectored,
+    _ => crc64_xz_dispatch_auto_vectored,
+  }
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn resolve_crc64_nvme_dispatch() -> Crc64DispatchFn {
+  match config::get().effective_force {
+    Crc64Force::Reference => crc64_nvme_dispatch_reference,
+    Crc64Force::Portable => crc64_nvme_dispatch_portable,
+    _ => crc64_nvme_dispatch_auto,
+  }
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn resolve_crc64_nvme_dispatch_vectored() -> Crc64DispatchVectoredFn {
+  match config::get().effective_force {
+    Crc64Force::Reference => crc64_nvme_dispatch_reference_vectored,
+    Crc64Force::Portable => crc64_nvme_dispatch_portable_vectored,
+    _ => crc64_nvme_dispatch_auto_vectored,
+  }
+}
+
+/// CRC-64-XZ dispatch - hot path uses one-time resolved dispatch function.
+#[inline]
+fn crc64_xz_dispatch(crc: u64, data: &[u8]) -> u64 {
+  #[cfg(feature = "std")]
+  {
+    let dispatch = CRC64_XZ_DISPATCH.get_or_init(resolve_crc64_xz_dispatch);
+    dispatch(crc, data)
+  }
+
+  #[cfg(not(feature = "std"))]
+  {
+    crc64_xz_dispatch_auto(crc, data)
+  }
+}
+
+/// CRC-64/XZ vectored dispatch (processes multiple buffers in order).
+#[inline]
+fn crc64_xz_dispatch_vectored(crc: u64, bufs: &[&[u8]]) -> u64 {
+  #[cfg(feature = "std")]
+  {
+    let dispatch = CRC64_XZ_DISPATCH_VECTORED.get_or_init(resolve_crc64_xz_dispatch_vectored);
+    dispatch(crc, bufs)
+  }
+
+  #[cfg(not(feature = "std"))]
+  {
+    crc64_xz_dispatch_auto_vectored(crc, bufs)
+  }
+}
+
+/// CRC-64-NVME dispatch - hot path uses one-time resolved dispatch function.
+#[inline]
+fn crc64_nvme_dispatch(crc: u64, data: &[u8]) -> u64 {
+  #[cfg(feature = "std")]
+  {
+    let dispatch = CRC64_NVME_DISPATCH.get_or_init(resolve_crc64_nvme_dispatch);
+    dispatch(crc, data)
+  }
+
+  #[cfg(not(feature = "std"))]
+  {
+    crc64_nvme_dispatch_auto(crc, data)
+  }
+}
+
+/// CRC-64/NVME vectored dispatch (processes multiple buffers in order).
+#[inline]
+fn crc64_nvme_dispatch_vectored(crc: u64, bufs: &[&[u8]]) -> u64 {
+  #[cfg(feature = "std")]
+  {
+    let dispatch = CRC64_NVME_DISPATCH_VECTORED.get_or_init(resolve_crc64_nvme_dispatch_vectored);
+    dispatch(crc, bufs)
+  }
+
+  #[cfg(not(feature = "std"))]
+  {
+    crc64_nvme_dispatch_auto_vectored(crc, bufs)
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

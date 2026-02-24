@@ -86,53 +86,28 @@ fn crc24_openpgp_reference(crc: u32, data: &[u8]) -> u32 {
 // Auto Dispatch Function (using new dispatch module)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// CRC-24/OPENPGP dispatch - fast path using pre-resolved kernel tables.
-///
-/// Uses the empirically-optimal kernel for the current platform and buffer size.
-/// When `std` is enabled, also respects `RSCRYPTO_CRC24_FORCE` env var for
-/// debugging/testing specific kernel paths.
+type Crc24DispatchFn = crate::dispatchers::Crc24Fn;
+type Crc24DispatchVectoredFn = fn(u32, &[&[u8]]) -> u32;
+
 #[inline]
-fn crc24_openpgp_dispatch(crc: u32, data: &[u8]) -> u32 {
-  #[cfg(feature = "std")]
-  {
-    let cfg = config::get();
-    if cfg.effective_force == Crc24Force::Reference {
-      return crc24_openpgp_reference(crc, data);
-    }
-    if cfg.effective_force == Crc24Force::Portable {
-      return portable::crc24_openpgp_slice8(crc, data);
+fn crc24_apply_kernel_vectored(mut crc: u32, bufs: &[&[u8]], kernel: Crc24DispatchFn) -> u32 {
+  for &buf in bufs {
+    if !buf.is_empty() {
+      crc = kernel(crc, buf);
     }
   }
+  crc
+}
 
+#[inline]
+fn crc24_openpgp_dispatch_auto(crc: u32, data: &[u8]) -> u32 {
   let table = crate::dispatch::active_table();
   let kernel = table.select_set(data.len()).crc24_openpgp;
   kernel(crc, data)
 }
 
-/// CRC-24/OPENPGP vectored dispatch (processes multiple buffers in order).
 #[inline]
-fn crc24_openpgp_dispatch_vectored(mut crc: u32, bufs: &[&[u8]]) -> u32 {
-  #[cfg(feature = "std")]
-  {
-    let cfg = config::get();
-    if cfg.effective_force == Crc24Force::Reference {
-      for &buf in bufs {
-        if !buf.is_empty() {
-          crc = crc24_openpgp_reference(crc, buf);
-        }
-      }
-      return crc;
-    }
-    if cfg.effective_force == Crc24Force::Portable {
-      for &buf in bufs {
-        if !buf.is_empty() {
-          crc = portable::crc24_openpgp_slice8(crc, buf);
-        }
-      }
-      return crc;
-    }
-  }
-
+fn crc24_openpgp_dispatch_auto_vectored(mut crc: u32, bufs: &[&[u8]]) -> u32 {
   let table = crate::dispatch::active_table();
   let mut last_set: *const crate::dispatch::KernelSet = core::ptr::null();
   let mut kernel = table.xs.crc24_openpgp;
@@ -151,6 +126,85 @@ fn crc24_openpgp_dispatch_vectored(mut crc: u32, bufs: &[&[u8]]) -> u32 {
   }
 
   crc
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn crc24_openpgp_dispatch_reference(crc: u32, data: &[u8]) -> u32 {
+  crc24_openpgp_reference(crc, data)
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn crc24_openpgp_dispatch_portable(crc: u32, data: &[u8]) -> u32 {
+  portable::crc24_openpgp_slice8(crc, data)
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn crc24_openpgp_dispatch_reference_vectored(crc: u32, bufs: &[&[u8]]) -> u32 {
+  crc24_apply_kernel_vectored(crc, bufs, crc24_openpgp_reference)
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn crc24_openpgp_dispatch_portable_vectored(crc: u32, bufs: &[&[u8]]) -> u32 {
+  crc24_apply_kernel_vectored(crc, bufs, portable::crc24_openpgp_slice8)
+}
+
+#[cfg(feature = "std")]
+static CRC24_OPENPGP_DISPATCH: backend::OnceCache<Crc24DispatchFn> = backend::OnceCache::new();
+#[cfg(feature = "std")]
+static CRC24_OPENPGP_DISPATCH_VECTORED: backend::OnceCache<Crc24DispatchVectoredFn> = backend::OnceCache::new();
+
+#[cfg(feature = "std")]
+#[inline]
+fn resolve_crc24_openpgp_dispatch() -> Crc24DispatchFn {
+  match config::get().effective_force {
+    Crc24Force::Reference => crc24_openpgp_dispatch_reference,
+    Crc24Force::Portable => crc24_openpgp_dispatch_portable,
+    _ => crc24_openpgp_dispatch_auto,
+  }
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn resolve_crc24_openpgp_dispatch_vectored() -> Crc24DispatchVectoredFn {
+  match config::get().effective_force {
+    Crc24Force::Reference => crc24_openpgp_dispatch_reference_vectored,
+    Crc24Force::Portable => crc24_openpgp_dispatch_portable_vectored,
+    _ => crc24_openpgp_dispatch_auto_vectored,
+  }
+}
+
+/// CRC-24/OPENPGP dispatch - hot path uses one-time resolved dispatch function.
+#[inline]
+fn crc24_openpgp_dispatch(crc: u32, data: &[u8]) -> u32 {
+  #[cfg(feature = "std")]
+  {
+    let dispatch = CRC24_OPENPGP_DISPATCH.get_or_init(resolve_crc24_openpgp_dispatch);
+    dispatch(crc, data)
+  }
+
+  #[cfg(not(feature = "std"))]
+  {
+    crc24_openpgp_dispatch_auto(crc, data)
+  }
+}
+
+/// CRC-24/OPENPGP vectored dispatch (processes multiple buffers in order).
+#[inline]
+fn crc24_openpgp_dispatch_vectored(crc: u32, bufs: &[&[u8]]) -> u32 {
+  #[cfg(feature = "std")]
+  {
+    let dispatch = CRC24_OPENPGP_DISPATCH_VECTORED.get_or_init(resolve_crc24_openpgp_dispatch_vectored);
+    dispatch(crc, bufs)
+  }
+
+  #[cfg(not(feature = "std"))]
+  {
+    crc24_openpgp_dispatch_auto_vectored(crc, bufs)
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

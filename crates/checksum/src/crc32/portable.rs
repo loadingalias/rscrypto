@@ -10,6 +10,10 @@ use crate::common::portable;
 // Polynomial-specific wrappers
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Canonical kernel name for byte-at-a-time table lookup kernels.
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
+pub(crate) const BYTEWISE_KERNEL_NAME: &str = "portable/bytewise";
+
 /// CRC-32 (IEEE) byte-at-a-time lookup computation.
 ///
 /// This is typically faster than slice-by-16 for tiny buffers because it uses a
