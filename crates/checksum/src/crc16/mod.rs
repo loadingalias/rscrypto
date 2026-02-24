@@ -88,53 +88,28 @@ fn crc16_ibm_reference(crc: u16, data: &[u8]) -> u16 {
 // Dispatch Functions (using new dispatch module)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// CRC-16/CCITT dispatch - fast path using pre-resolved kernel tables.
-///
-/// Uses the empirically-optimal kernel for the current platform and buffer size.
-/// When `std` is enabled, also respects `RSCRYPTO_CRC16_CCITT_FORCE` env var for
-/// debugging/testing specific kernel paths.
+type Crc16DispatchFn = crate::dispatchers::Crc16Fn;
+type Crc16DispatchVectoredFn = fn(u16, &[&[u8]]) -> u16;
+
 #[inline]
-fn crc16_ccitt_dispatch(crc: u16, data: &[u8]) -> u16 {
-  #[cfg(feature = "std")]
-  {
-    let cfg = config::get_ccitt();
-    if cfg.effective_force == Crc16Force::Reference {
-      return crc16_ccitt_reference(crc, data);
-    }
-    if cfg.effective_force == Crc16Force::Portable {
-      return portable::crc16_ccitt_slice8(crc, data);
+fn crc16_apply_kernel_vectored(mut crc: u16, bufs: &[&[u8]], kernel: Crc16DispatchFn) -> u16 {
+  for &buf in bufs {
+    if !buf.is_empty() {
+      crc = kernel(crc, buf);
     }
   }
+  crc
+}
 
+#[inline]
+fn crc16_ccitt_dispatch_auto(crc: u16, data: &[u8]) -> u16 {
   let table = crate::dispatch::active_table();
   let kernel = table.select_set(data.len()).crc16_ccitt;
   kernel(crc, data)
 }
 
-/// CRC-16/CCITT vectored dispatch (processes multiple buffers in order).
 #[inline]
-fn crc16_ccitt_dispatch_vectored(mut crc: u16, bufs: &[&[u8]]) -> u16 {
-  #[cfg(feature = "std")]
-  {
-    let cfg = config::get_ccitt();
-    if cfg.effective_force == Crc16Force::Reference {
-      for &buf in bufs {
-        if !buf.is_empty() {
-          crc = crc16_ccitt_reference(crc, buf);
-        }
-      }
-      return crc;
-    }
-    if cfg.effective_force == Crc16Force::Portable {
-      for &buf in bufs {
-        if !buf.is_empty() {
-          crc = portable::crc16_ccitt_slice8(crc, buf);
-        }
-      }
-      return crc;
-    }
-  }
-
+fn crc16_ccitt_dispatch_auto_vectored(mut crc: u16, bufs: &[&[u8]]) -> u16 {
   let table = crate::dispatch::active_table();
   let mut last_set: *const crate::dispatch::KernelSet = core::ptr::null();
   let mut kernel = table.xs.crc16_ccitt;
@@ -155,53 +130,15 @@ fn crc16_ccitt_dispatch_vectored(mut crc: u16, bufs: &[&[u8]]) -> u16 {
   crc
 }
 
-/// CRC-16/IBM dispatch - fast path using pre-resolved kernel tables.
-///
-/// Uses the empirically-optimal kernel for the current platform and buffer size.
-/// When `std` is enabled, also respects `RSCRYPTO_CRC16_IBM_FORCE` env var for
-/// debugging/testing specific kernel paths.
 #[inline]
-fn crc16_ibm_dispatch(crc: u16, data: &[u8]) -> u16 {
-  #[cfg(feature = "std")]
-  {
-    let cfg = config::get_ibm();
-    if cfg.effective_force == Crc16Force::Reference {
-      return crc16_ibm_reference(crc, data);
-    }
-    if cfg.effective_force == Crc16Force::Portable {
-      return portable::crc16_ibm_slice8(crc, data);
-    }
-  }
-
+fn crc16_ibm_dispatch_auto(crc: u16, data: &[u8]) -> u16 {
   let table = crate::dispatch::active_table();
   let kernel = table.select_set(data.len()).crc16_ibm;
   kernel(crc, data)
 }
 
-/// CRC-16/IBM vectored dispatch (processes multiple buffers in order).
 #[inline]
-fn crc16_ibm_dispatch_vectored(mut crc: u16, bufs: &[&[u8]]) -> u16 {
-  #[cfg(feature = "std")]
-  {
-    let cfg = config::get_ibm();
-    if cfg.effective_force == Crc16Force::Reference {
-      for &buf in bufs {
-        if !buf.is_empty() {
-          crc = crc16_ibm_reference(crc, buf);
-        }
-      }
-      return crc;
-    }
-    if cfg.effective_force == Crc16Force::Portable {
-      for &buf in bufs {
-        if !buf.is_empty() {
-          crc = portable::crc16_ibm_slice8(crc, buf);
-        }
-      }
-      return crc;
-    }
-  }
-
+fn crc16_ibm_dispatch_auto_vectored(mut crc: u16, bufs: &[&[u8]]) -> u16 {
   let table = crate::dispatch::active_table();
   let mut last_set: *const crate::dispatch::KernelSet = core::ptr::null();
   let mut kernel = table.xs.crc16_ibm;
@@ -220,6 +157,163 @@ fn crc16_ibm_dispatch_vectored(mut crc: u16, bufs: &[&[u8]]) -> u16 {
   }
 
   crc
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn crc16_ccitt_dispatch_reference(crc: u16, data: &[u8]) -> u16 {
+  crc16_ccitt_reference(crc, data)
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn crc16_ccitt_dispatch_portable(crc: u16, data: &[u8]) -> u16 {
+  portable::crc16_ccitt_slice8(crc, data)
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn crc16_ccitt_dispatch_reference_vectored(crc: u16, bufs: &[&[u8]]) -> u16 {
+  crc16_apply_kernel_vectored(crc, bufs, crc16_ccitt_reference)
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn crc16_ccitt_dispatch_portable_vectored(crc: u16, bufs: &[&[u8]]) -> u16 {
+  crc16_apply_kernel_vectored(crc, bufs, portable::crc16_ccitt_slice8)
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn crc16_ibm_dispatch_reference(crc: u16, data: &[u8]) -> u16 {
+  crc16_ibm_reference(crc, data)
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn crc16_ibm_dispatch_portable(crc: u16, data: &[u8]) -> u16 {
+  portable::crc16_ibm_slice8(crc, data)
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn crc16_ibm_dispatch_reference_vectored(crc: u16, bufs: &[&[u8]]) -> u16 {
+  crc16_apply_kernel_vectored(crc, bufs, crc16_ibm_reference)
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn crc16_ibm_dispatch_portable_vectored(crc: u16, bufs: &[&[u8]]) -> u16 {
+  crc16_apply_kernel_vectored(crc, bufs, portable::crc16_ibm_slice8)
+}
+
+#[cfg(feature = "std")]
+static CRC16_CCITT_DISPATCH: backend::OnceCache<Crc16DispatchFn> = backend::OnceCache::new();
+#[cfg(feature = "std")]
+static CRC16_CCITT_DISPATCH_VECTORED: backend::OnceCache<Crc16DispatchVectoredFn> = backend::OnceCache::new();
+#[cfg(feature = "std")]
+static CRC16_IBM_DISPATCH: backend::OnceCache<Crc16DispatchFn> = backend::OnceCache::new();
+#[cfg(feature = "std")]
+static CRC16_IBM_DISPATCH_VECTORED: backend::OnceCache<Crc16DispatchVectoredFn> = backend::OnceCache::new();
+
+#[cfg(feature = "std")]
+#[inline]
+fn resolve_crc16_ccitt_dispatch() -> Crc16DispatchFn {
+  match config::get_ccitt().effective_force {
+    Crc16Force::Reference => crc16_ccitt_dispatch_reference,
+    Crc16Force::Portable => crc16_ccitt_dispatch_portable,
+    _ => crc16_ccitt_dispatch_auto,
+  }
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn resolve_crc16_ccitt_dispatch_vectored() -> Crc16DispatchVectoredFn {
+  match config::get_ccitt().effective_force {
+    Crc16Force::Reference => crc16_ccitt_dispatch_reference_vectored,
+    Crc16Force::Portable => crc16_ccitt_dispatch_portable_vectored,
+    _ => crc16_ccitt_dispatch_auto_vectored,
+  }
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn resolve_crc16_ibm_dispatch() -> Crc16DispatchFn {
+  match config::get_ibm().effective_force {
+    Crc16Force::Reference => crc16_ibm_dispatch_reference,
+    Crc16Force::Portable => crc16_ibm_dispatch_portable,
+    _ => crc16_ibm_dispatch_auto,
+  }
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn resolve_crc16_ibm_dispatch_vectored() -> Crc16DispatchVectoredFn {
+  match config::get_ibm().effective_force {
+    Crc16Force::Reference => crc16_ibm_dispatch_reference_vectored,
+    Crc16Force::Portable => crc16_ibm_dispatch_portable_vectored,
+    _ => crc16_ibm_dispatch_auto_vectored,
+  }
+}
+
+/// CRC-16/CCITT dispatch - hot path uses one-time resolved dispatch function.
+#[inline]
+fn crc16_ccitt_dispatch(crc: u16, data: &[u8]) -> u16 {
+  #[cfg(feature = "std")]
+  {
+    let dispatch = CRC16_CCITT_DISPATCH.get_or_init(resolve_crc16_ccitt_dispatch);
+    dispatch(crc, data)
+  }
+
+  #[cfg(not(feature = "std"))]
+  {
+    crc16_ccitt_dispatch_auto(crc, data)
+  }
+}
+
+/// CRC-16/CCITT vectored dispatch (processes multiple buffers in order).
+#[inline]
+fn crc16_ccitt_dispatch_vectored(crc: u16, bufs: &[&[u8]]) -> u16 {
+  #[cfg(feature = "std")]
+  {
+    let dispatch = CRC16_CCITT_DISPATCH_VECTORED.get_or_init(resolve_crc16_ccitt_dispatch_vectored);
+    dispatch(crc, bufs)
+  }
+
+  #[cfg(not(feature = "std"))]
+  {
+    crc16_ccitt_dispatch_auto_vectored(crc, bufs)
+  }
+}
+
+/// CRC-16/IBM dispatch - hot path uses one-time resolved dispatch function.
+#[inline]
+fn crc16_ibm_dispatch(crc: u16, data: &[u8]) -> u16 {
+  #[cfg(feature = "std")]
+  {
+    let dispatch = CRC16_IBM_DISPATCH.get_or_init(resolve_crc16_ibm_dispatch);
+    dispatch(crc, data)
+  }
+
+  #[cfg(not(feature = "std"))]
+  {
+    crc16_ibm_dispatch_auto(crc, data)
+  }
+}
+
+/// CRC-16/IBM vectored dispatch (processes multiple buffers in order).
+#[inline]
+fn crc16_ibm_dispatch_vectored(crc: u16, bufs: &[&[u8]]) -> u16 {
+  #[cfg(feature = "std")]
+  {
+    let dispatch = CRC16_IBM_DISPATCH_VECTORED.get_or_init(resolve_crc16_ibm_dispatch_vectored);
+    dispatch(crc, bufs)
+  }
+
+  #[cfg(not(feature = "std"))]
+  {
+    crc16_ibm_dispatch_auto_vectored(crc, bufs)
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

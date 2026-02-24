@@ -322,53 +322,28 @@ pub(crate) fn diag_crc32c(len: usize) -> Crc32SelectionDiag {
 // Auto Kernels (using new dispatch module)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// CRC-32 (IEEE) dispatch - fast path using pre-resolved kernel tables.
-///
-/// Uses the empirically-optimal kernel for the current platform and buffer size.
-/// When `std` is enabled, also respects `RSCRYPTO_CRC32_FORCE` env var for
-/// debugging/testing specific kernel paths.
+type Crc32DispatchFn = crate::dispatchers::Crc32Fn;
+type Crc32DispatchVectoredFn = fn(u32, &[&[u8]]) -> u32;
+
 #[inline]
-fn crc32_dispatch(crc: u32, data: &[u8]) -> u32 {
-  #[cfg(feature = "std")]
-  {
-    let cfg = config::get();
-    if cfg.effective_force == Crc32Force::Reference {
-      return crc32_reference(crc, data);
-    }
-    if cfg.effective_force == Crc32Force::Portable {
-      return crc32_portable(crc, data);
+fn crc32_apply_kernel_vectored(mut crc: u32, bufs: &[&[u8]], kernel: Crc32DispatchFn) -> u32 {
+  for &buf in bufs {
+    if !buf.is_empty() {
+      crc = kernel(crc, buf);
     }
   }
+  crc
+}
 
+#[inline]
+fn crc32_dispatch_auto(crc: u32, data: &[u8]) -> u32 {
   let table = crate::dispatch::active_table();
   let kernel = table.select_set(data.len()).crc32_ieee;
   kernel(crc, data)
 }
 
-/// CRC-32 (IEEE) vectored dispatch (processes multiple buffers in order).
 #[inline]
-fn crc32_dispatch_vectored(mut crc: u32, bufs: &[&[u8]]) -> u32 {
-  #[cfg(feature = "std")]
-  {
-    let cfg = config::get();
-    if cfg.effective_force == Crc32Force::Reference {
-      for &buf in bufs {
-        if !buf.is_empty() {
-          crc = crc32_reference(crc, buf);
-        }
-      }
-      return crc;
-    }
-    if cfg.effective_force == Crc32Force::Portable {
-      for &buf in bufs {
-        if !buf.is_empty() {
-          crc = crc32_portable(crc, buf);
-        }
-      }
-      return crc;
-    }
-  }
-
+fn crc32_dispatch_auto_vectored(mut crc: u32, bufs: &[&[u8]]) -> u32 {
   let table = crate::dispatch::active_table();
   let mut last_set: *const crate::dispatch::KernelSet = core::ptr::null();
   let mut kernel = table.xs.crc32_ieee;
@@ -389,53 +364,15 @@ fn crc32_dispatch_vectored(mut crc: u32, bufs: &[&[u8]]) -> u32 {
   crc
 }
 
-/// CRC-32C (Castagnoli) dispatch - fast path using pre-resolved kernel tables.
-///
-/// Uses the empirically-optimal kernel for the current platform and buffer size.
-/// When `std` is enabled, also respects `RSCRYPTO_CRC32_FORCE` env var for
-/// debugging/testing specific kernel paths.
 #[inline]
-fn crc32c_dispatch(crc: u32, data: &[u8]) -> u32 {
-  #[cfg(feature = "std")]
-  {
-    let cfg = config::get();
-    if cfg.effective_force == Crc32Force::Reference {
-      return crc32c_reference(crc, data);
-    }
-    if cfg.effective_force == Crc32Force::Portable {
-      return crc32c_portable(crc, data);
-    }
-  }
-
+fn crc32c_dispatch_auto(crc: u32, data: &[u8]) -> u32 {
   let table = crate::dispatch::active_table();
   let kernel = table.select_set(data.len()).crc32c;
   kernel(crc, data)
 }
 
-/// CRC-32C (Castagnoli) vectored dispatch (processes multiple buffers in order).
 #[inline]
-fn crc32c_dispatch_vectored(mut crc: u32, bufs: &[&[u8]]) -> u32 {
-  #[cfg(feature = "std")]
-  {
-    let cfg = config::get();
-    if cfg.effective_force == Crc32Force::Reference {
-      for &buf in bufs {
-        if !buf.is_empty() {
-          crc = crc32c_reference(crc, buf);
-        }
-      }
-      return crc;
-    }
-    if cfg.effective_force == Crc32Force::Portable {
-      for &buf in bufs {
-        if !buf.is_empty() {
-          crc = crc32c_portable(crc, buf);
-        }
-      }
-      return crc;
-    }
-  }
-
+fn crc32c_dispatch_auto_vectored(mut crc: u32, bufs: &[&[u8]]) -> u32 {
   let table = crate::dispatch::active_table();
   let mut last_set: *const crate::dispatch::KernelSet = core::ptr::null();
   let mut kernel = table.xs.crc32c;
@@ -454,6 +391,163 @@ fn crc32c_dispatch_vectored(mut crc: u32, bufs: &[&[u8]]) -> u32 {
   }
 
   crc
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn crc32_dispatch_reference(crc: u32, data: &[u8]) -> u32 {
+  crc32_reference(crc, data)
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn crc32_dispatch_portable(crc: u32, data: &[u8]) -> u32 {
+  crc32_portable(crc, data)
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn crc32_dispatch_reference_vectored(crc: u32, bufs: &[&[u8]]) -> u32 {
+  crc32_apply_kernel_vectored(crc, bufs, crc32_reference)
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn crc32_dispatch_portable_vectored(crc: u32, bufs: &[&[u8]]) -> u32 {
+  crc32_apply_kernel_vectored(crc, bufs, crc32_portable)
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn crc32c_dispatch_reference(crc: u32, data: &[u8]) -> u32 {
+  crc32c_reference(crc, data)
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn crc32c_dispatch_portable(crc: u32, data: &[u8]) -> u32 {
+  crc32c_portable(crc, data)
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn crc32c_dispatch_reference_vectored(crc: u32, bufs: &[&[u8]]) -> u32 {
+  crc32_apply_kernel_vectored(crc, bufs, crc32c_reference)
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn crc32c_dispatch_portable_vectored(crc: u32, bufs: &[&[u8]]) -> u32 {
+  crc32_apply_kernel_vectored(crc, bufs, crc32c_portable)
+}
+
+#[cfg(feature = "std")]
+static CRC32_DISPATCH: backend::OnceCache<Crc32DispatchFn> = backend::OnceCache::new();
+#[cfg(feature = "std")]
+static CRC32_DISPATCH_VECTORED: backend::OnceCache<Crc32DispatchVectoredFn> = backend::OnceCache::new();
+#[cfg(feature = "std")]
+static CRC32C_DISPATCH: backend::OnceCache<Crc32DispatchFn> = backend::OnceCache::new();
+#[cfg(feature = "std")]
+static CRC32C_DISPATCH_VECTORED: backend::OnceCache<Crc32DispatchVectoredFn> = backend::OnceCache::new();
+
+#[cfg(feature = "std")]
+#[inline]
+fn resolve_crc32_dispatch() -> Crc32DispatchFn {
+  match config::get().effective_force {
+    Crc32Force::Reference => crc32_dispatch_reference,
+    Crc32Force::Portable => crc32_dispatch_portable,
+    _ => crc32_dispatch_auto,
+  }
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn resolve_crc32_dispatch_vectored() -> Crc32DispatchVectoredFn {
+  match config::get().effective_force {
+    Crc32Force::Reference => crc32_dispatch_reference_vectored,
+    Crc32Force::Portable => crc32_dispatch_portable_vectored,
+    _ => crc32_dispatch_auto_vectored,
+  }
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn resolve_crc32c_dispatch() -> Crc32DispatchFn {
+  match config::get().effective_force {
+    Crc32Force::Reference => crc32c_dispatch_reference,
+    Crc32Force::Portable => crc32c_dispatch_portable,
+    _ => crc32c_dispatch_auto,
+  }
+}
+
+#[cfg(feature = "std")]
+#[inline]
+fn resolve_crc32c_dispatch_vectored() -> Crc32DispatchVectoredFn {
+  match config::get().effective_force {
+    Crc32Force::Reference => crc32c_dispatch_reference_vectored,
+    Crc32Force::Portable => crc32c_dispatch_portable_vectored,
+    _ => crc32c_dispatch_auto_vectored,
+  }
+}
+
+/// CRC-32 (IEEE) dispatch - hot path uses one-time resolved dispatch function.
+#[inline]
+fn crc32_dispatch(crc: u32, data: &[u8]) -> u32 {
+  #[cfg(feature = "std")]
+  {
+    let dispatch = CRC32_DISPATCH.get_or_init(resolve_crc32_dispatch);
+    dispatch(crc, data)
+  }
+
+  #[cfg(not(feature = "std"))]
+  {
+    crc32_dispatch_auto(crc, data)
+  }
+}
+
+/// CRC-32 (IEEE) vectored dispatch (processes multiple buffers in order).
+#[inline]
+fn crc32_dispatch_vectored(crc: u32, bufs: &[&[u8]]) -> u32 {
+  #[cfg(feature = "std")]
+  {
+    let dispatch = CRC32_DISPATCH_VECTORED.get_or_init(resolve_crc32_dispatch_vectored);
+    dispatch(crc, bufs)
+  }
+
+  #[cfg(not(feature = "std"))]
+  {
+    crc32_dispatch_auto_vectored(crc, bufs)
+  }
+}
+
+/// CRC-32C (Castagnoli) dispatch - hot path uses one-time resolved dispatch function.
+#[inline]
+fn crc32c_dispatch(crc: u32, data: &[u8]) -> u32 {
+  #[cfg(feature = "std")]
+  {
+    let dispatch = CRC32C_DISPATCH.get_or_init(resolve_crc32c_dispatch);
+    dispatch(crc, data)
+  }
+
+  #[cfg(not(feature = "std"))]
+  {
+    crc32c_dispatch_auto(crc, data)
+  }
+}
+
+/// CRC-32C (Castagnoli) vectored dispatch (processes multiple buffers in order).
+#[inline]
+fn crc32c_dispatch_vectored(crc: u32, bufs: &[&[u8]]) -> u32 {
+  #[cfg(feature = "std")]
+  {
+    let dispatch = CRC32C_DISPATCH_VECTORED.get_or_init(resolve_crc32c_dispatch_vectored);
+    dispatch(crc, bufs)
+  }
+
+  #[cfg(not(feature = "std"))]
+  {
+    crc32c_dispatch_auto_vectored(crc, bufs)
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
