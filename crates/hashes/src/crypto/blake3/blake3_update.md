@@ -163,7 +163,7 @@ Optional tools only with a specific question they uniquely answer:
   - Keep.
   - This is the first clear short-size win on Intel SPR in the current loop.
 
-### 2026-02-24 - Candidate V (in progress)
+### 2026-02-24 - Candidate V (`b7c7984`)
 - Hypothesis:
   - Candidate U's AVX-512 one-chunk fast path is SPR-specific in practice because Zen4/Zen5/ICL still route `65..1024` through AVX2.
   - Adding the same exact-block one-chunk fast path for AVX2 (`hash_many_avx2` with `num_inputs=1`) should reduce fixed overhead at `256/1024` for non-SPR x86 lanes without touching ARM64 behavior.
@@ -174,3 +174,17 @@ Optional tools only with a specific question they uniquely answer:
 - Validation:
   - Local: `just check-all && just test` passed.
   - CI plan (targeted): `intel-icl`, `amd-zen4`, `amd-zen5` oneshot gap-gate lanes.
+- CI outcomes:
+  - CI run: `22334612615`
+  - `intel-icl`
+    - `blake3/oneshot`: gate failed (`256 +23.55%`, `1024 +21.36%`).
+  - `amd-zen5`
+    - `blake3/oneshot`: gate failed (`256 +18.64%`, `1024 +17.25%`).
+  - `amd-zen4`
+    - `blake3/oneshot`: gate passed (`256 -4.82%`, `1024 -0.82%`).
+- Decision:
+  - Reject and revert.
+  - Keep Candidate U intact (Intel SPR AVX-512 short-input win remains the current baseline).
+- Narrow reintroduction direction:
+  - Do not use a global AVX2 `hash_many` one-chunk fast path.
+  - Reintroduce only behind microarchitecture gating (start with `TuneKind::Zen4` allowlist), then validate `intel-icl` + `amd-zen5` remain neutral while checking whether Zen4 still benefits.
