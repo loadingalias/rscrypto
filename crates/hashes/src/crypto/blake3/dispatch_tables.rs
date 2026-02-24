@@ -479,7 +479,7 @@ pub static PROFILE_X86_ZEN5: FamilyProfile = FamilyProfile {
   dispatch: DispatchTable {
     boundaries: [64, 1024, 4096],
     xs: KernelId::X86Sse41,
-    s: KernelId::X86Avx2,
+    s: KernelId::X86Avx512,
     m: KernelId::X86Avx512,
     l: KernelId::X86Avx512,
   },
@@ -649,7 +649,7 @@ pub static PROFILE_X86_INTEL_ICL: FamilyProfile = FamilyProfile {
   dispatch: DispatchTable {
     boundaries: [64, 1024, 4096],
     xs: KernelId::X86Avx512,
-    s: KernelId::X86Avx2,
+    s: KernelId::X86Avx512,
     m: KernelId::X86Avx512,
     l: KernelId::X86Avx512,
   },

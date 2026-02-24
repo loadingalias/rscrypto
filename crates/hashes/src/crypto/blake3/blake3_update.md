@@ -204,3 +204,24 @@ Optional tools only with a specific question they uniquely answer:
 - Validation:
   - Local: `just check-all && just test` passed.
   - CI plan (targeted): `intel-icl`, `amd-zen4`, `amd-zen5`, `intel-spr` with `blake3/oneshot` gap gate.
+- CI outcomes:
+  - CI run: `22353969789`
+  - `amd-zen4`: gate passed (`256 -4.78%`, `1024 -0.75%`).
+  - `intel-spr`: gate passed (`256 -3.50%`, `1024 -3.65%`, `4096 +6.75%`).
+  - `amd-zen5`: gate failed, but improved vs prior (`256 +19.34%`, `1024 +17.08%`).
+  - `intel-icl`: gate failed, but improved vs prior (`256 +25.52%`, `1024 +21.81%`).
+- Decision:
+  - Keep as new baseline.
+  - This restores wins on `zen4` and preserves/extends the Intel SPR win while reducing the `zen5`/`icl` short-size deficit.
+
+### 2026-02-24 - Candidate X (in progress)
+- Hypothesis:
+  - Remaining misses are concentrated at `256/1024` on `zen5` and `intel-icl`, where size-class `s` still routes through AVX2.
+  - Promoting `s` to AVX-512 for these two families should force short exact-block one-chunk inputs onto the AVX-512 asm fast path and close the residual gap.
+- Change:
+  - `dispatch_tables`:
+    - `PROFILE_X86_ZEN5.dispatch.s`: `X86Avx2 -> X86Avx512`.
+    - `PROFILE_X86_INTEL_ICL.dispatch.s`: `X86Avx2 -> X86Avx512`.
+- Validation:
+  - Local: `just check-all && just test` passed.
+  - CI plan (targeted): `intel-icl`, `amd-zen5`, plus `amd-zen4`/`intel-spr` guard lanes.
