@@ -188,3 +188,19 @@ Optional tools only with a specific question they uniquely answer:
 - Narrow reintroduction direction:
   - Do not use a global AVX2 `hash_many` one-chunk fast path.
   - Reintroduce only behind microarchitecture gating (start with `TuneKind::Zen4` allowlist), then validate `intel-icl` + `amd-zen5` remain neutral while checking whether Zen4 still benefits.
+
+### 2026-02-24 - Candidate W (in progress)
+- Hypothesis:
+  - Revert-only baseline is materially worse than Candidate V on `zen4/zen5/icl` at `256/1024`.
+  - Candidate V behavior should be reintroduced narrowly, not globally:
+    - enable AVX2 one-chunk `hash_many` only for known x86 tune kinds where it helped (`Zen4`, `Zen5`, `Zen5c`, `IntelIcl`),
+    - keep other architectures/kinds unchanged.
+- Change:
+  - `x86_64` one-chunk path:
+    - restore AVX2 exact-block one-chunk `hash_many_avx2` fast path.
+    - gate the path with a tune-kind allowlist (`Zen4`, `Zen5`, `Zen5c`, `IntelIcl`).
+  - dispatch plumbing:
+    - expose resolved BLAKE3 tune kind via `dispatch::tune_kind()` for hot-path gating.
+- Validation:
+  - Local: `just check-all && just test` passed.
+  - CI plan (targeted): `intel-icl`, `amd-zen4`, `amd-zen5`, `intel-spr` with `blake3/oneshot` gap gate.
