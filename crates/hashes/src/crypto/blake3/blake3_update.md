@@ -140,3 +140,18 @@ Optional tools only with a specific question they uniquely answer:
 - Decision:
   - Reject and revert.
   - Not a net win on Intel, and it introduces a new kernel gate failure at `4096`.
+
+### 2026-02-24 - Candidate U (in progress)
+- Hypothesis:
+  - Current Intel SPR short-input losses are partly self-inflicted by oneshot size-class routing (`65..1024 -> AVX2`) and by per-block AVX-512 one-chunk compression overhead.
+  - Reusing the existing AVX-512 asm `hash_many` backend for exact-block one-chunk inputs (`64/128/256/512/1024`) should reduce fixed overhead for kernel-ab short sizes.
+  - Switching Intel SPR `dispatch.s` from `x86_64/avx2` to `x86_64/avx512` should convert that kernel win into a direct oneshot win at `256`/`1024`.
+- Change:
+  - `x86_64` one-chunk path:
+    - in `digest_one_chunk_root_hash_words_x86`, add an AVX-512 exact-block fast path that calls `asm::hash_many_avx512` with `num_inputs=1`, `blocks=len/64`, and `flags_end` including `ROOT`.
+    - keep existing logic for partial-tail inputs and non-AVX-512 kernels.
+  - `dispatch_tables`:
+    - Intel SPR profile only: set oneshot size-class `s` kernel to `KernelId::X86Avx512` (was `KernelId::X86Avx2`).
+- Validation:
+  - Local: `just check-all && just test` passed.
+  - CI targeted bench lane pending: `intel-spr` with `blake3/oneshot` + kernel gate diagnostics.

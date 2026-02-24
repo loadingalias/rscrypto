@@ -564,7 +564,7 @@ pub static PROFILE_X86_INTEL_SPR: FamilyProfile = FamilyProfile {
   dispatch: DispatchTable {
     boundaries: [64, 1024, 4096],
     xs: KernelId::X86Avx512,
-    s: KernelId::X86Avx2,
+    s: KernelId::X86Avx512,
     m: KernelId::X86Avx512,
     l: KernelId::X86Avx512,
   },
