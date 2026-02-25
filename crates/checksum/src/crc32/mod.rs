@@ -531,6 +531,26 @@ fn crc32c_resolved_dispatch() -> Crc32DispatchFn {
   }
 }
 
+#[inline]
+fn crc32_runtime_paths() -> (Crc32DispatchFn, Option<&'static crate::dispatch::KernelTable>) {
+  let cfg = config::get();
+  if cfg.effective_force == Crc32Force::Auto {
+    (crc32_dispatch_auto, Some(crate::dispatch::active_table()))
+  } else {
+    (crc32_resolved_dispatch(), None)
+  }
+}
+
+#[inline]
+fn crc32c_runtime_paths() -> (Crc32DispatchFn, Option<&'static crate::dispatch::KernelTable>) {
+  let cfg = config::get();
+  if cfg.effective_force == Crc32Force::Auto {
+    (crc32c_dispatch_auto, Some(crate::dispatch::active_table()))
+  } else {
+    (crc32c_resolved_dispatch(), None)
+  }
+}
+
 /// CRC-32 (IEEE) vectored dispatch (processes multiple buffers in order).
 #[inline]
 fn crc32_dispatch_vectored(crc: u32, bufs: &[&[u8]]) -> u32 {
@@ -603,6 +623,7 @@ fn crc32c_dispatch_vectored(crc: u32, bufs: &[&[u8]]) -> u32 {
 pub struct Crc32 {
   state: u32,
   dispatch: Crc32DispatchFn,
+  auto_table: Option<&'static crate::dispatch::KernelTable>,
 }
 
 /// Explicit name for the IEEE CRC-32 variant (alias of [`Crc32`]).
@@ -620,6 +641,7 @@ impl Crc32 {
       state: crc ^ !0,
       // `resume` is const, so keep runtime force semantics via wrapper dispatch.
       dispatch: crc32_dispatch,
+      auto_table: None,
     }
   }
 
@@ -653,23 +675,32 @@ impl traits::Checksum for Crc32 {
 
   #[inline]
   fn new() -> Self {
+    let (dispatch, auto_table) = crc32_runtime_paths();
     Self {
       state: !0,
-      dispatch: crc32_resolved_dispatch(),
+      dispatch,
+      auto_table,
     }
   }
 
   #[inline]
   fn with_initial(initial: u32) -> Self {
+    let (dispatch, auto_table) = crc32_runtime_paths();
     Self {
       state: initial ^ !0,
-      dispatch: crc32_resolved_dispatch(),
+      dispatch,
+      auto_table,
     }
   }
 
   #[inline]
   fn update(&mut self, data: &[u8]) {
-    self.state = (self.dispatch)(self.state, data);
+    if let Some(table) = self.auto_table {
+      let kernel = table.select_set(data.len()).crc32_ieee;
+      self.state = kernel(self.state, data);
+    } else {
+      self.state = (self.dispatch)(self.state, data);
+    }
   }
 
   #[inline]
@@ -723,6 +754,7 @@ impl traits::ChecksumCombine for Crc32 {
 pub struct Crc32C {
   state: u32,
   dispatch: Crc32DispatchFn,
+  auto_table: Option<&'static crate::dispatch::KernelTable>,
 }
 
 /// Explicit name for the Castagnoli CRC-32C variant (alias of [`Crc32C`]).
@@ -740,6 +772,7 @@ impl Crc32C {
       state: crc ^ !0,
       // `resume` is const, so keep runtime force semantics via wrapper dispatch.
       dispatch: crc32c_dispatch,
+      auto_table: None,
     }
   }
 
@@ -773,23 +806,32 @@ impl traits::Checksum for Crc32C {
 
   #[inline]
   fn new() -> Self {
+    let (dispatch, auto_table) = crc32c_runtime_paths();
     Self {
       state: !0,
-      dispatch: crc32c_resolved_dispatch(),
+      dispatch,
+      auto_table,
     }
   }
 
   #[inline]
   fn with_initial(initial: u32) -> Self {
+    let (dispatch, auto_table) = crc32c_runtime_paths();
     Self {
       state: initial ^ !0,
-      dispatch: crc32c_resolved_dispatch(),
+      dispatch,
+      auto_table,
     }
   }
 
   #[inline]
   fn update(&mut self, data: &[u8]) {
-    self.state = (self.dispatch)(self.state, data);
+    if let Some(table) = self.auto_table {
+      let kernel = table.select_set(data.len()).crc32c;
+      self.state = kernel(self.state, data);
+    } else {
+      self.state = (self.dispatch)(self.state, data);
+    }
   }
 
   #[inline]
