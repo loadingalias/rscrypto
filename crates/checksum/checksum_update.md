@@ -64,3 +64,44 @@ Artifacts:
 
 Execution rule:
 - One small change at a time, rerun targeted CI lanes, keep only clear wins.
+
+## 2026-02-25: CRC32 focused validation for commit `362bbce` (ICL revert + hasher dispatch cache)
+
+- Run A: `22405777646` (graviton3/graviton4/intel-icl/intel-spr, `checksum`, `comp+kernels`, `only=crc32`, `quick=false`)
+- Run B (repeat on same SHA): `22407775339` (same matrix and settings)
+- Commit under test: `362bbce3252326827a21965322c21d6e17f6f41e`
+
+### Stable conclusions from A+B (treat as real)
+
+- Persistent CRC32 IEEE losses:
+  - `graviton4 crc32/ieee xs`: `-32.47%` (A) -> `-34.76%` (B)
+  - `graviton4 crc32/ieee s`: `-26.60%` (A) -> `-29.62%` (B)
+  - `intel-icl crc32/ieee s`: `-11.84%` (A) -> `-5.53%` (B)
+  - `intel-spr crc32/ieee s`: `-3.33%` (A) -> `-3.96%` (B)
+- `graviton3 crc32/ieee s` recovered and stayed green:
+  - `+2.85%` (A), `+2.02%` (B)
+
+### Noisy/non-actionable in this pass (do not optimize yet)
+
+- `intel-spr crc32/ieee xl`: `-5.17%` (A) -> `+2.59%` (B), sign flip
+- Several crc32c near-zero cells also flipped sign between A and B
+
+### Dispatch headroom check on persistent CRC32 IEEE losses
+
+- `graviton4 xs`: selected already best (`pmull-small`), headroom `0.0%`
+- `graviton4 s`: selected `pmull-small`, best `sve2-pmull`, headroom only `~0.06%`
+- `intel-icl s`: selected `vpclmul`, best `vpclmul-2way`, headroom `~2.69%`
+- `intel-spr s`: selected `vpclmul-7way`, best `vpclmul`, headroom `~2.48%`
+
+Conclusion:
+- Graviton4 `xs/s` is not a table selection problem; we need kernel/code-path work.
+- ICL/SPR `s` still have small dispatch retune headroom worth testing one-at-a-time.
+
+## Focused next plan (persistent CRC32 IEEE only)
+
+1. `intel-icl crc32/ieee s`: retune dispatch to `x86_64/vpclmul-2way` and rerun same 4-lane matrix.
+2. If #1 is clean, `intel-spr crc32/ieee s`: retune to `x86_64/vpclmul` and rerun same 4-lane matrix.
+3. Graviton4 `crc32/ieee xs/s`: start kernel-path optimization (not table churn):
+   - keep `pmull-small` mapping;
+   - optimize tiny/small path internals and call overhead;
+   - validate with Graviton-only `comp+kernels` non-quick before full 4-lane check.
