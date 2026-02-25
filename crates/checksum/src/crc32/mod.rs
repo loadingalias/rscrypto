@@ -505,6 +505,32 @@ fn crc32_dispatch(crc: u32, data: &[u8]) -> u32 {
   }
 }
 
+#[inline]
+fn crc32_resolved_dispatch() -> Crc32DispatchFn {
+  #[cfg(feature = "std")]
+  {
+    CRC32_DISPATCH.get_or_init(resolve_crc32_dispatch)
+  }
+
+  #[cfg(not(feature = "std"))]
+  {
+    crc32_dispatch_auto
+  }
+}
+
+#[inline]
+fn crc32c_resolved_dispatch() -> Crc32DispatchFn {
+  #[cfg(feature = "std")]
+  {
+    CRC32C_DISPATCH.get_or_init(resolve_crc32c_dispatch)
+  }
+
+  #[cfg(not(feature = "std"))]
+  {
+    crc32c_dispatch_auto
+  }
+}
+
 /// CRC-32 (IEEE) vectored dispatch (processes multiple buffers in order).
 #[inline]
 fn crc32_dispatch_vectored(crc: u32, bufs: &[&[u8]]) -> u32 {
@@ -576,6 +602,7 @@ fn crc32c_dispatch_vectored(crc: u32, bufs: &[&[u8]]) -> u32 {
 #[derive(Clone, Copy)]
 pub struct Crc32 {
   state: u32,
+  dispatch: Crc32DispatchFn,
 }
 
 /// Explicit name for the IEEE CRC-32 variant (alias of [`Crc32`]).
@@ -589,7 +616,11 @@ impl Crc32 {
   #[inline]
   #[must_use]
   pub const fn resume(crc: u32) -> Self {
-    Self { state: crc ^ !0 }
+    Self {
+      state: crc ^ !0,
+      // `resume` is const, so keep runtime force semantics via wrapper dispatch.
+      dispatch: crc32_dispatch,
+    }
   }
 
   /// Get the name of the currently selected backend.
@@ -622,17 +653,23 @@ impl traits::Checksum for Crc32 {
 
   #[inline]
   fn new() -> Self {
-    Self { state: !0 }
+    Self {
+      state: !0,
+      dispatch: crc32_resolved_dispatch(),
+    }
   }
 
   #[inline]
   fn with_initial(initial: u32) -> Self {
-    Self { state: initial ^ !0 }
+    Self {
+      state: initial ^ !0,
+      dispatch: crc32_resolved_dispatch(),
+    }
   }
 
   #[inline]
   fn update(&mut self, data: &[u8]) {
-    self.state = crc32_dispatch(self.state, data);
+    self.state = (self.dispatch)(self.state, data);
   }
 
   #[inline]
@@ -685,6 +722,7 @@ impl traits::ChecksumCombine for Crc32 {
 #[derive(Clone, Copy)]
 pub struct Crc32C {
   state: u32,
+  dispatch: Crc32DispatchFn,
 }
 
 /// Explicit name for the Castagnoli CRC-32C variant (alias of [`Crc32C`]).
@@ -698,7 +736,11 @@ impl Crc32C {
   #[inline]
   #[must_use]
   pub const fn resume(crc: u32) -> Self {
-    Self { state: crc ^ !0 }
+    Self {
+      state: crc ^ !0,
+      // `resume` is const, so keep runtime force semantics via wrapper dispatch.
+      dispatch: crc32c_dispatch,
+    }
   }
 
   /// Get the name of the currently selected backend.
@@ -731,17 +773,23 @@ impl traits::Checksum for Crc32C {
 
   #[inline]
   fn new() -> Self {
-    Self { state: !0 }
+    Self {
+      state: !0,
+      dispatch: crc32c_resolved_dispatch(),
+    }
   }
 
   #[inline]
   fn with_initial(initial: u32) -> Self {
-    Self { state: initial ^ !0 }
+    Self {
+      state: initial ^ !0,
+      dispatch: crc32c_resolved_dispatch(),
+    }
   }
 
   #[inline]
   fn update(&mut self, data: &[u8]) {
-    self.state = crc32c_dispatch(self.state, data);
+    self.state = (self.dispatch)(self.state, data);
   }
 
   #[inline]
