@@ -749,9 +749,11 @@ fn family_match(tune_kind: TuneKind, caps: Caps) -> Option<&'static KernelTable>
     #[cfg(target_arch = "aarch64")]
     TuneKind::AppleM4 | TuneKind::AppleM5 => Some(&APPLE_M1M3_TABLE),
 
-    // AWS Graviton / ARM Neoverse family → use Graviton3 data (better EOR3 tuning)
+    // AWS Graviton / ARM Neoverse family
     #[cfg(target_arch = "aarch64")]
-    TuneKind::Graviton4 | TuneKind::Graviton5 => Some(&GRAVITON3_TABLE),
+    TuneKind::Graviton4 => Some(&GRAVITON4_TABLE),
+    #[cfg(target_arch = "aarch64")]
+    TuneKind::Graviton5 => Some(&GRAVITON3_TABLE),
     #[cfg(target_arch = "aarch64")]
     TuneKind::NeoverseN2 | TuneKind::NeoverseN3 | TuneKind::NeoverseV3 => Some(&GRAVITON3_TABLE),
     #[cfg(target_arch = "aarch64")]
@@ -1193,6 +1195,87 @@ mod aarch64_tables {
       crc64_xz: crc64_k::XZ_PMULL_EOR3[0], // pmull-eor3 @ 38.04 GiB/s
       crc64_xz_name: "aarch64/pmull-eor3",
       crc64_nvme: crc64_k::NVME_PMULL_EOR3[0], // pmull-eor3 @ 38.05 GiB/s (G3: eor3 beats pmull)
+      crc64_nvme_name: "aarch64/pmull-eor3",
+    },
+  };
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Graviton4 Table (candidate)
+  //
+  // Graviton4 currently underperforms competitors at tiny/small CRC-32 IEEE
+  // sizes. Keep Graviton3 behavior for all other cells and retune only these:
+  // - xs: crc32/ieee -> aarch64/hwcrc
+  // - s:  crc32/ieee -> aarch64/hwcrc-3way
+  // ───────────────────────────────────────────────────────────────────────────
+  pub static GRAVITON4_TABLE: KernelTable = KernelTable {
+    requires: platform::caps::aarch64::CRC_READY.union(platform::caps::aarch64::PMULL_EOR3_READY),
+    boundaries: [64, 256, 4096],
+
+    xs: KernelSet {
+      crc16_ccitt: crc16_k::CCITT_PMULL_SMALL_KERNEL,
+      crc16_ccitt_name: "aarch64/pmull-small",
+      crc16_ibm: crc16_k::IBM_PMULL_SMALL_KERNEL,
+      crc16_ibm_name: "aarch64/pmull-small",
+      crc24_openpgp: crc24_k::OPENPGP_PMULL_SMALL_KERNEL,
+      crc24_openpgp_name: "aarch64/pmull-small",
+      crc32_ieee: crc32_k::CRC32_HWCRC[0],
+      crc32_ieee_name: "aarch64/hwcrc",
+      crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL,
+      crc32c_name: "aarch64/pmull-small",
+      crc64_xz: crc64_k::XZ_PMULL_SMALL,
+      crc64_xz_name: "aarch64/pmull-small",
+      crc64_nvme: crc64_k::NVME_PMULL_SMALL,
+      crc64_nvme_name: "aarch64/pmull-small",
+    },
+
+    s: KernelSet {
+      crc16_ccitt: crc16_k::CCITT_PMULL[0],
+      crc16_ccitt_name: "aarch64/pmull",
+      crc16_ibm: crc16_k::IBM_PMULL[0],
+      crc16_ibm_name: "aarch64/pmull",
+      crc24_openpgp: crc24_k::OPENPGP_PMULL[0],
+      crc24_openpgp_name: "aarch64/pmull",
+      crc32_ieee: crc32_k::CRC32_HWCRC[2],
+      crc32_ieee_name: "aarch64/hwcrc-3way",
+      crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL,
+      crc32c_name: "aarch64/pmull-small",
+      crc64_xz: crc64_k::XZ_PMULL[0],
+      crc64_xz_name: "aarch64/pmull",
+      crc64_nvme: crc64_k::NVME_PMULL[0],
+      crc64_nvme_name: "aarch64/pmull",
+    },
+
+    m: KernelSet {
+      crc16_ccitt: crc16_k::CCITT_PMULL[0],
+      crc16_ccitt_name: "aarch64/pmull",
+      crc16_ibm: crc16_k::IBM_PMULL[0],
+      crc16_ibm_name: "aarch64/pmull",
+      crc24_openpgp: crc24_k::OPENPGP_PMULL[0],
+      crc24_openpgp_name: "aarch64/pmull",
+      crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL,
+      crc32_ieee_name: "aarch64/pmull-small",
+      crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL,
+      crc32c_name: "aarch64/pmull-small",
+      crc64_xz: crc64_k::XZ_PMULL[0],
+      crc64_xz_name: "aarch64/pmull",
+      crc64_nvme: crc64_k::NVME_PMULL[1],
+      crc64_nvme_name: "aarch64/pmull-2way",
+    },
+
+    l: KernelSet {
+      crc16_ccitt: crc16_k::CCITT_PMULL[0],
+      crc16_ccitt_name: "aarch64/pmull",
+      crc16_ibm: crc16_k::IBM_PMULL[0],
+      crc16_ibm_name: "aarch64/pmull",
+      crc24_openpgp: crc24_k::OPENPGP_PMULL[0],
+      crc24_openpgp_name: "aarch64/pmull",
+      crc32_ieee: crc32_k::CRC32_PMULL_EOR3[0],
+      crc32_ieee_name: "aarch64/pmull-eor3-v9s3x2e-s3",
+      crc32c: crc32_k::CRC32C_PMULL_EOR3[0],
+      crc32c_name: "aarch64/pmull-eor3-v9s3x2e-s3",
+      crc64_xz: crc64_k::XZ_PMULL_EOR3[0],
+      crc64_xz_name: "aarch64/pmull-eor3",
+      crc64_nvme: crc64_k::NVME_PMULL_EOR3[0],
       crc64_nvme_name: "aarch64/pmull-eor3",
     },
   };
