@@ -769,7 +769,7 @@ fn family_match(tune_kind: TuneKind, caps: Caps) -> Option<&'static KernelTable>
       &INTEL_SPR_TABLE
     }),
     #[cfg(target_arch = "x86_64")]
-    TuneKind::IntelIcl => Some(&INTEL_ICL_TABLE),
+    TuneKind::IntelIcl => Some(&GENERIC_X86_VPCLMUL_TABLE),
 
     _ => None,
   };
@@ -2548,13 +2548,6 @@ mod tests {
       .union(platform::caps::x86::AMX_COMPLEX);
     let spr_table = exact_match(TuneKind::IntelSpr, spr_caps).unwrap();
     assert!(core::ptr::eq(spr_table, &INTEL_SPR_TABLE));
-  }
-
-  #[cfg(target_arch = "x86_64")]
-  #[test]
-  fn test_x86_64_family_match_intel_icl_uses_icl_table() {
-    let table = family_match(TuneKind::IntelIcl, INTEL_ICL_TABLE.requires).unwrap();
-    assert!(core::ptr::eq(table, &INTEL_ICL_TABLE));
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
