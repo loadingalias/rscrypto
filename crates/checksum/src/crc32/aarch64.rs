@@ -26,18 +26,6 @@ use crate::common::{
 
 const CRC32_SHIFT8_MATRIX: Gf2Matrix32 = generate_shift8_matrix_32(CRC32_IEEE_POLY);
 const CRC32C_SHIFT8_MATRIX: Gf2Matrix32 = generate_shift8_matrix_32(CRC32C_POLY);
-const CRC32_SHIFT16_MATRIX: Gf2Matrix32 = crate::common::combine::pow_shift8_matrix_32(16, CRC32_SHIFT8_MATRIX);
-const CRC32_SHIFT64_MATRIX: Gf2Matrix32 = crate::common::combine::pow_shift8_matrix_32(64, CRC32_SHIFT8_MATRIX);
-const CRC32_SHIFT256_MATRIX: Gf2Matrix32 = crate::common::combine::pow_shift8_matrix_32(256, CRC32_SHIFT8_MATRIX);
-const CRC32C_SHIFT16_MATRIX: Gf2Matrix32 = crate::common::combine::pow_shift8_matrix_32(16, CRC32C_SHIFT8_MATRIX);
-const CRC32C_SHIFT64_MATRIX: Gf2Matrix32 = crate::common::combine::pow_shift8_matrix_32(64, CRC32C_SHIFT8_MATRIX);
-const CRC32C_SHIFT256_MATRIX: Gf2Matrix32 = crate::common::combine::pow_shift8_matrix_32(256, CRC32C_SHIFT8_MATRIX);
-
-#[inline]
-#[must_use]
-fn combine_crc32_fixed(crc_a: u32, crc_b: u32, shift_matrix: Gf2Matrix32) -> u32 {
-  shift_matrix.mul_vec(crc_a) ^ crc_b
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Hardware CRC extension (CRC-only)
@@ -49,75 +37,6 @@ fn combine_crc32_fixed(crc_a: u32, crc_b: u32, shift_matrix: Gf2Matrix32) -> u32
 #[inline]
 #[target_feature(enable = "crc")]
 unsafe fn crc32_armv8(crc: u32, data: &[u8]) -> u32 {
-  if data.len() == 64 {
-    let boundary_final = crc ^ !0;
-    let base = data.as_ptr();
-    let mut lanes = [!0u32; 4];
-
-    lanes[0] = __crc32d(lanes[0], ptr::read_unaligned(base as *const u64));
-    lanes[1] = __crc32d(lanes[1], ptr::read_unaligned(base.add(16) as *const u64));
-    lanes[2] = __crc32d(lanes[2], ptr::read_unaligned(base.add(32) as *const u64));
-    lanes[3] = __crc32d(lanes[3], ptr::read_unaligned(base.add(48) as *const u64));
-
-    lanes[0] = __crc32d(lanes[0], ptr::read_unaligned(base.add(8) as *const u64));
-    lanes[1] = __crc32d(lanes[1], ptr::read_unaligned(base.add(24) as *const u64));
-    lanes[2] = __crc32d(lanes[2], ptr::read_unaligned(base.add(40) as *const u64));
-    lanes[3] = __crc32d(lanes[3], ptr::read_unaligned(base.add(56) as *const u64));
-
-    let c0 = lanes[0] ^ !0;
-    let c1 = lanes[1] ^ !0;
-    let c2 = lanes[2] ^ !0;
-    let c3 = lanes[3] ^ !0;
-
-    let mut data_crc_final: u32 = 0;
-    data_crc_final = combine_crc32_fixed(data_crc_final, c0, CRC32_SHIFT16_MATRIX);
-    data_crc_final = combine_crc32_fixed(data_crc_final, c1, CRC32_SHIFT16_MATRIX);
-    data_crc_final = combine_crc32_fixed(data_crc_final, c2, CRC32_SHIFT16_MATRIX);
-    data_crc_final = combine_crc32_fixed(data_crc_final, c3, CRC32_SHIFT16_MATRIX);
-
-    let combined_final = combine_crc32_fixed(boundary_final, data_crc_final, CRC32_SHIFT64_MATRIX);
-    return combined_final ^ !0;
-  }
-
-  if data.len() == 256 {
-    let boundary_final = crc ^ !0;
-    let base = data.as_ptr();
-    let lane_len: usize = 64;
-    let mut lanes = [!0u32; 4];
-
-    let mut offset: usize = 0;
-    while offset < lane_len {
-      lanes[0] = __crc32d(lanes[0], ptr::read_unaligned(base.add(offset) as *const u64));
-      lanes[1] = __crc32d(
-        lanes[1],
-        ptr::read_unaligned(base.add(lane_len.strict_add(offset)) as *const u64),
-      );
-      lanes[2] = __crc32d(
-        lanes[2],
-        ptr::read_unaligned(base.add(lane_len.strict_mul(2).strict_add(offset)) as *const u64),
-      );
-      lanes[3] = __crc32d(
-        lanes[3],
-        ptr::read_unaligned(base.add(lane_len.strict_mul(3).strict_add(offset)) as *const u64),
-      );
-      offset = offset.strict_add(8);
-    }
-
-    let c0 = lanes[0] ^ !0;
-    let c1 = lanes[1] ^ !0;
-    let c2 = lanes[2] ^ !0;
-    let c3 = lanes[3] ^ !0;
-
-    let mut data_crc_final: u32 = 0;
-    data_crc_final = combine_crc32_fixed(data_crc_final, c0, CRC32_SHIFT64_MATRIX);
-    data_crc_final = combine_crc32_fixed(data_crc_final, c1, CRC32_SHIFT64_MATRIX);
-    data_crc_final = combine_crc32_fixed(data_crc_final, c2, CRC32_SHIFT64_MATRIX);
-    data_crc_final = combine_crc32_fixed(data_crc_final, c3, CRC32_SHIFT64_MATRIX);
-
-    let combined_final = combine_crc32_fixed(boundary_final, data_crc_final, CRC32_SHIFT256_MATRIX);
-    return combined_final ^ !0;
-  }
-
   let mut state = crc;
   let mut buf = data.as_ptr();
   let mut len = data.len();
@@ -182,75 +101,6 @@ unsafe fn crc32_armv8(crc: u32, data: &[u8]) -> u32 {
 #[inline]
 #[target_feature(enable = "crc")]
 unsafe fn crc32c_armv8(crc: u32, data: &[u8]) -> u32 {
-  if data.len() == 64 {
-    let boundary_final = crc ^ !0;
-    let base = data.as_ptr();
-    let mut lanes = [!0u32; 4];
-
-    lanes[0] = __crc32cd(lanes[0], ptr::read_unaligned(base as *const u64));
-    lanes[1] = __crc32cd(lanes[1], ptr::read_unaligned(base.add(16) as *const u64));
-    lanes[2] = __crc32cd(lanes[2], ptr::read_unaligned(base.add(32) as *const u64));
-    lanes[3] = __crc32cd(lanes[3], ptr::read_unaligned(base.add(48) as *const u64));
-
-    lanes[0] = __crc32cd(lanes[0], ptr::read_unaligned(base.add(8) as *const u64));
-    lanes[1] = __crc32cd(lanes[1], ptr::read_unaligned(base.add(24) as *const u64));
-    lanes[2] = __crc32cd(lanes[2], ptr::read_unaligned(base.add(40) as *const u64));
-    lanes[3] = __crc32cd(lanes[3], ptr::read_unaligned(base.add(56) as *const u64));
-
-    let c0 = lanes[0] ^ !0;
-    let c1 = lanes[1] ^ !0;
-    let c2 = lanes[2] ^ !0;
-    let c3 = lanes[3] ^ !0;
-
-    let mut data_crc_final: u32 = 0;
-    data_crc_final = combine_crc32_fixed(data_crc_final, c0, CRC32C_SHIFT16_MATRIX);
-    data_crc_final = combine_crc32_fixed(data_crc_final, c1, CRC32C_SHIFT16_MATRIX);
-    data_crc_final = combine_crc32_fixed(data_crc_final, c2, CRC32C_SHIFT16_MATRIX);
-    data_crc_final = combine_crc32_fixed(data_crc_final, c3, CRC32C_SHIFT16_MATRIX);
-
-    let combined_final = combine_crc32_fixed(boundary_final, data_crc_final, CRC32C_SHIFT64_MATRIX);
-    return combined_final ^ !0;
-  }
-
-  if data.len() == 256 {
-    let boundary_final = crc ^ !0;
-    let base = data.as_ptr();
-    let lane_len: usize = 64;
-    let mut lanes = [!0u32; 4];
-
-    let mut offset: usize = 0;
-    while offset < lane_len {
-      lanes[0] = __crc32cd(lanes[0], ptr::read_unaligned(base.add(offset) as *const u64));
-      lanes[1] = __crc32cd(
-        lanes[1],
-        ptr::read_unaligned(base.add(lane_len.strict_add(offset)) as *const u64),
-      );
-      lanes[2] = __crc32cd(
-        lanes[2],
-        ptr::read_unaligned(base.add(lane_len.strict_mul(2).strict_add(offset)) as *const u64),
-      );
-      lanes[3] = __crc32cd(
-        lanes[3],
-        ptr::read_unaligned(base.add(lane_len.strict_mul(3).strict_add(offset)) as *const u64),
-      );
-      offset = offset.strict_add(8);
-    }
-
-    let c0 = lanes[0] ^ !0;
-    let c1 = lanes[1] ^ !0;
-    let c2 = lanes[2] ^ !0;
-    let c3 = lanes[3] ^ !0;
-
-    let mut data_crc_final: u32 = 0;
-    data_crc_final = combine_crc32_fixed(data_crc_final, c0, CRC32C_SHIFT64_MATRIX);
-    data_crc_final = combine_crc32_fixed(data_crc_final, c1, CRC32C_SHIFT64_MATRIX);
-    data_crc_final = combine_crc32_fixed(data_crc_final, c2, CRC32C_SHIFT64_MATRIX);
-    data_crc_final = combine_crc32_fixed(data_crc_final, c3, CRC32C_SHIFT64_MATRIX);
-
-    let combined_final = combine_crc32_fixed(boundary_final, data_crc_final, CRC32C_SHIFT256_MATRIX);
-    return combined_final ^ !0;
-  }
-
   let mut state = crc;
   let mut buf = data.as_ptr();
   let mut len = data.len();
@@ -626,11 +476,17 @@ pub fn crc32c_iscsi_pmull_eor3_3way_safe(crc: u32, data: &[u8]) -> u32 {
 
 #[inline]
 pub fn crc32_iso_hdlc_pmull_small_safe(crc: u32, data: &[u8]) -> u32 {
+  if data.len() <= 256 {
+    return crc32_armv8_safe(crc, data);
+  }
   crc32_iso_hdlc_pmull_v12e_v1_safe(crc, data)
 }
 
 #[inline]
 pub fn crc32c_iscsi_pmull_small_safe(crc: u32, data: &[u8]) -> u32 {
+  if data.len() <= 256 {
+    return crc32c_armv8_safe(crc, data);
+  }
   crc32c_iscsi_pmull_v12e_v1_safe(crc, data)
 }
 
