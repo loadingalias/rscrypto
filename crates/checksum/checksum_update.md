@@ -105,3 +105,46 @@ Conclusion:
    - keep `pmull-small` mapping;
    - optimize tiny/small path internals and call overhead;
    - validate with Graviton-only `comp+kernels` non-quick before full 4-lane check.
+
+## 2026-02-25: CRC32 hasher auto-dispatch table cache (SUCCESS, new targeted baseline)
+
+- Commit under test: `ee5eee46e46757de8ccddf2611b368b496c0fbb1`
+- Validation run: `22418728015` (graviton3/graviton4/intel-icl/intel-spr, `checksum`, `comp+kernels`, `only=crc32`, `quick=false`)
+- Comparison baseline for deltas: `22414190122`
+
+### Result summary
+
+- Total cases: `40`
+- Ahead of best external: `35`
+- Behind best external: `5`
+- Loss count improved: `11 -> 5` (`-6` cells)
+
+### Key wins from this change
+
+- `graviton4 crc32/ieee xs`: `-16.591% -> +30.960%` (LOSE -> WIN), ours `11.422 -> 18.138 GiB/s`
+- `graviton4 crc32/ieee s`: `-6.513% -> +4.701%` (LOSE -> WIN), ours `17.311 -> 19.489 GiB/s`
+- `graviton3 crc32/ieee s`: `-0.182% -> +29.465%` (LOSE -> WIN), ours `14.251 -> 18.551 GiB/s`
+- `graviton4 crc32/ieee l`: `-0.671% -> +0.299%` (LOSE -> WIN)
+
+### Remaining deficits (new baseline to close)
+
+- `intel-icl crc32/ieee s`: `-5.878%` (`x86_64/vpclmul`, `15.965` vs `crc32fast/auto` `16.962 GiB/s`)
+- `graviton3 crc32/ieee xl`: `-2.537%` (`aarch64/pmull-eor3-v9s3x2e-s3`, `44.684` vs `crc-fast/auto` `45.847 GiB/s`)
+- `intel-spr crc32/ieee s`: `-2.320%` (`x86_64/vpclmul-7way`, `19.198` vs `crc32fast/auto` `19.654 GiB/s`)
+- `intel-icl crc32c/castagnoli m`: `-0.627%` (new small regression)
+- `graviton4 crc32/ieee xl`: `-0.146%` (near noise floor)
+
+### Artifacts
+
+- `/private/tmp/checksum-bench-22418728015/comp_parsed.csv`
+- `/private/tmp/checksum-bench-22418728015/kernels_parsed.csv`
+- `/private/tmp/checksum-bench-22418728015/comp_vs_competitors.csv`
+- `/private/tmp/checksum-bench-22418728015/current_losses.csv`
+- `/private/tmp/checksum-bench-22418728015/kernel_selected_vs_best.csv`
+- `/private/tmp/checksum-bench-22418728015/delta_vs_22414190122.csv`
+
+### Updated next plan (from this baseline)
+
+1. `intel-icl crc32/ieee s`: retune selection away from `vpclmul` (trial `vpclmul-2way` then `vpclmul-8way`), rerun same 4-lane matrix.
+2. `intel-spr crc32/ieee s`: retune from `vpclmul-7way` to best measured small-size variant (`vpclmul-2way` candidate), rerun same 4-lane matrix.
+3. `graviton3 crc32/ieee xl`: kernel-path investigation (no internal dispatch headroom in current table).
