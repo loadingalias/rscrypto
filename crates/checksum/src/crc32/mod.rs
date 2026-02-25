@@ -490,64 +490,84 @@ fn resolve_crc32c_dispatch_vectored() -> Crc32DispatchVectoredFn {
   }
 }
 
-/// CRC-32 (IEEE) dispatch - hot path uses one-time resolved dispatch function.
 #[inline]
-fn crc32_dispatch(crc: u32, data: &[u8]) -> u32 {
+fn resolved_crc32_dispatch() -> Crc32DispatchFn {
   #[cfg(feature = "std")]
   {
-    let dispatch = CRC32_DISPATCH.get_or_init(resolve_crc32_dispatch);
-    dispatch(crc, data)
+    CRC32_DISPATCH.get_or_init(resolve_crc32_dispatch)
   }
 
   #[cfg(not(feature = "std"))]
   {
-    crc32_dispatch_auto(crc, data)
+    crc32_dispatch_auto
   }
+}
+
+#[inline]
+fn resolved_crc32_dispatch_vectored() -> Crc32DispatchVectoredFn {
+  #[cfg(feature = "std")]
+  {
+    CRC32_DISPATCH_VECTORED.get_or_init(resolve_crc32_dispatch_vectored)
+  }
+
+  #[cfg(not(feature = "std"))]
+  {
+    crc32_dispatch_auto_vectored
+  }
+}
+
+#[inline]
+fn resolved_crc32c_dispatch() -> Crc32DispatchFn {
+  #[cfg(feature = "std")]
+  {
+    CRC32C_DISPATCH.get_or_init(resolve_crc32c_dispatch)
+  }
+
+  #[cfg(not(feature = "std"))]
+  {
+    crc32c_dispatch_auto
+  }
+}
+
+#[inline]
+fn resolved_crc32c_dispatch_vectored() -> Crc32DispatchVectoredFn {
+  #[cfg(feature = "std")]
+  {
+    CRC32C_DISPATCH_VECTORED.get_or_init(resolve_crc32c_dispatch_vectored)
+  }
+
+  #[cfg(not(feature = "std"))]
+  {
+    crc32c_dispatch_auto_vectored
+  }
+}
+
+/// CRC-32 (IEEE) dispatch - hot path uses one-time resolved dispatch function.
+#[inline]
+fn crc32_dispatch(crc: u32, data: &[u8]) -> u32 {
+  let dispatch = resolved_crc32_dispatch();
+  dispatch(crc, data)
 }
 
 /// CRC-32 (IEEE) vectored dispatch (processes multiple buffers in order).
 #[inline]
 fn crc32_dispatch_vectored(crc: u32, bufs: &[&[u8]]) -> u32 {
-  #[cfg(feature = "std")]
-  {
-    let dispatch = CRC32_DISPATCH_VECTORED.get_or_init(resolve_crc32_dispatch_vectored);
-    dispatch(crc, bufs)
-  }
-
-  #[cfg(not(feature = "std"))]
-  {
-    crc32_dispatch_auto_vectored(crc, bufs)
-  }
+  let dispatch = resolved_crc32_dispatch_vectored();
+  dispatch(crc, bufs)
 }
 
 /// CRC-32C (Castagnoli) dispatch - hot path uses one-time resolved dispatch function.
 #[inline]
 fn crc32c_dispatch(crc: u32, data: &[u8]) -> u32 {
-  #[cfg(feature = "std")]
-  {
-    let dispatch = CRC32C_DISPATCH.get_or_init(resolve_crc32c_dispatch);
-    dispatch(crc, data)
-  }
-
-  #[cfg(not(feature = "std"))]
-  {
-    crc32c_dispatch_auto(crc, data)
-  }
+  let dispatch = resolved_crc32c_dispatch();
+  dispatch(crc, data)
 }
 
 /// CRC-32C (Castagnoli) vectored dispatch (processes multiple buffers in order).
 #[inline]
 fn crc32c_dispatch_vectored(crc: u32, bufs: &[&[u8]]) -> u32 {
-  #[cfg(feature = "std")]
-  {
-    let dispatch = CRC32C_DISPATCH_VECTORED.get_or_init(resolve_crc32c_dispatch_vectored);
-    dispatch(crc, bufs)
-  }
-
-  #[cfg(not(feature = "std"))]
-  {
-    crc32c_dispatch_auto_vectored(crc, bufs)
-  }
+  let dispatch = resolved_crc32c_dispatch_vectored();
+  dispatch(crc, bufs)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -576,6 +596,8 @@ fn crc32c_dispatch_vectored(crc: u32, bufs: &[&[u8]]) -> u32 {
 #[derive(Clone, Copy)]
 pub struct Crc32 {
   state: u32,
+  dispatch: Crc32DispatchFn,
+  dispatch_vectored: Crc32DispatchVectoredFn,
 }
 
 /// Explicit name for the IEEE CRC-32 variant (alias of [`Crc32`]).
@@ -584,12 +606,18 @@ pub type Crc32Ieee = Crc32;
 impl Crc32 {
   /// Pre-computed shift-by-8 matrix for combine.
   const SHIFT8_MATRIX: Gf2Matrix32 = generate_shift8_matrix_32(CRC32_IEEE_POLY);
+  const DEFAULT_DISPATCH: Crc32DispatchFn = crc32_dispatch;
+  const DEFAULT_DISPATCH_VECTORED: Crc32DispatchVectoredFn = crc32_dispatch_vectored;
 
   /// Create a hasher to resume from a previous CRC value.
   #[inline]
   #[must_use]
   pub const fn resume(crc: u32) -> Self {
-    Self { state: crc ^ !0 }
+    Self {
+      state: crc ^ !0,
+      dispatch: Self::DEFAULT_DISPATCH,
+      dispatch_vectored: Self::DEFAULT_DISPATCH_VECTORED,
+    }
   }
 
   /// Get the name of the currently selected backend.
@@ -622,22 +650,30 @@ impl traits::Checksum for Crc32 {
 
   #[inline]
   fn new() -> Self {
-    Self { state: !0 }
+    Self {
+      state: !0,
+      dispatch: resolved_crc32_dispatch(),
+      dispatch_vectored: resolved_crc32_dispatch_vectored(),
+    }
   }
 
   #[inline]
   fn with_initial(initial: u32) -> Self {
-    Self { state: initial ^ !0 }
+    Self {
+      state: initial ^ !0,
+      dispatch: resolved_crc32_dispatch(),
+      dispatch_vectored: resolved_crc32_dispatch_vectored(),
+    }
   }
 
   #[inline]
   fn update(&mut self, data: &[u8]) {
-    self.state = crc32_dispatch(self.state, data);
+    self.state = (self.dispatch)(self.state, data);
   }
 
   #[inline]
   fn update_vectored(&mut self, bufs: &[&[u8]]) {
-    self.state = crc32_dispatch_vectored(self.state, bufs);
+    self.state = (self.dispatch_vectored)(self.state, bufs);
   }
 
   #[inline]
@@ -685,6 +721,8 @@ impl traits::ChecksumCombine for Crc32 {
 #[derive(Clone, Copy)]
 pub struct Crc32C {
   state: u32,
+  dispatch: Crc32DispatchFn,
+  dispatch_vectored: Crc32DispatchVectoredFn,
 }
 
 /// Explicit name for the Castagnoli CRC-32C variant (alias of [`Crc32C`]).
@@ -693,12 +731,18 @@ pub type Crc32Castagnoli = Crc32C;
 impl Crc32C {
   /// Pre-computed shift-by-8 matrix for combine.
   const SHIFT8_MATRIX: Gf2Matrix32 = generate_shift8_matrix_32(CRC32C_POLY);
+  const DEFAULT_DISPATCH: Crc32DispatchFn = crc32c_dispatch;
+  const DEFAULT_DISPATCH_VECTORED: Crc32DispatchVectoredFn = crc32c_dispatch_vectored;
 
   /// Create a hasher to resume from a previous CRC value.
   #[inline]
   #[must_use]
   pub const fn resume(crc: u32) -> Self {
-    Self { state: crc ^ !0 }
+    Self {
+      state: crc ^ !0,
+      dispatch: Self::DEFAULT_DISPATCH,
+      dispatch_vectored: Self::DEFAULT_DISPATCH_VECTORED,
+    }
   }
 
   /// Get the name of the currently selected backend.
@@ -731,22 +775,30 @@ impl traits::Checksum for Crc32C {
 
   #[inline]
   fn new() -> Self {
-    Self { state: !0 }
+    Self {
+      state: !0,
+      dispatch: resolved_crc32c_dispatch(),
+      dispatch_vectored: resolved_crc32c_dispatch_vectored(),
+    }
   }
 
   #[inline]
   fn with_initial(initial: u32) -> Self {
-    Self { state: initial ^ !0 }
+    Self {
+      state: initial ^ !0,
+      dispatch: resolved_crc32c_dispatch(),
+      dispatch_vectored: resolved_crc32c_dispatch_vectored(),
+    }
   }
 
   #[inline]
   fn update(&mut self, data: &[u8]) {
-    self.state = crc32c_dispatch(self.state, data);
+    self.state = (self.dispatch)(self.state, data);
   }
 
   #[inline]
   fn update_vectored(&mut self, bufs: &[&[u8]]) {
-    self.state = crc32c_dispatch_vectored(self.state, bufs);
+    self.state = (self.dispatch_vectored)(self.state, bufs);
   }
 
   #[inline]
