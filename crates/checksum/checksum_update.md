@@ -266,3 +266,58 @@ By algorithm (wins / losses):
 1. `intel-icl crc32/ieee s`: fix small-size x86 kernel/dispatch choice first (largest x86 deficit).
 2. `graviton3/graviton4 crc16 (l/xl)`: investigate AArch64 PMULL kernel throughput gap vs `crc-fast`.
 3. `ibm-power10 crc64 xs`: targeted tiny-input path work (`portable/slice16` vs competitor xs behavior).
+
+## 2026-02-26: Targeted CRC16 Graviton check (SUCCESS, mixed but net positive)
+
+- Workflow run: `22452368230`
+- Commit under test: `04009ce07f922f8bc3e43df328f2bb50ae6c6c7c`
+- Scope: `checksum`, `comp+kernels`, `only=crc16`, lanes `graviton3` + `graviton4`
+- Comparison baseline: `22425195531` (full-suite baseline above)
+
+### Result summary
+
+- Targeted cells evaluated: `20` (`2 arches x 2 algos x 5 sizes`)
+- Ahead of best external (`crc-fast`): `10` (unchanged)
+- Behind best external (`crc-fast`): `10` (unchanged)
+- Net quality improved despite unchanged count:
+  - Sum of negative gaps improved from `-74.564%` -> `-51.225%`
+  - Mean loss improved from `-7.456%` -> `-5.122%`
+
+### Biggest improvements (gap vs best external)
+
+- `graviton4 crc16/ccitt xl`: `-8.747% -> -3.151%` (`+5.596 pp`)
+- `graviton4 crc16/ccitt l`: `-8.465% -> -3.481%` (`+4.984 pp`)
+- `graviton4 crc16/ibm l`: `-8.444% -> -3.478%` (`+4.966 pp`)
+- `graviton4 crc16/ibm xl`: `-8.391% -> -3.480%` (`+4.911 pp`)
+- `graviton3 crc16/ibm l`: `-5.269% -> -1.886%` (`+3.383 pp`)
+
+### Regressions
+
+- `graviton3 crc16/ibm xl`: `-10.821% -> -11.844%` (`-1.023 pp`)
+- `graviton3 crc16/ccitt xl`: `-10.259% -> -11.253%` (`-0.995 pp`)
+- `graviton3 crc16/ccitt l`: `-5.347% -> -5.933%` (`-0.586 pp`)
+
+### Current worst deficits after this run
+
+- `graviton3 crc16/ibm xl`: `-11.844%`
+- `graviton3 crc16/ccitt xl`: `-11.253%`
+- `graviton3 crc16/ccitt l`: `-5.933%`
+- `graviton4 crc16/{ccitt,ibm} m/l/xl`: now clustered around `-3.1%` to `-3.5%`
+
+### Dispatch headroom check (kernels bench)
+
+- `graviton4`: selected CRC16 kernels already match measured best for all sizes (`~0%` dispatch headroom).
+- `graviton3`:
+  - `ccitt l`: small dispatch headroom remains (`pmull -> pmull-2way`, about `+1.3%`).
+  - `ccitt xl`: no measured dispatch headroom.
+  - `ibm l/xl`: using `pmull-g3-ibm-hybrid`; this path is not directly visible as a separate kernel line in `kernels` output.
+
+Conclusion:
+- This run is a keep, not a revert.
+- Graviton4 remaining losses look kernel-level (not table-selection mistakes).
+- Graviton3 xl losses are still the priority.
+
+### Artifacts
+
+- `/tmp/checksum-bench-22452368230-k919MG/benchmark-graviton3/output.txt`
+- `/tmp/checksum-bench-22452368230-k919MG/benchmark-graviton4/output.txt`
