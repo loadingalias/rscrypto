@@ -714,6 +714,8 @@ fn exact_match(tune_kind: TuneKind, caps: Caps) -> Option<&'static KernelTable> 
     TuneKind::Graviton2 => Some(&GRAVITON2_TABLE),
     #[cfg(target_arch = "aarch64")]
     TuneKind::Graviton3 => Some(&GRAVITON3_TABLE),
+    #[cfg(target_arch = "aarch64")]
+    TuneKind::Graviton4 => Some(&GRAVITON4_TABLE),
     #[cfg(target_arch = "x86_64")]
     TuneKind::Zen4 => Some(&ZEN4_TABLE),
     #[cfg(target_arch = "x86_64")]
@@ -749,9 +751,9 @@ fn family_match(tune_kind: TuneKind, caps: Caps) -> Option<&'static KernelTable>
     #[cfg(target_arch = "aarch64")]
     TuneKind::AppleM4 | TuneKind::AppleM5 => Some(&APPLE_M1M3_TABLE),
 
-    // AWS Graviton / ARM Neoverse family → use Graviton3 data (better EOR3 tuning)
+    // AWS Graviton / ARM Neoverse family → prefer Graviton4 table where available.
     #[cfg(target_arch = "aarch64")]
-    TuneKind::Graviton4 | TuneKind::Graviton5 => Some(&GRAVITON3_TABLE),
+    TuneKind::Graviton4 | TuneKind::Graviton5 => Some(&GRAVITON4_TABLE),
     #[cfg(target_arch = "aarch64")]
     TuneKind::NeoverseN2 | TuneKind::NeoverseN3 | TuneKind::NeoverseV3 => Some(&GRAVITON3_TABLE),
     #[cfg(target_arch = "aarch64")]
@@ -1180,10 +1182,10 @@ mod aarch64_tables {
     },
 
     l: KernelSet {
-      crc16_ccitt: crc16_k::CCITT_PMULL[1], // retune: 2-way PMULL for Graviton3/4 l+xl
-      crc16_ccitt_name: "aarch64/pmull-2way",
-      crc16_ibm: crc16_k::IBM_PMULL[1], // retune: 2-way PMULL for Graviton3/4 l+xl
-      crc16_ibm_name: "aarch64/pmull-2way",
+      crc16_ccitt: crc16_k::CCITT_PMULL[0], // Graviton3: 1-way PMULL remains best for l/xl
+      crc16_ccitt_name: "aarch64/pmull",
+      crc16_ibm: crc16_k::IBM_PMULL[0], // Graviton3: 1-way PMULL remains best for l/xl
+      crc16_ibm_name: "aarch64/pmull",
       crc24_openpgp: crc24_k::OPENPGP_PMULL[0], // pmull @ 37.90 GiB/s
       crc24_openpgp_name: "aarch64/pmull",
       crc32_ieee: crc32_k::CRC32_PMULL_EOR3[0], // pmull-eor3-v9s3x2e-s3 @ 46.29 GiB/s
@@ -1195,6 +1197,23 @@ mod aarch64_tables {
       crc64_nvme: crc64_k::NVME_PMULL_EOR3[0], // pmull-eor3 @ 38.05 GiB/s (G3: eor3 beats pmull)
       crc64_nvme_name: "aarch64/pmull-eor3",
     },
+  };
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Graviton4 Table
+  //
+  // Starts from Graviton3, but keeps 2-way PMULL for CRC16 large class.
+  // This captures Graviton4 l/xl gains without regressing Graviton3 xl.
+  // ───────────────────────────────────────────────────────────────────────────
+  pub static GRAVITON4_TABLE: KernelTable = KernelTable {
+    l: KernelSet {
+      crc16_ccitt: crc16_k::CCITT_PMULL[1],
+      crc16_ccitt_name: "aarch64/pmull-2way",
+      crc16_ibm: crc16_k::IBM_PMULL[1],
+      crc16_ibm_name: "aarch64/pmull-2way",
+      ..GRAVITON3_TABLE.l
+    },
+    ..GRAVITON3_TABLE
   };
 
   // ───────────────────────────────────────────────────────────────────────────
