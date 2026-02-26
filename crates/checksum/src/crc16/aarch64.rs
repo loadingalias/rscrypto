@@ -344,32 +344,20 @@ unsafe fn update_simd_width32_reflected_3way(
 #[inline]
 #[target_feature(enable = "aes", enable = "neon")]
 unsafe fn update_simd_width32_reflected(state: u32, first: &[Simd; 8], rest: &[[Simd; 8]], keys: &[u64; 23]) -> u32 {
-  use crate::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
-
   let mut x = *first;
 
   x[0] ^= Simd::new(0, state as u64);
 
   let coeff_128b = Simd::new(keys[4], keys[3]);
-  const BLOCK_SIZE: usize = 128;
-  const DOUBLE_GROUP: usize = 2; // 2 x 128B blocks
-  let mut i: usize = 0;
-  let aligned = (rest.len() / DOUBLE_GROUP) * DOUBLE_GROUP;
-
-  while i.strict_add(DOUBLE_GROUP) <= aligned {
-    let prefetch_idx = i.strict_add(LARGE_BLOCK_DISTANCE / BLOCK_SIZE);
-    if prefetch_idx < rest.len() {
-      prefetch_read_l1(rest[prefetch_idx].as_ptr().cast::<u8>());
-    }
-
-    fold_block_128_width32_reflected(&mut x, &rest[i], coeff_128b);
-    fold_block_128_width32_reflected(&mut x, &rest[i.strict_add(1)], coeff_128b);
-    i = i.strict_add(DOUBLE_GROUP);
-  }
-
-  while i < rest.len() {
-    fold_block_128_width32_reflected(&mut x, &rest[i], coeff_128b);
-    i = i.strict_add(1);
+  for chunk in rest {
+    x[0] = x[0].fold_16_reflected(coeff_128b, chunk[0]);
+    x[1] = x[1].fold_16_reflected(coeff_128b, chunk[1]);
+    x[2] = x[2].fold_16_reflected(coeff_128b, chunk[2]);
+    x[3] = x[3].fold_16_reflected(coeff_128b, chunk[3]);
+    x[4] = x[4].fold_16_reflected(coeff_128b, chunk[4]);
+    x[5] = x[5].fold_16_reflected(coeff_128b, chunk[5]);
+    x[6] = x[6].fold_16_reflected(coeff_128b, chunk[6]);
+    x[7] = x[7].fold_16_reflected(coeff_128b, chunk[7]);
   }
 
   finalize_lanes_width32_reflected(x, keys)
