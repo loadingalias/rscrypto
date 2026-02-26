@@ -923,6 +923,21 @@ mod aarch64_tables {
     crc24::kernels::aarch64 as crc24_k, crc32::kernels::aarch64 as crc32_k, crc64::kernels::aarch64 as crc64_k,
   };
 
+  /// Graviton3 CRC16/IBM large-path hybrid.
+  ///
+  /// Empirically, 2-way PMULL helps lower "large" buffers while 1-way PMULL
+  /// remains safer for very large buffers on G3. This keeps the fast path
+  /// without paying the xl penalty.
+  #[inline]
+  fn g3_crc16_ibm_l_hybrid(crc: u16, data: &[u8]) -> u16 {
+    const PMULL_2WAY_MAX_LEN: usize = 262_144;
+    if data.len() <= PMULL_2WAY_MAX_LEN {
+      (crc16_k::IBM_PMULL[1])(crc, data)
+    } else {
+      (crc16_k::IBM_PMULL[0])(crc, data)
+    }
+  }
+
   // ───────────────────────────────────────────────────────────────────────────
   // Apple M1-M3 Table
   //
@@ -1184,8 +1199,8 @@ mod aarch64_tables {
     l: KernelSet {
       crc16_ccitt: crc16_k::CCITT_PMULL[0], // Graviton3: 1-way PMULL remains best for l/xl
       crc16_ccitt_name: "aarch64/pmull",
-      crc16_ibm: crc16_k::IBM_PMULL[0], // Graviton3: 1-way PMULL remains best for l/xl
-      crc16_ibm_name: "aarch64/pmull",
+      crc16_ibm: g3_crc16_ibm_l_hybrid,
+      crc16_ibm_name: "aarch64/pmull-g3-ibm-hybrid",
       crc24_openpgp: crc24_k::OPENPGP_PMULL[0], // pmull @ 37.90 GiB/s
       crc24_openpgp_name: "aarch64/pmull",
       crc32_ieee: crc32_k::CRC32_PMULL_EOR3[0], // pmull-eor3-v9s3x2e-s3 @ 46.29 GiB/s
@@ -1206,6 +1221,13 @@ mod aarch64_tables {
   // This captures Graviton4 l/xl gains without regressing Graviton3 xl.
   // ───────────────────────────────────────────────────────────────────────────
   pub static GRAVITON4_TABLE: KernelTable = KernelTable {
+    m: KernelSet {
+      crc16_ccitt: crc16_k::CCITT_PMULL[1],
+      crc16_ccitt_name: "aarch64/pmull-2way",
+      crc16_ibm: crc16_k::IBM_PMULL[1],
+      crc16_ibm_name: "aarch64/pmull-2way",
+      ..GRAVITON3_TABLE.m
+    },
     l: KernelSet {
       crc16_ccitt: crc16_k::CCITT_PMULL[1],
       crc16_ccitt_name: "aarch64/pmull-2way",
