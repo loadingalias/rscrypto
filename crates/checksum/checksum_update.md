@@ -148,3 +148,121 @@ Conclusion:
 1. `intel-icl crc32/ieee s`: retune selection away from `vpclmul` (trial `vpclmul-2way` then `vpclmul-8way`), rerun same 4-lane matrix.
 2. `intel-spr crc32/ieee s`: retune from `vpclmul-7way` to best measured small-size variant (`vpclmul-2way` candidate), rerun same 4-lane matrix.
 3. `graviton3 crc32/ieee xl`: kernel-path investigation (no internal dispatch headroom in current table).
+
+## 2026-02-26: Full-suite checksum run attempt (INCOMPLETE, partial data only)
+
+- Workflow run: `22421227461`
+- Commit under test: `4eab23c03474eb6cad5f55bad48862a271e868db`
+- Requested scope: all checksum CRC families (`comp+kernels`) across 8 lanes.
+
+### Run outcome
+
+- Workflow conclusion: `failure`
+- Lane status:
+  - Completed with artifacts: `amd-zen5`, `graviton4`, `ibm-power10`, `ibm-s390x`
+  - Incomplete/cancelled (no artifact): `amd-zen4`, `intel-icl`, `intel-spr`
+  - Failed/cancelled run step: `graviton3`
+
+This is **not** a valid full baseline for all arches because 4 lanes are missing.
+
+### Partial snapshot (4 completed lanes only)
+
+- Cases captured: `140` (`4 arches x 7 algos x 5 sizes`)
+- Ahead of best external: `119`
+- Behind best external: `21`
+- By arch:
+  - `amd-zen5`: `31` wins / `4` losses
+  - `graviton4`: `23` wins / `12` losses
+  - `ibm-power10`: `33` wins / `2` losses
+  - `ibm-s390x`: `32` wins / `3` losses
+
+### Largest partial deficits
+
+- `ibm-power10 crc64/xz xs`: `-20.636%` (selected `portable/slice16`, no internal headroom)
+- `ibm-power10 crc64/nvme xs`: `-19.999%` (selected `portable/slice16`, no internal headroom)
+- `ibm-s390x crc32/ieee xs`: `-14.597%` (selected `portable/slice16`, no internal headroom)
+- `amd-zen5 crc64/xz l`: `-12.650%` (dispatch headroom exists: `vpclmul-4x512 -> vpclmul-4way`)
+- `graviton4 crc16/ccitt xl`: `-8.980%` (dispatch headroom exists: `pmull -> pmull-2way`)
+
+### Artifacts (partial run data)
+
+- `/private/tmp/checksum-bench-22421227461/benchmark-amd-zen5/output.txt`
+- `/private/tmp/checksum-bench-22421227461/benchmark-graviton4/output.txt`
+- `/private/tmp/checksum-bench-22421227461/benchmark-ibm-power10/output.txt`
+- `/private/tmp/checksum-bench-22421227461/benchmark-ibm-s390x/output.txt`
+- `/private/tmp/checksum-bench-22421227461/comp_parsed.csv`
+- `/private/tmp/checksum-bench-22421227461/kernels_parsed.csv`
+- `/private/tmp/checksum-bench-22421227461/comp_vs_competitors.csv`
+- `/private/tmp/checksum-bench-22421227461/current_losses.csv`
+- `/private/tmp/checksum-bench-22421227461/kernel_selected_vs_best.csv`
+
+### Baseline policy update
+
+- Do **not** replace full-suite baseline with run `22421227461`.
+- Use this run only as a partial directional snapshot for the 4 completed arches.
+
+## 2026-02-26: Full-suite checksum baseline (SUCCESS)
+
+- Workflow run: `22425195531` (`Bench`, all 8 lanes green)
+- Commit under test: `4eab23c03474eb6cad5f55bad48862a271e868db`
+- Run URL: `https://github.com/loadingalias/rscrypto/actions/runs/22425195531`
+
+### Baseline status (all CRC families, all 8 arches)
+
+- Total cases: `280`
+- Ahead of best external: `247`
+- Behind best external: `33`
+
+By arch (wins / losses):
+- `amd-zen4`: `34 / 1`
+- `amd-zen5`: `34 / 1`
+- `graviton3`: `29 / 6`
+- `graviton4`: `23 / 12`
+- `intel-icl`: `33 / 2`
+- `intel-spr`: `28 / 7`
+- `ibm-s390x`: `33 / 2`
+- `ibm-power10`: `33 / 2`
+
+By algorithm (wins / losses):
+- `crc16/ccitt`: `33 / 7`
+- `crc16/ibm`: `33 / 7`
+- `crc24/openpgp`: `40 / 0`
+- `crc32/ieee`: `34 / 6`
+- `crc32c/castagnoli`: `34 / 6`
+- `crc64/nvme`: `36 / 4`
+- `crc64/xz`: `37 / 3`
+
+### Largest deficits (current priority queue)
+
+- `ibm-power10 crc64/xz xs`: `-19.745%` (`portable/slice16`, `1.5153` vs `1.8881 GiB/s`)
+- `ibm-power10 crc64/nvme xs`: `-19.458%` (`portable/slice16`, `1.5179` vs `1.8846 GiB/s`)
+- `intel-icl crc32/ieee s`: `-12.301%` (`x86_64/vpclmul-8way`, `15.785` vs `17.999 GiB/s`)
+- `graviton3 crc16/ibm xl`: `-10.821%` (`aarch64/pmull`, `30.699` vs `34.424 GiB/s`)
+- `graviton3 crc16/ccitt xl`: `-10.259%` (`aarch64/pmull`, `31.204` vs `34.771 GiB/s`)
+- `graviton4 crc16/ccitt xl`: `-8.747%`
+- `graviton4 crc16/ccitt l`: `-8.465%`
+- `graviton4 crc16/ibm l`: `-8.444%`
+- `graviton4 crc16/ibm xl`: `-8.391%`
+- `amd-zen4 crc32c/castagnoli l`: `-7.233%`
+
+### Artifacts
+
+- `/private/tmp/checksum-bench-22425195531/benchmark-amd-zen4/output.txt`
+- `/private/tmp/checksum-bench-22425195531/benchmark-amd-zen5/output.txt`
+- `/private/tmp/checksum-bench-22425195531/benchmark-graviton3/output.txt`
+- `/private/tmp/checksum-bench-22425195531/benchmark-graviton4/output.txt`
+- `/private/tmp/checksum-bench-22425195531/benchmark-intel-icl/output.txt`
+- `/private/tmp/checksum-bench-22425195531/benchmark-intel-spr/output.txt`
+- `/private/tmp/checksum-bench-22425195531/benchmark-ibm-s390x/output.txt`
+- `/private/tmp/checksum-bench-22425195531/benchmark-ibm-power10/output.txt`
+- `/private/tmp/checksum-bench-22425195531/comp_parsed.csv`
+- `/private/tmp/checksum-bench-22425195531/kernels_parsed.csv`
+- `/private/tmp/checksum-bench-22425195531/comp_vs_competitors.csv`
+- `/private/tmp/checksum-bench-22425195531/current_losses.csv`
+- `/private/tmp/checksum-bench-22425195531/kernel_selected_vs_best.csv`
+
+### Focus after this baseline
+
+1. `intel-icl crc32/ieee s`: fix small-size x86 kernel/dispatch choice first (largest x86 deficit).
+2. `graviton3/graviton4 crc16 (l/xl)`: investigate AArch64 PMULL kernel throughput gap vs `crc-fast`.
+3. `ibm-power10 crc64 xs`: targeted tiny-input path work (`portable/slice16` vs competitor xs behavior).
