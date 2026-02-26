@@ -1180,10 +1180,10 @@ mod aarch64_tables {
     },
 
     l: KernelSet {
-      crc16_ccitt: crc16_k::CCITT_PMULL[0], // pmull @ 37.89 GiB/s
-      crc16_ccitt_name: "aarch64/pmull",
-      crc16_ibm: crc16_k::IBM_PMULL[0], // pmull @ 37.92 GiB/s
-      crc16_ibm_name: "aarch64/pmull",
+      crc16_ccitt: crc16_k::CCITT_PMULL[1], // retune: 2-way PMULL for Graviton3/4 l+xl
+      crc16_ccitt_name: "aarch64/pmull-2way",
+      crc16_ibm: crc16_k::IBM_PMULL[1], // retune: 2-way PMULL for Graviton3/4 l+xl
+      crc16_ibm_name: "aarch64/pmull-2way",
       crc24_openpgp: crc24_k::OPENPGP_PMULL[0], // pmull @ 37.90 GiB/s
       crc24_openpgp_name: "aarch64/pmull",
       crc32_ieee: crc32_k::CRC32_PMULL_EOR3[0], // pmull-eor3-v9s3x2e-s3 @ 46.29 GiB/s
