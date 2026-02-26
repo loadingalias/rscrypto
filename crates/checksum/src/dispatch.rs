@@ -923,6 +923,21 @@ mod aarch64_tables {
     crc24::kernels::aarch64 as crc24_k, crc32::kernels::aarch64 as crc32_k, crc64::kernels::aarch64 as crc64_k,
   };
 
+  const G3_CRC16_PMULL_2WAY_MAX_LEN: usize = 262_144;
+
+  /// Graviton3 CRC16/CCITT large-path hybrid.
+  ///
+  /// PMULL-2way improves lower "large" buffers, while PMULL remains safer for
+  /// very large buffers on G3.
+  #[inline]
+  fn g3_crc16_ccitt_l_hybrid(crc: u16, data: &[u8]) -> u16 {
+    if data.len() <= G3_CRC16_PMULL_2WAY_MAX_LEN {
+      (crc16_k::CCITT_PMULL[1])(crc, data)
+    } else {
+      (crc16_k::CCITT_PMULL[0])(crc, data)
+    }
+  }
+
   /// Graviton3 CRC16/IBM large-path hybrid.
   ///
   /// Empirically, 2-way PMULL helps lower "large" buffers while 1-way PMULL
@@ -930,8 +945,7 @@ mod aarch64_tables {
   /// without paying the xl penalty.
   #[inline]
   fn g3_crc16_ibm_l_hybrid(crc: u16, data: &[u8]) -> u16 {
-    const PMULL_2WAY_MAX_LEN: usize = 262_144;
-    if data.len() <= PMULL_2WAY_MAX_LEN {
+    if data.len() <= G3_CRC16_PMULL_2WAY_MAX_LEN {
       (crc16_k::IBM_PMULL[1])(crc, data)
     } else {
       (crc16_k::IBM_PMULL[0])(crc, data)
@@ -1197,8 +1211,8 @@ mod aarch64_tables {
     },
 
     l: KernelSet {
-      crc16_ccitt: crc16_k::CCITT_PMULL[0], // Graviton3: 1-way PMULL remains best for l/xl
-      crc16_ccitt_name: "aarch64/pmull",
+      crc16_ccitt: g3_crc16_ccitt_l_hybrid,
+      crc16_ccitt_name: "aarch64/pmull-g3-ccitt-hybrid",
       crc16_ibm: g3_crc16_ibm_l_hybrid,
       crc16_ibm_name: "aarch64/pmull-g3-ibm-hybrid",
       crc24_openpgp: crc24_k::OPENPGP_PMULL[0], // pmull @ 37.90 GiB/s
