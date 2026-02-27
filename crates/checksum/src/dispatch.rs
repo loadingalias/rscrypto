@@ -1503,6 +1503,21 @@ mod x86_64_tables {
     crc24::kernels::x86_64 as crc24_k, crc32::kernels::x86_64 as crc32_k, crc64::kernels::x86_64 as crc64_k,
   };
 
+  const ZEN4_CRC64_XZ_2WAY_MAX_LEN: usize = 262_144;
+
+  /// Zen4 CRC64/XZ large-path hybrid.
+  ///
+  /// 2-way is strongest around lower "large" sizes, while 8-way closes the
+  /// remaining gap at xl-scale buffers.
+  #[inline]
+  fn zen4_crc64_xz_l_hybrid(crc: u64, data: &[u8]) -> u64 {
+    if data.len() <= ZEN4_CRC64_XZ_2WAY_MAX_LEN {
+      (crc64_k::XZ_VPCLMUL[1])(crc, data)
+    } else {
+      (crc64_k::XZ_VPCLMUL[4])(crc, data)
+    }
+  }
+
   // ───────────────────────────────────────────────────────────────────────────
   // Zen5 Table
   //
@@ -1679,10 +1694,10 @@ mod x86_64_tables {
       crc32_ieee_name: "x86_64/vpclmul-2way",
       crc32c: crc32_k::CRC32C_FUSION_VPCLMUL[0], // fusion-vpclmul-v3x2
       crc32c_name: "x86_64/fusion-vpclmul-v3x2",
-      crc64_xz: crc64_k::XZ_VPCLMUL[2], // 4-way @ 74.62 GiB/s (bench: 4way beats 4x512)
-      crc64_xz_name: "x86_64/vpclmul-4way",
-      crc64_nvme: crc64_k::NVME_VPCLMUL[2], // 4-way @ 74.10 GiB/s
-      crc64_nvme_name: "x86_64/vpclmul-4way",
+      crc64_xz: zen4_crc64_xz_l_hybrid,
+      crc64_xz_name: "x86_64/vpclmul-zen4-xz-hybrid",
+      crc64_nvme: crc64_k::NVME_VPCLMUL[1], // 2-way edges out 4-way at l/xl in latest comp+kernels
+      crc64_nvme_name: "x86_64/vpclmul-2way",
     },
   };
 
