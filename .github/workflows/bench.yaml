@@ -84,7 +84,7 @@ on:
         description: "Allow unscoped hashes/comp runs (very expensive; may hit lane timeouts)."
         required: false
         type: boolean
-        default: false
+        default: true
       enforce_blake3_gap_gate:
         description: "Fail when pinned BLAKE3 oneshot gap thresholds are exceeded (requires quick=false)."
         required: false

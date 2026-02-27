@@ -2352,63 +2352,125 @@ fn root_output_oneshot(
 
   // Small exact trees are common in oneshot benchmarks (4KiB/16KiB). For these,
   // bypass the generic CV-stack builder and reduce the leaves directly.
-  if remainder == 0 && full_chunks.is_power_of_two() && full_chunks <= FAST_TREE_MAX_CHUNKS {
-    #[cfg(target_endian = "little")]
-    {
-      let mut cur = [[0u32; 8]; FAST_TREE_MAX_CHUNKS];
-      let mut next = [[0u32; 8]; FAST_TREE_MAX_CHUNKS / 2];
+  if remainder == 0 && full_chunks.is_power_of_two() {
+    if full_chunks <= MAX_SIMD_DEGREE {
+      #[cfg(target_endian = "little")]
+      {
+        let mut cur = [[0u32; 8]; MAX_SIMD_DEGREE];
+        let mut next = [[0u32; 8]; MAX_SIMD_DEGREE / 2];
 
-      // SAFETY: input has exactly `full_chunks * CHUNK_LEN` bytes and `cur` has
-      // `full_chunks` CV slots (`full_chunks * OUT_LEN` bytes).
-      unsafe {
-        (kernel.hash_many_contiguous)(
-          input.as_ptr(),
-          full_chunks,
-          &key_words,
-          0,
-          flags,
-          cur.as_mut_ptr().cast::<u8>(),
-        )
-      };
+        // SAFETY: input has exactly `full_chunks * CHUNK_LEN` bytes and `cur` has
+        // `full_chunks` CV slots (`full_chunks * OUT_LEN` bytes).
+        unsafe {
+          (kernel.hash_many_contiguous)(
+            input.as_ptr(),
+            full_chunks,
+            &key_words,
+            0,
+            flags,
+            cur.as_mut_ptr().cast::<u8>(),
+          )
+        };
 
-      let mut cur_len = full_chunks;
-      while cur_len > 2 {
-        let pairs = cur_len / 2;
-        kernels::parent_cvs_many_from_cvs_inline(kernel.id, &cur[..cur_len], key_words, flags, &mut next[..pairs]);
-        cur[..pairs].copy_from_slice(&next[..pairs]);
-        cur_len = pairs;
+        let mut cur_len = full_chunks;
+        while cur_len > 2 {
+          let pairs = cur_len / 2;
+          kernels::parent_cvs_many_from_cvs_inline(kernel.id, &cur[..cur_len], key_words, flags, &mut next[..pairs]);
+          cur[..pairs].copy_from_slice(&next[..pairs]);
+          cur_len = pairs;
+        }
+        return parent_output(kernel, cur[0], cur[1], key_words, flags);
       }
-      return parent_output(kernel, cur[0], cur[1], key_words, flags);
+
+      #[cfg(not(target_endian = "little"))]
+      {
+        let mut cur = [[0u8; OUT_LEN]; MAX_SIMD_DEGREE];
+        let mut next = [[0u8; OUT_LEN]; MAX_SIMD_DEGREE / 2];
+
+        // SAFETY: input has exactly `full_chunks * CHUNK_LEN` bytes and `cur` has
+        // `full_chunks` CV slots (`full_chunks * OUT_LEN` bytes).
+        unsafe {
+          (kernel.hash_many_contiguous)(
+            input.as_ptr(),
+            full_chunks,
+            &key_words,
+            0,
+            flags,
+            cur.as_mut_ptr().cast::<u8>(),
+          )
+        };
+
+        let mut cur_len = full_chunks;
+        while cur_len > 2 {
+          let pairs = cur_len / 2;
+          kernels::parent_cvs_many_from_bytes_inline(kernel.id, &cur[..cur_len], key_words, flags, &mut next[..pairs]);
+          cur[..pairs].copy_from_slice(&next[..pairs]);
+          cur_len = pairs;
+        }
+        let left = words8_from_le_bytes_32(&cur[0]);
+        let right = words8_from_le_bytes_32(&cur[1]);
+        return parent_output(kernel, left, right, key_words, flags);
+      }
     }
 
-    #[cfg(not(target_endian = "little"))]
-    {
-      let mut cur = [[0u8; OUT_LEN]; FAST_TREE_MAX_CHUNKS];
-      let mut next = [[0u8; OUT_LEN]; FAST_TREE_MAX_CHUNKS / 2];
+    if full_chunks <= FAST_TREE_MAX_CHUNKS {
+      #[cfg(target_endian = "little")]
+      {
+        let mut cur = [[0u32; 8]; FAST_TREE_MAX_CHUNKS];
+        let mut next = [[0u32; 8]; FAST_TREE_MAX_CHUNKS / 2];
 
-      // SAFETY: input has exactly `full_chunks * CHUNK_LEN` bytes and `cur` has
-      // `full_chunks` CV slots (`full_chunks * OUT_LEN` bytes).
-      unsafe {
-        (kernel.hash_many_contiguous)(
-          input.as_ptr(),
-          full_chunks,
-          &key_words,
-          0,
-          flags,
-          cur.as_mut_ptr().cast::<u8>(),
-        )
-      };
+        // SAFETY: input has exactly `full_chunks * CHUNK_LEN` bytes and `cur` has
+        // `full_chunks` CV slots (`full_chunks * OUT_LEN` bytes).
+        unsafe {
+          (kernel.hash_many_contiguous)(
+            input.as_ptr(),
+            full_chunks,
+            &key_words,
+            0,
+            flags,
+            cur.as_mut_ptr().cast::<u8>(),
+          )
+        };
 
-      let mut cur_len = full_chunks;
-      while cur_len > 2 {
-        let pairs = cur_len / 2;
-        kernels::parent_cvs_many_from_bytes_inline(kernel.id, &cur[..cur_len], key_words, flags, &mut next[..pairs]);
-        cur[..pairs].copy_from_slice(&next[..pairs]);
-        cur_len = pairs;
+        let mut cur_len = full_chunks;
+        while cur_len > 2 {
+          let pairs = cur_len / 2;
+          kernels::parent_cvs_many_from_cvs_inline(kernel.id, &cur[..cur_len], key_words, flags, &mut next[..pairs]);
+          cur[..pairs].copy_from_slice(&next[..pairs]);
+          cur_len = pairs;
+        }
+        return parent_output(kernel, cur[0], cur[1], key_words, flags);
       }
-      let left = words8_from_le_bytes_32(&cur[0]);
-      let right = words8_from_le_bytes_32(&cur[1]);
-      return parent_output(kernel, left, right, key_words, flags);
+
+      #[cfg(not(target_endian = "little"))]
+      {
+        let mut cur = [[0u8; OUT_LEN]; FAST_TREE_MAX_CHUNKS];
+        let mut next = [[0u8; OUT_LEN]; FAST_TREE_MAX_CHUNKS / 2];
+
+        // SAFETY: input has exactly `full_chunks * CHUNK_LEN` bytes and `cur` has
+        // `full_chunks` CV slots (`full_chunks * OUT_LEN` bytes).
+        unsafe {
+          (kernel.hash_many_contiguous)(
+            input.as_ptr(),
+            full_chunks,
+            &key_words,
+            0,
+            flags,
+            cur.as_mut_ptr().cast::<u8>(),
+          )
+        };
+
+        let mut cur_len = full_chunks;
+        while cur_len > 2 {
+          let pairs = cur_len / 2;
+          kernels::parent_cvs_many_from_bytes_inline(kernel.id, &cur[..cur_len], key_words, flags, &mut next[..pairs]);
+          cur[..pairs].copy_from_slice(&next[..pairs]);
+          cur_len = pairs;
+        }
+        let left = words8_from_le_bytes_32(&cur[0]);
+        let right = words8_from_le_bytes_32(&cur[1]);
+        return parent_output(kernel, left, right, key_words, flags);
+      }
     }
   }
 

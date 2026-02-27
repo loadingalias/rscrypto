@@ -316,7 +316,7 @@ if [[ "$ALLOW_FULL_HASHES_COMP_INPUT" != "true" \
   && -z "$ONLY_INPUT" \
   && -z "$FILTER_INPUT" ]]; then
   echo "error: refusing unscoped hashes/comp run (expensive and often timeout-prone on CI lanes)." >&2
-  echo "hint: set BENCH_ONLY (recommended: blake3), or BENCH_FILTER (recommended: blake3/oneshot,blake3/kernel-ab)." >&2
+  echo "hint: set BENCH_ONLY and/or BENCH_FILTER to scope the run, or explicitly allow full coverage." >&2
   echo "hint: if you intentionally want full hashes/comp coverage, set BENCH_ALLOW_FULL_HASHES_COMP=true." >&2
   exit 2
 fi
