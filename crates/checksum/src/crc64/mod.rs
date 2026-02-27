@@ -428,6 +428,52 @@ fn crc64_xz_dispatch(crc: u64, data: &[u8]) -> u64 {
   }
 }
 
+#[inline]
+fn crc64_xz_resolved_dispatch() -> Crc64DispatchFn {
+  #[cfg(feature = "std")]
+  {
+    CRC64_XZ_DISPATCH.get_or_init(resolve_crc64_xz_dispatch)
+  }
+
+  #[cfg(not(feature = "std"))]
+  {
+    crc64_xz_dispatch_auto
+  }
+}
+
+#[inline]
+fn crc64_nvme_resolved_dispatch() -> Crc64DispatchFn {
+  #[cfg(feature = "std")]
+  {
+    CRC64_NVME_DISPATCH.get_or_init(resolve_crc64_nvme_dispatch)
+  }
+
+  #[cfg(not(feature = "std"))]
+  {
+    crc64_nvme_dispatch_auto
+  }
+}
+
+#[inline]
+fn crc64_xz_runtime_paths() -> (Crc64DispatchFn, Option<&'static crate::dispatch::KernelTable>) {
+  let cfg = config::get();
+  if cfg.effective_force == Crc64Force::Auto {
+    (crc64_xz_dispatch_auto, Some(crate::dispatch::active_table()))
+  } else {
+    (crc64_xz_resolved_dispatch(), None)
+  }
+}
+
+#[inline]
+fn crc64_nvme_runtime_paths() -> (Crc64DispatchFn, Option<&'static crate::dispatch::KernelTable>) {
+  let cfg = config::get();
+  if cfg.effective_force == Crc64Force::Auto {
+    (crc64_nvme_dispatch_auto, Some(crate::dispatch::active_table()))
+  } else {
+    (crc64_nvme_resolved_dispatch(), None)
+  }
+}
+
 /// CRC-64/XZ vectored dispatch (processes multiple buffers in order).
 #[inline]
 fn crc64_xz_dispatch_vectored(crc: u64, bufs: &[&[u8]]) -> u64 {
@@ -516,6 +562,8 @@ fn crc64_nvme_dispatch_vectored(crc: u64, bufs: &[&[u8]]) -> u64 {
 #[derive(Clone, Copy)]
 pub struct Crc64 {
   state: u64,
+  dispatch: Crc64DispatchFn,
+  auto_table: Option<&'static crate::dispatch::KernelTable>,
 }
 
 /// Explicit name for the XZ CRC-64 variant (alias of [`Crc64`]).
@@ -530,7 +578,12 @@ impl Crc64 {
   #[inline]
   #[must_use]
   pub const fn resume(crc: u64) -> Self {
-    Self { state: crc ^ !0 }
+    Self {
+      state: crc ^ !0,
+      // `resume` is const, so keep runtime force semantics via wrapper dispatch.
+      dispatch: crc64_xz_dispatch,
+      auto_table: None,
+    }
   }
 
   /// Get the name of the currently selected backend.
@@ -563,17 +616,32 @@ impl traits::Checksum for Crc64 {
 
   #[inline]
   fn new() -> Self {
-    Self { state: !0 }
+    let (dispatch, auto_table) = crc64_xz_runtime_paths();
+    Self {
+      state: !0,
+      dispatch,
+      auto_table,
+    }
   }
 
   #[inline]
   fn with_initial(initial: u64) -> Self {
-    Self { state: initial ^ !0 }
+    let (dispatch, auto_table) = crc64_xz_runtime_paths();
+    Self {
+      state: initial ^ !0,
+      dispatch,
+      auto_table,
+    }
   }
 
   #[inline]
   fn update(&mut self, data: &[u8]) {
-    self.state = crc64_xz_dispatch(self.state, data);
+    if let Some(table) = self.auto_table {
+      let kernel = table.select_set(data.len()).crc64_xz;
+      self.state = kernel(self.state, data);
+    } else {
+      self.state = (self.dispatch)(self.state, data);
+    }
   }
 
   #[inline]
@@ -643,6 +711,8 @@ impl traits::ChecksumCombine for Crc64 {
 #[derive(Clone, Copy)]
 pub struct Crc64Nvme {
   state: u64,
+  dispatch: Crc64DispatchFn,
+  auto_table: Option<&'static crate::dispatch::KernelTable>,
 }
 
 impl Crc64Nvme {
@@ -654,7 +724,12 @@ impl Crc64Nvme {
   #[inline]
   #[must_use]
   pub const fn resume(crc: u64) -> Self {
-    Self { state: crc ^ !0 }
+    Self {
+      state: crc ^ !0,
+      // `resume` is const, so keep runtime force semantics via wrapper dispatch.
+      dispatch: crc64_nvme_dispatch,
+      auto_table: None,
+    }
   }
 
   /// Get the name of the currently selected backend.
@@ -687,17 +762,32 @@ impl traits::Checksum for Crc64Nvme {
 
   #[inline]
   fn new() -> Self {
-    Self { state: !0 }
+    let (dispatch, auto_table) = crc64_nvme_runtime_paths();
+    Self {
+      state: !0,
+      dispatch,
+      auto_table,
+    }
   }
 
   #[inline]
   fn with_initial(initial: u64) -> Self {
-    Self { state: initial ^ !0 }
+    let (dispatch, auto_table) = crc64_nvme_runtime_paths();
+    Self {
+      state: initial ^ !0,
+      dispatch,
+      auto_table,
+    }
   }
 
   #[inline]
   fn update(&mut self, data: &[u8]) {
-    self.state = crc64_nvme_dispatch(self.state, data);
+    if let Some(table) = self.auto_table {
+      let kernel = table.select_set(data.len()).crc64_nvme;
+      self.state = kernel(self.state, data);
+    } else {
+      self.state = (self.dispatch)(self.state, data);
+    }
   }
 
   #[inline]

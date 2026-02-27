@@ -1677,8 +1677,8 @@ mod x86_64_tables {
       crc24_openpgp_name: "x86_64/vpclmul-4way",
       crc32_ieee: crc32_k::CRC32_VPCLMUL[1], // 2-way @ 72.57 GiB/s
       crc32_ieee_name: "x86_64/vpclmul-2way",
-      crc32c: crc32_k::CRC32C_FUSION_VPCLMUL[4], // fusion-vpclmul-v3x2-8way @ 75.16 GiB/s
-      crc32c_name: "x86_64/fusion-vpclmul-v3x2-8way",
+      crc32c: crc32_k::CRC32C_FUSION_VPCLMUL[0], // fusion-vpclmul-v3x2
+      crc32c_name: "x86_64/fusion-vpclmul-v3x2",
       crc64_xz: crc64_k::XZ_VPCLMUL[2], // 4-way @ 74.62 GiB/s (bench: 4way beats 4x512)
       crc64_xz_name: "x86_64/vpclmul-4way",
       crc64_nvme: crc64_k::NVME_VPCLMUL[2], // 4-way @ 74.10 GiB/s
@@ -1733,8 +1733,8 @@ mod x86_64_tables {
       crc32_ieee_name: "x86_64/vpclmul-2way",
       crc32c: crc32_k::CRC32C_HWCRC[4],
       crc32c_name: "x86_64/hwcrc-8way",
-      crc64_xz: crc64_k::XZ_VPCLMUL[3],
-      crc64_xz_name: "x86_64/vpclmul-7way",
+      crc64_xz: crc64_k::XZ_VPCLMUL[2],
+      crc64_xz_name: "x86_64/vpclmul-4way",
       crc64_nvme: crc64_k::NVME_PCLMUL[0],
       crc64_nvme_name: "x86_64/pclmul",
     },
@@ -1769,8 +1769,8 @@ mod x86_64_tables {
       crc32c_name: "x86_64/fusion-vpclmul-v3x2-2way",
       crc64_xz: crc64_k::XZ_VPCLMUL_4X512,
       crc64_xz_name: "x86_64/vpclmul-4x512",
-      crc64_nvme: crc64_k::NVME_VPCLMUL_4X512,
-      crc64_nvme_name: "x86_64/vpclmul-4x512",
+      crc64_nvme: crc64_k::NVME_VPCLMUL[1],
+      crc64_nvme_name: "x86_64/vpclmul-2way",
     },
   };
 
