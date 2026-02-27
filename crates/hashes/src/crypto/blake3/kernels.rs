@@ -341,38 +341,6 @@ pub(crate) fn parent_cv_inline(
   }
 }
 
-#[inline(always)]
-pub(crate) fn compress_inline(
-  id: Blake3KernelId,
-  chaining_value: &[u32; 8],
-  block_words: &[u32; 16],
-  counter: u64,
-  block_len: u32,
-  flags: u32,
-) -> [u32; 16] {
-  match id {
-    Blake3KernelId::Portable => super::compress(chaining_value, block_words, counter, block_len, flags),
-    #[cfg(target_arch = "x86_64")]
-    Blake3KernelId::X86Ssse3 => compress_ssse3_wrapper(chaining_value, block_words, counter, block_len, flags),
-    #[cfg(target_arch = "x86_64")]
-    Blake3KernelId::X86Sse41 => compress_sse41_wrapper(chaining_value, block_words, counter, block_len, flags),
-    #[cfg(target_arch = "x86_64")]
-    Blake3KernelId::X86Avx2 => compress_avx2_wrapper(chaining_value, block_words, counter, block_len, flags),
-    #[cfg(target_arch = "x86_64")]
-    Blake3KernelId::X86Avx512 => compress_avx512_wrapper(chaining_value, block_words, counter, block_len, flags),
-    #[cfg(target_arch = "aarch64")]
-    Blake3KernelId::Aarch64Neon => compress_neon_wrapper(chaining_value, block_words, counter, block_len, flags),
-    #[cfg(target_arch = "s390x")]
-    Blake3KernelId::S390xVector => {
-      compress_s390x_vector_wrapper(chaining_value, block_words, counter, block_len, flags)
-    }
-    #[cfg(target_arch = "powerpc64")]
-    Blake3KernelId::PowerVsx => compress_power_vsx_wrapper(chaining_value, block_words, counter, block_len, flags),
-    #[cfg(target_arch = "riscv64")]
-    Blake3KernelId::RiscvV => compress_riscv_v_wrapper(chaining_value, block_words, counter, block_len, flags),
-  }
-}
-
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 fn parent_block_ptrs<const DEGREE: usize, PtrAt>(
