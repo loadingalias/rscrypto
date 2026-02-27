@@ -214,7 +214,7 @@ Optional tools only with a specific question they uniquely answer:
   - Keep as new baseline.
   - This restores wins on `zen4` and preserves/extends the Intel SPR win while reducing the `zen5`/`icl` short-size deficit.
 
-### 2026-02-24 - Candidate X (in progress)
+### 2026-02-24 - Candidate X (`3cbfa0c`)
 - Hypothesis:
   - Remaining misses are concentrated at `256/1024` on `zen5` and `intel-icl`, where size-class `s` still routes through AVX2.
   - Promoting `s` to AVX-512 for these two families should force short exact-block one-chunk inputs onto the AVX-512 asm fast path and close the residual gap.
@@ -244,3 +244,50 @@ Optional tools only with a specific question they uniquely answer:
   - Immediate next step: rerun a targeted `intel-spr` `blake3/kernel-ab` gate check to confirm whether the `4096` miss is repeatable or run noise before final keep/reject.
   - SPR confirmation rerun: CI run `22470059519` (2026-02-27, `intel-spr` only, `filter=kernel-ab`, enforced kernel gate) also failed at `4096`, but narrowly (`+6.08%` vs `+6.00%` limit; `256 -2.46%`, `1024 -4.63%`, `65536 -0.40%` passed).
   - Interpretation: the SPR `4096` kernel-ab miss is repeatable but near-threshold; treat as a real guard-lane regression risk until we either claw back ~0.1-0.3% at `4096` or retune gate policy with explicit justification.
+
+### 2026-02-27 - Candidate Y (`5c52746`)
+- Hypothesis:
+  - The remaining Intel SPR `kernel-ab` miss at `4096` is a fixed-overhead issue in exact power-of-two oneshot tree reduction.
+  - Reducing stack zero-init pressure for small exact trees (`<=16` chunks) should recover margin without touching dispatch policy.
+- Change:
+  - In `root_output_oneshot` exact-tree fast path:
+    - split into two tiers:
+      - `full_chunks <= MAX_SIMD_DEGREE` uses small stack buffers (`16/8` CV slots),
+      - `full_chunks <= FAST_TREE_MAX_CHUNKS` keeps the existing larger (`128/64`) path.
+  - No dispatch-table changes.
+- Validation:
+  - Local: `just check-all && just test` passed.
+  - CI bench run: `22470926772` (2026-02-27, `intel-spr` only, `filter=kernel-ab`, enforced kernel gate).
+- CI outcomes:
+  - `intel-spr` `blake3/kernel-ab` gate passed:
+    - `256 -6.75%`
+    - `1024 +0.19%`
+    - `4096 +1.83%`
+    - `16384 +1.90%`
+    - `65536 +1.78%`
+- Decision:
+  - Keep.
+  - This closed the repeatable `4096` guard-lane miss with margin.
+
+### 2026-02-27 - Candidate Z (`3e9bac9`)
+- Hypothesis:
+  - Exact-tree reduction still pays avoidable copy-back overhead each level (`next -> cur`), especially at `16KiB`/`64KiB` trees.
+  - Ping-ponging source/destination buffers per level should reduce fixed reduction cost while preserving semantics.
+- Change:
+  - In `root_output_oneshot` exact-tree fast path:
+    - replace per-level `copy_from_slice` back into `cur` with alternating `cur`/`next` ping-pong parent folding,
+    - apply to both `<=16` and `<=128` chunk paths, for little- and non-little-endian branches.
+  - No dispatch or API changes.
+- Validation:
+  - Local: `just check-all && just test` passed.
+  - CI bench run: `22494693671` (2026-02-27, `intel-spr` only, `filter=kernel-ab`, enforced kernel gate).
+- CI outcomes:
+  - `intel-spr` `blake3/kernel-ab` gate passed:
+    - `256 -3.17%`
+    - `1024 -4.67%`
+    - `4096 -1.34%`
+    - `16384 -2.61%`
+    - `65536 -1.42%`
+- Decision:
+  - Keep as current baseline.
+  - SPR guard-lane risk from Candidate X is resolved; all enforced SPR kernel-ab sizes are now wins in this targeted run.

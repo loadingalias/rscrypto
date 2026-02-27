@@ -4041,7 +4041,14 @@ fn digest_one_chunk_root_hash_words_generic(kernel: Kernel, key_words: [u32; 8],
     let offset = full_blocks * BLOCK_LEN;
     // SAFETY: `offset + BLOCK_LEN <= input.len()` by construction.
     let block_words = unsafe { words16_from_le_bytes_64(&*input.as_ptr().add(offset).cast::<[u8; BLOCK_LEN]>()) };
-    return first_8_words((kernel.compress)(&cv, &block_words, 0, BLOCK_LEN as u32, final_flags));
+    return first_8_words(kernels::compress_inline(
+      kernel.id,
+      &cv,
+      &block_words,
+      0,
+      BLOCK_LEN as u32,
+      final_flags,
+    ));
   }
 
   let mut final_block = [0u8; BLOCK_LEN];
@@ -4052,7 +4059,14 @@ fn digest_one_chunk_root_hash_words_generic(kernel: Kernel, key_words: [u32; 8],
   }
 
   let final_words = words16_from_le_bytes_64(&final_block);
-  first_8_words((kernel.compress)(&cv, &final_words, 0, last_len as u32, final_flags))
+  first_8_words(kernels::compress_inline(
+    kernel.id,
+    &cv,
+    &final_words,
+    0,
+    last_len as u32,
+    final_flags,
+  ))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
