@@ -2373,13 +2373,21 @@ fn root_output_oneshot(
         };
 
         let mut cur_len = full_chunks;
+        let mut cur_is_cur = true;
         while cur_len > 2 {
           let pairs = cur_len / 2;
-          kernels::parent_cvs_many_from_cvs_inline(kernel.id, &cur[..cur_len], key_words, flags, &mut next[..pairs]);
-          cur[..pairs].copy_from_slice(&next[..pairs]);
+          if cur_is_cur {
+            kernels::parent_cvs_many_from_cvs_inline(kernel.id, &cur[..cur_len], key_words, flags, &mut next[..pairs]);
+          } else {
+            kernels::parent_cvs_many_from_cvs_inline(kernel.id, &next[..cur_len], key_words, flags, &mut cur[..pairs]);
+          }
+          cur_is_cur = !cur_is_cur;
           cur_len = pairs;
         }
-        return parent_output(kernel, cur[0], cur[1], key_words, flags);
+        if cur_is_cur {
+          return parent_output(kernel, cur[0], cur[1], key_words, flags);
+        }
+        return parent_output(kernel, next[0], next[1], key_words, flags);
       }
 
       #[cfg(not(target_endian = "little"))]
@@ -2401,14 +2409,32 @@ fn root_output_oneshot(
         };
 
         let mut cur_len = full_chunks;
+        let mut cur_is_cur = true;
         while cur_len > 2 {
           let pairs = cur_len / 2;
-          kernels::parent_cvs_many_from_bytes_inline(kernel.id, &cur[..cur_len], key_words, flags, &mut next[..pairs]);
-          cur[..pairs].copy_from_slice(&next[..pairs]);
+          if cur_is_cur {
+            kernels::parent_cvs_many_from_bytes_inline(
+              kernel.id,
+              &cur[..cur_len],
+              key_words,
+              flags,
+              &mut next[..pairs],
+            );
+          } else {
+            kernels::parent_cvs_many_from_bytes_inline(
+              kernel.id,
+              &next[..cur_len],
+              key_words,
+              flags,
+              &mut cur[..pairs],
+            );
+          }
+          cur_is_cur = !cur_is_cur;
           cur_len = pairs;
         }
-        let left = words8_from_le_bytes_32(&cur[0]);
-        let right = words8_from_le_bytes_32(&cur[1]);
+        let final_cvs: &[[u8; OUT_LEN]] = if cur_is_cur { &cur[..] } else { &next[..] };
+        let left = words8_from_le_bytes_32(&final_cvs[0]);
+        let right = words8_from_le_bytes_32(&final_cvs[1]);
         return parent_output(kernel, left, right, key_words, flags);
       }
     }
@@ -2433,13 +2459,21 @@ fn root_output_oneshot(
         };
 
         let mut cur_len = full_chunks;
+        let mut cur_is_cur = true;
         while cur_len > 2 {
           let pairs = cur_len / 2;
-          kernels::parent_cvs_many_from_cvs_inline(kernel.id, &cur[..cur_len], key_words, flags, &mut next[..pairs]);
-          cur[..pairs].copy_from_slice(&next[..pairs]);
+          if cur_is_cur {
+            kernels::parent_cvs_many_from_cvs_inline(kernel.id, &cur[..cur_len], key_words, flags, &mut next[..pairs]);
+          } else {
+            kernels::parent_cvs_many_from_cvs_inline(kernel.id, &next[..cur_len], key_words, flags, &mut cur[..pairs]);
+          }
+          cur_is_cur = !cur_is_cur;
           cur_len = pairs;
         }
-        return parent_output(kernel, cur[0], cur[1], key_words, flags);
+        if cur_is_cur {
+          return parent_output(kernel, cur[0], cur[1], key_words, flags);
+        }
+        return parent_output(kernel, next[0], next[1], key_words, flags);
       }
 
       #[cfg(not(target_endian = "little"))]
@@ -2461,14 +2495,32 @@ fn root_output_oneshot(
         };
 
         let mut cur_len = full_chunks;
+        let mut cur_is_cur = true;
         while cur_len > 2 {
           let pairs = cur_len / 2;
-          kernels::parent_cvs_many_from_bytes_inline(kernel.id, &cur[..cur_len], key_words, flags, &mut next[..pairs]);
-          cur[..pairs].copy_from_slice(&next[..pairs]);
+          if cur_is_cur {
+            kernels::parent_cvs_many_from_bytes_inline(
+              kernel.id,
+              &cur[..cur_len],
+              key_words,
+              flags,
+              &mut next[..pairs],
+            );
+          } else {
+            kernels::parent_cvs_many_from_bytes_inline(
+              kernel.id,
+              &next[..cur_len],
+              key_words,
+              flags,
+              &mut cur[..pairs],
+            );
+          }
+          cur_is_cur = !cur_is_cur;
           cur_len = pairs;
         }
-        let left = words8_from_le_bytes_32(&cur[0]);
-        let right = words8_from_le_bytes_32(&cur[1]);
+        let final_cvs: &[[u8; OUT_LEN]] = if cur_is_cur { &cur[..] } else { &next[..] };
+        let left = words8_from_le_bytes_32(&final_cvs[0]);
+        let right = words8_from_le_bytes_32(&final_cvs[1]);
         return parent_output(kernel, left, right, key_words, flags);
       }
     }
