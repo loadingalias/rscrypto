@@ -291,3 +291,23 @@ Optional tools only with a specific question they uniquely answer:
 - Decision:
   - Keep as current baseline.
   - SPR guard-lane risk from Candidate X is resolved; all enforced SPR kernel-ab sizes are now wins in this targeted run.
+
+### 2026-02-27 - Candidate AA (`99874ad`)
+- Hypothesis:
+  - Generic one-chunk root hashing still pays avoidable dispatch overhead on non-x86/aarch64 lanes.
+  - Replacing the final-step `kernel.compress` function-pointer call with an inline kernel-id dispatch helper should improve IBM short-input `kernel-ab` gaps (`256`/`1024`).
+- Change:
+  - Added `kernels::compress_inline(...)` and switched `digest_one_chunk_root_hash_words_generic` final-block compression to use it.
+  - No dispatch-table changes.
+- Validation:
+  - Local: `just check-all && just test` passed.
+  - CI targeted bench run: `22495902076` (`ibm-s390x` + `ibm-power10`, `filter=kernel-ab`, enforced kernel gate).
+- CI outcomes:
+  - `ibm-power10`: gate passed; all enforced sizes remained wins.
+  - `ibm-s390x`: gate failed at short sizes:
+    - `256 +14.54%` vs `+12.00%` limit (prior `+13.40%` in `22284378402`)
+    - `1024 +10.10%` vs `+10.00%` limit (prior `+9.20%` in `22284378402`)
+    - medium/large sizes remained strong wins.
+- Decision:
+  - Reject and revert.
+  - This change did not close the intended IBM short-input gap and slightly worsened `s390x` `256/1024`.
