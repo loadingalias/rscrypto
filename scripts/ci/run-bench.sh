@@ -84,6 +84,21 @@ normalize_csv_raw() {
   fi
 }
 
+csv_has_token() {
+  local csv="${1:-}"
+  local needle="${2:-}"
+  local -a parts=()
+  local token
+  [[ -z "$csv" || -z "$needle" ]] && return 1
+  IFS=',' read -r -a parts <<< "$csv"
+  for token in "${parts[@]:+${parts[@]}}"; do
+    if [[ "$token" == "$needle" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 normalize_selector() {
   echo "${1:-}" | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]'
 }
@@ -226,6 +241,7 @@ MEASURE_MS_INPUT="${BENCH_MEASURE_MS:-}"
 SAMPLE_SIZE_INPUT="${BENCH_SAMPLE_SIZE:-}"
 PROFILE_TIME_SECS_INPUT="${BENCH_PROFILE_TIME_SECS:-}"
 ATTACH_CRITERION_INPUT="$(to_bool "${BENCH_ATTACH_CRITERION:-false}")"
+ALLOW_FULL_HASHES_COMP_INPUT="$(to_bool "${BENCH_ALLOW_FULL_HASHES_COMP:-false}")"
 
 ENFORCE_BLAKE3_GAP_GATE_INPUT="$(to_bool "${BENCH_ENFORCE_BLAKE3_GAP_GATE:-false}")"
 ENFORCE_BLAKE3_KERNEL_GATE_INPUT="$(to_bool "${BENCH_ENFORCE_BLAKE3_KERNEL_GATE:-false}")"
@@ -286,6 +302,25 @@ if [[ "$ENFORCE_BLAKE3_KERNEL_GATE_INPUT" == "true" && "$QUICK_INPUT" == "true" 
   exit 2
 fi
 
+targets_hashes="false"
+targets_comp="false"
+if [[ -z "$CRATES_INPUT" ]] || csv_has_token "$CRATES_INPUT" "hashes"; then
+  targets_hashes="true"
+fi
+if [[ -z "$BENCHES_INPUT" ]] || csv_has_token "$BENCHES_INPUT" "comp"; then
+  targets_comp="true"
+fi
+if [[ "$ALLOW_FULL_HASHES_COMP_INPUT" != "true" \
+  && "$targets_hashes" == "true" \
+  && "$targets_comp" == "true" \
+  && -z "$ONLY_INPUT" \
+  && -z "$FILTER_INPUT" ]]; then
+  echo "error: refusing unscoped hashes/comp run (expensive and often timeout-prone on CI lanes)." >&2
+  echo "hint: set BENCH_ONLY (recommended: blake3), or BENCH_FILTER (recommended: blake3/oneshot,blake3/kernel-ab)." >&2
+  echo "hint: if you intentionally want full hashes/comp coverage, set BENCH_ALLOW_FULL_HASHES_COMP=true." >&2
+  exit 2
+fi
+
 LOG_PATH="$OUT_DIR/output.txt"
 : > "$LOG_PATH"
 
@@ -306,6 +341,7 @@ if [[ -n "$FILTER_INPUT" ]]; then
 fi
 echo "Criterion args: ${CRITERION_ARGS[*]-<none>}"
 echo "Attach raw Criterion: $ATTACH_CRITERION_INPUT"
+echo "Allow full hashes/comp: $ALLOW_FULL_HASHES_COMP_INPUT"
 echo "Enforce BLAKE3 gap gate: $ENFORCE_BLAKE3_GAP_GATE_INPUT"
 echo "Enforce BLAKE3 kernel gate: $ENFORCE_BLAKE3_KERNEL_GATE_INPUT"
 if [[ -n "$PLATFORM_INPUT" ]]; then
@@ -527,6 +563,13 @@ if [[ -n "$BENCHES_INPUT" && "${#PLAN_ROWS[@]}" -gt 0 ]]; then
     fi
   done
   PLAN_ROWS=("${filtered[@]:+${filtered[@]}}")
+fi
+
+if [[ "${#PLAN_ROWS[@]}" -eq 0 && ( -n "$ONLY_INPUT" || -n "$FILTER_INPUT" ) ]]; then
+  echo "error: selector inputs produced an empty execution plan; refusing generic fallback." | tee -a "$LOG_PATH"
+  echo "hint: check BENCH_ONLY/BENCH_FILTER spelling, or clear selectors if you intend a broad run." | tee -a "$LOG_PATH"
+  maybe_attach_criterion
+  exit 2
 fi
 
 run_bench_cmd() {

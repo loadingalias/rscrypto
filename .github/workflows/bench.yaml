@@ -80,6 +80,11 @@ on:
         required: false
         type: boolean
         default: false
+      allow_full_hashes_comp:
+        description: "Allow unscoped hashes/comp runs (very expensive; may hit lane timeouts)."
+        required: false
+        type: boolean
+        default: false
       enforce_blake3_gap_gate:
         description: "Fail when pinned BLAKE3 oneshot gap thresholds are exceeded (requires quick=false)."
         required: false
@@ -169,6 +174,7 @@ jobs:
         BENCH_PROFILE_TIME_SECS="${{ inputs.profile_time_secs }}" \
         RSCRYPTO_BLAKE3_FORCE_KERNEL="${{ inputs.blake3_force_kernel }}" \
         BENCH_ATTACH_CRITERION=${{ inputs.upload_raw_criterion && 'true' || 'false' }} \
+        BENCH_ALLOW_FULL_HASHES_COMP=${{ inputs.allow_full_hashes_comp && 'true' || 'false' }} \
         BENCH_ENFORCE_BLAKE3_GAP_GATE=${{ inputs.enforce_blake3_gap_gate && 'true' || 'false' }} \
         BENCH_ENFORCE_BLAKE3_KERNEL_GATE=${{ inputs.enforce_blake3_kernel_gate && 'true' || 'false' }} \
         BENCH_PLATFORM="${{ matrix.platform }}" \
