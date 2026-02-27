@@ -225,3 +225,22 @@ Optional tools only with a specific question they uniquely answer:
 - Validation:
   - Local: `just check-all && just test` passed.
   - CI plan (targeted): `intel-icl`, `amd-zen5`, plus `amd-zen4`/`intel-spr` guard lanes.
+- CI outcomes:
+  - CI run: `22468964422` (2026-02-27; targeted `oneshot` + enforced `kernel-ab` gate).
+  - `amd-zen5`
+    - `blake3/oneshot`: gate passed (`256 +0.27%`, `1024 -1.47%`, `4096 +5.64%`, `65536 -0.32%`).
+    - `blake3/kernel-ab`: gate passed (`256 -2.97%`, `1024 -1.41%`, `4096 +4.08%`, `65536 +2.16%`).
+  - `amd-zen4`
+    - `blake3/oneshot`: gate passed (`256 -4.74%`, `1024 -0.77%`, `4096 +6.00%`, `65536 +0.77%`).
+    - `blake3/kernel-ab`: gate passed (`256 -10.49%`, `1024 -5.63%`, `4096 +5.71%`, `65536 +0.65%`).
+  - `intel-icl`
+    - `blake3/oneshot`: gate passed (`256 -0.55%`, `1024 -2.14%`, `4096 +7.34%`, `65536 +1.66%`).
+    - `blake3/kernel-ab`: gate passed (`256 -0.79%`, `1024 -2.40%`, `4096 +6.89%`, `65536 +1.54%`).
+  - `intel-spr` (guard lane)
+    - `blake3/oneshot`: gate passed (`256 -3.81%`, `1024 -2.54%`, `4096 +6.35%`, `65536 +2.74%`).
+    - `blake3/kernel-ab`: gate failed at `4096` (`+7.96%` vs `+6.00%` limit); other enforced sizes passed (`256 -4.28%`, `1024 -1.76%`, `65536 +2.29%`).
+- Decision:
+  - Hold/keep Candidate X for now; do not revert from this single run.
+  - Immediate next step: rerun a targeted `intel-spr` `blake3/kernel-ab` gate check to confirm whether the `4096` miss is repeatable or run noise before final keep/reject.
+  - SPR confirmation rerun: CI run `22470059519` (2026-02-27, `intel-spr` only, `filter=kernel-ab`, enforced kernel gate) also failed at `4096`, but narrowly (`+6.08%` vs `+6.00%` limit; `256 -2.46%`, `1024 -4.63%`, `65536 -0.40%` passed).
+  - Interpretation: the SPR `4096` kernel-ab miss is repeatable but near-threshold; treat as a real guard-lane regression risk until we either claw back ~0.1-0.3% at `4096` or retune gate policy with explicit justification.

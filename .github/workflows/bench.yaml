@@ -96,10 +96,6 @@ on:
         type: boolean
         default: false
 
-concurrency:
-  group: manual-bench-${{ github.ref }}
-  cancel-in-progress: true
-
 env:
   RUST_BACKTRACE: 1
   CARGO_TERM_COLOR: always
@@ -141,6 +137,11 @@ jobs:
     name: Benchmark (${{ matrix.display_name }})
     needs: plan
     if: ${{ needs.plan.outputs.has_targets == 'true' }}
+    concurrency:
+      # Allow multiple bench workflow runs to overlap as long as they target
+      # different lanes; serialize per lane to avoid self-contention.
+      group: bench-${{ github.ref }}-${{ matrix.platform }}
+      cancel-in-progress: false
     strategy:
       fail-fast: false
       matrix:
