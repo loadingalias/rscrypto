@@ -271,6 +271,52 @@ fn crc16_ccitt_dispatch(crc: u16, data: &[u8]) -> u16 {
   }
 }
 
+#[inline]
+fn crc16_ccitt_resolved_dispatch() -> Crc16DispatchFn {
+  #[cfg(feature = "std")]
+  {
+    CRC16_CCITT_DISPATCH.get_or_init(resolve_crc16_ccitt_dispatch)
+  }
+
+  #[cfg(not(feature = "std"))]
+  {
+    crc16_ccitt_dispatch_auto
+  }
+}
+
+#[inline]
+fn crc16_ibm_resolved_dispatch() -> Crc16DispatchFn {
+  #[cfg(feature = "std")]
+  {
+    CRC16_IBM_DISPATCH.get_or_init(resolve_crc16_ibm_dispatch)
+  }
+
+  #[cfg(not(feature = "std"))]
+  {
+    crc16_ibm_dispatch_auto
+  }
+}
+
+#[inline]
+fn crc16_ccitt_runtime_paths() -> (Crc16DispatchFn, Option<&'static crate::dispatch::KernelTable>) {
+  let cfg = config::get_ccitt();
+  if cfg.effective_force == Crc16Force::Auto {
+    (crc16_ccitt_dispatch_auto, Some(crate::dispatch::active_table()))
+  } else {
+    (crc16_ccitt_resolved_dispatch(), None)
+  }
+}
+
+#[inline]
+fn crc16_ibm_runtime_paths() -> (Crc16DispatchFn, Option<&'static crate::dispatch::KernelTable>) {
+  let cfg = config::get_ibm();
+  if cfg.effective_force == Crc16Force::Auto {
+    (crc16_ibm_dispatch_auto, Some(crate::dispatch::active_table()))
+  } else {
+    (crc16_ibm_resolved_dispatch(), None)
+  }
+}
+
 /// CRC-16/CCITT vectored dispatch (processes multiple buffers in order).
 #[inline]
 fn crc16_ccitt_dispatch_vectored(crc: u16, bufs: &[&[u8]]) -> u16 {
@@ -388,6 +434,8 @@ pub(crate) fn crc16_ibm_selected_kernel_name(len: usize) -> &'static str {
 #[derive(Clone, Copy)]
 pub struct Crc16Ccitt {
   state: u16,
+  dispatch: Crc16DispatchFn,
+  auto_table: Option<&'static crate::dispatch::KernelTable>,
 }
 
 impl Crc16Ccitt {
@@ -404,6 +452,9 @@ impl Crc16Ccitt {
   pub const fn resume(crc: u16) -> Self {
     Self {
       state: crc ^ Self::XOROUT,
+      // `resume` is const, so keep runtime force semantics via wrapper dispatch.
+      dispatch: crc16_ccitt_dispatch,
+      auto_table: None,
     }
   }
 
@@ -437,19 +488,32 @@ impl traits::Checksum for Crc16Ccitt {
 
   #[inline]
   fn new() -> Self {
-    Self { state: Self::INIT }
+    let (dispatch, auto_table) = crc16_ccitt_runtime_paths();
+    Self {
+      state: Self::INIT,
+      dispatch,
+      auto_table,
+    }
   }
 
   #[inline]
   fn with_initial(initial: u16) -> Self {
+    let (dispatch, auto_table) = crc16_ccitt_runtime_paths();
     Self {
       state: initial ^ Self::XOROUT,
+      dispatch,
+      auto_table,
     }
   }
 
   #[inline]
   fn update(&mut self, data: &[u8]) {
-    self.state = crc16_ccitt_dispatch(self.state, data);
+    if let Some(table) = self.auto_table {
+      let kernel = table.select_set(data.len()).crc16_ccitt;
+      self.state = kernel(self.state, data);
+    } else {
+      self.state = (self.dispatch)(self.state, data);
+    }
   }
 
   #[inline]
@@ -500,6 +564,8 @@ impl traits::ChecksumCombine for Crc16Ccitt {
 #[derive(Clone, Copy)]
 pub struct Crc16Ibm {
   state: u16,
+  dispatch: Crc16DispatchFn,
+  auto_table: Option<&'static crate::dispatch::KernelTable>,
 }
 
 impl Crc16Ibm {
@@ -516,6 +582,9 @@ impl Crc16Ibm {
   pub const fn resume(crc: u16) -> Self {
     Self {
       state: crc ^ Self::XOROUT,
+      // `resume` is const, so keep runtime force semantics via wrapper dispatch.
+      dispatch: crc16_ibm_dispatch,
+      auto_table: None,
     }
   }
 
@@ -549,19 +618,32 @@ impl traits::Checksum for Crc16Ibm {
 
   #[inline]
   fn new() -> Self {
-    Self { state: Self::INIT }
+    let (dispatch, auto_table) = crc16_ibm_runtime_paths();
+    Self {
+      state: Self::INIT,
+      dispatch,
+      auto_table,
+    }
   }
 
   #[inline]
   fn with_initial(initial: u16) -> Self {
+    let (dispatch, auto_table) = crc16_ibm_runtime_paths();
     Self {
       state: initial ^ Self::XOROUT,
+      dispatch,
+      auto_table,
     }
   }
 
   #[inline]
   fn update(&mut self, data: &[u8]) {
-    self.state = crc16_ibm_dispatch(self.state, data);
+    if let Some(table) = self.auto_table {
+      let kernel = table.select_set(data.len()).crc16_ibm;
+      self.state = kernel(self.state, data);
+    } else {
+      self.state = (self.dispatch)(self.state, data);
+    }
   }
 
   #[inline]
