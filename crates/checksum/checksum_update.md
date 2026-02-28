@@ -1,5 +1,56 @@
 # Checksum Baseline Update (2026-02-25)
 
+## 2026-02-28 Current Competitive Snapshot
+
+- Data source: [benchmark-results/ci-22524744705-checksum/checksum_tally.json](/Users/mr.wolf/loadingalias/rscrypto/benchmark-results/ci-22524744705-checksum/checksum_tally.json)
+- Run: `22524744705` (`quick=false`, `crates=checksum`, `benches=comp`, all 8 arches).
+- Overall: `242W / 32L / 6T` (`280` comparable cases, `86.4%` wins).
+
+Per arch (`wins/total`):
+- `amd-zen4`: `30/35` (`85.7%`)
+- `amd-zen5`: `31/35` (`88.6%`)
+- `graviton3`: `26/35` (`74.3%`)
+- `graviton4`: `24/35` (`68.6%`)
+- `ibm-power10`: `32/35` (`91.4%`)
+- `ibm-s390x`: `34/35` (`97.1%`)
+- `intel-icl`: `34/35` (`97.1%`)
+- `intel-spr`: `31/35` (`88.6%`)
+
+Per algorithm:
+- `crc24/openpgp`: `40/40` (`100%`) - done.
+- `crc64/xz`: `35/40` (`87.5%`)
+- `crc16/ibm`: `34/40` (`85.0%`)
+- `crc32c/castagnoli`: `34/40` (`85.0%`)
+- `crc64/nvme`: `34/40` (`85.0%`)
+- `crc32/ieee`: `33/40` (`82.5%`)
+- `crc16/ccitt`: `32/40` (`80.0%`)
+
+Loss clusters (highest frequency):
+- `crc64/nvme/xl@vec` (4 losses)
+- `crc16/ccitt/xl@vec` (3 losses)
+- `crc16/ibm/xl@vec` (3 losses)
+- Then `crc16`/`crc32` large buckets (`l`/`xl`) on Graviton3/4.
+
+Interpretation:
+- We are close, but not at the 90% target yet.
+- To hit `>=90%` on this matrix, we need about `+10` net flips.
+- The fastest path is Arm large-size (`l/xl`) `crc16` + `crc64/nvme` cleanup.
+
+## Next Steps (Checksum)
+
+1. Focus on Graviton3/4 `crc16/ccitt` and `crc16/ibm` `l/xl` first.
+2. In parallel, target `crc64/nvme/xl` cross-arch loss cells (especially Arm + SPR).
+3. Avoid broad table churn; run targeted kernel shootouts and only promote measured winners.
+4. Rerun full checksum comp across all 8 arches after each small batch of flips.
+
+## First Step (Checksum)
+
+- Run a targeted non-quick kernel shootout on only these cells first:
+  - `crc16/ccitt` (`l`, `xl`) on `graviton3`, `graviton4`
+  - `crc16/ibm` (`l`, `xl`) on `graviton3`, `graviton4`
+- Pick winners, apply minimal dispatch updates, then rerun full `checksum/comp` all-arch matrix.
+- Objective for this first cycle: flip at least 4-6 losses from the top-frequency bucket list before touching anything else.
+
 ## Baseline run captured
 
 - Workflow run: `22379444492` (all 8 lanes green)
