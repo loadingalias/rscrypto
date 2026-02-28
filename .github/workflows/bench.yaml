@@ -72,7 +72,7 @@ on:
         required: false
         type: string
       filter:
-        description: "Advanced raw Criterion filter(s), comma-separated."
+        description: "Advanced raw Criterion filter(s), comma-separated. Do NOT use 'hashes/comp' here (it selects the full hashes comp matrix)."
         required: false
         type: string
       upload_raw_criterion:
@@ -163,11 +163,19 @@ jobs:
           cat /proc/cpuinfo | head -50
         fi
       run_script: |
+        FILTER_INPUT="${{ inputs.filter }}"
+        FILTER_LOWER="$(echo "${FILTER_INPUT}" | tr '[:upper:]' '[:lower:]')"
+        if [[ ",${FILTER_LOWER}," == *",hashes/comp,"* ]]; then
+          echo "error: filter contains 'hashes/comp', which expands to the full hashes comp matrix." >&2
+          echo "hint: use 'blake3/' for Blake3-only comp groups, or use BENCH_ONLY selectors for scoped plans." >&2
+          exit 2
+        fi
+
         BENCH_OUTPUT_DIR=benchmark-results \
         BENCH_CRATES="${{ inputs.crates }}" \
         BENCH_BENCHES="${{ inputs.benches }}" \
         BENCH_ONLY="${{ inputs.only }}" \
-        BENCH_FILTER="${{ inputs.filter }}" \
+        BENCH_FILTER="${FILTER_INPUT}" \
         BENCH_QUICK=${{ inputs.quick && 'true' || 'false' }} \
         BENCH_WARMUP_MS="${{ inputs.warmup_ms }}" \
         BENCH_MEASURE_MS="${{ inputs.measure_ms }}" \
