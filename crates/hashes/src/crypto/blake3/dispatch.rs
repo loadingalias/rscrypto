@@ -103,13 +103,13 @@ pub(crate) struct HasherDispatch {
 impl HasherDispatch {
   #[inline]
   #[must_use]
-  pub(crate) fn stream_kernel(self) -> Kernel {
+  pub(crate) fn stream_kernel(&self) -> Kernel {
     self.stream_kernel
   }
 
   #[inline]
   #[must_use]
-  pub(crate) fn bulk_kernel_for_update(self, input_len: usize) -> Kernel {
+  pub(crate) fn bulk_kernel_for_update(&self, input_len: usize) -> Kernel {
     if input_len >= self.bulk_sizeclass_threshold {
       self.size_classes.select(input_len)
     } else {
@@ -119,25 +119,25 @@ impl HasherDispatch {
 
   #[inline]
   #[must_use]
-  pub(crate) fn size_class_kernel(self, len: usize) -> Kernel {
+  pub(crate) fn size_class_kernel(&self, len: usize) -> Kernel {
     self.size_classes.select(len)
   }
 
   #[inline]
   #[must_use]
-  pub(crate) fn should_defer_simd(self, buffered_len: usize, incoming_len: usize) -> bool {
+  pub(crate) fn should_defer_simd(&self, buffered_len: usize, incoming_len: usize) -> bool {
     buffered_len.saturating_add(incoming_len) < self.simd_threshold
   }
 
   #[inline]
   #[must_use]
-  pub(crate) fn parallel_streaming(self) -> ParallelTable {
+  pub(crate) fn parallel_streaming(&self) -> ParallelTable {
     self.parallel_streaming
   }
 
   #[inline]
   #[must_use]
-  pub(crate) fn bulk_sizeclass_threshold(self) -> usize {
+  pub(crate) fn bulk_sizeclass_threshold(&self) -> usize {
     self.bulk_sizeclass_threshold
   }
 }
