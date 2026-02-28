@@ -208,6 +208,22 @@ build_algo_plan_rows() {
   fi
 
   if [[ "$algo" == "blake3" ]]; then
+    # If a bench scope is explicitly requested, keep Blake3 inside that scope.
+    # This prevents BENCH_ONLY=blake3 + BENCH_BENCHES=comp/kernels from
+    # filtering down to an empty plan.
+    if [[ -n "$BENCHES_INPUT" ]]; then
+      if csv_has_token "$BENCHES_INPUT" "comp"; then
+        PLAN_ROWS+=("hashes|comp|blake3/")
+      fi
+      if csv_has_token "$BENCHES_INPUT" "kernels"; then
+        PLAN_ROWS+=("hashes|kernels|blake3")
+      fi
+      if csv_has_token "$BENCHES_INPUT" "blake3"; then
+        PLAN_ROWS+=("hashes|blake3|blake3")
+      fi
+      return 0
+    fi
+
     # Dedicated bench target already includes oneshot/streaming/keyed/xof/derive variants.
     PLAN_ROWS+=("hashes|blake3|blake3")
     return 0
