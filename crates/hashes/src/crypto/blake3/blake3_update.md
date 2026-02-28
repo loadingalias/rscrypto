@@ -2,53 +2,47 @@
 
 ## 2026-02-28 Current Competitive Snapshot
 
-- Data source: [benchmark-results/ci-22523614273-blake3/blake3_tally.json](/Users/mr.wolf/loadingalias/rscrypto/benchmark-results/ci-22523614273-blake3/blake3_tally.json)
-- Scope note: this run (`22523614273`) was cancelled, but all 8 lane logs were captured and parsed; treat this as the latest complete cross-arch snapshot until the next clean rerun.
-- Overall: `228W / 212L / 1T` (`440` cases, `51.8%` wins).
+- Data source: [benchmark-results/ci-22527347170-blake3/blake3_tally.json](/Users/mr.wolf/loadingalias/rscrypto/benchmark-results/ci-22527347170-blake3/blake3_tally.json)
+- Run: `22527347170` (`quick=false`, `crates=hashes`, `benches=comp`, `only=blake3`, all 8 arches), commit `171d60de...`.
+- Overall: `230W / 206L / 4T` (`440` cases, `52.3%` wins).
+- Baseline status: this is the best clean full-matrix Blake3 snapshot so far in-repo (`+2W`, `-6L`, `+3T` vs `22523614273`).
 
 Per arch (`wins/total`):
 - `amd_zen4`: `31/55` (`56.4%`)
-- `amd_zen5`: `20/55` (`36.4%`)
-- `aws_graviton3`: `24/55` (`43.6%`)
-- `aws_graviton4`: `26/55` (`47.3%`)
-- `ibm_power10_ppc64le`: `36/55` (`65.5%`)
+- `amd_zen5`: `18/55` (`32.7%`)
+- `aws_graviton3`: `27/55` (`49.1%`)
+- `aws_graviton4`: `28/55` (`50.9%`)
+- `ibm_power10_ppc64le`: `34/55` (`61.8%`)
 - `ibm_z_s390x`: `36/55` (`65.5%`)
-- `intel_ice_lake`: `24/55` (`43.6%`)
-- `intel_sapphire_rapids`: `31/55` (`56.4%`)
+- `intel_ice_lake`: `27/55` (`49.1%`)
+- `intel_sapphire_rapids`: `29/55` (`52.7%`)
 
 Per group:
-- `derive-key`: `97W / 7L` (`93.3%`) - strong.
-- `hash`: `57W / 47L` (`54.8%`) - mixed.
-- `keyed-hash`: `54W / 49L / 1T` (`51.9%`) - mixed.
+- `derive-key`: `97W / 6L / 1T` (`93.3%`) - strong.
+- `hash`: `55W / 47L / 2T` (`52.9%`) - mixed.
+- `keyed-hash`: `53W / 50L / 1T` (`51.0%`) - mixed.
 - `streaming`: `12W / 52L` (`18.8%`) - primary deficit.
-- `xof`: `7W / 57L` (`10.9%`) - primary deficit.
+- `xof`: `13W / 51L` (`20.3%`) - improved, still primary deficit.
 
 Clear loss clusters:
 - Streaming: `64B`, `128B`, `256B`, `512B`, `1024B` chunk modes are `0/8` each.
-- XOF: `1024B-in/32B-out` is `0/8`; most other XOF cells are `1/8`.
-- Keyed/hash edge case around `65B` is still weak.
+- XOF short-output (`32B`) remains red across all arches (`1B-in`, `64B-in`, `1024B-in` are `0/8`).
+- Keyed/hash edge case around `65B` is still weak (`keyed-hash/65` is `0/8`, `hash/65` is `1/8`).
 
 ## Next Steps (Blake3)
 
-1. Rebaseline on the pushed SHA with a clean, non-quick, Blake3-only comp run across all 8 arches.
-2. Confirm whether the latest XOF kernel-selection change moved the CI numbers materially on:
-   - `1B-in/1024B-out`
-   - `64B-in/1024B-out`
-   - `1024B-in/1024B-out`
-3. If XOF is still materially red in CI, do kernel-path work next (not more table churn):
-   - prioritize squeeze micro-kernel path for short-output (`32B`) and first-block generation overhead.
-4. Keep dispatch-table work limited to targeted tie-breaks only after kernel-path measurement.
+1. Hit streaming short-chunk overhead first (`64..1024`): remove avoidable per-call finalize/copy work on one-chunk and few-chunk paths.
+2. Add an explicit XOF short-output fast path (`32B-out`) that avoids generic squeeze setup overhead and first-block overwork.
+3. Fix the persistent `65B` edge in `hash`/`keyed-hash` by reducing small-tail branching and one-block setup overhead.
+4. Keep dispatch-table churn frozen unless a change is proven by kernel/codegen evidence.
 
 ## First Step (Blake3)
 
-- Trigger this exact CI run first (source of truth):
-  - `crates=hashes`
-  - `benches=comp`
-  - `only=blake3`
-  - `quick=false`
-  - all 8 arches enabled
-- Parse and store the result next to the existing file as `benchmark-results/ci-<runid>-blake3/blake3_tally.{txt,json}`.
-- Do not start a new Blake3 code candidate until this rebaseline is in hand.
+- Implement one minimal kernel/codegen candidate only for short paths:
+  - target streaming/xof paths at `64..1024` and `32B-out`,
+  - no dispatch table edits in this first pass.
+- Validate with targeted non-quick lanes first (`graviton3`, `graviton4`, `intel-icl`, `intel-spr`, `amd-zen5`), then rerun full 8-arch `blake3/comp` if trend is clean.
+- Keep/revert immediately based on cross-lane net wins.
 
 ## Mission
 Beat upstream on enforced `kernel-ab` and `oneshot` lanes with simpler or equal complexity, no API churn, and repeatable results. If we see a win that makes our code more complex, it's fine... but it must be a real win over the 'official Blake3' crate/implementation/benches.

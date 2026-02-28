@@ -3772,10 +3772,14 @@ impl Digest for Blake3 {
       let remaining = CHUNK_LEN - self.chunk_state.len();
       if input.len() <= remaining {
         if self.kernel.id == kernels::Blake3KernelId::Portable
-          && !self
-            .dispatch_plan
-            .should_defer_simd(self.chunk_state.len(), input.len())
+          && (self.chunk_state.chunk_counter != 0
+            || !self
+              .dispatch_plan
+              .should_defer_simd(self.chunk_state.len(), input.len()))
         {
+          // Once we've already processed at least one full chunk, keep streaming
+          // on the tuned stream kernel instead of repeatedly re-applying the
+          // tiny-input defer heuristic every new chunk.
           let stream = self.dispatch_plan.stream_kernel();
           self.kernel = stream;
           self.chunk_state.kernel = stream;

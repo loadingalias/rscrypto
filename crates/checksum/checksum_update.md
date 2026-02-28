@@ -4,7 +4,9 @@
 
 - Data source: [benchmark-results/ci-22524744705-checksum/checksum_tally.json](/Users/mr.wolf/loadingalias/rscrypto/benchmark-results/ci-22524744705-checksum/checksum_tally.json)
 - Run: `22524744705` (`quick=false`, `crates=checksum`, `benches=comp`, all 8 arches).
+- Scope note: newer checksum run `22526610459` is only `graviton3/graviton4`; it is not a full-matrix baseline.
 - Overall: `242W / 32L / 6T` (`280` comparable cases, `86.4%` wins).
+- Baseline status: this remains the best complete all-arch checksum baseline currently in-repo.
 
 Per arch (`wins/total`):
 - `amd-zen4`: `30/35` (`85.7%`)
@@ -29,7 +31,8 @@ Loss clusters (highest frequency):
 - `crc64/nvme/xl@vec` (4 losses)
 - `crc16/ccitt/xl@vec` (3 losses)
 - `crc16/ibm/xl@vec` (3 losses)
-- Then `crc16`/`crc32` large buckets (`l`/`xl`) on Graviton3/4.
+- `crc32/ieee` short buckets (`xs`, `s`) still leak on Intel + IBM.
+- Arch concentration: `graviton4` (`10` losses) and `graviton3` (`7` losses) account for over half of all losses.
 
 Interpretation:
 - We are close, but not at the 90% target yet.
@@ -38,18 +41,18 @@ Interpretation:
 
 ## Next Steps (Checksum)
 
-1. Focus on Graviton3/4 `crc16/ccitt` and `crc16/ibm` `l/xl` first.
-2. In parallel, target `crc64/nvme/xl` cross-arch loss cells (especially Arm + SPR).
-3. Avoid broad table churn; run targeted kernel shootouts and only promote measured winners.
-4. Rerun full checksum comp across all 8 arches after each small batch of flips.
+1. Prioritize Arm `crc16` large-size kernels (`ccitt` + `ibm`, `l/xl`) on `graviton3` and `graviton4`.
+2. Tackle `crc64/nvme/xl` as the single highest-frequency loss cell (4 arches).
+3. Clean up remaining `crc32/ieee` `xs/s` losses with tiny-path/kernel-overhead work (not table churn first).
+4. Keep changes incremental and rerun a full 8-arch checksum comp only after targeted lanes are net-positive.
 
 ## First Step (Checksum)
 
-- Run a targeted non-quick kernel shootout on only these cells first:
+- Run one targeted non-quick kernel shootout first:
   - `crc16/ccitt` (`l`, `xl`) on `graviton3`, `graviton4`
   - `crc16/ibm` (`l`, `xl`) on `graviton3`, `graviton4`
-- Pick winners, apply minimal dispatch updates, then rerun full `checksum/comp` all-arch matrix.
-- Objective for this first cycle: flip at least 4-6 losses from the top-frequency bucket list before touching anything else.
+- Promote only clear winners, then immediately rerun `crc64/nvme/xl` checks on `graviton3`, `graviton4`, `intel-spr`.
+- Objective for this cycle: flip at least `+4` loss cells before paying for the next full 8-arch checksum comp run.
 
 ## Baseline run captured
 
