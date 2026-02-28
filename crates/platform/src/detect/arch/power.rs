@@ -64,6 +64,7 @@ fn runtime_power() -> Caps {
   // HWCAP2 masks
   const PPC_FEATURE2_ARCH_2_07: u64 = 0x8000_0000; // POWER8 ISA (v2.07)
   const PPC_FEATURE2_ARCH_3_00: u64 = 0x0080_0000; // POWER9 ISA (v3.00)
+  const PPC_FEATURE2_ARCH_3_1: u64 = 0x0004_0000; // POWER10 ISA (v3.1)
 
   let (hwcap, hwcap2) = (|| -> Option<(u64, u64)> {
     let mut file = File::open("/proc/self/auxv").ok()?;
@@ -99,8 +100,10 @@ fn runtime_power() -> Caps {
     caps |= power::VSX;
   }
 
-  // POWER9 implies POWER8 vector/crypto as well.
-  if hwcap2 & PPC_FEATURE2_ARCH_3_00 != 0 {
+  // POWER10 implies POWER9 and POWER8 vector/crypto as well.
+  if hwcap2 & PPC_FEATURE2_ARCH_3_1 != 0 {
+    caps |= power::POWER10_VECTOR | power::POWER9_VECTOR | power::POWER8_VECTOR | power::POWER8_CRYPTO;
+  } else if hwcap2 & PPC_FEATURE2_ARCH_3_00 != 0 {
     caps |= power::POWER9_VECTOR | power::POWER8_VECTOR | power::POWER8_CRYPTO;
   } else if hwcap2 & PPC_FEATURE2_ARCH_2_07 != 0 {
     caps |= power::POWER8_VECTOR | power::POWER8_CRYPTO;

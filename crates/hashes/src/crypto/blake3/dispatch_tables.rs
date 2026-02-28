@@ -931,7 +931,7 @@ pub static PROFILE_Z15: FamilyProfile = FamilyProfile {
   dispatch: DispatchTable {
     boundaries: [64, 256, 4096],
     xs: KernelId::Portable,
-    s: KernelId::Portable,
+    s: S390X_VECTOR_KERNEL,
     m: S390X_VECTOR_KERNEL,
     l: S390X_VECTOR_KERNEL,
   },
