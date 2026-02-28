@@ -13,8 +13,6 @@ use platform::caps::x86;
 use super::{
   BLOCK_LEN, CHUNK_LEN, CHUNK_START, OUT_LEN, PARENT, first_8_words, words8_from_le_bytes_32, words16_from_le_bytes_64,
 };
-#[cfg(target_arch = "powerpc64")]
-use super::{CHUNK_END, ROOT};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Kernel function types
@@ -1628,69 +1626,6 @@ unsafe fn hash_many_contiguous_power_vsx_wrapper(
 ) {
   // SAFETY: dispatch requires `power::VSX` before selecting this kernel.
   unsafe { hash_many_contiguous_power_vsx(input, num_chunks, key, counter, flags, out) }
-}
-
-#[cfg(target_arch = "powerpc64")]
-#[target_feature(enable = "vsx")]
-unsafe fn digest_one_chunk_root_hash_words_power_vsx_inner(key_words: [u32; 8], flags: u32, input: &[u8]) -> [u32; 8] {
-  debug_assert!(input.len() <= CHUNK_LEN);
-
-  // Keep one final block for CHUNK_END|ROOT. For aligned inputs we process
-  // `len/BLOCK_LEN - 1` full blocks and finish on the last full block.
-  let (full_blocks, last_len) = if input.is_empty() {
-    (0usize, 0usize)
-  } else {
-    let rem = input.len() % BLOCK_LEN;
-    if rem == 0 {
-      (input.len() / BLOCK_LEN - 1, BLOCK_LEN)
-    } else {
-      (input.len() / BLOCK_LEN, rem)
-    }
-  };
-
-  // Hash all full blocks except the final block, updating the CV.
-  let mut cv = key_words;
-  let mut blocks_compressed = 0u8;
-  let full_bytes = full_blocks * BLOCK_LEN;
-  // SAFETY: `full_bytes <= input.len()` and this function requires VSX.
-  unsafe {
-    chunk_compress_blocks_power_vsx(
-      &mut cv,
-      0,
-      flags,
-      &mut blocks_compressed,
-      core::slice::from_raw_parts(input.as_ptr(), full_bytes),
-    );
-  }
-
-  let start = if full_blocks == 0 { CHUNK_START } else { 0 };
-  let final_flags = flags | start | CHUNK_END | ROOT;
-
-  if last_len == BLOCK_LEN && !input.is_empty() {
-    let offset = full_blocks * BLOCK_LEN;
-    // SAFETY: `offset + BLOCK_LEN <= input.len()` by construction.
-    let final_words = unsafe { words16_from_le_bytes_64(&*input.as_ptr().add(offset).cast::<[u8; BLOCK_LEN]>()) };
-    // SAFETY: this function requires VSX.
-    return first_8_words(unsafe { compress_power_vsx(&cv, &final_words, 0, BLOCK_LEN as u32, final_flags) });
-  }
-
-  let mut final_block = [0u8; BLOCK_LEN];
-  if last_len != 0 {
-    let offset = full_blocks * BLOCK_LEN;
-    // SAFETY: `last_len < BLOCK_LEN`, source and destination are valid.
-    unsafe { core::ptr::copy_nonoverlapping(input.as_ptr().add(offset), final_block.as_mut_ptr(), last_len) };
-  }
-  let final_words = words16_from_le_bytes_64(&final_block);
-  // SAFETY: this function requires VSX.
-  first_8_words(unsafe { compress_power_vsx(&cv, &final_words, 0, last_len as u32, final_flags) })
-}
-
-#[cfg(target_arch = "powerpc64")]
-#[inline]
-#[must_use]
-pub(crate) fn digest_one_chunk_root_hash_words_power_vsx(key_words: [u32; 8], flags: u32, input: &[u8]) -> [u32; 8] {
-  // SAFETY: dispatch validates `power::VSX` before selecting this helper path.
-  unsafe { digest_one_chunk_root_hash_words_power_vsx_inner(key_words, flags, input) }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -125,7 +125,7 @@ static AVAILABLE_PARALLELISM: OnceLock<Option<usize>> = OnceLock::new();
 #[inline]
 fn compute_derive_context_key_words(context: &str) -> [u32; 8] {
   let context_bytes = context.as_bytes();
-  let kernel_ctx = dispatch::size_class_kernel_for_len(context_bytes.len());
+  let kernel_ctx = dispatch::hasher_dispatch().size_class_kernel(context_bytes.len());
   digest_oneshot_words(kernel_ctx, IV, DERIVE_KEY_CONTEXT, context_bytes)
 }
 
@@ -2735,13 +2735,6 @@ fn digest_oneshot_words(kernel: Kernel, key_words: [u32; 8], flags: u32, input: 
     }
   }
 
-  #[cfg(target_arch = "powerpc64")]
-  {
-    if input.len() <= CHUNK_LEN && kernel.id == kernels::Blake3KernelId::PowerVsx {
-      return kernels::digest_one_chunk_root_hash_words_power_vsx(key_words, flags, input);
-    }
-  }
-
   if input.len() <= CHUNK_LEN {
     return digest_one_chunk_root_hash_words_generic(kernel, key_words, flags, input);
   }
@@ -2787,7 +2780,7 @@ fn digest_oneshot(kernel: Kernel, key_words: [u32; 8], flags: u32, input: &[u8])
 
 #[inline]
 fn digest_public_oneshot(key_words: [u32; 8], flags: u32, input: &[u8]) -> [u8; OUT_LEN] {
-  let kernel = dispatch::size_class_kernel_for_len(input.len());
+  let kernel = dispatch::hasher_dispatch().size_class_kernel(input.len());
   digest_oneshot(kernel, key_words, flags, input)
 }
 
@@ -2885,7 +2878,7 @@ impl Blake3 {
       #[cfg(not(feature = "std"))]
       {
         let context_bytes = context.as_bytes();
-        let kernel_ctx = dispatch::size_class_kernel_for_len(context_bytes.len());
+        let kernel_ctx = dispatch::hasher_dispatch().size_class_kernel(context_bytes.len());
         digest_oneshot_words(kernel_ctx, IV, DERIVE_KEY_CONTEXT, context_bytes)
       }
     };
@@ -3532,7 +3525,7 @@ impl Blake3 {
     #[cfg(not(feature = "std"))]
     let key_words = {
       let context_bytes = context.as_bytes();
-      let kernel_ctx = dispatch::size_class_kernel_for_len(context_bytes.len());
+      let kernel_ctx = dispatch::hasher_dispatch().size_class_kernel(context_bytes.len());
       digest_oneshot_words(kernel_ctx, IV, DERIVE_KEY_CONTEXT, context_bytes)
     };
     Self::new_internal(key_words, DERIVE_KEY_MATERIAL)
