@@ -186,46 +186,57 @@ unsafe fn update_simd_width32_reflected_2way(
   use crate::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
 
   debug_assert!(blocks.len() >= 2);
+  if blocks.len() < 2 {
+    // SAFETY: this function is only called when there are at least 2 blocks.
+    unsafe { core::hint::unreachable_unchecked() }
+  }
 
   let coeff_256b = Simd::new(fold_256b.0, fold_256b.1);
   let coeff_128b = Simd::new(keys[4], keys[3]);
   let zero = Simd::new(0, 0);
 
-  let mut s0 = blocks[0];
-  let mut s1 = blocks[1];
+  let blocks_ptr = blocks.as_ptr();
+  // SAFETY: caller guarantees `blocks.len() >= 2`.
+  let mut s0 = *blocks_ptr;
+  // SAFETY: caller guarantees `blocks.len() >= 2`.
+  let mut s1 = *blocks_ptr.add(1);
 
   // Inject CRC into stream 0 (block 0).
   s0[0] ^= Simd::new(0, state as u64);
 
-  // Double-unrolled main loop: process 4 blocks (512B) per iteration.
+  // Pointer-walk variant to keep the hot loop free of index bounds checks.
   const BLOCK_SIZE: usize = 128;
   const DOUBLE_GROUP: usize = 4; // 2 × 2-way = 4 blocks = 512B
-  let mut i: usize = 2;
-  let aligned = (blocks.len() / DOUBLE_GROUP) * DOUBLE_GROUP;
+  const PREFETCH_BLOCKS: usize = LARGE_BLOCK_DISTANCE / BLOCK_SIZE;
 
-  while i.strict_add(DOUBLE_GROUP) <= aligned {
-    let prefetch_idx = i.strict_add(LARGE_BLOCK_DISTANCE / BLOCK_SIZE);
-    if prefetch_idx < blocks.len() {
-      prefetch_read_l1(blocks[prefetch_idx].as_ptr().cast::<u8>());
+  let blocks_end = blocks_ptr.add(blocks.len());
+  let mut ptr = blocks_ptr.add(2);
+  let mut rem = blocks.len() - 2;
+
+  while rem >= DOUBLE_GROUP {
+    let prefetch_ptr = ptr.add(PREFETCH_BLOCKS);
+    if prefetch_ptr < blocks_end {
+      prefetch_read_l1(prefetch_ptr.cast::<u8>());
     }
 
     // First iteration (blocks i, i+1)
-    fold_block_128_width32_reflected(&mut s0, &blocks[i], coeff_256b);
-    fold_block_128_width32_reflected(&mut s1, &blocks[i.strict_add(1)], coeff_256b);
+    fold_block_128_width32_reflected(&mut s0, &*ptr, coeff_256b);
+    fold_block_128_width32_reflected(&mut s1, &*ptr.add(1), coeff_256b);
 
     // Second iteration (blocks i+2, i+3)
-    fold_block_128_width32_reflected(&mut s0, &blocks[i.strict_add(2)], coeff_256b);
-    fold_block_128_width32_reflected(&mut s1, &blocks[i.strict_add(3)], coeff_256b);
+    fold_block_128_width32_reflected(&mut s0, &*ptr.add(2), coeff_256b);
+    fold_block_128_width32_reflected(&mut s1, &*ptr.add(3), coeff_256b);
 
-    i = i.strict_add(DOUBLE_GROUP);
+    ptr = ptr.add(DOUBLE_GROUP);
+    rem -= DOUBLE_GROUP;
   }
 
   // Handle remaining pairs.
-  let even = blocks.len() & !1usize;
-  while i < even {
-    fold_block_128_width32_reflected(&mut s0, &blocks[i], coeff_256b);
-    fold_block_128_width32_reflected(&mut s1, &blocks[i.strict_add(1)], coeff_256b);
-    i = i.strict_add(2);
+  while rem >= 2 {
+    fold_block_128_width32_reflected(&mut s0, &*ptr, coeff_256b);
+    fold_block_128_width32_reflected(&mut s1, &*ptr.add(1), coeff_256b);
+    ptr = ptr.add(2);
+    rem -= 2;
   }
 
   // Merge streams: A·s0 ⊕ s1 (A = shift by 128B).
@@ -240,8 +251,8 @@ unsafe fn update_simd_width32_reflected_2way(
   combined[7] ^= s0[7].fold_16_reflected(coeff_128b, zero);
 
   // Handle any remaining block (odd tail) sequentially.
-  if even != blocks.len() {
-    fold_block_128_width32_reflected(&mut combined, &blocks[even], coeff_128b);
+  if rem == 1 {
+    fold_block_128_width32_reflected(&mut combined, &*ptr, coeff_128b);
   }
 
   finalize_lanes_width32_reflected(combined, keys)
