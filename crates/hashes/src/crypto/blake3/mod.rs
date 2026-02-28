@@ -3576,24 +3576,44 @@ impl Blake3 {
     output
   }
 
+  /// Rebuild the current chunk output using a specific kernel.
+  #[inline]
+  fn chunk_output_with_kernel(&self, kernel: Kernel) -> OutputState {
+    let mut temp_chunk_state = ChunkState::new(self.key_words, self.chunk_state.chunk_counter, self.flags, kernel);
+    temp_chunk_state.chaining_value = self.chunk_state.chaining_value;
+    temp_chunk_state.block = self.chunk_state.block;
+    temp_chunk_state.block_len = self.chunk_state.block_len;
+    temp_chunk_state.blocks_compressed = self.chunk_state.blocks_compressed;
+    temp_chunk_state.output()
+  }
+
   /// Finalize into an extendable output state (XOF).
   #[must_use]
   #[inline]
   pub fn finalize_xof(&self) -> Blake3Xof {
-    // Mirror `finalize()` for the empty-input case: don't stay pinned to the
-    // portable default when we could use the tuned streaming kernel.
-    if self.chunk_state.chunk_counter == 0
-      && self.chunk_state.len() == 0
-      && self.cv_stack_len == 0
-      && self.pending_chunk_cv.is_none()
-    {
-      Blake3Xof::new(
-        single_chunk_output(self.dispatch_plan.stream_kernel(), self.key_words, 0, self.flags, &[]),
-        self.dispatch_plan,
-      )
-    } else {
-      Blake3Xof::new(self.root_output(), self.dispatch_plan)
+    let single_chunk_no_tree =
+      self.chunk_state.chunk_counter == 0 && self.cv_stack_len == 0 && self.pending_chunk_cv.is_none();
+
+    // XOF can be dominated by squeeze throughput; for single-chunk states we
+    // should not stay pinned to portable when streaming dispatch picked a better
+    // kernel.
+    if single_chunk_no_tree {
+      let kernel = if self.kernel.id == kernels::Blake3KernelId::Portable {
+        self.dispatch_plan.stream_kernel()
+      } else {
+        self.kernel
+      };
+      let output = if self.chunk_state.len() == 0 {
+        single_chunk_output(kernel, self.key_words, 0, self.flags, &[])
+      } else if kernel.id == self.kernel.id {
+        self.chunk_state.output()
+      } else {
+        self.chunk_output_with_kernel(kernel)
+      };
+      return Blake3Xof::new_with_kernel(output, kernel, self.dispatch_plan);
     }
+
+    Blake3Xof::new(self.root_output(), self.dispatch_plan)
   }
 
   /// Finalize into an extendable output state (XOF) with output-size-aware kernel selection.
@@ -3626,9 +3646,10 @@ impl Blake3 {
     // World-class XOF: select kernel based on output size, not just input size.
     // This is the fix for the "+500% XOF slowdown" on x86_64.
     let kernel = if expected_output_bytes >= 512 {
-      // For large expected outputs, force SIMD kernel regardless of input size.
-      // The throughput benefit outweighs any setup overhead.
-      self.dispatch_plan.size_class_kernel(expected_output_bytes)
+      // For XOF squeezing, prefer the streaming bulk policy. This avoids
+      // pinning to conservative size-class kernels on platforms where
+      // one-shot size classes intentionally stay portable at ~1 KiB.
+      self.dispatch_plan.bulk_kernel_for_update(expected_output_bytes)
     } else {
       // For small outputs, use streaming dispatch (input-size-aware).
       self.dispatch_plan.stream_kernel()
@@ -3643,14 +3664,8 @@ impl Blake3 {
       // Empty input: single chunk output
       single_chunk_output(kernel, self.key_words, 0, self.flags, &[])
     } else if self.chunk_state.chunk_counter == 0 && self.pending_chunk_cv.is_none() {
-      // Single chunk input: re-create output with the SIMD kernel
-      let mut temp_chunk_state = ChunkState::new(self.key_words, 0, self.flags, kernel);
-      // Copy the accumulated state
-      temp_chunk_state.chaining_value = self.chunk_state.chaining_value;
-      temp_chunk_state.block = self.chunk_state.block;
-      temp_chunk_state.block_len = self.chunk_state.block_len;
-      temp_chunk_state.blocks_compressed = self.chunk_state.blocks_compressed;
-      temp_chunk_state.output()
+      // Single chunk input: re-create output with the selected kernel.
+      self.chunk_output_with_kernel(kernel)
     } else {
       // Multi-chunk: use root output (tree structure is already built)
       // But we need to rebuild parent outputs with the selected kernel
@@ -3674,13 +3689,7 @@ impl Blake3 {
       let left = unsafe { *self.cv_stack[parent_nodes_remaining].assume_init_ref() };
       parent_output(kernel, left, right_cv, self.key_words, self.flags)
     } else {
-      // Re-create chunk state output with the new kernel
-      let mut temp_chunk_state = ChunkState::new(self.key_words, self.chunk_state.chunk_counter, self.flags, kernel);
-      temp_chunk_state.chaining_value = self.chunk_state.chaining_value;
-      temp_chunk_state.block = self.chunk_state.block;
-      temp_chunk_state.block_len = self.chunk_state.block_len;
-      temp_chunk_state.blocks_compressed = self.chunk_state.blocks_compressed;
-      temp_chunk_state.output()
+      self.chunk_output_with_kernel(kernel)
     };
 
     while parent_nodes_remaining > 0 {
@@ -3755,6 +3764,25 @@ impl Digest for Blake3 {
       self.chunk_state.kernel = stream;
       self.chunk_state.update(input);
       return;
+    }
+
+    // Hot path for chunked streaming workloads: when this call fits in the
+    // current chunk, avoid update-loop + batch-admission overhead.
+    if self.pending_chunk_cv.is_none() && self.chunk_state.len() < CHUNK_LEN {
+      let remaining = CHUNK_LEN - self.chunk_state.len();
+      if input.len() <= remaining {
+        if self.kernel.id == kernels::Blake3KernelId::Portable
+          && !self
+            .dispatch_plan
+            .should_defer_simd(self.chunk_state.len(), input.len())
+        {
+          let stream = self.dispatch_plan.stream_kernel();
+          self.kernel = stream;
+          self.chunk_state.kernel = stream;
+        }
+        self.chunk_state.update(input);
+        return;
+      }
     }
 
     let stream = self.dispatch_plan.stream_kernel();
@@ -3885,7 +3913,7 @@ impl Xof for Blake3Xof {
     // kernel for a large output request.
     const LARGE_SQUEEZE_THRESHOLD: usize = 512;
     if out.len() >= LARGE_SQUEEZE_THRESHOLD {
-      let desired = self.dispatch_plan.size_class_kernel(out.len());
+      let desired = self.dispatch_plan.bulk_kernel_for_update(out.len());
       if desired.id != self.kernel.id {
         self.kernel = desired;
         self.output.kernel = desired;
