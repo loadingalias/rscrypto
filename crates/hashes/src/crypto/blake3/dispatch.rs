@@ -366,6 +366,13 @@ pub fn kernel_name_for_len(len: usize) -> &'static str {
 
 #[inline]
 #[must_use]
+pub(crate) fn size_class_kernel_for_len(len: usize) -> Kernel {
+  let d = active();
+  select(&d, len).kernel
+}
+
+#[inline]
+#[must_use]
 pub fn digest(data: &[u8]) -> [u8; 32] {
   let d = active();
   let kernel = select(&d, data.len()).kernel;
