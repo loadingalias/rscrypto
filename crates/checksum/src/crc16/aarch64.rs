@@ -191,8 +191,9 @@ unsafe fn update_simd_width32_reflected_2way(
   let coeff_128b = Simd::new(keys[4], keys[3]);
   let zero = Simd::new(0, 0);
 
-  let mut s0 = blocks[0];
-  let mut s1 = blocks[1];
+  // SAFETY: `blocks.len() >= 2` is guaranteed by caller and asserted above.
+  let mut s0 = *blocks.get_unchecked(0);
+  let mut s1 = *blocks.get_unchecked(1);
 
   // Inject CRC into stream 0 (block 0).
   s0[0] ^= Simd::new(0, state as u64);
@@ -200,33 +201,36 @@ unsafe fn update_simd_width32_reflected_2way(
   // Double-unrolled main loop: process 4 blocks (512B) per iteration.
   const BLOCK_SIZE: usize = 128;
   const DOUBLE_GROUP: usize = 4; // 2 × 2-way = 4 blocks = 512B
+  const PREFETCH_BLOCKS: usize = LARGE_BLOCK_DISTANCE / BLOCK_SIZE;
 
-  let mut i: usize = 2;
-  let aligned = (blocks.len() / DOUBLE_GROUP) * DOUBLE_GROUP;
+  let blocks_ptr = blocks.as_ptr();
+  let blocks_end = blocks_ptr.add(blocks.len());
+  let mut ptr = blocks_ptr.add(2);
+  let double_end = blocks_ptr.add(2 + ((blocks.len() - 2) / DOUBLE_GROUP) * DOUBLE_GROUP);
 
-  while i.strict_add(DOUBLE_GROUP) <= aligned {
-    let prefetch_idx = i.strict_add(LARGE_BLOCK_DISTANCE / BLOCK_SIZE);
-    if prefetch_idx < blocks.len() {
-      prefetch_read_l1(blocks[prefetch_idx].as_ptr().cast::<u8>());
+  while ptr < double_end {
+    let prefetch_ptr = ptr.add(PREFETCH_BLOCKS);
+    if prefetch_ptr < blocks_end {
+      prefetch_read_l1(prefetch_ptr.cast::<u8>());
     }
 
     // First iteration (blocks i, i+1)
-    fold_block_128_width32_reflected(&mut s0, &blocks[i], coeff_256b);
-    fold_block_128_width32_reflected(&mut s1, &blocks[i.strict_add(1)], coeff_256b);
+    fold_block_128_width32_reflected(&mut s0, &*ptr, coeff_256b);
+    fold_block_128_width32_reflected(&mut s1, &*ptr.add(1), coeff_256b);
 
     // Second iteration (blocks i+2, i+3)
-    fold_block_128_width32_reflected(&mut s0, &blocks[i.strict_add(2)], coeff_256b);
-    fold_block_128_width32_reflected(&mut s1, &blocks[i.strict_add(3)], coeff_256b);
+    fold_block_128_width32_reflected(&mut s0, &*ptr.add(2), coeff_256b);
+    fold_block_128_width32_reflected(&mut s1, &*ptr.add(3), coeff_256b);
 
-    i = i.strict_add(DOUBLE_GROUP);
+    ptr = ptr.add(DOUBLE_GROUP);
   }
 
   // Handle remaining pairs.
-  let even = blocks.len() & !1usize;
-  while i < even {
-    fold_block_128_width32_reflected(&mut s0, &blocks[i], coeff_256b);
-    fold_block_128_width32_reflected(&mut s1, &blocks[i.strict_add(1)], coeff_256b);
-    i = i.strict_add(2);
+  let pair_end = blocks_ptr.add(blocks.len() & !1usize);
+  while ptr < pair_end {
+    fold_block_128_width32_reflected(&mut s0, &*ptr, coeff_256b);
+    fold_block_128_width32_reflected(&mut s1, &*ptr.add(1), coeff_256b);
+    ptr = ptr.add(2);
   }
 
   // Merge streams: A·s0 ⊕ s1 (A = shift by 128B).
@@ -241,8 +245,8 @@ unsafe fn update_simd_width32_reflected_2way(
   combined[7] ^= s0[7].fold_16_reflected(coeff_128b, zero);
 
   // Handle any remaining block (odd tail) sequentially.
-  if even != blocks.len() {
-    fold_block_128_width32_reflected(&mut combined, &blocks[even], coeff_128b);
+  if ptr < blocks_end {
+    fold_block_128_width32_reflected(&mut combined, &*ptr, coeff_128b);
   }
 
   finalize_lanes_width32_reflected(combined, keys)
@@ -280,36 +284,39 @@ unsafe fn update_simd_width32_reflected_3way(
   // Double-unrolled main loop: process 6 blocks (768B) per iteration.
   const BLOCK_SIZE: usize = 128;
   const DOUBLE_GROUP: usize = 6; // 2 × 3-way = 6 blocks = 768B
+  const PREFETCH_BLOCKS: usize = LARGE_BLOCK_DISTANCE / BLOCK_SIZE;
 
-  let mut i: usize = 3;
-  let aligned = (blocks.len() / DOUBLE_GROUP) * DOUBLE_GROUP;
+  let blocks_ptr = blocks.as_ptr();
+  let blocks_end = blocks_ptr.add(blocks.len());
+  let mut ptr = blocks_ptr.add(3);
+  let double_end = blocks_ptr.add(3 + ((blocks.len() - 3) / DOUBLE_GROUP) * DOUBLE_GROUP);
 
-  while i.strict_add(DOUBLE_GROUP) <= aligned {
-    let prefetch_idx = i.strict_add(LARGE_BLOCK_DISTANCE / BLOCK_SIZE);
-    if prefetch_idx < blocks.len() {
-      prefetch_read_l1(blocks[prefetch_idx].as_ptr().cast::<u8>());
+  while ptr < double_end {
+    let prefetch_ptr = ptr.add(PREFETCH_BLOCKS);
+    if prefetch_ptr < blocks_end {
+      prefetch_read_l1(prefetch_ptr.cast::<u8>());
     }
 
     // First iteration (blocks i, i+1, i+2)
-    fold_block_128_width32_reflected(&mut s0, &blocks[i], coeff_384b);
-    fold_block_128_width32_reflected(&mut s1, &blocks[i.strict_add(1)], coeff_384b);
-    fold_block_128_width32_reflected(&mut s2, &blocks[i.strict_add(2)], coeff_384b);
+    fold_block_128_width32_reflected(&mut s0, &*ptr, coeff_384b);
+    fold_block_128_width32_reflected(&mut s1, &*ptr.add(1), coeff_384b);
+    fold_block_128_width32_reflected(&mut s2, &*ptr.add(2), coeff_384b);
 
     // Second iteration (blocks i+3, i+4, i+5)
-    fold_block_128_width32_reflected(&mut s0, &blocks[i.strict_add(3)], coeff_384b);
-    fold_block_128_width32_reflected(&mut s1, &blocks[i.strict_add(4)], coeff_384b);
-    fold_block_128_width32_reflected(&mut s2, &blocks[i.strict_add(5)], coeff_384b);
+    fold_block_128_width32_reflected(&mut s0, &*ptr.add(3), coeff_384b);
+    fold_block_128_width32_reflected(&mut s1, &*ptr.add(4), coeff_384b);
+    fold_block_128_width32_reflected(&mut s2, &*ptr.add(5), coeff_384b);
 
-    i = i.strict_add(DOUBLE_GROUP);
+    ptr = ptr.add(DOUBLE_GROUP);
   }
 
   // Handle remaining triplets.
-  let triple_aligned = (blocks.len() / 3) * 3;
-  while i < triple_aligned {
-    fold_block_128_width32_reflected(&mut s0, &blocks[i], coeff_384b);
-    fold_block_128_width32_reflected(&mut s1, &blocks[i.strict_add(1)], coeff_384b);
-    fold_block_128_width32_reflected(&mut s2, &blocks[i.strict_add(2)], coeff_384b);
-    i = i.strict_add(3);
+  let triple_end = blocks_ptr.add((blocks.len() / 3) * 3);
+  while ptr < triple_end {
+    fold_block_128_width32_reflected(&mut s0, &*ptr, coeff_384b);
+    fold_block_128_width32_reflected(&mut s1, &*ptr.add(1), coeff_384b);
+    fold_block_128_width32_reflected(&mut s2, &*ptr.add(2), coeff_384b);
+    ptr = ptr.add(3);
   }
 
   // Merge: A^2·s0 ⊕ A·s1 ⊕ s2 (A = shift by 128B).
@@ -334,8 +341,9 @@ unsafe fn update_simd_width32_reflected_3way(
   combined[7] ^= s0[7].fold_16_reflected(coeff_256b, zero);
 
   // Handle any remaining blocks sequentially.
-  for block in &blocks[triple_aligned..] {
-    fold_block_128_width32_reflected(&mut combined, block, coeff_128b);
+  while ptr < blocks_end {
+    fold_block_128_width32_reflected(&mut combined, &*ptr, coeff_128b);
+    ptr = ptr.add(1);
   }
 
   finalize_lanes_width32_reflected(combined, keys)
@@ -344,12 +352,55 @@ unsafe fn update_simd_width32_reflected_3way(
 #[inline]
 #[target_feature(enable = "aes", enable = "neon")]
 unsafe fn update_simd_width32_reflected(state: u32, first: &[Simd; 8], rest: &[[Simd; 8]], keys: &[u64; 23]) -> u32 {
+  use crate::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
+
   let mut x = *first;
 
   x[0] ^= Simd::new(0, state as u64);
 
   let coeff_128b = Simd::new(keys[4], keys[3]);
-  for chunk in rest {
+
+  // Double-unrolled folding for large buffers improves ILP on Neoverse-class cores.
+  const BLOCK_SIZE: usize = 128;
+  const DOUBLE_GROUP: usize = 2; // 2 × 1-way = 2 blocks = 256B
+  const PREFETCH_BLOCKS: usize = LARGE_BLOCK_DISTANCE / BLOCK_SIZE;
+
+  let rest_ptr = rest.as_ptr();
+  let rest_end = rest_ptr.add(rest.len());
+  let mut ptr = rest_ptr;
+  let double_end = rest_ptr.add((rest.len() / DOUBLE_GROUP) * DOUBLE_GROUP);
+
+  while ptr < double_end {
+    let prefetch_ptr = ptr.add(PREFETCH_BLOCKS);
+    if prefetch_ptr < rest_end {
+      prefetch_read_l1(prefetch_ptr.cast::<u8>());
+    }
+
+    let chunk0 = &*ptr;
+    x[0] = x[0].fold_16_reflected(coeff_128b, chunk0[0]);
+    x[1] = x[1].fold_16_reflected(coeff_128b, chunk0[1]);
+    x[2] = x[2].fold_16_reflected(coeff_128b, chunk0[2]);
+    x[3] = x[3].fold_16_reflected(coeff_128b, chunk0[3]);
+    x[4] = x[4].fold_16_reflected(coeff_128b, chunk0[4]);
+    x[5] = x[5].fold_16_reflected(coeff_128b, chunk0[5]);
+    x[6] = x[6].fold_16_reflected(coeff_128b, chunk0[6]);
+    x[7] = x[7].fold_16_reflected(coeff_128b, chunk0[7]);
+
+    let chunk1 = &*ptr.add(1);
+    x[0] = x[0].fold_16_reflected(coeff_128b, chunk1[0]);
+    x[1] = x[1].fold_16_reflected(coeff_128b, chunk1[1]);
+    x[2] = x[2].fold_16_reflected(coeff_128b, chunk1[2]);
+    x[3] = x[3].fold_16_reflected(coeff_128b, chunk1[3]);
+    x[4] = x[4].fold_16_reflected(coeff_128b, chunk1[4]);
+    x[5] = x[5].fold_16_reflected(coeff_128b, chunk1[5]);
+    x[6] = x[6].fold_16_reflected(coeff_128b, chunk1[6]);
+    x[7] = x[7].fold_16_reflected(coeff_128b, chunk1[7]);
+
+    ptr = ptr.add(DOUBLE_GROUP);
+  }
+
+  while ptr < rest_end {
+    let chunk = &*ptr;
     x[0] = x[0].fold_16_reflected(coeff_128b, chunk[0]);
     x[1] = x[1].fold_16_reflected(coeff_128b, chunk[1]);
     x[2] = x[2].fold_16_reflected(coeff_128b, chunk[2]);
@@ -358,6 +409,7 @@ unsafe fn update_simd_width32_reflected(state: u32, first: &[Simd; 8], rest: &[[
     x[5] = x[5].fold_16_reflected(coeff_128b, chunk[5]);
     x[6] = x[6].fold_16_reflected(coeff_128b, chunk[6]);
     x[7] = x[7].fold_16_reflected(coeff_128b, chunk[7]);
+    ptr = ptr.add(1);
   }
 
   finalize_lanes_width32_reflected(x, keys)
