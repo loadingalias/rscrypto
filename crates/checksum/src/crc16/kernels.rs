@@ -151,6 +151,12 @@ pub mod aarch64 {
   pub const PMULL_SMALL: &str = "aarch64/pmull-small";
   /// PMULL kernel names: [1-way, 2-way, 3-way].
   pub const PMULL_NAMES: &[&str] = &["aarch64/pmull", "aarch64/pmull-2way", "aarch64/pmull-3way"];
+  /// PMULL+EOR3 kernel names: [1-way, 2-way, 3-way].
+  pub const PMULL_EOR3_NAMES: &[&str] = &[
+    "aarch64/pmull-eor3",
+    "aarch64/pmull-eor3-2way",
+    "aarch64/pmull-eor3-3way",
+  ];
 
   // ─────────────────────────────────────────────────────────────────────────
   // CRC-16/CCITT Kernel Functions
@@ -164,6 +170,16 @@ pub mod aarch64 {
     arch::crc16_ccitt_pmull_3way_safe,
     arch::crc16_ccitt_pmull_3way_safe, // dup for index consistency
     arch::crc16_ccitt_pmull_3way_safe, // dup for index consistency
+  ];
+
+  /// CCITT PMULL+EOR3 kernels: [1-way, 2-way, 3-way, 3-way(dup), 3-way(dup)].
+  #[allow(dead_code)] // Used by bench + policy dispatch.
+  pub const CCITT_PMULL_EOR3: [Crc16Fn; 5] = [
+    arch::crc16_ccitt_pmull_eor3_safe,
+    arch::crc16_ccitt_pmull_eor3_2way_safe,
+    arch::crc16_ccitt_pmull_eor3_3way_safe,
+    arch::crc16_ccitt_pmull_eor3_3way_safe, // dup for index consistency
+    arch::crc16_ccitt_pmull_eor3_3way_safe, // dup for index consistency
   ];
 
   /// CCITT PMULL small-buffer kernel.
@@ -182,6 +198,16 @@ pub mod aarch64 {
     arch::crc16_ibm_pmull_3way_safe,
     arch::crc16_ibm_pmull_3way_safe, // dup for index consistency
     arch::crc16_ibm_pmull_3way_safe, // dup for index consistency
+  ];
+
+  /// IBM PMULL+EOR3 kernels: [1-way, 2-way, 3-way, 3-way(dup), 3-way(dup)].
+  #[allow(dead_code)] // Used by bench + policy dispatch.
+  pub const IBM_PMULL_EOR3: [Crc16Fn; 5] = [
+    arch::crc16_ibm_pmull_eor3_safe,
+    arch::crc16_ibm_pmull_eor3_2way_safe,
+    arch::crc16_ibm_pmull_eor3_3way_safe,
+    arch::crc16_ibm_pmull_eor3_3way_safe, // dup for index consistency
+    arch::crc16_ibm_pmull_eor3_3way_safe, // dup for index consistency
   ];
 
   /// IBM PMULL small-buffer kernel.

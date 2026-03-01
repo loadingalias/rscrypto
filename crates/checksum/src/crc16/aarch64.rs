@@ -176,6 +176,27 @@ unsafe fn fold_block_128_width32_reflected(x: &mut [Simd; 8], chunk: &[Simd; 8],
   x[7] = x[7].fold_16_reflected(coeff, chunk[7]);
 }
 
+#[inline]
+#[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
+unsafe fn fold_lane_width32_reflected_eor3(x: Simd, coeff: Simd, data_to_xor: Simd) -> Simd {
+  let h = x.clmul10(coeff);
+  let l = x.clmul01(coeff);
+  Simd(veor3q_u8(data_to_xor.0, h.0, l.0))
+}
+
+#[inline]
+#[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
+unsafe fn fold_block_128_width32_reflected_eor3(x: &mut [Simd; 8], chunk: &[Simd; 8], coeff: Simd) {
+  x[0] = fold_lane_width32_reflected_eor3(x[0], coeff, chunk[0]);
+  x[1] = fold_lane_width32_reflected_eor3(x[1], coeff, chunk[1]);
+  x[2] = fold_lane_width32_reflected_eor3(x[2], coeff, chunk[2]);
+  x[3] = fold_lane_width32_reflected_eor3(x[3], coeff, chunk[3]);
+  x[4] = fold_lane_width32_reflected_eor3(x[4], coeff, chunk[4]);
+  x[5] = fold_lane_width32_reflected_eor3(x[5], coeff, chunk[5]);
+  x[6] = fold_lane_width32_reflected_eor3(x[6], coeff, chunk[6]);
+  x[7] = fold_lane_width32_reflected_eor3(x[7], coeff, chunk[7]);
+}
+
 #[target_feature(enable = "aes", enable = "neon")]
 unsafe fn update_simd_width32_reflected_2way(
   state: u32,
@@ -422,6 +443,208 @@ unsafe fn update_simd_width32_reflected(state: u32, first: &[Simd; 8], rest: &[[
 }
 
 #[inline]
+#[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
+unsafe fn update_simd_width32_reflected_eor3(
+  state: u32,
+  first: &[Simd; 8],
+  rest: &[[Simd; 8]],
+  keys: &[u64; 23],
+) -> u32 {
+  use crate::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
+
+  let mut x = *first;
+
+  x[0] ^= Simd::new(0, state as u64);
+
+  let coeff_128b = Simd::new(keys[4], keys[3]);
+
+  const BLOCK_SIZE: usize = 128;
+  const DOUBLE_GROUP: usize = 2; // 2 × 1-way = 2 blocks = 256B
+  const PREFETCH_BLOCKS: usize = LARGE_BLOCK_DISTANCE / BLOCK_SIZE;
+
+  let rest_ptr = rest.as_ptr();
+  let rest_end = rest_ptr.add(rest.len());
+  let mut ptr = rest_ptr;
+  let double_end = rest_ptr.add((rest.len() / DOUBLE_GROUP) * DOUBLE_GROUP);
+
+  while ptr < double_end {
+    let prefetch_ptr = ptr.add(PREFETCH_BLOCKS);
+    if prefetch_ptr < rest_end {
+      prefetch_read_l1(prefetch_ptr.cast::<u8>());
+    }
+
+    fold_block_128_width32_reflected_eor3(&mut x, &*ptr, coeff_128b);
+    fold_block_128_width32_reflected_eor3(&mut x, &*ptr.add(1), coeff_128b);
+    ptr = ptr.add(DOUBLE_GROUP);
+  }
+
+  while ptr < rest_end {
+    fold_block_128_width32_reflected_eor3(&mut x, &*ptr, coeff_128b);
+    ptr = ptr.add(1);
+  }
+
+  finalize_lanes_width32_reflected(x, keys)
+}
+
+#[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
+unsafe fn update_simd_width32_reflected_eor3_2way(
+  state: u32,
+  blocks: &[[Simd; 8]],
+  fold_256b: (u64, u64),
+  keys: &[u64; 23],
+) -> u32 {
+  use crate::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
+
+  debug_assert!(blocks.len() >= 2);
+  if blocks.len() < 2 {
+    // SAFETY: this function is only called when there are at least 2 blocks.
+    unsafe { core::hint::unreachable_unchecked() }
+  }
+
+  let coeff_256b = Simd::new(fold_256b.0, fold_256b.1);
+  let coeff_128b = Simd::new(keys[4], keys[3]);
+
+  let blocks_ptr = blocks.as_ptr();
+  let mut s0 = *blocks_ptr;
+  let mut s1 = *blocks_ptr.add(1);
+
+  s0[0] ^= Simd::new(0, state as u64);
+
+  const BLOCK_SIZE: usize = 128;
+  const DOUBLE_GROUP: usize = 4; // 2 × 2-way = 4 blocks = 512B
+  const PREFETCH_BLOCKS: usize = LARGE_BLOCK_DISTANCE / BLOCK_SIZE;
+
+  let blocks_end = blocks_ptr.add(blocks.len());
+  let mut ptr = blocks_ptr.add(2);
+  let mut rem = blocks.len() - 2;
+
+  while rem >= DOUBLE_GROUP {
+    let prefetch_ptr = ptr.add(PREFETCH_BLOCKS);
+    if prefetch_ptr < blocks_end {
+      prefetch_read_l1(prefetch_ptr.cast::<u8>());
+    }
+
+    fold_block_128_width32_reflected_eor3(&mut s0, &*ptr, coeff_256b);
+    fold_block_128_width32_reflected_eor3(&mut s1, &*ptr.add(1), coeff_256b);
+    fold_block_128_width32_reflected_eor3(&mut s0, &*ptr.add(2), coeff_256b);
+    fold_block_128_width32_reflected_eor3(&mut s1, &*ptr.add(3), coeff_256b);
+
+    ptr = ptr.add(DOUBLE_GROUP);
+    rem -= DOUBLE_GROUP;
+  }
+
+  while rem >= 2 {
+    fold_block_128_width32_reflected_eor3(&mut s0, &*ptr, coeff_256b);
+    fold_block_128_width32_reflected_eor3(&mut s1, &*ptr.add(1), coeff_256b);
+    ptr = ptr.add(2);
+    rem -= 2;
+  }
+
+  let mut combined = s1;
+  combined[0] = fold_lane_width32_reflected_eor3(s0[0], coeff_128b, combined[0]);
+  combined[1] = fold_lane_width32_reflected_eor3(s0[1], coeff_128b, combined[1]);
+  combined[2] = fold_lane_width32_reflected_eor3(s0[2], coeff_128b, combined[2]);
+  combined[3] = fold_lane_width32_reflected_eor3(s0[3], coeff_128b, combined[3]);
+  combined[4] = fold_lane_width32_reflected_eor3(s0[4], coeff_128b, combined[4]);
+  combined[5] = fold_lane_width32_reflected_eor3(s0[5], coeff_128b, combined[5]);
+  combined[6] = fold_lane_width32_reflected_eor3(s0[6], coeff_128b, combined[6]);
+  combined[7] = fold_lane_width32_reflected_eor3(s0[7], coeff_128b, combined[7]);
+
+  if rem == 1 {
+    fold_block_128_width32_reflected_eor3(&mut combined, &*ptr, coeff_128b);
+  }
+
+  finalize_lanes_width32_reflected(combined, keys)
+}
+
+#[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
+unsafe fn update_simd_width32_reflected_eor3_3way(
+  state: u32,
+  blocks: &[[Simd; 8]],
+  fold_384b: (u64, u64),
+  fold_256b: (u64, u64),
+  keys: &[u64; 23],
+) -> u32 {
+  use crate::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
+
+  if blocks.len() < 3 {
+    let Some((first, rest)) = blocks.split_first() else {
+      return state;
+    };
+    return update_simd_width32_reflected_eor3(state, first, rest, keys);
+  }
+
+  let coeff_384b = Simd::new(fold_384b.0, fold_384b.1);
+  let coeff_256b = Simd::new(fold_256b.0, fold_256b.1);
+  let coeff_128b = Simd::new(keys[4], keys[3]);
+
+  let mut s0 = blocks[0];
+  let mut s1 = blocks[1];
+  let mut s2 = blocks[2];
+
+  s0[0] ^= Simd::new(0, state as u64);
+
+  const BLOCK_SIZE: usize = 128;
+  const DOUBLE_GROUP: usize = 6; // 2 × 3-way = 6 blocks = 768B
+  const PREFETCH_BLOCKS: usize = LARGE_BLOCK_DISTANCE / BLOCK_SIZE;
+
+  let blocks_ptr = blocks.as_ptr();
+  let blocks_end = blocks_ptr.add(blocks.len());
+  let mut ptr = blocks_ptr.add(3);
+  let double_end = blocks_ptr.add(3 + ((blocks.len() - 3) / DOUBLE_GROUP) * DOUBLE_GROUP);
+
+  while ptr < double_end {
+    let prefetch_ptr = ptr.add(PREFETCH_BLOCKS);
+    if prefetch_ptr < blocks_end {
+      prefetch_read_l1(prefetch_ptr.cast::<u8>());
+    }
+
+    fold_block_128_width32_reflected_eor3(&mut s0, &*ptr, coeff_384b);
+    fold_block_128_width32_reflected_eor3(&mut s1, &*ptr.add(1), coeff_384b);
+    fold_block_128_width32_reflected_eor3(&mut s2, &*ptr.add(2), coeff_384b);
+    fold_block_128_width32_reflected_eor3(&mut s0, &*ptr.add(3), coeff_384b);
+    fold_block_128_width32_reflected_eor3(&mut s1, &*ptr.add(4), coeff_384b);
+    fold_block_128_width32_reflected_eor3(&mut s2, &*ptr.add(5), coeff_384b);
+
+    ptr = ptr.add(DOUBLE_GROUP);
+  }
+
+  let triple_end = blocks_ptr.add((blocks.len() / 3) * 3);
+  while ptr < triple_end {
+    fold_block_128_width32_reflected_eor3(&mut s0, &*ptr, coeff_384b);
+    fold_block_128_width32_reflected_eor3(&mut s1, &*ptr.add(1), coeff_384b);
+    fold_block_128_width32_reflected_eor3(&mut s2, &*ptr.add(2), coeff_384b);
+    ptr = ptr.add(3);
+  }
+
+  let mut combined = s2;
+  combined[0] = fold_lane_width32_reflected_eor3(s1[0], coeff_128b, combined[0]);
+  combined[1] = fold_lane_width32_reflected_eor3(s1[1], coeff_128b, combined[1]);
+  combined[2] = fold_lane_width32_reflected_eor3(s1[2], coeff_128b, combined[2]);
+  combined[3] = fold_lane_width32_reflected_eor3(s1[3], coeff_128b, combined[3]);
+  combined[4] = fold_lane_width32_reflected_eor3(s1[4], coeff_128b, combined[4]);
+  combined[5] = fold_lane_width32_reflected_eor3(s1[5], coeff_128b, combined[5]);
+  combined[6] = fold_lane_width32_reflected_eor3(s1[6], coeff_128b, combined[6]);
+  combined[7] = fold_lane_width32_reflected_eor3(s1[7], coeff_128b, combined[7]);
+
+  combined[0] = fold_lane_width32_reflected_eor3(s0[0], coeff_256b, combined[0]);
+  combined[1] = fold_lane_width32_reflected_eor3(s0[1], coeff_256b, combined[1]);
+  combined[2] = fold_lane_width32_reflected_eor3(s0[2], coeff_256b, combined[2]);
+  combined[3] = fold_lane_width32_reflected_eor3(s0[3], coeff_256b, combined[3]);
+  combined[4] = fold_lane_width32_reflected_eor3(s0[4], coeff_256b, combined[4]);
+  combined[5] = fold_lane_width32_reflected_eor3(s0[5], coeff_256b, combined[5]);
+  combined[6] = fold_lane_width32_reflected_eor3(s0[6], coeff_256b, combined[6]);
+  combined[7] = fold_lane_width32_reflected_eor3(s0[7], coeff_256b, combined[7]);
+
+  while ptr < blocks_end {
+    fold_block_128_width32_reflected_eor3(&mut combined, &*ptr, coeff_128b);
+    ptr = ptr.add(1);
+  }
+
+  finalize_lanes_width32_reflected(combined, keys)
+}
+
+#[inline]
 #[target_feature(enable = "aes", enable = "neon")]
 unsafe fn crc16_width32_pmull_small(
   mut state: u16,
@@ -519,6 +742,73 @@ unsafe fn crc16_width32_pmull_3way(
   portable(state, right)
 }
 
+#[inline]
+#[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
+unsafe fn crc16_width32_pmull_eor3(
+  mut state: u16,
+  data: &[u8],
+  keys: &[u64; 23],
+  portable: fn(u16, &[u8]) -> u16,
+) -> u16 {
+  let (left, middle, right) = data.align_to::<[Simd; 8]>();
+  let Some((first, rest)) = middle.split_first() else {
+    return crc16_width32_pmull_small(state, data, keys, portable);
+  };
+
+  state = portable(state, left);
+  let state32 = update_simd_width32_reflected_eor3(state as u32, first, rest, keys);
+  state = state32 as u16;
+  portable(state, right)
+}
+
+#[inline]
+#[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
+unsafe fn crc16_width32_pmull_eor3_2way(
+  mut state: u16,
+  data: &[u8],
+  keys: &[u64; 23],
+  fold_256b: (u64, u64),
+  portable: fn(u16, &[u8]) -> u16,
+) -> u16 {
+  let (left, middle, right) = data.align_to::<[Simd; 8]>();
+  if middle.is_empty() {
+    return crc16_width32_pmull_small(state, data, keys, portable);
+  }
+
+  state = portable(state, left);
+  let state32 = if middle.len() >= 2 {
+    update_simd_width32_reflected_eor3_2way(state as u32, middle, fold_256b, keys)
+  } else {
+    let Some((first, rest)) = middle.split_first() else {
+      return crc16_width32_pmull_small(state, data, keys, portable);
+    };
+    update_simd_width32_reflected_eor3(state as u32, first, rest, keys)
+  };
+  state = state32 as u16;
+  portable(state, right)
+}
+
+#[inline]
+#[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
+unsafe fn crc16_width32_pmull_eor3_3way(
+  mut state: u16,
+  data: &[u8],
+  keys: &[u64; 23],
+  fold_384b: (u64, u64),
+  fold_256b: (u64, u64),
+  portable: fn(u16, &[u8]) -> u16,
+) -> u16 {
+  let (left, middle, right) = data.align_to::<[Simd; 8]>();
+  if middle.is_empty() {
+    return crc16_width32_pmull_small(state, data, keys, portable);
+  }
+
+  state = portable(state, left);
+  let state32 = update_simd_width32_reflected_eor3_3way(state as u32, middle, fold_384b, fold_256b, keys);
+  state = state32 as u16;
+  portable(state, right)
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Public Safe Kernels (matching CRC-64 pure fn(u16, &[u8]) -> u16 signature)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -600,6 +890,63 @@ pub fn crc16_ccitt_pmull_3way_safe(crc: u16, data: &[u8]) -> u16 {
   }
 }
 
+/// CRC-16/CCITT PMULL+EOR3 kernel.
+///
+/// # Safety
+///
+/// Dispatcher verifies PMULL+SHA3 before selecting this kernel.
+#[inline]
+pub fn crc16_ccitt_pmull_eor3_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: Dispatcher verifies PMULL+SHA3 before selecting this kernel.
+  unsafe {
+    crc16_width32_pmull_eor3(
+      crc,
+      data,
+      &CRC16_CCITT_KEYS_REFLECTED,
+      super::portable::crc16_ccitt_slice8,
+    )
+  }
+}
+
+/// CRC-16/CCITT PMULL+EOR3 kernel (2-way striping).
+///
+/// # Safety
+///
+/// Dispatcher verifies PMULL+SHA3 before selecting this kernel.
+#[inline]
+pub fn crc16_ccitt_pmull_eor3_2way_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: Dispatcher verifies PMULL+SHA3 before selecting this kernel.
+  unsafe {
+    crc16_width32_pmull_eor3_2way(
+      crc,
+      data,
+      &CRC16_CCITT_KEYS_REFLECTED,
+      CRC16_CCITT_STREAM_REFLECTED.fold_256b,
+      super::portable::crc16_ccitt_slice8,
+    )
+  }
+}
+
+/// CRC-16/CCITT PMULL+EOR3 kernel (3-way striping).
+///
+/// # Safety
+///
+/// Dispatcher verifies PMULL+SHA3 before selecting this kernel.
+#[inline]
+pub fn crc16_ccitt_pmull_eor3_3way_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: Dispatcher verifies PMULL+SHA3 before selecting this kernel.
+  unsafe {
+    crc16_width32_pmull_eor3_3way(
+      crc,
+      data,
+      &CRC16_CCITT_KEYS_REFLECTED,
+      CRC16_CCITT_STREAM_REFLECTED.fold_384b,
+      CRC16_CCITT_STREAM_REFLECTED.fold_256b,
+      super::portable::crc16_ccitt_slice8,
+    )
+  }
+}
+
 /// CRC-16/IBM PMULL kernel.
 ///
 /// # Safety
@@ -653,6 +1000,56 @@ pub fn crc16_ibm_pmull_3way_safe(crc: u16, data: &[u8]) -> u16 {
   // SAFETY: Dispatcher verifies PMULL before selecting this kernel.
   unsafe {
     crc16_width32_pmull_3way(
+      crc,
+      data,
+      &CRC16_IBM_KEYS_REFLECTED,
+      CRC16_IBM_STREAM_REFLECTED.fold_384b,
+      CRC16_IBM_STREAM_REFLECTED.fold_256b,
+      super::portable::crc16_ibm_slice8,
+    )
+  }
+}
+
+/// CRC-16/IBM PMULL+EOR3 kernel.
+///
+/// # Safety
+///
+/// Dispatcher verifies PMULL+SHA3 before selecting this kernel.
+#[inline]
+pub fn crc16_ibm_pmull_eor3_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: Dispatcher verifies PMULL+SHA3 before selecting this kernel.
+  unsafe { crc16_width32_pmull_eor3(crc, data, &CRC16_IBM_KEYS_REFLECTED, super::portable::crc16_ibm_slice8) }
+}
+
+/// CRC-16/IBM PMULL+EOR3 kernel (2-way striping).
+///
+/// # Safety
+///
+/// Dispatcher verifies PMULL+SHA3 before selecting this kernel.
+#[inline]
+pub fn crc16_ibm_pmull_eor3_2way_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: Dispatcher verifies PMULL+SHA3 before selecting this kernel.
+  unsafe {
+    crc16_width32_pmull_eor3_2way(
+      crc,
+      data,
+      &CRC16_IBM_KEYS_REFLECTED,
+      CRC16_IBM_STREAM_REFLECTED.fold_256b,
+      super::portable::crc16_ibm_slice8,
+    )
+  }
+}
+
+/// CRC-16/IBM PMULL+EOR3 kernel (3-way striping).
+///
+/// # Safety
+///
+/// Dispatcher verifies PMULL+SHA3 before selecting this kernel.
+#[inline]
+pub fn crc16_ibm_pmull_eor3_3way_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: Dispatcher verifies PMULL+SHA3 before selecting this kernel.
+  unsafe {
+    crc16_width32_pmull_eor3_3way(
       crc,
       data,
       &CRC16_IBM_KEYS_REFLECTED,

@@ -923,32 +923,31 @@ mod aarch64_tables {
     crc24::kernels::aarch64 as crc24_k, crc32::kernels::aarch64 as crc32_k, crc64::kernels::aarch64 as crc64_k,
   };
 
-  const G3_CRC16_PMULL_2WAY_MAX_LEN: usize = 262_144;
+  const G3_CRC16_PMULL_EOR3_2WAY_MAX_LEN: usize = 262_144;
 
-  /// Graviton3 CRC16/CCITT large-path hybrid.
+  /// Graviton3 CRC16/CCITT large-path PMULL+EOR3 hybrid.
   ///
-  /// PMULL-2way improves lower "large" buffers, while PMULL remains safer for
-  /// very large buffers on G3.
+  /// PMULL+EOR3 2-way improves lower "large" buffers, while PMULL+EOR3 1-way
+  /// remains safer for very large buffers on G3.
   #[inline]
   fn g3_crc16_ccitt_l_hybrid(crc: u16, data: &[u8]) -> u16 {
-    if data.len() <= G3_CRC16_PMULL_2WAY_MAX_LEN {
-      (crc16_k::CCITT_PMULL[1])(crc, data)
+    if data.len() <= G3_CRC16_PMULL_EOR3_2WAY_MAX_LEN {
+      (crc16_k::CCITT_PMULL_EOR3[1])(crc, data)
     } else {
-      (crc16_k::CCITT_PMULL[0])(crc, data)
+      (crc16_k::CCITT_PMULL_EOR3[0])(crc, data)
     }
   }
 
-  /// Graviton3 CRC16/IBM large-path hybrid.
+  /// Graviton3 CRC16/IBM large-path PMULL+EOR3 hybrid.
   ///
-  /// Empirically, 2-way PMULL helps lower "large" buffers while 1-way PMULL
-  /// remains safer for very large buffers on G3. This keeps the fast path
-  /// without paying the xl penalty.
+  /// Empirically, 2-way PMULL+EOR3 helps lower "large" buffers while 1-way
+  /// PMULL+EOR3 remains safer for very large buffers on G3.
   #[inline]
   fn g3_crc16_ibm_l_hybrid(crc: u16, data: &[u8]) -> u16 {
-    if data.len() <= G3_CRC16_PMULL_2WAY_MAX_LEN {
-      (crc16_k::IBM_PMULL[1])(crc, data)
+    if data.len() <= G3_CRC16_PMULL_EOR3_2WAY_MAX_LEN {
+      (crc16_k::IBM_PMULL_EOR3[1])(crc, data)
     } else {
-      (crc16_k::IBM_PMULL[0])(crc, data)
+      (crc16_k::IBM_PMULL_EOR3[0])(crc, data)
     }
   }
 
@@ -1194,10 +1193,10 @@ mod aarch64_tables {
     },
 
     m: KernelSet {
-      crc16_ccitt: crc16_k::CCITT_PMULL[0], // pmull @ 32.80 GiB/s
-      crc16_ccitt_name: "aarch64/pmull",
-      crc16_ibm: crc16_k::IBM_PMULL[0], // pmull @ 32.79 GiB/s
-      crc16_ibm_name: "aarch64/pmull",
+      crc16_ccitt: crc16_k::CCITT_PMULL_EOR3[0], // PMULL+EOR3 cuts XOR chain in large lanes.
+      crc16_ccitt_name: "aarch64/pmull-eor3",
+      crc16_ibm: crc16_k::IBM_PMULL_EOR3[0], // PMULL+EOR3 cuts XOR chain in large lanes.
+      crc16_ibm_name: "aarch64/pmull-eor3",
       crc24_openpgp: crc24_k::OPENPGP_PMULL[0], // pmull @ 32.78 GiB/s
       crc24_openpgp_name: "aarch64/pmull",
       crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL, // pmull-small @ 31.76 GiB/s
@@ -1212,9 +1211,9 @@ mod aarch64_tables {
 
     l: KernelSet {
       crc16_ccitt: g3_crc16_ccitt_l_hybrid,
-      crc16_ccitt_name: "aarch64/pmull-g3-ccitt-hybrid",
+      crc16_ccitt_name: "aarch64/pmull-eor3-g3-ccitt-hybrid",
       crc16_ibm: g3_crc16_ibm_l_hybrid,
-      crc16_ibm_name: "aarch64/pmull-g3-ibm-hybrid",
+      crc16_ibm_name: "aarch64/pmull-eor3-g3-ibm-hybrid",
       crc24_openpgp: crc24_k::OPENPGP_PMULL[0], // pmull @ 37.90 GiB/s
       crc24_openpgp_name: "aarch64/pmull",
       crc32_ieee: crc32_k::CRC32_PMULL_EOR3[0], // pmull-eor3-v9s3x2e-s3 @ 46.29 GiB/s
@@ -1231,22 +1230,21 @@ mod aarch64_tables {
   // ───────────────────────────────────────────────────────────────────────────
   // Graviton4 Table
   //
-  // Starts from Graviton3, but keeps 2-way PMULL for CRC16 large class.
-  // This captures Graviton4 l/xl gains without regressing Graviton3 xl.
+  // Starts from Graviton3, but keeps 2-way PMULL+EOR3 for CRC16 large classes.
   // ───────────────────────────────────────────────────────────────────────────
   pub static GRAVITON4_TABLE: KernelTable = KernelTable {
     m: KernelSet {
-      crc16_ccitt: crc16_k::CCITT_PMULL[1],
-      crc16_ccitt_name: "aarch64/pmull-2way",
-      crc16_ibm: crc16_k::IBM_PMULL[1],
-      crc16_ibm_name: "aarch64/pmull-2way",
+      crc16_ccitt: crc16_k::CCITT_PMULL_EOR3[1],
+      crc16_ccitt_name: "aarch64/pmull-eor3-2way",
+      crc16_ibm: crc16_k::IBM_PMULL_EOR3[1],
+      crc16_ibm_name: "aarch64/pmull-eor3-2way",
       ..GRAVITON3_TABLE.m
     },
     l: KernelSet {
-      crc16_ccitt: crc16_k::CCITT_PMULL[1],
-      crc16_ccitt_name: "aarch64/pmull-2way",
-      crc16_ibm: crc16_k::IBM_PMULL[1],
-      crc16_ibm_name: "aarch64/pmull-2way",
+      crc16_ccitt: crc16_k::CCITT_PMULL_EOR3[1],
+      crc16_ccitt_name: "aarch64/pmull-eor3-2way",
+      crc16_ibm: crc16_k::IBM_PMULL_EOR3[1],
+      crc16_ibm_name: "aarch64/pmull-eor3-2way",
       ..GRAVITON3_TABLE.l
     },
     ..GRAVITON3_TABLE
