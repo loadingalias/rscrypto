@@ -161,7 +161,7 @@ const DEFAULT_M: KernelId = SIMD_KERNEL;
 const DEFAULT_L: KernelId = SIMD_KERNEL;
 
 #[cfg(target_arch = "x86_64")]
-const DEFAULT_STREAM_KERNEL: KernelId = KernelId::X86Avx2;
+const DEFAULT_STREAM_KERNEL: KernelId = KernelId::X86Sse41;
 #[cfg(target_arch = "aarch64")]
 const DEFAULT_STREAM_KERNEL: KernelId = KernelId::Aarch64Neon;
 #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
@@ -442,7 +442,7 @@ pub static PROFILE_X86_ZEN4: FamilyProfile = FamilyProfile {
     l: KernelId::X86Avx512,
   },
   streaming: StreamingTable {
-    stream: KernelId::X86Avx2,
+    stream: KernelId::X86Sse41,
     bulk: KernelId::X86Avx512,
     bulk_sizeclass_threshold: THRESHOLD_AVX512,
   },
@@ -484,7 +484,7 @@ pub static PROFILE_X86_ZEN5: FamilyProfile = FamilyProfile {
     l: KernelId::X86Avx512,
   },
   streaming: StreamingTable {
-    stream: KernelId::X86Avx2,
+    stream: KernelId::X86Sse41,
     bulk: KernelId::X86Avx512,
     bulk_sizeclass_threshold: THRESHOLD_AVX512,
   },
@@ -569,7 +569,7 @@ pub static PROFILE_X86_INTEL_SPR: FamilyProfile = FamilyProfile {
     l: KernelId::X86Avx512,
   },
   streaming: StreamingTable {
-    stream: KernelId::X86Avx2,
+    stream: KernelId::X86Sse41,
     bulk: KernelId::X86Avx512,
     bulk_sizeclass_threshold: THRESHOLD_AVX512,
   },
@@ -654,7 +654,7 @@ pub static PROFILE_X86_INTEL_ICL: FamilyProfile = FamilyProfile {
     l: KernelId::X86Avx512,
   },
   streaming: StreamingTable {
-    stream: KernelId::X86Avx2,
+    stream: KernelId::X86Sse41,
     bulk: KernelId::X86Avx512,
     bulk_sizeclass_threshold: THRESHOLD_AVX512,
   },
