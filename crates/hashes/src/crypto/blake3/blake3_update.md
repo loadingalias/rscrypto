@@ -511,3 +511,15 @@ Optional tools only with a specific question they uniquely answer:
 - Decision:
   - Reject and revert.
   - Reverted commit `c3eaa72`; this approach does not close either target gap.
+
+### 2026-03-01 - Candidate AG (in flight)
+- Hypothesis:
+  - Tiny XOF `init+read` is still paying fixed overhead in the first `squeeze` from `OutputState::root_hash_bytes()` (indirect `compress` + conversion) even when the state is single-chunk/no-tree.
+  - Precomputing and caching the single-chunk root hash at `finalize_xof()` should reduce the dominant overhead on `*-in/32B-out` cases without changing kernel policy.
+- Change:
+  - Added `single_chunk_root_hash_bytes_with_kernel()` helper in `Blake3` and reused it in `finalize()` single-chunk path.
+  - `finalize_xof()` single-chunk/no-tree now precomputes root hash bytes once and seeds `Blake3Xof` with cached root bytes.
+  - `Blake3Xof::squeeze()` tiny first-read path now uses cached root bytes when available and only falls back to `output.root_hash_bytes()` if cache is not yet populated.
+- Validation:
+  - Local: `just check-all && just test` passed.
+  - CI targeted bench run: pending (`filter=blake3/xof/`, lanes `intel-icl`, `intel-spr`, `amd-zen5`).
