@@ -386,3 +386,50 @@ Optional tools only with a specific question they uniquely answer:
 - Decision:
   - Reject and revert.
   - This change did not close the intended IBM short-input gap and slightly worsened `s390x` `256/1024`.
+
+### 2026-03-01 - Candidate AB (`bd61c53`)
+- Hypothesis:
+  - Single-chunk XOF short-output (`32B-out`) pays avoidable fixed overhead from eager zero-init of `Blake3Xof` scratch buffers (`buf` + `root_hash_cache`).
+  - Making these buffers lazy-initialized should improve `xof init+read` at `1B`/`64B`/`1024B` inputs.
+- Change:
+  - In `Blake3Xof`:
+    - switched `buf` and `root_hash_cache` to `MaybeUninit`,
+    - initialized `buf` only in `refill`,
+    - initialized `root_hash_cache` only when short-root fast path is used.
+- Validation:
+  - Local: `just check-all && just test` passed.
+  - CI targeted bench run: `22546811144` (`crates=hashes`, `benches=blake3`, `filter=xof/`,
+    lanes: `intel-icl`, `intel-spr`, `amd-zen5`, `graviton3`, `graviton4`).
+- CI outcomes (`xof/init+read/*-in/32B-out`):
+  - Net: `2W / 13L` vs official; median gap remained strongly negative.
+  - Wins only on `amd-zen5` (`1B`, `64B`), but multiple severe x86 losses remained (`intel-icl`, `intel-spr`).
+- Decision:
+  - Reject and revert.
+  - Not a cross-lane win on the targeted 32B-out gap cluster.
+
+### 2026-03-01 - Candidate AC (`aea12be`)
+- Hypothesis:
+  - Single-chunk `finalize_xof()` can inherit a deferred streaming kernel (`portable`) from `update()`, hurting short XOF competitiveness.
+  - Rebuilding single-chunk XOF output with one-shot size-class dispatch kernel should reduce this pinning.
+- Change:
+  - In `finalize_xof` single-chunk/no-tree path:
+    - switched from `self.kernel` to `dispatch_plan.size_class_kernel(self.chunk_state.len())`,
+    - rebuilt output via `chunk_output_with_kernel(kernel)`.
+- Validation:
+  - Local: `just check-all && just test` passed.
+  - CI targeted bench run: `22548433906` (same scoped `xof/` lane set as Candidate AB).
+- CI outcomes (`xof/init+read/*-in/32B-out`):
+  - Net: `0W / 15L` vs official.
+  - Average gap: `-17.75%` (median: `-18.38%`).
+  - Notable losses persisted across all five lanes.
+- Decision:
+  - Reject and revert.
+  - This change improved selected Intel points versus AB but remained a full loss set against official on the target surface.
+
+## Immediate Next Candidate (after AC revert)
+
+1. Narrow single-chunk XOF kernel override:
+   - keep current `finalize_xof()` behavior by default,
+   - only override kernel when `self.kernel == Portable` **and** tune-kind is an x86 Intel family (`IntelIcl`/`IntelSpr`), using size-class selection.
+2. Keep non-Intel lanes unchanged in this candidate (avoid another cross-lane cliff).
+3. Re-run the same targeted `bench.yaml` scope (`xof/`, 5 lanes above), then keep/revert immediately based on net `32B-out` results.

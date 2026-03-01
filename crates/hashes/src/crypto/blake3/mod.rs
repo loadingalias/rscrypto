@@ -3666,13 +3666,11 @@ impl Blake3 {
     let single_chunk_no_tree =
       self.chunk_state.chunk_counter == 0 && self.cv_stack_len == 0 && self.pending_chunk_cv.is_none();
 
-    // XOF can be dominated by squeeze throughput. For single-chunk states,
-    // rebuild with one-shot size-class kernel selection instead of inheriting
-    // the streaming/deferred kernel from `update()`.
+    // XOF can be dominated by squeeze throughput; for single-chunk states we
+    // keep the current chunk kernel to avoid rebuild overhead. Squeeze can
+    // still upgrade to a bulk kernel for large output requests.
     if single_chunk_no_tree {
-      let kernel = self.dispatch_plan.size_class_kernel(self.chunk_state.len());
-      let output = self.chunk_output_with_kernel(kernel);
-      return Blake3Xof::new_with_kernel(output, kernel, self.dispatch_plan);
+      return Blake3Xof::new_with_kernel(self.chunk_state.output(), self.kernel, self.dispatch_plan);
     }
 
     Blake3Xof::new(self.root_output(), self.dispatch_plan)
