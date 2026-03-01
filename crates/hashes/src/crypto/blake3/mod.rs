@@ -3667,19 +3667,9 @@ impl Blake3 {
       self.chunk_state.chunk_counter == 0 && self.cv_stack_len == 0 && self.pending_chunk_cv.is_none();
 
     // XOF can be dominated by squeeze throughput; for single-chunk states we
-    // usually keep the current chunk kernel to avoid rebuild overhead.
-    //
-    // Exception: if update() deferred SIMD and left us on portable, rebuild
-    // with the tuned streaming kernel so tiny init+read XOF is not pinned to
-    // scalar root hashing.
+    // keep the current chunk kernel to avoid rebuild overhead. Squeeze can
+    // still upgrade to a bulk kernel for large output requests.
     if single_chunk_no_tree {
-      if self.kernel.id == kernels::Blake3KernelId::Portable {
-        let stream = self.dispatch_plan.stream_kernel();
-        if stream.id != self.kernel.id {
-          let output = self.chunk_output_with_kernel(stream);
-          return Blake3Xof::new_with_kernel(output, stream, self.dispatch_plan);
-        }
-      }
       return Blake3Xof::new_with_kernel(self.chunk_state.output(), self.kernel, self.dispatch_plan);
     }
 

@@ -458,7 +458,7 @@ Optional tools only with a specific question they uniquely answer:
   - Reject and revert.
   - The narrow Intel override did not improve the target `32B-out` gap cluster enough to keep.
 
-### 2026-03-01 - Candidate AE (in flight)
+### 2026-03-01 - Candidate AE (`dd8be8e`)
 - Hypothesis:
   - XOF `init+read/*-in/32B-out` remains weak because single-chunk finalize can stay pinned to `Portable` after deferred-SIMD updates.
   - Streaming remains weak on x86 because profile tables still select `SSE4.1` for the per-update stream kernel.
@@ -468,7 +468,19 @@ Optional tools only with a specific question they uniquely answer:
     - keep existing behavior for non-Portable and multi-chunk states.
   - x86 dispatch tables:
     - set default streaming kernel to `X86Avx2`,
-    - set `IntelIcl` and `IntelSpr` streaming kernels to `X86Avx2` (bulk remains `X86Avx512`).
+    - set `Zen4`, `Zen5`, `IntelIcl`, and `IntelSpr` streaming kernels to `X86Avx2` (bulk remains `X86Avx512`).
 - Validation:
   - Local: `just check-all && just test` passed.
-  - CI targeted bench run: pending.
+  - CI targeted bench run: `22552154576` (`crates=hashes`, `benches=blake3`,
+    `filter=xof/init+read/,streaming/`, lanes: `intel-icl`, `intel-spr`, `amd-zen5`).
+  - Note: `xof/init+read/` filter matched no benchmarks in this run (`xof_cases=0` on all three lanes); run evidence is valid for streaming only.
+- CI outcomes:
+  - `streaming/*`: `0W / 24L` vs official (3 lanes x 8 chunk sizes).
+  - Aggregate streaming gap: avg `-19.98%` (median `-20.61%`).
+  - Lane-average streaming delta vs prior baseline run (`22549116807`):
+    - `intel-icl`: `-18.72%` -> `-20.76%` (`-2.04 pp`),
+    - `intel-spr`: `-16.09%` -> `-19.70%` (`-3.61 pp`),
+    - `amd-zen5`: `-18.03%` -> `-19.48%` (`-1.45 pp`).
+- Decision:
+  - Reject and revert.
+  - This candidate regressed streaming and did not produce actionable XOF data from the scoped run.
