@@ -434,17 +434,26 @@ Optional tools only with a specific question they uniquely answer:
 2. Keep non-Intel lanes unchanged in this candidate (avoid another cross-lane cliff).
 3. Re-run the same targeted `bench.yaml` scope (`xof/`, 5 lanes above), then keep/revert immediately based on net `32B-out` results.
 
-### 2026-03-01 - Candidate AD (in flight)
+### 2026-03-01 - Candidate AD (`853fd53`)
 - Hypothesis:
   - AC was too broad; rebuilding single-chunk XOF output with size-class selection on all lanes caused cross-lane losses.
   - Restricting the override to Intel x86_64 when update-path dispatch remained `Portable` should improve Intel short XOF cases while keeping non-Intel behavior stable.
 - Change:
   - In `finalize_xof` single-chunk/no-tree path:
-    - default path stays unchanged (`self.chunk_state.output()`, `self.kernel`),
+    - default path stayed unchanged (`self.chunk_state.output()`, `self.kernel`),
     - override to `dispatch_plan.size_class_kernel(self.chunk_state.len())` only when:
       - target is `x86_64`,
       - `self.kernel == Portable`,
       - tune-kind is `IntelIcl` or `IntelSpr`.
 - Validation:
   - Local: `just check-all && just test` passed.
-  - CI targeted bench run: pending.
+  - CI targeted bench run: `22549116807` (`crates=hashes`, `benches=blake3`, `filter=xof/`,
+    lanes: `intel-icl`, `intel-spr`, `amd-zen5`, `graviton3`, `graviton4`).
+  - Note: this run used pre-fix bench planning and emitted both `filter=blake3` and `filter=xof/`; decisions below are based on the dedicated `xof/` pass only.
+- CI outcomes (`xof/init+read/*-in/32B-out`):
+  - Net: `4W / 16L` vs official.
+  - Average gap: `-10.60%` (median: `-15.03%`).
+  - Intel remained the blocker (`intel-icl`: `0W / 4L`, `intel-spr`: `0W / 4L`).
+- Decision:
+  - Reject and revert.
+  - The narrow Intel override did not improve the target `32B-out` gap cluster enough to keep.
