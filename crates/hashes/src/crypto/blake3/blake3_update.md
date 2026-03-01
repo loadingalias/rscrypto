@@ -485,16 +485,29 @@ Optional tools only with a specific question they uniquely answer:
   - Reject and revert.
   - This candidate regressed streaming and did not produce actionable XOF data from the scoped run.
 
-### 2026-03-01 - Candidate AF (in flight)
+### 2026-03-01 - Candidate AF (`c3eaa72`)
 - Hypothesis:
-  - XOF short-output still loses when single-chunk state stays pinned to `Portable` after deferred-SIMD update.
-  - Streaming `1024B-chunks` loses because exact full-chunk updates are routed through conservative stream-kernel policy instead of bulk-tuned compression kernels.
+  - XOF short-output losses persist when single-chunk finalize inherits a deferred `Portable` kernel.
+  - Streaming losses at exact `1024B` chunk updates are partly due to conservative stream-kernel selection at chunk boundaries.
 - Change:
   - `finalize_xof` single-chunk path:
-    - if current kernel is `Portable`, rebuild chunk output with `dispatch_plan.stream_kernel()` and seed XOF with that kernel.
+    - when current kernel is `Portable`, rebuild chunk output with `dispatch_plan.stream_kernel()` and seed XOF with that kernel.
   - `update` full-chunk policy:
-    - for exact `CHUNK_LEN` updates at chunk boundary, choose `bulk_kernel_for_update(input.len())` as the active chunk kernel (instead of tiny-input stream/defer choice),
-    - keep existing behavior for sub-chunk and multi-chunk update paths.
+    - for exact `CHUNK_LEN` updates at chunk boundary, force active chunk kernel to `bulk_kernel_for_update(input.len())`.
 - Validation:
   - Local: `just check-all && just test` passed.
-  - CI targeted bench run: pending.
+  - CI targeted bench run: `22554313539` (`crates=hashes`, `benches=blake3`,
+    `filter=blake3/xof/,blake3/streaming/`, lanes: `intel-icl`, `intel-spr`, `amd-zen5`).
+- CI outcomes:
+  - Aggregate (`xof` + `streaming`): `0W / 48L` vs official.
+  - Surface aggregates:
+    - `streaming/*`: `0W / 24L`, avg gap `-21.56%`.
+    - `xof/init+read/*`: `0W / 24L`, avg gap `-21.83%`.
+  - Lane aggregates:
+    - `intel-icl`: streaming `-23.08%`, xof `-31.14%`.
+    - `intel-spr`: streaming `-20.13%`, xof `-16.74%`.
+    - `amd-zen5`: streaming `-21.48%`, xof `-17.59%`.
+  - Notable regressions remained severe on tiny-XOF cases (e.g., `intel-icl 1B-in/32B-out: -66.12%`, `intel-spr 1B-in/32B-out: -52.24%`).
+- Decision:
+  - Reject and revert.
+  - Reverted commit `c3eaa72`; this approach does not close either target gap.
