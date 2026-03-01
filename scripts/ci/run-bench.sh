@@ -502,9 +502,14 @@ if [[ -n "$ONLY_INPUT" ]]; then
     esac
   done
 
-  for algo in "${SELECTED_ALGOS[@]:+${SELECTED_ALGOS[@]}}"; do
-    build_algo_plan_rows "$algo"
-  done
+  # When an explicit raw Criterion filter is provided, treat it as the
+  # authoritative benchmark matcher and avoid adding a second broad plan row
+  # from BENCH_ONLY (e.g. "blake3"), which would run extra surfaces.
+  if [[ -z "$FILTER_INPUT" ]]; then
+    for algo in "${SELECTED_ALGOS[@]:+${SELECTED_ALGOS[@]}}"; do
+      build_algo_plan_rows "$algo"
+    done
+  fi
 fi
 
 if [[ -n "$FILTER_INPUT" ]]; then
@@ -525,6 +530,17 @@ if [[ "${#RAW_FILTERS[@]}" -gt 0 ]]; then
       IFS='|' read -r crate _ _ <<< "$row"
       append_unique "$crate" raw_crates
     done
+  elif [[ "${#SELECTED_ALGOS[@]}" -gt 0 ]]; then
+    for algo in "${SELECTED_ALGOS[@]:+${SELECTED_ALGOS[@]}}"; do
+      if array_contains "$algo" "${DEFAULT_CHECKSUM_ALGOS[@]}"; then
+        append_unique "checksum" raw_crates
+      elif array_contains "$algo" "${DEFAULT_HASH_ALGOS[@]}"; then
+        append_unique "hashes" raw_crates
+      fi
+    done
+    if [[ "${#raw_crates[@]}" -eq 0 ]]; then
+      raw_crates=("checksum" "hashes")
+    fi
   else
     raw_crates=("checksum" "hashes")
   fi

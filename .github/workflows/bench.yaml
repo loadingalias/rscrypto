@@ -44,7 +44,7 @@ on:
         required: false
         type: boolean
       only:
-        description: "Algorithm selector(s), comma-separated (e.g. blake3, crc32c)."
+        description: "Algorithm selector(s), comma-separated (e.g. blake3, crc32c). If 'filter' is set, this scopes crate/bench selection only."
         required: false
         type: string
       quick:
@@ -72,7 +72,7 @@ on:
         required: false
         type: string
       filter:
-        description: "Advanced raw Criterion filter(s), comma-separated. Do NOT use 'hashes/comp' here (it selects the full hashes comp matrix)."
+        description: "Advanced raw Criterion filter(s), comma-separated. Authoritative matcher when set (precedes 'only' benchmark matching). Do NOT use 'hashes/comp' here."
         required: false
         type: string
       upload_raw_criterion:
