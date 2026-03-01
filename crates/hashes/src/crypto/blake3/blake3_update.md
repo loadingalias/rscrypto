@@ -433,3 +433,18 @@ Optional tools only with a specific question they uniquely answer:
    - only override kernel when `self.kernel == Portable` **and** tune-kind is an x86 Intel family (`IntelIcl`/`IntelSpr`), using size-class selection.
 2. Keep non-Intel lanes unchanged in this candidate (avoid another cross-lane cliff).
 3. Re-run the same targeted `bench.yaml` scope (`xof/`, 5 lanes above), then keep/revert immediately based on net `32B-out` results.
+
+### 2026-03-01 - Candidate AD (in flight)
+- Hypothesis:
+  - AC was too broad; rebuilding single-chunk XOF output with size-class selection on all lanes caused cross-lane losses.
+  - Restricting the override to Intel x86_64 when update-path dispatch remained `Portable` should improve Intel short XOF cases while keeping non-Intel behavior stable.
+- Change:
+  - In `finalize_xof` single-chunk/no-tree path:
+    - default path stays unchanged (`self.chunk_state.output()`, `self.kernel`),
+    - override to `dispatch_plan.size_class_kernel(self.chunk_state.len())` only when:
+      - target is `x86_64`,
+      - `self.kernel == Portable`,
+      - tune-kind is `IntelIcl` or `IntelSpr`.
+- Validation:
+  - Local: `just check-all && just test` passed.
+  - CI targeted bench run: pending.

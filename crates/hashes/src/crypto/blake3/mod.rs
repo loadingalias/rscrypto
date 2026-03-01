@@ -3667,9 +3667,23 @@ impl Blake3 {
       self.chunk_state.chunk_counter == 0 && self.cv_stack_len == 0 && self.pending_chunk_cv.is_none();
 
     // XOF can be dominated by squeeze throughput; for single-chunk states we
-    // keep the current chunk kernel to avoid rebuild overhead. Squeeze can
-    // still upgrade to a bulk kernel for large output requests.
+    // usually keep the current chunk kernel to avoid rebuild overhead.
+    //
+    // Narrow exception: if update() left us on portable on Intel x86_64, use
+    // one-shot size-class dispatch here to avoid pessimizing short XOF paths.
     if single_chunk_no_tree {
+      #[cfg(target_arch = "x86_64")]
+      if self.kernel.id == kernels::Blake3KernelId::Portable
+        && matches!(
+          dispatch::tune_kind(),
+          platform::TuneKind::IntelIcl | platform::TuneKind::IntelSpr
+        )
+      {
+        let kernel = self.dispatch_plan.size_class_kernel(self.chunk_state.len());
+        let output = self.chunk_output_with_kernel(kernel);
+        return Blake3Xof::new_with_kernel(output, kernel, self.dispatch_plan);
+      }
+
       return Blake3Xof::new_with_kernel(self.chunk_state.output(), self.kernel, self.dispatch_plan);
     }
 
