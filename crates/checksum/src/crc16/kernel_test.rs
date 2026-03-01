@@ -234,6 +234,12 @@ fn run_aarch64_kernels_ccitt(data: &[u8], results: &mut alloc::vec::Vec<KernelRe
     }
     run_single_kernel_ccitt(data, CCITT_PMULL_SMALL_KERNEL, PMULL_SMALL, results);
   }
+
+  if caps.has(platform::caps::aarch64::PMULL_EOR3_READY) {
+    for (&name, &func) in PMULL_EOR3_NAMES.iter().zip(CCITT_PMULL_EOR3.iter()).take(3) {
+      run_single_kernel_ccitt(data, func, name, results);
+    }
+  }
 }
 
 #[cfg(target_arch = "aarch64")]
@@ -246,6 +252,12 @@ fn run_aarch64_kernels_ibm(data: &[u8], results: &mut alloc::vec::Vec<KernelResu
       run_single_kernel_ibm(data, func, name, results);
     }
     run_single_kernel_ibm(data, IBM_PMULL_SMALL_KERNEL, PMULL_SMALL, results);
+  }
+
+  if caps.has(platform::caps::aarch64::PMULL_EOR3_READY) {
+    for (&name, &func) in PMULL_EOR3_NAMES.iter().zip(IBM_PMULL_EOR3.iter()).take(3) {
+      run_single_kernel_ibm(data, func, name, results);
+    }
   }
 }
 

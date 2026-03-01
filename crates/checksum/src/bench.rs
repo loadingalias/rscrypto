@@ -99,6 +99,9 @@ pub fn available_crc16_kernels() -> Vec<&'static str> {
       kernels.extend_from_slice(aarch64::PMULL_NAMES);
       kernels.push(aarch64::PMULL_SMALL);
     }
+    if caps.has(platform::caps::aarch64::PMULL_EOR3_READY) {
+      kernels.extend_from_slice(aarch64::PMULL_EOR3_NAMES);
+    }
   }
 
   #[cfg(target_arch = "powerpc64")]
@@ -355,6 +358,17 @@ fn get_aarch64_crc16_ccitt_kernel(name: &str) -> Option<Crc16Kernel> {
       }
     }
   }
+  if caps.has(platform::caps::aarch64::PMULL_EOR3_READY) {
+    for (&k, &func) in aarch64::PMULL_EOR3_NAMES
+      .iter()
+      .zip(aarch64::CCITT_PMULL_EOR3.iter())
+      .take(3)
+    {
+      if name == k {
+        return Some(Crc16Kernel { name: k, func });
+      }
+    }
+  }
 
   None
 }
@@ -372,6 +386,17 @@ fn get_aarch64_crc16_ibm_kernel(name: &str) -> Option<Crc16Kernel> {
       });
     }
     for (&k, &func) in aarch64::PMULL_NAMES.iter().zip(aarch64::IBM_PMULL.iter()) {
+      if name == k {
+        return Some(Crc16Kernel { name: k, func });
+      }
+    }
+  }
+  if caps.has(platform::caps::aarch64::PMULL_EOR3_READY) {
+    for (&k, &func) in aarch64::PMULL_EOR3_NAMES
+      .iter()
+      .zip(aarch64::IBM_PMULL_EOR3.iter())
+      .take(3)
+    {
       if name == k {
         return Some(Crc16Kernel { name: k, func });
       }
