@@ -457,3 +457,18 @@ Optional tools only with a specific question they uniquely answer:
 - Decision:
   - Reject and revert.
   - The narrow Intel override did not improve the target `32B-out` gap cluster enough to keep.
+
+### 2026-03-01 - Candidate AE (in flight)
+- Hypothesis:
+  - XOF `init+read/*-in/32B-out` remains weak because single-chunk finalize can stay pinned to `Portable` after deferred-SIMD updates.
+  - Streaming remains weak on x86 because profile tables still select `SSE4.1` for the per-update stream kernel.
+- Change:
+  - `finalize_xof` single-chunk path:
+    - when current kernel is `Portable`, rebuild chunk output with `dispatch_plan.stream_kernel()` and use that for XOF state.
+    - keep existing behavior for non-Portable and multi-chunk states.
+  - x86 dispatch tables:
+    - set default streaming kernel to `X86Avx2`,
+    - set `IntelIcl` and `IntelSpr` streaming kernels to `X86Avx2` (bulk remains `X86Avx512`).
+- Validation:
+  - Local: `just check-all && just test` passed.
+  - CI targeted bench run: pending.
