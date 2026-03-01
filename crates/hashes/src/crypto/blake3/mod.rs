@@ -226,7 +226,12 @@ fn parallel_override() -> Option<ParallelPolicyOverride> {
 #[cfg(feature = "std")]
 #[inline]
 fn available_parallelism_cached() -> Option<usize> {
-  *AVAILABLE_PARALLELISM.get_or_init(|| thread::available_parallelism().ok().map(|v| v.get()))
+  *AVAILABLE_PARALLELISM.get_or_init(|| {
+    let std_threads = thread::available_parallelism().ok().map(|v| v.get()).unwrap_or(0);
+    let rayon_threads = rayon::current_num_threads();
+    let threads = core::cmp::max(std_threads, rayon_threads);
+    (threads != 0).then_some(threads)
+  })
 }
 
 #[cfg(feature = "std")]
@@ -336,7 +341,7 @@ fn scale_parallel_required_bytes(mode: ParallelPolicyKind, required: usize, inpu
   let (num, den) = match mode {
     // Fitted from crossover data: one-shot/XOF benefit earlier than update.
     ParallelPolicyKind::Oneshot | ParallelPolicyKind::KeyedOneshot | ParallelPolicyKind::DeriveOneshot => {
-      if input_bytes >= (1024 * 1024) {
+      if input_bytes >= (64 * 1024) {
         (10usize, 10usize)
       } else {
         (12usize, 10usize)
@@ -345,7 +350,13 @@ fn scale_parallel_required_bytes(mode: ParallelPolicyKind, required: usize, inpu
     ParallelPolicyKind::Update | ParallelPolicyKind::KeyedUpdate | ParallelPolicyKind::DeriveUpdate => {
       (15usize, 10usize)
     }
-    ParallelPolicyKind::Xof | ParallelPolicyKind::KeyedXof | ParallelPolicyKind::DeriveXof => (12usize, 10usize),
+    ParallelPolicyKind::Xof | ParallelPolicyKind::KeyedXof | ParallelPolicyKind::DeriveXof => {
+      if input_bytes >= (64 * 1024) {
+        (9usize, 10usize)
+      } else {
+        (12usize, 10usize)
+      }
+    }
   };
   required.saturating_mul(num).saturating_add(den - 1) / den
 }
@@ -2066,6 +2077,67 @@ impl ChunkState {
     if self.blocks_compressed == 0 { CHUNK_START } else { 0 }
   }
 
+  /// Fast path for block-aligned short updates that stay within one chunk.
+  ///
+  /// This removes the generic update-loop overhead for the dominant streaming
+  /// benchmark pattern (`64..1024` byte aligned chunks).
+  #[inline]
+  fn try_update_block_aligned_short(&mut self, mut input: &[u8]) -> bool {
+    if input.is_empty() || !input.len().is_multiple_of(BLOCK_LEN) || input.len() > CHUNK_LEN {
+      return false;
+    }
+
+    let cur_len = self.len();
+    if cur_len == CHUNK_LEN || cur_len + input.len() > CHUNK_LEN {
+      return false;
+    }
+
+    if self.block_len != 0 && self.block_len as usize != BLOCK_LEN {
+      return false;
+    }
+
+    if self.block_len as usize == BLOCK_LEN {
+      debug_assert!(
+        self.blocks_compressed < 15,
+        "last chunk block stays buffered until output()"
+      );
+      kernels::chunk_compress_blocks_inline(
+        self.kernel.id,
+        &mut self.chaining_value,
+        self.chunk_counter,
+        self.flags,
+        &mut self.blocks_compressed,
+        &self.block,
+      );
+      self.block_len = 0;
+    }
+
+    let total_blocks = input.len() / BLOCK_LEN;
+    let max_blocks_with_tail = 16usize - self.blocks_compressed as usize;
+    if total_blocks > max_blocks_with_tail {
+      return false;
+    }
+
+    let blocks_to_compress = total_blocks.saturating_sub(1);
+    if blocks_to_compress != 0 {
+      let bytes = blocks_to_compress * BLOCK_LEN;
+      kernels::chunk_compress_blocks_inline(
+        self.kernel.id,
+        &mut self.chaining_value,
+        self.chunk_counter,
+        self.flags,
+        &mut self.blocks_compressed,
+        &input[..bytes],
+      );
+      input = &input[bytes..];
+    }
+
+    debug_assert_eq!(input.len(), BLOCK_LEN);
+    self.block.copy_from_slice(input);
+    self.block_len = BLOCK_LEN as u8;
+    true
+  }
+
   fn update(&mut self, mut input: &[u8]) {
     // Streaming fast path: when we receive exactly one whole chunk at a chunk
     // boundary, compute the internal state in one shot.
@@ -3595,22 +3667,10 @@ impl Blake3 {
       self.chunk_state.chunk_counter == 0 && self.cv_stack_len == 0 && self.pending_chunk_cv.is_none();
 
     // XOF can be dominated by squeeze throughput; for single-chunk states we
-    // should not stay pinned to portable when streaming dispatch picked a better
-    // kernel.
+    // keep the current chunk kernel to avoid rebuild overhead. Squeeze can
+    // still upgrade to a bulk kernel for large output requests.
     if single_chunk_no_tree {
-      let kernel = if self.kernel.id == kernels::Blake3KernelId::Portable {
-        self.dispatch_plan.stream_kernel()
-      } else {
-        self.kernel
-      };
-      let output = if self.chunk_state.len() == 0 {
-        single_chunk_output(kernel, self.key_words, 0, self.flags, &[])
-      } else if kernel.id == self.kernel.id {
-        self.chunk_state.output()
-      } else {
-        self.chunk_output_with_kernel(kernel)
-      };
-      return Blake3Xof::new_with_kernel(output, kernel, self.dispatch_plan);
+      return Blake3Xof::new_with_kernel(self.chunk_state.output(), self.kernel, self.dispatch_plan);
     }
 
     Blake3Xof::new(self.root_output(), self.dispatch_plan)
@@ -3784,6 +3844,9 @@ impl Digest for Blake3 {
           self.kernel = stream;
           self.chunk_state.kernel = stream;
         }
+        if input.len().is_multiple_of(BLOCK_LEN) && self.chunk_state.try_update_block_aligned_short(input) {
+          return;
+        }
         self.chunk_state.update(input);
         return;
       }
@@ -3852,6 +3915,8 @@ pub struct Blake3Xof {
   block_counter: u64,
   buf: [u8; OUTPUT_BLOCK_LEN],
   buf_pos: usize,
+  root_hash_cache: [u8; OUT_LEN],
+  root_hash_pos: u8,
   /// Kernel used for XOF squeeze operations. Stored to enable dynamic upgrade
   /// when large squeezes are requested with a suboptimal kernel.
   kernel: Kernel,
@@ -3867,6 +3932,8 @@ impl Blake3Xof {
       block_counter: 0,
       buf: [0u8; OUTPUT_BLOCK_LEN],
       buf_pos: OUTPUT_BLOCK_LEN,
+      root_hash_cache: [0u8; OUT_LEN],
+      root_hash_pos: 0,
       kernel,
       dispatch_plan,
     }
@@ -3879,6 +3946,8 @@ impl Blake3Xof {
       block_counter: 0,
       buf: [0u8; OUTPUT_BLOCK_LEN],
       buf_pos: OUTPUT_BLOCK_LEN,
+      root_hash_cache: [0u8; OUT_LEN],
+      root_hash_pos: 0,
       kernel,
       dispatch_plan,
     }
@@ -3898,12 +3967,35 @@ impl Xof for Blake3Xof {
       return;
     }
 
+    // Continue a lazily-served short-root-hash sequence, if active.
+    if self.root_hash_pos != 0 {
+      let pos = self.root_hash_pos as usize;
+      if pos < OUT_LEN {
+        let take = min(OUT_LEN - pos, out.len());
+        out[..take].copy_from_slice(&self.root_hash_cache[pos..pos + take]);
+        self.root_hash_pos = (pos + take) as u8;
+        out = &mut out[take..];
+        if out.is_empty() {
+          return;
+        }
+      }
+
+      if self.root_hash_pos as usize == OUT_LEN {
+        self.refill();
+        // We already served the first 32 bytes from `root_hash_cache`.
+        self.buf_pos = OUT_LEN;
+        self.root_hash_pos = 0;
+      }
+    }
+
     // Fast path: the first 32 output bytes are the root hash. Avoid generating
-    // a full 64-byte output block (and touching the internal buffer) when the
-    // caller only needs up to one hash output.
+    // the full first 64-byte output block unless/when the caller requests bytes
+    // beyond this prefix.
     if self.block_counter == 0 && self.buf_pos == self.buf.len() && out.len() <= OUT_LEN {
       let rh = self.output.root_hash_bytes();
       out.copy_from_slice(&rh[..out.len()]);
+      self.root_hash_cache = rh;
+      self.root_hash_pos = out.len() as u8;
       return;
     }
 
@@ -4369,6 +4461,34 @@ mod tests {
         "XOF outputs should match for {}B input -> {}B output",
         input_len, output_len
       );
+    }
+  }
+
+  #[test]
+  fn xof_repeated_small_squeezes_match_single_read() {
+    use alloc::vec;
+
+    for input_len in [0usize, 1, 64, 1024, 4096] {
+      let input = vec![0x5au8; input_len];
+
+      let mut single = Blake3::new();
+      single.update(&input);
+      let mut single_xof = single.finalize_xof();
+      let mut expected = [0u8; 96];
+      single_xof.squeeze(&mut expected);
+
+      let mut stepped = Blake3::new();
+      stepped.update(&input);
+      let mut stepped_xof = stepped.finalize_xof();
+      let mut actual = [0u8; 96];
+      let mut off = 0usize;
+      for step in [7usize, 9, 16, 32, 5, 27] {
+        let end = off + step;
+        stepped_xof.squeeze(&mut actual[off..end]);
+        off = end;
+      }
+
+      assert_eq!(actual, expected, "xof squeeze mismatch for input_len={input_len}");
     }
   }
 

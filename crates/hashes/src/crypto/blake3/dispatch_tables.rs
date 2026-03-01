@@ -447,8 +447,8 @@ pub static PROFILE_X86_ZEN4: FamilyProfile = FamilyProfile {
     bulk_sizeclass_threshold: THRESHOLD_AVX512,
   },
   parallel: ParallelTable {
-    min_bytes: 131072,
-    min_chunks: 128,
+    min_bytes: 65536,
+    min_chunks: 64,
     max_threads: 8,
     spawn_cost_bytes: 24576,
     merge_cost_bytes: 16384,
@@ -489,8 +489,8 @@ pub static PROFILE_X86_ZEN5: FamilyProfile = FamilyProfile {
     bulk_sizeclass_threshold: THRESHOLD_AVX512,
   },
   parallel: ParallelTable {
-    min_bytes: 98304,
-    min_chunks: 96,
+    min_bytes: 65536,
+    min_chunks: 64,
     max_threads: 8,
     spawn_cost_bytes: 24576,
     merge_cost_bytes: 16384,
@@ -574,8 +574,8 @@ pub static PROFILE_X86_INTEL_SPR: FamilyProfile = FamilyProfile {
     bulk_sizeclass_threshold: THRESHOLD_AVX512,
   },
   parallel: ParallelTable {
-    min_bytes: 1048576,
-    min_chunks: 1024,
+    min_bytes: 65536,
+    min_chunks: 64,
     max_threads: 8,
     spawn_cost_bytes: 24576,
     merge_cost_bytes: 131072,
@@ -659,8 +659,8 @@ pub static PROFILE_X86_INTEL_ICL: FamilyProfile = FamilyProfile {
     bulk_sizeclass_threshold: THRESHOLD_AVX512,
   },
   parallel: ParallelTable {
-    min_bytes: 131072,
-    min_chunks: 128,
+    min_bytes: 65536,
+    min_chunks: 64,
     max_threads: 8,
     spawn_cost_bytes: 24576,
     merge_cost_bytes: 16384,
