@@ -3667,9 +3667,19 @@ impl Blake3 {
       self.chunk_state.chunk_counter == 0 && self.cv_stack_len == 0 && self.pending_chunk_cv.is_none();
 
     // XOF can be dominated by squeeze throughput; for single-chunk states we
-    // keep the current chunk kernel to avoid rebuild overhead. Squeeze can
-    // still upgrade to a bulk kernel for large output requests.
+    // usually keep the current chunk kernel to avoid rebuild overhead.
+    //
+    // Exception: if update() deferred SIMD and left us on portable, rebuild
+    // with the tuned streaming kernel so tiny init+read XOF is not pinned to
+    // scalar root hashing.
     if single_chunk_no_tree {
+      if self.kernel.id == kernels::Blake3KernelId::Portable {
+        let stream = self.dispatch_plan.stream_kernel();
+        if stream.id != self.kernel.id {
+          let output = self.chunk_output_with_kernel(stream);
+          return Blake3Xof::new_with_kernel(output, stream, self.dispatch_plan);
+        }
+      }
       return Blake3Xof::new_with_kernel(self.chunk_state.output(), self.kernel, self.dispatch_plan);
     }
 
@@ -3809,7 +3819,8 @@ impl Digest for Blake3 {
       && self.chunk_state.block_len == 0
       && input.len() <= CHUNK_LEN
     {
-      let stream = if self.kernel.id == kernels::Blake3KernelId::Portable
+      let bulk = self.dispatch_plan.bulk_kernel_for_update(input.len());
+      let mut stream = if self.kernel.id == kernels::Blake3KernelId::Portable
         && self
           .dispatch_plan
           .should_defer_simd(self.chunk_state.len(), input.len())
@@ -3818,7 +3829,11 @@ impl Digest for Blake3 {
       } else {
         self.dispatch_plan.stream_kernel()
       };
-      let bulk = self.dispatch_plan.bulk_kernel_for_update(input.len());
+      // Exact full-chunk updates are compression-dominated; use the bulk-tuned
+      // kernel instead of a conservative tiny-input stream pick.
+      if input.len() == CHUNK_LEN {
+        stream = bulk;
+      }
       self.kernel = stream;
       self.bulk_kernel = bulk;
       self.chunk_state.kernel = stream;
@@ -3831,6 +3846,12 @@ impl Digest for Blake3 {
     if self.pending_chunk_cv.is_none() && self.chunk_state.len() < CHUNK_LEN {
       let remaining = CHUNK_LEN - self.chunk_state.len();
       if input.len() <= remaining {
+        if self.chunk_state.len() == 0 && input.len() == CHUNK_LEN {
+          let bulk = self.dispatch_plan.bulk_kernel_for_update(input.len());
+          self.kernel = bulk;
+          self.bulk_kernel = bulk;
+          self.chunk_state.kernel = bulk;
+        }
         if self.kernel.id == kernels::Blake3KernelId::Portable
           && (self.chunk_state.chunk_counter != 0
             || !self

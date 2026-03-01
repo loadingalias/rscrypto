@@ -484,3 +484,17 @@ Optional tools only with a specific question they uniquely answer:
 - Decision:
   - Reject and revert.
   - This candidate regressed streaming and did not produce actionable XOF data from the scoped run.
+
+### 2026-03-01 - Candidate AF (in flight)
+- Hypothesis:
+  - XOF short-output still loses when single-chunk state stays pinned to `Portable` after deferred-SIMD update.
+  - Streaming `1024B-chunks` loses because exact full-chunk updates are routed through conservative stream-kernel policy instead of bulk-tuned compression kernels.
+- Change:
+  - `finalize_xof` single-chunk path:
+    - if current kernel is `Portable`, rebuild chunk output with `dispatch_plan.stream_kernel()` and seed XOF with that kernel.
+  - `update` full-chunk policy:
+    - for exact `CHUNK_LEN` updates at chunk boundary, choose `bulk_kernel_for_update(input.len())` as the active chunk kernel (instead of tiny-input stream/defer choice),
+    - keep existing behavior for sub-chunk and multi-chunk update paths.
+- Validation:
+  - Local: `just check-all && just test` passed.
+  - CI targeted bench run: pending.
