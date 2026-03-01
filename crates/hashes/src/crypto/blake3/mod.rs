@@ -3913,9 +3913,9 @@ impl Digest for Blake3 {
 pub struct Blake3Xof {
   output: OutputState,
   block_counter: u64,
-  buf: MaybeUninit<[u8; OUTPUT_BLOCK_LEN]>,
+  buf: [u8; OUTPUT_BLOCK_LEN],
   buf_pos: usize,
-  root_hash_cache: MaybeUninit<[u8; OUT_LEN]>,
+  root_hash_cache: [u8; OUT_LEN],
   root_hash_pos: u8,
   /// Kernel used for XOF squeeze operations. Stored to enable dynamic upgrade
   /// when large squeezes are requested with a suboptimal kernel.
@@ -3930,9 +3930,9 @@ impl Blake3Xof {
     Self {
       output,
       block_counter: 0,
-      buf: MaybeUninit::uninit(),
+      buf: [0u8; OUTPUT_BLOCK_LEN],
       buf_pos: OUTPUT_BLOCK_LEN,
-      root_hash_cache: MaybeUninit::uninit(),
+      root_hash_cache: [0u8; OUT_LEN],
       root_hash_pos: 0,
       kernel,
       dispatch_plan,
@@ -3944,9 +3944,9 @@ impl Blake3Xof {
     Self {
       output,
       block_counter: 0,
-      buf: MaybeUninit::uninit(),
+      buf: [0u8; OUTPUT_BLOCK_LEN],
       buf_pos: OUTPUT_BLOCK_LEN,
-      root_hash_cache: MaybeUninit::uninit(),
+      root_hash_cache: [0u8; OUT_LEN],
       root_hash_pos: 0,
       kernel,
       dispatch_plan,
@@ -3955,9 +3955,7 @@ impl Blake3Xof {
 
   #[inline]
   fn refill(&mut self) {
-    // SAFETY: `root_output_blocks_into` writes the entire output block.
-    let buf = unsafe { &mut *self.buf.as_mut_ptr() };
-    self.output.root_output_blocks_into(self.block_counter, buf);
+    self.output.root_output_blocks_into(self.block_counter, &mut self.buf);
     self.block_counter = self.block_counter.wrapping_add(1);
     self.buf_pos = 0;
   }
@@ -3974,9 +3972,7 @@ impl Xof for Blake3Xof {
       let pos = self.root_hash_pos as usize;
       if pos < OUT_LEN {
         let take = min(OUT_LEN - pos, out.len());
-        // SAFETY: `root_hash_pos != 0` implies `root_hash_cache` was written.
-        let cache = unsafe { self.root_hash_cache.assume_init_ref() };
-        out[..take].copy_from_slice(&cache[pos..pos + take]);
+        out[..take].copy_from_slice(&self.root_hash_cache[pos..pos + take]);
         self.root_hash_pos = (pos + take) as u8;
         out = &mut out[take..];
         if out.is_empty() {
@@ -3995,10 +3991,10 @@ impl Xof for Blake3Xof {
     // Fast path: the first 32 output bytes are the root hash. Avoid generating
     // the full first 64-byte output block unless/when the caller requests bytes
     // beyond this prefix.
-    if self.block_counter == 0 && self.buf_pos == OUTPUT_BLOCK_LEN && out.len() <= OUT_LEN {
+    if self.block_counter == 0 && self.buf_pos == self.buf.len() && out.len() <= OUT_LEN {
       let rh = self.output.root_hash_bytes();
       out.copy_from_slice(&rh[..out.len()]);
-      self.root_hash_cache.write(rh);
+      self.root_hash_cache = rh;
       self.root_hash_pos = out.len() as u8;
       return;
     }
@@ -4021,11 +4017,9 @@ impl Xof for Blake3Xof {
     }
 
     // Drain any buffered bytes first.
-    if self.buf_pos != OUTPUT_BLOCK_LEN {
-      let take = min(OUTPUT_BLOCK_LEN - self.buf_pos, out.len());
-      // SAFETY: `buf_pos != len` implies `buf` was initialized via `refill`.
-      let buf = unsafe { self.buf.assume_init_ref() };
-      out[..take].copy_from_slice(&buf[self.buf_pos..self.buf_pos + take]);
+    if self.buf_pos != self.buf.len() {
+      let take = min(self.buf.len() - self.buf_pos, out.len());
+      out[..take].copy_from_slice(&self.buf[self.buf_pos..self.buf_pos + take]);
       self.buf_pos += take;
       out = &mut out[take..];
       if out.is_empty() {
@@ -4049,9 +4043,7 @@ impl Xof for Blake3Xof {
     if !out.is_empty() {
       self.refill();
       let take = out.len();
-      // SAFETY: `refill` initializes `buf` with a full output block.
-      let buf = unsafe { self.buf.assume_init_ref() };
-      out.copy_from_slice(&buf[..take]);
+      out.copy_from_slice(&self.buf[..take]);
       self.buf_pos = take;
     }
   }
