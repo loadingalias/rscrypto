@@ -1,5 +1,36 @@
 # BLAKE3 Performance Plan (Locked Loop)
 
+## 2026-03-01 Competitive Snapshot Update
+
+- Data source: [benchmark-results/ci-22530359798-blake3/blake3_tally.json](/Users/mr.wolf/loadingalias/rscrypto/benchmark-results/ci-22530359798-blake3/blake3_tally.json)
+- Run: `22530359798` (`quick=false`, `crates=hashes`, `benches=comp`, `only=blake3`, all 8 arches), commit `b160f5ac...`.
+- Overall: `228W / 211L / 1T` (`440` cases, `51.8%` wins).
+- Delta vs `22527347170`: `-2W / +5L / -3T`.
+- Baseline status: `22527347170` remains the best full-matrix Blake3 snapshot in-repo.
+
+Per arch (`wins/total`):
+- `amd_zen4`: `30/55` (`54.5%`)
+- `amd_zen5`: `18/55` (`32.7%`)
+- `aws_graviton3`: `26/55` (`47.3%`)
+- `aws_graviton4`: `28/55` (`50.9%`)
+- `ibm_power10_ppc64le`: `34/55` (`61.8%`)
+- `ibm_z_s390x`: `35/55` (`63.6%`)
+- `intel_ice_lake`: `27/55` (`49.1%`)
+- `intel_sapphire_rapids`: `30/55` (`54.5%`)
+
+Per group:
+- `derive-key`: `98W / 6L` (`94.2%`) - strong and stable.
+- `hash`: `55W / 49L` (`52.9%`) - mixed, with persistent `65B`/`65536` weak points.
+- `keyed-hash`: `52W / 51L / 1T` (`50.0%`) - mixed, similar edge-case weakness.
+- `streaming`: `12W / 52L` (`18.8%`) - primary deficit.
+- `xof`: `11W / 53L` (`17.2%`) - primary deficit and slightly worse than prior baseline.
+
+Clear loss clusters:
+- Streaming short chunks (`64B`, `128B`, `256B`, `512B`, `1024B`) are `0/8` each.
+- XOF short-output (`32B-out`) at `1B-in`, `64B-in`, `1024B-in` are `0/8` each.
+- `65B` edge remains weak (`hash/65` and `keyed-hash/65` lose on `7/8` arches).
+- Large rayon compare points (`65536`, `1048576`) remain red on select arches (notably Graviton and Intel SPR surfaces).
+
 ## 2026-02-28 Current Competitive Snapshot
 
 - Data source: [benchmark-results/ci-22527347170-blake3/blake3_tally.json](/Users/mr.wolf/loadingalias/rscrypto/benchmark-results/ci-22527347170-blake3/blake3_tally.json)
