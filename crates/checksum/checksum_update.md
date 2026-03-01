@@ -1,58 +1,44 @@
-# Checksum Baseline Update (2026-02-25)
+# Checksum Baseline Update (2026-03-01)
 
-## 2026-02-28 Current Competitive Snapshot
+## 2026-03-01 Current Competitive Snapshot
 
-- Data source: [benchmark-results/ci-22524744705-checksum/checksum_tally.json](/Users/mr.wolf/loadingalias/rscrypto/benchmark-results/ci-22524744705-checksum/checksum_tally.json)
-- Run: `22524744705` (`quick=false`, `crates=checksum`, `benches=comp`, all 8 arches).
-- Scope note: newer checksum run `22526610459` is only `graviton3/graviton4`; it is not a full-matrix baseline.
-- Overall: `242W / 32L / 6T` (`280` comparable cases, `86.4%` wins).
-- Baseline status: this remains the best complete all-arch checksum baseline currently in-repo.
+- Full-matrix data source: [benchmark-results/ci-22530359800-checksum/checksum_tally.json](/Users/mr.wolf/loadingalias/rscrypto/benchmark-results/ci-22530359800-checksum/checksum_tally.json)
+- Run: `22530359800` (`quick=false`, `crates=checksum`, `benches=comp`, all 8 arches).
+- Overall: `243W / 34L / 3T` (`280` comparable cases, `86.8%` wins).
+- Baseline status: this is the current best full 8-arch checksum baseline in-repo by win rate.
 
-Per arch (`wins/total`):
-- `amd-zen4`: `30/35` (`85.7%`)
-- `amd-zen5`: `31/35` (`88.6%`)
-- `graviton3`: `26/35` (`74.3%`)
-- `graviton4`: `24/35` (`68.6%`)
-- `ibm-power10`: `32/35` (`91.4%`)
-- `ibm-s390x`: `34/35` (`97.1%`)
-- `intel-icl`: `34/35` (`97.1%`)
-- `intel-spr`: `31/35` (`88.6%`)
+Delta vs prior full baseline `22524744705`:
+- Overall: `+1` win, `+2` losses, `-3` ties (`86.4%` -> `86.8%` win rate).
+- Arch shifts:
+  - Improved: `amd-zen4` (`+3W`, `-1L`), `graviton3` (`+1W`), `graviton4` (`+1W`), `intel-spr` (`+2W`, `-2L`).
+  - Regressed: `amd-zen5` (`-4W`, `+2L`), `intel-icl` (`-2W`, `+2L`).
+- Algorithm shifts:
+  - Improved: `crc64/nvme` (`+3W`, `-4L`), `crc32c/castagnoli` (`+2W`).
+  - Regressed: `crc16/ibm` (`-2W`, `+2L`), `crc32/ieee` (`-1W`, `+2L`), `crc64/xz` (`-1W`, `+2L`).
 
-Per algorithm:
-- `crc24/openpgp`: `40/40` (`100%`) - done.
-- `crc64/xz`: `35/40` (`87.5%`)
-- `crc16/ibm`: `34/40` (`85.0%`)
-- `crc32c/castagnoli`: `34/40` (`85.0%`)
-- `crc64/nvme`: `34/40` (`85.0%`)
-- `crc32/ieee`: `33/40` (`82.5%`)
-- `crc16/ccitt`: `32/40` (`80.0%`)
-
-Loss clusters (highest frequency):
-- `crc64/nvme/xl@vec` (4 losses)
-- `crc16/ccitt/xl@vec` (3 losses)
-- `crc16/ibm/xl@vec` (3 losses)
-- `crc32/ieee` short buckets (`xs`, `s`) still leak on Intel + IBM.
-- Arch concentration: `graviton4` (`10` losses) and `graviton3` (`7` losses) account for over half of all losses.
-
-Interpretation:
-- We are close, but not at the 90% target yet.
-- To hit `>=90%` on this matrix, we need about `+10` net flips.
-- The fastest path is Arm large-size (`l/xl`) `crc16` + `crc64/nvme` cleanup.
+Targeted follow-up (Arm crc16 only):
+- Data source: `benchmark-results/ci-22532219626-checksum-targeted` (`graviton3`, `graviton4`; `crc16/ccitt` + `crc16/ibm`; `comp+kernels`; `quick=false`).
+- Result on the 20 comparable Arm crc16 cells: `12W / 8L / 0T`.
+- Reference points:
+  - Same 20-cell subset in full run `22530359800`: `8W / 12L / 0T`.
+  - Same 20-cell subset in baseline `22524744705`: `10W / 10L / 0T`.
+- Interpretation: the Arm crc16 changes are directionally correct and recovered from the temporary full-run dip; remaining losses are concentrated in `l/xl` (roughly `-1%` to `-5%`).
 
 ## Next Steps (Checksum)
 
-1. Prioritize Arm `crc16` large-size kernels (`ccitt` + `ibm`, `l/xl`) on `graviton3` and `graviton4`.
-2. Tackle `crc64/nvme/xl` as the single highest-frequency loss cell (4 arches).
-3. Clean up remaining `crc32/ieee` `xs/s` losses with tiny-path/kernel-overhead work (not table churn first).
-4. Keep changes incremental and rerun a full 8-arch checksum comp only after targeted lanes are net-positive.
+1. Lock this Arm crc16 improvement by running one fresh full 8-arch checksum `comp` pass on the exact SHA containing the targeted winners.
+2. Keep focus on remaining Arm `crc16` `l/xl` losses (`graviton3` + `graviton4`) with kernel throughput work, not dispatch-table churn.
+3. Run two targeted non-quick checks to address full-matrix regressions before another broad cycle:
+  - `amd-zen5`: `crc64/xz` (`l/xl`) and any `crc32/ieee` drift.
+  - `intel-icl`: `crc32/ieee` (`s`) + `crc32c/castagnoli` (`xl`).
+4. Update this file after each targeted run with explicit `W/L/T` deltas before paying for another full matrix.
 
 ## First Step (Checksum)
 
-- Run one targeted non-quick kernel shootout first:
-  - `crc16/ccitt` (`l`, `xl`) on `graviton3`, `graviton4`
-  - `crc16/ibm` (`l`, `xl`) on `graviton3`, `graviton4`
-- Promote only clear winners, then immediately rerun `crc64/nvme/xl` checks on `graviton3`, `graviton4`, `intel-spr`.
-- Objective for this cycle: flip at least `+4` loss cells before paying for the next full 8-arch checksum comp run.
+- Trigger full checksum comp-only on all 8 arches (`quick=false`) for the current main SHA.
+- Acceptance gate for promotion:
+  - Overall win rate `>= 86.8%` (no backslide).
+  - Arm crc16 subset (`g3/g4`, `ccitt+ibm`, all 5 sizes) holds at least `12W / 8L`.
 
 ## Baseline run captured
 
