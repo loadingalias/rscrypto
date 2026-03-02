@@ -726,7 +726,6 @@ pub unsafe fn chunk_compress_blocks_sse41(
 ) {
   debug_assert_eq!(blocks.len() % BLOCK_LEN, 0);
 
-  #[cfg(not(target_os = "linux"))]
   #[inline(always)]
   unsafe fn compress_cv_sse41_block(cv: &[u32; 8], block: *const u8, counter: u64, flags: u32) -> [u32; 8] {
     let (m0, m1, m2, m3) = unsafe { load_msg_vecs(block) };
@@ -744,23 +743,7 @@ pub unsafe fn chunk_compress_blocks_sse41(
 
   if blocks.len() == BLOCK_LEN {
     let start = if *blocks_compressed == 0 { CHUNK_START } else { 0 };
-    #[cfg(target_os = "linux")]
-    {
-      *chaining_value = unsafe {
-        asm::compress_in_place_sse41(
-          chaining_value,
-          blocks.as_ptr(),
-          chunk_counter,
-          BLOCK_LEN as u32,
-          flags | start,
-        )
-      };
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-      *chaining_value =
-        unsafe { compress_cv_sse41_block(chaining_value, blocks.as_ptr(), chunk_counter, flags | start) };
-    }
+    *chaining_value = unsafe { compress_cv_sse41_block(chaining_value, blocks.as_ptr(), chunk_counter, flags | start) };
     *blocks_compressed = blocks_compressed.wrapping_add(1);
     return;
   }
@@ -769,23 +752,8 @@ pub unsafe fn chunk_compress_blocks_sse41(
   debug_assert!(remainder.is_empty());
   for block_bytes in block_slices {
     let start = if *blocks_compressed == 0 { CHUNK_START } else { 0 };
-    #[cfg(target_os = "linux")]
-    {
-      *chaining_value = unsafe {
-        asm::compress_in_place_sse41(
-          chaining_value,
-          block_bytes.as_ptr(),
-          chunk_counter,
-          BLOCK_LEN as u32,
-          flags | start,
-        )
-      };
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-      *chaining_value =
-        unsafe { compress_cv_sse41_block(chaining_value, block_bytes.as_ptr(), chunk_counter, flags | start) };
-    }
+    *chaining_value =
+      unsafe { compress_cv_sse41_block(chaining_value, block_bytes.as_ptr(), chunk_counter, flags | start) };
     *blocks_compressed = blocks_compressed.wrapping_add(1);
   }
 }
@@ -1072,39 +1040,23 @@ pub unsafe fn chunk_compress_blocks_avx2(
   debug_assert_eq!(blocks.len() % BLOCK_LEN, 0);
 
   if blocks.len() == BLOCK_LEN {
+    // SAFETY: `blocks` is exactly one full block.
+    let block_bytes: &[u8; BLOCK_LEN] = unsafe { &*(blocks.as_ptr().cast()) };
     let start = if *blocks_compressed == 0 { CHUNK_START } else { 0 };
-    #[cfg(target_os = "linux")]
-    {
-      // Match upstream AVX2 behavior: single-block compression uses SSE4.1 asm.
-      *chaining_value = unsafe {
-        asm::compress_in_place_sse41(
-          chaining_value,
-          blocks.as_ptr(),
-          chunk_counter,
-          BLOCK_LEN as u32,
-          flags | start,
-        )
-      };
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-      // SAFETY: `blocks` is exactly one full block.
-      let block_bytes: &[u8; BLOCK_LEN] = unsafe { &*(blocks.as_ptr().cast()) };
-      let (m0, m1, m2, m3) = unsafe { load_msg_vecs(block_bytes.as_ptr()) };
-      // SAFETY: this function is AVX2+SSSE3-gated.
-      *chaining_value = unsafe {
-        compress_cv_avx2(
-          chaining_value,
-          m0,
-          m1,
-          m2,
-          m3,
-          chunk_counter,
-          BLOCK_LEN as u32,
-          flags | start,
-        )
-      };
-    }
+    let (m0, m1, m2, m3) = unsafe { load_msg_vecs(block_bytes.as_ptr()) };
+    // SAFETY: this function is AVX2+SSSE3-gated.
+    *chaining_value = unsafe {
+      compress_cv_avx2(
+        chaining_value,
+        m0,
+        m1,
+        m2,
+        m3,
+        chunk_counter,
+        BLOCK_LEN as u32,
+        flags | start,
+      )
+    };
     *blocks_compressed = blocks_compressed.wrapping_add(1);
     return;
   }
@@ -1113,35 +1065,20 @@ pub unsafe fn chunk_compress_blocks_avx2(
   debug_assert!(remainder.is_empty());
   for block_bytes in block_slices {
     let start = if *blocks_compressed == 0 { CHUNK_START } else { 0 };
-    #[cfg(target_os = "linux")]
-    {
-      *chaining_value = unsafe {
-        asm::compress_in_place_sse41(
-          chaining_value,
-          block_bytes.as_ptr(),
-          chunk_counter,
-          BLOCK_LEN as u32,
-          flags | start,
-        )
-      };
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-      let (m0, m1, m2, m3) = unsafe { load_msg_vecs(block_bytes.as_ptr()) };
-      // SAFETY: this function is AVX2+SSSE3-gated.
-      *chaining_value = unsafe {
-        compress_cv_avx2(
-          chaining_value,
-          m0,
-          m1,
-          m2,
-          m3,
-          chunk_counter,
-          BLOCK_LEN as u32,
-          flags | start,
-        )
-      };
-    }
+    let (m0, m1, m2, m3) = unsafe { load_msg_vecs(block_bytes.as_ptr()) };
+    // SAFETY: this function is AVX2+SSSE3-gated.
+    *chaining_value = unsafe {
+      compress_cv_avx2(
+        chaining_value,
+        m0,
+        m1,
+        m2,
+        m3,
+        chunk_counter,
+        BLOCK_LEN as u32,
+        flags | start,
+      )
+    };
     *blocks_compressed = blocks_compressed.wrapping_add(1);
   }
 }
