@@ -565,3 +565,17 @@ Optional tools only with a specific question they uniquely answer:
 - Decision:
   - Reject and revert.
   - Reverted commit `03d9943`; this path improved over AG but remained a clear regression vs baseline on Intel lanes.
+
+### 2026-03-02 - Candidate AI (pending commit)
+- Hypothesis:
+  - XOF/streaming finalization paths still pay function-pointer indirection in `OutputState` for per-block compression.
+  - Replacing `kernel.compress` pointer calls with inline kernel-id dispatch should reduce fixed overhead on short-output and tail-heavy paths.
+- Change:
+  - Added `kernels::compress_inline(id, ...)` in `kernels.rs` (mirrors existing inline helpers).
+  - Switched `OutputState::chaining_value`, `OutputState::root_hash_words`, and scalar fallback inside `root_output_blocks_into` to `kernels::compress_inline(self.kernel.id, ...)`.
+  - No algorithmic changes, no dispatch-table changes.
+- Validation:
+  - Local: `just check-all && just test` passed.
+- Next step:
+  - CI targeted bench: `crates=hashes`, `benches=blake3`, `filter=blake3/xof/,blake3/streaming/`,
+    lanes: `intel-icl`, `intel-spr`, `amd-zen5`.
