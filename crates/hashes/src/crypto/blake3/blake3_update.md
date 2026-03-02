@@ -538,3 +538,15 @@ Optional tools only with a specific question they uniquely answer:
 - Decision:
   - Reject and revert.
   - Reverted commit `b1f25ea`; eager root-hash precompute in `finalize_xof()` regressed XOF broadly.
+
+### 2026-03-01 - Candidate AH (in flight)
+- Hypothesis:
+  - AG regressed because eager root-hash precompute at `finalize_xof()` adds fixed cost to all XOF calls, including large-output cases.
+  - We can still improve tiny `init+read/*-out<=32` by doing a lazy direct chunk-tail root hash only on the tiny first-squeeze path.
+- Change:
+  - Added a single-chunk tail hint carried into `Blake3Xof` only for single-chunk/no-tree `finalize_xof()`.
+  - Tiny first-squeeze path (`block_counter == 0`, `buf` empty, `out.len() <= 32`) now uses direct chunk-tail root hashing from the hint.
+  - Removed eager finalize-time root-hash work; large-output XOF path remains unchanged.
+- Validation:
+  - Local: `just check-all && just test` passed.
+  - CI targeted bench run: pending (`filter=blake3/xof/`, lanes `intel-icl`, `intel-spr`, `amd-zen5`).

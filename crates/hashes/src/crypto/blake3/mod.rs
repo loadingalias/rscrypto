@@ -3659,6 +3659,23 @@ impl Blake3 {
     temp_chunk_state.output()
   }
 
+  /// Snapshot the current single-chunk tail state for lazy XOF tiny-prefix
+  /// root hashing.
+  #[inline]
+  fn single_chunk_tail_hint(&self) -> SingleChunkTailHint {
+    debug_assert!(self.chunk_state.chunk_counter == 0);
+    debug_assert!(self.cv_stack_len == 0);
+    debug_assert!(self.pending_chunk_cv.is_none());
+
+    SingleChunkTailHint {
+      cv: self.chunk_state.chaining_value,
+      block: self.chunk_state.block,
+      block_len: self.chunk_state.block_len,
+      flags: self.flags,
+      add_chunk_start: self.chunk_state.blocks_compressed == 0,
+    }
+  }
+
   /// Finalize into an extendable output state (XOF).
   #[must_use]
   #[inline]
@@ -3670,7 +3687,12 @@ impl Blake3 {
     // keep the current chunk kernel to avoid rebuild overhead. Squeeze can
     // still upgrade to a bulk kernel for large output requests.
     if single_chunk_no_tree {
-      return Blake3Xof::new_with_kernel(self.chunk_state.output(), self.kernel, self.dispatch_plan);
+      return Blake3Xof::new_with_kernel_and_single_chunk_tail(
+        self.chunk_state.output(),
+        self.kernel,
+        self.dispatch_plan,
+        self.single_chunk_tail_hint(),
+      );
     }
 
     Blake3Xof::new(self.root_output(), self.dispatch_plan)
@@ -3916,6 +3938,7 @@ pub struct Blake3Xof {
   buf: [u8; OUTPUT_BLOCK_LEN],
   buf_pos: usize,
   root_hash_cache: [u8; OUT_LEN],
+  single_chunk_tail: Option<SingleChunkTailHint>,
   root_hash_pos: u8,
   /// Kernel used for XOF squeeze operations. Stored to enable dynamic upgrade
   /// when large squeezes are requested with a suboptimal kernel.
@@ -3933,6 +3956,7 @@ impl Blake3Xof {
       buf: [0u8; OUTPUT_BLOCK_LEN],
       buf_pos: OUTPUT_BLOCK_LEN,
       root_hash_cache: [0u8; OUT_LEN],
+      single_chunk_tail: None,
       root_hash_pos: 0,
       kernel,
       dispatch_plan,
@@ -3947,10 +3971,66 @@ impl Blake3Xof {
       buf: [0u8; OUTPUT_BLOCK_LEN],
       buf_pos: OUTPUT_BLOCK_LEN,
       root_hash_cache: [0u8; OUT_LEN],
+      single_chunk_tail: None,
       root_hash_pos: 0,
       kernel,
       dispatch_plan,
     }
+  }
+
+  #[inline]
+  fn new_with_kernel_and_single_chunk_tail(
+    output: OutputState,
+    kernel: Kernel,
+    dispatch_plan: dispatch::HasherDispatch,
+    single_chunk_tail: SingleChunkTailHint,
+  ) -> Self {
+    Self {
+      output,
+      block_counter: 0,
+      buf: [0u8; OUTPUT_BLOCK_LEN],
+      buf_pos: OUTPUT_BLOCK_LEN,
+      root_hash_cache: [0u8; OUT_LEN],
+      single_chunk_tail: Some(single_chunk_tail),
+      root_hash_pos: 0,
+      kernel,
+      dispatch_plan,
+    }
+  }
+
+  /// Compute root hash bytes for the tiny first-squeeze path.
+  ///
+  /// For single-chunk states seeded by `finalize_xof()`, this uses the direct
+  /// chunk-tail helper to avoid generic `OutputState` root-hash machinery.
+  #[inline]
+  fn tiny_root_hash_bytes(&self) -> [u8; OUT_LEN] {
+    if let Some(tail) = self.single_chunk_tail {
+      let block_len = tail.block_len as usize;
+      let out_words = if block_len == BLOCK_LEN {
+        compress_chunk_tail_to_root_words(
+          self.kernel,
+          tail.cv,
+          &tail.block,
+          block_len,
+          tail.flags,
+          tail.add_chunk_start,
+        )
+      } else {
+        let mut block = tail.block;
+        block[block_len..].fill(0);
+        compress_chunk_tail_to_root_words(
+          self.kernel,
+          tail.cv,
+          &block,
+          block_len,
+          tail.flags,
+          tail.add_chunk_start,
+        )
+      };
+      return words8_to_le_bytes(&out_words);
+    }
+
+    self.output.root_hash_bytes()
   }
 
   #[inline]
@@ -3992,7 +4072,7 @@ impl Xof for Blake3Xof {
     // the full first 64-byte output block unless/when the caller requests bytes
     // beyond this prefix.
     if self.block_counter == 0 && self.buf_pos == self.buf.len() && out.len() <= OUT_LEN {
-      let rh = self.output.root_hash_bytes();
+      let rh = self.tiny_root_hash_bytes();
       out.copy_from_slice(&rh[..out.len()]);
       self.root_hash_cache = rh;
       self.root_hash_pos = out.len() as u8;
@@ -4047,6 +4127,15 @@ impl Xof for Blake3Xof {
       self.buf_pos = take;
     }
   }
+}
+
+#[derive(Clone, Copy)]
+struct SingleChunkTailHint {
+  cv: [u32; 8],
+  block: [u8; BLOCK_LEN],
+  block_len: u8,
+  flags: u32,
+  add_chunk_start: bool,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
