@@ -1775,72 +1775,18 @@ impl OutputState {
 
   #[inline]
   fn root_hash_words(&self) -> [u32; 8] {
-    self.root_hash_words_with_kernel(self.kernel)
-  }
-
-  #[inline]
-  fn root_hash_words_with_kernel(&self, kernel: Kernel) -> [u32; 8] {
-    let flags = self.flags | ROOT;
-
-    #[cfg(target_arch = "x86_64")]
-    {
-      match kernel.id {
-        kernels::Blake3KernelId::X86Ssse3
-        | kernels::Blake3KernelId::X86Sse41
-        | kernels::Blake3KernelId::X86Avx2
-        | kernels::Blake3KernelId::X86Avx512 => {
-          #[cfg(target_endian = "little")]
-          let block_ptr = self.block_words.as_ptr().cast::<u8>();
-          #[cfg(not(target_endian = "little"))]
-          let block_bytes = words16_to_le_bytes(&self.block_words);
-          #[cfg(not(target_endian = "little"))]
-          let block_ptr = block_bytes.as_ptr();
-
-          // SAFETY: dispatch validated required CPU features for `kernel`, and
-          // block pointer references a readable 64-byte block.
-          return unsafe {
-            (kernel.x86_compress_cv_bytes)(&self.input_chaining_value, block_ptr, 0, self.block_len, flags)
-          };
-        }
-        _ => {}
-      }
-    }
-
-    #[cfg(target_arch = "aarch64")]
-    {
-      if kernel.id == kernels::Blake3KernelId::Aarch64Neon {
-        #[cfg(target_endian = "little")]
-        let block_ptr = self.block_words.as_ptr().cast::<u8>();
-        #[cfg(not(target_endian = "little"))]
-        let block_bytes = words16_to_le_bytes(&self.block_words);
-        #[cfg(not(target_endian = "little"))]
-        let block_ptr = block_bytes.as_ptr();
-
-        // SAFETY: dispatch validated NEON for this kernel, and block pointer
-        // references a readable 64-byte block.
-        return unsafe {
-          aarch64::compress_cv_neon_bytes(&self.input_chaining_value, block_ptr, 0, self.block_len, flags)
-        };
-      }
-    }
-
-    first_8_words((kernel.compress)(
+    first_8_words((self.kernel.compress)(
       &self.input_chaining_value,
       &self.block_words,
       0,
       self.block_len,
-      flags,
+      self.flags | ROOT,
     ))
   }
 
   #[inline]
   fn root_hash_bytes(&self) -> [u8; OUT_LEN] {
-    self.root_hash_bytes_with_kernel(self.kernel)
-  }
-
-  #[inline]
-  fn root_hash_bytes_with_kernel(&self, kernel: Kernel) -> [u8; OUT_LEN] {
-    words8_to_le_bytes(&self.root_hash_words_with_kernel(kernel))
+    words8_to_le_bytes(&self.root_hash_words())
   }
 
   #[inline]
@@ -4046,21 +3992,7 @@ impl Xof for Blake3Xof {
     // the full first 64-byte output block unless/when the caller requests bytes
     // beyond this prefix.
     if self.block_counter == 0 && self.buf_pos == self.buf.len() && out.len() <= OUT_LEN {
-      let root_kernel = self.output.kernel;
-      #[cfg(target_arch = "x86_64")]
-      let root_kernel = {
-        let mut rk = root_kernel;
-        if rk.id == kernels::Blake3KernelId::Portable {
-          let stream = self.dispatch_plan.stream_kernel();
-          if stream.id != kernels::Blake3KernelId::Portable {
-            rk = stream;
-            self.kernel = stream;
-            self.output.kernel = stream;
-          }
-        }
-        rk
-      };
-      let rh = self.output.root_hash_bytes_with_kernel(root_kernel);
+      let rh = self.output.root_hash_bytes();
       out.copy_from_slice(&rh[..out.len()]);
       self.root_hash_cache = rh;
       self.root_hash_pos = out.len() as u8;
