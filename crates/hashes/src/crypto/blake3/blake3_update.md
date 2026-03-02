@@ -665,3 +665,21 @@ Optional tools only with a specific question they uniquely answer:
 - Decision:
   - Reject and revert.
   - Reverted `bd2f124` via `b0c088b`.
+
+### 2026-03-02 - Candidate AL (pending CI)
+- Hypothesis:
+  - XOF gaps are still dominated by tiny-input kernel pinning and extra runtime upgrade logic in `Blake3Xof::squeeze`.
+  - Streaming `64..1024` update gaps still include avoidable first-chunk control overhead on x86 and over-deferral of SIMD for repeated block-aligned updates.
+- Change:
+  - Added x86 one-full-chunk `ChunkState` fast path:
+    - new `try_chunk_state_one_chunk_x86_out(...)` uses AVX2/AVX-512 asm `hash_many` with `blocks=15` to materialize pre-final-block CV and stores block 15 bytes directly.
+  - Simplified XOF kernel model:
+    - removed runtime XOF kernel/dispatch upgrade state from `Blake3Xof`,
+    - moved kernel selection to finalize time only (`finalize_xof` => stream kernel; `finalize_xof_sized` => stream/bulk by expected output),
+    - switched `dispatch::xof` and `Blake3::keyed_xof` to retag final `OutputState` to stream kernel.
+  - Streaming defer tweak:
+    - in `Digest::update` first-update path, skip deferred-SIMD for likely chunked workloads (`existing buffered chunk data + block-aligned incoming update`).
+- Validation:
+  - Local: `just check-all && just test` passed.
+- CI status:
+  - Pending targeted `bench.yaml` run for `blake3/xof` + `blake3/streaming` on gap lanes.
