@@ -3659,37 +3659,6 @@ impl Blake3 {
     temp_chunk_state.output()
   }
 
-  /// Compute the single-chunk root hash bytes directly from the chunk tail.
-  ///
-  /// This bypasses `OutputState::root_hash_bytes()` to avoid an extra indirect
-  /// compress call on tiny XOF init+read paths.
-  #[inline]
-  fn single_chunk_root_hash_bytes_with_kernel(&self, kernel: Kernel) -> [u8; OUT_LEN] {
-    debug_assert!(self.chunk_state.chunk_counter == 0);
-    debug_assert!(self.cv_stack_len == 0);
-    debug_assert!(self.pending_chunk_cv.is_none());
-
-    let block_len = self.chunk_state.block_len as usize;
-    let add_chunk_start = self.chunk_state.blocks_compressed == 0;
-    let cv = self.chunk_state.chaining_value;
-
-    let out_words = if block_len == BLOCK_LEN {
-      compress_chunk_tail_to_root_words(
-        kernel,
-        cv,
-        &self.chunk_state.block,
-        block_len,
-        self.flags,
-        add_chunk_start,
-      )
-    } else {
-      let mut block = self.chunk_state.block;
-      block[block_len..].fill(0);
-      compress_chunk_tail_to_root_words(kernel, cv, &block, block_len, self.flags, add_chunk_start)
-    };
-    words8_to_le_bytes(&out_words)
-  }
-
   /// Finalize into an extendable output state (XOF).
   #[must_use]
   #[inline]
@@ -3701,13 +3670,7 @@ impl Blake3 {
     // keep the current chunk kernel to avoid rebuild overhead. Squeeze can
     // still upgrade to a bulk kernel for large output requests.
     if single_chunk_no_tree {
-      let root_hash = self.single_chunk_root_hash_bytes_with_kernel(self.kernel);
-      return Blake3Xof::new_with_kernel_and_cached_root(
-        self.chunk_state.output(),
-        self.kernel,
-        self.dispatch_plan,
-        root_hash,
-      );
+      return Blake3Xof::new_with_kernel(self.chunk_state.output(), self.kernel, self.dispatch_plan);
     }
 
     Blake3Xof::new(self.root_output(), self.dispatch_plan)
@@ -3901,7 +3864,28 @@ impl Digest for Blake3 {
     // chunk tail. This avoids OutputState construction and bytes<->words
     // conversion on short streaming finalization.
     if self.chunk_state.chunk_counter == 0 && self.cv_stack_len == 0 && self.pending_chunk_cv.is_none() {
-      return self.single_chunk_root_hash_bytes_with_kernel(self.kernel);
+      let block_len = self.chunk_state.block_len as usize;
+
+      let add_chunk_start = self.chunk_state.blocks_compressed == 0;
+      let cv = self.chunk_state.chaining_value;
+
+      if block_len == BLOCK_LEN {
+        let out_words = compress_chunk_tail_to_root_words(
+          self.kernel,
+          cv,
+          &self.chunk_state.block,
+          block_len,
+          self.flags,
+          add_chunk_start,
+        );
+        return words8_to_le_bytes(&out_words);
+      }
+
+      let mut block = self.chunk_state.block;
+      block[block_len..].fill(0);
+      let out_words =
+        compress_chunk_tail_to_root_words(self.kernel, cv, &block, block_len, self.flags, add_chunk_start);
+      return words8_to_le_bytes(&out_words);
     }
 
     // If the caller never provided any input (or only provided empty updates),
@@ -3932,7 +3916,6 @@ pub struct Blake3Xof {
   buf: [u8; OUTPUT_BLOCK_LEN],
   buf_pos: usize,
   root_hash_cache: [u8; OUT_LEN],
-  root_hash_cached: bool,
   root_hash_pos: u8,
   /// Kernel used for XOF squeeze operations. Stored to enable dynamic upgrade
   /// when large squeezes are requested with a suboptimal kernel.
@@ -3950,7 +3933,6 @@ impl Blake3Xof {
       buf: [0u8; OUTPUT_BLOCK_LEN],
       buf_pos: OUTPUT_BLOCK_LEN,
       root_hash_cache: [0u8; OUT_LEN],
-      root_hash_cached: false,
       root_hash_pos: 0,
       kernel,
       dispatch_plan,
@@ -3965,27 +3947,6 @@ impl Blake3Xof {
       buf: [0u8; OUTPUT_BLOCK_LEN],
       buf_pos: OUTPUT_BLOCK_LEN,
       root_hash_cache: [0u8; OUT_LEN],
-      root_hash_cached: false,
-      root_hash_pos: 0,
-      kernel,
-      dispatch_plan,
-    }
-  }
-
-  #[inline]
-  fn new_with_kernel_and_cached_root(
-    output: OutputState,
-    kernel: Kernel,
-    dispatch_plan: dispatch::HasherDispatch,
-    root_hash: [u8; OUT_LEN],
-  ) -> Self {
-    Self {
-      output,
-      block_counter: 0,
-      buf: [0u8; OUTPUT_BLOCK_LEN],
-      buf_pos: OUTPUT_BLOCK_LEN,
-      root_hash_cache: root_hash,
-      root_hash_cached: true,
       root_hash_pos: 0,
       kernel,
       dispatch_plan,
@@ -4031,11 +3992,9 @@ impl Xof for Blake3Xof {
     // the full first 64-byte output block unless/when the caller requests bytes
     // beyond this prefix.
     if self.block_counter == 0 && self.buf_pos == self.buf.len() && out.len() <= OUT_LEN {
-      if !self.root_hash_cached {
-        self.root_hash_cache = self.output.root_hash_bytes();
-        self.root_hash_cached = true;
-      }
-      out.copy_from_slice(&self.root_hash_cache[..out.len()]);
+      let rh = self.output.root_hash_bytes();
+      out.copy_from_slice(&rh[..out.len()]);
+      self.root_hash_cache = rh;
       self.root_hash_pos = out.len() as u8;
       return;
     }
