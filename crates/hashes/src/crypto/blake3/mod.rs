@@ -1764,8 +1764,7 @@ struct OutputState {
 impl OutputState {
   #[inline]
   fn chaining_value(&self) -> [u32; 8] {
-    first_8_words(kernels::compress_inline(
-      self.kernel.id,
+    first_8_words((self.kernel.compress)(
       &self.input_chaining_value,
       &self.block_words,
       self.counter,
@@ -1776,8 +1775,7 @@ impl OutputState {
 
   #[inline]
   fn root_hash_words(&self) -> [u32; 8] {
-    first_8_words(kernels::compress_inline(
-      self.kernel.id,
+    first_8_words((self.kernel.compress)(
       &self.input_chaining_value,
       &self.block_words,
       0,
@@ -2030,8 +2028,7 @@ impl OutputState {
       }
 
       // Scalar fallback: generate one block at a time.
-      let words = kernels::compress_inline(
-        self.kernel.id,
+      let words = (self.kernel.compress)(
         &self.input_chaining_value,
         &self.block_words,
         output_block_counter,
