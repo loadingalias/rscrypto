@@ -698,4 +698,34 @@ Optional tools only with a specific question they uniquely answer:
     - `intel-spr xof init+read/64B-in/1024B-out`: `+295.21%`.
 - Decision:
   - Reject and revert.
-  - Reverted `e7fbaf9` (revert staged locally; commit pending).
+  - Reverted `e7fbaf9` via `71d45a1`.
+
+### 2026-03-02 - Candidate AM (`5a7df00` + `8885536`)
+- Hypothesis:
+  - Streaming and XOF short-path gaps on Linux x86_64 are still dominated by call overhead in the Rust SSE4.1 CV path.
+  - Wiring the generated Linux SSE4.1 asm backend into streaming/XOF hot paths should reduce fixed overhead for `64..1024` and `32B-out` cases.
+- Change:
+  - Added Linux SSE4.1 asm entry points for chunk CV compression and `compress_in_place`.
+  - Hooked x86_64 streaming/XOF hot paths to use those asm hooks on Linux when SSE4.1 is selected.
+  - Fixed assembler section directive for Linux buildability:
+    - `.static_data` -> `.section .rodata` in `rscrypto_blake3_sse41_x86-64_unix_linux.s`.
+- Validation:
+  - Local pre-push: `just check-all && just test` passed.
+  - CI targeted bench run: `22600518259` (`crates=hashes`, `benches=blake3`,
+    `filter=blake3/xof/,blake3/streaming/`, lanes: `intel-icl`, `intel-spr`, `amd-zen5`).
+  - Scope check: execution plan contained exactly two rows (`blake3/xof/`, `blake3/streaming/`) on all lanes (no oneshot).
+- CI outcomes (time-based gap vs official; positive = slower):
+  - Aggregate (`xof` + `streaming`): `2W / 46L`, avg gap `+24.80%`.
+  - `xof/*`: `2W / 22L`, avg gap `+25.56%`.
+  - `streaming/*`: `0W / 24L`, avg gap `+24.04%`.
+  - Lane aggregates:
+    - `intel-icl`: `xof 0W/8L` avg `+40.90%`; `streaming 0W/8L` avg `+24.48%`.
+    - `intel-spr`: `xof 0W/8L` avg `+23.42%`; `streaming 0W/8L` avg `+22.54%`.
+    - `amd-zen5`: `xof 2W/6L` avg `+12.35%`; `streaming 0W/8L` avg `+25.11%`.
+  - Notable points:
+    - worst: `intel-icl xof init+read/1B-in/32B-out` at `+91.41%`.
+    - worst: `intel-icl xof init+read/64B-in/32B-out` at `+83.21%`.
+    - only wins: `amd-zen5 xof init+read/1B-in/32B-out` (`-12.46%`) and `64B-in/32B-out` (`-20.54%`).
+- Decision:
+  - Reject and revert.
+  - Revert of `8885536` and `5a7df00` is staged locally (commit pending).
