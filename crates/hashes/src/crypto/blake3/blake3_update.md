@@ -594,3 +594,37 @@ Optional tools only with a specific question they uniquely answer:
 - Decision:
   - Reject and revert.
   - Reverted `39855a8` via `a787d48`.
+
+### 2026-03-02 - Candidate AJ (`57b90a8`)
+- Hypothesis:
+  - XOF `init+read` tiny-output is still paying avoidable per-call cost by using full `[u32; 16]` compression to derive the root hash words.
+  - Streaming remains pinned to conservative x86 stream kernels despite having AVX-512 asm `compress_in_place` path available.
+- Change:
+  - Added kernel-aware `OutputState` root-hash path:
+    - `root_hash_words_with_kernel` / `root_hash_bytes_with_kernel`,
+    - CV-only x86 (`x86_compress_cv_bytes`) and aarch64 NEON (`compress_cv_neon_bytes`) paths when available.
+  - Updated XOF tiny first-read fast path to:
+    - opportunistically upgrade from `Portable` to tuned stream kernel on x86,
+    - compute first root hash via kernel-aware CV-only path.
+  - Retuned x86 streaming tables:
+    - `IntelIcl`, `IntelSpr`, `Zen5` stream kernel set to `X86Avx512` (bulk unchanged `X86Avx512`).
+- Validation:
+  - Local: `just check-all && just test` passed.
+  - CI targeted bench run: `22560608081` (`crates=hashes`, `benches=blake3`,
+    `filter=blake3/xof/,blake3/streaming/`, lanes: `intel-icl`, `intel-spr`, `amd-zen5`).
+  - Scope check: execution plan contained exactly two rows (`blake3/xof/`, `blake3/streaming/`), no oneshot scope.
+- CI outcomes (time-based gap vs official; positive = slower):
+  - Aggregate (`xof` + `streaming`): `0W / 48L`, avg gap `+16.46%`.
+  - `xof/*`: `0W / 24L`, avg gap `+19.37%` (median `+15.92%`).
+  - `streaming/*`: `0W / 24L`, avg gap `+13.56%` (median `+13.60%`).
+  - Lane aggregates:
+    - `intel-icl`: `xof 0W/8L` avg `+26.25%`; `streaming 0W/8L` avg `+13.38%`.
+    - `intel-spr`: `xof 0W/8L` avg `+17.02%`; `streaming 0W/8L` avg `+13.54%`.
+    - `amd-zen5`: `xof 0W/8L` avg `+14.83%`; `streaming 0W/8L` avg `+13.76%`.
+  - Directional delta vs prior baseline run (`22559324946`):
+    - aggregate: `+22.94%` -> `+16.46%` (`-6.47 pp`),
+    - streaming: `+21.48%` -> `+13.56%` (`-7.92 pp`),
+    - xof: `+24.39%` -> `+19.37%` (`-5.03 pp`).
+- Decision:
+  - Reject and revert.
+  - Reverted `57b90a8` via `70e7519`.
