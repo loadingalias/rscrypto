@@ -377,11 +377,9 @@ pub fn digest(data: &[u8]) -> [u8; 32] {
 #[must_use]
 pub fn xof(data: &[u8]) -> super::Blake3Xof {
   let d = active();
-  let plan = hasher_dispatch();
   let kernel = select(&d, data.len()).kernel;
-  let mut output = super::root_output_oneshot(kernel, super::IV, 0, super::policy_kind_from_flags(0, true), data);
-  output.kernel = plan.stream_kernel();
-  super::Blake3Xof::new(output)
+  let output = super::root_output_oneshot(kernel, super::IV, 0, super::policy_kind_from_flags(0, true), data);
+  super::Blake3Xof::new(output, hasher_dispatch())
 }
 
 #[inline]
