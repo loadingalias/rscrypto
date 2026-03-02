@@ -400,6 +400,39 @@ pub unsafe fn root_output_blocks4(
   flags: u32,
   out: *mut u8,
 ) {
+  #[cfg(target_os = "linux")]
+  unsafe {
+    let block = block_words.as_ptr().cast();
+    // Match upstream behavior on AVX2/SSE4.1: xof_many falls back to
+    // repeated `compress_xof` calls.
+    super::asm::compress_xof_sse41(chaining_value, block, counter, block_len, flags, out);
+    super::asm::compress_xof_sse41(
+      chaining_value,
+      block,
+      counter.wrapping_add(1),
+      block_len,
+      flags,
+      out.add(64),
+    );
+    super::asm::compress_xof_sse41(
+      chaining_value,
+      block,
+      counter.wrapping_add(2),
+      block_len,
+      flags,
+      out.add(128),
+    );
+    super::asm::compress_xof_sse41(
+      chaining_value,
+      block,
+      counter.wrapping_add(3),
+      block_len,
+      flags,
+      out.add(192),
+    );
+  }
+
+  #[cfg(not(target_os = "linux"))]
   unsafe {
     let rot16_mask = _mm_setr_epi8(2, 3, 0, 1, 6, 7, 4, 5, 10, 11, 8, 9, 14, 15, 12, 13);
     let rot8_mask = _mm_setr_epi8(1, 2, 3, 0, 5, 6, 7, 4, 9, 10, 11, 8, 13, 14, 15, 12);
@@ -528,6 +561,20 @@ pub unsafe fn root_output_blocks1(
   flags: u32,
   out: *mut u8,
 ) {
+  #[cfg(target_os = "linux")]
+  unsafe {
+    // Use upstream SSE4.1 assembly on Linux.
+    super::asm::compress_xof_sse41(
+      chaining_value,
+      block_words.as_ptr().cast(),
+      counter,
+      block_len,
+      flags,
+      out,
+    );
+  }
+
+  #[cfg(not(target_os = "linux"))]
   unsafe {
     let rot16 = _mm_setr_epi8(2, 3, 0, 1, 6, 7, 4, 5, 10, 11, 8, 9, 14, 15, 12, 13);
     let rot8 = _mm_setr_epi8(1, 2, 3, 0, 5, 6, 7, 4, 9, 10, 11, 8, 13, 14, 15, 12);

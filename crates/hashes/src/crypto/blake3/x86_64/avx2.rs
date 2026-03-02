@@ -463,6 +463,70 @@ pub unsafe fn root_output_blocks8(
   flags: u32,
   out: *mut u8,
 ) {
+  #[cfg(target_os = "linux")]
+  unsafe {
+    let block = block_words.as_ptr().cast();
+    // Match upstream AVX2 behavior: use SSE4.1 compress_xof per block.
+    super::asm::compress_xof_sse41(chaining_value, block, counter, block_len, flags, out);
+    super::asm::compress_xof_sse41(
+      chaining_value,
+      block,
+      counter.wrapping_add(1),
+      block_len,
+      flags,
+      out.add(64),
+    );
+    super::asm::compress_xof_sse41(
+      chaining_value,
+      block,
+      counter.wrapping_add(2),
+      block_len,
+      flags,
+      out.add(128),
+    );
+    super::asm::compress_xof_sse41(
+      chaining_value,
+      block,
+      counter.wrapping_add(3),
+      block_len,
+      flags,
+      out.add(192),
+    );
+    super::asm::compress_xof_sse41(
+      chaining_value,
+      block,
+      counter.wrapping_add(4),
+      block_len,
+      flags,
+      out.add(256),
+    );
+    super::asm::compress_xof_sse41(
+      chaining_value,
+      block,
+      counter.wrapping_add(5),
+      block_len,
+      flags,
+      out.add(320),
+    );
+    super::asm::compress_xof_sse41(
+      chaining_value,
+      block,
+      counter.wrapping_add(6),
+      block_len,
+      flags,
+      out.add(384),
+    );
+    super::asm::compress_xof_sse41(
+      chaining_value,
+      block,
+      counter.wrapping_add(7),
+      block_len,
+      flags,
+      out.add(448),
+    );
+  }
+
+  #[cfg(not(target_os = "linux"))]
   unsafe {
     let rot16_mask = _mm256_setr_epi8(
       2, 3, 0, 1, 6, 7, 4, 5, 10, 11, 8, 9, 14, 15, 12, 13, 2, 3, 0, 1, 6, 7, 4, 5, 10, 11, 8, 9, 14, 15, 12, 13,
