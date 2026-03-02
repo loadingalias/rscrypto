@@ -1916,9 +1916,16 @@ unsafe fn x86_compress_cv_sse41_wrapper(
   block_len: u32,
   flags: u32,
 ) -> [u32; 8] {
-  // SAFETY: dispatch guarantees SSE4.1 availability; caller guarantees `block` is readable for 64
-  // bytes.
-  unsafe { super::x86_64::compress_cv_sse41_bytes(cv, block, counter, block_len, flags) }
+  #[cfg(target_os = "linux")]
+  {
+    // SAFETY: dispatch guarantees SSE4.1 availability; caller guarantees `block` is readable.
+    unsafe { super::x86_64::asm::compress_in_place_sse41(cv, block, counter, block_len, flags) }
+  }
+  #[cfg(not(target_os = "linux"))]
+  {
+    // SAFETY: dispatch guarantees SSE4.1 availability; caller guarantees `block` is readable.
+    unsafe { super::x86_64::compress_cv_sse41_bytes(cv, block, counter, block_len, flags) }
+  }
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -1929,9 +1936,17 @@ unsafe fn x86_compress_cv_avx2_wrapper(
   block_len: u32,
   flags: u32,
 ) -> [u32; 8] {
-  // SAFETY: dispatch guarantees AVX2 availability; caller guarantees `block` is readable for 64
-  // bytes.
-  unsafe { super::x86_64::compress_cv_avx2_bytes(cv, block, counter, block_len, flags) }
+  #[cfg(target_os = "linux")]
+  {
+    // Match upstream AVX2 behavior: single-block compression uses SSE4.1 asm.
+    // SAFETY: AVX2 implies SSE4.1; dispatch validates CPU features.
+    unsafe { super::x86_64::asm::compress_in_place_sse41(cv, block, counter, block_len, flags) }
+  }
+  #[cfg(not(target_os = "linux"))]
+  {
+    // SAFETY: dispatch guarantees AVX2 availability; caller guarantees `block` is readable.
+    unsafe { super::x86_64::compress_cv_avx2_bytes(cv, block, counter, block_len, flags) }
+  }
 }
 
 #[cfg(target_arch = "x86_64")]

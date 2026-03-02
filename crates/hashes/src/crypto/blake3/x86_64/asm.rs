@@ -17,6 +17,8 @@ use core::arch::global_asm;
 global_asm!(include_str!("asm/rscrypto_blake3_avx2_x86-64_unix_linux.s"));
 #[cfg(target_os = "linux")]
 global_asm!(include_str!("asm/rscrypto_blake3_avx512_x86-64_unix_linux.s"));
+#[cfg(target_os = "linux")]
+global_asm!(include_str!("asm/rscrypto_blake3_sse41_x86-64_unix_linux.s"));
 
 #[cfg(target_os = "macos")]
 global_asm!(include_str!("asm/rscrypto_blake3_avx2_x86-64_apple_darwin.s"));
@@ -142,6 +144,25 @@ unsafe extern "C" {
     flags: u8,
     out: *mut u8,
   );
+
+  #[cfg(target_os = "linux")]
+  pub fn rscrypto_blake3_compress_in_place_sse41(
+    cv: *mut u32,
+    block: *const u8,
+    block_len: u8,
+    counter: u64,
+    flags: u8,
+  );
+
+  #[cfg(target_os = "linux")]
+  pub fn rscrypto_blake3_compress_xof_sse41(
+    cv: *const u32,
+    block: *const u8,
+    block_len: u8,
+    counter: u64,
+    flags: u8,
+    out: *mut u8,
+  );
 }
 
 #[inline(always)]
@@ -202,6 +223,51 @@ pub(crate) unsafe fn hash_many_avx512(
       out,
     )
   };
+}
+
+/// Linux-only SSE4.1 single-block compress (CV-only output).
+///
+/// # Safety
+/// Caller must ensure SSE4.1+SSSE3 are available.
+#[cfg(target_os = "linux")]
+#[inline(always)]
+pub(crate) unsafe fn compress_in_place_sse41(
+  cv: &[u32; 8],
+  block: *const u8,
+  counter: u64,
+  block_len: u32,
+  flags: u32,
+) -> [u32; 8] {
+  debug_assert!(block_len <= u8::MAX as u32);
+  debug_assert!(flags <= u8::MAX as u32);
+  let mut cv_out = *cv;
+  // SAFETY: callsites validate CPU features and pointer contracts.
+  unsafe {
+    rscrypto_blake3_compress_in_place_sse41(cv_out.as_mut_ptr(), block, block_len as u8, counter, flags as u8);
+  }
+  cv_out
+}
+
+/// Linux-only SSE4.1 single-block compress with full 64-byte output.
+///
+/// # Safety
+/// Caller must ensure SSE4.1+SSSE3 are available.
+#[cfg(target_os = "linux")]
+#[inline(always)]
+pub(crate) unsafe fn compress_xof_sse41(
+  cv: &[u32; 8],
+  block: *const u8,
+  counter: u64,
+  block_len: u32,
+  flags: u32,
+  out: *mut u8,
+) {
+  debug_assert!(block_len <= u8::MAX as u32);
+  debug_assert!(flags <= u8::MAX as u32);
+  // SAFETY: callsites validate CPU features and pointer contracts.
+  unsafe {
+    rscrypto_blake3_compress_xof_sse41(cv.as_ptr(), block, block_len as u8, counter, flags as u8, out);
+  }
 }
 
 /// Single-block compress using AVX-512 assembly (CV-only output).
