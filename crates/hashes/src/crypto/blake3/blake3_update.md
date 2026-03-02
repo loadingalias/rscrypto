@@ -512,14 +512,29 @@ Optional tools only with a specific question they uniquely answer:
   - Reject and revert.
   - Reverted commit `c3eaa72`; this approach does not close either target gap.
 
-### 2026-03-01 - Candidate AG (in flight)
+### 2026-03-01 - Candidate AG (`b1f25ea`)
 - Hypothesis:
-  - Tiny XOF `init+read` is still paying fixed overhead in the first `squeeze` from `OutputState::root_hash_bytes()` (indirect `compress` + conversion) even when the state is single-chunk/no-tree.
-  - Precomputing and caching the single-chunk root hash at `finalize_xof()` should reduce the dominant overhead on `*-in/32B-out` cases without changing kernel policy.
+  - Tiny XOF `init+read` still pays fixed overhead from `OutputState::root_hash_bytes()` in first squeeze.
+  - Precomputing/caching single-chunk root hash at `finalize_xof()` should improve `*-in/32B-out` cases.
 - Change:
-  - Added `single_chunk_root_hash_bytes_with_kernel()` helper in `Blake3` and reused it in `finalize()` single-chunk path.
-  - `finalize_xof()` single-chunk/no-tree now precomputes root hash bytes once and seeds `Blake3Xof` with cached root bytes.
-  - `Blake3Xof::squeeze()` tiny first-read path now uses cached root bytes when available and only falls back to `output.root_hash_bytes()` if cache is not yet populated.
+  - Added direct single-chunk root-hash helper and reused it in `finalize()`.
+  - `finalize_xof()` single-chunk path precomputed root hash and seeded `Blake3Xof` cache.
+  - `Blake3Xof::squeeze()` tiny first-read path used cache when available.
 - Validation:
   - Local: `just check-all && just test` passed.
-  - CI targeted bench run: pending (`filter=blake3/xof/`, lanes `intel-icl`, `intel-spr`, `amd-zen5`).
+  - CI targeted bench run: `22555765324` (`crates=hashes`, `benches=blake3`,
+    `filter=blake3/xof/`, lanes `intel-icl`, `intel-spr`, `amd-zen5`).
+- CI outcomes:
+  - Aggregate (`xof/*`): `2W / 22L` vs official.
+  - Aggregate xof gap: avg `-42.03%`.
+  - Lane-average gaps:
+    - `intel-icl`: `-53.32%`.
+    - `intel-spr`: `-45.39%`.
+    - `amd-zen5`: `-27.37%`.
+  - Delta vs prior xof baseline run (`22554313539`) by lane:
+    - `intel-icl`: `-31.14%` -> `-53.32%` (`-22.18 pp`).
+    - `intel-spr`: `-16.74%` -> `-45.39%` (`-28.65 pp`).
+    - `amd-zen5`: `-17.59%` -> `-27.37%` (`-9.78 pp`).
+- Decision:
+  - Reject and revert.
+  - Reverted commit `b1f25ea`; eager root-hash precompute in `finalize_xof()` regressed XOF broadly.
