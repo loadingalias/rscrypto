@@ -565,3 +565,32 @@ Optional tools only with a specific question they uniquely answer:
 - Decision:
   - Reject and revert.
   - Reverted commit `03d9943`; this path improved over AG but remained a clear regression vs baseline on Intel lanes.
+
+### 2026-03-02 - Candidate AI (`39855a8`)
+- Hypothesis:
+  - `OutputState` still pays function-pointer dispatch (`kernel.compress`) on finalize/XOF scalar block generation.
+  - Replacing those calls with inline `kernel.id` dispatch might reduce fixed overhead on XOF and streaming surfaces.
+- Change:
+  - Added `kernels::compress_inline(id, ...)`.
+  - Routed `OutputState::chaining_value`, `OutputState::root_hash_words`, and scalar fallback in
+    `root_output_blocks_into` through `compress_inline`.
+  - No dispatch-table or algorithm changes.
+- Validation:
+  - Local pre-push validation passed: `just check-all && just test`.
+  - CI targeted bench run: `22559324946` (`crates=hashes`, `benches=blake3`,
+    `filter=blake3/xof/,blake3/streaming/`, lanes: `intel-icl`, `intel-spr`, `amd-zen5`).
+  - Scope check: execution plan contained exactly two rows (`blake3/xof/`, `blake3/streaming/`), no oneshot scope.
+- CI outcomes (time-based gap vs official; positive = slower):
+  - Aggregate (`xof` + `streaming`): `2W / 46L`, avg gap `+22.94%`.
+  - `xof/*`: `2W / 22L`, avg gap `+24.39%` (median `+21.50%`).
+  - `streaming/*`: `0W / 24L`, avg gap `+21.48%` (median `+22.15%`).
+  - Lane aggregates:
+    - `intel-icl`: `xof 0W/8L` avg `+41.09%`; `streaming 0W/8L` avg `+23.51%`.
+    - `intel-spr`: `xof 0W/8L` avg `+20.62%`; `streaming 0W/8L` avg `+19.02%`.
+    - `amd-zen5`: `xof 2W/6L` avg `+11.48%`; `streaming 0W/8L` avg `+21.91%`.
+  - Notable regressions:
+    - `intel-icl xof init+read/1B-in/32B-out`: `+93.93%`.
+    - `intel-icl xof init+read/64B-in/32B-out`: `+90.49%`.
+- Decision:
+  - Reject and revert.
+  - Reverted `39855a8` via `a787d48`.
