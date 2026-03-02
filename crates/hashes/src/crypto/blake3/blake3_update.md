@@ -539,14 +539,29 @@ Optional tools only with a specific question they uniquely answer:
   - Reject and revert.
   - Reverted commit `b1f25ea`; eager root-hash precompute in `finalize_xof()` regressed XOF broadly.
 
-### 2026-03-01 - Candidate AH (in flight)
+### 2026-03-02 - Candidate AH (`03d9943`)
 - Hypothesis:
-  - AG regressed because eager root-hash precompute at `finalize_xof()` adds fixed cost to all XOF calls, including large-output cases.
-  - We can still improve tiny `init+read/*-out<=32` by doing a lazy direct chunk-tail root hash only on the tiny first-squeeze path.
+  - AG regressed because eager root-hash precompute at `finalize_xof()` adds fixed cost to all XOF calls.
+  - A lazy tiny-first-squeeze optimization should improve `*-in/32B-out` without harming large-output XOF.
 - Change:
-  - Added a single-chunk tail hint carried into `Blake3Xof` only for single-chunk/no-tree `finalize_xof()`.
-  - Tiny first-squeeze path (`block_counter == 0`, `buf` empty, `out.len() <= 32`) now uses direct chunk-tail root hashing from the hint.
-  - Removed eager finalize-time root-hash work; large-output XOF path remains unchanged.
+  - Added single-chunk tail hint plumbing from `finalize_xof()` into `Blake3Xof` for single-chunk/no-tree states.
+  - Tiny first-squeeze path (`out.len() <= 32`) used direct chunk-tail root hashing from the hint.
+  - Kept large-output XOF path unchanged (no eager finalize-time precompute).
 - Validation:
   - Local: `just check-all && just test` passed.
-  - CI targeted bench run: pending (`filter=blake3/xof/`, lanes `intel-icl`, `intel-spr`, `amd-zen5`).
+  - CI targeted bench run: `22556963869` (`crates=hashes`, `benches=blake3`,
+    `filter=blake3/xof/`, lanes: `intel-icl`, `intel-spr`, `amd-zen5`).
+- CI outcomes:
+  - Aggregate (`xof/*`): `1W / 23L` vs official.
+  - Aggregate xof gap: avg `-29.00%`.
+  - Lane-average gaps:
+    - `intel-icl`: `-40.78%`.
+    - `intel-spr`: `-29.37%`.
+    - `amd-zen5`: `-16.84%`.
+  - Delta vs prior non-AG baseline run (`22554313539`) by lane:
+    - `intel-icl`: `-31.14%` -> `-40.78%` (`-9.64 pp`).
+    - `intel-spr`: `-16.74%` -> `-29.37%` (`-12.63 pp`).
+    - `amd-zen5`: `-17.59%` -> `-16.84%` (`+0.75 pp`).
+- Decision:
+  - Reject and revert.
+  - Reverted commit `03d9943`; this path improved over AG but remained a clear regression vs baseline on Intel lanes.
