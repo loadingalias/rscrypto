@@ -2101,7 +2101,8 @@ impl ChunkState {
         self.blocks_compressed < 15,
         "last chunk block stays buffered until output()"
       );
-      (self.kernel.chunk_compress_blocks)(
+      kernels::chunk_compress_blocks_inline(
+        self.kernel.id,
         &mut self.chaining_value,
         self.chunk_counter,
         self.flags,
@@ -2120,7 +2121,8 @@ impl ChunkState {
     let blocks_to_compress = total_blocks.saturating_sub(1);
     if blocks_to_compress != 0 {
       let bytes = blocks_to_compress * BLOCK_LEN;
-      (self.kernel.chunk_compress_blocks)(
+      kernels::chunk_compress_blocks_inline(
+        self.kernel.id,
         &mut self.chaining_value,
         self.chunk_counter,
         self.flags,
@@ -2192,7 +2194,8 @@ impl ChunkState {
           self.blocks_compressed < 15,
           "last chunk block stays buffered until output()"
         );
-        (self.kernel.chunk_compress_blocks)(
+        kernels::chunk_compress_blocks_inline(
+          self.kernel.id,
           &mut self.chaining_value,
           self.chunk_counter,
           self.flags,
@@ -2229,7 +2232,8 @@ impl ChunkState {
 
         if blocks_to_compress != 0 {
           let bytes = blocks_to_compress * BLOCK_LEN;
-          (self.kernel.chunk_compress_blocks)(
+          kernels::chunk_compress_blocks_inline(
+            self.kernel.id,
             &mut self.chaining_value,
             self.chunk_counter,
             self.flags,
@@ -3911,6 +3915,8 @@ pub struct Blake3Xof {
   block_counter: u64,
   buf: [u8; OUTPUT_BLOCK_LEN],
   buf_pos: usize,
+  root_hash_cache: [u8; OUT_LEN],
+  root_hash_pos: u8,
   /// Kernel used for XOF squeeze operations. Stored to enable dynamic upgrade
   /// when large squeezes are requested with a suboptimal kernel.
   kernel: Kernel,
@@ -3926,6 +3932,8 @@ impl Blake3Xof {
       block_counter: 0,
       buf: [0u8; OUTPUT_BLOCK_LEN],
       buf_pos: OUTPUT_BLOCK_LEN,
+      root_hash_cache: [0u8; OUT_LEN],
+      root_hash_pos: 0,
       kernel,
       dispatch_plan,
     }
@@ -3938,6 +3946,8 @@ impl Blake3Xof {
       block_counter: 0,
       buf: [0u8; OUTPUT_BLOCK_LEN],
       buf_pos: OUTPUT_BLOCK_LEN,
+      root_hash_cache: [0u8; OUT_LEN],
+      root_hash_pos: 0,
       kernel,
       dispatch_plan,
     }
@@ -3954,6 +3964,38 @@ impl Blake3Xof {
 impl Xof for Blake3Xof {
   fn squeeze(&mut self, mut out: &mut [u8]) {
     if out.is_empty() {
+      return;
+    }
+
+    // Continue a lazily-served short-root-hash sequence, if active.
+    if self.root_hash_pos != 0 {
+      let pos = self.root_hash_pos as usize;
+      if pos < OUT_LEN {
+        let take = min(OUT_LEN - pos, out.len());
+        out[..take].copy_from_slice(&self.root_hash_cache[pos..pos + take]);
+        self.root_hash_pos = (pos + take) as u8;
+        out = &mut out[take..];
+        if out.is_empty() {
+          return;
+        }
+      }
+
+      if self.root_hash_pos as usize == OUT_LEN {
+        self.refill();
+        // We already served the first 32 bytes from `root_hash_cache`.
+        self.buf_pos = OUT_LEN;
+        self.root_hash_pos = 0;
+      }
+    }
+
+    // Fast path: the first 32 output bytes are the root hash. Avoid generating
+    // the full first 64-byte output block unless/when the caller requests bytes
+    // beyond this prefix.
+    if self.block_counter == 0 && self.buf_pos == self.buf.len() && out.len() <= OUT_LEN {
+      let rh = self.output.root_hash_bytes();
+      out.copy_from_slice(&rh[..out.len()]);
+      self.root_hash_cache = rh;
+      self.root_hash_pos = out.len() as u8;
       return;
     }
 
