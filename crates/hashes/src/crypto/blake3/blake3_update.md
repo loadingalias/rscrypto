@@ -628,3 +628,40 @@ Optional tools only with a specific question they uniquely answer:
 - Decision:
   - Reject and revert.
   - Reverted `57b90a8` via `70e7519`.
+
+### 2026-03-02 - Candidate AK (`bd2f124`)
+- Hypothesis:
+  - Streaming short-chunk loss still includes avoidable per-block control-path overhead from repeated `kernel.id` inline dispatch inside `ChunkState` block compression.
+  - XOF tiny first-read root-hash cache path may be fighting the kernel fast path and diverging from official reader behavior.
+- Change:
+  - In `ChunkState` hot paths:
+    - replaced repeated `kernels::chunk_compress_blocks_inline(self.kernel.id, ...)` calls with direct
+      `(self.kernel.chunk_compress_blocks)(...)` calls.
+  - In `Blake3Xof`:
+    - removed `root_hash_cache` / `root_hash_pos` state and the `out.len() <= 32` first-read root-hash fast path,
+    - kept first output generation on normal block path (`root_output_blocks_into`) only.
+  - No dispatch-table edits.
+- Validation:
+  - Local: `just check-all && just test` passed.
+  - CI targeted bench run: `22588630907` (`crates=hashes`, `benches=blake3`,
+    `filter=blake3/xof/,blake3/streaming/`, lanes: `intel-icl`, `intel-spr`, `amd-zen5`).
+  - Scope check: execution plan contained exactly two rows (`blake3/xof/`, `blake3/streaming/`) on all lanes.
+- CI outcomes (time-based gap vs official; positive = slower):
+  - Aggregate (`xof` + `streaming`): `2W / 46L`, avg gap `+23.51%`.
+  - `xof/*`: `2W / 22L`, avg gap `+25.77%`.
+  - `streaming/*`: `0W / 24L`, avg gap `+21.26%`.
+  - Lane aggregates:
+    - `intel-icl`: `xof 0W/8L` avg `+44.77%`; `streaming 0W/8L` avg `+22.91%`.
+    - `intel-spr`: `xof 0W/8L` avg `+21.74%`; `streaming 0W/8L` avg `+18.94%`.
+    - `amd-zen5`: `xof 2W/6L` avg `+10.80%`; `streaming 0W/8L` avg `+21.93%`.
+  - Directional delta vs prior targeted baseline (`22560608081`, Candidate AJ):
+    - aggregate: `+16.46%` -> `+23.51%` (`+7.05 pp`),
+    - streaming: `+13.56%` -> `+21.26%` (`+7.70 pp`),
+    - xof: `+19.37%` -> `+25.77%` (`+6.40 pp`).
+  - Notable worst regressions:
+    - `intel-icl xof init+read/64B-in/32B-out`: `+101.63%`.
+    - `intel-icl xof init+read/1B-in/32B-out`: `+94.53%`.
+    - `intel-spr xof init+read/1B-in/32B-out`: `+48.78%`.
+- Decision:
+  - Reject and revert.
+  - Reverted `bd2f124` via `b0c088b`.
