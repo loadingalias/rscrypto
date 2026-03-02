@@ -1967,7 +1967,7 @@ rscrypto_blake3_compress_xof_sse41:
         movups xmmword ptr [r9+0x20], xmm2
         movups xmmword ptr [r9+0x30], xmm3
         ret
-.static_data
+.section .rodata
 .p2align 6
 RSCRYPTO_SSE41_BLAKE3_IV:
         .long 0x6A09E667, 0xBB67AE85
