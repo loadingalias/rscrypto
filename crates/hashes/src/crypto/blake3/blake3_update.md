@@ -666,20 +666,36 @@ Optional tools only with a specific question they uniquely answer:
   - Reject and revert.
   - Reverted `bd2f124` via `b0c088b`.
 
-### 2026-03-02 - Candidate AL (pending CI)
+### 2026-03-02 - Candidate AL (`e7fbaf9`)
 - Hypothesis:
   - XOF gaps are still dominated by tiny-input kernel pinning and extra runtime upgrade logic in `Blake3Xof::squeeze`.
   - Streaming `64..1024` update gaps still include avoidable first-chunk control overhead on x86 and over-deferral of SIMD for repeated block-aligned updates.
 - Change:
   - Added x86 one-full-chunk `ChunkState` fast path:
-    - new `try_chunk_state_one_chunk_x86_out(...)` uses AVX2/AVX-512 asm `hash_many` with `blocks=15` to materialize pre-final-block CV and stores block 15 bytes directly.
+    - `try_chunk_state_one_chunk_x86_out(...)` uses AVX2/AVX-512 asm `hash_many` with `blocks=15` to materialize pre-final-block CV and copy block 15 bytes.
   - Simplified XOF kernel model:
-    - removed runtime XOF kernel/dispatch upgrade state from `Blake3Xof`,
-    - moved kernel selection to finalize time only (`finalize_xof` => stream kernel; `finalize_xof_sized` => stream/bulk by expected output),
-    - switched `dispatch::xof` and `Blake3::keyed_xof` to retag final `OutputState` to stream kernel.
+    - removed runtime XOF kernel/dispatch-upgrade state from `Blake3Xof`,
+    - moved kernel selection to finalize time (`finalize_xof` => stream kernel; `finalize_xof_sized` => stream/bulk by expected output),
+    - retagged one-shot XOF outputs in `dispatch::xof` and `Blake3::keyed_xof` to stream kernel.
   - Streaming defer tweak:
     - in `Digest::update` first-update path, skip deferred-SIMD for likely chunked workloads (`existing buffered chunk data + block-aligned incoming update`).
 - Validation:
-  - Local: `just check-all && just test` passed.
-- CI status:
-  - Pending targeted `bench.yaml` run for `blake3/xof` + `blake3/streaming` on gap lanes.
+  - Local pre-push: `just check-all && just test` passed.
+  - CI targeted bench run: `22593524598` (`crates=hashes`, `benches=blake3`,
+    `filter=blake3/xof/,blake3/streaming/`, lanes: `intel-icl`, `intel-spr`, `amd-zen5`).
+  - Scope check: execution plan contained exactly two rows (`blake3/xof/`, `blake3/streaming/`) on all lanes.
+- CI outcomes (time-based gap vs official; positive = slower):
+  - Aggregate (`xof` + `streaming`): `0W / 48L`, avg gap `+62.89%`.
+  - `xof/*`: `0W / 24L`, avg gap `+104.06%`.
+  - `streaming/*`: `0W / 24L`, avg gap `+21.72%`.
+  - Lane aggregates:
+    - `intel-icl`: `xof 0W/8L` avg `+96.56%`; `streaming 0W/8L` avg `+23.47%`.
+    - `intel-spr`: `xof 0W/8L` avg `+99.93%`; `streaming 0W/8L` avg `+19.43%`.
+    - `amd-zen5`: `xof 0W/8L` avg `+115.69%`; `streaming 0W/8L` avg `+22.25%`.
+  - Notable worst regressions:
+    - `amd-zen5 xof init+read/1B-in/1024B-out`: `+364.61%`.
+    - `amd-zen5 xof init+read/64B-in/1024B-out`: `+359.63%`.
+    - `intel-spr xof init+read/64B-in/1024B-out`: `+295.21%`.
+- Decision:
+  - Reject and revert.
+  - Reverted `e7fbaf9` (revert staged locally; commit pending).
