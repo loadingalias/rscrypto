@@ -33,29 +33,6 @@ pub(crate) type CompressFn = fn(&[u32; 8], &[u32; 16], u64, u32, u32) -> [u32; 1
 pub(crate) type HashManyContiguousFn =
   unsafe fn(input: *const u8, num_chunks: usize, key: &[u32; 8], counter: u64, flags: u32, out: *mut u8);
 
-/// Generate one root output block (64 bytes) for XOF squeeze.
-///
-/// # Safety
-///
-/// - `out` must be valid for `BLOCK_LEN` writable bytes.
-pub(crate) type XofBlockFn =
-  unsafe fn(chaining_value: &[u32; 8], block_words: &[u32; 16], block_len: u32, counter: u64, flags: u32, out: *mut u8);
-
-/// Generate one or more root output blocks (64 bytes each) for XOF squeeze.
-///
-/// # Safety
-///
-/// - `out` must be valid for `out_blocks * BLOCK_LEN` writable bytes.
-pub(crate) type XofManyFn = unsafe fn(
-  chaining_value: &[u32; 8],
-  block_words: &[u32; 16],
-  block_len: u32,
-  counter: u64,
-  flags: u32,
-  out: *mut u8,
-  out_blocks: usize,
-);
-
 /// Compress one or more full 64-byte blocks into a chaining value.
 pub(crate) type ChunkCompressBlocksFn = fn(&mut [u32; 8], u64, u32, &mut u8, &[u8]);
 
@@ -76,10 +53,6 @@ pub(crate) struct Kernel {
   pub(crate) chunk_compress_blocks: ChunkCompressBlocksFn,
   /// Hash many contiguous full chunks (for throughput, no pointer chasing).
   pub(crate) hash_many_contiguous: HashManyContiguousFn,
-  /// Generate one root output block for XOF squeeze.
-  pub(crate) xof_block: XofBlockFn,
-  /// Generate root output blocks for XOF squeeze.
-  pub(crate) xof_many: XofManyFn,
   /// x86-only final-block compressor from bytes.
   #[cfg(target_arch = "x86_64")]
   pub(crate) x86_compress_cv_bytes: X86CompressCvBytesFn,
@@ -194,8 +167,6 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
       compress: super::compress,
       chunk_compress_blocks: chunk_compress_blocks_portable,
       hash_many_contiguous: hash_many_contiguous_portable,
-      xof_block: xof_block_portable_wrapper,
-      xof_many: xof_many_portable_wrapper,
       #[cfg(target_arch = "x86_64")]
       x86_compress_cv_bytes: x86_compress_cv_portable_wrapper,
       simd_degree: 1,
@@ -207,8 +178,6 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
       compress: compress_ssse3_wrapper,
       chunk_compress_blocks: chunk_compress_blocks_ssse3_wrapper,
       hash_many_contiguous: hash_many_contiguous_ssse3_wrapper,
-      xof_block: xof_block_ssse3_wrapper,
-      xof_many: xof_many_ssse3_wrapper,
       x86_compress_cv_bytes: x86_compress_cv_portable_wrapper,
       simd_degree: 1,
       name: id.as_str(),
@@ -222,8 +191,6 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
       compress: compress_sse41_wrapper,
       chunk_compress_blocks: chunk_compress_blocks_sse41_wrapper,
       hash_many_contiguous: hash_many_contiguous_sse41_wrapper,
-      xof_block: xof_block_sse41_wrapper,
-      xof_many: xof_many_sse41_wrapper,
       x86_compress_cv_bytes: x86_compress_cv_sse41_wrapper,
       simd_degree: 4,
       name: id.as_str(),
@@ -237,8 +204,6 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
       compress: compress_avx2_wrapper,
       chunk_compress_blocks: chunk_compress_blocks_avx2_wrapper,
       hash_many_contiguous: hash_many_contiguous_avx2_wrapper,
-      xof_block: xof_block_avx2_wrapper,
-      xof_many: xof_many_avx2_wrapper,
       x86_compress_cv_bytes: x86_compress_cv_avx2_wrapper,
       simd_degree: 8,
       name: id.as_str(),
@@ -252,8 +217,6 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
       compress: compress_avx512_wrapper,
       chunk_compress_blocks: chunk_compress_blocks_avx512_wrapper,
       hash_many_contiguous: hash_many_contiguous_avx512_wrapper,
-      xof_block: xof_block_avx512_wrapper,
-      xof_many: xof_many_avx512_wrapper,
       x86_compress_cv_bytes: x86_compress_cv_avx512_wrapper,
       simd_degree: 16,
       name: id.as_str(),
@@ -268,8 +231,6 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
       compress: compress_neon_wrapper,
       chunk_compress_blocks: chunk_compress_blocks_neon_wrapper,
       hash_many_contiguous: hash_many_contiguous_neon_wrapper,
-      xof_block: xof_block_portable_wrapper,
-      xof_many: xof_many_neon_wrapper,
       simd_degree: 4,
       name: id.as_str(),
     },
@@ -279,8 +240,6 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
       compress: compress_s390x_vector_wrapper,
       chunk_compress_blocks: chunk_compress_blocks_s390x_vector_wrapper,
       hash_many_contiguous: hash_many_contiguous_s390x_vector_wrapper,
-      xof_block: xof_block_s390x_vector_wrapper,
-      xof_many: xof_many_s390x_vector_wrapper,
       simd_degree: 4,
       name: id.as_str(),
     },
@@ -290,8 +249,6 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
       compress: compress_power_vsx_wrapper,
       chunk_compress_blocks: chunk_compress_blocks_power_vsx_wrapper,
       hash_many_contiguous: hash_many_contiguous_power_vsx_wrapper,
-      xof_block: xof_block_power_vsx_wrapper,
-      xof_many: xof_many_power_vsx_wrapper,
       simd_degree: 4,
       name: id.as_str(),
     },
@@ -301,8 +258,6 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
       compress: compress_riscv_v_wrapper,
       chunk_compress_blocks: chunk_compress_blocks_riscv_v_wrapper,
       hash_many_contiguous: hash_many_contiguous_riscv_v_wrapper,
-      xof_block: xof_block_riscv_v_wrapper,
-      xof_many: xof_many_riscv_v_wrapper,
       simd_degree: 4,
       name: id.as_str(),
     },
@@ -845,118 +800,6 @@ unsafe fn hash_many_contiguous_portable(
       // SAFETY: caller guarantees out is valid for `num_chunks * OUT_LEN`.
       unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), out.add(chunk_idx * OUT_LEN + j * 4), 4) };
     }
-  }
-}
-
-#[inline(always)]
-unsafe fn write_output_block_words(out: *mut u8, words: &[u32; 16]) {
-  if cfg!(target_endian = "little") {
-    // SAFETY: `words` is exactly `BLOCK_LEN` bytes, and caller guarantees `out`
-    // points to one writable output block.
-    unsafe { core::ptr::copy_nonoverlapping(words.as_ptr().cast::<u8>(), out, BLOCK_LEN) };
-    return;
-  }
-
-  for (i, &word) in words.iter().enumerate() {
-    let bytes = word.to_le_bytes();
-    // SAFETY: caller guarantees one full output block at `out`.
-    unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), out.add(i * 4), 4) };
-  }
-}
-
-#[derive(Copy, Clone)]
-struct XofCompressInput<'a> {
-  chaining_value: &'a [u32; 8],
-  block_words: &'a [u32; 16],
-  block_len: u32,
-  flags: u32,
-}
-
-#[inline(always)]
-unsafe fn xof_block_via_compress(
-  compress: CompressFn,
-  chaining_value: &[u32; 8],
-  block_words: &[u32; 16],
-  block_len: u32,
-  counter: u64,
-  flags: u32,
-  out: *mut u8,
-) {
-  let words = compress(chaining_value, block_words, counter, block_len, flags);
-  // SAFETY: caller guarantees `out` is writable for one block.
-  unsafe { write_output_block_words(out, &words) };
-}
-
-unsafe fn xof_block_portable_wrapper(
-  chaining_value: &[u32; 8],
-  block_words: &[u32; 16],
-  block_len: u32,
-  counter: u64,
-  flags: u32,
-  out: *mut u8,
-) {
-  // SAFETY: caller guarantees `out` is writable for one block.
-  unsafe {
-    xof_block_via_compress(
-      super::compress,
-      chaining_value,
-      block_words,
-      block_len,
-      counter,
-      flags,
-      out,
-    )
-  }
-}
-
-#[inline(always)]
-unsafe fn xof_many_via_compress(
-  compress: CompressFn,
-  xof: XofCompressInput<'_>,
-  mut counter: u64,
-  mut out: *mut u8,
-  mut out_blocks: usize,
-) {
-  let XofCompressInput {
-    chaining_value,
-    block_words,
-    block_len,
-    flags,
-  } = xof;
-  while out_blocks != 0 {
-    // SAFETY: caller guarantees `out` is writable for one block.
-    unsafe { xof_block_via_compress(compress, chaining_value, block_words, block_len, counter, flags, out) };
-    counter = counter.wrapping_add(1);
-    // SAFETY: caller guarantees `out` is writable for `out_blocks * BLOCK_LEN`,
-    // and we advance by one block per iteration.
-    out = unsafe { out.add(BLOCK_LEN) };
-    out_blocks -= 1;
-  }
-}
-
-unsafe fn xof_many_portable_wrapper(
-  chaining_value: &[u32; 8],
-  block_words: &[u32; 16],
-  block_len: u32,
-  counter: u64,
-  flags: u32,
-  out: *mut u8,
-  out_blocks: usize,
-) {
-  // SAFETY: caller guarantees `out` is writable for `out_blocks * BLOCK_LEN`.
-  unsafe {
-    xof_many_via_compress(
-      super::compress,
-      XofCompressInput {
-        chaining_value,
-        block_words,
-        block_len,
-        flags,
-      },
-      counter,
-      out,
-      out_blocks,
-    )
   }
 }
 
@@ -1586,56 +1429,6 @@ unsafe fn hash_many_contiguous_s390x_vector_wrapper(
   unsafe { hash_many_contiguous_s390x_vector(input, num_chunks, key, counter, flags, out) }
 }
 
-#[cfg(target_arch = "s390x")]
-unsafe fn xof_many_s390x_vector_wrapper(
-  chaining_value: &[u32; 8],
-  block_words: &[u32; 16],
-  block_len: u32,
-  counter: u64,
-  flags: u32,
-  out: *mut u8,
-  out_blocks: usize,
-) {
-  // SAFETY: dispatch requires `s390x::VECTOR` before selecting this kernel.
-  unsafe {
-    xof_many_via_compress(
-      compress_s390x_vector_wrapper,
-      XofCompressInput {
-        chaining_value,
-        block_words,
-        block_len,
-        flags,
-      },
-      counter,
-      out,
-      out_blocks,
-    )
-  }
-}
-
-#[cfg(target_arch = "s390x")]
-unsafe fn xof_block_s390x_vector_wrapper(
-  chaining_value: &[u32; 8],
-  block_words: &[u32; 16],
-  block_len: u32,
-  counter: u64,
-  flags: u32,
-  out: *mut u8,
-) {
-  // SAFETY: dispatch requires `s390x::VECTOR` before selecting this kernel.
-  unsafe {
-    xof_block_via_compress(
-      compress_s390x_vector_wrapper,
-      chaining_value,
-      block_words,
-      block_len,
-      counter,
-      flags,
-      out,
-    )
-  }
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // powerpc64 VSX wrappers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1833,56 +1626,6 @@ unsafe fn hash_many_contiguous_power_vsx_wrapper(
 ) {
   // SAFETY: dispatch requires `power::VSX` before selecting this kernel.
   unsafe { hash_many_contiguous_power_vsx(input, num_chunks, key, counter, flags, out) }
-}
-
-#[cfg(target_arch = "powerpc64")]
-unsafe fn xof_many_power_vsx_wrapper(
-  chaining_value: &[u32; 8],
-  block_words: &[u32; 16],
-  block_len: u32,
-  counter: u64,
-  flags: u32,
-  out: *mut u8,
-  out_blocks: usize,
-) {
-  // SAFETY: dispatch requires `power::VSX` before selecting this kernel.
-  unsafe {
-    xof_many_via_compress(
-      compress_power_vsx_wrapper,
-      XofCompressInput {
-        chaining_value,
-        block_words,
-        block_len,
-        flags,
-      },
-      counter,
-      out,
-      out_blocks,
-    )
-  }
-}
-
-#[cfg(target_arch = "powerpc64")]
-unsafe fn xof_block_power_vsx_wrapper(
-  chaining_value: &[u32; 8],
-  block_words: &[u32; 16],
-  block_len: u32,
-  counter: u64,
-  flags: u32,
-  out: *mut u8,
-) {
-  // SAFETY: dispatch requires `power::VSX` before selecting this kernel.
-  unsafe {
-    xof_block_via_compress(
-      compress_power_vsx_wrapper,
-      chaining_value,
-      block_words,
-      block_len,
-      counter,
-      flags,
-      out,
-    )
-  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2148,56 +1891,6 @@ unsafe fn hash_many_contiguous_riscv_v_wrapper(
   unsafe { hash_many_contiguous_riscv_v(input, num_chunks, key, counter, flags, out) }
 }
 
-#[cfg(target_arch = "riscv64")]
-unsafe fn xof_many_riscv_v_wrapper(
-  chaining_value: &[u32; 8],
-  block_words: &[u32; 16],
-  block_len: u32,
-  counter: u64,
-  flags: u32,
-  out: *mut u8,
-  out_blocks: usize,
-) {
-  // SAFETY: dispatch requires `riscv::V` before selecting this kernel.
-  unsafe {
-    xof_many_via_compress(
-      compress_riscv_v_wrapper,
-      XofCompressInput {
-        chaining_value,
-        block_words,
-        block_len,
-        flags,
-      },
-      counter,
-      out,
-      out_blocks,
-    )
-  }
-}
-
-#[cfg(target_arch = "riscv64")]
-unsafe fn xof_block_riscv_v_wrapper(
-  chaining_value: &[u32; 8],
-  block_words: &[u32; 16],
-  block_len: u32,
-  counter: u64,
-  flags: u32,
-  out: *mut u8,
-) {
-  // SAFETY: dispatch requires `riscv::V` before selecting this kernel.
-  unsafe {
-    xof_block_via_compress(
-      compress_riscv_v_wrapper,
-      chaining_value,
-      block_words,
-      block_len,
-      counter,
-      flags,
-      out,
-    )
-  }
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // x86_64 SSSE3 wrappers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2431,56 +2124,6 @@ unsafe fn hash_many_contiguous_ssse3_wrapper(
   unsafe { super::x86_64::hash_many_contiguous_ssse3(input, num_chunks, key, counter, flags, out) }
 }
 
-#[cfg(target_arch = "x86_64")]
-unsafe fn xof_many_ssse3_wrapper(
-  chaining_value: &[u32; 8],
-  block_words: &[u32; 16],
-  block_len: u32,
-  counter: u64,
-  flags: u32,
-  out: *mut u8,
-  out_blocks: usize,
-) {
-  // SAFETY: this wrapper is selected only when SSSE3 is available.
-  unsafe {
-    xof_many_via_compress(
-      compress_ssse3_wrapper,
-      XofCompressInput {
-        chaining_value,
-        block_words,
-        block_len,
-        flags,
-      },
-      counter,
-      out,
-      out_blocks,
-    )
-  }
-}
-
-#[cfg(target_arch = "x86_64")]
-unsafe fn xof_block_ssse3_wrapper(
-  chaining_value: &[u32; 8],
-  block_words: &[u32; 16],
-  block_len: u32,
-  counter: u64,
-  flags: u32,
-  out: *mut u8,
-) {
-  // SAFETY: this wrapper is selected only when SSSE3 is available.
-  unsafe {
-    xof_block_via_compress(
-      compress_ssse3_wrapper,
-      chaining_value,
-      block_words,
-      block_len,
-      counter,
-      flags,
-      out,
-    )
-  }
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // x86_64 SSE4.1/AVX2/AVX-512 wrappers (throughput kernels)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2562,56 +2205,6 @@ unsafe fn hash_many_contiguous_sse41_wrapper(
       core::ptr::copy_nonoverlapping(tmp.as_ptr(), out, num_chunks * OUT_LEN);
     }
   }
-}
-
-#[cfg(target_arch = "x86_64")]
-unsafe fn xof_many_sse41_wrapper(
-  chaining_value: &[u32; 8],
-  block_words: &[u32; 16],
-  block_len: u32,
-  mut counter: u64,
-  flags: u32,
-  mut out: *mut u8,
-  mut out_blocks: usize,
-) {
-  while out_blocks >= super::x86_64::sse41::DEGREE {
-    // SAFETY: dispatch selects this wrapper only when SSE4.1 is available, and
-    // `out` has at least `4 * BLOCK_LEN` writable bytes.
-    unsafe {
-      super::x86_64::sse41::root_output_blocks4(chaining_value, block_words, counter, block_len, flags, out);
-      out = out.add(super::x86_64::sse41::DEGREE * BLOCK_LEN);
-    }
-    counter = counter.wrapping_add(super::x86_64::sse41::DEGREE as u64);
-    out_blocks -= super::x86_64::sse41::DEGREE;
-  }
-
-  if out_blocks >= 2 {
-    // SAFETY: `out_blocks >= 2` guarantees space for two blocks.
-    unsafe {
-      super::x86_64::sse41::root_output_blocks2(chaining_value, block_words, counter, block_len, flags, out);
-      out = out.add(2 * BLOCK_LEN);
-    }
-    counter = counter.wrapping_add(2);
-    out_blocks -= 2;
-  }
-
-  if out_blocks == 1 {
-    // SAFETY: one output block remains.
-    unsafe { super::x86_64::sse41::root_output_blocks1(chaining_value, block_words, counter, block_len, flags, out) };
-  }
-}
-
-#[cfg(target_arch = "x86_64")]
-unsafe fn xof_block_sse41_wrapper(
-  chaining_value: &[u32; 8],
-  block_words: &[u32; 16],
-  block_len: u32,
-  counter: u64,
-  flags: u32,
-  out: *mut u8,
-) {
-  // SAFETY: dispatch selects this wrapper only when SSE4.1 is available.
-  unsafe { super::x86_64::sse41::root_output_blocks1(chaining_value, block_words, counter, block_len, flags, out) };
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -2767,66 +2360,6 @@ unsafe fn hash_many_contiguous_avx2_wrapper(
 }
 
 #[cfg(target_arch = "x86_64")]
-unsafe fn xof_many_avx2_wrapper(
-  chaining_value: &[u32; 8],
-  block_words: &[u32; 16],
-  block_len: u32,
-  mut counter: u64,
-  flags: u32,
-  mut out: *mut u8,
-  mut out_blocks: usize,
-) {
-  while out_blocks >= super::x86_64::avx2::DEGREE {
-    // SAFETY: dispatch selects this wrapper only when AVX2 is available, and
-    // `out` has at least `8 * BLOCK_LEN` writable bytes.
-    unsafe {
-      super::x86_64::avx2::root_output_blocks8(chaining_value, block_words, counter, block_len, flags, out);
-      out = out.add(super::x86_64::avx2::DEGREE * BLOCK_LEN);
-    }
-    counter = counter.wrapping_add(super::x86_64::avx2::DEGREE as u64);
-    out_blocks -= super::x86_64::avx2::DEGREE;
-  }
-
-  if out_blocks >= super::x86_64::sse41::DEGREE {
-    // SAFETY: AVX2 implies SSE4.1, and at least four blocks remain.
-    unsafe {
-      super::x86_64::sse41::root_output_blocks4(chaining_value, block_words, counter, block_len, flags, out);
-      out = out.add(super::x86_64::sse41::DEGREE * BLOCK_LEN);
-    }
-    counter = counter.wrapping_add(super::x86_64::sse41::DEGREE as u64);
-    out_blocks -= super::x86_64::sse41::DEGREE;
-  }
-
-  if out_blocks >= 2 {
-    // SAFETY: two blocks remain.
-    unsafe {
-      super::x86_64::avx2::root_output_blocks2(chaining_value, block_words, counter, block_len, flags, out);
-      out = out.add(2 * BLOCK_LEN);
-    }
-    counter = counter.wrapping_add(2);
-    out_blocks -= 2;
-  }
-
-  if out_blocks == 1 {
-    // SAFETY: one block remains.
-    unsafe { super::x86_64::avx2::root_output_blocks1(chaining_value, block_words, counter, block_len, flags, out) };
-  }
-}
-
-#[cfg(target_arch = "x86_64")]
-unsafe fn xof_block_avx2_wrapper(
-  chaining_value: &[u32; 8],
-  block_words: &[u32; 16],
-  block_len: u32,
-  counter: u64,
-  flags: u32,
-  out: *mut u8,
-) {
-  // SAFETY: dispatch selects this wrapper only when AVX2 is available.
-  unsafe { super::x86_64::avx2::root_output_blocks1(chaining_value, block_words, counter, block_len, flags, out) };
-}
-
-#[cfg(target_arch = "x86_64")]
 unsafe fn hash_many_contiguous_avx512_wrapper(
   input: *const u8,
   mut num_chunks: usize,
@@ -2970,106 +2503,6 @@ unsafe fn hash_many_contiguous_avx512_wrapper(
   }
 }
 
-#[cfg(target_arch = "x86_64")]
-unsafe fn xof_many_avx512_wrapper(
-  chaining_value: &[u32; 8],
-  block_words: &[u32; 16],
-  block_len: u32,
-  counter: u64,
-  flags: u32,
-  out: *mut u8,
-  out_blocks: usize,
-) {
-  #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-  {
-    if out_blocks == 0 {
-      return;
-    }
-    debug_assert!(block_len <= u8::MAX as u32);
-    debug_assert!(flags <= u8::MAX as u32);
-    // SAFETY: dispatch selects this wrapper only when AVX-512 is available, and
-    // `out` is writable for `out_blocks * BLOCK_LEN` bytes.
-    unsafe {
-      super::x86_64::asm::rscrypto_blake3_xof_many_avx512(
-        chaining_value.as_ptr(),
-        block_words.as_ptr().cast(),
-        block_len as u8,
-        counter,
-        flags as u8,
-        out,
-        out_blocks,
-      );
-    }
-  }
-
-  #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-  {
-    let mut counter = counter;
-    let mut out = out;
-    let mut out_blocks = out_blocks;
-
-    while out_blocks >= super::x86_64::avx512::DEGREE {
-      // SAFETY: at least 16 blocks remain.
-      unsafe {
-        super::x86_64::avx512::root_output_blocks16(chaining_value, block_words, counter, block_len, flags, out);
-        out = out.add(super::x86_64::avx512::DEGREE * BLOCK_LEN);
-      }
-      counter = counter.wrapping_add(super::x86_64::avx512::DEGREE as u64);
-      out_blocks -= super::x86_64::avx512::DEGREE;
-    }
-
-    if out_blocks >= super::x86_64::avx2::DEGREE {
-      // SAFETY: AVX-512 implies AVX2, and at least 8 blocks remain.
-      unsafe {
-        super::x86_64::avx2::root_output_blocks8(chaining_value, block_words, counter, block_len, flags, out);
-        out = out.add(super::x86_64::avx2::DEGREE * BLOCK_LEN);
-      }
-      counter = counter.wrapping_add(super::x86_64::avx2::DEGREE as u64);
-      out_blocks -= super::x86_64::avx2::DEGREE;
-    }
-
-    if out_blocks >= super::x86_64::sse41::DEGREE {
-      // SAFETY: AVX-512 implies SSE4.1, and at least 4 blocks remain.
-      unsafe {
-        super::x86_64::sse41::root_output_blocks4(chaining_value, block_words, counter, block_len, flags, out);
-        out = out.add(super::x86_64::sse41::DEGREE * BLOCK_LEN);
-      }
-      counter = counter.wrapping_add(super::x86_64::sse41::DEGREE as u64);
-      out_blocks -= super::x86_64::sse41::DEGREE;
-    }
-
-    if out_blocks >= 2 {
-      // SAFETY: at least two blocks remain.
-      unsafe {
-        super::x86_64::avx512::root_output_blocks2(chaining_value, block_words, counter, block_len, flags, out);
-        out = out.add(2 * BLOCK_LEN);
-      }
-      counter = counter.wrapping_add(2);
-      out_blocks -= 2;
-    }
-
-    if out_blocks == 1 {
-      // SAFETY: one block remains.
-      unsafe {
-        super::x86_64::avx512::root_output_blocks1(chaining_value, block_words, counter, block_len, flags, out)
-      };
-    }
-  }
-}
-
-#[cfg(target_arch = "x86_64")]
-unsafe fn xof_block_avx512_wrapper(
-  chaining_value: &[u32; 8],
-  block_words: &[u32; 16],
-  block_len: u32,
-  counter: u64,
-  flags: u32,
-  out: *mut u8,
-) {
-  // SAFETY: dispatch selects this wrapper only when AVX-512 is available.
-  unsafe { super::x86_64::avx512::root_output_blocks1(chaining_value, block_words, counter, block_len, flags, out) };
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // aarch64 NEON wrappers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3123,48 +2556,4 @@ unsafe fn hash_many_contiguous_neon_wrapper(
 ) {
   // SAFETY: This function is only called when NEON is available (checked by dispatch).
   unsafe { super::aarch64::hash_many_contiguous_neon(input, num_chunks, key, counter, flags, out) }
-}
-
-#[cfg(target_arch = "aarch64")]
-unsafe fn xof_many_neon_wrapper(
-  chaining_value: &[u32; 8],
-  block_words: &[u32; 16],
-  block_len: u32,
-  mut counter: u64,
-  flags: u32,
-  mut out: *mut u8,
-  mut out_blocks: usize,
-) {
-  const DEGREE: usize = 4;
-  while out_blocks >= DEGREE {
-    // SAFETY: dispatch selects this wrapper only when NEON is available, and
-    // at least four output blocks remain.
-    unsafe {
-      super::aarch64::root_output_blocks4_neon(chaining_value, block_words, counter, block_len, flags, out);
-      out = out.add(DEGREE * BLOCK_LEN);
-    }
-    counter = counter.wrapping_add(DEGREE as u64);
-    out_blocks -= DEGREE;
-  }
-
-  if out_blocks != 0 {
-    // Match upstream behavior: NEON has no dedicated `compress_xof` primitive,
-    // so tails use the portable scalar compressor.
-    // SAFETY: `out` points to at least `out_blocks * BLOCK_LEN` writable bytes,
-    // and this wrapper is selected only when NEON dispatch predicates hold.
-    unsafe {
-      xof_many_via_compress(
-        super::compress,
-        XofCompressInput {
-          chaining_value,
-          block_words,
-          block_len,
-          flags,
-        },
-        counter,
-        out,
-        out_blocks,
-      )
-    }
-  }
 }
