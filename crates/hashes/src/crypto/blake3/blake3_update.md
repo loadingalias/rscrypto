@@ -730,29 +730,45 @@ Optional tools only with a specific question they uniquely answer:
   - Reject and revert.
   - Reverted `8885536` and `5a7df00` via `097edf6`.
 
-### 2026-03-02 - Candidate AN (`pending`)
+### 2026-03-03 - Candidate AN (`56485ac`)
 - Hypothesis:
-  - Streaming/XOF gaps are now dominated by control-path complexity (defer/upgrade/cache logic), not raw SIMD throughput.
-  - Removing defer/upgrade state and running direct stream-kernel paths should reduce fixed overhead on `xof` and `streaming`.
+  - Remaining streaming/XOF losses were dominated by control-path complexity (defer/upgrade/cache logic) rather than raw SIMD throughput.
+  - Simplifying to direct stream-kernel dispatch and reducing XOF state should lower fixed overhead on `blake3/streaming/*` and `blake3/xof/*`.
 - Change:
   - `Blake3::update`:
-    - removed deferred SIMD selection (`should_defer_simd`) from the hot update path.
-    - now selects `stream_kernel()` + `bulk_kernel_for_update(input.len())` directly per update call.
+    - removed deferred-SIMD gating (`should_defer_simd`) from the hot path,
+    - now directly selects `stream_kernel()` + `bulk_kernel_for_update(input.len())` on update calls.
   - `Blake3::finalize_xof`:
-    - now routes through `finalize_xof_sized(OUT_LEN)` to keep a single output-construction path.
+    - routes through `finalize_xof_sized(OUT_LEN)` to use one output-construction path.
   - `Blake3Xof`:
-    - removed root-hash cache state (`root_hash_cache`, `root_hash_pos`),
+    - removed `root_hash_cache` / `root_hash_pos`,
     - removed runtime squeeze kernel-upgrade state (`kernel`, `dispatch_plan`),
-    - simplified `squeeze` to buffered block generation only.
-  - x86 streaming policy retune:
-    - `PROFILE_X86_ZEN5`, `PROFILE_X86_INTEL_ICL`, `PROFILE_X86_INTEL_SPR` stream kernel set to `X86Avx512`.
+    - simplified `squeeze()` to buffered block generation only.
+  - x86 profile policy:
+    - set `PROFILE_X86_ZEN5`, `PROFILE_X86_INTEL_ICL`, and `PROFILE_X86_INTEL_SPR` streaming kernel to `X86Avx512`.
   - Cleanup:
     - removed dead `HasherDispatch::simd_threshold` field and `should_defer_simd` method.
 - Validation:
   - Local: `just check-all && just test` passed (`167/167`).
-- CI bench plan:
-  - `crates=hashes`, `benches=blake3`,
-  - `filter=blake3/xof/,blake3/streaming/`,
-  - lanes: `intel-icl`, `intel-spr`, `amd-zen5`.
+  - CI targeted bench run: `22601614792` (`crates=hashes`, `benches=blake3`,
+    `filter=blake3/xof/,blake3/streaming/`, lanes: `intel-icl`, `intel-spr`, `amd-zen5`).
+  - Scope check: execution plan contained exactly two rows (`blake3/xof/`, `blake3/streaming/`) on all lanes.
+- CI outcomes (time-based gap vs official; positive = slower):
+  - Aggregate (`xof` + `streaming`): `0W / 48L`, avg gap `+29.60%`.
+  - `streaming/*`: `0W / 24L`, avg gap `+16.18%`.
+  - `xof/*`: `0W / 24L`, avg gap `+43.02%`.
+  - Lane aggregates:
+    - `intel-icl`: `0W/16L`, avg `+60.64%`.
+    - `intel-spr`: `0W/16L`, avg `+13.01%`.
+    - `amd-zen5`: `0W/16L`, avg `+15.15%`.
+  - Directional delta vs prior targeted run (`22600518259`, Candidate AM):
+    - aggregate: `+24.80%` -> `+29.60%` (`+4.80 pp`, worse),
+    - streaming: `+24.04%` -> `+16.18%` (`-7.86 pp`, better),
+    - xof: `+25.56%` -> `+43.02%` (`+17.46 pp`, much worse).
+  - Notable regressions:
+    - `intel-icl xof init+read/64B-in/1024B-out`: `+270.52%` (from `+20.95%`).
+    - `intel-icl xof init+read/1B-in/1024B-out`: `+263.39%` (from `+31.92%`).
+    - `amd-zen5 xof init+read/64B-in/32B-out`: `+18.07%` (from `-20.54%`).
 - Decision:
-  - Pending CI evidence.
+  - Reject and revert.
+  - Revert of `56485ac` is staged locally (commit pending).
