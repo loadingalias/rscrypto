@@ -856,6 +856,28 @@ Optional tools only with a specific question they uniquely answer:
     - `xof init+read/*-in/32B-out`: `1B +23.84%`, `64B +18.98%`, `1024B +4.42%`.
   - CI run `22631079643` completed, but executed commit `d4ffe54` (remote `main`), not Candidate AP commit `686773a`; this run is invalid for AP evaluation.
     - Invalid-run outcomes (`d4ffe54`, same 5 lanes): aggregate `18W / 62L`, avg `+11.34%` (`streaming +12.79%`, `xof +9.89%`), consistent with previously rejected behavior.
-  - CI targeted bench run: pending.
+  - CI targeted bench run: `22634499864` (`crates=hashes`, `benches=blake3`,
+    `filter=blake3/xof/,blake3/streaming/`, `quick=false`,
+    lanes: `amd-zen5`, `intel-icl`, `intel-spr`, `graviton3`, `graviton4`).
+  - Scope/commit check:
+    - workflow completed `success`,
+    - executed commit `a780ad164e636ef81769ba685b80943f79e98c12` (expected SHA; valid run).
+  - CI outcomes (time-based gap vs official; positive = slower):
+    - Aggregate (`xof` + `streaming`, 5 lanes): `13W / 67L`, avg gap `+67.90%`.
+    - `streaming/*`: `6W / 34L`, avg gap `+12.83%`.
+    - `xof/*`: `7W / 33L`, avg gap `+122.98%`.
+    - Lane aggregates:
+      - `intel-icl`: `0W/16L`, avg `+120.59%` (`streaming +23.49%`, `xof +217.70%`).
+      - `intel-spr`: `0W/16L`, avg `+109.21%` (`streaming +19.36%`, `xof +199.07%`).
+      - `amd-zen5`: `2W/14L`, avg `+107.73%` (`streaming +22.61%`, `xof +192.85%`).
+      - `graviton3`: `5W/11L`, avg `+0.85%` (`streaming -0.76%`, `xof +2.45%`).
+      - `graviton4`: `6W/10L`, avg `+1.12%` (`streaming -0.56%`, `xof +2.81%`).
+  - Notable regressions:
+    - `intel-icl xof init+read/64B-in/1024B-out`: `+734.81%`.
+    - `intel-icl xof init+read/1B-in/1024B-out`: `+732.21%`.
+    - `amd-zen5 xof init+read/64B-in/1024B-out`: `+725.26%`.
+    - `amd-zen5 xof init+read/1B-in/1024B-out`: `+721.32%`.
+    - `intel-spr xof init+read/64B-in/1024B-out`: `+705.18%`.
+    - `intel-spr xof init+read/1B-in/1024B-out`: `+673.96%`.
 - Decision:
-  - Pending targeted CI benches (`blake3/streaming/*` + `blake3/xof/*`).
+  - Reject and revert.
