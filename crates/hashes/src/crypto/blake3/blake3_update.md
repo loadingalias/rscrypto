@@ -899,6 +899,26 @@ Optional tools only with a specific question they uniquely answer:
 - Validation:
   - Local: `just check-all` passed.
   - Local: `just test` passed (`167/167`).
-  - CI targeted bench run: pending (`blake3/xof/` + `blake3/streaming/`, 5 lanes).
+  - CI targeted bench run: `22636554814` (`crates=hashes`, `benches=blake3`,
+    `filter=blake3/xof/,blake3/streaming/`, `quick=false`,
+    lanes: `amd-zen5`, `intel-icl`, `intel-spr`).
+  - Scope/commit check:
+    - workflow completed `success`,
+    - executed commit `bf58df99569450e3088650298e4947dc2140a4bf` (expected SHA; valid run).
+  - CI outcomes (time-based gap vs official; positive = slower):
+    - Aggregate (`xof` + `streaming`, 3 lanes): `0W / 48L`, avg gap `+23.19%`.
+    - `streaming/*`: `0W / 24L`, avg gap `+21.63%`.
+    - `xof/*`: `0W / 24L`, avg gap `+24.74%`.
+    - Lane aggregates:
+      - `intel-icl`: `0W/16L`, avg `+28.39%` (`streaming +23.61%`, `xof +33.17%`).
+      - `intel-spr`: `0W/16L`, avg `+19.43%` (`streaming +18.59%`, `xof +20.28%`).
+      - `amd-zen5`: `0W/16L`, avg `+21.74%` (`streaming +22.69%`, `xof +20.78%`).
+  - Target-cluster check:
+    - `xof init+read/*-in/32B-out`: `0W / 12L`, avg gap `+31.24%`.
+    - `streaming 64..1024B chunks`: `0W / 15L`, avg gap `+23.91%`.
+  - Directional delta vs strong prior targeted baseline (`22560608081`, same 3 lanes/scope):
+    - aggregate: `+16.30%` -> `+23.19%` (`+6.89 pp`, worse),
+    - streaming: `+13.44%` -> `+21.63%` (`+8.20 pp`, worse),
+    - xof: `+19.15%` -> `+24.74%` (`+5.59 pp`, worse).
 - Decision:
-  - Pending targeted CI benches.
+  - Reject and revert.
