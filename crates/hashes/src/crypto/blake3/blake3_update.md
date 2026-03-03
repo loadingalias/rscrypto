@@ -728,4 +728,31 @@ Optional tools only with a specific question they uniquely answer:
     - only wins: `amd-zen5 xof init+read/1B-in/32B-out` (`-12.46%`) and `64B-in/32B-out` (`-20.54%`).
 - Decision:
   - Reject and revert.
-  - Revert of `8885536` and `5a7df00` is staged locally (commit pending).
+  - Reverted `8885536` and `5a7df00` via `097edf6`.
+
+### 2026-03-02 - Candidate AN (`pending`)
+- Hypothesis:
+  - Streaming/XOF gaps are now dominated by control-path complexity (defer/upgrade/cache logic), not raw SIMD throughput.
+  - Removing defer/upgrade state and running direct stream-kernel paths should reduce fixed overhead on `xof` and `streaming`.
+- Change:
+  - `Blake3::update`:
+    - removed deferred SIMD selection (`should_defer_simd`) from the hot update path.
+    - now selects `stream_kernel()` + `bulk_kernel_for_update(input.len())` directly per update call.
+  - `Blake3::finalize_xof`:
+    - now routes through `finalize_xof_sized(OUT_LEN)` to keep a single output-construction path.
+  - `Blake3Xof`:
+    - removed root-hash cache state (`root_hash_cache`, `root_hash_pos`),
+    - removed runtime squeeze kernel-upgrade state (`kernel`, `dispatch_plan`),
+    - simplified `squeeze` to buffered block generation only.
+  - x86 streaming policy retune:
+    - `PROFILE_X86_ZEN5`, `PROFILE_X86_INTEL_ICL`, `PROFILE_X86_INTEL_SPR` stream kernel set to `X86Avx512`.
+  - Cleanup:
+    - removed dead `HasherDispatch::simd_threshold` field and `should_defer_simd` method.
+- Validation:
+  - Local: `just check-all && just test` passed (`167/167`).
+- CI bench plan:
+  - `crates=hashes`, `benches=blake3`,
+  - `filter=blake3/xof/,blake3/streaming/`,
+  - lanes: `intel-icl`, `intel-spr`, `amd-zen5`.
+- Decision:
+  - Pending CI evidence.

@@ -442,7 +442,7 @@ pub static PROFILE_X86_ZEN4: FamilyProfile = FamilyProfile {
     l: KernelId::X86Avx512,
   },
   streaming: StreamingTable {
-    stream: KernelId::X86Sse41,
+    stream: KernelId::X86Avx512,
     bulk: KernelId::X86Avx512,
     bulk_sizeclass_threshold: THRESHOLD_AVX512,
   },
@@ -484,7 +484,7 @@ pub static PROFILE_X86_ZEN5: FamilyProfile = FamilyProfile {
     l: KernelId::X86Avx512,
   },
   streaming: StreamingTable {
-    stream: KernelId::X86Sse41,
+    stream: KernelId::X86Avx512,
     bulk: KernelId::X86Avx512,
     bulk_sizeclass_threshold: THRESHOLD_AVX512,
   },
@@ -569,7 +569,7 @@ pub static PROFILE_X86_INTEL_SPR: FamilyProfile = FamilyProfile {
     l: KernelId::X86Avx512,
   },
   streaming: StreamingTable {
-    stream: KernelId::X86Sse41,
+    stream: KernelId::X86Avx512,
     bulk: KernelId::X86Avx512,
     bulk_sizeclass_threshold: THRESHOLD_AVX512,
   },

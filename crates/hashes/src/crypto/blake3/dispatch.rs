@@ -96,7 +96,6 @@ pub(crate) struct HasherDispatch {
   stream_kernel: Kernel,
   table_bulk_kernel: Kernel,
   parallel_streaming: ParallelTable,
-  simd_threshold: usize,
   bulk_sizeclass_threshold: usize,
 }
 
@@ -121,12 +120,6 @@ impl HasherDispatch {
   #[must_use]
   pub(crate) fn size_class_kernel(&self, len: usize) -> Kernel {
     self.size_classes.select(len)
-  }
-
-  #[inline]
-  #[must_use]
-  pub(crate) fn should_defer_simd(&self, buffered_len: usize, incoming_len: usize) -> bool {
-    buffered_len.saturating_add(incoming_len) < self.simd_threshold
   }
 
   #[inline]
@@ -308,7 +301,6 @@ fn resolved() -> ResolvedDispatch {
       stream_kernel: streaming.stream,
       table_bulk_kernel: streaming.bulk,
       parallel_streaming: parallel.streaming,
-      simd_threshold: tune.simd_threshold,
       bulk_sizeclass_threshold: stream_table.bulk_sizeclass_threshold,
     };
 
@@ -379,7 +371,7 @@ pub fn xof(data: &[u8]) -> super::Blake3Xof {
   let d = active();
   let kernel = select(&d, data.len()).kernel;
   let output = super::root_output_oneshot(kernel, super::IV, 0, super::policy_kind_from_flags(0, true), data);
-  super::Blake3Xof::new(output, hasher_dispatch())
+  super::Blake3Xof::new(output)
 }
 
 #[inline]
