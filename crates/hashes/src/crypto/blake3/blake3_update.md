@@ -881,3 +881,24 @@ Optional tools only with a specific question they uniquely answer:
     - `intel-spr xof init+read/1B-in/1024B-out`: `+673.96%`.
 - Decision:
   - Reject and revert.
+
+### 2026-03-03 - Candidate AQ (`working tree`)
+- Hypothesis:
+  - The remaining x86 XOF short-output gap is concentrated in first-block root-hash generation (`init+read/*-in/32B-out`), where we still pay generic compression path overhead.
+  - A narrow, kernel-aware root-hash fast path should reduce first-block latency without policy churn or broad XOF state rewrites.
+- Change:
+  - `OutputState` root-hash path:
+    - added `root_hash_words_with_kernel(kernel)` and `root_hash_bytes_with_kernel(kernel)`,
+    - on `x86_64`, route SIMD kernels through `kernel.x86_compress_cv_bytes`,
+    - on `aarch64` NEON, route through `compress_cv_neon_bytes`,
+    - keep portable fallback unchanged.
+  - `Blake3Xof::squeeze` first-block fast path (`out.len() <= 32`):
+    - compute root hash via `root_hash_bytes_with_kernel(...)`,
+    - on `x86_64`, if current root kernel is `Portable`, promote only this path to `dispatch_plan.stream_kernel()` when available.
+  - No dispatch-table edits, no API changes, no streaming-path rewrites.
+- Validation:
+  - Local: `just check-all` passed.
+  - Local: `just test` passed (`167/167`).
+  - CI targeted bench run: pending (`blake3/xof/` + `blake3/streaming/`, 5 lanes).
+- Decision:
+  - Pending targeted CI benches.
