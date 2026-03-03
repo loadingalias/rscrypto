@@ -379,8 +379,7 @@ pub fn xof(data: &[u8]) -> super::Blake3Xof {
   let d = active();
   let kernel = select(&d, data.len()).kernel;
   let output = super::root_output_oneshot(kernel, super::IV, 0, super::policy_kind_from_flags(0, true), data);
-  let large_squeeze_kernel = hasher_dispatch().bulk_kernel_for_update(super::XOF_LARGE_SQUEEZE_THRESHOLD);
-  super::Blake3Xof::new(output, large_squeeze_kernel)
+  super::Blake3Xof::new(output, hasher_dispatch())
 }
 
 #[inline]

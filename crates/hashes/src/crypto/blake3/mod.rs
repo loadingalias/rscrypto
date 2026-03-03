@@ -46,7 +46,6 @@ const KEY_LEN: usize = 32;
 const BLOCK_LEN: usize = 64;
 const CHUNK_LEN: usize = 1024;
 const OUTPUT_BLOCK_LEN: usize = 2 * OUT_LEN;
-const XOF_LARGE_SQUEEZE_THRESHOLD: usize = 512;
 // Max CV stack depth for incremental hashing.
 //
 // BLAKE3 chunk size is 1024 bytes. If we cap the total input length at `u64`
@@ -2923,7 +2922,6 @@ impl Blake3 {
     let key_words = words8_from_le_bytes_32(key);
     let plan = dispatch::hasher_dispatch();
     let kernel = plan.size_class_kernel(data.len());
-    let large_squeeze_kernel = plan.bulk_kernel_for_update(XOF_LARGE_SQUEEZE_THRESHOLD);
     Blake3Xof::new(
       root_output_oneshot(
         kernel,
@@ -2932,7 +2930,7 @@ impl Blake3 {
         policy_kind_from_flags(KEYED_HASH, true),
         data,
       ),
-      large_squeeze_kernel,
+      plan,
     )
   }
 
@@ -3665,15 +3663,17 @@ impl Blake3 {
   #[must_use]
   #[inline]
   pub fn finalize_xof(&self) -> Blake3Xof {
-    let large_squeeze_kernel = self.dispatch_plan.bulk_kernel_for_update(XOF_LARGE_SQUEEZE_THRESHOLD);
     let single_chunk_no_tree =
       self.chunk_state.chunk_counter == 0 && self.cv_stack_len == 0 && self.pending_chunk_cv.is_none();
 
+    // XOF can be dominated by squeeze throughput; for single-chunk states we
+    // keep the current chunk kernel to avoid rebuild overhead. Squeeze can
+    // still upgrade to a bulk kernel for large output requests.
     if single_chunk_no_tree {
-      return Blake3Xof::new(self.chunk_state.output(), large_squeeze_kernel);
+      return Blake3Xof::new_with_kernel(self.chunk_state.output(), self.kernel, self.dispatch_plan);
     }
 
-    Blake3Xof::new(self.root_output(), large_squeeze_kernel)
+    Blake3Xof::new(self.root_output(), self.dispatch_plan)
   }
 
   /// Finalize into an extendable output state (XOF) with output-size-aware kernel selection.
@@ -3732,8 +3732,7 @@ impl Blake3 {
       self.root_output_with_kernel(kernel)
     };
 
-    let large_squeeze_kernel = self.dispatch_plan.bulk_kernel_for_update(XOF_LARGE_SQUEEZE_THRESHOLD);
-    Blake3Xof::new(output, large_squeeze_kernel)
+    Blake3Xof::new_with_kernel(output, kernel, self.dispatch_plan)
   }
 
   /// Get root output with a specific kernel (for XOF kernel switching).
@@ -3914,39 +3913,51 @@ impl Digest for Blake3 {
 pub struct Blake3Xof {
   output: OutputState,
   block_counter: u64,
-  position_within_block: u8,
-  large_squeeze_kernel: Kernel,
+  buf: [u8; OUTPUT_BLOCK_LEN],
+  buf_pos: usize,
+  root_hash_cache: [u8; OUT_LEN],
+  root_hash_pos: u8,
+  /// Kernel used for XOF squeeze operations. Stored to enable dynamic upgrade
+  /// when large squeezes are requested with a suboptimal kernel.
+  kernel: Kernel,
+  dispatch_plan: dispatch::HasherDispatch,
 }
 
 impl Blake3Xof {
   #[inline]
-  fn new(output: OutputState, large_squeeze_kernel: Kernel) -> Self {
+  fn new(output: OutputState, dispatch_plan: dispatch::HasherDispatch) -> Self {
+    let kernel = output.kernel;
     Self {
       output,
       block_counter: 0,
-      position_within_block: 0,
-      large_squeeze_kernel,
+      buf: [0u8; OUTPUT_BLOCK_LEN],
+      buf_pos: OUTPUT_BLOCK_LEN,
+      root_hash_cache: [0u8; OUT_LEN],
+      root_hash_pos: 0,
+      kernel,
+      dispatch_plan,
     }
   }
 
   #[inline]
-  fn fill_one_block(&mut self, out: &mut &mut [u8]) {
-    let mut output_block = [0u8; OUTPUT_BLOCK_LEN];
-    self
-      .output
-      .root_output_blocks_into(self.block_counter, &mut output_block);
-
-    let output_bytes = &output_block[self.position_within_block as usize..];
-    let take = min(out.len(), output_bytes.len());
-    out[..take].copy_from_slice(&output_bytes[..take]);
-    self.position_within_block = self.position_within_block.strict_add(take as u8);
-    if self.position_within_block as usize == OUTPUT_BLOCK_LEN {
-      self.block_counter = self.block_counter.wrapping_add(1);
-      self.position_within_block = 0;
+  fn new_with_kernel(output: OutputState, kernel: Kernel, dispatch_plan: dispatch::HasherDispatch) -> Self {
+    Self {
+      output,
+      block_counter: 0,
+      buf: [0u8; OUTPUT_BLOCK_LEN],
+      buf_pos: OUTPUT_BLOCK_LEN,
+      root_hash_cache: [0u8; OUT_LEN],
+      root_hash_pos: 0,
+      kernel,
+      dispatch_plan,
     }
+  }
 
-    // Advance the output slice in place.
-    *out = &mut core::mem::take(out)[take..];
+  #[inline]
+  fn refill(&mut self) {
+    self.output.root_output_blocks_into(self.block_counter, &mut self.buf);
+    self.block_counter = self.block_counter.wrapping_add(1);
+    self.buf_pos = 0;
   }
 }
 
@@ -3956,18 +3967,68 @@ impl Xof for Blake3Xof {
       return;
     }
 
-    // If the XOF came from a short-input stream kernel, upgrade once for
-    // large reads.
-    if out.len() >= XOF_LARGE_SQUEEZE_THRESHOLD && self.output.kernel.id != self.large_squeeze_kernel.id {
-      self.output.kernel = self.large_squeeze_kernel;
+    // Continue a lazily-served short-root-hash sequence, if active.
+    if self.root_hash_pos != 0 {
+      let pos = self.root_hash_pos as usize;
+      if pos < OUT_LEN {
+        let take = min(OUT_LEN - pos, out.len());
+        out[..take].copy_from_slice(&self.root_hash_cache[pos..pos + take]);
+        self.root_hash_pos = (pos + take) as u8;
+        out = &mut out[take..];
+        if out.is_empty() {
+          return;
+        }
+      }
+
+      if self.root_hash_pos as usize == OUT_LEN {
+        self.refill();
+        // We already served the first 32 bytes from `root_hash_cache`.
+        self.buf_pos = OUT_LEN;
+        self.root_hash_pos = 0;
+      }
     }
 
-    // If we're partway through a block, reach the next block boundary first.
-    if self.position_within_block != 0 {
-      self.fill_one_block(&mut out);
+    // Fast path: the first 32 output bytes are the root hash. Avoid generating
+    // the full first 64-byte output block unless/when the caller requests bytes
+    // beyond this prefix.
+    if self.block_counter == 0 && self.buf_pos == self.buf.len() && out.len() <= OUT_LEN {
+      let rh = self.output.root_hash_bytes();
+      out.copy_from_slice(&rh[..out.len()]);
+      self.root_hash_cache = rh;
+      self.root_hash_pos = out.len() as u8;
+      return;
     }
 
-    // Write full output blocks directly into the caller buffer.
+    // World-class: XOF output generation is dominated by the squeeze phase, not the
+    // input hashing phase. Tiny inputs can select a "streaming" kernel (e.g. SSE4.1)
+    // that is great for per-block updates but suboptimal for generating many output
+    // blocks. For large squeezes, upgrade to the best available bulk kernel.
+    //
+    // This is the runtime safety net: even if the caller didn't use
+    // `finalize_xof_sized()`, we can still avoid being pinned to a small-input
+    // kernel for a large output request.
+    const LARGE_SQUEEZE_THRESHOLD: usize = 512;
+    if out.len() >= LARGE_SQUEEZE_THRESHOLD {
+      let desired = self.dispatch_plan.bulk_kernel_for_update(out.len());
+      if desired.id != self.kernel.id {
+        self.kernel = desired;
+        self.output.kernel = desired;
+      }
+    }
+
+    // Drain any buffered bytes first.
+    if self.buf_pos != self.buf.len() {
+      let take = min(self.buf.len() - self.buf_pos, out.len());
+      out[..take].copy_from_slice(&self.buf[self.buf_pos..self.buf_pos + take]);
+      self.buf_pos += take;
+      out = &mut out[take..];
+      if out.is_empty() {
+        return;
+      }
+    }
+
+    // Generate any remaining full output blocks directly into the caller
+    // buffer (lets the kernel choose its best batch size).
     let full = out.len() / OUTPUT_BLOCK_LEN * OUTPUT_BLOCK_LEN;
     if full != 0 {
       let blocks = (full / OUTPUT_BLOCK_LEN) as u64;
@@ -3978,9 +4039,12 @@ impl Xof for Blake3Xof {
       out = &mut out[full..];
     }
 
-    // Tail: fill one block and copy the remainder.
+    // Tail: refill once and copy the remaining bytes.
     if !out.is_empty() {
-      self.fill_one_block(&mut out);
+      self.refill();
+      let take = out.len();
+      out.copy_from_slice(&self.buf[..take]);
+      self.buf_pos = take;
     }
   }
 }
