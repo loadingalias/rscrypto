@@ -3791,6 +3791,17 @@ impl Digest for Blake3 {
       && self.chunk_state.block_len == 0
       && input.len() <= BLOCK_LEN
     {
+      #[cfg(target_arch = "x86_64")]
+      {
+        // Keep tiny single-update x86 paths (notably XOF init+read 1B/64B)
+        // from being permanently pinned to portable.
+        if self.kernel.id == kernels::Blake3KernelId::Portable {
+          let stream = self.dispatch_plan.stream_kernel();
+          self.kernel = stream;
+          self.bulk_kernel = self.dispatch_plan.bulk_kernel_for_update(input.len());
+          self.chunk_state.kernel = stream;
+        }
+      }
       self.chunk_state.block[..input.len()].copy_from_slice(input);
       self.chunk_state.block_len = input.len() as u8;
       return;
