@@ -3801,19 +3801,15 @@ impl Digest for Blake3 {
     // - Avoid SIMD setup overhead for tiny one-off updates.
     //
     // We start in portable mode and only "lock in" streaming dispatch once we
-    // have enough data to amortize kernel setup costs.
-    //
-    // On x86_64, short-streaming and XOF init+read are more latency-sensitive
-    // to conservative stream-kernel pinning than to setup overhead, so we skip
-    // defer for this hot path.
+    // have enough data to amortize kernel setup costs. This applies uniformly
+    // to all modes (plain, keyed, derive) - the defer heuristic improves
+    // small-input latency across the board.
     if first_update
       && self.chunk_state.blocks_compressed == 0
       && self.chunk_state.block_len == 0
       && input.len() <= CHUNK_LEN
     {
-      let defer_simd = !cfg!(target_arch = "x86_64");
       let stream = if self.kernel.id == kernels::Blake3KernelId::Portable
-        && defer_simd
         && self
           .dispatch_plan
           .should_defer_simd(self.chunk_state.len(), input.len())
@@ -3835,15 +3831,12 @@ impl Digest for Blake3 {
     if self.pending_chunk_cv.is_none() && self.chunk_state.len() < CHUNK_LEN {
       let remaining = CHUNK_LEN - self.chunk_state.len();
       if input.len() <= remaining {
-        let should_promote_stream = if cfg!(target_arch = "x86_64") {
-          true
-        } else {
-          self.chunk_state.chunk_counter != 0
+        if self.kernel.id == kernels::Blake3KernelId::Portable
+          && (self.chunk_state.chunk_counter != 0
             || !self
               .dispatch_plan
-              .should_defer_simd(self.chunk_state.len(), input.len())
-        };
-        if self.kernel.id == kernels::Blake3KernelId::Portable && should_promote_stream {
+              .should_defer_simd(self.chunk_state.len(), input.len()))
+        {
           // Once we've already processed at least one full chunk, keep streaming
           // on the tuned stream kernel instead of repeatedly re-applying the
           // tiny-input defer heuristic every new chunk.
