@@ -2077,67 +2077,6 @@ impl ChunkState {
     if self.blocks_compressed == 0 { CHUNK_START } else { 0 }
   }
 
-  /// Fast path for block-aligned short updates that stay within one chunk.
-  ///
-  /// This removes the generic update-loop overhead for the dominant streaming
-  /// benchmark pattern (`64..1024` byte aligned chunks).
-  #[inline]
-  fn try_update_block_aligned_short(&mut self, mut input: &[u8]) -> bool {
-    if input.is_empty() || !input.len().is_multiple_of(BLOCK_LEN) || input.len() > CHUNK_LEN {
-      return false;
-    }
-
-    let cur_len = self.len();
-    if cur_len == CHUNK_LEN || cur_len + input.len() > CHUNK_LEN {
-      return false;
-    }
-
-    if self.block_len != 0 && self.block_len as usize != BLOCK_LEN {
-      return false;
-    }
-
-    if self.block_len as usize == BLOCK_LEN {
-      debug_assert!(
-        self.blocks_compressed < 15,
-        "last chunk block stays buffered until output()"
-      );
-      kernels::chunk_compress_blocks_inline(
-        self.kernel.id,
-        &mut self.chaining_value,
-        self.chunk_counter,
-        self.flags,
-        &mut self.blocks_compressed,
-        &self.block,
-      );
-      self.block_len = 0;
-    }
-
-    let total_blocks = input.len() / BLOCK_LEN;
-    let max_blocks_with_tail = 16usize - self.blocks_compressed as usize;
-    if total_blocks > max_blocks_with_tail {
-      return false;
-    }
-
-    let blocks_to_compress = total_blocks.saturating_sub(1);
-    if blocks_to_compress != 0 {
-      let bytes = blocks_to_compress * BLOCK_LEN;
-      kernels::chunk_compress_blocks_inline(
-        self.kernel.id,
-        &mut self.chaining_value,
-        self.chunk_counter,
-        self.flags,
-        &mut self.blocks_compressed,
-        &input[..bytes],
-      );
-      input = &input[bytes..];
-    }
-
-    debug_assert_eq!(input.len(), BLOCK_LEN);
-    self.block.copy_from_slice(input);
-    self.block_len = BLOCK_LEN as u8;
-    true
-  }
-
   fn update(&mut self, mut input: &[u8]) {
     // Streaming fast path: when we receive exactly one whole chunk at a chunk
     // boundary, compute the internal state in one shot.
@@ -2210,47 +2149,35 @@ impl ChunkState {
     // directly from the caller slice, leaving exactly one full block buffered
     // when the caller ends on a block boundary.
     debug_assert_eq!(self.block_len, 0);
-    while !input.is_empty() {
-      // Once we've compressed 15 blocks, the final block stays buffered.
-      if self.blocks_compressed == 15 {
-        debug_assert!(input.len() <= BLOCK_LEN);
-        self.block[..input.len()].copy_from_slice(input);
-        self.block_len = input.len() as u8;
-        return;
-      }
-
+    if self.blocks_compressed < 15 && input.len() > BLOCK_LEN {
+      let max_blocks = 15usize - self.blocks_compressed as usize;
       let full_blocks = input.len() / BLOCK_LEN;
-      if full_blocks != 0 {
-        let max_blocks = 15usize - self.blocks_compressed as usize;
-        let mut blocks_to_compress = full_blocks.min(max_blocks);
+      let mut blocks_to_compress = full_blocks.min(max_blocks);
 
-        // If we'd consume the entire input as full blocks, leave one block
-        // buffered so finalize can apply CHUNK_END if the caller stops here.
-        if input.len().is_multiple_of(BLOCK_LEN) && blocks_to_compress == full_blocks && blocks_to_compress > 0 {
-          blocks_to_compress = blocks_to_compress.strict_sub(1);
-        }
-
-        if blocks_to_compress != 0 {
-          let bytes = blocks_to_compress * BLOCK_LEN;
-          kernels::chunk_compress_blocks_inline(
-            self.kernel.id,
-            &mut self.chaining_value,
-            self.chunk_counter,
-            self.flags,
-            &mut self.blocks_compressed,
-            &input[..bytes],
-          );
-          input = &input[bytes..];
-          continue;
-        }
+      // If we'd consume the entire input as full blocks, leave one block
+      // buffered so finalize can apply CHUNK_END if the caller stops here.
+      if input.len().is_multiple_of(BLOCK_LEN) && blocks_to_compress == full_blocks && blocks_to_compress != 0 {
+        blocks_to_compress -= 1;
       }
 
-      // Remainder: buffer <= 64 bytes and return.
-      let take = min(BLOCK_LEN, input.len());
-      self.block[..take].copy_from_slice(&input[..take]);
-      self.block_len = take as u8;
-      return;
+      if blocks_to_compress != 0 {
+        let bytes = blocks_to_compress * BLOCK_LEN;
+        kernels::chunk_compress_blocks_inline(
+          self.kernel.id,
+          &mut self.chaining_value,
+          self.chunk_counter,
+          self.flags,
+          &mut self.blocks_compressed,
+          &input[..bytes],
+        );
+        input = &input[bytes..];
+      }
     }
+
+    // Remainder: always <= 64 bytes at this point.
+    debug_assert!(input.len() <= BLOCK_LEN);
+    self.block[..input.len()].copy_from_slice(input);
+    self.block_len = input.len() as u8;
   }
 
   #[inline]
@@ -3843,9 +3770,6 @@ impl Digest for Blake3 {
           let stream = self.dispatch_plan.stream_kernel();
           self.kernel = stream;
           self.chunk_state.kernel = stream;
-        }
-        if input.len().is_multiple_of(BLOCK_LEN) && self.chunk_state.try_update_block_aligned_short(input) {
-          return;
         }
         self.chunk_state.update(input);
         return;
