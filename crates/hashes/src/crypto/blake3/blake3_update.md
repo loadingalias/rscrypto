@@ -1016,3 +1016,44 @@ Optional tools only with a specific question they uniquely answer:
 - Decision:
   - Reject and revert.
   - This is an improvement over AR, but it is still slower than the strong baseline on aggregate, streaming, and xof surfaces.
+
+### 2026-03-03 - Candidate AT (`eb61536`)
+- Hypothesis:
+  - Tiny x86 first-update fast path (`input.len() <= 64`) was returning before stream-kernel lock-in, leaving single-update XOF/streaming calls pinned to `Portable`.
+  - Forcing x86 stream-kernel lock-in in that ultra-tiny first-update branch should reduce fixed overhead on `xof init+read` (`1B/64B`) and short streaming chunks.
+- Change:
+  - `Digest::update` tiny first-update branch (`<= BLOCK_LEN`):
+    - on `x86_64`, when `self.kernel == Portable`, set:
+      - `self.kernel = dispatch_plan.stream_kernel()`,
+      - `self.bulk_kernel = dispatch_plan.bulk_kernel_for_update(input.len())`,
+      - `self.chunk_state.kernel = stream`.
+    - keep existing block copy + early return behavior unchanged.
+  - No dispatch-table edits, no XOF state/model rewrites, no kernel implementation changes.
+- Validation:
+  - Local: `just check-all` passed.
+  - Local: `just test` passed (`167/167`).
+  - CI targeted bench run: `22645562535` (`crates=hashes`, `benches=blake3`,
+    `filter=blake3/xof/,blake3/streaming/`, `quick=false`,
+    lanes: `amd-zen5`, `intel-icl`, `intel-spr`).
+  - Scope/commit check:
+    - workflow completed `success`,
+    - executed commit `eb61536401be7d19433c0da87bcbd99578f790a8` (expected SHA; valid run).
+- CI outcomes (time-based gap vs official; positive = slower):
+  - Aggregate (`xof` + `streaming`, 3 lanes): `0W / 48L`, avg gap `+23.75%`.
+  - `streaming/*`: `0W / 24L`, avg gap `+21.22%`.
+  - `xof/*`: `0W / 24L`, avg gap `+26.29%`.
+  - Lane aggregates:
+    - `intel-icl`: `0W/16L`, avg `+28.19%` (`streaming +23.31%`, `xof +33.06%`).
+    - `intel-spr`: `0W/16L`, avg `+20.26%` (`streaming +18.88%`, `xof +21.64%`).
+    - `amd-zen5`: `0W/16L`, avg `+22.81%` (`streaming +21.45%`, `xof +24.17%`).
+  - Target-cluster check:
+    - `xof init+read/*-in/32B-out`: `0W / 12L`, avg gap `+36.50%`.
+    - `streaming 64..1024B chunks`: `0W / 15L`, avg gap `+23.84%`.
+  - Notable regressions:
+    - `intel-icl xof init+read/1B-in/32B-out`: `+69.94%`.
+    - `intel-icl xof init+read/64B-in/32B-out`: `+60.98%`.
+    - `intel-spr xof init+read/1B-in/32B-out`: `+43.52%`.
+    - `amd-zen5 xof init+read/1B-in/32B-out`: `+35.17%`.
+- Decision:
+  - Reject and revert.
+  - The tiny first-update kernel lock-in did not close the target surfaces and produced an all-loss run.
