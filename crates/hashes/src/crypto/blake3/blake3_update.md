@@ -143,6 +143,18 @@ Optional tools only with a specific question they uniquely answer:
 - Every candidate carries CI run IDs and explicit keep/reject outcome in notes.
 
 ## Progress
+### 2026-03-03 - XOF Helper Signature Refactor (No Suppression)
+- Change:
+  - Removed `#[allow(clippy::too_many_arguments)]` from `xof_many_via_compress`.
+  - Introduced `XofCompressInput` to carry invariant XOF parameters and shrink helper arity structurally.
+  - Added the missing `// SAFETY:` note on the NEON XOF tail path.
+  - Cleaned cfg-dependent AVX-512 wrapper lint fallout (`unused mut`, `needless return`) without behavior changes.
+- Validation:
+  - Local: `just check-all` passed (host + cross-target groups).
+  - Local: `just test` passed (`167/167`).
+- Notes:
+  - This is a hygiene/code-shape change only; no intended algorithmic or dispatch-policy shift.
+
 ### 2026-02-22 - Candidate P (`3a57016`)
 - Change:
   - Enabled lane-native vector bulk kernels in BLAKE3 dispatch tables for IBM Z (`s390x`) and POWER (`powerpc64`) families.
@@ -842,6 +854,8 @@ Optional tools only with a specific question they uniquely answer:
   - Local spot-check bench (`cargo bench -p hashes --bench blake3`, Apple M1, short streaming/XOF cases):
     - `streaming`: `64B +2.35%`, `128B -4.93%`, `256B +3.01%`, `512B +4.48%`, `1024B +2.52%`.
     - `xof init+read/*-in/32B-out`: `1B +23.84%`, `64B +18.98%`, `1024B +4.42%`.
+  - CI run `22631079643` completed, but executed commit `d4ffe54` (remote `main`), not Candidate AP commit `686773a`; this run is invalid for AP evaluation.
+    - Invalid-run outcomes (`d4ffe54`, same 5 lanes): aggregate `18W / 62L`, avg `+11.34%` (`streaming +12.79%`, `xof +9.89%`), consistent with previously rejected behavior.
   - CI targeted bench run: pending.
 - Decision:
   - Pending targeted CI benches (`blake3/streaming/*` + `blake3/xof/*`).

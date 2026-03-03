@@ -864,6 +864,14 @@ unsafe fn write_output_block_words(out: *mut u8, words: &[u32; 16]) {
   }
 }
 
+#[derive(Copy, Clone)]
+struct XofCompressInput<'a> {
+  chaining_value: &'a [u32; 8],
+  block_words: &'a [u32; 16],
+  block_len: u32,
+  flags: u32,
+}
+
 #[inline(always)]
 unsafe fn xof_block_via_compress(
   compress: CompressFn,
@@ -904,14 +912,17 @@ unsafe fn xof_block_portable_wrapper(
 #[inline(always)]
 unsafe fn xof_many_via_compress(
   compress: CompressFn,
-  chaining_value: &[u32; 8],
-  block_words: &[u32; 16],
-  block_len: u32,
+  xof: XofCompressInput<'_>,
   mut counter: u64,
-  flags: u32,
   mut out: *mut u8,
   mut out_blocks: usize,
 ) {
+  let XofCompressInput {
+    chaining_value,
+    block_words,
+    block_len,
+    flags,
+  } = xof;
   while out_blocks != 0 {
     // SAFETY: caller guarantees `out` is writable for one block.
     unsafe { xof_block_via_compress(compress, chaining_value, block_words, block_len, counter, flags, out) };
@@ -936,11 +947,13 @@ unsafe fn xof_many_portable_wrapper(
   unsafe {
     xof_many_via_compress(
       super::compress,
-      chaining_value,
-      block_words,
-      block_len,
+      XofCompressInput {
+        chaining_value,
+        block_words,
+        block_len,
+        flags,
+      },
       counter,
-      flags,
       out,
       out_blocks,
     )
@@ -1587,11 +1600,13 @@ unsafe fn xof_many_s390x_vector_wrapper(
   unsafe {
     xof_many_via_compress(
       compress_s390x_vector_wrapper,
-      chaining_value,
-      block_words,
-      block_len,
+      XofCompressInput {
+        chaining_value,
+        block_words,
+        block_len,
+        flags,
+      },
       counter,
-      flags,
       out,
       out_blocks,
     )
@@ -1834,11 +1849,13 @@ unsafe fn xof_many_power_vsx_wrapper(
   unsafe {
     xof_many_via_compress(
       compress_power_vsx_wrapper,
-      chaining_value,
-      block_words,
-      block_len,
+      XofCompressInput {
+        chaining_value,
+        block_words,
+        block_len,
+        flags,
+      },
       counter,
-      flags,
       out,
       out_blocks,
     )
@@ -2145,11 +2162,13 @@ unsafe fn xof_many_riscv_v_wrapper(
   unsafe {
     xof_many_via_compress(
       compress_riscv_v_wrapper,
-      chaining_value,
-      block_words,
-      block_len,
+      XofCompressInput {
+        chaining_value,
+        block_words,
+        block_len,
+        flags,
+      },
       counter,
-      flags,
       out,
       out_blocks,
     )
@@ -2426,11 +2445,13 @@ unsafe fn xof_many_ssse3_wrapper(
   unsafe {
     xof_many_via_compress(
       compress_ssse3_wrapper,
-      chaining_value,
-      block_words,
-      block_len,
+      XofCompressInput {
+        chaining_value,
+        block_words,
+        block_len,
+        flags,
+      },
       counter,
-      flags,
       out,
       out_blocks,
     )
@@ -2954,10 +2975,10 @@ unsafe fn xof_many_avx512_wrapper(
   chaining_value: &[u32; 8],
   block_words: &[u32; 16],
   block_len: u32,
-  mut counter: u64,
+  counter: u64,
   flags: u32,
-  mut out: *mut u8,
-  mut out_blocks: usize,
+  out: *mut u8,
+  out_blocks: usize,
 ) {
   #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
   {
@@ -2979,11 +3000,14 @@ unsafe fn xof_many_avx512_wrapper(
         out_blocks,
       );
     }
-    return;
   }
 
   #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
   {
+    let mut counter = counter;
+    let mut out = out;
+    let mut out_blocks = out_blocks;
+
     while out_blocks >= super::x86_64::avx512::DEGREE {
       // SAFETY: at least 16 blocks remain.
       unsafe {
@@ -3126,14 +3150,18 @@ unsafe fn xof_many_neon_wrapper(
   if out_blocks != 0 {
     // Match upstream behavior: NEON has no dedicated `compress_xof` primitive,
     // so tails use the portable scalar compressor.
+    // SAFETY: `out` points to at least `out_blocks * BLOCK_LEN` writable bytes,
+    // and this wrapper is selected only when NEON dispatch predicates hold.
     unsafe {
       xof_many_via_compress(
         super::compress,
-        chaining_value,
-        block_words,
-        block_len,
+        XofCompressInput {
+          chaining_value,
+          block_words,
+          block_len,
+          flags,
+        },
         counter,
-        flags,
         out,
         out_blocks,
       )
