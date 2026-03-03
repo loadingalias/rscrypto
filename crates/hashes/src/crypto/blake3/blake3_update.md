@@ -966,3 +966,20 @@ Optional tools only with a specific question they uniquely answer:
     - `amd-zen5 streaming/16384B-chunks`: `+32.83%`.
 - Decision:
   - Reject and revert.
+
+### 2026-03-03 - Candidate AS (`working tree`)
+- Hypothesis:
+  - The most reliable prior directional improvement came from x86 stream-kernel policy (`AVX-512` stream selection) rather than control-path rewrites.
+  - Current first-update defer policy still pins x86 short streaming/XOF init paths to conservative kernels and inflates fixed cost.
+- Change:
+  - x86 dispatch-table policy:
+    - set `PROFILE_X86_ZEN5`, `PROFILE_X86_INTEL_SPR`, and `PROFILE_X86_INTEL_ICL` streaming kernel to `X86Avx512`.
+  - `Digest::update` policy (x86_64 only):
+    - bypass first-update SIMD defer gating in the `input.len() <= CHUNK_LEN` path,
+    - bypass short-chunk re-defer check when deciding whether to promote from `Portable` to tuned stream kernel.
+  - No `Blake3Xof` state/model changes and no kernel implementation changes.
+- Validation:
+  - Local: `just check-all` passed.
+  - Local: `just test` passed (`167/167`).
+- Next step:
+  - Run CI targeted benches (`filter=blake3/xof/,blake3/streaming/`; lanes `amd-zen5`, `intel-icl`, `intel-spr`) and keep/revert immediately from measured deltas.
