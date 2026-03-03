@@ -923,21 +923,46 @@ Optional tools only with a specific question they uniquely answer:
 - Decision:
   - Reject and revert.
 
-### 2026-03-03 - Candidate AR (`working tree`)
+### 2026-03-03 - Candidate AR (`1107ec6`)
 - Hypothesis:
-  - The remaining `streaming` and `xof init+read` deficits are dominated by control-path complexity in per-update chunk handling, not kernel throughput.
-  - The current short-update specialization (`try_update_block_aligned_short`) and multi-branch chunk update loop add fixed overhead in the hottest path (`64..1024B` chunked updates).
+  - Remaining `streaming` and `xof init+read` losses were dominated by control-path overhead in per-update chunk handling, not SIMD kernel throughput.
+  - Removing short-update specialization (`try_update_block_aligned_short`) and simplifying `ChunkState::update` control flow should reduce fixed overhead in the hot `64..1024B` update surface.
 - Change:
   - Removed `ChunkState::try_update_block_aligned_short`.
-  - Simplified `ChunkState::update`:
-    - kept existing aarch64 one-chunk fast path,
-    - collapsed generic block handling to one bulk-compress step plus tail buffering,
-    - removed the inner `while`/`continue` control flow and strict-subtract on the block count path.
+  - Simplified `ChunkState::update` generic path:
+    - retained the existing aarch64 one-chunk fast path,
+    - replaced the inner loop/continue structure with one bulk-compress step plus tail buffering,
+    - removed the strict-subtract branch in block-count handling.
   - `Digest::update`:
-    - removed the `try_update_block_aligned_short` callsite from the single-chunk-fit fast path.
+    - removed `try_update_block_aligned_short` call from the single-chunk-fit fast path.
 - Validation:
   - Local: `just check-all` passed.
   - Local: `just test` passed (`167/167`).
-  - Local targeted benchmark run was started (`cargo bench -p hashes --bench blake3 -- blake3/streaming/`) but interrupted before completion (no valid benchmark data recorded).
-- Next step:
-  - Run CI targeted benches (`filter=blake3/xof/,blake3/streaming/`) and keep/revert immediately from measured deltas.
+  - CI targeted bench run: `22637943751` (`crates=hashes`, `benches=blake3`,
+    `filter=blake3/xof/,blake3/streaming/`, `quick=false`,
+    lanes: `amd-zen5`, `intel-icl`, `intel-spr`).
+  - Scope/commit check:
+    - workflow completed `success`,
+    - executed commit `1107ec6f009a9d329b2aa5c51ccbf19d6f9ea77e` (expected SHA; valid run).
+  - CI outcomes (time-based gap vs official; positive = slower):
+    - Aggregate (`xof` + `streaming`, 3 lanes): `2W / 46L`, avg gap `+24.85%`.
+    - `streaming/*`: `0W / 24L`, avg gap `+22.86%`.
+    - `xof/*`: `2W / 22L`, avg gap `+26.84%`.
+    - Lane aggregates:
+      - `intel-icl`: `0W/16L`, avg `+34.40%` (`streaming +23.31%`, `xof +45.49%`).
+      - `intel-spr`: `0W/16L`, avg `+23.47%` (`streaming +23.01%`, `xof +23.93%`).
+      - `amd-zen5`: `2W/14L`, avg `+16.69%` (`streaming +22.27%`, `xof +11.11%`).
+  - Target-cluster check:
+    - `xof init+read/*-in/32B-out`: `2W / 10L`, avg gap `+31.60%`.
+    - `streaming 64..1024B chunks`: `0W / 15L`, avg gap `+25.75%`.
+  - Directional delta vs strong prior targeted baseline (`22560608081`, same 3 lanes/scope):
+    - aggregate: `+16.30%` -> `+24.85%` (`+8.55 pp`, worse),
+    - streaming: `+13.44%` -> `+22.86%` (`+9.42 pp`, worse),
+    - xof: `+19.15%` -> `+26.84%` (`+7.69 pp`, worse).
+  - Notable regressions:
+    - `intel-icl xof init+read/1B-in/32B-out`: `+101.26%`.
+    - `intel-icl xof init+read/64B-in/32B-out`: `+97.09%`.
+    - `intel-spr xof init+read/1B-in/32B-out`: `+47.59%`.
+    - `amd-zen5 streaming/16384B-chunks`: `+32.83%`.
+- Decision:
+  - Reject and revert.
