@@ -771,4 +771,77 @@ Optional tools only with a specific question they uniquely answer:
     - `amd-zen5 xof init+read/64B-in/32B-out`: `+18.07%` (from `-20.54%`).
 - Decision:
   - Reject and revert.
-  - Revert of `56485ac` is staged locally (commit pending).
+  - Reverted `56485ac` via `661da62`.
+
+### 2026-03-03 - Candidate AO (`ec296b8`)
+- Hypothesis:
+  - XOF short-output overhead was still inflated by reader state complexity (`buf`/`root_hash_cache`/runtime dispatch state) and extra control branches.
+  - Shrinking `Blake3Xof` state and making squeeze block-generation/direct-copy first should reduce fixed overhead while preserving large-read kernel throughput.
+- Change:
+  - `dispatch::xof` / `Blake3::finalize_xof` / `Blake3::keyed_xof`:
+    - precompute `large_squeeze_kernel = bulk_kernel_for_update(512)`,
+    - construct XOF with that kernel directly.
+  - `Blake3Xof` refactor:
+    - removed `buf`, `buf_pos`, `root_hash_cache`, `root_hash_pos`, and stored dispatch plan state,
+    - added `position_within_block` + `large_squeeze_kernel`,
+    - added `fill_one_block()` and rewired `squeeze()` to direct block writes plus a single large-read kernel upgrade.
+  - Cleanup:
+    - removed `new_with_kernel` constructor and obsolete refill/cache machinery.
+- Validation:
+  - Local pre-push for the candidate commit was green before CI (`just check-all && just test`).
+  - CI targeted bench run: `22605740146` (`crates=hashes`, `benches=comp`, `only=blake3`, `quick=false`,
+    lanes: `amd-zen5`, `intel-icl`, `intel-spr`, `graviton3`, `graviton4`).
+  - Scope check: lane artifacts contained the `blake3/streaming/*` and `blake3/xof/*` matrices used for delta extraction.
+- CI outcomes (time-based gap vs official; positive = slower):
+  - Aggregate (`xof` + `streaming`, 5 lanes): `18W / 62L`, avg gap `+10.50%`.
+  - `streaming/*`: `6W / 34L`, avg gap `+12.82%`.
+  - `xof/*`: `12W / 28L`, avg gap `+8.19%`.
+  - Lane aggregates:
+    - `intel-icl`: `0W/16L`, avg `+29.12%` (`streaming +23.07%`, `xof +35.17%`).
+    - `intel-spr`: `0W/16L`, avg `+21.44%` (`streaming +19.34%`, `xof +23.54%`).
+    - `amd-zen5`: `2W/14L`, avg `+16.02%` (`streaming +22.30%`, `xof +9.73%`).
+    - `graviton3`: `8W/8L`, avg `-7.51%` (`streaming -0.67%`, `xof -14.36%`).
+    - `graviton4`: `8W/8L`, avg `-6.55%` (`streaming +0.06%`, `xof -13.16%`).
+  - Directional delta vs prior x86 run (`22601614792`, Candidate AN; x86 lanes only):
+    - aggregate: `+29.60%` -> `+22.19%` (`-7.41 pp`, better),
+    - streaming: `+16.18%` -> `+21.57%` (`+5.39 pp`, worse),
+    - xof: `+43.02%` -> `+22.82%` (`-20.20 pp`, better).
+  - Notable regressions vs prior x86 run:
+    - `intel-spr xof init+read/1B-in/32B-out`: `+22.06%` -> `+67.80%` (`+45.74 pp`).
+    - `intel-spr xof init+read/64B-in/32B-out`: `+1.67%` -> `+24.65%` (`+22.98 pp`).
+    - `intel-icl xof init+read/64B-in/32B-out`: `+54.84%` -> `+76.95%` (`+22.11 pp`).
+    - `intel-icl xof init+read/1B-in/32B-out`: `+59.62%` -> `+78.48%` (`+18.86 pp`).
+    - `amd-zen5 streaming/64B-chunks`: `+6.08%` -> `+21.18%` (`+15.10 pp`).
+- Decision:
+  - Reject and revert.
+  - Reverted `ec296b8` via `d4ffe54`.
+
+### 2026-03-03 - Candidate AP (`working tree`)
+- Hypothesis:
+  - The remaining x86 gap is now mostly control-path overhead in XOF output production, not raw kernel throughput.
+  - We still diverge from upstream architecture by doing runtime kernel-ID laddering in `root_output_blocks_into` and by carrying extra state/branches in `Blake3Xof`.
+- Change:
+  - Kernel dispatch model:
+    - added `xof_block` function pointer to `kernels::Kernel` for single-block XOF output,
+    - added `xof_many` function pointer to `kernels::Kernel`,
+    - wired all kernel variants (`portable`, `x86 ssse3/sse4.1/avx2/avx512`, `aarch64 neon`, and other SIMD targets) to explicit XOF block generators.
+  - Output path:
+    - added `OutputState::root_output_block_into()` that dispatches through `kernel.xof_block`,
+    - replaced `OutputState::root_output_blocks_into` kernel-ID `match` ladder with one indirect call through `kernel.xof_many`.
+  - Reader state simplification:
+    - rewrote `Blake3Xof` to upstream-style state (`output`, `block_counter`, `position_within_block`),
+    - removed `buf`, `buf_pos`, `root_hash_cache`, `root_hash_pos`, runtime kernel-upgrade state, and `dispatch_plan` from `Blake3Xof`,
+    - removed `new_with_kernel`/`refill`; added `fill_one_block`,
+    - `fill_one_block()` now uses `xof_block` (single-block path) while full-block regions use `xof_many`.
+  - Constructor cleanup:
+    - updated `dispatch::xof`, `Blake3::keyed_xof`, `Blake3::finalize_xof`, and `Blake3::finalize_xof_sized` to use the simplified `Blake3Xof::new(output)`.
+  - Cleanup:
+    - removed dead helper `words16_to_le_bytes`.
+- Validation:
+  - Local: `cargo test -p hashes blake3 --lib` passed (`20/20`).
+  - Local spot-check bench (`cargo bench -p hashes --bench blake3`, Apple M1, short streaming/XOF cases):
+    - `streaming`: `64B +2.35%`, `128B -4.93%`, `256B +3.01%`, `512B +4.48%`, `1024B +2.52%`.
+    - `xof init+read/*-in/32B-out`: `1B +23.84%`, `64B +18.98%`, `1024B +4.42%`.
+  - CI targeted bench run: pending.
+- Decision:
+  - Pending targeted CI benches (`blake3/streaming/*` + `blake3/xof/*`).
