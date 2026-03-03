@@ -967,7 +967,7 @@ Optional tools only with a specific question they uniquely answer:
 - Decision:
   - Reject and revert.
 
-### 2026-03-03 - Candidate AS (`working tree`)
+### 2026-03-03 - Candidate AS (`6de31a0`)
 - Hypothesis:
   - The most reliable prior directional improvement came from x86 stream-kernel policy (`AVX-512` stream selection) rather than control-path rewrites.
   - Current first-update defer policy still pins x86 short streaming/XOF init paths to conservative kernels and inflates fixed cost.
@@ -981,5 +981,38 @@ Optional tools only with a specific question they uniquely answer:
 - Validation:
   - Local: `just check-all` passed.
   - Local: `just test` passed (`167/167`).
-- Next step:
-  - Run CI targeted benches (`filter=blake3/xof/,blake3/streaming/`; lanes `amd-zen5`, `intel-icl`, `intel-spr`) and keep/revert immediately from measured deltas.
+  - CI targeted bench run: `22638507919` (`crates=hashes`, `benches=blake3`,
+    `filter=blake3/xof/,blake3/streaming/`, `quick=false`,
+    lanes: `amd-zen5`, `intel-icl`, `intel-spr`).
+  - Scope/commit check:
+    - workflow completed `success`,
+    - executed commit `6de31a0999444bd66cc481fc5cc38f91fb1c968c` (expected SHA; valid run).
+  - CI outcomes (time-based gap vs official; positive = slower):
+    - Aggregate (`xof` + `streaming`, 3 lanes): `2W / 46L`, avg gap `+18.98%`.
+    - `streaming/*`: `0W / 24L`, avg gap `+16.08%`.
+    - `xof/*`: `2W / 22L`, avg gap `+21.88%`.
+    - Lane aggregates:
+      - `intel-icl`: `0W/16L`, avg `+30.88%` (`streaming +23.29%`, `xof +38.48%`).
+      - `intel-spr`: `0W/16L`, avg `+15.99%` (`streaming +11.63%`, `xof +20.36%`).
+      - `amd-zen5`: `2W/14L`, avg `+10.06%` (`streaming +13.32%`, `xof +6.80%`).
+  - Target-cluster check:
+    - `xof init+read/*-in/32B-out`: `2W / 10L`, avg gap `+27.12%`.
+    - `streaming 64..1024B chunks`: `0W / 15L`, avg gap `+16.50%`.
+  - Directional delta vs strong prior targeted baseline (`22560608081`, same 3 lanes/scope):
+    - aggregate: `+16.30%` -> `+18.98%` (`+2.68 pp`, worse),
+    - streaming: `+13.44%` -> `+16.08%` (`+2.64 pp`, worse),
+    - xof: `+19.15%` -> `+21.88%` (`+2.73 pp`, worse).
+  - Directional delta vs prior candidate run (`22637943751`, Candidate AR):
+    - aggregate: `+24.85%` -> `+18.98%` (`-5.87 pp`, better),
+    - streaming: `+22.86%` -> `+16.08%` (`-6.78 pp`, better),
+    - xof: `+26.84%` -> `+21.88%` (`-4.96 pp`, better).
+  - Notable regressions:
+    - `intel-icl xof init+read/1B-in/32B-out`: `+87.66%`.
+    - `intel-icl xof init+read/64B-in/32B-out`: `+84.80%`.
+    - `intel-spr xof init+read/1B-in/32B-out`: `+49.31%`.
+  - Notable wins:
+    - `amd-zen5 xof init+read/1B-in/32B-out`: `-14.44%`.
+    - `amd-zen5 xof init+read/64B-in/32B-out`: `-21.33%`.
+- Decision:
+  - Reject and revert.
+  - This is an improvement over AR, but it is still slower than the strong baseline on aggregate, streaming, and xof surfaces.
