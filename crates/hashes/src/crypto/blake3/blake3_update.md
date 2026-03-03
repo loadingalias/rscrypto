@@ -922,3 +922,22 @@ Optional tools only with a specific question they uniquely answer:
     - xof: `+19.15%` -> `+24.74%` (`+5.59 pp`, worse).
 - Decision:
   - Reject and revert.
+
+### 2026-03-03 - Candidate AR (`working tree`)
+- Hypothesis:
+  - The remaining `streaming` and `xof init+read` deficits are dominated by control-path complexity in per-update chunk handling, not kernel throughput.
+  - The current short-update specialization (`try_update_block_aligned_short`) and multi-branch chunk update loop add fixed overhead in the hottest path (`64..1024B` chunked updates).
+- Change:
+  - Removed `ChunkState::try_update_block_aligned_short`.
+  - Simplified `ChunkState::update`:
+    - kept existing aarch64 one-chunk fast path,
+    - collapsed generic block handling to one bulk-compress step plus tail buffering,
+    - removed the inner `while`/`continue` control flow and strict-subtract on the block count path.
+  - `Digest::update`:
+    - removed the `try_update_block_aligned_short` callsite from the single-chunk-fit fast path.
+- Validation:
+  - Local: `just check-all` passed.
+  - Local: `just test` passed (`167/167`).
+  - Local targeted benchmark run was started (`cargo bench -p hashes --bench blake3 -- blake3/streaming/`) but interrupted before completion (no valid benchmark data recorded).
+- Next step:
+  - Run CI targeted benches (`filter=blake3/xof/,blake3/streaming/`) and keep/revert immediately from measured deltas.
