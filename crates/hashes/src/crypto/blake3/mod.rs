@@ -2077,67 +2077,6 @@ impl ChunkState {
     if self.blocks_compressed == 0 { CHUNK_START } else { 0 }
   }
 
-  /// Fast path for block-aligned short updates that stay within one chunk.
-  ///
-  /// This removes the generic update-loop overhead for the dominant streaming
-  /// benchmark pattern (`64..1024` byte aligned chunks).
-  #[inline]
-  fn try_update_block_aligned_short(&mut self, mut input: &[u8]) -> bool {
-    if input.is_empty() || !input.len().is_multiple_of(BLOCK_LEN) || input.len() > CHUNK_LEN {
-      return false;
-    }
-
-    let cur_len = self.len();
-    if cur_len == CHUNK_LEN || cur_len + input.len() > CHUNK_LEN {
-      return false;
-    }
-
-    if self.block_len != 0 && self.block_len as usize != BLOCK_LEN {
-      return false;
-    }
-
-    if self.block_len as usize == BLOCK_LEN {
-      debug_assert!(
-        self.blocks_compressed < 15,
-        "last chunk block stays buffered until output()"
-      );
-      kernels::chunk_compress_blocks_inline(
-        self.kernel.id,
-        &mut self.chaining_value,
-        self.chunk_counter,
-        self.flags,
-        &mut self.blocks_compressed,
-        &self.block,
-      );
-      self.block_len = 0;
-    }
-
-    let total_blocks = input.len() / BLOCK_LEN;
-    let max_blocks_with_tail = 16usize - self.blocks_compressed as usize;
-    if total_blocks > max_blocks_with_tail {
-      return false;
-    }
-
-    let blocks_to_compress = total_blocks.saturating_sub(1);
-    if blocks_to_compress != 0 {
-      let bytes = blocks_to_compress * BLOCK_LEN;
-      kernels::chunk_compress_blocks_inline(
-        self.kernel.id,
-        &mut self.chaining_value,
-        self.chunk_counter,
-        self.flags,
-        &mut self.blocks_compressed,
-        &input[..bytes],
-      );
-      input = &input[bytes..];
-    }
-
-    debug_assert_eq!(input.len(), BLOCK_LEN);
-    self.block.copy_from_slice(input);
-    self.block_len = BLOCK_LEN as u8;
-    true
-  }
-
   fn update(&mut self, mut input: &[u8]) {
     // Streaming fast path: when we receive exactly one whole chunk at a chunk
     // boundary, compute the internal state in one shot.
@@ -2922,16 +2861,13 @@ impl Blake3 {
     let key_words = words8_from_le_bytes_32(key);
     let plan = dispatch::hasher_dispatch();
     let kernel = plan.size_class_kernel(data.len());
-    Blake3Xof::new(
-      root_output_oneshot(
-        kernel,
-        key_words,
-        KEYED_HASH,
-        policy_kind_from_flags(KEYED_HASH, true),
-        data,
-      ),
-      plan,
-    )
+    Blake3Xof::new(root_output_oneshot(
+      kernel,
+      key_words,
+      KEYED_HASH,
+      policy_kind_from_flags(KEYED_HASH, true),
+      data,
+    ))
   }
 
   /// Compute the derived key for `key_material` under `context`, in one shot.
@@ -3226,7 +3162,7 @@ impl Blake3 {
 
   #[inline]
   fn new_internal(key_words: [u32; 8], flags: u32) -> Self {
-    let kernel = kernels::kernel(kernels::Blake3KernelId::Portable);
+    let kernel = dispatch::hasher_dispatch().stream_kernel();
     Self::new_internal_with(key_words, flags, kernel)
   }
 
@@ -3648,44 +3584,20 @@ impl Blake3 {
     output
   }
 
-  /// Rebuild the current chunk output using a specific kernel.
-  #[inline]
-  fn chunk_output_with_kernel(&self, kernel: Kernel) -> OutputState {
-    let mut temp_chunk_state = ChunkState::new(self.key_words, self.chunk_state.chunk_counter, self.flags, kernel);
-    temp_chunk_state.chaining_value = self.chunk_state.chaining_value;
-    temp_chunk_state.block = self.chunk_state.block;
-    temp_chunk_state.block_len = self.chunk_state.block_len;
-    temp_chunk_state.blocks_compressed = self.chunk_state.blocks_compressed;
-    temp_chunk_state.output()
-  }
-
   /// Finalize into an extendable output state (XOF).
   #[must_use]
   #[inline]
   pub fn finalize_xof(&self) -> Blake3Xof {
-    let single_chunk_no_tree =
-      self.chunk_state.chunk_counter == 0 && self.cv_stack_len == 0 && self.pending_chunk_cv.is_none();
-
-    // XOF can be dominated by squeeze throughput; for single-chunk states we
-    // keep the current chunk kernel to avoid rebuild overhead. Squeeze can
-    // still upgrade to a bulk kernel for large output requests.
-    if single_chunk_no_tree {
-      return Blake3Xof::new_with_kernel(self.chunk_state.output(), self.kernel, self.dispatch_plan);
-    }
-
-    Blake3Xof::new(self.root_output(), self.dispatch_plan)
+    Blake3Xof::new(self.root_output())
   }
 
-  /// Finalize into an extendable output state (XOF) with output-size-aware kernel selection.
+  /// Finalize into an extendable output state (XOF) with a size hint.
   ///
-  /// This is the world-class XOF entry point: it uses the expected output size to select
-  /// the optimal kernel. For small inputs with large expected outputs, this ensures we
-  /// use SIMD kernels for the XOF squeeze phase, avoiding the "+500% XOF slowdown" that
-  /// occurs when tiny inputs pin us to portable kernels.
+  /// This currently behaves identically to [`Self::finalize_xof`]. The size
+  /// hint is accepted for API compatibility.
   ///
   /// # Arguments
-  /// * `expected_output_bytes` - The expected number of bytes to squeeze from this XOF. This is
-  ///   used as a hint for kernel selection. The actual squeezed amount can differ.
+  /// * `expected_output_bytes` - Expected output length hint (currently unused).
   ///
   /// # Example
   /// ```rust
@@ -3694,7 +3606,6 @@ impl Blake3 {
   ///
   /// let mut hasher = Blake3::new();
   /// hasher.update(b"small input");
-  /// // Even though input is small, we'll use SIMD for the 1KB output
   /// let mut xof = hasher.finalize_xof_sized(1024);
   /// let mut out = [0u8; 1024];
   /// xof.squeeze(&mut out);
@@ -3703,62 +3614,8 @@ impl Blake3 {
   #[must_use]
   #[inline]
   pub fn finalize_xof_sized(&self, expected_output_bytes: usize) -> Blake3Xof {
-    // World-class XOF: select kernel based on output size, not just input size.
-    // This is the fix for the "+500% XOF slowdown" on x86_64.
-    let kernel = if expected_output_bytes >= 512 {
-      // For XOF squeezing, prefer the streaming bulk policy. This avoids
-      // pinning to conservative size-class kernels on platforms where
-      // one-shot size classes intentionally stay portable at ~1 KiB.
-      self.dispatch_plan.bulk_kernel_for_update(expected_output_bytes)
-    } else {
-      // For small outputs, use streaming dispatch (input-size-aware).
-      self.dispatch_plan.stream_kernel()
-    };
-
-    // Re-create the root output with the selected kernel for optimal squeeze performance.
-    let output = if self.chunk_state.chunk_counter == 0
-      && self.chunk_state.len() == 0
-      && self.cv_stack_len == 0
-      && self.pending_chunk_cv.is_none()
-    {
-      // Empty input: single chunk output
-      single_chunk_output(kernel, self.key_words, 0, self.flags, &[])
-    } else if self.chunk_state.chunk_counter == 0 && self.pending_chunk_cv.is_none() {
-      // Single chunk input: re-create output with the selected kernel.
-      self.chunk_output_with_kernel(kernel)
-    } else {
-      // Multi-chunk: use root output (tree structure is already built)
-      // But we need to rebuild parent outputs with the selected kernel
-      self.root_output_with_kernel(kernel)
-    };
-
-    Blake3Xof::new_with_kernel(output, kernel, self.dispatch_plan)
-  }
-
-  /// Get root output with a specific kernel (for XOF kernel switching).
-  #[inline]
-  fn root_output_with_kernel(&self, kernel: Kernel) -> OutputState {
-    let mut parent_nodes_remaining = self.cv_stack_len as usize;
-    let mut output = if let Some(right_cv) = self.pending_chunk_cv {
-      debug_assert!(
-        parent_nodes_remaining > 0,
-        "pending full chunk implies multi-chunk input"
-      );
-      parent_nodes_remaining -= 1;
-      // SAFETY: `cv_stack_len` tracks the number of initialized entries.
-      let left = unsafe { *self.cv_stack[parent_nodes_remaining].assume_init_ref() };
-      parent_output(kernel, left, right_cv, self.key_words, self.flags)
-    } else {
-      self.chunk_output_with_kernel(kernel)
-    };
-
-    while parent_nodes_remaining > 0 {
-      parent_nodes_remaining -= 1;
-      // SAFETY: `cv_stack_len` tracks the number of initialized entries.
-      let left = unsafe { *self.cv_stack[parent_nodes_remaining].assume_init_ref() };
-      output = parent_output(kernel, left, output.chaining_value(), self.key_words, self.flags);
-    }
-    output
+    let _ = expected_output_bytes;
+    self.finalize_xof()
   }
 }
 
@@ -3782,79 +3639,8 @@ impl Digest for Blake3 {
       return;
     }
 
-    let first_update = self.chunk_state.chunk_counter == 0 && self.cv_stack_len == 0 && self.pending_chunk_cv.is_none();
-
-    // Ultra-tiny first update fast path: avoid `update_with` dispatch and loop
-    // machinery when we can satisfy the call with a single block copy.
-    if first_update
-      && self.chunk_state.blocks_compressed == 0
-      && self.chunk_state.block_len == 0
-      && input.len() <= BLOCK_LEN
-    {
-      self.chunk_state.block[..input.len()].copy_from_slice(input);
-      self.chunk_state.block_len = input.len() as u8;
-      return;
-    }
-
-    // Streaming has two competing goals:
-    // - Be very fast for large updates (file hashing, storage, etc.).
-    // - Avoid SIMD setup overhead for tiny one-off updates.
-    //
-    // We start in portable mode and only "lock in" streaming dispatch once we
-    // have enough data to amortize kernel setup costs. This applies uniformly
-    // to all modes (plain, keyed, derive) - the defer heuristic improves
-    // small-input latency across the board.
-    if first_update
-      && self.chunk_state.blocks_compressed == 0
-      && self.chunk_state.block_len == 0
-      && input.len() <= CHUNK_LEN
-    {
-      let stream = if self.kernel.id == kernels::Blake3KernelId::Portable
-        && self
-          .dispatch_plan
-          .should_defer_simd(self.chunk_state.len(), input.len())
-      {
-        self.kernel
-      } else {
-        self.dispatch_plan.stream_kernel()
-      };
-      let bulk = self.dispatch_plan.bulk_kernel_for_update(input.len());
-      self.kernel = stream;
-      self.bulk_kernel = bulk;
-      self.chunk_state.kernel = stream;
-      self.chunk_state.update(input);
-      return;
-    }
-
-    // Hot path for chunked streaming workloads: when this call fits in the
-    // current chunk, avoid update-loop + batch-admission overhead.
-    if self.pending_chunk_cv.is_none() && self.chunk_state.len() < CHUNK_LEN {
-      let remaining = CHUNK_LEN - self.chunk_state.len();
-      if input.len() <= remaining {
-        if self.kernel.id == kernels::Blake3KernelId::Portable
-          && (self.chunk_state.chunk_counter != 0
-            || !self
-              .dispatch_plan
-              .should_defer_simd(self.chunk_state.len(), input.len()))
-        {
-          // Once we've already processed at least one full chunk, keep streaming
-          // on the tuned stream kernel instead of repeatedly re-applying the
-          // tiny-input defer heuristic every new chunk.
-          let stream = self.dispatch_plan.stream_kernel();
-          self.kernel = stream;
-          self.chunk_state.kernel = stream;
-        }
-        if input.len().is_multiple_of(BLOCK_LEN) && self.chunk_state.try_update_block_aligned_short(input) {
-          return;
-        }
-        self.chunk_state.update(input);
-        return;
-      }
-    }
-
     let stream = self.dispatch_plan.stream_kernel();
     let bulk = self.dispatch_plan.bulk_kernel_for_update(input.len());
-
     self.update_with(input, stream, bulk);
   }
 
@@ -3913,51 +3699,32 @@ impl Digest for Blake3 {
 pub struct Blake3Xof {
   output: OutputState,
   block_counter: u64,
-  buf: [u8; OUTPUT_BLOCK_LEN],
-  buf_pos: usize,
-  root_hash_cache: [u8; OUT_LEN],
-  root_hash_pos: u8,
-  /// Kernel used for XOF squeeze operations. Stored to enable dynamic upgrade
-  /// when large squeezes are requested with a suboptimal kernel.
-  kernel: Kernel,
-  dispatch_plan: dispatch::HasherDispatch,
+  position_within_block: u8,
 }
 
 impl Blake3Xof {
   #[inline]
-  fn new(output: OutputState, dispatch_plan: dispatch::HasherDispatch) -> Self {
-    let kernel = output.kernel;
+  fn new(output: OutputState) -> Self {
     Self {
       output,
       block_counter: 0,
-      buf: [0u8; OUTPUT_BLOCK_LEN],
-      buf_pos: OUTPUT_BLOCK_LEN,
-      root_hash_cache: [0u8; OUT_LEN],
-      root_hash_pos: 0,
-      kernel,
-      dispatch_plan,
+      position_within_block: 0,
     }
   }
 
   #[inline]
-  fn new_with_kernel(output: OutputState, kernel: Kernel, dispatch_plan: dispatch::HasherDispatch) -> Self {
-    Self {
-      output,
-      block_counter: 0,
-      buf: [0u8; OUTPUT_BLOCK_LEN],
-      buf_pos: OUTPUT_BLOCK_LEN,
-      root_hash_cache: [0u8; OUT_LEN],
-      root_hash_pos: 0,
-      kernel,
-      dispatch_plan,
+  fn fill_one_block(&mut self, out: &mut &mut [u8]) {
+    let mut block = [0u8; OUTPUT_BLOCK_LEN];
+    self.output.root_output_blocks_into(self.block_counter, &mut block);
+    let output_bytes = &block[self.position_within_block as usize..];
+    let take = min(out.len(), output_bytes.len());
+    out[..take].copy_from_slice(&output_bytes[..take]);
+    self.position_within_block += take as u8;
+    if self.position_within_block == OUTPUT_BLOCK_LEN as u8 {
+      self.block_counter = self.block_counter.wrapping_add(1);
+      self.position_within_block = 0;
     }
-  }
-
-  #[inline]
-  fn refill(&mut self) {
-    self.output.root_output_blocks_into(self.block_counter, &mut self.buf);
-    self.block_counter = self.block_counter.wrapping_add(1);
-    self.buf_pos = 0;
+    *out = &mut core::mem::take(out)[take..];
   }
 }
 
@@ -3967,68 +3734,11 @@ impl Xof for Blake3Xof {
       return;
     }
 
-    // Continue a lazily-served short-root-hash sequence, if active.
-    if self.root_hash_pos != 0 {
-      let pos = self.root_hash_pos as usize;
-      if pos < OUT_LEN {
-        let take = min(OUT_LEN - pos, out.len());
-        out[..take].copy_from_slice(&self.root_hash_cache[pos..pos + take]);
-        self.root_hash_pos = (pos + take) as u8;
-        out = &mut out[take..];
-        if out.is_empty() {
-          return;
-        }
-      }
-
-      if self.root_hash_pos as usize == OUT_LEN {
-        self.refill();
-        // We already served the first 32 bytes from `root_hash_cache`.
-        self.buf_pos = OUT_LEN;
-        self.root_hash_pos = 0;
-      }
+    if self.position_within_block != 0 {
+      self.fill_one_block(&mut out);
     }
 
-    // Fast path: the first 32 output bytes are the root hash. Avoid generating
-    // the full first 64-byte output block unless/when the caller requests bytes
-    // beyond this prefix.
-    if self.block_counter == 0 && self.buf_pos == self.buf.len() && out.len() <= OUT_LEN {
-      let rh = self.output.root_hash_bytes();
-      out.copy_from_slice(&rh[..out.len()]);
-      self.root_hash_cache = rh;
-      self.root_hash_pos = out.len() as u8;
-      return;
-    }
-
-    // World-class: XOF output generation is dominated by the squeeze phase, not the
-    // input hashing phase. Tiny inputs can select a "streaming" kernel (e.g. SSE4.1)
-    // that is great for per-block updates but suboptimal for generating many output
-    // blocks. For large squeezes, upgrade to the best available bulk kernel.
-    //
-    // This is the runtime safety net: even if the caller didn't use
-    // `finalize_xof_sized()`, we can still avoid being pinned to a small-input
-    // kernel for a large output request.
-    const LARGE_SQUEEZE_THRESHOLD: usize = 512;
-    if out.len() >= LARGE_SQUEEZE_THRESHOLD {
-      let desired = self.dispatch_plan.bulk_kernel_for_update(out.len());
-      if desired.id != self.kernel.id {
-        self.kernel = desired;
-        self.output.kernel = desired;
-      }
-    }
-
-    // Drain any buffered bytes first.
-    if self.buf_pos != self.buf.len() {
-      let take = min(self.buf.len() - self.buf_pos, out.len());
-      out[..take].copy_from_slice(&self.buf[self.buf_pos..self.buf_pos + take]);
-      self.buf_pos += take;
-      out = &mut out[take..];
-      if out.is_empty() {
-        return;
-      }
-    }
-
-    // Generate any remaining full output blocks directly into the caller
-    // buffer (lets the kernel choose its best batch size).
+    // Generate full blocks directly into caller output.
     let full = out.len() / OUTPUT_BLOCK_LEN * OUTPUT_BLOCK_LEN;
     if full != 0 {
       let blocks = (full / OUTPUT_BLOCK_LEN) as u64;
@@ -4039,12 +3749,8 @@ impl Xof for Blake3Xof {
       out = &mut out[full..];
     }
 
-    // Tail: refill once and copy the remaining bytes.
     if !out.is_empty() {
-      self.refill();
-      let take = out.len();
-      out.copy_from_slice(&self.buf[..take]);
-      self.buf_pos = take;
+      self.fill_one_block(&mut out);
     }
   }
 }
