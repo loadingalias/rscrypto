@@ -1156,3 +1156,52 @@ Optional tools only with a specific question they uniquely answer:
 - Decision:
   - Reject and revert.
   - Key inference: fully removing `pending_chunk_cv` is not viable; it improves the small streaming cluster but catastrophically regresses large-chunk streaming throughput and worsens XOF short-output competitiveness.
+
+### 2026-03-04 - Candidate AW (`4097712`)
+- Hypothesis:
+  - XOF short first reads were paying unnecessary fixed cost by materializing a full 64-byte output block even when the caller requests at most 32 bytes.
+  - A narrow `squeeze()` fast path for the first `<=32` bytes should improve `xof init+read/*-in/32B-out` without perturbing large streaming throughput.
+- Change:
+  - In `Blake3Xof::squeeze`:
+    - added a first-read fast path when `block_counter == 0`, `position_within_block == 0`, and `out.len() <= OUT_LEN`,
+    - returns bytes directly from `output.root_hash_bytes()` and advances `position_within_block`,
+    - bypasses first-block materialization for this narrow case.
+  - No dispatch-table changes and no update/streaming pipeline changes.
+- Validation:
+  - Local: `cargo fmt --all` passed.
+  - Local: `cargo test -p hashes blake3 --lib` passed (`20/20`).
+  - CI targeted bench run: `22654769160` (`crates=hashes`, `benches=blake3`,
+    `filter=blake3/xof/,blake3/streaming/`, `quick=false`,
+    lanes: `amd-zen5`, `intel-icl`, `intel-spr`).
+  - Scope/commit check:
+    - workflow completed `success`,
+    - executed commit `409771272c712c8799fd4dea64475f0474e58052` (expected SHA; valid run).
+  - CI outcomes (time-based gap vs official; positive = slower):
+    - Aggregate (`xof` + `streaming`, 3 lanes): `0W / 48L`, avg gap `+19.79%`.
+    - `streaming/*`: `0W / 24L`, avg gap `+13.46%`.
+    - `xof/*`: `0W / 24L`, avg gap `+26.11%`.
+    - Lane aggregates:
+      - `intel-icl`: `0W/16L`, avg `+20.05%` (`streaming +13.78%`, `xof +26.31%`).
+      - `intel-spr`: `0W/16L`, avg `+21.82%` (`streaming +13.53%`, `xof +30.11%`).
+      - `amd-zen5`: `0W/16L`, avg `+17.49%` (`streaming +13.07%`, `xof +21.92%`).
+  - Target-cluster check:
+    - `xof init+read/*-in/32B-out`: `0W / 12L`, avg gap `+30.51%`.
+    - `streaming 64..1024B chunks`: `0W / 15L`, avg gap `+12.37%`.
+  - Directional delta vs prior candidate (`22652495044`, Candidate AV):
+    - aggregate: `+48.17%` -> `+19.79%` (`-28.38 pp`, better),
+    - streaming: `+60.81%` -> `+13.46%` (`-47.35 pp`, better),
+    - xof: `+35.54%` -> `+26.11%` (`-9.43 pp`, better).
+  - Directional delta vs prior stable structural candidate (`22650809810`, Candidate AU):
+    - aggregate: `+21.32%` -> `+19.79%` (`-1.53 pp`, better),
+    - streaming: `+16.07%` -> `+13.46%` (`-2.61 pp`, better),
+    - xof: `+26.56%` -> `+26.11%` (`-0.45 pp`, better),
+    - `xof 32B-out` cluster: `+29.88%` -> `+30.51%` (`+0.63 pp`, worse),
+    - `streaming 64..1024B` cluster: `+16.58%` -> `+12.37%` (`-4.21 pp`, better).
+  - Notable regressions:
+    - `intel-spr xof init+read/1B-in/32B-out`: `+65.50%`.
+    - `intel-spr xof init+read/64B-in/32B-out`: `+53.01%`.
+    - `intel-icl xof init+read/1B-in/32B-out`: `+49.60%`.
+    - `intel-icl xof init+read/64B-in/32B-out`: `+41.55%`.
+- Decision:
+  - Reject and revert.
+  - This pass materially improves aggregate/streaming vs recent candidates, but remains all-loss and does not solve the primary xof short-output deficit on Intel lanes.
