@@ -2679,23 +2679,6 @@ fn root_output_oneshot(
 
 #[cfg(feature = "std")]
 #[inline]
-fn hash_one_full_chunk_cv(
-  kernel: Kernel,
-  key_words: [u32; 8],
-  flags: u32,
-  chunk_counter: u64,
-  chunk: &[u8],
-) -> [u32; 8] {
-  debug_assert_eq!(chunk.len(), CHUNK_LEN);
-
-  let mut out = [0u8; OUT_LEN];
-  // SAFETY: `chunk` is exactly one full chunk, and `out` is OUT_LEN bytes.
-  unsafe { (kernel.hash_many_contiguous)(chunk.as_ptr(), 1, &key_words, chunk_counter, flags, out.as_mut_ptr()) };
-  words8_from_le_bytes_32(&out)
-}
-
-#[cfg(feature = "std")]
-#[inline]
 fn hash_full_chunks_cvs_scoped(
   kernel: Kernel,
   key_words: [u32; 8],
@@ -2801,7 +2784,6 @@ pub struct Blake3 {
   kernel: Kernel,
   bulk_kernel: Kernel,
   chunk_state: ChunkState,
-  pending_chunk_cv: Option<[u32; 8]>,
   key_words: [u32; 8],
   cv_stack: [MaybeUninit<[u32; 8]>; CV_STACK_LEN],
   cv_stack_len: u8,
@@ -3174,7 +3156,6 @@ impl Blake3 {
       kernel,
       bulk_kernel: kernel,
       chunk_state: ChunkState::new(key_words, 0, flags, kernel),
-      pending_chunk_cv: None,
       key_words,
       cv_stack: uninit_cv_stack(),
       cv_stack_len: 0,
@@ -3217,15 +3198,7 @@ impl Blake3 {
   #[cfg(feature = "std")]
   #[cold]
   #[inline(never)]
-  fn commit_parallel_batch(
-    &mut self,
-    batch_input: &[u8],
-    base_counter: u64,
-    batch: usize,
-    commit: usize,
-    threads: usize,
-    keep_last_full_chunk: bool,
-  ) {
+  fn commit_parallel_batch(&mut self, batch_input: &[u8], base_counter: u64, commit: usize, threads: usize) {
     #[inline]
     fn push_stack(stack: &mut [MaybeUninit<[u32; 8]>; CV_STACK_LEN], len: &mut usize, cv: [u32; 8]) {
       stack[*len].write(cv);
@@ -3342,18 +3315,8 @@ impl Blake3 {
 
     self.cv_stack_len = stack_len as u8;
 
-    let new_counter = base_counter + batch as u64;
+    let new_counter = base_counter + commit as u64;
     self.chunk_state = ChunkState::new(self.key_words, new_counter, self.flags, self.kernel);
-    if keep_last_full_chunk {
-      let last = &batch_input[(batch - 1) * CHUNK_LEN..batch * CHUNK_LEN];
-      self.pending_chunk_cv = Some(hash_one_full_chunk_cv(
-        self.bulk_kernel,
-        self.key_words,
-        self.flags,
-        new_counter - 1,
-        last,
-      ));
-    }
   }
 
   #[cfg(feature = "std")]
@@ -3384,14 +3347,14 @@ impl Blake3 {
       return None;
     }
 
-    let bytes = batch * CHUNK_LEN;
+    let bytes = commit * CHUNK_LEN;
     let threads = self.streaming_parallel_threads(bytes, batch, commit)?;
     if threads <= 1 {
       return None;
     }
 
     let batch_input = &input[..bytes];
-    self.commit_parallel_batch(batch_input, base_counter, batch, commit, threads, keep_last_full_chunk);
+    self.commit_parallel_batch(batch_input, base_counter, commit, threads);
     Some(bytes)
   }
 
@@ -3411,16 +3374,21 @@ impl Blake3 {
     if batch == 0 {
       return None;
     }
+    let keep_last_full_chunk = input.len().is_multiple_of(CHUNK_LEN) && batch == full_chunks;
+    let commit = if keep_last_full_chunk { batch - 1 } else { batch };
+    if commit == 0 {
+      return None;
+    }
 
     let mut out_buf = [0u8; OUT_LEN * MAX_SIMD_DEGREE];
     let base_counter = self.chunk_state.chunk_counter;
-    // SAFETY: `input` has at least `batch * CHUNK_LEN` bytes, `out_buf`
+    // SAFETY: `input` has at least `commit * CHUNK_LEN` bytes, `out_buf`
     // has at least `batch * OUT_LEN` bytes, and this kernel was selected
     // only when its required CPU features are available.
     unsafe {
       (self.bulk_kernel.hash_many_contiguous)(
         input.as_ptr(),
-        batch,
+        commit,
         &self.key_words,
         base_counter,
         self.flags,
@@ -3428,54 +3396,31 @@ impl Blake3 {
       )
     };
 
-    let keep_last_full_chunk = input.len().is_multiple_of(CHUNK_LEN) && batch == full_chunks;
-    let commit = if keep_last_full_chunk { batch - 1 } else { batch };
-    if commit != 0 {
-      // SAFETY: `out_buf` stores `batch` contiguous CV outputs, and
-      // `commit <= batch <= MAX_SIMD_DEGREE`.
-      let cvs_bytes: &[[u8; OUT_LEN]] =
-        unsafe { slice::from_raw_parts(out_buf.as_ptr().cast::<[u8; OUT_LEN]>(), commit) };
-      let mut stack_len = self.cv_stack_len as usize;
-      add_chunk_cvs_batched_bytes(
-        self.bulk_kernel,
-        &mut self.cv_stack,
-        &mut stack_len,
-        base_counter,
-        cvs_bytes,
-        self.key_words,
-        self.flags,
-      );
-      self.cv_stack_len = stack_len as u8;
-    }
+    // SAFETY: `out_buf` stores `commit` contiguous CV outputs, and
+    // `commit <= MAX_SIMD_DEGREE`.
+    let cvs_bytes: &[[u8; OUT_LEN]] =
+      unsafe { slice::from_raw_parts(out_buf.as_ptr().cast::<[u8; OUT_LEN]>(), commit) };
+    let mut stack_len = self.cv_stack_len as usize;
+    add_chunk_cvs_batched_bytes(
+      self.bulk_kernel,
+      &mut self.cv_stack,
+      &mut stack_len,
+      base_counter,
+      cvs_bytes,
+      self.key_words,
+      self.flags,
+    );
+    self.cv_stack_len = stack_len as u8;
 
-    let new_counter = base_counter + batch as u64;
+    let new_counter = base_counter + commit as u64;
     self.chunk_state = ChunkState::new(self.key_words, new_counter, self.flags, self.kernel);
-    if keep_last_full_chunk {
-      let offset = (batch - 1) * OUT_LEN;
-      // SAFETY: `out_buf` is `OUT_LEN * MAX_SIMD_DEGREE`, and `offset`
-      // is `(batch - 1) * OUT_LEN` with `batch <= MAX_SIMD_DEGREE`.
-      let cv = unsafe { words8_from_le_bytes_32(&*(out_buf.as_ptr().add(offset) as *const [u8; OUT_LEN])) };
-      self.pending_chunk_cv = Some(cv);
-    }
-
-    Some(batch * CHUNK_LEN)
+    Some(commit * CHUNK_LEN)
   }
 
   fn update_with(&mut self, mut input: &[u8], stream_kernel: Kernel, bulk_kernel: Kernel) {
     self.kernel = stream_kernel;
     self.bulk_kernel = bulk_kernel;
     self.chunk_state.kernel = stream_kernel;
-
-    // If the previous update ended exactly on a chunk boundary, we may have
-    // stored the last full chunk's CV instead of keeping a fully-buffered
-    // `ChunkState`. As soon as more input arrives, that chunk is no longer
-    // terminal and can be committed to the tree.
-    if !input.is_empty()
-      && let Some(cv) = self.pending_chunk_cv.take()
-    {
-      let total_chunks = self.chunk_state.chunk_counter;
-      self.add_chunk_chaining_value(cv, total_chunks);
-    }
 
     // When we're at a chunk boundary and we have more than one whole chunk
     // available, use the kernel's multi-chunk primitive to hash whole chunks
@@ -3561,18 +3506,21 @@ impl Blake3 {
   }
 
   fn root_output(&self) -> OutputState {
+    if self.cv_stack_len == 0 {
+      return self.chunk_state.output();
+    }
+
     let mut parent_nodes_remaining = self.cv_stack_len as usize;
-    let mut output = if let Some(right_cv) = self.pending_chunk_cv {
-      debug_assert!(
-        parent_nodes_remaining > 0,
-        "pending full chunk implies multi-chunk input"
-      );
-      parent_nodes_remaining -= 1;
-      // SAFETY: `cv_stack_len` tracks the number of initialized entries.
-      let left = unsafe { *self.cv_stack[parent_nodes_remaining].assume_init_ref() };
-      parent_output(self.kernel, left, right_cv, self.key_words, self.flags)
-    } else {
+    let mut output = if self.chunk_state.len() != 0 {
       self.chunk_state.output()
+    } else {
+      debug_assert!(parent_nodes_remaining >= 2, "empty chunk state requires >=2 stack CVs");
+      // SAFETY: `cv_stack_len` tracks the number of initialized entries.
+      let right = unsafe { *self.cv_stack[parent_nodes_remaining - 1].assume_init_ref() };
+      // SAFETY: `cv_stack_len` tracks the number of initialized entries.
+      let left = unsafe { *self.cv_stack[parent_nodes_remaining - 2].assume_init_ref() };
+      parent_nodes_remaining -= 2;
+      parent_output(self.kernel, left, right, self.key_words, self.flags)
     };
 
     while parent_nodes_remaining > 0 {
@@ -3649,7 +3597,7 @@ impl Digest for Blake3 {
     // Single-chunk fast path: compute root bytes directly from the current
     // chunk tail. This avoids OutputState construction and bytes<->words
     // conversion on short streaming finalization.
-    if self.chunk_state.chunk_counter == 0 && self.cv_stack_len == 0 && self.pending_chunk_cv.is_none() {
+    if self.chunk_state.chunk_counter == 0 && self.cv_stack_len == 0 {
       let block_len = self.chunk_state.block_len as usize;
 
       let add_chunk_start = self.chunk_state.blocks_compressed == 0;
@@ -3677,11 +3625,7 @@ impl Digest for Blake3 {
     // If the caller never provided any input (or only provided empty updates),
     // we still want to use the tuned streaming kernel rather than staying
     // pinned to the portable default.
-    let output = if self.chunk_state.chunk_counter == 0
-      && self.chunk_state.len() == 0
-      && self.cv_stack_len == 0
-      && self.pending_chunk_cv.is_none()
-    {
+    let output = if self.chunk_state.chunk_counter == 0 && self.chunk_state.len() == 0 && self.cv_stack_len == 0 {
       single_chunk_output(self.dispatch_plan.stream_kernel(), self.key_words, 0, self.flags, &[])
     } else {
       self.root_output()
