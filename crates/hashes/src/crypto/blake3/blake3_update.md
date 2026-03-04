@@ -1111,3 +1111,48 @@ Optional tools only with a specific question they uniquely answer:
 - Decision:
   - Reject and revert.
   - This pass reduced streaming gap materially but still produced an all-loss run and did not crack xof short-output overhead vs official.
+
+### 2026-03-04 - Candidate AV (`abc1a2f`)
+- Hypothesis:
+  - Removing deferred last-full-chunk CV state (`pending_chunk_cv`) and simplifying terminal merge flow would reduce control-path overhead on streaming/XOF hot paths.
+- Change:
+  - Removed `pending_chunk_cv` and related helper/state handling in `mod.rs`.
+  - Updated SIMD/parallel batch commit paths to consume only `commit` chunks and leave one full terminal chunk in `ChunkState` on exact-boundary inputs.
+  - Simplified root merge path to official-style stack fold without `pending_chunk_cv` branch.
+  - Kept minimal XOF reader shape (`output`, `block_counter`, `position_within_block`) and compatibility `finalize_xof_sized` alias.
+- Validation:
+  - Local: `cargo fmt --all` passed.
+  - Local: `just check` passed.
+  - Local: `cargo test -p hashes blake3 --lib` passed (`20/20`).
+  - CI targeted bench run: `22652495044` (`crates=hashes`, `benches=blake3`,
+    `filter=blake3/xof/,blake3/streaming/`, `quick=false`,
+    lanes: `amd-zen5`, `intel-icl`, `intel-spr`).
+  - Scope/commit check:
+    - workflow completed `success`,
+    - executed commit `abc1a2f07c21b249e469e1002c8f4c9e75f98891` (expected SHA; valid run).
+  - CI outcomes (time-based gap vs official; positive = slower):
+    - Aggregate (`xof` + `streaming`, 3 lanes): `0W / 48L`, avg gap `+48.17%`.
+    - `streaming/*`: `0W / 24L`, avg gap `+60.81%`.
+    - `xof/*`: `0W / 24L`, avg gap `+35.54%`.
+    - Lane aggregates:
+      - `intel-icl`: `0W/16L`, avg `+41.32%` (`streaming +50.49%`, `xof +32.15%`).
+      - `intel-spr`: `0W/16L`, avg `+41.99%` (`streaming +52.31%`, `xof +31.68%`).
+      - `amd-zen5`: `0W/16L`, avg `+61.20%` (`streaming +79.63%`, `xof +42.77%`).
+  - Target-cluster check:
+    - `xof init+read/*-in/32B-out`: `0W / 12L`, avg gap `+37.91%`.
+    - `streaming 64..1024B chunks`: `0W / 15L`, avg gap `+12.87%`.
+  - Directional delta vs prior candidate (`22650809810`, Candidate AU):
+    - aggregate: `+21.32%` -> `+48.17%` (`+26.85 pp`, worse),
+    - streaming: `+16.07%` -> `+60.81%` (`+44.74 pp`, much worse),
+    - xof: `+26.56%` -> `+35.54%` (`+8.98 pp`, worse),
+    - `xof 32B-out` cluster: `+29.88%` -> `+37.91%` (`+8.03 pp`, worse),
+    - `streaming 64..1024B` cluster: `+16.58%` -> `+12.87%` (`-3.71 pp`, better).
+  - Notable regressions:
+    - `amd-zen5 streaming/16384B-chunks`: `+302.95%`.
+    - `amd-zen5 streaming/4096B-chunks`: `+184.57%`.
+    - `intel-spr streaming/4096B-chunks`: `+178.47%`.
+    - `intel-icl streaming/4096B-chunks`: `+164.97%`.
+    - `intel-icl streaming/16384B-chunks`: `+128.23%`.
+- Decision:
+  - Reject and revert.
+  - Key inference: fully removing `pending_chunk_cv` is not viable; it improves the small streaming cluster but catastrophically regresses large-chunk streaming throughput and worsens XOF short-output competitiveness.
