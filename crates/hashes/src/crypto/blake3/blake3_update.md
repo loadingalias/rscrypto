@@ -1057,3 +1057,57 @@ Optional tools only with a specific question they uniquely answer:
 - Decision:
   - Reject and revert.
   - The tiny first-update kernel lock-in did not close the target surfaces and produced an all-loss run.
+
+### 2026-03-03 - Candidate AU (`6d508e6`)
+- Hypothesis:
+  - The remaining deficit is control-path architecture, not kernel throughput.
+  - Matching upstream runtime shape for streaming/XOF hot paths (no portable-first defer gate, minimal XOF reader state) should reduce fixed overhead.
+- Change:
+  - Runtime-path simplification in `mod.rs`:
+    - removed `Digest::update()` portable-first defer/tiny special branches; always dispatch through resolved `(stream, bulk)` pair.
+    - removed `ChunkState::try_update_block_aligned_short`.
+    - simplified XOF to upstream-style state (`output`, `block_counter`, `position_within_block`) and removed cache/upgrade state machine.
+    - simplified `finalize_xof()` to direct `root_output()` and made `finalize_xof_sized()` a compatibility alias.
+    - default `Blake3::new_internal()` now starts on `dispatch_plan.stream_kernel()` instead of forced portable.
+  - Dispatch policy alignment:
+    - `dispatch_tables.rs`: x86 default stream kernel `SSE4.1 -> AVX2`.
+    - x86 lane profiles (`Zen4`, `Zen5`, `IntelIcl`, `IntelSpr`) stream kernel `SSE4.1 -> AVX512` (bulk unchanged).
+  - Dispatch plumbing cleanup:
+    - `dispatch::xof()` now constructs `Blake3Xof::new(output)` directly.
+    - removed stale lazy-defer reporting path in `streaming_dispatch_info`.
+- Validation:
+  - Local: `just check` passed.
+  - Local: `cargo test -p hashes blake3 --lib` passed (`20/20`).
+  - CI targeted bench run: `22650809810` (`crates=hashes`, `benches=blake3`,
+    `filter=blake3/xof/,blake3/streaming/`, `quick=false`,
+    lanes: `amd-zen5`, `intel-icl`, `intel-spr`).
+  - Scope/commit check:
+    - workflow completed `success`,
+    - executed commit `6d508e6a030582bb441bc1e7dbef78f8f660ae57` (expected SHA; valid run).
+  - CI outcomes (time-based gap vs official; positive = slower):
+    - Aggregate (`xof` + `streaming`, 3 lanes): `0W / 48L`, avg gap `+21.32%`.
+    - `streaming/*`: `0W / 24L`, avg gap `+16.07%`.
+    - `xof/*`: `0W / 24L`, avg gap `+26.56%`.
+    - Lane aggregates:
+      - `intel-icl`: `0W/16L`, avg `+23.88%` (`streaming +20.39%`, `xof +27.38%`).
+      - `intel-spr`: `0W/16L`, avg `+22.66%` (`streaming +14.28%`, `xof +31.04%`).
+      - `amd-zen5`: `0W/16L`, avg `+17.41%` (`streaming +13.55%`, `xof +21.27%`).
+  - Target-cluster check:
+    - `xof init+read/*-in/32B-out`: `0W / 12L`, avg gap `+29.88%`.
+    - `streaming 64..1024B chunks`: `0W / 15L`, avg gap `+16.58%`.
+  - Directional delta vs prior candidate (`22645562535`, Candidate AT):
+    - aggregate: `+23.75%` -> `+21.32%` (`-2.43 pp`, better),
+    - streaming: `+21.22%` -> `+16.07%` (`-5.15 pp`, better),
+    - xof: `+26.29%` -> `+26.56%` (`+0.27 pp`, worse).
+  - Directional delta vs strong prior targeted baseline (`22560608081`, same 3 lanes/scope):
+    - aggregate: `+16.30%` -> `+21.32%` (`+5.02 pp`, worse),
+    - streaming: `+13.44%` -> `+16.07%` (`+2.63 pp`, worse),
+    - xof: `+19.15%` -> `+26.56%` (`+7.41 pp`, worse).
+  - Notable regressions:
+    - `intel-spr xof init+read/1B-in/32B-out`: `+62.21%`.
+    - `intel-spr xof init+read/64B-in/32B-out`: `+55.76%`.
+    - `intel-icl xof init+read/1B-in/32B-out`: `+45.68%`.
+    - `intel-icl xof init+read/64B-in/32B-out`: `+39.86%`.
+- Decision:
+  - Reject and revert.
+  - This pass reduced streaming gap materially but still produced an all-loss run and did not crack xof short-output overhead vs official.
