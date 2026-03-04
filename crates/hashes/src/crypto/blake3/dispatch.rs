@@ -96,7 +96,6 @@ pub(crate) struct HasherDispatch {
   stream_kernel: Kernel,
   table_bulk_kernel: Kernel,
   parallel_streaming: ParallelTable,
-  simd_threshold: usize,
   bulk_sizeclass_threshold: usize,
 }
 
@@ -121,12 +120,6 @@ impl HasherDispatch {
   #[must_use]
   pub(crate) fn size_class_kernel(&self, len: usize) -> Kernel {
     self.size_classes.select(len)
-  }
-
-  #[inline]
-  #[must_use]
-  pub(crate) fn should_defer_simd(&self, buffered_len: usize, incoming_len: usize) -> bool {
-    buffered_len.saturating_add(incoming_len) < self.simd_threshold
   }
 
   #[inline]
@@ -308,7 +301,6 @@ fn resolved() -> ResolvedDispatch {
       stream_kernel: streaming.stream,
       table_bulk_kernel: streaming.bulk,
       parallel_streaming: parallel.streaming,
-      simd_threshold: tune.simd_threshold,
       bulk_sizeclass_threshold: stream_table.bulk_sizeclass_threshold,
     };
 
@@ -379,7 +371,7 @@ pub fn xof(data: &[u8]) -> super::Blake3Xof {
   let d = active();
   let kernel = select(&d, data.len()).kernel;
   let output = super::root_output_oneshot(kernel, super::IV, 0, super::policy_kind_from_flags(0, true), data);
-  super::Blake3Xof::new(output, hasher_dispatch())
+  super::Blake3Xof::new(output)
 }
 
 #[inline]
@@ -474,21 +466,14 @@ pub fn streaming_dispatch_info(flags: u32, input_len: usize) -> StreamingDispatc
     _ => pd.streaming,
   };
 
-  // Mirror the lazy-SIMD gate in `update()`: plain hashes stay portable for
-  // tiny inputs below the platform's simd_threshold.
-  let is_plain = flags == 0;
   let hd = hasher_dispatch();
-  let (stream_kernel, bulk_kernel) = if is_plain && input_len < streaming_simd_threshold() {
-    ("portable", "portable")
+  let sd = active_streaming();
+  let bulk_kernel = if input_len >= hd.bulk_sizeclass_threshold() {
+    kernel_dispatch().select(input_len).name
   } else {
-    let sd = active_streaming();
-    let bulk = if input_len >= hd.bulk_sizeclass_threshold() {
-      kernel_dispatch().select(input_len).name
-    } else {
-      sd.bulk.name
-    };
-    (sd.stream.name, bulk)
+    sd.bulk.name
   };
+  let stream_kernel = sd.stream.name;
 
   // Mirror `parallel_policy_threads` + the per-thread work guard
   // from `update_with`.
