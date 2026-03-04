@@ -3738,6 +3738,15 @@ impl Xof for Blake3Xof {
       self.fill_one_block(&mut out);
     }
 
+    // Fast path for short first reads: the first 32 XOF bytes are the root
+    // hash, so avoid materializing a full 64-byte output block.
+    if self.block_counter == 0 && self.position_within_block == 0 && out.len() <= OUT_LEN {
+      let root = self.output.root_hash_bytes();
+      out.copy_from_slice(&root[..out.len()]);
+      self.position_within_block = out.len() as u8;
+      return;
+    }
+
     // Generate full blocks directly into caller output.
     let full = out.len() / OUTPUT_BLOCK_LEN * OUTPUT_BLOCK_LEN;
     if full != 0 {
