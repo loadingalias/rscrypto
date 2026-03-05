@@ -1250,3 +1250,54 @@ Optional tools only with a specific question they uniquely answer:
 - Decision:
   - Reject and revert.
   - Intel stream-kernel downtier (`AVX512 -> AVX2`) is decisively the wrong direction for this benchmark surface.
+
+### 2026-03-05 - Candidate AY (`f4fc8e9`)
+- Hypothesis:
+  - Constructor-time dispatch lookup/ref handling was still adding fixed cost to hot `xof`/`streaming` paths.
+  - Caching a shared hasher dispatch-plan reference in `Blake3` construction paths could reduce `new -> update -> finalize/fill` fixed overhead.
+- Change:
+  - `Blake3` stored a shared `&'static dispatch::HasherDispatch` and reused it in constructor paths.
+  - Added static dispatch-plan helper in `dispatch.rs` and wired call sites in `mod.rs`.
+- Validation:
+  - CI targeted bench run: `22734116057` (`crates=hashes`, `benches=blake3`,
+    `filter=blake3/xof-phase/,blake3/xof/,blake3/streaming/`, `quick=false`,
+    lanes: `amd-zen5`, `intel-icl`, `intel-spr`).
+  - Scope/commit check:
+    - executed commit `f4fc8e96cd2f78f7c8a52e3416b64f3d0e1bc4ab` (expected SHA; valid run).
+  - Infra status:
+    - `intel-icl` runner was stuck in setup (GitHub Actions infra; no usable artifact).
+    - `amd-zen5` and `intel-spr` completed successfully.
+- CI outcomes on completed lanes (time-based gap vs official; positive = slower):
+  - Target surfaces (`xof` + `streaming`):
+    - `amd-zen5`: `0W / 16L`, avg gap `+16.09%`.
+    - `intel-spr`: `0W / 16L`, avg gap `+18.97%`.
+    - combined completed lanes: `0W / 32L`, avg gap `+17.53%`.
+  - Target clusters:
+    - `xof init+read/*-in/32B-out`:
+      - `amd-zen5`: avg `+17.59%`,
+      - `intel-spr`: avg `+25.98%`.
+    - `streaming 64..1024B chunks`:
+      - `amd-zen5`: avg `+9.55%`,
+      - `intel-spr`: avg `+15.55%`.
+  - `xof-phase` attribution signals:
+    - `finalize-xof-only - drop-after-update-only` remained dramatically slower than official (large fixed finalize/XOF object cost signal).
+    - `squeeze-32-only` remained materially slower, while `squeeze-1024-only` was near parity/slightly better on SPR (short-read control-path overhead signal).
+- Decision:
+  - Reject and revert.
+  - Reverted by `3b5f51d`.
+  - Constructor dispatch-reference optimization does not solve the streaming/xof deficit.
+
+## Anti-Repeat Guardrails (2026-03-05)
+
+- Do not repeat candidate AV-style full `pending_chunk_cv` removal as-is (`abc1a2f`): it catastrophically regressed large-chunk streaming.
+- Do not repeat candidate AX-style Intel stream-kernel downtier (`6ba2b95`): it decisively worsened Intel xof/streaming.
+- Do not run constructor-only tuning again as a standalone strategy (`f4fc8e9`): no wins on target surfaces.
+- Do not retry first-read root-hash shortcut alone (`4097712`): it improved aggregate trend but did not solve short-output xof losses.
+
+## Active Next 1/2/3 Plan (Post-AY)
+
+1. Stop kernel micro-tuning for this pass.
+2. Align runtime model to official where current evidence points to fixed-cost overhead:
+   - reduce exact-boundary finalize tree-walk overhead,
+   - reduce short XOF first-block/small-read control overhead.
+3. Re-run the same targeted CI scope immediately after this structural simplification.

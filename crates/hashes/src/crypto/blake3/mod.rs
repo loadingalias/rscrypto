@@ -1117,6 +1117,25 @@ fn pow2_floor(n: usize) -> usize {
 }
 
 #[inline]
+fn choose_pending_subtree_chunks(total_chunks: u64, base_counter: u64, batch_chunks: usize) -> usize {
+  debug_assert!(batch_chunks > 0);
+  debug_assert!(total_chunks >= base_counter + batch_chunks as u64);
+
+  // Keep the largest aligned right-edge subtree we can from this batch.
+  let lowbit = (total_chunks & total_chunks.wrapping_neg()) as usize;
+  let mut keep = core::cmp::min(batch_chunks, lowbit).max(1);
+
+  // For single-batch exact-boundary inputs (base_counter == 0), we must still
+  // commit at least one subtree to the stack; a pending-only tree cannot be
+  // finalized into an OutputState from CV bytes alone.
+  if keep == batch_chunks && base_counter == 0 {
+    keep >>= 1;
+  }
+
+  keep.max(1)
+}
+
+#[inline]
 fn reduce_power_of_two_chunk_cvs(kernel: Kernel, key_words: [u32; 8], flags: u32, cvs: &[[u32; 8]]) -> [u32; 8] {
   debug_assert!(cvs.len().is_power_of_two());
   debug_assert!(cvs.len() <= 16);
@@ -1787,6 +1806,74 @@ impl OutputState {
   #[inline]
   fn root_hash_bytes(&self) -> [u8; OUT_LEN] {
     words8_to_le_bytes(&self.root_hash_words())
+  }
+
+  #[inline]
+  fn root_output_block(&self, output_block_counter: u64) -> [u8; OUTPUT_BLOCK_LEN] {
+    let flags = self.flags | ROOT;
+    let mut out = [0u8; OUTPUT_BLOCK_LEN];
+
+    #[cfg(target_arch = "x86_64")]
+    {
+      match self.kernel.id {
+        kernels::Blake3KernelId::X86Avx512 => {
+          // SAFETY: required CPU features are validated by dispatch before
+          // selecting this kernel.
+          unsafe {
+            x86_64::avx512::root_output_blocks1(
+              &self.input_chaining_value,
+              &self.block_words,
+              output_block_counter,
+              self.block_len,
+              flags,
+              out.as_mut_ptr(),
+            );
+          }
+          return out;
+        }
+        kernels::Blake3KernelId::X86Avx2 => {
+          // SAFETY: required CPU features are validated by dispatch before
+          // selecting this kernel.
+          unsafe {
+            x86_64::avx2::root_output_blocks1(
+              &self.input_chaining_value,
+              &self.block_words,
+              output_block_counter,
+              self.block_len,
+              flags,
+              out.as_mut_ptr(),
+            );
+          }
+          return out;
+        }
+        kernels::Blake3KernelId::X86Sse41 => {
+          // SAFETY: required CPU features are validated by dispatch before
+          // selecting this kernel.
+          unsafe {
+            x86_64::sse41::root_output_blocks1(
+              &self.input_chaining_value,
+              &self.block_words,
+              output_block_counter,
+              self.block_len,
+              flags,
+              out.as_mut_ptr(),
+            );
+          }
+          return out;
+        }
+        _ => {}
+      }
+    }
+
+    let words = (self.kernel.compress)(
+      &self.input_chaining_value,
+      &self.block_words,
+      output_block_counter,
+      self.block_len,
+      flags,
+    );
+    out.copy_from_slice(&words16_to_le_bytes(&words));
+    out
   }
 
   #[inline]
@@ -2802,6 +2889,7 @@ pub struct Blake3 {
   bulk_kernel: Kernel,
   chunk_state: ChunkState,
   pending_chunk_cv: Option<[u32; 8]>,
+  pending_subtree_chunks: u32,
   key_words: [u32; 8],
   cv_stack: [MaybeUninit<[u32; 8]>; CV_STACK_LEN],
   cv_stack_len: u8,
@@ -3175,6 +3263,7 @@ impl Blake3 {
       bulk_kernel: kernel,
       chunk_state: ChunkState::new(key_words, 0, flags, kernel),
       pending_chunk_cv: None,
+      pending_subtree_chunks: 0,
       key_words,
       cv_stack: uninit_cv_stack(),
       cv_stack_len: 0,
@@ -3223,8 +3312,8 @@ impl Blake3 {
     base_counter: u64,
     batch: usize,
     commit: usize,
+    pending_subtree_chunks: usize,
     threads: usize,
-    keep_last_full_chunk: bool,
   ) {
     #[inline]
     fn push_stack(stack: &mut [MaybeUninit<[u32; 8]>; CV_STACK_LEN], len: &mut usize, cv: [u32; 8]) {
@@ -3344,15 +3433,42 @@ impl Blake3 {
 
     let new_counter = base_counter + batch as u64;
     self.chunk_state = ChunkState::new(self.key_words, new_counter, self.flags, self.kernel);
-    if keep_last_full_chunk {
-      let last = &batch_input[(batch - 1) * CHUNK_LEN..batch * CHUNK_LEN];
-      self.pending_chunk_cv = Some(hash_one_full_chunk_cv(
-        self.bulk_kernel,
-        self.key_words,
-        self.flags,
-        new_counter - 1,
-        last,
-      ));
+
+    if pending_subtree_chunks != 0 {
+      debug_assert!(pending_subtree_chunks.is_power_of_two());
+      debug_assert!(pending_subtree_chunks <= batch);
+
+      let tail_offset = (batch - pending_subtree_chunks) * CHUNK_LEN;
+      let pending_counter = new_counter - pending_subtree_chunks as u64;
+      let tail = &batch_input[tail_offset..batch * CHUNK_LEN];
+
+      let cv = if pending_subtree_chunks == 1 {
+        hash_one_full_chunk_cv(self.bulk_kernel, self.key_words, self.flags, pending_counter, tail)
+      } else {
+        self.parallel_leaf_cvs_scratch.resize(pending_subtree_chunks, [0u32; 8]);
+        hash_full_chunks_cvs_scoped(
+          self.bulk_kernel,
+          self.key_words,
+          self.flags,
+          pending_counter,
+          tail,
+          &mut self.parallel_leaf_cvs_scratch[..pending_subtree_chunks],
+          threads,
+        );
+        reduce_power_of_two_chunk_cvs_any(
+          self.bulk_kernel,
+          self.key_words,
+          self.flags,
+          &self.parallel_leaf_cvs_scratch[..pending_subtree_chunks],
+          threads,
+        )
+      };
+
+      self.pending_chunk_cv = Some(cv);
+      self.pending_subtree_chunks = pending_subtree_chunks as u32;
+    } else {
+      self.pending_chunk_cv = None;
+      self.pending_subtree_chunks = 0;
     }
   }
 
@@ -3378,11 +3494,12 @@ impl Blake3 {
     let batch = core::cmp::min(full_chunks, MAX_PASS_CHUNKS);
     let base_counter = self.chunk_state.chunk_counter;
 
-    let keep_last_full_chunk = input.len().is_multiple_of(CHUNK_LEN) && batch == full_chunks;
-    let commit = if keep_last_full_chunk { batch - 1 } else { batch };
-    if commit == 0 {
-      return None;
-    }
+    let pending_subtree_chunks = if input.len().is_multiple_of(CHUNK_LEN) && batch == full_chunks {
+      choose_pending_subtree_chunks(base_counter + batch as u64, base_counter, batch)
+    } else {
+      0
+    };
+    let commit = batch - pending_subtree_chunks;
 
     let bytes = batch * CHUNK_LEN;
     let threads = self.streaming_parallel_threads(bytes, batch, commit)?;
@@ -3391,7 +3508,14 @@ impl Blake3 {
     }
 
     let batch_input = &input[..bytes];
-    self.commit_parallel_batch(batch_input, base_counter, batch, commit, threads, keep_last_full_chunk);
+    self.commit_parallel_batch(
+      batch_input,
+      base_counter,
+      batch,
+      commit,
+      pending_subtree_chunks,
+      threads,
+    );
     Some(bytes)
   }
 
@@ -3428,8 +3552,12 @@ impl Blake3 {
       )
     };
 
-    let keep_last_full_chunk = input.len().is_multiple_of(CHUNK_LEN) && batch == full_chunks;
-    let commit = if keep_last_full_chunk { batch - 1 } else { batch };
+    let pending_subtree_chunks = if input.len().is_multiple_of(CHUNK_LEN) && batch == full_chunks {
+      choose_pending_subtree_chunks(base_counter + batch as u64, base_counter, batch)
+    } else {
+      0
+    };
+    let commit = batch - pending_subtree_chunks;
     if commit != 0 {
       // SAFETY: `out_buf` stores `batch` contiguous CV outputs, and
       // `commit <= batch <= MAX_SIMD_DEGREE`.
@@ -3450,12 +3578,23 @@ impl Blake3 {
 
     let new_counter = base_counter + batch as u64;
     self.chunk_state = ChunkState::new(self.key_words, new_counter, self.flags, self.kernel);
-    if keep_last_full_chunk {
-      let offset = (batch - 1) * OUT_LEN;
-      // SAFETY: `out_buf` is `OUT_LEN * MAX_SIMD_DEGREE`, and `offset`
-      // is `(batch - 1) * OUT_LEN` with `batch <= MAX_SIMD_DEGREE`.
-      let cv = unsafe { words8_from_le_bytes_32(&*(out_buf.as_ptr().add(offset) as *const [u8; OUT_LEN])) };
-      self.pending_chunk_cv = Some(cv);
+    if pending_subtree_chunks != 0 {
+      debug_assert!(pending_subtree_chunks.is_power_of_two());
+      // SAFETY: `out_buf` stores `batch` contiguous CV outputs and
+      // `pending_subtree_chunks <= batch <= MAX_SIMD_DEGREE`.
+      let pending_cvs_bytes: &[[u8; OUT_LEN]] = unsafe {
+        slice::from_raw_parts(
+          out_buf.as_ptr().add(commit * OUT_LEN).cast::<[u8; OUT_LEN]>(),
+          pending_subtree_chunks,
+        )
+      };
+      let cv_bytes =
+        reduce_power_of_two_chunk_cvs_bytes(self.bulk_kernel, self.key_words, self.flags, pending_cvs_bytes);
+      self.pending_chunk_cv = Some(words8_from_le_bytes_32(&cv_bytes));
+      self.pending_subtree_chunks = pending_subtree_chunks as u32;
+    } else {
+      self.pending_chunk_cv = None;
+      self.pending_subtree_chunks = 0;
     }
 
     Some(batch * CHUNK_LEN)
@@ -3467,14 +3606,18 @@ impl Blake3 {
     self.chunk_state.kernel = stream_kernel;
 
     // If the previous update ended exactly on a chunk boundary, we may have
-    // stored the last full chunk's CV instead of keeping a fully-buffered
-    // `ChunkState`. As soon as more input arrives, that chunk is no longer
+    // stored the right-edge subtree CV (instead of keeping a fully-buffered
+    // `ChunkState`). As soon as more input arrives, that subtree is no longer
     // terminal and can be committed to the tree.
     if !input.is_empty()
       && let Some(cv) = self.pending_chunk_cv.take()
     {
       let total_chunks = self.chunk_state.chunk_counter;
-      self.add_chunk_chaining_value(cv, total_chunks);
+      let subtree_chunks = self.pending_subtree_chunks as u64;
+      debug_assert!(subtree_chunks.is_power_of_two());
+      debug_assert!(subtree_chunks != 0);
+      self.pending_subtree_chunks = 0;
+      self.add_subtree_chaining_value(cv, total_chunks, subtree_chunks);
     }
 
     // When we're at a chunk boundary and we have more than one whole chunk
@@ -3552,20 +3695,32 @@ impl Blake3 {
     unsafe { self.cv_stack[self.cv_stack_len as usize].assume_init_read() }
   }
 
-  fn add_chunk_chaining_value(&mut self, mut new_cv: [u32; 8], mut total_chunks: u64) {
-    while total_chunks & 1 == 0 {
+  fn add_subtree_chaining_value(&mut self, mut new_cv: [u32; 8], total_chunks: u64, subtree_chunks: u64) {
+    debug_assert!(subtree_chunks.is_power_of_two());
+    debug_assert!(subtree_chunks != 0);
+    debug_assert!(total_chunks >= subtree_chunks);
+
+    let level = subtree_chunks.trailing_zeros();
+    let mut total = total_chunks >> level;
+    while total & 1 == 0 {
       new_cv = kernels::parent_cv_inline(self.kernel.id, self.pop_stack(), new_cv, self.key_words, self.flags);
-      total_chunks >>= 1;
+      total >>= 1;
     }
     self.push_stack(new_cv);
+  }
+
+  #[inline]
+  fn add_chunk_chaining_value(&mut self, new_cv: [u32; 8], total_chunks: u64) {
+    self.add_subtree_chaining_value(new_cv, total_chunks, 1);
   }
 
   fn root_output(&self) -> OutputState {
     let mut parent_nodes_remaining = self.cv_stack_len as usize;
     let mut output = if let Some(right_cv) = self.pending_chunk_cv {
+      debug_assert!(self.pending_subtree_chunks != 0);
       debug_assert!(
         parent_nodes_remaining > 0,
-        "pending full chunk implies multi-chunk input"
+        "pending right-edge subtree implies multi-chunk input"
       );
       parent_nodes_remaining -= 1;
       // SAFETY: `cv_stack_len` tracks the number of initialized entries.
@@ -3714,8 +3869,7 @@ impl Blake3Xof {
 
   #[inline]
   fn fill_one_block(&mut self, out: &mut &mut [u8]) {
-    let mut block = [0u8; OUTPUT_BLOCK_LEN];
-    self.output.root_output_blocks_into(self.block_counter, &mut block);
+    let block = self.output.root_output_block(self.block_counter);
     let output_bytes = &block[self.position_within_block as usize..];
     let take = min(out.len(), output_bytes.len());
     out[..take].copy_from_slice(&output_bytes[..take]);
