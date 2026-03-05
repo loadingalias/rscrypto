@@ -1,4 +1,4 @@
-use backend::{OnceCache, PolicyCache};
+use backend::OnceCache;
 use platform::Caps;
 #[cfg(target_arch = "x86_64")]
 use platform::TuneKind;
@@ -62,7 +62,6 @@ struct ResolvedDispatch {
 }
 
 static RESOLVED: OnceCache<ResolvedDispatch> = OnceCache::new();
-static HASHER_DISPATCH: PolicyCache<(), HasherDispatch> = PolicyCache::new();
 
 #[derive(Clone, Copy)]
 pub(crate) struct StreamingDispatch {
@@ -88,9 +87,9 @@ pub(crate) struct ParallelDispatch {
 
 /// Immutable per-hasher dispatch snapshot.
 ///
-/// This is resolved once from platform caps/tune and shared by reference from
-/// each hasher instance, avoiding repeated global dispatch lookups and per-new
-/// snapshot copying in hot constructor paths.
+/// This is resolved once from platform caps/tune and can be copied into each
+/// hasher, avoiding repeated global dispatch lookups in hot update/finalize
+/// paths.
 #[derive(Clone, Copy)]
 pub(crate) struct HasherDispatch {
   size_classes: SizeClassDispatch<Kernel>,
@@ -390,8 +389,8 @@ pub(crate) fn kernel_dispatch() -> SizeClassDispatch<Kernel> {
 
 #[inline]
 #[must_use]
-pub(crate) fn hasher_dispatch_ref() -> &'static HasherDispatch {
-  HASHER_DISPATCH.get_or_init_ref(|| ((), resolved().hasher)).1
+pub(crate) fn hasher_dispatch() -> HasherDispatch {
+  resolved().hasher
 }
 
 #[inline]
@@ -467,7 +466,7 @@ pub fn streaming_dispatch_info(flags: u32, input_len: usize) -> StreamingDispatc
     _ => pd.streaming,
   };
 
-  let hd = hasher_dispatch_ref();
+  let hd = hasher_dispatch();
   let sd = active_streaming();
   let bulk_kernel = if input_len >= hd.bulk_sizeclass_threshold() {
     kernel_dispatch().select(input_len).name
