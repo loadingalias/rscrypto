@@ -108,6 +108,12 @@ impl HasherDispatch {
 
   #[inline]
   #[must_use]
+  pub(crate) fn output_kernel(&self) -> Kernel {
+    self.table_bulk_kernel
+  }
+
+  #[inline]
+  #[must_use]
   pub(crate) fn bulk_kernel_for_update(&self, input_len: usize) -> Kernel {
     if input_len >= self.bulk_sizeclass_threshold {
       self.size_classes.select(input_len)
