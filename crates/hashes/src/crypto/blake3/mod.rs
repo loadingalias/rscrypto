@@ -125,7 +125,7 @@ static AVAILABLE_PARALLELISM: OnceLock<Option<usize>> = OnceLock::new();
 #[inline]
 fn compute_derive_context_key_words(context: &str) -> [u32; 8] {
   let context_bytes = context.as_bytes();
-  let kernel_ctx = dispatch::hasher_dispatch().size_class_kernel(context_bytes.len());
+  let kernel_ctx = dispatch::hasher_dispatch_ref().size_class_kernel(context_bytes.len());
   digest_oneshot_words(kernel_ctx, IV, DERIVE_KEY_CONTEXT, context_bytes)
 }
 
@@ -2791,13 +2791,13 @@ fn digest_oneshot(kernel: Kernel, key_words: [u32; 8], flags: u32, input: &[u8])
 
 #[inline]
 fn digest_public_oneshot(key_words: [u32; 8], flags: u32, input: &[u8]) -> [u8; OUT_LEN] {
-  let kernel = dispatch::hasher_dispatch().size_class_kernel(input.len());
+  let kernel = dispatch::hasher_dispatch_ref().size_class_kernel(input.len());
   digest_oneshot(kernel, key_words, flags, input)
 }
 
 #[derive(Clone)]
 pub struct Blake3 {
-  dispatch_plan: dispatch::HasherDispatch,
+  dispatch_plan: &'static dispatch::HasherDispatch,
   kernel: Kernel,
   bulk_kernel: Kernel,
   chunk_state: ChunkState,
@@ -2859,7 +2859,7 @@ impl Blake3 {
   #[must_use]
   pub fn keyed_xof(key: &[u8; KEY_LEN], data: &[u8]) -> Blake3Xof {
     let key_words = words8_from_le_bytes_32(key);
-    let plan = dispatch::hasher_dispatch();
+    let plan = dispatch::hasher_dispatch_ref();
     let kernel = plan.size_class_kernel(data.len());
     Blake3Xof::new(root_output_oneshot(
       kernel,
@@ -2886,7 +2886,7 @@ impl Blake3 {
       #[cfg(not(feature = "std"))]
       {
         let context_bytes = context.as_bytes();
-        let kernel_ctx = dispatch::hasher_dispatch().size_class_kernel(context_bytes.len());
+        let kernel_ctx = dispatch::hasher_dispatch_ref().size_class_kernel(context_bytes.len());
         digest_oneshot_words(kernel_ctx, IV, DERIVE_KEY_CONTEXT, context_bytes)
       }
     };
@@ -3162,13 +3162,24 @@ impl Blake3 {
 
   #[inline]
   fn new_internal(key_words: [u32; 8], flags: u32) -> Self {
-    let kernel = dispatch::hasher_dispatch().stream_kernel();
-    Self::new_internal_with(key_words, flags, kernel)
+    let dispatch_plan = dispatch::hasher_dispatch_ref();
+    let kernel = dispatch_plan.stream_kernel();
+    Self::new_internal_with_plan(key_words, flags, kernel, dispatch_plan)
   }
 
   #[inline]
   fn new_internal_with(key_words: [u32; 8], flags: u32, kernel: Kernel) -> Self {
-    let dispatch_plan = dispatch::hasher_dispatch();
+    let dispatch_plan = dispatch::hasher_dispatch_ref();
+    Self::new_internal_with_plan(key_words, flags, kernel, dispatch_plan)
+  }
+
+  #[inline]
+  fn new_internal_with_plan(
+    key_words: [u32; 8],
+    flags: u32,
+    kernel: Kernel,
+    dispatch_plan: &'static dispatch::HasherDispatch,
+  ) -> Self {
     Self {
       dispatch_plan,
       kernel,
@@ -3533,7 +3544,7 @@ impl Blake3 {
     #[cfg(not(feature = "std"))]
     let key_words = {
       let context_bytes = context.as_bytes();
-      let kernel_ctx = dispatch::hasher_dispatch().size_class_kernel(context_bytes.len());
+      let kernel_ctx = dispatch::hasher_dispatch_ref().size_class_kernel(context_bytes.len());
       digest_oneshot_words(kernel_ctx, IV, DERIVE_KEY_CONTEXT, context_bytes)
     };
     Self::new_internal(key_words, DERIVE_KEY_MATERIAL)
