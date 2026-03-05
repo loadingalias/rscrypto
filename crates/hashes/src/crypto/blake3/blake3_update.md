@@ -1205,3 +1205,48 @@ Optional tools only with a specific question they uniquely answer:
 - Decision:
   - Reject and revert.
   - This pass materially improves aggregate/streaming vs recent candidates, but remains all-loss and does not solve the primary xof short-output deficit on Intel lanes.
+
+### 2026-03-04 - Candidate AX (`6ba2b95`)
+- Hypothesis:
+  - Intel short-output XOF losses were potentially AVX-512 stream warmup/fixed-cost driven.
+  - For `intel-icl` and `intel-spr`, setting streaming `stream` kernel to `AVX2` (while keeping `bulk=AVX512`) could reduce fixed cost on `xof init+read`.
+- Change:
+  - Dispatch policy only (`dispatch_tables.rs`):
+    - `PROFILE_X86_INTEL_SPR.streaming.stream`: `X86Avx512 -> X86Avx2`.
+    - `PROFILE_X86_INTEL_ICL.streaming.stream`: `X86Avx512 -> X86Avx2`.
+    - `bulk` remained `X86Avx512` for both.
+  - No update/XOF state-machine changes.
+- Validation:
+  - Local: `cargo test -p hashes blake3 --lib` passed (`20/20`).
+  - CI targeted bench run: `22677938256` (`crates=hashes`, `benches=blake3`,
+    `filter=blake3/xof/,blake3/streaming/`, `quick=false`,
+    lanes: `amd-zen5`, `intel-icl`, `intel-spr`).
+  - Scope/commit check:
+    - workflow completed `success`,
+    - executed commit `6ba2b95ce63a065906b6657c6979f75674c6fe28` (expected SHA; valid run).
+  - CI outcomes (time-based gap vs official; positive = slower):
+    - Aggregate (`xof` + `streaming`, 3 lanes): `0W / 48L`, avg gap `+37.00%`.
+    - `streaming/*`: `0W / 24L`, avg gap `+22.33%`.
+    - `xof/*`: `0W / 24L`, avg gap `+51.67%`.
+    - Lane aggregates:
+      - `intel-icl`: `0W/16L`, avg `+45.68%` (`streaming +26.69%`, `xof +64.67%`).
+      - `intel-spr`: `0W/16L`, avg `+48.48%` (`streaming +27.15%`, `xof +69.82%`).
+      - `amd-zen5`: `0W/16L`, avg `+16.83%` (`streaming +13.15%`, `xof +20.51%`).
+  - Target-cluster check:
+    - `xof init+read/*-in/32B-out`: `0W / 12L`, avg gap `+44.91%`.
+    - `streaming 64..1024B chunks`: `0W / 15L`, avg gap `+26.37%`.
+  - Directional delta vs prior candidate (`22654769160`, Candidate AW):
+    - aggregate: `+19.79%` -> `+37.00%` (`+17.21 pp`, worse),
+    - streaming: `+13.46%` -> `+22.33%` (`+8.87 pp`, worse),
+    - xof: `+26.11%` -> `+51.67%` (`+25.56 pp`, much worse),
+    - `xof 32B-out` cluster: `+30.51%` -> `+44.91%` (`+14.40 pp`, worse).
+  - Notable regressions:
+    - `intel-spr xof init+read/64B-in/1024B-out`: `+144.02%`.
+    - `intel-spr xof init+read/1B-in/1024B-out`: `+129.24%`.
+    - `intel-icl xof init+read/64B-in/1024B-out`: `+111.57%`.
+    - `intel-icl xof init+read/1B-in/1024B-out`: `+103.37%`.
+    - `intel-spr xof init+read/1B-in/32B-out`: `+93.77%`.
+    - `intel-icl xof init+read/1B-in/32B-out`: `+92.92%`.
+- Decision:
+  - Reject and revert.
+  - Intel stream-kernel downtier (`AVX512 -> AVX2`) is decisively the wrong direction for this benchmark surface.

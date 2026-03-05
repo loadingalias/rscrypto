@@ -569,7 +569,7 @@ pub static PROFILE_X86_INTEL_SPR: FamilyProfile = FamilyProfile {
     l: KernelId::X86Avx512,
   },
   streaming: StreamingTable {
-    stream: KernelId::X86Avx2,
+    stream: KernelId::X86Avx512,
     bulk: KernelId::X86Avx512,
     bulk_sizeclass_threshold: THRESHOLD_AVX512,
   },
@@ -654,7 +654,7 @@ pub static PROFILE_X86_INTEL_ICL: FamilyProfile = FamilyProfile {
     l: KernelId::X86Avx512,
   },
   streaming: StreamingTable {
-    stream: KernelId::X86Avx2,
+    stream: KernelId::X86Avx512,
     bulk: KernelId::X86Avx512,
     bulk_sizeclass_threshold: THRESHOLD_AVX512,
   },
