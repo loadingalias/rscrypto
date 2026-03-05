@@ -3561,7 +3561,6 @@ impl Blake3 {
   }
 
   fn root_output(&self) -> OutputState {
-    let output_kernel = self.dispatch_plan.output_kernel();
     let mut parent_nodes_remaining = self.cv_stack_len as usize;
     let mut output = if let Some(right_cv) = self.pending_chunk_cv {
       debug_assert!(
@@ -3571,18 +3570,16 @@ impl Blake3 {
       parent_nodes_remaining -= 1;
       // SAFETY: `cv_stack_len` tracks the number of initialized entries.
       let left = unsafe { *self.cv_stack[parent_nodes_remaining].assume_init_ref() };
-      parent_output(output_kernel, left, right_cv, self.key_words, self.flags)
+      parent_output(self.kernel, left, right_cv, self.key_words, self.flags)
     } else {
-      let mut output = self.chunk_state.output();
-      output.kernel = output_kernel;
-      output
+      self.chunk_state.output()
     };
 
     while parent_nodes_remaining > 0 {
       parent_nodes_remaining -= 1;
       // SAFETY: `cv_stack_len` tracks the number of initialized entries.
       let left = unsafe { *self.cv_stack[parent_nodes_remaining].assume_init_ref() };
-      output = parent_output(output_kernel, left, output.chaining_value(), self.key_words, self.flags);
+      output = parent_output(self.kernel, left, output.chaining_value(), self.key_words, self.flags);
     }
     output
   }
@@ -3643,18 +3640,6 @@ impl Digest for Blake3 {
     }
 
     let stream = self.dispatch_plan.stream_kernel();
-    if self.pending_chunk_cv.is_none() {
-      let used = self.chunk_state.len();
-      if input.len() <= CHUNK_LEN - used {
-        let bulk = self.dispatch_plan.bulk_kernel_for_update(input.len());
-        self.kernel = stream;
-        self.bulk_kernel = bulk;
-        self.chunk_state.kernel = stream;
-        self.chunk_state.update(input);
-        return;
-      }
-    }
-
     let bulk = self.dispatch_plan.bulk_kernel_for_update(input.len());
     self.update_with(input, stream, bulk);
   }
