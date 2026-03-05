@@ -143,35 +143,6 @@ Optional tools only with a specific question they uniquely answer:
 - Every candidate carries CI run IDs and explicit keep/reject outcome in notes.
 
 ## Progress
-### 2026-03-05 - XOF Phase-Split v2 (Constructor/Drop Attribution) (`c5d3171`)
-- Scope:
-  - CI run `22724865196` with `crates=hashes`, `benches=blake3`, filter `blake3/xof-phase/`.
-  - Lanes: `amd-zen5`, `intel-icl`, `intel-spr`.
-  - Bench instrumentation updates:
-    - added `new-only`,
-    - changed `finalize-xof-only` to `iter_batched_ref` (setup/drop excluded),
-    - added `drop-after-update-only`.
-- Result (geomean slowdown vs official, computed as `rscrypto_time / official_time`):
-  - `new-only`: `2.5220x` slower (`+152.20%`).
-  - `update-only`: `1.6210x` slower (`+62.10%`).
-  - `drop-after-update-only`: `1.0222x` slower (`+2.22%`, near parity overall).
-  - `finalize-xof-only`: `2.4242x` slower (`+142.42%`).
-  - `squeeze-32-only`: `1.3800x` slower (`+38.00%`).
-  - `squeeze-1024-only`: `1.0179x` slower (`+1.79%`, near parity).
-- Key observations:
-  - Constructor cost is consistently high on every lane/input (`new-only` ~`2.1x..3.0x` slower).
-  - `drop-after-update-only` is effectively not the issue on Zen5/ICL (near parity); SPR shows only a localized `65536B` drop penalty.
-  - `finalize-xof-only` remains the dominant structural issue, especially `65536B-in`:
-    - `amd-zen5 +1612.88%`,
-    - `intel-icl +1104.37%`,
-    - `intel-spr +744.24%`.
-  - `squeeze-1024-only` remains near parity, so large-output squeeze kernels are not the primary blocker.
-- Decision:
-  - Prioritize two structural targets:
-    1. reduce `Blake3::new()` fixed cost (constructor/runtime state footprint and dispatch snapshot handling),
-    2. reduce `finalize_xof()` exact-boundary multi-chunk fold cost (`root_output` merge shape / pending-chunk flow).
-  - Keep squeeze-kernel tuning deprioritized.
-
 ### 2026-03-03 - XOF Helper Signature Refactor (No Suppression)
 - Change:
   - Removed `#[allow(clippy::too_many_arguments)]` from `xof_many_via_compress`.
