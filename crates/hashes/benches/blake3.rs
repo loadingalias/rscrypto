@@ -5,7 +5,7 @@
 
 use core::{hint::black_box, time::Duration};
 
-use criterion::{BenchmarkId, Criterion, SamplingMode, Throughput, criterion_group, criterion_main};
+use criterion::{BatchSize, BenchmarkId, Criterion, SamplingMode, Throughput, criterion_group, criterion_main};
 use hashes::{
   bench as microbench,
   crypto::{
@@ -280,6 +280,113 @@ fn blake3_xof(c: &mut Criterion) {
         });
       }
     }
+  }
+
+  group.finish();
+}
+
+fn blake3_xof_phase_split(c: &mut Criterion) {
+  let inputs = common::sized_inputs();
+  let input_sizes: &[usize] = &[1, 64, 1024, 64 * 1024];
+  let mut group = c.benchmark_group("blake3/xof-phase");
+  group.sample_size(15);
+  group.warm_up_time(Duration::from_secs(1));
+  group.measurement_time(Duration::from_secs(3));
+  group.sampling_mode(SamplingMode::Flat);
+
+  for (len, data) in &inputs {
+    if !input_sizes.contains(len) {
+      continue;
+    }
+    let name = format!("{len}B-in");
+
+    group.throughput(Throughput::Bytes(*len as u64));
+    group.bench_function(format!("rscrypto/update-only/{name}"), |b| {
+      b.iter(|| {
+        let mut h = Blake3::new();
+        h.update(black_box(data));
+        black_box(h);
+      })
+    });
+    group.bench_function(format!("official/update-only/{name}"), |b| {
+      b.iter(|| {
+        let mut h = blake3::Hasher::new();
+        h.update(black_box(data));
+        black_box(h);
+      })
+    });
+
+    group.throughput(Throughput::Bytes(*len as u64));
+    group.bench_function(format!("rscrypto/finalize-xof-only/{name}"), |b| {
+      b.iter_batched(
+        || {
+          let mut h = Blake3::new();
+          h.update(data);
+          h
+        },
+        |h| black_box(h.finalize_xof()),
+        BatchSize::PerIteration,
+      )
+    });
+    group.bench_function(format!("official/finalize-xof-only/{name}"), |b| {
+      b.iter_batched(
+        || {
+          let mut h = blake3::Hasher::new();
+          h.update(data);
+          h
+        },
+        |h| black_box(h.finalize_xof()),
+        BatchSize::PerIteration,
+      )
+    });
+
+    group.throughput(Throughput::Bytes(32));
+    group.bench_function(format!("rscrypto/squeeze-32-only/{name}"), |b| {
+      let mut h = Blake3::new();
+      h.update(data);
+      let base = h.finalize_xof();
+      let mut out = [0u8; 32];
+      b.iter(|| {
+        let mut xof = base.clone();
+        xof.squeeze(&mut out);
+        black_box(&out);
+      })
+    });
+    group.bench_function(format!("official/squeeze-32-only/{name}"), |b| {
+      let mut h = blake3::Hasher::new();
+      h.update(data);
+      let base = h.finalize_xof();
+      let mut out = [0u8; 32];
+      b.iter(|| {
+        let mut reader = base.clone();
+        reader.fill(&mut out);
+        black_box(&out);
+      })
+    });
+
+    group.throughput(Throughput::Bytes(1024));
+    group.bench_function(format!("rscrypto/squeeze-1024-only/{name}"), |b| {
+      let mut h = Blake3::new();
+      h.update(data);
+      let base = h.finalize_xof();
+      let mut out = [0u8; 1024];
+      b.iter(|| {
+        let mut xof = base.clone();
+        xof.squeeze(&mut out);
+        black_box(&out);
+      })
+    });
+    group.bench_function(format!("official/squeeze-1024-only/{name}"), |b| {
+      let mut h = blake3::Hasher::new();
+      h.update(data);
+      let base = h.finalize_xof();
+      let mut out = [0u8; 1024];
+      b.iter(|| {
+        let mut reader = base.clone();
+        reader.fill(&mut out);
+        black_box(&out);
+      })
+    });
   }
 
   group.finish();
@@ -833,6 +940,7 @@ criterion_group!(
   blake3_update_overhead,
   blake3_parent_folding_only,
   blake3_xof,
+  blake3_xof_phase_split,
   blake3_xof_oneshot,
   blake3_xof_sized_comparison,
   blake3_keyed,
