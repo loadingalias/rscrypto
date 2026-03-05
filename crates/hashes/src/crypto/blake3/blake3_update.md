@@ -143,23 +143,6 @@ Optional tools only with a specific question they uniquely answer:
 - Every candidate carries CI run IDs and explicit keep/reject outcome in notes.
 
 ## Progress
-### 2026-03-04 - XOF Phase-Split Diagnostics (`d5d9198`)
-- Scope:
-  - CI run `22700145932` with `crates=hashes`, `benches=blake3`, filter `blake3/xof-phase/`.
-  - Lanes: `amd-zen5`, `intel-icl`, `intel-spr`.
-- Result (geomean slowdown vs official, computed as `official_throughput / rscrypto_throughput`):
-  - `update-only`: `1.6137x` slower (`+61.37%`).
-  - `finalize-xof-only`: `2.3960x` slower (`+139.60%`).
-  - `squeeze-32-only`: `1.3704x` slower (`+37.04%`).
-  - `squeeze-1024-only`: `1.0253x` slower (`+2.53%`, effectively near parity).
-- Lane highlights:
-  - `finalize-xof-only` is bad on all lanes (`amd-zen5 3.0592x`, `intel-icl 2.0178x`, `intel-spr 2.2281x` slower).
-  - Worst outlier is `finalize-xof-only` at `65536B-in` (`amd-zen5 11.58x`, `intel-icl 6.34x`, `intel-spr 5.99x` slower).
-  - `squeeze-1024-only` is near parity or better on Intel (`intel-icl 0.9871x`, `intel-spr 1.0123x`).
-- Decision:
-  - This isolates the bottleneck to control-path/setup/finalization work, not large-output squeeze compute.
-  - Next candidates should target `update` and `finalize_xof` structure first (state transitions, staging, and root-output path), not squeeze kernels.
-
 ### 2026-03-03 - XOF Helper Signature Refactor (No Suppression)
 - Change:
   - Removed `#[allow(clippy::too_many_arguments)]` from `xof_many_via_compress`.
