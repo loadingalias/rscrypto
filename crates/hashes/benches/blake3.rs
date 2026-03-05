@@ -300,6 +300,14 @@ fn blake3_xof_phase_split(c: &mut Criterion) {
     }
     let name = format!("{len}B-in");
 
+    group.throughput(Throughput::Elements(1));
+    group.bench_function(format!("rscrypto/new-only/{name}"), |b| {
+      b.iter(|| black_box(Blake3::new()))
+    });
+    group.bench_function(format!("official/new-only/{name}"), |b| {
+      b.iter(|| black_box(blake3::Hasher::new()))
+    });
+
     group.throughput(Throughput::Bytes(*len as u64));
     group.bench_function(format!("rscrypto/update-only/{name}"), |b| {
       b.iter(|| {
@@ -318,24 +326,58 @@ fn blake3_xof_phase_split(c: &mut Criterion) {
 
     group.throughput(Throughput::Bytes(*len as u64));
     group.bench_function(format!("rscrypto/finalize-xof-only/{name}"), |b| {
+      b.iter_batched_ref(
+        || {
+          let mut h = Blake3::new();
+          h.update(data);
+          h
+        },
+        |h| {
+          let xof = h.finalize_xof();
+          black_box(xof);
+        },
+        BatchSize::PerIteration,
+      )
+    });
+    group.bench_function(format!("official/finalize-xof-only/{name}"), |b| {
+      b.iter_batched_ref(
+        || {
+          let mut h = blake3::Hasher::new();
+          h.update(data);
+          h
+        },
+        |h| {
+          let xof = h.finalize_xof();
+          black_box(xof);
+        },
+        BatchSize::PerIteration,
+      )
+    });
+
+    group.throughput(Throughput::Bytes(*len as u64));
+    group.bench_function(format!("rscrypto/drop-after-update-only/{name}"), |b| {
       b.iter_batched(
         || {
           let mut h = Blake3::new();
           h.update(data);
           h
         },
-        |h| black_box(h.finalize_xof()),
+        |h| {
+          drop(h);
+        },
         BatchSize::PerIteration,
       )
     });
-    group.bench_function(format!("official/finalize-xof-only/{name}"), |b| {
+    group.bench_function(format!("official/drop-after-update-only/{name}"), |b| {
       b.iter_batched(
         || {
           let mut h = blake3::Hasher::new();
           h.update(data);
           h
         },
-        |h| black_box(h.finalize_xof()),
+        |h| {
+          drop(h);
+        },
         BatchSize::PerIteration,
       )
     });
