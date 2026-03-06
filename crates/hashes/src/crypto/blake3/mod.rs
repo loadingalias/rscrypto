@@ -1797,9 +1797,9 @@ impl OutputState {
     {
       let mut out = [0u8; OUTPUT_BLOCK_LEN];
       match self.kernel.id {
+        // SAFETY: dispatch validated AVX-512 before selecting this kernel,
+        // and `out` points to one writable output block.
         kernels::Blake3KernelId::X86Avx512 => unsafe {
-          // SAFETY: dispatch validated AVX-512 before selecting this kernel,
-          // and `out` points to one writable output block.
           x86_64::avx512::root_output_blocks1(
             &self.input_chaining_value,
             &self.block_words,
@@ -1810,9 +1810,9 @@ impl OutputState {
           );
           return out;
         },
+        // SAFETY: dispatch validated AVX2 before selecting this kernel,
+        // and `out` points to one writable output block.
         kernels::Blake3KernelId::X86Avx2 => unsafe {
-          // SAFETY: dispatch validated AVX2 before selecting this kernel,
-          // and `out` points to one writable output block.
           x86_64::avx2::root_output_blocks1(
             &self.input_chaining_value,
             &self.block_words,
@@ -1823,9 +1823,9 @@ impl OutputState {
           );
           return out;
         },
+        // SAFETY: dispatch validated SSE4.1 before selecting this kernel,
+        // and `out` points to one writable output block.
         kernels::Blake3KernelId::X86Sse41 => unsafe {
-          // SAFETY: dispatch validated SSE4.1 before selecting this kernel,
-          // and `out` points to one writable output block.
           x86_64::sse41::root_output_blocks1(
             &self.input_chaining_value,
             &self.block_words,
