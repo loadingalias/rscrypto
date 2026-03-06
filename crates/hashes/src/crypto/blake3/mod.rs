@@ -1790,66 +1790,6 @@ impl OutputState {
   }
 
   #[inline]
-  fn root_output_block(&self, output_block_counter: u64) -> [u8; OUTPUT_BLOCK_LEN] {
-    let flags = self.flags | ROOT;
-
-    #[cfg(target_arch = "x86_64")]
-    {
-      let mut out = [0u8; OUTPUT_BLOCK_LEN];
-      match self.kernel.id {
-        // SAFETY: dispatch validated AVX-512 before selecting this kernel,
-        // and `out` points to one writable output block.
-        kernels::Blake3KernelId::X86Avx512 => unsafe {
-          x86_64::avx512::root_output_blocks1(
-            &self.input_chaining_value,
-            &self.block_words,
-            output_block_counter,
-            self.block_len,
-            flags,
-            out.as_mut_ptr(),
-          );
-          return out;
-        },
-        // SAFETY: dispatch validated AVX2 before selecting this kernel,
-        // and `out` points to one writable output block.
-        kernels::Blake3KernelId::X86Avx2 => unsafe {
-          x86_64::avx2::root_output_blocks1(
-            &self.input_chaining_value,
-            &self.block_words,
-            output_block_counter,
-            self.block_len,
-            flags,
-            out.as_mut_ptr(),
-          );
-          return out;
-        },
-        // SAFETY: dispatch validated SSE4.1 before selecting this kernel,
-        // and `out` points to one writable output block.
-        kernels::Blake3KernelId::X86Sse41 => unsafe {
-          x86_64::sse41::root_output_blocks1(
-            &self.input_chaining_value,
-            &self.block_words,
-            output_block_counter,
-            self.block_len,
-            flags,
-            out.as_mut_ptr(),
-          );
-          return out;
-        },
-        _ => {}
-      }
-    }
-
-    words16_to_le_bytes(&(self.kernel.compress)(
-      &self.input_chaining_value,
-      &self.block_words,
-      output_block_counter,
-      self.block_len,
-      flags,
-    ))
-  }
-
-  #[inline]
   fn root_output_blocks_into(&self, mut output_block_counter: u64, mut out: &mut [u8]) {
     debug_assert!(out.len().is_multiple_of(OUTPUT_BLOCK_LEN));
     let flags = self.flags | ROOT;
@@ -3723,18 +3663,6 @@ impl Digest for Blake3 {
     }
 
     let stream = self.dispatch_plan.stream_kernel();
-    if self.pending_chunk_cv.is_none() {
-      let used = self.chunk_state.len();
-      if input.len() <= CHUNK_LEN - used {
-        let bulk = self.dispatch_plan.bulk_kernel_for_update(input.len());
-        self.kernel = stream;
-        self.bulk_kernel = bulk;
-        self.chunk_state.kernel = stream;
-        self.chunk_state.update(input);
-        return;
-      }
-    }
-
     let bulk = self.dispatch_plan.bulk_kernel_for_update(input.len());
     self.update_with(input, stream, bulk);
   }
@@ -3809,7 +3737,8 @@ impl Blake3Xof {
 
   #[inline]
   fn fill_one_block(&mut self, out: &mut &mut [u8]) {
-    let block = self.output.root_output_block(self.block_counter);
+    let mut block = [0u8; OUTPUT_BLOCK_LEN];
+    self.output.root_output_blocks_into(self.block_counter, &mut block);
     let output_bytes = &block[self.position_within_block as usize..];
     let take = min(out.len(), output_bytes.len());
     out[..take].copy_from_slice(&output_bytes[..take]);
