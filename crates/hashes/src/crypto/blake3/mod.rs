@@ -2797,6 +2797,9 @@ fn digest_public_oneshot(key_words: [u32; 8], flags: u32, input: &[u8]) -> [u8; 
 
 #[derive(Clone)]
 pub struct Blake3 {
+  #[cfg(feature = "std")]
+  dispatch_plan: &'static dispatch::HasherDispatch,
+  #[cfg(not(feature = "std"))]
   dispatch_plan: dispatch::HasherDispatch,
   kernel: Kernel,
   bulk_kernel: Kernel,
@@ -2805,10 +2808,6 @@ pub struct Blake3 {
   key_words: [u32; 8],
   cv_stack: [MaybeUninit<[u32; 8]>; CV_STACK_LEN],
   cv_stack_len: u8,
-  #[cfg(feature = "std")]
-  parallel_roots_scratch: alloc::vec::Vec<[u32; 8]>,
-  #[cfg(feature = "std")]
-  parallel_leaf_cvs_scratch: alloc::vec::Vec<[u32; 8]>,
   flags: u32,
 }
 
@@ -3162,12 +3161,18 @@ impl Blake3 {
 
   #[inline]
   fn new_internal(key_words: [u32; 8], flags: u32) -> Self {
+    #[cfg(feature = "std")]
+    let kernel = dispatch::hasher_dispatch_ref().stream_kernel();
+    #[cfg(not(feature = "std"))]
     let kernel = dispatch::hasher_dispatch().stream_kernel();
     Self::new_internal_with(key_words, flags, kernel)
   }
 
   #[inline]
   fn new_internal_with(key_words: [u32; 8], flags: u32, kernel: Kernel) -> Self {
+    #[cfg(feature = "std")]
+    let dispatch_plan = dispatch::hasher_dispatch_ref();
+    #[cfg(not(feature = "std"))]
     let dispatch_plan = dispatch::hasher_dispatch();
     Self {
       dispatch_plan,
@@ -3178,10 +3183,6 @@ impl Blake3 {
       key_words,
       cv_stack: uninit_cv_stack(),
       cv_stack_len: 0,
-      #[cfg(feature = "std")]
-      parallel_roots_scratch: alloc::vec::Vec::new(),
-      #[cfg(feature = "std")]
-      parallel_leaf_cvs_scratch: alloc::vec::Vec::new(),
       flags,
     }
   }
@@ -3223,6 +3224,8 @@ impl Blake3 {
     base_counter: u64,
     batch: usize,
     commit: usize,
+    parallel_roots_scratch: &mut alloc::vec::Vec<[u32; 8]>,
+    parallel_leaf_cvs_scratch: &mut alloc::vec::Vec<[u32; 8]>,
     threads: usize,
     keep_last_full_chunk: bool,
   ) {
@@ -3244,8 +3247,8 @@ impl Blake3 {
     let mut offset_chunks = 0usize;
     let mut remaining_commit = commit;
 
-    self.parallel_roots_scratch.clear();
-    self.parallel_leaf_cvs_scratch.clear();
+    parallel_roots_scratch.clear();
+    parallel_leaf_cvs_scratch.clear();
 
     while remaining_commit != 0 {
       let mut size = pow2_floor(remaining_commit);
@@ -3281,7 +3284,7 @@ impl Blake3 {
         debug_assert!(roots_len.is_power_of_two());
         debug_assert_eq!(roots_len * subtree_chunks, size);
 
-        self.parallel_roots_scratch.resize(roots_len, [0u32; 8]);
+        parallel_roots_scratch.resize(roots_len, [0u32; 8]);
         hash_power_of_two_subtree_roots_parallel_rayon(SubtreeRootsRequest {
           kernel: self.bulk_kernel,
           key_words: self.key_words,
@@ -3289,7 +3292,7 @@ impl Blake3 {
           base_counter: counter,
           input: subtree_input,
           subtree_chunks,
-          out: &mut self.parallel_roots_scratch,
+          out: parallel_roots_scratch,
           threads_total: threads,
         });
 
@@ -3297,25 +3300,25 @@ impl Blake3 {
           self.bulk_kernel,
           self.key_words,
           self.flags,
-          &self.parallel_roots_scratch,
+          parallel_roots_scratch,
           threads,
         )
       } else {
-        self.parallel_leaf_cvs_scratch.resize(size, [0u32; 8]);
+        parallel_leaf_cvs_scratch.resize(size, [0u32; 8]);
         hash_full_chunks_cvs_scoped(
           self.bulk_kernel,
           self.key_words,
           self.flags,
           counter,
           subtree_input,
-          &mut self.parallel_leaf_cvs_scratch,
+          parallel_leaf_cvs_scratch,
           threads,
         );
         reduce_power_of_two_chunk_cvs_any(
           self.bulk_kernel,
           self.key_words,
           self.flags,
-          &self.parallel_leaf_cvs_scratch,
+          parallel_leaf_cvs_scratch,
           threads,
         )
       };
@@ -3390,8 +3393,19 @@ impl Blake3 {
       return None;
     }
 
+    let mut parallel_roots_scratch = alloc::vec::Vec::new();
+    let mut parallel_leaf_cvs_scratch = alloc::vec::Vec::new();
     let batch_input = &input[..bytes];
-    self.commit_parallel_batch(batch_input, base_counter, batch, commit, threads, keep_last_full_chunk);
+    self.commit_parallel_batch(
+      batch_input,
+      base_counter,
+      batch,
+      commit,
+      &mut parallel_roots_scratch,
+      &mut parallel_leaf_cvs_scratch,
+      threads,
+      keep_last_full_chunk,
+    );
     Some(bytes)
   }
 
