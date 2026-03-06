@@ -2811,6 +2811,33 @@ pub struct Blake3 {
   flags: u32,
 }
 
+#[cfg(feature = "std")]
+struct ParallelBatchSpec<'a> {
+  input: &'a [u8],
+  base_counter: u64,
+  batch_chunks: usize,
+  commit_chunks: usize,
+  threads: usize,
+  keep_last_full_chunk: bool,
+}
+
+#[cfg(feature = "std")]
+struct ParallelBatchScratch {
+  roots: alloc::vec::Vec<[u32; 8]>,
+  leaf_cvs: alloc::vec::Vec<[u32; 8]>,
+}
+
+#[cfg(feature = "std")]
+impl ParallelBatchScratch {
+  #[inline]
+  fn new() -> Self {
+    Self {
+      roots: alloc::vec::Vec::new(),
+      leaf_cvs: alloc::vec::Vec::new(),
+    }
+  }
+}
+
 impl Default for Blake3 {
   #[inline]
   fn default() -> Self {
@@ -3218,17 +3245,7 @@ impl Blake3 {
   #[cfg(feature = "std")]
   #[cold]
   #[inline(never)]
-  fn commit_parallel_batch(
-    &mut self,
-    batch_input: &[u8],
-    base_counter: u64,
-    batch: usize,
-    commit: usize,
-    parallel_roots_scratch: &mut alloc::vec::Vec<[u32; 8]>,
-    parallel_leaf_cvs_scratch: &mut alloc::vec::Vec<[u32; 8]>,
-    threads: usize,
-    keep_last_full_chunk: bool,
-  ) {
+  fn commit_parallel_batch(&mut self, batch: ParallelBatchSpec<'_>, scratch: &mut ParallelBatchScratch) {
     #[inline]
     fn push_stack(stack: &mut [MaybeUninit<[u32; 8]>; CV_STACK_LEN], len: &mut usize, cv: [u32; 8]) {
       stack[*len].write(cv);
@@ -3242,13 +3259,18 @@ impl Blake3 {
       unsafe { stack[*len].assume_init_read() }
     }
 
+    let batch_input = batch.input;
+    let base_counter = batch.base_counter;
+    let commit = batch.commit_chunks;
+    let threads = batch.threads;
+
     let mut stack_len = self.cv_stack_len as usize;
     let mut counter = base_counter;
     let mut offset_chunks = 0usize;
     let mut remaining_commit = commit;
 
-    parallel_roots_scratch.clear();
-    parallel_leaf_cvs_scratch.clear();
+    scratch.roots.clear();
+    scratch.leaf_cvs.clear();
 
     while remaining_commit != 0 {
       let mut size = pow2_floor(remaining_commit);
@@ -3284,7 +3306,7 @@ impl Blake3 {
         debug_assert!(roots_len.is_power_of_two());
         debug_assert_eq!(roots_len * subtree_chunks, size);
 
-        parallel_roots_scratch.resize(roots_len, [0u32; 8]);
+        scratch.roots.resize(roots_len, [0u32; 8]);
         hash_power_of_two_subtree_roots_parallel_rayon(SubtreeRootsRequest {
           kernel: self.bulk_kernel,
           key_words: self.key_words,
@@ -3292,35 +3314,23 @@ impl Blake3 {
           base_counter: counter,
           input: subtree_input,
           subtree_chunks,
-          out: parallel_roots_scratch,
+          out: &mut scratch.roots,
           threads_total: threads,
         });
 
-        reduce_power_of_two_chunk_cvs_any(
-          self.bulk_kernel,
-          self.key_words,
-          self.flags,
-          parallel_roots_scratch,
-          threads,
-        )
+        reduce_power_of_two_chunk_cvs_any(self.bulk_kernel, self.key_words, self.flags, &scratch.roots, threads)
       } else {
-        parallel_leaf_cvs_scratch.resize(size, [0u32; 8]);
+        scratch.leaf_cvs.resize(size, [0u32; 8]);
         hash_full_chunks_cvs_scoped(
           self.bulk_kernel,
           self.key_words,
           self.flags,
           counter,
           subtree_input,
-          parallel_leaf_cvs_scratch,
+          &mut scratch.leaf_cvs,
           threads,
         );
-        reduce_power_of_two_chunk_cvs_any(
-          self.bulk_kernel,
-          self.key_words,
-          self.flags,
-          parallel_leaf_cvs_scratch,
-          threads,
-        )
+        reduce_power_of_two_chunk_cvs_any(self.bulk_kernel, self.key_words, self.flags, &scratch.leaf_cvs, threads)
       };
 
       counter = counter.wrapping_add(size as u64);
@@ -3345,10 +3355,11 @@ impl Blake3 {
 
     self.cv_stack_len = stack_len as u8;
 
-    let new_counter = base_counter + batch as u64;
+    let new_counter = base_counter + batch.batch_chunks as u64;
     self.chunk_state = ChunkState::new(self.key_words, new_counter, self.flags, self.kernel);
-    if keep_last_full_chunk {
-      let last = &batch_input[(batch - 1) * CHUNK_LEN..batch * CHUNK_LEN];
+    if batch.keep_last_full_chunk {
+      let last_chunk_idx = batch.batch_chunks - 1;
+      let last = &batch_input[last_chunk_idx * CHUNK_LEN..batch.batch_chunks * CHUNK_LEN];
       self.pending_chunk_cv = Some(hash_one_full_chunk_cv(
         self.bulk_kernel,
         self.key_words,
@@ -3393,19 +3404,17 @@ impl Blake3 {
       return None;
     }
 
-    let mut parallel_roots_scratch = alloc::vec::Vec::new();
-    let mut parallel_leaf_cvs_scratch = alloc::vec::Vec::new();
     let batch_input = &input[..bytes];
-    self.commit_parallel_batch(
-      batch_input,
+    let spec = ParallelBatchSpec {
+      input: batch_input,
       base_counter,
-      batch,
-      commit,
-      &mut parallel_roots_scratch,
-      &mut parallel_leaf_cvs_scratch,
+      batch_chunks: batch,
+      commit_chunks: commit,
       threads,
       keep_last_full_chunk,
-    );
+    };
+    let mut scratch = ParallelBatchScratch::new();
+    self.commit_parallel_batch(spec, &mut scratch);
     Some(bytes)
   }
 
