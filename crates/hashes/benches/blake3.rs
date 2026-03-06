@@ -363,7 +363,7 @@ fn blake3_xof_phase_split(c: &mut Criterion) {
           h
         },
         |h| {
-          drop(h);
+          black_box(h);
         },
         BatchSize::PerIteration,
       )
@@ -376,7 +376,7 @@ fn blake3_xof_phase_split(c: &mut Criterion) {
           h
         },
         |h| {
-          drop(h);
+          black_box(h);
         },
         BatchSize::PerIteration,
       )
