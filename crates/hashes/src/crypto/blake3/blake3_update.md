@@ -1435,3 +1435,62 @@ Optional tools only with a specific question they uniquely answer:
 ## Anti-Repeat Guardrails (2026-03-06)
 
 - Do not repeat finalize-time compact XOF/output materialization as a strategy (`Candidate BB`): it massively regresses `finalize-xof-only` and does not convert short-read XOF wins.
+
+### 2026-03-06 - Candidate BC (`1e5778d`, run `22791127078`)
+- Hypothesis:
+  - We were still paying too much fixed cost in the hot hasher object and on the single-chunk `finalize_xof()` path.
+  - Shrinking `Blake3` state and giving `finalize_xof()` a lazy single-chunk reader path would cut `new-only`, short streaming, and short-output XOF overhead without repeating finalize-time XOF materialization.
+- Change:
+  - `mod.rs`:
+    - removed persistent `bulk_kernel` from `Blake3` to shrink hot-state footprint,
+    - added a `SingleChunkXofState` / `Blake3XofInner` split,
+    - made `finalize_xof()` return a direct single-chunk reader when there is no tree state,
+    - deferred promotion to generic `OutputState` until the reader actually needed the generic path,
+    - avoided bulk-kernel selection on obviously in-chunk `update()` calls.
+  - Support cleanup:
+    - updated `kernel_test.rs` and `kernels.rs` for the removed field and cfg-clean builds.
+- Validation:
+  - Local: `cargo fmt --all` passed.
+  - Local: `cargo test -p hashes blake3 --lib` passed.
+  - Local: `cargo bench -p hashes --bench blake3 --no-run` passed.
+  - Local: `cargo clippy -p hashes --lib --tests -- -D warnings` passed.
+  - Local: `just check-all` passed.
+  - Local: `just test` passed.
+  - CI targeted bench run: `22791127078` (`crates=hashes`, `benches=blake3`,
+    `filter=blake3/xof-phase/,blake3/xof/,blake3/streaming/`, `quick=false`,
+    lanes: `amd-zen5`, `intel-icl`, `intel-spr`, `graviton3`, `graviton4`).
+  - Scope/commit check:
+    - workflow completed `success`,
+    - executed the intended candidate commit (valid run).
+- CI outcomes (time-based gap vs official; positive = slower):
+  - Aggregate scoped target surfaces (`xof-phase` + `xof` + `streaming`, 5 lanes): `28W / 172L`, avg gap `+49.75%`.
+  - `streaming/*`: `6W / 34L`, avg gap `+7.98%`.
+  - `xof/*`: `10W / 30L`, avg gap `+5.43%`.
+  - `xof-phase/*`: `12W / 108L`, avg gap `+78.45%`.
+  - Target clusters:
+    - `streaming 64..1024B chunks`: `0W / 25L`, avg gap `+8.93%`.
+    - `xof init+read/*-in/32B-out`: `5W / 15L`, avg gap `+6.43%`.
+    - `xof init+read/*-in/1024B-out`: `5W / 15L`, avg gap `+4.44%`.
+  - XOF phase attribution:
+    - `finalize-xof-only`: `0W / 20L`, avg gap `+308.91%`.
+    - `squeeze-32-only`: `0W / 20L`, avg gap `+26.17%`.
+    - `squeeze-1024-only`: `10W / 10L`, avg gap `-1.30%` (win).
+    - `new-only`: `0W / 20L`, avg gap `+112.83%`.
+    - `update-only`: `2W / 18L`, avg gap `+10.18%`.
+    - `drop-after-update-only`: `0W / 20L`, avg gap `+11.30%`.
+  - Notable behavior:
+    - `xof` improved meaningfully versus `Candidate BB`, and `squeeze-1024-only` flipped fully green.
+    - But the decisive blockers remained:
+      - short streaming stayed all-loss,
+      - short-output XOF stayed net-loss,
+      - `finalize-xof-only` remained catastrophically slower on every lane,
+      - `new-only` stayed heavily red.
+- Decision:
+  - Reject and revert.
+  - This candidate proved the lazy single-chunk reader idea has some value on longer XOF reads, but it does not solve the actual problem.
+  - The architecture is still paying too much fixed setup cost before any useful streaming/XOF work happens.
+
+## Anti-Repeat Guardrails (2026-03-06, updated)
+
+- Do not repeat finalize-time compact XOF/output materialization as a strategy (`Candidate BB`): it massively regresses `finalize-xof-only` and does not convert short-read XOF wins.
+- Do not treat lazy single-chunk XOF reader promotion alone as the fix (`Candidate BC`): it helps long XOF squeezes, but short streaming, `new-only`, and `finalize-xof-only` remain structurally too expensive.
