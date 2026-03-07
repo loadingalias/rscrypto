@@ -1339,3 +1339,46 @@ Optional tools only with a specific question they uniquely answer:
 - Decision:
   - Reject and revert.
   - The candidate improves one internal hotspot (exact-boundary finalize) but remains all-loss on targeted surfaces and does not close short-output XOF competitiveness.
+
+### 2026-03-06 - Candidate BA (`539d0de`, fixup `ab1bf11`)
+- Hypothesis:
+  - Short XOF reads still spend too much time materializing a one-block output through the generic multi-block path.
+  - Small streaming updates that remain within the current chunk still pay avoidable `update_with` admission overhead.
+- Change:
+  - `mod.rs` only:
+    - added `OutputState::root_output_block(output_block_counter)` for direct single-block XOF emission,
+    - switched `Blake3Xof::fill_one_block` to use that helper instead of going through `root_output_blocks_into`,
+    - restored a narrow `Digest::update` fast path for inputs that fit in the current chunk and have no pending subtree/CV state.
+  - Follow-up fixup commit `ab1bf11` moved `// SAFETY:` comments to the exact locations Clippy requires.
+  - No dispatch-table changes, no kernel selection retuning, no API changes.
+- Validation:
+  - Local: `cargo fmt --all` passed.
+  - Local: `cargo test -p hashes blake3 --lib` passed (`20/20`).
+  - Local: `cargo bench -p hashes --bench blake3 --no-run` passed.
+  - Local quick signal (Apple M1): slight movement in the right direction for `streaming/64B-chunks`, but short XOF phase remained mixed and not decision-grade.
+  - CI targeted bench run: `22780800112` (`crates=hashes`, `benches=blake3`,
+    `filter=blake3/xof-phase/,blake3/xof/,blake3/streaming/`, `quick=false`,
+    lanes: `amd-zen5`, `intel-icl`, `intel-spr`, `graviton3`, `graviton4`).
+  - Scope/commit check:
+    - workflow completed `success`,
+    - executed commit `539d0dec80ed6fd2ffd7627d652d07be9cc79e07` (valid run).
+- CI outcomes (time-based gap vs official; positive = slower):
+  - Aggregate target API surfaces (`xof` + `streaming`, 5 lanes): `10W / 70L`, avg gap `+10.51%`.
+  - `streaming/*`: `6W / 34L`, avg gap `+8.53%`.
+  - `xof/*`: `4W / 36L`, avg gap `+12.49%`.
+  - Lane aggregates (`xof` + `streaming`):
+    - `amd-zen5`: `0W / 16L`, avg `+15.37%`.
+    - `intel-icl`: `0W / 16L`, avg `+14.25%`.
+    - `intel-spr`: `0W / 16L`, avg `+17.09%`.
+    - `graviton3`: `5W / 11L`, avg `+3.31%`.
+    - `graviton4`: `5W / 11L`, avg `+2.52%`.
+  - Target-cluster check:
+    - `xof init+read/*-in/32B-out`: `2W / 18L`, avg gap `+15.42%`.
+    - `streaming 64..1024B chunks`: `0W / 25L`, avg gap `+9.72%`.
+  - Attribution signal:
+    - `xof-phase` remained dominated by fixed-cost reader/setup overhead on x86.
+    - The direct one-block helper did not materially close `squeeze-32-only`, and the restored in-chunk update fast path did not convert the short streaming cluster.
+- Decision:
+  - Reject and revert.
+  - This candidate is directionally less bad than several earlier failures, but it is still not competitive where we need it to be.
+  - The decisive blocker is unchanged: x86 lanes remain all-loss, short streaming is still `0W / 25L`, and short-output XOF remains overwhelmingly red.
