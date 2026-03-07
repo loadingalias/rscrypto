@@ -511,10 +511,9 @@ pub(crate) fn parent_cvs_many_from_bytes_inline(
     }
     #[cfg(target_arch = "x86_64")]
     Blake3KernelId::X86Avx512 => {
-      let parent_flags = PARENT | flags;
-
       #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
       {
+        let parent_flags = PARENT | flags;
         const DEGREE: usize = 16;
         debug_assert!(parent_flags <= u8::MAX as u32);
         reduce_parent_blocks_lanes::<DEGREE, _, _, _>(
@@ -593,6 +592,7 @@ pub(crate) fn parent_cvs_many_from_bytes_inline(
 
           #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
           {
+            let _ = rem;
             // SAFETY: AVX2 is available for this wrapper; pointers and outputs are valid.
             unsafe {
               super::x86_64::avx2::hash8(
