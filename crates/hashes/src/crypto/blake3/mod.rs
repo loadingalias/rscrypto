@@ -50,8 +50,9 @@ const OUTPUT_BLOCK_LEN: usize = 2 * OUT_LEN;
 //
 // BLAKE3 chunk size is 1024 bytes. If we cap the total input length at `u64`
 // bytes, then the maximum number of chunks is `2^64 / 2^10 = 2^54`, i.e. a
-// 54-level binary reduction tree.
-const CV_STACK_LEN: usize = 54;
+// 54-level binary reduction tree. The streaming hasher uses upstream-style lazy
+// merging, so it needs one extra slot for the newest unmerged subtree.
+const CV_STACK_LEN: usize = 55;
 
 type CvBytes = [u8; OUT_LEN];
 
@@ -1141,6 +1142,7 @@ fn reduce_power_of_two_chunk_cvs(kernel: Kernel, key_words: [u32; 8], flags: u32
   cur[0]
 }
 
+#[cfg(not(target_endian = "little"))]
 #[inline]
 fn reduce_power_of_two_chunk_cvs_bytes(kernel: Kernel, key_words: [u32; 8], flags: u32, cvs: &[CvBytes]) -> CvBytes {
   debug_assert!(cvs.len().is_power_of_two());
@@ -1327,6 +1329,7 @@ fn add_chunk_cvs_batched(
   }
 }
 
+#[cfg(not(target_endian = "little"))]
 #[inline]
 fn add_chunk_cvs_batched_bytes(
   kernel: Kernel,
@@ -2677,7 +2680,6 @@ fn root_output_oneshot(
   output
 }
 
-#[cfg(feature = "std")]
 #[inline]
 fn hash_one_full_chunk_cv(
   kernel: Kernel,
@@ -2796,19 +2798,124 @@ fn digest_public_oneshot(key_words: [u32; 8], flags: u32, input: &[u8]) -> [u8; 
 }
 
 #[derive(Clone)]
+struct SerialHasherState {
+  key_words: [u32; 8],
+  chunk_state: ChunkState,
+  cv_stack: [MaybeUninit<[u32; 8]>; CV_STACK_LEN],
+  cv_stack_len: u8,
+  flags: u32,
+}
+
+impl SerialHasherState {
+  #[inline]
+  fn new(key_words: [u32; 8], flags: u32, kernel: Kernel) -> Self {
+    Self {
+      key_words,
+      chunk_state: ChunkState::new(key_words, 0, flags, kernel),
+      cv_stack: uninit_cv_stack(),
+      cv_stack_len: 0,
+      flags,
+    }
+  }
+
+  #[inline]
+  fn kernel(&self) -> Kernel {
+    self.chunk_state.kernel
+  }
+
+  #[inline]
+  fn set_kernel(&mut self, kernel: Kernel) {
+    self.chunk_state.kernel = kernel;
+  }
+
+  #[inline]
+  fn chunk_len(&self) -> usize {
+    self.chunk_state.len()
+  }
+
+  #[inline]
+  fn push_stack(&mut self, cv: [u32; 8]) {
+    self.cv_stack[self.cv_stack_len as usize].write(cv);
+    self.cv_stack_len = self.cv_stack_len.wrapping_add(1);
+  }
+
+  #[inline]
+  fn pop_stack(&mut self) -> [u32; 8] {
+    self.cv_stack_len = self.cv_stack_len.wrapping_sub(1);
+    // SAFETY: `cv_stack_len` tracks the number of initialized entries.
+    unsafe { self.cv_stack[self.cv_stack_len as usize].assume_init_read() }
+  }
+
+  fn merge_cv_stack(&mut self, chunk_counter: u64) {
+    let post_merge_stack_len = chunk_counter.count_ones() as usize;
+    while self.cv_stack_len as usize > post_merge_stack_len {
+      let right_child = self.pop_stack();
+      let left_child = self.pop_stack();
+      let parent_cv = kernels::parent_cv_inline(self.kernel().id, left_child, right_child, self.key_words, self.flags);
+      self.push_stack(parent_cv);
+    }
+  }
+
+  #[inline]
+  fn push_cv(&mut self, new_cv: [u32; 8], chunk_counter: u64) {
+    self.merge_cv_stack(chunk_counter);
+    self.push_stack(new_cv);
+  }
+
+  #[inline]
+  fn final_output(&self) -> OutputState {
+    if self.cv_stack_len == 0 {
+      debug_assert_eq!(self.chunk_state.chunk_counter, 0);
+      return self.chunk_state.output();
+    }
+
+    let mut output: OutputState;
+    let mut num_cvs_remaining = self.cv_stack_len as usize;
+    if self.chunk_state.len() > 0 {
+      debug_assert_eq!(
+        self.cv_stack_len as usize,
+        self.chunk_state.chunk_counter.count_ones() as usize,
+        "cv stack does not need a merge"
+      );
+      output = self.chunk_state.output();
+    } else {
+      debug_assert!(num_cvs_remaining >= 2);
+      output = parent_output(
+        self.kernel(),
+        // SAFETY: `cv_stack_len` tracks the number of initialized entries.
+        unsafe { *self.cv_stack[num_cvs_remaining - 2].assume_init_ref() },
+        // SAFETY: `cv_stack_len` tracks the number of initialized entries.
+        unsafe { *self.cv_stack[num_cvs_remaining - 1].assume_init_ref() },
+        self.key_words,
+        self.flags,
+      );
+      num_cvs_remaining -= 2;
+    }
+
+    while num_cvs_remaining > 0 {
+      output = parent_output(
+        self.kernel(),
+        // SAFETY: `cv_stack_len` tracks the number of initialized entries.
+        unsafe { *self.cv_stack[num_cvs_remaining - 1].assume_init_ref() },
+        output.chaining_value(),
+        self.key_words,
+        self.flags,
+      );
+      num_cvs_remaining -= 1;
+    }
+
+    output
+  }
+}
+
+#[derive(Clone)]
 pub struct Blake3 {
   #[cfg(feature = "std")]
   dispatch_plan: &'static dispatch::HasherDispatch,
   #[cfg(not(feature = "std"))]
   dispatch_plan: dispatch::HasherDispatch,
-  kernel: Kernel,
   bulk_kernel: Kernel,
-  chunk_state: ChunkState,
-  pending_chunk_cv: Option<[u32; 8]>,
-  key_words: [u32; 8],
-  cv_stack: [MaybeUninit<[u32; 8]>; CV_STACK_LEN],
-  cv_stack_len: u8,
-  flags: u32,
+  serial: SerialHasherState,
 }
 
 #[cfg(feature = "std")]
@@ -3203,14 +3310,8 @@ impl Blake3 {
     let dispatch_plan = dispatch::hasher_dispatch();
     Self {
       dispatch_plan,
-      kernel,
       bulk_kernel: kernel,
-      chunk_state: ChunkState::new(key_words, 0, flags, kernel),
-      pending_chunk_cv: None,
-      key_words,
-      cv_stack: uninit_cv_stack(),
-      cv_stack_len: 0,
-      flags,
+      serial: SerialHasherState::new(key_words, flags, kernel),
     }
   }
 
@@ -3223,7 +3324,7 @@ impl Blake3 {
     commit_full_chunks: usize,
   ) -> Option<usize> {
     let (policy, mode) = if let Some(override_policy) = parallel_override() {
-      let mode = match self.flags {
+      let mode = match self.serial.flags {
         0 => ParallelPolicyKind::Update,
         KEYED_HASH => ParallelPolicyKind::KeyedUpdate,
         DERIVE_KEY_MATERIAL => ParallelPolicyKind::DeriveUpdate,
@@ -3246,25 +3347,11 @@ impl Blake3 {
   #[cold]
   #[inline(never)]
   fn commit_parallel_batch(&mut self, batch: ParallelBatchSpec<'_>, scratch: &mut ParallelBatchScratch) {
-    #[inline]
-    fn push_stack(stack: &mut [MaybeUninit<[u32; 8]>; CV_STACK_LEN], len: &mut usize, cv: [u32; 8]) {
-      stack[*len].write(cv);
-      *len += 1;
-    }
-
-    #[inline]
-    fn pop_stack(stack: &mut [MaybeUninit<[u32; 8]>; CV_STACK_LEN], len: &mut usize) -> [u32; 8] {
-      *len -= 1;
-      // SAFETY: `len` tracks the number of initialized entries.
-      unsafe { stack[*len].assume_init_read() }
-    }
-
     let batch_input = batch.input;
     let base_counter = batch.base_counter;
     let commit = batch.commit_chunks;
     let threads = batch.threads;
 
-    let mut stack_len = self.cv_stack_len as usize;
     let mut counter = base_counter;
     let mut offset_chunks = 0usize;
     let mut remaining_commit = commit;
@@ -3309,8 +3396,8 @@ impl Blake3 {
         scratch.roots.resize(roots_len, [0u32; 8]);
         hash_power_of_two_subtree_roots_parallel_rayon(SubtreeRootsRequest {
           kernel: self.bulk_kernel,
-          key_words: self.key_words,
-          flags: self.flags,
+          key_words: self.serial.key_words,
+          flags: self.serial.flags,
           base_counter: counter,
           input: subtree_input,
           subtree_chunks,
@@ -3318,55 +3405,50 @@ impl Blake3 {
           threads_total: threads,
         });
 
-        reduce_power_of_two_chunk_cvs_any(self.bulk_kernel, self.key_words, self.flags, &scratch.roots, threads)
+        reduce_power_of_two_chunk_cvs_any(
+          self.bulk_kernel,
+          self.serial.key_words,
+          self.serial.flags,
+          &scratch.roots,
+          threads,
+        )
       } else {
         scratch.leaf_cvs.resize(size, [0u32; 8]);
         hash_full_chunks_cvs_scoped(
           self.bulk_kernel,
-          self.key_words,
-          self.flags,
+          self.serial.key_words,
+          self.serial.flags,
           counter,
           subtree_input,
           &mut scratch.leaf_cvs,
           threads,
         );
-        reduce_power_of_two_chunk_cvs_any(self.bulk_kernel, self.key_words, self.flags, &scratch.leaf_cvs, threads)
+        reduce_power_of_two_chunk_cvs_any(
+          self.bulk_kernel,
+          self.serial.key_words,
+          self.serial.flags,
+          &scratch.leaf_cvs,
+          threads,
+        )
       };
 
+      self.serial.push_cv(subtree_cv, counter);
       counter = counter.wrapping_add(size as u64);
-      let level = size.trailing_zeros();
-      let mut total = counter >> level;
-      let mut cv = subtree_cv;
-      while total & 1 == 0 {
-        cv = kernels::parent_cv_inline(
-          self.bulk_kernel.id,
-          pop_stack(&mut self.cv_stack, &mut stack_len),
-          cv,
-          self.key_words,
-          self.flags,
-        );
-        total >>= 1;
-      }
-      push_stack(&mut self.cv_stack, &mut stack_len, cv);
-
       offset_chunks += size;
       remaining_commit -= size;
     }
 
-    self.cv_stack_len = stack_len as u8;
-
-    let new_counter = base_counter + batch.batch_chunks as u64;
-    self.chunk_state = ChunkState::new(self.key_words, new_counter, self.flags, self.kernel);
     if batch.keep_last_full_chunk {
       let last_chunk_idx = batch.batch_chunks - 1;
       let last = &batch_input[last_chunk_idx * CHUNK_LEN..batch.batch_chunks * CHUNK_LEN];
-      self.pending_chunk_cv = Some(hash_one_full_chunk_cv(
-        self.bulk_kernel,
-        self.key_words,
-        self.flags,
-        new_counter - 1,
-        last,
-      ));
+      self.set_terminal_chunk_state(base_counter + last_chunk_idx as u64, last);
+    } else {
+      self.serial.chunk_state = ChunkState::new(
+        self.serial.key_words,
+        base_counter + batch.batch_chunks as u64,
+        self.serial.flags,
+        self.serial.kernel(),
+      );
     }
   }
 
@@ -3381,7 +3463,7 @@ impl Blake3 {
     // traffic, while preserving the canonical BLAKE3 tree shape.
     const MAX_PASS_CHUNKS: usize = 1 << 16; // 64 MiB input per pass
 
-    if self.chunk_state.len() != 0 || input.len() <= CHUNK_LEN {
+    if self.serial.chunk_len() != 0 || input.len() <= CHUNK_LEN {
       return None;
     }
     let full_chunks = input.len() / CHUNK_LEN;
@@ -3390,7 +3472,7 @@ impl Blake3 {
     }
 
     let batch = core::cmp::min(full_chunks, MAX_PASS_CHUNKS);
-    let base_counter = self.chunk_state.chunk_counter;
+    let base_counter = self.serial.chunk_state.chunk_counter;
 
     let keep_last_full_chunk = input.len().is_multiple_of(CHUNK_LEN) && batch == full_chunks;
     let commit = if keep_last_full_chunk { batch - 1 } else { batch };
@@ -3420,7 +3502,7 @@ impl Blake3 {
 
   #[inline(never)]
   fn try_simd_update_batch(&mut self, input: &[u8]) -> Option<usize> {
-    if self.chunk_state.len() != 0 || self.bulk_kernel.simd_degree <= 1 || input.len() <= CHUNK_LEN {
+    if self.serial.chunk_len() != 0 || self.bulk_kernel.simd_degree <= 1 || input.len() <= CHUNK_LEN {
       return None;
     }
 
@@ -3436,7 +3518,7 @@ impl Blake3 {
     }
 
     let mut out_buf = [0u8; OUT_LEN * MAX_SIMD_DEGREE];
-    let base_counter = self.chunk_state.chunk_counter;
+    let base_counter = self.serial.chunk_state.chunk_counter;
     // SAFETY: `input` has at least `batch * CHUNK_LEN` bytes, `out_buf`
     // has at least `batch * OUT_LEN` bytes, and this kernel was selected
     // only when its required CPU features are available.
@@ -3444,9 +3526,9 @@ impl Blake3 {
       (self.bulk_kernel.hash_many_contiguous)(
         input.as_ptr(),
         batch,
-        &self.key_words,
+        &self.serial.key_words,
         base_counter,
-        self.flags,
+        self.serial.flags,
         out_buf.as_mut_ptr(),
       )
     };
@@ -3458,70 +3540,75 @@ impl Blake3 {
       // `commit <= batch <= MAX_SIMD_DEGREE`.
       let cvs_bytes: &[[u8; OUT_LEN]] =
         unsafe { slice::from_raw_parts(out_buf.as_ptr().cast::<[u8; OUT_LEN]>(), commit) };
-      let mut stack_len = self.cv_stack_len as usize;
-      add_chunk_cvs_batched_bytes(
-        self.bulk_kernel,
-        &mut self.cv_stack,
-        &mut stack_len,
-        base_counter,
-        cvs_bytes,
-        self.key_words,
-        self.flags,
-      );
-      self.cv_stack_len = stack_len as u8;
+      for (i, cv_bytes) in cvs_bytes.iter().enumerate() {
+        self
+          .serial
+          .push_cv(words8_from_le_bytes_32(cv_bytes), base_counter + i as u64);
+      }
     }
 
-    let new_counter = base_counter + batch as u64;
-    self.chunk_state = ChunkState::new(self.key_words, new_counter, self.flags, self.kernel);
     if keep_last_full_chunk {
-      let offset = (batch - 1) * OUT_LEN;
-      // SAFETY: `out_buf` is `OUT_LEN * MAX_SIMD_DEGREE`, and `offset`
-      // is `(batch - 1) * OUT_LEN` with `batch <= MAX_SIMD_DEGREE`.
-      let cv = unsafe { words8_from_le_bytes_32(&*(out_buf.as_ptr().add(offset) as *const [u8; OUT_LEN])) };
-      self.pending_chunk_cv = Some(cv);
+      let last = &input[(batch - 1) * CHUNK_LEN..batch * CHUNK_LEN];
+      self.set_terminal_chunk_state(base_counter + (batch - 1) as u64, last);
+    } else {
+      self.serial.chunk_state = ChunkState::new(
+        self.serial.key_words,
+        base_counter + batch as u64,
+        self.serial.flags,
+        self.serial.kernel(),
+      );
     }
 
     Some(batch * CHUNK_LEN)
   }
 
-  fn update_with(&mut self, mut input: &[u8], stream_kernel: Kernel, bulk_kernel: Kernel) {
-    self.kernel = stream_kernel;
-    self.bulk_kernel = bulk_kernel;
-    self.chunk_state.kernel = stream_kernel;
+  #[inline]
+  fn set_terminal_chunk_state(&mut self, chunk_counter: u64, chunk: &[u8]) {
+    debug_assert_eq!(chunk.len(), CHUNK_LEN);
+    self.serial.chunk_state = ChunkState::new(
+      self.serial.key_words,
+      chunk_counter,
+      self.serial.flags,
+      self.serial.kernel(),
+    );
+    self.serial.chunk_state.update(chunk);
+    self.serial.merge_cv_stack(chunk_counter);
+    debug_assert_eq!(self.serial.chunk_state.len(), CHUNK_LEN);
+  }
 
-    // If the previous update ended exactly on a chunk boundary, we may have
-    // stored the last full chunk's CV instead of keeping a fully-buffered
-    // `ChunkState`. As soon as more input arrives, that chunk is no longer
-    // terminal and can be committed to the tree.
-    if !input.is_empty()
-      && let Some(cv) = self.pending_chunk_cv.take()
-    {
-      let total_chunks = self.chunk_state.chunk_counter;
-      self.add_chunk_chaining_value(cv, total_chunks);
+  fn update_with(&mut self, mut input: &[u8], stream_kernel: Kernel, bulk_kernel: Kernel) {
+    self.bulk_kernel = bulk_kernel;
+    self.serial.set_kernel(stream_kernel);
+
+    // Finish a partial chunk first. If that completes the chunk and more input
+    // remains, we now know the completed chunk is not the root.
+    if self.serial.chunk_len() > 0 {
+      let want = CHUNK_LEN - self.serial.chunk_len();
+      let take = min(want, input.len());
+      self.serial.chunk_state.update(&input[..take]);
+      input = &input[take..];
+      if !input.is_empty() {
+        debug_assert_eq!(self.serial.chunk_len(), CHUNK_LEN);
+        let chunk_counter = self.serial.chunk_state.chunk_counter;
+        let chunk_cv = self.serial.chunk_state.output().chaining_value();
+        self.serial.push_cv(chunk_cv, chunk_counter);
+        self.serial.chunk_state = ChunkState::new(
+          self.serial.key_words,
+          chunk_counter + 1,
+          self.serial.flags,
+          stream_kernel,
+        );
+      } else {
+        return;
+      }
     }
 
-    // When we're at a chunk boundary and we have more than one whole chunk
-    // available, use the kernel's multi-chunk primitive to hash whole chunks
-    // directly and feed their chaining values into the tree.
-    //
-    // Important: we always leave at least one full chunk (or partial) to be
-    // processed by `ChunkState::update`, so that the streaming state retains
-    // the "buffer the last block" invariant needed when the caller stops at
-    // a block boundary and later calls `finalize`.
-    while !input.is_empty() {
-      if self.chunk_state.len() == CHUNK_LEN {
-        let chunk_cv = self.chunk_state.output().chaining_value();
-        let total_chunks = self.chunk_state.chunk_counter + 1;
-        self.add_chunk_chaining_value(chunk_cv, total_chunks);
-        self.chunk_state = ChunkState::new(self.key_words, total_chunks, self.flags, self.kernel);
-      }
+    while input.len() > CHUNK_LEN {
+      debug_assert_eq!(self.serial.chunk_len(), 0);
 
       #[cfg(feature = "std")]
       {
-        if self.chunk_state.len() == 0
-          && input.len() > CHUNK_LEN
-          && let Some(consumed) = self.try_parallel_update_batch(input)
-        {
+        if let Some(consumed) = self.try_parallel_update_batch(input) {
           input = &input[consumed..];
           continue;
         }
@@ -3532,10 +3619,27 @@ impl Blake3 {
         continue;
       }
 
-      let want = CHUNK_LEN - self.chunk_state.len();
-      let take = min(want, input.len());
-      self.chunk_state.update(&input[..take]);
-      input = &input[take..];
+      let chunk_counter = self.serial.chunk_state.chunk_counter;
+      let chunk_cv = hash_one_full_chunk_cv(
+        self.bulk_kernel,
+        self.serial.key_words,
+        self.serial.flags,
+        chunk_counter,
+        &input[..CHUNK_LEN],
+      );
+      self.serial.push_cv(chunk_cv, chunk_counter);
+      self.serial.chunk_state = ChunkState::new(
+        self.serial.key_words,
+        chunk_counter + 1,
+        self.serial.flags,
+        stream_kernel,
+      );
+      input = &input[CHUNK_LEN..];
+    }
+
+    if !input.is_empty() {
+      self.serial.chunk_state.update(input);
+      self.serial.merge_cv_stack(self.serial.chunk_state.chunk_counter);
     }
   }
 
@@ -3562,56 +3666,11 @@ impl Blake3 {
     Self::new_internal(key_words, DERIVE_KEY_MATERIAL)
   }
 
-  #[inline]
-  fn push_stack(&mut self, cv: [u32; 8]) {
-    self.cv_stack[self.cv_stack_len as usize].write(cv);
-    self.cv_stack_len = self.cv_stack_len.wrapping_add(1);
-  }
-
-  #[inline]
-  fn pop_stack(&mut self) -> [u32; 8] {
-    self.cv_stack_len = self.cv_stack_len.wrapping_sub(1);
-    // SAFETY: `cv_stack_len` tracks the number of initialized entries.
-    unsafe { self.cv_stack[self.cv_stack_len as usize].assume_init_read() }
-  }
-
-  fn add_chunk_chaining_value(&mut self, mut new_cv: [u32; 8], mut total_chunks: u64) {
-    while total_chunks & 1 == 0 {
-      new_cv = kernels::parent_cv_inline(self.kernel.id, self.pop_stack(), new_cv, self.key_words, self.flags);
-      total_chunks >>= 1;
-    }
-    self.push_stack(new_cv);
-  }
-
-  fn root_output(&self) -> OutputState {
-    let mut parent_nodes_remaining = self.cv_stack_len as usize;
-    let mut output = if let Some(right_cv) = self.pending_chunk_cv {
-      debug_assert!(
-        parent_nodes_remaining > 0,
-        "pending full chunk implies multi-chunk input"
-      );
-      parent_nodes_remaining -= 1;
-      // SAFETY: `cv_stack_len` tracks the number of initialized entries.
-      let left = unsafe { *self.cv_stack[parent_nodes_remaining].assume_init_ref() };
-      parent_output(self.kernel, left, right_cv, self.key_words, self.flags)
-    } else {
-      self.chunk_state.output()
-    };
-
-    while parent_nodes_remaining > 0 {
-      parent_nodes_remaining -= 1;
-      // SAFETY: `cv_stack_len` tracks the number of initialized entries.
-      let left = unsafe { *self.cv_stack[parent_nodes_remaining].assume_init_ref() };
-      output = parent_output(self.kernel, left, output.chaining_value(), self.key_words, self.flags);
-    }
-    output
-  }
-
   /// Finalize into an extendable output state (XOF).
   #[must_use]
   #[inline]
   pub fn finalize_xof(&self) -> Blake3Xof {
-    Blake3Xof::new(self.root_output())
+    Blake3Xof::new(self.serial.final_output())
   }
 
   /// Finalize into an extendable output state (XOF) with a size hint.
@@ -3672,49 +3731,60 @@ impl Digest for Blake3 {
     // Single-chunk fast path: compute root bytes directly from the current
     // chunk tail. This avoids OutputState construction and bytes<->words
     // conversion on short streaming finalization.
-    if self.chunk_state.chunk_counter == 0 && self.cv_stack_len == 0 && self.pending_chunk_cv.is_none() {
-      let block_len = self.chunk_state.block_len as usize;
+    if self.serial.chunk_state.chunk_counter == 0 && self.serial.cv_stack_len == 0 {
+      let block_len = self.serial.chunk_state.block_len as usize;
 
-      let add_chunk_start = self.chunk_state.blocks_compressed == 0;
-      let cv = self.chunk_state.chaining_value;
+      let add_chunk_start = self.serial.chunk_state.blocks_compressed == 0;
+      let cv = self.serial.chunk_state.chaining_value;
 
       if block_len == BLOCK_LEN {
         let out_words = compress_chunk_tail_to_root_words(
-          self.kernel,
+          self.serial.kernel(),
           cv,
-          &self.chunk_state.block,
+          &self.serial.chunk_state.block,
           block_len,
-          self.flags,
+          self.serial.flags,
           add_chunk_start,
         );
         return words8_to_le_bytes(&out_words);
       }
 
-      let mut block = self.chunk_state.block;
+      let mut block = self.serial.chunk_state.block;
       block[block_len..].fill(0);
-      let out_words =
-        compress_chunk_tail_to_root_words(self.kernel, cv, &block, block_len, self.flags, add_chunk_start);
+      let out_words = compress_chunk_tail_to_root_words(
+        self.serial.kernel(),
+        cv,
+        &block,
+        block_len,
+        self.serial.flags,
+        add_chunk_start,
+      );
       return words8_to_le_bytes(&out_words);
     }
 
     // If the caller never provided any input (or only provided empty updates),
     // we still want to use the tuned streaming kernel rather than staying
     // pinned to the portable default.
-    let output = if self.chunk_state.chunk_counter == 0
-      && self.chunk_state.len() == 0
-      && self.cv_stack_len == 0
-      && self.pending_chunk_cv.is_none()
+    let output = if self.serial.chunk_state.chunk_counter == 0
+      && self.serial.chunk_state.len() == 0
+      && self.serial.cv_stack_len == 0
     {
-      single_chunk_output(self.dispatch_plan.stream_kernel(), self.key_words, 0, self.flags, &[])
+      single_chunk_output(
+        self.dispatch_plan.stream_kernel(),
+        self.serial.key_words,
+        0,
+        self.serial.flags,
+        &[],
+      )
     } else {
-      self.root_output()
+      self.serial.final_output()
     };
     output.root_hash_bytes()
   }
 
   #[inline]
   fn reset(&mut self) {
-    *self = Self::new_internal(self.key_words, self.flags);
+    *self = Self::new_internal(self.serial.key_words, self.serial.flags);
   }
 }
 
@@ -4314,6 +4384,39 @@ mod tests {
           expected_derive,
           "derive streaming mismatch len={len} split={split}"
         );
+      }
+    }
+  }
+
+  #[test]
+  fn repeated_short_updates_match_official_digest_and_xof_32b() {
+    let lens = [0usize, 1, 63, 64, 65, 127, 255, 1024, 1025, 4096 + 17];
+    let splits = [1usize, 2, 3, 5, 7, 13, 31, 32, 63, 64, 255, 1024];
+
+    for &len in &lens {
+      let input = input_pattern(len);
+      let expected_digest = *blake3::hash(&input).as_bytes();
+      let expected_xof_32 = {
+        let mut h = blake3::Hasher::new();
+        h.update(&input);
+        let mut reader = h.finalize_xof();
+        let mut out = [0u8; 32];
+        reader.fill(&mut out);
+        out
+      };
+
+      for &split in &splits {
+        let mut h = Blake3::new();
+        for chunk in input.chunks(split) {
+          h.update(chunk);
+        }
+
+        assert_eq!(h.finalize(), expected_digest, "digest mismatch len={len} split={split}");
+
+        let mut xof = h.finalize_xof();
+        let mut out = [0u8; 32];
+        xof.squeeze(&mut out);
+        assert_eq!(out, expected_xof_32, "xof-32 mismatch len={len} split={split}");
       }
     }
   }
