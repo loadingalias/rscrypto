@@ -1702,11 +1702,10 @@ fn root_output_oneshot_join_parallel(
 
   let parent_block =
     compress_subtree_to_parent_node_bytes::<join::RayonJoin>(kernel, key_words, 0, flags, input, budget);
-  let block_words = words16_from_le_bytes_64(&parent_block);
   OutputState {
     kernel,
     input_chaining_value: key_words,
-    block_words,
+    block: parent_block,
     counter: 0,
     block_len: BLOCK_LEN as u32,
     flags: PARENT | flags,
@@ -1755,7 +1754,7 @@ fn words16_to_le_bytes(words: &[u32; 16]) -> [u8; 2 * OUT_LEN] {
 struct OutputState {
   kernel: Kernel,
   input_chaining_value: [u32; 8],
-  block_words: [u32; 16],
+  block: [u8; BLOCK_LEN],
   counter: u64,
   block_len: u32,
   flags: u32,
@@ -1763,10 +1762,16 @@ struct OutputState {
 
 impl OutputState {
   #[inline]
+  fn block_words(&self) -> [u32; 16] {
+    words16_from_le_bytes_64(&self.block)
+  }
+
+  #[inline]
   fn chaining_value(&self) -> [u32; 8] {
+    let block_words = self.block_words();
     first_8_words((self.kernel.compress)(
       &self.input_chaining_value,
-      &self.block_words,
+      &block_words,
       self.counter,
       self.block_len,
       self.flags,
@@ -1775,9 +1780,10 @@ impl OutputState {
 
   #[inline]
   fn root_hash_words(&self) -> [u32; 8] {
+    let block_words = self.block_words();
     first_8_words((self.kernel.compress)(
       &self.input_chaining_value,
-      &self.block_words,
+      &block_words,
       0,
       self.block_len,
       self.flags | ROOT,
@@ -1790,9 +1796,17 @@ impl OutputState {
   }
 
   #[inline]
+  fn root_output_block(&self, output_block_counter: u64) -> [u8; OUTPUT_BLOCK_LEN] {
+    let mut block = [0u8; OUTPUT_BLOCK_LEN];
+    self.root_output_blocks_into(output_block_counter, &mut block);
+    block
+  }
+
+  #[inline]
   fn root_output_blocks_into(&self, mut output_block_counter: u64, mut out: &mut [u8]) {
     debug_assert!(out.len().is_multiple_of(OUTPUT_BLOCK_LEN));
     let flags = self.flags | ROOT;
+    let block_words = self.block_words();
 
     while !out.is_empty() {
       let blocks_remaining = out.len() / OUTPUT_BLOCK_LEN;
@@ -1808,7 +1822,7 @@ impl OutputState {
             unsafe {
               x86_64::avx512::root_output_blocks16(
                 &self.input_chaining_value,
-                &self.block_words,
+                &block_words,
                 output_block_counter,
                 self.block_len,
                 flags,
@@ -1825,7 +1839,7 @@ impl OutputState {
             unsafe {
               x86_64::avx2::root_output_blocks8(
                 &self.input_chaining_value,
-                &self.block_words,
+                &block_words,
                 output_block_counter,
                 self.block_len,
                 flags,
@@ -1842,7 +1856,7 @@ impl OutputState {
             unsafe {
               x86_64::sse41::root_output_blocks4(
                 &self.input_chaining_value,
-                &self.block_words,
+                &block_words,
                 output_block_counter,
                 self.block_len,
                 flags,
@@ -1859,7 +1873,7 @@ impl OutputState {
             unsafe {
               x86_64::avx512::root_output_blocks2(
                 &self.input_chaining_value,
-                &self.block_words,
+                &block_words,
                 output_block_counter,
                 self.block_len,
                 flags,
@@ -1876,7 +1890,7 @@ impl OutputState {
             unsafe {
               x86_64::avx512::root_output_blocks1(
                 &self.input_chaining_value,
-                &self.block_words,
+                &block_words,
                 output_block_counter,
                 self.block_len,
                 flags,
@@ -1893,7 +1907,7 @@ impl OutputState {
             unsafe {
               x86_64::avx2::root_output_blocks8(
                 &self.input_chaining_value,
-                &self.block_words,
+                &block_words,
                 output_block_counter,
                 self.block_len,
                 flags,
@@ -1910,7 +1924,7 @@ impl OutputState {
             unsafe {
               x86_64::sse41::root_output_blocks4(
                 &self.input_chaining_value,
-                &self.block_words,
+                &block_words,
                 output_block_counter,
                 self.block_len,
                 flags,
@@ -1926,7 +1940,7 @@ impl OutputState {
             unsafe {
               x86_64::avx2::root_output_blocks2(
                 &self.input_chaining_value,
-                &self.block_words,
+                &block_words,
                 output_block_counter,
                 self.block_len,
                 flags,
@@ -1942,7 +1956,7 @@ impl OutputState {
             unsafe {
               x86_64::avx2::root_output_blocks1(
                 &self.input_chaining_value,
-                &self.block_words,
+                &block_words,
                 output_block_counter,
                 self.block_len,
                 flags,
@@ -1959,7 +1973,7 @@ impl OutputState {
             unsafe {
               x86_64::sse41::root_output_blocks4(
                 &self.input_chaining_value,
-                &self.block_words,
+                &block_words,
                 output_block_counter,
                 self.block_len,
                 flags,
@@ -1975,7 +1989,7 @@ impl OutputState {
             unsafe {
               x86_64::sse41::root_output_blocks2(
                 &self.input_chaining_value,
-                &self.block_words,
+                &block_words,
                 output_block_counter,
                 self.block_len,
                 flags,
@@ -1991,7 +2005,7 @@ impl OutputState {
             unsafe {
               x86_64::sse41::root_output_blocks1(
                 &self.input_chaining_value,
-                &self.block_words,
+                &block_words,
                 output_block_counter,
                 self.block_len,
                 flags,
@@ -2014,7 +2028,7 @@ impl OutputState {
           unsafe {
             aarch64::root_output_blocks4_neon(
               &self.input_chaining_value,
-              &self.block_words,
+              &block_words,
               output_block_counter,
               self.block_len,
               flags,
@@ -2030,7 +2044,7 @@ impl OutputState {
       // Scalar fallback: generate one block at a time.
       let words = (self.kernel.compress)(
         &self.input_chaining_value,
-        &self.block_words,
+        &block_words,
         output_block_counter,
         self.block_len,
         flags,
@@ -2198,11 +2212,10 @@ impl ChunkState {
     if self.block_len as usize != BLOCK_LEN {
       block[self.block_len as usize..].fill(0);
     }
-    let block_words = words16_from_le_bytes_64(&block);
     OutputState {
       kernel: self.kernel,
       input_chaining_value: self.chaining_value,
-      block_words,
+      block,
       counter: self.chunk_counter,
       block_len: self.block_len as u32,
       flags: self.flags | self.start_flag() | CHUNK_END,
@@ -2218,13 +2231,13 @@ fn parent_output(
   key_words: [u32; 8],
   flags: u32,
 ) -> OutputState {
-  let mut block_words = [0u32; 16];
-  block_words[..8].copy_from_slice(&left_child_cv);
-  block_words[8..].copy_from_slice(&right_child_cv);
+  let mut block = [0u8; BLOCK_LEN];
+  block[..OUT_LEN].copy_from_slice(&words8_to_le_bytes(&left_child_cv));
+  block[OUT_LEN..].copy_from_slice(&words8_to_le_bytes(&right_child_cv));
   OutputState {
     kernel,
     input_chaining_value: key_words,
-    block_words,
+    block,
     counter: 0,
     block_len: BLOCK_LEN as u32,
     flags: PARENT | flags,
@@ -2264,11 +2277,10 @@ fn single_chunk_output(
         );
       }
 
-      let block_words = words16_from_le_bytes_64(&last_block);
       return OutputState {
         kernel,
         input_chaining_value: cv_words,
-        block_words,
+        block: last_block,
         counter: chunk_counter,
         block_len: BLOCK_LEN as u32,
         flags: flags | CHUNK_END,
@@ -2298,30 +2310,17 @@ fn single_chunk_output(
     &input[..full_bytes],
   );
 
-  let block_words = if cfg!(target_endian = "little") {
-    let mut out = [0u32; 16];
-    if !input.is_empty() {
-      let offset = full_blocks * BLOCK_LEN;
-      // SAFETY: `out` is 64 bytes, and `last_len <= 64`.
-      unsafe {
-        ptr::copy_nonoverlapping(input.as_ptr().add(offset), out.as_mut_ptr().cast::<u8>(), last_len);
-      }
-    }
-    out
-  } else {
-    let mut last_block = [0u8; BLOCK_LEN];
-    if !input.is_empty() {
-      let offset = full_blocks * BLOCK_LEN;
-      last_block[..last_len].copy_from_slice(&input[offset..offset + last_len]);
-    }
-    words16_from_le_bytes_64(&last_block)
-  };
+  let mut block = [0u8; BLOCK_LEN];
+  if !input.is_empty() {
+    let offset = full_blocks * BLOCK_LEN;
+    block[..last_len].copy_from_slice(&input[offset..offset + last_len]);
+  }
   let start = if blocks_compressed == 0 { CHUNK_START } else { 0 };
 
   OutputState {
     kernel,
     input_chaining_value: chaining_value,
-    block_words,
+    block,
     counter: chunk_counter,
     block_len: last_len as u32,
     flags: flags | start | CHUNK_END,
@@ -3214,6 +3213,36 @@ impl Blake3 {
     }
   }
 
+  #[inline]
+  fn commit_buffered_full_chunk(&mut self) {
+    debug_assert_eq!(self.chunk_state.len(), CHUNK_LEN);
+    let chunk_cv = self.chunk_state.output().chaining_value();
+    let total_chunks = self.chunk_state.chunk_counter + 1;
+    self.add_chunk_chaining_value(chunk_cv, total_chunks);
+    self.chunk_state = ChunkState::new(self.key_words, total_chunks, self.flags, self.kernel);
+  }
+
+  #[inline]
+  fn update_serial_short(&mut self, mut input: &[u8], stream_kernel: Kernel) {
+    debug_assert!(!input.is_empty());
+    debug_assert!(input.len() <= CHUNK_LEN);
+    debug_assert!(self.pending_chunk_cv.is_none());
+
+    self.kernel = stream_kernel;
+    self.chunk_state.kernel = stream_kernel;
+
+    while !input.is_empty() {
+      if self.chunk_state.len() == CHUNK_LEN {
+        self.commit_buffered_full_chunk();
+      }
+
+      let want = CHUNK_LEN - self.chunk_state.len();
+      let take = min(want, input.len());
+      self.chunk_state.update(&input[..take]);
+      input = &input[take..];
+    }
+  }
+
   #[cfg(feature = "std")]
   #[inline]
   fn streaming_parallel_threads(
@@ -3510,10 +3539,7 @@ impl Blake3 {
     // a block boundary and later calls `finalize`.
     while !input.is_empty() {
       if self.chunk_state.len() == CHUNK_LEN {
-        let chunk_cv = self.chunk_state.output().chaining_value();
-        let total_chunks = self.chunk_state.chunk_counter + 1;
-        self.add_chunk_chaining_value(chunk_cv, total_chunks);
-        self.chunk_state = ChunkState::new(self.key_words, total_chunks, self.flags, self.kernel);
+        self.commit_buffered_full_chunk();
       }
 
       #[cfg(feature = "std")]
@@ -3663,6 +3689,11 @@ impl Digest for Blake3 {
     }
 
     let stream = self.dispatch_plan.stream_kernel();
+    if self.pending_chunk_cv.is_none() && input.len() <= CHUNK_LEN {
+      self.update_serial_short(input, stream);
+      return;
+    }
+
     let bulk = self.dispatch_plan.bulk_kernel_for_update(input.len());
     self.update_with(input, stream, bulk);
   }
@@ -3737,8 +3768,7 @@ impl Blake3Xof {
 
   #[inline]
   fn fill_one_block(&mut self, out: &mut &mut [u8]) {
-    let mut block = [0u8; OUTPUT_BLOCK_LEN];
-    self.output.root_output_blocks_into(self.block_counter, &mut block);
+    let block = self.output.root_output_block(self.block_counter);
     let output_bytes = &block[self.position_within_block as usize..];
     let take = min(out.len(), output_bytes.len());
     out[..take].copy_from_slice(&output_bytes[..take]);

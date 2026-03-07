@@ -1554,3 +1554,22 @@ Optional tools only with a specific question they uniquely answer:
 - Do not repeat finalize-time compact XOF/output materialization as a strategy (`Candidate BB`): it massively regresses `finalize-xof-only` and does not convert short-read XOF wins.
 - Do not treat lazy single-chunk XOF reader promotion alone as the fix (`Candidate BC`): it helps long XOF squeezes, but short streaming, `new-only`, and `finalize-xof-only` remain structurally too expensive.
 - Do not expect hot-state shrinking and localized bulk dispatch alone to break through (`Candidate BD`): it helps `new-only`, `update-only`, and some XOF setup cost, but it does not fix `finalize_xof()` or short streaming.
+
+## 2026-03-07 Root-Cause Reset
+
+- We have been over-reading `xof-phase/update-only`.
+  - That benchmark measures exactly one `update()` call.
+  - The losing `blake3/streaming/64..1024B-chunks` surfaces measure thousands of repeated `update()` calls across 1 MiB.
+  - Improving one-call `update-only` is therefore necessary but not sufficient; it does not prove we have removed repeated-call control-path tax.
+- The kernels are not the main problem.
+  - `oneshot` remains strong.
+  - `squeeze-1024-only` is no longer the primary deficit.
+  - The remaining failures are fixed-cost serial-path overhead: `new-only`, repeated short `update()`, `finalize-xof-only`, and `init+read/*/32B-out`.
+- The architectural mismatch with upstream is still the core issue.
+  - Upstream serial BLAKE3 uses a very small `Hasher`, a direct `final_output()`, and a minimal `OutputReader`.
+  - Our historical candidates kept trying to optimize on top of a heavier streaming/XOF runtime shape.
+- Reset strategy:
+  - add repeated-update diagnostics so the actual short-streaming regime is measurable directly,
+  - move `OutputState` closer to upstream by storing raw block bytes rather than eager word materialization,
+  - keep long-read XOF throughput paths, but reduce `finalize_xof()` construction cost,
+  - cut repeated short `update()` control overhead with a dedicated serial short-input path instead of routing every chunk-boundary rollover through the generic batching logic.
