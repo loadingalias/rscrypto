@@ -1382,3 +1382,56 @@ Optional tools only with a specific question they uniquely answer:
   - Reject and revert.
   - This candidate is directionally less bad than several earlier failures, but it is still not competitive where we need it to be.
   - The decisive blocker is unchanged: x86 lanes remain all-loss, short streaming is still `0W / 25L`, and short-output XOF remains overwhelmingly red.
+
+### 2026-03-06 - Candidate BB (`ea0734c`, run `22789997965`)
+- Hypothesis:
+  - Our XOF reader/runtime shape was still too heavy compared with upstream.
+  - Moving XOF ownership onto a compact output object with its own counter, and materializing raw block bytes once, would reduce short-read overhead and improve `xof/streaming` without touching oneshot paths.
+- Change:
+  - `mod.rs` structural rewrite:
+    - introduced `XofOutputState` as a compact XOF/output holder,
+    - converted `Blake3Xof` to own that compact state directly,
+    - moved XOF counter ownership into the reader,
+    - routed short reads through `root_output_block()` and full-block reads through the compact bulk emitter,
+    - removed the old generic `OutputState` XOF block emission path from the hot reader flow.
+  - No dispatch-table changes and no kernel retuning.
+- Validation:
+  - Local: `just check-all` passed after fixing unrelated CRC64 aarch64 target-feature contracts and Blake3 clippy cleanup.
+  - Local: `just test` passed (`517/517`).
+  - CI targeted bench run: `22789997965` (`crates=hashes`, `benches=blake3`,
+    `filter=blake3/xof-phase/,blake3/xof/,blake3/streaming/`, `quick=false`,
+    lanes: `amd-zen5`, `intel-icl`, `intel-spr`, `graviton3`, `graviton4`).
+  - Scope/commit check:
+    - workflow completed `success`,
+    - executed the intended `main` candidate state (valid run).
+- CI outcomes (time-based gap vs official; positive = slower):
+  - Aggregate scoped target surfaces (`xof-phase` + `xof` + `streaming`, 5 lanes): `12W / 188L`, avg gap `+62.96%`.
+  - `streaming/*`: `6W / 34L`, avg gap `+8.86%`.
+  - `xof/*`: `4W / 36L`, avg gap `+18.71%`.
+  - `xof-phase/*`: `2W / 118L`, avg gap `+95.74%`.
+  - Target clusters:
+    - `streaming 64..1024B chunks`: `0W / 25L`, avg gap `+10.22%`.
+    - `xof init+read/*-in/32B-out`: `2W / 18L`, avg gap `+25.95%`.
+    - `xof init+read/*-in/1024B-out`: `2W / 18L`, avg gap `+11.46%`.
+  - XOF phase attribution:
+    - `finalize-xof-only`: `0W / 20L`, avg gap `+333.10%`.
+    - `squeeze-32-only`: `0W / 20L`, avg gap `+36.42%`.
+    - `squeeze-1024-only`: `0W / 20L`, avg gap `+8.04%`.
+    - `new-only`: `0W / 20L`, avg gap `+141.52%`.
+    - `drop-after-update-only`: `0W / 20L`, avg gap `+20.67%`.
+  - Notable regressions:
+    - `finalize-xof-only/65536B-in` blew up on every lane:
+      - `amd-zen5`: `+1622.84%`
+      - `graviton3`: `+1190.37%`
+      - `intel-icl`: `+1064.24%`
+      - `graviton4`: `+988.53%`
+      - `intel-spr`: `+797.11%`
+- Decision:
+  - Reject and revert.
+  - This is the clearest evidence yet that finalize-time XOF state materialization is the wrong direction.
+  - We did not remove fixed cost; we relocated and amplified it, especially in `finalize_xof()`.
+  - The target failure remains unchanged where it matters: x86 short streaming is still all-loss, short-output XOF is still overwhelmingly red, and `xof-phase` got materially worse.
+
+## Anti-Repeat Guardrails (2026-03-06)
+
+- Do not repeat finalize-time compact XOF/output materialization as a strategy (`Candidate BB`): it massively regresses `finalize-xof-only` and does not convert short-read XOF wins.
