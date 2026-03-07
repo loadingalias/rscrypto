@@ -1668,3 +1668,78 @@ Optional tools only with a specific question they uniquely answer:
 - Do not treat lazy single-chunk XOF reader promotion alone as the fix (`Candidate BC`).
 - Do not expect hot-state shrinking and localized bulk dispatch alone to break through (`Candidate BD`).
 - Do not rewrite the generic `OutputState` around raw bytes as a standalone fix (`Candidate BE`).
+- Do not assume an upstream-literal serial streaming/XOF rewrite alone is sufficient (`Candidate BF`).
+
+### 2026-03-07 - Candidate BF (`675f96a`, run `22805525301`)
+- Hypothesis:
+  - The current hybrid serial engine was the real blocker.
+  - Replacing only the serial `new -> update -> finalize -> finalize_xof -> reader` path with an upstream-literal state machine would finally convert:
+    - repeated short streaming updates,
+    - `finalize_xof()` setup,
+    - short-output XOF (`32B-out`).
+- Change:
+  - `mod.rs`:
+    - introduced a separate internal `SerialHasherState` with:
+      - `key_words`,
+      - `chunk_state`,
+      - lazy `cv_stack`,
+      - `flags`,
+      - no `pending_chunk_cv`,
+    - rewrote serial `update_with()` around upstream-style flow:
+      - partial chunk first,
+      - whole-chunk handling next,
+      - final chunk state last,
+    - rewrote final fold to upstream-style `final_output()` logic,
+    - kept the existing oneshot path, kernels, public API, and parallel/oneshot machinery intact,
+    - kept XOF reader minimal on top of `OutputState`.
+  - `kernel_test.rs`:
+    - updated forced-kernel helpers to point at the new serial state.
+  - `mod.rs` tests:
+    - added repeated-short-update digest/XOF-32 regression coverage.
+- Validation:
+  - Local: `just check-all` passed.
+  - Local: `just test` passed.
+  - CI targeted bench run: `22805525301` (`crates=hashes`, `benches=blake3`,
+    `filter=blake3/streaming/,blake3/xof/,blake3/xof-phase/`, `quick=false`,
+    lanes: `amd-zen5`, `intel-icl`, `intel-spr`, `graviton3`, `graviton4`).
+- CI outcomes (time-based gap vs official; positive = slower):
+  - Aggregate scoped target surfaces (`streaming` + `xof` + `xof-phase`, 5 lanes): `20W / 180L`, avg gap `+62.97%`.
+  - `streaming/*`: `2W / 38L`, avg gap `+25.92%`.
+  - `xof/*`: `4W / 36L`, avg gap `+21.90%`.
+  - `xof-phase/*`: `14W / 106L`, avg gap `+89.01%`.
+  - Target clusters:
+    - `streaming 64..1024B chunks`: `0W / 25L`
+      - `64B`: `+5.30%` to `+21.32%`
+      - `128B`: `+6.15%` to `+18.06%`
+      - `256B`: `+4.60%` to `+16.30%`
+      - `512B`: `+4.44%` to `+15.11%`
+      - `1024B`: `+3.63%` to `+14.69%`
+    - `xof init+read/*-in/32B-out`: `0W / 15L`
+      - `1B-in`: `+22.97%` to `+44.71%`
+      - `64B-in`: `+10.01%` to `+39.80%`
+      - `1024B-in`: `+6.36%` to `+17.19%`
+    - `xof-phase/finalize-xof-only/{1B,64B,1024B}-in`: `0W / 15L`
+      - `1B-in`: `+18.35%` to `+31.22%`
+      - `64B-in`: `+2.11%` to `+14.26%`
+      - `1024B-in`: `+2.04%` to `+14.50%`
+  - Notable behavior:
+    - The rewrite preserved correctness and kept the implementation boundary clean.
+    - It did not convert a single target-cluster lane.
+    - x86 remained materially behind on the short streaming and short-XOF surfaces.
+    - The architectural simplification was real; the performance win was not.
+- Decision:
+  - Reject and revert.
+  - This was the right cleanup to try, but it is not the missing performance lever.
+  - The evidence now says the remaining problem is not just “our serial engine shape is less upstream-like”.
+  - There is still a fixed-cost/codegen problem in the repeated short-update path and in short XOF setup/read that this rewrite did not remove.
+
+## Next Step After BF Revert
+
+1. Revert `Candidate BF`.
+2. Keep the new repeated-short-update diagnostic test idea, but carry it on top of the last accepted baseline rather than this rewrite.
+3. Investigate codegen and fixed-cost sources inside the accepted serial path before changing architecture again.
+4. Focus only on the three real target surfaces:
+   - `blake3/streaming/64B..1024B-chunks`
+   - `blake3/xof-phase/finalize-xof-only`
+   - `blake3/xof/init+read/*/32B-out`
+5. Do not do another structural rewrite until we can point to a concrete per-call cost that the rewrite removes and the benchmark naming actually matches that cost.
