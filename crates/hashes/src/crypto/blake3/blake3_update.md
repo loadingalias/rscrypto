@@ -1,5 +1,49 @@
 # BLAKE3 Performance Plan (Locked Loop)
 
+## Read This First
+
+### Current Truth
+
+- `oneshot` is not the problem. We are already strong there.
+- The real deficits are still:
+  - repeated short streaming updates (`64..1024B` chunk modes),
+  - `finalize_xof()` setup cost,
+  - short-output XOF (`32B-out`).
+- If a candidate improves long-read XOF or one-call `update-only` but does not flip those three surfaces, it is not a solution.
+
+### Most Informative Failed Directions
+
+| Theme | Candidate(s) | What happened | Verdict |
+|---|---|---|---|
+| Remove or weaken `pending_chunk_cv` behavior | `AV` | Helped a narrow streaming slice, broke larger streaming behavior | Dead end |
+| First-read / root-hash shortcut only | `AW` | Small directional change, did not close short XOF | Not enough |
+| Direct one-block XOF helper only | `AZ`, `BA` | Did not materially improve `squeeze-32-only` or short streaming | Dead end |
+| Dispatch / policy churn on x86 | `AX`, `AY` | Noise at best, regression at worst | Stop doing this |
+| Lazy single-chunk XOF reader | `BC` | Helped long squeezes, did not fix short streaming or `finalize_xof` | Partial signal only |
+| Shrink hot state / localize bulk dispatch only | `BD` | Best setup-only movement so far, still failed target clusters | Partial signal only |
+| Finalize-time compact XOF/output materialization | `BB` | Catastrophic `finalize-xof-only` regression | Hard no |
+| Raw-byte generic `OutputState` rewrite | `BE` | Regressed setup, XOF, and short streaming again | Hard no |
+
+### What Not To Do Again
+
+- Do not retune dispatch tables as the primary strategy.
+- Do not add more one-off XOF reader helpers on top of the current architecture.
+- Do not move more work into `finalize_xof()`.
+- Do not treat a better `update-only` microbench as proof that repeated short streaming is fixed.
+- Do not touch long-read squeeze throughput unless the short surfaces are already green.
+
+### What The Next Real Candidate Must Prove
+
+- `blake3/streaming/64B..1024B-chunks` must stop being all-loss on x86.
+- `blake3/xof-phase/finalize-xof-only` must materially improve, not just move sideways.
+- `blake3/xof/init+read/*/32B-out` must improve with cross-lane wins, not just a smaller average loss.
+
+### Archive Rule
+
+- The chronology below is the raw experiment log.
+- Use the summary above to decide what to try next.
+- If a new idea matches one of the failed themes above, assume it is wrong until new evidence proves otherwise.
+
 ## 2026-03-01 Competitive Snapshot Update
 
 - Data source: [benchmark-results/ci-22530359798-blake3/blake3_tally.json](/Users/mr.wolf/loadingalias/rscrypto/benchmark-results/ci-22530359798-blake3/blake3_tally.json)
@@ -1558,18 +1602,69 @@ Optional tools only with a specific question they uniquely answer:
 ## 2026-03-07 Root-Cause Reset
 
 - We have been over-reading `xof-phase/update-only`.
-  - That benchmark measures exactly one `update()` call.
+  - That benchmark measures one `update()` call.
   - The losing `blake3/streaming/64..1024B-chunks` surfaces measure thousands of repeated `update()` calls across 1 MiB.
-  - Improving one-call `update-only` is therefore necessary but not sufficient; it does not prove we have removed repeated-call control-path tax.
-- The kernels are not the main problem.
-  - `oneshot` remains strong.
-  - `squeeze-1024-only` is no longer the primary deficit.
-  - The remaining failures are fixed-cost serial-path overhead: `new-only`, repeated short `update()`, `finalize-xof-only`, and `init+read/*/32B-out`.
-- The architectural mismatch with upstream is still the core issue.
-  - Upstream serial BLAKE3 uses a very small `Hasher`, a direct `final_output()`, and a minimal `OutputReader`.
-  - Our historical candidates kept trying to optimize on top of a heavier streaming/XOF runtime shape.
-- Reset strategy:
-  - add repeated-update diagnostics so the actual short-streaming regime is measurable directly,
-  - move `OutputState` closer to upstream by storing raw block bytes rather than eager word materialization,
-  - keep long-read XOF throughput paths, but reduce `finalize_xof()` construction cost,
-  - cut repeated short `update()` control overhead with a dedicated serial short-input path instead of routing every chunk-boundary rollover through the generic batching logic.
+  - Better one-call `update-only` results do not prove repeated short streaming is fixed.
+- The kernels are not the core problem.
+  - `oneshot` is already strong.
+  - The persistent deficits are fixed-cost serial-path overhead:
+    - repeated short streaming updates,
+    - `finalize_xof()` setup,
+    - short-output XOF (`32B-out`).
+- The most recent failures say exactly what not to do:
+  - do not move more work into `finalize_xof()`,
+  - do not rely on XOF reader helper tweaks,
+  - do not use dispatch-table churn as the primary strategy,
+  - do not assume a more upstream-looking generic `OutputState` is automatically a win.
+
+### 2026-03-07 - Candidate BE (`d5374db`, run `22802604951`)
+- Hypothesis:
+  - The remaining wall was serial-path setup cost.
+  - Making generic `OutputState` raw-byte based, adding a direct single-block XOF path, and adding a dedicated short serial `update()` path would finally close short streaming/XOF.
+- Change:
+  - `mod.rs`:
+    - rewrote generic `OutputState` around raw block bytes,
+    - routed `fill_one_block()` through a direct single-block root-output path,
+    - added a dedicated short serial `update()` fast path.
+  - `benches/blake3.rs`:
+    - added repeated-update / repeated-finalize-XOF diagnostics.
+  - `blake3_update.md`:
+    - added this root-cause reset section.
+- Validation:
+  - Local: `cargo fmt --all` passed.
+  - Local: `cargo test -p hashes blake3 --lib` passed.
+  - Local: `cargo clippy -p hashes --lib --tests -- -D warnings` passed.
+  - Local: `cargo bench -p hashes --bench blake3 --no-run` passed.
+  - Local: `just check-all` passed.
+  - Local: `just test` passed.
+  - CI targeted bench run: `22802604951` (`crates=hashes`, `benches=blake3`,
+    `filter=blake3/xof-phase/,blake3/xof/,blake3/streaming/`, `quick=false`,
+    lanes: `amd-zen5`, `intel-icl`, `intel-spr`, `graviton3`, `graviton4`).
+- CI outcomes (time-based gap vs official; positive = slower):
+  - Aggregate scoped target surfaces (`xof-phase` + `xof` + `streaming`, 5 lanes): `12W / 188L`, avg gap `+57.15%`.
+  - `streaming/*`: `6W / 34L`, avg gap `+7.96%`.
+  - `xof/*`: `4W / 36L`, avg gap `+11.80%`.
+  - `xof-phase/*`: `2W / 118L`, avg gap `+88.66%`.
+  - Target clusters:
+    - `streaming 64..1024B chunks`: `0W / 25L`, avg gap `+8.98%`.
+    - `xof init+read/*-in/32B-out`: `2W / 18L`, avg gap `+14.85%`.
+    - `xof init+read/*-in/1024B-out`: `2W / 18L`, avg gap `+8.75%`.
+  - XOF phase attribution:
+    - `new-only`: `0W / 20L`, avg gap `+122.80%`.
+    - `update-only`: `2W / 18L`, avg gap `+26.29%`.
+    - `finalize-xof-only`: `0W / 20L`, avg gap `+326.57%`.
+    - `squeeze-32-only`: `0W / 20L`, avg gap `+28.94%`.
+    - `squeeze-1024-only`: `0W / 20L`, avg gap `+6.02%`.
+    - `drop-after-update-only`: `0W / 20L`, avg gap `+21.33%`.
+- Decision:
+  - Reject and revert.
+  - The repeated-update diagnostics were the right investigative addition.
+  - The raw-byte generic `OutputState` rewrite was the wrong production change.
+  - This candidate made the hot setup path worse and did not convert any of the real target clusters.
+
+## Anti-Repeat Guardrails (2026-03-07, final)
+
+- Do not repeat finalize-time compact XOF/output materialization as a strategy (`Candidate BB`).
+- Do not treat lazy single-chunk XOF reader promotion alone as the fix (`Candidate BC`).
+- Do not expect hot-state shrinking and localized bulk dispatch alone to break through (`Candidate BD`).
+- Do not rewrite the generic `OutputState` around raw bytes as a standalone fix (`Candidate BE`).
