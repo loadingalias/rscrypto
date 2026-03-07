@@ -2802,6 +2802,7 @@ pub struct Blake3 {
   #[cfg(not(feature = "std"))]
   dispatch_plan: dispatch::HasherDispatch,
   kernel: Kernel,
+  bulk_kernel: Kernel,
   chunk_state: ChunkState,
   pending_chunk_cv: Option<[u32; 8]>,
   key_words: [u32; 8],
@@ -3203,6 +3204,7 @@ impl Blake3 {
     Self {
       dispatch_plan,
       kernel,
+      bulk_kernel: kernel,
       chunk_state: ChunkState::new(key_words, 0, flags, kernel),
       pending_chunk_cv: None,
       key_words,
@@ -3243,12 +3245,7 @@ impl Blake3 {
   #[cfg(feature = "std")]
   #[cold]
   #[inline(never)]
-  fn commit_parallel_batch(
-    &mut self,
-    batch: ParallelBatchSpec<'_>,
-    scratch: &mut ParallelBatchScratch,
-    bulk_kernel: Kernel,
-  ) {
+  fn commit_parallel_batch(&mut self, batch: ParallelBatchSpec<'_>, scratch: &mut ParallelBatchScratch) {
     #[inline]
     fn push_stack(stack: &mut [MaybeUninit<[u32; 8]>; CV_STACK_LEN], len: &mut usize, cv: [u32; 8]) {
       stack[*len].write(cv);
@@ -3311,7 +3308,7 @@ impl Blake3 {
 
         scratch.roots.resize(roots_len, [0u32; 8]);
         hash_power_of_two_subtree_roots_parallel_rayon(SubtreeRootsRequest {
-          kernel: bulk_kernel,
+          kernel: self.bulk_kernel,
           key_words: self.key_words,
           flags: self.flags,
           base_counter: counter,
@@ -3321,11 +3318,11 @@ impl Blake3 {
           threads_total: threads,
         });
 
-        reduce_power_of_two_chunk_cvs_any(bulk_kernel, self.key_words, self.flags, &scratch.roots, threads)
+        reduce_power_of_two_chunk_cvs_any(self.bulk_kernel, self.key_words, self.flags, &scratch.roots, threads)
       } else {
         scratch.leaf_cvs.resize(size, [0u32; 8]);
         hash_full_chunks_cvs_scoped(
-          bulk_kernel,
+          self.bulk_kernel,
           self.key_words,
           self.flags,
           counter,
@@ -3333,7 +3330,7 @@ impl Blake3 {
           &mut scratch.leaf_cvs,
           threads,
         );
-        reduce_power_of_two_chunk_cvs_any(bulk_kernel, self.key_words, self.flags, &scratch.leaf_cvs, threads)
+        reduce_power_of_two_chunk_cvs_any(self.bulk_kernel, self.key_words, self.flags, &scratch.leaf_cvs, threads)
       };
 
       counter = counter.wrapping_add(size as u64);
@@ -3342,7 +3339,7 @@ impl Blake3 {
       let mut cv = subtree_cv;
       while total & 1 == 0 {
         cv = kernels::parent_cv_inline(
-          bulk_kernel.id,
+          self.bulk_kernel.id,
           pop_stack(&mut self.cv_stack, &mut stack_len),
           cv,
           self.key_words,
@@ -3364,7 +3361,7 @@ impl Blake3 {
       let last_chunk_idx = batch.batch_chunks - 1;
       let last = &batch_input[last_chunk_idx * CHUNK_LEN..batch.batch_chunks * CHUNK_LEN];
       self.pending_chunk_cv = Some(hash_one_full_chunk_cv(
-        bulk_kernel,
+        self.bulk_kernel,
         self.key_words,
         self.flags,
         new_counter - 1,
@@ -3376,7 +3373,7 @@ impl Blake3 {
   #[cfg(feature = "std")]
   #[cold]
   #[inline(never)]
-  fn try_parallel_update_batch(&mut self, input: &[u8], bulk_kernel: Kernel) -> Option<usize> {
+  fn try_parallel_update_batch(&mut self, input: &[u8]) -> Option<usize> {
     // Large updates: multi-thread full-chunk hashing.
     //
     // Prefer subtree-root batching for large, chunk-aligned power-of-two
@@ -3417,13 +3414,13 @@ impl Blake3 {
       keep_last_full_chunk,
     };
     let mut scratch = ParallelBatchScratch::new();
-    self.commit_parallel_batch(spec, &mut scratch, bulk_kernel);
+    self.commit_parallel_batch(spec, &mut scratch);
     Some(bytes)
   }
 
   #[inline(never)]
-  fn try_simd_update_batch(&mut self, input: &[u8], bulk_kernel: Kernel) -> Option<usize> {
-    if self.chunk_state.len() != 0 || bulk_kernel.simd_degree <= 1 || input.len() <= CHUNK_LEN {
+  fn try_simd_update_batch(&mut self, input: &[u8]) -> Option<usize> {
+    if self.chunk_state.len() != 0 || self.bulk_kernel.simd_degree <= 1 || input.len() <= CHUNK_LEN {
       return None;
     }
 
@@ -3444,7 +3441,7 @@ impl Blake3 {
     // has at least `batch * OUT_LEN` bytes, and this kernel was selected
     // only when its required CPU features are available.
     unsafe {
-      (bulk_kernel.hash_many_contiguous)(
+      (self.bulk_kernel.hash_many_contiguous)(
         input.as_ptr(),
         batch,
         &self.key_words,
@@ -3463,7 +3460,7 @@ impl Blake3 {
         unsafe { slice::from_raw_parts(out_buf.as_ptr().cast::<[u8; OUT_LEN]>(), commit) };
       let mut stack_len = self.cv_stack_len as usize;
       add_chunk_cvs_batched_bytes(
-        bulk_kernel,
+        self.bulk_kernel,
         &mut self.cv_stack,
         &mut stack_len,
         base_counter,
@@ -3489,6 +3486,7 @@ impl Blake3 {
 
   fn update_with(&mut self, mut input: &[u8], stream_kernel: Kernel, bulk_kernel: Kernel) {
     self.kernel = stream_kernel;
+    self.bulk_kernel = bulk_kernel;
     self.chunk_state.kernel = stream_kernel;
 
     // If the previous update ended exactly on a chunk boundary, we may have
@@ -3522,14 +3520,14 @@ impl Blake3 {
       {
         if self.chunk_state.len() == 0
           && input.len() > CHUNK_LEN
-          && let Some(consumed) = self.try_parallel_update_batch(input, bulk_kernel)
+          && let Some(consumed) = self.try_parallel_update_batch(input)
         {
           input = &input[consumed..];
           continue;
         }
       }
 
-      if let Some(consumed) = self.try_simd_update_batch(input, bulk_kernel) {
+      if let Some(consumed) = self.try_simd_update_batch(input) {
         input = &input[consumed..];
         continue;
       }
@@ -3613,9 +3611,6 @@ impl Blake3 {
   #[must_use]
   #[inline]
   pub fn finalize_xof(&self) -> Blake3Xof {
-    if self.chunk_state.chunk_counter == 0 && self.cv_stack_len == 0 && self.pending_chunk_cv.is_none() {
-      return Blake3Xof::from_single_chunk(&self.chunk_state);
-    }
     Blake3Xof::new(self.root_output())
   }
 
@@ -3667,17 +3662,8 @@ impl Digest for Blake3 {
       return;
     }
 
-    if self.pending_chunk_cv.is_none() && self.chunk_state.len().saturating_add(input.len()) <= CHUNK_LEN {
-      self.chunk_state.update(input);
-      return;
-    }
-
     let stream = self.dispatch_plan.stream_kernel();
-    let bulk = if self.chunk_state.len() != 0 || input.len() <= CHUNK_LEN {
-      stream
-    } else {
-      self.dispatch_plan.bulk_kernel_for_update(input.len())
-    };
+    let bulk = self.dispatch_plan.bulk_kernel_for_update(input.len());
     self.update_with(input, stream, bulk);
   }
 
@@ -3733,128 +3719,8 @@ impl Digest for Blake3 {
 }
 
 #[derive(Clone)]
-enum Blake3XofInner {
-  Generic(OutputState),
-  SingleChunk(SingleChunkXofState),
-}
-
-#[derive(Clone, Copy)]
-struct SingleChunkXofState {
-  kernel: Kernel,
-  input_chaining_value: [u32; 8],
-  block: [u8; BLOCK_LEN],
-  counter: u64,
-  block_len: u32,
-  flags: u32,
-}
-
-impl SingleChunkXofState {
-  #[inline]
-  fn from_chunk_state(chunk_state: &ChunkState) -> Self {
-    let mut block = chunk_state.block;
-    if chunk_state.block_len as usize != BLOCK_LEN {
-      block[chunk_state.block_len as usize..].fill(0);
-    }
-    Self {
-      kernel: chunk_state.kernel,
-      input_chaining_value: chunk_state.chaining_value,
-      block,
-      counter: chunk_state.chunk_counter,
-      block_len: chunk_state.block_len as u32,
-      flags: chunk_state.flags | chunk_state.start_flag() | CHUNK_END,
-    }
-  }
-
-  #[inline]
-  fn root_output_block(&self) -> [u8; OUTPUT_BLOCK_LEN] {
-    let flags = self.flags | ROOT;
-
-    #[cfg(target_arch = "x86_64")]
-    {
-      #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-      if self.kernel.id == kernels::Blake3KernelId::X86Avx512 {
-        let mut out = [0u8; OUTPUT_BLOCK_LEN];
-        // SAFETY: dispatch validated AVX-512 before selecting this kernel, `self.block`
-        // is a full 64-byte padded block, and `out` is valid for one output block.
-        unsafe {
-          x86_64::asm::compress_xof_avx512(
-            &self.input_chaining_value,
-            self.block.as_ptr(),
-            self.counter,
-            self.block_len,
-            flags,
-            out.as_mut_ptr(),
-          );
-        }
-        return out;
-      }
-    }
-
-    let block_words = words16_from_le_bytes_64(&self.block);
-
-    #[cfg(target_arch = "x86_64")]
-    {
-      let mut out = [0u8; OUTPUT_BLOCK_LEN];
-      match self.kernel.id {
-        kernels::Blake3KernelId::X86Avx2 => {
-          // SAFETY: dispatch validated AVX2 before selecting this kernel,
-          // and `out` points to one writable output block.
-          unsafe {
-            x86_64::avx2::root_output_blocks1(
-              &self.input_chaining_value,
-              &block_words,
-              self.counter,
-              self.block_len,
-              flags,
-              out.as_mut_ptr(),
-            );
-          }
-          return out;
-        }
-        kernels::Blake3KernelId::X86Sse41 => {
-          // SAFETY: dispatch validated SSE4.1 before selecting this kernel,
-          // and `out` points to one writable output block.
-          unsafe {
-            x86_64::sse41::root_output_blocks1(
-              &self.input_chaining_value,
-              &block_words,
-              self.counter,
-              self.block_len,
-              flags,
-              out.as_mut_ptr(),
-            );
-          }
-          return out;
-        }
-        _ => {}
-      }
-    }
-
-    words16_to_le_bytes(&(self.kernel.compress)(
-      &self.input_chaining_value,
-      &block_words,
-      self.counter,
-      self.block_len,
-      flags,
-    ))
-  }
-
-  #[inline]
-  fn into_output_state(self) -> OutputState {
-    OutputState {
-      kernel: self.kernel,
-      input_chaining_value: self.input_chaining_value,
-      block_words: words16_from_le_bytes_64(&self.block),
-      counter: self.counter,
-      block_len: self.block_len,
-      flags: self.flags,
-    }
-  }
-}
-
-#[derive(Clone)]
 pub struct Blake3Xof {
-  inner: Blake3XofInner,
+  output: OutputState,
   block_counter: u64,
   position_within_block: u8,
 }
@@ -3863,45 +3729,16 @@ impl Blake3Xof {
   #[inline]
   fn new(output: OutputState) -> Self {
     Self {
-      inner: Blake3XofInner::Generic(output),
+      output,
       block_counter: 0,
       position_within_block: 0,
-    }
-  }
-
-  #[inline]
-  fn from_single_chunk(chunk_state: &ChunkState) -> Self {
-    Self {
-      inner: Blake3XofInner::SingleChunk(SingleChunkXofState::from_chunk_state(chunk_state)),
-      block_counter: 0,
-      position_within_block: 0,
-    }
-  }
-
-  #[inline]
-  fn promote_single_chunk(&mut self) {
-    if let Blake3XofInner::SingleChunk(state) = self.inner {
-      self.inner = Blake3XofInner::Generic(state.into_output_state());
     }
   }
 
   #[inline]
   fn fill_one_block(&mut self, out: &mut &mut [u8]) {
-    if matches!(self.inner, Blake3XofInner::SingleChunk(_)) && self.block_counter != 0 {
-      self.promote_single_chunk();
-    }
-
-    let block = match &self.inner {
-      Blake3XofInner::Generic(output) => {
-        let mut block = [0u8; OUTPUT_BLOCK_LEN];
-        output.root_output_blocks_into(self.block_counter, &mut block);
-        block
-      }
-      Blake3XofInner::SingleChunk(state) => {
-        debug_assert_eq!(self.block_counter, 0);
-        state.root_output_block()
-      }
-    };
+    let mut block = [0u8; OUTPUT_BLOCK_LEN];
+    self.output.root_output_blocks_into(self.block_counter, &mut block);
     let output_bytes = &block[self.position_within_block as usize..];
     let take = min(out.len(), output_bytes.len());
     out[..take].copy_from_slice(&output_bytes[..take]);
@@ -3928,11 +3765,9 @@ impl Xof for Blake3Xof {
     let full = out.len() / OUTPUT_BLOCK_LEN * OUTPUT_BLOCK_LEN;
     if full != 0 {
       let blocks = (full / OUTPUT_BLOCK_LEN) as u64;
-      self.promote_single_chunk();
-      let Blake3XofInner::Generic(output) = &self.inner else {
-        unreachable!("single-chunk xof must promote before generic bulk output");
-      };
-      output.root_output_blocks_into(self.block_counter, &mut out[..full]);
+      self
+        .output
+        .root_output_blocks_into(self.block_counter, &mut out[..full]);
       self.block_counter = self.block_counter.wrapping_add(blocks);
       out = &mut out[full..];
     }
