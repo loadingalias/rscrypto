@@ -37,21 +37,21 @@ impl Simd {
   }
 
   #[inline]
-  #[target_feature(enable = "neon")]
+  #[target_feature(enable = "neon", enable = "aes")]
   unsafe fn into_poly64s(self) -> [poly64_t; 2] {
     let x = vreinterpretq_p64_u8(self.0);
     [vgetq_lane_p64(x, 0), vgetq_lane_p64(x, 1)]
   }
 
   #[inline]
-  #[target_feature(enable = "neon")]
+  #[target_feature(enable = "neon", enable = "aes")]
   unsafe fn high_64(self) -> poly64_t {
     let x = vreinterpretq_p64_u8(self.0);
     vgetq_lane_p64(x, 1)
   }
 
   #[inline]
-  #[target_feature(enable = "neon")]
+  #[target_feature(enable = "neon", enable = "aes")]
   unsafe fn low_64(self) -> poly64_t {
     let x = vreinterpretq_p64_u8(self.0);
     vgetq_lane_p64(x, 0)
