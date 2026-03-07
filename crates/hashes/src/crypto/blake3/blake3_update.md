@@ -1494,3 +1494,63 @@ Optional tools only with a specific question they uniquely answer:
 
 - Do not repeat finalize-time compact XOF/output materialization as a strategy (`Candidate BB`): it massively regresses `finalize-xof-only` and does not convert short-read XOF wins.
 - Do not treat lazy single-chunk XOF reader promotion alone as the fix (`Candidate BC`): it helps long XOF squeezes, but short streaming, `new-only`, and `finalize-xof-only` remain structurally too expensive.
+
+### 2026-03-07 - Candidate BD (`04ab0e8`, run `22800786046`)
+- Hypothesis:
+  - We were still carrying too much hot setup state per hasher, and paying bulk-dispatch overhead even on small streaming updates.
+  - Replacing full `Kernel` bundles in hot state with compact kernel IDs, removing persistent `bulk_kernel`, and localizing bulk dispatch to large updates would reduce `new-only`, `update-only`, and short XOF setup cost without touching the reader model.
+- Change:
+  - `mod.rs`:
+    - changed `Blake3`, `ChunkState`, and `OutputState` hot state to store `Blake3KernelId` where only selection was needed,
+    - removed persistent `bulk_kernel` from `Blake3`,
+    - threaded `bulk_kernel` only through the large update batching paths that actually use it,
+    - avoided bulk-kernel selection entirely for obviously in-chunk `update()` calls.
+  - `kernel_test.rs`:
+    - updated forced-kernel helpers to match the leaner state model.
+- Validation:
+  - Local: `cargo fmt --all` passed.
+  - Local: `cargo test -p hashes blake3 --lib` passed.
+  - Local: `cargo clippy -p hashes --lib --tests -- -D warnings` passed.
+  - Local: `cargo bench -p hashes --bench blake3 --no-run` passed.
+  - Local: `just check-all` passed.
+  - Local: `just test` passed.
+  - CI targeted bench run: `22800786046` (`crates=hashes`, `benches=blake3`,
+    `filter=blake3/xof-phase/,blake3/xof/,blake3/streaming/`, `quick=false`,
+    lanes: `amd-zen5`, `intel-icl`, `intel-spr`, `graviton3`, `graviton4`).
+  - Scope/commit check:
+    - workflow completed `success`,
+    - executed the intended candidate commit (valid run).
+- CI outcomes (time-based gap vs official; positive = slower):
+  - Aggregate scoped target surfaces (`xof-phase` + `xof` + `streaming`, 5 lanes): `37W / 163L`, avg gap `+44.98%`.
+  - `streaming/*`: `6W / 34L`, avg gap `+8.19%`.
+  - `xof/*`: `10W / 30L`, avg gap `+4.75%`.
+  - `xof-phase/*`: `21W / 99L`, avg gap `+70.65%`.
+  - Target clusters:
+    - `streaming 64..1024B chunks`: `0W / 25L`, avg gap `+9.24%`.
+    - `xof init+read/*-in/32B-out`: `5W / 15L`, avg gap `+4.71%`.
+    - `xof init+read/*-in/1024B-out`: `5W / 15L`, avg gap `+4.79%`.
+  - XOF phase attribution:
+    - `new-only`: `0W / 20L`, avg gap `+95.38%`.
+    - `update-only`: `5W / 15L`, avg gap `+4.27%`.
+    - `finalize-xof-only`: `0W / 20L`, avg gap `+293.43%`.
+    - `squeeze-32-only`: `4W / 16L`, avg gap `+19.45%`.
+    - `squeeze-1024-only`: `12W / 8L`, avg gap `+1.53%`.
+    - `drop-after-update-only`: `0W / 20L`, avg gap `+9.89%`.
+  - Notable behavior:
+    - This was the best setup-focused candidate so far on `new-only` and `update-only`; it materially reduced those gaps versus `Candidate BC`.
+    - It also improved short-output XOF somewhat versus `Candidate BC`.
+    - But the decisive blockers remained:
+      - short streaming stayed all-loss,
+      - short-output XOF stayed net-loss,
+      - `finalize-xof-only` remained catastrophically slower on every lane,
+      - x86 still did not convert the target cluster.
+- Decision:
+  - Reject and revert.
+  - Shrinking hot state and localizing bulk dispatch is directionally right, but by itself it is not enough.
+  - The dominant remaining architectural failure is still `finalize_xof()` setup cost, with short streaming also paying more fixed control tax than upstream.
+
+## Anti-Repeat Guardrails (2026-03-07, updated)
+
+- Do not repeat finalize-time compact XOF/output materialization as a strategy (`Candidate BB`): it massively regresses `finalize-xof-only` and does not convert short-read XOF wins.
+- Do not treat lazy single-chunk XOF reader promotion alone as the fix (`Candidate BC`): it helps long XOF squeezes, but short streaming, `new-only`, and `finalize-xof-only` remain structurally too expensive.
+- Do not expect hot-state shrinking and localized bulk dispatch alone to break through (`Candidate BD`): it helps `new-only`, `update-only`, and some XOF setup cost, but it does not fix `finalize_xof()` or short streaming.
