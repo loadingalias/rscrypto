@@ -434,105 +434,6 @@ fn blake3_xof_phase_split(c: &mut Criterion) {
   group.finish();
 }
 
-fn blake3_xof_repeated_phase_split(c: &mut Criterion) {
-  if !diagnostics_enabled() {
-    return;
-  }
-
-  let data_1mb = common::pseudo_random_bytes(1024 * 1024, 0xB1AE_E3B1_A1E3_0003);
-  let data_1mb = black_box(data_1mb);
-
-  let mut group = c.benchmark_group("blake3/xof-phase-repeated");
-  group.sample_size(20);
-  group.warm_up_time(Duration::from_secs(1));
-  group.measurement_time(Duration::from_secs(3));
-  group.sampling_mode(SamplingMode::Flat);
-
-  for chunk_size in [64, 128, 256, 512, 1024] {
-    let name = format!("{chunk_size}B-chunks");
-    group.throughput(Throughput::Bytes(data_1mb.len() as u64));
-
-    group.bench_function(format!("rscrypto/repeated-update-only/{name}"), |b| {
-      b.iter(|| {
-        let mut h = Blake3::new();
-        for chunk in data_1mb.chunks(chunk_size) {
-          h.update(black_box(chunk));
-        }
-        black_box(h);
-      })
-    });
-    group.bench_function(format!("official/repeated-update-only/{name}"), |b| {
-      b.iter(|| {
-        let mut h = blake3::Hasher::new();
-        for chunk in data_1mb.chunks(chunk_size) {
-          h.update(black_box(chunk));
-        }
-        black_box(h);
-      })
-    });
-
-    group.bench_function(format!("rscrypto/repeated-finalize-xof-only/{name}"), |b| {
-      b.iter_batched_ref(
-        || {
-          let mut h = Blake3::new();
-          for chunk in data_1mb.chunks(chunk_size) {
-            h.update(chunk);
-          }
-          h
-        },
-        |h| {
-          let xof = h.finalize_xof();
-          black_box(xof);
-        },
-        BatchSize::PerIteration,
-      )
-    });
-    group.bench_function(format!("official/repeated-finalize-xof-only/{name}"), |b| {
-      b.iter_batched_ref(
-        || {
-          let mut h = blake3::Hasher::new();
-          for chunk in data_1mb.chunks(chunk_size) {
-            h.update(chunk);
-          }
-          h
-        },
-        |h| {
-          let xof = h.finalize_xof();
-          black_box(xof);
-        },
-        BatchSize::PerIteration,
-      )
-    });
-
-    group.bench_function(format!("rscrypto/repeated-init+read-32/{name}"), |b| {
-      let mut out = [0u8; 32];
-      b.iter(|| {
-        let mut h = Blake3::new();
-        for chunk in data_1mb.chunks(chunk_size) {
-          h.update(black_box(chunk));
-        }
-        let mut xof = h.finalize_xof();
-        xof.squeeze(&mut out);
-        black_box(&out);
-      })
-    });
-    group.bench_function(format!("official/repeated-init+read-32/{name}"), |b| {
-      let mut out = [0u8; 32];
-      b.iter(|| {
-        let mut h = blake3::Hasher::new();
-        for chunk in data_1mb.chunks(chunk_size) {
-          h.update(black_box(chunk));
-        }
-        let mut xof = h.finalize_xof();
-        xof.fill(&mut out);
-        black_box(&out);
-      })
-    });
-  }
-
-  group.finish();
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // One-shot XOF Benchmarks (avoid streaming hasher setup)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1082,7 +983,6 @@ criterion_group!(
   blake3_parent_folding_only,
   blake3_xof,
   blake3_xof_phase_split,
-  blake3_xof_repeated_phase_split,
   blake3_xof_oneshot,
   blake3_xof_sized_comparison,
   blake3_keyed,
