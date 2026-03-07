@@ -2077,7 +2077,38 @@ impl ChunkState {
     if self.blocks_compressed == 0 { CHUNK_START } else { 0 }
   }
 
-  fn update(&mut self, mut input: &[u8]) {
+  #[inline]
+  fn try_update_fast(&mut self, input: &[u8]) -> bool {
+    if input.len() > BLOCK_LEN {
+      return false;
+    }
+
+    let block_len = self.block_len as usize;
+    if block_len + input.len() <= BLOCK_LEN {
+      self.block[block_len..block_len + input.len()].copy_from_slice(input);
+      self.block_len = self.block_len.strict_add(input.len() as u8);
+      return true;
+    }
+
+    if block_len == BLOCK_LEN && self.blocks_compressed < 15 {
+      kernels::chunk_compress_blocks_inline(
+        self.kernel.id,
+        &mut self.chaining_value,
+        self.chunk_counter,
+        self.flags,
+        &mut self.blocks_compressed,
+        &self.block,
+      );
+      self.block_len = 0;
+      self.block[..input.len()].copy_from_slice(input);
+      self.block_len = input.len() as u8;
+      return true;
+    }
+
+    false
+  }
+
+  fn update(&mut self, input: &[u8]) {
     // Streaming fast path: when we receive exactly one whole chunk at a chunk
     // boundary, compute the internal state in one shot.
     #[cfg(target_arch = "aarch64")]
@@ -2110,6 +2141,16 @@ impl ChunkState {
       }
     }
 
+    if self.try_update_fast(input) {
+      return;
+    }
+
+    self.update_slow(input);
+  }
+
+  #[cold]
+  #[inline(never)]
+  fn update_slow(&mut self, mut input: &[u8]) {
     // Phase 1: if we already have a buffered (partial or full) block, fill it
     // (or, if it's already full, compress it) before touching the caller
     // slice. This keeps the hot "many full blocks" path branch-light.
@@ -3484,11 +3525,29 @@ impl Blake3 {
     Some(batch * CHUNK_LEN)
   }
 
-  fn update_with(&mut self, mut input: &[u8], stream_kernel: Kernel, bulk_kernel: Kernel) {
-    self.kernel = stream_kernel;
-    self.bulk_kernel = bulk_kernel;
-    self.chunk_state.kernel = stream_kernel;
+  #[inline]
+  fn try_update_chunk_local(&mut self, input: &[u8]) -> bool {
+    if input.len() > CHUNK_LEN || self.pending_chunk_cv.is_some() {
+      return false;
+    }
 
+    let chunk_len = self.chunk_state.len();
+    if chunk_len == CHUNK_LEN {
+      let chunk_cv = self.chunk_state.output().chaining_value();
+      let total_chunks = self.chunk_state.chunk_counter + 1;
+      self.add_chunk_chaining_value(chunk_cv, total_chunks);
+      self.chunk_state = ChunkState::new(self.key_words, total_chunks, self.flags, self.kernel);
+    } else if input.len() > CHUNK_LEN - chunk_len {
+      return false;
+    }
+
+    self.chunk_state.update(input);
+    true
+  }
+
+  #[cold]
+  #[inline(never)]
+  fn update_with_slow(&mut self, mut input: &[u8]) {
     // If the previous update ended exactly on a chunk boundary, we may have
     // stored the last full chunk's CV instead of keeping a fully-buffered
     // `ChunkState`. As soon as more input arrives, that chunk is no longer
@@ -3537,6 +3596,21 @@ impl Blake3 {
       self.chunk_state.update(&input[..take]);
       input = &input[take..];
     }
+  }
+
+  fn update_with(&mut self, input: &[u8], stream_kernel: Kernel, bulk_kernel: Kernel) {
+    self.kernel = stream_kernel;
+    self.bulk_kernel = bulk_kernel;
+    self.chunk_state.kernel = stream_kernel;
+
+    // Repeated short streaming updates can stay on the current chunk and still
+    // reuse the existing tree state. Keep that path out of the large control
+    // flow that admits parallel and SIMD batches.
+    if self.try_update_chunk_local(input) {
+      return;
+    }
+
+    self.update_with_slow(input);
   }
 
   /// Construct a new hasher for the keyed hash function.
@@ -3611,6 +3685,9 @@ impl Blake3 {
   #[must_use]
   #[inline]
   pub fn finalize_xof(&self) -> Blake3Xof {
+    if self.cv_stack_len == 0 && self.pending_chunk_cv.is_none() {
+      return Blake3Xof::new(self.chunk_state.output());
+    }
     Blake3Xof::new(self.root_output())
   }
 
@@ -3663,8 +3740,15 @@ impl Digest for Blake3 {
     }
 
     let stream = self.dispatch_plan.stream_kernel();
+    self.kernel = stream;
+    self.chunk_state.kernel = stream;
+    if self.try_update_chunk_local(input) {
+      return;
+    }
+
     let bulk = self.dispatch_plan.bulk_kernel_for_update(input.len());
-    self.update_with(input, stream, bulk);
+    self.bulk_kernel = bulk;
+    self.update_with_slow(input);
   }
 
   #[inline]
