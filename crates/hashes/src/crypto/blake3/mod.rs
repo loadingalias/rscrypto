@@ -3589,8 +3589,34 @@ impl Blake3 {
   }
 
   #[inline]
-  fn frontier_can_absorb(&self, input: &[u8]) -> bool {
-    self.frontier_is_active() && self.chunk_state.len() + input.len() <= CHUNK_LEN
+  fn short_update_candidate(&self, input: &[u8]) -> bool {
+    input.len() <= CHUNK_LEN
+  }
+
+  #[inline]
+  fn short_update(&mut self, mut input: &[u8]) {
+    self.chunk_state.kernel = self.kernel;
+
+    if !input.is_empty()
+      && let Some(cv) = self.pending_chunk_cv.take()
+    {
+      let total_chunks = self.chunk_state.chunk_counter;
+      self.add_chunk_chaining_value(cv, total_chunks);
+    }
+
+    while !input.is_empty() {
+      if self.chunk_state.len() == CHUNK_LEN {
+        let chunk_cv = self.chunk_state.output().chaining_value();
+        let total_chunks = self.chunk_state.chunk_counter + 1;
+        self.add_chunk_chaining_value(chunk_cv, total_chunks);
+        self.chunk_state = ChunkState::new(self.key_words, total_chunks, self.flags, self.kernel);
+      }
+
+      let want = CHUNK_LEN - self.chunk_state.len();
+      let take = min(want, input.len());
+      self.chunk_state.update(&input[..take]);
+      input = &input[take..];
+    }
   }
 
   fn root_output(&self) -> OutputState {
@@ -3687,9 +3713,8 @@ impl Digest for Blake3 {
       return;
     }
 
-    if self.frontier_can_absorb(input) {
-      self.chunk_state.kernel = self.kernel;
-      self.chunk_state.update(input);
+    if self.short_update_candidate(input) {
+      self.short_update(input);
       return;
     }
 
@@ -4377,6 +4402,37 @@ mod tests {
       }
 
       assert_eq!(actual, expected, "xof squeeze mismatch for input_len={input_len}");
+    }
+  }
+
+  #[test]
+  fn repeated_short_updates_match_single_update_for_hash_and_xof() {
+    for step in [64usize, 256, 1024] {
+      for total_len in [step, step * 2, step * 3 + 17, super::CHUNK_LEN * 2 + step + 11] {
+        let input = input_pattern(total_len);
+
+        let expected_hash = Blake3::digest(&input);
+        let mut expected_xof = [0u8; 32];
+        Blake3::xof(&input).squeeze(&mut expected_xof);
+
+        let mut streaming = Blake3::new();
+        for chunk in input.chunks(step) {
+          streaming.update(chunk);
+        }
+        let actual_hash = streaming.finalize();
+
+        let mut actual_xof = [0u8; 32];
+        streaming.finalize_xof().squeeze(&mut actual_xof);
+
+        assert_eq!(
+          actual_hash, expected_hash,
+          "hash mismatch for step={step}, total_len={total_len}"
+        );
+        assert_eq!(
+          actual_xof, expected_xof,
+          "xof mismatch for step={step}, total_len={total_len}"
+        );
+      }
     }
   }
 

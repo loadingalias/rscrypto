@@ -2207,3 +2207,133 @@ Optional tools only with a specific question they uniquely answer:
 - If work continues, the next candidate should be explicitly narrower:
   - either a streaming-only candidate built on the lessons from `BN`,
   - or a separate XOF/final-output candidate justified by new attribution first.
+
+### 2026-03-08 - Next execution plan after `BM` + `BN`
+- Non-negotiable framing:
+  - Stop treating short streaming and short XOF as one optimization problem.
+  - Keep the public API, oneshot path, and existing kernels.
+  - Do not spend another cycle on generic `OutputState` churn, reader-only helpers, or dispatch-table retuning as the primary move.
+  - Every candidate below must be independently shippable and independently revertable.
+
+#### Track 1 - Streaming-only candidate (`BO`)
+- Goal:
+  - Convert `blake3/streaming/{64B,256B,1024B}-chunks` without touching XOF behavior.
+- Why this track exists:
+  - `BN` materially improved short streaming on every comparable lane.
+  - `BN` failed because of XOF, not because the streaming direction was wrong.
+- Scope:
+  - Restrict code changes to the serial streaming state machine in:
+    - `Blake3::update`
+    - `Blake3::update_with`
+    - chunk-rollover handling
+    - pending-chunk/tree admission only as needed for streaming correctness
+  - No changes to:
+    - `Blake3Xof`
+    - `finalize_xof`
+    - `OutputState`
+    - oneshot APIs
+    - dispatch tables
+    - kernel implementations
+- Intended design:
+  - Keep a frontier-style local serial path for repeated short updates.
+  - Carry that path cleanly across chunk rollover, not just inside the first chunk.
+  - Fall back to the current tree/bulk path only when:
+    - parallel admission actually matters,
+    - SIMD full-chunk batching actually matters,
+    - or the update is no longer a short serial case.
+  - Do not try to share this candidate with XOF setup or root-output redesign.
+- Local gate before CI:
+  - `cargo clean`
+  - `just check-all`
+  - `just test`
+  - `cargo bench --profile bench -p hashes --bench blake3 -- 'blake3/streaming/(rscrypto|official)/(64B-chunks|256B-chunks|1024B-chunks)'`
+  - Treat local benches as directional only.
+- CI acceptance bar:
+  - Dispatch targeted `bench.yaml` with:
+    - `filter=blake3/streaming/`
+    - lanes: `amd-zen4`, `amd-zen5`, `intel-icl`, `intel-spr`, `graviton3`, `graviton4`
+  - Keep only if:
+    - the streaming cluster shows clear cross-lane wins or near-parity conversion,
+    - and no correctness regressions appear locally.
+  - Revert immediately if:
+    - streaming is still net red across all lanes,
+    - or wins are too narrow to justify carrying the extra control path.
+
+#### Track 2 - Dedicated backend-level root/XOF path (`BP`)
+- Goal:
+  - Convert:
+    - `blake3/xof/init+read/{1B,64B,1024B}-in/32B-out`
+    - `blake3/xof-phase/finalize-xof-only/{1B,64B,1024B}`
+- Why this track exists:
+  - External attribution showed the remaining deficit is the whole short final-output path:
+    - `update_with`
+    - `root_output`
+    - `squeeze`
+    - `root_output_blocks_into`
+  - The reader-only and partial raw-byte attempts are already ruled out.
+  - `BN` also showed that carrying frontier ideas into XOF setup is not enough under the current root/output model.
+- Scope:
+  - Build a real internal root-output/XOF object below the public API.
+  - Keep the public `Blake3Xof` type and external behavior unchanged.
+  - Keep tree semantics, oneshot behavior, and kernel selection rules unchanged.
+- Intended design:
+  - Introduce a compact internal root-output carrier for XOF/final-output setup.
+  - This carrier should store exactly the state needed for root emission:
+    - input CV
+    - final block bytes
+    - block length
+    - chunk/root flags
+    - chunk counter / output block counter as required
+    - resolved emission kernel or direct backend entry points
+  - Add backend-level direct root/XOF emission entry points so the short path does not go through:
+    - generic `OutputState`
+    - generic `root_output_blocks_into`
+    - generic reader promotion logic
+  - Keep the generic tree/output path for the cases that actually need it.
+  - The short serial `finalize_xof -> read32` path should be able to stay entirely on this compact backend path.
+- Explicit non-goals:
+  - no generic raw-byte `OutputState` rewrite,
+  - no x86-only special case as the main design,
+  - no eager finalize-time precompute that pushes work into every XOF call,
+  - no dispatch-table tuning as a substitute for design work.
+- Required attribution before implementation:
+  - Re-run code-size and asm checks on the exact wrapper path:
+    - `cargo llvm-lines`
+    - `cargo asm`
+    - `sample` / `samply`
+  - The new design is only worth landing if it materially removes the current short-path frames from the wrapper:
+    - `Blake3::root_output`
+    - `Blake3Xof::squeeze`
+    - `OutputState::root_output_blocks_into`
+- Local gate before CI:
+  - `cargo clean`
+  - `just check-all`
+  - `just test`
+  - `cargo bench --profile bench -p hashes --bench blake3 -- 'blake3/xof/(rscrypto|official)/init\\+read/(1B-in|64B-in|1024B-in)/32B-out'`
+  - `cargo bench --profile bench -p hashes --bench blake3 -- 'blake3/xof-phase/(rscrypto|official)/finalize-xof-only/(1B-in|64B-in|1024B-in)'`
+  - Treat local benches as directional only.
+- CI acceptance bar:
+  - Dispatch targeted `bench.yaml` with:
+    - `filter=blake3/xof/,blake3/xof-phase/`
+    - lanes: `amd-zen4`, `amd-zen5`, `intel-icl`, `intel-spr`, `graviton3`, `graviton4`
+  - Keep only if:
+    - short-XOF surfaces show real cross-lane wins,
+    - and `finalize-xof-only` is no longer universally red.
+  - Revert immediately if:
+    - the result is still `0W / N` on `finalize-xof-only`,
+    - or improvements are confined to one input size or one architecture family.
+
+#### Execution order
+- Do not combine these tracks again.
+- Run them in this order:
+  1. `BO` streaming-only candidate.
+  2. If `BO` wins, keep it isolated and move on to `BP`.
+  3. If `BO` fails, revert it and still proceed to `BP` from baseline.
+- Reason:
+  - the evidence is already strong enough that streaming and XOF need different designs and different acceptance bars.
+
+#### Keep / stop rule
+- If `BO` fails and `BP` also fails, stop BLAKE3 short-path churn.
+- At that point the remaining gap is either:
+  - inherent to the chosen Rust/control-flow architecture around the existing kernels,
+  - or only recoverable with a larger backend/kernel model change than is currently justified.
