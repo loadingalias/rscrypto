@@ -2210,6 +2210,77 @@ impl ChunkState {
   }
 }
 
+#[derive(Clone, Copy)]
+struct RootState {
+  kernel: Kernel,
+  input_chaining_value: [u32; 8],
+  block: [u8; BLOCK_LEN],
+  counter: u64,
+  block_len: u32,
+  flags: u32,
+}
+
+impl RootState {
+  #[inline]
+  fn from_output(output: OutputState) -> Self {
+    Self {
+      kernel: output.kernel,
+      input_chaining_value: output.input_chaining_value,
+      block: words16_to_le_bytes(&output.block_words),
+      counter: output.counter,
+      block_len: output.block_len,
+      flags: output.flags,
+    }
+  }
+
+  #[inline]
+  fn chaining_value(&self) -> [u32; 8] {
+    first_8_words((self.kernel.compress)(
+      &self.input_chaining_value,
+      &words16_from_le_bytes_64(&self.block),
+      self.counter,
+      self.block_len,
+      self.flags,
+    ))
+  }
+
+  #[inline]
+  fn root_hash_bytes(&self) -> [u8; OUT_LEN] {
+    let words = first_8_words((self.kernel.compress)(
+      &self.input_chaining_value,
+      &words16_from_le_bytes_64(&self.block),
+      0,
+      self.block_len,
+      self.flags | ROOT,
+    ));
+    words8_to_le_bytes(&words)
+  }
+
+  #[inline]
+  fn output_state(&self) -> OutputState {
+    OutputState {
+      kernel: self.kernel,
+      input_chaining_value: self.input_chaining_value,
+      block_words: words16_from_le_bytes_64(&self.block),
+      counter: self.counter,
+      block_len: self.block_len,
+      flags: self.flags,
+    }
+  }
+
+  #[inline]
+  fn root_output_block(&self, counter: u64) -> [u8; OUTPUT_BLOCK_LEN] {
+    let words = (self.kernel.compress)(
+      &self.input_chaining_value,
+      &words16_from_le_bytes_64(&self.block),
+      counter,
+      self.block_len,
+      self.flags | ROOT,
+    );
+    words16_to_le_bytes(&words)
+  }
+}
+
 #[inline]
 fn parent_output(
   kernel: Kernel,
@@ -2225,6 +2296,27 @@ fn parent_output(
     kernel,
     input_chaining_value: key_words,
     block_words,
+    counter: 0,
+    block_len: BLOCK_LEN as u32,
+    flags: PARENT | flags,
+  }
+}
+
+#[inline]
+fn parent_root_state(
+  kernel: Kernel,
+  left_child_cv: [u32; 8],
+  right_child_cv: [u32; 8],
+  key_words: [u32; 8],
+  flags: u32,
+) -> RootState {
+  let mut block = [0u8; BLOCK_LEN];
+  block[..OUT_LEN].copy_from_slice(&words8_to_le_bytes(&left_child_cv));
+  block[OUT_LEN..OUT_LEN * 2].copy_from_slice(&words8_to_le_bytes(&right_child_cv));
+  RootState {
+    kernel,
+    input_chaining_value: key_words,
+    block,
     counter: 0,
     block_len: BLOCK_LEN as u32,
     flags: PARENT | flags,
@@ -2887,7 +2979,7 @@ impl Blake3 {
     let key_words = words8_from_le_bytes_32(key);
     let plan = dispatch::hasher_dispatch();
     let kernel = plan.size_class_kernel(data.len());
-    Blake3Xof::new(root_output_oneshot(
+    Blake3Xof::from_output(root_output_oneshot(
       kernel,
       key_words,
       KEYED_HASH,
@@ -3584,16 +3676,37 @@ impl Blake3 {
   }
 
   #[inline]
-  fn frontier_is_active(&self) -> bool {
-    self.chunk_state.chunk_counter == 0 && self.cv_stack_len == 0 && self.pending_chunk_cv.is_none()
+  fn short_update_candidate(&self, input: &[u8]) -> bool {
+    input.len() <= CHUNK_LEN
   }
 
   #[inline]
-  fn frontier_can_absorb(&self, input: &[u8]) -> bool {
-    self.frontier_is_active() && self.chunk_state.len() + input.len() <= CHUNK_LEN
+  fn short_update(&mut self, mut input: &[u8]) {
+    self.chunk_state.kernel = self.kernel;
+
+    if !input.is_empty()
+      && let Some(cv) = self.pending_chunk_cv.take()
+    {
+      let total_chunks = self.chunk_state.chunk_counter;
+      self.add_chunk_chaining_value(cv, total_chunks);
+    }
+
+    while !input.is_empty() {
+      if self.chunk_state.len() == CHUNK_LEN {
+        let chunk_cv = self.chunk_state.output().chaining_value();
+        let total_chunks = self.chunk_state.chunk_counter + 1;
+        self.add_chunk_chaining_value(chunk_cv, total_chunks);
+        self.chunk_state = ChunkState::new(self.key_words, total_chunks, self.flags, self.kernel);
+      }
+
+      let want = CHUNK_LEN - self.chunk_state.len();
+      let take = min(want, input.len());
+      self.chunk_state.update(&input[..take]);
+      input = &input[take..];
+    }
   }
 
-  fn root_output(&self) -> OutputState {
+  fn root_state(&self) -> RootState {
     let mut parent_nodes_remaining = self.cv_stack_len as usize;
     let mut output = if let Some(right_cv) = self.pending_chunk_cv {
       debug_assert!(
@@ -3603,16 +3716,29 @@ impl Blake3 {
       parent_nodes_remaining -= 1;
       // SAFETY: `cv_stack_len` tracks the number of initialized entries.
       let left = unsafe { *self.cv_stack[parent_nodes_remaining].assume_init_ref() };
-      parent_output(self.kernel, left, right_cv, self.key_words, self.flags)
+      parent_root_state(self.kernel, left, right_cv, self.key_words, self.flags)
     } else {
-      self.chunk_state.output()
+      let block_len = self.chunk_state.block_len as usize;
+      let mut block = self.chunk_state.block;
+      if block_len != BLOCK_LEN {
+        block[block_len..].fill(0);
+      }
+      RootState {
+        kernel: self.kernel,
+        input_chaining_value: self.chunk_state.chaining_value,
+        block,
+        counter: self.chunk_state.chunk_counter,
+        block_len: self.chunk_state.block_len as u32,
+        flags: self.flags | self.chunk_state.start_flag() | CHUNK_END,
+      }
     };
 
     while parent_nodes_remaining > 0 {
       parent_nodes_remaining -= 1;
       // SAFETY: `cv_stack_len` tracks the number of initialized entries.
       let left = unsafe { *self.cv_stack[parent_nodes_remaining].assume_init_ref() };
-      output = parent_output(self.kernel, left, output.chaining_value(), self.key_words, self.flags);
+      let right = output.chaining_value();
+      output = parent_root_state(self.kernel, left, right, self.key_words, self.flags);
     }
     output
   }
@@ -3621,22 +3747,7 @@ impl Blake3 {
   #[must_use]
   #[inline]
   pub fn finalize_xof(&self) -> Blake3Xof {
-    if self.frontier_is_active() {
-      let block_len = self.chunk_state.block_len as usize;
-      let mut block = self.chunk_state.block;
-      if block_len != BLOCK_LEN {
-        block[block_len..].fill(0);
-      }
-      return Blake3Xof::new_frontier(
-        self.kernel,
-        self.chunk_state.chaining_value,
-        block,
-        self.chunk_state.block_len as u32,
-        self.flags | self.chunk_state.start_flag() | CHUNK_END,
-      );
-    }
-
-    Blake3Xof::new(self.root_output())
+    Blake3Xof::new(self.root_state())
   }
 
   /// Finalize into an extendable output state (XOF) with a size hint.
@@ -3687,9 +3798,8 @@ impl Digest for Blake3 {
       return;
     }
 
-    if self.frontier_can_absorb(input) {
-      self.chunk_state.kernel = self.kernel;
-      self.chunk_state.update(input);
+    if self.short_update_candidate(input) {
+      self.short_update(input);
       return;
     }
 
@@ -3700,47 +3810,19 @@ impl Digest for Blake3 {
 
   #[inline]
   fn finalize(&self) -> Self::Output {
-    // Single-chunk fast path: compute root bytes directly from the current
-    // chunk tail. This avoids OutputState construction and bytes<->words
-    // conversion on short streaming finalization.
-    if self.chunk_state.chunk_counter == 0 && self.cv_stack_len == 0 && self.pending_chunk_cv.is_none() {
-      let block_len = self.chunk_state.block_len as usize;
-
-      let add_chunk_start = self.chunk_state.blocks_compressed == 0;
-      let cv = self.chunk_state.chaining_value;
-
-      if block_len == BLOCK_LEN {
-        let out_words = compress_chunk_tail_to_root_words(
-          self.kernel,
-          cv,
-          &self.chunk_state.block,
-          block_len,
-          self.flags,
-          add_chunk_start,
-        );
-        return words8_to_le_bytes(&out_words);
-      }
-
-      let mut block = self.chunk_state.block;
-      block[block_len..].fill(0);
-      let out_words =
-        compress_chunk_tail_to_root_words(self.kernel, cv, &block, block_len, self.flags, add_chunk_start);
-      return words8_to_le_bytes(&out_words);
-    }
-
     // If the caller never provided any input (or only provided empty updates),
     // we still want to use the tuned streaming kernel rather than staying
     // pinned to the portable default.
-    let output = if self.chunk_state.chunk_counter == 0
+    if self.chunk_state.chunk_counter == 0
       && self.chunk_state.len() == 0
       && self.cv_stack_len == 0
       && self.pending_chunk_cv.is_none()
     {
-      single_chunk_output(self.dispatch_plan.stream_kernel(), self.key_words, 0, self.flags, &[])
-    } else {
-      self.root_output()
-    };
-    output.root_hash_bytes()
+      return single_chunk_output(self.dispatch_plan.stream_kernel(), self.key_words, 0, self.flags, &[])
+        .root_hash_bytes();
+    }
+
+    self.root_state().root_hash_bytes()
   }
 
   #[inline]
@@ -3751,36 +3833,24 @@ impl Digest for Blake3 {
 
 #[derive(Clone)]
 pub struct Blake3Xof {
-  inner: Blake3XofInner,
+  root: RootState,
+  block_counter: u64,
+  position_within_block: u8,
 }
 
 impl Blake3Xof {
   #[inline]
-  fn new(output: OutputState) -> Self {
+  fn new(root: RootState) -> Self {
     Self {
-      inner: Blake3XofInner::tree(output),
+      root,
+      block_counter: 0,
+      position_within_block: 0,
     }
   }
 
   #[inline]
-  fn new_frontier(
-    kernel: Kernel,
-    input_chaining_value: [u32; 8],
-    block: [u8; BLOCK_LEN],
-    block_len: u32,
-    flags: u32,
-  ) -> Self {
-    Self {
-      inner: Blake3XofInner::Frontier(FrontierXof {
-        kernel,
-        input_chaining_value,
-        block,
-        block_len,
-        flags,
-        block_counter: 0,
-        position_within_block: 0,
-      }),
-    }
+  fn from_output(output: OutputState) -> Self {
+    Self::new(RootState::from_output(output))
   }
 }
 
@@ -3790,150 +3860,40 @@ impl Xof for Blake3Xof {
       return;
     }
 
-    self.inner.squeeze(&mut out);
-  }
-}
-
-#[derive(Clone)]
-enum Blake3XofInner {
-  Tree(TreeXof),
-  Frontier(FrontierXof),
-}
-
-impl Blake3XofInner {
-  #[inline]
-  fn tree(output: OutputState) -> Self {
-    Self::Tree(TreeXof {
-      output,
-      block_counter: 0,
-      position_within_block: 0,
-    })
-  }
-
-  #[inline]
-  fn squeeze(&mut self, out: &mut &mut [u8]) {
-    match self {
-      Self::Tree(tree) => tree.squeeze(out),
-      Self::Frontier(frontier) => frontier.squeeze(out),
-    }
-  }
-}
-
-#[derive(Clone)]
-struct TreeXof {
-  output: OutputState,
-  block_counter: u64,
-  position_within_block: u8,
-}
-
-impl TreeXof {
-  #[inline]
-  fn fill_one_block(&mut self, out: &mut &mut [u8]) {
-    let mut block = [0u8; OUTPUT_BLOCK_LEN];
-    self.output.root_output_blocks_into(self.block_counter, &mut block);
-    let output_bytes = &block[self.position_within_block as usize..];
-    let take = min(out.len(), output_bytes.len());
-    out[..take].copy_from_slice(&output_bytes[..take]);
-    self.position_within_block += take as u8;
-    if self.position_within_block == OUTPUT_BLOCK_LEN as u8 {
-      self.block_counter = self.block_counter.wrapping_add(1);
-      self.position_within_block = 0;
-    }
-    *out = &mut core::mem::take(out)[take..];
-  }
-
-  #[inline]
-  fn squeeze(&mut self, out: &mut &mut [u8]) {
     if self.position_within_block != 0 {
-      self.fill_one_block(out);
+      self.fill_one_block(&mut out);
     }
 
     let full = out.len() / OUTPUT_BLOCK_LEN * OUTPUT_BLOCK_LEN;
     if full != 0 {
       let blocks = (full / OUTPUT_BLOCK_LEN) as u64;
       self
-        .output
-        .root_output_blocks_into(self.block_counter, &mut out[..full]);
-      self.block_counter = self.block_counter.wrapping_add(blocks);
-      *out = &mut core::mem::take(out)[full..];
-    }
-
-    if !out.is_empty() {
-      self.fill_one_block(out);
-    }
-  }
-}
-
-#[derive(Clone)]
-struct FrontierXof {
-  kernel: Kernel,
-  input_chaining_value: [u32; 8],
-  block: [u8; BLOCK_LEN],
-  block_len: u32,
-  flags: u32,
-  block_counter: u64,
-  position_within_block: u8,
-}
-
-impl FrontierXof {
-  #[inline]
-  fn output_state(&self) -> OutputState {
-    OutputState {
-      kernel: self.kernel,
-      input_chaining_value: self.input_chaining_value,
-      block_words: words16_from_le_bytes_64(&self.block),
-      counter: 0,
-      block_len: self.block_len,
-      flags: self.flags,
-    }
-  }
-
-  #[inline]
-  fn root_output_block(&self) -> [u8; OUTPUT_BLOCK_LEN] {
-    let block_words = words16_from_le_bytes_64(&self.block);
-    let words = (self.kernel.compress)(
-      &self.input_chaining_value,
-      &block_words,
-      self.block_counter,
-      self.block_len,
-      self.flags | ROOT,
-    );
-    words16_to_le_bytes(&words)
-  }
-
-  #[inline]
-  fn fill_one_block(&mut self, out: &mut &mut [u8]) {
-    let block = self.root_output_block();
-    let output_bytes = &block[self.position_within_block as usize..];
-    let take = min(out.len(), output_bytes.len());
-    out[..take].copy_from_slice(&output_bytes[..take]);
-    self.position_within_block += take as u8;
-    if self.position_within_block == OUTPUT_BLOCK_LEN as u8 {
-      self.block_counter = self.block_counter.wrapping_add(1);
-      self.position_within_block = 0;
-    }
-    *out = &mut core::mem::take(out)[take..];
-  }
-
-  #[inline]
-  fn squeeze(&mut self, out: &mut &mut [u8]) {
-    if self.position_within_block != 0 {
-      self.fill_one_block(out);
-    }
-
-    let full = out.len() / OUTPUT_BLOCK_LEN * OUTPUT_BLOCK_LEN;
-    if full != 0 {
-      let blocks = (full / OUTPUT_BLOCK_LEN) as u64;
-      self
+        .root
         .output_state()
         .root_output_blocks_into(self.block_counter, &mut out[..full]);
       self.block_counter = self.block_counter.wrapping_add(blocks);
-      *out = &mut core::mem::take(out)[full..];
+      out = &mut out[full..];
     }
 
     if !out.is_empty() {
-      self.fill_one_block(out);
+      self.fill_one_block(&mut out);
     }
+  }
+}
+
+impl Blake3Xof {
+  #[inline]
+  fn fill_one_block(&mut self, out: &mut &mut [u8]) {
+    let block = self.root.root_output_block(self.block_counter);
+    let output_bytes = &block[self.position_within_block as usize..];
+    let take = min(out.len(), output_bytes.len());
+    out[..take].copy_from_slice(&output_bytes[..take]);
+    self.position_within_block += take as u8;
+    if self.position_within_block == OUTPUT_BLOCK_LEN as u8 {
+      self.block_counter = self.block_counter.wrapping_add(1);
+      self.position_within_block = 0;
+    }
+    *out = &mut core::mem::take(out)[take..];
   }
 }
 
