@@ -4,12 +4,12 @@
 
 use core::{hint::black_box, time::Duration};
 
-use criterion::{BenchmarkId, Criterion, SamplingMode, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, SamplingMode, Throughput, criterion_group, criterion_main};
 use hashes::{
   bench as microbench,
   crypto::{Blake3, blake3::dispatch},
 };
-use traits::Digest as _;
+use traits::{Digest as _, Xof as _};
 
 mod common;
 const _: fn() -> Vec<(usize, Vec<u8>)> = common::sized_inputs;
@@ -26,6 +26,16 @@ fn configure_group(group: &mut criterion::BenchmarkGroup<'_, criterion::measurem
   group.sampling_mode(SamplingMode::Flat);
 }
 
+#[inline]
+fn black_box_ref<T: ?Sized>(value: &T) {
+  let _ = black_box(value);
+}
+
+#[inline]
+fn black_box_mut<T: ?Sized>(value: &mut T) {
+  let _ = black_box(value);
+}
+
 fn blake3_short_path_split(c: &mut Criterion) {
   let mut group = c.benchmark_group("blake3/short-input/short-path-split");
   configure_group(&mut group);
@@ -35,14 +45,17 @@ fn blake3_short_path_split(c: &mut Criterion) {
     common::set_throughput(&mut group, len);
 
     group.bench_function(BenchmarkId::new("rscrypto/plain/init", len), |b| {
-      b.iter(|| black_box(Blake3::new()))
+      b.iter(|| {
+        let h = Blake3::new();
+        black_box_ref(&h);
+      })
     });
 
     group.bench_with_input(BenchmarkId::new("rscrypto/plain/init+update", len), &data, |b, d| {
       b.iter(|| {
         let mut h = Blake3::new();
         h.update(black_box(d));
-        black_box(h)
+        black_box_mut(&mut h)
       })
     });
 
@@ -104,6 +117,228 @@ fn blake3_short_path_split(c: &mut Criterion) {
       b.iter(|| {
         let h = black_box(off_pre.clone());
         black_box(*h.finalize().as_bytes())
+      })
+    });
+  }
+
+  group.finish();
+}
+
+fn blake3_xof_target_attribution(c: &mut Criterion) {
+  let mut group = c.benchmark_group("blake3/short-input/xof-target-attribution");
+  configure_group(&mut group);
+
+  for len in [1, 64, 1024] {
+    let data = common::pseudo_random_bytes(len, 0xB1AE_E3B1_A1E3_2005 ^ len as u64);
+    let name = format!("{len}B-in");
+
+    group.throughput(Throughput::Elements(1));
+    group.bench_function(BenchmarkId::new("rscrypto/init-only(ref)", &name), |b| {
+      b.iter(|| {
+        let h = Blake3::new();
+        black_box_ref(&h);
+      })
+    });
+    group.bench_function(BenchmarkId::new("official/init-only(ref)", &name), |b| {
+      b.iter(|| {
+        let h = blake3::Hasher::new();
+        black_box_ref(&h);
+      })
+    });
+
+    group.throughput(Throughput::Bytes(len as u64));
+    group.bench_with_input(BenchmarkId::new("rscrypto/init+update(ref)", &name), &data, |b, d| {
+      b.iter(|| {
+        let mut h = Blake3::new();
+        h.update(black_box(d));
+        black_box_mut(&mut h);
+      })
+    });
+    group.bench_with_input(BenchmarkId::new("official/init+update(ref)", &name), &data, |b, d| {
+      b.iter(|| {
+        let mut h = blake3::Hasher::new();
+        h.update(black_box(d));
+        black_box_mut(&mut h);
+      })
+    });
+
+    group.throughput(Throughput::Bytes(len as u64));
+    group.bench_with_input(
+      BenchmarkId::new("rscrypto/init+update+finalize-xof(ref)", &name),
+      &data,
+      |b, d| {
+        b.iter(|| {
+          let mut h = Blake3::new();
+          h.update(black_box(d));
+          let xof = h.finalize_xof();
+          black_box_ref(&xof);
+        })
+      },
+    );
+    group.bench_with_input(
+      BenchmarkId::new("official/init+update+finalize-xof(ref)", &name),
+      &data,
+      |b, d| {
+        b.iter(|| {
+          let mut h = blake3::Hasher::new();
+          h.update(black_box(d));
+          let reader = h.finalize_xof();
+          black_box_ref(&reader);
+        })
+      },
+    );
+
+    group.throughput(Throughput::Bytes(32));
+    group.bench_with_input(
+      BenchmarkId::new("rscrypto/finalize-xof+read32(clone)", &name),
+      &data,
+      |b, d| {
+        let mut h = Blake3::new();
+        h.update(d);
+        b.iter(|| {
+          let mut xof = h.clone().finalize_xof();
+          let mut out = [0u8; 32];
+          xof.squeeze(&mut out);
+          black_box_ref(&out);
+        })
+      },
+    );
+    group.bench_with_input(
+      BenchmarkId::new("official/finalize-xof+read32(clone)", &name),
+      &data,
+      |b, d| {
+        let mut h = blake3::Hasher::new();
+        h.update(d);
+        b.iter(|| {
+          let mut reader = h.clone().finalize_xof();
+          let mut out = [0u8; 32];
+          reader.fill(&mut out);
+          black_box_ref(&out);
+        })
+      },
+    );
+
+    group.bench_with_input(
+      BenchmarkId::new("rscrypto/init+read32(target)", &name),
+      &data,
+      |b, d| {
+        let mut out = [0u8; 32];
+        b.iter(|| {
+          let mut h = Blake3::new();
+          h.update(black_box(d));
+          let mut xof = h.finalize_xof();
+          xof.squeeze(&mut out);
+          black_box_ref(&out);
+        })
+      },
+    );
+    group.bench_with_input(
+      BenchmarkId::new("official/init+read32(target)", &name),
+      &data,
+      |b, d| {
+        let mut out = [0u8; 32];
+        b.iter(|| {
+          let mut h = blake3::Hasher::new();
+          h.update(black_box(d));
+          let mut reader = h.finalize_xof();
+          reader.fill(&mut out);
+          black_box_ref(&out);
+        })
+      },
+    );
+
+    group.bench_with_input(BenchmarkId::new("rscrypto/read32-only", &name), &data, |b, d| {
+      let mut h = Blake3::new();
+      h.update(d);
+      let base = h.finalize_xof();
+      let mut out = [0u8; 32];
+      b.iter(|| {
+        let mut xof = base.clone();
+        xof.squeeze(&mut out);
+        black_box_ref(&out);
+      })
+    });
+    group.bench_with_input(BenchmarkId::new("official/read32-only", &name), &data, |b, d| {
+      let mut h = blake3::Hasher::new();
+      h.update(d);
+      let base = h.finalize_xof();
+      let mut out = [0u8; 32];
+      b.iter(|| {
+        let mut reader = base.clone();
+        reader.fill(&mut out);
+        black_box_ref(&out);
+      })
+    });
+  }
+
+  group.finish();
+}
+
+fn blake3_stream_target_attribution(c: &mut Criterion) {
+  let data_1mb = common::pseudo_random_bytes(1024 * 1024, 0xB1AE_E3B1_A1E3_2006);
+  let mut group = c.benchmark_group("blake3/short-input/stream-target-attribution");
+  configure_group(&mut group);
+
+  for chunk_size in SHORT_SIZES {
+    let name = format!("{chunk_size}B-chunks");
+    group.throughput(Throughput::Bytes(data_1mb.len() as u64));
+
+    group.bench_function(BenchmarkId::new("rscrypto/update-loop-only(ref)", &name), |b| {
+      b.iter(|| {
+        let mut h = Blake3::new();
+        for chunk in data_1mb.chunks(chunk_size) {
+          h.update(black_box(chunk));
+        }
+        black_box_mut(&mut h);
+      })
+    });
+    group.bench_function(BenchmarkId::new("official/update-loop-only(ref)", &name), |b| {
+      b.iter(|| {
+        let mut h = blake3::Hasher::new();
+        for chunk in data_1mb.chunks(chunk_size) {
+          h.update(black_box(chunk));
+        }
+        black_box_mut(&mut h);
+      })
+    });
+
+    group.bench_function(BenchmarkId::new("rscrypto/finalize-only(clone)", &name), |b| {
+      let mut h = Blake3::new();
+      for chunk in data_1mb.chunks(chunk_size) {
+        h.update(chunk);
+      }
+      b.iter(|| {
+        let cloned = h.clone();
+        black_box(cloned.finalize());
+      })
+    });
+    group.bench_function(BenchmarkId::new("official/finalize-only(clone)", &name), |b| {
+      let mut h = blake3::Hasher::new();
+      for chunk in data_1mb.chunks(chunk_size) {
+        h.update(chunk);
+      }
+      b.iter(|| {
+        let cloned = h.clone();
+        black_box(*cloned.finalize().as_bytes());
+      })
+    });
+
+    group.bench_function(BenchmarkId::new("rscrypto/full(target)", &name), |b| {
+      b.iter(|| {
+        let mut h = Blake3::new();
+        for chunk in data_1mb.chunks(chunk_size) {
+          h.update(black_box(chunk));
+        }
+        black_box(h.finalize());
+      })
+    });
+    group.bench_function(BenchmarkId::new("official/full(target)", &name), |b| {
+      b.iter(|| {
+        let mut h = blake3::Hasher::new();
+        for chunk in data_1mb.chunks(chunk_size) {
+          h.update(black_box(chunk));
+        }
+        black_box(*h.finalize().as_bytes());
       })
     });
   }
@@ -282,5 +517,7 @@ criterion_group!(
   blake3_oneshot_dispatch_overhead,
   blake3_stream_dispatch_overhead,
   blake3_oneshot_apples,
+  blake3_xof_target_attribution,
+  blake3_stream_target_attribution,
 );
 criterion_main!(benches);

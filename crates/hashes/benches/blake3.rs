@@ -41,6 +41,16 @@ fn official_hash_bytes_rayon(input: &[u8]) -> [u8; 32] {
   *h.finalize().as_bytes()
 }
 
+#[inline]
+fn black_box_ref<T: ?Sized>(value: &T) {
+  let _ = black_box(value);
+}
+
+#[inline]
+fn black_box_mut<T: ?Sized>(value: &mut T) {
+  let _ = black_box(value);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // One-shot Comparison Benchmarks
 // ─────────────────────────────────────────────────────────────────────────────
@@ -302,10 +312,16 @@ fn blake3_xof_phase_split(c: &mut Criterion) {
 
     group.throughput(Throughput::Elements(1));
     group.bench_function(format!("rscrypto/new-only/{name}"), |b| {
-      b.iter(|| black_box(Blake3::new()))
+      b.iter(|| {
+        let h = Blake3::new();
+        black_box_ref(&h);
+      })
     });
     group.bench_function(format!("official/new-only/{name}"), |b| {
-      b.iter(|| black_box(blake3::Hasher::new()))
+      b.iter(|| {
+        let h = blake3::Hasher::new();
+        black_box_ref(&h);
+      })
     });
 
     group.throughput(Throughput::Bytes(*len as u64));
@@ -313,14 +329,14 @@ fn blake3_xof_phase_split(c: &mut Criterion) {
       b.iter(|| {
         let mut h = Blake3::new();
         h.update(black_box(data));
-        black_box(h);
+        black_box_mut(&mut h);
       })
     });
     group.bench_function(format!("official/update-only/{name}"), |b| {
       b.iter(|| {
         let mut h = blake3::Hasher::new();
         h.update(black_box(data));
-        black_box(h);
+        black_box_mut(&mut h);
       })
     });
 
@@ -334,7 +350,7 @@ fn blake3_xof_phase_split(c: &mut Criterion) {
         },
         |h| {
           let xof = h.finalize_xof();
-          black_box(xof);
+          black_box_ref(&xof);
         },
         BatchSize::PerIteration,
       )
@@ -348,7 +364,7 @@ fn blake3_xof_phase_split(c: &mut Criterion) {
         },
         |h| {
           let xof = h.finalize_xof();
-          black_box(xof);
+          black_box_ref(&xof);
         },
         BatchSize::PerIteration,
       )
@@ -362,9 +378,7 @@ fn blake3_xof_phase_split(c: &mut Criterion) {
           h.update(data);
           h
         },
-        |h| {
-          black_box(h);
-        },
+        |h| black_box_ref(&h),
         BatchSize::PerIteration,
       )
     });
@@ -375,11 +389,31 @@ fn blake3_xof_phase_split(c: &mut Criterion) {
           h.update(data);
           h
         },
-        |h| {
-          black_box(h);
-        },
+        |h| black_box_ref(&h),
         BatchSize::PerIteration,
       )
+    });
+
+    group.throughput(Throughput::Bytes(*len as u64 + 32));
+    group.bench_function(format!("rscrypto/finalize-xof+read32-only/{name}"), |b| {
+      let mut h = Blake3::new();
+      h.update(data);
+      b.iter(|| {
+        let mut xof = h.clone().finalize_xof();
+        let mut out = [0u8; 32];
+        xof.squeeze(&mut out);
+        black_box_ref(&out);
+      })
+    });
+    group.bench_function(format!("official/finalize-xof+read32-only/{name}"), |b| {
+      let mut h = blake3::Hasher::new();
+      h.update(data);
+      b.iter(|| {
+        let mut reader = h.clone().finalize_xof();
+        let mut out = [0u8; 32];
+        reader.fill(&mut out);
+        black_box_ref(&out);
+      })
     });
 
     group.throughput(Throughput::Bytes(32));

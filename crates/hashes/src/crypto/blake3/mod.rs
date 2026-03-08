@@ -3583,6 +3583,16 @@ impl Blake3 {
     self.push_stack(new_cv);
   }
 
+  #[inline]
+  fn frontier_is_active(&self) -> bool {
+    self.chunk_state.chunk_counter == 0 && self.cv_stack_len == 0 && self.pending_chunk_cv.is_none()
+  }
+
+  #[inline]
+  fn frontier_can_absorb(&self, input: &[u8]) -> bool {
+    self.frontier_is_active() && self.chunk_state.len() + input.len() <= CHUNK_LEN
+  }
+
   fn root_output(&self) -> OutputState {
     let mut parent_nodes_remaining = self.cv_stack_len as usize;
     let mut output = if let Some(right_cv) = self.pending_chunk_cv {
@@ -3611,6 +3621,21 @@ impl Blake3 {
   #[must_use]
   #[inline]
   pub fn finalize_xof(&self) -> Blake3Xof {
+    if self.frontier_is_active() {
+      let block_len = self.chunk_state.block_len as usize;
+      let mut block = self.chunk_state.block;
+      if block_len != BLOCK_LEN {
+        block[block_len..].fill(0);
+      }
+      return Blake3Xof::new_frontier(
+        self.kernel,
+        self.chunk_state.chaining_value,
+        block,
+        self.chunk_state.block_len as u32,
+        self.flags | self.chunk_state.start_flag() | CHUNK_END,
+      );
+    }
+
     Blake3Xof::new(self.root_output())
   }
 
@@ -3659,6 +3684,12 @@ impl Digest for Blake3 {
   #[inline]
   fn update(&mut self, input: &[u8]) {
     if input.is_empty() {
+      return;
+    }
+
+    if self.frontier_can_absorb(input) {
+      self.chunk_state.kernel = self.kernel;
+      self.chunk_state.update(input);
       return;
     }
 
@@ -3720,21 +3751,82 @@ impl Digest for Blake3 {
 
 #[derive(Clone)]
 pub struct Blake3Xof {
-  output: OutputState,
-  block_counter: u64,
-  position_within_block: u8,
+  inner: Blake3XofInner,
 }
 
 impl Blake3Xof {
   #[inline]
   fn new(output: OutputState) -> Self {
     Self {
-      output,
-      block_counter: 0,
-      position_within_block: 0,
+      inner: Blake3XofInner::tree(output),
     }
   }
 
+  #[inline]
+  fn new_frontier(
+    kernel: Kernel,
+    input_chaining_value: [u32; 8],
+    block: [u8; BLOCK_LEN],
+    block_len: u32,
+    flags: u32,
+  ) -> Self {
+    Self {
+      inner: Blake3XofInner::Frontier(FrontierXof {
+        kernel,
+        input_chaining_value,
+        block,
+        block_len,
+        flags,
+        block_counter: 0,
+        position_within_block: 0,
+      }),
+    }
+  }
+}
+
+impl Xof for Blake3Xof {
+  fn squeeze(&mut self, mut out: &mut [u8]) {
+    if out.is_empty() {
+      return;
+    }
+
+    self.inner.squeeze(&mut out);
+  }
+}
+
+#[derive(Clone)]
+enum Blake3XofInner {
+  Tree(TreeXof),
+  Frontier(FrontierXof),
+}
+
+impl Blake3XofInner {
+  #[inline]
+  fn tree(output: OutputState) -> Self {
+    Self::Tree(TreeXof {
+      output,
+      block_counter: 0,
+      position_within_block: 0,
+    })
+  }
+
+  #[inline]
+  fn squeeze(&mut self, out: &mut &mut [u8]) {
+    match self {
+      Self::Tree(tree) => tree.squeeze(out),
+      Self::Frontier(frontier) => frontier.squeeze(out),
+    }
+  }
+}
+
+#[derive(Clone)]
+struct TreeXof {
+  output: OutputState,
+  block_counter: u64,
+  position_within_block: u8,
+}
+
+impl TreeXof {
   #[inline]
   fn fill_one_block(&mut self, out: &mut &mut [u8]) {
     let mut block = [0u8; OUTPUT_BLOCK_LEN];
@@ -3749,19 +3841,13 @@ impl Blake3Xof {
     }
     *out = &mut core::mem::take(out)[take..];
   }
-}
 
-impl Xof for Blake3Xof {
-  fn squeeze(&mut self, mut out: &mut [u8]) {
-    if out.is_empty() {
-      return;
-    }
-
+  #[inline]
+  fn squeeze(&mut self, out: &mut &mut [u8]) {
     if self.position_within_block != 0 {
-      self.fill_one_block(&mut out);
+      self.fill_one_block(out);
     }
 
-    // Generate full blocks directly into caller output.
     let full = out.len() / OUTPUT_BLOCK_LEN * OUTPUT_BLOCK_LEN;
     if full != 0 {
       let blocks = (full / OUTPUT_BLOCK_LEN) as u64;
@@ -3769,11 +3855,84 @@ impl Xof for Blake3Xof {
         .output
         .root_output_blocks_into(self.block_counter, &mut out[..full]);
       self.block_counter = self.block_counter.wrapping_add(blocks);
-      out = &mut out[full..];
+      *out = &mut core::mem::take(out)[full..];
     }
 
     if !out.is_empty() {
-      self.fill_one_block(&mut out);
+      self.fill_one_block(out);
+    }
+  }
+}
+
+#[derive(Clone)]
+struct FrontierXof {
+  kernel: Kernel,
+  input_chaining_value: [u32; 8],
+  block: [u8; BLOCK_LEN],
+  block_len: u32,
+  flags: u32,
+  block_counter: u64,
+  position_within_block: u8,
+}
+
+impl FrontierXof {
+  #[inline]
+  fn output_state(&self) -> OutputState {
+    OutputState {
+      kernel: self.kernel,
+      input_chaining_value: self.input_chaining_value,
+      block_words: words16_from_le_bytes_64(&self.block),
+      counter: 0,
+      block_len: self.block_len,
+      flags: self.flags,
+    }
+  }
+
+  #[inline]
+  fn root_output_block(&self) -> [u8; OUTPUT_BLOCK_LEN] {
+    let block_words = words16_from_le_bytes_64(&self.block);
+    let words = (self.kernel.compress)(
+      &self.input_chaining_value,
+      &block_words,
+      self.block_counter,
+      self.block_len,
+      self.flags | ROOT,
+    );
+    words16_to_le_bytes(&words)
+  }
+
+  #[inline]
+  fn fill_one_block(&mut self, out: &mut &mut [u8]) {
+    let block = self.root_output_block();
+    let output_bytes = &block[self.position_within_block as usize..];
+    let take = min(out.len(), output_bytes.len());
+    out[..take].copy_from_slice(&output_bytes[..take]);
+    self.position_within_block += take as u8;
+    if self.position_within_block == OUTPUT_BLOCK_LEN as u8 {
+      self.block_counter = self.block_counter.wrapping_add(1);
+      self.position_within_block = 0;
+    }
+    *out = &mut core::mem::take(out)[take..];
+  }
+
+  #[inline]
+  fn squeeze(&mut self, out: &mut &mut [u8]) {
+    if self.position_within_block != 0 {
+      self.fill_one_block(out);
+    }
+
+    let full = out.len() / OUTPUT_BLOCK_LEN * OUTPUT_BLOCK_LEN;
+    if full != 0 {
+      let blocks = (full / OUTPUT_BLOCK_LEN) as u64;
+      self
+        .output_state()
+        .root_output_blocks_into(self.block_counter, &mut out[..full]);
+      self.block_counter = self.block_counter.wrapping_add(blocks);
+      *out = &mut core::mem::take(out)[full..];
+    }
+
+    if !out.is_empty() {
+      self.fill_one_block(out);
     }
   }
 }
