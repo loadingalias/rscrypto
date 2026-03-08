@@ -373,7 +373,7 @@ pub fn xof(data: &[u8]) -> super::Blake3Xof {
   let d = active();
   let kernel = select(&d, data.len()).kernel;
   let output = super::root_output_oneshot(kernel, super::IV, 0, super::policy_kind_from_flags(0, true), data);
-  super::Blake3Xof::from_output(output)
+  super::Blake3Xof::new(output)
 }
 
 #[inline]

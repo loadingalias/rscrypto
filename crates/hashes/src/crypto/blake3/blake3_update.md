@@ -2130,3 +2130,80 @@ Optional tools only with a specific question they uniquely answer:
 - Working conclusion:
   - If we continue at all, the next candidate has to be justified against this whole-path evidence, not against a single helper diff.
   - If we do not have a candidate that can remove meaningful control-flow/code-size from `short update + root_output + squeeze` together, we should stop rather than keep churning BLAKE3 internals.
+
+### 2026-03-08 - Candidate BM (pushed, CI run `22813005832`)
+- Hypothesis:
+  - A no-tree frontier mode that removes `update_with -> root_output -> generic squeeze` from the exact short serial/XOF path might finally convert the short clusters without touching oneshot or kernels.
+- Change:
+  - Added a frontier-mode short path for:
+    - small serial `update()` while still in the first chunk,
+    - single-chunk `finalize_xof()`,
+    - a dedicated `FrontierXof` reader for the no-tree case.
+  - Kept the existing tree path for everything else.
+- CI scope:
+  - Workflow run: `22813005832`
+  - Lanes: `amd-zen4`, `amd-zen5`, `intel-icl`, `intel-spr`, `graviton3`, `graviton4`
+  - Filter: `blake3/streaming/`, `blake3/xof/`, `blake3/xof-phase/`
+- Result:
+  - Rejected.
+  - Short streaming and `finalize-xof-only` stayed red across the completed lanes.
+  - The only real improvement cluster was `xof/init+read/64B-in/32B-out`, which is too narrow to justify keeping the rewrite.
+  - Graviton4 was not needed to make the call.
+- What it proved:
+  - Removing the generic no-tree `update_with/root_output/squeeze` stack frame is a real lever.
+  - But a frontier path that only owns the first chunk is too small a slice of the real hot surfaces.
+
+### 2026-03-08 - Candidate BN (pushed, CI run `22813859207`)
+- Hypothesis:
+  - If the frontier idea is carried through chunk rollover and short final-output setup, not just the first chunk, it might solve short streaming without sacrificing short XOF.
+- Change:
+  - Extended the short serial frontier path so `update()` can carry across chunk rollover instead of bailing out after the first chunk.
+  - Replaced the split tree/frontier XOF reader with a compact root-state reader that preserves the minimum state needed for root emission.
+  - Preserved public API, oneshot path, and kernels.
+- Validation before CI:
+  - `cargo clean`
+  - `just check-all`
+  - `just test`
+  - all passed after fixing an internal root-state counter regression during development.
+- CI scope:
+  - Workflow run: `22813859207`
+  - Lanes: `amd-zen4`, `amd-zen5`, `intel-icl`, `intel-spr`, `graviton3`, `graviton4`
+  - Filter: `blake3/streaming/`, `blake3/xof/`, `blake3/xof-phase/`
+- Result:
+  - Rejected.
+  - Exact target summary vs official:
+    - `blake3/streaming/{64B,256B,1024B}-chunks`: `0W / 18L`
+    - `blake3/xof/init+read/{1B,64B,1024B}-in/32B-out`: `0W / 18L`
+    - `blake3/xof-phase/finalize-xof-only/{1B,64B,1024B}`: `0W / 18L`
+- Useful new evidence:
+  - Short streaming improved materially versus `BM`:
+    - `64B-chunks`: improved on all 5 comparable prior lanes
+    - `256B-chunks`: improved on all 5 comparable prior lanes
+    - `1024B-chunks`: improved on 2 comparable lanes and did not materially regress elsewhere
+  - Representative remaining streaming gaps vs official:
+    - `graviton4 64B-chunks`: `+3.14%`
+    - `graviton3 64B-chunks`: `+3.58%`
+    - `graviton4 256B-chunks`: `+3.71%`
+    - `graviton3 1024B-chunks`: `+2.28%`
+  - XOF did not convert:
+    - `init+read/1B-in/32B-out`: still `0W / 6L`
+    - `init+read/64B-in/32B-out`: still `0W / 6L`
+    - `finalize-xof-only/*`: still `0W / 6L` on every input size
+  - Worse, parts of short XOF regressed relative to `BM`, especially on x86 for:
+    - `init+read/64B-in/32B-out`
+    - `finalize-xof-only/*`
+- Decision:
+  - Revert.
+  - `BN` proves the frontier idea is a valid streaming lever, but not a combined streaming-plus-XOF solution.
+  - The remaining problem is no longer “generic short streaming control flow” by itself.
+  - The XOF setup/final-output path is still the blocker, and the current frontier/root-state direction did not solve it cleanly.
+
+### Current conclusion after `BM` + `BN`
+- The frontier idea should not be treated as an all-up answer.
+- What is now defensible to say:
+  - short serial streaming can be improved by owning more of the rollover path locally;
+  - short XOF setup/final-output still does not have a winning design;
+  - a unified rewrite that tries to solve both surfaces at once is still failing the bar.
+- If work continues, the next candidate should be explicitly narrower:
+  - either a streaming-only candidate built on the lessons from `BN`,
+  - or a separate XOF/final-output candidate justified by new attribution first.
