@@ -1733,13 +1733,140 @@ Optional tools only with a specific question they uniquely answer:
   - The evidence now says the remaining problem is not just “our serial engine shape is less upstream-like”.
   - There is still a fixed-cost/codegen problem in the repeated short-update path and in short XOF setup/read that this rewrite did not remove.
 
-## Next Step After BF Revert
+### 2026-03-08 - Candidate BG (`4ae6bc3`, run `22809940913`)
+- Hypothesis:
+  - The accepted baseline was still carrying too much cold control flow in the short serial hot path.
+  - Splitting repeated short `update()` calls and single-chunk `finalize_xof()` into tiny leaves, while outlining the bulk/parallel/SIMD logic, would convert:
+    - `streaming 64..1024B chunks`,
+    - `finalize-xof-only`,
+    - `xof init+read/*-in/32B-out`.
+- Change:
+  - `mod.rs` only:
+    - added `ChunkState::try_update_fast()` and outlined the old generic block/chunk flow into cold `update_slow()`,
+    - added `Blake3::try_update_chunk_local()` so repeated short updates could stay on the current chunk even when tree state already existed,
+    - outlined the old serial control path into cold `update_with_slow()`,
+    - made public `Digest::update()` take the chunk-local leaf before bulk-kernel selection,
+    - added a single-chunk `finalize_xof()` leaf that returns `self.chunk_state.output()` directly when no tree fold is needed.
+  - No dispatch-table changes, no kernel changes, no oneshot changes, no reader redesign.
+- Validation:
+  - Local: `cargo test -p hashes blake3 --lib` passed.
+  - Local: `just check-all` passed.
+  - Local: `just test` passed (`167/167`).
+  - Local codegen signal:
+    - `Digest::update`: `26` LLVM lines.
+    - `ChunkState::update`: `56` LLVM lines.
+    - slow paths moved into `update_with_slow` / `update_slow`.
+  - Local targeted benches moved in the right direction on Apple M1, especially for short streaming and `finalize-xof-only`, but those numbers were not accepted as decision-grade.
+  - CI targeted bench run: `22809940913` (`crates=hashes`, `benches=blake3`,
+    `filter=blake3/streaming/,blake3/xof/,blake3/xof-phase/`, `quick=false`,
+    lanes: `amd-zen5`, `intel-icl`, `intel-spr`, `graviton3`, `graviton4`).
+- CI outcomes (time-based gap vs official; positive = slower):
+  - Target-cluster check:
+    - `streaming 64..1024B chunks`: `0W / 15L`
+      - `64B`: `+1.47%` to `+13.09%`
+      - `256B`: `+3.98%` to `+15.01%`
+      - `1024B`: `+2.41%` to `+16.66%`
+    - `xof init+read/*-in/32B-out`: `4W / 16L`
+      - `1B-in`: `+3.05%` to `+21.73%`
+      - `64B-in`: `-3.77%` to `+15.68%`
+      - `1024B-in`: `+3.78%` to `+16.99%`
+      - `65536B-in`: `-7.89%` to `+26.11%`
+    - `xof-phase/finalize-xof-only/{1B,64B,1024B}-in`: `0W / 15L`
+      - `1B-in`: `+19.94%` to `+30.30%`
+      - `64B-in`: `+1.74%` to `+16.68%`
+      - `1024B-in`: `+1.53%` to `+13.12%`
+  - Per-lane summary on the exact target surfaces:
+    - `amd-zen5`: `1W / 9L`
+    - `intel-icl`: `1W / 9L`
+    - `intel-spr`: `0W / 10L`
+    - `graviton3`: `1W / 9L`
+    - `graviton4`: `1W / 9L`
+  - Notable behavior:
+    - The local code-size cleanup was real.
+    - The CI target clusters did not convert.
+    - `finalize-xof-only` improved dramatically versus the catastrophic BF-style failures, but still remained net-loss on every lane.
+    - Short streaming stayed decisively behind on every lane.
+- Decision:
+  - Reject and revert.
+  - Hot/cold splitting and broader chunk-local fast-path admission are not enough.
+  - This candidate confirms that simply making the accepted serial path smaller in source and LLVM IR does not remove the remaining cross-lane cost.
 
-1. Revert `Candidate BF`.
-2. Keep the new repeated-short-update diagnostic test idea, but carry it on top of the last accepted baseline rather than this rewrite.
-3. Investigate codegen and fixed-cost sources inside the accepted serial path before changing architecture again.
-4. Focus only on the three real target surfaces:
-   - `blake3/streaming/64B..1024B-chunks`
-   - `blake3/xof-phase/finalize-xof-only`
-   - `blake3/xof/init+read/*/32B-out`
-5. Do not do another structural rewrite until we can point to a concrete per-call cost that the rewrite removes and the benchmark naming actually matches that cost.
+### 2026-03-08 - Candidate BH (local-only, not pushed)
+- Hypothesis:
+  - The remaining short streaming/XOF gap was still paying repeated kernel-ID dispatch inside serial inner primitives.
+  - Resolving those operations once in `Kernel` and using direct entry points for:
+    - chunk block compression,
+    - parent CV folding,
+    - root/XOF block emission,
+    would lower fixed cost without another state-machine rewrite.
+- Change:
+  - `kernels.rs`:
+    - extended `Kernel` with direct `parent_cv`, `root_output_block`, and `root_output_blocks` entry points,
+    - added per-arch wrappers so serial code stopped re-matching on `kernel.id`.
+  - `mod.rs`:
+    - switched `ChunkState::update`, parent folding, and `OutputState::root_output_blocks_into()` to those direct entry points,
+    - added a tiny first-read XOF shortcut for `<=32B` at `block_counter == 0`.
+  - No dispatch-table retune, no oneshot rewrite, no public API change.
+- Validation:
+  - Local: `cargo test -p hashes blake3 --lib --tests --no-run` passed.
+  - Local: `cargo test -p hashes blake3 --lib --tests` passed.
+  - Full `just check-all` / `just test` were not run, because the local perf gate failed first.
+  - Local targeted results on Apple M1 (median vs official):
+    - `blake3/streaming`:
+      - `64B-chunks`: `1.3398 ms` vs `1.3223 ms` (`+1.33%`)
+      - `256B-chunks`: `1.3268 ms` vs `1.2726 ms` (`+4.26%`)
+      - `1024B-chunks`: `1.3109 ms` vs `1.3215 ms` (`-0.80%`)
+    - `blake3/xof/init+read/*/32B-out` exact rerun:
+      - `1B-in`: `104.19 ns` vs `79.19 ns` (`+31.57%`)
+      - `64B-in`: `101.47 ns` vs `80.49 ns` (`+26.06%`)
+      - `1024B-in`: `1.2371 us` vs `1.1868 us` (`+4.24%`)
+    - `blake3/xof-phase/finalize-xof-only/1B-in` exact rerun:
+      - `21.63 ns` vs `19.53 ns` (`+6.02%`)
+  - Attribution from the exact `xof-phase` rerun exposed the more important fact:
+    - `new-only/1B-in`: `63.97 ns` vs `28.85 ns` (`+121.7%`)
+    - `update-only/1B-in`: `49.99 ns` vs `32.08 ns` (`+55.8%`)
+    - `new-only/64B-in`: `64.30 ns` vs `28.99 ns` (`+121.8%`)
+    - `update-only/64B-in`: `53.18 ns`, still far behind official and regressed vs our prior local baseline
+- Decision:
+  - Reject locally. Do not push.
+  - The direct serial-op snapshot is not the missing lever.
+  - The remaining short-XOF gap is dominated by constructor/setup and first-update fixed cost, not by the old finalize/squeeze dispatch ladders.
+  - The tiny `<=32B` first-read shortcut did not change that conclusion.
+
+## Anti-Repeat Guardrails (2026-03-08)
+
+- Do not repeat finalize-time compact XOF/output materialization as a strategy (`Candidate BB`).
+- Do not treat lazy single-chunk XOF reader promotion alone as the fix (`Candidate BC`).
+- Do not expect hot-state shrinking and localized bulk dispatch alone to break through (`Candidate BD`).
+- Do not rewrite the generic `OutputState` around raw bytes as a standalone fix (`Candidate BE`).
+- Do not assume an upstream-literal serial streaming/XOF rewrite alone is sufficient (`Candidate BF`).
+- Do not assume hot/cold outlining plus broader chunk-local update admission is sufficient (`Candidate BG`).
+- Do not assume direct serial primitive snapshots plus another tiny first-read XOF shortcut are sufficient (`Candidate BH`).
+
+## Next Step After BH Rejection
+
+1. Keep the accepted baseline architecture.
+2. Stop rewriting serial state machines, stop adding XOF first-read helpers, and stop attacking `kernel.id` laddering as the primary lever.
+3. Attack per-instance setup cost instead.
+4. New candidate should be:
+   - measure and reduce `Blake3::new()` / `new_internal()` fixed cost first,
+   - measure and reduce the first tiny `update()` call cost second,
+   - treat `xof init+read/*/32B-out` as primarily a constructor/setup problem until proven otherwise.
+5. Keep it narrow:
+   - no dispatch-table retune,
+   - no oneshot changes,
+   - no XOF reader redesign,
+   - no new architectural serial rewrite.
+6. Validate in the same order:
+   - local constructor/setup attribution first:
+     - `blake3/xof-phase/new-only`
+     - `blake3/xof-phase/update-only`
+     - `blake3/xof-phase/finalize-xof-only`
+   - then local target surfaces:
+     - `blake3/streaming/64B..1024B-chunks`
+     - `blake3/xof/init+read/*/32B-out`
+   - only if those move in the right direction:
+     - `just check-all && just test`
+     - then the same 5-lane CI bench scope.
+7. Keep/revert rule:
+   - if `new-only` and `update-only` stay badly behind official, reject before CI even if `finalize-xof-only` improves.
