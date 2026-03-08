@@ -2337,3 +2337,49 @@ Optional tools only with a specific question they uniquely answer:
 - At that point the remaining gap is either:
   - inherent to the chosen Rust/control-flow architecture around the existing kernels,
   - or only recoverable with a larger backend/kernel model change than is currently justified.
+
+### 2026-03-08 - Candidate `BO` (pushed, CI run `22823651733`)
+- Hypothesis:
+  - Extending only the short-update frontier across chunk rollover, while leaving XOF and final-output code untouched, would convert the short streaming cluster by itself.
+- Change:
+  - Broadened the short serial `update()` path so any `<= CHUNK_LEN` update could stay on the local serial path across chunk rollover and pending-chunk commit.
+  - Left `finalize_xof`, `Blake3Xof`, `OutputState`, oneshot code, and kernels unchanged.
+- Validation before CI:
+  - `just check-all`
+  - `just test`
+  - all passed locally.
+- CI scope:
+  - Workflow run: `22823651733`
+  - Lanes: `amd-zen4`, `amd-zen5`, `intel-icl`, `intel-spr`, `graviton3`, `graviton4`
+  - Filter: `blake3/streaming/`
+- Result:
+  - Rejected.
+  - Exact target summary vs official:
+    - `blake3/streaming/{64B,256B,1024B}-chunks`: `0W / 18L`
+- Representative gaps vs official:
+  - `amd-zen4`: `64B +12.07%`, `256B +14.15%`, `1024B +14.56%`
+  - `amd-zen5`: `64B +10.96%`, `256B +12.73%`, `1024B +12.61%`
+  - `intel-icl`: `64B +10.08%`, `256B +13.82%`, `1024B +14.18%`
+  - `intel-spr`: `64B +14.73%`, `256B +16.32%`, `1024B +15.90%`
+  - `graviton3`: `64B +4.18%`, `256B +5.07%`, `1024B +3.23%`
+  - `graviton4`: `64B +3.01%`, `256B +4.29%`, `1024B +2.76%`
+- What it proved:
+  - Another streaming-only frontier follow-up does not break through on x86 and does not improve enough on Arm to justify keeping it.
+  - `BO` is not clearly better than the stronger streaming signal already observed inside `BN`.
+  - The frontier idea has yielded the signal it is going to yield.
+- Decision:
+  - Revert.
+  - Stop spending time on more streaming-only frontier churn.
+  - The next candidate is `BP`, not `BO2`.
+
+### Current conclusion after `BO`
+- The combined streaming+XOF rewrites failed.
+- The streaming-only frontier follow-up also failed.
+- What is still left standing:
+  - the remaining high-value unsolved problem is short XOF/final-output setup,
+  - and the only technically credible next move is the dedicated backend-level root/XOF path (`BP`).
+- Practical rule from here:
+  - do not spend another candidate on `update()` control-flow reshaping alone,
+  - do not revisit reader-only helpers,
+  - do not revisit generic `OutputState` rewrites,
+  - move directly to `BP` or stop.
