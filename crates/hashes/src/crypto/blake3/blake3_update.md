@@ -1883,29 +1883,250 @@ Optional tools only with a specific question they uniquely answer:
 - Do not assume direct serial primitive snapshots plus another tiny first-read XOF shortcut are sufficient (`Candidate BH`).
 - Do not assume shrinking the base hasher with a lazy tree sidecar is sufficient (`Candidate BI`).
 
-## Next Step After BI Rejection
+### 2026-03-08 - Truthful short-path attribution
+- Goal:
+  - stop trusting `xof-phase/new-only` and `xof-phase/update-only` as previously measured,
+  - add attribution that mirrors the real acceptance surfaces without black-boxing whole hashers by value,
+  - determine whether the remaining short-XOF gap lives in:
+    - constructor / first update setup,
+    - `finalize_xof()` setup,
+    - or the first 32-byte squeeze itself.
+- Change:
+  - `crates/hashes/benches/blake3.rs`
+    - changed `blake3/xof-phase/{new-only,update-only,finalize-xof-only}` to black-box references instead of moving whole hashers/readers by value,
+    - added `finalize-xof+read32-only/*` so the main BLAKE3 bench can attribute first-read cost without constructor/update.
+  - `crates/hashes/benches/blake3_short_input_attribution.rs`
+    - added `blake3/short-input/xof-target-attribution`,
+    - added `blake3/short-input/stream-target-attribution`,
+    - both mirror the actual target shapes instead of synthetic by-value ownership traffic.
+- Validation:
+  - `cargo test -p hashes --benches --no-run` passed.
+  - `cargo test -p hashes blake3 --lib --tests --no-run` passed.
+  - `cargo bench --profile bench -p hashes --bench blake3_short_input_attribution -- 'blake3/short-input/(xof-target-attribution|stream-target-attribution)'`
+    completed locally.
+- Local findings on Apple M1:
+  - XOF target split:
+    - `init-only(ref)/1B-in`: `8.31 ns` vs official `3.76 ns`
+    - `init+update(ref)/1B-in`: `17.63 ns` vs `7.91 ns`
+    - `init+update+finalize-xof(ref)/1B-in`: `28.20 ns` vs `11.35 ns`
+    - `finalize-xof+read32(clone)/1B-in`: `119.82 ns` vs `110.33 ns`
+    - `init+read32(target)/1B-in`: `104.83 ns` vs `82.33 ns`
+    - `read32-only/1B-in`: `74.92 ns` vs `74.26 ns`
+    - `init+update(ref)/64B-in`: `18.80 ns` vs `8.86 ns`
+    - `init+update+finalize-xof(ref)/64B-in`: `28.27 ns` vs `12.03 ns`
+    - `finalize-xof+read32(clone)/64B-in`: `118.26 ns` vs `99.76 ns`
+    - `init+read32(target)/64B-in`: `103.82 ns` vs `82.48 ns`
+    - `read32-only/64B-in`: `74.16 ns` vs `73.38 ns`
+  - Streaming target split:
+    - `update-loop-only(ref)/64B-chunks`: `1.4648 ms` vs official ~`1.54 ms` (noisy, not useful as primary evidence)
+    - `full(target)/64B-chunks`: `1.4494 ms` vs `1.3642 ms`
+    - `update-loop-only(ref)/256B-chunks`: `1.3996 ms` vs `1.3313 ms`
+    - `finalize-only(clone)/256B-chunks`: `851.66 ns` vs `843.98 ns`
+    - `full(target)/256B-chunks`: `1.3986 ms` vs `1.3227 ms`
+    - `update-loop-only(ref)/1024B-chunks`: `1.3616 ms` vs `1.3322 ms`
+    - `finalize-only(clone)/1024B-chunks`: `846.90 ns` vs `844.90 ns`
+    - `full(target)/1024B-chunks`: `1.3698 ms` vs `1.3410 ms`
+- Decision / inference:
+  - The short `read32-only` path is basically at parity. Do not treat `Blake3Xof::squeeze()` / first-block copy as the primary culprit anymore.
+  - The short `init+read32` gap is mostly before or at `finalize_xof()`:
+    - constructor + first update are still materially behind,
+    - `finalize_xof()` setup adds another fixed-cost gap on `1B` / `64B`,
+    - the pure 32-byte squeeze is not where the remaining loss lives.
+  - The short streaming loss is overwhelmingly the repeated `update()` loop.
+    - `finalize()` after a fully-populated 1 MiB stream is near parity,
+    - so another `finalize()`-centric rewrite would be ornamental complexity.
 
-1. Keep the accepted baseline architecture.
-2. Stop rewriting serial state machines, stop adding XOF first-read helpers, stop attacking `kernel.id` laddering as the primary lever, and stop treating `new-only` / `update-only` wins as acceptance evidence.
-3. Use attribution benches that mirror the real targets more faithfully.
-4. New candidate should be:
-   - add or use local attribution that isolates:
-     - `new + update + finalize_xof` without black-boxing the whole hasher by value,
-     - `finalize_xof + squeeze_32` with the accepted baseline state layout,
-     - repeated short `update()` with the actual stop-at-1MiB streaming loop shape,
-   - then optimize only the phase that still explains the measured gap.
-5. Keep it narrow:
-   - no dispatch-table retune,
+## Next Step After Truthful Attribution
+
+1. Keep the accepted baseline architecture and keep the new attribution benches.
+2. Do not target `Blake3Xof::squeeze()` / reader-only paths as the primary fix.
+3. Next candidate should attack only two fixed-cost surfaces:
+   - `Blake3::new_internal()` / first tiny `update()` setup,
+   - short `finalize_xof()` / `root_output()` setup before any bytes are squeezed.
+4. Keep the candidate narrow:
+   - no serial-state rewrite,
    - no oneshot changes,
-   - no XOF reader redesign,
-   - no new architectural serial rewrite.
-6. Validate in the same order:
-   - local attribution that matches target behavior first,
-   - then local target surfaces:
+   - no dispatch-table retune,
+   - no XOF reader redesign unless the new attribution moves.
+5. Validate in this order:
+   - local attribution:
+     - `blake3/short-input/xof-target-attribution`
+     - `blake3/short-input/stream-target-attribution`
+   - local acceptance surfaces:
      - `blake3/streaming/64B..1024B-chunks`
      - `blake3/xof/init+read/*/32B-out`
-   - only if those move in the right direction:
+   - only if both move:
      - `just check-all && just test`
      - then the same 5-lane CI bench scope.
-7. Keep/revert rule:
-   - if the candidate only improves `new-only` / `update-only` but leaves `init+read/*/32B-out` and short streaming red locally, reject before CI.
+6. Keep/reject rule:
+   - if the candidate improves only constructor-only attribution or only pure `read32-only`, reject it before CI.
+
+### 2026-03-08 - Candidate BJ (local-only, not pushed)
+- Hypothesis:
+  - We were still paying redundant public-path dispatch/setup work on every short streaming update:
+    - `new_internal()` fetched the hasher dispatch twice,
+    - `update()` reloaded the stream kernel, recomputed the default table-bulk choice, and rewrote the same kernel fields even when the short-input path would not change dispatch.
+  - Eliminating that fixed work without changing the state machine could cut:
+    - `new_internal()` cost,
+    - first tiny `update()`,
+    - and some short `finalize_xof()` setup indirectly.
+- Change:
+  - `mod.rs` / `dispatch.rs` only:
+    - fetched the constructor dispatch plan once,
+    - cached the default table-bulk kernel at construction,
+    - split the `update_with` body so short inputs below `bulk_sizeclass_threshold` reused the existing stream/table-bulk pair instead of re-running dispatch setup each call.
+  - No kernel changes, no state-machine rewrite, no reader redesign, no API change.
+- Validation:
+  - `cargo test -p hashes blake3 --lib --tests --no-run` passed.
+  - `cargo test -p hashes --benches --no-run` passed.
+  - Local truthful attribution:
+    - `rscrypto init-only(ref)/1B-in`: `7.65 ns` vs prior `8.31 ns`
+    - `rscrypto init+update(ref)/1B-in`: `12.61 ns` vs prior `17.63 ns`
+    - `rscrypto init+update+finalize-xof(ref)/1B-in`: `23.76 ns` vs prior `28.20 ns`
+    - `rscrypto init+update(ref)/64B-in`: `13.82 ns` vs prior `18.80 ns`
+    - `rscrypto init+update+finalize-xof(ref)/64B-in`: `23.18 ns` vs prior `28.27 ns`
+    - `rscrypto init+read32(target)/1B-in`: `97.23 ns` vs prior `104.83 ns`
+    - `rscrypto init+read32(target)/64B-in`: `97.80 ns` vs prior `103.82 ns`
+  - Local target surfaces still failed:
+    - `blake3/streaming/64B-chunks`: `1.3996 ms` vs official `1.3860 ms`
+    - `blake3/streaming/256B-chunks`: `1.3995 ms` vs official `1.3318 ms`
+    - `blake3/streaming/1024B-chunks`: `1.3664 ms` vs official `1.3356 ms`
+    - `blake3/xof/init+read/1B-in/32B-out`: `101.89 ns` vs official `82.75 ns`
+    - `blake3/xof/init+read/64B-in/32B-out`: `96.52 ns` vs official `82.57 ns`
+    - `blake3/xof/init+read/1024B-in/32B-out`: `1.2670 us` vs official `1.2442 us`
+- Decision:
+  - Reject locally. Do not push.
+  - This candidate proved that redundant dispatch/setup on the public short path is real and worth removing in principle.
+  - But it still does not convert the actual repeated short streaming surfaces, which remain red exactly where we need wins.
+  - The remaining bottleneck is not just dispatch-plan churn at the API boundary.
+
+### 2026-03-08 - Candidate BK (local-only, not pushed)
+- Hypothesis:
+  - The remaining single-chunk `finalize_xof()` setup gap might still include unnecessary tail handling in `ChunkState::output()`.
+  - Keeping the chunk buffer tail zeroed after buffered-block compression would let `output()` stop zero-filling the last block before building `OutputState`, potentially reducing short XOF setup cost without changing reader or tree state.
+- Change:
+  - `mod.rs` only:
+    - after compressing a buffered full block, reset `self.block` back to `[0; 64]`,
+    - removed the explicit zero-fill from `ChunkState::output()` and relied on the zeroed-tail invariant instead.
+  - No reader changes, no kernel changes, no dispatch changes.
+- Validation:
+  - `cargo test -p hashes blake3 --lib --tests --no-run` passed.
+  - `cargo test -p hashes --benches --no-run` passed.
+  - Local truthful XOF attribution regressed on the measured setup phases:
+    - `init+update(ref)/1B-in`: `17.30 ns` vs prior baseline `17.63 ns` but far worse than `Candidate BJ` and still not competitive
+    - `init+update+finalize-xof(ref)/1B-in`: `24.84 ns` vs baseline `28.20 ns`, but not enough to explain the target gap
+    - `init+update(ref)/64B-in`: `18.94 ns` vs baseline `18.80 ns`
+    - `init+update+finalize-xof(ref)/64B-in`: `26.25 ns` vs baseline `28.27 ns`
+    - `init+read32(target)/64B-in`: `97.97 ns`, essentially flat versus the restored baseline signal
+  - Local target surfaces:
+    - `blake3/xof/init+read/1B-in/32B-out`: `98.06 ns` vs official `80.87 ns`
+    - `blake3/xof/init+read/64B-in/32B-out`: `99.43 ns` vs official `82.07 ns`
+    - `blake3/xof/init+read/1024B-in/32B-out`: `1.2607 us` vs official `1.2284 us`
+- Decision:
+  - Reject locally. Do not push.
+  - The zero-tail/output cleanup is too small and too noisy to be a real lever.
+  - More importantly, it does not improve the truthful setup phases in a way that matches the acceptance targets.
+
+### 2026-03-08 - Candidate BL (local-only, not pushed)
+- Hypothesis:
+  - The remaining short-XOF gap might come from converting the single-chunk tail block into words before first-block root/XOF emission.
+  - A very narrow x86-only raw-byte first-block path beneath `finalize_xof()` could bypass that conversion without repeating the failed generic `OutputState` raw-byte rewrite.
+- Change:
+  - `mod.rs` / `x86_64/{sse41,avx2,avx512}.rs` only:
+    - added x86 raw-byte single-block root-output helpers,
+    - taught `finalize_xof()` to preserve the padded raw tail block for single-chunk/no-tree states,
+    - taught `Blake3Xof` to use that raw-byte path for block counter `0` only, then fall back to the existing generic `OutputState` path.
+  - No oneshot changes, no generic `OutputState` rewrite, no dispatch-table changes, no public API change.
+- Validation:
+  - Correctness smoke before revert:
+    - `cargo test -p hashes blake3 --lib --tests --no-run` passed.
+    - `cargo test -p hashes --benches --no-run` passed.
+    - `cargo test -p hashes single_chunk_xof_prefix_matches_official_crate_for_forced_kernels -- --nocapture` passed.
+    - `cargo test -p hashes xof_repeated_small_squeezes_match_single_read -- --nocapture` passed.
+  - Exact local target surfaces moved the wrong way immediately:
+    - truthful attribution:
+      - `rscrypto init+update+finalize-xof(ref)/1B-in`: `27.71 ns` vs baseline `24.84 ns`
+      - `rscrypto finalize-xof+read32(clone)/1B-in`: `118.30 ns` vs baseline `110.70 ns`
+    - target benches:
+      - `blake3/xof/init+read/1B-in/32B-out`: `105.50 ns`, `+7.59%` vs prior local baseline
+      - `blake3/xof-phase/finalize-xof-only/1B-in`: `22.66 ns`, `+4.85%` vs prior local baseline
+      - `blake3/xof-phase/finalize-xof-only/64B-in`: `21.05 ns`, `+3.06%` vs prior local baseline
+  - I stopped the remaining local bench runs once the exact XOF target surfaces were decisively red, then reverted the code immediately.
+- Decision:
+  - Reject locally. Do not push.
+  - This kills the narrow “x86-only raw-byte first-block XOF leaf” variant.
+  - The byte-to-word conversion we were targeting is not the dominant lever in practice once the reader/setup plumbing needed to exploit it is included.
+  - Combined with `Candidate BE`, this is enough evidence to stop spending time on partial raw-byte root/XOF rewrites.
+
+### 2026-03-08 - External attribution snapshot before any further code changes
+- Environment / tools:
+  - Host: macOS 26.3.1, arm64 (Apple Silicon).
+  - Available attribution tools here are `cargo asm`, `cargo llvm-lines`, `sample`, `samply`, `xctrace`, and `dtrace`.
+  - Linux-style hardware counter tools (`perf stat`, `perf record`) are not available on this host, so the nearest equivalent here is assembly + sampled time-profiler evidence.
+- Method:
+  - Built a disposable crate outside the repo that exposes exact `init -> update -> finalize_xof -> read 32B` wrappers for:
+    - `hashes::crypto::Blake3`
+    - official `blake3::Hasher`
+  - Compared:
+    - wrapper assembly with `cargo asm`,
+    - wrapper and internal code size with `cargo llvm-lines`,
+    - runtime stack samples with macOS `sample` on tight wrapper loops.
+- Wrapper code-size result:
+  - Exact 1B / 64B wrapper size (`cargo llvm-lines`, local disposable crate):
+    - official `init+read32`: `84-86` LLVM lines
+    - rscrypto `init+read32`: `237` LLVM lines
+  - In our workspace build:
+    - `OutputState::root_output_blocks_into`: `3297` LLVM lines
+    - `Blake3::update_with`: `1120`
+    - `Blake3::root_output`: `332`
+    - `Blake3Xof::squeeze`: `250`
+    - `Blake3Xof::fill_one_block`: `65`
+- Assembly result:
+  - Official `init+read32` wrapper stays simple:
+    - initialize hasher,
+    - call `Hasher::update`,
+    - call `Hasher::finalize_xof`,
+    - call `OutputReader::fill`.
+  - Our `init+read32` wrapper pulls in materially more fixed work before the first 32 output bytes:
+    - repeated `HASHER_DISPATCH_REF` / once-lock load checks,
+    - repeated `stream_kernel` reloads,
+    - `bulk_kernel_for_update` / size-class selection,
+    - a much larger stack frame,
+    - call chain through `Blake3::update_with`, `Blake3::root_output`, and `Blake3Xof::squeeze`.
+  - Stack frame size in the wrapper diff was also not subtle:
+    - official: `2080` bytes
+    - rscrypto: `2352` bytes
+- Sampled runtime result on the exact `1B -> read32` wrapper loop:
+  - rscrypto top-of-stack buckets:
+    - `compress`: `2615`
+    - `Blake3::root_output`: `280`
+    - `Blake3::update_with`: `190`
+    - `Blake3Xof::squeeze`: `178`
+    - `memset`: `177`
+    - `memmove`: `102`
+    - `try_simd_update_batch`: `45`
+  - official top-of-stack buckets:
+    - `portable::compress_xof`: `3185`
+    - `Hasher::final_output`: `180`
+    - `Hasher::update`: `179`
+    - `OutputReader::fill`: `131`
+    - `memmove`: `153`
+    - `Hasher::finalize_xof`: `37`
+  - Interpretation:
+    - both implementations spend most samples inside compression, as expected;
+    - the gap is the extra fixed-cost control work around compression on our side, not a single missing reader helper.
+- What this rules in:
+  - The short-XOF deficit is structurally closer to:
+    - `update_with` control flow,
+    - `root_output` construction/folding,
+    - `squeeze` / `root_output_blocks_into` setup and copy behavior,
+    than to any one raw-byte conversion or first-block micro-helper.
+- What this rules out:
+  - Stop chasing isolated:
+    - first-read XOF helpers,
+    - tail-zeroing tweaks,
+    - partial raw-byte root/XOF leaves.
+  - Those are too small relative to the whole-path fixed cost the asm and samples show.
+- Working conclusion:
+  - If we continue at all, the next candidate has to be justified against this whole-path evidence, not against a single helper diff.
+  - If we do not have a candidate that can remove meaningful control-flow/code-size from `short update + root_output + squeeze` together, we should stop rather than keep churning BLAKE3 internals.

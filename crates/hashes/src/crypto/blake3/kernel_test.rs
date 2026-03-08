@@ -249,6 +249,52 @@ mod tests {
   }
 
   #[test]
+  fn single_chunk_xof_prefix_matches_official_crate_for_forced_kernels() {
+    let caps = platform::caps();
+    let lens = [0usize, 1, 63, 64, 65, 511, 1024];
+
+    for &id in ALL {
+      if !caps.has(required_caps(id)) {
+        continue;
+      }
+
+      let kernel = kernel_for_id(id);
+      for &len in &lens {
+        let msg = pattern(len);
+
+        let mut ours = [0u8; 96];
+        {
+          let mut h = hasher_for_kernel(id);
+          for part in msg.chunks(13) {
+            h.update_with(part, kernel, kernel);
+          }
+          let mut xof = h.finalize_xof();
+          xof.squeeze(&mut ours[..32]);
+          xof.squeeze(&mut ours[32..]);
+        }
+
+        let mut expected = [0u8; 96];
+        {
+          let mut h = blake3::Hasher::new();
+          for part in msg.chunks(13) {
+            h.update(part);
+          }
+          let mut xof = h.finalize_xof();
+          xof.fill(&mut expected[..32]);
+          xof.fill(&mut expected[32..]);
+        }
+
+        assert_eq!(
+          ours,
+          expected,
+          "single-chunk xof mismatch kernel={} len={len}",
+          id.as_str()
+        );
+      }
+    }
+  }
+
+  #[test]
   fn run_all_agree() {
     verify_blake3_kernels(b"abc").expect("kernels should agree");
     verify_blake3_kernels(&pattern(8192)).expect("kernels should agree");
