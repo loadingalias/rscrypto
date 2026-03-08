@@ -1833,6 +1833,45 @@ Optional tools only with a specific question they uniquely answer:
   - The remaining short-XOF gap is dominated by constructor/setup and first-update fixed cost, not by the old finalize/squeeze dispatch ladders.
   - The tiny `<=32B` first-read shortcut did not change that conclusion.
 
+### 2026-03-08 - Candidate BI (local-only, not pushed)
+- Hypothesis:
+  - The base `Blake3` object was still too large for the short-path setup surfaces.
+  - Moving tree-only state (`pending_chunk_cv` + `cv_stack`) out of the base object on `std` builds and allocating it lazily only when the stream actually becomes multi-chunk would reduce:
+    - `new-only`,
+    - first tiny `update()`,
+    - `xof init+read/*-in/32B-out`,
+    without touching the accepted algorithm shape.
+- Change:
+  - `mod.rs` only:
+    - introduced a `TreeState` sidecar,
+    - stored tree-only state behind `Option<Box<TreeState>>` on `std`,
+    - kept the inline tree state on non-`std`,
+    - routed stack/pending helpers through the sidecar,
+    - left kernels, oneshot, XOF reader shape, and public API unchanged.
+- Validation:
+  - Local: `cargo test -p hashes blake3 --lib --tests --no-run` passed.
+  - Local: `cargo test -p hashes blake3 --lib --tests` passed.
+  - Full `just check-all` / `just test` were not run, because the local perf gate failed first.
+  - Local `xof-phase` attribution moved dramatically:
+    - `new-only/1B-in`: `12.48 ns` vs official `29.08 ns`
+    - `update-only/1B-in`: `21.12 ns` vs official `32.32 ns`
+    - `new-only/64B-in`: `12.45 ns` vs official `29.03 ns`
+    - `update-only/64B-in`: `21.91 ns` vs official `33.10 ns`
+    - `finalize-xof-only/64B-in`: `20.42 ns` vs official `19.67 ns`
+    - `finalize-xof-only/1024B-in`: `19.87 ns` vs official `19.48 ns`
+  - But the actual target surfaces did not convert:
+    - `blake3/streaming/64B-chunks`: `1.3875 ms` vs official `1.3026 ms` (`+6.52%`)
+    - `blake3/streaming/256B-chunks`: `1.3455 ms` vs official `1.2758 ms` (`+5.46%`)
+    - `blake3/streaming/1024B-chunks`: `1.3187 ms` vs official `1.2861 ms` (`+2.54%`)
+    - `blake3/xof/init+read/1B-in/32B-out`: `102.73 ns` vs official `78.51 ns` (`+30.85%`)
+    - `blake3/xof/init+read/64B-in/32B-out`: `99.29 ns` vs official ~`80 ns` (still badly red)
+- Decision:
+  - Reject locally. Do not push.
+  - The lazy tree sidecar fixed setup attribution benches and still failed the real acceptance surfaces.
+  - Inference:
+    - `xof-phase/new-only` and `xof-phase/update-only` are over-weighting whole-hasher move/black-box cost and are not reliable acceptance proxies for `xof init+read`.
+    - The sidecar also introduced an expensive multi-chunk transition in streaming, which showed up exactly where short chunked streaming is already weak.
+
 ## Anti-Repeat Guardrails (2026-03-08)
 
 - Do not repeat finalize-time compact XOF/output materialization as a strategy (`Candidate BB`).
@@ -1842,26 +1881,26 @@ Optional tools only with a specific question they uniquely answer:
 - Do not assume an upstream-literal serial streaming/XOF rewrite alone is sufficient (`Candidate BF`).
 - Do not assume hot/cold outlining plus broader chunk-local update admission is sufficient (`Candidate BG`).
 - Do not assume direct serial primitive snapshots plus another tiny first-read XOF shortcut are sufficient (`Candidate BH`).
+- Do not assume shrinking the base hasher with a lazy tree sidecar is sufficient (`Candidate BI`).
 
-## Next Step After BH Rejection
+## Next Step After BI Rejection
 
 1. Keep the accepted baseline architecture.
-2. Stop rewriting serial state machines, stop adding XOF first-read helpers, and stop attacking `kernel.id` laddering as the primary lever.
-3. Attack per-instance setup cost instead.
+2. Stop rewriting serial state machines, stop adding XOF first-read helpers, stop attacking `kernel.id` laddering as the primary lever, and stop treating `new-only` / `update-only` wins as acceptance evidence.
+3. Use attribution benches that mirror the real targets more faithfully.
 4. New candidate should be:
-   - measure and reduce `Blake3::new()` / `new_internal()` fixed cost first,
-   - measure and reduce the first tiny `update()` call cost second,
-   - treat `xof init+read/*/32B-out` as primarily a constructor/setup problem until proven otherwise.
+   - add or use local attribution that isolates:
+     - `new + update + finalize_xof` without black-boxing the whole hasher by value,
+     - `finalize_xof + squeeze_32` with the accepted baseline state layout,
+     - repeated short `update()` with the actual stop-at-1MiB streaming loop shape,
+   - then optimize only the phase that still explains the measured gap.
 5. Keep it narrow:
    - no dispatch-table retune,
    - no oneshot changes,
    - no XOF reader redesign,
    - no new architectural serial rewrite.
 6. Validate in the same order:
-   - local constructor/setup attribution first:
-     - `blake3/xof-phase/new-only`
-     - `blake3/xof-phase/update-only`
-     - `blake3/xof-phase/finalize-xof-only`
+   - local attribution that matches target behavior first,
    - then local target surfaces:
      - `blake3/streaming/64B..1024B-chunks`
      - `blake3/xof/init+read/*/32B-out`
@@ -1869,4 +1908,4 @@ Optional tools only with a specific question they uniquely answer:
      - `just check-all && just test`
      - then the same 5-lane CI bench scope.
 7. Keep/revert rule:
-   - if `new-only` and `update-only` stay badly behind official, reject before CI even if `finalize-xof-only` improves.
+   - if the candidate only improves `new-only` / `update-only` but leaves `init+read/*/32B-out` and short streaming red locally, reject before CI.
