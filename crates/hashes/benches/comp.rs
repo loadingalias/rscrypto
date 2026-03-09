@@ -3,8 +3,8 @@ use core::{hint::black_box, time::Duration};
 use criterion::{BenchmarkId, Criterion, SamplingMode, Throughput, criterion_group, criterion_main};
 use hashes::{
   crypto::{
-    AsconHash256, AsconXof128, Blake3, Sha3_224, Sha3_256, Sha3_384, Sha3_512, Sha224, Sha256,
-    Sha384, Sha512, Sha512_256, Shake128, Shake256,
+    AsconHash256, AsconXof128, Blake3, Sha3_224, Sha3_256, Sha3_384, Sha3_512, Sha224, Sha256, Sha384, Sha512,
+    Sha512_256, Shake128, Shake256,
   },
   fast::{RapidHash64, Xxh3_64, Xxh3_128},
 };
@@ -424,7 +424,6 @@ fn comp(c: &mut Criterion) {
         })
       },
     );
-
   }
 
   group.finish();
