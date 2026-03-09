@@ -23,7 +23,7 @@ alloc = ["checksum?/alloc", "hashes?/alloc"]
 
 # Algorithm modules (optional, additive)
 checksums = ["dep:checksum"]  # CRC-16, CRC-24, CRC-32, CRC-64
-hashes = ["dep:hashes"]       # SHA-2, SHA-3, Blake2, Blake3, etc.
+hashes = ["dep:hashes"]       # SHA-2, SHA-3, Blake3, Ascon, XXH3, etc.
 # aead = ["dep:aead"]         # Future: AES-GCM, ChaCha20-Poly1305
 
 [dependencies]

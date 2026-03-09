@@ -17,10 +17,8 @@ arbitrary = { version = "1.4.2", features = ["derive"] }
 sha2 = "0.10.8"
 sha3 = "0.10.8"
 blake3 = "1.5.5"
-blake2 = "0.10.6"
 xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
 rapidhash = "4.2.1"
-siphasher = "0.3"
 tiny-keccak = { version = "2.0.2", features = ["kmac"] }
 ascon-hash256 = "0.5.0-rc.0"
 
@@ -80,13 +78,6 @@ doc = false
 bench = false
 
 [[bin]]
-name = "siphash"
-path = "fuzz_targets/siphash.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
 name = "sha2_family"
 path = "fuzz_targets/sha2_family.rs"
 test = false
@@ -103,13 +94,6 @@ bench = false
 [[bin]]
 name = "shake"
 path = "fuzz_targets/shake.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "blake2"
-path = "fuzz_targets/blake2.rs"
 test = false
 doc = false
 bench = false

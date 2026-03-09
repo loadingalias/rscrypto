@@ -60,22 +60,12 @@ fn sha384_portable(data: &[u8]) -> u64 {
 fn sha512_portable(data: &[u8]) -> u64 {
   u64_from_prefix(&crypto::Sha512::digest_portable(data))
 }
-fn sha512_224_portable(data: &[u8]) -> u64 {
-  u64_from_prefix(&crypto::Sha512_224::digest_portable(data))
-}
 fn sha512_256_portable(data: &[u8]) -> u64 {
   u64_from_prefix(&crypto::Sha512_256::digest_portable(data))
 }
 fn blake3_portable(data: &[u8]) -> u64 {
   u64_from_prefix(&crypto::Blake3::digest_portable(data))
 }
-fn blake2b_512_portable(data: &[u8]) -> u64 {
-  u64_from_prefix(&crypto::Blake2b512::digest_portable(data))
-}
-fn blake2s_256_portable(data: &[u8]) -> u64 {
-  u64_from_prefix(&crypto::Blake2s256::digest_portable(data))
-}
-
 fn sha3_224_portable(data: &[u8]) -> u64 {
   u64_from_prefix(&crypto::Sha3_224::digest_portable(data))
 }
@@ -109,11 +99,6 @@ fn xxh3_portable(data: &[u8]) -> u64 {
 fn rapidhash_portable(data: &[u8]) -> u64 {
   let f = fast::rapidhash::kernels::hash64_fn(fast::rapidhash::kernels::RapidHashKernelId::Portable);
   f(data, 0)
-}
-
-fn siphash_portable(data: &[u8]) -> u64 {
-  let f = fast::siphash::kernels::hash13_fn(fast::siphash::kernels::SipHashKernelId::Portable);
-  f([0, 0], data)
 }
 
 fn sha224_compress_kernel(id: crypto::sha224::kernels::Sha224KernelId, data: &[u8]) -> u64 {
@@ -284,39 +269,6 @@ fn sha512_compress_unaligned_auto(data: &[u8]) -> u64 {
   u64_from_u64_state(&state)
 }
 
-fn sha512_224_compress_kernel(id: crypto::sha512_224::kernels::Sha512_224KernelId, data: &[u8]) -> u64 {
-  const BLOCK_LEN: usize = 128;
-  let compress = crypto::sha512_224::kernels::compress_blocks_fn(id);
-  let blocks_len = data.len() - (data.len() % BLOCK_LEN);
-
-  let seed = u64_from_prefix(data);
-  let mut state = [seed; 8];
-
-  if blocks_len != 0 {
-    compress(&mut state, &data[..blocks_len]);
-  }
-
-  u64_from_u64_state(&state)
-}
-
-fn sha512_224_compress_portable(data: &[u8]) -> u64 {
-  sha512_224_compress_kernel(crypto::sha512_224::kernels::Sha512_224KernelId::Portable, data)
-}
-
-fn sha512_224_compress_auto(data: &[u8]) -> u64 {
-  const BLOCK_LEN: usize = 128;
-  let blocks_len = data.len() - (data.len() % BLOCK_LEN);
-
-  let seed = u64_from_prefix(data);
-  let mut state = [seed; 8];
-
-  if blocks_len != 0 {
-    crypto::sha512_224::dispatch::compress_blocks(&mut state, &data[..blocks_len]);
-  }
-
-  u64_from_u64_state(&state)
-}
-
 fn sha512_256_compress_kernel(id: crypto::sha512_256::kernels::Sha512_256KernelId, data: &[u8]) -> u64 {
   const BLOCK_LEN: usize = 128;
   let compress = crypto::sha512_256::kernels::compress_blocks_fn(id);
@@ -382,40 +334,6 @@ fn sha512_stream64_auto(data: &[u8]) -> u64 {
 
 fn sha512_stream4k_auto(data: &[u8]) -> u64 {
   sha512_stream_chunks_auto(data, 4 * 1024)
-}
-
-fn blake2b_512_stream_chunks_auto(data: &[u8], chunk_size: usize) -> u64 {
-  use traits::Digest as _;
-  let mut h = crypto::Blake2b512::new();
-  for chunk in data.chunks(chunk_size) {
-    h.update(chunk);
-  }
-  u64_from_prefix(&h.finalize())
-}
-
-fn blake2b_512_stream64_auto(data: &[u8]) -> u64 {
-  blake2b_512_stream_chunks_auto(data, 64)
-}
-
-fn blake2b_512_stream4k_auto(data: &[u8]) -> u64 {
-  blake2b_512_stream_chunks_auto(data, 4 * 1024)
-}
-
-fn blake2s_256_stream_chunks_auto(data: &[u8], chunk_size: usize) -> u64 {
-  use traits::Digest as _;
-  let mut h = crypto::Blake2s256::new();
-  for chunk in data.chunks(chunk_size) {
-    h.update(chunk);
-  }
-  u64_from_prefix(&h.finalize())
-}
-
-fn blake2s_256_stream64_auto(data: &[u8]) -> u64 {
-  blake2s_256_stream_chunks_auto(data, 64)
-}
-
-fn blake2s_256_stream4k_auto(data: &[u8]) -> u64 {
-  blake2s_256_stream_chunks_auto(data, 4 * 1024)
 }
 
 #[derive(Clone, Copy)]
@@ -768,176 +686,6 @@ fn blake3_stream4k_x86_64_avx512(data: &[u8]) -> u64 {
 #[cfg(target_arch = "aarch64")]
 fn blake3_stream4k_aarch64_neon(data: &[u8]) -> u64 {
   blake3_stream_chunks_kernel(crypto::blake3::kernels::Blake3KernelId::Aarch64Neon, data, 4 * 1024)
-}
-
-fn blake2b_512_compress_kernel(id: crypto::blake2b::kernels::Blake2b512KernelId, data: &[u8]) -> u64 {
-  const BLOCK_LEN: usize = 128;
-  let compress = crypto::blake2b::kernels::compress_fn(id);
-
-  let seed = u64_from_prefix(data);
-  let mut h = [seed; 8];
-  let mut t: u128 = 0;
-
-  let full_blocks = data.len() / BLOCK_LEN;
-  let rem = data.len() % BLOCK_LEN;
-
-  if full_blocks == 0 {
-    let mut last = [0u8; BLOCK_LEN];
-    last[..data.len()].copy_from_slice(data);
-    compress(&mut h, &last, &mut t, true, data.len() as u32);
-    return h[0] ^ (t as u64);
-  }
-
-  if rem == 0 {
-    let prefix = (full_blocks - 1) * BLOCK_LEN;
-    if prefix != 0 {
-      compress(&mut h, &data[..prefix], &mut t, false, 0);
-    }
-    compress(
-      &mut h,
-      &data[prefix..prefix + BLOCK_LEN],
-      &mut t,
-      true,
-      BLOCK_LEN as u32,
-    );
-  } else {
-    let prefix = full_blocks * BLOCK_LEN;
-    compress(&mut h, &data[..prefix], &mut t, false, 0);
-    let mut last = [0u8; BLOCK_LEN];
-    last[..rem].copy_from_slice(&data[prefix..]);
-    compress(&mut h, &last, &mut t, true, rem as u32);
-  }
-
-  h[0] ^ (t as u64)
-}
-
-fn blake2b_512_compress_portable(data: &[u8]) -> u64 {
-  blake2b_512_compress_kernel(crypto::blake2b::kernels::Blake2b512KernelId::Portable, data)
-}
-
-fn blake2b_512_compress_auto(data: &[u8]) -> u64 {
-  const BLOCK_LEN: usize = 128;
-
-  let seed = u64_from_prefix(data);
-  let mut h = [seed; 8];
-  let mut t: u128 = 0;
-
-  let full_blocks = data.len() / BLOCK_LEN;
-  let rem = data.len() % BLOCK_LEN;
-
-  if full_blocks == 0 {
-    let mut last = [0u8; BLOCK_LEN];
-    last[..data.len()].copy_from_slice(data);
-    crypto::blake2b::dispatch::compress(&mut h, &last, &mut t, true, data.len() as u32);
-    return h[0] ^ (t as u64);
-  }
-
-  if rem == 0 {
-    let prefix = (full_blocks - 1) * BLOCK_LEN;
-    if prefix != 0 {
-      crypto::blake2b::dispatch::compress(&mut h, &data[..prefix], &mut t, false, 0);
-    }
-    crypto::blake2b::dispatch::compress(
-      &mut h,
-      &data[prefix..prefix + BLOCK_LEN],
-      &mut t,
-      true,
-      BLOCK_LEN as u32,
-    );
-  } else {
-    let prefix = full_blocks * BLOCK_LEN;
-    crypto::blake2b::dispatch::compress(&mut h, &data[..prefix], &mut t, false, 0);
-    let mut last = [0u8; BLOCK_LEN];
-    last[..rem].copy_from_slice(&data[prefix..]);
-    crypto::blake2b::dispatch::compress(&mut h, &last, &mut t, true, rem as u32);
-  }
-
-  h[0] ^ (t as u64)
-}
-
-fn blake2s_256_compress_kernel(id: crypto::blake2s::kernels::Blake2s256KernelId, data: &[u8]) -> u64 {
-  const BLOCK_LEN: usize = 64;
-  let compress = crypto::blake2s::kernels::compress_fn(id);
-
-  let seed = u64_from_prefix(data);
-  let mut h = [seed as u32; 8];
-  let mut t: u64 = 0;
-
-  let full_blocks = data.len() / BLOCK_LEN;
-  let rem = data.len() % BLOCK_LEN;
-
-  if full_blocks == 0 {
-    let mut last = [0u8; BLOCK_LEN];
-    last[..data.len()].copy_from_slice(data);
-    compress(&mut h, &last, &mut t, true, data.len() as u32);
-    return u64_from_u32_state(&h) ^ t;
-  }
-
-  if rem == 0 {
-    let prefix = (full_blocks - 1) * BLOCK_LEN;
-    if prefix != 0 {
-      compress(&mut h, &data[..prefix], &mut t, false, 0);
-    }
-    compress(
-      &mut h,
-      &data[prefix..prefix + BLOCK_LEN],
-      &mut t,
-      true,
-      BLOCK_LEN as u32,
-    );
-  } else {
-    let prefix = full_blocks * BLOCK_LEN;
-    compress(&mut h, &data[..prefix], &mut t, false, 0);
-    let mut last = [0u8; BLOCK_LEN];
-    last[..rem].copy_from_slice(&data[prefix..]);
-    compress(&mut h, &last, &mut t, true, rem as u32);
-  }
-
-  u64_from_u32_state(&h) ^ t
-}
-
-fn blake2s_256_compress_portable(data: &[u8]) -> u64 {
-  blake2s_256_compress_kernel(crypto::blake2s::kernels::Blake2s256KernelId::Portable, data)
-}
-
-fn blake2s_256_compress_auto(data: &[u8]) -> u64 {
-  const BLOCK_LEN: usize = 64;
-
-  let seed = u64_from_prefix(data);
-  let mut h = [seed as u32; 8];
-  let mut t: u64 = 0;
-
-  let full_blocks = data.len() / BLOCK_LEN;
-  let rem = data.len() % BLOCK_LEN;
-
-  if full_blocks == 0 {
-    let mut last = [0u8; BLOCK_LEN];
-    last[..data.len()].copy_from_slice(data);
-    crypto::blake2s::dispatch::compress(&mut h, &last, &mut t, true, data.len() as u32);
-    return u64_from_u32_state(&h) ^ t;
-  }
-
-  if rem == 0 {
-    let prefix = (full_blocks - 1) * BLOCK_LEN;
-    if prefix != 0 {
-      crypto::blake2s::dispatch::compress(&mut h, &data[..prefix], &mut t, false, 0);
-    }
-    crypto::blake2s::dispatch::compress(
-      &mut h,
-      &data[prefix..prefix + BLOCK_LEN],
-      &mut t,
-      true,
-      BLOCK_LEN as u32,
-    );
-  } else {
-    let prefix = full_blocks * BLOCK_LEN;
-    crypto::blake2s::dispatch::compress(&mut h, &data[..prefix], &mut t, false, 0);
-    let mut last = [0u8; BLOCK_LEN];
-    last[..rem].copy_from_slice(&data[prefix..]);
-    crypto::blake2s::dispatch::compress(&mut h, &last, &mut t, true, rem as u32);
-  }
-
-  u64_from_u32_state(&h) ^ t
 }
 
 fn blake3_words16_from_le_bytes_64(bytes: &[u8; 64]) -> [u32; 16] {
@@ -1626,21 +1374,9 @@ pub fn get_kernel(algo: &str, name: &str) -> Option<Kernel> {
       name: "portable",
       func: sha512_compress_unaligned_auto,
     }),
-    ("sha512-224-compress", "portable") => Some(Kernel {
-      name: "portable",
-      func: sha512_224_compress_portable,
-    }),
     ("sha512-256-compress", "portable") => Some(Kernel {
       name: "portable",
       func: sha512_256_compress_portable,
-    }),
-    ("blake2b-512-compress", "portable") => Some(Kernel {
-      name: "portable",
-      func: blake2b_512_compress_portable,
-    }),
-    ("blake2s-256-compress", "portable") => Some(Kernel {
-      name: "portable",
-      func: blake2s_256_compress_portable,
     }),
     ("blake3-chunk", "portable") => Some(Kernel {
       name: "portable",
@@ -1765,22 +1501,6 @@ pub fn get_kernel(algo: &str, name: &str) -> Option<Kernel> {
       name: "portable",
       func: sha512_stream4k_auto,
     }),
-    ("blake2b-512-stream64", "portable") => Some(Kernel {
-      name: "portable",
-      func: blake2b_512_stream64_auto,
-    }),
-    ("blake2b-512-stream4k", "portable") => Some(Kernel {
-      name: "portable",
-      func: blake2b_512_stream4k_auto,
-    }),
-    ("blake2s-256-stream64", "portable") => Some(Kernel {
-      name: "portable",
-      func: blake2s_256_stream64_auto,
-    }),
-    ("blake2s-256-stream4k", "portable") => Some(Kernel {
-      name: "portable",
-      func: blake2s_256_stream4k_auto,
-    }),
     ("blake3-stream64", "portable") => Some(Kernel {
       name: "portable",
       func: blake3_stream64_portable,
@@ -1854,10 +1574,6 @@ pub fn get_kernel(algo: &str, name: &str) -> Option<Kernel> {
     ("sha512", "portable") => Some(Kernel {
       name: "portable",
       func: sha512_portable,
-    }),
-    ("sha512-224", "portable") => Some(Kernel {
-      name: "portable",
-      func: sha512_224_portable,
     }),
     ("sha512-256", "portable") => Some(Kernel {
       name: "portable",
@@ -2081,14 +1797,6 @@ pub fn get_kernel(algo: &str, name: &str) -> Option<Kernel> {
       name: "aarch64/neon",
       func: blake3_latency_xof_aarch64_neon,
     }),
-    ("blake2b-512", "portable") => Some(Kernel {
-      name: "portable",
-      func: blake2b_512_portable,
-    }),
-    ("blake2s-256", "portable") => Some(Kernel {
-      name: "portable",
-      func: blake2s_256_portable,
-    }),
     ("sha3-224", "portable") => Some(Kernel {
       name: "portable",
       func: sha3_224_portable,
@@ -2120,10 +1828,6 @@ pub fn get_kernel(algo: &str, name: &str) -> Option<Kernel> {
     ("rapidhash", "portable") => Some(Kernel {
       name: "portable",
       func: rapidhash_portable,
-    }),
-    ("siphash", "portable") => Some(Kernel {
-      name: "portable",
-      func: siphash_portable,
     }),
     ("keccakf1600", "portable") => Some(Kernel {
       name: "portable",
@@ -2161,10 +1865,7 @@ pub fn run_auto(algo: &str, data: &[u8]) -> Option<u64> {
     "sha384-compress" => Some(sha384_compress_auto(data)),
     "sha512-compress" => Some(sha512_compress_auto(data)),
     "sha512-compress-unaligned" => Some(sha512_compress_unaligned_auto(data)),
-    "sha512-224-compress" => Some(sha512_224_compress_auto(data)),
     "sha512-256-compress" => Some(sha512_256_compress_auto(data)),
-    "blake2b-512-compress" => Some(blake2b_512_compress_auto(data)),
-    "blake2s-256-compress" => Some(blake2s_256_compress_auto(data)),
     "blake3-chunk" => Some(blake3_oneshot_auto(data)),
     "blake3-parent" => Some(blake3_parent_cvs_many_auto(data)),
     "blake3-parent-fold" => Some(blake3_parent_fold_root_auto(data)),
@@ -2173,10 +1874,6 @@ pub fn run_auto(algo: &str, data: &[u8]) -> Option<u64> {
     "sha256-stream4k" => Some(sha256_stream4k_auto(data)),
     "sha512-stream64" => Some(sha512_stream64_auto(data)),
     "sha512-stream4k" => Some(sha512_stream4k_auto(data)),
-    "blake2b-512-stream64" => Some(blake2b_512_stream64_auto(data)),
-    "blake2b-512-stream4k" => Some(blake2b_512_stream4k_auto(data)),
-    "blake2s-256-stream64" => Some(blake2s_256_stream64_auto(data)),
-    "blake2s-256-stream4k" => Some(blake2s_256_stream4k_auto(data)),
     "blake3-stream64" => Some(blake3_stream64_auto(data)),
     "blake3-stream256" => Some(blake3_stream256_auto(data)),
     "blake3-stream1k" => Some(blake3_stream1k_auto(data)),
@@ -2193,7 +1890,6 @@ pub fn run_auto(algo: &str, data: &[u8]) -> Option<u64> {
     "sha256" => Some(u64_from_prefix(&<crypto::Sha256 as Digest>::digest(data))),
     "sha384" => Some(u64_from_prefix(&<crypto::Sha384 as Digest>::digest(data))),
     "sha512" => Some(u64_from_prefix(&<crypto::Sha512 as Digest>::digest(data))),
-    "sha512-224" => Some(u64_from_prefix(&<crypto::Sha512_224 as Digest>::digest(data))),
     "sha512-256" => Some(u64_from_prefix(&<crypto::Sha512_256 as Digest>::digest(data))),
     "blake3" => Some(u64_from_prefix(&<crypto::Blake3 as Digest>::digest(data))),
     "blake3-latency" => Some(blake3_latency_auto(data)),
@@ -2202,8 +1898,6 @@ pub fn run_auto(algo: &str, data: &[u8]) -> Option<u64> {
     "blake3-derive" => Some(blake3_derive_oneshot_auto(data)),
     "blake3-latency-derive" => Some(blake3_latency_derive_auto(data)),
     "blake3-latency-xof" => Some(blake3_latency_xof_auto(data)),
-    "blake2b-512" => Some(u64_from_prefix(&<crypto::Blake2b512 as Digest>::digest(data))),
-    "blake2s-256" => Some(u64_from_prefix(&<crypto::Blake2s256 as Digest>::digest(data))),
     "sha3-224" => Some(u64_from_prefix(&<crypto::Sha3_224 as Digest>::digest(data))),
     "sha3-256" => Some(u64_from_prefix(&<crypto::Sha3_256 as Digest>::digest(data))),
     "sha3-384" => Some(u64_from_prefix(&<crypto::Sha3_384 as Digest>::digest(data))),
@@ -2220,7 +1914,6 @@ pub fn run_auto(algo: &str, data: &[u8]) -> Option<u64> {
     }
     "xxh3" => Some(fast::xxh3::dispatch::hash64_with_seed(0, data)),
     "rapidhash" => Some(fast::rapidhash::dispatch::hash64_with_seed(0, data)),
-    "siphash" => Some(fast::siphash::dispatch::hash13_with_seed([0, 0], data)),
     "keccakf1600" => Some(keccakf1600_auto(data)),
     "ascon-hash256" => Some(u64_from_prefix(&<crypto::AsconHash256 as Digest>::digest(data))),
     "ascon-xof128" => {
@@ -2249,16 +1942,11 @@ pub fn kernel_name_for_len(algo: &str, len: usize) -> Option<&'static str> {
     "sha256-compress" | "sha256-compress-unaligned" => Some(crypto::sha256::dispatch::kernel_name_for_len(len)),
     "sha384-compress" => Some(crypto::sha384::dispatch::kernel_name_for_len(len)),
     "sha512-compress" | "sha512-compress-unaligned" => Some(crypto::sha512::dispatch::kernel_name_for_len(len)),
-    "sha512-224-compress" => Some(crypto::sha512_224::dispatch::kernel_name_for_len(len)),
     "sha512-256-compress" => Some(crypto::sha512_256::dispatch::kernel_name_for_len(len)),
-    "blake2b-512-compress" => Some(crypto::blake2b::dispatch::kernel_name_for_len(len)),
-    "blake2s-256-compress" => Some(crypto::blake2s::dispatch::kernel_name_for_len(len)),
     "blake3-chunk" | "blake3-parent" | "blake3-parent-fold" => Some(crypto::blake3::dispatch::kernel_name_for_len(len)),
     "keccakf1600-permute" => Some(crypto::keccak::dispatch::kernel_name_for_len(len)),
     "sha256-stream64" | "sha256-stream4k" => Some(crypto::sha256::dispatch::kernel_name_for_len(len)),
     "sha512-stream64" | "sha512-stream4k" => Some(crypto::sha512::dispatch::kernel_name_for_len(len)),
-    "blake2b-512-stream64" | "blake2b-512-stream4k" => Some(crypto::blake2b::dispatch::kernel_name_for_len(len)),
-    "blake2s-256-stream64" | "blake2s-256-stream4k" => Some(crypto::blake2s::dispatch::kernel_name_for_len(len)),
     "blake3-stream64"
     | "blake3-stream256"
     | "blake3-stream1k"
@@ -2275,7 +1963,6 @@ pub fn kernel_name_for_len(algo: &str, len: usize) -> Option<&'static str> {
     "sha256" => Some(crypto::sha256::dispatch::kernel_name_for_len(len)),
     "sha384" => Some(crypto::sha384::dispatch::kernel_name_for_len(len)),
     "sha512" => Some(crypto::sha512::dispatch::kernel_name_for_len(len)),
-    "sha512-224" => Some(crypto::sha512_224::dispatch::kernel_name_for_len(len)),
     "sha512-256" => Some(crypto::sha512_256::dispatch::kernel_name_for_len(len)),
     "blake3"
     | "blake3-latency"
@@ -2284,14 +1971,11 @@ pub fn kernel_name_for_len(algo: &str, len: usize) -> Option<&'static str> {
     | "blake3-derive"
     | "blake3-latency-derive"
     | "blake3-latency-xof" => Some(crypto::blake3::dispatch::kernel_name_for_len(len)),
-    "blake2b-512" => Some(crypto::blake2b::dispatch::kernel_name_for_len(len)),
-    "blake2s-256" => Some(crypto::blake2s::dispatch::kernel_name_for_len(len)),
     "sha3-224" | "sha3-256" | "sha3-384" | "sha3-512" | "shake128" | "shake256" => {
       Some(crypto::keccak::dispatch::kernel_name_for_len(len))
     }
     "xxh3" => Some(fast::xxh3::dispatch::kernel_name_for_len(len)),
     "rapidhash" => Some(fast::rapidhash::dispatch::kernel_name_for_len(len)),
-    "siphash" => Some(fast::siphash::dispatch::kernel_name_for_len(len)),
     "keccakf1600" => Some(crypto::keccak::dispatch::kernel_name_for_len(len)),
     "ascon-hash256" => Some(crypto::ascon::dispatch::kernel_name_for_len(len)),
     "ascon-xof128" => Some(crypto::ascon::dispatch::kernel_name_for_len(len)),
