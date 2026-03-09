@@ -534,7 +534,7 @@ pub(crate) fn root_output_blocks_bytes_into_inline(
           unsafe {
             super::x86_64::avx512::root_output_blocks2(
               chaining_value,
-              &block_words,
+              block_words,
               output_block_counter,
               block_len,
               flags,
@@ -597,7 +597,7 @@ pub(crate) fn root_output_blocks_bytes_into_inline(
           unsafe {
             super::x86_64::avx2::root_output_blocks2(
               chaining_value,
-              &block_words,
+              block_words,
               output_block_counter,
               block_len,
               flags,
