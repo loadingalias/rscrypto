@@ -3573,6 +3573,12 @@ impl Digest for Blake3 {
       return;
     }
 
+    if self.frontier_is_active() && self.chunk_state.len() == 0 && input.len() == CHUNK_LEN {
+      self.chunk_state.kernel = self.dispatch_plan.size_class_kernel(CHUNK_LEN);
+      self.chunk_state.update(input);
+      return;
+    }
+
     if self.frontier_can_absorb(input) {
       self.chunk_state.kernel = self.kernel;
       self.chunk_state.update(input);
