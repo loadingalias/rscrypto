@@ -313,6 +313,64 @@ pub(crate) fn chunk_compress_blocks_inline(
 }
 
 #[inline(always)]
+pub(crate) unsafe fn hash_many_contiguous_inline(
+  id: Blake3KernelId,
+  input: *const u8,
+  num_chunks: usize,
+  key: &[u32; 8],
+  counter: u64,
+  flags: u32,
+  out: *mut u8,
+) {
+  match id {
+    Blake3KernelId::Portable => {
+      // SAFETY: caller upholds the contiguous-input and output-buffer contract.
+      unsafe { hash_many_contiguous_portable(input, num_chunks, key, counter, flags, out) }
+    }
+    #[cfg(target_arch = "x86_64")]
+    Blake3KernelId::X86Ssse3 => {
+      // SAFETY: caller upholds the contiguous-input and output-buffer contract.
+      unsafe { hash_many_contiguous_ssse3_wrapper(input, num_chunks, key, counter, flags, out) }
+    }
+    #[cfg(target_arch = "x86_64")]
+    Blake3KernelId::X86Sse41 => {
+      // SAFETY: caller upholds the contiguous-input and output-buffer contract.
+      unsafe { hash_many_contiguous_sse41_wrapper(input, num_chunks, key, counter, flags, out) }
+    }
+    #[cfg(target_arch = "x86_64")]
+    Blake3KernelId::X86Avx2 => {
+      // SAFETY: caller upholds the contiguous-input and output-buffer contract.
+      unsafe { hash_many_contiguous_avx2_wrapper(input, num_chunks, key, counter, flags, out) }
+    }
+    #[cfg(target_arch = "x86_64")]
+    Blake3KernelId::X86Avx512 => {
+      // SAFETY: caller upholds the contiguous-input and output-buffer contract.
+      unsafe { hash_many_contiguous_avx512_wrapper(input, num_chunks, key, counter, flags, out) }
+    }
+    #[cfg(target_arch = "aarch64")]
+    Blake3KernelId::Aarch64Neon => {
+      // SAFETY: caller upholds the contiguous-input and output-buffer contract.
+      unsafe { hash_many_contiguous_neon_wrapper(input, num_chunks, key, counter, flags, out) }
+    }
+    #[cfg(target_arch = "s390x")]
+    Blake3KernelId::S390xVector => {
+      // SAFETY: caller upholds the contiguous-input and output-buffer contract.
+      unsafe { hash_many_contiguous_s390x_vector_wrapper(input, num_chunks, key, counter, flags, out) }
+    }
+    #[cfg(target_arch = "powerpc64")]
+    Blake3KernelId::PowerVsx => {
+      // SAFETY: caller upholds the contiguous-input and output-buffer contract.
+      unsafe { hash_many_contiguous_power_vsx_wrapper(input, num_chunks, key, counter, flags, out) }
+    }
+    #[cfg(target_arch = "riscv64")]
+    Blake3KernelId::RiscvV => {
+      // SAFETY: caller upholds the contiguous-input and output-buffer contract.
+      unsafe { hash_many_contiguous_riscv_v_wrapper(input, num_chunks, key, counter, flags, out) }
+    }
+  }
+}
+
+#[inline(always)]
 pub(crate) fn parent_cv_inline(
   id: Blake3KernelId,
   left_child_cv: [u32; 8],
