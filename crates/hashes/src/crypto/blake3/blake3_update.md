@@ -2265,63 +2265,186 @@ Optional tools only with a specific question they uniquely answer:
     - `blake3/xof/init+read/{1B,64B,1024B}-in/32B-out`
     - `blake3/xof-phase/finalize-xof-only/{1B,64B,1024B}`
 - Why this track exists:
-  - External attribution showed the remaining deficit is the whole short final-output path:
-    - `update_with`
-    - `root_output`
-    - `squeeze`
-    - `root_output_blocks_into`
-  - The reader-only and partial raw-byte attempts are already ruled out.
-  - `BN` also showed that carrying frontier ideas into XOF setup is not enough under the current root/output model.
-- Scope:
-  - Build a real internal root-output/XOF object below the public API.
-  - Keep the public `Blake3Xof` type and external behavior unchanged.
-  - Keep tree semantics, oneshot behavior, and kernel selection rules unchanged.
-- Intended design:
-  - Introduce a compact internal root-output carrier for XOF/final-output setup.
-  - This carrier should store exactly the state needed for root emission:
-    - input CV
-    - final block bytes
-    - block length
-    - chunk/root flags
-    - chunk counter / output block counter as required
-    - resolved emission kernel or direct backend entry points
-  - Add backend-level direct root/XOF emission entry points so the short path does not go through:
-    - generic `OutputState`
-    - generic `root_output_blocks_into`
-    - generic reader promotion logic
-  - Keep the generic tree/output path for the cases that actually need it.
-  - The short serial `finalize_xof -> read32` path should be able to stay entirely on this compact backend path.
-- Explicit non-goals:
-  - no generic raw-byte `OutputState` rewrite,
-  - no x86-only special case as the main design,
-  - no eager finalize-time precompute that pushes work into every XOF call,
-  - no dispatch-table tuning as a substitute for design work.
-- Required attribution before implementation:
-  - Re-run code-size and asm checks on the exact wrapper path:
+  - External attribution already narrowed the real problem to the short final-output stack:
+    - `root_output` construction/folding,
+    - `Blake3Xof::squeeze`,
+    - `OutputState::root_output_blocks_into`,
+    - extra memset/memmove and block-format conversion around them.
+  - The code is currently paying generic-tree machinery even when the caller only wants:
+    - `new -> update(<= 1024B total) -> finalize_xof -> read 32B`.
+  - Every smaller attempt failed because it optimized around `OutputState` instead of replacing the short root/XOF execution model below it.
+
+#### `BP` acceptance criteria
+- `audit` criteria:
+  1. Correctness:
+    - identical bytes vs official `blake3` crate for plain, keyed, and derive-key modes,
+    - identical bytes across all resolved kernels and forced-kernel tests,
+    - chunk-boundary independence preserved,
+    - `finalize()`, `finalize_xof()`, and oneshot APIs keep existing public semantics.
+  2. Performance:
+    - the exact wrapper `init -> update -> finalize_xof -> read32` must materially shrink in `cargo llvm-lines` and `cargo asm`,
+    - the short no-tree path must stop routing through generic `OutputState::root_output_blocks_into`,
+    - CI must show real cross-lane wins on short-XOF target surfaces, not a smaller average loss.
+  3. Resource:
+    - no heap allocation,
+    - no per-read `OutputState` materialization,
+    - no repeated bytes<->words conversion on the short no-tree path,
+    - no extra always-live state inside `Blake3` beyond what the backend path strictly needs.
+  4. Scaling:
+    - large squeezes remain O(n) and continue to use multi-block emission where the kernel supports it,
+    - no per-block tree refolding,
+    - no fallback to scalar one-block loops when a backend already has a wider root-output primitive.
+
+#### `BP` design rule
+- Portable Rust remains authoritative for semantics.
+- SIMD/ASM remains accelerators, not alternate semantics.
+- We maximize Rust first for correctness and maintainability, but we explicitly use backend-level SIMD/ASM entry points where they already exist or where profiling proves a Rust wrapper is still the fixed-cost bottleneck.
+
+#### `BP` architecture
+- Replace the short-XOF root/output setup path with a dedicated internal object:
+  - working name: `RootEmitState`
+- `RootEmitState` is **not** a rewrite of generic `OutputState`.
+- It is a separate, byte-oriented root emitter that stores only:
+  - resolved emission kernel,
+  - input chaining value,
+  - final block bytes,
+  - block length,
+  - final flags,
+  - output block counter,
+  - optional cached word block only if a backend wrapper demonstrably needs it and can keep it cold/lazy.
+- There are only two construction cases:
+  - `ChunkRoot`:
+    - single-chunk/no-tree final state from `ChunkState`
+  - `ParentRoot`:
+    - final parent/root node after folding stack state
+- Both cases normalize into the same backend emission contract:
+  - “emit root output block(s) for this `(cv, block_bytes, block_len, flags, counter)` state”
+
+#### Backend contract changes
+- Extend the kernel/backend layer with direct root-output emission entry points.
+- The contract should be byte-oriented at the boundary:
+  - `root_output_block_bytes(...)`
+  - `root_output_blocks_bytes(...)`
+- Purpose:
+  - eliminate generic `OutputState` construction on the short XOF path,
+  - eliminate the giant `root_output_blocks_into` match ladder from the no-tree path,
+  - reuse existing lane-native root-output helpers where we already have them.
+- Backend mapping:
+  - `portable`:
+    - Rust wrapper, byte block -> local word block once -> scalar compress loop
+  - `x86_64/sse4.1`, `x86_64/avx2`, `x86_64/avx512`:
+    - wrap existing `root_output_blocks{1,2,4,8,16}` / `compress_xof` surfaces
+  - `aarch64/neon`:
+    - wrap existing `root_output_blocks4_neon` plus one-block fallback
+  - `s390x`, `powerpc64`, `riscv64`:
+    - start with correct Rust/portable wrappers behind the same contract unless profiling proves a dedicated backend path is necessary
+- This is the right Rust/ASM split:
+  - semantics and state management in Rust,
+  - actual root emission delegated to backend-specific code when available.
+
+#### `BP` hot-path execution model
+- `finalize_xof()`:
+  - build `RootEmitState` directly
+  - do **not** build generic `OutputState`
+  - do **not** build split tree/frontier reader state
+- `Blake3Xof`:
+  - become a compact reader over `RootEmitState`
+  - state should be only:
+    - `root`
+    - `block_counter`
+    - `position_within_block`
+- `squeeze()`:
+  - partial block:
+    - use direct one-block backend emitter
+  - full aligned block run:
+    - use direct many-block backend emitter
+  - tail:
+    - use direct one-block emitter once
+- Short no-tree `finalize_xof -> read32` must stay entirely on this path.
+- Multi-chunk/tree inputs may still pay root folding in Rust, but once the final root state exists, emission must use the same backend contract.
+
+#### What `BP` must not do
+- no generic raw-byte `OutputState` rewrite,
+- no helper stack that starts fast then promotes back into the old generic path for the first short read,
+- no eager finalize-time precompute that taxes every XOF call,
+- no x86-only escape hatch as the main design,
+- no dispatch-table retune as a substitute for removing control flow.
+
+#### `audit` risks to design against up front
+- Counter semantics:
+  - root-output counter vs chunk counter vs block counter must never be conflated again.
+- Flag semantics:
+  - `CHUNK_START`, `CHUNK_END`, `PARENT`, `ROOT` composition must match current portable/reference behavior exactly.
+- Endianness:
+  - byte-oriented root state must not silently depend on little-endian layout in the generic path.
+- Backend equivalence:
+  - new root emit wrappers must be proven byte-identical to portable across all forced-kernel tests.
+- Cold-path creep:
+  - do not let `RootEmitState` become another generic “maybe tree, maybe frontier, maybe promoted” abstraction blob.
+
+#### `BP` implementation phases
+- Phase 0: baseline attribution refresh
+  - rerun:
     - `cargo llvm-lines`
     - `cargo asm`
     - `sample` / `samply`
-  - The new design is only worth landing if it materially removes the current short-path frames from the wrapper:
-    - `Blake3::root_output`
+  - exact wrapper target:
+    - `init -> update -> finalize_xof -> read32`
+  - record current size/stack/frame evidence before coding.
+- Phase 1: backend contract
+  - add kernel/root-emission entry points in `kernels.rs`
+  - wire wrappers to existing x86/aarch64 SIMD/ASM helpers
+  - keep portable fallback authoritative and obviously correct
+- Phase 2: root emitter object
+  - implement `RootEmitState`
+  - add direct builders from:
+    - single-chunk final state
+    - folded parent/root state
+- Phase 3: reader replacement
+  - replace current `Blake3Xof` internals with compact root-emitter reader
+  - keep the public API unchanged
+- Phase 4: optional finalize integration
+  - only if it is mechanically clean, let `finalize()` reuse the same root emitter for 32-byte root hash output
+  - if that complicates the candidate, leave `finalize()` alone and keep scope on XOF
+
+#### Verification plan for `BP`
+- Required correctness tests:
+  - existing official vector, differential, and forced-kernel suites
+  - dedicated tests for:
+    - single-chunk `finalize_xof` prefix vs official for all forced kernels
+    - repeated small squeezes vs one large squeeze
+    - finalize after repeated short updates, then read 32 bytes
+    - keyed and derive-key XOF parity on the new path
+- Required code-shape checks:
+  - `cargo llvm-lines` on:
+    - exact wrapper
+    - `Blake3::finalize_xof`
     - `Blake3Xof::squeeze`
-    - `OutputState::root_output_blocks_into`
+    - new backend root emitter wrappers
+  - `cargo asm` on the exact wrapper and one-block emitter path
+  - acceptance requirement:
+    - the no-tree wrapper should stop pulling in:
+      - `Blake3::root_output`
+      - `OutputState::root_output_blocks_into`
+      - generic tree-reader promotion logic
 - Local gate before CI:
   - `cargo clean`
   - `just check-all`
   - `just test`
   - `cargo bench --profile bench -p hashes --bench blake3 -- 'blake3/xof/(rscrypto|official)/init\\+read/(1B-in|64B-in|1024B-in)/32B-out'`
   - `cargo bench --profile bench -p hashes --bench blake3 -- 'blake3/xof-phase/(rscrypto|official)/finalize-xof-only/(1B-in|64B-in|1024B-in)'`
-  - Treat local benches as directional only.
+  - local benches remain directional only.
 - CI acceptance bar:
   - Dispatch targeted `bench.yaml` with:
     - `filter=blake3/xof/,blake3/xof-phase/`
     - lanes: `amd-zen4`, `amd-zen5`, `intel-icl`, `intel-spr`, `graviton3`, `graviton4`
   - Keep only if:
     - short-XOF surfaces show real cross-lane wins,
-    - and `finalize-xof-only` is no longer universally red.
+    - `finalize-xof-only` is no longer universally red,
+    - and wins are not confined to one architecture family.
   - Revert immediately if:
     - the result is still `0W / N` on `finalize-xof-only`,
-    - or improvements are confined to one input size or one architecture family.
+    - or the code-shape checks show the wrapper still drags in the old generic path.
 
 #### Execution order
 - Do not combine these tracks again.
