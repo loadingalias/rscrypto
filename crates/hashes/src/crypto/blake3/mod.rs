@@ -1704,7 +1704,7 @@ fn root_output_oneshot_join_parallel(
     compress_subtree_to_parent_node_bytes::<join::RayonJoin>(kernel, key_words, 0, flags, input, budget);
   let block_words = words16_from_le_bytes_64(&parent_block);
   OutputState {
-    kernel,
+    kernel_id: kernel.id,
     input_chaining_value: key_words,
     block_words,
     counter: 0,
@@ -1753,7 +1753,7 @@ fn words16_to_le_bytes(words: &[u32; 16]) -> [u8; 2 * OUT_LEN] {
 
 #[derive(Clone, Copy)]
 struct OutputState {
-  kernel: Kernel,
+  kernel_id: kernels::Blake3KernelId,
   input_chaining_value: [u32; 8],
   block_words: [u32; 16],
   counter: u64,
@@ -1764,7 +1764,8 @@ struct OutputState {
 impl OutputState {
   #[inline]
   fn chaining_value(&self) -> [u32; 8] {
-    first_8_words((self.kernel.compress)(
+    first_8_words(kernels::compress_block_inline(
+      self.kernel_id,
       &self.input_chaining_value,
       &self.block_words,
       self.counter,
@@ -1775,7 +1776,8 @@ impl OutputState {
 
   #[inline]
   fn root_hash_words(&self) -> [u32; 8] {
-    first_8_words((self.kernel.compress)(
+    first_8_words(kernels::compress_block_inline(
+      self.kernel_id,
       &self.input_chaining_value,
       &self.block_words,
       0,
@@ -1792,7 +1794,7 @@ impl OutputState {
   #[inline]
   fn into_root_emit_state(self) -> RootEmitState {
     RootEmitState {
-      kernel_id: self.kernel.id,
+      kernel_id: self.kernel_id,
       input_chaining_value: self.input_chaining_value,
       block_words: self.block_words,
       counter: self.counter,
@@ -1863,7 +1865,7 @@ impl RootEmitState {
 
 #[inline]
 fn compress_node_chaining_value(
-  kernel: Kernel,
+  kernel_id: kernels::Blake3KernelId,
   input_chaining_value: [u32; 8],
   block: &[u8; BLOCK_LEN],
   counter: u64,
@@ -1871,7 +1873,8 @@ fn compress_node_chaining_value(
   flags: u32,
 ) -> [u32; 8] {
   let block_words = words16_from_le_bytes_64(block);
-  first_8_words((kernel.compress)(
+  first_8_words(kernels::compress_block_inline(
+    kernel_id,
     &input_chaining_value,
     &block_words,
     counter,
@@ -1882,7 +1885,7 @@ fn compress_node_chaining_value(
 
 #[derive(Clone, Copy)]
 struct ChunkState {
-  kernel: Kernel,
+  kernel_id: kernels::Blake3KernelId,
   chaining_value: [u32; 8],
   chunk_counter: u64,
   block: [u8; BLOCK_LEN],
@@ -1895,7 +1898,7 @@ impl ChunkState {
   #[inline]
   fn new(key_words: [u32; 8], chunk_counter: u64, flags: u32, kernel: Kernel) -> Self {
     Self {
-      kernel,
+      kernel_id: kernel.id,
       chaining_value: key_words,
       chunk_counter,
       block: [0u8; BLOCK_LEN],
@@ -1915,39 +1918,52 @@ impl ChunkState {
     if self.blocks_compressed == 0 { CHUNK_START } else { 0 }
   }
 
-  fn update(&mut self, mut input: &[u8]) {
-    // Streaming fast path: when we receive exactly one whole chunk at a chunk
-    // boundary, compute the internal state in one shot.
+  #[inline]
+  fn set_exact_one_chunk(&mut self, input: &[u8]) {
+    debug_assert_eq!(self.blocks_compressed, 0);
+    debug_assert_eq!(self.block_len, 0);
+    debug_assert_eq!(input.len(), CHUNK_LEN);
+
     #[cfg(target_arch = "aarch64")]
     {
-      if self.kernel.id == kernels::Blake3KernelId::Aarch64Neon
-        && self.blocks_compressed == 0
-        && self.block_len == 0
-        && input.len() == CHUNK_LEN
-      {
-        let mut cv_words = [0u32; 8];
-        let mut last_block = [0u8; BLOCK_LEN];
+      if self.kernel_id == kernels::Blake3KernelId::Aarch64Neon {
+        let key = self.chaining_value;
 
-        // SAFETY: input is exactly one full chunk.
+        // SAFETY: `input` is exactly one full chunk, `self.chaining_value` is
+        // writable for 8 words, and `self.block` is writable for one full
+        // block.
         unsafe {
           aarch64::chunk_state_one_chunk_aarch64_out(
             input.as_ptr(),
-            &self.chaining_value,
+            &key,
             self.chunk_counter,
             self.flags,
-            cv_words.as_mut_ptr(),
-            last_block.as_mut_ptr(),
+            self.chaining_value.as_mut_ptr(),
+            self.block.as_mut_ptr(),
           );
         }
 
-        self.chaining_value = cv_words;
-        self.block = last_block;
         self.block_len = BLOCK_LEN as u8;
         self.blocks_compressed = 15;
         return;
       }
     }
 
+    let mut blocks_compressed = 0u8;
+    kernels::chunk_compress_blocks_inline(
+      self.kernel_id,
+      &mut self.chaining_value,
+      self.chunk_counter,
+      self.flags,
+      &mut blocks_compressed,
+      &input[..CHUNK_LEN - BLOCK_LEN],
+    );
+    self.block.copy_from_slice(&input[CHUNK_LEN - BLOCK_LEN..]);
+    self.block_len = BLOCK_LEN as u8;
+    self.blocks_compressed = blocks_compressed;
+  }
+
+  fn update(&mut self, mut input: &[u8]) {
     // Phase 1: if we already have a buffered (partial or full) block, fill it
     // (or, if it's already full, compress it) before touching the caller
     // slice. This keeps the hot "many full blocks" path branch-light.
@@ -1972,7 +1988,7 @@ impl ChunkState {
           "last chunk block stays buffered until output()"
         );
         kernels::chunk_compress_blocks_inline(
-          self.kernel.id,
+          self.kernel_id,
           &mut self.chaining_value,
           self.chunk_counter,
           self.flags,
@@ -2011,7 +2027,7 @@ impl ChunkState {
         if blocks_to_compress != 0 {
           let bytes = blocks_to_compress * BLOCK_LEN;
           kernels::chunk_compress_blocks_inline(
-            self.kernel.id,
+            self.kernel_id,
             &mut self.chaining_value,
             self.chunk_counter,
             self.flags,
@@ -2034,7 +2050,7 @@ impl ChunkState {
   #[inline]
   fn output_chaining_value(&self) -> [u32; 8] {
     compress_node_chaining_value(
-      self.kernel,
+      self.kernel_id,
       self.chaining_value,
       &self.block,
       self.chunk_counter,
@@ -2050,7 +2066,7 @@ impl ChunkState {
       "single-message frontier root emit state must be chunk-counter zero"
     );
     RootEmitState {
-      kernel_id: self.kernel.id,
+      kernel_id: self.kernel_id,
       input_chaining_value: self.chaining_value,
       block_words: words16_from_le_bytes_64(&self.block),
       counter: self.chunk_counter,
@@ -2062,7 +2078,7 @@ impl ChunkState {
   #[inline]
   fn output(&self) -> OutputState {
     OutputState {
-      kernel: self.kernel,
+      kernel_id: self.kernel_id,
       input_chaining_value: self.chaining_value,
       block_words: words16_from_le_bytes_64(&self.block),
       counter: self.chunk_counter,
@@ -2074,7 +2090,7 @@ impl ChunkState {
 
 #[inline]
 fn parent_output(
-  kernel: Kernel,
+  kernel_id: kernels::Blake3KernelId,
   left_child_cv: [u32; 8],
   right_child_cv: [u32; 8],
   key_words: [u32; 8],
@@ -2084,7 +2100,7 @@ fn parent_output(
   block_words[..8].copy_from_slice(&left_child_cv);
   block_words[8..].copy_from_slice(&right_child_cv);
   OutputState {
-    kernel,
+    kernel_id,
     input_chaining_value: key_words,
     block_words,
     counter: 0,
@@ -2128,7 +2144,7 @@ fn single_chunk_output(
 
       let block_words = words16_from_le_bytes_64(&last_block);
       return OutputState {
-        kernel,
+        kernel_id: kernel.id,
         input_chaining_value: cv_words,
         block_words,
         counter: chunk_counter,
@@ -2181,7 +2197,7 @@ fn single_chunk_output(
   let start = if blocks_compressed == 0 { CHUNK_START } else { 0 };
 
   OutputState {
-    kernel,
+    kernel_id: kernel.id,
     input_chaining_value: chaining_value,
     block_words,
     counter: chunk_counter,
@@ -2258,9 +2274,9 @@ fn root_output_oneshot(
           cur_len = pairs;
         }
         if cur_is_cur {
-          return parent_output(kernel, cur[0], cur[1], key_words, flags);
+          return parent_output(kernel.id, cur[0], cur[1], key_words, flags);
         }
-        return parent_output(kernel, next[0], next[1], key_words, flags);
+        return parent_output(kernel.id, next[0], next[1], key_words, flags);
       }
 
       #[cfg(not(target_endian = "little"))]
@@ -2308,7 +2324,7 @@ fn root_output_oneshot(
         let final_cvs: &[[u8; OUT_LEN]] = if cur_is_cur { &cur[..] } else { &next[..] };
         let left = words8_from_le_bytes_32(&final_cvs[0]);
         let right = words8_from_le_bytes_32(&final_cvs[1]);
-        return parent_output(kernel, left, right, key_words, flags);
+        return parent_output(kernel.id, left, right, key_words, flags);
       }
     }
 
@@ -2344,9 +2360,9 @@ fn root_output_oneshot(
           cur_len = pairs;
         }
         if cur_is_cur {
-          return parent_output(kernel, cur[0], cur[1], key_words, flags);
+          return parent_output(kernel.id, cur[0], cur[1], key_words, flags);
         }
-        return parent_output(kernel, next[0], next[1], key_words, flags);
+        return parent_output(kernel.id, next[0], next[1], key_words, flags);
       }
 
       #[cfg(not(target_endian = "little"))]
@@ -2394,7 +2410,7 @@ fn root_output_oneshot(
         let final_cvs: &[[u8; OUT_LEN]] = if cur_is_cur { &cur[..] } else { &next[..] };
         let left = words8_from_le_bytes_32(&final_cvs[0]);
         let right = words8_from_le_bytes_32(&final_cvs[1]);
-        return parent_output(kernel, left, right, key_words, flags);
+        return parent_output(kernel.id, left, right, key_words, flags);
       }
     }
   }
@@ -2528,12 +2544,12 @@ fn root_output_oneshot(
   parent_nodes_remaining -= 1;
   // SAFETY: `cv_stack_len` tracks the number of initialized entries.
   let left = unsafe { cv_stack[parent_nodes_remaining].assume_init_read() };
-  let mut output = parent_output(kernel, left, right_cv, key_words, flags);
+  let mut output = parent_output(kernel.id, left, right_cv, key_words, flags);
   while parent_nodes_remaining > 0 {
     parent_nodes_remaining -= 1;
     // SAFETY: `cv_stack_len` tracks the number of initialized entries.
     let left = unsafe { cv_stack[parent_nodes_remaining].assume_init_read() };
-    output = parent_output(kernel, left, output.chaining_value(), key_words, flags);
+    output = parent_output(kernel.id, left, output.chaining_value(), key_words, flags);
   }
 
   output
@@ -3349,7 +3365,7 @@ impl Blake3 {
   fn update_with(&mut self, mut input: &[u8], stream_kernel: Kernel, bulk_kernel: Kernel) {
     self.kernel = stream_kernel;
     self.bulk_kernel = bulk_kernel;
-    self.chunk_state.kernel = stream_kernel;
+    self.chunk_state.kernel_id = stream_kernel.id;
 
     // If the previous update ended exactly on a chunk boundary, we may have
     // stored the last full chunk's CV instead of keeping a fully-buffered
@@ -3396,7 +3412,11 @@ impl Blake3 {
 
       let want = CHUNK_LEN - self.chunk_state.len();
       let take = min(want, input.len());
-      self.chunk_state.update(&input[..take]);
+      if self.chunk_state.len() == 0 && take == CHUNK_LEN {
+        self.chunk_state.set_exact_one_chunk(&input[..take]);
+      } else {
+        self.chunk_state.update(&input[..take]);
+      }
       input = &input[take..];
     }
   }
@@ -3465,7 +3485,7 @@ impl Blake3 {
       parent_nodes_remaining -= 1;
       // SAFETY: `cv_stack_len` tracks the number of initialized entries.
       let left = unsafe { *self.cv_stack[parent_nodes_remaining].assume_init_ref() };
-      parent_output(self.kernel, left, right_cv, self.key_words, self.flags)
+      parent_output(self.kernel.id, left, right_cv, self.key_words, self.flags)
     } else {
       self.chunk_state.output()
     };
@@ -3474,7 +3494,13 @@ impl Blake3 {
       parent_nodes_remaining -= 1;
       // SAFETY: `cv_stack_len` tracks the number of initialized entries.
       let left = unsafe { *self.cv_stack[parent_nodes_remaining].assume_init_ref() };
-      output = parent_output(self.kernel, left, output.chaining_value(), self.key_words, self.flags);
+      output = parent_output(
+        self.kernel.id,
+        left,
+        output.chaining_value(),
+        self.key_words,
+        self.flags,
+      );
     }
     output
   }
@@ -3574,13 +3600,13 @@ impl Digest for Blake3 {
     }
 
     if self.frontier_is_active() && self.chunk_state.len() == 0 && input.len() == CHUNK_LEN {
-      self.chunk_state.kernel = self.dispatch_plan.size_class_kernel(CHUNK_LEN);
-      self.chunk_state.update(input);
+      self.chunk_state.kernel_id = self.dispatch_plan.size_class_kernel(CHUNK_LEN).id;
+      self.chunk_state.set_exact_one_chunk(input);
       return;
     }
 
     if self.frontier_can_absorb(input) {
-      self.chunk_state.kernel = self.kernel;
+      self.chunk_state.kernel_id = self.kernel.id;
       self.chunk_state.update(input);
       return;
     }
