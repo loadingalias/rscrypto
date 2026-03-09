@@ -3481,11 +3481,16 @@ impl Blake3 {
 
   #[inline]
   fn root_emit_state(&self) -> RootEmitState {
-    let mut parent_nodes_remaining = self.cv_stack_len as usize;
-    if parent_nodes_remaining == 0 && self.pending_chunk_cv.is_none() {
+    if self.cv_stack_len == 0 && self.pending_chunk_cv.is_none() {
       return self.chunk_state.root_emit_state();
     }
 
+    self.root_emit_state_slow()
+  }
+
+  #[inline(never)]
+  fn root_emit_state_slow(&self) -> RootEmitState {
+    let mut parent_nodes_remaining = self.cv_stack_len as usize;
     let mut current_cv = if let Some(right_cv) = self.pending_chunk_cv {
       debug_assert!(
         parent_nodes_remaining > 0,
@@ -3513,6 +3518,10 @@ impl Blake3 {
   #[must_use]
   #[inline]
   pub fn finalize_xof(&self) -> Blake3Xof {
+    if self.cv_stack_len == 0 && self.pending_chunk_cv.is_none() {
+      return Blake3Xof::new(self.chunk_state.root_emit_state());
+    }
+
     Blake3Xof::new(self.root_emit_state())
   }
 
