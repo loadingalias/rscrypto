@@ -441,6 +441,15 @@ pub(crate) fn root_output_block_bytes_inline(
   out.copy_from_slice(&super::words16_to_le_bytes(&words));
 }
 
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn root_output_tail_block_mut(out: &mut [u8]) -> &mut [u8; 2 * OUT_LEN] {
+  debug_assert!(out.len() >= 2 * OUT_LEN);
+  // SAFETY: callers only use this helper when at least one full 64-byte root
+  // output block remains. The cast reinterprets the first 64 bytes of `out`.
+  unsafe { &mut *out.as_mut_ptr().cast::<[u8; 2 * OUT_LEN]>() }
+}
+
 #[inline(always)]
 pub(crate) fn root_output_blocks_bytes_into_inline(
   id: Blake3KernelId,
@@ -529,9 +538,7 @@ pub(crate) fn root_output_blocks_bytes_into_inline(
           continue;
         }
         Blake3KernelId::X86Avx512 => {
-          let block_out: &mut [u8; 2 * OUT_LEN] = out[..2 * OUT_LEN]
-            .try_into()
-            .expect("root output tail block must be 64 bytes");
+          let block_out = root_output_tail_block_mut(out);
           root_output_block_bytes_inline(
             id,
             chaining_value,
@@ -594,9 +601,7 @@ pub(crate) fn root_output_blocks_bytes_into_inline(
           continue;
         }
         Blake3KernelId::X86Avx2 => {
-          let block_out: &mut [u8; 2 * OUT_LEN] = out[..2 * OUT_LEN]
-            .try_into()
-            .expect("root output tail block must be 64 bytes");
+          let block_out = root_output_tail_block_mut(out);
           root_output_block_bytes_inline(
             id,
             chaining_value,
@@ -643,9 +648,7 @@ pub(crate) fn root_output_blocks_bytes_into_inline(
           continue;
         }
         Blake3KernelId::X86Sse41 => {
-          let block_out: &mut [u8; 2 * OUT_LEN] = out[..2 * OUT_LEN]
-            .try_into()
-            .expect("root output tail block must be 64 bytes");
+          let block_out = root_output_tail_block_mut(out);
           root_output_block_bytes_inline(
             id,
             chaining_value,
@@ -860,10 +863,9 @@ pub(crate) fn parent_cvs_many_from_bytes_inline(
     }
     #[cfg(target_arch = "x86_64")]
     Blake3KernelId::X86Avx512 => {
-      let parent_flags = PARENT | flags;
-
       #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
       {
+        let parent_flags = PARENT | flags;
         const DEGREE: usize = 16;
         debug_assert!(parent_flags <= u8::MAX as u32);
         reduce_parent_blocks_lanes::<DEGREE, _, _, _>(
@@ -917,9 +919,10 @@ pub(crate) fn parent_cvs_many_from_bytes_inline(
       reduce_parent_blocks_lanes::<{ super::x86_64::avx2::DEGREE }, _, _, _>(
         out.len(),
         |idx| children[2 * idx].as_ptr(),
-        |ptrs, rem, tmp| {
+        |ptrs, _rem, tmp| {
           #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
           {
+            let rem = _rem;
             debug_assert!(parent_flags <= u8::MAX as u32);
             // SAFETY: `id` is AVX2, so required AVX2 features are present per
             // dispatch. Each pointer is valid for one 64-byte parent block.
