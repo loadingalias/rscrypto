@@ -1,5 +1,5 @@
 use digest::dev::blobby::Blob2Iterator;
-use hashes::crypto::{Sha224, Sha384, Sha512, Sha512_224, Sha512_256};
+use hashes::crypto::{Sha224, Sha384, Sha512, Sha512_256};
 
 fn run_fixed_vectors<const OUT: usize>(data: &'static [u8], name: &str, mut digest: impl FnMut(&[u8]) -> [u8; OUT]) {
   let iter = Blob2Iterator::new(data).expect("sha2 vector corpus must parse");
@@ -31,12 +31,6 @@ fn sha384_official_vectors() {
 fn sha512_official_vectors() {
   let data = include_bytes!("../testdata/sha2/sha512.blb");
   run_fixed_vectors(data, "sha512", Sha512::digest);
-}
-
-#[test]
-fn sha512_224_official_vectors() {
-  let data = include_bytes!("../testdata/sha2/sha512_224.blb");
-  run_fixed_vectors(data, "sha512/224", Sha512_224::digest);
 }
 
 #[test]

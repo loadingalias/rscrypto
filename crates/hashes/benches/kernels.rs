@@ -3,7 +3,7 @@ use core::hint::black_box;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use hashes::{
   crypto::{Blake3, Sha3_256, Sha3_512, Sha256, Sha512, Shake256},
-  fast::{RapidHash64, RapidHash128, SipHash13, SipHash24, Xxh3_64, Xxh3_128},
+  fast::{RapidHash64, RapidHash128, Xxh3_64, Xxh3_128},
 };
 use platform as _;
 use traits::{Digest as _, FastHash as _, Xof as _};
@@ -82,12 +82,6 @@ fn fast_oneshot(c: &mut Criterion) {
     });
     group.bench_with_input(BenchmarkId::new("rapidhash128", len), data, |b, d| {
       b.iter(|| black_box(RapidHash128::hash(black_box(d))))
-    });
-    group.bench_with_input(BenchmarkId::new("siphash13", len), data, |b, d| {
-      b.iter(|| black_box(SipHash13::hash_with_seed([0u64; 2], black_box(d))))
-    });
-    group.bench_with_input(BenchmarkId::new("siphash24", len), data, |b, d| {
-      b.iter(|| black_box(SipHash24::hash_with_seed([0u64; 2], black_box(d))))
     });
   }
 

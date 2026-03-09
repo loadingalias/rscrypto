@@ -598,15 +598,11 @@ fn hash_dispatch_tables_path(repo_root: &Path, algo: &str) -> Option<PathBuf> {
     "sha256-compress" => "crates/hashes/src/crypto/sha256/dispatch_tables.rs",
     "sha384-compress" => "crates/hashes/src/crypto/sha384/dispatch_tables.rs",
     "sha512-compress" => "crates/hashes/src/crypto/sha512/dispatch_tables.rs",
-    "sha512-224-compress" => "crates/hashes/src/crypto/sha512_224/dispatch_tables.rs",
     "sha512-256-compress" => "crates/hashes/src/crypto/sha512_256/dispatch_tables.rs",
-    "blake2b-512-compress" => "crates/hashes/src/crypto/blake2b/dispatch_tables.rs",
-    "blake2s-256-compress" => "crates/hashes/src/crypto/blake2s/dispatch_tables.rs",
     "keccakf1600-permute" => "crates/hashes/src/crypto/keccak/dispatch_tables.rs",
     "ascon-hash256" => "crates/hashes/src/crypto/ascon/dispatch_tables.rs",
     "xxh3" => "crates/hashes/src/fast/xxh3/dispatch_tables.rs",
     "rapidhash" => "crates/hashes/src/fast/rapidhash/dispatch_tables.rs",
-    "siphash" => "crates/hashes/src/fast/siphash/dispatch_tables.rs",
     _ => return None,
   };
   Some(repo_root.join(rel))
@@ -841,20 +837,8 @@ const HASH_DISPATCH_TARGETS: &[HashDispatchTarget] = &[
     aliases: &["sha512"],
   },
   HashDispatchTarget {
-    algo: "sha512-224-compress",
-    aliases: &["sha512-224"],
-  },
-  HashDispatchTarget {
     algo: "sha512-256-compress",
     aliases: &["sha512-256"],
-  },
-  HashDispatchTarget {
-    algo: "blake2b-512-compress",
-    aliases: &["blake2b-512"],
-  },
-  HashDispatchTarget {
-    algo: "blake2s-256-compress",
-    aliases: &["blake2s-256"],
   },
   HashDispatchTarget {
     algo: "blake3-chunk",
@@ -866,10 +850,6 @@ const HASH_DISPATCH_TARGETS: &[HashDispatchTarget] = &[
   },
   HashDispatchTarget {
     algo: "rapidhash",
-    aliases: &[],
-  },
-  HashDispatchTarget {
-    algo: "siphash",
     aliases: &[],
   },
   HashDispatchTarget {

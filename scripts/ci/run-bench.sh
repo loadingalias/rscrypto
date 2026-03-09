@@ -123,7 +123,6 @@ DEFAULT_HASH_ALGOS=(
   "sha256"
   "sha384"
   "sha512"
-  "sha512-224"
   "sha512-256"
   "sha3-224"
   "sha3-256"
@@ -131,12 +130,9 @@ DEFAULT_HASH_ALGOS=(
   "sha3-512"
   "shake128"
   "shake256"
-  "blake2b-512"
-  "blake2s-256"
   "blake3"
   "xxh3"
   "rapidhash"
-  "siphash"
   "keccakf1600"
   "ascon-hash256"
   "ascon-xof128"
@@ -165,10 +161,8 @@ hash_filter_token() {
     sha3-256) echo "sha3_256" ;;
     sha3-384) echo "sha3_384" ;;
     sha3-512) echo "sha3_512" ;;
-    sha512-224) echo "sha512_224" ;;
     sha512-256) echo "sha512_256" ;;
-    blake2b-512) echo "blake2b512" ;;
-    blake2s-256) echo "blake2s256" ;;
+
     ascon-hash256) echo "ascon_hash256" ;;
     ascon-xof128) echo "ascon_xof128" ;;
     keccakf1600) echo "keccak" ;;
@@ -190,7 +184,7 @@ default_benches_for_crate() {
 supports_hash_kernels() {
   local algo="${1:-}"
   case "$algo" in
-    sha256|sha512|sha3-256|sha3-512|shake256|xxh3|rapidhash|siphash|blake3) return 0 ;;
+    sha256|sha512|sha3-256|sha3-512|shake256|xxh3|rapidhash|blake3) return 0 ;;
     *) return 1 ;;
   esac
 }

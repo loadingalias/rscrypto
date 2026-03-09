@@ -3,10 +3,10 @@ use core::{hint::black_box, time::Duration};
 use criterion::{BenchmarkId, Criterion, SamplingMode, Throughput, criterion_group, criterion_main};
 use hashes::{
   crypto::{
-    AsconHash256, AsconXof128, Blake2b512, Blake2s256, Blake3, Sha3_224, Sha3_256, Sha3_384, Sha3_512, Sha224, Sha256,
-    Sha384, Sha512, Sha512_224, Sha512_256, Shake128, Shake256,
+    AsconHash256, AsconXof128, Blake3, Sha3_224, Sha3_256, Sha3_384, Sha3_512, Sha224, Sha256,
+    Sha384, Sha512, Sha512_256, Shake128, Shake256,
   },
-  fast::{RapidHash64, SipHash13, SipHash24, Xxh3_64, Xxh3_128},
+  fast::{RapidHash64, Xxh3_64, Xxh3_128},
 };
 use traits::{Digest as _, FastHash as _, Xof as _};
 
@@ -331,17 +331,6 @@ fn comp(c: &mut Criterion) {
       })
     });
 
-    group.bench_with_input(BenchmarkId::new("sha512_224/rscrypto", len), data, |b, d| {
-      b.iter(|| black_box(Sha512_224::digest(black_box(d))))
-    });
-    group.bench_with_input(BenchmarkId::new("sha512_224/sha2", len), data, |b, d| {
-      b.iter(|| {
-        use sha2::Digest as _;
-        let out = sha2::Sha512_224::digest(black_box(d));
-        black_box(out)
-      })
-    });
-
     group.bench_with_input(BenchmarkId::new("sha512_256/rscrypto", len), data, |b, d| {
       b.iter(|| black_box(Sha512_256::digest(black_box(d))))
     });
@@ -436,27 +425,6 @@ fn comp(c: &mut Criterion) {
       },
     );
 
-    group.bench_with_input(BenchmarkId::new("blake2s256/rscrypto", len), data, |b, d| {
-      b.iter(|| black_box(Blake2s256::digest(black_box(d))))
-    });
-    group.bench_with_input(BenchmarkId::new("blake2s256/blake2", len), data, |b, d| {
-      b.iter(|| {
-        use blake2::Digest as _;
-        let out = blake2::Blake2s256::digest(black_box(d));
-        black_box(out)
-      })
-    });
-
-    group.bench_with_input(BenchmarkId::new("blake2b512/rscrypto", len), data, |b, d| {
-      b.iter(|| black_box(Blake2b512::digest(black_box(d))))
-    });
-    group.bench_with_input(BenchmarkId::new("blake2b512/blake2", len), data, |b, d| {
-      b.iter(|| {
-        use blake2::Digest as _;
-        let out = blake2::Blake2b512::digest(black_box(d));
-        black_box(out)
-      })
-    });
   }
 
   group.finish();
@@ -467,7 +435,6 @@ fn fast_comp(c: &mut Criterion) {
   let mut group = c.benchmark_group("fasthash/comp");
   let rapid_seed = 0u64;
   let rapid_secrets = rapidhash::v3::RapidSecrets::seed_cpp(rapid_seed);
-  let sip_key = [0u64; 2];
 
   for (len, data) in &inputs {
     common::set_throughput(&mut group, *len);
@@ -491,30 +458,6 @@ fn fast_comp(c: &mut Criterion) {
     });
     group.bench_with_input(BenchmarkId::new("rapidhash_v3/rapidhash", len), data, |b, d| {
       b.iter(|| black_box(rapidhash::v3::rapidhash_v3_seeded(black_box(d), &rapid_secrets)))
-    });
-
-    group.bench_with_input(BenchmarkId::new("siphash13/rscrypto", len), data, |b, d| {
-      b.iter(|| black_box(SipHash13::hash_with_seed(sip_key, black_box(d))))
-    });
-    group.bench_with_input(BenchmarkId::new("siphash13/siphasher", len), data, |b, d| {
-      b.iter(|| {
-        use core::hash::Hasher as _;
-        let mut h = siphasher::sip::SipHasher13::new_with_keys(sip_key[0], sip_key[1]);
-        h.write(black_box(d));
-        black_box(h.finish())
-      })
-    });
-
-    group.bench_with_input(BenchmarkId::new("siphash24/rscrypto", len), data, |b, d| {
-      b.iter(|| black_box(SipHash24::hash_with_seed(sip_key, black_box(d))))
-    });
-    group.bench_with_input(BenchmarkId::new("siphash24/siphasher", len), data, |b, d| {
-      b.iter(|| {
-        use core::hash::Hasher as _;
-        let mut h = siphasher::sip::SipHasher24::new_with_keys(sip_key[0], sip_key[1]);
-        h.write(black_box(d));
-        black_box(h.finish())
-      })
     });
   }
 

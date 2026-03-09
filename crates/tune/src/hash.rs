@@ -22,10 +22,7 @@ pub const HASH_CORE_TUNING_CORPUS: &[(&str, &str)] = &[
   ("sha256", "RSCRYPTO_SHA256"),
   ("sha384", "RSCRYPTO_SHA384"),
   ("sha512", "RSCRYPTO_SHA512"),
-  ("sha512-224", "RSCRYPTO_SHA512_224"),
   ("sha512-256", "RSCRYPTO_SHA512_256"),
-  ("blake2b-512", "RSCRYPTO_BLAKE2B_512"),
-  ("blake2s-256", "RSCRYPTO_BLAKE2S_256"),
   ("sha3-224", "RSCRYPTO_SHA3_224"),
   ("sha3-256", "RSCRYPTO_SHA3_256"),
   ("sha3-384", "RSCRYPTO_SHA3_384"),
@@ -34,7 +31,6 @@ pub const HASH_CORE_TUNING_CORPUS: &[(&str, &str)] = &[
   ("shake256", "RSCRYPTO_SHAKE256"),
   ("xxh3", "RSCRYPTO_XXH3"),
   ("rapidhash", "RSCRYPTO_RAPIDHASH"),
-  ("siphash", "RSCRYPTO_SIPHASH"),
   ("keccakf1600", "RSCRYPTO_KECCAKF1600"),
   ("ascon-hash256", "RSCRYPTO_ASCON_HASH256"),
   ("ascon-xof128", "RSCRYPTO_ASCON_XOF128"),
@@ -77,10 +73,7 @@ pub const HASH_MICRO_TUNING_CORPUS: &[(&str, &str)] = &[
   ("sha384-compress", "RSCRYPTO_BENCH_SHA384_COMPRESS"),
   ("sha512-compress", "RSCRYPTO_BENCH_SHA512_COMPRESS"),
   ("sha512-compress-unaligned", "RSCRYPTO_BENCH_SHA512_COMPRESS_UNALIGNED"),
-  ("sha512-224-compress", "RSCRYPTO_BENCH_SHA512_224_COMPRESS"),
   ("sha512-256-compress", "RSCRYPTO_BENCH_SHA512_256_COMPRESS"),
-  ("blake2b-512-compress", "RSCRYPTO_BENCH_BLAKE2B_512_COMPRESS"),
-  ("blake2s-256-compress", "RSCRYPTO_BENCH_BLAKE2S_256_COMPRESS"),
   ("keccakf1600-permute", "RSCRYPTO_BENCH_KECCAKF1600_PERMUTE"),
 ];
 
@@ -90,10 +83,6 @@ pub const HASH_STREAM_PROFILE_TUNING_CORPUS: &[(&str, &str)] = &[
   ("sha256-stream4k", "RSCRYPTO_BENCH_SHA256_STREAM4K"),
   ("sha512-stream64", "RSCRYPTO_BENCH_SHA512_STREAM64"),
   ("sha512-stream4k", "RSCRYPTO_BENCH_SHA512_STREAM4K"),
-  ("blake2b-512-stream64", "RSCRYPTO_BENCH_BLAKE2B_512_STREAM64"),
-  ("blake2b-512-stream4k", "RSCRYPTO_BENCH_BLAKE2B_512_STREAM4K"),
-  ("blake2s-256-stream64", "RSCRYPTO_BENCH_BLAKE2S_256_STREAM64"),
-  ("blake2s-256-stream4k", "RSCRYPTO_BENCH_BLAKE2S_256_STREAM4K"),
 ];
 
 /// Returns true if `algo` is in the canonical BLAKE3 tuning corpus.
