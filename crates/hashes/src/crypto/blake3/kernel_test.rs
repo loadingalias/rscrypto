@@ -19,7 +19,7 @@ fn force_hasher_kernel(mut h: Blake3, id: Blake3KernelId) -> Blake3 {
   let kernel = kernel_for_id(id);
   h.kernel = kernel;
   h.bulk_kernel = kernel;
-  h.chunk_state.kernel = kernel;
+  h.chunk_state.kernel_id = kernel.id;
   h
 }
 

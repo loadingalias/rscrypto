@@ -342,7 +342,7 @@ pub(crate) fn parent_cv_inline(
 }
 
 #[inline(always)]
-fn compress_block_inline(
+pub(crate) fn compress_block_inline(
   id: Blake3KernelId,
   chaining_value: &[u32; 8],
   block_words: &[u32; 16],
