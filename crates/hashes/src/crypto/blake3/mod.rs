@@ -1792,22 +1792,24 @@ impl OutputState {
   #[inline]
   fn into_root_emit_state(self) -> RootEmitState {
     RootEmitState {
-      kernel: self.kernel,
+      kernel_id: self.kernel.id,
       input_chaining_value: self.input_chaining_value,
-      block: words16_to_le_bytes(&self.block_words),
-      block_len: self.block_len,
-      flags: self.flags,
+      block_words: self.block_words,
+      counter: self.counter,
+      block_len: self.block_len as u8,
+      flags: self.flags as u8,
     }
   }
 }
 
 #[derive(Clone, Copy)]
 struct RootEmitState {
-  kernel: Kernel,
   input_chaining_value: [u32; 8],
-  block: [u8; BLOCK_LEN],
-  block_len: u32,
-  flags: u32,
+  block_words: [u32; 16],
+  counter: u64,
+  block_len: u8,
+  flags: u8,
+  kernel_id: kernels::Blake3KernelId,
 }
 
 impl RootEmitState {
@@ -1819,40 +1821,41 @@ impl RootEmitState {
     key_words: [u32; 8],
     flags: u32,
   ) -> Self {
-    let mut block = [0u8; BLOCK_LEN];
-    block[..OUT_LEN].copy_from_slice(&words8_to_le_bytes(&left_child_cv));
-    block[OUT_LEN..].copy_from_slice(&words8_to_le_bytes(&right_child_cv));
+    let mut block_words = [0u32; 16];
+    block_words[..8].copy_from_slice(&left_child_cv);
+    block_words[8..].copy_from_slice(&right_child_cv);
     Self {
-      kernel,
+      kernel_id: kernel.id,
       input_chaining_value: key_words,
-      block,
-      block_len: BLOCK_LEN as u32,
-      flags: PARENT | flags,
+      block_words,
+      counter: 0,
+      block_len: BLOCK_LEN as u8,
+      flags: (PARENT | flags) as u8,
     }
   }
 
   #[inline]
-  fn emit_one_block(&self, output_block_counter: u64, out: &mut [u8; OUTPUT_BLOCK_LEN]) {
-    kernels::root_output_block_bytes_inline(
-      self.kernel.id,
+  fn emit_one_block(&self, out: &mut [u8; OUTPUT_BLOCK_LEN]) {
+    kernels::root_output_block_words(
+      self.kernel_id,
       &self.input_chaining_value,
-      &self.block,
-      output_block_counter,
-      self.block_len,
-      self.flags | ROOT,
+      &self.block_words,
+      self.counter,
+      u32::from(self.block_len),
+      u32::from(self.flags) | ROOT,
       out,
     );
   }
 
   #[inline]
-  fn emit_blocks_into(&self, output_block_counter: u64, out: &mut [u8]) {
+  fn emit_blocks_into(&self, out: &mut [u8]) {
     kernels::root_output_blocks_bytes_into_inline(
-      self.kernel.id,
+      self.kernel_id,
       &self.input_chaining_value,
-      &self.block,
-      output_block_counter,
-      self.block_len,
-      self.flags | ROOT,
+      &self.block_words,
+      self.counter,
+      u32::from(self.block_len),
+      u32::from(self.flags) | ROOT,
       out,
     );
   }
@@ -1977,6 +1980,7 @@ impl ChunkState {
           &self.block,
         );
         self.block_len = 0;
+        self.block = [0u8; BLOCK_LEN];
       }
     }
 
@@ -2028,20 +2032,11 @@ impl ChunkState {
   }
 
   #[inline]
-  fn padded_block(&self) -> [u8; BLOCK_LEN] {
-    let mut block = self.block;
-    if self.block_len as usize != BLOCK_LEN {
-      block[self.block_len as usize..].fill(0);
-    }
-    block
-  }
-
-  #[inline]
   fn output_chaining_value(&self) -> [u32; 8] {
     compress_node_chaining_value(
       self.kernel,
       self.chaining_value,
-      &self.padded_block(),
+      &self.block,
       self.chunk_counter,
       self.block_len as u32,
       self.flags | self.start_flag() | CHUNK_END,
@@ -2055,22 +2050,21 @@ impl ChunkState {
       "single-message frontier root emit state must be chunk-counter zero"
     );
     RootEmitState {
-      kernel: self.kernel,
+      kernel_id: self.kernel.id,
       input_chaining_value: self.chaining_value,
-      block: self.padded_block(),
-      block_len: self.block_len as u32,
-      flags: self.flags | self.start_flag() | CHUNK_END,
+      block_words: words16_from_le_bytes_64(&self.block),
+      counter: self.chunk_counter,
+      block_len: self.block_len,
+      flags: (self.flags | self.start_flag() | CHUNK_END) as u8,
     }
   }
 
   #[inline]
   fn output(&self) -> OutputState {
-    let block = self.padded_block();
-    let block_words = words16_from_le_bytes_64(&block);
     OutputState {
       kernel: self.kernel,
       input_chaining_value: self.chaining_value,
-      block_words,
+      block_words: words16_from_le_bytes_64(&self.block),
       counter: self.chunk_counter,
       block_len: self.block_len as u32,
       flags: self.flags | self.start_flag() | CHUNK_END,
@@ -3635,7 +3629,6 @@ impl Digest for Blake3 {
 #[derive(Clone)]
 pub struct Blake3Xof {
   root: RootEmitState,
-  block_counter: u64,
   position_within_block: u8,
 }
 
@@ -3644,7 +3637,6 @@ impl Blake3Xof {
   fn new(root: RootEmitState) -> Self {
     Self {
       root,
-      block_counter: 0,
       position_within_block: 0,
     }
   }
@@ -3657,20 +3649,20 @@ impl Blake3Xof {
   #[inline]
   fn fill_one_block(&mut self, out: &mut &mut [u8]) {
     let mut block = [0u8; OUTPUT_BLOCK_LEN];
-    self.root.emit_one_block(self.block_counter, &mut block);
+    self.root.emit_one_block(&mut block);
     let output_bytes = &block[self.position_within_block as usize..];
     let take = min(out.len(), output_bytes.len());
     out[..take].copy_from_slice(&output_bytes[..take]);
     self.position_within_block += take as u8;
     if self.position_within_block == OUTPUT_BLOCK_LEN as u8 {
-      self.block_counter = self.block_counter.wrapping_add(1);
+      self.root.counter = self.root.counter.wrapping_add(1);
       self.position_within_block = 0;
     }
     *out = &mut core::mem::take(out)[take..];
   }
 
-  #[inline]
-  fn squeeze_into(&mut self, out: &mut &mut [u8]) {
+  #[inline(never)]
+  fn squeeze_general(&mut self, out: &mut &mut [u8]) {
     if self.position_within_block != 0 {
       self.fill_one_block(out);
     }
@@ -3678,8 +3670,8 @@ impl Blake3Xof {
     let full = out.len() / OUTPUT_BLOCK_LEN * OUTPUT_BLOCK_LEN;
     if full != 0 {
       let blocks = (full / OUTPUT_BLOCK_LEN) as u64;
-      self.root.emit_blocks_into(self.block_counter, &mut out[..full]);
-      self.block_counter = self.block_counter.wrapping_add(blocks);
+      self.root.emit_blocks_into(&mut out[..full]);
+      self.root.counter = self.root.counter.wrapping_add(blocks);
       *out = &mut core::mem::take(out)[full..];
     }
 
@@ -3695,7 +3687,12 @@ impl Xof for Blake3Xof {
       return;
     }
 
-    Blake3Xof::squeeze_into(self, &mut out);
+    if out.len() < OUTPUT_BLOCK_LEN {
+      self.fill_one_block(&mut out);
+      return;
+    }
+
+    Blake3Xof::squeeze_general(self, &mut out);
   }
 }
 

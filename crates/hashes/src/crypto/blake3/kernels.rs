@@ -373,18 +373,28 @@ fn compress_block_inline(
   }
 }
 
-#[inline(always)]
-pub(crate) fn root_output_block_bytes_inline(
+pub(crate) fn root_output_block_words(
   id: Blake3KernelId,
   chaining_value: &[u32; 8],
-  block: &[u8; BLOCK_LEN],
+  block_words: &[u32; 16],
   counter: u64,
   block_len: u32,
   flags: u32,
   out: &mut [u8; 2 * OUT_LEN],
 ) {
-  let block_words = words16_from_le_bytes_64(block);
+  root_output_block_words_inline(id, chaining_value, block_words, counter, block_len, flags, out);
+}
 
+#[inline(always)]
+fn root_output_block_words_inline(
+  id: Blake3KernelId,
+  chaining_value: &[u32; 8],
+  block_words: &[u32; 16],
+  counter: u64,
+  block_len: u32,
+  flags: u32,
+  out: &mut [u8; 2 * OUT_LEN],
+) {
   #[cfg(target_arch = "x86_64")]
   {
     match id {
@@ -394,7 +404,7 @@ pub(crate) fn root_output_block_bytes_inline(
         unsafe {
           super::x86_64::avx512::root_output_blocks1(
             chaining_value,
-            &block_words,
+            block_words,
             counter,
             block_len,
             flags,
@@ -409,7 +419,7 @@ pub(crate) fn root_output_block_bytes_inline(
         unsafe {
           super::x86_64::avx2::root_output_blocks1(
             chaining_value,
-            &block_words,
+            block_words,
             counter,
             block_len,
             flags,
@@ -424,7 +434,7 @@ pub(crate) fn root_output_block_bytes_inline(
         unsafe {
           super::x86_64::sse41::root_output_blocks1(
             chaining_value,
-            &block_words,
+            block_words,
             counter,
             block_len,
             flags,
@@ -437,7 +447,7 @@ pub(crate) fn root_output_block_bytes_inline(
     }
   }
 
-  let words = compress_block_inline(id, chaining_value, &block_words, counter, block_len, flags);
+  let words = compress_block_inline(id, chaining_value, block_words, counter, block_len, flags);
   out.copy_from_slice(&super::words16_to_le_bytes(&words));
 }
 
@@ -454,15 +464,13 @@ fn root_output_tail_block_mut(out: &mut [u8]) -> &mut [u8; 2 * OUT_LEN] {
 pub(crate) fn root_output_blocks_bytes_into_inline(
   id: Blake3KernelId,
   chaining_value: &[u32; 8],
-  block: &[u8; BLOCK_LEN],
+  block_words: &[u32; 16],
   mut output_block_counter: u64,
   block_len: u32,
   flags: u32,
   mut out: &mut [u8],
 ) {
   debug_assert!(out.len().is_multiple_of(2 * OUT_LEN));
-
-  let block_words = words16_from_le_bytes_64(block);
 
   while !out.is_empty() {
     let blocks_remaining = out.len() / (2 * OUT_LEN);
@@ -478,7 +486,7 @@ pub(crate) fn root_output_blocks_bytes_into_inline(
           unsafe {
             super::x86_64::avx512::root_output_blocks16(
               chaining_value,
-              &block_words,
+              block_words,
               output_block_counter,
               block_len,
               flags,
@@ -494,7 +502,7 @@ pub(crate) fn root_output_blocks_bytes_into_inline(
           unsafe {
             super::x86_64::avx2::root_output_blocks8(
               chaining_value,
-              &block_words,
+              block_words,
               output_block_counter,
               block_len,
               flags,
@@ -510,7 +518,7 @@ pub(crate) fn root_output_blocks_bytes_into_inline(
           unsafe {
             super::x86_64::sse41::root_output_blocks4(
               chaining_value,
-              &block_words,
+              block_words,
               output_block_counter,
               block_len,
               flags,
@@ -539,10 +547,10 @@ pub(crate) fn root_output_blocks_bytes_into_inline(
         }
         Blake3KernelId::X86Avx512 => {
           let block_out = root_output_tail_block_mut(out);
-          root_output_block_bytes_inline(
+          root_output_block_words_inline(
             id,
             chaining_value,
-            block,
+            block_words,
             output_block_counter,
             block_len,
             flags,
@@ -557,7 +565,7 @@ pub(crate) fn root_output_blocks_bytes_into_inline(
           unsafe {
             super::x86_64::avx2::root_output_blocks8(
               chaining_value,
-              &block_words,
+              block_words,
               output_block_counter,
               block_len,
               flags,
@@ -573,7 +581,7 @@ pub(crate) fn root_output_blocks_bytes_into_inline(
           unsafe {
             super::x86_64::sse41::root_output_blocks4(
               chaining_value,
-              &block_words,
+              block_words,
               output_block_counter,
               block_len,
               flags,
@@ -602,10 +610,10 @@ pub(crate) fn root_output_blocks_bytes_into_inline(
         }
         Blake3KernelId::X86Avx2 => {
           let block_out = root_output_tail_block_mut(out);
-          root_output_block_bytes_inline(
+          root_output_block_words_inline(
             id,
             chaining_value,
-            block,
+            block_words,
             output_block_counter,
             block_len,
             flags,
@@ -620,7 +628,7 @@ pub(crate) fn root_output_blocks_bytes_into_inline(
           unsafe {
             super::x86_64::sse41::root_output_blocks4(
               chaining_value,
-              &block_words,
+              block_words,
               output_block_counter,
               block_len,
               flags,
@@ -636,7 +644,7 @@ pub(crate) fn root_output_blocks_bytes_into_inline(
           unsafe {
             super::x86_64::sse41::root_output_blocks2(
               chaining_value,
-              &block_words,
+              block_words,
               output_block_counter,
               block_len,
               flags,
@@ -649,10 +657,10 @@ pub(crate) fn root_output_blocks_bytes_into_inline(
         }
         Blake3KernelId::X86Sse41 => {
           let block_out = root_output_tail_block_mut(out);
-          root_output_block_bytes_inline(
+          root_output_block_words_inline(
             id,
             chaining_value,
-            block,
+            block_words,
             output_block_counter,
             block_len,
             flags,
@@ -673,7 +681,7 @@ pub(crate) fn root_output_blocks_bytes_into_inline(
         unsafe {
           super::aarch64::root_output_blocks4_neon(
             chaining_value,
-            &block_words,
+            block_words,
             output_block_counter,
             block_len,
             flags,
@@ -686,7 +694,7 @@ pub(crate) fn root_output_blocks_bytes_into_inline(
       }
     }
 
-    let words = compress_block_inline(id, chaining_value, &block_words, output_block_counter, block_len, flags);
+    let words = compress_block_inline(id, chaining_value, block_words, output_block_counter, block_len, flags);
     out[..2 * OUT_LEN].copy_from_slice(&super::words16_to_le_bytes(&words));
     output_block_counter = output_block_counter.wrapping_add(1);
     out = &mut out[2 * OUT_LEN..];
