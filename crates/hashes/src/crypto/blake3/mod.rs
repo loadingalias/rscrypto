@@ -1931,12 +1931,30 @@ impl ChunkState {
     self.blocks_compressed = 15;
   }
 
-  fn update(&mut self, mut input: &[u8]) {
-    if self.block_len == 0 && self.blocks_compressed == 0 && input.len() == CHUNK_LEN {
-      self.absorb_exact_one_chunk(input);
+  #[inline]
+  fn update(&mut self, input: &[u8]) {
+    if input.is_empty() {
       return;
     }
 
+    if self.block_len == 0 && self.blocks_compressed == 0 {
+      if input.len() == CHUNK_LEN {
+        self.absorb_exact_one_chunk(input);
+        return;
+      }
+
+      if input.len() <= BLOCK_LEN {
+        self.block[..input.len()].copy_from_slice(input);
+        self.block_len = input.len() as u8;
+        return;
+      }
+    }
+
+    self.update_general(input);
+  }
+
+  #[inline(never)]
+  fn update_general(&mut self, mut input: &[u8]) {
     // Phase 1: if we already have a buffered (partial or full) block, fill it
     // (or, if it's already full, compress it) before touching the caller
     // slice. This keeps the hot "many full blocks" path branch-light.
@@ -2070,22 +2088,6 @@ fn absorb_exact_one_chunk_state(
   flags: u32,
 ) -> ([u32; 8], [u8; BLOCK_LEN]) {
   debug_assert_eq!(input.len(), CHUNK_LEN);
-
-  #[cfg(target_arch = "aarch64")]
-  {
-    if kernel_id == kernels::Blake3KernelId::Aarch64Neon {
-      let mut cv_words = [0u32; 8];
-      // SAFETY: `input` is exactly one full chunk, and this kernel is only selected
-      // when its required CPU features are available.
-      unsafe {
-        aarch64::chunk_state_prefix15_aarch64_out(input.as_ptr(), &key, counter, flags, cv_words.as_mut_ptr());
-      }
-
-      let mut last_block = [0u8; BLOCK_LEN];
-      last_block.copy_from_slice(&input[CHUNK_LEN - BLOCK_LEN..]);
-      return (cv_words, last_block);
-    }
-  }
 
   #[cfg(target_arch = "x86_64")]
   {
