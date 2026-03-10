@@ -62,6 +62,8 @@ struct ResolvedDispatch {
 }
 
 static RESOLVED: OnceCache<ResolvedDispatch> = OnceCache::new();
+#[cfg(feature = "std")]
+static STREAM_KERNEL_ID_REF: std::sync::OnceLock<Blake3KernelId> = std::sync::OnceLock::new();
 
 #[derive(Clone, Copy)]
 pub(crate) struct StreamingDispatch {
@@ -391,6 +393,13 @@ pub(crate) fn kernel_dispatch() -> SizeClassDispatch<Kernel> {
 #[must_use]
 pub(crate) fn hasher_dispatch() -> HasherDispatch {
   resolved().hasher
+}
+
+#[cfg(feature = "std")]
+#[inline]
+#[must_use]
+pub(crate) fn stream_kernel_id_ref() -> Blake3KernelId {
+  *STREAM_KERNEL_ID_REF.get_or_init(|| resolved().hasher.stream_kernel().id)
 }
 
 #[inline]

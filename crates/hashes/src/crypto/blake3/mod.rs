@@ -3110,6 +3110,9 @@ impl Blake3 {
 
   #[inline]
   fn new_internal(key_words: [u32; 8], flags: u32) -> Self {
+    #[cfg(feature = "std")]
+    let kernel_id = dispatch::stream_kernel_id_ref();
+    #[cfg(not(feature = "std"))]
     let kernel_id = dispatch::hasher_dispatch().stream_kernel().id;
     Self::new_internal_with(key_words, flags, kernel_id)
   }
