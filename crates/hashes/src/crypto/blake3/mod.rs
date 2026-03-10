@@ -2071,6 +2071,29 @@ fn absorb_exact_one_chunk_state(
 ) -> ([u32; 8], [u8; BLOCK_LEN]) {
   debug_assert_eq!(input.len(), CHUNK_LEN);
 
+  #[cfg(target_arch = "aarch64")]
+  {
+    if kernel_id == kernels::Blake3KernelId::Aarch64Neon {
+      let mut cv_words = [0u32; 8];
+      let mut last_block = [0u8; BLOCK_LEN];
+
+      // SAFETY: `input` is exactly one full chunk, and this kernel is only selected
+      // when its required CPU features are available.
+      unsafe {
+        aarch64::chunk_state_one_chunk_aarch64_out(
+          input.as_ptr(),
+          &key,
+          counter,
+          flags,
+          cv_words.as_mut_ptr(),
+          last_block.as_mut_ptr(),
+        );
+      }
+
+      return (cv_words, last_block);
+    }
+  }
+
   #[cfg(target_arch = "x86_64")]
   {
     let (prefix_blocks, remainder) = input[..CHUNK_LEN - BLOCK_LEN].as_chunks::<BLOCK_LEN>();
