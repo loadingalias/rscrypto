@@ -1918,7 +1918,33 @@ impl ChunkState {
     if self.blocks_compressed == 0 { CHUNK_START } else { 0 }
   }
 
+  #[inline]
+  fn absorb_exact_one_chunk(&mut self, input: &[u8]) {
+    debug_assert_eq!(self.blocks_compressed, 0);
+    debug_assert_eq!(self.block_len, 0);
+    debug_assert_eq!(input.len(), CHUNK_LEN);
+
+    let (prefix_blocks, remainder) = input[..CHUNK_LEN - BLOCK_LEN].as_chunks::<BLOCK_LEN>();
+    debug_assert!(remainder.is_empty());
+
+    let mut cv = self.chaining_value;
+    for (idx, block) in prefix_blocks.iter().enumerate() {
+      let block_flags = self.flags | if idx == 0 { CHUNK_START } else { 0 };
+      cv = compress_chunk_block_streaming_compatible(self.kernel_id, cv, block, self.chunk_counter, block_flags);
+    }
+
+    self.chaining_value = cv;
+    self.block.copy_from_slice(&input[CHUNK_LEN - BLOCK_LEN..]);
+    self.block_len = BLOCK_LEN as u8;
+    self.blocks_compressed = 15;
+  }
+
   fn update(&mut self, mut input: &[u8]) {
+    if self.block_len == 0 && self.blocks_compressed == 0 && input.len() == CHUNK_LEN {
+      self.absorb_exact_one_chunk(input);
+      return;
+    }
+
     // Phase 1: if we already have a buffered (partial or full) block, fill it
     // (or, if it's already full, compress it) before touching the caller
     // slice. This keeps the hot "many full blocks" path branch-light.
@@ -2041,6 +2067,61 @@ impl ChunkState {
       flags: self.flags | self.start_flag() | CHUNK_END,
     }
   }
+}
+
+#[inline(always)]
+fn compress_chunk_block_streaming_compatible(
+  kernel_id: kernels::Blake3KernelId,
+  cv: [u32; 8],
+  block: &[u8; BLOCK_LEN],
+  counter: u64,
+  flags: u32,
+) -> [u32; 8] {
+  #[cfg(target_arch = "x86_64")]
+  {
+    match kernel_id {
+      kernels::Blake3KernelId::X86Sse41 | kernels::Blake3KernelId::X86Avx2 => {
+        // SAFETY: dispatch validates SSE4.1 for both kernels, and `block` is a
+        // readable 64-byte buffer.
+        return unsafe { x86_64::compress_cv_sse41_bytes(&cv, block.as_ptr(), counter, BLOCK_LEN as u32, flags) };
+      }
+      kernels::Blake3KernelId::X86Avx512 => {
+        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+        {
+          // SAFETY: dispatch validates AVX-512 availability, and `block` is a
+          // readable 64-byte buffer.
+          return unsafe {
+            x86_64::asm::compress_in_place_avx512(&cv, block.as_ptr(), counter, BLOCK_LEN as u32, flags)
+          };
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+        {
+          // SAFETY: dispatch validates AVX-512 availability, and `block` is a
+          // readable 64-byte buffer.
+          return unsafe { x86_64::compress_cv_avx512_bytes(&cv, block.as_ptr(), counter, BLOCK_LEN as u32, flags) };
+        }
+      }
+      _ => {}
+    }
+  }
+
+  #[cfg(target_arch = "aarch64")]
+  {
+    if kernel_id == kernels::Blake3KernelId::Aarch64Neon {
+      let block_words = words16_from_le_bytes_64(block);
+      return first_8_words(compress(&cv, &block_words, counter, BLOCK_LEN as u32, flags));
+    }
+  }
+
+  let block_words = words16_from_le_bytes_64(block);
+  first_8_words(kernels::compress_block_inline(
+    kernel_id,
+    &cv,
+    &block_words,
+    counter,
+    BLOCK_LEN as u32,
+    flags,
+  ))
 }
 
 #[inline]
