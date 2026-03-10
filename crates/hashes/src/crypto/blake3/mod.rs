@@ -1924,6 +1924,31 @@ impl ChunkState {
     debug_assert_eq!(self.block_len, 0);
     debug_assert_eq!(input.len(), CHUNK_LEN);
 
+    #[cfg(target_arch = "aarch64")]
+    {
+      if self.kernel_id == kernels::Blake3KernelId::Aarch64Neon {
+        let key = self.chaining_value;
+
+        // SAFETY: `input` is exactly one full chunk, `self.chaining_value` is
+        // writable for 8 words, and `self.block` is writable for one full
+        // block.
+        unsafe {
+          aarch64::chunk_state_one_chunk_aarch64_out(
+            input.as_ptr(),
+            &key,
+            self.chunk_counter,
+            self.flags,
+            self.chaining_value.as_mut_ptr(),
+            self.block.as_mut_ptr(),
+          );
+        }
+
+        self.block_len = BLOCK_LEN as u8;
+        self.blocks_compressed = 15;
+        return;
+      }
+    }
+
     let (prefix_blocks, remainder) = input[..CHUNK_LEN - BLOCK_LEN].as_chunks::<BLOCK_LEN>();
     debug_assert!(remainder.is_empty());
 
@@ -2107,10 +2132,7 @@ fn compress_chunk_block_streaming_compatible(
 
   #[cfg(target_arch = "aarch64")]
   {
-    if kernel_id == kernels::Blake3KernelId::Aarch64Neon {
-      let block_words = words16_from_le_bytes_64(block);
-      return first_8_words(compress(&cv, &block_words, counter, BLOCK_LEN as u32, flags));
-    }
+    let _ = kernel_id;
   }
 
   let block_words = words16_from_le_bytes_64(block);
