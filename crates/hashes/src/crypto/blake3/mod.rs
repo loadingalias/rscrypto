@@ -2075,21 +2075,14 @@ fn absorb_exact_one_chunk_state(
   {
     if kernel_id == kernels::Blake3KernelId::Aarch64Neon {
       let mut cv_words = [0u32; 8];
-      let mut last_block = [0u8; BLOCK_LEN];
-
       // SAFETY: `input` is exactly one full chunk, and this kernel is only selected
       // when its required CPU features are available.
       unsafe {
-        aarch64::chunk_state_one_chunk_aarch64_out(
-          input.as_ptr(),
-          &key,
-          counter,
-          flags,
-          cv_words.as_mut_ptr(),
-          last_block.as_mut_ptr(),
-        );
+        aarch64::chunk_state_prefix15_aarch64_out(input.as_ptr(), &key, counter, flags, cv_words.as_mut_ptr());
       }
 
+      let mut last_block = [0u8; BLOCK_LEN];
+      last_block.copy_from_slice(&input[CHUNK_LEN - BLOCK_LEN..]);
       return (cv_words, last_block);
     }
   }

@@ -75,13 +75,6 @@ struct ChunkStateAsmScratch {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-#[repr(C, align(8))]
-struct ChunkStateAsmIoScratch {
-  input: [u8; CHUNK_LEN],
-  state: ChunkStateAsmScratch,
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[inline(always)]
 unsafe fn chunk_compress_blocks_asm(
   blocks: *const u8,
@@ -1100,64 +1093,75 @@ pub unsafe fn chunk_state_one_chunk_aarch64_out(
       core::ptr::copy_nonoverlapping(scratch.last_block.as_ptr(), out_last_block, scratch.last_block.len());
       return;
     }
+  }
 
-    let mut scratch = ChunkStateAsmIoScratch {
-      input: [0u8; CHUNK_LEN],
-      state: ChunkStateAsmScratch {
-        cv: [0u32; 8],
-        last_block: [0u8; BLOCK_LEN],
-      },
+  // Fallback: per-block NEON compressor for blocks 0..14, then copy the final block bytes.
+  let mut cv = *key;
+  for block_idx in 0..15 {
+    let block_bytes: &[u8; BLOCK_LEN] = {
+      let src = input.add(block_idx * BLOCK_LEN);
+      &*(src as *const [u8; BLOCK_LEN])
     };
-    core::ptr::copy_nonoverlapping(input, scratch.input.as_mut_ptr(), CHUNK_LEN);
 
-    #[cfg(target_os = "linux")]
-    asm::rscrypto_blake3_hash1_chunk_state_aarch64_unix_linux(
-      scratch.input.as_ptr(),
-      key.as_ptr(),
-      counter,
-      flags,
-      scratch.state.cv.as_mut_ptr(),
-      scratch.state.last_block.as_mut_ptr(),
-    );
-
-    #[cfg(target_os = "macos")]
-    asm::rscrypto_blake3_hash1_chunk_state_aarch64_apple_darwin(
-      scratch.input.as_ptr(),
-      key.as_ptr(),
-      counter,
-      flags,
-      scratch.state.cv.as_mut_ptr(),
-      scratch.state.last_block.as_mut_ptr(),
-    );
-
-    core::ptr::copy_nonoverlapping(scratch.state.cv.as_ptr(), out_cv, scratch.state.cv.len());
-    core::ptr::copy_nonoverlapping(
-      scratch.state.last_block.as_ptr(),
-      out_last_block,
-      scratch.state.last_block.len(),
-    );
+    let start = if block_idx == 0 { CHUNK_START } else { 0 };
+    cv = compress_cv_neon_bytes(&cv, block_bytes.as_ptr(), counter, BLOCK_LEN as u32, flags | start);
   }
 
-  #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+  // Store cv.
+  core::ptr::copy_nonoverlapping(cv.as_ptr(), out_cv, 8);
+
+  // Copy final block bytes.
+  core::ptr::copy_nonoverlapping(input.add(15 * BLOCK_LEN), out_last_block, BLOCK_LEN);
+}
+
+/// Hash exactly the first 15 blocks of one full chunk and return the chaining
+/// value that should precede the final buffered block.
+///
+/// This is the streaming exact-chunk helper. Unlike
+/// `chunk_state_one_chunk_aarch64_out`, it does not need to materialize the
+/// last block bytes or satisfy output-alignment constraints for an external
+/// buffer shape.
+///
+/// # Safety
+///
+/// - `input` must point to exactly `CHUNK_LEN` readable bytes.
+/// - `out_cv` must point to at least 8 writable `u32`s.
+#[inline]
+pub unsafe fn chunk_state_prefix15_aarch64_out(
+  input: *const u8,
+  key: &[u32; 8],
+  counter: u64,
+  flags: u32,
+  out_cv: *mut u32,
+) {
+  #[cfg(any(target_os = "linux", target_os = "macos"))]
   {
-    // Fallback: per-block NEON compressor for blocks 0..14, then copy the final block bytes.
-    let mut cv = *key;
-    for block_idx in 0..15 {
-      let block_bytes: &[u8; BLOCK_LEN] = {
-        let src = input.add(block_idx * BLOCK_LEN);
-        &*(src as *const [u8; BLOCK_LEN])
-      };
-
-      let start = if block_idx == 0 { CHUNK_START } else { 0 };
-      cv = compress_cv_neon_bytes(&cv, block_bytes.as_ptr(), counter, BLOCK_LEN as u32, flags | start);
+    if can_use_asm_input(input) {
+      let mut cv = *key;
+      let mut blocks_compressed = 0u8;
+      // SAFETY: `input` points to exactly one chunk, and the asm helper only
+      // reads the first 15 blocks here.
+      unsafe {
+        chunk_compress_blocks_asm(input, cv.as_mut_ptr(), counter, flags, &mut blocks_compressed, 15);
+      }
+      debug_assert_eq!(blocks_compressed, 15);
+      core::ptr::copy_nonoverlapping(cv.as_ptr(), out_cv, cv.len());
+      return;
     }
-
-    // Store cv.
-    core::ptr::copy_nonoverlapping(cv.as_ptr(), out_cv, 8);
-
-    // Copy final block bytes.
-    core::ptr::copy_nonoverlapping(input.add(15 * BLOCK_LEN), out_last_block, BLOCK_LEN);
   }
+
+  let mut cv = *key;
+  for block_idx in 0..15 {
+    let block_bytes: &[u8; BLOCK_LEN] = {
+      let src = input.add(block_idx * BLOCK_LEN);
+      &*(src as *const [u8; BLOCK_LEN])
+    };
+
+    let start = if block_idx == 0 { CHUNK_START } else { 0 };
+    cv = compress_cv_neon_bytes(&cv, block_bytes.as_ptr(), counter, BLOCK_LEN as u32, flags | start);
+  }
+
+  core::ptr::copy_nonoverlapping(cv.as_ptr(), out_cv, 8);
 }
 
 /// Hash exactly one full chunk (1024B) and return the *root* hash bytes.
