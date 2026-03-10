@@ -1918,51 +1918,6 @@ impl ChunkState {
     if self.blocks_compressed == 0 { CHUNK_START } else { 0 }
   }
 
-  #[inline]
-  fn set_exact_one_chunk(&mut self, input: &[u8]) {
-    debug_assert_eq!(self.blocks_compressed, 0);
-    debug_assert_eq!(self.block_len, 0);
-    debug_assert_eq!(input.len(), CHUNK_LEN);
-
-    #[cfg(target_arch = "aarch64")]
-    {
-      if self.kernel_id == kernels::Blake3KernelId::Aarch64Neon {
-        let key = self.chaining_value;
-
-        // SAFETY: `input` is exactly one full chunk, `self.chaining_value` is
-        // writable for 8 words, and `self.block` is writable for one full
-        // block.
-        unsafe {
-          aarch64::chunk_state_one_chunk_aarch64_out(
-            input.as_ptr(),
-            &key,
-            self.chunk_counter,
-            self.flags,
-            self.chaining_value.as_mut_ptr(),
-            self.block.as_mut_ptr(),
-          );
-        }
-
-        self.block_len = BLOCK_LEN as u8;
-        self.blocks_compressed = 15;
-        return;
-      }
-    }
-
-    let mut blocks_compressed = 0u8;
-    kernels::chunk_compress_blocks_inline(
-      self.kernel_id,
-      &mut self.chaining_value,
-      self.chunk_counter,
-      self.flags,
-      &mut blocks_compressed,
-      &input[..CHUNK_LEN - BLOCK_LEN],
-    );
-    self.block.copy_from_slice(&input[CHUNK_LEN - BLOCK_LEN..]);
-    self.block_len = BLOCK_LEN as u8;
-    self.blocks_compressed = blocks_compressed;
-  }
-
   fn update(&mut self, mut input: &[u8]) {
     // Phase 1: if we already have a buffered (partial or full) block, fill it
     // (or, if it's already full, compress it) before touching the caller
@@ -3421,11 +3376,7 @@ impl Blake3 {
 
       let want = CHUNK_LEN - self.chunk_state.len();
       let take = min(want, input.len());
-      if self.chunk_state.len() == 0 && take == CHUNK_LEN {
-        self.chunk_state.set_exact_one_chunk(&input[..take]);
-      } else {
-        self.chunk_state.update(&input[..take]);
-      }
+      self.chunk_state.update(&input[..take]);
       input = &input[take..];
     }
   }
@@ -3605,12 +3556,6 @@ impl Digest for Blake3 {
   #[inline]
   fn update(&mut self, input: &[u8]) {
     if input.is_empty() {
-      return;
-    }
-
-    if self.frontier_is_active() && self.chunk_state.len() == 0 && input.len() == CHUNK_LEN {
-      self.chunk_state.kernel_id = self.dispatch_plan.size_class_kernel(CHUNK_LEN).id;
-      self.chunk_state.set_exact_one_chunk(input);
       return;
     }
 
