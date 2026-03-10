@@ -2721,10 +2721,6 @@ fn digest_public_oneshot(key_words: [u32; 8], flags: u32, input: &[u8]) -> [u8; 
 
 #[derive(Clone)]
 pub struct Blake3 {
-  #[cfg(feature = "std")]
-  dispatch_plan: &'static dispatch::HasherDispatch,
-  #[cfg(not(feature = "std"))]
-  dispatch_plan: dispatch::HasherDispatch,
   kernel_id: kernels::Blake3KernelId,
   bulk_kernel_id: kernels::Blake3KernelId,
   chunk_state: ChunkState,
@@ -3114,21 +3110,13 @@ impl Blake3 {
 
   #[inline]
   fn new_internal(key_words: [u32; 8], flags: u32) -> Self {
-    #[cfg(feature = "std")]
-    let kernel_id = dispatch::hasher_dispatch_ref().stream_kernel().id;
-    #[cfg(not(feature = "std"))]
     let kernel_id = dispatch::hasher_dispatch().stream_kernel().id;
     Self::new_internal_with(key_words, flags, kernel_id)
   }
 
   #[inline]
   fn new_internal_with(key_words: [u32; 8], flags: u32, kernel_id: kernels::Blake3KernelId) -> Self {
-    #[cfg(feature = "std")]
-    let dispatch_plan = dispatch::hasher_dispatch_ref();
-    #[cfg(not(feature = "std"))]
-    let dispatch_plan = dispatch::hasher_dispatch();
     Self {
-      dispatch_plan,
       kernel_id,
       bulk_kernel_id: kernel_id,
       chunk_state: ChunkState::new(key_words, 0, flags, kernel_id),
@@ -3163,7 +3151,10 @@ impl Blake3 {
       };
       (policy, mode)
     } else {
-      (self.dispatch_plan.parallel_streaming(), ParallelPolicyKind::Update)
+      (
+        dispatch::hasher_dispatch().parallel_streaming(),
+        ParallelPolicyKind::Update,
+      )
     };
     parallel_threads_for_policy(mode, policy, input_bytes, admission_full_chunks, commit_full_chunks)
   }
@@ -3656,8 +3647,9 @@ impl Digest for Blake3 {
       return;
     }
 
-    let stream = self.dispatch_plan.stream_kernel().id;
-    let bulk = self.dispatch_plan.bulk_kernel_for_update(input.len()).id;
+    let plan = dispatch::hasher_dispatch();
+    let stream = self.kernel_id;
+    let bulk = plan.bulk_kernel_for_update(input.len()).id;
     self.update_with(input, stream, bulk);
   }
 
@@ -3699,7 +3691,7 @@ impl Digest for Blake3 {
       && self.cv_stack_len == 0
       && self.pending_chunk_cv.is_none()
     {
-      single_chunk_output(self.dispatch_plan.stream_kernel(), self.key_words, 0, self.flags, &[])
+      single_chunk_output(kernels::kernel(self.kernel_id), self.key_words, 0, self.flags, &[])
     } else {
       self.root_output()
     };
