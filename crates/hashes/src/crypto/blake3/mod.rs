@@ -1923,43 +1923,10 @@ impl ChunkState {
     debug_assert_eq!(self.blocks_compressed, 0);
     debug_assert_eq!(self.block_len, 0);
     debug_assert_eq!(input.len(), CHUNK_LEN);
-
-    #[cfg(target_arch = "aarch64")]
-    {
-      if self.kernel_id == kernels::Blake3KernelId::Aarch64Neon {
-        let key = self.chaining_value;
-
-        // SAFETY: `input` is exactly one full chunk, `self.chaining_value` is
-        // writable for 8 words, and `self.block` is writable for one full
-        // block.
-        unsafe {
-          aarch64::chunk_state_one_chunk_aarch64_out(
-            input.as_ptr(),
-            &key,
-            self.chunk_counter,
-            self.flags,
-            self.chaining_value.as_mut_ptr(),
-            self.block.as_mut_ptr(),
-          );
-        }
-
-        self.block_len = BLOCK_LEN as u8;
-        self.blocks_compressed = 15;
-        return;
-      }
-    }
-
-    let (prefix_blocks, remainder) = input[..CHUNK_LEN - BLOCK_LEN].as_chunks::<BLOCK_LEN>();
-    debug_assert!(remainder.is_empty());
-
-    let mut cv = self.chaining_value;
-    for (idx, block) in prefix_blocks.iter().enumerate() {
-      let block_flags = self.flags | if idx == 0 { CHUNK_START } else { 0 };
-      cv = compress_chunk_block_streaming_compatible(self.kernel_id, cv, block, self.chunk_counter, block_flags);
-    }
-
+    let key = self.chaining_value;
+    let (cv, last_block) = absorb_exact_one_chunk_state(self.kernel_id, input, key, self.chunk_counter, self.flags);
     self.chaining_value = cv;
-    self.block.copy_from_slice(&input[CHUNK_LEN - BLOCK_LEN..]);
+    self.block = last_block;
     self.block_len = BLOCK_LEN as u8;
     self.blocks_compressed = 15;
   }
@@ -2094,37 +2061,57 @@ impl ChunkState {
   }
 }
 
-#[inline(always)]
-fn compress_chunk_block_streaming_compatible(
+#[inline]
+fn absorb_exact_one_chunk_state(
   kernel_id: kernels::Blake3KernelId,
-  cv: [u32; 8],
-  block: &[u8; BLOCK_LEN],
+  input: &[u8],
+  key: [u32; 8],
   counter: u64,
   flags: u32,
-) -> [u32; 8] {
+) -> ([u32; 8], [u8; BLOCK_LEN]) {
+  debug_assert_eq!(input.len(), CHUNK_LEN);
+
   #[cfg(target_arch = "x86_64")]
   {
+    let (prefix_blocks, remainder) = input[..CHUNK_LEN - BLOCK_LEN].as_chunks::<BLOCK_LEN>();
+    debug_assert!(remainder.is_empty());
+
     match kernel_id {
       kernels::Blake3KernelId::X86Sse41 | kernels::Blake3KernelId::X86Avx2 => {
-        // SAFETY: dispatch validates SSE4.1 for both kernels, and `block` is a
-        // readable 64-byte buffer.
-        return unsafe { x86_64::compress_cv_sse41_bytes(&cv, block.as_ptr(), counter, BLOCK_LEN as u32, flags) };
+        let mut cv = key;
+        for (idx, block) in prefix_blocks.iter().enumerate() {
+          let block_flags = flags | if idx == 0 { CHUNK_START } else { 0 };
+          // SAFETY: dispatch validates SSE4.1 for both kernels, and `block` is a
+          // readable 64-byte buffer.
+          cv = unsafe { x86_64::compress_cv_sse41_bytes(&cv, block.as_ptr(), counter, BLOCK_LEN as u32, block_flags) };
+        }
+        let mut last_block = [0u8; BLOCK_LEN];
+        last_block.copy_from_slice(&input[CHUNK_LEN - BLOCK_LEN..]);
+        return (cv, last_block);
       }
       kernels::Blake3KernelId::X86Avx512 => {
-        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-        {
-          // SAFETY: dispatch validates AVX-512 availability, and `block` is a
-          // readable 64-byte buffer.
-          return unsafe {
-            x86_64::asm::compress_in_place_avx512(&cv, block.as_ptr(), counter, BLOCK_LEN as u32, flags)
-          };
+        let mut cv = key;
+        for (idx, block) in prefix_blocks.iter().enumerate() {
+          let block_flags = flags | if idx == 0 { CHUNK_START } else { 0 };
+          #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+          {
+            // SAFETY: dispatch validates AVX-512 availability, and `block` is a
+            // readable 64-byte buffer.
+            cv = unsafe {
+              x86_64::asm::compress_in_place_avx512(&cv, block.as_ptr(), counter, BLOCK_LEN as u32, block_flags)
+            };
+          }
+          #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+          {
+            // SAFETY: dispatch validates AVX-512 availability, and `block` is a
+            // readable 64-byte buffer.
+            cv =
+              unsafe { x86_64::compress_cv_avx512_bytes(&cv, block.as_ptr(), counter, BLOCK_LEN as u32, block_flags) };
+          }
         }
-        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-        {
-          // SAFETY: dispatch validates AVX-512 availability, and `block` is a
-          // readable 64-byte buffer.
-          return unsafe { x86_64::compress_cv_avx512_bytes(&cv, block.as_ptr(), counter, BLOCK_LEN as u32, flags) };
-        }
+        let mut last_block = [0u8; BLOCK_LEN];
+        last_block.copy_from_slice(&input[CHUNK_LEN - BLOCK_LEN..]);
+        return (cv, last_block);
       }
       _ => {}
     }
@@ -2132,18 +2119,42 @@ fn compress_chunk_block_streaming_compatible(
 
   #[cfg(target_arch = "aarch64")]
   {
-    let _ = kernel_id;
+    if kernel_id == kernels::Blake3KernelId::Aarch64Neon {
+      let mut cv_words = [0u32; 8];
+      let mut last_block = [0u8; BLOCK_LEN];
+
+      // SAFETY: `input` is exactly one full chunk, and this kernel is only selected
+      // when its required CPU features are available.
+      unsafe {
+        aarch64::chunk_state_one_chunk_aarch64_out(
+          input.as_ptr(),
+          &key,
+          counter,
+          flags,
+          cv_words.as_mut_ptr(),
+          last_block.as_mut_ptr(),
+        );
+      }
+
+      return (cv_words, last_block);
+    }
   }
 
-  let block_words = words16_from_le_bytes_64(block);
-  first_8_words(kernels::compress_block_inline(
+  let mut cv = key;
+  let mut blocks_compressed = 0u8;
+  kernels::chunk_compress_blocks_inline(
     kernel_id,
-    &cv,
-    &block_words,
+    &mut cv,
     counter,
-    BLOCK_LEN as u32,
     flags,
-  ))
+    &mut blocks_compressed,
+    &input[..CHUNK_LEN - BLOCK_LEN],
+  );
+  debug_assert_eq!(blocks_compressed, 15);
+
+  let mut last_block = [0u8; BLOCK_LEN];
+  last_block.copy_from_slice(&input[CHUNK_LEN - BLOCK_LEN..]);
+  (cv, last_block)
 }
 
 #[inline]
