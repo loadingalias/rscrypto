@@ -68,6 +68,13 @@ fn can_use_asm_last_block_out(ptr: *const u8) -> bool {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+#[repr(C, align(8))]
+struct ChunkStateAsmScratch {
+  cv: [u32; 8],
+  last_block: [u8; BLOCK_LEN],
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[inline(always)]
 unsafe fn chunk_compress_blocks_asm(
   blocks: *const u8,
@@ -1030,34 +1037,60 @@ pub unsafe fn chunk_state_one_chunk_aarch64_out(
 ) {
   #[cfg(any(target_os = "linux", target_os = "macos"))]
   {
-    #[cfg(target_os = "linux")]
-    if can_use_asm_input(input)
-      && can_use_asm_u32_out(out_cv.cast::<u8>())
-      && can_use_asm_last_block_out(out_last_block)
-    {
+    if can_use_asm_input(input) {
+      #[cfg(target_os = "linux")]
+      if can_use_asm_u32_out(out_cv.cast::<u8>()) && can_use_asm_last_block_out(out_last_block) {
+        asm::rscrypto_blake3_hash1_chunk_state_aarch64_unix_linux(
+          input,
+          key.as_ptr(),
+          counter,
+          flags,
+          out_cv,
+          out_last_block,
+        );
+        return;
+      }
+
+      #[cfg(target_os = "macos")]
+      if can_use_asm_u32_out(out_cv.cast::<u8>()) && can_use_asm_last_block_out(out_last_block) {
+        asm::rscrypto_blake3_hash1_chunk_state_aarch64_apple_darwin(
+          input,
+          key.as_ptr(),
+          counter,
+          flags,
+          out_cv,
+          out_last_block,
+        );
+        return;
+      }
+
+      let mut scratch = ChunkStateAsmScratch {
+        cv: [0u32; 8],
+        last_block: [0u8; BLOCK_LEN],
+      };
+
+      #[cfg(target_os = "linux")]
       asm::rscrypto_blake3_hash1_chunk_state_aarch64_unix_linux(
         input,
         key.as_ptr(),
         counter,
         flags,
-        out_cv,
-        out_last_block,
+        scratch.cv.as_mut_ptr(),
+        scratch.last_block.as_mut_ptr(),
       );
-      return;
-    }
-    #[cfg(target_os = "macos")]
-    if can_use_asm_input(input)
-      && can_use_asm_u32_out(out_cv.cast::<u8>())
-      && can_use_asm_last_block_out(out_last_block)
-    {
+
+      #[cfg(target_os = "macos")]
       asm::rscrypto_blake3_hash1_chunk_state_aarch64_apple_darwin(
         input,
         key.as_ptr(),
         counter,
         flags,
-        out_cv,
-        out_last_block,
+        scratch.cv.as_mut_ptr(),
+        scratch.last_block.as_mut_ptr(),
       );
+
+      core::ptr::copy_nonoverlapping(scratch.cv.as_ptr(), out_cv, scratch.cv.len());
+      core::ptr::copy_nonoverlapping(scratch.last_block.as_ptr(), out_last_block, scratch.last_block.len());
       return;
     }
   }
