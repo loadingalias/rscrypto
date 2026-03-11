@@ -22,6 +22,11 @@ if [[ "$CRATE_FLAGS" == "--workspace" ]]; then
   FULL_WORKSPACE=true
 fi
 
+CHECK_RSCRYPTO_FEATURE_MATRIX=false
+if [[ "$FULL_WORKSPACE" == true || "$CRATE_FLAGS" == *" -p rscrypto"* ]]; then
+  CHECK_RSCRYPTO_FEATURE_MATRIX=true
+fi
+
 LOG_DIR=$(mktemp -d)
 trap 'rm -rf "$LOG_DIR"' EXIT
 
@@ -45,6 +50,26 @@ if ! cargo check $CRATE_FLAGS --all-targets --all-features >"$LOG_DIR/check.log"
   exit 1
 fi
 ok
+
+if [[ "$CHECK_RSCRYPTO_FEATURE_MATRIX" == true ]]; then
+  step "Checking rscrypto no_std matrix"
+  for feature_set in "" "alloc" "checksums" "alloc,checksums" "hashes" "alloc,hashes" "checksums,hashes" "alloc,checksums,hashes"; do
+    if [[ -n "$feature_set" ]]; then
+      if ! cargo check -p rscrypto --no-default-features --features "$feature_set" --lib >>"$LOG_DIR/check.log" 2>&1; then
+        fail
+        show_error "$LOG_DIR/check.log"
+        exit 1
+      fi
+    else
+      if ! cargo check -p rscrypto --no-default-features --lib >>"$LOG_DIR/check.log" 2>&1; then
+        fail
+        show_error "$LOG_DIR/check.log"
+        exit 1
+      fi
+    fi
+  done
+  ok
+fi
 
 # Clippy
 step "Linting"
