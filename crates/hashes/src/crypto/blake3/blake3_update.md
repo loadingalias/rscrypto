@@ -318,14 +318,14 @@ Optional tools only with a specific question they uniquely answer:
   - Keep Candidate U intact (Intel SPR AVX-512 short-input win remains the current baseline).
 - Narrow reintroduction direction:
   - Do not use a global AVX2 `hash_many` one-chunk fast path.
-  - Reintroduce only behind microarchitecture gating (start with `TuneKind::Zen4` allowlist), then validate `intel-icl` + `amd-zen5` remain neutral while checking whether Zen4 still benefits.
+  - Reintroduce only behind a narrow x86 host allowlist, then validate `intel-icl` + `amd-zen5` remain neutral while checking whether `amd-zen4` still benefits.
 
 ### 2026-02-24 - Candidate W (in progress)
 - Hypothesis:
   - Revert-only baseline is materially worse than Candidate V on `zen4/zen5/icl` at `256/1024`.
   - Candidate V behavior should be reintroduced narrowly, not globally:
-    - enable AVX2 one-chunk `hash_many` only for known x86 tune kinds where it helped (`Zen4`, `Zen5`, `Zen5c`, `IntelIcl`),
-    - keep other architectures/kinds unchanged.
+    - enable AVX2 one-chunk `hash_many` only for the specific x86 host classes where it helped (`amd-zen4`, `amd-zen5`, `amd-zen5c`, `intel-icl`),
+    - keep other architectures/capability groups unchanged.
 - Change:
   - `x86_64` one-chunk path:
     - restore AVX2 exact-block one-chunk `hash_many_avx2` fast path.
