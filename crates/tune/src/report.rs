@@ -99,7 +99,7 @@ impl<W: Write> Report<W> {
     &mut self,
     algo: &AlgorithmResult,
     arch: &str,
-    tune_kind: platform::TuneKind,
+    tune_kind: platform::tune::TuneKind,
   ) -> io::Result<()> {
     writeln!(self.writer, "=== {} ===", algo.name)?;
     writeln!(

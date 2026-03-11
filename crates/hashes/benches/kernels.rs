@@ -11,15 +11,9 @@ use traits::{Digest as _, FastHash as _, Xof as _};
 mod common;
 
 fn print_blake3_dispatch_info(oneshot_lens: impl Iterator<Item = usize>) {
-  let tune = platform::tune();
-  let caps = platform::caps();
+  let det = platform::get();
   let (stream, bulk) = hashes::crypto::blake3::dispatch::streaming_kernel_names();
-  eprintln!(
-    "BLAKE3 dispatch: tune.kind={:?} ({}) caps={:?}",
-    tune.kind,
-    tune.kind.name(),
-    caps
-  );
+  eprintln!("BLAKE3 dispatch: arch={:?} caps={:?}", det.arch, det.caps);
   eprintln!("BLAKE3 streaming dispatch: stream={stream} bulk={bulk}");
 
   for len in oneshot_lens {

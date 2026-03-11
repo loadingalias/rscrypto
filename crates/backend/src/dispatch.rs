@@ -2,11 +2,11 @@
 //!
 //! This module provides the core dispatch primitives for rscrypto:
 //!
-//! - [`Candidate`] / [`TunedCandidate`]: Kernel with capability requirements
+//! - [`Candidate`]: Kernel with capability requirements
 //! - [`Selected`]: Result of kernel selection
-//! - [`try_select`] / [`try_select_tuned`]: Typed non-panicking selection
-//! - [`select_or`] / [`select_tuned_or`]: Total selection with explicit fallback
-//! - [`candidates!`] / [`tuned_candidates!`]: Macros for defining candidate lists
+//! - [`try_select`]: Typed non-panicking selection
+//! - [`select_or`]: Total selection with explicit fallback
+//! - [`candidates!`]: Macro for defining candidate lists
 //! - `define_dispatcher!`: Macro for generating cached dispatcher types
 //!
 //! # Design
@@ -19,7 +19,7 @@
 //! 2. **Runtime** (cached): For generic binaries, the dispatcher detects CPU features once and
 //!    caches the selected kernel. Subsequent calls are a single indirect call.
 
-use platform::{Caps, Tune};
+use platform::Caps;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Candidate List Macro
@@ -71,57 +71,6 @@ macro_rules! candidates {
 pub use candidates;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Tuned Candidate List Macro
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Creates a static slice of [`TunedCandidate`]s with optional tuning predicates.
-///
-/// Like [`candidates!`], but entries may include a `where` clause that filters
-/// candidates based on [`platform::Tune`]. This enables microarchitecture-aware
-/// kernel selection.
-///
-/// # Syntax
-///
-/// ```text
-/// tuned_candidates![
-///     "name" => CAPS => kernel_fn,
-///     "name" => CAPS, where |t| t.fast_wide_ops => wide_kernel_fn,
-///     "fallback" => Caps::NONE => fallback_fn,
-/// ]
-/// ```
-///
-/// # Example
-///
-/// ```text
-/// let kernels = tuned_candidates![
-///     "x86_64/vpclmul" => x86::VPCLMUL_READY, where |t| t.effective_simd_width >= 256 => vpclmul,
-///     "x86_64/pclmul" => x86::PCLMUL_READY => pclmul,
-///     "portable" => Caps::NONE => portable,
-/// ];
-/// ```
-#[macro_export]
-macro_rules! tuned_candidates {
-  [ $( $name:literal => $caps:expr $(, where $pred:expr)? => $func:expr ),+ $(,)? ] => {
-    &[
-      $(
-        $crate::dispatch::TunedCandidate::new(
-          $name,
-          $caps,
-          $crate::tuned_candidates!(@pred $( $pred )?),
-          $func as _,
-        ),
-      )+
-    ]
-  };
-
-  (@pred) => { $crate::dispatch::always_tuned };
-  (@pred $pred:expr) => { $pred as fn(&$crate::platform::Tune) -> bool };
-}
-
-// Re-export at crate root for ergonomic imports
-pub use tuned_candidates;
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Core Types
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -145,37 +94,6 @@ impl<F> Candidate<F> {
   #[must_use]
   pub const fn new(name: &'static str, requires: Caps, func: F) -> Self {
     Self { name, requires, func }
-  }
-}
-
-/// A tuned candidate kernel with capability requirements and a tuning predicate.
-///
-/// Candidates are ordered from best to worst. The dispatcher selects the first
-/// candidate whose requirements are satisfied by the detected capabilities and
-/// whose predicate returns `true` for the detected tuning preset.
-#[derive(Clone, Copy, Debug)]
-pub struct TunedCandidate<F> {
-  /// Human-readable name for diagnostics (e.g., "x86_64/vpclmul").
-  pub name: &'static str,
-  /// Required CPU capabilities. Must be a subset of detected caps.
-  pub requires: Caps,
-  /// Tuning predicate: must return true for this candidate to be eligible.
-  pub predicate: fn(&Tune) -> bool,
-  /// The kernel function pointer.
-  pub func: F,
-}
-
-impl<F> TunedCandidate<F> {
-  /// Create a new tuned candidate.
-  #[inline]
-  #[must_use]
-  pub const fn new(name: &'static str, requires: Caps, predicate: fn(&Tune) -> bool, func: F) -> Self {
-    Self {
-      name,
-      requires,
-      predicate,
-      func,
-    }
   }
 }
 
@@ -232,55 +150,6 @@ pub fn try_select<F: Copy>(caps: Caps, candidates: &[Candidate<F>]) -> Result<Se
 #[must_use]
 pub fn select_or<F: Copy>(caps: Caps, candidates: &[Candidate<F>], fallback: Candidate<F>) -> Selected<F> {
   if let Ok(selected) = try_select(caps, candidates) {
-    selected
-  } else {
-    Selected::new(fallback.name, fallback.func)
-  }
-}
-
-/// Predicate used for tuned candidates without an explicit `where` clause.
-#[inline(always)]
-#[must_use]
-pub fn always_tuned(_: &Tune) -> bool {
-  true
-}
-
-/// Select the best kernel from a tuned candidate list.
-///
-/// Returns the first candidate whose `requires` is satisfied by `caps` and whose
-/// tuning predicate returns `true` for `tune`.
-///
-/// This API is non-panicking and returns a typed error if selection fails.
-#[inline(always)]
-pub fn try_select_tuned<F: Copy>(
-  caps: Caps,
-  tune: &Tune,
-  candidates: &[TunedCandidate<F>],
-) -> Result<Selected<F>, SelectionError> {
-  if candidates.is_empty() {
-    return Err(SelectionError::EmptyCandidateList);
-  }
-
-  for candidate in candidates {
-    if caps.has(candidate.requires) && (candidate.predicate)(tune) {
-      return Ok(Selected::new(candidate.name, candidate.func));
-    }
-  }
-  Err(SelectionError::NoMatchingCandidate)
-}
-
-/// Select the best tuned candidate with a total fallback guarantee.
-///
-/// Returns the first matching candidate; if none match, returns `fallback`.
-#[inline(always)]
-#[must_use]
-pub fn select_tuned_or<F: Copy>(
-  caps: Caps,
-  tune: &Tune,
-  candidates: &[TunedCandidate<F>],
-  fallback: TunedCandidate<F>,
-) -> Selected<F> {
-  if let Ok(selected) = try_select_tuned(caps, tune, candidates) {
     selected
   } else {
     Selected::new(fallback.name, fallback.func)

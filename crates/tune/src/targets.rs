@@ -10,7 +10,7 @@ use std::{
   path::{Path, PathBuf},
 };
 
-use platform::TuneKind;
+use platform::tune::TuneKind;
 
 #[cfg(feature = "std")]
 use crate::TuneResults;

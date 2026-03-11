@@ -3,7 +3,7 @@
 //! This module is behind `cfg(feature = "diag")` and is intended for
 //! explainable/debuggable kernel selection without affecting normal builds.
 
-use platform::TuneKind;
+use platform::Arch;
 
 /// High-level reason for a selection outcome.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -36,7 +36,7 @@ pub enum Crc64Polynomial {
 pub struct Crc32SelectionDiag {
   pub polynomial: Crc32Polynomial,
   pub len: usize,
-  pub tune_kind: TuneKind,
+  pub arch: Arch,
   pub reason: SelectionReason,
   pub effective_force: crate::Crc32Force,
   pub policy_family: &'static str,
@@ -60,7 +60,7 @@ pub struct Crc32SelectionDiag {
 pub struct Crc64SelectionDiag {
   pub polynomial: Crc64Polynomial,
   pub len: usize,
-  pub tune_kind: TuneKind,
+  pub arch: Arch,
   pub reason: SelectionReason,
   pub effective_force: crate::Crc64Force,
   pub policy_family: &'static str,

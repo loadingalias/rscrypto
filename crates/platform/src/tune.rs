@@ -1,9 +1,10 @@
-//! Microarchitecture-derived tuning hints.
+//! Offline microarchitecture tuning presets.
 //!
-//! `Tune` answers: "What should I *prefer* on this machine?"
+//! `Tune` answers: "What did the tuning pipeline decide to prefer for this
+//! profile?"
 //!
-//! Unlike `CpuCaps` (which describes what's *possible*), `Tune` describes
-//! what's *optimal*. This includes:
+//! Unlike [`Caps`](crate::Caps) (which describes what's *possible*), `Tune`
+//! describes benchmark-derived preferences. This includes:
 //!
 //! - SIMD threshold (minimum buffer size for SIMD to be worthwhile)
 //! - Strategy preferences (hybrid vs pure folding, etc.)
@@ -11,14 +12,14 @@
 //!
 //! # Design
 //!
-//! Tuning hints are derived from:
+//! Presets are derived from:
 //! 1. Detected microarchitecture (x86_64: family/model, aarch64: feature combo)
 //! 2. Known performance characteristics from benchmarks
 //!
 //! # Examples
 //!
 //! ```
-//! let tune = platform::tune();
+//! let tune = platform::tune::Tune::DEFAULT;
 //! assert!(tune.simd_threshold > 0);
 //! assert!(tune.cache_line >= 32);
 //! ```

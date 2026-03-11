@@ -593,8 +593,8 @@ fn raw_platform_to_platform_info(raw: &RawPlatformInfo) -> Result<PlatformInfo, 
 }
 
 #[must_use]
-fn tune_kind_from_u8(value: u8) -> Option<platform::TuneKind> {
-  use platform::TuneKind;
+fn tune_kind_from_u8(value: u8) -> Option<platform::tune::TuneKind> {
+  use platform::tune::TuneKind;
   Some(match value {
     0 => TuneKind::Custom,
     1 => TuneKind::Default,

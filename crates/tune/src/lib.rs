@@ -405,7 +405,7 @@ pub struct PlatformInfo {
   pub caps: Caps,
 
   /// Platform tune kind.
-  pub tune_kind: platform::TuneKind,
+  pub tune_kind: platform::tune::TuneKind,
 
   /// Full platform description.
   pub description: String,
@@ -421,10 +421,409 @@ impl PlatformInfo {
       arch: detected.arch.name(),
       os: std::env::consts::OS,
       caps: detected.caps,
-      tune_kind: detected.tune.kind,
+      tune_kind: infer_tune_kind(detected),
       description: platform::describe().to_string(),
     }
   }
+}
+
+#[cfg(feature = "std")]
+fn infer_tune_kind(detected: platform::Detected) -> platform::tune::TuneKind {
+  use platform::{Arch, tune::TuneKind};
+
+  match detected.arch {
+    Arch::X86 | Arch::X86_64 => infer_x86_tune_kind(detected.caps),
+    Arch::Aarch64 => infer_aarch64_tune_kind(detected.caps),
+    Arch::S390x => infer_s390x_tune_kind(detected.caps),
+    Arch::Power => infer_power_tune_kind(detected.caps),
+    Arch::Riscv32 | Arch::Riscv64 => infer_riscv_tune_kind(detected.caps),
+    Arch::Wasm32 | Arch::Wasm64 => infer_wasm_tune_kind(detected.caps),
+    Arch::Other => TuneKind::Portable,
+    _ => TuneKind::Portable,
+  }
+}
+
+#[cfg(feature = "std")]
+fn infer_riscv_tune_kind(caps: Caps) -> platform::tune::TuneKind {
+  use platform::{caps::riscv, tune::TuneKind};
+
+  if caps.has(riscv::ZBC) || caps.has(riscv::ZVBC) {
+    TuneKind::Default
+  } else {
+    TuneKind::Portable
+  }
+}
+
+#[cfg(feature = "std")]
+fn infer_wasm_tune_kind(caps: Caps) -> platform::tune::TuneKind {
+  use platform::{caps::wasm, tune::TuneKind};
+
+  if caps.has(wasm::SIMD128) {
+    TuneKind::Default
+  } else {
+    TuneKind::Portable
+  }
+}
+
+#[cfg(feature = "std")]
+fn infer_s390x_tune_kind(caps: Caps) -> platform::tune::TuneKind {
+  use platform::{caps::s390x, tune::TuneKind};
+
+  if caps.has(s390x::VECTOR_ENH2) {
+    TuneKind::Z15
+  } else if caps.has(s390x::VECTOR_ENH1) {
+    TuneKind::Z14
+  } else if caps.has(s390x::VECTOR) {
+    TuneKind::Z13
+  } else {
+    TuneKind::Portable
+  }
+}
+
+#[cfg(feature = "std")]
+fn infer_power_tune_kind(caps: Caps) -> platform::tune::TuneKind {
+  use platform::{caps::power, tune::TuneKind};
+
+  if caps.has(power::POWER10_VECTOR) {
+    TuneKind::Power10
+  } else if caps.has(power::POWER9_VECTOR) {
+    TuneKind::Power9
+  } else if caps.has(power::POWER8_VECTOR) {
+    TuneKind::Power8
+  } else if caps.has(power::VSX) {
+    TuneKind::Power7
+  } else {
+    TuneKind::Portable
+  }
+}
+
+#[cfg(feature = "std")]
+fn infer_aarch64_tune_kind(caps: Caps) -> platform::tune::TuneKind {
+  use platform::{caps::aarch64, tune::TuneKind};
+
+  #[cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "watchos"))]
+  {
+    if caps.has(aarch64::PMULL_EOR3_READY) {
+      if caps.has(aarch64::SME2) {
+        return TuneKind::AppleM5;
+      }
+      if caps.has(aarch64::SME) {
+        return TuneKind::AppleM4;
+      }
+      return TuneKind::AppleM1M3;
+    }
+  }
+
+  if caps.has(aarch64::SME2P1) {
+    return TuneKind::Graviton5;
+  }
+
+  if caps.has(aarch64::SVE2) {
+    #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
+    if let Some((implementer, part)) = read_midr_parts() {
+      return match (implementer, part) {
+        (MIDR_IMPL_NVIDIA, _) => TuneKind::NvidiaGrace,
+        (MIDR_IMPL_AMPERE, _) => TuneKind::AmpereAltra,
+        (MIDR_IMPL_ARM, MIDR_PART_NEOVERSE_N3) => TuneKind::NeoverseN3,
+        (MIDR_IMPL_ARM, MIDR_PART_NEOVERSE_N2) => TuneKind::NeoverseN2,
+        (MIDR_IMPL_ARM, MIDR_PART_NEOVERSE_V2) => TuneKind::Graviton4,
+        (MIDR_IMPL_ARM, MIDR_PART_NEOVERSE_V1) => TuneKind::Graviton3,
+        _ => infer_aarch64_sve2_from_vlen(),
+      };
+    }
+    return infer_aarch64_sve2_from_vlen();
+  }
+
+  if caps.has(aarch64::SVE) {
+    #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
+    if let Some((implementer, part)) = read_midr_parts() {
+      return match (implementer, part) {
+        (MIDR_IMPL_NVIDIA, _) => TuneKind::NvidiaGrace,
+        (MIDR_IMPL_AMPERE, _) => TuneKind::AmpereAltra,
+        (MIDR_IMPL_ARM, MIDR_PART_NEOVERSE_N2) => TuneKind::NeoverseN2,
+        (MIDR_IMPL_ARM, MIDR_PART_NEOVERSE_V1) => TuneKind::Graviton3,
+        _ => infer_aarch64_sve_from_vlen(),
+      };
+    }
+    return infer_aarch64_sve_from_vlen();
+  }
+
+  if caps.has(aarch64::PMULL_EOR3_READY) {
+    #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
+    if let Some((implementer, part)) = read_midr_parts() {
+      return match (implementer, part) {
+        (MIDR_IMPL_AMPERE, _) => TuneKind::AmpereAltra,
+        (MIDR_IMPL_ARM, MIDR_PART_NEOVERSE_N1) => TuneKind::Graviton2,
+        _ => TuneKind::Aarch64Pmull,
+      };
+    }
+    return TuneKind::Aarch64Pmull;
+  }
+
+  if caps.has(aarch64::PMULL_READY) {
+    TuneKind::Aarch64Pmull
+  } else if caps.has(aarch64::NEON) {
+    TuneKind::Default
+  } else {
+    TuneKind::Portable
+  }
+}
+
+#[cfg(feature = "std")]
+fn infer_aarch64_sve2_from_vlen() -> platform::tune::TuneKind {
+  use platform::tune::TuneKind;
+
+  let vlen = detect_sve_vlen();
+  if vlen > 128 {
+    TuneKind::NeoverseV3
+  } else if vlen > 0 {
+    TuneKind::Graviton4
+  } else {
+    TuneKind::Default
+  }
+}
+
+#[cfg(feature = "std")]
+fn infer_aarch64_sve_from_vlen() -> platform::tune::TuneKind {
+  use platform::tune::TuneKind;
+
+  let vlen = detect_sve_vlen();
+  if vlen >= 256 {
+    TuneKind::Graviton3
+  } else if vlen > 0 {
+    TuneKind::NeoverseN2
+  } else {
+    TuneKind::Default
+  }
+}
+
+#[cfg(feature = "std")]
+fn infer_x86_tune_kind(caps: Caps) -> platform::tune::TuneKind {
+  use platform::{caps::x86, tune::TuneKind};
+
+  let Some((is_amd, family, model)) = x86_identity() else {
+    return if caps.has(x86::PCLMUL_READY) {
+      TuneKind::Default
+    } else {
+      TuneKind::Portable
+    };
+  };
+
+  if is_intel_hybrid(is_amd, family, model) && !hybrid_avx512_override() && caps.has(x86::AVX2) {
+    return TuneKind::IntelIcl;
+  }
+
+  let has_avx512 = caps.has(x86::AVX512F) && caps.has(x86::AVX512VL);
+  if has_avx512 {
+    if is_amd {
+      return if family == 26 {
+        TuneKind::Zen5
+      } else if family == 25 {
+        TuneKind::Zen4
+      } else {
+        TuneKind::Default
+      };
+    }
+
+    return if is_intel_icl_model(family, model) {
+      TuneKind::IntelIcl
+    } else if is_intel_gnr_model(family, model) {
+      TuneKind::IntelGnr
+    } else if is_intel_spr_model(family, model)
+      || caps.has(x86::AVX512BF16)
+      || caps.has(x86::AMX_TILE)
+      || caps.has(x86::AMX_BF16)
+      || caps.has(x86::AMX_INT8)
+    {
+      TuneKind::IntelSpr
+    } else if caps.has(x86::AMX_FP16) || caps.has(x86::AMX_COMPLEX) {
+      TuneKind::IntelGnr
+    } else {
+      TuneKind::IntelIcl
+    };
+  }
+
+  if caps.has(x86::AVX2) {
+    if is_amd {
+      return if family == 26 {
+        TuneKind::Zen5
+      } else if family == 25 {
+        TuneKind::Zen4
+      } else {
+        TuneKind::Default
+      };
+    }
+    return TuneKind::IntelIcl;
+  }
+
+  if caps.has(x86::PCLMUL_READY) {
+    if is_amd { TuneKind::Default } else { TuneKind::IntelIcl }
+  } else {
+    TuneKind::Portable
+  }
+}
+
+#[cfg(feature = "std")]
+fn hybrid_avx512_override() -> bool {
+  std::env::var("RSCRYPTO_FORCE_AVX512")
+    .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+    .unwrap_or(false)
+}
+
+#[cfg(feature = "std")]
+fn is_intel_hybrid(is_amd: bool, family: u32, model: u32) -> bool {
+  if is_amd || family != 6 {
+    return false;
+  }
+
+  matches!(
+    model,
+    0x97 | 0x9A | 0x9C | 0xB7 | 0xBA | 0xBF | 0xAA | 0xAC | 0xBD | 0xC5 | 0xC6
+  )
+}
+
+#[cfg(feature = "std")]
+fn is_intel_icl_model(family: u32, model: u32) -> bool {
+  family == 6 && matches!(model, 0x6A | 0x6C | 0x7D | 0x7E)
+}
+
+#[cfg(feature = "std")]
+fn is_intel_spr_model(family: u32, model: u32) -> bool {
+  family == 6 && matches!(model, 0x8F | 0xCF)
+}
+
+#[cfg(feature = "std")]
+fn is_intel_gnr_model(family: u32, model: u32) -> bool {
+  family == 6 && matches!(model, 0xAD)
+}
+
+#[cfg(all(feature = "std", target_arch = "x86_64"))]
+fn x86_identity() -> Option<(bool, u32, u32)> {
+  use core::arch::x86_64::__cpuid;
+
+  let leaf0 = __cpuid(0);
+  let is_amd = leaf0.ebx == 0x6874_7541 && leaf0.edx == 0x6974_6E65 && leaf0.ecx == 0x444D_4163;
+
+  let leaf1 = __cpuid(1);
+  let family_id = (leaf1.eax >> 8) & 0xF;
+  let model_id = (leaf1.eax >> 4) & 0xF;
+  let ext_family = (leaf1.eax >> 20) & 0xFF;
+  let ext_model = (leaf1.eax >> 16) & 0xF;
+
+  let family = if family_id == 0xF {
+    family_id + ext_family
+  } else {
+    family_id
+  };
+  let model = if family_id == 0x6 || family_id == 0xF {
+    (ext_model << 4) | model_id
+  } else {
+    model_id
+  };
+
+  Some((is_amd, family, model))
+}
+
+#[cfg(all(feature = "std", target_arch = "x86"))]
+fn x86_identity() -> Option<(bool, u32, u32)> {
+  use core::arch::x86::__cpuid;
+
+  let leaf0 = __cpuid(0);
+  let is_amd = leaf0.ebx == 0x6874_7541 && leaf0.edx == 0x6974_6E65 && leaf0.ecx == 0x444D_4163;
+
+  let leaf1 = __cpuid(1);
+  let family_id = (leaf1.eax >> 8) & 0xF;
+  let model_id = (leaf1.eax >> 4) & 0xF;
+  let ext_family = (leaf1.eax >> 20) & 0xFF;
+  let ext_model = (leaf1.eax >> 16) & 0xF;
+
+  let family = if family_id == 0xF {
+    family_id + ext_family
+  } else {
+    family_id
+  };
+  let model = if family_id == 0x6 || family_id == 0xF {
+    (ext_model << 4) | model_id
+  } else {
+    model_id
+  };
+
+  Some((is_amd, family, model))
+}
+
+#[cfg(all(feature = "std", not(any(target_arch = "x86_64", target_arch = "x86"))))]
+fn x86_identity() -> Option<(bool, u32, u32)> {
+  None
+}
+
+#[cfg(all(feature = "std", target_arch = "aarch64", target_os = "linux"))]
+const MIDR_IMPL_ARM: u8 = 0x41;
+#[cfg(all(feature = "std", target_arch = "aarch64", target_os = "linux"))]
+const MIDR_IMPL_AMPERE: u8 = 0xC0;
+#[cfg(all(feature = "std", target_arch = "aarch64", target_os = "linux"))]
+const MIDR_IMPL_NVIDIA: u8 = 0x4E;
+#[cfg(all(feature = "std", target_arch = "aarch64", target_os = "linux"))]
+const MIDR_PART_NEOVERSE_N1: u16 = 0xD0C;
+#[cfg(all(feature = "std", target_arch = "aarch64", target_os = "linux"))]
+const MIDR_PART_NEOVERSE_N2: u16 = 0xD49;
+#[cfg(all(feature = "std", target_arch = "aarch64", target_os = "linux"))]
+const MIDR_PART_NEOVERSE_N3: u16 = 0xD8E;
+#[cfg(all(feature = "std", target_arch = "aarch64", target_os = "linux"))]
+const MIDR_PART_NEOVERSE_V1: u16 = 0xD40;
+#[cfg(all(feature = "std", target_arch = "aarch64", target_os = "linux"))]
+const MIDR_PART_NEOVERSE_V2: u16 = 0xD4F;
+
+#[cfg(all(feature = "std", target_arch = "aarch64", target_os = "linux"))]
+fn read_midr_parts() -> Option<(u8, u16)> {
+  let midr = read_midr_el1()?;
+  Some((((midr >> 24) & 0xFF) as u8, ((midr >> 4) & 0xFFF) as u16))
+}
+
+#[cfg(all(feature = "std", target_arch = "aarch64", target_os = "linux"))]
+fn read_midr_el1() -> Option<u64> {
+  use std::fs;
+
+  if let Ok(contents) = fs::read_to_string("/sys/devices/system/cpu/cpu0/regs/identification/midr_el1")
+    && let Ok(midr) = u64::from_str_radix(contents.trim().trim_start_matches("0x"), 16)
+  {
+    return Some(midr);
+  }
+
+  None
+}
+
+#[cfg(all(feature = "std", target_arch = "aarch64", target_os = "linux"))]
+fn detect_sve_vlen() -> u16 {
+  const SYS_PRCTL: u64 = 167;
+  const PR_SVE_GET_VL: u64 = 51;
+  const PR_SVE_VL_LEN_MASK: u64 = 0xFFFF;
+
+  let result: i64;
+  // SAFETY: `prctl(PR_SVE_GET_VL)` is a side-effect-free kernel query.
+  unsafe {
+    core::arch::asm!(
+      "svc #0",
+      in("x8") SYS_PRCTL,
+      in("x0") PR_SVE_GET_VL,
+      in("x1") 0u64,
+      in("x2") 0u64,
+      in("x3") 0u64,
+      in("x4") 0u64,
+      lateout("x0") result,
+      options(nostack)
+    );
+  }
+
+  if result < 0 {
+    0
+  } else {
+    (((result as u64) & PR_SVE_VL_LEN_MASK).saturating_mul(8)) as u16
+  }
+}
+
+#[cfg(all(feature = "std", not(all(target_arch = "aarch64", target_os = "linux"))))]
+fn detect_sve_vlen() -> u16 {
+  0
 }
 
 /// Complete tuning results for all algorithms.

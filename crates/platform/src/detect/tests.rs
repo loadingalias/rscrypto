@@ -14,10 +14,7 @@ mod tests {
     assert_eq!(det.arch, Arch::X86_64);
     #[cfg(target_arch = "aarch64")]
     assert_eq!(det.arch, Arch::Aarch64);
-
-    assert!(det.tune.simd_threshold > 0);
-    assert!(det.tune.parallel_streams > 0);
-    assert!(det.tune.cache_line > 0);
+    assert!(det.caps.count() >= 1);
   }
 
   #[test]
@@ -34,7 +31,6 @@ mod tests {
   fn test_convenience_functions() {
     let det = get();
     assert_eq!(caps(), det.caps);
-    assert_eq!(tune(), det.tune);
     assert_eq!(arch(), det.arch);
   }
 
@@ -210,19 +206,6 @@ mod tests {
     }
   }
 
-  #[test]
-  #[cfg(all(target_arch = "aarch64", target_os = "macos", not(miri)))]
-  fn test_apple_silicon_tune_selection() {
-    use crate::caps::aarch64;
-
-    let det = get();
-    // On Apple Silicon, if we have PMULL+EOR3, we should get Apple tuning
-    if det.caps.has(aarch64::PMULL_EOR3_READY) {
-      let tune_name = det.tune.name();
-      assert!(tune_name.starts_with("Apple"), "Expected Apple tune, got: {tune_name}");
-    }
-  }
-
   // ─────────────────────────────────────────────────────────────────────────────
   // SVE Vector Length Detection Tests
   // ─────────────────────────────────────────────────────────────────────────────
@@ -237,26 +220,6 @@ mod tests {
       assert!(vlen >= 128, "SVE VL too small: {vlen}");
       assert!(vlen <= 2048, "SVE VL too large: {vlen}");
       assert!(vlen.is_power_of_two(), "SVE VL not power of 2: {vlen}");
-    }
-  }
-
-  #[test]
-  #[cfg(all(target_arch = "aarch64", target_os = "linux", not(miri)))]
-  fn test_sve_tune_includes_vlen() {
-    use crate::caps::aarch64;
-
-    let det = get();
-    // If SVE is detected, tune should have appropriate SVE VL
-    if det.caps.has(aarch64::SVE) || det.caps.has(aarch64::SVE2) {
-      let runtime_vlen = detect_sve_vlen();
-      if runtime_vlen > 0 {
-        // The tune's sve_vlen should be a valid value
-        let tune_vlen = det.tune.sve_vlen;
-        assert!(
-          tune_vlen == 0 || tune_vlen == 128 || tune_vlen == 256 || tune_vlen == 512,
-          "Unexpected tune SVE VL: {tune_vlen}"
-        );
-      }
     }
   }
 
@@ -290,75 +253,6 @@ mod tests {
   }
 
   #[test]
-  #[cfg(all(any(target_arch = "x86_64", target_arch = "x86"), feature = "std"))]
-  fn test_is_intel_icl_model_known_models() {
-    assert!(is_intel_icl_model(6, 0x6A)); // Ice Lake-SP
-    assert!(is_intel_icl_model(6, 0x6C)); // Ice Lake-D
-    assert!(is_intel_icl_model(6, 0x7D)); // Ice Lake client family
-    assert!(is_intel_icl_model(6, 0x7E)); // Ice Lake client family
-
-    assert!(!is_intel_icl_model(6, 0x8F)); // Sapphire Rapids
-    assert!(!is_intel_icl_model(6, 0xAD)); // Granite Rapids
-    assert!(!is_intel_icl_model(25, 0x6A)); // AMD family value (invalid for Intel detect)
-  }
-
-  #[test]
-  #[cfg(all(any(target_arch = "x86_64", target_arch = "x86"), feature = "std"))]
-  fn test_is_intel_spr_model_known_models() {
-    assert!(is_intel_spr_model(6, 0x8F)); // Sapphire Rapids
-    assert!(is_intel_spr_model(6, 0xCF)); // Emerald Rapids
-
-    assert!(!is_intel_spr_model(6, 0x6A)); // Ice Lake-SP
-    assert!(!is_intel_spr_model(6, 0xAD)); // Granite Rapids
-    assert!(!is_intel_spr_model(25, 0x8F)); // AMD family value (invalid for Intel detect)
-  }
-
-  #[test]
-  #[cfg(all(any(target_arch = "x86_64", target_arch = "x86"), feature = "std"))]
-  fn test_is_intel_gnr_model_known_models() {
-    assert!(is_intel_gnr_model(6, 0xAD)); // Granite Rapids
-
-    assert!(!is_intel_gnr_model(6, 0x8F)); // Sapphire Rapids
-    assert!(!is_intel_gnr_model(6, 0x6A)); // Ice Lake-SP
-    assert!(!is_intel_gnr_model(25, 0xAD)); // AMD family value (invalid for Intel detect)
-  }
-
-  #[test]
-  #[cfg(all(any(target_arch = "x86_64", target_arch = "x86"), feature = "std"))]
-  fn test_select_x86_tune_classifies_intel_icl_spr_gnr() {
-    use crate::caps::x86;
-
-    let avx512_base = x86::AVX512F | x86::AVX512VL;
-
-    // Ice Lake model must map to Intel ICL and never Intel SPR.
-    let icl = select_x86_tune(avx512_base | x86::AVX2, false, 6, 0x6A);
-    assert_eq!(icl, crate::tune::Tune::INTEL_ICL);
-
-    // Sapphire Rapids class (BF16/AMX feature set without AMX FP16/COMPLEX).
-    let spr = select_x86_tune(avx512_base | x86::AVX512BF16, false, 6, 0x8F);
-    assert_eq!(spr, crate::tune::Tune::INTEL_SPR);
-
-    // Granite Rapids class (AMX FP16/COMPLEX).
-    let gnr = select_x86_tune(avx512_base | x86::AMX_FP16, false, 6, 0xAD);
-    assert_eq!(gnr, crate::tune::Tune::INTEL_GNR);
-  }
-
-  #[test]
-  #[cfg(all(any(target_arch = "x86_64", target_arch = "x86"), feature = "std"))]
-  fn test_select_x86_tune_model_fallback_when_features_masked() {
-    use crate::caps::x86;
-
-    let avx512_base = x86::AVX512F | x86::AVX512VL;
-
-    // Even with masked AMX/BF16 bits, SPR/GNR models should not collapse to Intel ICL.
-    let spr_masked = select_x86_tune(avx512_base, false, 6, 0x8F);
-    assert_eq!(spr_masked, crate::tune::Tune::INTEL_SPR);
-
-    let gnr_masked = select_x86_tune(avx512_base, false, 6, 0xAD);
-    assert_eq!(gnr_masked, crate::tune::Tune::INTEL_GNR);
-  }
-
-  #[test]
   #[allow(unsafe_code)]
   #[cfg(all(any(target_arch = "x86_64", target_arch = "x86"), feature = "std"))]
   fn test_hybrid_avx512_override_default() {
@@ -377,8 +271,8 @@ mod tests {
   fn test_x86_64_model_extraction() {
     // Just verify CPUID model extraction works
     let det = detect_uncached();
-    // Model should be extracted - we just verify detection runs
-    assert!(det.tune.simd_threshold > 0);
+    assert_eq!(det.arch, Arch::X86_64);
+    assert!(det.caps.count() >= 1);
   }
 
   #[test]
@@ -451,124 +345,6 @@ mod tests {
     } else {
       std::eprintln!("Unknown or A-series chip detected");
     }
-  }
-
-  // ─────────────────────────────────────────────────────────────────────────────
-  // TuneKind Round-Trip Tests
-  // ─────────────────────────────────────────────────────────────────────────────
-
-  // Mirror of the kind_from_u8 mapping used in atomic_cache (no_std).
-  // This test validates that the mapping stays in sync with TuneKind's #[repr(u8)].
-  fn test_kind_from_u8(v: u8) -> crate::tune::TuneKind {
-    use crate::tune::TuneKind;
-    match v {
-      1 => TuneKind::Default,
-      2 => TuneKind::Portable,
-      3 => TuneKind::Zen4,
-      4 => TuneKind::Zen5,
-      5 => TuneKind::Zen5c,
-      6 => TuneKind::IntelSpr,
-      7 => TuneKind::IntelGnr,
-      8 => TuneKind::IntelIcl,
-      9 => TuneKind::AppleM1M3,
-      10 => TuneKind::AppleM4,
-      11 => TuneKind::AppleM5,
-      12 => TuneKind::Graviton2,
-      13 => TuneKind::Graviton3,
-      14 => TuneKind::Graviton4,
-      15 => TuneKind::Graviton5,
-      16 => TuneKind::NeoverseN2,
-      17 => TuneKind::NeoverseN3,
-      18 => TuneKind::NeoverseV3,
-      19 => TuneKind::NvidiaGrace,
-      20 => TuneKind::AmpereAltra,
-      21 => TuneKind::Aarch64Pmull,
-      22 => TuneKind::Z13,
-      23 => TuneKind::Z14,
-      24 => TuneKind::Z15,
-      25 => TuneKind::Power7,
-      26 => TuneKind::Power8,
-      27 => TuneKind::Power9,
-      28 => TuneKind::Power10,
-      _ => TuneKind::Custom,
-    }
-  }
-
-  /// Validates that the `kind_from_u8` mapping correctly round-trips with TuneKind's
-  /// `#[repr(u8)]` discriminants.
-  ///
-  /// This catches drift if someone adds a new TuneKind variant but forgets to update
-  /// the mapping in atomic_cache.
-  #[test]
-  fn test_tunekind_round_trip() {
-    use crate::tune::TuneKind;
-
-    // TuneKind has 29 variants (0=Custom through 28=Power10)
-    for i in 0..=28u8 {
-      let kind = test_kind_from_u8(i);
-
-      // Custom (0) is the fallback for unknown values, so skip its reverse check
-      if kind != TuneKind::Custom {
-        assert_eq!(
-          kind as u8, i,
-          "TuneKind mapping mismatch: kind_from_u8({i}) = {:?} but {:?} as u8 = {}",
-          kind, kind, kind as u8
-        );
-      }
-    }
-
-    // Verify out-of-range values map to Custom
-    assert_eq!(test_kind_from_u8(29), TuneKind::Custom);
-    assert_eq!(test_kind_from_u8(255), TuneKind::Custom);
-  }
-
-  /// Verify that all TuneKind variants have distinct u8 representations.
-  #[test]
-  fn test_tunekind_no_collisions() {
-    use alloc::collections::BTreeSet;
-
-    use crate::tune::TuneKind;
-
-    let variants: &[TuneKind] = &[
-      TuneKind::Custom,
-      TuneKind::Default,
-      TuneKind::Portable,
-      TuneKind::Zen4,
-      TuneKind::Zen5,
-      TuneKind::Zen5c,
-      TuneKind::IntelSpr,
-      TuneKind::IntelGnr,
-      TuneKind::IntelIcl,
-      TuneKind::AppleM1M3,
-      TuneKind::AppleM4,
-      TuneKind::AppleM5,
-      TuneKind::Graviton2,
-      TuneKind::Graviton3,
-      TuneKind::Graviton4,
-      TuneKind::Graviton5,
-      TuneKind::NeoverseN2,
-      TuneKind::NeoverseN3,
-      TuneKind::NeoverseV3,
-      TuneKind::NvidiaGrace,
-      TuneKind::AmpereAltra,
-      TuneKind::Aarch64Pmull,
-      TuneKind::Z13,
-      TuneKind::Z14,
-      TuneKind::Z15,
-      TuneKind::Power7,
-      TuneKind::Power8,
-      TuneKind::Power9,
-      TuneKind::Power10,
-    ];
-
-    let mut seen = BTreeSet::new();
-    for &kind in variants {
-      let val = kind as u8;
-      assert!(seen.insert(val), "TuneKind::{:?} has duplicate u8 value {}", kind, val);
-    }
-
-    // Verify we have all 29 variants
-    assert_eq!(seen.len(), 29, "Expected 29 TuneKind variants");
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -690,7 +466,6 @@ mod tests {
   fn test_detected_portable_constructor() {
     let det = Detected::portable();
     assert_eq!(det.caps, Caps::NONE);
-    assert_eq!(det.tune.kind(), crate::tune::TuneKind::Portable);
     assert_eq!(det.arch, Arch::Other);
   }
 
@@ -702,7 +477,6 @@ mod tests {
 
     let c = Detected {
       caps: Caps::bit(0),
-      tune: crate::tune::Tune::DEFAULT,
       arch: Arch::X86_64,
     };
     assert_ne!(a, c);
@@ -714,7 +488,6 @@ mod tests {
     let s = alloc::format!("{:?}", det);
     assert!(s.contains("Detected"));
     assert!(s.contains("caps"));
-    assert!(s.contains("tune"));
     assert!(s.contains("arch"));
   }
 }

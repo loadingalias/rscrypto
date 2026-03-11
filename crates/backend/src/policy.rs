@@ -13,11 +13,11 @@
 //! # Usage
 //!
 //! ```text
-//! let policy = SelectionPolicy::from_platform(caps, &tune);
+//! let policy = SelectionPolicy::from_platform(caps);
 //! let streams = policy.streams_for_len(buffer.len());
 //! ```
 
-use platform::{Caps, Tune};
+use platform::Caps;
 
 use crate::{
   family::{KernelFamily, KernelSubfamily},
@@ -30,7 +30,7 @@ use crate::{
 
 /// Pre-computed kernel selection policy.
 ///
-/// Policies are computed once from `Caps` + `Tune` and cached for the process
+/// Policies are computed once from `Caps` and cached for the process
 /// lifetime. They encode:
 ///
 /// - Which kernel family and subfamily to use
@@ -91,7 +91,7 @@ pub struct SelectionPolicy {
   /// Stream selection uses: `streams = max(s) where len / s >= min_bytes_per_lane`.
   /// This ensures each parallel lane has enough data to amortize setup costs.
   ///
-  /// Initialized from `KernelFamily::min_bytes_per_lane_for_tune()` and can be
+  /// Initialized from the kernel family's capability-driven defaults and can be
   /// overridden by algorithm-specific tunables.
   pub min_bytes_per_lane: usize,
 }
@@ -138,28 +138,27 @@ impl SelectionPolicy {
     }
   }
 
-  /// Construct a policy from detected capabilities and tuning hints.
+  /// Construct a policy from detected capabilities.
   ///
   /// This performs the one-time analysis to select the optimal family
   /// and compute all thresholds.
   #[must_use]
-  pub fn from_platform(caps: Caps, tune: &Tune) -> Self {
+  pub fn from_platform(caps: Caps) -> Self {
     // Select the best available family
-    let family = KernelFamily::select_for_platform(caps, tune);
+    let family = KernelFamily::select_for_platform(caps);
 
     // Compute subfamily based on family and tier
     let subfamily = Self::compute_subfamily(family);
 
-    // Compute thresholds based on tune preset
+    // Compute conservative generic thresholds.
     let TierThresholds {
       small: small_threshold,
       fold: fold_threshold,
       wide: wide_threshold,
-    } = family.tier().policy_thresholds(tune);
+    } = family.tier().policy_thresholds();
 
-    // Compute stream parameters for multi-way folding
-    let max_streams = family.max_streams_for_tune(tune);
-    let min_bytes_per_lane = family.min_bytes_per_lane_for_tune(tune);
+    let max_streams = family.arch_max_streams();
+    let min_bytes_per_lane = family.min_bytes_per_lane();
 
     Self {
       family,
@@ -178,11 +177,11 @@ impl SelectionPolicy {
   /// The family is validated against capabilities - if unavailable,
   /// falls back to the best available alternative.
   #[must_use]
-  pub fn with_family(caps: Caps, tune: &Tune, family: KernelFamily) -> Self {
+  pub fn with_family(caps: Caps, family: KernelFamily) -> Self {
     let effective_family = if family.is_available(caps) {
       family
     } else {
-      KernelFamily::select_for_platform(caps, tune)
+      KernelFamily::select_for_platform(caps)
     };
 
     let subfamily = Self::compute_subfamily(effective_family);
@@ -190,9 +189,9 @@ impl SelectionPolicy {
       small: small_threshold,
       fold: fold_threshold,
       wide: wide_threshold,
-    } = effective_family.tier().policy_thresholds(tune);
-    let max_streams = effective_family.max_streams_for_tune(tune);
-    let min_bytes_per_lane = effective_family.min_bytes_per_lane_for_tune(tune);
+    } = effective_family.tier().policy_thresholds();
+    let max_streams = effective_family.arch_max_streams();
+    let min_bytes_per_lane = effective_family.min_bytes_per_lane();
 
     Self {
       family: effective_family,
@@ -210,15 +209,15 @@ impl SelectionPolicy {
   ///
   /// This allows algorithm-specific code to set exact subfamily configuration.
   #[must_use]
-  pub fn with_subfamily(caps: Caps, tune: &Tune, subfamily: KernelSubfamily) -> Self {
+  pub fn with_subfamily(caps: Caps, subfamily: KernelSubfamily) -> Self {
     let family = subfamily.family;
     let TierThresholds {
       small: small_threshold,
       fold: fold_threshold,
       wide: wide_threshold,
-    } = family.tier().policy_thresholds(tune);
-    let max_streams = family.max_streams_for_tune(tune);
-    let min_bytes_per_lane = family.min_bytes_per_lane_for_tune(tune);
+    } = family.tier().policy_thresholds();
+    let max_streams = family.arch_max_streams();
+    let min_bytes_per_lane = family.min_bytes_per_lane();
 
     Self {
       family,
@@ -365,19 +364,19 @@ impl SelectionPolicy {
   /// The force is clamped to available capabilities - forcing an unavailable
   /// family results in the best available alternative.
   #[must_use]
-  pub fn with_force(&self, force: ForceMode, tune: &Tune) -> Self {
+  pub fn with_force(&self, force: ForceMode) -> Self {
     match force {
       ForceMode::Auto => *self,
       ForceMode::Reference => Self::reference(),
       ForceMode::Portable => Self::portable(),
-      ForceMode::Tier(tier) => self.force_to_tier(tier, tune),
-      ForceMode::Family(family) => Self::with_family(self.caps, tune, family),
+      ForceMode::Tier(tier) => self.force_to_tier(tier),
+      ForceMode::Family(family) => Self::with_family(self.caps, family),
     }
   }
 
-  fn force_to_tier(&self, tier: KernelTier, tune: &Tune) -> Self {
+  fn force_to_tier(&self, tier: KernelTier) -> Self {
     if let Some(family) = KernelFamily::best_available_in_tier(tier, self.caps) {
-      return Self::with_family(self.caps, tune, family);
+      return Self::with_family(self.caps, family);
     }
 
     // Fall back to portable if tier unavailable
@@ -424,7 +423,7 @@ impl Default for SelectionPolicy {
 /// policy falls back to the best available alternative.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum ForceMode {
-  /// Automatic selection based on capabilities and tuning (default).
+  /// Automatic selection based on capabilities (default).
   #[default]
   Auto,
 
@@ -545,16 +544,9 @@ mod tests {
 
   #[test]
   #[cfg(target_arch = "aarch64")]
-  fn arm_pmull_eor3_is_not_blocked_by_128bit_tune() {
-    // Apple M-series (and other aarch64 CPUs) report 128-bit NEON, but EOR3 is
-    // still a strictly better instruction mix for CRC folding when available.
+  fn arm_pmull_eor3_is_selected_when_available() {
     let caps = platform::caps::aarch64::PMULL_EOR3_READY;
-    let tune = Tune {
-      effective_simd_width: 128,
-      ..Tune::DEFAULT
-    };
-
-    let policy = SelectionPolicy::from_platform(caps, &tune);
+    let policy = SelectionPolicy::from_platform(caps);
     assert_eq!(policy.family(), KernelFamily::ArmPmullEor3);
   }
 

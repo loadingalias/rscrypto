@@ -31,7 +31,7 @@
 
 #![allow(dead_code)] // Tables for non-current architectures
 
-use platform::{Caps, TuneKind};
+use platform::Caps;
 
 use crate::dispatchers::{Crc16Fn, Crc24Fn, Crc32Fn, Crc64Fn};
 
@@ -51,9 +51,8 @@ static ACTIVE_TABLE: backend::OnceCache<&'static KernelTable> = backend::OnceCac
 #[inline]
 pub fn active_table() -> &'static KernelTable {
   ACTIVE_TABLE.get_or_init(|| {
-    let tune = platform::tune();
     let caps = platform::caps();
-    select_table(tune.kind(), caps)
+    select_table(caps)
   })
 }
 
@@ -659,41 +658,13 @@ pub fn is_hardware_accelerated() -> bool {
 // Platform Table Selection
 // ─────────────────────────────────────────────────────────────────────────────
 
-#[cfg(target_arch = "x86_64")]
-#[inline]
-#[must_use]
-fn prefer_intel_icl_tables(caps: Caps, kind: TuneKind) -> bool {
-  // `platform` can report some "AVX-512 Intel server" runners as IntelSpr even
-  // when AMX is absent (e.g. ICL-SP class). These CPUs have meaningfully
-  // different optimal CRC kernel selection than SPR/EMR-class.
-  kind == TuneKind::IntelSpr
-    && !caps.has(platform::caps::x86::AMX_TILE)
-    && !caps.has(platform::caps::x86::AMX_INT8)
-    && !caps.has(platform::caps::x86::AMX_BF16)
-    && !caps.has(platform::caps::x86::AMX_FP16)
-    && !caps.has(platform::caps::x86::AMX_COMPLEX)
-}
-
 /// Select the appropriate kernel table for the current platform.
 ///
 /// Resolution order:
-/// 1. **Exact match**: Benchmarked platform with measured data
-/// 2. **Family match**: Inferred from similar microarchitecture
-/// 3. **Capability match**: Conservative defaults based on CPU features
-/// 4. **Portable fallback**: No SIMD, table-based only
+/// 1. **Capability match**: Conservative defaults based on CPU features
+/// 2. **Portable fallback**: No SIMD, table-based only
 #[inline]
-pub fn select_table(tune_kind: TuneKind, caps: Caps) -> &'static KernelTable {
-  // 1. Exact match (benchmarked platforms)
-  if let Some(table) = exact_match(tune_kind, caps) {
-    return table;
-  }
-
-  // 2. Family match (inferred from similar hardware)
-  if let Some(table) = family_match(tune_kind, caps) {
-    return table;
-  }
-
-  // 3. Capability match (conservative defaults)
+pub fn select_table(caps: Caps) -> &'static KernelTable {
   if let Some(table) = capability_match(caps) {
     debug_assert!(caps.has(table.requires), "capability_match returned an unsafe table");
     if caps.has(table.requires) {
@@ -701,82 +672,8 @@ pub fn select_table(tune_kind: TuneKind, caps: Caps) -> &'static KernelTable {
     }
   }
 
-  // 4. Portable fallback
+  // 2. Portable fallback
   &PORTABLE_TABLE
-}
-
-#[inline]
-fn exact_match(tune_kind: TuneKind, caps: Caps) -> Option<&'static KernelTable> {
-  let table: Option<&'static KernelTable> = match tune_kind {
-    #[cfg(target_arch = "aarch64")]
-    TuneKind::AppleM1M3 => Some(&APPLE_M1M3_TABLE),
-    #[cfg(target_arch = "aarch64")]
-    TuneKind::Graviton2 => Some(&GRAVITON2_TABLE),
-    #[cfg(target_arch = "aarch64")]
-    TuneKind::Graviton3 => Some(&GRAVITON3_TABLE),
-    #[cfg(target_arch = "aarch64")]
-    TuneKind::Graviton4 => Some(&GRAVITON4_TABLE),
-    #[cfg(target_arch = "x86_64")]
-    TuneKind::Zen4 => Some(&ZEN4_TABLE),
-    #[cfg(target_arch = "x86_64")]
-    TuneKind::Zen5 => Some(&ZEN5_TABLE),
-    #[cfg(target_arch = "x86_64")]
-    TuneKind::IntelSpr => Some(if prefer_intel_icl_tables(caps, tune_kind) {
-      &INTEL_ICL_TABLE
-    } else {
-      &INTEL_SPR_TABLE
-    }),
-    #[cfg(target_arch = "s390x")]
-    TuneKind::Z13 => Some(&S390X_Z13_TABLE),
-    #[cfg(target_arch = "s390x")]
-    TuneKind::Z14 => Some(&S390X_Z14_TABLE),
-    #[cfg(target_arch = "s390x")]
-    TuneKind::Z15 => Some(&S390X_Z15_TABLE),
-    #[cfg(target_arch = "powerpc64")]
-    TuneKind::Power8 => Some(&POWER8_TABLE),
-    #[cfg(target_arch = "powerpc64")]
-    TuneKind::Power9 => Some(&POWER9_TABLE),
-    #[cfg(target_arch = "powerpc64")]
-    TuneKind::Power10 => Some(&POWER10_TABLE),
-    _ => None,
-  };
-  let table = table?;
-  if caps.has(table.requires) { Some(table) } else { None }
-}
-
-#[inline]
-fn family_match(tune_kind: TuneKind, caps: Caps) -> Option<&'static KernelTable> {
-  let table: Option<&'static KernelTable> = match tune_kind {
-    // Apple Silicon family → use M1-M3 data
-    #[cfg(target_arch = "aarch64")]
-    TuneKind::AppleM4 | TuneKind::AppleM5 => Some(&APPLE_M1M3_TABLE),
-
-    // AWS Graviton / ARM Neoverse family → prefer Graviton4 table where available.
-    #[cfg(target_arch = "aarch64")]
-    TuneKind::Graviton4 | TuneKind::Graviton5 => Some(&GRAVITON4_TABLE),
-    #[cfg(target_arch = "aarch64")]
-    TuneKind::NeoverseN2 | TuneKind::NeoverseN3 | TuneKind::NeoverseV3 => Some(&GRAVITON3_TABLE),
-    #[cfg(target_arch = "aarch64")]
-    TuneKind::NvidiaGrace | TuneKind::AmpereAltra => Some(&GRAVITON3_TABLE),
-
-    // AMD Zen family → prefer Zen5 table when available
-    #[cfg(target_arch = "x86_64")]
-    TuneKind::Zen5 | TuneKind::Zen5c => Some(&ZEN5_TABLE),
-
-    // Intel family → prefer Intel SPR table when available
-    #[cfg(target_arch = "x86_64")]
-    TuneKind::IntelSpr | TuneKind::IntelGnr => Some(if prefer_intel_icl_tables(caps, tune_kind) {
-      &INTEL_ICL_TABLE
-    } else {
-      &INTEL_SPR_TABLE
-    }),
-    #[cfg(target_arch = "x86_64")]
-    TuneKind::IntelIcl => Some(&INTEL_ICL_TABLE),
-
-    _ => None,
-  };
-  let table = table?;
-  if caps.has(table.requires) { Some(table) } else { None }
 }
 
 #[inline]
@@ -1789,7 +1686,7 @@ mod x86_64_tables {
 
   // Intel ICL-SP-ish Table (no AMX)
   //
-  // Generated by rscrypto-tune (Intel ICL runner that reported TuneKind::IntelSpr).
+  // Generated by rscrypto-tune on an Intel ICL runner using the SPR-class profile.
   // Selected by `prefer_intel_icl_tables` when AMX is absent.
   pub static INTEL_ICL_TABLE: KernelTable = KernelTable {
     requires: platform::caps::x86::CRC32C_READY
@@ -2582,40 +2479,8 @@ mod tests {
   #[test]
   fn test_select_table_fallback() {
     // With no capabilities, should return portable table
-    let table = select_table(TuneKind::Portable, Caps::NONE);
+    let table = select_table(Caps::NONE);
     assert!(core::ptr::eq(table, &PORTABLE_TABLE));
-  }
-
-  #[cfg(target_arch = "aarch64")]
-  #[test]
-  fn test_aarch64_exact_match() {
-    // Apple M1-M3 should return the Apple table
-    let table = exact_match(TuneKind::AppleM1M3, APPLE_M1M3_TABLE.requires);
-    assert!(table.is_some());
-  }
-
-  #[cfg(target_arch = "x86_64")]
-  #[test]
-  fn test_x86_64_exact_match() {
-    // Zen4 should return the Zen4 table.
-    assert!(exact_match(TuneKind::Zen4, ZEN4_TABLE.requires).is_some());
-    // Zen5 should return the Zen5 table.
-    assert!(exact_match(TuneKind::Zen5, ZEN5_TABLE.requires).is_some());
-    // IntelSpr is split into:
-    // - ICL-SP-ish (no AMX) → INTEL_ICL_TABLE
-    // - SPR/EMR-ish (AMX) → INTEL_SPR_TABLE
-    let icl_table = exact_match(TuneKind::IntelSpr, INTEL_SPR_TABLE.requires).unwrap();
-    assert!(core::ptr::eq(icl_table, &INTEL_ICL_TABLE));
-
-    let spr_caps = INTEL_SPR_TABLE
-      .requires
-      .union(platform::caps::x86::AMX_TILE)
-      .union(platform::caps::x86::AMX_INT8)
-      .union(platform::caps::x86::AMX_BF16)
-      .union(platform::caps::x86::AMX_FP16)
-      .union(platform::caps::x86::AMX_COMPLEX);
-    let spr_table = exact_match(TuneKind::IntelSpr, spr_caps).unwrap();
-    assert!(core::ptr::eq(spr_table, &INTEL_SPR_TABLE));
   }
 
   // ─────────────────────────────────────────────────────────────────────────────

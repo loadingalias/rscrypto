@@ -1,20 +1,16 @@
-//! CPU detection, capabilities, and tuning for maximum performance.
+//! CPU detection and capabilities for maximum performance.
 //!
-//! Unified platform abstraction for rscrypto: detects CPU features, selects optimal
-//! algorithms, and provides microarchitecture-specific tuning—all from a single API.
+//! Unified platform abstraction for rscrypto: detects CPU features and exposes
+//! the architectural facts dispatch code needs.
 //!
 //! # Quick Start
 //!
 //! ```
-//! use platform::{Caps, Tune, dispatch_auto};
+//! use platform::dispatch_auto;
 //!
 //! // Automatic dispatch: zero-overhead when compiled with target features,
 //! // runtime detection otherwise
-//! let result = dispatch_auto(|caps, tune| {
-//!   // `caps` tells you what's possible (which instructions exist)
-//!   // `tune` tells you what's optimal (thresholds, strategies)
-//!   assert!(tune.simd_threshold > 0);
-//!   assert!(tune.cache_line >= 32);
+//! let result = dispatch_auto(|caps| {
 //!   caps.count() // returns number of detected features
 //! });
 //! assert!(result >= 1); // At least one feature detected
@@ -33,16 +29,11 @@
 //! ```
 //! # #[cfg(target_arch = "aarch64")]
 //! # fn example() {
-//! use platform::{Caps, Tune, caps::aarch64, dispatch_auto};
+//! use platform::{caps::aarch64, dispatch_auto};
 //!
 //! fn crc32c(crc: u32, data: &[u8]) -> u32 {
-//!   dispatch_auto(|caps, tune| {
-//!     // Use tuning to decide scalar vs SIMD threshold
-//!     if data.len() < tune.simd_threshold {
-//!       scalar_crc32c(crc, data)
-//!     }
-//!     // Use caps to select best available kernel
-//!     else if caps.has(aarch64::PMULL_EOR3_READY) {
+//!   dispatch_auto(|caps| {
+//!     if caps.has(aarch64::PMULL_EOR3_READY) {
 //!       pmull_eor3_kernel(crc, data) // Apple M1+, Graviton3+
 //!     } else if caps.has(aarch64::AES) {
 //!       pmull_kernel(crc, data) // Most ARMv8
@@ -60,7 +51,6 @@
 //! # Design
 //!
 //! - **[`Caps`]**: 256-bit feature bitset. "What instructions can run?"
-//! - **[`Tune`]**: Microarchitecture hints. "What thresholds/strategies are optimal?"
 //! - **[`caps_static`]**: Compile-time detection via `cfg!()`. Zero overhead.
 //! - **[`caps()`]**: Runtime detection via CPUID/HWCAP. Cached in `OnceLock`.
 //!
@@ -85,6 +75,7 @@ pub mod caps;
 pub mod detect;
 pub mod dispatch;
 pub mod target_matrix;
+#[doc(hidden)]
 pub mod tune;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -94,7 +85,6 @@ pub mod tune;
 pub use caps::{Arch, Caps};
 pub use detect::{Detected, OverrideError};
 pub use dispatch::{dispatch, dispatch_auto, dispatch_static, has_static_features};
-pub use tune::{Tune, TuneKind};
 
 // Architecture-specific feature constants are available via submodules:
 // - `caps::x86` - x86/x86_64 features (SSE, AVX, AVX-512, etc.)
@@ -108,7 +98,7 @@ pub use tune::{Tune, TuneKind};
 // Public API - Functions
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Get detected CPU capabilities and tuning hints.
+/// Get detected CPU capabilities and architecture.
 ///
 /// Results are cached after first call.
 ///
@@ -131,15 +121,6 @@ pub fn get() -> Detected {
 #[must_use]
 pub fn caps() -> Caps {
   detect::caps()
-}
-
-/// Get just the tuning hints.
-///
-/// Convenience wrapper around [`get()`].
-#[inline]
-#[must_use]
-pub fn tune() -> Tune {
-  detect::tune()
 }
 
 /// Get the detected architecture.
@@ -205,22 +186,11 @@ pub const fn caps_static() -> Caps {
   detect::caps_static()
 }
 
-/// Get compile-time tuning hints.
-///
-/// Returns conservative tuning hints based on compile-time known features.
-///
-/// See [`detect::tune_static`] for details.
-#[inline(always)]
-#[must_use]
-pub const fn tune_static() -> Tune {
-  detect::tune_static()
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Description (for diagnostics)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// A zero-allocation description of detected CPU capabilities and tuning.
+/// A zero-allocation description of detected CPU capabilities and architecture.
 ///
 /// Implements `Display` so it can be written to any formatter without heap allocation.
 #[derive(Clone, Copy)]
@@ -230,7 +200,7 @@ pub struct Description {
 
 impl core::fmt::Display for Description {
   fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-    write!(f, "{:?} ({})", self.det.caps, self.det.tune.name())
+    write!(f, "{:?} ({:?})", self.det.caps, self.det.arch)
   }
 }
 
