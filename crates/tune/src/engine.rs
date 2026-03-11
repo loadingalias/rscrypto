@@ -6,8 +6,8 @@ mod crc_adapter;
 use std::{collections::HashSet, time::Instant};
 
 use crate::{
-  AlgorithmResult, KernelSpec, KernelTier, PlatformInfo, RawAlgorithmMeasurements, RawBenchPoint, RawKernelSpec,
-  RawPlatformInfo, RawRunnerConfig, RawTuneResults, SizeClassBest, Tunable, TuneError, TuneKind, TuneResults,
+  AlgorithmResult, Blake3TargetProfile, KernelSpec, KernelTier, PlatformInfo, RawAlgorithmMeasurements, RawBenchPoint,
+  RawKernelSpec, RawPlatformInfo, RawRunnerConfig, RawTuneResults, SizeClassBest, Tunable, TuneError, TuneResults,
   TuningDomain,
   analysis::{self, CrossoverType, Measurement},
   crc16::crc16_threshold_to_env_suffix,
@@ -161,7 +161,7 @@ impl TuneEngine {
 
     if self.verbose {
       eprintln!("Platform: {}", platform.description);
-      eprintln!("Tune preset: {:?}", platform.tune_kind);
+      eprintln!("BLAKE3 profile: {:?}", platform.blake3_profile);
       eprintln!();
     }
 
@@ -203,9 +203,10 @@ impl TuneEngine {
       platform: RawPlatformInfo {
         arch: platform.arch.to_string(),
         os: platform.os.to_string(),
-        tune_kind: platform.tune_kind as u8,
+        blake3_profile: platform.blake3_profile as u8,
         description: platform.description,
         caps: platform.caps.to_string(),
+        caps_words: platform.caps.words(),
       },
       checksum_runner: RawRunnerConfig {
         warmup_ms: self.checksum_runner.warmup_ms(),
@@ -577,25 +578,25 @@ fn threshold_to_env_suffix_for_algo(algo_name: &str, threshold_name: &str) -> Op
 }
 
 fn raw_platform_to_platform_info(raw: &RawPlatformInfo) -> Result<PlatformInfo, TuneError> {
-  let tune_kind = tune_kind_from_u8(raw.tune_kind).ok_or_else(|| {
+  let blake3_profile = blake3_profile_from_u8(raw.blake3_profile).ok_or_else(|| {
     TuneError::Io(format!(
-      "invalid raw artifact: unknown tune kind discriminant {}",
-      raw.tune_kind
+      "invalid raw artifact: unknown BLAKE3 profile discriminant {}",
+      raw.blake3_profile
     ))
   })?;
 
   Ok(PlatformInfo {
     arch: Box::leak(raw.arch.clone().into_boxed_str()),
     os: Box::leak(raw.os.clone().into_boxed_str()),
-    caps: platform::Caps::NONE,
-    tune_kind,
+    caps: platform::Caps::from_words(raw.caps_words),
+    blake3_profile,
     description: raw.description.clone(),
   })
 }
 
 #[must_use]
-fn tune_kind_from_u8(value: u8) -> Option<TuneKind> {
-  TuneKind::from_u8(value)
+fn blake3_profile_from_u8(value: u8) -> Option<Blake3TargetProfile> {
+  Blake3TargetProfile::from_u8(value)
 }
 
 fn find_raw_kernel_by_tier(kernels: &[RawKernelSpec], tier: KernelTier) -> Option<&RawKernelSpec> {

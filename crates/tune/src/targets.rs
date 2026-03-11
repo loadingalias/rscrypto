@@ -12,7 +12,7 @@ use std::{
 
 #[cfg(feature = "std")]
 use crate::TuneResults;
-use crate::{TuneKind, hash::is_blake3_tuning_algo};
+use crate::{Blake3TargetProfile, hash::is_blake3_tuning_algo};
 
 const TARGET_MATRIX_MANIFEST: &str = include_str!("../../../config/target-matrix.toml");
 static TUNE_ARCHES: OnceLock<Vec<&'static str>> = OnceLock::new();
@@ -158,7 +158,7 @@ pub fn contract_mode(algo: &str) -> ContractMode {
 ///
 /// Returns `None` when no explicit target is defined.
 #[must_use]
-pub fn class_target_gib_s(algo: &str, arch: &str, tune_kind: TuneKind, class: &str) -> Option<f64> {
+pub fn class_target_gib_s(algo: &str, arch: &str, blake3_profile: Blake3TargetProfile, class: &str) -> Option<f64> {
   if !is_blake3_tuning_algo(algo) {
     return None;
   }
@@ -171,9 +171,9 @@ pub fn class_target_gib_s(algo: &str, arch: &str, tune_kind: TuneKind, class: &s
   let surface = blake3_surface(algo)?;
   let idx = class_index(class)?;
 
-  Some(match (arch, tune_kind) {
+  Some(match (arch, blake3_profile) {
     // x86_64
-    ("x86_64", TuneKind::Zen5 | TuneKind::Zen5c) => surface_value(
+    ("x86_64", Blake3TargetProfile::Zen5 | Blake3TargetProfile::Zen5c) => surface_value(
       surface,
       idx,
       SurfaceFloors {
@@ -185,7 +185,7 @@ pub fn class_target_gib_s(algo: &str, arch: &str, tune_kind: TuneKind, class: &s
         xof: [0.40, 0.80, 2.00, 3.30],
       },
     ),
-    ("x86_64", TuneKind::Zen4) => surface_value(
+    ("x86_64", Blake3TargetProfile::Zen4) => surface_value(
       surface,
       idx,
       SurfaceFloors {
@@ -197,7 +197,7 @@ pub fn class_target_gib_s(algo: &str, arch: &str, tune_kind: TuneKind, class: &s
         xof: [0.34, 0.68, 1.70, 2.80],
       },
     ),
-    ("x86_64", TuneKind::IntelGnr | TuneKind::IntelSpr) => surface_value(
+    ("x86_64", Blake3TargetProfile::IntelGnr | Blake3TargetProfile::IntelSpr) => surface_value(
       surface,
       idx,
       SurfaceFloors {
@@ -209,7 +209,7 @@ pub fn class_target_gib_s(algo: &str, arch: &str, tune_kind: TuneKind, class: &s
         xof: [0.32, 0.64, 1.60, 2.64],
       },
     ),
-    ("x86_64", TuneKind::IntelIcl) => surface_value(
+    ("x86_64", Blake3TargetProfile::IntelIcl) => surface_value(
       surface,
       idx,
       SurfaceFloors {
@@ -221,7 +221,7 @@ pub fn class_target_gib_s(algo: &str, arch: &str, tune_kind: TuneKind, class: &s
         xof: [0.30, 0.60, 1.40, 2.20],
       },
     ),
-    ("x86_64", TuneKind::Default | TuneKind::Portable) => surface_value(
+    ("x86_64", Blake3TargetProfile::Default | Blake3TargetProfile::Portable) => surface_value(
       surface,
       idx,
       SurfaceFloors {
@@ -234,7 +234,7 @@ pub fn class_target_gib_s(algo: &str, arch: &str, tune_kind: TuneKind, class: &s
       },
     ),
     // aarch64
-    ("aarch64", TuneKind::AppleM5) => surface_value(
+    ("aarch64", Blake3TargetProfile::AppleM5) => surface_value(
       surface,
       idx,
       SurfaceFloors {
@@ -246,7 +246,7 @@ pub fn class_target_gib_s(algo: &str, arch: &str, tune_kind: TuneKind, class: &s
         xof: [0.30, 0.56, 1.30, 2.20],
       },
     ),
-    ("aarch64", TuneKind::AppleM4) => surface_value(
+    ("aarch64", Blake3TargetProfile::AppleM4) => surface_value(
       surface,
       idx,
       SurfaceFloors {
@@ -258,7 +258,7 @@ pub fn class_target_gib_s(algo: &str, arch: &str, tune_kind: TuneKind, class: &s
         xof: [0.28, 0.54, 1.25, 2.00],
       },
     ),
-    ("aarch64", TuneKind::AppleM1M3) => surface_value(
+    ("aarch64", Blake3TargetProfile::AppleM1M3) => surface_value(
       surface,
       idx,
       SurfaceFloors {
@@ -270,7 +270,7 @@ pub fn class_target_gib_s(algo: &str, arch: &str, tune_kind: TuneKind, class: &s
         xof: [0.24, 0.46, 1.05, 1.75],
       },
     ),
-    ("aarch64", TuneKind::Graviton5 | TuneKind::NeoverseV3) => surface_value(
+    ("aarch64", Blake3TargetProfile::Graviton5 | Blake3TargetProfile::NeoverseV3) => surface_value(
       surface,
       idx,
       SurfaceFloors {
@@ -282,7 +282,10 @@ pub fn class_target_gib_s(algo: &str, arch: &str, tune_kind: TuneKind, class: &s
         xof: [0.26, 0.50, 1.20, 1.90],
       },
     ),
-    ("aarch64", TuneKind::Graviton4 | TuneKind::NeoverseN3 | TuneKind::NvidiaGrace) => surface_value(
+    (
+      "aarch64",
+      Blake3TargetProfile::Graviton4 | Blake3TargetProfile::NeoverseN3 | Blake3TargetProfile::NvidiaGrace,
+    ) => surface_value(
       surface,
       idx,
       SurfaceFloors {
@@ -294,7 +297,10 @@ pub fn class_target_gib_s(algo: &str, arch: &str, tune_kind: TuneKind, class: &s
         xof: [0.24, 0.46, 1.05, 1.70],
       },
     ),
-    ("aarch64", TuneKind::Graviton3 | TuneKind::NeoverseN2 | TuneKind::AmpereAltra) => surface_value(
+    (
+      "aarch64",
+      Blake3TargetProfile::Graviton3 | Blake3TargetProfile::NeoverseN2 | Blake3TargetProfile::AmpereAltra,
+    ) => surface_value(
       surface,
       idx,
       SurfaceFloors {
@@ -306,7 +312,7 @@ pub fn class_target_gib_s(algo: &str, arch: &str, tune_kind: TuneKind, class: &s
         xof: [0.20, 0.38, 0.90, 1.45],
       },
     ),
-    ("aarch64", TuneKind::Graviton2 | TuneKind::Aarch64Pmull) => surface_value(
+    ("aarch64", Blake3TargetProfile::Graviton2 | Blake3TargetProfile::Aarch64Pmull) => surface_value(
       surface,
       idx,
       SurfaceFloors {
@@ -318,7 +324,7 @@ pub fn class_target_gib_s(algo: &str, arch: &str, tune_kind: TuneKind, class: &s
         xof: [0.16, 0.32, 0.66, 1.15],
       },
     ),
-    ("aarch64", TuneKind::Default | TuneKind::Portable) => surface_value(
+    ("aarch64", Blake3TargetProfile::Default | Blake3TargetProfile::Portable) => surface_value(
       surface,
       idx,
       SurfaceFloors {
@@ -340,29 +346,29 @@ mod tests {
 
   #[test]
   fn targets_are_tunekind_and_algo_sensitive() {
-    let zen5 = class_target_gib_s("blake3", "x86_64", TuneKind::Zen5, "l").unwrap();
-    let icl = class_target_gib_s("blake3", "x86_64", TuneKind::IntelIcl, "l").unwrap();
+    let zen5 = class_target_gib_s("blake3", "x86_64", Blake3TargetProfile::Zen5, "l").unwrap();
+    let icl = class_target_gib_s("blake3", "x86_64", Blake3TargetProfile::IntelIcl, "l").unwrap();
     assert!(zen5 > icl);
 
-    let stream64 = class_target_gib_s("blake3-latency", "x86_64", TuneKind::Zen5, "s").unwrap();
-    let stream4k = class_target_gib_s("blake3-stream4k", "x86_64", TuneKind::Zen5, "s").unwrap();
+    let stream64 = class_target_gib_s("blake3-latency", "x86_64", Blake3TargetProfile::Zen5, "s").unwrap();
+    let stream4k = class_target_gib_s("blake3-stream4k", "x86_64", Blake3TargetProfile::Zen5, "s").unwrap();
     assert!(stream4k > stream64);
   }
 
   #[test]
   fn keyed_and_derive_are_independent_surfaces() {
-    let keyed = class_target_gib_s("blake3-stream4k-keyed", "x86_64", TuneKind::IntelSpr, "l").unwrap();
-    let derive = class_target_gib_s("blake3-stream4k-derive", "x86_64", TuneKind::IntelSpr, "l").unwrap();
-    let stream4k = class_target_gib_s("blake3-stream4k", "x86_64", TuneKind::IntelSpr, "l").unwrap();
+    let keyed = class_target_gib_s("blake3-stream4k-keyed", "x86_64", Blake3TargetProfile::IntelSpr, "l").unwrap();
+    let derive = class_target_gib_s("blake3-stream4k-derive", "x86_64", Blake3TargetProfile::IntelSpr, "l").unwrap();
+    let stream4k = class_target_gib_s("blake3-stream4k", "x86_64", Blake3TargetProfile::IntelSpr, "l").unwrap();
     assert!(keyed < stream4k);
     assert!(derive < keyed);
   }
 
   #[test]
   fn streaming_targets_are_explicit_and_conservative() {
-    let oneshot_l = class_target_gib_s("blake3", "x86_64", TuneKind::IntelSpr, "l").unwrap();
-    let stream4k_l = class_target_gib_s("blake3-stream4k", "x86_64", TuneKind::IntelSpr, "l").unwrap();
-    let stream64_l = class_target_gib_s("blake3-latency", "x86_64", TuneKind::IntelSpr, "l").unwrap();
+    let oneshot_l = class_target_gib_s("blake3", "x86_64", Blake3TargetProfile::IntelSpr, "l").unwrap();
+    let stream4k_l = class_target_gib_s("blake3-stream4k", "x86_64", Blake3TargetProfile::IntelSpr, "l").unwrap();
+    let stream64_l = class_target_gib_s("blake3-latency", "x86_64", Blake3TargetProfile::IntelSpr, "l").unwrap();
 
     assert!(stream4k_l < oneshot_l);
     assert!(stream64_l < stream4k_l);
@@ -372,9 +378,9 @@ mod tests {
   #[test]
   fn informational_surfaces_do_not_emit_class_contracts() {
     assert_eq!(contract_mode("blake3-parent"), ContractMode::Informational);
-    assert!(class_target_gib_s("blake3-parent", "aarch64", TuneKind::AppleM1M3, "l").is_none());
-    assert!(class_target_gib_s("blake3-stream64", "x86_64", TuneKind::Zen5, "m").is_none());
-    assert!(class_target_gib_s("blake3-stream-mixed-xof", "aarch64", TuneKind::AppleM4, "s").is_none());
+    assert!(class_target_gib_s("blake3-parent", "aarch64", Blake3TargetProfile::AppleM1M3, "l").is_none());
+    assert!(class_target_gib_s("blake3-stream64", "x86_64", Blake3TargetProfile::Zen5, "m").is_none());
+    assert!(class_target_gib_s("blake3-stream-mixed-xof", "aarch64", Blake3TargetProfile::AppleM4, "s").is_none());
   }
 
   #[test]
@@ -403,11 +409,11 @@ pub struct TargetMiss {
 pub fn collect_target_misses(results: &TuneResults) -> Vec<TargetMiss> {
   let mut misses = Vec::with_capacity(results.algorithms.len().saturating_mul(4));
   let arch = results.platform.arch;
-  let tune_kind = results.platform.tune_kind;
+  let blake3_profile = results.platform.blake3_profile;
 
   for algo in &results.algorithms {
     for class_best in &algo.size_class_best {
-      let Some(target) = class_target_gib_s(algo.name, arch, tune_kind, class_best.class) else {
+      let Some(target) = class_target_gib_s(algo.name, arch, blake3_profile, class_best.class) else {
         continue;
       };
 

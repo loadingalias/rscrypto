@@ -329,9 +329,7 @@ Optional tools only with a specific question they uniquely answer:
 - Change:
   - `x86_64` one-chunk path:
     - restore AVX2 exact-block one-chunk `hash_many_avx2` fast path.
-    - gate the path with a tune-kind allowlist (`Zen4`, `Zen5`, `Zen5c`, `IntelIcl`).
-  - dispatch plumbing:
-    - expose resolved BLAKE3 tune kind via `dispatch::tune_kind()` for hot-path gating.
+    - gate the path with a narrow x86 host allowlist (`amd-zen4`, `amd-zen5`, `amd-zen5c`, `intel-icl`).
 - Validation:
   - Local: `just check-all && just test` passed.
   - CI plan (targeted): `intel-icl`, `amd-zen4`, `amd-zen5`, `intel-spr` with `blake3/oneshot` gap gate.
@@ -486,7 +484,7 @@ Optional tools only with a specific question they uniquely answer:
 
 1. Narrow single-chunk XOF kernel override:
    - keep current `finalize_xof()` behavior by default,
-   - only override kernel when `self.kernel == Portable` **and** tune-kind is an x86 Intel family (`IntelIcl`/`IntelSpr`), using size-class selection.
+   - only override kernel when `self.kernel == Portable` **and** the host is in the narrow x86 Intel allowlist (`intel-icl`/`intel-spr`), using size-class selection.
 2. Keep non-Intel lanes unchanged in this candidate (avoid another cross-lane cliff).
 3. Re-run the same targeted `bench.yaml` scope (`xof/`, 5 lanes above), then keep/revert immediately based on net `32B-out` results.
 
@@ -500,7 +498,7 @@ Optional tools only with a specific question they uniquely answer:
     - override to `dispatch_plan.size_class_kernel(self.chunk_state.len())` only when:
       - target is `x86_64`,
       - `self.kernel == Portable`,
-      - tune-kind is `IntelIcl` or `IntelSpr`.
+      - host class is `intel-icl` or `intel-spr`.
 - Validation:
   - Local: `just check-all && just test` passed.
   - CI targeted bench run: `22549116807` (`crates=hashes`, `benches=blake3`, `filter=xof/`,

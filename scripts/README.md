@@ -58,7 +58,5 @@ This file is the caller map for `scripts/`.
   - Called by: `just comp-check`
 - `scripts/gen_blake3_x86_asm_ports.py`
   - Called by: `just gen-blake3-x86-asm-ports`
-- `scripts/gen/kernel_tables.py`
-  - Called by: `just gen-kernel-tables`; also documented in `crates/checksum/src/dispatch.rs` and `crates/checksum/src/generated/README.md`
 - `scripts/gen_hashes_testdata.py`
   - Called by: `just gen-hashes-testdata` (manual developer utility)

@@ -56,6 +56,22 @@ impl Caps {
 
   /// Create a capability set from raw words.
   ///
+  /// This is primarily useful for serialization and testing.
+  #[inline]
+  #[must_use]
+  pub const fn from_words(words: [u64; 4]) -> Self {
+    Self(words)
+  }
+
+  /// Return the raw underlying 64-bit words.
+  #[inline]
+  #[must_use]
+  pub const fn words(self) -> [u64; 4] {
+    self.0
+  }
+
+  /// Create a capability set from raw words.
+  ///
   /// This is primarily useful for testing and fuzzing.
   /// Normal usage should prefer the predefined constants.
   ///
@@ -71,7 +87,7 @@ impl Caps {
   #[inline]
   #[must_use]
   pub const fn from_raw(words: [u64; 4]) -> Self {
-    Self(words)
+    Self::from_words(words)
   }
 
   /// Access the raw underlying words.

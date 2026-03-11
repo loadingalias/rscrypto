@@ -81,13 +81,13 @@ impl<W: Write> Report<W> {
 
     // Platform info
     writeln!(self.writer, "Platform: {}", results.platform.description)?;
-    writeln!(self.writer, "Tune preset: {:?}", results.platform.tune_kind)?;
+    writeln!(self.writer, "BLAKE3 profile: {:?}", results.platform.blake3_profile)?;
     writeln!(self.writer, "Timestamp: {}", results.timestamp)?;
     writeln!(self.writer)?;
 
     // Algorithm results
     for algo in &results.algorithms {
-      self.write_algorithm_summary(algo, results.platform.arch, results.platform.tune_kind)?;
+      self.write_algorithm_summary(algo, results.platform.arch, results.platform.blake3_profile)?;
       writeln!(self.writer)?;
     }
 
@@ -99,7 +99,7 @@ impl<W: Write> Report<W> {
     &mut self,
     algo: &AlgorithmResult,
     arch: &str,
-    tune_kind: crate::TuneKind,
+    blake3_profile: crate::Blake3TargetProfile,
   ) -> io::Result<()> {
     writeln!(self.writer, "=== {} ===", algo.name)?;
     writeln!(
@@ -117,7 +117,7 @@ impl<W: Write> Report<W> {
         writeln!(self.writer, "Perf targets ({arch}):")?;
         wrote_perf_targets = true;
       }
-      if let Some(target_gib_s) = targets::class_target_gib_s(algo.name, arch, tune_kind, class_best.class) {
+      if let Some(target_gib_s) = targets::class_target_gib_s(algo.name, arch, blake3_profile, class_best.class) {
         let status = if class_best.throughput_gib_s >= target_gib_s {
           "ok"
         } else {
@@ -216,7 +216,11 @@ impl<W: Write> Report<W> {
       "    \"description\": \"{}\",",
       escape_json(&results.platform.description)
     )?;
-    writeln!(self.writer, "    \"tune_kind\": \"{:?}\"", results.platform.tune_kind)?;
+    writeln!(
+      self.writer,
+      "    \"blake3_profile\": \"{:?}\"",
+      results.platform.blake3_profile
+    )?;
     writeln!(self.writer, "  }},")?;
 
     writeln!(self.writer, "  \"algorithms\": [")?;
@@ -311,7 +315,11 @@ impl<W: Write> Report<W> {
     writeln!(self.writer, "## Tuning Results")?;
     writeln!(self.writer)?;
     writeln!(self.writer, "**Platform:** `{}`", results.platform.description)?;
-    writeln!(self.writer, "**Tune preset:** `{:?}`", results.platform.tune_kind)?;
+    writeln!(
+      self.writer,
+      "**BLAKE3 profile:** `{:?}`",
+      results.platform.blake3_profile
+    )?;
     writeln!(self.writer, "**Timestamp:** {}", results.timestamp)?;
     writeln!(self.writer)?;
 

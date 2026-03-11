@@ -10,7 +10,7 @@ use std::{
   path::{Path, PathBuf},
 };
 
-use crate::{AlgorithmResult, TuneKind, TuneResults, hash::BLAKE3_TUNING_CORPUS};
+use crate::{AlgorithmResult, Blake3FamilyProfile, TuneResults, hash::BLAKE3_TUNING_CORPUS};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Size Class Boundaries
@@ -406,72 +406,40 @@ fn write_artifacts_transactional(artifacts: &[GeneratedArtifact]) -> io::Result<
 }
 
 #[cfg(test)]
-fn tune_kind_table_ident(tune_kind: TuneKind) -> &'static str {
-  match tune_kind {
-    TuneKind::Custom => "CUSTOM_TABLE",
-    TuneKind::Default => "DEFAULT_KIND_TABLE",
-    TuneKind::Portable => "PORTABLE_TABLE",
-    TuneKind::Zen4 => "ZEN4_TABLE",
-    TuneKind::Zen5 => "ZEN5_TABLE",
-    TuneKind::Zen5c => "ZEN5C_TABLE",
-    TuneKind::IntelSpr => "INTELSPR_TABLE",
-    TuneKind::IntelGnr => "INTELGNR_TABLE",
-    TuneKind::IntelIcl => "INTELICL_TABLE",
-    TuneKind::AppleM1M3 => "APPLEM1M3_TABLE",
-    TuneKind::AppleM4 => "APPLEM4_TABLE",
-    TuneKind::AppleM5 => "APPLEM5_TABLE",
-    TuneKind::Graviton2 => "GRAVITON2_TABLE",
-    TuneKind::Graviton3 => "GRAVITON3_TABLE",
-    TuneKind::Graviton4 => "GRAVITON4_TABLE",
-    TuneKind::Graviton5 => "GRAVITON5_TABLE",
-    TuneKind::NeoverseN2 => "NEOVERSEN2_TABLE",
-    TuneKind::NeoverseN3 => "NEOVERSEN3_TABLE",
-    TuneKind::NeoverseV3 => "NEOVERSEV3_TABLE",
-    TuneKind::NvidiaGrace => "NVIDIAGRACE_TABLE",
-    TuneKind::AmpereAltra => "AMPEREALTRA_TABLE",
-    TuneKind::Aarch64Pmull => "AARCH64PMULL_TABLE",
-    TuneKind::Z13 => "Z13_TABLE",
-    TuneKind::Z14 => "Z14_TABLE",
-    TuneKind::Z15 => "Z15_TABLE",
-    TuneKind::Power7 => "POWER7_TABLE",
-    TuneKind::Power8 => "POWER8_TABLE",
-    TuneKind::Power9 => "POWER9_TABLE",
-    TuneKind::Power10 => "POWER10_TABLE",
+fn family_table_ident(profile: Blake3FamilyProfile) -> &'static str {
+  match profile {
+    Blake3FamilyProfile::Custom => "CUSTOM_TABLE",
+    Blake3FamilyProfile::DefaultKind => "DEFAULT_KIND_TABLE",
+    Blake3FamilyProfile::Portable => "PORTABLE_TABLE",
+    Blake3FamilyProfile::X86Avx512 => "X86_AVX512_TABLE",
+    Blake3FamilyProfile::X86Avx512Amx => "X86_AVX512_AMX_TABLE",
+    Blake3FamilyProfile::Aarch64Neon => "AARCH64_NEON_TABLE",
+    Blake3FamilyProfile::Z13 => "Z13_TABLE",
+    Blake3FamilyProfile::Z14 => "Z14_TABLE",
+    Blake3FamilyProfile::Z15 => "Z15_TABLE",
+    Blake3FamilyProfile::Power7 => "POWER7_TABLE",
+    Blake3FamilyProfile::Power8 => "POWER8_TABLE",
+    Blake3FamilyProfile::Power9 => "POWER9_TABLE",
+    Blake3FamilyProfile::Power10 => "POWER10_TABLE",
   }
 }
 
 #[cfg(test)]
-fn tune_kind_streaming_table_ident(tune_kind: TuneKind) -> &'static str {
-  match tune_kind {
-    TuneKind::Custom => "CUSTOM_STREAMING_TABLE",
-    TuneKind::Default => "DEFAULT_KIND_STREAMING_TABLE",
-    TuneKind::Portable => "PORTABLE_STREAMING_TABLE",
-    TuneKind::Zen4 => "ZEN4_STREAMING_TABLE",
-    TuneKind::Zen5 => "ZEN5_STREAMING_TABLE",
-    TuneKind::Zen5c => "ZEN5C_STREAMING_TABLE",
-    TuneKind::IntelSpr => "INTELSPR_STREAMING_TABLE",
-    TuneKind::IntelGnr => "INTELGNR_STREAMING_TABLE",
-    TuneKind::IntelIcl => "INTELICL_STREAMING_TABLE",
-    TuneKind::AppleM1M3 => "APPLEM1M3_STREAMING_TABLE",
-    TuneKind::AppleM4 => "APPLEM4_STREAMING_TABLE",
-    TuneKind::AppleM5 => "APPLEM5_STREAMING_TABLE",
-    TuneKind::Graviton2 => "GRAVITON2_STREAMING_TABLE",
-    TuneKind::Graviton3 => "GRAVITON3_STREAMING_TABLE",
-    TuneKind::Graviton4 => "GRAVITON4_STREAMING_TABLE",
-    TuneKind::Graviton5 => "GRAVITON5_STREAMING_TABLE",
-    TuneKind::NeoverseN2 => "NEOVERSEN2_STREAMING_TABLE",
-    TuneKind::NeoverseN3 => "NEOVERSEN3_STREAMING_TABLE",
-    TuneKind::NeoverseV3 => "NEOVERSEV3_STREAMING_TABLE",
-    TuneKind::NvidiaGrace => "NVIDIAGRACE_STREAMING_TABLE",
-    TuneKind::AmpereAltra => "AMPEREALTRA_STREAMING_TABLE",
-    TuneKind::Aarch64Pmull => "AARCH64PMULL_STREAMING_TABLE",
-    TuneKind::Z13 => "Z13_STREAMING_TABLE",
-    TuneKind::Z14 => "Z14_STREAMING_TABLE",
-    TuneKind::Z15 => "Z15_STREAMING_TABLE",
-    TuneKind::Power7 => "POWER7_STREAMING_TABLE",
-    TuneKind::Power8 => "POWER8_STREAMING_TABLE",
-    TuneKind::Power9 => "POWER9_STREAMING_TABLE",
-    TuneKind::Power10 => "POWER10_STREAMING_TABLE",
+fn family_streaming_table_ident(profile: Blake3FamilyProfile) -> &'static str {
+  match profile {
+    Blake3FamilyProfile::Custom => "CUSTOM_STREAMING_TABLE",
+    Blake3FamilyProfile::DefaultKind => "DEFAULT_KIND_STREAMING_TABLE",
+    Blake3FamilyProfile::Portable => "PORTABLE_STREAMING_TABLE",
+    Blake3FamilyProfile::X86Avx512 => "X86_AVX512_STREAMING_TABLE",
+    Blake3FamilyProfile::X86Avx512Amx => "X86_AVX512_AMX_STREAMING_TABLE",
+    Blake3FamilyProfile::Aarch64Neon => "AARCH64_NEON_STREAMING_TABLE",
+    Blake3FamilyProfile::Z13 => "Z13_STREAMING_TABLE",
+    Blake3FamilyProfile::Z14 => "Z14_STREAMING_TABLE",
+    Blake3FamilyProfile::Z15 => "Z15_STREAMING_TABLE",
+    Blake3FamilyProfile::Power7 => "POWER7_STREAMING_TABLE",
+    Blake3FamilyProfile::Power8 => "POWER8_STREAMING_TABLE",
+    Blake3FamilyProfile::Power9 => "POWER9_STREAMING_TABLE",
+    Blake3FamilyProfile::Power10 => "POWER10_STREAMING_TABLE",
   }
 }
 
@@ -583,23 +551,23 @@ fn is_blake3_x86_sse41_kernel(kernel: &str) -> bool {
 
 #[inline]
 #[must_use]
-fn is_blake3_x86_profile_kind(tune_kind: TuneKind) -> bool {
+fn is_blake3_x86_family_profile(profile: Blake3FamilyProfile) -> bool {
   matches!(
-    tune_kind,
-    TuneKind::Zen4 | TuneKind::Zen5 | TuneKind::Zen5c | TuneKind::IntelSpr | TuneKind::IntelGnr | TuneKind::IntelIcl
+    profile,
+    Blake3FamilyProfile::X86Avx512 | Blake3FamilyProfile::X86Avx512Amx
   )
 }
 
 #[inline]
 fn sanitize_blake3_dispatch_profile(
-  tune_kind: TuneKind,
+  profile: Blake3FamilyProfile,
   boundaries: &mut [usize; 3],
   xs: &str,
   s: &mut &str,
   m: &str,
   l: &str,
 ) {
-  if !is_blake3_x86_profile_kind(tune_kind) {
+  if !is_blake3_x86_family_profile(profile) {
     return;
   }
   if !xs.starts_with("x86_64/") || !s.starts_with("x86_64/") || !m.starts_with("x86_64/") || !l.starts_with("x86_64/") {
@@ -754,7 +722,7 @@ fn aggregate_blake3_parallel_values(algos: &[&AlgorithmResult]) -> Blake3Paralle
 }
 
 #[cfg(test)]
-fn generate_hash_table(tune_kind: TuneKind, algo: &AlgorithmResult, results: Option<&TuneResults>) -> String {
+fn generate_hash_table(profile: Blake3FamilyProfile, algo: &AlgorithmResult, results: Option<&TuneResults>) -> String {
   // Defaults if size-class data isn't present (older results / partial runs).
   let mut xs = "portable";
   let mut s = "portable";
@@ -771,8 +739,8 @@ fn generate_hash_table(tune_kind: TuneKind, algo: &AlgorithmResult, results: Opt
     }
   }
 
-  let kind_name = format!("{tune_kind:?}");
-  let table_ident = tune_kind_table_ident(tune_kind);
+  let kind_name = format!("{profile:?}");
+  let table_ident = family_table_ident(profile);
   let use_tuned_boundaries = matches!(algo.name, "blake3-chunk" | "blake3");
   let [xs_max, s_max, m_max] = if use_tuned_boundaries {
     if let Some(results) = results {
@@ -1038,12 +1006,12 @@ fn choose_blake3_pair_component(results: &[&AlgorithmResult], objective: Blake3P
 
 #[cfg(test)]
 fn generate_blake3_streaming_table(
-  tune_kind: TuneKind,
+  profile: Blake3FamilyProfile,
   stream64_modes: &[&AlgorithmResult],
   bulk_modes: &[&AlgorithmResult],
 ) -> String {
-  let kind_name = format!("{tune_kind:?}");
-  let table_ident = tune_kind_streaming_table_ident(tune_kind);
+  let kind_name = format!("{profile:?}");
+  let table_ident = family_streaming_table_ident(profile);
 
   let stream = choose_blake3_pair_component(stream64_modes, Blake3PairObjective::StreamKernel)
     .unwrap_or_else(|| "portable".to_string());
@@ -1108,81 +1076,69 @@ struct Blake3FamilySpec {
 
 #[inline]
 #[must_use]
-fn blake3_family_spec(tune_kind: TuneKind) -> Blake3FamilySpec {
-  match tune_kind {
-    TuneKind::Custom => Blake3FamilySpec {
+fn blake3_family_spec(profile: Blake3FamilyProfile) -> Blake3FamilySpec {
+  match profile {
+    Blake3FamilyProfile::Custom => Blake3FamilySpec {
       marker: "// Family Profile: CUSTOM",
       profile_ident: "PROFILE_CUSTOM",
       cfg_expr: None,
     },
-    TuneKind::Default => Blake3FamilySpec {
+    Blake3FamilyProfile::DefaultKind => Blake3FamilySpec {
       marker: "// Family Profile: DEFAULT_KIND",
       profile_ident: "PROFILE_DEFAULT_KIND",
       cfg_expr: None,
     },
-    TuneKind::Portable => Blake3FamilySpec {
+    Blake3FamilyProfile::Portable => Blake3FamilySpec {
       marker: "// Family Profile: PORTABLE",
       profile_ident: "PROFILE_PORTABLE",
       cfg_expr: None,
     },
-    TuneKind::Zen4 | TuneKind::Zen5 | TuneKind::Zen5c | TuneKind::IntelGnr | TuneKind::IntelIcl => Blake3FamilySpec {
+    Blake3FamilyProfile::X86Avx512 => Blake3FamilySpec {
       marker: "// Family Profile: X86_AVX512",
       profile_ident: "PROFILE_X86_AVX512",
       cfg_expr: Some("target_arch = \"x86_64\""),
     },
-    TuneKind::IntelSpr => Blake3FamilySpec {
+    Blake3FamilyProfile::X86Avx512Amx => Blake3FamilySpec {
       marker: "// Family Profile: X86_AVX512_AMX",
       profile_ident: "PROFILE_X86_AVX512_AMX",
       cfg_expr: Some("target_arch = \"x86_64\""),
     },
-    TuneKind::AppleM1M3
-    | TuneKind::AppleM4
-    | TuneKind::AppleM5
-    | TuneKind::Graviton2
-    | TuneKind::Graviton3
-    | TuneKind::Graviton4
-    | TuneKind::Graviton5
-    | TuneKind::NeoverseN2
-    | TuneKind::NeoverseN3
-    | TuneKind::NeoverseV3
-    | TuneKind::NvidiaGrace
-    | TuneKind::AmpereAltra
-    | TuneKind::Aarch64Pmull => Blake3FamilySpec {
+    Blake3FamilyProfile::Aarch64Neon => Blake3FamilySpec {
       marker: "// Family Profile: AARCH64_NEON",
       profile_ident: "PROFILE_AARCH64_NEON",
       cfg_expr: Some("target_arch = \"aarch64\""),
     },
-    TuneKind::Z13 => Blake3FamilySpec {
+    Blake3FamilyProfile::Z13 => Blake3FamilySpec {
       marker: "// Family Profile: Z13",
       profile_ident: "PROFILE_Z13",
       cfg_expr: None,
     },
-    TuneKind::Z14 => Blake3FamilySpec {
+    Blake3FamilyProfile::Z14 => Blake3FamilySpec {
       marker: "// Family Profile: Z14",
       profile_ident: "PROFILE_Z14",
       cfg_expr: None,
     },
-    TuneKind::Z15 => Blake3FamilySpec {
+    Blake3FamilyProfile::Z15 => Blake3FamilySpec {
       marker: "// Family Profile: Z15",
       profile_ident: "PROFILE_Z15",
       cfg_expr: None,
     },
-    TuneKind::Power7 => Blake3FamilySpec {
+    Blake3FamilyProfile::Power7 => Blake3FamilySpec {
       marker: "// Family Profile: POWER7",
       profile_ident: "PROFILE_POWER7",
       cfg_expr: None,
     },
-    TuneKind::Power8 => Blake3FamilySpec {
+    Blake3FamilyProfile::Power8 => Blake3FamilySpec {
       marker: "// Family Profile: POWER8",
       profile_ident: "PROFILE_POWER8",
       cfg_expr: None,
     },
-    TuneKind::Power9 => Blake3FamilySpec {
+    Blake3FamilyProfile::Power9 => Blake3FamilySpec {
       marker: "// Family Profile: POWER9",
       profile_ident: "PROFILE_POWER9",
       cfg_expr: None,
     },
-    TuneKind::Power10 => Blake3FamilySpec {
+    Blake3FamilyProfile::Power10 => Blake3FamilySpec {
       marker: "// Family Profile: POWER10",
       profile_ident: "PROFILE_POWER10",
       cfg_expr: None,
@@ -1191,7 +1147,7 @@ fn blake3_family_spec(tune_kind: TuneKind) -> Blake3FamilySpec {
 }
 
 fn generate_blake3_family_profile(
-  tune_kind: TuneKind,
+  profile: Blake3FamilyProfile,
   algo: &AlgorithmResult,
   policy_source: &AlgorithmResult,
   stream64_modes: &[&AlgorithmResult],
@@ -1199,7 +1155,7 @@ fn generate_blake3_family_profile(
   bulk_modes: &[&AlgorithmResult],
   results: &TuneResults,
 ) -> String {
-  let spec = blake3_family_spec(tune_kind);
+  let spec = blake3_family_spec(profile);
 
   let mut xs = "portable";
   let mut s = "portable";
@@ -1215,7 +1171,7 @@ fn generate_blake3_family_profile(
     }
   }
   let mut boundaries = blake3_boundaries(results, algo);
-  sanitize_blake3_dispatch_profile(tune_kind, &mut boundaries, xs, &mut s, m, l);
+  sanitize_blake3_dispatch_profile(profile, &mut boundaries, xs, &mut s, m, l);
   let stream = choose_blake3_pair_component(stream64_modes, Blake3PairObjective::StreamKernel)
     .unwrap_or_else(|| "portable".to_string());
   let bulk =
@@ -1368,7 +1324,8 @@ fn replace_marked_section(source: &str, marker: &str, replacement: &str, next_ma
 }
 
 fn apply_hash_dispatch_tables(repo_root: &Path, results: &TuneResults) -> io::Result<Vec<GeneratedArtifact>> {
-  let tune_kind = results.platform.tune_kind;
+  let blake3_profile = results.platform.blake3_profile;
+  let family = blake3_profile.family();
   let mut artifacts = Vec::new();
 
   for target in HASH_DISPATCH_TARGETS {
@@ -1430,7 +1387,7 @@ fn apply_hash_dispatch_tables(repo_root: &Path, results: &TuneResults) -> io::Re
       }
 
       let profile_code = generate_blake3_family_profile(
-        tune_kind,
+        family,
         algo,
         policy_source,
         &stream64_modes,
@@ -1438,7 +1395,7 @@ fn apply_hash_dispatch_tables(repo_root: &Path, results: &TuneResults) -> io::Re
         &bulk_modes,
         results,
       );
-      let spec = blake3_family_spec(tune_kind);
+      let spec = blake3_family_spec(family);
       let path = blake3_dispatch_tables_path(repo_root);
       let source = fs::read_to_string(&path)?;
       let next_markers: [&str; 14] = [
@@ -1540,7 +1497,10 @@ mod tests {
   use super::{
     CrcVariant, generate_blake3_family_profile, generate_blake3_streaming_table, generate_hash_table, kernel_expr,
   };
-  use crate::{AlgorithmResult, PlatformInfo, SizeClassBest, TuneKind, TuneResults, analysis::AnalysisResult};
+  use crate::{
+    AlgorithmResult, Blake3FamilyProfile, Blake3TargetProfile, PlatformInfo, SizeClassBest, TuneResults,
+    analysis::AnalysisResult,
+  };
 
   fn temp_repo_root(tag: &str) -> PathBuf {
     let nanos = SystemTime::now()
@@ -1576,7 +1536,7 @@ mod tests {
       analysis: AnalysisResult::default(),
     };
 
-    let code = generate_hash_table(TuneKind::Zen4, &algo, None);
+    let code = generate_hash_table(Blake3FamilyProfile::X86Avx512, &algo, None);
     assert!(code.contains("#[cfg(target_arch = \"x86_64\")]"));
     assert!(code.contains("#[cfg(not(target_arch = \"x86_64\"))]"));
     assert!(code.contains("default_kind_table()"));
@@ -1663,7 +1623,7 @@ mod tests {
         arch: "x86_64",
         os: "linux",
         caps: platform::Caps::NONE,
-        tune_kind: TuneKind::Zen4,
+        blake3_profile: Blake3TargetProfile::Zen4,
         description: String::new(),
       },
       algorithms: vec![
@@ -1677,7 +1637,7 @@ mod tests {
     };
 
     let code = generate_blake3_family_profile(
-      TuneKind::Zen4,
+      Blake3FamilyProfile::X86Avx512,
       &blake3_chunk,
       &blake3,
       &[&stream64],
@@ -1718,7 +1678,7 @@ mod tests {
       analysis: AnalysisResult::default(),
     };
 
-    let code = generate_blake3_streaming_table(TuneKind::IntelSpr, &[&stream64], &[&stream4k]);
+    let code = generate_blake3_streaming_table(Blake3FamilyProfile::X86Avx512Amx, &[&stream64], &[&stream4k]);
     assert!(code.contains("#[cfg(target_arch = \"x86_64\")]"));
     assert!(code.contains("#[cfg(not(target_arch = \"x86_64\"))]"));
     assert!(code.contains("default_kind_streaming_table()"));
@@ -1770,7 +1730,11 @@ mod tests {
       analysis: AnalysisResult::default(),
     };
 
-    let code = generate_blake3_streaming_table(TuneKind::IntelSpr, &[&stream64, &stream256, &stream64_keyed], &[&bulk]);
+    let code = generate_blake3_streaming_table(
+      Blake3FamilyProfile::X86Avx512Amx,
+      &[&stream64, &stream256, &stream64_keyed],
+      &[&bulk],
+    );
     assert!(code.contains("stream: KernelId::X86Avx2"));
   }
 
@@ -1817,7 +1781,11 @@ mod tests {
       analysis: AnalysisResult::default(),
     };
 
-    let code = generate_blake3_streaming_table(TuneKind::IntelSpr, &[&stream], &[&bulk4k, &bulk4k_keyed, &mixed_xof]);
+    let code = generate_blake3_streaming_table(
+      Blake3FamilyProfile::X86Avx512Amx,
+      &[&stream],
+      &[&bulk4k, &bulk4k_keyed, &mixed_xof],
+    );
     assert!(code.contains("bulk: KernelId::X86Avx512"));
   }
 
@@ -1881,7 +1849,11 @@ mod tests {
       throughput_gib_s: 16.0,
     });
 
-    let code = generate_blake3_streaming_table(TuneKind::IntelSpr, &[&small_fast, &large_fast], &[&large_fast]);
+    let code = generate_blake3_streaming_table(
+      Blake3FamilyProfile::X86Avx512Amx,
+      &[&small_fast, &large_fast],
+      &[&large_fast],
+    );
     assert!(code.contains("stream: KernelId::X86Sse41"));
   }
 
@@ -1903,7 +1875,7 @@ mod tests {
         arch: "x86_64",
         os: "linux",
         caps: platform::Caps::NONE,
-        tune_kind: TuneKind::Zen4,
+        blake3_profile: Blake3TargetProfile::Zen4,
         description: String::new(),
       },
       algorithms: vec![
@@ -1922,7 +1894,7 @@ mod tests {
       timestamp: String::new(),
     };
 
-    let code = generate_hash_table(TuneKind::Zen4, &blake3_chunk, Some(&results));
+    let code = generate_hash_table(Blake3FamilyProfile::X86Avx512, &blake3_chunk, Some(&results));
     // Median(320, 256) = 320 (upper median), then boundary is crossover-1.
     assert!(code.contains("boundaries: [64, 319, 4096]"));
   }
@@ -1985,7 +1957,7 @@ mod tests {
         arch: "x86_64",
         os: "linux",
         caps: platform::Caps::NONE,
-        tune_kind: TuneKind::Zen5,
+        blake3_profile: Blake3TargetProfile::Zen5,
         description: String::new(),
       },
       algorithms: vec![
@@ -2003,7 +1975,7 @@ mod tests {
     };
 
     let code = super::generate_blake3_family_profile(
-      TuneKind::Zen5,
+      Blake3FamilyProfile::X86Avx512,
       &blake3_chunk,
       &results.algorithms[1],
       &[&stream64, &stream4k],
@@ -2122,7 +2094,7 @@ pub fn select_profile() {}
         arch: "x86_64",
         os: "linux",
         caps: platform::Caps::NONE,
-        tune_kind: TuneKind::Zen4,
+        blake3_profile: Blake3TargetProfile::Zen4,
         description: String::new(),
       },
       algorithms: vec![
@@ -2219,7 +2191,7 @@ pub fn select_table_for_caps(caps: Caps) -> &'static DispatchTable { unreachable
         arch: "powerpc64",
         os: "linux",
         caps: platform::Caps::NONE,
-        tune_kind: TuneKind::Power10,
+        blake3_profile: Blake3TargetProfile::Power10,
         description: String::new(),
       },
       algorithms: vec![

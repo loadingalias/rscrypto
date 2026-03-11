@@ -102,9 +102,6 @@ target-matrix-shell:
 target-matrix-json key:
     @python3 scripts/lib/target-matrix.py --format json --key "{{key}}"
 
-gen-kernel-tables:
-    @python3 scripts/gen/kernel_tables.py
-
 gen-hashes-testdata:
     @python3 scripts/gen_hashes_testdata.py
 

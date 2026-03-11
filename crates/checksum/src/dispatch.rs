@@ -25,9 +25,9 @@
 //! - `linux_x86-64_zen5_kernels.txt` → Zen5
 //! - `linux_x86-64_intel_kernels.txt` → IntelSpr
 //!
-//! Run `python scripts/gen/kernel_tables.py` to analyze benchmarks and emit a
-//! draft table module at `crates/checksum/src/generated/kernel_tables.rs` for
-//! inspection. The in-crate dispatch tables in this file are authoritative.
+//! The in-crate dispatch tables in this file are authoritative. Benchmark
+//! baselines inform updates, but there is no separate generated source of
+//! truth anymore.
 
 #![allow(dead_code)] // Tables for non-current architectures
 

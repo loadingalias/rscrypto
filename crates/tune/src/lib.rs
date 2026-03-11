@@ -110,14 +110,14 @@ pub use sampler::{SampledResult, Sampler, SamplerConfig};
 #[cfg(feature = "std")]
 pub use stats::{DEFAULT_CV_THRESHOLD, SampleStats, VarianceQuality};
 
-/// Offline tuning profile taxonomy.
+/// Offline BLAKE3 benchmark host classification.
 ///
 /// This is dev-only metadata used by the tuning pipeline to label benchmark
-/// results and rewrite checked-in artifacts. It is not part of runtime
+/// results and evaluate BLAKE3 class contracts. It is not part of runtime
 /// platform detection or dispatch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
-pub enum TuneKind {
+pub enum Blake3TargetProfile {
   Custom = 0,
   Default,
   Portable,
@@ -149,7 +149,7 @@ pub enum TuneKind {
   Power10,
 }
 
-impl TuneKind {
+impl Blake3TargetProfile {
   #[must_use]
   pub const fn from_u8(value: u8) -> Option<Self> {
     Some(match value {
@@ -185,6 +185,55 @@ impl TuneKind {
       _ => return None,
     })
   }
+
+  #[must_use]
+  pub const fn family(self) -> Blake3FamilyProfile {
+    match self {
+      Self::Custom => Blake3FamilyProfile::Custom,
+      Self::Default => Blake3FamilyProfile::DefaultKind,
+      Self::Portable => Blake3FamilyProfile::Portable,
+      Self::Zen4 | Self::Zen5 | Self::Zen5c | Self::IntelGnr | Self::IntelIcl => Blake3FamilyProfile::X86Avx512,
+      Self::IntelSpr => Blake3FamilyProfile::X86Avx512Amx,
+      Self::AppleM1M3
+      | Self::AppleM4
+      | Self::AppleM5
+      | Self::Graviton2
+      | Self::Graviton3
+      | Self::Graviton4
+      | Self::Graviton5
+      | Self::NeoverseN2
+      | Self::NeoverseN3
+      | Self::NeoverseV3
+      | Self::NvidiaGrace
+      | Self::AmpereAltra
+      | Self::Aarch64Pmull => Blake3FamilyProfile::Aarch64Neon,
+      Self::Z13 => Blake3FamilyProfile::Z13,
+      Self::Z14 => Blake3FamilyProfile::Z14,
+      Self::Z15 => Blake3FamilyProfile::Z15,
+      Self::Power7 => Blake3FamilyProfile::Power7,
+      Self::Power8 => Blake3FamilyProfile::Power8,
+      Self::Power9 => Blake3FamilyProfile::Power9,
+      Self::Power10 => Blake3FamilyProfile::Power10,
+    }
+  }
+}
+
+/// Runtime BLAKE3 family profiles that still exist in checked-in dispatch code.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Blake3FamilyProfile {
+  Custom,
+  DefaultKind,
+  Portable,
+  X86Avx512,
+  X86Avx512Amx,
+  Aarch64Neon,
+  Z13,
+  Z14,
+  Z15,
+  Power7,
+  Power8,
+  Power9,
+  Power10,
 }
 
 /// High-level tuning domain.
@@ -481,8 +530,8 @@ pub struct PlatformInfo {
   /// Detected CPU capabilities.
   pub caps: Caps,
 
-  /// Platform tune kind.
-  pub tune_kind: TuneKind,
+  /// Dev-only BLAKE3 benchmark host profile.
+  pub blake3_profile: Blake3TargetProfile,
 
   /// Full platform description.
   pub description: String,
@@ -498,241 +547,245 @@ impl PlatformInfo {
       arch: detected.arch.name(),
       os: std::env::consts::OS,
       caps: detected.caps,
-      tune_kind: infer_tune_kind(detected),
+      blake3_profile: detect_blake3_profile(detected),
       description: platform::describe().to_string(),
     }
   }
 }
 
 #[cfg(feature = "std")]
-fn infer_tune_kind(detected: platform::Detected) -> TuneKind {
+fn detect_blake3_profile(detected: platform::Detected) -> Blake3TargetProfile {
   use platform::Arch;
 
   match detected.arch {
-    Arch::X86 | Arch::X86_64 => infer_x86_tune_kind(detected.caps),
-    Arch::Aarch64 => infer_aarch64_tune_kind(detected.caps),
-    Arch::S390x => infer_s390x_tune_kind(detected.caps),
-    Arch::Power => infer_power_tune_kind(detected.caps),
-    Arch::Riscv32 | Arch::Riscv64 => infer_riscv_tune_kind(detected.caps),
-    Arch::Wasm32 | Arch::Wasm64 => infer_wasm_tune_kind(detected.caps),
-    Arch::Other => TuneKind::Portable,
-    _ => TuneKind::Portable,
+    Arch::X86 | Arch::X86_64 => detect_x86_blake3_profile(detected.caps),
+    Arch::Aarch64 => detect_aarch64_blake3_profile(detected.caps),
+    Arch::S390x => detect_s390x_blake3_profile(detected.caps),
+    Arch::Power => detect_power_blake3_profile(detected.caps),
+    Arch::Riscv32 | Arch::Riscv64 => detect_riscv_blake3_profile(detected.caps),
+    Arch::Wasm32 | Arch::Wasm64 => detect_wasm_blake3_profile(detected.caps),
+    Arch::Other => Blake3TargetProfile::Portable,
+    _ => Blake3TargetProfile::Portable,
   }
 }
 
 #[cfg(feature = "std")]
-fn infer_riscv_tune_kind(caps: Caps) -> TuneKind {
+fn detect_riscv_blake3_profile(caps: Caps) -> Blake3TargetProfile {
   use platform::caps::riscv;
 
   if caps.has(riscv::ZBC) || caps.has(riscv::ZVBC) {
-    TuneKind::Default
+    Blake3TargetProfile::Default
   } else {
-    TuneKind::Portable
+    Blake3TargetProfile::Portable
   }
 }
 
 #[cfg(feature = "std")]
-fn infer_wasm_tune_kind(caps: Caps) -> TuneKind {
+fn detect_wasm_blake3_profile(caps: Caps) -> Blake3TargetProfile {
   use platform::caps::wasm;
 
   if caps.has(wasm::SIMD128) {
-    TuneKind::Default
+    Blake3TargetProfile::Default
   } else {
-    TuneKind::Portable
+    Blake3TargetProfile::Portable
   }
 }
 
 #[cfg(feature = "std")]
-fn infer_s390x_tune_kind(caps: Caps) -> TuneKind {
+fn detect_s390x_blake3_profile(caps: Caps) -> Blake3TargetProfile {
   use platform::caps::s390x;
 
   if caps.has(s390x::VECTOR_ENH2) {
-    TuneKind::Z15
+    Blake3TargetProfile::Z15
   } else if caps.has(s390x::VECTOR_ENH1) {
-    TuneKind::Z14
+    Blake3TargetProfile::Z14
   } else if caps.has(s390x::VECTOR) {
-    TuneKind::Z13
+    Blake3TargetProfile::Z13
   } else {
-    TuneKind::Portable
+    Blake3TargetProfile::Portable
   }
 }
 
 #[cfg(feature = "std")]
-fn infer_power_tune_kind(caps: Caps) -> TuneKind {
+fn detect_power_blake3_profile(caps: Caps) -> Blake3TargetProfile {
   use platform::caps::power;
 
   if caps.has(power::POWER10_VECTOR) {
-    TuneKind::Power10
+    Blake3TargetProfile::Power10
   } else if caps.has(power::POWER9_VECTOR) {
-    TuneKind::Power9
+    Blake3TargetProfile::Power9
   } else if caps.has(power::POWER8_VECTOR) {
-    TuneKind::Power8
+    Blake3TargetProfile::Power8
   } else if caps.has(power::VSX) {
-    TuneKind::Power7
+    Blake3TargetProfile::Power7
   } else {
-    TuneKind::Portable
+    Blake3TargetProfile::Portable
   }
 }
 
 #[cfg(feature = "std")]
-fn infer_aarch64_tune_kind(caps: Caps) -> TuneKind {
+fn detect_aarch64_blake3_profile(caps: Caps) -> Blake3TargetProfile {
   use platform::caps::aarch64;
 
   #[cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "watchos"))]
   {
     if caps.has(aarch64::PMULL_EOR3_READY) {
       if caps.has(aarch64::SME2) {
-        return TuneKind::AppleM5;
+        return Blake3TargetProfile::AppleM5;
       }
       if caps.has(aarch64::SME) {
-        return TuneKind::AppleM4;
+        return Blake3TargetProfile::AppleM4;
       }
-      return TuneKind::AppleM1M3;
+      return Blake3TargetProfile::AppleM1M3;
     }
   }
 
   if caps.has(aarch64::SME2P1) {
-    return TuneKind::Graviton5;
+    return Blake3TargetProfile::Graviton5;
   }
 
   if caps.has(aarch64::SVE2) {
     #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
     if let Some((implementer, part)) = read_midr_parts() {
       return match (implementer, part) {
-        (MIDR_IMPL_NVIDIA, _) => TuneKind::NvidiaGrace,
-        (MIDR_IMPL_AMPERE, _) => TuneKind::AmpereAltra,
-        (MIDR_IMPL_ARM, MIDR_PART_NEOVERSE_N3) => TuneKind::NeoverseN3,
-        (MIDR_IMPL_ARM, MIDR_PART_NEOVERSE_N2) => TuneKind::NeoverseN2,
-        (MIDR_IMPL_ARM, MIDR_PART_NEOVERSE_V2) => TuneKind::Graviton4,
-        (MIDR_IMPL_ARM, MIDR_PART_NEOVERSE_V1) => TuneKind::Graviton3,
-        _ => infer_aarch64_sve2_from_vlen(),
+        (MIDR_IMPL_NVIDIA, _) => Blake3TargetProfile::NvidiaGrace,
+        (MIDR_IMPL_AMPERE, _) => Blake3TargetProfile::AmpereAltra,
+        (MIDR_IMPL_ARM, MIDR_PART_NEOVERSE_N3) => Blake3TargetProfile::NeoverseN3,
+        (MIDR_IMPL_ARM, MIDR_PART_NEOVERSE_N2) => Blake3TargetProfile::NeoverseN2,
+        (MIDR_IMPL_ARM, MIDR_PART_NEOVERSE_V2) => Blake3TargetProfile::Graviton4,
+        (MIDR_IMPL_ARM, MIDR_PART_NEOVERSE_V1) => Blake3TargetProfile::Graviton3,
+        _ => detect_aarch64_sve2_blake3_profile_from_vlen(),
       };
     }
-    return infer_aarch64_sve2_from_vlen();
+    return detect_aarch64_sve2_blake3_profile_from_vlen();
   }
 
   if caps.has(aarch64::SVE) {
     #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
     if let Some((implementer, part)) = read_midr_parts() {
       return match (implementer, part) {
-        (MIDR_IMPL_NVIDIA, _) => TuneKind::NvidiaGrace,
-        (MIDR_IMPL_AMPERE, _) => TuneKind::AmpereAltra,
-        (MIDR_IMPL_ARM, MIDR_PART_NEOVERSE_N2) => TuneKind::NeoverseN2,
-        (MIDR_IMPL_ARM, MIDR_PART_NEOVERSE_V1) => TuneKind::Graviton3,
-        _ => infer_aarch64_sve_from_vlen(),
+        (MIDR_IMPL_NVIDIA, _) => Blake3TargetProfile::NvidiaGrace,
+        (MIDR_IMPL_AMPERE, _) => Blake3TargetProfile::AmpereAltra,
+        (MIDR_IMPL_ARM, MIDR_PART_NEOVERSE_N2) => Blake3TargetProfile::NeoverseN2,
+        (MIDR_IMPL_ARM, MIDR_PART_NEOVERSE_V1) => Blake3TargetProfile::Graviton3,
+        _ => detect_aarch64_sve_blake3_profile_from_vlen(),
       };
     }
-    return infer_aarch64_sve_from_vlen();
+    return detect_aarch64_sve_blake3_profile_from_vlen();
   }
 
   if caps.has(aarch64::PMULL_EOR3_READY) {
     #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
     if let Some((implementer, part)) = read_midr_parts() {
       return match (implementer, part) {
-        (MIDR_IMPL_AMPERE, _) => TuneKind::AmpereAltra,
-        (MIDR_IMPL_ARM, MIDR_PART_NEOVERSE_N1) => TuneKind::Graviton2,
-        _ => TuneKind::Aarch64Pmull,
+        (MIDR_IMPL_AMPERE, _) => Blake3TargetProfile::AmpereAltra,
+        (MIDR_IMPL_ARM, MIDR_PART_NEOVERSE_N1) => Blake3TargetProfile::Graviton2,
+        _ => Blake3TargetProfile::Aarch64Pmull,
       };
     }
-    return TuneKind::Aarch64Pmull;
+    return Blake3TargetProfile::Aarch64Pmull;
   }
 
   if caps.has(aarch64::PMULL_READY) {
-    TuneKind::Aarch64Pmull
+    Blake3TargetProfile::Aarch64Pmull
   } else if caps.has(aarch64::NEON) {
-    TuneKind::Default
+    Blake3TargetProfile::Default
   } else {
-    TuneKind::Portable
+    Blake3TargetProfile::Portable
   }
 }
 
 #[cfg(feature = "std")]
-fn infer_aarch64_sve2_from_vlen() -> TuneKind {
+fn detect_aarch64_sve2_blake3_profile_from_vlen() -> Blake3TargetProfile {
   let vlen = detect_sve_vlen();
   if vlen > 128 {
-    TuneKind::NeoverseV3
+    Blake3TargetProfile::NeoverseV3
   } else if vlen > 0 {
-    TuneKind::Graviton4
+    Blake3TargetProfile::Graviton4
   } else {
-    TuneKind::Default
+    Blake3TargetProfile::Default
   }
 }
 
 #[cfg(feature = "std")]
-fn infer_aarch64_sve_from_vlen() -> TuneKind {
+fn detect_aarch64_sve_blake3_profile_from_vlen() -> Blake3TargetProfile {
   let vlen = detect_sve_vlen();
   if vlen >= 256 {
-    TuneKind::Graviton3
+    Blake3TargetProfile::Graviton3
   } else if vlen > 0 {
-    TuneKind::NeoverseN2
+    Blake3TargetProfile::NeoverseN2
   } else {
-    TuneKind::Default
+    Blake3TargetProfile::Default
   }
 }
 
 #[cfg(feature = "std")]
-fn infer_x86_tune_kind(caps: Caps) -> TuneKind {
+fn detect_x86_blake3_profile(caps: Caps) -> Blake3TargetProfile {
   use platform::caps::x86;
 
   let Some((is_amd, family, model)) = x86_identity() else {
     return if caps.has(x86::PCLMUL_READY) {
-      TuneKind::Default
+      Blake3TargetProfile::Default
     } else {
-      TuneKind::Portable
+      Blake3TargetProfile::Portable
     };
   };
 
   if is_intel_hybrid(is_amd, family, model) && !hybrid_avx512_override() && caps.has(x86::AVX2) {
-    return TuneKind::IntelIcl;
+    return Blake3TargetProfile::IntelIcl;
   }
 
   let has_avx512 = caps.has(x86::AVX512F) && caps.has(x86::AVX512VL);
   if has_avx512 {
     if is_amd {
       return if family == 26 {
-        TuneKind::Zen5
+        Blake3TargetProfile::Zen5
       } else if family == 25 {
-        TuneKind::Zen4
+        Blake3TargetProfile::Zen4
       } else {
-        TuneKind::Default
+        Blake3TargetProfile::Default
       };
     }
 
     return if is_intel_icl_model(family, model) {
-      TuneKind::IntelIcl
+      Blake3TargetProfile::IntelIcl
     } else if is_intel_gnr_model(family, model) {
-      TuneKind::IntelGnr
+      Blake3TargetProfile::IntelGnr
     } else if is_intel_spr_model(family, model)
       || caps.has(x86::AVX512BF16)
       || caps.has(x86::AMX_TILE)
       || caps.has(x86::AMX_BF16)
       || caps.has(x86::AMX_INT8)
     {
-      TuneKind::IntelSpr
+      Blake3TargetProfile::IntelSpr
     } else if caps.has(x86::AMX_FP16) || caps.has(x86::AMX_COMPLEX) {
-      TuneKind::IntelGnr
+      Blake3TargetProfile::IntelGnr
     } else {
-      TuneKind::IntelIcl
+      Blake3TargetProfile::IntelIcl
     };
   }
 
   if caps.has(x86::AVX2) {
     if is_amd {
       return if family == 26 {
-        TuneKind::Zen5
+        Blake3TargetProfile::Zen5
       } else if family == 25 {
-        TuneKind::Zen4
+        Blake3TargetProfile::Zen4
       } else {
-        TuneKind::Default
+        Blake3TargetProfile::Default
       };
     }
-    return TuneKind::IntelIcl;
+    return Blake3TargetProfile::IntelIcl;
   }
 
   if caps.has(x86::PCLMUL_READY) {
-    if is_amd { TuneKind::Default } else { TuneKind::IntelIcl }
+    if is_amd {
+      Blake3TargetProfile::Default
+    } else {
+      Blake3TargetProfile::IntelIcl
+    }
   } else {
-    TuneKind::Portable
+    Blake3TargetProfile::Portable
   }
 }
 

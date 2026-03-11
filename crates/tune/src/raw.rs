@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use crate::{BenchResult, KernelSpec, analysis::Measurement};
 
 /// Current on-disk schema version for raw tune artifacts.
-pub const RAW_SCHEMA_VERSION: u32 = 2;
+pub const RAW_SCHEMA_VERSION: u32 = 3;
 
 /// Aggregation mode for combining repeated measurement runs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -53,9 +53,12 @@ impl AggregationMode {
 pub struct RawPlatformInfo {
   pub arch: String,
   pub os: String,
-  pub tune_kind: u8,
+  #[serde(default, alias = "tune_kind")]
+  pub blake3_profile: u8,
   pub description: String,
   pub caps: String,
+  #[serde(default)]
+  pub caps_words: [u64; 4],
 }
 
 /// Runner settings captured at measurement time.
@@ -504,8 +507,9 @@ pub fn aggregate_raw_results(runs: &[RawTuneResults], mode: AggregationMode) -> 
     }
     if run.platform.arch != first.platform.arch
       || run.platform.os != first.platform.os
-      || run.platform.tune_kind != first.platform.tune_kind
+      || run.platform.blake3_profile != first.platform.blake3_profile
       || run.platform.caps != first.platform.caps
+      || run.platform.caps_words != first.platform.caps_words
     {
       return Err(io::Error::new(
         io::ErrorKind::InvalidData,
@@ -540,7 +544,7 @@ pub fn aggregate_raw_results(runs: &[RawTuneResults], mode: AggregationMode) -> 
   }
 
   Ok(RawTuneResults {
-    schema_version: first.schema_version,
+    schema_version: RAW_SCHEMA_VERSION,
     timestamp: runs
       .last()
       .map(|r| r.timestamp.clone())
@@ -569,11 +573,11 @@ pub fn read_raw_results(path: &Path) -> io::Result<RawTuneResults> {
   let raw: RawTuneResults =
     serde_json::from_reader(reader).map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
 
-  if raw.schema_version != RAW_SCHEMA_VERSION {
+  if raw.schema_version < 2 || raw.schema_version > RAW_SCHEMA_VERSION {
     return Err(io::Error::new(
       io::ErrorKind::InvalidData,
       format!(
-        "unsupported raw schema version {} (expected {})",
+        "unsupported raw schema version {} (supported: 2..={})",
         raw.schema_version, RAW_SCHEMA_VERSION
       ),
     ));
@@ -613,9 +617,10 @@ mod tests {
       platform: RawPlatformInfo {
         arch: "aarch64".to_string(),
         os: "macos".to_string(),
-        tune_kind: 9,
+        blake3_profile: 9,
         description: "test".to_string(),
         caps: "none".to_string(),
+        caps_words: [0; 4],
       },
       checksum_runner: RawRunnerConfig {
         warmup_ms: 100,
