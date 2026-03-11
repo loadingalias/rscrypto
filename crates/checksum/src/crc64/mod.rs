@@ -110,7 +110,6 @@ pub(crate) fn crc64_nvme_selected_kernel_name(len: usize) -> &'static str {
 #[inline]
 #[must_use]
 pub(crate) fn diag_crc64_xz(len: usize) -> Crc64SelectionDiag {
-  let tune = platform::tune();
   let cfg = config::get();
   let selected_kernel = crc64_xz_selected_kernel_name(len);
 
@@ -127,7 +126,7 @@ pub(crate) fn diag_crc64_xz(len: usize) -> Crc64SelectionDiag {
   Crc64SelectionDiag {
     polynomial: Crc64Polynomial::Xz,
     len,
-    tune_kind: tune.kind(),
+    arch: platform::arch(),
     reason,
     effective_force: cfg.effective_force,
     policy_family: "dispatch",
@@ -145,7 +144,6 @@ pub(crate) fn diag_crc64_xz(len: usize) -> Crc64SelectionDiag {
 #[inline]
 #[must_use]
 pub(crate) fn diag_crc64_nvme(len: usize) -> Crc64SelectionDiag {
-  let tune = platform::tune();
   let cfg = config::get();
   let selected_kernel = crc64_nvme_selected_kernel_name(len);
 
@@ -162,7 +160,7 @@ pub(crate) fn diag_crc64_nvme(len: usize) -> Crc64SelectionDiag {
   Crc64SelectionDiag {
     polynomial: Crc64Polynomial::Nvme,
     len,
-    tune_kind: tune.kind(),
+    arch: platform::arch(),
     reason,
     effective_force: cfg.effective_force,
     policy_family: "dispatch",

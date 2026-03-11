@@ -934,7 +934,7 @@ fn hash_power_of_two_subtree_roots_parallel_rayon(req: SubtreeRootsRequest<'_>) 
 #[doc(hidden)]
 pub mod tune {
   // Re-export types needed for policy construction
-  use super::{Mutex, PARALLEL_OVERRIDE, dispatch, dispatch_tables};
+  use super::{Mutex, PARALLEL_OVERRIDE, dispatch_tables};
   pub use super::{ParallelPolicyOverride, dispatch_tables::ParallelTable};
 
   #[derive(Debug)]
@@ -983,16 +983,6 @@ pub mod tune {
       *g = Some(policy);
     };
     Blake3ParallelOverrideGuard { prev }
-  }
-
-  /// Return the current SIMD threshold for streaming operations.
-  ///
-  /// This is used by legacy tuning tooling to ensure consistent SIMD threshold
-  /// tuning across all operation variants.
-  #[inline]
-  #[must_use]
-  pub fn streaming_simd_threshold() -> usize {
-    dispatch::streaming_simd_threshold()
   }
 
   // NOTE: std parallelism is implemented via Rayon; there is no longer an
@@ -1918,6 +1908,7 @@ impl ChunkState {
     if self.blocks_compressed == 0 { CHUNK_START } else { 0 }
   }
 
+  #[cfg(target_arch = "x86_64")]
   #[inline]
   fn absorb_exact_one_chunk(&mut self, input: &[u8]) {
     debug_assert_eq!(self.blocks_compressed, 0);
@@ -1938,7 +1929,16 @@ impl ChunkState {
     }
 
     if self.block_len == 0 && self.blocks_compressed == 0 {
-      if input.len() == CHUNK_LEN {
+      #[cfg(target_arch = "x86_64")]
+      if input.len() == CHUNK_LEN
+        && matches!(
+          self.kernel_id,
+          kernels::Blake3KernelId::X86Ssse3
+            | kernels::Blake3KernelId::X86Sse41
+            | kernels::Blake3KernelId::X86Avx2
+            | kernels::Blake3KernelId::X86Avx512
+        )
+      {
         self.absorb_exact_one_chunk(input);
         return;
       }
@@ -2079,6 +2079,7 @@ impl ChunkState {
   }
 }
 
+#[cfg(target_arch = "x86_64")]
 #[inline]
 fn absorb_exact_one_chunk_state(
   kernel_id: kernels::Blake3KernelId,
@@ -2132,25 +2133,6 @@ fn absorb_exact_one_chunk_state(
         return (cv, last_block);
       }
       _ => {}
-    }
-  }
-
-  #[cfg(target_arch = "aarch64")]
-  {
-    if kernel_id == kernels::Blake3KernelId::Aarch64Neon {
-      let (prefix_blocks, remainder) = input[..CHUNK_LEN - BLOCK_LEN].as_chunks::<BLOCK_LEN>();
-      debug_assert!(remainder.is_empty());
-
-      let mut cv = key;
-      for (idx, block) in prefix_blocks.iter().enumerate() {
-        let block_flags = flags | if idx == 0 { CHUNK_START } else { 0 };
-        let block_words = words16_from_le_bytes_64(block);
-        cv = first_8_words(compress(&cv, &block_words, counter, BLOCK_LEN as u32, block_flags));
-      }
-
-      let mut last_block = [0u8; BLOCK_LEN];
-      last_block.copy_from_slice(&input[CHUNK_LEN - BLOCK_LEN..]);
-      return (cv, last_block);
     }
   }
 
@@ -3951,10 +3933,7 @@ fn digest_one_chunk_root_hash_words_generic(kernel: Kernel, key_words: [u32; 8],
 #[inline]
 #[must_use]
 fn use_avx2_hash_many_one_chunk_fast_path() -> bool {
-  matches!(
-    dispatch::tune_kind(),
-    platform::TuneKind::Zen4 | platform::TuneKind::Zen5 | platform::TuneKind::Zen5c | platform::TuneKind::IntelIcl
-  )
+  dispatch::avx2_hash_many_one_chunk_fast_path()
 }
 
 #[cfg(target_arch = "x86_64")]

@@ -9,29 +9,9 @@ fn detect_power() -> Detected {
   #[cfg(not(feature = "std"))]
   let caps = caps_static();
 
-  let tune = select_power_tune(caps);
-
   Detected {
     caps,
-    tune,
     arch: Arch::Power,
-  }
-}
-
-#[cfg(target_arch = "powerpc64")]
-fn select_power_tune(caps: Caps) -> Tune {
-  use crate::caps::power;
-
-  if caps.has(power::POWER10_VECTOR) {
-    Tune::POWER10
-  } else if caps.has(power::POWER9_VECTOR) {
-    Tune::POWER9
-  } else if caps.has(power::POWER8_VECTOR) {
-    Tune::POWER8
-  } else if caps.has(power::VSX) {
-    Tune::POWER7
-  } else {
-    Tune::PORTABLE
   }
 }
 

@@ -16,8 +16,6 @@
 
 use core::fmt;
 
-use platform::Tune;
-
 /// Tier-level thresholds used by policy dispatch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TierThresholds {
@@ -141,10 +139,13 @@ impl KernelTier {
   /// All tiers in ascending order.
   pub const ALL: [Self; 5] = [Self::Reference, Self::Portable, Self::HwCrc, Self::Folding, Self::Wide];
 
-  /// Build dispatch thresholds for this tier from tune hints.
+  /// Build conservative dispatch thresholds for this tier.
+  ///
+  /// These are architecture-agnostic defaults for generic backend policy.
+  /// Algorithm crates with measured dispatch tables should override them.
   #[inline]
   #[must_use]
-  pub fn policy_thresholds(self, tune: &Tune) -> TierThresholds {
+  pub const fn policy_thresholds(self) -> TierThresholds {
     match self {
       Self::Reference | Self::Portable => TierThresholds {
         small: usize::MAX,
@@ -152,23 +153,20 @@ impl KernelTier {
         wide: usize::MAX,
       },
       Self::HwCrc => TierThresholds {
-        small: tune.hwcrc_threshold,
+        small: 16,
         fold: usize::MAX,
         wide: usize::MAX,
       },
       Self::Folding => TierThresholds {
-        small: tune.pclmul_threshold,
-        fold: tune.pclmul_threshold,
+        small: 64,
+        fold: 64,
         wide: usize::MAX,
       },
-      Self::Wide => {
-        let fold_to_wide = if tune.fast_wide_ops { 512 } else { 2048 };
-        TierThresholds {
-          small: tune.pclmul_threshold,
-          fold: tune.pclmul_threshold,
-          wide: fold_to_wide,
-        }
-      }
+      Self::Wide => TierThresholds {
+        small: 64,
+        fold: 64,
+        wide: 512,
+      },
     }
   }
 }

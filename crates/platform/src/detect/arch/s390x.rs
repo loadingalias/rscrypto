@@ -10,11 +10,8 @@ fn detect_s390x() -> Detected {
   #[cfg(not(feature = "std"))]
   let caps = caps_static();
 
-  let tune = select_s390x_tune(caps);
-
   Detected {
     caps,
-    tune,
     arch: Arch::S390x,
   }
 }
@@ -172,22 +169,4 @@ fn stfle_facilities() -> [u64; 4] {
 #[inline]
 fn stfle_facilities() -> [u64; 4] {
   [0; 4]
-}
-
-#[cfg(target_arch = "s390x")]
-fn select_s390x_tune(caps: Caps) -> Tune {
-  use crate::caps::s390x;
-
-  if caps.has(s390x::VECTOR_ENH2) {
-    // z15+
-    Tune::Z15
-  } else if caps.has(s390x::VECTOR_ENH1) {
-    // z14
-    Tune::Z14
-  } else if caps.has(s390x::VECTOR) {
-    // z13
-    Tune::Z13
-  } else {
-    Tune::PORTABLE
-  }
 }

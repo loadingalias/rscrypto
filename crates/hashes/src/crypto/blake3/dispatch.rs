@@ -1,8 +1,6 @@
 use backend::OnceCache;
 use platform::Caps;
 #[cfg(target_arch = "x86_64")]
-use platform::TuneKind;
-#[cfg(target_arch = "x86_64")]
 use platform::caps::x86;
 
 #[cfg(any(
@@ -22,13 +20,8 @@ use crate::crypto::dispatch_util::SizeClassDispatch;
 #[cfg(target_arch = "x86_64")]
 #[inline]
 #[must_use]
-fn prefer_intel_icl_tables(caps: Caps, kind: TuneKind) -> bool {
-  // `platform` currently groups many AVX-512 Intel server CPUs under the
-  // IntelSpr preset. BLAKE3 kernel selection is sensitive to AVX-512 warmup
-  // overhead, so we split "SPR-like" into:
-  // - IntelSpr: AMX-capable (SPR/EMR-class)
-  // - IntelIcl: no-AMX (ICL-SP and older AVX-512 servers)
-  kind == TuneKind::IntelSpr
+fn allow_avx2_hash_many_one_chunk_fast_path(caps: Caps) -> bool {
+  caps.has(x86::AVX512_READY)
     && !caps.has(x86::AMX_TILE)
     && !caps.has(x86::AMX_INT8)
     && !caps.has(x86::AMX_BF16)
@@ -55,10 +48,9 @@ struct ResolvedDispatch {
   active: ActiveDispatch,
   streaming: StreamingDispatch,
   parallel: ParallelDispatch,
-  simd_threshold: usize,
   hasher: HasherDispatch,
   #[cfg(target_arch = "x86_64")]
-  tune_kind: TuneKind,
+  avx2_hash_many_one_chunk_fast_path: bool,
 }
 
 static RESOLVED: OnceCache<ResolvedDispatch> = OnceCache::new();
@@ -134,24 +126,6 @@ impl HasherDispatch {
   #[must_use]
   pub(crate) fn bulk_sizeclass_threshold(&self) -> usize {
     self.bulk_sizeclass_threshold
-  }
-}
-
-#[inline]
-#[must_use]
-fn effective_tune_kind(caps: Caps, tune: platform::Tune) -> platform::TuneKind {
-  #[cfg(target_arch = "x86_64")]
-  {
-    if prefer_intel_icl_tables(caps, tune.kind) {
-      TuneKind::IntelIcl
-    } else {
-      tune.kind
-    }
-  }
-  #[cfg(not(target_arch = "x86_64"))]
-  {
-    let _ = caps;
-    tune.kind
   }
 }
 
@@ -248,14 +222,12 @@ fn resolved() -> ResolvedDispatch {
   RESOLVED.get_or_init(|| {
     let det = platform::get();
     let caps = det.caps;
-    let tune = det.tune;
-    let kind = effective_tune_kind(caps, tune);
 
-    let table: &'static DispatchTable = super::dispatch_tables::select_table(kind);
-    let stream_table: &'static StreamingTable = super::dispatch_tables::select_streaming_table(kind);
-    let oneshot_parallel_table: &'static ParallelTable = super::dispatch_tables::select_parallel_table(kind);
+    let table: &'static DispatchTable = super::dispatch_tables::select_table_for_caps(caps);
+    let stream_table: &'static StreamingTable = super::dispatch_tables::select_streaming_table_for_caps(caps);
+    let oneshot_parallel_table: &'static ParallelTable = super::dispatch_tables::select_parallel_table_for_caps(caps);
     let streaming_parallel_table: &'static ParallelTable =
-      super::dispatch_tables::select_streaming_parallel_table(kind);
+      super::dispatch_tables::select_streaming_parallel_table_for_caps(caps);
 
     let xs_id = resolve(table.xs, caps);
     let s_id = resolve(table.s, caps);
@@ -310,10 +282,9 @@ fn resolved() -> ResolvedDispatch {
       active,
       streaming,
       parallel,
-      simd_threshold: tune.simd_threshold,
       hasher,
       #[cfg(target_arch = "x86_64")]
-      tune_kind: kind,
+      avx2_hash_many_one_chunk_fast_path: allow_avx2_hash_many_one_chunk_fast_path(caps),
     }
   })
 }
@@ -408,17 +379,11 @@ pub(crate) fn parallel_dispatch() -> ParallelDispatch {
   active_parallel()
 }
 
-#[inline]
-#[must_use]
-pub(crate) fn streaming_simd_threshold() -> usize {
-  resolved().simd_threshold
-}
-
 #[cfg(target_arch = "x86_64")]
 #[inline]
 #[must_use]
-pub(crate) fn tune_kind() -> TuneKind {
-  resolved().tune_kind
+pub(crate) fn avx2_hash_many_one_chunk_fast_path() -> bool {
+  resolved().avx2_hash_many_one_chunk_fast_path
 }
 
 #[inline]

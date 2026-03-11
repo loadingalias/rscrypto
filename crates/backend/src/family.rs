@@ -20,8 +20,6 @@
 //! - `ArmPmull` - aarch64 PMULL instruction
 //! - `PowerVpmsum` - Power VPMSUMD instruction
 
-use platform::Tune;
-
 use crate::{
   caps::{Arch, Caps},
   tier::KernelTier,
@@ -272,63 +270,6 @@ impl KernelFamily {
     }
   }
 
-  /// Tune-aware minimum bytes per lane for multi-stream folding.
-  ///
-  /// This refines [`min_bytes_per_lane`](Self::min_bytes_per_lane) using the
-  /// detected microarchitecture tuning preset so runtime policy can avoid
-  /// overly conservative static defaults.
-  #[inline]
-  #[must_use]
-  pub fn min_bytes_per_lane_for_tune(self, tune: &Tune) -> usize {
-    match self {
-      Self::Reference | Self::Portable => usize::MAX,
-      // Memory-bound HWCRC platforms can scale streams with less per-lane work.
-      Self::X86Crc32 | Self::ArmCrc32 => {
-        if tune.memory_bound_hwcrc {
-          64
-        } else {
-          128
-        }
-      }
-      // Folding tier follows tune-specific CLMUL crossover behavior.
-      Self::X86Pclmul | Self::ArmPmull | Self::PowerVpmsum | Self::S390xVgfm | Self::RiscvZbc => {
-        if tune.pclmul_threshold <= 64 {
-          128
-        } else if tune.pclmul_threshold <= 128 {
-          192
-        } else {
-          256
-        }
-      }
-      // Wide x86 benefits the most from fast-wide presets.
-      Self::X86Vpclmul => {
-        if tune.fast_wide_ops {
-          256
-        } else if tune.effective_simd_width >= 512 {
-          384
-        } else {
-          512
-        }
-      }
-      // PMULL+EOR3 is still 128-bit NEON, but fast microarchitectures can run
-      // with lower per-lane requirements.
-      Self::ArmPmullEor3 => {
-        if tune.fast_wide_ops {
-          128
-        } else {
-          192
-        }
-      }
-      Self::ArmSve2Pmull | Self::RiscvZvbc => {
-        if tune.fast_wide_ops {
-          384
-        } else {
-          512
-        }
-      }
-    }
-  }
-
   /// Maximum stream count supported by this family on the current architecture.
   #[inline]
   #[must_use]
@@ -339,13 +280,6 @@ impl KernelFamily {
       Self::S390xVgfm | Self::RiscvZbc | Self::RiscvZvbc => 4,
       _ => 8, // x86, power
     }
-  }
-
-  /// Tune-aware maximum stream count for this family.
-  #[inline]
-  #[must_use]
-  pub fn max_streams_for_tune(self, tune: &Tune) -> u8 {
-    tune.parallel_streams.min(self.arch_max_streams())
   }
 
   /// Preferred stream levels in descending order for this family.
@@ -370,17 +304,14 @@ impl KernelFamily {
   /// Select the best available family for a platform.
   ///
   /// Families are checked in architecture-preferred order (descending tier),
-  /// then filtered by capability and tune constraints.
+  /// then filtered only by hard capability requirements.
   #[must_use]
-  pub fn select_for_platform(caps: Caps, tune: &Tune) -> Self {
+  pub fn select_for_platform(caps: Caps) -> Self {
     for &family in Self::families_for_current_arch() {
       if family == Self::Reference {
         continue;
       }
       if !family.is_available(caps) {
-        continue;
-      }
-      if family.tier() == KernelTier::Wide && family.requires_simd_width_256() && tune.effective_simd_width < 256 {
         continue;
       }
       return family;
@@ -724,20 +655,7 @@ mod tests {
     }
   }
 
-  #[test]
-  fn tuned_min_bytes_per_lane_values() {
-    let zen5 = platform::Tune::ZEN5;
-    let icl = platform::Tune::INTEL_ICL;
-
-    assert_eq!(KernelFamily::Reference.min_bytes_per_lane_for_tune(&zen5), usize::MAX);
-    assert_eq!(KernelFamily::X86Crc32.min_bytes_per_lane_for_tune(&zen5), 64);
-    assert_eq!(KernelFamily::X86Crc32.min_bytes_per_lane_for_tune(&icl), 128);
-    assert_eq!(KernelFamily::X86Vpclmul.min_bytes_per_lane_for_tune(&zen5), 256);
-    assert_eq!(KernelFamily::X86Vpclmul.min_bytes_per_lane_for_tune(&icl), 512);
-  }
-
   // ─── KernelSubfamily Tests ─────────────────────────────────────────────────
-
   #[test]
   fn subfamily_constructors() {
     let ref_sub = KernelSubfamily::reference();

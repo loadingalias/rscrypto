@@ -232,7 +232,6 @@ pub(crate) fn crc32c_selected_kernel_name(len: usize) -> &'static str {
 #[inline]
 #[must_use]
 pub(crate) fn diag_crc32_ieee(len: usize) -> Crc32SelectionDiag {
-  let tune = platform::tune();
   let cfg = config::get();
   let selected_kernel = crc32_selected_kernel_name(len);
 
@@ -252,7 +251,7 @@ pub(crate) fn diag_crc32_ieee(len: usize) -> Crc32SelectionDiag {
   Crc32SelectionDiag {
     polynomial: Crc32Polynomial::Ieee,
     len,
-    tune_kind: tune.kind(),
+    arch: platform::arch(),
     reason,
     effective_force: cfg.effective_force,
     policy_family: "dispatch",
@@ -277,7 +276,6 @@ pub(crate) fn diag_crc32_ieee(len: usize) -> Crc32SelectionDiag {
 #[inline]
 #[must_use]
 pub(crate) fn diag_crc32c(len: usize) -> Crc32SelectionDiag {
-  let tune = platform::tune();
   let cfg = config::get();
   let selected_kernel = crc32c_selected_kernel_name(len);
 
@@ -297,7 +295,7 @@ pub(crate) fn diag_crc32c(len: usize) -> Crc32SelectionDiag {
   Crc32SelectionDiag {
     polynomial: Crc32Polynomial::Castagnoli,
     len,
-    tune_kind: tune.kind(),
+    arch: platform::arch(),
     reason,
     effective_force: cfg.effective_force,
     policy_family: "dispatch",

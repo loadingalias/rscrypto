@@ -39,9 +39,8 @@ fn resolve(id: Sha384KernelId, caps: Caps) -> Sha384KernelId {
 #[must_use]
 fn active() -> ActiveDispatch {
   ACTIVE.get_or_init(|| {
-    let tune = platform::tune();
     let caps = platform::caps();
-    let table: &'static DispatchTable = super::dispatch_tables::select_table(tune.kind);
+    let table: &'static DispatchTable = super::dispatch_tables::select_runtime_table(caps);
 
     let xs_id = resolve(table.xs, caps);
     let s_id = resolve(table.s, caps);

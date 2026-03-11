@@ -3,7 +3,17 @@
 //! This module is the integration point for offline dispatch-table generation tooling.
 //! The tuning engine updates compact per-family profiles in this file.
 
-use platform::TuneKind;
+#[cfg(target_arch = "aarch64")]
+use platform::caps::aarch64;
+#[cfg(target_arch = "powerpc64")]
+use platform::caps::power;
+#[cfg(target_arch = "riscv64")]
+use platform::caps::riscv;
+#[cfg(target_arch = "s390x")]
+use platform::caps::s390x;
+#[cfg(target_arch = "x86_64")]
+use platform::caps::x86;
+use platform::{Caps, tune::TuneKind};
 
 pub use super::kernels::Blake3KernelId as KernelId;
 
@@ -1043,6 +1053,92 @@ pub static PROFILE_POWER10: FamilyProfile = FamilyProfile {
 
 #[inline]
 #[must_use]
+#[cfg(target_arch = "x86_64")]
+fn has_any_amx(caps: Caps) -> bool {
+  caps.has(x86::AMX_TILE)
+    || caps.has(x86::AMX_INT8)
+    || caps.has(x86::AMX_BF16)
+    || caps.has(x86::AMX_FP16)
+    || caps.has(x86::AMX_COMPLEX)
+}
+
+#[inline]
+#[must_use]
+pub fn select_profile_for_caps(caps: Caps) -> &'static FamilyProfile {
+  #[cfg(target_arch = "x86_64")]
+  {
+    if caps.has(x86::AVX512_READY) {
+      return if has_any_amx(caps) {
+        &PROFILE_X86_INTEL_SPR
+      } else {
+        &PROFILE_X86_INTEL_ICL
+      };
+    }
+    &PROFILE_DEFAULT_KIND
+  }
+
+  #[cfg(target_arch = "aarch64")]
+  {
+    if caps.has(aarch64::NEON) {
+      return &PROFILE_AARCH64_SERVER_NEON;
+    }
+    &PROFILE_PORTABLE
+  }
+
+  #[cfg(target_arch = "s390x")]
+  {
+    if caps.has(s390x::Z15_READY) {
+      return &PROFILE_Z15;
+    }
+    if caps.has(s390x::Z14_READY) {
+      return &PROFILE_Z14;
+    }
+    if caps.has(s390x::Z13_READY) {
+      return &PROFILE_Z13;
+    }
+    &PROFILE_PORTABLE
+  }
+
+  #[cfg(target_arch = "powerpc64")]
+  {
+    if caps.has(power::POWER10_READY) {
+      return &PROFILE_POWER10;
+    }
+    if caps.has(power::POWER9_READY) {
+      return &PROFILE_POWER9;
+    }
+    if caps.has(power::POWER8_READY) {
+      return &PROFILE_POWER8;
+    }
+    if caps.has(power::POWER7_READY) {
+      return &PROFILE_POWER7;
+    }
+    &PROFILE_PORTABLE
+  }
+
+  #[cfg(target_arch = "riscv64")]
+  {
+    if caps.has(riscv::V) {
+      return &PROFILE_DEFAULT_KIND;
+    }
+    &PROFILE_PORTABLE
+  }
+
+  #[cfg(not(any(
+    target_arch = "x86_64",
+    target_arch = "aarch64",
+    target_arch = "s390x",
+    target_arch = "powerpc64",
+    target_arch = "riscv64"
+  )))]
+  {
+    let _ = caps;
+    &PROFILE_PORTABLE
+  }
+}
+
+#[inline]
+#[must_use]
 fn select_profile(kind: TuneKind) -> &'static FamilyProfile {
   match kind {
     TuneKind::Custom => &PROFILE_CUSTOM,
@@ -1079,8 +1175,20 @@ fn select_profile(kind: TuneKind) -> &'static FamilyProfile {
 
 #[inline]
 #[must_use]
+pub fn select_table_for_caps(caps: Caps) -> &'static DispatchTable {
+  &select_profile_for_caps(caps).dispatch
+}
+
+#[inline]
+#[must_use]
 pub fn select_table(kind: TuneKind) -> &'static DispatchTable {
   &select_profile(kind).dispatch
+}
+
+#[inline]
+#[must_use]
+pub fn select_streaming_table_for_caps(caps: Caps) -> &'static StreamingTable {
+  &select_profile_for_caps(caps).streaming
 }
 
 #[inline]
@@ -1091,8 +1199,20 @@ pub fn select_streaming_table(kind: TuneKind) -> &'static StreamingTable {
 
 #[inline]
 #[must_use]
+pub fn select_parallel_table_for_caps(caps: Caps) -> &'static ParallelTable {
+  &select_profile_for_caps(caps).parallel
+}
+
+#[inline]
+#[must_use]
 pub fn select_parallel_table(kind: TuneKind) -> &'static ParallelTable {
   &select_profile(kind).parallel
+}
+
+#[inline]
+#[must_use]
+pub fn select_streaming_parallel_table_for_caps(caps: Caps) -> &'static ParallelTable {
+  &select_profile_for_caps(caps).streaming_parallel
 }
 
 #[inline]

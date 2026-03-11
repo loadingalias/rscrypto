@@ -144,7 +144,6 @@ pub mod dispatchers;
 mod introspect;
 #[cfg(feature = "std")]
 pub mod io;
-pub mod tune;
 
 #[doc(hidden)]
 pub mod __internal {

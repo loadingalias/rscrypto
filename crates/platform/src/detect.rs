@@ -17,10 +17,7 @@
 //! platform::clear_override();
 //! ```
 
-use crate::{
-  caps::{Arch, Caps},
-  tune::Tune,
-};
+use crate::caps::{Arch, Caps};
 
 /// Errors when configuring runtime detection overrides.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -44,11 +41,10 @@ impl core::fmt::Display for OverrideError {
 // Main API
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Detected CPU state: capabilities and tuning hints.
+/// Detected CPU state: capabilities and architecture.
 ///
 /// This struct combines all detection results:
 /// - `caps`: Available CPU features (what instructions can run)
-/// - `tune`: Microarchitecture-specific tuning hints (what's optimal)
 /// - `arch`: Target architecture identifier
 ///
 /// Use [`get()`] to obtain a cached instance, or [`detect_uncached()`] for
@@ -57,8 +53,6 @@ impl core::fmt::Display for OverrideError {
 pub struct Detected {
   /// CPU feature capabilities bitset.
   pub caps: Caps,
-  /// Microarchitecture-specific tuning hints.
-  pub tune: Tune,
   /// Target architecture identifier.
   pub arch: Arch,
 }
@@ -76,13 +70,12 @@ impl Detected {
   pub const fn portable() -> Self {
     Self {
       caps: Caps::NONE,
-      tune: Tune::PORTABLE,
       arch: Arch::Other,
     }
   }
 }
 
-/// Get detected CPU capabilities and tuning hints.
+/// Get detected CPU capabilities and architecture.
 ///
 /// Results are cached after first call.
 ///
@@ -123,7 +116,7 @@ pub fn get() -> Detected {
     };
 
     debug_assert!(
-      crate::target_matrix::tune_manifest_has_arch(det.arch),
+      crate::target_matrix::manifest_has_arch(det.arch),
       "detected arch policy drifted from config/target-matrix.toml"
     );
     det
@@ -135,13 +128,6 @@ pub fn get() -> Detected {
 #[must_use]
 pub fn caps() -> Caps {
   get().caps
-}
-
-/// Get just the tuning hints.
-#[inline]
-#[must_use]
-pub fn tune() -> Tune {
-  get().tune
 }
 
 /// Get the detected architecture.

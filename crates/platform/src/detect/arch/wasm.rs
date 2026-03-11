@@ -16,7 +16,6 @@ fn detect_wasm32() -> Detected {
 
   Detected {
     caps,
-    tune: Tune::PORTABLE,
     arch: Arch::Wasm32,
   }
 }
@@ -36,7 +35,6 @@ fn detect_wasm64() -> Detected {
 
   Detected {
     caps,
-    tune: Tune::PORTABLE,
     arch: Arch::Wasm64,
   }
 }
@@ -44,4 +42,3 @@ fn detect_wasm64() -> Detected {
 // ─────────────────────────────────────────────────────────────────────────────
 // Tests
 // ─────────────────────────────────────────────────────────────────────────────
-

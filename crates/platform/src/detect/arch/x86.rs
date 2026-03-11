@@ -14,8 +14,6 @@ fn detect_x86_64() -> Detected {
     let batch = cpuid_batch_x86_64();
     (batch.caps, batch.is_amd, batch.family, batch.model)
   };
-  #[cfg(not(feature = "std"))]
-  let (is_amd, family, model) = (false, 0u32, 0u32);
 
   #[cfg(feature = "std")]
   let mut caps = caps_static.union(runtime_caps);
@@ -56,11 +54,8 @@ fn detect_x86_64() -> Detected {
     }
   }
 
-  let tune = select_x86_tune(caps, is_amd, family, model);
-
   Detected {
     caps,
-    tune,
     arch: Arch::X86_64,
   }
 }
@@ -83,7 +78,6 @@ fn detect_x86() -> Detected {
 
   Detected {
     caps,
-    tune: Tune::DEFAULT,
     arch: Arch::X86,
   }
 }
@@ -479,142 +473,4 @@ fn is_intel_hybrid(is_amd: bool, family: u32, model: u32) -> bool {
     | 0xC5  // Arrow Lake-S
     | 0xC6 // Arrow Lake-H
   )
-}
-
-/// Detect Intel Ice Lake family models.
-///
-/// We use model-based identification here because feature-only identification
-/// cannot reliably separate Ice Lake AVX-512 parts from newer Intel AVX-512
-/// generations in all environments.
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-fn is_intel_icl_model(family: u32, model: u32) -> bool {
-  // Intel uses family 6 for modern server/client generations.
-  if family != 6 {
-    return false;
-  }
-
-  // Ice Lake known models:
-  // - 0x6A, 0x6C: Ice Lake-SP / Ice Lake-D server parts
-  // - 0x7D, 0x7E: Ice Lake client derivatives
-  matches!(model, 0x6A | 0x6C | 0x7D | 0x7E)
-}
-
-/// Detect Intel Sapphire Rapids / Emerald Rapids family models.
-///
-/// Model-based detection protects tune kind stability when hypervisors mask
-/// BF16/AMX capability bits.
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-fn is_intel_spr_model(family: u32, model: u32) -> bool {
-  if family != 6 {
-    return false;
-  }
-
-  // Sapphire Rapids (0x8F), Emerald Rapids (0xCF)
-  matches!(model, 0x8F | 0xCF)
-}
-
-/// Detect Intel Granite Rapids family models.
-///
-/// Model-based detection protects tune kind stability when AMX FP16/COMPLEX
-/// bits are masked by virtualization.
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-fn is_intel_gnr_model(family: u32, model: u32) -> bool {
-  if family != 6 {
-    return false;
-  }
-
-  // Granite Rapids (0xAD)
-  matches!(model, 0xAD)
-}
-
-/// Select tuning preset based on features and pre-extracted CPU info.
-///
-/// Takes vendor/family/model info extracted from batch CPUID to avoid redundant calls.
-/// - `is_amd`: true if vendor string is "AuthenticAMD"
-/// - `family`: CPU family (e.g., 25 = Zen 3/4, 26 = Zen 5)
-/// - `model`: CPU model within family (used for hybrid detection in std mode)
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-#[allow(unused_variables)] // `model` only used with std feature for hybrid detection
-fn select_x86_tune(caps: Caps, is_amd: bool, family: u32, model: u32) -> Tune {
-  use crate::caps::x86;
-
-  // Hybrid Intel note:
-  // `detect_x86_64` will clear AVX-512 caps on known hybrid Intel CPUs unless
-  // the user explicitly overrides. For tune selection we still want to prefer
-  // 256-bit strategies on those systems when AVX2 is available.
-  #[cfg(feature = "std")]
-  if is_intel_hybrid(is_amd, family, model) && !hybrid_avx512_override() && caps.has(x86::AVX2) {
-    return Tune::INTEL_ICL;
-  }
-
-  // BLAKE3 (and other vectorized kernels) benefit from AVX-512 on CPUs that
-  // support the *base* AVX-512 feature set. Do not gate microarchitecture
-  // classification on VPCLMUL/VAES; those are kernel-specific capabilities.
-  let has_avx512 = caps.has(x86::AVX512F) && caps.has(x86::AVX512VL);
-
-  if has_avx512 {
-    return if is_amd {
-      // Zen 5/5c is family 26, Zen 4 is family 25 (models 96-127)
-      // Note: Currently no way to differentiate Zen 5c from Zen 5 via CPUID alone.
-      // Both share Family 26 (0x1A). Zen 5c is used in EPYC 9005 series and
-      // Strix Point APUs with hybrid configurations. For now, use ZEN5 tuning
-      // for all Family 26 CPUs. Future: may need OS topology detection or
-      // per-core CPUID to identify compact cores in hybrid SKUs.
-      if family == 26 {
-        Tune::ZEN5
-      } else if family == 25 {
-        Tune::ZEN4
-      } else {
-        Tune::DEFAULT
-      }
-    } else {
-      // Intel AVX-512 classification order:
-      // 1) Explicit known models (ICL / SPR / GNR)
-      // 2) Feature-led fallback (AMX FP16/COMPLEX => GNR; BF16/AMX => SPR)
-      // 3) Final fallback => Intel ICL
-      if is_intel_icl_model(family, model) {
-        Tune::INTEL_ICL
-      } else if is_intel_gnr_model(family, model) {
-        Tune::INTEL_GNR
-      } else if is_intel_spr_model(family, model) {
-        Tune::INTEL_SPR
-      } else if caps.has(x86::AMX_FP16) || caps.has(x86::AMX_COMPLEX) {
-        Tune::INTEL_GNR
-      } else if caps.has(x86::AVX512BF16)
-        || caps.has(x86::AMX_TILE)
-        || caps.has(x86::AMX_BF16)
-        || caps.has(x86::AMX_INT8)
-      {
-        Tune::INTEL_SPR
-      } else {
-        Tune::INTEL_ICL
-      }
-    };
-  }
-
-  // AVX2-only systems need finer classification than the generic default:
-  // - Intel AVX2 parts typically align better with IntelIcl thresholds/policies.
-  // - AMD Family 25/26 should stay on Zen-class presets even when AVX-512 is unavailable (e.g.
-  //   BIOS-disabled AVX-512, virtualization masks).
-  if caps.has(x86::AVX2) {
-    if is_amd {
-      if family == 26 {
-        return Tune::ZEN5;
-      }
-      if family == 25 {
-        return Tune::ZEN4;
-      }
-      return Tune::DEFAULT;
-    }
-    return Tune::INTEL_ICL;
-  }
-
-  if caps.has(x86::PCLMUL_READY) {
-    if !is_amd {
-      return Tune::INTEL_ICL;
-    }
-    return Tune::DEFAULT;
-  }
-
-  Tune::PORTABLE
 }

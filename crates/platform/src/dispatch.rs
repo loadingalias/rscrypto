@@ -17,11 +17,11 @@
 //! ```
 //! use platform::dispatch_auto;
 //!
-//! let count = dispatch_auto(|caps, _tune| caps.count());
+//! let count = dispatch_auto(|caps| caps.count());
 //! assert!(count >= 1);
 //! ```
 
-use crate::{Caps, Tune, detect};
+use crate::{Caps, detect};
 
 /// Shared decision graph for choosing the dispatch path.
 ///
@@ -67,15 +67,15 @@ const fn use_static_dispatch_path() -> bool {
 /// ```
 /// use platform::dispatch_static;
 ///
-/// let count = dispatch_static(|caps, _| caps.count());
+/// let count = dispatch_static(|caps| caps.count());
 /// // count is known at compile time
 /// ```
 #[inline(always)]
 pub fn dispatch_static<F, R>(f: F) -> R
 where
-  F: FnOnce(Caps, Tune) -> R,
+  F: FnOnce(Caps) -> R,
 {
-  f(detect::caps_static(), detect::tune_static())
+  f(detect::caps_static())
 }
 
 /// Dispatch with runtime-detected capabilities.
@@ -98,16 +98,16 @@ where
 /// ```
 /// use platform::dispatch;
 ///
-/// let threshold = dispatch(|_, tune| tune.simd_threshold);
-/// assert!(threshold > 0);
+/// let feature_count = dispatch(|caps| caps.count());
+/// assert!(feature_count >= 1);
 /// ```
 #[inline]
 pub fn dispatch<F, R>(f: F) -> R
 where
-  F: FnOnce(Caps, Tune) -> R,
+  F: FnOnce(Caps) -> R,
 {
   let det = detect::get();
-  f(det.caps, det.tune)
+  f(det.caps)
 }
 
 /// Automatically choose compile-time or runtime dispatch.
@@ -127,13 +127,13 @@ where
 /// ```
 /// use platform::dispatch_auto;
 ///
-/// let cache_line = dispatch_auto(|_, tune| tune.cache_line);
-/// assert!(cache_line >= 32);
+/// let feature_count = dispatch_auto(|caps| caps.count());
+/// assert!(feature_count >= 1);
 /// ```
 #[inline(always)]
 pub fn dispatch_auto<F, R>(f: F) -> R
 where
-  F: FnOnce(Caps, Tune) -> R,
+  F: FnOnce(Caps) -> R,
 {
   if use_static_dispatch_path() {
     dispatch_static(f)
@@ -166,7 +166,7 @@ mod tests {
   #[test]
   #[cfg(not(miri))] // dispatch() returns portable caps under Miri
   fn test_dispatch_returns_caps() {
-    dispatch(|caps, _tune| {
+    dispatch(|caps| {
       #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
       let _ = caps;
 
@@ -187,7 +187,7 @@ mod tests {
 
   #[test]
   fn test_dispatch_static_returns_caps() {
-    dispatch_static(|caps, _tune| {
+    dispatch_static(|caps| {
       #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
       let _ = caps;
 
@@ -209,7 +209,7 @@ mod tests {
   #[test]
   #[cfg_attr(miri, ignore)] // Miri returns Caps::NONE, no runtime detection
   fn test_dispatch_auto_works() {
-    let result = dispatch_auto(|caps, _tune| {
+    let result = dispatch_auto(|caps| {
       // Just verify it returns something
       caps.count()
     });
@@ -222,16 +222,6 @@ mod tests {
 
     #[cfg(target_arch = "aarch64")]
     assert!(result >= 1); // At least NEON
-  }
-
-  #[test]
-  fn test_dispatch_returns_tune() {
-    dispatch(|_caps, tune| {
-      // Tune should have reasonable values
-      assert!(tune.simd_threshold > 0);
-      assert!(tune.parallel_streams >= 1);
-      assert!(tune.cache_line > 0);
-    });
   }
 
   #[test]
@@ -255,13 +245,6 @@ mod tests {
   }
 
   #[test]
-  fn test_tune_static_is_const() {
-    // tune_static should be evaluable at compile time
-    const TUNE: Tune = detect::tune_static();
-    const { assert!(TUNE.simd_threshold > 0) };
-  }
-
-  #[test]
   fn test_has_static_features_is_const() {
     // Should be evaluable at compile time
     const HAS_STATIC: bool = has_static_features();
@@ -274,7 +257,7 @@ mod tests {
     let multiplier = 42u32;
     let base = 10u32;
 
-    let result = dispatch(|_caps, _tune| base * multiplier);
+    let result = dispatch(|_caps| base * multiplier);
     assert_eq!(result, 420);
   }
 

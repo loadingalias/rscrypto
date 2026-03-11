@@ -37,9 +37,8 @@ fn resolve(id: RapidHashKernelId, caps: Caps) -> RapidHashKernelId {
 #[must_use]
 fn active() -> ActiveDispatch {
   ACTIVE.get_or_init(|| {
-    let tune = platform::tune();
     let caps = platform::caps();
-    let table: &'static DispatchTable = super::dispatch_tables::select_table(tune.kind);
+    let table: &'static DispatchTable = super::dispatch_tables::select_runtime_table(caps);
 
     let xs_id = resolve(table.xs, caps);
     let s_id = resolve(table.s, caps);

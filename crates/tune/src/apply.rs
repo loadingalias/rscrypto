@@ -1,7 +1,7 @@
 //! Apply `legacy-tune` results into dispatch kernel tables.
 //!
 //! This is the legacy pipeline step for offline dispatch-table generation.
-//! and generated artifacts are emitted for that platform's [`platform::TuneKind`].
+//! and generated artifacts are emitted for that platform's [`platform::tune::TuneKind`].
 //!
 //! # Output Format
 //!
@@ -24,7 +24,7 @@ use std::{
   path::{Path, PathBuf},
 };
 
-use platform::TuneKind;
+use platform::tune::TuneKind;
 
 use crate::{AlgorithmResult, TuneResults, hash::BLAKE3_TUNING_CORPUS};
 
@@ -592,88 +592,6 @@ fn blake3_dispatch_tables_path(repo_root: &Path) -> PathBuf {
   repo_root.join("crates/hashes/src/crypto/blake3/dispatch_tables.rs")
 }
 
-fn hash_dispatch_tables_path(repo_root: &Path, algo: &str) -> Option<PathBuf> {
-  let rel = match algo {
-    "sha224-compress" => "crates/hashes/src/crypto/sha224/dispatch_tables.rs",
-    "sha256-compress" => "crates/hashes/src/crypto/sha256/dispatch_tables.rs",
-    "sha384-compress" => "crates/hashes/src/crypto/sha384/dispatch_tables.rs",
-    "sha512-compress" => "crates/hashes/src/crypto/sha512/dispatch_tables.rs",
-    "sha512-256-compress" => "crates/hashes/src/crypto/sha512_256/dispatch_tables.rs",
-    "keccakf1600-permute" => "crates/hashes/src/crypto/keccak/dispatch_tables.rs",
-    "ascon-hash256" => "crates/hashes/src/crypto/ascon/dispatch_tables.rs",
-    "xxh3" => "crates/hashes/src/fast/xxh3/dispatch_tables.rs",
-    "rapidhash" => "crates/hashes/src/fast/rapidhash/dispatch_tables.rs",
-    _ => return None,
-  };
-  Some(repo_root.join(rel))
-}
-
-fn tune_kind_table_marker(tune_kind: TuneKind) -> &'static str {
-  match tune_kind {
-    TuneKind::Custom => "// Custom Table",
-    TuneKind::Default => "// Default Table",
-    TuneKind::Portable => "// Portable Table",
-    TuneKind::Zen4 => "// Zen4 Table",
-    TuneKind::Zen5 => "// Zen5 Table",
-    TuneKind::Zen5c => "// Zen5c Table",
-    TuneKind::IntelSpr => "// IntelSpr Table",
-    TuneKind::IntelGnr => "// IntelGnr Table",
-    TuneKind::IntelIcl => "// IntelIcl Table",
-    TuneKind::AppleM1M3 => "// AppleM1M3 Table",
-    TuneKind::AppleM4 => "// AppleM4 Table",
-    TuneKind::AppleM5 => "// AppleM5 Table",
-    TuneKind::Graviton2 => "// Graviton2 Table",
-    TuneKind::Graviton3 => "// Graviton3 Table",
-    TuneKind::Graviton4 => "// Graviton4 Table",
-    TuneKind::Graviton5 => "// Graviton5 Table",
-    TuneKind::NeoverseN2 => "// NeoverseN2 Table",
-    TuneKind::NeoverseN3 => "// NeoverseN3 Table",
-    TuneKind::NeoverseV3 => "// NeoverseV3 Table",
-    TuneKind::NvidiaGrace => "// NvidiaGrace Table",
-    TuneKind::AmpereAltra => "// AmpereAltra Table",
-    TuneKind::Aarch64Pmull => "// Aarch64Pmull Table",
-    TuneKind::Z13 => "// Z13 Table",
-    TuneKind::Z14 => "// Z14 Table",
-    TuneKind::Z15 => "// Z15 Table",
-    TuneKind::Power7 => "// Power7 Table",
-    TuneKind::Power8 => "// Power8 Table",
-    TuneKind::Power9 => "// Power9 Table",
-    TuneKind::Power10 => "// Power10 Table",
-  }
-}
-
-const TUNE_KIND_TABLE_MARKERS: &[&str] = &[
-  "// Custom Table",
-  "// Default Table",
-  "// Portable Table",
-  "// Zen4 Table",
-  "// Zen5 Table",
-  "// Zen5c Table",
-  "// IntelSpr Table",
-  "// IntelGnr Table",
-  "// IntelIcl Table",
-  "// AppleM1M3 Table",
-  "// AppleM4 Table",
-  "// AppleM5 Table",
-  "// Graviton2 Table",
-  "// Graviton3 Table",
-  "// Graviton4 Table",
-  "// Graviton5 Table",
-  "// NeoverseN2 Table",
-  "// NeoverseN3 Table",
-  "// NeoverseV3 Table",
-  "// NvidiaGrace Table",
-  "// AmpereAltra Table",
-  "// Aarch64Pmull Table",
-  "// Z13 Table",
-  "// Z14 Table",
-  "// Z15 Table",
-  "// Power7 Table",
-  "// Power8 Table",
-  "// Power9 Table",
-  "// Power10 Table",
-];
-
 fn generated_apply_path(repo_root: &Path, family: &str, name: &str, tune_kind: TuneKind) -> PathBuf {
   generated_dir(repo_root)
     .join(family)
@@ -937,6 +855,7 @@ fn write_artifacts_transactional(artifacts: &[GeneratedArtifact]) -> io::Result<
   Ok(())
 }
 
+#[cfg(test)]
 fn tune_kind_table_ident(tune_kind: TuneKind) -> &'static str {
   match tune_kind {
     TuneKind::Custom => "CUSTOM_TABLE",
@@ -1284,6 +1203,7 @@ fn aggregate_blake3_parallel_values(algos: &[&AlgorithmResult]) -> Blake3Paralle
   sanitize_blake3_parallel_values(merged)
 }
 
+#[cfg(test)]
 fn generate_hash_table(tune_kind: TuneKind, algo: &AlgorithmResult, results: Option<&TuneResults>) -> String {
   // Defaults if size-class data isn't present (older results / partial runs).
   let mut xs = "portable";
@@ -2034,26 +1954,6 @@ fn apply_hash_dispatch_tables(repo_root: &Path, results: &TuneResults) -> io::Re
       });
       continue;
     }
-
-    let table_code = generate_hash_table(tune_kind, algo, Some(results));
-    let path = hash_dispatch_tables_path(repo_root, target.algo).ok_or_else(|| {
-      io::Error::new(
-        io::ErrorKind::InvalidData,
-        format!("no runtime hash dispatch table mapping for target '{}'", target.algo),
-      )
-    })?;
-    let source = fs::read_to_string(&path)?;
-    let marker = tune_kind_table_marker(tune_kind);
-    let next: Vec<&str> = TUNE_KIND_TABLE_MARKERS
-      .iter()
-      .copied()
-      .filter(|m| *m != marker)
-      .collect();
-    let replaced = replace_marked_section(&source, marker, &table_code, &next)?;
-    artifacts.push(GeneratedArtifact {
-      path,
-      contents: replaced,
-    });
   }
 
   Ok(artifacts)
@@ -2204,7 +2104,7 @@ mod tests {
     time::{SystemTime, UNIX_EPOCH},
   };
 
-  use platform::TuneKind;
+  use platform::tune::TuneKind;
 
   use super::{
     CrcVariant, generate_blake3_family_profile, generate_blake3_streaming_table, generate_hash_table, kernel_expr,
@@ -2956,89 +2856,6 @@ pub fn select_table(kind: TuneKind) -> &'static DispatchTable { unreachable!() }
     assert!(updated.contains("// Family Profile: POWER10"));
     assert!(updated.contains("pub static PROFILE_POWER10: FamilyProfile"));
     assert!(updated.contains("pub fn select_table(kind: TuneKind) -> &'static DispatchTable"));
-
-    let _ = fs::remove_dir_all(&repo_root);
-  }
-
-  #[test]
-  fn apply_sha256_rewrites_runtime_dispatch_tables_in_place() {
-    let repo_root = temp_repo_root("apply-sha256-rewrite");
-    let dispatch_path = repo_root.join("crates/hashes/src/crypto/sha256/dispatch_tables.rs");
-    fs::create_dir_all(dispatch_path.parent().expect("dispatch path should have parent")).expect("create test dirs");
-    fs::write(
-      &dispatch_path,
-      "\
-//! test fixture
-// Custom Table
-pub static CUSTOM_TABLE: DispatchTable = DEFAULT_TABLE;
-// Zen4 Table
-OLD_ZEN4_BODY
-// Zen5 Table
-KEEP_NEXT_SECTION
-#[inline]
-#[must_use]
-pub fn select_table() {}
-",
-    )
-    .expect("write seed dispatch file");
-
-    let results = TuneResults {
-      platform: PlatformInfo {
-        arch: "x86_64",
-        os: "linux",
-        caps: platform::Caps::NONE,
-        tune_kind: TuneKind::Zen4,
-        description: String::new(),
-      },
-      algorithms: vec![AlgorithmResult {
-        name: "sha256-compress",
-        env_prefix: "RSCRYPTO_BENCH_SHA256_COMPRESS",
-        best_kernel: "portable",
-        recommended_streams: 1,
-        peak_throughput_gib_s: 0.0,
-        size_class_best: vec![
-          SizeClassBest {
-            class: "xs",
-            kernel: "portable".to_string(),
-            streams: 1,
-            throughput_gib_s: 0.0,
-          },
-          SizeClassBest {
-            class: "s",
-            kernel: "portable".to_string(),
-            streams: 1,
-            throughput_gib_s: 0.0,
-          },
-          SizeClassBest {
-            class: "m",
-            kernel: "portable".to_string(),
-            streams: 1,
-            throughput_gib_s: 0.0,
-          },
-          SizeClassBest {
-            class: "l",
-            kernel: "portable".to_string(),
-            streams: 1,
-            throughput_gib_s: 0.0,
-          },
-        ],
-        thresholds: vec![],
-        analysis: AnalysisResult::default(),
-      }],
-      timestamp: String::new(),
-    };
-
-    super::apply_tuned_defaults(&repo_root, &results).expect("apply should rewrite runtime dispatch tables");
-
-    let updated = fs::read_to_string(&dispatch_path).expect("read updated dispatch file");
-    assert!(!updated.contains("OLD_ZEN4_BODY"));
-    assert!(updated.contains("// Zen4 Table"));
-    assert!(updated.contains("pub static ZEN4_TABLE: DispatchTable"));
-    assert!(updated.contains("// Zen5 Table"));
-    assert!(updated.contains("KEEP_NEXT_SECTION"));
-
-    let old_generated_path = repo_root.join("crates/tune/generated/hashes/sha256-compress/zen4.rs");
-    assert!(!old_generated_path.exists());
 
     let _ = fs::remove_dir_all(&repo_root);
   }

@@ -10,11 +10,6 @@ fn detect_riscv64() -> Detected {
 
   Detected {
     caps,
-    tune: if caps.has(crate::caps::riscv::ZBC) || caps.has(crate::caps::riscv::ZVBC) {
-      Tune::DEFAULT
-    } else {
-      Tune::PORTABLE
-    },
     arch: Arch::Riscv64,
   }
 }
@@ -28,11 +23,6 @@ fn detect_riscv32() -> Detected {
 
   Detected {
     caps,
-    tune: if caps.has(crate::caps::riscv::ZBC) || caps.has(crate::caps::riscv::ZVBC) {
-      Tune::DEFAULT
-    } else {
-      Tune::PORTABLE
-    },
     arch: Arch::Riscv32,
   }
 }
