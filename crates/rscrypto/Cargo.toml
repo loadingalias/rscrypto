@@ -30,8 +30,5 @@ hashes = ["dep:hashes"]       # SHA-2, SHA-3, Blake3, Ascon, XXH3, etc.
 checksum = { workspace = true, optional = true }
 hashes = { workspace = true, optional = true }
 
-[lib]
-crate-type = ["cdylib", "rlib"]
-
 [lints]
 workspace = true

@@ -11,6 +11,7 @@ source "$SCRIPT_DIR/../lib/common.sh"
 source "$SCRIPT_DIR/../lib/targets.sh"
 
 DEFAULT_CONSTRAINED_CRATES=(
+	"rscrypto"
 	"platform"
 	"backend"
 	"traits"
@@ -66,6 +67,30 @@ crate_supports_alloc() {
 	[[ -f "$manifest" ]] && grep -q '^[[:space:]]*alloc[[:space:]]*=' "$manifest"
 }
 
+run_constrained_check() {
+	local crate=$1
+	local target=$2
+	local target_dir=$3
+	local log_file=$4
+	local feature_set=${5:-}
+
+	local args=(
+		check
+		-p "$crate"
+		--no-default-features
+		--target "$target"
+		--lib
+	)
+
+	if [[ -n "$feature_set" ]]; then
+		args+=(--features "$feature_set")
+	fi
+
+	if ! RUSTC_WRAPPER="" CARGO_TARGET_DIR="$target_dir" cargo "${args[@]}" >>"$log_file" 2>&1; then
+		return 1
+	fi
+}
+
 run_constrained_target() {
 	local target=$1
 	local log_dir=$2
@@ -80,15 +105,25 @@ run_constrained_target() {
 
 	step "$target check (no features)"
 	for crate in "${CONSTRAINED_CRATES[@]}"; do
-		if ! RUSTC_WRAPPER="" CARGO_TARGET_DIR="$target_dir" \
-			cargo check -p "$crate" --no-default-features --target "$target" --lib \
-			>>"$log_file" 2>&1; then
+		if ! run_constrained_check "$crate" "$target" "$target_dir" "$log_file"; then
 			fail
 			show_error "$log_file"
 			return 1
 		fi
 	done
 	ok
+
+	if [[ " ${CONSTRAINED_CRATES[*]} " == *" rscrypto "* ]]; then
+		step "$target check (rscrypto facade matrix)"
+		for feature_set in "alloc" "checksums" "alloc,checksums" "hashes" "alloc,hashes" "checksums,hashes" "alloc,checksums,hashes"; do
+			if ! run_constrained_check "rscrypto" "$target" "$target_dir" "$log_file" "$feature_set"; then
+				fail
+				show_error "$log_file"
+				return 1
+			fi
+		done
+		ok
+	fi
 
 	local alloc_crates=()
 	for crate in "${CONSTRAINED_CRATES[@]}"; do

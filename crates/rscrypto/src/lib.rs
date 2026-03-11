@@ -37,16 +37,9 @@
 //! ```
 //!
 //! Without `std`, hardware acceleration uses compile-time feature detection only.
+//! Final artifacts remain responsible for choosing their panic strategy and,
+//! on bare-metal targets, supplying any required panic handler.
 #![cfg_attr(not(feature = "std"), no_std)]
-
-// Provide a minimal panic handler for wasm32 builds without std.
-// This is required because wasm32-unknown-unknown has no default panic implementation.
-// Applications using this crate with their own panic handler can use the `rlib` target only.
-#[cfg(all(not(feature = "std"), target_arch = "wasm32"))]
-#[panic_handler]
-fn panic(_info: &core::panic::PanicInfo) -> ! {
-  core::arch::wasm32::unreachable()
-}
 
 // =============================================================================
 // Checksums
