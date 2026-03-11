@@ -3,6 +3,7 @@
 //! This module is the integration point for offline dispatch-table generation tooling.
 //! The tuning engine updates compact per-family profiles in this file.
 
+use platform::Caps;
 #[cfg(target_arch = "aarch64")]
 use platform::caps::aarch64;
 #[cfg(target_arch = "powerpc64")]
@@ -13,7 +14,6 @@ use platform::caps::riscv;
 use platform::caps::s390x;
 #[cfg(target_arch = "x86_64")]
 use platform::caps::x86;
-use platform::{Caps, tune::TuneKind};
 
 pub use super::kernels::Blake3KernelId as KernelId;
 
@@ -139,9 +139,6 @@ const SIMD_KERNEL: KernelId = KernelId::RiscvV;
   target_arch = "riscv64"
 )))]
 const SIMD_KERNEL: KernelId = KernelId::Portable;
-
-#[cfg(target_arch = "x86_64")]
-const AVX512_KERNEL: KernelId = KernelId::X86Avx512;
 
 #[cfg(target_arch = "s390x")]
 const S390X_VECTOR_KERNEL: KernelId = KernelId::S390xVector;
@@ -441,136 +438,9 @@ pub static PROFILE_DEFAULT_KIND: FamilyProfile = default_kind_profile();
 // Family Profile: PORTABLE
 pub static PROFILE_PORTABLE: FamilyProfile = portable_profile();
 
-// Family Profile: X86_ZEN4
+// Family Profile: X86_AVX512_AMX
 #[cfg(target_arch = "x86_64")]
-pub static PROFILE_X86_ZEN4: FamilyProfile = FamilyProfile {
-  dispatch: DispatchTable {
-    boundaries: [64, 1024, 4096],
-    xs: KernelId::X86Avx512,
-    s: KernelId::X86Avx2,
-    m: KernelId::X86Avx512,
-    l: KernelId::X86Avx512,
-  },
-  streaming: StreamingTable {
-    stream: KernelId::X86Avx512,
-    bulk: KernelId::X86Avx512,
-    bulk_sizeclass_threshold: THRESHOLD_AVX512,
-  },
-  parallel: ParallelTable {
-    min_bytes: 65536,
-    min_chunks: 64,
-    max_threads: 8,
-    spawn_cost_bytes: 24576,
-    merge_cost_bytes: 16384,
-    bytes_per_core_small: 24576,
-    bytes_per_core_medium: 107520,
-    bytes_per_core_large: 1025024,
-    small_limit_bytes: 262144,
-    medium_limit_bytes: 2097152,
-  },
-  streaming_parallel: ParallelTable {
-    min_bytes: 0,
-    min_chunks: 0,
-    max_threads: 1,
-    spawn_cost_bytes: 24576,
-    merge_cost_bytes: 16384,
-    bytes_per_core_small: 262144,
-    bytes_per_core_medium: 131072,
-    bytes_per_core_large: 65536,
-    small_limit_bytes: 262144,
-    medium_limit_bytes: 2097152,
-  },
-};
-#[cfg(not(target_arch = "x86_64"))]
-pub static PROFILE_X86_ZEN4: FamilyProfile = default_kind_profile();
-// Family Profile: X86_ZEN5
-#[cfg(target_arch = "x86_64")]
-pub static PROFILE_X86_ZEN5: FamilyProfile = FamilyProfile {
-  dispatch: DispatchTable {
-    boundaries: [64, 1024, 4096],
-    xs: KernelId::X86Sse41,
-    s: KernelId::X86Avx512,
-    m: KernelId::X86Avx512,
-    l: KernelId::X86Avx512,
-  },
-  streaming: StreamingTable {
-    stream: KernelId::X86Avx512,
-    bulk: KernelId::X86Avx512,
-    bulk_sizeclass_threshold: THRESHOLD_AVX512,
-  },
-  parallel: ParallelTable {
-    min_bytes: 65536,
-    min_chunks: 64,
-    max_threads: 8,
-    spawn_cost_bytes: 24576,
-    merge_cost_bytes: 16384,
-    bytes_per_core_small: 24576,
-    bytes_per_core_medium: 107520,
-    bytes_per_core_large: 1025024,
-    small_limit_bytes: 262144,
-    medium_limit_bytes: 2097152,
-  },
-  streaming_parallel: ParallelTable {
-    min_bytes: 0,
-    min_chunks: 0,
-    max_threads: 1,
-    spawn_cost_bytes: 24576,
-    merge_cost_bytes: 16384,
-    bytes_per_core_small: 262144,
-    bytes_per_core_medium: 131072,
-    bytes_per_core_large: 65536,
-    small_limit_bytes: 262144,
-    medium_limit_bytes: 2097152,
-  },
-};
-#[cfg(not(target_arch = "x86_64"))]
-pub static PROFILE_X86_ZEN5: FamilyProfile = default_kind_profile();
-// Family Profile: X86_ZEN5C
-#[cfg(target_arch = "x86_64")]
-pub static PROFILE_X86_ZEN5C: FamilyProfile = FamilyProfile {
-  dispatch: DispatchTable {
-    boundaries: DEFAULT_BOUNDARIES,
-    xs: DEFAULT_XS,
-    s: DEFAULT_S,
-    m: SIMD_KERNEL,
-    l: AVX512_KERNEL,
-  },
-  streaming: StreamingTable {
-    stream: DEFAULT_STREAM_KERNEL,
-    bulk: AVX512_KERNEL,
-    bulk_sizeclass_threshold: THRESHOLD_AVX512,
-  },
-  parallel: parallel_costs!(
-    80 * 1024,
-    40,
-    0,
-    18 * 1024,
-    12 * 1024,
-    176 * 1024,
-    104 * 1024,
-    52 * 1024,
-    256 * 1024,
-    2 * 1024 * 1024,
-  ),
-  streaming_parallel: parallel_costs!(
-    80 * 1024,
-    40,
-    0,
-    18 * 1024,
-    12 * 1024,
-    176 * 1024,
-    104 * 1024,
-    52 * 1024,
-    256 * 1024,
-    2 * 1024 * 1024,
-  ),
-};
-#[cfg(not(target_arch = "x86_64"))]
-pub static PROFILE_X86_ZEN5C: FamilyProfile = default_kind_profile();
-
-// Family Profile: X86_INTEL_SPR
-#[cfg(target_arch = "x86_64")]
-pub static PROFILE_X86_INTEL_SPR: FamilyProfile = FamilyProfile {
+pub static PROFILE_X86_AVX512_AMX: FamilyProfile = FamilyProfile {
   dispatch: DispatchTable {
     boundaries: [64, 1024, 4096],
     xs: KernelId::X86Avx512,
@@ -609,53 +479,10 @@ pub static PROFILE_X86_INTEL_SPR: FamilyProfile = FamilyProfile {
   },
 };
 #[cfg(not(target_arch = "x86_64"))]
-pub static PROFILE_X86_INTEL_SPR: FamilyProfile = default_kind_profile();
-// Family Profile: X86_INTEL_GNR
+pub static PROFILE_X86_AVX512_AMX: FamilyProfile = default_kind_profile();
+// Family Profile: X86_AVX512
 #[cfg(target_arch = "x86_64")]
-pub static PROFILE_X86_INTEL_GNR: FamilyProfile = FamilyProfile {
-  dispatch: DispatchTable {
-    boundaries: DEFAULT_BOUNDARIES,
-    xs: DEFAULT_XS,
-    s: DEFAULT_S,
-    m: AVX512_KERNEL,
-    l: AVX512_KERNEL,
-  },
-  streaming: StreamingTable {
-    stream: DEFAULT_STREAM_KERNEL,
-    bulk: AVX512_KERNEL,
-    bulk_sizeclass_threshold: THRESHOLD_AVX512,
-  },
-  parallel: parallel_costs!(
-    96 * 1024,
-    48,
-    0,
-    20 * 1024,
-    14 * 1024,
-    208 * 1024,
-    120 * 1024,
-    60 * 1024,
-    256 * 1024,
-    2 * 1024 * 1024,
-  ),
-  streaming_parallel: parallel_costs!(
-    96 * 1024,
-    48,
-    0,
-    20 * 1024,
-    14 * 1024,
-    208 * 1024,
-    120 * 1024,
-    60 * 1024,
-    256 * 1024,
-    2 * 1024 * 1024,
-  ),
-};
-#[cfg(not(target_arch = "x86_64"))]
-pub static PROFILE_X86_INTEL_GNR: FamilyProfile = default_kind_profile();
-
-// Family Profile: X86_INTEL_ICL
-#[cfg(target_arch = "x86_64")]
-pub static PROFILE_X86_INTEL_ICL: FamilyProfile = FamilyProfile {
+pub static PROFILE_X86_AVX512: FamilyProfile = FamilyProfile {
   dispatch: DispatchTable {
     boundaries: [64, 1024, 4096],
     xs: KernelId::X86Avx512,
@@ -694,181 +521,11 @@ pub static PROFILE_X86_INTEL_ICL: FamilyProfile = FamilyProfile {
   },
 };
 #[cfg(not(target_arch = "x86_64"))]
-pub static PROFILE_X86_INTEL_ICL: FamilyProfile = default_kind_profile();
-// Family Profile: AARCH64_APPLE_M1M3
-#[cfg(target_arch = "aarch64")]
-pub static PROFILE_AARCH64_APPLE_M1M3: FamilyProfile = FamilyProfile {
-  dispatch: DispatchTable {
-    boundaries: [64, 4095, 4096],
-    xs: KernelId::Portable,
-    s: KernelId::Portable,
-    m: KernelId::Aarch64Neon,
-    l: KernelId::Aarch64Neon,
-  },
-  streaming: StreamingTable {
-    stream: KernelId::Portable,
-    bulk: KernelId::Aarch64Neon,
-    bulk_sizeclass_threshold: THRESHOLD_NEON,
-  },
-  parallel: ParallelTable {
-    min_bytes: 98304,
-    min_chunks: 96,
-    max_threads: 12,
-    spawn_cost_bytes: 24576,
-    merge_cost_bytes: 16384,
-    bytes_per_core_small: 19660,
-    bytes_per_core_medium: 107520,
-    bytes_per_core_large: 1025024,
-    small_limit_bytes: 262144,
-    medium_limit_bytes: 2097152,
-  },
-  streaming_parallel: ParallelTable {
-    min_bytes: 0,
-    min_chunks: 0,
-    max_threads: 1,
-    spawn_cost_bytes: 24576,
-    merge_cost_bytes: 16384,
-    bytes_per_core_small: 262144,
-    bytes_per_core_medium: 131072,
-    bytes_per_core_large: 65536,
-    small_limit_bytes: 262144,
-    medium_limit_bytes: 2097152,
-  },
-};
-#[cfg(not(target_arch = "aarch64"))]
-pub static PROFILE_AARCH64_APPLE_M1M3: FamilyProfile = default_kind_profile();
-// Family Profile: AARCH64_APPLE_M4
-#[cfg(target_arch = "aarch64")]
-pub static PROFILE_AARCH64_APPLE_M4: FamilyProfile = FamilyProfile {
-  dispatch: DispatchTable {
-    boundaries: DEFAULT_BOUNDARIES,
-    xs: KernelId::Portable,
-    s: KernelId::Portable,
-    m: KernelId::Aarch64Neon,
-    l: KernelId::Aarch64Neon,
-  },
-  streaming: StreamingTable {
-    stream: KernelId::Portable,
-    bulk: KernelId::Aarch64Neon,
-    bulk_sizeclass_threshold: THRESHOLD_NEON,
-  },
-  parallel: parallel_costs!(
-    64 * 1024,
-    32,
-    12,
-    8 * 1024,
-    8 * 1024,
-    96 * 1024,
-    80 * 1024,
-    48 * 1024,
-    256 * 1024,
-    2 * 1024 * 1024,
-  ),
-  streaming_parallel: parallel_costs!(
-    64 * 1024,
-    32,
-    12,
-    8 * 1024,
-    8 * 1024,
-    96 * 1024,
-    80 * 1024,
-    48 * 1024,
-    256 * 1024,
-    2 * 1024 * 1024,
-  ),
-};
-#[cfg(not(target_arch = "aarch64"))]
-pub static PROFILE_AARCH64_APPLE_M4: FamilyProfile = default_kind_profile();
+pub static PROFILE_X86_AVX512: FamilyProfile = default_kind_profile();
 
-// Family Profile: AARCH64_APPLE_M5
+// Family Profile: AARCH64_NEON
 #[cfg(target_arch = "aarch64")]
-pub static PROFILE_AARCH64_APPLE_M5: FamilyProfile = FamilyProfile {
-  dispatch: DispatchTable {
-    boundaries: DEFAULT_BOUNDARIES,
-    xs: KernelId::Portable,
-    s: KernelId::Portable,
-    m: KernelId::Aarch64Neon,
-    l: KernelId::Aarch64Neon,
-  },
-  streaming: StreamingTable {
-    stream: KernelId::Portable,
-    bulk: KernelId::Aarch64Neon,
-    bulk_sizeclass_threshold: THRESHOLD_NEON,
-  },
-  parallel: parallel_costs!(
-    64 * 1024,
-    32,
-    16,
-    8 * 1024,
-    8 * 1024,
-    96 * 1024,
-    72 * 1024,
-    40 * 1024,
-    256 * 1024,
-    2 * 1024 * 1024,
-  ),
-  streaming_parallel: parallel_costs!(
-    64 * 1024,
-    32,
-    16,
-    8 * 1024,
-    8 * 1024,
-    96 * 1024,
-    72 * 1024,
-    40 * 1024,
-    256 * 1024,
-    2 * 1024 * 1024,
-  ),
-};
-#[cfg(not(target_arch = "aarch64"))]
-pub static PROFILE_AARCH64_APPLE_M5: FamilyProfile = default_kind_profile();
-
-// Family Profile: AARCH64_GRAVITON2
-#[cfg(target_arch = "aarch64")]
-pub static PROFILE_AARCH64_GRAVITON2: FamilyProfile = FamilyProfile {
-  dispatch: DispatchTable {
-    boundaries: DEFAULT_BOUNDARIES,
-    xs: KernelId::Aarch64Neon,
-    s: KernelId::Aarch64Neon,
-    m: KernelId::Aarch64Neon,
-    l: KernelId::Aarch64Neon,
-  },
-  streaming: StreamingTable {
-    stream: KernelId::Portable,
-    bulk: KernelId::Aarch64Neon,
-    bulk_sizeclass_threshold: THRESHOLD_NEON,
-  },
-  parallel: parallel_costs!(
-    128 * 1024,
-    64,
-    16,
-    24 * 1024,
-    16 * 1024,
-    256 * 1024,
-    160 * 1024,
-    96 * 1024,
-    256 * 1024,
-    2 * 1024 * 1024,
-  ),
-  streaming_parallel: parallel_costs!(
-    128 * 1024,
-    64,
-    16,
-    24 * 1024,
-    16 * 1024,
-    256 * 1024,
-    160 * 1024,
-    96 * 1024,
-    256 * 1024,
-    2 * 1024 * 1024,
-  ),
-};
-#[cfg(not(target_arch = "aarch64"))]
-pub static PROFILE_AARCH64_GRAVITON2: FamilyProfile = default_kind_profile();
-
-// Family Profile: AARCH64_SERVER_NEON
-#[cfg(target_arch = "aarch64")]
-pub static PROFILE_AARCH64_SERVER_NEON: FamilyProfile = FamilyProfile {
+pub static PROFILE_AARCH64_NEON: FamilyProfile = FamilyProfile {
   dispatch: DispatchTable {
     boundaries: [64, 4095, 4096],
     // Graviton-class attribution shows that for short inputs (<4KiB), the
@@ -911,7 +568,7 @@ pub static PROFILE_AARCH64_SERVER_NEON: FamilyProfile = FamilyProfile {
   },
 };
 #[cfg(not(target_arch = "aarch64"))]
-pub static PROFILE_AARCH64_SERVER_NEON: FamilyProfile = default_kind_profile();
+pub static PROFILE_AARCH64_NEON: FamilyProfile = default_kind_profile();
 // Family Profile: Z13
 pub static PROFILE_Z13: FamilyProfile = FamilyProfile {
   dispatch: default_kind_table(),
@@ -1069,9 +726,9 @@ pub fn select_profile_for_caps(caps: Caps) -> &'static FamilyProfile {
   {
     if caps.has(x86::AVX512_READY) {
       return if has_any_amx(caps) {
-        &PROFILE_X86_INTEL_SPR
+        &PROFILE_X86_AVX512_AMX
       } else {
-        &PROFILE_X86_INTEL_ICL
+        &PROFILE_X86_AVX512
       };
     }
     &PROFILE_DEFAULT_KIND
@@ -1080,7 +737,7 @@ pub fn select_profile_for_caps(caps: Caps) -> &'static FamilyProfile {
   #[cfg(target_arch = "aarch64")]
   {
     if caps.has(aarch64::NEON) {
-      return &PROFILE_AARCH64_SERVER_NEON;
+      return &PROFILE_AARCH64_NEON;
     }
     &PROFILE_PORTABLE
   }
@@ -1139,50 +796,8 @@ pub fn select_profile_for_caps(caps: Caps) -> &'static FamilyProfile {
 
 #[inline]
 #[must_use]
-fn select_profile(kind: TuneKind) -> &'static FamilyProfile {
-  match kind {
-    TuneKind::Custom => &PROFILE_CUSTOM,
-    TuneKind::Default => &PROFILE_DEFAULT_KIND,
-    TuneKind::Portable => &PROFILE_PORTABLE,
-    TuneKind::Zen4 => &PROFILE_X86_ZEN4,
-    TuneKind::Zen5 => &PROFILE_X86_ZEN5,
-    TuneKind::Zen5c => &PROFILE_X86_ZEN5C,
-    TuneKind::IntelSpr => &PROFILE_X86_INTEL_SPR,
-    TuneKind::IntelGnr => &PROFILE_X86_INTEL_GNR,
-    TuneKind::IntelIcl => &PROFILE_X86_INTEL_ICL,
-    TuneKind::AppleM1M3 => &PROFILE_AARCH64_APPLE_M1M3,
-    TuneKind::AppleM4 => &PROFILE_AARCH64_APPLE_M4,
-    TuneKind::AppleM5 => &PROFILE_AARCH64_APPLE_M5,
-    TuneKind::Graviton2 => &PROFILE_AARCH64_GRAVITON2,
-    TuneKind::Graviton3
-    | TuneKind::Graviton4
-    | TuneKind::Graviton5
-    | TuneKind::NeoverseN2
-    | TuneKind::NeoverseN3
-    | TuneKind::NeoverseV3
-    | TuneKind::NvidiaGrace
-    | TuneKind::AmpereAltra
-    | TuneKind::Aarch64Pmull => &PROFILE_AARCH64_SERVER_NEON,
-    TuneKind::Z13 => &PROFILE_Z13,
-    TuneKind::Z14 => &PROFILE_Z14,
-    TuneKind::Z15 => &PROFILE_Z15,
-    TuneKind::Power7 => &PROFILE_POWER7,
-    TuneKind::Power8 => &PROFILE_POWER8,
-    TuneKind::Power9 => &PROFILE_POWER9,
-    TuneKind::Power10 => &PROFILE_POWER10,
-  }
-}
-
-#[inline]
-#[must_use]
 pub fn select_table_for_caps(caps: Caps) -> &'static DispatchTable {
   &select_profile_for_caps(caps).dispatch
-}
-
-#[inline]
-#[must_use]
-pub fn select_table(kind: TuneKind) -> &'static DispatchTable {
-  &select_profile(kind).dispatch
 }
 
 #[inline]
@@ -1193,30 +808,12 @@ pub fn select_streaming_table_for_caps(caps: Caps) -> &'static StreamingTable {
 
 #[inline]
 #[must_use]
-pub fn select_streaming_table(kind: TuneKind) -> &'static StreamingTable {
-  &select_profile(kind).streaming
-}
-
-#[inline]
-#[must_use]
 pub fn select_parallel_table_for_caps(caps: Caps) -> &'static ParallelTable {
   &select_profile_for_caps(caps).parallel
 }
 
 #[inline]
 #[must_use]
-pub fn select_parallel_table(kind: TuneKind) -> &'static ParallelTable {
-  &select_profile(kind).parallel
-}
-
-#[inline]
-#[must_use]
 pub fn select_streaming_parallel_table_for_caps(caps: Caps) -> &'static ParallelTable {
   &select_profile_for_caps(caps).streaming_parallel
-}
-
-#[inline]
-#[must_use]
-pub fn select_streaming_parallel_table(kind: TuneKind) -> &'static ParallelTable {
-  &select_profile(kind).streaming_parallel
 }

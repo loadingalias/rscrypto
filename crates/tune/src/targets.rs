@@ -10,11 +10,9 @@ use std::{
   path::{Path, PathBuf},
 };
 
-use platform::tune::TuneKind;
-
 #[cfg(feature = "std")]
 use crate::TuneResults;
-use crate::hash::is_blake3_tuning_algo;
+use crate::{TuneKind, hash::is_blake3_tuning_algo};
 
 const TARGET_MATRIX_MANIFEST: &str = include_str!("../../../config/target-matrix.toml");
 static TUNE_ARCHES: OnceLock<Vec<&'static str>> = OnceLock::new();

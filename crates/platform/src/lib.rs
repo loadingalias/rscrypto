@@ -75,8 +75,6 @@ pub mod caps;
 pub mod detect;
 pub mod dispatch;
 pub mod target_matrix;
-#[doc(hidden)]
-pub mod tune;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Public API - Types

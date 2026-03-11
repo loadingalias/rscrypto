@@ -1908,6 +1908,25 @@ impl ChunkState {
     if self.blocks_compressed == 0 { CHUNK_START } else { 0 }
   }
 
+  #[inline]
+  fn absorb_exact_one_chunk_generic(&mut self, input: &[u8]) {
+    debug_assert_eq!(self.blocks_compressed, 0);
+    debug_assert_eq!(self.block_len, 0);
+    debug_assert_eq!(input.len(), CHUNK_LEN);
+
+    kernels::chunk_compress_blocks_inline(
+      self.kernel_id,
+      &mut self.chaining_value,
+      self.chunk_counter,
+      self.flags,
+      &mut self.blocks_compressed,
+      &input[..CHUNK_LEN - BLOCK_LEN],
+    );
+    debug_assert_eq!(self.blocks_compressed, 15);
+    self.block.copy_from_slice(&input[CHUNK_LEN - BLOCK_LEN..]);
+    self.block_len = BLOCK_LEN as u8;
+  }
+
   #[cfg(target_arch = "x86_64")]
   #[inline]
   fn absorb_exact_one_chunk(&mut self, input: &[u8]) {
@@ -1929,17 +1948,20 @@ impl ChunkState {
     }
 
     if self.block_len == 0 && self.blocks_compressed == 0 {
-      #[cfg(target_arch = "x86_64")]
-      if input.len() == CHUNK_LEN
-        && matches!(
+      if input.len() == CHUNK_LEN {
+        #[cfg(target_arch = "x86_64")]
+        if matches!(
           self.kernel_id,
           kernels::Blake3KernelId::X86Ssse3
             | kernels::Blake3KernelId::X86Sse41
             | kernels::Blake3KernelId::X86Avx2
             | kernels::Blake3KernelId::X86Avx512
-        )
-      {
-        self.absorb_exact_one_chunk(input);
+        ) {
+          self.absorb_exact_one_chunk(input);
+          return;
+        }
+
+        self.absorb_exact_one_chunk_generic(input);
         return;
       }
 

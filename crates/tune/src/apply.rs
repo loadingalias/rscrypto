@@ -1,21 +1,7 @@
-//! Apply `legacy-tune` results into dispatch kernel tables.
+//! Apply offline tuning results to checked-in hash dispatch artifacts.
 //!
-//! This is the legacy pipeline step for offline dispatch-table generation.
-//! and generated artifacts are emitted for that platform's [`platform::tune::TuneKind`].
-//!
-//! # Output Format
-//!
-//! Generates a `KernelTable` entry for `crates/checksum/src/dispatch.rs`:
-//!
-//! ```text
-//! pub static PLATFORM_TABLE: KernelTable = KernelTable {
-//!   boundaries: [64, 256, 4096],
-//!   xs: KernelSet { crc16_ccitt: ..., crc64_xz: ..., ... },
-//!   s:  KernelSet { ... },
-//!   m:  KernelSet { ... },
-//!   l:  KernelSet { ... },
-//! };
-//! ```
+//! The active path rewrites the BLAKE3 capability-group profiles in
+//! `crates/hashes/src/crypto/blake3/dispatch_tables.rs`.
 
 use alloc::collections::BTreeSet;
 use std::{
@@ -24,9 +10,7 @@ use std::{
   path::{Path, PathBuf},
 };
 
-use platform::tune::TuneKind;
-
-use crate::{AlgorithmResult, TuneResults, hash::BLAKE3_TUNING_CORPUS};
+use crate::{AlgorithmResult, TuneKind, TuneResults, hash::BLAKE3_TUNING_CORPUS};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Size Class Boundaries
@@ -50,18 +34,14 @@ struct GeneratedArtifact {
 // Kernel Expression Mapping (tune results → dispatch.rs initializers)
 // ─────────────────────────────────────────────────────────────────────────────
 
-#[derive(Clone, Debug)]
-struct KernelChoice {
-  base: String,
-  streams: u8,
-}
-
+#[cfg(test)]
 #[derive(Clone, Debug)]
 struct KernelExpr {
   func: String,
   name: String,
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug)]
 enum CrcVariant {
   Crc16Ccitt,
@@ -73,6 +53,7 @@ enum CrcVariant {
   Crc64Nvme,
 }
 
+#[cfg(test)]
 impl CrcVariant {
   fn module_ident(self) -> &'static str {
     match self {
@@ -96,6 +77,7 @@ impl CrcVariant {
   }
 }
 
+#[cfg(test)]
 /// Stream count → array index mapping used by checksum kernel arrays.
 ///
 /// Arrays are ordered `[1-way, 2-way, 3/4-way, 7-way, 8-way]`, with duplicates
@@ -112,6 +94,7 @@ const fn stream_to_index(streams: u8) -> usize {
   }
 }
 
+#[cfg(test)]
 fn parse_arch_and_impl(base: &str) -> io::Result<(&str, &str)> {
   let (arch, imp) = base.split_once('/').ok_or_else(|| {
     io::Error::new(
@@ -122,6 +105,7 @@ fn parse_arch_and_impl(base: &str) -> io::Result<(&str, &str)> {
   Ok((arch, imp))
 }
 
+#[cfg(test)]
 fn canonical_kernel_name(base: &str, streams: u8) -> String {
   if base == "reference" || base.starts_with("reference/") {
     return "reference".to_string();
@@ -138,6 +122,7 @@ fn canonical_kernel_name(base: &str, streams: u8) -> String {
   format!("{base}-{streams}way")
 }
 
+#[cfg(test)]
 fn family_const_suffix(imp: &str) -> Option<&'static str> {
   if imp == "vpclmul-4x512" {
     return Some("VPCLMUL_4X512");
@@ -185,6 +170,7 @@ fn family_const_suffix(imp: &str) -> Option<&'static str> {
   None
 }
 
+#[cfg(test)]
 fn portable_kernel_expr(variant: CrcVariant, base: &str) -> io::Result<KernelExpr> {
   let func = match (variant, base) {
     (CrcVariant::Crc16Ccitt, "portable/slice4") => "crate::crc16::portable::crc16_ccitt_slice4",
@@ -229,6 +215,7 @@ fn portable_kernel_expr(variant: CrcVariant, base: &str) -> io::Result<KernelExp
   })
 }
 
+#[cfg(test)]
 fn kernel_expr(variant: CrcVariant, base: &str, streams: u8) -> io::Result<KernelExpr> {
   if base == "portable" || base.starts_with("portable/") {
     return portable_kernel_expr(variant, base);
@@ -286,446 +273,9 @@ fn kernel_expr(variant: CrcVariant, base: &str, streams: u8) -> io::Result<Kerne
   })
 }
 
-fn best_by_size_class(algo: &AlgorithmResult) -> HashMap<&'static str, KernelChoice> {
-  let mut best: HashMap<&'static str, KernelChoice> = HashMap::new();
-
-  for entry in &algo.size_class_best {
-    best.insert(
-      entry.class,
-      KernelChoice {
-        base: entry.kernel.clone(),
-        streams: entry.streams,
-      },
-    );
-  }
-
-  // Fallback (older results / partial runs).
-  if best.is_empty() {
-    for class in SIZE_CLASSES {
-      best.insert(
-        class,
-        KernelChoice {
-          base: algo.best_kernel.to_string(),
-          streams: algo.recommended_streams,
-        },
-      );
-    }
-  } else {
-    for class in SIZE_CLASSES {
-      best.entry(class).or_insert_with(|| KernelChoice {
-        base: algo.best_kernel.to_string(),
-        streams: algo.recommended_streams,
-      });
-    }
-  }
-
-  best
-}
-
-fn cap_terms_for_kernel(variant: CrcVariant, base: &str) -> io::Result<Vec<&'static str>> {
-  if base == "portable" || base.starts_with("portable/") {
-    return Ok(vec![]);
-  }
-  if base == "reference" || base.starts_with("reference/") {
-    return Ok(vec![]);
-  }
-
-  let (arch, imp) = parse_arch_and_impl(base)?;
-  let imp = imp.strip_suffix("-small").unwrap_or(imp);
-
-  let terms = match arch {
-    "x86_64" => {
-      if imp.starts_with("pclmul") {
-        vec!["platform::caps::x86::PCLMUL_READY"]
-      } else if imp.starts_with("vpclmul") {
-        vec!["platform::caps::x86::VPCLMUL_READY"]
-      } else if imp.starts_with("hwcrc") {
-        vec!["platform::caps::x86::CRC32C_READY"]
-      } else if imp.starts_with("fusion-sse") {
-        vec!["platform::caps::x86::CRC32C_READY", "platform::caps::x86::PCLMUL_READY"]
-      } else if imp.starts_with("fusion-avx512") {
-        vec![
-          "platform::caps::x86::CRC32C_READY",
-          "platform::caps::x86::PCLMUL_READY",
-          "platform::caps::x86::AVX512_READY",
-        ]
-      } else if imp.starts_with("fusion-vpclmul") {
-        vec![
-          "platform::caps::x86::CRC32C_READY",
-          "platform::caps::x86::VPCLMUL_READY",
-        ]
-      } else {
-        vec![]
-      }
-    }
-    "aarch64" => {
-      if imp.starts_with("hwcrc") {
-        vec!["platform::caps::aarch64::CRC_READY"]
-      } else if imp.starts_with("pmull-eor3") {
-        let mut t = vec!["platform::caps::aarch64::PMULL_EOR3_READY"];
-        if matches!(variant, CrcVariant::Crc32Ieee | CrcVariant::Crc32c) {
-          t.push("platform::caps::aarch64::CRC_READY");
-        }
-        t
-      } else if imp.starts_with("sve2-pmull") {
-        let mut t = vec![
-          "platform::caps::aarch64::SVE2_PMULL",
-          "platform::caps::aarch64::PMULL_READY",
-        ];
-        if matches!(variant, CrcVariant::Crc32Ieee | CrcVariant::Crc32c) {
-          t.push("platform::caps::aarch64::CRC_READY");
-        }
-        t
-      } else if imp.starts_with("pmull") {
-        let mut t = vec!["platform::caps::aarch64::PMULL_READY"];
-        if matches!(variant, CrcVariant::Crc32Ieee | CrcVariant::Crc32c) {
-          t.push("platform::caps::aarch64::CRC_READY");
-        }
-        t
-      } else {
-        vec![]
-      }
-    }
-    "power" => {
-      if imp.starts_with("vpmsum") {
-        vec!["platform::caps::power::VPMSUM_READY"]
-      } else {
-        vec![]
-      }
-    }
-    "s390x" => {
-      if imp.starts_with("vgfm") {
-        vec!["platform::caps::s390x::VECTOR"]
-      } else {
-        vec![]
-      }
-    }
-    "riscv64" => {
-      if imp.starts_with("zvbc") {
-        vec!["platform::caps::riscv::V", "platform::caps::riscv::ZVBC"]
-      } else if imp.starts_with("zbc") {
-        vec!["platform::caps::riscv::ZBC"]
-      } else {
-        vec![]
-      }
-    }
-    _ => vec![],
-  };
-
-  Ok(terms)
-}
-
-fn requires_expr_for_crc_table(
-  ccitt: &HashMap<&'static str, KernelChoice>,
-  ibm: &HashMap<&'static str, KernelChoice>,
-  openpgp: &HashMap<&'static str, KernelChoice>,
-  crc32: &HashMap<&'static str, KernelChoice>,
-  crc32c: &HashMap<&'static str, KernelChoice>,
-  xz: &HashMap<&'static str, KernelChoice>,
-  nvme: &HashMap<&'static str, KernelChoice>,
-) -> io::Result<String> {
-  let mut terms: BTreeSet<&'static str> = BTreeSet::new();
-
-  let add = |variant: CrcVariant, choice: &KernelChoice, terms: &mut BTreeSet<&'static str>| -> io::Result<()> {
-    for t in cap_terms_for_kernel(variant, &choice.base)? {
-      terms.insert(t);
-    }
-    Ok(())
-  };
-
-  for class in SIZE_CLASSES {
-    add(
-      CrcVariant::Crc16Ccitt,
-      ccitt.get(class).expect("missing class"),
-      &mut terms,
-    )?;
-    add(CrcVariant::Crc16Ibm, ibm.get(class).expect("missing class"), &mut terms)?;
-    add(
-      CrcVariant::Crc24OpenPgp,
-      openpgp.get(class).expect("missing class"),
-      &mut terms,
-    )?;
-    add(
-      CrcVariant::Crc32Ieee,
-      crc32.get(class).expect("missing class"),
-      &mut terms,
-    )?;
-    add(
-      CrcVariant::Crc32c,
-      crc32c.get(class).expect("missing class"),
-      &mut terms,
-    )?;
-    add(CrcVariant::Crc64Xz, xz.get(class).expect("missing class"), &mut terms)?;
-    add(
-      CrcVariant::Crc64Nvme,
-      nvme.get(class).expect("missing class"),
-      &mut terms,
-    )?;
-  }
-
-  if terms.is_empty() {
-    return Ok("Caps::NONE".to_string());
-  }
-
-  let mut iter = terms.into_iter();
-  let first = iter.next().unwrap();
-  let mut expr = first.to_string();
-  for t in iter {
-    expr.push_str(".union(");
-    expr.push_str(t);
-    expr.push(')');
-  }
-  Ok(expr)
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
-// Dispatch Table Generation
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Algorithm set for building a kernel table.
-struct AlgoSet<'a> {
-  crc16_ccitt: &'a AlgorithmResult,
-  crc16_ibm: &'a AlgorithmResult,
-  crc24_openpgp: &'a AlgorithmResult,
-  crc32_ieee: &'a AlgorithmResult,
-  crc32c: &'a AlgorithmResult,
-  crc64_xz: &'a AlgorithmResult,
-  crc64_nvme: &'a AlgorithmResult,
-}
-
-struct CrcBestMaps<'a> {
-  ccitt: &'a HashMap<&'static str, KernelChoice>,
-  ibm: &'a HashMap<&'static str, KernelChoice>,
-  openpgp: &'a HashMap<&'static str, KernelChoice>,
-  crc32: &'a HashMap<&'static str, KernelChoice>,
-  crc32c: &'a HashMap<&'static str, KernelChoice>,
-  xz: &'a HashMap<&'static str, KernelChoice>,
-  nvme: &'a HashMap<&'static str, KernelChoice>,
-}
-
-const CRC_ALGO_NAMES: &[&str] = &[
-  "crc16-ccitt",
-  "crc16-ibm",
-  "crc24-openpgp",
-  "crc32-ieee",
-  "crc32c",
-  "crc64-xz",
-  "crc64-nvme",
-];
-
-fn algos(results: &TuneResults) -> Result<AlgoSet<'_>, io::Error> {
-  fn find<'a>(results: &'a TuneResults, name: &str) -> Option<&'a AlgorithmResult> {
-    results.algorithms.iter().find(|a| a.name == name)
-  }
-
-  let crc16_ccitt = find(results, "crc16-ccitt").ok_or_else(|| missing("crc16-ccitt"))?;
-  let crc16_ibm = find(results, "crc16-ibm").ok_or_else(|| missing("crc16-ibm"))?;
-  let crc24_openpgp = find(results, "crc24-openpgp").ok_or_else(|| missing("crc24-openpgp"))?;
-  let crc32_ieee = find(results, "crc32-ieee").ok_or_else(|| missing("crc32-ieee"))?;
-  let crc32c = find(results, "crc32c").ok_or_else(|| missing("crc32c"))?;
-  let crc64_xz = find(results, "crc64-xz").ok_or_else(|| missing("crc64-xz"))?;
-  let crc64_nvme = find(results, "crc64-nvme").ok_or_else(|| missing("crc64-nvme"))?;
-
-  Ok(AlgoSet {
-    crc16_ccitt,
-    crc16_ibm,
-    crc24_openpgp,
-    crc32_ieee,
-    crc32c,
-    crc64_xz,
-    crc64_nvme,
-  })
-}
-
-fn missing(name: &str) -> io::Error {
-  io::Error::new(io::ErrorKind::InvalidData, format!("missing algorithm result: {name}"))
-}
-
-fn checksum_table_ident(tune_kind: TuneKind) -> Option<&'static str> {
-  // Keep this in sync with `checksum::dispatch::{exact_match,family_match,capability_match}`.
-  Some(match tune_kind {
-    TuneKind::Portable => "PORTABLE_TABLE",
-
-    // aarch64 exact + family matches
-    TuneKind::AppleM1M3 | TuneKind::AppleM4 | TuneKind::AppleM5 => "APPLE_M1M3_TABLE",
-    TuneKind::Graviton2 => "GRAVITON2_TABLE",
-    TuneKind::Graviton3
-    | TuneKind::Graviton4
-    | TuneKind::Graviton5
-    | TuneKind::NeoverseN2
-    | TuneKind::NeoverseN3
-    | TuneKind::NeoverseV3
-    | TuneKind::NvidiaGrace
-    | TuneKind::AmpereAltra => "GRAVITON3_TABLE",
-    TuneKind::Aarch64Pmull => "GENERIC_ARM_PMULL_TABLE",
-
-    // x86_64 exact + family matches
-    TuneKind::Zen4 => "ZEN4_TABLE",
-    TuneKind::Zen5 | TuneKind::Zen5c => "ZEN5_TABLE",
-    TuneKind::IntelSpr | TuneKind::IntelGnr => "INTEL_SPR_TABLE",
-    TuneKind::IntelIcl => "GENERIC_X86_VPCLMUL_TABLE",
-
-    // s390x exact matches
-    TuneKind::Z13 => "S390X_Z13_TABLE",
-    TuneKind::Z14 => "S390X_Z14_TABLE",
-    TuneKind::Z15 => "S390X_Z15_TABLE",
-
-    // power exact matches (Power7 maps to the conservative POWER8 table)
-    TuneKind::Power7 | TuneKind::Power8 => "POWER8_TABLE",
-    TuneKind::Power9 => "POWER9_TABLE",
-    TuneKind::Power10 => "POWER10_TABLE",
-
-    // Default/Custom are policy-driven and do not have a unique checksum table.
-    TuneKind::Custom | TuneKind::Default => return None,
-  })
-}
-
-fn should_apply_checksum_dispatch(results: &TuneResults) -> bool {
-  results.algorithms.iter().any(|a| CRC_ALGO_NAMES.contains(&a.name))
-}
-
-fn generated_dir(repo_root: &Path) -> PathBuf {
-  repo_root.join("crates/tune/generated")
-}
-
 fn blake3_dispatch_tables_path(repo_root: &Path) -> PathBuf {
   repo_root.join("crates/hashes/src/crypto/blake3/dispatch_tables.rs")
-}
-
-fn generated_apply_path(repo_root: &Path, family: &str, name: &str, tune_kind: TuneKind) -> PathBuf {
-  generated_dir(repo_root)
-    .join(family)
-    .join(name)
-    .join(format!("{tune_kind:?}.rs").to_lowercase())
-}
-
-fn apply_checksum_dispatch_tables(repo_root: &Path, results: &TuneResults) -> io::Result<Vec<GeneratedArtifact>> {
-  let tune_kind = results.platform.tune_kind;
-
-  let missing: Vec<&'static str> = CRC_ALGO_NAMES
-    .iter()
-    .copied()
-    .filter(|name| !results.algorithms.iter().any(|a| a.name == *name))
-    .collect();
-  if !missing.is_empty() {
-    return Err(io::Error::new(
-      io::ErrorKind::InvalidData,
-      format!("incomplete CRC tuning results; missing: {}", missing.join(", ")),
-    ));
-  }
-
-  let a = algos(results)?;
-  let table_code = generate_kernel_table(tune_kind, &a)?;
-  let table_ident = checksum_table_ident(tune_kind).ok_or_else(|| {
-    io::Error::new(
-      io::ErrorKind::InvalidData,
-      format!("no checksum dispatch table identifier known for TuneKind::{tune_kind:?}"),
-    )
-  })?;
-
-  let output_path = generated_apply_path(repo_root, "checksum", table_ident, tune_kind);
-  Ok(vec![GeneratedArtifact {
-    path: output_path,
-    contents: table_code,
-  }])
-}
-
-/// Generate a KernelSet entry for one size class.
-fn generate_kernel_set(size_class: &'static str, best: &CrcBestMaps<'_>, indent: &str) -> io::Result<String> {
-  let ccitt_k = best.ccitt.get(size_class).ok_or_else(|| missing("crc16-ccitt"))?;
-  let ibm_k = best.ibm.get(size_class).ok_or_else(|| missing("crc16-ibm"))?;
-  let openpgp_k = best.openpgp.get(size_class).ok_or_else(|| missing("crc24-openpgp"))?;
-  let crc32_k = best.crc32.get(size_class).ok_or_else(|| missing("crc32-ieee"))?;
-  let crc32c_k = best.crc32c.get(size_class).ok_or_else(|| missing("crc32c"))?;
-  let xz_k = best.xz.get(size_class).ok_or_else(|| missing("crc64-xz"))?;
-  let nvme_k = best.nvme.get(size_class).ok_or_else(|| missing("crc64-nvme"))?;
-
-  let ccitt_e = kernel_expr(CrcVariant::Crc16Ccitt, &ccitt_k.base, ccitt_k.streams)?;
-  let ibm_e = kernel_expr(CrcVariant::Crc16Ibm, &ibm_k.base, ibm_k.streams)?;
-  let openpgp_e = kernel_expr(CrcVariant::Crc24OpenPgp, &openpgp_k.base, openpgp_k.streams)?;
-  let crc32_e = kernel_expr(CrcVariant::Crc32Ieee, &crc32_k.base, crc32_k.streams)?;
-  let crc32c_e = kernel_expr(CrcVariant::Crc32c, &crc32c_k.base, crc32c_k.streams)?;
-  let xz_e = kernel_expr(CrcVariant::Crc64Xz, &xz_k.base, xz_k.streams)?;
-  let nvme_e = kernel_expr(CrcVariant::Crc64Nvme, &nvme_k.base, nvme_k.streams)?;
-
-  Ok(format!(
-    "{indent}KernelSet {{\n{indent}  crc16_ccitt: {ccitt_func},\n{indent}  crc16_ccitt_name: {ccitt_name},\n{indent}  \
-     crc16_ibm: {ibm_func},\n{indent}  crc16_ibm_name: {ibm_name},\n{indent}  crc24_openpgp: \
-     {openpgp_func},\n{indent}  crc24_openpgp_name: {openpgp_name},\n{indent}  crc32_ieee: {crc32_func},\n{indent}  \
-     crc32_ieee_name: {crc32_name},\n{indent}  crc32c: {crc32c_func},\n{indent}  crc32c_name: \
-     {crc32c_name},\n{indent}  crc64_xz: {xz_func},\n{indent}  crc64_xz_name: {xz_name},\n{indent}  crc64_nvme: \
-     {nvme_func},\n{indent}  crc64_nvme_name: {nvme_name},\n{indent}}}",
-    ccitt_func = ccitt_e.func,
-    ccitt_name = ccitt_e.name,
-    ibm_func = ibm_e.func,
-    ibm_name = ibm_e.name,
-    openpgp_func = openpgp_e.func,
-    openpgp_name = openpgp_e.name,
-    crc32_func = crc32_e.func,
-    crc32_name = crc32_e.name,
-    crc32c_func = crc32c_e.func,
-    crc32c_name = crc32c_e.name,
-    xz_func = xz_e.func,
-    xz_name = xz_e.name,
-    nvme_func = nvme_e.func,
-    nvme_name = nvme_e.name,
-  ))
-}
-
-/// Generate a complete KernelTable entry.
-fn generate_kernel_table(tune_kind: TuneKind, algos: &AlgoSet<'_>) -> io::Result<String> {
-  let ccitt = best_by_size_class(algos.crc16_ccitt);
-  let ibm = best_by_size_class(algos.crc16_ibm);
-  let openpgp = best_by_size_class(algos.crc24_openpgp);
-  let crc32 = best_by_size_class(algos.crc32_ieee);
-  let crc32c = best_by_size_class(algos.crc32c);
-  let xz = best_by_size_class(algos.crc64_xz);
-  let nvme = best_by_size_class(algos.crc64_nvme);
-  let best = CrcBestMaps {
-    ccitt: &ccitt,
-    ibm: &ibm,
-    openpgp: &openpgp,
-    crc32: &crc32,
-    crc32c: &crc32c,
-    xz: &xz,
-    nvme: &nvme,
-  };
-
-  let kind_name = format!("{tune_kind:?}");
-  let table_name = checksum_table_ident(tune_kind).ok_or_else(|| {
-    io::Error::new(
-      io::ErrorKind::InvalidData,
-      format!("no checksum dispatch table identifier known for TuneKind::{kind_name}"),
-    )
-  })?;
-
-  let requires = requires_expr_for_crc_table(&ccitt, &ibm, &openpgp, &crc32, &crc32c, &xz, &nvme)?;
-
-  let xs_set = generate_kernel_set("xs", &best, "    ")?;
-  let s_set = generate_kernel_set("s", &best, "    ")?;
-  let m_set = generate_kernel_set("m", &best, "    ")?;
-  let l_set = generate_kernel_set("l", &best, "    ")?;
-
-  Ok(format!(
-    "  // ───────────────────────────────────────────────────────────────────────────
-  // {kind_name} Table
-  //
-  // Generated by legacy-tune. Do not edit manually.
-  // ───────────────────────────────────────────────────────────────────────────
-  pub static {table_name}: KernelTable = KernelTable {{
-    requires: {requires},
-    boundaries: [{SIZE_CLASS_XS_MAX}, {SIZE_CLASS_S_MAX}, {SIZE_CLASS_M_MAX}],
-
-    xs: {xs_set},
-
-    s: {s_set},
-
-    m: {m_set},
-
-    l: {l_set},
-  }};
-"
-  ))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1575,57 +1125,21 @@ fn blake3_family_spec(tune_kind: TuneKind) -> Blake3FamilySpec {
       profile_ident: "PROFILE_PORTABLE",
       cfg_expr: None,
     },
-    TuneKind::Zen4 => Blake3FamilySpec {
-      marker: "// Family Profile: X86_ZEN4",
-      profile_ident: "PROFILE_X86_ZEN4",
-      cfg_expr: Some("target_arch = \"x86_64\""),
-    },
-    TuneKind::Zen5 => Blake3FamilySpec {
-      marker: "// Family Profile: X86_ZEN5",
-      profile_ident: "PROFILE_X86_ZEN5",
-      cfg_expr: Some("target_arch = \"x86_64\""),
-    },
-    TuneKind::Zen5c => Blake3FamilySpec {
-      marker: "// Family Profile: X86_ZEN5C",
-      profile_ident: "PROFILE_X86_ZEN5C",
+    TuneKind::Zen4 | TuneKind::Zen5 | TuneKind::Zen5c | TuneKind::IntelGnr | TuneKind::IntelIcl => Blake3FamilySpec {
+      marker: "// Family Profile: X86_AVX512",
+      profile_ident: "PROFILE_X86_AVX512",
       cfg_expr: Some("target_arch = \"x86_64\""),
     },
     TuneKind::IntelSpr => Blake3FamilySpec {
-      marker: "// Family Profile: X86_INTEL_SPR",
-      profile_ident: "PROFILE_X86_INTEL_SPR",
+      marker: "// Family Profile: X86_AVX512_AMX",
+      profile_ident: "PROFILE_X86_AVX512_AMX",
       cfg_expr: Some("target_arch = \"x86_64\""),
     },
-    TuneKind::IntelGnr => Blake3FamilySpec {
-      marker: "// Family Profile: X86_INTEL_GNR",
-      profile_ident: "PROFILE_X86_INTEL_GNR",
-      cfg_expr: Some("target_arch = \"x86_64\""),
-    },
-    TuneKind::IntelIcl => Blake3FamilySpec {
-      marker: "// Family Profile: X86_INTEL_ICL",
-      profile_ident: "PROFILE_X86_INTEL_ICL",
-      cfg_expr: Some("target_arch = \"x86_64\""),
-    },
-    TuneKind::AppleM1M3 => Blake3FamilySpec {
-      marker: "// Family Profile: AARCH64_APPLE_M1M3",
-      profile_ident: "PROFILE_AARCH64_APPLE_M1M3",
-      cfg_expr: Some("target_arch = \"aarch64\""),
-    },
-    TuneKind::AppleM4 => Blake3FamilySpec {
-      marker: "// Family Profile: AARCH64_APPLE_M4",
-      profile_ident: "PROFILE_AARCH64_APPLE_M4",
-      cfg_expr: Some("target_arch = \"aarch64\""),
-    },
-    TuneKind::AppleM5 => Blake3FamilySpec {
-      marker: "// Family Profile: AARCH64_APPLE_M5",
-      profile_ident: "PROFILE_AARCH64_APPLE_M5",
-      cfg_expr: Some("target_arch = \"aarch64\""),
-    },
-    TuneKind::Graviton2 => Blake3FamilySpec {
-      marker: "// Family Profile: AARCH64_GRAVITON2",
-      profile_ident: "PROFILE_AARCH64_GRAVITON2",
-      cfg_expr: Some("target_arch = \"aarch64\""),
-    },
-    TuneKind::Graviton3
+    TuneKind::AppleM1M3
+    | TuneKind::AppleM4
+    | TuneKind::AppleM5
+    | TuneKind::Graviton2
+    | TuneKind::Graviton3
     | TuneKind::Graviton4
     | TuneKind::Graviton5
     | TuneKind::NeoverseN2
@@ -1634,8 +1148,8 @@ fn blake3_family_spec(tune_kind: TuneKind) -> Blake3FamilySpec {
     | TuneKind::NvidiaGrace
     | TuneKind::AmpereAltra
     | TuneKind::Aarch64Pmull => Blake3FamilySpec {
-      marker: "// Family Profile: AARCH64_SERVER_NEON",
-      profile_ident: "PROFILE_AARCH64_SERVER_NEON",
+      marker: "// Family Profile: AARCH64_NEON",
+      profile_ident: "PROFILE_AARCH64_NEON",
       cfg_expr: Some("target_arch = \"aarch64\""),
     },
     TuneKind::Z13 => Blake3FamilySpec {
@@ -1818,11 +1332,16 @@ fn replace_marked_section(source: &str, marker: &str, replacement: &str, next_ma
   }
   if end == source.len() {
     for selector_anchor in [
+      "\n#[inline]\n#[must_use]\npub fn select_profile_for_caps",
       "\n#[inline]\n#[must_use]\nfn select_profile",
       "\n#[inline]\n#[must_use]\npub fn select_profile",
+      "\n#[inline]\n#[must_use]\npub fn select_table_for_caps",
       "\n#[inline]\n#[must_use]\npub fn select_table",
+      "\n#[inline]\n#[must_use]\npub fn select_streaming_table_for_caps",
       "\n#[inline]\n#[must_use]\npub fn select_streaming_table",
+      "\n#[inline]\n#[must_use]\npub fn select_parallel_table_for_caps",
       "\n#[inline]\n#[must_use]\npub fn select_parallel_table",
+      "\n#[inline]\n#[must_use]\npub fn select_streaming_parallel_table_for_caps",
       "\n#[inline]\n#[must_use]\npub fn select_streaming_parallel_table",
     ] {
       if let Some(rel) = after_start.find(selector_anchor) {
@@ -1922,21 +1441,13 @@ fn apply_hash_dispatch_tables(repo_root: &Path, results: &TuneResults) -> io::Re
       let spec = blake3_family_spec(tune_kind);
       let path = blake3_dispatch_tables_path(repo_root);
       let source = fs::read_to_string(&path)?;
-      let next_markers: [&str; 22] = [
+      let next_markers: [&str; 14] = [
         "// Family Profile: CUSTOM",
         "// Family Profile: DEFAULT_KIND",
         "// Family Profile: PORTABLE",
-        "// Family Profile: X86_ZEN4",
-        "// Family Profile: X86_ZEN5",
-        "// Family Profile: X86_ZEN5C",
-        "// Family Profile: X86_INTEL_SPR",
-        "// Family Profile: X86_INTEL_GNR",
-        "// Family Profile: X86_INTEL_ICL",
-        "// Family Profile: AARCH64_APPLE_M1M3",
-        "// Family Profile: AARCH64_APPLE_M4",
-        "// Family Profile: AARCH64_APPLE_M5",
-        "// Family Profile: AARCH64_GRAVITON2",
-        "// Family Profile: AARCH64_SERVER_NEON",
+        "// Family Profile: X86_AVX512",
+        "// Family Profile: X86_AVX512_AMX",
+        "// Family Profile: AARCH64_NEON",
         "// Family Profile: Z13",
         "// Family Profile: Z14",
         "// Family Profile: Z15",
@@ -2008,90 +1519,12 @@ fn validate_apply_input(results: &TuneResults) -> io::Result<()> {
   Ok(())
 }
 
-/// Apply tuning results to generate dispatch table entries.
-///
-/// This generates a `KernelTable` entry for the current platform and
-/// either updates `dispatch.rs` or prints the generated code for manual
-/// insertion.
+/// Apply offline tuning results to checked-in runtime dispatch sources.
 pub fn apply_tuned_defaults(repo_root: &Path, results: &TuneResults) -> io::Result<()> {
   validate_apply_input(results)?;
 
-  let mut artifacts = Vec::new();
-  if should_apply_checksum_dispatch(results) {
-    artifacts.extend(apply_checksum_dispatch_tables(repo_root, results)?);
-  }
-
-  artifacts.extend(apply_hash_dispatch_tables(repo_root, results)?);
+  let artifacts = apply_hash_dispatch_tables(repo_root, results)?;
   write_artifacts_transactional(&artifacts)?;
-
-  Ok(())
-}
-
-/// Validate that tuning results can be safely applied on this host.
-///
-/// This is intended as a fast, "pre-flight" check for `--apply` that catches:
-/// - Unknown/unmappable kernel families
-/// - Missing per-size-class winners
-/// - Kernel names that don't exist in the checksum bench registry for this host
-pub fn self_check(results: &TuneResults) -> io::Result<()> {
-  if !should_apply_checksum_dispatch(results) {
-    return Ok(());
-  }
-
-  let a = algos(results)?;
-
-  // Ensure we can generate the table for this TuneKind.
-  let _ = generate_kernel_table(results.platform.tune_kind, &a)?;
-
-  let ccitt = best_by_size_class(a.crc16_ccitt);
-  let ibm = best_by_size_class(a.crc16_ibm);
-  let openpgp = best_by_size_class(a.crc24_openpgp);
-  let crc32 = best_by_size_class(a.crc32_ieee);
-  let crc32c = best_by_size_class(a.crc32c);
-  let xz = best_by_size_class(a.crc64_xz);
-  let nvme = best_by_size_class(a.crc64_nvme);
-
-  let crc16_avail = checksum::bench::available_crc16_kernels();
-  let crc24_avail = checksum::bench::available_crc24_kernels();
-  let crc32_ieee_avail = checksum::bench::available_crc32_ieee_kernels();
-  let crc32c_avail = checksum::bench::available_crc32c_kernels();
-  let crc64_avail = checksum::bench::available_crc64_kernels();
-
-  fn ensure_in(avail: &[&'static str], name: &str, variant: CrcVariant) -> io::Result<()> {
-    if avail.contains(&name) {
-      return Ok(());
-    }
-    Err(io::Error::new(
-      io::ErrorKind::InvalidData,
-      format!("kernel not available on this host for {variant:?}: {name}"),
-    ))
-  }
-
-  for class in SIZE_CLASSES {
-    let ccitt_e = kernel_expr(CrcVariant::Crc16Ccitt, &ccitt[class].base, ccitt[class].streams)?;
-    let ibm_e = kernel_expr(CrcVariant::Crc16Ibm, &ibm[class].base, ibm[class].streams)?;
-    let openpgp_e = kernel_expr(CrcVariant::Crc24OpenPgp, &openpgp[class].base, openpgp[class].streams)?;
-    let crc32_e = kernel_expr(CrcVariant::Crc32Ieee, &crc32[class].base, crc32[class].streams)?;
-    let crc32c_e = kernel_expr(CrcVariant::Crc32c, &crc32c[class].base, crc32c[class].streams)?;
-    let xz_e = kernel_expr(CrcVariant::Crc64Xz, &xz[class].base, xz[class].streams)?;
-    let nvme_e = kernel_expr(CrcVariant::Crc64Nvme, &nvme[class].base, nvme[class].streams)?;
-
-    let ccitt_name = ccitt_e.name.trim_matches('"');
-    let ibm_name = ibm_e.name.trim_matches('"');
-    let openpgp_name = openpgp_e.name.trim_matches('"');
-    let crc32_name = crc32_e.name.trim_matches('"');
-    let crc32c_name = crc32c_e.name.trim_matches('"');
-    let xz_name = xz_e.name.trim_matches('"');
-    let nvme_name = nvme_e.name.trim_matches('"');
-
-    ensure_in(&crc16_avail, ccitt_name, CrcVariant::Crc16Ccitt)?;
-    ensure_in(&crc16_avail, ibm_name, CrcVariant::Crc16Ibm)?;
-    ensure_in(&crc24_avail, openpgp_name, CrcVariant::Crc24OpenPgp)?;
-    ensure_in(&crc32_ieee_avail, crc32_name, CrcVariant::Crc32Ieee)?;
-    ensure_in(&crc32c_avail, crc32c_name, CrcVariant::Crc32c)?;
-    ensure_in(&crc64_avail, xz_name, CrcVariant::Crc64Xz)?;
-    ensure_in(&crc64_avail, nvme_name, CrcVariant::Crc64Nvme)?;
-  }
 
   Ok(())
 }
@@ -2100,16 +1533,14 @@ pub fn self_check(results: &TuneResults) -> io::Result<()> {
 mod tests {
   use std::{
     fs,
-    path::{Path, PathBuf},
+    path::PathBuf,
     time::{SystemTime, UNIX_EPOCH},
   };
-
-  use platform::tune::TuneKind;
 
   use super::{
     CrcVariant, generate_blake3_family_profile, generate_blake3_streaming_table, generate_hash_table, kernel_expr,
   };
-  use crate::{AlgorithmResult, PlatformInfo, SizeClassBest, TuneResults, analysis::AnalysisResult};
+  use crate::{AlgorithmResult, PlatformInfo, SizeClassBest, TuneKind, TuneResults, analysis::AnalysisResult};
 
   fn temp_repo_root(tag: &str) -> PathBuf {
     let nanos = SystemTime::now()
@@ -2254,9 +1685,9 @@ mod tests {
       &[&stream4k],
       &results,
     );
-    assert!(code.contains("// Family Profile: X86_ZEN4"));
+    assert!(code.contains("// Family Profile: X86_AVX512"));
     assert!(code.contains("#[cfg(target_arch = \"x86_64\")]"));
-    assert!(code.contains("pub static PROFILE_X86_ZEN4: FamilyProfile"));
+    assert!(code.contains("pub static PROFILE_X86_AVX512: FamilyProfile"));
     assert!(code.contains("spawn_cost_bytes: 12288"));
     assert!(code.contains("parallel: ParallelTable"));
     assert!(code.contains("streaming_parallel: ParallelTable"));
@@ -2593,61 +2024,6 @@ mod tests {
   }
 
   #[test]
-  fn apply_skips_checksum_dispatch_when_no_crc_results_exist() {
-    let results = TuneResults {
-      platform: PlatformInfo {
-        arch: "x86_64",
-        os: "linux",
-        caps: platform::Caps::NONE,
-        tune_kind: TuneKind::Zen4,
-        description: String::new(),
-      },
-      algorithms: vec![AlgorithmResult {
-        name: "blake3-chunk",
-        env_prefix: "RSCRYPTO_BENCH_BLAKE3_CHUNK",
-        best_kernel: "portable",
-        recommended_streams: 1,
-        peak_throughput_gib_s: 0.0,
-        size_class_best: vec![],
-        thresholds: vec![],
-        analysis: AnalysisResult::default(),
-      }],
-      timestamp: String::new(),
-    };
-
-    assert!(!super::should_apply_checksum_dispatch(&results));
-  }
-
-  #[test]
-  fn apply_errors_on_partial_crc_results() {
-    let results = TuneResults {
-      platform: PlatformInfo {
-        arch: "x86_64",
-        os: "linux",
-        caps: platform::Caps::NONE,
-        tune_kind: TuneKind::Zen4,
-        description: String::new(),
-      },
-      algorithms: vec![AlgorithmResult {
-        name: "crc32c",
-        env_prefix: "RSCRYPTO_BENCH_CRC32C",
-        best_kernel: "portable",
-        recommended_streams: 1,
-        peak_throughput_gib_s: 0.0,
-        size_class_best: vec![],
-        thresholds: vec![],
-        analysis: AnalysisResult::default(),
-      }],
-      timestamp: String::new(),
-    };
-
-    assert!(super::should_apply_checksum_dispatch(&results));
-    let err = super::apply_checksum_dispatch_tables(Path::new("."), &results).unwrap_err();
-    assert!(err.to_string().contains("incomplete CRC tuning results"));
-    assert!(err.to_string().contains("crc16-ccitt"));
-  }
-
-  #[test]
   fn checksum_kernel_expr_handles_non_x86_stream_kernels() {
     let e = kernel_expr(CrcVariant::Crc64Xz, "power/vpmsum", 8).unwrap();
     assert_eq!(e.func, "crc64_k::XZ_VPMSUM[4]");
@@ -2664,6 +2040,14 @@ mod tests {
 
   #[test]
   fn checksum_kernel_expr_handles_versioned_kernels_and_small_kernels() {
+    let e = kernel_expr(CrcVariant::Crc16Ccitt, "portable/slice4", 1).unwrap();
+    assert_eq!(e.func, "crate::crc16::portable::crc16_ccitt_slice4");
+    assert_eq!(e.name, "\"portable/slice4\"");
+
+    let e = kernel_expr(CrcVariant::Crc16Ibm, "portable", 1).unwrap();
+    assert_eq!(e.func, "crate::crc16::portable::crc16_ibm_slice8");
+    assert_eq!(e.name, "\"portable/slice8\"");
+
     let e = kernel_expr(CrcVariant::Crc32c, "x86_64/fusion-avx512-v4s3x3", 8).unwrap();
     assert_eq!(e.func, "crc32_k::CRC32C_FUSION_AVX512[4]");
     assert_eq!(e.name, "\"x86_64/fusion-avx512-v4s3x3-8way\"");
@@ -2686,9 +2070,9 @@ mod tests {
       &dispatch_path,
       "\
 // prelude
-// Family Profile: X86_ZEN4
+// Family Profile: X86_AVX512
 OLD_PROFILE_BODY
-// Family Profile: X86_ZEN5
+// Family Profile: X86_AVX512_AMX
 KEEP_NEXT_SECTION
 #[inline]
 #[must_use]
@@ -2766,14 +2150,11 @@ pub fn select_profile() {}
 
     let updated = fs::read_to_string(&dispatch_path).expect("read updated dispatch file");
     assert!(!updated.contains("OLD_PROFILE_BODY"));
-    assert!(updated.contains("// Family Profile: X86_ZEN4"));
-    assert!(updated.contains("pub static PROFILE_X86_ZEN4: FamilyProfile"));
+    assert!(updated.contains("// Family Profile: X86_AVX512"));
+    assert!(updated.contains("pub static PROFILE_X86_AVX512: FamilyProfile"));
     assert!(updated.contains("bulk_sizeclass_threshold: THRESHOLD_AVX512"));
-    assert!(updated.contains("// Family Profile: X86_ZEN5"));
+    assert!(updated.contains("// Family Profile: X86_AVX512_AMX"));
     assert!(updated.contains("KEEP_NEXT_SECTION"));
-
-    let old_generated_path = repo_root.join("crates/tune/generated/hashes/PROFILE_X86_ZEN4/zen4.rs");
-    assert!(!old_generated_path.exists());
 
     let _ = fs::remove_dir_all(&repo_root);
   }
@@ -2789,9 +2170,10 @@ pub fn select_profile() {}
 // fixture prelude
 // Family Profile: POWER10
 OLD_POWER10_BODY
+
 #[inline]
 #[must_use]
-pub fn select_table(kind: TuneKind) -> &'static DispatchTable { unreachable!() }
+pub fn select_table_for_caps(caps: Caps) -> &'static DispatchTable { unreachable!() }
 ",
     )
     .expect("write seed dispatch file");
@@ -2855,7 +2237,7 @@ pub fn select_table(kind: TuneKind) -> &'static DispatchTable { unreachable!() }
     assert!(!updated.contains("OLD_POWER10_BODY"));
     assert!(updated.contains("// Family Profile: POWER10"));
     assert!(updated.contains("pub static PROFILE_POWER10: FamilyProfile"));
-    assert!(updated.contains("pub fn select_table(kind: TuneKind) -> &'static DispatchTable"));
+    assert!(updated.contains("pub fn select_table_for_caps(caps: Caps) -> &'static DispatchTable"));
 
     let _ = fs::remove_dir_all(&repo_root);
   }

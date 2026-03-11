@@ -7,7 +7,8 @@ use std::{collections::HashSet, time::Instant};
 
 use crate::{
   AlgorithmResult, KernelSpec, KernelTier, PlatformInfo, RawAlgorithmMeasurements, RawBenchPoint, RawKernelSpec,
-  RawPlatformInfo, RawRunnerConfig, RawTuneResults, SizeClassBest, Tunable, TuneError, TuneResults, TuningDomain,
+  RawPlatformInfo, RawRunnerConfig, RawTuneResults, SizeClassBest, Tunable, TuneError, TuneKind, TuneResults,
+  TuningDomain,
   analysis::{self, CrossoverType, Measurement},
   crc16::crc16_threshold_to_env_suffix,
   crc24::crc24_threshold_to_env_suffix,
@@ -593,40 +594,8 @@ fn raw_platform_to_platform_info(raw: &RawPlatformInfo) -> Result<PlatformInfo, 
 }
 
 #[must_use]
-fn tune_kind_from_u8(value: u8) -> Option<platform::tune::TuneKind> {
-  use platform::tune::TuneKind;
-  Some(match value {
-    0 => TuneKind::Custom,
-    1 => TuneKind::Default,
-    2 => TuneKind::Portable,
-    3 => TuneKind::Zen4,
-    4 => TuneKind::Zen5,
-    5 => TuneKind::Zen5c,
-    6 => TuneKind::IntelSpr,
-    7 => TuneKind::IntelGnr,
-    8 => TuneKind::IntelIcl,
-    9 => TuneKind::AppleM1M3,
-    10 => TuneKind::AppleM4,
-    11 => TuneKind::AppleM5,
-    12 => TuneKind::Graviton2,
-    13 => TuneKind::Graviton3,
-    14 => TuneKind::Graviton4,
-    15 => TuneKind::Graviton5,
-    16 => TuneKind::NeoverseN2,
-    17 => TuneKind::NeoverseN3,
-    18 => TuneKind::NeoverseV3,
-    19 => TuneKind::NvidiaGrace,
-    20 => TuneKind::AmpereAltra,
-    21 => TuneKind::Aarch64Pmull,
-    22 => TuneKind::Z13,
-    23 => TuneKind::Z14,
-    24 => TuneKind::Z15,
-    25 => TuneKind::Power7,
-    26 => TuneKind::Power8,
-    27 => TuneKind::Power9,
-    28 => TuneKind::Power10,
-    _ => return None,
-  })
+fn tune_kind_from_u8(value: u8) -> Option<TuneKind> {
+  TuneKind::from_u8(value)
 }
 
 fn find_raw_kernel_by_tier(kernels: &[RawKernelSpec], tier: KernelTier) -> Option<&RawKernelSpec> {

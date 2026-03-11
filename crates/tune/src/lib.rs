@@ -110,6 +110,83 @@ pub use sampler::{SampledResult, Sampler, SamplerConfig};
 #[cfg(feature = "std")]
 pub use stats::{DEFAULT_CV_THRESHOLD, SampleStats, VarianceQuality};
 
+/// Offline tuning profile taxonomy.
+///
+/// This is dev-only metadata used by the tuning pipeline to label benchmark
+/// results and rewrite checked-in artifacts. It is not part of runtime
+/// platform detection or dispatch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum TuneKind {
+  Custom = 0,
+  Default,
+  Portable,
+  Zen4,
+  Zen5,
+  Zen5c,
+  IntelSpr,
+  IntelGnr,
+  IntelIcl,
+  AppleM1M3,
+  AppleM4,
+  AppleM5,
+  Graviton2,
+  Graviton3,
+  Graviton4,
+  Graviton5,
+  NeoverseN2,
+  NeoverseN3,
+  NeoverseV3,
+  NvidiaGrace,
+  AmpereAltra,
+  Aarch64Pmull,
+  Z13,
+  Z14,
+  Z15,
+  Power7,
+  Power8,
+  Power9,
+  Power10,
+}
+
+impl TuneKind {
+  #[must_use]
+  pub const fn from_u8(value: u8) -> Option<Self> {
+    Some(match value {
+      0 => Self::Custom,
+      1 => Self::Default,
+      2 => Self::Portable,
+      3 => Self::Zen4,
+      4 => Self::Zen5,
+      5 => Self::Zen5c,
+      6 => Self::IntelSpr,
+      7 => Self::IntelGnr,
+      8 => Self::IntelIcl,
+      9 => Self::AppleM1M3,
+      10 => Self::AppleM4,
+      11 => Self::AppleM5,
+      12 => Self::Graviton2,
+      13 => Self::Graviton3,
+      14 => Self::Graviton4,
+      15 => Self::Graviton5,
+      16 => Self::NeoverseN2,
+      17 => Self::NeoverseN3,
+      18 => Self::NeoverseV3,
+      19 => Self::NvidiaGrace,
+      20 => Self::AmpereAltra,
+      21 => Self::Aarch64Pmull,
+      22 => Self::Z13,
+      23 => Self::Z14,
+      24 => Self::Z15,
+      25 => Self::Power7,
+      26 => Self::Power8,
+      27 => Self::Power9,
+      28 => Self::Power10,
+      _ => return None,
+    })
+  }
+}
+
 /// High-level tuning domain.
 ///
 /// Checksums and hashes have different performance profiles and measurement
@@ -405,7 +482,7 @@ pub struct PlatformInfo {
   pub caps: Caps,
 
   /// Platform tune kind.
-  pub tune_kind: platform::tune::TuneKind,
+  pub tune_kind: TuneKind,
 
   /// Full platform description.
   pub description: String,
@@ -428,8 +505,8 @@ impl PlatformInfo {
 }
 
 #[cfg(feature = "std")]
-fn infer_tune_kind(detected: platform::Detected) -> platform::tune::TuneKind {
-  use platform::{Arch, tune::TuneKind};
+fn infer_tune_kind(detected: platform::Detected) -> TuneKind {
+  use platform::Arch;
 
   match detected.arch {
     Arch::X86 | Arch::X86_64 => infer_x86_tune_kind(detected.caps),
@@ -444,8 +521,8 @@ fn infer_tune_kind(detected: platform::Detected) -> platform::tune::TuneKind {
 }
 
 #[cfg(feature = "std")]
-fn infer_riscv_tune_kind(caps: Caps) -> platform::tune::TuneKind {
-  use platform::{caps::riscv, tune::TuneKind};
+fn infer_riscv_tune_kind(caps: Caps) -> TuneKind {
+  use platform::caps::riscv;
 
   if caps.has(riscv::ZBC) || caps.has(riscv::ZVBC) {
     TuneKind::Default
@@ -455,8 +532,8 @@ fn infer_riscv_tune_kind(caps: Caps) -> platform::tune::TuneKind {
 }
 
 #[cfg(feature = "std")]
-fn infer_wasm_tune_kind(caps: Caps) -> platform::tune::TuneKind {
-  use platform::{caps::wasm, tune::TuneKind};
+fn infer_wasm_tune_kind(caps: Caps) -> TuneKind {
+  use platform::caps::wasm;
 
   if caps.has(wasm::SIMD128) {
     TuneKind::Default
@@ -466,8 +543,8 @@ fn infer_wasm_tune_kind(caps: Caps) -> platform::tune::TuneKind {
 }
 
 #[cfg(feature = "std")]
-fn infer_s390x_tune_kind(caps: Caps) -> platform::tune::TuneKind {
-  use platform::{caps::s390x, tune::TuneKind};
+fn infer_s390x_tune_kind(caps: Caps) -> TuneKind {
+  use platform::caps::s390x;
 
   if caps.has(s390x::VECTOR_ENH2) {
     TuneKind::Z15
@@ -481,8 +558,8 @@ fn infer_s390x_tune_kind(caps: Caps) -> platform::tune::TuneKind {
 }
 
 #[cfg(feature = "std")]
-fn infer_power_tune_kind(caps: Caps) -> platform::tune::TuneKind {
-  use platform::{caps::power, tune::TuneKind};
+fn infer_power_tune_kind(caps: Caps) -> TuneKind {
+  use platform::caps::power;
 
   if caps.has(power::POWER10_VECTOR) {
     TuneKind::Power10
@@ -498,8 +575,8 @@ fn infer_power_tune_kind(caps: Caps) -> platform::tune::TuneKind {
 }
 
 #[cfg(feature = "std")]
-fn infer_aarch64_tune_kind(caps: Caps) -> platform::tune::TuneKind {
-  use platform::{caps::aarch64, tune::TuneKind};
+fn infer_aarch64_tune_kind(caps: Caps) -> TuneKind {
+  use platform::caps::aarch64;
 
   #[cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "watchos"))]
   {
@@ -570,9 +647,7 @@ fn infer_aarch64_tune_kind(caps: Caps) -> platform::tune::TuneKind {
 }
 
 #[cfg(feature = "std")]
-fn infer_aarch64_sve2_from_vlen() -> platform::tune::TuneKind {
-  use platform::tune::TuneKind;
-
+fn infer_aarch64_sve2_from_vlen() -> TuneKind {
   let vlen = detect_sve_vlen();
   if vlen > 128 {
     TuneKind::NeoverseV3
@@ -584,9 +659,7 @@ fn infer_aarch64_sve2_from_vlen() -> platform::tune::TuneKind {
 }
 
 #[cfg(feature = "std")]
-fn infer_aarch64_sve_from_vlen() -> platform::tune::TuneKind {
-  use platform::tune::TuneKind;
-
+fn infer_aarch64_sve_from_vlen() -> TuneKind {
   let vlen = detect_sve_vlen();
   if vlen >= 256 {
     TuneKind::Graviton3
@@ -598,8 +671,8 @@ fn infer_aarch64_sve_from_vlen() -> platform::tune::TuneKind {
 }
 
 #[cfg(feature = "std")]
-fn infer_x86_tune_kind(caps: Caps) -> platform::tune::TuneKind {
-  use platform::{caps::x86, tune::TuneKind};
+fn infer_x86_tune_kind(caps: Caps) -> TuneKind {
+  use platform::caps::x86;
 
   let Some((is_amd, family, model)) = x86_identity() else {
     return if caps.has(x86::PCLMUL_READY) {
