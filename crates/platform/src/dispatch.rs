@@ -8,8 +8,9 @@
 //!
 //! # Zero-Overhead Dispatch
 //!
-//! When target features are known at compile time (e.g., `-C target-cpu=native` or
-//! `-C target-feature=+avx512f,+vpclmulqdq`), the dispatch can be resolved to a direct
+//! When target features are known at compile time beyond the architecture baseline
+//! (e.g., `-C target-cpu=native`, `-C target-feature=+sse4.2,+pclmulqdq`, or
+//! `-C target-feature=+aes` on aarch64), the dispatch can be resolved to a direct
 //! function call with no runtime overhead.
 //!
 //! # Examples
@@ -23,25 +24,31 @@
 
 use crate::{Caps, detect};
 
+#[inline(always)]
+#[must_use]
+#[allow(unreachable_code)] // cfg branches may return early on some targets.
+const fn static_dispatch_baseline() -> Caps {
+  #[cfg(target_arch = "x86_64")]
+  {
+    return crate::caps::x86::SSE2;
+  }
+
+  #[cfg(target_arch = "aarch64")]
+  {
+    return crate::caps::aarch64::NEON;
+  }
+
+  Caps::NONE
+}
+
 /// Shared decision graph for choosing the dispatch path.
 ///
 /// Keeping this in one place guarantees `dispatch_auto()` and
 /// `has_static_features()` always agree.
 #[inline(always)]
 #[must_use]
-#[allow(unreachable_code)] // cfg branches may return early on some targets.
 const fn use_static_dispatch_path() -> bool {
-  #[cfg(all(target_arch = "x86_64", target_feature = "avx512f", target_feature = "vpclmulqdq"))]
-  {
-    return true;
-  }
-
-  #[cfg(all(target_arch = "aarch64", target_feature = "aes", target_feature = "sha3"))]
-  {
-    return true;
-  }
-
-  false
+  !detect::caps_static().difference(static_dispatch_baseline()).is_empty()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -112,12 +119,16 @@ where
 
 /// Automatically choose compile-time or runtime dispatch.
 ///
-/// This function uses compile-time dispatch when "top-tier" features are statically
-/// known, falling back to runtime detection otherwise.
+/// This function uses compile-time dispatch when the build enables target
+/// features beyond the architecture baseline, falling back to runtime detection
+/// for generic baseline builds.
 ///
-/// **Top-tier features** (triggers compile-time dispatch):
-/// - **x86_64**: AVX-512F + VPCLMULQDQ (modern AVX-512 crypto)
-/// - **aarch64**: AES + SHA3 (PMULL + EOR3 for fast carryless multiply)
+/// **Triggers compile-time dispatch**:
+/// - **x86/x86_64**: Any compile-time feature beyond the x86_64 SSE2 baseline (for example, SSE4.2,
+///   PCLMULQDQ, AVX2, or AVX-512)
+/// - **aarch64**: Any compile-time feature beyond the NEON baseline (for example, AES/PMULL, SHA2,
+///   SHA3, or SVE)
+/// - **Other architectures**: Any compile-time target feature exposed by [`detect::caps_static`]
 ///
 /// **Use this when**: Library code that should work everywhere but
 /// optimize when compiled with target features.
