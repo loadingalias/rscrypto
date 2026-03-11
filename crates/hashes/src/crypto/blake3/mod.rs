@@ -1948,28 +1948,39 @@ impl ChunkState {
     }
 
     if self.block_len == 0 && self.blocks_compressed == 0 {
-      if input.len() == CHUNK_LEN {
-        #[cfg(target_arch = "x86_64")]
-        if matches!(
-          self.kernel_id,
-          kernels::Blake3KernelId::X86Ssse3
-            | kernels::Blake3KernelId::X86Sse41
-            | kernels::Blake3KernelId::X86Avx2
-            | kernels::Blake3KernelId::X86Avx512
-        ) {
-          self.absorb_exact_one_chunk(input);
-          return;
-        }
-
-        self.absorb_exact_one_chunk_generic(input);
-        return;
-      }
-
       if input.len() <= BLOCK_LEN {
         self.block[..input.len()].copy_from_slice(input);
         self.block_len = input.len() as u8;
         return;
       }
+
+      self.update_empty_frontier(input);
+      return;
+    }
+
+    self.update_general(input);
+  }
+
+  #[inline(never)]
+  fn update_empty_frontier(&mut self, input: &[u8]) {
+    debug_assert_eq!(self.block_len, 0);
+    debug_assert_eq!(self.blocks_compressed, 0);
+
+    if input.len() == CHUNK_LEN {
+      #[cfg(target_arch = "x86_64")]
+      if matches!(
+        self.kernel_id,
+        kernels::Blake3KernelId::X86Ssse3
+          | kernels::Blake3KernelId::X86Sse41
+          | kernels::Blake3KernelId::X86Avx2
+          | kernels::Blake3KernelId::X86Avx512
+      ) {
+        self.absorb_exact_one_chunk(input);
+        return;
+      }
+
+      self.absorb_exact_one_chunk_generic(input);
+      return;
     }
 
     self.update_general(input);

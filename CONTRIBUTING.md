@@ -18,8 +18,8 @@ For Blake3 perf regressions or gap-closing, start with `just bench-blake3-core`.
 
 ### Measured
 
-| Platform | TuneKind | Peak CRC-64 |
-|----------|----------|-------------|
+| Platform | BLAKE3 Profile | Peak CRC-64 |
+|----------|----------------|-------------|
 | AMD Zen 4 | `Zen4` | 75 GiB/s |
 | Apple M1-M3 | `AppleM1M3` | 63 GiB/s |
 | AWS Graviton 2 | `Graviton2` | 33 GiB/s |
@@ -37,8 +37,8 @@ For Blake3 perf regressions or gap-closing, start with `just bench-blake3-core`.
 
 ### Wanted
 
-| Priority | Platform | TuneKind |
-|----------|----------|----------|
+| Priority | Platform | BLAKE3 Profile |
+|----------|----------|----------------|
 | High | Intel Sapphire/Granite/Ice Lake | `IntelSpr`, `IntelGnr`, `IntelIcl` |
 | Medium | AWS Graviton 3/4 | `Graviton3`, `Graviton4` |
 | Medium | IBM Power 9/10 | `Power9`, `Power10` |
