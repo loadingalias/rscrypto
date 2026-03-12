@@ -81,7 +81,7 @@ pub(crate) struct ParallelDispatch {
 
 /// Immutable per-hasher dispatch snapshot.
 ///
-/// This is resolved once from platform caps/tune and can be copied into each
+/// This is resolved once from platform caps and dispatch tables and can be copied into each
 /// hasher, avoiding repeated global dispatch lookups in hot update/finalize
 /// paths.
 #[derive(Clone, Copy)]

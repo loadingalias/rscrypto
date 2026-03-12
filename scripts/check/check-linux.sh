@@ -22,11 +22,6 @@ get_crate_flags "$@"
 
 export ZIG_CC="$SCRIPT_DIR/zig-cc.sh"
 
-TUNE_IN_SCOPE=false
-if [[ "$CRATE_FLAGS" == "--workspace" || "$CRATE_FLAGS" == *"-p tune"* || "$CRATE_FLAGS" == *"-p checksum"* ]]; then
-  TUNE_IN_SCOPE=true
-fi
-
 LOG_DIR=$(mktemp -d)
 trap 'rm -rf "$LOG_DIR"' EXIT
 
@@ -63,14 +58,6 @@ for i in "${!LINUX_TARGETS[@]}"; do
          >"$log_file" 2>&1; then
       exit 1
     fi
-
-    if [[ "$TUNE_IN_SCOPE" == true && "$target" == x86_64-* ]]; then
-      if ! CC="$ZIG_CC" RUSTC_WRAPPER="" CARGO_TARGET_DIR="$target_dir" \
-           cargo clippy -p tune --bin rscrypto-blake3-boundary --all-features --target "$target" -- -D warnings \
-           >>"$log_file" 2>&1; then
-        exit 1
-      fi
-    fi
   ) &
   pids[$i]=$!
 done
@@ -83,10 +70,6 @@ for i in "${!targets[@]}"; do
   step "$short_name clippy"
   if wait "${pids[$i]}"; then
     ok
-    if [[ "$TUNE_IN_SCOPE" == true && "$target" == x86_64-* ]]; then
-      step "$short_name rscrypto-blake3-boundary"
-      ok
-    fi
   else
     fail
     show_error "${logs[$i]}"

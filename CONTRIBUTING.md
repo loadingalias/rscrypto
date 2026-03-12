@@ -1,18 +1,14 @@
 # Contributing to rscrypto
 
-Submit tuning results from your hardware. Every contribution helps users on similar platforms get better performance automatically.
+Start with benchmarks, tests, and correctness work.
 
 ## Quick Start
 
 ```bash
 git clone https://github.com/loadingalias/rscrypto.git
 cd rscrypto
-just tune
+just bench-blake3-core
 ```
-
-Open `tune-results/boundary/summary.txt`, then paste the summary into a [new issue](../../issues/new?template=tuning-results.md).
-Detailed workflow and artifact layout: `docs/tuning.md`.
-For Blake3 perf regressions or gap-closing, start with `just bench-blake3-core`.
 
 ## Platform Coverage
 
@@ -47,7 +43,7 @@ For Blake3 perf regressions or gap-closing, start with `just bench-blake3-core`.
 
 ## Validation
 
-Before submitting, verify results are reasonable:
+Before submitting benchmark work, verify results are reasonable:
 
 - **Peak throughput**: 30-80 GiB/s for CRC-64 on modern CPUs
 - **Stream counts**: 1-8 (x86_64), 1-3 (aarch64)

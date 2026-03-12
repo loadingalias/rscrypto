@@ -1,10 +1,10 @@
-//! Kernel benchmarking API for the unified tuning engine.
+//! Kernel benchmarking API for internal checksum benchmarking.
 //!
-//! This module exposes kernel function pointers by name, allowing the tuning
-//! engine to directly benchmark specific kernels without going through the
-//! cached dispatch system.
+//! This module exposes kernel function pointers by name so internal benchmarks
+//! can measure specific kernels without going through the cached dispatch
+//! system.
 //!
-//! Used by the `tune` crate to benchmark specific kernels.
+//! Production code should not depend on this API.
 
 use alloc::vec::Vec;
 

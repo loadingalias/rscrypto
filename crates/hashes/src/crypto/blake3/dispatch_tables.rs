@@ -1,7 +1,6 @@
-//! Tuned dispatch tables for BLAKE3.
+//! Dispatch tables for BLAKE3.
 //!
-//! This module is the integration point for offline dispatch-table generation tooling.
-//! The tuning engine updates compact per-family profiles in this file.
+//! This module stores compact per-family profiles used by runtime dispatch.
 
 use platform::Caps;
 #[cfg(target_arch = "aarch64")]

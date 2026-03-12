@@ -56,15 +56,6 @@ blake3-codegen-audit target="x86_64-unknown-linux-gnu" out="target/blake3-codege
     @scripts/bench/blake3-codegen-audit.sh {{target}} {{out}}
 
 
-# Tuning (active path): Blake3 boundary capture only.
-# This keeps the tuning surface tiny and cheap while Blake3 ships.
-tune warmup_ms="80" measure_ms="120":
-    @TUNE_OUTPUT_DIR=tune-results \
-    TUNE_BOUNDARY_WARMUP_MS={{warmup_ms}} \
-    TUNE_BOUNDARY_MEASURE_MS={{measure_ms}} \
-    scripts/ci/run-tune.sh
-
-
 # Summarize Criterion results as TSV
 bench-summary group="" only="oneshot":
     @python3 scripts/bench/criterion-summary.py --group-prefix '{{group}}' --only {{only}}

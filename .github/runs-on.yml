@@ -1,8 +1,8 @@
 # .github/runs-on.yml
-# RunsOn configuration for rscrypto benchmark and tuning lanes.
+# RunsOn configuration for rscrypto benchmark lanes.
 
 runners:
-  # Intel Sapphire Rapids: primary Intel lane for high-end AVX-512 tuning/benching.
+  # Intel Sapphire Rapids: primary Intel lane for high-end AVX-512 benchmarking.
   intel-spr:
     cpu: 8
     ram: 16

@@ -43,7 +43,3 @@ runner = "windows-latest"
 [[ci.commit]]
 name = "aarch64-pc-windows-msvc"
 runner = "windows-11-arm"
-
-# Canonical architecture strings used in tuning target contracts.
-[tune]
-arches = ["x86_64", "aarch64", "s390x", "powerpc64le", "riscv64"]

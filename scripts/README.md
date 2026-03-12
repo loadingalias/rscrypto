@@ -30,8 +30,6 @@ This file is the caller map for `scripts/`.
   - Called by: `.github/actions/setup/action.yaml`, `.github/actions/setup-runson/action.yaml`, `.github/actions/setup-namespace/action.yaml`
 - `scripts/ci/pin-actions.sh`
   - Called by: `just pin-actions`, `just verify-actions`
-- `scripts/ci/run-tune.sh`
-  - Called by: `.github/workflows/tune.yaml`
 - `scripts/ci/pre-push.sh`
   - Called by: optional local Git hook (`.git/hooks/pre-push`)
 
