@@ -4,7 +4,7 @@
 //!
 //! - **Dispatch**: Zero-cost (compile-time) or cached (runtime) kernel selection
 //! - **Capabilities**: Re-exports from `platform` for capability-based dispatch
-//! - **Policy**: Pre-computed selection policies with cached thresholds
+//! - **Policy**: Pre-computed selection policies with explicit algorithm tuning
 //!
 //! # Architecture
 //!
@@ -20,7 +20,8 @@
 //!
 //! - [`KernelTier`]: Acceleration levels (Reference, Portable, HwCrc, Folding, Wide)
 //! - [`KernelFamily`]: Specific backend implementations (X86Pclmul, ArmPmull, etc.)
-//! - [`SelectionPolicy`]: Pre-computed dispatch decisions with cached thresholds
+//! - [`SelectionPolicy`]: Pre-computed dispatch structure with explicit algorithm tuning
+//! - [`PolicyTunables`]: Algorithm-owned thresholds layered onto a structural policy
 //! - [`OnceCache`]: Thread-safe lazy initialization for kernel selection
 //!
 //! # Usage
@@ -47,5 +48,5 @@ pub use cache::{OnceCache, PolicyCache};
 pub use family::{KernelFamily, KernelSubfamily};
 // Re-export platform types for convenience.
 pub use platform;
-pub use policy::{ForceMode, SelectionPolicy};
+pub use policy::{ForceMode, PolicyTunables, SelectionPolicy};
 pub use tier::KernelTier;

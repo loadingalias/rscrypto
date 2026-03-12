@@ -16,14 +16,6 @@
 
 use core::fmt;
 
-/// Tier-level thresholds used by policy dispatch.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct TierThresholds {
-  pub small: usize,
-  pub fold: usize,
-  pub wide: usize,
-}
-
 /// Kernel acceleration tier.
 ///
 /// Tiers are ordered from lowest (always available) to highest (best
@@ -138,37 +130,6 @@ impl KernelTier {
 
   /// All tiers in ascending order.
   pub const ALL: [Self; 5] = [Self::Reference, Self::Portable, Self::HwCrc, Self::Folding, Self::Wide];
-
-  /// Build conservative dispatch thresholds for this tier.
-  ///
-  /// These are architecture-agnostic defaults for generic backend policy.
-  /// Algorithm crates with measured dispatch tables should override them.
-  #[inline]
-  #[must_use]
-  pub const fn policy_thresholds(self) -> TierThresholds {
-    match self {
-      Self::Reference | Self::Portable => TierThresholds {
-        small: usize::MAX,
-        fold: usize::MAX,
-        wide: usize::MAX,
-      },
-      Self::HwCrc => TierThresholds {
-        small: 16,
-        fold: usize::MAX,
-        wide: usize::MAX,
-      },
-      Self::Folding => TierThresholds {
-        small: 64,
-        fold: 64,
-        wide: usize::MAX,
-      },
-      Self::Wide => TierThresholds {
-        small: 64,
-        fold: 64,
-        wide: 512,
-      },
-    }
-  }
 }
 
 impl fmt::Display for KernelTier {

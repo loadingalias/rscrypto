@@ -8,6 +8,7 @@ pub enum AsconPermute12KernelId {
   Portable = 0,
 }
 
+#[cfg(any(test, feature = "std"))]
 pub const ALL: &[AsconPermute12KernelId] = &[AsconPermute12KernelId::Portable];
 
 impl AsconPermute12KernelId {
@@ -17,15 +18,6 @@ impl AsconPermute12KernelId {
     match self {
       Self::Portable => "portable",
     }
-  }
-}
-
-#[allow(dead_code)]
-#[must_use]
-pub fn id_from_name(name: &str) -> Option<AsconPermute12KernelId> {
-  match name {
-    "portable" => Some(AsconPermute12KernelId::Portable),
-    _ => None,
   }
 }
 

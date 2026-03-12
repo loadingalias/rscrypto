@@ -239,27 +239,10 @@ pub(crate) fn keccakf_portable(state: &mut [u64; 25]) {
 
 pub(crate) type KeccakCore<const RATE: usize> = KeccakCoreImpl<RATE, DispatchPermuter>;
 
+#[cfg(any(test, feature = "std"))]
 pub(crate) type KeccakCorePortable<const RATE: usize> = KeccakCoreImpl<RATE, PortablePermuter>;
 
 pub(crate) type KeccakXof<const RATE: usize> = KeccakXofImpl<RATE, DispatchPermuter>;
-
-#[allow(dead_code)]
-pub(crate) type KeccakXofPortable<const RATE: usize> = KeccakXofImpl<RATE, PortablePermuter>;
-
-#[derive(Clone, Copy)]
-#[allow(dead_code)]
-pub(crate) struct FnPermuter {
-  f: fn(&mut [u64; 25]),
-}
-
-#[allow(dead_code)]
-impl FnPermuter {
-  #[inline]
-  #[must_use]
-  pub(crate) const fn new(f: fn(&mut [u64; 25])) -> Self {
-    Self { f }
-  }
-}
 
 pub(crate) trait Permuter: Copy {
   fn permute(self, state: &mut [u64; 25], len_hint: usize);
@@ -286,20 +269,15 @@ impl Permuter for DispatchPermuter {
   }
 }
 
+#[cfg(any(test, feature = "std"))]
 #[derive(Clone, Copy)]
 pub(crate) struct PortablePermuter;
 
+#[cfg(any(test, feature = "std"))]
 impl Permuter for PortablePermuter {
   #[inline(always)]
   fn permute(self, state: &mut [u64; 25], _len_hint: usize) {
     keccakf_portable(state);
-  }
-}
-
-impl Permuter for FnPermuter {
-  #[inline(always)]
-  fn permute(self, state: &mut [u64; 25], _len_hint: usize) {
-    (self.f)(state);
   }
 }
 
@@ -327,6 +305,7 @@ impl<const RATE: usize> Default for KeccakCoreImpl<RATE, DispatchPermuter> {
   }
 }
 
+#[cfg(any(test, feature = "std"))]
 impl<const RATE: usize> Default for KeccakCoreImpl<RATE, PortablePermuter> {
   #[inline]
   fn default() -> Self {
@@ -336,22 +315,6 @@ impl<const RATE: usize> Default for KeccakCoreImpl<RATE, PortablePermuter> {
       buf_len: 0,
       bytes_hint: 0,
       permuter: PortablePermuter,
-      _p: PhantomData,
-    }
-  }
-}
-
-#[allow(dead_code)]
-impl<const RATE: usize> KeccakCoreImpl<RATE, FnPermuter> {
-  #[inline]
-  #[must_use]
-  pub(crate) const fn new(permuter: FnPermuter) -> Self {
-    Self {
-      state: [0u64; 25],
-      buf: [0u8; RATE],
-      buf_len: 0,
-      bytes_hint: 0,
-      permuter,
       _p: PhantomData,
     }
   }

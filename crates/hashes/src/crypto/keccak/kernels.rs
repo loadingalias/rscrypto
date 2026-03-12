@@ -8,6 +8,7 @@ pub enum Keccakf1600KernelId {
   Portable = 0,
 }
 
+#[cfg(any(test, feature = "std"))]
 pub const ALL: &[Keccakf1600KernelId] = &[Keccakf1600KernelId::Portable];
 
 impl Keccakf1600KernelId {
@@ -17,15 +18,6 @@ impl Keccakf1600KernelId {
     match self {
       Self::Portable => "portable",
     }
-  }
-}
-
-#[allow(dead_code)]
-#[must_use]
-pub fn id_from_name(name: &str) -> Option<Keccakf1600KernelId> {
-  match name {
-    "portable" => Some(Keccakf1600KernelId::Portable),
-    _ => None,
   }
 }
 

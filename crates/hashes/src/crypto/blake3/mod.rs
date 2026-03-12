@@ -208,8 +208,11 @@ enum ParallelPolicyKind {
   Xof,
   KeyedXof,
   DeriveXof,
+  #[cfg(feature = "std")]
   Update,
+  #[cfg(feature = "std")]
   KeyedUpdate,
+  #[cfg(feature = "std")]
   DeriveUpdate,
 }
 
@@ -466,6 +469,7 @@ fn with_subtree_scratch<R>(subtree_chunks: usize, f: impl FnOnce(&mut [[u32; 8]]
   })
 }
 
+#[cfg(feature = "std")]
 #[inline]
 fn reduce_power_of_two_cvs_in_place(
   kernel: Kernel,
@@ -1247,7 +1251,7 @@ fn reduce_power_of_two_chunk_cvs_any(
   }
 }
 
-#[cfg_attr(not(target_endian = "little"), allow(dead_code))]
+#[cfg(target_endian = "little")]
 #[inline]
 fn add_chunk_cvs_batched(
   kernel: Kernel,
@@ -1541,11 +1545,12 @@ fn compress_subtree_wide_bytes<J: join::Join>(
 ) -> usize {
   debug_assert!(!input.is_empty());
 
-  let max_leaf_bytes = kernel.simd_degree * CHUNK_LEN;
+  let simd_degree = kernel.id.simd_degree();
+  let max_leaf_bytes = simd_degree * CHUNK_LEN;
   if input.len() <= max_leaf_bytes {
     let chunks_exact = input.chunks_exact(CHUNK_LEN);
     let full_chunks = chunks_exact.len();
-    debug_assert!(full_chunks <= kernel.simd_degree);
+    debug_assert!(full_chunks <= simd_degree);
     debug_assert!(out.len() >= full_chunks + (!chunks_exact.remainder().is_empty()) as usize);
 
     if full_chunks != 0 {
@@ -1575,7 +1580,7 @@ fn compress_subtree_wide_bytes<J: join::Join>(
     return out_len;
   }
 
-  debug_assert!(out.len() >= kernel.simd_degree.max(2));
+  debug_assert!(out.len() >= simd_degree.max(2));
   let left_len = left_subtree_len_bytes(input.len());
   let (left, right) = input.split_at(left_len);
   let right_chunk_counter = chunk_counter + (left.len() / CHUNK_LEN) as u64;
@@ -1583,7 +1588,7 @@ fn compress_subtree_wide_bytes<J: join::Join>(
   const MAX_SIMD_DEGREE: usize = 16;
   let mut cv_array = [[0u8; OUT_LEN]; 2 * MAX_SIMD_DEGREE];
 
-  let simd = kernel.simd_degree;
+  let simd = simd_degree;
   let degree = if simd == 1 && left.len() == CHUNK_LEN {
     1
   } else {
@@ -1917,20 +1922,31 @@ impl ChunkState {
 
     let (prefix_blocks, remainder) = input[..CHUNK_LEN - BLOCK_LEN].as_chunks::<BLOCK_LEN>();
     debug_assert!(remainder.is_empty());
-    for (idx, block) in prefix_blocks.iter().enumerate() {
+    let Some((first_block, rest_blocks)) = prefix_blocks.split_first() else {
+      unreachable!("exact chunk prefix always has 15 blocks");
+    };
+
+    let first_words = words16_from_le_bytes_64(first_block);
+    self.chaining_value = first_8_words(compress(
+      &self.chaining_value,
+      &first_words,
+      self.chunk_counter,
+      BLOCK_LEN as u32,
+      self.flags | CHUNK_START,
+    ));
+
+    for block in rest_blocks {
       let block_words = words16_from_le_bytes_64(block);
-      let block_flags = self.flags | if idx == 0 { CHUNK_START } else { 0 };
       self.chaining_value = first_8_words(compress(
         &self.chaining_value,
         &block_words,
         self.chunk_counter,
         BLOCK_LEN as u32,
-        block_flags,
+        self.flags,
       ));
-      self.blocks_compressed = self.blocks_compressed.strict_add(1);
     }
 
-    debug_assert_eq!(self.blocks_compressed, 15);
+    self.blocks_compressed = 15;
     self.block.copy_from_slice(&input[CHUNK_LEN - BLOCK_LEN..]);
     self.block_len = BLOCK_LEN as u8;
   }
@@ -1961,8 +1977,9 @@ impl ChunkState {
     debug_assert_eq!(self.block_len, 0);
     debug_assert_eq!(input.len(), CHUNK_LEN);
     let key = self.chaining_value;
-    self.chaining_value = absorb_exact_one_chunk_state(self.kernel_id, input, key, self.chunk_counter, self.flags);
-    self.block.copy_from_slice(&input[CHUNK_LEN - BLOCK_LEN..]);
+    let (cv, last_block) = absorb_exact_one_chunk_state(self.kernel_id, input, key, self.chunk_counter, self.flags);
+    self.chaining_value = cv;
+    self.block = last_block;
     self.block_len = BLOCK_LEN as u8;
     self.blocks_compressed = 15;
   }
@@ -2139,46 +2156,83 @@ fn absorb_exact_one_chunk_state(
   key: [u32; 8],
   counter: u64,
   flags: u32,
-) -> [u32; 8] {
+) -> ([u32; 8], [u8; BLOCK_LEN]) {
   debug_assert_eq!(input.len(), CHUNK_LEN);
 
   #[cfg(target_arch = "x86_64")]
   {
     let (prefix_blocks, remainder) = input[..CHUNK_LEN - BLOCK_LEN].as_chunks::<BLOCK_LEN>();
     debug_assert!(remainder.is_empty());
+    let Some((first_block, rest_blocks)) = prefix_blocks.split_first() else {
+      unreachable!("exact chunk prefix always has 15 blocks");
+    };
 
     match kernel_id {
       kernels::Blake3KernelId::X86Sse41 | kernels::Blake3KernelId::X86Avx2 => {
-        let mut cv = key;
-        for (idx, block) in prefix_blocks.iter().enumerate() {
-          let block_flags = flags | if idx == 0 { CHUNK_START } else { 0 };
+        // SAFETY: dispatch validates SSE4.1 for both kernels, and `first_block`
+        // is a readable 64-byte buffer.
+        let mut cv = unsafe {
+          x86_64::compress_cv_sse41_bytes(
+            &key,
+            first_block.as_ptr(),
+            counter,
+            BLOCK_LEN as u32,
+            flags | CHUNK_START,
+          )
+        };
+        for block in rest_blocks {
           // SAFETY: dispatch validates SSE4.1 for both kernels, and `block` is a
           // readable 64-byte buffer.
-          cv = unsafe { x86_64::compress_cv_sse41_bytes(&cv, block.as_ptr(), counter, BLOCK_LEN as u32, block_flags) };
+          cv = unsafe { x86_64::compress_cv_sse41_bytes(&cv, block.as_ptr(), counter, BLOCK_LEN as u32, flags) };
         }
-        return cv;
+        let mut last_block = [0u8; BLOCK_LEN];
+        last_block.copy_from_slice(&input[CHUNK_LEN - BLOCK_LEN..]);
+        return (cv, last_block);
       }
       kernels::Blake3KernelId::X86Avx512 => {
-        let mut cv = key;
-        for (idx, block) in prefix_blocks.iter().enumerate() {
-          let block_flags = flags | if idx == 0 { CHUNK_START } else { 0 };
+        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+        let mut cv = unsafe {
+          // SAFETY: dispatch validates AVX-512 availability, and `first_block`
+          // is a readable 64-byte buffer.
+          x86_64::asm::compress_in_place_avx512(
+            &key,
+            first_block.as_ptr(),
+            counter,
+            BLOCK_LEN as u32,
+            flags | CHUNK_START,
+          )
+        };
+        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+        let mut cv = unsafe {
+          // SAFETY: dispatch validates AVX-512 availability, and `first_block`
+          // is a readable 64-byte buffer.
+          x86_64::compress_cv_avx512_bytes(
+            &key,
+            first_block.as_ptr(),
+            counter,
+            BLOCK_LEN as u32,
+            flags | CHUNK_START,
+          )
+        };
+
+        for block in rest_blocks {
           #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
           {
             // SAFETY: dispatch validates AVX-512 availability, and `block` is a
             // readable 64-byte buffer.
-            cv = unsafe {
-              x86_64::asm::compress_in_place_avx512(&cv, block.as_ptr(), counter, BLOCK_LEN as u32, block_flags)
-            };
+            cv =
+              unsafe { x86_64::asm::compress_in_place_avx512(&cv, block.as_ptr(), counter, BLOCK_LEN as u32, flags) };
           }
           #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
           {
             // SAFETY: dispatch validates AVX-512 availability, and `block` is a
             // readable 64-byte buffer.
-            cv =
-              unsafe { x86_64::compress_cv_avx512_bytes(&cv, block.as_ptr(), counter, BLOCK_LEN as u32, block_flags) };
+            cv = unsafe { x86_64::compress_cv_avx512_bytes(&cv, block.as_ptr(), counter, BLOCK_LEN as u32, flags) };
           }
         }
-        return cv;
+        let mut last_block = [0u8; BLOCK_LEN];
+        last_block.copy_from_slice(&input[CHUNK_LEN - BLOCK_LEN..]);
+        return (cv, last_block);
       }
       _ => {}
     }
@@ -2195,7 +2249,9 @@ fn absorb_exact_one_chunk_state(
     &input[..CHUNK_LEN - BLOCK_LEN],
   );
   debug_assert_eq!(blocks_compressed, 15);
-  cv
+  let mut last_block = [0u8; BLOCK_LEN];
+  last_block.copy_from_slice(&input[CHUNK_LEN - BLOCK_LEN..]);
+  (cv, last_block)
 }
 
 #[inline]
@@ -2907,6 +2963,7 @@ impl Blake3 {
   /// This is crate-internal glue for `hashes::bench`.
   #[inline]
   #[must_use]
+  #[cfg(any(test, feature = "std"))]
   pub(crate) fn digest_with_kernel_id(id: kernels::Blake3KernelId, data: &[u8]) -> [u8; OUT_LEN] {
     let kernel = kernels::kernel(id);
     digest_oneshot(kernel, IV, 0, data)
@@ -2917,6 +2974,7 @@ impl Blake3 {
   /// This is crate-internal glue for `hashes::bench`.
   #[inline]
   #[must_use]
+  #[cfg(any(test, feature = "std"))]
   pub(crate) fn keyed_digest_with_kernel_id(id: kernels::Blake3KernelId, key: &[u8; 32], data: &[u8]) -> [u8; OUT_LEN] {
     let kernel = kernels::kernel(id);
     let key_words = words8_from_le_bytes_32(key);
@@ -2928,6 +2986,7 @@ impl Blake3 {
   /// This is crate-internal glue for `hashes::bench`.
   #[inline]
   #[must_use]
+  #[cfg(any(test, feature = "std"))]
   pub(crate) fn derive_key_with_kernel_id(
     id: kernels::Blake3KernelId,
     context: &str,
@@ -2939,6 +2998,7 @@ impl Blake3 {
   }
 
   #[inline]
+  #[cfg(any(test, feature = "std"))]
   fn stream_chunks_pattern_with_kernel_pair_and_state(
     stream_id: kernels::Blake3KernelId,
     bulk_id: kernels::Blake3KernelId,
@@ -2974,6 +3034,7 @@ impl Blake3 {
   }
 
   #[inline]
+  #[cfg(any(test, feature = "std"))]
   fn stream_chunks_with_kernel_pair_and_state(
     stream_id: kernels::Blake3KernelId,
     bulk_id: kernels::Blake3KernelId,
@@ -2998,6 +3059,7 @@ impl Blake3 {
   /// This is crate-internal glue for `hashes::bench`.
   #[inline]
   #[must_use]
+  #[cfg(any(test, feature = "std"))]
   pub(crate) fn stream_chunks_with_kernel_pair_id(
     stream_id: kernels::Blake3KernelId,
     bulk_id: kernels::Blake3KernelId,
@@ -3012,6 +3074,7 @@ impl Blake3 {
   /// This is crate-internal glue for `hashes::bench`.
   #[inline]
   #[must_use]
+  #[cfg(any(test, feature = "std"))]
   pub(crate) fn stream_chunks_keyed_with_kernel_pair_id(
     stream_id: kernels::Blake3KernelId,
     bulk_id: kernels::Blake3KernelId,
@@ -3031,6 +3094,7 @@ impl Blake3 {
   /// This is crate-internal glue for `hashes::bench`.
   #[inline]
   #[must_use]
+  #[cfg(any(test, feature = "std"))]
   pub(crate) fn stream_chunks_derive_with_kernel_pair_id(
     stream_id: kernels::Blake3KernelId,
     bulk_id: kernels::Blake3KernelId,
@@ -3055,6 +3119,7 @@ impl Blake3 {
   /// This is crate-internal glue for `hashes::bench`.
   #[inline]
   #[must_use]
+  #[cfg(any(test, feature = "std"))]
   pub(crate) fn stream_chunks_xof_with_kernel_pair_id(
     stream_id: kernels::Blake3KernelId,
     bulk_id: kernels::Blake3KernelId,
@@ -3077,6 +3142,7 @@ impl Blake3 {
   /// This is crate-internal glue for `hashes::bench`.
   #[inline]
   #[must_use]
+  #[cfg(any(test, feature = "std"))]
   pub(crate) fn stream_chunks_mixed_with_kernel_pair_id(
     stream_id: kernels::Blake3KernelId,
     bulk_id: kernels::Blake3KernelId,
@@ -3091,6 +3157,7 @@ impl Blake3 {
   /// This is crate-internal glue for `hashes::bench`.
   #[inline]
   #[must_use]
+  #[cfg(any(test, feature = "std"))]
   pub(crate) fn stream_chunks_mixed_keyed_with_kernel_pair_id(
     stream_id: kernels::Blake3KernelId,
     bulk_id: kernels::Blake3KernelId,
@@ -3118,6 +3185,7 @@ impl Blake3 {
   /// This is crate-internal glue for `hashes::bench`.
   #[inline]
   #[must_use]
+  #[cfg(any(test, feature = "std"))]
   pub(crate) fn stream_chunks_mixed_derive_with_kernel_pair_id(
     stream_id: kernels::Blake3KernelId,
     bulk_id: kernels::Blake3KernelId,
@@ -3143,6 +3211,7 @@ impl Blake3 {
   /// This is crate-internal glue for `hashes::bench`.
   #[inline]
   #[must_use]
+  #[cfg(any(test, feature = "std"))]
   pub(crate) fn stream_chunks_mixed_xof_with_kernel_pair_id(
     stream_id: kernels::Blake3KernelId,
     bulk_id: kernels::Blake3KernelId,
@@ -3154,6 +3223,7 @@ impl Blake3 {
 
   #[inline]
   #[must_use]
+  #[cfg(any(test, feature = "std"))]
   pub(crate) fn digest_portable(data: &[u8]) -> [u8; OUT_LEN] {
     let kernel = kernels::kernel(kernels::Blake3KernelId::Portable);
     if data.len() <= CHUNK_LEN {

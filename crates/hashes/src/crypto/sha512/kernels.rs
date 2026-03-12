@@ -10,6 +10,7 @@ pub enum Sha512KernelId {
   Portable = 0,
 }
 
+#[cfg(any(test, feature = "std"))]
 pub const ALL: &[Sha512KernelId] = &[Sha512KernelId::Portable];
 
 impl Sha512KernelId {

@@ -76,7 +76,6 @@ mod kernel_tables {
 
 /// Bitwise reference implementation for CRC-24/OPENPGP.
 #[cfg(any(test, feature = "std"))]
-#[allow(dead_code)]
 #[inline]
 fn crc24_openpgp_reference(crc: u32, data: &[u8]) -> u32 {
   crc24_bitwise(CRC24_OPENPGP_POLY, crc, data)
@@ -86,9 +85,12 @@ fn crc24_openpgp_reference(crc: u32, data: &[u8]) -> u32 {
 // Auto Dispatch Function (using new dispatch module)
 // ─────────────────────────────────────────────────────────────────────────────
 
+#[cfg(feature = "std")]
 type Crc24DispatchFn = crate::dispatchers::Crc24Fn;
+#[cfg(feature = "std")]
 type Crc24DispatchVectoredFn = fn(u32, &[&[u8]]) -> u32;
 
+#[cfg(feature = "std")]
 #[inline]
 fn crc24_apply_kernel_vectored(mut crc: u32, bufs: &[&[u8]], kernel: Crc24DispatchFn) -> u32 {
   for &buf in bufs {
