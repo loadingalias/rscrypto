@@ -50,10 +50,8 @@ rscrypto = { version = "0.1", default-features = false, features = ["checksums"]
 
 ## Contributing
 
-Run `just tune` for active Blake3 boundary capture.
-See `docs/tuning.md` for the tuning workflow and artifact format.
-For perf-gap work on Blake3, use `just bench-blake3-core`.
-Runner/architecture policy for CI/bench/tune is pinned in `ARCHITECTURE_MATRIX.md`.
+For perf-gap work on Blake3, start with `just bench-blake3-core`.
+Runner/architecture policy for CI and benchmarking is pinned in `ARCHITECTURE_MATRIX.md`.
 
 ## License
 

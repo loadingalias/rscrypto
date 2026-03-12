@@ -3,9 +3,9 @@ set -euo pipefail
 
 MODE="${1:-}"
 case "$MODE" in
-  bench|tune) ;;
+  bench) ;;
   *)
-    echo "usage: scripts/ci/emit-manual-matrix.sh <bench|tune>" >&2
+    echo "usage: scripts/ci/emit-manual-matrix.sh <bench>" >&2
     exit 2
     ;;
 esac
@@ -36,9 +36,6 @@ fi
 ROWS=()
 COMPONENTS_STD="clippy, rustfmt, rust-src"
 RUNSON_TIMEOUT_MINUTES=120
-if [[ "$MODE" == "tune" ]]; then
-  RUNSON_TIMEOUT_MINUTES=55
-fi
 
 emit_row_if_enabled "${RUN_AMD_ZEN4:-false}" \
   "{\"platform\":\"amd-zen4\",\"display_name\":\"AMD Zen4\",\"artifact_suffix\":\"amd-zen4\",\"timeout_minutes\":${RUNSON_TIMEOUT_MINUTES},\"setup_kind\":\"runson\",\"runner\":\"runs-on=${GH_RUN_ID_VAL}/runner=amd-zen4\",\"cache_key\":\"\",\"tools_mode\":\"standard\",\"toolchain_components\":\"${COMPONENTS_STD}\",\"runson_mode\":\"runson-bench\"}"

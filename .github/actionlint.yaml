@@ -8,7 +8,7 @@ self-hosted-runner:
     - namespace-profile-rscrypto-linux-x86
     - namespace-profile-rscrypto-linux-arm64
 
-    # RunsOn benchmark/tune runners
+    # RunsOn benchmark runners
     - runs-on=${{ github.run_id }}/runner=intel-spr
     - runs-on=${{ github.run_id }}/runner=intel-icl
     - runs-on=${{ github.run_id }}/runner=amd-zen4

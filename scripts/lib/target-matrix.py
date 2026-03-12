@@ -53,8 +53,6 @@ def get_json_view(manifest: dict, key: str):
         return manifest["groups"]["no_std"]
     if key == "commit_wasm":
         return manifest["groups"]["wasm"]
-    if key == "tune_arches":
-        return manifest["tune"]["arches"]
     raise KeyError(f"unknown json key: {key}")
 
 

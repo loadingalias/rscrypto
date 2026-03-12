@@ -78,11 +78,11 @@ Power/s390x/riscv64 parity harnesses exist in source under `cfg(target_arch=...)
 
 Many tables use `[64,256,4096]`, but there are existing variants like `[64,128,4096]` and `[64,64,4096]`. The real issue is boundary policy transparency/provenance, not complete uniformity.
 
-3. `tune.rs` is not dead today, but conceptually overlaps dispatch-era model.
+3. The old advisory API is gone; keep dispatch policy centered on benchmark-backed tables.
 - `crates/checksum/src/lib.rs:147`
-- `crates/checksum/src/tune.rs`
+- `crates/checksum/src/dispatch.rs`
 
-It is public API and tested. Decision needed: keep as compatibility API (documented as advisory), or deprecate with migration path.
+Do not reintroduce an advisory tuning API unless it has a concrete ownership and update path.
 
 ## Revised priority plan (world-class, minimal complexity)
 
@@ -160,13 +160,12 @@ Acceptance:
 1. De-duplicate benchmark harness shape with reusable helper/macro.
 - Keep clarity; avoid over-generic API soup.
 
-2. Clarify `tune.rs` role in docs/API.
-- If retained: mark as advisory thresholds, not dispatch selectors.
-- If deprecated: soft deprecate with replacement guidance.
+2. Keep benchmark guidance focused on dispatch tables and reproducible bench data.
+- Avoid reviving a parallel tuning API without a clear maintenance owner.
 
 Acceptance:
 - Smaller benchmark boilerplate with equal readability.
-- No ambiguity about tune-vs-dispatch responsibilities.
+- No ambiguity about dispatch responsibilities.
 
 ## Concrete next implementation batch (recommended)
 

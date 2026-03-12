@@ -1032,7 +1032,7 @@ mod tests {
 
   /// Test various buffer sizes to exercise both portable and SIMD paths.
   ///
-  /// This test verifies that the tune-aware dispatch produces correct results
+  /// This test verifies that dispatch selection produces correct results
   /// regardless of whether the portable slice-by-8 or SIMD path is selected.
   #[test]
   fn test_crc64_various_lengths() {
@@ -1044,7 +1044,7 @@ mod tests {
 
     // Test lengths around key thresholds:
     // - 0-15: always portable (below 16B lane minimum)
-    // - 16-127: may use portable or small-lane CLMUL/PMULL (tune dependent)
+    // - 16-127: may use portable or small-lane CLMUL/PMULL depending on dispatch thresholds
     // - 128+: may use 128B folding (and VPCLMUL on wide-SIMD x86_64)
     let test_lengths = [
       0, 1, 7, 8, 9, 15, 16, 17, 31, 32, 48, 63, 64, 65, 100, 127, 128, 200, 255, 256, 300, 400, 512,

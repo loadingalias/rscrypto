@@ -10,7 +10,7 @@ use hashes::{
   bench as microbench,
   crypto::{
     Blake3,
-    blake3::{dispatch, dispatch_tables, tune},
+    blake3::{__bench, dispatch, dispatch_tables},
   },
 };
 use traits::{Digest as _, Xof as _};
@@ -767,7 +767,7 @@ fn blake3_rscrypto_threads(c: &mut Criterion) {
       };
 
       group.bench_function(BenchmarkId::new(format!("rscrypto/t{threads_total}"), size), |b| {
-        let _guard = tune::override_blake3_parallel_policy(table);
+        let _guard = __bench::override_blake3_parallel_policy(table);
         b.iter(|| black_box(Blake3::digest(black_box(&data))))
       });
     }

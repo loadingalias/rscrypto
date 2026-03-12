@@ -11,8 +11,8 @@ const TARGET_MATRIX_MANIFEST: &str = include_str!("../../../config/target-matrix
 #[must_use]
 pub fn manifest_has_arch(arch: Arch) -> bool {
   match arch {
-    Arch::X86_64 => TARGET_MATRIX_MANIFEST.contains("\"x86_64\""),
-    Arch::Aarch64 => TARGET_MATRIX_MANIFEST.contains("\"aarch64\""),
+    Arch::X86_64 => TARGET_MATRIX_MANIFEST.contains("\"x86_64-"),
+    Arch::Aarch64 => TARGET_MATRIX_MANIFEST.contains("\"aarch64-"),
     _ => true,
   }
 }

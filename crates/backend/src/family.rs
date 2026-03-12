@@ -242,8 +242,8 @@ impl KernelFamily {
   /// must have enough data to amortize setup costs. This returns the minimum
   /// bytes *per lane* for this family.
   ///
-  /// **NOTE**: These are initial conservative defaults. Run tune binaries
-  /// to find empirical crossover points for each microarch.
+  /// **NOTE**: These are conservative defaults. Use benchmark data to refine
+  /// crossover points for each microarchitecture.
   ///
   /// # Returns
   ///

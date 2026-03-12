@@ -929,10 +929,10 @@ fn hash_power_of_two_subtree_roots_parallel_rayon(req: SubtreeRootsRequest<'_>) 
   }
 }
 
-/// Tuning-only hooks (not part of the stable API).
+/// Benchmark-only hooks (not part of the stable API).
 #[cfg(feature = "std")]
 #[doc(hidden)]
-pub mod tune {
+pub mod __bench {
   // Re-export types needed for policy construction
   use super::{Mutex, PARALLEL_OVERRIDE, dispatch_tables};
   pub use super::{ParallelPolicyOverride, dispatch_tables::ParallelTable};
@@ -956,8 +956,8 @@ pub mod tune {
   /// This sets all variants to the same table. For per-variant control,
   /// use `override_blake3_parallel_policy_full()`.
   ///
-  /// This is used by legacy tuning tooling to benchmark single-thread vs multi-thread
-  /// behavior without relying on user-facing environment variables.
+  /// This is used by internal benchmarks to compare single-thread and
+  /// multi-thread behavior without relying on user-facing environment variables.
   #[must_use]
   pub fn override_blake3_parallel_policy(table: dispatch_tables::ParallelTable) -> Blake3ParallelOverrideGuard {
     override_blake3_parallel_policy_full(ParallelPolicyOverride::new(table))
@@ -965,7 +965,7 @@ pub mod tune {
 
   /// Override the active BLAKE3 parallel policy with per-variant control.
   ///
-  /// This allows independent tuning of:
+  /// This allows independent control of:
   /// - oneshot: regular one-shot hashing (`digest`, `xof`)
   /// - keyed_oneshot: keyed one-shot hashing (`keyed_digest`, `keyed_xof`)
   /// - derive_oneshot: derive-key one-shot hashing (`derive_key`)
@@ -973,7 +973,7 @@ pub mod tune {
   /// - keyed_streaming: keyed streaming updates
   /// - derive_streaming: derive-key streaming updates
   ///
-  /// This is used by legacy tuning tooling for fine-grained threshold tuning.
+  /// This is used by internal benchmarks for fine-grained policy overrides.
   #[must_use]
   pub fn override_blake3_parallel_policy_full(policy: ParallelPolicyOverride) -> Blake3ParallelOverrideGuard {
     let lock: &Mutex<Option<ParallelPolicyOverride>> = PARALLEL_OVERRIDE.get_or_init(|| Mutex::new(None));
@@ -1961,9 +1961,8 @@ impl ChunkState {
     debug_assert_eq!(self.block_len, 0);
     debug_assert_eq!(input.len(), CHUNK_LEN);
     let key = self.chaining_value;
-    let (cv, last_block) = absorb_exact_one_chunk_state(self.kernel_id, input, key, self.chunk_counter, self.flags);
-    self.chaining_value = cv;
-    self.block = last_block;
+    self.chaining_value = absorb_exact_one_chunk_state(self.kernel_id, input, key, self.chunk_counter, self.flags);
+    self.block.copy_from_slice(&input[CHUNK_LEN - BLOCK_LEN..]);
     self.block_len = BLOCK_LEN as u8;
     self.blocks_compressed = 15;
   }
@@ -2140,7 +2139,7 @@ fn absorb_exact_one_chunk_state(
   key: [u32; 8],
   counter: u64,
   flags: u32,
-) -> ([u32; 8], [u8; BLOCK_LEN]) {
+) -> [u32; 8] {
   debug_assert_eq!(input.len(), CHUNK_LEN);
 
   #[cfg(target_arch = "x86_64")]
@@ -2157,9 +2156,7 @@ fn absorb_exact_one_chunk_state(
           // readable 64-byte buffer.
           cv = unsafe { x86_64::compress_cv_sse41_bytes(&cv, block.as_ptr(), counter, BLOCK_LEN as u32, block_flags) };
         }
-        let mut last_block = [0u8; BLOCK_LEN];
-        last_block.copy_from_slice(&input[CHUNK_LEN - BLOCK_LEN..]);
-        return (cv, last_block);
+        return cv;
       }
       kernels::Blake3KernelId::X86Avx512 => {
         let mut cv = key;
@@ -2181,9 +2178,7 @@ fn absorb_exact_one_chunk_state(
               unsafe { x86_64::compress_cv_avx512_bytes(&cv, block.as_ptr(), counter, BLOCK_LEN as u32, block_flags) };
           }
         }
-        let mut last_block = [0u8; BLOCK_LEN];
-        last_block.copy_from_slice(&input[CHUNK_LEN - BLOCK_LEN..]);
-        return (cv, last_block);
+        return cv;
       }
       _ => {}
     }
@@ -2200,9 +2195,7 @@ fn absorb_exact_one_chunk_state(
     &input[..CHUNK_LEN - BLOCK_LEN],
   );
   debug_assert_eq!(blocks_compressed, 15);
-  let mut last_block = [0u8; BLOCK_LEN];
-  last_block.copy_from_slice(&input[CHUNK_LEN - BLOCK_LEN..]);
-  (cv, last_block)
+  cv
 }
 
 #[inline]
@@ -2911,7 +2904,7 @@ impl Blake3 {
 
   /// One-shot hash using an explicitly selected kernel.
   ///
-  /// This is crate-internal glue for `hashes::bench` / legacy tuning tooling.
+  /// This is crate-internal glue for `hashes::bench`.
   #[inline]
   #[must_use]
   pub(crate) fn digest_with_kernel_id(id: kernels::Blake3KernelId, data: &[u8]) -> [u8; OUT_LEN] {
@@ -2921,7 +2914,7 @@ impl Blake3 {
 
   /// One-shot keyed hash using an explicitly selected kernel.
   ///
-  /// This is crate-internal glue for `hashes::bench` / legacy tuning tooling.
+  /// This is crate-internal glue for `hashes::bench`.
   #[inline]
   #[must_use]
   pub(crate) fn keyed_digest_with_kernel_id(id: kernels::Blake3KernelId, key: &[u8; 32], data: &[u8]) -> [u8; OUT_LEN] {
@@ -2932,7 +2925,7 @@ impl Blake3 {
 
   /// One-shot derive-key hash using an explicitly selected kernel.
   ///
-  /// This is crate-internal glue for `hashes::bench` / legacy tuning tooling.
+  /// This is crate-internal glue for `hashes::bench`.
   #[inline]
   #[must_use]
   pub(crate) fn derive_key_with_kernel_id(
@@ -3002,7 +2995,7 @@ impl Blake3 {
 
   /// Streaming hash with explicit `(stream, bulk)` kernel IDs.
   ///
-  /// This is crate-internal glue for `hashes::bench` / legacy tuning tooling.
+  /// This is crate-internal glue for `hashes::bench`.
   #[inline]
   #[must_use]
   pub(crate) fn stream_chunks_with_kernel_pair_id(
@@ -3016,7 +3009,7 @@ impl Blake3 {
 
   /// Keyed streaming hash with explicit `(stream, bulk)` kernel IDs.
   ///
-  /// This is crate-internal glue for `hashes::bench` / legacy tuning tooling.
+  /// This is crate-internal glue for `hashes::bench`.
   #[inline]
   #[must_use]
   pub(crate) fn stream_chunks_keyed_with_kernel_pair_id(
@@ -3035,7 +3028,7 @@ impl Blake3 {
 
   /// Derive-key-material streaming hash with explicit `(stream, bulk)` kernel IDs.
   ///
-  /// This is crate-internal glue for `hashes::bench` / legacy tuning tooling.
+  /// This is crate-internal glue for `hashes::bench`.
   #[inline]
   #[must_use]
   pub(crate) fn stream_chunks_derive_with_kernel_pair_id(
@@ -3059,7 +3052,7 @@ impl Blake3 {
 
   /// Streaming XOF with explicit `(stream, bulk)` kernel IDs.
   ///
-  /// This is crate-internal glue for `hashes::bench` / legacy tuning tooling.
+  /// This is crate-internal glue for `hashes::bench`.
   #[inline]
   #[must_use]
   pub(crate) fn stream_chunks_xof_with_kernel_pair_id(
@@ -3081,7 +3074,7 @@ impl Blake3 {
 
   /// Streaming mixed-pattern hash with explicit `(stream, bulk)` kernel IDs.
   ///
-  /// This is crate-internal glue for `hashes::bench` / legacy tuning tooling.
+  /// This is crate-internal glue for `hashes::bench`.
   #[inline]
   #[must_use]
   pub(crate) fn stream_chunks_mixed_with_kernel_pair_id(
@@ -3095,7 +3088,7 @@ impl Blake3 {
 
   /// Keyed streaming mixed-pattern hash with explicit `(stream, bulk)` kernel IDs.
   ///
-  /// This is crate-internal glue for `hashes::bench` / legacy tuning tooling.
+  /// This is crate-internal glue for `hashes::bench`.
   #[inline]
   #[must_use]
   pub(crate) fn stream_chunks_mixed_keyed_with_kernel_pair_id(
@@ -3122,7 +3115,7 @@ impl Blake3 {
 
   /// Derive-key-material streaming mixed-pattern hash with explicit `(stream, bulk)` kernel IDs.
   ///
-  /// This is crate-internal glue for `hashes::bench` / legacy tuning tooling.
+  /// This is crate-internal glue for `hashes::bench`.
   #[inline]
   #[must_use]
   pub(crate) fn stream_chunks_mixed_derive_with_kernel_pair_id(
@@ -3147,7 +3140,7 @@ impl Blake3 {
 
   /// Streaming mixed-pattern XOF with explicit `(stream, bulk)` kernel IDs.
   ///
-  /// This is crate-internal glue for `hashes::bench` / legacy tuning tooling.
+  /// This is crate-internal glue for `hashes::bench`.
   #[inline]
   #[must_use]
   pub(crate) fn stream_chunks_mixed_xof_with_kernel_pair_id(
@@ -4491,7 +4484,7 @@ mod tests {
       },
       Blake3, CONTEXT, KEY, OUT_LEN, input_pattern,
     };
-    use crate::crypto::blake3::{CHUNK_LEN, dispatch, dispatch_tables, tune};
+    use crate::crypto::blake3::{__bench, CHUNK_LEN, dispatch, dispatch_tables};
 
     #[inline]
     fn always_parallel_table(max_threads: u8) -> dispatch_tables::ParallelTable {
@@ -4572,13 +4565,13 @@ mod tests {
 
           // Serial baseline (forced single-thread).
           let serial_regular = {
-            let _serial_policy = tune::override_blake3_parallel_policy(never_parallel_table());
+            let _serial_policy = __bench::override_blake3_parallel_policy(never_parallel_table());
             run_case_streaming(Blake3::new, prefix, payload)
           };
 
           // Sanity: one-shot should match streaming in serial mode.
           {
-            let _serial_policy = tune::override_blake3_parallel_policy(never_parallel_table());
+            let _serial_policy = __bench::override_blake3_parallel_policy(never_parallel_table());
             assert_eq!(
               serial_regular.0,
               Blake3::digest(full_input),
@@ -4588,7 +4581,7 @@ mod tests {
 
           for &threads_total in &thread_caps {
             let threads_total = threads_total as u8;
-            let _policy = tune::override_blake3_parallel_policy(always_parallel_table(threads_total));
+            let _policy = __bench::override_blake3_parallel_policy(always_parallel_table(threads_total));
 
             let got_regular = run_case_streaming(Blake3::new, prefix, payload);
             assert_eq!(
@@ -4627,14 +4620,14 @@ mod tests {
         let full_input = &input[..offset + payload_len];
 
         let (serial_keyed, serial_derive) = {
-          let _serial_policy = tune::override_blake3_parallel_policy(never_parallel_table());
+          let _serial_policy = __bench::override_blake3_parallel_policy(never_parallel_table());
           let keyed = run_case_streaming(|| Blake3::new_keyed(KEY), prefix, payload);
           let derive = run_case_streaming(|| Blake3::new_derive_key(CONTEXT), prefix, payload);
           (keyed, derive)
         };
 
         {
-          let _serial_policy = tune::override_blake3_parallel_policy(never_parallel_table());
+          let _serial_policy = __bench::override_blake3_parallel_policy(never_parallel_table());
           assert_eq!(
             serial_keyed.0,
             Blake3::keyed_digest(KEY, full_input),
@@ -4649,7 +4642,7 @@ mod tests {
 
         for &threads_total in &thread_caps {
           let threads_total = threads_total as u8;
-          let _policy = tune::override_blake3_parallel_policy(always_parallel_table(threads_total));
+          let _policy = __bench::override_blake3_parallel_policy(always_parallel_table(threads_total));
 
           let got_keyed = run_case_streaming(|| Blake3::new_keyed(KEY), prefix, payload);
           let got_derive = run_case_streaming(|| Blake3::new_derive_key(CONTEXT), prefix, payload);
@@ -4823,12 +4816,12 @@ mod tests {
 
       let input = input_pattern(1024 * CHUNK_LEN);
       let expected = {
-        let _serial_policy = tune::override_blake3_parallel_policy(never_parallel_table());
+        let _serial_policy = __bench::override_blake3_parallel_policy(never_parallel_table());
         Blake3::digest(&input)
       };
 
       let _force = force_parallel_panic(true);
-      let _parallel_policy = tune::override_blake3_parallel_policy(always_parallel_table(ap.get() as u8));
+      let _parallel_policy = __bench::override_blake3_parallel_policy(always_parallel_table(ap.get() as u8));
       let got = Blake3::digest(&input);
       assert_eq!(got, expected, "forced-panic fallback digest mismatch");
     }
