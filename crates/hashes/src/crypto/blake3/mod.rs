@@ -3801,8 +3801,9 @@ impl Digest for Blake3 {
       return;
     }
 
-    if self.pending_chunk_cv.is_none()
-      && self.chunk_state.len() != CHUNK_LEN
+    if self.chunk_state.chunk_counter == 0
+      && self.cv_stack_len == 0
+      && self.pending_chunk_cv.is_none()
       && self.chunk_state.len() + input.len() <= CHUNK_LEN
     {
       self.chunk_state.update(input);
