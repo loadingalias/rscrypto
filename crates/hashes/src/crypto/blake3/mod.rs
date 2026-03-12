@@ -1922,31 +1922,20 @@ impl ChunkState {
 
     let (prefix_blocks, remainder) = input[..CHUNK_LEN - BLOCK_LEN].as_chunks::<BLOCK_LEN>();
     debug_assert!(remainder.is_empty());
-    let Some((first_block, rest_blocks)) = prefix_blocks.split_first() else {
-      unreachable!("exact chunk prefix always has 15 blocks");
-    };
-
-    let first_words = words16_from_le_bytes_64(first_block);
-    self.chaining_value = first_8_words(compress(
-      &self.chaining_value,
-      &first_words,
-      self.chunk_counter,
-      BLOCK_LEN as u32,
-      self.flags | CHUNK_START,
-    ));
-
-    for block in rest_blocks {
+    for (idx, block) in prefix_blocks.iter().enumerate() {
       let block_words = words16_from_le_bytes_64(block);
+      let block_flags = self.flags | if idx == 0 { CHUNK_START } else { 0 };
       self.chaining_value = first_8_words(compress(
         &self.chaining_value,
         &block_words,
         self.chunk_counter,
         BLOCK_LEN as u32,
-        self.flags,
+        block_flags,
       ));
+      self.blocks_compressed = self.blocks_compressed.strict_add(1);
     }
 
-    self.blocks_compressed = 15;
+    debug_assert_eq!(self.blocks_compressed, 15);
     self.block.copy_from_slice(&input[CHUNK_LEN - BLOCK_LEN..]);
     self.block_len = BLOCK_LEN as u8;
   }
@@ -2163,71 +2152,38 @@ fn absorb_exact_one_chunk_state(
   {
     let (prefix_blocks, remainder) = input[..CHUNK_LEN - BLOCK_LEN].as_chunks::<BLOCK_LEN>();
     debug_assert!(remainder.is_empty());
-    let Some((first_block, rest_blocks)) = prefix_blocks.split_first() else {
-      unreachable!("exact chunk prefix always has 15 blocks");
-    };
 
     match kernel_id {
       kernels::Blake3KernelId::X86Sse41 | kernels::Blake3KernelId::X86Avx2 => {
-        // SAFETY: dispatch validates SSE4.1 for both kernels, and `first_block`
-        // is a readable 64-byte buffer.
-        let mut cv = unsafe {
-          x86_64::compress_cv_sse41_bytes(
-            &key,
-            first_block.as_ptr(),
-            counter,
-            BLOCK_LEN as u32,
-            flags | CHUNK_START,
-          )
-        };
-        for block in rest_blocks {
+        let mut cv = key;
+        for (idx, block) in prefix_blocks.iter().enumerate() {
+          let block_flags = flags | if idx == 0 { CHUNK_START } else { 0 };
           // SAFETY: dispatch validates SSE4.1 for both kernels, and `block` is a
           // readable 64-byte buffer.
-          cv = unsafe { x86_64::compress_cv_sse41_bytes(&cv, block.as_ptr(), counter, BLOCK_LEN as u32, flags) };
+          cv = unsafe { x86_64::compress_cv_sse41_bytes(&cv, block.as_ptr(), counter, BLOCK_LEN as u32, block_flags) };
         }
         let mut last_block = [0u8; BLOCK_LEN];
         last_block.copy_from_slice(&input[CHUNK_LEN - BLOCK_LEN..]);
         return (cv, last_block);
       }
       kernels::Blake3KernelId::X86Avx512 => {
-        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-        let mut cv = unsafe {
-          // SAFETY: dispatch validates AVX-512 availability, and `first_block`
-          // is a readable 64-byte buffer.
-          x86_64::asm::compress_in_place_avx512(
-            &key,
-            first_block.as_ptr(),
-            counter,
-            BLOCK_LEN as u32,
-            flags | CHUNK_START,
-          )
-        };
-        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-        let mut cv = unsafe {
-          // SAFETY: dispatch validates AVX-512 availability, and `first_block`
-          // is a readable 64-byte buffer.
-          x86_64::compress_cv_avx512_bytes(
-            &key,
-            first_block.as_ptr(),
-            counter,
-            BLOCK_LEN as u32,
-            flags | CHUNK_START,
-          )
-        };
-
-        for block in rest_blocks {
+        let mut cv = key;
+        for (idx, block) in prefix_blocks.iter().enumerate() {
+          let block_flags = flags | if idx == 0 { CHUNK_START } else { 0 };
           #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
           {
             // SAFETY: dispatch validates AVX-512 availability, and `block` is a
             // readable 64-byte buffer.
-            cv =
-              unsafe { x86_64::asm::compress_in_place_avx512(&cv, block.as_ptr(), counter, BLOCK_LEN as u32, flags) };
+            cv = unsafe {
+              x86_64::asm::compress_in_place_avx512(&cv, block.as_ptr(), counter, BLOCK_LEN as u32, block_flags)
+            };
           }
           #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
           {
             // SAFETY: dispatch validates AVX-512 availability, and `block` is a
             // readable 64-byte buffer.
-            cv = unsafe { x86_64::compress_cv_avx512_bytes(&cv, block.as_ptr(), counter, BLOCK_LEN as u32, flags) };
+            cv =
+              unsafe { x86_64::compress_cv_avx512_bytes(&cv, block.as_ptr(), counter, BLOCK_LEN as u32, block_flags) };
           }
         }
         let mut last_block = [0u8; BLOCK_LEN];
