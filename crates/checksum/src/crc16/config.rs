@@ -248,12 +248,12 @@ pub fn get_ccitt() -> Crc16Config {
   {
     use std::sync::OnceLock;
     static CACHED: OnceLock<Crc16Config> = OnceLock::new();
-    *CACHED.get_or_init(|| config_ccitt(platform::caps()))
+    *CACHED.get_or_init(|| config_ccitt(crate::dispatch_caps()))
   }
 
   #[cfg(not(feature = "std"))]
   {
-    config_ccitt(platform::caps())
+    config_ccitt(crate::dispatch_caps())
   }
 }
 
@@ -265,11 +265,11 @@ pub fn get_ibm() -> Crc16Config {
   {
     use std::sync::OnceLock;
     static CACHED: OnceLock<Crc16Config> = OnceLock::new();
-    *CACHED.get_or_init(|| config_ibm(platform::caps()))
+    *CACHED.get_or_init(|| config_ibm(crate::dispatch_caps()))
   }
 
   #[cfg(not(feature = "std"))]
   {
-    config_ibm(platform::caps())
+    config_ibm(crate::dispatch_caps())
   }
 }

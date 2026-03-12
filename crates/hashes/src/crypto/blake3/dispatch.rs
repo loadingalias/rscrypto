@@ -220,8 +220,7 @@ fn resolve(id: Blake3KernelId, caps: Caps) -> Blake3KernelId {
 #[must_use]
 fn resolved() -> ResolvedDispatch {
   RESOLVED.get_or_init(|| {
-    let det = platform::get();
-    let caps = det.caps;
+    let caps = crate::util::dispatch_caps();
 
     let table: &'static DispatchTable = super::dispatch_tables::select_table_for_caps(caps);
     let stream_table: &'static StreamingTable = super::dispatch_tables::select_streaming_table_for_caps(caps);

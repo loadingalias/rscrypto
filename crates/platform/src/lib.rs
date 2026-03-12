@@ -1,64 +1,33 @@
-//! CPU detection and capabilities for maximum performance.
+//! CPU detection and capability reporting.
 //!
-//! Unified platform abstraction for rscrypto: detects CPU features and exposes
-//! the architectural facts dispatch code needs.
+//! This crate is the facts layer for rscrypto. It reports what instructions are
+//! legal on the current target and leaves dispatch policy to algorithm crates.
 //!
 //! # Quick Start
 //!
 //! ```
-//! use platform::dispatch_auto;
+//! let runtime = platform::caps();
+//! let compile_time = platform::caps_static();
 //!
-//! // Automatic dispatch: zero-overhead when compiled with target features,
-//! // runtime detection otherwise
-//! let result = dispatch_auto(|caps| {
-//!   caps.count() // returns number of detected features
-//! });
-//! assert!(result >= 1); // At least one feature detected
-//! ```
-//!
-//! # Three Dispatch Modes
-//!
-//! | Function | When to Use | Overhead |
-//! |----------|-------------|----------|
-//! | [`dispatch_static`] | Compiled with `-C target-cpu=native` | Zero |
-//! | [`dispatch()`] | Generic binary, need runtime detection | Nanoseconds (cached) |
-//! | [`dispatch_auto`] | Best of both: static when possible, runtime fallback | Optimal |
-//!
-//! # For Checksum/Hash Implementations
-//!
-//! ```
-//! # #[cfg(target_arch = "aarch64")]
-//! # fn example() {
-//! use platform::{caps::aarch64, dispatch_auto};
-//!
-//! fn crc32c(crc: u32, data: &[u8]) -> u32 {
-//!   dispatch_auto(|caps| {
-//!     if caps.has(aarch64::PMULL_EOR3_READY) {
-//!       pmull_eor3_kernel(crc, data) // Apple M1+, Graviton3+
-//!     } else if caps.has(aarch64::AES) {
-//!       pmull_kernel(crc, data) // Most ARMv8
-//!     } else {
-//!       scalar_crc32c(crc, data) // Fallback
-//!     }
-//!   })
-//! }
-//! # fn scalar_crc32c(_: u32, _: &[u8]) -> u32 { 0 }
-//! # fn pmull_eor3_kernel(_: u32, _: &[u8]) -> u32 { 0 }
-//! # fn pmull_kernel(_: u32, _: &[u8]) -> u32 { 0 }
-//! # }
+//! assert!(runtime.count() >= compile_time.count());
 //! ```
 //!
 //! # Design
 //!
 //! - **[`Caps`]**: 256-bit feature bitset. "What instructions can run?"
-//! - **[`caps_static`]**: Compile-time detection via `cfg!()`. Zero overhead.
-//! - **[`caps()`]**: Runtime detection via CPUID/HWCAP. Cached in `OnceLock`.
+//! - **[`caps_static`]**: Compile-time facts from `cfg!(target_feature = ...)`
+//! - **[`caps()`]**: Runtime facts via CPUID/HWCAP with process-wide caching
+//! - **[`Detected`]**: Capabilities plus architecture identifier
+//!
+//! Algorithm crates decide whether to use compile-time facts, runtime facts, or
+//! a mix of both for their own planners. This crate does not own dispatch
+//! policy.
 //!
 //! # Performance
 //!
-//! - Compile-time path: **0ns** (eliminated by optimizer)
-//! - Runtime path: **~3ns** (atomic load of cached `Detected`)
-//! - First detection: **~1μs** (CPUID/sysctl, happens once)
+//! - Compile-time capability query: **0ns** after optimization
+//! - Cached runtime capability query: **~3ns**
+//! - First runtime detection: **~1μs** (CPUID/sysctl, once per process)
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 #![cfg_attr(not(test), deny(clippy::expect_used))]
 #![cfg_attr(not(test), deny(clippy::indexing_slicing))]
@@ -73,7 +42,6 @@ extern crate std;
 
 pub mod caps;
 pub mod detect;
-pub mod dispatch;
 pub mod target_matrix;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -82,7 +50,6 @@ pub mod target_matrix;
 
 pub use caps::{Arch, Caps};
 pub use detect::{Detected, OverrideError};
-pub use dispatch::{dispatch, dispatch_auto, dispatch_static, has_static_features};
 
 // Architecture-specific feature constants are available via submodules:
 // - `caps::x86` - x86/x86_64 features (SSE, AVX, AVX-512, etc.)
