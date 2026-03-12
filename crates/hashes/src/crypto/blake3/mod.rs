@@ -1914,33 +1914,6 @@ impl ChunkState {
   }
 
   #[inline]
-  fn absorb_exact_one_chunk_portable(&mut self, input: &[u8]) {
-    debug_assert_eq!(self.kernel_id, kernels::Blake3KernelId::Portable);
-    debug_assert_eq!(self.blocks_compressed, 0);
-    debug_assert_eq!(self.block_len, 0);
-    debug_assert_eq!(input.len(), CHUNK_LEN);
-
-    let (prefix_blocks, remainder) = input[..CHUNK_LEN - BLOCK_LEN].as_chunks::<BLOCK_LEN>();
-    debug_assert!(remainder.is_empty());
-    for (idx, block) in prefix_blocks.iter().enumerate() {
-      let block_words = words16_from_le_bytes_64(block);
-      let block_flags = self.flags | if idx == 0 { CHUNK_START } else { 0 };
-      self.chaining_value = first_8_words(compress(
-        &self.chaining_value,
-        &block_words,
-        self.chunk_counter,
-        BLOCK_LEN as u32,
-        block_flags,
-      ));
-      self.blocks_compressed = self.blocks_compressed.strict_add(1);
-    }
-
-    debug_assert_eq!(self.blocks_compressed, 15);
-    self.block.copy_from_slice(&input[CHUNK_LEN - BLOCK_LEN..]);
-    self.block_len = BLOCK_LEN as u8;
-  }
-
-  #[inline]
   fn absorb_exact_one_chunk_fallback(&mut self, input: &[u8]) {
     debug_assert_eq!(self.blocks_compressed, 0);
     debug_assert_eq!(self.block_len, 0);
@@ -1993,11 +1966,7 @@ impl ChunkState {
           return;
         }
 
-        if self.kernel_id == kernels::Blake3KernelId::Portable {
-          self.absorb_exact_one_chunk_portable(input);
-        } else {
-          self.absorb_exact_one_chunk_fallback(input);
-        }
+        self.absorb_exact_one_chunk_fallback(input);
         return;
       }
 
