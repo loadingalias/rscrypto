@@ -3639,6 +3639,26 @@ impl Blake3 {
     );
   }
 
+  #[cold]
+  #[inline(never)]
+  fn update_digest_slow(&mut self, input: &[u8]) {
+    self.commit_pending_chunk_cv();
+
+    if self.chunk_state.len() == CHUNK_LEN {
+      self.advance_full_chunk();
+    }
+
+    if self.chunk_state.len() + input.len() <= CHUNK_LEN {
+      self.chunk_state.update(input);
+      return;
+    }
+
+    let plan = dispatch::hasher_dispatch();
+    let stream = self.chunk_state.kernel_id;
+    let bulk = plan.bulk_kernel_for_update(input.len()).id;
+    self.update_with(input, stream, bulk);
+  }
+
   fn root_output(&self) -> OutputState {
     let mut parent_nodes_remaining = self.cv_stack_len as usize;
     let mut output = if let Some(right_cv) = self.pending_chunk_cv {
@@ -3781,21 +3801,15 @@ impl Digest for Blake3 {
       return;
     }
 
-    self.commit_pending_chunk_cv();
-
-    if self.chunk_state.len() == CHUNK_LEN {
-      self.advance_full_chunk();
-    }
-
-    if self.chunk_state.len() + input.len() <= CHUNK_LEN {
+    if self.pending_chunk_cv.is_none()
+      && self.chunk_state.len() != CHUNK_LEN
+      && self.chunk_state.len() + input.len() <= CHUNK_LEN
+    {
       self.chunk_state.update(input);
       return;
     }
 
-    let plan = dispatch::hasher_dispatch();
-    let stream = self.chunk_state.kernel_id;
-    let bulk = plan.bulk_kernel_for_update(input.len()).id;
-    self.update_with(input, stream, bulk);
+    self.update_digest_slow(input);
   }
 
   #[inline]
