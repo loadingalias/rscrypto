@@ -50,10 +50,7 @@ static ACTIVE_TABLE: backend::OnceCache<&'static KernelTable> = backend::OnceCac
 /// This function is called once per process and caches the result.
 #[inline]
 pub fn active_table() -> &'static KernelTable {
-  ACTIVE_TABLE.get_or_init(|| {
-    let caps = platform::caps();
-    select_table(caps)
-  })
+  ACTIVE_TABLE.get_or_init(|| select_table(crate::dispatch_caps()))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -38,7 +38,7 @@ fn resolve(id: AsconPermute12KernelId, caps: Caps) -> AsconPermute12KernelId {
 #[must_use]
 fn active() -> ActiveDispatch {
   ACTIVE.get_or_init(|| {
-    let caps = platform::caps();
+    let caps = crate::util::dispatch_caps();
     let table: &'static DispatchTable = super::dispatch_tables::select_runtime_table(caps);
 
     let xs_id = resolve(table.xs, caps);
