@@ -3527,11 +3527,8 @@ impl Blake3 {
     // stored the last full chunk's CV instead of keeping a fully-buffered
     // `ChunkState`. As soon as more input arrives, that chunk is no longer
     // terminal and can be committed to the tree.
-    if !input.is_empty()
-      && let Some(cv) = self.pending_chunk_cv.take()
-    {
-      let total_chunks = self.chunk_state.chunk_counter;
-      self.add_chunk_chaining_value(cv, total_chunks);
+    if !input.is_empty() {
+      self.commit_pending_chunk_cv();
     }
 
     // When we're at a chunk boundary and we have more than one whole chunk
@@ -3544,15 +3541,7 @@ impl Blake3 {
     // a block boundary and later calls `finalize`.
     while !input.is_empty() {
       if self.chunk_state.len() == CHUNK_LEN {
-        let chunk_cv = self.chunk_state.output().chaining_value();
-        let total_chunks = self.chunk_state.chunk_counter + 1;
-        self.add_chunk_chaining_value(chunk_cv, total_chunks);
-        self.chunk_state = ChunkState::new(
-          self.key_words,
-          total_chunks,
-          self.chunk_state.flags,
-          self.chunk_state.kernel_id,
-        );
+        self.advance_full_chunk();
       }
 
       #[cfg(feature = "std")]
@@ -3629,13 +3618,25 @@ impl Blake3 {
   }
 
   #[inline]
-  fn frontier_is_active(&self) -> bool {
-    self.chunk_state.chunk_counter == 0 && self.cv_stack_len == 0 && self.pending_chunk_cv.is_none()
+  fn commit_pending_chunk_cv(&mut self) {
+    if let Some(cv) = self.pending_chunk_cv.take() {
+      let total_chunks = self.chunk_state.chunk_counter;
+      self.add_chunk_chaining_value(cv, total_chunks);
+    }
   }
 
   #[inline]
-  fn frontier_can_absorb(&self, input: &[u8]) -> bool {
-    self.frontier_is_active() && self.chunk_state.len() + input.len() <= CHUNK_LEN
+  fn advance_full_chunk(&mut self) {
+    debug_assert_eq!(self.chunk_state.len(), CHUNK_LEN);
+    let chunk_cv = self.chunk_state.output().chaining_value();
+    let total_chunks = self.chunk_state.chunk_counter + 1;
+    self.add_chunk_chaining_value(chunk_cv, total_chunks);
+    self.chunk_state = ChunkState::new(
+      self.key_words,
+      total_chunks,
+      self.chunk_state.flags,
+      self.chunk_state.kernel_id,
+    );
   }
 
   fn root_output(&self) -> OutputState {
@@ -3780,7 +3781,13 @@ impl Digest for Blake3 {
       return;
     }
 
-    if self.frontier_can_absorb(input) {
+    self.commit_pending_chunk_cv();
+
+    if self.chunk_state.len() == CHUNK_LEN {
+      self.advance_full_chunk();
+    }
+
+    if self.chunk_state.len() + input.len() <= CHUNK_LEN {
       self.chunk_state.update(input);
       return;
     }
