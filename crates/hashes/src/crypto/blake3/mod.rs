@@ -2160,7 +2160,9 @@ fn absorb_exact_one_chunk_state(
           let block_flags = flags | if idx == 0 { CHUNK_START } else { 0 };
           // SAFETY: dispatch validates SSE4.1 for both kernels, and `block` is a
           // readable 64-byte buffer.
-          cv = unsafe { x86_64::compress_cv_sse41_bytes(&cv, block.as_ptr(), counter, BLOCK_LEN as u32, block_flags) };
+          unsafe {
+            x86_64::compress_in_place_sse41_bytes(&mut cv, block.as_ptr(), counter, BLOCK_LEN as u32, block_flags)
+          };
         }
         let mut last_block = [0u8; BLOCK_LEN];
         last_block.copy_from_slice(&input[CHUNK_LEN - BLOCK_LEN..]);
@@ -2174,16 +2176,17 @@ fn absorb_exact_one_chunk_state(
           {
             // SAFETY: dispatch validates AVX-512 availability, and `block` is a
             // readable 64-byte buffer.
-            cv = unsafe {
-              x86_64::asm::compress_in_place_avx512(&cv, block.as_ptr(), counter, BLOCK_LEN as u32, block_flags)
+            unsafe {
+              x86_64::asm::compress_in_place_avx512_mut(&mut cv, block.as_ptr(), counter, BLOCK_LEN as u32, block_flags)
             };
           }
           #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
           {
             // SAFETY: dispatch validates AVX-512 availability, and `block` is a
             // readable 64-byte buffer.
-            cv =
-              unsafe { x86_64::compress_cv_avx512_bytes(&cv, block.as_ptr(), counter, BLOCK_LEN as u32, block_flags) };
+            unsafe {
+              x86_64::compress_in_place_avx512_bytes(&mut cv, block.as_ptr(), counter, BLOCK_LEN as u32, block_flags)
+            };
           }
         }
         let mut last_block = [0u8; BLOCK_LEN];
@@ -3801,9 +3804,8 @@ impl Digest for Blake3 {
       return;
     }
 
-    if self.chunk_state.chunk_counter == 0
-      && self.cv_stack_len == 0
-      && self.pending_chunk_cv.is_none()
+    if self.pending_chunk_cv.is_none()
+      && self.chunk_state.len() != CHUNK_LEN
       && self.chunk_state.len() + input.len() <= CHUNK_LEN
     {
       self.chunk_state.update(input);

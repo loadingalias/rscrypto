@@ -226,6 +226,26 @@ pub(crate) unsafe fn compress_in_place_avx512(
   cv_out
 }
 
+/// Single-block compress using AVX-512 assembly, mutating the CV in place.
+///
+/// # Safety
+/// Caller must ensure AVX-512 F+VL are available.
+#[inline(always)]
+pub(crate) unsafe fn compress_in_place_avx512_mut(
+  cv: &mut [u32; 8],
+  block: *const u8,
+  counter: u64,
+  block_len: u32,
+  flags: u32,
+) {
+  debug_assert!(block_len <= u8::MAX as u32);
+  debug_assert!(flags <= u8::MAX as u32);
+  // SAFETY: callsites validate CPU features and pointer contracts.
+  unsafe {
+    rscrypto_blake3_compress_in_place_avx512(cv.as_mut_ptr(), block, counter, block_len as u8, flags as u8);
+  }
+}
+
 /// Single-block compress with full 64-byte output using AVX-512 assembly.
 ///
 /// # Safety

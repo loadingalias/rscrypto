@@ -221,6 +221,21 @@ unsafe fn load_msg_vecs(block: *const u8) -> (__m128i, __m128i, __m128i, __m128i
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "sse4.1,ssse3")]
+pub(crate) unsafe fn compress_in_place_sse41_bytes(
+  chaining_value: &mut [u32; 8],
+  block: *const u8,
+  counter: u64,
+  block_len: u32,
+  flags: u32,
+) {
+  let (m0, m1, m2, m3) = load_msg_vecs(block);
+  let [row0, row1, row2, row3] = compress_pre_sse41_impl(chaining_value, m0, m1, m2, m3, counter, block_len, flags);
+  _mm_storeu_si128(chaining_value.as_mut_ptr().cast(), _mm_xor_si128(row0, row2));
+  _mm_storeu_si128(chaining_value.as_mut_ptr().add(4).cast(), _mm_xor_si128(row1, row3));
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "sse4.1,ssse3")]
 pub(crate) unsafe fn compress_cv_sse41_bytes(
   chaining_value: &[u32; 8],
   block: *const u8,
@@ -239,8 +254,6 @@ pub(crate) unsafe fn compress_cv_sse41_bytes(
   out
 }
 
-#[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx2,sse4.1,ssse3")]
 pub(crate) unsafe fn compress_cv_avx2_bytes(
   chaining_value: &[u32; 8],
   block: *const u8,
@@ -254,6 +267,25 @@ pub(crate) unsafe fn compress_cv_avx2_bytes(
 
 // On ASM-supported platforms, we prefer the handwritten assembly. This intrinsics
 // version is kept as fallback for other x86_64 platforms (e.g., FreeBSD, illumos).
+#[cfg(target_arch = "x86_64")]
+#[cfg_attr(
+  any(target_os = "linux", target_os = "macos", target_os = "windows"),
+  allow(dead_code)
+)]
+#[target_feature(enable = "avx512f,avx512vl,avx2,sse4.1,ssse3")]
+pub(crate) unsafe fn compress_in_place_avx512_bytes(
+  chaining_value: &mut [u32; 8],
+  block: *const u8,
+  counter: u64,
+  block_len: u32,
+  flags: u32,
+) {
+  let (m0, m1, m2, m3) = load_msg_vecs(block);
+  let [row0, row1, row2, row3] = compress_pre_sse41_impl(chaining_value, m0, m1, m2, m3, counter, block_len, flags);
+  _mm_storeu_si128(chaining_value.as_mut_ptr().cast(), _mm_xor_si128(row0, row2));
+  _mm_storeu_si128(chaining_value.as_mut_ptr().add(4).cast(), _mm_xor_si128(row1, row3));
+}
+
 #[cfg(target_arch = "x86_64")]
 #[cfg_attr(
   any(target_os = "linux", target_os = "macos", target_os = "windows"),
