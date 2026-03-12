@@ -165,6 +165,7 @@ impl Sha512_256 {
 
   #[inline]
   #[must_use]
+  #[cfg(any(test, feature = "std"))]
   pub(crate) fn digest_portable(data: &[u8]) -> [u8; 32] {
     let mut h = Self::default();
     h.update_with(data, Self::compress_blocks_portable);

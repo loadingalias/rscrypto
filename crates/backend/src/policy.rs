@@ -1,19 +1,21 @@
 //! Pre-computed kernel selection policies.
 //!
-//! A [`SelectionPolicy`] captures all dispatch decisions at initialization time,
-//! eliminating per-call capability checks and threshold comparisons.
+//! A [`SelectionPolicy`] captures all dispatch structure at initialization time,
+//! eliminating per-call capability checks and leaving size crossover policy to
+//! algorithm crates.
 //!
 //! # Design Goals
 //!
 //! 1. **Zero per-call overhead**: Policy is computed once and cached
-//! 2. **Per-lane stream selection**: `streams_for_len()` ensures each lane has enough data
-//! 3. **no_std compatible**: All types are `Copy` and heap-free
-//! 4. **Algorithm-agnostic**: Same policy structure works for CRC/hash/AEAD
+//! 2. **Backend owns structure**: Family legality, subfamily shape, and stream topology live here
+//! 3. **Algorithm owns tuning**: Thresholds and lane crossover policy are explicit inputs
+//! 4. **no_std compatible**: All types are `Copy` and heap-free
 //!
 //! # Usage
 //!
 //! ```text
 //! let policy = SelectionPolicy::from_platform(caps);
+//! let policy = policy.with_tunables(PolicyTunables::conservative_for(policy.family()));
 //! let streams = policy.streams_for_len(buffer.len());
 //! ```
 
@@ -21,8 +23,77 @@ use platform::Caps;
 
 use crate::{
   family::{KernelFamily, KernelSubfamily},
-  tier::{KernelTier, TierThresholds},
+  tier::KernelTier,
 };
+
+/// Algorithm-owned dispatch tuning layered on top of a structural policy.
+///
+/// The backend can provide conservative fallbacks, but algorithm crates should
+/// prefer measured values derived from their own benchmarks and dispatch tables.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PolicyTunables {
+  /// Minimum bytes where SIMD becomes faster than portable.
+  pub small_threshold: usize,
+  /// Minimum bytes where folding becomes worthwhile.
+  pub fold_threshold: usize,
+  /// Minimum bytes where the wide tier becomes worthwhile.
+  pub wide_threshold: usize,
+  /// Minimum bytes per lane required before enabling multi-stream processing.
+  pub min_bytes_per_lane: usize,
+}
+
+impl PolicyTunables {
+  /// Disable all size-based tier transitions and multi-streaming.
+  pub const DISABLED: Self = Self {
+    small_threshold: usize::MAX,
+    fold_threshold: usize::MAX,
+    wide_threshold: usize::MAX,
+    min_bytes_per_lane: usize::MAX,
+  };
+
+  /// Conservative backend fallback for callers that do not have measured data yet.
+  #[inline]
+  #[must_use]
+  pub const fn conservative_for(family: KernelFamily) -> Self {
+    match family {
+      KernelFamily::Reference | KernelFamily::Portable => Self::DISABLED,
+      KernelFamily::X86Crc32 | KernelFamily::ArmCrc32 => Self {
+        small_threshold: 16,
+        fold_threshold: usize::MAX,
+        wide_threshold: usize::MAX,
+        min_bytes_per_lane: 128,
+      },
+      KernelFamily::X86Pclmul
+      | KernelFamily::ArmPmull
+      | KernelFamily::PowerVpmsum
+      | KernelFamily::S390xVgfm
+      | KernelFamily::RiscvZbc => Self {
+        small_threshold: 64,
+        fold_threshold: 64,
+        wide_threshold: usize::MAX,
+        min_bytes_per_lane: 256,
+      },
+      KernelFamily::X86Vpclmul => Self {
+        small_threshold: 64,
+        fold_threshold: 64,
+        wide_threshold: 512,
+        min_bytes_per_lane: 512,
+      },
+      KernelFamily::ArmPmullEor3 => Self {
+        small_threshold: 64,
+        fold_threshold: 64,
+        wide_threshold: 512,
+        min_bytes_per_lane: 256,
+      },
+      KernelFamily::ArmSve2Pmull | KernelFamily::RiscvZvbc => Self {
+        small_threshold: 64,
+        fold_threshold: 64,
+        wide_threshold: 512,
+        min_bytes_per_lane: 512,
+      },
+    }
+  }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SelectionPolicy
@@ -34,8 +105,8 @@ use crate::{
 /// lifetime. They encode:
 ///
 /// - Which kernel family and subfamily to use
-/// - Thresholds for tier transitions (e.g., portable to folding)
-/// - Per-lane stream count based on `min_bytes_per_lane`
+/// - Architecture stream topology and legality limits
+/// - Optional algorithm-owned thresholds for tier transitions and multi-streaming
 ///
 /// # Stream Selection
 ///
@@ -91,8 +162,8 @@ pub struct SelectionPolicy {
   /// Stream selection uses: `streams = max(s) where len / s >= min_bytes_per_lane`.
   /// This ensures each parallel lane has enough data to amortize setup costs.
   ///
-  /// Initialized from the kernel family's capability-driven defaults and can be
-  /// overridden by algorithm-specific tunables.
+  /// This is algorithm-owned tuning. Structural constructors leave it disabled
+  /// until the caller applies measured values or an explicit conservative fallback.
   pub min_bytes_per_lane: usize,
 }
 
@@ -112,11 +183,11 @@ impl SelectionPolicy {
       family: KernelFamily::Portable,
       subfamily: KernelSubfamily::portable(),
       caps: Caps::NONE,
-      small_threshold: usize::MAX, // Never transition to SIMD
-      fold_threshold: usize::MAX,
-      wide_threshold: usize::MAX,
+      small_threshold: PolicyTunables::DISABLED.small_threshold,
+      fold_threshold: PolicyTunables::DISABLED.fold_threshold,
+      wide_threshold: PolicyTunables::DISABLED.wide_threshold,
       max_streams: 1,
-      min_bytes_per_lane: usize::MAX,
+      min_bytes_per_lane: PolicyTunables::DISABLED.min_bytes_per_lane,
     }
   }
 
@@ -130,46 +201,24 @@ impl SelectionPolicy {
       family: KernelFamily::Reference,
       subfamily: KernelSubfamily::reference(),
       caps: Caps::NONE,
-      small_threshold: usize::MAX,
-      fold_threshold: usize::MAX,
-      wide_threshold: usize::MAX,
+      small_threshold: PolicyTunables::DISABLED.small_threshold,
+      fold_threshold: PolicyTunables::DISABLED.fold_threshold,
+      wide_threshold: PolicyTunables::DISABLED.wide_threshold,
       max_streams: 1,
-      min_bytes_per_lane: usize::MAX,
+      min_bytes_per_lane: PolicyTunables::DISABLED.min_bytes_per_lane,
     }
   }
 
   /// Construct a policy from detected capabilities.
   ///
-  /// This performs the one-time analysis to select the optimal family
-  /// and compute all thresholds.
+  /// This performs the one-time analysis to select the best legal family and
+  /// subfamily. Algorithm-owned thresholds remain disabled until callers apply
+  /// explicit tunables.
   #[must_use]
   pub fn from_platform(caps: Caps) -> Self {
-    // Select the best available family
     let family = KernelFamily::select_for_platform(caps);
-
-    // Compute subfamily based on family and tier
     let subfamily = Self::compute_subfamily(family);
-
-    // Compute conservative generic thresholds.
-    let TierThresholds {
-      small: small_threshold,
-      fold: fold_threshold,
-      wide: wide_threshold,
-    } = family.tier().policy_thresholds();
-
-    let max_streams = family.arch_max_streams();
-    let min_bytes_per_lane = family.min_bytes_per_lane();
-
-    Self {
-      family,
-      subfamily,
-      caps,
-      small_threshold,
-      fold_threshold,
-      wide_threshold,
-      max_streams,
-      min_bytes_per_lane,
-    }
+    Self::from_parts(caps, family, subfamily, PolicyTunables::DISABLED)
   }
 
   /// Construct a policy with a specific family (for forcing).
@@ -183,26 +232,8 @@ impl SelectionPolicy {
     } else {
       KernelFamily::select_for_platform(caps)
     };
-
     let subfamily = Self::compute_subfamily(effective_family);
-    let TierThresholds {
-      small: small_threshold,
-      fold: fold_threshold,
-      wide: wide_threshold,
-    } = effective_family.tier().policy_thresholds();
-    let max_streams = effective_family.arch_max_streams();
-    let min_bytes_per_lane = effective_family.min_bytes_per_lane();
-
-    Self {
-      family: effective_family,
-      subfamily,
-      caps,
-      small_threshold,
-      fold_threshold,
-      wide_threshold,
-      max_streams,
-      min_bytes_per_lane,
-    }
+    Self::from_parts(caps, effective_family, subfamily, PolicyTunables::DISABLED)
   }
 
   /// Construct a policy with a specific subfamily (for algorithm-specific policies).
@@ -211,24 +242,39 @@ impl SelectionPolicy {
   #[must_use]
   pub fn with_subfamily(caps: Caps, subfamily: KernelSubfamily) -> Self {
     let family = subfamily.family;
-    let TierThresholds {
-      small: small_threshold,
-      fold: fold_threshold,
-      wide: wide_threshold,
-    } = family.tier().policy_thresholds();
-    let max_streams = family.arch_max_streams();
-    let min_bytes_per_lane = family.min_bytes_per_lane();
+    Self::from_parts(caps, family, subfamily, PolicyTunables::DISABLED)
+  }
 
-    Self {
+  fn from_parts(caps: Caps, family: KernelFamily, subfamily: KernelSubfamily, tunables: PolicyTunables) -> Self {
+    let mut policy = Self {
       family,
       subfamily,
       caps,
-      small_threshold,
-      fold_threshold,
-      wide_threshold,
-      max_streams,
-      min_bytes_per_lane,
+      small_threshold: PolicyTunables::DISABLED.small_threshold,
+      fold_threshold: PolicyTunables::DISABLED.fold_threshold,
+      wide_threshold: PolicyTunables::DISABLED.wide_threshold,
+      max_streams: family.arch_max_streams(),
+      min_bytes_per_lane: PolicyTunables::DISABLED.min_bytes_per_lane,
+    };
+    policy.apply_tunables(tunables);
+    policy
+  }
+
+  fn apply_tunables(&mut self, tunables: PolicyTunables) {
+    if matches!(self.family, KernelFamily::Reference | KernelFamily::Portable) {
+      self.small_threshold = PolicyTunables::DISABLED.small_threshold;
+      self.fold_threshold = PolicyTunables::DISABLED.fold_threshold;
+      self.wide_threshold = PolicyTunables::DISABLED.wide_threshold;
+      self.max_streams = 1;
+      self.min_bytes_per_lane = PolicyTunables::DISABLED.min_bytes_per_lane;
+      return;
     }
+
+    self.small_threshold = tunables.small_threshold;
+    self.fold_threshold = tunables.fold_threshold;
+    self.wide_threshold = tunables.wide_threshold;
+    self.max_streams = self.family.arch_max_streams();
+    self.min_bytes_per_lane = tunables.min_bytes_per_lane;
   }
 
   /// Compute the default subfamily for a given family.
@@ -277,6 +323,18 @@ impl SelectionPolicy {
   #[must_use]
   pub const fn caps(&self) -> Caps {
     self.caps
+  }
+
+  /// Get the algorithm-owned tuning currently layered onto this policy.
+  #[inline]
+  #[must_use]
+  pub const fn tunables(&self) -> PolicyTunables {
+    PolicyTunables {
+      small_threshold: self.small_threshold,
+      fold_threshold: self.fold_threshold,
+      wide_threshold: self.wide_threshold,
+      min_bytes_per_lane: self.min_bytes_per_lane,
+    }
   }
 
   /// Check if this policy uses hardware CRC instructions.
@@ -355,6 +413,26 @@ impl SelectionPolicy {
     len >= self.small_threshold
   }
 
+  /// Apply explicit algorithm-owned tuning to this policy.
+  ///
+  /// Structural fields (family, subfamily, architecture stream limits) stay in
+  /// `backend`; size crossover policy remains the caller's responsibility.
+  #[inline]
+  #[must_use]
+  pub fn with_tunables(mut self, tunables: PolicyTunables) -> Self {
+    self.apply_tunables(tunables);
+    self
+  }
+
+  /// Apply backend conservative fallbacks explicitly.
+  ///
+  /// This exists for algorithms that have not yet landed measured tables.
+  #[inline]
+  #[must_use]
+  pub fn with_conservative_tunables(self) -> Self {
+    self.with_tunables(PolicyTunables::conservative_for(self.family))
+  }
+
   // ─────────────────────────────────────────────────────────────────────────
   // Force Mode Application
   // ─────────────────────────────────────────────────────────────────────────
@@ -370,17 +448,27 @@ impl SelectionPolicy {
       ForceMode::Reference => Self::reference(),
       ForceMode::Portable => Self::portable(),
       ForceMode::Tier(tier) => self.force_to_tier(tier),
-      ForceMode::Family(family) => Self::with_family(self.caps, family),
+      ForceMode::Family(family) => self.retarget(family),
     }
   }
 
   fn force_to_tier(&self, tier: KernelTier) -> Self {
     if let Some(family) = KernelFamily::best_available_in_tier(tier, self.caps) {
-      return Self::with_family(self.caps, family);
+      return self.retarget(family);
     }
 
     // Fall back to portable if tier unavailable
     Self::portable()
+  }
+
+  fn retarget(&self, family: KernelFamily) -> Self {
+    let effective_family = if family.is_available(self.caps) {
+      family
+    } else {
+      KernelFamily::select_for_platform(self.caps)
+    };
+    let subfamily = Self::compute_subfamily(effective_family);
+    Self::from_parts(self.caps, effective_family, subfamily, self.tunables())
   }
 
   /// Cap the maximum number of parallel streams used by this policy.
@@ -548,6 +636,8 @@ mod tests {
     let caps = platform::caps::aarch64::PMULL_EOR3_READY;
     let policy = SelectionPolicy::from_platform(caps);
     assert_eq!(policy.family(), KernelFamily::ArmPmullEor3);
+    assert_eq!(policy.tunables(), PolicyTunables::DISABLED);
+    assert_eq!(policy.max_streams, 3);
   }
 
   #[test]
@@ -564,6 +654,89 @@ mod tests {
     let policy = SelectionPolicy::reference();
     assert_eq!(policy.family(), KernelFamily::Reference);
     assert_eq!(policy.tier(), KernelTier::Reference);
+  }
+
+  #[test]
+  fn conservative_tunables_are_explicit() {
+    let policy = SelectionPolicy::with_subfamily(Caps::NONE, KernelSubfamily::folding(KernelFamily::X86Pclmul));
+    assert_eq!(policy.tunables(), PolicyTunables::DISABLED);
+    assert!(!policy.should_use_simd(4096));
+    assert_eq!(policy.streams_for_len(4096), 1);
+
+    let tuned = policy.with_conservative_tunables();
+    assert_eq!(
+      tuned.tunables(),
+      PolicyTunables {
+        small_threshold: 64,
+        fold_threshold: 64,
+        wide_threshold: usize::MAX,
+        min_bytes_per_lane: 256,
+      }
+    );
+    assert!(tuned.should_use_simd(4096));
+    assert_eq!(tuned.streams_for_len(4096), 8);
+  }
+
+  #[test]
+  fn force_preserves_algorithm_tuning() {
+    #[cfg(target_arch = "x86_64")]
+    let (source_subfamily, target_family, caps, expected_max_streams) = (
+      KernelSubfamily::wide(KernelFamily::X86Vpclmul, false),
+      KernelFamily::X86Pclmul,
+      platform::caps::x86::VPCLMUL_READY,
+      8,
+    );
+    #[cfg(target_arch = "aarch64")]
+    let (source_subfamily, target_family, caps, expected_max_streams) = (
+      KernelSubfamily::wide(KernelFamily::ArmPmullEor3, false),
+      KernelFamily::ArmPmull,
+      platform::caps::aarch64::PMULL_EOR3_READY,
+      3,
+    );
+    #[cfg(target_arch = "powerpc64")]
+    let (source_subfamily, target_family, caps, expected_max_streams) = (
+      KernelSubfamily::folding(KernelFamily::PowerVpmsum),
+      KernelFamily::PowerVpmsum,
+      platform::caps::power::VPMSUM_READY,
+      8,
+    );
+    #[cfg(target_arch = "s390x")]
+    let (source_subfamily, target_family, caps, expected_max_streams) = (
+      KernelSubfamily::folding(KernelFamily::S390xVgfm),
+      KernelFamily::S390xVgfm,
+      platform::caps::s390x::VECTOR,
+      4,
+    );
+    #[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
+    let (source_subfamily, target_family, caps, expected_max_streams) = (
+      KernelSubfamily::wide(KernelFamily::RiscvZvbc, false),
+      KernelFamily::RiscvZbc,
+      platform::caps::riscv::ZVBC,
+      4,
+    );
+    #[cfg(not(any(
+      target_arch = "x86_64",
+      target_arch = "aarch64",
+      target_arch = "powerpc64",
+      target_arch = "s390x",
+      target_arch = "riscv64",
+      target_arch = "riscv32"
+    )))]
+    let (source_subfamily, target_family, caps, expected_max_streams) =
+      (KernelSubfamily::portable(), KernelFamily::Portable, Caps::NONE, 1);
+
+    let tuned = SelectionPolicy::with_subfamily(caps, source_subfamily).with_tunables(PolicyTunables {
+      small_threshold: 96,
+      fold_threshold: 128,
+      wide_threshold: 1024,
+      min_bytes_per_lane: 384,
+    });
+
+    let forced = tuned.with_force(ForceMode::Family(target_family));
+
+    assert_eq!(forced.family(), target_family);
+    assert_eq!(forced.tunables(), tuned.tunables());
+    assert_eq!(forced.max_streams, expected_max_streams);
   }
 
   #[test]

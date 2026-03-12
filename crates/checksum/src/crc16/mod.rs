@@ -70,7 +70,6 @@ mod kernel_tables {
 
 /// Bitwise reference implementation for CRC-16/CCITT.
 #[cfg(any(test, feature = "std"))]
-#[allow(dead_code)]
 #[inline]
 fn crc16_ccitt_reference(crc: u16, data: &[u8]) -> u16 {
   crc16_bitwise(CRC16_CCITT_POLY, crc, data)
@@ -78,7 +77,6 @@ fn crc16_ccitt_reference(crc: u16, data: &[u8]) -> u16 {
 
 /// Bitwise reference implementation for CRC-16/IBM.
 #[cfg(any(test, feature = "std"))]
-#[allow(dead_code)]
 #[inline]
 fn crc16_ibm_reference(crc: u16, data: &[u8]) -> u16 {
   crc16_bitwise(CRC16_IBM_POLY, crc, data)
@@ -89,8 +87,10 @@ fn crc16_ibm_reference(crc: u16, data: &[u8]) -> u16 {
 // ─────────────────────────────────────────────────────────────────────────────
 
 type Crc16DispatchFn = crate::dispatchers::Crc16Fn;
+#[cfg(feature = "std")]
 type Crc16DispatchVectoredFn = fn(u16, &[&[u8]]) -> u16;
 
+#[cfg(feature = "std")]
 #[inline]
 fn crc16_apply_kernel_vectored(mut crc: u16, bufs: &[&[u8]], kernel: Crc16DispatchFn) -> u16 {
   for &buf in bufs {

@@ -194,14 +194,12 @@ mod kernel_tables {
 
 /// CRC-64-XZ portable kernel wrapper.
 #[cfg(any(test, feature = "std"))]
-#[allow(dead_code)]
 fn crc64_xz_portable(crc: u64, data: &[u8]) -> u64 {
   portable::crc64_slice16_xz(crc, data)
 }
 
 /// CRC-64-NVME portable kernel wrapper.
 #[cfg(any(test, feature = "std"))]
-#[allow(dead_code)]
 fn crc64_nvme_portable(crc: u64, data: &[u8]) -> u64 {
   portable::crc64_slice16_nvme(crc, data)
 }
@@ -211,7 +209,6 @@ fn crc64_nvme_portable(crc: u64, data: &[u8]) -> u64 {
 /// This is the canonical reference implementation - obviously correct,
 /// audit-friendly, and used for verification of all optimized paths.
 #[cfg(any(test, feature = "std"))]
-#[allow(dead_code)]
 fn crc64_xz_reference(crc: u64, data: &[u8]) -> u64 {
   crc64_bitwise(CRC64_XZ_POLY, crc, data)
 }
@@ -221,7 +218,6 @@ fn crc64_xz_reference(crc: u64, data: &[u8]) -> u64 {
 /// This is the canonical reference implementation - obviously correct,
 /// audit-friendly, and used for verification of all optimized paths.
 #[cfg(any(test, feature = "std"))]
-#[allow(dead_code)]
 fn crc64_nvme_reference(crc: u64, data: &[u8]) -> u64 {
   crc64_bitwise(CRC64_NVME_POLY, crc, data)
 }
@@ -244,8 +240,10 @@ const CRC64_BUFFERED_THRESHOLD: usize = 64;
 // ─────────────────────────────────────────────────────────────────────────────
 
 type Crc64DispatchFn = crate::dispatchers::Crc64Fn;
+#[cfg(feature = "std")]
 type Crc64DispatchVectoredFn = fn(u64, &[&[u8]]) -> u64;
 
+#[cfg(feature = "std")]
 #[inline]
 fn crc64_apply_kernel_vectored(mut crc: u64, bufs: &[&[u8]], kernel: Crc64DispatchFn) -> u64 {
   for &buf in bufs {

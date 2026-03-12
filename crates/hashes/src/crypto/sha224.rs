@@ -93,6 +93,7 @@ impl Sha224 {
 
   #[inline]
   #[must_use]
+  #[cfg(any(test, feature = "std"))]
   pub(crate) fn digest_portable(data: &[u8]) -> [u8; 28] {
     let mut h = Self::default();
     h.update_with(data, Self::compress_blocks_portable);

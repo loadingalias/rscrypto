@@ -56,8 +56,6 @@ pub(crate) struct Kernel {
   /// x86-only final-block compressor from bytes.
   #[cfg(target_arch = "x86_64")]
   pub(crate) x86_compress_cv_bytes: X86CompressCvBytesFn,
-  /// SIMD degree: 1 for portable, 4 for NEON/SSE4.1, 8 for AVX2, 16 for AVX-512.
-  pub(crate) simd_degree: usize,
   /// Kernel name for debugging/tuning.
   pub(crate) name: &'static str,
 }
@@ -88,6 +86,7 @@ pub enum Blake3KernelId {
   RiscvV = 8,
 }
 
+#[cfg(any(test, feature = "std"))]
 pub const ALL: &[Blake3KernelId] = &[
   Blake3KernelId::Portable,
   #[cfg(target_arch = "x86_64")]
@@ -169,7 +168,6 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
       hash_many_contiguous: hash_many_contiguous_portable,
       #[cfg(target_arch = "x86_64")]
       x86_compress_cv_bytes: x86_compress_cv_portable_wrapper,
-      simd_degree: 1,
       name: id.as_str(),
     },
     #[cfg(target_arch = "x86_64")]
@@ -179,7 +177,6 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
       chunk_compress_blocks: chunk_compress_blocks_ssse3_wrapper,
       hash_many_contiguous: hash_many_contiguous_ssse3_wrapper,
       x86_compress_cv_bytes: x86_compress_cv_portable_wrapper,
-      simd_degree: 1,
       name: id.as_str(),
     },
     #[cfg(target_arch = "x86_64")]
@@ -192,7 +189,6 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
       chunk_compress_blocks: chunk_compress_blocks_sse41_wrapper,
       hash_many_contiguous: hash_many_contiguous_sse41_wrapper,
       x86_compress_cv_bytes: x86_compress_cv_sse41_wrapper,
-      simd_degree: 4,
       name: id.as_str(),
     },
     #[cfg(target_arch = "x86_64")]
@@ -205,7 +201,6 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
       chunk_compress_blocks: chunk_compress_blocks_avx2_wrapper,
       hash_many_contiguous: hash_many_contiguous_avx2_wrapper,
       x86_compress_cv_bytes: x86_compress_cv_avx2_wrapper,
-      simd_degree: 8,
       name: id.as_str(),
     },
     #[cfg(target_arch = "x86_64")]
@@ -218,7 +213,6 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
       chunk_compress_blocks: chunk_compress_blocks_avx512_wrapper,
       hash_many_contiguous: hash_many_contiguous_avx512_wrapper,
       x86_compress_cv_bytes: x86_compress_cv_avx512_wrapper,
-      simd_degree: 16,
       name: id.as_str(),
     },
     #[cfg(target_arch = "aarch64")]
@@ -231,7 +225,6 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
       compress: compress_neon_wrapper,
       chunk_compress_blocks: chunk_compress_blocks_neon_wrapper,
       hash_many_contiguous: hash_many_contiguous_neon_wrapper,
-      simd_degree: 4,
       name: id.as_str(),
     },
     #[cfg(target_arch = "s390x")]
@@ -240,7 +233,6 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
       compress: compress_s390x_vector_wrapper,
       chunk_compress_blocks: chunk_compress_blocks_s390x_vector_wrapper,
       hash_many_contiguous: hash_many_contiguous_s390x_vector_wrapper,
-      simd_degree: 4,
       name: id.as_str(),
     },
     #[cfg(target_arch = "powerpc64")]
@@ -249,7 +241,6 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
       compress: compress_power_vsx_wrapper,
       chunk_compress_blocks: chunk_compress_blocks_power_vsx_wrapper,
       hash_many_contiguous: hash_many_contiguous_power_vsx_wrapper,
-      simd_degree: 4,
       name: id.as_str(),
     },
     #[cfg(target_arch = "riscv64")]
@@ -258,7 +249,6 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
       compress: compress_riscv_v_wrapper,
       chunk_compress_blocks: chunk_compress_blocks_riscv_v_wrapper,
       hash_many_contiguous: hash_many_contiguous_riscv_v_wrapper,
-      simd_degree: 4,
       name: id.as_str(),
     },
   }
@@ -1045,6 +1035,7 @@ pub(crate) fn parent_cvs_many_from_bytes_inline(
 ///
 /// Each entry in `parents` is a `[u32; 16]` message block representing
 /// `[left_cv (8 words), right_cv (8 words)]`.
+#[cfg(any(test, feature = "std"))]
 #[inline]
 pub(crate) fn parent_cvs_many_inline(
   id: Blake3KernelId,
@@ -2926,7 +2917,6 @@ unsafe fn hash_many_contiguous_avx512_wrapper(
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_arch = "aarch64")]
-#[allow(dead_code)]
 fn compress_neon_wrapper(
   chaining_value: &[u32; 8],
   block_words: &[u32; 16],
@@ -2939,7 +2929,6 @@ fn compress_neon_wrapper(
 }
 
 #[cfg(target_arch = "aarch64")]
-#[allow(dead_code)]
 fn chunk_compress_blocks_neon_wrapper(
   chaining_value: &mut [u32; 8],
   chunk_counter: u64,
@@ -2952,7 +2941,6 @@ fn chunk_compress_blocks_neon_wrapper(
 }
 
 #[cfg(target_arch = "aarch64")]
-#[allow(dead_code)]
 fn parent_cv_neon_wrapper(
   left_child_cv: [u32; 8],
   right_child_cv: [u32; 8],

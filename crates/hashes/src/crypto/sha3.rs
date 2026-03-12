@@ -4,7 +4,9 @@
 
 use traits::{Digest, Xof};
 
-use super::keccak::{KeccakCore, KeccakCorePortable, KeccakXof};
+#[cfg(any(test, feature = "std"))]
+use super::keccak::KeccakCorePortable;
+use super::keccak::{KeccakCore, KeccakXof};
 
 /// SHA3-256.
 #[derive(Clone, Default)]
@@ -48,6 +50,7 @@ impl Digest for Sha3_224 {
 impl Sha3_224 {
   #[inline]
   #[must_use]
+  #[cfg(any(test, feature = "std"))]
   pub(crate) fn digest_portable(data: &[u8]) -> [u8; 28] {
     let mut core = KeccakCorePortable::<144>::default();
     core.update(data);
@@ -87,6 +90,7 @@ impl Digest for Sha3_256 {
 impl Sha3_256 {
   #[inline]
   #[must_use]
+  #[cfg(any(test, feature = "std"))]
   pub(crate) fn digest_portable(data: &[u8]) -> [u8; 32] {
     let mut core = KeccakCorePortable::<136>::default();
     core.update(data);
@@ -138,6 +142,7 @@ impl Digest for Sha3_384 {
 impl Sha3_384 {
   #[inline]
   #[must_use]
+  #[cfg(any(test, feature = "std"))]
   pub(crate) fn digest_portable(data: &[u8]) -> [u8; 48] {
     let mut core = KeccakCorePortable::<104>::default();
     core.update(data);
@@ -177,6 +182,7 @@ impl Digest for Sha3_512 {
 impl Sha3_512 {
   #[inline]
   #[must_use]
+  #[cfg(any(test, feature = "std"))]
   pub(crate) fn digest_portable(data: &[u8]) -> [u8; 64] {
     let mut core = KeccakCorePortable::<72>::default();
     core.update(data);
@@ -231,6 +237,7 @@ impl Shake128 {
   }
 
   #[inline]
+  #[cfg(any(test, feature = "std"))]
   pub(crate) fn hash_into_portable(data: &[u8], out: &mut [u8]) {
     let mut core = KeccakCorePortable::<168>::default();
     core.update(data);
@@ -283,6 +290,7 @@ impl Shake256 {
   }
 
   #[inline]
+  #[cfg(any(test, feature = "std"))]
   pub(crate) fn hash_into_portable(data: &[u8], out: &mut [u8]) {
     let mut core = KeccakCorePortable::<136>::default();
     core.update(data);

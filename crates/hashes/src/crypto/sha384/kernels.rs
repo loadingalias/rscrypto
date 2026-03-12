@@ -10,6 +10,7 @@ pub enum Sha384KernelId {
   Portable = 0,
 }
 
+#[cfg(any(test, feature = "std"))]
 pub const ALL: &[Sha384KernelId] = &[Sha384KernelId::Portable];
 
 impl Sha384KernelId {

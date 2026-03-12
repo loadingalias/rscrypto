@@ -41,9 +41,11 @@ impl Permuter for DispatchPermuter {
   }
 }
 
+#[cfg(any(test, feature = "std"))]
 #[derive(Clone, Copy, Default)]
 struct PortablePermuter;
 
+#[cfg(any(test, feature = "std"))]
 impl Permuter for PortablePermuter {
   #[inline(always)]
   fn permute(self, state: &mut [u64; 5], _len_hint: usize) {
@@ -83,12 +85,6 @@ pub(crate) fn permute_12_portable(s: &mut [u64; 5]) {
   for &c in &RC {
     round(s, c);
   }
-}
-
-#[inline(always)]
-#[allow(dead_code)]
-fn permute_12(s: &mut [u64; 5]) {
-  dispatch::permute_12(s);
 }
 
 #[inline(always)]
@@ -240,6 +236,7 @@ pub struct AsconHash256 {
 impl AsconHash256 {
   #[inline]
   #[must_use]
+  #[cfg(any(test, feature = "std"))]
   pub(crate) fn digest_portable(data: &[u8]) -> [u8; 32] {
     let mut sponge: Sponge<
       PortablePermuter,
@@ -344,6 +341,7 @@ impl AsconXof128 {
   }
 
   #[inline]
+  #[cfg(any(test, feature = "std"))]
   pub(crate) fn hash_into_portable(data: &[u8], mut out: &mut [u8]) {
     let mut sponge: Sponge<
       PortablePermuter,

@@ -100,6 +100,7 @@ impl Sha256 {
 
   #[inline]
   #[must_use]
+  #[cfg(any(test, feature = "std"))]
   pub(crate) fn digest_portable(data: &[u8]) -> [u8; 32] {
     // Two-block limit:
     // - If `len < 64`, padding uses 1 or 2 blocks.

@@ -87,7 +87,7 @@ mod kernel_tables {
 }
 
 /// Block size for CRC-32 folding operations.
-#[allow(dead_code)]
+#[cfg(target_arch = "x86_64")]
 pub(crate) const CRC32_FOLD_BLOCK_BYTES: usize = 128;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -95,7 +95,6 @@ pub(crate) const CRC32_FOLD_BLOCK_BYTES: usize = 128;
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(any(test, feature = "std"))]
-#[allow(dead_code)]
 fn crc32_portable(crc: u32, data: &[u8]) -> u32 {
   const THRESHOLD: usize = 64;
   if data.len() < THRESHOLD {
@@ -106,7 +105,6 @@ fn crc32_portable(crc: u32, data: &[u8]) -> u32 {
 }
 
 #[cfg(any(test, feature = "std"))]
-#[allow(dead_code)]
 fn crc32c_portable(crc: u32, data: &[u8]) -> u32 {
   const THRESHOLD: usize = 64;
   if data.len() < THRESHOLD {
@@ -125,7 +123,6 @@ fn crc32c_portable(crc: u32, data: &[u8]) -> u32 {
 /// This is the canonical reference implementation - obviously correct,
 /// audit-friendly, and used for verification of all optimized paths.
 #[cfg(any(test, feature = "std"))]
-#[allow(dead_code)]
 fn crc32_reference(crc: u32, data: &[u8]) -> u32 {
   crc32_bitwise(CRC32_IEEE_POLY, crc, data)
 }
@@ -135,7 +132,6 @@ fn crc32_reference(crc: u32, data: &[u8]) -> u32 {
 /// This is the canonical reference implementation - obviously correct,
 /// audit-friendly, and used for verification of all optimized paths.
 #[cfg(any(test, feature = "std"))]
-#[allow(dead_code)]
 fn crc32c_reference(crc: u32, data: &[u8]) -> u32 {
   crc32_bitwise(CRC32C_POLY, crc, data)
 }
@@ -148,7 +144,6 @@ fn crc32c_reference(crc: u32, data: &[u8]) -> u32 {
 #[cfg(feature = "alloc")]
 #[inline]
 #[must_use]
-#[allow(dead_code)]
 fn crc32_buffered_threshold() -> usize {
   crc32_buffered_threshold_impl()
 }
@@ -180,7 +175,6 @@ fn crc32_buffered_threshold_impl() -> usize {
 #[cfg(feature = "alloc")]
 #[inline]
 #[must_use]
-#[allow(dead_code)]
 fn crc32c_buffered_threshold() -> usize {
   const THRESHOLD: usize = 64;
   THRESHOLD
@@ -321,8 +315,10 @@ pub(crate) fn diag_crc32c(len: usize) -> Crc32SelectionDiag {
 // ─────────────────────────────────────────────────────────────────────────────
 
 type Crc32DispatchFn = crate::dispatchers::Crc32Fn;
+#[cfg(feature = "std")]
 type Crc32DispatchVectoredFn = fn(u32, &[&[u8]]) -> u32;
 
+#[cfg(feature = "std")]
 #[inline]
 fn crc32_apply_kernel_vectored(mut crc: u32, bufs: &[&[u8]], kernel: Crc32DispatchFn) -> u32 {
   for &buf in bufs {

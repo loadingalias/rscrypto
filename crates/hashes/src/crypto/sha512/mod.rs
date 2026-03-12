@@ -179,6 +179,7 @@ impl Sha512 {
 
   #[inline]
   #[must_use]
+  #[cfg(any(test, feature = "std"))]
   pub(crate) fn digest_portable(data: &[u8]) -> [u8; 64] {
     // Two-block limit:
     // - If `len < 112`, padding fits into one block.

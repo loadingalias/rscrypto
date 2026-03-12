@@ -3,6 +3,8 @@ use platform::Caps;
 #[cfg(target_arch = "x86_64")]
 use platform::caps::x86;
 
+#[cfg(feature = "std")]
+use super::dispatch_tables::ParallelTable;
 #[cfg(any(
   target_arch = "x86_64",
   target_arch = "aarch64",
@@ -12,7 +14,7 @@ use platform::caps::x86;
 ))]
 use super::kernels::required_caps;
 use super::{
-  dispatch_tables::{DispatchTable, ParallelTable, StreamingTable},
+  dispatch_tables::{DispatchTable, StreamingTable},
   kernels::{Blake3KernelId, Kernel, kernel},
 };
 use crate::crypto::dispatch_util::SizeClassDispatch;
@@ -47,6 +49,7 @@ struct ActiveDispatch {
 struct ResolvedDispatch {
   active: ActiveDispatch,
   streaming: StreamingDispatch,
+  #[cfg(feature = "std")]
   parallel: ParallelDispatch,
   hasher: HasherDispatch,
   #[cfg(target_arch = "x86_64")]
@@ -64,6 +67,7 @@ pub(crate) struct StreamingDispatch {
 }
 
 #[derive(Clone, Copy)]
+#[cfg(feature = "std")]
 pub(crate) struct ParallelDispatch {
   pub(crate) oneshot: ParallelTable,
   pub(crate) keyed_oneshot: ParallelTable,
@@ -89,6 +93,7 @@ pub(crate) struct HasherDispatch {
   size_classes: SizeClassDispatch<Kernel>,
   stream_kernel: Kernel,
   table_bulk_kernel: Kernel,
+  #[cfg(feature = "std")]
   parallel_streaming: ParallelTable,
   bulk_sizeclass_threshold: usize,
 }
@@ -118,12 +123,14 @@ impl HasherDispatch {
 
   #[inline]
   #[must_use]
+  #[cfg(feature = "std")]
   pub(crate) fn parallel_streaming(&self) -> ParallelTable {
     self.parallel_streaming
   }
 
   #[inline]
   #[must_use]
+  #[cfg(any(test, feature = "std"))]
   pub(crate) fn bulk_sizeclass_threshold(&self) -> usize {
     self.bulk_sizeclass_threshold
   }
@@ -224,7 +231,9 @@ fn resolved() -> ResolvedDispatch {
 
     let table: &'static DispatchTable = super::dispatch_tables::select_table_for_caps(caps);
     let stream_table: &'static StreamingTable = super::dispatch_tables::select_streaming_table_for_caps(caps);
+    #[cfg(feature = "std")]
     let oneshot_parallel_table: &'static ParallelTable = super::dispatch_tables::select_parallel_table_for_caps(caps);
+    #[cfg(feature = "std")]
     let streaming_parallel_table: &'static ParallelTable =
       super::dispatch_tables::select_streaming_parallel_table_for_caps(caps);
 
@@ -247,21 +256,10 @@ fn resolved() -> ResolvedDispatch {
       stream: kernel(stream_id),
       bulk: kernel(bulk_id),
     };
+    #[cfg(feature = "std")]
     let oneshot_base = *oneshot_parallel_table;
+    #[cfg(feature = "std")]
     let streaming_base = *streaming_parallel_table;
-    // Keep runtime policy selection table-driven only. Mode-specific parallel
-    // behavior must come from tuned/applied tables, not post-hoc heuristics.
-    let parallel = ParallelDispatch {
-      oneshot: oneshot_base,
-      keyed_oneshot: oneshot_base,
-      derive_oneshot: oneshot_base,
-      xof: oneshot_base,
-      keyed_xof: oneshot_base,
-      derive_xof: oneshot_base,
-      streaming: streaming_base,
-      keyed_streaming: streaming_base,
-      derive_streaming: streaming_base,
-    };
     let size_classes = SizeClassDispatch {
       boundaries: active.boundaries,
       xs: active.xs.kernel,
@@ -273,14 +271,26 @@ fn resolved() -> ResolvedDispatch {
       size_classes,
       stream_kernel: streaming.stream,
       table_bulk_kernel: streaming.bulk,
-      parallel_streaming: parallel.streaming,
+      #[cfg(feature = "std")]
+      parallel_streaming: streaming_base,
       bulk_sizeclass_threshold: stream_table.bulk_sizeclass_threshold,
     };
 
     ResolvedDispatch {
       active,
       streaming,
-      parallel,
+      #[cfg(feature = "std")]
+      parallel: ParallelDispatch {
+        oneshot: oneshot_base,
+        keyed_oneshot: oneshot_base,
+        derive_oneshot: oneshot_base,
+        xof: oneshot_base,
+        keyed_xof: oneshot_base,
+        derive_xof: oneshot_base,
+        streaming: streaming_base,
+        keyed_streaming: streaming_base,
+        derive_streaming: streaming_base,
+      },
       hasher,
       #[cfg(target_arch = "x86_64")]
       avx2_hash_many_one_chunk_fast_path: allow_avx2_hash_many_one_chunk_fast_path(caps),
@@ -300,6 +310,7 @@ fn active_streaming() -> StreamingDispatch {
   resolved().streaming
 }
 
+#[cfg(feature = "std")]
 #[inline]
 #[must_use]
 fn active_parallel() -> ParallelDispatch {
@@ -348,6 +359,7 @@ pub fn xof(data: &[u8]) -> super::Blake3Xof {
 
 #[inline]
 #[must_use]
+#[cfg(any(test, feature = "std"))]
 pub(crate) fn kernel_dispatch() -> SizeClassDispatch<Kernel> {
   let d = active();
   SizeClassDispatch {
@@ -372,6 +384,7 @@ pub(crate) fn stream_kernel_id_ref() -> Blake3KernelId {
   *STREAM_KERNEL_ID_REF.get_or_init(|| resolved().hasher.stream_kernel().id)
 }
 
+#[cfg(feature = "std")]
 #[inline]
 #[must_use]
 pub(crate) fn parallel_dispatch() -> ParallelDispatch {
@@ -431,6 +444,7 @@ pub struct StreamingDispatchInfo {
 /// Bench-only introspection hook — not part of the stable API.
 #[doc(hidden)]
 #[must_use]
+#[cfg(feature = "std")]
 pub fn streaming_dispatch_info(flags: u32, input_len: usize) -> StreamingDispatchInfo {
   let pd = active_parallel();
   let ptable = match flags {
@@ -475,6 +489,7 @@ pub fn streaming_dispatch_info(flags: u32, input_len: usize) -> StreamingDispatc
 
 #[inline]
 #[must_use]
+#[cfg(feature = "std")]
 fn bytes_per_core_for_payload(table: &ParallelTable, input_bytes: usize) -> usize {
   if input_bytes <= table.small_limit_bytes {
     table.bytes_per_core_small
@@ -485,6 +500,7 @@ fn bytes_per_core_for_payload(table: &ParallelTable, input_bytes: usize) -> usiz
   }
 }
 
+#[cfg(feature = "std")]
 /// Compute (would_parallelize, thread_count) mirroring runtime policy checks.
 fn parallel_threads_for(table: &ParallelTable, input_bytes: usize, commit_chunks: usize) -> (bool, usize) {
   if table.max_threads == 1 {

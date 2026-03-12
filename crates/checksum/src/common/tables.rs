@@ -366,7 +366,6 @@ pub const CRC16_CCITT_POLY: u16 = 0x8408;
 
 /// CRC-16-IBM polynomial (0x8005) in reflected form.
 /// Used by Modbus, USB, ANSI X3.28, etc.
-#[allow(dead_code)]
 pub const CRC16_IBM_POLY: u16 = 0xA001;
 
 // CRC-24 Polynomials
