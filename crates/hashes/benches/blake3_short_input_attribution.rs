@@ -14,7 +14,7 @@ use traits::{Digest as _, Xof as _};
 mod common;
 const _: fn() -> Vec<(usize, Vec<u8>)> = common::sized_inputs;
 
-const SHORT_SIZES: [usize; 5] = [64, 128, 256, 512, 1024];
+const SHORT_SIZES: [usize; 6] = [64, 65, 128, 256, 512, 1024];
 const KEY: [u8; 32] = *b"rscrypto-blake3-benchmark-key!!_";
 const DERIVE_CONTEXT: &str = "rscrypto benchmark 2024-01-01 derive key context";
 

@@ -1017,21 +1017,9 @@ fn uninit_cv_stack() -> [MaybeUninit<[u32; 8]>; CV_STACK_LEN] {
 #[inline(always)]
 fn words8_from_le_bytes_32(bytes: &[u8; 32]) -> [u32; 8] {
   if cfg!(target_endian = "little") {
-    let src = bytes.as_ptr() as *const u32;
-    // SAFETY: `bytes` is exactly 32 bytes; `read_unaligned` supports the
+    // SAFETY: `bytes` is exactly 32 bytes, and `read_unaligned` supports the
     // 1-byte alignment of `[u8; 32]`.
-    unsafe {
-      [
-        ptr::read_unaligned(src.add(0)),
-        ptr::read_unaligned(src.add(1)),
-        ptr::read_unaligned(src.add(2)),
-        ptr::read_unaligned(src.add(3)),
-        ptr::read_unaligned(src.add(4)),
-        ptr::read_unaligned(src.add(5)),
-        ptr::read_unaligned(src.add(6)),
-        ptr::read_unaligned(src.add(7)),
-      ]
-    }
+    unsafe { ptr::read_unaligned(bytes.as_ptr().cast::<[u32; 8]>()) }
   } else {
     let src = bytes.as_ptr() as *const u32;
     // SAFETY: `bytes` is exactly 32 bytes; `read_unaligned` supports the
@@ -1054,29 +1042,9 @@ fn words8_from_le_bytes_32(bytes: &[u8; 32]) -> [u32; 8] {
 #[inline(always)]
 fn words16_from_le_bytes_64(bytes: &[u8; 64]) -> [u32; 16] {
   if cfg!(target_endian = "little") {
-    let src = bytes.as_ptr() as *const u32;
-    // SAFETY: `bytes` is exactly 64 bytes; `read_unaligned` supports the
+    // SAFETY: `bytes` is exactly 64 bytes, and `read_unaligned` supports the
     // 1-byte alignment of `[u8; 64]`.
-    unsafe {
-      [
-        ptr::read_unaligned(src.add(0)),
-        ptr::read_unaligned(src.add(1)),
-        ptr::read_unaligned(src.add(2)),
-        ptr::read_unaligned(src.add(3)),
-        ptr::read_unaligned(src.add(4)),
-        ptr::read_unaligned(src.add(5)),
-        ptr::read_unaligned(src.add(6)),
-        ptr::read_unaligned(src.add(7)),
-        ptr::read_unaligned(src.add(8)),
-        ptr::read_unaligned(src.add(9)),
-        ptr::read_unaligned(src.add(10)),
-        ptr::read_unaligned(src.add(11)),
-        ptr::read_unaligned(src.add(12)),
-        ptr::read_unaligned(src.add(13)),
-        ptr::read_unaligned(src.add(14)),
-        ptr::read_unaligned(src.add(15)),
-      ]
-    }
+    unsafe { ptr::read_unaligned(bytes.as_ptr().cast::<[u32; 16]>()) }
   } else {
     let src = bytes.as_ptr() as *const u32;
     // SAFETY: `bytes` is exactly 64 bytes; `read_unaligned` supports the
