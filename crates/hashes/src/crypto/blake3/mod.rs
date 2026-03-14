@@ -4156,6 +4156,8 @@ unsafe fn digest_one_chunk_root_hash_words_x86(
   if full_blocks != 0 {
     let first_block_ptr = input.as_ptr();
     let first_flags = flags | CHUNK_START;
+    // SAFETY: `input` covers at least one full 64-byte block here, and this
+    // helper is only entered for the selected x86 SIMD kernels.
     cv = unsafe {
       match kernel.id {
         kernels::Blake3KernelId::X86Sse41 => {
@@ -4280,6 +4282,8 @@ unsafe fn digest_one_chunk_root_hash_words_aarch64(
   let mut cv = key_words;
   let full_bytes = full_blocks * BLOCK_LEN;
   if full_blocks != 0 {
+    // SAFETY: `input` covers at least one full 64-byte block here, and this
+    // helper is only selected when NEON support has already been validated.
     cv = unsafe { aarch64::compress_cv_neon_bytes(&cv, input.as_ptr(), 0, BLOCK_LEN as u32, flags | CHUNK_START) };
     if full_blocks > 1 {
       let mut blocks_compressed: u8 = 1;
