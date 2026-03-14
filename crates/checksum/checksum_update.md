@@ -1,5 +1,55 @@
 # Checksum Baseline Update (2026-03-01)
 
+## 2026-03-13 Current 3-Lane Snapshot
+
+- Data source: [benchmark-results/ci-23076332349-checksum/checksum_tally.json](/Users/mr.wolf/loadingalias/rscrypto/benchmark-results/ci-23076332349-checksum/checksum_tally.json)
+- Run: `23076332349` (`quick=false`, `crates=checksum`, `benches=comp`, lanes=`amd-zen4,intel-spr,graviton4`).
+- Commit under test: `fe4cb881b1f33c27d3e157530f765832df1e1a44`.
+- Overall: `76W / 28L / 1T` (`105` comparable cases, `72.4%` wins).
+
+Per-lane:
+- `amd-zen4`: `34W / 0L / 1T`
+- `intel-spr`: `33W / 2L`
+- `graviton4`: `9W / 26L`
+
+Per-algorithm:
+- `crc24/openpgp`: `15W / 0L`
+- `crc16/ccitt`: `11W / 4L`
+- `crc16/ibm`: `11W / 4L`
+- `crc32/ieee`: `9W / 6L`
+- `crc32c/castagnoli`: `10W / 5L`
+- `crc64/nvme`: `11W / 4L`
+- `crc64/xz`: `9W / 5L / 1T`
+
+Delta vs the same 3-lane subset in full baseline `22530359800`:
+- Overall subset moved from `91W / 0L / 0T` to `76W / 28L / 1T`.
+- `amd-zen4` improved slightly (`33W / 2L` -> `34W / 0L / 1T`).
+- `intel-spr` held flat at `33W / 2L`.
+- `graviton4` collapsed from `25W / 10L` to `9W / 26L`.
+
+What the run actually shows:
+- This is not a broad checksum regression on all platforms. Zen4 and SPR are still fine.
+- This is a Graviton4 dispatch failure.
+- The current Graviton4 artifact reports `Caps(aarch64, [neon, aes, pmull, sha2, sha3, sha512, crc, ...])`, but kernel selection is `portable/*` for every size and every checksum family.
+- The last full baseline on the same lane selected the expected AArch64 PMULL-family kernels instead:
+  - `xs`: `aarch64/pmull-small`
+  - `s/m`: PMULL-family kernels
+  - `l/xl`: `aarch64/pmull-eor3*` for CRC32/CRC64 and `aarch64/pmull-2way` for CRC16
+
+Root cause:
+- The regression lines up with the `platform,tune` removal work, not with checksum kernels themselves.
+- [`dispatch_caps()`](/Users/mr.wolf/loadingalias/rscrypto/crates/checksum/src/lib.rs#L140) currently returns `static_caps` instead of `platform::caps()` whenever compile-time features extend the baseline.
+- In CI, aarch64 always builds with `+lse` from [`.cargo/config.toml`](/Users/mr.wolf/loadingalias/rscrypto/.cargo/config.toml#L5), so `static_caps.difference(dispatch_baseline_caps())` is never empty.
+- That means runtime PMULL/CRC/SHA3 detection is discarded on AArch64 bench runs, and [`select_table()`](/Users/mr.wolf/loadingalias/rscrypto/crates/checksum/src/dispatch.rs#L664) falls all the way back to the portable table.
+
+What needs to be done:
+1. Fix checksum dispatch capability handling first. Do not spend time on Graviton4 CRC kernel tuning until `dispatch_caps()` stops discarding runtime AArch64 features because `+lse` is present at compile time.
+2. Re-run the same 3-lane checksum `comp` slice immediately after that fix. Acceptance gate: Graviton4 must return to PMULL-family kernel selection and recover to roughly the prior `25W / 10L` neighborhood.
+3. Only after dispatch is repaired, resume targeted checksum work on the genuine remaining cells:
+   - Graviton4 `crc16` `l/xl`
+   - Graviton4 `crc32/ieee` and `crc32c/castagnoli` larger sizes
+   - any residual SPR `crc32/ieee s`
+
 ## 2026-03-01 Current Competitive Snapshot
 
 - Full-matrix data source: [benchmark-results/ci-22530359800-checksum/checksum_tally.json](/Users/mr.wolf/loadingalias/rscrypto/benchmark-results/ci-22530359800-checksum/checksum_tally.json)
