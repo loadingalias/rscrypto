@@ -1900,7 +1900,6 @@ impl ChunkState {
     self.block_len = BLOCK_LEN as u8;
   }
 
-  #[cfg(target_arch = "x86_64")]
   #[inline]
   fn absorb_exact_one_chunk(&mut self, input: &[u8]) {
     debug_assert_eq!(self.blocks_compressed, 0);
@@ -1922,14 +1921,7 @@ impl ChunkState {
 
     if self.block_len == 0 && self.blocks_compressed == 0 {
       if input.len() == CHUNK_LEN {
-        #[cfg(target_arch = "x86_64")]
-        if matches!(
-          self.kernel_id,
-          kernels::Blake3KernelId::X86Ssse3
-            | kernels::Blake3KernelId::X86Sse41
-            | kernels::Blake3KernelId::X86Avx2
-            | kernels::Blake3KernelId::X86Avx512
-        ) {
+        if should_use_exact_one_chunk_fast_path(self.kernel_id) {
           self.absorb_exact_one_chunk(input);
           return;
         }
@@ -2074,7 +2066,6 @@ impl ChunkState {
   }
 }
 
-#[cfg(target_arch = "x86_64")]
 #[inline]
 fn absorb_exact_one_chunk_state(
   kernel_id: kernels::Blake3KernelId,
@@ -2134,6 +2125,29 @@ fn absorb_exact_one_chunk_state(
     }
   }
 
+  #[cfg(target_arch = "aarch64")]
+  {
+    if kernel_id == kernels::Blake3KernelId::Aarch64Neon {
+      let mut cv = [0u32; 8];
+      let mut last_block = [0u8; BLOCK_LEN];
+
+      // SAFETY: the caller only uses this path for the selected NEON kernel,
+      // and `input` is exactly one full chunk.
+      unsafe {
+        aarch64::chunk_state_one_chunk_aarch64_out(
+          input.as_ptr(),
+          &key,
+          counter,
+          flags,
+          cv.as_mut_ptr(),
+          last_block.as_mut_ptr(),
+        );
+      }
+
+      return (cv, last_block);
+    }
+  }
+
   let mut cv = key;
   let mut blocks_compressed = 0u8;
   kernels::chunk_compress_blocks_inline(
@@ -2148,6 +2162,31 @@ fn absorb_exact_one_chunk_state(
   let mut last_block = [0u8; BLOCK_LEN];
   last_block.copy_from_slice(&input[CHUNK_LEN - BLOCK_LEN..]);
   (cv, last_block)
+}
+
+#[inline]
+fn should_use_exact_one_chunk_fast_path(_kernel_id: kernels::Blake3KernelId) -> bool {
+  #[cfg(target_arch = "x86_64")]
+  {
+    if matches!(
+      _kernel_id,
+      kernels::Blake3KernelId::X86Ssse3
+        | kernels::Blake3KernelId::X86Sse41
+        | kernels::Blake3KernelId::X86Avx2
+        | kernels::Blake3KernelId::X86Avx512
+    ) {
+      return true;
+    }
+  }
+
+  #[cfg(target_arch = "aarch64")]
+  {
+    if _kernel_id == kernels::Blake3KernelId::Aarch64Neon {
+      return true;
+    }
+  }
+
+  false
 }
 
 #[inline]
