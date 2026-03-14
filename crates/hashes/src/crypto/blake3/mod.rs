@@ -4152,9 +4152,37 @@ unsafe fn digest_one_chunk_root_hash_words_x86(
   // Hash all full blocks except the final block, updating the CV. This keeps
   // ROOT out of the dependency chain until the last compress.
   let mut cv = key_words;
-  let mut blocks_compressed = 0u8;
   let full_bytes = full_blocks * BLOCK_LEN;
-  (kernel.chunk_compress_blocks)(&mut cv, 0, flags, &mut blocks_compressed, &input[..full_bytes]);
+  if full_blocks != 0 {
+    let first_block_ptr = input.as_ptr();
+    let first_flags = flags | CHUNK_START;
+    cv = unsafe {
+      match kernel.id {
+        kernels::Blake3KernelId::X86Sse41 => {
+          x86_64::compress_cv_sse41_bytes(&cv, first_block_ptr, 0, BLOCK_LEN as u32, first_flags)
+        }
+        kernels::Blake3KernelId::X86Avx2 => {
+          x86_64::compress_cv_avx2_bytes(&cv, first_block_ptr, 0, BLOCK_LEN as u32, first_flags)
+        }
+        kernels::Blake3KernelId::X86Avx512 => {
+          #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+          {
+            x86_64::asm::compress_in_place_avx512(&cv, first_block_ptr, 0, BLOCK_LEN as u32, first_flags)
+          }
+          #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+          {
+            x86_64::compress_cv_avx512_bytes(&cv, first_block_ptr, 0, BLOCK_LEN as u32, first_flags)
+          }
+        }
+        _ => unreachable!(),
+      }
+    };
+
+    if full_blocks > 1 {
+      let mut blocks_compressed = 1u8;
+      (kernel.chunk_compress_blocks)(&mut cv, 0, flags, &mut blocks_compressed, &input[BLOCK_LEN..full_bytes]);
+    }
+  }
 
   let start = if full_blocks == 0 { CHUNK_START } else { 0 };
   let final_flags = flags | start | CHUNK_END | ROOT;
@@ -4250,16 +4278,21 @@ unsafe fn digest_one_chunk_root_hash_words_aarch64(
   // Hash all full blocks except the final block, updating the CV. This keeps
   // ROOT out of the dependency chain until the last compress.
   let mut cv = key_words;
-  let mut blocks_compressed: u8 = 0;
   let full_bytes = full_blocks * BLOCK_LEN;
-  kernels::chunk_compress_blocks_inline(
-    kernel.id,
-    &mut cv,
-    0,
-    flags,
-    &mut blocks_compressed,
-    &input[..full_bytes],
-  );
+  if full_blocks != 0 {
+    cv = unsafe { aarch64::compress_cv_neon_bytes(&cv, input.as_ptr(), 0, BLOCK_LEN as u32, flags | CHUNK_START) };
+    if full_blocks > 1 {
+      let mut blocks_compressed: u8 = 1;
+      kernels::chunk_compress_blocks_inline(
+        kernel.id,
+        &mut cv,
+        0,
+        flags,
+        &mut blocks_compressed,
+        &input[BLOCK_LEN..full_bytes],
+      );
+    }
+  }
 
   let start = if full_blocks == 0 { CHUNK_START } else { 0 };
   let final_flags = flags | start | CHUNK_END | ROOT;
