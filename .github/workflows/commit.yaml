@@ -187,28 +187,6 @@ jobs:
         cargo build --target ${{ matrix.target }} --no-default-features --lib --release
         cargo build --target ${{ matrix.target }} --no-default-features --features alloc --lib --release
 
-  wasm-pack-optional:
-    name: wasm-pack smoke (optional)
-    needs: lane-contract
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    timeout-minutes: 20
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
-
-      - name: Setup
-        uses: ./.github/actions/setup
-        with:
-          cache-key: commit-wasm-pack
-          tools-mode: minimal
-
-      - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
-
-      - name: wasm-pack build
-        run: wasm-pack build --target web --no-default-features --features std
-
   complete:
     name: Complete (commit)
     needs: [ci, ci-ibm-s390x, ci-ibm-power10, no-std, wasm]
