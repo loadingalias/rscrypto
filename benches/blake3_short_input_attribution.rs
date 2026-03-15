@@ -416,38 +416,45 @@ fn blake3_stream_dispatch_overhead(c: &mut Criterion) {
     let data = common::pseudo_random_bytes(len, 0xB1AE_E3B1_A1E3_2003 ^ len as u64);
     common::set_throughput(&mut group, len);
 
-    for (mode, algo, flags) in modes {
-      let info = dispatch::streaming_dispatch_info(*flags, len);
-      let kernel_pair = format!("{}+{}", info.stream_kernel, info.bulk_kernel);
-      eprintln!(
-        "[short-input][stream64] mode={mode} len={len} pair={kernel_pair} parallel={} min_bytes={} max_threads={} \
-         actual_threads={}",
-        if info.would_parallelize { "YES" } else { "no" },
-        info.parallel_min_bytes,
-        info.parallel_max_threads,
-        info.parallel_threads,
-      );
+    for (mode, algo, _flags) in modes {
+      #[cfg(feature = "parallel")]
+      {
+        let info = dispatch::streaming_dispatch_info(*_flags, len);
+        let kernel_pair = format!("{}+{}", info.stream_kernel, info.bulk_kernel);
+        eprintln!(
+          "[short-input][stream64] mode={mode} len={len} pair={kernel_pair} parallel={} min_bytes={} max_threads={} \
+           actual_threads={}",
+          if info.would_parallelize { "YES" } else { "no" },
+          info.parallel_min_bytes,
+          info.parallel_max_threads,
+          info.parallel_threads,
+        );
+      }
 
       group.bench_with_input(BenchmarkId::new(format!("rscrypto/{mode}/auto"), len), &data, |b, d| {
         b.iter(|| black_box(microbench::run_auto(algo, black_box(d)).unwrap_or(0)))
       });
 
-      if let Some(k) = microbench::get_kernel(algo, info.stream_kernel) {
-        group.bench_with_input(
-          BenchmarkId::new(format!("rscrypto/{mode}/direct/{}", k.name), len),
-          &data,
-          |b, d| b.iter(|| black_box((k.func)(black_box(d)))),
-        );
-      }
-
-      if info.stream_kernel != "portable"
-        && let Some(k) = microbench::get_kernel(algo, "portable")
+      #[cfg(feature = "parallel")]
       {
-        group.bench_with_input(
-          BenchmarkId::new(format!("rscrypto/{mode}/direct/portable"), len),
-          &data,
-          |b, d| b.iter(|| black_box((k.func)(black_box(d)))),
-        );
+        let info = dispatch::streaming_dispatch_info(*_flags, len);
+        if let Some(k) = microbench::get_kernel(algo, info.stream_kernel) {
+          group.bench_with_input(
+            BenchmarkId::new(format!("rscrypto/{mode}/direct/{}", k.name), len),
+            &data,
+            |b, d| b.iter(|| black_box((k.func)(black_box(d)))),
+          );
+        }
+
+        if info.stream_kernel != "portable"
+          && let Some(k) = microbench::get_kernel(algo, "portable")
+        {
+          group.bench_with_input(
+            BenchmarkId::new(format!("rscrypto/{mode}/direct/portable"), len),
+            &data,
+            |b, d| b.iter(|| black_box((k.func)(black_box(d)))),
+          );
+        }
       }
     }
   }
