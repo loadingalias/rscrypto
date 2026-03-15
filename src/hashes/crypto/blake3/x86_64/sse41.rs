@@ -539,7 +539,12 @@ pub(crate) unsafe fn root_output_blocks1(
     let mut row0 = cv_lo;
     let mut row1 = cv_hi;
     let mut row2 = _mm_loadu_si128(IV.as_ptr().cast());
-    let mut row3 = _mm_set_epi32(flags.cast_signed(), block_len.cast_signed(), (counter >> 32) as i32, counter as i32);
+    let mut row3 = _mm_set_epi32(
+      flags.cast_signed(),
+      block_len.cast_signed(),
+      (counter >> 32) as i32,
+      counter as i32,
+    );
 
     // Load message words row-wise
     let m0 = _mm_loadu_si128(block_words.as_ptr().cast());

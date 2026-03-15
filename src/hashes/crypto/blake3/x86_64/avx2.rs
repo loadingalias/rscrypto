@@ -51,7 +51,14 @@ unsafe fn set1(x: u32) -> __m256i {
 unsafe fn set8(a: u32, b: u32, c: u32, d: u32, e: u32, f: u32, g: u32, h: u32) -> __m256i {
   unsafe {
     _mm256_setr_epi32(
-      a.cast_signed(), b.cast_signed(), c.cast_signed(), d.cast_signed(), e.cast_signed(), f.cast_signed(), g.cast_signed(), h.cast_signed(),
+      a.cast_signed(),
+      b.cast_signed(),
+      c.cast_signed(),
+      d.cast_signed(),
+      e.cast_signed(),
+      f.cast_signed(),
+      g.cast_signed(),
+      h.cast_signed(),
     )
   }
 }

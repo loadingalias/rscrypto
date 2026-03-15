@@ -205,9 +205,7 @@ pub struct ChecksumReader<R, C: crate::Checksum> {
 }
 
 #[cfg(feature = "std")]
-impl<R: core::fmt::Debug, C: crate::Checksum + core::fmt::Debug> core::fmt::Debug
-  for ChecksumReader<R, C>
-{
+impl<R: core::fmt::Debug, C: crate::Checksum + core::fmt::Debug> core::fmt::Debug for ChecksumReader<R, C> {
   fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
     f.debug_struct("ChecksumReader")
       .field("inner", &self.inner)
@@ -350,9 +348,7 @@ pub struct ChecksumWriter<W, C: crate::Checksum> {
 }
 
 #[cfg(feature = "std")]
-impl<W: core::fmt::Debug, C: crate::Checksum + core::fmt::Debug> core::fmt::Debug
-  for ChecksumWriter<W, C>
-{
+impl<W: core::fmt::Debug, C: crate::Checksum + core::fmt::Debug> core::fmt::Debug for ChecksumWriter<W, C> {
   fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
     f.debug_struct("ChecksumWriter")
       .field("inner", &self.inner)
@@ -486,9 +482,7 @@ pub struct DigestReader<R, D: crate::Digest> {
 }
 
 #[cfg(feature = "std")]
-impl<R: core::fmt::Debug, D: crate::Digest + core::fmt::Debug> core::fmt::Debug
-  for DigestReader<R, D>
-{
+impl<R: core::fmt::Debug, D: crate::Digest + core::fmt::Debug> core::fmt::Debug for DigestReader<R, D> {
   fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
     f.debug_struct("DigestReader")
       .field("inner", &self.inner)
@@ -618,9 +612,7 @@ pub struct DigestWriter<W, D: crate::Digest> {
 }
 
 #[cfg(feature = "std")]
-impl<W: core::fmt::Debug, D: crate::Digest + core::fmt::Debug> core::fmt::Debug
-  for DigestWriter<W, D>
-{
+impl<W: core::fmt::Debug, D: crate::Digest + core::fmt::Debug> core::fmt::Debug for DigestWriter<W, D> {
   fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
     f.debug_struct("DigestWriter")
       .field("inner", &self.inner)
