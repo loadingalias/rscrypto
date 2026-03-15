@@ -275,6 +275,12 @@ impl AsconHash256 {
   }
 }
 
+impl core::fmt::Debug for AsconHash256 {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.debug_struct("AsconHash256").finish_non_exhaustive()
+  }
+}
+
 impl Digest for AsconHash256 {
   const OUTPUT_SIZE: usize = 32;
   type Output = [u8; 32];
@@ -314,6 +320,12 @@ impl Digest for AsconHash256 {
 pub struct AsconXof128 {
   sponge:
     Sponge<DispatchPermuter, { XOF128_IV[0] }, { XOF128_IV[1] }, { XOF128_IV[2] }, { XOF128_IV[3] }, { XOF128_IV[4] }>,
+}
+
+impl core::fmt::Debug for AsconXof128 {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.debug_struct("AsconXof128").finish_non_exhaustive()
+  }
 }
 
 impl AsconXof128 {
@@ -393,6 +405,12 @@ pub struct AsconXof128Xof {
   pos: usize,
   hint: usize,
   bytes_out: usize,
+}
+
+impl core::fmt::Debug for AsconXof128Xof {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.debug_struct("AsconXof128Xof").finish_non_exhaustive()
+  }
 }
 
 impl Drop for AsconXof128Xof {

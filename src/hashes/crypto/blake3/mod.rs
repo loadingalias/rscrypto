@@ -2827,6 +2827,12 @@ impl ParallelBatchScratch {
   }
 }
 
+impl core::fmt::Debug for Blake3 {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.debug_struct("Blake3").finish_non_exhaustive()
+  }
+}
+
 impl Default for Blake3 {
   #[inline]
   fn default() -> Self {
@@ -3920,6 +3926,12 @@ impl Digest for Blake3 {
 pub struct Blake3Xof {
   root: RootEmitState,
   position_within_block: u8,
+}
+
+impl core::fmt::Debug for Blake3Xof {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.debug_struct("Blake3Xof").finish_non_exhaustive()
+  }
 }
 
 impl Blake3Xof {

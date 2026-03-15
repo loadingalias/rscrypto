@@ -179,7 +179,7 @@ run_constrained_checks() {
 	echo "Constrained targets ${DIM}($CONSTRAINED_SCOPE)${RESET}"
 
 	if [[ ${#constrained_targets[@]} -eq 0 ]]; then
-		skip "no constrained targets configured" "config/target-matrix.toml"
+		skip "no constrained targets configured" ".config/target-matrix.toml"
 		return 0
 	fi
 

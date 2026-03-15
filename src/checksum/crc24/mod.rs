@@ -346,6 +346,12 @@ impl crate::traits::Checksum for Crc24OpenPgp {
   }
 }
 
+impl core::fmt::Debug for Crc24OpenPgp {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.debug_struct("Crc24OpenPgp").finish_non_exhaustive()
+  }
+}
+
 impl Default for Crc24OpenPgp {
   fn default() -> Self {
     <Self as crate::traits::Checksum>::new()

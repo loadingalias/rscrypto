@@ -231,16 +231,16 @@ unsafe fn clmul_hi_sse(a: __m128i, b: __m128i) -> __m128i {
 #[inline]
 #[target_feature(enable = "pclmulqdq")]
 unsafe fn clmul_scalar_sse(a: u32, b: u32) -> __m128i {
-  _mm_clmulepi64_si128::<0x00>(_mm_cvtsi32_si128(a as i32), _mm_cvtsi32_si128(b as i32))
+  _mm_clmulepi64_si128::<0x00>(_mm_cvtsi32_si128(a.cast_signed()), _mm_cvtsi32_si128(b.cast_signed()))
 }
 
 #[inline]
 #[target_feature(enable = "sse2")]
 unsafe fn mm_extract_epi64(val: __m128i, idx: i32) -> u64 {
   if idx == 0 {
-    _mm_cvtsi128_si64(val) as u64
+    _mm_cvtsi128_si64(val).cast_unsigned()
   } else {
-    _mm_cvtsi128_si64(_mm_srli_si128::<8>(val)) as u64
+    _mm_cvtsi128_si64(_mm_srli_si128::<8>(val)).cast_unsigned()
   }
 }
 
@@ -275,7 +275,7 @@ unsafe fn xnmodp_iscsi_sse(mut n: u64) -> u32 {
     stack >>= 1;
     stack != 0
   } {
-    let x = _mm_cvtsi32_si128(acc as i32);
+    let x = _mm_cvtsi32_si128(acc.cast_signed());
     let clmul_result = _mm_clmulepi64_si128::<0x00>(x, x);
     let y = mm_extract_epi64(clmul_result, 0);
     acc = mm_crc32c_u64(0, y << low);
@@ -321,10 +321,10 @@ unsafe fn crc32c_iscsi_sse_v4s3x3(mut crc0: u32, mut buf: *const u8, mut len: us
     let mut x3 = _mm_loadu_si128(buf2_start.add(48) as *const __m128i);
 
     // iSCSI-specific folding constant.
-    let mut k = _mm_setr_epi32(0x740eef02u32 as i32, 0, 0x9e4addf8u32 as i32, 0);
+    let mut k = _mm_setr_epi32(0x740eef02u32.cast_signed(), 0, 0x9e4addf8u32.cast_signed(), 0);
 
     // XOR CRC into the first vector's low 32 bits.
-    x0 = _mm_xor_si128(_mm_cvtsi32_si128(crc0 as i32), x0);
+    x0 = _mm_xor_si128(_mm_cvtsi32_si128(crc0.cast_signed()), x0);
     crc0 = 0;
 
     let mut buf2 = buf2_start.add(64);
@@ -369,7 +369,7 @@ unsafe fn crc32c_iscsi_sse_v4s3x3(mut crc0: u32, mut buf: *const u8, mut len: us
     }
 
     // Reduce x0..x3 to x0.
-    k = _mm_setr_epi32(0xf20c0dfeu32 as i32, 0, 0x493c7d27u32 as i32, 0);
+    k = _mm_setr_epi32(0xf20c0dfeu32.cast_signed(), 0, 0x493c7d27u32.cast_signed(), 0);
 
     let mut y0 = clmul_lo_sse(x0, k);
     x0 = clmul_hi_sse(x0, k);
@@ -381,7 +381,7 @@ unsafe fn crc32c_iscsi_sse_v4s3x3(mut crc0: u32, mut buf: *const u8, mut len: us
     y2 = _mm_xor_si128(y2, x3);
     x2 = _mm_xor_si128(x2, y2);
 
-    k = _mm_setr_epi32(0x3da6d0cbu32 as i32, 0, 0xba4fc28eu32 as i32, 0);
+    k = _mm_setr_epi32(0x3da6d0cbu32.cast_signed(), 0, 0xba4fc28eu32.cast_signed(), 0);
 
     y0 = clmul_lo_sse(x0, k);
     x0 = clmul_hi_sse(x0, k);
@@ -549,8 +549,8 @@ unsafe fn crc32c_iscsi_avx512_v4s3x3(mut crc0: u32, mut buf: *const u8, mut len:
     let mut x2 = _mm_loadu_si128(buf2_start.add(32) as *const __m128i);
     let mut x3 = _mm_loadu_si128(buf2_start.add(48) as *const __m128i);
 
-    let mut k = _mm_setr_epi32(0x740eef02u32 as i32, 0, 0x9e4addf8u32 as i32, 0);
-    x0 = _mm_xor_si128(_mm_cvtsi32_si128(crc0 as i32), x0);
+    let mut k = _mm_setr_epi32(0x740eef02u32.cast_signed(), 0, 0x9e4addf8u32.cast_signed(), 0);
+    x0 = _mm_xor_si128(_mm_cvtsi32_si128(crc0.cast_signed()), x0);
     crc0 = 0;
 
     let mut buf2 = buf2_start.add(64);
@@ -596,7 +596,7 @@ unsafe fn crc32c_iscsi_avx512_v4s3x3(mut crc0: u32, mut buf: *const u8, mut len:
       len = len.strict_sub(136);
     }
 
-    k = _mm_setr_epi32(0xf20c0dfeu32 as i32, 0, 0x493c7d27u32 as i32, 0);
+    k = _mm_setr_epi32(0xf20c0dfeu32.cast_signed(), 0, 0x493c7d27u32.cast_signed(), 0);
     let y0 = clmul_lo_sse(x0, k);
     x0 = clmul_hi_sse(x0, k);
     let y2 = clmul_lo_sse(x2, k);
@@ -605,7 +605,7 @@ unsafe fn crc32c_iscsi_avx512_v4s3x3(mut crc0: u32, mut buf: *const u8, mut len:
     x0 = _mm_ternarylogic_epi64(x0, y0, x1, 0x96);
     x2 = _mm_ternarylogic_epi64(x2, y2, x3, 0x96);
 
-    k = _mm_setr_epi32(0x3da6d0cbu32 as i32, 0, 0xba4fc28eu32 as i32, 0);
+    k = _mm_setr_epi32(0x3da6d0cbu32.cast_signed(), 0, 0xba4fc28eu32.cast_signed(), 0);
     let y0 = clmul_lo_sse(x0, k);
     x0 = clmul_hi_sse(x0, k);
     x0 = _mm_ternarylogic_epi64(x0, y0, x2, 0x96);
@@ -725,11 +725,11 @@ unsafe fn crc32c_iscsi_avx512_vpclmulqdq_v3x2(mut crc0: u32, mut buf: *const u8,
     let mut x2 = _mm512_loadu_si512(buf.add(128) as *const __m512i);
 
     // Broadcast folding constant to each 128-bit lane.
-    let k_128 = _mm_setr_epi32(0xa87ab8a8u32 as i32, 0, 0xab7aff2au32 as i32, 0);
+    let k_128 = _mm_setr_epi32(0xa87ab8a8u32.cast_signed(), 0, 0xab7aff2au32.cast_signed(), 0);
     let mut k = _mm512_broadcast_i32x4(k_128);
 
     // XOR CRC into the first vector's low 32 bits.
-    let crc_vec = _mm512_castsi128_si512(_mm_cvtsi32_si128(crc0 as i32));
+    let crc_vec = _mm512_castsi128_si512(_mm_cvtsi32_si128(crc0.cast_signed()));
     x0 = _mm512_xor_si512(crc_vec, x0);
 
     // First folding round.
@@ -777,7 +777,7 @@ unsafe fn crc32c_iscsi_avx512_vpclmulqdq_v3x2(mut crc0: u32, mut buf: *const u8,
     }
 
     // Reduce x0,x1,x2 to x0.
-    let k_128 = _mm_setr_epi32(0x740eef02u32 as i32, 0, 0x9e4addf8u32 as i32, 0);
+    let k_128 = _mm_setr_epi32(0x740eef02u32.cast_signed(), 0, 0x9e4addf8u32.cast_signed(), 0);
     k = _mm512_broadcast_i32x4(k_128);
 
     y0 = clmul_lo_avx512_vpclmulqdq(x0, k);
@@ -791,17 +791,17 @@ unsafe fn crc32c_iscsi_avx512_vpclmulqdq_v3x2(mut crc0: u32, mut buf: *const u8,
 
     // Reduce 512 bits to 128 bits.
     k = _mm512_setr_epi32(
-      0x1c291d04u32 as i32,
+      0x1c291d04u32.cast_signed(),
       0,
-      0xddc0152bu32 as i32,
+      0xddc0152bu32.cast_signed(),
       0,
-      0x3da6d0cbu32 as i32,
+      0x3da6d0cbu32.cast_signed(),
       0,
-      0xba4fc28eu32 as i32,
+      0xba4fc28eu32.cast_signed(),
       0,
-      0xf20c0dfeu32 as i32,
+      0xf20c0dfeu32.cast_signed(),
       0,
-      0x493c7d27u32 as i32,
+      0x493c7d27u32.cast_signed(),
       0,
       0,
       0,
@@ -934,7 +934,7 @@ const fn reduce128_crc32(hi: u64, lo: u64, poly: u32) -> u32 {
 
   let mut bit: i32 = 127;
   while bit >= 32 {
-    let b = bit as u32;
+    let b = bit.cast_unsigned();
     if ((val >> b) & 1) != 0 {
       val ^= poly_full << b.strict_sub(32);
     }
@@ -1076,7 +1076,7 @@ impl Simd128 {
   #[inline]
   #[target_feature(enable = "sse2")]
   unsafe fn new(high: u64, low: u64) -> Self {
-    Self(_mm_set_epi64x(high as i64, low as i64))
+    Self(_mm_set_epi64x(high.cast_signed(), low.cast_signed()))
   }
 
   #[inline]
@@ -1710,14 +1710,14 @@ unsafe fn update_simd_crc32_ieee_reflected_vpclmul(state: u32, first: &[Simd128;
   // Fold coefficient (128-byte distance), replicated across lanes:
   // each 128-bit lane expects: low64=keys[3], high64=keys[4].
   let coeff = _mm512_setr_epi64(
-    keys[3] as i64,
-    keys[4] as i64,
-    keys[3] as i64,
-    keys[4] as i64,
-    keys[3] as i64,
-    keys[4] as i64,
-    keys[3] as i64,
-    keys[4] as i64,
+    keys[3].cast_signed(),
+    keys[4].cast_signed(),
+    keys[3].cast_signed(),
+    keys[4].cast_signed(),
+    keys[3].cast_signed(),
+    keys[4].cast_signed(),
+    keys[3].cast_signed(),
+    keys[4].cast_signed(),
   );
 
   // Load the first 128-byte block as 2×512-bit registers (8×16B lanes).
@@ -1801,14 +1801,14 @@ pub fn crc32_ieee_vpclmul_safe(crc: u32, data: &[u8]) -> u32 {
 unsafe fn vpclmul_coeff(pair: (u64, u64)) -> __m512i {
   // Each 128-bit lane expects: low64 = pair.1, high64 = pair.0.
   _mm512_setr_epi64(
-    pair.1 as i64,
-    pair.0 as i64,
-    pair.1 as i64,
-    pair.0 as i64,
-    pair.1 as i64,
-    pair.0 as i64,
-    pair.1 as i64,
-    pair.0 as i64,
+    pair.1.cast_signed(),
+    pair.0.cast_signed(),
+    pair.1.cast_signed(),
+    pair.0.cast_signed(),
+    pair.1.cast_signed(),
+    pair.0.cast_signed(),
+    pair.1.cast_signed(),
+    pair.0.cast_signed(),
   )
 }
 

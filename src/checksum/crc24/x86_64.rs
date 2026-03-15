@@ -55,7 +55,7 @@ impl Simd128 {
   #[inline]
   #[target_feature(enable = "sse2")]
   unsafe fn new(high: u64, low: u64) -> Self {
-    Self(_mm_set_epi64x(high as i64, low as i64))
+    Self(_mm_set_epi64x(high.cast_signed(), low.cast_signed()))
   }
 
   #[inline]
@@ -816,14 +816,14 @@ unsafe fn fold_16_reflected_vpclmul(state: __m512i, coeff: __m512i, data: __m512
 #[target_feature(enable = "avx512f")]
 unsafe fn broadcast_coeff_128b(high: u64, low: u64) -> __m512i {
   _mm512_set_epi64(
-    high as i64,
-    low as i64,
-    high as i64,
-    low as i64,
-    high as i64,
-    low as i64,
-    high as i64,
-    low as i64,
+    high.cast_signed(),
+    low.cast_signed(),
+    high.cast_signed(),
+    low.cast_signed(),
+    high.cast_signed(),
+    low.cast_signed(),
+    high.cast_signed(),
+    low.cast_signed(),
   )
 }
 

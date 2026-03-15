@@ -1,11 +1,11 @@
 //! Target-matrix contract helpers.
 //!
-//! This module ties platform detection to `config/target-matrix.toml` so
+//! This module ties platform detection to `.config/target-matrix.toml` so
 //! architecture policy stays aligned with CI manifests.
 
 use crate::platform::caps::Arch;
 
-const TARGET_MATRIX_MANIFEST: &str = include_str!("../../config/target-matrix.toml");
+const TARGET_MATRIX_MANIFEST: &str = include_str!("../../.config/target-matrix.toml");
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Section {

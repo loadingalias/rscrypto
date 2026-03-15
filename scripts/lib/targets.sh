@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Target definitions for cross-platform checks.
 #
-# Single source of truth: config/target-matrix.toml
+# Single source of truth: .config/target-matrix.toml
 
 TARGETS_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TARGET_MATRIX_PY="$TARGETS_LIB_DIR/target-matrix.py"

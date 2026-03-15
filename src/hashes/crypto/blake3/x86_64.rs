@@ -87,7 +87,7 @@ pub(crate) unsafe fn compress_ssse3(
   let mut row0 = _mm_loadu_si128(chaining_value.as_ptr().cast());
   let mut row1 = _mm_loadu_si128(chaining_value.as_ptr().add(4).cast());
   let mut row2 = _mm_loadu_si128(IV.as_ptr().cast());
-  let mut row3 = _mm_set_epi32(flags as i32, block_len as i32, (counter >> 32) as i32, counter as i32);
+  let mut row3 = _mm_set_epi32(flags.cast_signed(), block_len.cast_signed(), (counter >> 32) as i32, counter as i32);
 
   // Load message words
   let m0 = _mm_loadu_si128(block_words.as_ptr().cast());
@@ -411,12 +411,12 @@ unsafe fn compress_pre_sse41_impl(
   unsafe {
     let mut row0 = _mm_loadu_si128(chaining_value.as_ptr().cast());
     let mut row1 = _mm_loadu_si128(chaining_value.as_ptr().add(4).cast());
-    let mut row2 = _mm_setr_epi32(IV[0] as i32, IV[1] as i32, IV[2] as i32, IV[3] as i32);
+    let mut row2 = _mm_setr_epi32(IV[0].cast_signed(), IV[1].cast_signed(), IV[2].cast_signed(), IV[3].cast_signed());
     let mut row3 = _mm_setr_epi32(
-      counter as u32 as i32,
-      (counter >> 32) as u32 as i32,
-      block_len as i32,
-      flags as i32,
+      (counter as u32).cast_signed(),
+      ((counter >> 32) as u32).cast_signed(),
+      block_len.cast_signed(),
+      flags.cast_signed(),
     );
 
     let mut t0;
@@ -525,7 +525,7 @@ macro_rules! compress_cv_common_body {
     let mut row0 = cv_lo;
     let mut row1 = cv_hi;
     let mut row2 = _mm_loadu_si128(IV.as_ptr().cast());
-    let mut row3 = _mm_set_epi32(flags as i32, block_len as i32, (counter >> 32) as i32, counter as i32);
+    let mut row3 = _mm_set_epi32(flags.cast_signed(), block_len.cast_signed(), (counter >> 32) as i32, counter as i32);
 
     macro_rules! g {
       ($a:expr, $b:expr, $c:expr, $d:expr, $mx:expr, $my:expr) => {{

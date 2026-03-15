@@ -44,14 +44,14 @@ unsafe fn xor(a: __m256i, b: __m256i) -> __m256i {
 
 #[inline(always)]
 unsafe fn set1(x: u32) -> __m256i {
-  unsafe { _mm256_set1_epi32(x as i32) }
+  unsafe { _mm256_set1_epi32(x.cast_signed()) }
 }
 
 #[inline(always)]
 unsafe fn set8(a: u32, b: u32, c: u32, d: u32, e: u32, f: u32, g: u32, h: u32) -> __m256i {
   unsafe {
     _mm256_setr_epi32(
-      a as i32, b as i32, c as i32, d as i32, e as i32, f as i32, g as i32, h as i32,
+      a.cast_signed(), b.cast_signed(), c.cast_signed(), d.cast_signed(), e.cast_signed(), f.cast_signed(), g.cast_signed(), h.cast_signed(),
     )
   }
 }

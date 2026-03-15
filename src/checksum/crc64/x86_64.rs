@@ -46,7 +46,7 @@ impl Simd {
   #[inline]
   #[target_feature(enable = "sse2")]
   unsafe fn new(high: u64, low: u64) -> Self {
-    Self(_mm_set_epi64x(high as i64, low as i64))
+    Self(_mm_set_epi64x(high.cast_signed(), low.cast_signed()))
   }
 
   /// Fold 16 bytes: `(coeff.low ⊗ self.low) ⊕ (coeff.high ⊗ self.high)`.
@@ -80,7 +80,7 @@ impl Simd {
 
     // Extract high 64 bits without requiring SSE4.1.
     let hi = _mm_srli_si128::<8>(reduced.0);
-    _mm_cvtsi128_si64(hi) as u64
+    _mm_cvtsi128_si64(hi).cast_unsigned()
   }
 }
 
@@ -662,14 +662,14 @@ unsafe fn fold16_4x_ternlog(x: __m512i, data: __m512i, coeff: __m512i) -> __m512
 #[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
 unsafe fn vpclmul_coeff(pair: (u64, u64)) -> __m512i {
   _mm512_set_epi64(
-    pair.0 as i64,
-    pair.1 as i64,
-    pair.0 as i64,
-    pair.1 as i64,
-    pair.0 as i64,
-    pair.1 as i64,
-    pair.0 as i64,
-    pair.1 as i64,
+    pair.0.cast_signed(),
+    pair.1.cast_signed(),
+    pair.0.cast_signed(),
+    pair.1.cast_signed(),
+    pair.0.cast_signed(),
+    pair.1.cast_signed(),
+    pair.0.cast_signed(),
+    pair.1.cast_signed(),
   )
 }
 
@@ -733,7 +733,7 @@ unsafe fn update_simd_vpclmul_impl<const ALIGNED: bool>(
   let (mut x0, mut x1) = load_128b_block::<ALIGNED>(first);
 
   // XOR the initial CRC into lane 0 (low 64 bits of the first 16-byte lane).
-  let crc_mask = _mm512_set_epi64(0, 0, 0, 0, 0, 0, 0, state as i64);
+  let crc_mask = _mm512_set_epi64(0, 0, 0, 0, 0, 0, 0, state.cast_signed());
   x0 = _mm512_xor_si512(x0, crc_mask);
 
   // Broadcast 128-byte fold coefficient across the 4×128-bit lanes of each vector.
@@ -811,7 +811,7 @@ unsafe fn update_simd_vpclmul_2way_impl<const ALIGNED: bool>(
   let (mut x0_1, mut x1_1) = load_128b_block::<ALIGNED>(&blocks[1]);
 
   // Inject CRC into stream 0.
-  let crc_mask = _mm512_set_epi64(0, 0, 0, 0, 0, 0, 0, state as i64);
+  let crc_mask = _mm512_set_epi64(0, 0, 0, 0, 0, 0, 0, state.cast_signed());
   x0_0 = _mm512_xor_si512(x0_0, crc_mask);
 
   let coeff_256 = vpclmul_coeff(fold_256b);
@@ -927,7 +927,7 @@ unsafe fn update_simd_vpclmul_4way_impl<const ALIGNED: bool>(
   let (mut x0_2, mut x1_2) = load_128b_block::<ALIGNED>(&blocks[2]);
   let (mut x0_3, mut x1_3) = load_128b_block::<ALIGNED>(&blocks[3]);
 
-  let crc_mask = _mm512_set_epi64(0, 0, 0, 0, 0, 0, 0, state as i64);
+  let crc_mask = _mm512_set_epi64(0, 0, 0, 0, 0, 0, 0, state.cast_signed());
   x0_0 = _mm512_xor_si512(x0_0, crc_mask);
 
   let coeff_512 = vpclmul_coeff(fold_512b);
@@ -1076,7 +1076,7 @@ unsafe fn update_simd_vpclmul_7way_impl<const ALIGNED: bool>(
   let (mut x0_5, mut x1_5) = load_128b_block::<ALIGNED>(&blocks[5]);
   let (mut x0_6, mut x1_6) = load_128b_block::<ALIGNED>(&blocks[6]);
 
-  let crc_mask = _mm512_set_epi64(0, 0, 0, 0, 0, 0, 0, state as i64);
+  let crc_mask = _mm512_set_epi64(0, 0, 0, 0, 0, 0, 0, state.cast_signed());
   x0_0 = _mm512_xor_si512(x0_0, crc_mask);
 
   let coeff_896 = vpclmul_coeff(fold_896b);
@@ -1202,7 +1202,7 @@ unsafe fn update_simd_vpclmul_8way_impl<const ALIGNED: bool>(
   let (mut x0_6, mut x1_6) = load_128b_block::<ALIGNED>(&blocks[6]);
   let (mut x0_7, mut x1_7) = load_128b_block::<ALIGNED>(&blocks[7]);
 
-  let crc_mask = _mm512_set_epi64(0, 0, 0, 0, 0, 0, 0, state as i64);
+  let crc_mask = _mm512_set_epi64(0, 0, 0, 0, 0, 0, 0, state.cast_signed());
   x0_0 = _mm512_xor_si512(x0_0, crc_mask);
 
   let coeff_1024 = vpclmul_coeff(fold_1024b);
@@ -1393,7 +1393,7 @@ unsafe fn crc64_vpclmul_4x512(
   ptr = ptr.add(BLOCK_SIZE);
 
   // XOR the initial CRC into lane 0 (low 64 bits of first register).
-  let crc_mask = _mm512_set_epi64(0, 0, 0, 0, 0, 0, 0, state as i64);
+  let crc_mask = _mm512_set_epi64(0, 0, 0, 0, 0, 0, 0, state.cast_signed());
   x0 = _mm512_xor_si512(x0, crc_mask);
 
   // Folding distance is 256 bytes (2048 bits) per iteration.

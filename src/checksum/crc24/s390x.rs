@@ -72,17 +72,17 @@ impl Simd {
   #[inline]
   fn new(high: u64, low: u64) -> Self {
     // On s390x, vector element 0 maps to the most-significant 64 bits.
-    Self(i64x2::from_array([high as i64, low as i64]))
+    Self(i64x2::from_array([high.cast_signed(), low.cast_signed()]))
   }
 
   #[inline]
   fn low_64(self) -> u64 {
-    self.0.to_array()[1] as u64
+    self.0.to_array()[1].cast_unsigned()
   }
 
   #[inline]
   fn high_64(self) -> u64 {
-    self.0.to_array()[0] as u64
+    self.0.to_array()[0].cast_unsigned()
   }
 
   #[inline]
