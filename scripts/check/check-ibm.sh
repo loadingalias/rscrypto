@@ -28,7 +28,7 @@ trap 'rm -rf "$LOG_DIR"' EXIT
 echo "IBM targets ${DIM}($SCOPE_DESC)${RESET}"
 
 if [[ ${#IBM_TARGETS[@]} -eq 0 ]]; then
-	skip "no IBM targets configured" ".config/target-matrix.toml"
+	skip "no IBM targets configured" ".config/target-matrix.json"
 	exit 0
 fi
 

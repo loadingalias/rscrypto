@@ -39,7 +39,7 @@ This file is the caller map for `scripts/`.
   - Sourced by: `scripts/check/*.sh`, `scripts/test/*.sh`, `scripts/ci/ci-check.sh`
 - `scripts/lib/targets.sh`
   - Sourced by: `scripts/check/check-all.sh`, `scripts/check/check-win.sh`, `scripts/check/check-linux.sh`
-- `scripts/lib/target-matrix.py`
+- `scripts/lib/target-matrix.sh`
   - Called by: `scripts/lib/targets.sh`, `.github/workflows/commit.yaml`, `.github/workflows/weekly.yaml`, `just target-matrix-shell`, `just target-matrix-json`
 - `scripts/lib/toolchain.sh`
   - Called by: `.github/actions/setup-toolchain/action.yaml`, `.github/actions/setup-runson/action.yaml`
@@ -52,6 +52,8 @@ This file is the caller map for `scripts/`.
   - Called by: `just bench-summary`, `just bench-compare`, `just bench-blake3-compare`
 - `scripts/bench/blake3-codegen-audit.sh`
   - Called by: `just blake3-codegen-audit`
+- `scripts/bench/blake3-gap-gate.sh`
+  - Called by: `scripts/ci/run-bench.sh`, `just bench-blake3-gate`
 - `scripts/bench/comp-check.py`
   - Called by: `just comp-check`
 - `scripts/gen_blake3_x86_asm_ports.py`

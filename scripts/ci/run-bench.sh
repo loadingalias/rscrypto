@@ -409,7 +409,7 @@ run_blake3_enforced_gates() {
   local failed=0
 
   if [[ "$ENFORCE_BLAKE3_GAP_GATE_INPUT" == "true" ]]; then
-    if ! python3 scripts/bench/blake3-gap-gate.py | tee -a "$LOG_PATH"; then
+    if ! bash scripts/bench/blake3-gap-gate.sh | tee -a "$LOG_PATH"; then
       failed=1
     fi
   fi
@@ -431,7 +431,7 @@ run_blake3_enforced_gates() {
       if ! RSCRYPTO_BLAKE3_BENCH_DIAGNOSTICS=1 "${cmd[@]}" 2>&1 | tee -a "$LOG_PATH"; then
         failed=1
       fi
-      if ! python3 scripts/bench/blake3-gap-gate.py \
+      if ! bash scripts/bench/blake3-gap-gate.sh \
         --group blake3/kernel-ab \
         --ours-prefix "$ours_prefix" \
         --rival official \

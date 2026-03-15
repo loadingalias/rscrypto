@@ -88,10 +88,10 @@ gen-blake3-x86-asm-ports:
     @scripts/gen_blake3_x86_asm_ports.py
 
 target-matrix-shell:
-    @python3 scripts/lib/target-matrix.py --format shell
+    @bash scripts/lib/target-matrix.sh --format shell
 
 target-matrix-json key:
-    @python3 scripts/lib/target-matrix.py --format json --key "{{key}}"
+    @bash scripts/lib/target-matrix.sh --format json --key "{{key}}"
 
 gen-hashes-testdata:
     @python3 scripts/gen_hashes_testdata.py

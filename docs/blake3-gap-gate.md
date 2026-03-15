@@ -18,7 +18,7 @@ This gate tracks a small set of BLAKE3 one-shot sizes where `rscrypto` has histo
 - 16 KiB: `+13.0%`
 - 64 KiB: `+4.5%`
 
-Gate implementation: `scripts/bench/blake3-gap-gate.py`.
+Gate implementation: `scripts/bench/blake3-gap-gate.sh`.
 
 ## Local Usage
 
