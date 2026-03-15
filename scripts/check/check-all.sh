@@ -12,11 +12,6 @@ source "$SCRIPT_DIR/../lib/targets.sh"
 
 DEFAULT_CONSTRAINED_CRATES=(
 	"rscrypto"
-	"platform"
-	"backend"
-	"traits"
-	"checksum"
-	"hashes"
 )
 
 CONSTRAINED_CRATES=()
@@ -63,7 +58,7 @@ select_constrained_crates() {
 
 crate_supports_alloc() {
 	local crate=$1
-	local manifest="crates/$crate/Cargo.toml"
+	local manifest="Cargo.toml"
 	[[ -f "$manifest" ]] && grep -q '^[[:space:]]*alloc[[:space:]]*=' "$manifest"
 }
 

@@ -160,10 +160,10 @@ jobs:
       tools_mode: minimal
       run_script: |
         rustup target add ${{ matrix.target }}
-        cargo check -p platform -p traits -p backend -p checksum -p hashes --target ${{ matrix.target }} --no-default-features --lib
-        cargo check -p platform -p traits -p backend -p checksum -p hashes --target ${{ matrix.target }} --no-default-features --features alloc --lib
-        cargo build -p platform -p traits -p backend -p checksum -p hashes --target ${{ matrix.target }} --no-default-features --lib --release
-        cargo build -p platform -p traits -p backend -p checksum -p hashes --target ${{ matrix.target }} --no-default-features --features alloc --lib --release
+        cargo check --target ${{ matrix.target }} --no-default-features --lib
+        cargo check --target ${{ matrix.target }} --no-default-features --features alloc --lib
+        cargo build --target ${{ matrix.target }} --no-default-features --lib --release
+        cargo build --target ${{ matrix.target }} --no-default-features --features alloc --lib --release
 
   wasm:
     name: wasm (${{ matrix.target }})
@@ -181,10 +181,10 @@ jobs:
       tools_mode: minimal
       run_script: |
         rustup target add ${{ matrix.target }}
-        cargo check -p platform -p traits -p backend -p checksum -p hashes --target ${{ matrix.target }} --no-default-features --lib
-        cargo check -p platform -p traits -p backend -p checksum -p hashes --target ${{ matrix.target }} --no-default-features --features alloc --lib
-        cargo build -p platform -p traits -p backend -p checksum -p hashes --target ${{ matrix.target }} --no-default-features --lib --release
-        cargo build -p platform -p traits -p backend -p checksum -p hashes --target ${{ matrix.target }} --no-default-features --features alloc --lib --release
+        cargo check --target ${{ matrix.target }} --no-default-features --lib
+        cargo check --target ${{ matrix.target }} --no-default-features --features alloc --lib
+        cargo build --target ${{ matrix.target }} --no-default-features --lib --release
+        cargo build --target ${{ matrix.target }} --no-default-features --features alloc --lib --release
 
   wasm-pack-optional:
     name: wasm-pack smoke (optional)
@@ -206,7 +206,7 @@ jobs:
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
       - name: wasm-pack build
-        run: wasm-pack build crates/rscrypto --target web --no-default-features --features std
+        run: wasm-pack build --target web --no-default-features --features std
 
   miri:
     name: Miri (${{ matrix.target.name }})
@@ -268,7 +268,7 @@ jobs:
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08  # v4.6.0
         with:
           name: fuzz-crashes-weekly-${{ matrix.target.name }}
-          path: crates/**/fuzz/artifacts/
+          path: fuzz/artifacts/
           retention-days: 90
           if-no-files-found: ignore
 

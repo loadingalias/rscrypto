@@ -29,86 +29,19 @@ echo ""
 
 maybe_disable_sccache
 
-# Crates that work with Miri (have #[cfg(miri)] portable fallbacks)
-# - backend: Has dispatch with unsafe transmute (needs Miri testing)
-# - platform: Feature detection with #[cfg(miri)] fallbacks, Caps bitset tests
-# - checksum: SIMD tests guarded with #[cfg(not(miri))], portable tests run
-MIRI_CRATES="backend platform checksum"
-
-# Crates excluded from Miri testing
-# - traits: Just trait definitions, no unsafe code
-EXCLUDED_CRATES="traits"
-
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# Argument Parsing
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-is_in_list() {
-  local item="$1"
-  local list="$2"
-  for i in $list; do
-    [ "$item" = "$i" ] && return 0
-  done
-  return 1
-}
-
-CRATES=()
-ALL_FLAG=false
-
-for arg in "$@"; do
-  if [ "$arg" = "--all" ]; then
-    ALL_FLAG=true
-  else
-    CRATES+=("$arg")
-  fi
-done
-
-# Determine which crates to test
-if [ ${#CRATES[@]} -gt 0 ]; then
-  CRATES_TO_TEST="${CRATES[*]}"
-elif [ "$ALL_FLAG" = true ]; then
-  CRATES_TO_TEST="$MIRI_CRATES"
-else
-  CRATES_TO_TEST="$(rail_plan_crates)"
-
-  if [ -z "$CRATES_TO_TEST" ]; then
-    echo "No changes detected - skipping Miri tests"
-    exit 0
-  fi
-fi
-
-# Build package flags, filtering exclusions
-PKG_FLAGS=""
-PKG_LIST=""
-
-for crate in $CRATES_TO_TEST; do
-  if ! is_in_list "$crate" "$MIRI_CRATES"; then
-    echo "Skipping $crate (no Miri support)"
-  elif is_in_list "$crate" "$EXCLUDED_CRATES"; then
-    echo "Skipping $crate (excluded from Miri)"
-  else
-    PKG_FLAGS="$PKG_FLAGS -p $crate"
-    PKG_LIST="$PKG_LIST $crate"
-  fi
-done
-
-if [ -z "$PKG_FLAGS" ]; then
-  echo "No compatible crates to test"
-  exit 0
-fi
+# Single-crate layout: run Miri on the whole rscrypto crate.
+# The #[cfg(miri)] guards in dispatch/SIMD modules ensure portable code is used.
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Run Miri Tests
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-echo "Testing:$PKG_LIST"
+echo "Testing: rscrypto"
 echo "Mode: --lib (unit tests only, no benchmarks)"
 echo ""
 
 # Run Miri on library tests only (--lib excludes benchmarks/examples)
-# The #[cfg(miri)] guards in dispatch functions ensure portable code is used
-# shellcheck disable=SC2086
-cargo miri test $PKG_FLAGS --lib
+cargo miri test --lib
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

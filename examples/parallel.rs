@@ -4,7 +4,7 @@
 //! we can compute crc(A || B) without having both chunks in memory.
 //! This enables efficient parallel processing of large data.
 //!
-//! Run with: `cargo run --example parallel -p checksum`
+//! Run with: `cargo run --example parallel`
 
 use std::thread;
 

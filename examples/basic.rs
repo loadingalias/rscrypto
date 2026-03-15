@@ -1,6 +1,6 @@
 //! Basic checksum usage: one-shot and streaming APIs.
 //!
-//! Run with: `cargo run --example basic -p checksum`
+//! Run with: `cargo run --example basic`
 
 use rscrypto::{Checksum, Crc16Ccitt, Crc24OpenPgp, Crc32, Crc32C, Crc64, Crc64Nvme};
 
