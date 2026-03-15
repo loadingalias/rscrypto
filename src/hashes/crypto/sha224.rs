@@ -102,6 +102,12 @@ impl Sha224 {
   }
 }
 
+impl core::fmt::Debug for Sha224 {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.debug_struct("Sha224").finish_non_exhaustive()
+  }
+}
+
 impl Default for Sha224 {
   #[inline]
   fn default() -> Self {

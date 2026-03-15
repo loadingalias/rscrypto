@@ -205,6 +205,18 @@ pub struct ChecksumReader<R, C: crate::Checksum> {
 }
 
 #[cfg(feature = "std")]
+impl<R: core::fmt::Debug, C: crate::Checksum + core::fmt::Debug> core::fmt::Debug
+  for ChecksumReader<R, C>
+{
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.debug_struct("ChecksumReader")
+      .field("inner", &self.inner)
+      .field("hasher", &self.hasher)
+      .finish()
+  }
+}
+
+#[cfg(feature = "std")]
 impl<R, C: crate::Checksum> ChecksumReader<R, C> {
   /// Create a new reader wrapper with the default initial state.
   #[inline]
@@ -338,6 +350,18 @@ pub struct ChecksumWriter<W, C: crate::Checksum> {
 }
 
 #[cfg(feature = "std")]
+impl<W: core::fmt::Debug, C: crate::Checksum + core::fmt::Debug> core::fmt::Debug
+  for ChecksumWriter<W, C>
+{
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.debug_struct("ChecksumWriter")
+      .field("inner", &self.inner)
+      .field("hasher", &self.hasher)
+      .finish()
+  }
+}
+
+#[cfg(feature = "std")]
 impl<W, C: crate::Checksum> ChecksumWriter<W, C> {
   /// Create a new writer wrapper with the default initial state.
   #[inline]
@@ -462,6 +486,18 @@ pub struct DigestReader<R, D: crate::Digest> {
 }
 
 #[cfg(feature = "std")]
+impl<R: core::fmt::Debug, D: crate::Digest + core::fmt::Debug> core::fmt::Debug
+  for DigestReader<R, D>
+{
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.debug_struct("DigestReader")
+      .field("inner", &self.inner)
+      .field("hasher", &self.hasher)
+      .finish()
+  }
+}
+
+#[cfg(feature = "std")]
 impl<R, D: crate::Digest> DigestReader<R, D> {
   /// Create a new reader wrapper with the default initial state.
   #[inline]
@@ -579,6 +615,18 @@ impl<R: std::io::Read, D: crate::Digest> std::io::Read for DigestReader<R, D> {
 pub struct DigestWriter<W, D: crate::Digest> {
   inner: W,
   hasher: D,
+}
+
+#[cfg(feature = "std")]
+impl<W: core::fmt::Debug, D: crate::Digest + core::fmt::Debug> core::fmt::Debug
+  for DigestWriter<W, D>
+{
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.debug_struct("DigestWriter")
+      .field("inner", &self.inner)
+      .field("hasher", &self.hasher)
+      .finish()
+  }
 }
 
 #[cfg(feature = "std")]

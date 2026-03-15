@@ -15,10 +15,10 @@ pub mod dispatch;
 pub mod dispatch_tables;
 pub(crate) mod kernels;
 
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct RapidHash64;
 
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct RapidHash128;
 
 // rapidhash v3 default secrets (C++ compatible)

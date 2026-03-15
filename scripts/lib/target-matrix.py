@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read config/target-matrix.toml and emit shell/json views for CI/scripts."""
+"""Read .config/target-matrix.toml and emit shell/json views for CI/scripts."""
 
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ def bash_array(name: str, values: list[str]) -> str:
 
 def print_shell(manifest: dict) -> None:
     groups = manifest["groups"]
-    print("# Generated from config/target-matrix.toml")
+    print("# Generated from .config/target-matrix.toml")
     print(bash_array("WIN_TARGETS", groups["win"]))
     print(bash_array("LINUX_TARGETS", groups["linux"]))
     print(bash_array("IBM_TARGETS", groups.get("ibm", [])))

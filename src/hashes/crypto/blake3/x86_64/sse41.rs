@@ -37,12 +37,12 @@ unsafe fn xor(a: __m128i, b: __m128i) -> __m128i {
 
 #[inline(always)]
 unsafe fn set1(x: u32) -> __m128i {
-  unsafe { _mm_set1_epi32(x as i32) }
+  unsafe { _mm_set1_epi32(x.cast_signed()) }
 }
 
 #[inline(always)]
 unsafe fn set4(a: u32, b: u32, c: u32, d: u32) -> __m128i {
-  unsafe { _mm_setr_epi32(a as i32, b as i32, c as i32, d as i32) }
+  unsafe { _mm_setr_epi32(a.cast_signed(), b.cast_signed(), c.cast_signed(), d.cast_signed()) }
 }
 
 #[inline(always)]
@@ -539,7 +539,7 @@ pub(crate) unsafe fn root_output_blocks1(
     let mut row0 = cv_lo;
     let mut row1 = cv_hi;
     let mut row2 = _mm_loadu_si128(IV.as_ptr().cast());
-    let mut row3 = _mm_set_epi32(flags as i32, block_len as i32, (counter >> 32) as i32, counter as i32);
+    let mut row3 = _mm_set_epi32(flags.cast_signed(), block_len.cast_signed(), (counter >> 32) as i32, counter as i32);
 
     // Load message words row-wise
     let m0 = _mm_loadu_si128(block_words.as_ptr().cast());

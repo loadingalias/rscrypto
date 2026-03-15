@@ -132,6 +132,12 @@ macro_rules! define_buffered_crc {
       }
     }
 
+    impl core::fmt::Debug for $name {
+      fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct(stringify!($name)).finish_non_exhaustive()
+      }
+    }
+
     impl Default for $name {
       fn default() -> Self {
         Self::new()

@@ -3,12 +3,16 @@ name = "rscrypto"
 description = "Pure Rust cryptography. Hardware-accelerated. Zero dependencies."
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.92.0"
+rust-version = "1.94.0"
 license = "MIT OR Apache-2.0"
 authors = ["loadingalias"]
 repository = "https://github.com/loadingalias/rscrypto"
 keywords = ["crypto", "crc", "checksum", "blake3", "simd"]
 categories = ["cryptography", "no-std::no-alloc", "algorithms"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [workspace]
 resolver = "3"
@@ -21,7 +25,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.92.0"
+rust-version = "1.94.0"
 license = "MIT OR Apache-2.0"
 authors = ["loadingalias"]
 repository = "https://github.com/loadingalias/rscrypto"

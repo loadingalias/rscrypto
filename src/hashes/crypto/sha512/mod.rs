@@ -153,6 +153,12 @@ pub struct Sha512 {
   dispatch: Option<SizeClassDispatch<CompressBlocksFn>>,
 }
 
+impl core::fmt::Debug for Sha512 {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.debug_struct("Sha512").finish_non_exhaustive()
+  }
+}
+
 impl Default for Sha512 {
   #[inline]
   fn default() -> Self {

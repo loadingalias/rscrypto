@@ -74,6 +74,12 @@ pub struct Sha256 {
   dispatch: Option<SizeClassDispatch<CompressBlocksFn>>,
 }
 
+impl core::fmt::Debug for Sha256 {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.debug_struct("Sha256").finish_non_exhaustive()
+  }
+}
+
 impl Default for Sha256 {
   #[inline]
   fn default() -> Self {

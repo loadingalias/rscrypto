@@ -541,6 +541,12 @@ impl crate::traits::Checksum for Crc16Ccitt {
   }
 }
 
+impl core::fmt::Debug for Crc16Ccitt {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.debug_struct("Crc16Ccitt").finish_non_exhaustive()
+  }
+}
+
 impl Default for Crc16Ccitt {
   fn default() -> Self {
     <Self as crate::traits::Checksum>::new()
@@ -668,6 +674,12 @@ impl crate::traits::Checksum for Crc16Ibm {
   #[inline]
   fn reset(&mut self) {
     self.state = Self::INIT;
+  }
+}
+
+impl core::fmt::Debug for Crc16Ibm {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.debug_struct("Crc16Ibm").finish_non_exhaustive()
   }
 }
 

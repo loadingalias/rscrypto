@@ -174,6 +174,12 @@ impl Sha512_256 {
   }
 }
 
+impl core::fmt::Debug for Sha512_256 {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.debug_struct("Sha512_256").finish_non_exhaustive()
+  }
+}
+
 impl Default for Sha512_256 {
   #[inline]
   fn default() -> Self {

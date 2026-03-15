@@ -174,6 +174,12 @@ impl Sha384 {
   }
 }
 
+impl core::fmt::Debug for Sha384 {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.debug_struct("Sha384").finish_non_exhaustive()
+  }
+}
+
 impl Default for Sha384 {
   #[inline]
   fn default() -> Self {

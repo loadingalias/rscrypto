@@ -19,6 +19,18 @@ pub struct Sha3_224 {
   core: KeccakCore<144>,
 }
 
+impl core::fmt::Debug for Sha3_256 {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.debug_struct("Sha3_256").finish_non_exhaustive()
+  }
+}
+
+impl core::fmt::Debug for Sha3_224 {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.debug_struct("Sha3_224").finish_non_exhaustive()
+  }
+}
+
 impl Digest for Sha3_224 {
   const OUTPUT_SIZE: usize = 28;
   type Output = [u8; 28];
@@ -109,6 +121,18 @@ pub struct Sha3_512 {
 #[derive(Clone, Default)]
 pub struct Sha3_384 {
   core: KeccakCore<104>,
+}
+
+impl core::fmt::Debug for Sha3_512 {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.debug_struct("Sha3_512").finish_non_exhaustive()
+  }
+}
+
+impl core::fmt::Debug for Sha3_384 {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.debug_struct("Sha3_384").finish_non_exhaustive()
+  }
 }
 
 impl Digest for Sha3_384 {
@@ -203,6 +227,18 @@ pub struct Shake128 {
   core: KeccakCore<168>,
 }
 
+impl core::fmt::Debug for Shake256 {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.debug_struct("Shake256").finish_non_exhaustive()
+  }
+}
+
+impl core::fmt::Debug for Shake128 {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.debug_struct("Shake128").finish_non_exhaustive()
+  }
+}
+
 impl Shake128 {
   #[inline]
   #[must_use]
@@ -247,6 +283,12 @@ impl Shake128 {
 #[derive(Clone)]
 pub struct Shake128Xof {
   inner: KeccakXof<168>,
+}
+
+impl core::fmt::Debug for Shake128Xof {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.debug_struct("Shake128Xof").finish_non_exhaustive()
+  }
 }
 
 impl Xof for Shake128Xof {
@@ -300,6 +342,12 @@ impl Shake256 {
 #[derive(Clone)]
 pub struct Shake256Xof {
   inner: KeccakXof<136>,
+}
+
+impl core::fmt::Debug for Shake256Xof {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.debug_struct("Shake256Xof").finish_non_exhaustive()
+  }
 }
 
 impl Xof for Shake256Xof {

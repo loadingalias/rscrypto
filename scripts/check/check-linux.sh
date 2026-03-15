@@ -28,7 +28,7 @@ trap 'rm -rf "$LOG_DIR"' EXIT
 echo "Linux targets ${DIM}($SCOPE_DESC)${RESET}"
 
 if [[ ${#LINUX_TARGETS[@]} -eq 0 ]]; then
-  skip "no Linux targets configured" "config/target-matrix.toml"
+  skip "no Linux targets configured" ".config/target-matrix.toml"
   exit 0
 fi
 

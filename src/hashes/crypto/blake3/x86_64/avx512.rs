@@ -35,7 +35,7 @@ unsafe fn xor(a: __m512i, b: __m512i) -> __m512i {
 
 #[inline(always)]
 unsafe fn set1(x: u32) -> __m512i {
-  unsafe { _mm512_set1_epi32(x as i32) }
+  unsafe { _mm512_set1_epi32(x.cast_signed()) }
 }
 
 #[inline(always)]
@@ -196,40 +196,40 @@ unsafe fn counter_vec(counter: u64, increment_counter: bool) -> (__m512i, __m512
   let mask = if increment_counter { !0u64 } else { 0u64 };
   unsafe {
     let lo = _mm512_setr_epi32(
-      counter_low(counter) as i32,
-      counter_low(counter.wrapping_add(mask & 1)) as i32,
-      counter_low(counter.wrapping_add(mask & 2)) as i32,
-      counter_low(counter.wrapping_add(mask & 3)) as i32,
-      counter_low(counter.wrapping_add(mask & 4)) as i32,
-      counter_low(counter.wrapping_add(mask & 5)) as i32,
-      counter_low(counter.wrapping_add(mask & 6)) as i32,
-      counter_low(counter.wrapping_add(mask & 7)) as i32,
-      counter_low(counter.wrapping_add(mask & 8)) as i32,
-      counter_low(counter.wrapping_add(mask & 9)) as i32,
-      counter_low(counter.wrapping_add(mask & 10)) as i32,
-      counter_low(counter.wrapping_add(mask & 11)) as i32,
-      counter_low(counter.wrapping_add(mask & 12)) as i32,
-      counter_low(counter.wrapping_add(mask & 13)) as i32,
-      counter_low(counter.wrapping_add(mask & 14)) as i32,
-      counter_low(counter.wrapping_add(mask & 15)) as i32,
+      counter_low(counter).cast_signed(),
+      counter_low(counter.wrapping_add(mask & 1)).cast_signed(),
+      counter_low(counter.wrapping_add(mask & 2)).cast_signed(),
+      counter_low(counter.wrapping_add(mask & 3)).cast_signed(),
+      counter_low(counter.wrapping_add(mask & 4)).cast_signed(),
+      counter_low(counter.wrapping_add(mask & 5)).cast_signed(),
+      counter_low(counter.wrapping_add(mask & 6)).cast_signed(),
+      counter_low(counter.wrapping_add(mask & 7)).cast_signed(),
+      counter_low(counter.wrapping_add(mask & 8)).cast_signed(),
+      counter_low(counter.wrapping_add(mask & 9)).cast_signed(),
+      counter_low(counter.wrapping_add(mask & 10)).cast_signed(),
+      counter_low(counter.wrapping_add(mask & 11)).cast_signed(),
+      counter_low(counter.wrapping_add(mask & 12)).cast_signed(),
+      counter_low(counter.wrapping_add(mask & 13)).cast_signed(),
+      counter_low(counter.wrapping_add(mask & 14)).cast_signed(),
+      counter_low(counter.wrapping_add(mask & 15)).cast_signed(),
     );
     let hi = _mm512_setr_epi32(
-      counter_high(counter) as i32,
-      counter_high(counter.wrapping_add(mask & 1)) as i32,
-      counter_high(counter.wrapping_add(mask & 2)) as i32,
-      counter_high(counter.wrapping_add(mask & 3)) as i32,
-      counter_high(counter.wrapping_add(mask & 4)) as i32,
-      counter_high(counter.wrapping_add(mask & 5)) as i32,
-      counter_high(counter.wrapping_add(mask & 6)) as i32,
-      counter_high(counter.wrapping_add(mask & 7)) as i32,
-      counter_high(counter.wrapping_add(mask & 8)) as i32,
-      counter_high(counter.wrapping_add(mask & 9)) as i32,
-      counter_high(counter.wrapping_add(mask & 10)) as i32,
-      counter_high(counter.wrapping_add(mask & 11)) as i32,
-      counter_high(counter.wrapping_add(mask & 12)) as i32,
-      counter_high(counter.wrapping_add(mask & 13)) as i32,
-      counter_high(counter.wrapping_add(mask & 14)) as i32,
-      counter_high(counter.wrapping_add(mask & 15)) as i32,
+      counter_high(counter).cast_signed(),
+      counter_high(counter.wrapping_add(mask & 1)).cast_signed(),
+      counter_high(counter.wrapping_add(mask & 2)).cast_signed(),
+      counter_high(counter.wrapping_add(mask & 3)).cast_signed(),
+      counter_high(counter.wrapping_add(mask & 4)).cast_signed(),
+      counter_high(counter.wrapping_add(mask & 5)).cast_signed(),
+      counter_high(counter.wrapping_add(mask & 6)).cast_signed(),
+      counter_high(counter.wrapping_add(mask & 7)).cast_signed(),
+      counter_high(counter.wrapping_add(mask & 8)).cast_signed(),
+      counter_high(counter.wrapping_add(mask & 9)).cast_signed(),
+      counter_high(counter.wrapping_add(mask & 10)).cast_signed(),
+      counter_high(counter.wrapping_add(mask & 11)).cast_signed(),
+      counter_high(counter.wrapping_add(mask & 12)).cast_signed(),
+      counter_high(counter.wrapping_add(mask & 13)).cast_signed(),
+      counter_high(counter.wrapping_add(mask & 14)).cast_signed(),
+      counter_high(counter.wrapping_add(mask & 15)).cast_signed(),
     );
     (lo, hi)
   }

@@ -713,6 +713,12 @@ impl crate::traits::Checksum for Crc32 {
   }
 }
 
+impl core::fmt::Debug for Crc32 {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.debug_struct("Crc32").finish_non_exhaustive()
+  }
+}
+
 impl Default for Crc32 {
   fn default() -> Self {
     <Self as crate::traits::Checksum>::new()
@@ -841,6 +847,12 @@ impl crate::traits::Checksum for Crc32C {
   #[inline]
   fn reset(&mut self) {
     self.state = !0;
+  }
+}
+
+impl core::fmt::Debug for Crc32C {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.debug_struct("Crc32C").finish_non_exhaustive()
   }
 }
 

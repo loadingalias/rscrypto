@@ -69,17 +69,17 @@ impl Simd {
   #[inline]
   fn new(high: u64, low: u64) -> Self {
     // Match the x86/aarch64 lane layout: lane0 = low, lane1 = high.
-    Self(i64x2::from_array([low as i64, high as i64]))
+    Self(i64x2::from_array([low.cast_signed(), high.cast_signed()]))
   }
 
   #[inline]
   fn low_64(self) -> u64 {
-    self.0.to_array()[0] as u64
+    self.0.to_array()[0].cast_unsigned()
   }
 
   #[inline]
   fn high_64(self) -> u64 {
-    self.0.to_array()[1] as u64
+    self.0.to_array()[1].cast_unsigned()
   }
 
   #[inline]
@@ -142,8 +142,8 @@ impl Simd {
     enable = "power8-crypto"
   )]
   unsafe fn mul64(a: u64, b: u64) -> Self {
-    let va = i64x2::from_array([a as i64, 0]);
-    let vb = i64x2::from_array([b as i64, 0]);
+    let va = i64x2::from_array([a.cast_signed(), 0]);
+    let vb = i64x2::from_array([b.cast_signed(), 0]);
     Self(Self::vpmsumd(va, vb))
   }
 

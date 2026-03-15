@@ -661,6 +661,12 @@ impl crate::traits::Checksum for Crc64 {
   }
 }
 
+impl core::fmt::Debug for Crc64 {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.debug_struct("Crc64").finish_non_exhaustive()
+  }
+}
+
 impl Default for Crc64 {
   fn default() -> Self {
     <Self as crate::traits::Checksum>::new()
@@ -804,6 +810,12 @@ impl crate::traits::Checksum for Crc64Nvme {
   #[inline]
   fn reset(&mut self) {
     self.state = !0;
+  }
+}
+
+impl core::fmt::Debug for Crc64Nvme {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.debug_struct("Crc64Nvme").finish_non_exhaustive()
   }
 }
 
