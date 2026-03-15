@@ -175,8 +175,8 @@ hash_filter_token() {
 default_benches_for_crate() {
   local crate="${1:-}"
   case "$crate" in
-    checksum) echo "comp,kernels" ;;
-    hashes) echo "comp,kernels,blake3" ;;
+    checksum) echo "checksum_comp,checksum_kernels" ;;
+    hashes) echo "hashes_comp,hashes_kernels,blake3" ;;
     *) echo "" ;;
   esac
 }
@@ -317,7 +317,7 @@ targets_comp="false"
 if [[ -z "$CRATES_INPUT" ]] || csv_has_token "$CRATES_INPUT" "hashes"; then
   targets_hashes="true"
 fi
-if [[ -z "$BENCHES_INPUT" ]] || csv_has_token "$BENCHES_INPUT" "comp"; then
+if [[ -z "$BENCHES_INPUT" ]] || csv_has_token "$BENCHES_INPUT" "hashes_comp"; then
   targets_comp="true"
 fi
 if [[ "$ALLOW_FULL_HASHES_COMP_INPUT" != "true" \
@@ -423,7 +423,7 @@ run_blake3_enforced_gates() {
       ours_prefix="$(blake3_kernel_gate_prefix "$PLATFORM_INPUT")"
       echo "" | tee -a "$LOG_PATH"
       echo "Running kernel diagnostics for BLAKE3 gate..." | tee -a "$LOG_PATH"
-      cmd=(cargo bench --profile bench -p hashes --bench blake3 -- kernel-ab)
+      cmd=(cargo bench --profile bench --bench blake3 -- kernel-ab)
       if [[ "${#CRITERION_ARGS[@]}" -gt 0 ]]; then
         cmd+=("${CRITERION_ARGS[@]}")
       fi
@@ -602,7 +602,7 @@ run_bench_cmd() {
   local crate="$1"
   local bench="$2"
   local filter="${3:-}"
-  local -a cmd=(cargo bench --profile bench -p "$crate" --bench "$bench")
+  local -a cmd=(cargo bench --profile bench --bench "$bench")
   if [[ -n "$filter" || "${#CRITERION_ARGS[@]}" -gt 0 ]]; then
     cmd+=(--)
     if [[ -n "$filter" ]]; then
@@ -638,16 +638,8 @@ if [[ "${#PLAN_ROWS[@]}" -gt 0 ]]; then
   exit 0
 fi
 
-CRATE_FLAGS=()
 BENCH_FLAGS=()
-if [[ -n "$CRATES_INPUT" ]]; then
-  IFS=',' read -r -a crates_values <<< "$CRATES_INPUT"
-  for crate in "${crates_values[@]:+${crates_values[@]}}"; do
-    CRATE_FLAGS+=(-p "$crate")
-  done
-else
-  CRATE_FLAGS+=(--workspace)
-fi
+# Single-crate layout: no -p flags needed (workspace has only rscrypto).
 
 if [[ -n "$BENCHES_INPUT" ]]; then
   IFS=',' read -r -a benches_values <<< "$BENCHES_INPUT"
@@ -667,7 +659,7 @@ if [[ -n "$GENERIC_FILTER" ]]; then
   echo "Using first filter token for generic run: $GENERIC_FILTER" | tee -a "$LOG_PATH"
 fi
 
-cmd=(cargo bench --profile bench "${CRATE_FLAGS[@]}" "${BENCH_FLAGS[@]}")
+cmd=(cargo bench --profile bench "${BENCH_FLAGS[@]}")
 if [[ -n "$GENERIC_FILTER" || "${#CRITERION_ARGS[@]}" -gt 0 ]]; then
   cmd+=(--)
   if [[ -n "$GENERIC_FILTER" ]]; then

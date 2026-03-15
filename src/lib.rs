@@ -118,3 +118,147 @@ pub use traits::ct;
 pub use traits::{Checksum, ChecksumCombine};
 #[cfg(feature = "hashes")]
 pub use traits::{Digest, FastHash, Xof};
+
+// ─── Compile-time Send + Sync assertions ──────────────────────────────────
+//
+// Every public type must be Send + Sync.  These static assertions fail the
+// build if the contract is ever broken by a field change.
+
+#[cfg(test)]
+mod send_sync_assertions {
+  #![allow(unused_imports)]
+  use super::*;
+
+  fn assert_send_sync<T: Send + Sync>() {}
+
+  #[test]
+  fn public_types_are_send_and_sync() {
+    // ── Traits (object-safety is separate; this checks the types) ──
+    assert_send_sync::<traits::error::VerificationError>();
+
+    // ── Platform ──
+    assert_send_sync::<platform::Caps>();
+    assert_send_sync::<platform::Arch>();
+    assert_send_sync::<platform::Detected>();
+    assert_send_sync::<platform::OverrideError>();
+    assert_send_sync::<platform::Description>();
+
+    // ── Backend ──
+    assert_send_sync::<backend::cache::OnceCache<u64>>();
+    assert_send_sync::<backend::cache::PolicyCache<u32, u32>>();
+    assert_send_sync::<backend::dispatch::Candidate<fn()>>();
+    assert_send_sync::<backend::dispatch::Selected<fn()>>();
+    assert_send_sync::<backend::dispatch::SelectionError>();
+    assert_send_sync::<backend::tier::KernelTier>();
+    assert_send_sync::<backend::family::KernelFamily>();
+    assert_send_sync::<backend::family::KernelSubfamily>();
+    assert_send_sync::<backend::policy::PolicyTunables>();
+    assert_send_sync::<backend::policy::SelectionPolicy>();
+    assert_send_sync::<backend::policy::ForceMode>();
+
+    #[cfg(feature = "std")]
+    assert_send_sync::<backend::dispatch::GenericDispatcher<fn()>>();
+  }
+
+  #[test]
+  #[cfg(feature = "checksums")]
+  fn checksum_types_are_send_and_sync() {
+    // CRC-16
+    assert_send_sync::<Crc16Ccitt>();
+    assert_send_sync::<Crc16Ibm>();
+    assert_send_sync::<Crc16Force>();
+    assert_send_sync::<Crc16Config>();
+
+    // CRC-24
+    assert_send_sync::<Crc24OpenPgp>();
+    assert_send_sync::<Crc24Force>();
+    assert_send_sync::<Crc24Config>();
+
+    // CRC-32
+    assert_send_sync::<Crc32>();
+    assert_send_sync::<Crc32C>();
+    assert_send_sync::<Crc32Force>();
+    assert_send_sync::<Crc32Config>();
+
+    // CRC-64
+    assert_send_sync::<Crc64>();
+    assert_send_sync::<Crc64Nvme>();
+    assert_send_sync::<Crc64Force>();
+    assert_send_sync::<Crc64Config>();
+
+    // Dispatch / Diagnostics
+    assert_send_sync::<DispatchInfo>();
+
+    #[cfg(feature = "diag")]
+    {
+      assert_send_sync::<checksum::diag::SelectionReason>();
+      assert_send_sync::<checksum::diag::Crc32Polynomial>();
+      assert_send_sync::<checksum::diag::Crc64Polynomial>();
+      assert_send_sync::<checksum::diag::Crc32SelectionDiag>();
+      assert_send_sync::<checksum::diag::Crc64SelectionDiag>();
+    }
+  }
+
+  #[test]
+  #[cfg(all(feature = "checksums", feature = "alloc"))]
+  fn buffered_checksum_types_are_send_and_sync() {
+    assert_send_sync::<BufferedCrc16Ccitt>();
+    assert_send_sync::<BufferedCrc16Ibm>();
+    assert_send_sync::<BufferedCrc24OpenPgp>();
+    assert_send_sync::<BufferedCrc32>();
+    assert_send_sync::<BufferedCrc32C>();
+    assert_send_sync::<BufferedCrc64>();
+    assert_send_sync::<BufferedCrc64Nvme>();
+  }
+
+  #[test]
+  #[cfg(feature = "hashes")]
+  fn hash_types_are_send_and_sync() {
+    // SHA-2
+    assert_send_sync::<Sha256>();
+    assert_send_sync::<Sha224>();
+    assert_send_sync::<Sha512>();
+    assert_send_sync::<Sha384>();
+    assert_send_sync::<Sha512_256>();
+
+    // SHA-3
+    assert_send_sync::<Sha3_256>();
+    assert_send_sync::<Sha3_224>();
+    assert_send_sync::<Sha3_512>();
+    assert_send_sync::<Sha3_384>();
+    assert_send_sync::<Shake128>();
+    assert_send_sync::<Shake256>();
+    assert_send_sync::<Shake128Xof>();
+    assert_send_sync::<Shake256Xof>();
+
+    // ASCON
+    assert_send_sync::<AsconHash256>();
+    assert_send_sync::<AsconXof128>();
+    assert_send_sync::<AsconXof128Xof>();
+
+    // BLAKE3
+    assert_send_sync::<Blake3>();
+    assert_send_sync::<Blake3Xof>();
+
+    // Fast hashes
+    assert_send_sync::<Xxh3_64>();
+    assert_send_sync::<Xxh3_128>();
+    assert_send_sync::<RapidHash64>();
+    assert_send_sync::<RapidHash128>();
+  }
+
+  #[test]
+  #[cfg(all(feature = "checksums", feature = "std"))]
+  fn io_adapter_types_are_send_and_sync() {
+    // ChecksumReader/Writer are Send+Sync when their inner types are
+    assert_send_sync::<traits::io::ChecksumReader<std::io::Cursor<Vec<u8>>, Crc32C>>();
+    assert_send_sync::<traits::io::ChecksumWriter<Vec<u8>, Crc32C>>();
+  }
+
+  #[test]
+  #[cfg(all(feature = "hashes", feature = "std"))]
+  fn digest_io_adapter_types_are_send_and_sync() {
+    assert_send_sync::<DigestReader<std::io::Cursor<Vec<u8>>, Sha256>>();
+    assert_send_sync::<DigestWriter<Vec<u8>, Sha256>>();
+  }
+}

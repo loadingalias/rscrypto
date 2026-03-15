@@ -62,24 +62,24 @@ bench-summary group="" only="oneshot":
 
 # Run `checksum` comparison benches and report non-wins vs competitors.
 bench-compare group="" ours="rscrypto/checksum" min_pct="0":
-    RUSTC_WRAPPER= cargo bench -p checksum --bench comp
+    RUSTC_WRAPPER= cargo bench --bench checksum_comp
     @python3 scripts/bench/criterion-summary.py --group-prefix '{{group}}' --non-wins --ours '{{ours}}' --min-improvement-pct {{min_pct}}
 
 bench-blake3-compare min_pct="0":
-    RUSTC_WRAPPER= cargo bench -p hashes --bench comp
+    RUSTC_WRAPPER= cargo bench --bench hashes_comp
     @python3 scripts/bench/criterion-summary.py --group-prefix 'blake3/' --non-wins --ours 'rscrypto/blake3' --min-improvement-pct {{min_pct}}
 
 bench-blake3-core:
-    @scripts/bench/bench.sh crates=hashes benches=blake3 filter=oneshot,streaming,keyed,derive-key,xof
+    @scripts/bench/bench.sh benches=blake3 filter=oneshot,streaming,keyed,derive-key,xof
 
 bench-blake3-diag:
-    @RSCRYPTO_BLAKE3_BENCH_DIAGNOSTICS=1 scripts/bench/bench.sh crates=hashes benches=blake3
+    @RSCRYPTO_BLAKE3_BENCH_DIAGNOSTICS=1 scripts/bench/bench.sh benches=blake3
 
 bench-blake3-gate:
-    @BENCH_ENFORCE_BLAKE3_GAP_GATE=true scripts/bench/bench.sh crates=hashes benches=blake3 filter=oneshot quick=false
+    @BENCH_ENFORCE_BLAKE3_GAP_GATE=true scripts/bench/bench.sh benches=blake3 filter=oneshot quick=false
 
 bench-blake3-kernel-gate platform="intel-icl":
-    @BENCH_ENFORCE_BLAKE3_KERNEL_GATE=true BENCH_PLATFORM={{platform}} scripts/bench/bench.sh crates=hashes benches=blake3 filter=kernel-ab quick=false
+    @BENCH_ENFORCE_BLAKE3_KERNEL_GATE=true BENCH_PLATFORM={{platform}} scripts/bench/bench.sh benches=blake3 filter=kernel-ab quick=false
 
 comp-check path:
     @python3 scripts/bench/comp-check.py {{path}}

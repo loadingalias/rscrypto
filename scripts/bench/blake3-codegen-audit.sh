@@ -14,7 +14,7 @@ run_asm() {
   local symbol="$1"
   local out_file="$2"
   echo "  - cargo asm: $symbol"
-  cargo asm -p hashes --lib --target "$TARGET" "$symbol" --rust > "$OUT_DIR/$out_file"
+  cargo asm -p rscrypto --lib --target "$TARGET" "$symbol" --rust > "$OUT_DIR/$out_file"
 }
 
 run_asm_or_emit_fallback() {
@@ -22,16 +22,16 @@ run_asm_or_emit_fallback() {
   local out_file="$2"
   local fallback_pattern="$3"
   echo "  - cargo asm: $symbol"
-  if cargo asm -p hashes --lib --target "$TARGET" "$symbol" --rust > "$OUT_DIR/$out_file" 2>"$OUT_DIR/$out_file.err"; then
+  if cargo asm -p rscrypto --lib --target "$TARGET" "$symbol" --rust > "$OUT_DIR/$out_file" 2>"$OUT_DIR/$out_file.err"; then
     rm -f "$OUT_DIR/$out_file.err"
     return
   fi
 
   echo "    cargo asm parse failed; falling back to --emit=asm extraction"
-  cargo rustc -p hashes --lib --release --target "$TARGET" -- --emit=asm >/dev/null
+  cargo rustc -p rscrypto --lib --release --target "$TARGET" -- --emit=asm >/dev/null
 
   local asm_file
-  asm_file="$(ls -t target/"$TARGET"/release/deps/hashes-*.s | head -n1)"
+  asm_file="$(ls -t target/"$TARGET"/release/deps/rscrypto-*.s | head -n1)"
   if [[ -z "$asm_file" ]]; then
     echo "No assembly output found for fallback extraction" >&2
     exit 1
@@ -55,7 +55,7 @@ run_llvm_lines() {
   local filter="$1"
   local out_file="$2"
   echo "  - cargo llvm-lines: $filter"
-  cargo llvm-lines -p hashes --lib --release --target "$TARGET" | rg "$filter" > "$OUT_DIR/$out_file"
+  cargo llvm-lines -p rscrypto --lib --release --target "$TARGET" | rg "$filter" > "$OUT_DIR/$out_file"
 }
 
 case "$TARGET" in
