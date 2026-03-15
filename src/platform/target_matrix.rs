@@ -1,18 +1,11 @@
 //! Target-matrix contract helpers.
 //!
-//! This module ties platform detection to `.config/target-matrix.toml` so
+//! This module ties platform detection to `.config/target-matrix.json` so
 //! architecture policy stays aligned with CI manifests.
 
 use crate::platform::caps::Arch;
 
-const TARGET_MATRIX_MANIFEST: &str = include_str!("../../.config/target-matrix.toml");
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Section {
-  Other,
-  Groups,
-  CiCommit,
-}
+const TARGET_MATRIX_MANIFEST: &str = include_str!("../../.config/target-matrix.json");
 
 #[inline]
 const fn manifest_prefix_for_arch(arch: Arch) -> Option<&'static str> {
@@ -31,11 +24,10 @@ fn matches_target_arch(target: &str, arch: Arch) -> bool {
   target.starts_with(prefix)
 }
 
-#[inline]
-fn quoted_strings_in<'a>(line: &'a str) -> impl Iterator<Item = &'a str> + 'a {
-  line.split('"').skip(1).step_by(2)
-}
-
+/// Scan all quoted strings in the JSON manifest for a target triple matching
+/// `arch`. The only quoted strings in the file are JSON keys (`"groups"`,
+/// `"win"`, `"ci"`, etc.) and target triple values — keys never start with
+/// an arch prefix like `x86_64-`, so false positives are impossible.
 #[inline]
 #[must_use]
 pub fn manifest_has_arch(arch: Arch) -> bool {
@@ -43,63 +35,20 @@ pub fn manifest_has_arch(arch: Arch) -> bool {
     return true;
   };
 
-  let mut section = Section::Other;
-  let mut in_group_array = false;
+  let mut in_quote = false;
+  let mut start = 0;
 
-  for raw_line in TARGET_MATRIX_MANIFEST.lines() {
-    let line = raw_line.split('#').next().unwrap_or("").trim();
-    if line.is_empty() {
-      continue;
-    }
-
-    if line.starts_with("[[") {
-      section = if line == "[[ci.commit]]" {
-        Section::CiCommit
-      } else {
-        Section::Other
-      };
-      in_group_array = false;
-      continue;
-    }
-
-    if line.starts_with('[') {
-      section = if line == "[groups]" {
-        Section::Groups
-      } else {
-        Section::Other
-      };
-      in_group_array = false;
-      continue;
-    }
-
-    match section {
-      Section::Groups => {
-        if in_group_array || line.contains('=') {
-          for value in quoted_strings_in(line) {
-            if matches_target_arch(value, arch) {
-              return true;
-            }
-          }
-
-          if line.contains('=') {
-            in_group_array = line.contains('[') && !line.contains(']');
-          } else if line.contains(']') {
-            in_group_array = false;
-          }
+  for (i, b) in TARGET_MATRIX_MANIFEST.bytes().enumerate() {
+    if b == b'"' {
+      if in_quote {
+        let value = &TARGET_MATRIX_MANIFEST[start..i];
+        if matches_target_arch(value, arch) {
+          return true;
         }
+      } else {
+        start = i.strict_add(1);
       }
-      Section::CiCommit => {
-        if let Some((key, value)) = line.split_once('=')
-          && key.trim() == "name"
-        {
-          for name in quoted_strings_in(value) {
-            if matches_target_arch(name, arch) {
-              return true;
-            }
-          }
-        }
-      }
-      Section::Other => {}
+      in_quote = !in_quote;
     }
   }
 

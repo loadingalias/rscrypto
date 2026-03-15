@@ -67,9 +67,9 @@ jobs:
         id: matrix
         run: |
           {
-            echo "weekly_ci=$(python3 scripts/lib/target-matrix.py --format json --key commit_ci)"
-            echo "weekly_no_std=$(python3 scripts/lib/target-matrix.py --format json --key commit_no_std)"
-            echo "weekly_wasm=$(python3 scripts/lib/target-matrix.py --format json --key commit_wasm)"
+            echo "weekly_ci=$(bash scripts/lib/target-matrix.sh --format json --key commit_ci)"
+            echo "weekly_no_std=$(bash scripts/lib/target-matrix.sh --format json --key commit_no_std)"
+            echo "weekly_wasm=$(bash scripts/lib/target-matrix.sh --format json --key commit_wasm)"
           } >> "$GITHUB_OUTPUT"
 
   ci:

@@ -117,7 +117,7 @@ pub fn get() -> Detected {
 
     debug_assert!(
       crate::platform::target_matrix::manifest_has_arch(det.arch),
-      "detected arch policy drifted from .config/target-matrix.toml"
+      "detected arch policy drifted from .config/target-matrix.json"
     );
     det
   }
