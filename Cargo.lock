@@ -73,13 +73,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
-name = "backend"
-version = "0.1.0"
-dependencies = [
- "platform",
-]
-
-[[package]]
 name = "bit-set"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -166,23 +159,6 @@ name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
-
-[[package]]
-name = "checksum"
-version = "0.1.0"
-dependencies = [
- "backend",
- "crc",
- "crc-fast",
- "crc32c",
- "crc32fast",
- "crc64fast",
- "crc64fast-nvme",
- "criterion",
- "platform",
- "proptest",
- "traits",
-]
 
 [[package]]
 name = "ciborium"
@@ -522,26 +498,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
 
 [[package]]
-name = "hashes"
-version = "0.1.0"
-dependencies = [
- "ascon-hash256",
- "backend",
- "blake3",
- "criterion",
- "digest 0.10.7",
- "platform",
- "proptest",
- "rapidhash",
- "rayon",
- "sha2",
- "sha3",
- "tiny-keccak",
- "traits",
- "xxhash-rust",
-]
-
-[[package]]
 name = "heck"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -667,13 +623,6 @@ checksum = "30d5b2194ed13191c1999ae0704b7839fb18384fa22e49b57eeaa97d79ce40da"
 dependencies = [
  "libc",
  "winapi",
-]
-
-[[package]]
-name = "platform"
-version = "0.1.0"
-dependencies = [
- "proptest",
 ]
 
 [[package]]
@@ -878,8 +827,23 @@ checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 name = "rscrypto"
 version = "0.1.0"
 dependencies = [
- "checksum",
- "hashes",
+ "ascon-hash256",
+ "blake3",
+ "crc",
+ "crc-fast",
+ "crc32c",
+ "crc32fast",
+ "crc64fast",
+ "crc64fast-nvme",
+ "criterion",
+ "digest 0.10.7",
+ "proptest",
+ "rapidhash",
+ "rayon",
+ "sha2",
+ "sha3",
+ "tiny-keccak",
+ "xxhash-rust",
 ]
 
 [[package]]
@@ -1055,10 +1019,6 @@ dependencies = [
  "serde",
  "serde_json",
 ]
-
-[[package]]
-name = "traits"
-version = "0.1.0"
 
 [[package]]
 name = "typenum"

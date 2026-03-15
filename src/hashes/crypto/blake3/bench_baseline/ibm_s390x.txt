@@ -1,0 +1,2184 @@
+[1m[92m     Running[0m benches/blake3.rs (target/release/deps/blake3-1fc0d7dc5bef0815)
+Gnuplot not found, using plotters backend
+Benchmarking blake3/oneshot/rscrypto/0
+Benchmarking blake3/oneshot/rscrypto/0: Warming up for 2.0000 s
+Benchmarking blake3/oneshot/rscrypto/0: Collecting 40 samples in estimated 4.0000 s (30M iterations)
+Benchmarking blake3/oneshot/rscrypto/0: Analyzing
+blake3/oneshot/rscrypto/0
+                        time:   [134.04 ns 134.25 ns 134.45 ns]
+                        thrpt:  [7.4378 Melem/s 7.4490 Melem/s 7.4604 Melem/s]
+Benchmarking blake3/oneshot/official/0
+Benchmarking blake3/oneshot/official/0: Warming up for 2.0000 s
+Benchmarking blake3/oneshot/official/0: Collecting 40 samples in estimated 4.0000 s (27M iterations)
+Benchmarking blake3/oneshot/official/0: Analyzing
+blake3/oneshot/official/0
+                        time:   [149.37 ns 149.64 ns 149.88 ns]
+                        thrpt:  [6.6718 Melem/s 6.6829 Melem/s 6.6946 Melem/s]
+Benchmarking blake3/oneshot/rscrypto/1
+Benchmarking blake3/oneshot/rscrypto/1: Warming up for 2.0000 s
+Benchmarking blake3/oneshot/rscrypto/1: Collecting 40 samples in estimated 4.0000 s (30M iterations)
+Benchmarking blake3/oneshot/rscrypto/1: Analyzing
+blake3/oneshot/rscrypto/1
+                        time:   [132.43 ns 132.80 ns 133.17 ns]
+                        thrpt:  [7.1614 MiB/s 7.1813 MiB/s 7.2014 MiB/s]
+Benchmarking blake3/oneshot/official/1
+Benchmarking blake3/oneshot/official/1: Warming up for 2.0000 s
+Benchmarking blake3/oneshot/official/1: Collecting 40 samples in estimated 4.0000 s (27M iterations)
+Benchmarking blake3/oneshot/official/1: Analyzing
+blake3/oneshot/official/1
+                        time:   [146.63 ns 147.05 ns 147.48 ns]
+                        thrpt:  [6.4664 MiB/s 6.4853 MiB/s 6.5041 MiB/s]
+Benchmarking blake3/oneshot/rscrypto/3
+Benchmarking blake3/oneshot/rscrypto/3: Warming up for 2.0000 s
+Benchmarking blake3/oneshot/rscrypto/3: Collecting 40 samples in estimated 4.0000 s (30M iterations)
+Benchmarking blake3/oneshot/rscrypto/3: Analyzing
+blake3/oneshot/rscrypto/3
+                        time:   [133.74 ns 134.62 ns 135.55 ns]
+                        thrpt:  [21.107 MiB/s 21.252 MiB/s 21.392 MiB/s]
+Benchmarking blake3/oneshot/official/3
+Benchmarking blake3/oneshot/official/3: Warming up for 2.0000 s
+Benchmarking blake3/oneshot/official/3: Collecting 40 samples in estimated 4.0000 s (27M iterations)
+Benchmarking blake3/oneshot/official/3: Analyzing
+blake3/oneshot/official/3
+                        time:   [146.31 ns 146.83 ns 147.38 ns]
+                        thrpt:  [19.412 MiB/s 19.485 MiB/s 19.554 MiB/s]
+Found 1 outliers among 40 measurements (2.50%)
+  1 (2.50%) high mild
+Benchmarking blake3/oneshot/rscrypto/8
+Benchmarking blake3/oneshot/rscrypto/8: Warming up for 2.0000 s
+Benchmarking blake3/oneshot/rscrypto/8: Collecting 40 samples in estimated 4.0000 s (30M iterations)
+Benchmarking blake3/oneshot/rscrypto/8: Analyzing
+blake3/oneshot/rscrypto/8
+                        time:   [132.05 ns 132.44 ns 132.89 ns]
+                        thrpt:  [57.411 MiB/s 57.606 MiB/s 57.776 MiB/s]
+Found 1 outliers among 40 measurements (2.50%)
+  1 (2.50%) high mild
+Benchmarking blake3/oneshot/official/8
+Benchmarking blake3/oneshot/official/8: Warming up for 2.0000 s
+Benchmarking blake3/oneshot/official/8: Collecting 40 samples in estimated 4.0000 s (27M iterations)
+Benchmarking blake3/oneshot/official/8: Analyzing
+blake3/oneshot/official/8
+                        time:   [146.81 ns 147.36 ns 147.96 ns]
+                        thrpt:  [51.565 MiB/s 51.774 MiB/s 51.967 MiB/s]
+Benchmarking blake3/oneshot/rscrypto/16
+Benchmarking blake3/oneshot/rscrypto/16: Warming up for 2.0000 s
+Benchmarking blake3/oneshot/rscrypto/16: Collecting 40 samples in estimated 4.0000 s (30M iterations)
+Benchmarking blake3/oneshot/rscrypto/16: Analyzing
+blake3/oneshot/rscrypto/16
+                        time:   [131.95 ns 132.35 ns 132.76 ns]
+                        thrpt:  [114.93 MiB/s 115.29 MiB/s 115.64 MiB/s]
+Benchmarking blake3/oneshot/official/16
+Benchmarking blake3/oneshot/official/16: Warming up for 2.0000 s
+Benchmarking blake3/oneshot/official/16: Collecting 40 samples in estimated 4.0000 s (27M iterations)
+Benchmarking blake3/oneshot/official/16: Analyzing
+blake3/oneshot/official/16
+                        time:   [148.54 ns 148.92 ns 149.34 ns]
+                        thrpt:  [102.17 MiB/s 102.46 MiB/s 102.72 MiB/s]
+Found 1 outliers among 40 measurements (2.50%)
+  1 (2.50%) high mild
+Benchmarking blake3/oneshot/rscrypto/31
+Benchmarking blake3/oneshot/rscrypto/31: Warming up for 2.0000 s
+Benchmarking blake3/oneshot/rscrypto/31: Collecting 40 samples in estimated 4.0000 s (30M iterations)
+Benchmarking blake3/oneshot/rscrypto/31: Analyzing
+blake3/oneshot/rscrypto/31
+                        time:   [131.47 ns 131.59 ns 131.73 ns]
+                        thrpt:  [224.42 MiB/s 224.66 MiB/s 224.88 MiB/s]
+Found 5 outliers among 40 measurements (12.50%)
+  5 (12.50%) high mild
+Benchmarking blake3/oneshot/official/31
+Benchmarking blake3/oneshot/official/31: Warming up for 2.0000 s
+Benchmarking blake3/oneshot/official/31: Collecting 40 samples in estimated 4.0000 s (27M iterations)
+Benchmarking blake3/oneshot/official/31: Analyzing
+blake3/oneshot/official/31
+                        time:   [148.12 ns 148.83 ns 149.60 ns]
+                        thrpt:  [197.62 MiB/s 198.64 MiB/s 199.60 MiB/s]
+Found 6 outliers among 40 measurements (15.00%)
+  1 (2.50%) low mild
+  5 (12.50%) high mild
+Benchmarking blake3/oneshot/rscrypto/32
+Benchmarking blake3/oneshot/rscrypto/32: Warming up for 2.0000 s
+Benchmarking blake3/oneshot/rscrypto/32: Collecting 40 samples in estimated 4.0000 s (31M iterations)
+Benchmarking blake3/oneshot/rscrypto/32: Analyzing
+blake3/oneshot/rscrypto/32
+                        time:   [129.62 ns 129.84 ns 130.09 ns]
+                        thrpt:  [234.59 MiB/s 235.05 MiB/s 235.44 MiB/s]
+Found 7 outliers among 40 measurements (17.50%)
+  1 (2.50%) low mild
+  2 (5.00%) high mild
+  4 (10.00%) high severe
+Benchmarking blake3/oneshot/official/32
+Benchmarking blake3/oneshot/official/32: Warming up for 2.0000 s
+Benchmarking blake3/oneshot/official/32: Collecting 40 samples in estimated 4.0000 s (27M iterations)
+Benchmarking blake3/oneshot/official/32: Analyzing
+blake3/oneshot/official/32
+                        time:   [147.99 ns 148.27 ns 148.53 ns]
+                        thrpt:  [205.46 MiB/s 205.83 MiB/s 206.21 MiB/s]
+Benchmarking blake3/oneshot/rscrypto/63
+Benchmarking blake3/oneshot/rscrypto/63: Warming up for 2.0000 s
+Benchmarking blake3/oneshot/rscrypto/63: Collecting 40 samples in estimated 4.0000 s (30M iterations)
+Benchmarking blake3/oneshot/rscrypto/63: Analyzing
+blake3/oneshot/rscrypto/63
+                        time:   [132.91 ns 133.12 ns 133.33 ns]
+                        thrpt:  [450.63 MiB/s 451.35 MiB/s 452.03 MiB/s]
+Found 1 outliers among 40 measurements (2.50%)
+  1 (2.50%) high mild
+Benchmarking blake3/oneshot/official/63
+Benchmarking blake3/oneshot/official/63: Warming up for 2.0000 s
+Benchmarking blake3/oneshot/official/63: Collecting 40 samples in estimated 4.0000 s (27M iterations)
+Benchmarking blake3/oneshot/official/63: Analyzing
+blake3/oneshot/official/63
+                        time:   [148.45 ns 148.74 ns 149.01 ns]
+                        thrpt:  [403.21 MiB/s 403.95 MiB/s 404.72 MiB/s]
+Found 2 outliers among 40 measurements (5.00%)
+  2 (5.00%) low mild
+Benchmarking blake3/oneshot/rscrypto/64
+Benchmarking blake3/oneshot/rscrypto/64: Warming up for 2.0000 s
+Benchmarking blake3/oneshot/rscrypto/64: Collecting 40 samples in estimated 4.0000 s (31M iterations)
+Benchmarking blake3/oneshot/rscrypto/64: Analyzing
+blake3/oneshot/rscrypto/64
+                        time:   [129.06 ns 129.42 ns 129.84 ns]
+                        thrpt:  [470.08 MiB/s 471.62 MiB/s 472.92 MiB/s]
+Found 3 outliers among 40 measurements (7.50%)
+  2 (5.00%) high mild
+  1 (2.50%) high severe
+Benchmarking blake3/oneshot/official/64
+Benchmarking blake3/oneshot/official/64: Warming up for 2.0000 s
+Benchmarking blake3/oneshot/official/64: Collecting 40 samples in estimated 4.0000 s (27M iterations)
+Benchmarking blake3/oneshot/official/64: Analyzing
+blake3/oneshot/official/64
+                        time:   [147.70 ns 148.18 ns 148.64 ns]
+                        thrpt:  [410.62 MiB/s 411.89 MiB/s 413.24 MiB/s]
+Found 1 outliers among 40 measurements (2.50%)
+  1 (2.50%) low mild
+Benchmarking blake3/oneshot/rscrypto/65
+Benchmarking blake3/oneshot/rscrypto/65: Warming up for 2.0000 s
+Benchmarking blake3/oneshot/rscrypto/65: Collecting 40 samples in estimated 4.0000 s (15M iterations)
+Benchmarking blake3/oneshot/rscrypto/65: Analyzing
+blake3/oneshot/rscrypto/65
+                        time:   [263.43 ns 265.91 ns 268.80 ns]
+                        thrpt:  [230.61 MiB/s 233.12 MiB/s 235.31 MiB/s]
+Found 7 outliers among 40 measurements (17.50%)
+  1 (2.50%) high mild
+  6 (15.00%) high severe
+Benchmarking blake3/oneshot/official/65
+Benchmarking blake3/oneshot/official/65: Warming up for 2.0000 s
+Benchmarking blake3/oneshot/official/65: Collecting 40 samples in estimated 4.0000 s (16M iterations)
+Benchmarking blake3/oneshot/official/65: Analyzing
+blake3/oneshot/official/65
+                        time:   [254.53 ns 255.15 ns 255.93 ns]
+                        thrpt:  [242.21 MiB/s 242.95 MiB/s 243.54 MiB/s]
+Found 5 outliers among 40 measurements (12.50%)
+  1 (2.50%) high mild
+  4 (10.00%) high severe
+Benchmarking blake3/oneshot/rscrypto/128
+Benchmarking blake3/oneshot/rscrypto/128: Warming up for 2.0000 s
+Benchmarking blake3/oneshot/rscrypto/128: Collecting 40 samples in estimated 4.0000 s (15M iterations)
+Benchmarking blake3/oneshot/rscrypto/128: Analyzing
+blake3/oneshot/rscrypto/128
+                        time:   [259.68 ns 259.98 ns 260.29 ns]
+                        thrpt:  [468.98 MiB/s 469.54 MiB/s 470.07 MiB/s]
+Benchmarking blake3/oneshot/official/128
+Benchmarking blake3/oneshot/official/128: Warming up for 2.0000 s
+Benchmarking blake3/oneshot/official/128: Collecting 40 samples in estimated 4.0000 s (16M iterations)
+Benchmarking blake3/oneshot/official/128: Analyzing
+blake3/oneshot/official/128
+                        time:   [254.70 ns 254.86 ns 255.04 ns]
+                        thrpt:  [478.64 MiB/s 478.98 MiB/s 479.27 MiB/s]
+Found 1 outliers among 40 measurements (2.50%)
+  1 (2.50%) high severe
+Benchmarking blake3/oneshot/rscrypto/256
+Benchmarking blake3/oneshot/rscrypto/256: Warming up for 2.0000 s
+Benchmarking blake3/oneshot/rscrypto/256: Collecting 40 samples in estimated 4.0000 s (8.1M iterations)
+Benchmarking blake3/oneshot/rscrypto/256: Analyzing
+blake3/oneshot/rscrypto/256
+                        time:   [489.35 ns 493.76 ns 499.96 ns]
+                        thrpt:  [488.32 MiB/s 494.45 MiB/s 498.91 MiB/s]
+Found 8 outliers among 40 measurements (20.00%)
+  1 (2.50%) high mild
+  7 (17.50%) high severe
+Benchmarking blake3/oneshot/official/256
+Benchmarking blake3/oneshot/official/256: Warming up for 2.0000 s
+Benchmarking blake3/oneshot/official/256: Collecting 40 samples in estimated 4.0000 s (8.3M iterations)
+Benchmarking blake3/oneshot/official/256: Analyzing
+blake3/oneshot/official/256
+                        time:   [481.48 ns 484.67 ns 488.74 ns]
+                        thrpt:  [499.53 MiB/s 503.72 MiB/s 507.06 MiB/s]
+Found 7 outliers among 40 measurements (17.50%)
+  1 (2.50%) high mild
+  6 (15.00%) high severe
+Benchmarking blake3/oneshot/rscrypto/1024
+Benchmarking blake3/oneshot/rscrypto/1024: Warming up for 2.0000 s
+Benchmarking blake3/oneshot/rscrypto/1024: Collecting 40 samples in estimated 4.0001 s (2.0M iterations)
+Benchmarking blake3/oneshot/rscrypto/1024: Analyzing
+blake3/oneshot/rscrypto/1024
+                        time:   [2.0197 µs 2.0217 µs 2.0241 µs]
+                        thrpt:  [482.47 MiB/s 483.03 MiB/s 483.52 MiB/s]
+Found 1 outliers among 40 measurements (2.50%)
+  1 (2.50%) high mild
+Benchmarking blake3/oneshot/official/1024
+Benchmarking blake3/oneshot/official/1024: Warming up for 2.0000 s
+Benchmarking blake3/oneshot/official/1024: Collecting 40 samples in estimated 4.0000 s (2.2M iterations)
+Benchmarking blake3/oneshot/official/1024: Analyzing
+blake3/oneshot/official/1024
+                        time:   [1.8360 µs 1.8421 µs 1.8492 µs]
+                        thrpt:  [528.11 MiB/s 530.13 MiB/s 531.88 MiB/s]
+Found 9 outliers among 40 measurements (22.50%)
+  1 (2.50%) high mild
+  8 (20.00%) high severe
+Benchmarking blake3/oneshot/official-rayon/1024
+Benchmarking blake3/oneshot/official-rayon/1024: Warming up for 2.0000 s
+Benchmarking blake3/oneshot/official-rayon/1024: Collecting 40 samples in estimated 4.0001 s (2.1M iterations)
+Benchmarking blake3/oneshot/official-rayon/1024: Analyzing
+blake3/oneshot/official-rayon/1024
+                        time:   [1.8617 µs 1.8669 µs 1.8727 µs]
+                        thrpt:  [521.47 MiB/s 523.09 MiB/s 524.57 MiB/s]
+Found 7 outliers among 40 measurements (17.50%)
+  7 (17.50%) high mild
+Benchmarking blake3/oneshot/rscrypto/4096
+Benchmarking blake3/oneshot/rscrypto/4096: Warming up for 2.0000 s
+Benchmarking blake3/oneshot/rscrypto/4096: Collecting 40 samples in estimated 4.0000 s (1.1M iterations)
+Benchmarking blake3/oneshot/rscrypto/4096: Analyzing
+blake3/oneshot/rscrypto/4096
+                        time:   [3.4787 µs 3.4903 µs 3.5045 µs]
+                        thrpt:  [1.0885 GiB/s 1.0929 GiB/s 1.0966 GiB/s]
+Found 4 outliers among 40 measurements (10.00%)
+  1 (2.50%) high mild
+  3 (7.50%) high severe
+Benchmarking blake3/oneshot/official/4096
+Benchmarking blake3/oneshot/official/4096: Warming up for 2.0000 s
+Benchmarking blake3/oneshot/official/4096: Collecting 40 samples in estimated 4.0003 s (523k iterations)
+Benchmarking blake3/oneshot/official/4096: Analyzing
+blake3/oneshot/official/4096
+                        time:   [7.6017 µs 7.6069 µs 7.6129 µs]
+                        thrpt:  [513.11 MiB/s 513.51 MiB/s 513.87 MiB/s]
+Found 6 outliers among 40 measurements (15.00%)
+  3 (7.50%) high mild
+  3 (7.50%) high severe
+Benchmarking blake3/oneshot/official-rayon/4096
+Benchmarking blake3/oneshot/official-rayon/4096: Warming up for 2.0000 s
+Benchmarking blake3/oneshot/official-rayon/4096: Collecting 40 samples in estimated 4.0001 s (485k iterations)
+Benchmarking blake3/oneshot/official-rayon/4096: Analyzing
+blake3/oneshot/official-rayon/4096
+                        time:   [8.1951 µs 8.2429 µs 8.2956 µs]
+                        thrpt:  [470.88 MiB/s 473.89 MiB/s 476.66 MiB/s]
+Found 2 outliers among 40 measurements (5.00%)
+  2 (5.00%) high mild
+Benchmarking blake3/oneshot/rscrypto/16384
+Benchmarking blake3/oneshot/rscrypto/16384: Warming up for 2.0000 s
+Benchmarking blake3/oneshot/rscrypto/16384: Collecting 40 samples in estimated 4.0001 s (280k iterations)
+Benchmarking blake3/oneshot/rscrypto/16384: Analyzing
+blake3/oneshot/rscrypto/16384
+                        time:   [14.130 µs 14.145 µs 14.170 µs]
+                        thrpt:  [1.0768 GiB/s 1.0787 GiB/s 1.0799 GiB/s]
+Found 3 outliers among 40 measurements (7.50%)
+  2 (5.00%) high mild
+  1 (2.50%) high severe
+Benchmarking blake3/oneshot/official/16384
+Benchmarking blake3/oneshot/official/16384: Warming up for 2.0000 s
+Benchmarking blake3/oneshot/official/16384: Collecting 40 samples in estimated 4.0004 s (129k iterations)
+Benchmarking blake3/oneshot/official/16384: Analyzing
+blake3/oneshot/official/16384
+                        time:   [31.093 µs 31.413 µs 31.846 µs]
+                        thrpt:  [490.64 MiB/s 497.40 MiB/s 502.52 MiB/s]
+Found 5 outliers among 40 measurements (12.50%)
+  2 (5.00%) high mild
+  3 (7.50%) high severe
+Benchmarking blake3/oneshot/official-rayon/16384
+Benchmarking blake3/oneshot/official-rayon/16384: Warming up for 2.0000 s
+Benchmarking blake3/oneshot/official-rayon/16384: Collecting 40 samples in estimated 4.0001 s (250k iterations)
+Benchmarking blake3/oneshot/official-rayon/16384: Analyzing
+blake3/oneshot/official-rayon/16384
+                        time:   [15.896 µs 15.973 µs 16.066 µs]
+                        thrpt:  [972.54 MiB/s 978.22 MiB/s 982.96 MiB/s]
+Found 2 outliers among 40 measurements (5.00%)
+  2 (5.00%) high severe
+Benchmarking blake3/oneshot/rscrypto/65536
+Benchmarking blake3/oneshot/rscrypto/65536: Warming up for 2.0000 s
+Benchmarking blake3/oneshot/rscrypto/65536: Collecting 40 samples in estimated 4.0002 s (74k iterations)
+Benchmarking blake3/oneshot/rscrypto/65536: Analyzing
+blake3/oneshot/rscrypto/65536
+                        time:   [53.490 µs 53.615 µs 53.815 µs]
+                        thrpt:  [1.1342 GiB/s 1.1384 GiB/s 1.1411 GiB/s]
+Found 4 outliers among 40 measurements (10.00%)
+  4 (10.00%) high severe
+Benchmarking blake3/oneshot/official/65536
+Benchmarking blake3/oneshot/official/65536: Warming up for 2.0000 s
+Benchmarking blake3/oneshot/official/65536: Collecting 40 samples in estimated 4.0034 s (32k iterations)
+Benchmarking blake3/oneshot/official/65536: Analyzing
+blake3/oneshot/official/65536
+                        time:   [123.80 µs 124.34 µs 124.98 µs]
+                        thrpt:  [500.10 MiB/s 502.65 MiB/s 504.83 MiB/s]
+Found 7 outliers among 40 measurements (17.50%)
+  1 (2.50%) high mild
+  6 (15.00%) high severe
+Benchmarking blake3/oneshot/official-rayon/65536
+Benchmarking blake3/oneshot/official-rayon/65536: Warming up for 2.0000 s
+Benchmarking blake3/oneshot/official-rayon/65536: Collecting 40 samples in estimated 4.0015 s (99k iterations)
+Benchmarking blake3/oneshot/official-rayon/65536: Analyzing
+blake3/oneshot/official-rayon/65536
+                        time:   [40.328 µs 40.550 µs 40.820 µs]
+                        thrpt:  [1.4952 GiB/s 1.5052 GiB/s 1.5135 GiB/s]
+Found 2 outliers among 40 measurements (5.00%)
+  1 (2.50%) high mild
+  1 (2.50%) high severe
+Benchmarking blake3/oneshot/rscrypto/1048576
+Benchmarking blake3/oneshot/rscrypto/1048576: Warming up for 2.0000 s
+Benchmarking blake3/oneshot/rscrypto/1048576: Collecting 40 samples in estimated 4.0049 s (18k iterations)
+Benchmarking blake3/oneshot/rscrypto/1048576: Analyzing
+blake3/oneshot/rscrypto/1048576
+                        time:   [221.89 µs 226.52 µs 232.55 µs]
+                        thrpt:  [4.1994 GiB/s 4.3112 GiB/s 4.4010 GiB/s]
+Found 2 outliers among 40 measurements (5.00%)
+  2 (5.00%) high severe
+Benchmarking blake3/oneshot/official/1048576
+Benchmarking blake3/oneshot/official/1048576: Warming up for 2.0000 s
+Benchmarking blake3/oneshot/official/1048576: Collecting 40 samples in estimated 4.0712 s (2040 iterations)
+Benchmarking blake3/oneshot/official/1048576: Analyzing
+blake3/oneshot/official/1048576
+                        time:   [1.9842 ms 1.9871 ms 1.9903 ms]
+                        thrpt:  [502.43 MiB/s 503.23 MiB/s 503.99 MiB/s]
+Benchmarking blake3/oneshot/official-rayon/1048576
+Benchmarking blake3/oneshot/official-rayon/1048576: Warming up for 2.0000 s
+Benchmarking blake3/oneshot/official-rayon/1048576: Collecting 40 samples in estimated 4.0140 s (7720 iterations)
+Benchmarking blake3/oneshot/official-rayon/1048576: Analyzing
+blake3/oneshot/official-rayon/1048576
+                        time:   [513.93 µs 516.30 µs 519.77 µs]
+                        thrpt:  [1.8788 GiB/s 1.8915 GiB/s 1.9002 GiB/s]
+Found 7 outliers among 40 measurements (17.50%)
+  3 (7.50%) high mild
+  4 (10.00%) high severe
+
+Benchmarking blake3/streaming/rscrypto/64B-chunks
+Benchmarking blake3/streaming/rscrypto/64B-chunks: Warming up for 2.0000 s
+Benchmarking blake3/streaming/rscrypto/64B-chunks: Collecting 30 samples in estimated 4.0483 s (1470 iterations)
+Benchmarking blake3/streaming/rscrypto/64B-chunks: Analyzing
+blake3/streaming/rscrypto/64B-chunks
+                        time:   [2.7478 ms 2.7564 ms 2.7672 ms]
+                        thrpt:  [361.38 MiB/s 362.80 MiB/s 363.92 MiB/s]
+Found 1 outliers among 30 measurements (3.33%)
+  1 (3.33%) high severe
+Benchmarking blake3/streaming/official/64B-chunks
+Benchmarking blake3/streaming/official/64B-chunks: Warming up for 2.0000 s
+Benchmarking blake3/streaming/official/64B-chunks: Collecting 30 samples in estimated 4.0501 s (1800 iterations)
+Benchmarking blake3/streaming/official/64B-chunks: Analyzing
+blake3/streaming/official/64B-chunks
+                        time:   [2.2483 ms 2.2573 ms 2.2719 ms]
+                        thrpt:  [440.17 MiB/s 443.00 MiB/s 444.78 MiB/s]
+Found 1 outliers among 30 measurements (3.33%)
+  1 (3.33%) high severe
+Benchmarking blake3/streaming/rscrypto/128B-chunks
+Benchmarking blake3/streaming/rscrypto/128B-chunks: Warming up for 2.0000 s
+Benchmarking blake3/streaming/rscrypto/128B-chunks: Collecting 30 samples in estimated 4.0238 s (1590 iterations)
+Benchmarking blake3/streaming/rscrypto/128B-chunks: Analyzing
+blake3/streaming/rscrypto/128B-chunks
+                        time:   [2.4767 ms 2.4888 ms 2.5024 ms]
+                        thrpt:  [399.62 MiB/s 401.80 MiB/s 403.77 MiB/s]
+Found 2 outliers among 30 measurements (6.67%)
+  2 (6.67%) high mild
+Benchmarking blake3/streaming/official/128B-chunks
+Benchmarking blake3/streaming/official/128B-chunks: Warming up for 2.0000 s
+Benchmarking blake3/streaming/official/128B-chunks: Collecting 30 samples in estimated 4.0332 s (1860 iterations)
+Benchmarking blake3/streaming/official/128B-chunks: Analyzing
+blake3/streaming/official/128B-chunks
+                        time:   [2.1659 ms 2.1692 ms 2.1725 ms]
+                        thrpt:  [460.30 MiB/s 461.00 MiB/s 461.70 MiB/s]
+Benchmarking blake3/streaming/rscrypto/256B-chunks
+Benchmarking blake3/streaming/rscrypto/256B-chunks: Warming up for 2.0000 s
+Benchmarking blake3/streaming/rscrypto/256B-chunks: Collecting 30 samples in estimated 4.0502 s (1800 iterations)
+Benchmarking blake3/streaming/rscrypto/256B-chunks: Analyzing
+blake3/streaming/rscrypto/256B-chunks
+                        time:   [2.2563 ms 2.2657 ms 2.2764 ms]
+                        thrpt:  [439.29 MiB/s 441.36 MiB/s 443.20 MiB/s]
+Found 6 outliers among 30 measurements (20.00%)
+  1 (3.33%) high mild
+  5 (16.67%) high severe
+Benchmarking blake3/streaming/official/256B-chunks
+Benchmarking blake3/streaming/official/256B-chunks: Warming up for 2.0000 s
+Benchmarking blake3/streaming/official/256B-chunks: Collecting 30 samples in estimated 4.0133 s (1920 iterations)
+Benchmarking blake3/streaming/official/256B-chunks: Analyzing
+blake3/streaming/official/256B-chunks
+                        time:   [2.0908 ms 2.0924 ms 2.0943 ms]
+                        thrpt:  [477.50 MiB/s 477.91 MiB/s 478.28 MiB/s]
+Found 3 outliers among 30 measurements (10.00%)
+  3 (10.00%) high mild
+Benchmarking blake3/streaming/rscrypto/512B-chunks
+Benchmarking blake3/streaming/rscrypto/512B-chunks: Warming up for 2.0000 s
+Benchmarking blake3/streaming/rscrypto/512B-chunks: Collecting 30 samples in estimated 4.0169 s (1860 iterations)
+Benchmarking blake3/streaming/rscrypto/512B-chunks: Analyzing
+blake3/streaming/rscrypto/512B-chunks
+                        time:   [2.1584 ms 2.1618 ms 2.1662 ms]
+                        thrpt:  [461.64 MiB/s 462.58 MiB/s 463.30 MiB/s]
+Found 2 outliers among 30 measurements (6.67%)
+  1 (3.33%) high mild
+  1 (3.33%) high severe
+Benchmarking blake3/streaming/official/512B-chunks
+Benchmarking blake3/streaming/official/512B-chunks: Warming up for 2.0000 s
+Benchmarking blake3/streaming/official/512B-chunks: Collecting 30 samples in estimated 4.0217 s (1950 iterations)
+Benchmarking blake3/streaming/official/512B-chunks: Analyzing
+blake3/streaming/official/512B-chunks
+                        time:   [2.0673 ms 2.0709 ms 2.0746 ms]
+                        thrpt:  [482.02 MiB/s 482.89 MiB/s 483.73 MiB/s]
+Benchmarking blake3/streaming/rscrypto/1024B-chunks
+Benchmarking blake3/streaming/rscrypto/1024B-chunks: Warming up for 2.0000 s
+Benchmarking blake3/streaming/rscrypto/1024B-chunks: Collecting 30 samples in estimated 4.0265 s (1920 iterations)
+Benchmarking blake3/streaming/rscrypto/1024B-chunks: Analyzing
+blake3/streaming/rscrypto/1024B-chunks
+                        time:   [2.0896 ms 2.0949 ms 2.1041 ms]
+                        thrpt:  [475.25 MiB/s 477.36 MiB/s 478.56 MiB/s]
+Found 3 outliers among 30 measurements (10.00%)
+  2 (6.67%) high mild
+  1 (3.33%) high severe
+Benchmarking blake3/streaming/official/1024B-chunks
+Benchmarking blake3/streaming/official/1024B-chunks: Warming up for 2.0000 s
+Benchmarking blake3/streaming/official/1024B-chunks: Collecting 30 samples in estimated 4.0243 s (1950 iterations)
+Benchmarking blake3/streaming/official/1024B-chunks: Analyzing
+blake3/streaming/official/1024B-chunks
+                        time:   [2.0527 ms 2.0626 ms 2.0738 ms]
+                        thrpt:  [482.20 MiB/s 484.83 MiB/s 487.16 MiB/s]
+Found 4 outliers among 30 measurements (13.33%)
+  4 (13.33%) high mild
+Benchmarking blake3/streaming/rscrypto/4096B-chunks
+Benchmarking blake3/streaming/rscrypto/4096B-chunks: Warming up for 2.0000 s
+Benchmarking blake3/streaming/rscrypto/4096B-chunks: Collecting 30 samples in estimated 4.0037 s (1920 iterations)
+Benchmarking blake3/streaming/rscrypto/4096B-chunks: Analyzing
+blake3/streaming/rscrypto/4096B-chunks
+                        time:   [2.0849 ms 2.0875 ms 2.0909 ms]
+                        thrpt:  [478.25 MiB/s 479.04 MiB/s 479.64 MiB/s]
+Found 6 outliers among 30 measurements (20.00%)
+  3 (10.00%) high mild
+  3 (10.00%) high severe
+Benchmarking blake3/streaming/official/4096B-chunks
+Benchmarking blake3/streaming/official/4096B-chunks: Warming up for 2.0000 s
+Benchmarking blake3/streaming/official/4096B-chunks: Collecting 30 samples in estimated 4.0148 s (2010 iterations)
+Benchmarking blake3/streaming/official/4096B-chunks: Analyzing
+blake3/streaming/official/4096B-chunks
+                        time:   [1.9900 ms 1.9942 ms 2.0011 ms]
+                        thrpt:  [499.71 MiB/s 501.44 MiB/s 502.51 MiB/s]
+Found 2 outliers among 30 measurements (6.67%)
+  1 (3.33%) high mild
+  1 (3.33%) high severe
+Benchmarking blake3/streaming/rscrypto/16384B-chunks
+Benchmarking blake3/streaming/rscrypto/16384B-chunks: Warming up for 2.0000 s
+Benchmarking blake3/streaming/rscrypto/16384B-chunks: Collecting 30 samples in estimated 4.0618 s (1950 iterations)
+Benchmarking blake3/streaming/rscrypto/16384B-chunks: Analyzing
+blake3/streaming/rscrypto/16384B-chunks
+                        time:   [2.0825 ms 2.0835 ms 2.0845 ms]
+                        thrpt:  [479.73 MiB/s 479.97 MiB/s 480.18 MiB/s]
+Found 2 outliers among 30 measurements (6.67%)
+  1 (3.33%) high mild
+  1 (3.33%) high severe
+Benchmarking blake3/streaming/official/16384B-chunks
+Benchmarking blake3/streaming/official/16384B-chunks: Warming up for 2.0000 s
+Benchmarking blake3/streaming/official/16384B-chunks: Collecting 30 samples in estimated 4.0024 s (2010 iterations)
+Benchmarking blake3/streaming/official/16384B-chunks: Analyzing
+blake3/streaming/official/16384B-chunks
+                        time:   [1.9844 ms 1.9878 ms 1.9914 ms]
+                        thrpt:  [502.17 MiB/s 503.06 MiB/s 503.93 MiB/s]
+Benchmarking blake3/streaming/rscrypto/65536B-chunks
+Benchmarking blake3/streaming/rscrypto/65536B-chunks: Warming up for 2.0000 s
+Benchmarking blake3/streaming/rscrypto/65536B-chunks: Collecting 30 samples in estimated 4.0256 s (4500 iterations)
+Benchmarking blake3/streaming/rscrypto/65536B-chunks: Analyzing
+blake3/streaming/rscrypto/65536B-chunks
+                        time:   [867.79 µs 873.44 µs 880.22 µs]
+                        thrpt:  [1.1095 GiB/s 1.1181 GiB/s 1.1253 GiB/s]
+Found 1 outliers among 30 measurements (3.33%)
+  1 (3.33%) high mild
+Benchmarking blake3/streaming/official/65536B-chunks
+Benchmarking blake3/streaming/official/65536B-chunks: Warming up for 2.0000 s
+Benchmarking blake3/streaming/official/65536B-chunks: Collecting 30 samples in estimated 4.0477 s (2040 iterations)
+Benchmarking blake3/streaming/official/65536B-chunks: Analyzing
+blake3/streaming/official/65536B-chunks
+                        time:   [1.9802 ms 1.9820 ms 1.9840 ms]
+                        thrpt:  [504.03 MiB/s 504.55 MiB/s 504.99 MiB/s]
+Found 1 outliers among 30 measurements (3.33%)
+  1 (3.33%) high severe
+
+Benchmarking blake3/update-overhead/64B-chunks
+Benchmarking blake3/update-overhead/64B-chunks: Warming up for 2.0000 s
+Benchmarking blake3/update-overhead/64B-chunks: Collecting 30 samples in estimated 4.0823 s (1470 iterations)
+Benchmarking blake3/update-overhead/64B-chunks: Analyzing
+blake3/update-overhead/64B-chunks
+                        time:   [2.7514 ms 2.7575 ms 2.7636 ms]
+                        thrpt:  [361.85 MiB/s 362.65 MiB/s 363.45 MiB/s]
+Benchmarking blake3/update-overhead/128B-chunks
+Benchmarking blake3/update-overhead/128B-chunks: Warming up for 2.0000 s
+Benchmarking blake3/update-overhead/128B-chunks: Collecting 30 samples in estimated 4.0403 s (1620 iterations)
+Benchmarking blake3/update-overhead/128B-chunks: Analyzing
+blake3/update-overhead/128B-chunks
+                        time:   [2.4645 ms 2.4828 ms 2.5035 ms]
+                        thrpt:  [399.45 MiB/s 402.77 MiB/s 405.77 MiB/s]
+Found 1 outliers among 30 measurements (3.33%)
+  1 (3.33%) high mild
+Benchmarking blake3/update-overhead/256B-chunks
+Benchmarking blake3/update-overhead/256B-chunks: Warming up for 2.0000 s
+Benchmarking blake3/update-overhead/256B-chunks: Collecting 30 samples in estimated 4.0670 s (1800 iterations)
+Benchmarking blake3/update-overhead/256B-chunks: Analyzing
+blake3/update-overhead/256B-chunks
+                        time:   [2.2660 ms 2.2772 ms 2.2897 ms]
+                        thrpt:  [436.73 MiB/s 439.14 MiB/s 441.30 MiB/s]
+Found 6 outliers among 30 measurements (20.00%)
+  4 (13.33%) high mild
+  2 (6.67%) high severe
+Benchmarking blake3/update-overhead/512B-chunks
+Benchmarking blake3/update-overhead/512B-chunks: Warming up for 2.0000 s
+Benchmarking blake3/update-overhead/512B-chunks: Collecting 30 samples in estimated 4.0072 s (1860 iterations)
+Benchmarking blake3/update-overhead/512B-chunks: Analyzing
+blake3/update-overhead/512B-chunks
+                        time:   [2.1703 ms 2.1853 ms 2.2029 ms]
+                        thrpt:  [453.96 MiB/s 457.59 MiB/s 460.76 MiB/s]
+Found 6 outliers among 30 measurements (20.00%)
+  4 (13.33%) high mild
+  2 (6.67%) high severe
+Benchmarking blake3/update-overhead/1024B-chunks
+Benchmarking blake3/update-overhead/1024B-chunks: Warming up for 2.0000 s
+Benchmarking blake3/update-overhead/1024B-chunks: Collecting 30 samples in estimated 4.0234 s (1890 iterations)
+Benchmarking blake3/update-overhead/1024B-chunks: Analyzing
+blake3/update-overhead/1024B-chunks
+                        time:   [2.0980 ms 2.1049 ms 2.1135 ms]
+                        thrpt:  [473.15 MiB/s 475.08 MiB/s 476.65 MiB/s]
+Found 6 outliers among 30 measurements (20.00%)
+  2 (6.67%) high mild
+  4 (13.33%) high severe
+Benchmarking blake3/update-overhead/4096B-chunks
+Benchmarking blake3/update-overhead/4096B-chunks: Warming up for 2.0000 s
+Benchmarking blake3/update-overhead/4096B-chunks: Collecting 30 samples in estimated 4.0383 s (1890 iterations)
+Benchmarking blake3/update-overhead/4096B-chunks: Analyzing
+blake3/update-overhead/4096B-chunks
+                        time:   [2.0946 ms 2.0982 ms 2.1025 ms]
+                        thrpt:  [475.63 MiB/s 476.61 MiB/s 477.43 MiB/s]
+Found 4 outliers among 30 measurements (13.33%)
+  1 (3.33%) high mild
+  3 (10.00%) high severe
+Benchmarking blake3/update-overhead/16384B-chunks
+Benchmarking blake3/update-overhead/16384B-chunks: Warming up for 2.0000 s
+Benchmarking blake3/update-overhead/16384B-chunks: Collecting 30 samples in estimated 4.0574 s (1920 iterations)
+Benchmarking blake3/update-overhead/16384B-chunks: Analyzing
+blake3/update-overhead/16384B-chunks
+                        time:   [2.1064 ms 2.1123 ms 2.1192 ms]
+                        thrpt:  [471.89 MiB/s 473.41 MiB/s 474.74 MiB/s]
+Found 1 outliers among 30 measurements (3.33%)
+  1 (3.33%) high severe
+Benchmarking blake3/update-overhead/65536B-chunks
+Benchmarking blake3/update-overhead/65536B-chunks: Warming up for 2.0000 s
+Benchmarking blake3/update-overhead/65536B-chunks: Collecting 30 samples in estimated 4.0131 s (4470 iterations)
+Benchmarking blake3/update-overhead/65536B-chunks: Analyzing
+blake3/update-overhead/65536B-chunks
+                        time:   [865.88 µs 869.50 µs 873.78 µs]
+                        thrpt:  [1.1176 GiB/s 1.1231 GiB/s 1.1278 GiB/s]
+Found 5 outliers among 30 measurements (16.67%)
+  5 (16.67%) high severe
+
+Benchmarking blake3/parent-folding/rscrypto/auto
+Benchmarking blake3/parent-folding/rscrypto/auto: Warming up for 2.0000 s
+Benchmarking blake3/parent-folding/rscrypto/auto: Collecting 30 samples in estimated 4.1101 s (930 iterations)
+Benchmarking blake3/parent-folding/rscrypto/auto: Analyzing
+blake3/parent-folding/rscrypto/auto
+                        time:   [4.4106 ms 4.4170 ms 4.4240 ms]
+                        thrpt:  [226.04 MiB/s 226.40 MiB/s 226.72 MiB/s]
+Found 3 outliers among 30 measurements (10.00%)
+  3 (10.00%) high mild
+Benchmarking blake3/parent-folding/rscrypto/portable
+Benchmarking blake3/parent-folding/rscrypto/portable: Warming up for 2.0000 s
+Benchmarking blake3/parent-folding/rscrypto/portable: Collecting 30 samples in estimated 4.0797 s (990 iterations)
+Benchmarking blake3/parent-folding/rscrypto/portable: Analyzing
+blake3/parent-folding/rscrypto/portable
+                        time:   [4.1633 ms 4.1983 ms 4.2363 ms]
+                        thrpt:  [236.06 MiB/s 238.19 MiB/s 240.20 MiB/s]
+Found 1 outliers among 30 measurements (3.33%)
+  1 (3.33%) high mild
+
+Benchmarking blake3/xof/rscrypto/init+read/1B-in/32B-out
+Benchmarking blake3/xof/rscrypto/init+read/1B-in/32B-out: Warming up for 1.0000 s
+Benchmarking blake3/xof/rscrypto/init+read/1B-in/32B-out: Collecting 20 samples in estimated 3.0000 s (15M iterations)
+Benchmarking blake3/xof/rscrypto/init+read/1B-in/32B-out: Analyzing
+blake3/xof/rscrypto/init+read/1B-in/32B-out
+                        time:   [204.88 ns 205.17 ns 205.46 ns]
+                        thrpt:  [153.17 MiB/s 153.39 MiB/s 153.61 MiB/s]
+Benchmarking blake3/xof/official/init+read/1B-in/32B-out
+Benchmarking blake3/xof/official/init+read/1B-in/32B-out: Warming up for 1.0000 s
+Benchmarking blake3/xof/official/init+read/1B-in/32B-out: Collecting 20 samples in estimated 3.0000 s (19M iterations)
+Benchmarking blake3/xof/official/init+read/1B-in/32B-out: Analyzing
+blake3/xof/official/init+read/1B-in/32B-out
+                        time:   [155.59 ns 157.55 ns 159.83 ns]
+                        thrpt:  [196.90 MiB/s 199.75 MiB/s 202.27 MiB/s]
+Found 2 outliers among 20 measurements (10.00%)
+  2 (10.00%) high mild
+Benchmarking blake3/xof/rscrypto/init+read/64B-in/32B-out
+Benchmarking blake3/xof/rscrypto/init+read/64B-in/32B-out: Warming up for 1.0000 s
+Benchmarking blake3/xof/rscrypto/init+read/64B-in/32B-out: Collecting 20 samples in estimated 3.0000 s (16M iterations)
+Benchmarking blake3/xof/rscrypto/init+read/64B-in/32B-out: Analyzing
+blake3/xof/rscrypto/init+read/64B-in/32B-out
+                        time:   [193.93 ns 194.71 ns 195.51 ns]
+                        thrpt:  [468.29 MiB/s 470.19 MiB/s 472.10 MiB/s]
+Benchmarking blake3/xof/official/init+read/64B-in/32B-out
+Benchmarking blake3/xof/official/init+read/64B-in/32B-out: Warming up for 1.0000 s
+Benchmarking blake3/xof/official/init+read/64B-in/32B-out: Collecting 20 samples in estimated 3.0000 s (19M iterations)
+Benchmarking blake3/xof/official/init+read/64B-in/32B-out: Analyzing
+blake3/xof/official/init+read/64B-in/32B-out
+                        time:   [154.76 ns 155.43 ns 156.25 ns]
+                        thrpt:  [585.94 MiB/s 589.05 MiB/s 591.56 MiB/s]
+Found 3 outliers among 20 measurements (15.00%)
+  3 (15.00%) high severe
+Benchmarking blake3/xof/rscrypto/init+read/1024B-in/32B-out
+Benchmarking blake3/xof/rscrypto/init+read/1024B-in/32B-out: Warming up for 1.0000 s
+Benchmarking blake3/xof/rscrypto/init+read/1024B-in/32B-out: Collecting 20 samples in estimated 3.0000 s (1.5M iterations)
+Benchmarking blake3/xof/rscrypto/init+read/1024B-in/32B-out: Analyzing
+blake3/xof/rscrypto/init+read/1024B-in/32B-out
+                        time:   [1.9621 µs 1.9636 µs 1.9653 µs]
+                        thrpt:  [512.43 MiB/s 512.87 MiB/s 513.26 MiB/s]
+Found 1 outliers among 20 measurements (5.00%)
+  1 (5.00%) high mild
+Benchmarking blake3/xof/official/init+read/1024B-in/32B-out
+Benchmarking blake3/xof/official/init+read/1024B-in/32B-out: Warming up for 1.0000 s
+Benchmarking blake3/xof/official/init+read/1024B-in/32B-out: Collecting 20 samples in estimated 3.0000 s (1.6M iterations)
+Benchmarking blake3/xof/official/init+read/1024B-in/32B-out: Analyzing
+blake3/xof/official/init+read/1024B-in/32B-out
+                        time:   [1.8697 µs 1.8786 µs 1.8884 µs]
+                        thrpt:  [533.31 MiB/s 536.08 MiB/s 538.64 MiB/s]
+Benchmarking blake3/xof/rscrypto/init+read/65536B-in/32B-out
+Benchmarking blake3/xof/rscrypto/init+read/65536B-in/32B-out: Warming up for 1.0000 s
+Benchmarking blake3/xof/rscrypto/init+read/65536B-in/32B-out: Collecting 20 samples in estimated 3.0003 s (56k iterations)
+Benchmarking blake3/xof/rscrypto/init+read/65536B-in/32B-out: Analyzing
+blake3/xof/rscrypto/init+read/65536B-in/32B-out
+                        time:   [53.639 µs 53.722 µs 53.817 µs]
+                        thrpt:  [1.1347 GiB/s 1.1367 GiB/s 1.1384 GiB/s]
+Found 3 outliers among 20 measurements (15.00%)
+  3 (15.00%) high mild
+Benchmarking blake3/xof/official/init+read/65536B-in/32B-out
+Benchmarking blake3/xof/official/init+read/65536B-in/32B-out: Warming up for 1.0000 s
+Benchmarking blake3/xof/official/init+read/65536B-in/32B-out: Collecting 20 samples in estimated 3.0005 s (24k iterations)
+Benchmarking blake3/xof/official/init+read/65536B-in/32B-out: Analyzing
+blake3/xof/official/init+read/65536B-in/32B-out
+                        time:   [123.46 µs 123.65 µs 123.93 µs]
+                        thrpt:  [504.56 MiB/s 505.69 MiB/s 506.49 MiB/s]
+Found 3 outliers among 20 measurements (15.00%)
+  3 (15.00%) high severe
+Benchmarking blake3/xof/rscrypto/init+read/1B-in/1024B-out
+Benchmarking blake3/xof/rscrypto/init+read/1B-in/1024B-out: Warming up for 1.0000 s
+Benchmarking blake3/xof/rscrypto/init+read/1B-in/1024B-out: Collecting 20 samples in estimated 3.0000 s (1.4M iterations)
+Benchmarking blake3/xof/rscrypto/init+read/1B-in/1024B-out: Analyzing
+blake3/xof/rscrypto/init+read/1B-in/1024B-out
+                        time:   [2.2119 µs 2.2132 µs 2.2144 µs]
+                        thrpt:  [441.44 MiB/s 441.68 MiB/s 441.94 MiB/s]
+Benchmarking blake3/xof/official/init+read/1B-in/1024B-out
+Benchmarking blake3/xof/official/init+read/1B-in/1024B-out: Warming up for 1.0000 s
+Benchmarking blake3/xof/official/init+read/1B-in/1024B-out: Collecting 20 samples in estimated 3.0000 s (1.5M iterations)
+Benchmarking blake3/xof/official/init+read/1B-in/1024B-out: Analyzing
+blake3/xof/official/init+read/1B-in/1024B-out
+                        time:   [1.9424 µs 1.9444 µs 1.9469 µs]
+                        thrpt:  [502.08 MiB/s 502.74 MiB/s 503.26 MiB/s]
+Found 1 outliers among 20 measurements (5.00%)
+  1 (5.00%) high severe
+Benchmarking blake3/xof/rscrypto/init+read/64B-in/1024B-out
+Benchmarking blake3/xof/rscrypto/init+read/64B-in/1024B-out: Warming up for 1.0000 s
+Benchmarking blake3/xof/rscrypto/init+read/64B-in/1024B-out: Collecting 20 samples in estimated 3.0000 s (1.4M iterations)
+Benchmarking blake3/xof/rscrypto/init+read/64B-in/1024B-out: Analyzing
+blake3/xof/rscrypto/init+read/64B-in/1024B-out
+                        time:   [2.2004 µs 2.2020 µs 2.2036 µs]
+                        thrpt:  [470.87 MiB/s 471.21 MiB/s 471.55 MiB/s]
+Benchmarking blake3/xof/official/init+read/64B-in/1024B-out
+Benchmarking blake3/xof/official/init+read/64B-in/1024B-out: Warming up for 1.0000 s
+Benchmarking blake3/xof/official/init+read/64B-in/1024B-out: Collecting 20 samples in estimated 3.0000 s (1.5M iterations)
+Benchmarking blake3/xof/official/init+read/64B-in/1024B-out: Analyzing
+blake3/xof/official/init+read/64B-in/1024B-out
+                        time:   [1.9428 µs 1.9476 µs 1.9535 µs]
+                        thrpt:  [531.14 MiB/s 532.76 MiB/s 534.08 MiB/s]
+Found 4 outliers among 20 measurements (20.00%)
+  1 (5.00%) high mild
+  3 (15.00%) high severe
+Benchmarking blake3/xof/rscrypto/init+read/1024B-in/1024B-out
+Benchmarking blake3/xof/rscrypto/init+read/1024B-in/1024B-out: Warming up for 1.0000 s
+Benchmarking blake3/xof/rscrypto/init+read/1024B-in/1024B-out: Collecting 20 samples in estimated 3.0001 s (759k iterations)
+Benchmarking blake3/xof/rscrypto/init+read/1024B-in/1024B-out: Analyzing
+blake3/xof/rscrypto/init+read/1024B-in/1024B-out
+                        time:   [3.9583 µs 3.9623 µs 3.9666 µs]
+                        thrpt:  [492.39 MiB/s 492.93 MiB/s 493.42 MiB/s]
+Benchmarking blake3/xof/official/init+read/1024B-in/1024B-out
+Benchmarking blake3/xof/official/init+read/1024B-in/1024B-out: Warming up for 1.0000 s
+Benchmarking blake3/xof/official/init+read/1024B-in/1024B-out: Collecting 20 samples in estimated 3.0000 s (817k iterations)
+Benchmarking blake3/xof/official/init+read/1024B-in/1024B-out: Analyzing
+blake3/xof/official/init+read/1024B-in/1024B-out
+                        time:   [3.6289 µs 3.6307 µs 3.6329 µs]
+                        thrpt:  [537.62 MiB/s 537.95 MiB/s 538.21 MiB/s]
+Found 2 outliers among 20 measurements (10.00%)
+  1 (5.00%) high mild
+  1 (5.00%) high severe
+Benchmarking blake3/xof/rscrypto/init+read/65536B-in/1024B-out
+Benchmarking blake3/xof/rscrypto/init+read/65536B-in/1024B-out: Warming up for 1.0000 s
+Benchmarking blake3/xof/rscrypto/init+read/65536B-in/1024B-out: Collecting 20 samples in estimated 3.0001 s (53k iterations)
+Benchmarking blake3/xof/rscrypto/init+read/65536B-in/1024B-out: Analyzing
+blake3/xof/rscrypto/init+read/65536B-in/1024B-out
+                        time:   [55.589 µs 55.670 µs 55.768 µs]
+                        thrpt:  [1.1115 GiB/s 1.1135 GiB/s 1.1151 GiB/s]
+Found 2 outliers among 20 measurements (10.00%)
+  2 (10.00%) high severe
+Benchmarking blake3/xof/official/init+read/65536B-in/1024B-out
+Benchmarking blake3/xof/official/init+read/65536B-in/1024B-out: Warming up for 1.0000 s
+Benchmarking blake3/xof/official/init+read/65536B-in/1024B-out: Collecting 20 samples in estimated 3.0019 s (24k iterations)
+Benchmarking blake3/xof/official/init+read/65536B-in/1024B-out: Analyzing
+blake3/xof/official/init+read/65536B-in/1024B-out
+                        time:   [125.93 µs 126.45 µs 127.11 µs]
+                        thrpt:  [499.39 MiB/s 501.98 MiB/s 504.07 MiB/s]
+Found 2 outliers among 20 measurements (10.00%)
+  2 (10.00%) high severe
+
+Benchmarking blake3/xof-sized-comparison/standard/1B-in/512B-out
+Benchmarking blake3/xof-sized-comparison/standard/1B-in/512B-out: Warming up for 2.0000 s
+Benchmarking blake3/xof-sized-comparison/standard/1B-in/512B-out: Collecting 30 samples in estimated 4.0000 s (3.4M iterations)
+Benchmarking blake3/xof-sized-comparison/standard/1B-in/512B-out: Analyzing
+blake3/xof-sized-comparison/standard/1B-in/512B-out
+                        time:   [1.1616 µs 1.1624 µs 1.1632 µs]
+                        thrpt:  [420.58 MiB/s 420.88 MiB/s 421.17 MiB/s]
+Benchmarking blake3/xof-sized-comparison/sized/1B-in/512B-out
+Benchmarking blake3/xof-sized-comparison/sized/1B-in/512B-out: Warming up for 2.0000 s
+Benchmarking blake3/xof-sized-comparison/sized/1B-in/512B-out: Collecting 30 samples in estimated 4.0000 s (3.5M iterations)
+Benchmarking blake3/xof-sized-comparison/sized/1B-in/512B-out: Analyzing
+blake3/xof-sized-comparison/sized/1B-in/512B-out
+                        time:   [1.1356 µs 1.1367 µs 1.1378 µs]
+                        thrpt:  [429.99 MiB/s 430.40 MiB/s 430.82 MiB/s]
+Benchmarking blake3/xof-sized-comparison/official/1B-in/512B-out
+Benchmarking blake3/xof-sized-comparison/official/1B-in/512B-out: Warming up for 2.0000 s
+Benchmarking blake3/xof-sized-comparison/official/1B-in/512B-out: Collecting 30 samples in estimated 4.0000 s (4.0M iterations)
+Benchmarking blake3/xof-sized-comparison/official/1B-in/512B-out: Analyzing
+blake3/xof-sized-comparison/official/1B-in/512B-out
+                        time:   [1.0123 µs 1.0165 µs 1.0210 µs]
+                        thrpt:  [479.19 MiB/s 481.29 MiB/s 483.29 MiB/s]
+Benchmarking blake3/xof-sized-comparison/standard/1B-in/1024B-out
+Benchmarking blake3/xof-sized-comparison/standard/1B-in/1024B-out: Warming up for 2.0000 s
+Benchmarking blake3/xof-sized-comparison/standard/1B-in/1024B-out: Collecting 30 samples in estimated 4.0000 s (1.8M iterations)
+Benchmarking blake3/xof-sized-comparison/standard/1B-in/1024B-out: Analyzing
+blake3/xof-sized-comparison/standard/1B-in/1024B-out
+                        time:   [2.2069 µs 2.2095 µs 2.2129 µs]
+                        thrpt:  [441.75 MiB/s 442.41 MiB/s 442.94 MiB/s]
+Found 3 outliers among 30 measurements (10.00%)
+  1 (3.33%) high mild
+  2 (6.67%) high severe
+Benchmarking blake3/xof-sized-comparison/sized/1B-in/1024B-out
+Benchmarking blake3/xof-sized-comparison/sized/1B-in/1024B-out: Warming up for 2.0000 s
+Benchmarking blake3/xof-sized-comparison/sized/1B-in/1024B-out: Collecting 30 samples in estimated 4.0000 s (1.8M iterations)
+Benchmarking blake3/xof-sized-comparison/sized/1B-in/1024B-out: Analyzing
+blake3/xof-sized-comparison/sized/1B-in/1024B-out
+                        time:   [2.1912 µs 2.2014 µs 2.2129 µs]
+                        thrpt:  [441.73 MiB/s 444.04 MiB/s 446.11 MiB/s]
+Found 5 outliers among 30 measurements (16.67%)
+  4 (13.33%) high mild
+  1 (3.33%) high severe
+Benchmarking blake3/xof-sized-comparison/official/1B-in/1024B-out
+Benchmarking blake3/xof-sized-comparison/official/1B-in/1024B-out: Warming up for 2.0000 s
+Benchmarking blake3/xof-sized-comparison/official/1B-in/1024B-out: Collecting 30 samples in estimated 4.0000 s (2.0M iterations)
+Benchmarking blake3/xof-sized-comparison/official/1B-in/1024B-out: Analyzing
+blake3/xof-sized-comparison/official/1B-in/1024B-out
+                        time:   [1.9523 µs 1.9552 µs 1.9583 µs]
+                        thrpt:  [499.16 MiB/s 499.97 MiB/s 500.69 MiB/s]
+Found 1 outliers among 30 measurements (3.33%)
+  1 (3.33%) high mild
+Benchmarking blake3/xof-sized-comparison/standard/64B-in/512B-out
+Benchmarking blake3/xof-sized-comparison/standard/64B-in/512B-out: Warming up for 2.0000 s
+Benchmarking blake3/xof-sized-comparison/standard/64B-in/512B-out: Collecting 30 samples in estimated 4.0000 s (3.5M iterations)
+Benchmarking blake3/xof-sized-comparison/standard/64B-in/512B-out: Analyzing
+blake3/xof-sized-comparison/standard/64B-in/512B-out
+                        time:   [1.1545 µs 1.1558 µs 1.1572 µs]
+                        thrpt:  [474.71 MiB/s 475.27 MiB/s 475.81 MiB/s]
+Benchmarking blake3/xof-sized-comparison/sized/64B-in/512B-out
+Benchmarking blake3/xof-sized-comparison/sized/64B-in/512B-out: Warming up for 2.0000 s
+Benchmarking blake3/xof-sized-comparison/sized/64B-in/512B-out: Collecting 30 samples in estimated 4.0000 s (3.5M iterations)
+Benchmarking blake3/xof-sized-comparison/sized/64B-in/512B-out: Analyzing
+blake3/xof-sized-comparison/sized/64B-in/512B-out
+                        time:   [1.1271 µs 1.1277 µs 1.1284 µs]
+                        thrpt:  [486.80 MiB/s 487.09 MiB/s 487.38 MiB/s]
+Benchmarking blake3/xof-sized-comparison/official/64B-in/512B-out
+Benchmarking blake3/xof-sized-comparison/official/64B-in/512B-out: Warming up for 2.0000 s
+Benchmarking blake3/xof-sized-comparison/official/64B-in/512B-out: Collecting 30 samples in estimated 4.0000 s (4.0M iterations)
+Benchmarking blake3/xof-sized-comparison/official/64B-in/512B-out: Analyzing
+blake3/xof-sized-comparison/official/64B-in/512B-out
+                        time:   [1.0043 µs 1.0082 µs 1.0132 µs]
+                        thrpt:  [542.17 MiB/s 544.83 MiB/s 546.96 MiB/s]
+Found 8 outliers among 30 measurements (26.67%)
+  5 (16.67%) low mild
+  3 (10.00%) high severe
+Benchmarking blake3/xof-sized-comparison/standard/64B-in/1024B-out
+Benchmarking blake3/xof-sized-comparison/standard/64B-in/1024B-out: Warming up for 2.0000 s
+Benchmarking blake3/xof-sized-comparison/standard/64B-in/1024B-out: Collecting 30 samples in estimated 4.0000 s (1.8M iterations)
+Benchmarking blake3/xof-sized-comparison/standard/64B-in/1024B-out: Analyzing
+blake3/xof-sized-comparison/standard/64B-in/1024B-out
+                        time:   [2.2018 µs 2.2033 µs 2.2049 µs]
+                        thrpt:  [470.58 MiB/s 470.93 MiB/s 471.25 MiB/s]
+Found 3 outliers among 30 measurements (10.00%)
+  3 (10.00%) high mild
+Benchmarking blake3/xof-sized-comparison/sized/64B-in/1024B-out
+Benchmarking blake3/xof-sized-comparison/sized/64B-in/1024B-out: Warming up for 2.0000 s
+Benchmarking blake3/xof-sized-comparison/sized/64B-in/1024B-out: Collecting 30 samples in estimated 4.0001 s (1.8M iterations)
+Benchmarking blake3/xof-sized-comparison/sized/64B-in/1024B-out: Analyzing
+blake3/xof-sized-comparison/sized/64B-in/1024B-out
+                        time:   [2.1803 µs 2.1827 µs 2.1854 µs]
+                        thrpt:  [474.78 MiB/s 475.38 MiB/s 475.90 MiB/s]
+Found 2 outliers among 30 measurements (6.67%)
+  1 (3.33%) high mild
+  1 (3.33%) high severe
+Benchmarking blake3/xof-sized-comparison/official/64B-in/1024B-out
+Benchmarking blake3/xof-sized-comparison/official/64B-in/1024B-out: Warming up for 2.0000 s
+Benchmarking blake3/xof-sized-comparison/official/64B-in/1024B-out: Collecting 30 samples in estimated 4.0001 s (2.0M iterations)
+Benchmarking blake3/xof-sized-comparison/official/64B-in/1024B-out: Analyzing
+blake3/xof-sized-comparison/official/64B-in/1024B-out
+                        time:   [1.9752 µs 1.9988 µs 2.0287 µs]
+                        thrpt:  [511.45 MiB/s 519.11 MiB/s 525.32 MiB/s]
+Found 2 outliers among 30 measurements (6.67%)
+  1 (3.33%) high mild
+  1 (3.33%) high severe
+
+Benchmarking blake3/keyed/rscrypto/0
+Benchmarking blake3/keyed/rscrypto/0: Warming up for 1.0000 s
+Benchmarking blake3/keyed/rscrypto/0: Collecting 25 samples in estimated 3.0000 s (19M iterations)
+Benchmarking blake3/keyed/rscrypto/0: Analyzing
+blake3/keyed/rscrypto/0 time:   [161.74 ns 162.03 ns 162.34 ns]
+                        thrpt:  [6.1599 Melem/s 6.1719 Melem/s 6.1828 Melem/s]
+Found 1 outliers among 25 measurements (4.00%)
+  1 (4.00%) high mild
+Benchmarking blake3/keyed/official/0
+Benchmarking blake3/keyed/official/0: Warming up for 1.0000 s
+Benchmarking blake3/keyed/official/0: Collecting 25 samples in estimated 3.0000 s (21M iterations)
+Benchmarking blake3/keyed/official/0: Analyzing
+blake3/keyed/official/0 time:   [141.87 ns 142.18 ns 142.56 ns]
+                        thrpt:  [7.0145 Melem/s 7.0332 Melem/s 7.0488 Melem/s]
+Found 1 outliers among 25 measurements (4.00%)
+  1 (4.00%) high severe
+Benchmarking blake3/keyed/rscrypto/1
+Benchmarking blake3/keyed/rscrypto/1: Warming up for 1.0000 s
+Benchmarking blake3/keyed/rscrypto/1: Collecting 25 samples in estimated 3.0000 s (19M iterations)
+Benchmarking blake3/keyed/rscrypto/1: Analyzing
+blake3/keyed/rscrypto/1 time:   [158.72 ns 158.91 ns 159.11 ns]
+                        thrpt:  [5.9938 MiB/s 6.0014 MiB/s 6.0086 MiB/s]
+Benchmarking blake3/keyed/official/1
+Benchmarking blake3/keyed/official/1: Warming up for 1.0000 s
+Benchmarking blake3/keyed/official/1: Collecting 25 samples in estimated 3.0000 s (20M iterations)
+Benchmarking blake3/keyed/official/1: Analyzing
+blake3/keyed/official/1 time:   [153.16 ns 154.07 ns 155.27 ns]
+                        thrpt:  [6.1420 MiB/s 6.1899 MiB/s 6.2268 MiB/s]
+Found 1 outliers among 25 measurements (4.00%)
+  1 (4.00%) high severe
+Benchmarking blake3/keyed/rscrypto/3
+Benchmarking blake3/keyed/rscrypto/3: Warming up for 1.0000 s
+Benchmarking blake3/keyed/rscrypto/3: Collecting 25 samples in estimated 3.0000 s (19M iterations)
+Benchmarking blake3/keyed/rscrypto/3: Analyzing
+blake3/keyed/rscrypto/3 time:   [159.67 ns 160.39 ns 161.17 ns]
+                        thrpt:  [17.751 MiB/s 17.838 MiB/s 17.918 MiB/s]
+Benchmarking blake3/keyed/official/3
+Benchmarking blake3/keyed/official/3: Warming up for 1.0000 s
+Benchmarking blake3/keyed/official/3: Collecting 25 samples in estimated 3.0000 s (20M iterations)
+Benchmarking blake3/keyed/official/3: Analyzing
+blake3/keyed/official/3 time:   [153.12 ns 153.84 ns 154.69 ns]
+                        thrpt:  [18.495 MiB/s 18.597 MiB/s 18.685 MiB/s]
+Found 1 outliers among 25 measurements (4.00%)
+  1 (4.00%) high mild
+Benchmarking blake3/keyed/rscrypto/8
+Benchmarking blake3/keyed/rscrypto/8: Warming up for 1.0000 s
+Benchmarking blake3/keyed/rscrypto/8: Collecting 25 samples in estimated 3.0000 s (19M iterations)
+Benchmarking blake3/keyed/rscrypto/8: Analyzing
+blake3/keyed/rscrypto/8 time:   [158.54 ns 158.69 ns 158.85 ns]
+                        thrpt:  [48.030 MiB/s 48.079 MiB/s 48.124 MiB/s]
+Found 1 outliers among 25 measurements (4.00%)
+  1 (4.00%) high mild
+Benchmarking blake3/keyed/official/8
+Benchmarking blake3/keyed/official/8: Warming up for 1.0000 s
+Benchmarking blake3/keyed/official/8: Collecting 25 samples in estimated 3.0000 s (20M iterations)
+Benchmarking blake3/keyed/official/8: Analyzing
+blake3/keyed/official/8 time:   [153.25 ns 154.16 ns 155.13 ns]
+                        thrpt:  [49.180 MiB/s 49.490 MiB/s 49.783 MiB/s]
+Benchmarking blake3/keyed/rscrypto/16
+Benchmarking blake3/keyed/rscrypto/16: Warming up for 1.0000 s
+Benchmarking blake3/keyed/rscrypto/16: Collecting 25 samples in estimated 3.0000 s (19M iterations)
+Benchmarking blake3/keyed/rscrypto/16: Analyzing
+blake3/keyed/rscrypto/16
+                        time:   [157.82 ns 158.92 ns 160.66 ns]
+                        thrpt:  [94.975 MiB/s 96.016 MiB/s 96.684 MiB/s]
+Found 3 outliers among 25 measurements (12.00%)
+  3 (12.00%) high severe
+Benchmarking blake3/keyed/official/16
+Benchmarking blake3/keyed/official/16: Warming up for 1.0000 s
+Benchmarking blake3/keyed/official/16: Collecting 25 samples in estimated 3.0000 s (20M iterations)
+Benchmarking blake3/keyed/official/16: Analyzing
+blake3/keyed/official/16
+                        time:   [151.91 ns 152.41 ns 152.90 ns]
+                        thrpt:  [99.794 MiB/s 100.12 MiB/s 100.44 MiB/s]
+Benchmarking blake3/keyed/rscrypto/31
+Benchmarking blake3/keyed/rscrypto/31: Warming up for 1.0000 s
+Benchmarking blake3/keyed/rscrypto/31: Collecting 25 samples in estimated 3.0000 s (19M iterations)
+Benchmarking blake3/keyed/rscrypto/31: Analyzing
+blake3/keyed/rscrypto/31
+                        time:   [161.08 ns 161.77 ns 162.49 ns]
+                        thrpt:  [181.94 MiB/s 182.76 MiB/s 183.54 MiB/s]
+Benchmarking blake3/keyed/official/31
+Benchmarking blake3/keyed/official/31: Warming up for 1.0000 s
+Benchmarking blake3/keyed/official/31: Collecting 25 samples in estimated 3.0000 s (19M iterations)
+Benchmarking blake3/keyed/official/31: Analyzing
+blake3/keyed/official/31
+                        time:   [152.08 ns 152.58 ns 153.10 ns]
+                        thrpt:  [193.11 MiB/s 193.76 MiB/s 194.40 MiB/s]
+Benchmarking blake3/keyed/rscrypto/32
+Benchmarking blake3/keyed/rscrypto/32: Warming up for 1.0000 s
+Benchmarking blake3/keyed/rscrypto/32: Collecting 25 samples in estimated 3.0000 s (19M iterations)
+Benchmarking blake3/keyed/rscrypto/32: Analyzing
+blake3/keyed/rscrypto/32
+                        time:   [158.76 ns 159.56 ns 160.40 ns]
+                        thrpt:  [190.26 MiB/s 191.26 MiB/s 192.23 MiB/s]
+Benchmarking blake3/keyed/official/32
+Benchmarking blake3/keyed/official/32: Warming up for 1.0000 s
+Benchmarking blake3/keyed/official/32: Collecting 25 samples in estimated 3.0000 s (20M iterations)
+Benchmarking blake3/keyed/official/32: Analyzing
+blake3/keyed/official/32
+                        time:   [152.70 ns 153.13 ns 153.56 ns]
+                        thrpt:  [198.73 MiB/s 199.30 MiB/s 199.85 MiB/s]
+Found 2 outliers among 25 measurements (8.00%)
+  1 (4.00%) low mild
+  1 (4.00%) high severe
+Benchmarking blake3/keyed/rscrypto/63
+Benchmarking blake3/keyed/rscrypto/63: Warming up for 1.0000 s
+Benchmarking blake3/keyed/rscrypto/63: Collecting 25 samples in estimated 3.0000 s (19M iterations)
+Benchmarking blake3/keyed/rscrypto/63: Analyzing
+blake3/keyed/rscrypto/63
+                        time:   [161.16 ns 161.31 ns 161.48 ns]
+                        thrpt:  [372.08 MiB/s 372.45 MiB/s 372.82 MiB/s]
+Benchmarking blake3/keyed/official/63
+Benchmarking blake3/keyed/official/63: Warming up for 1.0000 s
+Benchmarking blake3/keyed/official/63: Collecting 25 samples in estimated 3.0000 s (19M iterations)
+Benchmarking blake3/keyed/official/63: Analyzing
+blake3/keyed/official/63
+                        time:   [151.32 ns 152.30 ns 153.33 ns]
+                        thrpt:  [391.85 MiB/s 394.49 MiB/s 397.05 MiB/s]
+Found 1 outliers among 25 measurements (4.00%)
+  1 (4.00%) high mild
+Benchmarking blake3/keyed/rscrypto/64
+Benchmarking blake3/keyed/rscrypto/64: Warming up for 1.0000 s
+Benchmarking blake3/keyed/rscrypto/64: Collecting 25 samples in estimated 3.0000 s (19M iterations)
+Benchmarking blake3/keyed/rscrypto/64: Analyzing
+blake3/keyed/rscrypto/64
+                        time:   [158.26 ns 159.56 ns 161.44 ns]
+                        thrpt:  [378.08 MiB/s 382.53 MiB/s 385.67 MiB/s]
+Found 9 outliers among 25 measurements (36.00%)
+  1 (4.00%) low severe
+  2 (8.00%) low mild
+  1 (4.00%) high mild
+  5 (20.00%) high severe
+Benchmarking blake3/keyed/official/64
+Benchmarking blake3/keyed/official/64: Warming up for 1.0000 s
+Benchmarking blake3/keyed/official/64: Collecting 25 samples in estimated 3.0000 s (20M iterations)
+Benchmarking blake3/keyed/official/64: Analyzing
+blake3/keyed/official/64
+                        time:   [151.29 ns 151.94 ns 152.60 ns]
+                        thrpt:  [399.98 MiB/s 401.71 MiB/s 403.44 MiB/s]
+Benchmarking blake3/keyed/rscrypto/65
+Benchmarking blake3/keyed/rscrypto/65: Warming up for 1.0000 s
+Benchmarking blake3/keyed/rscrypto/65: Collecting 25 samples in estimated 3.0000 s (8.9M iterations)
+Benchmarking blake3/keyed/rscrypto/65: Analyzing
+blake3/keyed/rscrypto/65
+                        time:   [340.31 ns 342.24 ns 344.37 ns]
+                        thrpt:  [180.01 MiB/s 181.13 MiB/s 182.15 MiB/s]
+Found 5 outliers among 25 measurements (20.00%)
+  5 (20.00%) high mild
+Benchmarking blake3/keyed/official/65
+Benchmarking blake3/keyed/official/65: Warming up for 1.0000 s
+Benchmarking blake3/keyed/official/65: Collecting 25 samples in estimated 3.0000 s (11M iterations)
+Benchmarking blake3/keyed/official/65: Analyzing
+blake3/keyed/official/65
+                        time:   [262.39 ns 263.34 ns 264.33 ns]
+                        thrpt:  [234.52 MiB/s 235.40 MiB/s 236.25 MiB/s]
+Benchmarking blake3/keyed/rscrypto/128
+Benchmarking blake3/keyed/rscrypto/128: Warming up for 1.0000 s
+Benchmarking blake3/keyed/rscrypto/128: Collecting 25 samples in estimated 3.0000 s (9.0M iterations)
+Benchmarking blake3/keyed/rscrypto/128: Analyzing
+blake3/keyed/rscrypto/128
+                        time:   [334.31 ns 335.03 ns 335.95 ns]
+                        thrpt:  [363.36 MiB/s 364.36 MiB/s 365.14 MiB/s]
+Found 1 outliers among 25 measurements (4.00%)
+  1 (4.00%) high severe
+Benchmarking blake3/keyed/official/128
+Benchmarking blake3/keyed/official/128: Warming up for 1.0000 s
+Benchmarking blake3/keyed/official/128: Collecting 25 samples in estimated 3.0000 s (11M iterations)
+Benchmarking blake3/keyed/official/128: Analyzing
+blake3/keyed/official/128
+                        time:   [262.99 ns 264.55 ns 266.16 ns]
+                        thrpt:  [458.63 MiB/s 461.43 MiB/s 464.16 MiB/s]
+Benchmarking blake3/keyed/rscrypto/256
+Benchmarking blake3/keyed/rscrypto/256: Warming up for 1.0000 s
+Benchmarking blake3/keyed/rscrypto/256: Collecting 25 samples in estimated 3.0000 s (5.3M iterations)
+Benchmarking blake3/keyed/rscrypto/256: Analyzing
+blake3/keyed/rscrypto/256
+                        time:   [564.25 ns 565.24 ns 566.25 ns]
+                        thrpt:  [431.15 MiB/s 431.93 MiB/s 432.68 MiB/s]
+Benchmarking blake3/keyed/official/256
+Benchmarking blake3/keyed/official/256: Warming up for 1.0000 s
+Benchmarking blake3/keyed/official/256: Collecting 25 samples in estimated 3.0000 s (6.1M iterations)
+Benchmarking blake3/keyed/official/256: Analyzing
+blake3/keyed/official/256
+                        time:   [486.68 ns 488.29 ns 490.18 ns]
+                        thrpt:  [498.07 MiB/s 500.00 MiB/s 501.64 MiB/s]
+Found 1 outliers among 25 measurements (4.00%)
+  1 (4.00%) high mild
+Benchmarking blake3/keyed/rscrypto/1024
+Benchmarking blake3/keyed/rscrypto/1024: Warming up for 1.0000 s
+Benchmarking blake3/keyed/rscrypto/1024: Collecting 25 samples in estimated 3.0000 s (1.5M iterations)
+Benchmarking blake3/keyed/rscrypto/1024: Analyzing
+blake3/keyed/rscrypto/1024
+                        time:   [1.9385 µs 1.9414 µs 1.9453 µs]
+                        thrpt:  [502.01 MiB/s 503.03 MiB/s 503.78 MiB/s]
+Found 1 outliers among 25 measurements (4.00%)
+  1 (4.00%) high severe
+Benchmarking blake3/keyed/official/1024
+Benchmarking blake3/keyed/official/1024: Warming up for 1.0000 s
+Benchmarking blake3/keyed/official/1024: Collecting 25 samples in estimated 3.0000 s (1.6M iterations)
+Benchmarking blake3/keyed/official/1024: Analyzing
+blake3/keyed/official/1024
+                        time:   [1.8480 µs 1.8495 µs 1.8513 µs]
+                        thrpt:  [527.50 MiB/s 528.02 MiB/s 528.45 MiB/s]
+Found 3 outliers among 25 measurements (12.00%)
+  1 (4.00%) high mild
+  2 (8.00%) high severe
+Benchmarking blake3/keyed/rscrypto/4096
+Benchmarking blake3/keyed/rscrypto/4096: Warming up for 1.0000 s
+Benchmarking blake3/keyed/rscrypto/4096: Collecting 25 samples in estimated 3.0002 s (371k iterations)
+Benchmarking blake3/keyed/rscrypto/4096: Analyzing
+blake3/keyed/rscrypto/4096
+                        time:   [8.0659 µs 8.0884 µs 8.1161 µs]
+                        thrpt:  [481.30 MiB/s 482.95 MiB/s 484.29 MiB/s]
+Found 1 outliers among 25 measurements (4.00%)
+  1 (4.00%) high severe
+Benchmarking blake3/keyed/official/4096
+Benchmarking blake3/keyed/official/4096: Warming up for 1.0000 s
+Benchmarking blake3/keyed/official/4096: Collecting 25 samples in estimated 3.0002 s (389k iterations)
+Benchmarking blake3/keyed/official/4096: Analyzing
+blake3/keyed/official/4096
+                        time:   [7.6715 µs 7.7086 µs 7.7659 µs]
+                        thrpt:  [503.00 MiB/s 506.74 MiB/s 509.19 MiB/s]
+Found 4 outliers among 25 measurements (16.00%)
+  4 (16.00%) high severe
+Benchmarking blake3/keyed/rscrypto/16384
+Benchmarking blake3/keyed/rscrypto/16384: Warming up for 1.0000 s
+Benchmarking blake3/keyed/rscrypto/16384: Collecting 25 samples in estimated 3.0007 s (93k iterations)
+Benchmarking blake3/keyed/rscrypto/16384: Analyzing
+blake3/keyed/rscrypto/16384
+                        time:   [32.441 µs 32.684 µs 33.039 µs]
+                        thrpt:  [472.93 MiB/s 478.07 MiB/s 481.65 MiB/s]
+Found 4 outliers among 25 measurements (16.00%)
+  2 (8.00%) high mild
+  2 (8.00%) high severe
+Benchmarking blake3/keyed/official/16384
+Benchmarking blake3/keyed/official/16384: Warming up for 1.0000 s
+Benchmarking blake3/keyed/official/16384: Collecting 25 samples in estimated 3.0002 s (96k iterations)
+Benchmarking blake3/keyed/official/16384: Analyzing
+blake3/keyed/official/16384
+                        time:   [30.972 µs 31.024 µs 31.077 µs]
+                        thrpt:  [502.78 MiB/s 503.64 MiB/s 504.49 MiB/s]
+Benchmarking blake3/keyed/rscrypto/65536
+Benchmarking blake3/keyed/rscrypto/65536: Warming up for 1.0000 s
+Benchmarking blake3/keyed/rscrypto/65536: Collecting 25 samples in estimated 3.0006 s (56k iterations)
+Benchmarking blake3/keyed/rscrypto/65536: Analyzing
+blake3/keyed/rscrypto/65536
+                        time:   [53.637 µs 53.716 µs 53.818 µs]
+                        thrpt:  [1.1341 GiB/s 1.1362 GiB/s 1.1379 GiB/s]
+Found 2 outliers among 25 measurements (8.00%)
+  1 (4.00%) high mild
+  1 (4.00%) high severe
+Benchmarking blake3/keyed/official/65536
+Benchmarking blake3/keyed/official/65536: Warming up for 1.0000 s
+Benchmarking blake3/keyed/official/65536: Collecting 25 samples in estimated 3.0011 s (24k iterations)
+Benchmarking blake3/keyed/official/65536: Analyzing
+blake3/keyed/official/65536
+                        time:   [123.52 µs 124.03 µs 124.98 µs]
+                        thrpt:  [500.07 MiB/s 503.90 MiB/s 506.00 MiB/s]
+Found 2 outliers among 25 measurements (8.00%)
+  1 (4.00%) high mild
+  1 (4.00%) high severe
+Benchmarking blake3/keyed/rscrypto/1048576
+Benchmarking blake3/keyed/rscrypto/1048576: Warming up for 1.0000 s
+Benchmarking blake3/keyed/rscrypto/1048576: Collecting 25 samples in estimated 3.0075 s (5425 iterations)
+Benchmarking blake3/keyed/rscrypto/1048576: Analyzing
+blake3/keyed/rscrypto/1048576
+                        time:   [552.85 µs 558.67 µs 566.00 µs]
+                        thrpt:  [1.7254 GiB/s 1.7480 GiB/s 1.7664 GiB/s]
+Found 4 outliers among 25 measurements (16.00%)
+  1 (4.00%) low mild
+  1 (4.00%) high mild
+  2 (8.00%) high severe
+Benchmarking blake3/keyed/official/1048576
+Benchmarking blake3/keyed/official/1048576: Warming up for 1.0000 s
+Benchmarking blake3/keyed/official/1048576: Collecting 25 samples in estimated 3.0197 s (1525 iterations)
+Benchmarking blake3/keyed/official/1048576: Analyzing
+blake3/keyed/official/1048576
+                        time:   [1.9769 ms 1.9780 ms 1.9792 ms]
+                        thrpt:  [505.25 MiB/s 505.57 MiB/s 505.85 MiB/s]
+Found 1 outliers among 25 measurements (4.00%)
+  1 (4.00%) high mild
+
+Benchmarking blake3/derive-key/rscrypto/0
+Benchmarking blake3/derive-key/rscrypto/0: Warming up for 1.0000 s
+Benchmarking blake3/derive-key/rscrypto/0: Collecting 25 samples in estimated 3.0000 s (18M iterations)
+Benchmarking blake3/derive-key/rscrypto/0: Analyzing
+blake3/derive-key/rscrypto/0
+                        time:   [170.42 ns 170.72 ns 171.07 ns]
+                        thrpt:  [5.8456 Melem/s 5.8577 Melem/s 5.8678 Melem/s]
+Found 1 outliers among 25 measurements (4.00%)
+  1 (4.00%) high mild
+Benchmarking blake3/derive-key/official/0
+Benchmarking blake3/derive-key/official/0: Warming up for 1.0000 s
+Benchmarking blake3/derive-key/official/0: Collecting 25 samples in estimated 3.0000 s (11M iterations)
+Benchmarking blake3/derive-key/official/0: Analyzing
+blake3/derive-key/official/0
+                        time:   [279.43 ns 280.96 ns 282.70 ns]
+                        thrpt:  [3.5373 Melem/s 3.5592 Melem/s 3.5787 Melem/s]
+Found 1 outliers among 25 measurements (4.00%)
+  1 (4.00%) high mild
+Benchmarking blake3/derive-key/rscrypto/1
+Benchmarking blake3/derive-key/rscrypto/1: Warming up for 1.0000 s
+Benchmarking blake3/derive-key/rscrypto/1: Collecting 25 samples in estimated 3.0000 s (17M iterations)
+Benchmarking blake3/derive-key/rscrypto/1: Analyzing
+blake3/derive-key/rscrypto/1
+                        time:   [171.70 ns 172.08 ns 172.55 ns]
+                        thrpt:  [5.5271 MiB/s 5.5421 MiB/s 5.5544 MiB/s]
+Found 1 outliers among 25 measurements (4.00%)
+  1 (4.00%) high mild
+Benchmarking blake3/derive-key/official/1
+Benchmarking blake3/derive-key/official/1: Warming up for 1.0000 s
+Benchmarking blake3/derive-key/official/1: Collecting 25 samples in estimated 3.0000 s (11M iterations)
+Benchmarking blake3/derive-key/official/1: Analyzing
+blake3/derive-key/official/1
+                        time:   [285.93 ns 286.32 ns 286.79 ns]
+                        thrpt:  [3.3253 MiB/s 3.3308 MiB/s 3.3354 MiB/s]
+Found 1 outliers among 25 measurements (4.00%)
+  1 (4.00%) high severe
+Benchmarking blake3/derive-key/rscrypto/3
+Benchmarking blake3/derive-key/rscrypto/3: Warming up for 1.0000 s
+Benchmarking blake3/derive-key/rscrypto/3: Collecting 25 samples in estimated 3.0000 s (17M iterations)
+Benchmarking blake3/derive-key/rscrypto/3: Analyzing
+blake3/derive-key/rscrypto/3
+                        time:   [171.97 ns 172.79 ns 173.82 ns]
+                        thrpt:  [16.460 MiB/s 16.557 MiB/s 16.636 MiB/s]
+Found 3 outliers among 25 measurements (12.00%)
+  3 (12.00%) high severe
+Benchmarking blake3/derive-key/official/3
+Benchmarking blake3/derive-key/official/3: Warming up for 1.0000 s
+Benchmarking blake3/derive-key/official/3: Collecting 25 samples in estimated 3.0000 s (11M iterations)
+Benchmarking blake3/derive-key/official/3: Analyzing
+blake3/derive-key/official/3
+                        time:   [286.40 ns 287.28 ns 288.31 ns]
+                        thrpt:  [9.9235 MiB/s 9.9590 MiB/s 9.9896 MiB/s]
+Found 4 outliers among 25 measurements (16.00%)
+  3 (12.00%) high mild
+  1 (4.00%) high severe
+Benchmarking blake3/derive-key/rscrypto/8
+Benchmarking blake3/derive-key/rscrypto/8: Warming up for 1.0000 s
+Benchmarking blake3/derive-key/rscrypto/8: Collecting 25 samples in estimated 3.0000 s (17M iterations)
+Benchmarking blake3/derive-key/rscrypto/8: Analyzing
+blake3/derive-key/rscrypto/8
+                        time:   [171.94 ns 172.70 ns 173.52 ns]
+                        thrpt:  [43.967 MiB/s 44.177 MiB/s 44.373 MiB/s]
+Benchmarking blake3/derive-key/official/8
+Benchmarking blake3/derive-key/official/8: Warming up for 1.0000 s
+Benchmarking blake3/derive-key/official/8: Collecting 25 samples in estimated 3.0000 s (11M iterations)
+Benchmarking blake3/derive-key/official/8: Analyzing
+blake3/derive-key/official/8
+                        time:   [286.74 ns 287.40 ns 288.09 ns]
+                        thrpt:  [26.482 MiB/s 26.546 MiB/s 26.607 MiB/s]
+Found 1 outliers among 25 measurements (4.00%)
+  1 (4.00%) high mild
+Benchmarking blake3/derive-key/rscrypto/16
+Benchmarking blake3/derive-key/rscrypto/16: Warming up for 1.0000 s
+Benchmarking blake3/derive-key/rscrypto/16: Collecting 25 samples in estimated 3.0000 s (17M iterations)
+Benchmarking blake3/derive-key/rscrypto/16: Analyzing
+blake3/derive-key/rscrypto/16
+                        time:   [172.67 ns 173.00 ns 173.37 ns]
+                        thrpt:  [88.014 MiB/s 88.202 MiB/s 88.368 MiB/s]
+Found 2 outliers among 25 measurements (8.00%)
+  2 (8.00%) high mild
+Benchmarking blake3/derive-key/official/16
+Benchmarking blake3/derive-key/official/16: Warming up for 1.0000 s
+Benchmarking blake3/derive-key/official/16: Collecting 25 samples in estimated 3.0000 s (10M iterations)
+Benchmarking blake3/derive-key/official/16: Analyzing
+blake3/derive-key/official/16
+                        time:   [287.58 ns 288.84 ns 290.34 ns]
+                        thrpt:  [52.555 MiB/s 52.828 MiB/s 53.058 MiB/s]
+Found 4 outliers among 25 measurements (16.00%)
+  3 (12.00%) high mild
+  1 (4.00%) high severe
+Benchmarking blake3/derive-key/rscrypto/31
+Benchmarking blake3/derive-key/rscrypto/31: Warming up for 1.0000 s
+Benchmarking blake3/derive-key/rscrypto/31: Collecting 25 samples in estimated 3.0000 s (17M iterations)
+Benchmarking blake3/derive-key/rscrypto/31: Analyzing
+blake3/derive-key/rscrypto/31
+                        time:   [172.02 ns 172.46 ns 172.88 ns]
+                        thrpt:  [171.01 MiB/s 171.43 MiB/s 171.87 MiB/s]
+Benchmarking blake3/derive-key/official/31
+Benchmarking blake3/derive-key/official/31: Warming up for 1.0000 s
+Benchmarking blake3/derive-key/official/31: Collecting 25 samples in estimated 3.0000 s (10M iterations)
+Benchmarking blake3/derive-key/official/31: Analyzing
+blake3/derive-key/official/31
+                        time:   [286.79 ns 288.14 ns 290.48 ns]
+                        thrpt:  [101.78 MiB/s 102.60 MiB/s 103.09 MiB/s]
+Found 1 outliers among 25 measurements (4.00%)
+  1 (4.00%) high severe
+Benchmarking blake3/derive-key/rscrypto/32
+Benchmarking blake3/derive-key/rscrypto/32: Warming up for 1.0000 s
+Benchmarking blake3/derive-key/rscrypto/32: Collecting 25 samples in estimated 3.0000 s (17M iterations)
+Benchmarking blake3/derive-key/rscrypto/32: Analyzing
+blake3/derive-key/rscrypto/32
+                        time:   [171.61 ns 171.95 ns 172.31 ns]
+                        thrpt:  [177.11 MiB/s 177.48 MiB/s 177.83 MiB/s]
+Benchmarking blake3/derive-key/official/32
+Benchmarking blake3/derive-key/official/32: Warming up for 1.0000 s
+Benchmarking blake3/derive-key/official/32: Collecting 25 samples in estimated 3.0000 s (10M iterations)
+Benchmarking blake3/derive-key/official/32: Analyzing
+blake3/derive-key/official/32
+                        time:   [286.54 ns 286.97 ns 287.41 ns]
+                        thrpt:  [106.18 MiB/s 106.34 MiB/s 106.50 MiB/s]
+Found 1 outliers among 25 measurements (4.00%)
+  1 (4.00%) high mild
+Benchmarking blake3/derive-key/rscrypto/63
+Benchmarking blake3/derive-key/rscrypto/63: Warming up for 1.0000 s
+Benchmarking blake3/derive-key/rscrypto/63: Collecting 25 samples in estimated 3.0000 s (17M iterations)
+Benchmarking blake3/derive-key/rscrypto/63: Analyzing
+blake3/derive-key/rscrypto/63
+                        time:   [173.22 ns 174.17 ns 175.27 ns]
+                        thrpt:  [342.79 MiB/s 344.96 MiB/s 346.85 MiB/s]
+Found 3 outliers among 25 measurements (12.00%)
+  3 (12.00%) high mild
+Benchmarking blake3/derive-key/official/63
+Benchmarking blake3/derive-key/official/63: Warming up for 1.0000 s
+Benchmarking blake3/derive-key/official/63: Collecting 25 samples in estimated 3.0000 s (10M iterations)
+Benchmarking blake3/derive-key/official/63: Analyzing
+blake3/derive-key/official/63
+                        time:   [287.12 ns 287.79 ns 288.61 ns]
+                        thrpt:  [208.17 MiB/s 208.77 MiB/s 209.26 MiB/s]
+Found 1 outliers among 25 measurements (4.00%)
+  1 (4.00%) high mild
+Benchmarking blake3/derive-key/rscrypto/64
+Benchmarking blake3/derive-key/rscrypto/64: Warming up for 1.0000 s
+Benchmarking blake3/derive-key/rscrypto/64: Collecting 25 samples in estimated 3.0000 s (18M iterations)
+Benchmarking blake3/derive-key/rscrypto/64: Analyzing
+blake3/derive-key/rscrypto/64
+                        time:   [171.44 ns 172.33 ns 173.52 ns]
+                        thrpt:  [351.75 MiB/s 354.17 MiB/s 356.01 MiB/s]
+Found 4 outliers among 25 measurements (16.00%)
+  3 (12.00%) high mild
+  1 (4.00%) high severe
+Benchmarking blake3/derive-key/official/64
+Benchmarking blake3/derive-key/official/64: Warming up for 1.0000 s
+Benchmarking blake3/derive-key/official/64: Collecting 25 samples in estimated 3.0000 s (10M iterations)
+Benchmarking blake3/derive-key/official/64: Analyzing
+blake3/derive-key/official/64
+                        time:   [287.96 ns 289.33 ns 290.96 ns]
+                        thrpt:  [209.77 MiB/s 210.96 MiB/s 211.96 MiB/s]
+Found 4 outliers among 25 measurements (16.00%)
+  1 (4.00%) high mild
+  3 (12.00%) high severe
+Benchmarking blake3/derive-key/rscrypto/65
+Benchmarking blake3/derive-key/rscrypto/65: Warming up for 1.0000 s
+Benchmarking blake3/derive-key/rscrypto/65: Collecting 25 samples in estimated 3.0000 s (8.5M iterations)
+Benchmarking blake3/derive-key/rscrypto/65: Analyzing
+blake3/derive-key/rscrypto/65
+                        time:   [352.60 ns 354.13 ns 356.23 ns]
+                        thrpt:  [174.01 MiB/s 175.05 MiB/s 175.80 MiB/s]
+Found 1 outliers among 25 measurements (4.00%)
+  1 (4.00%) high severe
+Benchmarking blake3/derive-key/official/65
+Benchmarking blake3/derive-key/official/65: Warming up for 1.0000 s
+Benchmarking blake3/derive-key/official/65: Collecting 25 samples in estimated 3.0000 s (7.5M iterations)
+Benchmarking blake3/derive-key/official/65: Analyzing
+blake3/derive-key/official/65
+                        time:   [399.97 ns 400.55 ns 401.27 ns]
+                        thrpt:  [154.48 MiB/s 154.76 MiB/s 154.98 MiB/s]
+Found 2 outliers among 25 measurements (8.00%)
+  2 (8.00%) high severe
+Benchmarking blake3/derive-key/rscrypto/128
+Benchmarking blake3/derive-key/rscrypto/128: Warming up for 1.0000 s
+Benchmarking blake3/derive-key/rscrypto/128: Collecting 25 samples in estimated 3.0000 s (8.6M iterations)
+Benchmarking blake3/derive-key/rscrypto/128: Analyzing
+blake3/derive-key/rscrypto/128
+                        time:   [349.31 ns 351.81 ns 354.83 ns]
+                        thrpt:  [344.02 MiB/s 346.97 MiB/s 349.46 MiB/s]
+Found 3 outliers among 25 measurements (12.00%)
+  1 (4.00%) high mild
+  2 (8.00%) high severe
+Benchmarking blake3/derive-key/official/128
+Benchmarking blake3/derive-key/official/128: Warming up for 1.0000 s
+Benchmarking blake3/derive-key/official/128: Collecting 25 samples in estimated 3.0000 s (7.5M iterations)
+Benchmarking blake3/derive-key/official/128: Analyzing
+blake3/derive-key/official/128
+                        time:   [401.99 ns 404.10 ns 407.05 ns]
+                        thrpt:  [299.89 MiB/s 302.08 MiB/s 303.67 MiB/s]
+Found 4 outliers among 25 measurements (16.00%)
+  1 (4.00%) high mild
+  3 (12.00%) high severe
+Benchmarking blake3/derive-key/rscrypto/256
+Benchmarking blake3/derive-key/rscrypto/256: Warming up for 1.0000 s
+Benchmarking blake3/derive-key/rscrypto/256: Collecting 25 samples in estimated 3.0000 s (5.2M iterations)
+Benchmarking blake3/derive-key/rscrypto/256: Analyzing
+blake3/derive-key/rscrypto/256
+                        time:   [573.78 ns 574.80 ns 576.10 ns]
+                        thrpt:  [423.78 MiB/s 424.74 MiB/s 425.50 MiB/s]
+Found 2 outliers among 25 measurements (8.00%)
+  1 (4.00%) high mild
+  1 (4.00%) high severe
+Benchmarking blake3/derive-key/official/256
+Benchmarking blake3/derive-key/official/256: Warming up for 1.0000 s
+Benchmarking blake3/derive-key/official/256: Collecting 25 samples in estimated 3.0000 s (4.8M iterations)
+Benchmarking blake3/derive-key/official/256: Analyzing
+blake3/derive-key/official/256
+                        time:   [624.44 ns 626.23 ns 628.33 ns]
+                        thrpt:  [388.56 MiB/s 389.86 MiB/s 390.97 MiB/s]
+Found 3 outliers among 25 measurements (12.00%)
+  2 (8.00%) high mild
+  1 (4.00%) high severe
+Benchmarking blake3/derive-key/rscrypto/1024
+Benchmarking blake3/derive-key/rscrypto/1024: Warming up for 1.0000 s
+Benchmarking blake3/derive-key/rscrypto/1024: Collecting 25 samples in estimated 3.0000 s (1.5M iterations)
+Benchmarking blake3/derive-key/rscrypto/1024: Analyzing
+blake3/derive-key/rscrypto/1024
+                        time:   [1.9638 µs 1.9663 µs 1.9691 µs]
+                        thrpt:  [495.94 MiB/s 496.65 MiB/s 497.29 MiB/s]
+Found 2 outliers among 25 measurements (8.00%)
+  2 (8.00%) high mild
+Benchmarking blake3/derive-key/official/1024
+Benchmarking blake3/derive-key/official/1024: Warming up for 1.0000 s
+Benchmarking blake3/derive-key/official/1024: Collecting 25 samples in estimated 3.0000 s (1.5M iterations)
+Benchmarking blake3/derive-key/official/1024: Analyzing
+blake3/derive-key/official/1024
+                        time:   [1.9812 µs 1.9826 µs 1.9842 µs]
+                        thrpt:  [492.18 MiB/s 492.57 MiB/s 492.92 MiB/s]
+Found 3 outliers among 25 measurements (12.00%)
+  2 (8.00%) high mild
+  1 (4.00%) high severe
+Benchmarking blake3/derive-key/rscrypto/4096
+Benchmarking blake3/derive-key/rscrypto/4096: Warming up for 1.0000 s
+Benchmarking blake3/derive-key/rscrypto/4096: Collecting 25 samples in estimated 3.0000 s (366k iterations)
+Benchmarking blake3/derive-key/rscrypto/4096: Analyzing
+blake3/derive-key/rscrypto/4096
+                        time:   [8.2140 µs 8.2638 µs 8.3214 µs]
+                        thrpt:  [469.42 MiB/s 472.69 MiB/s 475.56 MiB/s]
+Found 1 outliers among 25 measurements (4.00%)
+  1 (4.00%) high mild
+Benchmarking blake3/derive-key/official/4096
+Benchmarking blake3/derive-key/official/4096: Warming up for 1.0000 s
+Benchmarking blake3/derive-key/official/4096: Collecting 25 samples in estimated 3.0001 s (384k iterations)
+Benchmarking blake3/derive-key/official/4096: Analyzing
+blake3/derive-key/official/4096
+                        time:   [7.8145 µs 7.8341 µs 7.8568 µs]
+                        thrpt:  [497.18 MiB/s 498.62 MiB/s 499.87 MiB/s]
+Found 2 outliers among 25 measurements (8.00%)
+  2 (8.00%) high mild
+Benchmarking blake3/derive-key/rscrypto/16384
+Benchmarking blake3/derive-key/rscrypto/16384: Warming up for 1.0000 s
+Benchmarking blake3/derive-key/rscrypto/16384: Collecting 25 samples in estimated 3.0004 s (92k iterations)
+Benchmarking blake3/derive-key/rscrypto/16384: Analyzing
+blake3/derive-key/rscrypto/16384
+                        time:   [32.421 µs 32.455 µs 32.496 µs]
+                        thrpt:  [480.83 MiB/s 481.44 MiB/s 481.93 MiB/s]
+Found 2 outliers among 25 measurements (8.00%)
+  2 (8.00%) high severe
+Benchmarking blake3/derive-key/official/16384
+Benchmarking blake3/derive-key/official/16384: Warming up for 1.0000 s
+Benchmarking blake3/derive-key/official/16384: Collecting 25 samples in estimated 3.0002 s (97k iterations)
+Benchmarking blake3/derive-key/official/16384: Analyzing
+blake3/derive-key/official/16384
+                        time:   [31.075 µs 31.182 µs 31.315 µs]
+                        thrpt:  [498.97 MiB/s 501.09 MiB/s 502.82 MiB/s]
+Found 1 outliers among 25 measurements (4.00%)
+  1 (4.00%) high severe
+Benchmarking blake3/derive-key/rscrypto/65536
+Benchmarking blake3/derive-key/rscrypto/65536: Warming up for 1.0000 s
+Benchmarking blake3/derive-key/rscrypto/65536: Collecting 25 samples in estimated 3.0011 s (56k iterations)
+Benchmarking blake3/derive-key/rscrypto/65536: Analyzing
+blake3/derive-key/rscrypto/65536
+                        time:   [53.557 µs 53.594 µs 53.635 µs]
+                        thrpt:  [1.1380 GiB/s 1.1388 GiB/s 1.1396 GiB/s]
+Found 1 outliers among 25 measurements (4.00%)
+  1 (4.00%) high mild
+Benchmarking blake3/derive-key/official/65536
+Benchmarking blake3/derive-key/official/65536: Warming up for 1.0000 s
+Benchmarking blake3/derive-key/official/65536: Collecting 25 samples in estimated 3.0026 s (24k iterations)
+Benchmarking blake3/derive-key/official/65536: Analyzing
+blake3/derive-key/official/65536
+                        time:   [123.71 µs 123.84 µs 123.99 µs]
+                        thrpt:  [504.09 MiB/s 504.70 MiB/s 505.20 MiB/s]
+Found 3 outliers among 25 measurements (12.00%)
+  2 (8.00%) high mild
+  1 (4.00%) high severe
+Benchmarking blake3/derive-key/rscrypto/1048576
+Benchmarking blake3/derive-key/rscrypto/1048576: Warming up for 1.0000 s
+Benchmarking blake3/derive-key/rscrypto/1048576: Collecting 25 samples in estimated 3.0082 s (5650 iterations)
+Benchmarking blake3/derive-key/rscrypto/1048576: Analyzing
+blake3/derive-key/rscrypto/1048576
+                        time:   [536.19 µs 543.40 µs 551.38 µs]
+                        thrpt:  [1.7711 GiB/s 1.7971 GiB/s 1.8213 GiB/s]
+Found 3 outliers among 25 measurements (12.00%)
+  3 (12.00%) high mild
+Benchmarking blake3/derive-key/official/1048576
+Benchmarking blake3/derive-key/official/1048576: Warming up for 1.0000 s
+Benchmarking blake3/derive-key/official/1048576: Collecting 25 samples in estimated 3.0241 s (1525 iterations)
+Benchmarking blake3/derive-key/official/1048576: Analyzing
+blake3/derive-key/official/1048576
+                        time:   [1.9832 ms 1.9859 ms 1.9902 ms]
+                        thrpt:  [502.47 MiB/s 503.55 MiB/s 504.25 MiB/s]
+Found 4 outliers among 25 measurements (16.00%)
+  1 (4.00%) low mild
+  2 (8.00%) high mild
+  1 (4.00%) high severe
+
+Benchmarking blake3/active-kernel/portable/0
+Benchmarking blake3/active-kernel/portable/0: Warming up for 1.0000 s
+Benchmarking blake3/active-kernel/portable/0: Collecting 15 samples in estimated 2.0000 s (15M iterations)
+Benchmarking blake3/active-kernel/portable/0: Analyzing
+blake3/active-kernel/portable/0
+                        time:   [134.05 ns 135.22 ns 136.61 ns]
+                        thrpt:  [7.3200 Melem/s 7.3951 Melem/s 7.4600 Melem/s]
+Found 2 outliers among 15 measurements (13.33%)
+  2 (13.33%) high mild
+Benchmarking blake3/active-kernel/portable/1
+Benchmarking blake3/active-kernel/portable/1: Warming up for 1.0000 s
+Benchmarking blake3/active-kernel/portable/1: Collecting 15 samples in estimated 2.0000 s (15M iterations)
+Benchmarking blake3/active-kernel/portable/1: Analyzing
+blake3/active-kernel/portable/1
+                        time:   [131.56 ns 133.88 ns 137.67 ns]
+                        thrpt:  [6.9272 MiB/s 7.1236 MiB/s 7.2491 MiB/s]
+Found 2 outliers among 15 measurements (13.33%)
+  2 (13.33%) high severe
+Benchmarking blake3/active-kernel/portable/3
+Benchmarking blake3/active-kernel/portable/3: Warming up for 1.0000 s
+Benchmarking blake3/active-kernel/portable/3: Collecting 15 samples in estimated 2.0000 s (15M iterations)
+Benchmarking blake3/active-kernel/portable/3: Analyzing
+blake3/active-kernel/portable/3
+                        time:   [131.16 ns 131.48 ns 131.78 ns]
+                        thrpt:  [21.711 MiB/s 21.760 MiB/s 21.813 MiB/s]
+Benchmarking blake3/active-kernel/portable/8
+Benchmarking blake3/active-kernel/portable/8: Warming up for 1.0000 s
+Benchmarking blake3/active-kernel/portable/8: Collecting 15 samples in estimated 2.0000 s (15M iterations)
+Benchmarking blake3/active-kernel/portable/8: Analyzing
+blake3/active-kernel/portable/8
+                        time:   [131.14 ns 132.33 ns 133.92 ns]
+                        thrpt:  [56.969 MiB/s 57.653 MiB/s 58.177 MiB/s]
+Found 1 outliers among 15 measurements (6.67%)
+  1 (6.67%) high severe
+Benchmarking blake3/active-kernel/portable/16
+Benchmarking blake3/active-kernel/portable/16: Warming up for 1.0000 s
+Benchmarking blake3/active-kernel/portable/16: Collecting 15 samples in estimated 2.0000 s (15M iterations)
+Benchmarking blake3/active-kernel/portable/16: Analyzing
+blake3/active-kernel/portable/16
+                        time:   [132.35 ns 132.96 ns 133.62 ns]
+                        thrpt:  [114.19 MiB/s 114.76 MiB/s 115.30 MiB/s]
+Found 1 outliers among 15 measurements (6.67%)
+  1 (6.67%) high mild
+Benchmarking blake3/active-kernel/portable/31
+Benchmarking blake3/active-kernel/portable/31: Warming up for 1.0000 s
+Benchmarking blake3/active-kernel/portable/31: Collecting 15 samples in estimated 2.0000 s (15M iterations)
+Benchmarking blake3/active-kernel/portable/31: Analyzing
+blake3/active-kernel/portable/31
+                        time:   [131.75 ns 132.24 ns 132.86 ns]
+                        thrpt:  [222.51 MiB/s 223.57 MiB/s 224.40 MiB/s]
+Found 1 outliers among 15 measurements (6.67%)
+  1 (6.67%) high severe
+Benchmarking blake3/active-kernel/portable/32
+Benchmarking blake3/active-kernel/portable/32: Warming up for 1.0000 s
+Benchmarking blake3/active-kernel/portable/32: Collecting 15 samples in estimated 2.0000 s (15M iterations)
+Benchmarking blake3/active-kernel/portable/32: Analyzing
+blake3/active-kernel/portable/32
+                        time:   [129.44 ns 129.82 ns 130.47 ns]
+                        thrpt:  [233.91 MiB/s 235.07 MiB/s 235.77 MiB/s]
+Found 1 outliers among 15 measurements (6.67%)
+  1 (6.67%) high severe
+Benchmarking blake3/active-kernel/portable/63
+Benchmarking blake3/active-kernel/portable/63: Warming up for 1.0000 s
+Benchmarking blake3/active-kernel/portable/63: Collecting 15 samples in estimated 2.0000 s (15M iterations)
+Benchmarking blake3/active-kernel/portable/63: Analyzing
+blake3/active-kernel/portable/63
+                        time:   [133.61 ns 134.98 ns 136.78 ns]
+                        thrpt:  [439.27 MiB/s 445.12 MiB/s 449.69 MiB/s]
+Found 1 outliers among 15 measurements (6.67%)
+  1 (6.67%) high severe
+Benchmarking blake3/active-kernel/portable/64
+Benchmarking blake3/active-kernel/portable/64: Warming up for 1.0000 s
+Benchmarking blake3/active-kernel/portable/64: Collecting 15 samples in estimated 2.0000 s (15M iterations)
+Benchmarking blake3/active-kernel/portable/64: Analyzing
+blake3/active-kernel/portable/64
+                        time:   [129.74 ns 130.00 ns 130.28 ns]
+                        thrpt:  [468.48 MiB/s 469.49 MiB/s 470.43 MiB/s]
+Found 1 outliers among 15 measurements (6.67%)
+  1 (6.67%) high mild
+Benchmarking blake3/active-kernel/portable/65
+Benchmarking blake3/active-kernel/portable/65: Warming up for 1.0000 s
+Benchmarking blake3/active-kernel/portable/65: Collecting 15 samples in estimated 2.0000 s (7.4M iterations)
+Benchmarking blake3/active-kernel/portable/65: Analyzing
+blake3/active-kernel/portable/65
+                        time:   [269.43 ns 271.06 ns 273.05 ns]
+                        thrpt:  [227.03 MiB/s 228.69 MiB/s 230.07 MiB/s]
+Found 2 outliers among 15 measurements (13.33%)
+  2 (13.33%) high mild
+Benchmarking blake3/active-kernel/portable/128
+Benchmarking blake3/active-kernel/portable/128: Warming up for 1.0000 s
+Benchmarking blake3/active-kernel/portable/128: Collecting 15 samples in estimated 2.0000 s (7.4M iterations)
+Benchmarking blake3/active-kernel/portable/128: Analyzing
+blake3/active-kernel/portable/128
+                        time:   [263.29 ns 264.61 ns 266.06 ns]
+                        thrpt:  [458.81 MiB/s 461.33 MiB/s 463.64 MiB/s]
+Found 1 outliers among 15 measurements (6.67%)
+  1 (6.67%) high mild
+Benchmarking blake3/active-kernel/portable/256
+Benchmarking blake3/active-kernel/portable/256: Warming up for 1.0000 s
+Benchmarking blake3/active-kernel/portable/256: Collecting 15 samples in estimated 2.0000 s (4.0M iterations)
+Benchmarking blake3/active-kernel/portable/256: Analyzing
+blake3/active-kernel/portable/256
+                        time:   [488.55 ns 489.22 ns 489.93 ns]
+                        thrpt:  [498.32 MiB/s 499.04 MiB/s 499.72 MiB/s]
+Benchmarking blake3/active-kernel/s390x/vector/1024
+Benchmarking blake3/active-kernel/s390x/vector/1024: Warming up for 1.0000 s
+Benchmarking blake3/active-kernel/s390x/vector/1024: Collecting 15 samples in estimated 2.0000 s (992k iterations)
+Benchmarking blake3/active-kernel/s390x/vector/1024: Analyzing
+blake3/active-kernel/s390x/vector/1024
+                        time:   [2.0151 µs 2.0171 µs 2.0195 µs]
+                        thrpt:  [483.57 MiB/s 484.13 MiB/s 484.63 MiB/s]
+Found 1 outliers among 15 measurements (6.67%)
+  1 (6.67%) high mild
+Benchmarking blake3/active-kernel/s390x/vector/4096
+Benchmarking blake3/active-kernel/s390x/vector/4096: Warming up for 1.0000 s
+Benchmarking blake3/active-kernel/s390x/vector/4096: Collecting 15 samples in estimated 2.0000 s (549k iterations)
+Benchmarking blake3/active-kernel/s390x/vector/4096: Analyzing
+blake3/active-kernel/s390x/vector/4096
+                        time:   [3.5010 µs 3.5219 µs 3.5469 µs]
+                        thrpt:  [1.0755 GiB/s 1.0831 GiB/s 1.0896 GiB/s]
+Found 3 outliers among 15 measurements (20.00%)
+  3 (20.00%) high severe
+Benchmarking blake3/active-kernel/s390x/vector/16384
+Benchmarking blake3/active-kernel/s390x/vector/16384: Warming up for 1.0000 s
+Benchmarking blake3/active-kernel/s390x/vector/16384: Collecting 15 samples in estimated 2.0001 s (137k iterations)
+Benchmarking blake3/active-kernel/s390x/vector/16384: Analyzing
+blake3/active-kernel/s390x/vector/16384
+                        time:   [14.163 µs 14.267 µs 14.444 µs]
+                        thrpt:  [1.0564 GiB/s 1.0695 GiB/s 1.0774 GiB/s]
+Found 2 outliers among 15 measurements (13.33%)
+  1 (6.67%) high mild
+  1 (6.67%) high severe
+Benchmarking blake3/active-kernel/s390x/vector/65536
+Benchmarking blake3/active-kernel/s390x/vector/65536: Warming up for 1.0000 s
+Benchmarking blake3/active-kernel/s390x/vector/65536: Collecting 15 samples in estimated 2.0006 s (36k iterations)
+Benchmarking blake3/active-kernel/s390x/vector/65536: Analyzing
+blake3/active-kernel/s390x/vector/65536
+                        time:   [53.592 µs 53.770 µs 53.971 µs]
+                        thrpt:  [1.1309 GiB/s 1.1351 GiB/s 1.1389 GiB/s]
+Benchmarking blake3/active-kernel/s390x/vector/1048576
+Benchmarking blake3/active-kernel/s390x/vector/1048576: Warming up for 1.0000 s
+Benchmarking blake3/active-kernel/s390x/vector/1048576: Collecting 15 samples in estimated 2.0011 s (9120 iterations)
+Benchmarking blake3/active-kernel/s390x/vector/1048576: Analyzing
+blake3/active-kernel/s390x/vector/1048576
+                        time:   [216.49 µs 221.74 µs 228.16 µs]
+                        thrpt:  [4.2801 GiB/s 4.4041 GiB/s 4.5109 GiB/s]
+Found 2 outliers among 15 measurements (13.33%)
+  1 (6.67%) high mild
+  1 (6.67%) high severe
+
+Benchmarking blake3/rscrypto-threads/rscrypto/t1/65536
+Benchmarking blake3/rscrypto-threads/rscrypto/t1/65536: Warming up for 2.0000 s
+Benchmarking blake3/rscrypto-threads/rscrypto/t1/65536: Collecting 20 samples in estimated 4.0006 s (74k iterations)
+Benchmarking blake3/rscrypto-threads/rscrypto/t1/65536: Analyzing
+blake3/rscrypto-threads/rscrypto/t1/65536
+                        time:   [54.187 µs 54.536 µs 54.924 µs]
+                        thrpt:  [1.1113 GiB/s 1.1192 GiB/s 1.1264 GiB/s]
+Benchmarking blake3/rscrypto-threads/rscrypto/t2/65536
+Benchmarking blake3/rscrypto-threads/rscrypto/t2/65536: Warming up for 2.0000 s
+Benchmarking blake3/rscrypto-threads/rscrypto/t2/65536: Collecting 20 samples in estimated 4.0002 s (94k iterations)
+Benchmarking blake3/rscrypto-threads/rscrypto/t2/65536: Analyzing
+blake3/rscrypto-threads/rscrypto/t2/65536
+                        time:   [38.934 µs 39.969 µs 41.110 µs]
+                        thrpt:  [1.4847 GiB/s 1.5271 GiB/s 1.5676 GiB/s]
+Benchmarking blake3/rscrypto-threads/rscrypto/t4/65536
+Benchmarking blake3/rscrypto-threads/rscrypto/t4/65536: Warming up for 2.0000 s
+Benchmarking blake3/rscrypto-threads/rscrypto/t4/65536: Collecting 20 samples in estimated 4.0000 s (177k iterations)
+Benchmarking blake3/rscrypto-threads/rscrypto/t4/65536: Analyzing
+blake3/rscrypto-threads/rscrypto/t4/65536
+                        time:   [21.848 µs 22.030 µs 22.277 µs]
+                        thrpt:  [2.7398 GiB/s 2.7705 GiB/s 2.7936 GiB/s]
+Found 4 outliers among 20 measurements (20.00%)
+  3 (15.00%) high mild
+  1 (5.00%) high severe
+Benchmarking blake3/rscrypto-threads/rscrypto/t1/131072
+Benchmarking blake3/rscrypto-threads/rscrypto/t1/131072: Warming up for 2.0000 s
+Benchmarking blake3/rscrypto-threads/rscrypto/t1/131072: Collecting 20 samples in estimated 4.0013 s (37k iterations)
+Benchmarking blake3/rscrypto-threads/rscrypto/t1/131072: Analyzing
+blake3/rscrypto-threads/rscrypto/t1/131072
+                        time:   [106.89 µs 107.57 µs 108.36 µs]
+                        thrpt:  [1.1265 GiB/s 1.1348 GiB/s 1.1420 GiB/s]
+Found 4 outliers among 20 measurements (20.00%)
+  2 (10.00%) high mild
+  2 (10.00%) high severe
+Benchmarking blake3/rscrypto-threads/rscrypto/t2/131072
+Benchmarking blake3/rscrypto-threads/rscrypto/t2/131072: Warming up for 2.0000 s
+Benchmarking blake3/rscrypto-threads/rscrypto/t2/131072: Collecting 20 samples in estimated 4.0008 s (60k iterations)
+Benchmarking blake3/rscrypto-threads/rscrypto/t2/131072: Analyzing
+blake3/rscrypto-threads/rscrypto/t2/131072
+                        time:   [65.658 µs 66.437 µs 67.488 µs]
+                        thrpt:  [1.8088 GiB/s 1.8374 GiB/s 1.8592 GiB/s]
+Found 2 outliers among 20 measurements (10.00%)
+  1 (5.00%) high mild
+  1 (5.00%) high severe
+Benchmarking blake3/rscrypto-threads/rscrypto/t4/131072
+Benchmarking blake3/rscrypto-threads/rscrypto/t4/131072: Warming up for 2.0000 s
+Benchmarking blake3/rscrypto-threads/rscrypto/t4/131072: Collecting 20 samples in estimated 4.0004 s (117k iterations)
+Benchmarking blake3/rscrypto-threads/rscrypto/t4/131072: Analyzing
+blake3/rscrypto-threads/rscrypto/t4/131072
+                        time:   [35.421 µs 36.465 µs 37.813 µs]
+                        thrpt:  [3.2283 GiB/s 3.3476 GiB/s 3.4463 GiB/s]
+Found 2 outliers among 20 measurements (10.00%)
+  1 (5.00%) high mild
+  1 (5.00%) high severe
+Benchmarking blake3/rscrypto-threads/rscrypto/t1/1048576
+Benchmarking blake3/rscrypto-threads/rscrypto/t1/1048576: Warming up for 2.0000 s
+Benchmarking blake3/rscrypto-threads/rscrypto/t1/1048576: Collecting 20 samples in estimated 4.0148 s (4720 iterations)
+Benchmarking blake3/rscrypto-threads/rscrypto/t1/1048576: Analyzing
+blake3/rscrypto-threads/rscrypto/t1/1048576
+                        time:   [847.77 µs 850.38 µs 853.05 µs]
+                        thrpt:  [1.1448 GiB/s 1.1484 GiB/s 1.1519 GiB/s]
+Benchmarking blake3/rscrypto-threads/rscrypto/t2/1048576
+Benchmarking blake3/rscrypto-threads/rscrypto/t2/1048576: Warming up for 2.0000 s
+Benchmarking blake3/rscrypto-threads/rscrypto/t2/1048576: Collecting 20 samples in estimated 4.0059 s (7920 iterations)
+Benchmarking blake3/rscrypto-threads/rscrypto/t2/1048576: Analyzing
+blake3/rscrypto-threads/rscrypto/t2/1048576
+                        time:   [507.65 µs 519.85 µs 533.08 µs]
+                        thrpt:  [1.8319 GiB/s 1.8785 GiB/s 1.9237 GiB/s]
+Found 1 outliers among 20 measurements (5.00%)
+  1 (5.00%) high mild
+Benchmarking blake3/rscrypto-threads/rscrypto/t4/1048576
+Benchmarking blake3/rscrypto-threads/rscrypto/t4/1048576: Warming up for 2.0000 s
+Benchmarking blake3/rscrypto-threads/rscrypto/t4/1048576: Collecting 20 samples in estimated 4.0004 s (10k iterations)
+Benchmarking blake3/rscrypto-threads/rscrypto/t4/1048576: Analyzing
+blake3/rscrypto-threads/rscrypto/t4/1048576
+                        time:   [358.44 µs 376.32 µs 392.63 µs]
+                        thrpt:  [2.4872 GiB/s 2.5951 GiB/s 2.7245 GiB/s]
+Benchmarking blake3/rscrypto-threads/rscrypto/t1/8388608
+Benchmarking blake3/rscrypto-threads/rscrypto/t1/8388608: Warming up for 2.0000 s
+Benchmarking blake3/rscrypto-threads/rscrypto/t1/8388608: Collecting 20 samples in estimated 4.1276 s (600 iterations)
+Benchmarking blake3/rscrypto-threads/rscrypto/t1/8388608: Analyzing
+blake3/rscrypto-threads/rscrypto/t1/8388608
+                        time:   [6.8102 ms 6.8527 ms 6.8997 ms]
+                        thrpt:  [1.1323 GiB/s 1.1401 GiB/s 1.1472 GiB/s]
+Found 1 outliers among 20 measurements (5.00%)
+  1 (5.00%) high mild
+Benchmarking blake3/rscrypto-threads/rscrypto/t2/8388608
+Benchmarking blake3/rscrypto-threads/rscrypto/t2/8388608: Warming up for 2.0000 s
+Benchmarking blake3/rscrypto-threads/rscrypto/t2/8388608: Collecting 20 samples in estimated 4.0287 s (1120 iterations)
+Benchmarking blake3/rscrypto-threads/rscrypto/t2/8388608: Analyzing
+blake3/rscrypto-threads/rscrypto/t2/8388608
+                        time:   [3.3570 ms 3.4019 ms 3.4581 ms]
+                        thrpt:  [2.2592 GiB/s 2.2965 GiB/s 2.3272 GiB/s]
+Found 2 outliers among 20 measurements (10.00%)
+  2 (10.00%) high mild
+Benchmarking blake3/rscrypto-threads/rscrypto/t4/8388608
+Benchmarking blake3/rscrypto-threads/rscrypto/t4/8388608: Warming up for 2.0000 s
+Benchmarking blake3/rscrypto-threads/rscrypto/t4/8388608: Collecting 20 samples in estimated 4.0162 s (2340 iterations)
+Benchmarking blake3/rscrypto-threads/rscrypto/t4/8388608: Analyzing
+blake3/rscrypto-threads/rscrypto/t4/8388608
+                        time:   [1.6986 ms 1.7560 ms 1.8349 ms]
+                        thrpt:  [4.2577 GiB/s 4.4491 GiB/s 4.5993 GiB/s]
+Found 2 outliers among 20 measurements (10.00%)
+  2 (10.00%) high severe
+
+
+=== BLAKE3 Streaming Dispatch Decisions ===
+
+--- plain (flags=0x0) ---
+  len=       0: stream=portable     bulk=portable     parallel=no  (min_bytes=163840, max_threads=12, actual_threads=1)
+  len=       1: stream=portable     bulk=portable     parallel=no  (min_bytes=163840, max_threads=12, actual_threads=1)
+  len=       3: stream=portable     bulk=portable     parallel=no  (min_bytes=163840, max_threads=12, actual_threads=1)
+  len=       8: stream=portable     bulk=portable     parallel=no  (min_bytes=163840, max_threads=12, actual_threads=1)
+  len=      16: stream=portable     bulk=portable     parallel=no  (min_bytes=163840, max_threads=12, actual_threads=1)
+  len=      31: stream=portable     bulk=portable     parallel=no  (min_bytes=163840, max_threads=12, actual_threads=1)
+  len=      32: stream=portable     bulk=portable     parallel=no  (min_bytes=163840, max_threads=12, actual_threads=1)
+  len=      63: stream=portable     bulk=portable     parallel=no  (min_bytes=163840, max_threads=12, actual_threads=1)
+  len=      64: stream=portable     bulk=portable     parallel=no  (min_bytes=163840, max_threads=12, actual_threads=1)
+  len=      65: stream=portable     bulk=portable     parallel=no  (min_bytes=163840, max_threads=12, actual_threads=1)
+  len=     128: stream=portable     bulk=portable     parallel=no  (min_bytes=163840, max_threads=12, actual_threads=1)
+  len=     256: stream=portable     bulk=portable     parallel=no  (min_bytes=163840, max_threads=12, actual_threads=1)
+  len=    1024: stream=portable     bulk=portable     parallel=no  (min_bytes=163840, max_threads=12, actual_threads=1)
+  len=    4096: stream=portable     bulk=portable     parallel=no  (min_bytes=163840, max_threads=12, actual_threads=1)
+  len=   16384: stream=portable     bulk=portable     parallel=no  (min_bytes=163840, max_threads=12, actual_threads=1)
+  len=   65536: stream=portable     bulk=s390x/vector parallel=no  (min_bytes=163840, max_threads=12, actual_threads=1)
+  len= 1048576: stream=portable     bulk=s390x/vector parallel=YES (min_bytes=163840, max_threads=12, actual_threads=3)
+
+--- keyed (flags=0x10) ---
+  len=       0: stream=portable     bulk=portable     parallel=no  (min_bytes=163840, max_threads=12, actual_threads=1)
+  len=       1: stream=portable     bulk=portable     parallel=no  (min_bytes=163840, max_threads=12, actual_threads=1)
+  len=       3: stream=portable     bulk=portable     parallel=no  (min_bytes=163840, max_threads=12, actual_threads=1)
+  len=       8: stream=portable     bulk=portable     parallel=no  (min_bytes=163840, max_threads=12, actual_threads=1)
+  len=      16: stream=portable     bulk=portable     parallel=no  (min_bytes=163840, max_threads=12, actual_threads=1)
+  len=      31: stream=portable     bulk=portable     parallel=no  (min_bytes=163840, max_threads=12, actual_threads=1)
+  len=      32: stream=portable     bulk=portable     parallel=no  (min_bytes=163840, max_threads=12, actual_threads=1)
+  len=      63: stream=portable     bulk=portable     parallel=no  (min_bytes=163840, max_threads=12, actual_threads=1)
+  len=      64: stream=portable     bulk=portable     parallel=no  (min_bytes=163840, max_threads=12, actual_threads=1)
+  len=      65: stream=portable     bulk=portable     parallel=no  (min_bytes=163840, max_threads=12, actual_threads=1)
+  len=     128: stream=portable     bulk=portable     parallel=no  (min_bytes=163840, max_threads=12, actual_threads=1)
+  len=     256: stream=portable     bulk=portable     parallel=no  (min_bytes=163840, max_threads=12, actual_threads=1)
+  len=    1024: stream=portable     bulk=portable     parallel=no  (min_bytes=163840, max_threads=12, actual_threads=1)
+  len=    4096: stream=portable     bulk=portable     parallel=no  (min_bytes=163840, max_threads=12, actual_threads=1)
+  len=   16384: stream=portable     bulk=portable     parallel=no  (min_bytes=163840, max_threads=12, actual_threads=1)
+  len=   65536: stream=portable     bulk=s390x/vector parallel=no  (min_bytes=163840, max_threads=12, actual_threads=1)
+  len= 1048576: stream=portable     bulk=s390x/vector parallel=YES (min_bytes=163840, max_threads=12, actual_threads=3)
+
+--- derive-key (flags=0x40) ---
+  len=       0: stream=portable     bulk=portable     parallel=no  (min_bytes=163840, max_threads=12, actual_threads=1)
+  len=       1: stream=portable     bulk=portable     parallel=no  (min_bytes=163840, max_threads=12, actual_threads=1)
+  len=       3: stream=portable     bulk=portable     parallel=no  (min_bytes=163840, max_threads=12, actual_threads=1)
+  len=       8: stream=portable     bulk=portable     parallel=no  (min_bytes=163840, max_threads=12, actual_threads=1)
+  len=      16: stream=portable     bulk=portable     parallel=no  (min_bytes=163840, max_threads=12, actual_threads=1)
+  len=      31: stream=portable     bulk=portable     parallel=no  (min_bytes=163840, max_threads=12, actual_threads=1)
+  len=      32: stream=portable     bulk=portable     parallel=no  (min_bytes=163840, max_threads=12, actual_threads=1)
+  len=      63: stream=portable     bulk=portable     parallel=no  (min_bytes=163840, max_threads=12, actual_threads=1)
+  len=      64: stream=portable     bulk=portable     parallel=no  (min_bytes=163840, max_threads=12, actual_threads=1)
+  len=      65: stream=portable     bulk=portable     parallel=no  (min_bytes=163840, max_threads=12, actual_threads=1)
+  len=     128: stream=portable     bulk=portable     parallel=no  (min_bytes=163840, max_threads=12, actual_threads=1)
+  len=     256: stream=portable     bulk=portable     parallel=no  (min_bytes=163840, max_threads=12, actual_threads=1)
+  len=    1024: stream=portable     bulk=portable     parallel=no  (min_bytes=163840, max_threads=12, actual_threads=1)
+  len=    4096: stream=portable     bulk=portable     parallel=no  (min_bytes=163840, max_threads=12, actual_threads=1)
+  len=   16384: stream=portable     bulk=portable     parallel=no  (min_bytes=163840, max_threads=12, actual_threads=1)
+  len=   65536: stream=portable     bulk=s390x/vector parallel=no  (min_bytes=163840, max_threads=12, actual_threads=1)
+  len= 1048576: stream=portable     bulk=s390x/vector parallel=YES (min_bytes=163840, max_threads=12, actual_threads=3)
+
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/0
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/0: Warming up for 200.00 ms
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/0: Collecting 10 samples in estimated 500.01 ms (3.0M iterations)
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/0: Analyzing
+blake3/streaming-dispatch/plain/portable+portable/0
+                        time:   [165.39 ns 170.08 ns 178.86 ns]
+                        thrpt:  [5.5909 Melem/s 5.8797 Melem/s 6.0462 Melem/s]
+Found 1 outliers among 10 measurements (10.00%)
+  1 (10.00%) high severe
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/1
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/1: Warming up for 200.00 ms
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/1: Collecting 10 samples in estimated 500.01 ms (3.0M iterations)
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/1: Analyzing
+blake3/streaming-dispatch/plain/portable+portable/1
+                        time:   [167.92 ns 168.30 ns 168.96 ns]
+                        thrpt:  [5.6444 MiB/s 5.6665 MiB/s 5.6795 MiB/s]
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/3
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/3: Warming up for 200.00 ms
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/3: Collecting 10 samples in estimated 500.00 ms (2.8M iterations)
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/3: Analyzing
+blake3/streaming-dispatch/plain/portable+portable/3
+                        time:   [175.89 ns 178.75 ns 182.64 ns]
+                        thrpt:  [15.665 MiB/s 16.006 MiB/s 16.266 MiB/s]
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/8
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/8: Warming up for 200.00 ms
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/8: Collecting 10 samples in estimated 500.01 ms (2.9M iterations)
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/8: Analyzing
+blake3/streaming-dispatch/plain/portable+portable/8
+                        time:   [165.84 ns 166.27 ns 167.02 ns]
+                        thrpt:  [45.680 MiB/s 45.886 MiB/s 46.005 MiB/s]
+Found 1 outliers among 10 measurements (10.00%)
+  1 (10.00%) high severe
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/16
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/16: Warming up for 200.00 ms
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/16: Collecting 10 samples in estimated 500.01 ms (3.0M iterations)
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/16: Analyzing
+blake3/streaming-dispatch/plain/portable+portable/16
+                        time:   [166.22 ns 166.69 ns 167.01 ns]
+                        thrpt:  [91.364 MiB/s 91.540 MiB/s 91.797 MiB/s]
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/31
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/31: Warming up for 200.00 ms
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/31: Collecting 10 samples in estimated 500.00 ms (3.0M iterations)
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/31: Analyzing
+blake3/streaming-dispatch/plain/portable+portable/31
+                        time:   [168.79 ns 169.46 ns 170.01 ns]
+                        thrpt:  [173.90 MiB/s 174.46 MiB/s 175.15 MiB/s]
+Found 1 outliers among 10 measurements (10.00%)
+  1 (10.00%) high mild
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/32
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/32: Warming up for 200.00 ms
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/32: Collecting 10 samples in estimated 500.00 ms (3.0M iterations)
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/32: Analyzing
+blake3/streaming-dispatch/plain/portable+portable/32
+                        time:   [164.84 ns 165.50 ns 166.21 ns]
+                        thrpt:  [183.61 MiB/s 184.39 MiB/s 185.13 MiB/s]
+Found 1 outliers among 10 measurements (10.00%)
+  1 (10.00%) high mild
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/63
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/63: Warming up for 200.00 ms
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/63: Collecting 10 samples in estimated 500.00 ms (3.0M iterations)
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/63: Analyzing
+blake3/streaming-dispatch/plain/portable+portable/63
+                        time:   [171.52 ns 179.93 ns 189.81 ns]
+                        thrpt:  [316.53 MiB/s 333.92 MiB/s 350.29 MiB/s]
+Found 1 outliers among 10 measurements (10.00%)
+  1 (10.00%) high severe
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/64
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/64: Warming up for 200.00 ms
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/64: Collecting 10 samples in estimated 500.01 ms (3.0M iterations)
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/64: Analyzing
+blake3/streaming-dispatch/plain/portable+portable/64
+                        time:   [164.56 ns 165.07 ns 165.33 ns]
+                        thrpt:  [369.17 MiB/s 369.75 MiB/s 370.89 MiB/s]
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/65
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/65: Warming up for 200.00 ms
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/65: Collecting 10 samples in estimated 500.00 ms (1.4M iterations)
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/65: Analyzing
+blake3/streaming-dispatch/plain/portable+portable/65
+                        time:   [344.26 ns 344.89 ns 345.59 ns]
+                        thrpt:  [179.37 MiB/s 179.73 MiB/s 180.06 MiB/s]
+Found 1 outliers among 10 measurements (10.00%)
+  1 (10.00%) low severe
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/128
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/128: Warming up for 200.00 ms
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/128: Collecting 10 samples in estimated 500.01 ms (1.4M iterations)
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/128: Analyzing
+blake3/streaming-dispatch/plain/portable+portable/128
+                        time:   [339.01 ns 339.53 ns 340.29 ns]
+                        thrpt:  [358.73 MiB/s 359.52 MiB/s 360.08 MiB/s]
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/256
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/256: Warming up for 200.00 ms
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/256: Collecting 10 samples in estimated 500.01 ms (879k iterations)
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/256: Analyzing
+blake3/streaming-dispatch/plain/portable+portable/256
+                        time:   [565.01 ns 579.26 ns 589.35 ns]
+                        thrpt:  [414.26 MiB/s 421.47 MiB/s 432.10 MiB/s]
+Found 2 outliers among 10 measurements (20.00%)
+  2 (20.00%) high severe
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/1024
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/1024: Warming up for 200.00 ms
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/1024: Collecting 10 samples in estimated 500.06 ms (256k iterations)
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/1024: Analyzing
+blake3/streaming-dispatch/plain/portable+portable/1024
+                        time:   [1.9411 µs 1.9445 µs 1.9493 µs]
+                        thrpt:  [500.98 MiB/s 502.21 MiB/s 503.11 MiB/s]
+Found 2 outliers among 10 measurements (20.00%)
+  1 (10.00%) high mild
+  1 (10.00%) high severe
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/4096
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/4096: Warming up for 200.00 ms
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/4096: Collecting 10 samples in estimated 500.27 ms (62k iterations)
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/4096: Analyzing
+blake3/streaming-dispatch/plain/portable+portable/4096
+                        time:   [8.0404 µs 8.0742 µs 8.1639 µs]
+                        thrpt:  [478.48 MiB/s 483.79 MiB/s 485.83 MiB/s]
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/16384
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/16384: Warming up for 200.00 ms
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/16384: Collecting 10 samples in estimated 500.95 ms (15k iterations)
+Benchmarking blake3/streaming-dispatch/plain/portable+portable/16384: Analyzing
+blake3/streaming-dispatch/plain/portable+portable/16384
+                        time:   [32.377 µs 32.390 µs 32.411 µs]
+                        thrpt:  [482.09 MiB/s 482.40 MiB/s 482.60 MiB/s]
+Found 2 outliers among 10 measurements (20.00%)
+  1 (10.00%) high mild
+  1 (10.00%) high severe
+Benchmarking blake3/streaming-dispatch/plain/portable+s390x/vector/65536
+Benchmarking blake3/streaming-dispatch/plain/portable+s390x/vector/65536: Warming up for 200.00 ms
+Benchmarking blake3/streaming-dispatch/plain/portable+s390x/vector/65536: Collecting 10 samples in estimated 500.32 ms (9350 iterations)
+Benchmarking blake3/streaming-dispatch/plain/portable+s390x/vector/65536: Analyzing
+blake3/streaming-dispatch/plain/portable+s390x/vector/65536
+                        time:   [53.627 µs 53.825 µs 54.014 µs]
+                        thrpt:  [1.1300 GiB/s 1.1340 GiB/s 1.1381 GiB/s]
+Found 4 outliers among 10 measurements (40.00%)
+  1 (10.00%) low severe
+  1 (10.00%) low mild
+  2 (20.00%) high mild
+Benchmarking blake3/streaming-dispatch/plain/portable+s390x/vector/1048576
+Benchmarking blake3/streaming-dispatch/plain/portable+s390x/vector/1048576: Warming up for 200.00 ms
+Benchmarking blake3/streaming-dispatch/plain/portable+s390x/vector/1048576: Collecting 10 samples in estimated 504.66 ms (935 iterations)
+Benchmarking blake3/streaming-dispatch/plain/portable+s390x/vector/1048576: Analyzing
+blake3/streaming-dispatch/plain/portable+s390x/vector/1048576
+                        time:   [521.33 µs 535.17 µs 548.43 µs]
+                        thrpt:  [1.7807 GiB/s 1.8248 GiB/s 1.8732 GiB/s]
+Found 1 outliers among 10 measurements (10.00%)
+  1 (10.00%) high mild
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/0
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/0: Warming up for 200.00 ms
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/0: Collecting 10 samples in estimated 500.00 ms (3.1M iterations)
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/0: Analyzing
+blake3/streaming-dispatch/keyed/portable+portable/0
+                        time:   [161.12 ns 162.32 ns 164.49 ns]
+                        thrpt:  [6.0795 Melem/s 6.1605 Melem/s 6.2066 Melem/s]
+Found 1 outliers among 10 measurements (10.00%)
+  1 (10.00%) high severe
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/1
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/1: Warming up for 200.00 ms
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/1: Collecting 10 samples in estimated 500.00 ms (3.1M iterations)
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/1: Analyzing
+blake3/streaming-dispatch/keyed/portable+portable/1
+                        time:   [163.48 ns 163.86 ns 164.42 ns]
+                        thrpt:  [5.8003 MiB/s 5.8201 MiB/s 5.8336 MiB/s]
+Found 1 outliers among 10 measurements (10.00%)
+  1 (10.00%) high mild
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/3
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/3: Warming up for 200.00 ms
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/3: Collecting 10 samples in estimated 500.00 ms (3.0M iterations)
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/3: Analyzing
+blake3/streaming-dispatch/keyed/portable+portable/3
+                        time:   [164.44 ns 165.53 ns 166.71 ns]
+                        thrpt:  [17.162 MiB/s 17.284 MiB/s 17.398 MiB/s]
+Found 1 outliers among 10 measurements (10.00%)
+  1 (10.00%) low mild
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/8
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/8: Warming up for 200.00 ms
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/8: Collecting 10 samples in estimated 500.01 ms (3.1M iterations)
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/8: Analyzing
+blake3/streaming-dispatch/keyed/portable+portable/8
+                        time:   [161.96 ns 162.73 ns 163.58 ns]
+                        thrpt:  [46.640 MiB/s 46.884 MiB/s 47.107 MiB/s]
+Found 2 outliers among 10 measurements (20.00%)
+  1 (10.00%) low mild
+  1 (10.00%) high severe
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/16
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/16: Warming up for 200.00 ms
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/16: Collecting 10 samples in estimated 500.01 ms (3.1M iterations)
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/16: Analyzing
+blake3/streaming-dispatch/keyed/portable+portable/16
+                        time:   [161.43 ns 162.11 ns 162.83 ns]
+                        thrpt:  [93.709 MiB/s 94.129 MiB/s 94.524 MiB/s]
+Found 1 outliers among 10 measurements (10.00%)
+  1 (10.00%) low mild
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/31
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/31: Warming up for 200.00 ms
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/31: Collecting 10 samples in estimated 500.00 ms (3.1M iterations)
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/31: Analyzing
+blake3/streaming-dispatch/keyed/portable+portable/31
+                        time:   [162.70 ns 162.94 ns 163.28 ns]
+                        thrpt:  [181.06 MiB/s 181.44 MiB/s 181.71 MiB/s]
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/32
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/32: Warming up for 200.00 ms
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/32: Collecting 10 samples in estimated 500.00 ms (3.1M iterations)
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/32: Analyzing
+blake3/streaming-dispatch/keyed/portable+portable/32
+                        time:   [167.18 ns 172.13 ns 176.98 ns]
+                        thrpt:  [172.43 MiB/s 177.29 MiB/s 182.54 MiB/s]
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/63
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/63: Warming up for 200.00 ms
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/63: Collecting 10 samples in estimated 500.01 ms (3.0M iterations)
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/63: Analyzing
+blake3/streaming-dispatch/keyed/portable+portable/63
+                        time:   [163.77 ns 164.78 ns 166.65 ns]
+                        thrpt:  [360.53 MiB/s 364.63 MiB/s 366.87 MiB/s]
+Found 1 outliers among 10 measurements (10.00%)
+  1 (10.00%) high severe
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/64
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/64: Warming up for 200.00 ms
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/64: Collecting 10 samples in estimated 500.01 ms (3.1M iterations)
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/64: Analyzing
+blake3/streaming-dispatch/keyed/portable+portable/64
+                        time:   [162.04 ns 162.44 ns 162.84 ns]
+                        thrpt:  [374.82 MiB/s 375.74 MiB/s 376.67 MiB/s]
+Found 1 outliers among 10 measurements (10.00%)
+  1 (10.00%) high severe
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/65
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/65: Warming up for 200.00 ms
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/65: Collecting 10 samples in estimated 500.01 ms (1.4M iterations)
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/65: Analyzing
+blake3/streaming-dispatch/keyed/portable+portable/65
+                        time:   [341.47 ns 344.40 ns 348.51 ns]
+                        thrpt:  [177.87 MiB/s 179.99 MiB/s 181.53 MiB/s]
+Found 1 outliers among 10 measurements (10.00%)
+  1 (10.00%) high mild
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/128
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/128: Warming up for 200.00 ms
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/128: Collecting 10 samples in estimated 500.00 ms (1.5M iterations)
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/128: Analyzing
+blake3/streaming-dispatch/keyed/portable+portable/128
+                        time:   [337.21 ns 337.89 ns 339.13 ns]
+                        thrpt:  [359.95 MiB/s 361.27 MiB/s 362.01 MiB/s]
+Found 2 outliers among 10 measurements (20.00%)
+  2 (20.00%) high severe
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/256
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/256: Warming up for 200.00 ms
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/256: Collecting 10 samples in estimated 500.02 ms (881k iterations)
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/256: Analyzing
+blake3/streaming-dispatch/keyed/portable+portable/256
+                        time:   [569.07 ns 572.45 ns 574.37 ns]
+                        thrpt:  [425.06 MiB/s 426.49 MiB/s 429.02 MiB/s]
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/1024
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/1024: Warming up for 200.00 ms
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/1024: Collecting 10 samples in estimated 500.05 ms (255k iterations)
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/1024: Analyzing
+blake3/streaming-dispatch/keyed/portable+portable/1024
+                        time:   [1.9438 µs 1.9484 µs 1.9514 µs]
+                        thrpt:  [500.45 MiB/s 501.22 MiB/s 502.40 MiB/s]
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/4096
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/4096: Warming up for 200.00 ms
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/4096: Collecting 10 samples in estimated 500.19 ms (59k iterations)
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/4096: Analyzing
+blake3/streaming-dispatch/keyed/portable+portable/4096
+                        time:   [8.0469 µs 8.0669 µs 8.0834 µs]
+                        thrpt:  [483.24 MiB/s 484.23 MiB/s 485.43 MiB/s]
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/16384
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/16384: Warming up for 200.00 ms
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/16384: Collecting 10 samples in estimated 501.48 ms (15k iterations)
+Benchmarking blake3/streaming-dispatch/keyed/portable+portable/16384: Analyzing
+blake3/streaming-dispatch/keyed/portable+portable/16384
+                        time:   [32.836 µs 33.020 µs 33.247 µs]
+                        thrpt:  [469.97 MiB/s 473.19 MiB/s 475.86 MiB/s]
+Found 2 outliers among 10 measurements (20.00%)
+  2 (20.00%) high severe
+Benchmarking blake3/streaming-dispatch/keyed/portable+s390x/vector/65536
+Benchmarking blake3/streaming-dispatch/keyed/portable+s390x/vector/65536: Warming up for 200.00 ms
+Benchmarking blake3/streaming-dispatch/keyed/portable+s390x/vector/65536: Collecting 10 samples in estimated 502.06 ms (9350 iterations)
+Benchmarking blake3/streaming-dispatch/keyed/portable+s390x/vector/65536: Analyzing
+blake3/streaming-dispatch/keyed/portable+s390x/vector/65536
+                        time:   [54.054 µs 54.819 µs 56.127 µs]
+                        thrpt:  [1.0874 GiB/s 1.1134 GiB/s 1.1292 GiB/s]
+Benchmarking blake3/streaming-dispatch/keyed/portable+s390x/vector/1048576
+Benchmarking blake3/streaming-dispatch/keyed/portable+s390x/vector/1048576: Warming up for 200.00 ms
+Benchmarking blake3/streaming-dispatch/keyed/portable+s390x/vector/1048576: Collecting 10 samples in estimated 511.31 ms (935 iterations)
+Benchmarking blake3/streaming-dispatch/keyed/portable+s390x/vector/1048576: Analyzing
+blake3/streaming-dispatch/keyed/portable+s390x/vector/1048576
+                        time:   [560.05 µs 569.17 µs 584.04 µs]
+                        thrpt:  [1.6721 GiB/s 1.7158 GiB/s 1.7437 GiB/s]
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/0
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/0: Warming up for 200.00 ms
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/0: Collecting 10 samples in estimated 500.01 ms (2.9M iterations)
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/0: Analyzing
+blake3/streaming-dispatch/derive-key/portable+portable/0
+                        time:   [176.55 ns 177.78 ns 179.21 ns]
+                        thrpt:  [5.5801 Melem/s 5.6249 Melem/s 5.6642 Melem/s]
+Found 2 outliers among 10 measurements (20.00%)
+  1 (10.00%) high mild
+  1 (10.00%) high severe
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/1
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/1: Warming up for 200.00 ms
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/1: Collecting 10 samples in estimated 500.01 ms (2.8M iterations)
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/1: Analyzing
+blake3/streaming-dispatch/derive-key/portable+portable/1
+                        time:   [177.84 ns 178.84 ns 179.66 ns]
+                        thrpt:  [5.3083 MiB/s 5.3324 MiB/s 5.3627 MiB/s]
+Found 2 outliers among 10 measurements (20.00%)
+  2 (20.00%) low severe
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/3
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/3: Warming up for 200.00 ms
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/3: Collecting 10 samples in estimated 500.01 ms (2.8M iterations)
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/3: Analyzing
+blake3/streaming-dispatch/derive-key/portable+portable/3
+                        time:   [178.69 ns 179.58 ns 180.57 ns]
+                        thrpt:  [15.845 MiB/s 15.931 MiB/s 16.011 MiB/s]
+Found 1 outliers among 10 measurements (10.00%)
+  1 (10.00%) low mild
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/8
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/8: Warming up for 200.00 ms
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/8: Collecting 10 samples in estimated 500.01 ms (2.8M iterations)
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/8: Analyzing
+blake3/streaming-dispatch/derive-key/portable+portable/8
+                        time:   [178.23 ns 186.17 ns 199.31 ns]
+                        thrpt:  [38.278 MiB/s 40.981 MiB/s 42.807 MiB/s]
+Found 3 outliers among 10 measurements (30.00%)
+  1 (10.00%) low mild
+  1 (10.00%) high mild
+  1 (10.00%) high severe
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/16
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/16: Warming up for 200.00 ms
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/16: Collecting 10 samples in estimated 500.00 ms (2.8M iterations)
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/16: Analyzing
+blake3/streaming-dispatch/derive-key/portable+portable/16
+                        time:   [177.85 ns 178.84 ns 179.66 ns]
+                        thrpt:  [84.931 MiB/s 85.320 MiB/s 85.796 MiB/s]
+Found 2 outliers among 10 measurements (20.00%)
+  2 (20.00%) low mild
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/31
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/31: Warming up for 200.00 ms
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/31: Collecting 10 samples in estimated 500.01 ms (2.8M iterations)
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/31: Analyzing
+blake3/streaming-dispatch/derive-key/portable+portable/31
+                        time:   [177.58 ns 178.64 ns 179.65 ns]
+                        thrpt:  [164.56 MiB/s 165.50 MiB/s 166.48 MiB/s]
+Found 3 outliers among 10 measurements (30.00%)
+  2 (20.00%) low mild
+  1 (10.00%) high mild
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/32
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/32: Warming up for 200.00 ms
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/32: Collecting 10 samples in estimated 500.01 ms (2.8M iterations)
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/32: Analyzing
+blake3/streaming-dispatch/derive-key/portable+portable/32
+                        time:   [178.85 ns 180.19 ns 182.12 ns]
+                        thrpt:  [167.56 MiB/s 169.36 MiB/s 170.64 MiB/s]
+Found 2 outliers among 10 measurements (20.00%)
+  1 (10.00%) low mild
+  1 (10.00%) high severe
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/63
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/63: Warming up for 200.00 ms
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/63: Collecting 10 samples in estimated 500.00 ms (2.7M iterations)
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/63: Analyzing
+blake3/streaming-dispatch/derive-key/portable+portable/63
+                        time:   [178.46 ns 181.19 ns 185.77 ns]
+                        thrpt:  [323.42 MiB/s 331.59 MiB/s 336.66 MiB/s]
+Found 2 outliers among 10 measurements (20.00%)
+  1 (10.00%) low severe
+  1 (10.00%) high severe
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/64
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/64: Warming up for 200.00 ms
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/64: Collecting 10 samples in estimated 500.01 ms (2.8M iterations)
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/64: Analyzing
+blake3/streaming-dispatch/derive-key/portable+portable/64
+                        time:   [177.36 ns 178.03 ns 178.76 ns]
+                        thrpt:  [341.44 MiB/s 342.84 MiB/s 344.13 MiB/s]
+Found 1 outliers among 10 measurements (10.00%)
+  1 (10.00%) low severe
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/65
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/65: Warming up for 200.00 ms
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/65: Collecting 10 samples in estimated 500.00 ms (1.4M iterations)
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/65: Analyzing
+blake3/streaming-dispatch/derive-key/portable+portable/65
+                        time:   [352.46 ns 355.03 ns 356.84 ns]
+                        thrpt:  [173.71 MiB/s 174.60 MiB/s 175.88 MiB/s]
+Found 2 outliers among 10 measurements (20.00%)
+  2 (20.00%) low severe
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/128
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/128: Warming up for 200.00 ms
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/128: Collecting 10 samples in estimated 500.00 ms (1.4M iterations)
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/128: Analyzing
+blake3/streaming-dispatch/derive-key/portable+portable/128
+                        time:   [348.94 ns 349.94 ns 351.12 ns]
+                        thrpt:  [347.66 MiB/s 348.83 MiB/s 349.84 MiB/s]
+Found 3 outliers among 10 measurements (30.00%)
+  2 (20.00%) low severe
+  1 (10.00%) high severe
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/256
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/256: Warming up for 200.00 ms
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/256: Collecting 10 samples in estimated 500.03 ms (848k iterations)
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/256: Analyzing
+blake3/streaming-dispatch/derive-key/portable+portable/256
+                        time:   [574.52 ns 576.36 ns 578.38 ns]
+                        thrpt:  [422.11 MiB/s 423.59 MiB/s 424.95 MiB/s]
+Found 2 outliers among 10 measurements (20.00%)
+  1 (10.00%) low mild
+  1 (10.00%) high severe
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/1024
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/1024: Warming up for 200.00 ms
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/1024: Collecting 10 samples in estimated 500.09 ms (254k iterations)
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/1024: Analyzing
+blake3/streaming-dispatch/derive-key/portable+portable/1024
+                        time:   [1.9540 µs 1.9586 µs 1.9712 µs]
+                        thrpt:  [495.42 MiB/s 498.61 MiB/s 499.79 MiB/s]
+Found 2 outliers among 10 measurements (20.00%)
+  1 (10.00%) high mild
+  1 (10.00%) high severe
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/4096
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/4096: Warming up for 200.00 ms
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/4096: Collecting 10 samples in estimated 500.18 ms (62k iterations)
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/4096: Analyzing
+blake3/streaming-dispatch/derive-key/portable+portable/4096
+                        time:   [8.0345 µs 8.0376 µs 8.0425 µs]
+                        thrpt:  [485.70 MiB/s 486.00 MiB/s 486.19 MiB/s]
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/16384
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/16384: Warming up for 200.00 ms
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/16384: Collecting 10 samples in estimated 500.08 ms (15k iterations)
+Benchmarking blake3/streaming-dispatch/derive-key/portable+portable/16384: Analyzing
+blake3/streaming-dispatch/derive-key/portable+portable/16384
+                        time:   [32.431 µs 32.506 µs 32.558 µs]
+                        thrpt:  [479.91 MiB/s 480.68 MiB/s 481.79 MiB/s]
+Benchmarking blake3/streaming-dispatch/derive-key/portable+s390x/vector/65536
+Benchmarking blake3/streaming-dispatch/derive-key/portable+s390x/vector/65536: Warming up for 200.00 ms
+Benchmarking blake3/streaming-dispatch/derive-key/portable+s390x/vector/65536: Collecting 10 samples in estimated 500.40 ms (9350 iterations)
+Benchmarking blake3/streaming-dispatch/derive-key/portable+s390x/vector/65536: Analyzing
+blake3/streaming-dispatch/derive-key/portable+s390x/vector/65536
+                        time:   [53.707 µs 53.791 µs 53.899 µs]
+                        thrpt:  [1.1324 GiB/s 1.1347 GiB/s 1.1364 GiB/s]
+Found 1 outliers among 10 measurements (10.00%)
+  1 (10.00%) low mild
+Benchmarking blake3/streaming-dispatch/derive-key/portable+s390x/vector/1048576
+Benchmarking blake3/streaming-dispatch/derive-key/portable+s390x/vector/1048576: Warming up for 200.00 ms
+Benchmarking blake3/streaming-dispatch/derive-key/portable+s390x/vector/1048576: Collecting 10 samples in estimated 523.97 ms (990 iterations)
+Benchmarking blake3/streaming-dispatch/derive-key/portable+s390x/vector/1048576: Analyzing
+blake3/streaming-dispatch/derive-key/portable+s390x/vector/1048576
+                        time:   [528.12 µs 530.97 µs 536.26 µs]
+                        thrpt:  [1.8211 GiB/s 1.8392 GiB/s 1.8491 GiB/s]
+Found 3 outliers among 10 measurements (30.00%)
+  1 (10.00%) low mild
+  1 (10.00%) high mild
+  1 (10.00%) high severe

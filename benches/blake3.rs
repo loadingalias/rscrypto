@@ -1,0 +1,1035 @@
+//! BLAKE3 dedicated benchmarks.
+//!
+//! This benchmark file focuses exclusively on BLAKE3 to enable detailed
+//! performance analysis and comparison with the official blake3 crate.
+
+use core::{hint::black_box, time::Duration};
+
+use criterion::{BatchSize, BenchmarkId, Criterion, SamplingMode, Throughput, criterion_group, criterion_main};
+use rscrypto::{
+  hashes::{
+    bench as microbench,
+    crypto::{
+      Blake3,
+      blake3::{__bench, dispatch, dispatch_tables},
+    },
+  },
+  traits::{Digest as _, Xof as _},
+};
+
+mod common;
+
+#[inline]
+fn extended_enabled() -> bool {
+  std::env::var("RSCRYPTO_BLAKE3_BENCH_EXTENDED").is_ok()
+}
+
+#[inline]
+fn diagnostics_enabled() -> bool {
+  std::env::var("RSCRYPTO_BLAKE3_BENCH_DIAGNOSTICS").is_ok()
+}
+
+#[inline]
+fn official_hash_bytes(input: &[u8]) -> [u8; 32] {
+  *blake3::hash(input).as_bytes()
+}
+
+#[inline]
+fn official_hash_bytes_rayon(input: &[u8]) -> [u8; 32] {
+  // NOTE: `blake3::hash()` is always single-threaded, even when built with the `rayon` feature.
+  // The official crate’s parallel API is `Hasher::update_rayon`.
+  let mut h = blake3::Hasher::new();
+  h.update_rayon(input);
+  *h.finalize().as_bytes()
+}
+
+#[inline]
+fn black_box_ref<T: ?Sized>(value: &T) {
+  let _ = black_box(value);
+}
+
+#[inline]
+fn black_box_mut<T: ?Sized>(value: &mut T) {
+  let _ = black_box(value);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// One-shot Comparison Benchmarks
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn blake3_oneshot_comparison(c: &mut Criterion) {
+  let inputs = common::sized_inputs();
+  let mut group = c.benchmark_group("blake3/oneshot");
+  group.sample_size(40);
+  group.warm_up_time(Duration::from_secs(2));
+  group.measurement_time(Duration::from_secs(4));
+  group.sampling_mode(SamplingMode::Flat);
+
+  for (len, data) in &inputs {
+    common::set_throughput(&mut group, *len);
+
+    group.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
+      b.iter(|| black_box(Blake3::digest(black_box(d))))
+    });
+
+    group.bench_with_input(BenchmarkId::new("official", len), data, |b, d| {
+      b.iter(|| black_box(official_hash_bytes(black_box(d))))
+    });
+
+    // Rayon is only meaningful past tiny payloads.
+    if *len >= 1024 {
+      group.bench_with_input(BenchmarkId::new("official-rayon", len), data, |b, d| {
+        b.iter(|| black_box(official_hash_bytes_rayon(black_box(d))))
+      });
+    }
+  }
+
+  group.finish();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Streaming Benchmarks
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn blake3_streaming(c: &mut Criterion) {
+  let data_1mb = common::pseudo_random_bytes(1024 * 1024, 0xB1AE_E3B1_A1E3_0001);
+  let data_1mb = black_box(data_1mb);
+
+  let mut group = c.benchmark_group("blake3/streaming");
+  group.sample_size(30);
+  group.warm_up_time(Duration::from_secs(2));
+  group.measurement_time(Duration::from_secs(4));
+  group.sampling_mode(SamplingMode::Flat);
+  group.throughput(Throughput::Bytes(data_1mb.len() as u64));
+
+  // Test various chunk sizes to understand streaming overhead
+  for chunk_size in [64, 128, 256, 512, 1024, 4096, 16384, 65536] {
+    group.bench_function(format!("rscrypto/{chunk_size}B-chunks"), |b| {
+      b.iter(|| {
+        let mut h = Blake3::new();
+        for chunk in data_1mb.chunks(chunk_size) {
+          h.update(chunk);
+        }
+        black_box(h.finalize())
+      })
+    });
+
+    group.bench_function(format!("official/{chunk_size}B-chunks"), |b| {
+      b.iter(|| {
+        let mut h = blake3::Hasher::new();
+        for chunk in data_1mb.chunks(chunk_size) {
+          h.update(chunk);
+        }
+        black_box(*h.finalize().as_bytes())
+      })
+    });
+  }
+
+  group.finish();
+}
+
+fn blake3_update_overhead(c: &mut Criterion) {
+  if !diagnostics_enabled() {
+    return;
+  }
+
+  let data_1mb = common::pseudo_random_bytes(1024 * 1024, 0xB1AE_E3B1_A1E3_0002);
+  let data_1mb = black_box(data_1mb);
+
+  let mut group = c.benchmark_group("blake3/update-overhead");
+  group.sample_size(30);
+  group.warm_up_time(Duration::from_secs(2));
+  group.measurement_time(Duration::from_secs(4));
+  group.sampling_mode(SamplingMode::Flat);
+  group.throughput(Throughput::Bytes(data_1mb.len() as u64));
+
+  for chunk_size in [64, 128, 256, 512, 1024, 4096, 16384, 65536] {
+    group.bench_function(format!("{chunk_size}B-chunks"), |b| {
+      b.iter(|| {
+        let mut h = Blake3::new();
+        for chunk in data_1mb.chunks(chunk_size) {
+          h.update(chunk);
+        }
+        black_box(h.finalize())
+      })
+    });
+  }
+
+  group.finish();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Parent Folding (CVs -> Root) Benchmarks
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn blake3_parent_folding_only(c: &mut Criterion) {
+  if !diagnostics_enabled() {
+    return;
+  }
+
+  // 1 MiB worth of chaining values (CVs): 32 bytes each -> 32768 CVs.
+  let data = common::pseudo_random_bytes(1024 * 1024, 0xB1AE_E3B1_A1E3_7001);
+  let data = black_box(data);
+
+  let mut group = c.benchmark_group("blake3/parent-folding");
+  group.sample_size(30);
+  group.warm_up_time(Duration::from_secs(2));
+  group.measurement_time(Duration::from_secs(4));
+  group.sampling_mode(SamplingMode::Flat);
+  group.throughput(Throughput::Bytes(data.len() as u64));
+
+  group.bench_function("rscrypto/auto", |b| {
+    b.iter(|| black_box(microbench::run_auto("blake3-parent-fold", black_box(&data)).unwrap_or(0)))
+  });
+
+  for name in [
+    "portable",
+    #[cfg(target_arch = "x86_64")]
+    "x86_64/ssse3",
+    #[cfg(target_arch = "x86_64")]
+    "x86_64/sse4.1",
+    #[cfg(target_arch = "x86_64")]
+    "x86_64/avx2",
+    #[cfg(target_arch = "x86_64")]
+    "x86_64/avx512",
+    #[cfg(target_arch = "aarch64")]
+    "aarch64/neon",
+  ] {
+    let Some(k) = microbench::get_kernel("blake3-parent-fold", name) else {
+      continue;
+    };
+    group.bench_function(format!("rscrypto/{}", k.name), |b| {
+      b.iter(|| black_box((k.func)(black_box(&data))))
+    });
+  }
+
+  group.finish();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// XOF (Extendable Output) Benchmarks
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn blake3_xof(c: &mut Criterion) {
+  let inputs = common::sized_inputs();
+  let mut group = c.benchmark_group("blake3/xof");
+  group.sample_size(20);
+  group.warm_up_time(Duration::from_secs(1));
+  group.measurement_time(Duration::from_secs(3));
+  group.sampling_mode(SamplingMode::Flat);
+
+  // Keep the default XOF matrix small; it otherwise dominates total runtime.
+  let extended = extended_enabled();
+  let read_only = extended || std::env::var("RSCRYPTO_BLAKE3_BENCH_READ_ONLY").is_ok();
+  let output_sizes: &[usize] = if extended {
+    &[32, 64, 128, 256, 512, 1024]
+  } else {
+    &[32, 1024]
+  };
+  let input_sizes: &[usize] = if extended { &[] } else { &[1, 64, 1024, 64 * 1024] };
+
+  // Test XOF with various output sizes.
+  for &output_size in output_sizes {
+    for (len, data) in &inputs {
+      if *len == 0 || *len > 64 * 1024 {
+        continue; // skip 0B and very large inputs here
+      }
+      if !extended && !input_sizes.contains(len) {
+        continue;
+      }
+
+      let name = format!("{len}B-in/{output_size}B-out");
+      group.throughput(Throughput::Bytes((*len + output_size) as u64));
+
+      // Mode A: hash + finalize_xof + squeeze
+      group.bench_function(format!("rscrypto/init+read/{name}"), |b| {
+        let mut out = vec![0u8; output_size];
+        b.iter(|| {
+          let mut h = Blake3::new();
+          h.update(black_box(data));
+          let mut xof = h.finalize_xof();
+          xof.squeeze(&mut out);
+          black_box(&out);
+        })
+      });
+
+      group.bench_function(format!("official/init+read/{name}"), |b| {
+        let mut out = vec![0u8; output_size];
+        b.iter(|| {
+          let mut h = blake3::Hasher::new();
+          h.update(black_box(data));
+          let mut reader = h.finalize_xof();
+          reader.fill(&mut out);
+          black_box(&out);
+        })
+      });
+
+      if read_only {
+        // Mode B: squeeze-only (no hashing); helps attribute differences.
+        // Both XOF readers are `Clone`, so we can reset position cheaply.
+        group.bench_function(format!("rscrypto/read-only/{name}"), |b| {
+          let mut out = vec![0u8; output_size];
+          let mut h = Blake3::new();
+          h.update(data);
+          let base = h.finalize_xof();
+          b.iter(|| {
+            let mut xof = base.clone();
+            xof.squeeze(&mut out);
+            black_box(&out);
+          })
+        });
+
+        group.bench_function(format!("official/read-only/{name}"), |b| {
+          let mut out = vec![0u8; output_size];
+          let mut h = blake3::Hasher::new();
+          h.update(data);
+          let base = h.finalize_xof();
+          b.iter(|| {
+            let mut reader = base.clone();
+            reader.fill(&mut out);
+            black_box(&out);
+          })
+        });
+      }
+    }
+  }
+
+  group.finish();
+}
+
+fn blake3_xof_phase_split(c: &mut Criterion) {
+  let inputs = common::sized_inputs();
+  let input_sizes: &[usize] = &[1, 64, 1024, 64 * 1024];
+  let mut group = c.benchmark_group("blake3/xof-phase");
+  group.sample_size(15);
+  group.warm_up_time(Duration::from_secs(1));
+  group.measurement_time(Duration::from_secs(3));
+  group.sampling_mode(SamplingMode::Flat);
+
+  for (len, data) in &inputs {
+    if !input_sizes.contains(len) {
+      continue;
+    }
+    let name = format!("{len}B-in");
+
+    group.throughput(Throughput::Elements(1));
+    group.bench_function(format!("rscrypto/new-only/{name}"), |b| {
+      b.iter(|| {
+        let h = Blake3::new();
+        black_box_ref(&h);
+      })
+    });
+    group.bench_function(format!("official/new-only/{name}"), |b| {
+      b.iter(|| {
+        let h = blake3::Hasher::new();
+        black_box_ref(&h);
+      })
+    });
+
+    group.throughput(Throughput::Bytes(*len as u64));
+    group.bench_function(format!("rscrypto/update-only/{name}"), |b| {
+      b.iter(|| {
+        let mut h = Blake3::new();
+        h.update(black_box(data));
+        black_box_mut(&mut h);
+      })
+    });
+    group.bench_function(format!("official/update-only/{name}"), |b| {
+      b.iter(|| {
+        let mut h = blake3::Hasher::new();
+        h.update(black_box(data));
+        black_box_mut(&mut h);
+      })
+    });
+
+    group.throughput(Throughput::Bytes(*len as u64));
+    group.bench_function(format!("rscrypto/finalize-xof-only/{name}"), |b| {
+      b.iter_batched_ref(
+        || {
+          let mut h = Blake3::new();
+          h.update(data);
+          h
+        },
+        |h| {
+          let xof = h.finalize_xof();
+          black_box_ref(&xof);
+        },
+        BatchSize::PerIteration,
+      )
+    });
+    group.bench_function(format!("official/finalize-xof-only/{name}"), |b| {
+      b.iter_batched_ref(
+        || {
+          let mut h = blake3::Hasher::new();
+          h.update(data);
+          h
+        },
+        |h| {
+          let xof = h.finalize_xof();
+          black_box_ref(&xof);
+        },
+        BatchSize::PerIteration,
+      )
+    });
+
+    group.throughput(Throughput::Bytes(*len as u64));
+    group.bench_function(format!("rscrypto/drop-after-update-only/{name}"), |b| {
+      b.iter_batched(
+        || {
+          let mut h = Blake3::new();
+          h.update(data);
+          h
+        },
+        |h| black_box_ref(&h),
+        BatchSize::PerIteration,
+      )
+    });
+    group.bench_function(format!("official/drop-after-update-only/{name}"), |b| {
+      b.iter_batched(
+        || {
+          let mut h = blake3::Hasher::new();
+          h.update(data);
+          h
+        },
+        |h| black_box_ref(&h),
+        BatchSize::PerIteration,
+      )
+    });
+
+    group.throughput(Throughput::Bytes(*len as u64 + 32));
+    group.bench_function(format!("rscrypto/finalize-xof+read32-only/{name}"), |b| {
+      let mut h = Blake3::new();
+      h.update(data);
+      b.iter(|| {
+        let mut xof = h.clone().finalize_xof();
+        let mut out = [0u8; 32];
+        xof.squeeze(&mut out);
+        black_box_ref(&out);
+      })
+    });
+    group.bench_function(format!("official/finalize-xof+read32-only/{name}"), |b| {
+      let mut h = blake3::Hasher::new();
+      h.update(data);
+      b.iter(|| {
+        let mut reader = h.clone().finalize_xof();
+        let mut out = [0u8; 32];
+        reader.fill(&mut out);
+        black_box_ref(&out);
+      })
+    });
+
+    group.throughput(Throughput::Bytes(32));
+    group.bench_function(format!("rscrypto/squeeze-32-only/{name}"), |b| {
+      let mut h = Blake3::new();
+      h.update(data);
+      let base = h.finalize_xof();
+      let mut out = [0u8; 32];
+      b.iter(|| {
+        let mut xof = base.clone();
+        xof.squeeze(&mut out);
+        black_box(&out);
+      })
+    });
+    group.bench_function(format!("official/squeeze-32-only/{name}"), |b| {
+      let mut h = blake3::Hasher::new();
+      h.update(data);
+      let base = h.finalize_xof();
+      let mut out = [0u8; 32];
+      b.iter(|| {
+        let mut reader = base.clone();
+        reader.fill(&mut out);
+        black_box(&out);
+      })
+    });
+
+    group.throughput(Throughput::Bytes(1024));
+    group.bench_function(format!("rscrypto/squeeze-1024-only/{name}"), |b| {
+      let mut h = Blake3::new();
+      h.update(data);
+      let base = h.finalize_xof();
+      let mut out = [0u8; 1024];
+      b.iter(|| {
+        let mut xof = base.clone();
+        xof.squeeze(&mut out);
+        black_box(&out);
+      })
+    });
+    group.bench_function(format!("official/squeeze-1024-only/{name}"), |b| {
+      let mut h = blake3::Hasher::new();
+      h.update(data);
+      let base = h.finalize_xof();
+      let mut out = [0u8; 1024];
+      b.iter(|| {
+        let mut reader = base.clone();
+        reader.fill(&mut out);
+        black_box(&out);
+      })
+    });
+  }
+
+  group.finish();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// One-shot XOF Benchmarks (avoid streaming hasher setup)
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn blake3_xof_oneshot(c: &mut Criterion) {
+  if !extended_enabled() {
+    return;
+  }
+
+  let inputs = common::sized_inputs();
+  let mut group = c.benchmark_group("blake3/xof-oneshot");
+  group.sample_size(25);
+  group.warm_up_time(Duration::from_secs(1));
+  group.measurement_time(Duration::from_secs(3));
+  group.sampling_mode(SamplingMode::Flat);
+
+  let output_sizes: &[usize] = &[32, 1024];
+  for &output_size in output_sizes {
+    for (len, data) in &inputs {
+      if *len == 0 || *len > 64 * 1024 {
+        continue;
+      }
+
+      let name = format!("{len}B-in/{output_size}B-out");
+      group.throughput(Throughput::Bytes((*len + output_size) as u64));
+
+      group.bench_function(format!("rscrypto/{name}"), |b| {
+        let mut out = vec![0u8; output_size];
+        b.iter(|| {
+          let mut xof = Blake3::xof(black_box(data));
+          xof.squeeze(&mut out);
+          black_box(&out);
+        })
+      });
+
+      group.bench_function(format!("official/{name}"), |b| {
+        let mut out = vec![0u8; output_size];
+        b.iter(|| {
+          let mut h = blake3::Hasher::new();
+          h.update(black_box(data));
+          let mut reader = h.finalize_xof();
+          reader.fill(&mut out);
+          black_box(&out);
+        })
+      });
+    }
+  }
+
+  group.finish();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Keyed Hash Benchmarks
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn blake3_keyed(c: &mut Criterion) {
+  // Streaming-vs-streaming comparison: both use new_keyed + update + finalize
+  // This fixes the previous apples-to-oranges comparison where official used
+  // one-shot keyed_hash while rscrypto used streaming.
+  let inputs = common::sized_inputs();
+  let key: [u8; 32] = *b"rscrypto-blake3-benchmark-key!!_";
+  let mut group = c.benchmark_group("blake3/keyed");
+  group.sample_size(25);
+  group.warm_up_time(Duration::from_secs(1));
+  group.measurement_time(Duration::from_secs(3));
+  group.sampling_mode(SamplingMode::Flat);
+
+  for (len, data) in &inputs {
+    common::set_throughput(&mut group, *len);
+
+    group.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
+      b.iter(|| {
+        let mut h = Blake3::new_keyed(&key);
+        h.update(black_box(d));
+        black_box(h.finalize())
+      })
+    });
+
+    // Official: streaming mode (new_keyed + update + finalize)
+    // This matches rscrypto's streaming API for fair comparison
+    group.bench_with_input(BenchmarkId::new("official", len), data, |b, d| {
+      b.iter(|| {
+        let mut h = blake3::Hasher::new_keyed(&key);
+        h.update(black_box(d));
+        black_box(*h.finalize().as_bytes())
+      })
+    });
+  }
+
+  group.finish();
+}
+
+fn blake3_keyed_oneshot(c: &mut Criterion) {
+  if !extended_enabled() {
+    return;
+  }
+
+  let inputs = common::sized_inputs();
+  let key: [u8; 32] = *b"rscrypto-blake3-benchmark-key!!_";
+  let mut group = c.benchmark_group("blake3/keyed-oneshot");
+  group.sample_size(40);
+  group.warm_up_time(Duration::from_secs(2));
+  group.measurement_time(Duration::from_secs(4));
+  group.sampling_mode(SamplingMode::Flat);
+
+  for (len, data) in &inputs {
+    common::set_throughput(&mut group, *len);
+
+    group.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
+      b.iter(|| black_box(Blake3::keyed_digest(&key, black_box(d))))
+    });
+
+    group.bench_with_input(BenchmarkId::new("official", len), data, |b, d| {
+      b.iter(|| black_box(*blake3::keyed_hash(&key, black_box(d)).as_bytes()))
+    });
+  }
+
+  group.finish();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Derive Key Benchmarks
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn blake3_derive_key(c: &mut Criterion) {
+  let inputs = common::sized_inputs();
+  let context = "rscrypto benchmark 2024-01-01 derive key context";
+  let mut group = c.benchmark_group("blake3/derive-key");
+  group.sample_size(25);
+  group.warm_up_time(Duration::from_secs(1));
+  group.measurement_time(Duration::from_secs(3));
+  group.sampling_mode(SamplingMode::Flat);
+
+  for (len, data) in &inputs {
+    common::set_throughput(&mut group, *len);
+
+    group.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
+      b.iter(|| {
+        let mut h = Blake3::new_derive_key(context);
+        h.update(black_box(d));
+        black_box(h.finalize())
+      })
+    });
+
+    group.bench_with_input(BenchmarkId::new("official", len), data, |b, d| {
+      b.iter(|| {
+        let mut h = blake3::Hasher::new_derive_key(context);
+        h.update(black_box(d));
+        black_box(*h.finalize().as_bytes())
+      })
+    });
+  }
+
+  group.finish();
+}
+
+fn blake3_derive_key_oneshot(c: &mut Criterion) {
+  if !extended_enabled() {
+    return;
+  }
+
+  let inputs = common::sized_inputs();
+  let context = "rscrypto benchmark 2024-01-01 derive key context";
+  let mut group = c.benchmark_group("blake3/derive-key-oneshot");
+  group.sample_size(40);
+  group.warm_up_time(Duration::from_secs(2));
+  group.measurement_time(Duration::from_secs(4));
+  group.sampling_mode(SamplingMode::Flat);
+
+  for (len, data) in &inputs {
+    common::set_throughput(&mut group, *len);
+
+    group.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
+      b.iter(|| black_box(Blake3::derive_key(context, black_box(d))))
+    });
+
+    group.bench_with_input(BenchmarkId::new("official", len), data, |b, d| {
+      b.iter(|| black_box(blake3::derive_key(context, black_box(d))))
+    });
+  }
+
+  group.finish();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Active Kernel Info (reports which kernel is being used)
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn blake3_active_kernel(c: &mut Criterion) {
+  if !diagnostics_enabled() {
+    return;
+  }
+
+  use rscrypto::hashes::crypto::blake3::dispatch::kernel_name_for_len;
+
+  let inputs = common::sized_inputs();
+  let mut group = c.benchmark_group("blake3/active-kernel");
+  group.sample_size(15);
+  group.warm_up_time(Duration::from_secs(1));
+  group.measurement_time(Duration::from_secs(2));
+  group.sampling_mode(SamplingMode::Flat);
+
+  // Report which kernel is selected for different sizes
+  for (len, data) in &inputs {
+    let kernel_name = kernel_name_for_len(*len);
+    common::set_throughput(&mut group, *len);
+
+    group.bench_with_input(BenchmarkId::new(kernel_name, len), data, |b, d| {
+      b.iter(|| black_box(Blake3::digest(black_box(d))))
+    });
+  }
+
+  group.finish();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Large Input Benchmarks
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn blake3_large_inputs(c: &mut Criterion) {
+  if !extended_enabled() {
+    return;
+  }
+
+  let mut group = c.benchmark_group("blake3/large");
+  group.sample_size(15);
+  group.warm_up_time(Duration::from_secs(2));
+  group.measurement_time(Duration::from_secs(4));
+  group.sampling_mode(SamplingMode::Flat);
+
+  // Test larger inputs where SIMD benefits become more apparent
+  for size_mb in [1, 4, 16] {
+    let size = size_mb * 1024 * 1024;
+    let data = common::pseudo_random_bytes(size, 0x1A56_E1A9_0700 + size_mb as u64);
+    let data = black_box(data);
+
+    group.throughput(Throughput::Bytes(size as u64));
+
+    group.bench_function(format!("rscrypto/{size_mb}MB"), |b| {
+      b.iter(|| black_box(Blake3::digest(black_box(&data))))
+    });
+
+    group.bench_function(format!("official/{size_mb}MB"), |b| {
+      b.iter(|| black_box(official_hash_bytes(black_box(&data))))
+    });
+
+    group.bench_function(format!("official-rayon/{size_mb}MB"), |b| {
+      b.iter(|| black_box(official_hash_bytes_rayon(black_box(&data))))
+    });
+  }
+
+  group.finish();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Parallel Scaling (forced thread caps)
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn blake3_rscrypto_threads(c: &mut Criterion) {
+  if !diagnostics_enabled() {
+    return;
+  }
+
+  let Ok(ap) = std::thread::available_parallelism() else {
+    return;
+  };
+
+  let mut group = c.benchmark_group("blake3/rscrypto-threads");
+  group.sample_size(20);
+  group.warm_up_time(Duration::from_secs(2));
+  group.measurement_time(Duration::from_secs(4));
+  group.sampling_mode(SamplingMode::Flat);
+
+  let sizes = [64 * 1024usize, 128 * 1024, 1024 * 1024, 8 * 1024 * 1024];
+  let thread_caps = [1usize, 2, 4, 8, 12, 16];
+
+  for size in sizes {
+    let data = common::pseudo_random_bytes(size, 0xB1A8_3C11_0000 + size as u64);
+    let data = black_box(data);
+    group.throughput(Throughput::Bytes(size as u64));
+
+    for threads_total in thread_caps {
+      if threads_total > ap.get() {
+        continue;
+      }
+      let table = dispatch_tables::ParallelTable {
+        min_bytes: 0,
+        min_chunks: 0,
+        max_threads: threads_total as u8,
+        spawn_cost_bytes: 0,
+        merge_cost_bytes: 0,
+        bytes_per_core_small: 0,
+        bytes_per_core_medium: 0,
+        bytes_per_core_large: 0,
+        small_limit_bytes: 0,
+        medium_limit_bytes: 0,
+      };
+
+      group.bench_function(BenchmarkId::new(format!("rscrypto/t{threads_total}"), size), |b| {
+        let _guard = __bench::override_blake3_parallel_policy(table);
+        b.iter(|| black_box(Blake3::digest(black_box(&data))))
+      });
+    }
+  }
+
+  group.finish();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Latency Benchmarks (small inputs, measure overhead)
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn blake3_latency(c: &mut Criterion) {
+  if !extended_enabled() {
+    return;
+  }
+
+  let mut group = c.benchmark_group("blake3/latency");
+  group.sample_size(50);
+  group.warm_up_time(Duration::from_secs(1));
+  group.measurement_time(Duration::from_secs(3));
+  group.sampling_mode(SamplingMode::Flat);
+
+  // Very small inputs to measure setup/teardown overhead
+  for len in [0, 1, 8, 16, 32, 64] {
+    let data = common::pseudo_random_bytes(len, 0x1A7E_AC90_0000 + len as u64);
+    let data = black_box(data);
+
+    group.throughput(Throughput::Elements(1));
+
+    group.bench_function(format!("rscrypto/{len}B"), |b| {
+      b.iter(|| black_box(Blake3::digest(black_box(&data))))
+    });
+
+    group.bench_function(format!("official/{len}B"), |b| {
+      b.iter(|| black_box(official_hash_bytes(black_box(&data))))
+    });
+  }
+
+  group.finish();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// XOF Sized Comparison Benchmark (Phase 1 Fix Verification)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Benchmark to verify the XOF dispatch fix: compares `finalize_xof()` vs `finalize_xof_sized()`
+/// on small inputs with large outputs. This is the critical case that showed +500% slowdown.
+fn blake3_xof_sized_comparison(c: &mut Criterion) {
+  if !diagnostics_enabled() {
+    return;
+  }
+
+  let mut group = c.benchmark_group("blake3/xof-sized-comparison");
+  group.sample_size(30);
+  group.warm_up_time(Duration::from_secs(2));
+  group.measurement_time(Duration::from_secs(4));
+  group.sampling_mode(SamplingMode::Flat);
+
+  // These are the critical cases from TASK.md showing +500% slowdown
+  let input_sizes: &[usize] = &[1, 64];
+  let output_sizes: &[usize] = &[512, 1024];
+
+  for &input_len in input_sizes {
+    for &output_size in output_sizes {
+      let data = common::pseudo_random_bytes(input_len, 0xB1AE_E3B1_A1E3_0006 ^ (input_len as u64));
+      let name = format!("{input_len}B-in/{output_size}B-out");
+      group.throughput(Throughput::Bytes((input_len + output_size) as u64));
+
+      // Baseline: standard finalize_xof() - may use portable kernel for small inputs
+      group.bench_function(format!("standard/{name}"), |b| {
+        let mut out = vec![0u8; output_size];
+        b.iter(|| {
+          let mut h = Blake3::new();
+          h.update(black_box(&data));
+          let mut xof = h.finalize_xof();
+          xof.squeeze(&mut out);
+          black_box(&out);
+        })
+      });
+
+      // Fixed: finalize_xof_sized() - uses output size to select kernel
+      group.bench_function(format!("sized/{name}"), |b| {
+        let mut out = vec![0u8; output_size];
+        b.iter(|| {
+          let mut h = Blake3::new();
+          h.update(black_box(&data));
+          let mut xof = h.finalize_xof_sized(output_size);
+          xof.squeeze(&mut out);
+          black_box(&out);
+        })
+      });
+
+      // Official implementation for comparison
+      group.bench_function(format!("official/{name}"), |b| {
+        let mut out = vec![0u8; output_size];
+        b.iter(|| {
+          let mut h = blake3::Hasher::new();
+          h.update(black_box(&data));
+          let mut reader = h.finalize_xof();
+          reader.fill(&mut out);
+          black_box(&out);
+        })
+      });
+    }
+  }
+
+  group.finish();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Streaming Dispatch Observability
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn blake3_streaming_dispatch(c: &mut Criterion) {
+  if !diagnostics_enabled() {
+    return;
+  }
+
+  let inputs = common::sized_inputs();
+  let modes: &[(&str, u32)] = &[
+    ("plain", 0),
+    ("keyed", dispatch::FLAGS_KEYED_HASH),
+    ("derive-key", dispatch::FLAGS_DERIVE_KEY_MATERIAL),
+  ];
+
+  // Print full dispatch table (the real value of this bench)
+  eprintln!("\n=== BLAKE3 Streaming Dispatch Decisions ===");
+  for (mode_name, flags) in modes {
+    eprintln!("\n--- {mode_name} (flags={flags:#x}) ---");
+    for (len, _) in &inputs {
+      let info = dispatch::streaming_dispatch_info(*flags, *len);
+      eprintln!(
+        "  len={len:>8}: stream={:<12} bulk={:<12} parallel={} (min_bytes={}, max_threads={}, actual_threads={})",
+        info.stream_kernel,
+        info.bulk_kernel,
+        if info.would_parallelize { "YES" } else { "no " },
+        info.parallel_min_bytes,
+        info.parallel_max_threads,
+        info.parallel_threads,
+      );
+    }
+  }
+  eprintln!();
+
+  // Minimal Criterion group — the eprintln output above is the real deliverable
+  let key: [u8; 32] = *b"rscrypto-blake3-benchmark-key!!_";
+  let context = "rscrypto benchmark 2024-01-01 derive key context";
+
+  let mut group = c.benchmark_group("blake3/streaming-dispatch");
+  group.sample_size(10);
+  group.warm_up_time(Duration::from_millis(200));
+  group.measurement_time(Duration::from_millis(500));
+
+  for (mode_name, flags) in modes {
+    for (len, data) in &inputs {
+      let info = dispatch::streaming_dispatch_info(*flags, *len);
+      let label = format!("{mode_name}/{}+{}", info.stream_kernel, info.bulk_kernel);
+      common::set_throughput(&mut group, *len);
+
+      group.bench_with_input(BenchmarkId::new(&label, len), data, |b, d| {
+        b.iter(|| match *mode_name {
+          "plain" => {
+            let mut h = Blake3::new();
+            h.update(black_box(d));
+            black_box(h.finalize())
+          }
+          "keyed" => {
+            let mut h = Blake3::new_keyed(&key);
+            h.update(black_box(d));
+            black_box(h.finalize())
+          }
+          "derive-key" => {
+            let mut h = Blake3::new_derive_key(context);
+            h.update(black_box(d));
+            black_box(h.finalize())
+          }
+          _ => unreachable!(),
+        })
+      });
+    }
+  }
+  group.finish();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Kernel A/B Diagnostics (dispatch-independent)
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn blake3_kernel_ab(c: &mut Criterion) {
+  if !diagnostics_enabled() {
+    return;
+  }
+
+  let mut group = c.benchmark_group("blake3/kernel-ab");
+  group.sample_size(25);
+  group.warm_up_time(Duration::from_secs(1));
+  group.measurement_time(Duration::from_secs(3));
+  group.sampling_mode(SamplingMode::Flat);
+
+  let sizes = [256usize, 1024, 4096, 16384, 65536];
+  #[cfg(target_arch = "aarch64")]
+  let kernels: Vec<&str> = vec!["portable", "aarch64/neon"];
+  #[cfg(target_arch = "x86_64")]
+  let kernels: Vec<&str> = vec!["portable", "x86_64/sse4.1", "x86_64/avx2", "x86_64/avx512"];
+  #[cfg(target_arch = "s390x")]
+  let kernels: Vec<&str> = vec!["portable", "s390x/vector"];
+  #[cfg(target_arch = "powerpc64")]
+  let kernels: Vec<&str> = vec!["portable", "powerpc64/vsx"];
+  #[cfg(target_arch = "riscv64")]
+  let kernels: Vec<&str> = vec!["portable", "riscv64/v"];
+  #[cfg(not(any(
+    target_arch = "aarch64",
+    target_arch = "x86_64",
+    target_arch = "s390x",
+    target_arch = "powerpc64",
+    target_arch = "riscv64"
+  )))]
+  let kernels: Vec<&str> = vec!["portable"];
+
+  for size in sizes {
+    let data = common::pseudo_random_bytes(size, 0xB1AE_E3B1_A1E3_7A8B ^ size as u64);
+    group.throughput(Throughput::Bytes(size as u64));
+
+    for name in &kernels {
+      let Some(k) = microbench::get_kernel("blake3", name) else {
+        continue;
+      };
+      group.bench_function(BenchmarkId::new(format!("rscrypto/{}", k.name), size), |b| {
+        b.iter(|| black_box((k.func)(black_box(&data))))
+      });
+    }
+
+    group.bench_function(BenchmarkId::new("official", size), |b| {
+      b.iter(|| black_box(official_hash_bytes(black_box(&data))))
+    });
+  }
+
+  group.finish();
+}
+
+criterion_group!(
+  benches,
+  blake3_oneshot_comparison,
+  blake3_streaming,
+  blake3_update_overhead,
+  blake3_parent_folding_only,
+  blake3_xof,
+  blake3_xof_phase_split,
+  blake3_xof_oneshot,
+  blake3_xof_sized_comparison,
+  blake3_keyed,
+  blake3_keyed_oneshot,
+  blake3_derive_key,
+  blake3_derive_key_oneshot,
+  blake3_active_kernel,
+  blake3_large_inputs,
+  blake3_rscrypto_threads,
+  blake3_latency,
+  blake3_streaming_dispatch,
+  blake3_kernel_ab,
+);
+criterion_main!(benches);
