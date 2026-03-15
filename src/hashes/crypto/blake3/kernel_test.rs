@@ -1,0 +1,467 @@
+extern crate alloc;
+
+use alloc::vec::Vec;
+
+use super::{
+  Blake3,
+  kernels::{ALL, Blake3KernelId, kernel as kernel_for_id, required_caps},
+};
+use crate::traits::Digest as _;
+
+#[derive(Clone, Debug)]
+pub struct KernelResult {
+  pub name: &'static str,
+  pub digest: [u8; 32],
+}
+
+fn force_hasher_kernel(mut h: Blake3, id: Blake3KernelId) -> Blake3 {
+  let kernel = kernel_for_id(id);
+  h.bulk_kernel_id = kernel.id;
+  h.chunk_state.kernel_id = kernel.id;
+  h
+}
+
+fn hasher_for_kernel(id: Blake3KernelId) -> Blake3 {
+  force_hasher_kernel(Blake3::new(), id)
+}
+
+fn digest_with_kernel(id: Blake3KernelId, data: &[u8]) -> [u8; 32] {
+  let kernel = kernel_for_id(id);
+  let mut h = hasher_for_kernel(id);
+  h.update_with(data, kernel.id, kernel.id);
+  h.finalize()
+}
+
+#[must_use]
+pub fn run_all_blake3_kernels(data: &[u8]) -> Vec<KernelResult> {
+  let caps = crate::platform::caps();
+  let mut out = Vec::with_capacity(ALL.len());
+  for &id in ALL {
+    if caps.has(required_caps(id)) {
+      out.push(KernelResult {
+        name: id.as_str(),
+        digest: digest_with_kernel(id, data),
+      });
+    }
+  }
+  out
+}
+
+pub fn verify_blake3_kernels(data: &[u8]) -> Result<(), &'static str> {
+  let results = run_all_blake3_kernels(data);
+  let Some(first) = results.first() else {
+    return Ok(());
+  };
+  for r in &results[1..] {
+    if r.digest != first.digest {
+      return Err("blake3 kernel mismatch");
+    }
+  }
+  Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+  use alloc::vec;
+
+  use super::*;
+  use crate::traits::Xof as _;
+
+  const KEY: &[u8; 32] = b"whats the Elvish word for friend";
+  const CONTEXT: &str = "BLAKE3 2019-12-27 16:29:52 test vectors context";
+
+  fn keyed_hasher_for_kernel(id: Blake3KernelId, key: &[u8; 32]) -> Blake3 {
+    force_hasher_kernel(Blake3::new_keyed(key), id)
+  }
+
+  fn derive_hasher_for_kernel(id: Blake3KernelId, context: &str) -> Blake3 {
+    force_hasher_kernel(Blake3::new_derive_key(context), id)
+  }
+
+  fn pattern(len: usize) -> Vec<u8> {
+    (0..len).map(|i| (i % 251) as u8).collect()
+  }
+
+  #[test]
+  fn all_kernels_match_official_crate_and_streaming_splits() {
+    let caps = crate::platform::caps();
+    let lens = [0usize, 1, 2, 3, 63, 64, 65, 1023, 1024, 1025, 2047, 2048, 2049, 10_000];
+
+    for &id in ALL {
+      if !caps.has(required_caps(id)) {
+        continue;
+      }
+
+      let kernel = kernel_for_id(id);
+      for &len in &lens {
+        let msg = pattern(len);
+
+        // Hash mode.
+        let ours = digest_with_kernel(id, &msg);
+        let expected = *blake3::hash(&msg).as_bytes();
+        assert_eq!(ours, expected, "blake3 hash mismatch for kernel={}", id.as_str());
+
+        // Streaming chunking patterns.
+        for &chunk in &[1usize, 7, 31, 32, 63, 64, 65, 256, 1024, 4096] {
+          let mut h = hasher_for_kernel(id);
+          for part in msg.chunks(chunk) {
+            h.update_with(part, kernel.id, kernel.id);
+          }
+          assert_eq!(
+            h.finalize(),
+            ours,
+            "blake3 streaming mismatch kernel={} len={} chunk={}",
+            id.as_str(),
+            len,
+            chunk
+          );
+        }
+
+        // Keyed hash mode.
+        {
+          let mut h = keyed_hasher_for_kernel(id, KEY);
+          for part in msg.chunks(63) {
+            h.update_with(part, kernel.id, kernel.id);
+          }
+          let ours = h.finalize();
+          let expected = *blake3::keyed_hash(KEY, &msg).as_bytes();
+          assert_eq!(ours, expected, "blake3 keyed mismatch kernel={}", id.as_str());
+        }
+
+        // Derive-key mode.
+        {
+          let mut h = derive_hasher_for_kernel(id, CONTEXT);
+          for part in msg.chunks(65) {
+            h.update_with(part, kernel.id, kernel.id);
+          }
+          let ours = h.finalize();
+          let expected = {
+            let mut hh = blake3::Hasher::new_derive_key(CONTEXT);
+            hh.update(&msg);
+            *hh.finalize().as_bytes()
+          };
+          assert_eq!(ours, expected, "blake3 derive mismatch kernel={}", id.as_str());
+        }
+      }
+    }
+  }
+
+  #[test]
+  fn bench_helpers_match_forced_kernel_streaming() {
+    let caps = crate::platform::caps();
+    let msg = pattern(4096 + 17);
+
+    for &id in ALL {
+      if !caps.has(required_caps(id)) {
+        continue;
+      }
+
+      let oneshot = Blake3::digest_with_kernel_id(id, &msg);
+      assert_eq!(
+        oneshot,
+        digest_with_kernel(id, &msg),
+        "digest_with_kernel_id mismatch for kernel={}",
+        id.as_str()
+      );
+
+      for &chunk in &[64usize, 4096] {
+        let helper_stream = Blake3::stream_chunks_with_kernel_pair_id(id, id, chunk, &msg);
+
+        let kernel = kernel_for_id(id);
+        let mut h = hasher_for_kernel(id);
+        for part in msg.chunks(chunk) {
+          h.update_with(part, kernel.id, kernel.id);
+        }
+        assert_eq!(
+          helper_stream,
+          h.finalize(),
+          "stream_chunks_with_kernel_pair_id mismatch for kernel={} chunk={}",
+          id.as_str(),
+          chunk
+        );
+      }
+    }
+  }
+
+  #[cfg(target_arch = "aarch64")]
+  #[test]
+  fn oneshot_1024_fast_path_matches_official_crate() {
+    let caps = crate::platform::caps();
+    let id = Blake3KernelId::Aarch64Neon;
+    if !caps.has(required_caps(id)) {
+      return;
+    }
+
+    let msg = pattern(1024);
+
+    // Forced-kernel oneshot (exercises the len==1024 fast path).
+    let ours = Blake3::digest_with_kernel_id(id, &msg);
+    let expected = *blake3::hash(&msg).as_bytes();
+    assert_eq!(ours, expected, "blake3 oneshot mismatch kernel={}", id.as_str());
+
+    // Keyed oneshot (uses length-based dispatch).
+    let ours_keyed = Blake3::keyed_digest(KEY, &msg);
+    let expected_keyed = *blake3::keyed_hash(KEY, &msg).as_bytes();
+    assert_eq!(ours_keyed, expected_keyed, "blake3 keyed oneshot mismatch");
+
+    // Derive-key oneshot (uses length-based dispatch for key material).
+    let ours_derived = Blake3::derive_key(CONTEXT, &msg);
+    let expected_derived = {
+      let mut h = blake3::Hasher::new_derive_key(CONTEXT);
+      h.update(&msg);
+      *h.finalize().as_bytes()
+    };
+    assert_eq!(ours_derived, expected_derived, "blake3 derive-key oneshot mismatch");
+  }
+
+  #[test]
+  fn xof_prefix_matches_official_crate() {
+    let caps = crate::platform::caps();
+    let data = pattern(1234);
+
+    for &id in ALL {
+      if !caps.has(required_caps(id)) {
+        continue;
+      }
+
+      let mut ours = [0u8; 131];
+      {
+        let kernel = kernel_for_id(id);
+        let mut h = hasher_for_kernel(id);
+        h.update_with(&data, kernel.id, kernel.id);
+        let mut xof = h.finalize_xof();
+        xof.squeeze(&mut ours);
+      }
+
+      let mut expected = [0u8; 131];
+      {
+        let mut h = blake3::Hasher::new();
+        h.update(&data);
+        let mut out = h.finalize_xof();
+        out.fill(&mut expected);
+      }
+
+      assert_eq!(ours, expected, "blake3 xof mismatch kernel={}", id.as_str());
+    }
+  }
+
+  #[test]
+  fn single_chunk_xof_prefix_matches_official_crate_for_forced_kernels() {
+    let caps = crate::platform::caps();
+    let lens = [0usize, 1, 63, 64, 65, 511, 1024];
+
+    for &id in ALL {
+      if !caps.has(required_caps(id)) {
+        continue;
+      }
+
+      let kernel = kernel_for_id(id);
+      for &len in &lens {
+        let msg = pattern(len);
+
+        let mut ours = [0u8; 96];
+        {
+          let mut h = hasher_for_kernel(id);
+          for part in msg.chunks(13) {
+            h.update_with(part, kernel.id, kernel.id);
+          }
+          let mut xof = h.finalize_xof();
+          xof.squeeze(&mut ours[..32]);
+          xof.squeeze(&mut ours[32..]);
+        }
+
+        let mut expected = [0u8; 96];
+        {
+          let mut h = blake3::Hasher::new();
+          for part in msg.chunks(13) {
+            h.update(part);
+          }
+          let mut xof = h.finalize_xof();
+          xof.fill(&mut expected[..32]);
+          xof.fill(&mut expected[32..]);
+        }
+
+        assert_eq!(
+          ours,
+          expected,
+          "single-chunk xof mismatch kernel={} len={len}",
+          id.as_str()
+        );
+      }
+    }
+  }
+
+  #[test]
+  fn run_all_agree() {
+    verify_blake3_kernels(b"abc").expect("kernels should agree");
+    verify_blake3_kernels(&pattern(8192)).expect("kernels should agree");
+  }
+
+  #[test]
+  fn oneshot_digest_matches_official_crate() {
+    // This exercises the `dispatch::digest` fast path (including the multi-chunk
+    // oneshot implementation) rather than the streaming `update` API.
+    let lens = [
+      0usize, 1, 2, 3, 63, 64, 65, 1023, 1024, 1025, 2047, 2048, 2049, 4096, 8192, 65_536, 1_048_576,
+    ];
+
+    for &len in &lens {
+      let msg = pattern(len);
+      let ours = Blake3::digest(&msg);
+      let expected = *blake3::hash(&msg).as_bytes();
+      assert_eq!(ours, expected, "blake3 oneshot mismatch len={len}");
+    }
+  }
+
+  #[test]
+  fn oneshot_keyed_and_derive_match_official_crate() {
+    let lens = [0usize, 1, 3, 64, 65, 1024, 4096, 10_000];
+
+    for &len in &lens {
+      let msg = pattern(len);
+
+      let ours = Blake3::keyed_digest(KEY, &msg);
+      let expected = *blake3::keyed_hash(KEY, &msg).as_bytes();
+      assert_eq!(ours, expected, "blake3 keyed oneshot mismatch len={len}");
+
+      let ours = Blake3::derive_key(CONTEXT, &msg);
+      let expected = blake3::derive_key(CONTEXT, &msg);
+      assert_eq!(ours, expected, "blake3 derive-key oneshot mismatch len={len}");
+    }
+  }
+
+  /// Test that all hash_many kernel implementations produce identical output.
+  /// This tests the multi-chunk throughput path against the portable reference.
+  #[test]
+  fn hash_many_kernels_agree() {
+    use super::super::{CHUNK_LEN, IV, OUT_LEN};
+
+    let caps = crate::platform::caps();
+
+    let num_chunks = 8usize;
+
+    // One contiguous buffer containing `num_chunks` full chunks.
+    let mut input = vec![0u8; num_chunks * CHUNK_LEN];
+    for chunk_idx in 0..num_chunks {
+      let base = chunk_idx * CHUNK_LEN;
+      for i in 0..CHUNK_LEN {
+        input[base + i] = ((i % 251) as u8).wrapping_add(chunk_idx as u8);
+      }
+    }
+
+    // Get portable kernel output as reference
+    let portable_kernel = kernel_for_id(Blake3KernelId::Portable);
+    let mut reference_out = vec![0u8; num_chunks * OUT_LEN];
+    // SAFETY: `input` contains `num_chunks` full chunks, and `reference_out` is `num_chunks * OUT_LEN`.
+    unsafe {
+      (portable_kernel.hash_many_contiguous)(input.as_ptr(), num_chunks, &IV, 0, 0, reference_out.as_mut_ptr());
+    }
+
+    // Compare all other kernels against portable
+    for &id in ALL {
+      if id == Blake3KernelId::Portable {
+        continue;
+      }
+      if !caps.has(required_caps(id)) {
+        continue;
+      }
+
+      let k = kernel_for_id(id);
+      let mut out = vec![0u8; num_chunks * OUT_LEN];
+      // SAFETY: `input` contains `num_chunks` full chunks, and `out` is `num_chunks * OUT_LEN`.
+      unsafe { (k.hash_many_contiguous)(input.as_ptr(), num_chunks, &IV, 0, 0, out.as_mut_ptr()) };
+
+      assert_eq!(
+        out,
+        reference_out,
+        "hash_many_contiguous mismatch: kernel={} differs from portable",
+        id.as_str()
+      );
+    }
+  }
+
+  /// Test hash_many with various input sizes and configurations.
+  #[test]
+  fn hash_many_various_sizes() {
+    use super::super::{CHUNK_LEN, IV, OUT_LEN};
+
+    let caps = crate::platform::caps();
+
+    // Test with 1, 2, 3, 4, 5, 7, 8 chunks to cover edge cases
+    for num_chunks in [1, 2, 3, 4, 5, 7, 8] {
+      let mut input = vec![0u8; num_chunks * CHUNK_LEN];
+      for chunk_idx in 0..num_chunks {
+        let base = chunk_idx * CHUNK_LEN;
+        for i in 0..CHUNK_LEN {
+          input[base + i] = ((i % 251) as u8).wrapping_add(chunk_idx as u8);
+        }
+      }
+
+      // Get portable reference
+      let portable_kernel = kernel_for_id(Blake3KernelId::Portable);
+      let mut reference_out = vec![0u8; num_chunks * OUT_LEN];
+      // SAFETY: `input` contains `num_chunks` full chunks, and `reference_out` is `num_chunks * OUT_LEN`.
+      unsafe {
+        (portable_kernel.hash_many_contiguous)(input.as_ptr(), num_chunks, &IV, 0, 0, reference_out.as_mut_ptr());
+      }
+
+      // Compare all kernels
+      for &id in ALL {
+        if !caps.has(required_caps(id)) {
+          continue;
+        }
+
+        let k = kernel_for_id(id);
+        let mut out = vec![0u8; num_chunks * OUT_LEN];
+        // SAFETY: `input` contains `num_chunks` full chunks, and `out` is `num_chunks * OUT_LEN`.
+        unsafe { (k.hash_many_contiguous)(input.as_ptr(), num_chunks, &IV, 0, 0, out.as_mut_ptr()) };
+
+        assert_eq!(
+          out,
+          reference_out,
+          "hash_many_contiguous mismatch: kernel={} num_chunks={}",
+          id.as_str(),
+          num_chunks
+        );
+      }
+    }
+  }
+
+  #[cfg(feature = "std")]
+  #[test]
+  fn large_inputs_match_official_crate() {
+    // This is sized to reliably cross the std-only parallelization thresholds.
+    // If the test runner only exposes 1 CPU, we still validate correctness,
+    // but the parallel path may not execute.
+    let lens = [512 * 1024 + 123, 4 * 1024 * 1024 + 17];
+
+    for &len in &lens {
+      let msg = pattern(len);
+
+      // One-shot hashing (may take the parallel path).
+      let ours = Blake3::digest(&msg);
+      let expected = *blake3::hash(&msg).as_bytes();
+      assert_eq!(ours, expected, "blake3 oneshot mismatch len={}", len);
+
+      // Streaming hashing with a single large update (may take the parallel path).
+      let mut h = Blake3::new();
+      h.update(&msg);
+      let ours_stream = h.finalize();
+      assert_eq!(ours_stream, expected, "blake3 streaming mismatch len={}", len);
+
+      // Keyed hash one-shot.
+      let ours_keyed = Blake3::keyed_digest(KEY, &msg);
+      let expected_keyed = *blake3::keyed_hash(KEY, &msg).as_bytes();
+      assert_eq!(ours_keyed, expected_keyed, "blake3 keyed mismatch len={}", len);
+
+      // Derive-key one-shot.
+      let ours_derived = Blake3::derive_key(CONTEXT, &msg);
+      let expected_derived = {
+        let mut hh = blake3::Hasher::new_derive_key(CONTEXT);
+        hh.update(&msg);
+        *hh.finalize().as_bytes()
+      };
+      assert_eq!(ours_derived, expected_derived, "blake3 derive-key mismatch len={}", len);
+    }
+  }
+}

@@ -42,7 +42,7 @@ fi
 step "Initializing SDK cache"
 if ! XWIN_CACHE_DIR="$XWIN_CACHE_DIR_DEFAULT" \
      CARGO_TARGET_DIR="target/cross-check/xwin-init" \
-     cargo xwin check -p traits --lib --target x86_64-pc-windows-msvc \
+     cargo xwin check -p rscrypto --no-default-features --lib --target x86_64-pc-windows-msvc \
      >"$LOG_DIR/xwin-init.log" 2>&1; then
   # In sandboxed/offline environments, cargo-xwin can't fetch the MSVC CRT / SDK.
   # Treat that as a skip rather than a hard failure, while still surfacing

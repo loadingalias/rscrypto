@@ -1,22 +1,18 @@
+[package]
+name = "rscrypto"
+description = "Pure Rust cryptography. Hardware-accelerated. Zero dependencies."
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.92.0"
+license = "MIT OR Apache-2.0"
+authors = ["loadingalias"]
+repository = "https://github.com/loadingalias/rscrypto"
+keywords = ["crypto", "crc", "checksum", "blake3", "simd"]
+categories = ["cryptography", "no-std::no-alloc", "algorithms"]
+
 [workspace]
 resolver = "3"
-members = [
-  "crates/rscrypto",
-  "crates/checksum",
-  "crates/hashes",
-  "crates/platform",
-  "crates/traits",
-  "crates/backend",
-]
-# Only build the shipping crates by default.
-default-members = [
-  "crates/rscrypto",
-  "crates/checksum",
-  "crates/hashes",
-  "crates/platform",
-  "crates/traits",
-  "crates/backend",
-]
+members = ["."]
 
 [workspace.metadata.docs.rs]
 all-features = true
@@ -54,7 +50,7 @@ expect_used = "allow"
 indexing_slicing = "allow"
 
 # Safety discipline:
-# - `unsafe {}` blocks must have a `// SAFETY:` comment explaining why they’re sound.
+# - `unsafe {}` blocks must have a `// SAFETY:` comment explaining why they're sound.
 # - `unsafe fn` must document its safety contract.
 undocumented_unsafe_blocks = "deny"
 missing_safety_doc = "deny"
@@ -63,15 +59,80 @@ missing_safety_doc = "deny"
 broken_intra_doc_links = "deny"
 private_intra_doc_links = "warn"
 
-[workspace.dependencies]
-criterion = { version = "^0.8.2", default-features = false, features = ["html_reports", "plotters"] } #unified
+[features]
+default = ["std", "checksums", "hashes"]
+std = ["alloc"]
+alloc = []
+checksums = []
+hashes = []
+parallel = ["std", "dep:rayon"]
+diag = ["std"]
+testing = []
+
+[dependencies]
+rayon = { version = "1.11.0", optional = true }
+
+[dev-dependencies]
+# Benchmark framework
+criterion = { version = "^0.8.2", default-features = false, features = ["html_reports", "plotters"] }
 proptest = "^1.10.0"
-platform = { path = "crates/platform", version = "^0.1.0", default-features = false } #unified
-backend = { path = "crates/backend", version = "^0.1.0", default-features = false } #unified
-traits = { path = "crates/traits", version = "^0.1.0", default-features = false } #unified
-checksum = { path = "crates/checksum", version = "^0.1.0", default-features = false } #unified
-hashes = { path = "crates/hashes", version = "^0.1.0", default-features = false } #unified
-rscrypto = { path = "crates/rscrypto", version = "^0.1.0", default-features = false } #unified
+
+# CRC oracle crates
+crc = "3.4.0"
+crc-fast = "1.10.0"
+crc32c = "0.6.8"
+crc32fast = "1.5.0"
+crc64fast = "1.1.0"
+crc64fast-nvme = "1.2.1"
+
+# Hash oracle crates
+blake3 = { version = "1.8.3", default-features = false, features = ["std", "rayon"] }
+sha2 = { version = "0.10.9", default-features = false, features = ["std", "force-soft"] }
+sha3 = "0.10.8"
+xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
+rapidhash = "4.3.0"
+tiny-keccak = { version = "2.0.2", features = ["kmac"] }
+ascon-hash256 = "0.5.0-rc.2"
+digest = { version = "0.10.7", features = ["dev"] }
+
+[[bench]]
+name = "checksum_comp"
+harness = false
+
+[[bench]]
+name = "checksum_kernels"
+harness = false
+
+[[bench]]
+name = "hashes_comp"
+harness = false
+
+[[bench]]
+name = "hashes_kernels"
+harness = false
+
+[[bench]]
+name = "blake3"
+harness = false
+
+[[bench]]
+name = "blake3_short_input_attribution"
+harness = false
+
+[[example]]
+name = "basic"
+required-features = ["std"]
+
+[[example]]
+name = "introspect"
+required-features = ["std"]
+
+[[example]]
+name = "parallel"
+required-features = ["parallel"]
+
+[lints]
+workspace = true
 
 [profile.dev]
 opt-level = 0
