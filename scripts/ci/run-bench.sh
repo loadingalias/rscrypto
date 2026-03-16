@@ -442,7 +442,7 @@ run_blake3_enforced_gates() {
       ours_prefix="$(blake3_kernel_gate_prefix "$PLATFORM_INPUT")"
       echo "" | tee -a "$LOG_PATH"
       echo "Running kernel diagnostics for BLAKE3 gate..." | tee -a "$LOG_PATH"
-      cmd=(cargo bench --profile bench --bench blake3 -- kernel-ab)
+      cmd=(cargo bench --profile bench --features parallel --bench blake3 -- kernel-ab)
       if [[ "${#CRITERION_ARGS[@]}" -gt 0 ]]; then
         cmd+=("${CRITERION_ARGS[@]}")
       fi
@@ -621,7 +621,7 @@ run_bench_cmd() {
   local crate="$1"
   local bench="$2"
   local filter="${3:-}"
-  local -a cmd=(cargo bench --profile bench --bench "$bench")
+  local -a cmd=(cargo bench --profile bench --features parallel --bench "$bench")
   if [[ -n "$filter" || "${#CRITERION_ARGS[@]}" -gt 0 ]]; then
     cmd+=(--)
     if [[ -n "$filter" ]]; then
@@ -678,7 +678,7 @@ if [[ -n "$GENERIC_FILTER" ]]; then
   echo "Using first filter token for generic run: $GENERIC_FILTER" | tee -a "$LOG_PATH"
 fi
 
-cmd=(cargo bench --profile bench "${BENCH_FLAGS[@]}")
+cmd=(cargo bench --profile bench --features parallel "${BENCH_FLAGS[@]}")
 if [[ -n "$GENERIC_FILTER" || "${#CRITERION_ARGS[@]}" -gt 0 ]]; then
   cmd+=(--)
   if [[ -n "$GENERIC_FILTER" ]]; then
