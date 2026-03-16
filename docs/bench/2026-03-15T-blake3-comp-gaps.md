@@ -1,88 +1,91 @@
-# Blake3 Comp Gaps — 2026-03-15 (local, Apple Silicon, noisy)
+# Blake3 Comp Gaps — 2026-03-15
 
-Source: `just bench-blake3-compare` on laptop. CI numbers pending.
-Criterion 30 samples, default warmup/measurement. Not native RUSTFLAGS.
+Source: CI run [23122515388](https://github.com/loadingalias/rscrypto/actions/runs/23122515388)
+on AMD Zen4 (AVX-512), Intel Sapphire Rapids (AVX-512), AWS Graviton4 (NEON).
+Criterion 30 samples, `RUSTFLAGS="-C target-cpu=native"`, `--bench hashes_comp -- blake3/`.
 
-Only losses listed (cases where official beats rscrypto).
+Only losses listed (cases where official beats rscrypto). Mid-point estimate used.
 
-## Critical: XOF (4-5x slower at small inputs)
+## Critical: XOF (3-4x slower at small inputs, every platform)
 
-| Case | rscrypto | official | gap |
-|------|----------|----------|-----|
-| 1B-in / 32B-out | 87 MiB/s | 401 MiB/s | **-78%** |
-| 64B-in / 32B-out | 253 MiB/s | 1.12 GiB/s | **-78%** |
-| 1KiB-in / 32B-out | 674 MiB/s | 857 MiB/s | **-21%** |
-| 64KiB-in / 32B-out | 1.65 GiB/s | 1.73 GiB/s | -4.7% |
-| 1B-in / 1KiB-out | 698 MiB/s | 879 MiB/s | **-21%** |
-| 64B-in / 1KiB-out | 740 MiB/s | 931 MiB/s | **-20%** |
-| 1KiB-in / 1KiB-out | 772 MiB/s | 882 MiB/s | **-12%** |
-| 64KiB-in / 1KiB-out | 1.59 GiB/s | 1.65 GiB/s | -3.8% |
+Losses on ALL platforms, ALL sizes. Worst case: 265-320% slower.
 
-Root cause likely: XOF squeeze path not using SIMD, or excessive per-call overhead.
+| Case | Zen4 gap | SPR gap | Graviton4 gap |
+|------|----------|---------|---------------|
+| 1B-in / 32B-out | **-264%** | **-320%** | **-320%** |
+| 64B-in / 32B-out | **-266%** | **-302%** | **-319%** |
+| 1KiB-in / 32B-out | **-22%** | **-25%** | **-27%** |
+| 64KiB-in / 32B-out | **-16%** | **-16%** | +7% win |
+| 1B-in / 1KiB-out | **-142%** | **-179%** | **-16%** |
+| 64B-in / 1KiB-out | **-105%** | **-165%** | **-13%** |
+| 1KiB-in / 1KiB-out | **-26%** | **-27%** | **-14%** |
+| 64KiB-in / 1KiB-out | **-16%** | **-16%** | +7% win |
 
-## Streaming (consistent 2-4% gap)
+Root cause: XOF squeeze/output-extend path is not using SIMD. The official
+crate parallelizes output block generation; rscrypto appears to do it serially.
 
-| Chunk size | rscrypto | official | gap |
-|------------|----------|----------|-----|
-| 64B | 742 MiB/s | 757 MiB/s | -2.0% |
-| 128B | 744 MiB/s | 769 MiB/s | -3.2% |
-| 256B | 752 MiB/s | 784 MiB/s | **-4.1%** |
-| 512B | 762 MiB/s | 789 MiB/s | **-3.4%** |
-| 1KiB | 763 MiB/s | 778 MiB/s | -2.0% |
-| 4KiB | 1.55 GiB/s | 1.61 GiB/s | **-3.8%** |
-| 16KiB | 1.59 GiB/s | 1.70 GiB/s | **-6.4%** |
-| 64KiB | 1.65 GiB/s | 1.72 GiB/s | **-4.1%** |
+## Critical: Streaming (10-17% gap on x86-64, mixed on ARM)
 
-Pattern: gap widens at medium-large chunk sizes. Suggests overhead in
-update/finalize path or suboptimal buffer management.
+Losses on Zen4 and SPR at ALL chunk sizes. Graviton4 loses small, wins large.
 
-## Oneshot hash (small gaps at medium-large sizes)
+| Chunk size | Zen4 gap | SPR gap | Graviton4 gap |
+|------------|----------|---------|---------------|
+| 64B | **-13.5%** | **-13.5%** | -2.7% |
+| 128B | **-14.5%** | **-14.9%** | **-6.0%** |
+| 256B | **-14.4%** | **-15.6%** | **-6.0%** |
+| 512B | **-14.6%** | **-15.6%** | **-4.4%** |
+| 1KiB | -1.3% | ~0% | -2.2% |
+| 4KiB | **-8.3%** | **-6.2%** | +6.4% win |
+| 16KiB | **-16.8%** | **-14.1%** | +5.8% win |
+| 64KiB | **-13.3%** | **-12.5%** | +8.0% win |
 
-| Size | rscrypto | official | gap |
-|------|----------|----------|-----|
-| 0 (empty) | 13.45 Melem/s | 13.90 Melem/s | -3.3% |
-| 64B | 798 MiB/s | 831 MiB/s | **-4.0%** |
-| 1KiB | 806 MiB/s | 822 MiB/s | -1.9% |
-| 4KiB | 1.60 GiB/s | 1.63 GiB/s | -1.6% |
-| 64KiB | 1.72 GiB/s | 1.73 GiB/s | -0.4% |
-| 1MiB | 1.64 GiB/s | 1.70 GiB/s | **-3.4%** |
+Pattern: x86-64 has a systemic streaming regression. Graviton4 wins at
+large chunks but loses at small. The 1KiB chunk boundary is a transition point.
 
-## Keyed hash (mirrors oneshot pattern)
+## Significant: 1 MiB hash/keyed-hash (~10% gap, x86-64 only)
 
-| Size | rscrypto | official | gap |
-|------|----------|----------|-----|
-| 0 (empty) | 13.40 Melem/s | 13.91 Melem/s | -3.6% |
-| 1B | 12.24 MiB/s | 12.50 MiB/s | -2.1% |
-| 64B | 795 MiB/s | 838 MiB/s | **-5.1%** |
-| 65B | 401 MiB/s | 413 MiB/s | -2.9% |
-| 128B | 799 MiB/s | 815 MiB/s | -2.0% |
-| 1KiB | 801 MiB/s | 819 MiB/s | -2.2% |
-| 4KiB | 1.58 GiB/s | 1.66 GiB/s | **-4.8%** |
-| 64KiB | 1.72 GiB/s | 1.73 GiB/s | -0.6% |
-| 1MiB | 1.66 GiB/s | 1.73 GiB/s | **-3.8%** |
+| Mode | Zen4 gap | SPR gap | Graviton4 gap |
+|------|----------|---------|---------------|
+| hash 1MiB | **-10.8%** | **-10.3%** | +8.6% win |
+| keyed 1MiB | **-10.3%** | **-11.1%** | +8.5% win |
+| derive 1MiB | **-10.2%** | **-10.6%** | +8.2% win |
 
-## Derive-key (only 2 losses, large sizes)
+x86-64 specific. Graviton4 wins by ~8.5% at the same size. Likely a large-buffer
+hot-loop issue: prefetch strategy, cache line handling, or AVX-512 utilization.
 
-| Size | rscrypto | official | gap |
-|------|----------|----------|-----|
-| 4KiB | 1.60 GiB/s | 1.62 GiB/s | -0.8% |
-| 1MiB | 1.62 GiB/s | 1.69 GiB/s | **-4.2%** |
+## Minor: Small-input hash/keyed overhead
 
-Note: rscrypto **dominates** derive-key at small sizes (2x faster).
+Size 65 (first byte of second chunk) is a consistent loss across all platforms:
+
+| Mode | Zen4 gap | SPR gap | Graviton4 gap |
+|------|----------|---------|---------------|
+| hash 65B | -4.9% | **-7.0%** | -1.6% |
+| keyed 65B | -4.2% | **-7.6%** | -3.7% |
+
+Sizes 0-1B also lose on Graviton4 (~5%) but win on Zen4/SPR (~17%).
 
 ## Priority ranking
 
-1. **XOF**: 4-5x slower at small inputs. Likely a missing SIMD path or
-   architectural issue in the squeeze/output-extend logic. Biggest win.
-2. **Streaming**: Consistent 3-6% gap. Buffer management or update hot path.
-3. **Oneshot/keyed 1MiB**: 3-5% gap at bulk sizes. Compression loop or
-   finalization overhead.
-4. **Oneshot/keyed 64B**: 4-5% gap at exactly 1 chunk. Possibly setup cost.
+1. **XOF**: 3-4x slower at small inputs on every platform. Architectural gap
+   in output-extend logic. Biggest absolute improvement available.
+2. **Streaming (x86-64)**: 13-17% slower across the board on Zen4/SPR. This
+   is the update hot path — likely something in buffer management, state
+   machine overhead, or the compression function dispatch.
+3. **1 MiB bulk (x86-64)**: ~10% gap for hash/keyed/derive at the largest
+   single-thread workload. Graviton4 does NOT have this issue.
+4. **Size 65B (chunk boundary)**: Consistent 2-8% penalty at the first byte
+   of the second chunk. Likely chunk finalization + new chunk setup overhead.
 
-## Wins (not losing)
+## Strengths (where rscrypto wins)
 
-- Oneshot hash 1-63B: rscrypto faster by 2-3%
-- Oneshot hash 128B: rscrypto faster
-- Keyed hash 31-63B: rscrypto faster
-- Derive-key 0B-1KiB: rscrypto **2x faster**
-- Derive-key 16KiB-64KiB: rscrypto faster
+**derive-key: blowout win everywhere**
+- Empty to 128B: 30-60% faster (official double-hashes for key derivation)
+- Wins every size except 1MiB on x86-64
+
+**Small/medium hash and keyed-hash on x86-64**
+- Zen4: 32B +19%, 64B +22%, 128B +15% (huge wins)
+- SPR: 128B +5%, 1KiB +3%
+
+**Large sizes on Graviton4**
+- 4KiB-1MiB: +7-11% for hash/keyed/derive
+- Streaming 4KiB-64KiB: +6-8%

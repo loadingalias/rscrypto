@@ -1763,6 +1763,8 @@ impl OutputState {
 
   #[inline]
   fn into_root_emit_state(self) -> RootEmitState {
+    debug_assert!(self.block_len <= u8::MAX as u32);
+    debug_assert!(self.flags <= u8::MAX as u32);
     RootEmitState {
       kernel_id: self.kernel_id,
       input_chaining_value: self.input_chaining_value,
@@ -1804,6 +1806,19 @@ impl RootEmitState {
       block_len: BLOCK_LEN as u8,
       flags: (PARENT | flags) as u8,
     }
+  }
+
+  /// Compress and return the full 16-word state for the current output block.
+  #[inline]
+  fn compress_root_block(&self) -> [u32; 16] {
+    kernels::compress_block_inline(
+      self.kernel_id,
+      &self.input_chaining_value,
+      &self.block_words,
+      self.counter,
+      u32::from(self.block_len),
+      u32::from(self.flags) | ROOT,
+    )
   }
 
   #[inline]
@@ -1947,7 +1962,6 @@ impl ChunkState {
     self.update_general(input);
   }
 
-  #[inline(never)]
   fn update_general(&mut self, mut input: &[u8]) {
     // Phase 1: if we already have a buffered (partial or full) block, fill it
     // (or, if it's already full, compress it) before touching the caller
@@ -3454,7 +3468,6 @@ impl Blake3 {
     Some(bytes)
   }
 
-  #[inline(never)]
   fn try_simd_update_batch(&mut self, input: &[u8]) -> Option<usize> {
     if self.chunk_state.len() != 0 || self.bulk_kernel_id.simd_degree() <= 1 || input.len() <= CHUNK_LEN {
       return None;
@@ -3641,7 +3654,7 @@ impl Blake3 {
   fn advance_full_chunk(&mut self) {
     debug_assert_eq!(self.chunk_state.len(), CHUNK_LEN);
     let chunk_cv = self.chunk_state.output().chaining_value();
-    let total_chunks = self.chunk_state.chunk_counter + 1;
+    let total_chunks = self.chunk_state.chunk_counter.strict_add(1);
     self.add_chunk_chaining_value(chunk_cv, total_chunks);
     self.chunk_state = ChunkState::new(
       self.key_words,
@@ -3651,7 +3664,6 @@ impl Blake3 {
     );
   }
 
-  #[cold]
   #[inline(never)]
   fn update_digest_slow(&mut self, input: &[u8]) {
     self.commit_pending_chunk_cv();
@@ -3950,6 +3962,23 @@ impl Blake3Xof {
 
   #[inline]
   fn fill_one_block(&mut self, out: &mut &mut [u8]) {
+    // Fast path: position is block-aligned and request fits in the first half
+    // (first 8 words = OUT_LEN = 32 bytes). Avoid materializing the full
+    // 64-byte output block — only convert the first 8 compress words to bytes.
+    if self.position_within_block == 0 && out.len() <= OUT_LEN {
+      let words = self.root.compress_root_block();
+      let first_half = words8_to_le_bytes(&first_8_words(words));
+      let take = out.len();
+      out[..take].copy_from_slice(&first_half[..take]);
+      self.position_within_block = take as u8;
+      if self.position_within_block == OUTPUT_BLOCK_LEN as u8 {
+        self.root.counter = self.root.counter.wrapping_add(1);
+        self.position_within_block = 0;
+      }
+      *out = &mut core::mem::take(out)[take..];
+      return;
+    }
+
     let mut block = [0u8; OUTPUT_BLOCK_LEN];
     self.root.emit_one_block(&mut block);
     let output_bytes = &block[self.position_within_block as usize..];
@@ -3963,7 +3992,6 @@ impl Blake3Xof {
     *out = &mut core::mem::take(out)[take..];
   }
 
-  #[inline(never)]
   fn squeeze_general(&mut self, out: &mut &mut [u8]) {
     if self.position_within_block != 0 {
       self.fill_one_block(out);
@@ -3984,6 +4012,7 @@ impl Blake3Xof {
 }
 
 impl Xof for Blake3Xof {
+  #[inline]
   fn squeeze(&mut self, mut out: &mut [u8]) {
     if out.is_empty() {
       return;
