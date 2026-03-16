@@ -196,8 +196,8 @@ build_algo_plan_rows() {
 
   if array_contains "$algo" "${DEFAULT_CHECKSUM_ALGOS[@]}"; then
     token="$(checksum_filter_token "$algo")"
-    PLAN_ROWS+=("checksum|comp|$token")
-    PLAN_ROWS+=("checksum|kernels|$token")
+    PLAN_ROWS+=("checksum|checksum_comp|$token")
+    PLAN_ROWS+=("checksum|checksum_kernels|$token")
     return 0
   fi
 
@@ -206,11 +206,11 @@ build_algo_plan_rows() {
     # This prevents BENCH_ONLY=blake3 + BENCH_BENCHES=comp/kernels from
     # filtering down to an empty plan.
     if [[ -n "$BENCHES_INPUT" ]]; then
-      if csv_has_token "$BENCHES_INPUT" "comp"; then
-        PLAN_ROWS+=("hashes|comp|blake3/")
+      if csv_has_token "$BENCHES_INPUT" "hashes_comp"; then
+        PLAN_ROWS+=("hashes|hashes_comp|blake3/")
       fi
-      if csv_has_token "$BENCHES_INPUT" "kernels"; then
-        PLAN_ROWS+=("hashes|kernels|blake3")
+      if csv_has_token "$BENCHES_INPUT" "hashes_kernels"; then
+        PLAN_ROWS+=("hashes|hashes_kernels|blake3")
       fi
       if csv_has_token "$BENCHES_INPUT" "blake3"; then
         PLAN_ROWS+=("hashes|blake3|blake3")
@@ -224,10 +224,10 @@ build_algo_plan_rows() {
   fi
 
   if supports_hash_kernels "$algo"; then
-    PLAN_ROWS+=("hashes|comp|$token")
-    PLAN_ROWS+=("hashes|kernels|$token")
+    PLAN_ROWS+=("hashes|hashes_comp|$token")
+    PLAN_ROWS+=("hashes|hashes_kernels|$token")
   else
-    PLAN_ROWS+=("hashes|comp|$token")
+    PLAN_ROWS+=("hashes|hashes_comp|$token")
   fi
 }
 
@@ -242,6 +242,25 @@ dedupe_plan_rows() {
 
 CRATES_INPUT="$(normalize_csv_lower "${BENCH_CRATES:-}")"
 BENCHES_INPUT="$(normalize_csv_lower "${BENCH_BENCHES:-}")"
+
+# Expand bench shorthand: "comp" -> "hashes_comp,checksum_comp", etc.
+expand_bench_shorthand() {
+  local raw="$1"
+  [[ -n "$raw" ]] || return 0
+  local -a expanded=()
+  local token
+  IFS=',' read -r -a tokens <<< "$raw"
+  for token in "${tokens[@]}"; do
+    case "$token" in
+      comp)    expanded+=("hashes_comp" "checksum_comp") ;;
+      kernels) expanded+=("hashes_kernels" "checksum_kernels") ;;
+      *)       expanded+=("$token") ;;
+    esac
+  done
+  (IFS=','; echo "${expanded[*]}")
+}
+BENCHES_INPUT="$(expand_bench_shorthand "$BENCHES_INPUT")"
+
 ONLY_INPUT="$(normalize_csv_lower "${BENCH_ONLY:-}")"
 FILTER_INPUT="$(normalize_csv_raw "${BENCH_FILTER:-}")"
 QUICK_INPUT="$(to_bool "${BENCH_QUICK:-false}")"
