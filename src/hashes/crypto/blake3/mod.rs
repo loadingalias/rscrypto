@@ -1808,19 +1808,6 @@ impl RootEmitState {
     }
   }
 
-  /// Compress and return the full 16-word state for the current output block.
-  #[inline]
-  fn compress_root_block(&self) -> [u32; 16] {
-    kernels::compress_block_inline(
-      self.kernel_id,
-      &self.input_chaining_value,
-      &self.block_words,
-      self.counter,
-      u32::from(self.block_len),
-      u32::from(self.flags) | ROOT,
-    )
-  }
-
   #[inline]
   fn emit_one_block(&self, out: &mut [u8; OUTPUT_BLOCK_LEN]) {
     kernels::root_output_block_words(
@@ -3962,23 +3949,6 @@ impl Blake3Xof {
 
   #[inline]
   fn fill_one_block(&mut self, out: &mut &mut [u8]) {
-    // Fast path: position is block-aligned and request fits in the first half
-    // (first 8 words = OUT_LEN = 32 bytes). Avoid materializing the full
-    // 64-byte output block — only convert the first 8 compress words to bytes.
-    if self.position_within_block == 0 && out.len() <= OUT_LEN {
-      let words = self.root.compress_root_block();
-      let first_half = words8_to_le_bytes(&first_8_words(words));
-      let take = out.len();
-      out[..take].copy_from_slice(&first_half[..take]);
-      self.position_within_block = take as u8;
-      if self.position_within_block == OUTPUT_BLOCK_LEN as u8 {
-        self.root.counter = self.root.counter.wrapping_add(1);
-        self.position_within_block = 0;
-      }
-      *out = &mut core::mem::take(out)[take..];
-      return;
-    }
-
     let mut block = [0u8; OUTPUT_BLOCK_LEN];
     self.root.emit_one_block(&mut block);
     let output_bytes = &block[self.position_within_block as usize..];
