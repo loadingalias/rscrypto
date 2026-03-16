@@ -38,6 +38,7 @@ mod tests {
   use super::*;
 
   #[test]
+  #[cfg_attr(miri, ignore)] // Miri does not support inline assembly (aarch64 PRFM)
   fn prefetch_does_not_crash_on_null() {
     // SAFETY: prefetch is a CPU hint — any pointer value is safe.
     unsafe {
@@ -46,6 +47,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg_attr(miri, ignore)] // Miri does not support inline assembly (aarch64 PRFM)
   fn prefetch_does_not_crash_on_unaligned() {
     let data = [0u8; 256];
     // SAFETY: prefetch is a CPU hint — any pointer value is safe.
@@ -57,6 +59,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg_attr(miri, ignore)] // Miri does not support inline assembly (aarch64 PRFM)
   fn prefetch_does_not_crash_on_out_of_bounds() {
     let data = [0u8; 64];
     // SAFETY: prefetch is a CPU hint — invalid addresses are silently ignored.
