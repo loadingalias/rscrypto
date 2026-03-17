@@ -127,7 +127,7 @@ impl HasherDispatch {
 
   #[inline]
   #[must_use]
-  #[cfg(any(test, feature = "parallel"))]
+  #[cfg(feature = "parallel")]
   pub(crate) fn bulk_sizeclass_threshold(&self) -> usize {
     self.bulk_sizeclass_threshold
   }
