@@ -1995,14 +1995,18 @@ impl ChunkState {
           self.blocks_compressed < 15,
           "last chunk block stays buffered until output()"
         );
-        kernels::chunk_compress_blocks_inline(
-          self.kernel_id,
-          &mut self.chaining_value,
-          self.chunk_counter,
-          self.flags,
-          &mut self.blocks_compressed,
-          &self.block,
-        );
+        let start = if self.blocks_compressed == 0 { CHUNK_START } else { 0 };
+        // SAFETY: kernel_id was validated at construction to match available CPU features.
+        unsafe {
+          kernels::compress_block_asm_inline(
+            self.kernel_id,
+            &mut self.chaining_value,
+            &self.block,
+            self.chunk_counter,
+            self.flags | start,
+          );
+        }
+        self.blocks_compressed = self.blocks_compressed.wrapping_add(1);
         self.block_len = 0;
         self.block = [0u8; BLOCK_LEN];
       }
@@ -2033,15 +2037,22 @@ impl ChunkState {
         }
 
         if blocks_to_compress != 0 {
-          let bytes = blocks_to_compress * BLOCK_LEN;
-          kernels::chunk_compress_blocks_inline(
-            self.kernel_id,
-            &mut self.chaining_value,
-            self.chunk_counter,
-            self.flags,
-            &mut self.blocks_compressed,
-            &input[..bytes],
-          );
+          let bytes = blocks_to_compress.strict_mul(BLOCK_LEN);
+          let (block_slices, _) = input[..bytes].as_chunks::<BLOCK_LEN>();
+          for block_bytes in block_slices {
+            let start = if self.blocks_compressed == 0 { CHUNK_START } else { 0 };
+            // SAFETY: kernel_id was validated at construction to match available CPU features.
+            unsafe {
+              kernels::compress_block_asm_inline(
+                self.kernel_id,
+                &mut self.chaining_value,
+                block_bytes,
+                self.chunk_counter,
+                self.flags | start,
+              );
+            }
+            self.blocks_compressed = self.blocks_compressed.wrapping_add(1);
+          }
           input = &input[bytes..];
           continue;
         }
