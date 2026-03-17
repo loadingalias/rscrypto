@@ -6,9 +6,9 @@
 #![cfg_attr(not(test), deny(clippy::expect_used))]
 #![allow(clippy::indexing_slicing)] // Audited fixed-size parsing + perf-critical inner loops.
 
-use core::{cmp::min, mem::MaybeUninit, ptr};
 #[cfg(any(feature = "parallel", not(target_endian = "little")))]
 use core::slice;
+use core::{cmp::min, mem::MaybeUninit, ptr};
 #[cfg(feature = "std")]
 extern crate alloc;
 #[cfg(feature = "std")]
@@ -1167,31 +1167,15 @@ fn reduce_subtree_to_pair(
   while cur_len > 2 {
     let pairs = cur_len / 2;
     if !in_next {
-      kernels::parent_cvs_many_from_cvs_inline(
-        kernel.id,
-        &cvs[..cur_len],
-        key_words,
-        flags,
-        &mut next[..pairs],
-      );
+      kernels::parent_cvs_many_from_cvs_inline(kernel.id, &cvs[..cur_len], key_words, flags, &mut next[..pairs]);
     } else {
-      kernels::parent_cvs_many_from_cvs_inline(
-        kernel.id,
-        &next[..cur_len],
-        key_words,
-        flags,
-        &mut cvs[..pairs],
-      );
+      kernels::parent_cvs_many_from_cvs_inline(kernel.id, &next[..cur_len], key_words, flags, &mut cvs[..pairs]);
     }
     in_next = !in_next;
     cur_len = pairs;
   }
 
-  if !in_next {
-    (cvs[0], cvs[1])
-  } else {
-    (next[0], next[1])
-  }
+  if !in_next { (cvs[0], cvs[1]) } else { (next[0], next[1]) }
 }
 
 #[cfg(feature = "parallel")]
@@ -3569,10 +3553,7 @@ impl Blake3 {
   /// path is not applicable.
   #[cfg(target_endian = "little")]
   fn try_subtree_update(&mut self, input: &[u8]) -> Option<usize> {
-    if self.chunk_state.len() != 0
-      || self.bulk_kernel_id.simd_degree() <= 1
-      || input.len() <= CHUNK_LEN
-    {
+    if self.chunk_state.len() != 0 || self.bulk_kernel_id.simd_degree() <= 1 || input.len() <= CHUNK_LEN {
       return None;
     }
 
@@ -3628,8 +3609,7 @@ impl Blake3 {
       // Reduce to 2 CVs so the final parent compression can be deferred to
       // finalize() for ROOT flag application.
       let half = (subtree_chunks / 2) as u64;
-      let (left_cv, right_cv) =
-        reduce_subtree_to_pair(kernel, self.key_words, flags, &mut cvs[..subtree_chunks]);
+      let (left_cv, right_cv) = reduce_subtree_to_pair(kernel, self.key_words, flags, &mut cvs[..subtree_chunks]);
 
       // Push the left subtree onto the stack.
       self.add_subtree_cv(left_cv, half);
@@ -3641,10 +3621,8 @@ impl Blake3 {
       self.pending_cv_chunks = half;
     } else {
       // Non-terminal: more input follows. Reduce to 1 CV and push.
-      let (left_cv, right_cv) =
-        reduce_subtree_to_pair(kernel, self.key_words, flags, &mut cvs[..subtree_chunks]);
-      let subtree_cv =
-        kernels::parent_cv_inline(kernel.id, left_cv, right_cv, self.key_words, flags);
+      let (left_cv, right_cv) = reduce_subtree_to_pair(kernel, self.key_words, flags, &mut cvs[..subtree_chunks]);
+      let subtree_cv = kernels::parent_cv_inline(kernel.id, left_cv, right_cv, self.key_words, flags);
       self.add_subtree_cv(subtree_cv, subtree_chunks as u64);
     }
 
