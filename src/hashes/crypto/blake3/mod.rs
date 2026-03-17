@@ -1924,9 +1924,7 @@ impl ChunkState {
 
   #[inline]
   fn update(&mut self, input: &[u8]) {
-    if input.is_empty() {
-      return;
-    }
+    debug_assert!(!input.is_empty(), "caller checks for empty input");
 
     // Fast path A: buffer input into an empty block at any blocks_compressed.
     if self.block_len == 0 {
@@ -3870,12 +3868,14 @@ impl Digest for Blake3 {
       return;
     }
 
-    if self.pending_chunk_cv.is_none() {
-      let cs_len = self.chunk_state.len();
-      if cs_len != CHUNK_LEN && cs_len.strict_add(input.len()) <= CHUNK_LEN {
-        self.chunk_state.update(input);
-        return;
-      }
+    // Fast path: input fits entirely within the current chunk.
+    // Safe even when pending_chunk_cv is Some — the pending CV is for an
+    // earlier chunk and will be committed when we cross the chunk boundary
+    // in update_digest_slow().
+    let cs_len = self.chunk_state.len();
+    if cs_len != CHUNK_LEN && cs_len.strict_add(input.len()) <= CHUNK_LEN {
+      self.chunk_state.update(input);
+      return;
     }
 
     self.update_digest_slow(input);
