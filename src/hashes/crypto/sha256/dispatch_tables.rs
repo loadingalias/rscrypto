@@ -60,6 +60,24 @@ pub static AARCH64_SHA2_TABLE: DispatchTable = DispatchTable {
   l: KernelId::Aarch64Sha2,
 };
 
+#[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
+pub static RISCV_ZKNH_TABLE: DispatchTable = DispatchTable {
+  boundaries: DEFAULT_BOUNDARIES,
+  xs: KernelId::RiscvZknh,
+  s: KernelId::RiscvZknh,
+  m: KernelId::RiscvZknh,
+  l: KernelId::RiscvZknh,
+};
+
+#[cfg(target_arch = "wasm32")]
+pub static WASM_SIMD128_TABLE: DispatchTable = DispatchTable {
+  boundaries: DEFAULT_BOUNDARIES,
+  xs: KernelId::WasmSimd128,
+  s: KernelId::WasmSimd128,
+  m: KernelId::WasmSimd128,
+  l: KernelId::WasmSimd128,
+};
+
 #[inline]
 #[must_use]
 pub fn select_runtime_table(#[allow(unused_variables)] caps: Caps) -> &'static DispatchTable {
@@ -75,6 +93,20 @@ pub fn select_runtime_table(#[allow(unused_variables)] caps: Caps) -> &'static D
     use crate::platform::caps::aarch64;
     if caps.has(aarch64::SHA2) {
       return &AARCH64_SHA2_TABLE;
+    }
+  }
+  #[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
+  {
+    use crate::platform::caps::riscv;
+    if caps.has(riscv::ZKNH) {
+      return &RISCV_ZKNH_TABLE;
+    }
+  }
+  #[cfg(target_arch = "wasm32")]
+  {
+    use crate::platform::caps::wasm;
+    if caps.has(wasm::SIMD128) {
+      return &WASM_SIMD128_TABLE;
     }
   }
   &DEFAULT_TABLE
