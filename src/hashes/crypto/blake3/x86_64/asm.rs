@@ -14,15 +14,21 @@
 use core::arch::global_asm;
 
 #[cfg(target_os = "linux")]
+global_asm!(include_str!("asm/rscrypto_blake3_sse41_x86-64_unix_linux.s"));
+#[cfg(target_os = "linux")]
 global_asm!(include_str!("asm/rscrypto_blake3_avx2_x86-64_unix_linux.s"));
 #[cfg(target_os = "linux")]
 global_asm!(include_str!("asm/rscrypto_blake3_avx512_x86-64_unix_linux.s"));
 
 #[cfg(target_os = "macos")]
+global_asm!(include_str!("asm/rscrypto_blake3_sse41_x86-64_apple_darwin.s"));
+#[cfg(target_os = "macos")]
 global_asm!(include_str!("asm/rscrypto_blake3_avx2_x86-64_apple_darwin.s"));
 #[cfg(target_os = "macos")]
 global_asm!(include_str!("asm/rscrypto_blake3_avx512_x86-64_apple_darwin.s"));
 
+#[cfg(target_os = "windows")]
+global_asm!(include_str!("asm/rscrypto_blake3_sse41_x86-64_windows_msvc.s"));
 #[cfg(target_os = "windows")]
 global_asm!(include_str!("asm/rscrypto_blake3_avx2_x86-64_windows_msvc.s"));
 #[cfg(target_os = "windows")]
@@ -34,6 +40,14 @@ global_asm!(include_str!("asm/rscrypto_blake3_avx512_x86-64_windows_msvc.s"));
 // entrypoints are internal to rscrypto and are only called from our own code.
 #[cfg(target_os = "windows")]
 unsafe extern "sysv64" {
+  pub fn rscrypto_blake3_compress_in_place_sse41(
+    cv: *mut u32,
+    block: *const u8,
+    counter: u64,
+    block_len: u8,
+    flags: u8,
+  );
+
   pub fn rscrypto_blake3_hash_many_avx2(
     inputs: *const *const u8,
     num_inputs: usize,
@@ -46,6 +60,8 @@ unsafe extern "sysv64" {
     flags_end: u8,
     out: *mut u8,
   );
+
+  pub fn rscrypto_blake3_compress_in_place_avx2(cv: *mut u32, block: *const u8, counter: u64, block_len: u8, flags: u8);
 
   pub fn rscrypto_blake3_hash_many_avx512(
     inputs: *const *const u8,
@@ -90,6 +106,14 @@ unsafe extern "sysv64" {
 
 #[cfg(not(target_os = "windows"))]
 unsafe extern "C" {
+  pub fn rscrypto_blake3_compress_in_place_sse41(
+    cv: *mut u32,
+    block: *const u8,
+    counter: u64,
+    block_len: u8,
+    flags: u8,
+  );
+
   pub fn rscrypto_blake3_hash_many_avx2(
     inputs: *const *const u8,
     num_inputs: usize,
@@ -102,6 +126,8 @@ unsafe extern "C" {
     flags_end: u8,
     out: *mut u8,
   );
+
+  pub fn rscrypto_blake3_compress_in_place_avx2(cv: *mut u32, block: *const u8, counter: u64, block_len: u8, flags: u8);
 
   pub fn rscrypto_blake3_hash_many_avx512(
     inputs: *const *const u8,
@@ -172,6 +198,46 @@ pub(crate) unsafe fn hash_many_avx2(
       out,
     )
   };
+}
+
+/// Single-block compress using SSE4.1 assembly (CV-only output, mutating in place).
+///
+/// # Safety
+/// Caller must ensure SSE4.1 + SSSE3 are available.
+#[inline(always)]
+pub(crate) unsafe fn compress_in_place_sse41_mut(
+  cv: &mut [u32; 8],
+  block: *const u8,
+  counter: u64,
+  block_len: u32,
+  flags: u32,
+) {
+  debug_assert!(block_len <= u8::MAX as u32);
+  debug_assert!(flags <= u8::MAX as u32);
+  // SAFETY: callsites validate CPU features and pointer contracts.
+  unsafe {
+    rscrypto_blake3_compress_in_place_sse41(cv.as_mut_ptr(), block, counter, block_len as u8, flags as u8);
+  }
+}
+
+/// Single-block compress using AVX2 assembly (CV-only output, mutating in place).
+///
+/// # Safety
+/// Caller must ensure AVX2 is available.
+#[inline(always)]
+pub(crate) unsafe fn compress_in_place_avx2_mut(
+  cv: &mut [u32; 8],
+  block: *const u8,
+  counter: u64,
+  block_len: u32,
+  flags: u32,
+) {
+  debug_assert!(block_len <= u8::MAX as u32);
+  debug_assert!(flags <= u8::MAX as u32);
+  // SAFETY: callsites validate CPU features and pointer contracts.
+  unsafe {
+    rscrypto_blake3_compress_in_place_avx2(cv.as_mut_ptr(), block, counter, block_len as u8, flags as u8);
+  }
 }
 
 #[inline(always)]
