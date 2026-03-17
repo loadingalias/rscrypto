@@ -1928,8 +1928,16 @@ impl ChunkState {
       return;
     }
 
-    if self.block_len == 0 && self.blocks_compressed == 0 {
-      if input.len() == CHUNK_LEN {
+    // Fast path A: buffer input into an empty block at any blocks_compressed.
+    if self.block_len == 0 {
+      if input.len() <= BLOCK_LEN {
+        self.block[..input.len()].copy_from_slice(input);
+        self.block_len = input.len() as u8;
+        return;
+      }
+
+      // Exact full-chunk fast path (only pristine state).
+      if self.blocks_compressed == 0 && input.len() == CHUNK_LEN {
         if should_use_exact_one_chunk_fast_path(self.kernel_id) {
           self.absorb_exact_one_chunk(input);
           return;
@@ -1938,12 +1946,22 @@ impl ChunkState {
         self.absorb_exact_one_chunk_fallback(input);
         return;
       }
+    }
 
-      if input.len() <= BLOCK_LEN {
-        self.block[..input.len()].copy_from_slice(input);
-        self.block_len = input.len() as u8;
-        return;
-      }
+    // Fast path B: compress full buffered block, buffer the incoming one.
+    // Avoids update_general() two-phase machinery and the 64B zero-fill.
+    if self.block_len as usize == BLOCK_LEN && self.blocks_compressed < 15 && input.len() == BLOCK_LEN {
+      kernels::chunk_compress_blocks_inline(
+        self.kernel_id,
+        &mut self.chaining_value,
+        self.chunk_counter,
+        self.flags,
+        &mut self.blocks_compressed,
+        &self.block,
+      );
+      self.block.copy_from_slice(input);
+      // block_len stays BLOCK_LEN — no zero-fill needed
+      return;
     }
 
     self.update_general(input);
@@ -3852,12 +3870,12 @@ impl Digest for Blake3 {
       return;
     }
 
-    if self.pending_chunk_cv.is_none()
-      && self.chunk_state.len() != CHUNK_LEN
-      && self.chunk_state.len() + input.len() <= CHUNK_LEN
-    {
-      self.chunk_state.update(input);
-      return;
+    if self.pending_chunk_cv.is_none() {
+      let cs_len = self.chunk_state.len();
+      if cs_len != CHUNK_LEN && cs_len.strict_add(input.len()) <= CHUNK_LEN {
+        self.chunk_state.update(input);
+        return;
+      }
     }
 
     self.update_digest_slow(input);
