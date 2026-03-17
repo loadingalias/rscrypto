@@ -773,24 +773,32 @@ pub(crate) unsafe fn chunk_compress_blocks_sse41(
 ) {
   debug_assert_eq!(blocks.len() % BLOCK_LEN, 0);
 
-  #[inline(always)]
-  unsafe fn compress_cv_sse41_block(cv: &[u32; 8], block: *const u8, counter: u64, flags: u32) -> [u32; 8] {
-    let (m0, m1, m2, m3) = unsafe { load_msg_vecs(block) };
-    let [row0, row1, row2, row3] =
-      unsafe { compress_pre_sse41_impl(cv, m0, m1, m2, m3, counter, BLOCK_LEN as u32, flags) };
-    let row0 = unsafe { _mm_xor_si128(row0, row2) };
-    let row1 = unsafe { _mm_xor_si128(row1, row3) };
-    let mut out = [0u32; 8];
-    unsafe {
-      _mm_storeu_si128(out.as_mut_ptr().cast(), row0);
-      _mm_storeu_si128(out.as_mut_ptr().add(4).cast(), row1);
-    }
-    out
-  }
-
   if blocks.len() == BLOCK_LEN {
     let start = if *blocks_compressed == 0 { CHUNK_START } else { 0 };
-    *chaining_value = unsafe { compress_cv_sse41_block(chaining_value, blocks.as_ptr(), chunk_counter, flags | start) };
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+    {
+      unsafe {
+        asm::compress_in_place_sse41_mut(
+          chaining_value,
+          blocks.as_ptr(),
+          chunk_counter,
+          BLOCK_LEN as u32,
+          flags | start,
+        );
+      }
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+      unsafe {
+        compress_in_place_sse41_bytes(
+          chaining_value,
+          blocks.as_ptr(),
+          chunk_counter,
+          BLOCK_LEN as u32,
+          flags | start,
+        );
+      }
+    }
     *blocks_compressed = blocks_compressed.wrapping_add(1);
     return;
   }
@@ -799,8 +807,30 @@ pub(crate) unsafe fn chunk_compress_blocks_sse41(
   debug_assert!(remainder.is_empty());
   for block_bytes in block_slices {
     let start = if *blocks_compressed == 0 { CHUNK_START } else { 0 };
-    *chaining_value =
-      unsafe { compress_cv_sse41_block(chaining_value, block_bytes.as_ptr(), chunk_counter, flags | start) };
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+    {
+      unsafe {
+        asm::compress_in_place_sse41_mut(
+          chaining_value,
+          block_bytes.as_ptr(),
+          chunk_counter,
+          BLOCK_LEN as u32,
+          flags | start,
+        );
+      }
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+      unsafe {
+        compress_in_place_sse41_bytes(
+          chaining_value,
+          block_bytes.as_ptr(),
+          chunk_counter,
+          BLOCK_LEN as u32,
+          flags | start,
+        );
+      }
+    }
     *blocks_compressed = blocks_compressed.wrapping_add(1);
   }
 }
@@ -1081,29 +1111,34 @@ pub(crate) unsafe fn chunk_compress_blocks_avx2(
   blocks_compressed: &mut u8,
   blocks: &[u8],
 ) {
-  // For now, keep the AVX2 per-block path identical to SSSE3 but with AVX2
-  // enabled so the compiler can emit VEX-encoded 128-bit ops and avoid
-  // AVX<->SSE transition penalties in mixed workloads.
   debug_assert_eq!(blocks.len() % BLOCK_LEN, 0);
 
   if blocks.len() == BLOCK_LEN {
-    // SAFETY: `blocks` is exactly one full block.
-    let block_bytes: &[u8; BLOCK_LEN] = unsafe { &*(blocks.as_ptr().cast()) };
     let start = if *blocks_compressed == 0 { CHUNK_START } else { 0 };
-    let (m0, m1, m2, m3) = unsafe { load_msg_vecs(block_bytes.as_ptr()) };
-    // SAFETY: this function is AVX2+SSSE3-gated.
-    *chaining_value = unsafe {
-      compress_cv_avx2(
-        chaining_value,
-        m0,
-        m1,
-        m2,
-        m3,
-        chunk_counter,
-        BLOCK_LEN as u32,
-        flags | start,
-      )
-    };
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+    {
+      unsafe {
+        asm::compress_in_place_avx2_mut(
+          chaining_value,
+          blocks.as_ptr(),
+          chunk_counter,
+          BLOCK_LEN as u32,
+          flags | start,
+        );
+      }
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+      *chaining_value = unsafe {
+        compress_cv_avx2_bytes(
+          chaining_value,
+          blocks.as_ptr(),
+          chunk_counter,
+          BLOCK_LEN as u32,
+          flags | start,
+        )
+      };
+    }
     *blocks_compressed = blocks_compressed.wrapping_add(1);
     return;
   }
@@ -1112,20 +1147,30 @@ pub(crate) unsafe fn chunk_compress_blocks_avx2(
   debug_assert!(remainder.is_empty());
   for block_bytes in block_slices {
     let start = if *blocks_compressed == 0 { CHUNK_START } else { 0 };
-    let (m0, m1, m2, m3) = unsafe { load_msg_vecs(block_bytes.as_ptr()) };
-    // SAFETY: this function is AVX2+SSSE3-gated.
-    *chaining_value = unsafe {
-      compress_cv_avx2(
-        chaining_value,
-        m0,
-        m1,
-        m2,
-        m3,
-        chunk_counter,
-        BLOCK_LEN as u32,
-        flags | start,
-      )
-    };
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+    {
+      unsafe {
+        asm::compress_in_place_avx2_mut(
+          chaining_value,
+          block_bytes.as_ptr(),
+          chunk_counter,
+          BLOCK_LEN as u32,
+          flags | start,
+        );
+      }
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+      *chaining_value = unsafe {
+        compress_cv_avx2_bytes(
+          chaining_value,
+          block_bytes.as_ptr(),
+          chunk_counter,
+          BLOCK_LEN as u32,
+          flags | start,
+        )
+      };
+    }
     *blocks_compressed = blocks_compressed.wrapping_add(1);
   }
 }

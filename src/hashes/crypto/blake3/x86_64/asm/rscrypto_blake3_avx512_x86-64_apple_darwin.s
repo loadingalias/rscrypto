@@ -2368,11 +2368,11 @@ _rscrypto_blake3_compress_in_place_avx512:
         vmovdqu xmm0, xmmword ptr [rdi]
         vmovdqu xmm1, xmmword ptr [rdi+0x10]
         movzx   eax, r8b
-        movzx   edx, dl
+        movzx   ecx, cl
         shl     rax, 32
-        add     rdx, rax
-        vmovq   xmm3, rcx
-        vmovq   xmm4, rdx
+        add     rcx, rax
+        vmovq   xmm3, rdx
+        vmovq   xmm4, rcx
         vpunpcklqdq xmm3, xmm3, xmm4
         vmovaps xmm2, xmmword ptr [RSCRYPTO_AVX512_BLAKE3_IV+rip]
         vmovups xmm8, xmmword ptr [rsi]
@@ -2449,11 +2449,11 @@ _rscrypto_blake3_compress_xof_avx512:
         vmovdqu xmm0, xmmword ptr [rdi]
         vmovdqu xmm1, xmmword ptr [rdi+0x10]
         movzx   eax, r8b
-        movzx   edx, dl
+        movzx   ecx, cl
         shl     rax, 32
-        add     rdx, rax
-        vmovq   xmm3, rcx
-        vmovq   xmm4, rdx
+        add     rcx, rax
+        vmovq   xmm3, rdx
+        vmovq   xmm4, rcx
         vpunpcklqdq xmm3, xmm3, xmm4
         vmovaps xmm2, xmmword ptr [RSCRYPTO_AVX512_BLAKE3_IV+rip]
         vmovups xmm8, xmmword ptr [rsi]
