@@ -498,6 +498,7 @@ pub(crate) fn compress_block_inline(
   }
 }
 
+#[inline]
 pub(crate) fn root_output_block_words(
   id: Blake3KernelId,
   chaining_value: &[u32; 8],

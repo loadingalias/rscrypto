@@ -48,7 +48,17 @@ pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 /// ```
 #[inline(always)]
 pub fn zeroize(buf: &mut [u8]) {
-  for byte in buf.iter_mut() {
+  // SAFETY: align_to_mut returns valid prefix/words/suffix over the same allocation.
+  let (prefix, words, suffix) = unsafe { buf.align_to_mut::<u64>() };
+  for byte in prefix.iter_mut() {
+    // SAFETY: byte is a valid, aligned, dereferenceable pointer to initialized memory.
+    unsafe { core::ptr::write_volatile(byte, 0) };
+  }
+  for word in words.iter_mut() {
+    // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
+    unsafe { core::ptr::write_volatile(word, 0) };
+  }
+  for byte in suffix.iter_mut() {
     // SAFETY: byte is a valid, aligned, dereferenceable pointer to initialized memory.
     unsafe { core::ptr::write_volatile(byte, 0) };
   }

@@ -11,11 +11,15 @@ use crate::{
   traits::Digest,
 };
 
+#[cfg(target_arch = "aarch64")]
+pub(crate) mod aarch64;
 #[doc(hidden)]
 pub mod dispatch;
 #[doc(hidden)]
 pub mod dispatch_tables;
 pub(crate) mod kernels;
+#[cfg(target_arch = "x86_64")]
+pub(crate) mod x86_64;
 
 const BLOCK_LEN: usize = 64;
 
@@ -146,8 +150,8 @@ impl Sha256 {
 
       let mut out = [0u8; 32];
       for (i, word) in state.iter().copied().enumerate() {
-        let offset = i * 4;
-        out[offset..offset + 4].copy_from_slice(&word.to_be_bytes());
+        let offset = i.strict_mul(4);
+        out[offset..offset.strict_add(4)].copy_from_slice(&word.to_be_bytes());
       }
       out
     } else {
@@ -440,8 +444,8 @@ impl Sha256 {
 
     let mut out = [0u8; 32];
     for (i, word) in state.iter().copied().enumerate() {
-      let offset = i * 4;
-      out[offset..offset + 4].copy_from_slice(&word.to_be_bytes());
+      let offset = i.strict_mul(4);
+      out[offset..offset.strict_add(4)].copy_from_slice(&word.to_be_bytes());
     }
     out
   }
