@@ -1947,16 +1947,22 @@ impl ChunkState {
     }
 
     // Fast path B: compress full buffered block, buffer the incoming one.
-    // Avoids update_general() two-phase machinery and the 64B zero-fill.
+    // Calls assembly directly, bypassing the multi-block wrappers and their
+    // #[target_feature] boundaries. This matches the official blake3 crate's
+    // call depth: one match + one extern "C" assembly call.
     if self.block_len as usize == BLOCK_LEN && self.blocks_compressed < 15 && input.len() == BLOCK_LEN {
-      kernels::chunk_compress_blocks_inline(
-        self.kernel_id,
-        &mut self.chaining_value,
-        self.chunk_counter,
-        self.flags,
-        &mut self.blocks_compressed,
-        &self.block,
-      );
+      let start = if self.blocks_compressed == 0 { CHUNK_START } else { 0 };
+      // SAFETY: kernel_id was validated at construction to match available CPU features.
+      unsafe {
+        kernels::compress_block_asm_inline(
+          self.kernel_id,
+          &mut self.chaining_value,
+          &self.block,
+          self.chunk_counter,
+          self.flags | start,
+        );
+      }
+      self.blocks_compressed = self.blocks_compressed.wrapping_add(1);
       self.block.copy_from_slice(input);
       // block_len stays BLOCK_LEN — no zero-fill needed
       return;
@@ -3872,8 +3878,12 @@ impl Digest for Blake3 {
     // Safe even when pending_chunk_cv is Some — the pending CV is for an
     // earlier chunk and will be committed when we cross the chunk boundary
     // in update_digest_slow().
+    //
+    // Uses subtraction instead of addition to avoid an overflow-checking
+    // branch from strict_add. The cs_len < CHUNK_LEN guard proves the
+    // strict_sub cannot underflow, letting LLVM eliminate the panic path.
     let cs_len = self.chunk_state.len();
-    if cs_len != CHUNK_LEN && cs_len.strict_add(input.len()) <= CHUNK_LEN {
+    if cs_len < CHUNK_LEN && input.len() <= CHUNK_LEN.strict_sub(cs_len) {
       self.chunk_state.update(input);
       return;
     }

@@ -302,6 +302,83 @@ pub(crate) fn chunk_compress_blocks_inline(
   }
 }
 
+/// Single-block compress that calls assembly directly, bypassing the multi-block
+/// `chunk_compress_blocks_*` wrappers and their `#[target_feature]` boundaries.
+///
+/// On x86_64 with assembly support (linux/macos/windows), this inlines down to
+/// a single match + extern "C" assembly call — matching the official blake3
+/// crate's call depth.
+///
+/// # Safety
+///
+/// Caller must ensure `id` matches available CPU features.
+#[inline(always)]
+pub(crate) unsafe fn compress_block_asm_inline(
+  id: Blake3KernelId,
+  chaining_value: &mut [u32; 8],
+  block: &[u8; BLOCK_LEN],
+  chunk_counter: u64,
+  flags: u32,
+) {
+  #[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "linux", target_os = "macos", target_os = "windows")
+  ))]
+  match id {
+    Blake3KernelId::X86Avx512 => {
+      // SAFETY: caller ensures AVX-512 is available.
+      unsafe {
+        super::x86_64::asm::compress_in_place_avx512_mut(
+          chaining_value,
+          block.as_ptr(),
+          chunk_counter,
+          BLOCK_LEN as u32,
+          flags,
+        );
+      }
+      return;
+    }
+    Blake3KernelId::X86Avx2 => {
+      // SAFETY: caller ensures AVX2 is available.
+      unsafe {
+        super::x86_64::asm::compress_in_place_avx2_mut(
+          chaining_value,
+          block.as_ptr(),
+          chunk_counter,
+          BLOCK_LEN as u32,
+          flags,
+        );
+      }
+      return;
+    }
+    Blake3KernelId::X86Sse41 => {
+      // SAFETY: caller ensures SSE4.1 is available.
+      unsafe {
+        super::x86_64::asm::compress_in_place_sse41_mut(
+          chaining_value,
+          block.as_ptr(),
+          chunk_counter,
+          BLOCK_LEN as u32,
+          flags,
+        );
+      }
+      return;
+    }
+    _ => {}
+  }
+
+  // Fallback: portable compress (also covers SSSE3, NEON, etc.)
+  let _ = id;
+  let block_words = words16_from_le_bytes_64(block);
+  *chaining_value = first_8_words((super::compress)(
+    chaining_value,
+    &block_words,
+    chunk_counter,
+    BLOCK_LEN as u32,
+    flags,
+  ));
+}
+
 #[inline(always)]
 pub(crate) unsafe fn hash_many_contiguous_inline(
   id: Blake3KernelId,
