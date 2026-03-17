@@ -6,13 +6,20 @@
 #![cfg_attr(not(test), deny(clippy::expect_used))]
 #![allow(clippy::indexing_slicing)] // Audited fixed-size parsing + perf-critical inner loops.
 
-use core::{cmp::min, mem::MaybeUninit, ptr};
+use core::{cmp::min, mem::MaybeUninit, ptr, slice};
 #[cfg(feature = "std")]
 extern crate alloc;
 #[cfg(feature = "std")]
 use alloc::string::{String, ToString};
 #[cfg(feature = "std")]
 use core::cell::RefCell;
+#[cfg(all(feature = "std", test))]
+use core::{
+  panic::AssertUnwindSafe,
+  sync::atomic::{AtomicBool, Ordering},
+};
+#[cfg(all(feature = "std", test))]
+use std::panic;
 #[cfg(feature = "std")]
 use std::sync::{Mutex, OnceLock};
 #[cfg(feature = "parallel")]
@@ -43,12 +50,12 @@ const OUTPUT_BLOCK_LEN: usize = 2 * OUT_LEN;
 //
 // BLAKE3 chunk size is 1024 bytes. If we cap the total input length at `u64`
 // bytes, then the maximum number of chunks is `2^64 / 2^10 = 2^54`, i.e. a
-// 54-level binary reduction tree. Lazy merging needs one extra slot (the new
-// CV sits unmerged on top until the next push).
-const CV_STACK_LEN: usize = 55;
+// 54-level binary reduction tree.
+const CV_STACK_LEN: usize = 54;
 
 type CvBytes = [u8; OUT_LEN];
 
+#[cfg(feature = "parallel")]
 mod join {
   pub(super) trait Join {
     fn join<A, B, RA, RB>(oper_a: A, oper_b: B) -> (RA, RB)
@@ -364,8 +371,571 @@ fn scale_parallel_required_bytes(mode: ParallelPolicyKind, required: usize, inpu
 
 #[cfg(feature = "std")]
 thread_local! {
+  static BLAKE3_SUBTREE_SCRATCH0: RefCell<alloc::vec::Vec<[u32; 8]>> = const { RefCell::new(alloc::vec::Vec::new()) };
+  static BLAKE3_SUBTREE_SCRATCH1: RefCell<alloc::vec::Vec<[u32; 8]>> = const { RefCell::new(alloc::vec::Vec::new()) };
   static DERIVE_KEY_CONTEXT_LOCAL_CACHE: RefCell<Option<(String, [u32; 8])>> = const { RefCell::new(None) };
   static KEYED_WORDS_LOCAL_CACHE: RefCell<Option<([u8; KEY_LEN], [u32; 8])>> = const { RefCell::new(None) };
+}
+
+#[cfg(feature = "parallel")]
+#[derive(Clone, Copy)]
+struct SendPtr<T>(*mut T);
+
+// SAFETY: Callers must ensure no two tasks access overlapping ranges through the pointer.
+#[cfg(feature = "parallel")]
+unsafe impl<T> Send for SendPtr<T> {}
+#[cfg(feature = "parallel")]
+// SAFETY: Callers must ensure no two tasks access overlapping ranges through the pointer.
+unsafe impl<T> Sync for SendPtr<T> {}
+
+#[cfg(feature = "parallel")]
+impl<T> SendPtr<T> {
+  #[inline]
+  #[must_use]
+  fn get(self) -> *mut T {
+    self.0
+  }
+}
+
+#[cfg(feature = "parallel")]
+#[inline]
+#[must_use]
+fn thread_range(thread_index: usize, threads_total: usize, total: usize) -> (usize, usize) {
+  debug_assert!(thread_index < threads_total);
+  let start = thread_index.strict_mul(total).strict_div(threads_total);
+  let end = thread_index.strict_add(1).strict_mul(total).strict_div(threads_total);
+  (start, end)
+}
+
+#[cfg(all(feature = "std", test))]
+static FORCE_PARALLEL_PANIC: AtomicBool = AtomicBool::new(false);
+
+#[cfg(all(feature = "std", test))]
+struct ForceParallelPanicGuard {
+  prev: bool,
+}
+
+#[cfg(all(feature = "std", test))]
+impl Drop for ForceParallelPanicGuard {
+  fn drop(&mut self) {
+    FORCE_PARALLEL_PANIC.store(self.prev, Ordering::Relaxed);
+  }
+}
+
+#[cfg(all(feature = "std", test))]
+#[inline]
+#[must_use]
+fn force_parallel_panic(enabled: bool) -> ForceParallelPanicGuard {
+  let prev = FORCE_PARALLEL_PANIC.swap(enabled, Ordering::Relaxed);
+  ForceParallelPanicGuard { prev }
+}
+
+#[cfg(all(feature = "std", test))]
+#[inline]
+fn maybe_force_parallel_panic() {
+  if FORCE_PARALLEL_PANIC.load(Ordering::Relaxed) {
+    panic!("forced parallel panic (test-only)");
+  }
+}
+
+#[cfg(feature = "parallel")]
+#[inline]
+fn run_parallel_task(task: impl FnOnce()) -> bool {
+  #[cfg(test)]
+  {
+    panic::catch_unwind(AssertUnwindSafe(|| {
+      maybe_force_parallel_panic();
+      task();
+    }))
+    .is_ok()
+  }
+  #[cfg(not(test))]
+  {
+    task();
+    true
+  }
+}
+
+#[cfg(feature = "parallel")]
+#[inline]
+fn with_subtree_scratch<R>(subtree_chunks: usize, f: impl FnOnce(&mut [[u32; 8]], &mut [[u32; 8]]) -> R) -> R {
+  BLAKE3_SUBTREE_SCRATCH0.with(|s0| {
+    BLAKE3_SUBTREE_SCRATCH1.with(|s1| {
+      let mut scratch0 = s0.borrow_mut();
+      let mut scratch1 = s1.borrow_mut();
+      if scratch0.len() != subtree_chunks {
+        scratch0.resize(subtree_chunks, [0u32; 8]);
+      }
+      if scratch1.len() != subtree_chunks {
+        scratch1.resize(subtree_chunks, [0u32; 8]);
+      }
+      f(scratch0.as_mut_slice(), scratch1.as_mut_slice())
+    })
+  })
+}
+
+#[cfg(feature = "parallel")]
+#[inline]
+fn reduce_power_of_two_cvs_in_place(
+  kernel: Kernel,
+  key_words: [u32; 8],
+  flags: u32,
+  scratch0: &mut [[u32; 8]],
+  scratch1: &mut [[u32; 8]],
+) -> [u32; 8] {
+  debug_assert_eq!(scratch0.len(), scratch1.len());
+  debug_assert!(scratch0.len().is_power_of_two());
+
+  if scratch0.len() == 1 {
+    return scratch0[0];
+  }
+
+  let mut cur_len = scratch0.len();
+  let mut cur_is_0 = true;
+
+  while cur_len > 1 {
+    let pairs = cur_len / 2;
+    debug_assert!(pairs != 0);
+    if cur_is_0 {
+      kernels::parent_cvs_many_from_cvs_inline(
+        kernel.id,
+        &scratch0[..2 * pairs],
+        key_words,
+        flags,
+        &mut scratch1[..pairs],
+      );
+      cur_is_0 = false;
+    } else {
+      kernels::parent_cvs_many_from_cvs_inline(
+        kernel.id,
+        &scratch1[..2 * pairs],
+        key_words,
+        flags,
+        &mut scratch0[..pairs],
+      );
+      cur_is_0 = true;
+    }
+    cur_len = pairs;
+  }
+
+  if cur_is_0 { scratch0[0] } else { scratch1[0] }
+}
+
+#[cfg(feature = "parallel")]
+#[inline]
+fn hash_full_chunks_cvs_serial(
+  kernel: Kernel,
+  key_words: [u32; 8],
+  flags: u32,
+  base_counter: u64,
+  input: &[u8],
+  out: &mut [[u32; 8]],
+) {
+  debug_assert_eq!(input.len(), out.len() * CHUNK_LEN);
+
+  const MAX_SIMD_DEGREE: usize = 16;
+
+  let mut written = 0usize;
+  let mut chunk_counter = base_counter;
+  let mut input_ptr = input.as_ptr();
+
+  #[cfg(target_endian = "little")]
+  {
+    while written < out.len() {
+      let remaining = out.len() - written;
+      let batch = remaining.min(MAX_SIMD_DEGREE);
+
+      // SAFETY:
+      // - `input_ptr` points into `input`, which is at least `batch * CHUNK_LEN` bytes.
+      // - `out[written..]` has at least `batch` CV slots (= `batch * OUT_LEN` bytes).
+      let out_ptr = unsafe { out.as_mut_ptr().add(written).cast::<u8>() };
+      // SAFETY: pointers and lengths are validated in the comments above.
+      unsafe {
+        (kernel.hash_many_contiguous)(input_ptr, batch, &key_words, chunk_counter, flags, out_ptr);
+      }
+
+      written += batch;
+      chunk_counter = chunk_counter.wrapping_add(batch as u64);
+      // SAFETY: advancing within `input` by whole chunks.
+      unsafe {
+        input_ptr = input_ptr.add(batch * CHUNK_LEN);
+      }
+    }
+  }
+
+  #[cfg(not(target_endian = "little"))]
+  let mut out_buf = [0u8; OUT_LEN * MAX_SIMD_DEGREE];
+
+  #[cfg(not(target_endian = "little"))]
+  while written < out.len() {
+    let remaining = out.len() - written;
+    let batch = remaining.min(MAX_SIMD_DEGREE);
+
+    // SAFETY:
+    // - `input_ptr` points into `input`, which is at least `batch * CHUNK_LEN` bytes.
+    // - `out_buf` is `OUT_LEN * batch` bytes.
+    unsafe {
+      (kernel.hash_many_contiguous)(input_ptr, batch, &key_words, chunk_counter, flags, out_buf.as_mut_ptr());
+    }
+
+    for i in 0..batch {
+      let offset = i * OUT_LEN;
+      // SAFETY: `out_buf` is `OUT_LEN * MAX_SIMD_DEGREE` bytes, and `i < batch <= MAX_SIMD_DEGREE`.
+      let cv = unsafe { words8_from_le_bytes_32(&*(out_buf.as_ptr().add(offset) as *const [u8; OUT_LEN])) };
+      out[written + i] = cv;
+    }
+
+    written += batch;
+    chunk_counter = chunk_counter.wrapping_add(batch as u64);
+    // SAFETY: advancing within `input` by whole chunks.
+    unsafe {
+      input_ptr = input_ptr.add(batch * CHUNK_LEN);
+    }
+  }
+}
+
+#[cfg(feature = "parallel")]
+fn hash_full_chunks_cvs_parallel_rayon(
+  kernel: Kernel,
+  key_words: [u32; 8],
+  flags: u32,
+  base_counter: u64,
+  input: &[u8],
+  out: &mut [[u32; 8]],
+  threads_total: usize,
+) {
+  debug_assert_eq!(input.len(), out.len() * CHUNK_LEN);
+
+  if threads_total <= 1 || out.len() < 2 {
+    hash_full_chunks_cvs_serial(kernel, key_words, flags, base_counter, input, out);
+    return;
+  }
+
+  let threads_total = threads_total.min(out.len()).max(1);
+  #[cfg(test)]
+  let failed = AtomicBool::new(false);
+  let out_ptr = SendPtr(out.as_mut_ptr());
+  let out_len = out.len();
+
+  rayon::scope(|s| {
+    #[cfg(test)]
+    let failed = &failed;
+    for t in 1..threads_total {
+      let (start, end) = thread_range(t, threads_total, out_len);
+      if start == end {
+        continue;
+      }
+      let input = &input[start * CHUNK_LEN..end * CHUNK_LEN];
+      let counter = base_counter.wrapping_add(start as u64);
+      s.spawn(move |_| {
+        #[cfg(test)]
+        let ok = run_parallel_task(|| {
+          // SAFETY: `out_ptr` is valid for `out_len` elements and this task's
+          // range is disjoint from every other task.
+          let out = unsafe { slice::from_raw_parts_mut(out_ptr.get().add(start), end - start) };
+          hash_full_chunks_cvs_serial(kernel, key_words, flags, counter, input, out);
+        });
+        #[cfg(test)]
+        if !ok {
+          failed.store(true, Ordering::Relaxed);
+        }
+        #[cfg(not(test))]
+        {
+          run_parallel_task(|| {
+            // SAFETY: `out_ptr` is valid for `out_len` elements and this task's
+            // range is disjoint from every other task.
+            let out = unsafe { slice::from_raw_parts_mut(out_ptr.get().add(start), end - start) };
+            hash_full_chunks_cvs_serial(kernel, key_words, flags, counter, input, out);
+          });
+        }
+      });
+    }
+
+    let (start, end) = thread_range(0, threads_total, out_len);
+    #[cfg(test)]
+    let ok = run_parallel_task(|| {
+      hash_full_chunks_cvs_serial(
+        kernel,
+        key_words,
+        flags,
+        base_counter.wrapping_add(start as u64),
+        &input[start * CHUNK_LEN..end * CHUNK_LEN],
+        // SAFETY: disjoint partition for thread 0.
+        unsafe { slice::from_raw_parts_mut(out_ptr.get().add(start), end - start) },
+      );
+    });
+    #[cfg(test)]
+    if !ok {
+      failed.store(true, Ordering::Relaxed);
+    }
+    #[cfg(not(test))]
+    {
+      run_parallel_task(|| {
+        hash_full_chunks_cvs_serial(
+          kernel,
+          key_words,
+          flags,
+          base_counter.wrapping_add(start as u64),
+          &input[start * CHUNK_LEN..end * CHUNK_LEN],
+          // SAFETY: disjoint partition for thread 0.
+          unsafe { slice::from_raw_parts_mut(out_ptr.get().add(start), end - start) },
+        );
+      });
+    }
+  });
+
+  #[cfg(test)]
+  if failed.load(Ordering::Relaxed) {
+    hash_full_chunks_cvs_serial(kernel, key_words, flags, base_counter, input, out);
+  }
+}
+
+#[cfg(feature = "parallel")]
+fn parent_cvs_many_from_cvs_parallel_rayon(
+  kernel: Kernel,
+  key_words: [u32; 8],
+  flags: u32,
+  children: &[[u32; 8]],
+  out: &mut [[u32; 8]],
+  threads_total: usize,
+) {
+  debug_assert_eq!(children.len(), out.len() * 2);
+
+  if threads_total <= 1 || out.len() < 2 {
+    kernels::parent_cvs_many_from_cvs_inline(kernel.id, children, key_words, flags, out);
+    return;
+  }
+
+  let pairs = out.len();
+  let threads_total = threads_total.min(pairs).max(1);
+  #[cfg(test)]
+  let failed = AtomicBool::new(false);
+  let out_ptr = SendPtr(out.as_mut_ptr());
+
+  rayon::scope(|s| {
+    #[cfg(test)]
+    let failed = &failed;
+    for t in 1..threads_total {
+      let (start, end) = thread_range(t, threads_total, pairs);
+      if start == end {
+        continue;
+      }
+      let children = &children[2 * start..2 * end];
+      s.spawn(move |_| {
+        #[cfg(test)]
+        let ok = run_parallel_task(|| {
+          // SAFETY: `out_ptr` is valid for `pairs` outputs and this task's
+          // range is disjoint from every other task.
+          let out = unsafe { slice::from_raw_parts_mut(out_ptr.get().add(start), end - start) };
+          kernels::parent_cvs_many_from_cvs_inline(kernel.id, children, key_words, flags, out);
+        });
+        #[cfg(test)]
+        if !ok {
+          failed.store(true, Ordering::Relaxed);
+        }
+        #[cfg(not(test))]
+        {
+          run_parallel_task(|| {
+            // SAFETY: `out_ptr` is valid for `pairs` outputs and this task's
+            // range is disjoint from every other task.
+            let out = unsafe { slice::from_raw_parts_mut(out_ptr.get().add(start), end - start) };
+            kernels::parent_cvs_many_from_cvs_inline(kernel.id, children, key_words, flags, out);
+          });
+        }
+      });
+    }
+
+    let (start, end) = thread_range(0, threads_total, pairs);
+    #[cfg(test)]
+    let ok = run_parallel_task(|| {
+      kernels::parent_cvs_many_from_cvs_inline(
+        kernel.id,
+        &children[2 * start..2 * end],
+        key_words,
+        flags,
+        // SAFETY: disjoint partition for thread 0.
+        unsafe { slice::from_raw_parts_mut(out_ptr.get().add(start), end - start) },
+      );
+    });
+    #[cfg(test)]
+    if !ok {
+      failed.store(true, Ordering::Relaxed);
+    }
+    #[cfg(not(test))]
+    {
+      run_parallel_task(|| {
+        kernels::parent_cvs_many_from_cvs_inline(
+          kernel.id,
+          &children[2 * start..2 * end],
+          key_words,
+          flags,
+          // SAFETY: disjoint partition for thread 0.
+          unsafe { slice::from_raw_parts_mut(out_ptr.get().add(start), end - start) },
+        );
+      });
+    }
+  });
+
+  #[cfg(test)]
+  if failed.load(Ordering::Relaxed) {
+    kernels::parent_cvs_many_from_cvs_inline(kernel.id, children, key_words, flags, out);
+  }
+}
+
+#[cfg(feature = "parallel")]
+#[inline]
+fn hash_power_of_two_subtree_roots_serial(
+  kernel: Kernel,
+  key_words: [u32; 8],
+  flags: u32,
+  base_counter: u64,
+  input: &[u8],
+  subtree_chunks: usize,
+  out: &mut [[u32; 8]],
+) {
+  debug_assert!(subtree_chunks.is_power_of_two());
+  debug_assert_ne!(subtree_chunks, 0);
+  debug_assert_eq!(input.len(), out.len() * subtree_chunks * CHUNK_LEN);
+
+  with_subtree_scratch(subtree_chunks, |scratch0, scratch1| {
+    for (i, slot) in out.iter_mut().enumerate() {
+      let chunk_base = base_counter.wrapping_add((i * subtree_chunks) as u64);
+      let bytes = &input[i * subtree_chunks * CHUNK_LEN..(i + 1) * subtree_chunks * CHUNK_LEN];
+      hash_full_chunks_cvs_serial(kernel, key_words, flags, chunk_base, bytes, scratch0);
+      *slot = reduce_power_of_two_cvs_in_place(kernel, key_words, flags, scratch0, scratch1);
+    }
+  });
+}
+
+#[cfg(feature = "parallel")]
+struct SubtreeRootsRequest<'a> {
+  kernel: Kernel,
+  key_words: [u32; 8],
+  flags: u32,
+  base_counter: u64,
+  input: &'a [u8],
+  subtree_chunks: usize,
+  out: &'a mut [[u32; 8]],
+  threads_total: usize,
+}
+
+#[cfg(feature = "parallel")]
+fn hash_power_of_two_subtree_roots_parallel_rayon(req: SubtreeRootsRequest<'_>) {
+  let SubtreeRootsRequest {
+    kernel,
+    key_words,
+    flags,
+    base_counter,
+    input,
+    subtree_chunks,
+    out,
+    threads_total,
+  } = req;
+  debug_assert!(subtree_chunks.is_power_of_two());
+  debug_assert_ne!(subtree_chunks, 0);
+  debug_assert_eq!(input.len(), out.len() * subtree_chunks * CHUNK_LEN);
+
+  if threads_total <= 1 || out.len() < 2 {
+    hash_power_of_two_subtree_roots_serial(kernel, key_words, flags, base_counter, input, subtree_chunks, out);
+    return;
+  }
+
+  let threads_total = threads_total.min(out.len()).max(1);
+  #[cfg(test)]
+  let failed = AtomicBool::new(false);
+  let out_ptr = SendPtr(out.as_mut_ptr());
+  let out_len = out.len();
+
+  rayon::scope(|s| {
+    #[cfg(test)]
+    let failed = &failed;
+    for t in 1..threads_total {
+      let (start, end) = thread_range(t, threads_total, out_len);
+      if start == end {
+        continue;
+      }
+      let input = &input[start * subtree_chunks * CHUNK_LEN..end * subtree_chunks * CHUNK_LEN];
+      let counter = base_counter.wrapping_add((start * subtree_chunks) as u64);
+
+      s.spawn(move |_| {
+        #[cfg(test)]
+        let ok = run_parallel_task(|| {
+          with_subtree_scratch(subtree_chunks, |scratch0, scratch1| {
+            // SAFETY: `out_ptr` is valid for `out_len` outputs and this task's
+            // range is disjoint from every other task.
+            let out = unsafe { slice::from_raw_parts_mut(out_ptr.get().add(start), end - start) };
+            for (i, slot) in out.iter_mut().enumerate() {
+              let chunk_base = counter + (i * subtree_chunks) as u64;
+              let bytes = &input[i * subtree_chunks * CHUNK_LEN..(i + 1) * subtree_chunks * CHUNK_LEN];
+              hash_full_chunks_cvs_serial(kernel, key_words, flags, chunk_base, bytes, scratch0);
+              *slot = reduce_power_of_two_cvs_in_place(kernel, key_words, flags, scratch0, scratch1);
+            }
+          });
+        });
+        #[cfg(test)]
+        if !ok {
+          failed.store(true, Ordering::Relaxed);
+        }
+        #[cfg(not(test))]
+        {
+          run_parallel_task(|| {
+            with_subtree_scratch(subtree_chunks, |scratch0, scratch1| {
+              // SAFETY: `out_ptr` is valid for `out_len` outputs and this task's
+              // range is disjoint from every other task.
+              let out = unsafe { slice::from_raw_parts_mut(out_ptr.get().add(start), end - start) };
+              for (i, slot) in out.iter_mut().enumerate() {
+                let chunk_base = counter + (i * subtree_chunks) as u64;
+                let bytes = &input[i * subtree_chunks * CHUNK_LEN..(i + 1) * subtree_chunks * CHUNK_LEN];
+                hash_full_chunks_cvs_serial(kernel, key_words, flags, chunk_base, bytes, scratch0);
+                *slot = reduce_power_of_two_cvs_in_place(kernel, key_words, flags, scratch0, scratch1);
+              }
+            });
+          });
+        }
+      });
+    }
+
+    let (start, end) = thread_range(0, threads_total, out_len);
+    #[cfg(test)]
+    let ok = run_parallel_task(|| {
+      with_subtree_scratch(subtree_chunks, |scratch0, scratch1| {
+        let counter = base_counter.wrapping_add((start * subtree_chunks) as u64);
+        // SAFETY: disjoint partition for thread 0.
+        let out = unsafe { slice::from_raw_parts_mut(out_ptr.get().add(start), end - start) };
+        for (i, slot) in out.iter_mut().enumerate() {
+          let chunk_base = counter + (i * subtree_chunks) as u64;
+          let bytes = &input[(start + i) * subtree_chunks * CHUNK_LEN..(start + i + 1) * subtree_chunks * CHUNK_LEN];
+          hash_full_chunks_cvs_serial(kernel, key_words, flags, chunk_base, bytes, scratch0);
+          *slot = reduce_power_of_two_cvs_in_place(kernel, key_words, flags, scratch0, scratch1);
+        }
+      });
+    });
+    #[cfg(test)]
+    if !ok {
+      failed.store(true, Ordering::Relaxed);
+    }
+    #[cfg(not(test))]
+    {
+      run_parallel_task(|| {
+        with_subtree_scratch(subtree_chunks, |scratch0, scratch1| {
+          let counter = base_counter.wrapping_add((start * subtree_chunks) as u64);
+          // SAFETY: disjoint partition for thread 0.
+          let out = unsafe { slice::from_raw_parts_mut(out_ptr.get().add(start), end - start) };
+          for (i, slot) in out.iter_mut().enumerate() {
+            let chunk_base = counter + (i * subtree_chunks) as u64;
+            let bytes = &input[(start + i) * subtree_chunks * CHUNK_LEN..(start + i + 1) * subtree_chunks * CHUNK_LEN];
+            hash_full_chunks_cvs_serial(kernel, key_words, flags, chunk_base, bytes, scratch0);
+            *slot = reduce_power_of_two_cvs_in_place(kernel, key_words, flags, scratch0, scratch1);
+          }
+        });
+      });
+    }
+  });
+
+  #[cfg(test)]
+  if failed.load(Ordering::Relaxed) {
+    hash_power_of_two_subtree_roots_serial(kernel, key_words, flags, base_counter, input, subtree_chunks, out);
+  }
 }
 
 /// Benchmark-only hooks (not part of the stable API).
@@ -538,7 +1108,6 @@ fn reduce_power_of_two_chunk_cvs(kernel: Kernel, key_words: [u32; 8], flags: u32
   cur[0]
 }
 
-#[cfg(not(target_endian = "little"))]
 #[inline]
 fn reduce_power_of_two_chunk_cvs_bytes(kernel: Kernel, key_words: [u32; 8], flags: u32, cvs: &[CvBytes]) -> CvBytes {
   debug_assert!(cvs.len().is_power_of_two());
@@ -562,6 +1131,99 @@ fn reduce_power_of_two_chunk_cvs_bytes(kernel: Kernel, key_words: [u32; 8], flag
   }
 
   cur[0]
+}
+
+#[cfg(feature = "parallel")]
+#[inline]
+fn reduce_power_of_two_chunk_cvs_any(
+  kernel: Kernel,
+  key_words: [u32; 8],
+  flags: u32,
+  cvs: &[[u32; 8]],
+  threads_total: usize,
+) -> [u32; 8] {
+  debug_assert!(cvs.len().is_power_of_two());
+
+  if cvs.len() == 1 {
+    return cvs[0];
+  }
+  if cvs.len() <= 16 {
+    // Small subtrees are faster to fold serially (and avoid allocation / thread coordination).
+    return reduce_power_of_two_chunk_cvs(kernel, key_words, flags, cvs);
+  }
+
+  let threads_total = threads_total.max(1);
+
+  let mut buf0 = alloc::vec![[0u32; 8]; cvs.len() / 2];
+  let mut buf1 = alloc::vec![[0u32; 8]; cvs.len() / 2];
+
+  enum Cur<'a> {
+    Input(&'a [[u32; 8]]),
+    Buf0,
+    Buf1,
+  }
+
+  let mut cur = Cur::Input(cvs);
+  let mut cur_len = cvs.len();
+
+  loop {
+    let pairs = cur_len / 2;
+    debug_assert!(pairs != 0);
+
+    // For large levels, parallelize parent folding. For small levels, the SIMD
+    // parent kernel is faster than coordinating threads.
+    //
+    // Note: at 1 MiB (1024 chunks), the first reduction level is 512 pairs. If
+    // we require a huge minimum here, we'd never parallelize parent folding on
+    // common “large input” sizes.
+    //
+    // 256 pairs = 512 child CVs. That's enough work (and memory traffic) to
+    // amortize Rayon scheduling overhead on typical desktop/server CPUs.
+    const MIN_PAIRS_FOR_PARALLEL: usize = 256;
+
+    // Helper: fold one reduction level, parallel (rayon) or serial.
+    macro_rules! fold_level {
+      ($children:expr, $out:expr) => {
+        #[cfg(feature = "parallel")]
+        if threads_total > 1 && pairs >= MIN_PAIRS_FOR_PARALLEL {
+          parent_cvs_many_from_cvs_parallel_rayon(kernel, key_words, flags, $children, $out, threads_total);
+        } else {
+          kernels::parent_cvs_many_from_cvs_inline(kernel.id, $children, key_words, flags, $out);
+        }
+        #[cfg(not(feature = "parallel"))]
+        kernels::parent_cvs_many_from_cvs_inline(kernel.id, $children, key_words, flags, $out);
+      };
+    }
+
+    let out0: [u32; 8] = match cur {
+      Cur::Input(children) => {
+        let out = &mut buf0[..pairs];
+        let children = &children[..2 * pairs];
+        fold_level!(children, out);
+        cur = Cur::Buf0;
+        out[0]
+      }
+      Cur::Buf0 => {
+        let out = &mut buf1[..pairs];
+        let children = &buf0[..2 * pairs];
+        fold_level!(children, out);
+        cur = Cur::Buf1;
+        out[0]
+      }
+      Cur::Buf1 => {
+        let out = &mut buf0[..pairs];
+        let children = &buf1[..2 * pairs];
+        fold_level!(children, out);
+        cur = Cur::Buf0;
+        out[0]
+      }
+    };
+
+    if pairs == 1 {
+      return out0;
+    }
+    cur_len = pairs;
+  }
 }
 
 #[cfg(target_endian = "little")]
@@ -634,7 +1296,6 @@ fn add_chunk_cvs_batched(
   }
 }
 
-#[cfg(not(target_endian = "little"))]
 #[inline]
 fn add_chunk_cvs_batched_bytes(
   kernel: Kernel,
@@ -806,6 +1467,7 @@ fn compress(chaining_value: &[u32; 8], block_words: &[u32; 16], counter: u64, bl
   [v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15]
 }
 
+#[cfg(feature = "parallel")]
 #[inline]
 fn left_subtree_len_bytes(input_len: usize) -> usize {
   debug_assert!(input_len > CHUNK_LEN);
@@ -823,6 +1485,7 @@ fn left_subtree_len_bytes(input_len: usize) -> usize {
   left_chunks * CHUNK_LEN
 }
 
+#[cfg(feature = "parallel")]
 #[inline]
 fn compress_parents_parallel_bytes(
   kernel: Kernel,
@@ -844,6 +1507,7 @@ fn compress_parents_parallel_bytes(
   }
 }
 
+#[cfg(feature = "parallel")]
 #[inline]
 fn compress_subtree_wide_bytes<J: join::Join>(
   kernel: Kernel,
@@ -951,6 +1615,7 @@ fn compress_subtree_wide_bytes<J: join::Join>(
   compress_parents_parallel_bytes(kernel, &cv_array[..num_children], key_words, flags, out)
 }
 
+#[cfg(feature = "parallel")]
 #[inline]
 fn compress_subtree_to_parent_node_bytes<J: join::Join>(
   kernel: Kernel,
@@ -1999,6 +2664,55 @@ fn root_output_oneshot(
   output
 }
 
+#[cfg(feature = "parallel")]
+#[inline]
+fn hash_one_full_chunk_cv(
+  kernel: Kernel,
+  key_words: [u32; 8],
+  flags: u32,
+  chunk_counter: u64,
+  chunk: &[u8],
+) -> [u32; 8] {
+  debug_assert_eq!(chunk.len(), CHUNK_LEN);
+
+  let mut out = [0u8; OUT_LEN];
+  // SAFETY: `chunk` is exactly one full chunk, and `out` is OUT_LEN bytes.
+  unsafe { (kernel.hash_many_contiguous)(chunk.as_ptr(), 1, &key_words, chunk_counter, flags, out.as_mut_ptr()) };
+  words8_from_le_bytes_32(&out)
+}
+
+#[cfg(feature = "parallel")]
+#[inline]
+fn hash_full_chunks_cvs_scoped(
+  kernel: Kernel,
+  key_words: [u32; 8],
+  flags: u32,
+  base_counter: u64,
+  input: &[u8],
+  out: &mut [[u32; 8]],
+  threads_total: usize,
+) {
+  let out_len = out.len();
+  debug_assert_eq!(input.len(), out_len * CHUNK_LEN);
+
+  #[cfg(feature = "parallel")]
+  {
+    let mut threads_total = threads_total;
+    if threads_total <= 1 || out_len < 2 {
+      hash_full_chunks_cvs_parallel_rayon(kernel, key_words, flags, base_counter, input, out, 1);
+      return;
+    }
+    threads_total = threads_total.min(out_len);
+    hash_full_chunks_cvs_parallel_rayon(kernel, key_words, flags, base_counter, input, out, threads_total);
+  }
+
+  #[cfg(not(feature = "parallel"))]
+  {
+    let _ = threads_total;
+    hash_full_chunks_cvs_serial(kernel, key_words, flags, base_counter, input, out);
+  }
+}
+
 #[inline]
 fn digest_oneshot_words(kernel: Kernel, key_words: [u32; 8], flags: u32, input: &[u8]) -> [u32; 8] {
   // Ultra-fast path for tiny inputs (≤64B): use unified helper
@@ -2081,9 +2795,37 @@ fn digest_public_oneshot(key_words: [u32; 8], flags: u32, input: &[u8]) -> [u8; 
 pub struct Blake3 {
   bulk_kernel_id: kernels::Blake3KernelId,
   chunk_state: ChunkState,
+  pending_chunk_cv: Option<[u32; 8]>,
   key_words: [u32; 8],
   cv_stack: [MaybeUninit<[u32; 8]>; CV_STACK_LEN],
   cv_stack_len: u8,
+}
+
+#[cfg(feature = "parallel")]
+struct ParallelBatchSpec<'a> {
+  input: &'a [u8],
+  base_counter: u64,
+  batch_chunks: usize,
+  commit_chunks: usize,
+  threads: usize,
+  keep_last_full_chunk: bool,
+}
+
+#[cfg(feature = "parallel")]
+struct ParallelBatchScratch {
+  roots: alloc::vec::Vec<[u32; 8]>,
+  leaf_cvs: alloc::vec::Vec<[u32; 8]>,
+}
+
+#[cfg(feature = "parallel")]
+impl ParallelBatchScratch {
+  #[inline]
+  fn new() -> Self {
+    Self {
+      roots: alloc::vec::Vec::new(),
+      leaf_cvs: alloc::vec::Vec::new(),
+    }
+  }
 }
 
 impl core::fmt::Debug for Blake3 {
@@ -2470,6 +3212,7 @@ impl Blake3 {
     Self {
       bulk_kernel_id: kernel_id,
       chunk_state: ChunkState::new(key_words, 0, flags, kernel_id),
+      pending_chunk_cv: None,
       key_words,
       cv_stack: uninit_cv_stack(),
       cv_stack_len: 0,
@@ -2507,6 +3250,282 @@ impl Blake3 {
     parallel_threads_for_policy(mode, policy, input_bytes, admission_full_chunks, commit_full_chunks)
   }
 
+  #[cfg(feature = "parallel")]
+  #[cold]
+  #[inline(never)]
+  fn commit_parallel_batch(&mut self, batch: ParallelBatchSpec<'_>, scratch: &mut ParallelBatchScratch) {
+    #[inline]
+    fn push_stack(stack: &mut [MaybeUninit<[u32; 8]>; CV_STACK_LEN], len: &mut usize, cv: [u32; 8]) {
+      stack[*len].write(cv);
+      *len += 1;
+    }
+
+    #[inline]
+    fn pop_stack(stack: &mut [MaybeUninit<[u32; 8]>; CV_STACK_LEN], len: &mut usize) -> [u32; 8] {
+      *len -= 1;
+      // SAFETY: `len` tracks the number of initialized entries.
+      unsafe { stack[*len].assume_init_read() }
+    }
+
+    let batch_input = batch.input;
+    let base_counter = batch.base_counter;
+    let commit = batch.commit_chunks;
+    let threads = batch.threads;
+
+    let mut stack_len = self.cv_stack_len as usize;
+    let mut counter = base_counter;
+    let mut offset_chunks = 0usize;
+    let mut remaining_commit = commit;
+
+    scratch.roots.clear();
+    scratch.leaf_cvs.clear();
+
+    while remaining_commit != 0 {
+      let mut size = pow2_floor(remaining_commit);
+
+      let aligned_max = if counter == 0 {
+        usize::MAX
+      } else {
+        let tz = counter.trailing_zeros() as usize;
+        if tz >= (usize::BITS as usize) {
+          usize::MAX
+        } else {
+          1usize << tz
+        }
+      };
+      size = size.min(aligned_max).min(remaining_commit);
+      debug_assert!(size.is_power_of_two());
+
+      let bytes_base = offset_chunks * CHUNK_LEN;
+      let subtree_bytes = size * CHUNK_LEN;
+      let subtree_input = &batch_input[bytes_base..bytes_base + subtree_bytes];
+      let bulk_kernel = kernels::kernel(self.bulk_kernel_id);
+
+      // Fast path: hash this power-of-two subtree without materializing all
+      // leaf CVs. Fallback: hash leaf CVs directly and reduce.
+      let subtree_cv = if size >= threads && (counter == 0 || (counter & (size as u64 - 1)) == 0) {
+        const MAX_SUBTREE_CHUNKS: usize = 1 << 12; // 4096 chunks = 4 MiB per subtree
+
+        let mut subtree_chunks = size / threads;
+        subtree_chunks = subtree_chunks.max(1);
+        subtree_chunks = pow2_floor(subtree_chunks);
+        subtree_chunks = subtree_chunks.min(MAX_SUBTREE_CHUNKS).min(size);
+
+        let roots_len = size / subtree_chunks;
+        debug_assert!(roots_len.is_power_of_two());
+        debug_assert_eq!(roots_len * subtree_chunks, size);
+
+        scratch.roots.resize(roots_len, [0u32; 8]);
+        #[cfg(feature = "parallel")]
+        hash_power_of_two_subtree_roots_parallel_rayon(SubtreeRootsRequest {
+          kernel: bulk_kernel,
+          key_words: self.key_words,
+          flags: self.chunk_state.flags,
+          base_counter: counter,
+          input: subtree_input,
+          subtree_chunks,
+          out: &mut scratch.roots,
+          threads_total: threads,
+        });
+        #[cfg(not(feature = "parallel"))]
+        hash_power_of_two_subtree_roots_serial(
+          bulk_kernel,
+          self.key_words,
+          self.chunk_state.flags,
+          counter,
+          subtree_input,
+          subtree_chunks,
+          &mut scratch.roots,
+        );
+
+        reduce_power_of_two_chunk_cvs_any(
+          bulk_kernel,
+          self.key_words,
+          self.chunk_state.flags,
+          &scratch.roots,
+          threads,
+        )
+      } else {
+        scratch.leaf_cvs.resize(size, [0u32; 8]);
+        hash_full_chunks_cvs_scoped(
+          bulk_kernel,
+          self.key_words,
+          self.chunk_state.flags,
+          counter,
+          subtree_input,
+          &mut scratch.leaf_cvs,
+          threads,
+        );
+        reduce_power_of_two_chunk_cvs_any(
+          bulk_kernel,
+          self.key_words,
+          self.chunk_state.flags,
+          &scratch.leaf_cvs,
+          threads,
+        )
+      };
+
+      counter = counter.wrapping_add(size as u64);
+      let level = size.trailing_zeros();
+      let mut total = counter >> level;
+      let mut cv = subtree_cv;
+      while total & 1 == 0 {
+        cv = kernels::parent_cv_inline(
+          self.bulk_kernel_id,
+          pop_stack(&mut self.cv_stack, &mut stack_len),
+          cv,
+          self.key_words,
+          self.chunk_state.flags,
+        );
+        total >>= 1;
+      }
+      push_stack(&mut self.cv_stack, &mut stack_len, cv);
+
+      offset_chunks += size;
+      remaining_commit -= size;
+    }
+
+    self.cv_stack_len = stack_len as u8;
+
+    let new_counter = base_counter + batch.batch_chunks as u64;
+    self.chunk_state = ChunkState::new(
+      self.key_words,
+      new_counter,
+      self.chunk_state.flags,
+      self.chunk_state.kernel_id,
+    );
+    if batch.keep_last_full_chunk {
+      let last_chunk_idx = batch.batch_chunks - 1;
+      let last = &batch_input[last_chunk_idx * CHUNK_LEN..batch.batch_chunks * CHUNK_LEN];
+      self.pending_chunk_cv = Some(hash_one_full_chunk_cv(
+        kernels::kernel(self.bulk_kernel_id),
+        self.key_words,
+        self.chunk_state.flags,
+        new_counter - 1,
+        last,
+      ));
+    }
+  }
+
+  #[cfg(feature = "parallel")]
+  #[cold]
+  #[inline(never)]
+  fn try_parallel_update_batch(&mut self, input: &[u8]) -> Option<usize> {
+    // Large updates: multi-thread full-chunk hashing.
+    //
+    // Prefer subtree-root batching for large, chunk-aligned power-of-two
+    // subtrees. This avoids materializing all leaf CVs and reduces memory
+    // traffic, while preserving the canonical BLAKE3 tree shape.
+    const MAX_PASS_CHUNKS: usize = 1 << 16; // 64 MiB input per pass
+
+    if self.chunk_state.len() != 0 || input.len() <= CHUNK_LEN {
+      return None;
+    }
+    let full_chunks = input.len() / CHUNK_LEN;
+    if full_chunks <= 1 {
+      return None;
+    }
+
+    let batch = core::cmp::min(full_chunks, MAX_PASS_CHUNKS);
+    let base_counter = self.chunk_state.chunk_counter;
+
+    let keep_last_full_chunk = input.len().is_multiple_of(CHUNK_LEN) && batch == full_chunks;
+    let commit = if keep_last_full_chunk { batch - 1 } else { batch };
+    if commit == 0 {
+      return None;
+    }
+
+    let bytes = batch * CHUNK_LEN;
+    let threads = self.streaming_parallel_threads(bytes, batch, commit)?;
+    if threads <= 1 {
+      return None;
+    }
+
+    let batch_input = &input[..bytes];
+    let spec = ParallelBatchSpec {
+      input: batch_input,
+      base_counter,
+      batch_chunks: batch,
+      commit_chunks: commit,
+      threads,
+      keep_last_full_chunk,
+    };
+    let mut scratch = ParallelBatchScratch::new();
+    self.commit_parallel_batch(spec, &mut scratch);
+    Some(bytes)
+  }
+
+  fn try_simd_update_batch(&mut self, input: &[u8]) -> Option<usize> {
+    if self.chunk_state.len() != 0 || self.bulk_kernel_id.simd_degree() <= 1 || input.len() <= CHUNK_LEN {
+      return None;
+    }
+
+    let full_chunks = input.len() / CHUNK_LEN;
+    if full_chunks <= 1 {
+      return None;
+    }
+
+    const MAX_SIMD_DEGREE: usize = 16;
+    let batch = core::cmp::min(full_chunks, MAX_SIMD_DEGREE);
+    if batch == 0 {
+      return None;
+    }
+
+    let mut out_buf = [0u8; OUT_LEN * MAX_SIMD_DEGREE];
+    let base_counter = self.chunk_state.chunk_counter;
+    // SAFETY: `input` has at least `batch * CHUNK_LEN` bytes, `out_buf`
+    // has at least `batch * OUT_LEN` bytes, and this kernel was selected
+    // only when its required CPU features are available.
+    unsafe {
+      kernels::hash_many_contiguous_inline(
+        self.bulk_kernel_id,
+        input.as_ptr(),
+        batch,
+        &self.key_words,
+        base_counter,
+        self.chunk_state.flags,
+        out_buf.as_mut_ptr(),
+      )
+    };
+
+    let keep_last_full_chunk = input.len().is_multiple_of(CHUNK_LEN) && batch == full_chunks;
+    let commit = if keep_last_full_chunk { batch - 1 } else { batch };
+    if commit != 0 {
+      // SAFETY: `out_buf` stores `batch` contiguous CV outputs, and
+      // `commit <= batch <= MAX_SIMD_DEGREE`.
+      let cvs_bytes: &[[u8; OUT_LEN]] =
+        unsafe { slice::from_raw_parts(out_buf.as_ptr().cast::<[u8; OUT_LEN]>(), commit) };
+      let mut stack_len = self.cv_stack_len as usize;
+      add_chunk_cvs_batched_bytes(
+        kernels::kernel(self.bulk_kernel_id),
+        &mut self.cv_stack,
+        &mut stack_len,
+        base_counter,
+        cvs_bytes,
+        self.key_words,
+        self.chunk_state.flags,
+      );
+      self.cv_stack_len = stack_len as u8;
+    }
+
+    let new_counter = base_counter + batch as u64;
+    self.chunk_state = ChunkState::new(
+      self.key_words,
+      new_counter,
+      self.chunk_state.flags,
+      self.chunk_state.kernel_id,
+    );
+    if keep_last_full_chunk {
+      let offset = (batch - 1) * OUT_LEN;
+      // SAFETY: `out_buf` is `OUT_LEN * MAX_SIMD_DEGREE`, and `offset`
+      // is `(batch - 1) * OUT_LEN` with `batch <= MAX_SIMD_DEGREE`.
+      let cv = unsafe { words8_from_le_bytes_32(&*(out_buf.as_ptr().add(offset) as *const [u8; OUT_LEN])) };
+      self.pending_chunk_cv = Some(cv);
+    }
+
+    Some(batch * CHUNK_LEN)
+  }
+
   fn update_with(
     &mut self,
     mut input: &[u8],
@@ -2516,119 +3535,47 @@ impl Blake3 {
     self.bulk_kernel_id = bulk_kernel_id;
     self.chunk_state.kernel_id = stream_kernel_id;
 
-    // Phase 1: finish partial chunk if any.
-    if self.chunk_state.len() > 0 {
-      let want = CHUNK_LEN.strict_sub(self.chunk_state.len());
-      let take = min(want, input.len());
-      self.chunk_state.update(&input[..take]);
-      input = &input[take..];
-      if input.is_empty() {
-        return;
-      }
-      // Chunk is full — eagerly merge its CV into the tree.
-      let chunk_cv = self.chunk_state.output().chaining_value();
-      let total_chunks = self.chunk_state.chunk_counter.strict_add(1);
-      self.add_cv_to_tree(chunk_cv, total_chunks, 0);
-      self.chunk_state = ChunkState::new(
-        self.key_words,
-        total_chunks,
-        self.chunk_state.flags,
-        self.chunk_state.kernel_id,
-      );
+    // If the previous update ended exactly on a chunk boundary, we may have
+    // stored the last full chunk's CV instead of keeping a fully-buffered
+    // `ChunkState`. As soon as more input arrives, that chunk is no longer
+    // terminal and can be committed to the tree.
+    if !input.is_empty() {
+      self.commit_pending_chunk_cv();
     }
 
-    // Phase 2: power-of-2 subtree loop.
-    // Invariant: always leave at least CHUNK_LEN bytes for Phase 3 so that
-    // chunk_state is never empty at finalization. This avoids needing a
-    // pending_chunk_cv mechanism.
-    let kernel = kernels::kernel(bulk_kernel_id);
-    while input.len() > CHUNK_LEN {
-      debug_assert_eq!(self.chunk_state.len(), 0);
-      let mut subtree_len = pow2_floor(input.len());
-      subtree_len = subtree_len.max(CHUNK_LEN);
+    // When we're at a chunk boundary and we have more than one whole chunk
+    // available, use the kernel's multi-chunk primitive to hash whole chunks
+    // directly and feed their chaining values into the tree.
+    //
+    // Important: we always leave at least one full chunk (or partial) to be
+    // processed by `ChunkState::update`, so that the streaming state retains
+    // the "buffer the last block" invariant needed when the caller stops at
+    // a block boundary and later calls `finalize`.
+    while !input.is_empty() {
+      if self.chunk_state.len() == CHUNK_LEN {
+        self.advance_full_chunk();
+      }
 
-      // If the subtree would consume ALL remaining input, halve it
-      // so that Phase 3 always has data to buffer.
-      if subtree_len >= input.len() {
-        subtree_len /= 2;
-        if subtree_len < CHUNK_LEN {
-          break;
+      #[cfg(feature = "parallel")]
+      {
+        if self.chunk_state.len() == 0
+          && input.len() > CHUNK_LEN
+          && let Some(consumed) = self.try_parallel_update_batch(input)
+        {
+          input = &input[consumed..];
+          continue;
         }
       }
 
-      // Shrink until aligned with the byte count so far.
-      let count_so_far = self.chunk_state.chunk_counter.strict_mul(CHUNK_LEN as u64);
-      while (subtree_len as u64).strict_sub(1) & count_so_far != 0 {
-        subtree_len /= 2;
+      if let Some(consumed) = self.try_simd_update_batch(input) {
+        input = &input[consumed..];
+        continue;
       }
-      let subtree_chunks = (subtree_len / CHUNK_LEN) as u64;
 
-      if subtree_len <= CHUNK_LEN {
-        debug_assert_eq!(subtree_len, CHUNK_LEN);
-        let cv = single_chunk_output(
-          kernel,
-          self.key_words,
-          self.chunk_state.chunk_counter,
-          self.chunk_state.flags,
-          &input[..CHUNK_LEN],
-        )
-        .chaining_value();
-        let total = self.chunk_state.chunk_counter.strict_add(1);
-        self.add_cv_to_tree(cv, total, 0);
-      } else {
-        // Subtree compression — the high-performance path.
-        #[cfg(feature = "parallel")]
-        let cv_pair = {
-          let budget = self.parallel_budget_for_subtree(input.len());
-          if budget > 0 {
-            compress_subtree_to_parent_node_bytes::<join::RayonJoin>(
-              kernel,
-              self.key_words,
-              self.chunk_state.chunk_counter,
-              self.chunk_state.flags,
-              &input[..subtree_len],
-              budget,
-            )
-          } else {
-            compress_subtree_to_parent_node_bytes::<join::SerialJoin>(
-              kernel,
-              self.key_words,
-              self.chunk_state.chunk_counter,
-              self.chunk_state.flags,
-              &input[..subtree_len],
-              0,
-            )
-          }
-        };
-        #[cfg(not(feature = "parallel"))]
-        let cv_pair = compress_subtree_to_parent_node_bytes::<join::SerialJoin>(
-          kernel,
-          self.key_words,
-          self.chunk_state.chunk_counter,
-          self.chunk_state.flags,
-          &input[..subtree_len],
-          0,
-        );
-        // SAFETY: cv_pair is [u8; 64]; first 32 bytes are the left CV, next 32 are the right.
-        let left_cv = words8_from_le_bytes_32(unsafe { &*(cv_pair.as_ptr() as *const [u8; 32]) });
-        // SAFETY: cv_pair is [u8; 64]; bytes [32..64] are the right CV, pointer arithmetic is in-bounds.
-        let right_cv = words8_from_le_bytes_32(unsafe { &*(cv_pair.as_ptr().add(OUT_LEN) as *const [u8; 32]) });
-        // Compute the subtree's parent CV and eagerly merge it into the tree.
-        let parent_cv = kernels::parent_cv_inline(kernel.id, left_cv, right_cv, self.key_words, self.chunk_state.flags);
-        let total = self.chunk_state.chunk_counter.strict_add(subtree_chunks);
-        self.add_cv_to_tree(parent_cv, total, subtree_chunks.trailing_zeros());
-      }
-      self.chunk_state.chunk_counter = self.chunk_state.chunk_counter.strict_add(subtree_chunks);
-      input = &input[subtree_len..];
-    }
-
-    // Phase 3: remaining bytes → buffer in chunk_state.
-    // This always runs when input > CHUNK_LEN was provided, ensuring
-    // chunk_state is non-empty at finalization time.
-    if !input.is_empty() {
-      debug_assert_eq!(self.chunk_state.len(), 0);
-      debug_assert!(input.len() <= CHUNK_LEN);
-      self.chunk_state.update(input);
+      let want = CHUNK_LEN - self.chunk_state.len();
+      let take = min(want, input.len());
+      self.chunk_state.update(&input[..take]);
+      input = &input[take..];
     }
   }
 
@@ -2668,14 +3615,8 @@ impl Blake3 {
     unsafe { self.cv_stack[self.cv_stack_len as usize].assume_init_read() }
   }
 
-  /// Eagerly merge `new_cv` into the CV stack.
-  ///
-  /// `total_chunks` is the 1-based total number of committed chunks after this
-  /// CV. `subtree_level` is `subtree_chunks.trailing_zeros()` — 0 for a single
-  /// chunk, 1 for a 2-chunk subtree parent, etc.
-  fn add_cv_to_tree(&mut self, mut new_cv: [u32; 8], total_chunks: u64, subtree_level: u32) {
-    let mut shifted = total_chunks >> subtree_level;
-    while shifted & 1 == 0 {
+  fn add_chunk_chaining_value(&mut self, mut new_cv: [u32; 8], mut total_chunks: u64) {
+    while total_chunks & 1 == 0 {
       new_cv = kernels::parent_cv_inline(
         self.chunk_state.kernel_id,
         self.pop_stack(),
@@ -2683,43 +3624,42 @@ impl Blake3 {
         self.key_words,
         self.chunk_state.flags,
       );
-      shifted >>= 1;
+      total_chunks >>= 1;
     }
     self.push_stack(new_cv);
   }
 
-  #[cfg(feature = "parallel")]
   #[inline]
-  fn parallel_budget_for_subtree(&self, input_bytes: usize) -> usize {
-    let full_chunks = input_bytes / CHUNK_LEN;
-    if full_chunks <= 1 {
-      return 0;
+  fn commit_pending_chunk_cv(&mut self) {
+    if let Some(cv) = self.pending_chunk_cv.take() {
+      let total_chunks = self.chunk_state.chunk_counter;
+      self.add_chunk_chaining_value(cv, total_chunks);
     }
-    let commit = full_chunks;
-    match self.streaming_parallel_threads(input_bytes, full_chunks, commit) {
-      Some(threads) if threads > 1 => {
-        let depth = (usize::BITS.strict_sub(1).strict_sub(threads.leading_zeros())) as usize;
-        depth.max(1)
-      }
-      _ => 0,
-    }
+  }
+
+  #[inline]
+  fn advance_full_chunk(&mut self) {
+    debug_assert_eq!(self.chunk_state.len(), CHUNK_LEN);
+    let chunk_cv = self.chunk_state.output().chaining_value();
+    let total_chunks = self.chunk_state.chunk_counter.strict_add(1);
+    self.add_chunk_chaining_value(chunk_cv, total_chunks);
+    self.chunk_state = ChunkState::new(
+      self.key_words,
+      total_chunks,
+      self.chunk_state.flags,
+      self.chunk_state.kernel_id,
+    );
   }
 
   #[inline(never)]
   fn update_digest_slow(&mut self, input: &[u8]) {
+    self.commit_pending_chunk_cv();
+
     if self.chunk_state.len() == CHUNK_LEN {
-      let chunk_cv = self.chunk_state.output().chaining_value();
-      let total_chunks = self.chunk_state.chunk_counter.strict_add(1);
-      self.add_cv_to_tree(chunk_cv, total_chunks, 0);
-      self.chunk_state = ChunkState::new(
-        self.key_words,
-        total_chunks,
-        self.chunk_state.flags,
-        self.chunk_state.kernel_id,
-      );
+      self.advance_full_chunk();
     }
 
-    if self.chunk_state.len().strict_add(input.len()) <= CHUNK_LEN {
+    if self.chunk_state.len() + input.len() <= CHUNK_LEN {
       self.chunk_state.update(input);
       return;
     }
@@ -2731,16 +3671,28 @@ impl Blake3 {
   }
 
   fn root_output(&self) -> OutputState {
-    if self.cv_stack_len == 0 {
-      return self.chunk_state.output();
-    }
-
-    // Fold the eagerly-merged stack with the chunk state output (right-to-left).
     let mut parent_nodes_remaining = self.cv_stack_len as usize;
-    let mut output = self.chunk_state.output();
+    let mut output = if let Some(right_cv) = self.pending_chunk_cv {
+      debug_assert!(
+        parent_nodes_remaining > 0,
+        "pending full chunk implies multi-chunk input"
+      );
+      parent_nodes_remaining -= 1;
+      // SAFETY: `cv_stack_len` tracks the number of initialized entries.
+      let left = unsafe { *self.cv_stack[parent_nodes_remaining].assume_init_ref() };
+      parent_output(
+        self.chunk_state.kernel_id,
+        left,
+        right_cv,
+        self.key_words,
+        self.chunk_state.flags,
+      )
+    } else {
+      self.chunk_state.output()
+    };
 
     while parent_nodes_remaining > 0 {
-      parent_nodes_remaining = parent_nodes_remaining.strict_sub(1);
+      parent_nodes_remaining -= 1;
       // SAFETY: `cv_stack_len` tracks the number of initialized entries.
       let left = unsafe { *self.cv_stack[parent_nodes_remaining].assume_init_ref() };
       output = parent_output(
@@ -2756,7 +3708,7 @@ impl Blake3 {
 
   #[inline]
   fn root_emit_state(&self) -> RootEmitState {
-    if self.cv_stack_len == 0 {
+    if self.cv_stack_len == 0 && self.pending_chunk_cv.is_none() {
       return self.chunk_state.root_emit_state();
     }
 
@@ -2766,10 +3718,18 @@ impl Blake3 {
   #[inline(never)]
   fn root_emit_state_slow(&self) -> RootEmitState {
     let mut parent_nodes_remaining = self.cv_stack_len as usize;
-    let mut current_cv = self.chunk_state.output_chaining_value();
+    let mut current_cv = if let Some(right_cv) = self.pending_chunk_cv {
+      debug_assert!(
+        parent_nodes_remaining > 0,
+        "pending full chunk implies multi-chunk input"
+      );
+      right_cv
+    } else {
+      self.chunk_state.output_chaining_value()
+    };
 
     while parent_nodes_remaining > 0 {
-      parent_nodes_remaining = parent_nodes_remaining.strict_sub(1);
+      parent_nodes_remaining -= 1;
       // SAFETY: `cv_stack_len` tracks the number of initialized entries.
       let left = unsafe { *self.cv_stack[parent_nodes_remaining].assume_init_ref() };
       if parent_nodes_remaining == 0 {
@@ -2797,7 +3757,7 @@ impl Blake3 {
   #[must_use]
   #[inline]
   pub fn finalize_xof(&self) -> Blake3Xof {
-    if self.cv_stack_len == 0 {
+    if self.cv_stack_len == 0 && self.pending_chunk_cv.is_none() {
       return Blake3Xof::new(self.chunk_state.root_emit_state());
     }
 
@@ -2849,6 +3809,12 @@ impl Drop for Blake3 {
         unsafe { core::ptr::write_volatile(slot_ptr.add(i), 0) };
       }
     }
+    if let Some(ref mut cv) = self.pending_chunk_cv {
+      for word in cv.iter_mut() {
+        // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
+        unsafe { core::ptr::write_volatile(word, 0) };
+      }
+    }
     #[cfg(feature = "std")]
     if self.chunk_state.flags & KEYED_HASH != 0 {
       KEYED_WORDS_LOCAL_CACHE.with(|slot| {
@@ -2886,7 +3852,10 @@ impl Digest for Blake3 {
       return;
     }
 
-    if self.chunk_state.len() != CHUNK_LEN && self.chunk_state.len().strict_add(input.len()) <= CHUNK_LEN {
+    if self.pending_chunk_cv.is_none()
+      && self.chunk_state.len() != CHUNK_LEN
+      && self.chunk_state.len() + input.len() <= CHUNK_LEN
+    {
       self.chunk_state.update(input);
       return;
     }
@@ -2899,7 +3868,7 @@ impl Digest for Blake3 {
     // Single-chunk fast path: compute root bytes directly from the current
     // chunk tail. This avoids OutputState construction and bytes<->words
     // conversion on short streaming finalization.
-    if self.chunk_state.chunk_counter == 0 && self.cv_stack_len == 0 {
+    if self.chunk_state.chunk_counter == 0 && self.cv_stack_len == 0 && self.pending_chunk_cv.is_none() {
       let block_len = self.chunk_state.block_len as usize;
 
       let add_chunk_start = self.chunk_state.blocks_compressed == 0;
@@ -2928,7 +3897,11 @@ impl Digest for Blake3 {
     // If the caller never provided any input (or only provided empty updates),
     // we still want to use the tuned streaming kernel rather than staying
     // pinned to the portable default.
-    let output = if self.chunk_state.chunk_counter == 0 && self.chunk_state.len() == 0 && self.cv_stack_len == 0 {
+    let output = if self.chunk_state.chunk_counter == 0
+      && self.chunk_state.len() == 0
+      && self.cv_stack_len == 0
+      && self.pending_chunk_cv.is_none()
+    {
       single_chunk_output(
         kernels::kernel(self.chunk_state.kernel_id),
         self.key_words,
@@ -3634,6 +4607,365 @@ mod tests {
       derive_ref.update(&input);
       derive_ref.finalize_xof().fill(&mut derive_expected);
       assert_eq!(derive_out, derive_expected, "derive short xof mismatch len={len}");
+    }
+  }
+
+  #[cfg(feature = "parallel")]
+  mod parallel_pipeline {
+    extern crate alloc;
+
+    use super::{
+      super::{
+        IV, KEYED_HASH, SubtreeRootsRequest, force_parallel_panic, hash_full_chunks_cvs_serial,
+        hash_power_of_two_subtree_roots_parallel_rayon, hash_power_of_two_subtree_roots_serial,
+        reduce_power_of_two_chunk_cvs_any, words8_from_le_bytes_32,
+      },
+      Blake3, CONTEXT, KEY, OUT_LEN, input_pattern,
+    };
+    use crate::{
+      hashes::crypto::blake3::{__bench, CHUNK_LEN, dispatch, dispatch_tables},
+      traits::{Digest, Xof},
+    };
+
+    #[inline]
+    fn always_parallel_table(max_threads: u8) -> dispatch_tables::ParallelTable {
+      dispatch_tables::ParallelTable {
+        min_bytes: 0,
+        min_chunks: 0,
+        max_threads,
+        spawn_cost_bytes: 0,
+        merge_cost_bytes: 0,
+        bytes_per_core_small: 0,
+        bytes_per_core_medium: 0,
+        bytes_per_core_large: 0,
+        small_limit_bytes: 0,
+        medium_limit_bytes: 0,
+      }
+    }
+
+    #[inline]
+    fn never_parallel_table() -> dispatch_tables::ParallelTable {
+      // `max_threads == 1` disables parallel hashing (even when thresholds are met).
+      always_parallel_table(1)
+    }
+
+    #[inline]
+    fn finalize_digest_and_xof_prefix(h: &Blake3) -> ([u8; OUT_LEN], [u8; 64]) {
+      let digest = h.finalize();
+      let mut xof = h.finalize_xof();
+      let mut prefix = [0u8; 64];
+      xof.squeeze(&mut prefix);
+      (digest, prefix)
+    }
+
+    fn run_case_streaming(
+      make_hasher: impl Fn() -> Blake3,
+      prefix: &[u8],
+      payload: &[u8],
+    ) -> ([u8; OUT_LEN], [u8; 64]) {
+      let mut h = make_hasher();
+      for chunk in prefix.chunks(CHUNK_LEN) {
+        h.update(chunk);
+      }
+      h.update(payload);
+      finalize_digest_and_xof_prefix(&h)
+    }
+
+    #[test]
+    fn streaming_parallel_matches_serial() {
+      let Ok(ap) = std::thread::available_parallelism() else {
+        return;
+      };
+      if ap.get() <= 1 {
+        return;
+      }
+
+      let payload_lens = [
+        64 * 1024,       // 64 KiB (exactly chunk-aligned)
+        128 * 1024 + 17, // 128 KiB + 17B (forces remainder path)
+      ];
+
+      let max_prefix_chunks = 63usize;
+      let max_payload_len = *payload_lens.iter().max().unwrap();
+      let input = input_pattern(max_prefix_chunks * CHUNK_LEN + max_payload_len);
+
+      let prefix_chunks_cases = [0usize, 1, 7, 15, 16, 63];
+      let mut thread_caps = [2usize, 4, 8];
+
+      // Cap threads at runtime to keep tests robust on small machines.
+      for t in &mut thread_caps {
+        *t = (*t).min(ap.get()).max(2);
+      }
+
+      for &payload_len in &payload_lens {
+        for &prefix_chunks in &prefix_chunks_cases {
+          let offset = prefix_chunks * CHUNK_LEN;
+          let prefix = &input[..offset];
+          let payload = &input[offset..offset + payload_len];
+          let full_input = &input[..offset + payload_len];
+
+          // Serial baseline (forced single-thread).
+          let serial_regular = {
+            let _serial_policy = __bench::override_blake3_parallel_policy(never_parallel_table());
+            run_case_streaming(Blake3::new, prefix, payload)
+          };
+
+          // Sanity: one-shot should match streaming in serial mode.
+          {
+            let _serial_policy = __bench::override_blake3_parallel_policy(never_parallel_table());
+            assert_eq!(
+              serial_regular.0,
+              Blake3::digest(full_input),
+              "serial oneshot mismatch prefix_chunks={prefix_chunks} payload_len={payload_len}"
+            );
+          }
+
+          for &threads_total in &thread_caps {
+            let threads_total = threads_total as u8;
+            let _policy = __bench::override_blake3_parallel_policy(always_parallel_table(threads_total));
+
+            let got_regular = run_case_streaming(Blake3::new, prefix, payload);
+            assert_eq!(
+              got_regular, serial_regular,
+              "parallel regular mismatch prefix_chunks={prefix_chunks} payload_len={payload_len} \
+               threads_total={threads_total}"
+            );
+          }
+        }
+      }
+    }
+
+    #[test]
+    fn keyed_and_derive_parallel_matches_serial_subset() {
+      let Ok(ap) = std::thread::available_parallelism() else {
+        return;
+      };
+      if ap.get() <= 1 {
+        return;
+      }
+
+      let payload_len = 64 * 1024 + 17;
+      let max_prefix_chunks = 63usize;
+      let input = input_pattern(max_prefix_chunks * CHUNK_LEN + payload_len);
+
+      let prefix_chunks_cases = [0usize, 15, 63];
+      let mut thread_caps = [2usize, 8];
+      for t in &mut thread_caps {
+        *t = (*t).min(ap.get()).max(2);
+      }
+
+      for &prefix_chunks in &prefix_chunks_cases {
+        let offset = prefix_chunks * CHUNK_LEN;
+        let prefix = &input[..offset];
+        let payload = &input[offset..offset + payload_len];
+        let full_input = &input[..offset + payload_len];
+
+        let (serial_keyed, serial_derive) = {
+          let _serial_policy = __bench::override_blake3_parallel_policy(never_parallel_table());
+          let keyed = run_case_streaming(|| Blake3::new_keyed(KEY), prefix, payload);
+          let derive = run_case_streaming(|| Blake3::new_derive_key(CONTEXT), prefix, payload);
+          (keyed, derive)
+        };
+
+        {
+          let _serial_policy = __bench::override_blake3_parallel_policy(never_parallel_table());
+          assert_eq!(
+            serial_keyed.0,
+            Blake3::keyed_digest(KEY, full_input),
+            "serial keyed oneshot mismatch prefix_chunks={prefix_chunks}"
+          );
+          assert_eq!(
+            serial_derive.0,
+            Blake3::derive_key(CONTEXT, full_input),
+            "serial derive oneshot mismatch prefix_chunks={prefix_chunks}"
+          );
+        }
+
+        for &threads_total in &thread_caps {
+          let threads_total = threads_total as u8;
+          let _policy = __bench::override_blake3_parallel_policy(always_parallel_table(threads_total));
+
+          let got_keyed = run_case_streaming(|| Blake3::new_keyed(KEY), prefix, payload);
+          let got_derive = run_case_streaming(|| Blake3::new_derive_key(CONTEXT), prefix, payload);
+          assert_eq!(
+            got_keyed, serial_keyed,
+            "parallel keyed mismatch prefix_chunks={prefix_chunks} threads_total={threads_total}"
+          );
+          assert_eq!(
+            got_derive, serial_derive,
+            "parallel derive mismatch prefix_chunks={prefix_chunks} threads_total={threads_total}"
+          );
+        }
+      }
+    }
+
+    #[test]
+    fn subtree_roots_parallel_matches_serial_matrix() {
+      let Ok(ap) = std::thread::available_parallelism() else {
+        return;
+      };
+      if ap.get() <= 1 {
+        return;
+      }
+
+      let kernels = {
+        let kd = dispatch::kernel_dispatch();
+        [kd.xs, kd.l]
+      };
+
+      let modes = [
+        ("regular", IV, 0u32),
+        ("keyed", words8_from_le_bytes_32(KEY), KEYED_HASH),
+      ];
+
+      let mut thread_caps = [2usize, 8];
+      for t in &mut thread_caps {
+        *t = (*t).min(ap.get()).max(2);
+      }
+
+      // Total chunks chosen to keep runtime reasonable while still exercising
+      // lots of (roots_len, subtree_chunks) decompositions.
+      let total_chunks_cases = [64usize, 1024]; // 64 KiB and 1 MiB
+
+      for kernel in kernels {
+        for (mode_name, key_words, flags) in modes {
+          for total_chunks in total_chunks_cases {
+            let total_bytes = total_chunks * CHUNK_LEN;
+            let input = input_pattern(total_bytes);
+
+            // `subtree_chunks` is a power-of-two divisor of `total_chunks`.
+            let mut subtree_chunks = 1usize;
+            while subtree_chunks <= total_chunks {
+              debug_assert!(subtree_chunks.is_power_of_two());
+              debug_assert_eq!(total_chunks % subtree_chunks, 0);
+              let roots_len = total_chunks / subtree_chunks;
+              debug_assert!(roots_len.is_power_of_two());
+
+              let mut serial = alloc::vec![[0u32; 8]; roots_len];
+              let mut parallel = alloc::vec![[0u32; 8]; roots_len];
+
+              let wrap_base = {
+                let total = total_chunks as u64;
+                let mut base = u64::MAX.wrapping_sub(total.wrapping_sub(1));
+                let align = subtree_chunks as u64;
+                if align > 1 {
+                  base &= !(align - 1);
+                }
+                base
+              };
+
+              let base_counters = [0u64, (subtree_chunks as u64).wrapping_mul(7), wrap_base];
+
+              for &base_counter in &base_counters {
+                hash_power_of_two_subtree_roots_serial(
+                  kernel,
+                  key_words,
+                  flags,
+                  base_counter,
+                  &input,
+                  subtree_chunks,
+                  &mut serial,
+                );
+
+                #[cfg(feature = "parallel")]
+                for &threads_total in &thread_caps {
+                  parallel.fill([0u32; 8]);
+                  hash_power_of_two_subtree_roots_parallel_rayon(SubtreeRootsRequest {
+                    kernel,
+                    key_words,
+                    flags,
+                    base_counter,
+                    input: &input,
+                    subtree_chunks,
+                    out: &mut parallel,
+                    threads_total,
+                  });
+
+                  assert_eq!(
+                    parallel, serial,
+                    "subtree roots mismatch mode={mode_name} total_chunks={total_chunks} \
+                     subtree_chunks={subtree_chunks} roots_len={roots_len} base_counter={base_counter} \
+                     threads_total={threads_total}"
+                  );
+                }
+              }
+
+              subtree_chunks *= 2;
+            }
+          }
+        }
+      }
+    }
+
+    #[test]
+    fn parent_fold_parallel_matches_serial_matrix() {
+      let Ok(ap) = std::thread::available_parallelism() else {
+        return;
+      };
+      if ap.get() <= 1 {
+        return;
+      }
+
+      let kernels = {
+        let kd = dispatch::kernel_dispatch();
+        [kd.xs, kd.l]
+      };
+
+      let mut thread_caps = [2usize, 8];
+      for t in &mut thread_caps {
+        *t = (*t).min(ap.get()).max(2);
+      }
+
+      // Keep cases small-ish; we mainly want to shake out parent-fold correctness.
+      let chunk_counts = [2usize, 8, 64, 1024];
+
+      for kernel in kernels {
+        for &chunks in &chunk_counts {
+          debug_assert!(chunks.is_power_of_two());
+
+          let input = input_pattern(chunks * CHUNK_LEN);
+          let mut cvs = alloc::vec![[0u32; 8]; chunks];
+
+          let base_counters = [
+            0u64,
+            (chunks as u64).wrapping_mul(3),
+            u64::MAX.wrapping_sub(chunks as u64),
+          ];
+          for &base_counter in &base_counters {
+            hash_full_chunks_cvs_serial(kernel, IV, 0, base_counter, &input, &mut cvs);
+            let serial = reduce_power_of_two_chunk_cvs_any(kernel, IV, 0, &cvs, 1);
+
+            for &threads_total in &thread_caps {
+              let parallel = reduce_power_of_two_chunk_cvs_any(kernel, IV, 0, &cvs, threads_total);
+              assert_eq!(
+                parallel, serial,
+                "parent fold mismatch chunks={chunks} base_counter={base_counter} threads_total={threads_total}"
+              );
+            }
+          }
+        }
+      }
+    }
+
+    #[test]
+    fn parallel_fallback_on_forced_panic_is_correct() {
+      let Ok(ap) = std::thread::available_parallelism() else {
+        return;
+      };
+      if ap.get() <= 1 {
+        return;
+      }
+
+      let input = input_pattern(1024 * CHUNK_LEN);
+      let expected = {
+        let _serial_policy = __bench::override_blake3_parallel_policy(never_parallel_table());
+        Blake3::digest(&input)
+      };
+
+      let _force = force_parallel_panic(true);
+      let _parallel_policy = __bench::override_blake3_parallel_policy(always_parallel_table(ap.get() as u8));
+      let got = Blake3::digest(&input);
+      assert_eq!(got, expected, "forced-panic fallback digest mismatch");
     }
   }
 }

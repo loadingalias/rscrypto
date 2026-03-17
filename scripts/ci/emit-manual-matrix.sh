@@ -35,8 +35,8 @@ fi
 
 ROWS=()
 COMPONENTS_STD="clippy, rustfmt, rust-src"
-RUNSON_TIMEOUT_MINUTES=120
-IBM_TIMEOUT_MINUTES=120
+RUNSON_TIMEOUT_MINUTES=180
+IBM_TIMEOUT_MINUTES=240
 
 emit_row_if_enabled "${RUN_AMD_ZEN4:-false}" \
   "{\"platform\":\"amd-zen4\",\"display_name\":\"AMD Zen4\",\"artifact_suffix\":\"amd-zen4\",\"timeout_minutes\":${RUNSON_TIMEOUT_MINUTES},\"setup_kind\":\"runson\",\"runner\":\"runs-on=${GH_RUN_ID_VAL}/runner=amd-zen4\",\"cache_key\":\"\",\"tools_mode\":\"standard\",\"toolchain_components\":\"${COMPONENTS_STD}\",\"runson_mode\":\"runson-bench\"}"
