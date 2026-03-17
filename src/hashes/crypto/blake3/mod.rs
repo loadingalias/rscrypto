@@ -3835,11 +3835,12 @@ impl Drop for Blake3 {
       unsafe { core::ptr::write_volatile(word, 0) };
     }
     crate::traits::ct::zeroize(&mut self.chunk_state.block);
-    for slot in self.cv_stack.iter_mut() {
-      let slot_ptr = slot as *mut MaybeUninit<[u32; 8]> as *mut u8;
-      for i in 0..core::mem::size_of::<[u32; 8]>() {
-        // SAFETY: slot_ptr is valid for size_of::<[u32; 8]>() bytes.
-        unsafe { core::ptr::write_volatile(slot_ptr.add(i), 0) };
+    for slot in self.cv_stack[..self.cv_stack_len as usize].iter_mut() {
+      // SAFETY: cv_stack[..cv_stack_len] entries are initialized.
+      let words = unsafe { slot.assume_init_mut() };
+      for word in words.iter_mut() {
+        // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
+        unsafe { core::ptr::write_volatile(word, 0) };
       }
     }
     if let Some(ref mut cv) = self.pending_chunk_cv {

@@ -1,5 +1,5 @@
 use super::{
-  BLOCK_LEN, Sha256,
+  BLOCK_LEN,
   dispatch_tables::DispatchTable,
   kernels::{CompressBlocksFn, Sha256KernelId, compress_blocks_fn, required_caps},
 };
@@ -91,10 +91,46 @@ pub fn kernel_name_for_len(len: usize) -> &'static str {
 #[inline]
 #[must_use]
 pub fn digest(data: &[u8]) -> [u8; 32] {
-  use crate::traits::Digest;
-  let mut h = Sha256::default();
-  h.update(data);
-  h.finalize()
+  let d = active();
+  let compress = select(&d, data.len()).compress_blocks;
+  digest_oneshot(data, compress)
+}
+
+/// Oneshot digest: processes directly from the input slice without streaming
+/// state. Constructs final padded block(s) on the stack.
+#[inline]
+fn digest_oneshot(data: &[u8], compress_blocks: CompressBlocksFn) -> [u8; 32] {
+  let mut state = super::H0;
+
+  // Process all full blocks directly from the input.
+  let full_len = data.len().strict_sub(data.len() % BLOCK_LEN);
+  if full_len != 0 {
+    compress_blocks(&mut state, &data[..full_len]);
+  }
+
+  // Build final padded block(s) on the stack.
+  let rest = &data[full_len..];
+  let total_bits = (data.len() as u64).wrapping_mul(8);
+
+  let mut block = [0u8; BLOCK_LEN];
+  block[..rest.len()].copy_from_slice(rest);
+  block[rest.len()] = 0x80;
+
+  if rest.len() >= 56 {
+    // Padding spills into a second block.
+    compress_blocks(&mut state, &block);
+    block = [0u8; BLOCK_LEN];
+  }
+
+  block[56..64].copy_from_slice(&total_bits.to_be_bytes());
+  compress_blocks(&mut state, &block);
+
+  let mut out = [0u8; 32];
+  for (i, word) in state.iter().copied().enumerate() {
+    let offset = i * 4;
+    out[offset..offset.strict_add(4)].copy_from_slice(&word.to_be_bytes());
+  }
+  out
 }
 
 #[inline]
