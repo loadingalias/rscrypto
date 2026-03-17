@@ -3,6 +3,10 @@
 pub(crate) use crate::hashes::crypto::sha256::kernels::CompressBlocksFn;
 #[cfg(target_arch = "aarch64")]
 use crate::platform::caps::aarch64;
+#[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
+use crate::platform::caps::riscv;
+#[cfg(target_arch = "wasm32")]
+use crate::platform::caps::wasm;
 #[cfg(target_arch = "x86_64")]
 use crate::platform::caps::x86;
 use crate::{hashes::crypto::sha256::Sha256, platform::Caps};
@@ -16,6 +20,10 @@ pub enum Sha224KernelId {
   X86Sha = 1,
   #[cfg(target_arch = "aarch64")]
   Aarch64Sha2 = 2,
+  #[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
+  RiscvZknh = 3,
+  #[cfg(target_arch = "wasm32")]
+  WasmSimd128 = 4,
 }
 
 #[cfg(any(test, feature = "std"))]
@@ -25,6 +33,10 @@ pub const ALL: &[Sha224KernelId] = &[
   Sha224KernelId::X86Sha,
   #[cfg(target_arch = "aarch64")]
   Sha224KernelId::Aarch64Sha2,
+  #[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
+  Sha224KernelId::RiscvZknh,
+  #[cfg(target_arch = "wasm32")]
+  Sha224KernelId::WasmSimd128,
 ];
 
 impl Sha224KernelId {
@@ -37,6 +49,10 @@ impl Sha224KernelId {
       Self::X86Sha => "x86-sha",
       #[cfg(target_arch = "aarch64")]
       Self::Aarch64Sha2 => "aarch64-sha2",
+      #[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
+      Self::RiscvZknh => "riscv/zknh",
+      #[cfg(target_arch = "wasm32")]
+      Self::WasmSimd128 => "wasm/simd128",
     }
   }
 }
@@ -50,6 +66,10 @@ pub fn id_from_name(name: &str) -> Option<Sha224KernelId> {
     "x86-sha" => Some(Sha224KernelId::X86Sha),
     #[cfg(target_arch = "aarch64")]
     "aarch64-sha2" => Some(Sha224KernelId::Aarch64Sha2),
+    #[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
+    "riscv/zknh" => Some(Sha224KernelId::RiscvZknh),
+    #[cfg(target_arch = "wasm32")]
+    "wasm/simd128" => Some(Sha224KernelId::WasmSimd128),
     _ => None,
   }
 }
@@ -67,6 +87,14 @@ pub(crate) fn compress_blocks_fn(id: Sha224KernelId) -> CompressBlocksFn {
     Sha224KernelId::Aarch64Sha2 => crate::hashes::crypto::sha256::kernels::compress_blocks_fn(
       crate::hashes::crypto::sha256::kernels::Sha256KernelId::Aarch64Sha2,
     ),
+    #[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
+    Sha224KernelId::RiscvZknh => crate::hashes::crypto::sha256::kernels::compress_blocks_fn(
+      crate::hashes::crypto::sha256::kernels::Sha256KernelId::RiscvZknh,
+    ),
+    #[cfg(target_arch = "wasm32")]
+    Sha224KernelId::WasmSimd128 => crate::hashes::crypto::sha256::kernels::compress_blocks_fn(
+      crate::hashes::crypto::sha256::kernels::Sha256KernelId::WasmSimd128,
+    ),
   }
 }
 
@@ -79,5 +107,9 @@ pub const fn required_caps(id: Sha224KernelId) -> Caps {
     Sha224KernelId::X86Sha => x86::SHA,
     #[cfg(target_arch = "aarch64")]
     Sha224KernelId::Aarch64Sha2 => aarch64::SHA2,
+    #[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
+    Sha224KernelId::RiscvZknh => riscv::ZKNH,
+    #[cfg(target_arch = "wasm32")]
+    Sha224KernelId::WasmSimd128 => wasm::SIMD128,
   }
 }

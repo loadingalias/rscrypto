@@ -66,10 +66,19 @@
   feature(asm_experimental_arch, asm_experimental_reg, portable_simd)
 )]
 // riscv64 ZVBC backend uses vector target features + inline asm.
+// NIGHTLY: riscv_ext_intrinsics provides sha256{sum,sig}{0,1} Zknh intrinsics.
 #![cfg_attr(
   target_arch = "riscv64",
-  feature(asm_experimental_arch, asm_experimental_reg, riscv_target_feature, portable_simd)
+  feature(
+    asm_experimental_arch,
+    asm_experimental_reg,
+    riscv_target_feature,
+    portable_simd,
+    riscv_ext_intrinsics
+  )
 )]
+// NIGHTLY: riscv32 SHA-256 Zknh kernel uses scalar crypto intrinsics.
+#![cfg_attr(target_arch = "riscv32", feature(riscv_ext_intrinsics))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(not(feature = "std"), no_std)]
 

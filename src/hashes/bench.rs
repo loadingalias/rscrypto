@@ -135,6 +135,16 @@ fn sha224_compress_auto(data: &[u8]) -> u64 {
   u64_from_u32_state(&state)
 }
 
+#[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
+fn sha224_compress_riscv_zknh(data: &[u8]) -> u64 {
+  sha224_compress_kernel(crypto::sha224::kernels::Sha224KernelId::RiscvZknh, data)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn sha224_compress_wasm_simd128(data: &[u8]) -> u64 {
+  sha224_compress_kernel(crypto::sha224::kernels::Sha224KernelId::WasmSimd128, data)
+}
+
 fn sha256_compress_kernel(id: crypto::sha256::kernels::Sha256KernelId, data: &[u8]) -> u64 {
   const BLOCK_LEN: usize = 64;
   let compress = crypto::sha256::kernels::compress_blocks_fn(id);
@@ -152,6 +162,16 @@ fn sha256_compress_kernel(id: crypto::sha256::kernels::Sha256KernelId, data: &[u
 
 fn sha256_compress_portable(data: &[u8]) -> u64 {
   sha256_compress_kernel(crypto::sha256::kernels::Sha256KernelId::Portable, data)
+}
+
+#[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
+fn sha256_compress_riscv_zknh(data: &[u8]) -> u64 {
+  sha256_compress_kernel(crypto::sha256::kernels::Sha256KernelId::RiscvZknh, data)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn sha256_compress_wasm_simd128(data: &[u8]) -> u64 {
+  sha256_compress_kernel(crypto::sha256::kernels::Sha256KernelId::WasmSimd128, data)
 }
 
 fn sha256_compress_auto(data: &[u8]) -> u64 {
@@ -1355,9 +1375,29 @@ pub fn get_kernel(algo: &str, name: &str) -> Option<Kernel> {
       name: "portable",
       func: sha224_compress_portable,
     }),
+    #[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
+    ("sha224-compress", "riscv/zknh") => Some(Kernel {
+      name: "riscv/zknh",
+      func: sha224_compress_riscv_zknh,
+    }),
+    #[cfg(target_arch = "wasm32")]
+    ("sha224-compress", "wasm/simd128") => Some(Kernel {
+      name: "wasm/simd128",
+      func: sha224_compress_wasm_simd128,
+    }),
     ("sha256-compress", "portable") => Some(Kernel {
       name: "portable",
       func: sha256_compress_portable,
+    }),
+    #[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
+    ("sha256-compress", "riscv/zknh") => Some(Kernel {
+      name: "riscv/zknh",
+      func: sha256_compress_riscv_zknh,
+    }),
+    #[cfg(target_arch = "wasm32")]
+    ("sha256-compress", "wasm/simd128") => Some(Kernel {
+      name: "wasm/simd128",
+      func: sha256_compress_wasm_simd128,
     }),
     ("sha256-compress-unaligned", "portable") => Some(Kernel {
       name: "portable",

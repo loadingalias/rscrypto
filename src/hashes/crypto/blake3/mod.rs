@@ -6,7 +6,9 @@
 #![cfg_attr(not(test), deny(clippy::expect_used))]
 #![allow(clippy::indexing_slicing)] // Audited fixed-size parsing + perf-critical inner loops.
 
-use core::{cmp::min, mem::MaybeUninit, ptr, slice};
+use core::{cmp::min, mem::MaybeUninit, ptr};
+#[cfg(any(feature = "parallel", not(target_endian = "little")))]
+use core::slice;
 #[cfg(feature = "std")]
 extern crate alloc;
 #[cfg(feature = "std")]
@@ -53,6 +55,7 @@ const OUTPUT_BLOCK_LEN: usize = 2 * OUT_LEN;
 // 54-level binary reduction tree.
 const CV_STACK_LEN: usize = 54;
 
+#[cfg(any(feature = "parallel", not(target_endian = "little")))]
 type CvBytes = [u8; OUT_LEN];
 
 #[cfg(feature = "parallel")]
@@ -1108,6 +1111,7 @@ fn reduce_power_of_two_chunk_cvs(kernel: Kernel, key_words: [u32; 8], flags: u32
   cur[0]
 }
 
+#[cfg(not(target_endian = "little"))]
 #[inline]
 fn reduce_power_of_two_chunk_cvs_bytes(kernel: Kernel, key_words: [u32; 8], flags: u32, cvs: &[CvBytes]) -> CvBytes {
   debug_assert!(cvs.len().is_power_of_two());
@@ -1131,6 +1135,63 @@ fn reduce_power_of_two_chunk_cvs_bytes(kernel: Kernel, key_words: [u32; 8], flag
   }
 
   cur[0]
+}
+
+/// Reduce a power-of-2 slice of CVs down to exactly 2 using SIMD parent
+/// compression.  The returned `(left, right)` pair represents the left and
+/// right halves of the subtree.  The final parent compression (which may need
+/// the ROOT flag) is deferred to the caller.
+#[cfg(target_endian = "little")]
+#[inline]
+fn reduce_subtree_to_pair(
+  kernel: Kernel,
+  key_words: [u32; 8],
+  flags: u32,
+  cvs: &mut [[u32; 8]],
+) -> ([u32; 8], [u32; 8]) {
+  let n = cvs.len();
+  debug_assert!(n >= 2);
+  debug_assert!(n.is_power_of_two());
+
+  if n == 2 {
+    return (cvs[0], cvs[1]);
+  }
+
+  // Ping-pong reduction: cvs <-> next, halving each iteration.
+  // `cvs` is reused as one buffer; `next` is stack-allocated.
+  const HALF_MAX: usize = 64;
+  let mut next = [[0u32; 8]; HALF_MAX];
+  let mut cur_len = n;
+  let mut in_next = false; // false = current data is in cvs, true = in next
+
+  while cur_len > 2 {
+    let pairs = cur_len / 2;
+    if !in_next {
+      kernels::parent_cvs_many_from_cvs_inline(
+        kernel.id,
+        &cvs[..cur_len],
+        key_words,
+        flags,
+        &mut next[..pairs],
+      );
+    } else {
+      kernels::parent_cvs_many_from_cvs_inline(
+        kernel.id,
+        &next[..cur_len],
+        key_words,
+        flags,
+        &mut cvs[..pairs],
+      );
+    }
+    in_next = !in_next;
+    cur_len = pairs;
+  }
+
+  if !in_next {
+    (cvs[0], cvs[1])
+  } else {
+    (next[0], next[1])
+  }
 }
 
 #[cfg(feature = "parallel")]
@@ -1296,6 +1357,7 @@ fn add_chunk_cvs_batched(
   }
 }
 
+#[cfg(not(target_endian = "little"))]
 #[inline]
 fn add_chunk_cvs_batched_bytes(
   kernel: Kernel,
@@ -2829,6 +2891,11 @@ pub struct Blake3 {
   bulk_kernel_id: kernels::Blake3KernelId,
   chunk_state: ChunkState,
   pending_chunk_cv: Option<[u32; 8]>,
+  /// Number of chunks the pending CV represents. 1 for a single-chunk pending
+  /// (from the parallel path), or a power-of-2 > 1 for a subtree right-half
+  /// pending (from the subtree update path). Only meaningful when
+  /// `pending_chunk_cv` is `Some`.
+  pending_cv_chunks: u64,
   key_words: [u32; 8],
   cv_stack: [MaybeUninit<[u32; 8]>; CV_STACK_LEN],
   cv_stack_len: u8,
@@ -3246,6 +3313,7 @@ impl Blake3 {
       bulk_kernel_id: kernel_id,
       chunk_state: ChunkState::new(key_words, 0, flags, kernel_id),
       pending_chunk_cv: None,
+      pending_cv_chunks: 0,
       key_words,
       cv_stack: uninit_cv_stack(),
       cv_stack_len: 0,
@@ -3437,6 +3505,7 @@ impl Blake3 {
         new_counter - 1,
         last,
       ));
+      self.pending_cv_chunks = 1;
     }
   }
 
@@ -3488,6 +3557,101 @@ impl Blake3 {
     Some(bytes)
   }
 
+  /// Process the largest aligned power-of-2 subtree from the input using SIMD
+  /// `hash_many`, then reduce the resulting CVs with SIMD parent compression
+  /// and merge into the CV stack.
+  ///
+  /// This follows the canonical BLAKE3 streaming strategy: the subtree size is
+  /// chosen so that `chunk_counter % subtree_chunks == 0`, preserving the
+  /// correct Merkle tree shape.
+  ///
+  /// Returns the number of input bytes consumed, or `None` if the subtree
+  /// path is not applicable.
+  #[cfg(target_endian = "little")]
+  fn try_subtree_update(&mut self, input: &[u8]) -> Option<usize> {
+    if self.chunk_state.len() != 0
+      || self.bulk_kernel_id.simd_degree() <= 1
+      || input.len() <= CHUNK_LEN
+    {
+      return None;
+    }
+
+    let chunk_counter = self.chunk_state.chunk_counter;
+    let full_chunks = input.len() / CHUNK_LEN;
+    if full_chunks <= 1 {
+      return None;
+    }
+
+    // Compute the largest power-of-2 subtree aligned with the chunk counter.
+    // Alignment guarantees the canonical BLAKE3 tree shape: the subtree must
+    // evenly divide the total number of chunks processed so far.
+    let mut subtree_chunks = pow2_floor(full_chunks);
+    while subtree_chunks > 1 && (subtree_chunks as u64).strict_sub(1) & chunk_counter != 0 {
+      subtree_chunks /= 2;
+    }
+    if subtree_chunks <= 1 {
+      return None;
+    }
+
+    // Cap at our stack buffer size. MAX_SUBTREE_CHUNKS is a power of 2 that
+    // divides any larger aligned subtree, so alignment is preserved.
+    const MAX_SUBTREE_CHUNKS: usize = 128;
+    if subtree_chunks > MAX_SUBTREE_CHUNKS {
+      subtree_chunks = MAX_SUBTREE_CHUNKS;
+    }
+
+    let subtree_len = subtree_chunks.strict_mul(CHUNK_LEN);
+    let flags = self.chunk_state.flags;
+    let kernel_id = self.chunk_state.kernel_id;
+    let kernel = kernels::kernel(self.bulk_kernel_id);
+
+    // Hash all chunks in the subtree.
+    let mut cvs = [[0u32; 8]; MAX_SUBTREE_CHUNKS];
+    // SAFETY: `input` has at least `subtree_len` bytes, `cvs` has
+    // `subtree_chunks` CV slots, and the kernel's CPU features are available.
+    unsafe {
+      kernels::hash_many_contiguous_inline(
+        self.bulk_kernel_id,
+        input.as_ptr(),
+        subtree_chunks,
+        &self.key_words,
+        chunk_counter,
+        flags,
+        cvs.as_mut_ptr().cast::<u8>(),
+      )
+    };
+
+    let keep_last = input.len().is_multiple_of(CHUNK_LEN) && subtree_chunks == full_chunks;
+
+    if keep_last {
+      // Terminal batch: the entire remaining input fits in this subtree.
+      // Reduce to 2 CVs so the final parent compression can be deferred to
+      // finalize() for ROOT flag application.
+      let half = (subtree_chunks / 2) as u64;
+      let (left_cv, right_cv) =
+        reduce_subtree_to_pair(kernel, self.key_words, flags, &mut cvs[..subtree_chunks]);
+
+      // Push the left subtree onto the stack.
+      self.add_subtree_cv(left_cv, half);
+
+      // Advance counter for the pending right half and store it.
+      let full_counter = self.chunk_state.chunk_counter.strict_add(half);
+      self.chunk_state = ChunkState::new(self.key_words, full_counter, flags, kernel_id);
+      self.pending_chunk_cv = Some(right_cv);
+      self.pending_cv_chunks = half;
+    } else {
+      // Non-terminal: more input follows. Reduce to 1 CV and push.
+      let (left_cv, right_cv) =
+        reduce_subtree_to_pair(kernel, self.key_words, flags, &mut cvs[..subtree_chunks]);
+      let subtree_cv =
+        kernels::parent_cv_inline(kernel.id, left_cv, right_cv, self.key_words, flags);
+      self.add_subtree_cv(subtree_cv, subtree_chunks as u64);
+    }
+
+    Some(subtree_len)
+  }
+
+  #[cfg(not(target_endian = "little"))]
   fn try_simd_update_batch(&mut self, input: &[u8]) -> Option<usize> {
     if self.chunk_state.len() != 0 || self.bulk_kernel_id.simd_degree() <= 1 || input.len() <= CHUNK_LEN {
       return None;
@@ -3554,6 +3718,7 @@ impl Blake3 {
       // is `(batch - 1) * OUT_LEN` with `batch <= MAX_SIMD_DEGREE`.
       let cv = unsafe { words8_from_le_bytes_32(&*(out_buf.as_ptr().add(offset) as *const [u8; OUT_LEN])) };
       self.pending_chunk_cv = Some(cv);
+      self.pending_cv_chunks = 1;
     }
 
     Some(batch * CHUNK_LEN)
@@ -3600,6 +3765,13 @@ impl Blake3 {
         }
       }
 
+      #[cfg(target_endian = "little")]
+      if let Some(consumed) = self.try_subtree_update(input) {
+        input = &input[consumed..];
+        continue;
+      }
+
+      #[cfg(not(target_endian = "little"))]
       if let Some(consumed) = self.try_simd_update_batch(input) {
         input = &input[consumed..];
         continue;
@@ -3662,11 +3834,55 @@ impl Blake3 {
     self.push_stack(new_cv);
   }
 
+  /// Merge a CV that represents `num_chunks` chunks into the CV stack.
+  ///
+  /// The chunk counter must ALREADY include these chunks (i.e. the counter
+  /// was advanced before calling this method). `num_chunks` must be a
+  /// power of 2.
+  ///
+  /// For `num_chunks == 1` this is equivalent to `add_chunk_chaining_value`.
+  /// For larger powers of 2 it correctly places the subtree CV at the right
+  /// level in the Merkle tree, merging with existing stack entries as needed.
+  fn merge_cv_into_stack(&mut self, mut cv: [u32; 8], num_chunks: u64) {
+    debug_assert!(num_chunks.is_power_of_two());
+    let level = num_chunks.trailing_zeros();
+    let mut total = self.chunk_state.chunk_counter >> level;
+    while total & 1 == 0 {
+      cv = kernels::parent_cv_inline(
+        self.bulk_kernel_id,
+        self.pop_stack(),
+        cv,
+        self.key_words,
+        self.chunk_state.flags,
+      );
+      total >>= 1;
+    }
+    self.push_stack(cv);
+  }
+
+  /// Push a reduced subtree CV onto the stack at the correct tree level,
+  /// then advance the chunk counter.
+  ///
+  /// `subtree_chunks` must be a power of 2 and must be aligned with the
+  /// current chunk counter (i.e. `chunk_counter % subtree_chunks == 0`).
+  fn add_subtree_cv(&mut self, cv: [u32; 8], subtree_chunks: u64) {
+    debug_assert!(subtree_chunks.is_power_of_two());
+    let new_counter = self.chunk_state.chunk_counter.strict_add(subtree_chunks);
+    self.chunk_state = ChunkState::new(
+      self.key_words,
+      new_counter,
+      self.chunk_state.flags,
+      self.chunk_state.kernel_id,
+    );
+    self.merge_cv_into_stack(cv, subtree_chunks);
+  }
+
   #[inline]
   fn commit_pending_chunk_cv(&mut self) {
     if let Some(cv) = self.pending_chunk_cv.take() {
-      let total_chunks = self.chunk_state.chunk_counter;
-      self.add_chunk_chaining_value(cv, total_chunks);
+      let chunks = self.pending_cv_chunks;
+      self.pending_cv_chunks = 0;
+      self.merge_cv_into_stack(cv, chunks);
     }
   }
 
