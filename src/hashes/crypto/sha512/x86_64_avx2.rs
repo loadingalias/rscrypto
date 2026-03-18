@@ -138,8 +138,7 @@ unsafe fn compress_one_block(state: &mut [u64; 8], sched: &[__m256i; 40], lo_lan
     }};
   }
 
-  for pair in 0..40usize {
-    let v = sched[pair];
+  for (pair, &v) in sched.iter().enumerate() {
     // Extract 2 u64 words from the correct block's 128-bit lane.
     let (w_lo, w_hi) = if lo_lane {
       // Lower 128-bit lane: cast to __m128i and extract.
