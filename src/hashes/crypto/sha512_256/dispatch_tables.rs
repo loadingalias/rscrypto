@@ -41,8 +41,24 @@ pub static DEFAULT_TABLE: DispatchTable = DispatchTable {
   l: KernelId::Portable,
 };
 
+#[cfg(target_arch = "aarch64")]
+pub static AARCH64_SHA512_TABLE: DispatchTable = DispatchTable {
+  boundaries: DEFAULT_BOUNDARIES,
+  xs: KernelId::Aarch64Sha512,
+  s: KernelId::Aarch64Sha512,
+  m: KernelId::Aarch64Sha512,
+  l: KernelId::Aarch64Sha512,
+};
+
 #[inline]
 #[must_use]
-pub const fn select_runtime_table(_caps: Caps) -> &'static DispatchTable {
+pub fn select_runtime_table(#[allow(unused_variables)] caps: Caps) -> &'static DispatchTable {
+  #[cfg(target_arch = "aarch64")]
+  {
+    use crate::platform::caps::aarch64;
+    if caps.has(aarch64::SHA512) {
+      return &AARCH64_SHA512_TABLE;
+    }
+  }
   &DEFAULT_TABLE
 }

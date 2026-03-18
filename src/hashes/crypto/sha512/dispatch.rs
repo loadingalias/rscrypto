@@ -1,5 +1,5 @@
 use super::{
-  BLOCK_LEN, Sha512,
+  BLOCK_LEN,
   dispatch_tables::DispatchTable,
   kernels::{CompressBlocksFn, Sha512KernelId, compress_blocks_fn, required_caps},
 };
@@ -91,10 +91,43 @@ pub fn kernel_name_for_len(len: usize) -> &'static str {
 #[inline]
 #[must_use]
 pub fn digest(data: &[u8]) -> [u8; 64] {
-  use crate::traits::Digest;
-  let mut h = Sha512::default();
-  h.update(data);
-  h.finalize()
+  let d = active();
+  let compress = select(&d, data.len()).compress_blocks;
+  digest_oneshot(data, compress)
+}
+
+/// Oneshot digest: processes directly from the input slice without streaming
+/// state. Constructs final padded block(s) on the stack.
+#[inline]
+fn digest_oneshot(data: &[u8], compress_blocks: CompressBlocksFn) -> [u8; 64] {
+  let mut state = super::H0;
+
+  let full_len = data.len().strict_sub(data.len() % BLOCK_LEN);
+  if full_len != 0 {
+    compress_blocks(&mut state, &data[..full_len]);
+  }
+
+  let rest = &data[full_len..];
+  let total_bits = (data.len() as u128) << 3;
+
+  let mut block = [0u8; BLOCK_LEN];
+  block[..rest.len()].copy_from_slice(rest);
+  block[rest.len()] = 0x80;
+
+  if rest.len() >= 112 {
+    compress_blocks(&mut state, &block);
+    block = [0u8; BLOCK_LEN];
+  }
+
+  block[112..128].copy_from_slice(&total_bits.to_be_bytes());
+  compress_blocks(&mut state, &block);
+
+  let mut out = [0u8; 64];
+  for (i, word) in state.iter().copied().enumerate() {
+    let offset = i.strict_mul(8);
+    out[offset..offset.strict_add(8)].copy_from_slice(&word.to_be_bytes());
+  }
+  out
 }
 
 #[inline]
