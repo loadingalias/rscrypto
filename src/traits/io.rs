@@ -126,7 +126,7 @@ where
     if let Some(data) = buf.get(..to_hash) {
       on_data(data);
     }
-    remaining -= to_hash;
+    remaining = remaining.strict_sub(to_hash);
   }
   Ok(n)
 }

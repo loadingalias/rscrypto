@@ -1214,7 +1214,7 @@ pub(crate) unsafe fn hash_many_contiguous_neon(
     counter = counter.wrapping_add(4);
   }
 
-  let remaining = num_chunks - idx;
+  let remaining = num_chunks.strict_sub(idx);
   if remaining == 0 {
     return;
   }

@@ -111,14 +111,14 @@ impl Sha512_256 {
     }
 
     if self.block_len != 0 {
-      let take = core::cmp::min(BLOCK_LEN - self.block_len, data.len());
+      let take = core::cmp::min(BLOCK_LEN.strict_sub(self.block_len), data.len());
       self.block[self.block_len..self.block_len.strict_add(take)].copy_from_slice(&data[..take]);
       self.block_len = self.block_len.strict_add(take);
       data = &data[take..];
 
       if self.block_len == BLOCK_LEN {
         compress_blocks(&mut self.state, &self.block);
-        self.bytes_hashed = self.bytes_hashed.wrapping_add(BLOCK_LEN as u128);
+        self.bytes_hashed = self.bytes_hashed.strict_add(BLOCK_LEN as u128);
         self.block_len = 0;
       }
     }
@@ -127,7 +127,7 @@ impl Sha512_256 {
     if full_len != 0 {
       let (blocks, rest) = data.split_at(full_len);
       compress_blocks(&mut self.state, blocks);
-      self.bytes_hashed = self.bytes_hashed.wrapping_add(blocks.len() as u128);
+      self.bytes_hashed = self.bytes_hashed.strict_add(blocks.len() as u128);
       data = rest;
     }
 
@@ -142,7 +142,7 @@ impl Sha512_256 {
     let mut state = self.state;
     let mut block = self.block;
     let mut block_len = self.block_len;
-    let total_len = self.bytes_hashed.wrapping_add(block_len as u128);
+    let total_len = self.bytes_hashed.strict_add(block_len as u128);
 
     block[block_len] = 0x80;
     block_len = block_len.strict_add(1);
@@ -162,8 +162,8 @@ impl Sha512_256 {
 
     let mut out = [0u8; 32];
     for (i, word) in state.iter().copied().enumerate().take(4) {
-      let offset = i * 8;
-      out[offset..offset + 8].copy_from_slice(&word.to_be_bytes());
+      let offset = i.strict_mul(8);
+      out[offset..offset.strict_add(8)].copy_from_slice(&word.to_be_bytes());
     }
     out
   }
@@ -176,6 +176,10 @@ impl Drop for Sha512_256 {
       unsafe { core::ptr::write_volatile(word, 0) };
     }
     crate::traits::ct::zeroize(&mut self.block);
+    // SAFETY: field is a valid, aligned, dereferenceable pointer to initialized memory.
+    unsafe { core::ptr::write_volatile(&mut self.bytes_hashed, 0) };
+    // SAFETY: field is a valid, aligned, dereferenceable pointer to initialized memory.
+    unsafe { core::ptr::write_volatile(&mut self.block_len, 0) };
     core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
   }
 }
@@ -189,6 +193,7 @@ impl Digest for Sha512_256 {
     Self::default()
   }
 
+  #[inline]
   fn update(&mut self, data: &[u8]) {
     if data.is_empty() {
       return;

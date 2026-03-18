@@ -110,7 +110,7 @@ fn digest_oneshot(data: &[u8], compress_blocks: CompressBlocksFn) -> [u8; 32] {
 
   // Build final padded block(s) on the stack.
   let rest = &data[full_len..];
-  let total_bits = (data.len() as u64).wrapping_mul(8);
+  let total_bits = (data.len() as u64).strict_mul(8);
 
   let mut block = [0u8; BLOCK_LEN];
   block[..rest.len()].copy_from_slice(rest);
@@ -127,7 +127,7 @@ fn digest_oneshot(data: &[u8], compress_blocks: CompressBlocksFn) -> [u8; 32] {
 
   let mut out = [0u8; 32];
   for (i, word) in state.iter().copied().enumerate() {
-    let offset = i * 4;
+    let offset = i.strict_mul(4);
     out[offset..offset.strict_add(4)].copy_from_slice(&word.to_be_bytes());
   }
   out

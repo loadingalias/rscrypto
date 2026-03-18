@@ -3,7 +3,7 @@ use core::hint::black_box;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use rscrypto::{
   hashes::{
-    crypto::{Blake3, Sha3_256, Sha3_512, Sha256, Sha512, Shake256},
+    crypto::{Blake3, Sha3_256, Sha3_512, Sha256, Sha384, Sha512, Sha512_256, Shake256},
     fast::{RapidHash64, RapidHash128, Xxh3_64, Xxh3_128},
   },
   traits::{Digest as _, FastHash as _, Xof as _},
@@ -41,8 +41,14 @@ fn oneshot(c: &mut Criterion) {
     group.bench_with_input(BenchmarkId::new("sha3_512", len), data, |b, d| {
       b.iter(|| black_box(Sha3_512::digest(black_box(d))))
     });
+    group.bench_with_input(BenchmarkId::new("sha384", len), data, |b, d| {
+      b.iter(|| black_box(Sha384::digest(black_box(d))))
+    });
     group.bench_with_input(BenchmarkId::new("sha512", len), data, |b, d| {
       b.iter(|| black_box(Sha512::digest(black_box(d))))
+    });
+    group.bench_with_input(BenchmarkId::new("sha512_256", len), data, |b, d| {
+      b.iter(|| black_box(Sha512_256::digest(black_box(d))))
     });
     group.bench_with_input(BenchmarkId::new("shake256/32B", len), data, |b, d| {
       b.iter(|| {
@@ -154,6 +160,26 @@ fn streaming(c: &mut Criterion) {
     })
   });
 
+  group.bench_function("sha384/64B-chunks", |b| {
+    b.iter(|| {
+      let mut h = Sha384::new();
+      for chunk in data.chunks(64) {
+        h.update(chunk);
+      }
+      black_box(h.finalize())
+    })
+  });
+
+  group.bench_function("sha384/4KiB-chunks", |b| {
+    b.iter(|| {
+      let mut h = Sha384::new();
+      for chunk in data.chunks(4 * 1024) {
+        h.update(chunk);
+      }
+      black_box(h.finalize())
+    })
+  });
+
   group.bench_function("sha512/64B-chunks", |b| {
     b.iter(|| {
       let mut h = Sha512::new();
@@ -167,6 +193,26 @@ fn streaming(c: &mut Criterion) {
   group.bench_function("sha512/4KiB-chunks", |b| {
     b.iter(|| {
       let mut h = Sha512::new();
+      for chunk in data.chunks(4 * 1024) {
+        h.update(chunk);
+      }
+      black_box(h.finalize())
+    })
+  });
+
+  group.bench_function("sha512_256/64B-chunks", |b| {
+    b.iter(|| {
+      let mut h = Sha512_256::new();
+      for chunk in data.chunks(64) {
+        h.update(chunk);
+      }
+      black_box(h.finalize())
+    })
+  });
+
+  group.bench_function("sha512_256/4KiB-chunks", |b| {
+    b.iter(|| {
+      let mut h = Sha512_256::new();
       for chunk in data.chunks(4 * 1024) {
         h.update(chunk);
       }

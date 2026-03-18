@@ -1,6 +1,7 @@
 //! Tuned dispatch tables for SHA-512.
 //!
-//! This module is the checked-in runtime table used by capability-driven dispatch.
+//! SHA-512 NI, ARM SHA512 CE, and Zknh have negligible setup cost — use HW
+//! accel for all size classes when available.
 
 pub use super::kernels::Sha512KernelId as KernelId;
 use crate::platform::Caps;
@@ -50,14 +51,87 @@ pub static AARCH64_SHA512_TABLE: DispatchTable = DispatchTable {
   l: KernelId::Aarch64Sha512,
 };
 
+#[cfg(target_arch = "x86_64")]
+pub static X86_SHA512_TABLE: DispatchTable = DispatchTable {
+  boundaries: DEFAULT_BOUNDARIES,
+  xs: KernelId::X86Sha512,
+  s: KernelId::X86Sha512,
+  m: KernelId::X86Sha512,
+  l: KernelId::X86Sha512,
+};
+
+#[cfg(target_arch = "x86_64")]
+pub static X86_AVX512VL_TABLE: DispatchTable = DispatchTable {
+  boundaries: DEFAULT_BOUNDARIES,
+  xs: KernelId::X86Avx512vl,
+  s: KernelId::X86Avx512vl,
+  m: KernelId::X86Avx512vl,
+  l: KernelId::X86Avx512vl,
+};
+
+#[cfg(target_arch = "x86_64")]
+pub static X86_AVX2_TABLE: DispatchTable = DispatchTable {
+  boundaries: DEFAULT_BOUNDARIES,
+  xs: KernelId::X86Avx2,
+  s: KernelId::X86Avx2,
+  m: KernelId::X86Avx2,
+  l: KernelId::X86Avx2,
+};
+
+#[cfg(target_arch = "riscv64")]
+pub static RISCV_ZKNH_TABLE: DispatchTable = DispatchTable {
+  boundaries: DEFAULT_BOUNDARIES,
+  xs: KernelId::Riscv64Zknh,
+  s: KernelId::Riscv64Zknh,
+  m: KernelId::Riscv64Zknh,
+  l: KernelId::Riscv64Zknh,
+};
+
+#[cfg(target_arch = "wasm32")]
+pub static WASM_SIMD128_TABLE: DispatchTable = DispatchTable {
+  boundaries: DEFAULT_BOUNDARIES,
+  xs: KernelId::WasmSimd128,
+  s: KernelId::WasmSimd128,
+  m: KernelId::WasmSimd128,
+  l: KernelId::WasmSimd128,
+};
+
 #[inline]
 #[must_use]
 pub fn select_runtime_table(#[allow(unused_variables)] caps: Caps) -> &'static DispatchTable {
+  // x86_64 cascade: SHA-512 NI > AVX-512VL > AVX2 > Portable
+  #[cfg(target_arch = "x86_64")]
+  {
+    use crate::platform::caps::x86;
+    if caps.has(x86::SHA512) {
+      return &X86_SHA512_TABLE;
+    }
+    if caps.has(x86::AVX512F) && caps.has(x86::AVX512VL) {
+      return &X86_AVX512VL_TABLE;
+    }
+    if caps.has(x86::AVX2) {
+      return &X86_AVX2_TABLE;
+    }
+  }
   #[cfg(target_arch = "aarch64")]
   {
     use crate::platform::caps::aarch64;
     if caps.has(aarch64::SHA512) {
       return &AARCH64_SHA512_TABLE;
+    }
+  }
+  #[cfg(target_arch = "riscv64")]
+  {
+    use crate::platform::caps::riscv;
+    if caps.has(riscv::ZKNH) {
+      return &RISCV_ZKNH_TABLE;
+    }
+  }
+  #[cfg(target_arch = "wasm32")]
+  {
+    use crate::platform::caps::wasm;
+    if caps.has(wasm::SIMD128) {
+      return &WASM_SIMD128_TABLE;
     }
   }
   &DEFAULT_TABLE
