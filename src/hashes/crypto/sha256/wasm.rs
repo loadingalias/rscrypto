@@ -97,7 +97,7 @@ fn schedule_4(w: &mut [v128; 16], i: usize) {
   let w16_2 = schedule_word(w, t - 14);
   let w15_2 = schedule_word(w, t - 13);
   let w7_2 = schedule_word(w, t - 5);
-  let w2_2 = w1;
+  let w2_2 = w0;
   let w2 = small_sigma1(w2_2)
     .wrapping_add(w7_2)
     .wrapping_add(small_sigma0(w15_2))
@@ -106,7 +106,7 @@ fn schedule_4(w: &mut [v128; 16], i: usize) {
   let w16_3 = schedule_word(w, t - 13);
   let w15_3 = schedule_word(w, t - 12);
   let w7_3 = schedule_word(w, t - 4);
-  let w2_3 = w2;
+  let w2_3 = w1;
   let w3 = small_sigma1(w2_3)
     .wrapping_add(w7_3)
     .wrapping_add(small_sigma0(w15_3))
@@ -177,7 +177,7 @@ pub(crate) unsafe fn compress_blocks_wasm_simd(state: &mut [u32; 8], blocks: &[u
     macro_rules! sha_round {
       ($k:expr, $w:expr) => {{
         let t1 = h
-          .wrapping_add(big_sigma1($w))
+          .wrapping_add(big_sigma1(e))
           .wrapping_add(ch(e, f, g))
           .wrapping_add($k)
           .wrapping_add($w);

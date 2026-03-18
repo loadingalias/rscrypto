@@ -19,6 +19,16 @@ pub(crate) mod kernels;
 
 #[cfg(target_arch = "aarch64")]
 mod aarch64;
+#[cfg(target_arch = "riscv64")]
+pub(crate) mod riscv64;
+#[cfg(target_arch = "wasm32")]
+pub(crate) mod wasm;
+#[cfg(target_arch = "x86_64")]
+pub(crate) mod x86_64;
+#[cfg(target_arch = "x86_64")]
+pub(crate) mod x86_64_avx2;
+#[cfg(target_arch = "x86_64")]
+pub(crate) mod x86_64_avx512vl;
 
 const BLOCK_LEN: usize = 128;
 
@@ -33,7 +43,23 @@ const H0: [u64; 8] = [
   0x5be0_cd19_137e_2179,
 ];
 
-const K: [u64; 80] = [
+/// 80×u64 round constants aligned to a 64-byte cache line boundary.
+///
+/// Without alignment the 640-byte table can straddle up to 10+1 L1 cache lines,
+/// causing extra misses on first access. Aligning to 64 bytes guarantees it
+/// starts at a line boundary, filling exactly 10 lines.
+#[repr(C, align(64))]
+struct AlignedK([u64; 80]);
+
+impl core::ops::Deref for AlignedK {
+  type Target = [u64; 80];
+  #[inline(always)]
+  fn deref(&self) -> &[u64; 80] {
+    &self.0
+  }
+}
+
+static K: AlignedK = AlignedK([
   0x428a_2f98_d728_ae22,
   0x7137_4491_23ef_65cd,
   0xb5c0_fbcf_ec4d_3b2f,
@@ -114,7 +140,7 @@ const K: [u64; 80] = [
   0x597f_299c_fc65_7e2a,
   0x5fcb_6fab_3ad6_faec,
   0x6c44_198c_4a47_5817,
-];
+]);
 
 #[inline(always)]
 fn ch(x: u64, y: u64, z: u64) -> u64 {
@@ -127,12 +153,12 @@ fn maj(x: u64, y: u64, z: u64) -> u64 {
 }
 
 #[inline(always)]
-fn big_sigma0(x: u64) -> u64 {
+pub(super) fn big_sigma0(x: u64) -> u64 {
   rotr64(x, 28) ^ rotr64(x, 34) ^ rotr64(x, 39)
 }
 
 #[inline(always)]
-fn big_sigma1(x: u64) -> u64 {
+pub(super) fn big_sigma1(x: u64) -> u64 {
   rotr64(x, 14) ^ rotr64(x, 18) ^ rotr64(x, 41)
 }
 
@@ -225,8 +251,8 @@ impl Sha512 {
 
       let mut out = [0u8; 64];
       for (i, word) in state.iter().copied().enumerate() {
-        let offset = i * 8;
-        out[offset..offset + 8].copy_from_slice(&word.to_be_bytes());
+        let offset = i.strict_mul(8);
+        out[offset..offset.strict_add(8)].copy_from_slice(&word.to_be_bytes());
       }
       out
     } else {
@@ -275,14 +301,14 @@ impl Sha512 {
     }
 
     if self.block_len != 0 {
-      let take = core::cmp::min(BLOCK_LEN - self.block_len, data.len());
+      let take = core::cmp::min(BLOCK_LEN.strict_sub(self.block_len), data.len());
       self.block[self.block_len..self.block_len.strict_add(take)].copy_from_slice(&data[..take]);
       self.block_len = self.block_len.strict_add(take);
       data = &data[take..];
 
       if self.block_len == BLOCK_LEN {
         compress_blocks(&mut self.state, &self.block);
-        self.bytes_hashed = self.bytes_hashed.wrapping_add(BLOCK_LEN as u128);
+        self.bytes_hashed = self.bytes_hashed.strict_add(BLOCK_LEN as u128);
         self.block_len = 0;
       }
     }
@@ -291,7 +317,7 @@ impl Sha512 {
     if full_len != 0 {
       let (blocks, rest) = data.split_at(full_len);
       compress_blocks(&mut self.state, blocks);
-      self.bytes_hashed = self.bytes_hashed.wrapping_add(blocks.len() as u128);
+      self.bytes_hashed = self.bytes_hashed.strict_add(blocks.len() as u128);
       data = rest;
     }
 
@@ -303,230 +329,7 @@ impl Sha512 {
 
   #[inline(always)]
   fn compress_block(state: &mut [u64; 8], block: &[u8; BLOCK_LEN]) {
-    // 16-word ring buffer message schedule (lower memory traffic than a full
-    // 80-word schedule, and typically faster in practice).
-    //
-    // This is fully unrolled to avoid bounds checks and allow better
-    // instruction scheduling in the scalar core.
-    let mut w = [0u64; 16];
-    let (chunks, _) = block.as_chunks::<8>();
-    for (i, c) in chunks.iter().enumerate() {
-      w[i] = u64::from_be_bytes(*c);
-    }
-    let [
-      mut w0,
-      mut w1,
-      mut w2,
-      mut w3,
-      mut w4,
-      mut w5,
-      mut w6,
-      mut w7,
-      mut w8,
-      mut w9,
-      mut w10,
-      mut w11,
-      mut w12,
-      mut w13,
-      mut w14,
-      mut w15,
-    ] = w;
-
-    let mut a = state[0];
-    let mut b = state[1];
-    let mut c = state[2];
-    let mut d = state[3];
-    let mut e = state[4];
-    let mut f = state[5];
-    let mut g = state[6];
-    let mut h = state[7];
-
-    macro_rules! round {
-      ($k:expr, $wi:expr) => {{
-        let t1 = h
-          .wrapping_add(big_sigma1(e))
-          .wrapping_add(ch(e, f, g))
-          .wrapping_add($k)
-          .wrapping_add($wi);
-        let t2 = big_sigma0(a).wrapping_add(maj(a, b, c));
-
-        h = g;
-        g = f;
-        f = e;
-        e = d.wrapping_add(t1);
-        d = c;
-        c = b;
-        b = a;
-        a = t1.wrapping_add(t2);
-      }};
-    }
-
-    macro_rules! sched {
-      ($w_im2:expr, $w_im7:expr, $w_im15:expr, $w_im16:expr) => {{
-        small_sigma1($w_im2)
-          .wrapping_add($w_im7)
-          .wrapping_add(small_sigma0($w_im15))
-          .wrapping_add($w_im16)
-      }};
-    }
-
-    round!(K[0], w0);
-    round!(K[1], w1);
-    round!(K[2], w2);
-    round!(K[3], w3);
-    round!(K[4], w4);
-    round!(K[5], w5);
-    round!(K[6], w6);
-    round!(K[7], w7);
-    round!(K[8], w8);
-    round!(K[9], w9);
-    round!(K[10], w10);
-    round!(K[11], w11);
-    round!(K[12], w12);
-    round!(K[13], w13);
-    round!(K[14], w14);
-    round!(K[15], w15);
-
-    w0 = sched!(w14, w9, w1, w0);
-    round!(K[16], w0);
-    w1 = sched!(w15, w10, w2, w1);
-    round!(K[17], w1);
-    w2 = sched!(w0, w11, w3, w2);
-    round!(K[18], w2);
-    w3 = sched!(w1, w12, w4, w3);
-    round!(K[19], w3);
-    w4 = sched!(w2, w13, w5, w4);
-    round!(K[20], w4);
-    w5 = sched!(w3, w14, w6, w5);
-    round!(K[21], w5);
-    w6 = sched!(w4, w15, w7, w6);
-    round!(K[22], w6);
-    w7 = sched!(w5, w0, w8, w7);
-    round!(K[23], w7);
-    w8 = sched!(w6, w1, w9, w8);
-    round!(K[24], w8);
-    w9 = sched!(w7, w2, w10, w9);
-    round!(K[25], w9);
-    w10 = sched!(w8, w3, w11, w10);
-    round!(K[26], w10);
-    w11 = sched!(w9, w4, w12, w11);
-    round!(K[27], w11);
-    w12 = sched!(w10, w5, w13, w12);
-    round!(K[28], w12);
-    w13 = sched!(w11, w6, w14, w13);
-    round!(K[29], w13);
-    w14 = sched!(w12, w7, w15, w14);
-    round!(K[30], w14);
-    w15 = sched!(w13, w8, w0, w15);
-    round!(K[31], w15);
-
-    w0 = sched!(w14, w9, w1, w0);
-    round!(K[32], w0);
-    w1 = sched!(w15, w10, w2, w1);
-    round!(K[33], w1);
-    w2 = sched!(w0, w11, w3, w2);
-    round!(K[34], w2);
-    w3 = sched!(w1, w12, w4, w3);
-    round!(K[35], w3);
-    w4 = sched!(w2, w13, w5, w4);
-    round!(K[36], w4);
-    w5 = sched!(w3, w14, w6, w5);
-    round!(K[37], w5);
-    w6 = sched!(w4, w15, w7, w6);
-    round!(K[38], w6);
-    w7 = sched!(w5, w0, w8, w7);
-    round!(K[39], w7);
-    w8 = sched!(w6, w1, w9, w8);
-    round!(K[40], w8);
-    w9 = sched!(w7, w2, w10, w9);
-    round!(K[41], w9);
-    w10 = sched!(w8, w3, w11, w10);
-    round!(K[42], w10);
-    w11 = sched!(w9, w4, w12, w11);
-    round!(K[43], w11);
-    w12 = sched!(w10, w5, w13, w12);
-    round!(K[44], w12);
-    w13 = sched!(w11, w6, w14, w13);
-    round!(K[45], w13);
-    w14 = sched!(w12, w7, w15, w14);
-    round!(K[46], w14);
-    w15 = sched!(w13, w8, w0, w15);
-    round!(K[47], w15);
-
-    w0 = sched!(w14, w9, w1, w0);
-    round!(K[48], w0);
-    w1 = sched!(w15, w10, w2, w1);
-    round!(K[49], w1);
-    w2 = sched!(w0, w11, w3, w2);
-    round!(K[50], w2);
-    w3 = sched!(w1, w12, w4, w3);
-    round!(K[51], w3);
-    w4 = sched!(w2, w13, w5, w4);
-    round!(K[52], w4);
-    w5 = sched!(w3, w14, w6, w5);
-    round!(K[53], w5);
-    w6 = sched!(w4, w15, w7, w6);
-    round!(K[54], w6);
-    w7 = sched!(w5, w0, w8, w7);
-    round!(K[55], w7);
-    w8 = sched!(w6, w1, w9, w8);
-    round!(K[56], w8);
-    w9 = sched!(w7, w2, w10, w9);
-    round!(K[57], w9);
-    w10 = sched!(w8, w3, w11, w10);
-    round!(K[58], w10);
-    w11 = sched!(w9, w4, w12, w11);
-    round!(K[59], w11);
-    w12 = sched!(w10, w5, w13, w12);
-    round!(K[60], w12);
-    w13 = sched!(w11, w6, w14, w13);
-    round!(K[61], w13);
-    w14 = sched!(w12, w7, w15, w14);
-    round!(K[62], w14);
-    w15 = sched!(w13, w8, w0, w15);
-    round!(K[63], w15);
-
-    w0 = sched!(w14, w9, w1, w0);
-    round!(K[64], w0);
-    w1 = sched!(w15, w10, w2, w1);
-    round!(K[65], w1);
-    w2 = sched!(w0, w11, w3, w2);
-    round!(K[66], w2);
-    w3 = sched!(w1, w12, w4, w3);
-    round!(K[67], w3);
-    w4 = sched!(w2, w13, w5, w4);
-    round!(K[68], w4);
-    w5 = sched!(w3, w14, w6, w5);
-    round!(K[69], w5);
-    w6 = sched!(w4, w15, w7, w6);
-    round!(K[70], w6);
-    w7 = sched!(w5, w0, w8, w7);
-    round!(K[71], w7);
-    w8 = sched!(w6, w1, w9, w8);
-    round!(K[72], w8);
-    w9 = sched!(w7, w2, w10, w9);
-    round!(K[73], w9);
-    w10 = sched!(w8, w3, w11, w10);
-    round!(K[74], w10);
-    w11 = sched!(w9, w4, w12, w11);
-    round!(K[75], w11);
-    w12 = sched!(w10, w5, w13, w12);
-    round!(K[76], w12);
-    w13 = sched!(w11, w6, w14, w13);
-    round!(K[77], w13);
-    w14 = sched!(w12, w7, w15, w14);
-    round!(K[78], w14);
-    w15 = sched!(w13, w8, w0, w15);
-    round!(K[79], w15);
-
-    state[0] = state[0].wrapping_add(a);
-    state[1] = state[1].wrapping_add(b);
-    state[2] = state[2].wrapping_add(c);
-    state[3] = state[3].wrapping_add(d);
-    state[4] = state[4].wrapping_add(e);
-    state[5] = state[5].wrapping_add(f);
-    state[6] = state[6].wrapping_add(g);
-    state[7] = state[7].wrapping_add(h);
+    compress_block_with(state, block, big_sigma0, big_sigma1, small_sigma0, small_sigma1);
   }
 
   #[inline(always)]
@@ -535,7 +338,7 @@ impl Sha512 {
     let mut block = self.block;
     let mut block_len = self.block_len;
 
-    let total_len = self.bytes_hashed.wrapping_add(block_len as u128);
+    let total_len = self.bytes_hashed.strict_add(block_len as u128);
     let bit_len = total_len << 3;
 
     block[block_len] = 0x80;
@@ -561,6 +364,241 @@ impl Sha512 {
   }
 }
 
+/// Core SHA-512 block compression, parameterized over the four sigma/sum
+/// operations. The portable kernel passes software rotate-xor-shift; RISC-V
+/// Zknh passes hardware `sha512sum0/1` and `sha512sig0/1` intrinsics.
+///
+/// The compiler devirtualizes constant `fn` items at all optimization levels,
+/// producing identical codegen to a hand-inlined version.
+#[inline(always)]
+pub(crate) fn compress_block_with(
+  state: &mut [u64; 8],
+  block: &[u8; BLOCK_LEN],
+  big_s0: fn(u64) -> u64,
+  big_s1: fn(u64) -> u64,
+  small_s0: fn(u64) -> u64,
+  small_s1: fn(u64) -> u64,
+) {
+  let mut w = [0u64; 16];
+  let (chunks, _) = block.as_chunks::<8>();
+  for (i, c) in chunks.iter().enumerate() {
+    w[i] = u64::from_be_bytes(*c);
+  }
+  let [
+    mut w0,
+    mut w1,
+    mut w2,
+    mut w3,
+    mut w4,
+    mut w5,
+    mut w6,
+    mut w7,
+    mut w8,
+    mut w9,
+    mut w10,
+    mut w11,
+    mut w12,
+    mut w13,
+    mut w14,
+    mut w15,
+  ] = w;
+
+  let mut a = state[0];
+  let mut b = state[1];
+  let mut c = state[2];
+  let mut d = state[3];
+  let mut e = state[4];
+  let mut f = state[5];
+  let mut g = state[6];
+  let mut h = state[7];
+
+  macro_rules! round {
+    ($k:expr, $wi:expr) => {{
+      let t1 = h
+        .wrapping_add(big_s1(e))
+        .wrapping_add(ch(e, f, g))
+        .wrapping_add($k)
+        .wrapping_add($wi);
+      let t2 = big_s0(a).wrapping_add(maj(a, b, c));
+      h = g;
+      g = f;
+      f = e;
+      e = d.wrapping_add(t1);
+      d = c;
+      c = b;
+      b = a;
+      a = t1.wrapping_add(t2);
+    }};
+  }
+
+  macro_rules! sched {
+    ($w2:expr, $w7:expr, $w15:expr, $w16:expr) => {{
+      small_s1($w2)
+        .wrapping_add($w7)
+        .wrapping_add(small_s0($w15))
+        .wrapping_add($w16)
+    }};
+  }
+
+  round!(K[0], w0);
+  round!(K[1], w1);
+  round!(K[2], w2);
+  round!(K[3], w3);
+  round!(K[4], w4);
+  round!(K[5], w5);
+  round!(K[6], w6);
+  round!(K[7], w7);
+  round!(K[8], w8);
+  round!(K[9], w9);
+  round!(K[10], w10);
+  round!(K[11], w11);
+  round!(K[12], w12);
+  round!(K[13], w13);
+  round!(K[14], w14);
+  round!(K[15], w15);
+
+  w0 = sched!(w14, w9, w1, w0);
+  round!(K[16], w0);
+  w1 = sched!(w15, w10, w2, w1);
+  round!(K[17], w1);
+  w2 = sched!(w0, w11, w3, w2);
+  round!(K[18], w2);
+  w3 = sched!(w1, w12, w4, w3);
+  round!(K[19], w3);
+  w4 = sched!(w2, w13, w5, w4);
+  round!(K[20], w4);
+  w5 = sched!(w3, w14, w6, w5);
+  round!(K[21], w5);
+  w6 = sched!(w4, w15, w7, w6);
+  round!(K[22], w6);
+  w7 = sched!(w5, w0, w8, w7);
+  round!(K[23], w7);
+  w8 = sched!(w6, w1, w9, w8);
+  round!(K[24], w8);
+  w9 = sched!(w7, w2, w10, w9);
+  round!(K[25], w9);
+  w10 = sched!(w8, w3, w11, w10);
+  round!(K[26], w10);
+  w11 = sched!(w9, w4, w12, w11);
+  round!(K[27], w11);
+  w12 = sched!(w10, w5, w13, w12);
+  round!(K[28], w12);
+  w13 = sched!(w11, w6, w14, w13);
+  round!(K[29], w13);
+  w14 = sched!(w12, w7, w15, w14);
+  round!(K[30], w14);
+  w15 = sched!(w13, w8, w0, w15);
+  round!(K[31], w15);
+
+  w0 = sched!(w14, w9, w1, w0);
+  round!(K[32], w0);
+  w1 = sched!(w15, w10, w2, w1);
+  round!(K[33], w1);
+  w2 = sched!(w0, w11, w3, w2);
+  round!(K[34], w2);
+  w3 = sched!(w1, w12, w4, w3);
+  round!(K[35], w3);
+  w4 = sched!(w2, w13, w5, w4);
+  round!(K[36], w4);
+  w5 = sched!(w3, w14, w6, w5);
+  round!(K[37], w5);
+  w6 = sched!(w4, w15, w7, w6);
+  round!(K[38], w6);
+  w7 = sched!(w5, w0, w8, w7);
+  round!(K[39], w7);
+  w8 = sched!(w6, w1, w9, w8);
+  round!(K[40], w8);
+  w9 = sched!(w7, w2, w10, w9);
+  round!(K[41], w9);
+  w10 = sched!(w8, w3, w11, w10);
+  round!(K[42], w10);
+  w11 = sched!(w9, w4, w12, w11);
+  round!(K[43], w11);
+  w12 = sched!(w10, w5, w13, w12);
+  round!(K[44], w12);
+  w13 = sched!(w11, w6, w14, w13);
+  round!(K[45], w13);
+  w14 = sched!(w12, w7, w15, w14);
+  round!(K[46], w14);
+  w15 = sched!(w13, w8, w0, w15);
+  round!(K[47], w15);
+
+  w0 = sched!(w14, w9, w1, w0);
+  round!(K[48], w0);
+  w1 = sched!(w15, w10, w2, w1);
+  round!(K[49], w1);
+  w2 = sched!(w0, w11, w3, w2);
+  round!(K[50], w2);
+  w3 = sched!(w1, w12, w4, w3);
+  round!(K[51], w3);
+  w4 = sched!(w2, w13, w5, w4);
+  round!(K[52], w4);
+  w5 = sched!(w3, w14, w6, w5);
+  round!(K[53], w5);
+  w6 = sched!(w4, w15, w7, w6);
+  round!(K[54], w6);
+  w7 = sched!(w5, w0, w8, w7);
+  round!(K[55], w7);
+  w8 = sched!(w6, w1, w9, w8);
+  round!(K[56], w8);
+  w9 = sched!(w7, w2, w10, w9);
+  round!(K[57], w9);
+  w10 = sched!(w8, w3, w11, w10);
+  round!(K[58], w10);
+  w11 = sched!(w9, w4, w12, w11);
+  round!(K[59], w11);
+  w12 = sched!(w10, w5, w13, w12);
+  round!(K[60], w12);
+  w13 = sched!(w11, w6, w14, w13);
+  round!(K[61], w13);
+  w14 = sched!(w12, w7, w15, w14);
+  round!(K[62], w14);
+  w15 = sched!(w13, w8, w0, w15);
+  round!(K[63], w15);
+
+  w0 = sched!(w14, w9, w1, w0);
+  round!(K[64], w0);
+  w1 = sched!(w15, w10, w2, w1);
+  round!(K[65], w1);
+  w2 = sched!(w0, w11, w3, w2);
+  round!(K[66], w2);
+  w3 = sched!(w1, w12, w4, w3);
+  round!(K[67], w3);
+  w4 = sched!(w2, w13, w5, w4);
+  round!(K[68], w4);
+  w5 = sched!(w3, w14, w6, w5);
+  round!(K[69], w5);
+  w6 = sched!(w4, w15, w7, w6);
+  round!(K[70], w6);
+  w7 = sched!(w5, w0, w8, w7);
+  round!(K[71], w7);
+  w8 = sched!(w6, w1, w9, w8);
+  round!(K[72], w8);
+  w9 = sched!(w7, w2, w10, w9);
+  round!(K[73], w9);
+  w10 = sched!(w8, w3, w11, w10);
+  round!(K[74], w10);
+  w11 = sched!(w9, w4, w12, w11);
+  round!(K[75], w11);
+  w12 = sched!(w10, w5, w13, w12);
+  round!(K[76], w12);
+  w13 = sched!(w11, w6, w14, w13);
+  round!(K[77], w13);
+  w14 = sched!(w12, w7, w15, w14);
+  round!(K[78], w14);
+  w15 = sched!(w13, w8, w0, w15);
+  round!(K[79], w15);
+
+  state[0] = state[0].wrapping_add(a);
+  state[1] = state[1].wrapping_add(b);
+  state[2] = state[2].wrapping_add(c);
+  state[3] = state[3].wrapping_add(d);
+  state[4] = state[4].wrapping_add(e);
+  state[5] = state[5].wrapping_add(f);
+  state[6] = state[6].wrapping_add(g);
+  state[7] = state[7].wrapping_add(h);
+}
+
 impl Drop for Sha512 {
   fn drop(&mut self) {
     for word in self.state.iter_mut() {
@@ -568,6 +606,10 @@ impl Drop for Sha512 {
       unsafe { core::ptr::write_volatile(word, 0) };
     }
     crate::traits::ct::zeroize(&mut self.block);
+    // SAFETY: field is a valid, aligned, dereferenceable pointer to initialized memory.
+    unsafe { core::ptr::write_volatile(&mut self.bytes_hashed, 0) };
+    // SAFETY: field is a valid, aligned, dereferenceable pointer to initialized memory.
+    unsafe { core::ptr::write_volatile(&mut self.block_len, 0) };
     core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
   }
 }
@@ -581,6 +623,7 @@ impl Digest for Sha512 {
     Self::default()
   }
 
+  #[inline]
   fn update(&mut self, data: &[u8]) {
     if data.is_empty() {
       return;

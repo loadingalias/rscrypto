@@ -225,6 +225,36 @@ fn sha384_compress_portable(data: &[u8]) -> u64 {
   sha384_compress_kernel(crypto::sha384::kernels::Sha384KernelId::Portable, data)
 }
 
+#[cfg(target_arch = "aarch64")]
+fn sha384_compress_aarch64_sha512(data: &[u8]) -> u64 {
+  sha384_compress_kernel(crypto::sha384::kernels::Sha384KernelId::Aarch64Sha512, data)
+}
+
+#[cfg(target_arch = "x86_64")]
+fn sha384_compress_x86_sha512(data: &[u8]) -> u64 {
+  sha384_compress_kernel(crypto::sha384::kernels::Sha384KernelId::X86Sha512, data)
+}
+
+#[cfg(target_arch = "x86_64")]
+fn sha384_compress_x86_avx512vl(data: &[u8]) -> u64 {
+  sha384_compress_kernel(crypto::sha384::kernels::Sha384KernelId::X86Avx512vl, data)
+}
+
+#[cfg(target_arch = "x86_64")]
+fn sha384_compress_x86_avx2(data: &[u8]) -> u64 {
+  sha384_compress_kernel(crypto::sha384::kernels::Sha384KernelId::X86Avx2, data)
+}
+
+#[cfg(target_arch = "riscv64")]
+fn sha384_compress_riscv_zknh(data: &[u8]) -> u64 {
+  sha384_compress_kernel(crypto::sha384::kernels::Sha384KernelId::Riscv64Zknh, data)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn sha384_compress_wasm_simd128(data: &[u8]) -> u64 {
+  sha384_compress_kernel(crypto::sha384::kernels::Sha384KernelId::WasmSimd128, data)
+}
+
 fn sha384_compress_auto(data: &[u8]) -> u64 {
   const BLOCK_LEN: usize = 128;
   let blocks_len = data.len() - (data.len() % BLOCK_LEN);
@@ -256,6 +286,36 @@ fn sha512_compress_kernel(id: crypto::sha512::kernels::Sha512KernelId, data: &[u
 
 fn sha512_compress_portable(data: &[u8]) -> u64 {
   sha512_compress_kernel(crypto::sha512::kernels::Sha512KernelId::Portable, data)
+}
+
+#[cfg(target_arch = "aarch64")]
+fn sha512_compress_aarch64_sha512(data: &[u8]) -> u64 {
+  sha512_compress_kernel(crypto::sha512::kernels::Sha512KernelId::Aarch64Sha512, data)
+}
+
+#[cfg(target_arch = "x86_64")]
+fn sha512_compress_x86_sha512(data: &[u8]) -> u64 {
+  sha512_compress_kernel(crypto::sha512::kernels::Sha512KernelId::X86Sha512, data)
+}
+
+#[cfg(target_arch = "x86_64")]
+fn sha512_compress_x86_avx512vl(data: &[u8]) -> u64 {
+  sha512_compress_kernel(crypto::sha512::kernels::Sha512KernelId::X86Avx512vl, data)
+}
+
+#[cfg(target_arch = "x86_64")]
+fn sha512_compress_x86_avx2(data: &[u8]) -> u64 {
+  sha512_compress_kernel(crypto::sha512::kernels::Sha512KernelId::X86Avx2, data)
+}
+
+#[cfg(target_arch = "riscv64")]
+fn sha512_compress_riscv_zknh(data: &[u8]) -> u64 {
+  sha512_compress_kernel(crypto::sha512::kernels::Sha512KernelId::Riscv64Zknh, data)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn sha512_compress_wasm_simd128(data: &[u8]) -> u64 {
+  sha512_compress_kernel(crypto::sha512::kernels::Sha512KernelId::WasmSimd128, data)
 }
 
 fn sha512_compress_auto(data: &[u8]) -> u64 {
@@ -309,6 +369,36 @@ fn sha512_256_compress_portable(data: &[u8]) -> u64 {
   sha512_256_compress_kernel(crypto::sha512_256::kernels::Sha512_256KernelId::Portable, data)
 }
 
+#[cfg(target_arch = "aarch64")]
+fn sha512_256_compress_aarch64_sha512(data: &[u8]) -> u64 {
+  sha512_256_compress_kernel(crypto::sha512_256::kernels::Sha512_256KernelId::Aarch64Sha512, data)
+}
+
+#[cfg(target_arch = "x86_64")]
+fn sha512_256_compress_x86_sha512(data: &[u8]) -> u64 {
+  sha512_256_compress_kernel(crypto::sha512_256::kernels::Sha512_256KernelId::X86Sha512, data)
+}
+
+#[cfg(target_arch = "x86_64")]
+fn sha512_256_compress_x86_avx512vl(data: &[u8]) -> u64 {
+  sha512_256_compress_kernel(crypto::sha512_256::kernels::Sha512_256KernelId::X86Avx512vl, data)
+}
+
+#[cfg(target_arch = "x86_64")]
+fn sha512_256_compress_x86_avx2(data: &[u8]) -> u64 {
+  sha512_256_compress_kernel(crypto::sha512_256::kernels::Sha512_256KernelId::X86Avx2, data)
+}
+
+#[cfg(target_arch = "riscv64")]
+fn sha512_256_compress_riscv_zknh(data: &[u8]) -> u64 {
+  sha512_256_compress_kernel(crypto::sha512_256::kernels::Sha512_256KernelId::Riscv64Zknh, data)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn sha512_256_compress_wasm_simd128(data: &[u8]) -> u64 {
+  sha512_256_compress_kernel(crypto::sha512_256::kernels::Sha512_256KernelId::WasmSimd128, data)
+}
+
 fn sha512_256_compress_auto(data: &[u8]) -> u64 {
   const BLOCK_LEN: usize = 128;
   let blocks_len = data.len() - (data.len() % BLOCK_LEN);
@@ -355,6 +445,40 @@ fn sha512_stream64_auto(data: &[u8]) -> u64 {
 
 fn sha512_stream4k_auto(data: &[u8]) -> u64 {
   sha512_stream_chunks_auto(data, 4 * 1024)
+}
+
+fn sha384_stream_chunks_auto(data: &[u8], chunk_size: usize) -> u64 {
+  use crate::traits::Digest as _;
+  let mut h = crypto::Sha384::new();
+  for chunk in data.chunks(chunk_size) {
+    h.update(chunk);
+  }
+  u64_from_prefix(&h.finalize())
+}
+
+fn sha384_stream64_auto(data: &[u8]) -> u64 {
+  sha384_stream_chunks_auto(data, 64)
+}
+
+fn sha384_stream4k_auto(data: &[u8]) -> u64 {
+  sha384_stream_chunks_auto(data, 4 * 1024)
+}
+
+fn sha512_256_stream_chunks_auto(data: &[u8], chunk_size: usize) -> u64 {
+  use crate::traits::Digest as _;
+  let mut h = crypto::Sha512_256::new();
+  for chunk in data.chunks(chunk_size) {
+    h.update(chunk);
+  }
+  u64_from_prefix(&h.finalize())
+}
+
+fn sha512_256_stream64_auto(data: &[u8]) -> u64 {
+  sha512_256_stream_chunks_auto(data, 64)
+}
+
+fn sha512_256_stream4k_auto(data: &[u8]) -> u64 {
+  sha512_256_stream_chunks_auto(data, 4 * 1024)
 }
 
 #[derive(Clone, Copy)]
@@ -1407,9 +1531,69 @@ pub fn get_kernel(algo: &str, name: &str) -> Option<Kernel> {
       name: "portable",
       func: sha384_compress_portable,
     }),
+    #[cfg(target_arch = "aarch64")]
+    ("sha384-compress", "aarch64/sha512") => Some(Kernel {
+      name: "aarch64/sha512",
+      func: sha384_compress_aarch64_sha512,
+    }),
+    #[cfg(target_arch = "x86_64")]
+    ("sha384-compress", "x86_64/sha512") => Some(Kernel {
+      name: "x86_64/sha512",
+      func: sha384_compress_x86_sha512,
+    }),
+    #[cfg(target_arch = "x86_64")]
+    ("sha384-compress", "x86_64/avx512vl") => Some(Kernel {
+      name: "x86_64/avx512vl",
+      func: sha384_compress_x86_avx512vl,
+    }),
+    #[cfg(target_arch = "x86_64")]
+    ("sha384-compress", "x86_64/avx2") => Some(Kernel {
+      name: "x86_64/avx2",
+      func: sha384_compress_x86_avx2,
+    }),
+    #[cfg(target_arch = "riscv64")]
+    ("sha384-compress", "riscv/zknh") => Some(Kernel {
+      name: "riscv/zknh",
+      func: sha384_compress_riscv_zknh,
+    }),
+    #[cfg(target_arch = "wasm32")]
+    ("sha384-compress", "wasm/simd128") => Some(Kernel {
+      name: "wasm/simd128",
+      func: sha384_compress_wasm_simd128,
+    }),
     ("sha512-compress", "portable") => Some(Kernel {
       name: "portable",
       func: sha512_compress_portable,
+    }),
+    #[cfg(target_arch = "aarch64")]
+    ("sha512-compress", "aarch64/sha512") => Some(Kernel {
+      name: "aarch64/sha512",
+      func: sha512_compress_aarch64_sha512,
+    }),
+    #[cfg(target_arch = "x86_64")]
+    ("sha512-compress", "x86_64/sha512") => Some(Kernel {
+      name: "x86_64/sha512",
+      func: sha512_compress_x86_sha512,
+    }),
+    #[cfg(target_arch = "x86_64")]
+    ("sha512-compress", "x86_64/avx512vl") => Some(Kernel {
+      name: "x86_64/avx512vl",
+      func: sha512_compress_x86_avx512vl,
+    }),
+    #[cfg(target_arch = "x86_64")]
+    ("sha512-compress", "x86_64/avx2") => Some(Kernel {
+      name: "x86_64/avx2",
+      func: sha512_compress_x86_avx2,
+    }),
+    #[cfg(target_arch = "riscv64")]
+    ("sha512-compress", "riscv/zknh") => Some(Kernel {
+      name: "riscv/zknh",
+      func: sha512_compress_riscv_zknh,
+    }),
+    #[cfg(target_arch = "wasm32")]
+    ("sha512-compress", "wasm/simd128") => Some(Kernel {
+      name: "wasm/simd128",
+      func: sha512_compress_wasm_simd128,
     }),
     ("sha512-compress-unaligned", "portable") => Some(Kernel {
       name: "portable",
@@ -1418,6 +1602,36 @@ pub fn get_kernel(algo: &str, name: &str) -> Option<Kernel> {
     ("sha512-256-compress", "portable") => Some(Kernel {
       name: "portable",
       func: sha512_256_compress_portable,
+    }),
+    #[cfg(target_arch = "aarch64")]
+    ("sha512-256-compress", "aarch64/sha512") => Some(Kernel {
+      name: "aarch64/sha512",
+      func: sha512_256_compress_aarch64_sha512,
+    }),
+    #[cfg(target_arch = "x86_64")]
+    ("sha512-256-compress", "x86_64/sha512") => Some(Kernel {
+      name: "x86_64/sha512",
+      func: sha512_256_compress_x86_sha512,
+    }),
+    #[cfg(target_arch = "x86_64")]
+    ("sha512-256-compress", "x86_64/avx512vl") => Some(Kernel {
+      name: "x86_64/avx512vl",
+      func: sha512_256_compress_x86_avx512vl,
+    }),
+    #[cfg(target_arch = "x86_64")]
+    ("sha512-256-compress", "x86_64/avx2") => Some(Kernel {
+      name: "x86_64/avx2",
+      func: sha512_256_compress_x86_avx2,
+    }),
+    #[cfg(target_arch = "riscv64")]
+    ("sha512-256-compress", "riscv/zknh") => Some(Kernel {
+      name: "riscv/zknh",
+      func: sha512_256_compress_riscv_zknh,
+    }),
+    #[cfg(target_arch = "wasm32")]
+    ("sha512-256-compress", "wasm/simd128") => Some(Kernel {
+      name: "wasm/simd128",
+      func: sha512_256_compress_wasm_simd128,
     }),
     ("blake3-chunk", "portable") => Some(Kernel {
       name: "portable",
@@ -1541,6 +1755,22 @@ pub fn get_kernel(algo: &str, name: &str) -> Option<Kernel> {
     ("sha512-stream4k", "portable") => Some(Kernel {
       name: "portable",
       func: sha512_stream4k_auto,
+    }),
+    ("sha384-stream64", "portable") => Some(Kernel {
+      name: "portable",
+      func: sha384_stream64_auto,
+    }),
+    ("sha384-stream4k", "portable") => Some(Kernel {
+      name: "portable",
+      func: sha384_stream4k_auto,
+    }),
+    ("sha512-256-stream64", "portable") => Some(Kernel {
+      name: "portable",
+      func: sha512_256_stream64_auto,
+    }),
+    ("sha512-256-stream4k", "portable") => Some(Kernel {
+      name: "portable",
+      func: sha512_256_stream4k_auto,
     }),
     ("blake3-stream64", "portable") => Some(Kernel {
       name: "portable",
@@ -1915,6 +2145,10 @@ pub fn run_auto(algo: &str, data: &[u8]) -> Option<u64> {
     "sha256-stream4k" => Some(sha256_stream4k_auto(data)),
     "sha512-stream64" => Some(sha512_stream64_auto(data)),
     "sha512-stream4k" => Some(sha512_stream4k_auto(data)),
+    "sha384-stream64" => Some(sha384_stream64_auto(data)),
+    "sha384-stream4k" => Some(sha384_stream4k_auto(data)),
+    "sha512-256-stream64" => Some(sha512_256_stream64_auto(data)),
+    "sha512-256-stream4k" => Some(sha512_256_stream4k_auto(data)),
     "blake3-stream64" => Some(blake3_stream64_auto(data)),
     "blake3-stream256" => Some(blake3_stream256_auto(data)),
     "blake3-stream1k" => Some(blake3_stream1k_auto(data)),
@@ -1988,6 +2222,8 @@ pub fn kernel_name_for_len(algo: &str, len: usize) -> Option<&'static str> {
     "keccakf1600-permute" => Some(crypto::keccak::dispatch::kernel_name_for_len(len)),
     "sha256-stream64" | "sha256-stream4k" => Some(crypto::sha256::dispatch::kernel_name_for_len(len)),
     "sha512-stream64" | "sha512-stream4k" => Some(crypto::sha512::dispatch::kernel_name_for_len(len)),
+    "sha384-stream64" | "sha384-stream4k" => Some(crypto::sha384::dispatch::kernel_name_for_len(len)),
+    "sha512-256-stream64" | "sha512-256-stream4k" => Some(crypto::sha512_256::dispatch::kernel_name_for_len(len)),
     "blake3-stream64"
     | "blake3-stream256"
     | "blake3-stream1k"

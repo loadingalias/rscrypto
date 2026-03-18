@@ -32,6 +32,12 @@ const H0: [u32; 8] = [
   0xbefa_4fa4,
 ];
 
+/// Maximum message length in bytes for SHA-224 (FIPS 180-4).
+///
+/// Same limit as SHA-256: the spec encodes message length as a 64-bit **bit**
+/// count, so the maximum byte length is `(2^64 − 1) / 8 = 2^61 − 1`.
+const MAX_MESSAGE_LEN: u64 = u64::MAX / 8;
+
 #[derive(Clone)]
 pub struct Sha224 {
   state: [u32; 8],
@@ -83,7 +89,7 @@ impl Sha224 {
       let mut state = H0;
 
       let total_len = data.len() as u64;
-      let bit_len = total_len.wrapping_mul(8);
+      let bit_len = total_len.strict_mul(8);
 
       let (blocks, rest) = data.as_chunks::<BLOCK_LEN>();
       if !blocks.is_empty() {
@@ -112,7 +118,7 @@ impl Sha224 {
 
       let mut out = [0u8; 28];
       for (i, word) in state.iter().copied().enumerate().take(7) {
-        let offset = i * 4;
+        let offset = i.strict_mul(4);
         out[offset..offset.strict_add(4)].copy_from_slice(&word.to_be_bytes());
       }
       out
@@ -149,15 +155,24 @@ impl Sha224 {
       return;
     }
 
+    debug_assert!(
+      self
+        .bytes_hashed
+        .saturating_add(self.block_len as u64)
+        .saturating_add(data.len() as u64)
+        <= MAX_MESSAGE_LEN,
+      "SHA-224: total input exceeds FIPS 180-4 maximum of 2^61 − 1 bytes"
+    );
+
     if self.block_len != 0 {
-      let take = core::cmp::min(BLOCK_LEN - self.block_len, data.len());
+      let take = core::cmp::min(BLOCK_LEN.strict_sub(self.block_len), data.len());
       self.block[self.block_len..self.block_len.strict_add(take)].copy_from_slice(&data[..take]);
       self.block_len = self.block_len.strict_add(take);
       data = &data[take..];
 
       if self.block_len == BLOCK_LEN {
         compress_blocks(&mut self.state, &self.block);
-        self.bytes_hashed = self.bytes_hashed.wrapping_add(BLOCK_LEN as u64);
+        self.bytes_hashed = self.bytes_hashed.strict_add(BLOCK_LEN as u64);
         self.block_len = 0;
       }
     }
@@ -166,7 +181,7 @@ impl Sha224 {
     if full_len != 0 {
       let (blocks, rest) = data.split_at(full_len);
       compress_blocks(&mut self.state, blocks);
-      self.bytes_hashed = self.bytes_hashed.wrapping_add(blocks.len() as u64);
+      self.bytes_hashed = self.bytes_hashed.strict_add(blocks.len() as u64);
       data = rest;
     }
 
@@ -181,7 +196,7 @@ impl Sha224 {
     let mut state = self.state;
     let mut block = self.block;
     let mut block_len = self.block_len;
-    let total_len = self.bytes_hashed.wrapping_add(block_len as u64);
+    let total_len = self.bytes_hashed.strict_add(block_len as u64);
 
     block[block_len] = 0x80;
     block_len = block_len.strict_add(1);
@@ -195,7 +210,7 @@ impl Sha224 {
 
     block[block_len..56].fill(0);
 
-    let bit_len = total_len.wrapping_mul(8);
+    let bit_len = total_len.strict_mul(8);
     block[56..64].copy_from_slice(&bit_len.to_be_bytes());
     compress_blocks(&mut state, &block);
 
@@ -215,6 +230,10 @@ impl Drop for Sha224 {
       unsafe { core::ptr::write_volatile(word, 0) };
     }
     crate::traits::ct::zeroize(&mut self.block);
+    // SAFETY: field is a valid, aligned, dereferenceable pointer to initialized memory.
+    unsafe { core::ptr::write_volatile(&mut self.bytes_hashed, 0) };
+    // SAFETY: field is a valid, aligned, dereferenceable pointer to initialized memory.
+    unsafe { core::ptr::write_volatile(&mut self.block_len, 0) };
     core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
   }
 }
@@ -228,6 +247,7 @@ impl Digest for Sha224 {
     Self::default()
   }
 
+  #[inline]
   fn update(&mut self, data: &[u8]) {
     if data.is_empty() {
       return;
