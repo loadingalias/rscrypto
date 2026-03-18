@@ -152,8 +152,7 @@ pub(crate) unsafe fn compress_blocks_avx512vl(state: &mut [u64; 8], blocks: &[u8
     }
 
     // Rounds 0-15: extract from loaded vectors.
-    for pair in 0..8usize {
-      let v = wv[pair];
+    for (pair, &v) in wv.iter().enumerate() {
       let w_lo = _mm_extract_epi64(v, 0) as u64;
       let w_hi = _mm_extract_epi64(v, 1) as u64;
       let r = pair.strict_mul(2);

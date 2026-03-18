@@ -108,7 +108,28 @@ const fn to_sha512_kernel_id(id: Sha512_256KernelId) -> crate::hashes::crypto::s
 pub(crate) fn compress_blocks_fn(id: Sha512_256KernelId) -> CompressBlocksFn {
   match id {
     Sha512_256KernelId::Portable => Sha512::compress_blocks_portable,
-    _ => crate::hashes::crypto::sha512::kernels::compress_blocks_fn(to_sha512_kernel_id(id)),
+    #[cfg(target_arch = "aarch64")]
+    Sha512_256KernelId::Aarch64Sha512 => {
+      crate::hashes::crypto::sha512::kernels::compress_blocks_fn(to_sha512_kernel_id(id))
+    }
+    #[cfg(target_arch = "x86_64")]
+    Sha512_256KernelId::X86Sha512 => {
+      crate::hashes::crypto::sha512::kernels::compress_blocks_fn(to_sha512_kernel_id(id))
+    }
+    #[cfg(target_arch = "x86_64")]
+    Sha512_256KernelId::X86Avx512vl => {
+      crate::hashes::crypto::sha512::kernels::compress_blocks_fn(to_sha512_kernel_id(id))
+    }
+    #[cfg(target_arch = "x86_64")]
+    Sha512_256KernelId::X86Avx2 => crate::hashes::crypto::sha512::kernels::compress_blocks_fn(to_sha512_kernel_id(id)),
+    #[cfg(target_arch = "riscv64")]
+    Sha512_256KernelId::Riscv64Zknh => {
+      crate::hashes::crypto::sha512::kernels::compress_blocks_fn(to_sha512_kernel_id(id))
+    }
+    #[cfg(target_arch = "wasm32")]
+    Sha512_256KernelId::WasmSimd128 => {
+      crate::hashes::crypto::sha512::kernels::compress_blocks_fn(to_sha512_kernel_id(id))
+    }
   }
 }
 
