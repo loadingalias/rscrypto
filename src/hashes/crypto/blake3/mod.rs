@@ -3843,6 +3843,7 @@ impl Blake3 {
   ///
   /// `subtree_chunks` must be a power of 2 and must be aligned with the
   /// current chunk counter (i.e. `chunk_counter % subtree_chunks == 0`).
+  #[cfg(target_endian = "little")]
   fn add_subtree_cv(&mut self, cv: [u32; 8], subtree_chunks: u64) {
     debug_assert!(subtree_chunks.is_power_of_two());
     let new_counter = self.chunk_state.chunk_counter.strict_add(subtree_chunks);
