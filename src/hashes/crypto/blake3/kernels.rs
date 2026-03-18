@@ -1006,21 +1006,42 @@ pub(crate) fn parent_cvs_many_from_bytes_inline(
           out.len(),
           |idx| children[2 * idx].as_ptr(),
           |ptrs, rem, tmp| {
-            // SAFETY: AVX-512 is available per dispatch; pointers are valid for
-            // one parent block each, `rem <= DEGREE`, and output is large enough.
-            unsafe {
-              super::x86_64::asm::hash_many_avx512(
-                ptrs.as_ptr(),
-                rem,
-                1,
-                key_words.as_ptr(),
-                0,
-                false,
-                parent_flags as u8,
-                0,
-                0,
-                tmp.as_mut_ptr().cast::<u8>(),
-              );
+            if rem > super::x86_64::avx2::DEGREE {
+              // 9–16 parents: AVX-512 (>50% lane utilization).
+              // SAFETY: AVX-512 is available per dispatch; pointers are valid for
+              // one parent block each, `rem <= DEGREE`, and output is large enough.
+              unsafe {
+                super::x86_64::asm::hash_many_avx512(
+                  ptrs.as_ptr(),
+                  rem,
+                  1,
+                  key_words.as_ptr(),
+                  0,
+                  false,
+                  parent_flags as u8,
+                  0,
+                  0,
+                  tmp.as_mut_ptr().cast::<u8>(),
+                );
+              }
+            } else {
+              // 1–8 parents: cascade to AVX2 (higher clock, better utilization).
+              // SAFETY: AVX2 is available (AVX-512 implies AVX2). `rem <= 8`,
+              // pointers are valid for one parent block each.
+              unsafe {
+                super::x86_64::asm::hash_many_avx2(
+                  ptrs.as_ptr(),
+                  rem,
+                  1,
+                  key_words.as_ptr(),
+                  0,
+                  false,
+                  parent_flags as u8,
+                  0,
+                  0,
+                  tmp.as_mut_ptr().cast::<u8>(),
+                );
+              }
             }
           },
           |idx, bytes| out[idx] = *bytes,
@@ -2914,13 +2935,17 @@ unsafe fn hash_many_contiguous_avx512_wrapper(
     {
       debug_assert!(num_chunks < super::x86_64::avx512::DEGREE);
       debug_assert!(flags <= u8::MAX as u32);
-      // Use the upstream-grade AVX-512 asm `hash_many` backend for the
-      // sub-degree tail (1–15 chunks). Passing `num_inputs = num_chunks`
-      // prevents an AVX-512 -> AVX2 -> SSE4.1 downgrade on short totals and
-      // is a key lever for closing streaming gaps at 4KiB/16KiB update sizes
-      // on Intel and Zen5-class CPUs.
+      // Cascade sub-degree tails to AVX2 when ≤8 chunks remain.
       //
-      // SAFETY: This wrapper is only selected when the AVX-512 kernel is
+      // For 1–8 chunks, AVX2 (`hash_many_avx2`) provides better lane
+      // utilization (≥50% vs ≤50% in AVX-512) and avoids the AVX-512
+      // frequency penalty on Ice Lake-class CPUs. On Zen4/5 where AVX-512
+      // is decoded as 2×256-bit, AVX2 also avoids the wider decode overhead.
+      //
+      // For 9–15 chunks, AVX-512 uses more than half its lanes and the
+      // throughput advantage of 16-wide outweighs the frequency cost.
+      //
+      // SAFETY: This wrapper is only selected when both AVX-512 and AVX2 are
       // available per dispatch. `input`/`out` cover `num_chunks` full chunks.
       let mut ptrs = [input; super::x86_64::avx512::DEGREE];
       for (i, ptr) in ptrs.iter_mut().enumerate().take(num_chunks) {
@@ -2928,22 +2953,44 @@ unsafe fn hash_many_contiguous_avx512_wrapper(
         // for `num_chunks * CHUNK_LEN` bytes.
         *ptr = unsafe { input.add(i * CHUNK_LEN) };
       }
-      // SAFETY: AVX-512 is available for this kernel per dispatch. `ptrs`
-      // points to `num_chunks` valid chunk inputs, and `out` is valid for
-      // `num_chunks * OUT_LEN` bytes.
-      unsafe {
-        super::x86_64::asm::hash_many_avx512(
-          ptrs.as_ptr(),
-          num_chunks,
-          CHUNK_LEN / BLOCK_LEN,
-          key.as_ptr(),
-          counter,
-          true,
-          flags as u8,
-          CHUNK_START as u8,
-          super::CHUNK_END as u8,
-          out,
-        );
+      if num_chunks > super::x86_64::avx2::DEGREE {
+        // 9–15 chunks: AVX-512 (>50% lane utilization).
+        // SAFETY: AVX-512 is available per dispatch. `ptrs` points to
+        // `num_chunks` valid chunk inputs, `out` is valid for
+        // `num_chunks * OUT_LEN` bytes.
+        unsafe {
+          super::x86_64::asm::hash_many_avx512(
+            ptrs.as_ptr(),
+            num_chunks,
+            CHUNK_LEN / BLOCK_LEN,
+            key.as_ptr(),
+            counter,
+            true,
+            flags as u8,
+            CHUNK_START as u8,
+            super::CHUNK_END as u8,
+            out,
+          );
+        }
+      } else {
+        // 1–8 chunks: cascade to AVX2 (higher clock, better utilization).
+        // SAFETY: AVX2 is available (AVX-512 implies AVX2). The first
+        // `num_chunks` entries in `ptrs` are valid chunk pointers, and
+        // `out` is valid for `num_chunks * OUT_LEN` bytes.
+        unsafe {
+          super::x86_64::asm::hash_many_avx2(
+            ptrs.as_ptr(),
+            num_chunks,
+            CHUNK_LEN / BLOCK_LEN,
+            key.as_ptr(),
+            counter,
+            true,
+            flags as u8,
+            CHUNK_START as u8,
+            super::CHUNK_END as u8,
+            out,
+          );
+        }
       }
     }
 
