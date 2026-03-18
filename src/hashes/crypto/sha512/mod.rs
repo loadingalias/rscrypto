@@ -17,6 +17,9 @@ pub mod dispatch;
 pub mod dispatch_tables;
 pub(crate) mod kernels;
 
+#[cfg(target_arch = "aarch64")]
+mod aarch64;
+
 const BLOCK_LEN: usize = 128;
 
 const H0: [u64; 8] = [
