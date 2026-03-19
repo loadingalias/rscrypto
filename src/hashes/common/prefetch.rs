@@ -9,7 +9,6 @@
 // Prefetch instructions are hints to the CPU and cannot cause memory unsafety;
 // invalid addresses are silently ignored.
 #![allow(unsafe_code)]
-#![allow(unsafe_op_in_unsafe_fn)]
 
 /// Prefetch data for read into L1 cache (PLDL1KEEP).
 ///
@@ -22,11 +21,16 @@
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
 pub(crate) unsafe fn prefetch_read_l1(ptr: *const u8) {
-  core::arch::asm!(
-    "prfm pldl1keep, [{ptr}]",
-    ptr = in(reg) ptr,
-    options(nostack, preserves_flags)
-  );
+  // SAFETY: Inline assembly for PRFM prefetch hint. Prefetch instructions
+  // are CPU hints that cannot cause memory unsafety; invalid addresses
+  // are silently ignored by the hardware.
+  unsafe {
+    core::arch::asm!(
+      "prfm pldl1keep, [{ptr}]",
+      ptr = in(reg) ptr,
+      options(nostack, preserves_flags)
+    );
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

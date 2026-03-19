@@ -13,8 +13,6 @@
 #![allow(dead_code)] // Kernels wired up via dispatcher
 // SAFETY: All indexing is over fixed-size arrays with in-bounds constant indices.
 #![allow(clippy::indexing_slicing)]
-// This module is intrinsics-heavy; keep unsafe blocks readable.
-#![allow(unsafe_op_in_unsafe_fn)]
 
 use core::{
   arch::asm,
@@ -94,59 +92,89 @@ impl Simd {
   #[inline]
   #[target_feature(enable = "vector")]
   unsafe fn vgfm(a: i64x2, b: i64x2) -> i64x2 {
-    let out: i64x2;
-    asm!(
-      "vgfm {out}, {a}, {b}, 3",
-      out = lateout(vreg) out,
-      a = in(vreg) a,
-      b = in(vreg) b,
-      options(nomem, nostack, pure)
-    );
-    out
+    // SAFETY: Caller guarantees:
+    // 1. VECTOR target features are available (dispatch check).
+    // 2. All SIMD operations are pure register computations after loads.
+    unsafe {
+      let out: i64x2;
+      asm!(
+        "vgfm {out}, {a}, {b}, 3",
+        out = lateout(vreg) out,
+        a = in(vreg) a,
+        b = in(vreg) b,
+        options(nomem, nostack, pure)
+      );
+      out
+    }
   }
 
   #[inline]
   #[target_feature(enable = "vector")]
   unsafe fn mul64(a: u64, b: u64) -> Self {
-    let va = Self::new(0, a);
-    let vb = Self::new(0, b);
-    Self(Self::vgfm(va.0, vb.0))
+    // SAFETY: Caller guarantees:
+    // 1. VECTOR target features are available (dispatch check).
+    // 2. All SIMD operations are pure register computations after loads.
+    unsafe {
+      let va = Self::new(0, a);
+      let vb = Self::new(0, b);
+      Self(Self::vgfm(va.0, vb.0))
+    }
   }
 
   #[inline]
   #[target_feature(enable = "vector")]
   unsafe fn fold_16(self, coeff: Self) -> Self {
-    Self(Self::vgfm(self.0, coeff.swap_lanes().0))
+    // SAFETY: Caller guarantees:
+    // 1. VECTOR target features are available (dispatch check).
+    // 2. All SIMD operations are pure register computations after loads.
+    unsafe {
+      Self(Self::vgfm(self.0, coeff.swap_lanes().0))
+    }
   }
 
   #[inline]
   #[target_feature(enable = "vector")]
   unsafe fn fold_16_reflected(self, coeff: Self, data_to_xor: Self) -> Self {
-    data_to_xor ^ self.fold_16(coeff)
+    // SAFETY: Caller guarantees:
+    // 1. VECTOR + VECTOR target features are available (dispatch check).
+    // 2. All SIMD operations are pure register computations after loads.
+    unsafe {
+      data_to_xor ^ self.fold_16(coeff)
+    }
   }
 
   #[inline]
   #[target_feature(enable = "vector")]
   unsafe fn fold_width32_reflected(self, high: u64, low: u64) -> Self {
-    let clmul = Self::mul64(self.low_64(), low);
-    let shifted = Self::new(0, self.high_64());
-    let mut state = clmul ^ shifted;
+    // SAFETY: Caller guarantees:
+    // 1. VECTOR + VECTOR target features are available (dispatch check).
+    // 2. All SIMD operations are pure register computations after loads.
+    unsafe {
+      let clmul = Self::mul64(self.low_64(), low);
+      let shifted = Self::new(0, self.high_64());
+      let mut state = clmul ^ shifted;
 
-    let mask2 = Self::new(0xFFFF_FFFF_FFFF_FFFF, 0xFFFF_FFFF_0000_0000);
-    let masked = state & mask2;
-    let shifted_high = (state.low_64() & 0xFFFF_FFFF).strict_shl(32);
-    let clmul = Self::mul64(shifted_high, high);
-    state = clmul ^ masked;
+      let mask2 = Self::new(0xFFFF_FFFF_FFFF_FFFF, 0xFFFF_FFFF_0000_0000);
+      let masked = state & mask2;
+      let shifted_high = (state.low_64() & 0xFFFF_FFFF).strict_shl(32);
+      let clmul = Self::mul64(shifted_high, high);
+      state = clmul ^ masked;
 
-    state
+      state
+    }
   }
 
   #[inline]
   #[target_feature(enable = "vector")]
   unsafe fn barrett_width32_reflected(self, poly: u64, mu: u64) -> u32 {
-    let t1 = Self::mul64(self.low_64(), mu);
-    let l = Self::mul64(t1.low_64(), poly);
-    (self ^ l).high_64() as u32
+    // SAFETY: Caller guarantees:
+    // 1. VECTOR target features are available (dispatch check).
+    // 2. All SIMD operations are pure register computations after loads.
+    unsafe {
+      let t1 = Self::mul64(self.low_64(), mu);
+      let l = Self::mul64(t1.low_64(), poly);
+      (self ^ l).high_64() as u32
+    }
   }
 }
 
@@ -181,53 +209,68 @@ fn load_block_bitrev(block: &Block) -> [Simd; 8] {
 #[inline]
 #[target_feature(enable = "vector")]
 unsafe fn finalize_lanes_width32_reflected(x: [Simd; 8], keys: &[u64; 23]) -> u32 {
-  let mut res = x[7];
-  res = x[0].fold_16_reflected(Simd::new(keys[10], keys[9]), res);
-  res = x[1].fold_16_reflected(Simd::new(keys[12], keys[11]), res);
-  res = x[2].fold_16_reflected(Simd::new(keys[14], keys[13]), res);
-  res = x[3].fold_16_reflected(Simd::new(keys[16], keys[15]), res);
-  res = x[4].fold_16_reflected(Simd::new(keys[18], keys[17]), res);
-  res = x[5].fold_16_reflected(Simd::new(keys[20], keys[19]), res);
-  res = x[6].fold_16_reflected(Simd::new(keys[2], keys[1]), res);
+  // SAFETY: Caller guarantees:
+  // 1. VECTOR target features are available (dispatch check).
+  // 2. All SIMD operations are pure register computations after loads.
+  unsafe {
+    let mut res = x[7];
+    res = x[0].fold_16_reflected(Simd::new(keys[10], keys[9]), res);
+    res = x[1].fold_16_reflected(Simd::new(keys[12], keys[11]), res);
+    res = x[2].fold_16_reflected(Simd::new(keys[14], keys[13]), res);
+    res = x[3].fold_16_reflected(Simd::new(keys[16], keys[15]), res);
+    res = x[4].fold_16_reflected(Simd::new(keys[18], keys[17]), res);
+    res = x[5].fold_16_reflected(Simd::new(keys[20], keys[19]), res);
+    res = x[6].fold_16_reflected(Simd::new(keys[2], keys[1]), res);
 
-  res = res.fold_width32_reflected(keys[6], keys[5]);
-  res.barrett_width32_reflected(keys[8], keys[7])
+    res = res.fold_width32_reflected(keys[6], keys[5]);
+    res.barrett_width32_reflected(keys[8], keys[7])
+  }
 }
 
 #[inline]
 #[target_feature(enable = "vector")]
 unsafe fn update_simd_width32_reflected_bitrev(state: u32, first: &Block, rest: &[Block], keys: &[u64; 23]) -> u32 {
-  let mut x = load_block_bitrev(first);
-  x[0] ^= Simd::new(0, state as u64);
+  // SAFETY: Caller guarantees:
+  // 1. VECTOR target features are available (dispatch check).
+  // 2. All SIMD operations are pure register computations after loads.
+  unsafe {
+    let mut x = load_block_bitrev(first);
+    x[0] ^= Simd::new(0, state as u64);
 
-  let coeff_128b = Simd::new(keys[4], keys[3]);
-  for block in rest {
-    let chunk = load_block_bitrev(block);
-    x[0] = x[0].fold_16_reflected(coeff_128b, chunk[0]);
-    x[1] = x[1].fold_16_reflected(coeff_128b, chunk[1]);
-    x[2] = x[2].fold_16_reflected(coeff_128b, chunk[2]);
-    x[3] = x[3].fold_16_reflected(coeff_128b, chunk[3]);
-    x[4] = x[4].fold_16_reflected(coeff_128b, chunk[4]);
-    x[5] = x[5].fold_16_reflected(coeff_128b, chunk[5]);
-    x[6] = x[6].fold_16_reflected(coeff_128b, chunk[6]);
-    x[7] = x[7].fold_16_reflected(coeff_128b, chunk[7]);
+    let coeff_128b = Simd::new(keys[4], keys[3]);
+    for block in rest {
+      let chunk = load_block_bitrev(block);
+      x[0] = x[0].fold_16_reflected(coeff_128b, chunk[0]);
+      x[1] = x[1].fold_16_reflected(coeff_128b, chunk[1]);
+      x[2] = x[2].fold_16_reflected(coeff_128b, chunk[2]);
+      x[3] = x[3].fold_16_reflected(coeff_128b, chunk[3]);
+      x[4] = x[4].fold_16_reflected(coeff_128b, chunk[4]);
+      x[5] = x[5].fold_16_reflected(coeff_128b, chunk[5]);
+      x[6] = x[6].fold_16_reflected(coeff_128b, chunk[6]);
+      x[7] = x[7].fold_16_reflected(coeff_128b, chunk[7]);
+    }
+
+    finalize_lanes_width32_reflected(x, keys)
   }
-
-  finalize_lanes_width32_reflected(x, keys)
 }
 
 #[inline]
 #[target_feature(enable = "vector")]
 unsafe fn fold_block_128_reflected_bitrev(x: &mut [Simd; 8], block: &Block, coeff: Simd) {
-  let chunk = load_block_bitrev(block);
-  x[0] = x[0].fold_16_reflected(coeff, chunk[0]);
-  x[1] = x[1].fold_16_reflected(coeff, chunk[1]);
-  x[2] = x[2].fold_16_reflected(coeff, chunk[2]);
-  x[3] = x[3].fold_16_reflected(coeff, chunk[3]);
-  x[4] = x[4].fold_16_reflected(coeff, chunk[4]);
-  x[5] = x[5].fold_16_reflected(coeff, chunk[5]);
-  x[6] = x[6].fold_16_reflected(coeff, chunk[6]);
-  x[7] = x[7].fold_16_reflected(coeff, chunk[7]);
+  // SAFETY: Caller guarantees:
+  // 1. VECTOR target features are available (dispatch check).
+  // 2. All SIMD operations are pure register computations after loads.
+  unsafe {
+    let chunk = load_block_bitrev(block);
+    x[0] = x[0].fold_16_reflected(coeff, chunk[0]);
+    x[1] = x[1].fold_16_reflected(coeff, chunk[1]);
+    x[2] = x[2].fold_16_reflected(coeff, chunk[2]);
+    x[3] = x[3].fold_16_reflected(coeff, chunk[3]);
+    x[4] = x[4].fold_16_reflected(coeff, chunk[4]);
+    x[5] = x[5].fold_16_reflected(coeff, chunk[5]);
+    x[6] = x[6].fold_16_reflected(coeff, chunk[6]);
+    x[7] = x[7].fold_16_reflected(coeff, chunk[7]);
+  }
 }
 
 #[inline]
@@ -238,47 +281,52 @@ unsafe fn update_simd_width32_reflected_bitrev_2way(
   fold_256b: (u64, u64),
   keys: &[u64; 23],
 ) -> u32 {
-  debug_assert!(!blocks.is_empty());
+  // SAFETY: Caller guarantees:
+  // 1. VECTOR target features are available (dispatch check).
+  // 2. All SIMD operations are pure register computations after loads.
+  unsafe {
+    debug_assert!(!blocks.is_empty());
 
-  if blocks.len() < 2 {
-    let Some((first, rest)) = blocks.split_first() else {
-      return state;
-    };
-    return update_simd_width32_reflected_bitrev(state, first, rest, keys);
+    if blocks.len() < 2 {
+      let Some((first, rest)) = blocks.split_first() else {
+        return state;
+      };
+      return update_simd_width32_reflected_bitrev(state, first, rest, keys);
+    }
+
+    let coeff_256 = Simd::new(fold_256b.0, fold_256b.1);
+    let coeff_128 = Simd::new(keys[4], keys[3]);
+
+    let mut s0 = load_block_bitrev(&blocks[0]);
+    let mut s1 = load_block_bitrev(&blocks[1]);
+
+    s0[0] ^= Simd::new(0, state as u64);
+
+    let mut i: usize = 2;
+    let even = blocks.len() & !1usize;
+    while i < even {
+      fold_block_128_reflected_bitrev(&mut s0, &blocks[i], coeff_256);
+      fold_block_128_reflected_bitrev(&mut s1, &blocks[i.strict_add(1)], coeff_256);
+      i = i.strict_add(2);
+    }
+
+    // Merge: A·s0 ⊕ s1 (A = shift by 128B).
+    let mut combined = s1;
+    combined[0] = s0[0].fold_16_reflected(coeff_128, combined[0]);
+    combined[1] = s0[1].fold_16_reflected(coeff_128, combined[1]);
+    combined[2] = s0[2].fold_16_reflected(coeff_128, combined[2]);
+    combined[3] = s0[3].fold_16_reflected(coeff_128, combined[3]);
+    combined[4] = s0[4].fold_16_reflected(coeff_128, combined[4]);
+    combined[5] = s0[5].fold_16_reflected(coeff_128, combined[5]);
+    combined[6] = s0[6].fold_16_reflected(coeff_128, combined[6]);
+    combined[7] = s0[7].fold_16_reflected(coeff_128, combined[7]);
+
+    if even != blocks.len() {
+      fold_block_128_reflected_bitrev(&mut combined, &blocks[even], coeff_128);
+    }
+
+    finalize_lanes_width32_reflected(combined, keys)
   }
-
-  let coeff_256 = Simd::new(fold_256b.0, fold_256b.1);
-  let coeff_128 = Simd::new(keys[4], keys[3]);
-
-  let mut s0 = load_block_bitrev(&blocks[0]);
-  let mut s1 = load_block_bitrev(&blocks[1]);
-
-  s0[0] ^= Simd::new(0, state as u64);
-
-  let mut i: usize = 2;
-  let even = blocks.len() & !1usize;
-  while i < even {
-    fold_block_128_reflected_bitrev(&mut s0, &blocks[i], coeff_256);
-    fold_block_128_reflected_bitrev(&mut s1, &blocks[i.strict_add(1)], coeff_256);
-    i = i.strict_add(2);
-  }
-
-  // Merge: A·s0 ⊕ s1 (A = shift by 128B).
-  let mut combined = s1;
-  combined[0] = s0[0].fold_16_reflected(coeff_128, combined[0]);
-  combined[1] = s0[1].fold_16_reflected(coeff_128, combined[1]);
-  combined[2] = s0[2].fold_16_reflected(coeff_128, combined[2]);
-  combined[3] = s0[3].fold_16_reflected(coeff_128, combined[3]);
-  combined[4] = s0[4].fold_16_reflected(coeff_128, combined[4]);
-  combined[5] = s0[5].fold_16_reflected(coeff_128, combined[5]);
-  combined[6] = s0[6].fold_16_reflected(coeff_128, combined[6]);
-  combined[7] = s0[7].fold_16_reflected(coeff_128, combined[7]);
-
-  if even != blocks.len() {
-    fold_block_128_reflected_bitrev(&mut combined, &blocks[even], coeff_128);
-  }
-
-  finalize_lanes_width32_reflected(combined, keys)
 }
 
 #[inline]
@@ -290,118 +338,138 @@ unsafe fn update_simd_width32_reflected_bitrev_4way(
   combine: &[(u64, u64); 3],
   keys: &[u64; 23],
 ) -> u32 {
-  debug_assert!(!blocks.is_empty());
+  // SAFETY: Caller guarantees:
+  // 1. VECTOR target features are available (dispatch check).
+  // 2. All SIMD operations are pure register computations after loads.
+  unsafe {
+    debug_assert!(!blocks.is_empty());
 
-  if blocks.len() < 4 {
-    let Some((first, rest)) = blocks.split_first() else {
-      return state;
-    };
-    return update_simd_width32_reflected_bitrev(state, first, rest, keys);
+    if blocks.len() < 4 {
+      let Some((first, rest)) = blocks.split_first() else {
+        return state;
+      };
+      return update_simd_width32_reflected_bitrev(state, first, rest, keys);
+    }
+
+    let aligned = (blocks.len() / 4) * 4;
+
+    let coeff_512 = Simd::new(fold_512b.0, fold_512b.1);
+    let coeff_128 = Simd::new(keys[4], keys[3]);
+    let c384 = Simd::new(combine[0].0, combine[0].1);
+    let c256 = Simd::new(combine[1].0, combine[1].1);
+    let c128 = Simd::new(combine[2].0, combine[2].1);
+
+    let mut s0 = load_block_bitrev(&blocks[0]);
+    let mut s1 = load_block_bitrev(&blocks[1]);
+    let mut s2 = load_block_bitrev(&blocks[2]);
+    let mut s3 = load_block_bitrev(&blocks[3]);
+
+    s0[0] ^= Simd::new(0, state as u64);
+
+    let mut i: usize = 4;
+    while i < aligned {
+      fold_block_128_reflected_bitrev(&mut s0, &blocks[i], coeff_512);
+      fold_block_128_reflected_bitrev(&mut s1, &blocks[i.strict_add(1)], coeff_512);
+      fold_block_128_reflected_bitrev(&mut s2, &blocks[i.strict_add(2)], coeff_512);
+      fold_block_128_reflected_bitrev(&mut s3, &blocks[i.strict_add(3)], coeff_512);
+      i = i.strict_add(4);
+    }
+
+    // Merge: A^3·s0 ⊕ A^2·s1 ⊕ A·s2 ⊕ s3.
+    let mut acc = s3;
+    acc[0] = s2[0].fold_16_reflected(c128, acc[0]);
+    acc[1] = s2[1].fold_16_reflected(c128, acc[1]);
+    acc[2] = s2[2].fold_16_reflected(c128, acc[2]);
+    acc[3] = s2[3].fold_16_reflected(c128, acc[3]);
+    acc[4] = s2[4].fold_16_reflected(c128, acc[4]);
+    acc[5] = s2[5].fold_16_reflected(c128, acc[5]);
+    acc[6] = s2[6].fold_16_reflected(c128, acc[6]);
+    acc[7] = s2[7].fold_16_reflected(c128, acc[7]);
+
+    acc[0] = s1[0].fold_16_reflected(c256, acc[0]);
+    acc[1] = s1[1].fold_16_reflected(c256, acc[1]);
+    acc[2] = s1[2].fold_16_reflected(c256, acc[2]);
+    acc[3] = s1[3].fold_16_reflected(c256, acc[3]);
+    acc[4] = s1[4].fold_16_reflected(c256, acc[4]);
+    acc[5] = s1[5].fold_16_reflected(c256, acc[5]);
+    acc[6] = s1[6].fold_16_reflected(c256, acc[6]);
+    acc[7] = s1[7].fold_16_reflected(c256, acc[7]);
+
+    acc[0] = s0[0].fold_16_reflected(c384, acc[0]);
+    acc[1] = s0[1].fold_16_reflected(c384, acc[1]);
+    acc[2] = s0[2].fold_16_reflected(c384, acc[2]);
+    acc[3] = s0[3].fold_16_reflected(c384, acc[3]);
+    acc[4] = s0[4].fold_16_reflected(c384, acc[4]);
+    acc[5] = s0[5].fold_16_reflected(c384, acc[5]);
+    acc[6] = s0[6].fold_16_reflected(c384, acc[6]);
+    acc[7] = s0[7].fold_16_reflected(c384, acc[7]);
+
+    for block in &blocks[aligned..] {
+      fold_block_128_reflected_bitrev(&mut acc, block, coeff_128);
+    }
+
+    finalize_lanes_width32_reflected(acc, keys)
   }
-
-  let aligned = blocks.len().strict_div(4).strict_mul(4);
-
-  let coeff_512 = Simd::new(fold_512b.0, fold_512b.1);
-  let coeff_128 = Simd::new(keys[4], keys[3]);
-  let c384 = Simd::new(combine[0].0, combine[0].1);
-  let c256 = Simd::new(combine[1].0, combine[1].1);
-  let c128 = Simd::new(combine[2].0, combine[2].1);
-
-  let mut s0 = load_block_bitrev(&blocks[0]);
-  let mut s1 = load_block_bitrev(&blocks[1]);
-  let mut s2 = load_block_bitrev(&blocks[2]);
-  let mut s3 = load_block_bitrev(&blocks[3]);
-
-  s0[0] ^= Simd::new(0, state as u64);
-
-  let mut i: usize = 4;
-  while i < aligned {
-    fold_block_128_reflected_bitrev(&mut s0, &blocks[i], coeff_512);
-    fold_block_128_reflected_bitrev(&mut s1, &blocks[i.strict_add(1)], coeff_512);
-    fold_block_128_reflected_bitrev(&mut s2, &blocks[i.strict_add(2)], coeff_512);
-    fold_block_128_reflected_bitrev(&mut s3, &blocks[i.strict_add(3)], coeff_512);
-    i = i.strict_add(4);
-  }
-
-  // Merge: A^3·s0 ⊕ A^2·s1 ⊕ A·s2 ⊕ s3.
-  let mut acc = s3;
-  acc[0] = s2[0].fold_16_reflected(c128, acc[0]);
-  acc[1] = s2[1].fold_16_reflected(c128, acc[1]);
-  acc[2] = s2[2].fold_16_reflected(c128, acc[2]);
-  acc[3] = s2[3].fold_16_reflected(c128, acc[3]);
-  acc[4] = s2[4].fold_16_reflected(c128, acc[4]);
-  acc[5] = s2[5].fold_16_reflected(c128, acc[5]);
-  acc[6] = s2[6].fold_16_reflected(c128, acc[6]);
-  acc[7] = s2[7].fold_16_reflected(c128, acc[7]);
-
-  acc[0] = s1[0].fold_16_reflected(c256, acc[0]);
-  acc[1] = s1[1].fold_16_reflected(c256, acc[1]);
-  acc[2] = s1[2].fold_16_reflected(c256, acc[2]);
-  acc[3] = s1[3].fold_16_reflected(c256, acc[3]);
-  acc[4] = s1[4].fold_16_reflected(c256, acc[4]);
-  acc[5] = s1[5].fold_16_reflected(c256, acc[5]);
-  acc[6] = s1[6].fold_16_reflected(c256, acc[6]);
-  acc[7] = s1[7].fold_16_reflected(c256, acc[7]);
-
-  acc[0] = s0[0].fold_16_reflected(c384, acc[0]);
-  acc[1] = s0[1].fold_16_reflected(c384, acc[1]);
-  acc[2] = s0[2].fold_16_reflected(c384, acc[2]);
-  acc[3] = s0[3].fold_16_reflected(c384, acc[3]);
-  acc[4] = s0[4].fold_16_reflected(c384, acc[4]);
-  acc[5] = s0[5].fold_16_reflected(c384, acc[5]);
-  acc[6] = s0[6].fold_16_reflected(c384, acc[6]);
-  acc[7] = s0[7].fold_16_reflected(c384, acc[7]);
-
-  for block in &blocks[aligned..] {
-    fold_block_128_reflected_bitrev(&mut acc, block, coeff_128);
-  }
-
-  finalize_lanes_width32_reflected(acc, keys)
 }
 
 #[inline]
 #[target_feature(enable = "vector")]
 unsafe fn crc24_width32_vgfm_bitrev(mut state: u32, data: &[u8], keys: &[u64; 23]) -> u32 {
-  let (left, middle, right) = data.align_to::<Block>();
-  let Some((first, rest)) = middle.split_first() else {
-    return crc24_reflected_update_bitrev_bytes(state, data);
-  };
+  // SAFETY: Caller guarantees:
+  // 1. VECTOR target features are available (dispatch check).
+  // 2. All SIMD operations are pure register computations after loads.
+  unsafe {
+    let (left, middle, right) = data.align_to::<Block>();
+    let Some((first, rest)) = middle.split_first() else {
+      return crc24_reflected_update_bitrev_bytes(state, data);
+    };
 
-  state = crc24_reflected_update_bitrev_bytes(state, left);
-  state = update_simd_width32_reflected_bitrev(state, first, rest, keys);
-  crc24_reflected_update_bitrev_bytes(state, right)
+    state = crc24_reflected_update_bitrev_bytes(state, left);
+    state = update_simd_width32_reflected_bitrev(state, first, rest, keys);
+    crc24_reflected_update_bitrev_bytes(state, right)
+  }
 }
 
 #[inline]
 #[target_feature(enable = "vector")]
 unsafe fn crc24_width32_vgfm_bitrev_2way(mut state: u32, data: &[u8], keys: &[u64; 23]) -> u32 {
-  let (left, middle, right) = data.align_to::<Block>();
-  if middle.is_empty() {
-    return crc24_reflected_update_bitrev_bytes(state, data);
-  }
+  // SAFETY: Caller guarantees:
+  // 1. VECTOR target features are available (dispatch check).
+  // 2. All SIMD operations are pure register computations after loads.
+  unsafe {
+    let (left, middle, right) = data.align_to::<Block>();
+    if middle.is_empty() {
+      return crc24_reflected_update_bitrev_bytes(state, data);
+    }
 
-  state = crc24_reflected_update_bitrev_bytes(state, left);
-  state = update_simd_width32_reflected_bitrev_2way(state, middle, CRC24_OPENPGP_STREAM_REFLECTED.fold_256b, keys);
-  crc24_reflected_update_bitrev_bytes(state, right)
+    state = crc24_reflected_update_bitrev_bytes(state, left);
+    state = update_simd_width32_reflected_bitrev_2way(state, middle, CRC24_OPENPGP_STREAM_REFLECTED.fold_256b, keys);
+    crc24_reflected_update_bitrev_bytes(state, right)
+  }
 }
 
 #[inline]
 #[target_feature(enable = "vector")]
 unsafe fn crc24_width32_vgfm_bitrev_4way(mut state: u32, data: &[u8], keys: &[u64; 23]) -> u32 {
-  let (left, middle, right) = data.align_to::<Block>();
-  if middle.is_empty() {
-    return crc24_reflected_update_bitrev_bytes(state, data);
-  }
+  // SAFETY: Caller guarantees:
+  // 1. VECTOR target features are available (dispatch check).
+  // 2. All SIMD operations are pure register computations after loads.
+  unsafe {
+    let (left, middle, right) = data.align_to::<Block>();
+    if middle.is_empty() {
+      return crc24_reflected_update_bitrev_bytes(state, data);
+    }
 
-  state = crc24_reflected_update_bitrev_bytes(state, left);
-  state = update_simd_width32_reflected_bitrev_4way(
-    state,
-    middle,
-    CRC24_OPENPGP_STREAM_REFLECTED.fold_512b,
-    &CRC24_OPENPGP_STREAM_REFLECTED.combine_4way,
-    keys,
-  );
-  crc24_reflected_update_bitrev_bytes(state, right)
+    state = crc24_reflected_update_bitrev_bytes(state, left);
+    state = update_simd_width32_reflected_bitrev_4way(
+      state,
+      middle,
+      CRC24_OPENPGP_STREAM_REFLECTED.fold_512b,
+      &CRC24_OPENPGP_STREAM_REFLECTED.combine_4way,
+      keys,
+    );
+    crc24_reflected_update_bitrev_bytes(state, right)
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
