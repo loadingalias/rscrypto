@@ -533,6 +533,7 @@ const BLAKE3_STREAM_BENCH_CONTEXT: &str = "rscrypto-blake3-stream-bench";
 const BLAKE3_STREAM_MIXED_BURSTY_PATTERN: &[usize] = &[64, 64, 256, 1024, 4096, 256, 64, 1024, 4096, 64, 256];
 
 #[inline]
+#[allow(clippy::manual_saturating_arithmetic)] // Benchmark chunk walker wants explicit checked clamp.
 fn blake3_update_with_pattern(h: &mut crypto::Blake3, data: &[u8], pattern: Blake3ChunkPattern) {
   match pattern {
     Blake3ChunkPattern::Fixed(chunk_size) => {
@@ -545,10 +546,10 @@ fn blake3_update_with_pattern(h: &mut crypto::Blake3, data: &[u8], pattern: Blak
       let mut idx = 0usize;
       while offset < data.len() {
         let step = BLAKE3_STREAM_MIXED_BURSTY_PATTERN[idx % BLAKE3_STREAM_MIXED_BURSTY_PATTERN.len()].max(1);
-        let end = offset.saturating_add(step).min(data.len());
+        let end = offset.checked_add(step).unwrap_or(usize::MAX).min(data.len());
         h.update(&data[offset..end]);
         offset = end;
-        idx = idx.saturating_add(1);
+        idx = idx.strict_add(1);
       }
     }
   }

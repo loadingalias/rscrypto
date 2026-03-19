@@ -403,8 +403,8 @@ impl Sha256 {
 
     let total = self
       .bytes_hashed
-      .saturating_add(self.block_len as u64)
-      .saturating_add(incoming_len as u64);
+      .strict_add(self.block_len as u64)
+      .strict_add(incoming_len as u64);
     let compress = dispatch.select(len_hint_from_u64(total));
     self.compress_blocks = compress;
     compress
@@ -419,8 +419,8 @@ impl Sha256 {
     debug_assert!(
       self
         .bytes_hashed
-        .saturating_add(self.block_len as u64)
-        .saturating_add(data.len() as u64)
+        .strict_add(self.block_len as u64)
+        .strict_add(data.len() as u64)
         <= MAX_MESSAGE_LEN,
       "SHA-256: total input exceeds FIPS 180-4 maximum of 2^61 − 1 bytes"
     );

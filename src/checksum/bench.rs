@@ -73,6 +73,7 @@ pub fn available_crc16_kernels() -> Vec<&'static str> {
 
   // Always available
   kernels.push("reference");
+  #[cfg(any(test, feature = "testing"))]
   kernels.push("portable/slice4");
   kernels.push("portable/slice8");
 
@@ -529,6 +530,7 @@ pub fn available_crc24_kernels() -> Vec<&'static str> {
 
   // Always available
   kernels.push("reference");
+  #[cfg(any(test, feature = "testing"))]
   kernels.push("portable/slice4");
   kernels.push("portable/slice8");
 

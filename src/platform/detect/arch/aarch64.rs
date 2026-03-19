@@ -688,8 +688,13 @@ fn detect_sve_vlen() -> u16 {
 
   // Result is VL in bytes; convert to bits
   let vl_bytes = (result as u64) & PR_SVE_VL_LEN_MASK;
-  // Saturate to u16::MAX (65535 bits = 8KB, well above SVE's 2048-bit max)
-  (vl_bytes.saturating_mul(8)) as u16
+  // Clamp to u16::MAX. Real SVE widths are far below this bound.
+  let vl_bits = vl_bytes.strict_mul(8);
+  if vl_bits > u16::MAX as u64 {
+    u16::MAX
+  } else {
+    vl_bits as u16
+  }
 }
 
 /// Fallback SVE vector length detection for non-Linux platforms.
@@ -742,8 +747,13 @@ fn detect_sme_vlen() -> u16 {
 
   // Result is VL in bytes; convert to bits
   let vl_bytes = (result as u64) & PR_SME_VL_LEN_MASK;
-  // Saturate to u16::MAX (65535 bits = 8KB, well above SME's typical 256-512 bit max)
-  (vl_bytes.saturating_mul(8)) as u16
+  // Clamp to u16::MAX. Real SME widths are far below this bound.
+  let vl_bits = vl_bytes.strict_mul(8);
+  if vl_bits > u16::MAX as u64 {
+    u16::MAX
+  } else {
+    vl_bits as u16
+  }
 }
 
 /// Fallback SME vector length detection for non-Linux platforms.

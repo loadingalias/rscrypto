@@ -22,7 +22,6 @@
 use super::BLOCK_LEN;
 
 /// GPR -> VSR -> vshasigmad -> VSR -> GPR. No memory loads/stores, no endianness issues.
-
 #[inline(always)]
 fn big_sigma0(x: u64) -> u64 {
   let result: u64;

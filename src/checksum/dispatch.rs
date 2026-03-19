@@ -18,7 +18,7 @@
 //!
 //! # Data Sources
 //!
-//! Tables are derived from benchmark files in `crates/checksum/bench_baseline/`:
+//! Tables are derived from benchmark files in `src/checksum/bench_baseline/`:
 //! - `macos_arm64_kernels.txt` → AppleM1M3
 //! - `linux_arm64_kernels.txt` → Graviton2
 //! - `linux_x86-64_kernels.txt` → Zen4
@@ -922,7 +922,7 @@ mod aarch64_tables {
   // ───────────────────────────────────────────────────────────────────────────
   // Graviton3 Table
   //
-  // Benchmark source: `crates/checksum/bench_baseline/linux_arm64_graviton3_kernels.txt`
+  // Benchmark source: `src/checksum/bench_baseline/linux_arm64_graviton3_kernels.txt`
   // Features: PMULL + SHA3/EOR3
   // Peak throughputs: CRC-16 ~38 GiB/s, CRC-32 ~46 GiB/s, CRC-64 ~38 GiB/s
   //
@@ -1302,7 +1302,7 @@ mod x86_64_tables {
   // ───────────────────────────────────────────────────────────────────────────
   // Zen5 Table
   //
-  // Benchmark source: `crates/checksum/bench_baseline/linux_x86-64_zen5_kernels.txt`
+  // Benchmark source: `src/checksum/bench_baseline/linux_x86-64_zen5_kernels.txt`
   // Features: VPCLMULQDQ + AVX-512
   //
   // Key differences vs Zen4:
@@ -1312,7 +1312,7 @@ mod x86_64_tables {
   // ───────────────────────────────────────────────────────────────────────────
   // Zen5 Table
   //
-  // Benchmark source: `crates/checksum/bench_baseline/linux_x86-64_zen5_kernels.txt`
+  // Benchmark source: `src/checksum/bench_baseline/linux_x86-64_zen5_kernels.txt`
   // Features: VPCLMULQDQ + AVX-512
   // Peak throughputs: CRC-16 ~66 GiB/s, CRC-32C ~66 GiB/s, CRC-64 ~66 GiB/s
   // ───────────────────────────────────────────────────────────────────────────
@@ -1485,7 +1485,7 @@ mod x86_64_tables {
   // ───────────────────────────────────────────────────────────────────────────
   // Intel SPR Table
   //
-  // Benchmark source: `crates/checksum/bench_baseline/linux_x86-64_intel_kernels.txt`
+  // Benchmark source: `src/checksum/bench_baseline/linux_x86-64_intel_kernels.txt`
   // Features: VPCLMULQDQ + AVX-512
   //
   // Intel's optimal selections differ meaningfully from Zen4/Zen5, especially

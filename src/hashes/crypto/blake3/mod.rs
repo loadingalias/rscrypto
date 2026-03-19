@@ -12,8 +12,6 @@ use core::{cmp::min, mem::MaybeUninit, ptr};
 #[cfg(feature = "std")]
 extern crate alloc;
 #[cfg(feature = "std")]
-use alloc::string::{String, ToString};
-#[cfg(feature = "std")]
 use core::cell::RefCell;
 #[cfg(all(feature = "std", test))]
 use core::{
@@ -23,25 +21,27 @@ use core::{
 #[cfg(all(feature = "std", test))]
 use std::panic;
 #[cfg(feature = "std")]
-use std::sync::{Mutex, OnceLock};
-#[cfg(feature = "parallel")]
-use std::thread;
-#[cfg(feature = "std")]
 use std::thread_local;
 
 use crate::traits::{Digest, Xof};
 
 #[cfg(target_arch = "aarch64")]
 pub(crate) mod aarch64;
+#[cfg(any(test, feature = "std"))]
+mod bench;
+mod control;
 #[doc(hidden)]
 pub mod dispatch;
 #[doc(hidden)]
 pub mod dispatch_tables;
 pub(crate) mod kernels;
+#[cfg(feature = "parallel")]
+mod parallel;
 #[cfg(target_arch = "x86_64")]
 pub(crate) mod x86_64;
-
-use self::kernels::Kernel;
+#[cfg(feature = "std")]
+pub use self::bench::__bench;
+use self::{control::ParallelPolicyKind, kernels::Kernel};
 
 const OUT_LEN: usize = 32;
 const KEY_LEN: usize = 32;
@@ -122,262 +122,9 @@ const IV: [u32; 8] = [
 ];
 
 #[cfg(feature = "std")]
-static PARALLEL_OVERRIDE: OnceLock<Mutex<Option<ParallelPolicyOverride>>> = OnceLock::new();
-#[cfg(feature = "parallel")]
-static AVAILABLE_PARALLELISM: OnceLock<Option<usize>> = OnceLock::new();
-
-#[cfg(feature = "std")]
-#[inline]
-fn compute_derive_context_key_words(context: &str) -> [u32; 8] {
-  let context_bytes = context.as_bytes();
-  let kernel_ctx = dispatch::hasher_dispatch().size_class_kernel(context_bytes.len());
-  digest_oneshot_words(kernel_ctx, IV, DERIVE_KEY_CONTEXT, context_bytes)
-}
-
-#[cfg(feature = "std")]
-#[inline]
-fn derive_context_key_words_cached(context: &str) -> [u32; 8] {
-  // Hot path: same context repeated on the same thread.
-  if let Some(words) = DERIVE_KEY_CONTEXT_LOCAL_CACHE.with(|slot| {
-    let borrowed = slot.borrow();
-    borrowed
-      .as_ref()
-      .and_then(|(cached_context, cached_words)| (cached_context.as_str() == context).then_some(*cached_words))
-  }) {
-    return words;
-  }
-
-  let computed = compute_derive_context_key_words(context);
-  DERIVE_KEY_CONTEXT_LOCAL_CACHE.with(|slot| {
-    *slot.borrow_mut() = Some((context.to_string(), computed));
-  });
-  computed
-}
-
-#[cfg(feature = "std")]
-#[inline]
-fn keyed_words_cached(key: &[u8; KEY_LEN]) -> [u32; 8] {
-  if let Some(words) = KEYED_WORDS_LOCAL_CACHE.with(|slot| {
-    let borrowed = slot.borrow();
-    borrowed
-      .as_ref()
-      .and_then(|(cached_key, cached_words)| (cached_key == key).then_some(*cached_words))
-  }) {
-    return words;
-  }
-
-  let words = words8_from_le_bytes_32(key);
-  KEYED_WORDS_LOCAL_CACHE.with(|slot| {
-    *slot.borrow_mut() = Some((*key, words));
-  });
-  words
-}
-
-#[cfg(feature = "std")]
-#[derive(Clone, Copy, Debug)]
-pub struct ParallelPolicyOverride {
-  pub oneshot: dispatch_tables::ParallelTable,
-  pub keyed_oneshot: dispatch_tables::ParallelTable,
-  pub derive_oneshot: dispatch_tables::ParallelTable,
-  pub xof: dispatch_tables::ParallelTable,
-  pub keyed_xof: dispatch_tables::ParallelTable,
-  pub derive_xof: dispatch_tables::ParallelTable,
-  pub streaming: dispatch_tables::ParallelTable,
-  pub keyed_streaming: dispatch_tables::ParallelTable,
-  pub derive_streaming: dispatch_tables::ParallelTable,
-}
-
-#[cfg(feature = "std")]
-impl ParallelPolicyOverride {
-  #[inline]
-  fn new(table: dispatch_tables::ParallelTable) -> Self {
-    Self {
-      oneshot: table,
-      keyed_oneshot: table,
-      derive_oneshot: table,
-      xof: table,
-      keyed_xof: table,
-      derive_xof: table,
-      streaming: table,
-      keyed_streaming: table,
-      derive_streaming: table,
-    }
-  }
-}
-
-#[derive(Clone, Copy)]
-enum ParallelPolicyKind {
-  Oneshot,
-  KeyedOneshot,
-  DeriveOneshot,
-  Xof,
-  KeyedXof,
-  DeriveXof,
-  #[cfg(feature = "parallel")]
-  Update,
-  #[cfg(feature = "parallel")]
-  KeyedUpdate,
-  #[cfg(feature = "parallel")]
-  DeriveUpdate,
-}
-
-#[cfg(feature = "parallel")]
-#[inline]
-fn parallel_override() -> Option<ParallelPolicyOverride> {
-  PARALLEL_OVERRIDE
-    .get_or_init(|| Mutex::new(None))
-    .lock()
-    .ok()
-    .and_then(|g| *g)
-}
-
-#[cfg(feature = "parallel")]
-#[inline]
-fn available_parallelism_cached() -> Option<usize> {
-  *AVAILABLE_PARALLELISM.get_or_init(|| {
-    let std_threads = thread::available_parallelism().ok().map(|v| v.get()).unwrap_or(0);
-    #[cfg(feature = "parallel")]
-    let rayon_threads = rayon::current_num_threads();
-    #[cfg(not(feature = "parallel"))]
-    let rayon_threads = 0usize;
-    let threads = core::cmp::max(std_threads, rayon_threads);
-    (threads != 0).then_some(threads)
-  })
-}
-
-#[cfg(feature = "parallel")]
-#[inline]
-fn parallel_policy_threads_with_admission(
-  mode: ParallelPolicyKind,
-  input_bytes: usize,
-  admission_full_chunks: usize,
-  commit_full_chunks: usize,
-) -> Option<usize> {
-  let policy = if let Some(override_policy) = parallel_override() {
-    match mode {
-      ParallelPolicyKind::Oneshot => override_policy.oneshot,
-      ParallelPolicyKind::KeyedOneshot => override_policy.keyed_oneshot,
-      ParallelPolicyKind::DeriveOneshot => override_policy.derive_oneshot,
-      ParallelPolicyKind::Xof => override_policy.xof,
-      ParallelPolicyKind::KeyedXof => override_policy.keyed_xof,
-      ParallelPolicyKind::DeriveXof => override_policy.derive_xof,
-      ParallelPolicyKind::Update => override_policy.streaming,
-      ParallelPolicyKind::KeyedUpdate => override_policy.keyed_streaming,
-      ParallelPolicyKind::DeriveUpdate => override_policy.derive_streaming,
-    }
-  } else {
-    let dispatch_policy = dispatch::parallel_dispatch();
-    match mode {
-      ParallelPolicyKind::Oneshot => dispatch_policy.oneshot,
-      ParallelPolicyKind::KeyedOneshot => dispatch_policy.keyed_oneshot,
-      ParallelPolicyKind::DeriveOneshot => dispatch_policy.derive_oneshot,
-      ParallelPolicyKind::Xof => dispatch_policy.xof,
-      ParallelPolicyKind::KeyedXof => dispatch_policy.keyed_xof,
-      ParallelPolicyKind::DeriveXof => dispatch_policy.derive_xof,
-      ParallelPolicyKind::Update => dispatch_policy.streaming,
-      ParallelPolicyKind::KeyedUpdate => dispatch_policy.keyed_streaming,
-      ParallelPolicyKind::DeriveUpdate => dispatch_policy.derive_streaming,
-    }
-  };
-
-  parallel_threads_for_policy(mode, policy, input_bytes, admission_full_chunks, commit_full_chunks)
-}
-
-#[cfg(feature = "parallel")]
-#[inline]
-fn parallel_threads_for_policy(
-  mode: ParallelPolicyKind,
-  policy: dispatch_tables::ParallelTable,
-  input_bytes: usize,
-  admission_full_chunks: usize,
-  commit_full_chunks: usize,
-) -> Option<usize> {
-  if policy.max_threads == 1 {
-    return None;
-  }
-
-  if input_bytes < policy.min_bytes || admission_full_chunks < policy.min_chunks {
-    return None;
-  }
-
-  let mut threads = available_parallelism_cached()?;
-  if policy.max_threads != 0 {
-    threads = threads.min(policy.max_threads as usize);
-  }
-
-  if threads <= 1 {
-    return None;
-  }
-
-  let bytes_per_core = if input_bytes <= policy.small_limit_bytes {
-    policy.bytes_per_core_small
-  } else if input_bytes <= policy.medium_limit_bytes {
-    policy.bytes_per_core_medium
-  } else {
-    policy.bytes_per_core_large
-  };
-
-  let mut candidate = threads.min(commit_full_chunks);
-  while candidate > 1 {
-    let merge_divisor = parallel_merge_divisor(mode, commit_full_chunks, candidate);
-    let merge_cost = policy.merge_cost_bytes.saturating_add(merge_divisor - 1) / merge_divisor;
-    let spawn_cost = policy.spawn_cost_bytes.saturating_mul(candidate - 1);
-    let work_cost = bytes_per_core.saturating_mul(candidate);
-    let fitted_required = merge_cost.saturating_add(spawn_cost).saturating_add(work_cost);
-    let required = scale_parallel_required_bytes(mode, fitted_required, input_bytes);
-    if input_bytes >= required {
-      return Some(candidate);
-    }
-    candidate -= 1;
-  }
-  None
-}
-
-#[cfg(feature = "parallel")]
-#[inline]
-fn parallel_merge_divisor(mode: ParallelPolicyKind, commit_full_chunks: usize, threads: usize) -> usize {
-  let chunk_depth = (commit_full_chunks.max(2)).ilog2() as usize;
-  let thread_depth = (threads.max(2)).ilog2() as usize;
-  let mode_bias = match mode {
-    ParallelPolicyKind::Oneshot | ParallelPolicyKind::KeyedOneshot | ParallelPolicyKind::DeriveOneshot => 2,
-    ParallelPolicyKind::Update | ParallelPolicyKind::KeyedUpdate | ParallelPolicyKind::DeriveUpdate => 1,
-    ParallelPolicyKind::Xof | ParallelPolicyKind::KeyedXof | ParallelPolicyKind::DeriveXof => 3,
-  };
-  1 + chunk_depth + thread_depth + mode_bias
-}
-
-#[cfg(feature = "parallel")]
-#[inline]
-fn scale_parallel_required_bytes(mode: ParallelPolicyKind, required: usize, input_bytes: usize) -> usize {
-  let (num, den) = match mode {
-    // Fitted from crossover data: one-shot/XOF benefit earlier than update.
-    ParallelPolicyKind::Oneshot | ParallelPolicyKind::KeyedOneshot | ParallelPolicyKind::DeriveOneshot => {
-      if input_bytes >= (64 * 1024) {
-        (10usize, 10usize)
-      } else {
-        (12usize, 10usize)
-      }
-    }
-    ParallelPolicyKind::Update | ParallelPolicyKind::KeyedUpdate | ParallelPolicyKind::DeriveUpdate => {
-      (15usize, 10usize)
-    }
-    ParallelPolicyKind::Xof | ParallelPolicyKind::KeyedXof | ParallelPolicyKind::DeriveXof => {
-      if input_bytes >= (64 * 1024) {
-        (9usize, 10usize)
-      } else {
-        (12usize, 10usize)
-      }
-    }
-  };
-  required.saturating_mul(num).saturating_add(den - 1) / den
-}
-
-#[cfg(feature = "std")]
 thread_local! {
   static BLAKE3_SUBTREE_SCRATCH0: RefCell<alloc::vec::Vec<[u32; 8]>> = const { RefCell::new(alloc::vec::Vec::new()) };
   static BLAKE3_SUBTREE_SCRATCH1: RefCell<alloc::vec::Vec<[u32; 8]>> = const { RefCell::new(alloc::vec::Vec::new()) };
-  static DERIVE_KEY_CONTEXT_LOCAL_CACHE: RefCell<Option<(String, [u32; 8])>> = const { RefCell::new(None) };
-  static KEYED_WORDS_LOCAL_CACHE: RefCell<Option<([u8; KEY_LEN], [u32; 8])>> = const { RefCell::new(None) };
 }
 
 #[cfg(feature = "parallel")]
@@ -941,66 +688,6 @@ fn hash_power_of_two_subtree_roots_parallel_rayon(req: SubtreeRootsRequest<'_>) 
   }
 }
 
-/// Benchmark-only hooks (not part of the stable API).
-#[cfg(feature = "std")]
-#[doc(hidden)]
-pub mod __bench {
-  // Re-export types needed for policy construction
-  use super::{Mutex, PARALLEL_OVERRIDE, dispatch_tables};
-  pub use super::{ParallelPolicyOverride, dispatch_tables::ParallelTable};
-
-  #[derive(Debug)]
-  pub struct Blake3ParallelOverrideGuard {
-    prev: Option<ParallelPolicyOverride>,
-  }
-
-  impl Drop for Blake3ParallelOverrideGuard {
-    fn drop(&mut self) {
-      let lock: &Mutex<Option<ParallelPolicyOverride>> = PARALLEL_OVERRIDE.get_or_init(|| Mutex::new(None));
-      if let Ok(mut g) = lock.lock() {
-        *g = self.prev;
-      }
-    }
-  }
-
-  /// Override the active BLAKE3 parallel policy for the duration of the guard.
-  ///
-  /// This sets all variants to the same table. For per-variant control,
-  /// use `override_blake3_parallel_policy_full()`.
-  ///
-  /// This is used by internal benchmarks to compare single-thread and
-  /// multi-thread behavior without relying on user-facing environment variables.
-  #[must_use]
-  pub fn override_blake3_parallel_policy(table: dispatch_tables::ParallelTable) -> Blake3ParallelOverrideGuard {
-    override_blake3_parallel_policy_full(ParallelPolicyOverride::new(table))
-  }
-
-  /// Override the active BLAKE3 parallel policy with per-variant control.
-  ///
-  /// This allows independent control of:
-  /// - oneshot: regular one-shot hashing (`digest`, `xof`)
-  /// - keyed_oneshot: keyed one-shot hashing (`keyed_digest`, `keyed_xof`)
-  /// - derive_oneshot: derive-key one-shot hashing (`derive_key`)
-  /// - streaming: regular streaming updates
-  /// - keyed_streaming: keyed streaming updates
-  /// - derive_streaming: derive-key streaming updates
-  ///
-  /// This is used by internal benchmarks for fine-grained policy overrides.
-  #[must_use]
-  pub fn override_blake3_parallel_policy_full(policy: ParallelPolicyOverride) -> Blake3ParallelOverrideGuard {
-    let lock: &Mutex<Option<ParallelPolicyOverride>> = PARALLEL_OVERRIDE.get_or_init(|| Mutex::new(None));
-    let mut prev = None;
-    if let Ok(mut g) = lock.lock() {
-      prev = *g;
-      *g = Some(policy);
-    };
-    Blake3ParallelOverrideGuard { prev }
-  }
-
-  // NOTE: std parallelism is implemented via Rayon; there is no longer an
-  // internal subtree scheduler to override.
-}
-
 /// BLAKE3 message schedule.
 ///
 /// `MSG_SCHEDULE[round][i]` gives the index of the message word to use.
@@ -1086,6 +773,7 @@ fn pow2_floor(n: usize) -> usize {
   1usize << (usize::BITS - 1 - n.leading_zeros())
 }
 
+#[cfg(any(target_endian = "little", feature = "parallel"))]
 #[inline]
 fn reduce_power_of_two_chunk_cvs(kernel: Kernel, key_words: [u32; 8], flags: u32, cvs: &[[u32; 8]]) -> [u32; 8] {
   debug_assert!(cvs.len().is_power_of_two());
@@ -2422,7 +2110,9 @@ fn root_output_oneshot(
     // This is intentionally conservative to avoid overhead on latency-critical
     // small inputs (including keyed/derive).
     let commit_full_chunks = if remainder == 0 { full_chunks - 1 } else { full_chunks };
-    if let Some(threads) = parallel_policy_threads_with_admission(mode, input.len(), full_chunks, commit_full_chunks) {
+    if let Some(threads) =
+      control::parallel_policy_threads_with_admission(mode, input.len(), full_chunks, commit_full_chunks)
+    {
       return root_output_oneshot_join_parallel(kernel, key_words, flags, input, threads);
     }
   }
@@ -2833,22 +2523,9 @@ fn digest_oneshot_words(kernel: Kernel, key_words: [u32; 8], flags: u32, input: 
 #[cold]
 #[inline(never)]
 fn digest_oneshot_words_fallback(kernel: Kernel, key_words: [u32; 8], flags: u32, input: &[u8]) -> [u32; 8] {
-  let mode = policy_kind_from_flags(flags, false); // is_xof = false
+  let mode = control::policy_kind_from_flags(flags, false);
   let output = root_output_oneshot(kernel, key_words, flags, mode, input);
   output.root_hash_words()
-}
-
-#[inline]
-fn policy_kind_from_flags(flags: u32, is_xof: bool) -> ParallelPolicyKind {
-  match (is_xof, flags) {
-    (false, 0) => ParallelPolicyKind::Oneshot,
-    (false, KEYED_HASH) => ParallelPolicyKind::KeyedOneshot,
-    (false, DERIVE_KEY_MATERIAL) => ParallelPolicyKind::DeriveOneshot,
-    (true, 0) => ParallelPolicyKind::Xof,
-    (true, KEYED_HASH) => ParallelPolicyKind::KeyedXof,
-    (true, DERIVE_KEY_MATERIAL) => ParallelPolicyKind::DeriveXof,
-    _ => ParallelPolicyKind::Oneshot, // Fallback for unknown flag combinations
-  }
 }
 
 #[inline]
@@ -2872,7 +2549,10 @@ fn digest_public_oneshot(key_words: [u32; 8], flags: u32, input: &[u8]) -> [u8; 
 
 #[derive(Clone)]
 pub struct Blake3 {
+  dispatch: dispatch::HasherDispatch,
   bulk_kernel_id: kernels::Blake3KernelId,
+  #[cfg(feature = "parallel")]
+  parallel_batch_scratch: parallel::ParallelBatchScratch,
   chunk_state: ChunkState,
   pending_chunk_cv: Option<[u32; 8]>,
   /// Number of chunks the pending CV represents. 1 for a single-chunk pending
@@ -2883,33 +2563,6 @@ pub struct Blake3 {
   key_words: [u32; 8],
   cv_stack: [MaybeUninit<[u32; 8]>; CV_STACK_LEN],
   cv_stack_len: u8,
-}
-
-#[cfg(feature = "parallel")]
-struct ParallelBatchSpec<'a> {
-  input: &'a [u8],
-  base_counter: u64,
-  batch_chunks: usize,
-  commit_chunks: usize,
-  threads: usize,
-  keep_last_full_chunk: bool,
-}
-
-#[cfg(feature = "parallel")]
-struct ParallelBatchScratch {
-  roots: alloc::vec::Vec<[u32; 8]>,
-  leaf_cvs: alloc::vec::Vec<[u32; 8]>,
-}
-
-#[cfg(feature = "parallel")]
-impl ParallelBatchScratch {
-  #[inline]
-  fn new() -> Self {
-    Self {
-      roots: alloc::vec::Vec::new(),
-      leaf_cvs: alloc::vec::Vec::new(),
-    }
-  }
 }
 
 impl core::fmt::Debug for Blake3 {
@@ -2954,7 +2607,7 @@ impl Blake3 {
   #[must_use]
   pub fn keyed_digest(key: &[u8; KEY_LEN], data: &[u8]) -> [u8; OUT_LEN] {
     #[cfg(feature = "std")]
-    let key_words = keyed_words_cached(key);
+    let key_words = control::keyed_words_cached(key);
     #[cfg(not(feature = "std"))]
     let key_words = words8_from_le_bytes_32(key);
     digest_public_oneshot(key_words, KEYED_HASH, data)
@@ -2971,7 +2624,7 @@ impl Blake3 {
       kernel,
       key_words,
       KEYED_HASH,
-      policy_kind_from_flags(KEYED_HASH, true),
+      control::policy_kind_from_flags(KEYED_HASH, true),
       data,
     ))
   }
@@ -2987,314 +2640,40 @@ impl Blake3 {
     let context_key_words = {
       #[cfg(feature = "std")]
       {
-        derive_context_key_words_cached(context)
+        control::derive_context_key_words_cached(context)
       }
       #[cfg(not(feature = "std"))]
       {
-        let context_bytes = context.as_bytes();
-        let kernel_ctx = dispatch::hasher_dispatch().size_class_kernel(context_bytes.len());
-        digest_oneshot_words(kernel_ctx, IV, DERIVE_KEY_CONTEXT, context_bytes)
+        control::derive_context_key_words(context)
       }
     };
 
     digest_public_oneshot(context_key_words, DERIVE_KEY_MATERIAL, key_material)
   }
 
-  /// One-shot hash using an explicitly selected kernel.
-  ///
-  /// This is crate-internal glue for `hashes::bench`.
-  #[inline]
-  #[must_use]
-  #[cfg(any(test, feature = "std"))]
-  pub(crate) fn digest_with_kernel_id(id: kernels::Blake3KernelId, data: &[u8]) -> [u8; OUT_LEN] {
-    let kernel = kernels::kernel(id);
-    digest_oneshot(kernel, IV, 0, data)
-  }
-
-  /// One-shot keyed hash using an explicitly selected kernel.
-  ///
-  /// This is crate-internal glue for `hashes::bench`.
-  #[inline]
-  #[must_use]
-  #[cfg(any(test, feature = "std"))]
-  pub(crate) fn keyed_digest_with_kernel_id(id: kernels::Blake3KernelId, key: &[u8; 32], data: &[u8]) -> [u8; OUT_LEN] {
-    let kernel = kernels::kernel(id);
-    let key_words = words8_from_le_bytes_32(key);
-    digest_oneshot(kernel, key_words, KEYED_HASH, data)
-  }
-
-  /// One-shot derive-key hash using an explicitly selected kernel.
-  ///
-  /// This is crate-internal glue for `hashes::bench`.
-  #[inline]
-  #[must_use]
-  #[cfg(any(test, feature = "std"))]
-  pub(crate) fn derive_key_with_kernel_id(
-    id: kernels::Blake3KernelId,
-    context: &str,
-    key_material: &[u8],
-  ) -> [u8; OUT_LEN] {
-    let kernel = kernels::kernel(id);
-    let context_key_words = digest_oneshot_words(kernel, IV, DERIVE_KEY_CONTEXT, context.as_bytes());
-    digest_oneshot(kernel, context_key_words, DERIVE_KEY_MATERIAL, key_material)
-  }
-
-  #[inline]
-  #[cfg(any(test, feature = "std"))]
-  fn stream_chunks_pattern_with_kernel_pair_and_state(
-    stream_id: kernels::Blake3KernelId,
-    bulk_id: kernels::Blake3KernelId,
-    chunk_pattern: &[usize],
-    key_words: [u32; 8],
-    flags: u32,
-    xof_mode: bool,
-    data: &[u8],
-  ) -> [u8; OUT_LEN] {
-    let mut h = Self::new_internal_with(key_words, flags, stream_id);
-    if chunk_pattern.is_empty() {
-      h.update_with(data, stream_id, bulk_id);
-    } else {
-      let mut offset = 0usize;
-      let mut idx = 0usize;
-      while offset < data.len() {
-        let step = chunk_pattern[idx % chunk_pattern.len()].max(1);
-        let end = offset.saturating_add(step).min(data.len());
-        h.update_with(&data[offset..end], stream_id, bulk_id);
-        offset = end;
-        idx = idx.saturating_add(1);
-      }
-    }
-
-    if xof_mode {
-      let mut xof = h.finalize_xof();
-      let mut out = [0u8; OUT_LEN];
-      xof.squeeze(&mut out);
-      out
-    } else {
-      h.finalize()
-    }
-  }
-
-  #[inline]
-  #[cfg(any(test, feature = "std"))]
-  fn stream_chunks_with_kernel_pair_and_state(
-    stream_id: kernels::Blake3KernelId,
-    bulk_id: kernels::Blake3KernelId,
-    chunk_size: usize,
-    key_words: [u32; 8],
-    flags: u32,
-    data: &[u8],
-  ) -> [u8; OUT_LEN] {
-    Self::stream_chunks_pattern_with_kernel_pair_and_state(
-      stream_id,
-      bulk_id,
-      core::slice::from_ref(&chunk_size),
-      key_words,
-      flags,
-      false,
-      data,
-    )
-  }
-
-  /// Streaming hash with explicit `(stream, bulk)` kernel IDs.
-  ///
-  /// This is crate-internal glue for `hashes::bench`.
-  #[inline]
-  #[must_use]
-  #[cfg(any(test, feature = "std"))]
-  pub(crate) fn stream_chunks_with_kernel_pair_id(
-    stream_id: kernels::Blake3KernelId,
-    bulk_id: kernels::Blake3KernelId,
-    chunk_size: usize,
-    data: &[u8],
-  ) -> [u8; OUT_LEN] {
-    Self::stream_chunks_with_kernel_pair_and_state(stream_id, bulk_id, chunk_size, IV, 0, data)
-  }
-
-  /// Keyed streaming hash with explicit `(stream, bulk)` kernel IDs.
-  ///
-  /// This is crate-internal glue for `hashes::bench`.
-  #[inline]
-  #[must_use]
-  #[cfg(any(test, feature = "std"))]
-  pub(crate) fn stream_chunks_keyed_with_kernel_pair_id(
-    stream_id: kernels::Blake3KernelId,
-    bulk_id: kernels::Blake3KernelId,
-    chunk_size: usize,
-    data: &[u8],
-  ) -> [u8; OUT_LEN] {
-    const STREAM_BENCH_KEY: [u8; KEY_LEN] = [
-      0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12,
-      0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
-    ];
-    let key_words = words8_from_le_bytes_32(&STREAM_BENCH_KEY);
-    Self::stream_chunks_with_kernel_pair_and_state(stream_id, bulk_id, chunk_size, key_words, KEYED_HASH, data)
-  }
-
-  /// Derive-key-material streaming hash with explicit `(stream, bulk)` kernel IDs.
-  ///
-  /// This is crate-internal glue for `hashes::bench`.
-  #[inline]
-  #[must_use]
-  #[cfg(any(test, feature = "std"))]
-  pub(crate) fn stream_chunks_derive_with_kernel_pair_id(
-    stream_id: kernels::Blake3KernelId,
-    bulk_id: kernels::Blake3KernelId,
-    chunk_size: usize,
-    data: &[u8],
-  ) -> [u8; OUT_LEN] {
-    const STREAM_BENCH_CONTEXT: &str = "rscrypto-blake3-stream-bench";
-    let stream = kernels::kernel(stream_id);
-    let context_key_words = digest_oneshot_words(stream, IV, DERIVE_KEY_CONTEXT, STREAM_BENCH_CONTEXT.as_bytes());
-    Self::stream_chunks_with_kernel_pair_and_state(
-      stream_id,
-      bulk_id,
-      chunk_size,
-      context_key_words,
-      DERIVE_KEY_MATERIAL,
-      data,
-    )
-  }
-
-  /// Streaming XOF with explicit `(stream, bulk)` kernel IDs.
-  ///
-  /// This is crate-internal glue for `hashes::bench`.
-  #[inline]
-  #[must_use]
-  #[cfg(any(test, feature = "std"))]
-  pub(crate) fn stream_chunks_xof_with_kernel_pair_id(
-    stream_id: kernels::Blake3KernelId,
-    bulk_id: kernels::Blake3KernelId,
-    chunk_size: usize,
-    data: &[u8],
-  ) -> [u8; OUT_LEN] {
-    Self::stream_chunks_pattern_with_kernel_pair_and_state(
-      stream_id,
-      bulk_id,
-      core::slice::from_ref(&chunk_size),
-      IV,
-      0,
-      true,
-      data,
-    )
-  }
-
-  /// Streaming mixed-pattern hash with explicit `(stream, bulk)` kernel IDs.
-  ///
-  /// This is crate-internal glue for `hashes::bench`.
-  #[inline]
-  #[must_use]
-  #[cfg(any(test, feature = "std"))]
-  pub(crate) fn stream_chunks_mixed_with_kernel_pair_id(
-    stream_id: kernels::Blake3KernelId,
-    bulk_id: kernels::Blake3KernelId,
-    chunk_pattern: &[usize],
-    data: &[u8],
-  ) -> [u8; OUT_LEN] {
-    Self::stream_chunks_pattern_with_kernel_pair_and_state(stream_id, bulk_id, chunk_pattern, IV, 0, false, data)
-  }
-
-  /// Keyed streaming mixed-pattern hash with explicit `(stream, bulk)` kernel IDs.
-  ///
-  /// This is crate-internal glue for `hashes::bench`.
-  #[inline]
-  #[must_use]
-  #[cfg(any(test, feature = "std"))]
-  pub(crate) fn stream_chunks_mixed_keyed_with_kernel_pair_id(
-    stream_id: kernels::Blake3KernelId,
-    bulk_id: kernels::Blake3KernelId,
-    chunk_pattern: &[usize],
-    data: &[u8],
-  ) -> [u8; OUT_LEN] {
-    const STREAM_BENCH_KEY: [u8; KEY_LEN] = [
-      0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12,
-      0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
-    ];
-    let key_words = words8_from_le_bytes_32(&STREAM_BENCH_KEY);
-    Self::stream_chunks_pattern_with_kernel_pair_and_state(
-      stream_id,
-      bulk_id,
-      chunk_pattern,
-      key_words,
-      KEYED_HASH,
-      false,
-      data,
-    )
-  }
-
-  /// Derive-key-material streaming mixed-pattern hash with explicit `(stream, bulk)` kernel IDs.
-  ///
-  /// This is crate-internal glue for `hashes::bench`.
-  #[inline]
-  #[must_use]
-  #[cfg(any(test, feature = "std"))]
-  pub(crate) fn stream_chunks_mixed_derive_with_kernel_pair_id(
-    stream_id: kernels::Blake3KernelId,
-    bulk_id: kernels::Blake3KernelId,
-    chunk_pattern: &[usize],
-    data: &[u8],
-  ) -> [u8; OUT_LEN] {
-    const STREAM_BENCH_CONTEXT: &str = "rscrypto-blake3-stream-bench";
-    let stream = kernels::kernel(stream_id);
-    let context_key_words = digest_oneshot_words(stream, IV, DERIVE_KEY_CONTEXT, STREAM_BENCH_CONTEXT.as_bytes());
-    Self::stream_chunks_pattern_with_kernel_pair_and_state(
-      stream_id,
-      bulk_id,
-      chunk_pattern,
-      context_key_words,
-      DERIVE_KEY_MATERIAL,
-      false,
-      data,
-    )
-  }
-
-  /// Streaming mixed-pattern XOF with explicit `(stream, bulk)` kernel IDs.
-  ///
-  /// This is crate-internal glue for `hashes::bench`.
-  #[inline]
-  #[must_use]
-  #[cfg(any(test, feature = "std"))]
-  pub(crate) fn stream_chunks_mixed_xof_with_kernel_pair_id(
-    stream_id: kernels::Blake3KernelId,
-    bulk_id: kernels::Blake3KernelId,
-    chunk_pattern: &[usize],
-    data: &[u8],
-  ) -> [u8; OUT_LEN] {
-    Self::stream_chunks_pattern_with_kernel_pair_and_state(stream_id, bulk_id, chunk_pattern, IV, 0, true, data)
-  }
-
-  #[inline]
-  #[must_use]
-  #[cfg(any(test, feature = "std"))]
-  pub(crate) fn digest_portable(data: &[u8]) -> [u8; OUT_LEN] {
-    let kernel = kernels::kernel(kernels::Blake3KernelId::Portable);
-    if data.len() <= CHUNK_LEN {
-      let output = single_chunk_output(kernel, IV, 0, 0, data);
-      output.root_hash_bytes()
-    } else {
-      let mut h = Self::new_internal_with(IV, 0, kernels::Blake3KernelId::Portable);
-      h.update_with(
-        data,
-        kernels::Blake3KernelId::Portable,
-        kernels::Blake3KernelId::Portable,
-      );
-      h.finalize()
-    }
-  }
-
   #[inline]
   fn new_internal(key_words: [u32; 8], flags: u32) -> Self {
-    #[cfg(feature = "std")]
-    let kernel_id = dispatch::stream_kernel_id_ref();
-    #[cfg(not(feature = "std"))]
-    let kernel_id = dispatch::hasher_dispatch().stream_kernel().id;
-    Self::new_internal_with(key_words, flags, kernel_id)
+    let dispatch = dispatch::hasher_dispatch();
+    Self::new_internal_with_dispatch(key_words, flags, dispatch.stream_kernel().id, dispatch)
   }
 
   #[inline]
   fn new_internal_with(key_words: [u32; 8], flags: u32, kernel_id: kernels::Blake3KernelId) -> Self {
+    Self::new_internal_with_dispatch(key_words, flags, kernel_id, dispatch::hasher_dispatch())
+  }
+
+  #[inline]
+  fn new_internal_with_dispatch(
+    key_words: [u32; 8],
+    flags: u32,
+    kernel_id: kernels::Blake3KernelId,
+    dispatch: dispatch::HasherDispatch,
+  ) -> Self {
     Self {
+      dispatch,
       bulk_kernel_id: kernel_id,
+      #[cfg(feature = "parallel")]
+      parallel_batch_scratch: parallel::ParallelBatchScratch::default(),
       chunk_state: ChunkState::new(key_words, 0, flags, kernel_id),
       pending_chunk_cv: None,
       pending_cv_chunks: 0,
@@ -3302,243 +2681,6 @@ impl Blake3 {
       cv_stack: uninit_cv_stack(),
       cv_stack_len: 0,
     }
-  }
-
-  #[cfg(feature = "parallel")]
-  #[inline]
-  fn streaming_parallel_threads(
-    &self,
-    input_bytes: usize,
-    admission_full_chunks: usize,
-    commit_full_chunks: usize,
-  ) -> Option<usize> {
-    let (policy, mode) = if let Some(override_policy) = parallel_override() {
-      let mode = match self.chunk_state.flags {
-        0 => ParallelPolicyKind::Update,
-        KEYED_HASH => ParallelPolicyKind::KeyedUpdate,
-        DERIVE_KEY_MATERIAL => ParallelPolicyKind::DeriveUpdate,
-        _ => ParallelPolicyKind::Update,
-      };
-      let policy = match mode {
-        ParallelPolicyKind::Update => override_policy.streaming,
-        ParallelPolicyKind::KeyedUpdate => override_policy.keyed_streaming,
-        ParallelPolicyKind::DeriveUpdate => override_policy.derive_streaming,
-        _ => override_policy.streaming,
-      };
-      (policy, mode)
-    } else {
-      (
-        dispatch::hasher_dispatch().parallel_streaming(),
-        ParallelPolicyKind::Update,
-      )
-    };
-    parallel_threads_for_policy(mode, policy, input_bytes, admission_full_chunks, commit_full_chunks)
-  }
-
-  #[cfg(feature = "parallel")]
-  #[cold]
-  #[inline(never)]
-  fn commit_parallel_batch(&mut self, batch: ParallelBatchSpec<'_>, scratch: &mut ParallelBatchScratch) {
-    #[inline]
-    fn push_stack(stack: &mut [MaybeUninit<[u32; 8]>; CV_STACK_LEN], len: &mut usize, cv: [u32; 8]) {
-      stack[*len].write(cv);
-      *len += 1;
-    }
-
-    #[inline]
-    fn pop_stack(stack: &mut [MaybeUninit<[u32; 8]>; CV_STACK_LEN], len: &mut usize) -> [u32; 8] {
-      *len -= 1;
-      // SAFETY: `len` tracks the number of initialized entries.
-      unsafe { stack[*len].assume_init_read() }
-    }
-
-    let batch_input = batch.input;
-    let base_counter = batch.base_counter;
-    let commit = batch.commit_chunks;
-    let threads = batch.threads;
-
-    let mut stack_len = self.cv_stack_len as usize;
-    let mut counter = base_counter;
-    let mut offset_chunks = 0usize;
-    let mut remaining_commit = commit;
-
-    scratch.roots.clear();
-    scratch.leaf_cvs.clear();
-
-    while remaining_commit != 0 {
-      let mut size = pow2_floor(remaining_commit);
-
-      let aligned_max = if counter == 0 {
-        usize::MAX
-      } else {
-        let tz = counter.trailing_zeros() as usize;
-        if tz >= (usize::BITS as usize) {
-          usize::MAX
-        } else {
-          1usize << tz
-        }
-      };
-      size = size.min(aligned_max).min(remaining_commit);
-      debug_assert!(size.is_power_of_two());
-
-      let bytes_base = offset_chunks * CHUNK_LEN;
-      let subtree_bytes = size * CHUNK_LEN;
-      let subtree_input = &batch_input[bytes_base..bytes_base + subtree_bytes];
-      let bulk_kernel = kernels::kernel(self.bulk_kernel_id);
-
-      // Fast path: hash this power-of-two subtree without materializing all
-      // leaf CVs. Fallback: hash leaf CVs directly and reduce.
-      let subtree_cv = if size >= threads && (counter == 0 || (counter & (size as u64 - 1)) == 0) {
-        const MAX_SUBTREE_CHUNKS: usize = 1 << 12; // 4096 chunks = 4 MiB per subtree
-
-        let mut subtree_chunks = size / threads;
-        subtree_chunks = subtree_chunks.max(1);
-        subtree_chunks = pow2_floor(subtree_chunks);
-        subtree_chunks = subtree_chunks.min(MAX_SUBTREE_CHUNKS).min(size);
-
-        let roots_len = size / subtree_chunks;
-        debug_assert!(roots_len.is_power_of_two());
-        debug_assert_eq!(roots_len * subtree_chunks, size);
-
-        scratch.roots.resize(roots_len, [0u32; 8]);
-        #[cfg(feature = "parallel")]
-        hash_power_of_two_subtree_roots_parallel_rayon(SubtreeRootsRequest {
-          kernel: bulk_kernel,
-          key_words: self.key_words,
-          flags: self.chunk_state.flags,
-          base_counter: counter,
-          input: subtree_input,
-          subtree_chunks,
-          out: &mut scratch.roots,
-          threads_total: threads,
-        });
-        #[cfg(not(feature = "parallel"))]
-        hash_power_of_two_subtree_roots_serial(
-          bulk_kernel,
-          self.key_words,
-          self.chunk_state.flags,
-          counter,
-          subtree_input,
-          subtree_chunks,
-          &mut scratch.roots,
-        );
-
-        reduce_power_of_two_chunk_cvs_any(
-          bulk_kernel,
-          self.key_words,
-          self.chunk_state.flags,
-          &scratch.roots,
-          threads,
-        )
-      } else {
-        scratch.leaf_cvs.resize(size, [0u32; 8]);
-        hash_full_chunks_cvs_scoped(
-          bulk_kernel,
-          self.key_words,
-          self.chunk_state.flags,
-          counter,
-          subtree_input,
-          &mut scratch.leaf_cvs,
-          threads,
-        );
-        reduce_power_of_two_chunk_cvs_any(
-          bulk_kernel,
-          self.key_words,
-          self.chunk_state.flags,
-          &scratch.leaf_cvs,
-          threads,
-        )
-      };
-
-      counter = counter.wrapping_add(size as u64);
-      let level = size.trailing_zeros();
-      let mut total = counter >> level;
-      let mut cv = subtree_cv;
-      while total & 1 == 0 {
-        cv = kernels::parent_cv_inline(
-          self.bulk_kernel_id,
-          pop_stack(&mut self.cv_stack, &mut stack_len),
-          cv,
-          self.key_words,
-          self.chunk_state.flags,
-        );
-        total >>= 1;
-      }
-      push_stack(&mut self.cv_stack, &mut stack_len, cv);
-
-      offset_chunks += size;
-      remaining_commit -= size;
-    }
-
-    self.cv_stack_len = stack_len as u8;
-
-    let new_counter = base_counter + batch.batch_chunks as u64;
-    self.chunk_state = ChunkState::new(
-      self.key_words,
-      new_counter,
-      self.chunk_state.flags,
-      self.chunk_state.kernel_id,
-    );
-    if batch.keep_last_full_chunk {
-      let last_chunk_idx = batch.batch_chunks - 1;
-      let last = &batch_input[last_chunk_idx * CHUNK_LEN..batch.batch_chunks * CHUNK_LEN];
-      self.pending_chunk_cv = Some(hash_one_full_chunk_cv(
-        kernels::kernel(self.bulk_kernel_id),
-        self.key_words,
-        self.chunk_state.flags,
-        new_counter - 1,
-        last,
-      ));
-      self.pending_cv_chunks = 1;
-    }
-  }
-
-  #[cfg(feature = "parallel")]
-  #[cold]
-  #[inline(never)]
-  fn try_parallel_update_batch(&mut self, input: &[u8]) -> Option<usize> {
-    // Large updates: multi-thread full-chunk hashing.
-    //
-    // Prefer subtree-root batching for large, chunk-aligned power-of-two
-    // subtrees. This avoids materializing all leaf CVs and reduces memory
-    // traffic, while preserving the canonical BLAKE3 tree shape.
-    const MAX_PASS_CHUNKS: usize = 1 << 16; // 64 MiB input per pass
-
-    if self.chunk_state.len() != 0 || input.len() <= CHUNK_LEN {
-      return None;
-    }
-    let full_chunks = input.len() / CHUNK_LEN;
-    if full_chunks <= 1 {
-      return None;
-    }
-
-    let batch = core::cmp::min(full_chunks, MAX_PASS_CHUNKS);
-    let base_counter = self.chunk_state.chunk_counter;
-
-    let keep_last_full_chunk = input.len().is_multiple_of(CHUNK_LEN) && batch == full_chunks;
-    let commit = if keep_last_full_chunk { batch - 1 } else { batch };
-    if commit == 0 {
-      return None;
-    }
-
-    let bytes = batch * CHUNK_LEN;
-    let threads = self.streaming_parallel_threads(bytes, batch, commit)?;
-    if threads <= 1 {
-      return None;
-    }
-
-    let batch_input = &input[..bytes];
-    let spec = ParallelBatchSpec {
-      input: batch_input,
-      base_counter,
-      batch_chunks: batch,
-      commit_chunks: commit,
-      threads,
-      keep_last_full_chunk,
-    };
-    let mut scratch = ParallelBatchScratch::new();
-    self.commit_parallel_batch(spec, &mut scratch);
-    Some(bytes)
   }
 
   /// Process the largest aligned power-of-2 subtree from the input using SIMD
@@ -3586,8 +2728,12 @@ impl Blake3 {
     let kernel_id = self.chunk_state.kernel_id;
     let kernel = kernels::kernel(self.bulk_kernel_id);
 
-    // Hash all chunks in the subtree.
-    let mut cvs = [[0u32; 8]; MAX_SUBTREE_CHUNKS];
+    // Hash all chunks in the subtree into uninitialized scratch. The kernel
+    // writes every committed CV slot, so pre-zeroing the whole buffer is waste.
+    let mut cvs: [MaybeUninit<[u32; 8]>; MAX_SUBTREE_CHUNKS] =
+      // SAFETY: `[MaybeUninit<T>; N]` may be left uninitialized because
+      // `MaybeUninit<T>` permits any bit pattern.
+      unsafe { MaybeUninit::<[MaybeUninit<[u32; 8]>; MAX_SUBTREE_CHUNKS]>::uninit().assume_init() };
     // SAFETY: `input` has at least `subtree_len` bytes, `cvs` has
     // `subtree_chunks` CV slots, and the kernel's CPU features are available.
     unsafe {
@@ -3601,6 +2747,8 @@ impl Blake3 {
         cvs.as_mut_ptr().cast::<u8>(),
       )
     };
+    // SAFETY: `hash_many_contiguous_inline` wrote exactly `subtree_chunks` CVs.
+    let cvs = unsafe { core::slice::from_raw_parts_mut(cvs.as_mut_ptr().cast::<[u32; 8]>(), subtree_chunks) };
 
     let keep_last = input.len().is_multiple_of(CHUNK_LEN) && subtree_chunks == full_chunks;
 
@@ -3609,7 +2757,7 @@ impl Blake3 {
       // Reduce to 2 CVs so the final parent compression can be deferred to
       // finalize() for ROOT flag application.
       let half = (subtree_chunks / 2) as u64;
-      let (left_cv, right_cv) = reduce_subtree_to_pair(kernel, self.key_words, flags, &mut cvs[..subtree_chunks]);
+      let (left_cv, right_cv) = reduce_subtree_to_pair(kernel, self.key_words, flags, cvs);
 
       // Push the left subtree onto the stack.
       self.add_subtree_cv(left_cv, half);
@@ -3621,7 +2769,7 @@ impl Blake3 {
       self.pending_cv_chunks = half;
     } else {
       // Non-terminal: more input follows. Reduce to 1 CV and push.
-      let (left_cv, right_cv) = reduce_subtree_to_pair(kernel, self.key_words, flags, &mut cvs[..subtree_chunks]);
+      let (left_cv, right_cv) = reduce_subtree_to_pair(kernel, self.key_words, flags, cvs);
       let subtree_cv = kernels::parent_cv_inline(kernel.id, left_cv, right_cv, self.key_words, flags);
       self.add_subtree_cv(subtree_cv, subtree_chunks as u64);
     }
@@ -3775,13 +2923,9 @@ impl Blake3 {
   #[inline]
   pub fn new_derive_key(context: &str) -> Self {
     #[cfg(feature = "std")]
-    let key_words = derive_context_key_words_cached(context);
+    let key_words = control::derive_context_key_words_cached(context);
     #[cfg(not(feature = "std"))]
-    let key_words = {
-      let context_bytes = context.as_bytes();
-      let kernel_ctx = dispatch::hasher_dispatch().size_class_kernel(context_bytes.len());
-      digest_oneshot_words(kernel_ctx, IV, DERIVE_KEY_CONTEXT, context_bytes)
-    };
+    let key_words = control::derive_context_key_words(context);
     Self::new_internal(key_words, DERIVE_KEY_MATERIAL)
   }
 
@@ -3892,9 +3036,8 @@ impl Blake3 {
       return;
     }
 
-    let plan = dispatch::hasher_dispatch();
     let stream = self.chunk_state.kernel_id;
-    let bulk = plan.bulk_kernel_for_update(input.len()).id;
+    let bulk = self.dispatch.bulk_kernel_for_update(input.len()).id;
     self.update_with(input, stream, bulk);
   }
 
@@ -4046,16 +3189,7 @@ impl Drop for Blake3 {
     }
     #[cfg(feature = "std")]
     if self.chunk_state.flags & KEYED_HASH != 0 {
-      KEYED_WORDS_LOCAL_CACHE.with(|slot| {
-        if let Some((ref mut key_bytes, ref mut words)) = *slot.borrow_mut() {
-          crate::traits::ct::zeroize(key_bytes);
-          for w in words.iter_mut() {
-            // SAFETY: w is a valid, aligned, dereferenceable pointer to initialized memory.
-            unsafe { core::ptr::write_volatile(w, 0) };
-          }
-        }
-        *slot.borrow_mut() = None;
-      });
+      control::clear_keyed_words_cache();
     }
     core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
   }
