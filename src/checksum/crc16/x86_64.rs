@@ -1350,12 +1350,8 @@ unsafe fn crc16_width32_vpclmul_stream(
     8 => {
       update_simd_width32_reflected_vpclmul_8way(state as u32, middle, stream.fold_1024b, &stream.combine_8way, keys)
     }
-    7 => {
-      update_simd_width32_reflected_vpclmul_7way(state as u32, middle, stream.fold_896b, &stream.combine_7way, keys)
-    }
-    4 => {
-      update_simd_width32_reflected_vpclmul_4way(state as u32, middle, stream.fold_512b, &stream.combine_4way, keys)
-    }
+    7 => update_simd_width32_reflected_vpclmul_7way(state as u32, middle, stream.fold_896b, &stream.combine_7way, keys),
+    4 => update_simd_width32_reflected_vpclmul_4way(state as u32, middle, stream.fold_512b, &stream.combine_4way, keys),
     2 => update_simd_width32_reflected_vpclmul_2way(state as u32, middle, stream.fold_256b, keys),
     _ => update_simd_width32_reflected_vpclmul(state as u32, first, rest, keys),
   };

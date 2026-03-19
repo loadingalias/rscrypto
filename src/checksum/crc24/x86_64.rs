@@ -779,9 +779,7 @@ unsafe fn crc24_width32_pclmul_stream(
 
   state = crc24_reflected_update_bitrev_bytes(state, left);
   let state32 = match streams {
-    8 => {
-      update_simd_width32_reflected_bitrev_bytes_8way(state, middle, stream.fold_1024b, &stream.combine_8way, keys)
-    }
+    8 => update_simd_width32_reflected_bitrev_bytes_8way(state, middle, stream.fold_1024b, &stream.combine_8way, keys),
     7 => update_simd_width32_reflected_bitrev_bytes_7way(state, middle, stream.fold_896b, &stream.combine_7way, keys),
     4 => update_simd_width32_reflected_bitrev_bytes_4way(state, middle, stream.fold_512b, &stream.combine_4way, keys),
     2 => update_simd_width32_reflected_bitrev_bytes_2way(state, middle, stream.fold_256b, keys),
