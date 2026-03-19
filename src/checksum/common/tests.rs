@@ -13,6 +13,8 @@
 //!
 //! Used via [`define_crc_property_tests!`] macro in algorithm modules.
 
+extern crate alloc;
+
 use crate::traits::{Checksum, ChecksumCombine};
 
 /// Generic test harness for CRC algorithms.
@@ -300,6 +302,36 @@ macro_rules! define_crc_property_tests {
       }
     }
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Shared Cross-Check Test Infrastructure
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Lengths covering SIMD boundaries, alignment edges, and common sizes.
+///
+/// Used by all CRC cross-check test modules to exercise edge cases around
+/// lane widths, cache line boundaries, and page boundaries.
+pub const TEST_LENGTHS: &[usize] = &[
+  0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, // Tiny
+  16, 17, 31, 32, 33, 63, 64, 65, // SSE/NEON boundaries
+  127, 128, 129, 255, 256, 257, // Cache line boundaries
+  511, 512, 513, 1023, 1024, 1025, // Larger buffers
+  2047, 2048, 2049, 4095, 4096, 4097, // Page boundaries
+  8192, 16384, 32768, 65536, // Large buffers
+];
+
+/// Prime-sized chunk patterns for streaming cross-check tests.
+pub const STREAMING_CHUNK_SIZES: &[usize] = &[1, 3, 7, 13, 17, 31, 37, 61, 127, 251];
+
+/// Generate deterministic test data of a given length.
+///
+/// Uses a simple mixing function to produce non-trivial byte patterns
+/// that avoid accidentally passing due to regularity.
+pub fn generate_test_data(len: usize) -> alloc::vec::Vec<u8> {
+  (0..len)
+    .map(|i| (i as u64).wrapping_mul(17).wrapping_add(i as u64) as u8)
+    .collect()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
