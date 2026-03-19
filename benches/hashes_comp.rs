@@ -17,7 +17,7 @@ mod common;
 fn blake3_comp(c: &mut Criterion) {
   // Keep the comparison matrix crisp and stable across CI runners.
   // This is intentionally aligned with the BLAKE3-specific matrix in
-  // `crates/hashes/src/crypto/blake3/final.md`.
+  // `src/hashes/crypto/blake3/final.md`.
   let oneshot_sizes = [
     0usize,
     1,

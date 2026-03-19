@@ -97,8 +97,8 @@ impl Sha512_256 {
 
     let total = self
       .bytes_hashed
-      .saturating_add(self.block_len as u128)
-      .saturating_add(incoming_len as u128);
+      .strict_add(self.block_len as u128)
+      .strict_add(incoming_len as u128);
     let compress = dispatch.select(len_hint_from_u128(total));
     self.compress_blocks = compress;
     compress

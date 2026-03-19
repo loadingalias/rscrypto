@@ -509,7 +509,7 @@ pub(crate) unsafe fn compress_neon(
   flags: u32,
 ) -> [u32; 16] {
   // SAFETY: `block_words` is exactly 16 u32s, i.e. 64 bytes.
-  unsafe { compress_neon_bytes(chaining_value, block_words.as_ptr().cast(), counter, block_len, flags) }
+  compress_neon_bytes(chaining_value, block_words.as_ptr().cast(), counter, block_len, flags)
 }
 
 #[cfg(target_arch = "aarch64")]
@@ -589,78 +589,75 @@ unsafe fn g4(
 unsafe fn round4(v: &mut [uint32x4_t; 16], m: &[uint32x4_t; 16], r: usize, rot8_tbl: uint8x16_t) {
   // `r` is always 0..7 in all callers.
   debug_assert!(r < MSG_SCHEDULE.len());
-  // Avoid bounds checks when indexing `m` with schedule-driven indices.
   // SAFETY: `r < MSG_SCHEDULE.len()` (asserted above).
-  let s = unsafe { MSG_SCHEDULE.get_unchecked(r) };
+  let s = MSG_SCHEDULE.get_unchecked(r);
 
   // Column step: G(0,4,8,12), G(1,5,9,13), G(2,6,10,14), G(3,7,11,15)
   // SAFETY: `s` contains fixed schedule indices in 0..16, and `m` is `[T; 16]`.
-  unsafe {
-    g4(v, 0, 4, 8, 12, *m.get_unchecked(s[0]), *m.get_unchecked(s[1]), rot8_tbl);
-    g4(v, 1, 5, 9, 13, *m.get_unchecked(s[2]), *m.get_unchecked(s[3]), rot8_tbl);
-    g4(
-      v,
-      2,
-      6,
-      10,
-      14,
-      *m.get_unchecked(s[4]),
-      *m.get_unchecked(s[5]),
-      rot8_tbl,
-    );
-    g4(
-      v,
-      3,
-      7,
-      11,
-      15,
-      *m.get_unchecked(s[6]),
-      *m.get_unchecked(s[7]),
-      rot8_tbl,
-    );
+  g4(v, 0, 4, 8, 12, *m.get_unchecked(s[0]), *m.get_unchecked(s[1]), rot8_tbl);
+  g4(v, 1, 5, 9, 13, *m.get_unchecked(s[2]), *m.get_unchecked(s[3]), rot8_tbl);
+  g4(
+    v,
+    2,
+    6,
+    10,
+    14,
+    *m.get_unchecked(s[4]),
+    *m.get_unchecked(s[5]),
+    rot8_tbl,
+  );
+  g4(
+    v,
+    3,
+    7,
+    11,
+    15,
+    *m.get_unchecked(s[6]),
+    *m.get_unchecked(s[7]),
+    rot8_tbl,
+  );
 
-    // Diagonal step: G(0,5,10,15), G(1,6,11,12), G(2,7,8,13), G(3,4,9,14)
-    g4(
-      v,
-      0,
-      5,
-      10,
-      15,
-      *m.get_unchecked(s[8]),
-      *m.get_unchecked(s[9]),
-      rot8_tbl,
-    );
-    g4(
-      v,
-      1,
-      6,
-      11,
-      12,
-      *m.get_unchecked(s[10]),
-      *m.get_unchecked(s[11]),
-      rot8_tbl,
-    );
-    g4(
-      v,
-      2,
-      7,
-      8,
-      13,
-      *m.get_unchecked(s[12]),
-      *m.get_unchecked(s[13]),
-      rot8_tbl,
-    );
-    g4(
-      v,
-      3,
-      4,
-      9,
-      14,
-      *m.get_unchecked(s[14]),
-      *m.get_unchecked(s[15]),
-      rot8_tbl,
-    );
-  }
+  // Diagonal step: G(0,5,10,15), G(1,6,11,12), G(2,7,8,13), G(3,4,9,14)
+  g4(
+    v,
+    0,
+    5,
+    10,
+    15,
+    *m.get_unchecked(s[8]),
+    *m.get_unchecked(s[9]),
+    rot8_tbl,
+  );
+  g4(
+    v,
+    1,
+    6,
+    11,
+    12,
+    *m.get_unchecked(s[10]),
+    *m.get_unchecked(s[11]),
+    rot8_tbl,
+  );
+  g4(
+    v,
+    2,
+    7,
+    8,
+    13,
+    *m.get_unchecked(s[12]),
+    *m.get_unchecked(s[13]),
+    rot8_tbl,
+  );
+  g4(
+    v,
+    3,
+    4,
+    9,
+    14,
+    *m.get_unchecked(s[14]),
+    *m.get_unchecked(s[15]),
+    rot8_tbl,
+  );
 }
 
 /// Hash 4 complete chunks in parallel.
@@ -1175,14 +1172,14 @@ pub(crate) unsafe fn hash_many_contiguous_neon(
   // kernels with fixed contiguous/full-chunk shape.
   while idx + 8 <= num_chunks {
     // SAFETY: caller guarantees `input` is valid for `num_chunks * CHUNK_LEN`.
-    let src0 = unsafe { input.add(idx * CHUNK_LEN) };
+    let src0 = input.add(idx * CHUNK_LEN);
     // SAFETY: caller guarantees `out` is valid for `num_chunks * OUT_LEN`.
-    let dst0 = unsafe { out.add(idx * OUT_LEN) };
+    let dst0 = out.add(idx * OUT_LEN);
 
     // Prefetch next batch while processing current.
     if idx + 16 <= num_chunks {
       // SAFETY: prefetch is a CPU hint — invalid addresses are silently ignored by hardware.
-      unsafe { crate::hashes::common::prefetch::prefetch_read_l1(input.add((idx + 8) * CHUNK_LEN)) };
+      crate::hashes::common::prefetch::prefetch_read_l1(input.add((idx + 8) * CHUNK_LEN));
     }
 
     hash4_contiguous_full_chunks_neon_to_out(src0, key, counter, flags, dst0);
@@ -1199,14 +1196,14 @@ pub(crate) unsafe fn hash_many_contiguous_neon(
 
   while idx + 4 <= num_chunks {
     // SAFETY: caller guarantees `input` is valid for `num_chunks * CHUNK_LEN`.
-    let src = unsafe { input.add(idx * CHUNK_LEN) };
+    let src = input.add(idx * CHUNK_LEN);
     // SAFETY: caller guarantees `out` is valid for `num_chunks * OUT_LEN`.
-    let dst = unsafe { out.add(idx * OUT_LEN) };
+    let dst = out.add(idx * OUT_LEN);
 
     // Prefetch next batch while processing current.
     if idx + 8 <= num_chunks {
       // SAFETY: prefetch is a CPU hint — invalid addresses are silently ignored by hardware.
-      unsafe { crate::hashes::common::prefetch::prefetch_read_l1(input.add((idx + 4) * CHUNK_LEN)) };
+      crate::hashes::common::prefetch::prefetch_read_l1(input.add((idx + 4) * CHUNK_LEN));
     }
 
     hash4_contiguous_full_chunks_neon_to_out(src, key, counter, flags, dst);
@@ -1226,12 +1223,10 @@ pub(crate) unsafe fn hash_many_contiguous_neon(
   for lane in 0..remaining {
     // SAFETY: `lane < remaining <= num_chunks - idx`, so per-lane source and
     // destination pointers are within caller-provided buffers.
-    unsafe {
-      let src = input.add((idx + lane) * CHUNK_LEN);
-      let dst = out.add((idx + lane) * OUT_LEN);
-      let chunk_counter = counter.wrapping_add(lane as u64);
-      chunk_cv_one_chunk_aarch64_out(src, key, chunk_counter, flags, dst);
-    }
+    let src = input.add((idx + lane) * CHUNK_LEN);
+    let dst = out.add((idx + lane) * OUT_LEN);
+    let chunk_counter = counter.wrapping_add(lane as u64);
+    chunk_cv_one_chunk_aarch64_out(src, key, chunk_counter, flags, dst);
   }
 }
 
@@ -1271,7 +1266,7 @@ pub(crate) unsafe fn parent_cvs_many_neon(
       // - `out` is `[[u8; OUT_LEN]]`, so taking a 4-element window as `[[u8; OUT_LEN]; 4]` is
       //   layout-compatible.
       // - We write exactly those 4 outputs.
-      let out4 = unsafe { &mut *(out.as_mut_ptr().add(idx) as *mut [[u8; OUT_LEN]; 4]) };
+      let out4 = &mut *(out.as_mut_ptr().add(idx) as *mut [[u8; OUT_LEN]; 4]);
       hash4_neon(ptrs, BLOCK_LEN, &key_words, 0, false, parent_flags, 0, 0, out4);
     } else {
       let mut tmp = [[0u8; OUT_LEN]; 4];
@@ -1313,16 +1308,14 @@ pub(crate) unsafe fn chunk_compress_blocks_neon(
     let num_blocks = blocks.len() / BLOCK_LEN;
     if num_blocks != 0 && can_use_asm_input(blocks.as_ptr()) {
       // SAFETY: pointers/length satisfy asm contract.
-      unsafe {
-        chunk_compress_blocks_asm(
-          blocks.as_ptr(),
-          chaining_value.as_mut_ptr(),
-          chunk_counter,
-          flags,
-          blocks_compressed as *mut u8,
-          num_blocks,
-        );
-      }
+      chunk_compress_blocks_asm(
+        blocks.as_ptr(),
+        chaining_value.as_mut_ptr(),
+        chunk_counter,
+        flags,
+        blocks_compressed as *mut u8,
+        num_blocks,
+      );
       return;
     }
   }

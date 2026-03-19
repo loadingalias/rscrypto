@@ -81,6 +81,29 @@ Automatic dispatch: AVX-512, VPCLMUL, PMULL, EOR3, hardware CRC.
 | `hashes` | yes | SHA-2, SHA-3, BLAKE3, Ascon, XXH3, RapidHash |
 | `parallel` | no | Rayon-based parallel hashing (Blake3) |
 
+## Development
+
+### Repository Layout
+
+- Single root crate today; the workspace currently contains `members = ["."]`.
+- Production code lives in `src/`:
+  - `src/checksum`, `src/hashes` for algorithms.
+  - `src/platform`, `src/backend`, `src/traits` for detection, dispatch, and API contracts.
+- Validation and tooling live in `tests/`, `benches/`, `examples/`, and `scripts/`.
+
+### Common Commands
+
+- `just check` runs formatting, `cargo check`, clippy, docs, and the no_std matrix.
+- `just test` runs the main nextest suite.
+- `just test-miri`, `just test-fuzz`, and `just test-proptests` cover deeper correctness.
+- `just bench` and `just bench-native` drive the benchmark pipeline.
+
+### Arithmetic Discipline
+
+- Use `strict_*` for counters, lengths, indices, offsets, and shifts.
+- Use `wrapping_*` only for intentional modular arithmetic.
+- Avoid `saturating_*` unless saturation is the explicit algorithmic requirement.
+
 ## Algorithms
 
 ### Checksums
@@ -99,7 +122,7 @@ XXH3-64, XXH3-128, RapidHash-64, RapidHash-128.
 ## Contributing
 
 For perf-gap work on Blake3, start with `just bench-blake3-core`.
-Runner/architecture policy for CI and benchmarking is pinned in `ARCHITECTURE_MATRIX.md`.
+Run `just check` and `just test` before sending changes for review.
 
 ## License
 
