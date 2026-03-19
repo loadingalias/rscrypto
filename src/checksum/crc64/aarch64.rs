@@ -11,8 +11,7 @@
 #![allow(dead_code)] // Kernels wired up via dispatcher
 // SAFETY: All indexing is over fixed-size arrays with in-bounds constant indices.
 #![allow(clippy::indexing_slicing)]
-// This module is intrinsics-heavy; keep unsafe blocks readable.
-#![allow(unsafe_op_in_unsafe_fn)]
+// This module is intrinsics-heavy; unsafe blocks are per-function with SAFETY justifications.
 
 use core::{
   arch::aarch64::*,
@@ -32,6 +31,7 @@ impl Simd {
   #[inline]
   #[target_feature(enable = "neon", enable = "aes")]
   unsafe fn from_mul(a: poly64_t, b: poly64_t) -> Self {
+    // SAFETY: Caller guarantees NEON+AES (PMULL) is available. Intrinsics operate on registers.
     let mul = vmull_p64(a, b);
     Self(vreinterpretq_u8_p128(mul))
   }
@@ -39,6 +39,7 @@ impl Simd {
   #[inline]
   #[target_feature(enable = "neon", enable = "aes")]
   unsafe fn into_poly64s(self) -> [poly64_t; 2] {
+    // SAFETY: Caller guarantees NEON+AES is available. Intrinsics operate on registers.
     let x = vreinterpretq_p64_u8(self.0);
     [vgetq_lane_p64(x, 0), vgetq_lane_p64(x, 1)]
   }
@@ -46,6 +47,7 @@ impl Simd {
   #[inline]
   #[target_feature(enable = "neon", enable = "aes")]
   unsafe fn high_64(self) -> poly64_t {
+    // SAFETY: Caller guarantees NEON+AES is available. Intrinsics operate on registers.
     let x = vreinterpretq_p64_u8(self.0);
     vgetq_lane_p64(x, 1)
   }
@@ -53,6 +55,7 @@ impl Simd {
   #[inline]
   #[target_feature(enable = "neon", enable = "aes")]
   unsafe fn low_64(self) -> poly64_t {
+    // SAFETY: Caller guarantees NEON+AES is available. Intrinsics operate on registers.
     let x = vreinterpretq_p64_u8(self.0);
     vgetq_lane_p64(x, 0)
   }
@@ -60,6 +63,7 @@ impl Simd {
   #[inline]
   #[target_feature(enable = "neon")]
   unsafe fn new(high: u64, low: u64) -> Self {
+    // SAFETY: Caller guarantees NEON is available. Intrinsics operate on registers.
     Self(vcombine_u8(vcreate_u8(low), vcreate_u8(high)))
   }
 
@@ -67,11 +71,14 @@ impl Simd {
   #[inline]
   #[target_feature(enable = "neon", enable = "aes")]
   unsafe fn fold_16(self, coeff: Self) -> Self {
-    let [x0, x1] = self.into_poly64s();
-    let [c0, c1] = coeff.into_poly64s();
-    let h = Self::from_mul(c0, x0);
-    let l = Self::from_mul(c1, x1);
-    h ^ l
+    // SAFETY: Caller guarantees NEON+AES (PMULL) is available. All operations are register computations.
+    unsafe {
+      let [x0, x1] = self.into_poly64s();
+      let [c0, c1] = coeff.into_poly64s();
+      let h = Self::from_mul(c0, x0);
+      let l = Self::from_mul(c1, x1);
+      h ^ l
+    }
   }
 
   /// Fold 16 bytes using pre-extracted coefficient halves (low, high).
@@ -81,30 +88,39 @@ impl Simd {
   #[inline]
   #[target_feature(enable = "neon", enable = "aes")]
   unsafe fn fold_16_pair(self, coeff_low: poly64_t, coeff_high: poly64_t) -> Self {
-    let [x0, x1] = self.into_poly64s();
-    let h = Self::from_mul(coeff_low, x0);
-    let l = Self::from_mul(coeff_high, x1);
-    h ^ l
+    // SAFETY: Caller guarantees NEON+AES (PMULL) is available. All operations are register computations.
+    unsafe {
+      let [x0, x1] = self.into_poly64s();
+      let h = Self::from_mul(coeff_low, x0);
+      let l = Self::from_mul(coeff_high, x1);
+      h ^ l
+    }
   }
 
   /// Fold 8 bytes: `self.high ⊕ (coeff ⊗ self.low)`.
   #[inline]
   #[target_feature(enable = "neon", enable = "aes")]
   unsafe fn fold_8(self, coeff: u64) -> Self {
-    let [x0, x1] = self.into_poly64s();
-    let h = Self::from_mul(coeff, x0);
-    let l = Self::new(0, x1);
-    h ^ l
+    // SAFETY: Caller guarantees NEON+AES (PMULL) is available. All operations are register computations.
+    unsafe {
+      let [x0, x1] = self.into_poly64s();
+      let h = Self::from_mul(coeff, x0);
+      let l = Self::new(0, x1);
+      h ^ l
+    }
   }
 
   /// Barrett reduction to finalize the CRC.
   #[inline]
   #[target_feature(enable = "neon", enable = "aes")]
   unsafe fn barrett(self, poly: u64, mu: u64) -> u64 {
-    let t1 = Self::from_mul(self.low_64(), mu).low_64();
-    let l = Self::from_mul(t1, poly);
-    let reduced = (self ^ l).high_64();
-    reduced ^ t1
+    // SAFETY: Caller guarantees NEON+AES (PMULL) is available. All operations are register computations.
+    unsafe {
+      let t1 = Self::from_mul(self.low_64(), mu).low_64();
+      let l = Self::from_mul(t1, poly);
+      let reduced = (self ^ l).high_64();
+      reduced ^ t1
+    }
   }
 }
 
@@ -127,6 +143,10 @@ impl BitXorAssign for Simd {
 
 #[target_feature(enable = "aes", enable = "neon")]
 unsafe fn update_simd(state: u64, first: &[Simd; 8], rest: &[[Simd; 8]], consts: &Crc64ClmulConstants) -> u64 {
+  // SAFETY: Caller guarantees NEON+AES (PMULL) target features are available (dispatch check).
+  // All fold operations are pure register computations via PMULL.
+  // Block iteration is bounded by the slice length; no out-of-bounds access.
+  unsafe {
   let mut x = *first;
 
   // XOR the initial CRC into the first lane.
@@ -140,10 +160,14 @@ unsafe fn update_simd(state: u64, first: &[Simd; 8], rest: &[[Simd; 8]], consts:
   }
 
   fold_tail(x, consts)
+  } // unsafe
 }
 
 #[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
 unsafe fn update_simd_eor3(state: u64, first: &[Simd; 8], rest: &[[Simd; 8]], consts: &Crc64ClmulConstants) -> u64 {
+  // SAFETY: Caller guarantees NEON+AES+SHA3 (PMULL+EOR3) target features are available (dispatch check).
+  // All fold operations are pure register computations.
+  unsafe {
   let mut x = *first;
 
   // XOR the initial CRC into the first lane.
@@ -157,10 +181,15 @@ unsafe fn update_simd_eor3(state: u64, first: &[Simd; 8], rest: &[[Simd; 8]], co
   }
 
   fold_tail(x, consts)
+  } // unsafe
 }
 
 #[inline(always)]
 unsafe fn fold_tail(x: [Simd; 8], consts: &Crc64ClmulConstants) -> u64 {
+  // SAFETY: Caller guarantees NEON+AES (PMULL) target features are available (dispatch check).
+  // All fold/barrett calls are pure register computations.
+  // Array indexing is over fixed-size [Simd; 8] with constant indices 0..7.
+  unsafe {
   // Tail reduction (8×16B → 1×16B), unrolled for throughput.
   let c0 = Simd::new(consts.tail_fold_16b[0].0, consts.tail_fold_16b[0].1);
   let c1 = Simd::new(consts.tail_fold_16b[1].0, consts.tail_fold_16b[1].1);
@@ -180,6 +209,7 @@ unsafe fn fold_tail(x: [Simd; 8], consts: &Crc64ClmulConstants) -> u64 {
   acc ^= x[6].fold_16(c6);
 
   acc.fold_8(consts.fold_8b).barrett(consts.poly, consts.mu)
+  } // unsafe
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -189,6 +219,8 @@ unsafe fn fold_tail(x: [Simd; 8], consts: &Crc64ClmulConstants) -> u64 {
 #[inline]
 #[target_feature(enable = "aes", enable = "neon")]
 unsafe fn fold_block_128(x: &mut [Simd; 8], chunk: &[Simd; 8], coeff_low: u64, coeff_high: u64) {
+  // SAFETY: Caller guarantees NEON+AES (PMULL) is available. All fold_16_pair calls are register computations.
+  unsafe {
   x[0] = chunk[0] ^ x[0].fold_16_pair(coeff_low, coeff_high);
   x[1] = chunk[1] ^ x[1].fold_16_pair(coeff_low, coeff_high);
   x[2] = chunk[2] ^ x[2].fold_16_pair(coeff_low, coeff_high);
@@ -197,6 +229,7 @@ unsafe fn fold_block_128(x: &mut [Simd; 8], chunk: &[Simd; 8], coeff_low: u64, c
   x[5] = chunk[5] ^ x[5].fold_16_pair(coeff_low, coeff_high);
   x[6] = chunk[6] ^ x[6].fold_16_pair(coeff_low, coeff_high);
   x[7] = chunk[7] ^ x[7].fold_16_pair(coeff_low, coeff_high);
+  } // unsafe
 }
 
 /// Fold a 128-byte block using EOR3 (3-way XOR in one instruction).
@@ -206,6 +239,8 @@ unsafe fn fold_block_128(x: &mut [Simd; 8], chunk: &[Simd; 8], coeff_low: u64, c
 #[inline]
 #[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
 unsafe fn fold_block_128_eor3(x: &mut [Simd; 8], chunk: &[Simd; 8], coeff_low: u64, coeff_high: u64) {
+  // SAFETY: Caller guarantees NEON+AES+SHA3 (PMULL+EOR3) is available. All operations are register computations.
+  unsafe {
   x[0] = fold_lane_eor3(x[0], chunk[0], coeff_low, coeff_high);
   x[1] = fold_lane_eor3(x[1], chunk[1], coeff_low, coeff_high);
   x[2] = fold_lane_eor3(x[2], chunk[2], coeff_low, coeff_high);
@@ -214,6 +249,7 @@ unsafe fn fold_block_128_eor3(x: &mut [Simd; 8], chunk: &[Simd; 8], coeff_low: u
   x[5] = fold_lane_eor3(x[5], chunk[5], coeff_low, coeff_high);
   x[6] = fold_lane_eor3(x[6], chunk[6], coeff_low, coeff_high);
   x[7] = fold_lane_eor3(x[7], chunk[7], coeff_low, coeff_high);
+  } // unsafe
 }
 
 /// Fold a single 16-byte lane using EOR3.
@@ -223,11 +259,14 @@ unsafe fn fold_block_128_eor3(x: &mut [Simd; 8], chunk: &[Simd; 8], coeff_low: u
 #[inline]
 #[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
 unsafe fn fold_lane_eor3(x: Simd, data: Simd, coeff_low: poly64_t, coeff_high: poly64_t) -> Simd {
-  let [x0, x1] = x.into_poly64s();
-  let h = Simd::from_mul(coeff_low, x0);
-  let l = Simd::from_mul(coeff_high, x1);
-  // EOR3: 3-way XOR in one instruction (ARMv8.2-SHA3)
-  Simd(veor3q_u8(data.0, h.0, l.0))
+  // SAFETY: Caller guarantees NEON+AES+SHA3 (PMULL+EOR3) is available. All operations are register computations.
+  unsafe {
+    let [x0, x1] = x.into_poly64s();
+    let h = Simd::from_mul(coeff_low, x0);
+    let l = Simd::from_mul(coeff_high, x1);
+    // EOR3: 3-way XOR in one instruction (ARMv8.2-SHA3)
+    Simd(veor3q_u8(data.0, h.0, l.0))
+  }
 }
 
 #[target_feature(enable = "aes", enable = "neon")]
@@ -237,6 +276,9 @@ unsafe fn update_simd_2way(
   fold_256b: (u64, u64),
   consts: &Crc64ClmulConstants,
 ) -> u64 {
+  // SAFETY: Caller guarantees NEON+AES (PMULL) target features are available (dispatch check).
+  // All fold operations are pure register computations. Loop indices stay within slice bounds.
+  unsafe {
   use crate::checksum::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
 
   debug_assert!(blocks.len() >= 2);
@@ -303,6 +345,7 @@ unsafe fn update_simd_2way(
   }
 
   fold_tail(combined, consts)
+  } // unsafe
 }
 
 #[target_feature(enable = "aes", enable = "neon")]
@@ -313,6 +356,9 @@ unsafe fn update_simd_3way(
   fold_256b: (u64, u64),
   consts: &Crc64ClmulConstants,
 ) -> u64 {
+  // SAFETY: Caller guarantees NEON+AES (PMULL) target features are available (dispatch check).
+  // All fold operations are pure register computations. Loop indices stay within slice bounds.
+  unsafe {
   use crate::checksum::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
 
   if blocks.len() < 3 {
@@ -399,6 +445,7 @@ unsafe fn update_simd_3way(
   }
 
   fold_tail(combined, consts)
+  } // unsafe
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -417,6 +464,9 @@ unsafe fn update_simd_eor3_2way(
   fold_256b: (u64, u64),
   consts: &Crc64ClmulConstants,
 ) -> u64 {
+  // SAFETY: Caller guarantees NEON+AES+SHA3 (PMULL+EOR3) target features are available (dispatch check).
+  // All fold operations are pure register computations. Loop indices stay within slice bounds.
+  unsafe {
   use crate::checksum::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
 
   debug_assert!(blocks.len() >= 2);
@@ -486,6 +536,7 @@ unsafe fn update_simd_eor3_2way(
   }
 
   fold_tail(combined, consts)
+  } // unsafe
 }
 
 /// 3-way striping with EOR3 folding.
@@ -501,6 +552,9 @@ unsafe fn update_simd_eor3_3way(
   fold_256b: (u64, u64),
   consts: &Crc64ClmulConstants,
 ) -> u64 {
+  // SAFETY: Caller guarantees NEON+AES+SHA3 (PMULL+EOR3) target features are available (dispatch check).
+  // All fold operations are pure register computations. Loop indices stay within slice bounds.
+  unsafe {
   use crate::checksum::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
 
   if blocks.len() < 3 {
@@ -590,6 +644,7 @@ unsafe fn update_simd_eor3_3way(
   }
 
   fold_tail(combined, consts)
+  } // unsafe
 }
 
 #[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
@@ -600,14 +655,17 @@ unsafe fn crc64_pmull_eor3_2way(
   consts: &Crc64ClmulConstants,
   tables: &[[u64; 256]; 8],
 ) -> u64 {
-  let (left, middle, right) = bytes.align_to::<[Simd; 8]>();
-  if middle.len() < 2 {
-    return crc64_pmull_eor3(state, bytes, consts, tables);
-  }
+  // SAFETY: Caller guarantees NEON+AES+SHA3 is available. align_to produces valid sub-slices.
+  unsafe {
+    let (left, middle, right) = bytes.align_to::<[Simd; 8]>();
+    if middle.len() < 2 {
+      return crc64_pmull_eor3(state, bytes, consts, tables);
+    }
 
-  state = super::portable::crc64_slice8(state, left, tables);
-  state = update_simd_eor3_2way(state, middle, fold_256b, consts);
-  super::portable::crc64_slice8(state, right, tables)
+    state = super::portable::crc64_slice8(state, left, tables);
+    state = update_simd_eor3_2way(state, middle, fold_256b, consts);
+    super::portable::crc64_slice8(state, right, tables)
+  }
 }
 
 #[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
@@ -619,14 +677,17 @@ unsafe fn crc64_pmull_eor3_3way(
   consts: &Crc64ClmulConstants,
   tables: &[[u64; 256]; 8],
 ) -> u64 {
-  let (left, middle, right) = bytes.align_to::<[Simd; 8]>();
-  if middle.len() < 3 {
-    return crc64_pmull_eor3_2way(state, bytes, fold_256b, consts, tables);
-  }
+  // SAFETY: Caller guarantees NEON+AES+SHA3 is available. align_to produces valid sub-slices.
+  unsafe {
+    let (left, middle, right) = bytes.align_to::<[Simd; 8]>();
+    if middle.len() < 3 {
+      return crc64_pmull_eor3_2way(state, bytes, fold_256b, consts, tables);
+    }
 
-  state = super::portable::crc64_slice8(state, left, tables);
-  state = update_simd_eor3_3way(state, middle, fold_384b, fold_256b, consts);
-  super::portable::crc64_slice8(state, right, tables)
+    state = super::portable::crc64_slice8(state, left, tables);
+    state = update_simd_eor3_3way(state, middle, fold_384b, fold_256b, consts);
+    super::portable::crc64_slice8(state, right, tables)
+  }
 }
 
 #[target_feature(enable = "aes", enable = "neon")]
@@ -637,14 +698,17 @@ unsafe fn crc64_pmull_2way(
   consts: &Crc64ClmulConstants,
   tables: &[[u64; 256]; 8],
 ) -> u64 {
-  let (left, middle, right) = bytes.align_to::<[Simd; 8]>();
-  if middle.len() < 2 {
-    return crc64_pmull(state, bytes, consts, tables);
-  }
+  // SAFETY: Caller guarantees NEON+AES (PMULL) is available. align_to produces valid sub-slices.
+  unsafe {
+    let (left, middle, right) = bytes.align_to::<[Simd; 8]>();
+    if middle.len() < 2 {
+      return crc64_pmull(state, bytes, consts, tables);
+    }
 
-  state = super::portable::crc64_slice8(state, left, tables);
-  state = update_simd_2way(state, middle, fold_256b, consts);
-  super::portable::crc64_slice8(state, right, tables)
+    state = super::portable::crc64_slice8(state, left, tables);
+    state = update_simd_2way(state, middle, fold_256b, consts);
+    super::portable::crc64_slice8(state, right, tables)
+  }
 }
 
 #[target_feature(enable = "aes", enable = "neon")]
@@ -656,25 +720,31 @@ unsafe fn crc64_pmull_3way(
   consts: &Crc64ClmulConstants,
   tables: &[[u64; 256]; 8],
 ) -> u64 {
-  let (left, middle, right) = bytes.align_to::<[Simd; 8]>();
-  if middle.len() < 3 {
-    return crc64_pmull_2way(state, bytes, fold_256b, consts, tables);
-  }
+  // SAFETY: Caller guarantees NEON+AES (PMULL) is available. align_to produces valid sub-slices.
+  unsafe {
+    let (left, middle, right) = bytes.align_to::<[Simd; 8]>();
+    if middle.len() < 3 {
+      return crc64_pmull_2way(state, bytes, fold_256b, consts, tables);
+    }
 
-  state = super::portable::crc64_slice8(state, left, tables);
-  state = update_simd_3way(state, middle, fold_384b, fold_256b, consts);
-  super::portable::crc64_slice8(state, right, tables)
+    state = super::portable::crc64_slice8(state, left, tables);
+    state = update_simd_3way(state, middle, fold_384b, fold_256b, consts);
+    super::portable::crc64_slice8(state, right, tables)
+  }
 }
 
 #[target_feature(enable = "aes", enable = "neon")]
 unsafe fn crc64_pmull(mut state: u64, bytes: &[u8], consts: &Crc64ClmulConstants, tables: &[[u64; 256]; 8]) -> u64 {
-  let (left, middle, right) = bytes.align_to::<[Simd; 8]>();
-  if let Some((first, rest)) = middle.split_first() {
-    state = super::portable::crc64_slice8(state, left, tables);
-    state = update_simd(state, first, rest, consts);
-    super::portable::crc64_slice8(state, right, tables)
-  } else {
-    super::portable::crc64_slice8(state, bytes, tables)
+  // SAFETY: Caller guarantees NEON+AES (PMULL) is available. align_to produces valid sub-slices.
+  unsafe {
+    let (left, middle, right) = bytes.align_to::<[Simd; 8]>();
+    if let Some((first, rest)) = middle.split_first() {
+      state = super::portable::crc64_slice8(state, left, tables);
+      state = update_simd(state, first, rest, consts);
+      super::portable::crc64_slice8(state, right, tables)
+    } else {
+      super::portable::crc64_slice8(state, bytes, tables)
+    }
   }
 }
 
@@ -688,13 +758,16 @@ unsafe fn crc64_pmull_eor3(
   consts: &Crc64ClmulConstants,
   tables: &[[u64; 256]; 8],
 ) -> u64 {
-  let (left, middle, right) = bytes.align_to::<[Simd; 8]>();
-  if let Some((first, rest)) = middle.split_first() {
-    state = super::portable::crc64_slice8(state, left, tables);
-    state = update_simd_eor3(state, first, rest, consts);
-    super::portable::crc64_slice8(state, right, tables)
-  } else {
-    super::portable::crc64_slice8(state, bytes, tables)
+  // SAFETY: Caller guarantees NEON+AES+SHA3 is available. align_to produces valid sub-slices.
+  unsafe {
+    let (left, middle, right) = bytes.align_to::<[Simd; 8]>();
+    if let Some((first, rest)) = middle.split_first() {
+      state = super::portable::crc64_slice8(state, left, tables);
+      state = update_simd_eor3(state, first, rest, consts);
+      super::portable::crc64_slice8(state, right, tables)
+    } else {
+      super::portable::crc64_slice8(state, bytes, tables)
+    }
   }
 }
 
@@ -709,30 +782,34 @@ unsafe fn crc64_pmull_small(
   consts: &Crc64ClmulConstants,
   tables: &[[u64; 256]; 8],
 ) -> u64 {
-  let (left, middle, right) = bytes.align_to::<Simd>();
+  // SAFETY: Caller guarantees NEON+AES (PMULL) is available. align_to produces valid sub-slices.
+  // All fold/barrett operations are pure register computations.
+  unsafe {
+    let (left, middle, right) = bytes.align_to::<Simd>();
 
-  // Prefix: portable until 16B alignment.
-  state = super::portable::crc64_slice8(state, left, tables);
+    // Prefix: portable until 16B alignment.
+    state = super::portable::crc64_slice8(state, left, tables);
 
-  // If we don't have any full 16B lane, finish portably.
-  let Some((first, rest)) = middle.split_first() else {
-    return super::portable::crc64_slice8(state, right, tables);
-  };
+    // If we don't have any full 16B lane, finish portably.
+    let Some((first, rest)) = middle.split_first() else {
+      return super::portable::crc64_slice8(state, right, tables);
+    };
 
-  let mut acc = *first;
-  acc ^= Simd::new(0, state);
+    let mut acc = *first;
+    acc ^= Simd::new(0, state);
 
-  // Shift-by-16B folding coefficient (K_127, K_191).
-  let coeff_16b_low = consts.tail_fold_16b[6].1;
-  let coeff_16b_high = consts.tail_fold_16b[6].0;
+    // Shift-by-16B folding coefficient (K_127, K_191).
+    let coeff_16b_low = consts.tail_fold_16b[6].1;
+    let coeff_16b_high = consts.tail_fold_16b[6].0;
 
-  for chunk in rest {
-    acc = *chunk ^ acc.fold_16_pair(coeff_16b_low, coeff_16b_high);
+    for chunk in rest {
+      acc = *chunk ^ acc.fold_16_pair(coeff_16b_low, coeff_16b_high);
+    }
+
+    // Reduce 16B → 8B → u64, then finish any tail bytes portably.
+    state = acc.fold_8(consts.fold_8b).barrett(consts.poly, consts.mu);
+    super::portable::crc64_slice8(state, right, tables)
   }
-
-  // Reduce 16B → 8B → u64, then finish any tail bytes portably.
-  state = acc.fold_8(consts.fold_8b).barrett(consts.poly, consts.mu);
-  super::portable::crc64_slice8(state, right, tables)
 }
 
 /// CRC-64-XZ using PMULL folding.
