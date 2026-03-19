@@ -1029,6 +1029,34 @@ mod tests {
   }
 
   #[test]
+  fn test_streaming_resume_xz() {
+    let data = b"The quick brown fox jumps over the lazy dog";
+    let oneshot = Crc64::checksum(data);
+
+    for &split in &[1, data.len() / 4, data.len() / 2, data.len().strict_sub(1)] {
+      let (a, b) = data.split_at(split);
+      let crc_a = Crc64::checksum(a);
+      let mut resumed = Crc64::resume(crc_a);
+      resumed.update(b);
+      assert_eq!(resumed.finalize(), oneshot, "Crc64Xz resume failed at split={split}");
+    }
+  }
+
+  #[test]
+  fn test_streaming_resume_nvme() {
+    let data = b"The quick brown fox jumps over the lazy dog";
+    let oneshot = Crc64Nvme::checksum(data);
+
+    for &split in &[1, data.len() / 4, data.len() / 2, data.len().strict_sub(1)] {
+      let (a, b) = data.split_at(split);
+      let crc_a = Crc64Nvme::checksum(a);
+      let mut resumed = Crc64Nvme::resume(crc_a);
+      resumed.update(b);
+      assert_eq!(resumed.finalize(), oneshot, "Crc64Nvme resume failed at split={split}");
+    }
+  }
+
+  #[test]
   fn test_crc64_combine_all_splits() {
     for split in 0..=TEST_DATA.len() {
       let (a, b) = TEST_DATA.split_at(split);
@@ -1389,25 +1417,8 @@ mod tests {
     use crate::checksum::common::{
       reference::crc64_bitwise,
       tables::{CRC64_NVME_POLY, CRC64_XZ_POLY},
+      tests::{STREAMING_CHUNK_SIZES, TEST_LENGTHS},
     };
-
-    /// Comprehensive test lengths covering all edge cases.
-    const TEST_LENGTHS: &[usize] = &[
-      // Empty
-      0, // Single bytes
-      1, // Small lengths (portable path)
-      2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, // SIMD lane boundaries (16 bytes)
-      16, 17, 31, 32, 33, // Near 64-byte boundaries
-      63, 64, 65, // Near 128-byte fold block boundaries
-      127, 128, 129, // Near 256-byte boundaries (VPCLMUL threshold)
-      255, 256, 257, // Near 512-byte boundaries
-      511, 512, 513, // Larger sizes for multi-stream kernels
-      1023, 1024, 1025, 2047, 2048, 2049, 4095, 4096, 4097, // Very large (exercises 8-way and 4x512 kernels)
-      8192, 16384, 32768, 65536,
-    ];
-
-    /// Prime-sized chunk patterns for streaming tests.
-    const STREAMING_CHUNK_SIZES: &[usize] = &[1, 3, 7, 13, 17, 31, 37, 61, 127, 251];
 
     /// Generate deterministic test data of given length.
     fn generate_test_data(len: usize) -> Vec<u8> {
@@ -1679,3 +1690,8 @@ mod tests {
     }
   }
 }
+
+#[cfg(test)]
+crate::define_crc_property_tests!(crc64_xz_props, Crc64);
+#[cfg(test)]
+crate::define_crc_property_tests!(crc64_nvme_props, Crc64Nvme);

@@ -789,14 +789,29 @@ mod tests {
   #[test]
   fn test_streaming_resume_ibm() {
     let data = b"The quick brown fox jumps over the lazy dog";
-    let mid = data.len() / 2;
-    let (a, b) = data.split_at(mid);
     let oneshot = Crc16Ibm::checksum(data);
 
-    let crc_a = Crc16Ibm::checksum(a);
-    let mut resumed = Crc16Ibm::resume(crc_a);
-    resumed.update(b);
-    assert_eq!(resumed.finalize(), oneshot);
+    for &split in &[1, data.len() / 4, data.len() / 2, data.len().strict_sub(1)] {
+      let (a, b) = data.split_at(split);
+      let crc_a = Crc16Ibm::checksum(a);
+      let mut resumed = Crc16Ibm::resume(crc_a);
+      resumed.update(b);
+      assert_eq!(resumed.finalize(), oneshot, "Crc16Ibm resume failed at split={split}");
+    }
+  }
+
+  #[test]
+  fn test_streaming_resume_ccitt() {
+    let data = b"The quick brown fox jumps over the lazy dog";
+    let oneshot = Crc16Ccitt::checksum(data);
+
+    for &split in &[1, data.len() / 4, data.len() / 2, data.len().strict_sub(1)] {
+      let (a, b) = data.split_at(split);
+      let crc_a = Crc16Ccitt::checksum(a);
+      let mut resumed = Crc16Ccitt::resume(crc_a);
+      resumed.update(b);
+      assert_eq!(resumed.finalize(), oneshot, "Crc16Ccitt resume failed at split={split}");
+    }
   }
 
   #[cfg(feature = "alloc")]
@@ -832,36 +847,10 @@ mod tests {
 
 #[cfg(test)]
 mod cross_check {
-  extern crate alloc;
   extern crate std;
 
-  use alloc::vec::Vec;
-
   use super::*;
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // Test Data Generation
-  // ─────────────────────────────────────────────────────────────────────────
-
-  /// Lengths covering SIMD boundaries, alignment edges, and common sizes.
-  const TEST_LENGTHS: &[usize] = &[
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, // Tiny
-    16, 17, 31, 32, 33, 63, 64, 65, // SSE/NEON boundaries
-    127, 128, 129, 255, 256, 257, // Cache line boundaries
-    511, 512, 513, 1023, 1024, 1025, // Larger buffers
-    2047, 2048, 2049, 4095, 4096, 4097, // Page boundaries
-    8192, 16384, 32768, 65536, // Large buffers
-  ];
-
-  /// Chunk sizes for streaming tests.
-  const STREAMING_CHUNK_SIZES: &[usize] = &[1, 3, 7, 13, 17, 31, 37, 61, 127, 251];
-
-  /// Generate deterministic test data of a given length.
-  fn generate_test_data(len: usize) -> Vec<u8> {
-    (0..len)
-      .map(|i| (i as u64).wrapping_mul(17).wrapping_add(i as u64) as u8)
-      .collect()
-  }
+  use crate::checksum::common::tests::{STREAMING_CHUNK_SIZES, TEST_LENGTHS, generate_test_data};
 
   // ─────────────────────────────────────────────────────────────────────────
   // CRC-16/CCITT Cross-Check Tests
@@ -1069,3 +1058,8 @@ mod cross_check {
     }
   }
 }
+
+#[cfg(test)]
+crate::define_crc_property_tests!(crc16_ccitt_props, Crc16Ccitt);
+#[cfg(test)]
+crate::define_crc_property_tests!(crc16_ibm_props, Crc16Ibm);
