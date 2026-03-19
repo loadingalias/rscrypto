@@ -29,7 +29,8 @@
 //! baselines inform updates, but there is no separate generated source of
 //! truth anymore.
 
-#![allow(dead_code)] // Tables for non-current architectures
+// Per-item `#[allow(dead_code)]` is used on `KernelSet` (construction helper)
+// and arch-gated table modules (tables for non-current architectures).
 
 use crate::{
   checksum::dispatchers::{Crc16Fn, Crc24Fn, Crc32Fn, Crc64Fn},
@@ -74,7 +75,7 @@ pub fn active_table() -> &'static KernelTable {
 #[inline]
 pub fn crc64_xz(data: &[u8]) -> u64 {
   let table = active_table();
-  let kernel = table.select_set(data.len()).crc64_xz;
+  let kernel = table.select_fns(data.len()).crc64_xz;
   kernel(!0, data) ^ !0
 }
 
@@ -93,7 +94,7 @@ pub fn crc64_xz(data: &[u8]) -> u64 {
 #[inline]
 pub fn crc64_nvme(data: &[u8]) -> u64 {
   let table = active_table();
-  let kernel = table.select_set(data.len()).crc64_nvme;
+  let kernel = table.select_fns(data.len()).crc64_nvme;
   kernel(!0, data) ^ !0
 }
 
@@ -112,7 +113,7 @@ pub fn crc64_nvme(data: &[u8]) -> u64 {
 #[inline]
 pub fn crc32_ieee(data: &[u8]) -> u32 {
   let table = active_table();
-  let kernel = table.select_set(data.len()).crc32_ieee;
+  let kernel = table.select_fns(data.len()).crc32_ieee;
   kernel(!0, data) ^ !0
 }
 
@@ -131,7 +132,7 @@ pub fn crc32_ieee(data: &[u8]) -> u32 {
 #[inline]
 pub fn crc32c(data: &[u8]) -> u32 {
   let table = active_table();
-  let kernel = table.select_set(data.len()).crc32c;
+  let kernel = table.select_fns(data.len()).crc32c;
   kernel(!0, data) ^ !0
 }
 
@@ -151,7 +152,7 @@ pub fn crc32c(data: &[u8]) -> u32 {
 pub fn crc16_ccitt(data: &[u8]) -> u16 {
   // CCITT: INIT=0xFFFF, XOROUT=0xFFFF
   let table = active_table();
-  let kernel = table.select_set(data.len()).crc16_ccitt;
+  let kernel = table.select_fns(data.len()).crc16_ccitt;
   kernel(0xFFFF, data) ^ 0xFFFF
 }
 
@@ -171,7 +172,7 @@ pub fn crc16_ccitt(data: &[u8]) -> u16 {
 pub fn crc16_ibm(data: &[u8]) -> u16 {
   // IBM: INIT=0x0000, XOROUT=0x0000
   let table = active_table();
-  let kernel = table.select_set(data.len()).crc16_ibm;
+  let kernel = table.select_fns(data.len()).crc16_ibm;
   kernel(0, data)
 }
 
@@ -193,7 +194,7 @@ pub fn crc24_openpgp(data: &[u8]) -> u32 {
   const INIT: u32 = 0x00B7_04CE;
   const MASK: u32 = 0x00FF_FFFF;
   let table = active_table();
-  let kernel = table.select_set(data.len()).crc24_openpgp;
+  let kernel = table.select_fns(data.len()).crc24_openpgp;
   kernel(INIT, data) & MASK
 }
 
@@ -204,171 +205,43 @@ pub fn crc24_openpgp(data: &[u8]) -> u32 {
 /// Compute CRC-64/XZ checksum of multiple buffers treated as one concatenated stream.
 #[inline]
 pub fn crc64_xz_vectored(bufs: &[&[u8]]) -> u64 {
-  let table = active_table();
-  let mut crc: u64 = !0;
-  let mut last_set: *const KernelSet = core::ptr::null();
-  let mut kernel = table.xs.crc64_xz;
-
-  for &buf in bufs {
-    if buf.is_empty() {
-      continue;
-    }
-    let set = table.select_set(buf.len());
-    let set_ptr: *const KernelSet = core::ptr::from_ref(set);
-    if set_ptr != last_set {
-      last_set = set_ptr;
-      kernel = set.crc64_xz;
-    }
-    crc = kernel(crc, buf);
-  }
-
-  crc ^ !0
+  crc_vectored_dispatch!(active_table(), !0u64, crc64_xz, bufs) ^ !0
 }
 
 /// Compute CRC-64/NVME checksum of multiple buffers treated as one concatenated stream.
 #[inline]
 pub fn crc64_nvme_vectored(bufs: &[&[u8]]) -> u64 {
-  let table = active_table();
-  let mut crc: u64 = !0;
-  let mut last_set: *const KernelSet = core::ptr::null();
-  let mut kernel = table.xs.crc64_nvme;
-
-  for &buf in bufs {
-    if buf.is_empty() {
-      continue;
-    }
-    let set = table.select_set(buf.len());
-    let set_ptr: *const KernelSet = core::ptr::from_ref(set);
-    if set_ptr != last_set {
-      last_set = set_ptr;
-      kernel = set.crc64_nvme;
-    }
-    crc = kernel(crc, buf);
-  }
-
-  crc ^ !0
+  crc_vectored_dispatch!(active_table(), !0u64, crc64_nvme, bufs) ^ !0
 }
 
 /// Compute CRC-32 (IEEE) checksum of multiple buffers treated as one concatenated stream.
 #[inline]
 pub fn crc32_ieee_vectored(bufs: &[&[u8]]) -> u32 {
-  let table = active_table();
-  let mut crc: u32 = !0;
-  let mut last_set: *const KernelSet = core::ptr::null();
-  let mut kernel = table.xs.crc32_ieee;
-
-  for &buf in bufs {
-    if buf.is_empty() {
-      continue;
-    }
-    let set = table.select_set(buf.len());
-    let set_ptr: *const KernelSet = core::ptr::from_ref(set);
-    if set_ptr != last_set {
-      last_set = set_ptr;
-      kernel = set.crc32_ieee;
-    }
-    crc = kernel(crc, buf);
-  }
-
-  crc ^ !0
+  crc_vectored_dispatch!(active_table(), !0u32, crc32_ieee, bufs) ^ !0
 }
 
 /// Compute CRC-32C (Castagnoli) checksum of multiple buffers treated as one concatenated stream.
 #[inline]
 pub fn crc32c_vectored(bufs: &[&[u8]]) -> u32 {
-  let table = active_table();
-  let mut crc: u32 = !0;
-  let mut last_set: *const KernelSet = core::ptr::null();
-  let mut kernel = table.xs.crc32c;
-
-  for &buf in bufs {
-    if buf.is_empty() {
-      continue;
-    }
-    let set = table.select_set(buf.len());
-    let set_ptr: *const KernelSet = core::ptr::from_ref(set);
-    if set_ptr != last_set {
-      last_set = set_ptr;
-      kernel = set.crc32c;
-    }
-    crc = kernel(crc, buf);
-  }
-
-  crc ^ !0
+  crc_vectored_dispatch!(active_table(), !0u32, crc32c, bufs) ^ !0
 }
 
 /// Compute CRC-16/CCITT checksum of multiple buffers treated as one concatenated stream.
 #[inline]
 pub fn crc16_ccitt_vectored(bufs: &[&[u8]]) -> u16 {
-  let table = active_table();
-  let mut crc: u16 = 0xFFFF;
-  let mut last_set: *const KernelSet = core::ptr::null();
-  let mut kernel = table.xs.crc16_ccitt;
-
-  for &buf in bufs {
-    if buf.is_empty() {
-      continue;
-    }
-    let set = table.select_set(buf.len());
-    let set_ptr: *const KernelSet = core::ptr::from_ref(set);
-    if set_ptr != last_set {
-      last_set = set_ptr;
-      kernel = set.crc16_ccitt;
-    }
-    crc = kernel(crc, buf);
-  }
-
-  crc ^ 0xFFFF
+  crc_vectored_dispatch!(active_table(), 0xFFFFu16, crc16_ccitt, bufs) ^ 0xFFFF
 }
 
 /// Compute CRC-16/IBM checksum of multiple buffers treated as one concatenated stream.
 #[inline]
 pub fn crc16_ibm_vectored(bufs: &[&[u8]]) -> u16 {
-  let table = active_table();
-  let mut crc: u16 = 0;
-  let mut last_set: *const KernelSet = core::ptr::null();
-  let mut kernel = table.xs.crc16_ibm;
-
-  for &buf in bufs {
-    if buf.is_empty() {
-      continue;
-    }
-    let set = table.select_set(buf.len());
-    let set_ptr: *const KernelSet = core::ptr::from_ref(set);
-    if set_ptr != last_set {
-      last_set = set_ptr;
-      kernel = set.crc16_ibm;
-    }
-    crc = kernel(crc, buf);
-  }
-
-  crc
+  crc_vectored_dispatch!(active_table(), 0u16, crc16_ibm, bufs)
 }
 
 /// Compute CRC-24/OpenPGP checksum of multiple buffers treated as one concatenated stream.
 #[inline]
 pub fn crc24_openpgp_vectored(bufs: &[&[u8]]) -> u32 {
-  const INIT: u32 = 0x00B7_04CE;
-  const MASK: u32 = 0x00FF_FFFF;
-  let table = active_table();
-  let mut crc: u32 = INIT;
-  let mut last_set: *const KernelSet = core::ptr::null();
-  let mut kernel = table.xs.crc24_openpgp;
-
-  for &buf in bufs {
-    if buf.is_empty() {
-      continue;
-    }
-    let set = table.select_set(buf.len());
-    let set_ptr: *const KernelSet = core::ptr::from_ref(set);
-    if set_ptr != last_set {
-      last_set = set_ptr;
-      kernel = set.crc24_openpgp;
-    }
-    crc = kernel(crc, buf);
-  }
-
-  crc & MASK
+  crc_vectored_dispatch!(active_table(), 0x00B7_04CEu32, crc24_openpgp, bufs) & 0x00FF_FFFF
 }
 
 /// `std::io::IoSlice` versions of the vectored one-shot APIs.
@@ -379,171 +252,43 @@ pub mod std_io {
   /// Compute CRC-64/XZ checksum of `IoSlice` buffers treated as one concatenated stream.
   #[inline]
   pub fn crc64_xz_io_slices(bufs: &[std::io::IoSlice<'_>]) -> u64 {
-    let table = active_table();
-    let mut crc: u64 = !0;
-    let mut last_set: *const KernelSet = core::ptr::null();
-    let mut kernel = table.xs.crc64_xz;
-
-    for buf in bufs {
-      if buf.is_empty() {
-        continue;
-      }
-      let set = table.select_set(buf.len());
-      let set_ptr: *const KernelSet = core::ptr::from_ref(set);
-      if set_ptr != last_set {
-        last_set = set_ptr;
-        kernel = set.crc64_xz;
-      }
-      crc = kernel(crc, buf);
-    }
-
-    crc ^ !0
+    crc_vectored_dispatch!(active_table(), !0u64, crc64_xz, bufs) ^ !0
   }
 
   /// Compute CRC-64/NVME checksum of `IoSlice` buffers treated as one concatenated stream.
   #[inline]
   pub fn crc64_nvme_io_slices(bufs: &[std::io::IoSlice<'_>]) -> u64 {
-    let table = active_table();
-    let mut crc: u64 = !0;
-    let mut last_set: *const KernelSet = core::ptr::null();
-    let mut kernel = table.xs.crc64_nvme;
-
-    for buf in bufs {
-      if buf.is_empty() {
-        continue;
-      }
-      let set = table.select_set(buf.len());
-      let set_ptr: *const KernelSet = core::ptr::from_ref(set);
-      if set_ptr != last_set {
-        last_set = set_ptr;
-        kernel = set.crc64_nvme;
-      }
-      crc = kernel(crc, buf);
-    }
-
-    crc ^ !0
+    crc_vectored_dispatch!(active_table(), !0u64, crc64_nvme, bufs) ^ !0
   }
 
   /// Compute CRC-32 (IEEE) checksum of `IoSlice` buffers treated as one concatenated stream.
   #[inline]
   pub fn crc32_ieee_io_slices(bufs: &[std::io::IoSlice<'_>]) -> u32 {
-    let table = active_table();
-    let mut crc: u32 = !0;
-    let mut last_set: *const KernelSet = core::ptr::null();
-    let mut kernel = table.xs.crc32_ieee;
-
-    for buf in bufs {
-      if buf.is_empty() {
-        continue;
-      }
-      let set = table.select_set(buf.len());
-      let set_ptr: *const KernelSet = core::ptr::from_ref(set);
-      if set_ptr != last_set {
-        last_set = set_ptr;
-        kernel = set.crc32_ieee;
-      }
-      crc = kernel(crc, buf);
-    }
-
-    crc ^ !0
+    crc_vectored_dispatch!(active_table(), !0u32, crc32_ieee, bufs) ^ !0
   }
 
   /// Compute CRC-32C checksum of `IoSlice` buffers treated as one concatenated stream.
   #[inline]
   pub fn crc32c_io_slices(bufs: &[std::io::IoSlice<'_>]) -> u32 {
-    let table = active_table();
-    let mut crc: u32 = !0;
-    let mut last_set: *const KernelSet = core::ptr::null();
-    let mut kernel = table.xs.crc32c;
-
-    for buf in bufs {
-      if buf.is_empty() {
-        continue;
-      }
-      let set = table.select_set(buf.len());
-      let set_ptr: *const KernelSet = core::ptr::from_ref(set);
-      if set_ptr != last_set {
-        last_set = set_ptr;
-        kernel = set.crc32c;
-      }
-      crc = kernel(crc, buf);
-    }
-
-    crc ^ !0
+    crc_vectored_dispatch!(active_table(), !0u32, crc32c, bufs) ^ !0
   }
 
   /// Compute CRC-16/CCITT checksum of `IoSlice` buffers treated as one concatenated stream.
   #[inline]
   pub fn crc16_ccitt_io_slices(bufs: &[std::io::IoSlice<'_>]) -> u16 {
-    let table = active_table();
-    let mut crc: u16 = 0xFFFF;
-    let mut last_set: *const KernelSet = core::ptr::null();
-    let mut kernel = table.xs.crc16_ccitt;
-
-    for buf in bufs {
-      if buf.is_empty() {
-        continue;
-      }
-      let set = table.select_set(buf.len());
-      let set_ptr: *const KernelSet = core::ptr::from_ref(set);
-      if set_ptr != last_set {
-        last_set = set_ptr;
-        kernel = set.crc16_ccitt;
-      }
-      crc = kernel(crc, buf);
-    }
-
-    crc ^ 0xFFFF
+    crc_vectored_dispatch!(active_table(), 0xFFFFu16, crc16_ccitt, bufs) ^ 0xFFFF
   }
 
   /// Compute CRC-16/IBM checksum of `IoSlice` buffers treated as one concatenated stream.
   #[inline]
   pub fn crc16_ibm_io_slices(bufs: &[std::io::IoSlice<'_>]) -> u16 {
-    let table = active_table();
-    let mut crc: u16 = 0;
-    let mut last_set: *const KernelSet = core::ptr::null();
-    let mut kernel = table.xs.crc16_ibm;
-
-    for buf in bufs {
-      if buf.is_empty() {
-        continue;
-      }
-      let set = table.select_set(buf.len());
-      let set_ptr: *const KernelSet = core::ptr::from_ref(set);
-      if set_ptr != last_set {
-        last_set = set_ptr;
-        kernel = set.crc16_ibm;
-      }
-      crc = kernel(crc, buf);
-    }
-
-    crc
+    crc_vectored_dispatch!(active_table(), 0u16, crc16_ibm, bufs)
   }
 
   /// Compute CRC-24/OpenPGP checksum of `IoSlice` buffers treated as one concatenated stream.
   #[inline]
   pub fn crc24_openpgp_io_slices(bufs: &[std::io::IoSlice<'_>]) -> u32 {
-    const INIT: u32 = 0x00B7_04CE;
-    const MASK: u32 = 0x00FF_FFFF;
-    let table = active_table();
-    let mut crc: u32 = INIT;
-    let mut last_set: *const KernelSet = core::ptr::null();
-    let mut kernel = table.xs.crc24_openpgp;
-
-    for buf in bufs {
-      if buf.is_empty() {
-        continue;
-      }
-      let set = table.select_set(buf.len());
-      let set_ptr: *const KernelSet = core::ptr::from_ref(set);
-      if set_ptr != last_set {
-        last_set = set_ptr;
-        kernel = set.crc24_openpgp;
-      }
-      crc = kernel(crc, buf);
-    }
-
-    crc & MASK
+    crc_vectored_dispatch!(active_table(), 0x00B7_04CEu32, crc24_openpgp, bufs) & 0x00FF_FFFF
   }
 }
 
@@ -551,10 +296,52 @@ pub mod std_io {
 // Data Structures
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// All kernel function pointers for one size class.
+/// Hot-path kernel function pointers for one size class (56 bytes, fits one cache line).
 ///
-/// Contains the optimal kernel for each CRC variant at a specific buffer size,
-/// along with human-readable kernel names for introspection.
+/// Contains only the function pointers needed on the dispatch hot path.
+/// Name strings live in the companion [`KernelNameSet`], which is only
+/// touched by cold introspection / diagnostics code.
+#[derive(Clone, Copy)]
+pub struct KernelFnSet {
+  // CRC-16
+  pub crc16_ccitt: Crc16Fn,
+  pub crc16_ibm: Crc16Fn,
+  // CRC-24
+  pub crc24_openpgp: Crc24Fn,
+  // CRC-32
+  pub crc32_ieee: Crc32Fn,
+  pub crc32c: Crc32Fn,
+  // CRC-64
+  pub crc64_xz: Crc64Fn,
+  pub crc64_nvme: Crc64Fn,
+}
+
+/// Cold-path kernel name strings for one size class.
+///
+/// Contains human-readable kernel names for introspection / diagnostics.
+/// Separated from [`KernelFnSet`] so the hot dispatch path never pulls
+/// name data into the cache line.
+#[derive(Clone, Copy)]
+pub struct KernelNameSet {
+  // CRC-16
+  pub crc16_ccitt_name: &'static str,
+  pub crc16_ibm_name: &'static str,
+  // CRC-24
+  pub crc24_openpgp_name: &'static str,
+  // CRC-32
+  pub crc32_ieee_name: &'static str,
+  pub crc32c_name: &'static str,
+  // CRC-64
+  pub crc64_xz_name: &'static str,
+  pub crc64_nvme_name: &'static str,
+}
+
+/// Combined kernel definition for convenient table construction.
+///
+/// Holds both function pointers and name strings. Used in `const`/`static`
+/// table definitions, then split into [`KernelFnSet`] + [`KernelNameSet`]
+/// inside [`KernelTable::from_sets`].
+#[allow(dead_code)] // Construction helper; fields consumed by from_sets at compile time
 #[derive(Clone, Copy)]
 pub struct KernelSet {
   // CRC-16
@@ -577,10 +364,45 @@ pub struct KernelSet {
   pub crc64_nvme_name: &'static str,
 }
 
+#[allow(dead_code)] // Methods consumed at compile time by from_sets / kernel_table!
+impl KernelSet {
+  /// Extract the hot-path function pointer set.
+  #[inline]
+  pub const fn fns(&self) -> KernelFnSet {
+    KernelFnSet {
+      crc16_ccitt: self.crc16_ccitt,
+      crc16_ibm: self.crc16_ibm,
+      crc24_openpgp: self.crc24_openpgp,
+      crc32_ieee: self.crc32_ieee,
+      crc32c: self.crc32c,
+      crc64_xz: self.crc64_xz,
+      crc64_nvme: self.crc64_nvme,
+    }
+  }
+
+  /// Extract the cold-path name set.
+  #[inline]
+  pub const fn names(&self) -> KernelNameSet {
+    KernelNameSet {
+      crc16_ccitt_name: self.crc16_ccitt_name,
+      crc16_ibm_name: self.crc16_ibm_name,
+      crc24_openpgp_name: self.crc24_openpgp_name,
+      crc32_ieee_name: self.crc32_ieee_name,
+      crc32c_name: self.crc32c_name,
+      crc64_xz_name: self.crc64_xz_name,
+      crc64_nvme_name: self.crc64_nvme_name,
+    }
+  }
+}
+
 /// Complete kernel table for one platform.
 ///
 /// Contains pre-selected optimal kernels for each (variant, size_class) pair.
 /// Size class boundaries define when to transition between kernel tiers.
+///
+/// Hot-path function pointers ([`KernelFnSet`]) are stored separately from
+/// cold-path name strings ([`KernelNameSet`]) so the dispatch path fits in
+/// a single cache line per size class.
 #[derive(Clone, Copy)]
 pub struct KernelTable {
   /// Required capabilities for *all* kernels referenced by this table.
@@ -596,28 +418,61 @@ pub struct KernelTable {
   /// - else → use `l` kernels (large: 4KB+)
   pub boundaries: [usize; 3],
 
-  /// Kernels for tiny buffers (0 to xs_max bytes, typically 64B)
-  pub xs: KernelSet,
-  /// Kernels for small buffers (xs_max+1 to s_max bytes, typically 256B)
-  pub s: KernelSet,
-  /// Kernels for medium buffers (s_max+1 to m_max bytes, typically 4KB)
-  pub m: KernelSet,
-  /// Kernels for large buffers (m_max+1+ bytes, 4KB+)
-  pub l: KernelSet,
+  /// Hot-path function pointers per size class: [xs, s, m, l]
+  pub fns: [KernelFnSet; 4],
+  /// Cold-path kernel names per size class: [xs, s, m, l]
+  pub names: [KernelNameSet; 4],
 }
 
+/// Size-class index constants for [`KernelTable::fns`] / [`KernelTable::names`].
+#[allow(dead_code)] // Used inside select_fns / select_names; cfg-gated callers may not exercise all
+const XS: usize = 0;
+#[allow(dead_code)]
+const S: usize = 1;
+#[allow(dead_code)]
+const M: usize = 2;
+#[allow(dead_code)]
+const L: usize = 3;
+
 impl KernelTable {
-  /// Select the kernel set for the given buffer length.
+  /// Construct a `KernelTable` from four [`KernelSet`] definitions, splitting
+  /// function pointers from name strings at compile time.
+  pub const fn from_sets(requires: Caps, boundaries: [usize; 3], xs: KernelSet, s: KernelSet, m: KernelSet, l: KernelSet) -> Self {
+    Self {
+      requires,
+      boundaries,
+      fns: [xs.fns(), s.fns(), m.fns(), l.fns()],
+      names: [xs.names(), s.names(), m.names(), l.names()],
+    }
+  }
+
+  /// Select the hot-path function pointer set for the given buffer length.
   #[inline]
-  pub const fn select_set(&self, len: usize) -> &KernelSet {
+  pub const fn select_fns(&self, len: usize) -> &KernelFnSet {
     if len <= self.boundaries[0] {
-      &self.xs
+      &self.fns[XS]
     } else if len <= self.boundaries[1] {
-      &self.s
+      &self.fns[S]
     } else if len <= self.boundaries[2] {
-      &self.m
+      &self.fns[M]
     } else {
-      &self.l
+      &self.fns[L]
+    }
+  }
+
+  /// Select the cold-path kernel name set for the given buffer length.
+  ///
+  /// Used only for introspection / diagnostics; never called on the hot path.
+  #[inline]
+  pub const fn select_names(&self, len: usize) -> &KernelNameSet {
+    if len <= self.boundaries[0] {
+      &self.names[XS]
+    } else if len <= self.boundaries[1] {
+      &self.names[S]
+    } else if len <= self.boundaries[2] {
+      &self.names[M]
+    } else {
+      &self.names[L]
     }
   }
 
@@ -629,6 +484,25 @@ impl KernelTable {
   pub const fn is_hardware_accelerated(&self) -> bool {
     !self.requires.is_empty()
   }
+}
+
+/// Construct a [`KernelTable`] from the familiar field-label syntax, splitting
+/// function pointers from name strings at compile time.
+///
+/// Accepts the same field layout as the old monolithic `KernelTable { ... }`
+/// struct literal (with `requires`, `boundaries`, `xs`, `s`, `m`, `l` labels),
+/// converting it to `KernelTable::from_sets(...)` under the hood.
+macro_rules! kernel_table {
+  (
+    requires: $req:expr,
+    boundaries: $bounds:expr,
+    xs: $xs:expr,
+    s: $s:expr,
+    m: $m:expr,
+    l: $l:expr $(,)?
+  ) => {
+    KernelTable::from_sets($req, $bounds, $xs, $s, $m, $l)
+  };
 }
 
 /// Returns `true` if the current platform uses hardware-accelerated CRC kernels.
@@ -796,14 +670,14 @@ const PORTABLE_SET: KernelSet = KernelSet {
   crc64_nvme_name: "portable/slice16",
 };
 
-pub static PORTABLE_TABLE: KernelTable = KernelTable {
-  requires: Caps::NONE,
-  boundaries: [64, 256, 4096],
-  xs: PORTABLE_SET,
-  s: PORTABLE_SET,
-  m: PORTABLE_SET,
-  l: PORTABLE_SET,
-};
+pub static PORTABLE_TABLE: KernelTable = KernelTable::from_sets(
+  Caps::NONE,
+  [64, 256, 4096],
+  PORTABLE_SET,
+  PORTABLE_SET,
+  PORTABLE_SET,
+  PORTABLE_SET,
+);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // aarch64 Platform Tables
@@ -870,7 +744,7 @@ mod aarch64_tables {
   //
   // Generated from benchmark-derived dispatch data. Do not edit manually.
   // ───────────────────────────────────────────────────────────────────────────
-  pub static APPLE_M1M3_TABLE: KernelTable = KernelTable {
+  pub static APPLE_M1M3_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::aarch64::CRC_READY
       .union(crate::platform::caps::aarch64::PMULL_EOR3_READY)
       .union(crate::platform::caps::aarch64::PMULL_READY),
@@ -965,7 +839,7 @@ mod aarch64_tables {
   // without SHA3 feature flag - the EOR3 instruction is available through
   // a different path on this hardware.
   // ───────────────────────────────────────────────────────────────────────────
-  pub static GRAVITON2_TABLE: KernelTable = KernelTable {
+  pub static GRAVITON2_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::aarch64::CRC_READY.union(crate::platform::caps::aarch64::PMULL_EOR3_READY),
     boundaries: [64, 256, 4096],
 
@@ -1049,101 +923,105 @@ mod aarch64_tables {
   // - Higher throughput (~25% faster across the board)
   // - Different optimal kernel choices for CRC16@s and CRC64/NVME
   // ───────────────────────────────────────────────────────────────────────────
-  pub static GRAVITON3_TABLE: KernelTable = KernelTable {
-    requires: crate::platform::caps::aarch64::CRC_READY.union(crate::platform::caps::aarch64::PMULL_EOR3_READY),
-    boundaries: [64, 256, 4096],
-
-    xs: KernelSet {
-      crc16_ccitt: crc16_k::CCITT_PMULL_SMALL_KERNEL, // pmull-small @ 8.01 GiB/s
-      crc16_ccitt_name: "aarch64/pmull-small",
-      crc16_ibm: crc16_k::IBM_PMULL_SMALL_KERNEL, // pmull-small @ 7.85 GiB/s
-      crc16_ibm_name: "aarch64/pmull-small",
-      crc24_openpgp: crc24_k::OPENPGP_PMULL_SMALL_KERNEL, // pmull-small @ 6.81 GiB/s
-      crc24_openpgp_name: "aarch64/pmull-small",
-      crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL, // pmull-small @ 10.30 GiB/s
-      crc32_ieee_name: "aarch64/pmull-small",
-      crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL, // pmull-small @ 12.49 GiB/s
-      crc32c_name: "aarch64/pmull-small",
-      crc64_xz: crc64_k::XZ_PMULL_SMALL, // pmull-small @ 7.06 GiB/s
-      crc64_xz_name: "aarch64/pmull-small",
-      crc64_nvme: crc64_k::NVME_PMULL_SMALL, // pmull-small @ 7.06 GiB/s
-      crc64_nvme_name: "aarch64/pmull-small",
-    },
-
-    s: KernelSet {
-      crc16_ccitt: crc16_k::CCITT_PMULL[0], // pmull @ 11.97 GiB/s (G3: pmull beats pmull-small)
-      crc16_ccitt_name: "aarch64/pmull",
-      crc16_ibm: crc16_k::IBM_PMULL[0], // pmull @ 12.01 GiB/s (G3: pmull beats pmull-small)
-      crc16_ibm_name: "aarch64/pmull",
-      crc24_openpgp: crc24_k::OPENPGP_PMULL[0], // pmull @ 14.12 GiB/s
-      crc24_openpgp_name: "aarch64/pmull",
-      crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL, // pmull-small @ 8.66 GiB/s
-      crc32_ieee_name: "aarch64/pmull-small",
-      crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL, // pmull-small @ 8.79 GiB/s
-      crc32c_name: "aarch64/pmull-small",
-      crc64_xz: crc64_k::XZ_PMULL[0], // pmull @ 18.05 GiB/s
-      crc64_xz_name: "aarch64/pmull",
-      crc64_nvme: crc64_k::NVME_PMULL[0], // pmull @ 18.01 GiB/s
-      crc64_nvme_name: "aarch64/pmull",
-    },
-
-    m: KernelSet {
-      crc16_ccitt: crc16_k::CCITT_PMULL_EOR3[0], // PMULL+EOR3 cuts XOR chain in large lanes.
-      crc16_ccitt_name: "aarch64/pmull-eor3",
-      crc16_ibm: crc16_k::IBM_PMULL_EOR3[0], // PMULL+EOR3 cuts XOR chain in large lanes.
-      crc16_ibm_name: "aarch64/pmull-eor3",
-      crc24_openpgp: crc24_k::OPENPGP_PMULL[0], // pmull @ 32.78 GiB/s
-      crc24_openpgp_name: "aarch64/pmull",
-      crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL, // pmull-small @ 31.76 GiB/s
-      crc32_ieee_name: "aarch64/pmull-small",
-      crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL, // pmull-small @ 32.26 GiB/s
-      crc32c_name: "aarch64/pmull-small",
-      crc64_xz: crc64_k::XZ_PMULL[0], // pmull @ 35.34 GiB/s
-      crc64_xz_name: "aarch64/pmull",
-      crc64_nvme: crc64_k::NVME_PMULL[1], // pmull-2way @ 34.60 GiB/s (G3: 2way beats 1way)
-      crc64_nvme_name: "aarch64/pmull-2way",
-    },
-
-    l: KernelSet {
-      crc16_ccitt: g3_crc16_ccitt_l_hybrid,
-      crc16_ccitt_name: "aarch64/pmull-eor3-g3-ccitt-hybrid",
-      crc16_ibm: g3_crc16_ibm_l_hybrid,
-      crc16_ibm_name: "aarch64/pmull-eor3-g3-ibm-hybrid",
-      crc24_openpgp: crc24_k::OPENPGP_PMULL[0], // pmull @ 37.90 GiB/s
-      crc24_openpgp_name: "aarch64/pmull",
-      crc32_ieee: crc32_k::CRC32_PMULL_EOR3[0], // pmull-eor3-v9s3x2e-s3 @ 46.29 GiB/s
-      crc32_ieee_name: "aarch64/pmull-eor3-v9s3x2e-s3",
-      crc32c: crc32_k::CRC32C_PMULL_EOR3[0], // pmull-eor3-v9s3x2e-s3 @ 46.08 GiB/s
-      crc32c_name: "aarch64/pmull-eor3-v9s3x2e-s3",
-      crc64_xz: crc64_k::XZ_PMULL_EOR3[0], // pmull-eor3 @ 38.04 GiB/s
-      crc64_xz_name: "aarch64/pmull-eor3",
-      crc64_nvme: crc64_k::NVME_PMULL_EOR3[0], // pmull-eor3 @ 38.05 GiB/s (G3: eor3 beats pmull)
-      crc64_nvme_name: "aarch64/pmull-eor3",
-    },
+  const G3_XS: KernelSet = KernelSet {
+    crc16_ccitt: crc16_k::CCITT_PMULL_SMALL_KERNEL, // pmull-small @ 8.01 GiB/s
+    crc16_ccitt_name: "aarch64/pmull-small",
+    crc16_ibm: crc16_k::IBM_PMULL_SMALL_KERNEL, // pmull-small @ 7.85 GiB/s
+    crc16_ibm_name: "aarch64/pmull-small",
+    crc24_openpgp: crc24_k::OPENPGP_PMULL_SMALL_KERNEL, // pmull-small @ 6.81 GiB/s
+    crc24_openpgp_name: "aarch64/pmull-small",
+    crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL, // pmull-small @ 10.30 GiB/s
+    crc32_ieee_name: "aarch64/pmull-small",
+    crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL, // pmull-small @ 12.49 GiB/s
+    crc32c_name: "aarch64/pmull-small",
+    crc64_xz: crc64_k::XZ_PMULL_SMALL, // pmull-small @ 7.06 GiB/s
+    crc64_xz_name: "aarch64/pmull-small",
+    crc64_nvme: crc64_k::NVME_PMULL_SMALL, // pmull-small @ 7.06 GiB/s
+    crc64_nvme_name: "aarch64/pmull-small",
   };
+
+  const G3_S: KernelSet = KernelSet {
+    crc16_ccitt: crc16_k::CCITT_PMULL[0], // pmull @ 11.97 GiB/s (G3: pmull beats pmull-small)
+    crc16_ccitt_name: "aarch64/pmull",
+    crc16_ibm: crc16_k::IBM_PMULL[0], // pmull @ 12.01 GiB/s (G3: pmull beats pmull-small)
+    crc16_ibm_name: "aarch64/pmull",
+    crc24_openpgp: crc24_k::OPENPGP_PMULL[0], // pmull @ 14.12 GiB/s
+    crc24_openpgp_name: "aarch64/pmull",
+    crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL, // pmull-small @ 8.66 GiB/s
+    crc32_ieee_name: "aarch64/pmull-small",
+    crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL, // pmull-small @ 8.79 GiB/s
+    crc32c_name: "aarch64/pmull-small",
+    crc64_xz: crc64_k::XZ_PMULL[0], // pmull @ 18.05 GiB/s
+    crc64_xz_name: "aarch64/pmull",
+    crc64_nvme: crc64_k::NVME_PMULL[0], // pmull @ 18.01 GiB/s
+    crc64_nvme_name: "aarch64/pmull",
+  };
+
+  const G3_M: KernelSet = KernelSet {
+    crc16_ccitt: crc16_k::CCITT_PMULL_EOR3[0], // PMULL+EOR3 cuts XOR chain in large lanes.
+    crc16_ccitt_name: "aarch64/pmull-eor3",
+    crc16_ibm: crc16_k::IBM_PMULL_EOR3[0], // PMULL+EOR3 cuts XOR chain in large lanes.
+    crc16_ibm_name: "aarch64/pmull-eor3",
+    crc24_openpgp: crc24_k::OPENPGP_PMULL[0], // pmull @ 32.78 GiB/s
+    crc24_openpgp_name: "aarch64/pmull",
+    crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL, // pmull-small @ 31.76 GiB/s
+    crc32_ieee_name: "aarch64/pmull-small",
+    crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL, // pmull-small @ 32.26 GiB/s
+    crc32c_name: "aarch64/pmull-small",
+    crc64_xz: crc64_k::XZ_PMULL[0], // pmull @ 35.34 GiB/s
+    crc64_xz_name: "aarch64/pmull",
+    crc64_nvme: crc64_k::NVME_PMULL[1], // pmull-2way @ 34.60 GiB/s (G3: 2way beats 1way)
+    crc64_nvme_name: "aarch64/pmull-2way",
+  };
+
+  const G3_L: KernelSet = KernelSet {
+    crc16_ccitt: g3_crc16_ccitt_l_hybrid,
+    crc16_ccitt_name: "aarch64/pmull-eor3-g3-ccitt-hybrid",
+    crc16_ibm: g3_crc16_ibm_l_hybrid,
+    crc16_ibm_name: "aarch64/pmull-eor3-g3-ibm-hybrid",
+    crc24_openpgp: crc24_k::OPENPGP_PMULL[0], // pmull @ 37.90 GiB/s
+    crc24_openpgp_name: "aarch64/pmull",
+    crc32_ieee: crc32_k::CRC32_PMULL_EOR3[0], // pmull-eor3-v9s3x2e-s3 @ 46.29 GiB/s
+    crc32_ieee_name: "aarch64/pmull-eor3-v9s3x2e-s3",
+    crc32c: crc32_k::CRC32C_PMULL_EOR3[0], // pmull-eor3-v9s3x2e-s3 @ 46.08 GiB/s
+    crc32c_name: "aarch64/pmull-eor3-v9s3x2e-s3",
+    crc64_xz: crc64_k::XZ_PMULL_EOR3[0], // pmull-eor3 @ 38.04 GiB/s
+    crc64_xz_name: "aarch64/pmull-eor3",
+    crc64_nvme: crc64_k::NVME_PMULL_EOR3[0], // pmull-eor3 @ 38.05 GiB/s (G3: eor3 beats pmull)
+    crc64_nvme_name: "aarch64/pmull-eor3",
+  };
+
+  pub static GRAVITON3_TABLE: KernelTable = KernelTable::from_sets(
+    crate::platform::caps::aarch64::CRC_READY.union(crate::platform::caps::aarch64::PMULL_EOR3_READY),
+    [64, 256, 4096],
+    G3_XS, G3_S, G3_M, G3_L,
+  );
 
   // ───────────────────────────────────────────────────────────────────────────
   // Graviton4 Table
   //
   // Starts from Graviton3, but keeps 2-way PMULL+EOR3 for CRC16 large classes.
   // ───────────────────────────────────────────────────────────────────────────
-  pub static GRAVITON4_TABLE: KernelTable = KernelTable {
-    m: KernelSet {
+  pub static GRAVITON4_TABLE: KernelTable = KernelTable::from_sets(
+    crate::platform::caps::aarch64::CRC_READY.union(crate::platform::caps::aarch64::PMULL_EOR3_READY),
+    [64, 256, 4096],
+    G3_XS,
+    G3_S,
+    KernelSet {
       crc16_ccitt: crc16_k::CCITT_PMULL_EOR3[1],
       crc16_ccitt_name: "aarch64/pmull-eor3-2way",
       crc16_ibm: crc16_k::IBM_PMULL_EOR3[1],
       crc16_ibm_name: "aarch64/pmull-eor3-2way",
-      ..GRAVITON3_TABLE.m
+      ..G3_M
     },
-    l: KernelSet {
+    KernelSet {
       crc16_ccitt: crc16_k::CCITT_PMULL_EOR3[1],
       crc16_ccitt_name: "aarch64/pmull-eor3-2way",
       crc16_ibm: crc16_k::IBM_PMULL_EOR3[1],
       crc16_ibm_name: "aarch64/pmull-eor3-2way",
-      ..GRAVITON3_TABLE.l
+      ..G3_L
     },
-    ..GRAVITON3_TABLE
-  };
+  );
 
   // ───────────────────────────────────────────────────────────────────────────
   // Generic ARM PMULL+EOR3 Table (conservative)
@@ -1158,7 +1036,7 @@ mod aarch64_tables {
   //
   // For unknown ARM platforms with CRC + PMULL but *without* SHA3/EOR3.
   // ───────────────────────────────────────────────────────────────────────────
-  pub static GENERIC_ARM_PMULL_TABLE: KernelTable = KernelTable {
+  pub static GENERIC_ARM_PMULL_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::aarch64::CRC_READY.union(crate::platform::caps::aarch64::PMULL_READY),
     boundaries: [64, 256, 4096],
 
@@ -1232,7 +1110,7 @@ mod aarch64_tables {
   };
 
   /// PMULL-only table for platforms without the CRC extension.
-  pub static GENERIC_ARM_PMULL_NO_CRC_TABLE: KernelTable = KernelTable {
+  pub static GENERIC_ARM_PMULL_NO_CRC_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::aarch64::PMULL_READY,
     boundaries: [64, 256, 4096],
 
@@ -1306,7 +1184,7 @@ mod aarch64_tables {
   };
 
   /// CRC-only table for platforms without PMULL.
-  pub static GENERIC_ARM_CRC_ONLY_TABLE: KernelTable = KernelTable {
+  pub static GENERIC_ARM_CRC_ONLY_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::aarch64::CRC_READY,
     boundaries: [64, 256, 4096],
 
@@ -1428,7 +1306,7 @@ mod x86_64_tables {
   // Features: VPCLMULQDQ + AVX-512
   // Peak throughputs: CRC-16 ~66 GiB/s, CRC-32C ~66 GiB/s, CRC-64 ~66 GiB/s
   // ───────────────────────────────────────────────────────────────────────────
-  pub static ZEN5_TABLE: KernelTable = KernelTable {
+  pub static ZEN5_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::x86::VPCLMUL_READY
       .union(crate::platform::caps::x86::PCLMUL_READY)
       .union(crate::platform::caps::x86::CRC32C_READY),
@@ -1519,7 +1397,7 @@ mod x86_64_tables {
   //   crc64/xz:    vpclmul, streams=2, 71.56 GiB/s
   //   crc64/nvme:  vpclmul, streams=2, 75.18 GiB/s
   // ───────────────────────────────────────────────────────────────────────────
-  pub static ZEN4_TABLE: KernelTable = KernelTable {
+  pub static ZEN4_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::x86::VPCLMUL_READY
       .union(crate::platform::caps::x86::PCLMUL_READY)
       .union(crate::platform::caps::x86::CRC32C_READY),
@@ -1607,7 +1485,7 @@ mod x86_64_tables {
   //
   // Generated from benchmark-derived dispatch data. Do not edit manually.
   // ───────────────────────────────────────────────────────────────────────────
-  pub static INTEL_SPR_TABLE: KernelTable = KernelTable {
+  pub static INTEL_SPR_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::x86::CRC32C_READY
       .union(crate::platform::caps::x86::PCLMUL_READY)
       .union(crate::platform::caps::x86::VPCLMUL_READY),
@@ -1686,7 +1564,7 @@ mod x86_64_tables {
   //
   // Generated from benchmark-derived dispatch data on an Intel ICL runner using the SPR-class
   // profile. Selected by `prefer_intel_icl_tables` when AMX is absent.
-  pub static INTEL_ICL_TABLE: KernelTable = KernelTable {
+  pub static INTEL_ICL_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::x86::CRC32C_READY
       .union(crate::platform::caps::x86::PCLMUL_READY)
       .union(crate::platform::caps::x86::VPCLMUL_READY),
@@ -1772,7 +1650,7 @@ mod x86_64_tables {
   /// VPCLMUL table that never selects SSE4.2 CRC32C instructions/fusion.
   ///
   /// Use on systems with VPCLMUL but without SSE4.2 (`CRC32C_READY`).
-  pub static GENERIC_X86_VPCLMUL_NO_CRC32C_TABLE: KernelTable = KernelTable {
+  pub static GENERIC_X86_VPCLMUL_NO_CRC32C_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::x86::VPCLMUL_READY.union(crate::platform::caps::x86::PCLMUL_READY),
     boundaries: [64, 256, 4096],
 
@@ -1861,7 +1739,7 @@ mod x86_64_tables {
   //   crc64/xz:    xs=pclmul-small, s=pclmul-small, m=pclmul-4way, l=pclmul
   //   crc64/nvme:  xs=pclmul-small, s=pclmul-small, m=pclmul-2way, l=pclmul-2way
   // ───────────────────────────────────────────────────────────────────────────
-  pub static GENERIC_X86_PCLMUL_TABLE: KernelTable = KernelTable {
+  pub static GENERIC_X86_PCLMUL_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::x86::PCLMUL_READY.union(crate::platform::caps::x86::CRC32C_READY),
     boundaries: [64, 256, 4096],
 
@@ -1937,7 +1815,7 @@ mod x86_64_tables {
   /// PCLMUL table that never selects SSE4.2 CRC32C instructions/fusion.
   ///
   /// Use on systems with PCLMUL but without SSE4.2 (`CRC32C_READY`).
-  pub static GENERIC_X86_PCLMUL_NO_CRC32C_TABLE: KernelTable = KernelTable {
+  pub static GENERIC_X86_PCLMUL_NO_CRC32C_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::x86::PCLMUL_READY,
     boundaries: [64, 256, 4096],
 
@@ -2011,7 +1889,7 @@ mod x86_64_tables {
   };
 
   /// SSE4.2-only table: accelerate CRC32C, keep other variants portable.
-  pub static GENERIC_X86_CRC32C_ONLY_TABLE: KernelTable = KernelTable {
+  pub static GENERIC_X86_CRC32C_ONLY_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::x86::CRC32C_READY,
     boundaries: [64, 256, 4096],
 
@@ -2100,7 +1978,7 @@ mod s390x_tables {
     crc64::kernels::s390x as crc64_k,
   };
 
-  pub static S390X_Z13_TABLE: KernelTable = KernelTable {
+  pub static S390X_Z13_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::s390x::Z13_READY,
     boundaries: [64, 256, 4096],
     xs: PORTABLE_SET,
@@ -2139,7 +2017,7 @@ mod s390x_tables {
     },
   };
 
-  pub static S390X_Z14_TABLE: KernelTable = KernelTable {
+  pub static S390X_Z14_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::s390x::Z13_READY,
     boundaries: [64, 128, 4096],
     xs: PORTABLE_SET,
@@ -2178,7 +2056,7 @@ mod s390x_tables {
     },
   };
 
-  pub static S390X_Z15_TABLE: KernelTable = KernelTable {
+  pub static S390X_Z15_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::s390x::Z13_READY,
     boundaries: [64, 64, 4096],
     xs: PORTABLE_SET,
@@ -2233,7 +2111,7 @@ mod power_tables {
     crc64::kernels::power as crc64_k,
   };
 
-  pub static POWER8_TABLE: KernelTable = KernelTable {
+  pub static POWER8_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::power::VPMSUM_READY,
     boundaries: [64, 128, 4096],
     xs: PORTABLE_SET,
@@ -2272,7 +2150,7 @@ mod power_tables {
     },
   };
 
-  pub static POWER9_TABLE: KernelTable = KernelTable {
+  pub static POWER9_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::power::VPMSUM_READY,
     boundaries: [64, 64, 4096],
     xs: PORTABLE_SET,
@@ -2311,7 +2189,7 @@ mod power_tables {
     },
   };
 
-  pub static POWER10_TABLE: KernelTable = KernelTable {
+  pub static POWER10_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::power::VPMSUM_READY,
     boundaries: [64, 64, 4096],
     xs: PORTABLE_SET,
@@ -2366,7 +2244,7 @@ mod riscv64_tables {
     crc64::kernels::riscv64 as crc64_k,
   };
 
-  pub static RISCV64_ZBC_TABLE: KernelTable = KernelTable {
+  pub static RISCV64_ZBC_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::riscv::ZBC,
     boundaries: [64, 64, 4096],
     xs: PORTABLE_SET,
@@ -2405,7 +2283,7 @@ mod riscv64_tables {
     },
   };
 
-  pub static RISCV64_ZVBC_TABLE: KernelTable = KernelTable {
+  pub static RISCV64_ZVBC_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::riscv::V.union(crate::platform::caps::riscv::ZVBC),
     boundaries: [64, 64, 4096],
     xs: PORTABLE_SET,
@@ -2464,14 +2342,14 @@ mod tests {
     // Verify portable table returns correct sets for each size class
     let table = &PORTABLE_TABLE;
 
-    assert!(core::ptr::eq(table.select_set(0), &table.xs));
-    assert!(core::ptr::eq(table.select_set(64), &table.xs));
-    assert!(core::ptr::eq(table.select_set(65), &table.s));
-    assert!(core::ptr::eq(table.select_set(256), &table.s));
-    assert!(core::ptr::eq(table.select_set(257), &table.m));
-    assert!(core::ptr::eq(table.select_set(4096), &table.m));
-    assert!(core::ptr::eq(table.select_set(4097), &table.l));
-    assert!(core::ptr::eq(table.select_set(1_000_000), &table.l));
+    assert!(core::ptr::eq(table.select_fns(0), &table.fns[XS]));
+    assert!(core::ptr::eq(table.select_fns(64), &table.fns[XS]));
+    assert!(core::ptr::eq(table.select_fns(65), &table.fns[S]));
+    assert!(core::ptr::eq(table.select_fns(256), &table.fns[S]));
+    assert!(core::ptr::eq(table.select_fns(257), &table.fns[M]));
+    assert!(core::ptr::eq(table.select_fns(4096), &table.fns[M]));
+    assert!(core::ptr::eq(table.select_fns(4097), &table.fns[L]));
+    assert!(core::ptr::eq(table.select_fns(1_000_000), &table.fns[L]));
   }
 
   #[test]
@@ -2576,6 +2454,28 @@ mod tests {
     assert!(
       core::ptr::eq(table1, table2),
       "active_table should return cached reference"
+    );
+  }
+
+  #[test]
+  fn kernel_fn_set_fits_cache_line() {
+    // KernelFnSet holds 7 function pointers (8 bytes each on 64-bit) = 56 bytes,
+    // which fits within a single 64-byte cache line.
+    let size = core::mem::size_of::<KernelFnSet>();
+    assert!(size <= 64, "KernelFnSet is {size} bytes, must be <= 64 for cache-line fit");
+    assert_eq!(size, 56, "KernelFnSet should be exactly 56 bytes (7 fn ptrs)");
+  }
+
+  #[test]
+  fn kernel_name_set_is_separate() {
+    // KernelNameSet should only hold name strings, not fn ptrs.
+    let fn_size = core::mem::size_of::<KernelFnSet>();
+    let name_size = core::mem::size_of::<KernelNameSet>();
+    let combined_size = core::mem::size_of::<KernelSet>();
+    assert_eq!(
+      fn_size.strict_add(name_size),
+      combined_size,
+      "KernelFnSet + KernelNameSet should equal KernelSet"
     );
   }
 }
