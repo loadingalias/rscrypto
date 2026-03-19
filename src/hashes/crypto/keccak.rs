@@ -9,6 +9,8 @@ use core::marker::PhantomData;
 
 use crate::hashes::crypto::dispatch_util::SizeClassDispatch;
 
+#[cfg(target_arch = "aarch64")]
+pub(crate) mod aarch64;
 #[doc(hidden)]
 pub(crate) mod dispatch;
 #[doc(hidden)]
