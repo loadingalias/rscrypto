@@ -14,7 +14,6 @@
 //! this).
 #![allow(unsafe_code)]
 #![allow(clippy::indexing_slicing)]
-#![allow(unsafe_op_in_unsafe_fn)]
 
 use core::{
   arch::x86_64::*,
@@ -55,83 +54,123 @@ impl Simd128 {
   #[inline]
   #[target_feature(enable = "sse2")]
   unsafe fn new(high: u64, low: u64) -> Self {
-    Self(_mm_set_epi64x(high.cast_signed(), low.cast_signed()))
+    // SAFETY: Caller guarantees:
+    // 1. SSE2 target features are available (dispatch check).
+    // 2. All SIMD operations are pure register computations after loads.
+    unsafe {
+      Self(_mm_set_epi64x(high.cast_signed(), low.cast_signed()))
+    }
   }
 
   #[inline]
   #[target_feature(enable = "sse2")]
   unsafe fn shift_right_8(self) -> Self {
-    Self(_mm_srli_si128::<8>(self.0))
+    // SAFETY: Caller guarantees:
+    // 1. SSE2 + SSE2 target features are available (dispatch check).
+    // 2. All SIMD operations are pure register computations after loads.
+    unsafe {
+      Self(_mm_srli_si128::<8>(self.0))
+    }
   }
 
   #[inline]
   #[target_feature(enable = "sse2")]
   unsafe fn shift_left_12(self) -> Self {
-    Self(_mm_slli_si128::<12>(self.0))
+    // SAFETY: Caller guarantees:
+    // 1. SSE2 + SSE2 target features are available (dispatch check).
+    // 2. All SIMD operations are pure register computations after loads.
+    unsafe {
+      Self(_mm_slli_si128::<12>(self.0))
+    }
   }
 
   #[inline]
   #[target_feature(enable = "sse2")]
   unsafe fn and(self, mask: Self) -> Self {
-    Self(_mm_and_si128(self.0, mask.0))
+    // SAFETY: Caller guarantees:
+    // 1. SSE2 + SSE2 target features are available (dispatch check).
+    // 2. All SIMD operations are pure register computations after loads.
+    unsafe {
+      Self(_mm_and_si128(self.0, mask.0))
+    }
   }
 
   /// Reverse bits within each byte (u8::reverse_bits), lane-wise.
   #[inline]
   #[target_feature(enable = "sse2", enable = "ssse3")]
   unsafe fn bitrev_bytes(self) -> Self {
-    let mask = _mm_set1_epi8(0x0f);
-    let lo = _mm_and_si128(self.0, mask);
-    let hi = _mm_and_si128(_mm_srli_epi16::<4>(self.0), mask);
+    // SAFETY: Caller guarantees:
+    // 1. SSE2 + SSE2 + SSSE3 target features are available (dispatch check).
+    // 2. All SIMD operations are pure register computations after loads.
+    unsafe {
+      let mask = _mm_set1_epi8(0x0f);
+      let lo = _mm_and_si128(self.0, mask);
+      let hi = _mm_and_si128(_mm_srli_epi16::<4>(self.0), mask);
 
-    // Nibble bit-reversal LUT: 0b0000..0b1111 -> reversed bits.
-    let lut = _mm_setr_epi8(0, 8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15);
-    let lo_rev = _mm_shuffle_epi8(lut, lo);
-    let hi_rev = _mm_shuffle_epi8(lut, hi);
-    let lo_shift = _mm_slli_epi16::<4>(lo_rev);
-    Self(_mm_or_si128(lo_shift, hi_rev))
+      // Nibble bit-reversal LUT: 0b0000..0b1111 -> reversed bits.
+      let lut = _mm_setr_epi8(0, 8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15);
+      let lo_rev = _mm_shuffle_epi8(lut, lo);
+      let hi_rev = _mm_shuffle_epi8(lut, hi);
+      let lo_shift = _mm_slli_epi16::<4>(lo_rev);
+      Self(_mm_or_si128(lo_shift, hi_rev))
+    }
   }
 
   #[inline]
   #[target_feature(enable = "sse2", enable = "pclmulqdq")]
   unsafe fn fold_16_reflected(self, coeff: Self, data_to_xor: Self) -> Self {
-    let h = _mm_clmulepi64_si128::<0x10>(self.0, coeff.0);
-    let l = _mm_clmulepi64_si128::<0x01>(self.0, coeff.0);
-    Self(_mm_xor_si128(_mm_xor_si128(h, l), data_to_xor.0))
+    // SAFETY: Caller guarantees:
+    // 1. SSE2 + PCLMULQDQ target features are available (dispatch check).
+    // 2. All SIMD operations are pure register computations after loads.
+    unsafe {
+      let h = _mm_clmulepi64_si128::<0x10>(self.0, coeff.0);
+      let l = _mm_clmulepi64_si128::<0x01>(self.0, coeff.0);
+      Self(_mm_xor_si128(_mm_xor_si128(h, l), data_to_xor.0))
+    }
   }
 
   /// Fold 16 bytes down to the "width32" reduction state (reflected mode).
   #[inline]
   #[target_feature(enable = "sse2", enable = "pclmulqdq")]
   unsafe fn fold_width32_reflected(self, high: u64, low: u64) -> Self {
-    let coeff_low = Self::new(0, low);
-    let coeff_high = Self::new(high, 0);
+    // SAFETY: Caller guarantees:
+    // 1. SSE2 + PCLMULQDQ target features are available (dispatch check).
+    // 2. All SIMD operations are pure register computations after loads.
+    unsafe {
+      let coeff_low = Self::new(0, low);
+      let coeff_high = Self::new(high, 0);
 
-    // 16B -> 8B
-    let clmul = _mm_clmulepi64_si128::<0x00>(self.0, coeff_low.0);
-    let shifted = self.shift_right_8();
-    let mut state = Self(_mm_xor_si128(clmul, shifted.0));
+      // 16B -> 8B
+      let clmul = _mm_clmulepi64_si128::<0x00>(self.0, coeff_low.0);
+      let shifted = self.shift_right_8();
+      let mut state = Self(_mm_xor_si128(clmul, shifted.0));
 
-    // 8B -> 4B
-    let mask2 = Self::new(0xFFFF_FFFF_FFFF_FFFF, 0xFFFF_FFFF_0000_0000);
-    let masked = state.and(mask2);
-    let shifted = state.shift_left_12();
-    let clmul = _mm_clmulepi64_si128::<0x11>(shifted.0, coeff_high.0);
-    state = Self(_mm_xor_si128(clmul, masked.0));
+      // 8B -> 4B
+      let mask2 = Self::new(0xFFFF_FFFF_FFFF_FFFF, 0xFFFF_FFFF_0000_0000);
+      let masked = state.and(mask2);
+      let shifted = state.shift_left_12();
+      let clmul = _mm_clmulepi64_si128::<0x11>(shifted.0, coeff_high.0);
+      state = Self(_mm_xor_si128(clmul, masked.0));
 
-    state
+      state
+    }
   }
 
   #[inline]
   #[target_feature(enable = "sse2", enable = "pclmulqdq")]
   unsafe fn barrett_width32_reflected(self, poly: u64, mu: u64) -> u32 {
-    let polymu = Self::new(poly, mu);
-    let clmul1 = _mm_clmulepi64_si128::<0x00>(self.0, polymu.0);
-    let clmul2 = _mm_clmulepi64_si128::<0x10>(clmul1, polymu.0);
-    let xorred = _mm_xor_si128(self.0, clmul2);
+    // SAFETY: Caller guarantees:
+    // 1. SSE2 + PCLMULQDQ target features are available (dispatch check).
+    // 2. All SIMD operations are pure register computations after loads.
+    unsafe {
+      let polymu = Self::new(poly, mu);
+      let clmul1 = _mm_clmulepi64_si128::<0x00>(self.0, polymu.0);
+      let clmul2 = _mm_clmulepi64_si128::<0x10>(clmul1, polymu.0);
+      let xorred = _mm_xor_si128(self.0, clmul2);
 
-    let hi = _mm_srli_si128::<8>(xorred);
-    _mm_cvtsi128_si64(hi) as u32
+      let hi = _mm_srli_si128::<8>(xorred);
+      _mm_cvtsi128_si64(hi) as u32
+    }
   }
 }
 
@@ -142,17 +181,22 @@ impl Simd128 {
 #[inline]
 #[target_feature(enable = "sse2", enable = "pclmulqdq")]
 unsafe fn finalize_lanes_width32_reflected(x: [Simd128; 8], keys: &[u64; 23]) -> u32 {
-  let mut res = x[7];
-  res = x[0].fold_16_reflected(Simd128::new(keys[10], keys[9]), res);
-  res = x[1].fold_16_reflected(Simd128::new(keys[12], keys[11]), res);
-  res = x[2].fold_16_reflected(Simd128::new(keys[14], keys[13]), res);
-  res = x[3].fold_16_reflected(Simd128::new(keys[16], keys[15]), res);
-  res = x[4].fold_16_reflected(Simd128::new(keys[18], keys[17]), res);
-  res = x[5].fold_16_reflected(Simd128::new(keys[20], keys[19]), res);
-  res = x[6].fold_16_reflected(Simd128::new(keys[2], keys[1]), res);
+  // SAFETY: Caller guarantees:
+  // 1. SSE2 + PCLMULQDQ target features are available (dispatch check).
+  // 2. All SIMD operations are pure register computations after loads.
+  unsafe {
+    let mut res = x[7];
+    res = x[0].fold_16_reflected(Simd128::new(keys[10], keys[9]), res);
+    res = x[1].fold_16_reflected(Simd128::new(keys[12], keys[11]), res);
+    res = x[2].fold_16_reflected(Simd128::new(keys[14], keys[13]), res);
+    res = x[3].fold_16_reflected(Simd128::new(keys[16], keys[15]), res);
+    res = x[4].fold_16_reflected(Simd128::new(keys[18], keys[17]), res);
+    res = x[5].fold_16_reflected(Simd128::new(keys[20], keys[19]), res);
+    res = x[6].fold_16_reflected(Simd128::new(keys[2], keys[1]), res);
 
-  res = res.fold_width32_reflected(keys[6], keys[5]);
-  res.barrett_width32_reflected(keys[8], keys[7])
+    res = res.fold_width32_reflected(keys[6], keys[5]);
+    res.barrett_width32_reflected(keys[8], keys[7])
+  }
 }
 
 #[inline]
@@ -163,41 +207,46 @@ unsafe fn update_simd_width32_reflected_bitrev_bytes(
   rest: &[[Simd128; 8]],
   keys: &[u64; 23],
 ) -> u32 {
-  let mut x = *first;
+  // SAFETY: Caller guarantees:
+  // 1. SSE2 + SSSE3 + PCLMULQDQ target features are available (dispatch check).
+  // 2. All SIMD operations are pure register computations after loads.
+  unsafe {
+    let mut x = *first;
 
-  x[0] = x[0].bitrev_bytes();
-  x[1] = x[1].bitrev_bytes();
-  x[2] = x[2].bitrev_bytes();
-  x[3] = x[3].bitrev_bytes();
-  x[4] = x[4].bitrev_bytes();
-  x[5] = x[5].bitrev_bytes();
-  x[6] = x[6].bitrev_bytes();
-  x[7] = x[7].bitrev_bytes();
+    x[0] = x[0].bitrev_bytes();
+    x[1] = x[1].bitrev_bytes();
+    x[2] = x[2].bitrev_bytes();
+    x[3] = x[3].bitrev_bytes();
+    x[4] = x[4].bitrev_bytes();
+    x[5] = x[5].bitrev_bytes();
+    x[6] = x[6].bitrev_bytes();
+    x[7] = x[7].bitrev_bytes();
 
-  x[0] ^= Simd128::new(0, state as u64);
+    x[0] ^= Simd128::new(0, state as u64);
 
-  let coeff_128b = Simd128::new(keys[4], keys[3]);
-  for chunk in rest {
-    let y0 = chunk[0].bitrev_bytes();
-    let y1 = chunk[1].bitrev_bytes();
-    let y2 = chunk[2].bitrev_bytes();
-    let y3 = chunk[3].bitrev_bytes();
-    let y4 = chunk[4].bitrev_bytes();
-    let y5 = chunk[5].bitrev_bytes();
-    let y6 = chunk[6].bitrev_bytes();
-    let y7 = chunk[7].bitrev_bytes();
+    let coeff_128b = Simd128::new(keys[4], keys[3]);
+    for chunk in rest {
+      let y0 = chunk[0].bitrev_bytes();
+      let y1 = chunk[1].bitrev_bytes();
+      let y2 = chunk[2].bitrev_bytes();
+      let y3 = chunk[3].bitrev_bytes();
+      let y4 = chunk[4].bitrev_bytes();
+      let y5 = chunk[5].bitrev_bytes();
+      let y6 = chunk[6].bitrev_bytes();
+      let y7 = chunk[7].bitrev_bytes();
 
-    x[0] = x[0].fold_16_reflected(coeff_128b, y0);
-    x[1] = x[1].fold_16_reflected(coeff_128b, y1);
-    x[2] = x[2].fold_16_reflected(coeff_128b, y2);
-    x[3] = x[3].fold_16_reflected(coeff_128b, y3);
-    x[4] = x[4].fold_16_reflected(coeff_128b, y4);
-    x[5] = x[5].fold_16_reflected(coeff_128b, y5);
-    x[6] = x[6].fold_16_reflected(coeff_128b, y6);
-    x[7] = x[7].fold_16_reflected(coeff_128b, y7);
+      x[0] = x[0].fold_16_reflected(coeff_128b, y0);
+      x[1] = x[1].fold_16_reflected(coeff_128b, y1);
+      x[2] = x[2].fold_16_reflected(coeff_128b, y2);
+      x[3] = x[3].fold_16_reflected(coeff_128b, y3);
+      x[4] = x[4].fold_16_reflected(coeff_128b, y4);
+      x[5] = x[5].fold_16_reflected(coeff_128b, y5);
+      x[6] = x[6].fold_16_reflected(coeff_128b, y6);
+      x[7] = x[7].fold_16_reflected(coeff_128b, y7);
+    }
+
+    finalize_lanes_width32_reflected(x, keys)
   }
-
-  finalize_lanes_width32_reflected(x, keys)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -207,23 +256,28 @@ unsafe fn update_simd_width32_reflected_bitrev_bytes(
 #[inline]
 #[target_feature(enable = "sse2", enable = "ssse3", enable = "pclmulqdq")]
 unsafe fn fold_block_128_reflected_bitrev(x: &mut [Simd128; 8], chunk: &[Simd128; 8], coeff: Simd128) {
-  let y0 = chunk[0].bitrev_bytes();
-  let y1 = chunk[1].bitrev_bytes();
-  let y2 = chunk[2].bitrev_bytes();
-  let y3 = chunk[3].bitrev_bytes();
-  let y4 = chunk[4].bitrev_bytes();
-  let y5 = chunk[5].bitrev_bytes();
-  let y6 = chunk[6].bitrev_bytes();
-  let y7 = chunk[7].bitrev_bytes();
+  // SAFETY: Caller guarantees:
+  // 1. SSE2 + SSSE3 + PCLMULQDQ target features are available (dispatch check).
+  // 2. All SIMD operations are pure register computations after loads.
+  unsafe {
+    let y0 = chunk[0].bitrev_bytes();
+    let y1 = chunk[1].bitrev_bytes();
+    let y2 = chunk[2].bitrev_bytes();
+    let y3 = chunk[3].bitrev_bytes();
+    let y4 = chunk[4].bitrev_bytes();
+    let y5 = chunk[5].bitrev_bytes();
+    let y6 = chunk[6].bitrev_bytes();
+    let y7 = chunk[7].bitrev_bytes();
 
-  x[0] = x[0].fold_16_reflected(coeff, y0);
-  x[1] = x[1].fold_16_reflected(coeff, y1);
-  x[2] = x[2].fold_16_reflected(coeff, y2);
-  x[3] = x[3].fold_16_reflected(coeff, y3);
-  x[4] = x[4].fold_16_reflected(coeff, y4);
-  x[5] = x[5].fold_16_reflected(coeff, y5);
-  x[6] = x[6].fold_16_reflected(coeff, y6);
-  x[7] = x[7].fold_16_reflected(coeff, y7);
+    x[0] = x[0].fold_16_reflected(coeff, y0);
+    x[1] = x[1].fold_16_reflected(coeff, y1);
+    x[2] = x[2].fold_16_reflected(coeff, y2);
+    x[3] = x[3].fold_16_reflected(coeff, y3);
+    x[4] = x[4].fold_16_reflected(coeff, y4);
+    x[5] = x[5].fold_16_reflected(coeff, y5);
+    x[6] = x[6].fold_16_reflected(coeff, y6);
+    x[7] = x[7].fold_16_reflected(coeff, y7);
+  }
 }
 
 #[inline]
@@ -236,88 +290,93 @@ unsafe fn update_simd_width32_reflected_bitrev_bytes_2way(
 ) -> u32 {
   use crate::checksum::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
 
-  debug_assert!(!blocks.is_empty());
+  // SAFETY: Caller guarantees:
+  // 1. SSE2 + SSSE3 + PCLMULQDQ target features are available (dispatch check).
+  // 2. All SIMD operations are pure register computations after loads.
+  unsafe {
+    debug_assert!(!blocks.is_empty());
 
-  if blocks.len() < 2 {
-    let Some((first, rest)) = blocks.split_first() else {
-      return state;
-    };
-    return update_simd_width32_reflected_bitrev_bytes(state, first, rest, keys);
-  }
-
-  let coeff_256 = Simd128::new(fold_256b.0, fold_256b.1);
-  let coeff_128 = Simd128::new(keys[4], keys[3]);
-
-  let mut s0 = blocks[0];
-  let mut s1 = blocks[1];
-
-  s0[0] = s0[0].bitrev_bytes();
-  s0[1] = s0[1].bitrev_bytes();
-  s0[2] = s0[2].bitrev_bytes();
-  s0[3] = s0[3].bitrev_bytes();
-  s0[4] = s0[4].bitrev_bytes();
-  s0[5] = s0[5].bitrev_bytes();
-  s0[6] = s0[6].bitrev_bytes();
-  s0[7] = s0[7].bitrev_bytes();
-
-  s1[0] = s1[0].bitrev_bytes();
-  s1[1] = s1[1].bitrev_bytes();
-  s1[2] = s1[2].bitrev_bytes();
-  s1[3] = s1[3].bitrev_bytes();
-  s1[4] = s1[4].bitrev_bytes();
-  s1[5] = s1[5].bitrev_bytes();
-  s1[6] = s1[6].bitrev_bytes();
-  s1[7] = s1[7].bitrev_bytes();
-
-  s0[0] ^= Simd128::new(0, state as u64);
-
-  // Double-unrolled main loop: process 4 blocks (512B) per iteration.
-  const BLOCK_SIZE: usize = 128;
-  const DOUBLE_GROUP: usize = 4; // 2 × 2-way = 4 blocks = 512B
-
-  let mut i: usize = 2;
-  let aligned = (blocks.len() / DOUBLE_GROUP) * DOUBLE_GROUP;
-
-  while i.strict_add(DOUBLE_GROUP) <= aligned {
-    let prefetch_idx = i.strict_add(LARGE_BLOCK_DISTANCE / BLOCK_SIZE);
-    if prefetch_idx < blocks.len() {
-      prefetch_read_l1(blocks[prefetch_idx].as_ptr().cast::<u8>());
+    if blocks.len() < 2 {
+      let Some((first, rest)) = blocks.split_first() else {
+        return state;
+      };
+      return update_simd_width32_reflected_bitrev_bytes(state, first, rest, keys);
     }
 
-    // First iteration (blocks i, i+1)
-    fold_block_128_reflected_bitrev(&mut s0, &blocks[i], coeff_256);
-    fold_block_128_reflected_bitrev(&mut s1, &blocks[i.strict_add(1)], coeff_256);
+    let coeff_256 = Simd128::new(fold_256b.0, fold_256b.1);
+    let coeff_128 = Simd128::new(keys[4], keys[3]);
 
-    // Second iteration (blocks i+2, i+3)
-    fold_block_128_reflected_bitrev(&mut s0, &blocks[i.strict_add(2)], coeff_256);
-    fold_block_128_reflected_bitrev(&mut s1, &blocks[i.strict_add(3)], coeff_256);
+    let mut s0 = blocks[0];
+    let mut s1 = blocks[1];
 
-    i = i.strict_add(DOUBLE_GROUP);
+    s0[0] = s0[0].bitrev_bytes();
+    s0[1] = s0[1].bitrev_bytes();
+    s0[2] = s0[2].bitrev_bytes();
+    s0[3] = s0[3].bitrev_bytes();
+    s0[4] = s0[4].bitrev_bytes();
+    s0[5] = s0[5].bitrev_bytes();
+    s0[6] = s0[6].bitrev_bytes();
+    s0[7] = s0[7].bitrev_bytes();
+
+    s1[0] = s1[0].bitrev_bytes();
+    s1[1] = s1[1].bitrev_bytes();
+    s1[2] = s1[2].bitrev_bytes();
+    s1[3] = s1[3].bitrev_bytes();
+    s1[4] = s1[4].bitrev_bytes();
+    s1[5] = s1[5].bitrev_bytes();
+    s1[6] = s1[6].bitrev_bytes();
+    s1[7] = s1[7].bitrev_bytes();
+
+    s0[0] ^= Simd128::new(0, state as u64);
+
+    // Double-unrolled main loop: process 4 blocks (512B) per iteration.
+    const BLOCK_SIZE: usize = 128;
+    const DOUBLE_GROUP: usize = 4; // 2 × 2-way = 4 blocks = 512B
+
+    let mut i: usize = 2;
+    let aligned = (blocks.len() / DOUBLE_GROUP) * DOUBLE_GROUP;
+
+    while i.strict_add(DOUBLE_GROUP) <= aligned {
+      let prefetch_idx = i.strict_add(LARGE_BLOCK_DISTANCE / BLOCK_SIZE);
+      if prefetch_idx < blocks.len() {
+        prefetch_read_l1(blocks[prefetch_idx].as_ptr().cast::<u8>());
+      }
+
+      // First iteration (blocks i, i+1)
+      fold_block_128_reflected_bitrev(&mut s0, &blocks[i], coeff_256);
+      fold_block_128_reflected_bitrev(&mut s1, &blocks[i.strict_add(1)], coeff_256);
+
+      // Second iteration (blocks i+2, i+3)
+      fold_block_128_reflected_bitrev(&mut s0, &blocks[i.strict_add(2)], coeff_256);
+      fold_block_128_reflected_bitrev(&mut s1, &blocks[i.strict_add(3)], coeff_256);
+
+      i = i.strict_add(DOUBLE_GROUP);
+    }
+
+    // Handle remaining pairs.
+    let even = blocks.len() & !1usize;
+    while i < even {
+      fold_block_128_reflected_bitrev(&mut s0, &blocks[i], coeff_256);
+      fold_block_128_reflected_bitrev(&mut s1, &blocks[i.strict_add(1)], coeff_256);
+      i = i.strict_add(2);
+    }
+
+    let mut combined = s1;
+    combined[0] = s0[0].fold_16_reflected(coeff_128, combined[0]);
+    combined[1] = s0[1].fold_16_reflected(coeff_128, combined[1]);
+    combined[2] = s0[2].fold_16_reflected(coeff_128, combined[2]);
+    combined[3] = s0[3].fold_16_reflected(coeff_128, combined[3]);
+    combined[4] = s0[4].fold_16_reflected(coeff_128, combined[4]);
+    combined[5] = s0[5].fold_16_reflected(coeff_128, combined[5]);
+    combined[6] = s0[6].fold_16_reflected(coeff_128, combined[6]);
+    combined[7] = s0[7].fold_16_reflected(coeff_128, combined[7]);
+
+    if even != blocks.len() {
+      fold_block_128_reflected_bitrev(&mut combined, &blocks[even], coeff_128);
+    }
+
+    finalize_lanes_width32_reflected(combined, keys)
   }
-
-  // Handle remaining pairs.
-  let even = blocks.len() & !1usize;
-  while i < even {
-    fold_block_128_reflected_bitrev(&mut s0, &blocks[i], coeff_256);
-    fold_block_128_reflected_bitrev(&mut s1, &blocks[i.strict_add(1)], coeff_256);
-    i = i.strict_add(2);
-  }
-
-  let mut combined = s1;
-  combined[0] = s0[0].fold_16_reflected(coeff_128, combined[0]);
-  combined[1] = s0[1].fold_16_reflected(coeff_128, combined[1]);
-  combined[2] = s0[2].fold_16_reflected(coeff_128, combined[2]);
-  combined[3] = s0[3].fold_16_reflected(coeff_128, combined[3]);
-  combined[4] = s0[4].fold_16_reflected(coeff_128, combined[4]);
-  combined[5] = s0[5].fold_16_reflected(coeff_128, combined[5]);
-  combined[6] = s0[6].fold_16_reflected(coeff_128, combined[6]);
-  combined[7] = s0[7].fold_16_reflected(coeff_128, combined[7]);
-
-  if even != blocks.len() {
-    fold_block_128_reflected_bitrev(&mut combined, &blocks[even], coeff_128);
-  }
-
-  finalize_lanes_width32_reflected(combined, keys)
 }
 
 #[inline]
@@ -331,110 +390,115 @@ unsafe fn update_simd_width32_reflected_bitrev_bytes_4way(
 ) -> u32 {
   use crate::checksum::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
 
-  debug_assert!(!blocks.is_empty());
+  // SAFETY: Caller guarantees:
+  // 1. SSE2 + SSSE3 + PCLMULQDQ target features are available (dispatch check).
+  // 2. All SIMD operations are pure register computations after loads.
+  unsafe {
+    debug_assert!(!blocks.is_empty());
 
-  if blocks.len() < 4 {
-    let Some((first, rest)) = blocks.split_first() else {
-      return state;
-    };
-    return update_simd_width32_reflected_bitrev_bytes(state, first, rest, keys);
-  }
-
-  let coeff_512 = Simd128::new(fold_512b.0, fold_512b.1);
-  let coeff_128 = Simd128::new(keys[4], keys[3]);
-  let c384 = Simd128::new(combine[0].0, combine[0].1);
-  let c256 = Simd128::new(combine[1].0, combine[1].1);
-  let c128 = Simd128::new(combine[2].0, combine[2].1);
-
-  let mut s0 = blocks[0];
-  let mut s1 = blocks[1];
-  let mut s2 = blocks[2];
-  let mut s3 = blocks[3];
-
-  for s in [&mut s0, &mut s1, &mut s2, &mut s3] {
-    s[0] = s[0].bitrev_bytes();
-    s[1] = s[1].bitrev_bytes();
-    s[2] = s[2].bitrev_bytes();
-    s[3] = s[3].bitrev_bytes();
-    s[4] = s[4].bitrev_bytes();
-    s[5] = s[5].bitrev_bytes();
-    s[6] = s[6].bitrev_bytes();
-    s[7] = s[7].bitrev_bytes();
-  }
-
-  s0[0] ^= Simd128::new(0, state as u64);
-
-  // Double-unrolled main loop: process 8 blocks (1KB) per iteration.
-  const BLOCK_SIZE: usize = 128;
-  const DOUBLE_GROUP: usize = 8; // 2 × 4-way = 8 blocks = 1KB
-
-  let mut i: usize = 4;
-  let aligned = (blocks.len() / DOUBLE_GROUP) * DOUBLE_GROUP;
-
-  while i.strict_add(DOUBLE_GROUP) <= aligned {
-    let prefetch_idx = i.strict_add(LARGE_BLOCK_DISTANCE / BLOCK_SIZE);
-    if prefetch_idx < blocks.len() {
-      prefetch_read_l1(blocks[prefetch_idx].as_ptr().cast::<u8>());
+    if blocks.len() < 4 {
+      let Some((first, rest)) = blocks.split_first() else {
+        return state;
+      };
+      return update_simd_width32_reflected_bitrev_bytes(state, first, rest, keys);
     }
 
-    // First iteration (blocks i..i+3)
-    fold_block_128_reflected_bitrev(&mut s0, &blocks[i], coeff_512);
-    fold_block_128_reflected_bitrev(&mut s1, &blocks[i.strict_add(1)], coeff_512);
-    fold_block_128_reflected_bitrev(&mut s2, &blocks[i.strict_add(2)], coeff_512);
-    fold_block_128_reflected_bitrev(&mut s3, &blocks[i.strict_add(3)], coeff_512);
+    let coeff_512 = Simd128::new(fold_512b.0, fold_512b.1);
+    let coeff_128 = Simd128::new(keys[4], keys[3]);
+    let c384 = Simd128::new(combine[0].0, combine[0].1);
+    let c256 = Simd128::new(combine[1].0, combine[1].1);
+    let c128 = Simd128::new(combine[2].0, combine[2].1);
 
-    // Second iteration (blocks i+4..i+7)
-    fold_block_128_reflected_bitrev(&mut s0, &blocks[i.strict_add(4)], coeff_512);
-    fold_block_128_reflected_bitrev(&mut s1, &blocks[i.strict_add(5)], coeff_512);
-    fold_block_128_reflected_bitrev(&mut s2, &blocks[i.strict_add(6)], coeff_512);
-    fold_block_128_reflected_bitrev(&mut s3, &blocks[i.strict_add(7)], coeff_512);
+    let mut s0 = blocks[0];
+    let mut s1 = blocks[1];
+    let mut s2 = blocks[2];
+    let mut s3 = blocks[3];
 
-    i = i.strict_add(DOUBLE_GROUP);
+    for s in [&mut s0, &mut s1, &mut s2, &mut s3] {
+      s[0] = s[0].bitrev_bytes();
+      s[1] = s[1].bitrev_bytes();
+      s[2] = s[2].bitrev_bytes();
+      s[3] = s[3].bitrev_bytes();
+      s[4] = s[4].bitrev_bytes();
+      s[5] = s[5].bitrev_bytes();
+      s[6] = s[6].bitrev_bytes();
+      s[7] = s[7].bitrev_bytes();
+    }
+
+    s0[0] ^= Simd128::new(0, state as u64);
+
+    // Double-unrolled main loop: process 8 blocks (1KB) per iteration.
+    const BLOCK_SIZE: usize = 128;
+    const DOUBLE_GROUP: usize = 8; // 2 × 4-way = 8 blocks = 1KB
+
+    let mut i: usize = 4;
+    let aligned = (blocks.len() / DOUBLE_GROUP) * DOUBLE_GROUP;
+
+    while i.strict_add(DOUBLE_GROUP) <= aligned {
+      let prefetch_idx = i.strict_add(LARGE_BLOCK_DISTANCE / BLOCK_SIZE);
+      if prefetch_idx < blocks.len() {
+        prefetch_read_l1(blocks[prefetch_idx].as_ptr().cast::<u8>());
+      }
+
+      // First iteration (blocks i..i+3)
+      fold_block_128_reflected_bitrev(&mut s0, &blocks[i], coeff_512);
+      fold_block_128_reflected_bitrev(&mut s1, &blocks[i.strict_add(1)], coeff_512);
+      fold_block_128_reflected_bitrev(&mut s2, &blocks[i.strict_add(2)], coeff_512);
+      fold_block_128_reflected_bitrev(&mut s3, &blocks[i.strict_add(3)], coeff_512);
+
+      // Second iteration (blocks i+4..i+7)
+      fold_block_128_reflected_bitrev(&mut s0, &blocks[i.strict_add(4)], coeff_512);
+      fold_block_128_reflected_bitrev(&mut s1, &blocks[i.strict_add(5)], coeff_512);
+      fold_block_128_reflected_bitrev(&mut s2, &blocks[i.strict_add(6)], coeff_512);
+      fold_block_128_reflected_bitrev(&mut s3, &blocks[i.strict_add(7)], coeff_512);
+
+      i = i.strict_add(DOUBLE_GROUP);
+    }
+
+    // Handle remaining quads.
+    let quad_aligned = (blocks.len() / 4) * 4;
+    while i < quad_aligned {
+      fold_block_128_reflected_bitrev(&mut s0, &blocks[i], coeff_512);
+      fold_block_128_reflected_bitrev(&mut s1, &blocks[i.strict_add(1)], coeff_512);
+      fold_block_128_reflected_bitrev(&mut s2, &blocks[i.strict_add(2)], coeff_512);
+      fold_block_128_reflected_bitrev(&mut s3, &blocks[i.strict_add(3)], coeff_512);
+      i = i.strict_add(4);
+    }
+
+    let mut acc = s3;
+    acc[0] = s2[0].fold_16_reflected(c128, acc[0]);
+    acc[1] = s2[1].fold_16_reflected(c128, acc[1]);
+    acc[2] = s2[2].fold_16_reflected(c128, acc[2]);
+    acc[3] = s2[3].fold_16_reflected(c128, acc[3]);
+    acc[4] = s2[4].fold_16_reflected(c128, acc[4]);
+    acc[5] = s2[5].fold_16_reflected(c128, acc[5]);
+    acc[6] = s2[6].fold_16_reflected(c128, acc[6]);
+    acc[7] = s2[7].fold_16_reflected(c128, acc[7]);
+
+    acc[0] = s1[0].fold_16_reflected(c256, acc[0]);
+    acc[1] = s1[1].fold_16_reflected(c256, acc[1]);
+    acc[2] = s1[2].fold_16_reflected(c256, acc[2]);
+    acc[3] = s1[3].fold_16_reflected(c256, acc[3]);
+    acc[4] = s1[4].fold_16_reflected(c256, acc[4]);
+    acc[5] = s1[5].fold_16_reflected(c256, acc[5]);
+    acc[6] = s1[6].fold_16_reflected(c256, acc[6]);
+    acc[7] = s1[7].fold_16_reflected(c256, acc[7]);
+
+    acc[0] = s0[0].fold_16_reflected(c384, acc[0]);
+    acc[1] = s0[1].fold_16_reflected(c384, acc[1]);
+    acc[2] = s0[2].fold_16_reflected(c384, acc[2]);
+    acc[3] = s0[3].fold_16_reflected(c384, acc[3]);
+    acc[4] = s0[4].fold_16_reflected(c384, acc[4]);
+    acc[5] = s0[5].fold_16_reflected(c384, acc[5]);
+    acc[6] = s0[6].fold_16_reflected(c384, acc[6]);
+    acc[7] = s0[7].fold_16_reflected(c384, acc[7]);
+
+    for block in &blocks[aligned..] {
+      fold_block_128_reflected_bitrev(&mut acc, block, coeff_128);
+    }
+
+    finalize_lanes_width32_reflected(acc, keys)
   }
-
-  // Handle remaining quads.
-  let quad_aligned = (blocks.len() / 4) * 4;
-  while i < quad_aligned {
-    fold_block_128_reflected_bitrev(&mut s0, &blocks[i], coeff_512);
-    fold_block_128_reflected_bitrev(&mut s1, &blocks[i.strict_add(1)], coeff_512);
-    fold_block_128_reflected_bitrev(&mut s2, &blocks[i.strict_add(2)], coeff_512);
-    fold_block_128_reflected_bitrev(&mut s3, &blocks[i.strict_add(3)], coeff_512);
-    i = i.strict_add(4);
-  }
-
-  let mut acc = s3;
-  acc[0] = s2[0].fold_16_reflected(c128, acc[0]);
-  acc[1] = s2[1].fold_16_reflected(c128, acc[1]);
-  acc[2] = s2[2].fold_16_reflected(c128, acc[2]);
-  acc[3] = s2[3].fold_16_reflected(c128, acc[3]);
-  acc[4] = s2[4].fold_16_reflected(c128, acc[4]);
-  acc[5] = s2[5].fold_16_reflected(c128, acc[5]);
-  acc[6] = s2[6].fold_16_reflected(c128, acc[6]);
-  acc[7] = s2[7].fold_16_reflected(c128, acc[7]);
-
-  acc[0] = s1[0].fold_16_reflected(c256, acc[0]);
-  acc[1] = s1[1].fold_16_reflected(c256, acc[1]);
-  acc[2] = s1[2].fold_16_reflected(c256, acc[2]);
-  acc[3] = s1[3].fold_16_reflected(c256, acc[3]);
-  acc[4] = s1[4].fold_16_reflected(c256, acc[4]);
-  acc[5] = s1[5].fold_16_reflected(c256, acc[5]);
-  acc[6] = s1[6].fold_16_reflected(c256, acc[6]);
-  acc[7] = s1[7].fold_16_reflected(c256, acc[7]);
-
-  acc[0] = s0[0].fold_16_reflected(c384, acc[0]);
-  acc[1] = s0[1].fold_16_reflected(c384, acc[1]);
-  acc[2] = s0[2].fold_16_reflected(c384, acc[2]);
-  acc[3] = s0[3].fold_16_reflected(c384, acc[3]);
-  acc[4] = s0[4].fold_16_reflected(c384, acc[4]);
-  acc[5] = s0[5].fold_16_reflected(c384, acc[5]);
-  acc[6] = s0[6].fold_16_reflected(c384, acc[6]);
-  acc[7] = s0[7].fold_16_reflected(c384, acc[7]);
-
-  for block in &blocks[aligned..] {
-    fold_block_128_reflected_bitrev(&mut acc, block, coeff_128);
-  }
-
-  finalize_lanes_width32_reflected(acc, keys)
 }
 
 #[inline]
@@ -448,126 +512,131 @@ unsafe fn update_simd_width32_reflected_bitrev_bytes_7way(
 ) -> u32 {
   use crate::checksum::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
 
-  debug_assert!(!blocks.is_empty());
+  // SAFETY: Caller guarantees:
+  // 1. SSE2 + SSSE3 + PCLMULQDQ target features are available (dispatch check).
+  // 2. All SIMD operations are pure register computations after loads.
+  unsafe {
+    debug_assert!(!blocks.is_empty());
 
-  if blocks.len() < 7 {
-    let Some((first, rest)) = blocks.split_first() else {
-      return state;
-    };
-    return update_simd_width32_reflected_bitrev_bytes(state, first, rest, keys);
-  }
-
-  let aligned = (blocks.len() / 7) * 7;
-
-  let coeff_896 = Simd128::new(fold_896b.0, fold_896b.1);
-  let coeff_128 = Simd128::new(keys[4], keys[3]);
-  let c768 = Simd128::new(combine[0].0, combine[0].1);
-  let c640 = Simd128::new(combine[1].0, combine[1].1);
-  let c512 = Simd128::new(combine[2].0, combine[2].1);
-  let c384 = Simd128::new(combine[3].0, combine[3].1);
-  let c256 = Simd128::new(combine[4].0, combine[4].1);
-  let c128 = Simd128::new(combine[5].0, combine[5].1);
-
-  let mut s0 = blocks[0];
-  let mut s1 = blocks[1];
-  let mut s2 = blocks[2];
-  let mut s3 = blocks[3];
-  let mut s4 = blocks[4];
-  let mut s5 = blocks[5];
-  let mut s6 = blocks[6];
-
-  for s in [&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, &mut s6] {
-    s[0] = s[0].bitrev_bytes();
-    s[1] = s[1].bitrev_bytes();
-    s[2] = s[2].bitrev_bytes();
-    s[3] = s[3].bitrev_bytes();
-    s[4] = s[4].bitrev_bytes();
-    s[5] = s[5].bitrev_bytes();
-    s[6] = s[6].bitrev_bytes();
-    s[7] = s[7].bitrev_bytes();
-  }
-
-  s0[0] ^= Simd128::new(0, state as u64);
-
-  const BLOCK_SIZE: usize = 128;
-
-  let mut i: usize = 7;
-  while i < aligned {
-    let prefetch_idx = i.strict_add(LARGE_BLOCK_DISTANCE / BLOCK_SIZE);
-    if prefetch_idx < blocks.len() {
-      prefetch_read_l1(blocks[prefetch_idx].as_ptr().cast::<u8>());
+    if blocks.len() < 7 {
+      let Some((first, rest)) = blocks.split_first() else {
+        return state;
+      };
+      return update_simd_width32_reflected_bitrev_bytes(state, first, rest, keys);
     }
 
-    fold_block_128_reflected_bitrev(&mut s0, &blocks[i], coeff_896);
-    fold_block_128_reflected_bitrev(&mut s1, &blocks[i.strict_add(1)], coeff_896);
-    fold_block_128_reflected_bitrev(&mut s2, &blocks[i.strict_add(2)], coeff_896);
-    fold_block_128_reflected_bitrev(&mut s3, &blocks[i.strict_add(3)], coeff_896);
-    fold_block_128_reflected_bitrev(&mut s4, &blocks[i.strict_add(4)], coeff_896);
-    fold_block_128_reflected_bitrev(&mut s5, &blocks[i.strict_add(5)], coeff_896);
-    fold_block_128_reflected_bitrev(&mut s6, &blocks[i.strict_add(6)], coeff_896);
-    i = i.strict_add(7);
+    let aligned = (blocks.len() / 7) * 7;
+
+    let coeff_896 = Simd128::new(fold_896b.0, fold_896b.1);
+    let coeff_128 = Simd128::new(keys[4], keys[3]);
+    let c768 = Simd128::new(combine[0].0, combine[0].1);
+    let c640 = Simd128::new(combine[1].0, combine[1].1);
+    let c512 = Simd128::new(combine[2].0, combine[2].1);
+    let c384 = Simd128::new(combine[3].0, combine[3].1);
+    let c256 = Simd128::new(combine[4].0, combine[4].1);
+    let c128 = Simd128::new(combine[5].0, combine[5].1);
+
+    let mut s0 = blocks[0];
+    let mut s1 = blocks[1];
+    let mut s2 = blocks[2];
+    let mut s3 = blocks[3];
+    let mut s4 = blocks[4];
+    let mut s5 = blocks[5];
+    let mut s6 = blocks[6];
+
+    for s in [&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, &mut s6] {
+      s[0] = s[0].bitrev_bytes();
+      s[1] = s[1].bitrev_bytes();
+      s[2] = s[2].bitrev_bytes();
+      s[3] = s[3].bitrev_bytes();
+      s[4] = s[4].bitrev_bytes();
+      s[5] = s[5].bitrev_bytes();
+      s[6] = s[6].bitrev_bytes();
+      s[7] = s[7].bitrev_bytes();
+    }
+
+    s0[0] ^= Simd128::new(0, state as u64);
+
+    const BLOCK_SIZE: usize = 128;
+
+    let mut i: usize = 7;
+    while i < aligned {
+      let prefetch_idx = i.strict_add(LARGE_BLOCK_DISTANCE / BLOCK_SIZE);
+      if prefetch_idx < blocks.len() {
+        prefetch_read_l1(blocks[prefetch_idx].as_ptr().cast::<u8>());
+      }
+
+      fold_block_128_reflected_bitrev(&mut s0, &blocks[i], coeff_896);
+      fold_block_128_reflected_bitrev(&mut s1, &blocks[i.strict_add(1)], coeff_896);
+      fold_block_128_reflected_bitrev(&mut s2, &blocks[i.strict_add(2)], coeff_896);
+      fold_block_128_reflected_bitrev(&mut s3, &blocks[i.strict_add(3)], coeff_896);
+      fold_block_128_reflected_bitrev(&mut s4, &blocks[i.strict_add(4)], coeff_896);
+      fold_block_128_reflected_bitrev(&mut s5, &blocks[i.strict_add(5)], coeff_896);
+      fold_block_128_reflected_bitrev(&mut s6, &blocks[i.strict_add(6)], coeff_896);
+      i = i.strict_add(7);
+    }
+
+    let mut acc = s6;
+    acc[0] = s5[0].fold_16_reflected(c128, acc[0]);
+    acc[1] = s5[1].fold_16_reflected(c128, acc[1]);
+    acc[2] = s5[2].fold_16_reflected(c128, acc[2]);
+    acc[3] = s5[3].fold_16_reflected(c128, acc[3]);
+    acc[4] = s5[4].fold_16_reflected(c128, acc[4]);
+    acc[5] = s5[5].fold_16_reflected(c128, acc[5]);
+    acc[6] = s5[6].fold_16_reflected(c128, acc[6]);
+    acc[7] = s5[7].fold_16_reflected(c128, acc[7]);
+
+    acc[0] = s4[0].fold_16_reflected(c256, acc[0]);
+    acc[1] = s4[1].fold_16_reflected(c256, acc[1]);
+    acc[2] = s4[2].fold_16_reflected(c256, acc[2]);
+    acc[3] = s4[3].fold_16_reflected(c256, acc[3]);
+    acc[4] = s4[4].fold_16_reflected(c256, acc[4]);
+    acc[5] = s4[5].fold_16_reflected(c256, acc[5]);
+    acc[6] = s4[6].fold_16_reflected(c256, acc[6]);
+    acc[7] = s4[7].fold_16_reflected(c256, acc[7]);
+
+    acc[0] = s3[0].fold_16_reflected(c384, acc[0]);
+    acc[1] = s3[1].fold_16_reflected(c384, acc[1]);
+    acc[2] = s3[2].fold_16_reflected(c384, acc[2]);
+    acc[3] = s3[3].fold_16_reflected(c384, acc[3]);
+    acc[4] = s3[4].fold_16_reflected(c384, acc[4]);
+    acc[5] = s3[5].fold_16_reflected(c384, acc[5]);
+    acc[6] = s3[6].fold_16_reflected(c384, acc[6]);
+    acc[7] = s3[7].fold_16_reflected(c384, acc[7]);
+
+    acc[0] = s2[0].fold_16_reflected(c512, acc[0]);
+    acc[1] = s2[1].fold_16_reflected(c512, acc[1]);
+    acc[2] = s2[2].fold_16_reflected(c512, acc[2]);
+    acc[3] = s2[3].fold_16_reflected(c512, acc[3]);
+    acc[4] = s2[4].fold_16_reflected(c512, acc[4]);
+    acc[5] = s2[5].fold_16_reflected(c512, acc[5]);
+    acc[6] = s2[6].fold_16_reflected(c512, acc[6]);
+    acc[7] = s2[7].fold_16_reflected(c512, acc[7]);
+
+    acc[0] = s1[0].fold_16_reflected(c640, acc[0]);
+    acc[1] = s1[1].fold_16_reflected(c640, acc[1]);
+    acc[2] = s1[2].fold_16_reflected(c640, acc[2]);
+    acc[3] = s1[3].fold_16_reflected(c640, acc[3]);
+    acc[4] = s1[4].fold_16_reflected(c640, acc[4]);
+    acc[5] = s1[5].fold_16_reflected(c640, acc[5]);
+    acc[6] = s1[6].fold_16_reflected(c640, acc[6]);
+    acc[7] = s1[7].fold_16_reflected(c640, acc[7]);
+
+    acc[0] = s0[0].fold_16_reflected(c768, acc[0]);
+    acc[1] = s0[1].fold_16_reflected(c768, acc[1]);
+    acc[2] = s0[2].fold_16_reflected(c768, acc[2]);
+    acc[3] = s0[3].fold_16_reflected(c768, acc[3]);
+    acc[4] = s0[4].fold_16_reflected(c768, acc[4]);
+    acc[5] = s0[5].fold_16_reflected(c768, acc[5]);
+    acc[6] = s0[6].fold_16_reflected(c768, acc[6]);
+    acc[7] = s0[7].fold_16_reflected(c768, acc[7]);
+
+    for block in &blocks[aligned..] {
+      fold_block_128_reflected_bitrev(&mut acc, block, coeff_128);
+    }
+
+    finalize_lanes_width32_reflected(acc, keys)
   }
-
-  let mut acc = s6;
-  acc[0] = s5[0].fold_16_reflected(c128, acc[0]);
-  acc[1] = s5[1].fold_16_reflected(c128, acc[1]);
-  acc[2] = s5[2].fold_16_reflected(c128, acc[2]);
-  acc[3] = s5[3].fold_16_reflected(c128, acc[3]);
-  acc[4] = s5[4].fold_16_reflected(c128, acc[4]);
-  acc[5] = s5[5].fold_16_reflected(c128, acc[5]);
-  acc[6] = s5[6].fold_16_reflected(c128, acc[6]);
-  acc[7] = s5[7].fold_16_reflected(c128, acc[7]);
-
-  acc[0] = s4[0].fold_16_reflected(c256, acc[0]);
-  acc[1] = s4[1].fold_16_reflected(c256, acc[1]);
-  acc[2] = s4[2].fold_16_reflected(c256, acc[2]);
-  acc[3] = s4[3].fold_16_reflected(c256, acc[3]);
-  acc[4] = s4[4].fold_16_reflected(c256, acc[4]);
-  acc[5] = s4[5].fold_16_reflected(c256, acc[5]);
-  acc[6] = s4[6].fold_16_reflected(c256, acc[6]);
-  acc[7] = s4[7].fold_16_reflected(c256, acc[7]);
-
-  acc[0] = s3[0].fold_16_reflected(c384, acc[0]);
-  acc[1] = s3[1].fold_16_reflected(c384, acc[1]);
-  acc[2] = s3[2].fold_16_reflected(c384, acc[2]);
-  acc[3] = s3[3].fold_16_reflected(c384, acc[3]);
-  acc[4] = s3[4].fold_16_reflected(c384, acc[4]);
-  acc[5] = s3[5].fold_16_reflected(c384, acc[5]);
-  acc[6] = s3[6].fold_16_reflected(c384, acc[6]);
-  acc[7] = s3[7].fold_16_reflected(c384, acc[7]);
-
-  acc[0] = s2[0].fold_16_reflected(c512, acc[0]);
-  acc[1] = s2[1].fold_16_reflected(c512, acc[1]);
-  acc[2] = s2[2].fold_16_reflected(c512, acc[2]);
-  acc[3] = s2[3].fold_16_reflected(c512, acc[3]);
-  acc[4] = s2[4].fold_16_reflected(c512, acc[4]);
-  acc[5] = s2[5].fold_16_reflected(c512, acc[5]);
-  acc[6] = s2[6].fold_16_reflected(c512, acc[6]);
-  acc[7] = s2[7].fold_16_reflected(c512, acc[7]);
-
-  acc[0] = s1[0].fold_16_reflected(c640, acc[0]);
-  acc[1] = s1[1].fold_16_reflected(c640, acc[1]);
-  acc[2] = s1[2].fold_16_reflected(c640, acc[2]);
-  acc[3] = s1[3].fold_16_reflected(c640, acc[3]);
-  acc[4] = s1[4].fold_16_reflected(c640, acc[4]);
-  acc[5] = s1[5].fold_16_reflected(c640, acc[5]);
-  acc[6] = s1[6].fold_16_reflected(c640, acc[6]);
-  acc[7] = s1[7].fold_16_reflected(c640, acc[7]);
-
-  acc[0] = s0[0].fold_16_reflected(c768, acc[0]);
-  acc[1] = s0[1].fold_16_reflected(c768, acc[1]);
-  acc[2] = s0[2].fold_16_reflected(c768, acc[2]);
-  acc[3] = s0[3].fold_16_reflected(c768, acc[3]);
-  acc[4] = s0[4].fold_16_reflected(c768, acc[4]);
-  acc[5] = s0[5].fold_16_reflected(c768, acc[5]);
-  acc[6] = s0[6].fold_16_reflected(c768, acc[6]);
-  acc[7] = s0[7].fold_16_reflected(c768, acc[7]);
-
-  for block in &blocks[aligned..] {
-    fold_block_128_reflected_bitrev(&mut acc, block, coeff_128);
-  }
-
-  finalize_lanes_width32_reflected(acc, keys)
 }
 
 #[inline]
@@ -581,138 +650,143 @@ unsafe fn update_simd_width32_reflected_bitrev_bytes_8way(
 ) -> u32 {
   use crate::checksum::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
 
-  debug_assert!(!blocks.is_empty());
+  // SAFETY: Caller guarantees:
+  // 1. SSE2 + SSSE3 + PCLMULQDQ target features are available (dispatch check).
+  // 2. All SIMD operations are pure register computations after loads.
+  unsafe {
+    debug_assert!(!blocks.is_empty());
 
-  if blocks.len() < 8 {
-    let Some((first, rest)) = blocks.split_first() else {
-      return state;
-    };
-    return update_simd_width32_reflected_bitrev_bytes(state, first, rest, keys);
-  }
-
-  let aligned = (blocks.len() / 8) * 8;
-
-  let coeff_1024 = Simd128::new(fold_1024b.0, fold_1024b.1);
-  let coeff_128 = Simd128::new(keys[4], keys[3]);
-  let c896 = Simd128::new(combine[0].0, combine[0].1);
-  let c768 = Simd128::new(combine[1].0, combine[1].1);
-  let c640 = Simd128::new(combine[2].0, combine[2].1);
-  let c512 = Simd128::new(combine[3].0, combine[3].1);
-  let c384 = Simd128::new(combine[4].0, combine[4].1);
-  let c256 = Simd128::new(combine[5].0, combine[5].1);
-  let c128 = Simd128::new(combine[6].0, combine[6].1);
-
-  let mut s0 = blocks[0];
-  let mut s1 = blocks[1];
-  let mut s2 = blocks[2];
-  let mut s3 = blocks[3];
-  let mut s4 = blocks[4];
-  let mut s5 = blocks[5];
-  let mut s6 = blocks[6];
-  let mut s7 = blocks[7];
-
-  for s in [&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, &mut s6, &mut s7] {
-    s[0] = s[0].bitrev_bytes();
-    s[1] = s[1].bitrev_bytes();
-    s[2] = s[2].bitrev_bytes();
-    s[3] = s[3].bitrev_bytes();
-    s[4] = s[4].bitrev_bytes();
-    s[5] = s[5].bitrev_bytes();
-    s[6] = s[6].bitrev_bytes();
-    s[7] = s[7].bitrev_bytes();
-  }
-
-  s0[0] ^= Simd128::new(0, state as u64);
-
-  const BLOCK_SIZE: usize = 128;
-
-  let mut i: usize = 8;
-  while i < aligned {
-    let prefetch_idx = i.strict_add(LARGE_BLOCK_DISTANCE / BLOCK_SIZE);
-    if prefetch_idx < blocks.len() {
-      prefetch_read_l1(blocks[prefetch_idx].as_ptr().cast::<u8>());
+    if blocks.len() < 8 {
+      let Some((first, rest)) = blocks.split_first() else {
+        return state;
+      };
+      return update_simd_width32_reflected_bitrev_bytes(state, first, rest, keys);
     }
 
-    fold_block_128_reflected_bitrev(&mut s0, &blocks[i], coeff_1024);
-    fold_block_128_reflected_bitrev(&mut s1, &blocks[i.strict_add(1)], coeff_1024);
-    fold_block_128_reflected_bitrev(&mut s2, &blocks[i.strict_add(2)], coeff_1024);
-    fold_block_128_reflected_bitrev(&mut s3, &blocks[i.strict_add(3)], coeff_1024);
-    fold_block_128_reflected_bitrev(&mut s4, &blocks[i.strict_add(4)], coeff_1024);
-    fold_block_128_reflected_bitrev(&mut s5, &blocks[i.strict_add(5)], coeff_1024);
-    fold_block_128_reflected_bitrev(&mut s6, &blocks[i.strict_add(6)], coeff_1024);
-    fold_block_128_reflected_bitrev(&mut s7, &blocks[i.strict_add(7)], coeff_1024);
-    i = i.strict_add(8);
+    let aligned = (blocks.len() / 8) * 8;
+
+    let coeff_1024 = Simd128::new(fold_1024b.0, fold_1024b.1);
+    let coeff_128 = Simd128::new(keys[4], keys[3]);
+    let c896 = Simd128::new(combine[0].0, combine[0].1);
+    let c768 = Simd128::new(combine[1].0, combine[1].1);
+    let c640 = Simd128::new(combine[2].0, combine[2].1);
+    let c512 = Simd128::new(combine[3].0, combine[3].1);
+    let c384 = Simd128::new(combine[4].0, combine[4].1);
+    let c256 = Simd128::new(combine[5].0, combine[5].1);
+    let c128 = Simd128::new(combine[6].0, combine[6].1);
+
+    let mut s0 = blocks[0];
+    let mut s1 = blocks[1];
+    let mut s2 = blocks[2];
+    let mut s3 = blocks[3];
+    let mut s4 = blocks[4];
+    let mut s5 = blocks[5];
+    let mut s6 = blocks[6];
+    let mut s7 = blocks[7];
+
+    for s in [&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, &mut s6, &mut s7] {
+      s[0] = s[0].bitrev_bytes();
+      s[1] = s[1].bitrev_bytes();
+      s[2] = s[2].bitrev_bytes();
+      s[3] = s[3].bitrev_bytes();
+      s[4] = s[4].bitrev_bytes();
+      s[5] = s[5].bitrev_bytes();
+      s[6] = s[6].bitrev_bytes();
+      s[7] = s[7].bitrev_bytes();
+    }
+
+    s0[0] ^= Simd128::new(0, state as u64);
+
+    const BLOCK_SIZE: usize = 128;
+
+    let mut i: usize = 8;
+    while i < aligned {
+      let prefetch_idx = i.strict_add(LARGE_BLOCK_DISTANCE / BLOCK_SIZE);
+      if prefetch_idx < blocks.len() {
+        prefetch_read_l1(blocks[prefetch_idx].as_ptr().cast::<u8>());
+      }
+
+      fold_block_128_reflected_bitrev(&mut s0, &blocks[i], coeff_1024);
+      fold_block_128_reflected_bitrev(&mut s1, &blocks[i.strict_add(1)], coeff_1024);
+      fold_block_128_reflected_bitrev(&mut s2, &blocks[i.strict_add(2)], coeff_1024);
+      fold_block_128_reflected_bitrev(&mut s3, &blocks[i.strict_add(3)], coeff_1024);
+      fold_block_128_reflected_bitrev(&mut s4, &blocks[i.strict_add(4)], coeff_1024);
+      fold_block_128_reflected_bitrev(&mut s5, &blocks[i.strict_add(5)], coeff_1024);
+      fold_block_128_reflected_bitrev(&mut s6, &blocks[i.strict_add(6)], coeff_1024);
+      fold_block_128_reflected_bitrev(&mut s7, &blocks[i.strict_add(7)], coeff_1024);
+      i = i.strict_add(8);
+    }
+
+    let mut acc = s7;
+    acc[0] = s6[0].fold_16_reflected(c128, acc[0]);
+    acc[1] = s6[1].fold_16_reflected(c128, acc[1]);
+    acc[2] = s6[2].fold_16_reflected(c128, acc[2]);
+    acc[3] = s6[3].fold_16_reflected(c128, acc[3]);
+    acc[4] = s6[4].fold_16_reflected(c128, acc[4]);
+    acc[5] = s6[5].fold_16_reflected(c128, acc[5]);
+    acc[6] = s6[6].fold_16_reflected(c128, acc[6]);
+    acc[7] = s6[7].fold_16_reflected(c128, acc[7]);
+
+    acc[0] = s5[0].fold_16_reflected(c256, acc[0]);
+    acc[1] = s5[1].fold_16_reflected(c256, acc[1]);
+    acc[2] = s5[2].fold_16_reflected(c256, acc[2]);
+    acc[3] = s5[3].fold_16_reflected(c256, acc[3]);
+    acc[4] = s5[4].fold_16_reflected(c256, acc[4]);
+    acc[5] = s5[5].fold_16_reflected(c256, acc[5]);
+    acc[6] = s5[6].fold_16_reflected(c256, acc[6]);
+    acc[7] = s5[7].fold_16_reflected(c256, acc[7]);
+
+    acc[0] = s4[0].fold_16_reflected(c384, acc[0]);
+    acc[1] = s4[1].fold_16_reflected(c384, acc[1]);
+    acc[2] = s4[2].fold_16_reflected(c384, acc[2]);
+    acc[3] = s4[3].fold_16_reflected(c384, acc[3]);
+    acc[4] = s4[4].fold_16_reflected(c384, acc[4]);
+    acc[5] = s4[5].fold_16_reflected(c384, acc[5]);
+    acc[6] = s4[6].fold_16_reflected(c384, acc[6]);
+    acc[7] = s4[7].fold_16_reflected(c384, acc[7]);
+
+    acc[0] = s3[0].fold_16_reflected(c512, acc[0]);
+    acc[1] = s3[1].fold_16_reflected(c512, acc[1]);
+    acc[2] = s3[2].fold_16_reflected(c512, acc[2]);
+    acc[3] = s3[3].fold_16_reflected(c512, acc[3]);
+    acc[4] = s3[4].fold_16_reflected(c512, acc[4]);
+    acc[5] = s3[5].fold_16_reflected(c512, acc[5]);
+    acc[6] = s3[6].fold_16_reflected(c512, acc[6]);
+    acc[7] = s3[7].fold_16_reflected(c512, acc[7]);
+
+    acc[0] = s2[0].fold_16_reflected(c640, acc[0]);
+    acc[1] = s2[1].fold_16_reflected(c640, acc[1]);
+    acc[2] = s2[2].fold_16_reflected(c640, acc[2]);
+    acc[3] = s2[3].fold_16_reflected(c640, acc[3]);
+    acc[4] = s2[4].fold_16_reflected(c640, acc[4]);
+    acc[5] = s2[5].fold_16_reflected(c640, acc[5]);
+    acc[6] = s2[6].fold_16_reflected(c640, acc[6]);
+    acc[7] = s2[7].fold_16_reflected(c640, acc[7]);
+
+    acc[0] = s1[0].fold_16_reflected(c768, acc[0]);
+    acc[1] = s1[1].fold_16_reflected(c768, acc[1]);
+    acc[2] = s1[2].fold_16_reflected(c768, acc[2]);
+    acc[3] = s1[3].fold_16_reflected(c768, acc[3]);
+    acc[4] = s1[4].fold_16_reflected(c768, acc[4]);
+    acc[5] = s1[5].fold_16_reflected(c768, acc[5]);
+    acc[6] = s1[6].fold_16_reflected(c768, acc[6]);
+    acc[7] = s1[7].fold_16_reflected(c768, acc[7]);
+
+    acc[0] = s0[0].fold_16_reflected(c896, acc[0]);
+    acc[1] = s0[1].fold_16_reflected(c896, acc[1]);
+    acc[2] = s0[2].fold_16_reflected(c896, acc[2]);
+    acc[3] = s0[3].fold_16_reflected(c896, acc[3]);
+    acc[4] = s0[4].fold_16_reflected(c896, acc[4]);
+    acc[5] = s0[5].fold_16_reflected(c896, acc[5]);
+    acc[6] = s0[6].fold_16_reflected(c896, acc[6]);
+    acc[7] = s0[7].fold_16_reflected(c896, acc[7]);
+
+    for block in &blocks[aligned..] {
+      fold_block_128_reflected_bitrev(&mut acc, block, coeff_128);
+    }
+
+    finalize_lanes_width32_reflected(acc, keys)
   }
-
-  let mut acc = s7;
-  acc[0] = s6[0].fold_16_reflected(c128, acc[0]);
-  acc[1] = s6[1].fold_16_reflected(c128, acc[1]);
-  acc[2] = s6[2].fold_16_reflected(c128, acc[2]);
-  acc[3] = s6[3].fold_16_reflected(c128, acc[3]);
-  acc[4] = s6[4].fold_16_reflected(c128, acc[4]);
-  acc[5] = s6[5].fold_16_reflected(c128, acc[5]);
-  acc[6] = s6[6].fold_16_reflected(c128, acc[6]);
-  acc[7] = s6[7].fold_16_reflected(c128, acc[7]);
-
-  acc[0] = s5[0].fold_16_reflected(c256, acc[0]);
-  acc[1] = s5[1].fold_16_reflected(c256, acc[1]);
-  acc[2] = s5[2].fold_16_reflected(c256, acc[2]);
-  acc[3] = s5[3].fold_16_reflected(c256, acc[3]);
-  acc[4] = s5[4].fold_16_reflected(c256, acc[4]);
-  acc[5] = s5[5].fold_16_reflected(c256, acc[5]);
-  acc[6] = s5[6].fold_16_reflected(c256, acc[6]);
-  acc[7] = s5[7].fold_16_reflected(c256, acc[7]);
-
-  acc[0] = s4[0].fold_16_reflected(c384, acc[0]);
-  acc[1] = s4[1].fold_16_reflected(c384, acc[1]);
-  acc[2] = s4[2].fold_16_reflected(c384, acc[2]);
-  acc[3] = s4[3].fold_16_reflected(c384, acc[3]);
-  acc[4] = s4[4].fold_16_reflected(c384, acc[4]);
-  acc[5] = s4[5].fold_16_reflected(c384, acc[5]);
-  acc[6] = s4[6].fold_16_reflected(c384, acc[6]);
-  acc[7] = s4[7].fold_16_reflected(c384, acc[7]);
-
-  acc[0] = s3[0].fold_16_reflected(c512, acc[0]);
-  acc[1] = s3[1].fold_16_reflected(c512, acc[1]);
-  acc[2] = s3[2].fold_16_reflected(c512, acc[2]);
-  acc[3] = s3[3].fold_16_reflected(c512, acc[3]);
-  acc[4] = s3[4].fold_16_reflected(c512, acc[4]);
-  acc[5] = s3[5].fold_16_reflected(c512, acc[5]);
-  acc[6] = s3[6].fold_16_reflected(c512, acc[6]);
-  acc[7] = s3[7].fold_16_reflected(c512, acc[7]);
-
-  acc[0] = s2[0].fold_16_reflected(c640, acc[0]);
-  acc[1] = s2[1].fold_16_reflected(c640, acc[1]);
-  acc[2] = s2[2].fold_16_reflected(c640, acc[2]);
-  acc[3] = s2[3].fold_16_reflected(c640, acc[3]);
-  acc[4] = s2[4].fold_16_reflected(c640, acc[4]);
-  acc[5] = s2[5].fold_16_reflected(c640, acc[5]);
-  acc[6] = s2[6].fold_16_reflected(c640, acc[6]);
-  acc[7] = s2[7].fold_16_reflected(c640, acc[7]);
-
-  acc[0] = s1[0].fold_16_reflected(c768, acc[0]);
-  acc[1] = s1[1].fold_16_reflected(c768, acc[1]);
-  acc[2] = s1[2].fold_16_reflected(c768, acc[2]);
-  acc[3] = s1[3].fold_16_reflected(c768, acc[3]);
-  acc[4] = s1[4].fold_16_reflected(c768, acc[4]);
-  acc[5] = s1[5].fold_16_reflected(c768, acc[5]);
-  acc[6] = s1[6].fold_16_reflected(c768, acc[6]);
-  acc[7] = s1[7].fold_16_reflected(c768, acc[7]);
-
-  acc[0] = s0[0].fold_16_reflected(c896, acc[0]);
-  acc[1] = s0[1].fold_16_reflected(c896, acc[1]);
-  acc[2] = s0[2].fold_16_reflected(c896, acc[2]);
-  acc[3] = s0[3].fold_16_reflected(c896, acc[3]);
-  acc[4] = s0[4].fold_16_reflected(c896, acc[4]);
-  acc[5] = s0[5].fold_16_reflected(c896, acc[5]);
-  acc[6] = s0[6].fold_16_reflected(c896, acc[6]);
-  acc[7] = s0[7].fold_16_reflected(c896, acc[7]);
-
-  for block in &blocks[aligned..] {
-    fold_block_128_reflected_bitrev(&mut acc, block, coeff_128);
-  }
-
-  finalize_lanes_width32_reflected(acc, keys)
 }
 
 #[inline]
@@ -724,21 +798,26 @@ unsafe fn crc24_width32_pclmul_stream(
   stream: &Crc24StreamConstants,
   streams: u8,
 ) -> u32 {
-  let (left, middle, right) = data.align_to::<[Simd128; 8]>();
-  let Some((first, rest)) = middle.split_first() else {
-    return crc24_width32_pclmul_small(state, data, keys);
-  };
+  // SAFETY: Caller guarantees:
+  // 1. SSE2 + SSSE3 + PCLMULQDQ target features are available (dispatch check).
+  // 2. All SIMD operations are pure register computations after loads.
+  unsafe {
+    let (left, middle, right) = data.align_to::<[Simd128; 8]>();
+    let Some((first, rest)) = middle.split_first() else {
+      return crc24_width32_pclmul_small(state, data, keys);
+    };
 
-  state = crc24_reflected_update_bitrev_bytes(state, left);
-  let state32 = match streams {
-    8 => update_simd_width32_reflected_bitrev_bytes_8way(state, middle, stream.fold_1024b, &stream.combine_8way, keys),
-    7 => update_simd_width32_reflected_bitrev_bytes_7way(state, middle, stream.fold_896b, &stream.combine_7way, keys),
-    4 => update_simd_width32_reflected_bitrev_bytes_4way(state, middle, stream.fold_512b, &stream.combine_4way, keys),
-    2 => update_simd_width32_reflected_bitrev_bytes_2way(state, middle, stream.fold_256b, keys),
-    _ => update_simd_width32_reflected_bitrev_bytes(state, first, rest, keys),
-  };
-  state = state32;
-  crc24_reflected_update_bitrev_bytes(state, right)
+    state = crc24_reflected_update_bitrev_bytes(state, left);
+    let state32 = match streams {
+      8 => update_simd_width32_reflected_bitrev_bytes_8way(state, middle, stream.fold_1024b, &stream.combine_8way, keys),
+      7 => update_simd_width32_reflected_bitrev_bytes_7way(state, middle, stream.fold_896b, &stream.combine_7way, keys),
+      4 => update_simd_width32_reflected_bitrev_bytes_4way(state, middle, stream.fold_512b, &stream.combine_4way, keys),
+      2 => update_simd_width32_reflected_bitrev_bytes_2way(state, middle, stream.fold_256b, keys),
+      _ => update_simd_width32_reflected_bitrev_bytes(state, first, rest, keys),
+    };
+    state = state32;
+    crc24_reflected_update_bitrev_bytes(state, right)
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -748,46 +827,57 @@ unsafe fn crc24_width32_pclmul_stream(
 #[inline]
 #[target_feature(enable = "sse2", enable = "ssse3", enable = "pclmulqdq")]
 unsafe fn crc24_width32_pclmul_small(mut state: u32, data: &[u8], keys: &[u64; 23]) -> u32 {
-  let mut buf = data.as_ptr();
-  let mut len = data.len();
+  // SAFETY: Caller guarantees:
+  // 1. SSE2 + SSSE3 + PCLMULQDQ target features are available (dispatch check).
+  // 2. All pointer arithmetic stays within bounds via loop guards.
+  // 3. All SIMD operations are pure register computations after loads.
+  unsafe {
+    let mut buf = data.as_ptr();
+    let mut len = data.len();
 
-  if len < 16 {
-    return crc24_reflected_update_bitrev_bytes(state, data);
-  }
+    if len < 16 {
+      return crc24_reflected_update_bitrev_bytes(state, data);
+    }
 
-  let coeff_16b = Simd128::new(keys[2], keys[1]);
+    let coeff_16b = Simd128::new(keys[2], keys[1]);
 
-  let mut x0 = Simd128(_mm_loadu_si128(buf as *const __m128i)).bitrev_bytes();
-  x0 ^= Simd128::new(0, state as u64);
-  buf = buf.add(16);
-  len = len.strict_sub(16);
-
-  while len >= 16 {
-    let chunk = Simd128(_mm_loadu_si128(buf as *const __m128i)).bitrev_bytes();
-    x0 = x0.fold_16_reflected(coeff_16b, chunk);
+    let mut x0 = Simd128(_mm_loadu_si128(buf as *const __m128i)).bitrev_bytes();
+    x0 ^= Simd128::new(0, state as u64);
     buf = buf.add(16);
     len = len.strict_sub(16);
+
+    while len >= 16 {
+      let chunk = Simd128(_mm_loadu_si128(buf as *const __m128i)).bitrev_bytes();
+      x0 = x0.fold_16_reflected(coeff_16b, chunk);
+      buf = buf.add(16);
+      len = len.strict_sub(16);
+    }
+
+    let x0 = x0.fold_width32_reflected(keys[6], keys[5]);
+    state = x0.barrett_width32_reflected(keys[8], keys[7]);
+
+    let tail = core::slice::from_raw_parts(buf, len);
+    crc24_reflected_update_bitrev_bytes(state, tail)
   }
-
-  let x0 = x0.fold_width32_reflected(keys[6], keys[5]);
-  state = x0.barrett_width32_reflected(keys[8], keys[7]);
-
-  let tail = core::slice::from_raw_parts(buf, len);
-  crc24_reflected_update_bitrev_bytes(state, tail)
 }
 
 #[inline]
 #[target_feature(enable = "sse2", enable = "ssse3", enable = "pclmulqdq")]
 unsafe fn crc24_width32_pclmul(mut state: u32, data: &[u8], keys: &[u64; 23]) -> u32 {
-  let (left, middle, right) = data.align_to::<[Simd128; 8]>();
-  let Some((first, rest)) = middle.split_first() else {
-    return crc24_width32_pclmul_small(state, data, keys);
-  };
+  // SAFETY: Caller guarantees:
+  // 1. SSE2 + SSSE3 + PCLMULQDQ target features are available (dispatch check).
+  // 2. All SIMD operations are pure register computations after loads.
+  unsafe {
+    let (left, middle, right) = data.align_to::<[Simd128; 8]>();
+    let Some((first, rest)) = middle.split_first() else {
+      return crc24_width32_pclmul_small(state, data, keys);
+    };
 
-  state = crc24_reflected_update_bitrev_bytes(state, left);
-  let state32 = update_simd_width32_reflected_bitrev_bytes(state, first, rest, keys);
-  state = state32;
-  crc24_reflected_update_bitrev_bytes(state, right)
+    state = crc24_reflected_update_bitrev_bytes(state, left);
+    let state32 = update_simd_width32_reflected_bitrev_bytes(state, first, rest, keys);
+    state = state32;
+    crc24_reflected_update_bitrev_bytes(state, right)
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -797,54 +887,84 @@ unsafe fn crc24_width32_pclmul(mut state: u32, data: &[u8], keys: &[u64; 23]) ->
 #[inline]
 #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq")]
 unsafe fn clmul10_vpclmul(a: __m512i, b: __m512i) -> __m512i {
-  _mm512_clmulepi64_epi128(a, b, 0x10)
+  // SAFETY: Caller guarantees:
+  // 1. AVX512F,AVX512VL,AVX512BW,AVX512DQ,VPCLMULQDQ target features are available (dispatch check).
+  // 2. All SIMD operations are pure register computations after loads.
+  unsafe {
+    _mm512_clmulepi64_epi128(a, b, 0x10)
+  }
 }
 
 #[inline]
 #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq")]
 unsafe fn clmul01_vpclmul(a: __m512i, b: __m512i) -> __m512i {
-  _mm512_clmulepi64_epi128(a, b, 0x01)
+  // SAFETY: Caller guarantees:
+  // 1. AVX512F,AVX512VL,AVX512BW,AVX512DQ,VPCLMULQDQ + AVX512F,AVX512VL,AVX512BW,AVX512DQ,VPCLMULQDQ target features are available (dispatch check).
+  // 2. All SIMD operations are pure register computations after loads.
+  unsafe {
+    _mm512_clmulepi64_epi128(a, b, 0x01)
+  }
 }
 
 #[inline]
 #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq")]
 unsafe fn fold_16_reflected_vpclmul(state: __m512i, coeff: __m512i, data: __m512i) -> __m512i {
-  _mm512_ternarylogic_epi64(clmul10_vpclmul(state, coeff), clmul01_vpclmul(state, coeff), data, 0x96)
+  // SAFETY: Caller guarantees:
+  // 1. AVX512F,AVX512VL,AVX512BW,AVX512DQ,VPCLMULQDQ + AVX512F,AVX512VL,AVX512BW,AVX512DQ,VPCLMULQDQ target features are available (dispatch check).
+  // 2. All SIMD operations are pure register computations after loads.
+  unsafe {
+    _mm512_ternarylogic_epi64(clmul10_vpclmul(state, coeff), clmul01_vpclmul(state, coeff), data, 0x96)
+  }
 }
 
 #[inline]
 #[target_feature(enable = "avx512f")]
 unsafe fn broadcast_coeff_128b(high: u64, low: u64) -> __m512i {
-  _mm512_set_epi64(
-    high.cast_signed(),
-    low.cast_signed(),
-    high.cast_signed(),
-    low.cast_signed(),
-    high.cast_signed(),
-    low.cast_signed(),
-    high.cast_signed(),
-    low.cast_signed(),
-  )
+  // SAFETY: Caller guarantees:
+  // 1. AVX512F,AVX512VL,AVX512BW,AVX512DQ,VPCLMULQDQ + AVX512F target features are available (dispatch check).
+  // 2. All SIMD operations are pure register computations after loads.
+  unsafe {
+    _mm512_set_epi64(
+      high.cast_signed(),
+      low.cast_signed(),
+      high.cast_signed(),
+      low.cast_signed(),
+      high.cast_signed(),
+      low.cast_signed(),
+      high.cast_signed(),
+      low.cast_signed(),
+    )
+  }
 }
 
 #[inline]
 #[target_feature(enable = "avx512f")]
 unsafe fn state_mask_lane0(state: u32) -> __m512i {
-  _mm512_set_epi64(0, 0, 0, 0, 0, 0, 0, state as i64)
+  // SAFETY: Caller guarantees:
+  // 1. AVX512F target features are available (dispatch check).
+  // 2. All SIMD operations are pure register computations after loads.
+  unsafe {
+    _mm512_set_epi64(0, 0, 0, 0, 0, 0, 0, state as i64)
+  }
 }
 
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
 unsafe fn bitrev_bytes_vpclmul(x: __m512i) -> __m512i {
-  let mask = _mm512_set1_epi8(0x0f);
-  let lo = _mm512_and_si512(x, mask);
-  let hi = _mm512_and_si512(_mm512_srli_epi16(x, 4), mask);
+  // SAFETY: Caller guarantees:
+  // 1. AVX512F + AVX512F,AVX512BW target features are available (dispatch check).
+  // 2. All SIMD operations are pure register computations after loads.
+  unsafe {
+    let mask = _mm512_set1_epi8(0x0f);
+    let lo = _mm512_and_si512(x, mask);
+    let hi = _mm512_and_si512(_mm512_srli_epi16(x, 4), mask);
 
-  let lut128 = _mm_setr_epi8(0, 8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15);
-  let lut = _mm512_broadcast_i32x4(lut128);
-  let lo_rev = _mm512_shuffle_epi8(lut, lo);
-  let hi_rev = _mm512_shuffle_epi8(lut, hi);
-  _mm512_or_si512(_mm512_slli_epi16(lo_rev, 4), hi_rev)
+    let lut128 = _mm_setr_epi8(0, 8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15);
+    let lut = _mm512_broadcast_i32x4(lut128);
+    let lo_rev = _mm512_shuffle_epi8(lut, lo);
+    let hi_rev = _mm512_shuffle_epi8(lut, hi);
+    _mm512_or_si512(_mm512_slli_epi16(lo_rev, 4), hi_rev)
+  }
 }
 
 #[inline]
@@ -855,34 +975,40 @@ unsafe fn update_simd_width32_reflected_vpclmul_bitrev_bytes(
   rest: &[[Simd128; 8]],
   keys: &[u64; 23],
 ) -> u32 {
-  let ptr = first.as_ptr() as *const u8;
-  let mut x0 = _mm512_loadu_si512(ptr as *const __m512i);
-  let mut x1 = _mm512_loadu_si512(ptr.add(64) as *const __m512i);
+  // SAFETY: Caller guarantees:
+  // 1. AVX512F,AVX512VL,AVX512BW,AVX512DQ,VPCLMULQDQ,SSSE3,PCLMULQDQ,SSE2 target features are available (dispatch check).
+  // 2. All pointer arithmetic stays within bounds via loop guards.
+  // 3. All SIMD operations are pure register computations after loads.
+  unsafe {
+    let ptr = first.as_ptr() as *const u8;
+    let mut x0 = _mm512_loadu_si512(ptr as *const __m512i);
+    let mut x1 = _mm512_loadu_si512(ptr.add(64) as *const __m512i);
 
-  x0 = bitrev_bytes_vpclmul(x0);
-  x1 = bitrev_bytes_vpclmul(x1);
+    x0 = bitrev_bytes_vpclmul(x0);
+    x1 = bitrev_bytes_vpclmul(x1);
 
-  x0 = _mm512_xor_si512(x0, state_mask_lane0(state));
+    x0 = _mm512_xor_si512(x0, state_mask_lane0(state));
 
-  let coeff_128b = broadcast_coeff_128b(keys[4], keys[3]);
-  for chunk in rest {
-    let ptr = chunk.as_ptr() as *const u8;
-    let y0 = bitrev_bytes_vpclmul(_mm512_loadu_si512(ptr as *const __m512i));
-    let y1 = bitrev_bytes_vpclmul(_mm512_loadu_si512(ptr.add(64) as *const __m512i));
-    x0 = fold_16_reflected_vpclmul(x0, coeff_128b, y0);
-    x1 = fold_16_reflected_vpclmul(x1, coeff_128b, y1);
+    let coeff_128b = broadcast_coeff_128b(keys[4], keys[3]);
+    for chunk in rest {
+      let ptr = chunk.as_ptr() as *const u8;
+      let y0 = bitrev_bytes_vpclmul(_mm512_loadu_si512(ptr as *const __m512i));
+      let y1 = bitrev_bytes_vpclmul(_mm512_loadu_si512(ptr.add(64) as *const __m512i));
+      x0 = fold_16_reflected_vpclmul(x0, coeff_128b, y0);
+      x1 = fold_16_reflected_vpclmul(x1, coeff_128b, y1);
+    }
+
+    let mut lanes0 = [Simd128(_mm_setzero_si128()); 4];
+    let mut lanes1 = [Simd128(_mm_setzero_si128()); 4];
+    _mm512_storeu_si512(lanes0.as_mut_ptr() as *mut __m512i, x0);
+    _mm512_storeu_si512(lanes1.as_mut_ptr() as *mut __m512i, x1);
+
+    let x = [
+      lanes0[0], lanes0[1], lanes0[2], lanes0[3], lanes1[0], lanes1[1], lanes1[2], lanes1[3],
+    ];
+
+    finalize_lanes_width32_reflected(x, keys)
   }
-
-  let mut lanes0 = [Simd128(_mm_setzero_si128()); 4];
-  let mut lanes1 = [Simd128(_mm_setzero_si128()); 4];
-  _mm512_storeu_si512(lanes0.as_mut_ptr() as *mut __m512i, x0);
-  _mm512_storeu_si512(lanes1.as_mut_ptr() as *mut __m512i, x1);
-
-  let x = [
-    lanes0[0], lanes0[1], lanes0[2], lanes0[3], lanes1[0], lanes1[1], lanes1[2], lanes1[3],
-  ];
-
-  finalize_lanes_width32_reflected(x, keys)
 }
 
 #[inline]
@@ -894,32 +1020,43 @@ unsafe fn vpclmul_coeff(pair: (u64, u64)) -> __m512i {
 #[inline]
 #[target_feature(enable = "avx512f")]
 unsafe fn load_128b_block_bitrev(block: &[Simd128; 8]) -> (__m512i, __m512i) {
-  let ptr = block.as_ptr() as *const u8;
-  let y0 = bitrev_bytes_vpclmul(_mm512_loadu_si512(ptr as *const __m512i));
-  let y1 = bitrev_bytes_vpclmul(_mm512_loadu_si512(ptr.add(64) as *const __m512i));
-  (y0, y1)
+  // SAFETY: Caller guarantees:
+  // 1. AVX512F + AVX512F target features are available (dispatch check).
+  // 2. All pointer arithmetic stays within bounds via loop guards.
+  // 3. All SIMD operations are pure register computations after loads.
+  unsafe {
+    let ptr = block.as_ptr() as *const u8;
+    let y0 = bitrev_bytes_vpclmul(_mm512_loadu_si512(ptr as *const __m512i));
+    let y1 = bitrev_bytes_vpclmul(_mm512_loadu_si512(ptr.add(64) as *const __m512i));
+    (y0, y1)
+  }
 }
 
 #[inline]
 #[target_feature(enable = "avx512f")]
 unsafe fn finalize_vpclmul_state(x0: __m512i, x1: __m512i, keys: &[u64; 23]) -> u32 {
-  let lanes0 = [
-    Simd128(_mm512_extracti32x4_epi32::<0>(x0)),
-    Simd128(_mm512_extracti32x4_epi32::<1>(x0)),
-    Simd128(_mm512_extracti32x4_epi32::<2>(x0)),
-    Simd128(_mm512_extracti32x4_epi32::<3>(x0)),
-  ];
-  let lanes1 = [
-    Simd128(_mm512_extracti32x4_epi32::<0>(x1)),
-    Simd128(_mm512_extracti32x4_epi32::<1>(x1)),
-    Simd128(_mm512_extracti32x4_epi32::<2>(x1)),
-    Simd128(_mm512_extracti32x4_epi32::<3>(x1)),
-  ];
+  // SAFETY: Caller guarantees:
+  // 1. AVX512F target features are available (dispatch check).
+  // 2. All SIMD operations are pure register computations after loads.
+  unsafe {
+    let lanes0 = [
+      Simd128(_mm512_extracti32x4_epi32::<0>(x0)),
+      Simd128(_mm512_extracti32x4_epi32::<1>(x0)),
+      Simd128(_mm512_extracti32x4_epi32::<2>(x0)),
+      Simd128(_mm512_extracti32x4_epi32::<3>(x0)),
+    ];
+    let lanes1 = [
+      Simd128(_mm512_extracti32x4_epi32::<0>(x1)),
+      Simd128(_mm512_extracti32x4_epi32::<1>(x1)),
+      Simd128(_mm512_extracti32x4_epi32::<2>(x1)),
+      Simd128(_mm512_extracti32x4_epi32::<3>(x1)),
+    ];
 
-  let x = [
-    lanes0[0], lanes0[1], lanes0[2], lanes0[3], lanes1[0], lanes1[1], lanes1[2], lanes1[3],
-  ];
-  finalize_lanes_width32_reflected(x, keys)
+    let x = [
+      lanes0[0], lanes0[1], lanes0[2], lanes0[3], lanes1[0], lanes1[1], lanes1[2], lanes1[3],
+    ];
+    finalize_lanes_width32_reflected(x, keys)
+  }
 }
 
 #[inline]
@@ -932,81 +1069,86 @@ unsafe fn update_simd_width32_reflected_vpclmul_bitrev_bytes_2way(
 ) -> u32 {
   use crate::checksum::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
 
-  debug_assert!(!blocks.is_empty());
+  // SAFETY: Caller guarantees:
+  // 1. AVX512F,AVX512VL,AVX512BW,AVX512DQ,VPCLMULQDQ,SSSE3,PCLMULQDQ,SSE2 target features are available (dispatch check).
+  // 2. All SIMD operations are pure register computations after loads.
+  unsafe {
+    debug_assert!(!blocks.is_empty());
 
-  if blocks.len() < 2 {
-    let Some((first, rest)) = blocks.split_first() else {
-      return state;
-    };
-    return update_simd_width32_reflected_vpclmul_bitrev_bytes(state, first, rest, keys);
-  }
-
-  let (mut x0_0, mut x1_0) = load_128b_block_bitrev(&blocks[0]);
-  let (mut x0_1, mut x1_1) = load_128b_block_bitrev(&blocks[1]);
-
-  x0_0 = _mm512_xor_si512(x0_0, state_mask_lane0(state));
-
-  let coeff_256 = vpclmul_coeff(fold_256b);
-  let coeff_128 = vpclmul_coeff((keys[4], keys[3]));
-
-  // Double-unrolled main loop: process 4 blocks (512B) per iteration.
-  const BLOCK_SIZE: usize = 128;
-  const DOUBLE_GROUP: usize = 4; // 2 × 2-way = 4 blocks = 512B
-
-  let mut i: usize = 2;
-  let aligned = (blocks.len() / DOUBLE_GROUP) * DOUBLE_GROUP;
-
-  while i.strict_add(DOUBLE_GROUP) <= aligned {
-    let prefetch_idx = i.strict_add(LARGE_BLOCK_DISTANCE / BLOCK_SIZE);
-    if prefetch_idx < blocks.len() {
-      prefetch_read_l1(blocks[prefetch_idx].as_ptr().cast::<u8>());
+    if blocks.len() < 2 {
+      let Some((first, rest)) = blocks.split_first() else {
+        return state;
+      };
+      return update_simd_width32_reflected_vpclmul_bitrev_bytes(state, first, rest, keys);
     }
 
-    // First iteration (blocks i, i+1)
-    let (y0, y1) = load_128b_block_bitrev(&blocks[i]);
-    x0_0 = fold_16_reflected_vpclmul(x0_0, coeff_256, y0);
-    x1_0 = fold_16_reflected_vpclmul(x1_0, coeff_256, y1);
+    let (mut x0_0, mut x1_0) = load_128b_block_bitrev(&blocks[0]);
+    let (mut x0_1, mut x1_1) = load_128b_block_bitrev(&blocks[1]);
 
-    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(1)]);
-    x0_1 = fold_16_reflected_vpclmul(x0_1, coeff_256, y0);
-    x1_1 = fold_16_reflected_vpclmul(x1_1, coeff_256, y1);
+    x0_0 = _mm512_xor_si512(x0_0, state_mask_lane0(state));
 
-    // Second iteration (blocks i+2, i+3)
-    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(2)]);
-    x0_0 = fold_16_reflected_vpclmul(x0_0, coeff_256, y0);
-    x1_0 = fold_16_reflected_vpclmul(x1_0, coeff_256, y1);
+    let coeff_256 = vpclmul_coeff(fold_256b);
+    let coeff_128 = vpclmul_coeff((keys[4], keys[3]));
 
-    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(3)]);
-    x0_1 = fold_16_reflected_vpclmul(x0_1, coeff_256, y0);
-    x1_1 = fold_16_reflected_vpclmul(x1_1, coeff_256, y1);
+    // Double-unrolled main loop: process 4 blocks (512B) per iteration.
+    const BLOCK_SIZE: usize = 128;
+    const DOUBLE_GROUP: usize = 4; // 2 × 2-way = 4 blocks = 512B
 
-    i = i.strict_add(DOUBLE_GROUP);
+    let mut i: usize = 2;
+    let aligned = (blocks.len() / DOUBLE_GROUP) * DOUBLE_GROUP;
+
+    while i.strict_add(DOUBLE_GROUP) <= aligned {
+      let prefetch_idx = i.strict_add(LARGE_BLOCK_DISTANCE / BLOCK_SIZE);
+      if prefetch_idx < blocks.len() {
+        prefetch_read_l1(blocks[prefetch_idx].as_ptr().cast::<u8>());
+      }
+
+      // First iteration (blocks i, i+1)
+      let (y0, y1) = load_128b_block_bitrev(&blocks[i]);
+      x0_0 = fold_16_reflected_vpclmul(x0_0, coeff_256, y0);
+      x1_0 = fold_16_reflected_vpclmul(x1_0, coeff_256, y1);
+
+      let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(1)]);
+      x0_1 = fold_16_reflected_vpclmul(x0_1, coeff_256, y0);
+      x1_1 = fold_16_reflected_vpclmul(x1_1, coeff_256, y1);
+
+      // Second iteration (blocks i+2, i+3)
+      let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(2)]);
+      x0_0 = fold_16_reflected_vpclmul(x0_0, coeff_256, y0);
+      x1_0 = fold_16_reflected_vpclmul(x1_0, coeff_256, y1);
+
+      let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(3)]);
+      x0_1 = fold_16_reflected_vpclmul(x0_1, coeff_256, y0);
+      x1_1 = fold_16_reflected_vpclmul(x1_1, coeff_256, y1);
+
+      i = i.strict_add(DOUBLE_GROUP);
+    }
+
+    // Handle remaining pairs.
+    let even = blocks.len() & !1usize;
+    while i < even {
+      let (y0, y1) = load_128b_block_bitrev(&blocks[i]);
+      x0_0 = fold_16_reflected_vpclmul(x0_0, coeff_256, y0);
+      x1_0 = fold_16_reflected_vpclmul(x1_0, coeff_256, y1);
+
+      let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(1)]);
+      x0_1 = fold_16_reflected_vpclmul(x0_1, coeff_256, y0);
+      x1_1 = fold_16_reflected_vpclmul(x1_1, coeff_256, y1);
+
+      i = i.strict_add(2);
+    }
+
+    let mut x0 = fold_16_reflected_vpclmul(x0_0, coeff_128, x0_1);
+    let mut x1 = fold_16_reflected_vpclmul(x1_0, coeff_128, x1_1);
+
+    if even != blocks.len() {
+      let (y0, y1) = load_128b_block_bitrev(&blocks[even]);
+      x0 = fold_16_reflected_vpclmul(x0, coeff_128, y0);
+      x1 = fold_16_reflected_vpclmul(x1, coeff_128, y1);
+    }
+
+    finalize_vpclmul_state(x0, x1, keys)
   }
-
-  // Handle remaining pairs.
-  let even = blocks.len() & !1usize;
-  while i < even {
-    let (y0, y1) = load_128b_block_bitrev(&blocks[i]);
-    x0_0 = fold_16_reflected_vpclmul(x0_0, coeff_256, y0);
-    x1_0 = fold_16_reflected_vpclmul(x1_0, coeff_256, y1);
-
-    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(1)]);
-    x0_1 = fold_16_reflected_vpclmul(x0_1, coeff_256, y0);
-    x1_1 = fold_16_reflected_vpclmul(x1_1, coeff_256, y1);
-
-    i = i.strict_add(2);
-  }
-
-  let mut x0 = fold_16_reflected_vpclmul(x0_0, coeff_128, x0_1);
-  let mut x1 = fold_16_reflected_vpclmul(x1_0, coeff_128, x1_1);
-
-  if even != blocks.len() {
-    let (y0, y1) = load_128b_block_bitrev(&blocks[even]);
-    x0 = fold_16_reflected_vpclmul(x0, coeff_128, y0);
-    x1 = fold_16_reflected_vpclmul(x1, coeff_128, y1);
-  }
-
-  finalize_vpclmul_state(x0, x1, keys)
 }
 
 #[inline]
@@ -1020,114 +1162,119 @@ unsafe fn update_simd_width32_reflected_vpclmul_bitrev_bytes_4way(
 ) -> u32 {
   use crate::checksum::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
 
-  debug_assert!(!blocks.is_empty());
+  // SAFETY: Caller guarantees:
+  // 1. AVX512F,AVX512VL,AVX512BW,AVX512DQ,VPCLMULQDQ,SSSE3,PCLMULQDQ,SSE2 target features are available (dispatch check).
+  // 2. All SIMD operations are pure register computations after loads.
+  unsafe {
+    debug_assert!(!blocks.is_empty());
 
-  if blocks.len() < 4 {
-    let Some((first, rest)) = blocks.split_first() else {
-      return state;
-    };
-    return update_simd_width32_reflected_vpclmul_bitrev_bytes(state, first, rest, keys);
-  }
-
-  let (mut x0_0, mut x1_0) = load_128b_block_bitrev(&blocks[0]);
-  let (mut x0_1, mut x1_1) = load_128b_block_bitrev(&blocks[1]);
-  let (mut x0_2, mut x1_2) = load_128b_block_bitrev(&blocks[2]);
-  let (mut x0_3, mut x1_3) = load_128b_block_bitrev(&blocks[3]);
-
-  x0_0 = _mm512_xor_si512(x0_0, state_mask_lane0(state));
-
-  let coeff_512 = vpclmul_coeff(fold_512b);
-  let coeff_128 = vpclmul_coeff((keys[4], keys[3]));
-  let c384 = vpclmul_coeff(combine[0]);
-  let c256 = vpclmul_coeff(combine[1]);
-  let c128 = vpclmul_coeff(combine[2]);
-
-  // Double-unrolled main loop: process 8 blocks (1KB) per iteration.
-  const BLOCK_SIZE: usize = 128;
-  const DOUBLE_GROUP: usize = 8; // 2 × 4-way = 8 blocks = 1KB
-
-  let mut i: usize = 4;
-  let aligned = (blocks.len() / DOUBLE_GROUP) * DOUBLE_GROUP;
-
-  while i.strict_add(DOUBLE_GROUP) <= aligned {
-    let prefetch_idx = i.strict_add(LARGE_BLOCK_DISTANCE / BLOCK_SIZE);
-    if prefetch_idx < blocks.len() {
-      prefetch_read_l1(blocks[prefetch_idx].as_ptr().cast::<u8>());
+    if blocks.len() < 4 {
+      let Some((first, rest)) = blocks.split_first() else {
+        return state;
+      };
+      return update_simd_width32_reflected_vpclmul_bitrev_bytes(state, first, rest, keys);
     }
 
-    // First iteration (blocks i..i+3)
-    let (y0, y1) = load_128b_block_bitrev(&blocks[i]);
-    x0_0 = fold_16_reflected_vpclmul(x0_0, coeff_512, y0);
-    x1_0 = fold_16_reflected_vpclmul(x1_0, coeff_512, y1);
+    let (mut x0_0, mut x1_0) = load_128b_block_bitrev(&blocks[0]);
+    let (mut x0_1, mut x1_1) = load_128b_block_bitrev(&blocks[1]);
+    let (mut x0_2, mut x1_2) = load_128b_block_bitrev(&blocks[2]);
+    let (mut x0_3, mut x1_3) = load_128b_block_bitrev(&blocks[3]);
 
-    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(1)]);
-    x0_1 = fold_16_reflected_vpclmul(x0_1, coeff_512, y0);
-    x1_1 = fold_16_reflected_vpclmul(x1_1, coeff_512, y1);
+    x0_0 = _mm512_xor_si512(x0_0, state_mask_lane0(state));
 
-    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(2)]);
-    x0_2 = fold_16_reflected_vpclmul(x0_2, coeff_512, y0);
-    x1_2 = fold_16_reflected_vpclmul(x1_2, coeff_512, y1);
+    let coeff_512 = vpclmul_coeff(fold_512b);
+    let coeff_128 = vpclmul_coeff((keys[4], keys[3]));
+    let c384 = vpclmul_coeff(combine[0]);
+    let c256 = vpclmul_coeff(combine[1]);
+    let c128 = vpclmul_coeff(combine[2]);
 
-    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(3)]);
-    x0_3 = fold_16_reflected_vpclmul(x0_3, coeff_512, y0);
-    x1_3 = fold_16_reflected_vpclmul(x1_3, coeff_512, y1);
+    // Double-unrolled main loop: process 8 blocks (1KB) per iteration.
+    const BLOCK_SIZE: usize = 128;
+    const DOUBLE_GROUP: usize = 8; // 2 × 4-way = 8 blocks = 1KB
 
-    // Second iteration (blocks i+4..i+7)
-    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(4)]);
-    x0_0 = fold_16_reflected_vpclmul(x0_0, coeff_512, y0);
-    x1_0 = fold_16_reflected_vpclmul(x1_0, coeff_512, y1);
+    let mut i: usize = 4;
+    let aligned = (blocks.len() / DOUBLE_GROUP) * DOUBLE_GROUP;
 
-    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(5)]);
-    x0_1 = fold_16_reflected_vpclmul(x0_1, coeff_512, y0);
-    x1_1 = fold_16_reflected_vpclmul(x1_1, coeff_512, y1);
+    while i.strict_add(DOUBLE_GROUP) <= aligned {
+      let prefetch_idx = i.strict_add(LARGE_BLOCK_DISTANCE / BLOCK_SIZE);
+      if prefetch_idx < blocks.len() {
+        prefetch_read_l1(blocks[prefetch_idx].as_ptr().cast::<u8>());
+      }
 
-    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(6)]);
-    x0_2 = fold_16_reflected_vpclmul(x0_2, coeff_512, y0);
-    x1_2 = fold_16_reflected_vpclmul(x1_2, coeff_512, y1);
+      // First iteration (blocks i..i+3)
+      let (y0, y1) = load_128b_block_bitrev(&blocks[i]);
+      x0_0 = fold_16_reflected_vpclmul(x0_0, coeff_512, y0);
+      x1_0 = fold_16_reflected_vpclmul(x1_0, coeff_512, y1);
 
-    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(7)]);
-    x0_3 = fold_16_reflected_vpclmul(x0_3, coeff_512, y0);
-    x1_3 = fold_16_reflected_vpclmul(x1_3, coeff_512, y1);
+      let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(1)]);
+      x0_1 = fold_16_reflected_vpclmul(x0_1, coeff_512, y0);
+      x1_1 = fold_16_reflected_vpclmul(x1_1, coeff_512, y1);
 
-    i = i.strict_add(DOUBLE_GROUP);
+      let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(2)]);
+      x0_2 = fold_16_reflected_vpclmul(x0_2, coeff_512, y0);
+      x1_2 = fold_16_reflected_vpclmul(x1_2, coeff_512, y1);
+
+      let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(3)]);
+      x0_3 = fold_16_reflected_vpclmul(x0_3, coeff_512, y0);
+      x1_3 = fold_16_reflected_vpclmul(x1_3, coeff_512, y1);
+
+      // Second iteration (blocks i+4..i+7)
+      let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(4)]);
+      x0_0 = fold_16_reflected_vpclmul(x0_0, coeff_512, y0);
+      x1_0 = fold_16_reflected_vpclmul(x1_0, coeff_512, y1);
+
+      let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(5)]);
+      x0_1 = fold_16_reflected_vpclmul(x0_1, coeff_512, y0);
+      x1_1 = fold_16_reflected_vpclmul(x1_1, coeff_512, y1);
+
+      let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(6)]);
+      x0_2 = fold_16_reflected_vpclmul(x0_2, coeff_512, y0);
+      x1_2 = fold_16_reflected_vpclmul(x1_2, coeff_512, y1);
+
+      let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(7)]);
+      x0_3 = fold_16_reflected_vpclmul(x0_3, coeff_512, y0);
+      x1_3 = fold_16_reflected_vpclmul(x1_3, coeff_512, y1);
+
+      i = i.strict_add(DOUBLE_GROUP);
+    }
+
+    // Handle remaining quads.
+    let quad_aligned = (blocks.len() / 4) * 4;
+    while i < quad_aligned {
+      let (y0, y1) = load_128b_block_bitrev(&blocks[i]);
+      x0_0 = fold_16_reflected_vpclmul(x0_0, coeff_512, y0);
+      x1_0 = fold_16_reflected_vpclmul(x1_0, coeff_512, y1);
+
+      let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(1)]);
+      x0_1 = fold_16_reflected_vpclmul(x0_1, coeff_512, y0);
+      x1_1 = fold_16_reflected_vpclmul(x1_1, coeff_512, y1);
+
+      let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(2)]);
+      x0_2 = fold_16_reflected_vpclmul(x0_2, coeff_512, y0);
+      x1_2 = fold_16_reflected_vpclmul(x1_2, coeff_512, y1);
+
+      let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(3)]);
+      x0_3 = fold_16_reflected_vpclmul(x0_3, coeff_512, y0);
+      x1_3 = fold_16_reflected_vpclmul(x1_3, coeff_512, y1);
+
+      i = i.strict_add(4);
+    }
+
+    let mut x0 = fold_16_reflected_vpclmul(x0_2, c128, x0_3);
+    let mut x1 = fold_16_reflected_vpclmul(x1_2, c128, x1_3);
+    x0 = fold_16_reflected_vpclmul(x0_1, c256, x0);
+    x1 = fold_16_reflected_vpclmul(x1_1, c256, x1);
+    x0 = fold_16_reflected_vpclmul(x0_0, c384, x0);
+    x1 = fold_16_reflected_vpclmul(x1_0, c384, x1);
+
+    for block in &blocks[quad_aligned..] {
+      let (y0, y1) = load_128b_block_bitrev(block);
+      x0 = fold_16_reflected_vpclmul(x0, coeff_128, y0);
+      x1 = fold_16_reflected_vpclmul(x1, coeff_128, y1);
+    }
+
+    finalize_vpclmul_state(x0, x1, keys)
   }
-
-  // Handle remaining quads.
-  let quad_aligned = (blocks.len() / 4) * 4;
-  while i < quad_aligned {
-    let (y0, y1) = load_128b_block_bitrev(&blocks[i]);
-    x0_0 = fold_16_reflected_vpclmul(x0_0, coeff_512, y0);
-    x1_0 = fold_16_reflected_vpclmul(x1_0, coeff_512, y1);
-
-    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(1)]);
-    x0_1 = fold_16_reflected_vpclmul(x0_1, coeff_512, y0);
-    x1_1 = fold_16_reflected_vpclmul(x1_1, coeff_512, y1);
-
-    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(2)]);
-    x0_2 = fold_16_reflected_vpclmul(x0_2, coeff_512, y0);
-    x1_2 = fold_16_reflected_vpclmul(x1_2, coeff_512, y1);
-
-    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(3)]);
-    x0_3 = fold_16_reflected_vpclmul(x0_3, coeff_512, y0);
-    x1_3 = fold_16_reflected_vpclmul(x1_3, coeff_512, y1);
-
-    i = i.strict_add(4);
-  }
-
-  let mut x0 = fold_16_reflected_vpclmul(x0_2, c128, x0_3);
-  let mut x1 = fold_16_reflected_vpclmul(x1_2, c128, x1_3);
-  x0 = fold_16_reflected_vpclmul(x0_1, c256, x0);
-  x1 = fold_16_reflected_vpclmul(x1_1, c256, x1);
-  x0 = fold_16_reflected_vpclmul(x0_0, c384, x0);
-  x1 = fold_16_reflected_vpclmul(x1_0, c384, x1);
-
-  for block in &blocks[quad_aligned..] {
-    let (y0, y1) = load_128b_block_bitrev(block);
-    x0 = fold_16_reflected_vpclmul(x0, coeff_128, y0);
-    x1 = fold_16_reflected_vpclmul(x1, coeff_128, y1);
-  }
-
-  finalize_vpclmul_state(x0, x1, keys)
 }
 
 #[inline]
@@ -1141,96 +1288,101 @@ unsafe fn update_simd_width32_reflected_vpclmul_bitrev_bytes_7way(
 ) -> u32 {
   use crate::checksum::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
 
-  debug_assert!(!blocks.is_empty());
+  // SAFETY: Caller guarantees:
+  // 1. AVX512F,AVX512VL,AVX512BW,AVX512DQ,VPCLMULQDQ,SSSE3,PCLMULQDQ,SSE2 target features are available (dispatch check).
+  // 2. All SIMD operations are pure register computations after loads.
+  unsafe {
+    debug_assert!(!blocks.is_empty());
 
-  if blocks.len() < 7 {
-    let Some((first, rest)) = blocks.split_first() else {
-      return state;
-    };
-    return update_simd_width32_reflected_vpclmul_bitrev_bytes(state, first, rest, keys);
-  }
-
-  let aligned = (blocks.len() / 7) * 7;
-
-  let (mut x0_0, mut x1_0) = load_128b_block_bitrev(&blocks[0]);
-  let (mut x0_1, mut x1_1) = load_128b_block_bitrev(&blocks[1]);
-  let (mut x0_2, mut x1_2) = load_128b_block_bitrev(&blocks[2]);
-  let (mut x0_3, mut x1_3) = load_128b_block_bitrev(&blocks[3]);
-  let (mut x0_4, mut x1_4) = load_128b_block_bitrev(&blocks[4]);
-  let (mut x0_5, mut x1_5) = load_128b_block_bitrev(&blocks[5]);
-  let (mut x0_6, mut x1_6) = load_128b_block_bitrev(&blocks[6]);
-
-  x0_0 = _mm512_xor_si512(x0_0, state_mask_lane0(state));
-
-  let coeff_896 = vpclmul_coeff(fold_896b);
-  let coeff_128 = vpclmul_coeff((keys[4], keys[3]));
-  let c768 = vpclmul_coeff(combine[0]);
-  let c640 = vpclmul_coeff(combine[1]);
-  let c512 = vpclmul_coeff(combine[2]);
-  let c384 = vpclmul_coeff(combine[3]);
-  let c256 = vpclmul_coeff(combine[4]);
-  let c128 = vpclmul_coeff(combine[5]);
-
-  const BLOCK_SIZE: usize = 128;
-
-  let mut i: usize = 7;
-  while i < aligned {
-    let prefetch_idx = i.strict_add(LARGE_BLOCK_DISTANCE / BLOCK_SIZE);
-    if prefetch_idx < blocks.len() {
-      prefetch_read_l1(blocks[prefetch_idx].as_ptr().cast::<u8>());
+    if blocks.len() < 7 {
+      let Some((first, rest)) = blocks.split_first() else {
+        return state;
+      };
+      return update_simd_width32_reflected_vpclmul_bitrev_bytes(state, first, rest, keys);
     }
 
-    let (y0, y1) = load_128b_block_bitrev(&blocks[i]);
-    x0_0 = fold_16_reflected_vpclmul(x0_0, coeff_896, y0);
-    x1_0 = fold_16_reflected_vpclmul(x1_0, coeff_896, y1);
+    let aligned = (blocks.len() / 7) * 7;
 
-    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(1)]);
-    x0_1 = fold_16_reflected_vpclmul(x0_1, coeff_896, y0);
-    x1_1 = fold_16_reflected_vpclmul(x1_1, coeff_896, y1);
+    let (mut x0_0, mut x1_0) = load_128b_block_bitrev(&blocks[0]);
+    let (mut x0_1, mut x1_1) = load_128b_block_bitrev(&blocks[1]);
+    let (mut x0_2, mut x1_2) = load_128b_block_bitrev(&blocks[2]);
+    let (mut x0_3, mut x1_3) = load_128b_block_bitrev(&blocks[3]);
+    let (mut x0_4, mut x1_4) = load_128b_block_bitrev(&blocks[4]);
+    let (mut x0_5, mut x1_5) = load_128b_block_bitrev(&blocks[5]);
+    let (mut x0_6, mut x1_6) = load_128b_block_bitrev(&blocks[6]);
 
-    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(2)]);
-    x0_2 = fold_16_reflected_vpclmul(x0_2, coeff_896, y0);
-    x1_2 = fold_16_reflected_vpclmul(x1_2, coeff_896, y1);
+    x0_0 = _mm512_xor_si512(x0_0, state_mask_lane0(state));
 
-    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(3)]);
-    x0_3 = fold_16_reflected_vpclmul(x0_3, coeff_896, y0);
-    x1_3 = fold_16_reflected_vpclmul(x1_3, coeff_896, y1);
+    let coeff_896 = vpclmul_coeff(fold_896b);
+    let coeff_128 = vpclmul_coeff((keys[4], keys[3]));
+    let c768 = vpclmul_coeff(combine[0]);
+    let c640 = vpclmul_coeff(combine[1]);
+    let c512 = vpclmul_coeff(combine[2]);
+    let c384 = vpclmul_coeff(combine[3]);
+    let c256 = vpclmul_coeff(combine[4]);
+    let c128 = vpclmul_coeff(combine[5]);
 
-    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(4)]);
-    x0_4 = fold_16_reflected_vpclmul(x0_4, coeff_896, y0);
-    x1_4 = fold_16_reflected_vpclmul(x1_4, coeff_896, y1);
+    const BLOCK_SIZE: usize = 128;
 
-    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(5)]);
-    x0_5 = fold_16_reflected_vpclmul(x0_5, coeff_896, y0);
-    x1_5 = fold_16_reflected_vpclmul(x1_5, coeff_896, y1);
+    let mut i: usize = 7;
+    while i < aligned {
+      let prefetch_idx = i.strict_add(LARGE_BLOCK_DISTANCE / BLOCK_SIZE);
+      if prefetch_idx < blocks.len() {
+        prefetch_read_l1(blocks[prefetch_idx].as_ptr().cast::<u8>());
+      }
 
-    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(6)]);
-    x0_6 = fold_16_reflected_vpclmul(x0_6, coeff_896, y0);
-    x1_6 = fold_16_reflected_vpclmul(x1_6, coeff_896, y1);
+      let (y0, y1) = load_128b_block_bitrev(&blocks[i]);
+      x0_0 = fold_16_reflected_vpclmul(x0_0, coeff_896, y0);
+      x1_0 = fold_16_reflected_vpclmul(x1_0, coeff_896, y1);
 
-    i = i.strict_add(7);
+      let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(1)]);
+      x0_1 = fold_16_reflected_vpclmul(x0_1, coeff_896, y0);
+      x1_1 = fold_16_reflected_vpclmul(x1_1, coeff_896, y1);
+
+      let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(2)]);
+      x0_2 = fold_16_reflected_vpclmul(x0_2, coeff_896, y0);
+      x1_2 = fold_16_reflected_vpclmul(x1_2, coeff_896, y1);
+
+      let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(3)]);
+      x0_3 = fold_16_reflected_vpclmul(x0_3, coeff_896, y0);
+      x1_3 = fold_16_reflected_vpclmul(x1_3, coeff_896, y1);
+
+      let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(4)]);
+      x0_4 = fold_16_reflected_vpclmul(x0_4, coeff_896, y0);
+      x1_4 = fold_16_reflected_vpclmul(x1_4, coeff_896, y1);
+
+      let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(5)]);
+      x0_5 = fold_16_reflected_vpclmul(x0_5, coeff_896, y0);
+      x1_5 = fold_16_reflected_vpclmul(x1_5, coeff_896, y1);
+
+      let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(6)]);
+      x0_6 = fold_16_reflected_vpclmul(x0_6, coeff_896, y0);
+      x1_6 = fold_16_reflected_vpclmul(x1_6, coeff_896, y1);
+
+      i = i.strict_add(7);
+    }
+
+    let mut x0 = fold_16_reflected_vpclmul(x0_5, c128, x0_6);
+    let mut x1 = fold_16_reflected_vpclmul(x1_5, c128, x1_6);
+    x0 = fold_16_reflected_vpclmul(x0_4, c256, x0);
+    x1 = fold_16_reflected_vpclmul(x1_4, c256, x1);
+    x0 = fold_16_reflected_vpclmul(x0_3, c384, x0);
+    x1 = fold_16_reflected_vpclmul(x1_3, c384, x1);
+    x0 = fold_16_reflected_vpclmul(x0_2, c512, x0);
+    x1 = fold_16_reflected_vpclmul(x1_2, c512, x1);
+    x0 = fold_16_reflected_vpclmul(x0_1, c640, x0);
+    x1 = fold_16_reflected_vpclmul(x1_1, c640, x1);
+    x0 = fold_16_reflected_vpclmul(x0_0, c768, x0);
+    x1 = fold_16_reflected_vpclmul(x1_0, c768, x1);
+
+    for block in &blocks[aligned..] {
+      let (y0, y1) = load_128b_block_bitrev(block);
+      x0 = fold_16_reflected_vpclmul(x0, coeff_128, y0);
+      x1 = fold_16_reflected_vpclmul(x1, coeff_128, y1);
+    }
+
+    finalize_vpclmul_state(x0, x1, keys)
   }
-
-  let mut x0 = fold_16_reflected_vpclmul(x0_5, c128, x0_6);
-  let mut x1 = fold_16_reflected_vpclmul(x1_5, c128, x1_6);
-  x0 = fold_16_reflected_vpclmul(x0_4, c256, x0);
-  x1 = fold_16_reflected_vpclmul(x1_4, c256, x1);
-  x0 = fold_16_reflected_vpclmul(x0_3, c384, x0);
-  x1 = fold_16_reflected_vpclmul(x1_3, c384, x1);
-  x0 = fold_16_reflected_vpclmul(x0_2, c512, x0);
-  x1 = fold_16_reflected_vpclmul(x1_2, c512, x1);
-  x0 = fold_16_reflected_vpclmul(x0_1, c640, x0);
-  x1 = fold_16_reflected_vpclmul(x1_1, c640, x1);
-  x0 = fold_16_reflected_vpclmul(x0_0, c768, x0);
-  x1 = fold_16_reflected_vpclmul(x1_0, c768, x1);
-
-  for block in &blocks[aligned..] {
-    let (y0, y1) = load_128b_block_bitrev(block);
-    x0 = fold_16_reflected_vpclmul(x0, coeff_128, y0);
-    x1 = fold_16_reflected_vpclmul(x1, coeff_128, y1);
-  }
-
-  finalize_vpclmul_state(x0, x1, keys)
 }
 
 #[inline]
@@ -1244,104 +1396,109 @@ unsafe fn update_simd_width32_reflected_vpclmul_bitrev_bytes_8way(
 ) -> u32 {
   use crate::checksum::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
 
-  debug_assert!(!blocks.is_empty());
+  // SAFETY: Caller guarantees:
+  // 1. AVX512F,AVX512VL,AVX512BW,AVX512DQ,VPCLMULQDQ,SSSE3,PCLMULQDQ,SSE2 target features are available (dispatch check).
+  // 2. All SIMD operations are pure register computations after loads.
+  unsafe {
+    debug_assert!(!blocks.is_empty());
 
-  if blocks.len() < 8 {
-    let Some((first, rest)) = blocks.split_first() else {
-      return state;
-    };
-    return update_simd_width32_reflected_vpclmul_bitrev_bytes(state, first, rest, keys);
-  }
-
-  let aligned = (blocks.len() / 8) * 8;
-
-  let (mut x0_0, mut x1_0) = load_128b_block_bitrev(&blocks[0]);
-  let (mut x0_1, mut x1_1) = load_128b_block_bitrev(&blocks[1]);
-  let (mut x0_2, mut x1_2) = load_128b_block_bitrev(&blocks[2]);
-  let (mut x0_3, mut x1_3) = load_128b_block_bitrev(&blocks[3]);
-  let (mut x0_4, mut x1_4) = load_128b_block_bitrev(&blocks[4]);
-  let (mut x0_5, mut x1_5) = load_128b_block_bitrev(&blocks[5]);
-  let (mut x0_6, mut x1_6) = load_128b_block_bitrev(&blocks[6]);
-  let (mut x0_7, mut x1_7) = load_128b_block_bitrev(&blocks[7]);
-
-  x0_0 = _mm512_xor_si512(x0_0, state_mask_lane0(state));
-
-  let coeff_1024 = vpclmul_coeff(fold_1024b);
-  let coeff_128 = vpclmul_coeff((keys[4], keys[3]));
-  let c896 = vpclmul_coeff(combine[0]);
-  let c768 = vpclmul_coeff(combine[1]);
-  let c640 = vpclmul_coeff(combine[2]);
-  let c512 = vpclmul_coeff(combine[3]);
-  let c384 = vpclmul_coeff(combine[4]);
-  let c256 = vpclmul_coeff(combine[5]);
-  let c128 = vpclmul_coeff(combine[6]);
-
-  const BLOCK_SIZE: usize = 128;
-
-  let mut i: usize = 8;
-  while i < aligned {
-    let prefetch_idx = i.strict_add(LARGE_BLOCK_DISTANCE / BLOCK_SIZE);
-    if prefetch_idx < blocks.len() {
-      prefetch_read_l1(blocks[prefetch_idx].as_ptr().cast::<u8>());
+    if blocks.len() < 8 {
+      let Some((first, rest)) = blocks.split_first() else {
+        return state;
+      };
+      return update_simd_width32_reflected_vpclmul_bitrev_bytes(state, first, rest, keys);
     }
 
-    let (y0, y1) = load_128b_block_bitrev(&blocks[i]);
-    x0_0 = fold_16_reflected_vpclmul(x0_0, coeff_1024, y0);
-    x1_0 = fold_16_reflected_vpclmul(x1_0, coeff_1024, y1);
+    let aligned = (blocks.len() / 8) * 8;
 
-    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(1)]);
-    x0_1 = fold_16_reflected_vpclmul(x0_1, coeff_1024, y0);
-    x1_1 = fold_16_reflected_vpclmul(x1_1, coeff_1024, y1);
+    let (mut x0_0, mut x1_0) = load_128b_block_bitrev(&blocks[0]);
+    let (mut x0_1, mut x1_1) = load_128b_block_bitrev(&blocks[1]);
+    let (mut x0_2, mut x1_2) = load_128b_block_bitrev(&blocks[2]);
+    let (mut x0_3, mut x1_3) = load_128b_block_bitrev(&blocks[3]);
+    let (mut x0_4, mut x1_4) = load_128b_block_bitrev(&blocks[4]);
+    let (mut x0_5, mut x1_5) = load_128b_block_bitrev(&blocks[5]);
+    let (mut x0_6, mut x1_6) = load_128b_block_bitrev(&blocks[6]);
+    let (mut x0_7, mut x1_7) = load_128b_block_bitrev(&blocks[7]);
 
-    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(2)]);
-    x0_2 = fold_16_reflected_vpclmul(x0_2, coeff_1024, y0);
-    x1_2 = fold_16_reflected_vpclmul(x1_2, coeff_1024, y1);
+    x0_0 = _mm512_xor_si512(x0_0, state_mask_lane0(state));
 
-    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(3)]);
-    x0_3 = fold_16_reflected_vpclmul(x0_3, coeff_1024, y0);
-    x1_3 = fold_16_reflected_vpclmul(x1_3, coeff_1024, y1);
+    let coeff_1024 = vpclmul_coeff(fold_1024b);
+    let coeff_128 = vpclmul_coeff((keys[4], keys[3]));
+    let c896 = vpclmul_coeff(combine[0]);
+    let c768 = vpclmul_coeff(combine[1]);
+    let c640 = vpclmul_coeff(combine[2]);
+    let c512 = vpclmul_coeff(combine[3]);
+    let c384 = vpclmul_coeff(combine[4]);
+    let c256 = vpclmul_coeff(combine[5]);
+    let c128 = vpclmul_coeff(combine[6]);
 
-    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(4)]);
-    x0_4 = fold_16_reflected_vpclmul(x0_4, coeff_1024, y0);
-    x1_4 = fold_16_reflected_vpclmul(x1_4, coeff_1024, y1);
+    const BLOCK_SIZE: usize = 128;
 
-    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(5)]);
-    x0_5 = fold_16_reflected_vpclmul(x0_5, coeff_1024, y0);
-    x1_5 = fold_16_reflected_vpclmul(x1_5, coeff_1024, y1);
+    let mut i: usize = 8;
+    while i < aligned {
+      let prefetch_idx = i.strict_add(LARGE_BLOCK_DISTANCE / BLOCK_SIZE);
+      if prefetch_idx < blocks.len() {
+        prefetch_read_l1(blocks[prefetch_idx].as_ptr().cast::<u8>());
+      }
 
-    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(6)]);
-    x0_6 = fold_16_reflected_vpclmul(x0_6, coeff_1024, y0);
-    x1_6 = fold_16_reflected_vpclmul(x1_6, coeff_1024, y1);
+      let (y0, y1) = load_128b_block_bitrev(&blocks[i]);
+      x0_0 = fold_16_reflected_vpclmul(x0_0, coeff_1024, y0);
+      x1_0 = fold_16_reflected_vpclmul(x1_0, coeff_1024, y1);
 
-    let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(7)]);
-    x0_7 = fold_16_reflected_vpclmul(x0_7, coeff_1024, y0);
-    x1_7 = fold_16_reflected_vpclmul(x1_7, coeff_1024, y1);
+      let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(1)]);
+      x0_1 = fold_16_reflected_vpclmul(x0_1, coeff_1024, y0);
+      x1_1 = fold_16_reflected_vpclmul(x1_1, coeff_1024, y1);
 
-    i = i.strict_add(8);
+      let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(2)]);
+      x0_2 = fold_16_reflected_vpclmul(x0_2, coeff_1024, y0);
+      x1_2 = fold_16_reflected_vpclmul(x1_2, coeff_1024, y1);
+
+      let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(3)]);
+      x0_3 = fold_16_reflected_vpclmul(x0_3, coeff_1024, y0);
+      x1_3 = fold_16_reflected_vpclmul(x1_3, coeff_1024, y1);
+
+      let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(4)]);
+      x0_4 = fold_16_reflected_vpclmul(x0_4, coeff_1024, y0);
+      x1_4 = fold_16_reflected_vpclmul(x1_4, coeff_1024, y1);
+
+      let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(5)]);
+      x0_5 = fold_16_reflected_vpclmul(x0_5, coeff_1024, y0);
+      x1_5 = fold_16_reflected_vpclmul(x1_5, coeff_1024, y1);
+
+      let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(6)]);
+      x0_6 = fold_16_reflected_vpclmul(x0_6, coeff_1024, y0);
+      x1_6 = fold_16_reflected_vpclmul(x1_6, coeff_1024, y1);
+
+      let (y0, y1) = load_128b_block_bitrev(&blocks[i.strict_add(7)]);
+      x0_7 = fold_16_reflected_vpclmul(x0_7, coeff_1024, y0);
+      x1_7 = fold_16_reflected_vpclmul(x1_7, coeff_1024, y1);
+
+      i = i.strict_add(8);
+    }
+
+    let mut x0 = fold_16_reflected_vpclmul(x0_6, c128, x0_7);
+    let mut x1 = fold_16_reflected_vpclmul(x1_6, c128, x1_7);
+    x0 = fold_16_reflected_vpclmul(x0_5, c256, x0);
+    x1 = fold_16_reflected_vpclmul(x1_5, c256, x1);
+    x0 = fold_16_reflected_vpclmul(x0_4, c384, x0);
+    x1 = fold_16_reflected_vpclmul(x1_4, c384, x1);
+    x0 = fold_16_reflected_vpclmul(x0_3, c512, x0);
+    x1 = fold_16_reflected_vpclmul(x1_3, c512, x1);
+    x0 = fold_16_reflected_vpclmul(x0_2, c640, x0);
+    x1 = fold_16_reflected_vpclmul(x1_2, c640, x1);
+    x0 = fold_16_reflected_vpclmul(x0_1, c768, x0);
+    x1 = fold_16_reflected_vpclmul(x1_1, c768, x1);
+    x0 = fold_16_reflected_vpclmul(x0_0, c896, x0);
+    x1 = fold_16_reflected_vpclmul(x1_0, c896, x1);
+
+    for block in &blocks[aligned..] {
+      let (y0, y1) = load_128b_block_bitrev(block);
+      x0 = fold_16_reflected_vpclmul(x0, coeff_128, y0);
+      x1 = fold_16_reflected_vpclmul(x1, coeff_128, y1);
+    }
+
+    finalize_vpclmul_state(x0, x1, keys)
   }
-
-  let mut x0 = fold_16_reflected_vpclmul(x0_6, c128, x0_7);
-  let mut x1 = fold_16_reflected_vpclmul(x1_6, c128, x1_7);
-  x0 = fold_16_reflected_vpclmul(x0_5, c256, x0);
-  x1 = fold_16_reflected_vpclmul(x1_5, c256, x1);
-  x0 = fold_16_reflected_vpclmul(x0_4, c384, x0);
-  x1 = fold_16_reflected_vpclmul(x1_4, c384, x1);
-  x0 = fold_16_reflected_vpclmul(x0_3, c512, x0);
-  x1 = fold_16_reflected_vpclmul(x1_3, c512, x1);
-  x0 = fold_16_reflected_vpclmul(x0_2, c640, x0);
-  x1 = fold_16_reflected_vpclmul(x1_2, c640, x1);
-  x0 = fold_16_reflected_vpclmul(x0_1, c768, x0);
-  x1 = fold_16_reflected_vpclmul(x1_1, c768, x1);
-  x0 = fold_16_reflected_vpclmul(x0_0, c896, x0);
-  x1 = fold_16_reflected_vpclmul(x1_0, c896, x1);
-
-  for block in &blocks[aligned..] {
-    let (y0, y1) = load_128b_block_bitrev(block);
-    x0 = fold_16_reflected_vpclmul(x0, coeff_128, y0);
-    x1 = fold_16_reflected_vpclmul(x1, coeff_128, y1);
-  }
-
-  finalize_vpclmul_state(x0, x1, keys)
 }
 
 #[inline]
@@ -1353,53 +1510,63 @@ unsafe fn crc24_width32_vpclmul_stream(
   stream: &Crc24StreamConstants,
   streams: u8,
 ) -> u32 {
-  let (left, middle, right) = data.align_to::<[Simd128; 8]>();
-  let Some((first, rest)) = middle.split_first() else {
-    return crc24_width32_pclmul_small(state, data, keys);
-  };
+  // SAFETY: Caller guarantees:
+  // 1. AVX512F,AVX512VL,AVX512BW,AVX512DQ,VPCLMULQDQ,SSSE3,PCLMULQDQ,SSE2 target features are available (dispatch check).
+  // 2. All SIMD operations are pure register computations after loads.
+  unsafe {
+    let (left, middle, right) = data.align_to::<[Simd128; 8]>();
+    let Some((first, rest)) = middle.split_first() else {
+      return crc24_width32_pclmul_small(state, data, keys);
+    };
 
-  state = crc24_reflected_update_bitrev_bytes(state, left);
-  let state32 = match streams {
-    8 => update_simd_width32_reflected_vpclmul_bitrev_bytes_8way(
-      state,
-      middle,
-      stream.fold_1024b,
-      &stream.combine_8way,
-      keys,
-    ),
-    7 => update_simd_width32_reflected_vpclmul_bitrev_bytes_7way(
-      state,
-      middle,
-      stream.fold_896b,
-      &stream.combine_7way,
-      keys,
-    ),
-    4 => update_simd_width32_reflected_vpclmul_bitrev_bytes_4way(
-      state,
-      middle,
-      stream.fold_512b,
-      &stream.combine_4way,
-      keys,
-    ),
-    2 => update_simd_width32_reflected_vpclmul_bitrev_bytes_2way(state, middle, stream.fold_256b, keys),
-    _ => update_simd_width32_reflected_vpclmul_bitrev_bytes(state, first, rest, keys),
-  };
-  state = state32;
-  crc24_reflected_update_bitrev_bytes(state, right)
+    state = crc24_reflected_update_bitrev_bytes(state, left);
+    let state32 = match streams {
+      8 => update_simd_width32_reflected_vpclmul_bitrev_bytes_8way(
+        state,
+        middle,
+        stream.fold_1024b,
+        &stream.combine_8way,
+        keys,
+      ),
+      7 => update_simd_width32_reflected_vpclmul_bitrev_bytes_7way(
+        state,
+        middle,
+        stream.fold_896b,
+        &stream.combine_7way,
+        keys,
+      ),
+      4 => update_simd_width32_reflected_vpclmul_bitrev_bytes_4way(
+        state,
+        middle,
+        stream.fold_512b,
+        &stream.combine_4way,
+        keys,
+      ),
+      2 => update_simd_width32_reflected_vpclmul_bitrev_bytes_2way(state, middle, stream.fold_256b, keys),
+      _ => update_simd_width32_reflected_vpclmul_bitrev_bytes(state, first, rest, keys),
+    };
+    state = state32;
+    crc24_reflected_update_bitrev_bytes(state, right)
+  }
 }
 
 #[inline]
 #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,ssse3,pclmulqdq,sse2")]
 unsafe fn crc24_width32_vpclmul(mut state: u32, data: &[u8], keys: &[u64; 23]) -> u32 {
-  let (left, middle, right) = data.align_to::<[Simd128; 8]>();
-  let Some((first, rest)) = middle.split_first() else {
-    return crc24_width32_pclmul_small(state, data, keys);
-  };
+  // SAFETY: Caller guarantees:
+  // 1. AVX512F,AVX512VL,AVX512BW,AVX512DQ,VPCLMULQDQ,SSSE3,PCLMULQDQ,SSE2 target features are available (dispatch check).
+  // 2. All SIMD operations are pure register computations after loads.
+  unsafe {
+    let (left, middle, right) = data.align_to::<[Simd128; 8]>();
+    let Some((first, rest)) = middle.split_first() else {
+      return crc24_width32_pclmul_small(state, data, keys);
+    };
 
-  state = crc24_reflected_update_bitrev_bytes(state, left);
-  let state32 = update_simd_width32_reflected_vpclmul_bitrev_bytes(state, first, rest, keys);
-  state = state32;
-  crc24_reflected_update_bitrev_bytes(state, right)
+    state = crc24_reflected_update_bitrev_bytes(state, left);
+    let state32 = update_simd_width32_reflected_vpclmul_bitrev_bytes(state, first, rest, keys);
+    state = state32;
+    crc24_reflected_update_bitrev_bytes(state, right)
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

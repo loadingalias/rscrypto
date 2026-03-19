@@ -10,7 +10,6 @@
 //! available before executing these kernels (the dispatcher does this).
 #![allow(unsafe_code)]
 #![allow(clippy::indexing_slicing)]
-#![allow(unsafe_op_in_unsafe_fn)]
 
 use core::{
   arch::aarch64::*,
@@ -52,7 +51,12 @@ impl Simd {
   #[inline]
   #[target_feature(enable = "neon")]
   unsafe fn load(ptr: *const u8) -> Self {
-    Self(vld1q_u8(ptr))
+    // SAFETY: Caller guarantees:
+    // 1. NEON target features are available (dispatch check).
+    // 2. All SIMD operations are pure register computations after loads.
+    unsafe {
+      Self(vld1q_u8(ptr))
+    }
   }
 
   #[inline]
@@ -110,91 +114,126 @@ impl Simd {
   #[inline]
   #[target_feature(enable = "aes")]
   unsafe fn fold_16_reflected(self, coeff: Self, data_to_xor: Self) -> Self {
-    let h = self.clmul10(coeff);
-    let l = self.clmul01(coeff);
-    h ^ l ^ data_to_xor
+    // SAFETY: Caller guarantees:
+    // 1. AES target features are available (dispatch check).
+    // 2. All SIMD operations are pure register computations after loads.
+    unsafe {
+      let h = self.clmul10(coeff);
+      let l = self.clmul01(coeff);
+      h ^ l ^ data_to_xor
+    }
   }
 
   #[inline]
   #[target_feature(enable = "aes", enable = "neon")]
   unsafe fn fold_width32_reflected(self, high: u64, low: u64) -> Self {
-    let coeff_low = Self::new(0, low);
-    let coeff_high = Self::new(high, 0);
+    // SAFETY: Caller guarantees:
+    // 1. AES + NEON target features are available (dispatch check).
+    // 2. All SIMD operations are pure register computations after loads.
+    unsafe {
+      let coeff_low = Self::new(0, low);
+      let coeff_high = Self::new(high, 0);
 
-    let clmul = self.clmul00(coeff_low);
-    let shifted = self.shift_right_8();
-    let mut state = clmul ^ shifted;
+      let clmul = self.clmul00(coeff_low);
+      let shifted = self.shift_right_8();
+      let mut state = clmul ^ shifted;
 
-    let mask2 = Self::new(0xFFFF_FFFF_FFFF_FFFF, 0xFFFF_FFFF_0000_0000);
-    let masked = state.and(mask2);
-    let shifted = state.shift_left_12();
-    let clmul = shifted.clmul11(coeff_high);
-    state = clmul ^ masked;
+      let mask2 = Self::new(0xFFFF_FFFF_FFFF_FFFF, 0xFFFF_FFFF_0000_0000);
+      let masked = state.and(mask2);
+      let shifted = state.shift_left_12();
+      let clmul = shifted.clmul11(coeff_high);
+      state = clmul ^ masked;
 
-    state
+      state
+    }
   }
 
   #[inline]
   #[target_feature(enable = "aes", enable = "neon")]
   unsafe fn barrett_width32_reflected(self, poly: u64, mu: u64) -> u32 {
-    let polymu = Self::new(poly, mu);
-    let clmul1 = self.clmul00(polymu);
-    let clmul2 = clmul1.clmul10(polymu);
-    let xorred = self ^ clmul2;
+    // SAFETY: Caller guarantees:
+    // 1. AES + NEON target features are available (dispatch check).
+    // 2. All SIMD operations are pure register computations after loads.
+    unsafe {
+      let polymu = Self::new(poly, mu);
+      let clmul1 = self.clmul00(polymu);
+      let clmul2 = clmul1.clmul10(polymu);
+      let xorred = self ^ clmul2;
 
-    let hi = xorred.shift_right_8();
-    vgetq_lane_u32(vreinterpretq_u32_u8(hi.0), 0)
+      let hi = xorred.shift_right_8();
+      vgetq_lane_u32(vreinterpretq_u32_u8(hi.0), 0)
+    }
   }
 }
 
 #[inline]
 #[target_feature(enable = "aes", enable = "neon")]
 unsafe fn finalize_lanes_width32_reflected(x: [Simd; 8], keys: &[u64; 23]) -> u32 {
-  let mut res = x[7];
-  res = x[0].fold_16_reflected(Simd::new(keys[10], keys[9]), res);
-  res = x[1].fold_16_reflected(Simd::new(keys[12], keys[11]), res);
-  res = x[2].fold_16_reflected(Simd::new(keys[14], keys[13]), res);
-  res = x[3].fold_16_reflected(Simd::new(keys[16], keys[15]), res);
-  res = x[4].fold_16_reflected(Simd::new(keys[18], keys[17]), res);
-  res = x[5].fold_16_reflected(Simd::new(keys[20], keys[19]), res);
-  res = x[6].fold_16_reflected(Simd::new(keys[2], keys[1]), res);
+  // SAFETY: Caller guarantees:
+  // 1. AES + NEON target features are available (dispatch check).
+  // 2. All SIMD operations are pure register computations after loads.
+  unsafe {
+    let mut res = x[7];
+    res = x[0].fold_16_reflected(Simd::new(keys[10], keys[9]), res);
+    res = x[1].fold_16_reflected(Simd::new(keys[12], keys[11]), res);
+    res = x[2].fold_16_reflected(Simd::new(keys[14], keys[13]), res);
+    res = x[3].fold_16_reflected(Simd::new(keys[16], keys[15]), res);
+    res = x[4].fold_16_reflected(Simd::new(keys[18], keys[17]), res);
+    res = x[5].fold_16_reflected(Simd::new(keys[20], keys[19]), res);
+    res = x[6].fold_16_reflected(Simd::new(keys[2], keys[1]), res);
 
-  res = res.fold_width32_reflected(keys[6], keys[5]);
-  res.barrett_width32_reflected(keys[8], keys[7])
+    res = res.fold_width32_reflected(keys[6], keys[5]);
+    res.barrett_width32_reflected(keys[8], keys[7])
+  }
 }
 
 #[inline]
 #[target_feature(enable = "aes", enable = "neon")]
 unsafe fn fold_block_128_width32_reflected(x: &mut [Simd; 8], chunk: &[Simd; 8], coeff: Simd) {
-  x[0] = x[0].fold_16_reflected(coeff, chunk[0]);
-  x[1] = x[1].fold_16_reflected(coeff, chunk[1]);
-  x[2] = x[2].fold_16_reflected(coeff, chunk[2]);
-  x[3] = x[3].fold_16_reflected(coeff, chunk[3]);
-  x[4] = x[4].fold_16_reflected(coeff, chunk[4]);
-  x[5] = x[5].fold_16_reflected(coeff, chunk[5]);
-  x[6] = x[6].fold_16_reflected(coeff, chunk[6]);
-  x[7] = x[7].fold_16_reflected(coeff, chunk[7]);
+  // SAFETY: Caller guarantees:
+  // 1. AES + NEON target features are available (dispatch check).
+  // 2. All SIMD operations are pure register computations after loads.
+  unsafe {
+    x[0] = x[0].fold_16_reflected(coeff, chunk[0]);
+    x[1] = x[1].fold_16_reflected(coeff, chunk[1]);
+    x[2] = x[2].fold_16_reflected(coeff, chunk[2]);
+    x[3] = x[3].fold_16_reflected(coeff, chunk[3]);
+    x[4] = x[4].fold_16_reflected(coeff, chunk[4]);
+    x[5] = x[5].fold_16_reflected(coeff, chunk[5]);
+    x[6] = x[6].fold_16_reflected(coeff, chunk[6]);
+    x[7] = x[7].fold_16_reflected(coeff, chunk[7]);
+  }
 }
 
 #[inline]
 #[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
 unsafe fn fold_lane_width32_reflected_eor3(x: Simd, coeff: Simd, data_to_xor: Simd) -> Simd {
-  let h = x.clmul10(coeff);
-  let l = x.clmul01(coeff);
-  Simd(veor3q_u8(data_to_xor.0, h.0, l.0))
+  // SAFETY: Caller guarantees:
+  // 1. AES + NEON + SHA3 target features are available (dispatch check).
+  // 2. All SIMD operations are pure register computations after loads.
+  unsafe {
+    let h = x.clmul10(coeff);
+    let l = x.clmul01(coeff);
+    Simd(veor3q_u8(data_to_xor.0, h.0, l.0))
+  }
 }
 
 #[inline]
 #[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
 unsafe fn fold_block_128_width32_reflected_eor3(x: &mut [Simd; 8], chunk: &[Simd; 8], coeff: Simd) {
-  x[0] = fold_lane_width32_reflected_eor3(x[0], coeff, chunk[0]);
-  x[1] = fold_lane_width32_reflected_eor3(x[1], coeff, chunk[1]);
-  x[2] = fold_lane_width32_reflected_eor3(x[2], coeff, chunk[2]);
-  x[3] = fold_lane_width32_reflected_eor3(x[3], coeff, chunk[3]);
-  x[4] = fold_lane_width32_reflected_eor3(x[4], coeff, chunk[4]);
-  x[5] = fold_lane_width32_reflected_eor3(x[5], coeff, chunk[5]);
-  x[6] = fold_lane_width32_reflected_eor3(x[6], coeff, chunk[6]);
-  x[7] = fold_lane_width32_reflected_eor3(x[7], coeff, chunk[7]);
+  // SAFETY: Caller guarantees:
+  // 1. AES + NEON + SHA3 target features are available (dispatch check).
+  // 2. All SIMD operations are pure register computations after loads.
+  unsafe {
+    x[0] = fold_lane_width32_reflected_eor3(x[0], coeff, chunk[0]);
+    x[1] = fold_lane_width32_reflected_eor3(x[1], coeff, chunk[1]);
+    x[2] = fold_lane_width32_reflected_eor3(x[2], coeff, chunk[2]);
+    x[3] = fold_lane_width32_reflected_eor3(x[3], coeff, chunk[3]);
+    x[4] = fold_lane_width32_reflected_eor3(x[4], coeff, chunk[4]);
+    x[5] = fold_lane_width32_reflected_eor3(x[5], coeff, chunk[5]);
+    x[6] = fold_lane_width32_reflected_eor3(x[6], coeff, chunk[6]);
+    x[7] = fold_lane_width32_reflected_eor3(x[7], coeff, chunk[7]);
+  }
 }
 
 #[target_feature(enable = "aes", enable = "neon")]
@@ -206,77 +245,83 @@ unsafe fn update_simd_width32_reflected_2way(
 ) -> u32 {
   use crate::checksum::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
 
-  debug_assert!(blocks.len() >= 2);
-  if blocks.len() < 2 {
-    // SAFETY: this function is only called when there are at least 2 blocks.
-    unsafe { core::hint::unreachable_unchecked() }
-  }
-
-  let coeff_256b = Simd::new(fold_256b.0, fold_256b.1);
-  let coeff_128b = Simd::new(keys[4], keys[3]);
-  let zero = Simd::new(0, 0);
-
-  let blocks_ptr = blocks.as_ptr();
-  // SAFETY: caller guarantees `blocks.len() >= 2`.
-  let mut s0 = *blocks_ptr;
-  // SAFETY: caller guarantees `blocks.len() >= 2`.
-  let mut s1 = *blocks_ptr.add(1);
-
-  // Inject CRC into stream 0 (block 0).
-  s0[0] ^= Simd::new(0, state as u64);
-
-  // Pointer-walk variant to keep the hot loop free of index bounds checks.
-  const BLOCK_SIZE: usize = 128;
-  const DOUBLE_GROUP: usize = 4; // 2 × 2-way = 4 blocks = 512B
-  const PREFETCH_BLOCKS: usize = LARGE_BLOCK_DISTANCE / BLOCK_SIZE;
-
-  let blocks_end = blocks_ptr.add(blocks.len());
-  let mut ptr = blocks_ptr.add(2);
-  let mut rem = blocks.len() - 2;
-
-  while rem >= DOUBLE_GROUP {
-    let prefetch_ptr = ptr.add(PREFETCH_BLOCKS);
-    if prefetch_ptr < blocks_end {
-      prefetch_read_l1(prefetch_ptr.cast::<u8>());
+  // SAFETY: Caller guarantees:
+  // 1. AES + NEON target features are available (dispatch check).
+  // 2. All pointer arithmetic stays within bounds via loop guards.
+  // 3. All SIMD operations are pure register computations after loads.
+  unsafe {
+    debug_assert!(blocks.len() >= 2);
+    if blocks.len() < 2 {
+      // SAFETY: this function is only called when there are at least 2 blocks.
+      core::hint::unreachable_unchecked()
     }
 
-    // First iteration (blocks i, i+1)
-    fold_block_128_width32_reflected(&mut s0, &*ptr, coeff_256b);
-    fold_block_128_width32_reflected(&mut s1, &*ptr.add(1), coeff_256b);
+    let coeff_256b = Simd::new(fold_256b.0, fold_256b.1);
+    let coeff_128b = Simd::new(keys[4], keys[3]);
+    let zero = Simd::new(0, 0);
 
-    // Second iteration (blocks i+2, i+3)
-    fold_block_128_width32_reflected(&mut s0, &*ptr.add(2), coeff_256b);
-    fold_block_128_width32_reflected(&mut s1, &*ptr.add(3), coeff_256b);
+    let blocks_ptr = blocks.as_ptr();
+    // SAFETY: caller guarantees `blocks.len() >= 2`.
+    let mut s0 = *blocks_ptr;
+    // SAFETY: caller guarantees `blocks.len() >= 2`.
+    let mut s1 = *blocks_ptr.add(1);
 
-    ptr = ptr.add(DOUBLE_GROUP);
-    rem -= DOUBLE_GROUP;
+    // Inject CRC into stream 0 (block 0).
+    s0[0] ^= Simd::new(0, state as u64);
+
+    // Pointer-walk variant to keep the hot loop free of index bounds checks.
+    const BLOCK_SIZE: usize = 128;
+    const DOUBLE_GROUP: usize = 4; // 2 × 2-way = 4 blocks = 512B
+    const PREFETCH_BLOCKS: usize = LARGE_BLOCK_DISTANCE / BLOCK_SIZE;
+
+    let blocks_end = blocks_ptr.add(blocks.len());
+    let mut ptr = blocks_ptr.add(2);
+    let mut rem = blocks.len() - 2;
+
+    while rem >= DOUBLE_GROUP {
+      let prefetch_ptr = ptr.add(PREFETCH_BLOCKS);
+      if prefetch_ptr < blocks_end {
+        prefetch_read_l1(prefetch_ptr.cast::<u8>());
+      }
+
+      // First iteration (blocks i, i+1)
+      fold_block_128_width32_reflected(&mut s0, &*ptr, coeff_256b);
+      fold_block_128_width32_reflected(&mut s1, &*ptr.add(1), coeff_256b);
+
+      // Second iteration (blocks i+2, i+3)
+      fold_block_128_width32_reflected(&mut s0, &*ptr.add(2), coeff_256b);
+      fold_block_128_width32_reflected(&mut s1, &*ptr.add(3), coeff_256b);
+
+      ptr = ptr.add(DOUBLE_GROUP);
+      rem -= DOUBLE_GROUP;
+    }
+
+    // Handle remaining pairs.
+    while rem >= 2 {
+      fold_block_128_width32_reflected(&mut s0, &*ptr, coeff_256b);
+      fold_block_128_width32_reflected(&mut s1, &*ptr.add(1), coeff_256b);
+      ptr = ptr.add(2);
+      rem -= 2;
+    }
+
+    // Merge streams: A·s0 ⊕ s1 (A = shift by 128B).
+    let mut combined = s1;
+    combined[0] ^= s0[0].fold_16_reflected(coeff_128b, zero);
+    combined[1] ^= s0[1].fold_16_reflected(coeff_128b, zero);
+    combined[2] ^= s0[2].fold_16_reflected(coeff_128b, zero);
+    combined[3] ^= s0[3].fold_16_reflected(coeff_128b, zero);
+    combined[4] ^= s0[4].fold_16_reflected(coeff_128b, zero);
+    combined[5] ^= s0[5].fold_16_reflected(coeff_128b, zero);
+    combined[6] ^= s0[6].fold_16_reflected(coeff_128b, zero);
+    combined[7] ^= s0[7].fold_16_reflected(coeff_128b, zero);
+
+    // Handle any remaining block (odd tail) sequentially.
+    if rem == 1 {
+      fold_block_128_width32_reflected(&mut combined, &*ptr, coeff_128b);
+    }
+
+    finalize_lanes_width32_reflected(combined, keys)
   }
-
-  // Handle remaining pairs.
-  while rem >= 2 {
-    fold_block_128_width32_reflected(&mut s0, &*ptr, coeff_256b);
-    fold_block_128_width32_reflected(&mut s1, &*ptr.add(1), coeff_256b);
-    ptr = ptr.add(2);
-    rem -= 2;
-  }
-
-  // Merge streams: A·s0 ⊕ s1 (A = shift by 128B).
-  let mut combined = s1;
-  combined[0] ^= s0[0].fold_16_reflected(coeff_128b, zero);
-  combined[1] ^= s0[1].fold_16_reflected(coeff_128b, zero);
-  combined[2] ^= s0[2].fold_16_reflected(coeff_128b, zero);
-  combined[3] ^= s0[3].fold_16_reflected(coeff_128b, zero);
-  combined[4] ^= s0[4].fold_16_reflected(coeff_128b, zero);
-  combined[5] ^= s0[5].fold_16_reflected(coeff_128b, zero);
-  combined[6] ^= s0[6].fold_16_reflected(coeff_128b, zero);
-  combined[7] ^= s0[7].fold_16_reflected(coeff_128b, zero);
-
-  // Handle any remaining block (odd tail) sequentially.
-  if rem == 1 {
-    fold_block_128_width32_reflected(&mut combined, &*ptr, coeff_128b);
-  }
-
-  finalize_lanes_width32_reflected(combined, keys)
 }
 
 #[target_feature(enable = "aes", enable = "neon")]
@@ -289,91 +334,97 @@ unsafe fn update_simd_width32_reflected_3way(
 ) -> u32 {
   use crate::checksum::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
 
-  if blocks.len() < 3 {
-    let Some((first, rest)) = blocks.split_first() else {
-      return state;
-    };
-    return update_simd_width32_reflected(state, first, rest, keys);
-  }
-
-  let coeff_384b = Simd::new(fold_384b.0, fold_384b.1);
-  let coeff_256b = Simd::new(fold_256b.0, fold_256b.1);
-  let coeff_128b = Simd::new(keys[4], keys[3]);
-  let zero = Simd::new(0, 0);
-
-  let mut s0 = blocks[0];
-  let mut s1 = blocks[1];
-  let mut s2 = blocks[2];
-
-  // Inject CRC into stream 0 (block 0).
-  s0[0] ^= Simd::new(0, state as u64);
-
-  // Double-unrolled main loop: process 6 blocks (768B) per iteration.
-  const BLOCK_SIZE: usize = 128;
-  const DOUBLE_GROUP: usize = 6; // 2 × 3-way = 6 blocks = 768B
-  const PREFETCH_BLOCKS: usize = LARGE_BLOCK_DISTANCE / BLOCK_SIZE;
-
-  let blocks_ptr = blocks.as_ptr();
-  let blocks_end = blocks_ptr.add(blocks.len());
-  let mut ptr = blocks_ptr.add(3);
-  let double_end = blocks_ptr.add(3 + ((blocks.len() - 3) / DOUBLE_GROUP) * DOUBLE_GROUP);
-
-  while ptr < double_end {
-    let prefetch_ptr = ptr.add(PREFETCH_BLOCKS);
-    if prefetch_ptr < blocks_end {
-      prefetch_read_l1(prefetch_ptr.cast::<u8>());
+  // SAFETY: Caller guarantees:
+  // 1. AES + NEON target features are available (dispatch check).
+  // 2. All pointer arithmetic stays within bounds via loop guards.
+  // 3. All SIMD operations are pure register computations after loads.
+  unsafe {
+    if blocks.len() < 3 {
+      let Some((first, rest)) = blocks.split_first() else {
+        return state;
+      };
+      return update_simd_width32_reflected(state, first, rest, keys);
     }
 
-    // First iteration (blocks i, i+1, i+2)
-    fold_block_128_width32_reflected(&mut s0, &*ptr, coeff_384b);
-    fold_block_128_width32_reflected(&mut s1, &*ptr.add(1), coeff_384b);
-    fold_block_128_width32_reflected(&mut s2, &*ptr.add(2), coeff_384b);
+    let coeff_384b = Simd::new(fold_384b.0, fold_384b.1);
+    let coeff_256b = Simd::new(fold_256b.0, fold_256b.1);
+    let coeff_128b = Simd::new(keys[4], keys[3]);
+    let zero = Simd::new(0, 0);
 
-    // Second iteration (blocks i+3, i+4, i+5)
-    fold_block_128_width32_reflected(&mut s0, &*ptr.add(3), coeff_384b);
-    fold_block_128_width32_reflected(&mut s1, &*ptr.add(4), coeff_384b);
-    fold_block_128_width32_reflected(&mut s2, &*ptr.add(5), coeff_384b);
+    let mut s0 = blocks[0];
+    let mut s1 = blocks[1];
+    let mut s2 = blocks[2];
 
-    ptr = ptr.add(DOUBLE_GROUP);
+    // Inject CRC into stream 0 (block 0).
+    s0[0] ^= Simd::new(0, state as u64);
+
+    // Double-unrolled main loop: process 6 blocks (768B) per iteration.
+    const BLOCK_SIZE: usize = 128;
+    const DOUBLE_GROUP: usize = 6; // 2 × 3-way = 6 blocks = 768B
+    const PREFETCH_BLOCKS: usize = LARGE_BLOCK_DISTANCE / BLOCK_SIZE;
+
+    let blocks_ptr = blocks.as_ptr();
+    let blocks_end = blocks_ptr.add(blocks.len());
+    let mut ptr = blocks_ptr.add(3);
+    let double_end = blocks_ptr.add(3 + ((blocks.len() - 3) / DOUBLE_GROUP) * DOUBLE_GROUP);
+
+    while ptr < double_end {
+      let prefetch_ptr = ptr.add(PREFETCH_BLOCKS);
+      if prefetch_ptr < blocks_end {
+        prefetch_read_l1(prefetch_ptr.cast::<u8>());
+      }
+
+      // First iteration (blocks i, i+1, i+2)
+      fold_block_128_width32_reflected(&mut s0, &*ptr, coeff_384b);
+      fold_block_128_width32_reflected(&mut s1, &*ptr.add(1), coeff_384b);
+      fold_block_128_width32_reflected(&mut s2, &*ptr.add(2), coeff_384b);
+
+      // Second iteration (blocks i+3, i+4, i+5)
+      fold_block_128_width32_reflected(&mut s0, &*ptr.add(3), coeff_384b);
+      fold_block_128_width32_reflected(&mut s1, &*ptr.add(4), coeff_384b);
+      fold_block_128_width32_reflected(&mut s2, &*ptr.add(5), coeff_384b);
+
+      ptr = ptr.add(DOUBLE_GROUP);
+    }
+
+    // Handle remaining triplets.
+    let triple_end = blocks_ptr.add((blocks.len() / 3) * 3);
+    while ptr < triple_end {
+      fold_block_128_width32_reflected(&mut s0, &*ptr, coeff_384b);
+      fold_block_128_width32_reflected(&mut s1, &*ptr.add(1), coeff_384b);
+      fold_block_128_width32_reflected(&mut s2, &*ptr.add(2), coeff_384b);
+      ptr = ptr.add(3);
+    }
+
+    // Merge: A^2·s0 ⊕ A·s1 ⊕ s2 (A = shift by 128B).
+    let mut combined = s2;
+
+    combined[0] ^= s1[0].fold_16_reflected(coeff_128b, zero);
+    combined[1] ^= s1[1].fold_16_reflected(coeff_128b, zero);
+    combined[2] ^= s1[2].fold_16_reflected(coeff_128b, zero);
+    combined[3] ^= s1[3].fold_16_reflected(coeff_128b, zero);
+    combined[4] ^= s1[4].fold_16_reflected(coeff_128b, zero);
+    combined[5] ^= s1[5].fold_16_reflected(coeff_128b, zero);
+    combined[6] ^= s1[6].fold_16_reflected(coeff_128b, zero);
+    combined[7] ^= s1[7].fold_16_reflected(coeff_128b, zero);
+
+    combined[0] ^= s0[0].fold_16_reflected(coeff_256b, zero);
+    combined[1] ^= s0[1].fold_16_reflected(coeff_256b, zero);
+    combined[2] ^= s0[2].fold_16_reflected(coeff_256b, zero);
+    combined[3] ^= s0[3].fold_16_reflected(coeff_256b, zero);
+    combined[4] ^= s0[4].fold_16_reflected(coeff_256b, zero);
+    combined[5] ^= s0[5].fold_16_reflected(coeff_256b, zero);
+    combined[6] ^= s0[6].fold_16_reflected(coeff_256b, zero);
+    combined[7] ^= s0[7].fold_16_reflected(coeff_256b, zero);
+
+    // Handle any remaining blocks sequentially.
+    while ptr < blocks_end {
+      fold_block_128_width32_reflected(&mut combined, &*ptr, coeff_128b);
+      ptr = ptr.add(1);
+    }
+
+    finalize_lanes_width32_reflected(combined, keys)
   }
-
-  // Handle remaining triplets.
-  let triple_end = blocks_ptr.add((blocks.len() / 3) * 3);
-  while ptr < triple_end {
-    fold_block_128_width32_reflected(&mut s0, &*ptr, coeff_384b);
-    fold_block_128_width32_reflected(&mut s1, &*ptr.add(1), coeff_384b);
-    fold_block_128_width32_reflected(&mut s2, &*ptr.add(2), coeff_384b);
-    ptr = ptr.add(3);
-  }
-
-  // Merge: A^2·s0 ⊕ A·s1 ⊕ s2 (A = shift by 128B).
-  let mut combined = s2;
-
-  combined[0] ^= s1[0].fold_16_reflected(coeff_128b, zero);
-  combined[1] ^= s1[1].fold_16_reflected(coeff_128b, zero);
-  combined[2] ^= s1[2].fold_16_reflected(coeff_128b, zero);
-  combined[3] ^= s1[3].fold_16_reflected(coeff_128b, zero);
-  combined[4] ^= s1[4].fold_16_reflected(coeff_128b, zero);
-  combined[5] ^= s1[5].fold_16_reflected(coeff_128b, zero);
-  combined[6] ^= s1[6].fold_16_reflected(coeff_128b, zero);
-  combined[7] ^= s1[7].fold_16_reflected(coeff_128b, zero);
-
-  combined[0] ^= s0[0].fold_16_reflected(coeff_256b, zero);
-  combined[1] ^= s0[1].fold_16_reflected(coeff_256b, zero);
-  combined[2] ^= s0[2].fold_16_reflected(coeff_256b, zero);
-  combined[3] ^= s0[3].fold_16_reflected(coeff_256b, zero);
-  combined[4] ^= s0[4].fold_16_reflected(coeff_256b, zero);
-  combined[5] ^= s0[5].fold_16_reflected(coeff_256b, zero);
-  combined[6] ^= s0[6].fold_16_reflected(coeff_256b, zero);
-  combined[7] ^= s0[7].fold_16_reflected(coeff_256b, zero);
-
-  // Handle any remaining blocks sequentially.
-  while ptr < blocks_end {
-    fold_block_128_width32_reflected(&mut combined, &*ptr, coeff_128b);
-    ptr = ptr.add(1);
-  }
-
-  finalize_lanes_width32_reflected(combined, keys)
 }
 
 #[inline]
@@ -381,65 +432,71 @@ unsafe fn update_simd_width32_reflected_3way(
 unsafe fn update_simd_width32_reflected(state: u32, first: &[Simd; 8], rest: &[[Simd; 8]], keys: &[u64; 23]) -> u32 {
   use crate::checksum::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
 
-  let mut x = *first;
+  // SAFETY: Caller guarantees:
+  // 1. AES + NEON target features are available (dispatch check).
+  // 2. All pointer arithmetic stays within bounds via loop guards.
+  // 3. All SIMD operations are pure register computations after loads.
+  unsafe {
+    let mut x = *first;
 
-  x[0] ^= Simd::new(0, state as u64);
+    x[0] ^= Simd::new(0, state as u64);
 
-  let coeff_128b = Simd::new(keys[4], keys[3]);
+    let coeff_128b = Simd::new(keys[4], keys[3]);
 
-  // Double-unrolled folding for large buffers improves ILP on Neoverse-class cores.
-  const BLOCK_SIZE: usize = 128;
-  const DOUBLE_GROUP: usize = 2; // 2 × 1-way = 2 blocks = 256B
-  const PREFETCH_BLOCKS: usize = LARGE_BLOCK_DISTANCE / BLOCK_SIZE;
+    // Double-unrolled folding for large buffers improves ILP on Neoverse-class cores.
+    const BLOCK_SIZE: usize = 128;
+    const DOUBLE_GROUP: usize = 2; // 2 × 1-way = 2 blocks = 256B
+    const PREFETCH_BLOCKS: usize = LARGE_BLOCK_DISTANCE / BLOCK_SIZE;
 
-  let rest_ptr = rest.as_ptr();
-  let rest_end = rest_ptr.add(rest.len());
-  let mut ptr = rest_ptr;
-  let double_end = rest_ptr.add((rest.len() / DOUBLE_GROUP) * DOUBLE_GROUP);
+    let rest_ptr = rest.as_ptr();
+    let rest_end = rest_ptr.add(rest.len());
+    let mut ptr = rest_ptr;
+    let double_end = rest_ptr.add((rest.len() / DOUBLE_GROUP) * DOUBLE_GROUP);
 
-  while ptr < double_end {
-    let prefetch_ptr = ptr.add(PREFETCH_BLOCKS);
-    if prefetch_ptr < rest_end {
-      prefetch_read_l1(prefetch_ptr.cast::<u8>());
+    while ptr < double_end {
+      let prefetch_ptr = ptr.add(PREFETCH_BLOCKS);
+      if prefetch_ptr < rest_end {
+        prefetch_read_l1(prefetch_ptr.cast::<u8>());
+      }
+
+      let chunk0 = &*ptr;
+      x[0] = x[0].fold_16_reflected(coeff_128b, chunk0[0]);
+      x[1] = x[1].fold_16_reflected(coeff_128b, chunk0[1]);
+      x[2] = x[2].fold_16_reflected(coeff_128b, chunk0[2]);
+      x[3] = x[3].fold_16_reflected(coeff_128b, chunk0[3]);
+      x[4] = x[4].fold_16_reflected(coeff_128b, chunk0[4]);
+      x[5] = x[5].fold_16_reflected(coeff_128b, chunk0[5]);
+      x[6] = x[6].fold_16_reflected(coeff_128b, chunk0[6]);
+      x[7] = x[7].fold_16_reflected(coeff_128b, chunk0[7]);
+
+      let chunk1 = &*ptr.add(1);
+      x[0] = x[0].fold_16_reflected(coeff_128b, chunk1[0]);
+      x[1] = x[1].fold_16_reflected(coeff_128b, chunk1[1]);
+      x[2] = x[2].fold_16_reflected(coeff_128b, chunk1[2]);
+      x[3] = x[3].fold_16_reflected(coeff_128b, chunk1[3]);
+      x[4] = x[4].fold_16_reflected(coeff_128b, chunk1[4]);
+      x[5] = x[5].fold_16_reflected(coeff_128b, chunk1[5]);
+      x[6] = x[6].fold_16_reflected(coeff_128b, chunk1[6]);
+      x[7] = x[7].fold_16_reflected(coeff_128b, chunk1[7]);
+
+      ptr = ptr.add(DOUBLE_GROUP);
     }
 
-    let chunk0 = &*ptr;
-    x[0] = x[0].fold_16_reflected(coeff_128b, chunk0[0]);
-    x[1] = x[1].fold_16_reflected(coeff_128b, chunk0[1]);
-    x[2] = x[2].fold_16_reflected(coeff_128b, chunk0[2]);
-    x[3] = x[3].fold_16_reflected(coeff_128b, chunk0[3]);
-    x[4] = x[4].fold_16_reflected(coeff_128b, chunk0[4]);
-    x[5] = x[5].fold_16_reflected(coeff_128b, chunk0[5]);
-    x[6] = x[6].fold_16_reflected(coeff_128b, chunk0[6]);
-    x[7] = x[7].fold_16_reflected(coeff_128b, chunk0[7]);
+    while ptr < rest_end {
+      let chunk = &*ptr;
+      x[0] = x[0].fold_16_reflected(coeff_128b, chunk[0]);
+      x[1] = x[1].fold_16_reflected(coeff_128b, chunk[1]);
+      x[2] = x[2].fold_16_reflected(coeff_128b, chunk[2]);
+      x[3] = x[3].fold_16_reflected(coeff_128b, chunk[3]);
+      x[4] = x[4].fold_16_reflected(coeff_128b, chunk[4]);
+      x[5] = x[5].fold_16_reflected(coeff_128b, chunk[5]);
+      x[6] = x[6].fold_16_reflected(coeff_128b, chunk[6]);
+      x[7] = x[7].fold_16_reflected(coeff_128b, chunk[7]);
+      ptr = ptr.add(1);
+    }
 
-    let chunk1 = &*ptr.add(1);
-    x[0] = x[0].fold_16_reflected(coeff_128b, chunk1[0]);
-    x[1] = x[1].fold_16_reflected(coeff_128b, chunk1[1]);
-    x[2] = x[2].fold_16_reflected(coeff_128b, chunk1[2]);
-    x[3] = x[3].fold_16_reflected(coeff_128b, chunk1[3]);
-    x[4] = x[4].fold_16_reflected(coeff_128b, chunk1[4]);
-    x[5] = x[5].fold_16_reflected(coeff_128b, chunk1[5]);
-    x[6] = x[6].fold_16_reflected(coeff_128b, chunk1[6]);
-    x[7] = x[7].fold_16_reflected(coeff_128b, chunk1[7]);
-
-    ptr = ptr.add(DOUBLE_GROUP);
+    finalize_lanes_width32_reflected(x, keys)
   }
-
-  while ptr < rest_end {
-    let chunk = &*ptr;
-    x[0] = x[0].fold_16_reflected(coeff_128b, chunk[0]);
-    x[1] = x[1].fold_16_reflected(coeff_128b, chunk[1]);
-    x[2] = x[2].fold_16_reflected(coeff_128b, chunk[2]);
-    x[3] = x[3].fold_16_reflected(coeff_128b, chunk[3]);
-    x[4] = x[4].fold_16_reflected(coeff_128b, chunk[4]);
-    x[5] = x[5].fold_16_reflected(coeff_128b, chunk[5]);
-    x[6] = x[6].fold_16_reflected(coeff_128b, chunk[6]);
-    x[7] = x[7].fold_16_reflected(coeff_128b, chunk[7]);
-    ptr = ptr.add(1);
-  }
-
-  finalize_lanes_width32_reflected(x, keys)
 }
 
 #[inline]
@@ -452,38 +509,44 @@ unsafe fn update_simd_width32_reflected_eor3(
 ) -> u32 {
   use crate::checksum::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
 
-  let mut x = *first;
+  // SAFETY: Caller guarantees:
+  // 1. AES + NEON + SHA3 target features are available (dispatch check).
+  // 2. All pointer arithmetic stays within bounds via loop guards.
+  // 3. All SIMD operations are pure register computations after loads.
+  unsafe {
+    let mut x = *first;
 
-  x[0] ^= Simd::new(0, state as u64);
+    x[0] ^= Simd::new(0, state as u64);
 
-  let coeff_128b = Simd::new(keys[4], keys[3]);
+    let coeff_128b = Simd::new(keys[4], keys[3]);
 
-  const BLOCK_SIZE: usize = 128;
-  const DOUBLE_GROUP: usize = 2; // 2 × 1-way = 2 blocks = 256B
-  const PREFETCH_BLOCKS: usize = LARGE_BLOCK_DISTANCE / BLOCK_SIZE;
+    const BLOCK_SIZE: usize = 128;
+    const DOUBLE_GROUP: usize = 2; // 2 × 1-way = 2 blocks = 256B
+    const PREFETCH_BLOCKS: usize = LARGE_BLOCK_DISTANCE / BLOCK_SIZE;
 
-  let rest_ptr = rest.as_ptr();
-  let rest_end = rest_ptr.add(rest.len());
-  let mut ptr = rest_ptr;
-  let double_end = rest_ptr.add((rest.len() / DOUBLE_GROUP) * DOUBLE_GROUP);
+    let rest_ptr = rest.as_ptr();
+    let rest_end = rest_ptr.add(rest.len());
+    let mut ptr = rest_ptr;
+    let double_end = rest_ptr.add((rest.len() / DOUBLE_GROUP) * DOUBLE_GROUP);
 
-  while ptr < double_end {
-    let prefetch_ptr = ptr.add(PREFETCH_BLOCKS);
-    if prefetch_ptr < rest_end {
-      prefetch_read_l1(prefetch_ptr.cast::<u8>());
+    while ptr < double_end {
+      let prefetch_ptr = ptr.add(PREFETCH_BLOCKS);
+      if prefetch_ptr < rest_end {
+        prefetch_read_l1(prefetch_ptr.cast::<u8>());
+      }
+
+      fold_block_128_width32_reflected_eor3(&mut x, &*ptr, coeff_128b);
+      fold_block_128_width32_reflected_eor3(&mut x, &*ptr.add(1), coeff_128b);
+      ptr = ptr.add(DOUBLE_GROUP);
     }
 
-    fold_block_128_width32_reflected_eor3(&mut x, &*ptr, coeff_128b);
-    fold_block_128_width32_reflected_eor3(&mut x, &*ptr.add(1), coeff_128b);
-    ptr = ptr.add(DOUBLE_GROUP);
-  }
+    while ptr < rest_end {
+      fold_block_128_width32_reflected_eor3(&mut x, &*ptr, coeff_128b);
+      ptr = ptr.add(1);
+    }
 
-  while ptr < rest_end {
-    fold_block_128_width32_reflected_eor3(&mut x, &*ptr, coeff_128b);
-    ptr = ptr.add(1);
+    finalize_lanes_width32_reflected(x, keys)
   }
-
-  finalize_lanes_width32_reflected(x, keys)
 }
 
 #[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
@@ -495,66 +558,72 @@ unsafe fn update_simd_width32_reflected_eor3_2way(
 ) -> u32 {
   use crate::checksum::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
 
-  debug_assert!(blocks.len() >= 2);
-  if blocks.len() < 2 {
-    // SAFETY: this function is only called when there are at least 2 blocks.
-    unsafe { core::hint::unreachable_unchecked() }
-  }
-
-  let coeff_256b = Simd::new(fold_256b.0, fold_256b.1);
-  let coeff_128b = Simd::new(keys[4], keys[3]);
-
-  let blocks_ptr = blocks.as_ptr();
-  let mut s0 = *blocks_ptr;
-  let mut s1 = *blocks_ptr.add(1);
-
-  s0[0] ^= Simd::new(0, state as u64);
-
-  const BLOCK_SIZE: usize = 128;
-  const DOUBLE_GROUP: usize = 4; // 2 × 2-way = 4 blocks = 512B
-  const PREFETCH_BLOCKS: usize = LARGE_BLOCK_DISTANCE / BLOCK_SIZE;
-
-  let blocks_end = blocks_ptr.add(blocks.len());
-  let mut ptr = blocks_ptr.add(2);
-  let mut rem = blocks.len() - 2;
-
-  while rem >= DOUBLE_GROUP {
-    let prefetch_ptr = ptr.add(PREFETCH_BLOCKS);
-    if prefetch_ptr < blocks_end {
-      prefetch_read_l1(prefetch_ptr.cast::<u8>());
+  // SAFETY: Caller guarantees:
+  // 1. AES + NEON + SHA3 target features are available (dispatch check).
+  // 2. All pointer arithmetic stays within bounds via loop guards.
+  // 3. All SIMD operations are pure register computations after loads.
+  unsafe {
+    debug_assert!(blocks.len() >= 2);
+    if blocks.len() < 2 {
+      // SAFETY: this function is only called when there are at least 2 blocks.
+      core::hint::unreachable_unchecked()
     }
 
-    fold_block_128_width32_reflected_eor3(&mut s0, &*ptr, coeff_256b);
-    fold_block_128_width32_reflected_eor3(&mut s1, &*ptr.add(1), coeff_256b);
-    fold_block_128_width32_reflected_eor3(&mut s0, &*ptr.add(2), coeff_256b);
-    fold_block_128_width32_reflected_eor3(&mut s1, &*ptr.add(3), coeff_256b);
+    let coeff_256b = Simd::new(fold_256b.0, fold_256b.1);
+    let coeff_128b = Simd::new(keys[4], keys[3]);
 
-    ptr = ptr.add(DOUBLE_GROUP);
-    rem -= DOUBLE_GROUP;
+    let blocks_ptr = blocks.as_ptr();
+    let mut s0 = *blocks_ptr;
+    let mut s1 = *blocks_ptr.add(1);
+
+    s0[0] ^= Simd::new(0, state as u64);
+
+    const BLOCK_SIZE: usize = 128;
+    const DOUBLE_GROUP: usize = 4; // 2 × 2-way = 4 blocks = 512B
+    const PREFETCH_BLOCKS: usize = LARGE_BLOCK_DISTANCE / BLOCK_SIZE;
+
+    let blocks_end = blocks_ptr.add(blocks.len());
+    let mut ptr = blocks_ptr.add(2);
+    let mut rem = blocks.len() - 2;
+
+    while rem >= DOUBLE_GROUP {
+      let prefetch_ptr = ptr.add(PREFETCH_BLOCKS);
+      if prefetch_ptr < blocks_end {
+        prefetch_read_l1(prefetch_ptr.cast::<u8>());
+      }
+
+      fold_block_128_width32_reflected_eor3(&mut s0, &*ptr, coeff_256b);
+      fold_block_128_width32_reflected_eor3(&mut s1, &*ptr.add(1), coeff_256b);
+      fold_block_128_width32_reflected_eor3(&mut s0, &*ptr.add(2), coeff_256b);
+      fold_block_128_width32_reflected_eor3(&mut s1, &*ptr.add(3), coeff_256b);
+
+      ptr = ptr.add(DOUBLE_GROUP);
+      rem -= DOUBLE_GROUP;
+    }
+
+    while rem >= 2 {
+      fold_block_128_width32_reflected_eor3(&mut s0, &*ptr, coeff_256b);
+      fold_block_128_width32_reflected_eor3(&mut s1, &*ptr.add(1), coeff_256b);
+      ptr = ptr.add(2);
+      rem -= 2;
+    }
+
+    let mut combined = s1;
+    combined[0] = fold_lane_width32_reflected_eor3(s0[0], coeff_128b, combined[0]);
+    combined[1] = fold_lane_width32_reflected_eor3(s0[1], coeff_128b, combined[1]);
+    combined[2] = fold_lane_width32_reflected_eor3(s0[2], coeff_128b, combined[2]);
+    combined[3] = fold_lane_width32_reflected_eor3(s0[3], coeff_128b, combined[3]);
+    combined[4] = fold_lane_width32_reflected_eor3(s0[4], coeff_128b, combined[4]);
+    combined[5] = fold_lane_width32_reflected_eor3(s0[5], coeff_128b, combined[5]);
+    combined[6] = fold_lane_width32_reflected_eor3(s0[6], coeff_128b, combined[6]);
+    combined[7] = fold_lane_width32_reflected_eor3(s0[7], coeff_128b, combined[7]);
+
+    if rem == 1 {
+      fold_block_128_width32_reflected_eor3(&mut combined, &*ptr, coeff_128b);
+    }
+
+    finalize_lanes_width32_reflected(combined, keys)
   }
-
-  while rem >= 2 {
-    fold_block_128_width32_reflected_eor3(&mut s0, &*ptr, coeff_256b);
-    fold_block_128_width32_reflected_eor3(&mut s1, &*ptr.add(1), coeff_256b);
-    ptr = ptr.add(2);
-    rem -= 2;
-  }
-
-  let mut combined = s1;
-  combined[0] = fold_lane_width32_reflected_eor3(s0[0], coeff_128b, combined[0]);
-  combined[1] = fold_lane_width32_reflected_eor3(s0[1], coeff_128b, combined[1]);
-  combined[2] = fold_lane_width32_reflected_eor3(s0[2], coeff_128b, combined[2]);
-  combined[3] = fold_lane_width32_reflected_eor3(s0[3], coeff_128b, combined[3]);
-  combined[4] = fold_lane_width32_reflected_eor3(s0[4], coeff_128b, combined[4]);
-  combined[5] = fold_lane_width32_reflected_eor3(s0[5], coeff_128b, combined[5]);
-  combined[6] = fold_lane_width32_reflected_eor3(s0[6], coeff_128b, combined[6]);
-  combined[7] = fold_lane_width32_reflected_eor3(s0[7], coeff_128b, combined[7]);
-
-  if rem == 1 {
-    fold_block_128_width32_reflected_eor3(&mut combined, &*ptr, coeff_128b);
-  }
-
-  finalize_lanes_width32_reflected(combined, keys)
 }
 
 #[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
@@ -567,81 +636,87 @@ unsafe fn update_simd_width32_reflected_eor3_3way(
 ) -> u32 {
   use crate::checksum::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
 
-  if blocks.len() < 3 {
-    let Some((first, rest)) = blocks.split_first() else {
-      return state;
-    };
-    return update_simd_width32_reflected_eor3(state, first, rest, keys);
-  }
-
-  let coeff_384b = Simd::new(fold_384b.0, fold_384b.1);
-  let coeff_256b = Simd::new(fold_256b.0, fold_256b.1);
-  let coeff_128b = Simd::new(keys[4], keys[3]);
-
-  let mut s0 = blocks[0];
-  let mut s1 = blocks[1];
-  let mut s2 = blocks[2];
-
-  s0[0] ^= Simd::new(0, state as u64);
-
-  const BLOCK_SIZE: usize = 128;
-  const DOUBLE_GROUP: usize = 6; // 2 × 3-way = 6 blocks = 768B
-  const PREFETCH_BLOCKS: usize = LARGE_BLOCK_DISTANCE / BLOCK_SIZE;
-
-  let blocks_ptr = blocks.as_ptr();
-  let blocks_end = blocks_ptr.add(blocks.len());
-  let mut ptr = blocks_ptr.add(3);
-  let double_end = blocks_ptr.add(3 + ((blocks.len() - 3) / DOUBLE_GROUP) * DOUBLE_GROUP);
-
-  while ptr < double_end {
-    let prefetch_ptr = ptr.add(PREFETCH_BLOCKS);
-    if prefetch_ptr < blocks_end {
-      prefetch_read_l1(prefetch_ptr.cast::<u8>());
+  // SAFETY: Caller guarantees:
+  // 1. AES + NEON + SHA3 target features are available (dispatch check).
+  // 2. All pointer arithmetic stays within bounds via loop guards.
+  // 3. All SIMD operations are pure register computations after loads.
+  unsafe {
+    if blocks.len() < 3 {
+      let Some((first, rest)) = blocks.split_first() else {
+        return state;
+      };
+      return update_simd_width32_reflected_eor3(state, first, rest, keys);
     }
 
-    fold_block_128_width32_reflected_eor3(&mut s0, &*ptr, coeff_384b);
-    fold_block_128_width32_reflected_eor3(&mut s1, &*ptr.add(1), coeff_384b);
-    fold_block_128_width32_reflected_eor3(&mut s2, &*ptr.add(2), coeff_384b);
-    fold_block_128_width32_reflected_eor3(&mut s0, &*ptr.add(3), coeff_384b);
-    fold_block_128_width32_reflected_eor3(&mut s1, &*ptr.add(4), coeff_384b);
-    fold_block_128_width32_reflected_eor3(&mut s2, &*ptr.add(5), coeff_384b);
+    let coeff_384b = Simd::new(fold_384b.0, fold_384b.1);
+    let coeff_256b = Simd::new(fold_256b.0, fold_256b.1);
+    let coeff_128b = Simd::new(keys[4], keys[3]);
 
-    ptr = ptr.add(DOUBLE_GROUP);
+    let mut s0 = blocks[0];
+    let mut s1 = blocks[1];
+    let mut s2 = blocks[2];
+
+    s0[0] ^= Simd::new(0, state as u64);
+
+    const BLOCK_SIZE: usize = 128;
+    const DOUBLE_GROUP: usize = 6; // 2 × 3-way = 6 blocks = 768B
+    const PREFETCH_BLOCKS: usize = LARGE_BLOCK_DISTANCE / BLOCK_SIZE;
+
+    let blocks_ptr = blocks.as_ptr();
+    let blocks_end = blocks_ptr.add(blocks.len());
+    let mut ptr = blocks_ptr.add(3);
+    let double_end = blocks_ptr.add(3 + ((blocks.len() - 3) / DOUBLE_GROUP) * DOUBLE_GROUP);
+
+    while ptr < double_end {
+      let prefetch_ptr = ptr.add(PREFETCH_BLOCKS);
+      if prefetch_ptr < blocks_end {
+        prefetch_read_l1(prefetch_ptr.cast::<u8>());
+      }
+
+      fold_block_128_width32_reflected_eor3(&mut s0, &*ptr, coeff_384b);
+      fold_block_128_width32_reflected_eor3(&mut s1, &*ptr.add(1), coeff_384b);
+      fold_block_128_width32_reflected_eor3(&mut s2, &*ptr.add(2), coeff_384b);
+      fold_block_128_width32_reflected_eor3(&mut s0, &*ptr.add(3), coeff_384b);
+      fold_block_128_width32_reflected_eor3(&mut s1, &*ptr.add(4), coeff_384b);
+      fold_block_128_width32_reflected_eor3(&mut s2, &*ptr.add(5), coeff_384b);
+
+      ptr = ptr.add(DOUBLE_GROUP);
+    }
+
+    let triple_end = blocks_ptr.add((blocks.len() / 3) * 3);
+    while ptr < triple_end {
+      fold_block_128_width32_reflected_eor3(&mut s0, &*ptr, coeff_384b);
+      fold_block_128_width32_reflected_eor3(&mut s1, &*ptr.add(1), coeff_384b);
+      fold_block_128_width32_reflected_eor3(&mut s2, &*ptr.add(2), coeff_384b);
+      ptr = ptr.add(3);
+    }
+
+    let mut combined = s2;
+    combined[0] = fold_lane_width32_reflected_eor3(s1[0], coeff_128b, combined[0]);
+    combined[1] = fold_lane_width32_reflected_eor3(s1[1], coeff_128b, combined[1]);
+    combined[2] = fold_lane_width32_reflected_eor3(s1[2], coeff_128b, combined[2]);
+    combined[3] = fold_lane_width32_reflected_eor3(s1[3], coeff_128b, combined[3]);
+    combined[4] = fold_lane_width32_reflected_eor3(s1[4], coeff_128b, combined[4]);
+    combined[5] = fold_lane_width32_reflected_eor3(s1[5], coeff_128b, combined[5]);
+    combined[6] = fold_lane_width32_reflected_eor3(s1[6], coeff_128b, combined[6]);
+    combined[7] = fold_lane_width32_reflected_eor3(s1[7], coeff_128b, combined[7]);
+
+    combined[0] = fold_lane_width32_reflected_eor3(s0[0], coeff_256b, combined[0]);
+    combined[1] = fold_lane_width32_reflected_eor3(s0[1], coeff_256b, combined[1]);
+    combined[2] = fold_lane_width32_reflected_eor3(s0[2], coeff_256b, combined[2]);
+    combined[3] = fold_lane_width32_reflected_eor3(s0[3], coeff_256b, combined[3]);
+    combined[4] = fold_lane_width32_reflected_eor3(s0[4], coeff_256b, combined[4]);
+    combined[5] = fold_lane_width32_reflected_eor3(s0[5], coeff_256b, combined[5]);
+    combined[6] = fold_lane_width32_reflected_eor3(s0[6], coeff_256b, combined[6]);
+    combined[7] = fold_lane_width32_reflected_eor3(s0[7], coeff_256b, combined[7]);
+
+    while ptr < blocks_end {
+      fold_block_128_width32_reflected_eor3(&mut combined, &*ptr, coeff_128b);
+      ptr = ptr.add(1);
+    }
+
+    finalize_lanes_width32_reflected(combined, keys)
   }
-
-  let triple_end = blocks_ptr.add((blocks.len() / 3) * 3);
-  while ptr < triple_end {
-    fold_block_128_width32_reflected_eor3(&mut s0, &*ptr, coeff_384b);
-    fold_block_128_width32_reflected_eor3(&mut s1, &*ptr.add(1), coeff_384b);
-    fold_block_128_width32_reflected_eor3(&mut s2, &*ptr.add(2), coeff_384b);
-    ptr = ptr.add(3);
-  }
-
-  let mut combined = s2;
-  combined[0] = fold_lane_width32_reflected_eor3(s1[0], coeff_128b, combined[0]);
-  combined[1] = fold_lane_width32_reflected_eor3(s1[1], coeff_128b, combined[1]);
-  combined[2] = fold_lane_width32_reflected_eor3(s1[2], coeff_128b, combined[2]);
-  combined[3] = fold_lane_width32_reflected_eor3(s1[3], coeff_128b, combined[3]);
-  combined[4] = fold_lane_width32_reflected_eor3(s1[4], coeff_128b, combined[4]);
-  combined[5] = fold_lane_width32_reflected_eor3(s1[5], coeff_128b, combined[5]);
-  combined[6] = fold_lane_width32_reflected_eor3(s1[6], coeff_128b, combined[6]);
-  combined[7] = fold_lane_width32_reflected_eor3(s1[7], coeff_128b, combined[7]);
-
-  combined[0] = fold_lane_width32_reflected_eor3(s0[0], coeff_256b, combined[0]);
-  combined[1] = fold_lane_width32_reflected_eor3(s0[1], coeff_256b, combined[1]);
-  combined[2] = fold_lane_width32_reflected_eor3(s0[2], coeff_256b, combined[2]);
-  combined[3] = fold_lane_width32_reflected_eor3(s0[3], coeff_256b, combined[3]);
-  combined[4] = fold_lane_width32_reflected_eor3(s0[4], coeff_256b, combined[4]);
-  combined[5] = fold_lane_width32_reflected_eor3(s0[5], coeff_256b, combined[5]);
-  combined[6] = fold_lane_width32_reflected_eor3(s0[6], coeff_256b, combined[6]);
-  combined[7] = fold_lane_width32_reflected_eor3(s0[7], coeff_256b, combined[7]);
-
-  while ptr < blocks_end {
-    fold_block_128_width32_reflected_eor3(&mut combined, &*ptr, coeff_128b);
-    ptr = ptr.add(1);
-  }
-
-  finalize_lanes_width32_reflected(combined, keys)
 }
 
 #[inline]
@@ -652,46 +727,57 @@ unsafe fn crc16_width32_pmull_small(
   keys: &[u64; 23],
   portable: fn(u16, &[u8]) -> u16,
 ) -> u16 {
-  let mut buf = data.as_ptr();
-  let mut len = data.len();
+  // SAFETY: Caller guarantees:
+  // 1. AES + NEON target features are available (dispatch check).
+  // 2. All pointer arithmetic stays within bounds via loop guards.
+  // 3. All SIMD operations are pure register computations after loads.
+  unsafe {
+    let mut buf = data.as_ptr();
+    let mut len = data.len();
 
-  if len < 16 {
-    return portable(state, data);
-  }
+    if len < 16 {
+      return portable(state, data);
+    }
 
-  let coeff_16b = Simd::new(keys[2], keys[1]);
+    let coeff_16b = Simd::new(keys[2], keys[1]);
 
-  let mut x0 = Simd::load(buf);
-  x0 ^= Simd::new(0, state as u64);
-  buf = buf.add(16);
-  len = len.strict_sub(16);
-
-  while len >= 16 {
-    let chunk = Simd::load(buf);
-    x0 = x0.fold_16_reflected(coeff_16b, chunk);
+    let mut x0 = Simd::load(buf);
+    x0 ^= Simd::new(0, state as u64);
     buf = buf.add(16);
     len = len.strict_sub(16);
+
+    while len >= 16 {
+      let chunk = Simd::load(buf);
+      x0 = x0.fold_16_reflected(coeff_16b, chunk);
+      buf = buf.add(16);
+      len = len.strict_sub(16);
+    }
+
+    let x0 = x0.fold_width32_reflected(keys[6], keys[5]);
+    state = x0.barrett_width32_reflected(keys[8], keys[7]) as u16;
+
+    let tail = core::slice::from_raw_parts(buf, len);
+    portable(state, tail)
   }
-
-  let x0 = x0.fold_width32_reflected(keys[6], keys[5]);
-  state = x0.barrett_width32_reflected(keys[8], keys[7]) as u16;
-
-  let tail = core::slice::from_raw_parts(buf, len);
-  portable(state, tail)
 }
 
 #[inline]
 #[target_feature(enable = "aes", enable = "neon")]
 unsafe fn crc16_width32_pmull(mut state: u16, data: &[u8], keys: &[u64; 23], portable: fn(u16, &[u8]) -> u16) -> u16 {
-  let (left, middle, right) = data.align_to::<[Simd; 8]>();
-  let Some((first, rest)) = middle.split_first() else {
-    return crc16_width32_pmull_small(state, data, keys, portable);
-  };
+  // SAFETY: Caller guarantees:
+  // 1. AES + NEON target features are available (dispatch check).
+  // 2. All SIMD operations are pure register computations after loads.
+  unsafe {
+    let (left, middle, right) = data.align_to::<[Simd; 8]>();
+    let Some((first, rest)) = middle.split_first() else {
+      return crc16_width32_pmull_small(state, data, keys, portable);
+    };
 
-  state = portable(state, left);
-  let state32 = update_simd_width32_reflected(state as u32, first, rest, keys);
-  state = state32 as u16;
-  portable(state, right)
+    state = portable(state, left);
+    let state32 = update_simd_width32_reflected(state as u32, first, rest, keys);
+    state = state32 as u16;
+    portable(state, right)
+  }
 }
 
 #[inline]
@@ -703,22 +789,27 @@ unsafe fn crc16_width32_pmull_2way(
   fold_256b: (u64, u64),
   portable: fn(u16, &[u8]) -> u16,
 ) -> u16 {
-  let (left, middle, right) = data.align_to::<[Simd; 8]>();
-  if middle.is_empty() {
-    return crc16_width32_pmull_small(state, data, keys, portable);
-  }
-
-  state = portable(state, left);
-  let state32 = if middle.len() >= 2 {
-    update_simd_width32_reflected_2way(state as u32, middle, fold_256b, keys)
-  } else {
-    let Some((first, rest)) = middle.split_first() else {
+  // SAFETY: Caller guarantees:
+  // 1. AES + NEON target features are available (dispatch check).
+  // 2. All SIMD operations are pure register computations after loads.
+  unsafe {
+    let (left, middle, right) = data.align_to::<[Simd; 8]>();
+    if middle.is_empty() {
       return crc16_width32_pmull_small(state, data, keys, portable);
+    }
+
+    state = portable(state, left);
+    let state32 = if middle.len() >= 2 {
+      update_simd_width32_reflected_2way(state as u32, middle, fold_256b, keys)
+    } else {
+      let Some((first, rest)) = middle.split_first() else {
+        return crc16_width32_pmull_small(state, data, keys, portable);
+      };
+      update_simd_width32_reflected(state as u32, first, rest, keys)
     };
-    update_simd_width32_reflected(state as u32, first, rest, keys)
-  };
-  state = state32 as u16;
-  portable(state, right)
+    state = state32 as u16;
+    portable(state, right)
+  }
 }
 
 #[inline]
@@ -731,15 +822,20 @@ unsafe fn crc16_width32_pmull_3way(
   fold_256b: (u64, u64),
   portable: fn(u16, &[u8]) -> u16,
 ) -> u16 {
-  let (left, middle, right) = data.align_to::<[Simd; 8]>();
-  if middle.is_empty() {
-    return crc16_width32_pmull_small(state, data, keys, portable);
-  }
+  // SAFETY: Caller guarantees:
+  // 1. AES + NEON target features are available (dispatch check).
+  // 2. All SIMD operations are pure register computations after loads.
+  unsafe {
+    let (left, middle, right) = data.align_to::<[Simd; 8]>();
+    if middle.is_empty() {
+      return crc16_width32_pmull_small(state, data, keys, portable);
+    }
 
-  state = portable(state, left);
-  let state32 = update_simd_width32_reflected_3way(state as u32, middle, fold_384b, fold_256b, keys);
-  state = state32 as u16;
-  portable(state, right)
+    state = portable(state, left);
+    let state32 = update_simd_width32_reflected_3way(state as u32, middle, fold_384b, fold_256b, keys);
+    state = state32 as u16;
+    portable(state, right)
+  }
 }
 
 #[inline]
@@ -750,15 +846,20 @@ unsafe fn crc16_width32_pmull_eor3(
   keys: &[u64; 23],
   portable: fn(u16, &[u8]) -> u16,
 ) -> u16 {
-  let (left, middle, right) = data.align_to::<[Simd; 8]>();
-  let Some((first, rest)) = middle.split_first() else {
-    return crc16_width32_pmull_small(state, data, keys, portable);
-  };
+  // SAFETY: Caller guarantees:
+  // 1. AES + NEON + SHA3 target features are available (dispatch check).
+  // 2. All SIMD operations are pure register computations after loads.
+  unsafe {
+    let (left, middle, right) = data.align_to::<[Simd; 8]>();
+    let Some((first, rest)) = middle.split_first() else {
+      return crc16_width32_pmull_small(state, data, keys, portable);
+    };
 
-  state = portable(state, left);
-  let state32 = update_simd_width32_reflected_eor3(state as u32, first, rest, keys);
-  state = state32 as u16;
-  portable(state, right)
+    state = portable(state, left);
+    let state32 = update_simd_width32_reflected_eor3(state as u32, first, rest, keys);
+    state = state32 as u16;
+    portable(state, right)
+  }
 }
 
 #[inline]
@@ -770,22 +871,27 @@ unsafe fn crc16_width32_pmull_eor3_2way(
   fold_256b: (u64, u64),
   portable: fn(u16, &[u8]) -> u16,
 ) -> u16 {
-  let (left, middle, right) = data.align_to::<[Simd; 8]>();
-  if middle.is_empty() {
-    return crc16_width32_pmull_small(state, data, keys, portable);
-  }
-
-  state = portable(state, left);
-  let state32 = if middle.len() >= 2 {
-    update_simd_width32_reflected_eor3_2way(state as u32, middle, fold_256b, keys)
-  } else {
-    let Some((first, rest)) = middle.split_first() else {
+  // SAFETY: Caller guarantees:
+  // 1. AES + NEON + SHA3 target features are available (dispatch check).
+  // 2. All SIMD operations are pure register computations after loads.
+  unsafe {
+    let (left, middle, right) = data.align_to::<[Simd; 8]>();
+    if middle.is_empty() {
       return crc16_width32_pmull_small(state, data, keys, portable);
+    }
+
+    state = portable(state, left);
+    let state32 = if middle.len() >= 2 {
+      update_simd_width32_reflected_eor3_2way(state as u32, middle, fold_256b, keys)
+    } else {
+      let Some((first, rest)) = middle.split_first() else {
+        return crc16_width32_pmull_small(state, data, keys, portable);
+      };
+      update_simd_width32_reflected_eor3(state as u32, first, rest, keys)
     };
-    update_simd_width32_reflected_eor3(state as u32, first, rest, keys)
-  };
-  state = state32 as u16;
-  portable(state, right)
+    state = state32 as u16;
+    portable(state, right)
+  }
 }
 
 #[inline]
@@ -798,15 +904,20 @@ unsafe fn crc16_width32_pmull_eor3_3way(
   fold_256b: (u64, u64),
   portable: fn(u16, &[u8]) -> u16,
 ) -> u16 {
-  let (left, middle, right) = data.align_to::<[Simd; 8]>();
-  if middle.is_empty() {
-    return crc16_width32_pmull_small(state, data, keys, portable);
-  }
+  // SAFETY: Caller guarantees:
+  // 1. AES + NEON + SHA3 target features are available (dispatch check).
+  // 2. All SIMD operations are pure register computations after loads.
+  unsafe {
+    let (left, middle, right) = data.align_to::<[Simd; 8]>();
+    if middle.is_empty() {
+      return crc16_width32_pmull_small(state, data, keys, portable);
+    }
 
-  state = portable(state, left);
-  let state32 = update_simd_width32_reflected_eor3_3way(state as u32, middle, fold_384b, fold_256b, keys);
-  state = state32 as u16;
-  portable(state, right)
+    state = portable(state, left);
+    let state32 = update_simd_width32_reflected_eor3_3way(state as u32, middle, fold_384b, fold_256b, keys);
+    state = state32 as u16;
+    portable(state, right)
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
