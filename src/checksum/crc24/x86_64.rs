@@ -14,6 +14,7 @@
 //! this).
 #![allow(unsafe_code)]
 #![allow(clippy::indexing_slicing)]
+#![allow(unsafe_op_in_unsafe_fn)]
 
 use core::{
   arch::x86_64::*,
