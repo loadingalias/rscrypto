@@ -1569,6 +1569,19 @@ impl RootEmitState {
   }
 
   #[inline]
+  fn root_hash_bytes(&self) -> [u8; OUT_LEN] {
+    debug_assert_eq!(self.counter, 0);
+    words8_to_le_bytes(&first_8_words(kernels::compress_block_inline(
+      self.kernel_id,
+      &self.input_chaining_value,
+      &self.block_words,
+      0,
+      u32::from(self.block_len),
+      u32::from(self.flags) | ROOT,
+    )))
+  }
+
+  #[inline]
   #[must_use]
   fn with_kernel_id(mut self, kernel_id: kernels::Blake3KernelId) -> Self {
     self.kernel_id = kernel_id;
@@ -3372,6 +3385,19 @@ impl Blake3Xof {
   }
 
   #[inline]
+  fn fill_root_hash_prefix(&mut self, out: &mut &mut [u8]) {
+    debug_assert_eq!(self.root.counter, 0);
+    debug_assert_eq!(self.position_within_block, 0);
+    debug_assert!(out.len() <= OUT_LEN);
+
+    let block = self.root.root_hash_bytes();
+    let take = out.len();
+    out[..take].copy_from_slice(&block[..take]);
+    self.position_within_block = take as u8;
+    *out = &mut core::mem::take(out)[take..];
+  }
+
+  #[inline]
   fn fill_one_block(&mut self, out: &mut &mut [u8]) {
     let mut block = [0u8; OUTPUT_BLOCK_LEN];
     self.root.emit_one_block(&mut block);
@@ -3409,6 +3435,11 @@ impl Xof for Blake3Xof {
   #[inline]
   fn squeeze(&mut self, mut out: &mut [u8]) {
     if out.is_empty() {
+      return;
+    }
+
+    if self.root.counter == 0 && self.position_within_block == 0 && out.len() <= OUT_LEN {
+      self.fill_root_hash_prefix(&mut out);
       return;
     }
 
@@ -3566,6 +3597,13 @@ fn use_avx2_hash_many_one_chunk_fast_path() -> bool {
 
 #[cfg(target_arch = "x86_64")]
 #[inline]
+#[must_use]
+fn use_avx512_four_block_avx2_fast_path() -> bool {
+  dispatch::avx2_available() && dispatch::avx2_hash_many_one_chunk_fast_path()
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline]
 unsafe fn digest_one_chunk_root_hash_words_x86(
   kernel: Kernel,
   key_words: [u32; 8],
@@ -3621,6 +3659,30 @@ unsafe fn digest_one_chunk_root_hash_words_x86(
     debug_assert!(flags_end <= u8::MAX as u32);
     let input_ptrs = [input.as_ptr()];
     let mut out = [0u8; OUT_LEN];
+    if blocks == 4 && use_avx512_four_block_avx2_fast_path() {
+      // For the exact 4-block one-chunk case (4096B input), AVX2's internal
+      // tail cascade is a better fit than the AVX-512 4-lane sub-degree path.
+      // Keep this heuristic narrow so 64..1024B stay on the proven AVX-512
+      // exact-block path.
+      // SAFETY: this branch is only enabled when AVX2 is available per
+      // dispatch; input is one contiguous full-chunk-or-less buffer; output
+      // points to one OUT_LEN digest lane.
+      unsafe {
+        x86_64::asm::hash_many_avx2(
+          input_ptrs.as_ptr(),
+          1,
+          blocks,
+          key_words.as_ptr(),
+          0,
+          false,
+          flags as u8,
+          flags_start as u8,
+          flags_end as u8,
+          out.as_mut_ptr(),
+        );
+      }
+      return words8_from_le_bytes_32(&out);
+    }
     // SAFETY: AVX-512 dispatch selected this kernel; input is one contiguous
     // full-chunk-or-less buffer; output points to one OUT_LEN digest lane.
     unsafe {
@@ -4033,6 +4095,28 @@ mod tests {
       derive_ref.update(&input);
       derive_ref.finalize_xof().fill(&mut derive_expected);
       assert_eq!(derive_out, derive_expected, "derive short xof mismatch len={len}");
+    }
+  }
+
+  #[test]
+  fn xof_two_32byte_reads_match_single_64byte_read() {
+    for len in [0usize, 1, 64, 1024] {
+      let input = input_pattern(len);
+
+      let mut stepped_hasher = Blake3::new();
+      stepped_hasher.update(&input);
+      let mut stepped_xof = stepped_hasher.finalize_xof();
+      let mut stepped = [0u8; 64];
+      stepped_xof.squeeze(&mut stepped[..32]);
+      stepped_xof.squeeze(&mut stepped[32..]);
+
+      let mut single_hasher = Blake3::new();
+      single_hasher.update(&input);
+      let mut single_xof = single_hasher.finalize_xof();
+      let mut single = [0u8; 64];
+      single_xof.squeeze(&mut single);
+
+      assert_eq!(stepped, single, "xof 32+32 mismatch len={len}");
     }
   }
 

@@ -1480,6 +1480,11 @@ fn keccakf1600_portable(data: &[u8]) -> u64 {
   keccakf1600_kernel(crypto::keccak::kernels::Keccakf1600KernelId::Portable, data)
 }
 
+#[cfg(target_arch = "aarch64")]
+fn keccakf1600_aarch64_sha3(data: &[u8]) -> u64 {
+  keccakf1600_kernel(crypto::keccak::kernels::Keccakf1600KernelId::Aarch64Sha3, data)
+}
+
 fn keccakf1600_auto(data: &[u8]) -> u64 {
   let permute_fn = crypto::keccak::dispatch::permute_dispatch().select(data.len());
   let permute = |state: &mut [u64; 25]| permute_fn(state);
@@ -1799,6 +1804,11 @@ pub fn get_kernel(algo: &str, name: &str) -> Option<Kernel> {
     ("keccakf1600-permute", "portable") => Some(Kernel {
       name: "portable",
       func: keccakf1600_portable,
+    }),
+    #[cfg(target_arch = "aarch64")]
+    ("keccakf1600-permute", "aarch64/sha3") => Some(Kernel {
+      name: "aarch64/sha3",
+      func: keccakf1600_aarch64_sha3,
     }),
     // Streaming chunking profiles (some algos only have dispatch/auto today).
     ("sha256-stream64", "portable") => Some(Kernel {
@@ -2164,6 +2174,11 @@ pub fn get_kernel(algo: &str, name: &str) -> Option<Kernel> {
     ("keccakf1600", "portable") => Some(Kernel {
       name: "portable",
       func: keccakf1600_portable,
+    }),
+    #[cfg(target_arch = "aarch64")]
+    ("keccakf1600", "aarch64/sha3") => Some(Kernel {
+      name: "aarch64/sha3",
+      func: keccakf1600_aarch64_sha3,
     }),
     ("ascon-hash256", "portable") => Some(Kernel {
       name: "portable",

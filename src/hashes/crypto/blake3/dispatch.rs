@@ -51,6 +51,8 @@ struct ResolvedDispatch {
   hasher: HasherDispatch,
   #[cfg(target_arch = "x86_64")]
   avx2_hash_many_one_chunk_fast_path: bool,
+  #[cfg(target_arch = "x86_64")]
+  avx2_available: bool,
 }
 
 static RESOLVED: OnceCache<ResolvedDispatch> = OnceCache::new();
@@ -289,6 +291,8 @@ fn resolved() -> ResolvedDispatch {
       hasher,
       #[cfg(target_arch = "x86_64")]
       avx2_hash_many_one_chunk_fast_path: allow_avx2_hash_many_one_chunk_fast_path(caps),
+      #[cfg(target_arch = "x86_64")]
+      avx2_available: caps.has(required_caps(Blake3KernelId::X86Avx2)),
     }
   })
 }
@@ -397,6 +401,13 @@ pub(crate) fn parallel_dispatch() -> ParallelDispatch {
 #[must_use]
 pub(crate) fn avx2_hash_many_one_chunk_fast_path() -> bool {
   resolved().avx2_hash_many_one_chunk_fast_path
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline]
+#[must_use]
+pub(crate) fn avx2_available() -> bool {
+  resolved().avx2_available
 }
 
 #[inline]
