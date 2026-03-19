@@ -249,7 +249,7 @@ impl Gf2Matrix32 {
     let mut m = [0u32; 32];
     let mut i: u32 = 0;
     while i < 32 {
-      m[i as usize] = 1u32 << i;
+      m[i as usize] = (1u32).strict_shl(i);
       i = i.strict_add(1);
     }
     Self(m)
@@ -262,7 +262,7 @@ impl Gf2Matrix32 {
     let mut result = 0u32;
     let mut i: u32 = 0;
     while i < 32 {
-      if vec & (1u32 << i) != 0 {
+      if vec & (1u32).strict_shl(i) != 0 {
         result ^= self.0[i as usize];
       }
       i = i.strict_add(1);
@@ -297,7 +297,7 @@ pub const fn generate_shift1_matrix_32(poly: u32) -> Gf2Matrix32 {
   m[0] = poly;
   let mut j: u32 = 1;
   while j < 32 {
-    m[j as usize] = 1u32 << (j - 1);
+    m[j as usize] = (1u32).strict_shl(j.strict_sub(1));
     j = j.strict_add(1);
   }
   Gf2Matrix32(m)
@@ -371,10 +371,10 @@ impl Gf2Matrix64 {
   #[must_use]
   pub const fn identity() -> Self {
     let mut m = [0u64; 64];
-    let mut i = 0;
+    let mut i: u32 = 0;
     while i < 64 {
-      m[i] = 1 << i;
-      i += 1;
+      m[i as usize] = (1u64).strict_shl(i);
+      i = i.strict_add(1);
     }
     Self(m)
   }
@@ -384,12 +384,12 @@ impl Gf2Matrix64 {
   #[must_use]
   pub const fn mul_vec(self, vec: u64) -> u64 {
     let mut result = 0u64;
-    let mut i = 0;
+    let mut i: u32 = 0;
     while i < 64 {
-      if vec & (1 << i) != 0 {
-        result ^= self.0[i];
+      if vec & (1u64).strict_shl(i) != 0 {
+        result ^= self.0[i as usize];
       }
-      i += 1;
+      i = i.strict_add(1);
     }
     result
   }
@@ -398,10 +398,10 @@ impl Gf2Matrix64 {
   #[must_use]
   pub const fn mul_mat(self, other: Self) -> Self {
     let mut result = [0u64; 64];
-    let mut i = 0;
+    let mut i: u32 = 0;
     while i < 64 {
-      result[i] = self.mul_vec(other.0[i]);
-      i += 1;
+      result[i as usize] = self.mul_vec(other.0[i as usize]);
+      i = i.strict_add(1);
     }
     Self(result)
   }
@@ -419,10 +419,10 @@ impl Gf2Matrix64 {
 pub const fn generate_shift1_matrix_64(poly: u64) -> Gf2Matrix64 {
   let mut m = [0u64; 64];
   m[0] = poly;
-  let mut j = 1;
+  let mut j: u32 = 1;
   while j < 64 {
-    m[j] = 1 << (j - 1);
-    j += 1;
+    m[j as usize] = (1u64).strict_shl(j.strict_sub(1));
+    j = j.strict_add(1);
   }
   Gf2Matrix64(m)
 }
@@ -453,7 +453,7 @@ pub const fn combine_crc64(crc_a: u64, crc_b: u64, len_b: usize, shift8_matrix: 
       result_mat = result_mat.mul_mat(mat);
     }
     mat = mat.square();
-    remaining >>= 1;
+    remaining = remaining.strict_shr(1);
   }
 
   result_mat.mul_vec(crc_a) ^ crc_b

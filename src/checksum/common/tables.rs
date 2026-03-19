@@ -67,7 +67,7 @@ pub const fn generate_crc16_tables_4(poly: u16) -> [[u16; 256]; 4] {
       tables[k][i as usize] = tables[0][(prev & 0xFF) as usize] ^ (prev >> 8);
       i = i.strict_add(1);
     }
-    k += 1;
+    k = k.strict_add(1);
   }
 
   tables
@@ -96,7 +96,7 @@ pub const fn generate_crc16_tables_8(poly: u16) -> [[u16; 256]; 8] {
       tables[k][i as usize] = tables[0][(prev & 0xFF) as usize] ^ (prev >> 8);
       i = i.strict_add(1);
     }
-    k += 1;
+    k = k.strict_add(1);
   }
 
   tables
@@ -156,7 +156,7 @@ pub const fn generate_crc24_tables_4(poly: u32) -> [[u32; 256]; 4] {
       tables[k][i as usize] = tables[0][(prev >> 24) as usize] ^ (prev.strict_shl(8));
       i = i.strict_add(1);
     }
-    k += 1;
+    k = k.strict_add(1);
   }
 
   tables
@@ -185,7 +185,7 @@ pub const fn generate_crc24_tables_8(poly: u32) -> [[u32; 256]; 8] {
       tables[k][i as usize] = tables[0][(prev >> 24) as usize] ^ (prev.strict_shl(8));
       i = i.strict_add(1);
     }
-    k += 1;
+    k = k.strict_add(1);
   }
 
   tables
@@ -282,14 +282,14 @@ pub const fn generate_crc32_tables_16(poly: u32) -> [[u32; 256]; 16] {
 #[must_use]
 pub const fn crc64_table_entry(poly: u64, index: u8) -> u64 {
   let mut crc = index as u64;
-  let mut i = 0;
+  let mut i: u32 = 0;
   while i < 8 {
     if crc & 1 != 0 {
       crc = (crc >> 1) ^ poly;
     } else {
       crc >>= 1;
     }
-    i += 1;
+    i = i.strict_add(1);
   }
   crc
 }
@@ -307,7 +307,7 @@ pub const fn generate_crc64_tables_8(poly: u64) -> [[u64; 256]; 8] {
   let mut i = 0u16;
   while i < 256 {
     tables[0][i as usize] = crc64_table_entry(poly, i as u8);
-    i += 1;
+    i = i.strict_add(1);
   }
 
   let mut k = 1usize;
@@ -316,9 +316,9 @@ pub const fn generate_crc64_tables_8(poly: u64) -> [[u64; 256]; 8] {
     while i < 256 {
       let prev = tables[k - 1][i as usize];
       tables[k][i as usize] = tables[0][(prev & 0xFF) as usize] ^ (prev >> 8);
-      i += 1;
+      i = i.strict_add(1);
     }
-    k += 1;
+    k = k.strict_add(1);
   }
 
   tables
@@ -339,7 +339,7 @@ pub const fn generate_crc64_tables_16(poly: u64) -> [[u64; 256]; 16] {
   let mut i = 0u16;
   while i < 256 {
     tables[0][i as usize] = crc64_table_entry(poly, i as u8);
-    i += 1;
+    i = i.strict_add(1);
   }
 
   let mut k = 1usize;
@@ -348,9 +348,9 @@ pub const fn generate_crc64_tables_16(poly: u64) -> [[u64; 256]; 16] {
     while i < 256 {
       let prev = tables[k - 1][i as usize];
       tables[k][i as usize] = tables[0][(prev & 0xFF) as usize] ^ (prev >> 8);
-      i += 1;
+      i = i.strict_add(1);
     }
-    k += 1;
+    k = k.strict_add(1);
   }
 
   tables

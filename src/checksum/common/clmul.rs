@@ -34,7 +34,7 @@ const fn clmul64(a: u64, b: u64) -> (u64, u64) {
   let mut lo: u64 = 0;
 
   // Process each bit of 'a'
-  let mut i = 0;
+  let mut i: u32 = 0;
   while i < 64 {
     if (a >> i) & 1 != 0 {
       // XOR b shifted by i positions into the result
@@ -47,7 +47,7 @@ const fn clmul64(a: u64, b: u64) -> (u64, u64) {
         hi ^= b >> (64 - i);
       }
     }
-    i += 1;
+    i = i.strict_add(1);
   }
 
   (hi, lo)
@@ -84,7 +84,7 @@ pub(crate) const fn reduce128(hi: u64, lo: u64, poly: u64) -> u64 {
         result_hi ^= (poly >> (64 - i)) | (1 << i);
       }
     }
-    i -= 1;
+    i = i.strict_sub(1);
   }
 
   result_lo
@@ -121,7 +121,7 @@ const fn xpow_mod(n: u32, poly: u64) -> u64 {
     // Square base
     let (hi, lo) = clmul64(base, base);
     base = reduce128(hi, lo, poly);
-    exp >>= 1;
+    exp = exp.strict_shr(1);
   }
 
   result
@@ -233,11 +233,11 @@ const fn compute_tikv_mu(poly: u64) -> u64 {
       let p_i = (poly >> i) & 1;
       let q_j = (inv >> (k - i)) & 1;
       s ^= p_i & q_j;
-      i += 1;
+      i = i.strict_add(1);
     }
 
     inv |= s << k;
-    k += 1;
+    k = k.strict_add(1);
   }
 
   inv

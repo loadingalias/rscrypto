@@ -122,7 +122,7 @@ pub const fn select_streams(len: usize, max_streams: u8, fold_bytes: usize, stre
     if max_streams >= streams && len >= min_bytes {
       return streams;
     }
-    i += 1;
+    i = i.strict_add(1);
   }
 
   // Default: single stream if buffer is large enough for any folding

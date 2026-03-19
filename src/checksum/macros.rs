@@ -57,10 +57,10 @@ macro_rules! define_buffered_crc {
 
         // If we have buffered data, try to fill and flush
         if self.len > 0 {
-          let space = $buffer_size - self.len;
+          let space = $buffer_size.strict_sub(self.len);
           let fill = input.len().min(space);
-          self.buffer[self.len..self.len + fill].copy_from_slice(&input[..fill]);
-          self.len += fill;
+          self.buffer[self.len..self.len.strict_add(fill)].copy_from_slice(&input[..fill]);
+          self.len = self.len.strict_add(fill);
           input = &input[fill..];
 
           // Flush if buffer is full or we have enough for SIMD
@@ -73,7 +73,7 @@ macro_rules! define_buffered_crc {
         // Process large chunks directly
         if input.len() >= threshold {
           // Find largest aligned chunk
-          let aligned = (input.len() / threshold) * threshold;
+          let aligned = input.len().strict_div(threshold).strict_mul(threshold);
           <$inner as $crate::Checksum>::update(&mut self.inner, &input[..aligned]);
           input = &input[aligned..];
         }
