@@ -667,7 +667,8 @@ unsafe fn crc64_zbc(mut state: u64, bytes: &[u8], consts: &Crc64ClmulConstants, 
 
   if !blocks_u64.is_empty() {
     // SAFETY: `blocks_u64` length is a multiple of 16, so casting to `[u64; 16]` is safe.
-    let blocks: &[Block] = unsafe { core::slice::from_raw_parts(blocks_u64.as_ptr().cast(), blocks_u64.len().strict_div(16)) };
+    let blocks: &[Block] =
+      unsafe { core::slice::from_raw_parts(blocks_u64.as_ptr().cast(), blocks_u64.len().strict_div(16)) };
     if let Some((first, rest)) = blocks.split_first() {
       state = update_simd(state, first, rest, consts);
     }
@@ -693,7 +694,8 @@ unsafe fn crc64_zvbc(mut state: u64, bytes: &[u8], consts: &Crc64ClmulConstants,
 
   if !blocks_u64.is_empty() {
     // SAFETY: `blocks_u64` length is a multiple of 16, so casting to `[u64; 16]` is safe.
-    let blocks: &[Block] = unsafe { core::slice::from_raw_parts(blocks_u64.as_ptr().cast(), blocks_u64.len().strict_div(16)) };
+    let blocks: &[Block] =
+      unsafe { core::slice::from_raw_parts(blocks_u64.as_ptr().cast(), blocks_u64.len().strict_div(16)) };
     if let Some((first, rest)) = blocks.split_first() {
       state = update_simd_zvbc(state, first, rest, consts);
     }
@@ -725,7 +727,8 @@ unsafe fn crc64_zbc_2way(
 
   if !blocks_u64.is_empty() {
     // SAFETY: `blocks_u64` length is a multiple of 16, so casting to `[u64; 16]` is safe.
-    let blocks: &[Block] = unsafe { core::slice::from_raw_parts(blocks_u64.as_ptr().cast(), blocks_u64.len().strict_div(16)) };
+    let blocks: &[Block] =
+      unsafe { core::slice::from_raw_parts(blocks_u64.as_ptr().cast(), blocks_u64.len().strict_div(16)) };
     state = update_simd_2way(state, blocks, fold_256b, consts);
   }
 
@@ -755,7 +758,8 @@ unsafe fn crc64_zvbc_2way(
 
   if !blocks_u64.is_empty() {
     // SAFETY: `blocks_u64` length is a multiple of 16, so casting to `[u64; 16]` is safe.
-    let blocks: &[Block] = unsafe { core::slice::from_raw_parts(blocks_u64.as_ptr().cast(), blocks_u64.len().strict_div(16)) };
+    let blocks: &[Block] =
+      unsafe { core::slice::from_raw_parts(blocks_u64.as_ptr().cast(), blocks_u64.len().strict_div(16)) };
     state = update_simd_zvbc_2way(state, blocks, fold_256b, consts);
   }
 
@@ -786,7 +790,8 @@ unsafe fn crc64_zbc_4way(
 
   if !blocks_u64.is_empty() {
     // SAFETY: `blocks_u64` length is a multiple of 16, so casting to `[u64; 16]` is safe.
-    let blocks: &[Block] = unsafe { core::slice::from_raw_parts(blocks_u64.as_ptr().cast(), blocks_u64.len().strict_div(16)) };
+    let blocks: &[Block] =
+      unsafe { core::slice::from_raw_parts(blocks_u64.as_ptr().cast(), blocks_u64.len().strict_div(16)) };
     state = update_simd_4way(state, blocks, fold_512b, combine, consts);
   }
 
@@ -817,7 +822,8 @@ unsafe fn crc64_zvbc_4way(
 
   if !blocks_u64.is_empty() {
     // SAFETY: `blocks_u64` length is a multiple of 16, so casting to `[u64; 16]` is safe.
-    let blocks: &[Block] = unsafe { core::slice::from_raw_parts(blocks_u64.as_ptr().cast(), blocks_u64.len().strict_div(16)) };
+    let blocks: &[Block] =
+      unsafe { core::slice::from_raw_parts(blocks_u64.as_ptr().cast(), blocks_u64.len().strict_div(16)) };
     state = update_simd_zvbc_4way(state, blocks, fold_512b, combine, consts);
   }
 

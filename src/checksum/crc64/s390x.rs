@@ -258,52 +258,51 @@ unsafe fn update_simd_2way(state: u64, blocks: &[Block], fold_256b: (u64, u64), 
   // Loop index `i` advances by 2 and is bounded by `even` (≤ blocks.len()),
   // so `blocks[i]` and `blocks[i + 1]` are always in-bounds.
   unsafe {
+    if blocks.len() < 2 {
+      let Some((first, rest)) = blocks.split_first() else {
+        return state;
+      };
+      return update_simd(state, first, rest, consts);
+    }
 
-  if blocks.len() < 2 {
-    let Some((first, rest)) = blocks.split_first() else {
-      return state;
-    };
-    return update_simd(state, first, rest, consts);
-  }
+    let even = blocks.len() & !1usize;
 
-  let even = blocks.len() & !1usize;
+    let coeff_256 = Simd::new(fold_256b.0, fold_256b.1);
+    let coeff_128 = Simd::new(consts.fold_128b.0, consts.fold_128b.1);
 
-  let coeff_256 = Simd::new(fold_256b.0, fold_256b.1);
-  let coeff_128 = Simd::new(consts.fold_128b.0, consts.fold_128b.1);
+    let mut s0 = load_block(&blocks[0]);
+    let mut s1 = load_block(&blocks[1]);
 
-  let mut s0 = load_block(&blocks[0]);
-  let mut s1 = load_block(&blocks[1]);
+    // Inject CRC into stream 0.
+    s0[0] ^= Simd::new(0, state);
 
-  // Inject CRC into stream 0.
-  s0[0] ^= Simd::new(0, state);
+    let mut i = 2;
+    while i < even {
+      let b0 = load_block(&blocks[i]);
+      let b1 = load_block(&blocks[i.strict_add(1)]);
+      fold_block_128(&mut s0, &b0, coeff_256);
+      fold_block_128(&mut s1, &b1, coeff_256);
+      i = i.strict_add(2);
+    }
 
-  let mut i = 2;
-  while i < even {
-    let b0 = load_block(&blocks[i]);
-    let b1 = load_block(&blocks[i + 1]);
-    fold_block_128(&mut s0, &b0, coeff_256);
-    fold_block_128(&mut s1, &b1, coeff_256);
-    i = i.strict_add(2);
-  }
+    // Merge streams: A·s0 ⊕ s1 (A = shift by 128B).
+    let mut combined = s1;
+    combined[0] ^= s0[0].fold_16(coeff_128);
+    combined[1] ^= s0[1].fold_16(coeff_128);
+    combined[2] ^= s0[2].fold_16(coeff_128);
+    combined[3] ^= s0[3].fold_16(coeff_128);
+    combined[4] ^= s0[4].fold_16(coeff_128);
+    combined[5] ^= s0[5].fold_16(coeff_128);
+    combined[6] ^= s0[6].fold_16(coeff_128);
+    combined[7] ^= s0[7].fold_16(coeff_128);
 
-  // Merge streams: A·s0 ⊕ s1 (A = shift by 128B).
-  let mut combined = s1;
-  combined[0] ^= s0[0].fold_16(coeff_128);
-  combined[1] ^= s0[1].fold_16(coeff_128);
-  combined[2] ^= s0[2].fold_16(coeff_128);
-  combined[3] ^= s0[3].fold_16(coeff_128);
-  combined[4] ^= s0[4].fold_16(coeff_128);
-  combined[5] ^= s0[5].fold_16(coeff_128);
-  combined[6] ^= s0[6].fold_16(coeff_128);
-  combined[7] ^= s0[7].fold_16(coeff_128);
+    // Handle any remaining block (odd tail) sequentially.
+    if even != blocks.len() {
+      let tail = load_block(&blocks[even]);
+      fold_block_128(&mut combined, &tail, coeff_128);
+    }
 
-  // Handle any remaining block (odd tail) sequentially.
-  if even != blocks.len() {
-    let tail = load_block(&blocks[even]);
-    fold_block_128(&mut combined, &tail, coeff_128);
-  }
-
-  fold_tail(combined, consts)
+    fold_tail(combined, consts)
   } // unsafe
 }
 
@@ -322,78 +321,77 @@ unsafe fn update_simd_4way(
   // Loop index `i` advances by 4 and is bounded by `aligned` (≤ blocks.len()),
   // so `blocks[i..i+3]` are always in-bounds. Tail processing uses iterator.
   unsafe {
+    if blocks.len() < 4 {
+      let Some((first, rest)) = blocks.split_first() else {
+        return state;
+      };
+      return update_simd(state, first, rest, consts);
+    }
 
-  if blocks.len() < 4 {
-    let Some((first, rest)) = blocks.split_first() else {
-      return state;
-    };
-    return update_simd(state, first, rest, consts);
-  }
+    let aligned = blocks.len().strict_div(4).strict_mul(4);
 
-  let aligned = (blocks.len() / 4) * 4;
+    let coeff_512 = Simd::new(fold_512b.0, fold_512b.1);
+    let coeff_128 = Simd::new(consts.fold_128b.0, consts.fold_128b.1);
+    let c384 = Simd::new(combine[0].0, combine[0].1);
+    let c256 = Simd::new(combine[1].0, combine[1].1);
+    let c128 = Simd::new(combine[2].0, combine[2].1);
 
-  let coeff_512 = Simd::new(fold_512b.0, fold_512b.1);
-  let coeff_128 = Simd::new(consts.fold_128b.0, consts.fold_128b.1);
-  let c384 = Simd::new(combine[0].0, combine[0].1);
-  let c256 = Simd::new(combine[1].0, combine[1].1);
-  let c128 = Simd::new(combine[2].0, combine[2].1);
+    let mut s0 = load_block(&blocks[0]);
+    let mut s1 = load_block(&blocks[1]);
+    let mut s2 = load_block(&blocks[2]);
+    let mut s3 = load_block(&blocks[3]);
 
-  let mut s0 = load_block(&blocks[0]);
-  let mut s1 = load_block(&blocks[1]);
-  let mut s2 = load_block(&blocks[2]);
-  let mut s3 = load_block(&blocks[3]);
+    // Inject CRC into stream 0.
+    s0[0] ^= Simd::new(0, state);
 
-  // Inject CRC into stream 0.
-  s0[0] ^= Simd::new(0, state);
+    let mut i = 4;
+    while i < aligned {
+      let b0 = load_block(&blocks[i]);
+      let b1 = load_block(&blocks[i.strict_add(1)]);
+      let b2 = load_block(&blocks[i.strict_add(2)]);
+      let b3 = load_block(&blocks[i.strict_add(3)]);
+      fold_block_128(&mut s0, &b0, coeff_512);
+      fold_block_128(&mut s1, &b1, coeff_512);
+      fold_block_128(&mut s2, &b2, coeff_512);
+      fold_block_128(&mut s3, &b3, coeff_512);
+      i = i.strict_add(4);
+    }
 
-  let mut i = 4;
-  while i < aligned {
-    let b0 = load_block(&blocks[i]);
-    let b1 = load_block(&blocks[i + 1]);
-    let b2 = load_block(&blocks[i + 2]);
-    let b3 = load_block(&blocks[i + 3]);
-    fold_block_128(&mut s0, &b0, coeff_512);
-    fold_block_128(&mut s1, &b1, coeff_512);
-    fold_block_128(&mut s2, &b2, coeff_512);
-    fold_block_128(&mut s3, &b3, coeff_512);
-    i = i.strict_add(4);
-  }
+    // Merge: A^3·s0 ⊕ A^2·s1 ⊕ A·s2 ⊕ s3.
+    let mut combined = s3;
+    combined[0] ^= s2[0].fold_16(c128);
+    combined[1] ^= s2[1].fold_16(c128);
+    combined[2] ^= s2[2].fold_16(c128);
+    combined[3] ^= s2[3].fold_16(c128);
+    combined[4] ^= s2[4].fold_16(c128);
+    combined[5] ^= s2[5].fold_16(c128);
+    combined[6] ^= s2[6].fold_16(c128);
+    combined[7] ^= s2[7].fold_16(c128);
 
-  // Merge: A^3·s0 ⊕ A^2·s1 ⊕ A·s2 ⊕ s3.
-  let mut combined = s3;
-  combined[0] ^= s2[0].fold_16(c128);
-  combined[1] ^= s2[1].fold_16(c128);
-  combined[2] ^= s2[2].fold_16(c128);
-  combined[3] ^= s2[3].fold_16(c128);
-  combined[4] ^= s2[4].fold_16(c128);
-  combined[5] ^= s2[5].fold_16(c128);
-  combined[6] ^= s2[6].fold_16(c128);
-  combined[7] ^= s2[7].fold_16(c128);
+    combined[0] ^= s1[0].fold_16(c256);
+    combined[1] ^= s1[1].fold_16(c256);
+    combined[2] ^= s1[2].fold_16(c256);
+    combined[3] ^= s1[3].fold_16(c256);
+    combined[4] ^= s1[4].fold_16(c256);
+    combined[5] ^= s1[5].fold_16(c256);
+    combined[6] ^= s1[6].fold_16(c256);
+    combined[7] ^= s1[7].fold_16(c256);
 
-  combined[0] ^= s1[0].fold_16(c256);
-  combined[1] ^= s1[1].fold_16(c256);
-  combined[2] ^= s1[2].fold_16(c256);
-  combined[3] ^= s1[3].fold_16(c256);
-  combined[4] ^= s1[4].fold_16(c256);
-  combined[5] ^= s1[5].fold_16(c256);
-  combined[6] ^= s1[6].fold_16(c256);
-  combined[7] ^= s1[7].fold_16(c256);
+    combined[0] ^= s0[0].fold_16(c384);
+    combined[1] ^= s0[1].fold_16(c384);
+    combined[2] ^= s0[2].fold_16(c384);
+    combined[3] ^= s0[3].fold_16(c384);
+    combined[4] ^= s0[4].fold_16(c384);
+    combined[5] ^= s0[5].fold_16(c384);
+    combined[6] ^= s0[6].fold_16(c384);
+    combined[7] ^= s0[7].fold_16(c384);
 
-  combined[0] ^= s0[0].fold_16(c384);
-  combined[1] ^= s0[1].fold_16(c384);
-  combined[2] ^= s0[2].fold_16(c384);
-  combined[3] ^= s0[3].fold_16(c384);
-  combined[4] ^= s0[4].fold_16(c384);
-  combined[5] ^= s0[5].fold_16(c384);
-  combined[6] ^= s0[6].fold_16(c384);
-  combined[7] ^= s0[7].fold_16(c384);
+    for block in &blocks[aligned..] {
+      let b = load_block(block);
+      fold_block_128(&mut combined, &b, coeff_128);
+    }
 
-  for block in &blocks[aligned..] {
-    let b = load_block(block);
-    fold_block_128(&mut combined, &b, coeff_128);
-  }
-
-  fold_tail(combined, consts)
+    fold_tail(combined, consts)
   } // unsafe
 }
 
@@ -416,7 +414,7 @@ unsafe fn crc64_vgfm(mut state: u64, bytes: &[u8], consts: &Crc64ClmulConstants,
 
     if !blocks_u64.is_empty() {
       // SAFETY: `blocks_u64` length is a multiple of 16, so casting to `[u64; 16]` is valid.
-      let blocks: &[Block] = core::slice::from_raw_parts(blocks_u64.as_ptr().cast(), blocks_u64.len() / 16);
+      let blocks: &[Block] = core::slice::from_raw_parts(blocks_u64.as_ptr().cast(), blocks_u64.len().strict_div(16));
       if let Some((first, rest)) = blocks.split_first() {
         state = update_simd(state, first, rest, consts);
       }
@@ -452,7 +450,7 @@ unsafe fn crc64_vgfm_2way(
 
     if !blocks_u64.is_empty() {
       // SAFETY: `blocks_u64` length is a multiple of 16, so casting to `[u64; 16]` is valid.
-      let blocks: &[Block] = core::slice::from_raw_parts(blocks_u64.as_ptr().cast(), blocks_u64.len() / 16);
+      let blocks: &[Block] = core::slice::from_raw_parts(blocks_u64.as_ptr().cast(), blocks_u64.len().strict_div(16));
       state = update_simd_2way(state, blocks, fold_256b, consts);
     }
 
@@ -487,7 +485,7 @@ unsafe fn crc64_vgfm_4way(
 
     if !blocks_u64.is_empty() {
       // SAFETY: `blocks_u64` length is a multiple of 16, so casting to `[u64; 16]` is valid.
-      let blocks: &[Block] = core::slice::from_raw_parts(blocks_u64.as_ptr().cast(), blocks_u64.len() / 16);
+      let blocks: &[Block] = core::slice::from_raw_parts(blocks_u64.as_ptr().cast(), blocks_u64.len().strict_div(16));
       state = update_simd_4way(state, blocks, fold_512b, combine, consts);
     }
 
@@ -510,12 +508,14 @@ unsafe fn crc64_vgfm_4way(
 #[target_feature(enable = "vector")]
 pub(crate) unsafe fn crc64_xz_vgfm(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: Caller guarantees the s390x vector facility is available (dispatch check).
-  unsafe { crc64_vgfm(
-    crc,
-    data,
-    &crate::checksum::common::clmul::CRC64_XZ_CLMUL,
-    &super::kernel_tables::XZ_TABLES_16,
-  ) }
+  unsafe {
+    crc64_vgfm(
+      crc,
+      data,
+      &crate::checksum::common::clmul::CRC64_XZ_CLMUL,
+      &super::kernel_tables::XZ_TABLES_16,
+    )
+  }
 }
 
 /// CRC-64-XZ using VGFM folding (2-way ILP variant).
@@ -527,13 +527,15 @@ pub(crate) unsafe fn crc64_xz_vgfm(crc: u64, data: &[u8]) -> u64 {
 #[target_feature(enable = "vector")]
 pub(crate) unsafe fn crc64_xz_vgfm_2way(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: Caller guarantees the s390x vector facility is available (dispatch check).
-  unsafe { crc64_vgfm_2way(
-    crc,
-    data,
-    XZ_FOLD_256B,
-    &crate::checksum::common::clmul::CRC64_XZ_CLMUL,
-    &super::kernel_tables::XZ_TABLES_16,
-  ) }
+  unsafe {
+    crc64_vgfm_2way(
+      crc,
+      data,
+      XZ_FOLD_256B,
+      &crate::checksum::common::clmul::CRC64_XZ_CLMUL,
+      &super::kernel_tables::XZ_TABLES_16,
+    )
+  }
 }
 
 /// CRC-64-XZ using VGFM folding (4-way ILP variant).
@@ -545,14 +547,16 @@ pub(crate) unsafe fn crc64_xz_vgfm_2way(crc: u64, data: &[u8]) -> u64 {
 #[target_feature(enable = "vector")]
 pub(crate) unsafe fn crc64_xz_vgfm_4way(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: Caller guarantees the s390x vector facility is available (dispatch check).
-  unsafe { crc64_vgfm_4way(
-    crc,
-    data,
-    XZ_FOLD_512B,
-    &XZ_COMBINE_4WAY,
-    &crate::checksum::common::clmul::CRC64_XZ_CLMUL,
-    &super::kernel_tables::XZ_TABLES_16,
-  ) }
+  unsafe {
+    crc64_vgfm_4way(
+      crc,
+      data,
+      XZ_FOLD_512B,
+      &XZ_COMBINE_4WAY,
+      &crate::checksum::common::clmul::CRC64_XZ_CLMUL,
+      &super::kernel_tables::XZ_TABLES_16,
+    )
+  }
 }
 
 /// CRC-64-NVME using VGFM folding.
@@ -564,12 +568,14 @@ pub(crate) unsafe fn crc64_xz_vgfm_4way(crc: u64, data: &[u8]) -> u64 {
 #[target_feature(enable = "vector")]
 pub(crate) unsafe fn crc64_nvme_vgfm(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: Caller guarantees the s390x vector facility is available (dispatch check).
-  unsafe { crc64_vgfm(
-    crc,
-    data,
-    &crate::checksum::common::clmul::CRC64_NVME_CLMUL,
-    &super::kernel_tables::NVME_TABLES_16,
-  ) }
+  unsafe {
+    crc64_vgfm(
+      crc,
+      data,
+      &crate::checksum::common::clmul::CRC64_NVME_CLMUL,
+      &super::kernel_tables::NVME_TABLES_16,
+    )
+  }
 }
 
 /// CRC-64-NVME using VGFM folding (2-way ILP variant).
@@ -581,13 +587,15 @@ pub(crate) unsafe fn crc64_nvme_vgfm(crc: u64, data: &[u8]) -> u64 {
 #[target_feature(enable = "vector")]
 pub(crate) unsafe fn crc64_nvme_vgfm_2way(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: Caller guarantees the s390x vector facility is available (dispatch check).
-  unsafe { crc64_vgfm_2way(
-    crc,
-    data,
-    NVME_FOLD_256B,
-    &crate::checksum::common::clmul::CRC64_NVME_CLMUL,
-    &super::kernel_tables::NVME_TABLES_16,
-  ) }
+  unsafe {
+    crc64_vgfm_2way(
+      crc,
+      data,
+      NVME_FOLD_256B,
+      &crate::checksum::common::clmul::CRC64_NVME_CLMUL,
+      &super::kernel_tables::NVME_TABLES_16,
+    )
+  }
 }
 
 /// CRC-64-NVME using VGFM folding (4-way ILP variant).
@@ -599,14 +607,16 @@ pub(crate) unsafe fn crc64_nvme_vgfm_2way(crc: u64, data: &[u8]) -> u64 {
 #[target_feature(enable = "vector")]
 pub(crate) unsafe fn crc64_nvme_vgfm_4way(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: Caller guarantees the s390x vector facility is available (dispatch check).
-  unsafe { crc64_vgfm_4way(
-    crc,
-    data,
-    NVME_FOLD_512B,
-    &NVME_COMBINE_4WAY,
-    &crate::checksum::common::clmul::CRC64_NVME_CLMUL,
-    &super::kernel_tables::NVME_TABLES_16,
-  ) }
+  unsafe {
+    crc64_vgfm_4way(
+      crc,
+      data,
+      NVME_FOLD_512B,
+      &NVME_COMBINE_4WAY,
+      &crate::checksum::common::clmul::CRC64_NVME_CLMUL,
+      &super::kernel_tables::NVME_TABLES_16,
+    )
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

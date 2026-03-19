@@ -255,6 +255,16 @@ fn sha384_compress_wasm_simd128(data: &[u8]) -> u64 {
   sha384_compress_kernel(crypto::sha384::kernels::Sha384KernelId::WasmSimd128, data)
 }
 
+#[cfg(target_arch = "s390x")]
+fn sha384_compress_s390x_kimd(data: &[u8]) -> u64 {
+  sha384_compress_kernel(crypto::sha384::kernels::Sha384KernelId::S390xKimd, data)
+}
+
+#[cfg(target_arch = "powerpc64")]
+fn sha384_compress_ppc64_crypto(data: &[u8]) -> u64 {
+  sha384_compress_kernel(crypto::sha384::kernels::Sha384KernelId::Ppc64Crypto, data)
+}
+
 fn sha384_compress_auto(data: &[u8]) -> u64 {
   const BLOCK_LEN: usize = 128;
   let blocks_len = data.len() - (data.len() % BLOCK_LEN);
@@ -316,6 +326,16 @@ fn sha512_compress_riscv_zknh(data: &[u8]) -> u64 {
 #[cfg(target_arch = "wasm32")]
 fn sha512_compress_wasm_simd128(data: &[u8]) -> u64 {
   sha512_compress_kernel(crypto::sha512::kernels::Sha512KernelId::WasmSimd128, data)
+}
+
+#[cfg(target_arch = "s390x")]
+fn sha512_compress_s390x_kimd(data: &[u8]) -> u64 {
+  sha512_compress_kernel(crypto::sha512::kernels::Sha512KernelId::S390xKimd, data)
+}
+
+#[cfg(target_arch = "powerpc64")]
+fn sha512_compress_ppc64_crypto(data: &[u8]) -> u64 {
+  sha512_compress_kernel(crypto::sha512::kernels::Sha512KernelId::Ppc64Crypto, data)
 }
 
 fn sha512_compress_auto(data: &[u8]) -> u64 {
@@ -397,6 +417,16 @@ fn sha512_256_compress_riscv_zknh(data: &[u8]) -> u64 {
 #[cfg(target_arch = "wasm32")]
 fn sha512_256_compress_wasm_simd128(data: &[u8]) -> u64 {
   sha512_256_compress_kernel(crypto::sha512_256::kernels::Sha512_256KernelId::WasmSimd128, data)
+}
+
+#[cfg(target_arch = "s390x")]
+fn sha512_256_compress_s390x_kimd(data: &[u8]) -> u64 {
+  sha512_256_compress_kernel(crypto::sha512_256::kernels::Sha512_256KernelId::S390xKimd, data)
+}
+
+#[cfg(target_arch = "powerpc64")]
+fn sha512_256_compress_ppc64_crypto(data: &[u8]) -> u64 {
+  sha512_256_compress_kernel(crypto::sha512_256::kernels::Sha512_256KernelId::Ppc64Crypto, data)
 }
 
 fn sha512_256_compress_auto(data: &[u8]) -> u64 {
@@ -1561,6 +1591,16 @@ pub fn get_kernel(algo: &str, name: &str) -> Option<Kernel> {
       name: "wasm/simd128",
       func: sha384_compress_wasm_simd128,
     }),
+    #[cfg(target_arch = "s390x")]
+    ("sha384-compress", "s390x/kimd") => Some(Kernel {
+      name: "s390x/kimd",
+      func: sha384_compress_s390x_kimd,
+    }),
+    #[cfg(target_arch = "powerpc64")]
+    ("sha384-compress", "ppc64/crypto") => Some(Kernel {
+      name: "ppc64/crypto",
+      func: sha384_compress_ppc64_crypto,
+    }),
     ("sha512-compress", "portable") => Some(Kernel {
       name: "portable",
       func: sha512_compress_portable,
@@ -1594,6 +1634,16 @@ pub fn get_kernel(algo: &str, name: &str) -> Option<Kernel> {
     ("sha512-compress", "wasm/simd128") => Some(Kernel {
       name: "wasm/simd128",
       func: sha512_compress_wasm_simd128,
+    }),
+    #[cfg(target_arch = "s390x")]
+    ("sha512-compress", "s390x/kimd") => Some(Kernel {
+      name: "s390x/kimd",
+      func: sha512_compress_s390x_kimd,
+    }),
+    #[cfg(target_arch = "powerpc64")]
+    ("sha512-compress", "ppc64/crypto") => Some(Kernel {
+      name: "ppc64/crypto",
+      func: sha512_compress_ppc64_crypto,
     }),
     ("sha512-compress-unaligned", "portable") => Some(Kernel {
       name: "portable",
@@ -1632,6 +1682,16 @@ pub fn get_kernel(algo: &str, name: &str) -> Option<Kernel> {
     ("sha512-256-compress", "wasm/simd128") => Some(Kernel {
       name: "wasm/simd128",
       func: sha512_256_compress_wasm_simd128,
+    }),
+    #[cfg(target_arch = "s390x")]
+    ("sha512-256-compress", "s390x/kimd") => Some(Kernel {
+      name: "s390x/kimd",
+      func: sha512_256_compress_s390x_kimd,
+    }),
+    #[cfg(target_arch = "powerpc64")]
+    ("sha512-256-compress", "ppc64/crypto") => Some(Kernel {
+      name: "ppc64/crypto",
+      func: sha512_256_compress_ppc64_crypto,
     }),
     ("blake3-chunk", "portable") => Some(Kernel {
       name: "portable",

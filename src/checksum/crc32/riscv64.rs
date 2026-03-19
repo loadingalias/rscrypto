@@ -680,7 +680,8 @@ unsafe fn crc32_zbc(mut state: u32, bytes: &[u8], consts: &Crc32ClmulConstants) 
 
   if !blocks_u64.is_empty() {
     // SAFETY: `blocks_u64` length is a multiple of 16, so casting to `[u64; 16]` is safe.
-    let blocks: &[Block] = unsafe { core::slice::from_raw_parts(blocks_u64.as_ptr().cast(), blocks_u64.len().strict_div(16)) };
+    let blocks: &[Block] =
+      unsafe { core::slice::from_raw_parts(blocks_u64.as_ptr().cast(), blocks_u64.len().strict_div(16)) };
     if let Some((first, rest)) = blocks.split_first() {
       // 1-way update (stream selection happens in the dispatcher).
       state = update_simd_zbc(state, first, rest, consts);
@@ -712,7 +713,8 @@ unsafe fn crc32_zbc_nway<const N: usize>(
   let (blocks_u64, tail_u64) = middle.split_at(block_u64s);
 
   if !blocks_u64.is_empty() {
-    let blocks: &[Block] = unsafe { core::slice::from_raw_parts(blocks_u64.as_ptr().cast(), blocks_u64.len().strict_div(16)) };
+    let blocks: &[Block] =
+      unsafe { core::slice::from_raw_parts(blocks_u64.as_ptr().cast(), blocks_u64.len().strict_div(16)) };
     state = match N {
       2 => update_simd_zbc_2way(state, blocks, stream.fold_256b, consts),
       _ => update_simd_zbc_4way(state, blocks, stream.fold_512b, &stream.combine_4way, consts),
@@ -737,7 +739,8 @@ unsafe fn crc32c_zbc(mut state: u32, bytes: &[u8], consts: &Crc32ClmulConstants)
   let (blocks_u64, tail_u64) = middle.split_at(block_u64s);
 
   if !blocks_u64.is_empty() {
-    let blocks: &[Block] = unsafe { core::slice::from_raw_parts(blocks_u64.as_ptr().cast(), blocks_u64.len().strict_div(16)) };
+    let blocks: &[Block] =
+      unsafe { core::slice::from_raw_parts(blocks_u64.as_ptr().cast(), blocks_u64.len().strict_div(16)) };
     if let Some((first, rest)) = blocks.split_first() {
       state = update_simd_zbc(state, first, rest, consts);
     }
@@ -767,7 +770,8 @@ unsafe fn crc32c_zbc_nway<const N: usize>(
   let (blocks_u64, tail_u64) = middle.split_at(block_u64s);
 
   if !blocks_u64.is_empty() {
-    let blocks: &[Block] = unsafe { core::slice::from_raw_parts(blocks_u64.as_ptr().cast(), blocks_u64.len().strict_div(16)) };
+    let blocks: &[Block] =
+      unsafe { core::slice::from_raw_parts(blocks_u64.as_ptr().cast(), blocks_u64.len().strict_div(16)) };
     state = match N {
       2 => update_simd_zbc_2way(state, blocks, stream.fold_256b, consts),
       _ => update_simd_zbc_4way(state, blocks, stream.fold_512b, &stream.combine_4way, consts),
@@ -792,7 +796,8 @@ unsafe fn crc32_zvbc(mut state: u32, bytes: &[u8], consts: &Crc32ClmulConstants)
   let (blocks_u64, tail_u64) = middle.split_at(block_u64s);
 
   if !blocks_u64.is_empty() {
-    let blocks: &[Block] = unsafe { core::slice::from_raw_parts(blocks_u64.as_ptr().cast(), blocks_u64.len().strict_div(16)) };
+    let blocks: &[Block] =
+      unsafe { core::slice::from_raw_parts(blocks_u64.as_ptr().cast(), blocks_u64.len().strict_div(16)) };
     if let Some((first, rest)) = blocks.split_first() {
       state = update_simd_zvbc(state, first, rest, consts);
     }
@@ -822,7 +827,8 @@ unsafe fn crc32_zvbc_nway<const N: usize>(
   let (blocks_u64, tail_u64) = middle.split_at(block_u64s);
 
   if !blocks_u64.is_empty() {
-    let blocks: &[Block] = unsafe { core::slice::from_raw_parts(blocks_u64.as_ptr().cast(), blocks_u64.len().strict_div(16)) };
+    let blocks: &[Block] =
+      unsafe { core::slice::from_raw_parts(blocks_u64.as_ptr().cast(), blocks_u64.len().strict_div(16)) };
     state = match N {
       2 => update_simd_zvbc_2way(state, blocks, stream.fold_256b, consts),
       _ => update_simd_zvbc_4way(state, blocks, stream.fold_512b, &stream.combine_4way, consts),
@@ -847,7 +853,8 @@ unsafe fn crc32c_zvbc(mut state: u32, bytes: &[u8], consts: &Crc32ClmulConstants
   let (blocks_u64, tail_u64) = middle.split_at(block_u64s);
 
   if !blocks_u64.is_empty() {
-    let blocks: &[Block] = unsafe { core::slice::from_raw_parts(blocks_u64.as_ptr().cast(), blocks_u64.len().strict_div(16)) };
+    let blocks: &[Block] =
+      unsafe { core::slice::from_raw_parts(blocks_u64.as_ptr().cast(), blocks_u64.len().strict_div(16)) };
     if let Some((first, rest)) = blocks.split_first() {
       state = update_simd_zvbc(state, first, rest, consts);
     }
@@ -877,7 +884,8 @@ unsafe fn crc32c_zvbc_nway<const N: usize>(
   let (blocks_u64, tail_u64) = middle.split_at(block_u64s);
 
   if !blocks_u64.is_empty() {
-    let blocks: &[Block] = unsafe { core::slice::from_raw_parts(blocks_u64.as_ptr().cast(), blocks_u64.len().strict_div(16)) };
+    let blocks: &[Block] =
+      unsafe { core::slice::from_raw_parts(blocks_u64.as_ptr().cast(), blocks_u64.len().strict_div(16)) };
     state = match N {
       2 => update_simd_zvbc_2way(state, blocks, stream.fold_256b, consts),
       _ => update_simd_zvbc_4way(state, blocks, stream.fold_512b, &stream.combine_4way, consts),

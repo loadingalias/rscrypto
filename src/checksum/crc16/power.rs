@@ -179,9 +179,7 @@ impl Simd {
     // SAFETY: Caller guarantees:
     // 1. ALTIVEC + VSX + POWER8-VECTOR + POWER8-CRYPTO target features are available (dispatch check).
     // 2. All SIMD operations are pure register computations after loads.
-    unsafe {
-      data_to_xor ^ self.fold_16(coeff)
-    }
+    unsafe { data_to_xor ^ self.fold_16(coeff) }
   }
 
   /// Fold 16 bytes down to the "width32" reduction state (reflected mode).

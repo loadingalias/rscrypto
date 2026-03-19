@@ -96,21 +96,53 @@ pub static WASM_SIMD128_TABLE: DispatchTable = DispatchTable {
   l: KernelId::WasmSimd128,
 };
 
+#[cfg(target_arch = "s390x")]
+pub static S390X_KIMD_TABLE: DispatchTable = DispatchTable {
+  boundaries: DEFAULT_BOUNDARIES,
+  xs: KernelId::S390xKimd,
+  s: KernelId::S390xKimd,
+  m: KernelId::S390xKimd,
+  l: KernelId::S390xKimd,
+};
+
+#[cfg(target_arch = "powerpc64")]
+pub static PPC64_CRYPTO_TABLE: DispatchTable = DispatchTable {
+  boundaries: DEFAULT_BOUNDARIES,
+  xs: KernelId::Ppc64Crypto,
+  s: KernelId::Ppc64Crypto,
+  m: KernelId::Ppc64Crypto,
+  l: KernelId::Ppc64Crypto,
+};
+
 #[inline]
 #[must_use]
 pub fn select_runtime_table(#[allow(unused_variables)] caps: Caps) -> &'static DispatchTable {
-  // x86_64 cascade: SHA-512 NI > AVX-512VL > AVX2 > Portable
+  // x86_64 cascade: SHA-512 NI > vendor-aware AVX-512VL/AVX2 > Portable
+  //
+  // AMD Zen 5: AVX2 is ~11% faster than AVX-512VL for SHA-512 compression,
+  // so AMD skips AVX-512VL and goes straight to AVX2.
   #[cfg(target_arch = "x86_64")]
   {
     use crate::platform::caps::x86;
     if caps.has(x86::SHA512) {
       return &X86_SHA512_TABLE;
     }
-    if caps.has(x86::AVX512F) && caps.has(x86::AVX512VL) {
-      return &X86_AVX512VL_TABLE;
-    }
-    if caps.has(x86::AVX2) {
-      return &X86_AVX2_TABLE;
+    if caps.has(x86::AMD) {
+      // AMD: AVX2 > AVX-512VL > Portable
+      if caps.has(x86::AVX2) {
+        return &X86_AVX2_TABLE;
+      }
+      if caps.has(x86::AVX512F) && caps.has(x86::AVX512VL) {
+        return &X86_AVX512VL_TABLE;
+      }
+    } else {
+      // Intel (and others): AVX-512VL > AVX2 > Portable
+      if caps.has(x86::AVX512F) && caps.has(x86::AVX512VL) {
+        return &X86_AVX512VL_TABLE;
+      }
+      if caps.has(x86::AVX2) {
+        return &X86_AVX2_TABLE;
+      }
     }
   }
   #[cfg(target_arch = "aarch64")]
@@ -132,6 +164,20 @@ pub fn select_runtime_table(#[allow(unused_variables)] caps: Caps) -> &'static D
     use crate::platform::caps::wasm;
     if caps.has(wasm::SIMD128) {
       return &WASM_SIMD128_TABLE;
+    }
+  }
+  #[cfg(target_arch = "s390x")]
+  {
+    use crate::platform::caps::s390x;
+    if caps.has(s390x::MSA) {
+      return &S390X_KIMD_TABLE;
+    }
+  }
+  #[cfg(target_arch = "powerpc64")]
+  {
+    use crate::platform::caps::power;
+    if caps.has(power::POWER8_CRYPTO) {
+      return &PPC64_CRYPTO_TABLE;
     }
   }
   &DEFAULT_TABLE

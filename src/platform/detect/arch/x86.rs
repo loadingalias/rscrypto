@@ -374,6 +374,13 @@ fn cpuid_batch_x86_64() -> CpuidBatch {
     caps |= x86::SSE4A;
   }
 
+  // ─── Vendor Identification ───
+  // Store vendor as a capability bit for vendor-aware dispatch (e.g., AMD Zen 5
+  // prefers AVX2 over AVX-512VL for SHA-512 compression).
+  if is_amd {
+    caps |= x86::AMD;
+  }
+
   CpuidBatch {
     caps,
     is_amd,

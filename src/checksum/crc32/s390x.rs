@@ -281,7 +281,7 @@ unsafe fn update_simd_2way(state: u32, blocks: &[Block], fold_256b: (u64, u64), 
     let mut i = 2usize;
     while i < even {
       let b0 = load_block(&blocks[i]);
-      let b1 = load_block(&blocks[i + 1]);
+      let b1 = load_block(&blocks[i.strict_add(1)]);
       fold_block_128(&mut s0, &b0, coeff_256);
       fold_block_128(&mut s1, &b1, coeff_256);
       i = i.strict_add(2);
@@ -328,7 +328,7 @@ unsafe fn update_simd_4way(
       return update_simd(state, first, rest, consts);
     }
 
-    let aligned = (blocks.len() / 4) * 4;
+    let aligned = blocks.len().strict_div(4).strict_mul(4);
 
     let coeff_512 = Simd::new(fold_512b.0, fold_512b.1);
     let coeff_128 = Simd::new(consts.fold_128b.0, consts.fold_128b.1);
@@ -345,9 +345,9 @@ unsafe fn update_simd_4way(
     let mut i = 4usize;
     while i < aligned {
       let b0 = load_block(&blocks[i]);
-      let b1 = load_block(&blocks[i + 1]);
-      let b2 = load_block(&blocks[i + 2]);
-      let b3 = load_block(&blocks[i + 3]);
+      let b1 = load_block(&blocks[i.strict_add(1)]);
+      let b2 = load_block(&blocks[i.strict_add(2)]);
+      let b3 = load_block(&blocks[i.strict_add(3)]);
       fold_block_128(&mut s0, &b0, coeff_512);
       fold_block_128(&mut s1, &b1, coeff_512);
       fold_block_128(&mut s2, &b2, coeff_512);

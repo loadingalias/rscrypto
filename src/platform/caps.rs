@@ -428,6 +428,11 @@ pub mod x86 {
   // ─── APX (Advanced Performance Extensions) ───
   pub const APX: Caps = Caps::bit(48);
 
+  // ─── Vendor Identification ───
+  /// AMD CPU vendor flag (set when CPUID reports "AuthenticAMD").
+  /// Used for vendor-aware dispatch where optimal kernel differs by vendor.
+  pub const AMD: Caps = Caps::bit(49);
+
   // ─── Combined Capability Masks ───
   // These represent common feature combinations for dispatch decisions.
 
@@ -823,6 +828,7 @@ const X86_FEATURES: &[FeatureEntry] = &[
   (46, "rdrand"),
   (47, "rdseed"),
   (48, "apx"),
+  (49, "amd"),
 ];
 
 /// aarch64 feature names.

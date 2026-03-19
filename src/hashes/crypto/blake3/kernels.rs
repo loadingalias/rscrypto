@@ -2914,16 +2914,10 @@ unsafe fn hash_many_contiguous_avx512_wrapper(
     {
       debug_assert!(num_chunks < super::x86_64::avx512::DEGREE);
       debug_assert!(flags <= u8::MAX as u32);
-      // Use the upstream-grade AVX-512 asm `hash_many` backend for the
-      // sub-degree tail (1–15 chunks). Passing `num_inputs = num_chunks`
-      // prevents an AVX-512 -> AVX2 -> SSE4.1 downgrade on short totals and
-      // is a key lever for closing streaming gaps at 4KiB/16KiB update sizes
-      // on Intel and Zen5-class CPUs.
-      //
-      // Benchmarked: cascading to AVX2 for ≤8 chunks is a 17–36% regression
-      // across SPR/ICL/Zen5 — the AVX-512 assembly handles sub-degree counts
-      // efficiently via lane masking, and the AVX2 assembly internally falls
-      // to SSE4.1 for <8 inputs which is much slower.
+      // Use the AVX-512 asm `hash_many` backend for the sub-degree tail
+      // (1–15 chunks). The assembly has efficient internal cascade with lane
+      // masking — Rust-side cascades to SSE4.1/AVX2 were benchmarked and
+      // regressed 11–36% on all x86_64 platforms.
       //
       // SAFETY: This wrapper is only selected when the AVX-512 kernel is
       // available per dispatch. `input`/`out` cover `num_chunks` full chunks.
@@ -2933,84 +2927,22 @@ unsafe fn hash_many_contiguous_avx512_wrapper(
         // for `num_chunks * CHUNK_LEN` bytes.
         *ptr = unsafe { input.add(i * CHUNK_LEN) };
       }
-      if num_chunks <= super::x86_64::sse41::DEGREE {
-        // 1–4 chunks: cascade to SSE4.1 hash4 at full lane utilization.
-        //
-        // The official crate cascades AVX-512→AVX2→SSE4.1 for sub-degree
-        // tails, landing on hash4 for ≤4 inputs. Benchmarking confirms:
-        // - AVX-512 with 4/16 lanes: slower than SSE4.1 with 4/4 lanes
-        // - AVX2 cascade (≤8): 17–36% regression (AVX2 asm falls to SSE4.1 internally with extra overhead)
-        // - Direct SSE4.1 hash4: matches official crate's cascade path
-        //
-        // SAFETY: AVX-512 implies SSE4.1+SSSE3. The first `num_chunks`
-        // entries in `ptrs` are valid chunk pointers. For <4 chunks,
-        // unused lanes are filled with the last valid pointer and excess
-        // outputs are discarded via the tmp buffer.
-        let last = ptrs[num_chunks - 1];
-        let sse_ptrs: [*const u8; super::x86_64::sse41::DEGREE] = [
-          ptrs[0],
-          if num_chunks > 1 { ptrs[1] } else { last },
-          if num_chunks > 2 { ptrs[2] } else { last },
-          if num_chunks > 3 { ptrs[3] } else { last },
-        ];
-        if num_chunks == super::x86_64::sse41::DEGREE {
-          // SAFETY: SSE4.1 is available (AVX-512 implies it). Exact 4-chunk
-          // fit: all `sse_ptrs` are valid and `out` has room for 4 outputs.
-          unsafe {
-            super::x86_64::sse41::hash4(
-              &sse_ptrs,
-              CHUNK_LEN / BLOCK_LEN,
-              key,
-              counter,
-              true,
-              flags,
-              CHUNK_START,
-              super::CHUNK_END,
-              out,
-            );
-          }
-        } else {
-          let mut tmp = [0u8; super::x86_64::sse41::DEGREE * OUT_LEN];
-          // SAFETY: SSE4.1 is available (AVX-512 implies it). 1–3 chunks:
-          // hash into stack tmp buffer, then copy only the needed outputs.
-          unsafe {
-            super::x86_64::sse41::hash4(
-              &sse_ptrs,
-              CHUNK_LEN / BLOCK_LEN,
-              key,
-              counter,
-              true,
-              flags,
-              CHUNK_START,
-              super::CHUNK_END,
-              tmp.as_mut_ptr(),
-            );
-            core::ptr::copy_nonoverlapping(tmp.as_ptr(), out, num_chunks * OUT_LEN);
-          }
-        }
-      } else {
-        // 5–15 chunks: AVX-512 with lane masking.
-        //
-        // At >4 chunks, AVX-512 uses >25% of its lanes and the wider
-        // execution width outweighs any frequency cost.
-        //
-        // SAFETY: AVX-512 is available per dispatch. `ptrs` points to
-        // `num_chunks` valid chunk inputs, `out` is valid for
-        // `num_chunks * OUT_LEN` bytes.
-        unsafe {
-          super::x86_64::asm::hash_many_avx512(
-            ptrs.as_ptr(),
-            num_chunks,
-            CHUNK_LEN / BLOCK_LEN,
-            key.as_ptr(),
-            counter,
-            true,
-            flags as u8,
-            CHUNK_START as u8,
-            super::CHUNK_END as u8,
-            out,
-          );
-        }
+      // SAFETY: AVX-512 is available for this kernel per dispatch. `ptrs`
+      // points to `num_chunks` valid chunk inputs, and `out` is valid for
+      // `num_chunks * OUT_LEN` bytes.
+      unsafe {
+        super::x86_64::asm::hash_many_avx512(
+          ptrs.as_ptr(),
+          num_chunks,
+          CHUNK_LEN / BLOCK_LEN,
+          key.as_ptr(),
+          counter,
+          true,
+          flags as u8,
+          CHUNK_START as u8,
+          super::CHUNK_END as u8,
+          out,
+        );
       }
     }
 

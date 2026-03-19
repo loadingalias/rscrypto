@@ -49,9 +49,7 @@ impl Simd128 {
     // SAFETY: Caller guarantees:
     // 1. SSE2 target features are available (dispatch check).
     // 2. All SIMD operations are pure register computations after loads.
-    unsafe {
-      Self(_mm_set_epi64x(high.cast_signed(), low.cast_signed()))
-    }
+    unsafe { Self(_mm_set_epi64x(high.cast_signed(), low.cast_signed())) }
   }
 
   #[inline]
@@ -60,9 +58,7 @@ impl Simd128 {
     // SAFETY: Caller guarantees:
     // 1. SSE2 + SSE2 target features are available (dispatch check).
     // 2. All SIMD operations are pure register computations after loads.
-    unsafe {
-      Self(_mm_srli_si128::<8>(self.0))
-    }
+    unsafe { Self(_mm_srli_si128::<8>(self.0)) }
   }
 
   #[inline]
@@ -71,9 +67,7 @@ impl Simd128 {
     // SAFETY: Caller guarantees:
     // 1. SSE2 + SSE2 target features are available (dispatch check).
     // 2. All SIMD operations are pure register computations after loads.
-    unsafe {
-      Self(_mm_slli_si128::<12>(self.0))
-    }
+    unsafe { Self(_mm_slli_si128::<12>(self.0)) }
   }
 
   #[inline]
@@ -82,9 +76,7 @@ impl Simd128 {
     // SAFETY: Caller guarantees:
     // 1. SSE2 + SSE2 target features are available (dispatch check).
     // 2. All SIMD operations are pure register computations after loads.
-    unsafe {
-      Self(_mm_and_si128(self.0, mask.0))
-    }
+    unsafe { Self(_mm_and_si128(self.0, mask.0)) }
   }
 
   #[inline]
@@ -785,38 +777,35 @@ unsafe fn clmul10_vpclmul(a: __m512i, b: __m512i) -> __m512i {
   // SAFETY: Caller guarantees:
   // 1. AVX512F,AVX512VL,AVX512BW,AVX512DQ,VPCLMULQDQ target features are available (dispatch check).
   // 2. All SIMD operations are pure register computations after loads.
-  unsafe {
-    _mm512_clmulepi64_epi128(a, b, 0x10)
-  }
+  unsafe { _mm512_clmulepi64_epi128(a, b, 0x10) }
 }
 
 #[inline]
 #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq")]
 unsafe fn clmul01_vpclmul(a: __m512i, b: __m512i) -> __m512i {
   // SAFETY: Caller guarantees:
-  // 1. AVX512F,AVX512VL,AVX512BW,AVX512DQ,VPCLMULQDQ + AVX512F,AVX512VL,AVX512BW,AVX512DQ,VPCLMULQDQ target features are available (dispatch check).
+  // 1. AVX512F,AVX512VL,AVX512BW,AVX512DQ,VPCLMULQDQ + AVX512F,AVX512VL,AVX512BW,AVX512DQ,VPCLMULQDQ
+  //    target features are available (dispatch check).
   // 2. All SIMD operations are pure register computations after loads.
-  unsafe {
-    _mm512_clmulepi64_epi128(a, b, 0x01)
-  }
+  unsafe { _mm512_clmulepi64_epi128(a, b, 0x01) }
 }
 
 #[inline]
 #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq")]
 unsafe fn fold_16_reflected_vpclmul(state: __m512i, coeff: __m512i, data: __m512i) -> __m512i {
   // SAFETY: Caller guarantees:
-  // 1. AVX512F,AVX512VL,AVX512BW,AVX512DQ,VPCLMULQDQ + AVX512F,AVX512VL,AVX512BW,AVX512DQ,VPCLMULQDQ target features are available (dispatch check).
+  // 1. AVX512F,AVX512VL,AVX512BW,AVX512DQ,VPCLMULQDQ + AVX512F,AVX512VL,AVX512BW,AVX512DQ,VPCLMULQDQ
+  //    target features are available (dispatch check).
   // 2. All SIMD operations are pure register computations after loads.
-  unsafe {
-    _mm512_ternarylogic_epi64(clmul10_vpclmul(state, coeff), clmul01_vpclmul(state, coeff), data, 0x96)
-  }
+  unsafe { _mm512_ternarylogic_epi64(clmul10_vpclmul(state, coeff), clmul01_vpclmul(state, coeff), data, 0x96) }
 }
 
 #[inline]
 #[target_feature(enable = "avx512f")]
 unsafe fn broadcast_coeff_128b(high: u64, low: u64) -> __m512i {
   // SAFETY: Caller guarantees:
-  // 1. AVX512F,AVX512VL,AVX512BW,AVX512DQ,VPCLMULQDQ + AVX512F target features are available (dispatch check).
+  // 1. AVX512F,AVX512VL,AVX512BW,AVX512DQ,VPCLMULQDQ + AVX512F target features are available
+  //    (dispatch check).
   // 2. All SIMD operations are pure register computations after loads.
   unsafe {
     _mm512_set_epi64(
@@ -838,9 +827,7 @@ unsafe fn state_mask_lane0(state: u32) -> __m512i {
   // SAFETY: Caller guarantees:
   // 1. AVX512F target features are available (dispatch check).
   // 2. All SIMD operations are pure register computations after loads.
-  unsafe {
-    _mm512_set_epi64(0, 0, 0, 0, 0, 0, 0, state as i64)
-  }
+  unsafe { _mm512_set_epi64(0, 0, 0, 0, 0, 0, 0, state as i64) }
 }
 
 #[inline]
@@ -852,7 +839,8 @@ unsafe fn update_simd_width32_reflected_vpclmul(
   keys: &[u64; 23],
 ) -> u32 {
   // SAFETY: Caller guarantees:
-  // 1. AVX512F + AVX512F,AVX512VL,AVX512BW,AVX512DQ,VPCLMULQDQ,SSSE3,PCLMULQDQ,SSE2 target features are available (dispatch check).
+  // 1. AVX512F + AVX512F,AVX512VL,AVX512BW,AVX512DQ,VPCLMULQDQ,SSSE3,PCLMULQDQ,SSE2 target features
+  //    are available (dispatch check).
   // 2. All pointer arithmetic stays within bounds via loop guards.
   // 3. All SIMD operations are pure register computations after loads.
   unsafe {
@@ -944,7 +932,8 @@ unsafe fn update_simd_width32_reflected_vpclmul_2way(
   use crate::checksum::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
 
   // SAFETY: Caller guarantees:
-  // 1. AVX512F,AVX512VL,AVX512BW,AVX512DQ,VPCLMULQDQ,SSSE3,PCLMULQDQ,SSE2 target features are available (dispatch check).
+  // 1. AVX512F,AVX512VL,AVX512BW,AVX512DQ,VPCLMULQDQ,SSSE3,PCLMULQDQ,SSE2 target features are
+  //    available (dispatch check).
   // 2. All SIMD operations are pure register computations after loads.
   unsafe {
     debug_assert!(!blocks.is_empty());
@@ -1037,7 +1026,8 @@ unsafe fn update_simd_width32_reflected_vpclmul_4way(
   use crate::checksum::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
 
   // SAFETY: Caller guarantees:
-  // 1. AVX512F,AVX512VL,AVX512BW,AVX512DQ,VPCLMULQDQ,SSSE3,PCLMULQDQ,SSE2 target features are available (dispatch check).
+  // 1. AVX512F,AVX512VL,AVX512BW,AVX512DQ,VPCLMULQDQ,SSSE3,PCLMULQDQ,SSE2 target features are
+  //    available (dispatch check).
   // 2. All SIMD operations are pure register computations after loads.
   unsafe {
     debug_assert!(!blocks.is_empty());
@@ -1163,7 +1153,8 @@ unsafe fn update_simd_width32_reflected_vpclmul_7way(
   use crate::checksum::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
 
   // SAFETY: Caller guarantees:
-  // 1. AVX512F,AVX512VL,AVX512BW,AVX512DQ,VPCLMULQDQ,SSSE3,PCLMULQDQ,SSE2 target features are available (dispatch check).
+  // 1. AVX512F,AVX512VL,AVX512BW,AVX512DQ,VPCLMULQDQ,SSSE3,PCLMULQDQ,SSE2 target features are
+  //    available (dispatch check).
   // 2. All SIMD operations are pure register computations after loads.
   unsafe {
     debug_assert!(!blocks.is_empty());
@@ -1271,7 +1262,8 @@ unsafe fn update_simd_width32_reflected_vpclmul_8way(
   use crate::checksum::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
 
   // SAFETY: Caller guarantees:
-  // 1. AVX512F,AVX512VL,AVX512BW,AVX512DQ,VPCLMULQDQ,SSSE3,PCLMULQDQ,SSE2 target features are available (dispatch check).
+  // 1. AVX512F,AVX512VL,AVX512BW,AVX512DQ,VPCLMULQDQ,SSSE3,PCLMULQDQ,SSE2 target features are
+  //    available (dispatch check).
   // 2. All SIMD operations are pure register computations after loads.
   unsafe {
     debug_assert!(!blocks.is_empty());
@@ -1386,7 +1378,8 @@ unsafe fn crc16_width32_vpclmul_stream(
   portable: fn(u16, &[u8]) -> u16,
 ) -> u16 {
   // SAFETY: Caller guarantees:
-  // 1. AVX512F,AVX512VL,AVX512BW,AVX512DQ,VPCLMULQDQ,SSSE3,PCLMULQDQ,SSE2 target features are available (dispatch check).
+  // 1. AVX512F,AVX512VL,AVX512BW,AVX512DQ,VPCLMULQDQ,SSSE3,PCLMULQDQ,SSE2 target features are
+  //    available (dispatch check).
   // 2. All SIMD operations are pure register computations after loads.
   unsafe {
     let (left, middle, right) = data.align_to::<[Simd128; 8]>();
@@ -1399,8 +1392,12 @@ unsafe fn crc16_width32_vpclmul_stream(
       8 => {
         update_simd_width32_reflected_vpclmul_8way(state as u32, middle, stream.fold_1024b, &stream.combine_8way, keys)
       }
-      7 => update_simd_width32_reflected_vpclmul_7way(state as u32, middle, stream.fold_896b, &stream.combine_7way, keys),
-      4 => update_simd_width32_reflected_vpclmul_4way(state as u32, middle, stream.fold_512b, &stream.combine_4way, keys),
+      7 => {
+        update_simd_width32_reflected_vpclmul_7way(state as u32, middle, stream.fold_896b, &stream.combine_7way, keys)
+      }
+      4 => {
+        update_simd_width32_reflected_vpclmul_4way(state as u32, middle, stream.fold_512b, &stream.combine_4way, keys)
+      }
       2 => update_simd_width32_reflected_vpclmul_2way(state as u32, middle, stream.fold_256b, keys),
       _ => update_simd_width32_reflected_vpclmul(state as u32, first, rest, keys),
     };
@@ -1413,7 +1410,8 @@ unsafe fn crc16_width32_vpclmul_stream(
 #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,ssse3,pclmulqdq,sse2")]
 unsafe fn crc16_width32_vpclmul(mut state: u16, data: &[u8], keys: &[u64; 23], portable: fn(u16, &[u8]) -> u16) -> u16 {
   // SAFETY: Caller guarantees:
-  // 1. AVX512F,AVX512VL,AVX512BW,AVX512DQ,VPCLMULQDQ,SSSE3,PCLMULQDQ,SSE2 target features are available (dispatch check).
+  // 1. AVX512F,AVX512VL,AVX512BW,AVX512DQ,VPCLMULQDQ,SSSE3,PCLMULQDQ,SSE2 target features are
+  //    available (dispatch check).
   // 2. All SIMD operations are pure register computations after loads.
   unsafe {
     let (left, middle, right) = data.align_to::<[Simd128; 8]>();

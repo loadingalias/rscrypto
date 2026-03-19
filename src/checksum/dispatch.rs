@@ -437,7 +437,14 @@ const L: usize = 3;
 impl KernelTable {
   /// Construct a `KernelTable` from four [`KernelSet`] definitions, splitting
   /// function pointers from name strings at compile time.
-  pub const fn from_sets(requires: Caps, boundaries: [usize; 3], xs: KernelSet, s: KernelSet, m: KernelSet, l: KernelSet) -> Self {
+  pub const fn from_sets(
+    requires: Caps,
+    boundaries: [usize; 3],
+    xs: KernelSet,
+    s: KernelSet,
+    m: KernelSet,
+    l: KernelSet,
+  ) -> Self {
     Self {
       requires,
       boundaries,
@@ -994,7 +1001,10 @@ mod aarch64_tables {
   pub static GRAVITON3_TABLE: KernelTable = KernelTable::from_sets(
     crate::platform::caps::aarch64::CRC_READY.union(crate::platform::caps::aarch64::PMULL_EOR3_READY),
     [64, 256, 4096],
-    G3_XS, G3_S, G3_M, G3_L,
+    G3_XS,
+    G3_S,
+    G3_M,
+    G3_L,
   );
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -2462,7 +2472,10 @@ mod tests {
     // KernelFnSet holds 7 function pointers (8 bytes each on 64-bit) = 56 bytes,
     // which fits within a single 64-byte cache line.
     let size = core::mem::size_of::<KernelFnSet>();
-    assert!(size <= 64, "KernelFnSet is {size} bytes, must be <= 64 for cache-line fit");
+    assert!(
+      size <= 64,
+      "KernelFnSet is {size} bytes, must be <= 64 for cache-line fit"
+    );
     assert_eq!(size, 56, "KernelFnSet should be exactly 56 bytes (7 fn ptrs)");
   }
 

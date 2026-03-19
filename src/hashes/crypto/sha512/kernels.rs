@@ -2,8 +2,12 @@ use super::Sha512;
 use crate::platform::Caps;
 #[cfg(target_arch = "aarch64")]
 use crate::platform::caps::aarch64;
+#[cfg(target_arch = "powerpc64")]
+use crate::platform::caps::power;
 #[cfg(target_arch = "riscv64")]
 use crate::platform::caps::riscv;
+#[cfg(target_arch = "s390x")]
+use crate::platform::caps::s390x;
 #[cfg(target_arch = "wasm32")]
 use crate::platform::caps::wasm;
 #[cfg(target_arch = "x86_64")]
@@ -28,6 +32,10 @@ pub enum Sha512KernelId {
   Riscv64Zknh = 3,
   #[cfg(target_arch = "wasm32")]
   WasmSimd128 = 4,
+  #[cfg(target_arch = "s390x")]
+  S390xKimd = 7,
+  #[cfg(target_arch = "powerpc64")]
+  Ppc64Crypto = 8,
 }
 
 #[cfg(any(test, feature = "std"))]
@@ -45,6 +53,10 @@ pub const ALL: &[Sha512KernelId] = &[
   Sha512KernelId::Riscv64Zknh,
   #[cfg(target_arch = "wasm32")]
   Sha512KernelId::WasmSimd128,
+  #[cfg(target_arch = "s390x")]
+  Sha512KernelId::S390xKimd,
+  #[cfg(target_arch = "powerpc64")]
+  Sha512KernelId::Ppc64Crypto,
 ];
 
 impl Sha512KernelId {
@@ -65,6 +77,10 @@ impl Sha512KernelId {
       Self::Riscv64Zknh => "riscv/zknh",
       #[cfg(target_arch = "wasm32")]
       Self::WasmSimd128 => "wasm/simd128",
+      #[cfg(target_arch = "s390x")]
+      Self::S390xKimd => "s390x/kimd",
+      #[cfg(target_arch = "powerpc64")]
+      Self::Ppc64Crypto => "ppc64/crypto",
     }
   }
 }
@@ -86,6 +102,10 @@ pub fn id_from_name(name: &str) -> Option<Sha512KernelId> {
     "riscv/zknh" => Some(Sha512KernelId::Riscv64Zknh),
     #[cfg(target_arch = "wasm32")]
     "wasm/simd128" => Some(Sha512KernelId::WasmSimd128),
+    #[cfg(target_arch = "s390x")]
+    "s390x/kimd" => Some(Sha512KernelId::S390xKimd),
+    #[cfg(target_arch = "powerpc64")]
+    "ppc64/crypto" => Some(Sha512KernelId::Ppc64Crypto),
     _ => None,
   }
 }
@@ -130,6 +150,18 @@ fn compress_blocks_wasm_simd128(state: &mut [u64; 8], blocks: &[u8]) {
   unsafe { super::wasm::compress_blocks_wasm_simd(state, blocks) }
 }
 
+#[cfg(target_arch = "s390x")]
+fn compress_blocks_s390x_kimd(state: &mut [u64; 8], blocks: &[u8]) {
+  // SAFETY: Only called when dispatch has verified `s390x::MSA` is available.
+  unsafe { super::s390x::compress_blocks_kimd(state, blocks) }
+}
+
+#[cfg(target_arch = "powerpc64")]
+fn compress_blocks_ppc64_crypto(state: &mut [u64; 8], blocks: &[u8]) {
+  // SAFETY: Only called when dispatch has verified `power::POWER8_CRYPTO` is available.
+  unsafe { super::ppc64::compress_blocks_ppc64_crypto(state, blocks) }
+}
+
 #[must_use]
 pub(crate) fn compress_blocks_fn(id: Sha512KernelId) -> CompressBlocksFn {
   match id {
@@ -146,6 +178,10 @@ pub(crate) fn compress_blocks_fn(id: Sha512KernelId) -> CompressBlocksFn {
     Sha512KernelId::Riscv64Zknh => compress_blocks_riscv_zknh,
     #[cfg(target_arch = "wasm32")]
     Sha512KernelId::WasmSimd128 => compress_blocks_wasm_simd128,
+    #[cfg(target_arch = "s390x")]
+    Sha512KernelId::S390xKimd => compress_blocks_s390x_kimd,
+    #[cfg(target_arch = "powerpc64")]
+    Sha512KernelId::Ppc64Crypto => compress_blocks_ppc64_crypto,
   }
 }
 
@@ -166,5 +202,9 @@ pub const fn required_caps(id: Sha512KernelId) -> Caps {
     Sha512KernelId::Riscv64Zknh => riscv::ZKNH,
     #[cfg(target_arch = "wasm32")]
     Sha512KernelId::WasmSimd128 => wasm::SIMD128,
+    #[cfg(target_arch = "s390x")]
+    Sha512KernelId::S390xKimd => s390x::MSA,
+    #[cfg(target_arch = "powerpc64")]
+    Sha512KernelId::Ppc64Crypto => power::POWER8_CRYPTO,
   }
 }

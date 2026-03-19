@@ -127,9 +127,7 @@ impl Simd {
     // SAFETY: Caller guarantees:
     // 1. VECTOR target features are available (dispatch check).
     // 2. All SIMD operations are pure register computations after loads.
-    unsafe {
-      Self(Self::vgfm(self.0, coeff.swap_lanes().0))
-    }
+    unsafe { Self(Self::vgfm(self.0, coeff.swap_lanes().0)) }
   }
 
   #[inline]
@@ -138,9 +136,7 @@ impl Simd {
     // SAFETY: Caller guarantees:
     // 1. VECTOR + VECTOR target features are available (dispatch check).
     // 2. All SIMD operations are pure register computations after loads.
-    unsafe {
-      data_to_xor ^ self.fold_16(coeff)
-    }
+    unsafe { data_to_xor ^ self.fold_16(coeff) }
   }
 
   #[inline]
@@ -351,7 +347,7 @@ unsafe fn update_simd_width32_reflected_bitrev_4way(
       return update_simd_width32_reflected_bitrev(state, first, rest, keys);
     }
 
-    let aligned = (blocks.len() / 4) * 4;
+    let aligned = blocks.len().strict_div(4).strict_mul(4);
 
     let coeff_512 = Simd::new(fold_512b.0, fold_512b.1);
     let coeff_128 = Simd::new(keys[4], keys[3]);
