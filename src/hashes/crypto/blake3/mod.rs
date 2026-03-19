@@ -1595,6 +1595,12 @@ fn retune_root_emit_kernel(root: RootEmitState, work_len: usize) -> RootEmitStat
 }
 
 #[inline]
+#[must_use]
+fn should_retune_xof_emit_kernel(expected_output_bytes: usize) -> bool {
+  expected_output_bytes >= 1024
+}
+
+#[inline]
 fn compress_node_chaining_value(
   kernel_id: kernels::Blake3KernelId,
   input_chaining_value: [u32; 8],
@@ -2645,18 +2651,13 @@ impl Blake3 {
     let key_words = words8_from_le_bytes_32(key);
     let plan = dispatch::hasher_dispatch();
     let kernel = plan.size_class_kernel(data.len());
-    let output = root_output_oneshot(
+    Blake3Xof::from_output(root_output_oneshot(
       kernel,
       key_words,
       KEYED_HASH,
       control::policy_kind_from_flags(KEYED_HASH, true),
       data,
-    );
-    let root = retune_root_emit_kernel(
-      output.into_root_emit_state(),
-      xof_emit_work_len(data.len(), OUTPUT_BLOCK_LEN),
-    );
-    Blake3Xof::new(root)
+    ))
   }
 
   /// Compute the derived key for `key_material` under `context`, in one shot.
@@ -3170,23 +3171,18 @@ impl Blake3 {
   #[must_use]
   #[inline]
   pub fn finalize_xof(&self) -> Blake3Xof {
-    let root = if self.cv_stack_len == 0 && self.pending_chunk_cv.is_none() {
-      self.chunk_state.root_emit_state()
-    } else {
-      self.root_emit_state()
-    };
-    let tuned = retune_root_emit_kernel(
-      root,
-      xof_emit_work_len(self.total_input_len_clamped(), OUTPUT_BLOCK_LEN),
-    );
-    Blake3Xof::new(tuned)
+    if self.cv_stack_len == 0 && self.pending_chunk_cv.is_none() {
+      return Blake3Xof::new(self.chunk_state.root_emit_state());
+    }
+
+    Blake3Xof::new(self.root_emit_state())
   }
 
   /// Finalize into an extendable output state (XOF) with a size hint.
   ///
-  /// The size hint is used to choose an XOF emission kernel. This matters for
-  /// short inputs followed by larger output requests, where the best XOF
-  /// emitter can differ from the best streaming-update kernel.
+  /// The size hint may be used to choose a better XOF emission kernel for
+  /// larger output requests. Small outputs stay on the standard path, because
+  /// broad retuning there regressed competitive performance.
   ///
   /// # Arguments
   /// * `expected_output_bytes` - Expected output length hint.
@@ -3210,6 +3206,9 @@ impl Blake3 {
     } else {
       self.root_emit_state()
     };
+    if !should_retune_xof_emit_kernel(expected_output_bytes) {
+      return Blake3Xof::new(root);
+    }
     let tuned = retune_root_emit_kernel(
       root,
       xof_emit_work_len(self.total_input_len_clamped(), expected_output_bytes),
