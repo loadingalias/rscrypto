@@ -9,7 +9,7 @@
 // (e.g. fixed-size lanes and chunked block processing) where bounds are proven by
 // control flow; Clippy cannot always see these invariants.
 #![allow(clippy::indexing_slicing)]
-#![allow(unsafe_op_in_unsafe_fn)]
+// This module is intrinsics-heavy; unsafe blocks are per-function with SAFETY justifications.
 
 use core::{
   arch::x86_64::*,
