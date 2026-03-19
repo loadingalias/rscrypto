@@ -23,7 +23,7 @@ pub struct CrcTestHarness<C> {
   _phantom: core::marker::PhantomData<C>,
 }
 
-#[allow(dead_code)]
+#[allow(dead_code)] // Methods invoked generically by define_crc_property_tests! macro expansions
 impl<C> CrcTestHarness<C>
 where
   C: Checksum + ChecksumCombine,

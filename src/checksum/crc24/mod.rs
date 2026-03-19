@@ -107,30 +107,13 @@ fn crc24_apply_kernel_vectored(mut crc: u32, bufs: &[&[u8]], kernel: Crc24Dispat
 #[inline]
 fn crc24_openpgp_dispatch_auto(crc: u32, data: &[u8]) -> u32 {
   let table = crate::checksum::dispatch::active_table();
-  let kernel = table.select_set(data.len()).crc24_openpgp;
+  let kernel = table.select_fns(data.len()).crc24_openpgp;
   kernel(crc, data)
 }
 
 #[inline]
-fn crc24_openpgp_dispatch_auto_vectored(mut crc: u32, bufs: &[&[u8]]) -> u32 {
-  let table = crate::checksum::dispatch::active_table();
-  let mut last_set: *const crate::checksum::dispatch::KernelSet = core::ptr::null();
-  let mut kernel = table.xs.crc24_openpgp;
-
-  for &buf in bufs {
-    if buf.is_empty() {
-      continue;
-    }
-    let set = table.select_set(buf.len());
-    let set_ptr: *const crate::checksum::dispatch::KernelSet = core::ptr::from_ref(set);
-    if set_ptr != last_set {
-      last_set = set_ptr;
-      kernel = set.crc24_openpgp;
-    }
-    crc = kernel(crc, buf);
-  }
-
-  crc
+fn crc24_openpgp_dispatch_auto_vectored(crc: u32, bufs: &[&[u8]]) -> u32 {
+  crc_vectored_dispatch!(crate::checksum::dispatch::active_table(), crc, crc24_openpgp, bufs)
 }
 
 #[cfg(feature = "std")]
@@ -236,7 +219,7 @@ pub(crate) fn crc24_openpgp_selected_kernel_name(len: usize) -> &'static str {
 
   // For auto mode, return the specific kernel name from the dispatch table
   let table = crate::checksum::dispatch::active_table();
-  table.select_set(len).crc24_openpgp_name
+  table.select_names(len).crc24_openpgp_name
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -1,6 +1,41 @@
 //! Internal macros for CRC variant generation.
 //!
-//! These macros eliminate boilerplate when defining buffered CRC wrappers.
+//! These macros eliminate boilerplate when defining buffered CRC wrappers
+//! and vectored (multi-buffer) dispatch.
+
+/// Run a CRC kernel across multiple buffers, re-selecting the optimal kernel
+/// when the buffer size class changes.
+///
+/// This is the shared core of every `*_vectored` / `*_io_slices` API and the
+/// `*_dispatch_auto_vectored` helpers in CRC modules.
+///
+/// `$field` is the [`KernelFnSet`] field name (e.g. `crc64_xz`).
+/// `$bufs` must yield items that deref to `&[u8]` (supports `&[&[u8]]`,
+/// `&[IoSlice]`, etc.).
+macro_rules! crc_vectored_dispatch {
+  ($table:expr, $init:expr, $field:ident, $bufs:expr) => {{
+    let table = $table;
+    let mut crc = $init;
+    let mut last_set: *const $crate::checksum::dispatch::KernelFnSet = core::ptr::null();
+    let mut kernel = table.fns[0].$field;
+
+    for buf in $bufs {
+      let buf: &[u8] = &*buf;
+      if buf.is_empty() {
+        continue;
+      }
+      let set = table.select_fns(buf.len());
+      let set_ptr: *const $crate::checksum::dispatch::KernelFnSet = core::ptr::from_ref(set);
+      if set_ptr != last_set {
+        last_set = set_ptr;
+        kernel = set.$field;
+      }
+      crc = kernel(crc, buf);
+    }
+
+    crc
+  }};
+}
 
 /// Generate a buffered CRC wrapper for a given inner CRC type.
 ///
