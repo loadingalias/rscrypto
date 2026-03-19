@@ -20,297 +20,469 @@
 #![allow(clippy::indexing_slicing)]
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Unified GF(2) matrix macro
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Defines a full GF(2) matrix type together with its shift and combine functions.
+///
+/// # Variants
+///
+/// - `full_width, reflected` -- dimension equals backing-type bit width, reflected CRC
+///   (shift-right: poly at row 0, `m[j] = 1 << (j-1)` for `j >= 1`).
+///
+/// - `full_width, reflected, combine_with_init_xorout` -- same matrix, but the combine
+///   function takes an extra `init_xorout` parameter.
+///
+/// - `sub_width, msb_first, combine_with_init_xorout` -- dimension < backing-type bits,
+///   a `MASK` constant is generated, MSB-first shift (shift-left: `m[j] = 1 << (j+1)`,
+///   poly at last row), and the combine function applies masking and `init_xorout`.
+macro_rules! define_gf2_combine {
+  // ── full-width, reflected, simple combine ───────────────────────────────
+  (
+    name: $Name:ident,
+    backing: $T:ty,
+    dim: $DIM:expr,
+    doc_matrix: $doc_matrix:expr,
+
+    shift1_fn: $shift1_fn:ident,
+    doc_shift1: $doc_shift1:expr,
+
+    shift8_fn: $shift8_fn:ident,
+    doc_shift8: $doc_shift8:expr,
+
+    combine_fn: $combine_fn:ident,
+    doc_combine: $doc_combine:expr,
+
+    full_width, reflected
+  ) => {
+    #[doc = $doc_matrix]
+    #[derive(Clone, Copy)]
+    pub struct $Name([$T; $DIM]);
+
+    impl $Name {
+      /// Create the identity matrix.
+      #[must_use]
+      pub const fn identity() -> Self {
+        let mut m = [0 as $T; $DIM];
+        let mut i: u32 = 0;
+        while i < $DIM as u32 {
+          m[i as usize] = (1 as $T).strict_shl(i);
+          i = i.strict_add(1);
+        }
+        Self(m)
+      }
+
+      /// Multiply matrix by a vector.
+      #[inline]
+      #[must_use]
+      pub const fn mul_vec(self, vec: $T) -> $T {
+        let mut result = 0 as $T;
+        let mut i: u32 = 0;
+        while i < $DIM as u32 {
+          if vec & (1 as $T).strict_shl(i) != 0 {
+            result ^= self.0[i as usize];
+          }
+          i = i.strict_add(1);
+        }
+        result
+      }
+
+      /// Multiply two matrices.
+      #[must_use]
+      pub const fn mul_mat(self, other: Self) -> Self {
+        let mut result = [0 as $T; $DIM];
+        let mut i: u32 = 0;
+        while i < $DIM as u32 {
+          result[i as usize] = self.mul_vec(other.0[i as usize]);
+          i = i.strict_add(1);
+        }
+        Self(result)
+      }
+
+      /// Square the matrix.
+      #[inline]
+      #[must_use]
+      pub const fn square(self) -> Self {
+        self.mul_mat(self)
+      }
+    }
+
+    #[doc = $doc_shift1]
+    #[must_use]
+    pub const fn $shift1_fn(poly: $T) -> $Name {
+      let mut m = [0 as $T; $DIM];
+      m[0] = poly;
+      let mut j: u32 = 1;
+      while j < $DIM as u32 {
+        m[j as usize] = (1 as $T).strict_shl(j.strict_sub(1));
+        j = j.strict_add(1);
+      }
+      $Name(m)
+    }
+
+    #[doc = $doc_shift8]
+    #[must_use]
+    pub const fn $shift8_fn(poly: $T) -> $Name {
+      let shift1 = $shift1_fn(poly);
+      let shift2 = shift1.square();
+      let shift4 = shift2.square();
+      shift4.square()
+    }
+
+    #[doc = $doc_combine]
+    #[must_use]
+    pub const fn $combine_fn(
+      crc_a: $T,
+      crc_b: $T,
+      len_b: usize,
+      shift8_matrix: $Name,
+    ) -> $T {
+      if len_b == 0 {
+        return crc_a;
+      }
+
+      let mut mat = shift8_matrix;
+      let mut result_mat = $Name::identity();
+      let mut remaining = len_b;
+
+      while remaining > 0 {
+        if remaining & 1 != 0 {
+          result_mat = result_mat.mul_mat(mat);
+        }
+        mat = mat.square();
+        remaining = remaining.strict_shr(1);
+      }
+
+      result_mat.mul_vec(crc_a) ^ crc_b
+    }
+  };
+
+  // ── full-width, reflected, combine with init_xorout ─────────────────────
+  (
+    name: $Name:ident,
+    backing: $T:ty,
+    dim: $DIM:expr,
+    doc_matrix: $doc_matrix:expr,
+
+    shift1_fn: $shift1_fn:ident,
+    doc_shift1: $doc_shift1:expr,
+
+    shift8_fn: $shift8_fn:ident,
+    doc_shift8: $doc_shift8:expr,
+
+    combine_fn: $combine_fn:ident,
+    doc_combine: $doc_combine:expr,
+
+    full_width, reflected, combine_with_init_xorout
+  ) => {
+    #[doc = $doc_matrix]
+    #[derive(Clone, Copy)]
+    pub struct $Name([$T; $DIM]);
+
+    impl $Name {
+      /// Create the identity matrix.
+      #[must_use]
+      pub const fn identity() -> Self {
+        let mut m = [0 as $T; $DIM];
+        let mut i: u32 = 0;
+        while i < $DIM as u32 {
+          m[i as usize] = (1 as $T).strict_shl(i);
+          i = i.strict_add(1);
+        }
+        Self(m)
+      }
+
+      /// Multiply matrix by a vector.
+      #[inline]
+      #[must_use]
+      pub const fn mul_vec(self, vec: $T) -> $T {
+        let mut result = 0 as $T;
+        let mut i: u32 = 0;
+        while i < $DIM as u32 {
+          if vec & (1 as $T).strict_shl(i) != 0 {
+            result ^= self.0[i as usize];
+          }
+          i = i.strict_add(1);
+        }
+        result
+      }
+
+      /// Multiply two matrices.
+      #[must_use]
+      pub const fn mul_mat(self, other: Self) -> Self {
+        let mut result = [0 as $T; $DIM];
+        let mut i: u32 = 0;
+        while i < $DIM as u32 {
+          result[i as usize] = self.mul_vec(other.0[i as usize]);
+          i = i.strict_add(1);
+        }
+        Self(result)
+      }
+
+      /// Square the matrix.
+      #[inline]
+      #[must_use]
+      pub const fn square(self) -> Self {
+        self.mul_mat(self)
+      }
+    }
+
+    #[doc = $doc_shift1]
+    #[must_use]
+    pub const fn $shift1_fn(poly: $T) -> $Name {
+      let mut m = [0 as $T; $DIM];
+      m[0] = poly;
+      let mut j: u32 = 1;
+      while j < $DIM as u32 {
+        m[j as usize] = (1 as $T).strict_shl(j.strict_sub(1));
+        j = j.strict_add(1);
+      }
+      $Name(m)
+    }
+
+    #[doc = $doc_shift8]
+    #[must_use]
+    pub const fn $shift8_fn(poly: $T) -> $Name {
+      let shift1 = $shift1_fn(poly);
+      let shift2 = shift1.square();
+      let shift4 = shift2.square();
+      shift4.square()
+    }
+
+    #[doc = $doc_combine]
+    ///
+    /// This works for any init/xorout as long as the caller supplies
+    /// `init_xorout = init ^ xorout` for the CRC variant being combined.
+    #[must_use]
+    pub const fn $combine_fn(
+      crc_a: $T,
+      crc_b: $T,
+      len_b: usize,
+      shift8_matrix: $Name,
+      init_xorout: $T,
+    ) -> $T {
+      if len_b == 0 {
+        return crc_a;
+      }
+
+      let mut mat = shift8_matrix;
+      let mut result_mat = $Name::identity();
+      let mut remaining = len_b;
+
+      while remaining > 0 {
+        if remaining & 1 != 0 {
+          result_mat = result_mat.mul_mat(mat);
+        }
+        mat = mat.square();
+        remaining = remaining.strict_shr(1);
+      }
+
+      result_mat.mul_vec(crc_a) ^ crc_b ^ result_mat.mul_vec(init_xorout)
+    }
+  };
+
+  // ── sub-width, msb-first, combine with init_xorout + masking ────────────
+  (
+    name: $Name:ident,
+    backing: $T:ty,
+    dim: $DIM:expr,
+    mask: $MASK:expr,
+    doc_matrix: $doc_matrix:expr,
+
+    shift1_fn: $shift1_fn:ident,
+    doc_shift1: $doc_shift1:expr,
+
+    shift8_fn: $shift8_fn:ident,
+    doc_shift8: $doc_shift8:expr,
+
+    combine_fn: $combine_fn:ident,
+    doc_combine: $doc_combine:expr,
+
+    sub_width, msb_first, combine_with_init_xorout
+  ) => {
+    #[doc = $doc_matrix]
+    #[derive(Clone, Copy)]
+    pub struct $Name([$T; $DIM]);
+
+    impl $Name {
+      /// Bit mask that keeps only the low `DIM` bits of the backing type.
+      pub const MASK: $T = $MASK;
+
+      /// Create the identity matrix.
+      #[must_use]
+      pub const fn identity() -> Self {
+        let mut m = [0 as $T; $DIM];
+        let mut i: u32 = 0;
+        while i < $DIM as u32 {
+          m[i as usize] = (1 as $T).strict_shl(i) & Self::MASK;
+          i = i.strict_add(1);
+        }
+        Self(m)
+      }
+
+      /// Multiply matrix by a vector (low bits only).
+      #[inline]
+      #[must_use]
+      pub const fn mul_vec(self, vec: $T) -> $T {
+        let vec = vec & Self::MASK;
+        let mut result = 0 as $T;
+        let mut i: u32 = 0;
+        while i < $DIM as u32 {
+          if vec & ((1 as $T).strict_shl(i) & Self::MASK) != 0 {
+            result ^= self.0[i as usize];
+          }
+          i = i.strict_add(1);
+        }
+        result & Self::MASK
+      }
+
+      /// Multiply two matrices.
+      #[must_use]
+      pub const fn mul_mat(self, other: Self) -> Self {
+        let mut result = [0 as $T; $DIM];
+        let mut i: u32 = 0;
+        while i < $DIM as u32 {
+          result[i as usize] = self.mul_vec(other.0[i as usize]);
+          i = i.strict_add(1);
+        }
+        Self(result)
+      }
+
+      /// Square the matrix.
+      #[inline]
+      #[must_use]
+      pub const fn square(self) -> Self {
+        self.mul_mat(self)
+      }
+    }
+
+    #[doc = $doc_shift1]
+    #[must_use]
+    pub const fn $shift1_fn(poly: $T) -> $Name {
+      let poly = poly & $Name::MASK;
+      let mut m = [0 as $T; $DIM];
+
+      // Shift-left: bit i moves to i+1; top bit reduces by poly.
+      let mut j: u32 = 0;
+      while j < ($DIM as u32).strict_sub(1) {
+        m[j as usize] = (1 as $T).strict_shl(j.strict_add(1)) & $Name::MASK;
+        j = j.strict_add(1);
+      }
+      m[$DIM - 1] = poly;
+
+      $Name(m)
+    }
+
+    #[doc = $doc_shift8]
+    #[must_use]
+    pub const fn $shift8_fn(poly: $T) -> $Name {
+      let shift1 = $shift1_fn(poly);
+      let shift2 = shift1.square();
+      let shift4 = shift2.square();
+      shift4.square()
+    }
+
+    #[doc = $doc_combine]
+    ///
+    /// This works for any init/xorout as long as the caller supplies
+    /// `init_xorout = init ^ xorout` for the CRC variant being combined.
+    #[must_use]
+    pub const fn $combine_fn(
+      crc_a: $T,
+      crc_b: $T,
+      len_b: usize,
+      shift8_matrix: $Name,
+      init_xorout: $T,
+    ) -> $T {
+      if len_b == 0 {
+        return crc_a & $Name::MASK;
+      }
+
+      let mut mat = shift8_matrix;
+      let mut result_mat = $Name::identity();
+      let mut remaining = len_b;
+
+      while remaining > 0 {
+        if remaining & 1 != 0 {
+          result_mat = result_mat.mul_mat(mat);
+        }
+        mat = mat.square();
+        remaining = remaining.strict_shr(1);
+      }
+
+      (result_mat.mul_vec(crc_a)
+        ^ (crc_b & $Name::MASK)
+        ^ result_mat.mul_vec(init_xorout))
+        & $Name::MASK
+    }
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // GF(2) Matrix Types (16-bit CRC)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// A 16x16 GF(2) matrix represented as 16 u16 values.
-#[derive(Clone, Copy)]
-pub struct Gf2Matrix16([u16; 16]);
+define_gf2_combine! {
+  name: Gf2Matrix16,
+  backing: u16,
+  dim: 16,
+  doc_matrix: "A 16x16 GF(2) matrix represented as 16 u16 values.",
 
-impl Gf2Matrix16 {
-  /// Create the identity matrix.
-  #[must_use]
-  pub const fn identity() -> Self {
-    let mut m = [0u16; 16];
-    let mut i: u32 = 0;
-    while i < 16 {
-      m[i as usize] = (1u16).strict_shl(i);
-      i = i.strict_add(1);
-    }
-    Self(m)
-  }
+  shift1_fn: generate_shift1_matrix_16,
+  doc_shift1: "Generate the \"shift by 1 bit\" matrix for a reflected CRC-16 polynomial.",
 
-  /// Multiply matrix by a vector.
-  #[inline]
-  #[must_use]
-  pub const fn mul_vec(self, vec: u16) -> u16 {
-    let mut result = 0u16;
-    let mut i: u32 = 0;
-    while i < 16 {
-      if vec & (1u16).strict_shl(i) != 0 {
-        result ^= self.0[i as usize];
-      }
-      i = i.strict_add(1);
-    }
-    result
-  }
+  shift8_fn: generate_shift8_matrix_16,
+  doc_shift8: "Generate the \"shift by 8 bits\" matrix for a reflected CRC-16 polynomial.",
 
-  /// Multiply two matrices.
-  #[must_use]
-  pub const fn mul_mat(self, other: Self) -> Self {
-    let mut result = [0u16; 16];
-    let mut i: u32 = 0;
-    while i < 16 {
-      result[i as usize] = self.mul_vec(other.0[i as usize]);
-      i = i.strict_add(1);
-    }
-    Self(result)
-  }
+  combine_fn: combine_crc16,
+  doc_combine: "Combine two CRC-16 values.",
 
-  /// Square the matrix.
-  #[inline]
-  #[must_use]
-  pub const fn square(self) -> Self {
-    self.mul_mat(self)
-  }
-}
-
-/// Generate the "shift by 1 bit" matrix for a reflected CRC-16 polynomial.
-#[must_use]
-pub const fn generate_shift1_matrix_16(poly: u16) -> Gf2Matrix16 {
-  let mut m = [0u16; 16];
-  m[0] = poly;
-  let mut j: u32 = 1;
-  while j < 16 {
-    m[j as usize] = (1u16).strict_shl(j.strict_sub(1));
-    j = j.strict_add(1);
-  }
-  Gf2Matrix16(m)
-}
-
-/// Generate the "shift by 8 bits" matrix for a reflected CRC-16 polynomial.
-#[must_use]
-pub const fn generate_shift8_matrix_16(poly: u16) -> Gf2Matrix16 {
-  let shift1 = generate_shift1_matrix_16(poly);
-  let shift2 = shift1.square();
-  let shift4 = shift2.square();
-
-  shift4.square()
-}
-
-/// Combine two CRC-16 values.
-///
-/// This works for any init/xorout as long as the caller supplies
-/// `init_xorout = init ^ xorout` for the CRC variant being combined.
-#[must_use]
-pub const fn combine_crc16(crc_a: u16, crc_b: u16, len_b: usize, shift8_matrix: Gf2Matrix16, init_xorout: u16) -> u16 {
-  if len_b == 0 {
-    return crc_a;
-  }
-
-  let mut mat = shift8_matrix;
-  let mut result_mat = Gf2Matrix16::identity();
-  let mut remaining = len_b;
-
-  while remaining > 0 {
-    if remaining & 1 != 0 {
-      result_mat = result_mat.mul_mat(mat);
-    }
-    mat = mat.square();
-    remaining = remaining.strict_shr(1);
-  }
-
-  result_mat.mul_vec(crc_a) ^ crc_b ^ result_mat.mul_vec(init_xorout)
+  full_width, reflected, combine_with_init_xorout
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GF(2) Matrix Types (24-bit CRC)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// A 24x24 GF(2) matrix represented as 24 u32 values (low 24 bits used).
-#[derive(Clone, Copy)]
-pub struct Gf2Matrix24([u32; 24]);
+define_gf2_combine! {
+  name: Gf2Matrix24,
+  backing: u32,
+  dim: 24,
+  mask: 0x00FF_FFFF,
+  doc_matrix: "A 24x24 GF(2) matrix represented as 24 u32 values (low 24 bits used).",
 
-impl Gf2Matrix24 {
-  const MASK: u32 = 0x00FF_FFFF;
+  shift1_fn: generate_shift1_matrix_24,
+  doc_shift1: "Generate the \"shift by 1 bit\" matrix for an MSB-first CRC-24 polynomial.",
 
-  /// Create the identity matrix.
-  #[must_use]
-  pub const fn identity() -> Self {
-    let mut m = [0u32; 24];
-    let mut i: u32 = 0;
-    while i < 24 {
-      m[i as usize] = (1u32).strict_shl(i) & Self::MASK;
-      i = i.strict_add(1);
-    }
-    Self(m)
-  }
+  shift8_fn: generate_shift8_matrix_24,
+  doc_shift8: "Generate the \"shift by 8 bits\" matrix for an MSB-first CRC-24 polynomial.",
 
-  /// Multiply matrix by a vector (low 24 bits).
-  #[inline]
-  #[must_use]
-  pub const fn mul_vec(self, vec: u32) -> u32 {
-    let vec = vec & Self::MASK;
-    let mut result = 0u32;
-    let mut i: u32 = 0;
-    while i < 24 {
-      if vec & ((1u32).strict_shl(i) & Self::MASK) != 0 {
-        result ^= self.0[i as usize];
-      }
-      i = i.strict_add(1);
-    }
-    result & Self::MASK
-  }
+  combine_fn: combine_crc24,
+  doc_combine: "Combine two CRC-24 values (low 24 bits).",
 
-  /// Multiply two matrices.
-  #[must_use]
-  pub const fn mul_mat(self, other: Self) -> Self {
-    let mut result = [0u32; 24];
-    let mut i: u32 = 0;
-    while i < 24 {
-      result[i as usize] = self.mul_vec(other.0[i as usize]);
-      i = i.strict_add(1);
-    }
-    Self(result)
-  }
-
-  /// Square the matrix.
-  #[inline]
-  #[must_use]
-  pub const fn square(self) -> Self {
-    self.mul_mat(self)
-  }
-}
-
-/// Generate the "shift by 1 bit" matrix for an MSB-first CRC-24 polynomial.
-#[must_use]
-pub const fn generate_shift1_matrix_24(poly: u32) -> Gf2Matrix24 {
-  let poly = poly & Gf2Matrix24::MASK;
-  let mut m = [0u32; 24];
-
-  // Shift-left: bit i moves to i+1; top bit reduces by poly.
-  let mut j: u32 = 0;
-  while j < 23 {
-    m[j as usize] = (1u32).strict_shl(j.strict_add(1)) & Gf2Matrix24::MASK;
-    j = j.strict_add(1);
-  }
-  m[23] = poly;
-
-  Gf2Matrix24(m)
-}
-
-/// Generate the "shift by 8 bits" matrix for an MSB-first CRC-24 polynomial.
-#[must_use]
-pub const fn generate_shift8_matrix_24(poly: u32) -> Gf2Matrix24 {
-  let shift1 = generate_shift1_matrix_24(poly);
-  let shift2 = shift1.square();
-  let shift4 = shift2.square();
-
-  shift4.square()
-}
-
-/// Combine two CRC-24 values (low 24 bits).
-///
-/// This works for any init/xorout as long as the caller supplies
-/// `init_xorout = init ^ xorout` for the CRC variant being combined.
-#[must_use]
-pub const fn combine_crc24(crc_a: u32, crc_b: u32, len_b: usize, shift8_matrix: Gf2Matrix24, init_xorout: u32) -> u32 {
-  if len_b == 0 {
-    return crc_a & Gf2Matrix24::MASK;
-  }
-
-  let mut mat = shift8_matrix;
-  let mut result_mat = Gf2Matrix24::identity();
-  let mut remaining = len_b;
-
-  while remaining > 0 {
-    if remaining & 1 != 0 {
-      result_mat = result_mat.mul_mat(mat);
-    }
-    mat = mat.square();
-    remaining = remaining.strict_shr(1);
-  }
-
-  (result_mat.mul_vec(crc_a) ^ (crc_b & Gf2Matrix24::MASK) ^ result_mat.mul_vec(init_xorout)) & Gf2Matrix24::MASK
+  sub_width, msb_first, combine_with_init_xorout
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GF(2) Matrix Types (32-bit CRC)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// A 32x32 GF(2) matrix represented as 32 u32 values.
-#[derive(Clone, Copy)]
-pub struct Gf2Matrix32([u32; 32]);
+define_gf2_combine! {
+  name: Gf2Matrix32,
+  backing: u32,
+  dim: 32,
+  doc_matrix: "A 32x32 GF(2) matrix represented as 32 u32 values.",
 
-impl Gf2Matrix32 {
-  /// Create the identity matrix.
-  #[must_use]
-  pub const fn identity() -> Self {
-    let mut m = [0u32; 32];
-    let mut i: u32 = 0;
-    while i < 32 {
-      m[i as usize] = (1u32).strict_shl(i);
-      i = i.strict_add(1);
-    }
-    Self(m)
-  }
+  shift1_fn: generate_shift1_matrix_32,
+  doc_shift1: "Generate the \"shift by 1 bit\" matrix for a CRC-32 polynomial.",
 
-  /// Multiply matrix by a vector.
-  #[inline]
-  #[must_use]
-  pub const fn mul_vec(self, vec: u32) -> u32 {
-    let mut result = 0u32;
-    let mut i: u32 = 0;
-    while i < 32 {
-      if vec & (1u32).strict_shl(i) != 0 {
-        result ^= self.0[i as usize];
-      }
-      i = i.strict_add(1);
-    }
-    result
-  }
+  shift8_fn: generate_shift8_matrix_32,
+  doc_shift8: "Generate the \"shift by 8 bits\" matrix for a CRC-32 polynomial.",
 
-  /// Multiply two matrices.
-  #[must_use]
-  pub const fn mul_mat(self, other: Self) -> Self {
-    let mut result = [0u32; 32];
-    let mut i: u32 = 0;
-    while i < 32 {
-      result[i as usize] = self.mul_vec(other.0[i as usize]);
-      i = i.strict_add(1);
-    }
-    Self(result)
-  }
+  combine_fn: combine_crc32,
+  doc_combine: "Combine two CRC-32 values.",
 
-  /// Square the matrix.
-  #[inline]
-  #[must_use]
-  pub const fn square(self) -> Self {
-    self.mul_mat(self)
-  }
-}
-
-/// Generate the "shift by 1 bit" matrix for a CRC-32 polynomial.
-#[must_use]
-pub const fn generate_shift1_matrix_32(poly: u32) -> Gf2Matrix32 {
-  let mut m = [0u32; 32];
-  m[0] = poly;
-  let mut j: u32 = 1;
-  while j < 32 {
-    m[j as usize] = (1u32).strict_shl(j.strict_sub(1));
-    j = j.strict_add(1);
-  }
-  Gf2Matrix32(m)
-}
-
-/// Generate the "shift by 8 bits" matrix for a CRC-32 polynomial.
-#[must_use]
-pub const fn generate_shift8_matrix_32(poly: u32) -> Gf2Matrix32 {
-  let shift1 = generate_shift1_matrix_32(poly);
-  let shift2 = shift1.square();
-  let shift4 = shift2.square();
-
-  shift4.square()
+  full_width, reflected
 }
 
 /// Compute the matrix that applies a shift of `len_bytes` bytes for a reflected CRC-32.
@@ -340,123 +512,26 @@ pub const fn pow_shift8_matrix_32(len_bytes: usize, shift8_matrix: Gf2Matrix32) 
   result_mat
 }
 
-/// Combine two CRC-32 values.
-#[must_use]
-pub const fn combine_crc32(crc_a: u32, crc_b: u32, len_b: usize, shift8_matrix: Gf2Matrix32) -> u32 {
-  if len_b == 0 {
-    return crc_a;
-  }
+// ─────────────────────────────────────────────────────────────────────────────
+// GF(2) Matrix Types (64-bit CRC)
+// ─────────────────────────────────────────────────────────────────────────────
 
-  let mut mat = shift8_matrix;
-  let mut result_mat = Gf2Matrix32::identity();
-  let mut remaining = len_b;
+define_gf2_combine! {
+  name: Gf2Matrix64,
+  backing: u64,
+  dim: 64,
+  doc_matrix: "A 64x64 GF(2) matrix represented as 64 u64 values.",
 
-  while remaining > 0 {
-    if remaining & 1 != 0 {
-      result_mat = result_mat.mul_mat(mat);
-    }
-    mat = mat.square();
-    remaining = remaining.strict_shr(1);
-  }
+  shift1_fn: generate_shift1_matrix_64,
+  doc_shift1: "Generate the \"shift by 1 bit\" matrix for a CRC-64 polynomial.",
 
-  result_mat.mul_vec(crc_a) ^ crc_b
-}
+  shift8_fn: generate_shift8_matrix_64,
+  doc_shift8: "Generate the \"shift by 8 bits\" matrix for a CRC-64 polynomial.",
 
-/// A 64x64 GF(2) matrix represented as 64 u64 values.
-#[derive(Clone, Copy)]
-pub struct Gf2Matrix64([u64; 64]);
+  combine_fn: combine_crc64,
+  doc_combine: "Combine two CRC-64 values.",
 
-impl Gf2Matrix64 {
-  /// Create the identity matrix.
-  #[must_use]
-  pub const fn identity() -> Self {
-    let mut m = [0u64; 64];
-    let mut i: u32 = 0;
-    while i < 64 {
-      m[i as usize] = (1u64).strict_shl(i);
-      i = i.strict_add(1);
-    }
-    Self(m)
-  }
-
-  /// Multiply matrix by a vector.
-  #[inline]
-  #[must_use]
-  pub const fn mul_vec(self, vec: u64) -> u64 {
-    let mut result = 0u64;
-    let mut i: u32 = 0;
-    while i < 64 {
-      if vec & (1u64).strict_shl(i) != 0 {
-        result ^= self.0[i as usize];
-      }
-      i = i.strict_add(1);
-    }
-    result
-  }
-
-  /// Multiply two matrices.
-  #[must_use]
-  pub const fn mul_mat(self, other: Self) -> Self {
-    let mut result = [0u64; 64];
-    let mut i: u32 = 0;
-    while i < 64 {
-      result[i as usize] = self.mul_vec(other.0[i as usize]);
-      i = i.strict_add(1);
-    }
-    Self(result)
-  }
-
-  /// Square the matrix.
-  #[inline]
-  #[must_use]
-  pub const fn square(self) -> Self {
-    self.mul_mat(self)
-  }
-}
-
-/// Generate the "shift by 1 bit" matrix for a CRC-64 polynomial.
-#[must_use]
-pub const fn generate_shift1_matrix_64(poly: u64) -> Gf2Matrix64 {
-  let mut m = [0u64; 64];
-  m[0] = poly;
-  let mut j: u32 = 1;
-  while j < 64 {
-    m[j as usize] = (1u64).strict_shl(j.strict_sub(1));
-    j = j.strict_add(1);
-  }
-  Gf2Matrix64(m)
-}
-
-/// Generate the "shift by 8 bits" matrix for a CRC-64 polynomial.
-#[must_use]
-pub const fn generate_shift8_matrix_64(poly: u64) -> Gf2Matrix64 {
-  let shift1 = generate_shift1_matrix_64(poly);
-  let shift2 = shift1.square();
-  let shift4 = shift2.square();
-
-  shift4.square()
-}
-
-/// Combine two CRC-64 values.
-#[must_use]
-pub const fn combine_crc64(crc_a: u64, crc_b: u64, len_b: usize, shift8_matrix: Gf2Matrix64) -> u64 {
-  if len_b == 0 {
-    return crc_a;
-  }
-
-  let mut mat = shift8_matrix;
-  let mut result_mat = Gf2Matrix64::identity();
-  let mut remaining = len_b;
-
-  while remaining > 0 {
-    if remaining & 1 != 0 {
-      result_mat = result_mat.mul_mat(mat);
-    }
-    mat = mat.square();
-    remaining = remaining.strict_shr(1);
-  }
-
-  result_mat.mul_vec(crc_a) ^ crc_b
+  full_width, reflected
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
