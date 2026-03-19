@@ -12,6 +12,7 @@
 #![allow(dead_code)] // Kernels wired up via dispatcher
 // SAFETY: All indexing is over fixed-size arrays with in-bounds constant indices.
 #![allow(clippy::indexing_slicing)]
+#![allow(unsafe_op_in_unsafe_fn)]
 
 use core::{
   arch::asm,
