@@ -105,15 +105,6 @@ pub static S390X_KIMD_TABLE: DispatchTable = DispatchTable {
   l: KernelId::S390xKimd,
 };
 
-#[cfg(target_arch = "powerpc64")]
-pub static PPC64_CRYPTO_TABLE: DispatchTable = DispatchTable {
-  boundaries: DEFAULT_BOUNDARIES,
-  xs: KernelId::Ppc64Crypto,
-  s: KernelId::Ppc64Crypto,
-  m: KernelId::Ppc64Crypto,
-  l: KernelId::Ppc64Crypto,
-};
-
 #[inline]
 #[must_use]
 pub fn select_runtime_table(#[allow(unused_variables)] caps: Caps) -> &'static DispatchTable {
@@ -171,13 +162,6 @@ pub fn select_runtime_table(#[allow(unused_variables)] caps: Caps) -> &'static D
     use crate::platform::caps::s390x;
     if caps.has(s390x::MSA) {
       return &S390X_KIMD_TABLE;
-    }
-  }
-  #[cfg(target_arch = "powerpc64")]
-  {
-    use crate::platform::caps::power;
-    if caps.has(power::POWER8_CRYPTO) {
-      return &PPC64_CRYPTO_TABLE;
     }
   }
   &DEFAULT_TABLE
