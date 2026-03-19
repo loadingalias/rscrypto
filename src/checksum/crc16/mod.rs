@@ -108,59 +108,25 @@ fn crc16_apply_kernel_vectored(mut crc: u16, bufs: &[&[u8]], kernel: Crc16Dispat
 #[inline]
 fn crc16_ccitt_dispatch_auto(crc: u16, data: &[u8]) -> u16 {
   let table = crate::checksum::dispatch::active_table();
-  let kernel = table.select_set(data.len()).crc16_ccitt;
+  let kernel = table.select_fns(data.len()).crc16_ccitt;
   kernel(crc, data)
 }
 
 #[inline]
-fn crc16_ccitt_dispatch_auto_vectored(mut crc: u16, bufs: &[&[u8]]) -> u16 {
-  let table = crate::checksum::dispatch::active_table();
-  let mut last_set: *const crate::checksum::dispatch::KernelSet = core::ptr::null();
-  let mut kernel = table.xs.crc16_ccitt;
-
-  for &buf in bufs {
-    if buf.is_empty() {
-      continue;
-    }
-    let set = table.select_set(buf.len());
-    let set_ptr: *const crate::checksum::dispatch::KernelSet = core::ptr::from_ref(set);
-    if set_ptr != last_set {
-      last_set = set_ptr;
-      kernel = set.crc16_ccitt;
-    }
-    crc = kernel(crc, buf);
-  }
-
-  crc
+fn crc16_ccitt_dispatch_auto_vectored(crc: u16, bufs: &[&[u8]]) -> u16 {
+  crc_vectored_dispatch!(crate::checksum::dispatch::active_table(), crc, crc16_ccitt, bufs)
 }
 
 #[inline]
 fn crc16_ibm_dispatch_auto(crc: u16, data: &[u8]) -> u16 {
   let table = crate::checksum::dispatch::active_table();
-  let kernel = table.select_set(data.len()).crc16_ibm;
+  let kernel = table.select_fns(data.len()).crc16_ibm;
   kernel(crc, data)
 }
 
 #[inline]
-fn crc16_ibm_dispatch_auto_vectored(mut crc: u16, bufs: &[&[u8]]) -> u16 {
-  let table = crate::checksum::dispatch::active_table();
-  let mut last_set: *const crate::checksum::dispatch::KernelSet = core::ptr::null();
-  let mut kernel = table.xs.crc16_ibm;
-
-  for &buf in bufs {
-    if buf.is_empty() {
-      continue;
-    }
-    let set = table.select_set(buf.len());
-    let set_ptr: *const crate::checksum::dispatch::KernelSet = core::ptr::from_ref(set);
-    if set_ptr != last_set {
-      last_set = set_ptr;
-      kernel = set.crc16_ibm;
-    }
-    crc = kernel(crc, buf);
-  }
-
-  crc
+fn crc16_ibm_dispatch_auto_vectored(crc: u16, bufs: &[&[u8]]) -> u16 {
+  crc_vectored_dispatch!(crate::checksum::dispatch::active_table(), crc, crc16_ibm, bufs)
 }
 
 #[cfg(feature = "std")]
@@ -394,7 +360,7 @@ pub(crate) fn crc16_ccitt_selected_kernel_name(len: usize) -> &'static str {
 
   // For auto mode, return the specific kernel name from the dispatch table
   let table = crate::checksum::dispatch::active_table();
-  table.select_set(len).crc16_ccitt_name
+  table.select_names(len).crc16_ccitt_name
 }
 
 /// Get the name of the CRC-16/IBM kernel that would be selected for a given buffer length.
@@ -416,7 +382,7 @@ pub(crate) fn crc16_ibm_selected_kernel_name(len: usize) -> &'static str {
 
   // For auto mode, return the specific kernel name from the dispatch table
   let table = crate::checksum::dispatch::active_table();
-  table.select_set(len).crc16_ibm_name
+  table.select_names(len).crc16_ibm_name
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -518,7 +484,7 @@ impl crate::traits::Checksum for Crc16Ccitt {
   #[inline]
   fn update(&mut self, data: &[u8]) {
     if let Some(table) = self.auto_table {
-      let kernel = table.select_set(data.len()).crc16_ccitt;
+      let kernel = table.select_fns(data.len()).crc16_ccitt;
       self.state = kernel(self.state, data);
     } else {
       self.state = (self.dispatch)(self.state, data);
@@ -654,7 +620,7 @@ impl crate::traits::Checksum for Crc16Ibm {
   #[inline]
   fn update(&mut self, data: &[u8]) {
     if let Some(table) = self.auto_table {
-      let kernel = table.select_set(data.len()).crc16_ibm;
+      let kernel = table.select_fns(data.len()).crc16_ibm;
       self.state = kernel(self.state, data);
     } else {
       self.state = (self.dispatch)(self.state, data);
