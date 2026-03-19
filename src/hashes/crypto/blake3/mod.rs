@@ -1567,6 +1567,31 @@ impl RootEmitState {
       out,
     );
   }
+
+  #[inline]
+  #[must_use]
+  fn with_kernel_id(mut self, kernel_id: kernels::Blake3KernelId) -> Self {
+    self.kernel_id = kernel_id;
+    self
+  }
+}
+
+#[inline]
+#[allow(clippy::manual_saturating_arithmetic)] // Explicit clamp semantics are preferred here.
+fn clamp_add_usize(lhs: usize, rhs: usize) -> usize {
+  lhs.checked_add(rhs).unwrap_or(usize::MAX)
+}
+
+#[inline]
+#[must_use]
+fn xof_emit_work_len(input_len: usize, expected_output_bytes: usize) -> usize {
+  clamp_add_usize(input_len, expected_output_bytes.max(OUTPUT_BLOCK_LEN))
+}
+
+#[inline]
+#[must_use]
+fn retune_root_emit_kernel(root: RootEmitState, work_len: usize) -> RootEmitState {
+  root.with_kernel_id(dispatch::kernel_for_len(work_len).id)
 }
 
 #[inline]
@@ -2620,13 +2645,18 @@ impl Blake3 {
     let key_words = words8_from_le_bytes_32(key);
     let plan = dispatch::hasher_dispatch();
     let kernel = plan.size_class_kernel(data.len());
-    Blake3Xof::from_output(root_output_oneshot(
+    let output = root_output_oneshot(
       kernel,
       key_words,
       KEYED_HASH,
       control::policy_kind_from_flags(KEYED_HASH, true),
       data,
-    ))
+    );
+    let root = retune_root_emit_kernel(
+      output.into_root_emit_state(),
+      xof_emit_work_len(data.len(), OUTPUT_BLOCK_LEN),
+    );
+    Blake3Xof::new(root)
   }
 
   /// Compute the derived key for `key_material` under `context`, in one shot.
@@ -3124,24 +3154,42 @@ impl Blake3 {
     unreachable!("root emit state must return from chunk or parent root path");
   }
 
+  #[inline]
+  #[must_use]
+  #[allow(clippy::manual_saturating_arithmetic)] // Explicit clamp semantics are preferred here.
+  fn total_input_len_clamped(&self) -> usize {
+    let chunk_index = match usize::try_from(self.chunk_state.chunk_counter) {
+      Ok(v) => v,
+      Err(_) => usize::MAX / CHUNK_LEN,
+    };
+    let chunk_bytes = chunk_index.checked_mul(CHUNK_LEN).unwrap_or(usize::MAX);
+    clamp_add_usize(chunk_bytes, self.chunk_state.len())
+  }
+
   /// Finalize into an extendable output state (XOF).
   #[must_use]
   #[inline]
   pub fn finalize_xof(&self) -> Blake3Xof {
-    if self.cv_stack_len == 0 && self.pending_chunk_cv.is_none() {
-      return Blake3Xof::new(self.chunk_state.root_emit_state());
-    }
-
-    Blake3Xof::new(self.root_emit_state())
+    let root = if self.cv_stack_len == 0 && self.pending_chunk_cv.is_none() {
+      self.chunk_state.root_emit_state()
+    } else {
+      self.root_emit_state()
+    };
+    let tuned = retune_root_emit_kernel(
+      root,
+      xof_emit_work_len(self.total_input_len_clamped(), OUTPUT_BLOCK_LEN),
+    );
+    Blake3Xof::new(tuned)
   }
 
   /// Finalize into an extendable output state (XOF) with a size hint.
   ///
-  /// This currently behaves identically to [`Self::finalize_xof`]. The size
-  /// hint is accepted for API compatibility.
+  /// The size hint is used to choose an XOF emission kernel. This matters for
+  /// short inputs followed by larger output requests, where the best XOF
+  /// emitter can differ from the best streaming-update kernel.
   ///
   /// # Arguments
-  /// * `expected_output_bytes` - Expected output length hint (currently unused).
+  /// * `expected_output_bytes` - Expected output length hint.
   ///
   /// # Example
   /// ```rust
@@ -3157,8 +3205,16 @@ impl Blake3 {
   #[must_use]
   #[inline]
   pub fn finalize_xof_sized(&self, expected_output_bytes: usize) -> Blake3Xof {
-    let _ = expected_output_bytes;
-    self.finalize_xof()
+    let root = if self.cv_stack_len == 0 && self.pending_chunk_cv.is_none() {
+      self.chunk_state.root_emit_state()
+    } else {
+      self.root_emit_state()
+    };
+    let tuned = retune_root_emit_kernel(
+      root,
+      xof_emit_work_len(self.total_input_len_clamped(), expected_output_bytes),
+    );
+    Blake3Xof::new(tuned)
   }
 }
 
