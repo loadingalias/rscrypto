@@ -1440,21 +1440,6 @@ fn words8_to_le_bytes(words: &[u32; 8]) -> [u8; OUT_LEN] {
   out
 }
 
-#[inline(always)]
-fn words16_to_le_bytes(words: &[u32; 16]) -> [u8; 2 * OUT_LEN] {
-  let mut out = [0u8; 2 * OUT_LEN];
-  if cfg!(target_endian = "little") {
-    // SAFETY: `words` is 16 u32s = 64 bytes, and `out` is 64 bytes.
-    unsafe { ptr::copy_nonoverlapping(words.as_ptr() as *const u8, out.as_mut_ptr(), 2 * OUT_LEN) };
-  } else {
-    for (i, word) in words.iter().copied().enumerate() {
-      let offset = i * 4;
-      out[offset..offset + 4].copy_from_slice(&word.to_le_bytes());
-    }
-  }
-  out
-}
-
 #[derive(Clone, Copy)]
 struct OutputState {
   kernel_id: kernels::Blake3KernelId,

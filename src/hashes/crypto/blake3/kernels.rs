@@ -512,6 +512,20 @@ pub(crate) fn root_output_block_words(
 }
 
 #[inline(always)]
+fn write_root_output_words(out: &mut [u8; 2 * OUT_LEN], words: &[u32; 16]) {
+  if cfg!(target_endian = "little") {
+    // SAFETY: `words` is exactly 16 u32s = 64 bytes and `out` is exactly 64 bytes.
+    unsafe { core::ptr::copy_nonoverlapping(words.as_ptr().cast::<u8>(), out.as_mut_ptr(), 2 * OUT_LEN) };
+    return;
+  }
+
+  for (idx, word) in words.iter().copied().enumerate() {
+    let offset = idx * 4;
+    out[offset..offset + 4].copy_from_slice(&word.to_le_bytes());
+  }
+}
+
+#[inline(always)]
 fn root_output_block_words_inline(
   id: Blake3KernelId,
   chaining_value: &[u32; 8],
@@ -573,8 +587,48 @@ fn root_output_block_words_inline(
     }
   }
 
+  #[cfg(target_arch = "aarch64")]
+  if id == Blake3KernelId::Aarch64Neon {
+    // SAFETY: dispatch only selects this kernel when NEON is available, and `out`
+    // is exactly one output block.
+    unsafe {
+      super::aarch64::root_output_blocks1_neon(
+        chaining_value,
+        block_words,
+        counter,
+        block_len,
+        flags,
+        out.as_mut_ptr(),
+      );
+    }
+    return;
+  }
+
+  #[cfg(target_arch = "s390x")]
+  if id == Blake3KernelId::S390xVector {
+    // SAFETY: dispatch only selects this kernel when the vector facility is present.
+    unsafe {
+      root_output_blocks1_s390x_vector(chaining_value, block_words, counter, block_len, flags, out.as_mut_ptr())
+    };
+    return;
+  }
+
+  #[cfg(target_arch = "powerpc64")]
+  if id == Blake3KernelId::PowerVsx {
+    // SAFETY: dispatch only selects this kernel when VSX is available.
+    unsafe { root_output_blocks1_power_vsx(chaining_value, block_words, counter, block_len, flags, out.as_mut_ptr()) };
+    return;
+  }
+
+  #[cfg(target_arch = "riscv64")]
+  if id == Blake3KernelId::RiscvV {
+    // SAFETY: dispatch only selects this kernel when RVV is available.
+    unsafe { root_output_blocks1_riscv_v(chaining_value, block_words, counter, block_len, flags, out.as_mut_ptr()) };
+    return;
+  }
+
   let words = compress_block_inline(id, chaining_value, block_words, counter, block_len, flags);
-  out.copy_from_slice(&super::words16_to_le_bytes(&words));
+  write_root_output_words(out, &words);
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -820,8 +874,18 @@ pub(crate) fn root_output_blocks_bytes_into_inline(
       }
     }
 
-    let words = compress_block_inline(id, chaining_value, block_words, output_block_counter, block_len, flags);
-    out[..2 * OUT_LEN].copy_from_slice(&super::words16_to_le_bytes(&words));
+    // SAFETY: the loop only reaches this path when at least one full 64-byte
+    // root output block remains in `out`.
+    let block_out = unsafe { &mut *out.as_mut_ptr().cast::<[u8; 2 * OUT_LEN]>() };
+    root_output_block_words_inline(
+      id,
+      chaining_value,
+      block_words,
+      output_block_counter,
+      block_len,
+      flags,
+      block_out,
+    );
     output_block_counter = output_block_counter.wrapping_add(1);
     out = &mut out[2 * OUT_LEN..];
   }
@@ -1736,6 +1800,23 @@ fn compress_s390x_vector_wrapper(
 
 #[cfg(target_arch = "s390x")]
 #[target_feature(enable = "vector")]
+unsafe fn root_output_blocks1_s390x_vector(
+  chaining_value: &[u32; 8],
+  block_words: &[u32; 16],
+  counter: u64,
+  block_len: u32,
+  flags: u32,
+  out: *mut u8,
+) {
+  // SAFETY: this function is only reached under the s390x vector target-feature gate.
+  let words = unsafe { compress_s390x_vector(chaining_value, block_words, counter, block_len, flags) };
+  // SAFETY: caller guarantees `out` is writable for one 64-byte root output block.
+  let out = unsafe { &mut *out.cast::<[u8; 2 * OUT_LEN]>() };
+  write_root_output_words(out, &words);
+}
+
+#[cfg(target_arch = "s390x")]
+#[target_feature(enable = "vector")]
 unsafe fn chunk_compress_blocks_s390x_vector(
   chaining_value: &mut [u32; 8],
   chunk_counter: u64,
@@ -1942,6 +2023,23 @@ fn compress_power_vsx_wrapper(
 ) -> [u32; 16] {
   // SAFETY: dispatch requires `power::VSX` before selecting this kernel.
   unsafe { compress_power_vsx(chaining_value, block_words, counter, block_len, flags) }
+}
+
+#[cfg(target_arch = "powerpc64")]
+#[target_feature(enable = "vsx")]
+unsafe fn root_output_blocks1_power_vsx(
+  chaining_value: &[u32; 8],
+  block_words: &[u32; 16],
+  counter: u64,
+  block_len: u32,
+  flags: u32,
+  out: *mut u8,
+) {
+  // SAFETY: this function is only reached under the VSX target-feature gate.
+  let words = unsafe { compress_power_vsx(chaining_value, block_words, counter, block_len, flags) };
+  // SAFETY: caller guarantees `out` is writable for one 64-byte root output block.
+  let out = unsafe { &mut *out.cast::<[u8; 2 * OUT_LEN]>() };
+  write_root_output_words(out, &words);
 }
 
 #[cfg(target_arch = "powerpc64")]
@@ -2208,6 +2306,23 @@ fn compress_riscv_v_wrapper(
 ) -> [u32; 16] {
   // SAFETY: dispatch requires `riscv::V` before selecting this kernel.
   unsafe { compress_riscv_v(chaining_value, block_words, counter, block_len, flags) }
+}
+
+#[cfg(target_arch = "riscv64")]
+#[target_feature(enable = "v")]
+unsafe fn root_output_blocks1_riscv_v(
+  chaining_value: &[u32; 8],
+  block_words: &[u32; 16],
+  counter: u64,
+  block_len: u32,
+  flags: u32,
+  out: *mut u8,
+) {
+  // SAFETY: this function is only reached under the RVV target-feature gate.
+  let words = unsafe { compress_riscv_v(chaining_value, block_words, counter, block_len, flags) };
+  // SAFETY: caller guarantees `out` is writable for one 64-byte root output block.
+  let out = unsafe { &mut *out.cast::<[u8; 2 * OUT_LEN]>() };
+  write_root_output_words(out, &words);
 }
 
 #[cfg(target_arch = "riscv64")]

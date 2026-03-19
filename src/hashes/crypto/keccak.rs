@@ -16,6 +16,10 @@ pub(crate) mod dispatch;
 #[doc(hidden)]
 pub(crate) mod dispatch_tables;
 pub(crate) mod kernels;
+#[cfg(target_arch = "x86_64")]
+pub(crate) mod x86_64_avx2;
+#[cfg(target_arch = "x86_64")]
+pub(crate) mod x86_64_avx512;
 
 const KECCAKF_ROUNDS: usize = 24;
 

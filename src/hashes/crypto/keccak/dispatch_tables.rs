@@ -52,6 +52,24 @@ pub static AARCH64_SHA3_TABLE: DispatchTable = DispatchTable {
   l: KernelId::Aarch64Sha3,
 };
 
+#[cfg(target_arch = "x86_64")]
+pub static X86_AVX2_TABLE: DispatchTable = DispatchTable {
+  boundaries: DEFAULT_BOUNDARIES,
+  xs: KernelId::X86Avx2,
+  s: KernelId::X86Avx2,
+  m: KernelId::X86Avx2,
+  l: KernelId::X86Avx2,
+};
+
+#[cfg(target_arch = "x86_64")]
+pub static X86_AVX512_TABLE: DispatchTable = DispatchTable {
+  boundaries: DEFAULT_BOUNDARIES,
+  xs: KernelId::X86Avx512,
+  s: KernelId::X86Avx512,
+  m: KernelId::X86Avx512,
+  l: KernelId::X86Avx512,
+};
+
 #[inline]
 #[must_use]
 pub fn select_runtime_table(#[allow(unused_variables)] caps: Caps) -> &'static DispatchTable {
@@ -60,6 +78,17 @@ pub fn select_runtime_table(#[allow(unused_variables)] caps: Caps) -> &'static D
     use crate::platform::caps::aarch64;
     if caps.has(aarch64::SHA3) {
       return &AARCH64_SHA3_TABLE;
+    }
+  }
+
+  #[cfg(target_arch = "x86_64")]
+  {
+    use crate::platform::caps::x86;
+    if caps.has(x86::AVX512F.union(x86::AVX512VL)) {
+      return &X86_AVX512_TABLE;
+    }
+    if caps.has(x86::AVX2) {
+      return &X86_AVX2_TABLE;
     }
   }
 

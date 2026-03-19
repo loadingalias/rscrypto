@@ -1529,3 +1529,34 @@ pub(crate) unsafe fn root_output_blocks4_neon(
     storeu_128(g3[lane], base.add(48));
   }
 }
+
+/// Generate 1 root output block (64 bytes).
+///
+/// # Safety
+/// Caller must ensure NEON is available and that `out` is valid for `64`
+/// writable bytes.
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn root_output_blocks1_neon(
+  chaining_value: &[u32; 8],
+  block_words: &[u32; 16],
+  counter: u64,
+  block_len: u32,
+  flags: u32,
+  out: *mut u8,
+) {
+  let words = compress_neon(chaining_value, block_words, counter, block_len, flags);
+  if cfg!(target_endian = "little") {
+    // SAFETY: `words` is exactly 64 bytes and caller guarantees `out` is writable for 64 bytes.
+    unsafe { core::ptr::copy_nonoverlapping(words.as_ptr().cast::<u8>(), out, 2 * OUT_LEN) };
+    return;
+  }
+
+  let mut idx = 0usize;
+  while idx < words.len() {
+    let bytes = words[idx].to_le_bytes();
+    // SAFETY: caller guarantees `out` is writable for 64 bytes.
+    unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), out.add(idx * 4), 4) };
+    idx += 1;
+  }
+}
