@@ -71,7 +71,8 @@ impl Simd {
   #[inline]
   #[target_feature(enable = "neon", enable = "aes")]
   unsafe fn fold_16(self, coeff: Self) -> Self {
-    // SAFETY: Caller guarantees NEON+AES (PMULL) is available. All operations are register computations.
+    // SAFETY: Caller guarantees NEON+AES (PMULL) is available. All operations are register
+    // computations.
     unsafe {
       let [x0, x1] = self.into_poly64s();
       let [c0, c1] = coeff.into_poly64s();
@@ -88,7 +89,8 @@ impl Simd {
   #[inline]
   #[target_feature(enable = "neon", enable = "aes")]
   unsafe fn fold_16_pair(self, coeff_low: poly64_t, coeff_high: poly64_t) -> Self {
-    // SAFETY: Caller guarantees NEON+AES (PMULL) is available. All operations are register computations.
+    // SAFETY: Caller guarantees NEON+AES (PMULL) is available. All operations are register
+    // computations.
     unsafe {
       let [x0, x1] = self.into_poly64s();
       let h = Self::from_mul(coeff_low, x0);
@@ -101,7 +103,8 @@ impl Simd {
   #[inline]
   #[target_feature(enable = "neon", enable = "aes")]
   unsafe fn fold_8(self, coeff: u64) -> Self {
-    // SAFETY: Caller guarantees NEON+AES (PMULL) is available. All operations are register computations.
+    // SAFETY: Caller guarantees NEON+AES (PMULL) is available. All operations are register
+    // computations.
     unsafe {
       let [x0, x1] = self.into_poly64s();
       let h = Self::from_mul(coeff, x0);
@@ -114,7 +117,8 @@ impl Simd {
   #[inline]
   #[target_feature(enable = "neon", enable = "aes")]
   unsafe fn barrett(self, poly: u64, mu: u64) -> u64 {
-    // SAFETY: Caller guarantees NEON+AES (PMULL) is available. All operations are register computations.
+    // SAFETY: Caller guarantees NEON+AES (PMULL) is available. All operations are register
+    // computations.
     unsafe {
       let t1 = Self::from_mul(self.low_64(), mu).low_64();
       let l = Self::from_mul(t1, poly);
@@ -147,40 +151,40 @@ unsafe fn update_simd(state: u64, first: &[Simd; 8], rest: &[[Simd; 8]], consts:
   // All fold operations are pure register computations via PMULL.
   // Block iteration is bounded by the slice length; no out-of-bounds access.
   unsafe {
-  let mut x = *first;
+    let mut x = *first;
 
-  // XOR the initial CRC into the first lane.
-  x[0] ^= Simd::new(0, state);
+    // XOR the initial CRC into the first lane.
+    x[0] ^= Simd::new(0, state);
 
-  // 128-byte folding.
-  let coeff_low = consts.fold_128b.1;
-  let coeff_high = consts.fold_128b.0;
-  for chunk in rest {
-    fold_block_128(&mut x, chunk, coeff_low, coeff_high);
-  }
+    // 128-byte folding.
+    let coeff_low = consts.fold_128b.1;
+    let coeff_high = consts.fold_128b.0;
+    for chunk in rest {
+      fold_block_128(&mut x, chunk, coeff_low, coeff_high);
+    }
 
-  fold_tail(x, consts)
+    fold_tail(x, consts)
   } // unsafe
 }
 
 #[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
 unsafe fn update_simd_eor3(state: u64, first: &[Simd; 8], rest: &[[Simd; 8]], consts: &Crc64ClmulConstants) -> u64 {
-  // SAFETY: Caller guarantees NEON+AES+SHA3 (PMULL+EOR3) target features are available (dispatch check).
-  // All fold operations are pure register computations.
+  // SAFETY: Caller guarantees NEON+AES+SHA3 (PMULL+EOR3) target features are available (dispatch
+  // check). All fold operations are pure register computations.
   unsafe {
-  let mut x = *first;
+    let mut x = *first;
 
-  // XOR the initial CRC into the first lane.
-  x[0] ^= Simd::new(0, state);
+    // XOR the initial CRC into the first lane.
+    x[0] ^= Simd::new(0, state);
 
-  // 128-byte folding.
-  let coeff_low = consts.fold_128b.1;
-  let coeff_high = consts.fold_128b.0;
-  for chunk in rest {
-    fold_block_128_eor3(&mut x, chunk, coeff_low, coeff_high);
-  }
+    // 128-byte folding.
+    let coeff_low = consts.fold_128b.1;
+    let coeff_high = consts.fold_128b.0;
+    for chunk in rest {
+      fold_block_128_eor3(&mut x, chunk, coeff_low, coeff_high);
+    }
 
-  fold_tail(x, consts)
+    fold_tail(x, consts)
   } // unsafe
 }
 
@@ -190,25 +194,25 @@ unsafe fn fold_tail(x: [Simd; 8], consts: &Crc64ClmulConstants) -> u64 {
   // All fold/barrett calls are pure register computations.
   // Array indexing is over fixed-size [Simd; 8] with constant indices 0..7.
   unsafe {
-  // Tail reduction (8×16B → 1×16B), unrolled for throughput.
-  let c0 = Simd::new(consts.tail_fold_16b[0].0, consts.tail_fold_16b[0].1);
-  let c1 = Simd::new(consts.tail_fold_16b[1].0, consts.tail_fold_16b[1].1);
-  let c2 = Simd::new(consts.tail_fold_16b[2].0, consts.tail_fold_16b[2].1);
-  let c3 = Simd::new(consts.tail_fold_16b[3].0, consts.tail_fold_16b[3].1);
-  let c4 = Simd::new(consts.tail_fold_16b[4].0, consts.tail_fold_16b[4].1);
-  let c5 = Simd::new(consts.tail_fold_16b[5].0, consts.tail_fold_16b[5].1);
-  let c6 = Simd::new(consts.tail_fold_16b[6].0, consts.tail_fold_16b[6].1);
+    // Tail reduction (8×16B → 1×16B), unrolled for throughput.
+    let c0 = Simd::new(consts.tail_fold_16b[0].0, consts.tail_fold_16b[0].1);
+    let c1 = Simd::new(consts.tail_fold_16b[1].0, consts.tail_fold_16b[1].1);
+    let c2 = Simd::new(consts.tail_fold_16b[2].0, consts.tail_fold_16b[2].1);
+    let c3 = Simd::new(consts.tail_fold_16b[3].0, consts.tail_fold_16b[3].1);
+    let c4 = Simd::new(consts.tail_fold_16b[4].0, consts.tail_fold_16b[4].1);
+    let c5 = Simd::new(consts.tail_fold_16b[5].0, consts.tail_fold_16b[5].1);
+    let c6 = Simd::new(consts.tail_fold_16b[6].0, consts.tail_fold_16b[6].1);
 
-  let mut acc = x[7];
-  acc ^= x[0].fold_16(c0);
-  acc ^= x[1].fold_16(c1);
-  acc ^= x[2].fold_16(c2);
-  acc ^= x[3].fold_16(c3);
-  acc ^= x[4].fold_16(c4);
-  acc ^= x[5].fold_16(c5);
-  acc ^= x[6].fold_16(c6);
+    let mut acc = x[7];
+    acc ^= x[0].fold_16(c0);
+    acc ^= x[1].fold_16(c1);
+    acc ^= x[2].fold_16(c2);
+    acc ^= x[3].fold_16(c3);
+    acc ^= x[4].fold_16(c4);
+    acc ^= x[5].fold_16(c5);
+    acc ^= x[6].fold_16(c6);
 
-  acc.fold_8(consts.fold_8b).barrett(consts.poly, consts.mu)
+    acc.fold_8(consts.fold_8b).barrett(consts.poly, consts.mu)
   } // unsafe
 }
 
@@ -219,16 +223,17 @@ unsafe fn fold_tail(x: [Simd; 8], consts: &Crc64ClmulConstants) -> u64 {
 #[inline]
 #[target_feature(enable = "aes", enable = "neon")]
 unsafe fn fold_block_128(x: &mut [Simd; 8], chunk: &[Simd; 8], coeff_low: u64, coeff_high: u64) {
-  // SAFETY: Caller guarantees NEON+AES (PMULL) is available. All fold_16_pair calls are register computations.
+  // SAFETY: Caller guarantees NEON+AES (PMULL) is available. All fold_16_pair calls are register
+  // computations.
   unsafe {
-  x[0] = chunk[0] ^ x[0].fold_16_pair(coeff_low, coeff_high);
-  x[1] = chunk[1] ^ x[1].fold_16_pair(coeff_low, coeff_high);
-  x[2] = chunk[2] ^ x[2].fold_16_pair(coeff_low, coeff_high);
-  x[3] = chunk[3] ^ x[3].fold_16_pair(coeff_low, coeff_high);
-  x[4] = chunk[4] ^ x[4].fold_16_pair(coeff_low, coeff_high);
-  x[5] = chunk[5] ^ x[5].fold_16_pair(coeff_low, coeff_high);
-  x[6] = chunk[6] ^ x[6].fold_16_pair(coeff_low, coeff_high);
-  x[7] = chunk[7] ^ x[7].fold_16_pair(coeff_low, coeff_high);
+    x[0] = chunk[0] ^ x[0].fold_16_pair(coeff_low, coeff_high);
+    x[1] = chunk[1] ^ x[1].fold_16_pair(coeff_low, coeff_high);
+    x[2] = chunk[2] ^ x[2].fold_16_pair(coeff_low, coeff_high);
+    x[3] = chunk[3] ^ x[3].fold_16_pair(coeff_low, coeff_high);
+    x[4] = chunk[4] ^ x[4].fold_16_pair(coeff_low, coeff_high);
+    x[5] = chunk[5] ^ x[5].fold_16_pair(coeff_low, coeff_high);
+    x[6] = chunk[6] ^ x[6].fold_16_pair(coeff_low, coeff_high);
+    x[7] = chunk[7] ^ x[7].fold_16_pair(coeff_low, coeff_high);
   } // unsafe
 }
 
@@ -239,16 +244,17 @@ unsafe fn fold_block_128(x: &mut [Simd; 8], chunk: &[Simd; 8], coeff_low: u64, c
 #[inline]
 #[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
 unsafe fn fold_block_128_eor3(x: &mut [Simd; 8], chunk: &[Simd; 8], coeff_low: u64, coeff_high: u64) {
-  // SAFETY: Caller guarantees NEON+AES+SHA3 (PMULL+EOR3) is available. All operations are register computations.
+  // SAFETY: Caller guarantees NEON+AES+SHA3 (PMULL+EOR3) is available. All operations are register
+  // computations.
   unsafe {
-  x[0] = fold_lane_eor3(x[0], chunk[0], coeff_low, coeff_high);
-  x[1] = fold_lane_eor3(x[1], chunk[1], coeff_low, coeff_high);
-  x[2] = fold_lane_eor3(x[2], chunk[2], coeff_low, coeff_high);
-  x[3] = fold_lane_eor3(x[3], chunk[3], coeff_low, coeff_high);
-  x[4] = fold_lane_eor3(x[4], chunk[4], coeff_low, coeff_high);
-  x[5] = fold_lane_eor3(x[5], chunk[5], coeff_low, coeff_high);
-  x[6] = fold_lane_eor3(x[6], chunk[6], coeff_low, coeff_high);
-  x[7] = fold_lane_eor3(x[7], chunk[7], coeff_low, coeff_high);
+    x[0] = fold_lane_eor3(x[0], chunk[0], coeff_low, coeff_high);
+    x[1] = fold_lane_eor3(x[1], chunk[1], coeff_low, coeff_high);
+    x[2] = fold_lane_eor3(x[2], chunk[2], coeff_low, coeff_high);
+    x[3] = fold_lane_eor3(x[3], chunk[3], coeff_low, coeff_high);
+    x[4] = fold_lane_eor3(x[4], chunk[4], coeff_low, coeff_high);
+    x[5] = fold_lane_eor3(x[5], chunk[5], coeff_low, coeff_high);
+    x[6] = fold_lane_eor3(x[6], chunk[6], coeff_low, coeff_high);
+    x[7] = fold_lane_eor3(x[7], chunk[7], coeff_low, coeff_high);
   } // unsafe
 }
 
@@ -259,7 +265,8 @@ unsafe fn fold_block_128_eor3(x: &mut [Simd; 8], chunk: &[Simd; 8], coeff_low: u
 #[inline]
 #[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
 unsafe fn fold_lane_eor3(x: Simd, data: Simd, coeff_low: poly64_t, coeff_high: poly64_t) -> Simd {
-  // SAFETY: Caller guarantees NEON+AES+SHA3 (PMULL+EOR3) is available. All operations are register computations.
+  // SAFETY: Caller guarantees NEON+AES+SHA3 (PMULL+EOR3) is available. All operations are register
+  // computations.
   unsafe {
     let [x0, x1] = x.into_poly64s();
     let h = Simd::from_mul(coeff_low, x0);
@@ -279,72 +286,72 @@ unsafe fn update_simd_2way(
   // SAFETY: Caller guarantees NEON+AES (PMULL) target features are available (dispatch check).
   // All fold operations are pure register computations. Loop indices stay within slice bounds.
   unsafe {
-  use crate::checksum::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
+    use crate::checksum::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
 
-  debug_assert!(blocks.len() >= 2);
+    debug_assert!(blocks.len() >= 2);
 
-  let coeff_256_low = fold_256b.1;
-  let coeff_256_high = fold_256b.0;
-  let coeff_128_low = consts.fold_128b.1;
-  let coeff_128_high = consts.fold_128b.0;
+    let coeff_256_low = fold_256b.1;
+    let coeff_256_high = fold_256b.0;
+    let coeff_128_low = consts.fold_128b.1;
+    let coeff_128_high = consts.fold_128b.0;
 
-  let mut s0 = blocks[0];
-  let mut s1 = blocks[1];
+    let mut s0 = blocks[0];
+    let mut s1 = blocks[1];
 
-  // Inject CRC into stream 0 (block 0).
-  s0[0] ^= Simd::new(0, state);
+    // Inject CRC into stream 0 (block 0).
+    s0[0] ^= Simd::new(0, state);
 
-  // Double-unrolled main loop: process 4 blocks (512B) per iteration.
-  const BLOCK_SIZE: usize = 128;
-  const DOUBLE_GROUP: usize = 4; // 2 × 2-way = 4 blocks = 512B
+    // Double-unrolled main loop: process 4 blocks (512B) per iteration.
+    const BLOCK_SIZE: usize = 128;
+    const DOUBLE_GROUP: usize = 4; // 2 × 2-way = 4 blocks = 512B
 
-  let mut i: usize = 2;
-  let aligned = (blocks.len() / DOUBLE_GROUP) * DOUBLE_GROUP;
+    let mut i: usize = 2;
+    let aligned = (blocks.len() / DOUBLE_GROUP) * DOUBLE_GROUP;
 
-  // Double-unrolled loop
-  while i.strict_add(DOUBLE_GROUP) <= aligned {
-    // Prefetch ahead
-    let prefetch_idx = i.strict_add(LARGE_BLOCK_DISTANCE / BLOCK_SIZE);
-    if prefetch_idx < blocks.len() {
-      prefetch_read_l1(blocks[prefetch_idx].as_ptr().cast::<u8>());
+    // Double-unrolled loop
+    while i.strict_add(DOUBLE_GROUP) <= aligned {
+      // Prefetch ahead
+      let prefetch_idx = i.strict_add(LARGE_BLOCK_DISTANCE / BLOCK_SIZE);
+      if prefetch_idx < blocks.len() {
+        prefetch_read_l1(blocks[prefetch_idx].as_ptr().cast::<u8>());
+      }
+
+      // First iteration (blocks i, i+1)
+      fold_block_128(&mut s0, &blocks[i], coeff_256_low, coeff_256_high);
+      fold_block_128(&mut s1, &blocks[i.strict_add(1)], coeff_256_low, coeff_256_high);
+
+      // Second iteration (blocks i+2, i+3)
+      fold_block_128(&mut s0, &blocks[i.strict_add(2)], coeff_256_low, coeff_256_high);
+      fold_block_128(&mut s1, &blocks[i.strict_add(3)], coeff_256_low, coeff_256_high);
+
+      i = i.strict_add(DOUBLE_GROUP);
     }
 
-    // First iteration (blocks i, i+1)
-    fold_block_128(&mut s0, &blocks[i], coeff_256_low, coeff_256_high);
-    fold_block_128(&mut s1, &blocks[i.strict_add(1)], coeff_256_low, coeff_256_high);
+    // Handle remaining pairs
+    let even = blocks.len() & !1usize;
+    while i < even {
+      fold_block_128(&mut s0, &blocks[i], coeff_256_low, coeff_256_high);
+      fold_block_128(&mut s1, &blocks[i.strict_add(1)], coeff_256_low, coeff_256_high);
+      i = i.strict_add(2);
+    }
 
-    // Second iteration (blocks i+2, i+3)
-    fold_block_128(&mut s0, &blocks[i.strict_add(2)], coeff_256_low, coeff_256_high);
-    fold_block_128(&mut s1, &blocks[i.strict_add(3)], coeff_256_low, coeff_256_high);
+    // Merge streams: A·s0 ⊕ s1 (A = shift by 128B).
+    let mut combined = s1;
+    combined[0] ^= s0[0].fold_16_pair(coeff_128_low, coeff_128_high);
+    combined[1] ^= s0[1].fold_16_pair(coeff_128_low, coeff_128_high);
+    combined[2] ^= s0[2].fold_16_pair(coeff_128_low, coeff_128_high);
+    combined[3] ^= s0[3].fold_16_pair(coeff_128_low, coeff_128_high);
+    combined[4] ^= s0[4].fold_16_pair(coeff_128_low, coeff_128_high);
+    combined[5] ^= s0[5].fold_16_pair(coeff_128_low, coeff_128_high);
+    combined[6] ^= s0[6].fold_16_pair(coeff_128_low, coeff_128_high);
+    combined[7] ^= s0[7].fold_16_pair(coeff_128_low, coeff_128_high);
 
-    i = i.strict_add(DOUBLE_GROUP);
-  }
+    // Handle any remaining block (odd tail) sequentially.
+    if even != blocks.len() {
+      fold_block_128(&mut combined, &blocks[even], coeff_128_low, coeff_128_high);
+    }
 
-  // Handle remaining pairs
-  let even = blocks.len() & !1usize;
-  while i < even {
-    fold_block_128(&mut s0, &blocks[i], coeff_256_low, coeff_256_high);
-    fold_block_128(&mut s1, &blocks[i.strict_add(1)], coeff_256_low, coeff_256_high);
-    i = i.strict_add(2);
-  }
-
-  // Merge streams: A·s0 ⊕ s1 (A = shift by 128B).
-  let mut combined = s1;
-  combined[0] ^= s0[0].fold_16_pair(coeff_128_low, coeff_128_high);
-  combined[1] ^= s0[1].fold_16_pair(coeff_128_low, coeff_128_high);
-  combined[2] ^= s0[2].fold_16_pair(coeff_128_low, coeff_128_high);
-  combined[3] ^= s0[3].fold_16_pair(coeff_128_low, coeff_128_high);
-  combined[4] ^= s0[4].fold_16_pair(coeff_128_low, coeff_128_high);
-  combined[5] ^= s0[5].fold_16_pair(coeff_128_low, coeff_128_high);
-  combined[6] ^= s0[6].fold_16_pair(coeff_128_low, coeff_128_high);
-  combined[7] ^= s0[7].fold_16_pair(coeff_128_low, coeff_128_high);
-
-  // Handle any remaining block (odd tail) sequentially.
-  if even != blocks.len() {
-    fold_block_128(&mut combined, &blocks[even], coeff_128_low, coeff_128_high);
-  }
-
-  fold_tail(combined, consts)
+    fold_tail(combined, consts)
   } // unsafe
 }
 
@@ -359,92 +366,92 @@ unsafe fn update_simd_3way(
   // SAFETY: Caller guarantees NEON+AES (PMULL) target features are available (dispatch check).
   // All fold operations are pure register computations. Loop indices stay within slice bounds.
   unsafe {
-  use crate::checksum::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
+    use crate::checksum::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
 
-  if blocks.len() < 3 {
-    let Some((first, rest)) = blocks.split_first() else {
-      return state;
-    };
-    return update_simd(state, first, rest, consts);
-  }
-
-  let coeff_384_low = fold_384b.1;
-  let coeff_384_high = fold_384b.0;
-  let coeff_256_low = fold_256b.1;
-  let coeff_256_high = fold_256b.0;
-  let coeff_128_low = consts.fold_128b.1;
-  let coeff_128_high = consts.fold_128b.0;
-
-  let mut s0 = blocks[0];
-  let mut s1 = blocks[1];
-  let mut s2 = blocks[2];
-
-  // Inject CRC into stream 0 (block 0).
-  s0[0] ^= Simd::new(0, state);
-
-  // Double-unrolled main loop: process 6 blocks (768B) per iteration.
-  const BLOCK_SIZE: usize = 128;
-  const DOUBLE_GROUP: usize = 6; // 2 × 3-way = 6 blocks = 768B
-
-  let mut i: usize = 3;
-  let double_aligned = (blocks.len() / DOUBLE_GROUP) * DOUBLE_GROUP;
-
-  // Double-unrolled loop
-  while i.strict_add(DOUBLE_GROUP) <= double_aligned {
-    // Prefetch ahead
-    let prefetch_idx = i.strict_add(LARGE_BLOCK_DISTANCE / BLOCK_SIZE);
-    if prefetch_idx < blocks.len() {
-      prefetch_read_l1(blocks[prefetch_idx].as_ptr().cast::<u8>());
+    if blocks.len() < 3 {
+      let Some((first, rest)) = blocks.split_first() else {
+        return state;
+      };
+      return update_simd(state, first, rest, consts);
     }
 
-    // First iteration (blocks i, i+1, i+2)
-    fold_block_128(&mut s0, &blocks[i], coeff_384_low, coeff_384_high);
-    fold_block_128(&mut s1, &blocks[i.strict_add(1)], coeff_384_low, coeff_384_high);
-    fold_block_128(&mut s2, &blocks[i.strict_add(2)], coeff_384_low, coeff_384_high);
+    let coeff_384_low = fold_384b.1;
+    let coeff_384_high = fold_384b.0;
+    let coeff_256_low = fold_256b.1;
+    let coeff_256_high = fold_256b.0;
+    let coeff_128_low = consts.fold_128b.1;
+    let coeff_128_high = consts.fold_128b.0;
 
-    // Second iteration (blocks i+3, i+4, i+5)
-    fold_block_128(&mut s0, &blocks[i.strict_add(3)], coeff_384_low, coeff_384_high);
-    fold_block_128(&mut s1, &blocks[i.strict_add(4)], coeff_384_low, coeff_384_high);
-    fold_block_128(&mut s2, &blocks[i.strict_add(5)], coeff_384_low, coeff_384_high);
+    let mut s0 = blocks[0];
+    let mut s1 = blocks[1];
+    let mut s2 = blocks[2];
 
-    i = i.strict_add(DOUBLE_GROUP);
-  }
+    // Inject CRC into stream 0 (block 0).
+    s0[0] ^= Simd::new(0, state);
 
-  // Handle remaining 3-block groups
-  let aligned = (blocks.len() / 3) * 3;
-  while i < aligned {
-    fold_block_128(&mut s0, &blocks[i], coeff_384_low, coeff_384_high);
-    fold_block_128(&mut s1, &blocks[i.strict_add(1)], coeff_384_low, coeff_384_high);
-    fold_block_128(&mut s2, &blocks[i.strict_add(2)], coeff_384_low, coeff_384_high);
-    i = i.strict_add(3);
-  }
+    // Double-unrolled main loop: process 6 blocks (768B) per iteration.
+    const BLOCK_SIZE: usize = 128;
+    const DOUBLE_GROUP: usize = 6; // 2 × 3-way = 6 blocks = 768B
 
-  // Merge: A^2·s0 ⊕ A·s1 ⊕ s2 (A = shift by 128B).
-  let mut combined = s2;
-  combined[0] ^= s1[0].fold_16_pair(coeff_128_low, coeff_128_high);
-  combined[1] ^= s1[1].fold_16_pair(coeff_128_low, coeff_128_high);
-  combined[2] ^= s1[2].fold_16_pair(coeff_128_low, coeff_128_high);
-  combined[3] ^= s1[3].fold_16_pair(coeff_128_low, coeff_128_high);
-  combined[4] ^= s1[4].fold_16_pair(coeff_128_low, coeff_128_high);
-  combined[5] ^= s1[5].fold_16_pair(coeff_128_low, coeff_128_high);
-  combined[6] ^= s1[6].fold_16_pair(coeff_128_low, coeff_128_high);
-  combined[7] ^= s1[7].fold_16_pair(coeff_128_low, coeff_128_high);
+    let mut i: usize = 3;
+    let double_aligned = (blocks.len() / DOUBLE_GROUP) * DOUBLE_GROUP;
 
-  combined[0] ^= s0[0].fold_16_pair(coeff_256_low, coeff_256_high);
-  combined[1] ^= s0[1].fold_16_pair(coeff_256_low, coeff_256_high);
-  combined[2] ^= s0[2].fold_16_pair(coeff_256_low, coeff_256_high);
-  combined[3] ^= s0[3].fold_16_pair(coeff_256_low, coeff_256_high);
-  combined[4] ^= s0[4].fold_16_pair(coeff_256_low, coeff_256_high);
-  combined[5] ^= s0[5].fold_16_pair(coeff_256_low, coeff_256_high);
-  combined[6] ^= s0[6].fold_16_pair(coeff_256_low, coeff_256_high);
-  combined[7] ^= s0[7].fold_16_pair(coeff_256_low, coeff_256_high);
+    // Double-unrolled loop
+    while i.strict_add(DOUBLE_GROUP) <= double_aligned {
+      // Prefetch ahead
+      let prefetch_idx = i.strict_add(LARGE_BLOCK_DISTANCE / BLOCK_SIZE);
+      if prefetch_idx < blocks.len() {
+        prefetch_read_l1(blocks[prefetch_idx].as_ptr().cast::<u8>());
+      }
 
-  // Handle any remaining blocks sequentially.
-  for block in &blocks[aligned..] {
-    fold_block_128(&mut combined, block, coeff_128_low, coeff_128_high);
-  }
+      // First iteration (blocks i, i+1, i+2)
+      fold_block_128(&mut s0, &blocks[i], coeff_384_low, coeff_384_high);
+      fold_block_128(&mut s1, &blocks[i.strict_add(1)], coeff_384_low, coeff_384_high);
+      fold_block_128(&mut s2, &blocks[i.strict_add(2)], coeff_384_low, coeff_384_high);
 
-  fold_tail(combined, consts)
+      // Second iteration (blocks i+3, i+4, i+5)
+      fold_block_128(&mut s0, &blocks[i.strict_add(3)], coeff_384_low, coeff_384_high);
+      fold_block_128(&mut s1, &blocks[i.strict_add(4)], coeff_384_low, coeff_384_high);
+      fold_block_128(&mut s2, &blocks[i.strict_add(5)], coeff_384_low, coeff_384_high);
+
+      i = i.strict_add(DOUBLE_GROUP);
+    }
+
+    // Handle remaining 3-block groups
+    let aligned = (blocks.len() / 3) * 3;
+    while i < aligned {
+      fold_block_128(&mut s0, &blocks[i], coeff_384_low, coeff_384_high);
+      fold_block_128(&mut s1, &blocks[i.strict_add(1)], coeff_384_low, coeff_384_high);
+      fold_block_128(&mut s2, &blocks[i.strict_add(2)], coeff_384_low, coeff_384_high);
+      i = i.strict_add(3);
+    }
+
+    // Merge: A^2·s0 ⊕ A·s1 ⊕ s2 (A = shift by 128B).
+    let mut combined = s2;
+    combined[0] ^= s1[0].fold_16_pair(coeff_128_low, coeff_128_high);
+    combined[1] ^= s1[1].fold_16_pair(coeff_128_low, coeff_128_high);
+    combined[2] ^= s1[2].fold_16_pair(coeff_128_low, coeff_128_high);
+    combined[3] ^= s1[3].fold_16_pair(coeff_128_low, coeff_128_high);
+    combined[4] ^= s1[4].fold_16_pair(coeff_128_low, coeff_128_high);
+    combined[5] ^= s1[5].fold_16_pair(coeff_128_low, coeff_128_high);
+    combined[6] ^= s1[6].fold_16_pair(coeff_128_low, coeff_128_high);
+    combined[7] ^= s1[7].fold_16_pair(coeff_128_low, coeff_128_high);
+
+    combined[0] ^= s0[0].fold_16_pair(coeff_256_low, coeff_256_high);
+    combined[1] ^= s0[1].fold_16_pair(coeff_256_low, coeff_256_high);
+    combined[2] ^= s0[2].fold_16_pair(coeff_256_low, coeff_256_high);
+    combined[3] ^= s0[3].fold_16_pair(coeff_256_low, coeff_256_high);
+    combined[4] ^= s0[4].fold_16_pair(coeff_256_low, coeff_256_high);
+    combined[5] ^= s0[5].fold_16_pair(coeff_256_low, coeff_256_high);
+    combined[6] ^= s0[6].fold_16_pair(coeff_256_low, coeff_256_high);
+    combined[7] ^= s0[7].fold_16_pair(coeff_256_low, coeff_256_high);
+
+    // Handle any remaining blocks sequentially.
+    for block in &blocks[aligned..] {
+      fold_block_128(&mut combined, block, coeff_128_low, coeff_128_high);
+    }
+
+    fold_tail(combined, consts)
   } // unsafe
 }
 
@@ -464,78 +471,79 @@ unsafe fn update_simd_eor3_2way(
   fold_256b: (u64, u64),
   consts: &Crc64ClmulConstants,
 ) -> u64 {
-  // SAFETY: Caller guarantees NEON+AES+SHA3 (PMULL+EOR3) target features are available (dispatch check).
-  // All fold operations are pure register computations. Loop indices stay within slice bounds.
+  // SAFETY: Caller guarantees NEON+AES+SHA3 (PMULL+EOR3) target features are available (dispatch
+  // check). All fold operations are pure register computations. Loop indices stay within slice
+  // bounds.
   unsafe {
-  use crate::checksum::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
+    use crate::checksum::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
 
-  debug_assert!(blocks.len() >= 2);
+    debug_assert!(blocks.len() >= 2);
 
-  let coeff_256_low = fold_256b.1;
-  let coeff_256_high = fold_256b.0;
-  let coeff_128_low = consts.fold_128b.1;
-  let coeff_128_high = consts.fold_128b.0;
+    let coeff_256_low = fold_256b.1;
+    let coeff_256_high = fold_256b.0;
+    let coeff_128_low = consts.fold_128b.1;
+    let coeff_128_high = consts.fold_128b.0;
 
-  let mut s0 = blocks[0];
-  let mut s1 = blocks[1];
+    let mut s0 = blocks[0];
+    let mut s1 = blocks[1];
 
-  // Inject CRC into stream 0 (block 0).
-  s0[0] ^= Simd::new(0, state);
+    // Inject CRC into stream 0 (block 0).
+    s0[0] ^= Simd::new(0, state);
 
-  // Double-unrolled main loop: process 4 blocks (512B) per iteration.
-  const BLOCK_SIZE: usize = 128;
-  const DOUBLE_GROUP: usize = 4; // 2 × 2-way = 4 blocks = 512B
+    // Double-unrolled main loop: process 4 blocks (512B) per iteration.
+    const BLOCK_SIZE: usize = 128;
+    const DOUBLE_GROUP: usize = 4; // 2 × 2-way = 4 blocks = 512B
 
-  let mut i: usize = 2;
-  let aligned = (blocks.len() / DOUBLE_GROUP) * DOUBLE_GROUP;
+    let mut i: usize = 2;
+    let aligned = (blocks.len() / DOUBLE_GROUP) * DOUBLE_GROUP;
 
-  // Double-unrolled loop
-  while i.strict_add(DOUBLE_GROUP) <= aligned {
-    // Prefetch ahead
-    let prefetch_idx = i.strict_add(LARGE_BLOCK_DISTANCE / BLOCK_SIZE);
-    if prefetch_idx < blocks.len() {
-      prefetch_read_l1(blocks[prefetch_idx].as_ptr().cast::<u8>());
+    // Double-unrolled loop
+    while i.strict_add(DOUBLE_GROUP) <= aligned {
+      // Prefetch ahead
+      let prefetch_idx = i.strict_add(LARGE_BLOCK_DISTANCE / BLOCK_SIZE);
+      if prefetch_idx < blocks.len() {
+        prefetch_read_l1(blocks[prefetch_idx].as_ptr().cast::<u8>());
+      }
+
+      // First iteration (blocks i, i+1)
+      fold_block_128_eor3(&mut s0, &blocks[i], coeff_256_low, coeff_256_high);
+      fold_block_128_eor3(&mut s1, &blocks[i.strict_add(1)], coeff_256_low, coeff_256_high);
+
+      // Second iteration (blocks i+2, i+3)
+      fold_block_128_eor3(&mut s0, &blocks[i.strict_add(2)], coeff_256_low, coeff_256_high);
+      fold_block_128_eor3(&mut s1, &blocks[i.strict_add(3)], coeff_256_low, coeff_256_high);
+
+      i = i.strict_add(DOUBLE_GROUP);
     }
 
-    // First iteration (blocks i, i+1)
-    fold_block_128_eor3(&mut s0, &blocks[i], coeff_256_low, coeff_256_high);
-    fold_block_128_eor3(&mut s1, &blocks[i.strict_add(1)], coeff_256_low, coeff_256_high);
+    // Handle remaining pairs
+    let even = blocks.len() & !1usize;
+    while i < even {
+      fold_block_128_eor3(&mut s0, &blocks[i], coeff_256_low, coeff_256_high);
+      fold_block_128_eor3(&mut s1, &blocks[i.strict_add(1)], coeff_256_low, coeff_256_high);
+      i = i.strict_add(2);
+    }
 
-    // Second iteration (blocks i+2, i+3)
-    fold_block_128_eor3(&mut s0, &blocks[i.strict_add(2)], coeff_256_low, coeff_256_high);
-    fold_block_128_eor3(&mut s1, &blocks[i.strict_add(3)], coeff_256_low, coeff_256_high);
+    // Merge streams using EOR3: combined = s1 ^ (A·s0) where A = shift by 128B.
+    // fold_lane_eor3(x, data, coeff_low, coeff_high) = data ^ pmull(coeff_low, x.low) ^
+    // pmull(coeff_high, x.high)
+    let mut combined: [Simd; 8] = [
+      fold_lane_eor3(s0[0], s1[0], coeff_128_low, coeff_128_high),
+      fold_lane_eor3(s0[1], s1[1], coeff_128_low, coeff_128_high),
+      fold_lane_eor3(s0[2], s1[2], coeff_128_low, coeff_128_high),
+      fold_lane_eor3(s0[3], s1[3], coeff_128_low, coeff_128_high),
+      fold_lane_eor3(s0[4], s1[4], coeff_128_low, coeff_128_high),
+      fold_lane_eor3(s0[5], s1[5], coeff_128_low, coeff_128_high),
+      fold_lane_eor3(s0[6], s1[6], coeff_128_low, coeff_128_high),
+      fold_lane_eor3(s0[7], s1[7], coeff_128_low, coeff_128_high),
+    ];
 
-    i = i.strict_add(DOUBLE_GROUP);
-  }
+    // Handle any remaining block (odd tail) sequentially with EOR3.
+    if even != blocks.len() {
+      fold_block_128_eor3(&mut combined, &blocks[even], coeff_128_low, coeff_128_high);
+    }
 
-  // Handle remaining pairs
-  let even = blocks.len() & !1usize;
-  while i < even {
-    fold_block_128_eor3(&mut s0, &blocks[i], coeff_256_low, coeff_256_high);
-    fold_block_128_eor3(&mut s1, &blocks[i.strict_add(1)], coeff_256_low, coeff_256_high);
-    i = i.strict_add(2);
-  }
-
-  // Merge streams using EOR3: combined = s1 ^ (A·s0) where A = shift by 128B.
-  // fold_lane_eor3(x, data, coeff_low, coeff_high) = data ^ pmull(coeff_low, x.low) ^
-  // pmull(coeff_high, x.high)
-  let mut combined: [Simd; 8] = [
-    fold_lane_eor3(s0[0], s1[0], coeff_128_low, coeff_128_high),
-    fold_lane_eor3(s0[1], s1[1], coeff_128_low, coeff_128_high),
-    fold_lane_eor3(s0[2], s1[2], coeff_128_low, coeff_128_high),
-    fold_lane_eor3(s0[3], s1[3], coeff_128_low, coeff_128_high),
-    fold_lane_eor3(s0[4], s1[4], coeff_128_low, coeff_128_high),
-    fold_lane_eor3(s0[5], s1[5], coeff_128_low, coeff_128_high),
-    fold_lane_eor3(s0[6], s1[6], coeff_128_low, coeff_128_high),
-    fold_lane_eor3(s0[7], s1[7], coeff_128_low, coeff_128_high),
-  ];
-
-  // Handle any remaining block (odd tail) sequentially with EOR3.
-  if even != blocks.len() {
-    fold_block_128_eor3(&mut combined, &blocks[even], coeff_128_low, coeff_128_high);
-  }
-
-  fold_tail(combined, consts)
+    fold_tail(combined, consts)
   } // unsafe
 }
 
@@ -552,98 +560,99 @@ unsafe fn update_simd_eor3_3way(
   fold_256b: (u64, u64),
   consts: &Crc64ClmulConstants,
 ) -> u64 {
-  // SAFETY: Caller guarantees NEON+AES+SHA3 (PMULL+EOR3) target features are available (dispatch check).
-  // All fold operations are pure register computations. Loop indices stay within slice bounds.
+  // SAFETY: Caller guarantees NEON+AES+SHA3 (PMULL+EOR3) target features are available (dispatch
+  // check). All fold operations are pure register computations. Loop indices stay within slice
+  // bounds.
   unsafe {
-  use crate::checksum::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
+    use crate::checksum::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
 
-  if blocks.len() < 3 {
-    let Some((first, rest)) = blocks.split_first() else {
-      return state;
-    };
-    return update_simd_eor3(state, first, rest, consts);
-  }
-
-  let coeff_384_low = fold_384b.1;
-  let coeff_384_high = fold_384b.0;
-  let coeff_256_low = fold_256b.1;
-  let coeff_256_high = fold_256b.0;
-  let coeff_128_low = consts.fold_128b.1;
-  let coeff_128_high = consts.fold_128b.0;
-
-  let mut s0 = blocks[0];
-  let mut s1 = blocks[1];
-  let mut s2 = blocks[2];
-
-  // Inject CRC into stream 0 (block 0).
-  s0[0] ^= Simd::new(0, state);
-
-  // Double-unrolled main loop: process 6 blocks (768B) per iteration.
-  const BLOCK_SIZE: usize = 128;
-  const DOUBLE_GROUP: usize = 6; // 2 × 3-way = 6 blocks = 768B
-
-  let mut i: usize = 3;
-  let double_aligned = (blocks.len() / DOUBLE_GROUP) * DOUBLE_GROUP;
-
-  // Double-unrolled loop
-  while i.strict_add(DOUBLE_GROUP) <= double_aligned {
-    // Prefetch ahead
-    let prefetch_idx = i.strict_add(LARGE_BLOCK_DISTANCE / BLOCK_SIZE);
-    if prefetch_idx < blocks.len() {
-      prefetch_read_l1(blocks[prefetch_idx].as_ptr().cast::<u8>());
+    if blocks.len() < 3 {
+      let Some((first, rest)) = blocks.split_first() else {
+        return state;
+      };
+      return update_simd_eor3(state, first, rest, consts);
     }
 
-    // First iteration (blocks i, i+1, i+2)
-    fold_block_128_eor3(&mut s0, &blocks[i], coeff_384_low, coeff_384_high);
-    fold_block_128_eor3(&mut s1, &blocks[i.strict_add(1)], coeff_384_low, coeff_384_high);
-    fold_block_128_eor3(&mut s2, &blocks[i.strict_add(2)], coeff_384_low, coeff_384_high);
+    let coeff_384_low = fold_384b.1;
+    let coeff_384_high = fold_384b.0;
+    let coeff_256_low = fold_256b.1;
+    let coeff_256_high = fold_256b.0;
+    let coeff_128_low = consts.fold_128b.1;
+    let coeff_128_high = consts.fold_128b.0;
 
-    // Second iteration (blocks i+3, i+4, i+5)
-    fold_block_128_eor3(&mut s0, &blocks[i.strict_add(3)], coeff_384_low, coeff_384_high);
-    fold_block_128_eor3(&mut s1, &blocks[i.strict_add(4)], coeff_384_low, coeff_384_high);
-    fold_block_128_eor3(&mut s2, &blocks[i.strict_add(5)], coeff_384_low, coeff_384_high);
+    let mut s0 = blocks[0];
+    let mut s1 = blocks[1];
+    let mut s2 = blocks[2];
 
-    i = i.strict_add(DOUBLE_GROUP);
-  }
+    // Inject CRC into stream 0 (block 0).
+    s0[0] ^= Simd::new(0, state);
 
-  // Handle remaining 3-block groups
-  let aligned = (blocks.len() / 3) * 3;
-  while i < aligned {
-    fold_block_128_eor3(&mut s0, &blocks[i], coeff_384_low, coeff_384_high);
-    fold_block_128_eor3(&mut s1, &blocks[i.strict_add(1)], coeff_384_low, coeff_384_high);
-    fold_block_128_eor3(&mut s2, &blocks[i.strict_add(2)], coeff_384_low, coeff_384_high);
-    i = i.strict_add(3);
-  }
+    // Double-unrolled main loop: process 6 blocks (768B) per iteration.
+    const BLOCK_SIZE: usize = 128;
+    const DOUBLE_GROUP: usize = 6; // 2 × 3-way = 6 blocks = 768B
 
-  // Merge: A^2·s0 ⊕ A·s1 ⊕ s2 (A = shift by 128B).
-  // First: combined = s2 ^ (A·s1)
-  let mut combined: [Simd; 8] = [
-    fold_lane_eor3(s1[0], s2[0], coeff_128_low, coeff_128_high),
-    fold_lane_eor3(s1[1], s2[1], coeff_128_low, coeff_128_high),
-    fold_lane_eor3(s1[2], s2[2], coeff_128_low, coeff_128_high),
-    fold_lane_eor3(s1[3], s2[3], coeff_128_low, coeff_128_high),
-    fold_lane_eor3(s1[4], s2[4], coeff_128_low, coeff_128_high),
-    fold_lane_eor3(s1[5], s2[5], coeff_128_low, coeff_128_high),
-    fold_lane_eor3(s1[6], s2[6], coeff_128_low, coeff_128_high),
-    fold_lane_eor3(s1[7], s2[7], coeff_128_low, coeff_128_high),
-  ];
+    let mut i: usize = 3;
+    let double_aligned = (blocks.len() / DOUBLE_GROUP) * DOUBLE_GROUP;
 
-  // Then: combined ^= (A^2·s0)
-  combined[0] = fold_lane_eor3(s0[0], combined[0], coeff_256_low, coeff_256_high);
-  combined[1] = fold_lane_eor3(s0[1], combined[1], coeff_256_low, coeff_256_high);
-  combined[2] = fold_lane_eor3(s0[2], combined[2], coeff_256_low, coeff_256_high);
-  combined[3] = fold_lane_eor3(s0[3], combined[3], coeff_256_low, coeff_256_high);
-  combined[4] = fold_lane_eor3(s0[4], combined[4], coeff_256_low, coeff_256_high);
-  combined[5] = fold_lane_eor3(s0[5], combined[5], coeff_256_low, coeff_256_high);
-  combined[6] = fold_lane_eor3(s0[6], combined[6], coeff_256_low, coeff_256_high);
-  combined[7] = fold_lane_eor3(s0[7], combined[7], coeff_256_low, coeff_256_high);
+    // Double-unrolled loop
+    while i.strict_add(DOUBLE_GROUP) <= double_aligned {
+      // Prefetch ahead
+      let prefetch_idx = i.strict_add(LARGE_BLOCK_DISTANCE / BLOCK_SIZE);
+      if prefetch_idx < blocks.len() {
+        prefetch_read_l1(blocks[prefetch_idx].as_ptr().cast::<u8>());
+      }
 
-  // Handle any remaining blocks sequentially with EOR3.
-  for block in &blocks[aligned..] {
-    fold_block_128_eor3(&mut combined, block, coeff_128_low, coeff_128_high);
-  }
+      // First iteration (blocks i, i+1, i+2)
+      fold_block_128_eor3(&mut s0, &blocks[i], coeff_384_low, coeff_384_high);
+      fold_block_128_eor3(&mut s1, &blocks[i.strict_add(1)], coeff_384_low, coeff_384_high);
+      fold_block_128_eor3(&mut s2, &blocks[i.strict_add(2)], coeff_384_low, coeff_384_high);
 
-  fold_tail(combined, consts)
+      // Second iteration (blocks i+3, i+4, i+5)
+      fold_block_128_eor3(&mut s0, &blocks[i.strict_add(3)], coeff_384_low, coeff_384_high);
+      fold_block_128_eor3(&mut s1, &blocks[i.strict_add(4)], coeff_384_low, coeff_384_high);
+      fold_block_128_eor3(&mut s2, &blocks[i.strict_add(5)], coeff_384_low, coeff_384_high);
+
+      i = i.strict_add(DOUBLE_GROUP);
+    }
+
+    // Handle remaining 3-block groups
+    let aligned = (blocks.len() / 3) * 3;
+    while i < aligned {
+      fold_block_128_eor3(&mut s0, &blocks[i], coeff_384_low, coeff_384_high);
+      fold_block_128_eor3(&mut s1, &blocks[i.strict_add(1)], coeff_384_low, coeff_384_high);
+      fold_block_128_eor3(&mut s2, &blocks[i.strict_add(2)], coeff_384_low, coeff_384_high);
+      i = i.strict_add(3);
+    }
+
+    // Merge: A^2·s0 ⊕ A·s1 ⊕ s2 (A = shift by 128B).
+    // First: combined = s2 ^ (A·s1)
+    let mut combined: [Simd; 8] = [
+      fold_lane_eor3(s1[0], s2[0], coeff_128_low, coeff_128_high),
+      fold_lane_eor3(s1[1], s2[1], coeff_128_low, coeff_128_high),
+      fold_lane_eor3(s1[2], s2[2], coeff_128_low, coeff_128_high),
+      fold_lane_eor3(s1[3], s2[3], coeff_128_low, coeff_128_high),
+      fold_lane_eor3(s1[4], s2[4], coeff_128_low, coeff_128_high),
+      fold_lane_eor3(s1[5], s2[5], coeff_128_low, coeff_128_high),
+      fold_lane_eor3(s1[6], s2[6], coeff_128_low, coeff_128_high),
+      fold_lane_eor3(s1[7], s2[7], coeff_128_low, coeff_128_high),
+    ];
+
+    // Then: combined ^= (A^2·s0)
+    combined[0] = fold_lane_eor3(s0[0], combined[0], coeff_256_low, coeff_256_high);
+    combined[1] = fold_lane_eor3(s0[1], combined[1], coeff_256_low, coeff_256_high);
+    combined[2] = fold_lane_eor3(s0[2], combined[2], coeff_256_low, coeff_256_high);
+    combined[3] = fold_lane_eor3(s0[3], combined[3], coeff_256_low, coeff_256_high);
+    combined[4] = fold_lane_eor3(s0[4], combined[4], coeff_256_low, coeff_256_high);
+    combined[5] = fold_lane_eor3(s0[5], combined[5], coeff_256_low, coeff_256_high);
+    combined[6] = fold_lane_eor3(s0[6], combined[6], coeff_256_low, coeff_256_high);
+    combined[7] = fold_lane_eor3(s0[7], combined[7], coeff_256_low, coeff_256_high);
+
+    // Handle any remaining blocks sequentially with EOR3.
+    for block in &blocks[aligned..] {
+      fold_block_128_eor3(&mut combined, block, coeff_128_low, coeff_128_high);
+    }
+
+    fold_tail(combined, consts)
   } // unsafe
 }
 

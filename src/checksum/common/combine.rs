@@ -30,12 +30,12 @@
 /// - `full_width, reflected` -- dimension equals backing-type bit width, reflected CRC
 ///   (shift-right: poly at row 0, `m[j] = 1 << (j-1)` for `j >= 1`).
 ///
-/// - `full_width, reflected, combine_with_init_xorout` -- same matrix, but the combine
-///   function takes an extra `init_xorout` parameter.
+/// - `full_width, reflected, combine_with_init_xorout` -- same matrix, but the combine function
+///   takes an extra `init_xorout` parameter.
 ///
-/// - `sub_width, msb_first, combine_with_init_xorout` -- dimension < backing-type bits,
-///   a `MASK` constant is generated, MSB-first shift (shift-left: `m[j] = 1 << (j+1)`,
-///   poly at last row), and the combine function applies masking and `init_xorout`.
+/// - `sub_width, msb_first, combine_with_init_xorout` -- dimension < backing-type bits, a `MASK`
+///   constant is generated, MSB-first shift (shift-left: `m[j] = 1 << (j+1)`, poly at last row),
+///   and the combine function applies masking and `init_xorout`.
 macro_rules! define_gf2_combine {
   // ── full-width, reflected, simple combine ───────────────────────────────
   (
@@ -131,12 +131,7 @@ macro_rules! define_gf2_combine {
 
     #[doc = $doc_combine]
     #[must_use]
-    pub const fn $combine_fn(
-      crc_a: $T,
-      crc_b: $T,
-      len_b: usize,
-      shift8_matrix: $Name,
-    ) -> $T {
+    pub const fn $combine_fn(crc_a: $T, crc_b: $T, len_b: usize, shift8_matrix: $Name) -> $T {
       if len_b == 0 {
         return crc_a;
       }
@@ -250,17 +245,10 @@ macro_rules! define_gf2_combine {
     }
 
     #[doc = $doc_combine]
-    ///
     /// This works for any init/xorout as long as the caller supplies
     /// `init_xorout = init ^ xorout` for the CRC variant being combined.
     #[must_use]
-    pub const fn $combine_fn(
-      crc_a: $T,
-      crc_b: $T,
-      len_b: usize,
-      shift8_matrix: $Name,
-      init_xorout: $T,
-    ) -> $T {
+    pub const fn $combine_fn(crc_a: $T, crc_b: $T, len_b: usize, shift8_matrix: $Name, init_xorout: $T) -> $T {
       if len_b == 0 {
         return crc_a;
       }
@@ -383,17 +371,10 @@ macro_rules! define_gf2_combine {
     }
 
     #[doc = $doc_combine]
-    ///
     /// This works for any init/xorout as long as the caller supplies
     /// `init_xorout = init ^ xorout` for the CRC variant being combined.
     #[must_use]
-    pub const fn $combine_fn(
-      crc_a: $T,
-      crc_b: $T,
-      len_b: usize,
-      shift8_matrix: $Name,
-      init_xorout: $T,
-    ) -> $T {
+    pub const fn $combine_fn(crc_a: $T, crc_b: $T, len_b: usize, shift8_matrix: $Name, init_xorout: $T) -> $T {
       if len_b == 0 {
         return crc_a & $Name::MASK;
       }
@@ -410,10 +391,7 @@ macro_rules! define_gf2_combine {
         remaining = remaining.strict_shr(1);
       }
 
-      (result_mat.mul_vec(crc_a)
-        ^ (crc_b & $Name::MASK)
-        ^ result_mat.mul_vec(init_xorout))
-        & $Name::MASK
+      (result_mat.mul_vec(crc_a) ^ (crc_b & $Name::MASK) ^ result_mat.mul_vec(init_xorout)) & $Name::MASK
     }
   };
 }

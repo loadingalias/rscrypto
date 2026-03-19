@@ -418,7 +418,11 @@ mod tests {
       let crc_a = Crc24OpenPgp::checksum(a);
       let mut resumed = Crc24OpenPgp::resume(crc_a);
       resumed.update(b);
-      assert_eq!(resumed.finalize(), oneshot, "Crc24OpenPgp resume failed at split={split}");
+      assert_eq!(
+        resumed.finalize(),
+        oneshot,
+        "Crc24OpenPgp resume failed at split={split}"
+      );
     }
   }
 

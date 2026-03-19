@@ -4330,16 +4330,18 @@ fn digest_one_chunk_root_hash_words_generic(kernel: Kernel, key_words: [u32; 8],
   };
 
   let mut cv = key_words;
-  let mut blocks_compressed = 0u8;
-  let full_bytes = full_blocks * BLOCK_LEN;
-  kernels::chunk_compress_blocks_inline(
-    kernel.id,
-    &mut cv,
-    0,
-    flags,
-    &mut blocks_compressed,
-    &input[..full_bytes],
-  );
+
+  // Process full non-final blocks. Use the compress function pointer directly
+  // instead of chunk_compress_blocks_inline to avoid the kernel-ID match
+  // dispatch on every call — the Kernel struct already carries the resolved
+  // function pointer.
+  for i in 0..full_blocks {
+    let offset = i * BLOCK_LEN;
+    let block_flags = flags | if i == 0 { CHUNK_START } else { 0 };
+    // SAFETY: `offset + BLOCK_LEN <= input.len()` by construction.
+    let block_words = unsafe { words16_from_le_bytes_64(&*input.as_ptr().add(offset).cast::<[u8; BLOCK_LEN]>()) };
+    cv = first_8_words((kernel.compress)(&cv, &block_words, 0, BLOCK_LEN as u32, block_flags));
+  }
 
   let start = if full_blocks == 0 { CHUNK_START } else { 0 };
   let final_flags = flags | start | CHUNK_END | ROOT;

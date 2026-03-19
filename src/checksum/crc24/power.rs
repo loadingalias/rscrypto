@@ -171,9 +171,7 @@ impl Simd {
     // SAFETY: Caller guarantees:
     // 1. ALTIVEC + VSX + POWER8-VECTOR + POWER8-CRYPTO target features are available (dispatch check).
     // 2. All SIMD operations are pure register computations after loads.
-    unsafe {
-      Self(Self::vpmsumd(self.0, coeff.swap_lanes().0))
-    }
+    unsafe { Self(Self::vpmsumd(self.0, coeff.swap_lanes().0)) }
   }
 
   #[inline]
@@ -187,9 +185,7 @@ impl Simd {
     // SAFETY: Caller guarantees:
     // 1. ALTIVEC + VSX + POWER8-VECTOR + POWER8-CRYPTO target features are available (dispatch check).
     // 2. All SIMD operations are pure register computations after loads.
-    unsafe {
-      data_to_xor ^ self.fold_16(coeff)
-    }
+    unsafe { data_to_xor ^ self.fold_16(coeff) }
   }
 
   #[inline]

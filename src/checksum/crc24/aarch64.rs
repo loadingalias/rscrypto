@@ -59,9 +59,7 @@ impl Simd {
     // SAFETY: Caller guarantees:
     // 1. NEON target features are available (dispatch check).
     // 2. All SIMD operations are pure register computations after loads.
-    unsafe {
-      Self(vld1q_u8(ptr))
-    }
+    unsafe { Self(vld1q_u8(ptr)) }
   }
 
   #[inline]

@@ -20,6 +20,10 @@ pub enum Sha512_256KernelId {
   Riscv64Zknh = 3,
   #[cfg(target_arch = "wasm32")]
   WasmSimd128 = 4,
+  #[cfg(target_arch = "s390x")]
+  S390xKimd = 7,
+  #[cfg(target_arch = "powerpc64")]
+  Ppc64Crypto = 8,
 }
 
 #[cfg(any(test, feature = "std"))]
@@ -37,6 +41,10 @@ pub const ALL: &[Sha512_256KernelId] = &[
   Sha512_256KernelId::Riscv64Zknh,
   #[cfg(target_arch = "wasm32")]
   Sha512_256KernelId::WasmSimd128,
+  #[cfg(target_arch = "s390x")]
+  Sha512_256KernelId::S390xKimd,
+  #[cfg(target_arch = "powerpc64")]
+  Sha512_256KernelId::Ppc64Crypto,
 ];
 
 impl Sha512_256KernelId {
@@ -57,6 +65,10 @@ impl Sha512_256KernelId {
       Self::Riscv64Zknh => "riscv/zknh",
       #[cfg(target_arch = "wasm32")]
       Self::WasmSimd128 => "wasm/simd128",
+      #[cfg(target_arch = "s390x")]
+      Self::S390xKimd => "s390x/kimd",
+      #[cfg(target_arch = "powerpc64")]
+      Self::Ppc64Crypto => "ppc64/crypto",
     }
   }
 }
@@ -78,6 +90,10 @@ pub fn id_from_name(name: &str) -> Option<Sha512_256KernelId> {
     "riscv/zknh" => Some(Sha512_256KernelId::Riscv64Zknh),
     #[cfg(target_arch = "wasm32")]
     "wasm/simd128" => Some(Sha512_256KernelId::WasmSimd128),
+    #[cfg(target_arch = "s390x")]
+    "s390x/kimd" => Some(Sha512_256KernelId::S390xKimd),
+    #[cfg(target_arch = "powerpc64")]
+    "ppc64/crypto" => Some(Sha512_256KernelId::Ppc64Crypto),
     _ => None,
   }
 }
@@ -100,6 +116,10 @@ const fn to_sha512_kernel_id(id: Sha512_256KernelId) -> crate::hashes::crypto::s
     Sha512_256KernelId::Riscv64Zknh => Sha512KernelId::Riscv64Zknh,
     #[cfg(target_arch = "wasm32")]
     Sha512_256KernelId::WasmSimd128 => Sha512KernelId::WasmSimd128,
+    #[cfg(target_arch = "s390x")]
+    Sha512_256KernelId::S390xKimd => Sha512KernelId::S390xKimd,
+    #[cfg(target_arch = "powerpc64")]
+    Sha512_256KernelId::Ppc64Crypto => Sha512KernelId::Ppc64Crypto,
   }
 }
 
@@ -128,6 +148,14 @@ pub(crate) fn compress_blocks_fn(id: Sha512_256KernelId) -> CompressBlocksFn {
     }
     #[cfg(target_arch = "wasm32")]
     Sha512_256KernelId::WasmSimd128 => {
+      crate::hashes::crypto::sha512::kernels::compress_blocks_fn(to_sha512_kernel_id(id))
+    }
+    #[cfg(target_arch = "s390x")]
+    Sha512_256KernelId::S390xKimd => {
+      crate::hashes::crypto::sha512::kernels::compress_blocks_fn(to_sha512_kernel_id(id))
+    }
+    #[cfg(target_arch = "powerpc64")]
+    Sha512_256KernelId::Ppc64Crypto => {
       crate::hashes::crypto::sha512::kernels::compress_blocks_fn(to_sha512_kernel_id(id))
     }
   }
