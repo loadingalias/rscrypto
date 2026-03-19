@@ -955,6 +955,34 @@ mod tests {
   }
 
   #[test]
+  fn test_streaming_resume_ieee() {
+    let data = b"The quick brown fox jumps over the lazy dog";
+    let oneshot = Crc32::checksum(data);
+
+    for &split in &[1, data.len() / 4, data.len() / 2, data.len().strict_sub(1)] {
+      let (a, b) = data.split_at(split);
+      let crc_a = Crc32::checksum(a);
+      let mut resumed = Crc32::resume(crc_a);
+      resumed.update(b);
+      assert_eq!(resumed.finalize(), oneshot, "Crc32 resume failed at split={split}");
+    }
+  }
+
+  #[test]
+  fn test_streaming_resume_castagnoli() {
+    let data = b"The quick brown fox jumps over the lazy dog";
+    let oneshot = Crc32C::checksum(data);
+
+    for &split in &[1, data.len() / 4, data.len() / 2, data.len().strict_sub(1)] {
+      let (a, b) = data.split_at(split);
+      let crc_a = Crc32C::checksum(a);
+      let mut resumed = Crc32C::resume(crc_a);
+      resumed.update(b);
+      assert_eq!(resumed.finalize(), oneshot, "Crc32C resume failed at split={split}");
+    }
+  }
+
+  #[test]
   fn test_backend_name_not_empty() {
     assert!(!Crc32::backend_name().is_empty());
     assert!(!Crc32C::backend_name().is_empty());
@@ -1226,15 +1254,8 @@ mod tests {
     use crate::checksum::common::{
       reference::crc32_bitwise,
       tables::{CRC32_IEEE_POLY, CRC32C_POLY},
+      tests::{STREAMING_CHUNK_SIZES, TEST_LENGTHS},
     };
-
-    /// Comprehensive test lengths covering all edge cases.
-    const TEST_LENGTHS: &[usize] = &[
-      0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129, 255, 256,
-      257, 511, 512, 513, 1023, 1024, 1025, 2047, 2048, 2049, 4095, 4096, 4097, 8192, 16384, 32768, 65536,
-    ];
-
-    const STREAMING_CHUNK_SIZES: &[usize] = &[1, 3, 7, 13, 17, 31, 37, 61, 127, 251];
 
     fn generate_test_data(len: usize) -> Vec<u8> {
       (0..len)
@@ -1483,3 +1504,8 @@ mod tests {
     }
   }
 }
+
+#[cfg(test)]
+crate::define_crc_property_tests!(crc32_ieee_props, Crc32);
+#[cfg(test)]
+crate::define_crc_property_tests!(crc32c_props, Crc32C);
