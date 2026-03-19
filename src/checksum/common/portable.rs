@@ -428,13 +428,11 @@ pub fn slice16_32(mut crc: u32, data: &[u8], tables: &[[u32; 256]; 16]) -> u32 {
   while len >= 16 {
     // SAFETY: `ptr` is within `data` and `len >= 16`.
     let v = unsafe { core::ptr::read_unaligned(ptr as *const v128) };
-    // SAFETY: `v128` is a 16-byte value and `u32x4` lane layout matches memory order on wasm.
-    let words: [u32; 4] = unsafe { core::mem::transmute(v) };
-
-    let a = words[0] ^ crc;
-    let b = words[1];
-    let c = words[2];
-    let d = words[3];
+    // Extract lanes using WASM SIMD intrinsics (avoids transmute layout assumptions).
+    let a = core::arch::wasm32::u32x4_extract_lane::<0>(v) ^ crc;
+    let b = core::arch::wasm32::u32x4_extract_lane::<1>(v);
+    let c = core::arch::wasm32::u32x4_extract_lane::<2>(v);
+    let d = core::arch::wasm32::u32x4_extract_lane::<3>(v);
 
     crc = tables[15][(a & 0xFF) as usize]
       ^ tables[14][((a >> 8) & 0xFF) as usize]
@@ -583,11 +581,9 @@ pub fn slice16_64(mut crc: u64, data: &[u8], tables: &[[u64; 256]; 16]) -> u64 {
   while len >= 16 {
     // SAFETY: `ptr` is within `data` and `len >= 16`.
     let v = unsafe { core::ptr::read_unaligned(ptr as *const v128) };
-    // SAFETY: `v128` is a 16-byte value and `u64x2` lane layout matches memory order on wasm.
-    let words: [u64; 2] = unsafe { core::mem::transmute(v) };
-
-    let a = words[0] ^ crc;
-    let b = words[1];
+    // Extract lanes using WASM SIMD intrinsics (avoids transmute layout assumptions).
+    let a = core::arch::wasm32::u64x2_extract_lane::<0>(v) ^ crc;
+    let b = core::arch::wasm32::u64x2_extract_lane::<1>(v);
 
     crc = tables[15][(a & 0xFF) as usize]
       ^ tables[14][((a >> 8) & 0xFF) as usize]

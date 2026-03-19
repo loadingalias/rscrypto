@@ -304,7 +304,7 @@ unsafe fn update_simd_zbc_4way(
     return update_simd_zbc(state, first, rest, keys);
   }
 
-  let aligned = (blocks.len() / 4) * 4;
+  let aligned = blocks.len().strict_div(4).strict_mul(4);
 
   let coeff_512 = fold_512b;
   let coeff_128 = (keys[4], keys[3]);
@@ -546,7 +546,7 @@ unsafe fn fold_block_128_zvbc(
       out("v5") _,
       options(nostack)
     );
-    offset += vl;
+    offset = offset.strict_add(vl);
   }
 }
 
@@ -593,7 +593,7 @@ unsafe fn update_simd_zvbc_2way(state: u32, blocks: &[Block], fold_256b: (u64, u
   let mut i: usize = 2;
   while i < even {
     let (b0_hi, b0_lo) = load_block_split(&blocks[i]);
-    let (b1_hi, b1_lo) = load_block_split(&blocks[i + 1]);
+    let (b1_hi, b1_lo) = load_block_split(&blocks[i.strict_add(1)]);
     fold_block_128_zvbc(&mut s0_hi, &mut s0_lo, &b0_hi, &b0_lo, coeff_256_low, coeff_256_high);
     fold_block_128_zvbc(&mut s1_hi, &mut s1_lo, &b1_hi, &b1_lo, coeff_256_low, coeff_256_high);
     i = i.strict_add(2);
@@ -634,7 +634,7 @@ unsafe fn update_simd_zvbc_4way(
     return update_simd_zvbc(state, first, rest, keys);
   }
 
-  let aligned = (blocks.len() / 4) * 4;
+  let aligned = blocks.len().strict_div(4).strict_mul(4);
 
   let coeff_512_low = fold_512b.1;
   let coeff_512_high = fold_512b.0;
@@ -659,9 +659,9 @@ unsafe fn update_simd_zvbc_4way(
   let mut i: usize = 4;
   while i < aligned {
     let (b0_hi, b0_lo) = load_block_split(&blocks[i]);
-    let (b1_hi, b1_lo) = load_block_split(&blocks[i + 1]);
-    let (b2_hi, b2_lo) = load_block_split(&blocks[i + 2]);
-    let (b3_hi, b3_lo) = load_block_split(&blocks[i + 3]);
+    let (b1_hi, b1_lo) = load_block_split(&blocks[i.strict_add(1)]);
+    let (b2_hi, b2_lo) = load_block_split(&blocks[i.strict_add(2)]);
+    let (b3_hi, b3_lo) = load_block_split(&blocks[i.strict_add(3)]);
     fold_block_128_zvbc(&mut s0_hi, &mut s0_lo, &b0_hi, &b0_lo, coeff_512_low, coeff_512_high);
     fold_block_128_zvbc(&mut s1_hi, &mut s1_lo, &b1_hi, &b1_lo, coeff_512_low, coeff_512_high);
     fold_block_128_zvbc(&mut s2_hi, &mut s2_lo, &b2_hi, &b2_lo, coeff_512_low, coeff_512_high);
