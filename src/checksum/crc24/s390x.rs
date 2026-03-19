@@ -299,7 +299,7 @@ unsafe fn update_simd_width32_reflected_bitrev_4way(
     return update_simd_width32_reflected_bitrev(state, first, rest, keys);
   }
 
-  let aligned = (blocks.len() / 4) * 4;
+  let aligned = blocks.len().strict_div(4).strict_mul(4);
 
   let coeff_512 = Simd::new(fold_512b.0, fold_512b.1);
   let coeff_128 = Simd::new(keys[4], keys[3]);

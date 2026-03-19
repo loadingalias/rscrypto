@@ -241,7 +241,7 @@ unsafe fn update_simd_2way(state: u64, blocks: &[Block], fold_256b: (u64, u64), 
   let mut i = 2;
   while i < even {
     let b0 = load_block(&blocks[i]);
-    let b1 = load_block(&blocks[i + 1]);
+    let b1 = load_block(&blocks[i.strict_add(1)]);
     fold_block_128(&mut s0, &b0, coeff_256);
     fold_block_128(&mut s1, &b1, coeff_256);
     i = i.strict_add(2);
@@ -284,7 +284,7 @@ unsafe fn update_simd_4way(
     return update_simd(state, first, rest, consts);
   }
 
-  let aligned = (blocks.len() / 4) * 4;
+  let aligned = blocks.len().strict_div(4).strict_mul(4);
 
   let coeff_512 = Simd::new(fold_512b.0, fold_512b.1);
   let coeff_128 = Simd::new(consts.fold_128b.0, consts.fold_128b.1);
@@ -303,9 +303,9 @@ unsafe fn update_simd_4way(
   let mut i = 4;
   while i < aligned {
     let b0 = load_block(&blocks[i]);
-    let b1 = load_block(&blocks[i + 1]);
-    let b2 = load_block(&blocks[i + 2]);
-    let b3 = load_block(&blocks[i + 3]);
+    let b1 = load_block(&blocks[i.strict_add(1)]);
+    let b2 = load_block(&blocks[i.strict_add(2)]);
+    let b3 = load_block(&blocks[i.strict_add(3)]);
     fold_block_128(&mut s0, &b0, coeff_512);
     fold_block_128(&mut s1, &b1, coeff_512);
     fold_block_128(&mut s2, &b2, coeff_512);
@@ -365,7 +365,7 @@ unsafe fn crc64_vgfm(mut state: u64, bytes: &[u8], consts: &Crc64ClmulConstants,
 
   if !blocks_u64.is_empty() {
     // SAFETY: `blocks_u64` length is a multiple of 16, so casting to `[u64; 16]` is safe.
-    let blocks: &[Block] = unsafe { core::slice::from_raw_parts(blocks_u64.as_ptr().cast(), blocks_u64.len() / 16) };
+    let blocks: &[Block] = unsafe { core::slice::from_raw_parts(blocks_u64.as_ptr().cast(), blocks_u64.len().strict_div(16)) };
     if let Some((first, rest)) = blocks.split_first() {
       state = update_simd(state, first, rest, consts);
     }
@@ -373,7 +373,7 @@ unsafe fn crc64_vgfm(mut state: u64, bytes: &[u8], consts: &Crc64ClmulConstants,
 
   if !tail_u64.is_empty() {
     // SAFETY: `tail_u64` is a subslice of the aligned u64 middle region.
-    let tail_bytes = unsafe { core::slice::from_raw_parts(tail_u64.as_ptr().cast(), tail_u64.len() * 8) };
+    let tail_bytes = unsafe { core::slice::from_raw_parts(tail_u64.as_ptr().cast(), tail_u64.len().strict_mul(8)) };
     state = super::portable::crc64_slice16(state, tail_bytes, tables);
   }
 
@@ -397,13 +397,13 @@ unsafe fn crc64_vgfm_2way(
 
   if !blocks_u64.is_empty() {
     // SAFETY: `blocks_u64` length is a multiple of 16, so casting to `[u64; 16]` is safe.
-    let blocks: &[Block] = unsafe { core::slice::from_raw_parts(blocks_u64.as_ptr().cast(), blocks_u64.len() / 16) };
+    let blocks: &[Block] = unsafe { core::slice::from_raw_parts(blocks_u64.as_ptr().cast(), blocks_u64.len().strict_div(16)) };
     state = update_simd_2way(state, blocks, fold_256b, consts);
   }
 
   if !tail_u64.is_empty() {
     // SAFETY: `tail_u64` is a subslice of the aligned u64 middle region.
-    let tail_bytes = unsafe { core::slice::from_raw_parts(tail_u64.as_ptr().cast(), tail_u64.len() * 8) };
+    let tail_bytes = unsafe { core::slice::from_raw_parts(tail_u64.as_ptr().cast(), tail_u64.len().strict_mul(8)) };
     state = super::portable::crc64_slice16(state, tail_bytes, tables);
   }
 
@@ -428,13 +428,13 @@ unsafe fn crc64_vgfm_4way(
 
   if !blocks_u64.is_empty() {
     // SAFETY: `blocks_u64` length is a multiple of 16, so casting to `[u64; 16]` is safe.
-    let blocks: &[Block] = unsafe { core::slice::from_raw_parts(blocks_u64.as_ptr().cast(), blocks_u64.len() / 16) };
+    let blocks: &[Block] = unsafe { core::slice::from_raw_parts(blocks_u64.as_ptr().cast(), blocks_u64.len().strict_div(16)) };
     state = update_simd_4way(state, blocks, fold_512b, combine, consts);
   }
 
   if !tail_u64.is_empty() {
     // SAFETY: `tail_u64` is a subslice of the aligned u64 middle region.
-    let tail_bytes = unsafe { core::slice::from_raw_parts(tail_u64.as_ptr().cast(), tail_u64.len() * 8) };
+    let tail_bytes = unsafe { core::slice::from_raw_parts(tail_u64.as_ptr().cast(), tail_u64.len().strict_mul(8)) };
     state = super::portable::crc64_slice16(state, tail_bytes, tables);
   }
 
