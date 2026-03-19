@@ -54,11 +54,11 @@ pub const REFERENCE: &str = "reference/bitwise";
 pub const PORTABLE_SLICE16: &str = "portable/slice16";
 
 /// Portable slice-by-8 kernel name.
-#[allow(dead_code)] // Used by CRC-32 module for small buffer fallback
+#[allow(dead_code)] // Used by crc16/crc24 kernels modules for introspection name tables
 pub const PORTABLE_SLICE8: &str = "portable/slice8";
 
 /// Portable slice-by-4 kernel name.
-#[allow(dead_code)]
+#[allow(dead_code)] // Used by crc16/crc24 kernels modules for introspection name tables
 pub const PORTABLE_SLICE4: &str = "portable/slice4";
 
 // ─────────────────────────────────────────────────────────────────────────────

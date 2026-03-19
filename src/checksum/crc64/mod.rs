@@ -77,7 +77,7 @@ pub(crate) fn crc64_xz_selected_kernel_name(len: usize) -> &'static str {
 
   // For auto mode, return the specific kernel name from the dispatch table
   let table = crate::checksum::dispatch::active_table();
-  table.select_set(len).crc64_xz_name
+  table.select_names(len).crc64_xz_name
 }
 
 /// Get the name of the CRC-64/NVME kernel that would be selected for a given buffer length.
@@ -99,7 +99,7 @@ pub(crate) fn crc64_nvme_selected_kernel_name(len: usize) -> &'static str {
 
   // For auto mode, return the specific kernel name from the dispatch table
   let table = crate::checksum::dispatch::active_table();
-  table.select_set(len).crc64_nvme_name
+  table.select_names(len).crc64_nvme_name
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -257,59 +257,25 @@ fn crc64_apply_kernel_vectored(mut crc: u64, bufs: &[&[u8]], kernel: Crc64Dispat
 #[inline]
 fn crc64_xz_dispatch_auto(crc: u64, data: &[u8]) -> u64 {
   let table = crate::checksum::dispatch::active_table();
-  let kernel = table.select_set(data.len()).crc64_xz;
+  let kernel = table.select_fns(data.len()).crc64_xz;
   kernel(crc, data)
 }
 
 #[inline]
-fn crc64_xz_dispatch_auto_vectored(mut crc: u64, bufs: &[&[u8]]) -> u64 {
-  let table = crate::checksum::dispatch::active_table();
-  let mut last_set: *const crate::checksum::dispatch::KernelSet = core::ptr::null();
-  let mut kernel = table.xs.crc64_xz;
-
-  for &buf in bufs {
-    if buf.is_empty() {
-      continue;
-    }
-    let set = table.select_set(buf.len());
-    let set_ptr: *const crate::checksum::dispatch::KernelSet = core::ptr::from_ref(set);
-    if set_ptr != last_set {
-      last_set = set_ptr;
-      kernel = set.crc64_xz;
-    }
-    crc = kernel(crc, buf);
-  }
-
-  crc
+fn crc64_xz_dispatch_auto_vectored(crc: u64, bufs: &[&[u8]]) -> u64 {
+  crc_vectored_dispatch!(crate::checksum::dispatch::active_table(), crc, crc64_xz, bufs)
 }
 
 #[inline]
 fn crc64_nvme_dispatch_auto(crc: u64, data: &[u8]) -> u64 {
   let table = crate::checksum::dispatch::active_table();
-  let kernel = table.select_set(data.len()).crc64_nvme;
+  let kernel = table.select_fns(data.len()).crc64_nvme;
   kernel(crc, data)
 }
 
 #[inline]
-fn crc64_nvme_dispatch_auto_vectored(mut crc: u64, bufs: &[&[u8]]) -> u64 {
-  let table = crate::checksum::dispatch::active_table();
-  let mut last_set: *const crate::checksum::dispatch::KernelSet = core::ptr::null();
-  let mut kernel = table.xs.crc64_nvme;
-
-  for &buf in bufs {
-    if buf.is_empty() {
-      continue;
-    }
-    let set = table.select_set(buf.len());
-    let set_ptr: *const crate::checksum::dispatch::KernelSet = core::ptr::from_ref(set);
-    if set_ptr != last_set {
-      last_set = set_ptr;
-      kernel = set.crc64_nvme;
-    }
-    crc = kernel(crc, buf);
-  }
-
-  crc
+fn crc64_nvme_dispatch_auto_vectored(crc: u64, bufs: &[&[u8]]) -> u64 {
+  crc_vectored_dispatch!(crate::checksum::dispatch::active_table(), crc, crc64_nvme, bufs)
 }
 
 #[cfg(feature = "std")]
@@ -638,7 +604,7 @@ impl crate::traits::Checksum for Crc64 {
   #[inline]
   fn update(&mut self, data: &[u8]) {
     if let Some(table) = self.auto_table {
-      let kernel = table.select_set(data.len()).crc64_xz;
+      let kernel = table.select_fns(data.len()).crc64_xz;
       self.state = kernel(self.state, data);
     } else {
       self.state = (self.dispatch)(self.state, data);
@@ -790,7 +756,7 @@ impl crate::traits::Checksum for Crc64Nvme {
   #[inline]
   fn update(&mut self, data: &[u8]) {
     if let Some(table) = self.auto_table {
-      let kernel = table.select_set(data.len()).crc64_nvme;
+      let kernel = table.select_fns(data.len()).crc64_nvme;
       self.state = kernel(self.state, data);
     } else {
       self.state = (self.dispatch)(self.state, data);

@@ -198,7 +198,7 @@ pub(crate) fn crc32_selected_kernel_name(len: usize) -> &'static str {
   }
 
   let table = crate::checksum::dispatch::active_table();
-  table.select_set(len).crc32_ieee_name
+  table.select_names(len).crc32_ieee_name
 }
 
 /// Get the name of the kernel that would be selected for a given buffer length.
@@ -215,7 +215,7 @@ pub(crate) fn crc32c_selected_kernel_name(len: usize) -> &'static str {
   }
 
   let table = crate::checksum::dispatch::active_table();
-  table.select_set(len).crc32c_name
+  table.select_names(len).crc32c_name
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -332,59 +332,25 @@ fn crc32_apply_kernel_vectored(mut crc: u32, bufs: &[&[u8]], kernel: Crc32Dispat
 #[inline]
 fn crc32_dispatch_auto(crc: u32, data: &[u8]) -> u32 {
   let table = crate::checksum::dispatch::active_table();
-  let kernel = table.select_set(data.len()).crc32_ieee;
+  let kernel = table.select_fns(data.len()).crc32_ieee;
   kernel(crc, data)
 }
 
 #[inline]
-fn crc32_dispatch_auto_vectored(mut crc: u32, bufs: &[&[u8]]) -> u32 {
-  let table = crate::checksum::dispatch::active_table();
-  let mut last_set: *const crate::checksum::dispatch::KernelSet = core::ptr::null();
-  let mut kernel = table.xs.crc32_ieee;
-
-  for &buf in bufs {
-    if buf.is_empty() {
-      continue;
-    }
-    let set = table.select_set(buf.len());
-    let set_ptr: *const crate::checksum::dispatch::KernelSet = core::ptr::from_ref(set);
-    if set_ptr != last_set {
-      last_set = set_ptr;
-      kernel = set.crc32_ieee;
-    }
-    crc = kernel(crc, buf);
-  }
-
-  crc
+fn crc32_dispatch_auto_vectored(crc: u32, bufs: &[&[u8]]) -> u32 {
+  crc_vectored_dispatch!(crate::checksum::dispatch::active_table(), crc, crc32_ieee, bufs)
 }
 
 #[inline]
 fn crc32c_dispatch_auto(crc: u32, data: &[u8]) -> u32 {
   let table = crate::checksum::dispatch::active_table();
-  let kernel = table.select_set(data.len()).crc32c;
+  let kernel = table.select_fns(data.len()).crc32c;
   kernel(crc, data)
 }
 
 #[inline]
-fn crc32c_dispatch_auto_vectored(mut crc: u32, bufs: &[&[u8]]) -> u32 {
-  let table = crate::checksum::dispatch::active_table();
-  let mut last_set: *const crate::checksum::dispatch::KernelSet = core::ptr::null();
-  let mut kernel = table.xs.crc32c;
-
-  for &buf in bufs {
-    if buf.is_empty() {
-      continue;
-    }
-    let set = table.select_set(buf.len());
-    let set_ptr: *const crate::checksum::dispatch::KernelSet = core::ptr::from_ref(set);
-    if set_ptr != last_set {
-      last_set = set_ptr;
-      kernel = set.crc32c;
-    }
-    crc = kernel(crc, buf);
-  }
-
-  crc
+fn crc32c_dispatch_auto_vectored(crc: u32, bufs: &[&[u8]]) -> u32 {
+  crc_vectored_dispatch!(crate::checksum::dispatch::active_table(), crc, crc32c, bufs)
 }
 
 #[cfg(feature = "std")]
@@ -690,7 +656,7 @@ impl crate::traits::Checksum for Crc32 {
   #[inline]
   fn update(&mut self, data: &[u8]) {
     if let Some(table) = self.auto_table {
-      let kernel = table.select_set(data.len()).crc32_ieee;
+      let kernel = table.select_fns(data.len()).crc32_ieee;
       self.state = kernel(self.state, data);
     } else {
       self.state = (self.dispatch)(self.state, data);
@@ -827,7 +793,7 @@ impl crate::traits::Checksum for Crc32C {
   #[inline]
   fn update(&mut self, data: &[u8]) {
     if let Some(table) = self.auto_table {
-      let kernel = table.select_set(data.len()).crc32c;
+      let kernel = table.select_fns(data.len()).crc32c;
       self.state = kernel(self.state, data);
     } else {
       self.state = (self.dispatch)(self.state, data);
