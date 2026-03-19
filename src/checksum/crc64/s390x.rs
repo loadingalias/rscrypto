@@ -12,8 +12,7 @@
 #![allow(dead_code)] // Kernels wired up via dispatcher
 // SAFETY: All indexing is over fixed-size arrays with in-bounds constant indices.
 #![allow(clippy::indexing_slicing)]
-// This module is intrinsics-heavy; keep unsafe blocks readable.
-#![allow(unsafe_op_in_unsafe_fn)]
+// This module is intrinsics-heavy; unsafe blocks are per-function with SAFETY justifications.
 
 use core::{
   arch::asm,
@@ -69,47 +68,66 @@ impl Simd {
   #[inline]
   #[target_feature(enable = "vector")]
   unsafe fn vgfm(a: i64x2, b: i64x2) -> i64x2 {
-    let out: i64x2;
-    asm!(
-      "vgfm {out}, {a}, {b}, 3",
-      out = lateout(vreg) out,
-      a = in(vreg) a,
-      b = in(vreg) b,
-      options(nomem, nostack, pure)
-    );
-    out
+    // SAFETY: Caller guarantees the s390x vector facility is available
+    // (verified by dispatch). The VGFM instruction operates on pure register
+    // values with no memory access.
+    unsafe {
+      let out: i64x2;
+      asm!(
+        "vgfm {out}, {a}, {b}, 3",
+        out = lateout(vreg) out,
+        a = in(vreg) a,
+        b = in(vreg) b,
+        options(nomem, nostack, pure)
+      );
+      out
+    }
   }
 
   #[inline]
   #[target_feature(enable = "vector")]
   unsafe fn mul64(a: u64, b: u64) -> Self {
-    let va = Self::new(0, a);
-    let vb = Self::new(0, b);
-    Self(Self::vgfm(va.0, vb.0))
+    // SAFETY: Caller guarantees the s390x vector facility is available.
+    // vgfm operates on pure register values.
+    unsafe {
+      let va = Self::new(0, a);
+      let vb = Self::new(0, b);
+      Self(Self::vgfm(va.0, vb.0))
+    }
   }
 
   /// Fold 16 bytes: `(coeff.low ⊗ self.low) ⊕ (coeff.high ⊗ self.high)`.
   #[inline]
   #[target_feature(enable = "vector")]
   unsafe fn fold_16(self, coeff: Self) -> Self {
-    Self(Self::vgfm(self.0, coeff.0))
+    // SAFETY: Caller guarantees the s390x vector facility is available.
+    // vgfm operates on pure register values.
+    unsafe { Self(Self::vgfm(self.0, coeff.0)) }
   }
 
   /// Fold 8 bytes: `self.high ⊕ (coeff ⊗ self.low)`.
   #[inline]
   #[target_feature(enable = "vector")]
   unsafe fn fold_8(self, coeff: u64) -> Self {
-    let prod = Self::mul64(self.low_64(), coeff);
-    prod ^ Self::new(0, self.high_64())
+    // SAFETY: Caller guarantees the s390x vector facility is available.
+    // mul64 and XOR are pure register computations.
+    unsafe {
+      let prod = Self::mul64(self.low_64(), coeff);
+      prod ^ Self::new(0, self.high_64())
+    }
   }
 
   /// Barrett reduction to finalize the CRC.
   #[inline]
   #[target_feature(enable = "vector")]
   unsafe fn barrett(self, poly: u64, mu: u64) -> u64 {
-    let t1 = Self::mul64(self.low_64(), mu).low_64();
-    let l = Self::mul64(t1, poly);
-    (self ^ l).high_64() ^ t1
+    // SAFETY: Caller guarantees the s390x vector facility is available.
+    // mul64 and XOR are pure register computations.
+    unsafe {
+      let t1 = Self::mul64(self.low_64(), mu).low_64();
+      let l = Self::mul64(t1, poly);
+      (self ^ l).high_64() ^ t1
+    }
   }
 }
 
@@ -165,60 +183,81 @@ fn load_block(block: &Block) -> [Simd; 8] {
 
 #[inline(always)]
 unsafe fn fold_tail(x: [Simd; 8], consts: &Crc64ClmulConstants) -> u64 {
-  // Tail reduction (8×16B → 1×16B), unrolled for throughput.
-  let c0 = Simd::new(consts.tail_fold_16b[0].0, consts.tail_fold_16b[0].1);
-  let c1 = Simd::new(consts.tail_fold_16b[1].0, consts.tail_fold_16b[1].1);
-  let c2 = Simd::new(consts.tail_fold_16b[2].0, consts.tail_fold_16b[2].1);
-  let c3 = Simd::new(consts.tail_fold_16b[3].0, consts.tail_fold_16b[3].1);
-  let c4 = Simd::new(consts.tail_fold_16b[4].0, consts.tail_fold_16b[4].1);
-  let c5 = Simd::new(consts.tail_fold_16b[5].0, consts.tail_fold_16b[5].1);
-  let c6 = Simd::new(consts.tail_fold_16b[6].0, consts.tail_fold_16b[6].1);
+  // SAFETY: Caller guarantees the s390x vector facility is available (dispatch check).
+  // All fold_16 / fold_8 / barrett calls are pure VGFM register computations.
+  // Array indexing is over fixed-size [Simd; 8] with constant indices 0..7.
+  unsafe {
+    // Tail reduction (8×16B → 1×16B), unrolled for throughput.
+    let c0 = Simd::new(consts.tail_fold_16b[0].0, consts.tail_fold_16b[0].1);
+    let c1 = Simd::new(consts.tail_fold_16b[1].0, consts.tail_fold_16b[1].1);
+    let c2 = Simd::new(consts.tail_fold_16b[2].0, consts.tail_fold_16b[2].1);
+    let c3 = Simd::new(consts.tail_fold_16b[3].0, consts.tail_fold_16b[3].1);
+    let c4 = Simd::new(consts.tail_fold_16b[4].0, consts.tail_fold_16b[4].1);
+    let c5 = Simd::new(consts.tail_fold_16b[5].0, consts.tail_fold_16b[5].1);
+    let c6 = Simd::new(consts.tail_fold_16b[6].0, consts.tail_fold_16b[6].1);
 
-  let mut acc = x[7];
-  acc ^= x[0].fold_16(c0);
-  acc ^= x[1].fold_16(c1);
-  acc ^= x[2].fold_16(c2);
-  acc ^= x[3].fold_16(c3);
-  acc ^= x[4].fold_16(c4);
-  acc ^= x[5].fold_16(c5);
-  acc ^= x[6].fold_16(c6);
+    let mut acc = x[7];
+    acc ^= x[0].fold_16(c0);
+    acc ^= x[1].fold_16(c1);
+    acc ^= x[2].fold_16(c2);
+    acc ^= x[3].fold_16(c3);
+    acc ^= x[4].fold_16(c4);
+    acc ^= x[5].fold_16(c5);
+    acc ^= x[6].fold_16(c6);
 
-  acc.fold_8(consts.fold_8b).barrett(consts.poly, consts.mu)
+    acc.fold_8(consts.fold_8b).barrett(consts.poly, consts.mu)
+  }
 }
 
 #[inline]
 #[target_feature(enable = "vector")]
 unsafe fn fold_block_128(x: &mut [Simd; 8], chunk: &[Simd; 8], coeff: Simd) {
-  x[0] = chunk[0] ^ x[0].fold_16(coeff);
-  x[1] = chunk[1] ^ x[1].fold_16(coeff);
-  x[2] = chunk[2] ^ x[2].fold_16(coeff);
-  x[3] = chunk[3] ^ x[3].fold_16(coeff);
-  x[4] = chunk[4] ^ x[4].fold_16(coeff);
-  x[5] = chunk[5] ^ x[5].fold_16(coeff);
-  x[6] = chunk[6] ^ x[6].fold_16(coeff);
-  x[7] = chunk[7] ^ x[7].fold_16(coeff);
+  // SAFETY: Caller guarantees the s390x vector facility is available (dispatch check).
+  // All fold_16 calls are pure VGFM register computations.
+  // Array indexing is over fixed-size [Simd; 8] with constant indices 0..7.
+  unsafe {
+    x[0] = chunk[0] ^ x[0].fold_16(coeff);
+    x[1] = chunk[1] ^ x[1].fold_16(coeff);
+    x[2] = chunk[2] ^ x[2].fold_16(coeff);
+    x[3] = chunk[3] ^ x[3].fold_16(coeff);
+    x[4] = chunk[4] ^ x[4].fold_16(coeff);
+    x[5] = chunk[5] ^ x[5].fold_16(coeff);
+    x[6] = chunk[6] ^ x[6].fold_16(coeff);
+    x[7] = chunk[7] ^ x[7].fold_16(coeff);
+  }
 }
 
 #[target_feature(enable = "vector")]
 unsafe fn update_simd(state: u64, first: &Block, rest: &[Block], consts: &Crc64ClmulConstants) -> u64 {
-  let mut x = load_block(first);
+  // SAFETY: Caller guarantees the s390x vector facility is available (dispatch check).
+  // All fold operations are pure VGFM register computations.
+  // Block iteration is bounded by the slice length; no out-of-bounds access.
+  unsafe {
+    let mut x = load_block(first);
 
-  // XOR the initial CRC into the first lane.
-  x[0] ^= Simd::new(0, state);
+    // XOR the initial CRC into the first lane.
+    x[0] ^= Simd::new(0, state);
 
-  // 128-byte folding.
-  let coeff = Simd::new(consts.fold_128b.0, consts.fold_128b.1);
-  for block in rest {
-    let chunk = load_block(block);
-    fold_block_128(&mut x, &chunk, coeff);
+    // 128-byte folding.
+    let coeff = Simd::new(consts.fold_128b.0, consts.fold_128b.1);
+    for block in rest {
+      let chunk = load_block(block);
+      fold_block_128(&mut x, &chunk, coeff);
+    }
+
+    fold_tail(x, consts)
   }
-
-  fold_tail(x, consts)
 }
 
 #[target_feature(enable = "vector")]
 unsafe fn update_simd_2way(state: u64, blocks: &[Block], fold_256b: (u64, u64), consts: &Crc64ClmulConstants) -> u64 {
   debug_assert!(!blocks.is_empty());
+
+  // SAFETY: Caller guarantees the s390x vector facility is available (dispatch check).
+  // All fold operations are pure VGFM register computations.
+  // Loop index `i` advances by 2 and is bounded by `even` (≤ blocks.len()),
+  // so `blocks[i]` and `blocks[i + 1]` are always in-bounds.
+  unsafe {
 
   if blocks.len() < 2 {
     let Some((first, rest)) = blocks.split_first() else {
@@ -241,7 +280,7 @@ unsafe fn update_simd_2way(state: u64, blocks: &[Block], fold_256b: (u64, u64), 
   let mut i = 2;
   while i < even {
     let b0 = load_block(&blocks[i]);
-    let b1 = load_block(&blocks[i.strict_add(1)]);
+    let b1 = load_block(&blocks[i + 1]);
     fold_block_128(&mut s0, &b0, coeff_256);
     fold_block_128(&mut s1, &b1, coeff_256);
     i = i.strict_add(2);
@@ -265,6 +304,7 @@ unsafe fn update_simd_2way(state: u64, blocks: &[Block], fold_256b: (u64, u64), 
   }
 
   fold_tail(combined, consts)
+  } // unsafe
 }
 
 #[target_feature(enable = "vector")]
@@ -277,6 +317,12 @@ unsafe fn update_simd_4way(
 ) -> u64 {
   debug_assert!(!blocks.is_empty());
 
+  // SAFETY: Caller guarantees the s390x vector facility is available (dispatch check).
+  // All fold operations are pure VGFM register computations.
+  // Loop index `i` advances by 4 and is bounded by `aligned` (≤ blocks.len()),
+  // so `blocks[i..i+3]` are always in-bounds. Tail processing uses iterator.
+  unsafe {
+
   if blocks.len() < 4 {
     let Some((first, rest)) = blocks.split_first() else {
       return state;
@@ -284,7 +330,7 @@ unsafe fn update_simd_4way(
     return update_simd(state, first, rest, consts);
   }
 
-  let aligned = blocks.len().strict_div(4).strict_mul(4);
+  let aligned = (blocks.len() / 4) * 4;
 
   let coeff_512 = Simd::new(fold_512b.0, fold_512b.1);
   let coeff_128 = Simd::new(consts.fold_128b.0, consts.fold_128b.1);
@@ -303,9 +349,9 @@ unsafe fn update_simd_4way(
   let mut i = 4;
   while i < aligned {
     let b0 = load_block(&blocks[i]);
-    let b1 = load_block(&blocks[i.strict_add(1)]);
-    let b2 = load_block(&blocks[i.strict_add(2)]);
-    let b3 = load_block(&blocks[i.strict_add(3)]);
+    let b1 = load_block(&blocks[i + 1]);
+    let b2 = load_block(&blocks[i + 2]);
+    let b3 = load_block(&blocks[i + 3]);
     fold_block_128(&mut s0, &b0, coeff_512);
     fold_block_128(&mut s1, &b1, coeff_512);
     fold_block_128(&mut s2, &b2, coeff_512);
@@ -348,6 +394,7 @@ unsafe fn update_simd_4way(
   }
 
   fold_tail(combined, consts)
+  } // unsafe
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -356,28 +403,33 @@ unsafe fn update_simd_4way(
 
 #[target_feature(enable = "vector")]
 unsafe fn crc64_vgfm(mut state: u64, bytes: &[u8], consts: &Crc64ClmulConstants, tables: &[[u64; 256]; 16]) -> u64 {
-  let (left, middle, right) = bytes.align_to::<u64>();
+  // SAFETY: Caller guarantees the s390x vector facility is available (dispatch check).
+  // align_to produces valid sub-slices. from_raw_parts length is exact because
+  // blocks_u64.len() is a multiple of 16 and tail_u64 is from the aligned middle.
+  unsafe {
+    let (left, middle, right) = bytes.align_to::<u64>();
 
-  state = super::portable::crc64_slice16(state, left, tables);
+    state = super::portable::crc64_slice16(state, left, tables);
 
-  let block_u64s = middle.len() & !15usize;
-  let (blocks_u64, tail_u64) = middle.split_at(block_u64s);
+    let block_u64s = middle.len() & !15usize;
+    let (blocks_u64, tail_u64) = middle.split_at(block_u64s);
 
-  if !blocks_u64.is_empty() {
-    // SAFETY: `blocks_u64` length is a multiple of 16, so casting to `[u64; 16]` is safe.
-    let blocks: &[Block] = unsafe { core::slice::from_raw_parts(blocks_u64.as_ptr().cast(), blocks_u64.len().strict_div(16)) };
-    if let Some((first, rest)) = blocks.split_first() {
-      state = update_simd(state, first, rest, consts);
+    if !blocks_u64.is_empty() {
+      // SAFETY: `blocks_u64` length is a multiple of 16, so casting to `[u64; 16]` is valid.
+      let blocks: &[Block] = core::slice::from_raw_parts(blocks_u64.as_ptr().cast(), blocks_u64.len() / 16);
+      if let Some((first, rest)) = blocks.split_first() {
+        state = update_simd(state, first, rest, consts);
+      }
     }
-  }
 
-  if !tail_u64.is_empty() {
-    // SAFETY: `tail_u64` is a subslice of the aligned u64 middle region.
-    let tail_bytes = unsafe { core::slice::from_raw_parts(tail_u64.as_ptr().cast(), tail_u64.len().strict_mul(8)) };
-    state = super::portable::crc64_slice16(state, tail_bytes, tables);
-  }
+    if !tail_u64.is_empty() {
+      // SAFETY: `tail_u64` is a subslice of the aligned u64 middle region.
+      let tail_bytes = core::slice::from_raw_parts(tail_u64.as_ptr().cast(), tail_u64.len() * 8);
+      state = super::portable::crc64_slice16(state, tail_bytes, tables);
+    }
 
-  super::portable::crc64_slice16(state, right, tables)
+    super::portable::crc64_slice16(state, right, tables)
+  }
 }
 
 #[target_feature(enable = "vector")]
@@ -388,26 +440,30 @@ unsafe fn crc64_vgfm_2way(
   consts: &Crc64ClmulConstants,
   tables: &[[u64; 256]; 16],
 ) -> u64 {
-  let (left, middle, right) = bytes.align_to::<u64>();
+  // SAFETY: Caller guarantees the s390x vector facility is available (dispatch check).
+  // align_to produces valid sub-slices. from_raw_parts length is exact.
+  unsafe {
+    let (left, middle, right) = bytes.align_to::<u64>();
 
-  state = super::portable::crc64_slice16(state, left, tables);
+    state = super::portable::crc64_slice16(state, left, tables);
 
-  let block_u64s = middle.len() & !15usize;
-  let (blocks_u64, tail_u64) = middle.split_at(block_u64s);
+    let block_u64s = middle.len() & !15usize;
+    let (blocks_u64, tail_u64) = middle.split_at(block_u64s);
 
-  if !blocks_u64.is_empty() {
-    // SAFETY: `blocks_u64` length is a multiple of 16, so casting to `[u64; 16]` is safe.
-    let blocks: &[Block] = unsafe { core::slice::from_raw_parts(blocks_u64.as_ptr().cast(), blocks_u64.len().strict_div(16)) };
-    state = update_simd_2way(state, blocks, fold_256b, consts);
+    if !blocks_u64.is_empty() {
+      // SAFETY: `blocks_u64` length is a multiple of 16, so casting to `[u64; 16]` is valid.
+      let blocks: &[Block] = core::slice::from_raw_parts(blocks_u64.as_ptr().cast(), blocks_u64.len() / 16);
+      state = update_simd_2way(state, blocks, fold_256b, consts);
+    }
+
+    if !tail_u64.is_empty() {
+      // SAFETY: `tail_u64` is a subslice of the aligned u64 middle region.
+      let tail_bytes = core::slice::from_raw_parts(tail_u64.as_ptr().cast(), tail_u64.len() * 8);
+      state = super::portable::crc64_slice16(state, tail_bytes, tables);
+    }
+
+    super::portable::crc64_slice16(state, right, tables)
   }
-
-  if !tail_u64.is_empty() {
-    // SAFETY: `tail_u64` is a subslice of the aligned u64 middle region.
-    let tail_bytes = unsafe { core::slice::from_raw_parts(tail_u64.as_ptr().cast(), tail_u64.len().strict_mul(8)) };
-    state = super::portable::crc64_slice16(state, tail_bytes, tables);
-  }
-
-  super::portable::crc64_slice16(state, right, tables)
 }
 
 #[target_feature(enable = "vector")]
@@ -419,26 +475,30 @@ unsafe fn crc64_vgfm_4way(
   consts: &Crc64ClmulConstants,
   tables: &[[u64; 256]; 16],
 ) -> u64 {
-  let (left, middle, right) = bytes.align_to::<u64>();
+  // SAFETY: Caller guarantees the s390x vector facility is available (dispatch check).
+  // align_to produces valid sub-slices. from_raw_parts length is exact.
+  unsafe {
+    let (left, middle, right) = bytes.align_to::<u64>();
 
-  state = super::portable::crc64_slice16(state, left, tables);
+    state = super::portable::crc64_slice16(state, left, tables);
 
-  let block_u64s = middle.len() & !15usize;
-  let (blocks_u64, tail_u64) = middle.split_at(block_u64s);
+    let block_u64s = middle.len() & !15usize;
+    let (blocks_u64, tail_u64) = middle.split_at(block_u64s);
 
-  if !blocks_u64.is_empty() {
-    // SAFETY: `blocks_u64` length is a multiple of 16, so casting to `[u64; 16]` is safe.
-    let blocks: &[Block] = unsafe { core::slice::from_raw_parts(blocks_u64.as_ptr().cast(), blocks_u64.len().strict_div(16)) };
-    state = update_simd_4way(state, blocks, fold_512b, combine, consts);
+    if !blocks_u64.is_empty() {
+      // SAFETY: `blocks_u64` length is a multiple of 16, so casting to `[u64; 16]` is valid.
+      let blocks: &[Block] = core::slice::from_raw_parts(blocks_u64.as_ptr().cast(), blocks_u64.len() / 16);
+      state = update_simd_4way(state, blocks, fold_512b, combine, consts);
+    }
+
+    if !tail_u64.is_empty() {
+      // SAFETY: `tail_u64` is a subslice of the aligned u64 middle region.
+      let tail_bytes = core::slice::from_raw_parts(tail_u64.as_ptr().cast(), tail_u64.len() * 8);
+      state = super::portable::crc64_slice16(state, tail_bytes, tables);
+    }
+
+    super::portable::crc64_slice16(state, right, tables)
   }
-
-  if !tail_u64.is_empty() {
-    // SAFETY: `tail_u64` is a subslice of the aligned u64 middle region.
-    let tail_bytes = unsafe { core::slice::from_raw_parts(tail_u64.as_ptr().cast(), tail_u64.len().strict_mul(8)) };
-    state = super::portable::crc64_slice16(state, tail_bytes, tables);
-  }
-
-  super::portable::crc64_slice16(state, right, tables)
 }
 
 /// CRC-64-XZ using VGFM folding.
@@ -449,12 +509,13 @@ unsafe fn crc64_vgfm_4way(
 /// `crate::platform::caps().has(s390x::VECTOR)`.
 #[target_feature(enable = "vector")]
 pub(crate) unsafe fn crc64_xz_vgfm(crc: u64, data: &[u8]) -> u64 {
-  crc64_vgfm(
+  // SAFETY: Caller guarantees the s390x vector facility is available (dispatch check).
+  unsafe { crc64_vgfm(
     crc,
     data,
     &crate::checksum::common::clmul::CRC64_XZ_CLMUL,
     &super::kernel_tables::XZ_TABLES_16,
-  )
+  ) }
 }
 
 /// CRC-64-XZ using VGFM folding (2-way ILP variant).
@@ -465,13 +526,14 @@ pub(crate) unsafe fn crc64_xz_vgfm(crc: u64, data: &[u8]) -> u64 {
 /// `crate::platform::caps().has(s390x::VECTOR)`.
 #[target_feature(enable = "vector")]
 pub(crate) unsafe fn crc64_xz_vgfm_2way(crc: u64, data: &[u8]) -> u64 {
-  crc64_vgfm_2way(
+  // SAFETY: Caller guarantees the s390x vector facility is available (dispatch check).
+  unsafe { crc64_vgfm_2way(
     crc,
     data,
     XZ_FOLD_256B,
     &crate::checksum::common::clmul::CRC64_XZ_CLMUL,
     &super::kernel_tables::XZ_TABLES_16,
-  )
+  ) }
 }
 
 /// CRC-64-XZ using VGFM folding (4-way ILP variant).
@@ -482,14 +544,15 @@ pub(crate) unsafe fn crc64_xz_vgfm_2way(crc: u64, data: &[u8]) -> u64 {
 /// `crate::platform::caps().has(s390x::VECTOR)`.
 #[target_feature(enable = "vector")]
 pub(crate) unsafe fn crc64_xz_vgfm_4way(crc: u64, data: &[u8]) -> u64 {
-  crc64_vgfm_4way(
+  // SAFETY: Caller guarantees the s390x vector facility is available (dispatch check).
+  unsafe { crc64_vgfm_4way(
     crc,
     data,
     XZ_FOLD_512B,
     &XZ_COMBINE_4WAY,
     &crate::checksum::common::clmul::CRC64_XZ_CLMUL,
     &super::kernel_tables::XZ_TABLES_16,
-  )
+  ) }
 }
 
 /// CRC-64-NVME using VGFM folding.
@@ -500,12 +563,13 @@ pub(crate) unsafe fn crc64_xz_vgfm_4way(crc: u64, data: &[u8]) -> u64 {
 /// `crate::platform::caps().has(s390x::VECTOR)`.
 #[target_feature(enable = "vector")]
 pub(crate) unsafe fn crc64_nvme_vgfm(crc: u64, data: &[u8]) -> u64 {
-  crc64_vgfm(
+  // SAFETY: Caller guarantees the s390x vector facility is available (dispatch check).
+  unsafe { crc64_vgfm(
     crc,
     data,
     &crate::checksum::common::clmul::CRC64_NVME_CLMUL,
     &super::kernel_tables::NVME_TABLES_16,
-  )
+  ) }
 }
 
 /// CRC-64-NVME using VGFM folding (2-way ILP variant).
@@ -516,13 +580,14 @@ pub(crate) unsafe fn crc64_nvme_vgfm(crc: u64, data: &[u8]) -> u64 {
 /// `crate::platform::caps().has(s390x::VECTOR)`.
 #[target_feature(enable = "vector")]
 pub(crate) unsafe fn crc64_nvme_vgfm_2way(crc: u64, data: &[u8]) -> u64 {
-  crc64_vgfm_2way(
+  // SAFETY: Caller guarantees the s390x vector facility is available (dispatch check).
+  unsafe { crc64_vgfm_2way(
     crc,
     data,
     NVME_FOLD_256B,
     &crate::checksum::common::clmul::CRC64_NVME_CLMUL,
     &super::kernel_tables::NVME_TABLES_16,
-  )
+  ) }
 }
 
 /// CRC-64-NVME using VGFM folding (4-way ILP variant).
@@ -533,14 +598,15 @@ pub(crate) unsafe fn crc64_nvme_vgfm_2way(crc: u64, data: &[u8]) -> u64 {
 /// `crate::platform::caps().has(s390x::VECTOR)`.
 #[target_feature(enable = "vector")]
 pub(crate) unsafe fn crc64_nvme_vgfm_4way(crc: u64, data: &[u8]) -> u64 {
-  crc64_vgfm_4way(
+  // SAFETY: Caller guarantees the s390x vector facility is available (dispatch check).
+  unsafe { crc64_vgfm_4way(
     crc,
     data,
     NVME_FOLD_512B,
     &NVME_COMBINE_4WAY,
     &crate::checksum::common::clmul::CRC64_NVME_CLMUL,
     &super::kernel_tables::NVME_TABLES_16,
-  )
+  ) }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

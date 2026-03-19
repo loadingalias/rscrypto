@@ -12,8 +12,7 @@
 #![allow(dead_code)] // Kernels wired up via dispatcher
 // SAFETY: All indexing is over fixed-size arrays with in-bounds constant indices.
 #![allow(clippy::indexing_slicing)]
-// This module is intrinsics-heavy; keep unsafe blocks readable.
-#![allow(unsafe_op_in_unsafe_fn)]
+// This module is intrinsics-heavy; unsafe blocks are per-function with SAFETY justifications.
 
 use core::{
   arch::asm,

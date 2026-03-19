@@ -15,7 +15,7 @@
 // (e.g. fixed-size lanes and chunked processing) where bounds are proven by
 // control flow; Clippy cannot always see these invariants.
 #![allow(clippy::indexing_slicing)]
-#![allow(unsafe_op_in_unsafe_fn)]
+// This module is intrinsics-heavy; unsafe blocks are per-function with SAFETY justifications.
 
 use core::{arch::aarch64::*, ptr};
 
@@ -37,62 +37,68 @@ const CRC32C_SHIFT8_MATRIX: Gf2Matrix32 = generate_shift8_matrix_32(CRC32C_POLY)
 #[inline]
 #[target_feature(enable = "crc")]
 unsafe fn crc32_armv8(crc: u32, data: &[u8]) -> u32 {
-  let mut state = crc;
-  let mut buf = data.as_ptr();
-  let mut len = data.len();
+  // SAFETY: Caller guarantees ARMv8 CRC extension is available (dispatch check).
+  // All pointer arithmetic stays within `data` bounds: `buf` starts at data.as_ptr(),
+  // `len` tracks remaining bytes, and each loop guard ensures sufficient bytes remain.
+  // All CRC intrinsics operate on values read from valid memory.
+  unsafe {
+    let mut state = crc;
+    let mut buf = data.as_ptr();
+    let mut len = data.len();
 
-  // Align to 8-byte boundary for the hot loop.
-  while len > 0 && (buf as usize & 7) != 0 {
-    state = __crc32b(state, *buf);
-    buf = buf.add(1);
-    len = len.strict_sub(1);
+    // Align to 8-byte boundary for the hot loop.
+    while len > 0 && (buf as usize & 7) != 0 {
+      state = __crc32b(state, *buf);
+      buf = buf.add(1);
+      len = len.strict_sub(1);
+    }
+
+    while len >= 64 {
+      state = __crc32d(state, ptr::read_unaligned(buf as *const u64));
+      state = __crc32d(state, ptr::read_unaligned(buf.add(8) as *const u64));
+      state = __crc32d(state, ptr::read_unaligned(buf.add(16) as *const u64));
+      state = __crc32d(state, ptr::read_unaligned(buf.add(24) as *const u64));
+      state = __crc32d(state, ptr::read_unaligned(buf.add(32) as *const u64));
+      state = __crc32d(state, ptr::read_unaligned(buf.add(40) as *const u64));
+      state = __crc32d(state, ptr::read_unaligned(buf.add(48) as *const u64));
+      state = __crc32d(state, ptr::read_unaligned(buf.add(56) as *const u64));
+      buf = buf.add(64);
+      len = len.strict_sub(64);
+    }
+
+    while len >= 32 {
+      state = __crc32d(state, ptr::read_unaligned(buf as *const u64));
+      state = __crc32d(state, ptr::read_unaligned(buf.add(8) as *const u64));
+      state = __crc32d(state, ptr::read_unaligned(buf.add(16) as *const u64));
+      state = __crc32d(state, ptr::read_unaligned(buf.add(24) as *const u64));
+      buf = buf.add(32);
+      len = len.strict_sub(32);
+    }
+
+    while len >= 8 {
+      state = __crc32d(state, ptr::read_unaligned(buf as *const u64));
+      buf = buf.add(8);
+      len = len.strict_sub(8);
+    }
+
+    if len >= 4 {
+      state = __crc32w(state, ptr::read_unaligned(buf as *const u32));
+      buf = buf.add(4);
+      len = len.strict_sub(4);
+    }
+
+    if len >= 2 {
+      state = __crc32h(state, ptr::read_unaligned(buf as *const u16));
+      buf = buf.add(2);
+      len = len.strict_sub(2);
+    }
+
+    if len > 0 {
+      state = __crc32b(state, *buf);
+    }
+
+    state
   }
-
-  while len >= 64 {
-    state = __crc32d(state, ptr::read_unaligned(buf as *const u64));
-    state = __crc32d(state, ptr::read_unaligned(buf.add(8) as *const u64));
-    state = __crc32d(state, ptr::read_unaligned(buf.add(16) as *const u64));
-    state = __crc32d(state, ptr::read_unaligned(buf.add(24) as *const u64));
-    state = __crc32d(state, ptr::read_unaligned(buf.add(32) as *const u64));
-    state = __crc32d(state, ptr::read_unaligned(buf.add(40) as *const u64));
-    state = __crc32d(state, ptr::read_unaligned(buf.add(48) as *const u64));
-    state = __crc32d(state, ptr::read_unaligned(buf.add(56) as *const u64));
-    buf = buf.add(64);
-    len = len.strict_sub(64);
-  }
-
-  while len >= 32 {
-    state = __crc32d(state, ptr::read_unaligned(buf as *const u64));
-    state = __crc32d(state, ptr::read_unaligned(buf.add(8) as *const u64));
-    state = __crc32d(state, ptr::read_unaligned(buf.add(16) as *const u64));
-    state = __crc32d(state, ptr::read_unaligned(buf.add(24) as *const u64));
-    buf = buf.add(32);
-    len = len.strict_sub(32);
-  }
-
-  while len >= 8 {
-    state = __crc32d(state, ptr::read_unaligned(buf as *const u64));
-    buf = buf.add(8);
-    len = len.strict_sub(8);
-  }
-
-  if len >= 4 {
-    state = __crc32w(state, ptr::read_unaligned(buf as *const u32));
-    buf = buf.add(4);
-    len = len.strict_sub(4);
-  }
-
-  if len >= 2 {
-    state = __crc32h(state, ptr::read_unaligned(buf as *const u16));
-    buf = buf.add(2);
-    len = len.strict_sub(2);
-  }
-
-  if len > 0 {
-    state = __crc32b(state, *buf);
-  }
-
-  state
 }
 
 /// CRC-32C (Castagnoli) update using ARMv8 CRC extension.
@@ -101,62 +107,68 @@ unsafe fn crc32_armv8(crc: u32, data: &[u8]) -> u32 {
 #[inline]
 #[target_feature(enable = "crc")]
 unsafe fn crc32c_armv8(crc: u32, data: &[u8]) -> u32 {
-  let mut state = crc;
-  let mut buf = data.as_ptr();
-  let mut len = data.len();
+  // SAFETY: Caller guarantees ARMv8 CRC extension is available (dispatch check).
+  // All pointer arithmetic stays within `data` bounds: `buf` starts at data.as_ptr(),
+  // `len` tracks remaining bytes, and each loop guard ensures sufficient bytes remain.
+  // All CRC intrinsics operate on values read from valid memory.
+  unsafe {
+    let mut state = crc;
+    let mut buf = data.as_ptr();
+    let mut len = data.len();
 
-  // Align to 8-byte boundary for the hot loop.
-  while len > 0 && (buf as usize & 7) != 0 {
-    state = __crc32cb(state, *buf);
-    buf = buf.add(1);
-    len = len.strict_sub(1);
+    // Align to 8-byte boundary for the hot loop.
+    while len > 0 && (buf as usize & 7) != 0 {
+      state = __crc32cb(state, *buf);
+      buf = buf.add(1);
+      len = len.strict_sub(1);
+    }
+
+    while len >= 64 {
+      state = __crc32cd(state, ptr::read_unaligned(buf as *const u64));
+      state = __crc32cd(state, ptr::read_unaligned(buf.add(8) as *const u64));
+      state = __crc32cd(state, ptr::read_unaligned(buf.add(16) as *const u64));
+      state = __crc32cd(state, ptr::read_unaligned(buf.add(24) as *const u64));
+      state = __crc32cd(state, ptr::read_unaligned(buf.add(32) as *const u64));
+      state = __crc32cd(state, ptr::read_unaligned(buf.add(40) as *const u64));
+      state = __crc32cd(state, ptr::read_unaligned(buf.add(48) as *const u64));
+      state = __crc32cd(state, ptr::read_unaligned(buf.add(56) as *const u64));
+      buf = buf.add(64);
+      len = len.strict_sub(64);
+    }
+
+    while len >= 32 {
+      state = __crc32cd(state, ptr::read_unaligned(buf as *const u64));
+      state = __crc32cd(state, ptr::read_unaligned(buf.add(8) as *const u64));
+      state = __crc32cd(state, ptr::read_unaligned(buf.add(16) as *const u64));
+      state = __crc32cd(state, ptr::read_unaligned(buf.add(24) as *const u64));
+      buf = buf.add(32);
+      len = len.strict_sub(32);
+    }
+
+    while len >= 8 {
+      state = __crc32cd(state, ptr::read_unaligned(buf as *const u64));
+      buf = buf.add(8);
+      len = len.strict_sub(8);
+    }
+
+    if len >= 4 {
+      state = __crc32cw(state, ptr::read_unaligned(buf as *const u32));
+      buf = buf.add(4);
+      len = len.strict_sub(4);
+    }
+
+    if len >= 2 {
+      state = __crc32ch(state, ptr::read_unaligned(buf as *const u16));
+      buf = buf.add(2);
+      len = len.strict_sub(2);
+    }
+
+    if len > 0 {
+      state = __crc32cb(state, *buf);
+    }
+
+    state
   }
-
-  while len >= 64 {
-    state = __crc32cd(state, ptr::read_unaligned(buf as *const u64));
-    state = __crc32cd(state, ptr::read_unaligned(buf.add(8) as *const u64));
-    state = __crc32cd(state, ptr::read_unaligned(buf.add(16) as *const u64));
-    state = __crc32cd(state, ptr::read_unaligned(buf.add(24) as *const u64));
-    state = __crc32cd(state, ptr::read_unaligned(buf.add(32) as *const u64));
-    state = __crc32cd(state, ptr::read_unaligned(buf.add(40) as *const u64));
-    state = __crc32cd(state, ptr::read_unaligned(buf.add(48) as *const u64));
-    state = __crc32cd(state, ptr::read_unaligned(buf.add(56) as *const u64));
-    buf = buf.add(64);
-    len = len.strict_sub(64);
-  }
-
-  while len >= 32 {
-    state = __crc32cd(state, ptr::read_unaligned(buf as *const u64));
-    state = __crc32cd(state, ptr::read_unaligned(buf.add(8) as *const u64));
-    state = __crc32cd(state, ptr::read_unaligned(buf.add(16) as *const u64));
-    state = __crc32cd(state, ptr::read_unaligned(buf.add(24) as *const u64));
-    buf = buf.add(32);
-    len = len.strict_sub(32);
-  }
-
-  while len >= 8 {
-    state = __crc32cd(state, ptr::read_unaligned(buf as *const u64));
-    buf = buf.add(8);
-    len = len.strict_sub(8);
-  }
-
-  if len >= 4 {
-    state = __crc32cw(state, ptr::read_unaligned(buf as *const u32));
-    buf = buf.add(4);
-    len = len.strict_sub(4);
-  }
-
-  if len >= 2 {
-    state = __crc32ch(state, ptr::read_unaligned(buf as *const u16));
-    buf = buf.add(2);
-    len = len.strict_sub(2);
-  }
-
-  if len > 0 {
-    state = __crc32cb(state, *buf);
-  }
-
-  state
 }
 
 /// Safe wrapper for CRC-32 ARMv8 CRC extension kernel.
@@ -182,64 +194,70 @@ pub fn crc32c_armv8_safe(crc: u32, data: &[u8]) -> u32 {
 unsafe fn crc32_armv8_nway<const N: usize>(crc: u32, data: &[u8]) -> u32 {
   debug_assert!(N == 2 || N == 3);
 
-  let len = data.len();
-  if len < N.strict_mul(256) {
-    return crc32_armv8(crc, data);
-  }
-
-  let chunk_len = len / N;
-  let mut lanes = [!0u32; N];
-
-  let mut i: usize = 0;
-  while i < chunk_len {
-    if i.strict_add(8) <= chunk_len {
-      let mut lane_idx: usize = 0;
-      while lane_idx < N {
-        let base = lane_idx.strict_mul(chunk_len).strict_add(i);
-        lanes[lane_idx] = __crc32d(
-          lanes[lane_idx],
-          ptr::read_unaligned(data.as_ptr().add(base) as *const u64),
-        );
-        lane_idx = lane_idx.strict_add(1);
-      }
-      i = i.strict_add(8);
-    } else {
-      let mut lane_idx: usize = 0;
-      while lane_idx < N {
-        let base = lane_idx.strict_mul(chunk_len).strict_add(i);
-        lanes[lane_idx] = __crc32b(lanes[lane_idx], *data.get_unchecked(base));
-        lane_idx = lane_idx.strict_add(1);
-      }
-      i = i.strict_add(1);
+  // SAFETY: Caller guarantees ARMv8 CRC extension is available (dispatch check).
+  // All pointer arithmetic stays within `data` bounds: `base` is computed from
+  // `lane_idx * chunk_len + i` which is always < len. Loop guards ensure sufficient
+  // bytes remain for 8-byte and 1-byte reads. get_unchecked calls use validated indices.
+  unsafe {
+    let len = data.len();
+    if len < N.strict_mul(256) {
+      return crc32_armv8(crc, data);
     }
-  }
 
-  let tail_start = chunk_len.strict_mul(N);
-  if tail_start < len {
-    lanes[N - 1] = crc32_armv8(lanes[N - 1], data.get_unchecked(tail_start..));
-  }
+    let chunk_len = len / N;
+    let mut lanes = [!0u32; N];
 
-  let mut data_crc_final: u32 = 0;
-  let mut lane_idx: usize = 0;
-  while lane_idx < N {
-    let lane_len = if lane_idx.strict_add(1) == N {
-      len.strict_sub(chunk_len.strict_mul(lane_idx))
-    } else {
-      chunk_len
-    };
-    data_crc_final = crate::checksum::common::combine::combine_crc32(
-      data_crc_final,
-      lanes[lane_idx] ^ !0,
-      lane_len,
-      CRC32_SHIFT8_MATRIX,
-    );
-    lane_idx = lane_idx.strict_add(1);
-  }
+    let mut i: usize = 0;
+    while i < chunk_len {
+      if i.strict_add(8) <= chunk_len {
+        let mut lane_idx: usize = 0;
+        while lane_idx < N {
+          let base = lane_idx.strict_mul(chunk_len).strict_add(i);
+          lanes[lane_idx] = __crc32d(
+            lanes[lane_idx],
+            ptr::read_unaligned(data.as_ptr().add(base) as *const u64),
+          );
+          lane_idx = lane_idx.strict_add(1);
+        }
+        i = i.strict_add(8);
+      } else {
+        let mut lane_idx: usize = 0;
+        while lane_idx < N {
+          let base = lane_idx.strict_mul(chunk_len).strict_add(i);
+          lanes[lane_idx] = __crc32b(lanes[lane_idx], *data.get_unchecked(base));
+          lane_idx = lane_idx.strict_add(1);
+        }
+        i = i.strict_add(1);
+      }
+    }
 
-  let boundary_final = crc ^ !0;
-  let combined_final =
-    crate::checksum::common::combine::combine_crc32(boundary_final, data_crc_final, len, CRC32_SHIFT8_MATRIX);
-  combined_final ^ !0
+    let tail_start = chunk_len.strict_mul(N);
+    if tail_start < len {
+      lanes[N - 1] = crc32_armv8(lanes[N - 1], data.get_unchecked(tail_start..));
+    }
+
+    let mut data_crc_final: u32 = 0;
+    let mut lane_idx: usize = 0;
+    while lane_idx < N {
+      let lane_len = if lane_idx.strict_add(1) == N {
+        len.strict_sub(chunk_len.strict_mul(lane_idx))
+      } else {
+        chunk_len
+      };
+      data_crc_final = crate::checksum::common::combine::combine_crc32(
+        data_crc_final,
+        lanes[lane_idx] ^ !0,
+        lane_len,
+        CRC32_SHIFT8_MATRIX,
+      );
+      lane_idx = lane_idx.strict_add(1);
+    }
+
+    let boundary_final = crc ^ !0;
+    let combined_final =
+      crate::checksum::common::combine::combine_crc32(boundary_final, data_crc_final, len, CRC32_SHIFT8_MATRIX);
+    combined_final ^ !0
+  }
 }
 
 #[inline]
@@ -247,64 +265,70 @@ unsafe fn crc32_armv8_nway<const N: usize>(crc: u32, data: &[u8]) -> u32 {
 unsafe fn crc32c_armv8_nway<const N: usize>(crc: u32, data: &[u8]) -> u32 {
   debug_assert!(N == 2 || N == 3);
 
-  let len = data.len();
-  if len < N.strict_mul(256) {
-    return crc32c_armv8(crc, data);
-  }
-
-  let chunk_len = len / N;
-  let mut lanes = [!0u32; N];
-
-  let mut i: usize = 0;
-  while i < chunk_len {
-    if i.strict_add(8) <= chunk_len {
-      let mut lane_idx: usize = 0;
-      while lane_idx < N {
-        let base = lane_idx.strict_mul(chunk_len).strict_add(i);
-        lanes[lane_idx] = __crc32cd(
-          lanes[lane_idx],
-          ptr::read_unaligned(data.as_ptr().add(base) as *const u64),
-        );
-        lane_idx = lane_idx.strict_add(1);
-      }
-      i = i.strict_add(8);
-    } else {
-      let mut lane_idx: usize = 0;
-      while lane_idx < N {
-        let base = lane_idx.strict_mul(chunk_len).strict_add(i);
-        lanes[lane_idx] = __crc32cb(lanes[lane_idx], *data.get_unchecked(base));
-        lane_idx = lane_idx.strict_add(1);
-      }
-      i = i.strict_add(1);
+  // SAFETY: Caller guarantees ARMv8 CRC extension is available (dispatch check).
+  // All pointer arithmetic stays within `data` bounds: `base` is computed from
+  // `lane_idx * chunk_len + i` which is always < len. Loop guards ensure sufficient
+  // bytes remain for 8-byte and 1-byte reads. get_unchecked calls use validated indices.
+  unsafe {
+    let len = data.len();
+    if len < N.strict_mul(256) {
+      return crc32c_armv8(crc, data);
     }
-  }
 
-  let tail_start = chunk_len.strict_mul(N);
-  if tail_start < len {
-    lanes[N - 1] = crc32c_armv8(lanes[N - 1], data.get_unchecked(tail_start..));
-  }
+    let chunk_len = len / N;
+    let mut lanes = [!0u32; N];
 
-  let mut data_crc_final: u32 = 0;
-  let mut lane_idx: usize = 0;
-  while lane_idx < N {
-    let lane_len = if lane_idx.strict_add(1) == N {
-      len.strict_sub(chunk_len.strict_mul(lane_idx))
-    } else {
-      chunk_len
-    };
-    data_crc_final = crate::checksum::common::combine::combine_crc32(
-      data_crc_final,
-      lanes[lane_idx] ^ !0,
-      lane_len,
-      CRC32C_SHIFT8_MATRIX,
-    );
-    lane_idx = lane_idx.strict_add(1);
-  }
+    let mut i: usize = 0;
+    while i < chunk_len {
+      if i.strict_add(8) <= chunk_len {
+        let mut lane_idx: usize = 0;
+        while lane_idx < N {
+          let base = lane_idx.strict_mul(chunk_len).strict_add(i);
+          lanes[lane_idx] = __crc32cd(
+            lanes[lane_idx],
+            ptr::read_unaligned(data.as_ptr().add(base) as *const u64),
+          );
+          lane_idx = lane_idx.strict_add(1);
+        }
+        i = i.strict_add(8);
+      } else {
+        let mut lane_idx: usize = 0;
+        while lane_idx < N {
+          let base = lane_idx.strict_mul(chunk_len).strict_add(i);
+          lanes[lane_idx] = __crc32cb(lanes[lane_idx], *data.get_unchecked(base));
+          lane_idx = lane_idx.strict_add(1);
+        }
+        i = i.strict_add(1);
+      }
+    }
 
-  let boundary_final = crc ^ !0;
-  let combined_final =
-    crate::checksum::common::combine::combine_crc32(boundary_final, data_crc_final, len, CRC32C_SHIFT8_MATRIX);
-  combined_final ^ !0
+    let tail_start = chunk_len.strict_mul(N);
+    if tail_start < len {
+      lanes[N - 1] = crc32c_armv8(lanes[N - 1], data.get_unchecked(tail_start..));
+    }
+
+    let mut data_crc_final: u32 = 0;
+    let mut lane_idx: usize = 0;
+    while lane_idx < N {
+      let lane_len = if lane_idx.strict_add(1) == N {
+        len.strict_sub(chunk_len.strict_mul(lane_idx))
+      } else {
+        chunk_len
+      };
+      data_crc_final = crate::checksum::common::combine::combine_crc32(
+        data_crc_final,
+        lanes[lane_idx] ^ !0,
+        lane_len,
+        CRC32C_SHIFT8_MATRIX,
+      );
+      lane_idx = lane_idx.strict_add(1);
+    }
+
+    let boundary_final = crc ^ !0;
+    let combined_final =
+      crate::checksum::common::combine::combine_crc32(boundary_final, data_crc_final, len, CRC32C_SHIFT8_MATRIX);
+    combined_final ^ !0
+  }
 }
 
 #[inline]
@@ -521,6 +545,8 @@ pub fn crc32c_iscsi_sve2_pmull_small_safe(crc: u32, data: &[u8]) -> u32 {
 #[inline]
 #[target_feature(enable = "aes")]
 unsafe fn clmul_lo(a: uint64x2_t, b: uint64x2_t) -> uint64x2_t {
+  // SAFETY: Caller guarantees NEON+AES (PMULL) is available.
+  // vmull_p64, vgetq_lane_u64, vreinterpretq_u64_p128 are safe with target_feature on the fn.
   let result = vmull_p64(vgetq_lane_u64(a, 0), vgetq_lane_u64(b, 0));
   vreinterpretq_u64_p128(result)
 }
@@ -528,6 +554,7 @@ unsafe fn clmul_lo(a: uint64x2_t, b: uint64x2_t) -> uint64x2_t {
 #[inline]
 #[target_feature(enable = "aes")]
 unsafe fn clmul_hi(a: uint64x2_t, b: uint64x2_t) -> uint64x2_t {
+  // SAFETY: Caller guarantees NEON+AES (PMULL) is available.
   let result = vmull_p64(vgetq_lane_u64(a, 1), vgetq_lane_u64(b, 1));
   vreinterpretq_u64_p128(result)
 }
@@ -535,6 +562,7 @@ unsafe fn clmul_hi(a: uint64x2_t, b: uint64x2_t) -> uint64x2_t {
 #[inline]
 #[target_feature(enable = "aes")]
 unsafe fn clmul_scalar(a: u32, b: u32) -> uint64x2_t {
+  // SAFETY: Caller guarantees NEON+AES (PMULL) is available.
   let result = vmull_p64(a as u64, b as u64);
   vreinterpretq_u64_p128(result)
 }
@@ -542,13 +570,15 @@ unsafe fn clmul_scalar(a: u32, b: u32) -> uint64x2_t {
 #[inline]
 #[target_feature(enable = "aes")]
 unsafe fn clmul_lo_and_xor(a: uint64x2_t, b: uint64x2_t, c: uint64x2_t) -> uint64x2_t {
-  veorq_u64(clmul_lo(a, b), c)
+  // SAFETY: Caller guarantees NEON+AES (PMULL) is available. All intrinsics operate on registers.
+  unsafe { veorq_u64(clmul_lo(a, b), c) }
 }
 
 #[inline]
 #[target_feature(enable = "aes")]
 unsafe fn clmul_hi_and_xor(a: uint64x2_t, b: uint64x2_t, c: uint64x2_t) -> uint64x2_t {
-  veorq_u64(clmul_hi(a, b), c)
+  // SAFETY: Caller guarantees NEON+AES (PMULL) is available. All intrinsics operate on registers.
+  unsafe { veorq_u64(clmul_hi(a, b), c) }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -558,6 +588,11 @@ unsafe fn clmul_hi_and_xor(a: uint64x2_t, b: uint64x2_t, c: uint64x2_t) -> uint6
 #[inline]
 #[target_feature(enable = "crc,aes")]
 unsafe fn crc32c_iscsi_pmull_v12e_v1(mut crc0: u32, mut buf: *const u8, mut len: usize) -> u32 {
+  // SAFETY: Caller guarantees CRC+AES (PMULL) target features are available (dispatch check).
+  // `buf` points into a valid buffer of at least `len` bytes (guaranteed by caller).
+  // All pointer arithmetic stays within bounds via loop guards on `len`.
+  // All SIMD intrinsics operate on valid register values after loads.
+  unsafe {
   while len > 0 && (buf as usize & 7) != 0 {
     crc0 = __crc32cb(crc0, *buf);
     buf = buf.add(1);
@@ -697,6 +732,7 @@ unsafe fn crc32c_iscsi_pmull_v12e_v1(mut crc0: u32, mut buf: *const u8, mut len:
   }
 
   crc0
+  } // unsafe
 }
 
 /// Safe wrapper for CRC-32C fusion kernel (CRC+PMULL v12e_v1).
@@ -713,6 +749,11 @@ pub fn crc32c_iscsi_pmull_v12e_v1_safe(crc: u32, data: &[u8]) -> u32 {
 #[inline]
 #[target_feature(enable = "crc,aes")]
 unsafe fn crc32_iso_hdlc_pmull_v12e_v1(mut crc0: u32, mut buf: *const u8, mut len: usize) -> u32 {
+  // SAFETY: Caller guarantees CRC+AES (PMULL) target features are available (dispatch check).
+  // `buf` points into a valid buffer of at least `len` bytes (guaranteed by caller).
+  // All pointer arithmetic stays within bounds via loop guards on `len`.
+  // All SIMD intrinsics operate on valid register values after loads.
+  unsafe {
   while len > 0 && (buf as usize & 7) != 0 {
     crc0 = __crc32b(crc0, *buf);
     buf = buf.add(1);
@@ -852,6 +893,7 @@ unsafe fn crc32_iso_hdlc_pmull_v12e_v1(mut crc0: u32, mut buf: *const u8, mut le
   }
 
   crc0
+  } // unsafe
 }
 
 /// Safe wrapper for CRC-32 fusion kernel (CRC+PMULL v12e_v1).
@@ -867,12 +909,18 @@ pub fn crc32_iso_hdlc_pmull_v12e_v1_safe(crc: u32, data: &[u8]) -> u32 {
 
 #[inline]
 unsafe fn xor3_u64x2(a: uint64x2_t, b: uint64x2_t, c: uint64x2_t) -> uint64x2_t {
-  veorq_u64(veorq_u64(a, b), c)
+  // SAFETY: Caller guarantees NEON is available. veorq_u64 operates on registers.
+  unsafe { veorq_u64(veorq_u64(a, b), c) }
 }
 
 #[inline]
 #[target_feature(enable = "crc,aes")]
 unsafe fn crc32c_iscsi_pmull_v9s3x2e_s3(mut crc0: u32, mut buf: *const u8, mut len: usize) -> u32 {
+  // SAFETY: Caller guarantees CRC+AES (PMULL) target features are available (dispatch check).
+  // `buf` points into a valid buffer of at least `len` bytes (guaranteed by caller).
+  // All pointer arithmetic stays within bounds via loop guards on `len`.
+  // All SIMD intrinsics operate on valid register values after loads.
+  unsafe {
   // Non-EOR3 equivalent of fast-crc32 neon_eor3 CRC32C (v9s3x2e_s3).
   while len > 0 && (buf as usize & 7) != 0 {
     crc0 = __crc32cb(crc0, *buf);
@@ -1061,6 +1109,7 @@ unsafe fn crc32c_iscsi_pmull_v9s3x2e_s3(mut crc0: u32, mut buf: *const u8, mut l
   }
 
   crc0
+  } // unsafe
 }
 
 /// Safe wrapper for CRC-32C fusion kernel (CRC+PMULL, no EOR3).
@@ -1073,6 +1122,11 @@ pub fn crc32c_iscsi_pmull_v9s3x2e_s3_safe(crc: u32, data: &[u8]) -> u32 {
 #[inline]
 #[target_feature(enable = "crc,aes")]
 unsafe fn crc32_iso_hdlc_pmull_v9s3x2e_s3(mut crc0: u32, mut buf: *const u8, mut len: usize) -> u32 {
+  // SAFETY: Caller guarantees CRC+AES (PMULL) target features are available (dispatch check).
+  // `buf` points into a valid buffer of at least `len` bytes (guaranteed by caller).
+  // All pointer arithmetic stays within bounds via loop guards on `len`.
+  // All SIMD intrinsics operate on valid register values after loads.
+  unsafe {
   // Non-EOR3 equivalent of fast-crc32 neon_eor3 ISO-HDLC (v9s3x2e_s3).
   while len > 0 && (buf as usize & 7) != 0 {
     crc0 = __crc32b(crc0, *buf);
@@ -1261,6 +1315,7 @@ unsafe fn crc32_iso_hdlc_pmull_v9s3x2e_s3(mut crc0: u32, mut buf: *const u8, mut
   }
 
   crc0
+  } // unsafe
 }
 
 /// Safe wrapper for CRC-32 fusion kernel (CRC+PMULL, no EOR3).
@@ -1277,6 +1332,11 @@ pub fn crc32_iso_hdlc_pmull_v9s3x2e_s3_safe(crc: u32, data: &[u8]) -> u32 {
 #[inline]
 #[target_feature(enable = "crc,aes,sha3")]
 unsafe fn crc32c_iscsi_pmull_eor3_v9s3x2e_s3(mut crc0: u32, mut buf: *const u8, mut len: usize) -> u32 {
+  // SAFETY: Caller guarantees CRC+AES+SHA3 (PMULL+EOR3) target features are available (dispatch check).
+  // `buf` points into a valid buffer of at least `len` bytes (guaranteed by caller).
+  // All pointer arithmetic stays within bounds via loop guards on `len`.
+  // All SIMD intrinsics operate on valid register values after loads.
+  unsafe {
   // Ported from fast-crc32 neon_eor3 CRC32C (v9s3x2e_s3).
   while len > 0 && (buf as usize & 7) != 0 {
     crc0 = __crc32cb(crc0, *buf);
@@ -1459,17 +1519,21 @@ unsafe fn crc32c_iscsi_pmull_eor3_v9s3x2e_s3(mut crc0: u32, mut buf: *const u8, 
   }
 
   crc0
+  } // unsafe
 }
 
 #[inline]
 #[target_feature(enable = "aes")]
 unsafe fn crc_shift_iscsi(crc: u32, nbytes: usize) -> uint64x2_t {
-  clmul_scalar(crc, xnmodp_crc32_iscsi((nbytes.strict_mul(8).strict_sub(33)) as u64))
+  // SAFETY: Caller guarantees AES (PMULL) is available. clmul_scalar operates on registers.
+  unsafe { clmul_scalar(crc, xnmodp_crc32_iscsi((nbytes.strict_mul(8).strict_sub(33)) as u64)) }
 }
 
 #[inline]
 #[target_feature(enable = "crc,aes")]
 unsafe fn xnmodp_crc32_iscsi(mut n: u64) -> u32 {
+  // SAFETY: Caller guarantees CRC+AES target features are available (dispatch check).
+  // All CRC and NEON intrinsics operate on scalar/register values; no memory access.
   let mut stack = !1u64;
   let mut acc: u32;
   let mut low: u32;
@@ -1511,6 +1575,11 @@ pub fn crc32c_iscsi_pmull_eor3_v9s3x2e_s3_safe(crc: u32, data: &[u8]) -> u32 {
 #[inline]
 #[target_feature(enable = "crc,aes,sha3")]
 unsafe fn crc32_iso_hdlc_pmull_eor3_v9s3x2e_s3(mut crc0: u32, mut buf: *const u8, mut len: usize) -> u32 {
+  // SAFETY: Caller guarantees CRC+AES+SHA3 (PMULL+EOR3) target features are available (dispatch check).
+  // `buf` points into a valid buffer of at least `len` bytes (guaranteed by caller).
+  // All pointer arithmetic stays within bounds via loop guards on `len`.
+  // All SIMD intrinsics operate on valid register values after loads.
+  unsafe {
   // Ported from fast-crc32 neon_eor3 ISO-HDLC (v9s3x2e_s3).
   while len > 0 && (buf as usize & 7) != 0 {
     crc0 = __crc32b(crc0, *buf);
@@ -1693,17 +1762,21 @@ unsafe fn crc32_iso_hdlc_pmull_eor3_v9s3x2e_s3(mut crc0: u32, mut buf: *const u8
   }
 
   crc0
+  } // unsafe
 }
 
 #[inline]
 #[target_feature(enable = "aes")]
 unsafe fn crc_shift_iso_hdlc(crc: u32, nbytes: usize) -> uint64x2_t {
-  clmul_scalar(crc, xnmodp_iso_hdlc((nbytes.strict_mul(8).strict_sub(33)) as u64))
+  // SAFETY: Caller guarantees AES (PMULL) is available. clmul_scalar operates on registers.
+  unsafe { clmul_scalar(crc, xnmodp_iso_hdlc((nbytes.strict_mul(8).strict_sub(33)) as u64)) }
 }
 
 #[inline]
 #[target_feature(enable = "crc,aes")]
 unsafe fn xnmodp_iso_hdlc(mut n: u64) -> u32 {
+  // SAFETY: Caller guarantees CRC+AES target features are available (dispatch check).
+  // All CRC and NEON intrinsics operate on scalar/register values; no memory access.
   let mut stack = !1u64;
   let mut acc: u32;
   let mut low: u32;
