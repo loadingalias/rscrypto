@@ -55,8 +55,6 @@ pub const ALL: &[Sha512KernelId] = &[
   Sha512KernelId::WasmSimd128,
   #[cfg(target_arch = "s390x")]
   Sha512KernelId::S390xKimd,
-  #[cfg(target_arch = "powerpc64")]
-  Sha512KernelId::Ppc64Crypto,
 ];
 
 impl Sha512KernelId {
