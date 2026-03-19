@@ -4,7 +4,6 @@
 // Prefetch instructions are hints to the CPU and cannot cause memory unsafety;
 // invalid addresses are silently ignored.
 #![allow(unsafe_code)]
-#![allow(unsafe_op_in_unsafe_fn)]
 //! This module provides platform-tuned prefetch constants and inline helpers
 //! for optimal memory access patterns in large-buffer CRC computation.
 //!
@@ -111,7 +110,11 @@ mod x86_64_impl {
   /// invalid addresses are silently ignored by the CPU.
   #[inline(always)]
   pub(crate) unsafe fn prefetch_read_l1(ptr: *const u8) {
-    _mm_prefetch(ptr.cast::<i8>(), _MM_HINT_T0);
+    // SAFETY: Prefetch is a CPU hint; invalid addresses are silently ignored.
+    // The _mm_prefetch intrinsic cannot cause memory unsafety.
+    unsafe {
+      _mm_prefetch(ptr.cast::<i8>(), _MM_HINT_T0);
+    }
   }
 
   /// Prefetch data for read into L2 cache (less temporal).
@@ -125,7 +128,11 @@ mod x86_64_impl {
   #[inline(always)]
   #[allow(dead_code)]
   pub(crate) unsafe fn prefetch_read_l2(ptr: *const u8) {
-    _mm_prefetch(ptr.cast::<i8>(), _MM_HINT_T1);
+    // SAFETY: Prefetch is a CPU hint; invalid addresses are silently ignored.
+    // The _mm_prefetch intrinsic cannot cause memory unsafety.
+    unsafe {
+      _mm_prefetch(ptr.cast::<i8>(), _MM_HINT_T1);
+    }
   }
 
   /// Prefetch data for read, non-temporal (streaming).
@@ -139,7 +146,11 @@ mod x86_64_impl {
   #[inline(always)]
   #[allow(dead_code)]
   pub(crate) unsafe fn prefetch_read_nta(ptr: *const u8) {
-    _mm_prefetch(ptr.cast::<i8>(), _MM_HINT_NTA);
+    // SAFETY: Prefetch is a CPU hint; invalid addresses are silently ignored.
+    // The _mm_prefetch intrinsic cannot cause memory unsafety.
+    unsafe {
+      _mm_prefetch(ptr.cast::<i8>(), _MM_HINT_NTA);
+    }
   }
 
   /// Prefetch for the next iteration of a double-unrolled loop.
@@ -153,9 +164,12 @@ mod x86_64_impl {
   #[inline(always)]
   #[allow(dead_code)]
   pub(crate) unsafe fn prefetch_for_next_iteration(ptr: *const u8) {
-    // Use wrapping pointer arithmetic: prefetch addresses are allowed to be
-    // out-of-bounds, but `ptr.add()` would be UB unless in-bounds.
-    prefetch_read_l1(ptr.wrapping_add(super::LARGE_BLOCK_DISTANCE));
+    // SAFETY: Delegates to prefetch_read_l1 which is a CPU hint.
+    // wrapping_add is used because prefetch addresses may be out-of-bounds,
+    // which is safe for prefetch instructions (silently ignored by hardware).
+    unsafe {
+      prefetch_read_l1(ptr.wrapping_add(super::LARGE_BLOCK_DISTANCE));
+    }
   }
 }
 
@@ -182,13 +196,18 @@ mod aarch64_impl {
   /// invalid addresses are silently ignored by the CPU.
   #[inline(always)]
   pub(crate) unsafe fn prefetch_read_l1(ptr: *const u8) {
-    // PRFM PLDL1KEEP, [ptr]
-    // Encoding: PLDL1KEEP = 0b00000 (type=0, target=0, policy=0)
-    core::arch::asm!(
-      "prfm pldl1keep, [{ptr}]",
-      ptr = in(reg) ptr,
-      options(nostack, preserves_flags)
-    );
+    // SAFETY: Inline assembly for PRFM prefetch hint. Prefetch instructions
+    // are CPU hints that cannot cause memory unsafety; invalid addresses
+    // are silently ignored by the hardware.
+    unsafe {
+      // PRFM PLDL1KEEP, [ptr]
+      // Encoding: PLDL1KEEP = 0b00000 (type=0, target=0, policy=0)
+      core::arch::asm!(
+        "prfm pldl1keep, [{ptr}]",
+        ptr = in(reg) ptr,
+        options(nostack, preserves_flags)
+      );
+    }
   }
 
   /// Prefetch data for read into L2 cache (PLDL2KEEP).
@@ -199,11 +218,16 @@ mod aarch64_impl {
   #[inline(always)]
   #[allow(dead_code)]
   pub(crate) unsafe fn prefetch_read_l2(ptr: *const u8) {
-    core::arch::asm!(
-      "prfm pldl2keep, [{ptr}]",
-      ptr = in(reg) ptr,
-      options(nostack, preserves_flags)
-    );
+    // SAFETY: Inline assembly for PRFM prefetch hint. Prefetch instructions
+    // are CPU hints that cannot cause memory unsafety; invalid addresses
+    // are silently ignored by the hardware.
+    unsafe {
+      core::arch::asm!(
+        "prfm pldl2keep, [{ptr}]",
+        ptr = in(reg) ptr,
+        options(nostack, preserves_flags)
+      );
+    }
   }
 
   /// Prefetch data for read, streaming (PLDL1STRM).
@@ -216,11 +240,16 @@ mod aarch64_impl {
   #[inline(always)]
   #[allow(dead_code)]
   pub(crate) unsafe fn prefetch_read_stream(ptr: *const u8) {
-    core::arch::asm!(
-      "prfm pldl1strm, [{ptr}]",
-      ptr = in(reg) ptr,
-      options(nostack, preserves_flags)
-    );
+    // SAFETY: Inline assembly for PRFM prefetch hint. Prefetch instructions
+    // are CPU hints that cannot cause memory unsafety; invalid addresses
+    // are silently ignored by the hardware.
+    unsafe {
+      core::arch::asm!(
+        "prfm pldl1strm, [{ptr}]",
+        ptr = in(reg) ptr,
+        options(nostack, preserves_flags)
+      );
+    }
   }
 
   /// Prefetch for the next iteration of a double-unrolled loop.
@@ -231,9 +260,12 @@ mod aarch64_impl {
   #[inline(always)]
   #[allow(dead_code)]
   pub(crate) unsafe fn prefetch_for_next_iteration(ptr: *const u8) {
-    // Use wrapping pointer arithmetic: prefetch addresses are allowed to be
-    // out-of-bounds, but `ptr.add()` would be UB unless in-bounds.
-    prefetch_read_l1(ptr.wrapping_add(super::LARGE_BLOCK_DISTANCE));
+    // SAFETY: Delegates to prefetch_read_l1 which is a CPU hint.
+    // wrapping_add is used because prefetch addresses may be out-of-bounds,
+    // which is safe for prefetch instructions (silently ignored by hardware).
+    unsafe {
+      prefetch_read_l1(ptr.wrapping_add(super::LARGE_BLOCK_DISTANCE));
+    }
   }
 }
 
