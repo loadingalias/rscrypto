@@ -1,61 +1,34 @@
-use core::hint::black_box;
+use criterion::{BenchmarkGroup, Throughput, measurement::WallTime};
 
-/// Deterministic, fast pseudo-random generator suitable for benchmarks.
-///
-/// This is *not* cryptographically secure; it's only used to avoid unrealistic
-/// all-zero / highly-structured benchmark inputs.
-#[inline]
-fn xorshift64star(state: &mut u64) -> u64 {
-  let mut x = *state;
-  x ^= x >> 12;
-  x ^= x << 25;
-  x ^= x >> 27;
-  *state = x;
-  x.wrapping_mul(0x2545F4914F6CDD1D)
-}
-
-pub fn pseudo_random_bytes(len: usize, seed: u64) -> Vec<u8> {
-  let mut state = seed ^ (len as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
-  let mut out = vec![0u8; len];
-  for b in &mut out {
-    *b = (xorshift64star(&mut state) >> 56) as u8;
-  }
-  // Help ensure the compiler can't assume anything about the contents.
-  black_box(&out);
-  out
-}
-
-pub fn sized_inputs() -> Vec<(usize, Vec<u8>)> {
-  // Includes a few edge cases and a selection of "real-world-ish" payload sizes.
-  let sizes = [
-    0usize,
-    1,
-    3,
-    8,
-    16,
-    31,
-    32,
-    63,
-    64,
-    65,
-    128,
-    256,
-    1024,
-    4 * 1024,
-    16 * 1024,
-    64 * 1024,
-    1024 * 1024,
-  ];
-  sizes
-    .into_iter()
-    .map(|len| (len, pseudo_random_bytes(len, 0xD1CE_B00C_D15C_0FFE)))
+/// Deterministic pseudo-random bytes for reproducible benchmarks.
+pub fn random_bytes(len: usize) -> Vec<u8> {
+  let mut state: u64 = (len as u64) ^ 0x517c_c1b7_2722_0a95;
+  (0..len)
+    .map(|_| {
+      state ^= state << 13;
+      state ^= state >> 7;
+      state ^= state << 17;
+      state = state.wrapping_mul(0x2545_F491_4F6C_DD1D);
+      (state >> 56) as u8
+    })
     .collect()
 }
 
-pub fn set_throughput(group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>, len: usize) {
-  if len == 0 {
-    group.throughput(criterion::Throughput::Elements(1));
-  } else {
-    group.throughput(criterion::Throughput::Bytes(len as u64));
+/// Focused size matrix for comparison benchmarks.
+///
+/// Covers: overhead (0B, 1B), small (32B), block boundary (64B),
+/// medium (256B, 1 KiB), page-aligned (4 KiB), in-cache (64 KiB),
+/// throughput (1 MiB).
+pub fn comp_sizes() -> Vec<(usize, Vec<u8>)> {
+  [0, 1, 32, 64, 256, 1024, 4096, 65536, 1048576]
+    .into_iter()
+    .map(|len| (len, random_bytes(len)))
+    .collect()
+}
+
+/// Set criterion throughput for a benchmark group.
+pub fn set_throughput(group: &mut BenchmarkGroup<'_, WallTime>, len: usize) {
+  if len > 0 {
+    group.throughput(Throughput::Bytes(len as u64));
   }
 }

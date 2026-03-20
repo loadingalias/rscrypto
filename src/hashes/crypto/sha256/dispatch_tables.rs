@@ -1,7 +1,7 @@
 //! Tuned dispatch tables for SHA-256.
 //!
-//! SHA-NI and ARM SHA2 CE have negligible setup cost — use HW accel for all
-//! size classes when available.
+//! SHA-NI, ARM SHA2 CE, KIMD, and vshasigmaw have negligible setup cost —
+//! use HW accel for all size classes when available.
 
 pub use super::kernels::Sha256KernelId as KernelId;
 use crate::platform::Caps;
@@ -78,6 +78,24 @@ pub static WASM_SIMD128_TABLE: DispatchTable = DispatchTable {
   l: KernelId::WasmSimd128,
 };
 
+#[cfg(target_arch = "s390x")]
+pub static S390X_KIMD_TABLE: DispatchTable = DispatchTable {
+  boundaries: DEFAULT_BOUNDARIES,
+  xs: KernelId::S390xKimd,
+  s: KernelId::S390xKimd,
+  m: KernelId::S390xKimd,
+  l: KernelId::S390xKimd,
+};
+
+#[cfg(target_arch = "powerpc64")]
+pub static PPC64_CRYPTO_TABLE: DispatchTable = DispatchTable {
+  boundaries: DEFAULT_BOUNDARIES,
+  xs: KernelId::Ppc64Crypto,
+  s: KernelId::Ppc64Crypto,
+  m: KernelId::Ppc64Crypto,
+  l: KernelId::Ppc64Crypto,
+};
+
 #[inline]
 #[must_use]
 pub fn select_runtime_table(#[allow(unused_variables)] caps: Caps) -> &'static DispatchTable {
@@ -107,6 +125,20 @@ pub fn select_runtime_table(#[allow(unused_variables)] caps: Caps) -> &'static D
     use crate::platform::caps::wasm;
     if caps.has(wasm::SIMD128) {
       return &WASM_SIMD128_TABLE;
+    }
+  }
+  #[cfg(target_arch = "s390x")]
+  {
+    use crate::platform::caps::s390x;
+    if caps.has(s390x::MSA) {
+      return &S390X_KIMD_TABLE;
+    }
+  }
+  #[cfg(target_arch = "powerpc64")]
+  {
+    use crate::platform::caps::power;
+    if caps.has(power::POWER8_CRYPTO) {
+      return &PPC64_CRYPTO_TABLE;
     }
   }
   &DEFAULT_TABLE

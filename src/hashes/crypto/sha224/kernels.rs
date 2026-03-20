@@ -3,8 +3,12 @@
 pub(crate) use crate::hashes::crypto::sha256::kernels::CompressBlocksFn;
 #[cfg(target_arch = "aarch64")]
 use crate::platform::caps::aarch64;
+#[cfg(target_arch = "powerpc64")]
+use crate::platform::caps::power;
 #[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
 use crate::platform::caps::riscv;
+#[cfg(target_arch = "s390x")]
+use crate::platform::caps::s390x;
 #[cfg(target_arch = "wasm32")]
 use crate::platform::caps::wasm;
 #[cfg(target_arch = "x86_64")]
@@ -24,6 +28,10 @@ pub enum Sha224KernelId {
   RiscvZknh = 3,
   #[cfg(target_arch = "wasm32")]
   WasmSimd128 = 4,
+  #[cfg(target_arch = "s390x")]
+  S390xKimd = 5,
+  #[cfg(target_arch = "powerpc64")]
+  Ppc64Crypto = 6,
 }
 
 #[cfg(any(test, feature = "std"))]
@@ -37,6 +45,10 @@ pub const ALL: &[Sha224KernelId] = &[
   Sha224KernelId::RiscvZknh,
   #[cfg(target_arch = "wasm32")]
   Sha224KernelId::WasmSimd128,
+  #[cfg(target_arch = "s390x")]
+  Sha224KernelId::S390xKimd,
+  #[cfg(target_arch = "powerpc64")]
+  Sha224KernelId::Ppc64Crypto,
 ];
 
 impl Sha224KernelId {
@@ -53,6 +65,10 @@ impl Sha224KernelId {
       Self::RiscvZknh => "riscv/zknh",
       #[cfg(target_arch = "wasm32")]
       Self::WasmSimd128 => "wasm/simd128",
+      #[cfg(target_arch = "s390x")]
+      Self::S390xKimd => "s390x/kimd",
+      #[cfg(target_arch = "powerpc64")]
+      Self::Ppc64Crypto => "ppc64/crypto",
     }
   }
 }
@@ -70,6 +86,10 @@ pub fn id_from_name(name: &str) -> Option<Sha224KernelId> {
     "riscv/zknh" => Some(Sha224KernelId::RiscvZknh),
     #[cfg(target_arch = "wasm32")]
     "wasm/simd128" => Some(Sha224KernelId::WasmSimd128),
+    #[cfg(target_arch = "s390x")]
+    "s390x/kimd" => Some(Sha224KernelId::S390xKimd),
+    #[cfg(target_arch = "powerpc64")]
+    "ppc64/crypto" => Some(Sha224KernelId::Ppc64Crypto),
     _ => None,
   }
 }
@@ -95,6 +115,14 @@ pub(crate) fn compress_blocks_fn(id: Sha224KernelId) -> CompressBlocksFn {
     Sha224KernelId::WasmSimd128 => crate::hashes::crypto::sha256::kernels::compress_blocks_fn(
       crate::hashes::crypto::sha256::kernels::Sha256KernelId::WasmSimd128,
     ),
+    #[cfg(target_arch = "s390x")]
+    Sha224KernelId::S390xKimd => crate::hashes::crypto::sha256::kernels::compress_blocks_fn(
+      crate::hashes::crypto::sha256::kernels::Sha256KernelId::S390xKimd,
+    ),
+    #[cfg(target_arch = "powerpc64")]
+    Sha224KernelId::Ppc64Crypto => crate::hashes::crypto::sha256::kernels::compress_blocks_fn(
+      crate::hashes::crypto::sha256::kernels::Sha256KernelId::Ppc64Crypto,
+    ),
   }
 }
 
@@ -111,5 +139,9 @@ pub const fn required_caps(id: Sha224KernelId) -> Caps {
     Sha224KernelId::RiscvZknh => riscv::ZKNH,
     #[cfg(target_arch = "wasm32")]
     Sha224KernelId::WasmSimd128 => wasm::SIMD128,
+    #[cfg(target_arch = "s390x")]
+    Sha224KernelId::S390xKimd => s390x::MSA,
+    #[cfg(target_arch = "powerpc64")]
+    Sha224KernelId::Ppc64Crypto => power::POWER8_CRYPTO,
   }
 }
