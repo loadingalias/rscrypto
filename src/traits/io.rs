@@ -137,8 +137,11 @@ fn write_and_update<W>(inner: &mut W, buf: &[u8], mut on_data: impl FnMut(&[u8])
 where
   W: std::io::Write,
 {
-  on_data(buf);
-  inner.write(buf)
+  let n = inner.write(buf)?;
+  if let Some(data) = buf.get(..n) {
+    on_data(data);
+  }
+  Ok(n)
 }
 
 #[cfg(feature = "std")]
@@ -151,10 +154,19 @@ fn write_vectored_and_update<W>(
 where
   W: std::io::Write,
 {
+  let n = inner.write_vectored(bufs)?;
+  let mut remaining = n;
   for buf in bufs {
-    on_data(buf);
+    let to_hash = remaining.min(buf.len());
+    if to_hash == 0 {
+      break;
+    }
+    if let Some(data) = buf.get(..to_hash) {
+      on_data(data);
+    }
+    remaining = remaining.strict_sub(to_hash);
   }
-  inner.write_vectored(bufs)
+  Ok(n)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -299,11 +311,10 @@ impl<R: std::io::Read, C: crate::Checksum> std::io::Read for ChecksumReader<R, C
 /// All writes to this type pass through to the inner writer while
 /// updating the checksum with the bytes being written.
 ///
-/// # Important: Hash-Then-Write Order
+/// # Partial Write Semantics
 ///
-/// The checksum is updated **before** writing to the inner writer.
-/// This ensures that if the write fails, the caller knows exactly
-/// what data was hashed vs what was successfully written.
+/// The checksum is updated with only the bytes the inner writer reports as
+/// successfully written. Short writes do not hash unwritten bytes.
 ///
 /// # Type Parameters
 ///
@@ -564,11 +575,10 @@ impl<R: std::io::Read, D: crate::Digest> std::io::Read for DigestReader<R, D> {
 /// All writes to this type pass through to the inner writer while
 /// updating the digest with the bytes being written.
 ///
-/// # Important: Hash-Then-Write Order
+/// # Partial Write Semantics
 ///
-/// The digest is updated **before** writing to the inner writer.
-/// This ensures that if the write fails, the caller knows exactly
-/// what data was hashed vs what was successfully written.
+/// The digest is updated with only the bytes the inner writer reports as
+/// successfully written. Short writes do not hash unwritten bytes.
 ///
 /// # Type Parameters
 ///
@@ -686,5 +696,170 @@ impl<W: std::io::Write, D: crate::Digest> std::io::Write for DigestWriter<W, D> 
   #[inline]
   fn write_vectored(&mut self, bufs: &[std::io::IoSlice<'_>]) -> std::io::Result<usize> {
     write_vectored_and_update(&mut self.inner, bufs, |data| self.hasher.update(data))
+  }
+}
+
+#[cfg(all(test, feature = "std"))]
+mod tests {
+  use std::io::{self, IoSlice, Write};
+
+  use super::{ChecksumWriter, DigestWriter};
+  use crate::{Checksum, Digest};
+
+  #[derive(Clone, Copy, Debug, Default)]
+  struct Sum(u32);
+
+  impl Checksum for Sum {
+    const OUTPUT_SIZE: usize = 4;
+    type Output = u32;
+
+    fn new() -> Self {
+      Self(0)
+    }
+
+    fn with_initial(initial: Self::Output) -> Self {
+      Self(initial)
+    }
+
+    fn update(&mut self, data: &[u8]) {
+      self.0 = data.iter().fold(self.0, |acc, &b| acc.wrapping_add(u32::from(b)));
+    }
+
+    fn finalize(&self) -> Self::Output {
+      self.0
+    }
+
+    fn reset(&mut self) {
+      self.0 = 0;
+    }
+  }
+
+  #[derive(Clone, Copy, Debug, Default)]
+  struct SumDigest(u8);
+
+  impl Digest for SumDigest {
+    const OUTPUT_SIZE: usize = 4;
+    type Output = [u8; 4];
+
+    fn new() -> Self {
+      Self(0)
+    }
+
+    fn update(&mut self, data: &[u8]) {
+      self.0 = data.iter().fold(self.0, |acc, &b| acc.wrapping_add(b));
+    }
+
+    fn finalize(&self) -> Self::Output {
+      [self.0; 4]
+    }
+
+    fn reset(&mut self) {
+      self.0 = 0;
+    }
+  }
+
+  #[derive(Debug, Default)]
+  struct PartialWriter {
+    inner: Vec<u8>,
+    max_per_call: usize,
+  }
+
+  impl PartialWriter {
+    fn new(max_per_call: usize) -> Self {
+      Self {
+        inner: Vec::new(),
+        max_per_call,
+      }
+    }
+  }
+
+  impl Write for PartialWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+      let written = self.max_per_call.min(buf.len());
+      self.inner.extend_from_slice(&buf[..written]);
+      Ok(written)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+      Ok(())
+    }
+
+    fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
+      let mut remaining = self.max_per_call;
+      let mut written = 0usize;
+
+      for buf in bufs {
+        let take = remaining.min(buf.len());
+        if take == 0 {
+          break;
+        }
+        self.inner.extend_from_slice(&buf[..take]);
+        written = written.strict_add(take);
+        remaining = remaining.strict_sub(take);
+      }
+
+      Ok(written)
+    }
+  }
+
+  #[inline]
+  fn checksum_sum(data: &[u8]) -> u32 {
+    data.iter().fold(0u32, |acc, &b| acc.wrapping_add(u32::from(b)))
+  }
+
+  #[inline]
+  fn digest_sum(data: &[u8]) -> [u8; 4] {
+    let sum = data.iter().fold(0u8, |acc, &b| acc.wrapping_add(b));
+    [sum; 4]
+  }
+
+  #[test]
+  fn checksum_writer_hashes_only_written_prefix() {
+    let mut writer = ChecksumWriter::<_, Sum>::new(PartialWriter::new(4));
+    let written = writer.write(b"abcdef").unwrap();
+    assert_eq!(written, 4);
+    assert_eq!(writer.crc(), checksum_sum(b"abcd"));
+
+    let (inner, checksum) = writer.into_parts();
+    assert_eq!(inner.inner, b"abcd");
+    assert_eq!(checksum, checksum_sum(b"abcd"));
+  }
+
+  #[test]
+  fn checksum_writer_vectored_hashes_only_written_prefix() {
+    let mut writer = ChecksumWriter::<_, Sum>::new(PartialWriter::new(5));
+    let bufs = [IoSlice::new(b"ab"), IoSlice::new(b"cdef"), IoSlice::new(b"gh")];
+    let written = writer.write_vectored(&bufs).unwrap();
+    assert_eq!(written, 5);
+    assert_eq!(writer.crc(), checksum_sum(b"abcde"));
+
+    let (inner, checksum) = writer.into_parts();
+    assert_eq!(inner.inner, b"abcde");
+    assert_eq!(checksum, checksum_sum(b"abcde"));
+  }
+
+  #[test]
+  fn digest_writer_hashes_only_written_prefix() {
+    let mut writer = DigestWriter::<_, SumDigest>::new(PartialWriter::new(3));
+    let written = writer.write(b"abcdef").unwrap();
+    assert_eq!(written, 3);
+    assert_eq!(writer.digest(), digest_sum(b"abc"));
+
+    let (inner, digest) = writer.into_parts();
+    assert_eq!(inner.inner, b"abc");
+    assert_eq!(digest, digest_sum(b"abc"));
+  }
+
+  #[test]
+  fn digest_writer_vectored_hashes_only_written_prefix() {
+    let mut writer = DigestWriter::<_, SumDigest>::new(PartialWriter::new(6));
+    let bufs = [IoSlice::new(b"ab"), IoSlice::new(b"cdef"), IoSlice::new(b"ghij")];
+    let written = writer.write_vectored(&bufs).unwrap();
+    assert_eq!(written, 6);
+    assert_eq!(writer.digest(), digest_sum(b"abcdef"));
+
+    let (inner, digest) = writer.into_parts();
+    assert_eq!(inner.inner, b"abcdef");
+    assert_eq!(digest, digest_sum(b"abcdef"));
   }
 }

@@ -172,6 +172,64 @@ impl<T: Copy> OnceCache<T> {
       f()
     }
   }
+
+  /// Get a reference to the cached value, initializing with `f` if not yet set.
+  ///
+  /// On std and no_std with atomics, this returns a stable reference to the
+  /// cached data. On targets without atomics, this is unsupported because
+  /// caching is not available there.
+  #[inline]
+  pub fn get_or_init_ref(&self, f: impl FnOnce() -> T) -> &T {
+    #[cfg(feature = "std")]
+    {
+      self.inner.get_or_init(f)
+    }
+
+    #[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
+    {
+      use core::sync::atomic::Ordering;
+
+      let state = self.state.load(Ordering::Acquire);
+      if state != Self::READY {
+        if state == Self::UNINIT {
+          if self
+            .state
+            .compare_exchange(Self::UNINIT, Self::INITING, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+          {
+            let value = f();
+            // SAFETY: We hold exclusive access during INITING state.
+            #[allow(unsafe_code)]
+            unsafe {
+              (*self.value.get()).write(value);
+            }
+            self.state.store(Self::READY, Ordering::Release);
+          } else {
+            while self.state.load(Ordering::Acquire) != Self::READY {
+              core::hint::spin_loop();
+            }
+          }
+        } else {
+          while self.state.load(Ordering::Acquire) != Self::READY {
+            core::hint::spin_loop();
+          }
+        }
+      }
+
+      // SAFETY: Value is initialized when state is READY, and the pointer
+      // remains valid for the lifetime of `self`.
+      #[allow(unsafe_code)]
+      unsafe {
+        &*(*self.value.get()).as_ptr()
+      }
+    }
+
+    #[cfg(all(not(feature = "std"), not(target_has_atomic = "ptr")))]
+    {
+      let _ = f;
+      unreachable!("OnceCache::get_or_init_ref not supported on targets without atomics");
+    }
+  }
 }
 
 impl<T: Copy> Default for OnceCache<T> {
@@ -190,61 +248,15 @@ impl<T: Copy> Default for OnceCache<T> {
 /// selected kernel functions together. See module documentation for
 /// platform-specific behavior.
 pub struct PolicyCache<P: Copy, K: Copy> {
-  #[cfg(feature = "std")]
-  inner: std::sync::OnceLock<(P, K)>,
-
-  #[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
-  state: core::sync::atomic::AtomicU8,
-  #[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
-  value: UnsafeCell<MaybeUninit<(P, K)>>,
-
-  // PhantomData<*const T> makes this !Send + !Sync on no-atomic targets.
-  #[cfg(all(not(feature = "std"), not(target_has_atomic = "ptr")))]
-  _marker: core::marker::PhantomData<*const (P, K)>,
+  inner: OnceCache<(P, K)>,
 }
 
-// ─── Send/Sync for PolicyCache ───────────────────────────────────────────────
-//
-// Same strategy as OnceCache:
-// - std: auto-derived from OnceLock
-// - no_std+atomics: only unsafe impl Sync (UnsafeCell is !Sync)
-// - no_std without atomics: unsafe impl Sync (single-threaded targets)
-
-#[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
-// SAFETY: Same atomic state machine guarantees as OnceCache.
-// See the OnceCache Sync impl for detailed justification.
-#[allow(unsafe_code)]
-unsafe impl<P: Copy + Sync, K: Copy + Sync> Sync for PolicyCache<P, K> {}
-
-#[cfg(all(not(feature = "std"), not(target_has_atomic = "ptr")))]
-// SAFETY: Same single-threaded target justification as OnceCache.
-// See the OnceCache Sync impl for detailed justification.
-#[allow(unsafe_code)]
-unsafe impl<P: Copy + Sync, K: Copy + Sync> Sync for PolicyCache<P, K> {}
-
 impl<P: Copy, K: Copy> PolicyCache<P, K> {
-  /// State constants for the atomic state machine
-  #[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
-  const UNINIT: u8 = 0;
-  #[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
-  const INITING: u8 = 1;
-  #[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
-  const READY: u8 = 2;
-
   /// Create a new empty cache.
   #[must_use]
   pub const fn new() -> Self {
     Self {
-      #[cfg(feature = "std")]
-      inner: std::sync::OnceLock::new(),
-
-      #[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
-      state: core::sync::atomic::AtomicU8::new(0),
-      #[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
-      value: UnsafeCell::new(MaybeUninit::uninit()),
-
-      #[cfg(all(not(feature = "std"), not(target_has_atomic = "ptr")))]
-      _marker: core::marker::PhantomData,
+      inner: OnceCache::new(),
     }
   }
 
@@ -257,56 +269,7 @@ impl<P: Copy, K: Copy> PolicyCache<P, K> {
   /// Returns the cached value by copy (since P and K are Copy).
   #[inline]
   pub fn get_or_init(&self, f: impl FnOnce() -> (P, K)) -> (P, K) {
-    #[cfg(feature = "std")]
-    {
-      *self.inner.get_or_init(f)
-    }
-
-    #[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
-    {
-      use core::sync::atomic::Ordering;
-
-      let state = self.state.load(Ordering::Acquire);
-      if state == Self::READY {
-        // SAFETY: Value is initialized when state is READY
-        #[allow(unsafe_code)]
-        return unsafe { (*self.value.get()).assume_init() };
-      }
-
-      if state == Self::UNINIT {
-        if self
-          .state
-          .compare_exchange(Self::UNINIT, Self::INITING, Ordering::AcqRel, Ordering::Acquire)
-          .is_ok()
-        {
-          let value = f();
-          // SAFETY: We hold exclusive access during INITING state
-          #[allow(unsafe_code)]
-          unsafe {
-            (*self.value.get()).write(value);
-          }
-          self.state.store(Self::READY, Ordering::Release);
-          return value;
-        }
-      }
-
-      // Another thread is initializing - spin wait
-      while self.state.load(Ordering::Acquire) != Self::READY {
-        core::hint::spin_loop();
-      }
-      // SAFETY: Value is initialized when state is READY
-      #[allow(unsafe_code)]
-      unsafe {
-        (*self.value.get()).assume_init()
-      }
-    }
-
-    #[cfg(all(not(feature = "std"), not(target_has_atomic = "ptr")))]
-    {
-      // No caching available - compute every time
-      // This is acceptable for single-threaded embedded targets
-      f()
-    }
+    self.inner.get_or_init(f)
   }
 
   /// Get a reference to the cached value, initializing with `f` if not yet set.
@@ -316,61 +279,8 @@ impl<P: Copy, K: Copy> PolicyCache<P, K> {
   /// On no_std without atomics, this panics (those targets don't have SIMD anyway).
   #[inline]
   pub fn get_or_init_ref(&self, f: impl FnOnce() -> (P, K)) -> (&P, &K) {
-    #[cfg(feature = "std")]
-    {
-      let cached = self.inner.get_or_init(f);
-      (&cached.0, &cached.1)
-    }
-
-    #[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
-    {
-      use core::sync::atomic::Ordering;
-
-      let state = self.state.load(Ordering::Acquire);
-      if state != Self::READY {
-        if state == Self::UNINIT {
-          if self
-            .state
-            .compare_exchange(Self::UNINIT, Self::INITING, Ordering::AcqRel, Ordering::Acquire)
-            .is_ok()
-          {
-            let value = f();
-            // SAFETY: We hold exclusive access during INITING state
-            #[allow(unsafe_code)]
-            unsafe {
-              (*self.value.get()).write(value);
-            }
-            self.state.store(Self::READY, Ordering::Release);
-          } else {
-            // Another thread is initializing - spin wait
-            while self.state.load(Ordering::Acquire) != Self::READY {
-              core::hint::spin_loop();
-            }
-          }
-        } else {
-          // Another thread is initializing - spin wait
-          while self.state.load(Ordering::Acquire) != Self::READY {
-            core::hint::spin_loop();
-          }
-        }
-      }
-
-      // SAFETY: Value is initialized when state is READY
-      #[allow(unsafe_code)]
-      unsafe {
-        let ptr = (*self.value.get()).as_ptr();
-        (&(*ptr).0, &(*ptr).1)
-      }
-    }
-
-    // Note: This arm is cfg'd out because thumbv6m targets don't have CRC SIMD.
-    // If future no-atomic targets need caching, we'd need a different approach.
-    #[cfg(all(not(feature = "std"), not(target_has_atomic = "ptr")))]
-    {
-      // Unreachable in practice - no-atomic targets are thumbv6m which don't have SIMD
-      let _ = f;
-      unreachable!("PolicyCache::get_or_init_ref not supported on targets without atomics");
-    }
+    let cached = self.inner.get_or_init_ref(f);
+    (&cached.0, &cached.1)
   }
 }
 
