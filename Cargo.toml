@@ -91,36 +91,40 @@ crc64fast-nvme = "1.2.1"
 
 # Hash oracle crates
 blake3 = { version = "1.8.3", default-features = false, features = ["std", "rayon"] }
-sha2 = { version = "0.10.9", default-features = false, features = ["std", "force-soft"] }
+sha2 = { version = "0.10.9", default-features = false, features = ["std"] }
 sha3 = "0.10.8"
 xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
-rapidhash = "4.3.0"
+rapidhash = "4.4.1"
 tiny-keccak = { version = "2.0.2", features = ["kmac"] }
 ascon-hash256 = "0.5.0-rc.2"
 digest = { version = "0.10.7", features = ["dev"] }
-
-[[bench]]
-name = "checksum_comp"
-harness = false
-
-[[bench]]
-name = "checksum_kernels"
-harness = false
-
-[[bench]]
-name = "hashes_comp"
-harness = false
-
-[[bench]]
-name = "hashes_kernels"
-harness = false
 
 [[bench]]
 name = "blake3"
 harness = false
 
 [[bench]]
-name = "blake3_short_input_attribution"
+name = "sha2"
+harness = false
+
+[[bench]]
+name = "sha3"
+harness = false
+
+[[bench]]
+name = "ascon"
+harness = false
+
+[[bench]]
+name = "xxh3"
+harness = false
+
+[[bench]]
+name = "rapidhash"
+harness = false
+
+[[bench]]
+name = "crc"
 harness = false
 
 [[example]]

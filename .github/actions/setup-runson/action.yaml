@@ -35,7 +35,7 @@ runs:
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     - name: Setup RunsOn MagicCache
       if: inputs.enable-cache == 'true'
-      uses: runs-on/action@cd2b598b0515d39d78c38a02d529db87d2196d1e  # v2
+      uses: runs-on/action@742bf56072eb4845a0f94b3394673e4903c90ff0  # v2
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # CPU Detection - Critical for tuning table generation
@@ -160,7 +160,7 @@ runs:
         echo "Toolchain: $TOOLCHAIN"
 
     - name: Install Rust Toolchain
-      uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561  # master
+      uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9  # master
       with:
         toolchain: ${{ steps.toolchain.outputs.version }}
         components: clippy, rustfmt

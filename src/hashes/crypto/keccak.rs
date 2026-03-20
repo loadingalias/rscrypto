@@ -53,7 +53,9 @@ const RC: [u64; KECCAKF_ROUNDS] = [
   0x8000_0000_8000_8008,
 ];
 
-#[inline(always)]
+// `#[inline]` (not `always`) — the function body is large and must not be
+// duplicated at every call site. See the loop comment below.
+#[inline]
 pub(crate) fn keccakf_portable(state: &mut [u64; 25]) {
   let mut a0 = state[0];
   let mut a1 = state[1];
@@ -193,30 +195,13 @@ pub(crate) fn keccakf_portable(state: &mut [u64; 25]) {
     }};
   }
 
-  round!(RC[0]);
-  round!(RC[1]);
-  round!(RC[2]);
-  round!(RC[3]);
-  round!(RC[4]);
-  round!(RC[5]);
-  round!(RC[6]);
-  round!(RC[7]);
-  round!(RC[8]);
-  round!(RC[9]);
-  round!(RC[10]);
-  round!(RC[11]);
-  round!(RC[12]);
-  round!(RC[13]);
-  round!(RC[14]);
-  round!(RC[15]);
-  round!(RC[16]);
-  round!(RC[17]);
-  round!(RC[18]);
-  round!(RC[19]);
-  round!(RC[20]);
-  round!(RC[21]);
-  round!(RC[22]);
-  round!(RC[23]);
+  // Loop over 24 rounds. Keeping the outer loop NOT unrolled is critical:
+  // the round body is ~110 scalar ops, so full unrolling produces ~10-15 KB
+  // of machine code and causes severe I-cache pressure. A compact loop body
+  // fits comfortably in L1i and lets the branch predictor handle the back-edge.
+  for &rc in &RC {
+    round!(rc);
+  }
 
   state[0] = a0;
   state[1] = a1;
