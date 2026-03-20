@@ -62,6 +62,7 @@ pub fn verify_ascon_p12_kernels(data: &[u8]) -> Result<(), &'static str> {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::hashes::crypto::ascon::kernels::simd_degree;
 
   #[test]
   fn run_all_agree() {
@@ -92,5 +93,67 @@ mod tests {
     let mut exp_xof = [0u8; 64];
     reader.read(&mut exp_xof);
     assert_eq!(ours_xof, exp_xof);
+  }
+
+  #[test]
+  fn digest_many_matches_scalar() {
+    let caps = crate::platform::caps();
+    let inputs_storage = [
+      vec![0xA3; 4096],
+      vec![0x5C; 4096],
+      vec![0x11; 4096],
+      vec![0xF0; 4096],
+      vec![0x37; 4096],
+    ];
+    let inputs: Vec<&[u8]> = inputs_storage.iter().map(Vec::as_slice).collect();
+
+    for &id in ALL {
+      if simd_degree(id) == 1 || !caps.has(required_caps(id)) {
+        continue;
+      }
+
+      let mut batch = [[0u8; 32]; 5];
+      crate::hashes::crypto::AsconHash256::digest_many_with_kernel(id, &inputs, &mut batch);
+
+      for (input, actual) in inputs.iter().zip(batch.iter()) {
+        let expected = crate::hashes::crypto::AsconHash256::digest_with_kernel(id, input);
+        assert_eq!(*actual, expected, "digest_many mismatch for {}", id.as_str());
+      }
+    }
+  }
+
+  #[test]
+  fn xof_many_matches_scalar() {
+    let caps = crate::platform::caps();
+    let out_len = 64usize;
+    let inputs_storage = [
+      vec![0x42; 4096],
+      vec![0x24; 4096],
+      vec![0x99; 4096],
+      vec![0x18; 4096],
+      vec![0x7E; 4096],
+    ];
+    let inputs: Vec<&[u8]> = inputs_storage.iter().map(Vec::as_slice).collect();
+
+    for &id in ALL {
+      if simd_degree(id) == 1 || !caps.has(required_caps(id)) {
+        continue;
+      }
+
+      let mut batch = vec![0u8; inputs.len() * out_len];
+      crate::hashes::crypto::AsconXof128::hash_many_into_with_kernel(id, &inputs, out_len, &mut batch);
+
+      for (index, input) in inputs.iter().enumerate() {
+        let mut expected = vec![0u8; out_len];
+        crate::hashes::crypto::AsconXof128::hash_into_with_kernel(id, input, &mut expected);
+        let base = index * out_len;
+        assert_eq!(
+          &batch[base..base + out_len],
+          expected.as_slice(),
+          "xof_many mismatch for {}",
+          id.as_str()
+        );
+      }
+    }
   }
 }

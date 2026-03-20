@@ -9,15 +9,21 @@ use crate::{
   traits::{Digest, Xof},
 };
 
+#[cfg(target_arch = "aarch64")]
+mod aarch64;
 #[doc(hidden)]
 pub mod dispatch;
 #[doc(hidden)]
 pub mod dispatch_tables;
 pub(crate) mod kernels;
+#[cfg(target_arch = "x86_64")]
+mod x86_64_avx2;
+#[cfg(target_arch = "x86_64")]
+mod x86_64_avx512;
 
 const RATE: usize = 8;
 
-trait Permuter: Copy + Default {
+trait Permuter: Copy {
   fn permute(self, state: &mut [u64; 5], len_hint: usize);
 }
 
@@ -43,14 +49,16 @@ impl Permuter for DispatchPermuter {
 }
 
 #[cfg(any(test, feature = "std"))]
-#[derive(Clone, Copy, Default)]
-struct PortablePermuter;
+#[derive(Clone, Copy)]
+struct FixedPermuter {
+  permute: fn(&mut [u64; 5]),
+}
 
 #[cfg(any(test, feature = "std"))]
-impl Permuter for PortablePermuter {
+impl Permuter for FixedPermuter {
   #[inline(always)]
   fn permute(self, state: &mut [u64; 5], _len_hint: usize) {
-    permute_12_portable(state);
+    (self.permute)(state);
   }
 }
 
@@ -144,7 +152,7 @@ struct Sponge<P: Permuter, const IV0: u64, const IV1: u64, const IV2: u64, const
   permuter: P,
 }
 
-impl<P: Permuter, const IV0: u64, const IV1: u64, const IV2: u64, const IV3: u64, const IV4: u64> Default
+impl<P: Permuter + Default, const IV0: u64, const IV1: u64, const IV2: u64, const IV3: u64, const IV4: u64> Default
   for Sponge<P, IV0, IV1, IV2, IV3, IV4>
 {
   #[inline]
@@ -234,6 +242,142 @@ impl<P: Permuter, const IV0: u64, const IV1: u64, const IV2: u64, const IV3: u64
   }
 }
 
+#[cfg(any(test, feature = "std"))]
+#[inline]
+fn fixed_sponge<P: Permuter, const IV0: u64, const IV1: u64, const IV2: u64, const IV3: u64, const IV4: u64>(
+  permuter: P,
+) -> Sponge<P, IV0, IV1, IV2, IV3, IV4> {
+  Sponge {
+    state: [IV0, IV1, IV2, IV3, IV4],
+    buf: [0u8; RATE],
+    buf_len: 0,
+    bytes_hint: 0,
+    permuter,
+  }
+}
+
+#[cfg(any(test, feature = "std"))]
+#[inline(always)]
+const fn init_states<const N: usize>(iv: [u64; 5]) -> [[u64; 5]; N] {
+  [iv; N]
+}
+
+#[cfg(any(test, feature = "std"))]
+#[inline(always)]
+fn permute_12_many_portable<const N: usize>(states: &mut [[u64; 5]; N]) {
+  for state in states {
+    permute_12_portable(state);
+  }
+}
+
+#[cfg(any(test, feature = "std"))]
+fn absorb_equal_len_group<const N: usize>(
+  states: &mut [[u64; 5]; N],
+  inputs: &[&[u8]],
+  permute_many: fn(&mut [[u64; 5]; N]),
+) {
+  debug_assert_eq!(inputs.len(), N);
+  let len = inputs[0].len();
+  let full_bytes = len / RATE * RATE;
+
+  for off in (0..full_bytes).step_by(RATE) {
+    for lane in 0..N {
+      let mut block = [0u8; RATE];
+      block.copy_from_slice(&inputs[lane][off..off + RATE]);
+      states[lane][0] ^= u64::from_le_bytes(block);
+    }
+    permute_many(states);
+  }
+
+  let tail_len = len - full_bytes;
+  for lane in 0..N {
+    let mut block = [0u8; RATE];
+    block[..tail_len].copy_from_slice(&inputs[lane][full_bytes..]);
+    states[lane][0] ^= u64::from_le_bytes(block);
+    states[lane][0] ^= pad(tail_len);
+  }
+  permute_many(states);
+}
+
+#[cfg(any(test, feature = "std"))]
+fn squeeze_hash256_group<const N: usize>(
+  states: &mut [[u64; 5]; N],
+  outputs: &mut [[u8; 32]],
+  permute_many: fn(&mut [[u64; 5]; N]),
+) {
+  debug_assert_eq!(outputs.len(), N);
+  let mut off = 0usize;
+  while off < 24 {
+    for lane in 0..N {
+      outputs[lane][off..off + RATE].copy_from_slice(&states[lane][0].to_le_bytes());
+    }
+    permute_many(states);
+    off += RATE;
+  }
+  for lane in 0..N {
+    outputs[lane][24..32].copy_from_slice(&states[lane][0].to_le_bytes());
+  }
+}
+
+#[cfg(any(test, feature = "std"))]
+fn squeeze_xof_group<const N: usize>(
+  states: &mut [[u64; 5]; N],
+  out_len: usize,
+  outputs: &mut [u8],
+  permute_many: fn(&mut [[u64; 5]; N]),
+) {
+  debug_assert_eq!(outputs.len(), N * out_len);
+  let mut produced = 0usize;
+  while produced < out_len {
+    let take = core::cmp::min(RATE, out_len - produced);
+    for lane in 0..N {
+      let base = lane * out_len + produced;
+      outputs[base..base + take].copy_from_slice(&states[lane][0].to_le_bytes()[..take]);
+    }
+    produced += take;
+    if produced < out_len {
+      permute_many(states);
+    }
+  }
+}
+
+#[cfg(any(test, feature = "std"))]
+#[inline]
+fn inputs_have_equal_len(inputs: &[&[u8]]) -> bool {
+  inputs
+    .split_first()
+    .is_none_or(|(first, rest)| rest.iter().all(|input| input.len() == first.len()))
+}
+
+#[cfg(any(test, feature = "std"))]
+fn digest_many_equal_len_group<const N: usize>(
+  inputs: &[&[u8]],
+  outputs: &mut [[u8; 32]],
+  iv: [u64; 5],
+  permute_many: fn(&mut [[u64; 5]; N]),
+) {
+  debug_assert_eq!(inputs.len(), N);
+  debug_assert_eq!(outputs.len(), N);
+  let mut states = init_states::<N>(iv);
+  absorb_equal_len_group(&mut states, inputs, permute_many);
+  squeeze_hash256_group(&mut states, outputs, permute_many);
+}
+
+#[cfg(any(test, feature = "std"))]
+fn xof_many_equal_len_group<const N: usize>(
+  inputs: &[&[u8]],
+  out_len: usize,
+  outputs: &mut [u8],
+  iv: [u64; 5],
+  permute_many: fn(&mut [[u64; 5]; N]),
+) {
+  debug_assert_eq!(inputs.len(), N);
+  debug_assert_eq!(outputs.len(), N * out_len);
+  let mut states = init_states::<N>(iv);
+  absorb_equal_len_group(&mut states, inputs, permute_many);
+  squeeze_xof_group(&mut states, out_len, outputs, permute_many);
+}
+
 /// Ascon-Hash256.
 #[derive(Clone, Default)]
 pub struct AsconHash256 {
@@ -249,29 +393,158 @@ pub struct AsconHash256 {
 
 impl AsconHash256 {
   #[inline]
+  #[cfg(any(test, feature = "std"))]
+  fn batch_kernel_id_for_inputs(inputs: &[&[u8]]) -> kernels::AsconPermute12KernelId {
+    inputs
+      .first()
+      .map_or(kernels::AsconPermute12KernelId::Portable, |first| {
+        let caps = crate::hashes::util::dispatch_caps();
+        let table = dispatch_tables::select_runtime_table(caps);
+        let candidate = table.kernel_for_len(first.len());
+        if caps.has(kernels::required_caps(candidate)) {
+          candidate
+        } else {
+          kernels::AsconPermute12KernelId::Portable
+        }
+      })
+  }
+
+  #[inline]
   #[must_use]
   #[cfg(any(test, feature = "std"))]
-  pub(crate) fn digest_portable(data: &[u8]) -> [u8; 32] {
+  pub(crate) fn digest_with_kernel(kid: kernels::AsconPermute12KernelId, data: &[u8]) -> [u8; 32] {
+    let permute = kernels::permute_fn(kid);
     let mut sponge: Sponge<
-      PortablePermuter,
+      FixedPermuter,
       { HASH256_IV[0] },
       { HASH256_IV[1] },
       { HASH256_IV[2] },
       { HASH256_IV[3] },
       { HASH256_IV[4] },
-    > = Sponge::default();
+    > = fixed_sponge(FixedPermuter { permute });
     sponge.update(data);
 
-    let (mut st, _) = sponge.finalize_state_with_hint();
+    let mut st = sponge.finalize_state();
     let mut out = [0u8; 32];
     let mut off = 0usize;
     while off < 24 {
       out[off..off + 8].copy_from_slice(&st[0].to_le_bytes());
-      permute_12_portable(&mut st);
+      permute(&mut st);
       off += 8;
     }
     out[24..32].copy_from_slice(&st[0].to_le_bytes());
     out
+  }
+
+  /// Multi-message one-shot hashing using an explicitly selected kernel.
+  ///
+  /// `outputs.len()` must equal `inputs.len()`.
+  #[inline]
+  #[cfg(any(test, feature = "std"))]
+  #[doc(hidden)]
+  pub fn digest_many_with_kernel(kid: kernels::AsconPermute12KernelId, inputs: &[&[u8]], outputs: &mut [[u8; 32]]) {
+    assert_eq!(inputs.len(), outputs.len(), "input/output batch length mismatch");
+
+    let degree = kernels::simd_degree(kid);
+    if degree == 1 || inputs.len() < degree || !inputs_have_equal_len(inputs) {
+      for (input, output) in inputs.iter().zip(outputs.iter_mut()) {
+        *output = Self::digest_with_kernel(kid, input);
+      }
+      return;
+    }
+
+    match kid {
+      kernels::AsconPermute12KernelId::Portable => {
+        let mut input_groups = inputs.chunks_exact(1);
+        let mut output_groups = outputs.chunks_exact_mut(1);
+        for (group_inputs, group_outputs) in input_groups.by_ref().zip(output_groups.by_ref()) {
+          digest_many_equal_len_group::<1>(group_inputs, group_outputs, HASH256_IV, permute_12_many_portable::<1>);
+        }
+      }
+      #[cfg(target_arch = "aarch64")]
+      kernels::AsconPermute12KernelId::Aarch64Neon => {
+        let mut input_groups = inputs.chunks_exact(2);
+        let mut output_groups = outputs.chunks_exact_mut(2);
+        for (group_inputs, group_outputs) in input_groups.by_ref().zip(output_groups.by_ref()) {
+          let group_inputs = [group_inputs[0], group_inputs[1]];
+          let group_outputs = <&mut [[u8; 32]; 2]>::try_from(group_outputs).expect("2-output chunk");
+          digest_many_equal_len_group::<2>(
+            &group_inputs,
+            group_outputs,
+            HASH256_IV,
+            aarch64::permute_12_aarch64_neon_x2,
+          );
+        }
+        for (input, output) in input_groups
+          .remainder()
+          .iter()
+          .zip(output_groups.into_remainder().iter_mut())
+        {
+          *output = Self::digest_with_kernel(kid, input);
+        }
+      }
+      #[cfg(target_arch = "x86_64")]
+      kernels::AsconPermute12KernelId::X86Avx2 => {
+        let mut input_groups = inputs.chunks_exact(4);
+        let mut output_groups = outputs.chunks_exact_mut(4);
+        for (group_inputs, group_outputs) in input_groups.by_ref().zip(output_groups.by_ref()) {
+          let group_inputs = [group_inputs[0], group_inputs[1], group_inputs[2], group_inputs[3]];
+          let group_outputs = <&mut [[u8; 32]; 4]>::try_from(group_outputs).expect("4-output chunk");
+          digest_many_equal_len_group::<4>(
+            &group_inputs,
+            group_outputs,
+            HASH256_IV,
+            x86_64_avx2::permute_12_x86_avx2_x4,
+          );
+        }
+        for (input, output) in input_groups
+          .remainder()
+          .iter()
+          .zip(output_groups.into_remainder().iter_mut())
+        {
+          *output = Self::digest_with_kernel(kid, input);
+        }
+      }
+      #[cfg(target_arch = "x86_64")]
+      kernels::AsconPermute12KernelId::X86Avx512 => {
+        let mut input_groups = inputs.chunks_exact(8);
+        let mut output_groups = outputs.chunks_exact_mut(8);
+        for (group_inputs, group_outputs) in input_groups.by_ref().zip(output_groups.by_ref()) {
+          let group_inputs = [
+            group_inputs[0],
+            group_inputs[1],
+            group_inputs[2],
+            group_inputs[3],
+            group_inputs[4],
+            group_inputs[5],
+            group_inputs[6],
+            group_inputs[7],
+          ];
+          let group_outputs = <&mut [[u8; 32]; 8]>::try_from(group_outputs).expect("8-output chunk");
+          digest_many_equal_len_group::<8>(
+            &group_inputs,
+            group_outputs,
+            HASH256_IV,
+            x86_64_avx512::permute_12_x86_avx512_x8,
+          );
+        }
+        for (input, output) in input_groups
+          .remainder()
+          .iter()
+          .zip(output_groups.into_remainder().iter_mut())
+        {
+          *output = Self::digest_with_kernel(kid, input);
+        }
+      }
+    }
+  }
+
+  /// Multi-message one-shot hashing with automatic kernel selection.
+  #[inline]
+  #[cfg(any(test, feature = "std"))]
+  #[doc(hidden)]
+  pub fn digest_many(inputs: &[&[u8]], outputs: &mut [[u8; 32]]) {
+    Self::digest_many_with_kernel(Self::batch_kernel_id_for_inputs(inputs), inputs, outputs);
   }
 }
 
@@ -368,15 +641,16 @@ impl AsconXof128 {
 
   #[inline]
   #[cfg(any(test, feature = "std"))]
-  pub(crate) fn hash_into_portable(data: &[u8], mut out: &mut [u8]) {
+  pub(crate) fn hash_into_with_kernel(kid: kernels::AsconPermute12KernelId, data: &[u8], mut out: &mut [u8]) {
+    let permute = kernels::permute_fn(kid);
     let mut sponge: Sponge<
-      PortablePermuter,
+      FixedPermuter,
       { XOF128_IV[0] },
       { XOF128_IV[1] },
       { XOF128_IV[2] },
       { XOF128_IV[3] },
       { XOF128_IV[4] },
-    > = Sponge::default();
+    > = fixed_sponge(FixedPermuter { permute });
     sponge.update(data);
     let mut state = sponge.finalize_state();
 
@@ -385,7 +659,7 @@ impl AsconXof128 {
     while !out.is_empty() {
       if pos == RATE {
         buf = state[0].to_le_bytes();
-        permute_12_portable(&mut state);
+        permute(&mut state);
         pos = 0;
       }
 
@@ -394,6 +668,130 @@ impl AsconXof128 {
       out = &mut out[take..];
       pos += take;
     }
+  }
+
+  /// Multi-message XOF using an explicitly selected kernel.
+  ///
+  /// `outputs` is a flat buffer laid out as `inputs.len()` adjacent outputs of
+  /// `out_len` bytes each.
+  #[inline]
+  #[cfg(any(test, feature = "std"))]
+  #[doc(hidden)]
+  pub fn hash_many_into_with_kernel(
+    kid: kernels::AsconPermute12KernelId,
+    inputs: &[&[u8]],
+    out_len: usize,
+    outputs: &mut [u8],
+  ) {
+    assert_eq!(
+      outputs.len(),
+      inputs.len() * out_len,
+      "input/output batch length mismatch"
+    );
+
+    let degree = kernels::simd_degree(kid);
+    if degree == 1 || inputs.len() < degree || !inputs_have_equal_len(inputs) {
+      for (index, input) in inputs.iter().enumerate() {
+        let base = index * out_len;
+        Self::hash_into_with_kernel(kid, input, &mut outputs[base..base + out_len]);
+      }
+      return;
+    }
+
+    match kid {
+      kernels::AsconPermute12KernelId::Portable => {
+        let mut input_groups = inputs.chunks_exact(1);
+        let mut output_groups = outputs.chunks_exact_mut(out_len);
+        for group_inputs in input_groups.by_ref() {
+          let group_outputs = output_groups.next().expect("1-output chunk");
+          xof_many_equal_len_group::<1>(
+            group_inputs,
+            out_len,
+            group_outputs,
+            XOF128_IV,
+            permute_12_many_portable::<1>,
+          );
+        }
+      }
+      #[cfg(target_arch = "aarch64")]
+      kernels::AsconPermute12KernelId::Aarch64Neon => {
+        let mut input_groups = inputs.chunks_exact(2);
+        let mut output_groups = outputs.chunks_exact_mut(2 * out_len);
+        for group_inputs in input_groups.by_ref() {
+          let group_outputs = output_groups.next().expect("2-output chunk");
+          let group_inputs = [group_inputs[0], group_inputs[1]];
+          xof_many_equal_len_group::<2>(
+            &group_inputs,
+            out_len,
+            group_outputs,
+            XOF128_IV,
+            aarch64::permute_12_aarch64_neon_x2,
+          );
+        }
+        for (index, input) in input_groups.remainder().iter().enumerate() {
+          let base = (inputs.len() - input_groups.remainder().len() + index) * out_len;
+          Self::hash_into_with_kernel(kid, input, &mut outputs[base..base + out_len]);
+        }
+      }
+      #[cfg(target_arch = "x86_64")]
+      kernels::AsconPermute12KernelId::X86Avx2 => {
+        let mut input_groups = inputs.chunks_exact(4);
+        let mut output_groups = outputs.chunks_exact_mut(4 * out_len);
+        for group_inputs in input_groups.by_ref() {
+          let group_outputs = output_groups.next().expect("4-output chunk");
+          let group_inputs = [group_inputs[0], group_inputs[1], group_inputs[2], group_inputs[3]];
+          xof_many_equal_len_group::<4>(
+            &group_inputs,
+            out_len,
+            group_outputs,
+            XOF128_IV,
+            x86_64_avx2::permute_12_x86_avx2_x4,
+          );
+        }
+        for (index, input) in input_groups.remainder().iter().enumerate() {
+          let base = (inputs.len() - input_groups.remainder().len() + index) * out_len;
+          Self::hash_into_with_kernel(kid, input, &mut outputs[base..base + out_len]);
+        }
+      }
+      #[cfg(target_arch = "x86_64")]
+      kernels::AsconPermute12KernelId::X86Avx512 => {
+        let mut input_groups = inputs.chunks_exact(8);
+        let mut output_groups = outputs.chunks_exact_mut(8 * out_len);
+        for group_inputs in input_groups.by_ref() {
+          let group_outputs = output_groups.next().expect("8-output chunk");
+          let group_inputs = [
+            group_inputs[0],
+            group_inputs[1],
+            group_inputs[2],
+            group_inputs[3],
+            group_inputs[4],
+            group_inputs[5],
+            group_inputs[6],
+            group_inputs[7],
+          ];
+          xof_many_equal_len_group::<8>(
+            &group_inputs,
+            out_len,
+            group_outputs,
+            XOF128_IV,
+            x86_64_avx512::permute_12_x86_avx512_x8,
+          );
+        }
+        for (index, input) in input_groups.remainder().iter().enumerate() {
+          let base = (inputs.len() - input_groups.remainder().len() + index) * out_len;
+          Self::hash_into_with_kernel(kid, input, &mut outputs[base..base + out_len]);
+        }
+      }
+    }
+  }
+
+  /// Multi-message XOF with automatic kernel selection.
+  #[inline]
+  #[cfg(any(test, feature = "std"))]
+  #[doc(hidden)]
+  pub fn hash_many_into(inputs: &[&[u8]], out_len: usize, outputs: &mut [u8]) {
+    let kid = AsconHash256::batch_kernel_id_for_inputs(inputs);
+    Self::hash_many_into_with_kernel(kid, inputs, out_len, outputs);
   }
 }
 

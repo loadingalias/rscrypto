@@ -1569,12 +1569,68 @@ fn keccakf1600_auto(data: &[u8]) -> u64 {
 }
 
 fn ascon_hash256_portable(data: &[u8]) -> u64 {
-  u64_from_prefix(&crypto::AsconHash256::digest_portable(data))
+  u64_from_prefix(&crypto::AsconHash256::digest_with_kernel(
+    crypto::ascon::kernels::AsconPermute12KernelId::Portable,
+    data,
+  ))
+}
+
+#[cfg(target_arch = "aarch64")]
+fn ascon_hash256_aarch64_neon(data: &[u8]) -> u64 {
+  u64_from_prefix(&crypto::AsconHash256::digest_with_kernel(
+    crypto::ascon::kernels::AsconPermute12KernelId::Aarch64Neon,
+    data,
+  ))
+}
+
+#[cfg(target_arch = "x86_64")]
+fn ascon_hash256_x86_avx2(data: &[u8]) -> u64 {
+  u64_from_prefix(&crypto::AsconHash256::digest_with_kernel(
+    crypto::ascon::kernels::AsconPermute12KernelId::X86Avx2,
+    data,
+  ))
+}
+
+#[cfg(target_arch = "x86_64")]
+fn ascon_hash256_x86_avx512(data: &[u8]) -> u64 {
+  u64_from_prefix(&crypto::AsconHash256::digest_with_kernel(
+    crypto::ascon::kernels::AsconPermute12KernelId::X86Avx512,
+    data,
+  ))
 }
 
 fn ascon_xof128_portable(data: &[u8]) -> u64 {
   let mut out = [0u8; 32];
-  crypto::AsconXof128::hash_into_portable(data, &mut out);
+  crypto::AsconXof128::hash_into_with_kernel(crypto::ascon::kernels::AsconPermute12KernelId::Portable, data, &mut out);
+  u64_from_prefix(&out)
+}
+
+#[cfg(target_arch = "aarch64")]
+fn ascon_xof128_aarch64_neon(data: &[u8]) -> u64 {
+  let mut out = [0u8; 32];
+  crypto::AsconXof128::hash_into_with_kernel(
+    crypto::ascon::kernels::AsconPermute12KernelId::Aarch64Neon,
+    data,
+    &mut out,
+  );
+  u64_from_prefix(&out)
+}
+
+#[cfg(target_arch = "x86_64")]
+fn ascon_xof128_x86_avx2(data: &[u8]) -> u64 {
+  let mut out = [0u8; 32];
+  crypto::AsconXof128::hash_into_with_kernel(crypto::ascon::kernels::AsconPermute12KernelId::X86Avx2, data, &mut out);
+  u64_from_prefix(&out)
+}
+
+#[cfg(target_arch = "x86_64")]
+fn ascon_xof128_x86_avx512(data: &[u8]) -> u64 {
+  let mut out = [0u8; 32];
+  crypto::AsconXof128::hash_into_with_kernel(
+    crypto::ascon::kernels::AsconPermute12KernelId::X86Avx512,
+    data,
+    &mut out,
+  );
   u64_from_prefix(&out)
 }
 
@@ -2294,9 +2350,39 @@ pub fn get_kernel(algo: &str, name: &str) -> Option<Kernel> {
       name: "portable",
       func: ascon_hash256_portable,
     }),
+    #[cfg(target_arch = "aarch64")]
+    ("ascon-hash256", "aarch64/neon") => Some(Kernel {
+      name: "aarch64/neon",
+      func: ascon_hash256_aarch64_neon,
+    }),
+    #[cfg(target_arch = "x86_64")]
+    ("ascon-hash256", "x86/avx2") => Some(Kernel {
+      name: "x86/avx2",
+      func: ascon_hash256_x86_avx2,
+    }),
+    #[cfg(target_arch = "x86_64")]
+    ("ascon-hash256", "x86/avx512") => Some(Kernel {
+      name: "x86/avx512",
+      func: ascon_hash256_x86_avx512,
+    }),
     ("ascon-xof128", "portable") => Some(Kernel {
       name: "portable",
       func: ascon_xof128_portable,
+    }),
+    #[cfg(target_arch = "aarch64")]
+    ("ascon-xof128", "aarch64/neon") => Some(Kernel {
+      name: "aarch64/neon",
+      func: ascon_xof128_aarch64_neon,
+    }),
+    #[cfg(target_arch = "x86_64")]
+    ("ascon-xof128", "x86/avx2") => Some(Kernel {
+      name: "x86/avx2",
+      func: ascon_xof128_x86_avx2,
+    }),
+    #[cfg(target_arch = "x86_64")]
+    ("ascon-xof128", "x86/avx512") => Some(Kernel {
+      name: "x86/avx512",
+      func: ascon_xof128_x86_avx512,
     }),
     _ => None,
   }
