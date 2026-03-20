@@ -3,6 +3,10 @@ use alloc::string::{String, ToString};
 #[cfg(feature = "std")]
 use core::cell::RefCell;
 #[cfg(feature = "std")]
+use core::sync::atomic::AtomicBool;
+#[cfg(all(feature = "std", feature = "parallel"))]
+use core::sync::atomic::Ordering;
+#[cfg(feature = "std")]
 use std::sync::{Mutex, OnceLock};
 #[cfg(feature = "parallel")]
 use std::thread;
@@ -149,12 +153,18 @@ pub(super) enum ParallelPolicyKind {
 
 #[cfg(feature = "std")]
 static PARALLEL_OVERRIDE: OnceLock<Mutex<Option<ParallelPolicyOverride>>> = OnceLock::new();
+#[cfg(feature = "std")]
+static PARALLEL_OVERRIDE_PRESENT: AtomicBool = AtomicBool::new(false);
 #[cfg(feature = "parallel")]
 static AVAILABLE_PARALLELISM: OnceLock<Option<usize>> = OnceLock::new();
 
 #[cfg(feature = "parallel")]
 #[inline]
 fn parallel_override() -> Option<ParallelPolicyOverride> {
+  if !PARALLEL_OVERRIDE_PRESENT.load(Ordering::Acquire) {
+    return None;
+  }
+
   PARALLEL_OVERRIDE
     .get_or_init(|| Mutex::new(None))
     .lock()
@@ -356,9 +366,10 @@ fn scale_parallel_required_bytes(mode: ParallelPolicyKind, required: usize, inpu
 
 #[cfg(feature = "std")]
 pub mod bench {
+  use core::sync::atomic::Ordering;
   use std::sync::Mutex;
 
-  use super::{PARALLEL_OVERRIDE, dispatch_tables};
+  use super::{PARALLEL_OVERRIDE, PARALLEL_OVERRIDE_PRESENT, dispatch_tables};
   pub use super::{ParallelPolicyOverride, dispatch_tables::ParallelTable};
 
   #[derive(Debug)]
@@ -372,6 +383,7 @@ pub mod bench {
       if let Ok(mut g) = lock.lock() {
         *g = self.prev;
       }
+      PARALLEL_OVERRIDE_PRESENT.store(self.prev.is_some(), Ordering::Release);
     }
   }
 
@@ -387,7 +399,8 @@ pub mod bench {
     if let Ok(mut g) = lock.lock() {
       prev = *g;
       *g = Some(policy);
-    };
+      PARALLEL_OVERRIDE_PRESENT.store(true, Ordering::Release);
+    }
     Blake3ParallelOverrideGuard { prev }
   }
 }
