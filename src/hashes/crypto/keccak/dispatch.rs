@@ -77,6 +77,13 @@ fn select(d: &ActiveDispatch, len: usize) -> (PermuteFn, &'static str) {
 #[must_use]
 #[allow(dead_code)]
 pub fn kernel_name_for_len(len: usize) -> &'static str {
+  #[cfg(target_arch = "s390x")]
+  {
+    use crate::platform::caps::s390x;
+    if crate::hashes::util::dispatch_caps().has(s390x::MSA8) {
+      return "s390x-kimd";
+    }
+  }
   let d = active();
   select(&d, len).1
 }

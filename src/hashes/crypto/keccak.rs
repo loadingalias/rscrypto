@@ -16,6 +16,8 @@ pub(crate) mod dispatch;
 #[doc(hidden)]
 pub(crate) mod dispatch_tables;
 pub(crate) mod kernels;
+#[cfg(target_arch = "s390x")]
+pub(crate) mod s390x;
 #[cfg(target_arch = "x86_64")]
 pub(crate) mod x86_64_avx2;
 #[cfg(target_arch = "x86_64")]
@@ -252,11 +254,33 @@ pub(crate) type KeccakXof<const RATE: usize> = KeccakXofImpl<RATE, DispatchPermu
 
 pub(crate) trait Permuter: Copy {
   fn permute(self, state: &mut [u64; 25], len_hint: usize);
+
+  /// Permute two independent states in parallel.
+  /// Default: two sequential single-state permutations.
+  #[inline(always)]
+  fn permute_x2(self, state_a: &mut [u64; 25], state_b: &mut [u64; 25], len_hint: usize) {
+    self.permute(state_a, len_hint);
+    self.permute(state_b, len_hint);
+  }
+
+  /// Try to batch-absorb complete rate-sized blocks via hardware instruction
+  /// (e.g., s390x KIMD). Returns `true` if the hardware path was taken, in
+  /// which case the caller must NOT perform the per-block XOR + permute loop.
+  ///
+  /// Default: returns `false` (fall back to per-block XOR + permute).
+  #[inline(always)]
+  fn try_absorb_blocks(self, _state: &mut [u64; 25], _blocks: &[u8], _rate: usize) -> bool {
+    false
+  }
 }
 
 #[derive(Clone, Copy)]
 pub(crate) struct DispatchPermuter {
   dispatch: SizeClassDispatch<fn(&mut [u64; 25])>,
+  #[cfg(target_arch = "s390x")]
+  has_kimd: bool,
+  #[cfg(target_arch = "aarch64")]
+  has_sha3: bool,
 }
 
 impl Default for DispatchPermuter {
@@ -264,6 +288,16 @@ impl Default for DispatchPermuter {
   fn default() -> Self {
     Self {
       dispatch: dispatch::permute_dispatch(),
+      #[cfg(target_arch = "s390x")]
+      has_kimd: {
+        use crate::platform::caps::s390x as s390x_caps;
+        crate::hashes::util::dispatch_caps().has(s390x_caps::MSA8)
+      },
+      #[cfg(target_arch = "aarch64")]
+      has_sha3: {
+        use crate::platform::caps::aarch64 as aarch64_caps;
+        crate::hashes::util::dispatch_caps().has(aarch64_caps::SHA3)
+      },
     }
   }
 }
@@ -272,6 +306,36 @@ impl Permuter for DispatchPermuter {
   #[inline(always)]
   fn permute(self, state: &mut [u64; 25], len_hint: usize) {
     (self.dispatch.select(len_hint))(state);
+  }
+
+  #[inline(always)]
+  fn permute_x2(self, state_a: &mut [u64; 25], state_b: &mut [u64; 25], len_hint: usize) {
+    #[cfg(target_arch = "aarch64")]
+    {
+      if self.has_sha3 {
+        aarch64::keccakf_aarch64_sha3_x2(state_a, state_b);
+        return;
+      }
+    }
+    self.permute(state_a, len_hint);
+    self.permute(state_b, len_hint);
+  }
+
+  #[inline(always)]
+  fn try_absorb_blocks(self, _state: &mut [u64; 25], _blocks: &[u8], _rate: usize) -> bool {
+    #[cfg(target_arch = "s390x")]
+    {
+      if self.has_kimd
+        && let Some(fc) = s390x::kimd_fc_for_rate(_rate)
+      {
+        // SAFETY: MSA8 verified at construction time (has_kimd flag).
+        unsafe {
+          s390x::absorb_blocks_kimd(_state, _blocks, fc);
+        }
+        return true;
+      }
+    }
+    false
   }
 }
 
@@ -378,8 +442,13 @@ impl<const RATE: usize, P: Permuter> KeccakCoreImpl<RATE, P> {
 
     let state = &mut self.state;
     let (blocks, rest) = data.as_chunks::<RATE>();
-    for block in blocks {
-      Self::absorb_block(permuter, len_hint, state, block);
+    if !blocks.is_empty() {
+      let block_bytes = &data[..blocks.len().strict_mul(RATE)];
+      if !permuter.try_absorb_blocks(state, block_bytes, RATE) {
+        for block in blocks {
+          Self::absorb_block(permuter, len_hint, state, block);
+        }
+      }
     }
     data = rest;
 
@@ -475,6 +544,111 @@ impl<const RATE: usize, P: Permuter> KeccakCoreImpl<RATE, P> {
       }
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// 2-state parallel oneshot (digest_pair)
+// ---------------------------------------------------------------------------
+
+/// XOR a RATE-sized block into the Keccak state.
+#[inline(always)]
+fn xor_block_into<const RATE: usize>(state: &mut [u64; 25], block: &[u8; RATE]) {
+  debug_assert_eq!(RATE % 8, 0);
+  let lanes = RATE / 8;
+  let ptr = block.as_ptr() as *const u64;
+  let mut i = 0usize;
+  while i < lanes {
+    // SAFETY: `RATE % 8 == 0` and `i < lanes == RATE / 8`, so this reads within `block`;
+    // `read_unaligned` supports the 1-byte alignment of `[u8; RATE]`.
+    let v = unsafe { core::ptr::read_unaligned(ptr.add(i)) };
+    state[i] ^= u64::from_le(v);
+    i += 1;
+  }
+}
+
+/// Pad and absorb the final block for a Keccak sponge.
+#[inline(always)]
+fn finalize_pad_absorb<const RATE: usize>(
+  state: &mut [u64; 25],
+  remainder: &[u8],
+  ds: u8,
+  permuter: DispatchPermuter,
+  len_hint: usize,
+) {
+  let mut buf = [0u8; RATE];
+  buf[..remainder.len()].copy_from_slice(remainder);
+  buf[remainder.len()] ^= ds;
+  buf[RATE - 1] ^= 0x80;
+  xor_block_into::<RATE>(state, &buf);
+  permuter.permute(state, len_hint);
+}
+
+/// Extract fixed-size output from a Keccak state.
+#[inline(always)]
+fn extract_output<const OUT: usize>(state: &[u64; 25], out: &mut [u8; OUT]) {
+  for (i, &word) in state.iter().enumerate().take(OUT.div_ceil(8)) {
+    let bytes = word.to_le_bytes();
+    let start = i.strict_mul(8);
+    let end = core::cmp::min(start.strict_add(8), OUT);
+    out[start..end].copy_from_slice(&bytes[..end.strict_sub(start)]);
+  }
+}
+
+/// Hash two independent messages in parallel using 2-state interleaved
+/// permutation (aarch64 SHA3 CE) or sequential fallback.
+///
+/// On aarch64 with SHA3 CE, this achieves ~2× the aggregate throughput of
+/// two sequential hash computations.
+pub(crate) fn oneshot_pair<const RATE: usize, const OUT: usize>(
+  ds: u8,
+  data_a: &[u8],
+  data_b: &[u8],
+) -> ([u8; OUT], [u8; OUT]) {
+  debug_assert!(OUT <= RATE);
+  let permuter = DispatchPermuter::default();
+  let mut state_a = [0u64; 25];
+  let mut state_b = [0u64; 25];
+  let len_hint = core::cmp::max(data_a.len(), data_b.len());
+
+  // Split into complete blocks + remainder.
+  let (blocks_a, rest_a) = data_a.as_chunks::<RATE>();
+  let (blocks_b, rest_b) = data_b.as_chunks::<RATE>();
+  let min_blocks = core::cmp::min(blocks_a.len(), blocks_b.len());
+
+  // Process paired blocks using 2-state interleaved permutation.
+  for i in 0..min_blocks {
+    xor_block_into::<RATE>(&mut state_a, &blocks_a[i]);
+    xor_block_into::<RATE>(&mut state_b, &blocks_b[i]);
+    permuter.permute_x2(&mut state_a, &mut state_b, len_hint);
+  }
+
+  // Process remaining blocks of the longer input with single-state.
+  for block in &blocks_a[min_blocks..] {
+    xor_block_into::<RATE>(&mut state_a, block);
+    permuter.permute(&mut state_a, len_hint);
+  }
+  for block in &blocks_b[min_blocks..] {
+    xor_block_into::<RATE>(&mut state_b, block);
+    permuter.permute(&mut state_b, len_hint);
+  }
+
+  // Finalize both states (pad + final absorb + extract).
+  finalize_pad_absorb::<RATE>(&mut state_a, rest_a, ds, permuter, len_hint);
+  finalize_pad_absorb::<RATE>(&mut state_b, rest_b, ds, permuter, len_hint);
+
+  let mut out_a = [0u8; OUT];
+  let mut out_b = [0u8; OUT];
+  extract_output::<OUT>(&state_a, &mut out_a);
+  extract_output::<OUT>(&state_b, &mut out_b);
+
+  // Zeroize state.
+  for word in state_a.iter_mut().chain(state_b.iter_mut()) {
+    // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
+    unsafe { core::ptr::write_volatile(word, 0) };
+  }
+  core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+
+  (out_a, out_b)
 }
 
 #[derive(Clone)]

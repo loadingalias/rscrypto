@@ -99,6 +99,17 @@ impl Digest for Sha3_256 {
 }
 
 impl Sha3_256 {
+  /// Hash two independent messages in parallel, returning both 32-byte digests.
+  ///
+  /// On aarch64 with SHA3 Crypto Extensions, this achieves ~2× the aggregate
+  /// throughput of two sequential [`digest`](Digest::digest) calls by using
+  /// 2-state NEON interleaving.
+  #[inline]
+  #[must_use]
+  pub fn digest_pair(a: &[u8], b: &[u8]) -> ([u8; 32], [u8; 32]) {
+    super::keccak::oneshot_pair::<136, 32>(0x06, a, b)
+  }
+
   #[inline]
   #[must_use]
   #[cfg(any(test, feature = "std"))]
@@ -407,5 +418,31 @@ mod tests {
       hex(&out),
       "46b9dd2b0ba88d13233b3feb743eeb243fcd52ea62b81b82b50c27646ed5762fd75dc4ddd8c0f200cb05019d67b592f6fc821c49479ab48640292eacb3b7c4be"
     );
+  }
+
+  #[test]
+  fn sha3_256_digest_pair_matches_sequential() {
+    let msg_a = b"The quick brown fox jumps over the lazy dog";
+    let msg_b = b"";
+    let msg_c = &[0xABu8; 4096];
+
+    let ref_a = Sha3_256::digest(msg_a);
+    let ref_b = Sha3_256::digest(msg_b);
+    let ref_c = Sha3_256::digest(msg_c);
+
+    // Equal-length pair
+    let (out_a, out_b) = Sha3_256::digest_pair(msg_a, msg_b);
+    assert_eq!(out_a, ref_a, "digest_pair output A mismatch");
+    assert_eq!(out_b, ref_b, "digest_pair output B mismatch");
+
+    // Mismatched lengths (long vs short — exercises the fallback path)
+    let (out_c, out_b2) = Sha3_256::digest_pair(msg_c, msg_b);
+    assert_eq!(out_c, ref_c, "digest_pair long output mismatch");
+    assert_eq!(out_b2, ref_b, "digest_pair short output mismatch");
+
+    // Same message both sides
+    let (out_c1, out_c2) = Sha3_256::digest_pair(msg_c, msg_c);
+    assert_eq!(out_c1, ref_c, "digest_pair same-msg output 1 mismatch");
+    assert_eq!(out_c2, ref_c, "digest_pair same-msg output 2 mismatch");
   }
 }
