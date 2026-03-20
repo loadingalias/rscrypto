@@ -107,4 +107,30 @@ mod tests {
     verify_keccakf1600_kernels(b"abc").expect("kernels should agree");
     verify_keccakf1600_kernels(&[0u8; 200]).expect("kernels should agree");
   }
+
+  /// Verify 2-state interleaved kernel matches two independent single-state runs.
+  #[test]
+  #[cfg(target_arch = "aarch64")]
+  fn keccakf1600_x2_matches_single_state() {
+    let caps = crate::platform::caps();
+    if !caps.has(crate::platform::caps::aarch64::SHA3) {
+      return; // SHA3 CE not available on this hardware
+    }
+
+    // Use two distinct initial states.
+    let mut state_a = state_from_bytes(b"state_a_test_data_for_keccak");
+    let mut state_b = state_from_bytes(b"state_b_different_test_input");
+
+    // Single-state reference: permute each independently.
+    let mut ref_a = state_a;
+    let mut ref_b = state_b;
+    super::super::aarch64::keccakf_aarch64_sha3(&mut ref_a);
+    super::super::aarch64::keccakf_aarch64_sha3(&mut ref_b);
+
+    // 2-state interleaved: permute both simultaneously.
+    super::super::aarch64::keccakf_aarch64_sha3_x2(&mut state_a, &mut state_b);
+
+    assert_eq!(state_a, ref_a, "x2 state_a mismatch vs single-state");
+    assert_eq!(state_b, ref_b, "x2 state_b mismatch vs single-state");
+  }
 }

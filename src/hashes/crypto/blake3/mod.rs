@@ -1554,19 +1554,6 @@ impl RootEmitState {
   }
 
   #[inline]
-  fn root_hash_bytes(&self) -> [u8; OUT_LEN] {
-    debug_assert_eq!(self.counter, 0);
-    words8_to_le_bytes(&first_8_words(kernels::compress_block_inline(
-      self.kernel_id,
-      &self.input_chaining_value,
-      &self.block_words,
-      0,
-      u32::from(self.block_len),
-      u32::from(self.flags) | ROOT,
-    )))
-  }
-
-  #[inline]
   #[must_use]
   fn with_kernel_id(mut self, kernel_id: kernels::Blake3KernelId) -> Self {
     self.kernel_id = kernel_id;
@@ -3370,19 +3357,6 @@ impl Blake3Xof {
   }
 
   #[inline]
-  fn fill_root_hash_prefix(&mut self, out: &mut &mut [u8]) {
-    debug_assert_eq!(self.root.counter, 0);
-    debug_assert_eq!(self.position_within_block, 0);
-    debug_assert!(out.len() <= OUT_LEN);
-
-    let block = self.root.root_hash_bytes();
-    let take = out.len();
-    out[..take].copy_from_slice(&block[..take]);
-    self.position_within_block = take as u8;
-    *out = &mut core::mem::take(out)[take..];
-  }
-
-  #[inline]
   fn fill_one_block(&mut self, out: &mut &mut [u8]) {
     let mut block = [0u8; OUTPUT_BLOCK_LEN];
     self.root.emit_one_block(&mut block);
@@ -3420,11 +3394,6 @@ impl Xof for Blake3Xof {
   #[inline]
   fn squeeze(&mut self, mut out: &mut [u8]) {
     if out.is_empty() {
-      return;
-    }
-
-    if self.root.counter == 0 && self.position_within_block == 0 && out.len() <= OUT_LEN {
-      self.fill_root_hash_prefix(&mut out);
       return;
     }
 
