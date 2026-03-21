@@ -150,6 +150,137 @@ rscrypto_blake3_compress_in_place_sse41:
         movdqu  xmmword ptr [rdi+0x10], xmm1
         ret
 
+// BLAKE3 SSE4.1 compress_xof — Linux (System V AMD64 ABI)
+//
+// void rscrypto_blake3_compress_xof_sse41(
+//   const uint32_t cv[8],    // rdi  (const, not mutated)
+//   const uint8_t block[64], // rsi
+//   uint64_t counter,        // rdx
+//   uint8_t block_len,       // cl   (rcx)
+//   uint8_t flags,           // r8b
+//   uint8_t out[64]          // r9   (6th arg)
+// )
+
+.global rscrypto_blake3_compress_xof_sse41
+.p2align 6
+rscrypto_blake3_compress_xof_sse41:
+        // Load chaining value
+        movdqu  xmm0, xmmword ptr [rdi]
+        movdqu  xmm1, xmmword ptr [rdi+0x10]
+        // Build row3 = [counter_lo, counter_hi, block_len, flags]
+        movzx   eax, r8b
+        movzx   ecx, cl
+        shl     rax, 32
+        add     rcx, rax
+        movq    xmm3, rdx
+        movq    xmm4, rcx
+        punpcklqdq xmm3, xmm4
+        // Load IV
+        movaps  xmm2, xmmword ptr [RSCRYPTO_SSE41_BLAKE3_IV+rip]
+        // Load and pre-shuffle message block
+        movups  xmm8, xmmword ptr [rsi]
+        movups  xmm9, xmmword ptr [rsi+0x10]
+        movaps  xmm4, xmm8
+        shufps  xmm4, xmm9, 136
+        movaps  xmm5, xmm8
+        shufps  xmm5, xmm9, 221
+        movups  xmm8, xmmword ptr [rsi+0x20]
+        movups  xmm9, xmmword ptr [rsi+0x30]
+        movaps  xmm6, xmm8
+        shufps  xmm6, xmm9, 136
+        movaps  xmm7, xmm8
+        shufps  xmm7, xmm9, 221
+        pshufd  xmm6, xmm6, 0x93
+        pshufd  xmm7, xmm7, 0x93
+        // Load rotation masks
+        movdqa  xmm14, xmmword ptr [ROT16_SSE41+rip]
+        movdqa  xmm15, xmmword ptr [ROT8_SSE41+rip]
+        mov     al, 7
+.p2align 5
+8:
+        // Column step
+        paddd   xmm0, xmm4
+        paddd   xmm0, xmm1
+        pxor    xmm3, xmm0
+        pshufb  xmm3, xmm14
+        paddd   xmm2, xmm3
+        pxor    xmm1, xmm2
+        movdqa  xmm10, xmm1
+        psrld   xmm1, 12
+        pslld   xmm10, 20
+        por     xmm1, xmm10
+        paddd   xmm0, xmm5
+        paddd   xmm0, xmm1
+        pxor    xmm3, xmm0
+        pshufb  xmm3, xmm15
+        paddd   xmm2, xmm3
+        pxor    xmm1, xmm2
+        movdqa  xmm10, xmm1
+        psrld   xmm1, 7
+        pslld   xmm10, 25
+        por     xmm1, xmm10
+        // Diagonalize
+        pshufd  xmm0, xmm0, 0x93
+        pshufd  xmm3, xmm3, 0x4E
+        pshufd  xmm2, xmm2, 0x39
+        // Diagonal step
+        paddd   xmm0, xmm6
+        paddd   xmm0, xmm1
+        pxor    xmm3, xmm0
+        pshufb  xmm3, xmm14
+        paddd   xmm2, xmm3
+        pxor    xmm1, xmm2
+        movdqa  xmm10, xmm1
+        psrld   xmm1, 12
+        pslld   xmm10, 20
+        por     xmm1, xmm10
+        paddd   xmm0, xmm7
+        paddd   xmm0, xmm1
+        pxor    xmm3, xmm0
+        pshufb  xmm3, xmm15
+        paddd   xmm2, xmm3
+        pxor    xmm1, xmm2
+        movdqa  xmm10, xmm1
+        psrld   xmm1, 7
+        pslld   xmm10, 25
+        por     xmm1, xmm10
+        // Un-diagonalize
+        pshufd  xmm0, xmm0, 0x39
+        pshufd  xmm3, xmm3, 0x4E
+        pshufd  xmm2, xmm2, 0x93
+        dec     al
+        jz      8f
+        // Message schedule permutation
+        movaps  xmm8, xmm4
+        shufps  xmm8, xmm5, 214
+        pshufd  xmm9, xmm4, 0x0F
+        pshufd  xmm4, xmm8, 0x39
+        movaps  xmm8, xmm6
+        shufps  xmm8, xmm7, 250
+        pblendw xmm9, xmm8, 0xCC
+        movdqa  xmm8, xmm7
+        punpcklqdq xmm8, xmm5
+        pblendw xmm8, xmm6, 0xC0
+        pshufd  xmm8, xmm8, 0x78
+        movdqa  xmm5, xmm5
+        punpckhdq xmm5, xmm7
+        punpckldq xmm6, xmm5
+        pshufd  xmm7, xmm6, 0x1E
+        movdqa  xmm5, xmm9
+        movdqa  xmm6, xmm8
+        jmp     8b
+8:
+        // XOF finalization: full 64-byte output to [r9]
+        pxor    xmm0, xmm2             // row0 ^ row2
+        pxor    xmm1, xmm3             // row1 ^ row3
+        pxor    xmm2, xmmword ptr [rdi]       // row2 ^ cv_lo (reload original cv)
+        pxor    xmm3, xmmword ptr [rdi+0x10]  // row3 ^ cv_hi
+        movdqu  xmmword ptr [r9], xmm0
+        movdqu  xmmword ptr [r9+0x10], xmm1
+        movdqu  xmmword ptr [r9+0x20], xmm2
+        movdqu  xmmword ptr [r9+0x30], xmm3
+        ret
+
 .section .rodata
 .p2align 4
 ROT16_SSE41:

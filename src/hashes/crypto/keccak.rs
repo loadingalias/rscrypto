@@ -279,8 +279,8 @@ impl Permuter for InlinePermuter {
   }
 }
 
-/// aarch64 permuter: portable for single-state (the 1-state SHA3 CE kernel
-/// wastes 50% of the NEON width), SHA3 CE for 2-state interleaved.
+/// aarch64 permuter: portable for single-state (SHA3 CE loses to scalar due
+/// to FMOV domain-crossing overhead), SHA3 CE for 2-state interleaved.
 #[cfg(target_arch = "aarch64")]
 #[derive(Clone, Copy)]
 pub(crate) struct Aarch64Permuter {
@@ -304,10 +304,12 @@ impl Default for Aarch64Permuter {
 impl Permuter for Aarch64Permuter {
   #[inline(always)]
   fn permute(self, state: &mut [u64; 25], _len_hint: usize) {
-    // Always use portable for single-state. The 1-state SHA3 CE kernel
-    // duplicates each lane into both halves of a uint64x2_t, wasting 50%
-    // of the NEON width. CI data confirms it is ~1.9× slower than portable
-    // on Neoverse V1/V2 (Graviton3/4): 615 ns vs 337 ns raw permutation.
+    // Portable scalar kernel is faster than SHA3 CE for single-state on
+    // both Apple Silicon and Neoverse V1/V2: the FMOV domain-crossing
+    // overhead between GPR↔NEON per SHA3 CE instruction exceeds the
+    // instruction count savings from EOR3/RAX1/BCAX. SHA3 CE is only
+    // profitable for the 2-state interleaved path where both NEON lanes
+    // carry useful work.
     keccakf_portable(state);
   }
 
@@ -395,7 +397,6 @@ pub(crate) struct KeccakCoreImpl<const RATE: usize, P: Permuter> {
   state: [u64; 25],
   buf: [u8; RATE],
   buf_len: usize,
-  bytes_hint: usize,
   permuter: P,
   _p: PhantomData<P>,
 }
@@ -407,7 +408,6 @@ impl<const RATE: usize> Default for KeccakCoreImpl<RATE, PlatformPermuter> {
       state: [0u64; 25],
       buf: [0u8; RATE],
       buf_len: 0,
-      bytes_hint: 0,
       permuter: PlatformPermuter::default(),
       _p: PhantomData,
     }
@@ -425,7 +425,6 @@ impl<const RATE: usize> Default for KeccakCoreImpl<RATE, InlinePermuter> {
       state: [0u64; 25],
       buf: [0u8; RATE],
       buf_len: 0,
-      bytes_hint: 0,
       permuter: InlinePermuter,
       _p: PhantomData,
     }
@@ -445,7 +444,7 @@ impl<const RATE: usize, P: Permuter> Drop for KeccakCoreImpl<RATE, P> {
 
 impl<const RATE: usize, P: Permuter> KeccakCoreImpl<RATE, P> {
   #[inline(always)]
-  fn absorb_block(permuter: P, len_hint: usize, state: &mut [u64; 25], block: &[u8; RATE]) {
+  fn absorb_block(permuter: P, state: &mut [u64; 25], block: &[u8; RATE]) {
     debug_assert_eq!(RATE % 8, 0);
     let lanes = RATE / 8;
     let mut i = 0usize;
@@ -457,7 +456,7 @@ impl<const RATE: usize, P: Permuter> KeccakCoreImpl<RATE, P> {
       state[i] ^= u64::from_le(v);
       i += 1;
     }
-    permuter.permute(state, len_hint);
+    permuter.permute(state, 0);
   }
 
   pub(crate) fn update(&mut self, mut data: &[u8]) {
@@ -465,9 +464,7 @@ impl<const RATE: usize, P: Permuter> KeccakCoreImpl<RATE, P> {
       return;
     }
 
-    self.bytes_hint = self.bytes_hint.wrapping_add(data.len());
     let permuter = self.permuter;
-    let len_hint = self.bytes_hint;
     if self.buf_len != 0 {
       let take = core::cmp::min(RATE - self.buf_len, data.len());
       self.buf[self.buf_len..self.buf_len.strict_add(take)].copy_from_slice(&data[..take]);
@@ -477,7 +474,7 @@ impl<const RATE: usize, P: Permuter> KeccakCoreImpl<RATE, P> {
       if self.buf_len == RATE {
         let state = &mut self.state;
         let block = &self.buf;
-        Self::absorb_block(permuter, len_hint, state, block);
+        Self::absorb_block(permuter, state, block);
         self.buf_len = 0;
       }
     }
@@ -488,7 +485,7 @@ impl<const RATE: usize, P: Permuter> KeccakCoreImpl<RATE, P> {
       let block_bytes = &data[..blocks.len().strict_mul(RATE)];
       if !permuter.try_absorb_blocks(state, block_bytes, RATE) {
         for block in blocks {
-          Self::absorb_block(permuter, len_hint, state, block);
+          Self::absorb_block(permuter, state, block);
         }
       }
     }
@@ -503,7 +500,6 @@ impl<const RATE: usize, P: Permuter> KeccakCoreImpl<RATE, P> {
   #[inline(always)]
   fn finalize_state(&self, ds: u8) -> [u64; 25] {
     let permuter = self.permuter;
-    let len_hint = self.bytes_hint;
     let mut state = self.state;
     let mut buf = self.buf;
     let buf_len = self.buf_len;
@@ -518,7 +514,7 @@ impl<const RATE: usize, P: Permuter> KeccakCoreImpl<RATE, P> {
     buf[buf_len] ^= ds;
     buf[RATE - 1] ^= 0x80;
 
-    Self::absorb_block(permuter, len_hint, &mut state, &buf);
+    Self::absorb_block(permuter, &mut state, &buf);
     state
   }
 
@@ -543,8 +539,6 @@ impl<const RATE: usize, P: Permuter> KeccakCoreImpl<RATE, P> {
       state,
       buf,
       pos: 0,
-      bytes_hint: self.bytes_hint,
-      bytes_out: 0,
       permuter,
       _p: PhantomData,
     }
@@ -552,7 +546,6 @@ impl<const RATE: usize, P: Permuter> KeccakCoreImpl<RATE, P> {
 
   pub(crate) fn finalize_xof_into(&self, ds: u8, mut out: &mut [u8]) {
     let permuter = self.permuter;
-    let len_hint = self.bytes_hint.wrapping_add(out.len());
     let mut state = self.finalize_state(ds);
 
     debug_assert_eq!(RATE % 8, 0);
@@ -582,10 +575,78 @@ impl<const RATE: usize, P: Permuter> KeccakCoreImpl<RATE, P> {
       }
 
       if !out.is_empty() {
-        permuter.permute(&mut state, len_hint);
+        permuter.permute(&mut state, 0);
       }
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Single-state oneshot (Digest::digest fast-path)
+// ---------------------------------------------------------------------------
+
+/// Hash a message in one shot, bypassing the `KeccakCoreImpl` sponge wrapper.
+///
+/// This avoids allocating the rate-sized buffer, eliminates the `Drop`
+/// zeroization of that buffer, and removes all buffer-management conditionals.
+/// The state is stack-allocated, absorbed into directly, and zeroized at the
+/// end.
+#[inline]
+pub(crate) fn oneshot_fixed<const RATE: usize, const OUT: usize>(ds: u8, data: &[u8]) -> [u8; OUT] {
+  debug_assert!(OUT <= RATE);
+  debug_assert_eq!(RATE % 8, 0);
+
+  let mut state = [0u64; 25];
+  let lanes = RATE / 8;
+
+  // Absorb complete blocks.
+  let (blocks, rest) = data.as_chunks::<RATE>();
+  for block in blocks {
+    let ptr = block.as_ptr() as *const u64;
+    let mut i = 0usize;
+    while i < lanes {
+      // SAFETY: `RATE % 8 == 0` and `i < lanes`, so this reads within `block`.
+      let v = unsafe { core::ptr::read_unaligned(ptr.add(i)) };
+      state[i] ^= u64::from_le(v);
+      i = i.strict_add(1);
+    }
+    keccakf_portable(&mut state);
+  }
+
+  // Pad the final block: domain separator + pad10*1.
+  let mut last = [0u8; RATE];
+  last[..rest.len()].copy_from_slice(rest);
+  last[rest.len()] ^= ds;
+  last[RATE - 1] ^= 0x80;
+  {
+    let ptr = last.as_ptr() as *const u64;
+    let mut i = 0usize;
+    while i < lanes {
+      // SAFETY: same as above — `i < lanes` and `RATE % 8 == 0`.
+      let v = unsafe { core::ptr::read_unaligned(ptr.add(i)) };
+      state[i] ^= u64::from_le(v);
+      i = i.strict_add(1);
+    }
+  }
+  keccakf_portable(&mut state);
+
+  // Extract output.
+  let mut out = [0u8; OUT];
+  for (i, &word) in state.iter().enumerate().take(OUT.div_ceil(8)) {
+    let bytes = word.to_le_bytes();
+    let start = i.strict_mul(8);
+    let end = core::cmp::min(start.strict_add(8), OUT);
+    out[start..end].copy_from_slice(&bytes[..end.strict_sub(start)]);
+  }
+
+  // Zeroize state.
+  for word in state.iter_mut() {
+    // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
+    unsafe { core::ptr::write_volatile(word, 0) };
+  }
+  core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+
+  out
 }
 
 // ---------------------------------------------------------------------------
@@ -610,19 +671,13 @@ fn xor_block_into<const RATE: usize>(state: &mut [u64; 25], block: &[u8; RATE]) 
 
 /// Pad and absorb the final block for a Keccak sponge.
 #[inline(always)]
-fn finalize_pad_absorb<const RATE: usize>(
-  state: &mut [u64; 25],
-  remainder: &[u8],
-  ds: u8,
-  permuter: PlatformPermuter,
-  len_hint: usize,
-) {
+fn finalize_pad_absorb<const RATE: usize>(state: &mut [u64; 25], remainder: &[u8], ds: u8, permuter: PlatformPermuter) {
   let mut buf = [0u8; RATE];
   buf[..remainder.len()].copy_from_slice(remainder);
   buf[remainder.len()] ^= ds;
   buf[RATE - 1] ^= 0x80;
   xor_block_into::<RATE>(state, &buf);
-  permuter.permute(state, len_hint);
+  permuter.permute(state, 0);
 }
 
 /// Extract fixed-size output from a Keccak state.
@@ -650,7 +705,6 @@ pub(crate) fn oneshot_pair<const RATE: usize, const OUT: usize>(
   let permuter = PlatformPermuter::default();
   let mut state_a = [0u64; 25];
   let mut state_b = [0u64; 25];
-  let len_hint = core::cmp::max(data_a.len(), data_b.len());
 
   // Split into complete blocks + remainder.
   let (blocks_a, rest_a) = data_a.as_chunks::<RATE>();
@@ -661,22 +715,22 @@ pub(crate) fn oneshot_pair<const RATE: usize, const OUT: usize>(
   for i in 0..min_blocks {
     xor_block_into::<RATE>(&mut state_a, &blocks_a[i]);
     xor_block_into::<RATE>(&mut state_b, &blocks_b[i]);
-    permuter.permute_x2(&mut state_a, &mut state_b, len_hint);
+    permuter.permute_x2(&mut state_a, &mut state_b, 0);
   }
 
   // Process remaining blocks of the longer input with single-state.
   for block in &blocks_a[min_blocks..] {
     xor_block_into::<RATE>(&mut state_a, block);
-    permuter.permute(&mut state_a, len_hint);
+    permuter.permute(&mut state_a, 0);
   }
   for block in &blocks_b[min_blocks..] {
     xor_block_into::<RATE>(&mut state_b, block);
-    permuter.permute(&mut state_b, len_hint);
+    permuter.permute(&mut state_b, 0);
   }
 
   // Finalize both states (pad + final absorb + extract).
-  finalize_pad_absorb::<RATE>(&mut state_a, rest_a, ds, permuter, len_hint);
-  finalize_pad_absorb::<RATE>(&mut state_b, rest_b, ds, permuter, len_hint);
+  finalize_pad_absorb::<RATE>(&mut state_a, rest_a, ds, permuter);
+  finalize_pad_absorb::<RATE>(&mut state_b, rest_b, ds, permuter);
 
   let mut out_a = [0u8; OUT];
   let mut out_b = [0u8; OUT];
@@ -698,8 +752,6 @@ pub(crate) struct KeccakXofImpl<const RATE: usize, P: Permuter> {
   state: [u64; 25],
   buf: [u8; RATE],
   pos: usize,
-  bytes_hint: usize,
-  bytes_out: usize,
   permuter: P,
   _p: PhantomData<P>,
 }
@@ -732,15 +784,13 @@ impl<const RATE: usize, P: Permuter> KeccakXofImpl<RATE, P> {
     while !out.is_empty() {
       if self.pos == RATE {
         let permuter = self.permuter;
-        let len_hint = self.bytes_hint.wrapping_add(self.bytes_out);
-        permuter.permute(&mut self.state, len_hint);
+        permuter.permute(&mut self.state, 0);
         Self::fill_buf(&self.state, &mut self.buf);
         self.pos = 0;
       }
 
       let take = core::cmp::min(RATE - self.pos, out.len());
       out[..take].copy_from_slice(&self.buf[self.pos..self.pos.strict_add(take)]);
-      self.bytes_out = self.bytes_out.wrapping_add(take);
       self.pos = self.pos.strict_add(take);
       out = &mut out[take..];
     }

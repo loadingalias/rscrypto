@@ -2420,6 +2420,9 @@ impl Blake3 {
     let key_words = words8_from_le_bytes_32(key);
     let plan = dispatch::hasher_dispatch();
     let kernel = plan.size_class_kernel(data.len());
+    if data.len() <= CHUNK_LEN {
+      return xof_oneshot_single_chunk(kernel, key_words, KEYED_HASH, data);
+    }
     Blake3Xof::from_output(root_output_oneshot(
       kernel,
       key_words,
@@ -3112,6 +3115,90 @@ impl Digest for Blake3 {
   fn reset(&mut self) {
     *self = Self::new_internal(self.key_words, self.chunk_state.flags);
   }
+}
+
+/// Lean XOF oneshot for single-chunk inputs (≤ 1024 bytes).
+///
+/// Constructs `Blake3Xof` directly without going through `root_output_oneshot`
+/// or `single_chunk_output`. For inputs ≤ 64B, no compression is needed at all.
+/// For 65–1024B, full blocks are compressed directly via the kernel's compress
+/// function pointer, avoiding the indirect `chunk_compress_blocks` call.
+#[inline]
+fn xof_oneshot_single_chunk(kernel: Kernel, key_words: [u32; 8], flags: u32, input: &[u8]) -> Blake3Xof {
+  debug_assert!(input.len() <= CHUNK_LEN);
+
+  // Tiny input (≤ 64B): zero-pad into block_words, no compression needed.
+  if input.len() <= BLOCK_LEN {
+    let block_words = if cfg!(target_endian = "little") {
+      let mut out = [0u32; 16];
+      if !input.is_empty() {
+        // SAFETY: `out` is 64 bytes, and `input.len() <= 64`.
+        unsafe {
+          ptr::copy_nonoverlapping(input.as_ptr(), out.as_mut_ptr().cast::<u8>(), input.len());
+        }
+      }
+      out
+    } else {
+      let mut block = [0u8; BLOCK_LEN];
+      block[..input.len()].copy_from_slice(input);
+      words16_from_le_bytes_64(&block)
+    };
+
+    return Blake3Xof::new(RootEmitState {
+      kernel_id: kernel.id,
+      input_chaining_value: key_words,
+      block_words,
+      counter: 0,
+      block_len: input.len() as u8,
+      flags: (flags | CHUNK_START | CHUNK_END) as u8,
+    });
+  }
+
+  // Single-chunk input (65–1024B): compress full blocks, store last block.
+  let rem = input.len() % BLOCK_LEN;
+  let (full_blocks, last_len) = if rem == 0 {
+    (input.len() / BLOCK_LEN - 1, BLOCK_LEN)
+  } else {
+    (input.len() / BLOCK_LEN, rem)
+  };
+
+  let mut cv = key_words;
+
+  // Compress full non-final blocks using the kernel's compress function pointer
+  // directly (no indirect chunk_compress_blocks call, no kernel-ID match).
+  for i in 0..full_blocks {
+    let offset = i * BLOCK_LEN;
+    let block_flags = flags | if i == 0 { CHUNK_START } else { 0 };
+    // SAFETY: `offset + BLOCK_LEN <= input.len()` by construction.
+    let block_words = unsafe { words16_from_le_bytes_64(&*input.as_ptr().add(offset).cast::<[u8; BLOCK_LEN]>()) };
+    cv = first_8_words((kernel.compress)(&cv, &block_words, 0, BLOCK_LEN as u32, block_flags));
+  }
+
+  // Build the last block's words.
+  let start = if full_blocks == 0 { CHUNK_START } else { 0 };
+  let block_words = if cfg!(target_endian = "little") {
+    let mut out = [0u32; 16];
+    let offset = full_blocks * BLOCK_LEN;
+    // SAFETY: `last_len <= BLOCK_LEN` and source range is in-bounds.
+    unsafe {
+      ptr::copy_nonoverlapping(input.as_ptr().add(offset), out.as_mut_ptr().cast::<u8>(), last_len);
+    }
+    out
+  } else {
+    let mut block = [0u8; BLOCK_LEN];
+    let offset = full_blocks * BLOCK_LEN;
+    block[..last_len].copy_from_slice(&input[offset..offset + last_len]);
+    words16_from_le_bytes_64(&block)
+  };
+
+  Blake3Xof::new(RootEmitState {
+    kernel_id: kernel.id,
+    input_chaining_value: cv,
+    block_words,
+    counter: 0,
+    block_len: last_len as u8,
+    flags: (flags | start | CHUNK_END) as u8,
+  })
 }
 
 #[derive(Clone)]
