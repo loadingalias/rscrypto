@@ -7,8 +7,6 @@
 
 use core::marker::PhantomData;
 
-use crate::hashes::crypto::dispatch_util::SizeClassDispatch;
-
 #[cfg(target_arch = "aarch64")]
 pub(crate) mod aarch64;
 #[doc(hidden)]
@@ -230,12 +228,22 @@ pub(crate) fn keccakf_portable(state: &mut [u64; 25]) {
   state[24] = a24;
 }
 
-pub(crate) type KeccakCore<const RATE: usize> = KeccakCoreImpl<RATE, DispatchPermuter>;
-
-#[cfg(any(test, feature = "std"))]
-pub(crate) type KeccakCorePortable<const RATE: usize> = KeccakCoreImpl<RATE, PortablePermuter>;
-
-pub(crate) type KeccakXof<const RATE: usize> = KeccakXofImpl<RATE, DispatchPermuter>;
+// ---------------------------------------------------------------------------
+// Permuter trait + platform-specific implementations
+// ---------------------------------------------------------------------------
+//
+// Direct-call permuters replace the old function-pointer dispatch. Each
+// platform gets a concrete `Permuter` that calls the best kernel directly,
+// allowing LLVM to inline the permutation into the absorb loop. This is the
+// single most impactful change for SHA-3 throughput.
+//
+// - x86_64 / generic: `InlinePermuter` → `keccakf_portable` (the AVX-512 and AVX2 χ-only SIMD
+//   kernels added pack/extract overhead that exceeded the VPTERNLOG savings; pure scalar is
+//   faster).
+// - aarch64: `Aarch64Permuter` → SHA3 CE when available (branch-based, not
+//   function pointer), portable fallback. The 2-state interleaved kernel is
+//   preserved for `digest_pair`.
+// - s390x: `S390xPermuter` → portable permutation + KIMD batch-absorb.
 
 pub(crate) trait Permuter: Copy {
   fn permute(self, state: &mut [u64; 25], len_hint: usize);
@@ -259,26 +267,31 @@ pub(crate) trait Permuter: Copy {
   }
 }
 
+/// Direct-call permuter using the portable scalar kernel. No function pointer
+/// indirection — LLVM can inline `keccakf_portable` into the absorb loop.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct InlinePermuter;
+
+impl Permuter for InlinePermuter {
+  #[inline(always)]
+  fn permute(self, state: &mut [u64; 25], _len_hint: usize) {
+    keccakf_portable(state);
+  }
+}
+
+/// aarch64 permuter: portable for single-state (the 1-state SHA3 CE kernel
+/// wastes 50% of the NEON width), SHA3 CE for 2-state interleaved.
+#[cfg(target_arch = "aarch64")]
 #[derive(Clone, Copy)]
-pub(crate) struct DispatchPermuter {
-  dispatch: SizeClassDispatch<fn(&mut [u64; 25])>,
-  #[cfg(target_arch = "s390x")]
-  has_kimd: bool,
-  #[cfg(target_arch = "aarch64")]
+pub(crate) struct Aarch64Permuter {
   has_sha3: bool,
 }
 
-impl Default for DispatchPermuter {
+#[cfg(target_arch = "aarch64")]
+impl Default for Aarch64Permuter {
   #[inline]
   fn default() -> Self {
     Self {
-      dispatch: dispatch::permute_dispatch(),
-      #[cfg(target_arch = "s390x")]
-      has_kimd: {
-        use crate::platform::caps::s390x as s390x_caps;
-        crate::hashes::util::dispatch_caps().has(s390x_caps::MSA8)
-      },
-      #[cfg(target_arch = "aarch64")]
       has_sha3: {
         use crate::platform::caps::aarch64 as aarch64_caps;
         crate::hashes::util::dispatch_caps().has(aarch64_caps::SHA3)
@@ -287,54 +300,99 @@ impl Default for DispatchPermuter {
   }
 }
 
-impl Permuter for DispatchPermuter {
+#[cfg(target_arch = "aarch64")]
+impl Permuter for Aarch64Permuter {
   #[inline(always)]
-  fn permute(self, state: &mut [u64; 25], len_hint: usize) {
-    (self.dispatch.select(len_hint))(state);
+  fn permute(self, state: &mut [u64; 25], _len_hint: usize) {
+    // Use SHA3 CE when available. The branch is always-taken and perfectly
+    // predicted after warmup. Even though the 1-state kernel wastes 50% of
+    // the NEON width, some microarchitectures (Apple M-series) have fast
+    // enough SHA3 CE that it still wins over portable scalar.
+    if self.has_sha3 {
+      aarch64::keccakf_aarch64_sha3(state);
+    } else {
+      keccakf_portable(state);
+    }
   }
 
   #[inline(always)]
   fn permute_x2(self, state_a: &mut [u64; 25], state_b: &mut [u64; 25], len_hint: usize) {
-    #[cfg(target_arch = "aarch64")]
-    {
-      if self.has_sha3 {
-        aarch64::keccakf_aarch64_sha3_x2(state_a, state_b);
-        return;
-      }
+    if self.has_sha3 {
+      // The 2-state kernel uses both NEON lanes meaningfully (state_a in
+      // lane 0, state_b in lane 1), achieving ~2× aggregate throughput.
+      aarch64::keccakf_aarch64_sha3_x2(state_a, state_b);
+    } else {
+      self.permute(state_a, len_hint);
+      self.permute(state_b, len_hint);
     }
-    self.permute(state_a, len_hint);
-    self.permute(state_b, len_hint);
+  }
+}
+
+/// s390x permuter: portable permutation + CPACF KIMD batch-absorb.
+#[cfg(target_arch = "s390x")]
+#[derive(Clone, Copy)]
+pub(crate) struct S390xPermuter {
+  has_kimd: bool,
+}
+
+#[cfg(target_arch = "s390x")]
+impl Default for S390xPermuter {
+  #[inline]
+  fn default() -> Self {
+    Self {
+      has_kimd: {
+        use crate::platform::caps::s390x as s390x_caps;
+        crate::hashes::util::dispatch_caps().has(s390x_caps::MSA8)
+      },
+    }
+  }
+}
+
+#[cfg(target_arch = "s390x")]
+impl Permuter for S390xPermuter {
+  #[inline(always)]
+  fn permute(self, state: &mut [u64; 25], _len_hint: usize) {
+    keccakf_portable(state);
   }
 
   #[inline(always)]
-  fn try_absorb_blocks(self, _state: &mut [u64; 25], _blocks: &[u8], _rate: usize) -> bool {
-    #[cfg(target_arch = "s390x")]
+  fn try_absorb_blocks(self, state: &mut [u64; 25], blocks: &[u8], rate: usize) -> bool {
+    if self.has_kimd
+      && let Some(fc) = s390x::kimd_fc_for_rate(rate)
     {
-      if self.has_kimd
-        && let Some(fc) = s390x::kimd_fc_for_rate(_rate)
-      {
-        // SAFETY: MSA8 verified at construction time (has_kimd flag).
-        unsafe {
-          s390x::absorb_blocks_kimd(_state, _blocks, fc);
-        }
-        return true;
+      // SAFETY: MSA8 verified at construction time (has_kimd flag).
+      unsafe {
+        s390x::absorb_blocks_kimd(state, blocks, fc);
       }
+      return true;
     }
     false
   }
 }
 
-#[cfg(any(test, feature = "std"))]
-#[derive(Clone, Copy)]
-pub(crate) struct PortablePermuter;
+// ---------------------------------------------------------------------------
+// Platform-specific permuter selection
+// ---------------------------------------------------------------------------
+
+#[cfg(target_arch = "aarch64")]
+pub(crate) type PlatformPermuter = Aarch64Permuter;
+
+#[cfg(target_arch = "s390x")]
+pub(crate) type PlatformPermuter = S390xPermuter;
+
+#[cfg(not(any(target_arch = "aarch64", target_arch = "s390x")))]
+pub(crate) type PlatformPermuter = InlinePermuter;
+
+pub(crate) type KeccakCore<const RATE: usize> = KeccakCoreImpl<RATE, PlatformPermuter>;
 
 #[cfg(any(test, feature = "std"))]
-impl Permuter for PortablePermuter {
-  #[inline(always)]
-  fn permute(self, state: &mut [u64; 25], _len_hint: usize) {
-    keccakf_portable(state);
-  }
-}
+pub(crate) type KeccakCorePortable<const RATE: usize> = KeccakCoreImpl<RATE, InlinePermuter>;
+
+pub(crate) type KeccakXof<const RATE: usize> = KeccakXofImpl<RATE, PlatformPermuter>;
+
+// ---------------------------------------------------------------------------
+// Sponge core
+// ---------------------------------------------------------------------------
 
 #[derive(Clone)]
 pub(crate) struct KeccakCoreImpl<const RATE: usize, P: Permuter> {
@@ -346,7 +404,7 @@ pub(crate) struct KeccakCoreImpl<const RATE: usize, P: Permuter> {
   _p: PhantomData<P>,
 }
 
-impl<const RATE: usize> Default for KeccakCoreImpl<RATE, DispatchPermuter> {
+impl<const RATE: usize> Default for KeccakCoreImpl<RATE, PlatformPermuter> {
   #[inline]
   fn default() -> Self {
     Self {
@@ -354,14 +412,17 @@ impl<const RATE: usize> Default for KeccakCoreImpl<RATE, DispatchPermuter> {
       buf: [0u8; RATE],
       buf_len: 0,
       bytes_hint: 0,
-      permuter: DispatchPermuter::default(),
+      permuter: PlatformPermuter::default(),
       _p: PhantomData,
     }
   }
 }
 
-#[cfg(any(test, feature = "std"))]
-impl<const RATE: usize> Default for KeccakCoreImpl<RATE, PortablePermuter> {
+// On aarch64/s390x, `PlatformPermuter` is NOT `InlinePermuter`, so the
+// portable-reference type alias needs its own `Default`. On other targets
+// `PlatformPermuter = InlinePermuter` and the impl above already covers it.
+#[cfg(all(any(test, feature = "std"), any(target_arch = "aarch64", target_arch = "s390x")))]
+impl<const RATE: usize> Default for KeccakCoreImpl<RATE, InlinePermuter> {
   #[inline]
   fn default() -> Self {
     Self {
@@ -369,7 +430,7 @@ impl<const RATE: usize> Default for KeccakCoreImpl<RATE, PortablePermuter> {
       buf: [0u8; RATE],
       buf_len: 0,
       bytes_hint: 0,
-      permuter: PortablePermuter,
+      permuter: InlinePermuter,
       _p: PhantomData,
     }
   }
@@ -557,7 +618,7 @@ fn finalize_pad_absorb<const RATE: usize>(
   state: &mut [u64; 25],
   remainder: &[u8],
   ds: u8,
-  permuter: DispatchPermuter,
+  permuter: PlatformPermuter,
   len_hint: usize,
 ) {
   let mut buf = [0u8; RATE];
@@ -590,7 +651,7 @@ pub(crate) fn oneshot_pair<const RATE: usize, const OUT: usize>(
   data_b: &[u8],
 ) -> ([u8; OUT], [u8; OUT]) {
   debug_assert!(OUT <= RATE);
-  let permuter = DispatchPermuter::default();
+  let permuter = PlatformPermuter::default();
   let mut state_a = [0u64; 25];
   let mut state_b = [0u64; 25];
   let len_hint = core::cmp::max(data_a.len(), data_b.len());
