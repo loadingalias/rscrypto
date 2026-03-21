@@ -240,8 +240,9 @@ pub(crate) fn keccakf_portable(state: &mut [u64; 25]) {
 // - x86_64 / generic: `InlinePermuter` → `keccakf_portable` (the AVX-512 and AVX2 χ-only SIMD
 //   kernels added pack/extract overhead that exceeded the VPTERNLOG savings; pure scalar is
 //   faster).
-// - aarch64: `Aarch64Permuter` → SHA3 CE when available (branch-based, not function pointer),
-//   portable fallback. The 2-state interleaved kernel is preserved for `digest_pair`.
+// - aarch64: `Aarch64Permuter` → portable for single-state (the 1-state SHA3
+//   CE kernel is ~1.9× slower on Neoverse V1/V2). SHA3 CE is used only for
+//   the 2-state interleaved path (`digest_pair`).
 // - s390x: `S390xPermuter` → portable permutation + KIMD batch-absorb.
 
 pub(crate) trait Permuter: Copy {
@@ -303,15 +304,11 @@ impl Default for Aarch64Permuter {
 impl Permuter for Aarch64Permuter {
   #[inline(always)]
   fn permute(self, state: &mut [u64; 25], _len_hint: usize) {
-    // Use SHA3 CE when available. The branch is always-taken and perfectly
-    // predicted after warmup. Even though the 1-state kernel wastes 50% of
-    // the NEON width, some microarchitectures (Apple M-series) have fast
-    // enough SHA3 CE that it still wins over portable scalar.
-    if self.has_sha3 {
-      aarch64::keccakf_aarch64_sha3(state);
-    } else {
-      keccakf_portable(state);
-    }
+    // Always use portable for single-state. The 1-state SHA3 CE kernel
+    // duplicates each lane into both halves of a uint64x2_t, wasting 50%
+    // of the NEON width. CI data confirms it is ~1.9× slower than portable
+    // on Neoverse V1/V2 (Graviton3/4): 615 ns vs 337 ns raw permutation.
+    keccakf_portable(state);
   }
 
   #[inline(always)]
