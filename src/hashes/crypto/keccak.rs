@@ -240,9 +240,9 @@ pub(crate) fn keccakf_portable(state: &mut [u64; 25]) {
 // - x86_64 / generic: `InlinePermuter` → `keccakf_portable` (the AVX-512 and AVX2 χ-only SIMD
 //   kernels added pack/extract overhead that exceeded the VPTERNLOG savings; pure scalar is
 //   faster).
-// - aarch64: `Aarch64Permuter` → portable for single-state (the 1-state SHA3
-//   CE kernel is ~1.9× slower on Neoverse V1/V2). SHA3 CE is used only for
-//   the 2-state interleaved path (`digest_pair`).
+// - aarch64: `Aarch64Permuter` → portable for single-state (the 1-state SHA3 CE kernel is ~1.9×
+//   slower on Neoverse V1/V2). SHA3 CE is used only for the 2-state interleaved path
+//   (`digest_pair`).
 // - s390x: `S390xPermuter` → portable permutation + KIMD batch-absorb.
 
 pub(crate) trait Permuter: Copy {
