@@ -101,11 +101,17 @@ pub(crate) fn permute_12_aarch64_neon(state: &mut [u64; 5]) {
 #[target_feature(enable = "neon")]
 #[inline]
 unsafe fn permute_12_aarch64_neon_x2_impl(states: &mut [[u64; 5]; 2]) {
-  let mut x0 = unsafe { combine_lanes(states[0][0], states[1][0]) };
-  let mut x1 = unsafe { combine_lanes(states[0][1], states[1][1]) };
-  let mut x2 = unsafe { combine_lanes(states[0][2], states[1][2]) };
-  let mut x3 = unsafe { combine_lanes(states[0][3], states[1][3]) };
-  let mut x4 = unsafe { combine_lanes(states[0][4], states[1][4]) };
+  // SAFETY: `combine_lanes` only requires the active `neon` target feature,
+  // which is guaranteed by this function's contract and attribute.
+  let (mut x0, mut x1, mut x2, mut x3, mut x4) = unsafe {
+    (
+      combine_lanes(states[0][0], states[1][0]),
+      combine_lanes(states[0][1], states[1][1]),
+      combine_lanes(states[0][2], states[1][2]),
+      combine_lanes(states[0][3], states[1][3]),
+      combine_lanes(states[0][4], states[1][4]),
+    )
+  };
   let ones = vdupq_n_u64(u64::MAX);
 
   for &c in &super::RC {

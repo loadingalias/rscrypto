@@ -281,20 +281,20 @@ fn absorb_equal_len_group<const N: usize>(
   let full_bytes = len / RATE * RATE;
 
   for off in (0..full_bytes).step_by(RATE) {
-    for lane in 0..N {
+    for (state, input) in states.iter_mut().zip(inputs.iter().copied()) {
       let mut block = [0u8; RATE];
-      block.copy_from_slice(&inputs[lane][off..off + RATE]);
-      states[lane][0] ^= u64::from_le_bytes(block);
+      block.copy_from_slice(&input[off..off + RATE]);
+      state[0] ^= u64::from_le_bytes(block);
     }
     permute_many(states);
   }
 
   let tail_len = len - full_bytes;
-  for lane in 0..N {
+  for (state, input) in states.iter_mut().zip(inputs.iter().copied()) {
     let mut block = [0u8; RATE];
-    block[..tail_len].copy_from_slice(&inputs[lane][full_bytes..]);
-    states[lane][0] ^= u64::from_le_bytes(block);
-    states[lane][0] ^= pad(tail_len);
+    block[..tail_len].copy_from_slice(&input[full_bytes..]);
+    state[0] ^= u64::from_le_bytes(block);
+    state[0] ^= pad(tail_len);
   }
   permute_many(states);
 }
@@ -308,14 +308,14 @@ fn squeeze_hash256_group<const N: usize>(
   debug_assert_eq!(outputs.len(), N);
   let mut off = 0usize;
   while off < 24 {
-    for lane in 0..N {
-      outputs[lane][off..off + RATE].copy_from_slice(&states[lane][0].to_le_bytes());
+    for (state, output) in states.iter().zip(outputs.iter_mut()) {
+      output[off..off + RATE].copy_from_slice(&state[0].to_le_bytes());
     }
     permute_many(states);
     off += RATE;
   }
-  for lane in 0..N {
-    outputs[lane][24..32].copy_from_slice(&states[lane][0].to_le_bytes());
+  for (state, output) in states.iter().zip(outputs.iter_mut()) {
+    output[24..32].copy_from_slice(&state[0].to_le_bytes());
   }
 }
 
@@ -330,9 +330,8 @@ fn squeeze_xof_group<const N: usize>(
   let mut produced = 0usize;
   while produced < out_len {
     let take = core::cmp::min(RATE, out_len - produced);
-    for lane in 0..N {
-      let base = lane * out_len + produced;
-      outputs[base..base + take].copy_from_slice(&states[lane][0].to_le_bytes()[..take]);
+    for (state, output) in states.iter().zip(outputs.chunks_exact_mut(out_len)) {
+      output[produced..produced + take].copy_from_slice(&state[0].to_le_bytes()[..take]);
     }
     produced += take;
     if produced < out_len {
@@ -466,10 +465,8 @@ impl AsconHash256 {
         let mut input_groups = inputs.chunks_exact(2);
         let mut output_groups = outputs.chunks_exact_mut(2);
         for (group_inputs, group_outputs) in input_groups.by_ref().zip(output_groups.by_ref()) {
-          let group_inputs = [group_inputs[0], group_inputs[1]];
-          let group_outputs = <&mut [[u8; 32]; 2]>::try_from(group_outputs).expect("2-output chunk");
           digest_many_equal_len_group::<2>(
-            &group_inputs,
+            group_inputs,
             group_outputs,
             HASH256_IV,
             aarch64::permute_12_aarch64_neon_x2,
@@ -488,10 +485,8 @@ impl AsconHash256 {
         let mut input_groups = inputs.chunks_exact(4);
         let mut output_groups = outputs.chunks_exact_mut(4);
         for (group_inputs, group_outputs) in input_groups.by_ref().zip(output_groups.by_ref()) {
-          let group_inputs = [group_inputs[0], group_inputs[1], group_inputs[2], group_inputs[3]];
-          let group_outputs = <&mut [[u8; 32]; 4]>::try_from(group_outputs).expect("4-output chunk");
           digest_many_equal_len_group::<4>(
-            &group_inputs,
+            group_inputs,
             group_outputs,
             HASH256_IV,
             x86_64_avx2::permute_12_x86_avx2_x4,
@@ -510,19 +505,8 @@ impl AsconHash256 {
         let mut input_groups = inputs.chunks_exact(8);
         let mut output_groups = outputs.chunks_exact_mut(8);
         for (group_inputs, group_outputs) in input_groups.by_ref().zip(output_groups.by_ref()) {
-          let group_inputs = [
-            group_inputs[0],
-            group_inputs[1],
-            group_inputs[2],
-            group_inputs[3],
-            group_inputs[4],
-            group_inputs[5],
-            group_inputs[6],
-            group_inputs[7],
-          ];
-          let group_outputs = <&mut [[u8; 32]; 8]>::try_from(group_outputs).expect("8-output chunk");
           digest_many_equal_len_group::<8>(
-            &group_inputs,
+            group_inputs,
             group_outputs,
             HASH256_IV,
             x86_64_avx512::permute_12_x86_avx512_x8,
@@ -702,8 +686,7 @@ impl AsconXof128 {
       kernels::AsconPermute12KernelId::Portable => {
         let mut input_groups = inputs.chunks_exact(1);
         let mut output_groups = outputs.chunks_exact_mut(out_len);
-        for group_inputs in input_groups.by_ref() {
-          let group_outputs = output_groups.next().expect("1-output chunk");
+        for (group_inputs, group_outputs) in input_groups.by_ref().zip(output_groups.by_ref()) {
           xof_many_equal_len_group::<1>(
             group_inputs,
             out_len,
@@ -717,69 +700,63 @@ impl AsconXof128 {
       kernels::AsconPermute12KernelId::Aarch64Neon => {
         let mut input_groups = inputs.chunks_exact(2);
         let mut output_groups = outputs.chunks_exact_mut(2 * out_len);
-        for group_inputs in input_groups.by_ref() {
-          let group_outputs = output_groups.next().expect("2-output chunk");
-          let group_inputs = [group_inputs[0], group_inputs[1]];
+        for (group_inputs, group_outputs) in input_groups.by_ref().zip(output_groups.by_ref()) {
           xof_many_equal_len_group::<2>(
-            &group_inputs,
+            group_inputs,
             out_len,
             group_outputs,
             XOF128_IV,
             aarch64::permute_12_aarch64_neon_x2,
           );
         }
-        for (index, input) in input_groups.remainder().iter().enumerate() {
-          let base = (inputs.len() - input_groups.remainder().len() + index) * out_len;
-          Self::hash_into_with_kernel(kid, input, &mut outputs[base..base + out_len]);
+        for (input, output) in input_groups
+          .remainder()
+          .iter()
+          .zip(output_groups.into_remainder().chunks_exact_mut(out_len))
+        {
+          Self::hash_into_with_kernel(kid, input, output);
         }
       }
       #[cfg(target_arch = "x86_64")]
       kernels::AsconPermute12KernelId::X86Avx2 => {
         let mut input_groups = inputs.chunks_exact(4);
         let mut output_groups = outputs.chunks_exact_mut(4 * out_len);
-        for group_inputs in input_groups.by_ref() {
-          let group_outputs = output_groups.next().expect("4-output chunk");
-          let group_inputs = [group_inputs[0], group_inputs[1], group_inputs[2], group_inputs[3]];
+        for (group_inputs, group_outputs) in input_groups.by_ref().zip(output_groups.by_ref()) {
           xof_many_equal_len_group::<4>(
-            &group_inputs,
+            group_inputs,
             out_len,
             group_outputs,
             XOF128_IV,
             x86_64_avx2::permute_12_x86_avx2_x4,
           );
         }
-        for (index, input) in input_groups.remainder().iter().enumerate() {
-          let base = (inputs.len() - input_groups.remainder().len() + index) * out_len;
-          Self::hash_into_with_kernel(kid, input, &mut outputs[base..base + out_len]);
+        for (input, output) in input_groups
+          .remainder()
+          .iter()
+          .zip(output_groups.into_remainder().chunks_exact_mut(out_len))
+        {
+          Self::hash_into_with_kernel(kid, input, output);
         }
       }
       #[cfg(target_arch = "x86_64")]
       kernels::AsconPermute12KernelId::X86Avx512 => {
         let mut input_groups = inputs.chunks_exact(8);
         let mut output_groups = outputs.chunks_exact_mut(8 * out_len);
-        for group_inputs in input_groups.by_ref() {
-          let group_outputs = output_groups.next().expect("8-output chunk");
-          let group_inputs = [
-            group_inputs[0],
-            group_inputs[1],
-            group_inputs[2],
-            group_inputs[3],
-            group_inputs[4],
-            group_inputs[5],
-            group_inputs[6],
-            group_inputs[7],
-          ];
+        for (group_inputs, group_outputs) in input_groups.by_ref().zip(output_groups.by_ref()) {
           xof_many_equal_len_group::<8>(
-            &group_inputs,
+            group_inputs,
             out_len,
             group_outputs,
             XOF128_IV,
             x86_64_avx512::permute_12_x86_avx512_x8,
           );
         }
-        for (index, input) in input_groups.remainder().iter().enumerate() {
-          let base = (inputs.len() - input_groups.remainder().len() + index) * out_len;
-          Self::hash_into_with_kernel(kid, input, &mut outputs[base..base + out_len]);
+        for (input, output) in input_groups
+          .remainder()
+          .iter()
+          .zip(output_groups.into_remainder().chunks_exact_mut(out_len))
+        {
+          Self::hash_into_with_kernel(kid, input, output);
         }
       }
     }
