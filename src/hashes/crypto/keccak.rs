@@ -240,9 +240,8 @@ pub(crate) fn keccakf_portable(state: &mut [u64; 25]) {
 // - x86_64 / generic: `InlinePermuter` → `keccakf_portable` (the AVX-512 and AVX2 χ-only SIMD
 //   kernels added pack/extract overhead that exceeded the VPTERNLOG savings; pure scalar is
 //   faster).
-// - aarch64: `Aarch64Permuter` → SHA3 CE when available (branch-based, not
-//   function pointer), portable fallback. The 2-state interleaved kernel is
-//   preserved for `digest_pair`.
+// - aarch64: `Aarch64Permuter` → SHA3 CE when available (branch-based, not function pointer),
+//   portable fallback. The 2-state interleaved kernel is preserved for `digest_pair`.
 // - s390x: `S390xPermuter` → portable permutation + KIMD batch-absorb.
 
 pub(crate) trait Permuter: Copy {
