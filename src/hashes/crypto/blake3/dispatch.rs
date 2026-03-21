@@ -359,6 +359,13 @@ pub fn digest(data: &[u8]) -> [u8; 32] {
 pub fn xof(data: &[u8]) -> super::Blake3Xof {
   let d = active();
   let kernel = select(&d, data.len()).kernel;
+
+  // Lean path for single-chunk inputs: directly construct Blake3Xof without
+  // going through root_output_oneshot / single_chunk_output / OutputState.
+  if data.len() <= super::CHUNK_LEN {
+    return super::xof_oneshot_single_chunk(kernel, super::IV, 0, data);
+  }
+
   let output = super::root_output_oneshot(
     kernel,
     super::IV,

@@ -53,6 +53,11 @@ impl Digest for Sha3_224 {
   }
 
   #[inline]
+  fn digest(data: &[u8]) -> Self::Output {
+    super::keccak::oneshot_fixed::<144, 28>(0x06, data)
+  }
+
+  #[inline]
   fn reset(&mut self) {
     *self = Self::default();
   }
@@ -90,6 +95,11 @@ impl Digest for Sha3_256 {
     let mut out = [0u8; 32];
     self.core.finalize_into_fixed(0x06, &mut out);
     out
+  }
+
+  #[inline]
+  fn digest(data: &[u8]) -> Self::Output {
+    super::keccak::oneshot_fixed::<136, 32>(0x06, data)
   }
 
   #[inline]
@@ -168,6 +178,11 @@ impl Digest for Sha3_384 {
   }
 
   #[inline]
+  fn digest(data: &[u8]) -> Self::Output {
+    super::keccak::oneshot_fixed::<104, 48>(0x06, data)
+  }
+
+  #[inline]
   fn reset(&mut self) {
     *self = Self::default();
   }
@@ -205,6 +220,11 @@ impl Digest for Sha3_512 {
     let mut out = [0u8; 64];
     self.core.finalize_into_fixed(0x06, &mut out);
     out
+  }
+
+  #[inline]
+  fn digest(data: &[u8]) -> Self::Output {
+    super::keccak::oneshot_fixed::<72, 64>(0x06, data)
   }
 
   #[inline]

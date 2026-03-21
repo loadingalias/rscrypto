@@ -589,18 +589,12 @@ fn root_output_block_words_inline(
 
   #[cfg(target_arch = "aarch64")]
   if id == Blake3KernelId::Aarch64Neon {
-    // SAFETY: dispatch only selects this kernel when NEON is available, and `out`
-    // is exactly one output block.
-    unsafe {
-      super::aarch64::root_output_blocks1_neon(
-        chaining_value,
-        block_words,
-        counter,
-        block_len,
-        flags,
-        out.as_mut_ptr(),
-      );
-    }
+    // Use portable compress for single-block XOF emit: NEON register load/store
+    // overhead is not worth it for a single 64-byte compress. The official blake3
+    // crate makes the same choice (portable::compress_xof for NEON).
+    // Bulk emit (root_output_blocks4_neon) still uses NEON.
+    let words = super::compress(chaining_value, block_words, counter, block_len, flags);
+    write_root_output_words(out, &words);
     return;
   }
 
