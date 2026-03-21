@@ -140,6 +140,69 @@ fn shake256(c: &mut Criterion) {
   g.finish();
 }
 
+// ---------------------------------------------------------------------------
+// Diagnostic: raw permutation isolation (no sponge overhead)
+// ---------------------------------------------------------------------------
+
+/// Benchmark the raw Keccak-f[1600] permutation in isolation — no sponge
+/// absorb, no padding, no zeroization on Drop. Compares rscrypto's portable
+/// kernel against the `keccak` crate's `f1600` to isolate whether the SHA-3
+/// gap is in the permutation or the sponge wrapper.
+fn keccakf1600_raw(c: &mut Criterion) {
+  let mut g = c.benchmark_group("keccakf1600/raw");
+  g.throughput(criterion::Throughput::Bytes(200));
+
+  let init_state: [u64; 25] = {
+    let bytes = common::random_bytes(200);
+    let mut s = [0u64; 25];
+    for (i, chunk) in bytes.chunks_exact(8).enumerate() {
+      s[i] = u64::from_le_bytes(chunk.try_into().unwrap());
+    }
+    s
+  };
+
+  // rscrypto: dispatched (what the production SHA-3 path actually uses).
+  g.bench_function("rscrypto/auto", |b| {
+    let bytes: Vec<u8> = init_state.iter().flat_map(|w| w.to_le_bytes()).collect();
+    b.iter(|| black_box(rscrypto::hashes::bench::run_auto("keccakf1600", black_box(&bytes))))
+  });
+
+  // rscrypto: portable kernel specifically.
+  if let Some(k) = rscrypto::hashes::bench::get_kernel("keccakf1600", "portable") {
+    g.bench_function("rscrypto/portable", |b| {
+      let bytes: Vec<u8> = init_state.iter().flat_map(|w| w.to_le_bytes()).collect();
+      b.iter(|| black_box((k.func)(black_box(&bytes))))
+    });
+  }
+
+  // rscrypto: SHA3 CE kernel (aarch64 only).
+  if let Some(k) = rscrypto::hashes::bench::get_kernel("keccakf1600", "aarch64/sha3") {
+    g.bench_function("rscrypto/aarch64-sha3", |b| {
+      let bytes: Vec<u8> = init_state.iter().flat_map(|w| w.to_le_bytes()).collect();
+      b.iter(|| black_box((k.func)(black_box(&bytes))))
+    });
+  }
+
+  // rscrypto: AVX-512 kernel (x86 only).
+  if let Some(k) = rscrypto::hashes::bench::get_kernel("keccakf1600", "x86/avx512") {
+    g.bench_function("rscrypto/x86-avx512", |b| {
+      let bytes: Vec<u8> = init_state.iter().flat_map(|w| w.to_le_bytes()).collect();
+      b.iter(|| black_box((k.func)(black_box(&bytes))))
+    });
+  }
+
+  // keccak crate's f1600 (the competitor's raw permutation).
+  g.bench_function("keccak-crate/f1600", |b| {
+    let mut state = init_state;
+    b.iter(|| {
+      keccak::f1600(black_box(&mut state));
+      black_box(&state);
+    })
+  });
+
+  g.finish();
+}
+
 criterion_group!(
   benches,
   sha3_224,
@@ -148,6 +211,7 @@ criterion_group!(
   sha3_512,
   sha3_256_streaming,
   shake128,
-  shake256
+  shake256,
+  keccakf1600_raw
 );
 criterion_main!(benches);

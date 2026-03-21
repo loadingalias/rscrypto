@@ -837,6 +837,7 @@ dependencies = [
  "crc64fast-nvme",
  "criterion",
  "digest 0.10.7",
+ "keccak",
  "proptest",
  "rapidhash",
  "rayon",
