@@ -402,13 +402,15 @@ fn crc32c_dispatch_portable_vectored(crc: u32, bufs: &[&[u8]]) -> u32 {
 }
 
 #[cfg(feature = "std")]
-static CRC32_DISPATCH: crate::backend::OnceCache<Crc32DispatchFn> = crate::backend::OnceCache::new();
+static CRC32_DISPATCH: crate::backend::cache::OnceCache<Crc32DispatchFn> = crate::backend::cache::OnceCache::new();
 #[cfg(feature = "std")]
-static CRC32_DISPATCH_VECTORED: crate::backend::OnceCache<Crc32DispatchVectoredFn> = crate::backend::OnceCache::new();
+static CRC32_DISPATCH_VECTORED: crate::backend::cache::OnceCache<Crc32DispatchVectoredFn> =
+  crate::backend::cache::OnceCache::new();
 #[cfg(feature = "std")]
-static CRC32C_DISPATCH: crate::backend::OnceCache<Crc32DispatchFn> = crate::backend::OnceCache::new();
+static CRC32C_DISPATCH: crate::backend::cache::OnceCache<Crc32DispatchFn> = crate::backend::cache::OnceCache::new();
 #[cfg(feature = "std")]
-static CRC32C_DISPATCH_VECTORED: crate::backend::OnceCache<Crc32DispatchVectoredFn> = crate::backend::OnceCache::new();
+static CRC32C_DISPATCH_VECTORED: crate::backend::cache::OnceCache<Crc32DispatchVectoredFn> =
+  crate::backend::cache::OnceCache::new();
 
 #[cfg(feature = "std")]
 #[inline]
@@ -605,17 +607,6 @@ impl Crc32 {
     }
   }
 
-  /// Get the name of the currently selected backend.
-  #[must_use]
-  pub fn backend_name() -> &'static str {
-    let cfg = config::get();
-    match cfg.effective_force {
-      Crc32Force::Reference => kernels::REFERENCE,
-      Crc32Force::Portable => kernels::PORTABLE,
-      _ => crc32_selected_kernel_name(1024),
-    }
-  }
-
   /// Get the effective CRC-32 configuration (overrides + thresholds).
   #[must_use]
   pub fn config() -> Crc32Config {
@@ -697,6 +688,14 @@ impl crate::traits::ChecksumCombine for Crc32 {
   }
 }
 
+#[cfg(feature = "alloc")]
+impl Crc32 {
+  #[must_use]
+  pub fn buffered() -> crate::checksum::buffered::BufferedCrc32 {
+    crate::checksum::buffered::BufferedCrc32::new()
+  }
+}
+
 /// CRC-32C (Castagnoli) checksum.
 ///
 /// Used by iSCSI, SCTP, ext4, Btrfs, SSE4.2 `crc32`, etc.
@@ -739,17 +738,6 @@ impl Crc32C {
       // `resume` is const, so keep runtime force semantics via wrapper dispatch.
       dispatch: crc32c_dispatch,
       auto_table: None,
-    }
-  }
-
-  /// Get the name of the currently selected backend.
-  #[must_use]
-  pub fn backend_name() -> &'static str {
-    let cfg = config::get();
-    match cfg.effective_force {
-      Crc32Force::Reference => kernels::REFERENCE,
-      Crc32Force::Portable => kernels::PORTABLE,
-      _ => crc32c_selected_kernel_name(1024),
     }
   }
 
@@ -834,6 +822,14 @@ impl crate::traits::ChecksumCombine for Crc32C {
   }
 }
 
+#[cfg(feature = "alloc")]
+impl Crc32C {
+  #[must_use]
+  pub fn buffered() -> crate::checksum::buffered::BufferedCrc32C {
+    crate::checksum::buffered::BufferedCrc32C::new()
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Buffered CRC-32 Wrappers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -862,14 +858,6 @@ define_buffered_crc! {
   }
 }
 
-/// Explicit buffered alias for the IEEE CRC-32 variant (alias of [`BufferedCrc32`]).
-#[cfg(feature = "alloc")]
-pub type BufferedCrc32Ieee = BufferedCrc32;
-
-/// Explicit buffered alias for the Castagnoli CRC-32C variant (alias of [`BufferedCrc32C`]).
-#[cfg(feature = "alloc")]
-pub type BufferedCrc32Castagnoli = BufferedCrc32C;
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Kernel Introspection
 // ─────────────────────────────────────────────────────────────────────────────
@@ -878,19 +866,11 @@ impl crate::checksum::introspect::KernelIntrospect for Crc32 {
   fn kernel_name_for_len(len: usize) -> &'static str {
     Self::kernel_name_for_len(len)
   }
-
-  fn backend_name() -> &'static str {
-    Self::backend_name()
-  }
 }
 
 impl crate::checksum::introspect::KernelIntrospect for Crc32C {
   fn kernel_name_for_len(len: usize) -> &'static str {
     Self::kernel_name_for_len(len)
-  }
-
-  fn backend_name() -> &'static str {
-    Self::backend_name()
   }
 }
 
@@ -950,9 +930,9 @@ mod tests {
   }
 
   #[test]
-  fn test_backend_name_not_empty() {
-    assert!(!Crc32::backend_name().is_empty());
-    assert!(!Crc32C::backend_name().is_empty());
+  fn test_kernel_probe_not_empty() {
+    assert!(!Crc32::kernel_name_for_len(1024).is_empty());
+    assert!(!Crc32C::kernel_name_for_len(1024).is_empty());
   }
 
   #[test]

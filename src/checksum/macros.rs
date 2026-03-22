@@ -41,14 +41,14 @@ macro_rules! crc_vectored_dispatch {
 ///
 /// This macro creates:
 /// - The struct definition with `inner`, `buffer`, and `len` fields
-/// - `new()`, `update()`, `finalize()`, `reset()`, `backend_name()` methods
+/// - `new()`, `update()`, `finalize()`, and `reset()` methods
 /// - `Default` trait implementation
 /// - `Drop` implementation that zeroizes the buffer via [`crate::traits::ct::zeroize`]
 ///
 /// # Arguments
 ///
-/// - `$name`: The wrapper type name (e.g., `BufferedCrc64Xz`)
-/// - `$inner`: The inner CRC type (e.g., `Crc64Xz`)
+/// - `$name`: The wrapper type name (e.g., `BufferedCrc64`)
+/// - `$inner`: The inner CRC type (e.g., `Crc64`)
 /// - `$buffer_size`: The buffer size constant
 /// - `$threshold_fn`: Function that returns the SIMD threshold
 #[cfg(feature = "alloc")]
@@ -159,12 +159,6 @@ macro_rules! define_buffered_crc {
       pub fn reset(&mut self) {
         <$inner as $crate::Checksum>::reset(&mut self.inner);
         self.len = 0;
-      }
-
-      /// Get the name of the currently selected backend.
-      #[must_use]
-      pub fn backend_name() -> &'static str {
-        <$inner>::backend_name()
       }
     }
 

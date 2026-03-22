@@ -14,7 +14,7 @@ use super::{
 };
 #[cfg(target_arch = "x86_64")]
 use crate::platform::caps::x86;
-use crate::{backend::OnceCache, hashes::crypto::dispatch_util::SizeClassDispatch, platform::Caps};
+use crate::{backend::cache::OnceCache, hashes::crypto::dispatch_util::SizeClassDispatch, platform::Caps};
 
 #[cfg(target_arch = "x86_64")]
 #[inline]
@@ -325,13 +325,6 @@ fn select(d: &ActiveDispatch, len: usize) -> Entry {
 pub fn kernel_name_for_len(len: usize) -> &'static str {
   let d = active();
   select(&d, len).kernel.name
-}
-
-#[inline]
-#[must_use]
-pub(crate) fn kernel_for_len(len: usize) -> Kernel {
-  let d = active();
-  select(&d, len).kernel
 }
 
 #[inline]

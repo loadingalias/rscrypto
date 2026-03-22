@@ -88,7 +88,7 @@ fn ascon_xof128_many(c: &mut Criterion) {
   g.bench_function("rscrypto/batch-auto", |b| {
     let mut out = vec![0u8; COUNT * OUT_LEN];
     b.iter(|| {
-      rscrypto::AsconXof128::hash_many_into(black_box(&inputs), OUT_LEN, black_box(&mut out));
+      rscrypto::AsconXof::hash_many_into(black_box(&inputs), OUT_LEN, black_box(&mut out));
       black_box(out[0])
     })
   });
@@ -97,7 +97,7 @@ fn ascon_xof128_many(c: &mut Criterion) {
     let mut out = vec![0u8; COUNT * OUT_LEN];
     b.iter(|| {
       for (index, input) in inputs.iter().enumerate() {
-        let mut hasher = rscrypto::AsconXof128::new();
+        let mut hasher = rscrypto::AsconXof::new();
         hasher.update(black_box(input));
         let mut reader = hasher.finalize_xof();
         let base = index * OUT_LEN;

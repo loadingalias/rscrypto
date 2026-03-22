@@ -166,7 +166,7 @@ pub trait Checksum: Clone + Default {
   /// let mut reader = Sum::reader(Cursor::new(b"abc".to_vec()));
   /// std::io::copy(&mut reader, &mut std::io::sink())?;
   /// assert_eq!(
-  ///   reader.crc(),
+  ///   reader.checksum(),
   ///   u32::from(b'a') + u32::from(b'b') + u32::from(b'c')
   /// );
   /// # Ok::<(), std::io::Error>(())

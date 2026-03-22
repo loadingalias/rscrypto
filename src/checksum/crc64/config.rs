@@ -63,52 +63,6 @@ impl Crc64Force {
       Self::Zvbc => "zvbc",
     }
   }
-
-  /// Convert to the corresponding [`crate::backend::KernelFamily`], if applicable.
-  ///
-  /// Returns `None` for `Auto` since it doesn't map to a specific family.
-  #[must_use]
-  pub const fn to_family(self) -> Option<crate::backend::KernelFamily> {
-    use crate::backend::KernelFamily;
-    match self {
-      Self::Auto => None,
-      Self::Reference => Some(KernelFamily::Reference),
-      Self::Portable => Some(KernelFamily::Portable),
-      Self::Pclmul => Some(KernelFamily::X86Pclmul),
-      Self::Vpclmul => Some(KernelFamily::X86Vpclmul),
-      Self::Pmull => Some(KernelFamily::ArmPmull),
-      Self::PmullEor3 => Some(KernelFamily::ArmPmullEor3),
-      Self::Sve2Pmull => Some(KernelFamily::ArmSve2Pmull),
-      Self::Vpmsum => Some(KernelFamily::PowerVpmsum),
-      Self::Vgfm => Some(KernelFamily::S390xVgfm),
-      Self::Zbc => Some(KernelFamily::RiscvZbc),
-      Self::Zvbc => Some(KernelFamily::RiscvZvbc),
-    }
-  }
-
-  /// Create from a [`crate::backend::KernelFamily`].
-  #[must_use]
-  pub const fn from_family(family: crate::backend::KernelFamily) -> Self {
-    use crate::backend::KernelFamily;
-    match family {
-      KernelFamily::Reference => Self::Reference,
-      KernelFamily::Portable => Self::Portable,
-      KernelFamily::X86Pclmul => Self::Pclmul,
-      KernelFamily::X86Vpclmul => Self::Vpclmul,
-      KernelFamily::ArmPmull => Self::Pmull,
-      KernelFamily::ArmPmullEor3 => Self::PmullEor3,
-      KernelFamily::ArmSve2Pmull => Self::Sve2Pmull,
-      KernelFamily::PowerVpmsum => Self::Vpmsum,
-      KernelFamily::S390xVgfm => Self::Vgfm,
-      KernelFamily::RiscvZbc => Self::Zbc,
-      KernelFamily::RiscvZvbc => Self::Zvbc,
-      // HW CRC families don't apply to CRC-64, fallback to portable
-      KernelFamily::X86Crc32 | KernelFamily::ArmCrc32 => Self::Portable,
-      // Future families - fallback to portable (non_exhaustive)
-      #[allow(unreachable_patterns)]
-      _ => Self::Portable,
-    }
-  }
 }
 
 #[cfg(feature = "std")]

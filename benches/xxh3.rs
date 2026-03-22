@@ -15,7 +15,7 @@ fn xxh3_64(c: &mut Criterion) {
     common::set_throughput(&mut g, *len);
 
     g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
-      b.iter(|| black_box(rscrypto::Xxh3_64::hash(black_box(d))))
+      b.iter(|| black_box(rscrypto::Xxh3::hash(black_box(d))))
     });
 
     g.bench_with_input(BenchmarkId::new("xxhash-rust", len), data, |b, d| {

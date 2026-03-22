@@ -575,22 +575,30 @@ impl Digest for AsconHash256 {
 
 /// Ascon-XOF128 hasher.
 #[derive(Clone, Default)]
-pub struct AsconXof128 {
+pub struct AsconXof {
   sponge:
     Sponge<DispatchPermuter, { XOF128_IV[0] }, { XOF128_IV[1] }, { XOF128_IV[2] }, { XOF128_IV[3] }, { XOF128_IV[4] }>,
 }
 
-impl core::fmt::Debug for AsconXof128 {
+impl core::fmt::Debug for AsconXof {
   fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-    f.debug_struct("AsconXof128").finish_non_exhaustive()
+    f.debug_struct("AsconXof").finish_non_exhaustive()
   }
 }
 
-impl AsconXof128 {
+impl AsconXof {
   #[inline]
   #[must_use]
   pub fn new() -> Self {
     Self::default()
+  }
+
+  #[inline]
+  #[must_use]
+  pub fn xof(data: &[u8]) -> AsconXofReader {
+    let mut h = Self::new();
+    h.update(data);
+    h.finalize_xof()
   }
 
   #[inline]
@@ -605,9 +613,9 @@ impl AsconXof128 {
 
   #[inline]
   #[must_use]
-  pub fn finalize_xof(&self) -> AsconXof128Xof {
+  pub fn finalize_xof(&self) -> AsconXofReader {
     let (state, hint) = self.sponge.finalize_state_with_hint();
-    AsconXof128Xof {
+    AsconXofReader {
       state,
       buf: [0u8; RATE],
       pos: RATE,
@@ -617,11 +625,12 @@ impl AsconXof128 {
   }
 
   #[inline]
+  /// Convenience one-shot XOF output for callers that only need bytes.
+  ///
+  /// The canonical one-shot API is [`Self::xof`]. Use [`Self::new`],
+  /// [`Self::update`], and [`Self::finalize_xof`] for streaming.
   pub fn hash_into(data: &[u8], out: &mut [u8]) {
-    let mut h = Self::new();
-    h.update(data);
-    let mut xof = h.finalize_xof();
-    xof.squeeze(out);
+    Self::xof(data).squeeze(out);
   }
 
   #[inline]
@@ -775,7 +784,7 @@ impl AsconXof128 {
 
 /// Ascon-XOF128 reader.
 #[derive(Clone)]
-pub struct AsconXof128Xof {
+pub struct AsconXofReader {
   state: [u64; 5],
   buf: [u8; RATE],
   pos: usize,
@@ -783,13 +792,13 @@ pub struct AsconXof128Xof {
   bytes_out: usize,
 }
 
-impl core::fmt::Debug for AsconXof128Xof {
+impl core::fmt::Debug for AsconXofReader {
   fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-    f.debug_struct("AsconXof128Xof").finish_non_exhaustive()
+    f.debug_struct("AsconXofReader").finish_non_exhaustive()
   }
 }
 
-impl Drop for AsconXof128Xof {
+impl Drop for AsconXofReader {
   fn drop(&mut self) {
     for word in self.state.iter_mut() {
       // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
@@ -800,7 +809,7 @@ impl Drop for AsconXof128Xof {
   }
 }
 
-impl AsconXof128Xof {
+impl AsconXofReader {
   #[inline(always)]
   fn refill(&mut self) {
     self.buf = self.state[0].to_le_bytes();
@@ -809,7 +818,7 @@ impl AsconXof128Xof {
   }
 }
 
-impl Xof for AsconXof128Xof {
+impl Xof for AsconXofReader {
   fn squeeze(&mut self, mut out: &mut [u8]) {
     while !out.is_empty() {
       if self.pos == RATE {
@@ -824,6 +833,12 @@ impl Xof for AsconXof128Xof {
     }
   }
 }
+
+/// Spec-precise alias for [`AsconXof`].
+pub type AsconXof128 = AsconXof;
+
+/// Spec-precise alias for [`AsconXofReader`].
+pub type AsconXof128Xof = AsconXofReader;
 
 #[cfg(feature = "std")]
 pub(crate) mod kernel_test;

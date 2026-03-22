@@ -278,6 +278,14 @@ impl Shake128 {
   }
 
   #[inline]
+  #[must_use]
+  pub fn xof(data: &[u8]) -> Shake128Xof {
+    let mut h = Self::new();
+    h.update(data);
+    h.finalize_xof()
+  }
+
+  #[inline]
   pub fn update(&mut self, data: &[u8]) {
     self.core.update(data);
   }
@@ -296,10 +304,12 @@ impl Shake128 {
   }
 
   #[inline]
+  /// Convenience one-shot XOF output for callers that only need bytes.
+  ///
+  /// The canonical one-shot API is [`Self::xof`]. Use [`Self::new`],
+  /// [`Self::update`], and [`Self::finalize_xof`] for streaming.
   pub fn hash_into(data: &[u8], out: &mut [u8]) {
-    let mut h = Self::new();
-    h.update(data);
-    h.core.finalize_xof_into(0x1F, out);
+    Self::xof(data).squeeze(out);
   }
 
   #[inline]
@@ -337,6 +347,14 @@ impl Shake256 {
   }
 
   #[inline]
+  #[must_use]
+  pub fn xof(data: &[u8]) -> Shake256Xof {
+    let mut h = Self::new();
+    h.update(data);
+    h.finalize_xof()
+  }
+
+  #[inline]
   pub fn update(&mut self, data: &[u8]) {
     self.core.update(data);
   }
@@ -355,10 +373,12 @@ impl Shake256 {
   }
 
   #[inline]
+  /// Convenience one-shot XOF output for callers that only need bytes.
+  ///
+  /// The canonical one-shot API is [`Self::xof`]. Use [`Self::new`],
+  /// [`Self::update`], and [`Self::finalize_xof`] for streaming.
   pub fn hash_into(data: &[u8], out: &mut [u8]) {
-    let mut h = Self::new();
-    h.update(data);
-    h.core.finalize_xof_into(0x1F, out);
+    Self::xof(data).squeeze(out);
   }
 
   #[inline]
@@ -390,8 +410,8 @@ impl Xof for Shake256Xof {
 
 #[cfg(test)]
 mod tests {
-  use super::{Sha3_256, Sha3_512, Shake256};
-  use crate::traits::Digest;
+  use super::{Sha3_256, Sha3_512, Shake128, Shake256};
+  use crate::traits::{Digest, Xof};
 
   fn hex(bytes: &[u8]) -> alloc::string::String {
     use alloc::string::String;
@@ -433,11 +453,29 @@ mod tests {
   fn shake256_vectors() {
     // NIST FIPS 202 test vector: SHAKE256(M="", 512 bits)
     let mut out = [0u8; 64];
-    Shake256::hash_into(b"", &mut out);
+    Shake256::xof(b"").squeeze(&mut out);
     assert_eq!(
       hex(&out),
       "46b9dd2b0ba88d13233b3feb743eeb243fcd52ea62b81b82b50c27646ed5762fd75dc4ddd8c0f200cb05019d67b592f6fc821c49479ab48640292eacb3b7c4be"
     );
+  }
+
+  #[test]
+  fn shake_xof_matches_finalize_xof() {
+    let data = b"hello world";
+
+    let mut via_finalize = Shake128::new();
+    via_finalize.update(data);
+    let mut via_finalize = via_finalize.finalize_xof();
+
+    let mut via_oneshot = Shake128::xof(data);
+
+    let mut finalize_out = [0u8; 96];
+    let mut oneshot_out = [0u8; 96];
+    via_finalize.squeeze(&mut finalize_out);
+    via_oneshot.squeeze(&mut oneshot_out);
+
+    assert_eq!(finalize_out, oneshot_out);
   }
 
   #[test]

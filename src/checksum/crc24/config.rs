@@ -37,65 +37,6 @@ impl Crc24Force {
       Self::Slice8 => "slice8",
     }
   }
-
-  /// Map to `KernelFamily` for dispatch.
-  #[must_use]
-  pub const fn to_family(self) -> Option<crate::backend::KernelFamily> {
-    match self {
-      Self::Auto | Self::Portable | Self::Slice4 | Self::Slice8 => None,
-      Self::Reference => Some(crate::backend::KernelFamily::Reference),
-      Self::Clmul => {
-        #[cfg(target_arch = "x86_64")]
-        {
-          Some(crate::backend::KernelFamily::X86Pclmul)
-        }
-        #[cfg(target_arch = "aarch64")]
-        {
-          Some(crate::backend::KernelFamily::ArmPmull)
-        }
-        #[cfg(target_arch = "powerpc64")]
-        {
-          Some(crate::backend::KernelFamily::PowerVpmsum)
-        }
-        #[cfg(target_arch = "s390x")]
-        {
-          Some(crate::backend::KernelFamily::S390xVgfm)
-        }
-        #[cfg(target_arch = "riscv64")]
-        {
-          Some(crate::backend::KernelFamily::RiscvZbc)
-        }
-        #[cfg(not(any(
-          target_arch = "x86_64",
-          target_arch = "aarch64",
-          target_arch = "powerpc64",
-          target_arch = "s390x",
-          target_arch = "riscv64"
-        )))]
-        {
-          None
-        }
-      }
-    }
-  }
-
-  /// Create from `KernelFamily`.
-  #[must_use]
-  pub const fn from_family(family: crate::backend::KernelFamily) -> Self {
-    match family {
-      crate::backend::KernelFamily::Reference => Self::Reference,
-      crate::backend::KernelFamily::Portable => Self::Portable,
-      crate::backend::KernelFamily::X86Pclmul | crate::backend::KernelFamily::X86Vpclmul => Self::Clmul,
-      crate::backend::KernelFamily::ArmPmull
-      | crate::backend::KernelFamily::ArmPmullEor3
-      | crate::backend::KernelFamily::ArmSve2Pmull => Self::Clmul,
-      crate::backend::KernelFamily::PowerVpmsum
-      | crate::backend::KernelFamily::S390xVgfm
-      | crate::backend::KernelFamily::RiscvZbc
-      | crate::backend::KernelFamily::RiscvZvbc => Self::Clmul,
-      _ => Self::Auto,
-    }
-  }
 }
 
 #[cfg(feature = "std")]

@@ -2,7 +2,7 @@ use super::{
   dispatch_tables::DispatchTable,
   kernels::{Xxh3KernelId, hash64_fn, hash128_fn, required_caps},
 };
-use crate::{backend::OnceCache, platform::Caps};
+use crate::{backend::cache::OnceCache, platform::Caps};
 
 type Hash64Fn = fn(&[u8], u64) -> u64;
 type Hash128Fn = fn(&[u8], u64) -> u128;

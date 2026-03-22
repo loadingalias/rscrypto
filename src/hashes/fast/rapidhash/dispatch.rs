@@ -2,7 +2,7 @@ use super::{
   dispatch_tables::DispatchTable,
   kernels::{RapidHashKernelId, hash64_fn, required_caps},
 };
-use crate::{backend::OnceCache, platform::Caps};
+use crate::{backend::cache::OnceCache, platform::Caps};
 
 type Hash64Fn = fn(&[u8], u64) -> u64;
 

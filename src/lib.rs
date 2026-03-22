@@ -1,40 +1,68 @@
-//! Pure Rust cryptography with hardware acceleration.
-//!
-//! `rscrypto` provides high-performance cryptographic primitives with automatic
-//! CPU feature detection and optimal kernel selection. Zero dependencies, `no_std`
-//! compatible, and hardware-accelerated on x86_64, aarch64, and more.
+//! Zero-dependency-by-default Rust checksums and hashes.
 //!
 //! # Quick Start
 //!
-//! ```
-//! # #[cfg(feature = "checksums")]
-//! # {
+//! ## Checksum
+//!
+//! ```rust
 //! use rscrypto::{Checksum, Crc32C};
 //!
-//! // One-shot computation
-//! let crc = Crc32C::checksum(b"hello world");
-//! assert_eq!(crc, 0xC99465AA);
+//! let data = b"hello world";
 //!
-//! // Streaming computation
-//! let mut hasher = Crc32C::new();
-//! hasher.update(b"hello ");
-//! hasher.update(b"world");
-//! assert_eq!(hasher.finalize(), crc);
-//! # }
+//! let checksum = Crc32C::checksum(data);
+//!
+//! let mut h = Crc32C::new();
+//! h.update(b"hello ");
+//! h.update(b"world");
+//! assert_eq!(h.finalize(), checksum);
+//! h.reset();
 //! ```
 //!
-//! Hash algorithms follow the same top-level pattern when the `hashes` feature
-//! is enabled:
+//! ## Digest
 //!
-//! ```
-//! # #[cfg(feature = "hashes")]
-//! # {
+//! ```rust
 //! use rscrypto::{Digest, Sha256};
 //!
-//! let digest = Sha256::digest(b"hello world");
-//! assert_eq!(digest.len(), 32);
-//! # }
+//! let data = b"hello world";
+//!
+//! let digest = Sha256::digest(data);
+//!
+//! let mut h = Sha256::new();
+//! h.update(b"hello ");
+//! h.update(b"world");
+//! assert_eq!(h.finalize(), digest);
+//! h.reset();
 //! ```
+//!
+//! ## XOF
+//!
+//! ```rust
+//! use rscrypto::{Shake256, Xof};
+//!
+//! let data = b"hello world";
+//!
+//! let mut h = Shake256::new();
+//! h.update(data);
+//! let mut xof = h.finalize_xof();
+//! let mut out = [0u8; 64];
+//! xof.squeeze(&mut out);
+//! h.reset();
+//!
+//! let mut oneshot = Shake256::xof(data);
+//! let mut same = [0u8; 64];
+//! oneshot.squeeze(&mut same);
+//! assert_eq!(out, same);
+//! assert_ne!(out, [0u8; 64]);
+//! ```
+//!
+//! `rscrypto` keeps the shipping library inside this repository:
+//!
+//! - no C FFI
+//! - no vendored C/C++ dependency chain
+//! - no mandatory runtime dependencies
+//!
+//! The only optional runtime dependency is `rayon`, behind the `parallel`
+//! feature.
 //!
 //! # Feature Flags
 //!
@@ -45,6 +73,21 @@
 //! | `checksums` | Yes | CRC-16, CRC-24, CRC-32, and CRC-64 algorithms |
 //! | `hashes` | Yes | Cryptographic and fast hash families |
 //! | `parallel` | No | Rayon-based parallel hashing (Blake3) |
+//!
+//! # Examples
+//!
+//! - `cargo run --example basic` is the canonical checksum, digest, XOF, fast hash, and I/O adapter
+//!   specimen.
+//! - `cargo run --example introspect` is the advanced dispatch introspection example.
+//! - `cargo run --example parallel --features parallel` shows CRC combine-based chunked processing.
+//!
+//! # Advanced Surfaces
+//!
+//! - `rscrypto::checksum::config` for checksum force/config controls
+//! - `rscrypto::checksum::introspect` for checksum dispatch reporting
+//! - `rscrypto::hashes::introspect` for hash kernel reporting
+//! - `rscrypto::hashes::fast` for explicit fast-hash family access
+//! - `rscrypto::platform` for platform detection and override control
 //!
 //! ## `no_std` Usage
 //!
@@ -93,7 +136,7 @@ extern crate std;
 
 // Internal modules (not published as separate crates)
 #[doc(hidden)]
-pub mod backend;
+mod backend;
 pub mod platform;
 pub mod traits;
 
@@ -105,32 +148,212 @@ pub mod hashes;
 
 // ─── Checksum re-exports ────────────────────────────────────────────────────
 
-#[cfg(all(feature = "checksums", feature = "alloc"))]
-pub use checksum::{
-  BufferedCrc16Ccitt, BufferedCrc16Ibm, BufferedCrc24OpenPgp, BufferedCrc32, BufferedCrc32C, BufferedCrc32Castagnoli,
-  BufferedCrc32Ieee, BufferedCrc64, BufferedCrc64Nvme, BufferedCrc64Xz,
-};
 #[cfg(feature = "checksums")]
-pub use checksum::{
-  Crc16Ccitt, Crc16Config, Crc16Force, Crc16Ibm, Crc24Config, Crc24Force, Crc24OpenPgp, Crc32, Crc32C, Crc32Castagnoli,
-  Crc32Config, Crc32Force, Crc32Ieee, Crc64, Crc64Config, Crc64Force, Crc64Nvme, Crc64Xz, DispatchInfo,
-  KernelIntrospect, is_hardware_accelerated, kernel_for, platform_describe,
-};
+pub use checksum::{Crc16Ccitt, Crc16Ibm, Crc24OpenPgp, Crc32, Crc32C, Crc64, Crc64Nvme};
 // ─── Hash re-exports ────────────────────────────────────────────────────────
 #[cfg(feature = "hashes")]
 pub use hashes::crypto::{
-  AsconHash256, AsconXof128, AsconXof128Xof, Blake3, Blake3Xof, Sha3_224, Sha3_256, Sha3_384, Sha3_512, Sha224, Sha256,
+  AsconHash256, AsconXof, AsconXofReader, Blake3, Blake3Xof, Sha3_224, Sha3_256, Sha3_384, Sha3_512, Sha224, Sha256,
   Sha384, Sha512, Sha512_256, Shake128, Shake128Xof, Shake256, Shake256Xof,
 };
 #[cfg(feature = "hashes")]
-pub use hashes::fast::{RapidHash64, RapidHash128, Xxh3_64, Xxh3_128};
-#[cfg(all(feature = "hashes", feature = "std"))]
-pub use hashes::{DigestReader, DigestWriter};
+pub use hashes::fast::{RapidHash, RapidHash128, Xxh3, Xxh3_128};
 pub use traits::ct;
 // ─── Trait re-exports ───────────────────────────────────────────────────────
-pub use traits::{Checksum, ChecksumCombine};
+pub use traits::{Checksum, ChecksumCombine, VerificationError};
 #[cfg(feature = "hashes")]
 pub use traits::{Digest, FastHash, Xof};
+
+#[cfg(doctest)]
+#[doc(hidden)]
+#[doc = r#"
+```compile_fail
+use rscrypto::Crc32Config;
+```
+
+```compile_fail
+use rscrypto::DispatchInfo;
+```
+
+```compile_fail
+use rscrypto::kernel_for;
+```
+
+```compile_fail
+use rscrypto::HashKernelIntrospect;
+```
+
+```compile_fail
+use rscrypto::backend_for;
+```
+
+```compile_fail
+use rscrypto::backend;
+```
+
+```compile_fail
+use rscrypto::Crc32Ieee;
+```
+
+```compile_fail
+use rscrypto::Crc32Castagnoli;
+```
+
+```compile_fail
+use rscrypto::Crc64Xz;
+```
+
+```compile_fail
+use rscrypto::AsconXof128;
+```
+
+```compile_fail
+use rscrypto::AsconXof128Xof;
+```
+
+```compile_fail
+use rscrypto::BufferedCrc32C;
+```
+
+```compile_fail
+use rscrypto::Xxh3_64;
+```
+
+```compile_fail
+use rscrypto::RapidHash64;
+```
+
+```compile_fail
+use rscrypto::checksum::BufferedCrc32C;
+```
+
+```compile_fail
+use rscrypto::platform_describe;
+```
+
+```compile_fail
+use rscrypto::DigestReader;
+```
+
+```rust
+use rscrypto::checksum::config::Crc32Config;
+use rscrypto::checksum::buffered::BufferedCrc32C;
+use rscrypto::checksum::introspect::{DispatchInfo, kernel_for};
+use rscrypto::checksum::{Crc32Castagnoli, Crc32Ieee, Crc64Xz};
+use rscrypto::hashes::fast::{RapidHash64, Xxh3_64};
+use rscrypto::hashes::introspect::{HashKernelIntrospect, kernel_for as hash_kernel_for};
+use rscrypto::hashes::DigestReader;
+use rscrypto::{AsconXof, AsconXofReader, RapidHash, Xxh3};
+
+fn assert_hash_introspect<T: HashKernelIntrospect>() {}
+
+let _ = rscrypto::platform::describe();
+let _: Crc32Config = rscrypto::Crc32::config();
+let _ = kernel_for::<rscrypto::Crc32>(64);
+let _ = DispatchInfo::current();
+let _ = hash_kernel_for::<rscrypto::Sha256>(1024);
+assert_hash_introspect::<rscrypto::Sha256>();
+let _ = (core::any::TypeId::of::<Crc32Ieee>(), core::any::TypeId::of::<Crc32Castagnoli>(), core::any::TypeId::of::<Crc64Xz>());
+let _ = (core::any::TypeId::of::<AsconXof>(), core::any::TypeId::of::<AsconXofReader>());
+let _ = core::any::TypeId::of::<BufferedCrc32C>();
+let _ = (core::any::TypeId::of::<Xxh3>(), core::any::TypeId::of::<Xxh3_64>());
+let _ = (core::any::TypeId::of::<RapidHash>(), core::any::TypeId::of::<RapidHash64>());
+```
+"#]
+pub struct __RootSurfaceAudit;
+
+#[cfg(doctest)]
+#[doc(hidden)]
+#[doc = r#"
+```rust
+use rscrypto::{
+  Blake3, Digest, Sha224, Sha256, Sha384, Sha512, Sha512_256, Sha3_224, Sha3_256, Sha3_384, Sha3_512,
+};
+
+fn assert_digest_api<D>()
+where
+  D: Digest,
+  D::Output: PartialEq + core::fmt::Debug,
+{
+  let mut h = D::new();
+  h.update(b"abc");
+  let expected = h.finalize();
+  h.reset();
+  h.update(b"abc");
+  assert_eq!(h.finalize(), expected);
+}
+
+assert_digest_api::<Sha224>();
+assert_digest_api::<Sha256>();
+assert_digest_api::<Sha384>();
+assert_digest_api::<Sha512>();
+assert_digest_api::<Sha512_256>();
+assert_digest_api::<Sha3_224>();
+assert_digest_api::<Sha3_256>();
+assert_digest_api::<Sha3_384>();
+assert_digest_api::<Sha3_512>();
+assert_digest_api::<Blake3>();
+```
+
+```rust
+use rscrypto::{AsconXof, Blake3, Digest, Shake128, Shake256, Xof};
+
+fn squeeze_32(mut reader: impl Xof) -> [u8; 32] {
+  let mut out = [0u8; 32];
+  reader.squeeze(&mut out);
+  out
+}
+
+macro_rules! assert_xof_api {
+  ($ty:ty) => {{
+    let data = b"abc";
+    let mut h = <$ty>::new();
+    h.update(data);
+    let streaming = squeeze_32(h.finalize_xof());
+    h.reset();
+    let oneshot = squeeze_32(<$ty>::xof(data));
+    assert_eq!(streaming, oneshot);
+  }};
+}
+
+assert_xof_api!(Shake128);
+assert_xof_api!(Shake256);
+assert_xof_api!(Blake3);
+assert_xof_api!(AsconXof);
+```
+
+```rust
+use std::io::{Cursor, Read, Write};
+
+use rscrypto::{Checksum as _, Crc32C};
+
+let mut reader = Crc32C::reader(Cursor::new(b"abc".to_vec()));
+std::io::copy(&mut reader, &mut std::io::sink())?;
+assert_eq!(reader.checksum(), Crc32C::checksum(b"abc"));
+
+let mut writer = Crc32C::writer(Vec::new());
+writer.write_all(b"abc")?;
+assert_eq!(writer.checksum(), Crc32C::checksum(b"abc"));
+# Ok::<(), std::io::Error>(())
+```
+
+```compile_fail
+use std::io::Cursor;
+
+use rscrypto::{Checksum as _, Crc32C};
+
+let reader = Crc32C::reader(Cursor::new(b"abc".to_vec()));
+let _ = reader.crc();
+```
+
+```compile_fail
+use rscrypto::{Checksum as _, Crc32C};
+
+let writer = Crc32C::writer(Vec::<u8>::new());
+let _ = writer.crc();
+```
+"#]
+pub struct __ApiPatternAudit;
 
 // ─── Compile-time trait assertions ─────────────────────────────────────────
 //
@@ -157,22 +380,6 @@ mod send_sync_assertions {
     assert_send_sync::<platform::Detected>();
     assert_send_sync::<platform::OverrideError>();
     assert_send_sync::<platform::Description>();
-
-    // ── Backend ──
-    assert_send_sync::<backend::cache::OnceCache<u64>>();
-    assert_send_sync::<backend::cache::PolicyCache<u32, u32>>();
-    assert_send_sync::<backend::dispatch::Candidate<fn()>>();
-    assert_send_sync::<backend::dispatch::Selected<fn()>>();
-    assert_send_sync::<backend::dispatch::SelectionError>();
-    assert_send_sync::<backend::tier::KernelTier>();
-    assert_send_sync::<backend::family::KernelFamily>();
-    assert_send_sync::<backend::family::KernelSubfamily>();
-    assert_send_sync::<backend::policy::PolicyTunables>();
-    assert_send_sync::<backend::policy::SelectionPolicy>();
-    assert_send_sync::<backend::policy::ForceMode>();
-
-    #[cfg(feature = "std")]
-    assert_send_sync::<backend::dispatch::GenericDispatcher<fn()>>();
   }
 
   #[test]
@@ -181,28 +388,28 @@ mod send_sync_assertions {
     // CRC-16
     assert_send_sync::<Crc16Ccitt>();
     assert_send_sync::<Crc16Ibm>();
-    assert_send_sync::<Crc16Force>();
-    assert_send_sync::<Crc16Config>();
+    assert_send_sync::<checksum::config::Crc16Force>();
+    assert_send_sync::<checksum::config::Crc16Config>();
 
     // CRC-24
     assert_send_sync::<Crc24OpenPgp>();
-    assert_send_sync::<Crc24Force>();
-    assert_send_sync::<Crc24Config>();
+    assert_send_sync::<checksum::config::Crc24Force>();
+    assert_send_sync::<checksum::config::Crc24Config>();
 
     // CRC-32
     assert_send_sync::<Crc32>();
     assert_send_sync::<Crc32C>();
-    assert_send_sync::<Crc32Force>();
-    assert_send_sync::<Crc32Config>();
+    assert_send_sync::<checksum::config::Crc32Force>();
+    assert_send_sync::<checksum::config::Crc32Config>();
 
     // CRC-64
     assert_send_sync::<Crc64>();
     assert_send_sync::<Crc64Nvme>();
-    assert_send_sync::<Crc64Force>();
-    assert_send_sync::<Crc64Config>();
+    assert_send_sync::<checksum::config::Crc64Force>();
+    assert_send_sync::<checksum::config::Crc64Config>();
 
     // Dispatch / Diagnostics
-    assert_send_sync::<DispatchInfo>();
+    assert_send_sync::<checksum::introspect::DispatchInfo>();
 
     #[cfg(feature = "diag")]
     {
@@ -217,13 +424,13 @@ mod send_sync_assertions {
   #[test]
   #[cfg(all(feature = "checksums", feature = "alloc"))]
   fn buffered_checksum_types_are_send_and_sync() {
-    assert_send_sync::<BufferedCrc16Ccitt>();
-    assert_send_sync::<BufferedCrc16Ibm>();
-    assert_send_sync::<BufferedCrc24OpenPgp>();
-    assert_send_sync::<BufferedCrc32>();
-    assert_send_sync::<BufferedCrc32C>();
-    assert_send_sync::<BufferedCrc64>();
-    assert_send_sync::<BufferedCrc64Nvme>();
+    assert_send_sync::<checksum::buffered::BufferedCrc16Ccitt>();
+    assert_send_sync::<checksum::buffered::BufferedCrc16Ibm>();
+    assert_send_sync::<checksum::buffered::BufferedCrc24OpenPgp>();
+    assert_send_sync::<checksum::buffered::BufferedCrc32>();
+    assert_send_sync::<checksum::buffered::BufferedCrc32C>();
+    assert_send_sync::<checksum::buffered::BufferedCrc64>();
+    assert_send_sync::<checksum::buffered::BufferedCrc64Nvme>();
   }
 
   #[test]
@@ -248,17 +455,17 @@ mod send_sync_assertions {
 
     // ASCON
     assert_send_sync::<AsconHash256>();
-    assert_send_sync::<AsconXof128>();
-    assert_send_sync::<AsconXof128Xof>();
+    assert_send_sync::<AsconXof>();
+    assert_send_sync::<AsconXofReader>();
 
     // BLAKE3
     assert_send_sync::<Blake3>();
     assert_send_sync::<Blake3Xof>();
 
     // Fast hashes
-    assert_send_sync::<Xxh3_64>();
+    assert_send_sync::<Xxh3>();
     assert_send_sync::<Xxh3_128>();
-    assert_send_sync::<RapidHash64>();
+    assert_send_sync::<RapidHash>();
     assert_send_sync::<RapidHash128>();
   }
 
@@ -273,8 +480,8 @@ mod send_sync_assertions {
   #[test]
   #[cfg(all(feature = "hashes", feature = "std"))]
   fn digest_io_adapter_types_are_send_and_sync() {
-    assert_send_sync::<DigestReader<std::io::Cursor<Vec<u8>>, Sha256>>();
-    assert_send_sync::<DigestWriter<Vec<u8>, Sha256>>();
+    assert_send_sync::<hashes::DigestReader<std::io::Cursor<Vec<u8>>, Sha256>>();
+    assert_send_sync::<hashes::DigestWriter<Vec<u8>, Sha256>>();
   }
 
   // ── Clone + Debug assertions ──────────────────────────────────────────
@@ -294,27 +501,6 @@ mod send_sync_assertions {
     assert_debug::<platform::OverrideError>();
     assert_debug::<platform::Description>();
     assert_debug::<traits::error::VerificationError>();
-
-    // Backend types with Clone + Debug
-    assert_clone::<backend::dispatch::Candidate<fn()>>();
-    assert_clone::<backend::dispatch::Selected<fn()>>();
-    assert_clone::<backend::dispatch::SelectionError>();
-    assert_clone::<backend::tier::KernelTier>();
-    assert_clone::<backend::family::KernelFamily>();
-    assert_clone::<backend::family::KernelSubfamily>();
-    assert_clone::<backend::policy::PolicyTunables>();
-    assert_clone::<backend::policy::SelectionPolicy>();
-    assert_clone::<backend::policy::ForceMode>();
-
-    assert_debug::<backend::dispatch::Candidate<fn()>>();
-    assert_debug::<backend::dispatch::Selected<fn()>>();
-    assert_debug::<backend::dispatch::SelectionError>();
-    assert_debug::<backend::tier::KernelTier>();
-    assert_debug::<backend::family::KernelFamily>();
-    assert_debug::<backend::family::KernelSubfamily>();
-    assert_debug::<backend::policy::PolicyTunables>();
-    assert_debug::<backend::policy::SelectionPolicy>();
-    assert_debug::<backend::policy::ForceMode>();
   }
 
   #[test]
@@ -327,15 +513,15 @@ mod send_sync_assertions {
     assert_clone::<Crc32C>();
     assert_clone::<Crc64>();
     assert_clone::<Crc64Nvme>();
-    assert_clone::<Crc16Force>();
-    assert_clone::<Crc16Config>();
-    assert_clone::<Crc24Force>();
-    assert_clone::<Crc24Config>();
-    assert_clone::<Crc32Force>();
-    assert_clone::<Crc32Config>();
-    assert_clone::<Crc64Force>();
-    assert_clone::<Crc64Config>();
-    assert_clone::<DispatchInfo>();
+    assert_clone::<checksum::config::Crc16Force>();
+    assert_clone::<checksum::config::Crc16Config>();
+    assert_clone::<checksum::config::Crc24Force>();
+    assert_clone::<checksum::config::Crc24Config>();
+    assert_clone::<checksum::config::Crc32Force>();
+    assert_clone::<checksum::config::Crc32Config>();
+    assert_clone::<checksum::config::Crc64Force>();
+    assert_clone::<checksum::config::Crc64Config>();
+    assert_clone::<checksum::introspect::DispatchInfo>();
 
     assert_debug::<Crc16Ccitt>();
     assert_debug::<Crc16Ibm>();
@@ -344,27 +530,27 @@ mod send_sync_assertions {
     assert_debug::<Crc32C>();
     assert_debug::<Crc64>();
     assert_debug::<Crc64Nvme>();
-    assert_debug::<Crc16Force>();
-    assert_debug::<Crc16Config>();
-    assert_debug::<Crc24Force>();
-    assert_debug::<Crc24Config>();
-    assert_debug::<Crc32Force>();
-    assert_debug::<Crc32Config>();
-    assert_debug::<Crc64Force>();
-    assert_debug::<Crc64Config>();
-    assert_debug::<DispatchInfo>();
+    assert_debug::<checksum::config::Crc16Force>();
+    assert_debug::<checksum::config::Crc16Config>();
+    assert_debug::<checksum::config::Crc24Force>();
+    assert_debug::<checksum::config::Crc24Config>();
+    assert_debug::<checksum::config::Crc32Force>();
+    assert_debug::<checksum::config::Crc32Config>();
+    assert_debug::<checksum::config::Crc64Force>();
+    assert_debug::<checksum::config::Crc64Config>();
+    assert_debug::<checksum::introspect::DispatchInfo>();
   }
 
   #[test]
   #[cfg(all(feature = "checksums", feature = "alloc"))]
   fn buffered_checksum_types_are_clone_and_debug() {
-    assert_debug::<BufferedCrc16Ccitt>();
-    assert_debug::<BufferedCrc16Ibm>();
-    assert_debug::<BufferedCrc24OpenPgp>();
-    assert_debug::<BufferedCrc32>();
-    assert_debug::<BufferedCrc32C>();
-    assert_debug::<BufferedCrc64>();
-    assert_debug::<BufferedCrc64Nvme>();
+    assert_debug::<checksum::buffered::BufferedCrc16Ccitt>();
+    assert_debug::<checksum::buffered::BufferedCrc16Ibm>();
+    assert_debug::<checksum::buffered::BufferedCrc24OpenPgp>();
+    assert_debug::<checksum::buffered::BufferedCrc32>();
+    assert_debug::<checksum::buffered::BufferedCrc32C>();
+    assert_debug::<checksum::buffered::BufferedCrc64>();
+    assert_debug::<checksum::buffered::BufferedCrc64Nvme>();
   }
 
   #[test]
@@ -384,13 +570,13 @@ mod send_sync_assertions {
     assert_clone::<Shake128Xof>();
     assert_clone::<Shake256Xof>();
     assert_clone::<AsconHash256>();
-    assert_clone::<AsconXof128>();
-    assert_clone::<AsconXof128Xof>();
+    assert_clone::<AsconXof>();
+    assert_clone::<AsconXofReader>();
     assert_clone::<Blake3>();
     assert_clone::<Blake3Xof>();
-    assert_clone::<Xxh3_64>();
+    assert_clone::<Xxh3>();
     assert_clone::<Xxh3_128>();
-    assert_clone::<RapidHash64>();
+    assert_clone::<RapidHash>();
     assert_clone::<RapidHash128>();
 
     assert_debug::<Sha256>();
@@ -407,13 +593,13 @@ mod send_sync_assertions {
     assert_debug::<Shake128Xof>();
     assert_debug::<Shake256Xof>();
     assert_debug::<AsconHash256>();
-    assert_debug::<AsconXof128>();
-    assert_debug::<AsconXof128Xof>();
+    assert_debug::<AsconXof>();
+    assert_debug::<AsconXofReader>();
     assert_debug::<Blake3>();
     assert_debug::<Blake3Xof>();
-    assert_debug::<Xxh3_64>();
+    assert_debug::<Xxh3>();
     assert_debug::<Xxh3_128>();
-    assert_debug::<RapidHash64>();
+    assert_debug::<RapidHash>();
     assert_debug::<RapidHash128>();
   }
 
@@ -427,7 +613,7 @@ mod send_sync_assertions {
   #[test]
   #[cfg(all(feature = "hashes", feature = "std"))]
   fn digest_io_adapter_types_are_debug() {
-    assert_debug::<DigestReader<std::io::Cursor<Vec<u8>>, Sha256>>();
-    assert_debug::<DigestWriter<Vec<u8>, Sha256>>();
+    assert_debug::<hashes::DigestReader<std::io::Cursor<Vec<u8>>, Sha256>>();
+    assert_debug::<hashes::DigestWriter<Vec<u8>, Sha256>>();
   }
 }

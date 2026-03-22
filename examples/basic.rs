@@ -1,116 +1,139 @@
-//! Basic checksum usage: one-shot and streaming APIs.
+//! Basic `rscrypto` usage across checksums, digests, XOFs, fast hashes, and I/O adapters.
 //!
 //! Run with: `cargo run --example basic`
 
-use rscrypto::{Checksum, Crc16Ccitt, Crc24OpenPgp, Crc32, Crc32C, Crc64, Crc64Nvme};
+use std::io::{Cursor, Read, Write};
 
-fn main() {
-  println!("=== Checksum Basic Examples ===\n");
+use rscrypto::{Blake3, Checksum, Crc32C, Digest, FastHash, RapidHash, Sha256, Shake256, Xof, Xxh3};
 
-  one_shot_examples();
-  streaming_examples();
-  resume_example();
+fn main() -> std::io::Result<()> {
+  println!("=== rscrypto Basic Examples ===\n");
+
+  checksum_api();
+  digest_api();
+  xof_api();
+  fast_hash_api();
+  io_api()?;
+
+  Ok(())
 }
 
-/// One-shot computation: fastest when you have all data in memory.
-fn one_shot_examples() {
-  println!("--- One-Shot Computation ---\n");
+/// Checksums follow `new` → `update` → `finalize` → `reset`.
+fn checksum_api() {
+  println!("--- Checksums ---\n");
 
-  let data = b"123456789";
+  let data = b"hello world";
 
-  // CRC-32 (IEEE) - Ethernet, gzip, zip, PNG
-  let crc32 = Crc32::checksum(data);
-  println!("CRC-32 (IEEE):   0x{crc32:08X}");
-  assert_eq!(crc32, 0xCBF4_3926);
+  let oneshot = Crc32C::checksum(data);
+  assert_eq!(oneshot, 0xC994_65AA);
 
-  // CRC-32C (Castagnoli) - iSCSI, SCTP, ext4, Btrfs
-  let crc32c = Crc32C::checksum(data);
-  println!("CRC-32C:         0x{crc32c:08X}");
-  assert_eq!(crc32c, 0xE306_9283);
+  let mut streaming = Crc32C::new();
+  streaming.update(b"hello ");
+  streaming.update(b"world");
+  assert_eq!(streaming.finalize(), oneshot);
+  streaming.reset();
+  streaming.update(data);
+  assert_eq!(streaming.finalize(), oneshot);
 
-  // CRC-64 (XZ/ECMA) - XZ Utils, 7-Zip
-  let crc64 = Crc64::checksum(data);
-  println!("CRC-64 (XZ):     0x{crc64:016X}");
-  assert_eq!(crc64, 0x995D_C9BB_DF19_39FA);
-
-  // CRC-64 (NVMe) - NVMe specification
-  let crc64_nvme = Crc64Nvme::checksum(data);
-  println!("CRC-64 (NVMe):   0x{crc64_nvme:016X}");
-  assert_eq!(crc64_nvme, 0xAE8B_1486_0A79_9888);
-
-  // CRC-24 (OpenPGP) - RFC 4880
-  let crc24 = Crc24OpenPgp::checksum(data);
-  println!("CRC-24 (OpenPGP): 0x{crc24:06X}");
-  assert_eq!(crc24, 0x21_CF02);
-
-  // CRC-16 (CCITT) - X.25, HDLC
-  let crc16 = Crc16Ccitt::checksum(data);
-  println!("CRC-16 (CCITT):  0x{crc16:04X}");
-  assert_eq!(crc16, 0x906E);
-
-  println!();
+  println!("CRC-32C(\"hello world\") = 0x{oneshot:08X}\n");
 }
 
-/// Streaming computation: process data in chunks.
-fn streaming_examples() {
-  println!("--- Streaming Computation ---\n");
+/// Digests follow `new` → `update` → `finalize` → `reset`.
+fn digest_api() {
+  println!("--- Digests ---\n");
 
-  let data = b"123456789";
+  let data = b"hello world";
 
-  // Process in chunks - result matches one-shot
-  let mut hasher = Crc32::new();
-  hasher.update(b"1234");
-  hasher.update(b"56789");
-  let crc = hasher.finalize();
+  let sha_oneshot = Sha256::digest(data);
+  let mut sha_stream = Sha256::new();
+  sha_stream.update(b"hello ");
+  sha_stream.update(b"world");
+  assert_eq!(sha_stream.finalize(), sha_oneshot);
+  sha_stream.reset();
+  sha_stream.update(data);
+  assert_eq!(sha_stream.finalize(), sha_oneshot);
 
-  println!("Streaming CRC-32: 0x{crc:08X}");
-  assert_eq!(crc, Crc32::checksum(data));
+  let blake3_oneshot = Blake3::digest(data);
+  let mut blake3_stream = Blake3::new();
+  blake3_stream.update(b"hello ");
+  blake3_stream.update(b"world");
+  assert_eq!(blake3_stream.finalize(), blake3_oneshot);
+  blake3_stream.reset();
+  blake3_stream.update(data);
+  assert_eq!(blake3_stream.finalize(), blake3_oneshot);
 
-  // finalize() is non-consuming: can continue after
-  hasher.update(b"...");
-  let extended = hasher.finalize();
-  println!("Extended CRC-32:  0x{extended:08X}");
-
-  // reset() clears state for reuse
-  hasher.reset();
-  hasher.update(b"new data");
-  let new_crc = hasher.finalize();
-  println!("Reset CRC-32:     0x{new_crc:08X}");
-
-  // Works the same for all CRC types
-  let mut h64 = Crc64::new();
-  h64.update(b"streaming ");
-  h64.update(b"crc64");
-  println!("Streaming CRC-64: 0x{:016X}", h64.finalize());
-
-  println!();
+  println!("SHA-256 output size = {} bytes", sha_oneshot.len());
+  println!("BLAKE3 output size  = {} bytes\n", blake3_oneshot.len());
 }
 
-/// Resume computation from a saved checksum state.
-fn resume_example() {
-  println!("--- Resume from Saved State ---\n");
+/// XOFs support both `new` → `update` → `finalize_xof` and `xof(data)`.
+fn xof_api() {
+  println!("--- XOFs ---\n");
 
-  let part1 = b"first part of data";
-  let part2 = b" and the second part";
+  let data = b"hello world";
 
-  // Compute partial CRC and save it
-  let mut hasher = Crc32::new();
-  hasher.update(part1);
-  let saved_state = hasher.finalize();
-  println!("Saved state after part1: 0x{saved_state:08X}");
+  let mut shake_stream = Shake256::xof(data);
+  let mut shake_stream_out = [0u8; 64];
+  shake_stream.squeeze(&mut shake_stream_out);
 
-  // Later, resume from saved state
-  let mut resumed = Crc32::resume(saved_state);
-  resumed.update(part2);
-  let final_crc = resumed.finalize();
-  println!("Final CRC after resume:  0x{final_crc:08X}");
+  let mut shake = Shake256::new();
+  shake.update(data);
+  let mut shake_oneshot_out = [0u8; 64];
+  shake.finalize_xof().squeeze(&mut shake_oneshot_out);
+  assert_eq!(shake_stream_out, shake_oneshot_out);
 
-  // Verify: should match processing all at once
-  let mut full = Crc32::new();
-  full.update(part1);
-  full.update(part2);
-  assert_eq!(final_crc, full.finalize());
-  println!("Verified: matches full computation");
+  let mut blake3_xof = Blake3::xof(data);
+  let mut blake3_out = [0u8; 64];
+  blake3_xof.squeeze(&mut blake3_out);
+  assert_eq!(&blake3_out[..32], &Blake3::digest(data));
 
-  println!();
+  println!("SHAKE256 produced {} bytes", shake_stream_out.len());
+  println!("BLAKE3 XOF produced {} bytes\n", blake3_out.len());
+}
+
+fn fast_hash_api() {
+  println!("--- Fast Hashes ---\n");
+
+  let data = b"hello world";
+
+  let xxh_default = Xxh3::hash(data);
+  let xxh_seeded = Xxh3::hash_with_seed(7, data);
+  assert_ne!(xxh_default, xxh_seeded);
+
+  let rapid_default = RapidHash::hash(data);
+  let rapid_seeded = RapidHash::hash_with_seed(7, data);
+  assert_ne!(rapid_default, rapid_seeded);
+
+  println!("Xxh3(default)       = 0x{xxh_default:016X}");
+  println!("RapidHash(default) = 0x{rapid_default:016X}\n");
+}
+
+fn io_api() -> std::io::Result<()> {
+  println!("--- I/O Adapters ---\n");
+
+  let data = b"stream me through adapters";
+
+  let mut reader = Sha256::reader(Cursor::new(data.to_vec()));
+  let mut copied = Vec::new();
+  reader.read_to_end(&mut copied)?;
+  assert_eq!(copied, data);
+  assert_eq!(reader.digest(), Sha256::digest(data));
+
+  let mut checksum_writer = Crc32C::writer(Vec::new());
+  checksum_writer.write_all(data)?;
+  let (written, crc) = checksum_writer.into_parts();
+  assert_eq!(written, data);
+  assert_eq!(crc, Crc32C::checksum(data));
+
+  let mut digest_writer = Blake3::writer(Vec::new());
+  digest_writer.write_all(data)?;
+  let (written, digest) = digest_writer.into_parts();
+  assert_eq!(written, data);
+  assert_eq!(digest, Blake3::digest(data));
+
+  println!("reader digest matches Sha256::digest()");
+  println!("writer checksum matches Crc32C::checksum()");
+  println!("writer digest matches Blake3::digest()\n");
+
+  Ok(())
 }

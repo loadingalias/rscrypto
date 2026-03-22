@@ -1601,14 +1601,14 @@ fn ascon_hash256_x86_avx512(data: &[u8]) -> u64 {
 
 fn ascon_xof128_portable(data: &[u8]) -> u64 {
   let mut out = [0u8; 32];
-  crypto::AsconXof128::hash_into_with_kernel(crypto::ascon::kernels::AsconPermute12KernelId::Portable, data, &mut out);
+  crypto::AsconXof::hash_into_with_kernel(crypto::ascon::kernels::AsconPermute12KernelId::Portable, data, &mut out);
   u64_from_prefix(&out)
 }
 
 #[cfg(target_arch = "aarch64")]
 fn ascon_xof128_aarch64_neon(data: &[u8]) -> u64 {
   let mut out = [0u8; 32];
-  crypto::AsconXof128::hash_into_with_kernel(
+  crypto::AsconXof::hash_into_with_kernel(
     crypto::ascon::kernels::AsconPermute12KernelId::Aarch64Neon,
     data,
     &mut out,
@@ -1619,14 +1619,14 @@ fn ascon_xof128_aarch64_neon(data: &[u8]) -> u64 {
 #[cfg(target_arch = "x86_64")]
 fn ascon_xof128_x86_avx2(data: &[u8]) -> u64 {
   let mut out = [0u8; 32];
-  crypto::AsconXof128::hash_into_with_kernel(crypto::ascon::kernels::AsconPermute12KernelId::X86Avx2, data, &mut out);
+  crypto::AsconXof::hash_into_with_kernel(crypto::ascon::kernels::AsconPermute12KernelId::X86Avx2, data, &mut out);
   u64_from_prefix(&out)
 }
 
 #[cfg(target_arch = "x86_64")]
 fn ascon_xof128_x86_avx512(data: &[u8]) -> u64 {
   let mut out = [0u8; 32];
-  crypto::AsconXof128::hash_into_with_kernel(
+  crypto::AsconXof::hash_into_with_kernel(
     crypto::ascon::kernels::AsconPermute12KernelId::X86Avx512,
     data,
     &mut out,
@@ -2465,7 +2465,7 @@ pub fn run_auto(algo: &str, data: &[u8]) -> Option<u64> {
     "ascon-hash256" => Some(u64_from_prefix(&<crypto::AsconHash256 as Digest>::digest(data))),
     "ascon-xof128" => {
       let mut out = [0u8; 32];
-      crypto::AsconXof128::hash_into(data, &mut out);
+      crypto::AsconXof::hash_into(data, &mut out);
       Some(u64_from_prefix(&out))
     }
     _ => None,

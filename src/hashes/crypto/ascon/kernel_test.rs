@@ -80,9 +80,9 @@ mod tests {
     assert_eq!(ours, expected);
 
     let mut ours_xof = [0u8; 64];
-    crate::hashes::crypto::AsconXof128::hash_into(data, &mut ours_xof);
+    crate::hashes::crypto::AsconXof::hash_into(data, &mut ours_xof);
     let mut exp_xof = [0u8; 64];
-    crate::hashes::crypto::AsconXof128::hash_into_with_kernel(AsconPermute12KernelId::Portable, data, &mut exp_xof);
+    crate::hashes::crypto::AsconXof::hash_into_with_kernel(AsconPermute12KernelId::Portable, data, &mut exp_xof);
     assert_eq!(ours_xof, exp_xof);
   }
 
@@ -132,11 +132,11 @@ mod tests {
       }
 
       let mut batch = vec![0u8; inputs.len() * out_len];
-      crate::hashes::crypto::AsconXof128::hash_many_into_with_kernel(id, &inputs, out_len, &mut batch);
+      crate::hashes::crypto::AsconXof::hash_many_into_with_kernel(id, &inputs, out_len, &mut batch);
 
       for (index, input) in inputs.iter().enumerate() {
         let mut expected = vec![0u8; out_len];
-        crate::hashes::crypto::AsconXof128::hash_into_with_kernel(id, input, &mut expected);
+        crate::hashes::crypto::AsconXof::hash_into_with_kernel(id, input, &mut expected);
         let base = index * out_len;
         assert_eq!(
           &batch[base..base + out_len],

@@ -3,7 +3,7 @@ use super::{
   dispatch_tables::DispatchTable,
   kernels::{CompressBlocksFn, Sha512KernelId, compress_blocks_fn, required_caps},
 };
-use crate::{backend::OnceCache, hashes::crypto::dispatch_util::SizeClassDispatch, platform::Caps};
+use crate::{backend::cache::OnceCache, hashes::crypto::dispatch_util::SizeClassDispatch, platform::Caps};
 
 #[derive(Clone, Copy)]
 struct Entry {

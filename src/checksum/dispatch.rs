@@ -45,7 +45,7 @@ use crate::{
 ///
 /// This is the heart of the new dispatch system. Platform detection happens
 /// exactly once, and all subsequent CRC calls use this pre-resolved table.
-static ACTIVE_TABLE: crate::backend::OnceCache<&'static KernelTable> = crate::backend::OnceCache::new();
+static ACTIVE_TABLE: crate::backend::cache::OnceCache<&'static KernelTable> = crate::backend::cache::OnceCache::new();
 
 /// Get the active kernel table for this platform.
 ///

@@ -141,10 +141,11 @@ fn crc24_openpgp_dispatch_portable_vectored(crc: u32, bufs: &[&[u8]]) -> u32 {
 }
 
 #[cfg(feature = "std")]
-static CRC24_OPENPGP_DISPATCH: crate::backend::OnceCache<Crc24DispatchFn> = crate::backend::OnceCache::new();
+static CRC24_OPENPGP_DISPATCH: crate::backend::cache::OnceCache<Crc24DispatchFn> =
+  crate::backend::cache::OnceCache::new();
 #[cfg(feature = "std")]
-static CRC24_OPENPGP_DISPATCH_VECTORED: crate::backend::OnceCache<Crc24DispatchVectoredFn> =
-  crate::backend::OnceCache::new();
+static CRC24_OPENPGP_DISPATCH_VECTORED: crate::backend::cache::OnceCache<Crc24DispatchVectoredFn> =
+  crate::backend::cache::OnceCache::new();
 
 #[cfg(feature = "std")]
 #[inline]
@@ -268,17 +269,6 @@ impl Crc24OpenPgp {
     }
   }
 
-  /// Get the name of the currently selected backend.
-  #[must_use]
-  pub fn backend_name() -> &'static str {
-    let cfg = config::get();
-    match cfg.effective_force {
-      Crc24Force::Reference => kernels::REFERENCE,
-      Crc24Force::Portable => kernels::PORTABLE_SLICE8,
-      _ => crc24_openpgp_selected_kernel_name(1024),
-    }
-  }
-
   /// Get the effective CRC-24 configuration.
   #[must_use]
   pub fn config() -> Crc24Config {
@@ -347,6 +337,14 @@ impl crate::traits::ChecksumCombine for Crc24OpenPgp {
   }
 }
 
+#[cfg(feature = "alloc")]
+impl Crc24OpenPgp {
+  #[must_use]
+  pub fn buffered() -> crate::checksum::buffered::BufferedCrc24OpenPgp {
+    crate::checksum::buffered::BufferedCrc24OpenPgp::new()
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Buffered CRC-24 Wrapper
 // ─────────────────────────────────────────────────────────────────────────────
@@ -378,10 +376,6 @@ define_buffered_crc! {
 impl crate::checksum::introspect::KernelIntrospect for Crc24OpenPgp {
   fn kernel_name_for_len(len: usize) -> &'static str {
     Self::kernel_name_for_len(len)
-  }
-
-  fn backend_name() -> &'static str {
-    Self::backend_name()
   }
 }
 

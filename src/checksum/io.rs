@@ -24,7 +24,7 @@
 //! let mut contents = Vec::new();
 //! reader.read_to_end(&mut contents)?;
 //! assert_eq!(contents, b"hello world");
-//! assert_eq!(reader.crc(), Crc32C::checksum(&contents));
+//! assert_eq!(reader.checksum(), Crc32C::checksum(&contents));
 //! # Ok::<(), std::io::Error>(())
 //! ```
 

@@ -21,7 +21,7 @@ proptest! {
     shake256_ref(&data, &mut expected);
 
     let mut actual = vec![0u8; out_len];
-    Shake256::hash_into(&data, &mut actual);
+    Shake256::xof(&data).squeeze(&mut actual);
 
     prop_assert_eq!(actual, expected);
   }

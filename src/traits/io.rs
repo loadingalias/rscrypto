@@ -31,7 +31,7 @@
 //! let mut reader = Sum::reader(Cursor::new(b"abc".to_vec()));
 //! std::io::copy(&mut reader, &mut std::io::sink())?;
 //! assert_eq!(
-//!   reader.crc(),
+//!   reader.checksum(),
 //!   u32::from(b'a') + u32::from(b'b') + u32::from(b'c')
 //! );
 //! # Ok::<(), std::io::Error>(())
@@ -204,7 +204,7 @@ where
 /// let mut reader = Sum::reader(Cursor::new(b"abc".to_vec()));
 /// std::io::copy(&mut reader, &mut std::io::sink())?;
 /// assert_eq!(
-///   reader.crc(),
+///   reader.checksum(),
 ///   u32::from(b'a') + u32::from(b'b') + u32::from(b'c')
 /// );
 /// # Ok::<(), std::io::Error>(())
@@ -256,7 +256,7 @@ impl<R, C: crate::Checksum> ChecksumReader<R, C> {
   /// further reads will continue updating the checksum.
   #[inline]
   #[must_use]
-  pub fn crc(&self) -> C::Output {
+  pub fn checksum(&self) -> C::Output {
     self.hasher.finalize()
   }
 
@@ -393,7 +393,7 @@ impl<W, C: crate::Checksum> ChecksumWriter<W, C> {
   /// Get the current checksum value.
   #[inline]
   #[must_use]
-  pub fn crc(&self) -> C::Output {
+  pub fn checksum(&self) -> C::Output {
     self.hasher.finalize()
   }
 
@@ -818,7 +818,7 @@ mod tests {
     let mut writer = ChecksumWriter::<_, Sum>::new(PartialWriter::new(4));
     let written = writer.write(b"abcdef").unwrap();
     assert_eq!(written, 4);
-    assert_eq!(writer.crc(), checksum_sum(b"abcd"));
+    assert_eq!(writer.checksum(), checksum_sum(b"abcd"));
 
     let (inner, checksum) = writer.into_parts();
     assert_eq!(inner.inner, b"abcd");
@@ -831,7 +831,7 @@ mod tests {
     let bufs = [IoSlice::new(b"ab"), IoSlice::new(b"cdef"), IoSlice::new(b"gh")];
     let written = writer.write_vectored(&bufs).unwrap();
     assert_eq!(written, 5);
-    assert_eq!(writer.crc(), checksum_sum(b"abcde"));
+    assert_eq!(writer.checksum(), checksum_sum(b"abcde"));
 
     let (inner, checksum) = writer.into_parts();
     assert_eq!(inner.inner, b"abcde");

@@ -178,15 +178,16 @@ fn crc16_ibm_dispatch_portable_vectored(crc: u16, bufs: &[&[u8]]) -> u16 {
 }
 
 #[cfg(feature = "std")]
-static CRC16_CCITT_DISPATCH: crate::backend::OnceCache<Crc16DispatchFn> = crate::backend::OnceCache::new();
+static CRC16_CCITT_DISPATCH: crate::backend::cache::OnceCache<Crc16DispatchFn> =
+  crate::backend::cache::OnceCache::new();
 #[cfg(feature = "std")]
-static CRC16_CCITT_DISPATCH_VECTORED: crate::backend::OnceCache<Crc16DispatchVectoredFn> =
-  crate::backend::OnceCache::new();
+static CRC16_CCITT_DISPATCH_VECTORED: crate::backend::cache::OnceCache<Crc16DispatchVectoredFn> =
+  crate::backend::cache::OnceCache::new();
 #[cfg(feature = "std")]
-static CRC16_IBM_DISPATCH: crate::backend::OnceCache<Crc16DispatchFn> = crate::backend::OnceCache::new();
+static CRC16_IBM_DISPATCH: crate::backend::cache::OnceCache<Crc16DispatchFn> = crate::backend::cache::OnceCache::new();
 #[cfg(feature = "std")]
-static CRC16_IBM_DISPATCH_VECTORED: crate::backend::OnceCache<Crc16DispatchVectoredFn> =
-  crate::backend::OnceCache::new();
+static CRC16_IBM_DISPATCH_VECTORED: crate::backend::cache::OnceCache<Crc16DispatchVectoredFn> =
+  crate::backend::cache::OnceCache::new();
 
 #[cfg(feature = "std")]
 #[inline]
@@ -433,17 +434,6 @@ impl Crc16Ccitt {
     }
   }
 
-  /// Get the name of the currently selected backend.
-  #[must_use]
-  pub fn backend_name() -> &'static str {
-    let cfg = config::get_ccitt();
-    match cfg.effective_force {
-      Crc16Force::Reference => kernels::REFERENCE,
-      Crc16Force::Portable => kernels::PORTABLE_SLICE8,
-      _ => crc16_ccitt_selected_kernel_name(1024),
-    }
-  }
-
   /// Get the effective CRC-16 configuration.
   #[must_use]
   pub fn config() -> Crc16Config {
@@ -525,6 +515,14 @@ impl crate::traits::ChecksumCombine for Crc16Ccitt {
   }
 }
 
+#[cfg(feature = "alloc")]
+impl Crc16Ccitt {
+  #[must_use]
+  pub fn buffered() -> crate::checksum::buffered::BufferedCrc16Ccitt {
+    crate::checksum::buffered::BufferedCrc16Ccitt::new()
+  }
+}
+
 /// CRC-16/ARC checksum (also known as CRC-16/IBM).
 ///
 /// # Properties
@@ -566,17 +564,6 @@ impl Crc16Ibm {
       // `resume` is const, so keep runtime force semantics via wrapper dispatch.
       dispatch: crc16_ibm_dispatch,
       auto_table: None,
-    }
-  }
-
-  /// Get the name of the currently selected backend.
-  #[must_use]
-  pub fn backend_name() -> &'static str {
-    let cfg = config::get_ibm();
-    match cfg.effective_force {
-      Crc16Force::Reference => kernels::REFERENCE,
-      Crc16Force::Portable => kernels::PORTABLE_SLICE8,
-      _ => crc16_ibm_selected_kernel_name(1024),
     }
   }
 
@@ -661,6 +648,14 @@ impl crate::traits::ChecksumCombine for Crc16Ibm {
   }
 }
 
+#[cfg(feature = "alloc")]
+impl Crc16Ibm {
+  #[must_use]
+  pub fn buffered() -> crate::checksum::buffered::BufferedCrc16Ibm {
+    crate::checksum::buffered::BufferedCrc16Ibm::new()
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Buffered CRC-16 Wrappers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -709,19 +704,11 @@ impl crate::checksum::introspect::KernelIntrospect for Crc16Ccitt {
   fn kernel_name_for_len(len: usize) -> &'static str {
     Self::kernel_name_for_len(len)
   }
-
-  fn backend_name() -> &'static str {
-    Self::backend_name()
-  }
 }
 
 impl crate::checksum::introspect::KernelIntrospect for Crc16Ibm {
   fn kernel_name_for_len(len: usize) -> &'static str {
     Self::kernel_name_for_len(len)
-  }
-
-  fn backend_name() -> &'static str {
-    Self::backend_name()
   }
 }
 
