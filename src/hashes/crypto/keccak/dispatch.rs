@@ -2,7 +2,7 @@ use super::{
   dispatch_tables::DispatchTable,
   kernels::{Keccakf1600KernelId, permute_fn, required_caps},
 };
-use crate::{backend::OnceCache, hashes::crypto::dispatch_util::SizeClassDispatch, platform::Caps};
+use crate::{backend::cache::OnceCache, hashes::crypto::dispatch_util::SizeClassDispatch, platform::Caps};
 
 type PermuteFn = fn(&mut [u64; 25]);
 

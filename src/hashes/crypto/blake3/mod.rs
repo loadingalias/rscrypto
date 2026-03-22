@@ -1336,37 +1336,6 @@ impl RootEmitState {
       out,
     );
   }
-
-  #[inline]
-  #[must_use]
-  fn with_kernel_id(mut self, kernel_id: kernels::Blake3KernelId) -> Self {
-    self.kernel_id = kernel_id;
-    self
-  }
-}
-
-#[inline]
-#[allow(clippy::manual_saturating_arithmetic)] // Explicit clamp semantics are preferred here.
-fn clamp_add_usize(lhs: usize, rhs: usize) -> usize {
-  lhs.checked_add(rhs).unwrap_or(usize::MAX)
-}
-
-#[inline]
-#[must_use]
-fn xof_emit_work_len(input_len: usize, expected_output_bytes: usize) -> usize {
-  clamp_add_usize(input_len, expected_output_bytes.max(OUTPUT_BLOCK_LEN))
-}
-
-#[inline]
-#[must_use]
-fn retune_root_emit_kernel(root: RootEmitState, work_len: usize) -> RootEmitState {
-  root.with_kernel_id(dispatch::kernel_for_len(work_len).id)
-}
-
-#[inline]
-#[must_use]
-fn should_retune_xof_emit_kernel(expected_output_bytes: usize) -> bool {
-  expected_output_bytes >= 1024
 }
 
 #[inline]
@@ -2927,18 +2896,6 @@ impl Blake3 {
     unreachable!("root emit state must return from chunk or parent root path");
   }
 
-  #[inline]
-  #[must_use]
-  #[allow(clippy::manual_saturating_arithmetic)] // Explicit clamp semantics are preferred here.
-  fn total_input_len_clamped(&self) -> usize {
-    let chunk_index = match usize::try_from(self.chunk_state.chunk_counter) {
-      Ok(v) => v,
-      Err(_) => usize::MAX / CHUNK_LEN,
-    };
-    let chunk_bytes = chunk_index.checked_mul(CHUNK_LEN).unwrap_or(usize::MAX);
-    clamp_add_usize(chunk_bytes, self.chunk_state.len())
-  }
-
   /// Finalize into an extendable output state (XOF).
   #[must_use]
   #[inline]
@@ -2948,44 +2905,6 @@ impl Blake3 {
     }
 
     Blake3Xof::new(self.root_emit_state())
-  }
-
-  /// Finalize into an extendable output state (XOF) with a size hint.
-  ///
-  /// The size hint may be used to choose a better XOF emission kernel for
-  /// larger output requests. Small outputs stay on the standard path, because
-  /// broad retuning there regressed competitive performance.
-  ///
-  /// # Arguments
-  /// * `expected_output_bytes` - Expected output length hint.
-  ///
-  /// # Example
-  /// ```rust
-  /// use rscrypto::{Digest as _, Xof, hashes::crypto::Blake3};
-  ///
-  /// let mut hasher = Blake3::new();
-  /// hasher.update(b"small input");
-  /// let mut xof = hasher.finalize_xof_sized(1024);
-  /// let mut out = [0u8; 1024];
-  /// xof.squeeze(&mut out);
-  /// assert_ne!(out, [0u8; 1024]);
-  /// ```
-  #[must_use]
-  #[inline]
-  pub fn finalize_xof_sized(&self, expected_output_bytes: usize) -> Blake3Xof {
-    let root = if self.cv_stack_len == 0 && self.pending_chunk_cv.is_none() {
-      self.chunk_state.root_emit_state()
-    } else {
-      self.root_emit_state()
-    };
-    if !should_retune_xof_emit_kernel(expected_output_bytes) {
-      return Blake3Xof::new(root);
-    }
-    let tuned = retune_root_emit_kernel(
-      root,
-      xof_emit_work_len(self.total_input_len_clamped(), expected_output_bytes),
-    );
-    Blake3Xof::new(tuned)
   }
 }
 
@@ -3718,45 +3637,6 @@ pub(crate) mod kernel_test;
 mod tests {
   use super::{Blake3, OUT_LEN};
   use crate::traits::{Digest, Xof};
-
-  #[test]
-  fn xof_sized_matches_standard() {
-    use alloc::vec;
-
-    // Test that finalize_xof_sized produces identical results to finalize_xof
-    let test_cases = [
-      (1usize, 1024usize),
-      (64, 1024),
-      (64, 512),
-      (0, 512),
-      (1024, 256),
-      (4096, 1024),
-    ];
-
-    for (input_len, output_len) in test_cases {
-      let input = vec![0xabu8; input_len];
-      let mut out_standard = vec![0u8; output_len];
-      let mut out_sized = vec![0u8; output_len];
-
-      // Standard finalize_xof
-      let mut h1 = Blake3::new();
-      h1.update(&input);
-      let mut xof1 = h1.finalize_xof();
-      xof1.squeeze(&mut out_standard);
-
-      // New finalize_xof_sized
-      let mut h2 = Blake3::new();
-      h2.update(&input);
-      let mut xof2 = h2.finalize_xof_sized(output_len);
-      xof2.squeeze(&mut out_sized);
-
-      assert_eq!(
-        out_standard, out_sized,
-        "XOF outputs should match for {}B input -> {}B output",
-        input_len, output_len
-      );
-    }
-  }
 
   #[test]
   fn xof_repeated_small_squeezes_match_single_read() {

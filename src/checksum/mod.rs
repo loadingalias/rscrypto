@@ -1,4 +1,4 @@
-//! High-performance CRC checksums with hardware acceleration.
+//! High-performance CRC checksums.
 //!
 //! This crate provides implementations of common CRC algorithms with automatic
 //! hardware acceleration on supported platforms.
@@ -14,27 +14,6 @@
 //! | [`Crc32C`] | 0x1EDC6F41 | `u32` | iSCSI, SCTP, ext4, Btrfs |
 //! | [`Crc64`] | 0x42F0E1EBA9EA3693 | `u64` | XZ Utils, 7-Zip |
 //! | [`Crc64Nvme`] | 0xAD93D23594C93659 | `u64` | NVMe specification |
-//!
-//! # Hardware Acceleration
-//!
-//! The following hardware acceleration paths are automatically selected based on
-//! detected CPU features:
-//!
-//! ## x86_64
-//!
-//! | Feature | Algorithms | Throughput |
-//! |---------|------------|------------|
-//! | SSE4.2 CRC32 | CRC-32C | ~20 GB/s |
-//! | VPCLMULQDQ | CRC-64 | ~35-40 GB/s |
-//! | PCLMULQDQ | CRC-64 | ~15 GB/s |
-//!
-//! ## aarch64
-//!
-//! | Feature | Algorithms | Throughput |
-//! |---------|------------|------------|
-//! | CRC extension | CRC-32/CRC-32C | ~15-25 GB/s |
-//! | PMULL + EOR3 | CRC-64 | ~15 GB/s |
-//! | PMULL | CRC-64 | ~12 GB/s |
 //!
 //! # Examples
 //!
@@ -60,34 +39,13 @@
 //! assert_eq!(combined, crc);
 //! ```
 //!
-//! # Introspection
+//! # Advanced
 //!
-//! Verify which kernels are selected for your platform:
+//! Dispatch is automatic by default.
 //!
-//! ```rust
-//! use rscrypto::checksum::{Crc64, DispatchInfo};
-//!
-//! // Platform-level info
-//! let info = DispatchInfo::current();
-//! println!("{info}");
-//! // Example output: "Caps(aarch64, [AES, PMULL, ...]) (Apple M1-M3)"
-//!
-//! // Per-algorithm kernel selection
-//! println!("CRC-64 backend: {}", Crc64::backend_name());
-//! println!("CRC-64 @ 4KB: {}", Crc64::kernel_name_for_len(4096));
-//! ```
-//!
-//! For generic introspection across types:
-//!
-//! ```rust
-//! use rscrypto::checksum::{Crc64, KernelIntrospect, kernel_for};
-//!
-//! fn show_kernel<T: KernelIntrospect>(name: &str, len: usize) {
-//!   println!("{name} @ {len}B: {}", kernel_for::<T>(len));
-//! }
-//!
-//! show_kernel::<Crc64>("CRC-64/XZ", 4096);
-//! ```
+//! - Use [`crate::checksum::config`] for force/config controls.
+//! - Use [`crate::checksum::introspect`] for kernel reporting and selection details.
+//! - Use [`crate::platform`] for platform detection and override control.
 //!
 //! # no_std Support
 //!
@@ -125,9 +83,28 @@ pub mod diag;
 pub mod dispatch;
 #[doc(hidden)]
 pub mod dispatchers;
-mod introspect;
+pub mod introspect;
 #[cfg(feature = "std")]
 pub mod io;
+#[cfg(feature = "alloc")]
+pub mod buffered {
+  pub use crate::checksum::{
+    crc16::{BufferedCrc16Ccitt, BufferedCrc16Ibm},
+    crc24::BufferedCrc24OpenPgp,
+    crc32::{BufferedCrc32, BufferedCrc32C},
+    crc64::{BufferedCrc64, BufferedCrc64Nvme},
+  };
+}
+
+/// Advanced checksum configuration and force-mode controls.
+pub mod config {
+  pub use crate::checksum::{
+    crc16::{Crc16Config, Crc16Force},
+    crc24::{Crc24Config, Crc24Force},
+    crc32::{Crc32Config, Crc32Force},
+    crc64::{Crc64Config, Crc64Force},
+  };
+}
 
 #[doc(hidden)]
 pub mod __internal {
@@ -180,29 +157,13 @@ pub mod __internal {
 }
 
 // Re-export public types
-// Re-export buffered types (requires alloc)
-#[cfg(feature = "alloc")]
-pub use crc16::{BufferedCrc16Ccitt, BufferedCrc16Ibm};
-pub use crc16::{Crc16Ccitt, Crc16Config, Crc16Force, Crc16Ibm};
-#[cfg(feature = "alloc")]
-pub use crc24::BufferedCrc24OpenPgp;
-pub use crc24::{Crc24Config, Crc24Force, Crc24OpenPgp};
-#[cfg(feature = "alloc")]
-pub use crc32::{BufferedCrc32, BufferedCrc32C};
-#[cfg(feature = "alloc")]
-pub use crc32::{BufferedCrc32Castagnoli, BufferedCrc32Ieee};
-pub use crc32::{Crc32, Crc32C, Crc32Castagnoli, Crc32Config, Crc32Force, Crc32Ieee};
-#[cfg(feature = "alloc")]
-pub use crc64::{BufferedCrc64, BufferedCrc64Nvme, BufferedCrc64Xz};
-pub use crc64::{Crc64, Crc64Config, Crc64Force, Crc64Nvme, Crc64Xz};
-// Re-export introspection API
-pub use dispatch::is_hardware_accelerated;
-pub use introspect::{DispatchInfo, KernelIntrospect, kernel_for};
+pub use crc16::{Crc16Ccitt, Crc16Ibm};
+pub use crc24::Crc24OpenPgp;
+pub use crc32::{Crc32, Crc32C, Crc32Castagnoli, Crc32Ieee};
+pub use crc64::{Crc64, Crc64Nvme, Crc64Xz};
 // Re-export I/O adapters (requires std)
 #[cfg(feature = "std")]
 pub use io::{ChecksumReader, ChecksumWriter};
 
-// Re-export crate::platform::describe for convenience
-pub use crate::platform::describe as platform_describe;
 // Re-export traits for convenience
 pub use crate::traits::{Checksum, ChecksumCombine};

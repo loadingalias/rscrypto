@@ -1,7 +1,6 @@
-//! Lazy caching primitives for dispatch and policy tables.
+//! Lazy caching primitives for runtime dispatch.
 //!
-//! - [`OnceCache<T>`]: Single-value lazy cache (building block for dispatchers)
-//! - [`PolicyCache<P, K>`]: Tuple cache for (Policy, Kernels) pairs
+//! - [`OnceCache<T>`]: Single-value lazy cache for selected dispatch entries
 //!
 //! # Platform Behavior
 //!
@@ -24,16 +23,6 @@ use core::mem::MaybeUninit;
 ///
 /// Building block for dispatcher caching with proper synchronization.
 /// See module documentation for platform-specific behavior.
-///
-/// # Example
-///
-/// ```
-/// use rscrypto::backend::OnceCache;
-///
-/// static CACHE: OnceCache<u64> = OnceCache::new();
-/// let value = CACHE.get_or_init(|| 42);
-/// assert_eq!(value, 42);
-/// ```
 pub struct OnceCache<T: Copy> {
   #[cfg(feature = "std")]
   inner: std::sync::OnceLock<T>,
@@ -172,119 +161,9 @@ impl<T: Copy> OnceCache<T> {
       f()
     }
   }
-
-  /// Get a reference to the cached value, initializing with `f` if not yet set.
-  ///
-  /// On std and no_std with atomics, this returns a stable reference to the
-  /// cached data. On targets without atomics, this is unsupported because
-  /// caching is not available there.
-  #[inline]
-  pub fn get_or_init_ref(&self, f: impl FnOnce() -> T) -> &T {
-    #[cfg(feature = "std")]
-    {
-      self.inner.get_or_init(f)
-    }
-
-    #[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
-    {
-      use core::sync::atomic::Ordering;
-
-      let state = self.state.load(Ordering::Acquire);
-      if state != Self::READY {
-        if state == Self::UNINIT {
-          if self
-            .state
-            .compare_exchange(Self::UNINIT, Self::INITING, Ordering::AcqRel, Ordering::Acquire)
-            .is_ok()
-          {
-            let value = f();
-            // SAFETY: We hold exclusive access during INITING state.
-            #[allow(unsafe_code)]
-            unsafe {
-              (*self.value.get()).write(value);
-            }
-            self.state.store(Self::READY, Ordering::Release);
-          } else {
-            while self.state.load(Ordering::Acquire) != Self::READY {
-              core::hint::spin_loop();
-            }
-          }
-        } else {
-          while self.state.load(Ordering::Acquire) != Self::READY {
-            core::hint::spin_loop();
-          }
-        }
-      }
-
-      // SAFETY: Value is initialized when state is READY, and the pointer
-      // remains valid for the lifetime of `self`.
-      #[allow(unsafe_code)]
-      unsafe {
-        &*(*self.value.get()).as_ptr()
-      }
-    }
-
-    #[cfg(all(not(feature = "std"), not(target_has_atomic = "ptr")))]
-    {
-      let _ = f;
-      unreachable!("OnceCache::get_or_init_ref not supported on targets without atomics");
-    }
-  }
 }
 
 impl<T: Copy> Default for OnceCache<T> {
-  fn default() -> Self {
-    Self::new()
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// PolicyCache<P, K> - Tuple cache for (Policy, Kernels) pairs
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// A cache for (Policy, Kernels) pairs.
-///
-/// Used by algorithm crates to cache both the selection policy and the
-/// selected kernel functions together. See module documentation for
-/// platform-specific behavior.
-pub struct PolicyCache<P: Copy, K: Copy> {
-  inner: OnceCache<(P, K)>,
-}
-
-impl<P: Copy, K: Copy> PolicyCache<P, K> {
-  /// Create a new empty cache.
-  #[must_use]
-  pub const fn new() -> Self {
-    Self {
-      inner: OnceCache::new(),
-    }
-  }
-
-  /// Get the cached value, initializing with `f` if not yet set.
-  ///
-  /// On targets with atomics, this is thread-safe and the initializer
-  /// is called at most once. On targets without atomics, the initializer
-  /// is called on every invocation (unavoidable for single-threaded embedded).
-  ///
-  /// Returns the cached value by copy (since P and K are Copy).
-  #[inline]
-  pub fn get_or_init(&self, f: impl FnOnce() -> (P, K)) -> (P, K) {
-    self.inner.get_or_init(f)
-  }
-
-  /// Get a reference to the cached value, initializing with `f` if not yet set.
-  ///
-  /// This is the preferred API when you need to pass references to the cached values.
-  /// On std and no_std with atomics, this returns a reference to the cached data.
-  /// On no_std without atomics, this panics (those targets don't have SIMD anyway).
-  #[inline]
-  pub fn get_or_init_ref(&self, f: impl FnOnce() -> (P, K)) -> (&P, &K) {
-    let cached = self.inner.get_or_init_ref(f);
-    (&cached.0, &cached.1)
-  }
-}
-
-impl<P: Copy, K: Copy> Default for PolicyCache<P, K> {
   fn default() -> Self {
     Self::new()
   }
@@ -332,43 +211,6 @@ mod tests {
     assert_eq!(value, 123);
   }
 
-  // ─── PolicyCache Tests ─────────────────────────────────────────────────────
-
-  #[test]
-  fn test_policy_cache_basic() {
-    static CACHE: PolicyCache<u32, u64> = PolicyCache::new();
-
-    let mut call_count = 0;
-    let (p, k) = CACHE.get_or_init(|| {
-      call_count += 1;
-      (42u32, 123u64)
-    });
-
-    assert_eq!(p, 42);
-    assert_eq!(k, 123);
-
-    // Second call should return cached value
-    let (p2, k2) = CACHE.get_or_init(|| {
-      call_count += 1;
-      (99u32, 999u64)
-    });
-
-    assert_eq!(p2, 42);
-    assert_eq!(k2, 123);
-
-    // On std/atomic targets, initializer should only be called once
-    #[cfg(any(feature = "std", target_has_atomic = "ptr"))]
-    assert_eq!(call_count, 1);
-  }
-
-  #[test]
-  fn test_policy_cache_default() {
-    let cache: PolicyCache<u32, u64> = PolicyCache::default();
-    let (p, k) = cache.get_or_init(|| (1, 2));
-    assert_eq!(p, 1);
-    assert_eq!(k, 2);
-  }
-
   // ─── Threading Tests (std only) ────────────────────────────────────────────
 
   #[cfg(feature = "std")]
@@ -396,34 +238,6 @@ mod tests {
                 42u64
               });
               assert_eq!(value, 42);
-            }
-          })
-        })
-        .collect();
-
-      for handle in handles {
-        handle.join().unwrap();
-      }
-
-      // Selector called exactly once
-      assert_eq!(CALL_COUNT.load(Ordering::SeqCst), 1);
-    }
-
-    #[test]
-    fn test_policy_cache_concurrent_init() {
-      static CALL_COUNT: AtomicUsize = AtomicUsize::new(0);
-      static CACHE: PolicyCache<u32, u64> = PolicyCache::new();
-
-      let handles: Vec<thread::JoinHandle<()>> = (0..10)
-        .map(|_| {
-          thread::spawn(|| {
-            for _ in 0..100 {
-              let (p, k) = CACHE.get_or_init(|| {
-                CALL_COUNT.fetch_add(1, Ordering::SeqCst);
-                (42u32, 123u64)
-              });
-              assert_eq!(p, 42);
-              assert_eq!(k, 123);
             }
           })
         })

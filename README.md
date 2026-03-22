@@ -4,127 +4,149 @@
 [![docs.rs](https://img.shields.io/docsrs/rscrypto)](https://docs.rs/rscrypto)
 [![CI](https://github.com/loadingalias/rscrypto/actions/workflows/commit.yaml/badge.svg)](https://github.com/loadingalias/rscrypto/actions/workflows/commit.yaml)
 [![MSRV](https://img.shields.io/badge/MSRV-1.94.0-blue.svg)](https://blog.rust-lang.org/)
-[![License](https://img.shields.io/crates/l/rscrypto.svg)](https://github.com/loadingalias/rscrypto)
 
-Pure Rust cryptography. Zero dependencies. Hardware accelerated.
+Zero-dependency-by-default Rust checksums and hashes. No C FFI, no vendored C/C++, `no_std` support, and ISA dispatch where it helps.
 
-**Platforms:** x86-64, ARM64, Apple Silicon, RISC-V, IBM POWER, s390x.
+## Quick Start
 
-## Install
-
-```toml
-[dependencies]
-rscrypto = "0.1"
-```
-
-Zero runtime dependencies by default. Only `rayon` is pulled in with the
-optional `parallel` feature.
-
-## Usage
-
-### Checksums
+### Checksum
 
 ```rust
 use rscrypto::{Checksum, Crc32C};
 
-// One-shot
-let crc = Crc32C::checksum(b"hello world");
+let data = b"hello world";
 
-// Streaming
-let mut hasher = Crc32C::new();
-hasher.update(b"hello ");
-hasher.update(b"world");
-assert_eq!(hasher.finalize(), crc);
+let checksum = Crc32C::checksum(data);
+
+let mut h = Crc32C::new();
+h.update(b"hello ");
+h.update(b"world");
+assert_eq!(h.finalize(), checksum);
+h.reset();
 ```
 
-### Hashes
+### Digest
 
 ```rust
-use rscrypto::{Digest, Sha256, Blake3};
+use rscrypto::{Digest, Sha256};
 
-let sha = Sha256::digest(b"hello world");
-assert_eq!(sha.len(), 32);
+let data = b"hello world";
 
-let b3 = Blake3::digest(b"hello world");
-assert_eq!(b3.len(), 32);
+let digest = Sha256::digest(data);
+
+let mut h = Sha256::new();
+h.update(b"hello ");
+h.update(b"world");
+assert_eq!(h.finalize(), digest);
+h.reset();
 ```
 
-### `no_std`
+### XOF
+
+```rust
+use rscrypto::{Shake256, Xof};
+
+let data = b"hello world";
+
+let mut h = Shake256::new();
+h.update(data);
+let mut xof = h.finalize_xof();
+let mut out = [0u8; 64];
+xof.squeeze(&mut out);
+h.reset();
+
+let mut oneshot = Shake256::xof(data);
+let mut same = [0u8; 64];
+oneshot.squeeze(&mut same);
+assert_eq!(out, same);
+```
+
+## Canonical Surface
+
+```rust
+use rscrypto::{
+  Blake3, Checksum, Crc32C, Digest, RapidHash, Sha256, Shake256, Xof, Xxh3,
+};
+
+let checksum = Crc32C::checksum(b"data");
+let digest = Blake3::digest(b"data");
+
+let mut xof = Shake256::xof(b"data");
+let mut out = [0u8; 32];
+xof.squeeze(&mut out);
+
+let mut h = Sha256::new();
+h.update(b"part1");
+h.update(b"part2");
+let _ = h.finalize();
+h.reset();
+
+let _ = Xxh3::hash(b"data");
+let _ = RapidHash::hash(b"data");
+```
+
+Root exports are intentionally small:
+
+```rust
+pub use traits::{Checksum, ChecksumCombine, Digest, Xof, FastHash, VerificationError};
+pub use traits::ct;
+
+pub use checksum::{Crc16Ccitt, Crc16Ibm, Crc24OpenPgp, Crc32, Crc32C, Crc64, Crc64Nvme};
+pub use hashes::crypto::{
+  Sha224, Sha256, Sha384, Sha512, Sha512_256,
+  Sha3_224, Sha3_256, Sha3_384, Sha3_512,
+  Shake128, Shake128Xof, Shake256, Shake256Xof,
+  Blake3, Blake3Xof,
+  AsconHash256,
+  AsconXof, AsconXofReader,
+};
+pub use hashes::fast::{Xxh3, Xxh3_128, RapidHash, RapidHash128};
+```
+
+Advanced surfaces stay explicit:
+
+- `rscrypto::checksum::config::*`
+- `rscrypto::checksum::introspect::*`
+- `rscrypto::hashes::introspect::*`
+- `rscrypto::platform::*`
+- `rscrypto::hashes::fast::*`
+
+## Examples
+
+- `cargo run --example basic`
+  The canonical checksum, digest, XOF, fast-hash, and I/O adapter specimen.
+- `cargo run --example introspect`
+  Advanced checksum and hash dispatch reporting.
+- `cargo run --example parallel --features parallel`
+  CRC combine-based chunked processing.
+
+## Feature Flags
+
+| Feature | Default | Purpose |
+|---------|---------|---------|
+| `std` | Yes | runtime CPU detection and I/O adapters |
+| `alloc` | Yes | buffered checksum wrappers |
+| `checksums` | Yes | CRC families and checksum helpers |
+| `hashes` | Yes | digest, XOF, and fast-hash families |
+| `parallel` | No | rayon-backed BLAKE3 parallel work |
+| `diag` | No | checksum dispatch diagnostics |
+| `testing` | No | internal validation hooks |
+
+## no_std
 
 ```toml
+[dependencies]
 rscrypto = { version = "0.1", default-features = false, features = ["checksums"] }
 ```
 
-Without `std`, hardware acceleration uses compile-time feature detection only.
-
-## Performance (GiB/s)
-
-### Checksums
-
-| Algorithm | Zen 4 | Apple M3 | Graviton 2 |
-|-----------|-------|----------|------------|
-| CRC-64/XZ | 72 | 63 | 33 |
-| CRC-64/NVME | 75 | 62 | 33 |
-| CRC-32C | 72 | 75 | 40 |
-| CRC-32 | 78 | 74 | 40 |
-| CRC-16 | 80 | 61 | 33 |
-
-Automatic dispatch: AVX-512, VPCLMUL, PMULL, EOR3, hardware CRC.
-
-## Features
-
-| Feature | Default | Description |
-|---------|---------|-------------|
-| `std` | yes | Runtime CPU detection, implies `alloc` |
-| `alloc` | yes | Buffered streaming APIs |
-| `checksums` | yes | CRC-16, CRC-24, CRC-32, CRC-64 |
-| `hashes` | yes | SHA-2, SHA-3, BLAKE3, Ascon, XXH3, RapidHash |
-| `parallel` | no | Rayon-based parallel hashing (Blake3) |
+Without `std`, runtime detection and I/O adapters are unavailable. Portable implementations remain usable.
 
 ## Development
 
-### Repository Layout
-
-- Single root crate today; the workspace currently contains `members = ["."]`.
-- Production code lives in `src/`:
-  - `src/checksum`, `src/hashes` for algorithms.
-  - `src/platform`, `src/backend`, `src/traits` for detection, dispatch, and API contracts.
-- Validation and tooling live in `tests/`, `benches/`, `examples/`, and `scripts/`.
-
-### Common Commands
-
-- `just check` runs formatting, `cargo check`, clippy, docs, the compile-time no_std matrix, and executable no_std feature smoke tests.
-- `just test` runs the full nextest suite plus doctests.
-- `just test-changed` runs planner-selected affected tests via cargo-rail.
-- `just test-feature-matrix` runs executable `--no-default-features` checksum/hash smoke tests.
-- `just test-miri`, `just test-fuzz`, and `just test-proptests` cover deeper correctness.
-- `just bench` and `just bench-native` drive the benchmark pipeline.
-
-### Arithmetic Discipline
-
-- Use `strict_*` for counters, lengths, indices, offsets, and shifts.
-- Use `wrapping_*` only for intentional modular arithmetic.
-- Avoid `saturating_*` unless saturation is the explicit algorithmic requirement.
-
-## Algorithms
-
-### Checksums
-
-CRC-16 (CCITT, IBM), CRC-24 (OpenPGP), CRC-32 (IEEE, Castagnoli), CRC-64 (XZ, NVMe).
-
-### Cryptographic hashes
-
-SHA-224, SHA-256, SHA-384, SHA-512, SHA-512/256, SHA3-224, SHA3-256, SHA3-384,
-SHA3-512, SHAKE128, SHAKE256, BLAKE3, Ascon-Hash256, Ascon-Xof128.
-
-### Fast hashes
-
-XXH3-64, XXH3-128, RapidHash-64, RapidHash-128.
-
-## Contributing
-
-For perf-gap work on Blake3, start with `just bench-blake3-core`.
-Run `just check` and `just test --all` before sending changes for review.
+```bash
+just check-all
+just test
+```
 
 ## License
 

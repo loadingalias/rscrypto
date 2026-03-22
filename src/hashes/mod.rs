@@ -8,10 +8,19 @@
 //!
 //! - [`crypto`] - Cryptographic hash functions (safe by default).
 //! - [`fast`] - Non-cryptographic hashes (**NOT CRYPTO**).
+//! - [`introspect`] - Advanced kernel selection reporting.
+//!
+//! # Advanced
+//!
+//! Dispatch is automatic by default.
+//!
+//! - Use [`crate::hashes::introspect`] for kernel reporting and size-based dispatch details.
+//! - Use [`crate::hashes::fast`] for explicit fast-hash family access.
 #[doc(hidden)]
 pub mod common;
 pub mod crypto;
 pub mod fast;
+pub mod introspect;
 #[cfg(feature = "std")]
 pub mod io;
 

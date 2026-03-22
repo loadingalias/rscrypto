@@ -2,7 +2,7 @@
 
 use proptest::prelude::*;
 use rscrypto::{
-  hashes::crypto::{AsconHash256, AsconXof128},
+  hashes::crypto::{AsconHash256, AsconXof},
   traits::{Digest as _, Xof as _},
 };
 
@@ -18,11 +18,11 @@ fn ascon_hash256_streaming(data: &[u8]) -> [u8; 32] {
   hasher.finalize()
 }
 
-fn ascon_xof128_streaming(data: &[u8], out: &mut [u8]) {
+fn ascon_xof_streaming(data: &[u8], out: &mut [u8]) {
   let split_data = data.len() / 2;
   let split_out = out.len() / 2;
 
-  let mut hasher = AsconXof128::new();
+  let mut hasher = AsconXof::new();
   hasher.update(&data[..split_data]);
   hasher.update(&data[split_data..]);
   let mut xof = hasher.finalize_xof();
@@ -37,21 +37,21 @@ proptest! {
   }
 
   #[test]
-  fn ascon_xof128_one_shot_matches_streaming(
+  fn ascon_xof_one_shot_matches_streaming(
     data in proptest::collection::vec(any::<u8>(), 0..4096),
     out_len in 0usize..2048,
   ) {
     let mut expected = vec![0u8; out_len];
-    ascon_xof128_streaming(&data, &mut expected);
+    ascon_xof_streaming(&data, &mut expected);
 
     let mut actual = vec![0u8; out_len];
-    AsconXof128::hash_into(&data, &mut actual);
+    AsconXof::xof(&data).squeeze(&mut actual);
 
     prop_assert_eq!(actual, expected);
   }
 
   #[test]
-  fn ascon_xof128_streaming_and_multi_squeeze_matches_oracle(
+  fn ascon_xof_streaming_and_multi_squeeze_matches_oracle(
     data in proptest::collection::vec(any::<u8>(), 0..4096),
     out_len in 0usize..2048,
     split_data in any::<usize>(),
@@ -62,7 +62,7 @@ proptest! {
 
     let mut expected = vec![0u8; out_len];
     {
-      let mut h = AsconXof128::new();
+      let mut h = AsconXof::new();
       h.update(&data[..split_data]);
       h.update(&data[split_data..]);
       let mut xof = h.finalize_xof();
@@ -72,7 +72,7 @@ proptest! {
 
     let mut actual = vec![0u8; out_len];
     {
-      let mut h = AsconXof128::new();
+      let mut h = AsconXof::new();
       h.update(&data[..split_data]);
       h.update(&data[split_data..]);
       let mut xof = h.finalize_xof();

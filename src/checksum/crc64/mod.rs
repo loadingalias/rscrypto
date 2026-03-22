@@ -327,15 +327,15 @@ fn crc64_nvme_dispatch_portable_vectored(crc: u64, bufs: &[&[u8]]) -> u64 {
 }
 
 #[cfg(feature = "std")]
-static CRC64_XZ_DISPATCH: crate::backend::OnceCache<Crc64DispatchFn> = crate::backend::OnceCache::new();
+static CRC64_XZ_DISPATCH: crate::backend::cache::OnceCache<Crc64DispatchFn> = crate::backend::cache::OnceCache::new();
 #[cfg(feature = "std")]
-static CRC64_XZ_DISPATCH_VECTORED: crate::backend::OnceCache<Crc64DispatchVectoredFn> =
-  crate::backend::OnceCache::new();
+static CRC64_XZ_DISPATCH_VECTORED: crate::backend::cache::OnceCache<Crc64DispatchVectoredFn> =
+  crate::backend::cache::OnceCache::new();
 #[cfg(feature = "std")]
-static CRC64_NVME_DISPATCH: crate::backend::OnceCache<Crc64DispatchFn> = crate::backend::OnceCache::new();
+static CRC64_NVME_DISPATCH: crate::backend::cache::OnceCache<Crc64DispatchFn> = crate::backend::cache::OnceCache::new();
 #[cfg(feature = "std")]
-static CRC64_NVME_DISPATCH_VECTORED: crate::backend::OnceCache<Crc64DispatchVectoredFn> =
-  crate::backend::OnceCache::new();
+static CRC64_NVME_DISPATCH_VECTORED: crate::backend::cache::OnceCache<Crc64DispatchVectoredFn> =
+  crate::backend::cache::OnceCache::new();
 
 #[cfg(feature = "std")]
 #[inline]
@@ -515,15 +515,15 @@ fn crc64_nvme_dispatch_vectored(crc: u64, bufs: &[&[u8]]) -> u64 {
 /// - Intel SPR: 128 bytes (ZMM warmup overhead)
 /// - Apple M1-M5: 48 bytes (efficient PMULL)
 ///
-/// For streaming many small chunks, consider using [`BufferedCrc64Xz`] which
+/// For streaming many small chunks, consider using [`Crc64::buffered`] which
 /// accumulates data internally until reaching the SIMD threshold.
 ///
 /// # Examples
 ///
 /// ```rust
-/// use rscrypto::checksum::{Checksum, Crc64Xz};
+/// use rscrypto::{Checksum, Crc64};
 ///
-/// let crc = Crc64Xz::checksum(b"123456789");
+/// let crc = Crc64::checksum(b"123456789");
 /// assert_eq!(crc, 0x995DC9BBDF1939FA); // "123456789" test vector
 /// ```
 #[derive(Clone, Copy)]
@@ -550,17 +550,6 @@ impl Crc64 {
       // `resume` is const, so keep runtime force semantics via wrapper dispatch.
       dispatch: crc64_xz_dispatch,
       auto_table: None,
-    }
-  }
-
-  /// Get the name of the currently selected backend.
-  #[must_use]
-  pub fn backend_name() -> &'static str {
-    let cfg = config::get();
-    match cfg.effective_force {
-      Crc64Force::Reference => kernels::REFERENCE,
-      Crc64Force::Portable => kernels::PORTABLE,
-      _ => crc64_xz_selected_kernel_name(1024), // representative size
     }
   }
 
@@ -645,6 +634,14 @@ impl crate::traits::ChecksumCombine for Crc64 {
   }
 }
 
+#[cfg(feature = "alloc")]
+impl Crc64 {
+  #[must_use]
+  pub fn buffered() -> crate::checksum::buffered::BufferedCrc64 {
+    crate::checksum::buffered::BufferedCrc64::new()
+  }
+}
+
 /// CRC-64-NVME checksum.
 ///
 /// Used in the NVMe specification for data integrity.
@@ -670,7 +667,7 @@ impl crate::traits::ChecksumCombine for Crc64 {
 /// - Intel SPR: 128 bytes (ZMM warmup overhead)
 /// - Apple M1-M5: 48 bytes (efficient PMULL)
 ///
-/// For streaming many small chunks, consider using [`BufferedCrc64Nvme`] which
+/// For streaming many small chunks, consider using [`Crc64Nvme::buffered`] which
 /// accumulates data internally until reaching the SIMD threshold.
 ///
 /// # Examples
@@ -702,17 +699,6 @@ impl Crc64Nvme {
       // `resume` is const, so keep runtime force semantics via wrapper dispatch.
       dispatch: crc64_nvme_dispatch,
       auto_table: None,
-    }
-  }
-
-  /// Get the name of the currently selected backend.
-  #[must_use]
-  pub fn backend_name() -> &'static str {
-    let cfg = config::get();
-    match cfg.effective_force {
-      Crc64Force::Reference => kernels::REFERENCE,
-      Crc64Force::Portable => kernels::PORTABLE,
-      _ => crc64_nvme_selected_kernel_name(1024), // representative size
     }
   }
 
@@ -797,6 +783,14 @@ impl crate::traits::ChecksumCombine for Crc64Nvme {
   }
 }
 
+#[cfg(feature = "alloc")]
+impl Crc64Nvme {
+  #[must_use]
+  pub fn buffered() -> crate::checksum::buffered::BufferedCrc64Nvme {
+    crate::checksum::buffered::BufferedCrc64Nvme::new()
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Buffered CRC-64 Wrappers (generated via macro)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -810,7 +804,7 @@ const BUFFERED_CRC_BUFFER_SIZE: usize = 512;
 
 #[cfg(feature = "alloc")]
 define_buffered_crc! {
-  /// A buffering wrapper around [`Crc64Xz`] for streaming small chunks.
+  /// A buffering wrapper around [`Crc64`] for streaming small chunks.
   ///
   /// Use when you expect many small updates (< 64 bytes). This wrapper
   /// accumulates data internally until reaching the SIMD threshold, then
@@ -822,14 +816,14 @@ define_buffered_crc! {
   /// - Streaming parsers that emit small tokens
   /// - Any workload with many small `update()` calls
   ///
-  /// For large contiguous buffers, use [`Crc64Xz`] directly.
+  /// For large contiguous buffers, use [`Crc64`] directly.
   ///
   /// # Examples
   ///
   /// ```rust
-  /// use rscrypto::checksum::{BufferedCrc64Xz, Checksum};
+  /// use rscrypto::{Checksum, Crc64};
   ///
-  /// let mut hasher = BufferedCrc64Xz::new();
+  /// let mut hasher = Crc64::buffered();
   /// let data = b"The quick brown fox jumps over the lazy dog";
   ///
   /// // Many small updates - internally buffered
@@ -838,17 +832,13 @@ define_buffered_crc! {
   /// }
   ///
   /// let crc = hasher.finalize();
-  /// assert_eq!(crc, rscrypto::Crc64Xz::checksum(data));
+  /// assert_eq!(crc, Crc64::checksum(data));
   /// ```
   pub struct BufferedCrc64<Crc64> {
     buffer_size: BUFFERED_CRC_BUFFER_SIZE,
     threshold_fn: || CRC64_BUFFERED_THRESHOLD,
   }
 }
-
-/// Explicit name for the XZ buffered CRC-64 variant (alias of [`BufferedCrc64`]).
-#[cfg(feature = "alloc")]
-pub type BufferedCrc64Xz = BufferedCrc64;
 
 #[cfg(feature = "alloc")]
 define_buffered_crc! {
@@ -868,9 +858,9 @@ define_buffered_crc! {
   /// # Examples
   ///
   /// ```rust
-  /// use rscrypto::checksum::{BufferedCrc64Nvme, Checksum};
+  /// use rscrypto::{Checksum, Crc64Nvme};
   ///
-  /// let mut hasher = BufferedCrc64Nvme::new();
+  /// let mut hasher = Crc64Nvme::buffered();
   /// let data = b"The quick brown fox jumps over the lazy dog";
   ///
   /// // Many small updates - internally buffered
@@ -895,19 +885,11 @@ impl crate::checksum::introspect::KernelIntrospect for Crc64 {
   fn kernel_name_for_len(len: usize) -> &'static str {
     Self::kernel_name_for_len(len)
   }
-
-  fn backend_name() -> &'static str {
-    Self::backend_name()
-  }
 }
 
 impl crate::checksum::introspect::KernelIntrospect for Crc64Nvme {
   fn kernel_name_for_len(len: usize) -> &'static str {
     Self::kernel_name_for_len(len)
-  }
-
-  fn backend_name() -> &'static str {
-    Self::backend_name()
   }
 }
 
@@ -1035,9 +1017,9 @@ mod tests {
   }
 
   #[test]
-  fn test_backend_name_not_empty() {
-    assert!(!Crc64::backend_name().is_empty());
-    assert!(!Crc64Nvme::backend_name().is_empty());
+  fn test_kernel_probe_not_empty() {
+    assert!(!Crc64::kernel_name_for_len(1024).is_empty());
+    assert!(!Crc64Nvme::kernel_name_for_len(1024).is_empty());
   }
 
   /// Test various buffer sizes to exercise both portable and SIMD paths.
@@ -1119,10 +1101,10 @@ mod tests {
     assert_eq!(hasher.finalize(), oneshot, "Many small chunks failed");
   }
 
-  /// Verify backend name reflects the selected kernel.
+  /// Verify a representative kernel probe reflects the selected kernel.
   #[test]
-  fn test_backend_selection() {
-    let name = Crc64::backend_name();
+  fn test_kernel_probe_selection() {
+    let name = Crc64::kernel_name_for_len(1024);
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     let _ = name;
 

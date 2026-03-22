@@ -6,18 +6,23 @@
 //! # Examples
 //!
 //! ```
-//! use rscrypto::checksum::{Crc64, DispatchInfo, KernelIntrospect};
+//! use rscrypto::checksum::{
+//!   Crc64,
+//!   introspect::{DispatchInfo, KernelIntrospect},
+//! };
 //!
 //! // Platform-level info
 //! let info = DispatchInfo::current();
 //! println!("{info}");
 //!
 //! // Per-algorithm kernel selection
-//! println!("CRC-64 backend: {}", Crc64::backend_name());
+//! println!("CRC-64 @ 1KB: {}", Crc64::kernel_name_for_len(1024));
 //! println!("CRC-64 @ 4KB: {}", Crc64::kernel_name_for_len(4096));
 //! ```
 
 use core::fmt;
+
+pub use crate::checksum::dispatch::is_hardware_accelerated;
 
 /// Information about the current dispatch configuration.
 ///
@@ -27,7 +32,7 @@ use core::fmt;
 /// # Examples
 ///
 /// ```
-/// use rscrypto::checksum::DispatchInfo;
+/// use rscrypto::checksum::introspect::DispatchInfo;
 ///
 /// let info = DispatchInfo::current();
 /// println!("{info}");
@@ -80,7 +85,7 @@ impl fmt::Debug for DispatchInfo {
 /// # Examples
 ///
 /// ```
-/// use rscrypto::checksum::{Crc64, kernel_for};
+/// use rscrypto::checksum::{Crc64, introspect::kernel_for};
 ///
 /// // Check kernel selection at different buffer sizes
 /// let small = kernel_for::<Crc64>(64);
@@ -106,12 +111,6 @@ pub trait KernelIntrospect {
   /// - `"x86_64/vpclmul-4x512"` for large buffers on Zen4
   /// - `"portable/slice16"` on platforms without hardware acceleration
   fn kernel_name_for_len(len: usize) -> &'static str;
-
-  /// Returns the currently selected backend name.
-  ///
-  /// This reflects the kernel that would be used for a representative
-  /// buffer size (typically 1KB), unless a force mode is active.
-  fn backend_name() -> &'static str;
 }
 
 #[cfg(test)]

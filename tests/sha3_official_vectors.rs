@@ -4,6 +4,7 @@ use digest::dev::blobby::Blob2Iterator;
 use rscrypto::{
   Digest,
   hashes::crypto::{Sha3_224, Sha3_256, Sha3_384, Sha3_512, Shake128, Shake256},
+  traits::Xof as _,
 };
 
 fn run_fixed_vectors<const OUT: usize>(data: &'static [u8], name: &str, mut digest: impl FnMut(&[u8]) -> [u8; OUT]) {
@@ -44,12 +45,12 @@ fn sha3_384_official_vectors() {
   run_fixed_vectors(data, "sha3-384", Sha3_384::digest);
 }
 
-fn run_xof_vectors(data: &'static [u8], name: &str, mut hash_into: impl FnMut(&[u8], &mut [u8])) {
+fn run_xof_vectors(data: &'static [u8], name: &str, mut xof: impl FnMut(&[u8], &mut [u8])) {
   let iter = Blob2Iterator::new(data).expect("sha3 xof vector corpus must parse");
   for (i, row) in iter.enumerate() {
     let [input, output] = row.unwrap_or_else(|err| panic!("{name} vector row decode failed at case {i}: {err:?}"));
     let mut out = vec![0u8; output.len()];
-    hash_into(input, &mut out);
+    xof(input, &mut out);
     assert_eq!(
       &out[..],
       output,
@@ -62,11 +63,11 @@ fn run_xof_vectors(data: &'static [u8], name: &str, mut hash_into: impl FnMut(&[
 #[test]
 fn shake128_official_vectors() {
   let data = include_bytes!("../testdata/sha3/shake128.blb");
-  run_xof_vectors(data, "shake128", Shake128::hash_into);
+  run_xof_vectors(data, "shake128", |input, out| Shake128::xof(input).squeeze(out));
 }
 
 #[test]
 fn shake256_official_vectors() {
   let data = include_bytes!("../testdata/sha3/shake256.blb");
-  run_xof_vectors(data, "shake256", Shake256::hash_into);
+  run_xof_vectors(data, "shake256", |input, out| Shake256::xof(input).squeeze(out));
 }
