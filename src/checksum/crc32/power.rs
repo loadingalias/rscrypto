@@ -811,6 +811,7 @@ pub fn crc32c_vpmsum_8way_safe(crc: u32, data: &[u8]) -> u32 {
 
 #[cfg(test)]
 mod tests {
+  extern crate alloc;
   extern crate std;
 
   use alloc::vec::Vec;
