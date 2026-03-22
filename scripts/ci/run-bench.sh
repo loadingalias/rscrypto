@@ -175,59 +175,47 @@ hash_filter_token() {
 default_benches_for_crate() {
   local crate="${1:-}"
   case "$crate" in
-    checksum) echo "checksum_comp,checksum_kernels" ;;
-    hashes) echo "hashes_comp,hashes_kernels,blake3" ;;
+    checksum) echo "crc" ;;
+    hashes) echo "sha2,sha3,ascon,xxh3,rapidhash,blake3" ;;
     *) echo "" ;;
   esac
 }
 
-supports_hash_kernels() {
+bench_target_for_hash_algo() {
   local algo="${1:-}"
   case "$algo" in
-    sha256|sha512|sha3-256|sha3-512|shake256|xxh3|rapidhash|blake3) return 0 ;;
+    sha224|sha256|sha384|sha512|sha512-256) echo "sha2" ;;
+    sha3-224|sha3-256|sha3-384|sha3-512|shake128|shake256|keccakf1600) echo "sha3" ;;
+    ascon-hash256|ascon-xof128) echo "ascon" ;;
+    xxh3) echo "xxh3" ;;
+    rapidhash) echo "rapidhash" ;;
+    blake3) echo "blake3" ;;
     *) return 1 ;;
   esac
 }
 
-build_algo_plan_rows() {
+append_algo_plan_row() {
   local algo="${1:-}"
-  local token
-  token="$(hash_filter_token "$algo")"
+  local raw_filter="${2:-}"
+  local bench=""
+  local crate=""
+  local token=""
 
   if array_contains "$algo" "${DEFAULT_CHECKSUM_ALGOS[@]}"; then
-    token="$(checksum_filter_token "$algo")"
-    PLAN_ROWS+=("checksum|checksum_comp|$token")
-    PLAN_ROWS+=("checksum|checksum_kernels|$token")
+    crate="checksum"
+    bench="crc"
+    token="${raw_filter:-$(checksum_filter_token "$algo")}"
+    PLAN_ROWS+=("$crate|$bench|$token")
     return 0
   fi
 
-  if [[ "$algo" == "blake3" ]]; then
-    # If a bench scope is explicitly requested, keep Blake3 inside that scope.
-    # This prevents BENCH_ONLY=blake3 + BENCH_BENCHES=comp/kernels from
-    # filtering down to an empty plan.
-    if [[ -n "$BENCHES_INPUT" ]]; then
-      if csv_has_token "$BENCHES_INPUT" "hashes_comp"; then
-        PLAN_ROWS+=("hashes|hashes_comp|blake3/")
-      fi
-      if csv_has_token "$BENCHES_INPUT" "hashes_kernels"; then
-        PLAN_ROWS+=("hashes|hashes_kernels|blake3")
-      fi
-      if csv_has_token "$BENCHES_INPUT" "blake3"; then
-        PLAN_ROWS+=("hashes|blake3|blake3")
-      fi
+  if array_contains "$algo" "${DEFAULT_HASH_ALGOS[@]}"; then
+    if ! bench="$(bench_target_for_hash_algo "$algo")"; then
       return 0
     fi
-
-    # Dedicated bench target already includes oneshot/streaming/keyed/xof/derive variants.
-    PLAN_ROWS+=("hashes|blake3|blake3")
-    return 0
-  fi
-
-  if supports_hash_kernels "$algo"; then
-    PLAN_ROWS+=("hashes|hashes_comp|$token")
-    PLAN_ROWS+=("hashes|hashes_kernels|$token")
-  else
-    PLAN_ROWS+=("hashes|hashes_comp|$token")
+    crate="hashes"
+    token="${raw_filter:-$(hash_filter_token "$algo")}"
+    PLAN_ROWS+=("$crate|$bench|$token")
   fi
 }
 
@@ -243,7 +231,7 @@ dedupe_plan_rows() {
 CRATES_INPUT="$(normalize_csv_lower "${BENCH_CRATES:-}")"
 BENCHES_INPUT="$(normalize_csv_lower "${BENCH_BENCHES:-}")"
 
-# Expand bench shorthand: "comp" -> "hashes_comp,checksum_comp", etc.
+# Expand bench shorthand and legacy aliases onto real bench targets.
 expand_bench_shorthand() {
   local raw="$1"
   [[ -n "$raw" ]] || return 0
@@ -252,8 +240,11 @@ expand_bench_shorthand() {
   IFS=',' read -r -a tokens <<< "$raw"
   for token in "${tokens[@]}"; do
     case "$token" in
-      comp)    expanded+=("hashes_comp" "checksum_comp") ;;
-      kernels) expanded+=("hashes_kernels" "checksum_kernels") ;;
+      comp) expanded+=("crc" "sha2" "sha3" "ascon" "xxh3" "rapidhash" "blake3") ;;
+      kernels) expanded+=("blake3") ;;
+      checksum_comp|checksum_kernels) expanded+=("crc") ;;
+      hashes_comp) expanded+=("sha2" "sha3" "ascon" "xxh3" "rapidhash" "blake3") ;;
+      hashes_kernels) expanded+=("blake3") ;;
       *)       expanded+=("$token") ;;
     esac
   done
@@ -336,8 +327,15 @@ targets_comp="false"
 if [[ -z "$CRATES_INPUT" ]] || csv_has_token "$CRATES_INPUT" "hashes"; then
   targets_hashes="true"
 fi
-if [[ -z "$BENCHES_INPUT" ]] || csv_has_token "$BENCHES_INPUT" "hashes_comp"; then
+if [[ -z "$BENCHES_INPUT" ]]; then
   targets_comp="true"
+else
+  for bench in sha2 sha3 ascon xxh3 rapidhash; do
+    if csv_has_token "$BENCHES_INPUT" "$bench"; then
+      targets_comp="true"
+      break
+    fi
+  done
 fi
 if [[ "$ALLOW_FULL_HASHES_COMP_INPUT" != "true" \
   && "$targets_hashes" == "true" \
@@ -520,7 +518,7 @@ if [[ -n "$ONLY_INPUT" ]]; then
   # from BENCH_ONLY (e.g. "blake3"), which would run extra surfaces.
   if [[ -z "$FILTER_INPUT" ]]; then
     for algo in "${SELECTED_ALGOS[@]:+${SELECTED_ALGOS[@]}}"; do
-      build_algo_plan_rows "$algo"
+      append_algo_plan_row "$algo"
     done
   fi
 fi
@@ -536,52 +534,62 @@ if [[ "${#RAW_FILTERS[@]}" -gt 0 ]]; then
   raw_crates=()
   raw_benches=()
 
-  if [[ -n "$CRATES_INPUT" ]]; then
-    IFS=',' read -r -a raw_crates <<< "$CRATES_INPUT"
-  elif [[ "${#PLAN_ROWS[@]}" -gt 0 ]]; then
-    for row in "${PLAN_ROWS[@]}"; do
-      IFS='|' read -r crate _ _ <<< "$row"
-      append_unique "$crate" raw_crates
-    done
-  elif [[ "${#SELECTED_ALGOS[@]}" -gt 0 ]]; then
-    for algo in "${SELECTED_ALGOS[@]:+${SELECTED_ALGOS[@]}}"; do
-      if array_contains "$algo" "${DEFAULT_CHECKSUM_ALGOS[@]}"; then
-        append_unique "checksum" raw_crates
-      elif array_contains "$algo" "${DEFAULT_HASH_ALGOS[@]}"; then
-        append_unique "hashes" raw_crates
-      fi
-    done
-    if [[ "${#raw_crates[@]}" -eq 0 ]]; then
-      raw_crates=("checksum" "hashes")
-    fi
-  else
-    raw_crates=("checksum" "hashes")
-  fi
-
-  if [[ -n "$BENCHES_INPUT" ]]; then
-    IFS=',' read -r -a raw_benches <<< "$BENCHES_INPUT"
-  fi
-
-  for filter in "${RAW_FILTERS[@]}"; do
-    for crate in "${raw_crates[@]:+${raw_crates[@]}}"; do
-      benches_csv=""
-      if [[ "${#raw_benches[@]}" -gt 0 ]]; then
-        benches_csv="$(IFS=','; echo "${raw_benches[*]}")"
-      else
-        benches_csv="$(default_benches_for_crate "$crate")"
-      fi
-
-      if [[ -z "$benches_csv" ]]; then
-        echo "warning: no default bench set for crate '$crate'; skipping raw filter '$filter'" | tee -a "$LOG_PATH"
-        continue
-      fi
-
-      IFS=',' read -r -a benches_values <<< "$benches_csv"
-      for bench in "${benches_values[@]:+${benches_values[@]}}"; do
-        PLAN_ROWS+=("$crate|$bench|$filter")
+  if [[ -z "$CRATES_INPUT" && -z "$BENCHES_INPUT" && "${#SELECTED_ALGOS[@]}" -gt 0 ]]; then
+    for filter in "${RAW_FILTERS[@]}"; do
+      for algo in "${SELECTED_ALGOS[@]:+${SELECTED_ALGOS[@]}}"; do
+        append_algo_plan_row "$algo" "$filter"
       done
     done
-  done
+    dedupe_plan_rows
+  else
+
+    if [[ -n "$CRATES_INPUT" ]]; then
+      IFS=',' read -r -a raw_crates <<< "$CRATES_INPUT"
+    elif [[ "${#PLAN_ROWS[@]}" -gt 0 ]]; then
+      for row in "${PLAN_ROWS[@]}"; do
+        IFS='|' read -r crate _ _ <<< "$row"
+        append_unique "$crate" raw_crates
+      done
+    elif [[ "${#SELECTED_ALGOS[@]}" -gt 0 ]]; then
+      for algo in "${SELECTED_ALGOS[@]:+${SELECTED_ALGOS[@]}}"; do
+        if array_contains "$algo" "${DEFAULT_CHECKSUM_ALGOS[@]}"; then
+          append_unique "checksum" raw_crates
+        elif array_contains "$algo" "${DEFAULT_HASH_ALGOS[@]}"; then
+          append_unique "hashes" raw_crates
+        fi
+      done
+      if [[ "${#raw_crates[@]}" -eq 0 ]]; then
+        raw_crates=("checksum" "hashes")
+      fi
+    else
+      raw_crates=("checksum" "hashes")
+    fi
+
+    if [[ -n "$BENCHES_INPUT" ]]; then
+      IFS=',' read -r -a raw_benches <<< "$BENCHES_INPUT"
+    fi
+
+    for filter in "${RAW_FILTERS[@]}"; do
+      for crate in "${raw_crates[@]:+${raw_crates[@]}}"; do
+        benches_csv=""
+        if [[ "${#raw_benches[@]}" -gt 0 ]]; then
+          benches_csv="$(IFS=','; echo "${raw_benches[*]}")"
+        else
+          benches_csv="$(default_benches_for_crate "$crate")"
+        fi
+
+        if [[ -z "$benches_csv" ]]; then
+          echo "warning: no default bench set for crate '$crate'; skipping raw filter '$filter'" | tee -a "$LOG_PATH"
+          continue
+        fi
+
+        IFS=',' read -r -a benches_values <<< "$benches_csv"
+        for bench in "${benches_values[@]:+${benches_values[@]}}"; do
+          PLAN_ROWS+=("$crate|$bench|$filter")
+        done
+      done
+    done
+  fi
 fi
 
 dedupe_plan_rows

@@ -3,6 +3,8 @@
 //! These tests ensure that the portable tier (slice-by-N) is always available
 //! as a fallback on any platform, regardless of SIMD capabilities.
 
+#![cfg(feature = "checksums")]
+
 use rscrypto::{Checksum, Crc16Ccitt, Crc16Ibm, Crc24OpenPgp, Crc32, Crc32C, Crc64, Crc64Nvme};
 
 // ─────────────────────────────────────────────────────────────────────────────

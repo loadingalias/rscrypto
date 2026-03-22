@@ -1,5 +1,7 @@
 #[cfg(test)]
 extern crate alloc;
+#[cfg(test)]
+extern crate std;
 
 #[cfg(test)]
 mod tests {
@@ -191,7 +193,7 @@ mod tests {
   // ─────────────────────────────────────────────────────────────────────────────
 
   #[test]
-  #[cfg(all(target_arch = "aarch64", target_os = "macos", not(miri)))]
+  #[cfg(all(target_arch = "aarch64", target_os = "macos", feature = "std", not(miri)))]
   fn test_apple_silicon_detection_runs() {
     // Just verify detection doesn't crash and returns a valid result
     let chip_gen = detect_apple_silicon_gen();

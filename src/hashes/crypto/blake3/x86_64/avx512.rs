@@ -1,7 +1,6 @@
 //! BLAKE3 x86_64 AVX-512 throughput kernel (16-way).
 
 #![allow(unsafe_code)]
-#![allow(unsafe_op_in_unsafe_fn)]
 #![allow(clippy::inline_always)]
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::many_single_char_names)]
@@ -25,55 +24,65 @@ pub const DEGREE: usize = 16;
 
 #[inline(always)]
 unsafe fn add(a: __m512i, b: __m512i) -> __m512i {
+  // SAFETY: Caller guarantees the required AVX-512 feature set for this backend.
   unsafe { _mm512_add_epi32(a, b) }
 }
 
 #[inline(always)]
 unsafe fn xor(a: __m512i, b: __m512i) -> __m512i {
+  // SAFETY: Caller guarantees the required AVX-512 feature set for this backend.
   unsafe { _mm512_xor_si512(a, b) }
 }
 
 #[inline(always)]
 unsafe fn set1(x: u32) -> __m512i {
+  // SAFETY: Caller guarantees the required AVX-512 feature set for this backend.
   unsafe { _mm512_set1_epi32(x.cast_signed()) }
 }
 
 #[inline(always)]
 unsafe fn loadu256(src: *const u8) -> __m256i {
+  // SAFETY: Caller guarantees `src` is valid to read 32 bytes and has enabled this AVX-512 backend.
   unsafe { _mm256_loadu_si256(src.cast()) }
 }
 
 #[inline(always)]
 unsafe fn storeu256(src: __m256i, dest: *mut u8) {
+  // SAFETY: Caller guarantees `dest` is valid to write 32 bytes and has enabled this AVX-512 backend.
   unsafe { _mm256_storeu_si256(dest.cast(), src) }
 }
 
 #[inline(always)]
 unsafe fn rot16(x: __m512i) -> __m512i {
   // 32-bit rotate by 16. Prefer `vprold` over shift/or.
+  // SAFETY: Caller guarantees the required AVX-512 feature set for this backend.
   unsafe { _mm512_rol_epi32(x, 16) }
 }
 
 #[inline(always)]
 unsafe fn rot12(x: __m512i) -> __m512i {
   // Rotate right by 12 == rotate left by 20.
+  // SAFETY: Caller guarantees the required AVX-512 feature set for this backend.
   unsafe { _mm512_rol_epi32(x, 20) }
 }
 
 #[inline(always)]
 unsafe fn rot8(x: __m512i) -> __m512i {
   // Rotate right by 8 == rotate left by 24.
+  // SAFETY: Caller guarantees the required AVX-512 feature set for this backend.
   unsafe { _mm512_rol_epi32(x, 24) }
 }
 
 #[inline(always)]
 unsafe fn rot7(x: __m512i) -> __m512i {
   // Rotate right by 7 == rotate left by 25.
+  // SAFETY: Caller guarantees the required AVX-512 feature set for this backend.
   unsafe { _mm512_rol_epi32(x, 25) }
 }
 
 #[inline(always)]
 unsafe fn round(v: &mut [__m512i; 16], m: &[__m512i; 16], r: usize) {
+  // SAFETY: Caller guarantees this AVX-512 backend is active; all vector lanes are local registers.
   unsafe {
     v[0] = add(v[0], m[MSG_SCHEDULE[r][0]]);
     v[1] = add(v[1], m[MSG_SCHEDULE[r][2]]);
@@ -194,6 +203,7 @@ unsafe fn round(v: &mut [__m512i; 16], m: &[__m512i; 16], r: usize) {
 #[inline(always)]
 unsafe fn counter_vec(counter: u64, increment_counter: bool) -> (__m512i, __m512i) {
   let mask = if increment_counter { !0u64 } else { 0u64 };
+  // SAFETY: Counter vectors are assembled with this backend's AVX-512 intrinsics only.
   unsafe {
     let lo = _mm512_setr_epi32(
       counter_low(counter).cast_signed(),
@@ -237,6 +247,7 @@ unsafe fn counter_vec(counter: u64, increment_counter: bool) -> (__m512i, __m512
 
 #[inline(always)]
 unsafe fn transpose_msg_vecs8(inputs: &[*const u8; 8], block_offset: usize) -> [__m256i; 16] {
+  // SAFETY: Caller guarantees each input points to at least one full block at `block_offset`.
   unsafe {
     let stride = 4 * 8;
     let mut half0 = [
@@ -276,6 +287,7 @@ unsafe fn transpose_msg_vecs8(inputs: &[*const u8; 8], block_offset: usize) -> [
 
 #[inline(always)]
 unsafe fn transpose_msg_vecs16(inputs: &[*const u8; 16], block_offset: usize) -> [__m512i; 16] {
+  // SAFETY: Caller guarantees each input points to at least one full block at `block_offset`.
   unsafe {
     let lo_ptrs = [
       inputs[0], inputs[1], inputs[2], inputs[3], inputs[4], inputs[5], inputs[6], inputs[7],
@@ -317,6 +329,8 @@ pub(crate) unsafe fn hash16_contiguous(input: *const u8, key: &[u32; 8], counter
   // The upstream function accepts an array of input pointers, so we build it
   // from the contiguous layout.
   debug_assert!(flags <= u8::MAX as u32);
+  // SAFETY: Caller guarantees AVX-512F/VL+AVX2 availability, `input` readable for 16 chunks, and
+  // `out` writable for `DEGREE * OUT_LEN`. The asm entrypoint shares that contract.
   unsafe {
     let inputs = [
       input,
@@ -711,27 +725,31 @@ pub(crate) unsafe fn compress_block(
   block_len: u32,
   flags: u32,
 ) -> [u32; 16] {
-  let m0 = _mm_loadu_si128(block_words.as_ptr().cast());
-  let m1 = _mm_loadu_si128(block_words.as_ptr().add(4).cast());
-  let m2 = _mm_loadu_si128(block_words.as_ptr().add(8).cast());
-  let m3 = _mm_loadu_si128(block_words.as_ptr().add(12).cast());
-  let [mut row0, mut row1, mut row2, mut row3] =
-    super::compress_pre_sse41_impl(chaining_value, m0, m1, m2, m3, counter, block_len, flags);
+  // SAFETY: AVX-512/AVX2/SSE4.1/SSSE3 intrinsics are available via this function's
+  // #[target_feature] attribute. Pointer accesses are to valid fixed-size array references.
+  unsafe {
+    let m0 = _mm_loadu_si128(block_words.as_ptr().cast());
+    let m1 = _mm_loadu_si128(block_words.as_ptr().add(4).cast());
+    let m2 = _mm_loadu_si128(block_words.as_ptr().add(8).cast());
+    let m3 = _mm_loadu_si128(block_words.as_ptr().add(12).cast());
+    let [mut row0, mut row1, mut row2, mut row3] =
+      super::compress_pre_sse41_impl(chaining_value, m0, m1, m2, m3, counter, block_len, flags);
 
-  let cv_lo = _mm_loadu_si128(chaining_value.as_ptr().cast());
-  let cv_hi = _mm_loadu_si128(chaining_value.as_ptr().add(4).cast());
+    let cv_lo = _mm_loadu_si128(chaining_value.as_ptr().cast());
+    let cv_hi = _mm_loadu_si128(chaining_value.as_ptr().add(4).cast());
 
-  row0 = _mm_xor_si128(row0, row2);
-  row1 = _mm_xor_si128(row1, row3);
-  row2 = _mm_xor_si128(row2, cv_lo);
-  row3 = _mm_xor_si128(row3, cv_hi);
+    row0 = _mm_xor_si128(row0, row2);
+    row1 = _mm_xor_si128(row1, row3);
+    row2 = _mm_xor_si128(row2, cv_lo);
+    row3 = _mm_xor_si128(row3, cv_hi);
 
-  let mut out = [0u32; 16];
-  _mm_storeu_si128(out.as_mut_ptr().cast(), row0);
-  _mm_storeu_si128(out.as_mut_ptr().add(4).cast(), row1);
-  _mm_storeu_si128(out.as_mut_ptr().add(8).cast(), row2);
-  _mm_storeu_si128(out.as_mut_ptr().add(12).cast(), row3);
-  out
+    let mut out = [0u32; 16];
+    _mm_storeu_si128(out.as_mut_ptr().cast(), row0);
+    _mm_storeu_si128(out.as_mut_ptr().add(4).cast(), row1);
+    _mm_storeu_si128(out.as_mut_ptr().add(8).cast(), row2);
+    _mm_storeu_si128(out.as_mut_ptr().add(12).cast(), row3);
+    out
+  }
 }
 
 /// Compress one BLAKE3 block and return only the chaining value (8 words).
@@ -746,16 +764,20 @@ pub(crate) unsafe fn compress_cv_block(
   block_len: u32,
   flags: u32,
 ) -> [u32; 8] {
-  let m0 = _mm_loadu_si128(block_words.as_ptr().cast());
-  let m1 = _mm_loadu_si128(block_words.as_ptr().add(4).cast());
-  let m2 = _mm_loadu_si128(block_words.as_ptr().add(8).cast());
-  let m3 = _mm_loadu_si128(block_words.as_ptr().add(12).cast());
-  let [row0, row1, row2, row3] =
-    super::compress_pre_sse41_impl(chaining_value, m0, m1, m2, m3, counter, block_len, flags);
-  let row0 = _mm_xor_si128(row0, row2);
-  let row1 = _mm_xor_si128(row1, row3);
-  let mut out = [0u32; 8];
-  _mm_storeu_si128(out.as_mut_ptr().cast(), row0);
-  _mm_storeu_si128(out.as_mut_ptr().add(4).cast(), row1);
-  out
+  // SAFETY: AVX-512/AVX2/SSE4.1/SSSE3 intrinsics are available via this function's
+  // #[target_feature] attribute. Pointer accesses are to valid fixed-size array references.
+  unsafe {
+    let m0 = _mm_loadu_si128(block_words.as_ptr().cast());
+    let m1 = _mm_loadu_si128(block_words.as_ptr().add(4).cast());
+    let m2 = _mm_loadu_si128(block_words.as_ptr().add(8).cast());
+    let m3 = _mm_loadu_si128(block_words.as_ptr().add(12).cast());
+    let [row0, row1, row2, row3] =
+      super::compress_pre_sse41_impl(chaining_value, m0, m1, m2, m3, counter, block_len, flags);
+    let row0 = _mm_xor_si128(row0, row2);
+    let row1 = _mm_xor_si128(row1, row3);
+    let mut out = [0u32; 8];
+    _mm_storeu_si128(out.as_mut_ptr().cast(), row0);
+    _mm_storeu_si128(out.as_mut_ptr().add(4).cast(), row1);
+    out
+  }
 }

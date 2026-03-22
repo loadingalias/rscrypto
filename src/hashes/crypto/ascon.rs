@@ -196,6 +196,7 @@ impl<P: Permuter, const IV0: u64, const IV1: u64, const IV2: u64, const IV3: u64
       return;
     }
 
+    // Kernel selection only uses this as an advisory size hint, so wrapping is intentional.
     self.bytes_hint = self.bytes_hint.wrapping_add(data.len());
     if self.buf_len != 0 {
       let take = core::cmp::min(RATE - self.buf_len, data.len());

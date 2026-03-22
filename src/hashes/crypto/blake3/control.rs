@@ -151,6 +151,13 @@ pub(super) enum ParallelPolicyKind {
   DeriveUpdate,
 }
 
+#[cfg(feature = "parallel")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct ParallelAdmissionDecision {
+  pub would_parallelize: bool,
+  pub threads: usize,
+}
+
 #[cfg(feature = "std")]
 static PARALLEL_OVERRIDE: OnceLock<Mutex<Option<ParallelPolicyOverride>>> = OnceLock::new();
 #[cfg(feature = "std")]
@@ -188,13 +195,19 @@ fn available_parallelism_cached() -> Option<usize> {
 
 #[cfg(feature = "parallel")]
 #[inline]
-pub(super) fn parallel_policy_threads_with_admission(
-  mode: ParallelPolicyKind,
-  input_bytes: usize,
-  admission_full_chunks: usize,
-  commit_full_chunks: usize,
-) -> Option<usize> {
-  let policy = if let Some(override_policy) = parallel_override() {
+pub(super) fn streaming_policy_kind_from_flags(flags: u32) -> ParallelPolicyKind {
+  match flags {
+    0 => ParallelPolicyKind::Update,
+    KEYED_HASH => ParallelPolicyKind::KeyedUpdate,
+    DERIVE_KEY_MATERIAL => ParallelPolicyKind::DeriveUpdate,
+    _ => ParallelPolicyKind::Update,
+  }
+}
+
+#[cfg(feature = "parallel")]
+#[inline]
+pub(super) fn resolved_parallel_policy(mode: ParallelPolicyKind) -> dispatch_tables::ParallelTable {
+  if let Some(override_policy) = parallel_override() {
     match mode {
       ParallelPolicyKind::Oneshot => override_policy.oneshot,
       ParallelPolicyKind::KeyedOneshot => override_policy.keyed_oneshot,
@@ -219,9 +232,25 @@ pub(super) fn parallel_policy_threads_with_admission(
       ParallelPolicyKind::KeyedUpdate => dispatch_policy.keyed_streaming,
       ParallelPolicyKind::DeriveUpdate => dispatch_policy.derive_streaming,
     }
-  };
+  }
+}
 
-  parallel_threads_for_policy(mode, policy, input_bytes, admission_full_chunks, commit_full_chunks)
+#[cfg(feature = "parallel")]
+#[inline]
+pub(super) fn parallel_policy_threads_with_admission(
+  mode: ParallelPolicyKind,
+  input_bytes: usize,
+  admission_full_chunks: usize,
+  commit_full_chunks: usize,
+) -> Option<usize> {
+  let decision = parallel_admission_decision(
+    mode,
+    resolved_parallel_policy(mode),
+    input_bytes,
+    admission_full_chunks,
+    commit_full_chunks,
+  );
+  decision.would_parallelize.then_some(decision.threads)
 }
 
 #[cfg(feature = "parallel")]
@@ -232,27 +261,15 @@ pub(super) fn streaming_parallel_threads_for_flags(
   admission_full_chunks: usize,
   commit_full_chunks: usize,
 ) -> Option<usize> {
-  let (policy, mode) = if let Some(override_policy) = parallel_override() {
-    let mode = match flags {
-      0 => ParallelPolicyKind::Update,
-      KEYED_HASH => ParallelPolicyKind::KeyedUpdate,
-      DERIVE_KEY_MATERIAL => ParallelPolicyKind::DeriveUpdate,
-      _ => ParallelPolicyKind::Update,
-    };
-    let policy = match mode {
-      ParallelPolicyKind::Update => override_policy.streaming,
-      ParallelPolicyKind::KeyedUpdate => override_policy.keyed_streaming,
-      ParallelPolicyKind::DeriveUpdate => override_policy.derive_streaming,
-      _ => override_policy.streaming,
-    };
-    (policy, mode)
-  } else {
-    (
-      dispatch::hasher_dispatch().parallel_streaming(),
-      ParallelPolicyKind::Update,
-    )
-  };
-  parallel_threads_for_policy(mode, policy, input_bytes, admission_full_chunks, commit_full_chunks)
+  let mode = streaming_policy_kind_from_flags(flags);
+  let decision = parallel_admission_decision(
+    mode,
+    resolved_parallel_policy(mode),
+    input_bytes,
+    admission_full_chunks,
+    commit_full_chunks,
+  );
+  decision.would_parallelize.then_some(decision.threads)
 }
 
 #[cfg(feature = "parallel")]
@@ -278,28 +295,42 @@ fn ceil_div_usize(value: usize, divisor: usize) -> usize {
 
 #[cfg(feature = "parallel")]
 #[inline]
-fn parallel_threads_for_policy(
+pub(super) fn parallel_admission_decision(
   mode: ParallelPolicyKind,
   policy: dispatch_tables::ParallelTable,
   input_bytes: usize,
   admission_full_chunks: usize,
   commit_full_chunks: usize,
-) -> Option<usize> {
+) -> ParallelAdmissionDecision {
   if policy.max_threads == 1 {
-    return None;
+    return ParallelAdmissionDecision {
+      would_parallelize: false,
+      threads: 1,
+    };
   }
 
   if input_bytes < policy.min_bytes || admission_full_chunks < policy.min_chunks {
-    return None;
+    return ParallelAdmissionDecision {
+      would_parallelize: false,
+      threads: 1,
+    };
   }
 
-  let mut threads = available_parallelism_cached()?;
+  let Some(mut threads) = available_parallelism_cached() else {
+    return ParallelAdmissionDecision {
+      would_parallelize: false,
+      threads: 1,
+    };
+  };
   if policy.max_threads != 0 {
     threads = threads.min(policy.max_threads as usize);
   }
 
   if threads <= 1 {
-    return None;
+    return ParallelAdmissionDecision {
+      would_parallelize: false,
+      threads: 1,
+    };
   }
 
   let bytes_per_core = if input_bytes <= policy.small_limit_bytes {
@@ -319,11 +350,17 @@ fn parallel_threads_for_policy(
     let fitted_required = clamp_add_usize(clamp_add_usize(merge_cost, spawn_cost), work_cost);
     let required = scale_parallel_required_bytes(mode, fitted_required, input_bytes);
     if input_bytes >= required {
-      return Some(candidate);
+      return ParallelAdmissionDecision {
+        would_parallelize: true,
+        threads: candidate,
+      };
     }
     candidate -= 1;
   }
-  None
+  ParallelAdmissionDecision {
+    would_parallelize: false,
+    threads: 1,
+  }
 }
 
 #[cfg(feature = "parallel")]

@@ -17,9 +17,7 @@
 //! All functions require `avx512f` and `avx512vl` target features.
 
 #![allow(unsafe_code)]
-#![allow(unsafe_op_in_unsafe_fn)]
 #![allow(clippy::inline_always)]
-#![allow(clippy::undocumented_unsafe_blocks)]
 
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::*;
@@ -36,6 +34,8 @@ use core::arch::x86_64::*;
 #[target_feature(enable = "avx512f,avx512vl")]
 #[inline]
 unsafe fn keccakf_avx512_impl(state: &mut [u64; 25]) {
+  // SAFETY: AVX-512F/VL intrinsics in the chi_row! macro are available via
+  // this function's #[target_feature(enable = "avx512f,avx512vl")] attribute.
   let mut a0 = state[0];
   let mut a1 = state[1];
   let mut a2 = state[2];

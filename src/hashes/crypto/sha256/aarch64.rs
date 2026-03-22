@@ -9,9 +9,7 @@
 //! Callers must verify CPU capabilities before calling.
 
 #![allow(unsafe_code)]
-#![allow(unsafe_op_in_unsafe_fn)]
 #![allow(clippy::inline_always)]
-#![allow(clippy::undocumented_unsafe_blocks)]
 
 #[cfg(target_arch = "aarch64")]
 use core::arch::aarch64::*;
@@ -67,81 +65,85 @@ pub(crate) unsafe fn compress_blocks_aarch64_sha2(state: &mut [u32; 8], blocks: 
     return;
   }
 
-  // Load state: ABCD = [A,B,C,D], EFGH = [E,F,G,H]
-  let mut abcd = vld1q_u32(state.as_ptr());
-  let mut efgh = vld1q_u32(state.as_ptr().add(4));
+  // SAFETY: NEON/SHA2 intrinsics are available via this function's #[target_feature] attribute.
+  // Pointer arithmetic on `ptr` is bounded by `blocks.len()`.
+  unsafe {
+    // Load state: ABCD = [A,B,C,D], EFGH = [E,F,G,H]
+    let mut abcd = vld1q_u32(state.as_ptr());
+    let mut efgh = vld1q_u32(state.as_ptr().add(4));
 
-  let num_blocks = blocks.len() / 64;
-  let mut ptr = blocks.as_ptr();
+    let num_blocks = blocks.len() / 64;
+    let mut ptr = blocks.as_ptr();
 
-  for _ in 0..num_blocks {
-    let abcd_save = abcd;
-    let efgh_save = efgh;
+    for _ in 0..num_blocks {
+      let abcd_save = abcd;
+      let efgh_save = efgh;
 
-    // Load and byte-swap 4 message vectors (16 words = 1 block).
-    let mut w0 = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(ptr)));
-    let mut w1 = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(ptr.add(16))));
-    let mut w2 = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(ptr.add(32))));
-    let mut w3 = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(ptr.add(48))));
+      // Load and byte-swap 4 message vectors (16 words = 1 block).
+      let mut w0 = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(ptr)));
+      let mut w1 = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(ptr.add(16))));
+      let mut w2 = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(ptr.add(32))));
+      let mut w3 = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(ptr.add(48))));
 
-    let k = |i: usize| -> uint32x4_t { vld1q_u32(K4[i].as_ptr()) };
+      let k = |i: usize| -> uint32x4_t { vld1q_u32(K4[i].as_ptr()) };
 
-    // Rounds 0-3
-    sha256_4rounds(&mut abcd, &mut efgh, w0, k(0));
-    // Rounds 4-7
-    sha256_4rounds(&mut abcd, &mut efgh, w1, k(1));
-    // Rounds 8-11
-    sha256_4rounds(&mut abcd, &mut efgh, w2, k(2));
-    // Rounds 12-15
-    sha256_4rounds(&mut abcd, &mut efgh, w3, k(3));
+      // Rounds 0-3
+      sha256_4rounds(&mut abcd, &mut efgh, w0, k(0));
+      // Rounds 4-7
+      sha256_4rounds(&mut abcd, &mut efgh, w1, k(1));
+      // Rounds 8-11
+      sha256_4rounds(&mut abcd, &mut efgh, w2, k(2));
+      // Rounds 12-15
+      sha256_4rounds(&mut abcd, &mut efgh, w3, k(3));
 
-    // Rounds 16-19 + schedule
-    w0 = vsha256su1q_u32(vsha256su0q_u32(w0, w1), w2, w3);
-    sha256_4rounds(&mut abcd, &mut efgh, w0, k(4));
-    // Rounds 20-23
-    w1 = vsha256su1q_u32(vsha256su0q_u32(w1, w2), w3, w0);
-    sha256_4rounds(&mut abcd, &mut efgh, w1, k(5));
-    // Rounds 24-27
-    w2 = vsha256su1q_u32(vsha256su0q_u32(w2, w3), w0, w1);
-    sha256_4rounds(&mut abcd, &mut efgh, w2, k(6));
-    // Rounds 28-31
-    w3 = vsha256su1q_u32(vsha256su0q_u32(w3, w0), w1, w2);
-    sha256_4rounds(&mut abcd, &mut efgh, w3, k(7));
+      // Rounds 16-19 + schedule
+      w0 = vsha256su1q_u32(vsha256su0q_u32(w0, w1), w2, w3);
+      sha256_4rounds(&mut abcd, &mut efgh, w0, k(4));
+      // Rounds 20-23
+      w1 = vsha256su1q_u32(vsha256su0q_u32(w1, w2), w3, w0);
+      sha256_4rounds(&mut abcd, &mut efgh, w1, k(5));
+      // Rounds 24-27
+      w2 = vsha256su1q_u32(vsha256su0q_u32(w2, w3), w0, w1);
+      sha256_4rounds(&mut abcd, &mut efgh, w2, k(6));
+      // Rounds 28-31
+      w3 = vsha256su1q_u32(vsha256su0q_u32(w3, w0), w1, w2);
+      sha256_4rounds(&mut abcd, &mut efgh, w3, k(7));
 
-    // Rounds 32-35
-    w0 = vsha256su1q_u32(vsha256su0q_u32(w0, w1), w2, w3);
-    sha256_4rounds(&mut abcd, &mut efgh, w0, k(8));
-    // Rounds 36-39
-    w1 = vsha256su1q_u32(vsha256su0q_u32(w1, w2), w3, w0);
-    sha256_4rounds(&mut abcd, &mut efgh, w1, k(9));
-    // Rounds 40-43
-    w2 = vsha256su1q_u32(vsha256su0q_u32(w2, w3), w0, w1);
-    sha256_4rounds(&mut abcd, &mut efgh, w2, k(10));
-    // Rounds 44-47
-    w3 = vsha256su1q_u32(vsha256su0q_u32(w3, w0), w1, w2);
-    sha256_4rounds(&mut abcd, &mut efgh, w3, k(11));
+      // Rounds 32-35
+      w0 = vsha256su1q_u32(vsha256su0q_u32(w0, w1), w2, w3);
+      sha256_4rounds(&mut abcd, &mut efgh, w0, k(8));
+      // Rounds 36-39
+      w1 = vsha256su1q_u32(vsha256su0q_u32(w1, w2), w3, w0);
+      sha256_4rounds(&mut abcd, &mut efgh, w1, k(9));
+      // Rounds 40-43
+      w2 = vsha256su1q_u32(vsha256su0q_u32(w2, w3), w0, w1);
+      sha256_4rounds(&mut abcd, &mut efgh, w2, k(10));
+      // Rounds 44-47
+      w3 = vsha256su1q_u32(vsha256su0q_u32(w3, w0), w1, w2);
+      sha256_4rounds(&mut abcd, &mut efgh, w3, k(11));
 
-    // Rounds 48-51
-    w0 = vsha256su1q_u32(vsha256su0q_u32(w0, w1), w2, w3);
-    sha256_4rounds(&mut abcd, &mut efgh, w0, k(12));
-    // Rounds 52-55
-    w1 = vsha256su1q_u32(vsha256su0q_u32(w1, w2), w3, w0);
-    sha256_4rounds(&mut abcd, &mut efgh, w1, k(13));
-    // Rounds 56-59
-    w2 = vsha256su1q_u32(vsha256su0q_u32(w2, w3), w0, w1);
-    sha256_4rounds(&mut abcd, &mut efgh, w2, k(14));
-    // Rounds 60-63
-    w3 = vsha256su1q_u32(vsha256su0q_u32(w3, w0), w1, w2);
-    sha256_4rounds(&mut abcd, &mut efgh, w3, k(15));
+      // Rounds 48-51
+      w0 = vsha256su1q_u32(vsha256su0q_u32(w0, w1), w2, w3);
+      sha256_4rounds(&mut abcd, &mut efgh, w0, k(12));
+      // Rounds 52-55
+      w1 = vsha256su1q_u32(vsha256su0q_u32(w1, w2), w3, w0);
+      sha256_4rounds(&mut abcd, &mut efgh, w1, k(13));
+      // Rounds 56-59
+      w2 = vsha256su1q_u32(vsha256su0q_u32(w2, w3), w0, w1);
+      sha256_4rounds(&mut abcd, &mut efgh, w2, k(14));
+      // Rounds 60-63
+      w3 = vsha256su1q_u32(vsha256su0q_u32(w3, w0), w1, w2);
+      sha256_4rounds(&mut abcd, &mut efgh, w3, k(15));
 
-    // Add saved state back.
-    abcd = vaddq_u32(abcd, abcd_save);
-    efgh = vaddq_u32(efgh, efgh_save);
+      // Add saved state back.
+      abcd = vaddq_u32(abcd, abcd_save);
+      efgh = vaddq_u32(efgh, efgh_save);
 
-    ptr = ptr.add(64);
-  }
+      ptr = ptr.add(64);
+    }
 
-  // Store state back.
-  vst1q_u32(state.as_mut_ptr(), abcd);
-  vst1q_u32(state.as_mut_ptr().add(4), efgh);
+    // Store state back.
+    vst1q_u32(state.as_mut_ptr(), abcd);
+    vst1q_u32(state.as_mut_ptr().add(4), efgh);
+  } // unsafe
 }

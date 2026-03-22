@@ -6,9 +6,7 @@
 //! Available on Apple Silicon (M1+), Graviton2+, Ampere Altra, Cortex-A76+.
 
 #![allow(unsafe_code)]
-#![allow(unsafe_op_in_unsafe_fn)]
 #![allow(clippy::inline_always)]
-#![allow(clippy::undocumented_unsafe_blocks)]
 #![allow(clippy::indexing_slicing)]
 
 #[cfg(target_arch = "aarch64")]
@@ -86,163 +84,167 @@ pub(crate) unsafe fn compress_blocks_aarch64_sha512(state: &mut [u64; 8], blocks
     return;
   }
 
-  // State: s0=(a,b), s1=(c,d), s2=(e,f), s3=(g,h), s4=scratch.
-  let mut s0 = vld1q_u64(state.as_ptr());
-  let mut s1 = vld1q_u64(state.as_ptr().add(2));
-  let mut s2 = vld1q_u64(state.as_ptr().add(4));
-  let mut s3 = vld1q_u64(state.as_ptr().add(6));
-  let mut s4: uint64x2_t;
+  // SAFETY: NEON/SHA512 intrinsics (via sha3 target feature) are available via this
+  // function's #[target_feature] attribute. Pointer arithmetic is bounded by blocks.len().
+  unsafe {
+    // State: s0=(a,b), s1=(c,d), s2=(e,f), s3=(g,h), s4=scratch.
+    let mut s0 = vld1q_u64(state.as_ptr());
+    let mut s1 = vld1q_u64(state.as_ptr().add(2));
+    let mut s2 = vld1q_u64(state.as_ptr().add(4));
+    let mut s3 = vld1q_u64(state.as_ptr().add(6));
+    let mut s4: uint64x2_t;
 
-  let mut ptr = blocks.as_ptr();
-  let end = ptr.add(blocks.len());
+    let mut ptr = blocks.as_ptr();
+    let end = ptr.add(blocks.len());
 
-  while ptr < end {
-    let s0_save = s0;
-    let s1_save = s1;
-    let s2_save = s2;
-    let s3_save = s3;
+    while ptr < end {
+      let s0_save = s0;
+      let s1_save = s1;
+      let s2_save = s2;
+      let s3_save = s3;
 
-    // Load and byte-swap 8 message pairs (128 bytes).
-    let mut w0 = vreinterpretq_u64_u8(vrev64q_u8(vld1q_u8(ptr)));
-    let mut w1 = vreinterpretq_u64_u8(vrev64q_u8(vld1q_u8(ptr.add(16))));
-    let mut w2 = vreinterpretq_u64_u8(vrev64q_u8(vld1q_u8(ptr.add(32))));
-    let mut w3 = vreinterpretq_u64_u8(vrev64q_u8(vld1q_u8(ptr.add(48))));
-    let mut w4 = vreinterpretq_u64_u8(vrev64q_u8(vld1q_u8(ptr.add(64))));
-    let mut w5 = vreinterpretq_u64_u8(vrev64q_u8(vld1q_u8(ptr.add(80))));
-    let mut w6 = vreinterpretq_u64_u8(vrev64q_u8(vld1q_u8(ptr.add(96))));
-    let mut w7 = vreinterpretq_u64_u8(vrev64q_u8(vld1q_u8(ptr.add(112))));
+      // Load and byte-swap 8 message pairs (128 bytes).
+      let mut w0 = vreinterpretq_u64_u8(vrev64q_u8(vld1q_u8(ptr)));
+      let mut w1 = vreinterpretq_u64_u8(vrev64q_u8(vld1q_u8(ptr.add(16))));
+      let mut w2 = vreinterpretq_u64_u8(vrev64q_u8(vld1q_u8(ptr.add(32))));
+      let mut w3 = vreinterpretq_u64_u8(vrev64q_u8(vld1q_u8(ptr.add(48))));
+      let mut w4 = vreinterpretq_u64_u8(vrev64q_u8(vld1q_u8(ptr.add(64))));
+      let mut w5 = vreinterpretq_u64_u8(vrev64q_u8(vld1q_u8(ptr.add(80))));
+      let mut w6 = vreinterpretq_u64_u8(vrev64q_u8(vld1q_u8(ptr.add(96))));
+      let mut w7 = vreinterpretq_u64_u8(vrev64q_u8(vld1q_u8(ptr.add(112))));
 
-    let k = |i: usize| -> uint64x2_t { vld1q_u64(K_PAIRS[i].as_ptr()) };
+      let k = |i: usize| -> uint64x2_t { vld1q_u64(K_PAIRS[i].as_ptr()) };
 
-    // Two-round step using 5-register rotation (Linux kernel pattern).
-    //
-    // $i0=ab, $i1=cd, $i2=ef, $i3=gh (input), $i4=scratch (output).
-    // After: $i3 = new ab (SHA512H + SHA512H2), $i4 = new ef (cd + T1).
-    // Register roles rotate: the caller permutes arguments for the next step.
-    macro_rules! dround {
-      ($i0:ident, $i1:ident, $i2:ident, $i3:ident, $i4:ident, $ki:expr, $wi:expr) => {{
-        let kw = vaddq_u64(k($ki), $wi);
-        let fg = vextq_u64($i2, $i3, 1);
-        let de = vextq_u64($i1, $i2, 1);
-        let kw_swap = vextq_u64(kw, kw, 1);
-        let t = vaddq_u64($i3, kw_swap);
-        let t = vsha512hq_u64(t, fg, de);
-        $i4 = vaddq_u64($i1, t);
-        $i3 = vsha512h2q_u64(t, $i1, $i0);
-      }};
+      // Two-round step using 5-register rotation (Linux kernel pattern).
+      //
+      // $i0=ab, $i1=cd, $i2=ef, $i3=gh (input), $i4=scratch (output).
+      // After: $i3 = new ab (SHA512H + SHA512H2), $i4 = new ef (cd + T1).
+      // Register roles rotate: the caller permutes arguments for the next step.
+      macro_rules! dround {
+        ($i0:ident, $i1:ident, $i2:ident, $i3:ident, $i4:ident, $ki:expr, $wi:expr) => {{
+          let kw = vaddq_u64(k($ki), $wi);
+          let fg = vextq_u64($i2, $i3, 1);
+          let de = vextq_u64($i1, $i2, 1);
+          let kw_swap = vextq_u64(kw, kw, 1);
+          let t = vaddq_u64($i3, kw_swap);
+          let t = vsha512hq_u64(t, fg, de);
+          $i4 = vaddq_u64($i1, t);
+          $i3 = vsha512h2q_u64(t, $i1, $i0);
+        }};
+      }
+
+      // Message schedule update: W[t] = sigma1(W[t-2]) + W[t-7] + sigma0(W[t-15]) + W[t-16].
+      macro_rules! sched {
+        ($wn:ident, $wn1:expr, $wn4:expr, $wn5:expr, $wn7:expr) => {{
+          $wn = vsha512su1q_u64(vsha512su0q_u64($wn, $wn1), $wn7, vextq_u64($wn4, $wn5, 1));
+        }};
+      }
+
+      // 40 drounds (80 rounds). 5-register rotation cycle has period 5,
+      // and 40 = 8 × 5, so state returns to s0=ab after all drounds.
+      //
+      // Rotation pattern per cycle of 5 drounds:
+      //   pos 0: dround!(s0, s1, s2, s3, s4)
+      //   pos 1: dround!(s3, s0, s4, s2, s1)
+      //   pos 2: dround!(s2, s3, s1, s4, s0)
+      //   pos 3: dround!(s4, s2, s0, s1, s3)
+      //   pos 4: dround!(s1, s4, s3, s0, s2)  → back to s0=ab
+
+      // ---- Rounds 0-15 (drounds 0-7, no schedule update) ----
+      dround!(s0, s1, s2, s3, s4, 0, w0); // pos 0
+      dround!(s3, s0, s4, s2, s1, 1, w1); // pos 1
+      dround!(s2, s3, s1, s4, s0, 2, w2); // pos 2
+      dround!(s4, s2, s0, s1, s3, 3, w3); // pos 3
+      dround!(s1, s4, s3, s0, s2, 4, w4); // pos 4 [original]
+      dround!(s0, s1, s2, s3, s4, 5, w5); // pos 0
+      dround!(s3, s0, s4, s2, s1, 6, w6); // pos 1
+      dround!(s2, s3, s1, s4, s0, 7, w7); // pos 2
+
+      // ---- Rounds 16-79 (drounds 8-39, with schedule update) ----
+      sched!(w0, w1, w4, w5, w7);
+      dround!(s4, s2, s0, s1, s3, 8, w0); // pos 3
+      sched!(w1, w2, w5, w6, w0);
+      dround!(s1, s4, s3, s0, s2, 9, w1); // pos 4 [original]
+
+      sched!(w2, w3, w6, w7, w1);
+      dround!(s0, s1, s2, s3, s4, 10, w2); // pos 0
+      sched!(w3, w4, w7, w0, w2);
+      dround!(s3, s0, s4, s2, s1, 11, w3); // pos 1
+      sched!(w4, w5, w0, w1, w3);
+      dround!(s2, s3, s1, s4, s0, 12, w4); // pos 2
+      sched!(w5, w6, w1, w2, w4);
+      dround!(s4, s2, s0, s1, s3, 13, w5); // pos 3
+      sched!(w6, w7, w2, w3, w5);
+      dround!(s1, s4, s3, s0, s2, 14, w6); // pos 4 [original]
+
+      sched!(w7, w0, w3, w4, w6);
+      dround!(s0, s1, s2, s3, s4, 15, w7); // pos 0
+      sched!(w0, w1, w4, w5, w7);
+      dround!(s3, s0, s4, s2, s1, 16, w0); // pos 1
+      sched!(w1, w2, w5, w6, w0);
+      dround!(s2, s3, s1, s4, s0, 17, w1); // pos 2
+      sched!(w2, w3, w6, w7, w1);
+      dround!(s4, s2, s0, s1, s3, 18, w2); // pos 3
+      sched!(w3, w4, w7, w0, w2);
+      dround!(s1, s4, s3, s0, s2, 19, w3); // pos 4 [original]
+
+      sched!(w4, w5, w0, w1, w3);
+      dround!(s0, s1, s2, s3, s4, 20, w4); // pos 0
+      sched!(w5, w6, w1, w2, w4);
+      dround!(s3, s0, s4, s2, s1, 21, w5); // pos 1
+      sched!(w6, w7, w2, w3, w5);
+      dround!(s2, s3, s1, s4, s0, 22, w6); // pos 2
+      sched!(w7, w0, w3, w4, w6);
+      dround!(s4, s2, s0, s1, s3, 23, w7); // pos 3
+
+      sched!(w0, w1, w4, w5, w7);
+      dround!(s1, s4, s3, s0, s2, 24, w0); // pos 4 [original]
+      sched!(w1, w2, w5, w6, w0);
+      dround!(s0, s1, s2, s3, s4, 25, w1); // pos 0
+      sched!(w2, w3, w6, w7, w1);
+      dround!(s3, s0, s4, s2, s1, 26, w2); // pos 1
+      sched!(w3, w4, w7, w0, w2);
+      dround!(s2, s3, s1, s4, s0, 27, w3); // pos 2
+      sched!(w4, w5, w0, w1, w3);
+      dround!(s4, s2, s0, s1, s3, 28, w4); // pos 3
+      sched!(w5, w6, w1, w2, w4);
+      dround!(s1, s4, s3, s0, s2, 29, w5); // pos 4 [original]
+
+      sched!(w6, w7, w2, w3, w5);
+      dround!(s0, s1, s2, s3, s4, 30, w6); // pos 0
+      sched!(w7, w0, w3, w4, w6);
+      dround!(s3, s0, s4, s2, s1, 31, w7); // pos 1
+      sched!(w0, w1, w4, w5, w7);
+      dround!(s2, s3, s1, s4, s0, 32, w0); // pos 2
+      sched!(w1, w2, w5, w6, w0);
+      dround!(s4, s2, s0, s1, s3, 33, w1); // pos 3
+      sched!(w2, w3, w6, w7, w1);
+      dround!(s1, s4, s3, s0, s2, 34, w2); // pos 4 [original]
+
+      sched!(w3, w4, w7, w0, w2);
+      dround!(s0, s1, s2, s3, s4, 35, w3); // pos 0
+      sched!(w4, w5, w0, w1, w3);
+      dround!(s3, s0, s4, s2, s1, 36, w4); // pos 1
+      sched!(w5, w6, w1, w2, w4);
+      dround!(s2, s3, s1, s4, s0, 37, w5); // pos 2
+      sched!(w6, w7, w2, w3, w5);
+      dround!(s4, s2, s0, s1, s3, 38, w6); // pos 3
+      sched!(w7, w0, w3, w4, w6);
+      dround!(s1, s4, s3, s0, s2, 39, w7); // pos 4 [original]
+
+      // Add saved state (s0..s3 are back to original ab/cd/ef/gh roles).
+      s0 = vaddq_u64(s0, s0_save);
+      s1 = vaddq_u64(s1, s1_save);
+      s2 = vaddq_u64(s2, s2_save);
+      s3 = vaddq_u64(s3, s3_save);
+
+      ptr = ptr.add(128);
     }
 
-    // Message schedule update: W[t] = sigma1(W[t-2]) + W[t-7] + sigma0(W[t-15]) + W[t-16].
-    macro_rules! sched {
-      ($wn:ident, $wn1:expr, $wn4:expr, $wn5:expr, $wn7:expr) => {{
-        $wn = vsha512su1q_u64(vsha512su0q_u64($wn, $wn1), $wn7, vextq_u64($wn4, $wn5, 1));
-      }};
-    }
-
-    // 40 drounds (80 rounds). 5-register rotation cycle has period 5,
-    // and 40 = 8 × 5, so state returns to s0=ab after all drounds.
-    //
-    // Rotation pattern per cycle of 5 drounds:
-    //   pos 0: dround!(s0, s1, s2, s3, s4)
-    //   pos 1: dround!(s3, s0, s4, s2, s1)
-    //   pos 2: dround!(s2, s3, s1, s4, s0)
-    //   pos 3: dround!(s4, s2, s0, s1, s3)
-    //   pos 4: dround!(s1, s4, s3, s0, s2)  → back to s0=ab
-
-    // ---- Rounds 0-15 (drounds 0-7, no schedule update) ----
-    dround!(s0, s1, s2, s3, s4, 0, w0); // pos 0
-    dround!(s3, s0, s4, s2, s1, 1, w1); // pos 1
-    dround!(s2, s3, s1, s4, s0, 2, w2); // pos 2
-    dround!(s4, s2, s0, s1, s3, 3, w3); // pos 3
-    dround!(s1, s4, s3, s0, s2, 4, w4); // pos 4 [original]
-    dround!(s0, s1, s2, s3, s4, 5, w5); // pos 0
-    dround!(s3, s0, s4, s2, s1, 6, w6); // pos 1
-    dround!(s2, s3, s1, s4, s0, 7, w7); // pos 2
-
-    // ---- Rounds 16-79 (drounds 8-39, with schedule update) ----
-    sched!(w0, w1, w4, w5, w7);
-    dround!(s4, s2, s0, s1, s3, 8, w0); // pos 3
-    sched!(w1, w2, w5, w6, w0);
-    dround!(s1, s4, s3, s0, s2, 9, w1); // pos 4 [original]
-
-    sched!(w2, w3, w6, w7, w1);
-    dround!(s0, s1, s2, s3, s4, 10, w2); // pos 0
-    sched!(w3, w4, w7, w0, w2);
-    dround!(s3, s0, s4, s2, s1, 11, w3); // pos 1
-    sched!(w4, w5, w0, w1, w3);
-    dround!(s2, s3, s1, s4, s0, 12, w4); // pos 2
-    sched!(w5, w6, w1, w2, w4);
-    dround!(s4, s2, s0, s1, s3, 13, w5); // pos 3
-    sched!(w6, w7, w2, w3, w5);
-    dround!(s1, s4, s3, s0, s2, 14, w6); // pos 4 [original]
-
-    sched!(w7, w0, w3, w4, w6);
-    dround!(s0, s1, s2, s3, s4, 15, w7); // pos 0
-    sched!(w0, w1, w4, w5, w7);
-    dround!(s3, s0, s4, s2, s1, 16, w0); // pos 1
-    sched!(w1, w2, w5, w6, w0);
-    dround!(s2, s3, s1, s4, s0, 17, w1); // pos 2
-    sched!(w2, w3, w6, w7, w1);
-    dround!(s4, s2, s0, s1, s3, 18, w2); // pos 3
-    sched!(w3, w4, w7, w0, w2);
-    dround!(s1, s4, s3, s0, s2, 19, w3); // pos 4 [original]
-
-    sched!(w4, w5, w0, w1, w3);
-    dround!(s0, s1, s2, s3, s4, 20, w4); // pos 0
-    sched!(w5, w6, w1, w2, w4);
-    dround!(s3, s0, s4, s2, s1, 21, w5); // pos 1
-    sched!(w6, w7, w2, w3, w5);
-    dround!(s2, s3, s1, s4, s0, 22, w6); // pos 2
-    sched!(w7, w0, w3, w4, w6);
-    dround!(s4, s2, s0, s1, s3, 23, w7); // pos 3
-
-    sched!(w0, w1, w4, w5, w7);
-    dround!(s1, s4, s3, s0, s2, 24, w0); // pos 4 [original]
-    sched!(w1, w2, w5, w6, w0);
-    dround!(s0, s1, s2, s3, s4, 25, w1); // pos 0
-    sched!(w2, w3, w6, w7, w1);
-    dround!(s3, s0, s4, s2, s1, 26, w2); // pos 1
-    sched!(w3, w4, w7, w0, w2);
-    dround!(s2, s3, s1, s4, s0, 27, w3); // pos 2
-    sched!(w4, w5, w0, w1, w3);
-    dround!(s4, s2, s0, s1, s3, 28, w4); // pos 3
-    sched!(w5, w6, w1, w2, w4);
-    dround!(s1, s4, s3, s0, s2, 29, w5); // pos 4 [original]
-
-    sched!(w6, w7, w2, w3, w5);
-    dround!(s0, s1, s2, s3, s4, 30, w6); // pos 0
-    sched!(w7, w0, w3, w4, w6);
-    dround!(s3, s0, s4, s2, s1, 31, w7); // pos 1
-    sched!(w0, w1, w4, w5, w7);
-    dround!(s2, s3, s1, s4, s0, 32, w0); // pos 2
-    sched!(w1, w2, w5, w6, w0);
-    dround!(s4, s2, s0, s1, s3, 33, w1); // pos 3
-    sched!(w2, w3, w6, w7, w1);
-    dround!(s1, s4, s3, s0, s2, 34, w2); // pos 4 [original]
-
-    sched!(w3, w4, w7, w0, w2);
-    dround!(s0, s1, s2, s3, s4, 35, w3); // pos 0
-    sched!(w4, w5, w0, w1, w3);
-    dround!(s3, s0, s4, s2, s1, 36, w4); // pos 1
-    sched!(w5, w6, w1, w2, w4);
-    dround!(s2, s3, s1, s4, s0, 37, w5); // pos 2
-    sched!(w6, w7, w2, w3, w5);
-    dround!(s4, s2, s0, s1, s3, 38, w6); // pos 3
-    sched!(w7, w0, w3, w4, w6);
-    dround!(s1, s4, s3, s0, s2, 39, w7); // pos 4 [original]
-
-    // Add saved state (s0..s3 are back to original ab/cd/ef/gh roles).
-    s0 = vaddq_u64(s0, s0_save);
-    s1 = vaddq_u64(s1, s1_save);
-    s2 = vaddq_u64(s2, s2_save);
-    s3 = vaddq_u64(s3, s3_save);
-
-    ptr = ptr.add(128);
-  }
-
-  // Store final state.
-  vst1q_u64(state.as_mut_ptr(), s0);
-  vst1q_u64(state.as_mut_ptr().add(2), s1);
-  vst1q_u64(state.as_mut_ptr().add(4), s2);
-  vst1q_u64(state.as_mut_ptr().add(6), s3);
+    // Store final state.
+    vst1q_u64(state.as_mut_ptr(), s0);
+    vst1q_u64(state.as_mut_ptr().add(2), s1);
+    vst1q_u64(state.as_mut_ptr().add(4), s2);
+    vst1q_u64(state.as_mut_ptr().add(6), s3);
+  } // unsafe
 }

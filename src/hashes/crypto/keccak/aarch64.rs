@@ -18,9 +18,7 @@
 //! All functions require the `sha3` target feature (ARMv8.2-SHA3).
 
 #![allow(unsafe_code)]
-#![allow(unsafe_op_in_unsafe_fn)]
 #![allow(clippy::inline_always)]
-#![allow(clippy::undocumented_unsafe_blocks)]
 
 #[cfg(target_arch = "aarch64")]
 use core::arch::aarch64::*;
@@ -41,16 +39,20 @@ use core::arch::aarch64::*;
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
 unsafe fn eor3_u64(a: u64, b: u64, c: u64) -> u64 {
-  let result: u64;
-  core::arch::asm!(
-    "eor3 {out:v}.16b, {a:v}.16b, {b:v}.16b, {c:v}.16b",
-    a = in(vreg) a,
-    b = in(vreg) b,
-    c = in(vreg) c,
-    out = lateout(vreg) result,
-    options(pure, nomem, nostack, preserves_flags),
-  );
-  result
+  // SAFETY: SHA3 CE inline asm requires the sha3 target feature, ensured by callers'
+  // #[target_feature].
+  unsafe {
+    let result: u64;
+    core::arch::asm!(
+      "eor3 {out:v}.16b, {a:v}.16b, {b:v}.16b, {c:v}.16b",
+      a = in(vreg) a,
+      b = in(vreg) b,
+      c = in(vreg) c,
+      out = lateout(vreg) result,
+      options(pure, nomem, nostack, preserves_flags),
+    );
+    result
+  }
 }
 
 /// Rotate-and-XOR: `a ^ ROL(b, 1)`.
@@ -59,15 +61,19 @@ unsafe fn eor3_u64(a: u64, b: u64, c: u64) -> u64 {
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
 unsafe fn rax1_u64(a: u64, b: u64) -> u64 {
-  let result: u64;
-  core::arch::asm!(
-    "rax1 {out:v}.2d, {a:v}.2d, {b:v}.2d",
-    a = in(vreg) a,
-    b = in(vreg) b,
-    out = lateout(vreg) result,
-    options(pure, nomem, nostack, preserves_flags),
-  );
-  result
+  // SAFETY: SHA3 CE inline asm requires the sha3 target feature, ensured by callers'
+  // #[target_feature].
+  unsafe {
+    let result: u64;
+    core::arch::asm!(
+      "rax1 {out:v}.2d, {a:v}.2d, {b:v}.2d",
+      a = in(vreg) a,
+      b = in(vreg) b,
+      out = lateout(vreg) result,
+      options(pure, nomem, nostack, preserves_flags),
+    );
+    result
+  }
 }
 
 /// Bit-clear and XOR: `a ^ (b & ~c)`.
@@ -77,16 +83,20 @@ unsafe fn rax1_u64(a: u64, b: u64) -> u64 {
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
 unsafe fn bcax_u64(a: u64, b: u64, c: u64) -> u64 {
-  let result: u64;
-  core::arch::asm!(
-    "bcax {out:v}.16b, {a:v}.16b, {b:v}.16b, {c:v}.16b",
-    a = in(vreg) a,
-    b = in(vreg) b,
-    c = in(vreg) c,
-    out = lateout(vreg) result,
-    options(pure, nomem, nostack, preserves_flags),
-  );
-  result
+  // SAFETY: SHA3 CE inline asm requires the sha3 target feature, ensured by callers'
+  // #[target_feature].
+  unsafe {
+    let result: u64;
+    core::arch::asm!(
+      "bcax {out:v}.16b, {a:v}.16b, {b:v}.16b, {c:v}.16b",
+      a = in(vreg) a,
+      b = in(vreg) b,
+      c = in(vreg) c,
+      out = lateout(vreg) result,
+      options(pure, nomem, nostack, preserves_flags),
+    );
+    result
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -238,64 +248,69 @@ macro_rules! keccakf_sha3_scalar_round {
 #[target_feature(enable = "sha3")]
 #[inline]
 unsafe fn keccakf_sha3_impl(state: &mut [u64; 25]) {
-  let mut a0 = state[0];
-  let mut a1 = state[1];
-  let mut a2 = state[2];
-  let mut a3 = state[3];
-  let mut a4 = state[4];
-  let mut a5 = state[5];
-  let mut a6 = state[6];
-  let mut a7 = state[7];
-  let mut a8 = state[8];
-  let mut a9 = state[9];
-  let mut a10 = state[10];
-  let mut a11 = state[11];
-  let mut a12 = state[12];
-  let mut a13 = state[13];
-  let mut a14 = state[14];
-  let mut a15 = state[15];
-  let mut a16 = state[16];
-  let mut a17 = state[17];
-  let mut a18 = state[18];
-  let mut a19 = state[19];
-  let mut a20 = state[20];
-  let mut a21 = state[21];
-  let mut a22 = state[22];
-  let mut a23 = state[23];
-  let mut a24 = state[24];
+  // SAFETY: SHA3 CE helpers (eor3_u64, rax1_u64, bcax_u64) called via the
+  // macro require the sha3 target feature, ensured by this function's
+  // #[target_feature(enable = "sha3")] attribute.
+  unsafe {
+    let mut a0 = state[0];
+    let mut a1 = state[1];
+    let mut a2 = state[2];
+    let mut a3 = state[3];
+    let mut a4 = state[4];
+    let mut a5 = state[5];
+    let mut a6 = state[6];
+    let mut a7 = state[7];
+    let mut a8 = state[8];
+    let mut a9 = state[9];
+    let mut a10 = state[10];
+    let mut a11 = state[11];
+    let mut a12 = state[12];
+    let mut a13 = state[13];
+    let mut a14 = state[14];
+    let mut a15 = state[15];
+    let mut a16 = state[16];
+    let mut a17 = state[17];
+    let mut a18 = state[18];
+    let mut a19 = state[19];
+    let mut a20 = state[20];
+    let mut a21 = state[21];
+    let mut a22 = state[22];
+    let mut a23 = state[23];
+    let mut a24 = state[24];
 
-  for &rc in &super::RC {
-    keccakf_sha3_scalar_round!(
-      a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17, a18, a19, a20, a21, a22, a23,
-      a24, rc
-    );
-  }
+    for &rc in &super::RC {
+      keccakf_sha3_scalar_round!(
+        a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17, a18, a19, a20, a21, a22, a23,
+        a24, rc
+      );
+    }
 
-  state[0] = a0;
-  state[1] = a1;
-  state[2] = a2;
-  state[3] = a3;
-  state[4] = a4;
-  state[5] = a5;
-  state[6] = a6;
-  state[7] = a7;
-  state[8] = a8;
-  state[9] = a9;
-  state[10] = a10;
-  state[11] = a11;
-  state[12] = a12;
-  state[13] = a13;
-  state[14] = a14;
-  state[15] = a15;
-  state[16] = a16;
-  state[17] = a17;
-  state[18] = a18;
-  state[19] = a19;
-  state[20] = a20;
-  state[21] = a21;
-  state[22] = a22;
-  state[23] = a23;
-  state[24] = a24;
+    state[0] = a0;
+    state[1] = a1;
+    state[2] = a2;
+    state[3] = a3;
+    state[4] = a4;
+    state[5] = a5;
+    state[6] = a6;
+    state[7] = a7;
+    state[8] = a8;
+    state[9] = a9;
+    state[10] = a10;
+    state[11] = a11;
+    state[12] = a12;
+    state[13] = a13;
+    state[14] = a14;
+    state[15] = a15;
+    state[16] = a16;
+    state[17] = a17;
+    state[18] = a18;
+    state[19] = a19;
+    state[20] = a20;
+    state[21] = a21;
+    state[22] = a22;
+    state[23] = a23;
+    state[24] = a24;
+  } // unsafe
 }
 
 /// Keccak-f[1600] permutation using ARMv8.2 SHA3 Crypto Extensions.
@@ -418,7 +433,8 @@ macro_rules! keccakf_sha3_x2_round {
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
 unsafe fn combine_lanes(a: u64, b: u64) -> uint64x2_t {
-  vcombine_u64(vcreate_u64(a), vcreate_u64(b))
+  // SAFETY: NEON intrinsics are available on all aarch64 targets.
+  unsafe { vcombine_u64(vcreate_u64(a), vcreate_u64(b)) }
 }
 
 /// Keccak-f[1600] permutation — two independent states in parallel.
@@ -433,91 +449,96 @@ unsafe fn combine_lanes(a: u64, b: u64) -> uint64x2_t {
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "sha3")]
 unsafe fn keccakf_sha3_x2_impl(state_a: &mut [u64; 25], state_b: &mut [u64; 25]) {
-  // Load: lane 0 = state_a, lane 1 = state_b
-  let mut a0 = combine_lanes(state_a[0], state_b[0]);
-  let mut a1 = combine_lanes(state_a[1], state_b[1]);
-  let mut a2 = combine_lanes(state_a[2], state_b[2]);
-  let mut a3 = combine_lanes(state_a[3], state_b[3]);
-  let mut a4 = combine_lanes(state_a[4], state_b[4]);
-  let mut a5 = combine_lanes(state_a[5], state_b[5]);
-  let mut a6 = combine_lanes(state_a[6], state_b[6]);
-  let mut a7 = combine_lanes(state_a[7], state_b[7]);
-  let mut a8 = combine_lanes(state_a[8], state_b[8]);
-  let mut a9 = combine_lanes(state_a[9], state_b[9]);
-  let mut a10 = combine_lanes(state_a[10], state_b[10]);
-  let mut a11 = combine_lanes(state_a[11], state_b[11]);
-  let mut a12 = combine_lanes(state_a[12], state_b[12]);
-  let mut a13 = combine_lanes(state_a[13], state_b[13]);
-  let mut a14 = combine_lanes(state_a[14], state_b[14]);
-  let mut a15 = combine_lanes(state_a[15], state_b[15]);
-  let mut a16 = combine_lanes(state_a[16], state_b[16]);
-  let mut a17 = combine_lanes(state_a[17], state_b[17]);
-  let mut a18 = combine_lanes(state_a[18], state_b[18]);
-  let mut a19 = combine_lanes(state_a[19], state_b[19]);
-  let mut a20 = combine_lanes(state_a[20], state_b[20]);
-  let mut a21 = combine_lanes(state_a[21], state_b[21]);
-  let mut a22 = combine_lanes(state_a[22], state_b[22]);
-  let mut a23 = combine_lanes(state_a[23], state_b[23]);
-  let mut a24 = combine_lanes(state_a[24], state_b[24]);
+  // SAFETY: NEON + SHA3 CE intrinsics (combine_lanes, veor3q_u64, vrax1q_u64,
+  // vxarq_u64, vbcaxq_u64, vgetq_lane_u64, etc.) are available via this
+  // function's #[target_feature(enable = "sha3")] attribute.
+  unsafe {
+    // Load: lane 0 = state_a, lane 1 = state_b
+    let mut a0 = combine_lanes(state_a[0], state_b[0]);
+    let mut a1 = combine_lanes(state_a[1], state_b[1]);
+    let mut a2 = combine_lanes(state_a[2], state_b[2]);
+    let mut a3 = combine_lanes(state_a[3], state_b[3]);
+    let mut a4 = combine_lanes(state_a[4], state_b[4]);
+    let mut a5 = combine_lanes(state_a[5], state_b[5]);
+    let mut a6 = combine_lanes(state_a[6], state_b[6]);
+    let mut a7 = combine_lanes(state_a[7], state_b[7]);
+    let mut a8 = combine_lanes(state_a[8], state_b[8]);
+    let mut a9 = combine_lanes(state_a[9], state_b[9]);
+    let mut a10 = combine_lanes(state_a[10], state_b[10]);
+    let mut a11 = combine_lanes(state_a[11], state_b[11]);
+    let mut a12 = combine_lanes(state_a[12], state_b[12]);
+    let mut a13 = combine_lanes(state_a[13], state_b[13]);
+    let mut a14 = combine_lanes(state_a[14], state_b[14]);
+    let mut a15 = combine_lanes(state_a[15], state_b[15]);
+    let mut a16 = combine_lanes(state_a[16], state_b[16]);
+    let mut a17 = combine_lanes(state_a[17], state_b[17]);
+    let mut a18 = combine_lanes(state_a[18], state_b[18]);
+    let mut a19 = combine_lanes(state_a[19], state_b[19]);
+    let mut a20 = combine_lanes(state_a[20], state_b[20]);
+    let mut a21 = combine_lanes(state_a[21], state_b[21]);
+    let mut a22 = combine_lanes(state_a[22], state_b[22]);
+    let mut a23 = combine_lanes(state_a[23], state_b[23]);
+    let mut a24 = combine_lanes(state_a[24], state_b[24]);
 
-  for &rc in &super::RC {
-    keccakf_sha3_x2_round!(
-      a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17, a18, a19, a20, a21, a22, a23,
-      a24, rc
-    );
-  }
+    for &rc in &super::RC {
+      keccakf_sha3_x2_round!(
+        a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17, a18, a19, a20, a21, a22, a23,
+        a24, rc
+      );
+    }
 
-  // Store: extract lane 0 → state_a, lane 1 → state_b
-  state_a[0] = vgetq_lane_u64(a0, 0);
-  state_b[0] = vgetq_lane_u64(a0, 1);
-  state_a[1] = vgetq_lane_u64(a1, 0);
-  state_b[1] = vgetq_lane_u64(a1, 1);
-  state_a[2] = vgetq_lane_u64(a2, 0);
-  state_b[2] = vgetq_lane_u64(a2, 1);
-  state_a[3] = vgetq_lane_u64(a3, 0);
-  state_b[3] = vgetq_lane_u64(a3, 1);
-  state_a[4] = vgetq_lane_u64(a4, 0);
-  state_b[4] = vgetq_lane_u64(a4, 1);
-  state_a[5] = vgetq_lane_u64(a5, 0);
-  state_b[5] = vgetq_lane_u64(a5, 1);
-  state_a[6] = vgetq_lane_u64(a6, 0);
-  state_b[6] = vgetq_lane_u64(a6, 1);
-  state_a[7] = vgetq_lane_u64(a7, 0);
-  state_b[7] = vgetq_lane_u64(a7, 1);
-  state_a[8] = vgetq_lane_u64(a8, 0);
-  state_b[8] = vgetq_lane_u64(a8, 1);
-  state_a[9] = vgetq_lane_u64(a9, 0);
-  state_b[9] = vgetq_lane_u64(a9, 1);
-  state_a[10] = vgetq_lane_u64(a10, 0);
-  state_b[10] = vgetq_lane_u64(a10, 1);
-  state_a[11] = vgetq_lane_u64(a11, 0);
-  state_b[11] = vgetq_lane_u64(a11, 1);
-  state_a[12] = vgetq_lane_u64(a12, 0);
-  state_b[12] = vgetq_lane_u64(a12, 1);
-  state_a[13] = vgetq_lane_u64(a13, 0);
-  state_b[13] = vgetq_lane_u64(a13, 1);
-  state_a[14] = vgetq_lane_u64(a14, 0);
-  state_b[14] = vgetq_lane_u64(a14, 1);
-  state_a[15] = vgetq_lane_u64(a15, 0);
-  state_b[15] = vgetq_lane_u64(a15, 1);
-  state_a[16] = vgetq_lane_u64(a16, 0);
-  state_b[16] = vgetq_lane_u64(a16, 1);
-  state_a[17] = vgetq_lane_u64(a17, 0);
-  state_b[17] = vgetq_lane_u64(a17, 1);
-  state_a[18] = vgetq_lane_u64(a18, 0);
-  state_b[18] = vgetq_lane_u64(a18, 1);
-  state_a[19] = vgetq_lane_u64(a19, 0);
-  state_b[19] = vgetq_lane_u64(a19, 1);
-  state_a[20] = vgetq_lane_u64(a20, 0);
-  state_b[20] = vgetq_lane_u64(a20, 1);
-  state_a[21] = vgetq_lane_u64(a21, 0);
-  state_b[21] = vgetq_lane_u64(a21, 1);
-  state_a[22] = vgetq_lane_u64(a22, 0);
-  state_b[22] = vgetq_lane_u64(a22, 1);
-  state_a[23] = vgetq_lane_u64(a23, 0);
-  state_b[23] = vgetq_lane_u64(a23, 1);
-  state_a[24] = vgetq_lane_u64(a24, 0);
-  state_b[24] = vgetq_lane_u64(a24, 1);
+    // Store: extract lane 0 → state_a, lane 1 → state_b
+    state_a[0] = vgetq_lane_u64(a0, 0);
+    state_b[0] = vgetq_lane_u64(a0, 1);
+    state_a[1] = vgetq_lane_u64(a1, 0);
+    state_b[1] = vgetq_lane_u64(a1, 1);
+    state_a[2] = vgetq_lane_u64(a2, 0);
+    state_b[2] = vgetq_lane_u64(a2, 1);
+    state_a[3] = vgetq_lane_u64(a3, 0);
+    state_b[3] = vgetq_lane_u64(a3, 1);
+    state_a[4] = vgetq_lane_u64(a4, 0);
+    state_b[4] = vgetq_lane_u64(a4, 1);
+    state_a[5] = vgetq_lane_u64(a5, 0);
+    state_b[5] = vgetq_lane_u64(a5, 1);
+    state_a[6] = vgetq_lane_u64(a6, 0);
+    state_b[6] = vgetq_lane_u64(a6, 1);
+    state_a[7] = vgetq_lane_u64(a7, 0);
+    state_b[7] = vgetq_lane_u64(a7, 1);
+    state_a[8] = vgetq_lane_u64(a8, 0);
+    state_b[8] = vgetq_lane_u64(a8, 1);
+    state_a[9] = vgetq_lane_u64(a9, 0);
+    state_b[9] = vgetq_lane_u64(a9, 1);
+    state_a[10] = vgetq_lane_u64(a10, 0);
+    state_b[10] = vgetq_lane_u64(a10, 1);
+    state_a[11] = vgetq_lane_u64(a11, 0);
+    state_b[11] = vgetq_lane_u64(a11, 1);
+    state_a[12] = vgetq_lane_u64(a12, 0);
+    state_b[12] = vgetq_lane_u64(a12, 1);
+    state_a[13] = vgetq_lane_u64(a13, 0);
+    state_b[13] = vgetq_lane_u64(a13, 1);
+    state_a[14] = vgetq_lane_u64(a14, 0);
+    state_b[14] = vgetq_lane_u64(a14, 1);
+    state_a[15] = vgetq_lane_u64(a15, 0);
+    state_b[15] = vgetq_lane_u64(a15, 1);
+    state_a[16] = vgetq_lane_u64(a16, 0);
+    state_b[16] = vgetq_lane_u64(a16, 1);
+    state_a[17] = vgetq_lane_u64(a17, 0);
+    state_b[17] = vgetq_lane_u64(a17, 1);
+    state_a[18] = vgetq_lane_u64(a18, 0);
+    state_b[18] = vgetq_lane_u64(a18, 1);
+    state_a[19] = vgetq_lane_u64(a19, 0);
+    state_b[19] = vgetq_lane_u64(a19, 1);
+    state_a[20] = vgetq_lane_u64(a20, 0);
+    state_b[20] = vgetq_lane_u64(a20, 1);
+    state_a[21] = vgetq_lane_u64(a21, 0);
+    state_b[21] = vgetq_lane_u64(a21, 1);
+    state_a[22] = vgetq_lane_u64(a22, 0);
+    state_b[22] = vgetq_lane_u64(a22, 1);
+    state_a[23] = vgetq_lane_u64(a23, 0);
+    state_b[23] = vgetq_lane_u64(a23, 1);
+    state_a[24] = vgetq_lane_u64(a24, 0);
+    state_b[24] = vgetq_lane_u64(a24, 1);
+  } // unsafe
 }
 
 /// Permute two independent Keccak-f[1600] states in parallel using 2-state

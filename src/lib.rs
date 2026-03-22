@@ -7,6 +7,8 @@
 //! # Quick Start
 //!
 //! ```
+//! # #[cfg(feature = "checksums")]
+//! # {
 //! use rscrypto::{Checksum, Crc32C};
 //!
 //! // One-shot computation
@@ -18,6 +20,7 @@
 //! hasher.update(b"hello ");
 //! hasher.update(b"world");
 //! assert_eq!(hasher.finalize(), crc);
+//! # }
 //! ```
 //!
 //! Hash algorithms follow the same top-level pattern when the `hashes` feature

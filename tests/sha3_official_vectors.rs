@@ -1,3 +1,5 @@
+#![cfg(feature = "hashes")]
+
 use digest::dev::blobby::Blob2Iterator;
 use rscrypto::{
   Digest,

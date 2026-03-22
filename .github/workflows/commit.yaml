@@ -102,7 +102,7 @@ jobs:
               just test --all
             else
               export RAIL_SINCE="${{ needs.rail-plan.outputs.base_ref }}"
-              just test
+              just test-changed
             fi
             ;;
         esac
@@ -165,6 +165,9 @@ jobs:
         cargo check --target ${{ matrix.target }} --no-default-features --features alloc --lib
         cargo build --target ${{ matrix.target }} --no-default-features --lib --release
         cargo build --target ${{ matrix.target }} --no-default-features --features alloc --lib --release
+        if [[ "${{ matrix.target }}" == "thumbv6m-none-eabi" ]]; then
+          cargo check --target ${{ matrix.target }} --no-default-features --features checksums --lib
+        fi
 
   wasm:
     name: wasm (${{ matrix.target }})
@@ -186,6 +189,9 @@ jobs:
         cargo check --target ${{ matrix.target }} --no-default-features --features alloc --lib
         cargo build --target ${{ matrix.target }} --no-default-features --lib --release
         cargo build --target ${{ matrix.target }} --no-default-features --features alloc --lib --release
+        if [[ "${{ matrix.target }}" == "wasm32-unknown-unknown" ]]; then
+          cargo check --target ${{ matrix.target }} --no-default-features --features hashes --lib
+        fi
 
   complete:
     name: Complete (commit)

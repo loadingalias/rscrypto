@@ -1,7 +1,6 @@
 //! BLAKE3 x86_64 AVX2 throughput kernel (8-way).
 
 #![allow(unsafe_code)]
-#![allow(unsafe_op_in_unsafe_fn)]
 #![allow(clippy::inline_always)]
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::many_single_char_names)]
@@ -24,31 +23,37 @@ pub const DEGREE: usize = 8;
 
 #[inline(always)]
 unsafe fn loadu(src: *const u8) -> __m256i {
+  // SAFETY: Caller guarantees `src` is valid to read 32 bytes and has enabled this AVX2 backend.
   unsafe { _mm256_loadu_si256(src.cast()) }
 }
 
 #[inline(always)]
 unsafe fn storeu(src: __m256i, dest: *mut u8) {
+  // SAFETY: Caller guarantees `dest` is valid to write 32 bytes and has enabled this AVX2 backend.
   unsafe { _mm256_storeu_si256(dest.cast(), src) }
 }
 
 #[inline(always)]
 unsafe fn add(a: __m256i, b: __m256i) -> __m256i {
+  // SAFETY: Caller guarantees the required AVX2 feature set for this backend.
   unsafe { _mm256_add_epi32(a, b) }
 }
 
 #[inline(always)]
 unsafe fn xor(a: __m256i, b: __m256i) -> __m256i {
+  // SAFETY: Caller guarantees the required AVX2 feature set for this backend.
   unsafe { _mm256_xor_si256(a, b) }
 }
 
 #[inline(always)]
 unsafe fn set1(x: u32) -> __m256i {
+  // SAFETY: Caller guarantees the required AVX2 feature set for this backend.
   unsafe { _mm256_set1_epi32(x.cast_signed()) }
 }
 
 #[inline(always)]
 unsafe fn set8(a: u32, b: u32, c: u32, d: u32, e: u32, f: u32, g: u32, h: u32) -> __m256i {
+  // SAFETY: Caller guarantees the required AVX2 feature set for this backend.
   unsafe {
     _mm256_setr_epi32(
       a.cast_signed(),
@@ -65,16 +70,19 @@ unsafe fn set8(a: u32, b: u32, c: u32, d: u32, e: u32, f: u32, g: u32, h: u32) -
 
 #[inline(always)]
 unsafe fn rot12(x: __m256i) -> __m256i {
+  // SAFETY: Caller guarantees the required AVX2 feature set for this backend.
   unsafe { _mm256_or_si256(_mm256_srli_epi32(x, 12), _mm256_slli_epi32(x, 20)) }
 }
 
 #[inline(always)]
 unsafe fn rot7(x: __m256i) -> __m256i {
+  // SAFETY: Caller guarantees the required AVX2 feature set for this backend.
   unsafe { _mm256_or_si256(_mm256_srli_epi32(x, 7), _mm256_slli_epi32(x, 25)) }
 }
 
 #[inline(always)]
 unsafe fn round(v: &mut [__m256i; 16], m: &[__m256i; 16], r: usize, rot16_mask: __m256i, rot8_mask: __m256i) {
+  // SAFETY: Caller guarantees this AVX2 backend is active; all vector lanes are local registers.
   unsafe {
     v[0] = add(v[0], m[MSG_SCHEDULE[r][0]]);
     v[1] = add(v[1], m[MSG_SCHEDULE[r][2]]);
@@ -194,6 +202,7 @@ unsafe fn round(v: &mut [__m256i; 16], m: &[__m256i; 16], r: usize, rot16_mask: 
 
 #[inline(always)]
 unsafe fn interleave128(a: __m256i, b: __m256i) -> (__m256i, __m256i) {
+  // SAFETY: Caller guarantees this AVX2 backend is active; operations stay within local registers.
   unsafe {
     (
       _mm256_permute2x128_si256(a, b, 0x20),
@@ -204,6 +213,8 @@ unsafe fn interleave128(a: __m256i, b: __m256i) -> (__m256i, __m256i) {
 
 #[inline(always)]
 pub(super) unsafe fn transpose8x8(vecs: &mut [__m256i; 8]) {
+  // SAFETY: Caller guarantees this AVX2 backend is active; `vecs` is a valid fixed-size register
+  // array.
   unsafe {
     let ab_0145 = _mm256_unpacklo_epi32(vecs[0], vecs[1]);
     let ab_2367 = _mm256_unpackhi_epi32(vecs[0], vecs[1]);
@@ -241,6 +252,7 @@ pub(super) unsafe fn transpose8x8(vecs: &mut [__m256i; 8]) {
 
 #[inline(always)]
 unsafe fn transpose_msg_vecs(inputs: &[*const u8; DEGREE], block_offset: usize) -> [__m256i; 16] {
+  // SAFETY: Caller guarantees each input points to at least one full block at `block_offset`.
   unsafe {
     let stride = 4 * DEGREE;
     let mut half0 = [
@@ -281,6 +293,7 @@ unsafe fn transpose_msg_vecs(inputs: &[*const u8; DEGREE], block_offset: usize) 
 #[inline(always)]
 unsafe fn load_counters(counter: u64, increment_counter: bool) -> (__m256i, __m256i) {
   let mask = if increment_counter { !0u64 } else { 0u64 };
+  // SAFETY: Counter vectors are assembled with this backend's AVX2 intrinsics only.
   unsafe {
     (
       set8(
@@ -328,6 +341,8 @@ pub(crate) unsafe fn hash8(
   debug_assert!(flags <= u8::MAX as u32);
   debug_assert!(flags_start <= u8::MAX as u32);
   debug_assert!(flags_end <= u8::MAX as u32);
+  // SAFETY: Caller guarantees AVX2 availability, valid input pointers for `blocks * BLOCK_LEN`,
+  // and `out` writable for `DEGREE * OUT_LEN`. The asm entrypoint shares that contract.
   unsafe {
     super::asm::rscrypto_blake3_hash_many_avx2(
       inputs.as_ptr(),
@@ -362,6 +377,7 @@ pub(crate) unsafe fn hash8(
   flags_end: u32,
   out: *mut u8,
 ) {
+  // SAFETY: Caller guarantees AVX2 availability and `out` writable for `8 * OUT_LEN` bytes.
   unsafe {
     let rot16_mask = _mm256_setr_epi8(
       2, 3, 0, 1, 6, 7, 4, 5, 10, 11, 8, 9, 14, 15, 12, 13, 2, 3, 0, 1, 6, 7, 4, 5, 10, 11, 8, 9, 14, 15, 12, 13,
@@ -470,6 +486,7 @@ pub(crate) unsafe fn root_output_blocks8(
   flags: u32,
   out: *mut u8,
 ) {
+  // SAFETY: Caller guarantees AVX2 availability and `out` writable for `8 * OUT_LEN` bytes.
   unsafe {
     let rot16_mask = _mm256_setr_epi8(
       2, 3, 0, 1, 6, 7, 4, 5, 10, 11, 8, 9, 14, 15, 12, 13, 2, 3, 0, 1, 6, 7, 4, 5, 10, 11, 8, 9, 14, 15, 12, 13,
@@ -591,6 +608,8 @@ pub(crate) unsafe fn root_output_blocks1(
   out: *mut u8,
 ) {
   // AVX2 implies SSE4.1, so delegate to the SSE4.1 implementation
+  // SAFETY: Caller guarantees AVX2 availability; on x86_64 that implies the delegated SSE4.1 path is
+  // legal.
   unsafe { super::sse41::root_output_blocks1(chaining_value, block_words, counter, block_len, flags, out) }
 }
 
@@ -609,5 +628,7 @@ pub(crate) unsafe fn root_output_blocks2(
   out: *mut u8,
 ) {
   // AVX2 implies SSE4.1, so delegate to the SSE4.1 implementation
+  // SAFETY: Caller guarantees AVX2 availability; on x86_64 that implies the delegated SSE4.1 path is
+  // legal.
   unsafe { super::sse41::root_output_blocks2(chaining_value, block_words, counter, block_len, flags, out) }
 }

@@ -94,6 +94,11 @@ pub fn arch() -> Arch {
 /// Call this **before** any call to [`get()`] to bypass runtime detection.
 /// Useful for bare-metal, embedded, or testing.
 ///
+/// # Panics
+///
+/// Panics if detection has already been initialized or overrides are unsupported
+/// on the current target. Use [`try_set_override()`] for a fallible path.
+///
 /// # Examples
 ///
 /// ```
@@ -119,6 +124,11 @@ pub fn try_set_override(value: Option<Detected>) -> Result<(), OverrideError> {
 /// Clear the detection override.
 ///
 /// Equivalent to `set_override(None)`.
+///
+/// # Panics
+///
+/// Panics under the same conditions as [`set_override()`]. Use
+/// [`try_set_override(None)`](try_set_override) for a fallible path.
 #[inline]
 pub fn clear_override() {
   detect::clear_override();

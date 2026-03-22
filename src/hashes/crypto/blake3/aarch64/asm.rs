@@ -10,7 +10,6 @@
 //! - unaligned callers must use the NEON paths in `aarch64.rs`.
 
 #![allow(unsafe_code)]
-#![allow(unsafe_op_in_unsafe_fn)]
 
 use core::arch::global_asm;
 

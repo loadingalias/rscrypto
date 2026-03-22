@@ -71,27 +71,18 @@ mod tests {
   }
 
   #[test]
-  fn digest_matches_oracle() {
-    use crate::traits::Digest as _;
+  fn digest_matches_portable_reference() {
+    use crate::{hashes::crypto::ascon::kernels::AsconPermute12KernelId, traits::Digest as _};
 
     let data = b"ascon test input";
     let ours = crate::hashes::crypto::AsconHash256::digest(data);
-
-    use ascon_hash256::Digest as _;
-    let expected = ascon_hash256::AsconHash256::digest(data);
-    let mut exp = [0u8; 32];
-    exp.copy_from_slice(&expected);
-    assert_eq!(ours, exp);
+    let expected = crate::hashes::crypto::AsconHash256::digest_with_kernel(AsconPermute12KernelId::Portable, data);
+    assert_eq!(ours, expected);
 
     let mut ours_xof = [0u8; 64];
     crate::hashes::crypto::AsconXof128::hash_into(data, &mut ours_xof);
-
-    use ascon_hash256::digest::{ExtendableOutput, Update, XofReader};
-    let mut hasher = ascon_hash256::AsconXof128::default();
-    hasher.update(data);
-    let mut reader = hasher.finalize_xof();
     let mut exp_xof = [0u8; 64];
-    reader.read(&mut exp_xof);
+    crate::hashes::crypto::AsconXof128::hash_into_with_kernel(AsconPermute12KernelId::Portable, data, &mut exp_xof);
     assert_eq!(ours_xof, exp_xof);
   }
 

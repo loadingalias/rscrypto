@@ -90,8 +90,6 @@ pub(crate) struct HasherDispatch {
   size_classes: SizeClassDispatch<Kernel>,
   stream_kernel: Kernel,
   table_bulk_kernel: Kernel,
-  #[cfg(feature = "parallel")]
-  parallel_streaming: ParallelTable,
   bulk_sizeclass_threshold: usize,
 }
 
@@ -116,13 +114,6 @@ impl HasherDispatch {
   #[must_use]
   pub(crate) fn size_class_kernel(&self, len: usize) -> Kernel {
     self.size_classes.select(len)
-  }
-
-  #[inline]
-  #[must_use]
-  #[cfg(feature = "parallel")]
-  pub(crate) fn parallel_streaming(&self) -> ParallelTable {
-    self.parallel_streaming
   }
 
   #[inline]
@@ -268,8 +259,6 @@ fn resolved() -> ResolvedDispatch {
       size_classes,
       stream_kernel: streaming.stream,
       table_bulk_kernel: streaming.bulk,
-      #[cfg(feature = "parallel")]
-      parallel_streaming: streaming_base,
       bulk_sizeclass_threshold: stream_table.bulk_sizeclass_threshold,
     };
 
@@ -465,13 +454,7 @@ pub struct StreamingDispatchInfo {
 #[must_use]
 #[cfg(feature = "parallel")]
 pub fn streaming_dispatch_info(flags: u32, input_len: usize) -> StreamingDispatchInfo {
-  let pd = active_parallel();
-  let ptable = match flags {
-    FLAGS_KEYED_HASH => pd.keyed_streaming,
-    FLAGS_DERIVE_KEY_MATERIAL => pd.derive_streaming,
-    _ => pd.streaming,
-  };
-
+  use super::control;
   let hd = hasher_dispatch();
   let sd = active_streaming();
   let bulk_kernel = if input_len >= hd.bulk_sizeclass_threshold() {
@@ -485,8 +468,10 @@ pub fn streaming_dispatch_info(flags: u32, input_len: usize) -> StreamingDispatc
   // from `update_with`.
   const CHUNK_LEN: usize = 1024;
 
+  let mode = control::streaming_policy_kind_from_flags(flags);
+  let ptable = control::resolved_parallel_policy(mode);
   let commit_chunks = input_len / CHUNK_LEN;
-  let (would_parallelize, parallel_threads) = parallel_threads_for(&ptable, input_len, commit_chunks);
+  let decision = control::parallel_admission_decision(mode, ptable, input_len, commit_chunks, commit_chunks);
 
   StreamingDispatchInfo {
     stream_kernel,
@@ -501,81 +486,45 @@ pub fn streaming_dispatch_info(flags: u32, input_len: usize) -> StreamingDispatc
     parallel_bytes_per_core_large: ptable.bytes_per_core_large,
     parallel_small_limit_bytes: ptable.small_limit_bytes,
     parallel_medium_limit_bytes: ptable.medium_limit_bytes,
-    would_parallelize,
-    parallel_threads,
+    would_parallelize: decision.would_parallelize,
+    parallel_threads: decision.threads,
   }
 }
 
-#[inline]
-#[must_use]
-#[cfg(feature = "parallel")]
-fn bytes_per_core_for_payload(table: &ParallelTable, input_bytes: usize) -> usize {
-  if input_bytes <= table.small_limit_bytes {
-    table.bytes_per_core_small
-  } else if input_bytes <= table.medium_limit_bytes {
-    table.bytes_per_core_medium
-  } else {
-    table.bytes_per_core_large
-  }
-}
+#[cfg(all(test, feature = "parallel"))]
+mod tests {
+  use super::streaming_dispatch_info;
+  use crate::hashes::crypto::blake3::{CHUNK_LEN, DERIVE_KEY_MATERIAL, KEYED_HASH, control};
 
-#[cfg(feature = "parallel")]
-#[allow(clippy::manual_saturating_arithmetic)] // Planner math wants explicit clamp behavior.
-/// Compute (would_parallelize, thread_count) mirroring runtime policy checks.
-fn parallel_threads_for(table: &ParallelTable, input_bytes: usize, commit_chunks: usize) -> (bool, usize) {
-  if table.max_threads == 1 {
-    return (false, 1);
-  }
-  if input_bytes < table.min_bytes || commit_chunks < table.min_chunks {
-    return (false, 1);
-  }
+  #[test]
+  fn streaming_dispatch_info_matches_runtime_parallel_admission() {
+    for &flags in &[0u32, KEYED_HASH, DERIVE_KEY_MATERIAL] {
+      for &input_len in &[
+        0usize,
+        1,
+        CHUNK_LEN - 1,
+        CHUNK_LEN,
+        CHUNK_LEN * 2,
+        4 * 1024,
+        16 * 1024,
+        64 * 1024,
+        1024 * 1024,
+      ] {
+        let info = streaming_dispatch_info(flags, input_len);
+        let commit_chunks = input_len / CHUNK_LEN;
+        let expected = control::streaming_parallel_threads_for_flags(flags, input_len, commit_chunks, commit_chunks);
 
-  #[cfg(feature = "std")]
-  {
-    let Ok(ap) = std::thread::available_parallelism() else {
-      return (false, 1);
-    };
-    let mut threads = ap.get();
-    if table.max_threads != 0 {
-      threads = threads.min(table.max_threads as usize);
-    }
-    if threads <= 1 {
-      return (false, 1);
-    }
-    let bytes_per_core = bytes_per_core_for_payload(table, input_bytes);
-    let mut candidate = threads.min(commit_chunks);
-    while candidate > 1 {
-      let chunk_depth = (commit_chunks.max(2)).ilog2() as usize;
-      let thread_depth = (candidate.max(2)).ilog2() as usize;
-      let merge_divisor = 1 + chunk_depth + thread_depth + 1;
-      let merge_cost = table
-        .merge_cost_bytes
-        .checked_add(merge_divisor.strict_sub(1))
-        .unwrap_or(usize::MAX)
-        / merge_divisor;
-      let spawn_cost = table
-        .spawn_cost_bytes
-        .checked_mul(candidate.strict_sub(1))
-        .unwrap_or(usize::MAX);
-      let work_cost = bytes_per_core.checked_mul(candidate).unwrap_or(usize::MAX);
-      let fitted_required = merge_cost
-        .checked_add(spawn_cost)
-        .and_then(|sum| sum.checked_add(work_cost))
-        .unwrap_or(usize::MAX);
-      let required = fitted_required
-        .checked_mul(15)
-        .and_then(|scaled| scaled.checked_add(9))
-        .unwrap_or(usize::MAX)
-        / 10;
-      if input_bytes >= required {
-        return (true, candidate);
+        assert_eq!(
+          info.would_parallelize,
+          expected.is_some(),
+          "parallel admission mismatch for flags={flags:#x}, len={input_len}"
+        );
+        assert_eq!(
+          info.parallel_threads,
+          expected.unwrap_or(1),
+          "thread count mismatch for flags={flags:#x}, len={input_len}"
+        );
       }
-      candidate -= 1;
     }
-    (false, 1)
-  }
-  #[cfg(not(feature = "std"))]
-  {
-    (false, 1)
   }
 }

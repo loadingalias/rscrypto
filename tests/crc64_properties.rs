@@ -7,6 +7,7 @@
 
 // Proptest uses getcwd() which fails under Miri isolation.
 #![cfg(not(miri))]
+#![cfg(feature = "checksums")]
 
 use crc_fast::CrcAlgorithm;
 use crc64fast as ref_crc64fast;

@@ -93,8 +93,10 @@ Automatic dispatch: AVX-512, VPCLMUL, PMULL, EOR3, hardware CRC.
 
 ### Common Commands
 
-- `just check` runs formatting, `cargo check`, clippy, docs, and the no_std matrix.
-- `just test` runs the main nextest suite.
+- `just check` runs formatting, `cargo check`, clippy, docs, the compile-time no_std matrix, and executable no_std feature smoke tests.
+- `just test` runs the full nextest suite plus doctests.
+- `just test-changed` runs planner-selected affected tests via cargo-rail.
+- `just test-feature-matrix` runs executable `--no-default-features` checksum/hash smoke tests.
 - `just test-miri`, `just test-fuzz`, and `just test-proptests` cover deeper correctness.
 - `just bench` and `just bench-native` drive the benchmark pipeline.
 
@@ -122,7 +124,7 @@ XXH3-64, XXH3-128, RapidHash-64, RapidHash-128.
 ## Contributing
 
 For perf-gap work on Blake3, start with `just bench-blake3-core`.
-Run `just check` and `just test` before sending changes for review.
+Run `just check` and `just test --all` before sending changes for review.
 
 ## License
 

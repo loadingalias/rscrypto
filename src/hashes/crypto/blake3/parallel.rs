@@ -164,13 +164,13 @@ impl Blake3 {
       }
       push_stack(&mut self.cv_stack, &mut stack_len, cv);
 
-      offset_chunks += size;
+      offset_chunks = offset_chunks.strict_add(size);
       remaining_commit -= size;
     }
 
     self.cv_stack_len = stack_len as u8;
 
-    let new_counter = base_counter + batch.batch_chunks as u64;
+    let new_counter = base_counter.strict_add(batch.batch_chunks as u64);
     self.chunk_state = ChunkState::new(
       self.key_words,
       new_counter,
@@ -178,13 +178,15 @@ impl Blake3 {
       self.chunk_state.kernel_id,
     );
     if batch.keep_last_full_chunk {
-      let last_chunk_idx = batch.batch_chunks - 1;
-      let last = &batch_input[last_chunk_idx * CHUNK_LEN..batch.batch_chunks * CHUNK_LEN];
+      let last_chunk_idx = batch.batch_chunks.strict_sub(1);
+      let last_start = last_chunk_idx.strict_mul(CHUNK_LEN);
+      let last_end = batch.batch_chunks.strict_mul(CHUNK_LEN);
+      let last = &batch_input[last_start..last_end];
       self.pending_chunk_cv = Some(hash_one_full_chunk_cv(
         kernels::kernel(self.bulk_kernel_id),
         self.key_words,
         self.chunk_state.flags,
-        new_counter - 1,
+        new_counter.strict_sub(1),
         last,
       ));
       self.pending_cv_chunks = 1;

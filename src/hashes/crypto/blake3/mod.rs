@@ -2105,7 +2105,7 @@ fn root_output_oneshot(
       let mut chunk_counter = 0u64;
       let mut offset = 0usize;
       while chunk_counter < full_chunks as u64 {
-        let remaining = (full_chunks as u64 - chunk_counter) as usize;
+        let remaining = (full_chunks as u64).strict_sub(chunk_counter) as usize;
         let batch = core::cmp::min(remaining, MAX_SIMD_DEGREE);
         debug_assert!(batch != 0);
 
@@ -2123,7 +2123,7 @@ fn root_output_oneshot(
         };
 
         let mut commit = batch;
-        if remainder == 0 && chunk_counter + batch as u64 == full_chunks as u64 {
+        if remainder == 0 && chunk_counter.strict_add(batch as u64) == full_chunks as u64 {
           last_full_chunk_cv = Some(cvs[batch - 1]);
           commit -= 1;
         }
@@ -2140,8 +2140,8 @@ fn root_output_oneshot(
           );
         }
 
-        chunk_counter += batch as u64;
-        offset += batch * CHUNK_LEN;
+        chunk_counter = chunk_counter.strict_add(batch as u64);
+        offset = offset.strict_add(batch.strict_mul(CHUNK_LEN));
       }
 
       if remainder != 0 {
@@ -2165,7 +2165,7 @@ fn root_output_oneshot(
       let mut chunk_counter = 0u64;
       let mut offset = 0usize;
       while chunk_counter < full_chunks as u64 {
-        let remaining = (full_chunks as u64 - chunk_counter) as usize;
+        let remaining = (full_chunks as u64).strict_sub(chunk_counter) as usize;
         let batch = core::cmp::min(remaining, MAX_SIMD_DEGREE);
         debug_assert!(batch != 0);
 
@@ -2182,7 +2182,7 @@ fn root_output_oneshot(
         };
 
         let mut commit = batch;
-        if remainder == 0 && chunk_counter + batch as u64 == full_chunks as u64 {
+        if remainder == 0 && chunk_counter.strict_add(batch as u64) == full_chunks as u64 {
           last_full_chunk_cv = Some(cvs[batch - 1]);
           commit -= 1;
         }
@@ -2199,8 +2199,8 @@ fn root_output_oneshot(
           );
         }
 
-        chunk_counter += batch as u64;
-        offset += batch * CHUNK_LEN;
+        chunk_counter = chunk_counter.strict_add(batch as u64);
+        offset = offset.strict_add(batch.strict_mul(CHUNK_LEN));
       }
 
       if remainder != 0 {
@@ -2634,7 +2634,7 @@ impl Blake3 {
       self.cv_stack_len = stack_len as u8;
     }
 
-    let new_counter = base_counter + batch as u64;
+    let new_counter = base_counter.strict_add(batch as u64);
     self.chunk_state = ChunkState::new(
       self.key_words,
       new_counter,
@@ -2642,7 +2642,7 @@ impl Blake3 {
       self.chunk_state.kernel_id,
     );
     if keep_last_full_chunk {
-      let offset = (batch - 1) * OUT_LEN;
+      let offset = batch.strict_sub(1).strict_mul(OUT_LEN);
       // SAFETY: `out_buf` is `OUT_LEN * MAX_SIMD_DEGREE`, and `offset`
       // is `(batch - 1) * OUT_LEN` with `batch <= MAX_SIMD_DEGREE`.
       let cv = unsafe { words8_from_le_bytes_32(&*(out_buf.as_ptr().add(offset) as *const [u8; OUT_LEN])) };
@@ -2650,7 +2650,7 @@ impl Blake3 {
       self.pending_cv_chunks = 1;
     }
 
-    Some(batch * CHUNK_LEN)
+    Some(batch.strict_mul(CHUNK_LEN))
   }
 
   fn update_with(

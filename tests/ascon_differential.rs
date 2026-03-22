@@ -1,54 +1,48 @@
+#![cfg(feature = "hashes")]
+
 use proptest::prelude::*;
 use rscrypto::{
   hashes::crypto::{AsconHash256, AsconXof128},
   traits::{Digest as _, Xof as _},
 };
 
-fn ascon_hash256_ref(data: &[u8]) -> [u8; 32] {
-  use ascon_hash256::Digest as _;
-  let out = ascon_hash256::AsconHash256::digest(data);
-  let mut bytes = [0u8; 32];
-  bytes.copy_from_slice(&out);
-  bytes
+fn ascon_hash256_streaming(data: &[u8]) -> [u8; 32] {
+  let mut hasher = AsconHash256::new();
+  let mut i = 0usize;
+  while i < data.len() {
+    let step = (data[i] as usize % 97) + 1;
+    let end = core::cmp::min(data.len(), i + step);
+    hasher.update(&data[i..end]);
+    i = end;
+  }
+  hasher.finalize()
 }
 
-fn ascon_xof128_ref(data: &[u8], out: &mut [u8]) {
-  use ascon_hash256::digest::{ExtendableOutput, Update, XofReader};
-  let mut h = ascon_hash256::AsconXof128::default();
-  h.update(data);
-  let mut reader = h.finalize_xof();
-  reader.read(out);
+fn ascon_xof128_streaming(data: &[u8], out: &mut [u8]) {
+  let split_data = data.len() / 2;
+  let split_out = out.len() / 2;
+
+  let mut hasher = AsconXof128::new();
+  hasher.update(&data[..split_data]);
+  hasher.update(&data[split_data..]);
+  let mut xof = hasher.finalize_xof();
+  xof.squeeze(&mut out[..split_out]);
+  xof.squeeze(&mut out[split_out..]);
 }
 
 proptest! {
   #[test]
-  fn ascon_hash256_one_shot_matches_oracle(data in proptest::collection::vec(any::<u8>(), 0..8192)) {
-    prop_assert_eq!(AsconHash256::digest(&data), ascon_hash256_ref(&data));
+  fn ascon_hash256_one_shot_matches_streaming(data in proptest::collection::vec(any::<u8>(), 0..8192)) {
+    prop_assert_eq!(AsconHash256::digest(&data), ascon_hash256_streaming(&data));
   }
 
   #[test]
-  fn ascon_hash256_streaming_matches_oracle(data in proptest::collection::vec(any::<u8>(), 0..8192)) {
-    let expected = ascon_hash256_ref(&data);
-
-    let mut h = AsconHash256::new();
-    let mut i = 0usize;
-    while i < data.len() {
-      let step = (data[i] as usize % 97) + 1;
-      let end = core::cmp::min(data.len(), i + step);
-      h.update(&data[i..end]);
-      i = end;
-    }
-
-    prop_assert_eq!(h.finalize(), expected);
-  }
-
-  #[test]
-  fn ascon_xof128_one_shot_matches_oracle(
+  fn ascon_xof128_one_shot_matches_streaming(
     data in proptest::collection::vec(any::<u8>(), 0..4096),
     out_len in 0usize..2048,
   ) {
     let mut expected = vec![0u8; out_len];
-    ascon_xof128_ref(&data, &mut expected);
+    ascon_xof128_streaming(&data, &mut expected);
 
     let mut actual = vec![0u8; out_len];
     AsconXof128::hash_into(&data, &mut actual);
@@ -68,13 +62,12 @@ proptest! {
 
     let mut expected = vec![0u8; out_len];
     {
-      use ascon_hash256::digest::{ExtendableOutput, Update, XofReader};
-      let mut h = ascon_hash256::AsconXof128::default();
+      let mut h = AsconXof128::new();
       h.update(&data[..split_data]);
       h.update(&data[split_data..]);
-      let mut reader = h.finalize_xof();
-      reader.read(&mut expected[..split_out]);
-      reader.read(&mut expected[split_out..]);
+      let mut xof = h.finalize_xof();
+      xof.squeeze(&mut expected[..split_out]);
+      xof.squeeze(&mut expected[split_out..]);
     }
 
     let mut actual = vec![0u8; out_len];

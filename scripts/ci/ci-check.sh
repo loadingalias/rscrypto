@@ -48,6 +48,10 @@ echo ""
 echo "🔧 Running cargo check..."
 cargo check --workspace --all-targets --all-features
 
+echo ""
+echo "🧪 Running executable feature matrix..."
+"$SCRIPT_DIR/../test/test-feature-matrix.sh"
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Clippy
 # ─────────────────────────────────────────────────────────────────────────────
