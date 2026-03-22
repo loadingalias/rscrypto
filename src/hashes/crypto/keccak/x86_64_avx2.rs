@@ -20,9 +20,7 @@
 //! All functions require the `avx2` target feature.
 
 #![allow(unsafe_code)]
-#![allow(unsafe_op_in_unsafe_fn)]
 #![allow(clippy::inline_always)]
-#![allow(clippy::undocumented_unsafe_blocks)]
 
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::*;
@@ -39,6 +37,8 @@ use core::arch::x86_64::*;
 #[target_feature(enable = "avx2")]
 #[inline]
 unsafe fn keccakf_avx2_impl(state: &mut [u64; 25]) {
+  // SAFETY: AVX2 intrinsics in the chi_row! macro are available via this
+  // function's #[target_feature(enable = "avx2")] attribute.
   let mut a0 = state[0];
   let mut a1 = state[1];
   let mut a2 = state[2];

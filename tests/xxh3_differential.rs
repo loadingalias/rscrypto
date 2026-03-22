@@ -1,3 +1,5 @@
+#![cfg(feature = "hashes")]
+
 use proptest::prelude::*;
 use rscrypto::{
   hashes::fast::{Xxh3_64, Xxh3_128},

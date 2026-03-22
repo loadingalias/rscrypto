@@ -16,6 +16,7 @@
 
 // Proptest uses getcwd() which fails under Miri isolation.
 #![cfg(not(miri))]
+#![cfg(feature = "checksums")]
 
 use proptest::prelude::*;
 use rscrypto::{

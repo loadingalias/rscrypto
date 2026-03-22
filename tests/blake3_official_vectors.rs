@@ -1,3 +1,5 @@
+#![cfg(feature = "hashes")]
+
 use digest::dev::blobby::Blob6Iterator;
 use rscrypto::{Digest, hashes::crypto::Blake3, traits::Xof as _};
 

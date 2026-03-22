@@ -19,6 +19,12 @@ ci-infra-check:
 test *crates="":
     @scripts/test/test.sh {{crates}}
 
+test-changed *args="":
+    @scripts/test/test.sh --changed {{args}}
+
+test-feature-matrix:
+    @scripts/test/test-feature-matrix.sh
+
 test-miri *crates="":
     @scripts/test/test-miri.sh {{crates}}
 
@@ -32,7 +38,7 @@ test-proptests:
     PROPTEST_CASES=10000 cargo nextest run --workspace --all-features -E 'test(/proptest/)' --test-threads=1
 
 test-all:
-    just test
+    just test --all
     just test-fuzz
     just test-miri
 
@@ -61,13 +67,13 @@ bench-summary group="" only="oneshot":
     @python3 scripts/bench/criterion-summary.py --group-prefix '{{group}}' --only {{only}}
 
 # Run `checksum` comparison benches and report non-wins vs competitors.
-bench-compare group="" ours="rscrypto/checksum" min_pct="0":
-    RUSTC_WRAPPER= cargo bench --bench checksum_comp
+bench-compare group="" ours="rscrypto" min_pct="0":
+    RUSTC_WRAPPER= cargo bench --bench crc
     @python3 scripts/bench/criterion-summary.py --group-prefix '{{group}}' --non-wins --ours '{{ours}}' --min-improvement-pct {{min_pct}}
 
-bench-blake3-compare min_pct="0":
-    RUSTC_WRAPPER= cargo bench --bench hashes_comp
-    @python3 scripts/bench/criterion-summary.py --group-prefix 'blake3/' --non-wins --ours 'rscrypto/blake3' --min-improvement-pct {{min_pct}}
+bench-blake3-compare min_pct="0" ours="rscrypto":
+    RUSTC_WRAPPER= cargo bench --bench blake3
+    @python3 scripts/bench/criterion-summary.py --group-prefix 'blake3' --non-wins --ours '{{ours}}' --min-improvement-pct {{min_pct}}
 
 bench-blake3-core:
     @scripts/bench/bench.sh benches=blake3 filter=oneshot,streaming,keyed,derive-key,xof

@@ -15,7 +15,9 @@ This file is the caller map for `scripts/`.
 - `scripts/check/check-ibm.sh`
   - Called by: `scripts/check/check-all.sh`
 - `scripts/test/test.sh`
-  - Called by: `just test`
+  - Called by: `just test`, `just test-changed`
+- `scripts/test/test-feature-matrix.sh`
+  - Called by: `just test-feature-matrix`, `just check`, `just ci-check`
 - `scripts/test/test-miri.sh`
   - Called by: `just test-miri`
 - `scripts/test/test-fuzz.sh`

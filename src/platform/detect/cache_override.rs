@@ -15,7 +15,13 @@ static OVERRIDE: RwLock<Option<Detected>> = RwLock::new(None);
 ///
 /// Must be called **before** the first call to [`get()`]. After caching occurs,
 /// updates are rejected.
+///
+/// # Panics
+///
+/// Panics if detection has already been initialized or overrides are unsupported
+/// on the current target. Use [`try_set_override()`] for a fallible path.
 #[cold]
+#[track_caller]
 pub fn set_override(value: Option<Detected>) {
   if let Err(err) = try_set_override(value) {
     panic!("platform::set_override failed: {err}");
@@ -56,6 +62,7 @@ pub fn try_set_override(value: Option<Detected>) -> Result<(), OverrideError> {
 
 /// Clear detection override.
 #[cold]
+#[track_caller]
 pub fn clear_override() {
   set_override(None);
 }

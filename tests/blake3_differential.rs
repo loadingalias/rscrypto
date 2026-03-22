@@ -1,3 +1,5 @@
+#![cfg(feature = "hashes")]
+
 use proptest::prelude::*;
 use rscrypto::{
   hashes::crypto::Blake3,

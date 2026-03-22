@@ -116,6 +116,8 @@ pub trait KernelIntrospect {
 
 #[cfg(test)]
 mod tests {
+  extern crate alloc;
+
   use super::*;
 
   #[test]

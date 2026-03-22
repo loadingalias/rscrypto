@@ -1,10 +1,11 @@
-//! Ascon comparison benchmarks: rscrypto vs ascon-hash256 crate.
+//! Ascon benchmarks for rscrypto public APIs.
 
 mod common;
 
 use core::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use rscrypto::Xof as _;
 
 fn ascon_hash256(c: &mut Criterion) {
   let inputs = common::comp_sizes();
@@ -16,13 +17,6 @@ fn ascon_hash256(c: &mut Criterion) {
     g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
       use rscrypto::Digest as _;
       b.iter(|| black_box(rscrypto::AsconHash256::digest(black_box(d))))
-    });
-
-    g.bench_with_input(BenchmarkId::new("ascon-hash256", len), data, |b, d| {
-      b.iter(|| {
-        use ascon_hash256::digest::Digest as _;
-        black_box(ascon_hash256::AsconHash256::digest(black_box(d)))
-      })
     });
   }
 
@@ -41,17 +35,6 @@ fn ascon_hash256_streaming(c: &mut Criterion) {
         let mut h = rscrypto::AsconHash256::new();
         for chunk in data.chunks(chunk_size) {
           h.update(black_box(chunk));
-        }
-        black_box(h.finalize())
-      })
-    });
-
-    g.bench_function(format!("ascon-hash256/{chunk_size}B"), |b| {
-      b.iter(|| {
-        use ascon_hash256::digest::Digest;
-        let mut h = ascon_hash256::AsconHash256::new();
-        for chunk in data.chunks(chunk_size) {
-          ascon_hash256::digest::Update::update(&mut h, black_box(chunk));
         }
         black_box(h.finalize())
       })
@@ -81,9 +64,9 @@ fn ascon_hash256_many(c: &mut Criterion) {
   g.bench_function("ascon-hash256/scalar-loop", |b| {
     let mut out = vec![[0u8; 32]; COUNT];
     b.iter(|| {
-      use ascon_hash256::digest::Digest as _;
       for (input, slot) in inputs.iter().zip(out.iter_mut()) {
-        slot.copy_from_slice(&ascon_hash256::AsconHash256::digest(black_box(input)));
+        use rscrypto::Digest as _;
+        *slot = rscrypto::AsconHash256::digest(black_box(input));
       }
       black_box(out[0])
     })
@@ -113,13 +96,12 @@ fn ascon_xof128_many(c: &mut Criterion) {
   g.bench_function("ascon-xof128/scalar-loop", |b| {
     let mut out = vec![0u8; COUNT * OUT_LEN];
     b.iter(|| {
-      use ascon_hash256::digest::{ExtendableOutput, Update, XofReader};
       for (index, input) in inputs.iter().enumerate() {
-        let mut hasher = ascon_hash256::AsconXof128::default();
+        let mut hasher = rscrypto::AsconXof128::new();
         hasher.update(black_box(input));
         let mut reader = hasher.finalize_xof();
         let base = index * OUT_LEN;
-        reader.read(&mut out[base..base + OUT_LEN]);
+        reader.squeeze(&mut out[base..base + OUT_LEN]);
       }
       black_box(out[0])
     })

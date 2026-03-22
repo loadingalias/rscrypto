@@ -69,6 +69,14 @@ if [[ "$CHECK_RSCRYPTO_FEATURE_MATRIX" == true ]]; then
     fi
   done
   ok
+
+  step "Testing rscrypto feature matrix"
+  if ! "$SCRIPT_DIR/../test/test-feature-matrix.sh" >>"$LOG_DIR/check.log" 2>&1; then
+    fail
+    show_error "$LOG_DIR/check.log"
+    exit 1
+  fi
+  ok
 fi
 
 # Clippy

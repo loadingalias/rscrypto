@@ -90,7 +90,10 @@ def parse_nist_msg_md(path: Path) -> list[tuple[bytes, bytes]]:
 def generate_ascon(testdata_root: Path) -> None:
     src = glob.glob(os.path.expanduser("~/.cargo/registry/src/index.crates.io-*/ascon-hash256-0.5.0-rc.0/tests/data/asconhash.txt"))
     if not src:
-        raise RuntimeError("could not find ascon-hash256 vector source in ~/.cargo/registry")
+        src = glob.glob(os.path.expanduser("~/.cargo/registry/src/index.crates.io-*/ascon-hash256-0.5.0-rc.2/tests/data/asconhash.txt"))
+    if not src:
+        print("warning: skipping Ascon vector regeneration; upstream ascon-hash256 sources not found in ~/.cargo/registry")
+        return
     hash_pairs = parse_nist_msg_md(Path(src[0]))
     write_blb(
         testdata_root / "ascon" / "asconhash.blb",
@@ -99,7 +102,10 @@ def generate_ascon(testdata_root: Path) -> None:
 
     src = glob.glob(os.path.expanduser("~/.cargo/registry/src/index.crates.io-*/ascon-hash256-0.5.0-rc.0/tests/data/asconxof.txt"))
     if not src:
-        raise RuntimeError("could not find ascon-hash256 xof vector source in ~/.cargo/registry")
+        src = glob.glob(os.path.expanduser("~/.cargo/registry/src/index.crates.io-*/ascon-hash256-0.5.0-rc.2/tests/data/asconxof.txt"))
+    if not src:
+        print("warning: skipping Ascon XOF vector regeneration; upstream ascon-hash256 sources not found in ~/.cargo/registry")
+        return
     xof_pairs = parse_nist_msg_md(Path(src[0]))
     write_blb(
         testdata_root / "ascon" / "asconxof.blb",

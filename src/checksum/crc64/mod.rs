@@ -917,6 +917,7 @@ impl crate::checksum::introspect::KernelIntrospect for Crc64Nvme {
 
 #[cfg(test)]
 mod tests {
+  extern crate alloc;
   extern crate std;
 
   use alloc::vec::Vec;
@@ -1268,6 +1269,7 @@ mod tests {
   // Buffered CRC Tests
   // ─────────────────────────────────────────────────────────────────────────────
 
+  #[cfg(feature = "alloc")]
   #[test]
   fn test_buffered_crc64_xz_matches_unbuffered() {
     let data = b"The quick brown fox jumps over the lazy dog";
@@ -1278,6 +1280,7 @@ mod tests {
     assert_eq!(buffered.finalize(), expected);
   }
 
+  #[cfg(feature = "alloc")]
   #[test]
   fn test_buffered_crc64_xz_single_byte_updates() {
     let data = b"123456789";
@@ -1290,6 +1293,7 @@ mod tests {
     assert_eq!(buffered.finalize(), expected);
   }
 
+  #[cfg(feature = "alloc")]
   #[test]
   fn test_buffered_crc64_xz_mixed_sizes() {
     // Generate test data
@@ -1316,6 +1320,7 @@ mod tests {
     assert_eq!(buffered.finalize(), expected);
   }
 
+  #[cfg(feature = "alloc")]
   #[test]
   fn test_buffered_crc64_nvme_matches_unbuffered() {
     let data = b"The quick brown fox jumps over the lazy dog";
@@ -1326,6 +1331,7 @@ mod tests {
     assert_eq!(buffered.finalize(), expected);
   }
 
+  #[cfg(feature = "alloc")]
   #[test]
   fn test_buffered_crc64_nvme_single_byte_updates() {
     let data = b"123456789";
@@ -1338,6 +1344,7 @@ mod tests {
     assert_eq!(buffered.finalize(), expected);
   }
 
+  #[cfg(feature = "alloc")]
   #[test]
   fn test_buffered_crc64_reset() {
     let data1 = b"hello";
@@ -1351,12 +1358,14 @@ mod tests {
     assert_eq!(buffered.finalize(), Crc64::checksum(data2));
   }
 
+  #[cfg(feature = "alloc")]
   #[test]
   fn test_buffered_crc64_empty() {
     let buffered = BufferedCrc64::new();
     assert_eq!(buffered.finalize(), Crc64::checksum(&[]));
   }
 
+  #[cfg(feature = "alloc")]
   #[test]
   fn test_buffered_crc64_finalize_is_idempotent() {
     let data = b"test data";

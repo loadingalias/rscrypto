@@ -1,3 +1,5 @@
+#![cfg(feature = "hashes")]
+
 use digest::dev::blobby::Blob2Iterator;
 use rscrypto::hashes::crypto::{Sha224, Sha384, Sha512, Sha512_256};
 

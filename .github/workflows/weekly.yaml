@@ -85,14 +85,15 @@ jobs:
       timeout_minutes: 45
       setup_kind: default
       cache_key: weekly-${{ matrix.target.name }}
-      tools_mode: ${{ contains(matrix.target.name, 'windows-msvc') && 'none' || 'standard' }}
-      toolchain_components: ${{ contains(matrix.target.name, 'windows-msvc') && '' || 'clippy, rustfmt, rust-src' }}
+      tools_mode: ${{ contains(matrix.target.name, 'windows-msvc') && 'minimal' || 'standard' }}
+      toolchain_components: "clippy, rustfmt, rust-src"
       run_script: |
         case "${{ matrix.target.name }}" in
           *windows-msvc)
-            echo "Windows weekly lane: compile-only smoke"
-            cargo check --workspace --all-targets --all-features
-            cargo test --workspace --all-features --no-run
+            echo "Windows weekly lane: full end-to-end validation"
+            just ci-check
+            just build
+            just test --all
             ;;
           *)
             just ci-check
@@ -101,7 +102,7 @@ jobs:
               just test --all
             else
               export RAIL_SINCE="${{ needs.rail-plan.outputs.base_ref }}"
-              just test
+              just test-changed
             fi
             ;;
         esac

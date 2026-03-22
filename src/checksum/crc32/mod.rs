@@ -900,6 +900,7 @@ impl crate::checksum::introspect::KernelIntrospect for Crc32C {
 
 #[cfg(test)]
 mod tests {
+  extern crate alloc;
   extern crate std;
 
   use alloc::{string::String, vec::Vec};

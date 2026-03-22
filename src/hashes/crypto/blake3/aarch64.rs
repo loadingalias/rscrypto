@@ -16,7 +16,6 @@
 //! to be present. Callers must verify CPU capabilities before calling.
 
 #![allow(unsafe_code)]
-#![allow(unsafe_op_in_unsafe_fn)]
 #![allow(clippy::inline_always)]
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::many_single_char_names)]
@@ -84,27 +83,30 @@ unsafe fn chunk_compress_blocks_asm(
   blocks_compressed: *mut u8,
   num_blocks: usize,
 ) {
-  #[cfg(target_os = "linux")]
-  {
-    asm::rscrypto_blake3_chunk_compress_blocks_aarch64_unix_linux(
-      blocks,
-      chaining_value,
-      chunk_counter,
-      flags,
-      blocks_compressed,
-      num_blocks,
-    );
-  }
-  #[cfg(target_os = "macos")]
-  {
-    asm::rscrypto_blake3_chunk_compress_blocks_aarch64_apple_darwin(
-      blocks,
-      chaining_value,
-      chunk_counter,
-      flags,
-      blocks_compressed,
-      num_blocks,
-    );
+  // SAFETY: ASM routines require NEON, ensured by this function's #[target_feature] attribute.
+  unsafe {
+    #[cfg(target_os = "linux")]
+    {
+      asm::rscrypto_blake3_chunk_compress_blocks_aarch64_unix_linux(
+        blocks,
+        chaining_value,
+        chunk_counter,
+        flags,
+        blocks_compressed,
+        num_blocks,
+      );
+    }
+    #[cfg(target_os = "macos")]
+    {
+      asm::rscrypto_blake3_chunk_compress_blocks_aarch64_apple_darwin(
+        blocks,
+        chaining_value,
+        chunk_counter,
+        flags,
+        blocks_compressed,
+        num_blocks,
+      );
+    }
   }
 }
 
@@ -121,9 +123,12 @@ static ROT8_TABLE: [u8; 16] = [1, 2, 3, 0, 5, 6, 7, 4, 9, 10, 11, 8, 13, 14, 15,
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
 unsafe fn rotr16(v: uint32x4_t) -> uint32x4_t {
-  let v16 = vreinterpretq_u16_u32(v);
-  let rotated = vrev32q_u16(v16);
-  vreinterpretq_u32_u16(rotated)
+  // SAFETY: NEON intrinsics are available via this function's #[target_feature] attribute.
+  unsafe {
+    let v16 = vreinterpretq_u16_u32(v);
+    let rotated = vrev32q_u16(v16);
+    vreinterpretq_u32_u16(rotated)
+  }
 }
 
 /// Rotate right by 12 bits (each u32 lane).
@@ -135,7 +140,8 @@ unsafe fn rotr12(v: uint32x4_t) -> uint32x4_t {
   //
   // Use "shift-left-insert" to form the OR without an extra instruction.
   // This maps to a single `vsli` on aarch64.
-  vsliq_n_u32(vshrq_n_u32(v, 12), v, 20)
+  // SAFETY: NEON intrinsics are available via this function's #[target_feature] attribute.
+  unsafe { vsliq_n_u32(vshrq_n_u32(v, 12), v, 20) }
 }
 
 /// Rotate right by 8 bits (each u32 lane).
@@ -143,9 +149,12 @@ unsafe fn rotr12(v: uint32x4_t) -> uint32x4_t {
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
 unsafe fn rotr8_tbl(v: uint32x4_t, tbl: uint8x16_t) -> uint32x4_t {
-  let bytes = vreinterpretq_u8_u32(v);
-  let rotated = vqtbl1q_u8(bytes, tbl);
-  vreinterpretq_u32_u8(rotated)
+  // SAFETY: NEON intrinsics are available via this function's #[target_feature] attribute.
+  unsafe {
+    let bytes = vreinterpretq_u8_u32(v);
+    let rotated = vqtbl1q_u8(bytes, tbl);
+    vreinterpretq_u32_u8(rotated)
+  }
 }
 
 /// Rotate right by 8 bits (each u32 lane), shift/or variant.
@@ -156,7 +165,8 @@ unsafe fn rotr8_tbl(v: uint32x4_t, tbl: uint8x16_t) -> uint32x4_t {
 #[inline(always)]
 unsafe fn rotr8(v: uint32x4_t) -> uint32x4_t {
   // rotr(x, 8) = (x >> 8) | (x << 24)
-  vsliq_n_u32(vshrq_n_u32(v, 8), v, 24)
+  // SAFETY: NEON intrinsics are available via this function's #[target_feature] attribute.
+  unsafe { vsliq_n_u32(vshrq_n_u32(v, 8), v, 24) }
 }
 
 /// Rotate right by 7 bits (each u32 lane).
@@ -167,7 +177,8 @@ unsafe fn rotr7(v: uint32x4_t) -> uint32x4_t {
   // rotr(x, 7) = (x >> 7) | (x << 25)
   //
   // Use "shift-left-insert" to form the OR without an extra instruction.
-  vsliq_n_u32(vshrq_n_u32(v, 7), v, 25)
+  // SAFETY: NEON intrinsics are available via this function's #[target_feature] attribute.
+  unsafe { vsliq_n_u32(vshrq_n_u32(v, 7), v, 25) }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -178,21 +189,24 @@ unsafe fn rotr7(v: uint32x4_t) -> uint32x4_t {
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
 unsafe fn rot_lanes_left_1(v: uint32x4_t) -> uint32x4_t {
-  vextq_u32(v, v, 1)
+  // SAFETY: NEON intrinsics are available via this function's #[target_feature] attribute.
+  unsafe { vextq_u32(v, v, 1) }
 }
 
 /// Rotate lanes left by 2: [a, b, c, d] -> [c, d, a, b]
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
 unsafe fn rot_lanes_left_2(v: uint32x4_t) -> uint32x4_t {
-  vextq_u32(v, v, 2)
+  // SAFETY: NEON intrinsics are available via this function's #[target_feature] attribute.
+  unsafe { vextq_u32(v, v, 2) }
 }
 
 /// Rotate lanes left by 3: [a, b, c, d] -> [d, a, b, c]
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
 unsafe fn rot_lanes_left_3(v: uint32x4_t) -> uint32x4_t {
-  vextq_u32(v, v, 3)
+  // SAFETY: NEON intrinsics are available via this function's #[target_feature] attribute.
+  unsafe { vextq_u32(v, v, 3) }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -220,15 +234,18 @@ unsafe fn rot_lanes_left_3(v: uint32x4_t) -> uint32x4_t {
 #[inline(always)]
 #[allow(dead_code)]
 unsafe fn transpose_vecs(vecs: &mut [uint32x4_t; 4]) {
-  // Step 1: Transpose 2x2 sub-matrices using vtrnq_u32
-  let rows01 = vtrnq_u32(vecs[0], vecs[1]);
-  let rows23 = vtrnq_u32(vecs[2], vecs[3]);
+  // SAFETY: NEON intrinsics are available via this function's #[target_feature] attribute.
+  unsafe {
+    // Step 1: Transpose 2x2 sub-matrices using vtrnq_u32
+    let rows01 = vtrnq_u32(vecs[0], vecs[1]);
+    let rows23 = vtrnq_u32(vecs[2], vecs[3]);
 
-  // Step 2: Swap top-right and bottom-left 2x2 blocks
-  vecs[0] = vcombine_u32(vget_low_u32(rows01.0), vget_low_u32(rows23.0));
-  vecs[1] = vcombine_u32(vget_low_u32(rows01.1), vget_low_u32(rows23.1));
-  vecs[2] = vcombine_u32(vget_high_u32(rows01.0), vget_high_u32(rows23.0));
-  vecs[3] = vcombine_u32(vget_high_u32(rows01.1), vget_high_u32(rows23.1));
+    // Step 2: Swap top-right and bottom-left 2x2 blocks
+    vecs[0] = vcombine_u32(vget_low_u32(rows01.0), vget_low_u32(rows23.0));
+    vecs[1] = vcombine_u32(vget_low_u32(rows01.1), vget_low_u32(rows23.1));
+    vecs[2] = vcombine_u32(vget_high_u32(rows01.0), vget_high_u32(rows23.0));
+    vecs[3] = vcombine_u32(vget_high_u32(rows01.1), vget_high_u32(rows23.1));
+  }
 }
 
 /// Load and transpose message words from 4 input blocks.
@@ -245,51 +262,59 @@ unsafe fn load_msg_vecs_transposed(inputs: [*const u8; 4], block_offset: usize, 
 
   #[inline(always)]
   unsafe fn loadu_128(src: *const u8) -> uint32x4_t {
-    // `vld1q_u8` has no alignment requirements.
-    vreinterpretq_u32_u8(vld1q_u8(src))
+    // SAFETY: NEON intrinsics and pointer ops are sound: intrinsics require NEON via #[target_feature],
+    // pointers are within bounds of caller-provided slices.
+    unsafe {
+      // `vld1q_u8` has no alignment requirements.
+      vreinterpretq_u32_u8(vld1q_u8(src))
+    }
   }
 
-  // Fast path: full 64-byte block.
-  if block_len == BLOCK_LEN {
+  // SAFETY: NEON intrinsics and pointer ops are sound: intrinsics require NEON via #[target_feature],
+  // pointers are within bounds of caller-provided slices.
+  unsafe {
+    // Fast path: full 64-byte block.
+    if block_len == BLOCK_LEN {
+      let mut out = [vdupq_n_u32(0); 16];
+
+      // Load four 16-byte chunks per input and transpose each 4x4.
+      for lane_block in 0..4 {
+        let off = block_offset + lane_block * 16;
+        let mut vecs = [
+          loadu_128(inputs[0].add(off)),
+          loadu_128(inputs[1].add(off)),
+          loadu_128(inputs[2].add(off)),
+          loadu_128(inputs[3].add(off)),
+        ];
+        transpose_vecs(&mut vecs);
+        out[lane_block * 4] = vecs[0];
+        out[lane_block * 4 + 1] = vecs[1];
+        out[lane_block * 4 + 2] = vecs[2];
+        out[lane_block * 4 + 3] = vecs[3];
+      }
+
+      return out;
+    }
+
+    // Slow path: pad partial blocks to 64 bytes before loading.
+    let mut msg_words = [[0u32; 4]; 16];
+    for (lane, &input) in inputs.iter().enumerate() {
+      let mut block = [0u8; BLOCK_LEN];
+      if block_len != 0 {
+        core::ptr::copy_nonoverlapping(input.add(block_offset), block.as_mut_ptr(), block_len);
+      }
+      let words = words16_from_le_bytes_64(&block);
+      for j in 0..16 {
+        msg_words[j][lane] = words[j];
+      }
+    }
+
     let mut out = [vdupq_n_u32(0); 16];
-
-    // Load four 16-byte chunks per input and transpose each 4x4.
-    for lane_block in 0..4 {
-      let off = block_offset + lane_block * 16;
-      let mut vecs = [
-        loadu_128(inputs[0].add(off)),
-        loadu_128(inputs[1].add(off)),
-        loadu_128(inputs[2].add(off)),
-        loadu_128(inputs[3].add(off)),
-      ];
-      transpose_vecs(&mut vecs);
-      out[lane_block * 4] = vecs[0];
-      out[lane_block * 4 + 1] = vecs[1];
-      out[lane_block * 4 + 2] = vecs[2];
-      out[lane_block * 4 + 3] = vecs[3];
+    for i in 0..16 {
+      out[i] = vld1q_u32(msg_words[i].as_ptr());
     }
-
-    return out;
+    out
   }
-
-  // Slow path: pad partial blocks to 64 bytes before loading.
-  let mut msg_words = [[0u32; 4]; 16];
-  for (lane, &input) in inputs.iter().enumerate() {
-    let mut block = [0u8; BLOCK_LEN];
-    if block_len != 0 {
-      core::ptr::copy_nonoverlapping(input.add(block_offset), block.as_mut_ptr(), block_len);
-    }
-    let words = words16_from_le_bytes_64(&block);
-    for j in 0..16 {
-      msg_words[j][lane] = words[j];
-    }
-  }
-
-  let mut out = [vdupq_n_u32(0); 16];
-  for i in 0..16 {
-    out[i] = vld1q_u32(msg_words[i].as_ptr());
-  }
-  out
 }
 
 /// Load and transpose message words for 4 contiguous chunks.
@@ -313,33 +338,41 @@ unsafe fn load_msg_vecs_transposed_contiguous(base: *const u8, block_offset: usi
 
   #[inline(always)]
   unsafe fn loadu_128(src: *const u8) -> uint32x4_t {
-    // `vld1q_u8` has no alignment requirements.
-    vreinterpretq_u32_u8(vld1q_u8(src))
+    // SAFETY: NEON intrinsics and pointer ops are sound: intrinsics require NEON via #[target_feature],
+    // pointers are within bounds of caller-provided slices.
+    unsafe {
+      // `vld1q_u8` has no alignment requirements.
+      vreinterpretq_u32_u8(vld1q_u8(src))
+    }
   }
 
-  let mut out = [vdupq_n_u32(0); 16];
-  macro_rules! load_and_transpose {
-    ($dst:expr, $off:expr) => {{
-      let off = block_offset + $off;
-      let mut vecs = [
-        loadu_128(base.add(off)),
-        loadu_128(base.add(CHUNK_LEN + off)),
-        loadu_128(base.add(2 * CHUNK_LEN + off)),
-        loadu_128(base.add(3 * CHUNK_LEN + off)),
-      ];
-      transpose_vecs(&mut vecs);
-      out[$dst] = vecs[0];
-      out[$dst + 1] = vecs[1];
-      out[$dst + 2] = vecs[2];
-      out[$dst + 3] = vecs[3];
-    }};
-  }
+  // SAFETY: NEON intrinsics and pointer ops are sound: intrinsics require NEON via #[target_feature],
+  // pointers are within bounds of caller-provided slices.
+  unsafe {
+    let mut out = [vdupq_n_u32(0); 16];
+    macro_rules! load_and_transpose {
+      ($dst:expr, $off:expr) => {{
+        let off = block_offset + $off;
+        let mut vecs = [
+          loadu_128(base.add(off)),
+          loadu_128(base.add(CHUNK_LEN + off)),
+          loadu_128(base.add(2 * CHUNK_LEN + off)),
+          loadu_128(base.add(3 * CHUNK_LEN + off)),
+        ];
+        transpose_vecs(&mut vecs);
+        out[$dst] = vecs[0];
+        out[$dst + 1] = vecs[1];
+        out[$dst + 2] = vecs[2];
+        out[$dst + 3] = vecs[3];
+      }};
+    }
 
-  load_and_transpose!(0, 0);
-  load_and_transpose!(4, 16);
-  load_and_transpose!(8, 32);
-  load_and_transpose!(12, 48);
-  out
+    load_and_transpose!(0, 0);
+    load_and_transpose!(4, 16);
+    load_and_transpose!(8, 32);
+    load_and_transpose!(12, 48);
+    out
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -350,9 +383,12 @@ unsafe fn load_msg_vecs_transposed_contiguous(base: *const u8, block_offset: usi
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
 unsafe fn concat_low64_u32(a: uint32x4_t, b: uint32x4_t) -> uint32x4_t {
-  let a64 = vreinterpretq_u64_u32(a);
-  let b64 = vreinterpretq_u64_u32(b);
-  vreinterpretq_u32_u64(vcombine_u64(vget_low_u64(a64), vget_low_u64(b64)))
+  // SAFETY: NEON intrinsics are available via this function's #[target_feature] attribute.
+  unsafe {
+    let a64 = vreinterpretq_u64_u32(a);
+    let b64 = vreinterpretq_u64_u32(b);
+    vreinterpretq_u32_u64(vcombine_u64(vget_low_u64(a64), vget_low_u64(b64)))
+  }
 }
 
 /// Message word permutation for BLAKE3.
@@ -366,29 +402,32 @@ unsafe fn concat_low64_u32(a: uint32x4_t, b: uint32x4_t) -> uint32x4_t {
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
 unsafe fn permute_msg(m0: uint32x4_t, m1: uint32x4_t, m2: uint32x4_t, m3: uint32x4_t) -> [uint32x4_t; 4] {
-  // Rotations within each 4-word vector.
-  let m0r1 = vextq_u32(m0, m0, 1);
-  let m0r2 = vextq_u32(m0, m0, 2);
-  let m0r3 = vextq_u32(m0, m0, 3);
+  // SAFETY: NEON intrinsics are available via this function's #[target_feature] attribute.
+  unsafe {
+    // Rotations within each 4-word vector.
+    let m0r1 = vextq_u32(m0, m0, 1);
+    let m0r2 = vextq_u32(m0, m0, 2);
+    let m0r3 = vextq_u32(m0, m0, 3);
 
-  let m1r1 = vextq_u32(m1, m1, 1);
-  let m1r2 = vextq_u32(m1, m1, 2);
-  let m1r3 = vextq_u32(m1, m1, 3);
+    let m1r1 = vextq_u32(m1, m1, 1);
+    let m1r2 = vextq_u32(m1, m1, 2);
+    let m1r3 = vextq_u32(m1, m1, 3);
 
-  let m2r1 = vextq_u32(m2, m2, 1);
-  let m2r2 = vextq_u32(m2, m2, 2);
-  let m2r3 = vextq_u32(m2, m2, 3);
+    let m2r1 = vextq_u32(m2, m2, 1);
+    let m2r2 = vextq_u32(m2, m2, 2);
+    let m2r3 = vextq_u32(m2, m2, 3);
 
-  let m3r1 = vextq_u32(m3, m3, 1);
-  let m3r2 = vextq_u32(m3, m3, 2);
-  let m3r3 = vextq_u32(m3, m3, 3);
+    let m3r1 = vextq_u32(m3, m3, 1);
+    let m3r2 = vextq_u32(m3, m3, 2);
+    let m3r3 = vextq_u32(m3, m3, 3);
 
-  // Build each output vector as two 64-bit lanes (2x u32).
-  let p0 = concat_low64_u32(vzip1q_u32(m0r2, m1r2), vzip1q_u32(m0r3, m2r2)); // [2,6,3,10]
-  let p1 = concat_low64_u32(vzip1q_u32(m1r3, m0), vzip1q_u32(m1, m3r1)); // [7,0,4,13]
-  let p2 = concat_low64_u32(vzip1q_u32(m0r1, m2r3), vzip1q_u32(m3, m1r1)); // [1,11,12,5]
-  let p3 = concat_low64_u32(vzip1q_u32(m2r1, m3r2), vzip1q_u32(m3r3, m2)); // [9,14,15,8]
-  [p0, p1, p2, p3]
+    // Build each output vector as two 64-bit lanes (2x u32).
+    let p0 = concat_low64_u32(vzip1q_u32(m0r2, m1r2), vzip1q_u32(m0r3, m2r2)); // [2,6,3,10]
+    let p1 = concat_low64_u32(vzip1q_u32(m1r3, m0), vzip1q_u32(m1, m3r1)); // [7,0,4,13]
+    let p2 = concat_low64_u32(vzip1q_u32(m0r1, m2r3), vzip1q_u32(m3, m1r1)); // [1,11,12,5]
+    let p3 = concat_low64_u32(vzip1q_u32(m2r1, m3r2), vzip1q_u32(m3r3, m2)); // [9,14,15,8]
+    [p0, p1, p2, p3]
+  }
 }
 
 #[cfg(target_arch = "aarch64")]
@@ -408,90 +447,98 @@ unsafe fn compress_neon_core(
     );
   }
 
-  // Load state into 4 vectors (rows of the BLAKE3 state matrix)
-  let mut row0 = vld1q_u32(chaining_value.as_ptr());
-  let mut row1 = vld1q_u32(chaining_value.as_ptr().add(4));
-  let mut row2 = vld1q_u32(IV.as_ptr());
-
-  // Build row3 from counter, block_len, and flags.
-  let counter_lo = counter as u32;
-  let counter_hi = (counter >> 32) as u32;
-  let row3_arr: [u32; 4] = [counter_lo, counter_hi, block_len, flags];
-  let mut row3 = vld1q_u32(row3_arr.as_ptr());
-
   #[inline(always)]
   unsafe fn loadu_u32x4(src: *const u8) -> uint32x4_t {
-    // Load as bytes to avoid alignment requirements. The BLAKE3 message block
-    // can be arbitrarily aligned (e.g., buffered `[u8; 64]` on the stack).
-    vreinterpretq_u32_u8(vld1q_u8(src))
-  }
-
-  // Load message words into 4 vectors (standard order).
-  let mut m0 = loadu_u32x4(block);
-  let mut m1 = loadu_u32x4(block.add(16));
-  let mut m2 = loadu_u32x4(block.add(32));
-  let mut m3 = loadu_u32x4(block.add(48));
-
-  macro_rules! g {
-    ($a:expr, $b:expr, $c:expr, $d:expr, $mx:expr, $my:expr) => {{
-      $a = vaddq_u32($a, $b);
-      $a = vaddq_u32($a, $mx);
-      $d = veorq_u32($d, $a);
-      $d = rotr16($d);
-      $c = vaddq_u32($c, $d);
-      $b = veorq_u32($b, $c);
-      $b = rotr12($b);
-      $a = vaddq_u32($a, $b);
-      $a = vaddq_u32($a, $my);
-      $d = veorq_u32($d, $a);
-      $d = rotr8($d);
-      $c = vaddq_u32($c, $d);
-      $b = veorq_u32($b, $c);
-      $b = rotr7($b);
-    }};
-  }
-
-  macro_rules! round {
-    ($mx0:expr, $my0:expr, $mx1:expr, $my1:expr) => {{
-      // Column step
-      g!(row0, row1, row2, row3, $mx0, $my0);
-
-      // Diagonalize
-      row1 = rot_lanes_left_1(row1);
-      row2 = rot_lanes_left_2(row2);
-      row3 = rot_lanes_left_3(row3);
-
-      // Diagonal step
-      g!(row0, row1, row2, row3, $mx1, $my1);
-
-      // Undiagonalize
-      row1 = rot_lanes_left_3(row1);
-      row2 = rot_lanes_left_2(row2);
-      row3 = rot_lanes_left_1(row3);
-    }};
-  }
-
-  // Round 0 uses the message as-loaded. Between rounds, permute the message.
-  // For each round, build `(mx0,my0)` from words 0..7 and `(mx1,my1)` from 8..15.
-  for r in 0..7 {
-    let mx0 = vuzp1q_u32(m0, m1);
-    let my0 = vuzp2q_u32(m0, m1);
-    let mx1 = vuzp1q_u32(m2, m3);
-    let my1 = vuzp2q_u32(m2, m3);
-    round!(mx0, my0, mx1, my1);
-
-    if r != 6 {
-      let [p0, p1, p2, p3] = permute_msg(m0, m1, m2, m3);
-      m0 = p0;
-      m1 = p1;
-      m2 = p2;
-      m3 = p3;
+    // SAFETY: NEON intrinsics and pointer ops are sound: intrinsics require NEON via #[target_feature],
+    // pointers are within bounds of caller-provided slices.
+    unsafe {
+      // Load as bytes to avoid alignment requirements. The BLAKE3 message block
+      // can be arbitrarily aligned (e.g., buffered `[u8; 64]` on the stack).
+      vreinterpretq_u32_u8(vld1q_u8(src))
     }
   }
 
-  let cv_lo = vld1q_u32(chaining_value.as_ptr());
-  let cv_hi = vld1q_u32(chaining_value.as_ptr().add(4));
-  (row0, row1, row2, row3, cv_lo, cv_hi)
+  // SAFETY: NEON intrinsics and pointer ops are sound: intrinsics require NEON via #[target_feature],
+  // pointers are within bounds of caller-provided slices.
+  unsafe {
+    // Load state into 4 vectors (rows of the BLAKE3 state matrix)
+    let mut row0 = vld1q_u32(chaining_value.as_ptr());
+    let mut row1 = vld1q_u32(chaining_value.as_ptr().add(4));
+    let mut row2 = vld1q_u32(IV.as_ptr());
+
+    // Build row3 from counter, block_len, and flags.
+    let counter_lo = counter as u32;
+    let counter_hi = (counter >> 32) as u32;
+    let row3_arr: [u32; 4] = [counter_lo, counter_hi, block_len, flags];
+    let mut row3 = vld1q_u32(row3_arr.as_ptr());
+
+    // Load message words into 4 vectors (standard order).
+    let mut m0 = loadu_u32x4(block);
+    let mut m1 = loadu_u32x4(block.add(16));
+    let mut m2 = loadu_u32x4(block.add(32));
+    let mut m3 = loadu_u32x4(block.add(48));
+
+    macro_rules! g {
+      ($a:expr, $b:expr, $c:expr, $d:expr, $mx:expr, $my:expr) => {{
+        $a = vaddq_u32($a, $b);
+        $a = vaddq_u32($a, $mx);
+        $d = veorq_u32($d, $a);
+        $d = rotr16($d);
+        $c = vaddq_u32($c, $d);
+        $b = veorq_u32($b, $c);
+        $b = rotr12($b);
+        $a = vaddq_u32($a, $b);
+        $a = vaddq_u32($a, $my);
+        $d = veorq_u32($d, $a);
+        $d = rotr8($d);
+        $c = vaddq_u32($c, $d);
+        $b = veorq_u32($b, $c);
+        $b = rotr7($b);
+      }};
+    }
+
+    macro_rules! round {
+      ($mx0:expr, $my0:expr, $mx1:expr, $my1:expr) => {{
+        // Column step
+        g!(row0, row1, row2, row3, $mx0, $my0);
+
+        // Diagonalize
+        row1 = rot_lanes_left_1(row1);
+        row2 = rot_lanes_left_2(row2);
+        row3 = rot_lanes_left_3(row3);
+
+        // Diagonal step
+        g!(row0, row1, row2, row3, $mx1, $my1);
+
+        // Undiagonalize
+        row1 = rot_lanes_left_3(row1);
+        row2 = rot_lanes_left_2(row2);
+        row3 = rot_lanes_left_1(row3);
+      }};
+    }
+
+    // Round 0 uses the message as-loaded. Between rounds, permute the message.
+    // For each round, build `(mx0,my0)` from words 0..7 and `(mx1,my1)` from 8..15.
+    for r in 0..7 {
+      let mx0 = vuzp1q_u32(m0, m1);
+      let my0 = vuzp2q_u32(m0, m1);
+      let mx1 = vuzp1q_u32(m2, m3);
+      let my1 = vuzp2q_u32(m2, m3);
+      round!(mx0, my0, mx1, my1);
+
+      if r != 6 {
+        let [p0, p1, p2, p3] = permute_msg(m0, m1, m2, m3);
+        m0 = p0;
+        m1 = p1;
+        m2 = p2;
+        m3 = p3;
+      }
+    }
+
+    let cv_lo = vld1q_u32(chaining_value.as_ptr());
+    let cv_hi = vld1q_u32(chaining_value.as_ptr().add(4));
+    (row0, row1, row2, row3, cv_lo, cv_hi)
+  }
 }
 
 /// BLAKE3 compress function using NEON intrinsics.
@@ -508,8 +555,9 @@ pub(crate) unsafe fn compress_neon(
   block_len: u32,
   flags: u32,
 ) -> [u32; 16] {
-  // SAFETY: `block_words` is exactly 16 u32s, i.e. 64 bytes.
-  compress_neon_bytes(chaining_value, block_words.as_ptr().cast(), counter, block_len, flags)
+  // SAFETY: NEON intrinsics and pointer ops are sound: intrinsics require NEON via #[target_feature],
+  // pointers are within bounds of caller-provided slices.
+  unsafe { compress_neon_bytes(chaining_value, block_words.as_ptr().cast(), counter, block_len, flags) }
 }
 
 #[cfg(target_arch = "aarch64")]
@@ -521,21 +569,25 @@ unsafe fn compress_neon_bytes(
   block_len: u32,
   flags: u32,
 ) -> [u32; 16] {
-  let (mut row0, mut row1, mut row2, mut row3, cv_lo, cv_hi) =
-    compress_neon_core(chaining_value, block, counter, block_len, flags);
+  // SAFETY: NEON intrinsics and pointer ops are sound: intrinsics require NEON via #[target_feature],
+  // pointers are within bounds of caller-provided slices.
+  unsafe {
+    let (mut row0, mut row1, mut row2, mut row3, cv_lo, cv_hi) =
+      compress_neon_core(chaining_value, block, counter, block_len, flags);
 
-  row0 = veorq_u32(row0, row2);
-  row1 = veorq_u32(row1, row3);
-  row2 = veorq_u32(row2, cv_lo);
-  row3 = veorq_u32(row3, cv_hi);
+    row0 = veorq_u32(row0, row2);
+    row1 = veorq_u32(row1, row3);
+    row2 = veorq_u32(row2, cv_lo);
+    row3 = veorq_u32(row3, cv_hi);
 
-  // Store result
-  let mut out = [0u32; 16];
-  vst1q_u32(out.as_mut_ptr(), row0);
-  vst1q_u32(out.as_mut_ptr().add(4), row1);
-  vst1q_u32(out.as_mut_ptr().add(8), row2);
-  vst1q_u32(out.as_mut_ptr().add(12), row3);
-  out
+    // Store result
+    let mut out = [0u32; 16];
+    vst1q_u32(out.as_mut_ptr(), row0);
+    vst1q_u32(out.as_mut_ptr().add(4), row1);
+    vst1q_u32(out.as_mut_ptr().add(8), row2);
+    vst1q_u32(out.as_mut_ptr().add(12), row3);
+    out
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -559,28 +611,31 @@ unsafe fn g4(
   my: uint32x4_t,
   rot8_tbl: uint8x16_t,
 ) {
-  // a = a + b + mx
-  v[a] = vaddq_u32(v[a], v[b]);
-  v[a] = vaddq_u32(v[a], mx);
-  // d = (d ^ a) >>> 16
-  v[d] = veorq_u32(v[d], v[a]);
-  v[d] = rotr16(v[d]);
-  // c = c + d
-  v[c] = vaddq_u32(v[c], v[d]);
-  // b = (b ^ c) >>> 12
-  v[b] = veorq_u32(v[b], v[c]);
-  v[b] = rotr12(v[b]);
-  // a = a + b + my
-  v[a] = vaddq_u32(v[a], v[b]);
-  v[a] = vaddq_u32(v[a], my);
-  // d = (d ^ a) >>> 8
-  v[d] = veorq_u32(v[d], v[a]);
-  v[d] = rotr8_tbl(v[d], rot8_tbl);
-  // c = c + d
-  v[c] = vaddq_u32(v[c], v[d]);
-  // b = (b ^ c) >>> 7
-  v[b] = veorq_u32(v[b], v[c]);
-  v[b] = rotr7(v[b]);
+  // SAFETY: NEON intrinsics are available via this function's #[target_feature] attribute.
+  unsafe {
+    // a = a + b + mx
+    v[a] = vaddq_u32(v[a], v[b]);
+    v[a] = vaddq_u32(v[a], mx);
+    // d = (d ^ a) >>> 16
+    v[d] = veorq_u32(v[d], v[a]);
+    v[d] = rotr16(v[d]);
+    // c = c + d
+    v[c] = vaddq_u32(v[c], v[d]);
+    // b = (b ^ c) >>> 12
+    v[b] = veorq_u32(v[b], v[c]);
+    v[b] = rotr12(v[b]);
+    // a = a + b + my
+    v[a] = vaddq_u32(v[a], v[b]);
+    v[a] = vaddq_u32(v[a], my);
+    // d = (d ^ a) >>> 8
+    v[d] = veorq_u32(v[d], v[a]);
+    v[d] = rotr8_tbl(v[d], rot8_tbl);
+    // c = c + d
+    v[c] = vaddq_u32(v[c], v[d]);
+    // b = (b ^ c) >>> 7
+    v[b] = veorq_u32(v[b], v[c]);
+    v[b] = rotr7(v[b]);
+  }
 }
 
 /// One round of the parallel compression function for 4 chunks.
@@ -589,75 +644,79 @@ unsafe fn g4(
 unsafe fn round4(v: &mut [uint32x4_t; 16], m: &[uint32x4_t; 16], r: usize, rot8_tbl: uint8x16_t) {
   // `r` is always 0..7 in all callers.
   debug_assert!(r < MSG_SCHEDULE.len());
-  // SAFETY: `r < MSG_SCHEDULE.len()` (asserted above).
-  let s = MSG_SCHEDULE.get_unchecked(r);
+  // SAFETY: NEON intrinsics and pointer ops are sound: intrinsics require NEON via #[target_feature],
+  // pointers are within bounds of caller-provided slices.
+  unsafe {
+    // SAFETY: `r < MSG_SCHEDULE.len()` (asserted above).
+    let s = MSG_SCHEDULE.get_unchecked(r);
 
-  // Column step: G(0,4,8,12), G(1,5,9,13), G(2,6,10,14), G(3,7,11,15)
-  // SAFETY: `s` contains fixed schedule indices in 0..16, and `m` is `[T; 16]`.
-  g4(v, 0, 4, 8, 12, *m.get_unchecked(s[0]), *m.get_unchecked(s[1]), rot8_tbl);
-  g4(v, 1, 5, 9, 13, *m.get_unchecked(s[2]), *m.get_unchecked(s[3]), rot8_tbl);
-  g4(
-    v,
-    2,
-    6,
-    10,
-    14,
-    *m.get_unchecked(s[4]),
-    *m.get_unchecked(s[5]),
-    rot8_tbl,
-  );
-  g4(
-    v,
-    3,
-    7,
-    11,
-    15,
-    *m.get_unchecked(s[6]),
-    *m.get_unchecked(s[7]),
-    rot8_tbl,
-  );
+    // Column step: G(0,4,8,12), G(1,5,9,13), G(2,6,10,14), G(3,7,11,15)
+    // SAFETY: `s` contains fixed schedule indices in 0..16, and `m` is `[T; 16]`.
+    g4(v, 0, 4, 8, 12, *m.get_unchecked(s[0]), *m.get_unchecked(s[1]), rot8_tbl);
+    g4(v, 1, 5, 9, 13, *m.get_unchecked(s[2]), *m.get_unchecked(s[3]), rot8_tbl);
+    g4(
+      v,
+      2,
+      6,
+      10,
+      14,
+      *m.get_unchecked(s[4]),
+      *m.get_unchecked(s[5]),
+      rot8_tbl,
+    );
+    g4(
+      v,
+      3,
+      7,
+      11,
+      15,
+      *m.get_unchecked(s[6]),
+      *m.get_unchecked(s[7]),
+      rot8_tbl,
+    );
 
-  // Diagonal step: G(0,5,10,15), G(1,6,11,12), G(2,7,8,13), G(3,4,9,14)
-  g4(
-    v,
-    0,
-    5,
-    10,
-    15,
-    *m.get_unchecked(s[8]),
-    *m.get_unchecked(s[9]),
-    rot8_tbl,
-  );
-  g4(
-    v,
-    1,
-    6,
-    11,
-    12,
-    *m.get_unchecked(s[10]),
-    *m.get_unchecked(s[11]),
-    rot8_tbl,
-  );
-  g4(
-    v,
-    2,
-    7,
-    8,
-    13,
-    *m.get_unchecked(s[12]),
-    *m.get_unchecked(s[13]),
-    rot8_tbl,
-  );
-  g4(
-    v,
-    3,
-    4,
-    9,
-    14,
-    *m.get_unchecked(s[14]),
-    *m.get_unchecked(s[15]),
-    rot8_tbl,
-  );
+    // Diagonal step: G(0,5,10,15), G(1,6,11,12), G(2,7,8,13), G(3,4,9,14)
+    g4(
+      v,
+      0,
+      5,
+      10,
+      15,
+      *m.get_unchecked(s[8]),
+      *m.get_unchecked(s[9]),
+      rot8_tbl,
+    );
+    g4(
+      v,
+      1,
+      6,
+      11,
+      12,
+      *m.get_unchecked(s[10]),
+      *m.get_unchecked(s[11]),
+      rot8_tbl,
+    );
+    g4(
+      v,
+      2,
+      7,
+      8,
+      13,
+      *m.get_unchecked(s[12]),
+      *m.get_unchecked(s[13]),
+      rot8_tbl,
+    );
+    g4(
+      v,
+      3,
+      4,
+      9,
+      14,
+      *m.get_unchecked(s[14]),
+      *m.get_unchecked(s[15]),
+      rot8_tbl,
+    );
+  }
 }
 
 /// Hash 4 complete chunks in parallel.
@@ -693,123 +752,131 @@ pub(crate) unsafe fn hash4_neon(
 
   #[inline(always)]
   unsafe fn storeu_128(src: uint32x4_t, dest: *mut u8) {
-    vst1q_u8(dest, vreinterpretq_u8_u32(src));
+    // SAFETY: NEON intrinsics and pointer ops are sound: intrinsics require NEON via #[target_feature],
+    // pointers are within bounds of caller-provided slices.
+    unsafe {
+      vst1q_u8(dest, vreinterpretq_u8_u32(src));
+    }
   }
 
-  // CV vectors, lane = chunk.
-  let mut h_vecs = [
-    vdupq_n_u32(key[0]),
-    vdupq_n_u32(key[1]),
-    vdupq_n_u32(key[2]),
-    vdupq_n_u32(key[3]),
-    vdupq_n_u32(key[4]),
-    vdupq_n_u32(key[5]),
-    vdupq_n_u32(key[6]),
-    vdupq_n_u32(key[7]),
-  ];
-
-  // Counter vectors.
-  let (d0, d1, d2, d3) = if increment_counter {
-    (0u64, 1, 2, 3)
-  } else {
-    (0u64, 0, 0, 0)
-  };
-  let counter_low_vec = vld1q_u32(
-    [
-      (counter.wrapping_add(d0) as u32),
-      (counter.wrapping_add(d1) as u32),
-      (counter.wrapping_add(d2) as u32),
-      (counter.wrapping_add(d3) as u32),
-    ]
-    .as_ptr(),
-  );
-  let counter_high_vec = vld1q_u32(
-    [
-      ((counter.wrapping_add(d0) >> 32) as u32),
-      ((counter.wrapping_add(d1) >> 32) as u32),
-      ((counter.wrapping_add(d2) >> 32) as u32),
-      ((counter.wrapping_add(d3) >> 32) as u32),
-    ]
-    .as_ptr(),
-  );
-
-  // Process each block
-  let mut block_flags = flags | flags_start;
-  let rot8_tbl = vld1q_u8(ROT8_TABLE.as_ptr());
-  for block_idx in 0..num_blocks {
-    let block_offset = block_idx * BLOCK_LEN;
-    let is_last = block_idx == num_blocks - 1;
-
-    // Calculate block length for last block
-    let block_len = if is_last && !input_len.is_multiple_of(BLOCK_LEN) {
-      (input_len % BLOCK_LEN) as u32
-    } else {
-      BLOCK_LEN as u32
-    };
-
-    if is_last {
-      block_flags |= flags_end;
-    }
-
-    // Load and transpose message blocks (pads the last block if needed).
-    let msg = if contiguous_full_chunks {
-      load_msg_vecs_transposed_contiguous(inputs[0], block_offset)
-    } else {
-      load_msg_vecs_transposed(inputs, block_offset, block_len as usize)
-    };
-
-    let block_len_vec = vdupq_n_u32(block_len);
-    let block_flags_vec = vdupq_n_u32(block_flags);
-
-    let mut v = [
-      h_vecs[0],
-      h_vecs[1],
-      h_vecs[2],
-      h_vecs[3],
-      h_vecs[4],
-      h_vecs[5],
-      h_vecs[6],
-      h_vecs[7],
-      vdupq_n_u32(IV[0]),
-      vdupq_n_u32(IV[1]),
-      vdupq_n_u32(IV[2]),
-      vdupq_n_u32(IV[3]),
-      counter_low_vec,
-      counter_high_vec,
-      block_len_vec,
-      block_flags_vec,
+  // SAFETY: NEON intrinsics and pointer ops are sound: intrinsics require NEON via #[target_feature],
+  // pointers are within bounds of caller-provided slices.
+  unsafe {
+    // CV vectors, lane = chunk.
+    let mut h_vecs = [
+      vdupq_n_u32(key[0]),
+      vdupq_n_u32(key[1]),
+      vdupq_n_u32(key[2]),
+      vdupq_n_u32(key[3]),
+      vdupq_n_u32(key[4]),
+      vdupq_n_u32(key[5]),
+      vdupq_n_u32(key[6]),
+      vdupq_n_u32(key[7]),
     ];
 
-    round4(&mut v, &msg, 0, rot8_tbl);
-    round4(&mut v, &msg, 1, rot8_tbl);
-    round4(&mut v, &msg, 2, rot8_tbl);
-    round4(&mut v, &msg, 3, rot8_tbl);
-    round4(&mut v, &msg, 4, rot8_tbl);
-    round4(&mut v, &msg, 5, rot8_tbl);
-    round4(&mut v, &msg, 6, rot8_tbl);
+    // Counter vectors.
+    let (d0, d1, d2, d3) = if increment_counter {
+      (0u64, 1, 2, 3)
+    } else {
+      (0u64, 0, 0, 0)
+    };
+    let counter_low_vec = vld1q_u32(
+      [
+        (counter.wrapping_add(d0) as u32),
+        (counter.wrapping_add(d1) as u32),
+        (counter.wrapping_add(d2) as u32),
+        (counter.wrapping_add(d3) as u32),
+      ]
+      .as_ptr(),
+    );
+    let counter_high_vec = vld1q_u32(
+      [
+        ((counter.wrapping_add(d0) >> 32) as u32),
+        ((counter.wrapping_add(d1) >> 32) as u32),
+        ((counter.wrapping_add(d2) >> 32) as u32),
+        ((counter.wrapping_add(d3) >> 32) as u32),
+      ]
+      .as_ptr(),
+    );
 
-    h_vecs[0] = veorq_u32(v[0], v[8]);
-    h_vecs[1] = veorq_u32(v[1], v[9]);
-    h_vecs[2] = veorq_u32(v[2], v[10]);
-    h_vecs[3] = veorq_u32(v[3], v[11]);
-    h_vecs[4] = veorq_u32(v[4], v[12]);
-    h_vecs[5] = veorq_u32(v[5], v[13]);
-    h_vecs[6] = veorq_u32(v[6], v[14]);
-    h_vecs[7] = veorq_u32(v[7], v[15]);
+    // Process each block
+    let mut block_flags = flags | flags_start;
+    let rot8_tbl = vld1q_u8(ROT8_TABLE.as_ptr());
+    for block_idx in 0..num_blocks {
+      let block_offset = block_idx * BLOCK_LEN;
+      let is_last = block_idx == num_blocks - 1;
 
-    block_flags = flags;
-  }
+      // Calculate block length for last block
+      let block_len = if is_last && !input_len.is_multiple_of(BLOCK_LEN) {
+        (input_len % BLOCK_LEN) as u32
+      } else {
+        BLOCK_LEN as u32
+      };
 
-  // Transpose the CV vectors so we can store each output contiguously.
-  let mut lo = [h_vecs[0], h_vecs[1], h_vecs[2], h_vecs[3]];
-  let mut hi = [h_vecs[4], h_vecs[5], h_vecs[6], h_vecs[7]];
-  transpose_vecs(&mut lo);
-  transpose_vecs(&mut hi);
+      if is_last {
+        block_flags |= flags_end;
+      }
 
-  for lane in 0..4 {
-    let dst = out[lane].as_mut_ptr();
-    storeu_128(lo[lane], dst.add(0));
-    storeu_128(hi[lane], dst.add(16));
+      // Load and transpose message blocks (pads the last block if needed).
+      let msg = if contiguous_full_chunks {
+        load_msg_vecs_transposed_contiguous(inputs[0], block_offset)
+      } else {
+        load_msg_vecs_transposed(inputs, block_offset, block_len as usize)
+      };
+
+      let block_len_vec = vdupq_n_u32(block_len);
+      let block_flags_vec = vdupq_n_u32(block_flags);
+
+      let mut v = [
+        h_vecs[0],
+        h_vecs[1],
+        h_vecs[2],
+        h_vecs[3],
+        h_vecs[4],
+        h_vecs[5],
+        h_vecs[6],
+        h_vecs[7],
+        vdupq_n_u32(IV[0]),
+        vdupq_n_u32(IV[1]),
+        vdupq_n_u32(IV[2]),
+        vdupq_n_u32(IV[3]),
+        counter_low_vec,
+        counter_high_vec,
+        block_len_vec,
+        block_flags_vec,
+      ];
+
+      round4(&mut v, &msg, 0, rot8_tbl);
+      round4(&mut v, &msg, 1, rot8_tbl);
+      round4(&mut v, &msg, 2, rot8_tbl);
+      round4(&mut v, &msg, 3, rot8_tbl);
+      round4(&mut v, &msg, 4, rot8_tbl);
+      round4(&mut v, &msg, 5, rot8_tbl);
+      round4(&mut v, &msg, 6, rot8_tbl);
+
+      h_vecs[0] = veorq_u32(v[0], v[8]);
+      h_vecs[1] = veorq_u32(v[1], v[9]);
+      h_vecs[2] = veorq_u32(v[2], v[10]);
+      h_vecs[3] = veorq_u32(v[3], v[11]);
+      h_vecs[4] = veorq_u32(v[4], v[12]);
+      h_vecs[5] = veorq_u32(v[5], v[13]);
+      h_vecs[6] = veorq_u32(v[6], v[14]);
+      h_vecs[7] = veorq_u32(v[7], v[15]);
+
+      block_flags = flags;
+    }
+
+    // Transpose the CV vectors so we can store each output contiguously.
+    let mut lo = [h_vecs[0], h_vecs[1], h_vecs[2], h_vecs[3]];
+    let mut hi = [h_vecs[4], h_vecs[5], h_vecs[6], h_vecs[7]];
+    transpose_vecs(&mut lo);
+    transpose_vecs(&mut hi);
+
+    for lane in 0..4 {
+      let dst = out[lane].as_mut_ptr();
+      storeu_128(lo[lane], dst.add(0));
+      storeu_128(hi[lane], dst.add(16));
+    }
   }
 }
 
@@ -828,98 +895,106 @@ unsafe fn hash4_contiguous_full_chunks_neon_to_out(
 ) {
   #[inline(always)]
   unsafe fn storeu_128(src: uint32x4_t, dest: *mut u8) {
-    vst1q_u8(dest, vreinterpretq_u8_u32(src));
+    // SAFETY: NEON intrinsics and pointer ops are sound: intrinsics require NEON via #[target_feature],
+    // pointers are within bounds of caller-provided slices.
+    unsafe {
+      vst1q_u8(dest, vreinterpretq_u8_u32(src));
+    }
   }
 
-  let mut h_vecs = [
-    vdupq_n_u32(key[0]),
-    vdupq_n_u32(key[1]),
-    vdupq_n_u32(key[2]),
-    vdupq_n_u32(key[3]),
-    vdupq_n_u32(key[4]),
-    vdupq_n_u32(key[5]),
-    vdupq_n_u32(key[6]),
-    vdupq_n_u32(key[7]),
-  ];
-
-  let counter_low_vec = vld1q_u32(
-    [
-      counter as u32,
-      counter.wrapping_add(1) as u32,
-      counter.wrapping_add(2) as u32,
-      counter.wrapping_add(3) as u32,
-    ]
-    .as_ptr(),
-  );
-  let counter_high_vec = vld1q_u32(
-    [
-      (counter >> 32) as u32,
-      (counter.wrapping_add(1) >> 32) as u32,
-      (counter.wrapping_add(2) >> 32) as u32,
-      (counter.wrapping_add(3) >> 32) as u32,
-    ]
-    .as_ptr(),
-  );
-
-  let block_len_vec = vdupq_n_u32(BLOCK_LEN as u32);
-  let mut block_flags = flags | CHUNK_START;
-  let rot8_tbl = vld1q_u8(ROT8_TABLE.as_ptr());
-
-  for block_idx in 0..(CHUNK_LEN / BLOCK_LEN) {
-    if block_idx + 1 == (CHUNK_LEN / BLOCK_LEN) {
-      block_flags |= super::CHUNK_END;
-    }
-    let msg = load_msg_vecs_transposed_contiguous(input0, block_idx * BLOCK_LEN);
-    let block_flags_vec = vdupq_n_u32(block_flags);
-
-    let mut v = [
-      h_vecs[0],
-      h_vecs[1],
-      h_vecs[2],
-      h_vecs[3],
-      h_vecs[4],
-      h_vecs[5],
-      h_vecs[6],
-      h_vecs[7],
-      vdupq_n_u32(IV[0]),
-      vdupq_n_u32(IV[1]),
-      vdupq_n_u32(IV[2]),
-      vdupq_n_u32(IV[3]),
-      counter_low_vec,
-      counter_high_vec,
-      block_len_vec,
-      block_flags_vec,
+  // SAFETY: NEON intrinsics and pointer ops are sound: intrinsics require NEON via #[target_feature],
+  // pointers are within bounds of caller-provided slices.
+  unsafe {
+    let mut h_vecs = [
+      vdupq_n_u32(key[0]),
+      vdupq_n_u32(key[1]),
+      vdupq_n_u32(key[2]),
+      vdupq_n_u32(key[3]),
+      vdupq_n_u32(key[4]),
+      vdupq_n_u32(key[5]),
+      vdupq_n_u32(key[6]),
+      vdupq_n_u32(key[7]),
     ];
 
-    round4(&mut v, &msg, 0, rot8_tbl);
-    round4(&mut v, &msg, 1, rot8_tbl);
-    round4(&mut v, &msg, 2, rot8_tbl);
-    round4(&mut v, &msg, 3, rot8_tbl);
-    round4(&mut v, &msg, 4, rot8_tbl);
-    round4(&mut v, &msg, 5, rot8_tbl);
-    round4(&mut v, &msg, 6, rot8_tbl);
+    let counter_low_vec = vld1q_u32(
+      [
+        counter as u32,
+        counter.wrapping_add(1) as u32,
+        counter.wrapping_add(2) as u32,
+        counter.wrapping_add(3) as u32,
+      ]
+      .as_ptr(),
+    );
+    let counter_high_vec = vld1q_u32(
+      [
+        (counter >> 32) as u32,
+        (counter.wrapping_add(1) >> 32) as u32,
+        (counter.wrapping_add(2) >> 32) as u32,
+        (counter.wrapping_add(3) >> 32) as u32,
+      ]
+      .as_ptr(),
+    );
 
-    h_vecs[0] = veorq_u32(v[0], v[8]);
-    h_vecs[1] = veorq_u32(v[1], v[9]);
-    h_vecs[2] = veorq_u32(v[2], v[10]);
-    h_vecs[3] = veorq_u32(v[3], v[11]);
-    h_vecs[4] = veorq_u32(v[4], v[12]);
-    h_vecs[5] = veorq_u32(v[5], v[13]);
-    h_vecs[6] = veorq_u32(v[6], v[14]);
-    h_vecs[7] = veorq_u32(v[7], v[15]);
+    let block_len_vec = vdupq_n_u32(BLOCK_LEN as u32);
+    let mut block_flags = flags | CHUNK_START;
+    let rot8_tbl = vld1q_u8(ROT8_TABLE.as_ptr());
 
-    block_flags = flags;
-  }
+    for block_idx in 0..(CHUNK_LEN / BLOCK_LEN) {
+      if block_idx + 1 == (CHUNK_LEN / BLOCK_LEN) {
+        block_flags |= super::CHUNK_END;
+      }
+      let msg = load_msg_vecs_transposed_contiguous(input0, block_idx * BLOCK_LEN);
+      let block_flags_vec = vdupq_n_u32(block_flags);
 
-  let mut lo = [h_vecs[0], h_vecs[1], h_vecs[2], h_vecs[3]];
-  let mut hi = [h_vecs[4], h_vecs[5], h_vecs[6], h_vecs[7]];
-  transpose_vecs(&mut lo);
-  transpose_vecs(&mut hi);
+      let mut v = [
+        h_vecs[0],
+        h_vecs[1],
+        h_vecs[2],
+        h_vecs[3],
+        h_vecs[4],
+        h_vecs[5],
+        h_vecs[6],
+        h_vecs[7],
+        vdupq_n_u32(IV[0]),
+        vdupq_n_u32(IV[1]),
+        vdupq_n_u32(IV[2]),
+        vdupq_n_u32(IV[3]),
+        counter_low_vec,
+        counter_high_vec,
+        block_len_vec,
+        block_flags_vec,
+      ];
 
-  for lane in 0..4 {
-    let dst = out.add(lane * OUT_LEN);
-    storeu_128(lo[lane], dst.add(0));
-    storeu_128(hi[lane], dst.add(16));
+      round4(&mut v, &msg, 0, rot8_tbl);
+      round4(&mut v, &msg, 1, rot8_tbl);
+      round4(&mut v, &msg, 2, rot8_tbl);
+      round4(&mut v, &msg, 3, rot8_tbl);
+      round4(&mut v, &msg, 4, rot8_tbl);
+      round4(&mut v, &msg, 5, rot8_tbl);
+      round4(&mut v, &msg, 6, rot8_tbl);
+
+      h_vecs[0] = veorq_u32(v[0], v[8]);
+      h_vecs[1] = veorq_u32(v[1], v[9]);
+      h_vecs[2] = veorq_u32(v[2], v[10]);
+      h_vecs[3] = veorq_u32(v[3], v[11]);
+      h_vecs[4] = veorq_u32(v[4], v[12]);
+      h_vecs[5] = veorq_u32(v[5], v[13]);
+      h_vecs[6] = veorq_u32(v[6], v[14]);
+      h_vecs[7] = veorq_u32(v[7], v[15]);
+
+      block_flags = flags;
+    }
+
+    let mut lo = [h_vecs[0], h_vecs[1], h_vecs[2], h_vecs[3]];
+    let mut hi = [h_vecs[4], h_vecs[5], h_vecs[6], h_vecs[7]];
+    transpose_vecs(&mut lo);
+    transpose_vecs(&mut hi);
+
+    for lane in 0..4 {
+      let dst = out.add(lane * OUT_LEN);
+      storeu_128(lo[lane], dst.add(0));
+      storeu_128(hi[lane], dst.add(16));
+    }
   }
 }
 
@@ -932,30 +1007,34 @@ unsafe fn hash4_contiguous_full_chunks_neon_to_out(
 /// - `input` must point to exactly `CHUNK_LEN` readable bytes.
 #[inline]
 pub(crate) unsafe fn root_hash_one_chunk_root_aarch64(input: *const u8, key: &[u32; 8], flags: u32) -> [u8; OUT_LEN] {
-  #[cfg(any(target_os = "linux", target_os = "macos"))]
-  {
-    if can_use_asm_input(input) {
-      // The asm backend stores 32-bit words (`str wN, [...]`). Some Linux
-      // aarch64 environments enable strict alignment checking, and `[u8; 32]`
-      // has alignment 1 (so a stack slot is not guaranteed 4-byte aligned).
-      // Store into an aligned `[u32; 8]` scratch buffer and convert to bytes.
-      let mut out_words = [0u32; OUT_LEN / 4];
-      let out_ptr = out_words.as_mut_ptr().cast::<u8>();
-      #[cfg(target_os = "linux")]
-      asm::rscrypto_blake3_hash1_chunk_root_aarch64_unix_linux(input, key.as_ptr(), flags, out_ptr);
-      #[cfg(target_os = "macos")]
-      asm::rscrypto_blake3_hash1_chunk_root_aarch64_apple_darwin(input, key.as_ptr(), flags, out_ptr);
+  // SAFETY: NEON intrinsics and pointer ops are sound: intrinsics require NEON via #[target_feature],
+  // pointers are within bounds of caller-provided slices.
+  unsafe {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+      if can_use_asm_input(input) {
+        // The asm backend stores 32-bit words (`str wN, [...]`). Some Linux
+        // aarch64 environments enable strict alignment checking, and `[u8; 32]`
+        // has alignment 1 (so a stack slot is not guaranteed 4-byte aligned).
+        // Store into an aligned `[u32; 8]` scratch buffer and convert to bytes.
+        let mut out_words = [0u32; OUT_LEN / 4];
+        let out_ptr = out_words.as_mut_ptr().cast::<u8>();
+        #[cfg(target_os = "linux")]
+        asm::rscrypto_blake3_hash1_chunk_root_aarch64_unix_linux(input, key.as_ptr(), flags, out_ptr);
+        #[cfg(target_os = "macos")]
+        asm::rscrypto_blake3_hash1_chunk_root_aarch64_apple_darwin(input, key.as_ptr(), flags, out_ptr);
 
-      let mut out = [0u8; OUT_LEN];
-      for (j, word) in out_words.iter().copied().enumerate() {
-        out[j * 4..j * 4 + 4].copy_from_slice(&word.to_le_bytes());
+        let mut out = [0u8; OUT_LEN];
+        for (j, word) in out_words.iter().copied().enumerate() {
+          out[j * 4..j * 4 + 4].copy_from_slice(&word.to_le_bytes());
+        }
+        return out;
       }
-      return out;
     }
-  }
 
-  // Fallback: reuse the 4-lane NEON chunk kernel (duplicates lanes).
-  root_hash_one_chunk_neon(input, key, flags)
+    // Fallback: reuse the 4-lane NEON chunk kernel (duplicates lanes).
+    root_hash_one_chunk_neon(input, key, flags)
+  }
 }
 
 /// Hash exactly one full chunk (1024B) and write the resulting *chunk CV* bytes.
@@ -974,46 +1053,50 @@ pub(crate) unsafe fn chunk_cv_one_chunk_aarch64_out(
   flags: u32,
   out: *mut u8,
 ) {
-  #[cfg(any(target_os = "linux", target_os = "macos"))]
-  {
-    #[cfg(target_os = "linux")]
-    if can_use_asm_input(input) && can_use_asm_u32_out(out) {
-      asm::rscrypto_blake3_hash1_chunk_cv_aarch64_unix_linux(input, key.as_ptr(), counter, flags, out);
-      return;
+  // SAFETY: NEON intrinsics and pointer ops are sound: intrinsics require NEON via #[target_feature],
+  // pointers are within bounds of caller-provided slices.
+  unsafe {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+      #[cfg(target_os = "linux")]
+      if can_use_asm_input(input) && can_use_asm_u32_out(out) {
+        asm::rscrypto_blake3_hash1_chunk_cv_aarch64_unix_linux(input, key.as_ptr(), counter, flags, out);
+        return;
+      }
+      #[cfg(target_os = "macos")]
+      if can_use_asm_input(input) && can_use_asm_u32_out(out) {
+        asm::rscrypto_blake3_hash1_chunk_cv_aarch64_apple_darwin(input, key.as_ptr(), counter, flags, out);
+        return;
+      }
     }
-    #[cfg(target_os = "macos")]
-    if can_use_asm_input(input) && can_use_asm_u32_out(out) {
-      asm::rscrypto_blake3_hash1_chunk_cv_aarch64_apple_darwin(input, key.as_ptr(), counter, flags, out);
-      return;
+
+    // Fallback: per-block NEON compressor.
+    let mut cv = *key;
+    for block_idx in 0..(CHUNK_LEN / BLOCK_LEN) {
+      let block_bytes: &[u8; BLOCK_LEN] = {
+        let src = input.add(block_idx * BLOCK_LEN);
+        &*(src as *const [u8; BLOCK_LEN])
+      };
+
+      let start = if block_idx == 0 { CHUNK_START } else { 0 };
+      let end = if block_idx + 1 == (CHUNK_LEN / BLOCK_LEN) {
+        super::CHUNK_END
+      } else {
+        0
+      };
+      cv = compress_cv_neon_bytes(
+        &cv,
+        block_bytes.as_ptr(),
+        counter,
+        BLOCK_LEN as u32,
+        flags | start | end,
+      );
     }
-  }
 
-  // Fallback: per-block NEON compressor.
-  let mut cv = *key;
-  for block_idx in 0..(CHUNK_LEN / BLOCK_LEN) {
-    let block_bytes: &[u8; BLOCK_LEN] = {
-      let src = input.add(block_idx * BLOCK_LEN);
-      &*(src as *const [u8; BLOCK_LEN])
-    };
-
-    let start = if block_idx == 0 { CHUNK_START } else { 0 };
-    let end = if block_idx + 1 == (CHUNK_LEN / BLOCK_LEN) {
-      super::CHUNK_END
-    } else {
-      0
-    };
-    cv = compress_cv_neon_bytes(
-      &cv,
-      block_bytes.as_ptr(),
-      counter,
-      BLOCK_LEN as u32,
-      flags | start | end,
-    );
-  }
-
-  for (j, &word) in cv.iter().enumerate() {
-    let bytes = word.to_le_bytes();
-    core::ptr::copy_nonoverlapping(bytes.as_ptr(), out.add(j * 4), 4);
+    for (j, &word) in cv.iter().enumerate() {
+      let bytes = word.to_le_bytes();
+      core::ptr::copy_nonoverlapping(bytes.as_ptr(), out.add(j * 4), 4);
+    }
   }
 }
 
@@ -1038,83 +1121,87 @@ pub(crate) unsafe fn chunk_state_one_chunk_aarch64_out(
   out_cv: *mut u32,
   out_last_block: *mut u8,
 ) {
-  #[cfg(any(target_os = "linux", target_os = "macos"))]
-  {
-    if can_use_asm_input(input) {
-      #[cfg(target_os = "linux")]
-      if can_use_asm_u32_out(out_cv.cast::<u8>()) && can_use_asm_last_block_out(out_last_block) {
+  // SAFETY: NEON intrinsics and pointer ops are sound: intrinsics require NEON via #[target_feature],
+  // pointers are within bounds of caller-provided slices.
+  unsafe {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+      if can_use_asm_input(input) {
+        #[cfg(target_os = "linux")]
+        if can_use_asm_u32_out(out_cv.cast::<u8>()) && can_use_asm_last_block_out(out_last_block) {
+          asm::rscrypto_blake3_hash1_chunk_state_aarch64_unix_linux(
+            input,
+            key.as_ptr(),
+            counter,
+            flags,
+            out_cv,
+            out_last_block,
+          );
+          return;
+        }
+
+        #[cfg(target_os = "macos")]
+        if can_use_asm_u32_out(out_cv.cast::<u8>()) && can_use_asm_last_block_out(out_last_block) {
+          asm::rscrypto_blake3_hash1_chunk_state_aarch64_apple_darwin(
+            input,
+            key.as_ptr(),
+            counter,
+            flags,
+            out_cv,
+            out_last_block,
+          );
+          return;
+        }
+
+        let mut scratch = ChunkStateAsmScratch {
+          cv: [0u32; 8],
+          last_block: [0u8; BLOCK_LEN],
+        };
+
+        #[cfg(target_os = "linux")]
         asm::rscrypto_blake3_hash1_chunk_state_aarch64_unix_linux(
           input,
           key.as_ptr(),
           counter,
           flags,
-          out_cv,
-          out_last_block,
+          scratch.cv.as_mut_ptr(),
+          scratch.last_block.as_mut_ptr(),
         );
-        return;
-      }
 
-      #[cfg(target_os = "macos")]
-      if can_use_asm_u32_out(out_cv.cast::<u8>()) && can_use_asm_last_block_out(out_last_block) {
+        #[cfg(target_os = "macos")]
         asm::rscrypto_blake3_hash1_chunk_state_aarch64_apple_darwin(
           input,
           key.as_ptr(),
           counter,
           flags,
-          out_cv,
-          out_last_block,
+          scratch.cv.as_mut_ptr(),
+          scratch.last_block.as_mut_ptr(),
         );
+
+        core::ptr::copy_nonoverlapping(scratch.cv.as_ptr(), out_cv, scratch.cv.len());
+        core::ptr::copy_nonoverlapping(scratch.last_block.as_ptr(), out_last_block, scratch.last_block.len());
         return;
       }
+    }
 
-      let mut scratch = ChunkStateAsmScratch {
-        cv: [0u32; 8],
-        last_block: [0u8; BLOCK_LEN],
+    // Fallback: per-block NEON compressor for blocks 0..14, then copy the final block bytes.
+    let mut cv = *key;
+    for block_idx in 0..15 {
+      let block_bytes: &[u8; BLOCK_LEN] = {
+        let src = input.add(block_idx * BLOCK_LEN);
+        &*(src as *const [u8; BLOCK_LEN])
       };
 
-      #[cfg(target_os = "linux")]
-      asm::rscrypto_blake3_hash1_chunk_state_aarch64_unix_linux(
-        input,
-        key.as_ptr(),
-        counter,
-        flags,
-        scratch.cv.as_mut_ptr(),
-        scratch.last_block.as_mut_ptr(),
-      );
-
-      #[cfg(target_os = "macos")]
-      asm::rscrypto_blake3_hash1_chunk_state_aarch64_apple_darwin(
-        input,
-        key.as_ptr(),
-        counter,
-        flags,
-        scratch.cv.as_mut_ptr(),
-        scratch.last_block.as_mut_ptr(),
-      );
-
-      core::ptr::copy_nonoverlapping(scratch.cv.as_ptr(), out_cv, scratch.cv.len());
-      core::ptr::copy_nonoverlapping(scratch.last_block.as_ptr(), out_last_block, scratch.last_block.len());
-      return;
+      let start = if block_idx == 0 { CHUNK_START } else { 0 };
+      cv = compress_cv_neon_bytes(&cv, block_bytes.as_ptr(), counter, BLOCK_LEN as u32, flags | start);
     }
+
+    // Store cv.
+    core::ptr::copy_nonoverlapping(cv.as_ptr(), out_cv, 8);
+
+    // Copy final block bytes.
+    core::ptr::copy_nonoverlapping(input.add(15 * BLOCK_LEN), out_last_block, BLOCK_LEN);
   }
-
-  // Fallback: per-block NEON compressor for blocks 0..14, then copy the final block bytes.
-  let mut cv = *key;
-  for block_idx in 0..15 {
-    let block_bytes: &[u8; BLOCK_LEN] = {
-      let src = input.add(block_idx * BLOCK_LEN);
-      &*(src as *const [u8; BLOCK_LEN])
-    };
-
-    let start = if block_idx == 0 { CHUNK_START } else { 0 };
-    cv = compress_cv_neon_bytes(&cv, block_bytes.as_ptr(), counter, BLOCK_LEN as u32, flags | start);
-  }
-
-  // Store cv.
-  core::ptr::copy_nonoverlapping(cv.as_ptr(), out_cv, 8);
-
-  // Copy final block bytes.
-  core::ptr::copy_nonoverlapping(input.add(15 * BLOCK_LEN), out_last_block, BLOCK_LEN);
 }
 
 /// Hash exactly one full chunk (1024B) and return the *root* hash bytes.
@@ -1131,20 +1218,24 @@ pub(crate) unsafe fn chunk_state_one_chunk_aarch64_out(
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn root_hash_one_chunk_neon(input: *const u8, key: &[u32; 8], flags: u32) -> [u8; OUT_LEN] {
-  let inputs = [input, input, input, input];
-  let mut out = [[0u8; OUT_LEN]; 4];
-  hash4_neon(
-    inputs,
-    CHUNK_LEN,
-    key,
-    0,
-    false,
-    flags,
-    CHUNK_START,
-    super::CHUNK_END | super::ROOT,
-    &mut out,
-  );
-  out[0]
+  // SAFETY: NEON intrinsics and pointer ops are sound: intrinsics require NEON via #[target_feature],
+  // pointers are within bounds of caller-provided slices.
+  unsafe {
+    let inputs = [input, input, input, input];
+    let mut out = [[0u8; OUT_LEN]; 4];
+    hash4_neon(
+      inputs,
+      CHUNK_LEN,
+      key,
+      0,
+      false,
+      flags,
+      CHUNK_START,
+      super::CHUNK_END | super::ROOT,
+      &mut out,
+    );
+    out[0]
+  }
 }
 
 /// Hash many contiguous full chunks, dispatching to hash4 as much as possible.
@@ -1166,67 +1257,71 @@ pub(crate) unsafe fn hash_many_contiguous_neon(
 ) {
   debug_assert!(num_chunks != 0);
 
-  let mut idx = 0usize;
+  // SAFETY: NEON intrinsics and pointer ops are sound: intrinsics require NEON via #[target_feature],
+  // pointers are within bounds of caller-provided slices.
+  unsafe {
+    let mut idx = 0usize;
 
-  // Process 8 chunks per loop iteration when possible: two specialized 4-chunk
-  // kernels with fixed contiguous/full-chunk shape.
-  while idx + 8 <= num_chunks {
-    // SAFETY: caller guarantees `input` is valid for `num_chunks * CHUNK_LEN`.
-    let src0 = input.add(idx * CHUNK_LEN);
-    // SAFETY: caller guarantees `out` is valid for `num_chunks * OUT_LEN`.
-    let dst0 = out.add(idx * OUT_LEN);
+    // Process 8 chunks per loop iteration when possible: two specialized 4-chunk
+    // kernels with fixed contiguous/full-chunk shape.
+    while idx + 8 <= num_chunks {
+      // SAFETY: caller guarantees `input` is valid for `num_chunks * CHUNK_LEN`.
+      let src0 = input.add(idx * CHUNK_LEN);
+      // SAFETY: caller guarantees `out` is valid for `num_chunks * OUT_LEN`.
+      let dst0 = out.add(idx * OUT_LEN);
 
-    // Prefetch next batch while processing current.
-    if idx + 16 <= num_chunks {
-      // SAFETY: prefetch is a CPU hint — invalid addresses are silently ignored by hardware.
-      crate::hashes::common::prefetch::prefetch_read_l1(input.add((idx + 8) * CHUNK_LEN));
+      // Prefetch next batch while processing current.
+      if idx + 16 <= num_chunks {
+        // SAFETY: prefetch is a CPU hint — invalid addresses are silently ignored by hardware.
+        crate::hashes::common::prefetch::prefetch_read_l1(input.add((idx + 8) * CHUNK_LEN));
+      }
+
+      hash4_contiguous_full_chunks_neon_to_out(src0, key, counter, flags, dst0);
+      hash4_contiguous_full_chunks_neon_to_out(
+        src0.add(4 * CHUNK_LEN),
+        key,
+        counter.wrapping_add(4),
+        flags,
+        dst0.add(4 * OUT_LEN),
+      );
+      idx += 8;
+      counter = counter.wrapping_add(8);
     }
 
-    hash4_contiguous_full_chunks_neon_to_out(src0, key, counter, flags, dst0);
-    hash4_contiguous_full_chunks_neon_to_out(
-      src0.add(4 * CHUNK_LEN),
-      key,
-      counter.wrapping_add(4),
-      flags,
-      dst0.add(4 * OUT_LEN),
-    );
-    idx += 8;
-    counter = counter.wrapping_add(8);
-  }
+    while idx + 4 <= num_chunks {
+      // SAFETY: caller guarantees `input` is valid for `num_chunks * CHUNK_LEN`.
+      let src = input.add(idx * CHUNK_LEN);
+      // SAFETY: caller guarantees `out` is valid for `num_chunks * OUT_LEN`.
+      let dst = out.add(idx * OUT_LEN);
 
-  while idx + 4 <= num_chunks {
-    // SAFETY: caller guarantees `input` is valid for `num_chunks * CHUNK_LEN`.
-    let src = input.add(idx * CHUNK_LEN);
-    // SAFETY: caller guarantees `out` is valid for `num_chunks * OUT_LEN`.
-    let dst = out.add(idx * OUT_LEN);
+      // Prefetch next batch while processing current.
+      if idx + 8 <= num_chunks {
+        // SAFETY: prefetch is a CPU hint — invalid addresses are silently ignored by hardware.
+        crate::hashes::common::prefetch::prefetch_read_l1(input.add((idx + 4) * CHUNK_LEN));
+      }
 
-    // Prefetch next batch while processing current.
-    if idx + 8 <= num_chunks {
-      // SAFETY: prefetch is a CPU hint — invalid addresses are silently ignored by hardware.
-      crate::hashes::common::prefetch::prefetch_read_l1(input.add((idx + 4) * CHUNK_LEN));
+      hash4_contiguous_full_chunks_neon_to_out(src, key, counter, flags, dst);
+      idx += 4;
+      counter = counter.wrapping_add(4);
     }
 
-    hash4_contiguous_full_chunks_neon_to_out(src, key, counter, flags, dst);
-    idx += 4;
-    counter = counter.wrapping_add(4);
-  }
+    let remaining = num_chunks.strict_sub(idx);
+    if remaining == 0 {
+      return;
+    }
 
-  let remaining = num_chunks.strict_sub(idx);
-  if remaining == 0 {
-    return;
-  }
-
-  // Tail path: hash each leftover chunk directly. This avoids paying 4-lane
-  // transpose/compression cost when only 1-3 chunks remain.
-  //
-  // SAFETY: caller guarantees `input`/`out` cover `num_chunks` chunks.
-  for lane in 0..remaining {
-    // SAFETY: `lane < remaining <= num_chunks - idx`, so per-lane source and
-    // destination pointers are within caller-provided buffers.
-    let src = input.add((idx + lane) * CHUNK_LEN);
-    let dst = out.add((idx + lane) * OUT_LEN);
-    let chunk_counter = counter.wrapping_add(lane as u64);
-    chunk_cv_one_chunk_aarch64_out(src, key, chunk_counter, flags, dst);
+    // Tail path: hash each leftover chunk directly. This avoids paying 4-lane
+    // transpose/compression cost when only 1-3 chunks remain.
+    //
+    // SAFETY: caller guarantees `input`/`out` cover `num_chunks` chunks.
+    for lane in 0..remaining {
+      // SAFETY: `lane < remaining <= num_chunks - idx`, so per-lane source and
+      // destination pointers are within caller-provided buffers.
+      let src = input.add((idx + lane) * CHUNK_LEN);
+      let dst = out.add((idx + lane) * OUT_LEN);
+      let chunk_counter = counter.wrapping_add(lane as u64);
+      chunk_cv_one_chunk_aarch64_out(src, key, chunk_counter, flags, dst);
+    }
   }
 }
 
@@ -1251,29 +1346,33 @@ pub(crate) unsafe fn parent_cvs_many_neon(
   let parent_flags = PARENT | flags;
   debug_assert!(parent_flags <= u8::MAX as u32);
 
-  let mut idx = 0usize;
-  while idx < out.len() {
-    let rem = core::cmp::min(4usize, out.len() - idx);
-    let last_ptr = children[2 * (idx + rem - 1)].as_ptr();
-    let mut ptrs = [last_ptr; 4];
-    for lane in 0..rem {
-      ptrs[lane] = children[2 * (idx + lane)].as_ptr();
-    }
+  // SAFETY: NEON intrinsics and pointer ops are sound: intrinsics require NEON via #[target_feature],
+  // pointers are within bounds of caller-provided slices.
+  unsafe {
+    let mut idx = 0usize;
+    while idx < out.len() {
+      let rem = core::cmp::min(4usize, out.len() - idx);
+      let last_ptr = children[2 * (idx + rem - 1)].as_ptr();
+      let mut ptrs = [last_ptr; 4];
+      for lane in 0..rem {
+        ptrs[lane] = children[2 * (idx + lane)].as_ptr();
+      }
 
-    if rem == 4 {
-      // SAFETY:
-      // - `idx + 4 <= out.len()` by `rem == 4`.
-      // - `out` is `[[u8; OUT_LEN]]`, so taking a 4-element window as `[[u8; OUT_LEN]; 4]` is
-      //   layout-compatible.
-      // - We write exactly those 4 outputs.
-      let out4 = &mut *(out.as_mut_ptr().add(idx) as *mut [[u8; OUT_LEN]; 4]);
-      hash4_neon(ptrs, BLOCK_LEN, &key_words, 0, false, parent_flags, 0, 0, out4);
-    } else {
-      let mut tmp = [[0u8; OUT_LEN]; 4];
-      hash4_neon(ptrs, BLOCK_LEN, &key_words, 0, false, parent_flags, 0, 0, &mut tmp);
-      out[idx..idx + rem].copy_from_slice(&tmp[..rem]);
+      if rem == 4 {
+        // SAFETY:
+        // - `idx + 4 <= out.len()` by `rem == 4`.
+        // - `out` is `[[u8; OUT_LEN]]`, so taking a 4-element window as `[[u8; OUT_LEN]; 4]` is
+        //   layout-compatible.
+        // - We write exactly those 4 outputs.
+        let out4 = &mut *(out.as_mut_ptr().add(idx) as *mut [[u8; OUT_LEN]; 4]);
+        hash4_neon(ptrs, BLOCK_LEN, &key_words, 0, false, parent_flags, 0, 0, out4);
+      } else {
+        let mut tmp = [[0u8; OUT_LEN]; 4];
+        hash4_neon(ptrs, BLOCK_LEN, &key_words, 0, false, parent_flags, 0, 0, &mut tmp);
+        out[idx..idx + rem].copy_from_slice(&tmp[..rem]);
+      }
+      idx += rem;
     }
-    idx += rem;
   }
 }
 
@@ -1298,40 +1397,44 @@ pub(crate) unsafe fn chunk_compress_blocks_neon(
 ) {
   debug_assert_eq!(blocks.len() % BLOCK_LEN, 0);
 
-  // asm fast path for tight per-block compression loops.
-  //
-  // The asm kernel uses 64-bit loads, so direct calls require 8-byte aligned
-  // inputs. When `blocks` is unaligned, run the direct NEON loop below instead
-  // of staging through a copy buffer.
-  #[cfg(any(target_os = "linux", target_os = "macos"))]
-  {
-    let num_blocks = blocks.len() / BLOCK_LEN;
-    if num_blocks != 0 && can_use_asm_input(blocks.as_ptr()) {
-      // SAFETY: pointers/length satisfy asm contract.
-      chunk_compress_blocks_asm(
-        blocks.as_ptr(),
-        chaining_value.as_mut_ptr(),
-        chunk_counter,
-        flags,
-        blocks_compressed as *mut u8,
-        num_blocks,
-      );
-      return;
+  // SAFETY: NEON intrinsics and pointer ops are sound: intrinsics require NEON via #[target_feature],
+  // pointers are within bounds of caller-provided slices.
+  unsafe {
+    // asm fast path for tight per-block compression loops.
+    //
+    // The asm kernel uses 64-bit loads, so direct calls require 8-byte aligned
+    // inputs. When `blocks` is unaligned, run the direct NEON loop below instead
+    // of staging through a copy buffer.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+      let num_blocks = blocks.len() / BLOCK_LEN;
+      if num_blocks != 0 && can_use_asm_input(blocks.as_ptr()) {
+        // SAFETY: pointers/length satisfy asm contract.
+        chunk_compress_blocks_asm(
+          blocks.as_ptr(),
+          chaining_value.as_mut_ptr(),
+          chunk_counter,
+          flags,
+          blocks_compressed as *mut u8,
+          num_blocks,
+        );
+        return;
+      }
     }
-  }
 
-  let (block_slices, remainder) = blocks.as_chunks::<BLOCK_LEN>();
-  debug_assert!(remainder.is_empty());
-  for block_bytes in block_slices {
-    let start = if *blocks_compressed == 0 { CHUNK_START } else { 0 };
-    *chaining_value = compress_cv_neon_bytes(
-      chaining_value,
-      block_bytes.as_ptr(),
-      chunk_counter,
-      BLOCK_LEN as u32,
-      flags | start,
-    );
-    *blocks_compressed = blocks_compressed.wrapping_add(1);
+    let (block_slices, remainder) = blocks.as_chunks::<BLOCK_LEN>();
+    debug_assert!(remainder.is_empty());
+    for block_bytes in block_slices {
+      let start = if *blocks_compressed == 0 { CHUNK_START } else { 0 };
+      *chaining_value = compress_cv_neon_bytes(
+        chaining_value,
+        block_bytes.as_ptr(),
+        chunk_counter,
+        BLOCK_LEN as u32,
+        flags | start,
+      );
+      *blocks_compressed = blocks_compressed.wrapping_add(1);
+    }
   }
 }
 
@@ -1348,15 +1451,19 @@ pub(crate) unsafe fn compress_cv_neon_bytes(
   block_len: u32,
   flags: u32,
 ) -> [u32; 8] {
-  let (mut row0, mut row1, row2, row3, _cv_lo, _cv_hi) =
-    compress_neon_core(chaining_value, block, counter, block_len, flags);
-  row0 = veorq_u32(row0, row2);
-  row1 = veorq_u32(row1, row3);
+  // SAFETY: NEON intrinsics and pointer ops are sound: intrinsics require NEON via #[target_feature],
+  // pointers are within bounds of caller-provided slices.
+  unsafe {
+    let (mut row0, mut row1, row2, row3, _cv_lo, _cv_hi) =
+      compress_neon_core(chaining_value, block, counter, block_len, flags);
+    row0 = veorq_u32(row0, row2);
+    row1 = veorq_u32(row1, row3);
 
-  let mut out = [0u32; 8];
-  vst1q_u32(out.as_mut_ptr(), row0);
-  vst1q_u32(out.as_mut_ptr().add(4), row1);
-  out
+    let mut out = [0u32; 8];
+    vst1q_u32(out.as_mut_ptr(), row0);
+    vst1q_u32(out.as_mut_ptr().add(4), row1);
+    out
+  }
 }
 
 /// NEON parent CV computation.
@@ -1376,13 +1483,17 @@ pub(crate) unsafe fn parent_cv_neon(
   let mut block_words = [0u32; 16];
   block_words[..8].copy_from_slice(&left_child_cv);
   block_words[8..].copy_from_slice(&right_child_cv);
-  compress_cv_neon_bytes(
-    &key_words,
-    block_words.as_ptr().cast(),
-    0,
-    BLOCK_LEN as u32,
-    PARENT | flags,
-  )
+  // SAFETY: NEON intrinsics and pointer ops are sound: intrinsics require NEON via #[target_feature],
+  // pointers are within bounds of caller-provided slices.
+  unsafe {
+    compress_cv_neon_bytes(
+      &key_words,
+      block_words.as_ptr().cast(),
+      0,
+      BLOCK_LEN as u32,
+      PARENT | flags,
+    )
+  }
 }
 
 /// Generate 4 root output blocks (64 bytes each) in parallel.
@@ -1405,128 +1516,134 @@ pub(crate) unsafe fn root_output_blocks4_neon(
 ) {
   #[inline(always)]
   unsafe fn storeu_128(src: uint32x4_t, dest: *mut u8) {
-    vst1q_u8(dest, vreinterpretq_u8_u32(src))
+    // SAFETY: NEON intrinsics and pointer ops are sound: intrinsics require NEON via #[target_feature],
+    // pointers are within bounds of caller-provided slices.
+    unsafe { vst1q_u8(dest, vreinterpretq_u8_u32(src)) }
   }
 
-  let cv_vecs = [
-    vdupq_n_u32(chaining_value[0]),
-    vdupq_n_u32(chaining_value[1]),
-    vdupq_n_u32(chaining_value[2]),
-    vdupq_n_u32(chaining_value[3]),
-    vdupq_n_u32(chaining_value[4]),
-    vdupq_n_u32(chaining_value[5]),
-    vdupq_n_u32(chaining_value[6]),
-    vdupq_n_u32(chaining_value[7]),
-  ];
+  // SAFETY: NEON intrinsics and pointer ops are sound: intrinsics require NEON via #[target_feature],
+  // pointers are within bounds of caller-provided slices.
+  unsafe {
+    let cv_vecs = [
+      vdupq_n_u32(chaining_value[0]),
+      vdupq_n_u32(chaining_value[1]),
+      vdupq_n_u32(chaining_value[2]),
+      vdupq_n_u32(chaining_value[3]),
+      vdupq_n_u32(chaining_value[4]),
+      vdupq_n_u32(chaining_value[5]),
+      vdupq_n_u32(chaining_value[6]),
+      vdupq_n_u32(chaining_value[7]),
+    ];
 
-  let m = [
-    vdupq_n_u32(block_words[0]),
-    vdupq_n_u32(block_words[1]),
-    vdupq_n_u32(block_words[2]),
-    vdupq_n_u32(block_words[3]),
-    vdupq_n_u32(block_words[4]),
-    vdupq_n_u32(block_words[5]),
-    vdupq_n_u32(block_words[6]),
-    vdupq_n_u32(block_words[7]),
-    vdupq_n_u32(block_words[8]),
-    vdupq_n_u32(block_words[9]),
-    vdupq_n_u32(block_words[10]),
-    vdupq_n_u32(block_words[11]),
-    vdupq_n_u32(block_words[12]),
-    vdupq_n_u32(block_words[13]),
-    vdupq_n_u32(block_words[14]),
-    vdupq_n_u32(block_words[15]),
-  ];
+    let m = [
+      vdupq_n_u32(block_words[0]),
+      vdupq_n_u32(block_words[1]),
+      vdupq_n_u32(block_words[2]),
+      vdupq_n_u32(block_words[3]),
+      vdupq_n_u32(block_words[4]),
+      vdupq_n_u32(block_words[5]),
+      vdupq_n_u32(block_words[6]),
+      vdupq_n_u32(block_words[7]),
+      vdupq_n_u32(block_words[8]),
+      vdupq_n_u32(block_words[9]),
+      vdupq_n_u32(block_words[10]),
+      vdupq_n_u32(block_words[11]),
+      vdupq_n_u32(block_words[12]),
+      vdupq_n_u32(block_words[13]),
+      vdupq_n_u32(block_words[14]),
+      vdupq_n_u32(block_words[15]),
+    ];
 
-  let counter_low_vec = vld1q_u32(
-    [
-      counter as u32,
-      counter.wrapping_add(1) as u32,
-      counter.wrapping_add(2) as u32,
-      counter.wrapping_add(3) as u32,
-    ]
-    .as_ptr(),
-  );
-  let counter_high_vec = vld1q_u32(
-    [
-      (counter >> 32) as u32,
-      (counter.wrapping_add(1) >> 32) as u32,
-      (counter.wrapping_add(2) >> 32) as u32,
-      (counter.wrapping_add(3) >> 32) as u32,
-    ]
-    .as_ptr(),
-  );
+    let counter_low_vec = vld1q_u32(
+      [
+        counter as u32,
+        counter.wrapping_add(1) as u32,
+        counter.wrapping_add(2) as u32,
+        counter.wrapping_add(3) as u32,
+      ]
+      .as_ptr(),
+    );
+    let counter_high_vec = vld1q_u32(
+      [
+        (counter >> 32) as u32,
+        (counter.wrapping_add(1) >> 32) as u32,
+        (counter.wrapping_add(2) >> 32) as u32,
+        (counter.wrapping_add(3) >> 32) as u32,
+      ]
+      .as_ptr(),
+    );
 
-  let block_len_vec = vdupq_n_u32(block_len);
-  let flags_vec = vdupq_n_u32(flags);
+    let block_len_vec = vdupq_n_u32(block_len);
+    let flags_vec = vdupq_n_u32(flags);
 
-  let iv0 = vdupq_n_u32(IV[0]);
-  let iv1 = vdupq_n_u32(IV[1]);
-  let iv2 = vdupq_n_u32(IV[2]);
-  let iv3 = vdupq_n_u32(IV[3]);
+    let iv0 = vdupq_n_u32(IV[0]);
+    let iv1 = vdupq_n_u32(IV[1]);
+    let iv2 = vdupq_n_u32(IV[2]);
+    let iv3 = vdupq_n_u32(IV[3]);
 
-  let rot8_tbl = vld1q_u8(ROT8_TABLE.as_ptr());
-  let mut v = [
-    cv_vecs[0],
-    cv_vecs[1],
-    cv_vecs[2],
-    cv_vecs[3],
-    cv_vecs[4],
-    cv_vecs[5],
-    cv_vecs[6],
-    cv_vecs[7],
-    iv0,
-    iv1,
-    iv2,
-    iv3,
-    counter_low_vec,
-    counter_high_vec,
-    block_len_vec,
-    flags_vec,
-  ];
+    let rot8_tbl = vld1q_u8(ROT8_TABLE.as_ptr());
+    let mut v = [
+      cv_vecs[0],
+      cv_vecs[1],
+      cv_vecs[2],
+      cv_vecs[3],
+      cv_vecs[4],
+      cv_vecs[5],
+      cv_vecs[6],
+      cv_vecs[7],
+      iv0,
+      iv1,
+      iv2,
+      iv3,
+      counter_low_vec,
+      counter_high_vec,
+      block_len_vec,
+      flags_vec,
+    ];
 
-  round4(&mut v, &m, 0, rot8_tbl);
-  round4(&mut v, &m, 1, rot8_tbl);
-  round4(&mut v, &m, 2, rot8_tbl);
-  round4(&mut v, &m, 3, rot8_tbl);
-  round4(&mut v, &m, 4, rot8_tbl);
-  round4(&mut v, &m, 5, rot8_tbl);
-  round4(&mut v, &m, 6, rot8_tbl);
+    round4(&mut v, &m, 0, rot8_tbl);
+    round4(&mut v, &m, 1, rot8_tbl);
+    round4(&mut v, &m, 2, rot8_tbl);
+    round4(&mut v, &m, 3, rot8_tbl);
+    round4(&mut v, &m, 4, rot8_tbl);
+    round4(&mut v, &m, 5, rot8_tbl);
+    round4(&mut v, &m, 6, rot8_tbl);
 
-  let out_words = [
-    veorq_u32(v[0], v[8]),
-    veorq_u32(v[1], v[9]),
-    veorq_u32(v[2], v[10]),
-    veorq_u32(v[3], v[11]),
-    veorq_u32(v[4], v[12]),
-    veorq_u32(v[5], v[13]),
-    veorq_u32(v[6], v[14]),
-    veorq_u32(v[7], v[15]),
-    veorq_u32(v[8], cv_vecs[0]),
-    veorq_u32(v[9], cv_vecs[1]),
-    veorq_u32(v[10], cv_vecs[2]),
-    veorq_u32(v[11], cv_vecs[3]),
-    veorq_u32(v[12], cv_vecs[4]),
-    veorq_u32(v[13], cv_vecs[5]),
-    veorq_u32(v[14], cv_vecs[6]),
-    veorq_u32(v[15], cv_vecs[7]),
-  ];
+    let out_words = [
+      veorq_u32(v[0], v[8]),
+      veorq_u32(v[1], v[9]),
+      veorq_u32(v[2], v[10]),
+      veorq_u32(v[3], v[11]),
+      veorq_u32(v[4], v[12]),
+      veorq_u32(v[5], v[13]),
+      veorq_u32(v[6], v[14]),
+      veorq_u32(v[7], v[15]),
+      veorq_u32(v[8], cv_vecs[0]),
+      veorq_u32(v[9], cv_vecs[1]),
+      veorq_u32(v[10], cv_vecs[2]),
+      veorq_u32(v[11], cv_vecs[3]),
+      veorq_u32(v[12], cv_vecs[4]),
+      veorq_u32(v[13], cv_vecs[5]),
+      veorq_u32(v[14], cv_vecs[6]),
+      veorq_u32(v[15], cv_vecs[7]),
+    ];
 
-  let mut g0 = [out_words[0], out_words[1], out_words[2], out_words[3]];
-  let mut g1 = [out_words[4], out_words[5], out_words[6], out_words[7]];
-  let mut g2 = [out_words[8], out_words[9], out_words[10], out_words[11]];
-  let mut g3 = [out_words[12], out_words[13], out_words[14], out_words[15]];
-  transpose_vecs(&mut g0);
-  transpose_vecs(&mut g1);
-  transpose_vecs(&mut g2);
-  transpose_vecs(&mut g3);
+    let mut g0 = [out_words[0], out_words[1], out_words[2], out_words[3]];
+    let mut g1 = [out_words[4], out_words[5], out_words[6], out_words[7]];
+    let mut g2 = [out_words[8], out_words[9], out_words[10], out_words[11]];
+    let mut g3 = [out_words[12], out_words[13], out_words[14], out_words[15]];
+    transpose_vecs(&mut g0);
+    transpose_vecs(&mut g1);
+    transpose_vecs(&mut g2);
+    transpose_vecs(&mut g3);
 
-  for lane in 0..4 {
-    let base = out.add(lane * 64);
-    storeu_128(g0[lane], base);
-    storeu_128(g1[lane], base.add(16));
-    storeu_128(g2[lane], base.add(32));
-    storeu_128(g3[lane], base.add(48));
+    for lane in 0..4 {
+      let base = out.add(lane * 64);
+      storeu_128(g0[lane], base);
+      storeu_128(g1[lane], base.add(16));
+      storeu_128(g2[lane], base.add(32));
+      storeu_128(g3[lane], base.add(48));
+    }
   }
 }
 

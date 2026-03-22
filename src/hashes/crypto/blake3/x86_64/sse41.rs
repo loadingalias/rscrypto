@@ -1,7 +1,6 @@
 //! BLAKE3 x86_64 SSE4.1 throughput kernel (4-way).
 
 #![allow(unsafe_code)]
-#![allow(unsafe_op_in_unsafe_fn)]
 #![allow(clippy::inline_always)]
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::many_single_char_names)]
@@ -17,46 +16,56 @@ pub const DEGREE: usize = 4;
 
 #[inline(always)]
 unsafe fn loadu(src: *const u8) -> __m128i {
+  // SAFETY: Caller guarantees `src` is valid to read 16 bytes and has enabled this SSE backend.
   unsafe { _mm_loadu_si128(src.cast()) }
 }
 
 #[inline(always)]
 unsafe fn storeu(src: __m128i, dest: *mut u8) {
+  // SAFETY: Caller guarantees `dest` is valid to write 16 bytes and has enabled this SSE backend.
   unsafe { _mm_storeu_si128(dest.cast(), src) }
 }
 
 #[inline(always)]
 unsafe fn add(a: __m128i, b: __m128i) -> __m128i {
+  // SAFETY: Caller guarantees the required SSE4.1/SSSE3 feature set for this backend.
   unsafe { _mm_add_epi32(a, b) }
 }
 
 #[inline(always)]
 unsafe fn xor(a: __m128i, b: __m128i) -> __m128i {
+  // SAFETY: Caller guarantees the required SSE4.1/SSSE3 feature set for this backend.
   unsafe { _mm_xor_si128(a, b) }
 }
 
 #[inline(always)]
 unsafe fn set1(x: u32) -> __m128i {
+  // SAFETY: Caller guarantees the required SSE4.1/SSSE3 feature set for this backend.
   unsafe { _mm_set1_epi32(x.cast_signed()) }
 }
 
 #[inline(always)]
 unsafe fn set4(a: u32, b: u32, c: u32, d: u32) -> __m128i {
+  // SAFETY: Caller guarantees the required SSE4.1/SSSE3 feature set for this backend.
   unsafe { _mm_setr_epi32(a.cast_signed(), b.cast_signed(), c.cast_signed(), d.cast_signed()) }
 }
 
 #[inline(always)]
 unsafe fn rot12(a: __m128i) -> __m128i {
+  // SAFETY: Caller guarantees the required SSE4.1/SSSE3 feature set for this backend.
   unsafe { _mm_or_si128(_mm_srli_epi32(a, 12), _mm_slli_epi32(a, 20)) }
 }
 
 #[inline(always)]
 unsafe fn rot7(a: __m128i) -> __m128i {
+  // SAFETY: Caller guarantees the required SSE4.1/SSSE3 feature set for this backend.
   unsafe { _mm_or_si128(_mm_srli_epi32(a, 7), _mm_slli_epi32(a, 25)) }
 }
 
 #[inline(always)]
 unsafe fn round(v: &mut [__m128i; 16], m: &[__m128i; 16], r: usize, rot16_mask: __m128i, rot8_mask: __m128i) {
+  // SAFETY: Caller guarantees this SSE4.1/SSSE3 backend is active; all vector lanes are local
+  // registers.
   unsafe {
     v[0] = add(v[0], m[MSG_SCHEDULE[r][0]]);
     v[1] = add(v[1], m[MSG_SCHEDULE[r][2]]);
@@ -176,6 +185,8 @@ unsafe fn round(v: &mut [__m128i; 16], m: &[__m128i; 16], r: usize, rot16_mask: 
 
 #[inline(always)]
 unsafe fn transpose_vecs(vecs: &mut [__m128i; DEGREE]) {
+  // SAFETY: Caller guarantees this SSE4.1/SSSE3 backend is active; `vecs` is a valid fixed-size
+  // register array.
   unsafe {
     let ab_01 = _mm_unpacklo_epi32(vecs[0], vecs[1]);
     let ab_23 = _mm_unpackhi_epi32(vecs[0], vecs[1]);
@@ -196,6 +207,7 @@ unsafe fn transpose_vecs(vecs: &mut [__m128i; DEGREE]) {
 
 #[inline(always)]
 unsafe fn transpose_msg_vecs(inputs: &[*const u8; DEGREE], block_offset: usize) -> [__m128i; 16] {
+  // SAFETY: Caller guarantees each input points to at least one full block at `block_offset`.
   unsafe {
     let stride = 4 * DEGREE;
     let mut quarter0 = [
@@ -256,6 +268,7 @@ unsafe fn transpose_msg_vecs(inputs: &[*const u8; DEGREE], block_offset: usize) 
 #[inline(always)]
 unsafe fn load_counters(counter: u64, increment_counter: bool) -> (__m128i, __m128i) {
   let mask = if increment_counter { !0u64 } else { 0u64 };
+  // SAFETY: Counter vectors are assembled with this backend's SSE4.1/SSSE3 intrinsics only.
   unsafe {
     (
       set4(
@@ -291,6 +304,8 @@ pub(crate) unsafe fn hash4(
   flags_end: u32,
   out: *mut u8,
 ) {
+  // SAFETY: Caller guarantees SSE4.1/SSSE3 availability, valid input pointers for `blocks *
+  // BLOCK_LEN`, and `out` writable for `DEGREE * OUT_LEN`.
   unsafe {
     let rot16_mask = _mm_setr_epi8(2, 3, 0, 1, 6, 7, 4, 5, 10, 11, 8, 9, 14, 15, 12, 13);
     let rot8_mask = _mm_setr_epi8(1, 2, 3, 0, 5, 6, 7, 4, 9, 10, 11, 8, 13, 14, 15, 12);
@@ -400,6 +415,7 @@ pub(crate) unsafe fn root_output_blocks4(
   flags: u32,
   out: *mut u8,
 ) {
+  // SAFETY: Caller guarantees SSE4.1/SSSE3 availability and `out` writable for `4 * OUT_LEN` bytes.
   unsafe {
     let rot16_mask = _mm_setr_epi8(2, 3, 0, 1, 6, 7, 4, 5, 10, 11, 8, 9, 14, 15, 12, 13);
     let rot8_mask = _mm_setr_epi8(1, 2, 3, 0, 5, 6, 7, 4, 9, 10, 11, 8, 13, 14, 15, 12);
@@ -734,6 +750,7 @@ pub(crate) unsafe fn root_output_blocks2(
   out: *mut u8,
 ) {
   // Call root_output_blocks1 twice with consecutive counters
+  // SAFETY: Caller guarantees SSE4.1/SSSE3 availability and `out` writable for `2 * OUT_LEN` bytes.
   unsafe {
     root_output_blocks1(chaining_value, block_words, counter, block_len, flags, out);
     root_output_blocks1(

@@ -1,3 +1,5 @@
+#![cfg(feature = "checksums")]
+
 use rscrypto::{Checksum, Crc16Ccitt, Crc16Ibm, Crc24OpenPgp, Crc32, Crc32C, Crc64, Crc64Nvme, checksum::dispatch};
 
 #[test]

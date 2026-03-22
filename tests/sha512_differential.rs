@@ -1,3 +1,5 @@
+#![cfg(feature = "hashes")]
+
 use proptest::prelude::*;
 use rscrypto::{
   hashes::crypto::{Sha384, Sha512, Sha512_256},
