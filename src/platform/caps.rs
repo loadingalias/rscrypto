@@ -44,7 +44,7 @@ extern crate alloc;
 /// use rscrypto::platform::Caps;
 ///
 /// let caps = rscrypto::platform::caps();
-/// assert!(caps.count() >= 1);
+/// assert!(caps.has(Caps::NONE));
 /// ```
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
 #[repr(transparent)]

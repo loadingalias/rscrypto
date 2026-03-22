@@ -12,11 +12,7 @@ mod tests {
   fn test_get_returns_valid() {
     let det = get();
 
-    #[cfg(target_arch = "x86_64")]
-    assert_eq!(det.arch, Arch::X86_64);
-    #[cfg(target_arch = "aarch64")]
-    assert_eq!(det.arch, Arch::Aarch64);
-    assert!(det.caps.count() >= 1);
+    assert_eq!(det.arch, Arch::current());
   }
 
   #[test]

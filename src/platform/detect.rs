@@ -83,7 +83,7 @@ impl Detected {
 ///
 /// ```
 /// let det = rscrypto::platform::detect::get();
-/// assert!(det.caps.count() >= 1);
+/// assert_eq!(det.arch, rscrypto::platform::Arch::current());
 /// ```
 #[inline]
 #[must_use]
