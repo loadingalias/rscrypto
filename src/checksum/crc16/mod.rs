@@ -474,6 +474,10 @@ impl crate::traits::Checksum for Crc16Ccitt {
   #[inline]
   fn update(&mut self, data: &[u8]) {
     if let Some(table) = self.auto_table {
+      if data.len() <= 64 {
+        self.state = portable::crc16_ccitt_bytewise(self.state, data);
+        return;
+      }
       let kernel = table.select_fns(data.len()).crc16_ccitt;
       self.state = kernel(self.state, data);
     } else {
@@ -607,6 +611,10 @@ impl crate::traits::Checksum for Crc16Ibm {
   #[inline]
   fn update(&mut self, data: &[u8]) {
     if let Some(table) = self.auto_table {
+      if data.len() <= 64 {
+        self.state = portable::crc16_ibm_bytewise(self.state, data);
+        return;
+      }
       let kernel = table.select_fns(data.len()).crc16_ibm;
       self.state = kernel(self.state, data);
     } else {
