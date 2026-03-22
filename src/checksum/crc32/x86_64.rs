@@ -2471,6 +2471,9 @@ pub fn crc32_ieee_vpclmul_8way_safe(crc: u32, data: &[u8]) -> u32 {
 
 #[cfg(test)]
 mod tests {
+  extern crate alloc;
+  extern crate std;
+
   use alloc::vec::Vec;
 
   use super::*;
