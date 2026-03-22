@@ -16,10 +16,10 @@
 //! |  36  | SHAKE-128 | 168         |
 //! |  37  | SHAKE-256 | 136         |
 //!
-//! The 200-byte parameter block at GR1 holds the Keccak state as 25 big-endian
-//! double-words (native on s390x). GR2/GR3 form an even/odd pair for
-//! data address/length. CC=2 means partial completion (kernel preemption) —
-//! retry the instruction.
+//! The 200-byte parameter block at GR1 holds the Keccak state in FIPS 202 byte
+//! order (each lane stored as 8 little-endian bytes). GR2/GR3 form an even/odd
+//! pair for data address/length. CC=2 means partial completion (kernel
+//! preemption) — retry the instruction.
 //!
 //! # Safety
 //!
@@ -50,6 +50,16 @@ pub(crate) const fn kimd_fc_for_rate(rate: usize) -> Option<u64> {
 /// `blocks` must be a multiple of the rate corresponding to `func_code`.
 /// The state is updated in place.
 ///
+/// # Endianness
+///
+/// KIMD operates on the 200-byte parameter block in FIPS 202 byte order:
+/// each Keccak lane is stored as 8 little-endian bytes. Our portable sponge
+/// core stores lanes as native `u64` values (big-endian on s390x). We
+/// byte-swap every lane before the KIMD call (native BE → LE bytes) and
+/// swap back afterward (LE bytes → native BE), so the rest of the sponge
+/// pipeline (portable `absorb_block`, `finalize_into_fixed`) works
+/// unchanged.
+///
 /// # Safety
 ///
 /// - Caller must ensure the MSA8 (CPACF) facility is available.
@@ -58,6 +68,11 @@ pub(crate) const fn kimd_fc_for_rate(rate: usize) -> Option<u64> {
 pub(crate) unsafe fn absorb_blocks_kimd(state: &mut [u64; 25], blocks: &[u8], func_code: u64) {
   if blocks.is_empty() {
     return;
+  }
+
+  // Convert state from native u64 (BE) to FIPS 202 LE byte order for KIMD.
+  for word in state.iter_mut() {
+    *word = word.to_le();
   }
 
   let parm = state.as_mut_ptr();
@@ -79,7 +94,7 @@ pub(crate) unsafe fn absorb_blocks_kimd(state: &mut [u64; 25], blocks: &[u8], fu
   //
   // SAFETY: MSA8 verified by caller. Parameter block is &mut [u64; 25]
   // (200 bytes, 8-aligned >= required alignment). Data from valid slice.
-  // State is big-endian on s390x, matching KIMD's expected format.
+  // Parameter block is in FIPS 202 LE byte order (converted above).
   unsafe {
     core::arch::asm!(
       "0:",
@@ -91,5 +106,10 @@ pub(crate) unsafe fn absorb_blocks_kimd(state: &mut [u64; 25], blocks: &[u8], fu
       inout("r3") len => _,
       options(nostack),
     );
+  }
+
+  // Convert state from FIPS 202 LE byte order back to native u64 (BE).
+  for word in state.iter_mut() {
+    *word = u64::from_le(*word);
   }
 }
