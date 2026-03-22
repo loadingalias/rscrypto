@@ -593,6 +593,10 @@ impl crate::traits::Checksum for Crc64 {
   #[inline]
   fn update(&mut self, data: &[u8]) {
     if let Some(table) = self.auto_table {
+      if data.len() <= 64 {
+        self.state = portable::crc64_xz_bytewise(self.state, data);
+        return;
+      }
       let kernel = table.select_fns(data.len()).crc64_xz;
       self.state = kernel(self.state, data);
     } else {
@@ -742,6 +746,10 @@ impl crate::traits::Checksum for Crc64Nvme {
   #[inline]
   fn update(&mut self, data: &[u8]) {
     if let Some(table) = self.auto_table {
+      if data.len() <= 64 {
+        self.state = portable::crc64_nvme_bytewise(self.state, data);
+        return;
+      }
       let kernel = table.select_fns(data.len()).crc64_nvme;
       self.state = kernel(self.state, data);
     } else {

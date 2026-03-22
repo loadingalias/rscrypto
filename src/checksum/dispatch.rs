@@ -59,6 +59,13 @@ pub fn active_table() -> &'static KernelTable {
 // Oneshot Functions (Recommended API)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Maximum input size for the inline bytewise fast-path.
+///
+/// Inputs at or below this size bypass all dispatch machinery and use a simple
+/// byte-at-a-time table lookup. This eliminates `active_table()` + `select_fns()`
+/// + indirect fn ptr overhead (~3-5 ns) that dominates at tiny sizes.
+const FAST_PATH_MAX: usize = 64;
+
 /// Compute CRC-64/XZ checksum of data.
 ///
 /// Uses the optimal kernel for the current platform and buffer size.
@@ -74,6 +81,9 @@ pub fn active_table() -> &'static KernelTable {
 /// ```
 #[inline]
 pub fn crc64_xz(data: &[u8]) -> u64 {
+  if data.len() <= FAST_PATH_MAX {
+    return crate::checksum::crc64::portable::crc64_xz_bytewise(!0, data) ^ !0;
+  }
   let table = active_table();
   let kernel = table.select_fns(data.len()).crc64_xz;
   kernel(!0, data) ^ !0
@@ -93,6 +103,9 @@ pub fn crc64_xz(data: &[u8]) -> u64 {
 /// ```
 #[inline]
 pub fn crc64_nvme(data: &[u8]) -> u64 {
+  if data.len() <= FAST_PATH_MAX {
+    return crate::checksum::crc64::portable::crc64_nvme_bytewise(!0, data) ^ !0;
+  }
   let table = active_table();
   let kernel = table.select_fns(data.len()).crc64_nvme;
   kernel(!0, data) ^ !0
@@ -112,6 +125,9 @@ pub fn crc64_nvme(data: &[u8]) -> u64 {
 /// ```
 #[inline]
 pub fn crc32_ieee(data: &[u8]) -> u32 {
+  if data.len() <= FAST_PATH_MAX {
+    return crate::checksum::crc32::portable::crc32_bytewise_ieee(!0, data) ^ !0;
+  }
   let table = active_table();
   let kernel = table.select_fns(data.len()).crc32_ieee;
   kernel(!0, data) ^ !0
@@ -131,6 +147,9 @@ pub fn crc32_ieee(data: &[u8]) -> u32 {
 /// ```
 #[inline]
 pub fn crc32c(data: &[u8]) -> u32 {
+  if data.len() <= FAST_PATH_MAX {
+    return crate::checksum::crc32::portable::crc32c_bytewise(!0, data) ^ !0;
+  }
   let table = active_table();
   let kernel = table.select_fns(data.len()).crc32c;
   kernel(!0, data) ^ !0
@@ -151,6 +170,9 @@ pub fn crc32c(data: &[u8]) -> u32 {
 #[inline]
 pub fn crc16_ccitt(data: &[u8]) -> u16 {
   // CCITT: INIT=0xFFFF, XOROUT=0xFFFF
+  if data.len() <= FAST_PATH_MAX {
+    return crate::checksum::crc16::portable::crc16_ccitt_bytewise(0xFFFF, data) ^ 0xFFFF;
+  }
   let table = active_table();
   let kernel = table.select_fns(data.len()).crc16_ccitt;
   kernel(0xFFFF, data) ^ 0xFFFF
@@ -171,6 +193,9 @@ pub fn crc16_ccitt(data: &[u8]) -> u16 {
 #[inline]
 pub fn crc16_ibm(data: &[u8]) -> u16 {
   // IBM: INIT=0x0000, XOROUT=0x0000
+  if data.len() <= FAST_PATH_MAX {
+    return crate::checksum::crc16::portable::crc16_ibm_bytewise(0, data);
+  }
   let table = active_table();
   let kernel = table.select_fns(data.len()).crc16_ibm;
   kernel(0, data)
@@ -193,6 +218,9 @@ pub fn crc24_openpgp(data: &[u8]) -> u32 {
   // OpenPGP: INIT=0x00B704CE, XOROUT=0x000000, mask to 24 bits
   const INIT: u32 = 0x00B7_04CE;
   const MASK: u32 = 0x00FF_FFFF;
+  if data.len() <= FAST_PATH_MAX {
+    return crate::checksum::crc24::portable::crc24_openpgp_bytewise(INIT, data) & MASK;
+  }
   let table = active_table();
   let kernel = table.select_fns(data.len()).crc24_openpgp;
   kernel(INIT, data) & MASK

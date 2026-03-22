@@ -300,6 +300,10 @@ impl crate::traits::Checksum for Crc24OpenPgp {
 
   #[inline]
   fn update(&mut self, data: &[u8]) {
+    if data.len() <= 64 {
+      self.state = portable::crc24_openpgp_bytewise(self.state, data);
+      return;
+    }
     self.state = crc24_openpgp_dispatch(self.state, data) & Self::MASK;
   }
 

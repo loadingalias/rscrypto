@@ -647,6 +647,10 @@ impl crate::traits::Checksum for Crc32 {
   #[inline]
   fn update(&mut self, data: &[u8]) {
     if let Some(table) = self.auto_table {
+      if data.len() <= 64 {
+        self.state = portable::crc32_bytewise_ieee(self.state, data);
+        return;
+      }
       let kernel = table.select_fns(data.len()).crc32_ieee;
       self.state = kernel(self.state, data);
     } else {
@@ -781,6 +785,10 @@ impl crate::traits::Checksum for Crc32C {
   #[inline]
   fn update(&mut self, data: &[u8]) {
     if let Some(table) = self.auto_table {
+      if data.len() <= 64 {
+        self.state = portable::crc32c_bytewise(self.state, data);
+        return;
+      }
       let kernel = table.select_fns(data.len()).crc32c;
       self.state = kernel(self.state, data);
     } else {
