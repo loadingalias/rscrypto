@@ -1,21 +1,26 @@
-//! SHA-512 x86_64 AVX-512VL software kernel.
+//! SHA-512 x86_64 AVX-512VL + BMI2 stitched kernel.
 //!
-//! Processes the message schedule using `__m128i` (128-bit registers) with
-//! AVX-512VL operations:
-//! - **VPRORQ** (`_mm_ror_epi64`): native 64-bit vector rotate in 1 op (vs 3 ops with
-//!   shift+shift+or on AVX2)
+//! Uses the Gueron-Krasnov two-block parallel technique with **stitched**
+//! schedule/compress and **VPRORQ** native 64-bit vector rotates.
 //!
-//! Compression rounds remain in scalar GPRs (sequential dependency).
-//! Uses a 2-word-at-a-time ring buffer (8 × `__m128i`) for the schedule.
+//! Architecture:
+//! - **Dual-block** (≥ 2 blocks): 256-bit schedule (`__m256i` ring buffer, VPRORQ) stitched with
+//!   scalar rounds. Block 2's `W[t]+K[t]` stored during block 1's pass.
+//! - **Single-block** (odd trailing): 128-bit schedule (`__m128i` ring buffer, VPRORQ) stitched
+//!   with scalar rounds. No portable fallback — fully self-contained.
+//!
+//! VPRORQ (`_mm256_ror_epi64` / `_mm_ror_epi64`) provides 1-instruction 64-bit rotates vs
+//! 3-instruction shift-shift-or on AVX2, yielding ~40% fewer SIMD schedule instructions.
+//! 256-bit register width avoids frequency throttling on Intel.
+//!
+//! BMI2 (`bmi2` target feature) enables `RORX` for scalar rotations.
+//! Deferred-Σ0 shortens the critical dependency chain (e → Σ1 → Ch → T1 → e').
 //!
 //! Available on Intel Ice Lake+ (2019+) and AMD Zen 4+ (2022+).
-//! 256-bit register width avoids frequency throttling.
-//!
-//! Expected: ~15-20% improvement over portable from reduced rotation overhead.
 //!
 //! # Safety
 //!
-//! All functions require `avx512f` and `avx512vl` target features.
+//! All functions require `avx512f`, `avx512vl`, and `bmi2` target features.
 
 #![allow(unsafe_code)]
 #![allow(clippy::inline_always)]
@@ -27,14 +32,44 @@ use core::arch::x86_64::*;
 use super::{BLOCK_LEN, K, big_sigma0, big_sigma1, ch, maj};
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SIMD sigma functions using VPRORQ (AVX-512VL)
+// 256-bit SIMD sigma with VPRORQ (dual-block schedule)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// σ0(x) = ROTR(1) ^ ROTR(8) ^ SHR(7)  — 1 op per rotate with VPRORQ.
+/// σ0(x) = ROTR(1) ^ ROTR(8) ^ SHR(7)  — 256-bit, VPRORQ.
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
-unsafe fn small_sigma0_v(x: __m128i) -> __m128i {
-  // SAFETY: AVX-512VL intrinsics are available via this function's #[target_feature] attribute.
+unsafe fn small_sigma0_256(x: __m256i) -> __m256i {
+  // SAFETY: AVX-512VL intrinsics are available via the caller's #[target_feature] attribute.
+  unsafe {
+    _mm256_xor_si256(
+      _mm256_xor_si256(_mm256_ror_epi64(x, 1), _mm256_ror_epi64(x, 8)),
+      _mm256_srli_epi64(x, 7),
+    )
+  }
+}
+
+/// σ1(x) = ROTR(19) ^ ROTR(61) ^ SHR(6)  — 256-bit, VPRORQ.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+unsafe fn small_sigma1_256(x: __m256i) -> __m256i {
+  // SAFETY: AVX-512VL intrinsics are available via the caller's #[target_feature] attribute.
+  unsafe {
+    _mm256_xor_si256(
+      _mm256_xor_si256(_mm256_ror_epi64(x, 19), _mm256_ror_epi64(x, 61)),
+      _mm256_srli_epi64(x, 6),
+    )
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 128-bit SIMD sigma with VPRORQ (single-block schedule)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// σ0(x) = ROTR(1) ^ ROTR(8) ^ SHR(7)  — 128-bit, VPRORQ.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+unsafe fn small_sigma0_128(x: __m128i) -> __m128i {
+  // SAFETY: AVX-512VL intrinsics are available via the caller's #[target_feature] attribute.
   unsafe {
     _mm_xor_si128(
       _mm_xor_si128(_mm_ror_epi64(x, 1), _mm_ror_epi64(x, 8)),
@@ -43,11 +78,11 @@ unsafe fn small_sigma0_v(x: __m128i) -> __m128i {
   }
 }
 
-/// σ1(x) = ROTR(19) ^ ROTR(61) ^ SHR(6)  — 1 op per rotate with VPRORQ.
+/// σ1(x) = ROTR(19) ^ ROTR(61) ^ SHR(6)  — 128-bit, VPRORQ.
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
-unsafe fn small_sigma1_v(x: __m128i) -> __m128i {
-  // SAFETY: AVX-512VL intrinsics are available via this function's #[target_feature] attribute.
+unsafe fn small_sigma1_128(x: __m128i) -> __m128i {
+  // SAFETY: AVX-512VL intrinsics are available via the caller's #[target_feature] attribute.
   unsafe {
     _mm_xor_si128(
       _mm_xor_si128(_mm_ror_epi64(x, 19), _mm_ror_epi64(x, 61)),
@@ -57,72 +92,166 @@ unsafe fn small_sigma1_v(x: __m128i) -> __m128i {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Message schedule helpers
+// Dual-block message schedule helpers (256-bit)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Cross-register extraction: [a[1], b[0]] (cross-pair lane extraction).
-/// Uses PALIGNR (SSSE3): concat(b, a) >> 8 bytes = [a[1], b[0]].
+/// Cross-register extraction (256-bit): [a[1], a[2], a[3], b[0]].
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
-unsafe fn cross_lanes(a: __m128i, b: __m128i) -> __m128i {
-  // SAFETY: SSSE3 intrinsics are available via this function's #[target_feature] attribute.
-  unsafe { _mm_alignr_epi8(b, a, 8) }
+unsafe fn cross_lanes_256(a: __m256i, b: __m256i) -> __m256i {
+  // SAFETY: AVX2 intrinsics are available via the caller's #[target_feature] attribute.
+  unsafe {
+    let t = _mm256_permute2x128_si256(a, b, 0x21);
+    _mm256_alignr_epi8(t, a, 8)
+  }
 }
 
-/// Compute 2 message schedule words using SIMD with VPRORQ.
-///
-/// Ring buffer `w` has 8 slots, each holding `[W[2j], W[2j+1]]`.
-/// Called for pairs i = 8..39 (schedule words 16..79).
+/// Compute 2 schedule words for both blocks (256-bit ring buffer, VPRORQ).
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
-unsafe fn schedule_pair(w: &mut [__m128i; 8], i: usize) {
-  // SAFETY: AVX-512VL intrinsics and target-feature-gated calls are available via
-  // this function's #[target_feature] attribute.
+unsafe fn schedule_pair_256(w: &mut [__m256i; 8], i: usize) {
+  // SAFETY: AVX-512VL intrinsics are available via the caller's #[target_feature] attribute.
   unsafe {
-    // σ1 input: [W[2i-2], W[2i-1]]
     let s1_in = w[i.wrapping_sub(1) & 7];
-    // W[t-7]: [W[2i-7], W[2i-6]] — crosses a pair boundary
-    let w_tm7 = cross_lanes(w[i.wrapping_sub(4) & 7], w[i.wrapping_sub(3) & 7]);
-    // σ0 input: [W[2i-15], W[2i-14]] — crosses a pair boundary
-    let s0_in = cross_lanes(w[i.wrapping_sub(8) & 7], w[i.wrapping_sub(7) & 7]);
-    // W[t-16]: [W[2i-16], W[2i-15]] — exact pair
+    let w_tm7 = cross_lanes_256(w[i.wrapping_sub(4) & 7], w[i.wrapping_sub(3) & 7]);
+    let s0_in = cross_lanes_256(w[i.wrapping_sub(8) & 7], w[i.wrapping_sub(7) & 7]);
     let w_tm16 = w[i.wrapping_sub(8) & 7];
 
-    w[i & 7] = _mm_add_epi64(
-      _mm_add_epi64(small_sigma1_v(s1_in), w_tm7),
-      _mm_add_epi64(small_sigma0_v(s0_in), w_tm16),
+    w[i & 7] = _mm256_add_epi64(
+      _mm256_add_epi64(small_sigma1_256(s1_in), w_tm7),
+      _mm256_add_epi64(small_sigma0_256(s0_in), w_tm16),
     );
   }
 }
 
-/// Byte-swap mask for converting little-endian loads to big-endian u64 words.
+// ─────────────────────────────────────────────────────────────────────────────
+// Single-block message schedule helpers (128-bit)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Cross-register extraction (128-bit): [a[1], b[0]].
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+unsafe fn cross_lanes_128(a: __m128i, b: __m128i) -> __m128i {
+  // SAFETY: SSSE3 intrinsics are available via the caller's #[target_feature] attribute.
+  unsafe { _mm_alignr_epi8(b, a, 8) }
+}
+
+/// Compute 2 schedule words for a single block (128-bit ring buffer, VPRORQ).
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+unsafe fn schedule_pair_128(w: &mut [__m128i; 8], i: usize) {
+  // SAFETY: AVX-512VL intrinsics are available via the caller's #[target_feature] attribute.
+  unsafe {
+    let s1_in = w[i.wrapping_sub(1) & 7];
+    let w_tm7 = cross_lanes_128(w[i.wrapping_sub(4) & 7], w[i.wrapping_sub(3) & 7]);
+    let s0_in = cross_lanes_128(w[i.wrapping_sub(8) & 7], w[i.wrapping_sub(7) & 7]);
+    let w_tm16 = w[i.wrapping_sub(8) & 7];
+
+    w[i & 7] = _mm_add_epi64(
+      _mm_add_epi64(small_sigma1_128(s1_in), w_tm7),
+      _mm_add_epi64(small_sigma0_128(s0_in), w_tm16),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Common helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Byte-swap mask for big-endian u64 word loads (128-bit).
 #[cfg(target_arch = "x86_64")]
 static BSWAP64_128: [u8; 16] = [7, 6, 5, 4, 3, 2, 1, 0, 15, 14, 13, 12, 11, 10, 9, 8];
 
-/// SHA-512 multi-block compression using AVX-512VL.
+/// Load 2 big-endian u64 words from each of two blocks into a __m256i.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+unsafe fn load_two_blocks(blk1: *const u8, blk2: *const u8, offset: usize, bswap: __m128i) -> __m256i {
+  // SAFETY: AVX2/SSE intrinsics are available; pointer arithmetic bounded by caller.
+  unsafe {
+    let lo = _mm_shuffle_epi8(_mm_loadu_si128(blk1.add(offset).cast()), bswap);
+    let hi = _mm_shuffle_epi8(_mm_loadu_si128(blk2.add(offset).cast()), bswap);
+    _mm256_inserti128_si256(_mm256_castsi128_si256(lo), hi, 1)
+  }
+}
+
+/// Extract two u64 words from the lower 128-bit lane of a __m256i.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+unsafe fn extract_lo(v: __m256i) -> (u64, u64) {
+  // SAFETY: SSE intrinsics are available via the caller's #[target_feature] attribute.
+  unsafe {
+    let lo128 = _mm256_castsi256_si128(v);
+    (_mm_extract_epi64(lo128, 0) as u64, _mm_extract_epi64(lo128, 1) as u64)
+  }
+}
+
+/// Extract two u64 words from the upper 128-bit lane of a __m256i.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+unsafe fn extract_hi(v: __m256i) -> (u64, u64) {
+  // SAFETY: AVX2 intrinsics are available via the caller's #[target_feature] attribute.
+  unsafe {
+    let hi128 = _mm256_extracti128_si256(v, 1);
+    (_mm_extract_epi64(hi128, 0) as u64, _mm_extract_epi64(hi128, 1) as u64)
+  }
+}
+
+/// Extract two u64 words from a __m128i.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+unsafe fn extract_128(v: __m128i) -> (u64, u64) {
+  // SAFETY: SSE intrinsics are available via the caller's #[target_feature] attribute.
+  unsafe { (_mm_extract_epi64(v, 0) as u64, _mm_extract_epi64(v, 1) as u64) }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Entry point
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// SHA-512 multi-block compression using AVX-512VL + BMI2.
 ///
-/// Message schedule uses VPRORQ for efficient 64-bit rotations.
-/// Compression rounds remain scalar.
+/// - **≥ 2 blocks**: stitched dual-block (256-bit VPRORQ schedule + scalar rounds).
+/// - **1 block**: stitched single-block (128-bit VPRORQ schedule + scalar rounds).
+/// - **No portable fallback** — fully self-contained.
 ///
 /// # Safety
 ///
-/// Caller must ensure `avx512f` and `avx512vl` CPU features are available.
+/// Caller must ensure `avx512f`, `avx512vl`, and `bmi2` CPU features are available.
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx512f,avx512vl")]
+#[target_feature(enable = "avx512f,avx512vl,bmi2")]
 pub(crate) unsafe fn compress_blocks_avx512vl(state: &mut [u64; 8], blocks: &[u8]) {
   debug_assert_eq!(blocks.len() % BLOCK_LEN, 0);
-  if blocks.is_empty() {
+  let num_blocks = blocks.len() / BLOCK_LEN;
+  if num_blocks == 0 {
     return;
   }
 
-  // SAFETY: AVX-512VL/SSE intrinsics and target-feature-gated calls are available via
-  // this function's #[target_feature] attribute. Pointer arithmetic is bounded by blocks.len().
+  // SAFETY: AVX-512VL/BMI2 intrinsics and target-feature-gated calls are available via this
+  // function's #[target_feature] attribute. Pointer arithmetic is bounded by blocks.len().
   unsafe {
-    let bswap = _mm_loadu_si128(BSWAP64_128.as_ptr().cast());
-    let num_blocks = blocks.len() / BLOCK_LEN;
     let mut ptr = blocks.as_ptr();
+    let mut remaining = num_blocks;
 
-    for _ in 0..num_blocks {
+    let bswap = _mm_loadu_si128(BSWAP64_128.as_ptr().cast());
+
+    // ── Dual-block loop ──────────────────────────────────────────────────
+    while remaining >= 2 {
+      let blk1 = ptr;
+      let blk2 = ptr.add(BLOCK_LEN);
+
+      let mut w: [__m256i; 8] = [
+        load_two_blocks(blk1, blk2, 0, bswap),
+        load_two_blocks(blk1, blk2, 16, bswap),
+        load_two_blocks(blk1, blk2, 32, bswap),
+        load_two_blocks(blk1, blk2, 48, bswap),
+        load_two_blocks(blk1, blk2, 64, bswap),
+        load_two_blocks(blk1, blk2, 80, bswap),
+        load_two_blocks(blk1, blk2, 96, bswap),
+        load_two_blocks(blk1, blk2, 112, bswap),
+      ];
+
+      let mut t2_buf = [0u64; 80];
+
       let mut a = state[0];
       let mut b = state[1];
       let mut c = state[2];
@@ -131,8 +260,91 @@ pub(crate) unsafe fn compress_blocks_avx512vl(state: &mut [u64; 8], blocks: &[u8
       let mut f = state[5];
       let mut g = state[6];
       let mut h = state[7];
+      let mut t2_deferred: u64 = 0;
 
-      // Load and byte-swap 16 message words into 8 × __m128i ring buffer.
+      macro_rules! round {
+        ($wk:expr) => {{
+          a = a.wrapping_add(t2_deferred);
+          let t1 = h
+            .wrapping_add(big_sigma1(e))
+            .wrapping_add(ch(e, f, g))
+            .wrapping_add($wk);
+          t2_deferred = big_sigma0(a).wrapping_add(maj(a, b, c));
+          h = g;
+          g = f;
+          f = e;
+          e = d.wrapping_add(t1);
+          d = c;
+          c = b;
+          b = a;
+          a = t1;
+        }};
+      }
+
+      // Rounds 0-15: loaded words.
+      for (pair, &wv) in w.iter().enumerate() {
+        let (lo0, lo1) = extract_lo(wv);
+        let (hi0, hi1) = extract_hi(wv);
+        let r = pair.strict_mul(2);
+        t2_buf[r] = hi0.wrapping_add(K[r]);
+        t2_buf[r.strict_add(1)] = hi1.wrapping_add(K[r.strict_add(1)]);
+        round!(lo0.wrapping_add(K[r]));
+        round!(lo1.wrapping_add(K[r.strict_add(1)]));
+      }
+
+      // Rounds 16-79: interleaved VPRORQ schedule + scalar rounds.
+      for pair in 8..40usize {
+        schedule_pair_256(&mut w, pair);
+        let (lo0, lo1) = extract_lo(w[pair & 7]);
+        let (hi0, hi1) = extract_hi(w[pair & 7]);
+        let r = pair.strict_mul(2);
+        t2_buf[r] = hi0.wrapping_add(K[r]);
+        t2_buf[r.strict_add(1)] = hi1.wrapping_add(K[r.strict_add(1)]);
+        round!(lo0.wrapping_add(K[r]));
+        round!(lo1.wrapping_add(K[r.strict_add(1)]));
+      }
+
+      a = a.wrapping_add(t2_deferred);
+      state[0] = state[0].wrapping_add(a);
+      state[1] = state[1].wrapping_add(b);
+      state[2] = state[2].wrapping_add(c);
+      state[3] = state[3].wrapping_add(d);
+      state[4] = state[4].wrapping_add(e);
+      state[5] = state[5].wrapping_add(f);
+      state[6] = state[6].wrapping_add(g);
+      state[7] = state[7].wrapping_add(h);
+
+      // Block 2: pure scalar from pre-computed buffer.
+      a = state[0];
+      b = state[1];
+      c = state[2];
+      d = state[3];
+      e = state[4];
+      f = state[5];
+      g = state[6];
+      h = state[7];
+      t2_deferred = 0;
+
+      for &wk in &t2_buf {
+        round!(wk);
+      }
+
+      a = a.wrapping_add(t2_deferred);
+      state[0] = state[0].wrapping_add(a);
+      state[1] = state[1].wrapping_add(b);
+      state[2] = state[2].wrapping_add(c);
+      state[3] = state[3].wrapping_add(d);
+      state[4] = state[4].wrapping_add(e);
+      state[5] = state[5].wrapping_add(f);
+      state[6] = state[6].wrapping_add(g);
+      state[7] = state[7].wrapping_add(h);
+
+      ptr = ptr.add(BLOCK_LEN.strict_mul(2));
+      remaining = remaining.strict_sub(2);
+    }
+
+    // ── Single-block (odd trailing) ──────────────────────────────────────
+    if remaining == 1 {
       let mut wv: [__m128i; 8] = [
         _mm_shuffle_epi8(_mm_loadu_si128(ptr.cast()), bswap),
         _mm_shuffle_epi8(_mm_loadu_si128(ptr.add(16).cast()), bswap),
@@ -144,14 +356,24 @@ pub(crate) unsafe fn compress_blocks_avx512vl(state: &mut [u64; 8], blocks: &[u8
         _mm_shuffle_epi8(_mm_loadu_si128(ptr.add(112).cast()), bswap),
       ];
 
-      macro_rules! sha_round {
-        ($k:expr, $w:expr) => {{
+      let mut a = state[0];
+      let mut b = state[1];
+      let mut c = state[2];
+      let mut d = state[3];
+      let mut e = state[4];
+      let mut f = state[5];
+      let mut g = state[6];
+      let mut h = state[7];
+      let mut t2_deferred: u64 = 0;
+
+      macro_rules! round1 {
+        ($wk:expr) => {{
+          a = a.wrapping_add(t2_deferred);
           let t1 = h
             .wrapping_add(big_sigma1(e))
             .wrapping_add(ch(e, f, g))
-            .wrapping_add($k)
-            .wrapping_add($w);
-          let t2 = big_sigma0(a).wrapping_add(maj(a, b, c));
+            .wrapping_add($wk);
+          t2_deferred = big_sigma0(a).wrapping_add(maj(a, b, c));
           h = g;
           g = f;
           f = e;
@@ -159,30 +381,28 @@ pub(crate) unsafe fn compress_blocks_avx512vl(state: &mut [u64; 8], blocks: &[u8
           d = c;
           c = b;
           b = a;
-          a = t1.wrapping_add(t2);
+          a = t1;
         }};
       }
 
-      // Rounds 0-15: extract from loaded vectors.
+      // Rounds 0-15: loaded words.
       for (pair, &v) in wv.iter().enumerate() {
-        let w_lo = _mm_extract_epi64(v, 0) as u64;
-        let w_hi = _mm_extract_epi64(v, 1) as u64;
+        let (w0, w1) = extract_128(v);
         let r = pair.strict_mul(2);
-        sha_round!(K[r], w_lo);
-        sha_round!(K[r + 1], w_hi);
+        round1!(w0.wrapping_add(K[r]));
+        round1!(w1.wrapping_add(K[r.strict_add(1)]));
       }
 
-      // Rounds 16-79: expand schedule with VPRORQ, then extract for scalar rounds.
+      // Rounds 16-79: interleaved VPRORQ schedule + scalar rounds.
       for pair in 8..40usize {
-        schedule_pair(&mut wv, pair);
-        let v = wv[pair & 7];
-        let w_lo = _mm_extract_epi64(v, 0) as u64;
-        let w_hi = _mm_extract_epi64(v, 1) as u64;
+        schedule_pair_128(&mut wv, pair);
+        let (w0, w1) = extract_128(wv[pair & 7]);
         let r = pair.strict_mul(2);
-        sha_round!(K[r], w_lo);
-        sha_round!(K[r + 1], w_hi);
+        round1!(w0.wrapping_add(K[r]));
+        round1!(w1.wrapping_add(K[r.strict_add(1)]));
       }
 
+      a = a.wrapping_add(t2_deferred);
       state[0] = state[0].wrapping_add(a);
       state[1] = state[1].wrapping_add(b);
       state[2] = state[2].wrapping_add(c);
@@ -191,8 +411,6 @@ pub(crate) unsafe fn compress_blocks_avx512vl(state: &mut [u64; 8], blocks: &[u8
       state[5] = state[5].wrapping_add(f);
       state[6] = state[6].wrapping_add(g);
       state[7] = state[7].wrapping_add(h);
-
-      ptr = ptr.add(128);
     }
   } // unsafe
 }

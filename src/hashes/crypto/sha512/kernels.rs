@@ -126,7 +126,7 @@ fn compress_blocks_x86_sha512(state: &mut [u64; 8], blocks: &[u8]) {
 
 #[cfg(target_arch = "x86_64")]
 fn compress_blocks_x86_avx512vl(state: &mut [u64; 8], blocks: &[u8]) {
-  // SAFETY: Only called when dispatch has verified AVX-512VL is available.
+  // SAFETY: Only called when dispatch has verified AVX-512VL and BMI2 are available.
   unsafe { super::x86_64_avx512vl::compress_blocks_avx512vl(state, blocks) }
 }
 
@@ -193,7 +193,7 @@ pub const fn required_caps(id: Sha512KernelId) -> Caps {
     #[cfg(target_arch = "x86_64")]
     Sha512KernelId::X86Sha512 => x86::SHA512.union(x86::AVX2),
     #[cfg(target_arch = "x86_64")]
-    Sha512KernelId::X86Avx512vl => x86::AVX512F.union(x86::AVX512VL),
+    Sha512KernelId::X86Avx512vl => x86::AVX512F.union(x86::AVX512VL).union(x86::BMI2),
     #[cfg(target_arch = "x86_64")]
     Sha512KernelId::X86Avx2 => x86::AVX2.union(x86::BMI2),
     #[cfg(target_arch = "riscv64")]
