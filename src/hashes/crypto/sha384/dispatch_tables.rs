@@ -108,32 +108,21 @@ pub static S390X_KIMD_TABLE: DispatchTable = DispatchTable {
 #[inline]
 #[must_use]
 pub fn select_runtime_table(#[allow(unused_variables)] caps: Caps) -> &'static DispatchTable {
-  // x86_64 cascade: SHA-512 NI > vendor-aware AVX-512VL/AVX2 > Portable
+  // x86_64 cascade: SHA-512 NI > AVX2+BMI2 > AVX-512VL > Portable
   //
-  // AMD Zen 5: AVX2 is ~11% faster than AVX-512VL for SHA-512 compression,
-  // so AMD skips AVX-512VL and goes straight to AVX2.
+  // The stitched AVX2+BMI2 dual-block kernel outperforms single-block
+  // AVX-512VL on both AMD and Intel (sha512-compress/raw, CI 2026-03-23).
   #[cfg(target_arch = "x86_64")]
   {
     use crate::platform::caps::x86;
     if caps.has(x86::SHA512) {
       return &X86_SHA512_TABLE;
     }
-    if caps.has(x86::AMD) {
-      // AMD: AVX2 > AVX-512VL > Portable
-      if caps.has(x86::AVX2) {
-        return &X86_AVX2_TABLE;
-      }
-      if caps.has(x86::AVX512F) && caps.has(x86::AVX512VL) {
-        return &X86_AVX512VL_TABLE;
-      }
-    } else {
-      // Intel (and others): AVX-512VL > AVX2 > Portable
-      if caps.has(x86::AVX512F) && caps.has(x86::AVX512VL) {
-        return &X86_AVX512VL_TABLE;
-      }
-      if caps.has(x86::AVX2) {
-        return &X86_AVX2_TABLE;
-      }
+    if caps.has(x86::AVX2) {
+      return &X86_AVX2_TABLE;
+    }
+    if caps.has(x86::AVX512F) && caps.has(x86::AVX512VL) {
+      return &X86_AVX512VL_TABLE;
     }
   }
   #[cfg(target_arch = "aarch64")]
