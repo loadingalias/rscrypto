@@ -1,4 +1,4 @@
-//! SHA-512 x86_64 AVX2 + BMI2 stitched dual-block kernel.
+//! SHA-512 x86_64 AVX2 + BMI2 stitched kernel.
 //!
 //! Uses the Gueron-Krasnov two-block parallel technique with **stitched**
 //! schedule/compress: SIMD message schedule expansion (on FP ports) is
@@ -6,10 +6,10 @@
 //! out-of-order engine to overlap both pipelines.
 //!
 //! Architecture:
-//! - **Block 1**: stitched — SIMD schedule expands into a ring buffer while scalar rounds consume
-//!   words from the lower 128-bit lane.
-//! - **Block 2**: pure scalar — reads pre-computed `W[t] + K[t]` values that were extracted from
-//!   the upper lane during block 1's pass.
+//! - **Dual-block** (≥ 2 blocks): 256-bit schedule (`__m256i` ring buffer, 3-op rotates), stitched
+//!   with scalar rounds. Block 2's `W[t]+K[t]` stored during block 1's pass.
+//! - **Single-block** (odd trailing): 128-bit schedule (`__m128i` ring buffer, 3-op rotates),
+//!   stitched with scalar rounds. No portable fallback — fully self-contained.
 //!
 //! BMI2 (`bmi2` target feature) enables the compiler to emit `RORX` for scalar
 //! 64-bit rotations — a non-destructive, flag-free rotate that improves
@@ -35,19 +35,17 @@
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::*;
 
-use super::{BLOCK_LEN, K, Sha512, big_sigma0, big_sigma1, ch, maj};
+use super::{BLOCK_LEN, K, big_sigma0, big_sigma1, ch, maj};
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SIMD sigma (message schedule, 2 × u64 per 128-bit lane, parallel both blocks)
+// 256-bit SIMD sigma (dual-block schedule, 2 × u64 per 128-bit lane)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// σ0(x) = ROTR(1) ^ ROTR(8) ^ SHR(7)
-///
-/// AVX2 has no VPRORQ, so each rotate is 3 ops: (x >> n) | (x << (64-n)).
+/// σ0(x) = ROTR(1) ^ ROTR(8) ^ SHR(7)  — 256-bit, 3-op rotates.
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
-unsafe fn small_sigma0_v(x: __m256i) -> __m256i {
-  // SAFETY: AVX2 intrinsics are available via this function's #[target_feature] attribute.
+unsafe fn small_sigma0_256(x: __m256i) -> __m256i {
+  // SAFETY: AVX2 intrinsics are available via the caller's #[target_feature] attribute.
   unsafe {
     let rotr1 = _mm256_or_si256(_mm256_srli_epi64(x, 1), _mm256_slli_epi64(x, 63));
     let rotr8 = _mm256_or_si256(_mm256_srli_epi64(x, 8), _mm256_slli_epi64(x, 56));
@@ -55,11 +53,11 @@ unsafe fn small_sigma0_v(x: __m256i) -> __m256i {
   }
 }
 
-/// σ1(x) = ROTR(19) ^ ROTR(61) ^ SHR(6)
+/// σ1(x) = ROTR(19) ^ ROTR(61) ^ SHR(6)  — 256-bit, 3-op rotates.
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
-unsafe fn small_sigma1_v(x: __m256i) -> __m256i {
-  // SAFETY: AVX2 intrinsics are available via this function's #[target_feature] attribute.
+unsafe fn small_sigma1_256(x: __m256i) -> __m256i {
+  // SAFETY: AVX2 intrinsics are available via the caller's #[target_feature] attribute.
   unsafe {
     let rotr19 = _mm256_or_si256(_mm256_srli_epi64(x, 19), _mm256_slli_epi64(x, 45));
     let rotr61 = _mm256_or_si256(_mm256_srli_epi64(x, 61), _mm256_slli_epi64(x, 3));
@@ -68,58 +66,109 @@ unsafe fn small_sigma1_v(x: __m256i) -> __m256i {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Message schedule helpers
+// 128-bit SIMD sigma (single-block schedule, 2 × u64 per register)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Cross-register extraction: returns [a[1], a[2], a[3], b[0]] (shifting by
-/// 1 u64 lane across two __m256i vectors).
+/// σ0(x) = ROTR(1) ^ ROTR(8) ^ SHR(7)  — 128-bit, 3-op rotates.
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
-unsafe fn cross_lanes(a: __m256i, b: __m256i) -> __m256i {
-  // SAFETY: AVX2 intrinsics are available via this function's #[target_feature] attribute.
+unsafe fn small_sigma0_128(x: __m128i) -> __m128i {
+  // SAFETY: SSE2 intrinsics are available via the caller's #[target_feature] attribute.
   unsafe {
-    let t = _mm256_permute2x128_si256(a, b, 0x21); // [a_hi, b_lo]
-    _mm256_alignr_epi8(t, a, 8) // shift within each 128-bit lane by 8 bytes
+    let rotr1 = _mm_or_si128(_mm_srli_epi64(x, 1), _mm_slli_epi64(x, 63));
+    let rotr8 = _mm_or_si128(_mm_srli_epi64(x, 8), _mm_slli_epi64(x, 56));
+    _mm_xor_si128(_mm_xor_si128(rotr1, rotr8), _mm_srli_epi64(x, 7))
   }
 }
 
-/// Compute 2 schedule words for both blocks using a ring buffer.
-///
-/// `w` is an 8-slot ring buffer; indices are masked with `& 7`.
-/// Called for pairs i = 8..39 (schedule words 16..79).
+/// σ1(x) = ROTR(19) ^ ROTR(61) ^ SHR(6)  — 128-bit, 3-op rotates.
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
-unsafe fn schedule_pair(w: &mut [__m256i; 8], i: usize) {
-  // SAFETY: AVX2 intrinsics and target-feature-gated calls are available via
-  // this function's #[target_feature] attribute.
+unsafe fn small_sigma1_128(x: __m128i) -> __m128i {
+  // SAFETY: SSE2 intrinsics are available via the caller's #[target_feature] attribute.
   unsafe {
-    // σ1 input: [W[2i-2], W[2i-1]] for both blocks
+    let rotr19 = _mm_or_si128(_mm_srli_epi64(x, 19), _mm_slli_epi64(x, 45));
+    let rotr61 = _mm_or_si128(_mm_srli_epi64(x, 61), _mm_slli_epi64(x, 3));
+    _mm_xor_si128(_mm_xor_si128(rotr19, rotr61), _mm_srli_epi64(x, 6))
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Dual-block message schedule helpers (256-bit)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Cross-register extraction (256-bit): [a[1], a[2], a[3], b[0]].
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+unsafe fn cross_lanes_256(a: __m256i, b: __m256i) -> __m256i {
+  // SAFETY: AVX2 intrinsics are available via the caller's #[target_feature] attribute.
+  unsafe {
+    let t = _mm256_permute2x128_si256(a, b, 0x21); // [a_hi, b_lo]
+    _mm256_alignr_epi8(t, a, 8)
+  }
+}
+
+/// Compute 2 schedule words for both blocks (256-bit ring buffer).
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+unsafe fn schedule_pair_256(w: &mut [__m256i; 8], i: usize) {
+  // SAFETY: AVX2 intrinsics are available via the caller's #[target_feature] attribute.
+  unsafe {
     let s1_in = w[i.wrapping_sub(1) & 7];
-    // W[t-7]: [W[2i-7], W[2i-6]] — crosses a pair boundary
-    let w_tm7 = cross_lanes(w[i.wrapping_sub(4) & 7], w[i.wrapping_sub(3) & 7]);
-    // σ0 input: [W[2i-15], W[2i-14]] — crosses a pair boundary
-    let s0_in = cross_lanes(w[i.wrapping_sub(8) & 7], w[i.wrapping_sub(7) & 7]);
-    // W[t-16]: [W[2i-16], W[2i-15]] — exact pair
+    let w_tm7 = cross_lanes_256(w[i.wrapping_sub(4) & 7], w[i.wrapping_sub(3) & 7]);
+    let s0_in = cross_lanes_256(w[i.wrapping_sub(8) & 7], w[i.wrapping_sub(7) & 7]);
     let w_tm16 = w[i.wrapping_sub(8) & 7];
 
     w[i & 7] = _mm256_add_epi64(
-      _mm256_add_epi64(small_sigma1_v(s1_in), w_tm7),
-      _mm256_add_epi64(small_sigma0_v(s0_in), w_tm16),
+      _mm256_add_epi64(small_sigma1_256(s1_in), w_tm7),
+      _mm256_add_epi64(small_sigma0_256(s0_in), w_tm16),
     );
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Single-block message schedule helpers (128-bit)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Cross-register extraction (128-bit): [a[1], b[0]].
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+unsafe fn cross_lanes_128(a: __m128i, b: __m128i) -> __m128i {
+  // SAFETY: SSSE3 intrinsics are available via the caller's #[target_feature] attribute.
+  unsafe { _mm_alignr_epi8(b, a, 8) }
+}
+
+/// Compute 2 schedule words for a single block (128-bit ring buffer).
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+unsafe fn schedule_pair_128(w: &mut [__m128i; 8], i: usize) {
+  // SAFETY: SSE2/SSSE3 intrinsics are available via the caller's #[target_feature] attribute.
+  unsafe {
+    let s1_in = w[i.wrapping_sub(1) & 7];
+    let w_tm7 = cross_lanes_128(w[i.wrapping_sub(4) & 7], w[i.wrapping_sub(3) & 7]);
+    let s0_in = cross_lanes_128(w[i.wrapping_sub(8) & 7], w[i.wrapping_sub(7) & 7]);
+    let w_tm16 = w[i.wrapping_sub(8) & 7];
+
+    w[i & 7] = _mm_add_epi64(
+      _mm_add_epi64(small_sigma1_128(s1_in), w_tm7),
+      _mm_add_epi64(small_sigma0_128(s0_in), w_tm16),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Common helpers
+// ─────────────────────────────────────────────────────────────────────────────
 
 /// Byte-swap mask for big-endian u64 word loads (128-bit).
 #[cfg(target_arch = "x86_64")]
 static BSWAP64_128: [u8; 16] = [7, 6, 5, 4, 3, 2, 1, 0, 15, 14, 13, 12, 11, 10, 9, 8];
 
-/// Load 2 big-endian u64 words from each of two blocks, interleaving them
-/// into a single __m256i: lo128 = block1 words, hi128 = block2 words.
+/// Load 2 big-endian u64 words from each of two blocks into a __m256i.
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 unsafe fn load_two_blocks(blk1: *const u8, blk2: *const u8, offset: usize, bswap: __m128i) -> __m256i {
-  // SAFETY: AVX2/SSE intrinsics are available via this function's #[target_feature] attribute.
-  // Pointer arithmetic is bounded by caller-provided block pointers.
+  // SAFETY: AVX2/SSE intrinsics are available; pointer arithmetic bounded by caller.
   unsafe {
     let lo = _mm_shuffle_epi8(_mm_loadu_si128(blk1.add(offset).cast()), bswap);
     let hi = _mm_shuffle_epi8(_mm_loadu_si128(blk2.add(offset).cast()), bswap);
@@ -131,7 +180,7 @@ unsafe fn load_two_blocks(blk1: *const u8, blk2: *const u8, offset: usize, bswap
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 unsafe fn extract_lo(v: __m256i) -> (u64, u64) {
-  // SAFETY: AVX2/SSE intrinsics are available via this function's #[target_feature] attribute.
+  // SAFETY: SSE intrinsics are available via the caller's #[target_feature] attribute.
   unsafe {
     let lo128 = _mm256_castsi256_si128(v);
     (_mm_extract_epi64(lo128, 0) as u64, _mm_extract_epi64(lo128, 1) as u64)
@@ -142,26 +191,30 @@ unsafe fn extract_lo(v: __m256i) -> (u64, u64) {
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 unsafe fn extract_hi(v: __m256i) -> (u64, u64) {
-  // SAFETY: AVX2 intrinsics are available via this function's #[target_feature] attribute.
+  // SAFETY: AVX2 intrinsics are available via the caller's #[target_feature] attribute.
   unsafe {
     let hi128 = _mm256_extracti128_si256(v, 1);
     (_mm_extract_epi64(hi128, 0) as u64, _mm_extract_epi64(hi128, 1) as u64)
   }
 }
 
+/// Extract two u64 words from a __m128i.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+unsafe fn extract_128(v: __m128i) -> (u64, u64) {
+  // SAFETY: SSE intrinsics are available via the caller's #[target_feature] attribute.
+  unsafe { (_mm_extract_epi64(v, 0) as u64, _mm_extract_epi64(v, 1) as u64) }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
-// Stitched dual-block compression
+// Entry point
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// SHA-512 multi-block compression using AVX2 + BMI2 (stitched dual-block).
+/// SHA-512 multi-block compression using AVX2 + BMI2.
 ///
-/// Processes blocks in pairs. During block 1's compression, SIMD schedule
-/// expansion is interleaved with scalar rounds, allowing FP and ALU ports
-/// to work in parallel. Block 2's `W[t]+K[t]` values are stored to a side
-/// buffer during block 1's pass, then consumed in a pure-scalar second pass.
-///
-/// If an odd number of blocks remains, the last block is processed by the
-/// portable kernel.
+/// - **≥ 2 blocks**: stitched dual-block (256-bit SIMD schedule + scalar rounds).
+/// - **1 block**: stitched single-block (128-bit SIMD schedule + scalar rounds).
+/// - **No portable fallback** — fully self-contained.
 ///
 /// # Safety
 ///
@@ -177,19 +230,17 @@ pub(crate) unsafe fn compress_blocks_avx2(state: &mut [u64; 8], blocks: &[u8]) {
 
   // SAFETY: AVX2/BMI2 intrinsics and target-feature-gated calls are available via this
   // function's #[target_feature] attribute. Pointer arithmetic is bounded by blocks.len().
-  // from_raw_parts length is exactly BLOCK_LEN for the final odd block.
   unsafe {
     let mut ptr = blocks.as_ptr();
     let mut remaining = num_blocks;
 
     let bswap = _mm_loadu_si128(BSWAP64_128.as_ptr().cast());
 
+    // ── Dual-block loop ──────────────────────────────────────────────────
     while remaining >= 2 {
       let blk1 = ptr;
       let blk2 = ptr.add(BLOCK_LEN);
 
-      // Ring-buffer schedule: 8 × __m256i (256 bytes).
-      // Each entry holds 2 u64 words from block 1 (lo128) and block 2 (hi128).
       let mut w: [__m256i; 8] = [
         load_two_blocks(blk1, blk2, 0, bswap),
         load_two_blocks(blk1, blk2, 16, bswap),
@@ -201,10 +252,8 @@ pub(crate) unsafe fn compress_blocks_avx2(state: &mut [u64; 8], blocks: &[u8]) {
         load_two_blocks(blk1, blk2, 112, bswap),
       ];
 
-      // Block 2 pre-computed W[t]+K[t] buffer (640 bytes).
       let mut t2_buf = [0u64; 80];
 
-      // ── Block 1: stitched (SIMD schedule + scalar rounds) ──────────────
       let mut a = state[0];
       let mut b = state[1];
       let mut c = state[2];
@@ -213,13 +262,8 @@ pub(crate) unsafe fn compress_blocks_avx2(state: &mut [u64; 8], blocks: &[u8]) {
       let mut f = state[5];
       let mut g = state[6];
       let mut h = state[7];
-
-      // Deferred Σ0(a) + Maj(a,b,c) from previous round.
       let mut t2_deferred: u64 = 0;
 
-      // Deferred-Σ0 round: applies the previous round's T2 at the start,
-      // computes this round's T2 but defers its addition to the next round.
-      // This shortens the critical path: e → Σ1 → Ch → T1 → e'.
       macro_rules! round {
         ($wk:expr) => {{
           a = a.wrapping_add(t2_deferred);
@@ -239,7 +283,7 @@ pub(crate) unsafe fn compress_blocks_avx2(state: &mut [u64; 8], blocks: &[u8]) {
         }};
       }
 
-      // Rounds 0-15: consume loaded words, store block 2 values.
+      // Rounds 0-15: loaded words.
       for (pair, &wv) in w.iter().enumerate() {
         let (lo0, lo1) = extract_lo(wv);
         let (hi0, hi1) = extract_hi(wv);
@@ -250,12 +294,11 @@ pub(crate) unsafe fn compress_blocks_avx2(state: &mut [u64; 8], blocks: &[u8]) {
         round!(lo1.wrapping_add(K[r.strict_add(1)]));
       }
 
-      // Rounds 16-79: interleaved SIMD schedule expansion + scalar rounds.
+      // Rounds 16-79: interleaved schedule + rounds.
       for pair in 8..40usize {
-        schedule_pair(&mut w, pair);
-        let slot = pair & 7;
-        let (lo0, lo1) = extract_lo(w[slot]);
-        let (hi0, hi1) = extract_hi(w[slot]);
+        schedule_pair_256(&mut w, pair);
+        let (lo0, lo1) = extract_lo(w[pair & 7]);
+        let (hi0, hi1) = extract_hi(w[pair & 7]);
         let r = pair.strict_mul(2);
         t2_buf[r] = hi0.wrapping_add(K[r]);
         t2_buf[r.strict_add(1)] = hi1.wrapping_add(K[r.strict_add(1)]);
@@ -263,9 +306,7 @@ pub(crate) unsafe fn compress_blocks_avx2(state: &mut [u64; 8], blocks: &[u8]) {
         round!(lo1.wrapping_add(K[r.strict_add(1)]));
       }
 
-      // Apply final deferred Σ0.
       a = a.wrapping_add(t2_deferred);
-
       state[0] = state[0].wrapping_add(a);
       state[1] = state[1].wrapping_add(b);
       state[2] = state[2].wrapping_add(c);
@@ -275,7 +316,7 @@ pub(crate) unsafe fn compress_blocks_avx2(state: &mut [u64; 8], blocks: &[u8]) {
       state[6] = state[6].wrapping_add(g);
       state[7] = state[7].wrapping_add(h);
 
-      // ── Block 2: pure scalar from pre-computed buffer ──────────────────
+      // Block 2: pure scalar from pre-computed buffer.
       a = state[0];
       b = state[1];
       c = state[2];
@@ -291,7 +332,6 @@ pub(crate) unsafe fn compress_blocks_avx2(state: &mut [u64; 8], blocks: &[u8]) {
       }
 
       a = a.wrapping_add(t2_deferred);
-
       state[0] = state[0].wrapping_add(a);
       state[1] = state[1].wrapping_add(b);
       state[2] = state[2].wrapping_add(c);
@@ -305,9 +345,74 @@ pub(crate) unsafe fn compress_blocks_avx2(state: &mut [u64; 8], blocks: &[u8]) {
       remaining = remaining.strict_sub(2);
     }
 
-    // Handle the last block (if odd count) with the portable kernel.
+    // ── Single-block (odd trailing) ──────────────────────────────────────
     if remaining == 1 {
-      Sha512::compress_blocks_portable(state, core::slice::from_raw_parts(ptr, BLOCK_LEN));
+      let mut wv: [__m128i; 8] = [
+        _mm_shuffle_epi8(_mm_loadu_si128(ptr.cast()), bswap),
+        _mm_shuffle_epi8(_mm_loadu_si128(ptr.add(16).cast()), bswap),
+        _mm_shuffle_epi8(_mm_loadu_si128(ptr.add(32).cast()), bswap),
+        _mm_shuffle_epi8(_mm_loadu_si128(ptr.add(48).cast()), bswap),
+        _mm_shuffle_epi8(_mm_loadu_si128(ptr.add(64).cast()), bswap),
+        _mm_shuffle_epi8(_mm_loadu_si128(ptr.add(80).cast()), bswap),
+        _mm_shuffle_epi8(_mm_loadu_si128(ptr.add(96).cast()), bswap),
+        _mm_shuffle_epi8(_mm_loadu_si128(ptr.add(112).cast()), bswap),
+      ];
+
+      let mut a = state[0];
+      let mut b = state[1];
+      let mut c = state[2];
+      let mut d = state[3];
+      let mut e = state[4];
+      let mut f = state[5];
+      let mut g = state[6];
+      let mut h = state[7];
+      let mut t2_deferred: u64 = 0;
+
+      macro_rules! round1 {
+        ($wk:expr) => {{
+          a = a.wrapping_add(t2_deferred);
+          let t1 = h
+            .wrapping_add(big_sigma1(e))
+            .wrapping_add(ch(e, f, g))
+            .wrapping_add($wk);
+          t2_deferred = big_sigma0(a).wrapping_add(maj(a, b, c));
+          h = g;
+          g = f;
+          f = e;
+          e = d.wrapping_add(t1);
+          d = c;
+          c = b;
+          b = a;
+          a = t1;
+        }};
+      }
+
+      // Rounds 0-15: loaded words.
+      for (pair, &v) in wv.iter().enumerate() {
+        let (w0, w1) = extract_128(v);
+        let r = pair.strict_mul(2);
+        round1!(w0.wrapping_add(K[r]));
+        round1!(w1.wrapping_add(K[r.strict_add(1)]));
+      }
+
+      // Rounds 16-79: interleaved schedule + rounds.
+      for pair in 8..40usize {
+        schedule_pair_128(&mut wv, pair);
+        let (w0, w1) = extract_128(wv[pair & 7]);
+        let r = pair.strict_mul(2);
+        round1!(w0.wrapping_add(K[r]));
+        round1!(w1.wrapping_add(K[r.strict_add(1)]));
+      }
+
+      a = a.wrapping_add(t2_deferred);
+      state[0] = state[0].wrapping_add(a);
+      state[1] = state[1].wrapping_add(b);
+      state[2] = state[2].wrapping_add(c);
+      state[3] = state[3].wrapping_add(d);
+      state[4] = state[4].wrapping_add(e);
+      state[5] = state[5].wrapping_add(f);
+      state[6] = state[6].wrapping_add(g);
+      state[7] = state[7].wrapping_add(h);
     }
   } // unsafe
 }

@@ -108,23 +108,39 @@ pub static S390X_KIMD_TABLE: DispatchTable = DispatchTable {
 #[inline]
 #[must_use]
 pub fn select_runtime_table(#[allow(unused_variables)] caps: Caps) -> &'static DispatchTable {
-  // x86_64 cascade: SHA-512 NI > AVX2+BMI2 > AVX-512VL > Portable
+  // x86_64 cascade: SHA-512 NI > vendor-aware AVX2/AVX-512VL > Portable
   //
-  // The stitched AVX2+BMI2 dual-block kernel outperforms single-block
-  // AVX-512VL on both AMD and Intel: Zen5 791 vs 748 MiB/s, SPR 526 vs
-  // 478 MiB/s (sha512-compress/raw, CI 2026-03-23). Prefer AVX2
-  // unconditionally when available.
+  // The stitched AVX2+BMI2 dual-block kernel beats AVX-512VL in raw
+  // compression throughput on both AMD and Intel. However, the AVX2 kernel
+  // falls back to portable for odd-block-count inputs (the common case for
+  // small inputs: 0-64 B = 1 block). On Intel, AVX-512VL handles single
+  // blocks natively, so it wins at small sizes and breaks even at scale.
+  //
+  // AMD: AVX2 > AVX-512VL (AVX2 wins at all sizes due to stitched ILP).
+  // Intel: AVX-512VL > AVX2 (single-block native > portable fallback).
+  //
+  // Measured: sha512-compress/raw CI 2026-03-23.
   #[cfg(target_arch = "x86_64")]
   {
     use crate::platform::caps::x86;
     if caps.has(x86::SHA512) {
       return &X86_SHA512_TABLE;
     }
-    if caps.has(x86::AVX2) {
-      return &X86_AVX2_TABLE;
-    }
-    if caps.has(x86::AVX512F) && caps.has(x86::AVX512VL) {
-      return &X86_AVX512VL_TABLE;
+    if caps.has(x86::AMD) {
+      if caps.has(x86::AVX2) {
+        return &X86_AVX2_TABLE;
+      }
+      if caps.has(x86::AVX512F) && caps.has(x86::AVX512VL) {
+        return &X86_AVX512VL_TABLE;
+      }
+    } else {
+      // Intel: AVX-512VL > AVX2 (native single-block > portable fallback)
+      if caps.has(x86::AVX512F) && caps.has(x86::AVX512VL) {
+        return &X86_AVX512VL_TABLE;
+      }
+      if caps.has(x86::AVX2) {
+        return &X86_AVX2_TABLE;
+      }
     }
   }
   #[cfg(target_arch = "aarch64")]
