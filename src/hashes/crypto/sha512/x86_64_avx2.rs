@@ -240,9 +240,9 @@ pub(crate) unsafe fn compress_blocks_avx2(state: &mut [u64; 8], blocks: &[u8]) {
       }
 
       // Rounds 0-15: consume loaded words, store block 2 values.
-      for pair in 0..8usize {
-        let (lo0, lo1) = extract_lo(w[pair]);
-        let (hi0, hi1) = extract_hi(w[pair]);
+      for (pair, &wv) in w.iter().enumerate() {
+        let (lo0, lo1) = extract_lo(wv);
+        let (hi0, hi1) = extract_hi(wv);
         let r = pair.strict_mul(2);
         t2_buf[r] = hi0.wrapping_add(K[r]);
         t2_buf[r.strict_add(1)] = hi1.wrapping_add(K[r.strict_add(1)]);
@@ -286,8 +286,8 @@ pub(crate) unsafe fn compress_blocks_avx2(state: &mut [u64; 8], blocks: &[u8]) {
       h = state[7];
       t2_deferred = 0;
 
-      for r in 0..80usize {
-        round!(t2_buf[r]);
+      for &wk in &t2_buf {
+        round!(wk);
       }
 
       a = a.wrapping_add(t2_deferred);
