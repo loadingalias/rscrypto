@@ -63,8 +63,11 @@ pub fn active_table() -> &'static KernelTable {
 ///
 /// Inputs at or below this size bypass all dispatch machinery and use a simple
 /// byte-at-a-time table lookup. This eliminates `active_table()` + `select_fns()`
-/// + indirect fn ptr overhead (~3-5 ns) that dominates at tiny sizes.
-const FAST_PATH_MAX: usize = 64;
+/// + indirect fn ptr overhead (~7-10 ns) that dominates at tiny sizes.
+///
+/// Set to 7 (not 64) because at 8+ bytes the dispatch path's slice-by-N or
+/// hardware-accelerated kernels outperform the bytewise loop.
+const FAST_PATH_MAX: usize = 7;
 
 /// Compute CRC-64/XZ checksum of data.
 ///
