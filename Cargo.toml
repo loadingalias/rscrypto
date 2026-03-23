@@ -91,7 +91,7 @@ crc64fast-nvme = "1.2.1"
 
 # Hash oracle crates
 blake3 = { version = "1.8.3", default-features = false, features = ["std", "rayon"] }
-sha2 = { version = "0.10.9", default-features = false, features = ["std"] }
+sha2 = { version = "0.10.9", default-features = false, features = ["std", "compress"] }
 sha3 = "0.10.8"
 keccak = "0.1.6"
 xxhash-rust = { version = "0.8.15", features = ["xxh3"] }

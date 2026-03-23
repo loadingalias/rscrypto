@@ -77,6 +77,69 @@ macro_rules! sha2_streaming {
 sha2_streaming!(sha256_streaming, "sha256/streaming", rscrypto::Sha256, sha2::Sha256);
 sha2_streaming!(sha512_streaming, "sha512/streaming", rscrypto::Sha512, sha2::Sha512);
 
+/// Benchmark the raw SHA-512 compress_blocks function in isolation — no padding,
+/// no finalization, no dispatch overhead beyond the initial kernel selection.
+/// Compares rscrypto's per-kernel compression against the `sha2` crate's
+/// `compress512` to isolate whether the SHA-512 gap is in compression or the
+/// sponge/padding wrapper.
+fn sha512_compress_raw(c: &mut Criterion) {
+  const BLOCK_LEN: usize = 128;
+  const NUM_BLOCKS: usize = 8;
+  const DATA_LEN: usize = BLOCK_LEN * NUM_BLOCKS;
+
+  let data = common::random_bytes(DATA_LEN);
+  let mut g = c.benchmark_group("sha512-compress/raw");
+  g.throughput(criterion::Throughput::Bytes(DATA_LEN as u64));
+
+  let seed = u64::from_le_bytes(data[..8].try_into().unwrap());
+
+  // rscrypto: dispatched (what the production SHA-512 path actually uses).
+  g.bench_function("rscrypto/auto", |b| {
+    b.iter(|| black_box(rscrypto::hashes::bench::run_auto("sha512-compress", black_box(&data))))
+  });
+
+  // rscrypto: portable kernel specifically.
+  if let Some(k) = rscrypto::hashes::bench::get_kernel("sha512-compress", "portable") {
+    g.bench_function("rscrypto/portable", |b| {
+      b.iter(|| black_box((k.func)(black_box(&data))))
+    });
+  }
+
+  // rscrypto: AVX2 kernel (x86_64 only).
+  if let Some(k) = rscrypto::hashes::bench::get_kernel("sha512-compress", "x86_64/avx2") {
+    g.bench_function("rscrypto/x86-avx2", |b| {
+      b.iter(|| black_box((k.func)(black_box(&data))))
+    });
+  }
+
+  // rscrypto: AVX-512VL kernel (x86_64 only).
+  if let Some(k) = rscrypto::hashes::bench::get_kernel("sha512-compress", "x86_64/avx512vl") {
+    g.bench_function("rscrypto/x86-avx512vl", |b| {
+      b.iter(|| black_box((k.func)(black_box(&data))))
+    });
+  }
+
+  // sha2 crate: compress512 — raw compression, apples-to-apples.
+  g.bench_function("sha2-crate/compress512", |b| {
+    // SAFETY: `data` has exactly DATA_LEN = BLOCK_LEN * NUM_BLOCKS bytes, so
+    // from_raw_parts produces a valid &[[u8; BLOCK_LEN]] of NUM_BLOCKS elements.
+    let blocks: &[[u8; BLOCK_LEN]] = unsafe { core::slice::from_raw_parts(data.as_ptr().cast(), NUM_BLOCKS) };
+    // SAFETY: GenericArray<u8, U128> is #[repr(transparent)] over [u8; 128],
+    // so the slice layout is identical.
+    let ga_blocks: &[sha2::digest::generic_array::GenericArray<u8, _>] = unsafe {
+      &*(blocks as *const [[u8; BLOCK_LEN]]
+        as *const [sha2::digest::generic_array::GenericArray<u8, sha2::digest::consts::U128>])
+    };
+    b.iter(|| {
+      let mut state = [seed; 8];
+      sha2::compress512(&mut state, black_box(ga_blocks));
+      black_box(state)
+    })
+  });
+
+  g.finish();
+}
+
 criterion_group!(
   benches,
   sha224,
@@ -85,6 +148,7 @@ criterion_group!(
   sha512,
   sha512_256,
   sha256_streaming,
-  sha512_streaming
+  sha512_streaming,
+  sha512_compress_raw
 );
 criterion_main!(benches);
