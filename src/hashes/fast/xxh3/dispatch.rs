@@ -103,17 +103,29 @@ pub fn kernel_name_for_len(len: usize) -> &'static str {
   select64(&d, len).1
 }
 
+/// Inline fast-path for inputs ≤ 240 bytes.
+///
+/// Every SIMD kernel delegates inputs ≤ 240 B back to the same portable scalar
+/// functions, so calling through the dispatch table just adds OnceCache load +
+/// indirect call overhead for no benefit. Handle small inputs directly.
 #[inline]
 #[must_use]
 pub fn hash64_with_seed(seed: u64, data: &[u8]) -> u64 {
+  if data.len() <= super::MID_SIZE_MAX {
+    return super::xxh3_64_with_seed(data, seed);
+  }
   let d = active();
   let (f, _) = select64(&d, data.len());
   f(data, seed)
 }
 
+/// See [`hash64_with_seed`] for the fast-path rationale.
 #[inline]
 #[must_use]
 pub fn hash128_with_seed(seed: u64, data: &[u8]) -> u128 {
+  if data.len() <= super::MID_SIZE_MAX {
+    return super::xxh3_128_with_seed(data, seed);
+  }
   let d = active();
   let (f, _) = select128(&d, data.len());
   f(data, seed)
