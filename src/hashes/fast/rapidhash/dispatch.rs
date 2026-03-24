@@ -79,21 +79,20 @@ pub fn kernel_name_for_len(len: usize) -> &'static str {
   select(&d, len).1
 }
 
+/// Inline fast-path: RapidHash currently only has a portable kernel, so
+/// bypass dispatch machinery entirely and call the scalar implementation
+/// directly. This eliminates OnceCache load + indirect call overhead that
+/// dominated the 0-64 B benchmarks.
 #[inline]
 #[must_use]
 pub fn hash64_with_seed(seed: u64, data: &[u8]) -> u64 {
-  let d = active();
-  let (f, _) = select(&d, data.len());
-  f(data, seed)
+  super::rapidhash_v3_with_seed(data, seed)
 }
 
 #[inline]
 #[must_use]
 pub fn hash128_with_seed(seed: u64, data: &[u8]) -> u128 {
-  let d = active();
-  let (f, _) = select(&d, data.len());
-  // rapidhash defines a 64-bit output; derive 128-bit from two independent seeds.
-  let lo = f(data, seed);
-  let hi = f(data, seed ^ 0x9E37_79B9_7F4A_7C15);
+  let lo = super::rapidhash_v3_with_seed(data, seed);
+  let hi = super::rapidhash_v3_with_seed(data, seed ^ 0x9E37_79B9_7F4A_7C15);
   (lo as u128) | ((hi as u128) << 64)
 }
