@@ -618,6 +618,11 @@ impl crate::traits::Checksum for Crc64 {
   fn reset(&mut self) {
     self.state = !0;
   }
+
+  #[inline]
+  fn checksum(data: &[u8]) -> u64 {
+    crate::checksum::dispatch::crc64_xz(data)
+  }
 }
 
 impl core::fmt::Debug for Crc64 {
@@ -770,6 +775,11 @@ impl crate::traits::Checksum for Crc64Nvme {
   #[inline]
   fn reset(&mut self) {
     self.state = !0;
+  }
+
+  #[inline]
+  fn checksum(data: &[u8]) -> u64 {
+    crate::checksum::dispatch::crc64_nvme(data)
   }
 }
 

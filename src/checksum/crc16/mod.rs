@@ -499,6 +499,11 @@ impl crate::traits::Checksum for Crc16Ccitt {
   fn reset(&mut self) {
     self.state = Self::INIT;
   }
+
+  #[inline]
+  fn checksum(data: &[u8]) -> u16 {
+    crate::checksum::dispatch::crc16_ccitt(data)
+  }
 }
 
 impl core::fmt::Debug for Crc16Ccitt {
@@ -635,6 +640,11 @@ impl crate::traits::Checksum for Crc16Ibm {
   #[inline]
   fn reset(&mut self) {
     self.state = Self::INIT;
+  }
+
+  #[inline]
+  fn checksum(data: &[u8]) -> u16 {
+    crate::checksum::dispatch::crc16_ibm(data)
   }
 }
 

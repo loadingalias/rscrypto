@@ -321,6 +321,11 @@ impl crate::traits::Checksum for Crc24OpenPgp {
   fn reset(&mut self) {
     self.state = Self::INIT;
   }
+
+  #[inline]
+  fn checksum(data: &[u8]) -> u32 {
+    crate::checksum::dispatch::crc24_openpgp(data)
+  }
 }
 
 impl core::fmt::Debug for Crc24OpenPgp {
