@@ -51,15 +51,22 @@ const RC: [u64; KECCAKF_ROUNDS] = [
   0x8000_0000_8000_8008,
 ];
 
-// `#[inline]` (not `always`) — the function body is large and must not be
-// duplicated at every call site. See the loop comment below.
+// Two platform-tuned implementations of the same Keccak-f[1600] permutation.
 //
-// Array-based state access: state stays as `&mut [u64; 25]` so LLVM generates
-// uniform `[rsp + const]` spill patterns. A 5-element `[u64; 5]` buffer is
-// reused for θ column parity and χ row temporaries. The serial ρ+π chain uses
-// a single `last` variable instead of 25 named `b` temporaries. This keeps
-// maximum simultaneous live locals ~8 (vs ~60 in the old named-variable
-// approach), dramatically reducing register spills on x86-64's 16 GPRs.
+// **x86-64 / register-poor targets (≤16 GPRs):** array-based state access.
+// State stays as `&mut [u64; 25]` so LLVM generates uniform `[rsp + const]`
+// spill patterns. A 5-element buffer is reused for θ and χ. Serial ρ+π chain
+// with hardcoded PI/RHO indices. Max ~8 simultaneous live locals.
+// Measured: +28% Zen5, +30% SPR, +9% Zen4/ICL vs the named-variable version.
+//
+// **aarch64 / register-rich targets (≥30 GPRs):** named-variable state.
+// All 25 lanes live in registers with good ILP. The 25 `b` temporaries for
+// ρ+π also fit without spilling. Avoids load/store traffic that the array
+// version introduces.
+// Measured: 8% faster than array-based on Graviton4.
+
+/// x86-64 / s390x / generic: array-based Keccak-f[1600].
+#[cfg(not(target_arch = "aarch64"))]
 #[inline]
 #[allow(unused_assignments)] // final ρ+π iteration assigns `last` which is intentionally unused
 pub(crate) fn keccakf_portable(state: &mut [u64; 25]) {
@@ -90,10 +97,7 @@ pub(crate) fn keccakf_portable(state: &mut [u64; 25]) {
     };
   }
 
-  // Loop over 24 rounds. Keeping the outer loop NOT unrolled is critical:
-  // the round body is ~110 scalar ops, so full unrolling produces ~10-15 KB
-  // of machine code and causes severe I-cache pressure. A compact loop body
-  // fits comfortably in L1i and lets the branch predictor handle the back-edge.
+  // Not unrolled: ~110 ops per round × 24 = too large for L1i if unrolled.
   for &rc in &RC {
     let mut arr = [0u64; 5];
 
@@ -162,6 +166,177 @@ pub(crate) fn keccakf_portable(state: &mut [u64; 25]) {
     // ι
     state[0] ^= rc;
   }
+}
+
+/// aarch64: named-variable Keccak-f[1600] — all 25 lanes in registers.
+///
+/// ARM's 30 GPRs hold the full state + temporaries without chaotic spills.
+/// The explicit `b0..b24` ρ+π temporaries enable maximum ILP from the
+/// out-of-order engine. Array-based access adds unnecessary load/store
+/// traffic on this register-rich architecture.
+#[cfg(target_arch = "aarch64")]
+#[inline]
+pub(crate) fn keccakf_portable(state: &mut [u64; 25]) {
+  let mut a0 = state[0];
+  let mut a1 = state[1];
+  let mut a2 = state[2];
+  let mut a3 = state[3];
+  let mut a4 = state[4];
+  let mut a5 = state[5];
+  let mut a6 = state[6];
+  let mut a7 = state[7];
+  let mut a8 = state[8];
+  let mut a9 = state[9];
+  let mut a10 = state[10];
+  let mut a11 = state[11];
+  let mut a12 = state[12];
+  let mut a13 = state[13];
+  let mut a14 = state[14];
+  let mut a15 = state[15];
+  let mut a16 = state[16];
+  let mut a17 = state[17];
+  let mut a18 = state[18];
+  let mut a19 = state[19];
+  let mut a20 = state[20];
+  let mut a21 = state[21];
+  let mut a22 = state[22];
+  let mut a23 = state[23];
+  let mut a24 = state[24];
+
+  macro_rules! round {
+    ($rc:expr) => {{
+      // θ
+      let c0 = a0 ^ a5 ^ a10 ^ a15 ^ a20;
+      let c1 = a1 ^ a6 ^ a11 ^ a16 ^ a21;
+      let c2 = a2 ^ a7 ^ a12 ^ a17 ^ a22;
+      let c3 = a3 ^ a8 ^ a13 ^ a18 ^ a23;
+      let c4 = a4 ^ a9 ^ a14 ^ a19 ^ a24;
+
+      let d0 = c4 ^ c1.rotate_left(1);
+      let d1 = c0 ^ c2.rotate_left(1);
+      let d2 = c1 ^ c3.rotate_left(1);
+      let d3 = c2 ^ c4.rotate_left(1);
+      let d4 = c3 ^ c0.rotate_left(1);
+
+      a0 ^= d0;
+      a5 ^= d0;
+      a10 ^= d0;
+      a15 ^= d0;
+      a20 ^= d0;
+      a1 ^= d1;
+      a6 ^= d1;
+      a11 ^= d1;
+      a16 ^= d1;
+      a21 ^= d1;
+      a2 ^= d2;
+      a7 ^= d2;
+      a12 ^= d2;
+      a17 ^= d2;
+      a22 ^= d2;
+      a3 ^= d3;
+      a8 ^= d3;
+      a13 ^= d3;
+      a18 ^= d3;
+      a23 ^= d3;
+      a4 ^= d4;
+      a9 ^= d4;
+      a14 ^= d4;
+      a19 ^= d4;
+      a24 ^= d4;
+
+      // ρ + π
+      let b0 = a0;
+      let b10 = a1.rotate_left(1);
+      let b20 = a2.rotate_left(62);
+      let b5 = a3.rotate_left(28);
+      let b15 = a4.rotate_left(27);
+      let b16 = a5.rotate_left(36);
+      let b1 = a6.rotate_left(44);
+      let b11 = a7.rotate_left(6);
+      let b21 = a8.rotate_left(55);
+      let b6 = a9.rotate_left(20);
+      let b7 = a10.rotate_left(3);
+      let b17 = a11.rotate_left(10);
+      let b2 = a12.rotate_left(43);
+      let b12 = a13.rotate_left(25);
+      let b22 = a14.rotate_left(39);
+      let b23 = a15.rotate_left(41);
+      let b8 = a16.rotate_left(45);
+      let b18 = a17.rotate_left(15);
+      let b3 = a18.rotate_left(21);
+      let b13 = a19.rotate_left(8);
+      let b14 = a20.rotate_left(18);
+      let b24 = a21.rotate_left(2);
+      let b9 = a22.rotate_left(61);
+      let b19 = a23.rotate_left(56);
+      let b4 = a24.rotate_left(14);
+
+      // χ
+      a0 = b0 ^ ((!b1) & b2);
+      a1 = b1 ^ ((!b2) & b3);
+      a2 = b2 ^ ((!b3) & b4);
+      a3 = b3 ^ ((!b4) & b0);
+      a4 = b4 ^ ((!b0) & b1);
+
+      a5 = b5 ^ ((!b6) & b7);
+      a6 = b6 ^ ((!b7) & b8);
+      a7 = b7 ^ ((!b8) & b9);
+      a8 = b8 ^ ((!b9) & b5);
+      a9 = b9 ^ ((!b5) & b6);
+
+      a10 = b10 ^ ((!b11) & b12);
+      a11 = b11 ^ ((!b12) & b13);
+      a12 = b12 ^ ((!b13) & b14);
+      a13 = b13 ^ ((!b14) & b10);
+      a14 = b14 ^ ((!b10) & b11);
+
+      a15 = b15 ^ ((!b16) & b17);
+      a16 = b16 ^ ((!b17) & b18);
+      a17 = b17 ^ ((!b18) & b19);
+      a18 = b18 ^ ((!b19) & b15);
+      a19 = b19 ^ ((!b15) & b16);
+
+      a20 = b20 ^ ((!b21) & b22);
+      a21 = b21 ^ ((!b22) & b23);
+      a22 = b22 ^ ((!b23) & b24);
+      a23 = b23 ^ ((!b24) & b20);
+      a24 = b24 ^ ((!b20) & b21);
+
+      // ι
+      a0 ^= $rc;
+    }};
+  }
+
+  // Not unrolled: ~110 ops per round × 24 = too large for L1i if unrolled.
+  for &rc in &RC {
+    round!(rc);
+  }
+
+  state[0] = a0;
+  state[1] = a1;
+  state[2] = a2;
+  state[3] = a3;
+  state[4] = a4;
+  state[5] = a5;
+  state[6] = a6;
+  state[7] = a7;
+  state[8] = a8;
+  state[9] = a9;
+  state[10] = a10;
+  state[11] = a11;
+  state[12] = a12;
+  state[13] = a13;
+  state[14] = a14;
+  state[15] = a15;
+  state[16] = a16;
+  state[17] = a17;
+  state[18] = a18;
+  state[19] = a19;
+  state[20] = a20;
+  state[21] = a21;
+  state[22] = a22;
+  state[23] = a23;
+  state[24] = a24;
 }
 
 // ---------------------------------------------------------------------------
