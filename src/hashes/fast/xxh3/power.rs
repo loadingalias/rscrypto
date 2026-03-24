@@ -76,18 +76,22 @@ unsafe fn vshl_u64(a: i64x2, shift: i64x2) -> i64x2 {
   out
 }
 
-/// Multiply even-indexed u32 lanes → u64: `vmuleuw`.
+/// Multiply the low 32 bits of each u64 lane → u64: `vmulouw`.
 ///
-/// On ppc64le, even u32 elements are the low 32 bits of each u64 lane.
-/// This gives: `low32(a) × low32(b) → u64` per lane.
+/// On ppc64le, inline asm uses POWER ISA (big-endian) element numbering:
+/// ISA "odd" u32 elements (1, 3) correspond to the **low** 32 bits of each
+/// u64 lane in little-endian layout. `vmulouw` multiplies those odd elements.
+///
+/// (Using `vmuleuw` here would multiply the ISA "even" = **high** 32 bits,
+/// which is wrong for the XXH3 MAC pattern on LE.)
 #[inline]
 #[target_feature(enable = "altivec", enable = "vsx", enable = "power8-vector")]
-unsafe fn vmul_even_u32(a: i64x2, b: i64x2) -> i64x2 {
+unsafe fn vmul_low32(a: i64x2, b: i64x2) -> i64x2 {
   let out: i64x2;
   // SAFETY: POWER8+ VSX available via target_feature.
   unsafe {
     core::arch::asm!(
-      "vmuleuw {out}, {a}, {b}",
+      "vmulouw {out}, {a}, {b}",
       out = lateout(vreg) out,
       a = in(vreg) a,
       b = in(vreg) b,
@@ -174,7 +178,7 @@ unsafe fn accumulate_512(acc: &mut [i64x2; 4], stripe: *const u8, secret: *const
 
       // Isolate high32 in low32 position, then multiply even u32 lanes
       let data_key_hi = vshr_u64(data_key, shift_32);
-      let product = vmul_even_u32(data_key, data_key_hi);
+      let product = vmul_low32(data_key, data_key_hi);
 
       // Swap u64 lanes and add data to accumulator
       let data_swap = vswap(data_vec);
@@ -213,8 +217,8 @@ unsafe fn scramble_acc(acc: &mut [i64x2; 4], secret: *const u8) {
       // prod_lo = low32(data_key) × PRIME32_1
       // prod_hi = high32(data_key) × PRIME32_1, shifted left 32
       let data_key_hi = vshr_u64(data_key, shift_32);
-      let prod_lo = vmul_even_u32(data_key, prime_vec);
-      let prod_hi = vmul_even_u32(data_key_hi, prime_vec);
+      let prod_lo = vmul_low32(data_key, prime_vec);
+      let prod_hi = vmul_low32(data_key_hi, prime_vec);
       acc[i] = vadd_u64(prod_lo, vshl_u64(prod_hi, shift_32));
 
       i = i.strict_add(1);
