@@ -672,6 +672,11 @@ impl crate::traits::Checksum for Crc32 {
   fn reset(&mut self) {
     self.state = !0;
   }
+
+  #[inline]
+  fn checksum(data: &[u8]) -> u32 {
+    crate::checksum::dispatch::crc32_ieee(data)
+  }
 }
 
 impl core::fmt::Debug for Crc32 {
@@ -809,6 +814,11 @@ impl crate::traits::Checksum for Crc32C {
   #[inline]
   fn reset(&mut self) {
     self.state = !0;
+  }
+
+  #[inline]
+  fn checksum(data: &[u8]) -> u32 {
+    crate::checksum::dispatch::crc32c(data)
   }
 }
 
