@@ -8,11 +8,21 @@ use core::mem;
 
 use crate::traits::FastHash;
 
+#[cfg(target_arch = "aarch64")]
+pub(crate) mod aarch64_neon;
 #[doc(hidden)]
 pub mod dispatch;
 #[doc(hidden)]
 pub mod dispatch_tables;
 pub(crate) mod kernels;
+#[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+pub(crate) mod power;
+#[cfg(target_arch = "s390x")]
+pub(crate) mod s390x;
+#[cfg(target_arch = "x86_64")]
+pub(crate) mod x86_64_avx2;
+#[cfg(target_arch = "x86_64")]
+pub(crate) mod x86_64_avx512;
 
 #[derive(Clone, Debug, Default)]
 pub struct Xxh3_64;
