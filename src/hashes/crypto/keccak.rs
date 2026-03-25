@@ -117,11 +117,31 @@ pub(crate) fn keccakf_portable(state: &mut [u64; 25]) {
     let d3 = c2 ^ c4.rotate_left(1);
     let d4 = c3 ^ c0.rotate_left(1);
 
-    state[0] ^= d0; state[5] ^= d0; state[10] ^= d0; state[15] ^= d0; state[20] ^= d0;
-    state[1] ^= d1; state[6] ^= d1; state[11] ^= d1; state[16] ^= d1; state[21] ^= d1;
-    state[2] ^= d2; state[7] ^= d2; state[12] ^= d2; state[17] ^= d2; state[22] ^= d2;
-    state[3] ^= d3; state[8] ^= d3; state[13] ^= d3; state[18] ^= d3; state[23] ^= d3;
-    state[4] ^= d4; state[9] ^= d4; state[14] ^= d4; state[19] ^= d4; state[24] ^= d4;
+    state[0] ^= d0;
+    state[5] ^= d0;
+    state[10] ^= d0;
+    state[15] ^= d0;
+    state[20] ^= d0;
+    state[1] ^= d1;
+    state[6] ^= d1;
+    state[11] ^= d1;
+    state[16] ^= d1;
+    state[21] ^= d1;
+    state[2] ^= d2;
+    state[7] ^= d2;
+    state[12] ^= d2;
+    state[17] ^= d2;
+    state[22] ^= d2;
+    state[3] ^= d3;
+    state[8] ^= d3;
+    state[13] ^= d3;
+    state[18] ^= d3;
+    state[23] ^= d3;
+    state[4] ^= d4;
+    state[9] ^= d4;
+    state[14] ^= d4;
+    state[19] ^= d4;
+    state[24] ^= d4;
 
     // ρ + π: serial chain (hardcoded PI/RHO for guaranteed constant folding)
     let mut last = state[1];
