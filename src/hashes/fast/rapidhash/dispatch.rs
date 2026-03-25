@@ -97,13 +97,13 @@ pub fn hash128_with_seed(seed: u64, data: &[u8]) -> u128 {
   (lo as u128) | ((hi as u128) << 64)
 }
 
-#[inline]
+#[inline(always)]
 #[must_use]
 pub fn hash64_fast_with_seed(seed: u64, data: &[u8]) -> u64 {
   super::rapidhash_fast_with_seed(data, seed)
 }
 
-#[inline]
+#[inline(always)]
 #[must_use]
 pub fn hash128_fast_with_seed(seed: u64, data: &[u8]) -> u128 {
   let lo = super::rapidhash_fast_with_seed(data, seed);
