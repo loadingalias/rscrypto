@@ -1,12 +1,44 @@
 # Auth Roadmap
 
+## Current Status (2026-03-25)
+
+Phase 1 (HMAC-SHA256, HKDF-SHA256, Ed25519) is **shipped and benchmarked**.
+
+**CI benchmark results** — [run #23544327679](https://github.com/loadingalias/rscrypto/actions/runs/23544327679) on Zen5, SPR, Graviton4, s390x:
+
+| Primitive | vs | Win Rate | Key Finding |
+|-----------|-----|---------|-------------|
+| **HMAC-SHA256** | `hmac`+`sha2` | **53%** (19W/12T/5L) | Grav4: 3.3-3.7x WIN (SHA-CE). s390x: 1.7-9.4x WIN (KIMD). Zen5/SPR: 4-6% loss at 0-32 B (key setup overhead). |
+| **HKDF-SHA256** | `hkdf`+`sha2` | ~38% | Grav4: 1.6-2.0x WIN. Zen5/SPR: **1.5-1.9x LOSS** — key pad caching gap. |
+| **Ed25519** | `ed25519-dalek` | **0%** | **8-13x behind** everywhere. Expected — portable double-and-add vs dalek's optimized scalar field backends. |
+
+### Performance Priorities
+
+1. **HKDF expand on x86-64** — 1.5-1.9x behind. Root cause: the expand loop calls
+   full HMAC per iteration; RustCrypto likely caches inner/outer HMAC key pads across
+   iterations, avoiding redundant SHA-256 compressions. Bounded optimization — cache
+   the HMAC key schedule once in `HkdfSha256::new()` and reuse across `expand()` calls.
+
+2. **Ed25519 scalar field** — 8-13x behind. This is the deep problem. Dalek uses:
+   - Precomputed basepoint tables for fixed-base scalar mul (sign/keygen)
+   - Straus/Pippenger multi-scalar mul for verify
+   - Platform-specific backends (IFMA on AVX-512, etc.)
+   Our portable double-and-add is correctness-first. The acceleration plan in Phase 2B
+   below remains the right order. Target: ≤3x of dalek by v0.2.
+
+3. **HMAC-SHA256 small-size overhead** — 4-6% loss at 0-32 B on Zen5/SPR. The SHA-256
+   compression is fast (SHA-NI), but HMAC wrapping adds two compressions (ipad + opad).
+   Investigate whether the inner/outer key pads can be pre-compressed to a midstate.
+
+---
+
 ## Recommended Set
 
 Build this authentication and key-derivation stack first:
 
-- `HMAC-SHA256`
-- `HKDF-SHA256`
-- `Ed25519` / `EdDSA`
+- `HMAC-SHA256` ✅ shipped
+- `HKDF-SHA256` ✅ shipped
+- `Ed25519` / `EdDSA` ✅ shipped (correctness-first, performance pending)
 - `KMAC256` and `cSHAKE256`
 - `Argon2id` only if password hashing enters scope
 
@@ -31,31 +63,24 @@ This is the right split because it covers:
 - NIST reality
 - internal systems that want a modern fast keyed hash
 
-## Ship Now
+## Ship Now — ✅ ALL SHIPPED
 
-### 1. HMAC-SHA256
+### 1. HMAC-SHA256 ✅
 
-This is mandatory.
+Shipped. 53% win rate vs RustCrypto. Dominant on Grav4 (3.3-3.7x) and s390x (1.7-9.4x)
+due to SHA-256 hardware acceleration inheritance. Small-size overhead on x86-64 (4-6%)
+is the remaining optimization target.
 
-- AWS SigV4 and a lot of existing protocol glue still depend on it.
-- It is small work on top of the SHA-256 code already in `rscrypto`.
-- NIST is moving HMAC guidance from FIPS 198-1 into SP 800-224, but HMAC itself is not going away.
+### 2. HKDF-SHA256 ✅
 
-### 2. HKDF-SHA256
+Shipped. Wins on Grav4 (1.6-2.0x) and s390x (large sizes). **1.5-1.9x behind on x86-64** —
+the expand loop needs HMAC key pad caching to avoid redundant SHA-256 compressions.
 
-This should ship with HMAC.
+### 3. Ed25519 ✅
 
-- It is the boring interoperable KDF.
-- It is better than inventing ad hoc “keyed hash as KDF” APIs for protocol surfaces.
-- Your existing BLAKE3-based derivation can stay as an internal fast path, but it should not be the only KDF story.
-
-### 3. Ed25519
-
-If `rscrypto` wants to be taken seriously as a modern systems crypto crate, signatures need a clean path.
-
-- EdDSA is in NIST FIPS 186-5.
-- Ed25519 is the practical first target.
-- It is the modern small-key, fast-signature, easy-to-use answer for application auth.
+Shipped (correctness-first). Passes all RFC 8032 vectors, differential-tested against dalek.
+**8-13x behind dalek** — the portable scalar field baseline is deliberately unoptimized.
+Performance is the primary post-ship optimization target (see Performance Priorities above).
 
 ## Ship Second
 
@@ -290,14 +315,14 @@ Current status:
 
 Do not blur these together. Field, scalar, point, and hashing should remain auditable as separate layers.
 
-### Phase 2C. Signing and Verification API
+### Phase 2C. Signing and Verification API ✅ DONE
 
-Minimum concrete API:
+Minimum concrete API — all shipped and crate-root exported:
 
-- `Ed25519Keypair::from_secret_key(secret)`
-- `Ed25519Keypair::sign(message)`
-- `Ed25519PublicKey::verify(message, signature)`
-- one-shot verify helper returning `VerificationError`
+- `Ed25519Keypair::from_secret_key(secret)` ✅
+- `Ed25519Keypair::sign(message)` ✅
+- `Ed25519PublicKey::verify(message, signature)` ✅
+- one-shot verify helper returning `VerificationError` ✅
 
 Hold the line here:
 
@@ -306,20 +331,34 @@ Hold the line here:
 - no generic signature trait until a second signature algorithm exists
 - no trait dependency lock-in to an external ecosystem crate
 
-Current status:
+Typed surface promoted: `Ed25519SecretKey`, `Ed25519PublicKey`,
+`Ed25519Signature`, `Ed25519Keypair` are crate-root re-exports.
 
-- `Ed25519SecretKey::public_key` is wired
-- `Ed25519SecretKey::sign` is wired
-- `Ed25519Keypair::from_secret_key` and `sign` are wired
-- `Ed25519PublicKey::verify` is wired
-- the module-level one-shot `verify(...)` helper is wired
-- Ed25519 should be promoted into the stable `auth` and crate-root re-export surface now that sign / verify are real
+### Phase 2E. Performance (NEW — post-ship)
 
-Decision:
+**Target:** ≤3x of dalek for sign/verify by v0.2.
 
-- do promote the typed Ed25519 surface: `Ed25519SecretKey`, `Ed25519PublicKey`, `Ed25519Signature`, `Ed25519Keypair`
-- do not promote every internal helper; keep arithmetic and point modules internal
-- keep the one-shot free function explicit as `verify_ed25519` at the root so it stays discoverable without colliding with other future signature schemes
+Current gap: 8-13x. Breakdown by operation (Zen5):
+
+| Operation | rscrypto | dalek | Gap |
+|-----------|----------|-------|-----|
+| Public key | 97.6 µs | 11.5 µs | 8.5x |
+| Sign (32 B) | 99.1 µs | 12.0 µs | 8.3x |
+| Verify (32 B) | 247 µs | 18.8 µs | 13.1x |
+
+Acceleration roadmap (in order):
+
+1. **Precomputed basepoint table** — fixed-base scalar mul using a precomputed
+   table of `[B, 2B, 4B, ..., 2^252·B]` (or windowed NAF). Eliminates
+   double-and-add for keygen/sign. Expected: 5-10x improvement.
+2. **Dedicated doubling formula** — current doubling routes through general
+   addition. Use the Edwards dedicated doubling formula (fewer field muls).
+3. **Straus double-scalar mul for verify** — `aR + sB` via interleaved
+   Straus method instead of two separate scalar muls. Expected: 2-3x verify.
+4. **AVX2 field arithmetic** — vectorize 5×51-limb field mul/square across
+   two independent field elements (common in addition/doubling).
+5. **AVX-512IFMA** — 52-bit integer fused multiply-add, natural fit for
+   5×51-limb representation. Only where measurably better.
 
 ### Phase 2D. Validation
 

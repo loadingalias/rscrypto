@@ -111,10 +111,45 @@ impl FieldElement {
   }
 
   /// Square a field element.
+  ///
+  /// Dedicated formula exploiting `f[i]*f[j] == f[j]*f[i]` symmetry:
+  /// 15 wide multiplies instead of 25 in the general `mul` path.
   #[inline]
   #[must_use]
   pub(crate) fn square(&self) -> Self {
-    self.mul(self)
+    let [f0, f1, f2, f3, f4] = self.0;
+
+    // Pre-double and pre-reduce to fold the 2× and 19× factors into operands.
+    let f0_2 = f0.strict_mul(2);
+    let f1_2 = f1.strict_mul(2);
+    let f1_38 = f1.strict_mul(38); // 2 × 19
+    let f2_38 = f2.strict_mul(38);
+    let f3_38 = f3.strict_mul(38);
+    let f3_19 = f3.strict_mul(19);
+    let f4_19 = f4.strict_mul(19);
+
+    // h0 = f0² + 38·f1·f4 + 38·f2·f3
+    // h1 = 2·f0·f1 + 38·f2·f4 + 19·f3²
+    // h2 = 2·f0·f2 + f1² + 38·f3·f4
+    // h3 = 2·f0·f3 + 2·f1·f2 + 19·f4²
+    // h4 = 2·f0·f4 + 2·f1·f3 + f2²
+    let h0 = wide_mul(f0, f0)
+      .strict_add(wide_mul(f1_38, f4))
+      .strict_add(wide_mul(f2_38, f3));
+    let h1 = wide_mul(f0_2, f1)
+      .strict_add(wide_mul(f2_38, f4))
+      .strict_add(wide_mul(f3_19, f3));
+    let h2 = wide_mul(f0_2, f2)
+      .strict_add(wide_mul(f1, f1))
+      .strict_add(wide_mul(f3_38, f4));
+    let h3 = wide_mul(f0_2, f3)
+      .strict_add(wide_mul(f1_2, f2))
+      .strict_add(wide_mul(f4_19, f4));
+    let h4 = wide_mul(f0_2, f4)
+      .strict_add(wide_mul(f1_2, f3))
+      .strict_add(wide_mul(f2, f2));
+
+    Self(reduce_wide([h0, h1, h2, h3, h4]))
   }
 
   /// Negate the field element modulo `2^255 - 19`.
@@ -274,6 +309,12 @@ impl fmt::Debug for FieldElement {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     f.debug_tuple("FieldElement").field(&self.normalize().0).finish()
   }
+}
+
+#[inline]
+#[must_use]
+fn wide_mul(a: u64, b: u64) -> u128 {
+  u128::from(a).strict_mul(u128::from(b))
 }
 
 #[inline]

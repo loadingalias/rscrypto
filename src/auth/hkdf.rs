@@ -58,6 +58,9 @@ impl core::error::Error for HkdfOutputLengthError {}
 #[derive(Clone)]
 pub struct HkdfSha256 {
   prk: [u8; OUTPUT_SIZE],
+  /// Cached HMAC keyed with PRK. Avoids re-compressing ipad/opad (2 SHA-256
+  /// compressions) on every expand iteration.
+  prk_mac: HmacSha256,
 }
 
 impl fmt::Debug for HkdfSha256 {
@@ -85,9 +88,9 @@ impl HkdfSha256 {
   pub fn extract(salt: &[u8], input_key_material: &[u8]) -> Self {
     let zero_salt = [0u8; OUTPUT_SIZE];
     let salt = if salt.is_empty() { &zero_salt[..] } else { salt };
-    Self {
-      prk: HmacSha256::mac(salt, input_key_material),
-    }
+    let prk = HmacSha256::mac(salt, input_key_material);
+    let prk_mac = HmacSha256::new(&prk);
+    Self { prk, prk_mac }
   }
 
   /// Expand the stored pseudorandom key into `okm`.
@@ -100,13 +103,16 @@ impl HkdfSha256 {
       return Ok(());
     }
 
+    // Clone the cached HMAC once. Each iteration resets the inner state
+    // (one memcpy) instead of re-creating from scratch (2 SHA-256 compressions).
+    let mut mac = self.prk_mac.clone();
     let mut block = [0u8; OUTPUT_SIZE];
     let mut have_block = false;
     let mut counter = 1u8;
 
     for chunk in okm.chunks_mut(OUTPUT_SIZE) {
-      let mut mac = HmacSha256::new(&self.prk);
       if have_block {
+        mac.reset();
         mac.update(&block);
       }
       mac.update(info);
