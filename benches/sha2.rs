@@ -133,6 +133,13 @@ fn sha512_compress_raw(c: &mut Criterion) {
     });
   }
 
+  // rscrypto: AVX2 decoupled-schedule kernel (x86_64 only).
+  if let Some(k) = rscrypto::hashes::bench::get_kernel("sha512-compress", "x86_64/avx2-decoupled") {
+    g.bench_function("rscrypto/x86-avx2-decoupled", |b| {
+      b.iter(|| black_box((k.func)(black_box(&data))))
+    });
+  }
+
   // sha2 crate: compress512 — raw compression, apples-to-apples.
   g.bench_function("sha2-crate/compress512", |b| {
     // SAFETY: `data` has exactly DATA_LEN = BLOCK_LEN * NUM_BLOCKS bytes, so

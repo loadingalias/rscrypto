@@ -40,6 +40,8 @@ pub enum Sha512KernelId {
   X86Avx2Std = 9,
   #[cfg(target_arch = "x86_64")]
   X86Avx512vlStd = 10,
+  #[cfg(target_arch = "x86_64")]
+  X86Avx2Decoupled = 11,
 }
 
 #[cfg(any(test, feature = "std"))]
@@ -63,6 +65,8 @@ pub const ALL: &[Sha512KernelId] = &[
   Sha512KernelId::X86Avx2Std,
   #[cfg(target_arch = "x86_64")]
   Sha512KernelId::X86Avx512vlStd,
+  #[cfg(target_arch = "x86_64")]
+  Sha512KernelId::X86Avx2Decoupled,
 ];
 
 impl Sha512KernelId {
@@ -91,6 +95,8 @@ impl Sha512KernelId {
       Self::X86Avx2Std => "x86-avx2-std",
       #[cfg(target_arch = "x86_64")]
       Self::X86Avx512vlStd => "x86-avx512vl-std",
+      #[cfg(target_arch = "x86_64")]
+      Self::X86Avx2Decoupled => "x86-avx2-decoupled",
     }
   }
 }
@@ -120,6 +126,8 @@ pub fn id_from_name(name: &str) -> Option<Sha512KernelId> {
     "x86-avx2-std" => Some(Sha512KernelId::X86Avx2Std),
     #[cfg(target_arch = "x86_64")]
     "x86-avx512vl-std" => Some(Sha512KernelId::X86Avx512vlStd),
+    #[cfg(target_arch = "x86_64")]
+    "x86-avx2-decoupled" => Some(Sha512KernelId::X86Avx2Decoupled),
     _ => None,
   }
 }
@@ -183,6 +191,12 @@ fn compress_blocks_x86_avx2_std(state: &mut [u64; 8], blocks: &[u8]) {
 }
 
 #[cfg(target_arch = "x86_64")]
+fn compress_blocks_x86_avx2_decoupled(state: &mut [u64; 8], blocks: &[u8]) {
+  // SAFETY: Only called when dispatch has verified `x86::AVX2` and `x86::BMI2` are available.
+  unsafe { super::x86_64_avx2::compress_blocks_avx2_decoupled(state, blocks) }
+}
+
+#[cfg(target_arch = "x86_64")]
 fn compress_blocks_x86_avx512vl_std(state: &mut [u64; 8], blocks: &[u8]) {
   // SAFETY: Only called when dispatch has verified AVX-512VL and BMI2 are available.
   unsafe { super::x86_64_avx512vl::compress_blocks_avx512vl_std(state, blocks) }
@@ -212,6 +226,8 @@ pub(crate) fn compress_blocks_fn(id: Sha512KernelId) -> CompressBlocksFn {
     Sha512KernelId::X86Avx2Std => compress_blocks_x86_avx2_std,
     #[cfg(target_arch = "x86_64")]
     Sha512KernelId::X86Avx512vlStd => compress_blocks_x86_avx512vl_std,
+    #[cfg(target_arch = "x86_64")]
+    Sha512KernelId::X86Avx2Decoupled => compress_blocks_x86_avx2_decoupled,
   }
 }
 
@@ -240,5 +256,7 @@ pub const fn required_caps(id: Sha512KernelId) -> Caps {
     Sha512KernelId::X86Avx2Std => x86::AVX2.union(x86::BMI2),
     #[cfg(target_arch = "x86_64")]
     Sha512KernelId::X86Avx512vlStd => x86::AVX512F.union(x86::AVX512VL).union(x86::BMI2),
+    #[cfg(target_arch = "x86_64")]
+    Sha512KernelId::X86Avx2Decoupled => x86::AVX2.union(x86::BMI2),
   }
 }

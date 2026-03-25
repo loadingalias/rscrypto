@@ -28,6 +28,8 @@ pub enum Sha384KernelId {
   X86Avx2Std = 9,
   #[cfg(target_arch = "x86_64")]
   X86Avx512vlStd = 10,
+  #[cfg(target_arch = "x86_64")]
+  X86Avx2Decoupled = 11,
 }
 
 #[cfg(any(test, feature = "std"))]
@@ -51,6 +53,8 @@ pub const ALL: &[Sha384KernelId] = &[
   Sha384KernelId::X86Avx2Std,
   #[cfg(target_arch = "x86_64")]
   Sha384KernelId::X86Avx512vlStd,
+  #[cfg(target_arch = "x86_64")]
+  Sha384KernelId::X86Avx2Decoupled,
 ];
 
 impl Sha384KernelId {
@@ -79,6 +83,8 @@ impl Sha384KernelId {
       Self::X86Avx2Std => "x86-avx2-std",
       #[cfg(target_arch = "x86_64")]
       Self::X86Avx512vlStd => "x86-avx512vl-std",
+      #[cfg(target_arch = "x86_64")]
+      Self::X86Avx2Decoupled => "x86-avx2-decoupled",
     }
   }
 }
@@ -108,6 +114,8 @@ pub fn id_from_name(name: &str) -> Option<Sha384KernelId> {
     "x86-avx2-std" => Some(Sha384KernelId::X86Avx2Std),
     #[cfg(target_arch = "x86_64")]
     "x86-avx512vl-std" => Some(Sha384KernelId::X86Avx512vlStd),
+    #[cfg(target_arch = "x86_64")]
+    "x86-avx2-decoupled" => Some(Sha384KernelId::X86Avx2Decoupled),
     _ => None,
   }
 }
@@ -138,6 +146,8 @@ const fn to_sha512_kernel_id(id: Sha384KernelId) -> crate::hashes::crypto::sha51
     Sha384KernelId::X86Avx2Std => Sha512KernelId::X86Avx2Std,
     #[cfg(target_arch = "x86_64")]
     Sha384KernelId::X86Avx512vlStd => Sha512KernelId::X86Avx512vlStd,
+    #[cfg(target_arch = "x86_64")]
+    Sha384KernelId::X86Avx2Decoupled => Sha512KernelId::X86Avx2Decoupled,
   }
 }
 
@@ -168,6 +178,10 @@ pub(crate) fn compress_blocks_fn(id: Sha384KernelId) -> CompressBlocksFn {
     Sha384KernelId::X86Avx2Std => crate::hashes::crypto::sha512::kernels::compress_blocks_fn(to_sha512_kernel_id(id)),
     #[cfg(target_arch = "x86_64")]
     Sha384KernelId::X86Avx512vlStd => {
+      crate::hashes::crypto::sha512::kernels::compress_blocks_fn(to_sha512_kernel_id(id))
+    }
+    #[cfg(target_arch = "x86_64")]
+    Sha384KernelId::X86Avx2Decoupled => {
       crate::hashes::crypto::sha512::kernels::compress_blocks_fn(to_sha512_kernel_id(id))
     }
   }

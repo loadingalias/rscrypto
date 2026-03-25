@@ -96,6 +96,15 @@ pub static X86_AVX512VL_STD_TABLE: DispatchTable = DispatchTable {
   l: KernelId::X86Avx512vlStd,
 };
 
+#[cfg(target_arch = "x86_64")]
+pub static X86_AVX2_DECOUPLED_TABLE: DispatchTable = DispatchTable {
+  boundaries: DEFAULT_BOUNDARIES,
+  xs: KernelId::X86Avx2Decoupled,
+  s: KernelId::X86Avx2Decoupled,
+  m: KernelId::X86Avx2Decoupled,
+  l: KernelId::X86Avx2Decoupled,
+};
+
 #[cfg(target_arch = "riscv64")]
 pub static RISCV_ZKNH_TABLE: DispatchTable = DispatchTable {
   boundaries: DEFAULT_BOUNDARIES,
@@ -145,12 +154,13 @@ pub fn select_runtime_table(#[allow(unused_variables)] caps: Caps) -> &'static D
       return &X86_SHA512_TABLE;
     }
     if caps.has(x86::AMD) {
-      // Deferred-Σ0 wins on all AMD: the standard-round merge point
-      // (a = t1 + t2) serializes on Zen 5's 6-wide pipeline, losing to
-      // the pipelined t2 deferral. Measured: 0.79x with std → ~1.0x with
-      // deferred on Zen 5 CI 2026-03-25.
+      // Decoupled kernel: schedule one-ahead of rounds. The stitched kernel
+      // serialises schedule → extract → round within each iteration, limiting
+      // IPC on wide pipelines. The decoupled pattern gives the OOO engine
+      // 16 independent scalar rounds to overlap with SIMD schedule latency.
+      // Measured: stitched Zen4→Zen5 scaling 1.32x vs sha2 crate 1.71x.
       if caps.has(x86::AVX2) {
-        return &X86_AVX2_TABLE;
+        return &X86_AVX2_DECOUPLED_TABLE;
       }
       if caps.has(x86::AVX512F) && caps.has(x86::AVX512VL) {
         return &X86_AVX512VL_TABLE;

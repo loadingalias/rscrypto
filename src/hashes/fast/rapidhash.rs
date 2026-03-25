@@ -679,6 +679,7 @@ mod tests {
   // -- Fast variant oracle (competitor's inner module) --
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn smoke_fast_empty_matches_oracle() {
     use core::hash::Hasher;
     let seed = 0u64;
@@ -711,7 +712,12 @@ mod tests {
     /// The fast variant uses the inner-algorithm core (3-stream mid-range,
     /// inner finalization). Oracle: `rapidhash::fast::RapidHasher` (the
     /// competitor's optimized inner module with AVALANCHE=false, SPONGE=true).
+    ///
+    /// LE-only: the competitor's inner module uses non-portable native-endian
+    /// reads (`read_u64_np`), while we use LE reads for consistent hashing
+    /// across platforms. On BE targets the outputs diverge by design.
     #[test]
+    #[cfg(target_endian = "little")]
     fn rapidhash_fast_64_matches_inner_oracle(seed in any::<u64>(), data in proptest::collection::vec(any::<u8>(), 0..8192)) {
       use core::hash::Hasher;
       let ours = <RapidHashFast64 as crate::traits::FastHash>::hash_with_seed(seed, &data);
