@@ -64,11 +64,12 @@ broken_intra_doc_links = "deny"
 private_intra_doc_links = "warn"
 
 [features]
-default = ["std", "checksums", "hashes"]
+default = ["std", "checksums", "hashes", "auth"]
 std = ["alloc"]
 alloc = []
 checksums = []
 hashes = []
+auth = ["hashes"]
 parallel = ["std", "dep:rayon"]
 diag = ["std"]
 testing = []
@@ -98,6 +99,7 @@ xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
 rapidhash = "4.4.1"
 tiny-keccak = { version = "2.0.2", features = ["kmac"] }
 digest = { version = "0.10.7", features = ["dev"] }
+ed25519-dalek = "2.1.1"
 
 [[bench]]
 name = "blake3"
@@ -113,6 +115,10 @@ harness = false
 
 [[bench]]
 name = "ascon"
+harness = false
+
+[[bench]]
+name = "auth"
 harness = false
 
 [[bench]]

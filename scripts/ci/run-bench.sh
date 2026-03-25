@@ -138,7 +138,13 @@ DEFAULT_HASH_ALGOS=(
   "ascon-xof128"
 )
 
-ALL_KNOWN_ALGOS=("${DEFAULT_CHECKSUM_ALGOS[@]}" "${DEFAULT_HASH_ALGOS[@]}")
+DEFAULT_AUTH_ALGOS=(
+  "hmac-sha256"
+  "hkdf-sha256"
+  "ed25519"
+)
+
+ALL_KNOWN_ALGOS=("${DEFAULT_CHECKSUM_ALGOS[@]}" "${DEFAULT_HASH_ALGOS[@]}" "${DEFAULT_AUTH_ALGOS[@]}")
 
 checksum_filter_token() {
   local algo="${1:-}"
@@ -172,11 +178,22 @@ hash_filter_token() {
   esac
 }
 
+auth_filter_token() {
+  local algo="${1:-}"
+  case "$algo" in
+    hmac-sha256) echo "hmac" ;;
+    hkdf-sha256) echo "hkdf" ;;
+    ed25519) echo "ed25519" ;;
+    *) echo "$algo" ;;
+  esac
+}
+
 default_benches_for_crate() {
   local crate="${1:-}"
   case "$crate" in
     checksum) echo "crc" ;;
     hashes) echo "sha2,sha3,ascon,xxh3,rapidhash,blake3" ;;
+    auth) echo "auth" ;;
     *) echo "" ;;
   esac
 }
@@ -216,6 +233,14 @@ append_algo_plan_row() {
     crate="hashes"
     token="${raw_filter:-$(hash_filter_token "$algo")}"
     PLAN_ROWS+=("$crate|$bench|$token")
+    return 0
+  fi
+
+  if array_contains "$algo" "${DEFAULT_AUTH_ALGOS[@]}"; then
+    crate="auth"
+    bench="auth"
+    token="${raw_filter:-$(auth_filter_token "$algo")}"
+    PLAN_ROWS+=("$crate|$bench|$token")
   fi
 }
 
@@ -240,10 +265,11 @@ expand_bench_shorthand() {
   IFS=',' read -r -a tokens <<< "$raw"
   for token in "${tokens[@]}"; do
     case "$token" in
-      comp) expanded+=("crc" "sha2" "sha3" "ascon" "xxh3" "rapidhash" "blake3") ;;
+      comp) expanded+=("crc" "sha2" "sha3" "ascon" "auth" "xxh3" "rapidhash" "blake3") ;;
       kernels) expanded+=("blake3") ;;
       checksum_comp|checksum_kernels) expanded+=("crc") ;;
       hashes_comp) expanded+=("sha2" "sha3" "ascon" "xxh3" "rapidhash" "blake3") ;;
+      auth_comp) expanded+=("auth") ;;
       hashes_kernels) expanded+=("blake3") ;;
       *)       expanded+=("$token") ;;
     esac
@@ -476,6 +502,9 @@ if [[ -n "$ONLY_INPUT" ]]; then
       all)
         for algo in "${ALL_KNOWN_ALGOS[@]}"; do append_unique "$algo" SELECTED_ALGOS; done
         ;;
+      auth)
+        for algo in "${DEFAULT_AUTH_ALGOS[@]}"; do append_unique "$algo" SELECTED_ALGOS; done
+        ;;
       checksum|checksums)
         for algo in "${DEFAULT_CHECKSUM_ALGOS[@]}"; do append_unique "$algo" SELECTED_ALGOS; done
         ;;
@@ -556,13 +585,15 @@ if [[ "${#RAW_FILTERS[@]}" -gt 0 ]]; then
           append_unique "checksum" raw_crates
         elif array_contains "$algo" "${DEFAULT_HASH_ALGOS[@]}"; then
           append_unique "hashes" raw_crates
+        elif array_contains "$algo" "${DEFAULT_AUTH_ALGOS[@]}"; then
+          append_unique "auth" raw_crates
         fi
       done
       if [[ "${#raw_crates[@]}" -eq 0 ]]; then
-        raw_crates=("checksum" "hashes")
+        raw_crates=("checksum" "hashes" "auth")
       fi
     else
-      raw_crates=("checksum" "hashes")
+      raw_crates=("checksum" "hashes" "auth")
     fi
 
     if [[ -n "$BENCHES_INPUT" ]]; then

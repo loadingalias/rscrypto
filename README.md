@@ -41,6 +41,32 @@ assert_eq!(h.finalize(), digest);
 h.reset();
 ```
 
+### Auth
+
+```rust
+use rscrypto::{Ed25519Keypair, HkdfSha256, HmacSha256, Mac};
+
+let key = b"shared-secret";
+let data = b"hello world";
+
+let tag = HmacSha256::mac(key, data);
+
+let mut mac = HmacSha256::new(key);
+mac.update(b"hello ");
+mac.update(b"world");
+assert_eq!(mac.finalize(), tag);
+assert!(mac.verify(&tag).is_ok());
+
+let mut okm = [0u8; 32];
+HkdfSha256::new(b"salt", b"input key material").expand(b"context", &mut okm)?;
+assert_ne!(okm, [0u8; 32]);
+
+let keypair = Ed25519Keypair::from_secret_key(rscrypto::Ed25519SecretKey::from_bytes([7u8; 32]));
+let sig = keypair.sign(b"auth");
+assert!(keypair.public_key().verify(b"auth", &sig).is_ok());
+# Ok::<(), rscrypto::auth::HkdfOutputLengthError>(())
+```
+
 ### XOF
 
 ```rust
@@ -65,11 +91,16 @@ assert_eq!(out, same);
 
 ```rust
 use rscrypto::{
-  Blake3, Checksum, Crc32C, Digest, RapidHash, Sha256, Shake256, Xof, Xxh3,
+  Blake3, Checksum, Crc32C, Digest, Ed25519Keypair, Ed25519SecretKey, HkdfSha256, HmacSha256, Mac, RapidHash,
+  Sha256, Shake256, Xof, Xxh3,
 };
 
 let checksum = Crc32C::checksum(b"data");
 let digest = Blake3::digest(b"data");
+let tag = HmacSha256::mac(b"key", b"data");
+
+let mut okm = [0u8; 32];
+HkdfSha256::new(b"salt", b"ikm").expand(b"info", &mut okm)?;
 
 let mut xof = Shake256::xof(b"data");
 let mut out = [0u8; 32];
@@ -81,16 +112,22 @@ h.update(b"part2");
 let _ = h.finalize();
 h.reset();
 
+assert!(HmacSha256::verify_tag(b"key", b"data", &tag).is_ok());
+let keypair = Ed25519Keypair::from_secret_key(Ed25519SecretKey::from_bytes([1u8; 32]));
+let sig = keypair.sign(b"data");
+assert!(keypair.public_key().verify(b"data", &sig).is_ok());
 let _ = Xxh3::hash(b"data");
 let _ = RapidHash::hash(b"data");
+# Ok::<(), rscrypto::auth::HkdfOutputLengthError>(())
 ```
 
 Root exports are intentionally small:
 
 ```rust
-pub use traits::{Checksum, ChecksumCombine, Digest, Xof, FastHash, VerificationError};
+pub use traits::{Checksum, ChecksumCombine, Digest, Mac, Xof, FastHash, VerificationError};
 pub use traits::ct;
 
+pub use auth::{Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature, HkdfSha256, HmacSha256, verify_ed25519};
 pub use checksum::{Crc16Ccitt, Crc16Ibm, Crc24OpenPgp, Crc32, Crc32C, Crc64, Crc64Nvme};
 pub use hashes::crypto::{
   Sha224, Sha256, Sha384, Sha512, Sha512_256,
@@ -128,6 +165,7 @@ Advanced surfaces stay explicit:
 | `alloc` | Yes | buffered checksum wrappers |
 | `checksums` | Yes | CRC families and checksum helpers |
 | `hashes` | Yes | digest, XOF, and fast-hash families |
+| `auth` | Yes | HMAC-SHA256, HKDF-SHA256, and Ed25519 |
 | `parallel` | No | rayon-backed BLAKE3 parallel work |
 | `diag` | No | checksum dispatch diagnostics |
 | `testing` | No | internal validation hooks |

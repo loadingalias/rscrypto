@@ -236,6 +236,12 @@ pub(crate) unsafe fn compress_blocks_avx2(state: &mut [u64; 8], blocks: &[u8]) {
 
     let bswap = _mm_loadu_si128(BSWAP64_128.as_ptr().cast());
 
+    // Pre-allocate the block-2 round-value buffer outside the loop.
+    // All 80 entries are written (rounds 0-15 + 16-79) before block 2 reads them,
+    // so the initial value is irrelevant. Hoisting avoids a 640-byte memset per
+    // dual-block iteration.
+    let mut t2_buf = [0u64; 80];
+
     // ── Dual-block loop ──────────────────────────────────────────────────
     while remaining >= 2 {
       let blk1 = ptr;
@@ -251,8 +257,6 @@ pub(crate) unsafe fn compress_blocks_avx2(state: &mut [u64; 8], blocks: &[u8]) {
         load_two_blocks(blk1, blk2, 96, bswap),
         load_two_blocks(blk1, blk2, 112, bswap),
       ];
-
-      let mut t2_buf = [0u64; 80];
 
       let mut a = state[0];
       let mut b = state[1];
@@ -405,6 +409,215 @@ pub(crate) unsafe fn compress_blocks_avx2(state: &mut [u64; 8], blocks: &[u8]) {
       }
 
       a = a.wrapping_add(t2_deferred);
+      state[0] = state[0].wrapping_add(a);
+      state[1] = state[1].wrapping_add(b);
+      state[2] = state[2].wrapping_add(c);
+      state[3] = state[3].wrapping_add(d);
+      state[4] = state[4].wrapping_add(e);
+      state[5] = state[5].wrapping_add(f);
+      state[6] = state[6].wrapping_add(g);
+      state[7] = state[7].wrapping_add(h);
+    }
+  } // unsafe
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Standard-round variant (non-deferred Σ0)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// SHA-512 multi-block compression using AVX2 + BMI2, **standard round**.
+///
+/// Identical architecture to [`compress_blocks_avx2`] (stitched dual-block
+/// SIMD schedule + scalar rounds, block-2 replay from pre-computed buffer)
+/// but uses the standard SHA-512 round function where `a = T1 + Σ0(a) + Maj`
+/// is computed immediately rather than deferred to the next round.
+///
+/// The standard round has more within-round parallelism (Σ0 and Σ1 are
+/// independent), which benefits wide-pipeline CPUs (Zen 5, 6-wide dispatch).
+/// The deferred variant has a shorter serial dependency chain, which benefits
+/// narrow-pipeline CPUs (Zen 4, 4-wide dispatch).
+///
+/// # Safety
+///
+/// Caller must ensure `avx2` and `bmi2` CPU features are available.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,bmi2")]
+pub(crate) unsafe fn compress_blocks_avx2_std(state: &mut [u64; 8], blocks: &[u8]) {
+  debug_assert_eq!(blocks.len() % BLOCK_LEN, 0);
+  let num_blocks = blocks.len() / BLOCK_LEN;
+  if num_blocks == 0 {
+    return;
+  }
+
+  // SAFETY: AVX2/BMI2 intrinsics and target-feature-gated calls are available via this
+  // function's #[target_feature] attribute. Pointer arithmetic is bounded by blocks.len().
+  unsafe {
+    let mut ptr = blocks.as_ptr();
+    let mut remaining = num_blocks;
+
+    let bswap = _mm_loadu_si128(BSWAP64_128.as_ptr().cast());
+
+    let mut t2_buf = [0u64; 80];
+
+    // ── Dual-block loop ──────────────────────────────────────────────────
+    while remaining >= 2 {
+      let blk1 = ptr;
+      let blk2 = ptr.add(BLOCK_LEN);
+
+      let mut w: [__m256i; 8] = [
+        load_two_blocks(blk1, blk2, 0, bswap),
+        load_two_blocks(blk1, blk2, 16, bswap),
+        load_two_blocks(blk1, blk2, 32, bswap),
+        load_two_blocks(blk1, blk2, 48, bswap),
+        load_two_blocks(blk1, blk2, 64, bswap),
+        load_two_blocks(blk1, blk2, 80, bswap),
+        load_two_blocks(blk1, blk2, 96, bswap),
+        load_two_blocks(blk1, blk2, 112, bswap),
+      ];
+
+      let mut a = state[0];
+      let mut b = state[1];
+      let mut c = state[2];
+      let mut d = state[3];
+      let mut e = state[4];
+      let mut f = state[5];
+      let mut g = state[6];
+      let mut h = state[7];
+
+      macro_rules! round_std {
+        ($wk:expr) => {{
+          let t1 = h
+            .wrapping_add(big_sigma1(e))
+            .wrapping_add(ch(e, f, g))
+            .wrapping_add($wk);
+          let t2 = big_sigma0(a).wrapping_add(maj(a, b, c));
+          h = g;
+          g = f;
+          f = e;
+          e = d.wrapping_add(t1);
+          d = c;
+          c = b;
+          b = a;
+          a = t1.wrapping_add(t2);
+        }};
+      }
+
+      // Rounds 0-15: loaded words.
+      for (pair, &wv) in w.iter().enumerate() {
+        let (lo0, lo1) = extract_lo(wv);
+        let (hi0, hi1) = extract_hi(wv);
+        let r = pair.strict_mul(2);
+        t2_buf[r] = hi0.wrapping_add(K[r]);
+        t2_buf[r.strict_add(1)] = hi1.wrapping_add(K[r.strict_add(1)]);
+        round_std!(lo0.wrapping_add(K[r]));
+        round_std!(lo1.wrapping_add(K[r.strict_add(1)]));
+      }
+
+      // Rounds 16-79: interleaved schedule + rounds.
+      for pair in 8..40usize {
+        schedule_pair_256(&mut w, pair);
+        let (lo0, lo1) = extract_lo(w[pair & 7]);
+        let (hi0, hi1) = extract_hi(w[pair & 7]);
+        let r = pair.strict_mul(2);
+        t2_buf[r] = hi0.wrapping_add(K[r]);
+        t2_buf[r.strict_add(1)] = hi1.wrapping_add(K[r.strict_add(1)]);
+        round_std!(lo0.wrapping_add(K[r]));
+        round_std!(lo1.wrapping_add(K[r.strict_add(1)]));
+      }
+
+      state[0] = state[0].wrapping_add(a);
+      state[1] = state[1].wrapping_add(b);
+      state[2] = state[2].wrapping_add(c);
+      state[3] = state[3].wrapping_add(d);
+      state[4] = state[4].wrapping_add(e);
+      state[5] = state[5].wrapping_add(f);
+      state[6] = state[6].wrapping_add(g);
+      state[7] = state[7].wrapping_add(h);
+
+      // Block 2: pure scalar from pre-computed buffer.
+      a = state[0];
+      b = state[1];
+      c = state[2];
+      d = state[3];
+      e = state[4];
+      f = state[5];
+      g = state[6];
+      h = state[7];
+
+      for &wk in &t2_buf {
+        round_std!(wk);
+      }
+
+      state[0] = state[0].wrapping_add(a);
+      state[1] = state[1].wrapping_add(b);
+      state[2] = state[2].wrapping_add(c);
+      state[3] = state[3].wrapping_add(d);
+      state[4] = state[4].wrapping_add(e);
+      state[5] = state[5].wrapping_add(f);
+      state[6] = state[6].wrapping_add(g);
+      state[7] = state[7].wrapping_add(h);
+
+      ptr = ptr.add(BLOCK_LEN.strict_mul(2));
+      remaining = remaining.strict_sub(2);
+    }
+
+    // ── Single-block (odd trailing) ──────────────────────────────────────
+    if remaining == 1 {
+      let mut wv: [__m128i; 8] = [
+        _mm_shuffle_epi8(_mm_loadu_si128(ptr.cast()), bswap),
+        _mm_shuffle_epi8(_mm_loadu_si128(ptr.add(16).cast()), bswap),
+        _mm_shuffle_epi8(_mm_loadu_si128(ptr.add(32).cast()), bswap),
+        _mm_shuffle_epi8(_mm_loadu_si128(ptr.add(48).cast()), bswap),
+        _mm_shuffle_epi8(_mm_loadu_si128(ptr.add(64).cast()), bswap),
+        _mm_shuffle_epi8(_mm_loadu_si128(ptr.add(80).cast()), bswap),
+        _mm_shuffle_epi8(_mm_loadu_si128(ptr.add(96).cast()), bswap),
+        _mm_shuffle_epi8(_mm_loadu_si128(ptr.add(112).cast()), bswap),
+      ];
+
+      let mut a = state[0];
+      let mut b = state[1];
+      let mut c = state[2];
+      let mut d = state[3];
+      let mut e = state[4];
+      let mut f = state[5];
+      let mut g = state[6];
+      let mut h = state[7];
+
+      macro_rules! round1_std {
+        ($wk:expr) => {{
+          let t1 = h
+            .wrapping_add(big_sigma1(e))
+            .wrapping_add(ch(e, f, g))
+            .wrapping_add($wk);
+          let t2 = big_sigma0(a).wrapping_add(maj(a, b, c));
+          h = g;
+          g = f;
+          f = e;
+          e = d.wrapping_add(t1);
+          d = c;
+          c = b;
+          b = a;
+          a = t1.wrapping_add(t2);
+        }};
+      }
+
+      // Rounds 0-15: loaded words.
+      for (pair, &v) in wv.iter().enumerate() {
+        let (w0, w1) = extract_128(v);
+        let r = pair.strict_mul(2);
+        round1_std!(w0.wrapping_add(K[r]));
+        round1_std!(w1.wrapping_add(K[r.strict_add(1)]));
+      }
+
+      // Rounds 16-79: interleaved schedule + rounds.
+      for pair in 8..40usize {
+        schedule_pair_128(&mut wv, pair);
+        let (w0, w1) = extract_128(wv[pair & 7]);
+        let r = pair.strict_mul(2);
+        round1_std!(w0.wrapping_add(K[r]));
+        round1_std!(w1.wrapping_add(K[r.strict_add(1)]));
+      }
+
       state[0] = state[0].wrapping_add(a);
       state[1] = state[1].wrapping_add(b);
       state[2] = state[2].wrapping_add(c);

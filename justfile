@@ -45,6 +45,7 @@ test-all:
 # Bench frontdoor (local + CI parity via scripts/ci/run-bench.sh).
 # Usage:
 #   just bench
+#   just bench auth
 #   just bench blake3
 #   just bench crc32c quick=true
 #   just bench checksum

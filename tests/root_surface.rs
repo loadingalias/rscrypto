@@ -1,5 +1,7 @@
 #![allow(unused_imports)]
 
+#[cfg(feature = "auth")]
+use rscrypto::auth::HkdfOutputLengthError;
 #[cfg(all(feature = "checksums", feature = "alloc"))]
 use rscrypto::checksum::buffered::BufferedCrc32C;
 #[cfg(feature = "checksums")]
@@ -24,12 +26,51 @@ use rscrypto::{
 };
 #[cfg(feature = "checksums")]
 use rscrypto::{Checksum, ChecksumCombine, Crc16Ccitt, Crc16Ibm, Crc24OpenPgp, Crc32, Crc32C, Crc64, Crc64Nvme};
+#[cfg(feature = "auth")]
+use rscrypto::{
+  Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature, HkdfSha256, HmacSha256, Mac, verify_ed25519,
+};
 use rscrypto::{VerificationError, ct};
 
 #[test]
 fn root_surface_core_exports_compile() {
   let _ = VerificationError::new();
   assert!(ct::constant_time_eq(b"ok", b"ok"));
+}
+
+#[test]
+#[cfg(feature = "auth")]
+fn root_surface_auth_exports_compile() {
+  let key = b"root-surface-key";
+  let data = b"root-surface-data";
+
+  let tag = HmacSha256::mac(key, data);
+
+  let mut mac = HmacSha256::new(key);
+  mac.update(data);
+  assert_eq!(tag, mac.finalize());
+  assert!(mac.verify(&tag).is_ok());
+
+  let mut out = [0u8; 32];
+  let hkdf = HkdfSha256::new(b"salt", key);
+  hkdf.expand(b"info", &mut out).unwrap();
+  assert_eq!(out, HkdfSha256::derive_array::<32>(b"salt", key, b"info").unwrap());
+  let _ = HkdfOutputLengthError::new();
+}
+
+#[test]
+#[cfg(feature = "auth")]
+fn advanced_auth_modules_compile() {
+  let secret = Ed25519SecretKey::from_bytes([7u8; Ed25519SecretKey::LENGTH]);
+  let keypair = Ed25519Keypair::from_secret_key(secret.clone());
+  let public = keypair.public_key();
+  let signature = keypair.sign(b"root-surface-ed25519");
+
+  assert_eq!(secret.as_bytes().len(), 32);
+  assert_eq!(public.as_bytes().len(), 32);
+  assert_eq!(signature.as_bytes().len(), 64);
+  assert!(public.verify(b"root-surface-ed25519", &signature).is_ok());
+  assert!(verify_ed25519(b"root-surface-ed25519", &public, &signature).is_ok());
 }
 
 #[test]

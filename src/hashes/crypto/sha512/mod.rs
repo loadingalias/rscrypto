@@ -254,9 +254,8 @@ impl Sha512 {
       }
 
       let mut out = [0u8; 64];
-      for (i, word) in state.iter().copied().enumerate() {
-        let offset = i.strict_mul(8);
-        out[offset..offset.strict_add(8)].copy_from_slice(&word.to_be_bytes());
+      for (chunk, &word) in out.chunks_exact_mut(8).zip(state.iter()) {
+        chunk.copy_from_slice(&word.to_be_bytes());
       }
       out
     } else {
@@ -360,9 +359,8 @@ impl Sha512 {
     compress_blocks(&mut state, &block);
 
     let mut out = [0u8; 64];
-    for (i, word) in state.iter().copied().enumerate() {
-      let offset = i * 8;
-      out[offset..offset + 8].copy_from_slice(&word.to_be_bytes());
+    for (chunk, &word) in out.chunks_exact_mut(8).zip(state.iter()) {
+      chunk.copy_from_slice(&word.to_be_bytes());
     }
     out
   }
@@ -644,6 +642,11 @@ impl Digest for Sha512 {
   #[inline]
   fn reset(&mut self) {
     *self = Self::default();
+  }
+
+  #[inline]
+  fn digest(data: &[u8]) -> Self::Output {
+    dispatch::digest(data)
   }
 }
 
