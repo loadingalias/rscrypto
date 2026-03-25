@@ -422,25 +422,71 @@ pub(crate) unsafe fn compress_blocks_avx2(state: &mut [u64; 8], blocks: &[u8]) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Decoupled kernel (schedule one-ahead of rounds)
+// Rotation-based schedule (no cross-lane permute)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// SHA-512 multi-block compression using AVX2 + BMI2, **decoupled schedule**.
+/// Compute one schedule pair using **array rotation** (256-bit, dual-block).
 ///
-/// Same dual-block + single-block structure as [`compress_blocks_avx2`], but
-/// decouples the SIMD message schedule from the scalar compression rounds:
-/// rounds consume values from the *previous* group (stored in `rv[16]`) while
-/// the schedule computes the *next* group. This gives the out-of-order engine
-/// 16 independent scalar rounds to overlap with SIMD schedule latency.
+/// Produces raw W[t:t+1] for both blocks, stores in `x[7]` (after rotation),
+/// and returns `W[t:t+1] + k` (with K constants pre-added for both blocks).
 ///
-/// The stitched kernel serialises schedule → extract → round within each
-/// iteration, limiting IPC on wide pipelines (Zen 5, 6-wide dispatch). The
-/// decoupled pattern eliminates this dependency and achieves the same
-/// Zen 4 → Zen 5 scaling as the `sha2` crate (~1.7×).
+/// Unlike [`schedule_pair_256`], this function physically rotates the `x[]`
+/// array so that adjacent schedule words are always in adjacent registers.
+/// This lets `_mm256_alignr_epi8` extract cross-register values without
+/// `_mm256_permute2x128_si256` (3-cycle latency on Zen 5). The 7 register
+/// moves from rotation are zero-cost on modern x86 (register renaming).
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+unsafe fn schedule_rotate_256(x: &mut [__m256i; 8], k: __m256i) -> __m256i {
+  // SAFETY: AVX2 intrinsics are available via the caller's #[target_feature] attribute.
+  unsafe {
+    // σ0 input: W[t-15:t-14] — straddles x[0] and x[1].
+    let w_tm15 = _mm256_alignr_epi8(x[1], x[0], 8);
+    // W[t-7:t-6] — straddles x[4] and x[5].
+    let w_tm7 = _mm256_alignr_epi8(x[5], x[4], 8);
+
+    // W[t:t+1] = W[t-16:t-15] + W[t-7:t-6] + σ0(W[t-15:t-14]) + σ1(W[t-2:t-1])
+    x[0] = _mm256_add_epi64(
+      _mm256_add_epi64(x[0], w_tm7),
+      _mm256_add_epi64(small_sigma0_256(w_tm15), small_sigma1_256(x[7])),
+    );
+
+    // Rotate: x[0] (newest) → x[7], shift everything left.
+    // Zero-cost on modern x86 via register renaming.
+    let new_val = x[0];
+    x[0] = x[1];
+    x[1] = x[2];
+    x[2] = x[3];
+    x[3] = x[4];
+    x[4] = x[5];
+    x[5] = x[6];
+    x[6] = x[7];
+    x[7] = new_val;
+
+    _mm256_add_epi64(x[7], k)
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Decoupled kernel (schedule one-ahead of rounds, rotation-based schedule)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// SHA-512 multi-block compression using AVX2 + BMI2, **decoupled schedule
+/// with rotation-based message expansion**.
 ///
-/// Uses the **standard round** (not deferred-Σ0). With schedule decoupled,
-/// the round function is the throughput bottleneck, and the standard round's
-/// independent Σ0/Σ1 computation provides better within-round parallelism.
+/// Two key optimisations over the stitched kernel:
+///
+/// 1. **Decoupled schedule/rounds** — rounds consume W+K values from the *previous* 16-round group
+///    while the SIMD schedule computes the *next* group. Gives the OOO engine 16 independent scalar
+///    rounds to overlap with SIMD schedule latency.
+///
+/// 2. **Rotation-based schedule** — the `w[]` array is physically rotated after each schedule
+///    update so adjacent words stay in adjacent registers. This lets `_mm256_alignr_epi8` extract
+///    cross-register values directly, eliminating `_mm256_permute2x128_si256` (3-cycle latency on
+///    Zen 5). The 7 register moves from rotation are zero-cost (register renaming).
+///
+/// Uses the **standard round** (Σ0 and Σ1 computed independently within
+/// each round for maximum within-round parallelism).
 ///
 /// # Safety
 ///
@@ -487,14 +533,17 @@ pub(crate) unsafe fn compress_blocks_avx2_decoupled(state: &mut [u64; 8], blocks
       ];
 
       // Extract initial W[0-15]+K[0-15] for both blocks.
+      // K is added as a vector op (1 load + 1 broadcast + 1 add vs 4 scalar adds).
       for (i, &wv) in w.iter().enumerate() {
-        let (lo0, lo1) = extract_lo(wv);
-        let (hi0, hi1) = extract_hi(wv);
         let r = i.strict_mul(2);
-        rv[r] = lo0.wrapping_add(K[r]);
-        rv[r.strict_add(1)] = lo1.wrapping_add(K[r.strict_add(1)]);
-        t2_buf[r] = hi0.wrapping_add(K[r]);
-        t2_buf[r.strict_add(1)] = hi1.wrapping_add(K[r.strict_add(1)]);
+        let k_pair: __m128i = _mm_loadu_si128(K.as_ptr().add(r).cast());
+        let wk = _mm256_add_epi64(wv, _mm256_set_m128i(k_pair, k_pair));
+        let (lo0, lo1) = extract_lo(wk);
+        let (hi0, hi1) = extract_hi(wk);
+        rv[r] = lo0;
+        rv[r.strict_add(1)] = lo1;
+        t2_buf[r] = hi0;
+        t2_buf[r.strict_add(1)] = hi1;
       }
 
       let mut a = state[0];
@@ -526,7 +575,7 @@ pub(crate) unsafe fn compress_blocks_avx2_decoupled(state: &mut [u64; 8], blocks
 
       // Decoupled loop: 4 outer × 8 inner = 64 rounds + 64 schedule words.
       // Rounds consume rv[] from the PREVIOUS group (load or prior outer).
-      // Schedule computes the NEXT group into rv[] (overwriting consumed values).
+      // Schedule computes the NEXT group via rotation (no cross-lane permute).
       for outer in 0..4usize {
         for j in 0..8usize {
           // Consume 2 rounds from current rv[] (previous group).
@@ -534,18 +583,18 @@ pub(crate) unsafe fn compress_blocks_avx2_decoupled(state: &mut [u64; 8], blocks
           round!(rv[r]);
           round!(rv[r.strict_add(1)]);
 
-          // Compute next schedule pair (independent of the rounds above).
-          let sched_idx = 8usize.strict_add(outer.strict_mul(8)).strict_add(j);
-          schedule_pair_256(&mut w, sched_idx);
-          let (lo0, lo1) = extract_lo(w[sched_idx & 7]);
-          let (hi0, hi1) = extract_hi(w[sched_idx & 7]);
-          let kr = sched_idx.strict_mul(2);
+          // Compute next schedule pair via rotation (independent of rounds).
+          let kr = 8usize.strict_add(outer.strict_mul(8)).strict_add(j).strict_mul(2);
+          let k_pair: __m128i = _mm_loadu_si128(K.as_ptr().add(kr).cast());
+          let wk = schedule_rotate_256(&mut w, _mm256_set_m128i(k_pair, k_pair));
+          let (lo0, lo1) = extract_lo(wk);
+          let (hi0, hi1) = extract_hi(wk);
 
           // Store for next group (overwrite consumed rv[] slots).
-          rv[r] = lo0.wrapping_add(K[kr]);
-          rv[r.strict_add(1)] = lo1.wrapping_add(K[kr.strict_add(1)]);
-          t2_buf[kr] = hi0.wrapping_add(K[kr]);
-          t2_buf[kr.strict_add(1)] = hi1.wrapping_add(K[kr.strict_add(1)]);
+          rv[r] = lo0;
+          rv[r.strict_add(1)] = lo1;
+          t2_buf[kr] = hi0;
+          t2_buf[kr.strict_add(1)] = hi1;
         }
       }
 
@@ -591,6 +640,8 @@ pub(crate) unsafe fn compress_blocks_avx2_decoupled(state: &mut [u64; 8], blocks
     }
 
     // ── Single-block (odd trailing) ──────────────────────────────────────
+    // 128-bit schedule uses _mm_alignr_epi8 which has no cross-lane issue,
+    // so the ring-buffer approach is already optimal here.
     if remaining == 1 {
       let mut wv: [__m128i; 8] = [
         _mm_shuffle_epi8(_mm_loadu_si128(ptr.cast()), bswap),
