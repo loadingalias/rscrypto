@@ -3358,14 +3358,15 @@ unsafe fn digest_one_chunk_root_hash_words_x86(
 
   // AVX2 exact-block one-chunk fast path. Keep this on a narrow allowlist
   // only where CI has shown the path helps short inputs.
-  // Require ≥ 8 blocks (512 B): at 4 blocks (256 B) the hash_many SIMD setup
-  // cost is not amortized on wide-pipeline CPUs (Zen 5: 0.85x, ICL: 0.79x).
-  // The sequential compress path is faster there.
+  // On wide-pipeline CPUs (Zen 5, ICL) require ≥ 8 blocks (512 B): at 4 blocks
+  // the hash_many SIMD setup cost dominates. On narrow-pipeline AMD (Zen 4) the
+  // hash_many path is beneficial even at 4 blocks.
   #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
   if kernel.id == kernels::Blake3KernelId::X86Avx2
     && use_avx2_hash_many_one_chunk_fast_path()
-    && input.len() >= BLOCK_LEN.strict_mul(8)
+    && !input.is_empty()
     && input.len().is_multiple_of(BLOCK_LEN)
+    && (!dispatch::hash_many_wide_pipeline() || input.len() >= BLOCK_LEN.strict_mul(8))
   {
     let blocks = input.len() / BLOCK_LEN;
     debug_assert!((1..=CHUNK_LEN / BLOCK_LEN).contains(&blocks));
@@ -3395,12 +3396,12 @@ unsafe fn digest_one_chunk_root_hash_words_x86(
     return words8_from_le_bytes_32(&out);
   }
 
-  // Same minimum as the AVX2 path above: hash_many setup cost is not
-  // amortized at ≤ 4 blocks on wide-pipeline CPUs.
+  // Same platform-aware threshold as the AVX2 path above.
   #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
   if kernel.id == kernels::Blake3KernelId::X86Avx512
-    && input.len() >= BLOCK_LEN.strict_mul(8)
+    && !input.is_empty()
     && input.len().is_multiple_of(BLOCK_LEN)
+    && (!dispatch::hash_many_wide_pipeline() || input.len() >= BLOCK_LEN.strict_mul(8))
   {
     let blocks = input.len() / BLOCK_LEN;
     debug_assert!((1..=CHUNK_LEN / BLOCK_LEN).contains(&blocks));

@@ -1,4 +1,8 @@
 //! RapidHash comparison benchmarks: rscrypto vs rapidhash crate.
+//!
+//! Primary comparison: our `RapidHashFast` (V3 core, no avalanche) vs the
+//! competitor's `fast::RapidHasher` (inner module, no avalanche). Both are
+//! the recommended fast-path for HashMap users in their respective crates.
 
 mod common;
 
@@ -15,7 +19,7 @@ fn rapidhash_64(c: &mut Criterion) {
     common::set_throughput(&mut g, *len);
 
     g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
-      b.iter(|| black_box(rscrypto::RapidHash::hash(black_box(d))))
+      b.iter(|| black_box(rscrypto::RapidHashFast64::hash(black_box(d))))
     });
 
     g.bench_with_input(BenchmarkId::new("rapidhash", len), data, |b, d| {

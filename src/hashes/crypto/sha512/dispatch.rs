@@ -98,7 +98,7 @@ pub fn digest(data: &[u8]) -> [u8; 64] {
 
 /// Oneshot digest: processes directly from the input slice without streaming
 /// state. Constructs final padded block(s) on the stack.
-#[inline(always)]
+#[inline]
 fn digest_oneshot(data: &[u8], compress_blocks: CompressBlocksFn) -> [u8; 64] {
   let mut state = super::H0;
 
