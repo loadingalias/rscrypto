@@ -379,6 +379,11 @@ fn cpuid_batch_x86_64() -> CpuidBatch {
   // prefers AVX2 over AVX-512VL for SHA-512 compression).
   if is_amd {
     caps |= x86::AMD;
+    // Zen 5+ (family ≥ 0x1A) has a 6-wide dispatch pipeline where standard
+    // SHA-512 round structure outscales the deferred-Σ0 variant.
+    if family >= 0x1A {
+      caps |= x86::AMD_ZEN5;
+    }
   }
 
   CpuidBatch {

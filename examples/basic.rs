@@ -1,16 +1,20 @@
-//! Basic `rscrypto` usage across checksums, digests, XOFs, fast hashes, and I/O adapters.
+//! Basic `rscrypto` usage across checksums, digests, MACs, KDFs, XOFs, fast hashes, and I/O
+//! adapters.
 //!
 //! Run with: `cargo run --example basic`
 
 use std::io::{Cursor, Read, Write};
 
-use rscrypto::{Blake3, Checksum, Crc32C, Digest, FastHash, RapidHash, Sha256, Shake256, Xof, Xxh3};
+use rscrypto::{
+  Blake3, Checksum, Crc32C, Digest, FastHash, HkdfSha256, HmacSha256, Mac, RapidHash, Sha256, Shake256, Xof, Xxh3,
+};
 
 fn main() -> std::io::Result<()> {
   println!("=== rscrypto Basic Examples ===\n");
 
   checksum_api();
   digest_api();
+  auth_api();
   xof_api();
   fast_hash_api();
   io_api()?;
@@ -64,6 +68,40 @@ fn digest_api() {
 
   println!("SHA-256 output size = {} bytes", sha_oneshot.len());
   println!("BLAKE3 output size  = {} bytes\n", blake3_oneshot.len());
+}
+
+/// MACs and KDFs keep the same one-shot vs stateful split.
+fn auth_api() {
+  println!("--- Auth ---\n");
+
+  let key = b"shared-secret";
+  let data = b"hello world";
+
+  let tag = HmacSha256::mac(key, data);
+
+  let mut mac = HmacSha256::new(key);
+  mac.update(b"hello ");
+  mac.update(b"world");
+  assert_eq!(mac.finalize(), tag);
+  assert!(mac.verify(&tag).is_ok());
+  mac.reset();
+  mac.update(data);
+  assert_eq!(mac.finalize(), tag);
+
+  let hkdf = HkdfSha256::new(b"salt", b"input key material");
+  let mut okm = [0u8; 42];
+  if let Err(err) = hkdf.expand(b"context", &mut okm) {
+    panic!("HKDF expand must succeed: {err}");
+  }
+
+  let oneshot = match HkdfSha256::derive_array::<42>(b"salt", b"input key material", b"context") {
+    Ok(out) => out,
+    Err(err) => panic!("HKDF derive_array must succeed: {err}"),
+  };
+  assert_eq!(okm, oneshot);
+
+  println!("HMAC-SHA256 tag size = {} bytes", tag.len());
+  println!("HKDF-SHA256 output   = {} bytes\n", okm.len());
 }
 
 /// XOFs support both `new` → `update` → `finalize_xof` and `xof(data)`.

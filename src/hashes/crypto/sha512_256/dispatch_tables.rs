@@ -78,6 +78,24 @@ pub static X86_AVX2_TABLE: DispatchTable = DispatchTable {
   l: KernelId::X86Avx2,
 };
 
+#[cfg(target_arch = "x86_64")]
+pub static X86_AVX2_STD_TABLE: DispatchTable = DispatchTable {
+  boundaries: DEFAULT_BOUNDARIES,
+  xs: KernelId::X86Avx2Std,
+  s: KernelId::X86Avx2Std,
+  m: KernelId::X86Avx2Std,
+  l: KernelId::X86Avx2Std,
+};
+
+#[cfg(target_arch = "x86_64")]
+pub static X86_AVX512VL_STD_TABLE: DispatchTable = DispatchTable {
+  boundaries: DEFAULT_BOUNDARIES,
+  xs: KernelId::X86Avx512vlStd,
+  s: KernelId::X86Avx512vlStd,
+  m: KernelId::X86Avx512vlStd,
+  l: KernelId::X86Avx512vlStd,
+};
+
 #[cfg(target_arch = "riscv64")]
 pub static RISCV_ZKNH_TABLE: DispatchTable = DispatchTable {
   boundaries: DEFAULT_BOUNDARIES,
@@ -118,11 +136,22 @@ pub fn select_runtime_table(#[allow(unused_variables)] caps: Caps) -> &'static D
       return &X86_SHA512_TABLE;
     }
     if caps.has(x86::AMD) {
-      if caps.has(x86::AVX2) {
-        return &X86_AVX2_TABLE;
-      }
-      if caps.has(x86::AVX512F) && caps.has(x86::AVX512VL) {
-        return &X86_AVX512VL_TABLE;
+      if caps.has(x86::AMD_ZEN5) {
+        // Zen 5+ (6-wide dispatch): standard round scales better than deferred-Σ0.
+        if caps.has(x86::AVX2) {
+          return &X86_AVX2_STD_TABLE;
+        }
+        if caps.has(x86::AVX512F) && caps.has(x86::AVX512VL) {
+          return &X86_AVX512VL_STD_TABLE;
+        }
+      } else {
+        // Zen 4 and earlier (4-wide): deferred-Σ0 wins.
+        if caps.has(x86::AVX2) {
+          return &X86_AVX2_TABLE;
+        }
+        if caps.has(x86::AVX512F) && caps.has(x86::AVX512VL) {
+          return &X86_AVX512VL_TABLE;
+        }
       }
     } else {
       if caps.has(x86::AVX512F) && caps.has(x86::AVX512VL) {

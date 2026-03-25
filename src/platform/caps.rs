@@ -433,6 +433,10 @@ pub mod x86 {
   /// Used for vendor-aware dispatch where optimal kernel differs by vendor.
   pub const AMD: Caps = Caps::bit(49);
 
+  /// AMD Zen 5+ (CPUID family ≥ 0x1A). The 6-wide dispatch pipeline favors
+  /// standard SHA-512 round structure over deferred-Σ0.
+  pub const AMD_ZEN5: Caps = Caps::bit(50);
+
   // ─── Combined Capability Masks ───
   // These represent common feature combinations for dispatch decisions.
 
@@ -829,6 +833,7 @@ const X86_FEATURES: &[FeatureEntry] = &[
   (47, "rdseed"),
   (48, "apx"),
   (49, "amd"),
+  (50, "amd-zen5"),
 ];
 
 /// aarch64 feature names.

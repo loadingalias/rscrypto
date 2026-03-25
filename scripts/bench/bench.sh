@@ -7,6 +7,7 @@ Usage:
   scripts/bench/bench.sh [selector ...] [key=value ...]
 
 Selectors:
+  auth
   blake3
   crc32c
   checksum

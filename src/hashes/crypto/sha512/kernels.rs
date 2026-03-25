@@ -36,6 +36,10 @@ pub enum Sha512KernelId {
   S390xKimd = 7,
   #[cfg(target_arch = "powerpc64")]
   Ppc64Crypto = 8,
+  #[cfg(target_arch = "x86_64")]
+  X86Avx2Std = 9,
+  #[cfg(target_arch = "x86_64")]
+  X86Avx512vlStd = 10,
 }
 
 #[cfg(any(test, feature = "std"))]
@@ -55,6 +59,10 @@ pub const ALL: &[Sha512KernelId] = &[
   Sha512KernelId::WasmSimd128,
   #[cfg(target_arch = "s390x")]
   Sha512KernelId::S390xKimd,
+  #[cfg(target_arch = "x86_64")]
+  Sha512KernelId::X86Avx2Std,
+  #[cfg(target_arch = "x86_64")]
+  Sha512KernelId::X86Avx512vlStd,
 ];
 
 impl Sha512KernelId {
@@ -79,6 +87,10 @@ impl Sha512KernelId {
       Self::S390xKimd => "s390x/kimd",
       #[cfg(target_arch = "powerpc64")]
       Self::Ppc64Crypto => "ppc64/crypto",
+      #[cfg(target_arch = "x86_64")]
+      Self::X86Avx2Std => "x86-avx2-std",
+      #[cfg(target_arch = "x86_64")]
+      Self::X86Avx512vlStd => "x86-avx512vl-std",
     }
   }
 }
@@ -104,6 +116,10 @@ pub fn id_from_name(name: &str) -> Option<Sha512KernelId> {
     "s390x/kimd" => Some(Sha512KernelId::S390xKimd),
     #[cfg(target_arch = "powerpc64")]
     "ppc64/crypto" => Some(Sha512KernelId::Ppc64Crypto),
+    #[cfg(target_arch = "x86_64")]
+    "x86-avx2-std" => Some(Sha512KernelId::X86Avx2Std),
+    #[cfg(target_arch = "x86_64")]
+    "x86-avx512vl-std" => Some(Sha512KernelId::X86Avx512vlStd),
     _ => None,
   }
 }
@@ -160,6 +176,18 @@ fn compress_blocks_ppc64_crypto(state: &mut [u64; 8], blocks: &[u8]) {
   unsafe { super::ppc64::compress_blocks_ppc64_crypto(state, blocks) }
 }
 
+#[cfg(target_arch = "x86_64")]
+fn compress_blocks_x86_avx2_std(state: &mut [u64; 8], blocks: &[u8]) {
+  // SAFETY: Only called when dispatch has verified `x86::AVX2` and `x86::BMI2` are available.
+  unsafe { super::x86_64_avx2::compress_blocks_avx2_std(state, blocks) }
+}
+
+#[cfg(target_arch = "x86_64")]
+fn compress_blocks_x86_avx512vl_std(state: &mut [u64; 8], blocks: &[u8]) {
+  // SAFETY: Only called when dispatch has verified AVX-512VL and BMI2 are available.
+  unsafe { super::x86_64_avx512vl::compress_blocks_avx512vl_std(state, blocks) }
+}
+
 #[must_use]
 pub(crate) fn compress_blocks_fn(id: Sha512KernelId) -> CompressBlocksFn {
   match id {
@@ -180,6 +208,10 @@ pub(crate) fn compress_blocks_fn(id: Sha512KernelId) -> CompressBlocksFn {
     Sha512KernelId::S390xKimd => compress_blocks_s390x_kimd,
     #[cfg(target_arch = "powerpc64")]
     Sha512KernelId::Ppc64Crypto => compress_blocks_ppc64_crypto,
+    #[cfg(target_arch = "x86_64")]
+    Sha512KernelId::X86Avx2Std => compress_blocks_x86_avx2_std,
+    #[cfg(target_arch = "x86_64")]
+    Sha512KernelId::X86Avx512vlStd => compress_blocks_x86_avx512vl_std,
   }
 }
 
@@ -204,5 +236,9 @@ pub const fn required_caps(id: Sha512KernelId) -> Caps {
     Sha512KernelId::S390xKimd => s390x::MSA,
     #[cfg(target_arch = "powerpc64")]
     Sha512KernelId::Ppc64Crypto => power::POWER8_CRYPTO,
+    #[cfg(target_arch = "x86_64")]
+    Sha512KernelId::X86Avx2Std => x86::AVX2.union(x86::BMI2),
+    #[cfg(target_arch = "x86_64")]
+    Sha512KernelId::X86Avx512vlStd => x86::AVX512F.union(x86::AVX512VL).union(x86::BMI2),
   }
 }

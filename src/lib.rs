@@ -34,6 +34,32 @@
 //! h.reset();
 //! ```
 //!
+//! ## Auth
+//!
+//! ```rust
+//! use rscrypto::{Ed25519Keypair, Ed25519SecretKey, HkdfSha256, HmacSha256, Mac};
+//!
+//! let key = b"shared-secret";
+//! let data = b"hello world";
+//!
+//! let tag = HmacSha256::mac(key, data);
+//!
+//! let mut mac = HmacSha256::new(key);
+//! mac.update(b"hello ");
+//! mac.update(b"world");
+//! assert_eq!(mac.finalize(), tag);
+//! assert!(mac.verify(&tag).is_ok());
+//!
+//! let mut okm = [0u8; 32];
+//! HkdfSha256::new(b"salt", b"input key material").expand(b"context", &mut okm)?;
+//! assert_ne!(okm, [0u8; 32]);
+//!
+//! let keypair = Ed25519Keypair::from_secret_key(Ed25519SecretKey::from_bytes([7u8; 32]));
+//! let sig = keypair.sign(b"auth");
+//! assert!(keypair.public_key().verify(b"auth", &sig).is_ok());
+//! # Ok::<(), rscrypto::auth::HkdfOutputLengthError>(())
+//! ```
+//!
 //! ## XOF
 //!
 //! ```rust
@@ -72,12 +98,13 @@
 //! | `alloc` | Yes | Enables buffered types (implied by `std`) |
 //! | `checksums` | Yes | CRC-16, CRC-24, CRC-32, and CRC-64 algorithms |
 //! | `hashes` | Yes | Cryptographic and fast hash families |
+//! | `auth` | Yes | HMAC-SHA256, HKDF-SHA256, and Ed25519 |
 //! | `parallel` | No | Rayon-based parallel hashing (Blake3) |
 //!
 //! # Examples
 //!
-//! - `cargo run --example basic` is the canonical checksum, digest, XOF, fast hash, and I/O adapter
-//!   specimen.
+//! - `cargo run --example basic` is the canonical checksum, digest, MAC, KDF, XOF, fast hash, and
+//!   I/O adapter specimen.
 //! - `cargo run --example introspect` is the advanced dispatch introspection example.
 //! - `cargo run --example parallel --features parallel` shows CRC combine-based chunked processing.
 //!
@@ -135,6 +162,8 @@ extern crate alloc;
 extern crate std;
 
 // Internal modules (not published as separate crates)
+#[cfg(feature = "auth")]
+pub mod auth;
 #[doc(hidden)]
 mod backend;
 pub mod platform;
@@ -148,6 +177,10 @@ pub mod hashes;
 
 // ─── Checksum re-exports ────────────────────────────────────────────────────
 
+#[cfg(feature = "auth")]
+pub use auth::{
+  Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature, HkdfSha256, HmacSha256, verify_ed25519,
+};
 #[cfg(feature = "checksums")]
 pub use checksum::{Crc16Ccitt, Crc16Ibm, Crc24OpenPgp, Crc32, Crc32C, Crc64, Crc64Nvme};
 // ─── Hash re-exports ────────────────────────────────────────────────────────
@@ -160,7 +193,7 @@ pub use hashes::crypto::{
 pub use hashes::fast::{RapidHash, RapidHash128, Xxh3, Xxh3_128};
 pub use traits::ct;
 // ─── Trait re-exports ───────────────────────────────────────────────────────
-pub use traits::{Checksum, ChecksumCombine, VerificationError};
+pub use traits::{Checksum, ChecksumCombine, Mac, VerificationError};
 #[cfg(feature = "hashes")]
 pub use traits::{Digest, FastHash, Xof};
 

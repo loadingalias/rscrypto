@@ -98,16 +98,15 @@ pub fn digest(data: &[u8]) -> [u8; 32] {
 
 /// Oneshot digest: processes directly from the input slice without streaming
 /// state. Constructs final padded block(s) on the stack. Truncates to 32 bytes.
-#[inline]
+#[inline(always)]
 fn digest_oneshot(data: &[u8], compress_blocks: CompressBlocksFn) -> [u8; 32] {
   let mut state = super::H0;
 
-  let full_len = data.len().strict_sub(data.len() % BLOCK_LEN);
-  if full_len != 0 {
-    compress_blocks(&mut state, &data[..full_len]);
+  let (blocks, rest) = data.as_chunks::<BLOCK_LEN>();
+  if !blocks.is_empty() {
+    compress_blocks(&mut state, &data[..blocks.len().strict_mul(BLOCK_LEN)]);
   }
 
-  let rest = &data[full_len..];
   let total_bits = (data.len() as u128) << 3;
 
   let mut block = [0u8; BLOCK_LEN];
@@ -123,9 +122,8 @@ fn digest_oneshot(data: &[u8], compress_blocks: CompressBlocksFn) -> [u8; 32] {
   compress_blocks(&mut state, &block);
 
   let mut out = [0u8; 32];
-  for (i, word) in state.iter().copied().enumerate().take(4) {
-    let offset = i.strict_mul(8);
-    out[offset..offset.strict_add(8)].copy_from_slice(&word.to_be_bytes());
+  for (chunk, &word) in out.chunks_exact_mut(8).zip(state.iter()) {
+    chunk.copy_from_slice(&word.to_be_bytes());
   }
   out
 }

@@ -358,6 +358,16 @@ fn sha512_compress_x86_avx2(data: &[u8]) -> u64 {
   sha512_compress_kernel(crypto::sha512::kernels::Sha512KernelId::X86Avx2, data)
 }
 
+#[cfg(target_arch = "x86_64")]
+fn sha512_compress_x86_avx2_std(data: &[u8]) -> u64 {
+  sha512_compress_kernel(crypto::sha512::kernels::Sha512KernelId::X86Avx2Std, data)
+}
+
+#[cfg(target_arch = "x86_64")]
+fn sha512_compress_x86_avx512vl_std(data: &[u8]) -> u64 {
+  sha512_compress_kernel(crypto::sha512::kernels::Sha512KernelId::X86Avx512vlStd, data)
+}
+
 #[cfg(target_arch = "riscv64")]
 fn sha512_compress_riscv_zknh(data: &[u8]) -> u64 {
   sha512_compress_kernel(crypto::sha512::kernels::Sha512KernelId::Riscv64Zknh, data)
@@ -1776,6 +1786,16 @@ pub fn get_kernel(algo: &str, name: &str) -> Option<Kernel> {
     ("sha512-compress", "x86_64/avx2") => Some(Kernel {
       name: "x86_64/avx2",
       func: sha512_compress_x86_avx2,
+    }),
+    #[cfg(target_arch = "x86_64")]
+    ("sha512-compress", "x86_64/avx2-std") => Some(Kernel {
+      name: "x86_64/avx2-std",
+      func: sha512_compress_x86_avx2_std,
+    }),
+    #[cfg(target_arch = "x86_64")]
+    ("sha512-compress", "x86_64/avx512vl-std") => Some(Kernel {
+      name: "x86_64/avx512vl-std",
+      func: sha512_compress_x86_avx512vl_std,
     }),
     #[cfg(target_arch = "riscv64")]
     ("sha512-compress", "riscv/zknh") => Some(Kernel {

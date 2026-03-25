@@ -24,6 +24,10 @@ pub enum Sha512_256KernelId {
   S390xKimd = 7,
   #[cfg(target_arch = "powerpc64")]
   Ppc64Crypto = 8,
+  #[cfg(target_arch = "x86_64")]
+  X86Avx2Std = 9,
+  #[cfg(target_arch = "x86_64")]
+  X86Avx512vlStd = 10,
 }
 
 #[cfg(any(test, feature = "std"))]
@@ -43,6 +47,10 @@ pub const ALL: &[Sha512_256KernelId] = &[
   Sha512_256KernelId::WasmSimd128,
   #[cfg(target_arch = "s390x")]
   Sha512_256KernelId::S390xKimd,
+  #[cfg(target_arch = "x86_64")]
+  Sha512_256KernelId::X86Avx2Std,
+  #[cfg(target_arch = "x86_64")]
+  Sha512_256KernelId::X86Avx512vlStd,
 ];
 
 impl Sha512_256KernelId {
@@ -67,6 +75,10 @@ impl Sha512_256KernelId {
       Self::S390xKimd => "s390x/kimd",
       #[cfg(target_arch = "powerpc64")]
       Self::Ppc64Crypto => "ppc64/crypto",
+      #[cfg(target_arch = "x86_64")]
+      Self::X86Avx2Std => "x86-avx2-std",
+      #[cfg(target_arch = "x86_64")]
+      Self::X86Avx512vlStd => "x86-avx512vl-std",
     }
   }
 }
@@ -92,6 +104,10 @@ pub fn id_from_name(name: &str) -> Option<Sha512_256KernelId> {
     "s390x/kimd" => Some(Sha512_256KernelId::S390xKimd),
     #[cfg(target_arch = "powerpc64")]
     "ppc64/crypto" => Some(Sha512_256KernelId::Ppc64Crypto),
+    #[cfg(target_arch = "x86_64")]
+    "x86-avx2-std" => Some(Sha512_256KernelId::X86Avx2Std),
+    #[cfg(target_arch = "x86_64")]
+    "x86-avx512vl-std" => Some(Sha512_256KernelId::X86Avx512vlStd),
     _ => None,
   }
 }
@@ -118,6 +134,10 @@ const fn to_sha512_kernel_id(id: Sha512_256KernelId) -> crate::hashes::crypto::s
     Sha512_256KernelId::S390xKimd => Sha512KernelId::S390xKimd,
     #[cfg(target_arch = "powerpc64")]
     Sha512_256KernelId::Ppc64Crypto => Sha512KernelId::Ppc64Crypto,
+    #[cfg(target_arch = "x86_64")]
+    Sha512_256KernelId::X86Avx2Std => Sha512KernelId::X86Avx2Std,
+    #[cfg(target_arch = "x86_64")]
+    Sha512_256KernelId::X86Avx512vlStd => Sha512KernelId::X86Avx512vlStd,
   }
 }
 
@@ -154,6 +174,14 @@ pub(crate) fn compress_blocks_fn(id: Sha512_256KernelId) -> CompressBlocksFn {
     }
     #[cfg(target_arch = "powerpc64")]
     Sha512_256KernelId::Ppc64Crypto => {
+      crate::hashes::crypto::sha512::kernels::compress_blocks_fn(to_sha512_kernel_id(id))
+    }
+    #[cfg(target_arch = "x86_64")]
+    Sha512_256KernelId::X86Avx2Std => {
+      crate::hashes::crypto::sha512::kernels::compress_blocks_fn(to_sha512_kernel_id(id))
+    }
+    #[cfg(target_arch = "x86_64")]
+    Sha512_256KernelId::X86Avx512vlStd => {
       crate::hashes::crypto::sha512::kernels::compress_blocks_fn(to_sha512_kernel_id(id))
     }
   }

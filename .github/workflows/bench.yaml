@@ -4,11 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       crates:
-        description: "Crate(s), comma-separated (e.g. hashes). Empty = workspace."
+        description: "Crate(s), comma-separated (e.g. hashes,auth). Empty = workspace."
         required: false
         type: string
       benches:
-        description: "Bench target(s), comma-separated (e.g. blake3). Optional."
+        description: "Bench target(s), comma-separated (e.g. blake3,auth). Optional."
         required: false
         type: string
       run_amd_zen4:
@@ -44,7 +44,7 @@ on:
         required: false
         type: boolean
       only:
-        description: "Algorithm selector(s), comma-separated (e.g. blake3, crc32c). If 'filter' is set, this scopes crate/bench selection only."
+        description: "Algorithm selector(s), comma-separated (e.g. blake3,crc32c,auth,hmac,ed25519). If 'filter' is set, this scopes crate/bench selection only."
         required: false
         type: string
       quick:

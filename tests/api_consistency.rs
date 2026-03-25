@@ -8,6 +8,8 @@ use rscrypto::{
   AsconXof, Blake3, Digest, Sha3_224, Sha3_256, Sha3_384, Sha3_512, Sha224, Sha256, Sha384, Sha512, Sha512_256,
   Shake128, Shake256, Xof,
 };
+#[cfg(feature = "auth")]
+use rscrypto::{HmacSha256, Mac};
 
 #[cfg(feature = "hashes")]
 fn assert_digest_api<D>()
@@ -28,6 +30,22 @@ fn squeeze_32(mut reader: impl Xof) -> [u8; 32] {
   let mut out = [0u8; 32];
   reader.squeeze(&mut out);
   out
+}
+
+#[cfg(feature = "auth")]
+fn assert_mac_api<M>()
+where
+  M: Mac,
+  M::Tag: PartialEq + core::fmt::Debug,
+{
+  let key = b"api-consistency-key";
+  let mut mac = M::new(key);
+  mac.update(b"abc");
+  let expected = mac.finalize();
+  mac.reset();
+  mac.update(b"abc");
+  assert_eq!(mac.finalize(), expected);
+  assert!(mac.verify(&expected).is_ok());
 }
 
 #[test]
@@ -64,6 +82,12 @@ fn all_xofs_follow_new_update_finalize_xof_and_xof() {
   assert_xof_api!(Shake256);
   assert_xof_api!(Blake3);
   assert_xof_api!(AsconXof);
+}
+
+#[test]
+#[cfg(feature = "auth")]
+fn all_macs_follow_new_update_finalize_reset() {
+  assert_mac_api::<HmacSha256>();
 }
 
 #[test]

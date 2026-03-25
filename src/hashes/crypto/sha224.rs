@@ -117,9 +117,8 @@ impl Sha224 {
       }
 
       let mut out = [0u8; 28];
-      for (i, word) in state.iter().copied().enumerate().take(7) {
-        let offset = i.strict_mul(4);
-        out[offset..offset.strict_add(4)].copy_from_slice(&word.to_be_bytes());
+      for (chunk, &word) in out.chunks_exact_mut(4).zip(state.iter()) {
+        chunk.copy_from_slice(&word.to_be_bytes());
       }
       out
     } else {
@@ -215,9 +214,8 @@ impl Sha224 {
     compress_blocks(&mut state, &block);
 
     let mut out = [0u8; 28];
-    for (i, word) in state.iter().copied().enumerate().take(7) {
-      let offset = i * 4;
-      out[offset..offset.strict_add(4)].copy_from_slice(&word.to_be_bytes());
+    for (chunk, &word) in out.chunks_exact_mut(4).zip(state.iter()) {
+      chunk.copy_from_slice(&word.to_be_bytes());
     }
     out
   }
@@ -264,6 +262,11 @@ impl Digest for Sha224 {
   #[inline]
   fn reset(&mut self) {
     *self = Self::default();
+  }
+
+  #[inline]
+  fn digest(data: &[u8]) -> Self::Output {
+    dispatch::digest(data)
   }
 }
 
