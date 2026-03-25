@@ -307,13 +307,17 @@ pub fn verify(
   challenge_hasher.update(message);
   let challenge_digest = challenge_hasher.finalize();
   let challenge = scalar::reduce_bytes_mod_order(&challenge_digest);
-  let challenge_bytes = scalar::to_bytes(&challenge);
+  let neg_challenge = scalar::negate_mod(&challenge);
+  let neg_challenge_bytes = scalar::to_bytes(&neg_challenge);
   let s_canonical = scalar::to_bytes(&s);
 
-  let lhs = point::ExtendedPoint::scalar_mul_basepoint(&s_canonical).mul_by_cofactor();
-  let rhs = r_point.add(&a_point.scalar_mul(&challenge_bytes)).mul_by_cofactor();
+  // Straus/Shamir: compute [s]B + [-h]A in one interleaved 256-bit scan,
+  // then cofactor-clear and compare to [8]R.
+  let combined =
+    point::ExtendedPoint::straus_basepoint_vartime(&s_canonical, &neg_challenge_bytes, &a_point).mul_by_cofactor();
+  let expected = r_point.mul_by_cofactor();
 
-  match (lhs.to_bytes(), rhs.to_bytes()) {
+  match (combined.to_bytes(), expected.to_bytes()) {
     (Some(left), Some(right)) if ct::constant_time_eq(&left, &right) => Ok(()),
     _ => Err(VerificationError::new()),
   }

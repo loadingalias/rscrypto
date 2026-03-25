@@ -118,6 +118,17 @@ pub(crate) fn mul_add_mod(lhs: &Scalar, rhs: &Scalar, acc: &Scalar) -> Scalar {
   add_mod(&mul_mod(lhs, rhs), acc)
 }
 
+/// Negate a scalar modulo `L`: returns `L - s` when `s != 0`, else `0`.
+#[must_use]
+pub(crate) fn negate_mod(s: &Scalar) -> Scalar {
+  if *s == ZERO {
+    ZERO
+  } else {
+    let (result, _) = sub_raw(&ORDER, s);
+    result
+  }
+}
+
 #[inline]
 #[must_use]
 fn read_u64_le(chunk: &[u8]) -> u64 {
