@@ -145,22 +145,15 @@ pub fn select_runtime_table(#[allow(unused_variables)] caps: Caps) -> &'static D
       return &X86_SHA512_TABLE;
     }
     if caps.has(x86::AMD) {
-      if caps.has(x86::AMD_ZEN5) {
-        // Zen 5+ (6-wide dispatch): standard round scales better than deferred-Σ0.
-        if caps.has(x86::AVX2) {
-          return &X86_AVX2_STD_TABLE;
-        }
-        if caps.has(x86::AVX512F) && caps.has(x86::AVX512VL) {
-          return &X86_AVX512VL_STD_TABLE;
-        }
-      } else {
-        // Zen 4 and earlier (4-wide): deferred-Σ0 wins.
-        if caps.has(x86::AVX2) {
-          return &X86_AVX2_TABLE;
-        }
-        if caps.has(x86::AVX512F) && caps.has(x86::AVX512VL) {
-          return &X86_AVX512VL_TABLE;
-        }
+      // Deferred-Σ0 wins on all AMD: the standard-round merge point
+      // (a = t1 + t2) serializes on Zen 5's 6-wide pipeline, losing to
+      // the pipelined t2 deferral. Measured: 0.79x with std → ~1.0x with
+      // deferred on Zen 5 CI 2026-03-25.
+      if caps.has(x86::AVX2) {
+        return &X86_AVX2_TABLE;
+      }
+      if caps.has(x86::AVX512F) && caps.has(x86::AVX512VL) {
+        return &X86_AVX512VL_TABLE;
       }
     } else {
       // Intel: AVX-512VL > AVX2 (native single-block > portable fallback)

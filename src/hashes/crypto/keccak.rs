@@ -101,29 +101,27 @@ pub(crate) fn keccakf_portable(state: &mut [u64; 25]) {
   for &rc in &RC {
     let mut arr = [0u64; 5];
 
-    // θ: column parity
-    arr[0] = state[0] ^ state[5] ^ state[10] ^ state[15] ^ state[20];
-    arr[1] = state[1] ^ state[6] ^ state[11] ^ state[16] ^ state[21];
-    arr[2] = state[2] ^ state[7] ^ state[12] ^ state[17] ^ state[22];
-    arr[3] = state[3] ^ state[8] ^ state[13] ^ state[18] ^ state[23];
-    arr[4] = state[4] ^ state[9] ^ state[14] ^ state[19] ^ state[24];
+    // θ: column parity → all 5 d-values upfront (independent, max OOO parallelism).
+    // The column-at-a-time variant computes d-values serially which hides less
+    // latency on wide-issue x86-64 pipelines. Computing all 5 first lets the
+    // OOO engine overlap the rotate+XOR computations.
+    let c0 = state[0] ^ state[5] ^ state[10] ^ state[15] ^ state[20];
+    let c1 = state[1] ^ state[6] ^ state[11] ^ state[16] ^ state[21];
+    let c2 = state[2] ^ state[7] ^ state[12] ^ state[17] ^ state[22];
+    let c3 = state[3] ^ state[8] ^ state[13] ^ state[18] ^ state[23];
+    let c4 = state[4] ^ state[9] ^ state[14] ^ state[19] ^ state[24];
 
-    // θ: diffuse + XOR-back (column-at-a-time: one d-value live per column)
-    macro_rules! theta_col {
-      ($x:expr) => {
-        let d = arr[($x + 4) % 5] ^ arr[($x + 1) % 5].rotate_left(1);
-        state[$x] ^= d;
-        state[$x + 5] ^= d;
-        state[$x + 10] ^= d;
-        state[$x + 15] ^= d;
-        state[$x + 20] ^= d;
-      };
-    }
-    theta_col!(0);
-    theta_col!(1);
-    theta_col!(2);
-    theta_col!(3);
-    theta_col!(4);
+    let d0 = c4 ^ c1.rotate_left(1);
+    let d1 = c0 ^ c2.rotate_left(1);
+    let d2 = c1 ^ c3.rotate_left(1);
+    let d3 = c2 ^ c4.rotate_left(1);
+    let d4 = c3 ^ c0.rotate_left(1);
+
+    state[0] ^= d0; state[5] ^= d0; state[10] ^= d0; state[15] ^= d0; state[20] ^= d0;
+    state[1] ^= d1; state[6] ^= d1; state[11] ^= d1; state[16] ^= d1; state[21] ^= d1;
+    state[2] ^= d2; state[7] ^= d2; state[12] ^= d2; state[17] ^= d2; state[22] ^= d2;
+    state[3] ^= d3; state[8] ^= d3; state[13] ^= d3; state[18] ^= d3; state[23] ^= d3;
+    state[4] ^= d4; state[9] ^= d4; state[14] ^= d4; state[19] ^= d4; state[24] ^= d4;
 
     // ρ + π: serial chain (hardcoded PI/RHO for guaranteed constant folding)
     let mut last = state[1];
