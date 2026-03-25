@@ -190,7 +190,7 @@ pub use hashes::crypto::{
   Sha384, Sha512, Sha512_256, Shake128, Shake128Xof, Shake256, Shake256Xof,
 };
 #[cfg(feature = "hashes")]
-pub use hashes::fast::{RapidHash, RapidHash128, Xxh3, Xxh3_128};
+pub use hashes::fast::{RapidHash, RapidHash128, RapidHashFast64, RapidHashFast128, Xxh3, Xxh3_128};
 pub use traits::ct;
 // ─── Trait re-exports ───────────────────────────────────────────────────────
 pub use traits::{Checksum, ChecksumCombine, Mac, VerificationError};
@@ -500,6 +500,8 @@ mod send_sync_assertions {
     assert_send_sync::<Xxh3_128>();
     assert_send_sync::<RapidHash>();
     assert_send_sync::<RapidHash128>();
+    assert_send_sync::<RapidHashFast64>();
+    assert_send_sync::<RapidHashFast128>();
   }
 
   #[test]
@@ -611,6 +613,8 @@ mod send_sync_assertions {
     assert_clone::<Xxh3_128>();
     assert_clone::<RapidHash>();
     assert_clone::<RapidHash128>();
+    assert_clone::<RapidHashFast64>();
+    assert_clone::<RapidHashFast128>();
 
     assert_debug::<Sha256>();
     assert_debug::<Sha224>();
@@ -634,6 +638,8 @@ mod send_sync_assertions {
     assert_debug::<Xxh3_128>();
     assert_debug::<RapidHash>();
     assert_debug::<RapidHash128>();
+    assert_debug::<RapidHashFast64>();
+    assert_debug::<RapidHashFast128>();
   }
 
   #[test]

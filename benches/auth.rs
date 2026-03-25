@@ -6,7 +6,12 @@ use core::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use ed25519_dalek::{Signer as _, SigningKey};
-use rscrypto::{Ed25519Keypair, Ed25519SecretKey, HkdfSha256, HmacSha256, Mac};
+use hkdf::Hkdf as RustCryptoHkdf;
+use hmac::Hmac;
+use rscrypto::{Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, HkdfSha256, HmacSha256, Mac as _};
+
+type RustCryptoHmacSha256 = Hmac<sha2::Sha256>;
+type RustCryptoHkdfSha256 = RustCryptoHkdf<sha2::Sha256>;
 
 fn hmac_sha256(c: &mut Criterion) {
   let inputs = common::comp_sizes();
@@ -18,6 +23,16 @@ fn hmac_sha256(c: &mut Criterion) {
 
     g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
       b.iter(|| black_box(HmacSha256::mac(black_box(&key), black_box(d))))
+    });
+
+    g.bench_with_input(BenchmarkId::new("rustcrypto", len), data, |b, d| {
+      b.iter(|| {
+        use hmac::Mac as _;
+
+        let mut mac = RustCryptoHmacSha256::new_from_slice(black_box(&key)).unwrap();
+        mac.update(black_box(d));
+        black_box(mac.finalize().into_bytes())
+      })
     });
   }
 
@@ -40,6 +55,18 @@ fn hmac_sha256_streaming(c: &mut Criterion) {
         black_box(mac.finalize())
       })
     });
+
+    g.bench_function(format!("rustcrypto/{chunk_size}B"), |b| {
+      b.iter(|| {
+        use hmac::Mac as _;
+
+        let mut mac = RustCryptoHmacSha256::new_from_slice(&key).unwrap();
+        for chunk in data.chunks(chunk_size) {
+          mac.update(black_box(chunk));
+        }
+        black_box(mac.finalize().into_bytes())
+      })
+    });
   }
 
   g.finish();
@@ -50,6 +77,7 @@ fn hkdf_sha256_expand(c: &mut Criterion) {
   let ikm = [0x22u8; 32];
   let info = [0x33u8; 48];
   let hkdf = HkdfSha256::new(&salt, &ikm);
+  let rustcrypto = RustCryptoHkdfSha256::new(Some(&salt), &ikm);
   let mut g = c.benchmark_group("hkdf-sha256/expand");
 
   for out_len in [32usize, 64, 256, 1024] {
@@ -61,6 +89,14 @@ fn hkdf_sha256_expand(c: &mut Criterion) {
         black_box(out[0])
       })
     });
+
+    g.bench_with_input(BenchmarkId::new("rustcrypto", out_len), &out_len, |b, &len| {
+      let mut out = vec![0u8; len];
+      b.iter(|| {
+        rustcrypto.expand(black_box(&info), black_box(&mut out)).unwrap();
+        black_box(out[0])
+      })
+    });
   }
 
   g.finish();
@@ -68,14 +104,38 @@ fn hkdf_sha256_expand(c: &mut Criterion) {
 
 fn ed25519_public_key(c: &mut Criterion) {
   let secret_bytes = [7u8; 32];
-  let secret = Ed25519SecretKey::from_bytes(secret_bytes);
-  let signing_key = SigningKey::from_bytes(&secret_bytes);
-  let mut g = c.benchmark_group("ed25519/public-key");
+  let mut g = c.benchmark_group("ed25519/public-key-from-secret");
 
-  g.bench_function("rscrypto", |b| b.iter(|| black_box(black_box(&secret).public_key())));
+  g.bench_function("rscrypto", |b| {
+    b.iter(|| {
+      let secret = Ed25519SecretKey::from_bytes(*black_box(&secret_bytes));
+      black_box(secret.public_key())
+    })
+  });
 
   g.bench_function("dalek", |b| {
-    b.iter(|| black_box(black_box(&signing_key).verifying_key()))
+    b.iter(|| {
+      let signing_key = SigningKey::from_bytes(black_box(&secret_bytes));
+      black_box(signing_key.verifying_key())
+    })
+  });
+
+  g.finish();
+}
+
+fn ed25519_keypair_from_secret(c: &mut Criterion) {
+  let secret_bytes = [8u8; 32];
+  let mut g = c.benchmark_group("ed25519/keypair-from-secret");
+
+  g.bench_function("rscrypto", |b| {
+    b.iter(|| {
+      let secret = Ed25519SecretKey::from_bytes(*black_box(&secret_bytes));
+      black_box(Ed25519Keypair::from_secret_key(secret))
+    })
+  });
+
+  g.bench_function("dalek", |b| {
+    b.iter(|| black_box(SigningKey::from_bytes(black_box(&secret_bytes))))
   });
 
   g.finish();
@@ -111,7 +171,7 @@ fn ed25519_verify(c: &mut Criterion) {
   let secret_bytes = [13u8; 32];
   let secret = Ed25519SecretKey::from_bytes(secret_bytes);
   let keypair = Ed25519Keypair::from_secret_key(secret);
-  let public = keypair.public_key();
+  let public: Ed25519PublicKey = keypair.public_key();
   let signing_key = SigningKey::from_bytes(&secret_bytes);
   let verifying_key = signing_key.verifying_key();
   let inputs = [0usize, 32, 1024, 16384]
@@ -151,6 +211,7 @@ criterion_group!(
   hmac_sha256_streaming,
   hkdf_sha256_expand,
   ed25519_public_key,
+  ed25519_keypair_from_secret,
   ed25519_sign,
   ed25519_verify
 );

@@ -1,9 +1,15 @@
 //! rapidhash V3 (**NOT CRYPTO**).
 //!
-//! Portable scalar implementation (no SIMD yet).
+//! Portable scalar implementation.
 //!
-//! This implements the stable, C++-compatible V3 algorithm with the default secret set.
-//! The `FastHash` seed is interpreted as the C++ seed value.
+//! Two variants are provided:
+//!
+//! - **`RapidHash64` / `RapidHash128`** — the standard V3 algorithm with avalanche finisher (extra
+//!   `rapid_mix`). C++-compatible output. Use when you need stable, cross-language hash values.
+//!
+//! - **`RapidHashFast64` / `RapidHashFast128`** — V3 core with avalanche disabled. Saves one
+//!   128-bit multiply at finalization. Use when you only need a fast in-process hash (e.g. hash
+//!   maps) and don't need C++ compatibility.
 
 #![allow(clippy::indexing_slicing)] // Tight block parsing
 
@@ -15,11 +21,21 @@ pub mod dispatch;
 pub mod dispatch_tables;
 pub(crate) mod kernels;
 
+/// Standard V3 rapidhash (64-bit) with avalanche finisher.
 #[derive(Clone, Debug, Default)]
 pub struct RapidHash64;
 
+/// Standard V3 rapidhash (128-bit) with avalanche finisher.
 #[derive(Clone, Debug, Default)]
 pub struct RapidHash128;
+
+/// Fast V3 rapidhash (64-bit) — avalanche disabled for maximum throughput.
+#[derive(Clone, Debug, Default)]
+pub struct RapidHashFast64;
+
+/// Fast V3 rapidhash (128-bit) — avalanche disabled for maximum throughput.
+#[derive(Clone, Debug, Default)]
+pub struct RapidHashFast128;
 
 // rapidhash v3 default secrets (C++ compatible)
 const DEFAULT_SECRETS: [u64; 7] = [
@@ -62,6 +78,28 @@ const fn rapid_mix(a: u64, b: u64) -> u64 {
   (r as u64) ^ ((r >> 64) as u64)
 }
 
+/// Hint that `cond` is likely true. Uses `#[cold]` to nudge branch layout.
+#[inline(always)]
+fn likely(cond: bool) -> bool {
+  if !cond {
+    cold_path();
+  }
+  cond
+}
+
+/// Hint that `cond` is likely false.
+#[inline(always)]
+fn unlikely(cond: bool) -> bool {
+  if cond {
+    cold_path();
+  }
+  cond
+}
+
+#[cold]
+#[inline(always)]
+fn cold_path() {}
+
 #[inline(always)]
 const fn rapidhash_seed_cpp(seed: u64) -> u64 {
   seed ^ rapid_mix(seed ^ DEFAULT_SECRETS[2], DEFAULT_SECRETS[1])
@@ -74,56 +112,74 @@ fn rapidhash_finish(a: u64, b: u64, remainder: u64) -> u64 {
 
 #[inline(always)]
 fn rapidhash_v3_with_seed(data: &[u8], seed: u64) -> u64 {
-  rapidhash_v3_core(data, rapidhash_seed_cpp(seed))
+  rapidhash_core::<true>(data, rapidhash_seed_cpp(seed))
 }
 
 #[inline(always)]
-fn rapidhash_v3_core(data: &[u8], seed: u64) -> u64 {
-  if data.len() <= 16 {
-    rapidhash_v3_core_small(data, seed)
-  } else {
-    rapidhash_v3_core_large(data, seed)
-  }
+fn rapidhash_fast_with_seed(data: &[u8], seed: u64) -> u64 {
+  rapidhash_core::<false>(data, rapidhash_seed_cpp(seed))
 }
 
 #[inline(always)]
-fn rapidhash_v3_core_small(data: &[u8], mut seed: u64) -> u64 {
+fn rapidhash_core<const AVALANCHE: bool>(data: &[u8], mut seed: u64) -> u64 {
   let mut a = 0u64;
   let mut b = 0u64;
 
-  if data.len() >= 4 {
-    seed ^= data.len() as u64;
-    if data.len() >= 8 {
-      let plast = data.len() - 8;
-      a ^= read_u64_le(data, 0);
-      b ^= read_u64_le(data, plast);
-    } else {
-      let plast = data.len() - 4;
-      a ^= read_u32_le(data, 0) as u64;
-      b ^= read_u32_le(data, plast) as u64;
+  if likely(data.len() <= 16) {
+    // Small path: 0-16 bytes. Fully inline for minimum overhead.
+    if data.len() >= 4 {
+      seed ^= data.len() as u64;
+      if data.len() >= 8 {
+        a = read_u64_le(data, 0);
+        b = read_u64_le(data, data.len() - 8);
+      } else {
+        a = read_u32_le(data, 0) as u64;
+        b = read_u32_le(data, data.len() - 4) as u64;
+      }
+    } else if !data.is_empty() {
+      a = ((data[0] as u64) << 45) | (data[data.len() - 1] as u64);
+      b = data[data.len() >> 1] as u64;
     }
-  } else if !data.is_empty() {
-    a ^= ((data[0] as u64) << 45) | (data[data.len() - 1] as u64);
-    b ^= data[data.len() >> 1] as u64;
+  } else {
+    // Medium/large path: >16 bytes. The 7-stream bulk loop lives in a
+    // separate non-inlined function to keep the entry point lean.
+    // SAFETY: we just verified data.len() > 16.
+    unsafe { return rapidhash_core_large::<AVALANCHE>(data, seed) };
   }
 
   let remainder = data.len() as u64;
   a ^= DEFAULT_SECRETS[1];
   b ^= seed;
-
   (a, b) = rapid_mum(a, b);
-  rapidhash_finish(a, b, remainder)
+  rapidhash_final::<AVALANCHE>(a, b, remainder)
 }
 
+#[inline(always)]
+fn rapidhash_final<const AVALANCHE: bool>(a: u64, b: u64, remainder: u64) -> u64 {
+  if AVALANCHE {
+    rapidhash_finish(a, b, remainder)
+  } else {
+    a ^ b
+  }
+}
+
+/// Handles inputs >16 bytes. Kept as a separate function so the small-path
+/// entry point stays lean for inlining. LLVM decides whether to inline this.
+///
+/// # Safety
+///
+/// Caller must guarantee `data.len() > 16`.
 #[inline]
-fn rapidhash_v3_core_large(data: &[u8], mut seed: u64) -> u64 {
-  debug_assert!(data.len() > 16);
+unsafe fn rapidhash_core_large<const AVALANCHE: bool>(data: &[u8], mut seed: u64) -> u64 {
+  // SAFETY: caller guarantees data.len() > 16. This eliminates redundant
+  // bounds checks in the tail-read section below.
+  unsafe { core::hint::assert_unchecked(data.len() > 16) };
 
   let mut a = 0u64;
   let mut b = 0u64;
   let mut slice = data;
 
-  if slice.len() > 112 {
+  if unlikely(slice.len() > 112) {
     let mut see1 = seed;
     let mut see2 = seed;
     let mut see3 = seed;
@@ -187,7 +243,8 @@ fn rapidhash_v3_core_large(data: &[u8], mut seed: u64) -> u64 {
         read_u64_le(slice, 216) ^ see6,
       );
 
-      slice = &slice[224..];
+      let (_, rest) = slice.split_at(224);
+      slice = rest;
     }
 
     if slice.len() > 112 {
@@ -216,7 +273,8 @@ fn rapidhash_v3_core_large(data: &[u8], mut seed: u64) -> u64 {
         read_u64_le(slice, 96) ^ DEFAULT_SECRETS[6],
         read_u64_le(slice, 104) ^ see6,
       );
-      slice = &slice[112..];
+      let (_, rest) = slice.split_at(112);
+      slice = rest;
     }
 
     seed ^= see1;
@@ -269,7 +327,7 @@ fn rapidhash_v3_core_large(data: &[u8], mut seed: u64) -> u64 {
   b ^= seed;
 
   (a, b) = rapid_mum(a, b);
-  rapidhash_finish(a, b, remainder)
+  rapidhash_final::<AVALANCHE>(a, b, remainder)
 }
 
 impl FastHash for RapidHash64 {
@@ -294,11 +352,33 @@ impl FastHash for RapidHash128 {
   }
 }
 
+impl FastHash for RapidHashFast64 {
+  const OUTPUT_SIZE: usize = 8;
+  type Output = u64;
+  type Seed = u64;
+
+  #[inline]
+  fn hash_with_seed(seed: Self::Seed, data: &[u8]) -> Self::Output {
+    dispatch::hash64_fast_with_seed(seed, data)
+  }
+}
+
+impl FastHash for RapidHashFast128 {
+  const OUTPUT_SIZE: usize = 16;
+  type Output = u128;
+  type Seed = u64;
+
+  #[inline]
+  fn hash_with_seed(seed: Self::Seed, data: &[u8]) -> Self::Output {
+    dispatch::hash128_fast_with_seed(seed, data)
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use proptest::prelude::*;
 
-  use super::{RapidHash64, RapidHash128};
+  use super::{RapidHash64, RapidHash128, RapidHashFast64, RapidHashFast128};
 
   #[test]
   fn smoke_empty_matches_oracle() {
@@ -326,6 +406,27 @@ mod tests {
 
       prop_assert_eq!(lo, <RapidHash64 as crate::traits::FastHash>::hash_with_seed(seed, &data));
       prop_assert_eq!(hi, <RapidHash64 as crate::traits::FastHash>::hash_with_seed(seed ^ 0x9E37_79B9_7F4A_7C15, &data));
+    }
+
+    /// The fast variant matches the V3 algorithm with `AVALANCHE=false`:
+    /// same core processing but finish is `a ^ b` instead of an extra `rapid_mix`.
+    /// We verify against the competitor's V3-no-avalanche output.
+    #[test]
+    fn rapidhash_fast_64_matches_v3_no_avalanche(seed in any::<u64>(), data in proptest::collection::vec(any::<u8>(), 0..2048)) {
+      let ours = <RapidHashFast64 as crate::traits::FastHash>::hash_with_seed(seed, &data);
+      let secrets = rapidhash::v3::RapidSecrets::seed_cpp(seed);
+      let theirs = rapidhash::v3::rapidhash_v3_inline::<false, false, false>(&data, &secrets);
+      prop_assert_eq!(ours, theirs);
+    }
+
+    #[test]
+    fn rapidhash_fast_128_is_two_independent_64bit_hashes(seed in any::<u64>(), data in proptest::collection::vec(any::<u8>(), 0..2048)) {
+      let out = <RapidHashFast128 as crate::traits::FastHash>::hash_with_seed(seed, &data);
+      let lo = out as u64;
+      let hi = (out >> 64) as u64;
+
+      prop_assert_eq!(lo, <RapidHashFast64 as crate::traits::FastHash>::hash_with_seed(seed, &data));
+      prop_assert_eq!(hi, <RapidHashFast64 as crate::traits::FastHash>::hash_with_seed(seed ^ 0x9E37_79B9_7F4A_7C15, &data));
     }
   }
 }

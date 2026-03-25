@@ -28,6 +28,24 @@ fn allow_avx2_hash_many_one_chunk_fast_path(caps: Caps) -> bool {
     && !caps.has(x86::AMX_COMPLEX)
 }
 
+/// True on wide-pipeline CPUs (Zen 5+, Intel non-AMX) where hash_many's SIMD
+/// setup cost is not amortized at ≤ 4 blocks. On narrow-pipeline AMD (Zen 4),
+/// hash_many is beneficial even at 4 blocks.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+#[must_use]
+fn is_wide_pipeline_for_hash_many(caps: Caps) -> bool {
+  // Zen 5+: 6-wide dispatch, hash_many overhead > sequential at 4 blocks.
+  // Intel ICL-class (AVX-512, no AMX): same pattern.
+  // Zen 4 (AMD, not Zen5): 4-wide, hash_many amortizes at 4 blocks.
+  if caps.has(x86::AMD) {
+    caps.has(x86::AMD_ZEN5)
+  } else {
+    // Intel: all AVX-512 without AMX (ICL, TGL) are wide-pipeline.
+    true
+  }
+}
+
 #[derive(Clone, Copy)]
 struct Entry {
   kernel: Kernel,
@@ -51,6 +69,8 @@ struct ResolvedDispatch {
   hasher: HasherDispatch,
   #[cfg(target_arch = "x86_64")]
   avx2_hash_many_one_chunk_fast_path: bool,
+  #[cfg(target_arch = "x86_64")]
+  hash_many_wide_pipeline: bool,
   #[cfg(target_arch = "x86_64")]
   avx2_available: bool,
 }
@@ -281,6 +301,8 @@ fn resolved() -> ResolvedDispatch {
       #[cfg(target_arch = "x86_64")]
       avx2_hash_many_one_chunk_fast_path: allow_avx2_hash_many_one_chunk_fast_path(caps),
       #[cfg(target_arch = "x86_64")]
+      hash_many_wide_pipeline: is_wide_pipeline_for_hash_many(caps),
+      #[cfg(target_arch = "x86_64")]
       avx2_available: caps.has(required_caps(Blake3KernelId::X86Avx2)),
     }
   })
@@ -390,6 +412,13 @@ pub(crate) fn parallel_dispatch() -> ParallelDispatch {
 #[must_use]
 pub(crate) fn avx2_hash_many_one_chunk_fast_path() -> bool {
   resolved().avx2_hash_many_one_chunk_fast_path
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline]
+#[must_use]
+pub(crate) fn hash_many_wide_pipeline() -> bool {
+  resolved().hash_many_wide_pipeline
 }
 
 #[cfg(target_arch = "x86_64")]
