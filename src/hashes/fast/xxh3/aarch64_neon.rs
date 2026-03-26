@@ -3,6 +3,15 @@
 //! Vectorizes the 8-stripe accumulator multiply-accumulate loop using
 //! 128-bit NEON registers (4 × `uint64x2_t` = 8 × u64).
 //!
+//! Optimizations over the naive 1-lane-per-iteration approach:
+//! - **Pair-wise processing:** 2 lanes per iteration via `vuzpq_u32` deinterleave
+//!   and `vmlal_high_u32`, reducing instruction count per stripe.
+//! - **Broken dependency chain:** `vmlal(data_swap, lo, hi)` instead of
+//!   `vmlal(acc, lo, hi)` lets the multiply start without waiting for the
+//!   previous accumulate.
+//! - **Software prefetch:** `prfm pldl1keep` for the next stripe's input in the
+//!   long-path loop, reducing cache miss stalls on Neoverse V1 (Graviton3).
+//!
 //! # Safety
 //!
 //! Uses `unsafe` for NEON intrinsics. Callers must ensure NEON is available
@@ -50,6 +59,12 @@ unsafe fn store_acc(acc: &[uint64x2_t; 4]) -> [u64; ACC_NB] {
 }
 
 /// Accumulate one 64-byte stripe into the NEON accumulator.
+///
+/// Processes 2 accumulator lanes per iteration (32 bytes each) using:
+/// - `vuzpq_u32` to deinterleave lo/hi 32-bit halves from two `data_key`
+///   vectors in one instruction (vs 2 separate `vmovn` + `vshrn`)
+/// - `vmlal_high_u32` for the second lane (avoids `vget_high_u32` extraction)
+/// - `vmlal(data_swap, ...)` base to break the acc→vmlal dependency chain
 #[inline]
 #[target_feature(enable = "neon")]
 unsafe fn accumulate_512(acc: &mut [uint64x2_t; 4], stripe: *const u8, secret: *const u8) {
@@ -58,23 +73,41 @@ unsafe fn accumulate_512(acc: &mut [uint64x2_t; 4], stripe: *const u8, secret: *
   unsafe {
     let mut i = 0usize;
     while i < 4 {
-      let data_vec = vreinterpretq_u64_u8(vld1q_u8(stripe.add(i.strict_mul(16))));
-      let key_vec = vreinterpretq_u64_u8(vld1q_u8(secret.add(i.strict_mul(16))));
+      // Load 2 × 16B input chunks and 2 × 16B secret chunks.
+      let data_vec_1 = vreinterpretq_u64_u8(vld1q_u8(stripe.add(i.strict_mul(16))));
+      let data_vec_2 = vreinterpretq_u64_u8(vld1q_u8(stripe.add(i.strict_add(1).strict_mul(16))));
+      let key_vec_1 = vreinterpretq_u64_u8(vld1q_u8(secret.add(i.strict_mul(16))));
+      let key_vec_2 = vreinterpretq_u64_u8(vld1q_u8(secret.add(i.strict_add(1).strict_mul(16))));
 
-      // data_swap: swap the two u64 elements (idx ^ 1 effect)
-      let data_swap = vextq_u64(data_vec, data_vec, 1);
-      // acc[i] += data_swap
-      acc[i] = vaddq_u64(acc[i], data_swap);
+      // Swap u64 lanes (idx ^ 1 effect).
+      let data_swap_1 = vextq_u64(data_vec_1, data_vec_1, 1);
+      let data_swap_2 = vextq_u64(data_vec_2, data_vec_2, 1);
 
       // data_key = data ^ secret
-      let data_key = veorq_u64(data_vec, key_vec);
-      // Split into low32 and high32, multiply, accumulate:
-      // acc[i] += (low32(data_key) * high32(data_key)) as u64
-      let data_key_lo = vmovn_u64(data_key); // low 32 bits of each u64
-      let data_key_hi = vshrn_n_u64::<32>(data_key); // high 32 bits → low position
-      acc[i] = vmlal_u32(acc[i], data_key_lo, data_key_hi);
+      let data_key_1 = veorq_u64(data_vec_1, key_vec_1);
+      let data_key_2 = veorq_u64(data_vec_2, key_vec_2);
 
-      i = i.strict_add(1);
+      // Deinterleave lo/hi 32-bit halves from both keys in one instruction.
+      // Input as u32x4: [lo0, hi0, lo1, hi1] from each data_key.
+      // Result.0 (even): [lo0_1, lo1_1, lo0_2, lo1_2]
+      // Result.1 (odd):  [hi0_1, hi1_1, hi0_2, hi1_2]
+      let unzipped = vuzpq_u32(
+        vreinterpretq_u32_u64(data_key_1),
+        vreinterpretq_u32_u64(data_key_2),
+      );
+      let data_key_lo = unzipped.0;
+      let data_key_hi = unzipped.1;
+
+      // Multiply-accumulate with data_swap as base (not acc) to break the
+      // dependency chain: vmlal doesn't wait for the previous vaddq to complete.
+      // sum = data_swap + lo32 * hi32 (widening multiply-accumulate)
+      let sum_1 = vmlal_u32(data_swap_1, vget_low_u32(data_key_lo), vget_low_u32(data_key_hi));
+      let sum_2 = vmlal_high_u32(data_swap_2, data_key_lo, data_key_hi);
+
+      acc[i] = vaddq_u64(acc[i], sum_1);
+      acc[i.strict_add(1)] = vaddq_u64(acc[i.strict_add(1)], sum_2);
+
+      i = i.strict_add(2);
     }
   }
 }
@@ -115,6 +148,26 @@ unsafe fn scramble_acc(acc: &mut [uint64x2_t; 4], secret: *const u8) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Prefetch helper
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Prefetch the next stripe's input data into L1 cache.
+///
+/// Uses `wrapping_add` because the prefetch address may be past the end of the
+/// buffer — `prfm` silently ignores invalid addresses.
+#[inline(always)]
+unsafe fn prefetch_stripe(input_ptr: *const u8) {
+  // SAFETY: PRFM is a CPU hint; invalid addresses are silently ignored.
+  unsafe {
+    core::arch::asm!(
+      "prfm pldl1keep, [{ptr}]",
+      ptr = in(reg) input_ptr,
+      options(nostack, preserves_flags)
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Long-path loop (SIMD inner, scalar merge)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -133,8 +186,11 @@ unsafe fn hash_long_internal_loop(input: &[u8], secret: &[u8]) -> [u64; ACC_NB] 
       let mut stripe = 0usize;
       while stripe < nb_stripes {
         let input_off = block.strict_mul(block_len).strict_add(stripe.strict_mul(STRIPE_LEN));
+        let input_ptr = input.as_ptr().add(input_off);
         let secret_off = stripe.strict_mul(SECRET_CONSUME_RATE);
-        accumulate_512(&mut acc, input.as_ptr().add(input_off), secret.as_ptr().add(secret_off));
+        // Prefetch next stripe's input — prfm ignores out-of-bounds addresses.
+        prefetch_stripe(input_ptr.wrapping_add(STRIPE_LEN));
+        accumulate_512(&mut acc, input_ptr, secret.as_ptr().add(secret_off));
         stripe = stripe.strict_add(1);
       }
       scramble_acc(&mut acc, secret.as_ptr().add(secret.len().strict_sub(STRIPE_LEN)));
@@ -148,8 +204,10 @@ unsafe fn hash_long_internal_loop(input: &[u8], secret: &[u8]) -> [u64; ACC_NB] 
       let input_off = nb_blocks
         .strict_mul(block_len)
         .strict_add(stripe.strict_mul(STRIPE_LEN));
+      let input_ptr = input.as_ptr().add(input_off);
       let secret_off = stripe.strict_mul(SECRET_CONSUME_RATE);
-      accumulate_512(&mut acc, input.as_ptr().add(input_off), secret.as_ptr().add(secret_off));
+      prefetch_stripe(input_ptr.wrapping_add(STRIPE_LEN));
+      accumulate_512(&mut acc, input_ptr, secret.as_ptr().add(secret_off));
       stripe = stripe.strict_add(1);
     }
 
