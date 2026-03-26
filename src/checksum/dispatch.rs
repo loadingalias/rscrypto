@@ -134,14 +134,13 @@ pub fn crc32_ieee(data: &[u8]) -> u32 {
 
   // aarch64: 3-tier inline dispatch bypassing function-pointer tables.
   //
-  // - Small (<128 B): pure hardware CRC extension — avoids PMULL kernel entry
-  //   overhead (alignment prologue + fold threshold check) for data that would
-  //   just fall through to serial CRC anyway.
-  // - Medium (128–1024 B): PMULL v12e_v1 fold — 12-lane carryless multiply
-  //   amortizes setup cost. Inlined to eliminate indirect-call barrier.
-  // - Large (>1024 B + EOR3): v9s3x2e_s3 EOR3 fusion — 9 PMULL lanes
-  //   interleaved with 3 scalar CRC streams for ILP overlap; `veor3q_u64`
-  //   reduces XOR chains. Significantly faster than v12e_v1 at scale.
+  // - Small (<128 B): pure hardware CRC extension — avoids PMULL kernel entry overhead (alignment
+  //   prologue + fold threshold check) for data that would just fall through to serial CRC anyway.
+  // - Medium (128–1024 B): PMULL v12e_v1 fold — 12-lane carryless multiply amortizes setup cost.
+  //   Inlined to eliminate indirect-call barrier.
+  // - Large (>1024 B + EOR3): v9s3x2e_s3 EOR3 fusion — 9 PMULL lanes interleaved with 3 scalar CRC
+  //   streams for ILP overlap; `veor3q_u64` reduces XOR chains. Significantly faster than v12e_v1 at
+  //   scale.
   #[cfg(target_arch = "aarch64")]
   {
     use crate::platform::caps::aarch64;
