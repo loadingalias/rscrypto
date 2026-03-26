@@ -422,8 +422,41 @@ pub(crate) unsafe fn compress_blocks_avx2(state: &mut [u64; 8], blocks: &[u8]) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Rotation-based schedule (no cross-lane permute)
+// Rotation-based schedule (eliminates ring-buffer index computation)
 // ─────────────────────────────────────────────────────────────────────────────
+
+/// Compute one schedule pair using **array rotation** (128-bit, single-block).
+///
+/// Same approach as [`schedule_rotate_256`] but for 128-bit registers.
+/// Eliminates ring-buffer index computation (`wrapping_sub`, `& 7`) in favour
+/// of fixed-offset array accesses + physical rotation. The 7 register moves
+/// are zero-cost on modern x86 (register renaming).
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+unsafe fn schedule_rotate_128(x: &mut [__m128i; 8], k: __m128i) -> __m128i {
+  // SAFETY: SSE2/SSSE3 intrinsics are available via the caller's #[target_feature] attribute.
+  unsafe {
+    let w_tm15 = _mm_alignr_epi8(x[1], x[0], 8);
+    let w_tm7 = _mm_alignr_epi8(x[5], x[4], 8);
+
+    x[0] = _mm_add_epi64(
+      _mm_add_epi64(x[0], w_tm7),
+      _mm_add_epi64(small_sigma0_128(w_tm15), small_sigma1_128(x[7])),
+    );
+
+    let new_val = x[0];
+    x[0] = x[1];
+    x[1] = x[2];
+    x[2] = x[3];
+    x[3] = x[4];
+    x[4] = x[5];
+    x[5] = x[6];
+    x[6] = x[7];
+    x[7] = new_val;
+
+    _mm_add_epi64(x[7], k)
+  }
+}
 
 /// Compute one schedule pair using **array rotation** (256-bit, dual-block).
 ///
@@ -640,8 +673,8 @@ pub(crate) unsafe fn compress_blocks_avx2_decoupled(state: &mut [u64; 8], blocks
     }
 
     // ── Single-block (odd trailing) ──────────────────────────────────────
-    // 128-bit schedule uses _mm_alignr_epi8 which has no cross-lane issue,
-    // so the ring-buffer approach is already optimal here.
+    // Uses rotation-based 128-bit schedule (same approach as 256-bit) and
+    // vector K addition for consistency with the dual-block path.
     if remaining == 1 {
       let mut wv: [__m128i; 8] = [
         _mm_shuffle_epi8(_mm_loadu_si128(ptr.cast()), bswap),
@@ -654,12 +687,14 @@ pub(crate) unsafe fn compress_blocks_avx2_decoupled(state: &mut [u64; 8], blocks
         _mm_shuffle_epi8(_mm_loadu_si128(ptr.add(112).cast()), bswap),
       ];
 
-      // Extract initial W[0-15]+K[0-15].
+      // Extract initial W[0-15]+K[0-15] with vector K addition.
       for (i, &v) in wv.iter().enumerate() {
-        let (w0, w1) = extract_128(v);
         let r = i.strict_mul(2);
-        rv[r] = w0.wrapping_add(K[r]);
-        rv[r.strict_add(1)] = w1.wrapping_add(K[r.strict_add(1)]);
+        let k_pair: __m128i = _mm_loadu_si128(K.as_ptr().add(r).cast());
+        let wk = _mm_add_epi64(v, k_pair);
+        let (w0, w1) = extract_128(wk);
+        rv[r] = w0;
+        rv[r.strict_add(1)] = w1;
       }
 
       let mut a = state[0];
@@ -690,18 +725,19 @@ pub(crate) unsafe fn compress_blocks_avx2_decoupled(state: &mut [u64; 8], blocks
       }
 
       // Decoupled loop: 4 outer × 8 inner = 64 rounds + 64 schedule words.
+      // Rotation-based schedule with vector K addition.
       for outer in 0..4usize {
         for j in 0..8usize {
           let r = j.strict_mul(2);
           round1!(rv[r]);
           round1!(rv[r.strict_add(1)]);
 
-          let sched_idx = 8usize.strict_add(outer.strict_mul(8)).strict_add(j);
-          schedule_pair_128(&mut wv, sched_idx);
-          let (w0, w1) = extract_128(wv[sched_idx & 7]);
-          let kr = sched_idx.strict_mul(2);
-          rv[r] = w0.wrapping_add(K[kr]);
-          rv[r.strict_add(1)] = w1.wrapping_add(K[kr.strict_add(1)]);
+          let kr = 8usize.strict_add(outer.strict_mul(8)).strict_add(j).strict_mul(2);
+          let k_pair: __m128i = _mm_loadu_si128(K.as_ptr().add(kr).cast());
+          let wk = schedule_rotate_128(&mut wv, k_pair);
+          let (w0, w1) = extract_128(wk);
+          rv[r] = w0;
+          rv[r.strict_add(1)] = w1;
         }
       }
 
