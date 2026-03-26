@@ -4,13 +4,12 @@
 //! 128-bit NEON registers (4 × `uint64x2_t` = 8 × u64).
 //!
 //! Optimizations over the naive 1-lane-per-iteration approach:
-//! - **Pair-wise processing:** 2 lanes per iteration via `vuzpq_u32` deinterleave
-//!   and `vmlal_high_u32`, reducing instruction count per stripe.
-//! - **Broken dependency chain:** `vmlal(data_swap, lo, hi)` instead of
-//!   `vmlal(acc, lo, hi)` lets the multiply start without waiting for the
-//!   previous accumulate.
-//! - **Software prefetch:** `prfm pldl1keep` for the next stripe's input in the
-//!   long-path loop, reducing cache miss stalls on Neoverse V1 (Graviton3).
+//! - **Pair-wise processing:** 2 lanes per iteration via `vuzpq_u32` deinterleave and
+//!   `vmlal_high_u32`, reducing instruction count per stripe.
+//! - **Broken dependency chain:** `vmlal(data_swap, lo, hi)` instead of `vmlal(acc, lo, hi)` lets
+//!   the multiply start without waiting for the previous accumulate.
+//! - **Software prefetch:** `prfm pldl1keep` for the next stripe's input in the long-path loop,
+//!   reducing cache miss stalls on Neoverse V1 (Graviton3).
 //!
 //! # Safety
 //!
@@ -61,8 +60,8 @@ unsafe fn store_acc(acc: &[uint64x2_t; 4]) -> [u64; ACC_NB] {
 /// Accumulate one 64-byte stripe into the NEON accumulator.
 ///
 /// Processes 2 accumulator lanes per iteration (32 bytes each) using:
-/// - `vuzpq_u32` to deinterleave lo/hi 32-bit halves from two `data_key`
-///   vectors in one instruction (vs 2 separate `vmovn` + `vshrn`)
+/// - `vuzpq_u32` to deinterleave lo/hi 32-bit halves from two `data_key` vectors in one instruction
+///   (vs 2 separate `vmovn` + `vshrn`)
 /// - `vmlal_high_u32` for the second lane (avoids `vget_high_u32` extraction)
 /// - `vmlal(data_swap, ...)` base to break the acc→vmlal dependency chain
 #[inline]
@@ -91,10 +90,7 @@ unsafe fn accumulate_512(acc: &mut [uint64x2_t; 4], stripe: *const u8, secret: *
       // Input as u32x4: [lo0, hi0, lo1, hi1] from each data_key.
       // Result.0 (even): [lo0_1, lo1_1, lo0_2, lo1_2]
       // Result.1 (odd):  [hi0_1, hi1_1, hi0_2, hi1_2]
-      let unzipped = vuzpq_u32(
-        vreinterpretq_u32_u64(data_key_1),
-        vreinterpretq_u32_u64(data_key_2),
-      );
+      let unzipped = vuzpq_u32(vreinterpretq_u32_u64(data_key_1), vreinterpretq_u32_u64(data_key_2));
       let data_key_lo = unzipped.0;
       let data_key_hi = unzipped.1;
 
