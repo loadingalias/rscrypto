@@ -173,7 +173,10 @@ fn mix16_b(data: &[[u8; 8]; 2], secret: &[[u8; 8]; 2], seed: u64) -> u64 {
   let secret_lo = u64::from_ne_bytes(secret[0]).to_le();
   let secret_hi = u64::from_ne_bytes(secret[1]).to_le();
 
-  mul128_fold64(input_lo ^ secret_lo.wrapping_add(seed), input_hi ^ secret_hi.wrapping_sub(seed))
+  mul128_fold64(
+    input_lo ^ secret_lo.wrapping_add(seed),
+    input_hi ^ secret_hi.wrapping_sub(seed),
+  )
 }
 
 #[inline(always)]
@@ -271,18 +274,15 @@ fn xxh3_64_7to128(input: &[u8], seed: u64, secret: &[u8]) -> u64 {
       if input.len() > 64 {
         if input.len() > 96 {
           acc = acc.wrapping_add(mix16_b(chunk16(input, 48), chunk16(secret, 96), seed));
-          acc =
-            acc.wrapping_add(mix16_b(chunk16(input, input.len() - 64), chunk16(secret, 112), seed));
+          acc = acc.wrapping_add(mix16_b(chunk16(input, input.len() - 64), chunk16(secret, 112), seed));
         }
 
         acc = acc.wrapping_add(mix16_b(chunk16(input, 32), chunk16(secret, 64), seed));
-        acc =
-          acc.wrapping_add(mix16_b(chunk16(input, input.len() - 48), chunk16(secret, 80), seed));
+        acc = acc.wrapping_add(mix16_b(chunk16(input, input.len() - 48), chunk16(secret, 80), seed));
       }
 
       acc = acc.wrapping_add(mix16_b(chunk16(input, 16), chunk16(secret, 32), seed));
-      acc =
-        acc.wrapping_add(mix16_b(chunk16(input, input.len() - 32), chunk16(secret, 48), seed));
+      acc = acc.wrapping_add(mix16_b(chunk16(input, input.len() - 32), chunk16(secret, 48), seed));
     }
 
     acc = acc.wrapping_add(mix16_b(chunk16(input, 0), chunk16(secret, 0), seed));
@@ -644,8 +644,7 @@ fn xxh3_128_7to128(input: &[u8], seed: u64, secret: &[u8]) -> u128 {
       .wrapping_add(acc.1.wrapping_mul(PRIME64_4))
       .wrapping_add(((input.len() as u64).wrapping_sub(seed)).wrapping_mul(PRIME64_2));
 
-    (xxh3_avalanche(result_lo) as u128)
-      | (((0u64.wrapping_sub(xxh3_avalanche(result_hi))) as u128) << 64)
+    (xxh3_avalanche(result_lo) as u128) | (((0u64.wrapping_sub(xxh3_avalanche(result_hi))) as u128) << 64)
   }
 }
 
@@ -704,8 +703,7 @@ fn xxh3_128_129to240(input: &[u8], seed: u64, secret: &[u8]) -> u128 {
       .wrapping_add(acc.1.wrapping_mul(PRIME64_4))
       .wrapping_add(((input.len() as u64).wrapping_sub(seed)).wrapping_mul(PRIME64_2));
 
-    (xxh3_avalanche(result_lo) as u128)
-      | (0u128.wrapping_sub(xxh3_avalanche(result_hi) as u128) << 64)
+    (xxh3_avalanche(result_lo) as u128) | (0u128.wrapping_sub(xxh3_avalanche(result_hi) as u128) << 64)
   }
 }
 
