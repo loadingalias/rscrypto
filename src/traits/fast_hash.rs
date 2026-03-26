@@ -21,7 +21,7 @@ pub trait FastHash {
   type Seed: Copy + Debug + Default;
 
   /// Compute the hash of `data` using a default seed.
-  #[inline]
+  #[inline(always)]
   #[must_use]
   fn hash(data: &[u8]) -> Self::Output {
     Self::hash_with_seed(Self::Seed::default(), data)

@@ -131,6 +131,26 @@ pub fn crc32_ieee(data: &[u8]) -> u32 {
   if data.len() <= FAST_PATH_MAX {
     return crate::checksum::crc32::portable::crc32_bytewise_ieee(!0, data) ^ !0;
   }
+
+  // aarch64: bypass function-pointer dispatch for sizes where dispatch overhead
+  // dominates. The PMULL fusion kernel handles 16+ B via its fold path (better
+  // ILP than serial __crc32d) and 8-15 B via its CRC tail. For sizes 8-256 B
+  // this eliminates: active_table() + select_fns() + indirect call + the
+  // target_feature inlining barrier in pmull_small → armv8_safe → armv8.
+  #[cfg(target_arch = "aarch64")]
+  {
+    use crate::platform::caps::aarch64;
+    let caps = crate::platform::caps();
+    if caps.has(aarch64::PMULL_READY) && caps.has(aarch64::CRC_READY) {
+      // SAFETY: CRC + PMULL (AES) extensions verified via runtime caps check.
+      return unsafe { crate::checksum::crc32::aarch64::crc32_ieee_fusion_inline(!0, data) } ^ !0;
+    }
+    if caps.has(aarch64::CRC_READY) {
+      // SAFETY: CRC extension verified via runtime caps check.
+      return unsafe { crate::checksum::crc32::aarch64::crc32_ieee_hwcrc_inline(!0, data) } ^ !0;
+    }
+  }
+
   let table = active_table();
   let kernel = table.select_fns(data.len()).crc32_ieee;
   kernel(!0, data) ^ !0
@@ -153,6 +173,22 @@ pub fn crc32c(data: &[u8]) -> u32 {
   if data.len() <= FAST_PATH_MAX {
     return crate::checksum::crc32::portable::crc32c_bytewise(!0, data) ^ !0;
   }
+
+  // aarch64: same dispatch bypass as crc32_ieee — see comments above.
+  #[cfg(target_arch = "aarch64")]
+  {
+    use crate::platform::caps::aarch64;
+    let caps = crate::platform::caps();
+    if caps.has(aarch64::PMULL_READY) && caps.has(aarch64::CRC_READY) {
+      // SAFETY: CRC + PMULL (AES) extensions verified via runtime caps check.
+      return unsafe { crate::checksum::crc32::aarch64::crc32c_iscsi_fusion_inline(!0, data) } ^ !0;
+    }
+    if caps.has(aarch64::CRC_READY) {
+      // SAFETY: CRC extension verified via runtime caps check.
+      return unsafe { crate::checksum::crc32::aarch64::crc32c_iscsi_hwcrc_inline(!0, data) } ^ !0;
+    }
+  }
+
   let table = active_table();
   let kernel = table.select_fns(data.len()).crc32c;
   kernel(!0, data) ^ !0
