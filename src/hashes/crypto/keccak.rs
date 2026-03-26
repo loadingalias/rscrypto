@@ -651,11 +651,13 @@ impl<const RATE: usize, P: Permuter> KeccakCoreImpl<RATE, P> {
     debug_assert!(OUT <= RATE);
     let state = self.finalize_state(ds);
 
-    for (i, &word) in state.iter().enumerate().take(OUT.div_ceil(8)) {
-      let bytes = word.to_le_bytes();
-      let start = i * 8;
-      let end = core::cmp::min(start + 8, OUT);
-      out[start..end].copy_from_slice(&bytes[..end - start]);
+    let (chunks, rem) = out.as_chunks_mut::<8>();
+    for (chunk, &word) in chunks.iter_mut().zip(state.iter()) {
+      *chunk = word.to_le_bytes();
+    }
+    if !rem.is_empty() {
+      let bytes = state[chunks.len()].to_le_bytes();
+      rem.copy_from_slice(&bytes[..rem.len()]);
     }
   }
 
@@ -734,10 +736,10 @@ pub(crate) fn oneshot_fixed<const RATE: usize, const OUT: usize>(ds: u8, data: &
     let ptr = block.as_ptr() as *const u64;
     let mut i = 0usize;
     while i < lanes {
-      // SAFETY: `RATE % 8 == 0` and `i < lanes`, so this reads within `block`.
+      // SAFETY: `RATE % 8 == 0` and `i < lanes == RATE / 8`, so this reads within `block`.
       let v = unsafe { core::ptr::read_unaligned(ptr.add(i)) };
       state[i] ^= u64::from_le(v);
-      i = i.strict_add(1);
+      i += 1;
     }
     keccakf_portable(&mut state);
   }
@@ -754,18 +756,20 @@ pub(crate) fn oneshot_fixed<const RATE: usize, const OUT: usize>(ds: u8, data: &
       // SAFETY: same as above — `i < lanes` and `RATE % 8 == 0`.
       let v = unsafe { core::ptr::read_unaligned(ptr.add(i)) };
       state[i] ^= u64::from_le(v);
-      i = i.strict_add(1);
+      i += 1;
     }
   }
   keccakf_portable(&mut state);
 
   // Extract output.
   let mut out = [0u8; OUT];
-  for (i, &word) in state.iter().enumerate().take(OUT.div_ceil(8)) {
-    let bytes = word.to_le_bytes();
-    let start = i.strict_mul(8);
-    let end = core::cmp::min(start.strict_add(8), OUT);
-    out[start..end].copy_from_slice(&bytes[..end.strict_sub(start)]);
+  let (chunks, rem) = out.as_chunks_mut::<8>();
+  for (chunk, &word) in chunks.iter_mut().zip(state.iter()) {
+    *chunk = word.to_le_bytes();
+  }
+  if !rem.is_empty() {
+    let bytes = state[chunks.len()].to_le_bytes();
+    rem.copy_from_slice(&bytes[..rem.len()]);
   }
 
   // Zeroize state.
@@ -812,11 +816,13 @@ fn finalize_pad_absorb<const RATE: usize>(state: &mut [u64; 25], remainder: &[u8
 /// Extract fixed-size output from a Keccak state.
 #[inline(always)]
 fn extract_output<const OUT: usize>(state: &[u64; 25], out: &mut [u8; OUT]) {
-  for (i, &word) in state.iter().enumerate().take(OUT.div_ceil(8)) {
-    let bytes = word.to_le_bytes();
-    let start = i.strict_mul(8);
-    let end = core::cmp::min(start.strict_add(8), OUT);
-    out[start..end].copy_from_slice(&bytes[..end.strict_sub(start)]);
+  let (chunks, rem) = out.as_chunks_mut::<8>();
+  for (chunk, &word) in chunks.iter_mut().zip(state.iter()) {
+    *chunk = word.to_le_bytes();
+  }
+  if !rem.is_empty() {
+    let bytes = state[chunks.len()].to_le_bytes();
+    rem.copy_from_slice(&bytes[..rem.len()]);
   }
 }
 

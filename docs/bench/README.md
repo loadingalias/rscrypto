@@ -4,7 +4,7 @@ These files are the working benchmark record for `rscrypto`.
 
 ## Canonical Report
 
-- [`BENCHMARKS.md`](BENCHMARKS.md): **Full cross-platform competitive benchmarks** — every algorithm, size, and platform (2026-03-22)
+- [`BENCHMARKS.md`](BENCHMARKS.md): **Full cross-platform competitive benchmarks** — every algorithm, size, and platform (2026-03-25, SHA-2 updated 2026-03-26)
 
 ## Historical reports
 

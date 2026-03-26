@@ -539,6 +539,68 @@ pub fn crc32c_iscsi_sve2_pmull_small_safe(crc: u32, data: &[u8]) -> u32 {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Dispatch inline wrappers (bypass function-pointer dispatch for small sizes)
+//
+// These use `#[inline]` + `#[target_feature]` so the PMULL fusion
+// kernel is inlined directly into the dispatch caller, eliminating the
+// indirect-call + target_feature-barrier overhead that dominates at 32-64 B.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Inline CRC-32 (IEEE) via PMULL fusion for the dispatch fast path.
+///
+/// # Safety
+///
+/// Caller must verify that both CRC and AES (PMLL) target features are
+/// available at runtime (via capability detection).
+#[inline]
+#[target_feature(enable = "crc,aes")]
+pub(crate) unsafe fn crc32_ieee_fusion_inline(crc: u32, data: &[u8]) -> u32 {
+  // SAFETY: Caller guarantees CRC+AES are available.
+  unsafe { crc32_iso_hdlc_pmull_v12e_v1(crc, data.as_ptr(), data.len()) }
+}
+
+/// Inline CRC-32C (iSCSI) via PMULL fusion for the dispatch fast path.
+///
+/// # Safety
+///
+/// Caller must verify that both CRC and AES (PMLL) target features are
+/// available at runtime (via capability detection).
+#[inline]
+#[target_feature(enable = "crc,aes")]
+pub(crate) unsafe fn crc32c_iscsi_fusion_inline(crc: u32, data: &[u8]) -> u32 {
+  // SAFETY: Caller guarantees CRC+AES are available.
+  unsafe { crc32c_iscsi_pmull_v12e_v1(crc, data.as_ptr(), data.len()) }
+}
+
+/// Inline CRC-32 (IEEE) via hardware CRC extension for the dispatch fast path.
+///
+/// Used when PMULL is not available but CRC extension is.
+///
+/// # Safety
+///
+/// Caller must verify that the CRC target feature is available at runtime.
+#[inline]
+#[target_feature(enable = "crc")]
+pub(crate) unsafe fn crc32_ieee_hwcrc_inline(crc: u32, data: &[u8]) -> u32 {
+  // SAFETY: Caller guarantees CRC extension is available.
+  unsafe { crc32_armv8(crc, data) }
+}
+
+/// Inline CRC-32C (iSCSI) via hardware CRC extension for the dispatch fast path.
+///
+/// Used when PMULL is not available but CRC extension is.
+///
+/// # Safety
+///
+/// Caller must verify that the CRC target feature is available at runtime.
+#[inline]
+#[target_feature(enable = "crc")]
+pub(crate) unsafe fn crc32c_iscsi_hwcrc_inline(crc: u32, data: &[u8]) -> u32 {
+  // SAFETY: Caller guarantees CRC extension is available.
+  unsafe { crc32c_armv8(crc, data) }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // PMULL helpers (fusion kernels)
 // ─────────────────────────────────────────────────────────────────────────────
 

@@ -108,24 +108,48 @@ pub fn kernel_name_for_len(len: usize) -> &'static str {
 /// Every SIMD kernel delegates inputs ≤ 240 B back to the same portable scalar
 /// functions, so calling through the dispatch table just adds OnceCache load +
 /// indirect call overhead for no benefit. Handle small inputs directly.
-#[inline]
+///
+/// The long-path fallback is `#[cold]` to keep the inlined code small —
+/// otherwise the dispatch machinery bloats the caller and causes icache pressure
+/// that costs ~0.5ns on small inputs.
+#[inline(always)]
 #[must_use]
 pub fn hash64_with_seed(seed: u64, data: &[u8]) -> u64 {
   if data.len() <= super::MID_SIZE_MAX {
     return super::xxh3_64_with_seed(data, seed);
   }
+  hash64_long(seed, data)
+}
+
+#[cold]
+#[inline(never)]
+fn hash64_long(seed: u64, data: &[u8]) -> u64 {
   let d = active();
   let (f, _) = select64(&d, data.len());
   f(data, seed)
 }
 
+/// Direct portable scalar path — no dispatch, no capability check.
+/// For benchmarking only: isolates algorithm codegen from dispatch overhead.
+#[inline(always)]
+#[must_use]
+pub fn hash64_portable(seed: u64, data: &[u8]) -> u64 {
+  super::xxh3_64_with_seed(data, seed)
+}
+
 /// See [`hash64_with_seed`] for the fast-path rationale.
-#[inline]
+#[inline(always)]
 #[must_use]
 pub fn hash128_with_seed(seed: u64, data: &[u8]) -> u128 {
   if data.len() <= super::MID_SIZE_MAX {
     return super::xxh3_128_with_seed(data, seed);
   }
+  hash128_long(seed, data)
+}
+
+#[cold]
+#[inline(never)]
+fn hash128_long(seed: u64, data: &[u8]) -> u128 {
   let d = active();
   let (f, _) = select128(&d, data.len());
   f(data, seed)

@@ -103,6 +103,21 @@ unsafe fn read_u64_le(input: &[u8], offset: usize) -> u64 {
   u64::from_le(v)
 }
 
+/// Extract a pair of 8-byte arrays at `offset` from a byte slice.
+///
+/// Matches xxhash-rust's `get_aligned_chunk_ref::<[[u8; 8]; 2]>` pattern
+/// for optimal codegen: `from_ne_bytes(chunk[0])` compiles to a single `ldr`.
+///
+/// # Safety
+///
+/// Caller must ensure `offset + 16 <= data.len()`.
+#[inline(always)]
+unsafe fn chunk16(data: &[u8], offset: usize) -> &[[u8; 8]; 2] {
+  debug_assert!(offset + 16 <= data.len());
+  // SAFETY: caller ensures bounds. The resulting reference is valid for 16 bytes.
+  unsafe { &*(data.as_ptr().add(offset) as *const [[u8; 8]; 2]) }
+}
+
 #[inline(always)]
 const fn mult32_to64(left: u32, right: u32) -> u64 {
   (left as u64).wrapping_mul(right as u64)
@@ -152,46 +167,33 @@ const fn xxh64_avalanche(mut input: u64) -> u64 {
 }
 
 #[inline(always)]
-fn mix16_b(input: &[u8], input_offset: usize, secret: &[u8], secret_offset: usize, seed: u64) -> u64 {
-  // SAFETY: callers ensure input_offset+16 <= input.len() and secret_offset+16 <= secret.len().
-  unsafe {
-    let mut input_lo = read_u64_le(input, input_offset);
-    let mut input_hi = read_u64_le(input, input_offset + 8);
+fn mix16_b(data: &[[u8; 8]; 2], secret: &[[u8; 8]; 2], seed: u64) -> u64 {
+  let input_lo = u64::from_ne_bytes(data[0]).to_le();
+  let input_hi = u64::from_ne_bytes(data[1]).to_le();
+  let secret_lo = u64::from_ne_bytes(secret[0]).to_le();
+  let secret_hi = u64::from_ne_bytes(secret[1]).to_le();
 
-    input_lo ^= read_u64_le(secret, secret_offset).wrapping_add(seed);
-    input_hi ^= read_u64_le(secret, secret_offset + 8).wrapping_sub(seed);
-
-    mul128_fold64(input_lo, input_hi)
-  }
+  mul128_fold64(input_lo ^ secret_lo.wrapping_add(seed), input_hi ^ secret_hi.wrapping_sub(seed))
 }
 
 #[inline(always)]
-#[allow(clippy::too_many_arguments)] // perf-critical helper; split args would pessimize call sites
 fn mix32_b(
   mut acc: (u64, u64),
-  input_1: &[u8],
-  input_1_off: usize,
-  input_2: &[u8],
-  input_2_off: usize,
-  secret: &[u8],
-  secret_offset: usize,
+  data_1: &[[u8; 8]; 2],
+  data_2: &[[u8; 8]; 2],
+  secret_lo: &[[u8; 8]; 2],
+  secret_hi: &[[u8; 8]; 2],
   seed: u64,
 ) -> (u64, u64) {
-  acc.0 = acc
-    .0
-    .wrapping_add(mix16_b(input_1, input_1_off, secret, secret_offset, seed));
-  // SAFETY: callers ensure input_2_off+16 <= input_2.len() and input_1_off+16 <= input_1.len().
-  unsafe {
-    acc.0 ^= read_u64_le(input_2, input_2_off).wrapping_add(read_u64_le(input_2, input_2_off + 8));
-  }
+  acc.0 = acc.0.wrapping_add(mix16_b(data_1, secret_lo, seed));
+  acc.0 ^= u64::from_ne_bytes(data_2[0])
+    .to_le()
+    .wrapping_add(u64::from_ne_bytes(data_2[1]).to_le());
 
-  acc.1 = acc
-    .1
-    .wrapping_add(mix16_b(input_2, input_2_off, secret, secret_offset + 16, seed));
-  // SAFETY: same bounds as above.
-  unsafe {
-    acc.1 ^= read_u64_le(input_1, input_1_off).wrapping_add(read_u64_le(input_1, input_1_off + 8));
-  }
+  acc.1 = acc.1.wrapping_add(mix16_b(data_2, secret_hi, seed));
+  acc.1 ^= u64::from_ne_bytes(data_1[0])
+    .to_le()
+    .wrapping_add(u64::from_ne_bytes(data_1[1]).to_le());
 
   acc
 }
@@ -260,27 +262,34 @@ fn xxh3_64_0to16(input: &[u8], seed: u64, secret: &[u8]) -> u64 {
 
 #[inline(always)]
 fn xxh3_64_7to128(input: &[u8], seed: u64, secret: &[u8]) -> u64 {
-  let mut acc = (input.len() as u64).wrapping_mul(PRIME64_1);
+  // SAFETY: callers ensure input.len() >= 17 and secret.len() >= SECRET_SIZE_MIN (136).
+  // All chunk16 offsets are within bounds for those guarantees.
+  unsafe {
+    let mut acc = (input.len() as u64).wrapping_mul(PRIME64_1);
 
-  if input.len() > 32 {
-    if input.len() > 64 {
-      if input.len() > 96 {
-        acc = acc.wrapping_add(mix16_b(input, 48, secret, 96, seed));
-        acc = acc.wrapping_add(mix16_b(input, input.len() - 64, secret, 112, seed));
+    if input.len() > 32 {
+      if input.len() > 64 {
+        if input.len() > 96 {
+          acc = acc.wrapping_add(mix16_b(chunk16(input, 48), chunk16(secret, 96), seed));
+          acc =
+            acc.wrapping_add(mix16_b(chunk16(input, input.len() - 64), chunk16(secret, 112), seed));
+        }
+
+        acc = acc.wrapping_add(mix16_b(chunk16(input, 32), chunk16(secret, 64), seed));
+        acc =
+          acc.wrapping_add(mix16_b(chunk16(input, input.len() - 48), chunk16(secret, 80), seed));
       }
 
-      acc = acc.wrapping_add(mix16_b(input, 32, secret, 64, seed));
-      acc = acc.wrapping_add(mix16_b(input, input.len() - 48, secret, 80, seed));
+      acc = acc.wrapping_add(mix16_b(chunk16(input, 16), chunk16(secret, 32), seed));
+      acc =
+        acc.wrapping_add(mix16_b(chunk16(input, input.len() - 32), chunk16(secret, 48), seed));
     }
 
-    acc = acc.wrapping_add(mix16_b(input, 16, secret, 32, seed));
-    acc = acc.wrapping_add(mix16_b(input, input.len() - 32, secret, 48, seed));
+    acc = acc.wrapping_add(mix16_b(chunk16(input, 0), chunk16(secret, 0), seed));
+    acc = acc.wrapping_add(mix16_b(chunk16(input, input.len() - 16), chunk16(secret, 16), seed));
+
+    xxh3_avalanche(acc)
   }
-
-  acc = acc.wrapping_add(mix16_b(input, 0, secret, 0, seed));
-  acc = acc.wrapping_add(mix16_b(input, input.len() - 16, secret, 16, seed));
-
-  xxh3_avalanche(acc)
 }
 
 #[inline(never)]
@@ -288,30 +297,36 @@ fn xxh3_64_129to240(input: &[u8], seed: u64, secret: &[u8]) -> u64 {
   const START_OFFSET: usize = 3;
   const LAST_OFFSET: usize = 17;
 
-  let mut acc = (input.len() as u64).wrapping_mul(PRIME64_1);
-  let nb_rounds = input.len() / 16;
+  // SAFETY: input.len() is 129..=240 and secret.len() >= SECRET_SIZE_MIN (136).
+  // All chunk16 offsets are within bounds.
+  unsafe {
+    let mut acc = (input.len() as u64).wrapping_mul(PRIME64_1);
+    let nb_rounds = input.len() / 16;
 
-  let mut idx = 0usize;
-  while idx < 8 {
-    acc = acc.wrapping_add(mix16_b(input, 16 * idx, secret, 16 * idx, seed));
-    idx += 1;
+    let mut idx = 0usize;
+    while idx < 8 {
+      acc = acc.wrapping_add(mix16_b(chunk16(input, 16 * idx), chunk16(secret, 16 * idx), seed));
+      idx += 1;
+    }
+    acc = xxh3_avalanche(acc);
+
+    while idx < nb_rounds {
+      acc = acc.wrapping_add(mix16_b(
+        chunk16(input, 16 * idx),
+        chunk16(secret, 16 * (idx - 8) + START_OFFSET),
+        seed,
+      ));
+      idx += 1;
+    }
+
+    acc = acc.wrapping_add(mix16_b(
+      chunk16(input, input.len() - 16),
+      chunk16(secret, SECRET_SIZE_MIN - LAST_OFFSET),
+      seed,
+    ));
+
+    xxh3_avalanche(acc)
   }
-  acc = xxh3_avalanche(acc);
-
-  while idx < nb_rounds {
-    acc = acc.wrapping_add(mix16_b(input, 16 * idx, secret, 16 * (idx - 8) + START_OFFSET, seed));
-    idx += 1;
-  }
-
-  acc = acc.wrapping_add(mix16_b(
-    input,
-    input.len() - 16,
-    secret,
-    SECRET_SIZE_MIN - LAST_OFFSET,
-    seed,
-  ));
-
-  xxh3_avalanche(acc)
 }
 
 #[inline(always)]
@@ -406,7 +421,7 @@ fn accumulate_loop(
   acc
 }
 
-#[inline(always)]
+#[inline(never)]
 fn hash_long_internal_loop(input: &[u8], secret: &[u8]) -> [u64; ACC_NB] {
   let mut acc = INITIAL_ACC;
 
@@ -431,7 +446,7 @@ fn hash_long_internal_loop(input: &[u8], secret: &[u8]) -> [u64; ACC_NB] {
   )
 }
 
-#[inline(always)]
+#[inline(never)]
 fn xxh3_64_long_impl(input: &[u8], secret: &[u8]) -> u64 {
   let acc = hash_long_internal_loop(input, secret);
   merge_accs(
@@ -442,7 +457,7 @@ fn xxh3_64_long_impl(input: &[u8], secret: &[u8]) -> u64 {
   )
 }
 
-#[inline(always)]
+#[inline(never)]
 fn custom_default_secret(seed: u64) -> [u8; DEFAULT_SECRET_SIZE] {
   if seed == 0 {
     return DEFAULT_SECRET;
@@ -576,30 +591,62 @@ fn xxh3_128_0to16(input: &[u8], seed: u64, secret: &[u8]) -> u128 {
 
 #[inline(always)]
 fn xxh3_128_7to128(input: &[u8], seed: u64, secret: &[u8]) -> u128 {
-  let mut acc = ((input.len() as u64).wrapping_mul(PRIME64_1), 0u64);
+  // SAFETY: callers ensure input.len() >= 17 and secret.len() >= SECRET_SIZE_MIN (136).
+  unsafe {
+    let mut acc = ((input.len() as u64).wrapping_mul(PRIME64_1), 0u64);
 
-  if input.len() > 32 {
-    if input.len() > 64 {
-      if input.len() > 96 {
-        acc = mix32_b(acc, input, 48, input, input.len() - 64, secret, 96, seed);
+    if input.len() > 32 {
+      if input.len() > 64 {
+        if input.len() > 96 {
+          acc = mix32_b(
+            acc,
+            chunk16(input, 48),
+            chunk16(input, input.len() - 64),
+            chunk16(secret, 96),
+            chunk16(secret, 112),
+            seed,
+          );
+        }
+
+        acc = mix32_b(
+          acc,
+          chunk16(input, 32),
+          chunk16(input, input.len() - 48),
+          chunk16(secret, 64),
+          chunk16(secret, 80),
+          seed,
+        );
       }
 
-      acc = mix32_b(acc, input, 32, input, input.len() - 48, secret, 64, seed);
+      acc = mix32_b(
+        acc,
+        chunk16(input, 16),
+        chunk16(input, input.len() - 32),
+        chunk16(secret, 32),
+        chunk16(secret, 48),
+        seed,
+      );
     }
 
-    acc = mix32_b(acc, input, 16, input, input.len() - 32, secret, 32, seed);
+    acc = mix32_b(
+      acc,
+      chunk16(input, 0),
+      chunk16(input, input.len() - 16),
+      chunk16(secret, 0),
+      chunk16(secret, 16),
+      seed,
+    );
+
+    let result_lo = acc.0.wrapping_add(acc.1);
+    let result_hi = acc
+      .0
+      .wrapping_mul(PRIME64_1)
+      .wrapping_add(acc.1.wrapping_mul(PRIME64_4))
+      .wrapping_add(((input.len() as u64).wrapping_sub(seed)).wrapping_mul(PRIME64_2));
+
+    (xxh3_avalanche(result_lo) as u128)
+      | (((0u64.wrapping_sub(xxh3_avalanche(result_hi))) as u128) << 64)
   }
-
-  acc = mix32_b(acc, input, 0, input, input.len() - 16, secret, 0, seed);
-
-  let result_lo = acc.0.wrapping_add(acc.1);
-  let result_hi = acc
-    .0
-    .wrapping_mul(PRIME64_1)
-    .wrapping_add(acc.1.wrapping_mul(PRIME64_4))
-    .wrapping_add(((input.len() as u64).wrapping_sub(seed)).wrapping_mul(PRIME64_2));
-
-  (xxh3_avalanche(result_lo) as u128) | (((0u64.wrapping_sub(xxh3_avalanche(result_hi))) as u128) << 64)
 }
 
 #[inline(never)]
@@ -608,53 +655,61 @@ fn xxh3_128_129to240(input: &[u8], seed: u64, secret: &[u8]) -> u128 {
   const LAST_OFFSET: usize = 17;
   let nb_rounds = input.len() / 32;
 
-  let mut acc = ((input.len() as u64).wrapping_mul(PRIME64_1), 0u64);
+  // SAFETY: input.len() is 129..=240 and secret.len() >= SECRET_SIZE_MIN (136).
+  unsafe {
+    let mut acc = ((input.len() as u64).wrapping_mul(PRIME64_1), 0u64);
 
-  let mut idx = 0usize;
-  while idx < 4 {
-    acc = mix32_b(acc, input, 32 * idx, input, (32 * idx) + 16, secret, 32 * idx, seed);
-    idx += 1;
-  }
+    let mut idx = 0usize;
+    while idx < 4 {
+      acc = mix32_b(
+        acc,
+        chunk16(input, 32 * idx),
+        chunk16(input, (32 * idx) + 16),
+        chunk16(secret, 32 * idx),
+        chunk16(secret, (32 * idx) + 16),
+        seed,
+      );
+      idx += 1;
+    }
 
-  acc.0 = xxh3_avalanche(acc.0);
-  acc.1 = xxh3_avalanche(acc.1);
+    acc.0 = xxh3_avalanche(acc.0);
+    acc.1 = xxh3_avalanche(acc.1);
 
-  while idx < nb_rounds {
+    while idx < nb_rounds {
+      let sec_off = START_OFFSET.wrapping_add(32 * (idx - 4));
+      acc = mix32_b(
+        acc,
+        chunk16(input, 32 * idx),
+        chunk16(input, (32 * idx) + 16),
+        chunk16(secret, sec_off),
+        chunk16(secret, sec_off + 16),
+        seed,
+      );
+      idx += 1;
+    }
+
     acc = mix32_b(
       acc,
-      input,
-      32 * idx,
-      input,
-      (32 * idx) + 16,
-      secret,
-      START_OFFSET.wrapping_add(32 * (idx - 4)),
-      seed,
+      chunk16(input, input.len() - 16),
+      chunk16(input, input.len() - 32),
+      chunk16(secret, SECRET_SIZE_MIN - LAST_OFFSET - 16),
+      chunk16(secret, SECRET_SIZE_MIN - LAST_OFFSET),
+      0u64.wrapping_sub(seed),
     );
-    idx += 1;
+
+    let result_lo = acc.0.wrapping_add(acc.1);
+    let result_hi = acc
+      .0
+      .wrapping_mul(PRIME64_1)
+      .wrapping_add(acc.1.wrapping_mul(PRIME64_4))
+      .wrapping_add(((input.len() as u64).wrapping_sub(seed)).wrapping_mul(PRIME64_2));
+
+    (xxh3_avalanche(result_lo) as u128)
+      | (0u128.wrapping_sub(xxh3_avalanche(result_hi) as u128) << 64)
   }
-
-  acc = mix32_b(
-    acc,
-    input,
-    input.len() - 16,
-    input,
-    input.len() - 32,
-    secret,
-    SECRET_SIZE_MIN - LAST_OFFSET - 16,
-    0u64.wrapping_sub(seed),
-  );
-
-  let result_lo = acc.0.wrapping_add(acc.1);
-  let result_hi = acc
-    .0
-    .wrapping_mul(PRIME64_1)
-    .wrapping_add(acc.1.wrapping_mul(PRIME64_4))
-    .wrapping_add(((input.len() as u64).wrapping_sub(seed)).wrapping_mul(PRIME64_2));
-
-  (xxh3_avalanche(result_lo) as u128) | (0u128.wrapping_sub(xxh3_avalanche(result_hi) as u128) << 64)
 }
 
-#[inline(always)]
+#[inline(never)]
 fn xxh3_128_long_impl(input: &[u8], secret: &[u8]) -> u128 {
   let acc = hash_long_internal_loop(input, secret);
 
@@ -695,7 +750,7 @@ impl FastHash for Xxh3_64 {
   type Output = u64;
   type Seed = u64;
 
-  #[inline]
+  #[inline(always)]
   fn hash_with_seed(seed: Self::Seed, data: &[u8]) -> Self::Output {
     dispatch::hash64_with_seed(seed, data)
   }
@@ -706,7 +761,7 @@ impl FastHash for Xxh3_128 {
   type Output = u128;
   type Seed = u64;
 
-  #[inline]
+  #[inline(always)]
   fn hash_with_seed(seed: Self::Seed, data: &[u8]) -> Self::Output {
     dispatch::hash128_with_seed(seed, data)
   }
