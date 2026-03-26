@@ -57,3 +57,36 @@ fn hmac_sha256_verify_rejects_corrupted_tag() {
   tag[0] ^= 0x80;
   assert!(HmacSha256::verify_tag(key, data, &tag).is_err());
 }
+
+/// Verify the oneshot path matches the streaming path across padding boundaries.
+///
+/// The inner hash pads data after the 64-byte ipad block, so the critical
+/// boundary is `data.len() % 64 == 56` (where rest.len() triggers a padding
+/// spill into an extra block).
+#[test]
+fn hmac_sha256_oneshot_matches_streaming() {
+  use rscrypto::Mac as _;
+
+  let key = &[0x42u8; 32];
+
+  // Boundary-critical data lengths:
+  // 0    — empty data, minimal path
+  // 55   — rest = 55, last byte before padding spill
+  // 56   — rest = 56, padding spills into extra block
+  // 57   — rest = 57, also spills
+  // 63   — rest = 63, maximum remainder before full block
+  // 64   — exactly one full data block, rest = 0
+  // 65   — one full block + 1 byte remainder
+  // 120  — rest = 56 again (with a full data block preceding)
+  for len in [0, 1, 32, 55, 56, 57, 63, 64, 65, 119, 120, 121, 127, 128, 256, 1024] {
+    let data = vec![0xABu8; len];
+
+    let oneshot = HmacSha256::mac(key, &data);
+
+    let mut mac = HmacSha256::new(key);
+    mac.update(&data);
+    let streaming = mac.finalize();
+
+    assert_eq!(oneshot, streaming, "oneshot != streaming at data len {len}");
+  }
+}
