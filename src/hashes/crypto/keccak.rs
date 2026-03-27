@@ -184,6 +184,128 @@ pub(crate) fn keccakf_portable(state: &mut [u64; 25]) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// aarch64 named-variable round loop (shared by keccakf_portable and
+// keccakf_absorb_portable). All 25 state variables are passed explicitly
+// to avoid macro hygiene issues with module-level macros.
+// ---------------------------------------------------------------------------
+
+/// 24-round Keccak-f[1600] loop on named variables (aarch64).
+///
+/// All 25 mutable state variables are passed as parameters so the macro
+/// works regardless of where the caller defined them (no hygiene issues).
+#[cfg(target_arch = "aarch64")]
+macro_rules! keccak_round_loop_aarch64 {
+  ($a0:ident, $a1:ident, $a2:ident, $a3:ident, $a4:ident,
+   $a5:ident, $a6:ident, $a7:ident, $a8:ident, $a9:ident,
+   $a10:ident, $a11:ident, $a12:ident, $a13:ident, $a14:ident,
+   $a15:ident, $a16:ident, $a17:ident, $a18:ident, $a19:ident,
+   $a20:ident, $a21:ident, $a22:ident, $a23:ident, $a24:ident) => {{
+    // Not unrolled: ~110 ops per round × 24 = too large for L1i if unrolled.
+    for &rc in &RC {
+      // θ
+      let c0 = $a0 ^ $a5 ^ $a10 ^ $a15 ^ $a20;
+      let c1 = $a1 ^ $a6 ^ $a11 ^ $a16 ^ $a21;
+      let c2 = $a2 ^ $a7 ^ $a12 ^ $a17 ^ $a22;
+      let c3 = $a3 ^ $a8 ^ $a13 ^ $a18 ^ $a23;
+      let c4 = $a4 ^ $a9 ^ $a14 ^ $a19 ^ $a24;
+
+      let d0 = c4 ^ c1.rotate_left(1);
+      let d1 = c0 ^ c2.rotate_left(1);
+      let d2 = c1 ^ c3.rotate_left(1);
+      let d3 = c2 ^ c4.rotate_left(1);
+      let d4 = c3 ^ c0.rotate_left(1);
+
+      $a0 ^= d0;
+      $a5 ^= d0;
+      $a10 ^= d0;
+      $a15 ^= d0;
+      $a20 ^= d0;
+      $a1 ^= d1;
+      $a6 ^= d1;
+      $a11 ^= d1;
+      $a16 ^= d1;
+      $a21 ^= d1;
+      $a2 ^= d2;
+      $a7 ^= d2;
+      $a12 ^= d2;
+      $a17 ^= d2;
+      $a22 ^= d2;
+      $a3 ^= d3;
+      $a8 ^= d3;
+      $a13 ^= d3;
+      $a18 ^= d3;
+      $a23 ^= d3;
+      $a4 ^= d4;
+      $a9 ^= d4;
+      $a14 ^= d4;
+      $a19 ^= d4;
+      $a24 ^= d4;
+
+      // ρ + π
+      let b0 = $a0;
+      let b10 = $a1.rotate_left(1);
+      let b20 = $a2.rotate_left(62);
+      let b5 = $a3.rotate_left(28);
+      let b15 = $a4.rotate_left(27);
+      let b16 = $a5.rotate_left(36);
+      let b1 = $a6.rotate_left(44);
+      let b11 = $a7.rotate_left(6);
+      let b21 = $a8.rotate_left(55);
+      let b6 = $a9.rotate_left(20);
+      let b7 = $a10.rotate_left(3);
+      let b17 = $a11.rotate_left(10);
+      let b2 = $a12.rotate_left(43);
+      let b12 = $a13.rotate_left(25);
+      let b22 = $a14.rotate_left(39);
+      let b23 = $a15.rotate_left(41);
+      let b8 = $a16.rotate_left(45);
+      let b18 = $a17.rotate_left(15);
+      let b3 = $a18.rotate_left(21);
+      let b13 = $a19.rotate_left(8);
+      let b14 = $a20.rotate_left(18);
+      let b24 = $a21.rotate_left(2);
+      let b9 = $a22.rotate_left(61);
+      let b19 = $a23.rotate_left(56);
+      let b4 = $a24.rotate_left(14);
+
+      // χ
+      $a0 = b0 ^ ((!b1) & b2);
+      $a1 = b1 ^ ((!b2) & b3);
+      $a2 = b2 ^ ((!b3) & b4);
+      $a3 = b3 ^ ((!b4) & b0);
+      $a4 = b4 ^ ((!b0) & b1);
+
+      $a5 = b5 ^ ((!b6) & b7);
+      $a6 = b6 ^ ((!b7) & b8);
+      $a7 = b7 ^ ((!b8) & b9);
+      $a8 = b8 ^ ((!b9) & b5);
+      $a9 = b9 ^ ((!b5) & b6);
+
+      $a10 = b10 ^ ((!b11) & b12);
+      $a11 = b11 ^ ((!b12) & b13);
+      $a12 = b12 ^ ((!b13) & b14);
+      $a13 = b13 ^ ((!b14) & b10);
+      $a14 = b14 ^ ((!b10) & b11);
+
+      $a15 = b15 ^ ((!b16) & b17);
+      $a16 = b16 ^ ((!b17) & b18);
+      $a17 = b17 ^ ((!b18) & b19);
+      $a18 = b18 ^ ((!b19) & b15);
+      $a19 = b19 ^ ((!b15) & b16);
+
+      $a20 = b20 ^ ((!b21) & b22);
+      $a21 = b21 ^ ((!b22) & b23);
+      $a22 = b22 ^ ((!b23) & b24);
+      $a23 = b23 ^ ((!b24) & b20);
+      $a24 = b24 ^ ((!b20) & b21);
+
+      // ι
+      $a0 ^= rc;
+    }
+  }};
+}
+
 /// aarch64: named-variable Keccak-f[1600] — all 25 lanes in registers.
 ///
 /// ARM's 30 GPRs hold the full state + temporaries without chaotic spills.
@@ -219,114 +341,9 @@ pub(crate) fn keccakf_portable(state: &mut [u64; 25]) {
   let mut a23 = state[23];
   let mut a24 = state[24];
 
-  macro_rules! round {
-    ($rc:expr) => {{
-      // θ
-      let c0 = a0 ^ a5 ^ a10 ^ a15 ^ a20;
-      let c1 = a1 ^ a6 ^ a11 ^ a16 ^ a21;
-      let c2 = a2 ^ a7 ^ a12 ^ a17 ^ a22;
-      let c3 = a3 ^ a8 ^ a13 ^ a18 ^ a23;
-      let c4 = a4 ^ a9 ^ a14 ^ a19 ^ a24;
-
-      let d0 = c4 ^ c1.rotate_left(1);
-      let d1 = c0 ^ c2.rotate_left(1);
-      let d2 = c1 ^ c3.rotate_left(1);
-      let d3 = c2 ^ c4.rotate_left(1);
-      let d4 = c3 ^ c0.rotate_left(1);
-
-      a0 ^= d0;
-      a5 ^= d0;
-      a10 ^= d0;
-      a15 ^= d0;
-      a20 ^= d0;
-      a1 ^= d1;
-      a6 ^= d1;
-      a11 ^= d1;
-      a16 ^= d1;
-      a21 ^= d1;
-      a2 ^= d2;
-      a7 ^= d2;
-      a12 ^= d2;
-      a17 ^= d2;
-      a22 ^= d2;
-      a3 ^= d3;
-      a8 ^= d3;
-      a13 ^= d3;
-      a18 ^= d3;
-      a23 ^= d3;
-      a4 ^= d4;
-      a9 ^= d4;
-      a14 ^= d4;
-      a19 ^= d4;
-      a24 ^= d4;
-
-      // ρ + π
-      let b0 = a0;
-      let b10 = a1.rotate_left(1);
-      let b20 = a2.rotate_left(62);
-      let b5 = a3.rotate_left(28);
-      let b15 = a4.rotate_left(27);
-      let b16 = a5.rotate_left(36);
-      let b1 = a6.rotate_left(44);
-      let b11 = a7.rotate_left(6);
-      let b21 = a8.rotate_left(55);
-      let b6 = a9.rotate_left(20);
-      let b7 = a10.rotate_left(3);
-      let b17 = a11.rotate_left(10);
-      let b2 = a12.rotate_left(43);
-      let b12 = a13.rotate_left(25);
-      let b22 = a14.rotate_left(39);
-      let b23 = a15.rotate_left(41);
-      let b8 = a16.rotate_left(45);
-      let b18 = a17.rotate_left(15);
-      let b3 = a18.rotate_left(21);
-      let b13 = a19.rotate_left(8);
-      let b14 = a20.rotate_left(18);
-      let b24 = a21.rotate_left(2);
-      let b9 = a22.rotate_left(61);
-      let b19 = a23.rotate_left(56);
-      let b4 = a24.rotate_left(14);
-
-      // χ
-      a0 = b0 ^ ((!b1) & b2);
-      a1 = b1 ^ ((!b2) & b3);
-      a2 = b2 ^ ((!b3) & b4);
-      a3 = b3 ^ ((!b4) & b0);
-      a4 = b4 ^ ((!b0) & b1);
-
-      a5 = b5 ^ ((!b6) & b7);
-      a6 = b6 ^ ((!b7) & b8);
-      a7 = b7 ^ ((!b8) & b9);
-      a8 = b8 ^ ((!b9) & b5);
-      a9 = b9 ^ ((!b5) & b6);
-
-      a10 = b10 ^ ((!b11) & b12);
-      a11 = b11 ^ ((!b12) & b13);
-      a12 = b12 ^ ((!b13) & b14);
-      a13 = b13 ^ ((!b14) & b10);
-      a14 = b14 ^ ((!b10) & b11);
-
-      a15 = b15 ^ ((!b16) & b17);
-      a16 = b16 ^ ((!b17) & b18);
-      a17 = b17 ^ ((!b18) & b19);
-      a18 = b18 ^ ((!b19) & b15);
-      a19 = b19 ^ ((!b15) & b16);
-
-      a20 = b20 ^ ((!b21) & b22);
-      a21 = b21 ^ ((!b22) & b23);
-      a22 = b22 ^ ((!b23) & b24);
-      a23 = b23 ^ ((!b24) & b20);
-      a24 = b24 ^ ((!b20) & b21);
-
-      // ι
-      a0 ^= $rc;
-    }};
-  }
-
-  // Not unrolled: ~110 ops per round × 24 = too large for L1i if unrolled.
-  for &rc in &RC {
-    round!(rc);
-  }
+  keccak_round_loop_aarch64!(
+    a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17, a18, a19, a20, a21, a22, a23, a24
+  );
 
   state[0] = a0;
   state[1] = a1;
@@ -353,6 +370,119 @@ pub(crate) fn keccakf_portable(state: &mut [u64; 25]) {
   state[22] = a22;
   state[23] = a23;
   state[24] = a24;
+}
+
+/// aarch64: fused absorb + Keccak-f[1600] — XOR block data during register load.
+///
+/// Loads `state[i] ^ block_lane_i` directly into named register variables for
+/// rate lanes, and `state[i]` for capacity lanes. This eliminates the
+/// write-then-reload round-trip that separate `xor_block_into` + `keccakf_portable`
+/// incurs (~34 memory ops saved per SHA3-256 block).
+///
+/// Since `RATE` is a const generic, `RATE / 8` is compile-time known and LLVM
+/// eliminates all `if lane < lanes` branches — the result is straight-line code.
+#[cfg(target_arch = "aarch64")]
+#[inline]
+fn keccakf_absorb_portable<const RATE: usize>(state: &mut [u64; 25], block: &[u8; RATE]) {
+  debug_assert_eq!(RATE % 8, 0);
+  let lanes = RATE / 8;
+
+  #[inline(always)]
+  fn read_block_lane(block: *const u8, i: usize) -> u64 {
+    // SAFETY: caller guarantees `i < block.len() / 8`, so the read is in bounds.
+    // `read_unaligned` supports the 1-byte alignment of `[u8; RATE]`.
+    u64::from_le(unsafe { core::ptr::read_unaligned(block.cast::<u64>().add(i)) })
+  }
+
+  let ptr = block.as_ptr();
+
+  // Fused load: `state[i] ^ block_lane_i` for absorbed (rate) lanes,
+  // plain `state[i]` for capacity lanes. Each `$i` is a literal, so
+  // `$i < lanes` (where `lanes = RATE / 8`, a compile-time constant)
+  // is evaluated by LLVM at compile time — no runtime branches.
+  macro_rules! fused_load {
+    ($i:expr) => {
+      if $i < lanes {
+        state[$i] ^ read_block_lane(ptr, $i)
+      } else {
+        state[$i]
+      }
+    };
+  }
+
+  let mut a0 = fused_load!(0);
+  let mut a1 = fused_load!(1);
+  let mut a2 = fused_load!(2);
+  let mut a3 = fused_load!(3);
+  let mut a4 = fused_load!(4);
+  let mut a5 = fused_load!(5);
+  let mut a6 = fused_load!(6);
+  let mut a7 = fused_load!(7);
+  let mut a8 = fused_load!(8);
+  let mut a9 = fused_load!(9);
+  let mut a10 = fused_load!(10);
+  let mut a11 = fused_load!(11);
+  let mut a12 = fused_load!(12);
+  let mut a13 = fused_load!(13);
+  let mut a14 = fused_load!(14);
+  let mut a15 = fused_load!(15);
+  let mut a16 = fused_load!(16);
+  let mut a17 = fused_load!(17);
+  let mut a18 = fused_load!(18);
+  let mut a19 = fused_load!(19);
+  let mut a20 = fused_load!(20);
+  let mut a21 = fused_load!(21);
+  let mut a22 = fused_load!(22);
+  let mut a23 = fused_load!(23);
+  let mut a24 = fused_load!(24);
+
+  keccak_round_loop_aarch64!(
+    a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17, a18, a19, a20, a21, a22, a23, a24
+  );
+
+  state[0] = a0;
+  state[1] = a1;
+  state[2] = a2;
+  state[3] = a3;
+  state[4] = a4;
+  state[5] = a5;
+  state[6] = a6;
+  state[7] = a7;
+  state[8] = a8;
+  state[9] = a9;
+  state[10] = a10;
+  state[11] = a11;
+  state[12] = a12;
+  state[13] = a13;
+  state[14] = a14;
+  state[15] = a15;
+  state[16] = a16;
+  state[17] = a17;
+  state[18] = a18;
+  state[19] = a19;
+  state[20] = a20;
+  state[21] = a21;
+  state[22] = a22;
+  state[23] = a23;
+  state[24] = a24;
+}
+
+/// Fused absorb + permute: XOR a rate-sized block into state and run
+/// Keccak-f[1600]. On aarch64 this loads `state[i] ^ block[i]` directly
+/// into registers, eliminating the write-then-reload round-trip. On other
+/// architectures the array-based permutation accesses state via memory
+/// throughout, so fusion has no benefit — we fall back to separate steps.
+#[inline(always)]
+fn absorb_and_permute<const RATE: usize>(state: &mut [u64; 25], block: &[u8; RATE]) {
+  #[cfg(target_arch = "aarch64")]
+  {
+    keccakf_absorb_portable::<RATE>(state, block);
+  }
+  #[cfg(not(target_arch = "aarch64"))]
+  {
+    xor_block_into::<RATE>(state, block);
+    keccakf_portable(state);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -568,19 +698,8 @@ impl<const RATE: usize, P: Permuter> Drop for KeccakCoreImpl<RATE, P> {
 
 impl<const RATE: usize, P: Permuter> KeccakCoreImpl<RATE, P> {
   #[inline(always)]
-  fn absorb_block(permuter: P, state: &mut [u64; 25], block: &[u8; RATE]) {
-    debug_assert_eq!(RATE % 8, 0);
-    let lanes = RATE / 8;
-    let mut i = 0usize;
-    let ptr = block.as_ptr() as *const u64;
-    while i < lanes {
-      // SAFETY: `RATE % 8 == 0` and `i < lanes == RATE / 8`, so this reads within `block`;
-      // `read_unaligned` supports the 1-byte alignment of `[u8; RATE]`.
-      let v = unsafe { core::ptr::read_unaligned(ptr.add(i)) };
-      state[i] ^= u64::from_le(v);
-      i += 1;
-    }
-    permuter.permute(state, 0);
+  fn absorb_block(_permuter: P, state: &mut [u64; 25], block: &[u8; RATE]) {
+    absorb_and_permute::<RATE>(state, block);
   }
 
   pub(crate) fn update(&mut self, mut data: &[u8]) {
@@ -735,8 +854,7 @@ pub(crate) fn oneshot_fixed<const RATE: usize, const OUT: usize>(ds: u8, data: &
     let block_bytes = &data[..blocks.len().strict_mul(RATE)];
     if !permuter.try_absorb_blocks(&mut state, block_bytes, RATE) {
       for block in blocks {
-        xor_block_into::<RATE>(&mut state, block);
-        permuter.permute(&mut state, 0);
+        absorb_and_permute::<RATE>(&mut state, block);
       }
     }
   }
@@ -860,12 +978,10 @@ pub(crate) fn oneshot_pair<const RATE: usize, const OUT: usize>(
 
   // Process remaining blocks of the longer input with single-state.
   for block in &blocks_a[min_blocks..] {
-    xor_block_into::<RATE>(&mut state_a, block);
-    permuter.permute(&mut state_a, 0);
+    absorb_and_permute::<RATE>(&mut state_a, block);
   }
   for block in &blocks_b[min_blocks..] {
-    xor_block_into::<RATE>(&mut state_b, block);
-    permuter.permute(&mut state_b, 0);
+    absorb_and_permute::<RATE>(&mut state_b, block);
   }
 
   // Finalize both states (pad + final absorb + extract).
