@@ -12,14 +12,14 @@ use crate::checksum::common::portable;
 
 /// CRC-64-XZ slice-by-8 computation.
 #[inline]
-#[cfg(test)]
+#[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64")))]
 pub fn crc64_slice8_xz(crc: u64, data: &[u8]) -> u64 {
   crc64_slice8(crc, data, &kernel_tables::XZ_TABLES_8)
 }
 
 /// CRC-64-NVME slice-by-8 computation.
 #[inline]
-#[cfg(test)]
+#[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64")))]
 pub fn crc64_slice8_nvme(crc: u64, data: &[u8]) -> u64 {
   crc64_slice8(crc, data, &kernel_tables::NVME_TABLES_8)
 }
@@ -80,7 +80,7 @@ fn crc64_bytewise(mut crc: u64, data: &[u8], table: &[u64; 256]) -> u64 {
 /// * `crc` - Current CRC state (pre-inverted)
 /// * `data` - Input data
 /// * `tables` - 8 lookup tables (256 entries each)
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[inline]
 pub fn crc64_slice8(crc: u64, data: &[u8], tables: &[[u64; 256]; 8]) -> u64 {
   portable::slice8_64(crc, data, tables)
@@ -101,8 +101,11 @@ pub fn crc64_slice16(crc: u64, data: &[u8], tables: &[[u64; 256]; 16]) -> u64 {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::checksum::common::tables::{CRC64_XZ_POLY, generate_crc64_tables_8, generate_crc64_tables_16};
+  #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+  use crate::checksum::common::tables::generate_crc64_tables_8;
+  use crate::checksum::common::tables::{CRC64_XZ_POLY, generate_crc64_tables_16};
 
+  #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
   #[test]
   fn test_slice8_empty() {
     let tables = generate_crc64_tables_8(CRC64_XZ_POLY);
@@ -110,6 +113,7 @@ mod tests {
     assert_eq!(crc, !0);
   }
 
+  #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
   #[test]
   fn test_slice8_consistency_with_byte_at_a_time() {
     let tables = generate_crc64_tables_8(CRC64_XZ_POLY);
@@ -128,6 +132,7 @@ mod tests {
     assert_eq!(slice8_result, byte_result);
   }
 
+  #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
   #[test]
   fn test_slice8_incremental() {
     let tables = generate_crc64_tables_8(CRC64_XZ_POLY);
@@ -151,6 +156,7 @@ mod tests {
     assert_eq!(crc, !0);
   }
 
+  #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
   #[test]
   fn test_slice16_matches_slice8() {
     let tables8 = generate_crc64_tables_8(CRC64_XZ_POLY);

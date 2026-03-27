@@ -184,9 +184,9 @@ pub(crate) fn diag_crc64_nvme(len: usize) -> Crc64SelectionDiag {
 /// Portable kernel tables (pre-computed at compile time).
 mod kernel_tables {
   use super::*;
-  #[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
+  #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
   pub static XZ_TABLES_8: [[u64; 256]; 8] = generate_crc64_tables_8(CRC64_XZ_POLY);
-  #[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
+  #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
   pub static NVME_TABLES_8: [[u64; 256]; 8] = generate_crc64_tables_8(CRC64_NVME_POLY);
   pub static XZ_TABLES_16: [[u64; 256]; 16] = generate_crc64_tables_16(CRC64_XZ_POLY);
   pub static NVME_TABLES_16: [[u64; 256]; 16] = generate_crc64_tables_16(CRC64_NVME_POLY);
