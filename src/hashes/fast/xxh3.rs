@@ -166,6 +166,64 @@ const fn xxh64_avalanche(mut input: u64) -> u64 {
   input
 }
 
+// ---------------------------------------------------------------------------
+// Precomputed 0-byte hash constants (compile-time evaluation)
+// ---------------------------------------------------------------------------
+
+/// Read a u64 from `DEFAULT_SECRET` at `offset` in little-endian order.
+/// Const-compatible alternative to `read_u64_le` (no pointer ops).
+const fn secret_u64_le(offset: usize) -> u64 {
+  u64::from_le_bytes([
+    DEFAULT_SECRET[offset],
+    DEFAULT_SECRET[offset + 1],
+    DEFAULT_SECRET[offset + 2],
+    DEFAULT_SECRET[offset + 3],
+    DEFAULT_SECRET[offset + 4],
+    DEFAULT_SECRET[offset + 5],
+    DEFAULT_SECRET[offset + 6],
+    DEFAULT_SECRET[offset + 7],
+  ])
+}
+
+/// XOR of secret[56..64] ^ secret[64..72] — the "flip" value for XXH3-64 empty input.
+const EMPTY_64_FLIP: u64 = secret_u64_le(56) ^ secret_u64_le(64);
+
+/// Precomputed XXH3-64 result for empty input with seed=0.
+const EMPTY_64_SEED0: u64 = xxh64_avalanche(EMPTY_64_FLIP);
+
+/// XOR of secret[64..72] ^ secret[72..80] — flip_lo for XXH3-128 empty input.
+const EMPTY_128_FLIP_LO: u64 = secret_u64_le(64) ^ secret_u64_le(72);
+/// XOR of secret[80..88] ^ secret[88..96] — flip_hi for XXH3-128 empty input.
+const EMPTY_128_FLIP_HI: u64 = secret_u64_le(80) ^ secret_u64_le(88);
+
+/// Precomputed XXH3-128 result for empty input with seed=0.
+const EMPTY_128_SEED0: u128 =
+  (xxh64_avalanche(EMPTY_128_FLIP_LO) as u128) | ((xxh64_avalanche(EMPTY_128_FLIP_HI) as u128) << 64);
+
+/// Fast path for 0-byte XXH3-64: returns precomputed constant for seed=0,
+/// otherwise computes avalanche from precomputed flip (no secret reads).
+#[inline(always)]
+pub(crate) fn xxh3_64_empty(seed: u64) -> u64 {
+  if seed == 0 {
+    EMPTY_64_SEED0
+  } else {
+    xxh64_avalanche(seed ^ EMPTY_64_FLIP)
+  }
+}
+
+/// Fast path for 0-byte XXH3-128: returns precomputed constant for seed=0,
+/// otherwise computes avalanche from precomputed flips (no secret reads).
+#[inline(always)]
+pub(crate) fn xxh3_128_empty(seed: u64) -> u128 {
+  if seed == 0 {
+    EMPTY_128_SEED0
+  } else {
+    let lo = xxh64_avalanche(seed ^ EMPTY_128_FLIP_LO);
+    let hi = xxh64_avalanche(seed ^ EMPTY_128_FLIP_HI);
+    (lo as u128) | ((hi as u128) << 64)
+  }
+}
+
 #[inline(always)]
 fn mix16_b(data: &[[u8; 8]; 2], secret: &[[u8; 8]; 2], seed: u64) -> u64 {
   let input_lo = u64::from_ne_bytes(data[0]).to_le();

@@ -478,6 +478,51 @@ mod tests {
     assert_eq!(finalize_out, oneshot_out);
   }
 
+  /// Test inputs of length `RATE - 1` for each SHA-3 variant.
+  ///
+  /// At `len == RATE - 1`, the domain separator byte and the pad10*1 `0x80`
+  /// byte target the same lane (and the same byte within that lane). This
+  /// exercises the most subtle edge case in the direct-XOR padding path.
+  #[test]
+  fn sha3_padding_boundary_rate_minus_one() {
+    use super::{Sha3_224, Sha3_384, Sha3_512};
+
+    // SHA3-256: RATE=136, so test len=135
+    let input = &[0xAB_u8; 135];
+    let oneshot = Sha3_256::digest(input);
+    let mut streaming = Sha3_256::new();
+    streaming.update(input);
+    assert_eq!(oneshot, streaming.finalize(), "SHA3-256 RATE-1 mismatch");
+
+    // SHA3-512: RATE=72, so test len=71
+    let input = &[0xCD_u8; 71];
+    let oneshot = Sha3_512::digest(input);
+    let mut streaming = Sha3_512::new();
+    streaming.update(input);
+    assert_eq!(oneshot, streaming.finalize(), "SHA3-512 RATE-1 mismatch");
+
+    // SHA3-224: RATE=144, so test len=143
+    let input = &[0xEF_u8; 143];
+    let oneshot = Sha3_224::digest(input);
+    let mut streaming = Sha3_224::new();
+    streaming.update(input);
+    assert_eq!(oneshot, streaming.finalize(), "SHA3-224 RATE-1 mismatch");
+
+    // SHA3-384: RATE=104, so test len=103
+    let input = &[0x12_u8; 103];
+    let oneshot = Sha3_384::digest(input);
+    let mut streaming = Sha3_384::new();
+    streaming.update(input);
+    assert_eq!(oneshot, streaming.finalize(), "SHA3-384 RATE-1 mismatch");
+
+    // Also test exact-rate lengths (no remainder — ds byte starts a new block)
+    let input = &[0x34_u8; 136];
+    let oneshot = Sha3_256::digest(input);
+    let mut streaming = Sha3_256::new();
+    streaming.update(input);
+    assert_eq!(oneshot, streaming.finalize(), "SHA3-256 exact-rate mismatch");
+  }
+
   #[test]
   fn sha3_256_digest_pair_matches_sequential() {
     let msg_a = b"The quick brown fox jumps over the lazy dog";
