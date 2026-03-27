@@ -1883,7 +1883,6 @@ pub fn crc32_iso_hdlc_pmull_eor3_v9s3x2e_s3_safe(crc: u32, data: &[u8]) -> u32 {
 
 #[cfg(test)]
 mod tests {
-  extern crate alloc;
   extern crate std;
 
   use alloc::vec::Vec;

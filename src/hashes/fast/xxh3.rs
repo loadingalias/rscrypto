@@ -825,7 +825,6 @@ impl FastHash for Xxh3_128 {
 
 #[cfg(test)]
 mod tests {
-  extern crate alloc;
 
   use alloc::vec::Vec;
 

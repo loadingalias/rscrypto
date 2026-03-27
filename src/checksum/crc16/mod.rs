@@ -23,7 +23,7 @@ pub(crate) mod kernels;
 pub(crate) mod keys;
 pub(crate) mod portable;
 
-#[cfg(feature = "alloc")]
+#[cfg(all(test, feature = "alloc"))]
 pub mod kernel_test;
 
 #[allow(unused_imports)]

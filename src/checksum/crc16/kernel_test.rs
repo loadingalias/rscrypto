@@ -358,7 +358,6 @@ fn run_riscv64_kernels_ibm(data: &[u8], results: &mut alloc::vec::Vec<KernelResu
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Run a single CCITT kernel (init=0xFFFF, xorout=0xFFFF).
-#[allow(dead_code)] // Used on x86_64/aarch64 only
 fn run_single_kernel_ccitt(
   data: &[u8],
   kernel: Crc16Fn,
@@ -370,7 +369,6 @@ fn run_single_kernel_ccitt(
 }
 
 /// Run a single IBM kernel (init=0x0000, xorout=0x0000).
-#[allow(dead_code)] // Used on x86_64/aarch64 only
 fn run_single_kernel_ibm(
   data: &[u8],
   kernel: Crc16Fn,

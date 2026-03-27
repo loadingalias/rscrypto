@@ -56,12 +56,6 @@
 //! checksum = { version = "0.1", default-features = false }
 //! ```
 
-#[inline]
-#[must_use]
-pub(crate) fn dispatch_caps() -> crate::platform::Caps {
-  crate::platform::caps()
-}
-
 mod common;
 
 // Internal macros must be declared before modules that use them.
@@ -108,10 +102,8 @@ pub mod config {
 
 #[doc(hidden)]
 pub mod __internal {
-  pub use crate::checksum::common::kernels::stream_to_index;
-
-  /// Kernel testing utilities (for fuzz targets and integration tests).
-  #[cfg(feature = "alloc")]
+  /// Kernel testing utilities.
+  #[cfg(all(test, feature = "alloc"))]
   pub mod kernel_test {
     pub use crate::checksum::{
       crc16::kernel_test::{

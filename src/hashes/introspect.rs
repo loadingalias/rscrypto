@@ -132,7 +132,6 @@ impl_hash_kernel_introspect!(
 
 #[cfg(test)]
 mod tests {
-  extern crate alloc;
 
   use super::*;
 

@@ -267,10 +267,9 @@ pub(crate) const CRC64_NVME_CLMUL: Crc64ClmulConstants = Crc64ClmulConstants::ne
 /// - `combine_4way`: merge coefficients for 4-way (x86_64)
 /// - `combine_7way`: merge coefficients for 7-way (x86_64)
 /// - `combine_8way`: merge coefficients for 8-way (x86_64)
-// Some fields are only used on specific architectures.
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-#[allow(dead_code)] // Field use is architecture-dependent (x86_64 vs aarch64 stream widths).
 #[derive(Clone, Copy, Debug)]
+#[allow(dead_code)] // Field subsets vary by architecture (x86_64 vs aarch64 stream widths).
 pub(crate) struct Crc64StreamConstants {
   /// 2-way fold coefficient (256B = 2×128B).
   pub fold_256b: (u64, u64),

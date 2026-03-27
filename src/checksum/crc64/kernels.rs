@@ -25,25 +25,6 @@ pub use kernels::PORTABLE_SLICE16 as PORTABLE;
 pub use kernels::REFERENCE;
 
 use crate::checksum::common::kernels;
-#[cfg(any(
-  target_arch = "x86_64",
-  target_arch = "aarch64",
-  target_arch = "powerpc64",
-  target_arch = "s390x",
-  target_arch = "riscv64"
-))]
-use crate::checksum::dispatchers::Crc64Fn;
-
-// Generate CRC64-specific dispatch functions using the common macro.
-// Only needed on SIMD architectures where we have multiple kernel tiers.
-#[cfg(any(
-  target_arch = "x86_64",
-  target_arch = "aarch64",
-  target_arch = "powerpc64",
-  target_arch = "s390x",
-  target_arch = "riscv64"
-))]
-crate::define_crc_dispatch!(Crc64Fn, u64);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Kernel Name Tables (per architecture)

@@ -160,11 +160,11 @@ pub fn get() -> Crc24Config {
   {
     use std::sync::OnceLock;
     static CACHED: OnceLock<Crc24Config> = OnceLock::new();
-    *CACHED.get_or_init(|| config(crate::checksum::dispatch_caps()))
+    *CACHED.get_or_init(|| config(crate::platform::caps()))
   }
 
   #[cfg(not(feature = "std"))]
   {
-    config(crate::checksum::dispatch_caps())
+    config(crate::platform::caps())
   }
 }

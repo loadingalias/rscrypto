@@ -7,7 +7,6 @@ use crate::{backend::cache::OnceCache, hashes::crypto::dispatch_util::SizeClassD
 type PermuteFn = fn(&mut [u64; 25]);
 
 #[derive(Clone, Copy)]
-#[allow(dead_code)]
 struct ActiveDispatch {
   boundaries: [usize; 3],
   xs: PermuteFn,
@@ -36,7 +35,7 @@ fn resolve(id: Keccakf1600KernelId, caps: Caps) -> Keccakf1600KernelId {
 #[must_use]
 fn active() -> ActiveDispatch {
   ACTIVE.get_or_init(|| {
-    let caps = crate::hashes::util::dispatch_caps();
+    let caps = crate::platform::caps();
     let table: &'static DispatchTable = super::dispatch_tables::select_runtime_table(caps);
 
     let xs_id = resolve(table.xs, caps);
@@ -75,30 +74,16 @@ fn select(d: &ActiveDispatch, len: usize) -> (PermuteFn, &'static str) {
 
 #[inline]
 #[must_use]
-#[allow(dead_code)]
 pub fn kernel_name_for_len(len: usize) -> &'static str {
   #[cfg(target_arch = "s390x")]
   {
     use crate::platform::caps::s390x;
-    if crate::hashes::util::dispatch_caps().has(s390x::MSA8) {
+    if crate::platform::caps().has(s390x::MSA8) {
       return "s390x-kimd";
     }
   }
   let d = active();
   select(&d, len).1
-}
-
-/// Apply the configured Keccak-f[1600] permutation kernel for a specific
-/// workload size.
-///
-/// The `len` parameter is a hint representing the total amount of work (bytes)
-/// associated with the sponge operation. This allows tuned size-class tables to
-/// take effect for one-shot and long-running streaming workloads.
-#[inline]
-#[allow(dead_code)]
-pub fn keccakf_for_len(state: &mut [u64; 25], len: usize) {
-  let d = active();
-  (select(&d, len).0)(state);
 }
 
 #[inline]
@@ -112,12 +97,4 @@ pub(crate) fn permute_dispatch() -> SizeClassDispatch<PermuteFn> {
     m: d.m,
     l: d.l,
   }
-}
-
-/// Apply the configured Keccak-f[1600] permutation kernel.
-#[inline]
-#[allow(dead_code)]
-pub fn keccakf(state: &mut [u64; 25]) {
-  let d = active();
-  (d.l)(state);
 }

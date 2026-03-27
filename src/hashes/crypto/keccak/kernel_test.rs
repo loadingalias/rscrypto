@@ -1,5 +1,3 @@
-extern crate alloc;
-
 use alloc::vec::Vec;
 
 use super::kernels::{ALL, permute_fn, required_caps};

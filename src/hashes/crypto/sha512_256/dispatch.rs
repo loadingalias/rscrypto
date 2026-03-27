@@ -36,7 +36,7 @@ fn resolve(id: Sha512_256KernelId, caps: Caps) -> Sha512_256KernelId {
 #[must_use]
 fn active() -> ActiveDispatch {
   ACTIVE.get_or_init(|| {
-    let caps = crate::hashes::util::dispatch_caps();
+    let caps = crate::platform::caps();
     let table: &'static DispatchTable = super::dispatch_tables::select_runtime_table(caps);
 
     let xs_id = resolve(table.xs, caps);

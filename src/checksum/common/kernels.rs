@@ -54,41 +54,10 @@ pub const REFERENCE: &str = "reference/bitwise";
 pub const PORTABLE_SLICE16: &str = "portable/slice16";
 
 /// Portable slice-by-8 kernel name.
-#[allow(dead_code)] // Used by crc16/crc24 kernels modules for introspection name tables
 pub const PORTABLE_SLICE8: &str = "portable/slice8";
-
-/// Portable slice-by-4 kernel name.
-#[allow(dead_code)] // Used by crc16/crc24 kernels modules for introspection name tables
-pub const PORTABLE_SLICE4: &str = "portable/slice4";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Stream Mapping
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Map stream count to kernel array index.
-///
-/// Kernel arrays are ordered: `[1-way, 2-way, 3/4-way, 7-way, 8-way]`
-///
-/// This provides a consistent mapping across all architectures:
-/// - x86_64: 1, 2, 4, 7, 8-way
-/// - aarch64: 1, 2, 3-way (slot 2 used for 3-way)
-/// - Power: 1, 2, 4, 8-way
-/// - s390x: 1, 2, 4-way
-/// - riscv64: 1, 2, 4-way
-#[inline]
-#[must_use]
-pub const fn stream_to_index(streams: u8) -> usize {
-  match streams {
-    8 => 4,
-    7 => 3,
-    3 | 4 => 2,
-    2 => 1,
-    _ => 0,
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Name Selection
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -134,86 +103,12 @@ pub const fn select_streams(len: usize, max_streams: u8, fold_bytes: usize, stre
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Dispatch Macros
-// ─────────────────────────────────────────────────────────────────────────────
-//
-// These macros generate type-specific dispatch functions. We use macros
-// instead of generics to avoid any runtime overhead and keep the generated
-// code optimal for each CRC width.
-
-/// Define dispatch functions for a specific CRC function type.
-///
-/// This macro generates:
-/// - `dispatch_streams`: Dispatch to stream variant based on count
-/// - `dispatch_with_small`: Dispatch with small buffer handling
-///
-/// # Examples
-///
-/// ```rust,ignore
-/// use rscrypto::checksum::dispatchers::Crc32Fn;
-///
-/// checksum::define_crc_dispatch!(Crc32Fn, u32);
-///
-/// fn k(crc: u32, _data: &[u8]) -> u32 {
-///   crc.wrapping_add(1)
-/// }
-///
-/// const KERNELS: [Crc32Fn; 5] = [k, k, k, k, k];
-/// let out = dispatch_streams(&KERNELS, 1, 0, b"");
-/// assert_eq!(out, 1);
-/// ```
-#[macro_export]
-macro_rules! define_crc_dispatch {
-  ($fn_type:ty, $state_type:ty) => {
-    /// Dispatch to stream variant based on stream count.
-    ///
-    /// Kernels array: `[1-way, 2-way, 3/4-way, 7-way, 8-way]`
-    #[inline]
-    #[allow(dead_code)] // Not all CRC widths/arches use stream dispatch directly.
-    #[allow(clippy::indexing_slicing)] // stream_to_index returns 0-4, array is [_; 5]
-    pub fn dispatch_streams(kernels: &[$fn_type; 5], streams: u8, crc: $state_type, data: &[u8]) -> $state_type {
-      kernels[$crate::checksum::__internal::stream_to_index(streams)](crc, data)
-    }
-
-    /// Dispatch with small buffer handling.
-    #[inline]
-    #[allow(dead_code)] // Not all CRC widths/arches use small-buffer kernels yet.
-    #[allow(clippy::indexing_slicing)] // stream_to_index returns 0-4, array is [_; 5]
-    pub fn dispatch_with_small(
-      kernels: &[$fn_type; 5],
-      small: $fn_type,
-      streams: u8,
-      len: usize,
-      fold_bytes: usize,
-      crc: $state_type,
-      data: &[u8],
-    ) -> $state_type {
-      if len < fold_bytes {
-        small(crc, data)
-      } else {
-        kernels[$crate::checksum::__internal::stream_to_index(streams)](crc, data)
-      }
-    }
-  };
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Tests
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
   use super::*;
-
-  #[test]
-  fn test_stream_to_index() {
-    assert_eq!(stream_to_index(1), 0);
-    assert_eq!(stream_to_index(2), 1);
-    assert_eq!(stream_to_index(3), 2);
-    assert_eq!(stream_to_index(4), 2);
-    assert_eq!(stream_to_index(7), 3);
-    assert_eq!(stream_to_index(8), 4);
-  }
 
   #[test]
   fn test_select_streams() {
