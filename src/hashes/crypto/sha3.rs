@@ -423,8 +423,6 @@ mod tests {
     s
   }
 
-  extern crate alloc;
-
   #[test]
   fn sha3_256_vectors() {
     assert_eq!(

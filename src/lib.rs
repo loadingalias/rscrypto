@@ -158,6 +158,12 @@
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
+// Tests use alloc types (Vec, String) for constructing inputs regardless of feature flags.
+// The alloc crate is always in the sysroot; this brings the name into scope for test builds
+// when the `alloc` feature is off.
+#[cfg(all(test, not(feature = "alloc")))]
+extern crate alloc;
+
 #[cfg(feature = "std")]
 extern crate std;
 

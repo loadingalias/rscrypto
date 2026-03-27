@@ -70,8 +70,8 @@ pub(crate) const CRC16_IBM_KEYS_REFLECTED: [u64; 23] = [
 /// (CRC-16 and CRC-24 today). They describe how to:
 /// - advance a stream by `N * 128B` per iteration (striping)
 /// - merge streams back together (combine coefficients)
-#[allow(dead_code)] // Some fields are only used on specific architectures.
 #[derive(Clone, Copy, Debug)]
+#[allow(dead_code)] // Field subsets vary by architecture (x86_64/aarch64/power/s390x/riscv64 stream widths).
 pub(crate) struct Width32StreamConstants {
   /// 2-way fold coefficient (256B = 2×128B).
   pub fold_256b: (u64, u64),

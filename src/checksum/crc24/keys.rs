@@ -31,8 +31,8 @@ pub(crate) const CRC24_OPENPGP_KEYS_REFLECTED: [u64; 23] = build_keys(CRC24_OPEN
 ///
 /// These constants enable multi-way striping (2-way / 3-way / 4-way / 7-way / 8-way)
 /// for carryless-multiply kernels.
-#[allow(dead_code)] // Some fields are only used on specific architectures.
 #[derive(Clone, Copy, Debug)]
+#[allow(dead_code)] // Field subsets vary by architecture (x86_64/aarch64/power/s390x/riscv64 stream widths).
 pub(crate) struct Crc24StreamConstants {
   pub fold_256b: (u64, u64),
   pub fold_384b: (u64, u64),

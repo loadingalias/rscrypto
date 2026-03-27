@@ -277,8 +277,6 @@ pub(crate) mod kernel_test;
 mod tests {
   use super::Sha224;
 
-  extern crate alloc;
-
   fn hex28(bytes: &[u8; 28]) -> alloc::string::String {
     use alloc::string::String;
     use core::fmt::Write;

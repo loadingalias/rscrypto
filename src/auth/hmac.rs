@@ -72,12 +72,12 @@ impl Mac for HmacSha256 {
     let mut key_block = [0u8; BLOCK_SIZE];
     if key.len() > BLOCK_SIZE {
       let digest = Sha256::digest(key);
-      for (dst, src) in key_block.iter_mut().zip(digest.iter().copied()) {
-        *dst = src;
+      for (dst, src) in key_block.iter_mut().zip(digest.iter()) {
+        *dst = *src;
       }
     } else {
-      for (dst, src) in key_block.iter_mut().zip(key.iter().copied()) {
-        *dst = src;
+      for (dst, src) in key_block.iter_mut().zip(key.iter()) {
+        *dst = *src;
       }
     }
 
@@ -99,8 +99,8 @@ impl Mac for HmacSha256 {
     ct::zeroize(&mut opad);
 
     Self {
-      inner: inner_init.clone(),
-      inner_init,
+      inner_init: inner_init.clone(),
+      inner: inner_init,
       outer_init,
     }
   }
@@ -135,9 +135,13 @@ impl Mac for HmacSha256 {
     let mut key_block = [0u8; BLOCK_SIZE];
     if key.len() > BLOCK_SIZE {
       let digest = Sha256::digest(key);
-      key_block[..TAG_SIZE].copy_from_slice(&digest);
+      for (dst, src) in key_block.iter_mut().zip(digest.iter()) {
+        *dst = *src;
+      }
     } else {
-      key_block[..key.len()].copy_from_slice(key);
+      for (dst, src) in key_block.iter_mut().zip(key.iter()) {
+        *dst = *src;
+      }
     }
 
     // --- Build ipad / opad ---

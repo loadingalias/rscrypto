@@ -33,7 +33,7 @@ pub(crate) mod portable;
 ))]
 mod reflected;
 
-#[cfg(feature = "alloc")]
+#[cfg(all(test, feature = "alloc"))]
 pub mod kernel_test;
 
 #[allow(unused_imports)]

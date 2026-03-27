@@ -43,7 +43,7 @@ pub(crate) mod config;
 pub(crate) mod kernels;
 pub(crate) mod portable;
 
-#[cfg(feature = "alloc")]
+#[cfg(all(test, feature = "alloc"))]
 pub mod kernel_test;
 
 #[cfg(target_arch = "x86_64")]
@@ -898,7 +898,6 @@ impl crate::checksum::introspect::KernelIntrospect for Crc32C {
 
 #[cfg(test)]
 mod tests {
-  extern crate alloc;
   extern crate std;
 
   use alloc::{string::String, vec::Vec};

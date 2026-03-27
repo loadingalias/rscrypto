@@ -19,7 +19,7 @@ pub(crate) mod kernels;
 // portable is pub(crate) but needs internal access from bench module
 pub(crate) mod portable;
 
-#[cfg(feature = "alloc")]
+#[cfg(all(test, feature = "alloc"))]
 pub mod kernel_test;
 
 #[cfg(target_arch = "x86_64")]
@@ -917,7 +917,6 @@ impl crate::checksum::introspect::KernelIntrospect for Crc64Nvme {
 
 #[cfg(test)]
 mod tests {
-  extern crate alloc;
   extern crate std;
 
   use alloc::vec::Vec;

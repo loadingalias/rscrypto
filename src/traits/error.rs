@@ -66,7 +66,6 @@ impl core::error::Error for VerificationError {}
 
 #[cfg(test)]
 mod tests {
-  extern crate alloc;
 
   use alloc::{format, string::ToString};
   use core::hash::{Hash, Hasher};

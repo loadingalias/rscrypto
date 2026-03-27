@@ -655,7 +655,6 @@ pub(crate) mod kernel_test;
 
 #[cfg(test)]
 mod tests {
-  extern crate alloc;
 
   use super::Sha512;
 

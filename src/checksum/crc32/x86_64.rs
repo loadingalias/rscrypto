@@ -1338,7 +1338,6 @@ pub fn crc32_ieee_pclmul_small_safe(crc: u32, data: &[u8]) -> u32 {
 /// For small buffers we intentionally use the 128-bit PCLMUL small-lane kernel
 /// to avoid AVX-512 startup costs and 128B block requirements.
 #[inline]
-#[allow(dead_code)] // Reserved for future wide_small policy field
 pub fn crc32_ieee_vpclmul_small_safe(crc: u32, data: &[u8]) -> u32 {
   crc32_ieee_pclmul_small_safe(crc, data)
 }
@@ -2471,7 +2470,6 @@ pub fn crc32_ieee_vpclmul_8way_safe(crc: u32, data: &[u8]) -> u32 {
 
 #[cfg(test)]
 mod tests {
-  extern crate alloc;
   extern crate std;
 
   use alloc::vec::Vec;

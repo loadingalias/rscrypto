@@ -19,25 +19,6 @@ pub use kernels::PORTABLE_SLICE16 as PORTABLE;
 pub use kernels::REFERENCE;
 
 use crate::checksum::common::kernels;
-#[cfg(any(
-  target_arch = "x86_64",
-  target_arch = "aarch64",
-  target_arch = "powerpc64",
-  target_arch = "s390x",
-  target_arch = "riscv64"
-))]
-use crate::checksum::dispatchers::Crc32Fn;
-
-// Generate CRC32-specific dispatch functions using the common macro.
-// Only needed on SIMD architectures where we have multiple kernel tiers.
-#[cfg(any(
-  target_arch = "x86_64",
-  target_arch = "aarch64",
-  target_arch = "powerpc64",
-  target_arch = "s390x",
-  target_arch = "riscv64"
-))]
-crate::define_crc_dispatch!(Crc32Fn, u32);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Kernel Name Tables (per architecture)
@@ -78,7 +59,6 @@ pub mod x86_64 {
     "x86_64/vpclmul-8way",
   ];
   /// CRC-32 (IEEE) VPCLMUL small-buffer kernel name.
-  #[allow(dead_code)] // Reserved for future wide_small policy field
   pub const CRC32_VPCLMUL_SMALL: &str = "x86_64/vpclmul-small";
   /// CRC-32 (IEEE) VPCLMUL kernels.
   pub const CRC32_VPCLMUL: [Crc32Fn; 5] = [
@@ -89,7 +69,6 @@ pub mod x86_64 {
     arch::crc32_ieee_vpclmul_8way_safe,
   ];
   /// CRC-32 (IEEE) VPCLMUL small-buffer kernel (falls back to the PCLMUL small-lane kernel).
-  #[allow(dead_code)] // Reserved for future wide_small policy field
   pub const CRC32_VPCLMUL_SMALL_KERNEL: Crc32Fn = arch::crc32_ieee_vpclmul_small_safe;
 
   /// SSE4.2 `crc32` instruction kernel names (CRC-32C only).
@@ -310,10 +289,8 @@ pub mod aarch64 {
     arch::crc32_iso_hdlc_sve2_pmull_3way_safe,
   ];
   /// CRC-32 "SVE2 PMULL" small-buffer kernel.
-  #[allow(dead_code)] // Reserved for future wide_small policy field
   pub const CRC32_SVE2_PMULL_SMALL_KERNEL: Crc32Fn = arch::crc32_iso_hdlc_sve2_pmull_small_safe;
   /// CRC-32 SVE2 PMULL small-buffer kernel name.
-  #[allow(dead_code)] // Reserved for future wide_small policy field
   pub const SVE2_PMULL_SMALL: &str = "aarch64/sve2-pmull-small";
 
   /// CRC-32C (Castagnoli) "SVE2 PMULL" tier kernel names.
@@ -336,7 +313,6 @@ pub mod aarch64 {
     arch::crc32c_iscsi_sve2_pmull_3way_safe,
   ];
   /// CRC-32C "SVE2 PMULL" small-buffer kernel.
-  #[allow(dead_code)] // Reserved for future wide_small policy field
   pub const CRC32C_SVE2_PMULL_SMALL_KERNEL: Crc32Fn = arch::crc32c_iscsi_sve2_pmull_small_safe;
 }
 

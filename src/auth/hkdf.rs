@@ -119,8 +119,8 @@ impl HkdfSha256 {
       mac.update(&[counter]);
 
       block = mac.finalize();
-      for (dst, src) in chunk.iter_mut().zip(block.iter().copied()) {
-        *dst = src;
+      for (dst, src) in chunk.iter_mut().zip(block.iter()) {
+        *dst = *src;
       }
       have_block = true;
       counter = counter.wrapping_add(1);

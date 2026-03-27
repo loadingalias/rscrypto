@@ -25,10 +25,6 @@
 //! assert!(caps.has(Caps::NONE)); // NONE is always present
 //! ```
 
-// alloc is only needed for tests (feature_names iteration with Vec)
-#[cfg(test)]
-extern crate alloc;
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Core Capability Type
 // ─────────────────────────────────────────────────────────────────────────────

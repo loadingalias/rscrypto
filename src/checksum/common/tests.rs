@@ -13,8 +13,6 @@
 //!
 //! Used via [`define_crc_property_tests!`] macro in algorithm modules.
 
-extern crate alloc;
-
 use crate::traits::{Checksum, ChecksumCombine};
 
 /// Generic test harness for CRC algorithms.
@@ -25,7 +23,6 @@ pub struct CrcTestHarness<C> {
   _phantom: core::marker::PhantomData<C>,
 }
 
-#[allow(dead_code)] // Methods invoked generically by define_crc_property_tests! macro expansions
 impl<C> CrcTestHarness<C>
 where
   C: Checksum + ChecksumCombine,

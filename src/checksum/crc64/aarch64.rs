@@ -1368,7 +1368,6 @@ pub fn crc64_nvme_pmull_3way_safe(crc: u64, data: &[u8]) -> u64 {
 // Tests require SIMD intrinsics that Miri cannot interpret.
 #[cfg(all(test, not(miri)))]
 mod tests {
-  extern crate alloc;
   extern crate std;
 
   use super::*;

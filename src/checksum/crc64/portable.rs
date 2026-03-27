@@ -13,7 +13,6 @@ use crate::checksum::common::portable;
 /// CRC-64-XZ slice-by-8 computation.
 #[inline]
 #[cfg(test)]
-#[allow(dead_code)] // Used by arch-specific tests that don't run under Miri
 pub fn crc64_slice8_xz(crc: u64, data: &[u8]) -> u64 {
   crc64_slice8(crc, data, &kernel_tables::XZ_TABLES_8)
 }
@@ -21,7 +20,6 @@ pub fn crc64_slice8_xz(crc: u64, data: &[u8]) -> u64 {
 /// CRC-64-NVME slice-by-8 computation.
 #[inline]
 #[cfg(test)]
-#[allow(dead_code)] // Used by arch-specific tests that don't run under Miri
 pub fn crc64_slice8_nvme(crc: u64, data: &[u8]) -> u64 {
   crc64_slice8(crc, data, &kernel_tables::NVME_TABLES_8)
 }

@@ -5,8 +5,6 @@
 
 #![allow(clippy::indexing_slicing)] // Keccak state is fixed-size; indexing is audited
 
-use core::marker::PhantomData;
-
 #[cfg(target_arch = "aarch64")]
 pub(crate) mod aarch64;
 #[doc(hidden)]
@@ -423,7 +421,7 @@ impl Default for Aarch64Permuter {
     Self {
       has_sha3: {
         use crate::platform::caps::aarch64 as aarch64_caps;
-        crate::hashes::util::dispatch_caps().has(aarch64_caps::SHA3)
+        crate::platform::caps().has(aarch64_caps::SHA3)
       },
     }
   }
@@ -469,7 +467,7 @@ impl Default for S390xPermuter {
     Self {
       has_kimd: {
         use crate::platform::caps::s390x as s390x_caps;
-        crate::hashes::util::dispatch_caps().has(s390x_caps::MSA8)
+        crate::platform::caps().has(s390x_caps::MSA8)
       },
     }
   }
@@ -527,7 +525,6 @@ pub(crate) struct KeccakCoreImpl<const RATE: usize, P: Permuter> {
   buf: [u8; RATE],
   buf_len: usize,
   permuter: P,
-  _p: PhantomData<P>,
 }
 
 impl<const RATE: usize> Default for KeccakCoreImpl<RATE, PlatformPermuter> {
@@ -538,7 +535,6 @@ impl<const RATE: usize> Default for KeccakCoreImpl<RATE, PlatformPermuter> {
       buf: [0u8; RATE],
       buf_len: 0,
       permuter: PlatformPermuter::default(),
-      _p: PhantomData,
     }
   }
 }
@@ -555,7 +551,6 @@ impl<const RATE: usize> Default for KeccakCoreImpl<RATE, InlinePermuter> {
       buf: [0u8; RATE],
       buf_len: 0,
       permuter: InlinePermuter,
-      _p: PhantomData,
     }
   }
 }
@@ -671,7 +666,6 @@ impl<const RATE: usize, P: Permuter> KeccakCoreImpl<RATE, P> {
       buf,
       pos: 0,
       permuter,
-      _p: PhantomData,
     }
   }
 
@@ -899,7 +893,6 @@ pub(crate) struct KeccakXofImpl<const RATE: usize, P: Permuter> {
   buf: [u8; RATE],
   pos: usize,
   permuter: P,
-  _p: PhantomData<P>,
 }
 
 impl<const RATE: usize, P: Permuter> Drop for KeccakXofImpl<RATE, P> {

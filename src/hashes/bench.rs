@@ -5,8 +5,6 @@
 
 #![allow(clippy::indexing_slicing)] // Benchmark harness uses deliberate slicing patterns
 
-extern crate alloc;
-
 use alloc::{vec, vec::Vec};
 #[cfg(feature = "std")]
 use std::sync::OnceLock;

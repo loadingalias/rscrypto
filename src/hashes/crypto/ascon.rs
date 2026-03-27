@@ -398,7 +398,7 @@ impl AsconHash256 {
     inputs
       .first()
       .map_or(kernels::AsconPermute12KernelId::Portable, |first| {
-        let caps = crate::hashes::util::dispatch_caps();
+        let caps = crate::platform::caps();
         let table = dispatch_tables::select_runtime_table(caps);
         let candidate = table.kernel_for_len(first.len());
         if caps.has(kernels::required_caps(candidate)) {

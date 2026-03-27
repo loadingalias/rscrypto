@@ -312,7 +312,7 @@ fn run_riscv64_kernels_nvme(data: &[u8], results: &mut alloc::vec::Vec<KernelRes
 // Helpers (conditionally used based on architecture)
 // ─────────────────────────────────────────────────────────────────────────────
 
-#[allow(dead_code)] // Used on x86_64 only
+#[cfg(target_arch = "x86_64")]
 fn run_kernel_array(
   data: &[u8],
   kernels: &[Crc64Fn],
@@ -330,7 +330,6 @@ fn run_kernel_array(
 
 /// Run kernel array but skip duplicate function pointers (arrays pad with dups for index
 /// consistency).
-#[allow(dead_code)] // Used on aarch64/powerpc64/s390x/riscv64 only
 fn run_kernel_array_unique(
   data: &[u8],
   kernels: &[Crc64Fn],
@@ -353,7 +352,6 @@ fn run_kernel_array_unique(
   }
 }
 
-#[allow(dead_code)] // Used on x86_64/aarch64 only
 fn run_single_kernel(data: &[u8], kernel: Crc64Fn, name: &'static str, results: &mut alloc::vec::Vec<KernelResult>) {
   let checksum = kernel(!0u64, data) ^ !0u64;
   results.push(KernelResult { name, checksum });

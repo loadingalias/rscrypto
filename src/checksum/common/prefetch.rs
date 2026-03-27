@@ -32,12 +32,12 @@
 //! # Usage Pattern
 //!
 //! ```text
-//! use crate::checksum::common::prefetch::{prefetch_read, LARGE_BLOCK_DISTANCE};
+//! use crate::checksum::common::prefetch::{prefetch_read_l1, LARGE_BLOCK_DISTANCE};
 //!
 //! // In a double-unrolled loop processing 512B per iteration:
 //! while ptr.add(DOUBLE_BLOCK) <= end {
 //!     // Prefetch 2 iterations ahead (1KB for 512B blocks)
-//!     prefetch_read(ptr.add(LARGE_BLOCK_DISTANCE));
+//!     prefetch_read_l1(ptr.add(LARGE_BLOCK_DISTANCE));
 //!
 //!     // Process first 256B block
 //!     // ... fold operations ...
@@ -66,14 +66,6 @@
 #[cfg(target_arch = "x86_64")]
 pub const LARGE_BLOCK_DISTANCE: usize = 1024;
 
-/// Prefetch distance for medium buffer kernels (m/l size, 4KB-1MB).
-///
-/// Tuned for single or double-unrolled loops processing 256-512B per iteration.
-/// Value: 512 bytes (1-2 iterations ahead).
-#[cfg(target_arch = "x86_64")]
-#[allow(dead_code)]
-pub const MEDIUM_BLOCK_DISTANCE: usize = 512;
-
 /// Prefetch distance for large buffer kernels on ARM64.
 ///
 /// Tuned for Graviton2/3 and Apple Silicon.
@@ -86,18 +78,13 @@ pub const MEDIUM_BLOCK_DISTANCE: usize = 512;
 #[cfg(target_arch = "aarch64")]
 pub const LARGE_BLOCK_DISTANCE: usize = 768;
 
-/// Prefetch distance for medium buffer kernels on ARM64.
-#[cfg(target_arch = "aarch64")]
-#[allow(dead_code)]
-pub const MEDIUM_BLOCK_DISTANCE: usize = 384;
-
 // ─────────────────────────────────────────────────────────────────────────────
 // x86-64 Prefetch Intrinsics
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_arch = "x86_64")]
 mod x86_64_impl {
-  use core::arch::x86_64::{_MM_HINT_NTA, _MM_HINT_T0, _MM_HINT_T1, _mm_prefetch};
+  use core::arch::x86_64::{_MM_HINT_T0, _mm_prefetch};
 
   /// Prefetch data for read into L1 cache (temporal).
   ///
@@ -114,61 +101,6 @@ mod x86_64_impl {
     // The _mm_prefetch intrinsic cannot cause memory unsafety.
     unsafe {
       _mm_prefetch(ptr.cast::<i8>(), _MM_HINT_T0);
-    }
-  }
-
-  /// Prefetch data for read into L2 cache (less temporal).
-  ///
-  /// Use when data will be accessed once but not immediately.
-  /// Can be useful for prefetching further ahead without polluting L1.
-  ///
-  /// # Safety
-  ///
-  /// Same as [`prefetch_read_l1`].
-  #[inline(always)]
-  #[allow(dead_code)]
-  pub(crate) unsafe fn prefetch_read_l2(ptr: *const u8) {
-    // SAFETY: Prefetch is a CPU hint; invalid addresses are silently ignored.
-    // The _mm_prefetch intrinsic cannot cause memory unsafety.
-    unsafe {
-      _mm_prefetch(ptr.cast::<i8>(), _MM_HINT_T1);
-    }
-  }
-
-  /// Prefetch data for read, non-temporal (streaming).
-  ///
-  /// Use for data that will be accessed exactly once and should not
-  /// pollute the cache hierarchy. Rarely useful for CRC computation.
-  ///
-  /// # Safety
-  ///
-  /// Same as [`prefetch_read_l1`].
-  #[inline(always)]
-  #[allow(dead_code)]
-  pub(crate) unsafe fn prefetch_read_nta(ptr: *const u8) {
-    // SAFETY: Prefetch is a CPU hint; invalid addresses are silently ignored.
-    // The _mm_prefetch intrinsic cannot cause memory unsafety.
-    unsafe {
-      _mm_prefetch(ptr.cast::<i8>(), _MM_HINT_NTA);
-    }
-  }
-
-  /// Prefetch for the next iteration of a double-unrolled loop.
-  ///
-  /// This is the recommended prefetch pattern for large buffer kernels.
-  /// Prefetches into L1 at `LARGE_BLOCK_DISTANCE` ahead of current pointer.
-  ///
-  /// # Safety
-  ///
-  /// Same as [`prefetch_read_l1`].
-  #[inline(always)]
-  #[allow(dead_code)]
-  pub(crate) unsafe fn prefetch_for_next_iteration(ptr: *const u8) {
-    // SAFETY: Delegates to prefetch_read_l1 which is a CPU hint.
-    // wrapping_add is used because prefetch addresses may be out-of-bounds,
-    // which is safe for prefetch instructions (silently ignored by hardware).
-    unsafe {
-      prefetch_read_l1(ptr.wrapping_add(super::LARGE_BLOCK_DISTANCE));
     }
   }
 }
@@ -209,64 +141,6 @@ mod aarch64_impl {
       );
     }
   }
-
-  /// Prefetch data for read into L2 cache (PLDL2KEEP).
-  ///
-  /// # Safety
-  ///
-  /// Same as [`prefetch_read_l1`].
-  #[inline(always)]
-  #[allow(dead_code)]
-  pub(crate) unsafe fn prefetch_read_l2(ptr: *const u8) {
-    // SAFETY: Inline assembly for PRFM prefetch hint. Prefetch instructions
-    // are CPU hints that cannot cause memory unsafety; invalid addresses
-    // are silently ignored by the hardware.
-    unsafe {
-      core::arch::asm!(
-        "prfm pldl2keep, [{ptr}]",
-        ptr = in(reg) ptr,
-        options(nostack, preserves_flags)
-      );
-    }
-  }
-
-  /// Prefetch data for read, streaming (PLDL1STRM).
-  ///
-  /// Use for data that will be accessed exactly once.
-  ///
-  /// # Safety
-  ///
-  /// Same as [`prefetch_read_l1`].
-  #[inline(always)]
-  #[allow(dead_code)]
-  pub(crate) unsafe fn prefetch_read_stream(ptr: *const u8) {
-    // SAFETY: Inline assembly for PRFM prefetch hint. Prefetch instructions
-    // are CPU hints that cannot cause memory unsafety; invalid addresses
-    // are silently ignored by the hardware.
-    unsafe {
-      core::arch::asm!(
-        "prfm pldl1strm, [{ptr}]",
-        ptr = in(reg) ptr,
-        options(nostack, preserves_flags)
-      );
-    }
-  }
-
-  /// Prefetch for the next iteration of a double-unrolled loop.
-  ///
-  /// # Safety
-  ///
-  /// Same as [`prefetch_read_l1`].
-  #[inline(always)]
-  #[allow(dead_code)]
-  pub(crate) unsafe fn prefetch_for_next_iteration(ptr: *const u8) {
-    // SAFETY: Delegates to prefetch_read_l1 which is a CPU hint.
-    // wrapping_add is used because prefetch addresses may be out-of-bounds,
-    // which is safe for prefetch instructions (silently ignored by hardware).
-    unsafe {
-      prefetch_read_l1(ptr.wrapping_add(super::LARGE_BLOCK_DISTANCE));
-    }
-  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -274,17 +148,13 @@ mod aarch64_impl {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_arch = "aarch64")]
-#[allow(unused_imports)]
-pub(crate) use aarch64_impl::{prefetch_for_next_iteration, prefetch_read_l1, prefetch_read_l2};
+pub(crate) use aarch64_impl::prefetch_read_l1;
 #[cfg(target_arch = "x86_64")]
-#[allow(unused_imports)]
-pub(crate) use x86_64_impl::{prefetch_for_next_iteration, prefetch_read_l1, prefetch_read_l2};
+pub(crate) use x86_64_impl::prefetch_read_l1;
 
 // Fallback for other architectures (no-op)
 #[cfg(all(not(any(target_arch = "x86_64", target_arch = "aarch64")), test))]
 pub const LARGE_BLOCK_DISTANCE: usize = 512;
-#[cfg(all(not(any(target_arch = "x86_64", target_arch = "aarch64")), test))]
-pub const MEDIUM_BLOCK_DISTANCE: usize = 256;
 
 #[cfg(all(not(any(target_arch = "x86_64", target_arch = "aarch64")), test))]
 #[inline(always)]
@@ -295,24 +165,6 @@ pub const MEDIUM_BLOCK_DISTANCE: usize = 256;
 /// This function performs no memory access and is always safe to call.
 pub(crate) unsafe fn prefetch_read_l1(_ptr: *const u8) {}
 
-#[cfg(all(not(any(target_arch = "x86_64", target_arch = "aarch64")), test))]
-#[inline(always)]
-/// No-op prefetch fallback used only by tests on unsupported architectures.
-///
-/// # Safety
-///
-/// This function performs no memory access and is always safe to call.
-pub(crate) unsafe fn prefetch_read_l2(_ptr: *const u8) {}
-
-#[cfg(all(not(any(target_arch = "x86_64", target_arch = "aarch64")), test))]
-#[inline(always)]
-/// No-op prefetch fallback used only by tests on unsupported architectures.
-///
-/// # Safety
-///
-/// This function performs no memory access and is always safe to call.
-pub(crate) unsafe fn prefetch_for_next_iteration(_ptr: *const u8) {}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Tests
 // ─────────────────────────────────────────────────────────────────────────────
@@ -322,10 +174,9 @@ mod tests {
   use super::*;
 
   #[test]
-  fn prefetch_constants_are_cache_line_aligned() {
-    // Prefetch distances should be multiples of cache line size (64 bytes)
+  fn prefetch_distance_is_cache_line_aligned() {
+    // Prefetch distance should be a multiple of cache line size (64 bytes)
     assert_eq!(LARGE_BLOCK_DISTANCE % 64, 0);
-    assert_eq!(MEDIUM_BLOCK_DISTANCE % 64, 0);
   }
 
   #[test]
@@ -336,8 +187,6 @@ mod tests {
     // SAFETY: the prefetch intrinsics are explicitly documented as safe for any pointer value.
     unsafe {
       prefetch_read_l1(core::ptr::null());
-      prefetch_read_l2(core::ptr::null());
-      prefetch_for_next_iteration(core::ptr::null());
     }
   }
 

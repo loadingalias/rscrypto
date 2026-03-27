@@ -29,9 +29,6 @@
 //! baselines inform updates, but there is no separate generated source of
 //! truth anymore.
 
-// Per-item `#[allow(dead_code)]` is used on `KernelSet` (construction helper)
-// and arch-gated table modules (tables for non-current architectures).
-
 use crate::{
   checksum::dispatchers::{Crc16Fn, Crc24Fn, Crc32Fn, Crc64Fn},
   platform::Caps,
@@ -52,7 +49,7 @@ static ACTIVE_TABLE: crate::backend::cache::OnceCache<&'static KernelTable> = cr
 /// This function is called once per process and caches the result.
 #[inline]
 pub fn active_table() -> &'static KernelTable {
-  ACTIVE_TABLE.get_or_init(|| select_table(crate::checksum::dispatch_caps()))
+  ACTIVE_TABLE.get_or_init(|| select_table(crate::platform::caps()))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -430,7 +427,6 @@ pub struct KernelNameSet {
 /// Holds both function pointers and name strings. Used in `const`/`static`
 /// table definitions, then split into [`KernelFnSet`] + [`KernelNameSet`]
 /// inside [`KernelTable::from_sets`].
-#[allow(dead_code)] // Construction helper; fields consumed by from_sets at compile time
 #[derive(Clone, Copy)]
 pub struct KernelSet {
   // CRC-16
@@ -453,7 +449,6 @@ pub struct KernelSet {
   pub crc64_nvme_name: &'static str,
 }
 
-#[allow(dead_code)] // Methods consumed at compile time by from_sets / kernel_table!
 impl KernelSet {
   /// Extract the hot-path function pointer set.
   #[inline]
@@ -514,13 +509,9 @@ pub struct KernelTable {
 }
 
 /// Size-class index constants for [`KernelTable::fns`] / [`KernelTable::names`].
-#[allow(dead_code)] // Used inside select_fns / select_names; cfg-gated callers may not exercise all
 const XS: usize = 0;
-#[allow(dead_code)]
 const S: usize = 1;
-#[allow(dead_code)]
 const M: usize = 2;
-#[allow(dead_code)]
 const L: usize = 3;
 
 impl KernelTable {
@@ -2431,7 +2422,6 @@ pub use riscv64_tables::*;
 
 #[cfg(test)]
 mod tests {
-  extern crate alloc;
   use alloc::vec::Vec;
 
   use super::*;

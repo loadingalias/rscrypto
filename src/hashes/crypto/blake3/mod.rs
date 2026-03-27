@@ -6,13 +6,11 @@
 #![cfg_attr(not(test), deny(clippy::expect_used))]
 #![allow(clippy::indexing_slicing)] // Audited fixed-size parsing + perf-critical inner loops.
 
+#[cfg(feature = "std")]
+use core::cell::RefCell;
 #[cfg(any(feature = "parallel", not(target_endian = "little")))]
 use core::slice;
 use core::{cmp::min, mem::MaybeUninit, ptr};
-#[cfg(feature = "std")]
-extern crate alloc;
-#[cfg(feature = "std")]
-use core::cell::RefCell;
 #[cfg(all(feature = "std", test, feature = "parallel"))]
 use core::{
   panic::AssertUnwindSafe,
@@ -3695,8 +3693,6 @@ mod tests {
     v
   }
 
-  extern crate alloc;
-
   #[test]
   fn official_vectors_len0_hash_and_xof_prefix() {
     let mut hasher = Blake3::new();
@@ -3836,7 +3832,6 @@ mod tests {
 
   #[cfg(feature = "parallel")]
   mod parallel_pipeline {
-    extern crate alloc;
 
     use super::{
       super::{
