@@ -224,6 +224,32 @@ unsafe fn hash_long_internal_loop(input: &[u8], secret: &[u8]) -> [u64; ACC_NB] 
 // Top-level kernel functions (safe wrappers)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Long-path entry point (>240B) — no ≤240B branches.
+///
+/// Called from compile-time dispatch when the caller already knows `input.len() > MID_SIZE_MAX`.
+pub fn xxh3_64_long(input: &[u8], seed: u64) -> u64 {
+  if seed == 0 {
+    // SAFETY: NEON always available on aarch64.
+    let acc = unsafe { hash_long_internal_loop(input, &DEFAULT_SECRET) };
+    super::merge_accs(
+      &acc,
+      &DEFAULT_SECRET,
+      SECRET_MERGEACCS_START,
+      (input.len() as u64).wrapping_mul(PRIME64_1),
+    )
+  } else {
+    let secret = super::custom_default_secret(seed);
+    // SAFETY: NEON always available on aarch64.
+    let acc = unsafe { hash_long_internal_loop(input, &secret) };
+    super::merge_accs(
+      &acc,
+      &secret,
+      SECRET_MERGEACCS_START,
+      (input.len() as u64).wrapping_mul(PRIME64_1),
+    )
+  }
+}
+
 /// XXH3 64-bit hash — NEON kernel.
 ///
 /// Delegates ≤240 B to portable scalar paths; >240 B uses NEON accumulator.
@@ -237,27 +263,20 @@ pub fn xxh3_64_with_seed(input: &[u8], seed: u64) -> u64 {
   if input.len() <= MID_SIZE_MAX {
     return super::xxh3_64_129to240(input, seed, &DEFAULT_SECRET);
   }
+  xxh3_64_long(input, seed)
+}
 
+/// Long-path entry point (>240B) — no ≤240B branches.
+pub fn xxh3_128_long(input: &[u8], seed: u64) -> u128 {
   if seed == 0 {
-    // SAFETY: Dispatcher verifies NEON before selecting this kernel
-    // (always available on aarch64).
+    // SAFETY: NEON always available on aarch64.
     let acc = unsafe { hash_long_internal_loop(input, &DEFAULT_SECRET) };
-    super::merge_accs(
-      &acc,
-      &DEFAULT_SECRET,
-      SECRET_MERGEACCS_START,
-      (input.len() as u64).wrapping_mul(PRIME64_1),
-    )
+    xxh3_128_long_finalize(&acc, &DEFAULT_SECRET, input.len())
   } else {
     let secret = super::custom_default_secret(seed);
-    // SAFETY: Dispatcher verifies NEON before selecting this kernel.
+    // SAFETY: NEON always available on aarch64.
     let acc = unsafe { hash_long_internal_loop(input, &secret) };
-    super::merge_accs(
-      &acc,
-      &secret,
-      SECRET_MERGEACCS_START,
-      (input.len() as u64).wrapping_mul(PRIME64_1),
-    )
+    xxh3_128_long_finalize(&acc, &secret, input.len())
   }
 }
 
@@ -274,24 +293,7 @@ pub fn xxh3_128_with_seed(input: &[u8], seed: u64) -> u128 {
   if input.len() <= MID_SIZE_MAX {
     return super::xxh3_128_129to240(input, seed, &DEFAULT_SECRET);
   }
-
-  let (acc, secret_ref) = if seed == 0 {
-    (
-      // SAFETY: Dispatcher verifies NEON before selecting this kernel.
-      unsafe { hash_long_internal_loop(input, &DEFAULT_SECRET) },
-      &DEFAULT_SECRET[..],
-    )
-  } else {
-    let secret = super::custom_default_secret(seed);
-    // SAFETY: Dispatcher verifies NEON before selecting this kernel.
-    let acc = unsafe { hash_long_internal_loop(input, &secret) };
-    // Re-derive to keep borrow alive — custom_default_secret is cheap and
-    // only called for seed≠0 long inputs.
-    let secret2 = super::custom_default_secret(seed);
-    return xxh3_128_long_finalize(&acc, &secret2, input.len());
-  };
-
-  xxh3_128_long_finalize(&acc, secret_ref, input.len())
+  xxh3_128_long(input, seed)
 }
 
 #[inline(always)]
