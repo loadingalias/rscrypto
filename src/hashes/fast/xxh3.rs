@@ -544,6 +544,18 @@ fn custom_default_secret(seed: u64) -> [u8; DEFAULT_SECRET_SIZE] {
   result
 }
 
+/// Long-path entry point (>240B) — no ≤240B branches.
+///
+/// Called from compile-time dispatch when the caller already knows `input.len() > MID_SIZE_MAX`.
+pub(crate) fn xxh3_64_long(input: &[u8], seed: u64) -> u64 {
+  if seed == 0 {
+    xxh3_64_long_impl(input, &DEFAULT_SECRET)
+  } else {
+    let secret = custom_default_secret(seed);
+    xxh3_64_long_impl(input, &secret)
+  }
+}
+
 #[inline(always)]
 fn xxh3_64_with_seed(input: &[u8], seed: u64) -> u64 {
   if input.len() <= 16 {
@@ -552,11 +564,8 @@ fn xxh3_64_with_seed(input: &[u8], seed: u64) -> u64 {
     xxh3_64_7to128(input, seed, &DEFAULT_SECRET)
   } else if input.len() <= MID_SIZE_MAX {
     xxh3_64_129to240(input, seed, &DEFAULT_SECRET)
-  } else if seed == 0 {
-    xxh3_64_long_impl(input, &DEFAULT_SECRET)
   } else {
-    let secret = custom_default_secret(seed);
-    xxh3_64_long_impl(input, &secret)
+    xxh3_64_long(input, seed)
   }
 }
 
@@ -785,6 +794,16 @@ fn xxh3_128_long_impl(input: &[u8], secret: &[u8]) -> u128 {
   (lo as u128) | ((hi as u128) << 64)
 }
 
+/// Long-path entry point (>240B) — no ≤240B branches.
+pub(crate) fn xxh3_128_long(input: &[u8], seed: u64) -> u128 {
+  if seed == 0 {
+    xxh3_128_long_impl(input, &DEFAULT_SECRET)
+  } else {
+    let secret = custom_default_secret(seed);
+    xxh3_128_long_impl(input, &secret)
+  }
+}
+
 #[inline(always)]
 fn xxh3_128_with_seed(input: &[u8], seed: u64) -> u128 {
   if input.len() <= 16 {
@@ -793,11 +812,8 @@ fn xxh3_128_with_seed(input: &[u8], seed: u64) -> u128 {
     xxh3_128_7to128(input, seed, &DEFAULT_SECRET)
   } else if input.len() <= MID_SIZE_MAX {
     xxh3_128_129to240(input, seed, &DEFAULT_SECRET)
-  } else if seed == 0 {
-    xxh3_128_long_impl(input, &DEFAULT_SECRET)
   } else {
-    let secret = custom_default_secret(seed);
-    xxh3_128_long_impl(input, &secret)
+    xxh3_128_long(input, seed)
   }
 }
 
