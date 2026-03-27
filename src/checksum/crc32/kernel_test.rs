@@ -352,6 +352,12 @@ fn run_kernel_array(
 
 /// Run kernel array but skip duplicate function pointers (arrays pad with dups for index
 /// consistency).
+#[cfg(any(
+  target_arch = "aarch64",
+  target_arch = "powerpc64",
+  target_arch = "s390x",
+  target_arch = "riscv64"
+))]
 fn run_kernel_array_unique(
   data: &[u8],
   kernels: &[Crc32Fn],
@@ -374,6 +380,7 @@ fn run_kernel_array_unique(
   }
 }
 
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 fn run_single_kernel(data: &[u8], kernel: Crc32Fn, name: &'static str, results: &mut alloc::vec::Vec<KernelResult>) {
   let checksum = kernel(!0u32, data) ^ !0u32;
   results.push(KernelResult { name, checksum });
