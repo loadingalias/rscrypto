@@ -45,7 +45,7 @@ pub use config::{Crc64Config, Crc64Force};
 
 #[cfg(any(test, feature = "std"))]
 use crate::checksum::common::reference::crc64_bitwise;
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 use crate::checksum::common::tables::generate_crc64_tables_8;
 use crate::checksum::common::tables::{CRC64_NVME_POLY, CRC64_XZ_POLY, generate_crc64_tables_16};
 #[cfg(feature = "diag")]
