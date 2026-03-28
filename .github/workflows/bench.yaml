@@ -43,10 +43,6 @@ on:
         description: "IBM POWER10 (ppc64le)"
         required: false
         type: boolean
-      run_auth_recommended:
-        description: "Run auth benches on the recommended lanes: AMD Zen5, Intel SPR, AWS Graviton4, and IBM Z."
-        required: false
-        type: boolean
       only:
         description: "Algorithm selector(s), comma-separated (e.g. blake3,crc32c,auth,hmac,ed25519). If 'filter' is set, this scopes crate/bench selection only."
         required: false
@@ -135,7 +131,6 @@ jobs:
           RUN_GRAVITON4: ${{ inputs.run_graviton4 && 'true' || 'false' }}
           RUN_IBM_S390X: ${{ inputs.run_ibm_s390x && 'true' || 'false' }}
           RUN_IBM_POWER10: ${{ inputs.run_ibm_power10 && 'true' || 'false' }}
-          RUN_AUTH_RECOMMENDED: ${{ inputs.run_auth_recommended && 'true' || 'false' }}
         run: scripts/ci/emit-manual-matrix.sh bench
 
   bench:
@@ -173,15 +168,10 @@ jobs:
         ONLY_INPUT="${{ inputs.only }}"
         CRATES_INPUT="${{ inputs.crates }}"
         BENCHES_INPUT="${{ inputs.benches }}"
-        AUTH_PRESET_INPUT=${{ inputs.run_auth_recommended && 'true' || 'false' }}
         if [[ ",${FILTER_LOWER}," == *",hashes/comp,"* ]]; then
           echo "error: filter contains 'hashes/comp', which expands to the full hashes comp matrix." >&2
           echo "hint: use 'blake3/' for Blake3-only comp groups, or use BENCH_ONLY selectors for scoped plans." >&2
           exit 2
-        fi
-
-        if [[ "${AUTH_PRESET_INPUT}" == "true" && -z "${ONLY_INPUT}" && -z "${CRATES_INPUT}" && -z "${BENCHES_INPUT}" ]]; then
-          ONLY_INPUT="auth"
         fi
 
         BENCH_OUTPUT_DIR=benchmark-results \

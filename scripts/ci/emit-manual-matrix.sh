@@ -19,18 +19,6 @@ to_bool() {
   esac
 }
 
-auth_recommended_enabled="$(to_bool "${RUN_AUTH_RECOMMENDED:-false}")"
-
-effective_bool() {
-  local current="${1:-false}"
-  local enable_with_auth="${2:-false}"
-  if [[ "$(to_bool "$current")" == "true" || ( "$auth_recommended_enabled" == "true" && "$enable_with_auth" == "true" ) ]]; then
-    echo "true"
-  else
-    echo "false"
-  fi
-}
-
 emit_row_if_enabled() {
   local enabled="${1:-false}"
   local row="${2:-}"
@@ -50,28 +38,28 @@ COMPONENTS_STD="clippy, rustfmt, rust-src"
 RUNSON_TIMEOUT_MINUTES=180
 IBM_TIMEOUT_MINUTES=240
 
-emit_row_if_enabled "$(effective_bool "${RUN_AMD_ZEN4:-false}" false)" \
+emit_row_if_enabled "${RUN_AMD_ZEN4:-false}" \
   "{\"platform\":\"amd-zen4\",\"display_name\":\"AMD Zen4\",\"artifact_suffix\":\"amd-zen4\",\"timeout_minutes\":${RUNSON_TIMEOUT_MINUTES},\"setup_kind\":\"runson\",\"runner\":\"runs-on=${GH_RUN_ID_VAL}/runner=amd-zen4\",\"cache_key\":\"\",\"tools_mode\":\"standard\",\"toolchain_components\":\"${COMPONENTS_STD}\",\"runson_mode\":\"runson-bench\"}"
 
-emit_row_if_enabled "$(effective_bool "${RUN_INTEL_SPR:-false}" true)" \
+emit_row_if_enabled "${RUN_INTEL_SPR:-false}" \
   "{\"platform\":\"intel-spr\",\"display_name\":\"Intel Sapphire Rapids\",\"artifact_suffix\":\"intel-spr\",\"timeout_minutes\":${RUNSON_TIMEOUT_MINUTES},\"setup_kind\":\"runson\",\"runner\":\"runs-on=${GH_RUN_ID_VAL}/runner=intel-spr\",\"cache_key\":\"\",\"tools_mode\":\"standard\",\"toolchain_components\":\"${COMPONENTS_STD}\",\"runson_mode\":\"runson-bench\"}"
 
-emit_row_if_enabled "$(effective_bool "${RUN_INTEL_ICL:-false}" false)" \
+emit_row_if_enabled "${RUN_INTEL_ICL:-false}" \
   "{\"platform\":\"intel-icl\",\"display_name\":\"Intel Ice Lake\",\"artifact_suffix\":\"intel-icl\",\"timeout_minutes\":${RUNSON_TIMEOUT_MINUTES},\"setup_kind\":\"runson\",\"runner\":\"runs-on=${GH_RUN_ID_VAL}/runner=intel-icl\",\"cache_key\":\"\",\"tools_mode\":\"standard\",\"toolchain_components\":\"${COMPONENTS_STD}\",\"runson_mode\":\"runson-bench\"}"
 
-emit_row_if_enabled "$(effective_bool "${RUN_AMD_ZEN5:-false}" true)" \
+emit_row_if_enabled "${RUN_AMD_ZEN5:-false}" \
   "{\"platform\":\"amd-zen5\",\"display_name\":\"AMD Zen5\",\"artifact_suffix\":\"amd-zen5\",\"timeout_minutes\":${RUNSON_TIMEOUT_MINUTES},\"setup_kind\":\"runson\",\"runner\":\"runs-on=${GH_RUN_ID_VAL}/runner=amd-zen5\",\"cache_key\":\"\",\"tools_mode\":\"standard\",\"toolchain_components\":\"${COMPONENTS_STD}\",\"runson_mode\":\"runson-bench\"}"
 
-emit_row_if_enabled "$(effective_bool "${RUN_GRAVITON3:-false}" false)" \
+emit_row_if_enabled "${RUN_GRAVITON3:-false}" \
   "{\"platform\":\"graviton3\",\"display_name\":\"AWS Graviton3\",\"artifact_suffix\":\"graviton3\",\"timeout_minutes\":${RUNSON_TIMEOUT_MINUTES},\"setup_kind\":\"runson\",\"runner\":\"runs-on=${GH_RUN_ID_VAL}/runner=graviton3\",\"cache_key\":\"\",\"tools_mode\":\"standard\",\"toolchain_components\":\"${COMPONENTS_STD}\",\"runson_mode\":\"runson-bench\"}"
 
-emit_row_if_enabled "$(effective_bool "${RUN_GRAVITON4:-false}" true)" \
+emit_row_if_enabled "${RUN_GRAVITON4:-false}" \
   "{\"platform\":\"graviton4\",\"display_name\":\"AWS Graviton4\",\"artifact_suffix\":\"graviton4\",\"timeout_minutes\":${RUNSON_TIMEOUT_MINUTES},\"setup_kind\":\"runson\",\"runner\":\"runs-on=${GH_RUN_ID_VAL}/runner=graviton4\",\"cache_key\":\"\",\"tools_mode\":\"standard\",\"toolchain_components\":\"${COMPONENTS_STD}\",\"runson_mode\":\"runson-bench\"}"
 
-emit_row_if_enabled "$(effective_bool "${RUN_IBM_S390X:-false}" true)" \
+emit_row_if_enabled "${RUN_IBM_S390X:-false}" \
   "{\"platform\":\"ibm-s390x\",\"display_name\":\"IBM Z s390x\",\"artifact_suffix\":\"ibm-s390x\",\"timeout_minutes\":${IBM_TIMEOUT_MINUTES},\"setup_kind\":\"default\",\"runner\":\"ubuntu-24.04-s390x\",\"cache_key\":\"manual-ibm-${MODE}-s390x\",\"tools_mode\":\"none\",\"toolchain_components\":\"\",\"runson_mode\":\"runson-bench\"}"
 
-emit_row_if_enabled "$(effective_bool "${RUN_IBM_POWER10:-false}" false)" \
+emit_row_if_enabled "${RUN_IBM_POWER10:-false}" \
   "{\"platform\":\"ibm-power10\",\"display_name\":\"IBM POWER10 ppc64le\",\"artifact_suffix\":\"ibm-power10\",\"timeout_minutes\":${IBM_TIMEOUT_MINUTES},\"setup_kind\":\"default\",\"runner\":\"ubuntu-24.04-ppc64le-p10\",\"cache_key\":\"manual-ibm-${MODE}-power10\",\"tools_mode\":\"none\",\"toolchain_components\":\"\",\"runson_mode\":\"runson-bench\"}"
 
 HAS_TARGETS="false"
