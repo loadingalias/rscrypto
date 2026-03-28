@@ -118,6 +118,21 @@ unsafe fn chunk16(data: &[u8], offset: usize) -> &[[u8; 8]; 2] {
   unsafe { &*(data.as_ptr().add(offset) as *const [[u8; 8]; 2]) }
 }
 
+/// Extract two consecutive 16-byte chunks (32 bytes) at `offset`.
+///
+/// Used by `mix32_b` to pass both secret halves as a single reference,
+/// matching xxhash-rust's `get_aligned_chunk_ref::<[[[u8; 8]; 2]; 2]>`.
+///
+/// # Safety
+///
+/// Caller must ensure `offset + 32 <= data.len()`.
+#[inline(always)]
+unsafe fn chunk32(data: &[u8], offset: usize) -> &[[[u8; 8]; 2]; 2] {
+  debug_assert!(offset + 32 <= data.len());
+  // SAFETY: caller ensures bounds. The resulting reference is valid for 32 bytes.
+  unsafe { &*(data.as_ptr().add(offset) as *const [[[u8; 8]; 2]; 2]) }
+}
+
 #[inline(always)]
 const fn mult32_to64(left: u32, right: u32) -> u64 {
   (left as u64).wrapping_mul(right as u64)
@@ -167,63 +182,6 @@ const fn xxh64_avalanche(mut input: u64) -> u64 {
 }
 
 // ---------------------------------------------------------------------------
-// Precomputed 0-byte hash constants (compile-time evaluation)
-// ---------------------------------------------------------------------------
-
-/// Read a u64 from `DEFAULT_SECRET` at `offset` in little-endian order.
-/// Const-compatible alternative to `read_u64_le` (no pointer ops).
-const fn secret_u64_le(offset: usize) -> u64 {
-  u64::from_le_bytes([
-    DEFAULT_SECRET[offset],
-    DEFAULT_SECRET[offset + 1],
-    DEFAULT_SECRET[offset + 2],
-    DEFAULT_SECRET[offset + 3],
-    DEFAULT_SECRET[offset + 4],
-    DEFAULT_SECRET[offset + 5],
-    DEFAULT_SECRET[offset + 6],
-    DEFAULT_SECRET[offset + 7],
-  ])
-}
-
-/// XOR of secret[56..64] ^ secret[64..72] — the "flip" value for XXH3-64 empty input.
-const EMPTY_64_FLIP: u64 = secret_u64_le(56) ^ secret_u64_le(64);
-
-/// Precomputed XXH3-64 result for empty input with seed=0.
-const EMPTY_64_SEED0: u64 = xxh64_avalanche(EMPTY_64_FLIP);
-
-/// XOR of secret[64..72] ^ secret[72..80] — flip_lo for XXH3-128 empty input.
-const EMPTY_128_FLIP_LO: u64 = secret_u64_le(64) ^ secret_u64_le(72);
-/// XOR of secret[80..88] ^ secret[88..96] — flip_hi for XXH3-128 empty input.
-const EMPTY_128_FLIP_HI: u64 = secret_u64_le(80) ^ secret_u64_le(88);
-
-/// Precomputed XXH3-128 result for empty input with seed=0.
-const EMPTY_128_SEED0: u128 =
-  (xxh64_avalanche(EMPTY_128_FLIP_LO) as u128) | ((xxh64_avalanche(EMPTY_128_FLIP_HI) as u128) << 64);
-
-/// Fast path for 0-byte XXH3-64: returns precomputed constant for seed=0,
-/// otherwise computes avalanche from precomputed flip (no secret reads).
-#[inline(always)]
-pub(crate) fn xxh3_64_empty(seed: u64) -> u64 {
-  if seed == 0 {
-    EMPTY_64_SEED0
-  } else {
-    xxh64_avalanche(seed ^ EMPTY_64_FLIP)
-  }
-}
-
-/// Fast path for 0-byte XXH3-128: returns precomputed constant for seed=0,
-/// otherwise computes avalanche from precomputed flips (no secret reads).
-#[inline(always)]
-pub(crate) fn xxh3_128_empty(seed: u64) -> u128 {
-  if seed == 0 {
-    EMPTY_128_SEED0
-  } else {
-    let lo = xxh64_avalanche(seed ^ EMPTY_128_FLIP_LO);
-    let hi = xxh64_avalanche(seed ^ EMPTY_128_FLIP_HI);
-    (lo as u128) | ((hi as u128) << 64)
-  }
-}
-
 #[inline(always)]
 fn mix16_b(data: &[[u8; 8]; 2], secret: &[[u8; 8]; 2], seed: u64) -> u64 {
   let input_lo = u64::from_ne_bytes(data[0]).to_le();
@@ -239,24 +197,22 @@ fn mix16_b(data: &[[u8; 8]; 2], secret: &[[u8; 8]; 2], seed: u64) -> u64 {
 
 #[inline(always)]
 fn mix32_b(
-  mut acc: (u64, u64),
+  lo: &mut u64,
+  hi: &mut u64,
   data_1: &[[u8; 8]; 2],
   data_2: &[[u8; 8]; 2],
-  secret_lo: &[[u8; 8]; 2],
-  secret_hi: &[[u8; 8]; 2],
+  secret: &[[[u8; 8]; 2]; 2],
   seed: u64,
-) -> (u64, u64) {
-  acc.0 = acc.0.wrapping_add(mix16_b(data_1, secret_lo, seed));
-  acc.0 ^= u64::from_ne_bytes(data_2[0])
+) {
+  *lo = lo.wrapping_add(mix16_b(data_1, &secret[0], seed));
+  *lo ^= u64::from_ne_bytes(data_2[0])
     .to_le()
     .wrapping_add(u64::from_ne_bytes(data_2[1]).to_le());
 
-  acc.1 = acc.1.wrapping_add(mix16_b(data_2, secret_hi, seed));
-  acc.1 ^= u64::from_ne_bytes(data_1[0])
+  *hi = hi.wrapping_add(mix16_b(data_2, &secret[1], seed));
+  *hi ^= u64::from_ne_bytes(data_1[0])
     .to_le()
     .wrapping_add(u64::from_ne_bytes(data_1[1]).to_le());
-
-  acc
 }
 
 #[inline(always)]
@@ -659,56 +615,57 @@ fn xxh3_128_0to16(input: &[u8], seed: u64, secret: &[u8]) -> u128 {
 #[inline(always)]
 fn xxh3_128_7to128(input: &[u8], seed: u64, secret: &[u8]) -> u128 {
   // SAFETY: callers ensure input.len() >= 17 and secret.len() >= SECRET_SIZE_MIN (136).
+  // All chunk16/chunk32 offsets are within bounds for those guarantees.
   unsafe {
-    let mut acc = ((input.len() as u64).wrapping_mul(PRIME64_1), 0u64);
+    let mut lo = (input.len() as u64).wrapping_mul(PRIME64_1);
+    let mut hi = 0u64;
 
     if input.len() > 32 {
       if input.len() > 64 {
         if input.len() > 96 {
-          acc = mix32_b(
-            acc,
+          mix32_b(
+            &mut lo,
+            &mut hi,
             chunk16(input, 48),
             chunk16(input, input.len() - 64),
-            chunk16(secret, 96),
-            chunk16(secret, 112),
+            chunk32(secret, 96),
             seed,
           );
         }
 
-        acc = mix32_b(
-          acc,
+        mix32_b(
+          &mut lo,
+          &mut hi,
           chunk16(input, 32),
           chunk16(input, input.len() - 48),
-          chunk16(secret, 64),
-          chunk16(secret, 80),
+          chunk32(secret, 64),
           seed,
         );
       }
 
-      acc = mix32_b(
-        acc,
+      mix32_b(
+        &mut lo,
+        &mut hi,
         chunk16(input, 16),
         chunk16(input, input.len() - 32),
-        chunk16(secret, 32),
-        chunk16(secret, 48),
+        chunk32(secret, 32),
         seed,
       );
     }
 
-    acc = mix32_b(
-      acc,
+    mix32_b(
+      &mut lo,
+      &mut hi,
       chunk16(input, 0),
       chunk16(input, input.len() - 16),
-      chunk16(secret, 0),
-      chunk16(secret, 16),
+      chunk32(secret, 0),
       seed,
     );
 
-    let result_lo = acc.0.wrapping_add(acc.1);
-    let result_hi = acc
-      .0
+    let result_lo = lo.wrapping_add(hi);
+    let result_hi = lo
       .wrapping_mul(PRIME64_1)
-      .wrapping_add(acc.1.wrapping_mul(PRIME64_4))
+      .wrapping_add(hi.wrapping_mul(PRIME64_4))
       .wrapping_add(((input.len() as u64).wrapping_sub(seed)).wrapping_mul(PRIME64_2));
 
     (xxh3_avalanche(result_lo) as u128) | (((0u64.wrapping_sub(xxh3_avalanche(result_hi))) as u128) << 64)
@@ -722,52 +679,53 @@ fn xxh3_128_129to240(input: &[u8], seed: u64, secret: &[u8]) -> u128 {
   let nb_rounds = input.len() / 32;
 
   // SAFETY: input.len() is 129..=240 and secret.len() >= SECRET_SIZE_MIN (136).
+  // All chunk16/chunk32 offsets are within bounds for those guarantees.
   unsafe {
-    let mut acc = ((input.len() as u64).wrapping_mul(PRIME64_1), 0u64);
+    let mut lo = (input.len() as u64).wrapping_mul(PRIME64_1);
+    let mut hi = 0u64;
 
     let mut idx = 0usize;
     while idx < 4 {
-      acc = mix32_b(
-        acc,
+      mix32_b(
+        &mut lo,
+        &mut hi,
         chunk16(input, 32 * idx),
         chunk16(input, (32 * idx) + 16),
-        chunk16(secret, 32 * idx),
-        chunk16(secret, (32 * idx) + 16),
+        chunk32(secret, 32 * idx),
         seed,
       );
       idx += 1;
     }
 
-    acc.0 = xxh3_avalanche(acc.0);
-    acc.1 = xxh3_avalanche(acc.1);
+    lo = xxh3_avalanche(lo);
+    hi = xxh3_avalanche(hi);
 
     while idx < nb_rounds {
       let sec_off = START_OFFSET.wrapping_add(32 * (idx - 4));
-      acc = mix32_b(
-        acc,
+      mix32_b(
+        &mut lo,
+        &mut hi,
         chunk16(input, 32 * idx),
         chunk16(input, (32 * idx) + 16),
-        chunk16(secret, sec_off),
-        chunk16(secret, sec_off + 16),
+        chunk32(secret, sec_off),
         seed,
       );
       idx += 1;
     }
 
-    acc = mix32_b(
-      acc,
+    mix32_b(
+      &mut lo,
+      &mut hi,
       chunk16(input, input.len() - 16),
       chunk16(input, input.len() - 32),
-      chunk16(secret, SECRET_SIZE_MIN - LAST_OFFSET - 16),
-      chunk16(secret, SECRET_SIZE_MIN - LAST_OFFSET),
+      chunk32(secret, SECRET_SIZE_MIN - LAST_OFFSET - 16),
       0u64.wrapping_sub(seed),
     );
 
-    let result_lo = acc.0.wrapping_add(acc.1);
-    let result_hi = acc
-      .0
+    let result_lo = lo.wrapping_add(hi);
+    let result_hi = lo
       .wrapping_mul(PRIME64_1)
-      .wrapping_add(acc.1.wrapping_mul(PRIME64_4))
+      .wrapping_add(hi.wrapping_mul(PRIME64_4))
       .wrapping_add(((input.len() as u64).wrapping_sub(seed)).wrapping_mul(PRIME64_2));
 
     (xxh3_avalanche(result_lo) as u128) | (0u128.wrapping_sub(xxh3_avalanche(result_hi) as u128) << 64)
