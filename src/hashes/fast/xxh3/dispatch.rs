@@ -114,9 +114,6 @@ pub fn kernel_name_for_len(len: usize) -> &'static str {
 #[inline(always)]
 #[must_use]
 pub fn hash64_with_seed(seed: u64, data: &[u8]) -> u64 {
-  if data.is_empty() {
-    return super::xxh3_64_empty(seed);
-  }
   if data.len() <= 16 {
     return super::xxh3_64_0to16(data, seed, &super::DEFAULT_SECRET);
   }
@@ -178,9 +175,6 @@ pub fn hash64_portable(seed: u64, data: &[u8]) -> u64 {
 #[inline(always)]
 #[must_use]
 pub fn hash128_with_seed(seed: u64, data: &[u8]) -> u128 {
-  if data.is_empty() {
-    return super::xxh3_128_empty(seed);
-  }
   if data.len() <= 16 {
     return super::xxh3_128_0to16(data, seed, &super::DEFAULT_SECRET);
   }
