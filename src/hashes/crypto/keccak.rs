@@ -312,40 +312,38 @@ macro_rules! keccak_round_loop_aarch64 {
       let b19 = $a23.rotate_left(56);
       let b4 = $a24.rotate_left(14);
 
-      // χ: lane-complementing formulas (XKCP "Bebigokimisa" pattern).
-      // Reduces NOT ops from 25 to 5 per round by using AND/OR mix.
-      $a0 = b0 ^ (b1 | b2);
-      $a1 = b1 ^ ((!b2) | b3);
-      $a2 = b2 ^ (b3 & b4);
-      $a3 = b3 ^ (b4 | b0);
-      $a4 = b4 ^ (b0 & b1);
+      // χ: standard a ^ (!b & c) — on aarch64, BIC (bit-clear) already
+      // fuses NOT+AND into one instruction, so lane-complementing adds
+      // overhead instead of saving it.
+      $a0 = b0 ^ ((!b1) & b2);
+      $a1 = b1 ^ ((!b2) & b3);
+      $a2 = b2 ^ ((!b3) & b4);
+      $a3 = b3 ^ ((!b4) & b0);
+      $a4 = b4 ^ ((!b0) & b1);
 
-      $a5 = b5 ^ (b6 | b7);
-      $a6 = b6 ^ (b7 & b8);
-      $a7 = b7 ^ (b8 | (!b9));
-      $a8 = b8 ^ (b9 | b5);
-      $a9 = b9 ^ (b5 & b6);
+      $a5 = b5 ^ ((!b6) & b7);
+      $a6 = b6 ^ ((!b7) & b8);
+      $a7 = b7 ^ ((!b8) & b9);
+      $a8 = b8 ^ ((!b9) & b5);
+      $a9 = b9 ^ ((!b5) & b6);
 
-      let nb13 = !b13;
-      $a10 = b10 ^ (b11 | b12);
-      $a11 = b11 ^ (b12 & b13);
-      $a12 = b12 ^ (nb13 & b14);
-      $a13 = nb13 ^ (b14 | b10);
-      $a14 = b14 ^ (b10 & b11);
+      $a10 = b10 ^ ((!b11) & b12);
+      $a11 = b11 ^ ((!b12) & b13);
+      $a12 = b12 ^ ((!b13) & b14);
+      $a13 = b13 ^ ((!b14) & b10);
+      $a14 = b14 ^ ((!b10) & b11);
 
-      let nb18 = !b18;
-      $a15 = b15 ^ (b16 & b17);
-      $a16 = b16 ^ (b17 | b18);
-      $a17 = b17 ^ (nb18 | b19);
-      $a18 = nb18 ^ (b19 & b15);
-      $a19 = b19 ^ (b15 | b16);
+      $a15 = b15 ^ ((!b16) & b17);
+      $a16 = b16 ^ ((!b17) & b18);
+      $a17 = b17 ^ ((!b18) & b19);
+      $a18 = b18 ^ ((!b19) & b15);
+      $a19 = b19 ^ ((!b15) & b16);
 
-      let nb21 = !b21;
-      $a20 = b20 ^ (nb21 & b22);
-      $a21 = nb21 ^ (b22 | b23);
-      $a22 = b22 ^ (b23 & b24);
-      $a23 = b23 ^ (b24 | b20);
-      $a24 = b24 ^ (b20 & b21);
+      $a20 = b20 ^ ((!b21) & b22);
+      $a21 = b21 ^ ((!b22) & b23);
+      $a22 = b22 ^ ((!b23) & b24);
+      $a23 = b23 ^ ((!b24) & b20);
+      $a24 = b24 ^ ((!b20) & b21);
 
       // ι
       $a0 ^= rc;
@@ -359,33 +357,30 @@ macro_rules! keccak_round_loop_aarch64 {
 /// The explicit `b0..b24` ρ+π temporaries enable maximum ILP from the
 /// out-of-order engine. Array-based access adds unnecessary load/store
 /// traffic on this register-rich architecture.
-///
-/// Uses XKCP "Bebigokimisa" lane-complementing: lanes {1, 2, 8, 12, 17, 20}
-/// are complemented during load and un-complemented during store.
 #[cfg(target_arch = "aarch64")]
 #[inline]
 pub(crate) fn keccakf_portable(state: &mut [u64; 25]) {
   let mut a0 = state[0];
-  let mut a1 = !state[1];
-  let mut a2 = !state[2];
+  let mut a1 = state[1];
+  let mut a2 = state[2];
   let mut a3 = state[3];
   let mut a4 = state[4];
   let mut a5 = state[5];
   let mut a6 = state[6];
   let mut a7 = state[7];
-  let mut a8 = !state[8];
+  let mut a8 = state[8];
   let mut a9 = state[9];
   let mut a10 = state[10];
   let mut a11 = state[11];
-  let mut a12 = !state[12];
+  let mut a12 = state[12];
   let mut a13 = state[13];
   let mut a14 = state[14];
   let mut a15 = state[15];
   let mut a16 = state[16];
-  let mut a17 = !state[17];
+  let mut a17 = state[17];
   let mut a18 = state[18];
   let mut a19 = state[19];
-  let mut a20 = !state[20];
+  let mut a20 = state[20];
   let mut a21 = state[21];
   let mut a22 = state[22];
   let mut a23 = state[23];
@@ -396,26 +391,26 @@ pub(crate) fn keccakf_portable(state: &mut [u64; 25]) {
   );
 
   state[0] = a0;
-  state[1] = !a1;
-  state[2] = !a2;
+  state[1] = a1;
+  state[2] = a2;
   state[3] = a3;
   state[4] = a4;
   state[5] = a5;
   state[6] = a6;
   state[7] = a7;
-  state[8] = !a8;
+  state[8] = a8;
   state[9] = a9;
   state[10] = a10;
   state[11] = a11;
-  state[12] = !a12;
+  state[12] = a12;
   state[13] = a13;
   state[14] = a14;
   state[15] = a15;
   state[16] = a16;
-  state[17] = !a17;
+  state[17] = a17;
   state[18] = a18;
   state[19] = a19;
-  state[20] = !a20;
+  state[20] = a20;
   state[21] = a21;
   state[22] = a22;
   state[23] = a23;
@@ -428,9 +423,6 @@ pub(crate) fn keccakf_portable(state: &mut [u64; 25]) {
 /// rate lanes, and `state[i]` for capacity lanes. This eliminates the
 /// write-then-reload round-trip that separate `xor_block_into` + `keccakf_portable`
 /// incurs (~34 memory ops saved per SHA3-256 block).
-///
-/// Uses XKCP "Bebigokimisa" lane-complementing: lanes {1, 2, 8, 12, 17, 20}
-/// are complemented during the fused load and un-complemented during store.
 ///
 /// Since `RATE` is a const generic, `RATE / 8` is compile-time known and LLVM
 /// eliminates all `if lane < lanes` branches — the result is straight-line code.
@@ -463,30 +455,27 @@ fn keccakf_absorb_portable<const RATE: usize>(state: &mut [u64; 25], block: &[u8
     };
   }
 
-  // Lane-complementing: NOT applied after fused XOR for complemented lanes.
-  // Since ~(a ^ b) = ~a ^ b, this is equivalent to complementing state first
-  // then XORing, but avoids the extra memory round-trip.
   let mut a0 = fused_load!(0);
-  let mut a1 = !fused_load!(1);
-  let mut a2 = !fused_load!(2);
+  let mut a1 = fused_load!(1);
+  let mut a2 = fused_load!(2);
   let mut a3 = fused_load!(3);
   let mut a4 = fused_load!(4);
   let mut a5 = fused_load!(5);
   let mut a6 = fused_load!(6);
   let mut a7 = fused_load!(7);
-  let mut a8 = !fused_load!(8);
+  let mut a8 = fused_load!(8);
   let mut a9 = fused_load!(9);
   let mut a10 = fused_load!(10);
   let mut a11 = fused_load!(11);
-  let mut a12 = !fused_load!(12);
+  let mut a12 = fused_load!(12);
   let mut a13 = fused_load!(13);
   let mut a14 = fused_load!(14);
   let mut a15 = fused_load!(15);
   let mut a16 = fused_load!(16);
-  let mut a17 = !fused_load!(17);
+  let mut a17 = fused_load!(17);
   let mut a18 = fused_load!(18);
   let mut a19 = fused_load!(19);
-  let mut a20 = !fused_load!(20);
+  let mut a20 = fused_load!(20);
   let mut a21 = fused_load!(21);
   let mut a22 = fused_load!(22);
   let mut a23 = fused_load!(23);
@@ -497,26 +486,26 @@ fn keccakf_absorb_portable<const RATE: usize>(state: &mut [u64; 25], block: &[u8
   );
 
   state[0] = a0;
-  state[1] = !a1;
-  state[2] = !a2;
+  state[1] = a1;
+  state[2] = a2;
   state[3] = a3;
   state[4] = a4;
   state[5] = a5;
   state[6] = a6;
   state[7] = a7;
-  state[8] = !a8;
+  state[8] = a8;
   state[9] = a9;
   state[10] = a10;
   state[11] = a11;
-  state[12] = !a12;
+  state[12] = a12;
   state[13] = a13;
   state[14] = a14;
   state[15] = a15;
   state[16] = a16;
-  state[17] = !a17;
+  state[17] = a17;
   state[18] = a18;
   state[19] = a19;
-  state[20] = !a20;
+  state[20] = a20;
   state[21] = a21;
   state[22] = a22;
   state[23] = a23;
