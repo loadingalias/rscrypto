@@ -13,6 +13,11 @@ Watch closely, but do not let it derail first delivery:
 
 - `AEGIS-256`
 
+Companion interop profiles, once the core lands:
+
+- `ChaCha20-Poly1305` from the same ChaCha20 / Poly1305 core
+- `AES-128-GCM` and `AES-128-GCM-SIV` if downstream protocols actually need them
+
 ## Default Choices
 
 Use these defaults unless interoperability forces something else:
@@ -21,6 +26,11 @@ Use these defaults unless interoperability forces something else:
 - AES-family default: `AES-256-GCM-SIV`
 - interop default: `AES-256-GCM`
 - constrained / lightweight default: `Ascon-AEAD128`
+
+Keep one rule straight:
+
+- `XChaCha20-Poly1305` is the clean first build
+- plain `ChaCha20-Poly1305` is the interop companion, not the design center
 
 ## Why This Set
 
@@ -34,6 +44,10 @@ This should be the first AEAD you ship.
 - Operationally simpler than 96-bit nonce schemes
 
 If you control both ends, this is the cleanest first answer.
+
+The obvious follow-on is the RFC 8439 / TLS-style `ChaCha20-Poly1305` profile.
+That should be treated as a companion export once the XChaCha core and API shape
+are stable, not as a separate implementation project.
 
 ### AES-256-GCM-SIV
 
@@ -60,6 +74,7 @@ This is not optional if the goal is “important standards and the latest NIST w
 - NIST finalized SP 800-232 in August 2025.
 - It is the modern lightweight AEAD standard.
 - It fits the pure-Rust, broad-platform, no-FFI ethos well.
+- It keeps the Ascon family coherent with `Ascon-Hash256`, `Ascon-XOF128`, and the still-missing `Ascon-CXOF128`.
 
 ### AEGIS-256
 
@@ -81,7 +96,8 @@ That does not make `AEGIS-256` the first thing to build here. It makes it the th
 2. `AES-256-GCM-SIV`
 3. `AES-256-GCM`
 4. `Ascon-AEAD128`
-5. `AEGIS-256` if the project still wants to push the frontier
+5. companion interop profiles (`ChaCha20-Poly1305`, then AES-128 variants if needed)
+6. `AEGIS-256` if the project still wants to push the frontier
 
 ## SIMD / HW Rules
 
@@ -101,7 +117,7 @@ These are non-negotiable:
 
 ## Acceleration Posture
 
-As of 2026-03-24, the state of the art is not “accelerate every AEAD on every ISA equally.”
+As of 2026-03-28, the state of the art is not “accelerate every AEAD on every ISA equally.”
 
 The right rule is:
 
@@ -196,6 +212,7 @@ Required minimum shapes:
 - `decrypt`
 - `encrypt_in_place`
 - `decrypt_in_place`
+- `seal` / `open` aliases only if they map onto the exact same semantics
 - detached-tag variants
 - typed key and nonce wrappers
 
@@ -214,6 +231,8 @@ Required minimum shapes:
   https://datatracker.ietf.org/doc/html/rfc8452
 - RFC 8439: ChaCha20-Poly1305
   https://datatracker.ietf.org/doc/rfc8439/
+- Libsodium ChaCha20 / XChaCha20 guidance
+  https://doc.libsodium.org/secret-key_cryptography/aead/chacha20-poly1305
 - NIST SP 800-38D: GCM
   https://csrc.nist.gov/pubs/sp/800/38/d/final
 - NIST SP 800-232: Ascon-AEAD128 and Ascon family

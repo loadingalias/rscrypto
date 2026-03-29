@@ -11,13 +11,13 @@ For the first post-quantum wave, focus on:
 Track closely:
 
 - `HQC`
-- `FN-DSA`
+- `FN-DSA` / draft `FIPS 206`
 - hybrid `TLS 1.3`
 - PQ / hybrid `HPKE`
 
 ## Current State
 
-As of 2026-03-24, the official NIST baseline is:
+As of 2026-03-28, the official NIST baseline is:
 
 - `FIPS 203` — `ML-KEM`
 - `FIPS 204` — `ML-DSA`
@@ -28,6 +28,8 @@ NIST has also:
 
 - selected `HQC` on 2025-03-11 as a fourth-round KEM for future standardization
 - published draft migration guidance in `NIST IR 8547`
+- publicly presented `FIPS 206: FN-DSA (Falcon)` in September 2025; treat it as
+  an active draft track, not as a stable baseline
 
 So the serious answer is no longer “wait and see.” The standards exist now.
 
@@ -80,13 +82,14 @@ This is the signature watch item.
 
 These are the protocol destinations, not the first primitive implementations.
 
-- hybrid TLS 1.3 is still draft work
-- PQ and hybrid HPKE are active draft work
+- hybrid TLS 1.3 is effectively in the RFC Editor queue
+- PQ and hybrid HPKE are active draft work, with `draft-ietf-hpke-pq-04`
+  published on March 2, 2026
 
 That means:
 
 - build primitives first
-- build hybrid composition APIs second
+- build composition helpers second
 - build full protocol glue last
 
 ## SIMD / HW Rules
@@ -116,11 +119,12 @@ For PQC especially:
 ## Build Order
 
 1. `ML-KEM`
-2. `ML-DSA`
-3. hybrid composition helpers around classical + `ML-KEM`
+2. hybrid composition helpers around classical + `ML-KEM`
+3. `ML-DSA`
 4. `SLH-DSA`
 5. `HQC`
 6. protocol-layer hybrid `HPKE` / `TLS` helpers only after the primitive layer is solid
+7. `FN-DSA` only when the draft standard is materially settled
 
 ## Strong Opinion
 
@@ -152,6 +156,8 @@ But do not try to ship every PQ candidate. That would be a mess.
   https://csrc.nist.gov/pubs/ir/8547/ipd
 - NIST HQC selection
   https://csrc.nist.gov/News/2025/hqc-announced-as-a-4th-round-selection
+- NIST FIPS 206: FN-DSA presentation
+  https://csrc.nist.gov/presentations/2025/fips-206-fn-dsa-falcon
 - NIST approval of FIPS 203 / 204 / 205
   https://csrc.nist.gov/News/2024/postquantum-cryptography-fips-approved
 - Hybrid TLS 1.3 draft

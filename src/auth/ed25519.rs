@@ -1,22 +1,24 @@
-//! Ed25519 typed wrappers and constants.
-//!
-//! This module establishes the public shape for the upcoming Ed25519
-//! implementation without exposing a fake signer yet. It provides the stable
-//! byte-level types that the real signing and verification code will hang off.
+//! Ed25519 signing and verification with typed keys and signatures.
 //!
 //! # Quick Start
 //!
 //! ```rust
-//! use rscrypto::auth::ed25519::{Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature};
+//! use rscrypto::auth::ed25519::{Ed25519Keypair, Ed25519SecretKey};
 //!
 //! let secret = Ed25519SecretKey::from_bytes([7u8; Ed25519SecretKey::LENGTH]);
-//! let public = Ed25519PublicKey::from_bytes([9u8; Ed25519PublicKey::LENGTH]);
-//! let sig = Ed25519Signature::from_bytes([0u8; Ed25519Signature::LENGTH]);
+//! let keypair = Ed25519Keypair::from_secret_key(secret.clone());
+//! let public = keypair.public_key();
+//! let sig = secret.sign(b"auth");
 //!
 //! assert_eq!(secret.as_bytes().len(), 32);
 //! assert_eq!(public.as_bytes().len(), 32);
 //! assert_eq!(sig.as_bytes().len(), 64);
+//! assert!(public.verify(b"auth", &sig).is_ok());
 //! ```
+//!
+//! The public API keeps secret keys, public keys, signatures, and keypairs as
+//! distinct types instead of passing raw byte slices through signing and
+//! verification calls.
 
 use core::fmt;
 
@@ -90,9 +92,8 @@ const _: fn(&scalar::Scalar, &scalar::Scalar, &scalar::Scalar) -> scalar::Scalar
 
 /// Ed25519 secret key bytes.
 ///
-/// The actual signing API will be added once the scalar, point, and verification
-/// pipeline is implemented. For now this type exists to lock in the typed-key
-/// surface instead of using vague `&[u8]` parameters.
+/// Provides typed signing and public-key derivation instead of vague `&[u8]`
+/// parameters at the call site.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct Ed25519SecretKey([u8; Self::LENGTH]);
 
@@ -200,6 +201,11 @@ impl fmt::Debug for Ed25519PublicKey {
 
 impl Ed25519PublicKey {
   /// Verify a message/signature pair against this public key.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`VerificationError`] if the public key bytes are invalid, the
+  /// signature is non-canonical, or the signature does not match `message`.
   pub fn verify(&self, message: &[u8], signature: &Ed25519Signature) -> Result<(), VerificationError> {
     verify(message, self, signature)
   }
@@ -291,6 +297,11 @@ impl fmt::Debug for Ed25519Keypair {
 }
 
 /// Verify a message/signature pair against an Ed25519 public key.
+///
+/// # Errors
+///
+/// Returns [`VerificationError`] if the public key bytes are invalid, the
+/// signature is non-canonical, or the signature does not match `message`.
 pub fn verify(
   message: &[u8],
   public_key: &Ed25519PublicKey,

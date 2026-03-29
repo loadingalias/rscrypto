@@ -1,23 +1,23 @@
 # Auth Roadmap
 
-## Current Status (2026-03-25)
+## Current Status (2026-03-28)
 
 Phase 1 (HMAC-SHA256, HKDF-SHA256, Ed25519) is **shipped and benchmarked**.
 
-**CI benchmark results** — [run #23544327679](https://github.com/loadingalias/rscrypto/actions/runs/23544327679) on Zen5, SPR, Graviton4, s390x:
+**Historical CI benchmark results** — [run #23544327679](https://github.com/loadingalias/rscrypto/actions/runs/23544327679) on Zen5, SPR, Graviton4, s390x:
 
 | Primitive | vs | Win Rate | Key Finding |
 |-----------|-----|---------|-------------|
 | **HMAC-SHA256** | `hmac`+`sha2` | **53%** (19W/12T/5L) | Grav4: 3.3-3.7x WIN (SHA-CE). s390x: 1.7-9.4x WIN (KIMD). Zen5/SPR: 4-6% loss at 0-32 B (key setup overhead). |
-| **HKDF-SHA256** | `hkdf`+`sha2` | ~38% | Grav4: 1.6-2.0x WIN. Zen5/SPR: **1.5-1.9x LOSS** — key pad caching gap. |
+| **HKDF-SHA256** | `hkdf`+`sha2` | ~38% | Grav4: 1.6-2.0x WIN. Older Zen5/SPR runs showed **1.5-1.9x LOSS**; remeasure after the cached `prk_mac` path now in tree. |
 | **Ed25519** | `ed25519-dalek` | **0%** | **8-13x behind** everywhere. Expected — portable double-and-add vs dalek's optimized scalar field backends. |
 
 ### Performance Priorities
 
-1. **HKDF expand on x86-64** — 1.5-1.9x behind. Root cause: the expand loop calls
-   full HMAC per iteration; RustCrypto likely caches inner/outer HMAC key pads across
-   iterations, avoiding redundant SHA-256 compressions. Bounded optimization — cache
-   the HMAC key schedule once in `HkdfSha256::new()` and reuse across `expand()` calls.
+1. **HKDF expand on x86-64** — rerun the matrix and measure the residual gap.
+   The old x86-64 loss was tied to repeated keyed-HMAC setup. The current code
+   already caches keyed HMAC state inside `HkdfSha256`, so the next step is
+   evidence, not another speculative rewrite.
 
 2. **Ed25519 scalar field** — 8-13x behind. This is the deep problem. Dalek uses:
    - Precomputed basepoint tables for fixed-base scalar mul (sign/keygen)
@@ -40,28 +40,31 @@ Build this authentication and key-derivation stack first:
 - `HKDF-SHA256` ✅ shipped
 - `Ed25519` / `EdDSA` ✅ shipped (correctness-first, performance pending)
 - `KMAC256` and `cSHAKE256`
+- `Ascon-CXOF128`
 - `Argon2id` only if password hashing enters scope
 
 Keep this split clear:
 
 - protocol compatibility: `HMAC-SHA256`, `HKDF-SHA256`, `Ed25519`
 - NIST-native SHA-3 track: `KMAC256`, `cSHAKE256`
+- Ascon standards track: `Ascon-AEAD128`, `Ascon-Hash256`, `Ascon-XOF128`, `Ascon-CXOF128`
 - internal-only keyed hashing / derivation: `BLAKE3` keyed mode and `derive_key`
 
 ## Why This Set
 
-As of 2026-03-24, the boring, defensible baseline is still:
+As of 2026-03-28, the boring, defensible baseline is still:
 
 - `HMAC-SHA256` for request signing, token MACs, and compatibility surfaces
 - `HKDF-SHA256` for extract-then-expand key derivation
 - `Ed25519` for fast modern signatures
-- `KMAC256` where you want a NIST SHA-3-native MAC/PRF instead of HMAC
+- `KMAC256` and `cSHAKE256` where you want a NIST SHA-3-native MAC / PRF / customization story
+- `Ascon-CXOF128` to complete the Ascon family that NIST finalized in SP 800-232
 
 This is the right split because it covers:
 
 - IETF protocol reality
 - NIST reality
-- internal systems that want a modern fast keyed hash
+- internal systems that want modern keyed derivation without a dependency tower
 
 ## Ship Now — ✅ ALL SHIPPED
 
@@ -92,9 +95,19 @@ These are worth doing after HMAC and HKDF, not before.
 - They give you a SHA-3-native MAC / PRF / customizable hash story.
 - They matter if you want `rscrypto` to cover the NIST world cleanly, not just the IETF world.
 
+### 5. Ascon-CXOF128
+
+This is the obvious missing member of the Ascon family.
+
+- NIST SP 800-232 finalized `Ascon-AEAD128`, `Ascon-Hash256`, `Ascon-XOF128`,
+  and `Ascon-CXOF128` on August 13, 2025.
+- `rscrypto` already ships the hash/XOF half of that family.
+- `Ascon-CXOF128` lets the Ascon track cover customization cleanly instead of
+  leaving that story entirely to Keccak.
+
 ## Defer
 
-### 5. Argon2id
+### 6. Argon2id
 
 If password hashing becomes a real requirement, `Argon2id` is the right choice.
 
@@ -131,6 +144,7 @@ For auth, that means:
 
 - `HMAC-SHA256` and `HKDF-SHA256` should inherit the `SHA-256` backend matrix directly
 - `KMAC256` and `cSHAKE256` should inherit the `Keccak` backend matrix directly
+- `Ascon-CXOF128` should inherit the `Ascon` permutation backend matrix directly
 - `Ed25519` should get a portable constant-time baseline first, then targeted SIMD on the architectures where it clearly pays off
 - `Argon2id` is a separate memory-hard subsystem and should not be judged by the same “every ISA gets a bespoke kernel” bar
 
@@ -196,7 +210,8 @@ This is not a failure of ambition. `Argon2id` is memory-hard; bandwidth and layo
 3. `Ed25519`
 4. `KMAC256`
 5. `cSHAKE256`
-6. `Argon2id` if password auth becomes real
+6. `Ascon-CXOF128`
+7. `Argon2id` if password auth becomes real
 
 ## Phase 1 API Shape
 
@@ -386,6 +401,7 @@ This is the release bar the auth subsystem should aim at.
 | `HMAC-SHA256` | yes | yes | inherit `SHA-NI` | inherit SHA2 CE | inherit only when validated | inherit `KIMD` | inherit `Zknh` |
 | `HKDF-SHA256` | yes | yes | inherit `SHA-NI` | inherit SHA2 CE | inherit only when validated | inherit `KIMD` | inherit `Zknh` |
 | `KMAC256` / `cSHAKE256` | yes | yes | measured dispatch only | measured dispatch only | portable first | `KIMD` / absorb where it wins | portable first |
+| `Ascon-CXOF128` | yes | yes | measured dispatch only | measured dispatch only | portable first | portable first | portable first |
 | `Ed25519` | yes | yes | portable, then `AVX2`, then maybe `AVX-512IFMA` | portable, then `NEON`, then maybe `SVE2` | portable first | portable first | portable first |
 | `Argon2id` | `alloc`-centric | maybe | portable, then `AVX2` | portable, then `NEON` | portable first | portable first | portable first |
 
@@ -403,6 +419,10 @@ This is the release bar the auth subsystem should aim at.
   https://csrc.nist.gov/pubs/sp/800/185/final
 - NIST decision to revise SP 800-185 / update FIPS 202
   https://csrc.nist.gov/news/2025/decision-to-update-fips-202-and-revise-sp-800-185
+- NIST SP 800-232: Ascon standard family
+  https://csrc.nist.gov/pubs/sp/800/232/final
+- NIST Lightweight Cryptography project
+  https://csrc.nist.gov/projects/lightweight-cryptography
 - NIST FIPS 186-5 / SP 800-186 announcement
   https://csrc.nist.gov/News/2023/nist-releases-fips-186-5-and-sp-800-186
 - NIST SP 800-186: Edwards curves for government use

@@ -14,11 +14,9 @@
 //! | [`Xof`] | Extendable-output functions | BLAKE3 XOF |
 //! | [`FastHash`] | Fast non-cryptographic hashes (**NOT CRYPTO**) | XXH3, rapidhash |
 //!
-//! Future traits (not yet implemented):
-//!
-//! - `Aead` - Authenticated encryption (AES-GCM, ChaCha20-Poly1305, AEGIS)
-//! - `Cipher` - Block/stream ciphers (AES, ChaCha20)
-//! - `Kdf` - Key derivation functions (HKDF, Argon2, scrypt)
+//! These traits deliberately share a small set of repeated patterns:
+//! streaming `new`/`update`/`finalize`/`reset` for stateful algorithms,
+//! one-shot helpers for in-memory inputs, and opaque verification failures.
 //!
 //! # Error Types
 //!

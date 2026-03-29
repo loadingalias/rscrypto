@@ -13,7 +13,7 @@ use rscrypto::checksum::introspect::{DispatchInfo, KernelIntrospect, is_hardware
 #[cfg(feature = "checksums")]
 use rscrypto::checksum::{Crc32Castagnoli, Crc32Ieee, Crc64Xz};
 #[cfg(feature = "hashes")]
-use rscrypto::hashes::fast::{RapidHash64, Xxh3_64};
+use rscrypto::hashes::fast::{RapidHash64, RapidHashFast64, RapidHashFast128, Xxh3_64};
 #[cfg(feature = "hashes")]
 use rscrypto::hashes::introspect::{HashKernelIntrospect, kernel_for as hash_kernel_for};
 #[cfg(all(feature = "hashes", feature = "std"))]
@@ -134,6 +134,8 @@ fn root_surface_hash_exports_compile() {
 
   assert_eq!(Xxh3::hash(data), Xxh3_64::hash(data));
   assert_eq!(RapidHash::hash(data), RapidHash64::hash(data));
+  let _ = RapidHashFast64::hash(data);
+  let _ = RapidHashFast128::hash(data);
   assert_ne!(Xxh3::hash(data), Xxh3::hash_with_seed(7, data));
 }
 
