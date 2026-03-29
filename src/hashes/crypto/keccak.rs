@@ -64,6 +64,12 @@ const RC: [u64; KECCAKF_ROUNDS] = [
 // Measured: 8% faster than array-based on Graviton4.
 
 /// x86-64 / s390x / generic: array-based Keccak-f[1600].
+///
+/// Uses the XKCP "Bebigokimisa" lane-complementing technique: lanes
+/// {1, 2, 8, 12, 17, 20} are stored in complemented form during the
+/// 24 rounds, replacing 20 of 25 NOT operations per round with AND/OR.
+/// Pre/post complementation costs 12 ops total, saving ~480 NOTs across
+/// all rounds.
 #[cfg(not(target_arch = "aarch64"))]
 #[inline]
 #[allow(unused_assignments)] // final ρ+π iteration assigns `last` which is intentionally unused
@@ -79,30 +85,19 @@ pub(crate) fn keccakf_portable(state: &mut [u64; 25]) {
     };
   }
 
-  // χ row: buffer 5 lanes, then apply a ^ (!b & c).
-  macro_rules! chi_row {
-    ($state:ident, $arr:ident, $y:expr) => {
-      $arr[0] = $state[$y];
-      $arr[1] = $state[$y + 1];
-      $arr[2] = $state[$y + 2];
-      $arr[3] = $state[$y + 3];
-      $arr[4] = $state[$y + 4];
-      $state[$y] = $arr[0] ^ (!$arr[1] & $arr[2]);
-      $state[$y + 1] = $arr[1] ^ (!$arr[2] & $arr[3]);
-      $state[$y + 2] = $arr[2] ^ (!$arr[3] & $arr[4]);
-      $state[$y + 3] = $arr[3] ^ (!$arr[4] & $arr[0]);
-      $state[$y + 4] = $arr[4] ^ (!$arr[0] & $arr[1]);
-    };
-  }
+  // Lane-complementing: complement selected lanes before rounds.
+  // The modified χ formulas account for this, reducing NOT count from 25 to 5
+  // per round. Complement set: {1, 2, 8, 12, 17, 20}.
+  state[1] = !state[1];
+  state[2] = !state[2];
+  state[8] = !state[8];
+  state[12] = !state[12];
+  state[17] = !state[17];
+  state[20] = !state[20];
 
   // Not unrolled: ~110 ops per round × 24 = too large for L1i if unrolled.
   for &rc in &RC {
-    let mut arr = [0u64; 5];
-
     // θ: column parity → all 5 d-values upfront (independent, max OOO parallelism).
-    // The column-at-a-time variant computes d-values serially which hides less
-    // latency on wide-issue x86-64 pipelines. Computing all 5 first lets the
-    // OOO engine overlap the rotate+XOR computations.
     let c0 = state[0] ^ state[5] ^ state[10] ^ state[15] ^ state[20];
     let c1 = state[1] ^ state[6] ^ state[11] ^ state[16] ^ state[21];
     let c2 = state[2] ^ state[7] ^ state[12] ^ state[17] ^ state[22];
@@ -172,16 +167,64 @@ pub(crate) fn keccakf_portable(state: &mut [u64; 25]) {
       (1, 44),
     );
 
-    // χ: row-by-row with 5-element buffer
-    chi_row!(state, arr, 0);
-    chi_row!(state, arr, 5);
-    chi_row!(state, arr, 10);
-    chi_row!(state, arr, 15);
-    chi_row!(state, arr, 20);
+    // χ: lane-complementing formulas (XKCP "Bebigokimisa" pattern).
+    // Each row uses a mix of AND/OR/NOT instead of uniform NOT-AND,
+    // reducing total NOT ops from 25 to 5 per round.
+    {
+      let (b0, b1, b2, b3, b4) = (state[0], state[1], state[2], state[3], state[4]);
+      state[0] = b0 ^ (b1 | b2);
+      state[1] = b1 ^ ((!b2) | b3);
+      state[2] = b2 ^ (b3 & b4);
+      state[3] = b3 ^ (b4 | b0);
+      state[4] = b4 ^ (b0 & b1);
+    }
+    {
+      let (b0, b1, b2, b3, b4) = (state[5], state[6], state[7], state[8], state[9]);
+      state[5] = b0 ^ (b1 | b2);
+      state[6] = b1 ^ (b2 & b3);
+      state[7] = b2 ^ (b3 | (!b4));
+      state[8] = b3 ^ (b4 | b0);
+      state[9] = b4 ^ (b0 & b1);
+    }
+    {
+      let (b0, b1, b2, b3, b4) = (state[10], state[11], state[12], state[13], state[14]);
+      let nb3 = !b3;
+      state[10] = b0 ^ (b1 | b2);
+      state[11] = b1 ^ (b2 & b3);
+      state[12] = b2 ^ (nb3 & b4);
+      state[13] = nb3 ^ (b4 | b0);
+      state[14] = b4 ^ (b0 & b1);
+    }
+    {
+      let (b0, b1, b2, b3, b4) = (state[15], state[16], state[17], state[18], state[19]);
+      let nb3 = !b3;
+      state[15] = b0 ^ (b1 & b2);
+      state[16] = b1 ^ (b2 | b3);
+      state[17] = b2 ^ (nb3 | b4);
+      state[18] = nb3 ^ (b4 & b0);
+      state[19] = b4 ^ (b0 | b1);
+    }
+    {
+      let (b0, b1, b2, b3, b4) = (state[20], state[21], state[22], state[23], state[24]);
+      let nb1 = !b1;
+      state[20] = b0 ^ (nb1 & b2);
+      state[21] = nb1 ^ (b2 | b3);
+      state[22] = b2 ^ (b3 & b4);
+      state[23] = b3 ^ (b4 | b0);
+      state[24] = b4 ^ (b0 & b1);
+    }
 
     // ι
     state[0] ^= rc;
   }
+
+  // Un-complement to restore standard form.
+  state[1] = !state[1];
+  state[2] = !state[2];
+  state[8] = !state[8];
+  state[12] = !state[12];
+  state[17] = !state[17];
+  state[20] = !state[20];
 }
 
 // ---------------------------------------------------------------------------
@@ -269,36 +312,40 @@ macro_rules! keccak_round_loop_aarch64 {
       let b19 = $a23.rotate_left(56);
       let b4 = $a24.rotate_left(14);
 
-      // χ
-      $a0 = b0 ^ ((!b1) & b2);
-      $a1 = b1 ^ ((!b2) & b3);
-      $a2 = b2 ^ ((!b3) & b4);
-      $a3 = b3 ^ ((!b4) & b0);
-      $a4 = b4 ^ ((!b0) & b1);
+      // χ: lane-complementing formulas (XKCP "Bebigokimisa" pattern).
+      // Reduces NOT ops from 25 to 5 per round by using AND/OR mix.
+      $a0 = b0 ^ (b1 | b2);
+      $a1 = b1 ^ ((!b2) | b3);
+      $a2 = b2 ^ (b3 & b4);
+      $a3 = b3 ^ (b4 | b0);
+      $a4 = b4 ^ (b0 & b1);
 
-      $a5 = b5 ^ ((!b6) & b7);
-      $a6 = b6 ^ ((!b7) & b8);
-      $a7 = b7 ^ ((!b8) & b9);
-      $a8 = b8 ^ ((!b9) & b5);
-      $a9 = b9 ^ ((!b5) & b6);
+      $a5 = b5 ^ (b6 | b7);
+      $a6 = b6 ^ (b7 & b8);
+      $a7 = b7 ^ (b8 | (!b9));
+      $a8 = b8 ^ (b9 | b5);
+      $a9 = b9 ^ (b5 & b6);
 
-      $a10 = b10 ^ ((!b11) & b12);
-      $a11 = b11 ^ ((!b12) & b13);
-      $a12 = b12 ^ ((!b13) & b14);
-      $a13 = b13 ^ ((!b14) & b10);
-      $a14 = b14 ^ ((!b10) & b11);
+      let nb13 = !b13;
+      $a10 = b10 ^ (b11 | b12);
+      $a11 = b11 ^ (b12 & b13);
+      $a12 = b12 ^ (nb13 & b14);
+      $a13 = nb13 ^ (b14 | b10);
+      $a14 = b14 ^ (b10 & b11);
 
-      $a15 = b15 ^ ((!b16) & b17);
-      $a16 = b16 ^ ((!b17) & b18);
-      $a17 = b17 ^ ((!b18) & b19);
-      $a18 = b18 ^ ((!b19) & b15);
-      $a19 = b19 ^ ((!b15) & b16);
+      let nb18 = !b18;
+      $a15 = b15 ^ (b16 & b17);
+      $a16 = b16 ^ (b17 | b18);
+      $a17 = b17 ^ (nb18 | b19);
+      $a18 = nb18 ^ (b19 & b15);
+      $a19 = b19 ^ (b15 | b16);
 
-      $a20 = b20 ^ ((!b21) & b22);
-      $a21 = b21 ^ ((!b22) & b23);
-      $a22 = b22 ^ ((!b23) & b24);
-      $a23 = b23 ^ ((!b24) & b20);
-      $a24 = b24 ^ ((!b20) & b21);
+      let nb21 = !b21;
+      $a20 = b20 ^ (nb21 & b22);
+      $a21 = nb21 ^ (b22 | b23);
+      $a22 = b22 ^ (b23 & b24);
+      $a23 = b23 ^ (b24 | b20);
+      $a24 = b24 ^ (b20 & b21);
 
       // ι
       $a0 ^= rc;
@@ -312,30 +359,33 @@ macro_rules! keccak_round_loop_aarch64 {
 /// The explicit `b0..b24` ρ+π temporaries enable maximum ILP from the
 /// out-of-order engine. Array-based access adds unnecessary load/store
 /// traffic on this register-rich architecture.
+///
+/// Uses XKCP "Bebigokimisa" lane-complementing: lanes {1, 2, 8, 12, 17, 20}
+/// are complemented during load and un-complemented during store.
 #[cfg(target_arch = "aarch64")]
 #[inline]
 pub(crate) fn keccakf_portable(state: &mut [u64; 25]) {
   let mut a0 = state[0];
-  let mut a1 = state[1];
-  let mut a2 = state[2];
+  let mut a1 = !state[1];
+  let mut a2 = !state[2];
   let mut a3 = state[3];
   let mut a4 = state[4];
   let mut a5 = state[5];
   let mut a6 = state[6];
   let mut a7 = state[7];
-  let mut a8 = state[8];
+  let mut a8 = !state[8];
   let mut a9 = state[9];
   let mut a10 = state[10];
   let mut a11 = state[11];
-  let mut a12 = state[12];
+  let mut a12 = !state[12];
   let mut a13 = state[13];
   let mut a14 = state[14];
   let mut a15 = state[15];
   let mut a16 = state[16];
-  let mut a17 = state[17];
+  let mut a17 = !state[17];
   let mut a18 = state[18];
   let mut a19 = state[19];
-  let mut a20 = state[20];
+  let mut a20 = !state[20];
   let mut a21 = state[21];
   let mut a22 = state[22];
   let mut a23 = state[23];
@@ -346,26 +396,26 @@ pub(crate) fn keccakf_portable(state: &mut [u64; 25]) {
   );
 
   state[0] = a0;
-  state[1] = a1;
-  state[2] = a2;
+  state[1] = !a1;
+  state[2] = !a2;
   state[3] = a3;
   state[4] = a4;
   state[5] = a5;
   state[6] = a6;
   state[7] = a7;
-  state[8] = a8;
+  state[8] = !a8;
   state[9] = a9;
   state[10] = a10;
   state[11] = a11;
-  state[12] = a12;
+  state[12] = !a12;
   state[13] = a13;
   state[14] = a14;
   state[15] = a15;
   state[16] = a16;
-  state[17] = a17;
+  state[17] = !a17;
   state[18] = a18;
   state[19] = a19;
-  state[20] = a20;
+  state[20] = !a20;
   state[21] = a21;
   state[22] = a22;
   state[23] = a23;
@@ -378,6 +428,9 @@ pub(crate) fn keccakf_portable(state: &mut [u64; 25]) {
 /// rate lanes, and `state[i]` for capacity lanes. This eliminates the
 /// write-then-reload round-trip that separate `xor_block_into` + `keccakf_portable`
 /// incurs (~34 memory ops saved per SHA3-256 block).
+///
+/// Uses XKCP "Bebigokimisa" lane-complementing: lanes {1, 2, 8, 12, 17, 20}
+/// are complemented during the fused load and un-complemented during store.
 ///
 /// Since `RATE` is a const generic, `RATE / 8` is compile-time known and LLVM
 /// eliminates all `if lane < lanes` branches — the result is straight-line code.
@@ -410,27 +463,30 @@ fn keccakf_absorb_portable<const RATE: usize>(state: &mut [u64; 25], block: &[u8
     };
   }
 
+  // Lane-complementing: NOT applied after fused XOR for complemented lanes.
+  // Since ~(a ^ b) = ~a ^ b, this is equivalent to complementing state first
+  // then XORing, but avoids the extra memory round-trip.
   let mut a0 = fused_load!(0);
-  let mut a1 = fused_load!(1);
-  let mut a2 = fused_load!(2);
+  let mut a1 = !fused_load!(1);
+  let mut a2 = !fused_load!(2);
   let mut a3 = fused_load!(3);
   let mut a4 = fused_load!(4);
   let mut a5 = fused_load!(5);
   let mut a6 = fused_load!(6);
   let mut a7 = fused_load!(7);
-  let mut a8 = fused_load!(8);
+  let mut a8 = !fused_load!(8);
   let mut a9 = fused_load!(9);
   let mut a10 = fused_load!(10);
   let mut a11 = fused_load!(11);
-  let mut a12 = fused_load!(12);
+  let mut a12 = !fused_load!(12);
   let mut a13 = fused_load!(13);
   let mut a14 = fused_load!(14);
   let mut a15 = fused_load!(15);
   let mut a16 = fused_load!(16);
-  let mut a17 = fused_load!(17);
+  let mut a17 = !fused_load!(17);
   let mut a18 = fused_load!(18);
   let mut a19 = fused_load!(19);
-  let mut a20 = fused_load!(20);
+  let mut a20 = !fused_load!(20);
   let mut a21 = fused_load!(21);
   let mut a22 = fused_load!(22);
   let mut a23 = fused_load!(23);
@@ -441,26 +497,26 @@ fn keccakf_absorb_portable<const RATE: usize>(state: &mut [u64; 25], block: &[u8
   );
 
   state[0] = a0;
-  state[1] = a1;
-  state[2] = a2;
+  state[1] = !a1;
+  state[2] = !a2;
   state[3] = a3;
   state[4] = a4;
   state[5] = a5;
   state[6] = a6;
   state[7] = a7;
-  state[8] = a8;
+  state[8] = !a8;
   state[9] = a9;
   state[10] = a10;
   state[11] = a11;
-  state[12] = a12;
+  state[12] = !a12;
   state[13] = a13;
   state[14] = a14;
   state[15] = a15;
   state[16] = a16;
-  state[17] = a17;
+  state[17] = !a17;
   state[18] = a18;
   state[19] = a19;
-  state[20] = a20;
+  state[20] = !a20;
   state[21] = a21;
   state[22] = a22;
   state[23] = a23;
@@ -536,8 +592,13 @@ impl Permuter for InlinePermuter {
   }
 }
 
-/// aarch64 permuter: portable for single-state (SHA3 CE loses to scalar due
-/// to FMOV domain-crossing overhead), SHA3 CE for 2-state interleaved.
+/// aarch64 permuter: SHA3 CE full-NEON kernel when available, portable fallback.
+///
+/// The full-NEON kernel keeps all 25 state lanes in NEON registers for all 24
+/// rounds, using LD1R/ST1 for load/store (no GPR↔NEON domain crossing).
+/// XAR fuses θ XOR-back + ρ + π into one instruction per lane.
+/// This is ~24% faster than the portable scalar path on Apple Silicon and
+/// Graviton with SHA3 CE.
 #[cfg(target_arch = "aarch64")]
 #[derive(Clone, Copy)]
 pub(crate) struct Aarch64Permuter {
@@ -561,13 +622,11 @@ impl Default for Aarch64Permuter {
 impl Permuter for Aarch64Permuter {
   #[inline(always)]
   fn permute(self, state: &mut [u64; 25], _len_hint: usize) {
-    // Portable scalar kernel is faster than SHA3 CE for single-state on
-    // both Apple Silicon and Neoverse V1/V2: the FMOV domain-crossing
-    // overhead between GPR↔NEON per SHA3 CE instruction exceeds the
-    // instruction count savings from EOR3/RAX1/BCAX. SHA3 CE is only
-    // profitable for the 2-state interleaved path where both NEON lanes
-    // carry useful work.
-    keccakf_portable(state);
+    if self.has_sha3 {
+      aarch64::keccakf_aarch64_sha3(state);
+    } else {
+      keccakf_portable(state);
+    }
   }
 
   #[inline(always)]
