@@ -6,14 +6,18 @@
 
 use crate::platform::Caps;
 
-/// Forced backend selection for CRC-32/CRC-32C.
+/// Requested backend override for CRC-32 and CRC-32C.
+///
+/// Requests are clamped to detected CPU capabilities before use.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum Crc32Force {
   /// Use the default auto selector.
   #[default]
   Auto,
-  /// Force the bitwise reference implementation (slow, obviously correct).
+  /// Force the bitwise reference implementation.
+  ///
+  /// This is the correctness oracle used to validate optimized kernels.
   Reference,
   /// Force the portable table-based implementation.
   Portable,
@@ -40,6 +44,7 @@ pub enum Crc32Force {
 }
 
 impl Crc32Force {
+  /// Return the stable selector name used by debug and configuration surfaces.
   #[must_use]
   pub const fn as_str(self) -> &'static str {
     match self {
@@ -227,7 +232,10 @@ fn clamp_force_to_caps(requested: Crc32Force, caps: Caps) -> Crc32Force {
   }
 }
 
-/// CRC-32 runtime configuration (force mode only).
+/// Resolved CRC-32 force configuration.
+///
+/// `requested_force` is the user or environment request. `effective_force` is
+/// the same request clamped to the current platform capabilities.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Crc32Config {
   /// Requested force mode (env/programmatic).
@@ -253,7 +261,10 @@ fn config(caps: Caps) -> Crc32Config {
   }
 }
 
-/// Cached process-wide CRC-32 configuration.
+/// Return the cached process-wide CRC-32 configuration.
+///
+/// Under `std`, this reflects `RSCRYPTO_CRC32_FORCE` clamped to the detected
+/// platform capabilities.
 #[inline]
 #[must_use]
 pub fn get() -> Crc32Config {

@@ -6,14 +6,18 @@
 
 use crate::platform::Caps;
 
-/// Forced backend selection for CRC-24.
+/// Requested backend override for CRC-24.
+///
+/// Requests are clamped to detected CPU capabilities before use.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum Crc24Force {
   /// Use the default auto selector.
   #[default]
   Auto,
-  /// Force the bitwise reference implementation (slow, obviously correct).
+  /// Force the bitwise reference implementation.
+  ///
+  /// This is the correctness oracle used to validate optimized kernels.
   Reference,
   /// Force the portable tier (slice-by-8).
   Portable,
@@ -26,6 +30,7 @@ pub enum Crc24Force {
 }
 
 impl Crc24Force {
+  /// Return the stable selector name used by debug and configuration surfaces.
   #[must_use]
   pub const fn as_str(self) -> &'static str {
     match self {
@@ -126,7 +131,10 @@ fn clamp_force_to_caps(requested: Crc24Force, caps: Caps) -> Crc24Force {
   }
 }
 
-/// CRC-24 runtime configuration (force mode only).
+/// Resolved CRC-24 force configuration.
+///
+/// `requested_force` is the user or environment request. `effective_force` is
+/// the same request clamped to the current platform capabilities.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Crc24Config {
   /// Requested force mode (env/programmatic).
@@ -152,7 +160,10 @@ fn config(caps: Caps) -> Crc24Config {
   }
 }
 
-/// Cached process-wide CRC-24 configuration.
+/// Return the cached process-wide CRC-24 configuration.
+///
+/// Under `std`, this reflects `RSCRYPTO_CRC24_FORCE` clamped to the detected
+/// platform capabilities.
 #[inline]
 #[must_use]
 pub fn get() -> Crc24Config {

@@ -77,7 +77,7 @@ impl Caps {
   /// or in test builds. Enable it in Cargo.toml:
   /// ```toml
   /// [dependencies]
-  /// platform = { version = "...", features = ["testing"] }
+  /// rscrypto = { version = "...", features = ["testing"] }
   /// ```
   #[cfg(any(test, feature = "testing"))]
   #[inline]

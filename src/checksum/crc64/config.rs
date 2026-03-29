@@ -6,22 +6,18 @@
 
 use crate::platform::Caps;
 
-/// Forced backend selection for CRC-64.
+/// Requested backend override for CRC-64.
 ///
-/// This is a *request* that is clamped to the detected CPU capabilities to
-/// guarantee safety (e.g., forcing VPCLMUL on a CPU without VPCLMUL will fall
-/// back to `Auto` selection).
+/// This is a request that is clamped to detected CPU capabilities before use.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum Crc64Force {
   /// Use the default auto selector.
   #[default]
   Auto,
-  /// Force the bitwise reference implementation (slow, obviously correct).
+  /// Force the bitwise reference implementation.
   ///
-  /// This is the canonical reference against which all optimizations are
-  /// verified. Use for correctness testing or when absolute auditability
-  /// is required over performance.
+  /// This is the correctness oracle used to validate optimized kernels.
   Reference,
   /// Force the portable table-based implementation.
   Portable,
@@ -46,6 +42,7 @@ pub enum Crc64Force {
 }
 
 impl Crc64Force {
+  /// Return the stable selector name used by debug and configuration surfaces.
   #[must_use]
   pub const fn as_str(self) -> &'static str {
     match self {
@@ -215,7 +212,10 @@ fn clamp_force_to_caps(requested: Crc64Force, caps: Caps) -> Crc64Force {
   }
 }
 
-/// CRC-64 runtime configuration (force mode only).
+/// Resolved CRC-64 force configuration.
+///
+/// `requested_force` is the user or environment request. `effective_force` is
+/// the same request clamped to the current platform capabilities.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Crc64Config {
   /// Requested force mode (env/programmatic).
@@ -243,7 +243,10 @@ fn config(caps: Caps) -> Crc64Config {
   }
 }
 
-/// Cached process-wide CRC-64 configuration.
+/// Return the cached process-wide CRC-64 configuration.
+///
+/// Under `std`, this reflects `RSCRYPTO_CRC64_FORCE` clamped to the detected
+/// platform capabilities.
 #[inline]
 #[must_use]
 pub fn get() -> Crc64Config {
