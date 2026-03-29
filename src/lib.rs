@@ -113,7 +113,8 @@
 //! - `rscrypto::checksum::config` for checksum force/config controls
 //! - `rscrypto::checksum::introspect` for checksum dispatch reporting
 //! - `rscrypto::hashes::introspect` for hash kernel reporting
-//! - `rscrypto::hashes::fast` for explicit fast-hash family access
+//! - `rscrypto::hashes::fast` for explicit fast-hash family access, including `RapidHashFast64` and
+//!   `RapidHashFast128`
 //! - `rscrypto::platform` for platform detection and override control
 //!
 //! ## `no_std` Usage
@@ -279,7 +280,7 @@ use rscrypto::checksum::config::Crc32Config;
 use rscrypto::checksum::buffered::BufferedCrc32C;
 use rscrypto::checksum::introspect::{DispatchInfo, kernel_for};
 use rscrypto::checksum::{Crc32Castagnoli, Crc32Ieee, Crc64Xz};
-use rscrypto::hashes::fast::{RapidHash64, Xxh3_64};
+use rscrypto::hashes::fast::{RapidHash64, RapidHashFast128, RapidHashFast64, Xxh3_64};
 use rscrypto::hashes::introspect::{HashKernelIntrospect, kernel_for as hash_kernel_for};
 use rscrypto::hashes::DigestReader;
 use rscrypto::{AsconXof, AsconXofReader, RapidHash, Xxh3};
@@ -297,6 +298,7 @@ let _ = (core::any::TypeId::of::<AsconXof>(), core::any::TypeId::of::<AsconXofRe
 let _ = core::any::TypeId::of::<BufferedCrc32C>();
 let _ = (core::any::TypeId::of::<Xxh3>(), core::any::TypeId::of::<Xxh3_64>());
 let _ = (core::any::TypeId::of::<RapidHash>(), core::any::TypeId::of::<RapidHash64>());
+let _ = (core::any::TypeId::of::<RapidHashFast64>(), core::any::TypeId::of::<RapidHashFast128>());
 ```
 "#]
 pub struct __RootSurfaceAudit;
@@ -506,8 +508,8 @@ mod send_sync_assertions {
     assert_send_sync::<Xxh3_128>();
     assert_send_sync::<RapidHash>();
     assert_send_sync::<RapidHash128>();
-    assert_send_sync::<RapidHashFast64>();
-    assert_send_sync::<RapidHashFast128>();
+    assert_send_sync::<hashes::fast::RapidHashFast64>();
+    assert_send_sync::<hashes::fast::RapidHashFast128>();
   }
 
   #[test]
@@ -619,8 +621,8 @@ mod send_sync_assertions {
     assert_clone::<Xxh3_128>();
     assert_clone::<RapidHash>();
     assert_clone::<RapidHash128>();
-    assert_clone::<RapidHashFast64>();
-    assert_clone::<RapidHashFast128>();
+    assert_clone::<hashes::fast::RapidHashFast64>();
+    assert_clone::<hashes::fast::RapidHashFast128>();
 
     assert_debug::<Sha256>();
     assert_debug::<Sha224>();
@@ -644,8 +646,8 @@ mod send_sync_assertions {
     assert_debug::<Xxh3_128>();
     assert_debug::<RapidHash>();
     assert_debug::<RapidHash128>();
-    assert_debug::<RapidHashFast64>();
-    assert_debug::<RapidHashFast128>();
+    assert_debug::<hashes::fast::RapidHashFast64>();
+    assert_debug::<hashes::fast::RapidHashFast128>();
   }
 
   #[test]
