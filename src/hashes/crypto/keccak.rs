@@ -581,13 +581,13 @@ impl Permuter for InlinePermuter {
   }
 }
 
-/// aarch64 permuter: SHA3 CE full-NEON kernel when available, portable fallback.
+/// aarch64 permuter: portable for single-state, SHA3 CE for 2-state interleaved.
 ///
-/// The full-NEON kernel keeps all 25 state lanes in NEON registers for all 24
-/// rounds, using LD1R/ST1 for load/store (no GPR↔NEON domain crossing).
-/// XAR fuses θ XOR-back + ρ + π into one instruction per lane.
-/// This is ~24% faster than the portable scalar path on Apple Silicon and
-/// Graviton with SHA3 CE.
+/// The full-NEON SHA3 CE kernel (LD1R/XAR/BCAX/ST1) is fast on Apple Silicon
+/// but ~1.8× slower than portable on Graviton3/Graviton4 (Neoverse V1/V2) due
+/// to different SHA3 CE microarchitecture characteristics. The portable scalar
+/// path remains the production single-state kernel on aarch64. SHA3 CE is used
+/// only for the 2-state interleaved path where both NEON lanes carry useful work.
 #[cfg(target_arch = "aarch64")]
 #[derive(Clone, Copy)]
 pub(crate) struct Aarch64Permuter {
@@ -611,11 +611,7 @@ impl Default for Aarch64Permuter {
 impl Permuter for Aarch64Permuter {
   #[inline(always)]
   fn permute(self, state: &mut [u64; 25], _len_hint: usize) {
-    if self.has_sha3 {
-      aarch64::keccakf_aarch64_sha3(state);
-    } else {
-      keccakf_portable(state);
-    }
+    keccakf_portable(state);
   }
 
   #[inline(always)]
