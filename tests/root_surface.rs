@@ -1,5 +1,12 @@
 #![allow(unused_imports)]
 
+#[cfg(feature = "aead")]
+use rscrypto::Aead;
+#[cfg(feature = "aead")]
+use rscrypto::aead::{
+  AeadBackend, AeadBufferError, AeadPrimitive, BenchLane, Nonce96, Nonce128, Nonce192, OpenError, XChaCha20Poly1305,
+  XChaCha20Poly1305Key, XChaCha20Poly1305Tag, lane_target_backend, select_backend,
+};
 #[cfg(feature = "auth")]
 use rscrypto::auth::HkdfOutputLengthError;
 #[cfg(all(feature = "checksums", feature = "alloc"))]
@@ -18,6 +25,8 @@ use rscrypto::hashes::fast::{RapidHash64, RapidHashFast64, RapidHashFast128, Xxh
 use rscrypto::hashes::introspect::{HashKernelIntrospect, kernel_for as hash_kernel_for};
 #[cfg(all(feature = "hashes", feature = "std"))]
 use rscrypto::hashes::{DigestReader, DigestWriter};
+#[cfg(feature = "aead")]
+use rscrypto::platform::{Arch, Caps};
 #[cfg(feature = "hashes")]
 use rscrypto::{
   AsconHash256, AsconXof, AsconXofReader, Blake3, Blake3Xof, Digest, FastHash, RapidHash, RapidHash128, Sha3_224,
@@ -36,6 +45,79 @@ use rscrypto::{VerificationError, ct};
 fn root_surface_core_exports_compile() {
   let _ = VerificationError::new();
   assert!(ct::constant_time_eq(b"ok", b"ok"));
+}
+
+#[test]
+#[cfg(feature = "aead")]
+fn root_surface_aead_exports_compile() {
+  let nonce96 = Nonce96::from_bytes([0x11; Nonce96::LENGTH]);
+  let nonce128 = Nonce128::from_bytes([0x22; Nonce128::LENGTH]);
+  let nonce192 = Nonce192::from_bytes([0x33; Nonce192::LENGTH]);
+
+  assert_eq!(nonce96.as_bytes().len(), Nonce96::LENGTH);
+  assert_eq!(nonce128.as_bytes().len(), Nonce128::LENGTH);
+  assert_eq!(nonce192.as_bytes().len(), Nonce192::LENGTH);
+
+  let _ = AeadBufferError::new();
+  let _ = OpenError::buffer();
+  let _ = OpenError::verification();
+  let _ = AeadPrimitive::XChaCha20Poly1305.name();
+  let _ = AeadBackend::Portable.name();
+  let _ = BenchLane::IntelSpr.platform_name();
+  let _ = BenchLane::Graviton4.arch();
+  let _ = lane_target_backend(AeadPrimitive::Aes256Gcm, BenchLane::IntelSpr);
+  let _ = select_backend(AeadPrimitive::AsconAead128, Arch::Wasm32, Caps::NONE);
+
+  fn assert_aead_trait<T: Aead>() {}
+
+  #[derive(Clone)]
+  struct Marker;
+
+  impl Aead for Marker {
+    const KEY_SIZE: usize = 32;
+    const NONCE_SIZE: usize = Nonce96::LENGTH;
+    const TAG_SIZE: usize = 16;
+
+    type Key = [u8; 32];
+    type Nonce = Nonce96;
+    type Tag = [u8; 16];
+
+    fn new(_key: &Self::Key) -> Self {
+      Self
+    }
+
+    fn tag_from_slice(bytes: &[u8]) -> Result<Self::Tag, AeadBufferError> {
+      if bytes.len() != Self::TAG_SIZE {
+        return Err(AeadBufferError::new());
+      }
+
+      let mut tag = [0u8; Self::TAG_SIZE];
+      tag.copy_from_slice(bytes);
+      Ok(tag)
+    }
+
+    fn encrypt_in_place(&self, _nonce: &Self::Nonce, _aad: &[u8], _buffer: &mut [u8]) -> Self::Tag {
+      [0u8; Self::TAG_SIZE]
+    }
+
+    fn decrypt_in_place(
+      &self,
+      _nonce: &Self::Nonce,
+      _aad: &[u8],
+      _buffer: &mut [u8],
+      _tag: &Self::Tag,
+    ) -> Result<(), VerificationError> {
+      Ok(())
+    }
+  }
+
+  assert_aead_trait::<Marker>();
+
+  let key = XChaCha20Poly1305Key::from_bytes([0x44; XChaCha20Poly1305::KEY_SIZE]);
+  let cipher = XChaCha20Poly1305::new(&key);
+  let mut sealed = [0u8; 20];
+  cipher.encrypt(&nonce192, b"aad", b"test", &mut sealed).unwrap();
+  let _ = XChaCha20Poly1305Tag::from_bytes([0u8; XChaCha20Poly1305Tag::LENGTH]);
 }
 
 #[test]

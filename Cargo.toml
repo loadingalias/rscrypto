@@ -78,12 +78,13 @@ broken_intra_doc_links = "deny"
 private_intra_doc_links = "warn"
 
 [features]
-default = ["std", "checksums", "hashes", "auth"]
+default = ["std", "checksums", "hashes", "auth", "aead"]
 std = ["alloc"]
 alloc = []
 checksums = []
 hashes = []
 auth = ["hashes"]
+aead = []
 parallel = ["std", "dep:rayon"]
 diag = ["std"]
 testing = []
@@ -117,6 +118,7 @@ digest = { version = "0.11.2", features = ["dev"] }
 ed25519-dalek = "2.1.1"
 hmac = "0.12.1"
 hkdf = "0.12.4"
+chacha20poly1305 = "0.10.1"
 
 [[bench]]
 name = "blake3"

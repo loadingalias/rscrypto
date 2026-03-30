@@ -7,6 +7,7 @@
 //!
 //! | Trait | Purpose | Examples |
 //! |-------|---------|----------|
+//! | [`Aead`] | Authenticated encryption with associated data | XChaCha20-Poly1305 |
 //! | [`Checksum`] | Non-cryptographic checksums | CRC32, CRC64, xxHash |
 //! | [`ChecksumCombine`] | Parallel checksum combination | CRC with O(log n) combine |
 //! | [`Digest`] | Cryptographic digests | BLAKE3, SHA-2 |
@@ -26,6 +27,8 @@
 //!
 //! This crate denies `unwrap`, `expect`, and indexing in non-test code to ensure
 //! all error paths are handled explicitly.
+#[cfg(feature = "aead")]
+mod aead;
 mod checksum;
 pub mod ct;
 mod digest;
@@ -36,6 +39,8 @@ pub mod io;
 mod mac;
 mod xof;
 
+#[cfg(feature = "aead")]
+pub use aead::Aead;
 pub use checksum::{Checksum, ChecksumCombine};
 pub use digest::Digest;
 pub use error::VerificationError;

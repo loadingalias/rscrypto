@@ -99,6 +99,7 @@
 //! | `checksums` | Yes | CRC-16, CRC-24, CRC-32, and CRC-64 algorithms |
 //! | `hashes` | Yes | Cryptographic and fast hash families |
 //! | `auth` | Yes | HMAC-SHA256, HKDF-SHA256, and Ed25519 |
+//! | `aead` | Yes | AEAD traits, nonce wrappers, and AEAD-specific errors |
 //! | `parallel` | No | Rayon-based parallel hashing (Blake3) |
 //!
 //! # Examples
@@ -169,6 +170,8 @@ extern crate alloc;
 extern crate std;
 
 // Internal modules (not published as separate crates)
+#[cfg(feature = "aead")]
+pub mod aead;
 #[cfg(feature = "auth")]
 pub mod auth;
 #[doc(hidden)]
@@ -184,6 +187,8 @@ pub mod hashes;
 
 // ─── Checksum re-exports ────────────────────────────────────────────────────
 
+#[cfg(feature = "aead")]
+pub use aead::{XChaCha20Poly1305, XChaCha20Poly1305Key, XChaCha20Poly1305Tag};
 #[cfg(feature = "auth")]
 pub use auth::{
   Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature, HkdfSha256, HmacSha256, verify_ed25519,
@@ -198,9 +203,10 @@ pub use hashes::crypto::{
 };
 #[cfg(feature = "hashes")]
 pub use hashes::fast::{RapidHash, RapidHash128, RapidHashFast64, RapidHashFast128, Xxh3, Xxh3_128};
-pub use traits::ct;
 // ─── Trait re-exports ───────────────────────────────────────────────────────
-pub use traits::{Checksum, ChecksumCombine, Mac, VerificationError};
+#[cfg(feature = "aead")]
+pub use traits::Aead;
+pub use traits::{Checksum, ChecksumCombine, Mac, VerificationError, ct};
 #[cfg(feature = "hashes")]
 pub use traits::{Digest, FastHash, Xof};
 
