@@ -3,6 +3,11 @@
 #[cfg(all(feature = "checksums", feature = "std"))]
 use std::io::{Cursor, Read, Write};
 
+#[cfg(feature = "aead")]
+use rscrypto::{
+  Aead, VerificationError, XChaCha20Poly1305, XChaCha20Poly1305Key,
+  aead::{AeadBufferError, Nonce96, Nonce192},
+};
 #[cfg(feature = "hashes")]
 use rscrypto::{
   AsconXof, Blake3, Digest, Sha3_224, Sha3_256, Sha3_384, Sha3_512, Sha224, Sha256, Sha384, Sha512, Sha512_256,
@@ -48,6 +53,116 @@ where
   assert!(mac.verify(&expected).is_ok());
 }
 
+#[cfg(feature = "aead")]
+#[derive(Clone, PartialEq, Eq)]
+struct ApiKey([u8; 32]);
+
+#[cfg(feature = "aead")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ApiTag([u8; 16]);
+
+#[cfg(feature = "aead")]
+impl AsRef<[u8]> for ApiTag {
+  fn as_ref(&self) -> &[u8] {
+    &self.0
+  }
+}
+
+#[cfg(feature = "aead")]
+#[derive(Clone)]
+struct ApiAead {
+  key: ApiKey,
+}
+
+#[cfg(feature = "aead")]
+impl ApiAead {
+  fn mask(&self, nonce: &Nonce96, aad: &[u8]) -> u8 {
+    self.key.0[0] ^ nonce.as_bytes()[0] ^ (aad.len() as u8)
+  }
+
+  fn compute_tag(&self, nonce: &Nonce96, aad: &[u8], ciphertext: &[u8]) -> ApiTag {
+    let mut tag = [0u8; 16];
+    tag[0] = self.mask(nonce, aad);
+    tag[1] = ciphertext.len() as u8;
+    for (index, &byte) in ciphertext.iter().enumerate() {
+      tag[index % 14 + 2] ^= byte;
+    }
+    ApiTag(tag)
+  }
+}
+
+#[cfg(feature = "aead")]
+impl Aead for ApiAead {
+  const KEY_SIZE: usize = 32;
+  const NONCE_SIZE: usize = Nonce96::LENGTH;
+  const TAG_SIZE: usize = 16;
+
+  type Key = ApiKey;
+  type Nonce = Nonce96;
+  type Tag = ApiTag;
+
+  fn new(key: &Self::Key) -> Self {
+    Self { key: key.clone() }
+  }
+
+  fn tag_from_slice(bytes: &[u8]) -> Result<Self::Tag, AeadBufferError> {
+    if bytes.len() != Self::TAG_SIZE {
+      return Err(AeadBufferError::new());
+    }
+
+    let mut tag = [0u8; Self::TAG_SIZE];
+    tag.copy_from_slice(bytes);
+    Ok(ApiTag(tag))
+  }
+
+  fn encrypt_in_place(&self, nonce: &Self::Nonce, aad: &[u8], buffer: &mut [u8]) -> Self::Tag {
+    let mask = self.mask(nonce, aad);
+    for byte in buffer.iter_mut() {
+      *byte ^= mask;
+    }
+    self.compute_tag(nonce, aad, buffer)
+  }
+
+  fn decrypt_in_place(
+    &self,
+    nonce: &Self::Nonce,
+    aad: &[u8],
+    buffer: &mut [u8],
+    tag: &Self::Tag,
+  ) -> Result<(), VerificationError> {
+    if self.compute_tag(nonce, aad, buffer) != *tag {
+      return Err(VerificationError::new());
+    }
+
+    let mask = self.mask(nonce, aad);
+    for byte in buffer.iter_mut() {
+      *byte ^= mask;
+    }
+    Ok(())
+  }
+}
+
+#[cfg(feature = "aead")]
+fn assert_aead_api<A>(key: A::Key, nonce: A::Nonce)
+where
+  A: Aead,
+{
+  let aead = A::new(&key);
+  let plaintext = b"abc";
+
+  let mut sealed = [0u8; 19];
+  aead.encrypt(&nonce, b"aad", plaintext, &mut sealed).unwrap();
+
+  let mut opened = [0u8; 3];
+  aead.decrypt(&nonce, b"aad", &sealed, &mut opened).unwrap();
+  assert_eq!(&opened, plaintext);
+
+  let mut detached = *b"abc";
+  let tag = aead.encrypt_in_place_detached(&nonce, b"aad", &mut detached);
+  aead.decrypt_in_place(&nonce, b"aad", &mut detached, &tag).unwrap();
+  assert_eq!(&detached, plaintext);
+}
+
 #[test]
 #[cfg(feature = "hashes")]
 fn all_digests_follow_new_update_finalize_reset() {
@@ -88,6 +203,16 @@ fn all_xofs_follow_new_update_finalize_xof_and_xof() {
 #[cfg(feature = "auth")]
 fn all_macs_follow_new_update_finalize_reset() {
   assert_mac_api::<HmacSha256>();
+}
+
+#[test]
+#[cfg(feature = "aead")]
+fn all_aeads_follow_new_encrypt_decrypt_and_detached_aliases() {
+  assert_aead_api::<ApiAead>(ApiKey([7u8; 32]), Nonce96::from_bytes([9u8; Nonce96::LENGTH]));
+  assert_aead_api::<XChaCha20Poly1305>(
+    XChaCha20Poly1305Key::from_bytes([3u8; XChaCha20Poly1305::KEY_SIZE]),
+    Nonce192::from_bytes([5u8; Nonce192::LENGTH]),
+  );
 }
 
 #[test]
