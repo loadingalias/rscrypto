@@ -19,6 +19,7 @@ macro_rules! ror_u64x2 {
 }
 
 #[cfg(target_arch = "aarch64")]
+#[cfg_attr(not(any(test, feature = "std")), allow(dead_code))]
 #[target_feature(enable = "neon")]
 unsafe fn combine_lanes(a: u64, b: u64) -> uint64x2_t {
   vcombine_u64(vcreate_u64(a), vcreate_u64(b))
@@ -98,6 +99,7 @@ pub(crate) fn permute_12_aarch64_neon(state: &mut [u64; 5]) {
 ///
 /// Caller must ensure the `neon` CPU feature is available.
 #[cfg(target_arch = "aarch64")]
+#[cfg_attr(not(any(test, feature = "std")), allow(dead_code))]
 #[target_feature(enable = "neon")]
 #[inline]
 unsafe fn permute_12_aarch64_neon_x2_impl(states: &mut [[u64; 5]; 2]) {
@@ -165,6 +167,7 @@ unsafe fn permute_12_aarch64_neon_x2_impl(states: &mut [[u64; 5]; 2]) {
 
 /// Apply the Ascon-p[12] permutation to two independent states in parallel.
 #[cfg(target_arch = "aarch64")]
+#[cfg_attr(not(any(test, feature = "std")), allow(dead_code))]
 #[inline]
 pub(crate) fn permute_12_aarch64_neon_x2(states: &mut [[u64; 5]; 2]) {
   // SAFETY: Dispatch verifies aarch64::NEON before selecting this kernel.

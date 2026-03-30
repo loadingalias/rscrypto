@@ -1,5 +1,19 @@
 # AEAD Roadmap
 
+## Current Status (2026-03-30)
+
+`XChaCha20-Poly1305` is shipped on the typed AEAD surface.
+The plain `ChaCha20-Poly1305` interop companion is shipped on the same core.
+The ChaCha-family core now has explicit backend routing for `x86_64` (`portable -> AVX2 -> AVX-512`), `aarch64` (`portable -> NEON`), `wasm32/wasm64` (`portable -> simd128`), and explicit `s390x` / `powerpc64` / `riscv64` vector routes.
+`Poly1305` now follows the same primitive-keyed dispatch contract, with architecture-specific block kernels on `x86_64` (`AVX2` / `AVX-512`), `aarch64` (`NEON`), and `wasm32` (`simd128`), plus explicit fallback routes everywhere else.
+
+Still missing from the primary rollout:
+
+- `AES-256-GCM-SIV`
+- `AES-256-GCM`
+- `Ascon-AEAD128`
+- `AEGIS-256`
+
 ## Recommended Set
 
 Build this AEAD portfolio:
@@ -99,6 +113,12 @@ That does not make `AEGIS-256` the first thing to build here. It makes it the th
 5. companion interop profiles (`ChaCha20-Poly1305`, then AES-128 variants if needed)
 6. `AEGIS-256` if the project still wants to push the frontier
 
+Reality check as of 2026-03-30:
+
+- item 1 is shipped
+- the `ChaCha20-Poly1305` companion from item 5 is also shipped because it falls out of the same core and is too cheap to defer artificially
+- items 2, 3, 4, and 6 remain open
+
 ## SIMD / HW Rules
 
 These are non-negotiable:
@@ -136,7 +156,8 @@ This should be the software-first AEAD, and that has consequences:
 - `wasm32`: yes
 - `x86_64`: `AVX2` first, `AVX-512` only if it clearly wins end-to-end
 - `aarch64`: `NEON` first
-- `powerpc64` / `s390x` / `riscv64`: portable first unless a clear vector path justifies itself
+- `wasm32` / `wasm64`: portable baseline, then `simd128` if it stays honest end-to-end
+- `powerpc64` / `s390x` / `riscv64`: explicit vector routes are allowed, but only portable-first claims count until benchmarked
 
 Do not overfit this to AES-heavy hardware. The point of `XChaCha20-Poly1305` is exactly that it stays strong where AES hardware is absent or awkward.
 
@@ -193,7 +214,7 @@ This is the release bar the AEAD subsystem should aim at.
 
 | Primitive | `no_std` | `wasm32` | `x86_64` | `aarch64` | `powerpc64` | `s390x` | `riscv64` |
 |-----------|----------|----------|----------|-----------|-------------|---------|-----------|
-| `XChaCha20-Poly1305` | yes | yes | portable, then `AVX2`, then maybe `AVX-512` | portable, then `NEON` | portable first | portable first | portable first |
+| `XChaCha20-Poly1305` | yes | yes | portable, then `AVX2`, then `AVX-512` if it wins | portable, then `NEON` | portable first, explicit vector route | portable first, explicit vector route | portable first, explicit vector route |
 | `AES-256-GCM-SIV` | yes | yes | `AES-NI` / `PCLMUL`, then `VAES` / `VPCLMUL` | AES + `PMULL` | only if proven | hardware AES/GCM if clean | portable first |
 | `AES-256-GCM` | yes | yes | `AES-NI` / `PCLMUL`, then `VAES` / `VPCLMUL` | AES + `PMULL` | only if proven | hardware AES/GCM if clean | portable first |
 | `Ascon-AEAD128` | yes | yes | portable first, SIMD only if measured | portable first, SIMD only if measured | portable first | portable first | portable first |

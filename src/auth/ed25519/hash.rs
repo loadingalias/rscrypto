@@ -16,6 +16,7 @@ use super::{
 use crate::{hashes::crypto::Sha512, traits::ct};
 
 /// Expanded secret-key material derived from SHA-512(secret_key).
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) struct ExpandedSecret {
   scalar_bytes: [u8; SECRET_KEY_LENGTH],
   nonce_prefix: [u8; SECRET_KEY_LENGTH],

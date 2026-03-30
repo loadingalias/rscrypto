@@ -23,6 +23,12 @@
 //! let keypair = Ed25519Keypair::from_secret_key(Ed25519SecretKey::from_bytes([7u8; 32]));
 //! let sig = keypair.sign(b"auth");
 //! assert!(keypair.public_key().verify(b"auth", &sig).is_ok());
+//!
+//! let mut kmac = rscrypto::Kmac256::new(b"shared-secret", b"svc=v1");
+//! kmac.update(b"auth");
+//! let mut kmac_tag = [0u8; 32];
+//! kmac.finalize_into(&mut kmac_tag);
+//! assert!(rscrypto::Kmac256::verify(b"shared-secret", b"svc=v1", b"auth", &kmac_tag).is_ok());
 //! # Ok::<(), rscrypto::auth::HkdfOutputLengthError>(())
 //! ```
 //!
@@ -31,13 +37,16 @@
 //! - [`ed25519`] - Ed25519 key and signature types.
 //! - [`hmac`] - HMAC-based authentication.
 //! - [`hkdf`] - HKDF extract-then-expand key derivation.
+//! - [`kmac`] - KMAC256 variable-output MAC.
 
 pub mod ed25519;
 pub mod hkdf;
 pub mod hmac;
+pub mod kmac;
 
 pub use ed25519::{Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature, verify as verify_ed25519};
 pub use hkdf::{HkdfOutputLengthError, HkdfSha256};
 pub use hmac::HmacSha256;
+pub use kmac::Kmac256;
 
 pub use crate::traits::Mac;

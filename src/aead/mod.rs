@@ -5,6 +5,7 @@
 //! - AEAD-specific error types
 //! - explicit nonce wrappers
 //! - lane and backend planning for the AEAD rollout
+//! - dispatch introspection
 //! - the shared [`Aead`] trait re-export
 //!
 //! Concrete AEAD algorithms will land here on top of the same typed surface.
@@ -14,9 +15,12 @@ use core::fmt;
 pub use crate::traits::Aead;
 use crate::traits::VerificationError;
 mod chacha20;
+mod chacha20poly1305;
+pub mod introspect;
 mod poly1305;
 pub mod targets;
 mod xchacha20poly1305;
+pub use chacha20poly1305::{ChaCha20Poly1305, ChaCha20Poly1305Key, ChaCha20Poly1305Tag};
 pub use targets::{AeadBackend, AeadPrimitive, BenchLane, lane_target_backend, select_backend};
 pub use xchacha20poly1305::{XChaCha20Poly1305, XChaCha20Poly1305Key, XChaCha20Poly1305Tag};
 

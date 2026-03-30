@@ -10,7 +10,7 @@
 
 use crate::platform::{
   Arch, Caps,
-  caps::{aarch64, power, s390x, x86},
+  caps::{aarch64, power, riscv, s390x, wasm, x86},
 };
 
 /// AEAD primitives planned for the public surface.
@@ -88,6 +88,7 @@ impl AeadPrimitive {
 pub enum AeadBackend {
   Portable,
   WasmPortable,
+  WasmSimd128,
   X86Avx2,
   X86Avx512,
   X86Aesni,
@@ -99,8 +100,11 @@ pub enum AeadBackend {
   Aarch64AesPmull,
   Aarch64Sve2AesPmull,
   S390xMsa,
+  S390xVector,
   Power8Crypto,
+  PowerVector,
   Riscv64VectorCrypto,
+  Riscv64Vector,
 }
 
 impl AeadBackend {
@@ -110,6 +114,7 @@ impl AeadBackend {
     match self {
       Self::Portable => "portable",
       Self::WasmPortable => "wasm32/portable",
+      Self::WasmSimd128 => "wasm32/simd128",
       Self::X86Avx2 => "x86_64/avx2",
       Self::X86Avx512 => "x86_64/avx512",
       Self::X86Aesni => "x86_64/aesni",
@@ -121,8 +126,11 @@ impl AeadBackend {
       Self::Aarch64AesPmull => "aarch64/aes+pmull",
       Self::Aarch64Sve2AesPmull => "aarch64/sve2+aes+pmull",
       Self::S390xMsa => "s390x/msa",
+      Self::S390xVector => "s390x/vector",
       Self::Power8Crypto => "powerpc64/crypto",
+      Self::PowerVector => "powerpc64/vector",
       Self::Riscv64VectorCrypto => "riscv64/vector-crypto",
+      Self::Riscv64Vector => "riscv64/vector",
     }
   }
 }
@@ -189,9 +197,10 @@ impl BenchLane {
 pub const fn lane_target_backend(primitive: AeadPrimitive, lane: BenchLane) -> AeadBackend {
   match primitive {
     AeadPrimitive::XChaCha20Poly1305 | AeadPrimitive::ChaCha20Poly1305 => match lane {
-      BenchLane::IntelIcl | BenchLane::IntelSpr | BenchLane::AmdZen4 | BenchLane::AmdZen5 => AeadBackend::X86Avx2,
+      BenchLane::IntelIcl | BenchLane::IntelSpr | BenchLane::AmdZen4 | BenchLane::AmdZen5 => AeadBackend::X86Avx512,
       BenchLane::Graviton3 | BenchLane::Graviton4 => AeadBackend::Aarch64Neon,
-      BenchLane::IbmS390x | BenchLane::IbmPower10 => AeadBackend::Portable,
+      BenchLane::IbmS390x => AeadBackend::S390xVector,
+      BenchLane::IbmPower10 => AeadBackend::PowerVector,
     },
     AeadPrimitive::Aes256GcmSiv | AeadPrimitive::Aes256Gcm | AeadPrimitive::Aes128GcmSiv | AeadPrimitive::Aes128Gcm => {
       match lane {
@@ -234,7 +243,9 @@ pub fn select_backend(primitive: AeadPrimitive, arch: Arch, caps: Caps) -> AeadB
 fn select_chacha_backend(arch: Arch, caps: Caps) -> AeadBackend {
   match arch {
     Arch::X86_64 => {
-      if caps.has(x86::AVX2) {
+      if caps.has(x86::AVX512_READY) {
+        AeadBackend::X86Avx512
+      } else if caps.has(x86::AVX2) {
         AeadBackend::X86Avx2
       } else {
         AeadBackend::Portable
@@ -247,7 +258,34 @@ fn select_chacha_backend(arch: Arch, caps: Caps) -> AeadBackend {
         AeadBackend::Portable
       }
     }
-    Arch::Wasm32 | Arch::Wasm64 => AeadBackend::WasmPortable,
+    Arch::Wasm32 | Arch::Wasm64 => {
+      if caps.has(wasm::SIMD128) {
+        AeadBackend::WasmSimd128
+      } else {
+        AeadBackend::WasmPortable
+      }
+    }
+    Arch::S390x => {
+      if caps.has(s390x::MSA) {
+        AeadBackend::S390xVector
+      } else {
+        AeadBackend::Portable
+      }
+    }
+    Arch::Power => {
+      if caps.has(power::POWER8_VECTOR) {
+        AeadBackend::PowerVector
+      } else {
+        AeadBackend::Portable
+      }
+    }
+    Arch::Riscv64 => {
+      if caps.has(riscv::V) {
+        AeadBackend::Riscv64Vector
+      } else {
+        AeadBackend::Portable
+      }
+    }
     _ => AeadBackend::Portable,
   }
 }
@@ -354,7 +392,7 @@ mod tests {
   use super::{AeadBackend, AeadPrimitive, BenchLane, lane_target_backend, select_backend};
   use crate::platform::{
     Arch, Caps,
-    caps::{aarch64, power, s390x, x86},
+    caps::{aarch64, power, riscv, s390x, wasm, x86},
   };
 
   #[test]
@@ -429,12 +467,20 @@ mod tests {
   #[test]
   fn chacha_and_aegis_choose_lane_native_non_aes_and_aes_paths() {
     assert_eq!(
-      select_backend(AeadPrimitive::XChaCha20Poly1305, Arch::X86_64, x86::AVX2),
+      select_backend(AeadPrimitive::XChaCha20Poly1305, Arch::X86_64, x86::AVX512_READY),
+      AeadBackend::X86Avx512
+    );
+    assert_eq!(
+      select_backend(AeadPrimitive::ChaCha20Poly1305, Arch::X86_64, x86::AVX2),
       AeadBackend::X86Avx2
     );
     assert_eq!(
       select_backend(AeadPrimitive::XChaCha20Poly1305, Arch::Aarch64, aarch64::NEON),
       AeadBackend::Aarch64Neon
+    );
+    assert_eq!(
+      select_backend(AeadPrimitive::ChaCha20Poly1305, Arch::Wasm32, wasm::SIMD128),
+      AeadBackend::WasmSimd128
     );
     assert_eq!(
       select_backend(AeadPrimitive::Aegis256, Arch::X86_64, x86::VAES_READY),
@@ -453,8 +499,28 @@ mod tests {
       AeadBackend::S390xMsa
     );
     assert_eq!(
+      select_backend(AeadPrimitive::XChaCha20Poly1305, Arch::S390x, s390x::MSA),
+      AeadBackend::S390xVector
+    );
+    assert_eq!(
       select_backend(AeadPrimitive::Aes256GcmSiv, Arch::Power, power::POWER8_CRYPTO),
       AeadBackend::Power8Crypto
+    );
+    assert_eq!(
+      select_backend(AeadPrimitive::ChaCha20Poly1305, Arch::Power, power::POWER8_VECTOR),
+      AeadBackend::PowerVector
+    );
+  }
+
+  #[test]
+  fn riscv_and_wasm_have_explicit_chacha_vector_routes() {
+    assert_eq!(
+      select_backend(AeadPrimitive::XChaCha20Poly1305, Arch::Riscv64, riscv::V),
+      AeadBackend::Riscv64Vector
+    );
+    assert_eq!(
+      select_backend(AeadPrimitive::ChaCha20Poly1305, Arch::Wasm64, wasm::SIMD128),
+      AeadBackend::WasmSimd128
     );
   }
 

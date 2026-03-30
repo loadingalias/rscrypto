@@ -17,6 +17,7 @@ pub struct DispatchTable {
 }
 
 impl DispatchTable {
+  #[cfg_attr(not(any(test, feature = "std")), allow(dead_code))]
   #[inline]
   #[must_use]
   pub const fn kernel_for_len(&self, len: usize) -> KernelId {

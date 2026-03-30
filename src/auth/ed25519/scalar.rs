@@ -1,3 +1,5 @@
+#![allow(clippy::identity_op, clippy::indexing_slicing)]
+
 //! Internal Ed25519 scalar arithmetic mod the group order `L`.
 //!
 //! This is the correctness-first baseline for signing and verification. It
@@ -19,6 +21,247 @@ const ORDER: Scalar = [
   0,
   1_152_921_504_606_846_976,
 ];
+const RADIX52_MASK: u64 = (1u64 << 52) - 1;
+
+// Montgomery-friendly 5x52-limb constants for the Ed25519 subgroup order.
+const ORDER52: Scalar52 = Scalar52([
+  0x0002_631a_5cf5_d3ed,
+  0x000d_ea2f_79cd_6581,
+  0x0000_0000_0014_def9,
+  0x0000_0000_0000_0000,
+  0x0000_1000_0000_0000,
+]);
+const R52: Scalar52 = Scalar52([
+  0x000f_48bd_6721_e6ed,
+  0x0003_bab5_ac67_e45a,
+  0x000f_ffff_eb35_e51b,
+  0x000f_ffff_ffff_ffff,
+  0x0000_0fff_ffff_ffff,
+]);
+const RR52: Scalar52 = Scalar52([
+  0x0009_d265_e952_d13b,
+  0x000d_63c7_15be_a69f,
+  0x0005_be65_cb68_7604,
+  0x0003_dcee_c73d_217f,
+  0x0000_0941_1b7c_309a,
+]);
+const LFACTOR52: u64 = 0x0005_1da3_1254_7e1b;
+
+#[derive(Clone, Copy)]
+struct Scalar52([u64; 5]);
+
+#[inline(always)]
+#[must_use]
+fn wide_mul(lhs: u64, rhs: u64) -> u128 {
+  u128::from(lhs) * u128::from(rhs)
+}
+
+impl Scalar52 {
+  #[rustfmt::skip]
+  #[must_use]
+  fn from_bytes(bytes: &[u8; 32]) -> Self {
+    let words = read_words_le_32(bytes);
+
+    Self([
+        words[0] & RADIX52_MASK,
+      ((words[0] >> 52) | (words[1] << 12)) & RADIX52_MASK,
+      ((words[1] >> 40) | (words[2] << 24)) & RADIX52_MASK,
+      ((words[2] >> 28) | (words[3] << 36)) & RADIX52_MASK,
+       (words[3] >> 16) & ((1u64 << 48) - 1),
+    ])
+  }
+
+  #[rustfmt::skip]
+  #[must_use]
+  fn from_bytes_wide(bytes: &[u8; 64]) -> Self {
+    let words = read_words_le_64(bytes);
+
+    let lo = Self([
+        words[0] & RADIX52_MASK,
+      ((words[0] >> 52) | (words[1] << 12)) & RADIX52_MASK,
+      ((words[1] >> 40) | (words[2] << 24)) & RADIX52_MASK,
+      ((words[2] >> 28) | (words[3] << 36)) & RADIX52_MASK,
+      ((words[3] >> 16) | (words[4] << 48)) & RADIX52_MASK,
+    ]);
+    let hi = Self([
+       (words[4] >>  4) & RADIX52_MASK,
+      ((words[4] >> 56) | (words[5] <<  8)) & RADIX52_MASK,
+      ((words[5] >> 44) | (words[6] << 20)) & RADIX52_MASK,
+      ((words[6] >> 32) | (words[7] << 32)) & RADIX52_MASK,
+       (words[7] >> 20),
+    ]);
+
+    let lo = Self::montgomery_mul(&lo, &R52);
+    let hi = Self::montgomery_mul(&hi, &RR52);
+    Self::add(&hi, &lo)
+  }
+
+  #[rustfmt::skip]
+  #[must_use]
+  fn as_bytes(self) -> [u8; 32] {
+    let limbs = self.0;
+    [
+      ( limbs[0] >>  0) as u8,
+      ( limbs[0] >>  8) as u8,
+      ( limbs[0] >> 16) as u8,
+      ( limbs[0] >> 24) as u8,
+      ( limbs[0] >> 32) as u8,
+      ( limbs[0] >> 40) as u8,
+      ((limbs[0] >> 48) | (limbs[1] <<  4)) as u8,
+      ( limbs[1] >>  4) as u8,
+      ( limbs[1] >> 12) as u8,
+      ( limbs[1] >> 20) as u8,
+      ( limbs[1] >> 28) as u8,
+      ( limbs[1] >> 36) as u8,
+      ( limbs[1] >> 44) as u8,
+      ( limbs[2] >>  0) as u8,
+      ( limbs[2] >>  8) as u8,
+      ( limbs[2] >> 16) as u8,
+      ( limbs[2] >> 24) as u8,
+      ( limbs[2] >> 32) as u8,
+      ( limbs[2] >> 40) as u8,
+      ((limbs[2] >> 48) | (limbs[3] <<  4)) as u8,
+      ( limbs[3] >>  4) as u8,
+      ( limbs[3] >> 12) as u8,
+      ( limbs[3] >> 20) as u8,
+      ( limbs[3] >> 28) as u8,
+      ( limbs[3] >> 36) as u8,
+      ( limbs[3] >> 44) as u8,
+      ( limbs[4] >>  0) as u8,
+      ( limbs[4] >>  8) as u8,
+      ( limbs[4] >> 16) as u8,
+      ( limbs[4] >> 24) as u8,
+      ( limbs[4] >> 32) as u8,
+      ( limbs[4] >> 40) as u8,
+    ]
+  }
+
+  #[must_use]
+  fn add(lhs: &Self, rhs: &Self) -> Self {
+    let mut out = [0u64; 5];
+    let mut carry = 0u64;
+
+    for (dst, (&left, &right)) in out.iter_mut().zip(lhs.0.iter().zip(rhs.0.iter())) {
+      carry = left.strict_add(right).strict_add(carry >> 52);
+      *dst = carry & RADIX52_MASK;
+    }
+
+    Self::sub(&Self(out), &ORDER52)
+  }
+
+  #[must_use]
+  fn sub(lhs: &Self, rhs: &Self) -> Self {
+    #[inline]
+    fn barrier(value: u64) -> u64 {
+      // SAFETY: `value` is a local `u64`; reading it through a volatile pointer
+      // preserves the arithmetic shape without violating aliasing or lifetime rules.
+      unsafe { core::ptr::read_volatile(&value) }
+    }
+
+    let mut out = [0u64; 5];
+    let mut borrow = 0u64;
+
+    for (dst, (&left, &right)) in out.iter_mut().zip(lhs.0.iter().zip(rhs.0.iter())) {
+      borrow = left.wrapping_sub(right.strict_add(borrow >> 63));
+      *dst = borrow & RADIX52_MASK;
+    }
+
+    let underflow_mask = ((borrow >> 63) ^ 1).wrapping_sub(1);
+    let mut carry = 0u64;
+    for (i, limb) in out.iter_mut().enumerate() {
+      carry = (carry >> 52)
+        .strict_add(*limb)
+        .strict_add(ORDER52.0[i] & barrier(underflow_mask));
+      *limb = carry & RADIX52_MASK;
+    }
+
+    Self(out)
+  }
+
+  #[rustfmt::skip]
+  #[must_use]
+  fn mul_internal(lhs: &Self, rhs: &Self) -> [u128; 9] {
+    [
+      wide_mul(lhs.0[0], rhs.0[0]),
+      wide_mul(lhs.0[0], rhs.0[1]) + wide_mul(lhs.0[1], rhs.0[0]),
+      wide_mul(lhs.0[0], rhs.0[2]) + wide_mul(lhs.0[1], rhs.0[1]) + wide_mul(lhs.0[2], rhs.0[0]),
+      wide_mul(lhs.0[0], rhs.0[3]) + wide_mul(lhs.0[1], rhs.0[2]) + wide_mul(lhs.0[2], rhs.0[1]) + wide_mul(lhs.0[3], rhs.0[0]),
+      wide_mul(lhs.0[0], rhs.0[4]) + wide_mul(lhs.0[1], rhs.0[3]) + wide_mul(lhs.0[2], rhs.0[2]) + wide_mul(lhs.0[3], rhs.0[1]) + wide_mul(lhs.0[4], rhs.0[0]),
+      wide_mul(lhs.0[1], rhs.0[4]) + wide_mul(lhs.0[2], rhs.0[3]) + wide_mul(lhs.0[3], rhs.0[2]) + wide_mul(lhs.0[4], rhs.0[1]),
+      wide_mul(lhs.0[2], rhs.0[4]) + wide_mul(lhs.0[3], rhs.0[3]) + wide_mul(lhs.0[4], rhs.0[2]),
+      wide_mul(lhs.0[3], rhs.0[4]) + wide_mul(lhs.0[4], rhs.0[3]),
+      wide_mul(lhs.0[4], rhs.0[4]),
+    ]
+  }
+
+  #[inline(always)]
+  #[must_use]
+  fn montgomery_reduce(limbs: &[u128; 9]) -> Self {
+    #[inline(always)]
+    fn part1(sum: u128) -> (u128, u64) {
+      let p = (sum as u64).wrapping_mul(LFACTOR52) & RADIX52_MASK;
+      ((sum.strict_add(wide_mul(p, ORDER52.0[0]))) >> 52, p)
+    }
+
+    #[inline(always)]
+    fn part2(sum: u128) -> (u128, u64) {
+      let word = (sum as u64) & RADIX52_MASK;
+      (sum >> 52, word)
+    }
+
+    let (carry, n0) = part1(limbs[0]);
+    let (carry, n1) = part1(carry.strict_add(limbs[1]).strict_add(wide_mul(n0, ORDER52.0[1])));
+    let (carry, n2) = part1(
+      carry
+        .strict_add(limbs[2])
+        .strict_add(wide_mul(n0, ORDER52.0[2]))
+        .strict_add(wide_mul(n1, ORDER52.0[1])),
+    );
+    let (carry, n3) = part1(
+      carry
+        .strict_add(limbs[3])
+        .strict_add(wide_mul(n1, ORDER52.0[2]))
+        .strict_add(wide_mul(n2, ORDER52.0[1])),
+    );
+    let (carry, n4) = part1(
+      carry
+        .strict_add(limbs[4])
+        .strict_add(wide_mul(n0, ORDER52.0[4]))
+        .strict_add(wide_mul(n2, ORDER52.0[2]))
+        .strict_add(wide_mul(n3, ORDER52.0[1])),
+    );
+
+    let (carry, r0) = part2(
+      carry
+        .strict_add(limbs[5])
+        .strict_add(wide_mul(n1, ORDER52.0[4]))
+        .strict_add(wide_mul(n3, ORDER52.0[2]))
+        .strict_add(wide_mul(n4, ORDER52.0[1])),
+    );
+    let (carry, r1) = part2(
+      carry
+        .strict_add(limbs[6])
+        .strict_add(wide_mul(n2, ORDER52.0[4]))
+        .strict_add(wide_mul(n4, ORDER52.0[2])),
+    );
+    let (carry, r2) = part2(carry.strict_add(limbs[7]).strict_add(wide_mul(n3, ORDER52.0[4])));
+    let (carry, r3) = part2(carry.strict_add(limbs[8]).strict_add(wide_mul(n4, ORDER52.0[4])));
+    let r4 = carry as u64;
+
+    Self::sub(&Self([r0, r1, r2, r3, r4]), &ORDER52)
+  }
+
+  #[must_use]
+  fn montgomery_mul(lhs: &Self, rhs: &Self) -> Self {
+    Self::montgomery_reduce(&Self::mul_internal(lhs, rhs))
+  }
+
+  #[must_use]
+  fn mul(lhs: &Self, rhs: &Self) -> Self {
+    let product = Self::montgomery_reduce(&Self::mul_internal(lhs, rhs));
+    Self::montgomery_reduce(&Self::mul_internal(&product, &RR52))
+  }
+}
 
 /// Clamp the lower half of the expanded secret-key digest per RFC 8032.
 #[inline]
@@ -70,6 +313,102 @@ pub(crate) fn to_bytes(words: &Scalar) -> [u8; SECRET_KEY_LENGTH] {
 /// Reduce an arbitrary byte string modulo the Ed25519 group order.
 #[must_use]
 pub(crate) fn reduce_bytes_mod_order(bytes: &[u8]) -> Scalar {
+  if bytes.len() == 64 {
+    let mut wide = [0u8; 64];
+    wide.copy_from_slice(bytes);
+    return scalar52_to_words(Scalar52::from_bytes_wide(&wide));
+  }
+
+  reduce_bytes_mod_order_fallback(bytes)
+}
+
+/// Add two scalars modulo `L`.
+#[must_use]
+pub(crate) fn add_mod(lhs: &Scalar, rhs: &Scalar) -> Scalar {
+  let (sum, _) = add_raw(lhs, rhs);
+  maybe_sub_order(sum)
+}
+
+/// Multiply two scalars modulo `L`.
+#[must_use]
+pub(crate) fn mul_mod(lhs: &Scalar, rhs: &Scalar) -> Scalar {
+  scalar52_to_words(Scalar52::mul(&scalar52_from_words(lhs), &scalar52_from_words(rhs)))
+}
+
+/// Compute `lhs * rhs + acc (mod L)`.
+#[must_use]
+pub(crate) fn mul_add_mod(lhs: &Scalar, rhs: &Scalar, acc: &Scalar) -> Scalar {
+  let product = Scalar52::mul(&scalar52_from_words(lhs), &scalar52_from_words(rhs));
+  let sum = Scalar52::add(&product, &scalar52_from_words(acc));
+  scalar52_to_words(sum)
+}
+
+/// Negate a scalar modulo `L`: returns `L - s` when `s != 0`, else `0`.
+#[must_use]
+pub(crate) fn negate_mod(s: &Scalar) -> Scalar {
+  if *s == ZERO {
+    ZERO
+  } else {
+    let (result, _) = sub_raw(&ORDER, s);
+    result
+  }
+}
+
+/// Decompose a scalar encoding into signed radix-16 digits in `[-8, 8]`.
+#[must_use]
+#[allow(clippy::indexing_slicing)]
+pub(crate) fn as_radix_16(bytes: &[u8; SECRET_KEY_LENGTH]) -> [i8; 64] {
+  debug_assert!(bytes[31] <= 127);
+
+  let mut digits = [0i8; 64];
+
+  for (i, byte) in bytes.iter().copied().enumerate() {
+    digits[2 * i] = (byte & 0x0F) as i8;
+    digits[2 * i + 1] = ((byte >> 4) & 0x0F) as i8;
+  }
+
+  for i in 0..63 {
+    let carry = (digits[i] + 8) >> 4;
+    digits[i] -= carry << 4;
+    digits[i + 1] += carry;
+  }
+
+  digits
+}
+
+#[inline]
+#[must_use]
+fn read_u64_le(chunk: &[u8]) -> u64 {
+  let mut bytes = [0u8; core::mem::size_of::<u64>()];
+  for (dst, src) in bytes.iter_mut().zip(chunk.iter().copied()) {
+    *dst = src;
+  }
+  u64::from_le_bytes(bytes)
+}
+
+#[inline]
+#[must_use]
+fn read_words_le_32(bytes: &[u8; 32]) -> [u64; 4] {
+  let mut out = [0u64; 4];
+  for (dst, chunk) in out.iter_mut().zip(bytes.as_slice().chunks_exact(8)) {
+    *dst = read_u64_le(chunk);
+  }
+  out
+}
+
+#[inline]
+#[must_use]
+fn read_words_le_64(bytes: &[u8; 64]) -> [u64; 8] {
+  let mut out = [0u64; 8];
+  for (dst, chunk) in out.iter_mut().zip(bytes.as_slice().chunks_exact(8)) {
+    *dst = read_u64_le(chunk);
+  }
+  out
+}
+
+#[inline]
+#[must_use]
+fn reduce_bytes_mod_order_fallback(bytes: &[u8]) -> Scalar {
   let mut acc = ZERO;
   for byte in bytes.iter().rev().copied() {
     let mut shift = 8u32;
@@ -84,59 +423,16 @@ pub(crate) fn reduce_bytes_mod_order(bytes: &[u8]) -> Scalar {
   acc
 }
 
-/// Add two scalars modulo `L`.
+#[inline]
 #[must_use]
-pub(crate) fn add_mod(lhs: &Scalar, rhs: &Scalar) -> Scalar {
-  let (sum, _) = add_raw(lhs, rhs);
-  maybe_sub_order(sum)
-}
-
-/// Multiply two scalars modulo `L`.
-#[must_use]
-pub(crate) fn mul_mod(lhs: &Scalar, rhs: &Scalar) -> Scalar {
-  let mut acc = ZERO;
-  let mut term = *lhs;
-
-  for mut word in rhs.iter().copied() {
-    let mut bit = 64u32;
-    while bit > 0 {
-      if (word & 1) == 1 {
-        acc = add_mod(&acc, &term);
-      }
-      term = add_mod(&term, &term);
-      word >>= 1;
-      bit = bit.strict_sub(1);
-    }
-  }
-
-  acc
-}
-
-/// Compute `lhs * rhs + acc (mod L)`.
-#[must_use]
-pub(crate) fn mul_add_mod(lhs: &Scalar, rhs: &Scalar, acc: &Scalar) -> Scalar {
-  add_mod(&mul_mod(lhs, rhs), acc)
-}
-
-/// Negate a scalar modulo `L`: returns `L - s` when `s != 0`, else `0`.
-#[must_use]
-pub(crate) fn negate_mod(s: &Scalar) -> Scalar {
-  if *s == ZERO {
-    ZERO
-  } else {
-    let (result, _) = sub_raw(&ORDER, s);
-    result
-  }
+fn scalar52_from_words(words: &Scalar) -> Scalar52 {
+  Scalar52::from_bytes(&to_bytes(words))
 }
 
 #[inline]
 #[must_use]
-fn read_u64_le(chunk: &[u8]) -> u64 {
-  let mut bytes = [0u8; core::mem::size_of::<u64>()];
-  for (dst, src) in bytes.iter_mut().zip(chunk.iter().copied()) {
-    *dst = src;
-  }
-  u64::from_le_bytes(bytes)
+fn scalar52_to_words(value: Scalar52) -> Scalar {
+  decode_words_le(&value.as_bytes())
 }
 
 #[inline]
@@ -198,8 +494,8 @@ fn maybe_sub_order(words: Scalar) -> Scalar {
 #[cfg(test)]
 mod tests {
   use super::{
-    ORDER, Scalar, add_mod, clamp_secret_scalar, decode_words_le, from_canonical_bytes, mul_add_mod,
-    reduce_bytes_mod_order, to_bytes,
+    ORDER, Scalar, add_mod, as_radix_16, clamp_secret_scalar, decode_words_le, from_canonical_bytes, mul_add_mod,
+    reduce_bytes_mod_order, reduce_bytes_mod_order_fallback, to_bytes,
   };
 
   fn from_u64(value: u64) -> Scalar {
@@ -245,6 +541,39 @@ mod tests {
     let bytes = [7u8];
 
     assert_eq!(reduce_bytes_mod_order(&bytes), from_u64(7));
+  }
+
+  #[test]
+  fn wide_reduction_matches_known_vector() {
+    let reduced = reduce_bytes_mod_order(&[0xFFu8; 64]);
+
+    assert_eq!(
+      to_bytes(&reduced),
+      [
+        0x00, 0x0F, 0x9C, 0x44, 0xE3, 0x11, 0x06, 0xA4, 0x47, 0x93, 0x85, 0x68, 0xA7, 0x1B, 0x0E, 0xD0, 0x65, 0xBE,
+        0xF5, 0x17, 0xD2, 0x73, 0xEC, 0xCE, 0x3D, 0x9A, 0x30, 0x7C, 0x1B, 0x41, 0x99, 0x03,
+      ]
+    );
+  }
+
+  #[test]
+  fn wide_reduction_matches_fallback_for_fixed_input() {
+    let bytes = core::array::from_fn::<_, 64, _>(|i| (i as u8).wrapping_mul(17).wrapping_add(9));
+
+    assert_eq!(reduce_bytes_mod_order(&bytes), reduce_bytes_mod_order_fallback(&bytes));
+  }
+
+  #[test]
+  fn radix16_recenters_nibbles_into_signed_digits() {
+    let mut bytes = [0u8; 32];
+    bytes[0] = 0x19;
+    let digits = as_radix_16(&bytes);
+
+    assert_eq!(digits[0], -7);
+    assert_eq!(digits[1], 2);
+    assert!(digits[2..].iter().all(|digit| *digit == 0));
+    assert!(digits[..63].iter().all(|digit| (-8..8).contains(digit)));
+    assert!((-8..=8).contains(&digits[63]));
   }
 
   #[test]

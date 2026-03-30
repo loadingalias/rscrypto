@@ -9,7 +9,7 @@ use crate::traits::{VerificationError, ct};
 
 /// Message authentication code producing a fixed-size tag.
 ///
-/// This trait is intended for algorithms like HMAC-SHA256 and KMAC.
+/// This trait is intended for fixed-size algorithms like HMAC-SHA256.
 pub trait Mac: Clone {
   /// Tag size in bytes.
   const TAG_SIZE: usize;

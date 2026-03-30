@@ -7,10 +7,11 @@ use std::sync::OnceLock;
 #[cfg(feature = "parallel")]
 use std::thread;
 
-use super::{
-  DERIVE_KEY_CONTEXT, DERIVE_KEY_MATERIAL, IV, KEY_LEN, KEYED_HASH, digest_oneshot_words, dispatch, dispatch_tables,
-  words8_from_le_bytes_32,
-};
+#[cfg(feature = "parallel")]
+use super::dispatch_tables;
+use super::{DERIVE_KEY_CONTEXT, DERIVE_KEY_MATERIAL, IV, KEYED_HASH, digest_oneshot_words, dispatch};
+#[cfg(feature = "std")]
+use super::{KEY_LEN, words8_from_le_bytes_32};
 
 #[cfg(feature = "std")]
 thread_local! {

@@ -1,8 +1,16 @@
 # Auth Roadmap
 
-## Current Status (2026-03-28)
+## Current Status (2026-03-30)
 
 Phase 1 (HMAC-SHA256, HKDF-SHA256, Ed25519) is **shipped and benchmarked**.
+Phase 3 (`cSHAKE256`, `KMAC256`) is **now shipped**.
+Phase 4 (`Ascon-CXOF128`) is **now shipped**.
+
+AEAD work has now split cleanly into its own track:
+
+- AEAD foundations are in tree under [`docs/tasks/aead.md`](aead.md).
+- `XChaCha20-Poly1305` is implemented there, including native ChaCha dispatch work.
+- `auth.md` now treats `Ascon-CXOF128` as the remaining auth-side Ascon item instead of implicitly carrying the AEAD rollout too.
 
 **Historical CI benchmark results** — [run #23544327679](https://github.com/loadingalias/rscrypto/actions/runs/23544327679) on Zen5, SPR, Graviton4, s390x:
 
@@ -30,6 +38,30 @@ Phase 1 (HMAC-SHA256, HKDF-SHA256, Ed25519) is **shipped and benchmarked**.
    compression is fast (SHA-NI), but HMAC wrapping adds two compressions (ipad + opad).
    Investigate whether the inner/outer key pads can be pre-compressed to a midstate.
 
+## Authenticated Crypto Contract
+
+`auth.md` owns MACs, KDFs, and signatures. [`docs/tasks/aead.md`](aead.md) owns AEAD
+algorithms. They still need to meet the same subsystem bar.
+
+That bar is:
+
+- typed public surfaces for fixed-width secrets, nonces, tags, signatures, and public keys
+- one-shot helpers plus stateful or in-place APIs where the primitive naturally supports them
+- detached and combined outputs where AEAD semantics require both
+- caller-provided output buffers for the core path; no hidden allocation as the default contract
+- explicit error boundaries between buffer misuse, malformed inputs, and authentication failure
+- portable constant-time baselines first, then internal dispatch
+- zeroize owned secret material on drop
+- `no_std` as a first-class constraint; `std` only widens runtime dispatch and ergonomics
+
+This matters because “best API in the ecosystem” is not just a longer method list.
+It means one coherent contract across authentication and AEAD:
+
+- typed, misuse-resistant inputs
+- no allocation pressure hidden behind convenience
+- no backend-specific semantic drift
+- no fake platform support where the fast path is unmeasured or unauditable
+
 ---
 
 ## Recommended Set
@@ -39,20 +71,20 @@ Build this authentication and key-derivation stack first:
 - `HMAC-SHA256` ✅ shipped
 - `HKDF-SHA256` ✅ shipped
 - `Ed25519` / `EdDSA` ✅ shipped (correctness-first, performance pending)
-- `KMAC256` and `cSHAKE256`
-- `Ascon-CXOF128`
+- `KMAC256` and `cSHAKE256` ✅ shipped
+- `Ascon-CXOF128` ✅ shipped
 - `Argon2id` only if password hashing enters scope
 
 Keep this split clear:
 
 - protocol compatibility: `HMAC-SHA256`, `HKDF-SHA256`, `Ed25519`
 - NIST-native SHA-3 track: `KMAC256`, `cSHAKE256`
-- Ascon standards track: `Ascon-AEAD128`, `Ascon-Hash256`, `Ascon-XOF128`, `Ascon-CXOF128`
+- Ascon standards track: `Ascon-Hash256`, `Ascon-XOF128`, `Ascon-CXOF128`; `Ascon-AEAD128` is tracked under [`docs/tasks/aead.md`](aead.md).
 - internal-only keyed hashing / derivation: `BLAKE3` keyed mode and `derive_key`
 
 ## Why This Set
 
-As of 2026-03-28, the boring, defensible baseline is still:
+As of 2026-03-30, the boring, defensible baseline is still:
 
 - `HMAC-SHA256` for request signing, token MACs, and compatibility surfaces
 - `HKDF-SHA256` for extract-then-expand key derivation
@@ -85,22 +117,23 @@ Shipped (correctness-first). Passes all RFC 8032 vectors, differential-tested ag
 **8-13x behind dalek** — the portable scalar field baseline is deliberately unoptimized.
 Performance is the primary post-ship optimization target (see Performance Priorities above).
 
-## Ship Second
+## Ship Second — ✅ SHIPPED
 
-### 4. KMAC256 and cSHAKE256
+### 4. KMAC256 and cSHAKE256 ✅
 
-These are worth doing after HMAC and HKDF, not before.
+Shipped.
 
 - They align with NIST SP 800-185.
 - They give you a SHA-3-native MAC / PRF / customizable hash story.
 - They matter if you want `rscrypto` to cover the NIST world cleanly, not just the IETF world.
 
-### 5. Ascon-CXOF128
+### 5. Ascon-CXOF128 ✅
 
-This is the obvious missing member of the Ascon family.
+Shipped.
 
 - NIST SP 800-232 finalized `Ascon-AEAD128`, `Ascon-Hash256`, `Ascon-XOF128`,
   and `Ascon-CXOF128` on August 13, 2025.
+- The AEAD half is already tracked separately in [`docs/tasks/aead.md`](aead.md), so the auth-side gap is now `Ascon-CXOF128`, not the whole family.
 - `rscrypto` already ships the hash/XOF half of that family.
 - `Ascon-CXOF128` lets the Ascon track cover customization cleanly instead of
   leaving that story entirely to Keccak.
@@ -122,19 +155,21 @@ It is not first-wave work for `rscrypto` unless password authentication is actua
 
 ## SIMD / HW Rules
 
-These rules should hold for all auth primitives:
+These rules should hold for all authenticated primitives, including the AEAD
+track in [`docs/tasks/aead.md`](aead.md):
 
 - No lookup-table AES for anything new. If AES is used, use hardware AES paths or constant-time bitsliced code.
 - No secret-dependent memory access in signature, MAC, or KDF hot paths.
 - Prefer scalar constant-time reference code first, then add ISA paths.
-- x86_64 priorities: `SHA-NI`, `AVX2`, `AVX-512` only when it clearly wins.
-- aarch64 priorities: ARMv8 SHA extensions, NEON, then SVE2 only where it materially helps.
+- x86_64 priorities: `SHA-NI` / `AES-NI` / `PCLMUL` where the primitive inherits them, `AVX2` for software-first lanes, `AVX-512` or `IFMA` only when the end-to-end win is real.
+- aarch64 priorities: ARMv8 SHA / AES extensions and `PMULL` where applicable, `NEON` for software-first lanes, then `SVE2` only where it materially helps.
+- `s390x`, `powerpc64`, and `riscv64` priorities: use crypto or vector facilities only where the primitive maps cleanly and the maintenance cost is justified by measured wins.
 - Keep the public API stable while dispatch remains internal.
 - Do not tie correctness to SIMD. Every accelerated path must differential-test against the portable path.
 
 ## Acceleration Posture
 
-As of 2026-03-24, the right rule is:
+As of 2026-03-30, the right rule is:
 
 - pursue full coverage where the primitive naturally inherits an existing accelerated core
 - do not force fake ISA parity where the primitive does not map cleanly to the checksum/hash backend model
@@ -147,6 +182,17 @@ For auth, that means:
 - `Ascon-CXOF128` should inherit the `Ascon` permutation backend matrix directly
 - `Ed25519` should get a portable constant-time baseline first, then targeted SIMD on the architectures where it clearly pays off
 - `Argon2id` is a separate memory-hard subsystem and should not be judged by the same “every ISA gets a bespoke kernel” bar
+
+### Platform Ladder Discipline
+
+The platform story should be ambitious but not theatrical.
+
+- `x86_64`: treat the ladder as `portable -> AVX2 -> AVX-512` for software-first primitives and `portable -> SHA-NI` or `AES-NI/PCLMUL -> VAES/VPCLMUL/IFMA` for hardware-first primitives. Do not skip straight to the fanciest ISA and call the lower rungs “good enough.”
+- `aarch64`: treat the ladder as `portable -> NEON` for software-first primitives and `portable -> SHA2/AES/PMULL -> SVE2` for hardware-assisted or data-parallel primitives. `SVE2` is not a default; it is an earned optimization.
+- `s390x`: exploit CPACF and vector facilities where they give a real lane-native win, especially for SHA/AES-class work. Do not promise bespoke curve or permutation kernels without measurement.
+- `powerpc64`: use POWER crypto or VSX backends only where the implementation is maintainable and benchmarked on actual POWER hardware.
+- `riscv64`: target scalar or vector crypto extensions opportunistically, but do not let ecosystem immaturity turn into speculative API or dispatch complexity.
+- `wasm32`: support the contract and correctness story. Treat acceleration as optional and environment-specific, never as the semantic baseline.
 
 ### What “In Line” Means
 
@@ -391,6 +437,96 @@ Current status:
 - negative modified-message verification coverage is in place
 - differential testing against `ed25519-dalek` is in place
 - `no_std` auth compile coverage is in place
+
+## Phase 3. SHA-3 Native Auth Track ✅ DONE
+
+This is where the roadmap stops being “HMAC, but Keccak-shaped.”
+
+Do not force `KMAC256` into the current fixed-size `Mac` mental model just to
+reuse a trait. `KMAC256` is naturally variable-output. The API should admit that
+instead of pretending every MAC is a 32-byte tag forever.
+
+### Phase 3A. cSHAKE256 API Shape
+
+`cSHAKE256` should look like a customized XOF, not like a digest with hidden
+domain-separation state.
+
+Minimum public shape:
+
+- `Cshake256::new(function_name, customization)`
+- `Cshake256::xof(function_name, customization, data)`
+- `update`, `finalize_xof`, `reset`
+- reader side conforms to the existing `Xof` contract
+
+Hold the line here:
+
+- do not hide `function_name` and `customization` behind an options builder
+- do not collapse empty and non-empty customization cases into undocumented aliases
+- do not invent a generic “configurable sponge” public type first
+
+### Phase 3B. KMAC256 API Shape
+
+`KMAC256` should be explicit about output sizing.
+
+Minimum public shape:
+
+- `Kmac256::new(key, customization)`
+- `Kmac256::mac_into(key, customization, data, out)`
+- `update`, `finalize_into`, `reset`
+- `verify(key, customization, data, expected)`
+- `mac_array::<N>(...)` for fixed-size protocol tags where a const generic is useful
+
+Strong opinion:
+
+- do not wedge `KMAC256` into `traits::Mac` unless the trait is intentionally widened for variable-length outputs
+- do not split this into fake “KMAC” and “KMACXOF” user types unless the standards semantics genuinely diverge in the public contract
+
+### Phase 3C. SHA-3 Validation Bar
+
+- SP 800-185 vectors for `cSHAKE256` and `KMAC256`
+- empty `function_name` / empty `customization` cases
+- split-update equivalence vs one-shot usage
+- variable output lengths, including short tags and multi-block outputs
+- differential tests against a well-audited Keccak oracle where semantics align
+- `no_std` compile coverage
+
+## Phase 4. Ascon-CXOF128 ✅ DONE
+
+This should mirror the existing Ascon hash/XOF ergonomics, not bolt on a Keccak-shaped API.
+
+### Phase 4A. API Shape
+
+Minimum public shape:
+
+- `AsconCxof128::new(customization)`
+- `AsconCxof128::xof(customization, data)`
+- `update`, `finalize_xof`, `reset`
+- `hash_into(customization, data, out)` for direct one-shot filling
+
+Hold the line here:
+
+- keep the customization input explicit in the type construction or one-shot helper
+- reuse the existing `Xof` reader model for squeezing
+- do not introduce a separate trait just for “customizable XOF”
+
+### Phase 4B. Validation Bar
+
+- SP 800-232 vectors for `Ascon-CXOF128`
+- empty and non-empty customization cases
+- long-output squeeze coverage across multiple permutation rounds
+- split-update equivalence vs one-shot usage
+- differential testing against a known-good oracle implementation
+- `no_std` compile coverage
+
+### Phase 4C. Acceleration Posture
+
+`Ascon-CXOF128` inherits the Ascon permutation matrix directly.
+
+- `x86_64`: portable first, then `AVX2`, then `AVX-512` only if measured
+- `aarch64`: portable first, then `NEON` only if measured
+- `powerpc64`, `s390x`, `riscv64`, `wasm32`: portable first until data says otherwise
+
+Do not build a dispatch cathedral around a primitive whose core cost is already compact.
 
 ## Auth Target Matrix
 
