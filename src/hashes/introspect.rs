@@ -98,6 +98,10 @@ impl_hash_kernel_introspect!(
   crate::hashes::crypto::Shake256,
   crate::hashes::crypto::keccak::dispatch::kernel_name_for_len
 );
+impl_hash_kernel_introspect!(
+  crate::hashes::crypto::Cshake256,
+  crate::hashes::crypto::keccak::dispatch::kernel_name_for_len
+);
 
 impl_hash_kernel_introspect!(
   crate::hashes::crypto::Blake3,
@@ -110,6 +114,10 @@ impl_hash_kernel_introspect!(
 );
 impl_hash_kernel_introspect!(
   crate::hashes::crypto::AsconXof,
+  crate::hashes::crypto::ascon::dispatch::kernel_name_for_len
+);
+impl_hash_kernel_introspect!(
+  crate::hashes::crypto::AsconCxof128,
   crate::hashes::crypto::ascon::dispatch::kernel_name_for_len
 );
 

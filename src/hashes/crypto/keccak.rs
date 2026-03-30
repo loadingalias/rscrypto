@@ -567,6 +567,7 @@ pub(crate) trait Permuter: Copy {
 
 /// Direct-call permuter using the portable scalar kernel. No function pointer
 /// indirection — LLVM can inline `keccakf_portable` into the absorb loop.
+#[allow(dead_code)]
 #[derive(Clone, Copy, Default)]
 pub(crate) struct InlinePermuter;
 

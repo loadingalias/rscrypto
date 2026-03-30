@@ -41,6 +41,7 @@ const DEFAULT_PAR_MEDIUM_LIMIT_BYTES: usize = 2 * 1024 * 1024;
 /// The scheduler treats this as an explicit cost model:
 /// - fixed terms: `spawn_cost_bytes`, `merge_cost_bytes`
 /// - work terms: `bytes_per_core_*` for small/medium/large payload classes
+#[cfg_attr(not(feature = "parallel"), allow(dead_code))]
 #[derive(Clone, Copy, Debug)]
 pub struct ParallelTable {
   /// Minimum total input bytes before parallel hashing is considered.
@@ -91,6 +92,7 @@ pub struct DispatchTable {
 }
 
 /// Compact profile for one microarchitecture family.
+#[cfg_attr(not(feature = "parallel"), allow(dead_code))]
 #[derive(Clone, Copy, Debug)]
 pub struct FamilyProfile {
   pub dispatch: DispatchTable,
@@ -852,12 +854,14 @@ pub fn select_streaming_table_for_caps(caps: Caps) -> &'static StreamingTable {
   &select_profile_for_caps(caps).streaming
 }
 
+#[cfg(feature = "parallel")]
 #[inline]
 #[must_use]
 pub fn select_parallel_table_for_caps(caps: Caps) -> &'static ParallelTable {
   &select_profile_for_caps(caps).parallel
 }
 
+#[cfg(feature = "parallel")]
 #[inline]
 #[must_use]
 pub fn select_streaming_parallel_table_for_caps(caps: Caps) -> &'static ParallelTable {

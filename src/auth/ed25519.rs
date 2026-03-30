@@ -259,14 +259,20 @@ impl fmt::Debug for Ed25519Signature {
 pub struct Ed25519Keypair {
   secret: Ed25519SecretKey,
   public: Ed25519PublicKey,
+  expanded: hash::ExpandedSecret,
 }
 
 impl Ed25519Keypair {
   /// Derive a keypair from a secret key.
   #[must_use]
   pub fn from_secret_key(secret: Ed25519SecretKey) -> Self {
-    let public = secret.public_key();
-    Self { secret, public }
+    let expanded = hash::ExpandedSecret::from_secret_key(&secret);
+    let public = Ed25519PublicKey::from_bytes(expanded.public_key_bytes());
+    Self {
+      secret,
+      public,
+      expanded,
+    }
   }
 
   /// Borrow the secret key.
@@ -284,7 +290,7 @@ impl Ed25519Keypair {
   /// Sign a message with the keypair secret key.
   #[must_use]
   pub fn sign(&self, message: &[u8]) -> Ed25519Signature {
-    sign_with_secret(&self.secret, &self.public, message)
+    sign_with_expanded(&self.expanded, &self.public, message)
   }
 }
 
@@ -328,16 +334,22 @@ pub fn verify(
     point::ExtendedPoint::straus_basepoint_vartime(&s_canonical, &neg_challenge_bytes, &a_point).mul_by_cofactor();
   let expected = r_point.mul_by_cofactor();
 
-  match (combined.to_bytes(), expected.to_bytes()) {
-    (Some(left), Some(right)) if ct::constant_time_eq(&left, &right) => Ok(()),
-    _ => Err(VerificationError::new()),
+  if combined.equals_projective(&expected) {
+    Ok(())
+  } else {
+    Err(VerificationError::new())
   }
 }
 
 #[must_use]
 fn sign_with_secret(secret: &Ed25519SecretKey, public: &Ed25519PublicKey, message: &[u8]) -> Ed25519Signature {
   let expanded = hash::ExpandedSecret::from_secret_key(secret);
-  let secret_scalar = scalar::reduce_bytes_mod_order(expanded.scalar_bytes());
+  sign_with_expanded(&expanded, public, message)
+}
+
+#[must_use]
+fn sign_with_expanded(expanded: &hash::ExpandedSecret, public: &Ed25519PublicKey, message: &[u8]) -> Ed25519Signature {
+  let secret_scalar = expanded.scalar_words();
 
   let mut nonce_hasher = Sha512::new();
   nonce_hasher.update(expanded.nonce_prefix());

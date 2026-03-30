@@ -1,22 +1,22 @@
 #![allow(clippy::indexing_slicing)]
 
-//! XChaCha20-Poly1305 public AEAD surface.
+//! ChaCha20-Poly1305 public AEAD surface.
 
 use core::fmt;
 
-use super::{AeadBufferError, Nonce192, OpenError, chacha20, poly1305, targets::AeadPrimitive};
+use super::{AeadBufferError, Nonce96, OpenError, chacha20, poly1305, targets::AeadPrimitive};
 use crate::traits::{Aead, VerificationError, ct};
 
 const KEY_SIZE: usize = chacha20::KEY_SIZE;
 const TAG_SIZE: usize = 16;
-const NONCE_SIZE: usize = Nonce192::LENGTH;
+const NONCE_SIZE: usize = Nonce96::LENGTH;
 const MAX_PLAINTEXT_LEN: u64 = (u32::MAX as u64) * (chacha20::BLOCK_SIZE as u64);
 
-/// XChaCha20-Poly1305 secret key bytes.
+/// ChaCha20-Poly1305 secret key bytes.
 #[derive(Clone, PartialEq, Eq, Hash)]
-pub struct XChaCha20Poly1305Key([u8; Self::LENGTH]);
+pub struct ChaCha20Poly1305Key([u8; Self::LENGTH]);
 
-impl XChaCha20Poly1305Key {
+impl ChaCha20Poly1305Key {
   /// Key length in bytes.
   pub const LENGTH: usize = KEY_SIZE;
 
@@ -42,37 +42,37 @@ impl XChaCha20Poly1305Key {
   }
 }
 
-impl Default for XChaCha20Poly1305Key {
+impl Default for ChaCha20Poly1305Key {
   #[inline]
   fn default() -> Self {
     Self([0u8; Self::LENGTH])
   }
 }
 
-impl AsRef<[u8]> for XChaCha20Poly1305Key {
+impl AsRef<[u8]> for ChaCha20Poly1305Key {
   #[inline]
   fn as_ref(&self) -> &[u8] {
     &self.0
   }
 }
 
-impl fmt::Debug for XChaCha20Poly1305Key {
+impl fmt::Debug for ChaCha20Poly1305Key {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    f.debug_struct("XChaCha20Poly1305Key").finish_non_exhaustive()
+    f.debug_struct("ChaCha20Poly1305Key").finish_non_exhaustive()
   }
 }
 
-impl Drop for XChaCha20Poly1305Key {
+impl Drop for ChaCha20Poly1305Key {
   fn drop(&mut self) {
     ct::zeroize(&mut self.0);
   }
 }
 
-/// XChaCha20-Poly1305 authentication tag bytes.
+/// ChaCha20-Poly1305 authentication tag bytes.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct XChaCha20Poly1305Tag([u8; Self::LENGTH]);
+pub struct ChaCha20Poly1305Tag([u8; Self::LENGTH]);
 
-impl XChaCha20Poly1305Tag {
+impl ChaCha20Poly1305Tag {
   /// Tag length in bytes.
   pub const LENGTH: usize = TAG_SIZE;
 
@@ -98,39 +98,39 @@ impl XChaCha20Poly1305Tag {
   }
 }
 
-impl Default for XChaCha20Poly1305Tag {
+impl Default for ChaCha20Poly1305Tag {
   #[inline]
   fn default() -> Self {
     Self([0u8; Self::LENGTH])
   }
 }
 
-impl AsRef<[u8]> for XChaCha20Poly1305Tag {
+impl AsRef<[u8]> for ChaCha20Poly1305Tag {
   #[inline]
   fn as_ref(&self) -> &[u8] {
     &self.0
   }
 }
 
-impl fmt::Debug for XChaCha20Poly1305Tag {
+impl fmt::Debug for ChaCha20Poly1305Tag {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    f.debug_tuple("XChaCha20Poly1305Tag").field(&self.0).finish()
+    f.debug_tuple("ChaCha20Poly1305Tag").field(&self.0).finish()
   }
 }
 
-/// Portable XChaCha20-Poly1305 AEAD.
+/// Portable ChaCha20-Poly1305 AEAD.
 #[derive(Clone)]
-pub struct XChaCha20Poly1305 {
-  key: XChaCha20Poly1305Key,
+pub struct ChaCha20Poly1305 {
+  key: ChaCha20Poly1305Key,
 }
 
-impl fmt::Debug for XChaCha20Poly1305 {
+impl fmt::Debug for ChaCha20Poly1305 {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    f.debug_struct("XChaCha20Poly1305").finish_non_exhaustive()
+    f.debug_struct("ChaCha20Poly1305").finish_non_exhaustive()
   }
 }
 
-impl XChaCha20Poly1305 {
+impl ChaCha20Poly1305 {
   /// Key length in bytes.
   pub const KEY_SIZE: usize = KEY_SIZE;
 
@@ -140,23 +140,23 @@ impl XChaCha20Poly1305 {
   /// Tag length in bytes.
   pub const TAG_SIZE: usize = TAG_SIZE;
 
-  /// Construct a new XChaCha20-Poly1305 instance from `key`.
+  /// Construct a new ChaCha20-Poly1305 instance from `key`.
   #[inline]
   #[must_use]
-  pub fn new(key: &XChaCha20Poly1305Key) -> Self {
+  pub fn new(key: &ChaCha20Poly1305Key) -> Self {
     <Self as Aead>::new(key)
   }
 
   /// Rebuild a typed tag from raw tag bytes.
   #[inline]
-  pub fn tag_from_slice(bytes: &[u8]) -> Result<XChaCha20Poly1305Tag, AeadBufferError> {
+  pub fn tag_from_slice(bytes: &[u8]) -> Result<ChaCha20Poly1305Tag, AeadBufferError> {
     <Self as Aead>::tag_from_slice(bytes)
   }
 
   /// Encrypt `buffer` in place and return the detached authentication tag.
   #[inline]
   #[must_use]
-  pub fn encrypt_in_place(&self, nonce: &Nonce192, aad: &[u8], buffer: &mut [u8]) -> XChaCha20Poly1305Tag {
+  pub fn encrypt_in_place(&self, nonce: &Nonce96, aad: &[u8], buffer: &mut [u8]) -> ChaCha20Poly1305Tag {
     <Self as Aead>::encrypt_in_place(self, nonce, aad, buffer)
   }
 
@@ -164,17 +164,17 @@ impl XChaCha20Poly1305 {
   #[inline]
   pub fn decrypt_in_place(
     &self,
-    nonce: &Nonce192,
+    nonce: &Nonce96,
     aad: &[u8],
     buffer: &mut [u8],
-    tag: &XChaCha20Poly1305Tag,
+    tag: &ChaCha20Poly1305Tag,
   ) -> Result<(), VerificationError> {
     <Self as Aead>::decrypt_in_place(self, nonce, aad, buffer, tag)
   }
 
   /// Encrypt `plaintext` into `out` as `ciphertext || tag`.
   #[inline]
-  pub fn encrypt(&self, nonce: &Nonce192, aad: &[u8], plaintext: &[u8], out: &mut [u8]) -> Result<(), AeadBufferError> {
+  pub fn encrypt(&self, nonce: &Nonce96, aad: &[u8], plaintext: &[u8], out: &mut [u8]) -> Result<(), AeadBufferError> {
     <Self as Aead>::encrypt(self, nonce, aad, plaintext, out)
   }
 
@@ -182,7 +182,7 @@ impl XChaCha20Poly1305 {
   #[inline]
   pub fn decrypt(
     &self,
-    nonce: &Nonce192,
+    nonce: &Nonce96,
     aad: &[u8],
     ciphertext_and_tag: &[u8],
     out: &mut [u8],
@@ -190,42 +190,30 @@ impl XChaCha20Poly1305 {
     <Self as Aead>::decrypt(self, nonce, aad, ciphertext_and_tag, out)
   }
 
-  fn derive_subkey_and_nonce(&self, nonce: &Nonce192) -> ([u8; KEY_SIZE], [u8; chacha20::NONCE_SIZE]) {
-    let mut h_nonce = [0u8; chacha20::HCHACHA_NONCE_SIZE];
-    h_nonce.copy_from_slice(&nonce.as_bytes()[..chacha20::HCHACHA_NONCE_SIZE]);
-
-    let subkey = chacha20::hchacha20(self.key.as_bytes(), &h_nonce);
-    let mut ietf_nonce = [0u8; chacha20::NONCE_SIZE];
-    ietf_nonce[4..].copy_from_slice(&nonce.as_bytes()[chacha20::HCHACHA_NONCE_SIZE..]);
-    (subkey, ietf_nonce)
-  }
-
   fn ensure_message_len(len: usize) {
     let len = match u64::try_from(len) {
       Ok(value) => value,
       Err(_) => panic!("message length exceeds u64"),
     };
-    assert!(len <= MAX_PLAINTEXT_LEN, "XChaCha20-Poly1305 message too large");
+    assert!(len <= MAX_PLAINTEXT_LEN, "ChaCha20-Poly1305 message too large");
   }
 
-  fn compute_tag(&self, nonce: &Nonce192, aad: &[u8], ciphertext: &[u8]) -> [u8; TAG_SIZE] {
-    let (mut subkey, ietf_nonce) = self.derive_subkey_and_nonce(nonce);
-    let mut poly_key = chacha20::poly1305_key_gen(&subkey, &ietf_nonce);
-    let tag = poly1305::authenticate_aead(AeadPrimitive::XChaCha20Poly1305, aad, ciphertext, &poly_key);
+  fn compute_tag(&self, nonce: &Nonce96, aad: &[u8], ciphertext: &[u8]) -> [u8; TAG_SIZE] {
+    let mut poly_key = chacha20::poly1305_key_gen(self.key.as_bytes(), nonce.as_bytes());
+    let tag = poly1305::authenticate_aead(AeadPrimitive::ChaCha20Poly1305, aad, ciphertext, &poly_key);
     ct::zeroize(&mut poly_key);
-    ct::zeroize(&mut subkey);
     tag
   }
 }
 
-impl Aead for XChaCha20Poly1305 {
+impl Aead for ChaCha20Poly1305 {
   const KEY_SIZE: usize = KEY_SIZE;
   const NONCE_SIZE: usize = NONCE_SIZE;
   const TAG_SIZE: usize = TAG_SIZE;
 
-  type Key = XChaCha20Poly1305Key;
-  type Nonce = Nonce192;
-  type Tag = XChaCha20Poly1305Tag;
+  type Key = ChaCha20Poly1305Key;
+  type Nonce = Nonce96;
+  type Tag = ChaCha20Poly1305Tag;
 
   fn new(key: &Self::Key) -> Self {
     Self { key: key.clone() }
@@ -238,25 +226,28 @@ impl Aead for XChaCha20Poly1305 {
 
     let mut tag = [0u8; TAG_SIZE];
     tag.copy_from_slice(bytes);
-    Ok(XChaCha20Poly1305Tag::from_bytes(tag))
+    Ok(ChaCha20Poly1305Tag::from_bytes(tag))
   }
 
   fn encrypt_in_place(&self, nonce: &Self::Nonce, aad: &[u8], buffer: &mut [u8]) -> Self::Tag {
     Self::ensure_message_len(buffer.len());
 
-    let (mut subkey, ietf_nonce) = self.derive_subkey_and_nonce(nonce);
-    chacha20::xor_keystream(AeadPrimitive::XChaCha20Poly1305, &subkey, 1, &ietf_nonce, buffer);
+    chacha20::xor_keystream(
+      AeadPrimitive::ChaCha20Poly1305,
+      self.key.as_bytes(),
+      1,
+      nonce.as_bytes(),
+      buffer,
+    );
 
-    let mut poly_key = chacha20::poly1305_key_gen(&subkey, &ietf_nonce);
-    let tag = XChaCha20Poly1305Tag::from_bytes(poly1305::authenticate_aead(
-      AeadPrimitive::XChaCha20Poly1305,
+    let mut poly_key = chacha20::poly1305_key_gen(self.key.as_bytes(), nonce.as_bytes());
+    let tag = ChaCha20Poly1305Tag::from_bytes(poly1305::authenticate_aead(
+      AeadPrimitive::ChaCha20Poly1305,
       aad,
       buffer,
       &poly_key,
     ));
-
     ct::zeroize(&mut poly_key);
-    ct::zeroize(&mut subkey);
     tag
   }
 
@@ -274,9 +265,13 @@ impl Aead for XChaCha20Poly1305 {
       return Err(VerificationError::new());
     }
 
-    let (mut subkey, ietf_nonce) = self.derive_subkey_and_nonce(nonce);
-    chacha20::xor_keystream(AeadPrimitive::XChaCha20Poly1305, &subkey, 1, &ietf_nonce, buffer);
-    ct::zeroize(&mut subkey);
+    chacha20::xor_keystream(
+      AeadPrimitive::ChaCha20Poly1305,
+      self.key.as_bytes(),
+      1,
+      nonce.as_bytes(),
+      buffer,
+    );
     Ok(())
   }
 }

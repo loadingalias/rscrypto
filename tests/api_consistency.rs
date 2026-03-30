@@ -5,16 +5,16 @@ use std::io::{Cursor, Read, Write};
 
 #[cfg(feature = "aead")]
 use rscrypto::{
-  Aead, VerificationError, XChaCha20Poly1305, XChaCha20Poly1305Key,
+  Aead, ChaCha20Poly1305, ChaCha20Poly1305Key, VerificationError, XChaCha20Poly1305, XChaCha20Poly1305Key,
   aead::{AeadBufferError, Nonce96, Nonce192},
 };
 #[cfg(feature = "hashes")]
 use rscrypto::{
-  AsconXof, Blake3, Digest, Sha3_224, Sha3_256, Sha3_384, Sha3_512, Sha224, Sha256, Sha384, Sha512, Sha512_256,
-  Shake128, Shake256, Xof,
+  AsconCxof128, AsconXof, Blake3, Cshake256, Digest, Sha3_224, Sha3_256, Sha3_384, Sha3_512, Sha224, Sha256, Sha384,
+  Sha512, Sha512_256, Shake128, Shake256, Xof,
 };
 #[cfg(feature = "auth")]
-use rscrypto::{HmacSha256, Mac};
+use rscrypto::{HmacSha256, Kmac256, Mac};
 
 #[cfg(feature = "hashes")]
 fn assert_digest_api<D>()
@@ -197,18 +197,49 @@ fn all_xofs_follow_new_update_finalize_xof_and_xof() {
   assert_xof_api!(Shake256);
   assert_xof_api!(Blake3);
   assert_xof_api!(AsconXof);
+
+  let data = b"abc";
+  let mut cshake = Cshake256::new(b"", b"ctx=v1");
+  cshake.update(data);
+  let streaming = squeeze_32(cshake.finalize_xof());
+  cshake.reset();
+  cshake.update(data);
+  assert_eq!(streaming, squeeze_32(cshake.finalize_xof()));
+
+  let mut cxof = AsconCxof128::new(b"ctx=v1").unwrap();
+  cxof.update(data);
+  let streaming = squeeze_32(cxof.finalize_xof());
+  cxof.reset();
+  cxof.update(data);
+  assert_eq!(streaming, squeeze_32(cxof.finalize_xof()));
 }
 
 #[test]
 #[cfg(feature = "auth")]
 fn all_macs_follow_new_update_finalize_reset() {
   assert_mac_api::<HmacSha256>();
+
+  let mut kmac = Kmac256::new(b"api-consistency-key", b"ctx=v1");
+  kmac.update(b"abc");
+  let expected = Kmac256::mac_array::<32>(b"api-consistency-key", b"ctx=v1", b"abc");
+  let mut actual = [0u8; 32];
+  kmac.finalize_into(&mut actual);
+  assert_eq!(actual, expected);
+  kmac.reset();
+  kmac.update(b"abc");
+  kmac.finalize_into(&mut actual);
+  assert_eq!(actual, expected);
+  assert!(kmac.verify_tag(&expected).is_ok());
 }
 
 #[test]
 #[cfg(feature = "aead")]
 fn all_aeads_follow_new_encrypt_decrypt_and_detached_aliases() {
   assert_aead_api::<ApiAead>(ApiKey([7u8; 32]), Nonce96::from_bytes([9u8; Nonce96::LENGTH]));
+  assert_aead_api::<ChaCha20Poly1305>(
+    ChaCha20Poly1305Key::from_bytes([2u8; ChaCha20Poly1305::KEY_SIZE]),
+    Nonce96::from_bytes([4u8; Nonce96::LENGTH]),
+  );
   assert_aead_api::<XChaCha20Poly1305>(
     XChaCha20Poly1305Key::from_bytes([3u8; XChaCha20Poly1305::KEY_SIZE]),
     Nonce192::from_bytes([5u8; Nonce192::LENGTH]),

@@ -2,16 +2,440 @@
 
 //! Portable Poly1305 core.
 
-use crate::traits::ct;
+#[cfg(feature = "std")]
+use crate::backend::cache::OnceCache;
+use crate::{
+  aead::targets::{AeadPrimitive, select_backend},
+  platform::{Arch, Caps},
+  traits::ct,
+};
 
 const LIMB_MASK: u32 = 0x03ff_ffff;
 const FULL_BLOCK_HIBIT: u32 = 1 << 24;
+
+type ComputeBlockFn = fn(&mut State, &[u8; 16], bool);
+
+#[cfg(feature = "std")]
+static XCHACHA20POLY1305_COMPUTE_BLOCK_DISPATCH: OnceCache<ComputeBlockFn> = OnceCache::new();
+#[cfg(feature = "std")]
+static CHACHA20POLY1305_COMPUTE_BLOCK_DISPATCH: OnceCache<ComputeBlockFn> = OnceCache::new();
 
 #[inline]
 fn load_u32_le(input: &[u8]) -> u32 {
   let mut bytes = [0u8; 4];
   bytes.copy_from_slice(input);
   u32::from_le_bytes(bytes)
+}
+
+#[inline]
+fn current_caps() -> Caps {
+  #[cfg(feature = "std")]
+  {
+    crate::platform::caps()
+  }
+
+  #[cfg(not(feature = "std"))]
+  {
+    crate::platform::caps_static()
+  }
+}
+
+#[inline]
+fn compute_block_resolved(primitive: AeadPrimitive) -> ComputeBlockFn {
+  #[cfg(feature = "std")]
+  {
+    match primitive {
+      AeadPrimitive::XChaCha20Poly1305 => {
+        XCHACHA20POLY1305_COMPUTE_BLOCK_DISPATCH.get_or_init(|| resolve_compute_block(primitive))
+      }
+      AeadPrimitive::ChaCha20Poly1305 => {
+        CHACHA20POLY1305_COMPUTE_BLOCK_DISPATCH.get_or_init(|| resolve_compute_block(primitive))
+      }
+      _ => resolve_compute_block(primitive),
+    }
+  }
+
+  #[cfg(not(feature = "std"))]
+  {
+    resolve_compute_block(primitive)
+  }
+}
+
+#[inline]
+fn resolve_compute_block(primitive: AeadPrimitive) -> ComputeBlockFn {
+  match select_backend(primitive, Arch::current(), current_caps()) {
+    #[cfg(target_arch = "wasm32")]
+    crate::aead::targets::AeadBackend::WasmSimd128 => wasm_simd128::compute_block,
+    #[cfg(target_arch = "x86_64")]
+    crate::aead::targets::AeadBackend::X86Avx512 => x86_avx512::compute_block,
+    #[cfg(target_arch = "x86_64")]
+    crate::aead::targets::AeadBackend::X86Avx2 => x86_avx2::compute_block,
+    #[cfg(target_arch = "aarch64")]
+    crate::aead::targets::AeadBackend::Aarch64Neon => aarch64_neon::compute_block,
+    #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+    crate::aead::targets::AeadBackend::PowerVector => power_vsx::compute_block,
+    #[cfg(target_arch = "s390x")]
+    crate::aead::targets::AeadBackend::S390xVector => s390x_vector::compute_block,
+    #[cfg(target_arch = "riscv64")]
+    crate::aead::targets::AeadBackend::Riscv64Vector => riscv64_vector::compute_block,
+    _ => State::compute_block_portable,
+  }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn compute_block_x86_avx2(state: &mut State, block: &[u8; 16], partial: bool) {
+  use core::arch::x86_64::{__m256i, _mm256_mul_epu32, _mm256_setr_epi32, _mm256_storeu_si256};
+
+  #[inline(always)]
+  fn sum4_mul(lhs: [u32; 4], rhs: [u32; 4]) -> u64 {
+    // SAFETY: the enclosing kernel enables AVX2 and the destination array is a valid
+    // unaligned store target for one `__m256i`.
+    unsafe {
+      let a = _mm256_setr_epi32(lhs[0] as i32, 0, lhs[1] as i32, 0, lhs[2] as i32, 0, lhs[3] as i32, 0);
+      let b = _mm256_setr_epi32(rhs[0] as i32, 0, rhs[1] as i32, 0, rhs[2] as i32, 0, rhs[3] as i32, 0);
+      let products = _mm256_mul_epu32(a, b);
+      let mut lanes = [0u64; 4];
+      _mm256_storeu_si256(lanes.as_mut_ptr() as *mut __m256i, products);
+      lanes[0] + lanes[1] + lanes[2] + lanes[3]
+    }
+  }
+
+  let hibit = if partial { 0 } else { FULL_BLOCK_HIBIT };
+
+  let r0 = state.r[0];
+  let r1 = state.r[1];
+  let r2 = state.r[2];
+  let r3 = state.r[3];
+  let r4 = state.r[4];
+
+  let s1 = r1 * 5;
+  let s2 = r2 * 5;
+  let s3 = r3 * 5;
+  let s4 = r4 * 5;
+
+  let mut h0 = state.h[0];
+  let mut h1 = state.h[1];
+  let mut h2 = state.h[2];
+  let mut h3 = state.h[3];
+  let mut h4 = state.h[4];
+
+  h0 = h0.wrapping_add(load_u32_le(&block[0..4]) & LIMB_MASK);
+  h1 = h1.wrapping_add((load_u32_le(&block[3..7]) >> 2) & LIMB_MASK);
+  h2 = h2.wrapping_add((load_u32_le(&block[6..10]) >> 4) & LIMB_MASK);
+  h3 = h3.wrapping_add((load_u32_le(&block[9..13]) >> 6) & LIMB_MASK);
+  h4 = h4.wrapping_add((load_u32_le(&block[12..16]) >> 8) | hibit);
+
+  let d0 = sum4_mul([h0, h1, h2, h3], [r0, s4, s3, s2]) + (u64::from(h4) * u64::from(s1));
+  let mut d1 = sum4_mul([h0, h1, h2, h3], [r1, r0, s4, s3]) + (u64::from(h4) * u64::from(s2));
+  let mut d2 = sum4_mul([h0, h1, h2, h3], [r2, r1, r0, s4]) + (u64::from(h4) * u64::from(s3));
+  let mut d3 = sum4_mul([h0, h1, h2, h3], [r3, r2, r1, r0]) + (u64::from(h4) * u64::from(s4));
+  let mut d4 = sum4_mul([h0, h1, h2, h3], [r4, r3, r2, r1]) + (u64::from(h4) * u64::from(r0));
+
+  let mut c = (d0 >> 26) as u32;
+  h0 = (d0 as u32) & LIMB_MASK;
+  d1 += u64::from(c);
+
+  c = (d1 >> 26) as u32;
+  h1 = (d1 as u32) & LIMB_MASK;
+  d2 += u64::from(c);
+
+  c = (d2 >> 26) as u32;
+  h2 = (d2 as u32) & LIMB_MASK;
+  d3 += u64::from(c);
+
+  c = (d3 >> 26) as u32;
+  h3 = (d3 as u32) & LIMB_MASK;
+  d4 += u64::from(c);
+
+  c = (d4 >> 26) as u32;
+  h4 = (d4 as u32) & LIMB_MASK;
+  h0 = h0.wrapping_add(c * 5);
+
+  c = h0 >> 26;
+  h0 &= LIMB_MASK;
+  h1 = h1.wrapping_add(c);
+
+  state.h = [h0, h1, h2, h3, h4];
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq")]
+unsafe fn compute_block_x86_avx512(state: &mut State, block: &[u8; 16], partial: bool) {
+  use core::arch::x86_64::{__m512i, _mm512_mul_epu32, _mm512_setr_epi32, _mm512_storeu_si512};
+
+  #[inline(always)]
+  fn pair_sum4_mul(lhs: [u32; 4], rhs_lo: [u32; 4], rhs_hi: [u32; 4]) -> (u64, u64) {
+    // SAFETY: the enclosing kernel enables AVX-512F, and the destination array is a valid
+    // unaligned store target for one `__m512i`.
+    unsafe {
+      let a = _mm512_setr_epi32(
+        lhs[0] as i32,
+        0,
+        lhs[1] as i32,
+        0,
+        lhs[2] as i32,
+        0,
+        lhs[3] as i32,
+        0,
+        lhs[0] as i32,
+        0,
+        lhs[1] as i32,
+        0,
+        lhs[2] as i32,
+        0,
+        lhs[3] as i32,
+        0,
+      );
+      let b = _mm512_setr_epi32(
+        rhs_lo[0] as i32,
+        0,
+        rhs_lo[1] as i32,
+        0,
+        rhs_lo[2] as i32,
+        0,
+        rhs_lo[3] as i32,
+        0,
+        rhs_hi[0] as i32,
+        0,
+        rhs_hi[1] as i32,
+        0,
+        rhs_hi[2] as i32,
+        0,
+        rhs_hi[3] as i32,
+        0,
+      );
+      let products = _mm512_mul_epu32(a, b);
+      let mut lanes = [0u64; 8];
+      _mm512_storeu_si512(lanes.as_mut_ptr() as *mut __m512i, products);
+      (
+        lanes[0] + lanes[1] + lanes[2] + lanes[3],
+        lanes[4] + lanes[5] + lanes[6] + lanes[7],
+      )
+    }
+  }
+
+  #[inline(always)]
+  fn single_sum4_mul(lhs: [u32; 4], rhs: [u32; 4]) -> u64 {
+    pair_sum4_mul(lhs, rhs, [0; 4]).0
+  }
+
+  let hibit = if partial { 0 } else { FULL_BLOCK_HIBIT };
+
+  let r0 = state.r[0];
+  let r1 = state.r[1];
+  let r2 = state.r[2];
+  let r3 = state.r[3];
+  let r4 = state.r[4];
+
+  let s1 = r1 * 5;
+  let s2 = r2 * 5;
+  let s3 = r3 * 5;
+  let s4 = r4 * 5;
+
+  let mut h0 = state.h[0];
+  let mut h1 = state.h[1];
+  let mut h2 = state.h[2];
+  let mut h3 = state.h[3];
+  let mut h4 = state.h[4];
+
+  h0 = h0.wrapping_add(load_u32_le(&block[0..4]) & LIMB_MASK);
+  h1 = h1.wrapping_add((load_u32_le(&block[3..7]) >> 2) & LIMB_MASK);
+  h2 = h2.wrapping_add((load_u32_le(&block[6..10]) >> 4) & LIMB_MASK);
+  h3 = h3.wrapping_add((load_u32_le(&block[9..13]) >> 6) & LIMB_MASK);
+  h4 = h4.wrapping_add((load_u32_le(&block[12..16]) >> 8) | hibit);
+
+  let (d0_base, d1_base) = pair_sum4_mul([h0, h1, h2, h3], [r0, s4, s3, s2], [r1, r0, s4, s3]);
+  let (d2_base, d3_base) = pair_sum4_mul([h0, h1, h2, h3], [r2, r1, r0, s4], [r3, r2, r1, r0]);
+  let d4_base = single_sum4_mul([h0, h1, h2, h3], [r4, r3, r2, r1]);
+
+  let d0 = d0_base + (u64::from(h4) * u64::from(s1));
+  let mut d1 = d1_base + (u64::from(h4) * u64::from(s2));
+  let mut d2 = d2_base + (u64::from(h4) * u64::from(s3));
+  let mut d3 = d3_base + (u64::from(h4) * u64::from(s4));
+  let mut d4 = d4_base + (u64::from(h4) * u64::from(r0));
+
+  let mut c = (d0 >> 26) as u32;
+  h0 = (d0 as u32) & LIMB_MASK;
+  d1 += u64::from(c);
+
+  c = (d1 >> 26) as u32;
+  h1 = (d1 as u32) & LIMB_MASK;
+  d2 += u64::from(c);
+
+  c = (d2 >> 26) as u32;
+  h2 = (d2 as u32) & LIMB_MASK;
+  d3 += u64::from(c);
+
+  c = (d3 >> 26) as u32;
+  h3 = (d3 as u32) & LIMB_MASK;
+  d4 += u64::from(c);
+
+  c = (d4 >> 26) as u32;
+  h4 = (d4 as u32) & LIMB_MASK;
+  h0 = h0.wrapping_add(c * 5);
+
+  c = h0 >> 26;
+  h0 &= LIMB_MASK;
+  h1 = h1.wrapping_add(c);
+
+  state.h = [h0, h1, h2, h3, h4];
+}
+
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn compute_block_aarch64_neon(state: &mut State, block: &[u8; 16], partial: bool) {
+  use core::arch::aarch64::{uint64x2_t, vaddq_u64, vcreate_u32, vmull_u32, vst1q_u64};
+
+  #[inline(always)]
+  fn sum4_mul(lhs: [u32; 4], rhs: [u32; 4]) -> u64 {
+    // SAFETY: the enclosing kernel enables NEON and the destination arrays hold exactly one
+    // `uint64x2_t` each for unaligned stores.
+    unsafe {
+      let lo = vmull_u32(
+        vcreate_u32((u64::from(lhs[1]) << 32) | u64::from(lhs[0])),
+        vcreate_u32((u64::from(rhs[1]) << 32) | u64::from(rhs[0])),
+      );
+      let hi = vmull_u32(
+        vcreate_u32((u64::from(lhs[3]) << 32) | u64::from(lhs[2])),
+        vcreate_u32((u64::from(rhs[3]) << 32) | u64::from(rhs[2])),
+      );
+      let sum: uint64x2_t = vaddq_u64(lo, hi);
+      let mut lanes = [0u64; 2];
+      vst1q_u64(lanes.as_mut_ptr(), sum);
+      lanes[0] + lanes[1]
+    }
+  }
+
+  let hibit = if partial { 0 } else { FULL_BLOCK_HIBIT };
+
+  let r0 = state.r[0];
+  let r1 = state.r[1];
+  let r2 = state.r[2];
+  let r3 = state.r[3];
+  let r4 = state.r[4];
+
+  let s1 = r1 * 5;
+  let s2 = r2 * 5;
+  let s3 = r3 * 5;
+  let s4 = r4 * 5;
+
+  let mut h0 = state.h[0];
+  let mut h1 = state.h[1];
+  let mut h2 = state.h[2];
+  let mut h3 = state.h[3];
+  let mut h4 = state.h[4];
+
+  h0 = h0.wrapping_add(load_u32_le(&block[0..4]) & LIMB_MASK);
+  h1 = h1.wrapping_add((load_u32_le(&block[3..7]) >> 2) & LIMB_MASK);
+  h2 = h2.wrapping_add((load_u32_le(&block[6..10]) >> 4) & LIMB_MASK);
+  h3 = h3.wrapping_add((load_u32_le(&block[9..13]) >> 6) & LIMB_MASK);
+  h4 = h4.wrapping_add((load_u32_le(&block[12..16]) >> 8) | hibit);
+
+  let d0 = sum4_mul([h0, h1, h2, h3], [r0, s4, s3, s2]) + (u64::from(h4) * u64::from(s1));
+  let mut d1 = sum4_mul([h0, h1, h2, h3], [r1, r0, s4, s3]) + (u64::from(h4) * u64::from(s2));
+  let mut d2 = sum4_mul([h0, h1, h2, h3], [r2, r1, r0, s4]) + (u64::from(h4) * u64::from(s3));
+  let mut d3 = sum4_mul([h0, h1, h2, h3], [r3, r2, r1, r0]) + (u64::from(h4) * u64::from(s4));
+  let mut d4 = sum4_mul([h0, h1, h2, h3], [r4, r3, r2, r1]) + (u64::from(h4) * u64::from(r0));
+
+  let mut c = (d0 >> 26) as u32;
+  h0 = (d0 as u32) & LIMB_MASK;
+  d1 += u64::from(c);
+
+  c = (d1 >> 26) as u32;
+  h1 = (d1 as u32) & LIMB_MASK;
+  d2 += u64::from(c);
+
+  c = (d2 >> 26) as u32;
+  h2 = (d2 as u32) & LIMB_MASK;
+  d3 += u64::from(c);
+
+  c = (d3 >> 26) as u32;
+  h3 = (d3 as u32) & LIMB_MASK;
+  d4 += u64::from(c);
+
+  c = (d4 >> 26) as u32;
+  h4 = (d4 as u32) & LIMB_MASK;
+  h0 = h0.wrapping_add(c * 5);
+
+  c = h0 >> 26;
+  h0 &= LIMB_MASK;
+  h1 = h1.wrapping_add(c);
+
+  state.h = [h0, h1, h2, h3, h4];
+}
+
+#[cfg(target_arch = "wasm32")]
+#[target_feature(enable = "simd128")]
+unsafe fn compute_block_wasm_simd128(state: &mut State, block: &[u8; 16], partial: bool) {
+  use core::arch::wasm32::{i64x2_add, u32x4, u64x2_extmul_high_u32x4, u64x2_extmul_low_u32x4, u64x2_extract_lane};
+
+  #[inline(always)]
+  fn sum4_mul(lhs: [u32; 4], rhs: [u32; 4]) -> u64 {
+    let a = u32x4(lhs[0], lhs[1], lhs[2], lhs[3]);
+    let b = u32x4(rhs[0], rhs[1], rhs[2], rhs[3]);
+    let lo = u64x2_extmul_low_u32x4(a, b);
+    let hi = u64x2_extmul_high_u32x4(a, b);
+    let sum = i64x2_add(lo, hi);
+    u64x2_extract_lane::<0>(sum) + u64x2_extract_lane::<1>(sum)
+  }
+
+  let hibit = if partial { 0 } else { FULL_BLOCK_HIBIT };
+
+  let r0 = state.r[0];
+  let r1 = state.r[1];
+  let r2 = state.r[2];
+  let r3 = state.r[3];
+  let r4 = state.r[4];
+
+  let s1 = r1 * 5;
+  let s2 = r2 * 5;
+  let s3 = r3 * 5;
+  let s4 = r4 * 5;
+
+  let mut h0 = state.h[0];
+  let mut h1 = state.h[1];
+  let mut h2 = state.h[2];
+  let mut h3 = state.h[3];
+  let mut h4 = state.h[4];
+
+  h0 = h0.wrapping_add(load_u32_le(&block[0..4]) & LIMB_MASK);
+  h1 = h1.wrapping_add((load_u32_le(&block[3..7]) >> 2) & LIMB_MASK);
+  h2 = h2.wrapping_add((load_u32_le(&block[6..10]) >> 4) & LIMB_MASK);
+  h3 = h3.wrapping_add((load_u32_le(&block[9..13]) >> 6) & LIMB_MASK);
+  h4 = h4.wrapping_add((load_u32_le(&block[12..16]) >> 8) | hibit);
+
+  let d0 = sum4_mul([h0, h1, h2, h3], [r0, s4, s3, s2]) + (u64::from(h4) * u64::from(s1));
+  let mut d1 = sum4_mul([h0, h1, h2, h3], [r1, r0, s4, s3]) + (u64::from(h4) * u64::from(s2));
+  let mut d2 = sum4_mul([h0, h1, h2, h3], [r2, r1, r0, s4]) + (u64::from(h4) * u64::from(s3));
+  let mut d3 = sum4_mul([h0, h1, h2, h3], [r3, r2, r1, r0]) + (u64::from(h4) * u64::from(s4));
+  let mut d4 = sum4_mul([h0, h1, h2, h3], [r4, r3, r2, r1]) + (u64::from(h4) * u64::from(r0));
+
+  let mut c = (d0 >> 26) as u32;
+  h0 = (d0 as u32) & LIMB_MASK;
+  d1 += u64::from(c);
+
+  c = (d1 >> 26) as u32;
+  h1 = (d1 as u32) & LIMB_MASK;
+  d2 += u64::from(c);
+
+  c = (d2 >> 26) as u32;
+  h2 = (d2 as u32) & LIMB_MASK;
+  d3 += u64::from(c);
+
+  c = (d3 >> 26) as u32;
+  h3 = (d3 as u32) & LIMB_MASK;
+  d4 += u64::from(c);
+
+  c = (d4 >> 26) as u32;
+  h4 = (d4 as u32) & LIMB_MASK;
+  h0 = h0.wrapping_add(c * 5);
+
+  c = h0 >> 26;
+  h0 &= LIMB_MASK;
+  h1 = h1.wrapping_add(c);
+
+  state.h = [h0, h1, h2, h3, h4];
 }
 
 #[derive(Clone, Default)]
@@ -42,7 +466,7 @@ impl State {
     }
   }
 
-  fn compute_block(&mut self, block: &[u8; 16], partial: bool) {
+  fn compute_block_portable(&mut self, block: &[u8; 16], partial: bool) {
     let hibit = if partial { 0 } else { FULL_BLOCK_HIBIT };
 
     let r0 = self.r[0];
@@ -122,12 +546,12 @@ impl State {
   }
 
   #[cfg(test)]
-  fn update_message(&mut self, message: &[u8]) {
+  fn update_message(&mut self, message: &[u8], compute_block: ComputeBlockFn) {
     let mut blocks = message.chunks_exact(16);
     for chunk in &mut blocks {
       let mut block = [0u8; 16];
       block.copy_from_slice(chunk);
-      self.compute_block(&block, false);
+      compute_block(self, &block, false);
     }
 
     let remainder = blocks.remainder();
@@ -138,15 +562,15 @@ impl State {
     let mut block = [0u8; 16];
     block[..remainder.len()].copy_from_slice(remainder);
     block[remainder.len()] = 1;
-    self.compute_block(&block, true);
+    compute_block(self, &block, true);
   }
 
-  fn update_padded_segment(&mut self, segment: &[u8]) {
+  fn update_padded_segment(&mut self, segment: &[u8], compute_block: ComputeBlockFn) {
     let mut blocks = segment.chunks_exact(16);
     for chunk in &mut blocks {
       let mut block = [0u8; 16];
       block.copy_from_slice(chunk);
-      self.compute_block(&block, false);
+      compute_block(self, &block, false);
     }
 
     let remainder = blocks.remainder();
@@ -156,7 +580,7 @@ impl State {
 
     let mut block = [0u8; 16];
     block[..remainder.len()].copy_from_slice(remainder);
-    self.compute_block(&block, false);
+    compute_block(self, &block, false);
   }
 
   fn finalize(self) -> [u8; 16] {
@@ -245,15 +669,20 @@ impl State {
 #[must_use]
 pub(crate) fn authenticate(message: &[u8], key: &[u8; 32]) -> [u8; 16] {
   let mut state = State::new(key);
-  state.update_message(message);
+  state.update_message(message, State::compute_block_portable);
   state.finalize()
 }
 
 #[must_use]
-pub(crate) fn authenticate_aead(aad: &[u8], ciphertext: &[u8], key: &[u8; 32]) -> [u8; 16] {
+pub(crate) fn authenticate_aead(primitive: AeadPrimitive, aad: &[u8], ciphertext: &[u8], key: &[u8; 32]) -> [u8; 16] {
+  authenticate_aead_with(aad, ciphertext, key, compute_block_resolved(primitive))
+}
+
+#[must_use]
+fn authenticate_aead_with(aad: &[u8], ciphertext: &[u8], key: &[u8; 32], compute_block: ComputeBlockFn) -> [u8; 16] {
   let mut state = State::new(key);
-  state.update_padded_segment(aad);
-  state.update_padded_segment(ciphertext);
+  state.update_padded_segment(aad, compute_block);
+  state.update_padded_segment(ciphertext, compute_block);
 
   let aad_len = match u64::try_from(aad.len()) {
     Ok(len) => len,
@@ -267,16 +696,113 @@ pub(crate) fn authenticate_aead(aad: &[u8], ciphertext: &[u8], key: &[u8; 32]) -
   let mut lengths = [0u8; 16];
   lengths[0..8].copy_from_slice(&aad_len.to_le_bytes());
   lengths[8..16].copy_from_slice(&ciphertext_len.to_le_bytes());
-  state.compute_block(&lengths, false);
+  compute_block(&mut state, &lengths, false);
 
   let tag = state.finalize();
   ct::zeroize(&mut lengths);
   tag
 }
 
+#[cfg(target_arch = "x86_64")]
+mod x86_avx512 {
+  use super::{State, compute_block_x86_avx512};
+
+  #[inline]
+  pub(super) fn compute_block(state: &mut State, block: &[u8; 16], partial: bool) {
+    // SAFETY: Backend selection guarantees the AVX-512 feature set required by this kernel.
+    unsafe { compute_block_impl(state, block, partial) }
+  }
+
+  #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq")]
+  unsafe fn compute_block_impl(state: &mut State, block: &[u8; 16], partial: bool) {
+    // SAFETY: this wrapper enables the AVX-512 feature set required by the shared AVX-512 body.
+    unsafe { compute_block_x86_avx512(state, block, partial) }
+  }
+}
+
+#[cfg(target_arch = "x86_64")]
+mod x86_avx2 {
+  use super::{State, compute_block_x86_avx2};
+
+  #[inline]
+  pub(super) fn compute_block(state: &mut State, block: &[u8; 16], partial: bool) {
+    // SAFETY: Backend selection guarantees AVX2 is available before this wrapper is chosen.
+    unsafe { compute_block_impl(state, block, partial) }
+  }
+
+  #[target_feature(enable = "avx2")]
+  unsafe fn compute_block_impl(state: &mut State, block: &[u8; 16], partial: bool) {
+    // SAFETY: this wrapper enables AVX2 before calling the shared AVX2 body.
+    unsafe { compute_block_x86_avx2(state, block, partial) }
+  }
+}
+
+#[cfg(target_arch = "aarch64")]
+mod aarch64_neon {
+  use super::{State, compute_block_aarch64_neon};
+
+  #[inline]
+  pub(super) fn compute_block(state: &mut State, block: &[u8; 16], partial: bool) {
+    // SAFETY: Backend selection guarantees NEON is available before this wrapper is chosen.
+    unsafe { compute_block_impl(state, block, partial) }
+  }
+
+  #[target_feature(enable = "neon")]
+  unsafe fn compute_block_impl(state: &mut State, block: &[u8; 16], partial: bool) {
+    // SAFETY: this wrapper enables NEON before calling the shared NEON body.
+    unsafe { compute_block_aarch64_neon(state, block, partial) }
+  }
+}
+
+#[cfg(target_arch = "wasm32")]
+mod wasm_simd128 {
+  use super::{State, compute_block_wasm_simd128};
+
+  #[inline]
+  pub(super) fn compute_block(state: &mut State, block: &[u8; 16], partial: bool) {
+    // SAFETY: backend selection guarantees `simd128` is available before this wrapper is chosen.
+    unsafe { compute_block_wasm_simd128(state, block, partial) }
+  }
+}
+
+#[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+mod power_vsx {
+  use super::State;
+
+  #[inline]
+  pub(super) fn compute_block(state: &mut State, block: &[u8; 16], partial: bool) {
+    state.compute_block_portable(block, partial);
+  }
+}
+
+#[cfg(target_arch = "s390x")]
+mod s390x_vector {
+  use super::State;
+
+  #[inline]
+  pub(super) fn compute_block(state: &mut State, block: &[u8; 16], partial: bool) {
+    state.compute_block_portable(block, partial);
+  }
+}
+
+#[cfg(target_arch = "riscv64")]
+mod riscv64_vector {
+  use super::State;
+
+  #[inline]
+  pub(super) fn compute_block(state: &mut State, block: &[u8; 16], partial: bool) {
+    state.compute_block_portable(block, partial);
+  }
+}
+
 #[cfg(test)]
 mod tests {
-  use super::{authenticate, authenticate_aead};
+  use super::{ComputeBlockFn, State, authenticate, authenticate_aead_with};
+  use crate::aead::targets::AeadPrimitive;
+  #[cfg(target_arch = "aarch64")]
+  use crate::platform::caps::aarch64;
+  #[cfg(target_arch = "x86_64")]
+  use crate::platform::caps::x86;
 
   #[test]
   fn poly1305_matches_rfc_8439_section_2_5_2() {
@@ -311,6 +837,60 @@ mod tests {
       0x1a, 0xe1, 0x0b, 0x59, 0x4f, 0x09, 0xe2, 0x6a, 0x7e, 0x90, 0x2e, 0xcb, 0xd0, 0x60, 0x06, 0x91,
     ];
 
-    assert_eq!(authenticate_aead(&aad, &ciphertext, &poly_key), expected);
+    assert_eq!(
+      super::authenticate_aead(AeadPrimitive::ChaCha20Poly1305, &aad, &ciphertext, &poly_key),
+      expected
+    );
+  }
+
+  fn authenticate_aead_portable(aad: &[u8], ciphertext: &[u8], key: &[u8; 32]) -> [u8; 16] {
+    authenticate_aead_with(aad, ciphertext, key, State::compute_block_portable)
+  }
+
+  fn exercise_backend(backend: ComputeBlockFn) {
+    let key = [0x5au8; 32];
+    for aad_len in [0usize, 1, 15, 16, 17, 31, 32, 33, 80] {
+      for ciphertext_len in [0usize, 1, 15, 16, 17, 31, 32, 33, 191, 256] {
+        let aad = (0..aad_len)
+          .map(|index| index.strict_mul(11).strict_add(7) as u8)
+          .collect::<Vec<_>>();
+        let ciphertext = (0..ciphertext_len)
+          .map(|index| index.strict_mul(17).strict_add(3) as u8)
+          .collect::<Vec<_>>();
+        let portable = authenticate_aead_portable(&aad, &ciphertext, &key);
+        let accelerated = authenticate_aead_with(&aad, &ciphertext, &key, backend);
+        assert_eq!(accelerated, portable);
+      }
+    }
+  }
+
+  #[test]
+  #[cfg(target_arch = "x86_64")]
+  fn avx512_backend_matches_portable_when_available() {
+    if !crate::platform::caps().has(x86::AVX512_READY) {
+      return;
+    }
+
+    exercise_backend(super::x86_avx512::compute_block);
+  }
+
+  #[test]
+  #[cfg(target_arch = "x86_64")]
+  fn avx2_backend_matches_portable_when_available() {
+    if !crate::platform::caps().has(x86::AVX2) {
+      return;
+    }
+
+    exercise_backend(super::x86_avx2::compute_block);
+  }
+
+  #[test]
+  #[cfg(target_arch = "aarch64")]
+  fn neon_backend_matches_portable_when_available() {
+    if !crate::platform::caps().has(aarch64::NEON) {
+      return;
+    }
+
+    exercise_backend(super::aarch64_neon::compute_block);
   }
 }

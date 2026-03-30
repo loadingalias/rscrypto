@@ -10,14 +10,6 @@ use super::constants::FIELD_LIMBS;
 const RADIX_BITS: u32 = 51;
 const RADIX: u64 = 1u64 << RADIX_BITS;
 const MASK51: u64 = RADIX - 1;
-const INVERT_EXPONENT: [u8; 32] = [
-  0xEB, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-  0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x7F,
-];
-const SQRT_EXPONENT: [u8; 32] = [
-  0xFE, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-  0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x0F,
-];
 const MODULUS_0: u64 = RADIX - 19;
 const MODULUS_N: u64 = MASK51;
 const SUB_BIAS_0: u64 = RADIX.strict_mul(2).strict_sub(38);
@@ -162,7 +154,8 @@ impl FieldElement {
   /// Multiplicative inverse using exponentiation by `p - 2`.
   #[must_use]
   pub(crate) fn invert(&self) -> Self {
-    self.pow(&INVERT_EXPONENT)
+    let (t19, t3) = self.pow22501();
+    t19.pow2k(5).mul(&t3)
   }
 
   /// Canonically reduce the field element.
@@ -264,37 +257,80 @@ impl FieldElement {
   /// Square root in `GF(2^255 - 19)` when one exists.
   #[must_use]
   pub(crate) fn sqrt(&self) -> Option<Self> {
-    let canonical = self.normalize();
-    let mut candidate = canonical.pow(&SQRT_EXPONENT).normalize();
-
-    if candidate.square().normalize() == canonical {
-      return Some(candidate);
-    }
-
-    candidate = candidate.mul(&SQRT_M1).normalize();
-    if candidate.square().normalize() == canonical {
-      Some(candidate)
-    } else {
-      None
-    }
+    self.sqrt_ratio_i(&Self::ONE).and_then(|candidate| {
+      if candidate.square().normalize() == self.normalize() {
+        Some(candidate)
+      } else {
+        None
+      }
+    })
   }
 
   #[must_use]
-  fn pow(&self, exponent: &[u8; 32]) -> Self {
-    let mut acc = Self::ONE;
+  fn pow2k(&self, mut k: u32) -> Self {
+    debug_assert!(k > 0);
 
-    for byte in exponent.iter().rev().copied() {
-      let mut shift = 8u32;
-      while shift > 0 {
-        shift = shift.strict_sub(1);
-        acc = acc.square();
-        if ((byte >> shift) & 1) == 1 {
-          acc = acc.mul(self);
-        }
-      }
+    let mut acc = *self;
+    while k > 0 {
+      acc = acc.square();
+      k = k.strict_sub(1);
     }
-
     acc
+  }
+
+  #[must_use]
+  fn pow22501(&self) -> (Self, Self) {
+    let t0 = self.square();
+    let t1 = t0.square().square();
+    let t2 = self.mul(&t1);
+    let t3 = t0.mul(&t2);
+    let t4 = t3.square();
+    let t5 = t2.mul(&t4);
+    let t6 = t5.pow2k(5);
+    let t7 = t6.mul(&t5);
+    let t8 = t7.pow2k(10);
+    let t9 = t8.mul(&t7);
+    let t10 = t9.pow2k(20);
+    let t11 = t10.mul(&t9);
+    let t12 = t11.pow2k(10);
+    let t13 = t12.mul(&t7);
+    let t14 = t13.pow2k(50);
+    let t15 = t14.mul(&t13);
+    let t16 = t15.pow2k(100);
+    let t17 = t16.mul(&t15);
+    let t18 = t17.pow2k(50);
+    let t19 = t18.mul(&t13);
+
+    (t19, t3)
+  }
+
+  #[must_use]
+  fn pow_p58(&self) -> Self {
+    let (t19, _) = self.pow22501();
+    self.mul(&t19.pow2k(2))
+  }
+
+  #[must_use]
+  pub(crate) fn sqrt_ratio_i(&self, denominator: &Self) -> Option<Self> {
+    let numerator = self.normalize();
+    let denominator = denominator.normalize();
+    let v3 = denominator.square().mul(&denominator);
+    let v7 = v3.square().mul(&denominator);
+    let r = numerator.mul(&v3).mul(&numerator.mul(&v7).pow_p58());
+    let check = denominator.mul(&r.square()).normalize();
+
+    if check == numerator {
+      Some(if r.is_negative() { r.neg() } else { r })
+    } else if check == numerator.neg().normalize() {
+      let adjusted = r.mul(&SQRT_M1).normalize();
+      Some(if adjusted.is_negative() {
+        adjusted.neg()
+      } else {
+        adjusted
+      })
+    } else {
+      None
+    }
   }
 }
 

@@ -3,9 +3,12 @@
 #[cfg(feature = "aead")]
 use rscrypto::Aead;
 #[cfg(feature = "aead")]
+use rscrypto::aead::introspect::{DispatchInfo as AeadDispatchInfo, backend_for as aead_backend_for};
+#[cfg(feature = "aead")]
 use rscrypto::aead::{
-  AeadBackend, AeadBufferError, AeadPrimitive, BenchLane, Nonce96, Nonce128, Nonce192, OpenError, XChaCha20Poly1305,
-  XChaCha20Poly1305Key, XChaCha20Poly1305Tag, lane_target_backend, select_backend,
+  AeadBackend, AeadBufferError, AeadPrimitive, BenchLane, ChaCha20Poly1305, ChaCha20Poly1305Key, ChaCha20Poly1305Tag,
+  Nonce96, Nonce128, Nonce192, OpenError, XChaCha20Poly1305, XChaCha20Poly1305Key, XChaCha20Poly1305Tag,
+  lane_target_backend, select_backend,
 };
 #[cfg(feature = "auth")]
 use rscrypto::auth::HkdfOutputLengthError;
@@ -29,15 +32,16 @@ use rscrypto::hashes::{DigestReader, DigestWriter};
 use rscrypto::platform::{Arch, Caps};
 #[cfg(feature = "hashes")]
 use rscrypto::{
-  AsconHash256, AsconXof, AsconXofReader, Blake3, Blake3Xof, Digest, FastHash, RapidHash, RapidHash128, Sha3_224,
-  Sha3_256, Sha3_384, Sha3_512, Sha224, Sha256, Sha384, Sha512, Sha512_256, Shake128, Shake128Xof, Shake256,
-  Shake256Xof, Xof, Xxh3, Xxh3_128,
+  AsconCxof128, AsconCxof128Reader, AsconHash256, AsconXof, AsconXofReader, Blake3, Blake3Xof, Cshake256, Cshake256Xof,
+  Digest, FastHash, RapidHash, RapidHash128, Sha3_224, Sha3_256, Sha3_384, Sha3_512, Sha224, Sha256, Sha384, Sha512,
+  Sha512_256, Shake128, Shake128Xof, Shake256, Shake256Xof, Xof, Xxh3, Xxh3_128,
 };
 #[cfg(feature = "checksums")]
 use rscrypto::{Checksum, ChecksumCombine, Crc16Ccitt, Crc16Ibm, Crc24OpenPgp, Crc32, Crc32C, Crc64, Crc64Nvme};
 #[cfg(feature = "auth")]
 use rscrypto::{
-  Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature, HkdfSha256, HmacSha256, Mac, verify_ed25519,
+  Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature, HkdfSha256, HmacSha256, Kmac256, Mac,
+  verify_ed25519,
 };
 use rscrypto::{VerificationError, ct};
 
@@ -61,7 +65,9 @@ fn root_surface_aead_exports_compile() {
   let _ = AeadBufferError::new();
   let _ = OpenError::buffer();
   let _ = OpenError::verification();
+  let _ = AeadDispatchInfo::current();
   let _ = AeadPrimitive::XChaCha20Poly1305.name();
+  let _ = aead_backend_for(AeadPrimitive::ChaCha20Poly1305);
   let _ = AeadBackend::Portable.name();
   let _ = BenchLane::IntelSpr.platform_name();
   let _ = BenchLane::Graviton4.arch();
@@ -118,6 +124,12 @@ fn root_surface_aead_exports_compile() {
   let mut sealed = [0u8; 20];
   cipher.encrypt(&nonce192, b"aad", b"test", &mut sealed).unwrap();
   let _ = XChaCha20Poly1305Tag::from_bytes([0u8; XChaCha20Poly1305Tag::LENGTH]);
+
+  let key = ChaCha20Poly1305Key::from_bytes([0x55; ChaCha20Poly1305::KEY_SIZE]);
+  let cipher = ChaCha20Poly1305::new(&key);
+  let mut sealed = [0u8; 20];
+  cipher.encrypt(&nonce96, b"aad", b"test", &mut sealed).unwrap();
+  let _ = ChaCha20Poly1305Tag::from_bytes([0u8; ChaCha20Poly1305Tag::LENGTH]);
 }
 
 #[test]
@@ -138,6 +150,11 @@ fn root_surface_auth_exports_compile() {
   hkdf.expand(b"info", &mut out).unwrap();
   assert_eq!(out, HkdfSha256::derive_array::<32>(b"salt", key, b"info").unwrap());
   let _ = HkdfOutputLengthError::new();
+
+  let mut kmac = Kmac256::new(key, b"svc=v1");
+  kmac.update(data);
+  kmac.finalize_into(&mut out);
+  assert!(Kmac256::verify(key, b"svc=v1", data, &out).is_ok());
 }
 
 #[test]
@@ -214,6 +231,12 @@ fn root_surface_hash_exports_compile() {
   let mut ascon = AsconXof::xof(data);
   ascon.squeeze(&mut out);
 
+  let mut cshake = Cshake256::xof(b"", b"ctx=v1", data);
+  cshake.squeeze(&mut out);
+
+  let mut cxof = AsconCxof128::xof(b"ctx=v1", data).unwrap();
+  cxof.squeeze(&mut out);
+
   assert_eq!(Xxh3::hash(data), Xxh3_64::hash(data));
   assert_eq!(RapidHash::hash(data), RapidHash64::hash(data));
   let _ = RapidHashFast64::hash(data);
@@ -245,6 +268,7 @@ fn advanced_hash_modules_compile() {
   let _ = hash_kernel_for::<Blake3>(64);
   let _ = hash_kernel_for::<AsconHash256>(64);
   let _ = hash_kernel_for::<AsconXof>(64);
+  let _ = hash_kernel_for::<AsconCxof128>(64);
   let _ = hash_kernel_for::<Xxh3>(64);
   let _ = hash_kernel_for::<RapidHash128>(64);
 
@@ -259,6 +283,8 @@ fn advanced_hash_modules_compile() {
   assert_hash_kernel_introspect::<Sha3_512>();
   assert_hash_kernel_introspect::<Shake128>();
   assert_hash_kernel_introspect::<Shake256>();
+  assert_hash_kernel_introspect::<Cshake256>();
+  assert_hash_kernel_introspect::<AsconCxof128>();
   assert_hash_kernel_introspect::<Blake3>();
   assert_hash_kernel_introspect::<AsconHash256>();
   assert_hash_kernel_introspect::<AsconXof>();

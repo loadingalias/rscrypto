@@ -405,6 +405,7 @@ enum AppleSiliconGen {
 
 /// Microarchitecture family used for aarch64 kernel-table selection.
 #[cfg(target_arch = "aarch64")]
+#[cfg_attr(not(feature = "std"), allow(dead_code))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Aarch64TuneFamily {
   #[cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "watchos"))]
@@ -506,6 +507,7 @@ fn detect_apple_silicon_gen() -> Option<AppleSiliconGen> {
 
 /// Detect the aarch64 microarchitecture family used by runtime table selection.
 #[cfg(target_arch = "aarch64")]
+#[cfg_attr(not(feature = "std"), allow(dead_code))]
 #[must_use]
 pub(crate) fn detect_aarch64_tune_family() -> Option<Aarch64TuneFamily> {
   #[cfg(all(

@@ -37,7 +37,7 @@
 //! ## Auth
 //!
 //! ```rust
-//! use rscrypto::{Ed25519Keypair, Ed25519SecretKey, HkdfSha256, HmacSha256, Mac};
+//! use rscrypto::{Ed25519Keypair, Ed25519SecretKey, HkdfSha256, HmacSha256, Kmac256, Mac};
 //!
 //! let key = b"shared-secret";
 //! let data = b"hello world";
@@ -57,13 +57,41 @@
 //! let keypair = Ed25519Keypair::from_secret_key(Ed25519SecretKey::from_bytes([7u8; 32]));
 //! let sig = keypair.sign(b"auth");
 //! assert!(keypair.public_key().verify(b"auth", &sig).is_ok());
+//!
+//! let mut kmac = Kmac256::new(b"shared-secret", b"svc=v1");
+//! kmac.update(b"auth");
+//! let mut tag32 = [0u8; 32];
+//! kmac.finalize_into(&mut tag32);
+//! assert!(Kmac256::verify(b"shared-secret", b"svc=v1", b"auth", &tag32).is_ok());
 //! # Ok::<(), rscrypto::auth::HkdfOutputLengthError>(())
+//! ```
+//!
+//! ## AEAD
+//!
+//! ```rust
+//! use rscrypto::{
+//!   Aead, ChaCha20Poly1305, ChaCha20Poly1305Key, XChaCha20Poly1305, XChaCha20Poly1305Key,
+//!   aead::{Nonce96, Nonce192},
+//! };
+//!
+//! let chacha = ChaCha20Poly1305::new(&ChaCha20Poly1305Key::from_bytes([0x11; 32]));
+//! let nonce96 = Nonce96::from_bytes([0x22; Nonce96::LENGTH]);
+//! let mut sealed = [0u8; 4 + ChaCha20Poly1305::TAG_SIZE];
+//! chacha.encrypt(&nonce96, b"hdr", b"data", &mut sealed)?;
+//!
+//! let xchacha = XChaCha20Poly1305::new(&XChaCha20Poly1305Key::from_bytes([0x33; 32]));
+//! let nonce192 = Nonce192::from_bytes([0x44; Nonce192::LENGTH]);
+//! let mut detached = *b"data";
+//! let tag = xchacha.encrypt_in_place(&nonce192, b"hdr", &mut detached);
+//! xchacha.decrypt_in_place(&nonce192, b"hdr", &mut detached, &tag)?;
+//! assert_eq!(&detached, b"data");
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
 //! ## XOF
 //!
 //! ```rust
-//! use rscrypto::{Shake256, Xof};
+//! use rscrypto::{AsconCxof128, Cshake256, Shake256, Xof};
 //!
 //! let data = b"hello world";
 //!
@@ -79,6 +107,14 @@
 //! oneshot.squeeze(&mut same);
 //! assert_eq!(out, same);
 //! assert_ne!(out, [0u8; 64]);
+//!
+//! let mut cshake = Cshake256::xof(b"", b"domain=v1", data);
+//! cshake.squeeze(&mut same);
+//! assert_ne!(out, same);
+//!
+//! let mut cxof = AsconCxof128::xof(b"domain=v1", data)?;
+//! cxof.squeeze(&mut same);
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
 //! `rscrypto` keeps the shipping library inside this repository:
@@ -98,8 +134,8 @@
 //! | `alloc` | Yes | Enables buffered types (implied by `std`) |
 //! | `checksums` | Yes | CRC-16, CRC-24, CRC-32, and CRC-64 algorithms |
 //! | `hashes` | Yes | Cryptographic and fast hash families |
-//! | `auth` | Yes | HMAC-SHA256, HKDF-SHA256, and Ed25519 |
-//! | `aead` | Yes | AEAD traits, nonce wrappers, and AEAD-specific errors |
+//! | `auth` | Yes | HMAC-SHA256, HKDF-SHA256, KMAC256, and Ed25519 |
+//! | `aead` | Yes | AEAD traits, nonce wrappers, errors, and ChaCha20/XChaCha20-Poly1305 |
 //! | `parallel` | No | Rayon-based parallel hashing (Blake3) |
 //!
 //! # Examples
@@ -113,6 +149,7 @@
 //!
 //! - `rscrypto::checksum::config` for checksum force/config controls
 //! - `rscrypto::checksum::introspect` for checksum dispatch reporting
+//! - `rscrypto::aead::introspect` for AEAD backend reporting
 //! - `rscrypto::hashes::introspect` for hash kernel reporting
 //! - `rscrypto::hashes::fast` for explicit fast-hash family access, including `RapidHashFast64` and
 //!   `RapidHashFast128`
@@ -188,18 +225,22 @@ pub mod hashes;
 // ─── Checksum re-exports ────────────────────────────────────────────────────
 
 #[cfg(feature = "aead")]
-pub use aead::{XChaCha20Poly1305, XChaCha20Poly1305Key, XChaCha20Poly1305Tag};
+pub use aead::{
+  ChaCha20Poly1305, ChaCha20Poly1305Key, ChaCha20Poly1305Tag, XChaCha20Poly1305, XChaCha20Poly1305Key,
+  XChaCha20Poly1305Tag,
+};
 #[cfg(feature = "auth")]
 pub use auth::{
-  Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature, HkdfSha256, HmacSha256, verify_ed25519,
+  Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature, HkdfSha256, HmacSha256, Kmac256, verify_ed25519,
 };
 #[cfg(feature = "checksums")]
 pub use checksum::{Crc16Ccitt, Crc16Ibm, Crc24OpenPgp, Crc32, Crc32C, Crc64, Crc64Nvme};
 // ─── Hash re-exports ────────────────────────────────────────────────────────
 #[cfg(feature = "hashes")]
 pub use hashes::crypto::{
-  AsconHash256, AsconXof, AsconXofReader, Blake3, Blake3Xof, Sha3_224, Sha3_256, Sha3_384, Sha3_512, Sha224, Sha256,
-  Sha384, Sha512, Sha512_256, Shake128, Shake128Xof, Shake256, Shake256Xof,
+  AsconCxof128, AsconCxof128Reader, AsconHash256, AsconXof, AsconXofReader, Blake3, Blake3Xof, Cshake256, Cshake256Xof,
+  Sha3_224, Sha3_256, Sha3_384, Sha3_512, Sha224, Sha256, Sha384, Sha512, Sha512_256, Shake128, Shake128Xof, Shake256,
+  Shake256Xof,
 };
 #[cfg(feature = "hashes")]
 pub use hashes::fast::{RapidHash, RapidHash128, RapidHashFast64, RapidHashFast128, Xxh3, Xxh3_128};
@@ -499,11 +540,15 @@ mod send_sync_assertions {
     assert_send_sync::<Shake256>();
     assert_send_sync::<Shake128Xof>();
     assert_send_sync::<Shake256Xof>();
+    assert_send_sync::<Cshake256>();
+    assert_send_sync::<Cshake256Xof>();
 
     // ASCON
     assert_send_sync::<AsconHash256>();
     assert_send_sync::<AsconXof>();
     assert_send_sync::<AsconXofReader>();
+    assert_send_sync::<AsconCxof128>();
+    assert_send_sync::<AsconCxof128Reader>();
 
     // BLAKE3
     assert_send_sync::<Blake3>();
@@ -618,9 +663,13 @@ mod send_sync_assertions {
     assert_clone::<Shake256>();
     assert_clone::<Shake128Xof>();
     assert_clone::<Shake256Xof>();
+    assert_clone::<Cshake256>();
+    assert_clone::<Cshake256Xof>();
     assert_clone::<AsconHash256>();
     assert_clone::<AsconXof>();
     assert_clone::<AsconXofReader>();
+    assert_clone::<AsconCxof128>();
+    assert_clone::<AsconCxof128Reader>();
     assert_clone::<Blake3>();
     assert_clone::<Blake3Xof>();
     assert_clone::<Xxh3>();
@@ -643,9 +692,13 @@ mod send_sync_assertions {
     assert_debug::<Shake256>();
     assert_debug::<Shake128Xof>();
     assert_debug::<Shake256Xof>();
+    assert_debug::<Cshake256>();
+    assert_debug::<Cshake256Xof>();
     assert_debug::<AsconHash256>();
     assert_debug::<AsconXof>();
     assert_debug::<AsconXofReader>();
+    assert_debug::<AsconCxof128>();
+    assert_debug::<AsconCxof128Reader>();
     assert_debug::<Blake3>();
     assert_debug::<Blake3Xof>();
     assert_debug::<Xxh3>();

@@ -32,6 +32,7 @@ impl AsconPermute12KernelId {
 
 #[inline]
 #[must_use]
+#[cfg_attr(not(any(test, feature = "std")), allow(dead_code))]
 pub const fn simd_degree(id: AsconPermute12KernelId) -> usize {
   match id {
     AsconPermute12KernelId::Portable => 1,

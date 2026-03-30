@@ -52,7 +52,8 @@ done < "$WORK/artifacts.txt"
 
 # ── 2. Parse Criterion stdout ─────────────────────────────────────────────────
 #
-# Extract lines matching: group/impl/size  time:   [lo mid hi unit]
+# Extract lines matching nested Criterion benchmark ids where the final path
+# segment is the numeric size and the penultimate segment is the implementation.
 # Produce TSV: platform  group  impl  size  mid_ns
 
 parse_output() {
@@ -64,7 +65,7 @@ parse_output() {
   #   2. bench_id\n                        time:   [lo mid hi unit]  (split across lines)
   # We use awk to handle both: track the last bench_id seen, then parse time lines.
   awk -v platform="$platform" -v filter="$FILTER" '
-  /^[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+\/[0-9]+/ {
+  /^[A-Za-z0-9_-]+(\/[A-Za-z0-9_-]+)+/ {
     # Extract bench_id (first non-whitespace token)
     bench_id = $1
     # If this line also has time:, fall through to the time block
@@ -90,12 +91,21 @@ parse_output() {
         else if (unit == "s") mid_ns = mid * 1000000000.0
         else { bench_id = ""; next }
 
-        # Split bench_id: group/impl/size
+        # Split nested bench_id: <group...>/<impl>/<size>
         n2 = split(bench_id, bid, "/")
         if (n2 >= 3) {
+          size = bid[n2]
+          if (size !~ /^[0-9]+$/) {
+            bench_id = ""
+            next
+          }
+
+          impl = bid[n2 - 1]
           group = bid[1]
-          impl = bid[2]
-          size = bid[3]
+          for (i = 2; i <= n2 - 2; i++) {
+            group = group "/" bid[i]
+          }
+
           if (filter != "" && index(group, filter) == 0) {
             bench_id = ""
             next
@@ -127,7 +137,7 @@ echo "Parsed $TOTAL_LINES data points."
 
 echo ""
 echo "================================================================="
-echo "  CRC Benchmark Results -- Run $RUN_ID"
+echo "  Benchmark Results -- Run $RUN_ID"
 echo "================================================================="
 
 awk -F'\t' '
