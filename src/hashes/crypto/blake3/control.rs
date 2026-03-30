@@ -2,12 +2,8 @@
 use alloc::string::{String, ToString};
 #[cfg(feature = "std")]
 use core::cell::RefCell;
-#[cfg(feature = "std")]
-use core::sync::atomic::AtomicBool;
-#[cfg(all(feature = "std", feature = "parallel"))]
-use core::sync::atomic::Ordering;
-#[cfg(feature = "std")]
-use std::sync::{Mutex, OnceLock};
+#[cfg(feature = "parallel")]
+use std::sync::OnceLock;
 #[cfg(feature = "parallel")]
 use std::thread;
 
@@ -103,38 +99,6 @@ pub(super) fn clear_keyed_words_cache() {
   });
 }
 
-#[cfg(feature = "std")]
-#[derive(Clone, Copy, Debug)]
-pub struct ParallelPolicyOverride {
-  pub oneshot: dispatch_tables::ParallelTable,
-  pub keyed_oneshot: dispatch_tables::ParallelTable,
-  pub derive_oneshot: dispatch_tables::ParallelTable,
-  pub xof: dispatch_tables::ParallelTable,
-  pub keyed_xof: dispatch_tables::ParallelTable,
-  pub derive_xof: dispatch_tables::ParallelTable,
-  pub streaming: dispatch_tables::ParallelTable,
-  pub keyed_streaming: dispatch_tables::ParallelTable,
-  pub derive_streaming: dispatch_tables::ParallelTable,
-}
-
-#[cfg(feature = "std")]
-impl ParallelPolicyOverride {
-  #[inline]
-  fn new(table: dispatch_tables::ParallelTable) -> Self {
-    Self {
-      oneshot: table,
-      keyed_oneshot: table,
-      derive_oneshot: table,
-      xof: table,
-      keyed_xof: table,
-      derive_xof: table,
-      streaming: table,
-      keyed_streaming: table,
-      derive_streaming: table,
-    }
-  }
-}
-
 #[derive(Clone, Copy)]
 pub(super) enum ParallelPolicyKind {
   Oneshot,
@@ -158,26 +122,8 @@ pub(super) struct ParallelAdmissionDecision {
   pub threads: usize,
 }
 
-#[cfg(feature = "std")]
-static PARALLEL_OVERRIDE: OnceLock<Mutex<Option<ParallelPolicyOverride>>> = OnceLock::new();
-#[cfg(feature = "std")]
-static PARALLEL_OVERRIDE_PRESENT: AtomicBool = AtomicBool::new(false);
 #[cfg(feature = "parallel")]
 static AVAILABLE_PARALLELISM: OnceLock<Option<usize>> = OnceLock::new();
-
-#[cfg(feature = "parallel")]
-#[inline]
-fn parallel_override() -> Option<ParallelPolicyOverride> {
-  if !PARALLEL_OVERRIDE_PRESENT.load(Ordering::Acquire) {
-    return None;
-  }
-
-  PARALLEL_OVERRIDE
-    .get_or_init(|| Mutex::new(None))
-    .lock()
-    .ok()
-    .and_then(|g| *g)
-}
 
 #[cfg(feature = "parallel")]
 #[inline]
@@ -207,31 +153,17 @@ pub(super) fn streaming_policy_kind_from_flags(flags: u32) -> ParallelPolicyKind
 #[cfg(feature = "parallel")]
 #[inline]
 pub(super) fn resolved_parallel_policy(mode: ParallelPolicyKind) -> dispatch_tables::ParallelTable {
-  if let Some(override_policy) = parallel_override() {
-    match mode {
-      ParallelPolicyKind::Oneshot => override_policy.oneshot,
-      ParallelPolicyKind::KeyedOneshot => override_policy.keyed_oneshot,
-      ParallelPolicyKind::DeriveOneshot => override_policy.derive_oneshot,
-      ParallelPolicyKind::Xof => override_policy.xof,
-      ParallelPolicyKind::KeyedXof => override_policy.keyed_xof,
-      ParallelPolicyKind::DeriveXof => override_policy.derive_xof,
-      ParallelPolicyKind::Update => override_policy.streaming,
-      ParallelPolicyKind::KeyedUpdate => override_policy.keyed_streaming,
-      ParallelPolicyKind::DeriveUpdate => override_policy.derive_streaming,
-    }
-  } else {
-    let dispatch_policy = dispatch::parallel_dispatch();
-    match mode {
-      ParallelPolicyKind::Oneshot => dispatch_policy.oneshot,
-      ParallelPolicyKind::KeyedOneshot => dispatch_policy.keyed_oneshot,
-      ParallelPolicyKind::DeriveOneshot => dispatch_policy.derive_oneshot,
-      ParallelPolicyKind::Xof => dispatch_policy.xof,
-      ParallelPolicyKind::KeyedXof => dispatch_policy.keyed_xof,
-      ParallelPolicyKind::DeriveXof => dispatch_policy.derive_xof,
-      ParallelPolicyKind::Update => dispatch_policy.streaming,
-      ParallelPolicyKind::KeyedUpdate => dispatch_policy.keyed_streaming,
-      ParallelPolicyKind::DeriveUpdate => dispatch_policy.derive_streaming,
-    }
+  let dispatch_policy = dispatch::parallel_dispatch();
+  match mode {
+    ParallelPolicyKind::Oneshot => dispatch_policy.oneshot,
+    ParallelPolicyKind::KeyedOneshot => dispatch_policy.keyed_oneshot,
+    ParallelPolicyKind::DeriveOneshot => dispatch_policy.derive_oneshot,
+    ParallelPolicyKind::Xof => dispatch_policy.xof,
+    ParallelPolicyKind::KeyedXof => dispatch_policy.keyed_xof,
+    ParallelPolicyKind::DeriveXof => dispatch_policy.derive_xof,
+    ParallelPolicyKind::Update => dispatch_policy.streaming,
+    ParallelPolicyKind::KeyedUpdate => dispatch_policy.keyed_streaming,
+    ParallelPolicyKind::DeriveUpdate => dispatch_policy.derive_streaming,
   }
 }
 
@@ -399,45 +331,4 @@ fn scale_parallel_required_bytes(mode: ParallelPolicyKind, required: usize, inpu
     }
   };
   ceil_div_usize(clamp_mul_usize(required, num), den)
-}
-
-#[cfg(feature = "std")]
-pub mod bench {
-  use core::sync::atomic::Ordering;
-  use std::sync::Mutex;
-
-  use super::{PARALLEL_OVERRIDE, PARALLEL_OVERRIDE_PRESENT, dispatch_tables};
-  pub use super::{ParallelPolicyOverride, dispatch_tables::ParallelTable};
-
-  #[derive(Debug)]
-  pub struct Blake3ParallelOverrideGuard {
-    prev: Option<ParallelPolicyOverride>,
-  }
-
-  impl Drop for Blake3ParallelOverrideGuard {
-    fn drop(&mut self) {
-      let lock: &Mutex<Option<ParallelPolicyOverride>> = PARALLEL_OVERRIDE.get_or_init(|| Mutex::new(None));
-      if let Ok(mut g) = lock.lock() {
-        *g = self.prev;
-      }
-      PARALLEL_OVERRIDE_PRESENT.store(self.prev.is_some(), Ordering::Release);
-    }
-  }
-
-  #[must_use]
-  pub fn override_blake3_parallel_policy(table: dispatch_tables::ParallelTable) -> Blake3ParallelOverrideGuard {
-    override_blake3_parallel_policy_full(ParallelPolicyOverride::new(table))
-  }
-
-  #[must_use]
-  pub fn override_blake3_parallel_policy_full(policy: ParallelPolicyOverride) -> Blake3ParallelOverrideGuard {
-    let lock: &Mutex<Option<ParallelPolicyOverride>> = PARALLEL_OVERRIDE.get_or_init(|| Mutex::new(None));
-    let mut prev = None;
-    if let Ok(mut g) = lock.lock() {
-      prev = *g;
-      *g = Some(policy);
-      PARALLEL_OVERRIDE_PRESENT.store(true, Ordering::Release);
-    }
-    Blake3ParallelOverrideGuard { prev }
-  }
 }

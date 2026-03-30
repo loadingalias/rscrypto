@@ -43,36 +43,6 @@ pub const fn crc16_table_entry(poly: u16, index: u8) -> u16 {
   crc
 }
 
-/// Generate 4 CRC-16 lookup tables for slice-by-4 computation.
-///
-/// # Arguments
-///
-/// * `poly` - The reflected polynomial
-#[cfg(any(test, feature = "testing"))]
-#[must_use]
-pub const fn generate_crc16_tables_4(poly: u16) -> [[u16; 256]; 4] {
-  let mut tables = [[0u16; 256]; 4];
-
-  let mut i = 0u16;
-  while i < 256 {
-    tables[0][i as usize] = crc16_table_entry(poly, i as u8);
-    i = i.strict_add(1);
-  }
-
-  let mut k = 1usize;
-  while k < 4 {
-    i = 0;
-    while i < 256 {
-      let prev = tables[k - 1][i as usize];
-      tables[k][i as usize] = tables[0][(prev & 0xFF) as usize] ^ (prev >> 8);
-      i = i.strict_add(1);
-    }
-    k = k.strict_add(1);
-  }
-
-  tables
-}
-
 /// Generate 8 CRC-16 lookup tables for slice-by-8 computation.
 ///
 /// # Arguments
@@ -130,36 +100,6 @@ pub const fn crc24_table_entry(poly: u32, index: u8) -> u32 {
     i = i.strict_add(1);
   }
   crc & 0xFFFF_FF00
-}
-
-/// Generate 4 CRC-24 lookup tables for slice-by-4 computation.
-///
-/// # Arguments
-///
-/// * `poly` - The normal polynomial (low 24 bits), e.g. 0x864CFB for OpenPGP
-#[cfg(any(test, feature = "testing"))]
-#[must_use]
-pub const fn generate_crc24_tables_4(poly: u32) -> [[u32; 256]; 4] {
-  let mut tables = [[0u32; 256]; 4];
-
-  let mut i = 0u16;
-  while i < 256 {
-    tables[0][i as usize] = crc24_table_entry(poly, i as u8);
-    i = i.strict_add(1);
-  }
-
-  let mut k = 1usize;
-  while k < 4 {
-    i = 0;
-    while i < 256 {
-      let prev = tables[k - 1][i as usize];
-      tables[k][i as usize] = tables[0][(prev >> 24) as usize] ^ (prev.strict_shl(8));
-      i = i.strict_add(1);
-    }
-    k = k.strict_add(1);
-  }
-
-  tables
 }
 
 /// Generate 8 CRC-24 lookup tables for slice-by-8 computation.
@@ -411,30 +351,8 @@ mod tests {
   // ─────────────────────────────────────────────────────────────────────────
 
   #[test]
-  fn test_crc16_tables_4_consistency() {
-    let tables = generate_crc16_tables_4(CRC16_CCITT_POLY);
-
-    assert_eq!(tables[0][0], 0);
-    assert_ne!(tables[0][1], 0);
-
-    for k in 1..4 {
-      for i in 0..256 {
-        let prev = tables[k - 1][i];
-        let expected = tables[0][(prev & 0xFF) as usize] ^ (prev >> 8);
-        assert_eq!(tables[k][i], expected);
-      }
-    }
-  }
-
-  #[test]
   fn test_crc16_tables_8_consistency() {
-    let tables4 = generate_crc16_tables_4(CRC16_CCITT_POLY);
     let tables8 = generate_crc16_tables_8(CRC16_CCITT_POLY);
-
-    // First 4 tables must match
-    for k in 0..4 {
-      assert_eq!(tables8[k], tables4[k]);
-    }
 
     for k in 1..8 {
       for i in 0..256 {
@@ -486,32 +404,8 @@ mod tests {
   // ─────────────────────────────────────────────────────────────────────────
 
   #[test]
-  fn test_crc24_tables_4_consistency() {
-    let tables = generate_crc24_tables_4(CRC24_OPENPGP_POLY);
-
-    assert_eq!(tables[0][0], 0);
-    assert_ne!(tables[0][1], 0);
-
-    for k in 1..4 {
-      for i in 0..256 {
-        let prev = tables[k - 1][i];
-        let expected = tables[0][(prev >> 24) as usize] ^ (prev << 8);
-        assert_eq!(tables[k][i], expected);
-        // Expanded table entries must keep their low 8 bits clear.
-        assert_eq!(tables[k][i] & 0xFF, 0);
-      }
-    }
-  }
-
-  #[test]
   fn test_crc24_tables_8_consistency() {
-    let tables4 = generate_crc24_tables_4(CRC24_OPENPGP_POLY);
     let tables8 = generate_crc24_tables_8(CRC24_OPENPGP_POLY);
-
-    // First 4 tables must match
-    for k in 0..4 {
-      assert_eq!(tables8[k], tables4[k]);
-    }
 
     for k in 1..8 {
       for i in 0..256 {

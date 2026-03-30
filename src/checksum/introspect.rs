@@ -22,7 +22,7 @@
 
 use core::fmt;
 
-pub use crate::checksum::dispatch::is_hardware_accelerated;
+pub use crate::checksum::kernel_table::is_hardware_accelerated;
 
 /// Information about the current dispatch configuration.
 ///

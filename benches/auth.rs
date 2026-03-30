@@ -10,8 +10,8 @@ use hkdf::Hkdf as RustCryptoHkdf;
 use hmac::Hmac;
 use rscrypto::{Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, HkdfSha256, HmacSha256, Mac as _};
 
-type RustCryptoHmacSha256 = Hmac<sha2::Sha256>;
-type RustCryptoHkdfSha256 = RustCryptoHkdf<sha2::Sha256>;
+type RustCryptoHmacSha256 = Hmac<sha2_010::Sha256>;
+type RustCryptoHkdfSha256 = RustCryptoHkdf<sha2_010::Sha256>;
 
 fn hmac_sha256(c: &mut Criterion) {
   let inputs = common::comp_sizes();

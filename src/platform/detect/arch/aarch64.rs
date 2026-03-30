@@ -403,6 +403,22 @@ enum AppleSiliconGen {
   M5,
 }
 
+/// Microarchitecture family used for aarch64 kernel-table selection.
+#[cfg(target_arch = "aarch64")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Aarch64TuneFamily {
+  #[cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "watchos"))]
+  AppleM1M3,
+  #[cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "watchos"))]
+  AppleM4M5,
+  #[cfg(any(target_os = "linux", target_os = "android"))]
+  Graviton2,
+  #[cfg(any(target_os = "linux", target_os = "android"))]
+  Graviton3,
+  #[cfg(any(target_os = "linux", target_os = "android"))]
+  Graviton4,
+}
+
 /// Detect Apple Silicon generation via sysctlbyname("hw.cpufamily").
 ///
 /// Uses direct extern "C" linkage to libSystem (always linked on Apple platforms)
@@ -486,6 +502,29 @@ fn detect_apple_silicon_gen() -> Option<AppleSiliconGen> {
     CPUFAMILY_ARM_TAHITI | CPUFAMILY_ARM_TUPAI => Some(AppleSiliconGen::M4), // A18 ≈ M4 architecture
     _ => None,                                       // Unknown future chip - will fall back to feature-based detection
   }
+}
+
+/// Detect the aarch64 microarchitecture family used by runtime table selection.
+#[cfg(target_arch = "aarch64")]
+#[must_use]
+pub(crate) fn detect_aarch64_tune_family() -> Option<Aarch64TuneFamily> {
+  #[cfg(all(
+    feature = "std",
+    any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "watchos")
+  ))]
+  if let Some(chip_gen) = detect_apple_silicon_gen() {
+    return Some(match chip_gen {
+      AppleSiliconGen::M1 | AppleSiliconGen::M2 | AppleSiliconGen::M3 => Aarch64TuneFamily::AppleM1M3,
+      AppleSiliconGen::M4 | AppleSiliconGen::M5 => Aarch64TuneFamily::AppleM4M5,
+    });
+  }
+
+  #[cfg(all(feature = "std", any(target_os = "linux", target_os = "android")))]
+  if let Some(family) = detect_linux_aarch64_tune_family() {
+    return Some(family);
+  }
+
+  None
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -768,3 +807,105 @@ fn detect_sme_vlen() -> u16 {
 // ─────────────────────────────────────────────────────────────────────────────
 // MIDR_EL1 Detection (Linux aarch64)
 // ─────────────────────────────────────────────────────────────────────────────
+
+#[cfg(all(target_arch = "aarch64", feature = "std", any(target_os = "linux", target_os = "android")))]
+const MIDR_IMPLEMENTER_SHIFT: u32 = 24;
+#[cfg(all(target_arch = "aarch64", feature = "std", any(target_os = "linux", target_os = "android")))]
+const MIDR_PARTNUM_SHIFT: u32 = 4;
+
+#[cfg(all(target_arch = "aarch64", feature = "std", any(target_os = "linux", target_os = "android")))]
+const ARM_CPU_IMP_ARM: u32 = 0x41;
+#[cfg(all(target_arch = "aarch64", feature = "std", any(target_os = "linux", target_os = "android")))]
+const ARM_CPU_PART_NEOVERSE_N1: u32 = 0xD0C;
+#[cfg(all(target_arch = "aarch64", feature = "std", any(target_os = "linux", target_os = "android")))]
+const ARM_CPU_PART_NEOVERSE_V1: u32 = 0xD40;
+#[cfg(all(target_arch = "aarch64", feature = "std", any(target_os = "linux", target_os = "android")))]
+const ARM_CPU_PART_NEOVERSE_V2: u32 = 0xD4F;
+
+#[cfg(all(target_arch = "aarch64", feature = "std", any(target_os = "linux", target_os = "android")))]
+#[inline]
+fn midr_implementer(midr: u32) -> u32 {
+  midr >> MIDR_IMPLEMENTER_SHIFT
+}
+
+#[cfg(all(target_arch = "aarch64", feature = "std", any(target_os = "linux", target_os = "android")))]
+#[inline]
+fn midr_partnum(midr: u32) -> u32 {
+  (midr >> MIDR_PARTNUM_SHIFT) & 0x0fff
+}
+
+#[cfg(all(target_arch = "aarch64", feature = "std", any(target_os = "linux", target_os = "android")))]
+fn parse_u32_auto_radix(value: &str) -> Option<u32> {
+  let value = value.trim();
+  if let Some(hex) = value.strip_prefix("0x").or_else(|| value.strip_prefix("0X")) {
+    return u32::from_str_radix(hex, 16).ok();
+  }
+
+  value.parse::<u32>().ok().or_else(|| u32::from_str_radix(value, 16).ok())
+}
+
+#[cfg(all(target_arch = "aarch64", feature = "std", any(target_os = "linux", target_os = "android")))]
+fn read_linux_midr_sysfs() -> Option<u32> {
+  let paths = [
+    "/sys/devices/system/cpu/cpu0/regs/identification/midr_el1",
+    "/sys/devices/system/cpu/cpu0/identification/midr_el1",
+  ];
+
+  for path in paths {
+    if let Ok(text) = std::fs::read_to_string(path)
+      && let Some(midr) = parse_u32_auto_radix(&text)
+    {
+      return Some(midr);
+    }
+  }
+
+  None
+}
+
+#[cfg(all(target_arch = "aarch64", feature = "std", any(target_os = "linux", target_os = "android")))]
+fn read_linux_midr_cpuinfo() -> Option<u32> {
+  let cpuinfo = std::fs::read_to_string("/proc/cpuinfo").ok()?;
+  let mut implementer = None;
+  let mut part = None;
+
+  for line in cpuinfo.lines() {
+    let Some((key, value)) = line.split_once(':') else {
+      continue;
+    };
+    let key = key.trim();
+    let value = value.trim();
+
+    if key.eq_ignore_ascii_case("CPU implementer") {
+      implementer = parse_u32_auto_radix(value);
+    } else if key.eq_ignore_ascii_case("CPU part") {
+      part = parse_u32_auto_radix(value);
+    }
+
+    if implementer.is_some() && part.is_some() {
+      break;
+    }
+  }
+
+  Some((implementer? << MIDR_IMPLEMENTER_SHIFT) | (0xF << 16) | (part? << MIDR_PARTNUM_SHIFT))
+}
+
+#[cfg(all(target_arch = "aarch64", feature = "std", any(target_os = "linux", target_os = "android")))]
+#[inline]
+fn map_linux_midr_to_tune_family(midr: u32) -> Option<Aarch64TuneFamily> {
+  if midr_implementer(midr) != ARM_CPU_IMP_ARM {
+    return None;
+  }
+
+  match midr_partnum(midr) {
+    ARM_CPU_PART_NEOVERSE_N1 => Some(Aarch64TuneFamily::Graviton2),
+    ARM_CPU_PART_NEOVERSE_V1 => Some(Aarch64TuneFamily::Graviton3),
+    ARM_CPU_PART_NEOVERSE_V2 => Some(Aarch64TuneFamily::Graviton4),
+    _ => None,
+  }
+}
+
+#[cfg(all(target_arch = "aarch64", feature = "std", any(target_os = "linux", target_os = "android")))]
+fn detect_linux_aarch64_tune_family() -> Option<Aarch64TuneFamily> {
+  let midr = read_linux_midr_sysfs().or_else(read_linux_midr_cpuinfo)?;
+  map_linux_midr_to_tune_family(midr)
+}

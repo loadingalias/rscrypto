@@ -10,14 +10,9 @@
 use core::cell::RefCell;
 #[cfg(any(feature = "parallel", not(target_endian = "little")))]
 use core::slice;
+#[cfg(all(feature = "parallel", test))]
+use core::sync::atomic::{AtomicBool, Ordering};
 use core::{cmp::min, mem::MaybeUninit, ptr};
-#[cfg(all(feature = "std", test, feature = "parallel"))]
-use core::{
-  panic::AssertUnwindSafe,
-  sync::atomic::{AtomicBool, Ordering},
-};
-#[cfg(all(feature = "std", test, feature = "parallel"))]
-use std::panic;
 #[cfg(feature = "std")]
 use std::thread_local;
 
@@ -25,20 +20,16 @@ use crate::traits::{Digest, Xof};
 
 #[cfg(target_arch = "aarch64")]
 pub(crate) mod aarch64;
-#[cfg(any(test, feature = "std"))]
-mod bench;
 mod control;
 #[doc(hidden)]
-pub mod dispatch;
+pub(crate) mod dispatch;
 #[doc(hidden)]
-pub mod dispatch_tables;
+pub(crate) mod dispatch_tables;
 pub(crate) mod kernels;
 #[cfg(feature = "parallel")]
 mod parallel;
 #[cfg(target_arch = "x86_64")]
 pub(crate) mod x86_64;
-#[cfg(feature = "std")]
-pub use self::bench::__bench;
 use self::{control::ParallelPolicyKind, kernels::Kernel};
 
 const OUT_LEN: usize = 32;
@@ -155,53 +146,11 @@ fn thread_range(thread_index: usize, threads_total: usize, total: usize) -> (usi
   (start, end)
 }
 
-#[cfg(all(feature = "std", test, feature = "parallel"))]
-static FORCE_PARALLEL_PANIC: AtomicBool = AtomicBool::new(false);
-
-#[cfg(all(feature = "std", test, feature = "parallel"))]
-struct ForceParallelPanicGuard {
-  prev: bool,
-}
-
-#[cfg(all(feature = "std", test, feature = "parallel"))]
-impl Drop for ForceParallelPanicGuard {
-  fn drop(&mut self) {
-    FORCE_PARALLEL_PANIC.store(self.prev, Ordering::Relaxed);
-  }
-}
-
-#[cfg(all(feature = "std", test, feature = "parallel"))]
-#[inline]
-#[must_use]
-fn force_parallel_panic(enabled: bool) -> ForceParallelPanicGuard {
-  let prev = FORCE_PARALLEL_PANIC.swap(enabled, Ordering::Relaxed);
-  ForceParallelPanicGuard { prev }
-}
-
-#[cfg(all(feature = "std", test, feature = "parallel"))]
-#[inline]
-fn maybe_force_parallel_panic() {
-  if FORCE_PARALLEL_PANIC.load(Ordering::Relaxed) {
-    panic!("forced parallel panic (test-only)");
-  }
-}
-
 #[cfg(feature = "parallel")]
 #[inline]
 fn run_parallel_task(task: impl FnOnce()) -> bool {
-  #[cfg(test)]
-  {
-    panic::catch_unwind(AssertUnwindSafe(|| {
-      maybe_force_parallel_panic();
-      task();
-    }))
-    .is_ok()
-  }
-  #[cfg(not(test))]
-  {
-    task();
-    true
-  }
+  task();
+  true
 }
 
 #[cfg(feature = "parallel")]
@@ -1712,10 +1661,7 @@ fn should_use_exact_one_chunk_fast_path(_kernel_id: kernels::Blake3KernelId) -> 
   {
     if matches!(
       _kernel_id,
-      kernels::Blake3KernelId::X86Ssse3
-        | kernels::Blake3KernelId::X86Sse41
-        | kernels::Blake3KernelId::X86Avx2
-        | kernels::Blake3KernelId::X86Avx512
+      kernels::Blake3KernelId::X86Sse41 | kernels::Blake3KernelId::X86Avx2 | kernels::Blake3KernelId::X86Avx512
     ) {
       return true;
     }
@@ -2425,11 +2371,6 @@ impl Blake3 {
   fn new_internal(key_words: [u32; 8], flags: u32) -> Self {
     let dispatch = dispatch::hasher_dispatch();
     Self::new_internal_with_dispatch(key_words, flags, dispatch.stream_kernel().id, dispatch)
-  }
-
-  #[inline]
-  fn new_internal_with(key_words: [u32; 8], flags: u32, kernel_id: kernels::Blake3KernelId) -> Self {
-    Self::new_internal_with_dispatch(key_words, flags, kernel_id, dispatch::hasher_dispatch())
   }
 
   #[inline]
@@ -3231,10 +3172,7 @@ fn compress_chunk_tail_to_root_words(
   #[cfg(target_arch = "x86_64")]
   {
     match kernel.id {
-      kernels::Blake3KernelId::X86Ssse3
-      | kernels::Blake3KernelId::X86Sse41
-      | kernels::Blake3KernelId::X86Avx2
-      | kernels::Blake3KernelId::X86Avx512 => {
+      kernels::Blake3KernelId::X86Sse41 | kernels::Blake3KernelId::X86Avx2 | kernels::Blake3KernelId::X86Avx512 => {
         // SAFETY: dispatch validates required CPU features before selecting
         // each x86 kernel; `block` is a readable 64-byte buffer.
         return unsafe { (kernel.x86_compress_cv_bytes)(&cv, block.as_ptr(), 0, block_len as u32, final_flags) };
@@ -3637,9 +3575,6 @@ unsafe fn digest_one_chunk_root_hash_words_aarch64(
   unsafe { aarch64::compress_cv_neon_bytes(&cv, block_ptr, 0, last_len as u32, final_flags) }
 }
 
-#[cfg(feature = "std")]
-pub(crate) mod kernel_test;
-
 #[cfg(test)]
 mod tests {
   use super::{Blake3, OUT_LEN};
@@ -3835,188 +3770,13 @@ mod tests {
 
     use super::{
       super::{
-        IV, KEYED_HASH, SubtreeRootsRequest, force_parallel_panic, hash_full_chunks_cvs_serial,
+        IV, KEYED_HASH, SubtreeRootsRequest, hash_full_chunks_cvs_serial,
         hash_power_of_two_subtree_roots_parallel_rayon, hash_power_of_two_subtree_roots_serial,
         reduce_power_of_two_chunk_cvs_any, words8_from_le_bytes_32,
       },
-      Blake3, CONTEXT, KEY, OUT_LEN, input_pattern,
+      KEY, input_pattern,
     };
-    use crate::{
-      hashes::crypto::blake3::{__bench, CHUNK_LEN, dispatch, dispatch_tables},
-      traits::{Digest, Xof},
-    };
-
-    #[inline]
-    fn always_parallel_table(max_threads: u8) -> dispatch_tables::ParallelTable {
-      dispatch_tables::ParallelTable {
-        min_bytes: 0,
-        min_chunks: 0,
-        max_threads,
-        spawn_cost_bytes: 0,
-        merge_cost_bytes: 0,
-        bytes_per_core_small: 0,
-        bytes_per_core_medium: 0,
-        bytes_per_core_large: 0,
-        small_limit_bytes: 0,
-        medium_limit_bytes: 0,
-      }
-    }
-
-    #[inline]
-    fn never_parallel_table() -> dispatch_tables::ParallelTable {
-      // `max_threads == 1` disables parallel hashing (even when thresholds are met).
-      always_parallel_table(1)
-    }
-
-    #[inline]
-    fn finalize_digest_and_xof_prefix(h: &Blake3) -> ([u8; OUT_LEN], [u8; 64]) {
-      let digest = h.finalize();
-      let mut xof = h.finalize_xof();
-      let mut prefix = [0u8; 64];
-      xof.squeeze(&mut prefix);
-      (digest, prefix)
-    }
-
-    fn run_case_streaming(
-      make_hasher: impl Fn() -> Blake3,
-      prefix: &[u8],
-      payload: &[u8],
-    ) -> ([u8; OUT_LEN], [u8; 64]) {
-      let mut h = make_hasher();
-      for chunk in prefix.chunks(CHUNK_LEN) {
-        h.update(chunk);
-      }
-      h.update(payload);
-      finalize_digest_and_xof_prefix(&h)
-    }
-
-    #[test]
-    fn streaming_parallel_matches_serial() {
-      let Ok(ap) = std::thread::available_parallelism() else {
-        return;
-      };
-      if ap.get() <= 1 {
-        return;
-      }
-
-      let payload_lens = [
-        64 * 1024,       // 64 KiB (exactly chunk-aligned)
-        128 * 1024 + 17, // 128 KiB + 17B (forces remainder path)
-      ];
-
-      let max_prefix_chunks = 63usize;
-      let max_payload_len = *payload_lens.iter().max().unwrap();
-      let input = input_pattern(max_prefix_chunks * CHUNK_LEN + max_payload_len);
-
-      let prefix_chunks_cases = [0usize, 1, 7, 15, 16, 63];
-      let mut thread_caps = [2usize, 4, 8];
-
-      // Cap threads at runtime to keep tests robust on small machines.
-      for t in &mut thread_caps {
-        *t = (*t).min(ap.get()).max(2);
-      }
-
-      for &payload_len in &payload_lens {
-        for &prefix_chunks in &prefix_chunks_cases {
-          let offset = prefix_chunks * CHUNK_LEN;
-          let prefix = &input[..offset];
-          let payload = &input[offset..offset + payload_len];
-          let full_input = &input[..offset + payload_len];
-
-          // Serial baseline (forced single-thread).
-          let serial_regular = {
-            let _serial_policy = __bench::override_blake3_parallel_policy(never_parallel_table());
-            run_case_streaming(Blake3::new, prefix, payload)
-          };
-
-          // Sanity: one-shot should match streaming in serial mode.
-          {
-            let _serial_policy = __bench::override_blake3_parallel_policy(never_parallel_table());
-            assert_eq!(
-              serial_regular.0,
-              Blake3::digest(full_input),
-              "serial oneshot mismatch prefix_chunks={prefix_chunks} payload_len={payload_len}"
-            );
-          }
-
-          for &threads_total in &thread_caps {
-            let threads_total = threads_total as u8;
-            let _policy = __bench::override_blake3_parallel_policy(always_parallel_table(threads_total));
-
-            let got_regular = run_case_streaming(Blake3::new, prefix, payload);
-            assert_eq!(
-              got_regular, serial_regular,
-              "parallel regular mismatch prefix_chunks={prefix_chunks} payload_len={payload_len} \
-               threads_total={threads_total}"
-            );
-          }
-        }
-      }
-    }
-
-    #[test]
-    fn keyed_and_derive_parallel_matches_serial_subset() {
-      let Ok(ap) = std::thread::available_parallelism() else {
-        return;
-      };
-      if ap.get() <= 1 {
-        return;
-      }
-
-      let payload_len = 64 * 1024 + 17;
-      let max_prefix_chunks = 63usize;
-      let input = input_pattern(max_prefix_chunks * CHUNK_LEN + payload_len);
-
-      let prefix_chunks_cases = [0usize, 15, 63];
-      let mut thread_caps = [2usize, 8];
-      for t in &mut thread_caps {
-        *t = (*t).min(ap.get()).max(2);
-      }
-
-      for &prefix_chunks in &prefix_chunks_cases {
-        let offset = prefix_chunks * CHUNK_LEN;
-        let prefix = &input[..offset];
-        let payload = &input[offset..offset + payload_len];
-        let full_input = &input[..offset + payload_len];
-
-        let (serial_keyed, serial_derive) = {
-          let _serial_policy = __bench::override_blake3_parallel_policy(never_parallel_table());
-          let keyed = run_case_streaming(|| Blake3::new_keyed(KEY), prefix, payload);
-          let derive = run_case_streaming(|| Blake3::new_derive_key(CONTEXT), prefix, payload);
-          (keyed, derive)
-        };
-
-        {
-          let _serial_policy = __bench::override_blake3_parallel_policy(never_parallel_table());
-          assert_eq!(
-            serial_keyed.0,
-            Blake3::keyed_digest(KEY, full_input),
-            "serial keyed oneshot mismatch prefix_chunks={prefix_chunks}"
-          );
-          assert_eq!(
-            serial_derive.0,
-            Blake3::derive_key(CONTEXT, full_input),
-            "serial derive oneshot mismatch prefix_chunks={prefix_chunks}"
-          );
-        }
-
-        for &threads_total in &thread_caps {
-          let threads_total = threads_total as u8;
-          let _policy = __bench::override_blake3_parallel_policy(always_parallel_table(threads_total));
-
-          let got_keyed = run_case_streaming(|| Blake3::new_keyed(KEY), prefix, payload);
-          let got_derive = run_case_streaming(|| Blake3::new_derive_key(CONTEXT), prefix, payload);
-          assert_eq!(
-            got_keyed, serial_keyed,
-            "parallel keyed mismatch prefix_chunks={prefix_chunks} threads_total={threads_total}"
-          );
-          assert_eq!(
-            got_derive, serial_derive,
-            "parallel derive mismatch prefix_chunks={prefix_chunks} threads_total={threads_total}"
-          );
-        }
-      }
-    }
+    use crate::hashes::crypto::blake3::{CHUNK_LEN, dispatch};
 
     #[test]
     fn subtree_roots_parallel_matches_serial_matrix() {
@@ -4028,8 +3788,8 @@ mod tests {
       }
 
       let kernels = {
-        let kd = dispatch::kernel_dispatch();
-        [kd.xs, kd.l]
+        let plan = dispatch::hasher_dispatch();
+        [plan.size_class_kernel(0), plan.size_class_kernel(usize::MAX)]
       };
 
       let modes = [
@@ -4126,8 +3886,8 @@ mod tests {
       }
 
       let kernels = {
-        let kd = dispatch::kernel_dispatch();
-        [kd.xs, kd.l]
+        let plan = dispatch::hasher_dispatch();
+        [plan.size_class_kernel(0), plan.size_class_kernel(usize::MAX)]
       };
 
       let mut thread_caps = [2usize, 8];
@@ -4164,27 +3924,6 @@ mod tests {
           }
         }
       }
-    }
-
-    #[test]
-    fn parallel_fallback_on_forced_panic_is_correct() {
-      let Ok(ap) = std::thread::available_parallelism() else {
-        return;
-      };
-      if ap.get() <= 1 {
-        return;
-      }
-
-      let input = input_pattern(1024 * CHUNK_LEN);
-      let expected = {
-        let _serial_policy = __bench::override_blake3_parallel_policy(never_parallel_table());
-        Blake3::digest(&input)
-      };
-
-      let _force = force_parallel_panic(true);
-      let _parallel_policy = __bench::override_blake3_parallel_policy(always_parallel_table(ap.get() as u8));
-      let got = Blake3::digest(&input);
-      assert_eq!(got, expected, "forced-panic fallback digest mismatch");
     }
   }
 }

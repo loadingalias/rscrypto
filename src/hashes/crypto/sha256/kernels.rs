@@ -34,21 +34,6 @@ pub enum Sha256KernelId {
   Ppc64Crypto = 6,
 }
 
-#[cfg(any(test, feature = "std"))]
-pub const ALL: &[Sha256KernelId] = &[
-  Sha256KernelId::Portable,
-  #[cfg(target_arch = "x86_64")]
-  Sha256KernelId::X86Sha,
-  #[cfg(target_arch = "aarch64")]
-  Sha256KernelId::Aarch64Sha2,
-  #[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
-  Sha256KernelId::RiscvZknh,
-  #[cfg(target_arch = "wasm32")]
-  Sha256KernelId::WasmSimd128,
-  #[cfg(target_arch = "s390x")]
-  Sha256KernelId::S390xKimd,
-];
-
 impl Sha256KernelId {
   #[inline]
   #[must_use]

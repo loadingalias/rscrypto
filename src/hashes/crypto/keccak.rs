@@ -14,10 +14,6 @@ pub(crate) mod dispatch_tables;
 pub(crate) mod kernels;
 #[cfg(target_arch = "s390x")]
 pub(crate) mod s390x;
-#[cfg(target_arch = "x86_64")]
-pub(crate) mod x86_64_avx2;
-#[cfg(target_arch = "x86_64")]
-pub(crate) mod x86_64_avx512;
 
 const KECCAKF_ROUNDS: usize = 24;
 
@@ -684,9 +680,6 @@ pub(crate) type PlatformPermuter = InlinePermuter;
 
 pub(crate) type KeccakCore<const RATE: usize> = KeccakCoreImpl<RATE, PlatformPermuter>;
 
-#[cfg(any(test, feature = "std"))]
-pub(crate) type KeccakCorePortable<const RATE: usize> = KeccakCoreImpl<RATE, InlinePermuter>;
-
 pub(crate) type KeccakXof<const RATE: usize> = KeccakXofImpl<RATE, PlatformPermuter>;
 
 // ---------------------------------------------------------------------------
@@ -829,42 +822,6 @@ impl<const RATE: usize, P: Permuter> KeccakCoreImpl<RATE, P> {
       buf,
       pos: 0,
       permuter,
-    }
-  }
-
-  pub(crate) fn finalize_xof_into(&self, ds: u8, mut out: &mut [u8]) {
-    let permuter = self.permuter;
-    let mut state = self.finalize_state(ds);
-
-    debug_assert_eq!(RATE % 8, 0);
-    let lanes = RATE / 8;
-    if out.len() <= RATE {
-      let (chunks, rem) = out.as_chunks_mut::<8>();
-      let mut i = 0usize;
-      while i < chunks.len() {
-        chunks[i] = state[i].to_le_bytes();
-        i += 1;
-      }
-      if !rem.is_empty() {
-        let bytes = state[chunks.len()].to_le_bytes();
-        rem.copy_from_slice(&bytes[..rem.len()]);
-      }
-      return;
-    }
-
-    while !out.is_empty() {
-      let mut lane = 0usize;
-      while lane < lanes && !out.is_empty() {
-        let bytes = state[lane].to_le_bytes();
-        let take = core::cmp::min(8, out.len());
-        out[..take].copy_from_slice(&bytes[..take]);
-        out = &mut out[take..];
-        lane += 1;
-      }
-
-      if !out.is_empty() {
-        permuter.permute(&mut state, 0);
-      }
     }
   }
 }
@@ -1095,6 +1052,3 @@ impl<const RATE: usize, P: Permuter> KeccakXofImpl<RATE, P> {
     }
   }
 }
-
-#[cfg(feature = "std")]
-pub(crate) mod kernel_test;

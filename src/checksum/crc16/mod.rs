@@ -23,16 +23,11 @@ pub(crate) mod kernels;
 pub(crate) mod keys;
 pub(crate) mod portable;
 
-#[cfg(all(test, feature = "alloc"))]
-pub mod kernel_test;
-
 #[allow(unused_imports)]
 pub use config::{Crc16Config, Crc16Force};
 
 #[cfg(any(test, feature = "std"))]
 use crate::checksum::common::reference::crc16_bitwise;
-#[cfg(any(test, feature = "testing"))]
-use crate::checksum::common::tables::generate_crc16_tables_4;
 use crate::checksum::common::{
   combine::{Gf2Matrix16, combine_crc16, generate_shift8_matrix_16},
   tables::{CRC16_CCITT_POLY, CRC16_IBM_POLY, generate_crc16_tables_8},
@@ -59,12 +54,8 @@ mod x86_64;
 mod kernel_tables {
   use super::*;
 
-  #[cfg(any(test, feature = "testing"))]
-  pub static CCITT_TABLES_4: [[u16; 256]; 4] = generate_crc16_tables_4(CRC16_CCITT_POLY);
   pub static CCITT_TABLES_8: [[u16; 256]; 8] = generate_crc16_tables_8(CRC16_CCITT_POLY);
 
-  #[cfg(any(test, feature = "testing"))]
-  pub static IBM_TABLES_4: [[u16; 256]; 4] = generate_crc16_tables_4(CRC16_IBM_POLY);
   pub static IBM_TABLES_8: [[u16; 256]; 8] = generate_crc16_tables_8(CRC16_IBM_POLY);
 }
 
@@ -107,26 +98,26 @@ fn crc16_apply_kernel_vectored(mut crc: u16, bufs: &[&[u8]], kernel: Crc16Dispat
 
 #[inline]
 fn crc16_ccitt_dispatch_auto(crc: u16, data: &[u8]) -> u16 {
-  let table = crate::checksum::dispatch::active_table();
+  let table = crate::checksum::kernel_table::active_table();
   let kernel = table.select_fns(data.len()).crc16_ccitt;
   kernel(crc, data)
 }
 
 #[inline]
 fn crc16_ccitt_dispatch_auto_vectored(crc: u16, bufs: &[&[u8]]) -> u16 {
-  crc_vectored_dispatch!(crate::checksum::dispatch::active_table(), crc, crc16_ccitt, bufs)
+  crc_vectored_dispatch!(crate::checksum::kernel_table::active_table(), crc, crc16_ccitt, bufs)
 }
 
 #[inline]
 fn crc16_ibm_dispatch_auto(crc: u16, data: &[u8]) -> u16 {
-  let table = crate::checksum::dispatch::active_table();
+  let table = crate::checksum::kernel_table::active_table();
   let kernel = table.select_fns(data.len()).crc16_ibm;
   kernel(crc, data)
 }
 
 #[inline]
 fn crc16_ibm_dispatch_auto_vectored(crc: u16, bufs: &[&[u8]]) -> u16 {
-  crc_vectored_dispatch!(crate::checksum::dispatch::active_table(), crc, crc16_ibm, bufs)
+  crc_vectored_dispatch!(crate::checksum::kernel_table::active_table(), crc, crc16_ibm, bufs)
 }
 
 #[cfg(feature = "std")]
@@ -271,12 +262,15 @@ fn crc16_ibm_resolved_dispatch() -> Crc16DispatchFn {
 }
 
 #[inline]
-fn crc16_ccitt_runtime_paths() -> (Crc16DispatchFn, Option<&'static crate::checksum::dispatch::KernelTable>) {
+fn crc16_ccitt_runtime_paths() -> (
+  Crc16DispatchFn,
+  Option<&'static crate::checksum::kernel_table::KernelTable>,
+) {
   let cfg = config::get_ccitt();
   if cfg.effective_force == Crc16Force::Auto {
     (
       crc16_ccitt_dispatch_auto,
-      Some(crate::checksum::dispatch::active_table()),
+      Some(crate::checksum::kernel_table::active_table()),
     )
   } else {
     (crc16_ccitt_resolved_dispatch(), None)
@@ -284,10 +278,16 @@ fn crc16_ccitt_runtime_paths() -> (Crc16DispatchFn, Option<&'static crate::check
 }
 
 #[inline]
-fn crc16_ibm_runtime_paths() -> (Crc16DispatchFn, Option<&'static crate::checksum::dispatch::KernelTable>) {
+fn crc16_ibm_runtime_paths() -> (
+  Crc16DispatchFn,
+  Option<&'static crate::checksum::kernel_table::KernelTable>,
+) {
   let cfg = config::get_ibm();
   if cfg.effective_force == Crc16Force::Auto {
-    (crc16_ibm_dispatch_auto, Some(crate::checksum::dispatch::active_table()))
+    (
+      crc16_ibm_dispatch_auto,
+      Some(crate::checksum::kernel_table::active_table()),
+    )
   } else {
     (crc16_ibm_resolved_dispatch(), None)
   }
@@ -360,7 +360,7 @@ pub(crate) fn crc16_ccitt_selected_kernel_name(len: usize) -> &'static str {
   }
 
   // For auto mode, return the specific kernel name from the dispatch table
-  let table = crate::checksum::dispatch::active_table();
+  let table = crate::checksum::kernel_table::active_table();
   table.select_names(len).crc16_ccitt_name
 }
 
@@ -382,7 +382,7 @@ pub(crate) fn crc16_ibm_selected_kernel_name(len: usize) -> &'static str {
   }
 
   // For auto mode, return the specific kernel name from the dispatch table
-  let table = crate::checksum::dispatch::active_table();
+  let table = crate::checksum::kernel_table::active_table();
   table.select_names(len).crc16_ibm_name
 }
 
@@ -411,7 +411,7 @@ pub(crate) fn crc16_ibm_selected_kernel_name(len: usize) -> &'static str {
 pub struct Crc16Ccitt {
   state: u16,
   dispatch: Crc16DispatchFn,
-  auto_table: Option<&'static crate::checksum::dispatch::KernelTable>,
+  auto_table: Option<&'static crate::checksum::kernel_table::KernelTable>,
 }
 
 impl Crc16Ccitt {
@@ -502,7 +502,7 @@ impl crate::traits::Checksum for Crc16Ccitt {
 
   #[inline]
   fn checksum(data: &[u8]) -> u16 {
-    crate::checksum::dispatch::crc16_ccitt(data)
+    crate::checksum::kernel_table::crc16_ccitt(data)
   }
 }
 
@@ -553,7 +553,7 @@ impl Crc16Ccitt {
 pub struct Crc16Ibm {
   state: u16,
   dispatch: Crc16DispatchFn,
-  auto_table: Option<&'static crate::checksum::dispatch::KernelTable>,
+  auto_table: Option<&'static crate::checksum::kernel_table::KernelTable>,
 }
 
 impl Crc16Ibm {
@@ -644,7 +644,7 @@ impl crate::traits::Checksum for Crc16Ibm {
 
   #[inline]
   fn checksum(data: &[u8]) -> u16 {
-    crate::checksum::dispatch::crc16_ibm(data)
+    crate::checksum::kernel_table::crc16_ibm(data)
   }
 }
 
@@ -686,14 +686,14 @@ const BUFFERED_CRC16_BUFFER_SIZE: usize = 256;
 #[inline]
 #[must_use]
 fn crc16_ccitt_buffered_threshold() -> usize {
-  crate::checksum::dispatch::active_table().boundaries[0]
+  crate::checksum::kernel_table::active_table().boundaries[0]
 }
 
 #[cfg(feature = "alloc")]
 #[inline]
 #[must_use]
 fn crc16_ibm_buffered_threshold() -> usize {
-  crate::checksum::dispatch::active_table().boundaries[0]
+  crate::checksum::kernel_table::active_table().boundaries[0]
 }
 
 #[cfg(feature = "alloc")]

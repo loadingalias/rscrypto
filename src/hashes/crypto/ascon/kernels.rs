@@ -14,17 +14,6 @@ pub enum AsconPermute12KernelId {
   X86Avx512 = 3,
 }
 
-#[cfg(any(test, feature = "std"))]
-pub const ALL: &[AsconPermute12KernelId] = &[
-  AsconPermute12KernelId::Portable,
-  #[cfg(target_arch = "aarch64")]
-  AsconPermute12KernelId::Aarch64Neon,
-  #[cfg(target_arch = "x86_64")]
-  AsconPermute12KernelId::X86Avx2,
-  #[cfg(target_arch = "x86_64")]
-  AsconPermute12KernelId::X86Avx512,
-];
-
 impl AsconPermute12KernelId {
   #[inline]
   #[must_use]

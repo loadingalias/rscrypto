@@ -11,9 +11,9 @@ use crate::traits::FastHash;
 #[cfg(target_arch = "aarch64")]
 pub(crate) mod aarch64_neon;
 #[doc(hidden)]
-pub mod dispatch;
+pub(crate) mod dispatch;
 #[doc(hidden)]
-pub mod dispatch_tables;
+pub(crate) mod dispatch_tables;
 pub(crate) mod kernels;
 #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
 pub(crate) mod power;

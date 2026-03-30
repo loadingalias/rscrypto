@@ -16,7 +16,7 @@ macro_rules! crc_vectored_dispatch {
   ($table:expr, $init:expr, $field:ident, $bufs:expr) => {{
     let table = $table;
     let mut crc = $init;
-    let mut last_set: *const $crate::checksum::dispatch::KernelFnSet = core::ptr::null();
+    let mut last_set: *const $crate::checksum::kernel_table::KernelFnSet = core::ptr::null();
     let mut kernel = table.fns[0].$field;
 
     for buf in $bufs {
@@ -25,7 +25,7 @@ macro_rules! crc_vectored_dispatch {
         continue;
       }
       let set = table.select_fns(buf.len());
-      let set_ptr: *const $crate::checksum::dispatch::KernelFnSet = core::ptr::from_ref(set);
+      let set_ptr: *const $crate::checksum::kernel_table::KernelFnSet = core::ptr::from_ref(set);
       if set_ptr != last_set {
         last_set = set_ptr;
         kernel = set.$field;

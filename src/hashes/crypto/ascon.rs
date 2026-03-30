@@ -12,9 +12,9 @@ use crate::{
 #[cfg(target_arch = "aarch64")]
 mod aarch64;
 #[doc(hidden)]
-pub mod dispatch;
+pub(crate) mod dispatch;
 #[doc(hidden)]
-pub mod dispatch_tables;
+pub(crate) mod dispatch_tables;
 pub(crate) mod kernels;
 #[cfg(target_arch = "x86_64")]
 mod x86_64_avx2;
@@ -839,6 +839,3 @@ pub type AsconXof128 = AsconXof;
 
 /// Spec-precise alias for [`AsconXofReader`].
 pub type AsconXof128Xof = AsconXofReader;
-
-#[cfg(feature = "std")]
-pub(crate) mod kernel_test;

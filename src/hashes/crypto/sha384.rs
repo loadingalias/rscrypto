@@ -13,9 +13,9 @@ use crate::{
 };
 
 #[doc(hidden)]
-pub mod dispatch;
+pub(crate) mod dispatch;
 #[doc(hidden)]
-pub mod dispatch_tables;
+pub(crate) mod dispatch_tables;
 pub(crate) mod kernels;
 
 const BLOCK_LEN: usize = 128;
@@ -51,15 +51,6 @@ impl Sha384 {
   #[must_use]
   pub fn digest(data: &[u8]) -> [u8; 48] {
     dispatch::digest(data)
-  }
-
-  #[inline]
-  #[must_use]
-  #[cfg(any(test, feature = "std"))]
-  pub(crate) fn digest_portable(data: &[u8]) -> [u8; 48] {
-    let mut h = Self::default();
-    h.update_with(data, Sha512::compress_blocks_portable);
-    h.finalize_inner_with(Sha512::compress_blocks_portable)
   }
 }
 
@@ -216,6 +207,3 @@ impl Digest for Sha384 {
     dispatch::digest(data)
   }
 }
-
-#[cfg(feature = "std")]
-pub(crate) mod kernel_test;

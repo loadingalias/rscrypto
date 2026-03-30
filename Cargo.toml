@@ -9,6 +9,20 @@ authors = ["loadingalias"]
 repository = "https://github.com/loadingalias/rscrypto"
 keywords = ["crypto", "crc", "checksum", "blake3", "simd"]
 categories = ["cryptography", "no-std::no-alloc", "algorithms"]
+include = [
+  "/.config/target-matrix.json",
+  "/Cargo.toml",
+  "/LICENSE-APACHE",
+  "/LICENSE-MIT",
+  "/README.md",
+  "/examples/**",
+  "/src/**",
+  "!/src/**/*.md",
+  "!/src/**/*.txt",
+  "!/src/**/.gitignore",
+  "/tests/**",
+  "/testdata/**",
+]
 
 [package.metadata.docs.rs]
 all-features = true
@@ -80,7 +94,7 @@ rayon = { version = "1.11.0", optional = true }
 [dev-dependencies]
 # Benchmark framework
 criterion = { version = "^0.8.2", default-features = false, features = ["html_reports", "plotters"] }
-proptest = "^1.10.0"
+proptest = "^1.11.0"
 
 # CRC oracle crates
 crc = "3.4.0"
@@ -92,13 +106,14 @@ crc64fast-nvme = "1.2.1"
 
 # Hash oracle crates
 blake3 = { version = "1.8.3", default-features = false, features = ["std", "rayon"] }
-sha2 = { version = "0.10.9", default-features = false, features = ["std", "compress"] }
+sha2 = "0.11.0"
+sha2_010 = { package = "sha2", version = "0.10.9" }
 sha3 = "0.10.8"
-keccak = "0.1.6"
+keccak = "0.2.0"
 xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
 rapidhash = "4.4.1"
 tiny-keccak = { version = "2.0.2", features = ["kmac"] }
-digest = { version = "0.10.7", features = ["dev"] }
+digest = { version = "0.11.2", features = ["dev"] }
 ed25519-dalek = "2.1.1"
 hmac = "0.12.1"
 hkdf = "0.12.4"

@@ -33,16 +33,11 @@ pub(crate) mod portable;
 ))]
 mod reflected;
 
-#[cfg(all(test, feature = "alloc"))]
-pub mod kernel_test;
-
 #[allow(unused_imports)]
 pub use config::{Crc24Config, Crc24Force};
 
 #[cfg(any(test, feature = "std"))]
 use crate::checksum::common::reference::crc24_bitwise;
-#[cfg(any(test, feature = "testing"))]
-use crate::checksum::common::tables::generate_crc24_tables_4;
 use crate::checksum::common::{
   combine::{Gf2Matrix24, combine_crc24, generate_shift8_matrix_24},
   tables::{CRC24_OPENPGP_POLY, generate_crc24_tables_8},
@@ -68,8 +63,6 @@ mod x86_64;
 
 mod kernel_tables {
   use super::*;
-  #[cfg(any(test, feature = "testing"))]
-  pub static OPENPGP_TABLES_4: [[u32; 256]; 4] = generate_crc24_tables_4(CRC24_OPENPGP_POLY);
   pub static OPENPGP_TABLES_8: [[u32; 256]; 8] = generate_crc24_tables_8(CRC24_OPENPGP_POLY);
 }
 
@@ -106,14 +99,14 @@ fn crc24_apply_kernel_vectored(mut crc: u32, bufs: &[&[u8]], kernel: Crc24Dispat
 
 #[inline]
 fn crc24_openpgp_dispatch_auto(crc: u32, data: &[u8]) -> u32 {
-  let table = crate::checksum::dispatch::active_table();
+  let table = crate::checksum::kernel_table::active_table();
   let kernel = table.select_fns(data.len()).crc24_openpgp;
   kernel(crc, data)
 }
 
 #[inline]
 fn crc24_openpgp_dispatch_auto_vectored(crc: u32, bufs: &[&[u8]]) -> u32 {
-  crc_vectored_dispatch!(crate::checksum::dispatch::active_table(), crc, crc24_openpgp, bufs)
+  crc_vectored_dispatch!(crate::checksum::kernel_table::active_table(), crc, crc24_openpgp, bufs)
 }
 
 #[cfg(feature = "std")]
@@ -219,7 +212,7 @@ pub(crate) fn crc24_openpgp_selected_kernel_name(len: usize) -> &'static str {
   }
 
   // For auto mode, return the specific kernel name from the dispatch table
-  let table = crate::checksum::dispatch::active_table();
+  let table = crate::checksum::kernel_table::active_table();
   table.select_names(len).crc24_openpgp_name
 }
 
@@ -324,7 +317,7 @@ impl crate::traits::Checksum for Crc24OpenPgp {
 
   #[inline]
   fn checksum(data: &[u8]) -> u32 {
-    crate::checksum::dispatch::crc24_openpgp(data)
+    crate::checksum::kernel_table::crc24_openpgp(data)
   }
 }
 

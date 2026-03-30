@@ -25,6 +25,7 @@ const THRESHOLD_AVX512: usize = 4 * 1024; // AVX-512 is very fast, switch early
 const THRESHOLD_AVX2: usize = 8 * 1024; // AVX2 - used for fallback/default x86_64 profile
 #[cfg(target_arch = "aarch64")]
 const THRESHOLD_NEON: usize = 16 * 1024; // NEON - slightly higher due to different characteristics
+#[cfg(not(target_arch = "x86_64"))]
 const THRESHOLD_PORTABLE: usize = 32 * 1024; // Conservative for scalar
 
 const DEFAULT_PAR_SPAWN_COST_BYTES: usize = 24 * 1024;
@@ -89,23 +90,6 @@ pub struct DispatchTable {
   pub l: KernelId,
 }
 
-impl DispatchTable {
-  #[inline]
-  #[must_use]
-  pub const fn kernel_for_len(&self, len: usize) -> KernelId {
-    let [xs_max, s_max, m_max] = self.boundaries;
-    if len <= xs_max {
-      self.xs
-    } else if len <= s_max {
-      self.s
-    } else if len <= m_max {
-      self.m
-    } else {
-      self.l
-    }
-  }
-}
-
 /// Compact profile for one microarchitecture family.
 #[derive(Clone, Copy, Debug)]
 pub struct FamilyProfile {
@@ -119,59 +103,115 @@ pub struct FamilyProfile {
 //
 // The runtime dispatcher (`dispatch::resolve`) will still validate CPU feature
 // availability and fall back to Portable when needed.
+#[cfg(any(
+  target_arch = "x86_64",
+  target_arch = "riscv64",
+  target_arch = "s390x",
+  target_arch = "powerpc64"
+))]
 #[cfg(target_arch = "x86_64")]
 const SIMD_KERNEL: KernelId = KernelId::X86Avx2;
-#[cfg(target_arch = "aarch64")]
-const SIMD_KERNEL: KernelId = KernelId::Aarch64Neon;
+#[cfg(any(
+  target_arch = "x86_64",
+  target_arch = "riscv64",
+  target_arch = "s390x",
+  target_arch = "powerpc64"
+))]
 #[cfg(target_arch = "s390x")]
 const SIMD_KERNEL: KernelId = KernelId::S390xVector;
+#[cfg(any(
+  target_arch = "x86_64",
+  target_arch = "riscv64",
+  target_arch = "s390x",
+  target_arch = "powerpc64"
+))]
 #[cfg(target_arch = "powerpc64")]
 const SIMD_KERNEL: KernelId = KernelId::PowerVsx;
+#[cfg(any(
+  target_arch = "x86_64",
+  target_arch = "riscv64",
+  target_arch = "s390x",
+  target_arch = "powerpc64"
+))]
 #[cfg(target_arch = "riscv64")]
 const SIMD_KERNEL: KernelId = KernelId::RiscvV;
+#[cfg(any(
+  target_arch = "x86_64",
+  target_arch = "riscv64",
+  target_arch = "s390x",
+  target_arch = "powerpc64"
+))]
 #[cfg(not(any(
   target_arch = "x86_64",
-  target_arch = "aarch64",
+  target_arch = "riscv64",
   target_arch = "s390x",
-  target_arch = "powerpc64",
-  target_arch = "riscv64"
+  target_arch = "powerpc64"
 )))]
 const SIMD_KERNEL: KernelId = KernelId::Portable;
 
 #[cfg(target_arch = "s390x")]
 const S390X_VECTOR_KERNEL: KernelId = KernelId::S390xVector;
-#[cfg(not(target_arch = "s390x"))]
-const S390X_VECTOR_KERNEL: KernelId = KernelId::Portable;
 
 #[cfg(target_arch = "powerpc64")]
 const POWER_VSX_KERNEL: KernelId = KernelId::PowerVsx;
-#[cfg(not(target_arch = "powerpc64"))]
-const POWER_VSX_KERNEL: KernelId = KernelId::Portable;
 
+#[cfg(any(
+  target_arch = "x86_64",
+  target_arch = "riscv64",
+  target_arch = "s390x",
+  target_arch = "powerpc64"
+))]
 #[cfg(target_arch = "x86_64")]
 const DEFAULT_XS: KernelId = KernelId::X86Sse41;
-#[cfg(target_arch = "aarch64")]
-const DEFAULT_XS: KernelId = KernelId::Aarch64Neon;
-#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(any(
+  target_arch = "x86_64",
+  target_arch = "riscv64",
+  target_arch = "s390x",
+  target_arch = "powerpc64"
+))]
+#[cfg(not(target_arch = "x86_64"))]
 const DEFAULT_XS: KernelId = KernelId::Portable;
 
+#[cfg(any(
+  target_arch = "x86_64",
+  target_arch = "riscv64",
+  target_arch = "s390x",
+  target_arch = "powerpc64"
+))]
 #[cfg(target_arch = "x86_64")]
 const DEFAULT_S: KernelId = KernelId::X86Sse41;
-#[cfg(target_arch = "aarch64")]
-const DEFAULT_S: KernelId = KernelId::Aarch64Neon;
-#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(any(
+  target_arch = "x86_64",
+  target_arch = "riscv64",
+  target_arch = "s390x",
+  target_arch = "powerpc64"
+))]
+#[cfg(not(target_arch = "x86_64"))]
 const DEFAULT_S: KernelId = KernelId::Portable;
 
+#[cfg(any(
+  target_arch = "x86_64",
+  target_arch = "riscv64",
+  target_arch = "s390x",
+  target_arch = "powerpc64"
+))]
 const DEFAULT_M: KernelId = SIMD_KERNEL;
+#[cfg(any(
+  target_arch = "x86_64",
+  target_arch = "riscv64",
+  target_arch = "s390x",
+  target_arch = "powerpc64"
+))]
 const DEFAULT_L: KernelId = SIMD_KERNEL;
 
+#[cfg(any(target_arch = "x86_64", target_arch = "riscv64"))]
 #[cfg(target_arch = "x86_64")]
 const DEFAULT_STREAM_KERNEL: KernelId = KernelId::X86Avx2;
-#[cfg(target_arch = "aarch64")]
-const DEFAULT_STREAM_KERNEL: KernelId = KernelId::Aarch64Neon;
-#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(any(target_arch = "x86_64", target_arch = "riscv64"))]
+#[cfg(not(target_arch = "x86_64"))]
 const DEFAULT_STREAM_KERNEL: KernelId = KernelId::Portable;
 
+#[cfg(any(target_arch = "x86_64", target_arch = "riscv64"))]
 const DEFAULT_BULK_KERNEL: KernelId = SIMD_KERNEL;
 
 #[derive(Clone, Copy, Debug)]
@@ -229,6 +269,7 @@ const fn parallel_table(
   }
 }
 
+#[cfg(any(target_arch = "s390x", target_arch = "powerpc64"))]
 macro_rules! parallel_costs {
   (
     $min_bytes:expr,
@@ -280,6 +321,7 @@ const fn default_parallel_costs(min_bytes: usize, min_chunks: usize, max_threads
 
 #[inline]
 #[must_use]
+#[cfg(any(target_arch = "s390x", target_arch = "powerpc64"))]
 const fn scalar_profile_parallel(
   min_bytes: usize,
   min_chunks: usize,
@@ -352,6 +394,12 @@ const fn scalar_profile_parallel(
 
 #[inline]
 #[must_use]
+#[cfg(any(
+  target_arch = "x86_64",
+  target_arch = "riscv64",
+  target_arch = "s390x",
+  target_arch = "powerpc64"
+))]
 const fn default_kind_table() -> DispatchTable {
   DispatchTable {
     boundaries: DEFAULT_BOUNDARIES,
@@ -363,13 +411,14 @@ const fn default_kind_table() -> DispatchTable {
 }
 
 // Default threshold matches the default SIMD tier for each architecture.
+#[cfg(any(target_arch = "x86_64", target_arch = "riscv64"))]
 #[cfg(target_arch = "x86_64")]
 const DEFAULT_BULK_THRESHOLD: usize = THRESHOLD_AVX2;
-#[cfg(target_arch = "aarch64")]
-const DEFAULT_BULK_THRESHOLD: usize = THRESHOLD_NEON;
-#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(any(target_arch = "x86_64", target_arch = "riscv64"))]
+#[cfg(not(target_arch = "x86_64"))]
 const DEFAULT_BULK_THRESHOLD: usize = THRESHOLD_PORTABLE;
 
+#[cfg(any(target_arch = "x86_64", target_arch = "riscv64"))]
 #[inline]
 #[must_use]
 const fn default_kind_streaming_table() -> StreamingTable {
@@ -380,18 +429,21 @@ const fn default_kind_streaming_table() -> StreamingTable {
   }
 }
 
+#[cfg(any(target_arch = "x86_64", target_arch = "riscv64"))]
 #[inline]
 #[must_use]
 const fn default_kind_parallel_table() -> ParallelTable {
   default_parallel_costs(128 * 1024, 64, 0)
 }
 
+#[cfg(any(target_arch = "x86_64", target_arch = "riscv64"))]
 #[inline]
 #[must_use]
 const fn default_kind_streaming_parallel_table() -> ParallelTable {
   default_kind_parallel_table()
 }
 
+#[cfg(any(target_arch = "x86_64", target_arch = "riscv64"))]
 #[inline]
 #[must_use]
 const fn default_kind_profile() -> FamilyProfile {
@@ -403,6 +455,7 @@ const fn default_kind_profile() -> FamilyProfile {
   }
 }
 
+#[cfg(not(target_arch = "x86_64"))]
 #[inline]
 #[must_use]
 const fn portable_profile() -> FamilyProfile {
@@ -424,16 +477,11 @@ const fn portable_profile() -> FamilyProfile {
   }
 }
 
-pub static DEFAULT_TABLE: DispatchTable = portable_profile().dispatch;
-pub static DEFAULT_STREAMING_TABLE: StreamingTable = portable_profile().streaming;
-pub static DEFAULT_PARALLEL_TABLE: ParallelTable = portable_profile().parallel;
-pub static DEFAULT_STREAMING_PARALLEL_TABLE: ParallelTable = portable_profile().streaming_parallel;
-
-// Family Profile: CUSTOM
-pub static PROFILE_CUSTOM: FamilyProfile = portable_profile();
+#[cfg(any(target_arch = "x86_64", target_arch = "riscv64"))]
 // Family Profile: DEFAULT_KIND
 pub static PROFILE_DEFAULT_KIND: FamilyProfile = default_kind_profile();
 // Family Profile: PORTABLE
+#[cfg(not(target_arch = "x86_64"))]
 pub static PROFILE_PORTABLE: FamilyProfile = portable_profile();
 
 // Family Profile: X86_AVX512_AMX
@@ -476,8 +524,6 @@ pub static PROFILE_X86_AVX512_AMX: FamilyProfile = FamilyProfile {
     medium_limit_bytes: 2097152,
   },
 };
-#[cfg(not(target_arch = "x86_64"))]
-pub static PROFILE_X86_AVX512_AMX: FamilyProfile = default_kind_profile();
 // Family Profile: X86_AVX512
 #[cfg(target_arch = "x86_64")]
 pub static PROFILE_X86_AVX512: FamilyProfile = FamilyProfile {
@@ -518,9 +564,6 @@ pub static PROFILE_X86_AVX512: FamilyProfile = FamilyProfile {
     medium_limit_bytes: 2097152,
   },
 };
-#[cfg(not(target_arch = "x86_64"))]
-pub static PROFILE_X86_AVX512: FamilyProfile = default_kind_profile();
-
 // Family Profile: AARCH64_NEON
 #[cfg(target_arch = "aarch64")]
 pub static PROFILE_AARCH64_NEON: FamilyProfile = FamilyProfile {
@@ -565,9 +608,8 @@ pub static PROFILE_AARCH64_NEON: FamilyProfile = FamilyProfile {
     medium_limit_bytes: 2097152,
   },
 };
-#[cfg(not(target_arch = "aarch64"))]
-pub static PROFILE_AARCH64_NEON: FamilyProfile = default_kind_profile();
 // Family Profile: Z13
+#[cfg(target_arch = "s390x")]
 pub static PROFILE_Z13: FamilyProfile = FamilyProfile {
   dispatch: default_kind_table(),
   streaming: StreamingTable {
@@ -580,6 +622,7 @@ pub static PROFILE_Z13: FamilyProfile = FamilyProfile {
 };
 
 // Family Profile: Z14
+#[cfg(target_arch = "s390x")]
 pub static PROFILE_Z14: FamilyProfile = FamilyProfile {
   dispatch: default_kind_table(),
   streaming: StreamingTable {
@@ -592,6 +635,7 @@ pub static PROFILE_Z14: FamilyProfile = FamilyProfile {
 };
 
 // Family Profile: Z15
+#[cfg(target_arch = "s390x")]
 pub static PROFILE_Z15: FamilyProfile = FamilyProfile {
   dispatch: DispatchTable {
     boundaries: [64, 256, 4096],
@@ -631,6 +675,7 @@ pub static PROFILE_Z15: FamilyProfile = FamilyProfile {
   },
 };
 // Family Profile: POWER7
+#[cfg(target_arch = "powerpc64")]
 pub static PROFILE_POWER7: FamilyProfile = FamilyProfile {
   dispatch: default_kind_table(),
   streaming: StreamingTable {
@@ -643,6 +688,7 @@ pub static PROFILE_POWER7: FamilyProfile = FamilyProfile {
 };
 
 // Family Profile: POWER8
+#[cfg(target_arch = "powerpc64")]
 pub static PROFILE_POWER8: FamilyProfile = FamilyProfile {
   dispatch: default_kind_table(),
   streaming: StreamingTable {
@@ -655,6 +701,7 @@ pub static PROFILE_POWER8: FamilyProfile = FamilyProfile {
 };
 
 // Family Profile: POWER9
+#[cfg(target_arch = "powerpc64")]
 pub static PROFILE_POWER9: FamilyProfile = FamilyProfile {
   dispatch: default_kind_table(),
   streaming: StreamingTable {
@@ -667,6 +714,7 @@ pub static PROFILE_POWER9: FamilyProfile = FamilyProfile {
 };
 
 // Family Profile: POWER10
+#[cfg(target_arch = "powerpc64")]
 pub static PROFILE_POWER10: FamilyProfile = FamilyProfile {
   dispatch: DispatchTable {
     boundaries: [64, 256, 4096],

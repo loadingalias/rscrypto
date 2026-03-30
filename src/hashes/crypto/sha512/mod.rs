@@ -12,9 +12,9 @@ use crate::{
 };
 
 #[doc(hidden)]
-pub mod dispatch;
+pub(crate) mod dispatch;
 #[doc(hidden)]
-pub mod dispatch_tables;
+pub(crate) mod dispatch_tables;
 pub(crate) mod kernels;
 
 #[cfg(target_arch = "aarch64")]
@@ -215,54 +215,6 @@ impl Sha512 {
   #[must_use]
   pub fn digest(data: &[u8]) -> [u8; 64] {
     dispatch::digest(data)
-  }
-
-  #[inline]
-  #[must_use]
-  #[cfg(any(test, feature = "std"))]
-  pub(crate) fn digest_portable(data: &[u8]) -> [u8; 64] {
-    // Two-block limit:
-    // - If `len < 112`, padding fits into one block.
-    // - If `112 <= len < 128`, padding spills into a second block.
-    // - If `128 <= len < 128 + 112`, we have one full block and a final block.
-    if data.len() < 240 {
-      let mut state = H0;
-
-      let total_len = data.len() as u128;
-      let bit_len = total_len << 3;
-
-      let (blocks, rest) = data.as_chunks::<BLOCK_LEN>();
-      if !blocks.is_empty() {
-        // For `len < 240`, there can be at most one full block here.
-        Self::compress_block(&mut state, &blocks[0]);
-      }
-
-      let mut block0 = [0u8; BLOCK_LEN];
-      block0[..rest.len()].copy_from_slice(rest);
-      block0[rest.len()] = 0x80;
-
-      if blocks.is_empty() && data.len() >= 112 {
-        // `112 <= len < 128`: padding spills into a second block.
-        Self::compress_block(&mut state, &block0);
-        let mut block1 = [0u8; BLOCK_LEN];
-        block1[112..128].copy_from_slice(&bit_len.to_be_bytes());
-        Self::compress_block(&mut state, &block1);
-      } else {
-        // Either `len < 112` (single final block), or `128 <= len < 240` (remainder < 112).
-        block0[112..128].copy_from_slice(&bit_len.to_be_bytes());
-        Self::compress_block(&mut state, &block0);
-      }
-
-      let mut out = [0u8; 64];
-      for (chunk, &word) in out.chunks_exact_mut(8).zip(state.iter()) {
-        chunk.copy_from_slice(&word.to_be_bytes());
-      }
-      out
-    } else {
-      let mut h = Self::default();
-      h.update_with(data, Self::compress_blocks_portable);
-      h.finalize_inner_with(Self::compress_blocks_portable)
-    }
   }
 
   #[inline]
@@ -649,9 +601,6 @@ impl Digest for Sha512 {
     dispatch::digest(data)
   }
 }
-
-#[cfg(feature = "std")]
-pub(crate) mod kernel_test;
 
 #[cfg(test)]
 mod tests {

@@ -541,180 +541,6 @@ pub fn crc32c_iscsi_sse_v4s3x3_8way_safe(crc: u32, data: &[u8]) -> u32 {
 }
 
 #[inline]
-#[target_feature(enable = "sse4.2,avx512f,avx512vl,avx512bw,avx512dq,pclmulqdq")]
-unsafe fn crc32c_iscsi_avx512_v4s3x3(mut crc0: u32, mut buf: *const u8, mut len: usize) -> u32 {
-  // SAFETY: AVX-512/PCLMULQDQ intrinsics are available via this function's #[target_feature]
-  // attribute. Pointer arithmetic is bounded by `len` derived from the caller's slice.
-  unsafe {
-    // This is the AVX-512 variant of v4s3x3. It uses 128-bit loads/stores with
-    // AVX-512 ternary logic for better throughput.
-
-    while len > 0 && (buf as usize & 7) != 0 {
-      crc0 = _mm_crc32_u8(crc0, *buf);
-      buf = buf.add(1);
-      len = len.strict_sub(1);
-    }
-
-    if (buf as usize & 8) != 0 && len >= 8 {
-      crc0 = _mm_crc32_u64(crc0 as u64, ptr::read_unaligned(buf as *const u64)) as u32;
-      buf = buf.add(8);
-      len = len.strict_sub(8);
-    }
-
-    if len >= 144 {
-      let blk = (len.strict_sub(8)) / 136;
-      let klen = blk.strict_mul(24);
-      let buf2_start = buf;
-      let mut crc1 = 0u32;
-      let mut crc2 = 0u32;
-
-      let mut x0 = _mm_loadu_si128(buf2_start as *const __m128i);
-      let mut x1 = _mm_loadu_si128(buf2_start.add(16) as *const __m128i);
-      let mut x2 = _mm_loadu_si128(buf2_start.add(32) as *const __m128i);
-      let mut x3 = _mm_loadu_si128(buf2_start.add(48) as *const __m128i);
-
-      let mut k = _mm_setr_epi32(0x740eef02u32.cast_signed(), 0, 0x9e4addf8u32.cast_signed(), 0);
-      x0 = _mm_xor_si128(_mm_cvtsi32_si128(crc0.cast_signed()), x0);
-      crc0 = 0;
-
-      let mut buf2 = buf2_start.add(64);
-      len = len.strict_sub(136);
-      buf = buf.add(blk.strict_mul(64));
-
-      while len >= 144 {
-        let y0 = clmul_lo_sse(x0, k);
-        x0 = clmul_hi_sse(x0, k);
-        let y1 = clmul_lo_sse(x1, k);
-        x1 = clmul_hi_sse(x1, k);
-        let y2 = clmul_lo_sse(x2, k);
-        x2 = clmul_hi_sse(x2, k);
-        let y3 = clmul_lo_sse(x3, k);
-        x3 = clmul_hi_sse(x3, k);
-
-        x0 = _mm_ternarylogic_epi64(x0, y0, _mm_loadu_si128(buf2 as *const __m128i), 0x96);
-        x1 = _mm_ternarylogic_epi64(x1, y1, _mm_loadu_si128(buf2.add(16) as *const __m128i), 0x96);
-        x2 = _mm_ternarylogic_epi64(x2, y2, _mm_loadu_si128(buf2.add(32) as *const __m128i), 0x96);
-        x3 = _mm_ternarylogic_epi64(x3, y3, _mm_loadu_si128(buf2.add(48) as *const __m128i), 0x96);
-
-        crc0 = _mm_crc32_u64(crc0 as u64, ptr::read_unaligned(buf as *const u64)) as u32;
-        crc1 = _mm_crc32_u64(crc1 as u64, ptr::read_unaligned(buf.add(klen) as *const u64)) as u32;
-        crc2 = _mm_crc32_u64(
-          crc2 as u64,
-          ptr::read_unaligned(buf.add(klen.strict_mul(2)) as *const u64),
-        ) as u32;
-        crc0 = _mm_crc32_u64(crc0 as u64, ptr::read_unaligned(buf.add(8) as *const u64)) as u32;
-        crc1 = _mm_crc32_u64(crc1 as u64, ptr::read_unaligned(buf.add(klen + 8) as *const u64)) as u32;
-        crc2 = _mm_crc32_u64(
-          crc2 as u64,
-          ptr::read_unaligned(buf.add(klen.strict_mul(2) + 8) as *const u64),
-        ) as u32;
-        crc0 = _mm_crc32_u64(crc0 as u64, ptr::read_unaligned(buf.add(16) as *const u64)) as u32;
-        crc1 = _mm_crc32_u64(crc1 as u64, ptr::read_unaligned(buf.add(klen + 16) as *const u64)) as u32;
-        crc2 = _mm_crc32_u64(
-          crc2 as u64,
-          ptr::read_unaligned(buf.add(klen.strict_mul(2) + 16) as *const u64),
-        ) as u32;
-
-        buf = buf.add(24);
-        buf2 = buf2.add(64);
-        len = len.strict_sub(136);
-      }
-
-      k = _mm_setr_epi32(0xf20c0dfeu32.cast_signed(), 0, 0x493c7d27u32.cast_signed(), 0);
-      let y0 = clmul_lo_sse(x0, k);
-      x0 = clmul_hi_sse(x0, k);
-      let y2 = clmul_lo_sse(x2, k);
-      x2 = clmul_hi_sse(x2, k);
-
-      x0 = _mm_ternarylogic_epi64(x0, y0, x1, 0x96);
-      x2 = _mm_ternarylogic_epi64(x2, y2, x3, 0x96);
-
-      k = _mm_setr_epi32(0x3da6d0cbu32.cast_signed(), 0, 0xba4fc28eu32.cast_signed(), 0);
-      let y0 = clmul_lo_sse(x0, k);
-      x0 = clmul_hi_sse(x0, k);
-      x0 = _mm_ternarylogic_epi64(x0, y0, x2, 0x96);
-
-      crc0 = _mm_crc32_u64(crc0 as u64, ptr::read_unaligned(buf as *const u64)) as u32;
-      crc1 = _mm_crc32_u64(crc1 as u64, ptr::read_unaligned(buf.add(klen) as *const u64)) as u32;
-      crc2 = _mm_crc32_u64(
-        crc2 as u64,
-        ptr::read_unaligned(buf.add(klen.strict_mul(2)) as *const u64),
-      ) as u32;
-      crc0 = _mm_crc32_u64(crc0 as u64, ptr::read_unaligned(buf.add(8) as *const u64)) as u32;
-      crc1 = _mm_crc32_u64(crc1 as u64, ptr::read_unaligned(buf.add(klen + 8) as *const u64)) as u32;
-      crc2 = _mm_crc32_u64(
-        crc2 as u64,
-        ptr::read_unaligned(buf.add(klen.strict_mul(2) + 8) as *const u64),
-      ) as u32;
-      crc0 = _mm_crc32_u64(crc0 as u64, ptr::read_unaligned(buf.add(16) as *const u64)) as u32;
-      crc1 = _mm_crc32_u64(crc1 as u64, ptr::read_unaligned(buf.add(klen + 16) as *const u64)) as u32;
-      crc2 = _mm_crc32_u64(
-        crc2 as u64,
-        ptr::read_unaligned(buf.add(klen.strict_mul(2) + 16) as *const u64),
-      ) as u32;
-      buf = buf.add(24);
-
-      let vc0 = crc_shift_iscsi_sse(crc0, klen.strict_mul(2) + 8);
-      let vc1 = crc_shift_iscsi_sse(crc1, klen + 8);
-      let mut vc = mm_extract_epi64(_mm_xor_si128(vc0, vc1), 0);
-
-      let x0_low = mm_extract_epi64(x0, 0);
-      let x0_high = mm_extract_epi64(x0, 1);
-      let x0_combined = mm_extract_epi64(
-        crc_shift_iscsi_sse(mm_crc32c_u64(mm_crc32c_u64(0, x0_low), x0_high), klen.strict_mul(3) + 8),
-        0,
-      );
-      vc ^= x0_combined;
-
-      buf = buf.add(klen.strict_mul(2));
-      crc0 = crc2;
-      crc0 = mm_crc32c_u64(crc0, ptr::read_unaligned(buf as *const u64) ^ vc);
-      buf = buf.add(8);
-      len = len.strict_sub(8);
-    }
-
-    while len >= 8 {
-      crc0 = mm_crc32c_u64(crc0, ptr::read_unaligned(buf as *const u64));
-      buf = buf.add(8);
-      len = len.strict_sub(8);
-    }
-    while len > 0 {
-      crc0 = _mm_crc32_u8(crc0, *buf);
-      buf = buf.add(1);
-      len = len.strict_sub(1);
-    }
-    crc0
-  }
-}
-
-/// Safe wrapper for CRC-32C fusion kernel (AVX-512 v4s3x3).
-#[inline]
-pub fn crc32c_iscsi_avx512_v4s3x3_safe(crc: u32, data: &[u8]) -> u32 {
-  // SAFETY: Dispatcher verifies AVX-512 + PCLMULQDQ before selecting this kernel.
-  unsafe { crc32c_iscsi_avx512_v4s3x3(crc, data.as_ptr(), data.len()) }
-}
-
-#[inline]
-pub fn crc32c_iscsi_avx512_v4s3x3_2way_safe(crc: u32, data: &[u8]) -> u32 {
-  crc32c_fusion_nway::<2>(crc, data, crc32c_iscsi_avx512_v4s3x3_safe)
-}
-
-#[inline]
-pub fn crc32c_iscsi_avx512_v4s3x3_4way_safe(crc: u32, data: &[u8]) -> u32 {
-  crc32c_fusion_nway::<4>(crc, data, crc32c_iscsi_avx512_v4s3x3_safe)
-}
-
-#[inline]
-pub fn crc32c_iscsi_avx512_v4s3x3_7way_safe(crc: u32, data: &[u8]) -> u32 {
-  crc32c_fusion_nway::<7>(crc, data, crc32c_iscsi_avx512_v4s3x3_safe)
-}
-
-#[inline]
-pub fn crc32c_iscsi_avx512_v4s3x3_8way_safe(crc: u32, data: &[u8]) -> u32 {
-  crc32c_fusion_nway::<8>(crc, data, crc32c_iscsi_avx512_v4s3x3_safe)
-}
-
-#[inline]
 #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq")]
 unsafe fn clmul_lo_avx512_vpclmulqdq(a: __m512i, b: __m512i) -> __m512i {
   // SAFETY: AVX-512/VPCLMULQDQ intrinsics are available via this function's #[target_feature]
@@ -1331,15 +1157,6 @@ unsafe fn crc32_ieee_pclmul_small(crc: u32, data: &[u8]) -> u32 {
 pub fn crc32_ieee_pclmul_small_safe(crc: u32, data: &[u8]) -> u32 {
   // SAFETY: Dispatcher verifies PCLMULQDQ (directly or via VPCLMUL-ready) before selecting this path.
   unsafe { crc32_ieee_pclmul_small(crc, data) }
-}
-
-/// Safe wrapper for CRC-32 (IEEE) "vpclmul-small" kernel.
-///
-/// For small buffers we intentionally use the 128-bit PCLMUL small-lane kernel
-/// to avoid AVX-512 startup costs and 128B block requirements.
-#[inline]
-pub fn crc32_ieee_vpclmul_small_safe(crc: u32, data: &[u8]) -> u32 {
-  crc32_ieee_pclmul_small_safe(crc, data)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2528,9 +2345,7 @@ mod tests {
 
       let portable = super::super::portable::crc32_slice16_ieee(!0, &data) ^ !0;
       let pclmul_small = crc32_ieee_pclmul_small_safe(!0, &data) ^ !0;
-      let vpclmul_small = crc32_ieee_vpclmul_small_safe(!0, &data) ^ !0;
       assert_eq!(pclmul_small, portable, "len={len}");
-      assert_eq!(vpclmul_small, portable, "len={len}");
     }
   }
 

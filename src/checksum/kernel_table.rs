@@ -1,33 +1,8 @@
-//! Empirical kernel dispatch tables.
+//! Internal CRC kernel tables and one-shot helpers.
 //!
-//! This module provides pre-computed kernel selection tables derived from
-//! actual benchmark data. Each platform has a table mapping (variant, size_class)
-//! to the empirically-fastest kernel function pointer.
-//!
-//! # Design
-//!
-//! Unlike the policy-based system which computes kernel selection at runtime,
-//! this module uses **pre-resolved tables**:
-//!
-//! ```text
-//! Current:  caps → policy → thresholds → streams → kernel_name → lookup → kernel
-//! This:     platform → size_class → kernel (direct)
-//! ```
-//!
-//! This eliminates ~5ns of per-call overhead, reducing dispatch to ~1.5ns.
-//!
-//! # Data Sources
-//!
-//! Tables are derived from benchmark files in `src/checksum/bench_baseline/`:
-//! - `macos_arm64_kernels.txt` → AppleM1M3
-//! - `linux_arm64_kernels.txt` → Graviton2
-//! - `linux_x86-64_kernels.txt` → Zen4
-//! - `linux_x86-64_zen5_kernels.txt` → Zen5
-//! - `linux_x86-64_intel_kernels.txt` → IntelSpr
-//!
-//! The in-crate dispatch tables in this file are authoritative. Benchmark
-//! baselines inform updates, but there is no separate generated source of
-//! truth anymore.
+//! The public `checksum::dispatch` API was removed. What remains here is the
+//! internal table-driven selector that the CRC implementations use after the
+//! tuning work was collapsed into static, benchmark-backed kernel tables.
 
 use crate::{
   checksum::dispatchers::{Crc16Fn, Crc24Fn, Crc32Fn, Crc64Fn},
@@ -45,15 +20,13 @@ use crate::{
 static ACTIVE_TABLE: crate::backend::cache::OnceCache<&'static KernelTable> = crate::backend::cache::OnceCache::new();
 
 /// Get the active kernel table for this platform.
-///
-/// This function is called once per process and caches the result.
 #[inline]
-pub fn active_table() -> &'static KernelTable {
+pub(crate) fn active_table() -> &'static KernelTable {
   ACTIVE_TABLE.get_or_init(|| select_table(crate::platform::caps()))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Oneshot Functions (Recommended API)
+// Oneshot Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Maximum input size for the inline bytewise fast-path.
@@ -66,21 +39,9 @@ pub fn active_table() -> &'static KernelTable {
 /// hardware-accelerated kernels outperform the bytewise loop.
 const FAST_PATH_MAX: usize = 7;
 
-/// Compute CRC-64/XZ checksum of data.
-///
-/// Uses the optimal kernel for the current platform and buffer size.
-/// This is the recommended API for one-shot checksums.
-///
-/// # Examples
-///
-/// ```
-/// use rscrypto::checksum::dispatch::crc64_xz;
-///
-/// let crc = crc64_xz(b"123456789");
-/// assert_eq!(crc, 0x995DC9BBDF1939FA);
-/// ```
+/// Internal one-shot CRC-64/XZ helper used by trait impls.
 #[inline]
-pub fn crc64_xz(data: &[u8]) -> u64 {
+pub(crate) fn crc64_xz(data: &[u8]) -> u64 {
   if data.len() <= FAST_PATH_MAX {
     return crate::checksum::crc64::portable::crc64_xz_bytewise(!0, data) ^ !0;
   }
@@ -89,20 +50,9 @@ pub fn crc64_xz(data: &[u8]) -> u64 {
   kernel(!0, data) ^ !0
 }
 
-/// Compute CRC-64/NVME checksum of data.
-///
-/// Uses the optimal kernel for the current platform and buffer size.
-///
-/// # Examples
-///
-/// ```
-/// use rscrypto::checksum::dispatch::crc64_nvme;
-///
-/// let crc = crc64_nvme(b"123456789");
-/// assert_eq!(crc, 0xAE8B14860A799888);
-/// ```
+/// Internal one-shot CRC-64/NVME helper used by trait impls.
 #[inline]
-pub fn crc64_nvme(data: &[u8]) -> u64 {
+pub(crate) fn crc64_nvme(data: &[u8]) -> u64 {
   if data.len() <= FAST_PATH_MAX {
     return crate::checksum::crc64::portable::crc64_nvme_bytewise(!0, data) ^ !0;
   }
@@ -111,20 +61,9 @@ pub fn crc64_nvme(data: &[u8]) -> u64 {
   kernel(!0, data) ^ !0
 }
 
-/// Compute CRC-32 (IEEE) checksum of data.
-///
-/// Uses the optimal kernel for the current platform and buffer size.
-///
-/// # Examples
-///
-/// ```
-/// use rscrypto::checksum::dispatch::crc32_ieee;
-///
-/// let crc = crc32_ieee(b"123456789");
-/// assert_eq!(crc, 0xCBF43926);
-/// ```
+/// Internal one-shot CRC-32/IEEE helper used by trait impls.
 #[inline]
-pub fn crc32_ieee(data: &[u8]) -> u32 {
+pub(crate) fn crc32_ieee(data: &[u8]) -> u32 {
   if data.len() <= FAST_PATH_MAX {
     return crate::checksum::crc32::portable::crc32_bytewise_ieee(!0, data) ^ !0;
   }
@@ -166,20 +105,9 @@ pub fn crc32_ieee(data: &[u8]) -> u32 {
   kernel(!0, data) ^ !0
 }
 
-/// Compute CRC-32C (Castagnoli) checksum of data.
-///
-/// Uses the optimal kernel for the current platform and buffer size.
-///
-/// # Examples
-///
-/// ```
-/// use rscrypto::checksum::dispatch::crc32c;
-///
-/// let crc = crc32c(b"123456789");
-/// assert_eq!(crc, 0xE3069283);
-/// ```
+/// Internal one-shot CRC-32C helper used by trait impls.
 #[inline]
-pub fn crc32c(data: &[u8]) -> u32 {
+pub(crate) fn crc32c(data: &[u8]) -> u32 {
   if data.len() <= FAST_PATH_MAX {
     return crate::checksum::crc32::portable::crc32c_bytewise(!0, data) ^ !0;
   }
@@ -213,20 +141,9 @@ pub fn crc32c(data: &[u8]) -> u32 {
   kernel(!0, data) ^ !0
 }
 
-/// Compute CRC-16/CCITT checksum of data.
-///
-/// Uses the optimal kernel for the current platform and buffer size.
-///
-/// # Examples
-///
-/// ```
-/// use rscrypto::checksum::dispatch::crc16_ccitt;
-///
-/// let crc = crc16_ccitt(b"123456789");
-/// assert_eq!(crc, 0x906E);
-/// ```
+/// Internal one-shot CRC-16/CCITT helper used by trait impls.
 #[inline]
-pub fn crc16_ccitt(data: &[u8]) -> u16 {
+pub(crate) fn crc16_ccitt(data: &[u8]) -> u16 {
   // CCITT: INIT=0xFFFF, XOROUT=0xFFFF
   if data.len() <= FAST_PATH_MAX {
     return crate::checksum::crc16::portable::crc16_ccitt_bytewise(0xFFFF, data) ^ 0xFFFF;
@@ -236,20 +153,9 @@ pub fn crc16_ccitt(data: &[u8]) -> u16 {
   kernel(0xFFFF, data) ^ 0xFFFF
 }
 
-/// Compute CRC-16/IBM checksum of data.
-///
-/// Uses the optimal kernel for the current platform and buffer size.
-///
-/// # Examples
-///
-/// ```
-/// use rscrypto::checksum::dispatch::crc16_ibm;
-///
-/// let crc = crc16_ibm(b"123456789");
-/// assert_eq!(crc, 0xBB3D);
-/// ```
+/// Internal one-shot CRC-16/IBM helper used by trait impls.
 #[inline]
-pub fn crc16_ibm(data: &[u8]) -> u16 {
+pub(crate) fn crc16_ibm(data: &[u8]) -> u16 {
   // IBM: INIT=0x0000, XOROUT=0x0000
   if data.len() <= FAST_PATH_MAX {
     return crate::checksum::crc16::portable::crc16_ibm_bytewise(0, data);
@@ -259,20 +165,9 @@ pub fn crc16_ibm(data: &[u8]) -> u16 {
   kernel(0, data)
 }
 
-/// Compute CRC-24/OpenPGP checksum of data.
-///
-/// Uses the optimal kernel for the current platform and buffer size.
-///
-/// # Examples
-///
-/// ```
-/// use rscrypto::checksum::dispatch::crc24_openpgp;
-///
-/// let crc = crc24_openpgp(b"123456789");
-/// assert_eq!(crc, 0x21CF02);
-/// ```
+/// Internal one-shot CRC-24/OpenPGP helper used by trait impls.
 #[inline]
-pub fn crc24_openpgp(data: &[u8]) -> u32 {
+pub(crate) fn crc24_openpgp(data: &[u8]) -> u32 {
   // OpenPGP: INIT=0x00B704CE, XOROUT=0x000000, mask to 24 bits
   const INIT: u32 = 0x00B7_04CE;
   const MASK: u32 = 0x00FF_FFFF;
@@ -285,100 +180,6 @@ pub fn crc24_openpgp(data: &[u8]) -> u32 {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Vectored Oneshot Functions
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Compute CRC-64/XZ checksum of multiple buffers treated as one concatenated stream.
-#[inline]
-pub fn crc64_xz_vectored(bufs: &[&[u8]]) -> u64 {
-  crc_vectored_dispatch!(active_table(), !0u64, crc64_xz, bufs) ^ !0
-}
-
-/// Compute CRC-64/NVME checksum of multiple buffers treated as one concatenated stream.
-#[inline]
-pub fn crc64_nvme_vectored(bufs: &[&[u8]]) -> u64 {
-  crc_vectored_dispatch!(active_table(), !0u64, crc64_nvme, bufs) ^ !0
-}
-
-/// Compute CRC-32 (IEEE) checksum of multiple buffers treated as one concatenated stream.
-#[inline]
-pub fn crc32_ieee_vectored(bufs: &[&[u8]]) -> u32 {
-  crc_vectored_dispatch!(active_table(), !0u32, crc32_ieee, bufs) ^ !0
-}
-
-/// Compute CRC-32C (Castagnoli) checksum of multiple buffers treated as one concatenated stream.
-#[inline]
-pub fn crc32c_vectored(bufs: &[&[u8]]) -> u32 {
-  crc_vectored_dispatch!(active_table(), !0u32, crc32c, bufs) ^ !0
-}
-
-/// Compute CRC-16/CCITT checksum of multiple buffers treated as one concatenated stream.
-#[inline]
-pub fn crc16_ccitt_vectored(bufs: &[&[u8]]) -> u16 {
-  crc_vectored_dispatch!(active_table(), 0xFFFFu16, crc16_ccitt, bufs) ^ 0xFFFF
-}
-
-/// Compute CRC-16/IBM checksum of multiple buffers treated as one concatenated stream.
-#[inline]
-pub fn crc16_ibm_vectored(bufs: &[&[u8]]) -> u16 {
-  crc_vectored_dispatch!(active_table(), 0u16, crc16_ibm, bufs)
-}
-
-/// Compute CRC-24/OpenPGP checksum of multiple buffers treated as one concatenated stream.
-#[inline]
-pub fn crc24_openpgp_vectored(bufs: &[&[u8]]) -> u32 {
-  crc_vectored_dispatch!(active_table(), 0x00B7_04CEu32, crc24_openpgp, bufs) & 0x00FF_FFFF
-}
-
-/// `std::io::IoSlice` versions of the vectored one-shot APIs.
-#[cfg(feature = "std")]
-pub mod std_io {
-  use super::*;
-
-  /// Compute CRC-64/XZ checksum of `IoSlice` buffers treated as one concatenated stream.
-  #[inline]
-  pub fn crc64_xz_io_slices(bufs: &[std::io::IoSlice<'_>]) -> u64 {
-    crc_vectored_dispatch!(active_table(), !0u64, crc64_xz, bufs) ^ !0
-  }
-
-  /// Compute CRC-64/NVME checksum of `IoSlice` buffers treated as one concatenated stream.
-  #[inline]
-  pub fn crc64_nvme_io_slices(bufs: &[std::io::IoSlice<'_>]) -> u64 {
-    crc_vectored_dispatch!(active_table(), !0u64, crc64_nvme, bufs) ^ !0
-  }
-
-  /// Compute CRC-32 (IEEE) checksum of `IoSlice` buffers treated as one concatenated stream.
-  #[inline]
-  pub fn crc32_ieee_io_slices(bufs: &[std::io::IoSlice<'_>]) -> u32 {
-    crc_vectored_dispatch!(active_table(), !0u32, crc32_ieee, bufs) ^ !0
-  }
-
-  /// Compute CRC-32C checksum of `IoSlice` buffers treated as one concatenated stream.
-  #[inline]
-  pub fn crc32c_io_slices(bufs: &[std::io::IoSlice<'_>]) -> u32 {
-    crc_vectored_dispatch!(active_table(), !0u32, crc32c, bufs) ^ !0
-  }
-
-  /// Compute CRC-16/CCITT checksum of `IoSlice` buffers treated as one concatenated stream.
-  #[inline]
-  pub fn crc16_ccitt_io_slices(bufs: &[std::io::IoSlice<'_>]) -> u16 {
-    crc_vectored_dispatch!(active_table(), 0xFFFFu16, crc16_ccitt, bufs) ^ 0xFFFF
-  }
-
-  /// Compute CRC-16/IBM checksum of `IoSlice` buffers treated as one concatenated stream.
-  #[inline]
-  pub fn crc16_ibm_io_slices(bufs: &[std::io::IoSlice<'_>]) -> u16 {
-    crc_vectored_dispatch!(active_table(), 0u16, crc16_ibm, bufs)
-  }
-
-  /// Compute CRC-24/OpenPGP checksum of `IoSlice` buffers treated as one concatenated stream.
-  #[inline]
-  pub fn crc24_openpgp_io_slices(bufs: &[std::io::IoSlice<'_>]) -> u32 {
-    crc_vectored_dispatch!(active_table(), 0x00B7_04CEu32, crc24_openpgp, bufs) & 0x00FF_FFFF
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Data Structures
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -388,7 +189,7 @@ pub mod std_io {
 /// Name strings live in the companion [`KernelNameSet`], which is only
 /// touched by cold introspection / diagnostics code.
 #[derive(Clone, Copy)]
-pub struct KernelFnSet {
+pub(crate) struct KernelFnSet {
   // CRC-16
   pub crc16_ccitt: Crc16Fn,
   pub crc16_ibm: Crc16Fn,
@@ -408,7 +209,7 @@ pub struct KernelFnSet {
 /// Separated from [`KernelFnSet`] so the hot dispatch path never pulls
 /// name data into the cache line.
 #[derive(Clone, Copy)]
-pub struct KernelNameSet {
+pub(crate) struct KernelNameSet {
   // CRC-16
   pub crc16_ccitt_name: &'static str,
   pub crc16_ibm_name: &'static str,
@@ -428,7 +229,7 @@ pub struct KernelNameSet {
 /// table definitions, then split into [`KernelFnSet`] + [`KernelNameSet`]
 /// inside [`KernelTable::from_sets`].
 #[derive(Clone, Copy)]
-pub struct KernelSet {
+pub(crate) struct KernelSet {
   // CRC-16
   pub crc16_ccitt: Crc16Fn,
   pub crc16_ccitt_name: &'static str,
@@ -488,7 +289,7 @@ impl KernelSet {
 /// cold-path name strings ([`KernelNameSet`]) so the dispatch path fits in
 /// a single cache line per size class.
 #[derive(Clone, Copy)]
-pub struct KernelTable {
+pub(crate) struct KernelTable {
   /// Required capabilities for *all* kernels referenced by this table.
   ///
   /// `select_table()` must only return a table when `caps.has(requires)` holds.
@@ -592,22 +393,7 @@ macro_rules! kernel_table {
   };
 }
 
-/// Returns `true` if the current platform uses hardware-accelerated CRC kernels.
-///
-/// This is a convenience function that checks whether the active dispatch table
-/// requires any SIMD or hardware CRC capabilities.
-///
-/// # Examples
-///
-/// ```rust
-/// use rscrypto::checksum::dispatch::is_hardware_accelerated;
-///
-/// if is_hardware_accelerated() {
-///   println!("CRC operations are hardware-accelerated on this platform");
-/// } else {
-///   println!("Using portable (table-based) CRC implementations");
-/// }
-/// ```
+/// Returns `true` if the active kernel table uses hardware-accelerated CRC kernels.
 #[inline]
 pub fn is_hardware_accelerated() -> bool {
   active_table().is_hardware_accelerated()
@@ -623,7 +409,7 @@ pub fn is_hardware_accelerated() -> bool {
 /// 1. **Capability match**: Conservative defaults based on CPU features
 /// 2. **Portable fallback**: No SIMD, table-based only
 #[inline]
-pub fn select_table(caps: Caps) -> &'static KernelTable {
+pub(crate) fn select_table(caps: Caps) -> &'static KernelTable {
   if let Some(table) = capability_match(caps) {
     debug_assert!(caps.has(table.requires), "capability_match returned an unsafe table");
     if caps.has(table.requires) {
@@ -643,21 +429,57 @@ fn capability_match(caps: Caps) -> Option<&'static KernelTable> {
   {
     use crate::platform::caps::aarch64::{CRC_READY, PMULL_EOR3_READY, PMULL_READY};
 
+    #[cfg(feature = "std")]
+    if let Some(family) = crate::platform::detect::detect_aarch64_tune_family() {
+      match family {
+        #[cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "watchos"))]
+        crate::platform::detect::Aarch64TuneFamily::AppleM1M3 => {
+          if caps.has(aarch64_tables::APPLE_M1M3_TABLE.requires) {
+            return Some(&aarch64_tables::APPLE_M1M3_TABLE);
+          }
+        }
+        #[cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "watchos"))]
+        crate::platform::detect::Aarch64TuneFamily::AppleM4M5 => {
+          if caps.has(aarch64_tables::APPLE_M1M3_TABLE.requires) {
+            return Some(&aarch64_tables::APPLE_M1M3_TABLE);
+          }
+        }
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        crate::platform::detect::Aarch64TuneFamily::Graviton2 => {
+          if caps.has(aarch64_tables::GRAVITON2_TABLE.requires) {
+            return Some(&aarch64_tables::GRAVITON2_TABLE);
+          }
+        }
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        crate::platform::detect::Aarch64TuneFamily::Graviton3 => {
+          if caps.has(aarch64_tables::GRAVITON3_TABLE.requires) {
+            return Some(&aarch64_tables::GRAVITON3_TABLE);
+          }
+        }
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        crate::platform::detect::Aarch64TuneFamily::Graviton4 => {
+          if caps.has(aarch64_tables::GRAVITON4_TABLE.requires) {
+            return Some(&aarch64_tables::GRAVITON4_TABLE);
+          }
+        }
+      }
+    }
+
     // PMULL + SHA3 (EOR3) + CRC extension → use EOR3-enabled table
     if caps.has(CRC_READY) && caps.has(PMULL_EOR3_READY) {
-      return Some(&GENERIC_ARM_PMULL_EOR3_TABLE);
+      return Some(&aarch64_tables::GENERIC_ARM_PMULL_EOR3_TABLE);
     }
     // PMULL + CRC extension (no EOR3) → safe PMULL-only table
     if caps.has(CRC_READY) && caps.has(PMULL_READY) {
-      return Some(&GENERIC_ARM_PMULL_TABLE);
+      return Some(&aarch64_tables::GENERIC_ARM_PMULL_TABLE);
     }
     // PMULL only (no CRC extension) → accelerate CRC-16/24/64, keep CRC-32 portable
     if caps.has(PMULL_READY) {
-      return Some(&GENERIC_ARM_PMULL_NO_CRC_TABLE);
+      return Some(&aarch64_tables::GENERIC_ARM_PMULL_NO_CRC_TABLE);
     }
     // CRC extension only → accelerate CRC-32/32C, keep others portable
     if caps.has(CRC_READY) {
-      return Some(&GENERIC_ARM_CRC_ONLY_TABLE);
+      return Some(&aarch64_tables::GENERIC_ARM_CRC_ONLY_TABLE);
     }
   }
 
@@ -779,12 +601,14 @@ mod aarch64_tables {
     crc24::kernels::aarch64 as crc24_k, crc32::kernels::aarch64 as crc32_k, crc64::kernels::aarch64 as crc64_k,
   };
 
+  #[cfg(any(target_os = "linux", target_os = "android"))]
   const G3_CRC16_PMULL_EOR3_2WAY_MAX_LEN: usize = 262_144;
 
   /// Graviton3 CRC16/CCITT large-path PMULL+EOR3 hybrid.
   ///
   /// PMULL+EOR3 2-way improves lower "large" buffers, while PMULL+EOR3 1-way
   /// remains safer for very large buffers on G3.
+  #[cfg(any(target_os = "linux", target_os = "android"))]
   #[inline]
   fn g3_crc16_ccitt_l_hybrid(crc: u16, data: &[u8]) -> u16 {
     if data.len() <= G3_CRC16_PMULL_EOR3_2WAY_MAX_LEN {
@@ -798,6 +622,7 @@ mod aarch64_tables {
   ///
   /// Empirically, 2-way PMULL+EOR3 helps lower "large" buffers while 1-way
   /// PMULL+EOR3 remains safer for very large buffers on G3.
+  #[cfg(any(target_os = "linux", target_os = "android"))]
   #[inline]
   fn g3_crc16_ibm_l_hybrid(crc: u16, data: &[u8]) -> u16 {
     if data.len() <= G3_CRC16_PMULL_EOR3_2WAY_MAX_LEN {
@@ -926,6 +751,7 @@ mod aarch64_tables {
   // without SHA3 feature flag - the EOR3 instruction is available through
   // a different path on this hardware.
   // ───────────────────────────────────────────────────────────────────────────
+  #[cfg(any(target_os = "linux", target_os = "android"))]
   pub static GRAVITON2_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::aarch64::CRC_READY.union(crate::platform::caps::aarch64::PMULL_EOR3_READY),
     boundaries: [64, 256, 4096],
@@ -1010,6 +836,7 @@ mod aarch64_tables {
   // - Higher throughput (~25% faster across the board)
   // - Different optimal kernel choices for CRC16@s and CRC64/NVME
   // ───────────────────────────────────────────────────────────────────────────
+  #[cfg(any(target_os = "linux", target_os = "android"))]
   const G3_XS: KernelSet = KernelSet {
     crc16_ccitt: crc16_k::CCITT_PMULL_SMALL_KERNEL, // pmull-small @ 8.01 GiB/s
     crc16_ccitt_name: "aarch64/pmull-small",
@@ -1027,6 +854,7 @@ mod aarch64_tables {
     crc64_nvme_name: "aarch64/pmull-small",
   };
 
+  #[cfg(any(target_os = "linux", target_os = "android"))]
   const G3_S: KernelSet = KernelSet {
     crc16_ccitt: crc16_k::CCITT_PMULL[0], // pmull @ 11.97 GiB/s (G3: pmull beats pmull-small)
     crc16_ccitt_name: "aarch64/pmull",
@@ -1044,6 +872,7 @@ mod aarch64_tables {
     crc64_nvme_name: "aarch64/pmull",
   };
 
+  #[cfg(any(target_os = "linux", target_os = "android"))]
   const G3_M: KernelSet = KernelSet {
     crc16_ccitt: crc16_k::CCITT_PMULL_EOR3[0], // PMULL+EOR3 cuts XOR chain in large lanes.
     crc16_ccitt_name: "aarch64/pmull-eor3",
@@ -1061,6 +890,7 @@ mod aarch64_tables {
     crc64_nvme_name: "aarch64/pmull-2way",
   };
 
+  #[cfg(any(target_os = "linux", target_os = "android"))]
   const G3_L: KernelSet = KernelSet {
     crc16_ccitt: g3_crc16_ccitt_l_hybrid,
     crc16_ccitt_name: "aarch64/pmull-eor3-g3-ccitt-hybrid",
@@ -1078,6 +908,7 @@ mod aarch64_tables {
     crc64_nvme_name: "aarch64/pmull-eor3",
   };
 
+  #[cfg(any(target_os = "linux", target_os = "android"))]
   pub static GRAVITON3_TABLE: KernelTable = KernelTable::from_sets(
     crate::platform::caps::aarch64::CRC_READY.union(crate::platform::caps::aarch64::PMULL_EOR3_READY),
     [64, 256, 4096],
@@ -1092,6 +923,7 @@ mod aarch64_tables {
   //
   // Starts from Graviton3, but keeps 2-way PMULL+EOR3 for CRC16 large classes.
   // ───────────────────────────────────────────────────────────────────────────
+  #[cfg(any(target_os = "linux", target_os = "android"))]
   pub static GRAVITON4_TABLE: KernelTable = KernelTable::from_sets(
     crate::platform::caps::aarch64::CRC_READY.union(crate::platform::caps::aarch64::PMULL_EOR3_READY),
     [64, 256, 4096],
@@ -1348,9 +1180,6 @@ mod aarch64_tables {
   };
 }
 
-#[cfg(target_arch = "aarch64")]
-pub use aarch64_tables::*;
-
 // ─────────────────────────────────────────────────────────────────────────────
 // x86_64 Platform Tables
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1389,88 +1218,6 @@ mod x86_64_tables {
   // - Different optimal multi-stream counts for CRC16/24 kernels
   // - CRC64 (large) prefers VPCLMUL-2way over the 4×512 kernel
   // ───────────────────────────────────────────────────────────────────────────
-  // ───────────────────────────────────────────────────────────────────────────
-  // Zen5 Table
-  //
-  // Benchmark source: `src/checksum/bench_baseline/linux_x86-64_zen5_kernels.txt`
-  // Features: VPCLMULQDQ + AVX-512
-  // Peak throughputs: CRC-16 ~66 GiB/s, CRC-32C ~66 GiB/s, CRC-64 ~66 GiB/s
-  // ───────────────────────────────────────────────────────────────────────────
-  pub static ZEN5_TABLE: KernelTable = kernel_table! {
-    requires: crate::platform::caps::x86::VPCLMUL_READY
-      .union(crate::platform::caps::x86::PCLMUL_READY)
-      .union(crate::platform::caps::x86::CRC32C_READY),
-    boundaries: [64, 256, 4096],
-
-    xs: KernelSet {
-      crc16_ccitt: crc16_k::CCITT_PCLMUL_SMALL_KERNEL, // pclmul-small @ 10.68 GiB/s
-      crc16_ccitt_name: "x86_64/pclmul-small",
-      crc16_ibm: crc16_k::IBM_PCLMUL_SMALL_KERNEL, // pclmul-small @ 9.89 GiB/s
-      crc16_ibm_name: "x86_64/pclmul-small",
-      crc24_openpgp: crc24_k::OPENPGP_PCLMUL_SMALL_KERNEL, // pclmul-small @ 8.39 GiB/s
-      crc24_openpgp_name: "x86_64/pclmul-small",
-      crc32_ieee: crc32_k::CRC32_PCLMUL_SMALL_KERNEL, // pclmul-small @ 9.21 GiB/s
-      crc32_ieee_name: "x86_64/pclmul-small",
-      crc32c: crc32_k::CRC32C_HWCRC[0], // hwcrc @ 25.33 GiB/s
-      crc32c_name: "x86_64/hwcrc",
-      crc64_xz: crc64_k::XZ_PCLMUL_SMALL, // pclmul-small @ 7.82 GiB/s
-      crc64_xz_name: "x86_64/pclmul-small",
-      crc64_nvme: crc64_k::NVME_PCLMUL_SMALL, // pclmul-small @ 7.84 GiB/s
-      crc64_nvme_name: "x86_64/pclmul-small",
-    },
-
-    s: KernelSet {
-      crc16_ccitt: crc16_k::CCITT_VPCLMUL[2], // vpclmul-4way @ 18.38 GiB/s
-      crc16_ccitt_name: "x86_64/vpclmul-4way",
-      crc16_ibm: crc16_k::IBM_VPCLMUL[1], // vpclmul-2way @ 17.52 GiB/s
-      crc16_ibm_name: "x86_64/vpclmul-2way",
-      crc24_openpgp: crc24_k::OPENPGP_VPCLMUL[3], // vpclmul-7way @ 17.78 GiB/s
-      crc24_openpgp_name: "x86_64/vpclmul-7way",
-      crc32_ieee: crc32_k::CRC32_VPCLMUL[0], // vpclmul @ 16.43 GiB/s
-      crc32_ieee_name: "x86_64/vpclmul",
-      crc32c: crc32_k::CRC32C_HWCRC[0], // hwcrc @ 36.14 GiB/s
-      crc32c_name: "x86_64/hwcrc",
-      crc64_xz: crc64_k::XZ_VPCLMUL[0], // vpclmul @ 17.57 GiB/s
-      crc64_xz_name: "x86_64/vpclmul",
-      crc64_nvme: crc64_k::NVME_VPCLMUL[0], // vpclmul @ 17.52 GiB/s
-      crc64_nvme_name: "x86_64/vpclmul",
-    },
-
-    m: KernelSet {
-      crc16_ccitt: crc16_k::CCITT_VPCLMUL[1], // vpclmul-2way @ 56.87 GiB/s
-      crc16_ccitt_name: "x86_64/vpclmul-2way",
-      crc16_ibm: crc16_k::IBM_VPCLMUL[1], // vpclmul-2way @ 56.59 GiB/s
-      crc16_ibm_name: "x86_64/vpclmul-2way",
-      crc24_openpgp: crc24_k::OPENPGP_VPCLMUL[4], // vpclmul-8way @ 53.53 GiB/s
-      crc24_openpgp_name: "x86_64/vpclmul-8way",
-      crc32_ieee: crc32_k::CRC32_VPCLMUL[1], // vpclmul-2way @ 56.20 GiB/s
-      crc32_ieee_name: "x86_64/vpclmul-2way",
-      crc32c: crc32_k::CRC32C_FUSION_VPCLMUL[0], // fusion-vpclmul-v3x2 @ 66.24 GiB/s
-      crc32c_name: "x86_64/fusion-vpclmul-v3x2",
-      crc64_xz: crc64_k::XZ_VPCLMUL[1], // vpclmul-2way @ 56.52 GiB/s
-      crc64_xz_name: "x86_64/vpclmul-2way",
-      crc64_nvme: crc64_k::NVME_VPCLMUL[1], // vpclmul-2way @ 56.53 GiB/s
-      crc64_nvme_name: "x86_64/vpclmul-2way",
-    },
-
-    l: KernelSet {
-      crc16_ccitt: crc16_k::CCITT_VPCLMUL[2], // vpclmul-4way @ 66.09 GiB/s
-      crc16_ccitt_name: "x86_64/vpclmul-4way",
-      crc16_ibm: crc16_k::IBM_VPCLMUL[1], // vpclmul-2way @ 66.01 GiB/s
-      crc16_ibm_name: "x86_64/vpclmul-2way",
-      crc24_openpgp: crc24_k::OPENPGP_VPCLMUL[4], // vpclmul-8way @ 65.97 GiB/s
-      crc24_openpgp_name: "x86_64/vpclmul-8way",
-      crc32_ieee: crc32_k::CRC32_VPCLMUL[1], // vpclmul-2way @ 66.35 GiB/s
-      crc32_ieee_name: "x86_64/vpclmul-2way",
-      crc32c: crc32_k::CRC32C_FUSION_VPCLMUL[0], // fusion-vpclmul-v3x2 @ 66.22 GiB/s
-      crc32c_name: "x86_64/fusion-vpclmul-v3x2",
-      crc64_xz: crc64_k::XZ_VPCLMUL_4X512, // vpclmul-4x512 @ 64.35 GiB/s
-      crc64_xz_name: "x86_64/vpclmul-4x512",
-      crc64_nvme: crc64_k::NVME_VPCLMUL[2], // vpclmul-4way @ 66.21 GiB/s
-      crc64_nvme_name: "x86_64/vpclmul-4way",
-    },
-  };
-
   // ───────────────────────────────────────────────────────────────────────────
   // Zen4 Table
   //
@@ -1558,173 +1305,6 @@ mod x86_64_tables {
       crc64_xz: zen4_crc64_xz_l_hybrid,
       crc64_xz_name: "x86_64/vpclmul-zen4-xz-hybrid",
       crc64_nvme: crc64_k::NVME_VPCLMUL[1], // 2-way edges out 4-way at l/xl in latest comp+kernels
-      crc64_nvme_name: "x86_64/vpclmul-2way",
-    },
-  };
-
-  // ───────────────────────────────────────────────────────────────────────────
-  // Intel SPR Table
-  //
-  // Benchmark source: `src/checksum/bench_baseline/linux_x86-64_intel_kernels.txt`
-  // Features: VPCLMULQDQ + AVX-512
-  //
-  // Intel's optimal selections differ meaningfully from Zen4/Zen5, especially
-  // for CRC-64 and small-buffer thresholds.
-  // ───────────────────────────────────────────────────────────────────────────
-  // IntelSpr Table
-  //
-  // Generated from benchmark-derived dispatch data. Do not edit manually.
-  // ───────────────────────────────────────────────────────────────────────────
-  pub static INTEL_SPR_TABLE: KernelTable = kernel_table! {
-    requires: crate::platform::caps::x86::CRC32C_READY
-      .union(crate::platform::caps::x86::PCLMUL_READY)
-      .union(crate::platform::caps::x86::VPCLMUL_READY),
-    boundaries: [64, 256, 4096],
-
-    xs: KernelSet {
-      crc16_ccitt: crc16_k::CCITT_PCLMUL_SMALL_KERNEL,
-      crc16_ccitt_name: "x86_64/pclmul-small",
-      crc16_ibm: crc16_k::IBM_VPCLMUL[2],
-      crc16_ibm_name: "x86_64/vpclmul-4way",
-      crc24_openpgp: crc24_k::OPENPGP_PCLMUL[2],
-      crc24_openpgp_name: "x86_64/pclmul-4way",
-      crc32_ieee: crc32_k::CRC32_PCLMUL_SMALL_KERNEL,
-      crc32_ieee_name: "x86_64/pclmul-small",
-      crc32c: crc32_k::CRC32C_FUSION_VPCLMUL[0],
-      crc32c_name: "x86_64/fusion-vpclmul-v3x2",
-      crc64_xz: crc64_k::XZ_PCLMUL_SMALL,
-      crc64_xz_name: "x86_64/pclmul-small",
-      crc64_nvme: crc64_k::NVME_PCLMUL_SMALL,
-      crc64_nvme_name: "x86_64/pclmul-small",
-    },
-
-    s: KernelSet {
-      crc16_ccitt: crc16_k::CCITT_VPCLMUL[3],
-      crc16_ccitt_name: "x86_64/vpclmul-7way",
-      crc16_ibm: crc16_k::IBM_VPCLMUL[3],
-      crc16_ibm_name: "x86_64/vpclmul-7way",
-      crc24_openpgp: crc24_k::OPENPGP_VPCLMUL[0],
-      crc24_openpgp_name: "x86_64/vpclmul",
-      crc32_ieee: crc32_k::CRC32_VPCLMUL[1],
-      crc32_ieee_name: "x86_64/vpclmul-2way",
-      crc32c: crc32_k::CRC32C_HWCRC[4],
-      crc32c_name: "x86_64/hwcrc-8way",
-      crc64_xz: crc64_k::XZ_VPCLMUL[2],
-      crc64_xz_name: "x86_64/vpclmul-4way",
-      crc64_nvme: crc64_k::NVME_PCLMUL[0],
-      crc64_nvme_name: "x86_64/pclmul",
-    },
-
-    m: KernelSet {
-      crc16_ccitt: crc16_k::CCITT_VPCLMUL[3],
-      crc16_ccitt_name: "x86_64/vpclmul-7way",
-      crc16_ibm: crc16_k::IBM_VPCLMUL[4],
-      crc16_ibm_name: "x86_64/vpclmul-8way",
-      crc24_openpgp: crc24_k::OPENPGP_VPCLMUL[0],
-      crc24_openpgp_name: "x86_64/vpclmul",
-      crc32_ieee: crc32_k::CRC32_VPCLMUL[3],
-      crc32_ieee_name: "x86_64/vpclmul-7way",
-      crc32c: crc32_k::CRC32C_FUSION_VPCLMUL[0],
-      crc32c_name: "x86_64/fusion-vpclmul-v3x2",
-      crc64_xz: crc64_k::XZ_VPCLMUL[4],
-      crc64_xz_name: "x86_64/vpclmul-8way",
-      crc64_nvme: crc64_k::NVME_VPCLMUL[3],
-      crc64_nvme_name: "x86_64/vpclmul-7way",
-    },
-
-    l: KernelSet {
-      crc16_ccitt: crc16_k::CCITT_VPCLMUL[2],
-      crc16_ccitt_name: "x86_64/vpclmul-4way",
-      crc16_ibm: crc16_k::IBM_VPCLMUL[1],
-      crc16_ibm_name: "x86_64/vpclmul-2way",
-      crc24_openpgp: crc24_k::OPENPGP_VPCLMUL[1],
-      crc24_openpgp_name: "x86_64/vpclmul-2way",
-      crc32_ieee: crc32_k::CRC32_VPCLMUL[1],
-      crc32_ieee_name: "x86_64/vpclmul-2way",
-      crc32c: crc32_k::CRC32C_FUSION_VPCLMUL[1],
-      crc32c_name: "x86_64/fusion-vpclmul-v3x2-2way",
-      crc64_xz: crc64_k::XZ_VPCLMUL_4X512,
-      crc64_xz_name: "x86_64/vpclmul-4x512",
-      crc64_nvme: crc64_k::NVME_VPCLMUL[1],
-      crc64_nvme_name: "x86_64/vpclmul-2way",
-    },
-  };
-
-  // Intel ICL-SP-ish Table (no AMX)
-  //
-  // Generated from benchmark-derived dispatch data on an Intel ICL runner using the SPR-class
-  // profile. Selected by `prefer_intel_icl_tables` when AMX is absent.
-  pub static INTEL_ICL_TABLE: KernelTable = kernel_table! {
-    requires: crate::platform::caps::x86::CRC32C_READY
-      .union(crate::platform::caps::x86::PCLMUL_READY)
-      .union(crate::platform::caps::x86::VPCLMUL_READY),
-    boundaries: [64, 256, 4096],
-
-    xs: KernelSet {
-      crc16_ccitt: crc16_k::CCITT_PCLMUL_SMALL_KERNEL,
-      crc16_ccitt_name: "x86_64/pclmul-small",
-      crc16_ibm: crc16_k::IBM_PCLMUL_SMALL_KERNEL,
-      crc16_ibm_name: "x86_64/pclmul-small",
-      crc24_openpgp: crc24_k::OPENPGP_VPCLMUL[0],
-      crc24_openpgp_name: "x86_64/vpclmul",
-      crc32_ieee: crc32_k::CRC32_VPCLMUL_SMALL_KERNEL,
-      crc32_ieee_name: "x86_64/vpclmul-small",
-      crc32c: crc32_k::CRC32C_HWCRC[0],
-      crc32c_name: "x86_64/hwcrc",
-      crc64_xz: crc64_k::XZ_PCLMUL_SMALL,
-      crc64_xz_name: "x86_64/pclmul-small",
-      crc64_nvme: crc64_k::NVME_PCLMUL_SMALL,
-      crc64_nvme_name: "x86_64/pclmul-small",
-    },
-
-    s: KernelSet {
-      crc16_ccitt: crc16_k::CCITT_PCLMUL[0],
-      crc16_ccitt_name: "x86_64/pclmul",
-      crc16_ibm: crc16_k::IBM_PCLMUL[0],
-      crc16_ibm_name: "x86_64/pclmul",
-      crc24_openpgp: crc24_k::OPENPGP_VPCLMUL[0],
-      crc24_openpgp_name: "x86_64/vpclmul",
-      crc32_ieee: crc32_k::CRC32_VPCLMUL[1],
-      crc32_ieee_name: "x86_64/vpclmul-2way",
-      crc32c: crc32_k::CRC32C_HWCRC[0],
-      crc32c_name: "x86_64/hwcrc",
-      crc64_xz: crc64_k::XZ_PCLMUL[0],
-      crc64_xz_name: "x86_64/pclmul",
-      crc64_nvme: crc64_k::NVME_PCLMUL[0],
-      crc64_nvme_name: "x86_64/pclmul",
-    },
-
-    m: KernelSet {
-      crc16_ccitt: crc16_k::CCITT_VPCLMUL[4],
-      crc16_ccitt_name: "x86_64/vpclmul-8way",
-      crc16_ibm: crc16_k::IBM_VPCLMUL[4],
-      crc16_ibm_name: "x86_64/vpclmul-8way",
-      crc24_openpgp: crc24_k::OPENPGP_VPCLMUL[1],
-      crc24_openpgp_name: "x86_64/vpclmul-2way",
-      crc32_ieee: crc32_k::CRC32_VPCLMUL[1],
-      crc32_ieee_name: "x86_64/vpclmul-2way",
-      crc32c: crc32_k::CRC32C_FUSION_VPCLMUL[0],
-      crc32c_name: "x86_64/fusion-vpclmul-v3x2",
-      crc64_xz: crc64_k::XZ_VPCLMUL[1],
-      crc64_xz_name: "x86_64/vpclmul-2way",
-      crc64_nvme: crc64_k::NVME_VPCLMUL[1],
-      crc64_nvme_name: "x86_64/vpclmul-2way",
-    },
-
-    l: KernelSet {
-      crc16_ccitt: crc16_k::CCITT_VPCLMUL[1],
-      crc16_ccitt_name: "x86_64/vpclmul-2way",
-      crc16_ibm: crc16_k::IBM_VPCLMUL[1],
-      crc16_ibm_name: "x86_64/vpclmul-2way",
-      crc24_openpgp: crc24_k::OPENPGP_VPCLMUL[4],
-      crc24_openpgp_name: "x86_64/vpclmul-8way",
-      crc32_ieee: crc32_k::CRC32_VPCLMUL[2],
-      crc32_ieee_name: "x86_64/vpclmul-4way",
-      crc32c: crc32_k::CRC32C_FUSION_VPCLMUL[0],
-      crc32c_name: "x86_64/fusion-vpclmul-v3x2",
-      crc64_xz: crc64_k::XZ_VPCLMUL[1],
-      crc64_xz_name: "x86_64/vpclmul-2way",
-      crc64_nvme: crc64_k::NVME_VPCLMUL[1],
       crc64_nvme_name: "x86_64/vpclmul-2way",
     },
   };

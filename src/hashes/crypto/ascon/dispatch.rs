@@ -102,9 +102,3 @@ pub(crate) fn permute_dispatch() -> SizeClassDispatch<PermuteFn> {
     l: d.l,
   }
 }
-
-#[inline]
-pub fn permute_12(state: &mut [u64; 5]) {
-  let d = active();
-  (d.l)(state);
-}

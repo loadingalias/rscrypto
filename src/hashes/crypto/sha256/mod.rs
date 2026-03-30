@@ -14,9 +14,9 @@ use crate::{
 #[cfg(target_arch = "aarch64")]
 pub(crate) mod aarch64;
 #[doc(hidden)]
-pub mod dispatch;
+pub(crate) mod dispatch;
 #[doc(hidden)]
-pub mod dispatch_tables;
+pub(crate) mod dispatch_tables;
 pub(crate) mod kernels;
 #[cfg(target_arch = "powerpc64")]
 pub(crate) mod ppc64;
@@ -342,57 +342,6 @@ impl Sha256 {
   }
 
   #[inline]
-  #[must_use]
-  #[cfg(any(test, feature = "std"))]
-  pub(crate) fn digest_portable(data: &[u8]) -> [u8; 32] {
-    // Two-block limit:
-    // - If `len < 64`, padding uses 1 or 2 blocks.
-    // - If `64 <= len < 64 + 56`, we have exactly one full block + a final block (remainder < 56), i.e.
-    //   2 blocks total.
-    if data.len() < 120 {
-      let mut state = H0;
-
-      let total_len = data.len() as u64;
-      let bit_len = total_len.strict_mul(8);
-
-      let (blocks, rest) = data.as_chunks::<BLOCK_LEN>();
-      if !blocks.is_empty() {
-        // For `len < 120`, there can be at most one full block here.
-        Self::compress_block(&mut state, &blocks[0]);
-      }
-
-      let mut block0 = [0u8; BLOCK_LEN];
-      block0[..rest.len()].copy_from_slice(rest);
-      block0[rest.len()] = 0x80;
-
-      if data.len() < 56 {
-        block0[56..64].copy_from_slice(&bit_len.to_be_bytes());
-        Self::compress_block(&mut state, &block0);
-      } else if blocks.is_empty() {
-        // `56 <= len < 64`: padding spills into a second block.
-        Self::compress_block(&mut state, &block0);
-        let mut block1 = [0u8; BLOCK_LEN];
-        block1[56..64].copy_from_slice(&bit_len.to_be_bytes());
-        Self::compress_block(&mut state, &block1);
-      } else {
-        // `64 <= len < 120`: remainder < 56, so length fits in the final block.
-        block0[56..64].copy_from_slice(&bit_len.to_be_bytes());
-        Self::compress_block(&mut state, &block0);
-      }
-
-      let mut out = [0u8; 32];
-      for (chunk, &word) in out.chunks_exact_mut(4).zip(state.iter()) {
-        chunk.copy_from_slice(&word.to_be_bytes());
-      }
-      out
-    } else {
-      let mut h = Self::default();
-      h.update_with(data, Self::compress_blocks_portable);
-      h.finalize_inner_with(Self::compress_blocks_portable)
-    }
-  }
-
-  #[inline]
   pub(crate) fn compress_blocks_portable(state: &mut [u32; 8], blocks: &[u8]) {
     debug_assert_eq!(blocks.len() % BLOCK_LEN, 0);
     let mut chunks = blocks.chunks_exact(BLOCK_LEN);
@@ -550,9 +499,6 @@ impl Digest for Sha256 {
     dispatch::digest(data)
   }
 }
-
-#[cfg(feature = "std")]
-pub(crate) mod kernel_test;
 
 #[cfg(test)]
 mod tests {

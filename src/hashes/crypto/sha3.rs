@@ -2,8 +2,6 @@
 //!
 //! Portable, `no_std`, pure Rust Keccak-f\[1600\] sponge.
 
-#[cfg(any(test, feature = "std"))]
-use super::keccak::KeccakCorePortable;
 use super::keccak::{KeccakCore, KeccakXof};
 use crate::traits::{Digest, Xof};
 
@@ -63,18 +61,7 @@ impl Digest for Sha3_224 {
   }
 }
 
-impl Sha3_224 {
-  #[inline]
-  #[must_use]
-  #[cfg(any(test, feature = "std"))]
-  pub(crate) fn digest_portable(data: &[u8]) -> [u8; 28] {
-    let mut core = KeccakCorePortable::<144>::default();
-    core.update(data);
-    let mut out = [0u8; 28];
-    core.finalize_into_fixed(0x06, &mut out);
-    out
-  }
-}
+impl Sha3_224 {}
 
 impl Digest for Sha3_256 {
   const OUTPUT_SIZE: usize = 32;
@@ -118,17 +105,6 @@ impl Sha3_256 {
   #[must_use]
   pub fn digest_pair(a: &[u8], b: &[u8]) -> ([u8; 32], [u8; 32]) {
     super::keccak::oneshot_pair::<136, 32>(0x06, a, b)
-  }
-
-  #[inline]
-  #[must_use]
-  #[cfg(any(test, feature = "std"))]
-  pub(crate) fn digest_portable(data: &[u8]) -> [u8; 32] {
-    let mut core = KeccakCorePortable::<136>::default();
-    core.update(data);
-    let mut out = [0u8; 32];
-    core.finalize_into_fixed(0x06, &mut out);
-    out
   }
 }
 
@@ -188,18 +164,7 @@ impl Digest for Sha3_384 {
   }
 }
 
-impl Sha3_384 {
-  #[inline]
-  #[must_use]
-  #[cfg(any(test, feature = "std"))]
-  pub(crate) fn digest_portable(data: &[u8]) -> [u8; 48] {
-    let mut core = KeccakCorePortable::<104>::default();
-    core.update(data);
-    let mut out = [0u8; 48];
-    core.finalize_into_fixed(0x06, &mut out);
-    out
-  }
-}
+impl Sha3_384 {}
 
 impl Digest for Sha3_512 {
   const OUTPUT_SIZE: usize = 64;
@@ -233,18 +198,7 @@ impl Digest for Sha3_512 {
   }
 }
 
-impl Sha3_512 {
-  #[inline]
-  #[must_use]
-  #[cfg(any(test, feature = "std"))]
-  pub(crate) fn digest_portable(data: &[u8]) -> [u8; 64] {
-    let mut core = KeccakCorePortable::<72>::default();
-    core.update(data);
-    let mut out = [0u8; 64];
-    core.finalize_into_fixed(0x06, &mut out);
-    out
-  }
-}
+impl Sha3_512 {}
 
 /// SHAKE256 (XOF).
 #[derive(Clone, Default)]
@@ -311,14 +265,6 @@ impl Shake128 {
   pub fn hash_into(data: &[u8], out: &mut [u8]) {
     Self::xof(data).squeeze(out);
   }
-
-  #[inline]
-  #[cfg(any(test, feature = "std"))]
-  pub(crate) fn hash_into_portable(data: &[u8], out: &mut [u8]) {
-    let mut core = KeccakCorePortable::<168>::default();
-    core.update(data);
-    core.finalize_xof_into(0x1F, out);
-  }
 }
 
 #[derive(Clone)]
@@ -379,14 +325,6 @@ impl Shake256 {
   /// [`Self::update`], and [`Self::finalize_xof`] for streaming.
   pub fn hash_into(data: &[u8], out: &mut [u8]) {
     Self::xof(data).squeeze(out);
-  }
-
-  #[inline]
-  #[cfg(any(test, feature = "std"))]
-  pub(crate) fn hash_into_portable(data: &[u8], out: &mut [u8]) {
-    let mut core = KeccakCorePortable::<136>::default();
-    core.update(data);
-    core.finalize_xof_into(0x1F, out);
   }
 }
 

@@ -32,31 +32,6 @@ pub enum Sha384KernelId {
   X86Avx2Decoupled = 11,
 }
 
-#[cfg(any(test, feature = "std"))]
-pub const ALL: &[Sha384KernelId] = &[
-  Sha384KernelId::Portable,
-  #[cfg(target_arch = "aarch64")]
-  Sha384KernelId::Aarch64Sha512,
-  #[cfg(target_arch = "x86_64")]
-  Sha384KernelId::X86Sha512,
-  #[cfg(target_arch = "x86_64")]
-  Sha384KernelId::X86Avx512vl,
-  #[cfg(target_arch = "x86_64")]
-  Sha384KernelId::X86Avx2,
-  #[cfg(target_arch = "riscv64")]
-  Sha384KernelId::Riscv64Zknh,
-  #[cfg(target_arch = "wasm32")]
-  Sha384KernelId::WasmSimd128,
-  #[cfg(target_arch = "s390x")]
-  Sha384KernelId::S390xKimd,
-  #[cfg(target_arch = "x86_64")]
-  Sha384KernelId::X86Avx2Std,
-  #[cfg(target_arch = "x86_64")]
-  Sha384KernelId::X86Avx512vlStd,
-  #[cfg(target_arch = "x86_64")]
-  Sha384KernelId::X86Avx2Decoupled,
-];
-
 impl Sha384KernelId {
   #[inline]
   #[must_use]

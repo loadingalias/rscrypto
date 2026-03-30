@@ -69,8 +69,6 @@ pub(crate) struct Kernel {
 pub enum Blake3KernelId {
   Portable = 0,
   #[cfg(target_arch = "x86_64")]
-  X86Ssse3 = 1,
-  #[cfg(target_arch = "x86_64")]
   X86Sse41 = 2,
   #[cfg(target_arch = "x86_64")]
   X86Avx2 = 3,
@@ -86,35 +84,12 @@ pub enum Blake3KernelId {
   RiscvV = 8,
 }
 
-#[cfg(any(test, feature = "std"))]
-pub const ALL: &[Blake3KernelId] = &[
-  Blake3KernelId::Portable,
-  #[cfg(target_arch = "x86_64")]
-  Blake3KernelId::X86Ssse3,
-  #[cfg(target_arch = "x86_64")]
-  Blake3KernelId::X86Sse41,
-  #[cfg(target_arch = "x86_64")]
-  Blake3KernelId::X86Avx2,
-  #[cfg(target_arch = "x86_64")]
-  Blake3KernelId::X86Avx512,
-  #[cfg(target_arch = "aarch64")]
-  Blake3KernelId::Aarch64Neon,
-  #[cfg(target_arch = "s390x")]
-  Blake3KernelId::S390xVector,
-  #[cfg(target_arch = "powerpc64")]
-  Blake3KernelId::PowerVsx,
-  #[cfg(target_arch = "riscv64")]
-  Blake3KernelId::RiscvV,
-];
-
 impl Blake3KernelId {
   #[inline]
   #[must_use]
   pub const fn as_str(self) -> &'static str {
     match self {
       Self::Portable => "portable",
-      #[cfg(target_arch = "x86_64")]
-      Self::X86Ssse3 => "x86_64/ssse3",
       #[cfg(target_arch = "x86_64")]
       Self::X86Sse41 => "x86_64/sse4.1",
       #[cfg(target_arch = "x86_64")]
@@ -138,8 +113,6 @@ impl Blake3KernelId {
   pub const fn simd_degree(self) -> usize {
     match self {
       Self::Portable => 1,
-      #[cfg(target_arch = "x86_64")]
-      Self::X86Ssse3 => 1, // Single-block only (no multi-lane hash_many)
       #[cfg(target_arch = "x86_64")]
       Self::X86Sse41 => 4,
       #[cfg(target_arch = "x86_64")]
@@ -167,15 +140,6 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
       chunk_compress_blocks: chunk_compress_blocks_portable,
       hash_many_contiguous: hash_many_contiguous_portable,
       #[cfg(target_arch = "x86_64")]
-      x86_compress_cv_bytes: x86_compress_cv_portable_wrapper,
-      name: id.as_str(),
-    },
-    #[cfg(target_arch = "x86_64")]
-    Blake3KernelId::X86Ssse3 => Kernel {
-      id,
-      compress: compress_ssse3_wrapper,
-      chunk_compress_blocks: chunk_compress_blocks_ssse3_wrapper,
-      hash_many_contiguous: hash_many_contiguous_ssse3_wrapper,
       x86_compress_cv_bytes: x86_compress_cv_portable_wrapper,
       name: id.as_str(),
     },
@@ -266,10 +230,6 @@ pub(crate) fn chunk_compress_blocks_inline(
   match id {
     Blake3KernelId::Portable => {
       chunk_compress_blocks_portable(chaining_value, chunk_counter, flags, blocks_compressed, blocks)
-    }
-    #[cfg(target_arch = "x86_64")]
-    Blake3KernelId::X86Ssse3 => {
-      chunk_compress_blocks_ssse3_wrapper(chaining_value, chunk_counter, flags, blocks_compressed, blocks)
     }
     #[cfg(target_arch = "x86_64")]
     Blake3KernelId::X86Sse41 => {
@@ -395,11 +355,6 @@ pub(crate) unsafe fn hash_many_contiguous_inline(
       unsafe { hash_many_contiguous_portable(input, num_chunks, key, counter, flags, out) }
     }
     #[cfg(target_arch = "x86_64")]
-    Blake3KernelId::X86Ssse3 => {
-      // SAFETY: caller upholds the contiguous-input and output-buffer contract.
-      unsafe { hash_many_contiguous_ssse3_wrapper(input, num_chunks, key, counter, flags, out) }
-    }
-    #[cfg(target_arch = "x86_64")]
     Blake3KernelId::X86Sse41 => {
       // SAFETY: caller upholds the contiguous-input and output-buffer contract.
       unsafe { hash_many_contiguous_sse41_wrapper(input, num_chunks, key, counter, flags, out) }
@@ -448,8 +403,6 @@ pub(crate) fn parent_cv_inline(
   match id {
     Blake3KernelId::Portable => parent_cv_portable(left_child_cv, right_child_cv, key_words, flags),
     #[cfg(target_arch = "x86_64")]
-    Blake3KernelId::X86Ssse3 => parent_cv_ssse3_wrapper(left_child_cv, right_child_cv, key_words, flags),
-    #[cfg(target_arch = "x86_64")]
     Blake3KernelId::X86Sse41 => parent_cv_sse41_wrapper(left_child_cv, right_child_cv, key_words, flags),
     #[cfg(target_arch = "x86_64")]
     Blake3KernelId::X86Avx2 => parent_cv_avx2_wrapper(left_child_cv, right_child_cv, key_words, flags),
@@ -477,8 +430,6 @@ pub(crate) fn compress_block_inline(
 ) -> [u32; 16] {
   match id {
     Blake3KernelId::Portable => super::compress(chaining_value, block_words, counter, block_len, flags),
-    #[cfg(target_arch = "x86_64")]
-    Blake3KernelId::X86Ssse3 => compress_ssse3_wrapper(chaining_value, block_words, counter, block_len, flags),
     #[cfg(target_arch = "x86_64")]
     Blake3KernelId::X86Sse41 => compress_sse41_wrapper(chaining_value, block_words, counter, block_len, flags),
     #[cfg(target_arch = "x86_64")]
@@ -1026,8 +977,6 @@ pub(crate) fn parent_cvs_many_from_bytes_inline(
       return;
     }
     #[cfg(target_arch = "x86_64")]
-    Blake3KernelId::X86Ssse3 => {}
-    #[cfg(target_arch = "x86_64")]
     Blake3KernelId::X86Sse41 => {
       let parent_flags = PARENT | flags;
       reduce_parent_blocks_lanes::<{ super::x86_64::sse41::DEGREE }, _, _, _>(
@@ -1171,33 +1120,11 @@ pub(crate) fn parent_cvs_many_from_bytes_inline(
 ///
 /// Each entry in `parents` is a `[u32; 16]` message block representing
 /// `[left_cv (8 words), right_cv (8 words)]`.
-#[cfg(any(test, feature = "std"))]
-#[inline]
-pub(crate) fn parent_cvs_many_inline(
-  id: Blake3KernelId,
-  parents: &[[u32; 16]],
-  key_words: [u32; 8],
-  flags: u32,
-  out: &mut [[u32; 8]],
-) {
-  debug_assert_eq!(parents.len(), out.len());
-  if parents.is_empty() {
-    return;
-  }
-  // `[u32; 16]` is exactly two adjacent `[u32; 8]` children.
-  // SAFETY: each `[u32; 16]` element is contiguous and exactly two `[u32; 8]`
-  // elements, so the cast preserves length and alignment invariants.
-  let children: &[[u32; 8]] = unsafe { core::slice::from_raw_parts(parents.as_ptr().cast(), parents.len() * 2) };
-  parent_cvs_many_from_cvs_inline(id, children, key_words, flags, out);
-}
-
 #[inline]
 #[must_use]
 pub const fn required_caps(id: Blake3KernelId) -> Caps {
   match id {
     Blake3KernelId::Portable => Caps::NONE,
-    #[cfg(target_arch = "x86_64")]
-    Blake3KernelId::X86Ssse3 => x86::SSSE3,
     #[cfg(target_arch = "x86_64")]
     Blake3KernelId::X86Sse41 => x86::SSE41.union(x86::SSSE3),
     #[cfg(target_arch = "x86_64")]
@@ -2552,41 +2479,6 @@ unsafe fn x86_compress_cv_avx512_wrapper(
   }
 }
 
-#[cfg(target_arch = "x86_64")]
-fn compress_ssse3_wrapper(
-  chaining_value: &[u32; 8],
-  block_words: &[u32; 16],
-  counter: u64,
-  block_len: u32,
-  flags: u32,
-) -> [u32; 16] {
-  // SAFETY: This function is only called when SSSE3 is available (checked by dispatch).
-  unsafe { super::x86_64::compress_ssse3(chaining_value, block_words, counter, block_len, flags) }
-}
-
-#[cfg(target_arch = "x86_64")]
-fn chunk_compress_blocks_ssse3_wrapper(
-  chaining_value: &mut [u32; 8],
-  chunk_counter: u64,
-  flags: u32,
-  blocks_compressed: &mut u8,
-  blocks: &[u8],
-) {
-  // SAFETY: This function is only called when SSSE3 is available (checked by dispatch).
-  unsafe { super::x86_64::chunk_compress_blocks_ssse3(chaining_value, chunk_counter, flags, blocks_compressed, blocks) }
-}
-
-#[cfg(target_arch = "x86_64")]
-fn parent_cv_ssse3_wrapper(
-  left_child_cv: [u32; 8],
-  right_child_cv: [u32; 8],
-  key_words: [u32; 8],
-  flags: u32,
-) -> [u32; 8] {
-  // SAFETY: This function is only called when SSSE3 is available (checked by dispatch).
-  unsafe { super::x86_64::parent_cv_ssse3(left_child_cv, right_child_cv, key_words, flags) }
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // x86_64 AVX2 wrappers (single-block / streaming hot paths)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2705,24 +2597,6 @@ fn parent_cv_sse41_wrapper(
   // SAFETY: This function is only called when SSE4.1 is available (checked by dispatch).
   unsafe { super::x86_64::parent_cv_sse41(left_child_cv, right_child_cv, key_words, flags) }
 }
-
-#[cfg(target_arch = "x86_64")]
-unsafe fn hash_many_contiguous_ssse3_wrapper(
-  input: *const u8,
-  num_chunks: usize,
-  key: &[u32; 8],
-  counter: u64,
-  flags: u32,
-  out: *mut u8,
-) {
-  // For now, process chunks serially using the SSSE3 single-block compressor.
-  // SAFETY: This function is only called when SSSE3 is available (checked by dispatch).
-  unsafe { super::x86_64::hash_many_contiguous_ssse3(input, num_chunks, key, counter, flags, out) }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// x86_64 SSE4.1/AVX2/AVX-512 wrappers (throughput kernels)
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_arch = "x86_64")]
 unsafe fn hash_many_contiguous_sse41_wrapper(

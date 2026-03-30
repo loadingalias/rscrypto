@@ -63,7 +63,6 @@ struct ActiveDispatch {
 #[derive(Clone, Copy)]
 struct ResolvedDispatch {
   active: ActiveDispatch,
-  streaming: StreamingDispatch,
   #[cfg(feature = "parallel")]
   parallel: ParallelDispatch,
   hasher: HasherDispatch,
@@ -76,12 +75,6 @@ struct ResolvedDispatch {
 }
 
 static RESOLVED: OnceCache<ResolvedDispatch> = OnceCache::new();
-
-#[derive(Clone, Copy)]
-pub(crate) struct StreamingDispatch {
-  pub(crate) stream: Kernel,
-  pub(crate) bulk: Kernel,
-}
 
 #[derive(Clone, Copy)]
 #[cfg(feature = "parallel")]
@@ -135,13 +128,6 @@ impl HasherDispatch {
   pub(crate) fn size_class_kernel(&self, len: usize) -> Kernel {
     self.size_classes.select(len)
   }
-
-  #[inline]
-  #[must_use]
-  #[cfg(feature = "parallel")]
-  pub(crate) fn bulk_sizeclass_threshold(&self) -> usize {
-    self.bulk_sizeclass_threshold
-  }
 }
 
 #[inline]
@@ -184,14 +170,6 @@ fn resolve(id: Blake3KernelId, caps: Caps) -> Blake3KernelId {
     Blake3KernelId::X86Sse41 => {
       if caps.has(required_caps(Blake3KernelId::X86Sse41)) {
         Blake3KernelId::X86Sse41
-      } else {
-        Blake3KernelId::Portable
-      }
-    }
-    #[cfg(target_arch = "x86_64")]
-    Blake3KernelId::X86Ssse3 => {
-      if caps.has(required_caps(Blake3KernelId::X86Ssse3)) {
-        Blake3KernelId::X86Ssse3
       } else {
         Blake3KernelId::Portable
       }
@@ -260,10 +238,6 @@ fn resolved() -> ResolvedDispatch {
       m: Entry { kernel: kernel(m_id) },
       l: Entry { kernel: kernel(l_id) },
     };
-    let streaming = StreamingDispatch {
-      stream: kernel(stream_id),
-      bulk: kernel(bulk_id),
-    };
     #[cfg(feature = "parallel")]
     let oneshot_base = *oneshot_parallel_table;
     #[cfg(feature = "parallel")]
@@ -277,14 +251,13 @@ fn resolved() -> ResolvedDispatch {
     };
     let hasher = HasherDispatch {
       size_classes,
-      stream_kernel: streaming.stream,
-      table_bulk_kernel: streaming.bulk,
+      stream_kernel: kernel(stream_id),
+      table_bulk_kernel: kernel(bulk_id),
       bulk_sizeclass_threshold: stream_table.bulk_sizeclass_threshold,
     };
 
     ResolvedDispatch {
       active,
-      streaming,
       #[cfg(feature = "parallel")]
       parallel: ParallelDispatch {
         oneshot: oneshot_base,
@@ -312,12 +285,6 @@ fn resolved() -> ResolvedDispatch {
 #[must_use]
 fn active() -> ActiveDispatch {
   resolved().active
-}
-
-#[inline]
-#[must_use]
-fn active_streaming() -> StreamingDispatch {
-  resolved().streaming
 }
 
 #[cfg(feature = "parallel")]
@@ -351,15 +318,6 @@ pub fn kernel_name_for_len(len: usize) -> &'static str {
 
 #[inline]
 #[must_use]
-pub fn digest(data: &[u8]) -> [u8; 32] {
-  let d = active();
-  let kernel = select(&d, data.len()).kernel;
-
-  super::digest_oneshot(kernel, super::IV, 0, data)
-}
-
-#[inline]
-#[must_use]
 pub fn xof(data: &[u8]) -> super::Blake3Xof {
   let d = active();
   let kernel = select(&d, data.len()).kernel;
@@ -378,20 +336,6 @@ pub fn xof(data: &[u8]) -> super::Blake3Xof {
     data,
   );
   super::Blake3Xof::from_output(output)
-}
-
-#[inline]
-#[must_use]
-#[cfg(any(test, feature = "std"))]
-pub(crate) fn kernel_dispatch() -> SizeClassDispatch<Kernel> {
-  let d = active();
-  SizeClassDispatch {
-    boundaries: d.boundaries,
-    xs: d.xs.kernel,
-    s: d.s.kernel,
-    m: d.m.kernel,
-    l: d.l.kernel,
-  }
 }
 
 #[inline]
@@ -426,127 +370,4 @@ pub(crate) fn hash_many_wide_pipeline() -> bool {
 #[must_use]
 pub(crate) fn avx2_available() -> bool {
   resolved().avx2_available
-}
-
-#[inline]
-#[must_use]
-pub fn streaming_kernel_names() -> (&'static str, &'static str) {
-  let d = active_streaming();
-  (d.stream.name, d.bulk.name)
-}
-
-// ─── Bench-only introspection ────────────────────────────────────────────────
-
-/// BLAKE3 spec flag: keyed hash mode (bit 4).
-#[doc(hidden)]
-pub const FLAGS_KEYED_HASH: u32 = 1 << 4;
-
-/// BLAKE3 spec flag: derive-key-material mode (bit 6).
-#[doc(hidden)]
-pub const FLAGS_DERIVE_KEY_MATERIAL: u32 = 1 << 6;
-
-/// Dispatch decisions that `Blake3::update()` would make for a single call
-/// with the given flags and input length.
-///
-/// Bench-only introspection hook — not part of the stable API.
-#[doc(hidden)]
-#[derive(Clone, Debug)]
-pub struct StreamingDispatchInfo {
-  pub stream_kernel: &'static str,
-  pub bulk_kernel: &'static str,
-  pub parallel_min_bytes: usize,
-  pub parallel_min_chunks: usize,
-  pub parallel_max_threads: u8,
-  pub parallel_spawn_cost_bytes: usize,
-  pub parallel_merge_cost_bytes: usize,
-  pub parallel_bytes_per_core_small: usize,
-  pub parallel_bytes_per_core_medium: usize,
-  pub parallel_bytes_per_core_large: usize,
-  pub parallel_small_limit_bytes: usize,
-  pub parallel_medium_limit_bytes: usize,
-  pub would_parallelize: bool,
-  pub parallel_threads: usize,
-}
-
-/// Return the dispatch decisions that `Blake3::update()` would make for a
-/// single call with the given `flags` and `input_len`.
-///
-/// Bench-only introspection hook — not part of the stable API.
-#[doc(hidden)]
-#[must_use]
-#[cfg(feature = "parallel")]
-pub fn streaming_dispatch_info(flags: u32, input_len: usize) -> StreamingDispatchInfo {
-  use super::control;
-  let hd = hasher_dispatch();
-  let sd = active_streaming();
-  let bulk_kernel = if input_len >= hd.bulk_sizeclass_threshold() {
-    kernel_dispatch().select(input_len).name
-  } else {
-    sd.bulk.name
-  };
-  let stream_kernel = sd.stream.name;
-
-  // Mirror `parallel_policy_threads` + the per-thread work guard
-  // from `update_with`.
-  const CHUNK_LEN: usize = 1024;
-
-  let mode = control::streaming_policy_kind_from_flags(flags);
-  let ptable = control::resolved_parallel_policy(mode);
-  let commit_chunks = input_len / CHUNK_LEN;
-  let decision = control::parallel_admission_decision(mode, ptable, input_len, commit_chunks, commit_chunks);
-
-  StreamingDispatchInfo {
-    stream_kernel,
-    bulk_kernel,
-    parallel_min_bytes: ptable.min_bytes,
-    parallel_min_chunks: ptable.min_chunks,
-    parallel_max_threads: ptable.max_threads,
-    parallel_spawn_cost_bytes: ptable.spawn_cost_bytes,
-    parallel_merge_cost_bytes: ptable.merge_cost_bytes,
-    parallel_bytes_per_core_small: ptable.bytes_per_core_small,
-    parallel_bytes_per_core_medium: ptable.bytes_per_core_medium,
-    parallel_bytes_per_core_large: ptable.bytes_per_core_large,
-    parallel_small_limit_bytes: ptable.small_limit_bytes,
-    parallel_medium_limit_bytes: ptable.medium_limit_bytes,
-    would_parallelize: decision.would_parallelize,
-    parallel_threads: decision.threads,
-  }
-}
-
-#[cfg(all(test, feature = "parallel"))]
-mod tests {
-  use super::streaming_dispatch_info;
-  use crate::hashes::crypto::blake3::{CHUNK_LEN, DERIVE_KEY_MATERIAL, KEYED_HASH, control};
-
-  #[test]
-  fn streaming_dispatch_info_matches_runtime_parallel_admission() {
-    for &flags in &[0u32, KEYED_HASH, DERIVE_KEY_MATERIAL] {
-      for &input_len in &[
-        0usize,
-        1,
-        CHUNK_LEN - 1,
-        CHUNK_LEN,
-        CHUNK_LEN * 2,
-        4 * 1024,
-        16 * 1024,
-        64 * 1024,
-        1024 * 1024,
-      ] {
-        let info = streaming_dispatch_info(flags, input_len);
-        let commit_chunks = input_len / CHUNK_LEN;
-        let expected = control::streaming_parallel_threads_for_flags(flags, input_len, commit_chunks, commit_chunks);
-
-        assert_eq!(
-          info.would_parallelize,
-          expected.is_some(),
-          "parallel admission mismatch for flags={flags:#x}, len={input_len}"
-        );
-        assert_eq!(
-          info.parallel_threads,
-          expected.unwrap_or(1),
-          "thread count mismatch for flags={flags:#x}, len={input_len}"
-        );
-      }
-    }
-  }
 }
