@@ -40,26 +40,6 @@ pub mod x86_64 {
   use super::super::x86_64 as arch;
   use crate::checksum::dispatchers::Crc24Fn;
 
-  /// PCLMUL small-buffer kernel name.
-  pub const PCLMUL_SMALL: &str = "x86_64/pclmul-small";
-  /// PCLMUL kernel names: [1-way, 2-way, 4-way, 7-way, 8-way].
-  pub const PCLMUL_NAMES: &[&str] = &[
-    "x86_64/pclmul",
-    "x86_64/pclmul-2way",
-    "x86_64/pclmul-4way",
-    "x86_64/pclmul-7way",
-    "x86_64/pclmul-8way",
-  ];
-
-  /// VPCLMUL kernel names: [1-way, 2-way, 4-way, 7-way, 8-way].
-  pub const VPCLMUL_NAMES: &[&str] = &[
-    "x86_64/vpclmul",
-    "x86_64/vpclmul-2way",
-    "x86_64/vpclmul-4way",
-    "x86_64/vpclmul-7way",
-    "x86_64/vpclmul-8way",
-  ];
-
   /// OpenPGP PCLMUL kernel.
   pub const OPENPGP_PCLMUL: [Crc24Fn; 5] = [
     arch::crc24_openpgp_pclmul_safe,
@@ -87,11 +67,6 @@ pub mod aarch64 {
   use super::super::aarch64 as arch;
   use crate::checksum::dispatchers::Crc24Fn;
 
-  /// PMULL small-buffer kernel name.
-  pub const PMULL_SMALL: &str = "aarch64/pmull-small";
-  /// PMULL kernel names: [1-way, 2-way, 3-way].
-  pub const PMULL_NAMES: &[&str] = &["aarch64/pmull", "aarch64/pmull-2way", "aarch64/pmull-3way"];
-
   /// OpenPGP PMULL kernels: [1-way, 2-way, 3-way, 3-way(dup), 3-way(dup)].
   pub const OPENPGP_PMULL: [Crc24Fn; 5] = [
     arch::crc24_openpgp_pmull_safe,
@@ -110,15 +85,6 @@ pub mod power {
   use super::super::power as arch;
   use crate::checksum::dispatchers::Crc24Fn;
 
-  /// VPMSUM kernel names: [1-way, 2-way, 4-way, 8-way, 8-way(dup)].
-  pub const VPMSUM_NAMES: &[&str] = &[
-    "power/vpmsum",
-    "power/vpmsum-2way",
-    "power/vpmsum-4way",
-    "power/vpmsum-8way",
-    "power/vpmsum-8way", // dup for index consistency
-  ];
-
   /// OpenPGP VPMSUM kernels: [1-way, 2-way, 4-way, 8-way, 8-way(dup)].
   pub const OPENPGP_VPMSUM: [Crc24Fn; 5] = [
     arch::crc24_openpgp_vpmsum_safe,
@@ -133,15 +99,6 @@ pub mod power {
 pub mod s390x {
   use super::super::s390x as arch;
   use crate::checksum::dispatchers::Crc24Fn;
-
-  /// VGFM kernel names: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)].
-  pub const VGFM_NAMES: &[&str] = &[
-    "s390x/vgfm",
-    "s390x/vgfm-2way",
-    "s390x/vgfm-4way",
-    "s390x/vgfm-4way", // dup for index consistency
-    "s390x/vgfm-4way", // dup for index consistency
-  ];
 
   /// OpenPGP VGFM kernels: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)].
   pub const OPENPGP_VGFM: [Crc24Fn; 5] = [

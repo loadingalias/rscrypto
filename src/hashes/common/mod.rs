@@ -13,6 +13,4 @@
 //! optimization techniques (SIMD vectorization, prefetch hints, etc.)
 //! that can be centralized here.
 
-pub mod kernels;
 pub mod prefetch;
-pub mod simd;

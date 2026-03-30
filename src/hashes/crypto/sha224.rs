@@ -13,9 +13,9 @@ use crate::{
 };
 
 #[doc(hidden)]
-pub mod dispatch;
+pub(crate) mod dispatch;
 #[doc(hidden)]
-pub mod dispatch_tables;
+pub(crate) mod dispatch_tables;
 pub(crate) mod kernels;
 
 const BLOCK_LEN: usize = 64;
@@ -77,55 +77,6 @@ impl Sha224 {
   #[must_use]
   pub fn digest(data: &[u8]) -> [u8; 28] {
     dispatch::digest(data)
-  }
-
-  #[inline]
-  #[must_use]
-  #[cfg(any(test, feature = "std"))]
-  pub(crate) fn digest_portable(data: &[u8]) -> [u8; 28] {
-    // Fast path for small inputs: process on stack without streaming state.
-    // For `len < 120`, at most two blocks are needed (one full + one padded).
-    if data.len() < 120 {
-      let mut state = H0;
-
-      let total_len = data.len() as u64;
-      let bit_len = total_len.strict_mul(8);
-
-      let (blocks, rest) = data.as_chunks::<BLOCK_LEN>();
-      if !blocks.is_empty() {
-        // For `len < 120`, there can be at most one full block here.
-        Sha256::compress_blocks_portable(&mut state, &blocks[0]);
-      }
-
-      let mut block0 = [0u8; BLOCK_LEN];
-      block0[..rest.len()].copy_from_slice(rest);
-      block0[rest.len()] = 0x80;
-
-      if data.len() < 56 {
-        block0[56..64].copy_from_slice(&bit_len.to_be_bytes());
-        Sha256::compress_blocks_portable(&mut state, &block0);
-      } else if blocks.is_empty() {
-        // `56 <= len < 64`: padding spills into a second block.
-        Sha256::compress_blocks_portable(&mut state, &block0);
-        let mut block1 = [0u8; BLOCK_LEN];
-        block1[56..64].copy_from_slice(&bit_len.to_be_bytes());
-        Sha256::compress_blocks_portable(&mut state, &block1);
-      } else {
-        // `64 <= len < 120`: remainder < 56, so length fits in the final block.
-        block0[56..64].copy_from_slice(&bit_len.to_be_bytes());
-        Sha256::compress_blocks_portable(&mut state, &block0);
-      }
-
-      let mut out = [0u8; 28];
-      for (chunk, &word) in out.chunks_exact_mut(4).zip(state.iter()) {
-        chunk.copy_from_slice(&word.to_be_bytes());
-      }
-      out
-    } else {
-      let mut h = Self::default();
-      h.update_with(data, Sha256::compress_blocks_portable);
-      h.finalize_inner_with(Sha256::compress_blocks_portable)
-    }
   }
 
   #[inline]
@@ -269,9 +220,6 @@ impl Digest for Sha224 {
     dispatch::digest(data)
   }
 }
-
-#[cfg(feature = "std")]
-pub(crate) mod kernel_test;
 
 #[cfg(test)]
 mod tests {

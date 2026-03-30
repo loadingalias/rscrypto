@@ -35,28 +35,6 @@ pub mod x86_64 {
   use super::super::x86_64 as arch;
   use crate::checksum::dispatchers::Crc64Fn;
 
-  /// PCLMUL kernel names: [1-way, 2-way, 4-way, 7-way, 8-way]
-  pub const PCLMUL_NAMES: &[&str] = &[
-    "x86_64/pclmul",
-    "x86_64/pclmul-2way",
-    "x86_64/pclmul-4way",
-    "x86_64/pclmul-7way",
-    "x86_64/pclmul-8way",
-  ];
-  /// PCLMUL small buffer kernel name.
-  pub const PCLMUL_SMALL: &str = "x86_64/pclmul-small";
-
-  /// VPCLMUL kernel names: [1-way, 2-way, 4-way, 7-way, 8-way]
-  pub const VPCLMUL_NAMES: &[&str] = &[
-    "x86_64/vpclmul",
-    "x86_64/vpclmul-2way",
-    "x86_64/vpclmul-4way",
-    "x86_64/vpclmul-7way",
-    "x86_64/vpclmul-8way",
-  ];
-  /// VPCLMUL 4×512-bit kernel name (256B block processing).
-  pub const VPCLMUL_4X512: &str = "x86_64/vpclmul-4x512";
-
   // ─────────────────────────────────────────────────────────────────────────
   // CRC64-XZ Kernel Function Arrays
   // ─────────────────────────────────────────────────────────────────────────
@@ -106,40 +84,12 @@ pub mod x86_64 {
     arch::crc64_nvme_vpclmul_7way_safe,
     arch::crc64_nvme_vpclmul_8way_safe,
   ];
-  /// NVME VPCLMUL 4×512-bit kernel.
-  pub const NVME_VPCLMUL_4X512: Crc64Fn = arch::crc64_nvme_vpclmul_4x512_safe;
 }
 
 #[cfg(target_arch = "aarch64")]
 pub mod aarch64 {
   use super::super::aarch64 as arch;
   use crate::checksum::dispatchers::Crc64Fn;
-
-  /// PMULL kernel names: [1-way, 2-way, 3-way]
-  #[cfg(any(test, feature = "alloc"))]
-  pub const PMULL_NAMES: &[&str] = &["aarch64/pmull", "aarch64/pmull-2way", "aarch64/pmull-3way"];
-  /// PMULL small buffer kernel name.
-  #[cfg(any(test, feature = "alloc"))]
-  pub const PMULL_SMALL: &str = "aarch64/pmull-small";
-
-  /// PMULL+EOR3 kernel names: [1-way, 2-way, 3-way]
-  #[cfg(any(test, feature = "alloc"))]
-  pub const PMULL_EOR3_NAMES: &[&str] = &[
-    "aarch64/pmull-eor3",
-    "aarch64/pmull-eor3-2way",
-    "aarch64/pmull-eor3-3way",
-  ];
-
-  /// SVE2 PMULL kernel names: [1-way, 2-way, 3-way]
-  #[cfg(any(test, feature = "alloc"))]
-  pub const SVE2_PMULL_NAMES: &[&str] = &[
-    "aarch64/sve2-pmull",
-    "aarch64/sve2-pmull-2way",
-    "aarch64/sve2-pmull-3way",
-  ];
-  /// SVE2 PMULL small buffer kernel name.
-  #[cfg(any(test, feature = "alloc"))]
-  pub const SVE2_PMULL_SMALL: &str = "aarch64/sve2-pmull-small";
 
   // ─────────────────────────────────────────────────────────────────────────
   // CRC64-XZ Kernel Function Arrays
@@ -167,7 +117,6 @@ pub mod aarch64 {
   ];
 
   /// XZ SVE2 PMULL kernels: [1-way, 2-way, 3-way, 3-way(dup), 3-way(dup)]
-  #[cfg(any(test, feature = "alloc"))]
   pub const XZ_SVE2_PMULL: [Crc64Fn; 5] = [
     arch::crc64_xz_sve2_pmull_safe,
     arch::crc64_xz_sve2_pmull_2way_safe,
@@ -176,7 +125,6 @@ pub mod aarch64 {
     arch::crc64_xz_sve2_pmull_3way_safe, // dup for index consistency
   ];
   /// XZ SVE2 PMULL small buffer kernel.
-  #[cfg(any(test, feature = "alloc"))]
   pub const XZ_SVE2_PMULL_SMALL: Crc64Fn = arch::crc64_xz_sve2_pmull_small_safe;
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -204,7 +152,6 @@ pub mod aarch64 {
   ];
 
   /// NVME SVE2 PMULL kernels: [1-way, 2-way, 3-way, 3-way(dup), 3-way(dup)]
-  #[cfg(any(test, feature = "alloc"))]
   pub const NVME_SVE2_PMULL: [Crc64Fn; 5] = [
     arch::crc64_nvme_sve2_pmull_safe,
     arch::crc64_nvme_sve2_pmull_2way_safe,
@@ -213,7 +160,6 @@ pub mod aarch64 {
     arch::crc64_nvme_sve2_pmull_3way_safe, // dup for index consistency
   ];
   /// NVME SVE2 PMULL small buffer kernel.
-  #[cfg(any(test, feature = "alloc"))]
   pub const NVME_SVE2_PMULL_SMALL: Crc64Fn = arch::crc64_nvme_sve2_pmull_small_safe;
 }
 
@@ -221,15 +167,6 @@ pub mod aarch64 {
 pub mod power {
   use super::super::power as arch;
   use crate::checksum::dispatchers::Crc64Fn;
-
-  /// VPMSUM kernel names: [1-way, 2-way, 4-way, 8-way]
-  pub const VPMSUM_NAMES: &[&str] = &[
-    "power/vpmsum",
-    "power/vpmsum-2way",
-    "power/vpmsum-4way",
-    "power/vpmsum-8way",
-    "power/vpmsum-8way", // 8-way slot (same as 7-way slot on ppc64)
-  ];
 
   // ─────────────────────────────────────────────────────────────────────────
   // CRC64-XZ Kernel Function Arrays
@@ -262,15 +199,6 @@ pub mod power {
 pub mod s390x {
   use super::super::s390x as arch;
   use crate::checksum::dispatchers::Crc64Fn;
-
-  /// VGFM kernel names: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)]
-  pub const VGFM_NAMES: &[&str] = &[
-    "s390x/vgfm",
-    "s390x/vgfm-2way",
-    "s390x/vgfm-4way",
-    "s390x/vgfm-4way",
-    "s390x/vgfm-4way",
-  ];
 
   // ─────────────────────────────────────────────────────────────────────────
   // CRC64-XZ Kernel Function Arrays

@@ -62,24 +62,19 @@ mod common;
 #[macro_use]
 mod macros;
 
-#[doc(hidden)]
-#[cfg(feature = "alloc")]
-#[allow(clippy::indexing_slicing)] // All indexing uses enumerate() indices
-pub mod bench;
 mod crc16;
 mod crc24;
 mod crc32;
 mod crc64;
-#[doc(hidden)]
 #[cfg(feature = "diag")]
 pub mod diag;
 #[doc(hidden)]
-pub mod dispatch;
-#[doc(hidden)]
-pub mod dispatchers;
+pub(crate) mod dispatchers;
 pub mod introspect;
 #[cfg(feature = "std")]
 pub mod io;
+#[doc(hidden)]
+pub(crate) mod kernel_table;
 #[cfg(feature = "alloc")]
 pub mod buffered {
   pub use crate::checksum::{
@@ -102,28 +97,6 @@ pub mod config {
 
 #[doc(hidden)]
 pub mod __internal {
-  /// Kernel testing utilities.
-  #[cfg(all(test, feature = "alloc"))]
-  pub mod kernel_test {
-    pub use crate::checksum::{
-      crc16::kernel_test::{
-        KernelResult as KernelResult16, run_all_crc16_ccitt_kernels, run_all_crc16_ibm_kernels,
-        verify_crc16_ccitt_kernels, verify_crc16_ibm_kernels,
-      },
-      crc24::kernel_test::{
-        KernelResult as KernelResult24, run_all_crc24_openpgp_kernels, verify_crc24_openpgp_kernels,
-      },
-      crc32::kernel_test::{
-        KernelResult as KernelResult32, run_all_crc32_ieee_kernels, run_all_crc32c_kernels, verify_crc32_ieee_kernels,
-        verify_crc32c_kernels,
-      },
-      crc64::kernel_test::{
-        KernelResult, run_all_crc64_nvme_kernels, run_all_crc64_xz_kernels, verify_crc64_nvme_kernels,
-        verify_crc64_xz_kernels,
-      },
-    };
-  }
-
   /// Property test internals - bitwise reference implementations and constants.
   ///
   /// These are exposed for integration tests in `tests/` that need access to

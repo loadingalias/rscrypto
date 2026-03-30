@@ -129,17 +129,6 @@ fn digest_oneshot(data: &[u8], compress_blocks: CompressBlocksFn) -> [u8; 28] {
 }
 
 #[inline]
-pub fn compress_blocks(state: &mut [u32; 8], blocks: &[u8]) {
-  if blocks.is_empty() {
-    return;
-  }
-  debug_assert_eq!(blocks.len() % BLOCK_LEN, 0);
-  let d = active();
-  let entry = select(&d, blocks.len());
-  (entry.compress_blocks)(state, blocks);
-}
-
-#[inline]
 #[must_use]
 pub(crate) fn compress_dispatch() -> SizeClassDispatch<CompressBlocksFn> {
   let d = active();

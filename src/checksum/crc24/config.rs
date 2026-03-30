@@ -23,10 +23,6 @@ pub enum Crc24Force {
   Portable,
   /// Force the carryless-multiply tier (PCLMULQDQ/PMULL) if supported.
   Clmul,
-  /// Force the portable slice-by-4 kernel.
-  Slice4,
-  /// Force the portable slice-by-8 kernel.
-  Slice8,
 }
 
 impl Crc24Force {
@@ -38,8 +34,6 @@ impl Crc24Force {
       Self::Reference => "reference",
       Self::Portable => "portable",
       Self::Clmul => "clmul",
-      Self::Slice4 => "slice4",
-      Self::Slice8 => "slice8",
     }
   }
 }
@@ -76,11 +70,11 @@ fn parse_force_env() -> Crc24Force {
   {
     return Crc24Force::Clmul;
   }
-  if value.eq_ignore_ascii_case("slice4") {
-    return Crc24Force::Slice4;
-  }
   if value.eq_ignore_ascii_case("slice8") {
-    return Crc24Force::Slice8;
+    return Crc24Force::Portable;
+  }
+  if value.eq_ignore_ascii_case("slice4") {
+    return Crc24Force::Portable;
   }
 
   Crc24Force::Auto
@@ -91,9 +85,7 @@ fn parse_force_env() -> Crc24Force {
 #[allow(unused_variables)]
 fn clamp_force_to_caps(requested: Crc24Force, caps: Caps) -> Crc24Force {
   match requested {
-    Crc24Force::Auto | Crc24Force::Reference | Crc24Force::Portable | Crc24Force::Slice4 | Crc24Force::Slice8 => {
-      requested
-    }
+    Crc24Force::Auto | Crc24Force::Reference | Crc24Force::Portable => requested,
     Crc24Force::Clmul => {
       #[cfg(target_arch = "x86_64")]
       {

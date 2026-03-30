@@ -163,14 +163,6 @@ fn hash64_long(seed: u64, data: &[u8]) -> u64 {
   }
 }
 
-/// Direct portable scalar path — no dispatch, no capability check.
-/// For benchmarking only: isolates algorithm codegen from dispatch overhead.
-#[inline(always)]
-#[must_use]
-pub fn hash64_portable(seed: u64, data: &[u8]) -> u64 {
-  super::xxh3_64_with_seed(data, seed)
-}
-
 /// See [`hash64_with_seed`] for the dispatch rationale.
 #[inline(always)]
 #[must_use]

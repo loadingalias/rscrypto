@@ -30,26 +30,6 @@ pub mod x86_64 {
   use super::super::x86_64 as arch;
   use crate::checksum::dispatchers::Crc16Fn;
 
-  /// PCLMUL small-buffer kernel name.
-  pub const PCLMUL_SMALL: &str = "x86_64/pclmul-small";
-  /// PCLMUL kernel names: [1-way, 2-way, 4-way, 7-way, 8-way].
-  pub const PCLMUL_NAMES: &[&str] = &[
-    "x86_64/pclmul",
-    "x86_64/pclmul-2way",
-    "x86_64/pclmul-4way",
-    "x86_64/pclmul-7way",
-    "x86_64/pclmul-8way",
-  ];
-
-  /// VPCLMUL kernel names: [1-way, 2-way, 4-way, 7-way, 8-way].
-  pub const VPCLMUL_NAMES: &[&str] = &[
-    "x86_64/vpclmul",
-    "x86_64/vpclmul-2way",
-    "x86_64/vpclmul-4way",
-    "x86_64/vpclmul-7way",
-    "x86_64/vpclmul-8way",
-  ];
-
   // ─────────────────────────────────────────────────────────────────────────
   // CRC-16/CCITT Kernel Functions
   // ─────────────────────────────────────────────────────────────────────────
@@ -106,17 +86,6 @@ pub mod aarch64 {
   use super::super::aarch64 as arch;
   use crate::checksum::dispatchers::Crc16Fn;
 
-  /// PMULL small-buffer kernel name.
-  pub const PMULL_SMALL: &str = "aarch64/pmull-small";
-  /// PMULL kernel names: [1-way, 2-way, 3-way].
-  pub const PMULL_NAMES: &[&str] = &["aarch64/pmull", "aarch64/pmull-2way", "aarch64/pmull-3way"];
-  /// PMULL+EOR3 kernel names: [1-way, 2-way, 3-way].
-  pub const PMULL_EOR3_NAMES: &[&str] = &[
-    "aarch64/pmull-eor3",
-    "aarch64/pmull-eor3-2way",
-    "aarch64/pmull-eor3-3way",
-  ];
-
   // ─────────────────────────────────────────────────────────────────────────
   // CRC-16/CCITT Kernel Functions
   // ─────────────────────────────────────────────────────────────────────────
@@ -131,6 +100,7 @@ pub mod aarch64 {
   ];
 
   /// CCITT PMULL+EOR3 kernels: [1-way, 2-way, 3-way, 3-way(dup), 3-way(dup)].
+  #[cfg(any(target_os = "linux", target_os = "android"))]
   pub const CCITT_PMULL_EOR3: [Crc16Fn; 5] = [
     arch::crc16_ccitt_pmull_eor3_safe,
     arch::crc16_ccitt_pmull_eor3_2way_safe,
@@ -156,6 +126,7 @@ pub mod aarch64 {
   ];
 
   /// IBM PMULL+EOR3 kernels: [1-way, 2-way, 3-way, 3-way(dup), 3-way(dup)].
+  #[cfg(any(target_os = "linux", target_os = "android"))]
   pub const IBM_PMULL_EOR3: [Crc16Fn; 5] = [
     arch::crc16_ibm_pmull_eor3_safe,
     arch::crc16_ibm_pmull_eor3_2way_safe,
@@ -172,15 +143,6 @@ pub mod aarch64 {
 pub mod power {
   use super::super::power as arch;
   use crate::checksum::dispatchers::Crc16Fn;
-
-  /// VPMSUM kernel names: [1-way, 2-way, 4-way, 8-way, 8-way(dup)].
-  pub const VPMSUM_NAMES: &[&str] = &[
-    "power/vpmsum",
-    "power/vpmsum-2way",
-    "power/vpmsum-4way",
-    "power/vpmsum-8way",
-    "power/vpmsum-8way",
-  ];
 
   /// CCITT VPMSUM kernels: [1-way, 2-way, 4-way, 8-way, 8-way(dup)].
   pub const CCITT_VPMSUM: [Crc16Fn; 5] = [
@@ -205,15 +167,6 @@ pub mod power {
 pub mod s390x {
   use super::super::s390x as arch;
   use crate::checksum::dispatchers::Crc16Fn;
-
-  /// VGFM kernel names: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)].
-  pub const VGFM_NAMES: &[&str] = &[
-    "s390x/vgfm",
-    "s390x/vgfm-2way",
-    "s390x/vgfm-4way",
-    "s390x/vgfm-4way",
-    "s390x/vgfm-4way",
-  ];
 
   /// CCITT VGFM kernels: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)].
   pub const CCITT_VGFM: [Crc16Fn; 5] = [

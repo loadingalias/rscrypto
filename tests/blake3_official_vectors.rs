@@ -1,7 +1,9 @@
 #![cfg(feature = "hashes")]
 
-use digest::dev::blobby::Blob6Iterator;
+mod support;
+
 use rscrypto::{Digest, hashes::crypto::Blake3, traits::Xof as _};
+use support::blobby_compat::Blob6Iterator;
 
 fn update_input_pattern(hasher: &mut Blake3, len: usize) {
   let mut remaining = len;
@@ -26,9 +28,10 @@ fn decode_u64_le(bytes: &[u8]) -> u64 {
 #[test]
 fn blake3_official_test_vectors() {
   let blb = include_bytes!("../testdata/blake3/test_vectors.blb");
-  let iter = Blob6Iterator::new(blb).expect("blake3 vector corpus must parse");
-
-  for (i, row) in iter.enumerate() {
+  for (i, row) in Blob6Iterator::new(blb)
+    .expect("blake3 vector corpus must parse")
+    .enumerate()
+  {
     let [
       key_bytes,
       context_bytes,
@@ -54,7 +57,7 @@ fn blake3_official_test_vectors() {
       let mut xof = h.finalize_xof();
       let mut out = vec![0u8; hash_xof.len()];
       xof.squeeze(&mut out);
-      assert_eq!(out, hash_xof, "hash xof case {i}");
+      assert_eq!(&out[..], hash_xof, "hash xof case {i}");
     }
 
     // Keyed hash mode
@@ -66,7 +69,7 @@ fn blake3_official_test_vectors() {
       let mut xof = h.finalize_xof();
       let mut out = vec![0u8; keyed_hash_xof.len()];
       xof.squeeze(&mut out);
-      assert_eq!(out, keyed_hash_xof, "keyed xof case {i}");
+      assert_eq!(&out[..], keyed_hash_xof, "keyed xof case {i}");
     }
 
     // Derive key mode
@@ -78,7 +81,7 @@ fn blake3_official_test_vectors() {
       let mut xof = h.finalize_xof();
       let mut out = vec![0u8; derive_key_xof.len()];
       xof.squeeze(&mut out);
-      assert_eq!(out, derive_key_xof, "derive xof case {i}");
+      assert_eq!(&out[..], derive_key_xof, "derive xof case {i}");
     }
   }
 }

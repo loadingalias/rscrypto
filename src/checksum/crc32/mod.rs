@@ -43,9 +43,6 @@ pub(crate) mod config;
 pub(crate) mod kernels;
 pub(crate) mod portable;
 
-#[cfg(all(test, feature = "alloc"))]
-pub mod kernel_test;
-
 #[cfg(target_arch = "x86_64")]
 mod x86_64;
 
@@ -190,14 +187,35 @@ fn crc32c_buffered_threshold() -> usize {
 pub(crate) fn crc32_selected_kernel_name(len: usize) -> &'static str {
   let cfg = config::get();
 
-  if cfg.effective_force == Crc32Force::Reference {
-    return kernels::REFERENCE;
-  }
-  if cfg.effective_force == Crc32Force::Portable {
-    return kernels::PORTABLE;
+  match cfg.effective_force {
+    Crc32Force::Reference => return kernels::REFERENCE,
+    Crc32Force::Portable => return kernels::PORTABLE,
+    #[cfg(target_arch = "aarch64")]
+    Crc32Force::Hwcrc => return "aarch64/hwcrc",
+    #[cfg(target_arch = "aarch64")]
+    Crc32Force::Pmull => {
+      return if len < 64 {
+        "aarch64/pmull-small"
+      } else {
+        "aarch64/pmull-v9s3x2e-s3"
+      };
+    }
+    #[cfg(target_arch = "aarch64")]
+    Crc32Force::PmullEor3 => {
+      return "aarch64/pmull-eor3-v9s3x2e-s3";
+    }
+    #[cfg(target_arch = "aarch64")]
+    Crc32Force::Sve2Pmull => {
+      return if len < 64 {
+        "aarch64/sve2-pmull-small"
+      } else {
+        "aarch64/sve2-pmull"
+      };
+    }
+    _ => {}
   }
 
-  let table = crate::checksum::dispatch::active_table();
+  let table = crate::checksum::kernel_table::active_table();
   table.select_names(len).crc32_ieee_name
 }
 
@@ -207,14 +225,35 @@ pub(crate) fn crc32_selected_kernel_name(len: usize) -> &'static str {
 pub(crate) fn crc32c_selected_kernel_name(len: usize) -> &'static str {
   let cfg = config::get();
 
-  if cfg.effective_force == Crc32Force::Reference {
-    return kernels::REFERENCE;
-  }
-  if cfg.effective_force == Crc32Force::Portable {
-    return kernels::PORTABLE;
+  match cfg.effective_force {
+    Crc32Force::Reference => return kernels::REFERENCE,
+    Crc32Force::Portable => return kernels::PORTABLE,
+    #[cfg(target_arch = "aarch64")]
+    Crc32Force::Hwcrc => return "aarch64/hwcrc",
+    #[cfg(target_arch = "aarch64")]
+    Crc32Force::Pmull => {
+      return if len < 64 {
+        "aarch64/pmull-small"
+      } else {
+        "aarch64/pmull-v9s3x2e-s3"
+      };
+    }
+    #[cfg(target_arch = "aarch64")]
+    Crc32Force::PmullEor3 => {
+      return "aarch64/pmull-eor3-v9s3x2e-s3";
+    }
+    #[cfg(target_arch = "aarch64")]
+    Crc32Force::Sve2Pmull => {
+      return if len < 64 {
+        "aarch64/sve2-pmull-small"
+      } else {
+        "aarch64/sve2-pmull"
+      };
+    }
+    _ => {}
   }
 
-  let table = crate::checksum::dispatch::active_table();
+  let table = crate::checksum::kernel_table::active_table();
   table.select_names(len).crc32c_name
 }
 
@@ -235,7 +274,7 @@ pub(crate) fn diag_crc32_ieee(len: usize) -> Crc32SelectionDiag {
     crate::checksum::diag::SelectionReason::Auto
   };
 
-  let table = crate::checksum::dispatch::active_table();
+  let table = crate::checksum::kernel_table::active_table();
   let boundary = if !table.boundaries.is_empty() {
     table.boundaries[0]
   } else {
@@ -279,7 +318,7 @@ pub(crate) fn diag_crc32c(len: usize) -> Crc32SelectionDiag {
     crate::checksum::diag::SelectionReason::Auto
   };
 
-  let table = crate::checksum::dispatch::active_table();
+  let table = crate::checksum::kernel_table::active_table();
   let boundary = if !table.boundaries.is_empty() {
     table.boundaries[0]
   } else {
@@ -331,26 +370,26 @@ fn crc32_apply_kernel_vectored(mut crc: u32, bufs: &[&[u8]], kernel: Crc32Dispat
 
 #[inline]
 fn crc32_dispatch_auto(crc: u32, data: &[u8]) -> u32 {
-  let table = crate::checksum::dispatch::active_table();
+  let table = crate::checksum::kernel_table::active_table();
   let kernel = table.select_fns(data.len()).crc32_ieee;
   kernel(crc, data)
 }
 
 #[inline]
 fn crc32_dispatch_auto_vectored(crc: u32, bufs: &[&[u8]]) -> u32 {
-  crc_vectored_dispatch!(crate::checksum::dispatch::active_table(), crc, crc32_ieee, bufs)
+  crc_vectored_dispatch!(crate::checksum::kernel_table::active_table(), crc, crc32_ieee, bufs)
 }
 
 #[inline]
 fn crc32c_dispatch_auto(crc: u32, data: &[u8]) -> u32 {
-  let table = crate::checksum::dispatch::active_table();
+  let table = crate::checksum::kernel_table::active_table();
   let kernel = table.select_fns(data.len()).crc32c;
   kernel(crc, data)
 }
 
 #[inline]
 fn crc32c_dispatch_auto_vectored(crc: u32, bufs: &[&[u8]]) -> u32 {
-  crc_vectored_dispatch!(crate::checksum::dispatch::active_table(), crc, crc32c, bufs)
+  crc_vectored_dispatch!(crate::checksum::kernel_table::active_table(), crc, crc32c, bufs)
 }
 
 #[cfg(feature = "std")]
@@ -401,6 +440,142 @@ fn crc32c_dispatch_portable_vectored(crc: u32, bufs: &[&[u8]]) -> u32 {
   crc32_apply_kernel_vectored(crc, bufs, crc32c_portable)
 }
 
+#[cfg(all(feature = "std", target_arch = "aarch64"))]
+#[inline]
+fn crc32_force_pmull_kernel(len: usize) -> Crc32DispatchFn {
+  if len < 64 {
+    kernels::aarch64::CRC32_PMULL_SMALL_KERNEL
+  } else {
+    kernels::aarch64::CRC32_PMULL[0]
+  }
+}
+
+#[cfg(all(feature = "std", target_arch = "aarch64"))]
+#[inline]
+fn crc32c_force_pmull_kernel(len: usize) -> Crc32DispatchFn {
+  if len < 64 {
+    kernels::aarch64::CRC32C_PMULL_SMALL_KERNEL
+  } else {
+    kernels::aarch64::CRC32C_PMULL[0]
+  }
+}
+
+#[cfg(all(feature = "std", target_arch = "aarch64"))]
+#[inline]
+fn crc32_force_sve2_pmull_kernel(len: usize) -> Crc32DispatchFn {
+  if len < 64 {
+    kernels::aarch64::CRC32_SVE2_PMULL_SMALL_KERNEL
+  } else {
+    kernels::aarch64::CRC32_SVE2_PMULL[0]
+  }
+}
+
+#[cfg(all(feature = "std", target_arch = "aarch64"))]
+#[inline]
+fn crc32c_force_sve2_pmull_kernel(len: usize) -> Crc32DispatchFn {
+  if len < 64 {
+    kernels::aarch64::CRC32C_SVE2_PMULL_SMALL_KERNEL
+  } else {
+    kernels::aarch64::CRC32C_SVE2_PMULL[0]
+  }
+}
+
+#[cfg(all(feature = "std", target_arch = "aarch64"))]
+#[inline]
+fn crc32_dispatch_hwcrc(crc: u32, data: &[u8]) -> u32 {
+  (kernels::aarch64::CRC32_HWCRC[0])(crc, data)
+}
+
+#[cfg(all(feature = "std", target_arch = "aarch64"))]
+#[inline]
+fn crc32_dispatch_hwcrc_vectored(crc: u32, bufs: &[&[u8]]) -> u32 {
+  crc32_apply_kernel_vectored(crc, bufs, kernels::aarch64::CRC32_HWCRC[0])
+}
+
+#[cfg(all(feature = "std", target_arch = "aarch64"))]
+#[inline]
+fn crc32_dispatch_pmull(crc: u32, data: &[u8]) -> u32 {
+  crc32_force_pmull_kernel(data.len())(crc, data)
+}
+
+#[cfg(all(feature = "std", target_arch = "aarch64"))]
+#[inline]
+fn crc32_dispatch_pmull_vectored(crc: u32, bufs: &[&[u8]]) -> u32 {
+  crc32_apply_kernel_vectored(crc, bufs, crc32_force_pmull_kernel(64))
+}
+
+#[cfg(all(feature = "std", target_arch = "aarch64"))]
+#[inline]
+fn crc32_dispatch_pmull_eor3(crc: u32, data: &[u8]) -> u32 {
+  (kernels::aarch64::CRC32_PMULL_EOR3[0])(crc, data)
+}
+
+#[cfg(all(feature = "std", target_arch = "aarch64"))]
+#[inline]
+fn crc32_dispatch_pmull_eor3_vectored(crc: u32, bufs: &[&[u8]]) -> u32 {
+  crc32_apply_kernel_vectored(crc, bufs, kernels::aarch64::CRC32_PMULL_EOR3[0])
+}
+
+#[cfg(all(feature = "std", target_arch = "aarch64"))]
+#[inline]
+fn crc32_dispatch_sve2_pmull(crc: u32, data: &[u8]) -> u32 {
+  crc32_force_sve2_pmull_kernel(data.len())(crc, data)
+}
+
+#[cfg(all(feature = "std", target_arch = "aarch64"))]
+#[inline]
+fn crc32_dispatch_sve2_pmull_vectored(crc: u32, bufs: &[&[u8]]) -> u32 {
+  crc32_apply_kernel_vectored(crc, bufs, crc32_force_sve2_pmull_kernel(64))
+}
+
+#[cfg(all(feature = "std", target_arch = "aarch64"))]
+#[inline]
+fn crc32c_dispatch_hwcrc(crc: u32, data: &[u8]) -> u32 {
+  (kernels::aarch64::CRC32C_HWCRC[0])(crc, data)
+}
+
+#[cfg(all(feature = "std", target_arch = "aarch64"))]
+#[inline]
+fn crc32c_dispatch_hwcrc_vectored(crc: u32, bufs: &[&[u8]]) -> u32 {
+  crc32_apply_kernel_vectored(crc, bufs, kernels::aarch64::CRC32C_HWCRC[0])
+}
+
+#[cfg(all(feature = "std", target_arch = "aarch64"))]
+#[inline]
+fn crc32c_dispatch_pmull(crc: u32, data: &[u8]) -> u32 {
+  crc32c_force_pmull_kernel(data.len())(crc, data)
+}
+
+#[cfg(all(feature = "std", target_arch = "aarch64"))]
+#[inline]
+fn crc32c_dispatch_pmull_vectored(crc: u32, bufs: &[&[u8]]) -> u32 {
+  crc32_apply_kernel_vectored(crc, bufs, crc32c_force_pmull_kernel(64))
+}
+
+#[cfg(all(feature = "std", target_arch = "aarch64"))]
+#[inline]
+fn crc32c_dispatch_pmull_eor3(crc: u32, data: &[u8]) -> u32 {
+  (kernels::aarch64::CRC32C_PMULL_EOR3[0])(crc, data)
+}
+
+#[cfg(all(feature = "std", target_arch = "aarch64"))]
+#[inline]
+fn crc32c_dispatch_pmull_eor3_vectored(crc: u32, bufs: &[&[u8]]) -> u32 {
+  crc32_apply_kernel_vectored(crc, bufs, kernels::aarch64::CRC32C_PMULL_EOR3[0])
+}
+
+#[cfg(all(feature = "std", target_arch = "aarch64"))]
+#[inline]
+fn crc32c_dispatch_sve2_pmull(crc: u32, data: &[u8]) -> u32 {
+  crc32c_force_sve2_pmull_kernel(data.len())(crc, data)
+}
+
+#[cfg(all(feature = "std", target_arch = "aarch64"))]
+#[inline]
+fn crc32c_dispatch_sve2_pmull_vectored(crc: u32, bufs: &[&[u8]]) -> u32 {
+  crc32_apply_kernel_vectored(crc, bufs, crc32c_force_sve2_pmull_kernel(64))
+}
+
 #[cfg(feature = "std")]
 static CRC32_DISPATCH: crate::backend::cache::OnceCache<Crc32DispatchFn> = crate::backend::cache::OnceCache::new();
 #[cfg(feature = "std")]
@@ -418,6 +593,14 @@ fn resolve_crc32_dispatch() -> Crc32DispatchFn {
   match config::get().effective_force {
     Crc32Force::Reference => crc32_dispatch_reference,
     Crc32Force::Portable => crc32_dispatch_portable,
+    #[cfg(target_arch = "aarch64")]
+    Crc32Force::Hwcrc => crc32_dispatch_hwcrc,
+    #[cfg(target_arch = "aarch64")]
+    Crc32Force::Pmull => crc32_dispatch_pmull,
+    #[cfg(target_arch = "aarch64")]
+    Crc32Force::PmullEor3 => crc32_dispatch_pmull_eor3,
+    #[cfg(target_arch = "aarch64")]
+    Crc32Force::Sve2Pmull => crc32_dispatch_sve2_pmull,
     _ => crc32_dispatch_auto,
   }
 }
@@ -428,6 +611,14 @@ fn resolve_crc32_dispatch_vectored() -> Crc32DispatchVectoredFn {
   match config::get().effective_force {
     Crc32Force::Reference => crc32_dispatch_reference_vectored,
     Crc32Force::Portable => crc32_dispatch_portable_vectored,
+    #[cfg(target_arch = "aarch64")]
+    Crc32Force::Hwcrc => crc32_dispatch_hwcrc_vectored,
+    #[cfg(target_arch = "aarch64")]
+    Crc32Force::Pmull => crc32_dispatch_pmull_vectored,
+    #[cfg(target_arch = "aarch64")]
+    Crc32Force::PmullEor3 => crc32_dispatch_pmull_eor3_vectored,
+    #[cfg(target_arch = "aarch64")]
+    Crc32Force::Sve2Pmull => crc32_dispatch_sve2_pmull_vectored,
     _ => crc32_dispatch_auto_vectored,
   }
 }
@@ -438,6 +629,14 @@ fn resolve_crc32c_dispatch() -> Crc32DispatchFn {
   match config::get().effective_force {
     Crc32Force::Reference => crc32c_dispatch_reference,
     Crc32Force::Portable => crc32c_dispatch_portable,
+    #[cfg(target_arch = "aarch64")]
+    Crc32Force::Hwcrc => crc32c_dispatch_hwcrc,
+    #[cfg(target_arch = "aarch64")]
+    Crc32Force::Pmull => crc32c_dispatch_pmull,
+    #[cfg(target_arch = "aarch64")]
+    Crc32Force::PmullEor3 => crc32c_dispatch_pmull_eor3,
+    #[cfg(target_arch = "aarch64")]
+    Crc32Force::Sve2Pmull => crc32c_dispatch_sve2_pmull,
     _ => crc32c_dispatch_auto,
   }
 }
@@ -448,6 +647,14 @@ fn resolve_crc32c_dispatch_vectored() -> Crc32DispatchVectoredFn {
   match config::get().effective_force {
     Crc32Force::Reference => crc32c_dispatch_reference_vectored,
     Crc32Force::Portable => crc32c_dispatch_portable_vectored,
+    #[cfg(target_arch = "aarch64")]
+    Crc32Force::Hwcrc => crc32c_dispatch_hwcrc_vectored,
+    #[cfg(target_arch = "aarch64")]
+    Crc32Force::Pmull => crc32c_dispatch_pmull_vectored,
+    #[cfg(target_arch = "aarch64")]
+    Crc32Force::PmullEor3 => crc32c_dispatch_pmull_eor3_vectored,
+    #[cfg(target_arch = "aarch64")]
+    Crc32Force::Sve2Pmull => crc32c_dispatch_sve2_pmull_vectored,
     _ => crc32c_dispatch_auto_vectored,
   }
 }
@@ -494,20 +701,29 @@ fn crc32c_resolved_dispatch() -> Crc32DispatchFn {
 }
 
 #[inline]
-fn crc32_runtime_paths() -> (Crc32DispatchFn, Option<&'static crate::checksum::dispatch::KernelTable>) {
+fn crc32_runtime_paths() -> (
+  Crc32DispatchFn,
+  Option<&'static crate::checksum::kernel_table::KernelTable>,
+) {
   let cfg = config::get();
   if cfg.effective_force == Crc32Force::Auto {
-    (crc32_dispatch_auto, Some(crate::checksum::dispatch::active_table()))
+    (crc32_dispatch_auto, Some(crate::checksum::kernel_table::active_table()))
   } else {
     (crc32_resolved_dispatch(), None)
   }
 }
 
 #[inline]
-fn crc32c_runtime_paths() -> (Crc32DispatchFn, Option<&'static crate::checksum::dispatch::KernelTable>) {
+fn crc32c_runtime_paths() -> (
+  Crc32DispatchFn,
+  Option<&'static crate::checksum::kernel_table::KernelTable>,
+) {
   let cfg = config::get();
   if cfg.effective_force == Crc32Force::Auto {
-    (crc32c_dispatch_auto, Some(crate::checksum::dispatch::active_table()))
+    (
+      crc32c_dispatch_auto,
+      Some(crate::checksum::kernel_table::active_table()),
+    )
   } else {
     (crc32c_resolved_dispatch(), None)
   }
@@ -585,7 +801,7 @@ fn crc32c_dispatch_vectored(crc: u32, bufs: &[&[u8]]) -> u32 {
 pub struct Crc32 {
   state: u32,
   dispatch: Crc32DispatchFn,
-  auto_table: Option<&'static crate::checksum::dispatch::KernelTable>,
+  auto_table: Option<&'static crate::checksum::kernel_table::KernelTable>,
 }
 
 /// Explicit name for the IEEE CRC-32 variant (alias of [`Crc32`]).
@@ -675,7 +891,7 @@ impl crate::traits::Checksum for Crc32 {
 
   #[inline]
   fn checksum(data: &[u8]) -> u32 {
-    crate::checksum::dispatch::crc32_ieee(data)
+    crate::checksum::kernel_table::crc32_ieee(data)
   }
 }
 
@@ -728,7 +944,7 @@ impl Crc32 {
 pub struct Crc32C {
   state: u32,
   dispatch: Crc32DispatchFn,
-  auto_table: Option<&'static crate::checksum::dispatch::KernelTable>,
+  auto_table: Option<&'static crate::checksum::kernel_table::KernelTable>,
 }
 
 /// Explicit name for the Castagnoli CRC-32C variant (alias of [`Crc32C`]).
@@ -818,7 +1034,7 @@ impl crate::traits::Checksum for Crc32C {
 
   #[inline]
   fn checksum(data: &[u8]) -> u32 {
-    crate::checksum::dispatch::crc32c(data)
+    crate::checksum::kernel_table::crc32c(data)
   }
 }
 
@@ -1035,7 +1251,7 @@ mod tests {
 
   #[test]
   fn test_crc32_streaming_across_thresholds() {
-    let table = crate::checksum::dispatch::active_table();
+    let table = crate::checksum::kernel_table::active_table();
 
     // Use boundaries from the active dispatch table
     let mut crc32_thresholds = Vec::with_capacity(table.boundaries.len());

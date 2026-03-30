@@ -204,6 +204,7 @@ unsafe fn fold_block_128_width32_reflected(x: &mut [Simd; 8], chunk: &[Simd; 8],
 }
 
 #[inline]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 #[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
 unsafe fn fold_lane_width32_reflected_eor3(x: Simd, coeff: Simd, data_to_xor: Simd) -> Simd {
   // SAFETY: Caller guarantees:
@@ -217,6 +218,7 @@ unsafe fn fold_lane_width32_reflected_eor3(x: Simd, coeff: Simd, data_to_xor: Si
 }
 
 #[inline]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 #[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
 unsafe fn fold_block_128_width32_reflected_eor3(x: &mut [Simd; 8], chunk: &[Simd; 8], coeff: Simd) {
   // SAFETY: Caller guarantees:
@@ -498,6 +500,7 @@ unsafe fn update_simd_width32_reflected(state: u32, first: &[Simd; 8], rest: &[[
 }
 
 #[inline]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 #[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
 unsafe fn update_simd_width32_reflected_eor3(
   state: u32,
@@ -547,6 +550,7 @@ unsafe fn update_simd_width32_reflected_eor3(
   }
 }
 
+#[cfg(any(target_os = "linux", target_os = "android"))]
 #[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
 unsafe fn update_simd_width32_reflected_eor3_2way(
   state: u32,
@@ -624,6 +628,7 @@ unsafe fn update_simd_width32_reflected_eor3_2way(
   }
 }
 
+#[cfg(any(target_os = "linux", target_os = "android"))]
 #[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
 unsafe fn update_simd_width32_reflected_eor3_3way(
   state: u32,
@@ -837,6 +842,7 @@ unsafe fn crc16_width32_pmull_3way(
 }
 
 #[inline]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 #[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
 unsafe fn crc16_width32_pmull_eor3(
   mut state: u16,
@@ -861,6 +867,7 @@ unsafe fn crc16_width32_pmull_eor3(
 }
 
 #[inline]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 #[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
 unsafe fn crc16_width32_pmull_eor3_2way(
   mut state: u16,
@@ -893,6 +900,7 @@ unsafe fn crc16_width32_pmull_eor3_2way(
 }
 
 #[inline]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 #[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
 unsafe fn crc16_width32_pmull_eor3_3way(
   mut state: u16,
@@ -1005,6 +1013,7 @@ pub fn crc16_ccitt_pmull_3way_safe(crc: u16, data: &[u8]) -> u16 {
 ///
 /// Dispatcher verifies PMULL+SHA3 before selecting this kernel.
 #[inline]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 pub fn crc16_ccitt_pmull_eor3_safe(crc: u16, data: &[u8]) -> u16 {
   // SAFETY: Dispatcher verifies PMULL+SHA3 before selecting this kernel.
   unsafe {
@@ -1023,6 +1032,7 @@ pub fn crc16_ccitt_pmull_eor3_safe(crc: u16, data: &[u8]) -> u16 {
 ///
 /// Dispatcher verifies PMULL+SHA3 before selecting this kernel.
 #[inline]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 pub fn crc16_ccitt_pmull_eor3_2way_safe(crc: u16, data: &[u8]) -> u16 {
   // SAFETY: Dispatcher verifies PMULL+SHA3 before selecting this kernel.
   unsafe {
@@ -1042,6 +1052,7 @@ pub fn crc16_ccitt_pmull_eor3_2way_safe(crc: u16, data: &[u8]) -> u16 {
 ///
 /// Dispatcher verifies PMULL+SHA3 before selecting this kernel.
 #[inline]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 pub fn crc16_ccitt_pmull_eor3_3way_safe(crc: u16, data: &[u8]) -> u16 {
   // SAFETY: Dispatcher verifies PMULL+SHA3 before selecting this kernel.
   unsafe {
@@ -1125,6 +1136,7 @@ pub fn crc16_ibm_pmull_3way_safe(crc: u16, data: &[u8]) -> u16 {
 ///
 /// Dispatcher verifies PMULL+SHA3 before selecting this kernel.
 #[inline]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 pub fn crc16_ibm_pmull_eor3_safe(crc: u16, data: &[u8]) -> u16 {
   // SAFETY: Dispatcher verifies PMULL+SHA3 before selecting this kernel.
   unsafe { crc16_width32_pmull_eor3(crc, data, &CRC16_IBM_KEYS_REFLECTED, super::portable::crc16_ibm_slice8) }
@@ -1136,6 +1148,7 @@ pub fn crc16_ibm_pmull_eor3_safe(crc: u16, data: &[u8]) -> u16 {
 ///
 /// Dispatcher verifies PMULL+SHA3 before selecting this kernel.
 #[inline]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 pub fn crc16_ibm_pmull_eor3_2way_safe(crc: u16, data: &[u8]) -> u16 {
   // SAFETY: Dispatcher verifies PMULL+SHA3 before selecting this kernel.
   unsafe {
@@ -1155,6 +1168,7 @@ pub fn crc16_ibm_pmull_eor3_2way_safe(crc: u16, data: &[u8]) -> u16 {
 ///
 /// Dispatcher verifies PMULL+SHA3 before selecting this kernel.
 #[inline]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 pub fn crc16_ibm_pmull_eor3_3way_safe(crc: u16, data: &[u8]) -> u16 {
   // SAFETY: Dispatcher verifies PMULL+SHA3 before selecting this kernel.
   unsafe {

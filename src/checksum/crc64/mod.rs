@@ -19,9 +19,6 @@ pub(crate) mod kernels;
 // portable is pub(crate) but needs internal access from bench module
 pub(crate) mod portable;
 
-#[cfg(all(test, feature = "alloc"))]
-pub mod kernel_test;
-
 #[cfg(target_arch = "x86_64")]
 mod x86_64;
 
@@ -67,16 +64,31 @@ pub(super) use crate::traits::{Checksum, ChecksumCombine};
 pub(crate) fn crc64_xz_selected_kernel_name(len: usize) -> &'static str {
   let cfg = config::get();
 
-  // Handle forced modes
-  if cfg.effective_force == Crc64Force::Reference {
-    return kernels::REFERENCE;
-  }
-  if cfg.effective_force == Crc64Force::Portable {
-    return kernels::PORTABLE;
+  match cfg.effective_force {
+    Crc64Force::Reference => return kernels::REFERENCE,
+    Crc64Force::Portable => return kernels::PORTABLE,
+    #[cfg(target_arch = "aarch64")]
+    Crc64Force::Pmull => {
+      return if len < 64 {
+        "aarch64/pmull-small"
+      } else {
+        "aarch64/pmull"
+      };
+    }
+    #[cfg(target_arch = "aarch64")]
+    Crc64Force::PmullEor3 => return "aarch64/pmull-eor3",
+    #[cfg(target_arch = "aarch64")]
+    Crc64Force::Sve2Pmull => {
+      return if len < 64 {
+        "aarch64/sve2-pmull-small"
+      } else {
+        "aarch64/sve2-pmull"
+      };
+    }
+    _ => {}
   }
 
-  // For auto mode, return the specific kernel name from the dispatch table
-  let table = crate::checksum::dispatch::active_table();
+  let table = crate::checksum::kernel_table::active_table();
   table.select_names(len).crc64_xz_name
 }
 
@@ -89,16 +101,31 @@ pub(crate) fn crc64_xz_selected_kernel_name(len: usize) -> &'static str {
 pub(crate) fn crc64_nvme_selected_kernel_name(len: usize) -> &'static str {
   let cfg = config::get();
 
-  // Handle forced modes
-  if cfg.effective_force == Crc64Force::Reference {
-    return kernels::REFERENCE;
-  }
-  if cfg.effective_force == Crc64Force::Portable {
-    return kernels::PORTABLE;
+  match cfg.effective_force {
+    Crc64Force::Reference => return kernels::REFERENCE,
+    Crc64Force::Portable => return kernels::PORTABLE,
+    #[cfg(target_arch = "aarch64")]
+    Crc64Force::Pmull => {
+      return if len < 64 {
+        "aarch64/pmull-small"
+      } else {
+        "aarch64/pmull"
+      };
+    }
+    #[cfg(target_arch = "aarch64")]
+    Crc64Force::PmullEor3 => return "aarch64/pmull-eor3",
+    #[cfg(target_arch = "aarch64")]
+    Crc64Force::Sve2Pmull => {
+      return if len < 64 {
+        "aarch64/sve2-pmull-small"
+      } else {
+        "aarch64/sve2-pmull"
+      };
+    }
+    _ => {}
   }
 
-  // For auto mode, return the specific kernel name from the dispatch table
-  let table = crate::checksum::dispatch::active_table();
+  let table = crate::checksum::kernel_table::active_table();
   table.select_names(len).crc64_nvme_name
 }
 
@@ -121,7 +148,7 @@ pub(crate) fn diag_crc64_xz(len: usize) -> Crc64SelectionDiag {
   };
 
   // Thresholds are now baked into dispatch tables; report dispatch boundaries
-  let table = crate::checksum::dispatch::active_table();
+  let table = crate::checksum::kernel_table::active_table();
 
   Crc64SelectionDiag {
     polynomial: Crc64Polynomial::Xz,
@@ -155,7 +182,7 @@ pub(crate) fn diag_crc64_nvme(len: usize) -> Crc64SelectionDiag {
   };
 
   // Thresholds are now baked into dispatch tables; report dispatch boundaries
-  let table = crate::checksum::dispatch::active_table();
+  let table = crate::checksum::kernel_table::active_table();
 
   Crc64SelectionDiag {
     polynomial: Crc64Polynomial::Nvme,
@@ -256,26 +283,26 @@ fn crc64_apply_kernel_vectored(mut crc: u64, bufs: &[&[u8]], kernel: Crc64Dispat
 
 #[inline]
 fn crc64_xz_dispatch_auto(crc: u64, data: &[u8]) -> u64 {
-  let table = crate::checksum::dispatch::active_table();
+  let table = crate::checksum::kernel_table::active_table();
   let kernel = table.select_fns(data.len()).crc64_xz;
   kernel(crc, data)
 }
 
 #[inline]
 fn crc64_xz_dispatch_auto_vectored(crc: u64, bufs: &[&[u8]]) -> u64 {
-  crc_vectored_dispatch!(crate::checksum::dispatch::active_table(), crc, crc64_xz, bufs)
+  crc_vectored_dispatch!(crate::checksum::kernel_table::active_table(), crc, crc64_xz, bufs)
 }
 
 #[inline]
 fn crc64_nvme_dispatch_auto(crc: u64, data: &[u8]) -> u64 {
-  let table = crate::checksum::dispatch::active_table();
+  let table = crate::checksum::kernel_table::active_table();
   let kernel = table.select_fns(data.len()).crc64_nvme;
   kernel(crc, data)
 }
 
 #[inline]
 fn crc64_nvme_dispatch_auto_vectored(crc: u64, bufs: &[&[u8]]) -> u64 {
-  crc_vectored_dispatch!(crate::checksum::dispatch::active_table(), crc, crc64_nvme, bufs)
+  crc_vectored_dispatch!(crate::checksum::kernel_table::active_table(), crc, crc64_nvme, bufs)
 }
 
 #[cfg(feature = "std")]
@@ -326,6 +353,118 @@ fn crc64_nvme_dispatch_portable_vectored(crc: u64, bufs: &[&[u8]]) -> u64 {
   crc64_apply_kernel_vectored(crc, bufs, crc64_nvme_portable)
 }
 
+#[cfg(all(feature = "std", target_arch = "aarch64"))]
+#[inline]
+fn crc64_xz_force_pmull_kernel(len: usize) -> Crc64DispatchFn {
+  if len < 64 {
+    kernels::aarch64::XZ_PMULL_SMALL
+  } else {
+    kernels::aarch64::XZ_PMULL[0]
+  }
+}
+
+#[cfg(all(feature = "std", target_arch = "aarch64"))]
+#[inline]
+fn crc64_nvme_force_pmull_kernel(len: usize) -> Crc64DispatchFn {
+  if len < 64 {
+    kernels::aarch64::NVME_PMULL_SMALL
+  } else {
+    kernels::aarch64::NVME_PMULL[0]
+  }
+}
+
+#[cfg(all(feature = "std", target_arch = "aarch64"))]
+#[inline]
+fn crc64_xz_force_sve2_pmull_kernel(len: usize) -> Crc64DispatchFn {
+  if len < 64 {
+    kernels::aarch64::XZ_SVE2_PMULL_SMALL
+  } else {
+    kernels::aarch64::XZ_SVE2_PMULL[0]
+  }
+}
+
+#[cfg(all(feature = "std", target_arch = "aarch64"))]
+#[inline]
+fn crc64_nvme_force_sve2_pmull_kernel(len: usize) -> Crc64DispatchFn {
+  if len < 64 {
+    kernels::aarch64::NVME_SVE2_PMULL_SMALL
+  } else {
+    kernels::aarch64::NVME_SVE2_PMULL[0]
+  }
+}
+
+#[cfg(all(feature = "std", target_arch = "aarch64"))]
+#[inline]
+fn crc64_xz_dispatch_pmull(crc: u64, data: &[u8]) -> u64 {
+  crc64_xz_force_pmull_kernel(data.len())(crc, data)
+}
+
+#[cfg(all(feature = "std", target_arch = "aarch64"))]
+#[inline]
+fn crc64_xz_dispatch_pmull_vectored(crc: u64, bufs: &[&[u8]]) -> u64 {
+  crc64_apply_kernel_vectored(crc, bufs, crc64_xz_force_pmull_kernel(64))
+}
+
+#[cfg(all(feature = "std", target_arch = "aarch64"))]
+#[inline]
+fn crc64_xz_dispatch_pmull_eor3(crc: u64, data: &[u8]) -> u64 {
+  (kernels::aarch64::XZ_PMULL_EOR3[0])(crc, data)
+}
+
+#[cfg(all(feature = "std", target_arch = "aarch64"))]
+#[inline]
+fn crc64_xz_dispatch_pmull_eor3_vectored(crc: u64, bufs: &[&[u8]]) -> u64 {
+  crc64_apply_kernel_vectored(crc, bufs, kernels::aarch64::XZ_PMULL_EOR3[0])
+}
+
+#[cfg(all(feature = "std", target_arch = "aarch64"))]
+#[inline]
+fn crc64_xz_dispatch_sve2_pmull(crc: u64, data: &[u8]) -> u64 {
+  crc64_xz_force_sve2_pmull_kernel(data.len())(crc, data)
+}
+
+#[cfg(all(feature = "std", target_arch = "aarch64"))]
+#[inline]
+fn crc64_xz_dispatch_sve2_pmull_vectored(crc: u64, bufs: &[&[u8]]) -> u64 {
+  crc64_apply_kernel_vectored(crc, bufs, crc64_xz_force_sve2_pmull_kernel(64))
+}
+
+#[cfg(all(feature = "std", target_arch = "aarch64"))]
+#[inline]
+fn crc64_nvme_dispatch_pmull(crc: u64, data: &[u8]) -> u64 {
+  crc64_nvme_force_pmull_kernel(data.len())(crc, data)
+}
+
+#[cfg(all(feature = "std", target_arch = "aarch64"))]
+#[inline]
+fn crc64_nvme_dispatch_pmull_vectored(crc: u64, bufs: &[&[u8]]) -> u64 {
+  crc64_apply_kernel_vectored(crc, bufs, crc64_nvme_force_pmull_kernel(64))
+}
+
+#[cfg(all(feature = "std", target_arch = "aarch64"))]
+#[inline]
+fn crc64_nvme_dispatch_pmull_eor3(crc: u64, data: &[u8]) -> u64 {
+  (kernels::aarch64::NVME_PMULL_EOR3[0])(crc, data)
+}
+
+#[cfg(all(feature = "std", target_arch = "aarch64"))]
+#[inline]
+fn crc64_nvme_dispatch_pmull_eor3_vectored(crc: u64, bufs: &[&[u8]]) -> u64 {
+  crc64_apply_kernel_vectored(crc, bufs, kernels::aarch64::NVME_PMULL_EOR3[0])
+}
+
+#[cfg(all(feature = "std", target_arch = "aarch64"))]
+#[inline]
+fn crc64_nvme_dispatch_sve2_pmull(crc: u64, data: &[u8]) -> u64 {
+  crc64_nvme_force_sve2_pmull_kernel(data.len())(crc, data)
+}
+
+#[cfg(all(feature = "std", target_arch = "aarch64"))]
+#[inline]
+fn crc64_nvme_dispatch_sve2_pmull_vectored(crc: u64, bufs: &[&[u8]]) -> u64 {
+  crc64_apply_kernel_vectored(crc, bufs, crc64_nvme_force_sve2_pmull_kernel(64))
+}
+
 #[cfg(feature = "std")]
 static CRC64_XZ_DISPATCH: crate::backend::cache::OnceCache<Crc64DispatchFn> = crate::backend::cache::OnceCache::new();
 #[cfg(feature = "std")]
@@ -343,6 +482,12 @@ fn resolve_crc64_xz_dispatch() -> Crc64DispatchFn {
   match config::get().effective_force {
     Crc64Force::Reference => crc64_xz_dispatch_reference,
     Crc64Force::Portable => crc64_xz_dispatch_portable,
+    #[cfg(target_arch = "aarch64")]
+    Crc64Force::Pmull => crc64_xz_dispatch_pmull,
+    #[cfg(target_arch = "aarch64")]
+    Crc64Force::PmullEor3 => crc64_xz_dispatch_pmull_eor3,
+    #[cfg(target_arch = "aarch64")]
+    Crc64Force::Sve2Pmull => crc64_xz_dispatch_sve2_pmull,
     _ => crc64_xz_dispatch_auto,
   }
 }
@@ -353,6 +498,12 @@ fn resolve_crc64_xz_dispatch_vectored() -> Crc64DispatchVectoredFn {
   match config::get().effective_force {
     Crc64Force::Reference => crc64_xz_dispatch_reference_vectored,
     Crc64Force::Portable => crc64_xz_dispatch_portable_vectored,
+    #[cfg(target_arch = "aarch64")]
+    Crc64Force::Pmull => crc64_xz_dispatch_pmull_vectored,
+    #[cfg(target_arch = "aarch64")]
+    Crc64Force::PmullEor3 => crc64_xz_dispatch_pmull_eor3_vectored,
+    #[cfg(target_arch = "aarch64")]
+    Crc64Force::Sve2Pmull => crc64_xz_dispatch_sve2_pmull_vectored,
     _ => crc64_xz_dispatch_auto_vectored,
   }
 }
@@ -363,6 +514,12 @@ fn resolve_crc64_nvme_dispatch() -> Crc64DispatchFn {
   match config::get().effective_force {
     Crc64Force::Reference => crc64_nvme_dispatch_reference,
     Crc64Force::Portable => crc64_nvme_dispatch_portable,
+    #[cfg(target_arch = "aarch64")]
+    Crc64Force::Pmull => crc64_nvme_dispatch_pmull,
+    #[cfg(target_arch = "aarch64")]
+    Crc64Force::PmullEor3 => crc64_nvme_dispatch_pmull_eor3,
+    #[cfg(target_arch = "aarch64")]
+    Crc64Force::Sve2Pmull => crc64_nvme_dispatch_sve2_pmull,
     _ => crc64_nvme_dispatch_auto,
   }
 }
@@ -373,6 +530,12 @@ fn resolve_crc64_nvme_dispatch_vectored() -> Crc64DispatchVectoredFn {
   match config::get().effective_force {
     Crc64Force::Reference => crc64_nvme_dispatch_reference_vectored,
     Crc64Force::Portable => crc64_nvme_dispatch_portable_vectored,
+    #[cfg(target_arch = "aarch64")]
+    Crc64Force::Pmull => crc64_nvme_dispatch_pmull_vectored,
+    #[cfg(target_arch = "aarch64")]
+    Crc64Force::PmullEor3 => crc64_nvme_dispatch_pmull_eor3_vectored,
+    #[cfg(target_arch = "aarch64")]
+    Crc64Force::Sve2Pmull => crc64_nvme_dispatch_sve2_pmull_vectored,
     _ => crc64_nvme_dispatch_auto_vectored,
   }
 }
@@ -419,22 +582,31 @@ fn crc64_nvme_resolved_dispatch() -> Crc64DispatchFn {
 }
 
 #[inline]
-fn crc64_xz_runtime_paths() -> (Crc64DispatchFn, Option<&'static crate::checksum::dispatch::KernelTable>) {
+fn crc64_xz_runtime_paths() -> (
+  Crc64DispatchFn,
+  Option<&'static crate::checksum::kernel_table::KernelTable>,
+) {
   let cfg = config::get();
   if cfg.effective_force == Crc64Force::Auto {
-    (crc64_xz_dispatch_auto, Some(crate::checksum::dispatch::active_table()))
+    (
+      crc64_xz_dispatch_auto,
+      Some(crate::checksum::kernel_table::active_table()),
+    )
   } else {
     (crc64_xz_resolved_dispatch(), None)
   }
 }
 
 #[inline]
-fn crc64_nvme_runtime_paths() -> (Crc64DispatchFn, Option<&'static crate::checksum::dispatch::KernelTable>) {
+fn crc64_nvme_runtime_paths() -> (
+  Crc64DispatchFn,
+  Option<&'static crate::checksum::kernel_table::KernelTable>,
+) {
   let cfg = config::get();
   if cfg.effective_force == Crc64Force::Auto {
     (
       crc64_nvme_dispatch_auto,
-      Some(crate::checksum::dispatch::active_table()),
+      Some(crate::checksum::kernel_table::active_table()),
     )
   } else {
     (crc64_nvme_resolved_dispatch(), None)
@@ -530,7 +702,7 @@ fn crc64_nvme_dispatch_vectored(crc: u64, bufs: &[&[u8]]) -> u64 {
 pub struct Crc64 {
   state: u64,
   dispatch: Crc64DispatchFn,
-  auto_table: Option<&'static crate::checksum::dispatch::KernelTable>,
+  auto_table: Option<&'static crate::checksum::kernel_table::KernelTable>,
 }
 
 /// Explicit name for the XZ CRC-64 variant (alias of [`Crc64`]).
@@ -621,7 +793,7 @@ impl crate::traits::Checksum for Crc64 {
 
   #[inline]
   fn checksum(data: &[u8]) -> u64 {
-    crate::checksum::dispatch::crc64_xz(data)
+    crate::checksum::kernel_table::crc64_xz(data)
   }
 }
 
@@ -691,7 +863,7 @@ impl Crc64 {
 pub struct Crc64Nvme {
   state: u64,
   dispatch: Crc64DispatchFn,
-  auto_table: Option<&'static crate::checksum::dispatch::KernelTable>,
+  auto_table: Option<&'static crate::checksum::kernel_table::KernelTable>,
 }
 
 impl Crc64Nvme {
@@ -779,7 +951,7 @@ impl crate::traits::Checksum for Crc64Nvme {
 
   #[inline]
   fn checksum(data: &[u8]) -> u64 {
-    crate::checksum::dispatch::crc64_nvme(data)
+    crate::checksum::kernel_table::crc64_nvme(data)
   }
 }
 
@@ -1089,7 +1261,7 @@ mod tests {
   #[test]
   fn test_crc64_streaming_across_threshold() {
     // Use dispatch table boundaries for threshold
-    let table = crate::checksum::dispatch::active_table();
+    let table = crate::checksum::kernel_table::active_table();
     let threshold = table.boundaries[0]; // xs_max boundary
 
     // Generate test data larger than threshold

@@ -2,7 +2,7 @@ use super::{
   dispatch_tables::DispatchTable,
   kernels::{Keccakf1600KernelId, permute_fn, required_caps},
 };
-use crate::{backend::cache::OnceCache, hashes::crypto::dispatch_util::SizeClassDispatch, platform::Caps};
+use crate::{backend::cache::OnceCache, platform::Caps};
 
 type PermuteFn = fn(&mut [u64; 25]);
 
@@ -84,17 +84,4 @@ pub fn kernel_name_for_len(len: usize) -> &'static str {
   }
   let d = active();
   select(&d, len).1
-}
-
-#[inline]
-#[must_use]
-pub(crate) fn permute_dispatch() -> SizeClassDispatch<PermuteFn> {
-  let d = active();
-  SizeClassDispatch {
-    boundaries: d.boundaries,
-    xs: d.xs,
-    s: d.s,
-    m: d.m,
-    l: d.l,
-  }
 }

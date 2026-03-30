@@ -1,11 +1,15 @@
 #![cfg(feature = "hashes")]
 
-use digest::dev::blobby::Blob2Iterator;
+mod support;
+
 use rscrypto::hashes::crypto::{Sha224, Sha384, Sha512, Sha512_256};
+use support::blobby_compat::Blob2Iterator;
 
 fn run_fixed_vectors<const OUT: usize>(data: &'static [u8], name: &str, mut digest: impl FnMut(&[u8]) -> [u8; OUT]) {
-  let iter = Blob2Iterator::new(data).expect("sha2 vector corpus must parse");
-  for (i, row) in iter.enumerate() {
+  for (i, row) in Blob2Iterator::new(data)
+    .expect("sha2 vector corpus must parse")
+    .enumerate()
+  {
     let [input, output] = row.unwrap_or_else(|err| panic!("{name} vector row decode failed at case {i}: {err:?}"));
     let actual = digest(input);
     assert_eq!(

@@ -426,25 +426,21 @@ fn crc32_sve2_pmull_nway<const N: usize>(
   (mat_total.mul_vec(boundary_final) ^ data_crc_final) ^ !0
 }
 
-#[cfg(any(test, feature = "alloc"))]
 #[inline]
 pub fn crc32_iso_hdlc_sve2_pmull_2way_safe(crc: u32, data: &[u8]) -> u32 {
   crc32_sve2_pmull_nway::<2>(crc, data, crc32_iso_hdlc_pmull_v12e_v1_safe, CRC32_SHIFT8_MATRIX)
 }
 
-#[cfg(any(test, feature = "alloc"))]
 #[inline]
 pub fn crc32_iso_hdlc_sve2_pmull_3way_safe(crc: u32, data: &[u8]) -> u32 {
   crc32_sve2_pmull_nway::<3>(crc, data, crc32_iso_hdlc_pmull_v12e_v1_safe, CRC32_SHIFT8_MATRIX)
 }
 
-#[cfg(any(test, feature = "alloc"))]
 #[inline]
 pub fn crc32c_iscsi_sve2_pmull_2way_safe(crc: u32, data: &[u8]) -> u32 {
   crc32_sve2_pmull_nway::<2>(crc, data, crc32c_iscsi_pmull_v12e_v1_safe, CRC32C_SHIFT8_MATRIX)
 }
 
-#[cfg(any(test, feature = "alloc"))]
 #[inline]
 pub fn crc32c_iscsi_sve2_pmull_3way_safe(crc: u32, data: &[u8]) -> u32 {
   crc32_sve2_pmull_nway::<3>(crc, data, crc32c_iscsi_pmull_v12e_v1_safe, CRC32C_SHIFT8_MATRIX)
