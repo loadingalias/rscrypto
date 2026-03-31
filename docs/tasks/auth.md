@@ -23,6 +23,8 @@ AEAD work has now split cleanly into its own track:
 
 ### Performance Priorities
 
+> **Master acceleration tracker:** [`docs/tasks/acceleration.md`](acceleration.md)
+
 1. **HKDF expand on x86-64** — rerun the matrix and measure the residual gap.
    The old x86-64 loss was tied to repeated keyed-HMAC setup. The current code
    already caches keyed HMAC state inside `HkdfSha256`, so the next step is
@@ -34,10 +36,16 @@ AEAD work has now split cleanly into its own track:
    - Platform-specific backends (IFMA on AVX-512, etc.)
    Our portable double-and-add is correctness-first. The acceleration plan in Phase 2B
    below remains the right order. Target: ≤3x of dalek by v0.2.
+   **Gap tasks:** ED25519-1 through ED25519-6 in [`acceleration.md`](acceleration.md).
 
 3. **HMAC-SHA256 small-size overhead** — 4-6% loss at 0-32 B on Zen5/SPR. The SHA-256
    compression is fast (SHA-NI), but HMAC wrapping adds two compressions (ipad + opad).
    Investigate whether the inner/outer key pads can be pre-compressed to a midstate.
+
+4. **KMAC256/cSHAKE256 inherit Keccak regression** — The Keccak-f dispatch bug
+   (KECCAK-1 in [`acceleration.md`](acceleration.md)) means SHA-3-based auth primitives
+   are 26-45% slower than they should be on x86_64. Fix is trivial: disable the
+   x86-avx512 kernel in dispatch tables.
 
 ## Authenticated Crypto Contract
 

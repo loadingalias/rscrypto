@@ -4,6 +4,9 @@
 > **Target: 80%** (needs ~168 more wins from losses + ties)
 > **Source:** CI run [#23715419566](https://github.com/loadingalias/rscrypto/actions/runs/23715419566) (2026-03-29, 5 platforms: Zen4/SPR/ICL/s390x/POWER10) + Grav3/Grav4 baseline from [#23691455747](https://github.com/loadingalias/rscrypto/actions/runs/23691455747)
 > **Note:** Zen5 unavailable; Grav3/Grav4 estimated from pre-lane-complementing baseline (aarch64 unchanged)
+>
+> **Acceleration gap tracker:** [`docs/tasks/acceleration.md`](acceleration.md) — per-task inventory of every hardware backend gap across all subsystems.
+> **AEAD status:** AES-256-GCM and AES-256-GCM-SIV shipped with x86_64 AES-NI + PCLMULQDQ hardware dispatch (closes 340x gap on Intel/AMD). aarch64 AES-CE + PMULL is next. AEAD benchmarks will add ~144 new comparison points once `benches/aead.rs` enters CI rotation.
 
 ---
 
@@ -157,3 +160,4 @@ Step 7.1 alone converts 28L → competitive. Steps 7.1-7.3 would beat dalek.
 | 5.1 — Keccak fused absorb-permute | `keccakf_absorb_portable`: load state^block in one step | SHA-3 26L→15L, SHAKE 7L→3L |
 | 6.1 — HMAC-SHA256 oneshot | Direct `[u32; 8]` state, single dispatch compress | 26L→0L, Grav4 3.7-4.0x |
 | **A — Lane-complementing chi** | **XKCP "Bebigokimisa" on x86/s390x/POWER (not aarch64)** | **SHA-3 66W→~123W, SHAKE 90W→~131W (+98W)** |
+| **B — AES-NI + PCLMULQDQ** | **x86_64 hardware AES block + carryless multiply for GCM/GCM-SIV** | **Closes 340x portable→hardware gap on all Intel/AMD** |

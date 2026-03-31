@@ -31,6 +31,15 @@ No correctness blocker found. The crate passes:
 | XXH3 | 54% | Competitive |
 | RapidHash | 8% | Parity (ties, not losses) |
 | Auth | 48% | HMAC strong; Ed25519 correct but 5.9x slower than dalek |
+| AEAD | N/A | Not yet in CI rotation. ChaCha family 1.27x WIN vs RustCrypto; AES-GCM/SIV 340x behind (portable only) |
+
+**Acceleration gap tracker:** [`docs/tasks/acceleration.md`](acceleration.md)
+
+Key acceleration gaps blocking "world-class on all platforms":
+- AES-GCM / AES-GCM-SIV: **0% hardware acceleration** — 340x behind on all platforms (P0: AES-NI + PCLMULQDQ, AES + PMULL)
+- ChaCha20-Poly1305: 3 stub backends (power/s390x/riscv dispatch to portable)
+- Keccak-f: dispatch regression (x86-avx512 kernel 26-45% slower than portable)
+- Ed25519: 8-13x behind dalek (portable double-and-add vs precomputed tables)
 
 ### Security: SOLID FOUNDATIONS
 

@@ -1,11 +1,12 @@
 #![allow(clippy::indexing_slicing)]
 
-//! Portable constant-time AES-256 block cipher core.
+//! Portable constant-time AES-256 block cipher core with hardware dispatch.
 //!
 //! This module provides AES-256 key expansion and single-block encryption for
 //! use by AES-based AEAD constructions (GCM-SIV, GCM). All operations are
 //! constant-time: no table lookups indexed by secret data.
 //!
+//! On x86_64 with AES-NI, the hardware path is selected at key-expansion time.
 //! The portable S-box uses algebraic inversion in GF(2^8) via the Fermat
 //! power chain (x^254) and constant-time field arithmetic, avoiding any
 //! lookup tables that could leak through cache timing.
@@ -22,20 +23,156 @@ const ROUNDS: usize = 14;
 /// Number of 32-bit words in the expanded key schedule.
 const EXPANDED_KEY_WORDS: usize = 4 * (ROUNDS + 1); // 60
 
+// ---------------------------------------------------------------------------
+// x86_64 AES-NI backend
+// ---------------------------------------------------------------------------
+
+#[cfg(target_arch = "x86_64")]
+mod ni {
+  use core::arch::x86_64::*;
+
+  /// AES-256 round keys stored as 15 × 128-bit values for AES-NI.
+  #[derive(Clone, Copy)]
+  #[repr(C, align(16))]
+  pub(super) struct NiRoundKeys {
+    rk: [__m128i; 15],
+  }
+
+  impl NiRoundKeys {
+    /// Zeroize all round keys via volatile writes.
+    pub(super) fn zeroize(&mut self) {
+      // SAFETY: `self.rk` is a valid, aligned, fully-initialized array.
+      // Casting to a byte slice and using ct::zeroize ensures volatile
+      // writes that the compiler cannot elide.
+      let bytes = unsafe {
+        core::slice::from_raw_parts_mut(self.rk.as_mut_ptr().cast::<u8>(), 15usize.strict_mul(16))
+      };
+      crate::traits::ct::zeroize(bytes);
+    }
+  }
+
+  /// AES-256 key expansion using AES-NI instructions.
+  ///
+  /// # Safety
+  /// Caller must ensure the CPU supports AES-NI (`target_feature = "aes"`).
+  #[target_feature(enable = "aes,sse2")]
+  pub(super) unsafe fn expand_key(key: &[u8; 32]) -> NiRoundKeys {
+    let mut rk = [_mm_setzero_si128(); 15];
+
+    // Load the 256-bit key as two 128-bit halves.
+    rk[0] = _mm_loadu_si128(key.as_ptr().cast());
+    rk[1] = _mm_loadu_si128(key[16..].as_ptr().cast());
+
+    // Even-index expansion: AESKEYGENASSIST on the previous odd key,
+    // broadcast word 3 (shuffle 0xFF), then XOR cascade with previous even key.
+    macro_rules! expand_even {
+      ($idx:expr, $prev_even:expr, $prev_odd:expr, $rcon:expr) => {{
+        let assist = _mm_aeskeygenassist_si128($prev_odd, $rcon);
+        let assist = _mm_shuffle_epi32(assist, 0xFF);
+        let mut t = $prev_even;
+        t = _mm_xor_si128(t, _mm_slli_si128(t, 4));
+        t = _mm_xor_si128(t, _mm_slli_si128(t, 4));
+        t = _mm_xor_si128(t, _mm_slli_si128(t, 4));
+        rk[$idx] = _mm_xor_si128(t, assist);
+      }};
+    }
+
+    // Odd-index expansion: AESKEYGENASSIST on the previous even key with RCON=0,
+    // broadcast word 2 (shuffle 0xAA), then XOR cascade with previous odd key.
+    macro_rules! expand_odd {
+      ($idx:expr, $prev_even:expr, $prev_odd:expr) => {{
+        let assist = _mm_aeskeygenassist_si128($prev_even, 0x00);
+        let assist = _mm_shuffle_epi32(assist, 0xAA);
+        let mut t = $prev_odd;
+        t = _mm_xor_si128(t, _mm_slli_si128(t, 4));
+        t = _mm_xor_si128(t, _mm_slli_si128(t, 4));
+        t = _mm_xor_si128(t, _mm_slli_si128(t, 4));
+        rk[$idx] = _mm_xor_si128(t, assist);
+      }};
+    }
+
+    // 7 even expansions (RCON: 0x01..0x40) + 6 odd expansions = 13 derived keys.
+    expand_even!(2, rk[0], rk[1], 0x01);
+    expand_odd!(3, rk[2], rk[1]);
+    expand_even!(4, rk[2], rk[3], 0x02);
+    expand_odd!(5, rk[4], rk[3]);
+    expand_even!(6, rk[4], rk[5], 0x04);
+    expand_odd!(7, rk[6], rk[5]);
+    expand_even!(8, rk[6], rk[7], 0x08);
+    expand_odd!(9, rk[8], rk[7]);
+    expand_even!(10, rk[8], rk[9], 0x10);
+    expand_odd!(11, rk[10], rk[9]);
+    expand_even!(12, rk[10], rk[11], 0x20);
+    expand_odd!(13, rk[12], rk[11]);
+    expand_even!(14, rk[12], rk[13], 0x40);
+
+    NiRoundKeys { rk }
+  }
+
+  /// Encrypt a single 16-byte block using AES-256 with AES-NI.
+  ///
+  /// # Safety
+  /// Caller must ensure the CPU supports AES-NI (`target_feature = "aes"`).
+  #[target_feature(enable = "aes,sse2")]
+  pub(super) unsafe fn encrypt_block(keys: &NiRoundKeys, block: &mut [u8; 16]) {
+    let k = &keys.rk;
+    let mut state = _mm_loadu_si128(block.as_ptr().cast());
+
+    state = _mm_xor_si128(state, k[0]);
+    state = _mm_aesenc_si128(state, k[1]);
+    state = _mm_aesenc_si128(state, k[2]);
+    state = _mm_aesenc_si128(state, k[3]);
+    state = _mm_aesenc_si128(state, k[4]);
+    state = _mm_aesenc_si128(state, k[5]);
+    state = _mm_aesenc_si128(state, k[6]);
+    state = _mm_aesenc_si128(state, k[7]);
+    state = _mm_aesenc_si128(state, k[8]);
+    state = _mm_aesenc_si128(state, k[9]);
+    state = _mm_aesenc_si128(state, k[10]);
+    state = _mm_aesenc_si128(state, k[11]);
+    state = _mm_aesenc_si128(state, k[12]);
+    state = _mm_aesenc_si128(state, k[13]);
+    state = _mm_aesenclast_si128(state, k[14]);
+
+    _mm_storeu_si128(block.as_mut_ptr().cast(), state);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Aes256EncKey: enum-dispatched key storage
+// ---------------------------------------------------------------------------
+
 /// AES-256 expanded round keys.
 ///
-/// Holds the full key schedule (15 round keys × 4 words = 60 words).
-/// Zeroized on drop.
+/// On x86_64 with AES-NI, stores round keys as `__m128i` for zero-copy
+/// use with hardware instructions. Otherwise stores 60 big-endian u32 words
+/// for the portable path. Zeroized on drop.
+#[derive(Clone)]
 pub(crate) struct Aes256EncKey {
-  rk: [u32; EXPANDED_KEY_WORDS],
+  inner: KeyInner,
+}
+
+#[derive(Clone)]
+enum KeyInner {
+  Portable([u32; EXPANDED_KEY_WORDS]),
+  #[cfg(target_arch = "x86_64")]
+  AesNi(ni::NiRoundKeys),
 }
 
 impl Drop for Aes256EncKey {
   fn drop(&mut self) {
-    crate::traits::ct::zeroize(unsafe {
-      // SAFETY: [u32; 60] is layout-compatible with [u8; 240].
-      core::slice::from_raw_parts_mut(self.rk.as_mut_ptr().cast::<u8>(), EXPANDED_KEY_WORDS * 4)
-    });
+    match &mut self.inner {
+      KeyInner::Portable(rk) => {
+        crate::traits::ct::zeroize(unsafe {
+          // SAFETY: [u32; 60] is layout-compatible with [u8; 240].
+          core::slice::from_raw_parts_mut(rk.as_mut_ptr().cast::<u8>(), EXPANDED_KEY_WORDS * 4)
+        });
+      }
+      #[cfg(target_arch = "x86_64")]
+      KeyInner::AesNi(ni_rk) => {
+        ni_rk.zeroize();
+      }
+    }
   }
 }
 
@@ -162,9 +299,9 @@ const RCON: [u32; 10] = [
 // Key expansion
 // ---------------------------------------------------------------------------
 
-/// Expand a 256-bit AES key into 15 round keys (60 u32 words).
+/// Portable AES-256 key expansion into 60 big-endian u32 words.
 #[inline]
-pub(crate) fn aes256_expand_key(key: &[u8; KEY_SIZE]) -> Aes256EncKey {
+fn aes256_expand_key_portable(key: &[u8; KEY_SIZE]) -> [u32; EXPANDED_KEY_WORDS] {
   let mut rk = [0u32; EXPANDED_KEY_WORDS];
 
   // Load the initial key as 8 big-endian words.
@@ -193,7 +330,27 @@ pub(crate) fn aes256_expand_key(key: &[u8; KEY_SIZE]) -> Aes256EncKey {
     i = i.strict_add(1);
   }
 
-  Aes256EncKey { rk }
+  rk
+}
+
+/// Expand a 256-bit AES key into round keys.
+///
+/// On x86_64 with AES-NI detected at runtime, uses hardware key expansion.
+/// Otherwise uses the portable algebraic path.
+#[inline]
+pub(crate) fn aes256_expand_key(key: &[u8; KEY_SIZE]) -> Aes256EncKey {
+  #[cfg(target_arch = "x86_64")]
+  {
+    if crate::platform::caps().has(crate::platform::caps::x86::AESNI) {
+      // SAFETY: AES-NI availability verified via CPUID.
+      return Aes256EncKey {
+        inner: KeyInner::AesNi(unsafe { ni::expand_key(key) }),
+      };
+    }
+  }
+  Aes256EncKey {
+    inner: KeyInner::Portable(aes256_expand_key_portable(key)),
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -202,9 +359,22 @@ pub(crate) fn aes256_expand_key(key: &[u8; KEY_SIZE]) -> Aes256EncKey {
 
 /// Encrypt a single 16-byte block with AES-256.
 ///
-/// The block is modified in place.
+/// Dispatches to AES-NI when available, otherwise uses the portable path.
 #[inline]
 pub(crate) fn aes256_encrypt_block(ek: &Aes256EncKey, block: &mut [u8; BLOCK_SIZE]) {
+  match &ek.inner {
+    KeyInner::Portable(rk) => aes256_encrypt_block_portable(rk, block),
+    #[cfg(target_arch = "x86_64")]
+    KeyInner::AesNi(ni_rk) => {
+      // SAFETY: AesNi variant is only constructed after runtime detection confirms AES-NI.
+      unsafe { ni::encrypt_block(ni_rk, block) }
+    }
+  }
+}
+
+/// Portable AES-256 block encryption.
+#[inline]
+fn aes256_encrypt_block_portable(rk: &[u32; EXPANDED_KEY_WORDS], block: &mut [u8; BLOCK_SIZE]) {
   // Load state as four big-endian u32 columns.
   let mut s0 = u32::from_be_bytes([block[0], block[1], block[2], block[3]]);
   let mut s1 = u32::from_be_bytes([block[4], block[5], block[6], block[7]]);
@@ -212,30 +382,30 @@ pub(crate) fn aes256_encrypt_block(ek: &Aes256EncKey, block: &mut [u8; BLOCK_SIZ
   let mut s3 = u32::from_be_bytes([block[12], block[13], block[14], block[15]]);
 
   // Initial AddRoundKey.
-  s0 ^= ek.rk[0];
-  s1 ^= ek.rk[1];
-  s2 ^= ek.rk[2];
-  s3 ^= ek.rk[3];
+  s0 ^= rk[0];
+  s1 ^= rk[1];
+  s2 ^= rk[2];
+  s3 ^= rk[3];
 
   // Rounds 1..13: SubBytes, ShiftRows, MixColumns, AddRoundKey.
   let mut round = 1;
   while round < ROUNDS {
     let (t0, t1, t2, t3) = aes_round(s0, s1, s2, s3);
     let rk_off = round.strict_mul(4);
-    s0 = t0 ^ ek.rk[rk_off];
-    s1 = t1 ^ ek.rk[rk_off.strict_add(1)];
-    s2 = t2 ^ ek.rk[rk_off.strict_add(2)];
-    s3 = t3 ^ ek.rk[rk_off.strict_add(3)];
+    s0 = t0 ^ rk[rk_off];
+    s1 = t1 ^ rk[rk_off.strict_add(1)];
+    s2 = t2 ^ rk[rk_off.strict_add(2)];
+    s3 = t3 ^ rk[rk_off.strict_add(3)];
     round = round.strict_add(1);
   }
 
   // Final round (no MixColumns).
   let (t0, t1, t2, t3) = aes_final_round(s0, s1, s2, s3);
   let rk_off = ROUNDS.strict_mul(4);
-  s0 = t0 ^ ek.rk[rk_off];
-  s1 = t1 ^ ek.rk[rk_off.strict_add(1)];
-  s2 = t2 ^ ek.rk[rk_off.strict_add(2)];
-  s3 = t3 ^ ek.rk[rk_off.strict_add(3)];
+  s0 = t0 ^ rk[rk_off];
+  s1 = t1 ^ rk[rk_off.strict_add(1)];
+  s2 = t2 ^ rk[rk_off.strict_add(2)];
+  s3 = t3 ^ rk[rk_off.strict_add(3)];
 
   // Store back.
   block[0..4].copy_from_slice(&s0.to_be_bytes());
@@ -348,6 +518,52 @@ pub(crate) fn aes256_ctr32_encrypt(ek: &Aes256EncKey, initial_counter: &[u8; BLO
   while offset < data.len() {
     // Encode current counter into the block.
     counter_block[0..4].copy_from_slice(&ctr.to_le_bytes());
+
+    let mut keystream = counter_block;
+    aes256_encrypt_block(ek, &mut keystream);
+
+    let remaining = data.len().strict_sub(offset);
+    if remaining >= BLOCK_SIZE {
+      // Full block: XOR as u128 for vectorization.
+      let ks = u128::from_ne_bytes(keystream);
+      let mut d = [0u8; BLOCK_SIZE];
+      d.copy_from_slice(&data[offset..offset.strict_add(BLOCK_SIZE)]);
+      let xored = u128::from_ne_bytes(d) ^ ks;
+      data[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&xored.to_ne_bytes());
+      offset = offset.strict_add(BLOCK_SIZE);
+    } else {
+      // Partial tail: byte-wise XOR.
+      let mut i = 0usize;
+      while i < remaining {
+        data[offset.strict_add(i)] ^= keystream[i];
+        i = i.strict_add(1);
+      }
+      offset = offset.strict_add(remaining);
+    }
+
+    ctr = ctr.wrapping_add(1);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// AES-CTR for GCM (big-endian 32-bit counter in bytes 12..15)
+// ---------------------------------------------------------------------------
+
+/// AES-256 CTR encryption/decryption for GCM.
+///
+/// The counter occupies the last 4 bytes (12..15) of the 16-byte counter
+/// block and increments as a big-endian 32-bit integer. This matches the
+/// `inc_32` function from NIST SP 800-38D § 6.2.
+#[inline]
+pub(crate) fn aes256_ctr32_encrypt_be(ek: &Aes256EncKey, initial_counter: &[u8; BLOCK_SIZE], data: &mut [u8]) {
+  let mut counter_block = *initial_counter;
+  // Maintain the 32-bit counter separately to avoid per-block BE decode/encode.
+  let mut ctr = u32::from_be_bytes([counter_block[12], counter_block[13], counter_block[14], counter_block[15]]);
+  let mut offset = 0usize;
+
+  while offset < data.len() {
+    // Encode current counter into bytes 12..15 (big-endian).
+    counter_block[12..16].copy_from_slice(&ctr.to_be_bytes());
 
     let mut keystream = counter_block;
     aes256_encrypt_block(ek, &mut keystream);
