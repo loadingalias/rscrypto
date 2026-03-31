@@ -191,7 +191,10 @@ mod tests {
   fn mul_x_high_bit() {
     let v = 1u128 << 127;
     let result = mul_x_polyval(v);
-    assert_eq!(result, POLYVAL_FEEDBACK, "mulX(x^127) should reduce to feedback polynomial");
+    assert_eq!(
+      result, POLYVAL_FEEDBACK,
+      "mulX(x^127) should reduce to feedback polynomial"
+    );
   }
 
   fn hex_to_16(hex: &str) -> [u8; 16] {
