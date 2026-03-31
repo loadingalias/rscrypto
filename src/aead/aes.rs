@@ -41,10 +41,11 @@ mod ni {
   impl NiRoundKeys {
     /// Zeroize all round keys via volatile writes.
     pub(super) fn zeroize(&mut self) {
-      // SAFETY: `self.rk` is a valid, aligned, fully-initialized array.
-      // Casting to a byte slice and using ct::zeroize ensures volatile
-      // writes that the compiler cannot elide.
-      let bytes = unsafe { core::slice::from_raw_parts_mut(self.rk.as_mut_ptr().cast::<u8>(), 15usize.strict_mul(16)) };
+      // SAFETY: `self.rk` is a valid, aligned, fully-initialized [__m128i; 15].
+      // Reinterpreting as a byte slice for volatile zeroization is sound.
+      let bytes = unsafe {
+        core::slice::from_raw_parts_mut(self.rk.as_mut_ptr().cast::<u8>(), 15usize.strict_mul(16))
+      };
       crate::traits::ct::zeroize(bytes);
     }
   }
@@ -161,8 +162,8 @@ impl Drop for Aes256EncKey {
   fn drop(&mut self) {
     match &mut self.inner {
       KeyInner::Portable(rk) => {
+        // SAFETY: [u32; 60] is layout-compatible with [u8; 240].
         crate::traits::ct::zeroize(unsafe {
-          // SAFETY: [u32; 60] is layout-compatible with [u8; 240].
           core::slice::from_raw_parts_mut(rk.as_mut_ptr().cast::<u8>(), EXPANDED_KEY_WORDS * 4)
         });
       }
@@ -340,8 +341,8 @@ pub(crate) fn aes256_expand_key(key: &[u8; KEY_SIZE]) -> Aes256EncKey {
   #[cfg(target_arch = "x86_64")]
   {
     if crate::platform::caps().has(crate::platform::caps::x86::AESNI) {
-      // SAFETY: AES-NI availability verified via CPUID.
       return Aes256EncKey {
+        // SAFETY: AES-NI availability verified via CPUID above.
         inner: KeyInner::AesNi(unsafe { ni::expand_key(key) }),
       };
     }
