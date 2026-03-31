@@ -9,7 +9,8 @@ Phase 4 (`Ascon-CXOF128`) is **now shipped**.
 AEAD work has now split cleanly into its own track:
 
 - AEAD foundations are in tree under [`docs/tasks/aead.md`](aead.md).
-- `XChaCha20-Poly1305` is implemented there, including native ChaCha dispatch work.
+- `XChaCha20-Poly1305` and `ChaCha20-Poly1305` are shipped there, with native ChaCha dispatch across x86-64/aarch64/wasm/s390x/ppc64/riscv64.
+- `AES-256-GCM-SIV` is shipped there on the portable constant-time baseline (algebraic AES S-box, Pornin bmul64 POLYVAL, RFC 8452 vectors). Hardware acceleration (AES-NI + PCLMULQDQ, ARM AES + PMULL) is next.
 - `auth.md` now treats `Ascon-CXOF128` as the remaining auth-side Ascon item instead of implicitly carrying the AEAD rollout too.
 
 **Historical CI benchmark results** — [run #23544327679](https://github.com/loadingalias/rscrypto/actions/runs/23544327679) on Zen5, SPR, Graviton4, s390x:
@@ -79,7 +80,8 @@ Keep this split clear:
 
 - protocol compatibility: `HMAC-SHA256`, `HKDF-SHA256`, `Ed25519`
 - NIST-native SHA-3 track: `KMAC256`, `cSHAKE256`
-- Ascon standards track: `Ascon-Hash256`, `Ascon-XOF128`, `Ascon-CXOF128`; `Ascon-AEAD128` is tracked under [`docs/tasks/aead.md`](aead.md).
+- Ascon standards track: `Ascon-Hash256`, `Ascon-XOF128`, `Ascon-CXOF128`; `Ascon-AEAD128` is tracked under [`docs/tasks/aead.md`](aead.md)
+- AES-family AEAD: `AES-256-GCM-SIV` (shipped), `AES-256-GCM` (next); tracked under [`docs/tasks/aead.md`](aead.md)
 - internal-only keyed hashing / derivation: `BLAKE3` keyed mode and `derive_key`
 
 ## Why This Set

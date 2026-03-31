@@ -14,12 +14,16 @@ use core::fmt;
 
 pub use crate::traits::Aead;
 use crate::traits::VerificationError;
+mod aes;
+mod aes256gcmsiv;
 mod chacha20;
 mod chacha20poly1305;
 pub mod introspect;
 mod poly1305;
+mod polyval;
 pub mod targets;
 mod xchacha20poly1305;
+pub use aes256gcmsiv::{Aes256GcmSiv, Aes256GcmSivKey, Aes256GcmSivTag};
 pub use chacha20poly1305::{ChaCha20Poly1305, ChaCha20Poly1305Key, ChaCha20Poly1305Tag};
 pub use targets::{AeadBackend, AeadPrimitive, BenchLane, lane_target_backend, select_backend};
 pub use xchacha20poly1305::{XChaCha20Poly1305, XChaCha20Poly1305Key, XChaCha20Poly1305Tag};

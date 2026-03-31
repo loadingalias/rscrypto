@@ -7,9 +7,15 @@ The plain `ChaCha20-Poly1305` interop companion is shipped on the same core.
 The ChaCha-family core now has explicit backend routing for `x86_64` (`portable -> AVX2 -> AVX-512`), `aarch64` (`portable -> NEON`), `wasm32/wasm64` (`portable -> simd128`), and explicit `s390x` / `powerpc64` / `riscv64` vector routes.
 `Poly1305` now follows the same primitive-keyed dispatch contract, with architecture-specific block kernels on `x86_64` (`AVX2` / `AVX-512`), `aarch64` (`NEON`), and `wasm32` (`simd128`), plus explicit fallback routes everywhere else.
 
+`AES-256-GCM-SIV` is shipped on the portable constant-time baseline:
+- AES-256: algebraic S-box (Fermat x^254 in GF(2^8)), no lookup tables
+- POLYVAL: Pornin bmul64 (16 integer muls/call), Karatsuba 128×128, 2-pass Montgomery reduction
+- Full RFC 8452 construction: key derivation, POLYVAL tag, AES-CTR
+- Verified against RFC 8452 Appendix A (POLYVAL) and Appendix C.2 (AES-256-GCM-SIV) test vectors
+- Hardware acceleration (AES-NI + PCLMULQDQ, ARM AES + PMULL) is the next step for this primitive
+
 Still missing from the primary rollout:
 
-- `AES-256-GCM-SIV`
 - `AES-256-GCM`
 - `Ascon-AEAD128`
 - `AEGIS-256`
@@ -116,8 +122,9 @@ That does not make `AEGIS-256` the first thing to build here. It makes it the th
 Reality check as of 2026-03-30:
 
 - item 1 is shipped
+- item 2 (`AES-256-GCM-SIV`) is shipped on the portable constant-time baseline (algebraic AES S-box, Pornin bmul64 POLYVAL, RFC 8452 test vectors passing); hardware acceleration (AES-NI, PCLMULQDQ, ARM AES+PMULL) is the next step
 - the `ChaCha20-Poly1305` companion from item 5 is also shipped because it falls out of the same core and is too cheap to defer artificially
-- items 2, 3, 4, and 6 remain open
+- items 3, 4, and 6 remain open
 
 ## SIMD / HW Rules
 
