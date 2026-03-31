@@ -50,7 +50,10 @@ pub(crate) struct ExtendedPoint {
   t: FieldElement,
 }
 
-/// Cached affine precompute for mixed Edwards addition.
+/// Cached affine precompute for mixed Edwards addition (7M per add).
+///
+/// Used for the static basepoint table where points are precomputed at
+/// build time with Z = 1.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) struct CachedPoint {
   y_plus_x: FieldElement,
@@ -59,18 +62,44 @@ pub(crate) struct CachedPoint {
 }
 
 impl CachedPoint {
+  #[must_use]
+  fn neg(&self) -> Self {
+    Self {
+      y_plus_x: self.y_minus_x,
+      y_minus_x: self.y_plus_x,
+      t2d: self.t2d.neg(),
+    }
+  }
+}
+
+/// Projective cached precompute for non-affine mixed addition (8M per add).
+///
+/// Stores `(Y+X, Y-X, Z, 2dT)` in projective form. Costs 1 more field
+/// multiply per addition than affine `CachedPoint`, but avoids the
+/// expensive field inversion required to convert runtime tables to affine.
+#[derive(Clone, Copy)]
+struct ProjectiveCachedPoint {
+  y_plus_x: FieldElement,
+  y_minus_x: FieldElement,
+  z: FieldElement,
+  t2d: FieldElement,
+}
+
+impl ProjectiveCachedPoint {
   const IDENTITY: Self = Self {
     y_plus_x: FieldElement::ONE,
     y_minus_x: FieldElement::ONE,
+    z: FieldElement::ONE,
     t2d: FieldElement::ZERO,
   };
 
   #[must_use]
-  fn from_affine(x: FieldElement, y: FieldElement) -> Self {
+  fn from_extended(p: &ExtendedPoint) -> Self {
     Self {
-      y_plus_x: y.add(&x),
-      y_minus_x: y.sub(&x),
-      t2d: x.mul(&y).mul(&EDWARDS_D2),
+      y_plus_x: p.y.add(&p.x),
+      y_minus_x: p.y.sub(&p.x),
+      z: p.z,
+      t2d: p.t.mul(&EDWARDS_D2),
     }
   }
 
@@ -79,6 +108,7 @@ impl CachedPoint {
     Self {
       y_plus_x: self.y_minus_x,
       y_minus_x: self.y_plus_x,
+      z: self.z,
       t2d: self.t2d.neg(),
     }
   }
@@ -138,6 +168,28 @@ impl ExtendedPoint {
     let e = b.sub(&a);
     let f = d.sub(&c);
     let g = d.add(&c);
+    let h = b.add(&a);
+
+    Self {
+      x: e.mul(&f),
+      y: g.mul(&h),
+      z: f.mul(&g),
+      t: e.mul(&h),
+    }
+  }
+
+  /// Add a projective cached point (8M — 1 more than affine cached, but
+  /// avoids the inversion needed to build affine runtime tables).
+  #[must_use]
+  fn add_projective_cached(&self, rhs: &ProjectiveCachedPoint) -> Self {
+    let a = self.y.sub(&self.x).mul(&rhs.y_minus_x);
+    let b = self.y.add(&self.x).mul(&rhs.y_plus_x);
+    let c = self.t.mul(&rhs.t2d);
+    let d = self.z.mul(&rhs.z);
+    let d2 = d.add(&d);
+    let e = b.sub(&a);
+    let f = d2.sub(&c);
+    let g = d2.add(&c);
     let h = b.add(&a);
 
     Self {
@@ -232,17 +284,18 @@ impl ExtendedPoint {
     acc
   }
 
-  /// Variable-base signed radix-16 multiplication using a cached runtime table.
+  /// Variable-base signed radix-16 multiplication using a projective runtime
+  /// table (no field inversion).
   #[must_use]
   pub(crate) fn scalar_mul_vartime(&self, scalar: &[u8; 32]) -> Self {
     let digits = scalar::as_radix_16(scalar);
-    let table = cached_multiples(self);
+    let table = projective_cached_multiples(self);
     let mut acc = Self::identity();
 
     for digit in digits.iter().rev().copied() {
       acc = acc.double().double().double().double();
       if digit != 0 {
-        acc = add_signed_cached(acc, &table, digit);
+        acc = add_signed_projective_cached(acc, &table, digit);
       }
     }
 
@@ -317,10 +370,11 @@ impl ExtendedPoint {
   }
 }
 
+/// Add a signed digit from an affine cached table (basepoint table).
 #[inline]
 #[must_use]
 fn add_signed_cached(acc: ExtendedPoint, table: &[CachedPoint; 8], digit: i8) -> ExtendedPoint {
-  let index = usize::from(digit.unsigned_abs()).strict_sub(1);
+  let index = usize::from(digit.unsigned_abs()).wrapping_sub(1);
   let Some(point) = table.get(index).copied() else {
     return acc;
   };
@@ -332,39 +386,34 @@ fn add_signed_cached(acc: ExtendedPoint, table: &[CachedPoint; 8], digit: i8) ->
   }
 }
 
+/// Add a signed digit from a projective cached table (runtime table).
+#[inline]
 #[must_use]
-fn cached_multiples(point: &ExtendedPoint) -> [CachedPoint; 8] {
-  let mut multiples = [ExtendedPoint::identity(); 8];
-  let mut acc = ExtendedPoint::identity();
+fn add_signed_projective_cached(acc: ExtendedPoint, table: &[ProjectiveCachedPoint; 8], digit: i8) -> ExtendedPoint {
+  let index = usize::from(digit.unsigned_abs()).wrapping_sub(1);
+  let Some(point) = table.get(index).copied() else {
+    return acc;
+  };
 
-  for entry in &mut multiples {
-    acc = acc.add(point);
-    *entry = acc;
+  if digit > 0 {
+    acc.add_projective_cached(&point)
+  } else {
+    acc.add_projective_cached(&point.neg())
   }
-
-  cache_points(&multiples)
 }
 
+/// Build a projective cached table of `[1P, 2P, ..., 8P]` without any
+/// field inversion. Each entry stores `(Y+X, Y-X, Z, 2dT)` in extended
+/// projective coordinates.
 #[must_use]
-fn cache_points(points: &[ExtendedPoint; 8]) -> [CachedPoint; 8] {
-  let mut prefixes = [FieldElement::ONE; 8];
-  let mut product = FieldElement::ONE;
+fn projective_cached_multiples(point: &ExtendedPoint) -> [ProjectiveCachedPoint; 8] {
+  let mut out = [ProjectiveCachedPoint::IDENTITY; 8];
+  let mut acc = *point;
+  out[0] = ProjectiveCachedPoint::from_extended(&acc);
 
-  for (prefix, point) in prefixes.iter_mut().zip(points.iter()) {
-    *prefix = product;
-    product = product.mul(&point.z);
-  }
-
-  let mut inv = product.invert();
-  let mut out = [CachedPoint::IDENTITY; 8];
-
-  for ((point, prefix), out_entry) in points.iter().zip(prefixes.iter()).zip(out.iter_mut()).rev() {
-    let inv_z = inv.mul(prefix);
-    inv = inv.mul(&point.z);
-
-    let x = point.x.mul(&inv_z).normalize();
-    let y = point.y.mul(&inv_z).normalize();
-    *out_entry = CachedPoint::from_affine(x, y);
+  for entry in out.iter_mut().skip(1) {
+    acc = acc.add(point);
+    *entry = ProjectiveCachedPoint::from_extended(&acc);
   }
 
   out

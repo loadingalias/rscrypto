@@ -1,19 +1,38 @@
 //! Internal Ed25519 field arithmetic over `2^255 - 19`.
 //!
-//! This is the portable 5x51 radix baseline. It is the boring core that all
-//! later point arithmetic should sit on top of.
+//! This is the portable 5×51 radix baseline. All point arithmetic sits on
+//! top of these operations.
+//!
+//! # Arithmetic convention
+//!
+//! Field arithmetic is modular math (mod 2²⁵⁵ − 19). Per CLAUDE.md rules,
+//! `wrapping_*` is the correct choice for intentional modular arithmetic.
+//! Intermediate u128 accumulators are sized so that overflow is provably
+//! impossible — wrapping semantics are used for consistency, not because
+//! wrap-around actually occurs.
+//!
+//! # Lazy reduction
+//!
+//! `add` is lazy: no carry propagation, limbs may exceed 51 bits.
+//! `sub` uses a 16p bias and a single carry-propagation round.
+//! `mul` and `square` reduce via two carry-propagation rounds on u128
+//! accumulators. This matches the dalek/ref10 strategy and keeps the
+//! hot-path field operations as cheap as possible.
 
 use core::fmt;
 
 use super::constants::FIELD_LIMBS;
 
 const RADIX_BITS: u32 = 51;
-const RADIX: u64 = 1u64 << RADIX_BITS;
-const MASK51: u64 = RADIX - 1;
-const MODULUS_0: u64 = RADIX - 19;
+const MASK51: u64 = (1u64 << RADIX_BITS) - 1;
+const MODULUS_0: u64 = (1u64 << RADIX_BITS) - 19;
 const MODULUS_N: u64 = MASK51;
-const SUB_BIAS_0: u64 = RADIX.strict_mul(2).strict_sub(38);
-const SUB_BIAS_N: u64 = RADIX.strict_mul(2).strict_sub(2);
+
+/// Subtraction bias: 16p in radix-51. Large enough that `self + bias − rhs`
+/// never underflows even when limbs are up to ~55 bits from lazy addition
+/// chains.
+const SUB_BIAS_0: u64 = ((1u64 << RADIX_BITS) - 19).wrapping_mul(16);
+const SUB_BIAS_N: u64 = MASK51.wrapping_mul(16);
 const SQRT_M1: FieldElement = FieldElement::from_limbs([
   1_718_705_420_411_056,
   234_908_883_556_509,
@@ -54,50 +73,56 @@ impl FieldElement {
     &self.0
   }
 
-  /// Add two field elements.
+  /// Add two field elements (lazy — no carry propagation).
   #[inline]
   #[must_use]
   pub(crate) fn add(&self, rhs: &Self) -> Self {
-    let [f0, f1, f2, f3, f4] = self.0;
-    let [g0, g1, g2, g3, g4] = rhs.0;
-
-    Self(reduce_limbs([
-      f0.strict_add(g0),
-      f1.strict_add(g1),
-      f2.strict_add(g2),
-      f3.strict_add(g3),
-      f4.strict_add(g4),
-    ]))
+    Self([
+      self.0[0].wrapping_add(rhs.0[0]),
+      self.0[1].wrapping_add(rhs.0[1]),
+      self.0[2].wrapping_add(rhs.0[2]),
+      self.0[3].wrapping_add(rhs.0[3]),
+      self.0[4].wrapping_add(rhs.0[4]),
+    ])
   }
 
   /// Subtract two field elements modulo `2^255 - 19`.
+  ///
+  /// Adds a 16p bias to guarantee non-negative intermediates, then
+  /// propagates carries once to keep limbs bounded.
   #[inline]
   #[must_use]
   pub(crate) fn sub(&self, rhs: &Self) -> Self {
-    let [f0, f1, f2, f3, f4] = self.0;
-    let [g0, g1, g2, g3, g4] = rhs.0;
-
-    Self(reduce_limbs([
-      f0.strict_add(SUB_BIAS_0).strict_sub(g0),
-      f1.strict_add(SUB_BIAS_N).strict_sub(g1),
-      f2.strict_add(SUB_BIAS_N).strict_sub(g2),
-      f3.strict_add(SUB_BIAS_N).strict_sub(g3),
-      f4.strict_add(SUB_BIAS_N).strict_sub(g4),
+    Self(carry_propagate([
+      self.0[0].wrapping_add(SUB_BIAS_0).wrapping_sub(rhs.0[0]),
+      self.0[1].wrapping_add(SUB_BIAS_N).wrapping_sub(rhs.0[1]),
+      self.0[2].wrapping_add(SUB_BIAS_N).wrapping_sub(rhs.0[2]),
+      self.0[3].wrapping_add(SUB_BIAS_N).wrapping_sub(rhs.0[3]),
+      self.0[4].wrapping_add(SUB_BIAS_N).wrapping_sub(rhs.0[4]),
     ]))
   }
 
   /// Multiply two field elements.
+  ///
+  /// Precomputes `g[i] * 19` at the u64 level so that the reduction trick
+  /// `2^255 ≡ 19 (mod p)` uses a single u64×u64→u128 widening multiply
+  /// instead of a u128×u128 triple multiply.
   #[inline]
   #[must_use]
   pub(crate) fn mul(&self, rhs: &Self) -> Self {
     let [f0, f1, f2, f3, f4] = self.0;
     let [g0, g1, g2, g3, g4] = rhs.0;
 
-    let h0 = mul_acc([(f0, g0, 1), (f1, g4, 19), (f2, g3, 19), (f3, g2, 19), (f4, g1, 19)]);
-    let h1 = mul_acc([(f0, g1, 1), (f1, g0, 1), (f2, g4, 19), (f3, g3, 19), (f4, g2, 19)]);
-    let h2 = mul_acc([(f0, g2, 1), (f1, g1, 1), (f2, g0, 1), (f3, g4, 19), (f4, g3, 19)]);
-    let h3 = mul_acc([(f0, g3, 1), (f1, g2, 1), (f2, g1, 1), (f3, g0, 1), (f4, g4, 19)]);
-    let h4 = mul_acc([(f0, g4, 1), (f1, g3, 1), (f2, g2, 1), (f3, g1, 1), (f4, g0, 1)]);
+    let g1_19 = g1.wrapping_mul(19);
+    let g2_19 = g2.wrapping_mul(19);
+    let g3_19 = g3.wrapping_mul(19);
+    let g4_19 = g4.wrapping_mul(19);
+
+    let h0 = m(f0, g0).wrapping_add(m(f1, g4_19)).wrapping_add(m(f2, g3_19)).wrapping_add(m(f3, g2_19)).wrapping_add(m(f4, g1_19));
+    let h1 = m(f0, g1).wrapping_add(m(f1, g0)).wrapping_add(m(f2, g4_19)).wrapping_add(m(f3, g3_19)).wrapping_add(m(f4, g2_19));
+    let h2 = m(f0, g2).wrapping_add(m(f1, g1)).wrapping_add(m(f2, g0)).wrapping_add(m(f3, g4_19)).wrapping_add(m(f4, g3_19));
+    let h3 = m(f0, g3).wrapping_add(m(f1, g2)).wrapping_add(m(f2, g1)).wrapping_add(m(f3, g0)).wrapping_add(m(f4, g4_19));
+    let h4 = m(f0, g4).wrapping_add(m(f1, g3)).wrapping_add(m(f2, g2)).wrapping_add(m(f3, g1)).wrapping_add(m(f4, g0));
 
     Self(reduce_wide([h0, h1, h2, h3, h4]))
   }
@@ -111,35 +136,19 @@ impl FieldElement {
   pub(crate) fn square(&self) -> Self {
     let [f0, f1, f2, f3, f4] = self.0;
 
-    // Pre-double and pre-reduce to fold the 2× and 19× factors into operands.
-    let f0_2 = f0.strict_mul(2);
-    let f1_2 = f1.strict_mul(2);
-    let f1_38 = f1.strict_mul(38); // 2 × 19
-    let f2_38 = f2.strict_mul(38);
-    let f3_38 = f3.strict_mul(38);
-    let f3_19 = f3.strict_mul(19);
-    let f4_19 = f4.strict_mul(19);
+    let f0_2 = f0.wrapping_mul(2);
+    let f1_2 = f1.wrapping_mul(2);
+    let f1_38 = f1.wrapping_mul(38);
+    let f2_38 = f2.wrapping_mul(38);
+    let f3_38 = f3.wrapping_mul(38);
+    let f3_19 = f3.wrapping_mul(19);
+    let f4_19 = f4.wrapping_mul(19);
 
-    // h0 = f0² + 38·f1·f4 + 38·f2·f3
-    // h1 = 2·f0·f1 + 38·f2·f4 + 19·f3²
-    // h2 = 2·f0·f2 + f1² + 38·f3·f4
-    // h3 = 2·f0·f3 + 2·f1·f2 + 19·f4²
-    // h4 = 2·f0·f4 + 2·f1·f3 + f2²
-    let h0 = wide_mul(f0, f0)
-      .strict_add(wide_mul(f1_38, f4))
-      .strict_add(wide_mul(f2_38, f3));
-    let h1 = wide_mul(f0_2, f1)
-      .strict_add(wide_mul(f2_38, f4))
-      .strict_add(wide_mul(f3_19, f3));
-    let h2 = wide_mul(f0_2, f2)
-      .strict_add(wide_mul(f1, f1))
-      .strict_add(wide_mul(f3_38, f4));
-    let h3 = wide_mul(f0_2, f3)
-      .strict_add(wide_mul(f1_2, f2))
-      .strict_add(wide_mul(f4_19, f4));
-    let h4 = wide_mul(f0_2, f4)
-      .strict_add(wide_mul(f1_2, f3))
-      .strict_add(wide_mul(f2, f2));
+    let h0 = m(f0, f0).wrapping_add(m(f1_38, f4)).wrapping_add(m(f2_38, f3));
+    let h1 = m(f0_2, f1).wrapping_add(m(f2_38, f4)).wrapping_add(m(f3_19, f3));
+    let h2 = m(f0_2, f2).wrapping_add(m(f1, f1)).wrapping_add(m(f3_38, f4));
+    let h3 = m(f0_2, f3).wrapping_add(m(f1_2, f2)).wrapping_add(m(f4_19, f4));
+    let h4 = m(f0_2, f4).wrapping_add(m(f1_2, f3)).wrapping_add(m(f2, f2));
 
     Self(reduce_wide([h0, h1, h2, h3, h4]))
   }
@@ -162,7 +171,9 @@ impl FieldElement {
   #[inline]
   #[must_use]
   pub(crate) fn normalize(&self) -> Self {
-    let reduced = reduce_limbs(self.0);
+    // Two carry rounds to fully reduce potentially wide limbs from lazy
+    // add chains, then conditional subtraction of the modulus.
+    let reduced = carry_propagate(carry_propagate(self.0));
     let candidate = subtract_modulus(reduced);
     let use_candidate = u64::MAX.wrapping_mul(u64::from(candidate.1));
     let keep_reduced = !use_candidate;
@@ -190,7 +201,7 @@ impl FieldElement {
       while acc_bits < RADIX_BITS {
         if let Some(byte) = byte_iter.next() {
           acc |= u128::from(byte) << acc_bits;
-          acc_bits = acc_bits.strict_add(8);
+          acc_bits = acc_bits.wrapping_add(8);
         } else {
           break;
         }
@@ -198,7 +209,7 @@ impl FieldElement {
 
       *limb = (acc & u128::from(MASK51)) as u64;
       acc >>= RADIX_BITS;
-      acc_bits = acc_bits.strict_sub(RADIX_BITS);
+      acc_bits = acc_bits.wrapping_sub(RADIX_BITS);
     }
 
     if acc != 0 || byte_iter.next().is_some() {
@@ -224,14 +235,14 @@ impl FieldElement {
 
     for &limb in canonical.0.iter() {
       acc |= u128::from(limb) << acc_bits;
-      acc_bits = acc_bits.strict_add(RADIX_BITS);
+      acc_bits = acc_bits.wrapping_add(RADIX_BITS);
 
       while acc_bits >= 8 {
         if let Some(byte) = out_iter.next() {
           *byte = acc as u8;
         }
         acc >>= 8;
-        acc_bits = acc_bits.strict_sub(8);
+        acc_bits = acc_bits.wrapping_sub(8);
       }
     }
 
@@ -273,7 +284,7 @@ impl FieldElement {
     let mut acc = *self;
     while k > 0 {
       acc = acc.square();
-      k = k.strict_sub(1);
+      k = k.wrapping_sub(1);
     }
     acc
   }
@@ -347,72 +358,50 @@ impl fmt::Debug for FieldElement {
   }
 }
 
-#[inline]
+/// Widening multiply: u64 × u64 → u128.
+#[inline(always)]
 #[must_use]
-fn wide_mul(a: u64, b: u64) -> u128 {
-  u128::from(a).strict_mul(u128::from(b))
+fn m(a: u64, b: u64) -> u128 {
+  (a as u128).wrapping_mul(b as u128)
 }
 
-#[inline]
-#[must_use]
-fn mul_acc(terms: [(u64, u64, u64); FIELD_LIMBS]) -> u128 {
-  let mut acc = 0u128;
-  for (left, right, scale) in terms {
-    acc = acc.strict_add(
-      u128::from(left)
-        .strict_mul(u128::from(right))
-        .strict_mul(u128::from(scale)),
-    );
-  }
-  acc
-}
-
+/// Two-round carry propagation on u128 accumulators from mul/square.
 #[inline]
 #[must_use]
 fn reduce_wide(wide: [u128; FIELD_LIMBS]) -> [u64; FIELD_LIMBS] {
   let [mut h0, mut h1, mut h2, mut h3, mut h4] = wide;
   let mask = u128::from(MASK51);
 
-  propagate_carries(&mut h0, &mut h1, &mut h2, &mut h3, &mut h4, mask);
-  propagate_carries(&mut h0, &mut h1, &mut h2, &mut h3, &mut h4, mask);
+  // Round 1: the wrap-around carry (h4 → h0 × 19) may leave h0 wide.
+  h1 = h1.wrapping_add(h0 >> RADIX_BITS); h0 &= mask;
+  h2 = h2.wrapping_add(h1 >> RADIX_BITS); h1 &= mask;
+  h3 = h3.wrapping_add(h2 >> RADIX_BITS); h2 &= mask;
+  h4 = h4.wrapping_add(h3 >> RADIX_BITS); h3 &= mask;
+  h0 = h0.wrapping_add((h4 >> RADIX_BITS).wrapping_mul(19)); h4 &= mask;
+
+  // Round 2: flush the residual carry from round 1.
+  h1 = h1.wrapping_add(h0 >> RADIX_BITS); h0 &= mask;
+  h2 = h2.wrapping_add(h1 >> RADIX_BITS); h1 &= mask;
+  h3 = h3.wrapping_add(h2 >> RADIX_BITS); h2 &= mask;
+  h4 = h4.wrapping_add(h3 >> RADIX_BITS); h3 &= mask;
+  h0 = h0.wrapping_add((h4 >> RADIX_BITS).wrapping_mul(19)); h4 &= mask;
 
   [h0 as u64, h1 as u64, h2 as u64, h3 as u64, h4 as u64]
 }
 
+/// Single-round carry propagation on u64 limbs (sub output, normalize).
 #[inline]
 #[must_use]
-fn reduce_limbs(limbs: [u64; FIELD_LIMBS]) -> [u64; FIELD_LIMBS] {
-  let [h0, h1, h2, h3, h4] = limbs;
-  reduce_wide([
-    u128::from(h0),
-    u128::from(h1),
-    u128::from(h2),
-    u128::from(h3),
-    u128::from(h4),
-  ])
-}
+fn carry_propagate(limbs: [u64; FIELD_LIMBS]) -> [u64; FIELD_LIMBS] {
+  let [mut l0, mut l1, mut l2, mut l3, mut l4] = limbs;
 
-#[inline]
-fn propagate_carries(h0: &mut u128, h1: &mut u128, h2: &mut u128, h3: &mut u128, h4: &mut u128, mask: u128) {
-  let carry0 = *h0 >> RADIX_BITS;
-  *h1 = h1.strict_add(carry0);
-  *h0 &= mask;
+  l1 = l1.wrapping_add(l0 >> RADIX_BITS); l0 &= MASK51;
+  l2 = l2.wrapping_add(l1 >> RADIX_BITS); l1 &= MASK51;
+  l3 = l3.wrapping_add(l2 >> RADIX_BITS); l2 &= MASK51;
+  l4 = l4.wrapping_add(l3 >> RADIX_BITS); l3 &= MASK51;
+  l0 = l0.wrapping_add((l4 >> RADIX_BITS).wrapping_mul(19)); l4 &= MASK51;
 
-  let carry1 = *h1 >> RADIX_BITS;
-  *h2 = h2.strict_add(carry1);
-  *h1 &= mask;
-
-  let carry2 = *h2 >> RADIX_BITS;
-  *h3 = h3.strict_add(carry2);
-  *h2 &= mask;
-
-  let carry3 = *h3 >> RADIX_BITS;
-  *h4 = h4.strict_add(carry3);
-  *h3 &= mask;
-
-  let carry4 = *h4 >> RADIX_BITS;
-  *h0 = h0.strict_add(carry4.strict_mul(19));
-  *h4 &= mask;
+  [l0, l1, l2, l3, l4]
 }
 
 #[inline]
@@ -431,13 +420,13 @@ fn subtract_modulus(limbs: [u64; FIELD_LIMBS]) -> ([u64; FIELD_LIMBS], bool) {
 #[inline]
 #[must_use]
 fn sub_limb(lhs: u64, rhs: u64, borrow: bool) -> (u64, bool) {
-  let subtrahend = u128::from(rhs).strict_add(u128::from(u8::from(borrow)));
-  let lhs = u128::from(lhs);
+  let subtrahend = u128::from(rhs).wrapping_add(u128::from(u8::from(borrow)));
+  let lhs_wide = u128::from(lhs);
 
-  if lhs >= subtrahend {
-    ((lhs.strict_sub(subtrahend)) as u64, false)
+  if lhs_wide >= subtrahend {
+    ((lhs_wide.wrapping_sub(subtrahend)) as u64, false)
   } else {
-    ((lhs.strict_add(u128::from(RADIX)).strict_sub(subtrahend)) as u64, true)
+    ((lhs_wide.wrapping_add(u128::from(1u64 << RADIX_BITS)).wrapping_sub(subtrahend)) as u64, true)
   }
 }
 

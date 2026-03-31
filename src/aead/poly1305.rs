@@ -797,8 +797,10 @@ mod riscv64_vector {
 
 #[cfg(test)]
 mod tests {
-  use super::{ComputeBlockFn, State, authenticate, authenticate_aead_with};
+  use super::authenticate;
   use crate::aead::targets::AeadPrimitive;
+  #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+  use super::{ComputeBlockFn, State, authenticate_aead_with};
   #[cfg(target_arch = "aarch64")]
   use crate::platform::caps::aarch64;
   #[cfg(target_arch = "x86_64")]

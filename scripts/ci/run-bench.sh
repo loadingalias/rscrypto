@@ -144,7 +144,14 @@ DEFAULT_AUTH_ALGOS=(
   "ed25519"
 )
 
-ALL_KNOWN_ALGOS=("${DEFAULT_CHECKSUM_ALGOS[@]}" "${DEFAULT_HASH_ALGOS[@]}" "${DEFAULT_AUTH_ALGOS[@]}")
+DEFAULT_AEAD_ALGOS=(
+  "xchacha20-poly1305"
+  "chacha20-poly1305"
+  "aes-256-gcm-siv"
+  "aes-256-gcm"
+)
+
+ALL_KNOWN_ALGOS=("${DEFAULT_CHECKSUM_ALGOS[@]}" "${DEFAULT_HASH_ALGOS[@]}" "${DEFAULT_AUTH_ALGOS[@]}" "${DEFAULT_AEAD_ALGOS[@]}")
 
 checksum_filter_token() {
   local algo="${1:-}"
@@ -188,12 +195,24 @@ auth_filter_token() {
   esac
 }
 
+aead_filter_token() {
+  local algo="${1:-}"
+  case "$algo" in
+    xchacha20-poly1305) echo "xchacha20-poly1305" ;;
+    chacha20-poly1305) echo "chacha20-poly1305" ;;
+    aes-256-gcm-siv) echo "aes-256-gcm-siv" ;;
+    aes-256-gcm) echo "aes-256-gcm" ;;
+    *) echo "$algo" ;;
+  esac
+}
+
 default_benches_for_crate() {
   local crate="${1:-}"
   case "$crate" in
     checksum) echo "crc" ;;
     hashes) echo "sha2,sha3,ascon,xxh3,rapidhash,blake3" ;;
     auth) echo "auth" ;;
+    aead) echo "aead" ;;
     *) echo "" ;;
   esac
 }
@@ -241,6 +260,14 @@ append_algo_plan_row() {
     bench="auth"
     token="${raw_filter:-$(auth_filter_token "$algo")}"
     PLAN_ROWS+=("$crate|$bench|$token")
+    return 0
+  fi
+
+  if array_contains "$algo" "${DEFAULT_AEAD_ALGOS[@]}"; then
+    crate="aead"
+    bench="aead"
+    token="${raw_filter:-$(aead_filter_token "$algo")}"
+    PLAN_ROWS+=("$crate|$bench|$token")
   fi
 }
 
@@ -265,11 +292,12 @@ expand_bench_shorthand() {
   IFS=',' read -r -a tokens <<< "$raw"
   for token in "${tokens[@]}"; do
     case "$token" in
-      comp) expanded+=("crc" "sha2" "sha3" "ascon" "auth" "xxh3" "rapidhash" "blake3") ;;
+      comp) expanded+=("crc" "sha2" "sha3" "ascon" "auth" "aead" "xxh3" "rapidhash" "blake3") ;;
       kernels) expanded+=("blake3") ;;
       checksum_comp|checksum_kernels) expanded+=("crc") ;;
       hashes_comp) expanded+=("sha2" "sha3" "ascon" "xxh3" "rapidhash" "blake3") ;;
       auth_comp) expanded+=("auth") ;;
+      aead_comp) expanded+=("aead") ;;
       hashes_kernels) expanded+=("blake3") ;;
       *)       expanded+=("$token") ;;
     esac
@@ -505,6 +533,9 @@ if [[ -n "$ONLY_INPUT" ]]; then
       auth)
         for algo in "${DEFAULT_AUTH_ALGOS[@]}"; do append_unique "$algo" SELECTED_ALGOS; done
         ;;
+      aead)
+        for algo in "${DEFAULT_AEAD_ALGOS[@]}"; do append_unique "$algo" SELECTED_ALGOS; done
+        ;;
       checksum|checksums)
         for algo in "${DEFAULT_CHECKSUM_ALGOS[@]}"; do append_unique "$algo" SELECTED_ALGOS; done
         ;;
@@ -587,13 +618,15 @@ if [[ "${#RAW_FILTERS[@]}" -gt 0 ]]; then
           append_unique "hashes" raw_crates
         elif array_contains "$algo" "${DEFAULT_AUTH_ALGOS[@]}"; then
           append_unique "auth" raw_crates
+        elif array_contains "$algo" "${DEFAULT_AEAD_ALGOS[@]}"; then
+          append_unique "aead" raw_crates
         fi
       done
       if [[ "${#raw_crates[@]}" -eq 0 ]]; then
-        raw_crates=("checksum" "hashes" "auth")
+        raw_crates=("checksum" "hashes" "auth" "aead")
       fi
     else
-      raw_crates=("checksum" "hashes" "auth")
+      raw_crates=("checksum" "hashes" "auth" "aead")
     fi
 
     if [[ -n "$BENCHES_INPUT" ]]; then
