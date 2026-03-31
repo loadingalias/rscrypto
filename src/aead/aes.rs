@@ -43,9 +43,7 @@ mod ni {
     pub(super) fn zeroize(&mut self) {
       // SAFETY: `self.rk` is a valid, aligned, fully-initialized [__m128i; 15].
       // Reinterpreting as a byte slice for volatile zeroization is sound.
-      let bytes = unsafe {
-        core::slice::from_raw_parts_mut(self.rk.as_mut_ptr().cast::<u8>(), 15usize.strict_mul(16))
-      };
+      let bytes = unsafe { core::slice::from_raw_parts_mut(self.rk.as_mut_ptr().cast::<u8>(), 15usize.strict_mul(16)) };
       crate::traits::ct::zeroize(bytes);
     }
   }
