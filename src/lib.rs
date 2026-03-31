@@ -226,8 +226,8 @@ pub mod hashes;
 
 #[cfg(feature = "aead")]
 pub use aead::{
-  ChaCha20Poly1305, ChaCha20Poly1305Key, ChaCha20Poly1305Tag, XChaCha20Poly1305, XChaCha20Poly1305Key,
-  XChaCha20Poly1305Tag,
+  Aes256GcmSiv, Aes256GcmSivKey, Aes256GcmSivTag, ChaCha20Poly1305, ChaCha20Poly1305Key, ChaCha20Poly1305Tag,
+  XChaCha20Poly1305, XChaCha20Poly1305Key, XChaCha20Poly1305Tag,
 };
 #[cfg(feature = "auth")]
 pub use auth::{

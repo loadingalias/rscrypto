@@ -843,10 +843,12 @@ mod tests {
     );
   }
 
+  #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
   fn authenticate_aead_portable(aad: &[u8], ciphertext: &[u8], key: &[u8; 32]) -> [u8; 16] {
     authenticate_aead_with(aad, ciphertext, key, State::compute_block_portable)
   }
 
+  #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
   fn exercise_backend(backend: ComputeBlockFn) {
     let key = [0x5au8; 32];
     for aad_len in [0usize, 1, 15, 16, 17, 31, 32, 33, 80] {

@@ -1195,7 +1195,9 @@ mod riscv64_vector {
 
 #[cfg(test)]
 mod tests {
-  use super::{KEY_SIZE, NONCE_SIZE, block, hchacha20, xor_keystream, xor_keystream_portable};
+  #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+  use super::xor_keystream_portable;
+  use super::{KEY_SIZE, NONCE_SIZE, block, hchacha20, xor_keystream};
   use crate::aead::targets::AeadPrimitive;
   #[cfg(target_arch = "aarch64")]
   use crate::platform::caps::aarch64;
