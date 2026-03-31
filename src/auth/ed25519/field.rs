@@ -118,11 +118,31 @@ impl FieldElement {
     let g3_19 = g3.wrapping_mul(19);
     let g4_19 = g4.wrapping_mul(19);
 
-    let h0 = m(f0, g0).wrapping_add(m(f1, g4_19)).wrapping_add(m(f2, g3_19)).wrapping_add(m(f3, g2_19)).wrapping_add(m(f4, g1_19));
-    let h1 = m(f0, g1).wrapping_add(m(f1, g0)).wrapping_add(m(f2, g4_19)).wrapping_add(m(f3, g3_19)).wrapping_add(m(f4, g2_19));
-    let h2 = m(f0, g2).wrapping_add(m(f1, g1)).wrapping_add(m(f2, g0)).wrapping_add(m(f3, g4_19)).wrapping_add(m(f4, g3_19));
-    let h3 = m(f0, g3).wrapping_add(m(f1, g2)).wrapping_add(m(f2, g1)).wrapping_add(m(f3, g0)).wrapping_add(m(f4, g4_19));
-    let h4 = m(f0, g4).wrapping_add(m(f1, g3)).wrapping_add(m(f2, g2)).wrapping_add(m(f3, g1)).wrapping_add(m(f4, g0));
+    let h0 = m(f0, g0)
+      .wrapping_add(m(f1, g4_19))
+      .wrapping_add(m(f2, g3_19))
+      .wrapping_add(m(f3, g2_19))
+      .wrapping_add(m(f4, g1_19));
+    let h1 = m(f0, g1)
+      .wrapping_add(m(f1, g0))
+      .wrapping_add(m(f2, g4_19))
+      .wrapping_add(m(f3, g3_19))
+      .wrapping_add(m(f4, g2_19));
+    let h2 = m(f0, g2)
+      .wrapping_add(m(f1, g1))
+      .wrapping_add(m(f2, g0))
+      .wrapping_add(m(f3, g4_19))
+      .wrapping_add(m(f4, g3_19));
+    let h3 = m(f0, g3)
+      .wrapping_add(m(f1, g2))
+      .wrapping_add(m(f2, g1))
+      .wrapping_add(m(f3, g0))
+      .wrapping_add(m(f4, g4_19));
+    let h4 = m(f0, g4)
+      .wrapping_add(m(f1, g3))
+      .wrapping_add(m(f2, g2))
+      .wrapping_add(m(f3, g1))
+      .wrapping_add(m(f4, g0));
 
     Self(reduce_wide([h0, h1, h2, h3, h4]))
   }
@@ -373,18 +393,28 @@ fn reduce_wide(wide: [u128; FIELD_LIMBS]) -> [u64; FIELD_LIMBS] {
   let mask = u128::from(MASK51);
 
   // Round 1: the wrap-around carry (h4 → h0 × 19) may leave h0 wide.
-  h1 = h1.wrapping_add(h0 >> RADIX_BITS); h0 &= mask;
-  h2 = h2.wrapping_add(h1 >> RADIX_BITS); h1 &= mask;
-  h3 = h3.wrapping_add(h2 >> RADIX_BITS); h2 &= mask;
-  h4 = h4.wrapping_add(h3 >> RADIX_BITS); h3 &= mask;
-  h0 = h0.wrapping_add((h4 >> RADIX_BITS).wrapping_mul(19)); h4 &= mask;
+  h1 = h1.wrapping_add(h0 >> RADIX_BITS);
+  h0 &= mask;
+  h2 = h2.wrapping_add(h1 >> RADIX_BITS);
+  h1 &= mask;
+  h3 = h3.wrapping_add(h2 >> RADIX_BITS);
+  h2 &= mask;
+  h4 = h4.wrapping_add(h3 >> RADIX_BITS);
+  h3 &= mask;
+  h0 = h0.wrapping_add((h4 >> RADIX_BITS).wrapping_mul(19));
+  h4 &= mask;
 
   // Round 2: flush the residual carry from round 1.
-  h1 = h1.wrapping_add(h0 >> RADIX_BITS); h0 &= mask;
-  h2 = h2.wrapping_add(h1 >> RADIX_BITS); h1 &= mask;
-  h3 = h3.wrapping_add(h2 >> RADIX_BITS); h2 &= mask;
-  h4 = h4.wrapping_add(h3 >> RADIX_BITS); h3 &= mask;
-  h0 = h0.wrapping_add((h4 >> RADIX_BITS).wrapping_mul(19)); h4 &= mask;
+  h1 = h1.wrapping_add(h0 >> RADIX_BITS);
+  h0 &= mask;
+  h2 = h2.wrapping_add(h1 >> RADIX_BITS);
+  h1 &= mask;
+  h3 = h3.wrapping_add(h2 >> RADIX_BITS);
+  h2 &= mask;
+  h4 = h4.wrapping_add(h3 >> RADIX_BITS);
+  h3 &= mask;
+  h0 = h0.wrapping_add((h4 >> RADIX_BITS).wrapping_mul(19));
+  h4 &= mask;
 
   [h0 as u64, h1 as u64, h2 as u64, h3 as u64, h4 as u64]
 }
@@ -395,11 +425,16 @@ fn reduce_wide(wide: [u128; FIELD_LIMBS]) -> [u64; FIELD_LIMBS] {
 fn carry_propagate(limbs: [u64; FIELD_LIMBS]) -> [u64; FIELD_LIMBS] {
   let [mut l0, mut l1, mut l2, mut l3, mut l4] = limbs;
 
-  l1 = l1.wrapping_add(l0 >> RADIX_BITS); l0 &= MASK51;
-  l2 = l2.wrapping_add(l1 >> RADIX_BITS); l1 &= MASK51;
-  l3 = l3.wrapping_add(l2 >> RADIX_BITS); l2 &= MASK51;
-  l4 = l4.wrapping_add(l3 >> RADIX_BITS); l3 &= MASK51;
-  l0 = l0.wrapping_add((l4 >> RADIX_BITS).wrapping_mul(19)); l4 &= MASK51;
+  l1 = l1.wrapping_add(l0 >> RADIX_BITS);
+  l0 &= MASK51;
+  l2 = l2.wrapping_add(l1 >> RADIX_BITS);
+  l1 &= MASK51;
+  l3 = l3.wrapping_add(l2 >> RADIX_BITS);
+  l2 &= MASK51;
+  l4 = l4.wrapping_add(l3 >> RADIX_BITS);
+  l3 &= MASK51;
+  l0 = l0.wrapping_add((l4 >> RADIX_BITS).wrapping_mul(19));
+  l4 &= MASK51;
 
   [l0, l1, l2, l3, l4]
 }
@@ -426,7 +461,12 @@ fn sub_limb(lhs: u64, rhs: u64, borrow: bool) -> (u64, bool) {
   if lhs_wide >= subtrahend {
     ((lhs_wide.wrapping_sub(subtrahend)) as u64, false)
   } else {
-    ((lhs_wide.wrapping_add(u128::from(1u64 << RADIX_BITS)).wrapping_sub(subtrahend)) as u64, true)
+    (
+      (lhs_wide
+        .wrapping_add(u128::from(1u64 << RADIX_BITS))
+        .wrapping_sub(subtrahend)) as u64,
+      true,
+    )
   }
 }
 

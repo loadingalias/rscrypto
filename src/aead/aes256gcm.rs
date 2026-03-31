@@ -232,13 +232,7 @@ fn make_j0(nonce: &Nonce96) -> [u8; 16] {
 /// GHASH processes: padded AAD || padded ciphertext || length block,
 /// where the length block is [len(A) in bits as u64 BE || len(C) in bits as u64 BE].
 #[inline]
-fn compute_tag(
-  ek: &aes::Aes256EncKey,
-  h: &[u8; 16],
-  j0: &[u8; 16],
-  aad: &[u8],
-  ciphertext: &[u8],
-) -> [u8; TAG_SIZE] {
+fn compute_tag(ek: &aes::Aes256EncKey, h: &[u8; 16], j0: &[u8; 16], aad: &[u8], ciphertext: &[u8]) -> [u8; TAG_SIZE] {
   // GHASH(H, A, C)
   let mut gh = ghash::Ghash::new(h);
 

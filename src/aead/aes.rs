@@ -44,9 +44,7 @@ mod ni {
       // SAFETY: `self.rk` is a valid, aligned, fully-initialized array.
       // Casting to a byte slice and using ct::zeroize ensures volatile
       // writes that the compiler cannot elide.
-      let bytes = unsafe {
-        core::slice::from_raw_parts_mut(self.rk.as_mut_ptr().cast::<u8>(), 15usize.strict_mul(16))
-      };
+      let bytes = unsafe { core::slice::from_raw_parts_mut(self.rk.as_mut_ptr().cast::<u8>(), 15usize.strict_mul(16)) };
       crate::traits::ct::zeroize(bytes);
     }
   }
@@ -558,7 +556,12 @@ pub(crate) fn aes256_ctr32_encrypt(ek: &Aes256EncKey, initial_counter: &[u8; BLO
 pub(crate) fn aes256_ctr32_encrypt_be(ek: &Aes256EncKey, initial_counter: &[u8; BLOCK_SIZE], data: &mut [u8]) {
   let mut counter_block = *initial_counter;
   // Maintain the 32-bit counter separately to avoid per-block BE decode/encode.
-  let mut ctr = u32::from_be_bytes([counter_block[12], counter_block[13], counter_block[14], counter_block[15]]);
+  let mut ctr = u32::from_be_bytes([
+    counter_block[12],
+    counter_block[13],
+    counter_block[14],
+    counter_block[15],
+  ]);
   let mut offset = 0usize;
 
   while offset < data.len() {
