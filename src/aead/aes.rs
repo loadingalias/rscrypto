@@ -55,56 +55,53 @@ mod ni {
   /// Caller must ensure the CPU supports AES-NI (`target_feature = "aes"`).
   #[target_feature(enable = "aes,sse2")]
   pub(super) unsafe fn expand_key(key: &[u8; 32]) -> NiRoundKeys {
-    let mut rk = [_mm_setzero_si128(); 15];
+    // SAFETY: target_feature gate guarantees AES-NI + SSE2.
+    unsafe {
+      let mut rk = [_mm_setzero_si128(); 15];
 
-    // Load the 256-bit key as two 128-bit halves.
-    rk[0] = _mm_loadu_si128(key.as_ptr().cast());
-    rk[1] = _mm_loadu_si128(key[16..].as_ptr().cast());
+      rk[0] = _mm_loadu_si128(key.as_ptr().cast());
+      rk[1] = _mm_loadu_si128(key[16..].as_ptr().cast());
 
-    // Even-index expansion: AESKEYGENASSIST on the previous odd key,
-    // broadcast word 3 (shuffle 0xFF), then XOR cascade with previous even key.
-    macro_rules! expand_even {
-      ($idx:expr, $prev_even:expr, $prev_odd:expr, $rcon:expr) => {{
-        let assist = _mm_aeskeygenassist_si128($prev_odd, $rcon);
-        let assist = _mm_shuffle_epi32(assist, 0xFF);
-        let mut t = $prev_even;
-        t = _mm_xor_si128(t, _mm_slli_si128(t, 4));
-        t = _mm_xor_si128(t, _mm_slli_si128(t, 4));
-        t = _mm_xor_si128(t, _mm_slli_si128(t, 4));
-        rk[$idx] = _mm_xor_si128(t, assist);
-      }};
+      macro_rules! expand_even {
+        ($idx:expr, $prev_even:expr, $prev_odd:expr, $rcon:expr) => {{
+          let assist = _mm_aeskeygenassist_si128($prev_odd, $rcon);
+          let assist = _mm_shuffle_epi32(assist, 0xFF);
+          let mut t = $prev_even;
+          t = _mm_xor_si128(t, _mm_slli_si128(t, 4));
+          t = _mm_xor_si128(t, _mm_slli_si128(t, 4));
+          t = _mm_xor_si128(t, _mm_slli_si128(t, 4));
+          rk[$idx] = _mm_xor_si128(t, assist);
+        }};
+      }
+
+      macro_rules! expand_odd {
+        ($idx:expr, $prev_even:expr, $prev_odd:expr) => {{
+          let assist = _mm_aeskeygenassist_si128($prev_even, 0x00);
+          let assist = _mm_shuffle_epi32(assist, 0xAA);
+          let mut t = $prev_odd;
+          t = _mm_xor_si128(t, _mm_slli_si128(t, 4));
+          t = _mm_xor_si128(t, _mm_slli_si128(t, 4));
+          t = _mm_xor_si128(t, _mm_slli_si128(t, 4));
+          rk[$idx] = _mm_xor_si128(t, assist);
+        }};
+      }
+
+      expand_even!(2, rk[0], rk[1], 0x01);
+      expand_odd!(3, rk[2], rk[1]);
+      expand_even!(4, rk[2], rk[3], 0x02);
+      expand_odd!(5, rk[4], rk[3]);
+      expand_even!(6, rk[4], rk[5], 0x04);
+      expand_odd!(7, rk[6], rk[5]);
+      expand_even!(8, rk[6], rk[7], 0x08);
+      expand_odd!(9, rk[8], rk[7]);
+      expand_even!(10, rk[8], rk[9], 0x10);
+      expand_odd!(11, rk[10], rk[9]);
+      expand_even!(12, rk[10], rk[11], 0x20);
+      expand_odd!(13, rk[12], rk[11]);
+      expand_even!(14, rk[12], rk[13], 0x40);
+
+      NiRoundKeys { rk }
     }
-
-    // Odd-index expansion: AESKEYGENASSIST on the previous even key with RCON=0,
-    // broadcast word 2 (shuffle 0xAA), then XOR cascade with previous odd key.
-    macro_rules! expand_odd {
-      ($idx:expr, $prev_even:expr, $prev_odd:expr) => {{
-        let assist = _mm_aeskeygenassist_si128($prev_even, 0x00);
-        let assist = _mm_shuffle_epi32(assist, 0xAA);
-        let mut t = $prev_odd;
-        t = _mm_xor_si128(t, _mm_slli_si128(t, 4));
-        t = _mm_xor_si128(t, _mm_slli_si128(t, 4));
-        t = _mm_xor_si128(t, _mm_slli_si128(t, 4));
-        rk[$idx] = _mm_xor_si128(t, assist);
-      }};
-    }
-
-    // 7 even expansions (RCON: 0x01..0x40) + 6 odd expansions = 13 derived keys.
-    expand_even!(2, rk[0], rk[1], 0x01);
-    expand_odd!(3, rk[2], rk[1]);
-    expand_even!(4, rk[2], rk[3], 0x02);
-    expand_odd!(5, rk[4], rk[3]);
-    expand_even!(6, rk[4], rk[5], 0x04);
-    expand_odd!(7, rk[6], rk[5]);
-    expand_even!(8, rk[6], rk[7], 0x08);
-    expand_odd!(9, rk[8], rk[7]);
-    expand_even!(10, rk[8], rk[9], 0x10);
-    expand_odd!(11, rk[10], rk[9]);
-    expand_even!(12, rk[10], rk[11], 0x20);
-    expand_odd!(13, rk[12], rk[11]);
-    expand_even!(14, rk[12], rk[13], 0x40);
-
-    NiRoundKeys { rk }
   }
 
   /// Encrypt a single 16-byte block using AES-256 with AES-NI.
@@ -113,26 +110,29 @@ mod ni {
   /// Caller must ensure the CPU supports AES-NI (`target_feature = "aes"`).
   #[target_feature(enable = "aes,sse2")]
   pub(super) unsafe fn encrypt_block(keys: &NiRoundKeys, block: &mut [u8; 16]) {
-    let k = &keys.rk;
-    let mut state = _mm_loadu_si128(block.as_ptr().cast());
+    // SAFETY: target_feature gate guarantees AES-NI + SSE2.
+    unsafe {
+      let k = &keys.rk;
+      let mut state = _mm_loadu_si128(block.as_ptr().cast());
 
-    state = _mm_xor_si128(state, k[0]);
-    state = _mm_aesenc_si128(state, k[1]);
-    state = _mm_aesenc_si128(state, k[2]);
-    state = _mm_aesenc_si128(state, k[3]);
-    state = _mm_aesenc_si128(state, k[4]);
-    state = _mm_aesenc_si128(state, k[5]);
-    state = _mm_aesenc_si128(state, k[6]);
-    state = _mm_aesenc_si128(state, k[7]);
-    state = _mm_aesenc_si128(state, k[8]);
-    state = _mm_aesenc_si128(state, k[9]);
-    state = _mm_aesenc_si128(state, k[10]);
-    state = _mm_aesenc_si128(state, k[11]);
-    state = _mm_aesenc_si128(state, k[12]);
-    state = _mm_aesenc_si128(state, k[13]);
-    state = _mm_aesenclast_si128(state, k[14]);
+      state = _mm_xor_si128(state, k[0]);
+      state = _mm_aesenc_si128(state, k[1]);
+      state = _mm_aesenc_si128(state, k[2]);
+      state = _mm_aesenc_si128(state, k[3]);
+      state = _mm_aesenc_si128(state, k[4]);
+      state = _mm_aesenc_si128(state, k[5]);
+      state = _mm_aesenc_si128(state, k[6]);
+      state = _mm_aesenc_si128(state, k[7]);
+      state = _mm_aesenc_si128(state, k[8]);
+      state = _mm_aesenc_si128(state, k[9]);
+      state = _mm_aesenc_si128(state, k[10]);
+      state = _mm_aesenc_si128(state, k[11]);
+      state = _mm_aesenc_si128(state, k[12]);
+      state = _mm_aesenc_si128(state, k[13]);
+      state = _mm_aesenclast_si128(state, k[14]);
 
-    _mm_storeu_si128(block.as_mut_ptr().cast(), state);
+      _mm_storeu_si128(block.as_mut_ptr().cast(), state);
+    }
   }
 }
 
