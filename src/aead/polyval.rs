@@ -40,26 +40,29 @@ mod pclmul {
   /// Caller must ensure the CPU supports PCLMULQDQ and SSE2.
   #[target_feature(enable = "pclmulqdq,sse2")]
   pub(super) unsafe fn clmul128_reduce(a: u128, b: u128) -> u128 {
-    let a_xmm = _mm_loadu_si128((&a as *const u128).cast());
-    let b_xmm = _mm_loadu_si128((&b as *const u128).cast());
+    // SAFETY: target_feature gate guarantees PCLMULQDQ + SSE2.
+    unsafe {
+      let a_xmm = _mm_loadu_si128((&a as *const u128).cast());
+      let b_xmm = _mm_loadu_si128((&b as *const u128).cast());
 
-    // Schoolbook 128×128 → 256-bit product (4 PCLMULQDQ instructions).
-    let lo = _mm_clmulepi64_si128(a_xmm, b_xmm, 0x00); // a_lo × b_lo
-    let hi = _mm_clmulepi64_si128(a_xmm, b_xmm, 0x11); // a_hi × b_hi
-    let m1 = _mm_clmulepi64_si128(a_xmm, b_xmm, 0x10); // a_hi × b_lo
-    let m2 = _mm_clmulepi64_si128(a_xmm, b_xmm, 0x01); // a_lo × b_hi
-    let mid = _mm_xor_si128(m1, m2);
+      // Schoolbook 128×128 → 256-bit product (4 PCLMULQDQ instructions).
+      let lo = _mm_clmulepi64_si128(a_xmm, b_xmm, 0x00); // a_lo × b_lo
+      let hi = _mm_clmulepi64_si128(a_xmm, b_xmm, 0x11); // a_hi × b_hi
+      let m1 = _mm_clmulepi64_si128(a_xmm, b_xmm, 0x10); // a_hi × b_lo
+      let m2 = _mm_clmulepi64_si128(a_xmm, b_xmm, 0x01); // a_lo × b_hi
+      let mid = _mm_xor_si128(m1, m2);
 
-    // Assemble 256-bit product [lo_128 : hi_128].
-    let lo_128 = _mm_xor_si128(lo, _mm_slli_si128(mid, 8));
-    let hi_128 = _mm_xor_si128(hi, _mm_srli_si128(mid, 8));
+      // Assemble 256-bit product [lo_128 : hi_128].
+      let lo_128 = _mm_xor_si128(lo, _mm_slli_si128(mid, 8));
+      let hi_128 = _mm_xor_si128(hi, _mm_srli_si128(mid, 8));
 
-    // Montgomery reduction for x^128 + x^127 + x^126 + x^121 + 1.
-    let result = mont_reduce_sse2(lo_128, hi_128);
+      // Montgomery reduction for x^128 + x^127 + x^126 + x^121 + 1.
+      let result = mont_reduce_sse2(lo_128, hi_128);
 
-    let mut out = 0u128;
-    _mm_storeu_si128((&mut out as *mut u128).cast(), result);
-    out
+      let mut out = 0u128;
+      _mm_storeu_si128((&mut out as *mut u128).cast(), result);
+      out
+    }
   }
 
   /// Montgomery reduction of a 256-bit product [lo:hi] modulo POLYVAL's polynomial.
@@ -67,34 +70,34 @@ mod pclmul {
   /// Equivalent to the portable `mont_reduce` but uses SSE2 lane-parallel shifts.
   #[inline(always)]
   unsafe fn mont_reduce_sse2(lo: __m128i, hi: __m128i) -> __m128i {
-    // Phase 1: Compute left-shift contribution from both lo lanes.
-    // For POLYVAL: shifts by 63, 62, 57 correspond to polynomial taps 127, 126, 121.
-    let left = _mm_xor_si128(
-      _mm_xor_si128(_mm_slli_epi64(lo, 63), _mm_slli_epi64(lo, 62)),
-      _mm_slli_epi64(lo, 57),
-    );
+    // SAFETY: caller guarantees SSE2 availability via target_feature chain.
+    unsafe {
+      // Phase 1: Compute left-shift contribution from both lo lanes.
+      // For POLYVAL: shifts by 63, 62, 57 correspond to polynomial taps 127, 126, 121.
+      let left = _mm_xor_si128(
+        _mm_xor_si128(_mm_slli_epi64(lo, 63), _mm_slli_epi64(lo, 62)),
+        _mm_slli_epi64(lo, 57),
+      );
 
-    // Fold v0's left shifts into v1 (cross-lane: lo→hi via byte shift).
-    // slli_si128(left, 8) moves the low 64 bits to the high 64 bits.
-    let lo_folded = _mm_xor_si128(lo, _mm_slli_si128(left, 8));
-    // lo_folded = [v0 : v1'] where v1' = v1 ^ (v0<<63)^(v0<<62)^(v0<<57)
+      // Fold v0's left shifts into v1 (cross-lane: lo→hi via byte shift).
+      // slli_si128(left, 8) moves the low 64 bits to the high 64 bits.
+      let lo_folded = _mm_xor_si128(lo, _mm_slli_si128(left, 8));
 
-    // Right-shift + identity contribution from [v0 : v1'].
-    // v0's contribution → v2 (Phase 1); v1's contribution → v3 (Phase 2).
-    let right = _mm_xor_si128(
-      _mm_xor_si128(lo_folded, _mm_srli_epi64(lo_folded, 1)),
-      _mm_xor_si128(_mm_srli_epi64(lo_folded, 2), _mm_srli_epi64(lo_folded, 7)),
-    );
+      // Right-shift + identity contribution from [v0 : v1'].
+      let right = _mm_xor_si128(
+        _mm_xor_si128(lo_folded, _mm_srli_epi64(lo_folded, 1)),
+        _mm_xor_si128(_mm_srli_epi64(lo_folded, 2), _mm_srli_epi64(lo_folded, 7)),
+      );
 
-    // Left-shift contribution from v1' (Phase 2 → v2).
-    let left2 = _mm_xor_si128(
-      _mm_xor_si128(_mm_slli_epi64(lo_folded, 63), _mm_slli_epi64(lo_folded, 62)),
-      _mm_slli_epi64(lo_folded, 57),
-    );
+      // Left-shift contribution from v1' (Phase 2 → v2).
+      let left2 = _mm_xor_si128(
+        _mm_xor_si128(_mm_slli_epi64(lo_folded, 63), _mm_slli_epi64(lo_folded, 62)),
+        _mm_slli_epi64(lo_folded, 57),
+      );
 
-    // Final: hi XOR right XOR (left2's high lane shifted to low position).
-    // srli_si128(left2, 8) moves the high 64 bits (v1'_left) to the low position.
-    _mm_xor_si128(_mm_xor_si128(hi, right), _mm_srli_si128(left2, 8))
+      // Final: hi XOR right XOR (left2's high lane shifted to low position).
+      _mm_xor_si128(_mm_xor_si128(hi, right), _mm_srli_si128(left2, 8))
+    }
   }
 }
 
