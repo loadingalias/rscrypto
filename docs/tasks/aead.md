@@ -1,30 +1,35 @@
 # AEAD Roadmap
 
-## Current Status (2026-03-30)
+## Current Status (2026-03-31)
 
 `XChaCha20-Poly1305` is shipped on the typed AEAD surface.
 The plain `ChaCha20-Poly1305` interop companion is shipped on the same core.
 The ChaCha-family core now has explicit backend routing for `x86_64` (`portable -> AVX2 -> AVX-512`), `aarch64` (`portable -> NEON`), `wasm32/wasm64` (`portable -> simd128`), and explicit `s390x` / `powerpc64` / `riscv64` vector routes.
 `Poly1305` now follows the same primitive-keyed dispatch contract, with architecture-specific block kernels on `x86_64` (`AVX2` / `AVX-512`), `aarch64` (`NEON`), and `wasm32` (`simd128`), plus explicit fallback routes everywhere else.
 
-`AES-256-GCM-SIV` is shipped with **x86_64 hardware acceleration**:
-- AES-256: enum-based `Aes256EncKey` dispatches AES-NI (14 unrolled rounds) or portable algebraic S-box
-- POLYVAL: `clmul128_reduce()` dispatches PCLMULQDQ (4 schoolbook muls + SSE2 Montgomery reduce) or portable Pornin bmul64
+`AES-256-GCM-SIV` is shipped with **x86_64 + aarch64 hardware acceleration** plus **x86_64 VAES-512 + VPCLMULQDQ wide path**:
+- AES-256: enum-based `Aes256EncKey` dispatches AES-NI (x86_64), AES-CE (aarch64), or portable algebraic S-box
+- POLYVAL: `clmul128_reduce()` dispatches PCLMULQDQ (x86_64), PMULL (aarch64), or portable Pornin bmul64
+- Wide path (Zen4+/ICL+): VAES-512 4-block CTR + VPCLMULQDQ 4-block POLYVAL (schoolbook-then-reduce)
 - Full RFC 8452 construction: key derivation, POLYVAL tag, AES-CTR
 - Verified against RFC 8452 Appendix A (POLYVAL) and Appendix C.2 (AES-256-GCM-SIV) test vectors
-- Remaining: aarch64 AES-CE + PMULL (AES-3 + CLMUL-3), x86_64 VAES + VPCLMULQDQ wide path (AES-2 + CLMUL-2)
 
-`AES-256-GCM` is shipped with **x86_64 hardware acceleration**:
-- Reuses the same AES-256 core with AES-NI dispatch
+`AES-256-GCM` is shipped with **x86_64 + aarch64 hardware acceleration** plus **x86_64 VAES-512 + VPCLMULQDQ wide path**:
+- Reuses the same AES-256 core with AES-NI / AES-CE dispatch
 - GHASH: accelerated via shared `clmul128_reduce` from POLYVAL (GHASH↔POLYVAL bridge preserved)
+- Wide path (Zen4+/ICL+): VAES-512 4-block CTR + VPCLMULQDQ 4-block GHASH with precomputed H powers
 - AES-CTR with big-endian 32-bit counter (bytes 12-15) per NIST SP 800-38D
 - Full GCM construction: H = AES(K, 0), J0 = IV || 0x00000001, tag = AES(K, J0) XOR GHASH(H, AAD, C)
 - Verified against NIST SP 800-38D Test Cases 13, 14, 15, 16 (AES-256)
 - Hardware acceleration shared with GCM-SIV: same dispatch path benefits both
 
+`Ascon-AEAD128` is shipped on the portable constant-time baseline:
+- Full NIST SP 800-232 construction with 128-bit key, 128-bit nonce, 128-bit tag
+- Portable Ascon permutation (rate=64 bits, PA=12, PB=6), no ornamental SIMD dispatch
+- Verified against official Ascon LWC KAT vectors (11 test cases across varied AAD/PT sizes)
+
 Still missing from the primary rollout:
 
-- `Ascon-AEAD128`
 - `AEGIS-256`
 
 ## Recommended Set
@@ -126,50 +131,52 @@ That does not make `AEGIS-256` the first thing to build here. It makes it the th
 5. companion interop profiles (`ChaCha20-Poly1305`, then AES-128 variants if needed)
 6. `AEGIS-256` if the project still wants to push the frontier
 
-Reality check as of 2026-03-30:
+Reality check as of 2026-03-31:
 
 - item 1 is shipped
-- item 2 (`AES-256-GCM-SIV`) is shipped with **x86_64 AES-NI + PCLMULQDQ hardware dispatch** (enum-based key in `aes.rs`, combined `clmul128_reduce` in `polyval.rs`); aarch64 AES-CE + PMULL is the next hardware step
-- item 3 (`AES-256-GCM`) is shipped with the same x86_64 hardware dispatch; GHASH accelerated via shared `clmul128_reduce` (GHASH↔POLYVAL bridge preserved)
+- item 2 (`AES-256-GCM-SIV`) is shipped with **x86_64 AES-NI + PCLMULQDQ + VAES-512 + VPCLMULQDQ and aarch64 AES-CE + PMULL hardware dispatch**; wide path processes 4 blocks per iteration on Zen4+/ICL+
+- item 3 (`AES-256-GCM`) is shipped with the same hardware dispatch plus wide path; GHASH accelerated via shared `clmul128_reduce` + 4-block `accumulate_4blocks` (GHASH↔POLYVAL bridge preserved)
+- item 4 (`Ascon-AEAD128`) is shipped on the portable constant-time baseline with NIST SP 800-232 KAT vectors
 - the `ChaCha20-Poly1305` companion from item 5 is also shipped because it falls out of the same core and is too cheap to defer artificially
-- items 4 and 6 remain open
-- `benches/aead.rs` is live: all 4 shipped primitives benchmarked against RustCrypto competitors
+- item 6 remains open
+- `benches/aead.rs` is live: all 5 shipped primitives benchmarked against RustCrypto competitors
 
 ## Acceleration Gap Status
 
 > **Master tracker:** [`docs/tasks/acceleration.md`](acceleration.md)
 
-### AES-GCM and AES-GCM-SIV: x86_64 hardware-accelerated, other platforms portable
+### AES-GCM and AES-GCM-SIV: x86_64 + aarch64 hardware-accelerated
 
-**x86_64** now dispatches to AES-NI + PCLMULQDQ at construction time (enum-based
-`Aes256EncKey` in `aes.rs`, combined `clmul128_reduce` in `polyval.rs`). Both GCM
-and GCM-SIV benefit from the same hardware path. CTR functions auto-dispatch.
+**x86_64** dispatches to AES-NI + PCLMULQDQ and **aarch64** dispatches to AES-CE + PMULL,
+both at construction time (enum-based `Aes256EncKey` in `aes.rs`, combined `clmul128_reduce`
+in `polyval.rs`). Both GCM and GCM-SIV benefit from the same hardware paths. CTR functions
+auto-dispatch.
 
 | Platform | AES Block | GHASH/POLYVAL | Status |
 |----------|-----------|---------------|--------|
-| x86_64 | **AES-NI** (AES-1 ✅) — VAES wide path (AES-2) pending | **PCLMULQDQ** (CLMUL-1 ✅) — VPCLMULQDQ wide path (CLMUL-2) pending | **Competitive** |
-| aarch64 | Portable — need AES-CE (AES-3) | Portable — need PMULL (CLMUL-3) | **340x gap — NEXT** |
+| x86_64 | **AES-NI** (AES-1 ✅) + **VAES-512** (AES-2 ✅) | **PCLMULQDQ** (CLMUL-1 ✅) + **VPCLMULQDQ** (CLMUL-2 ✅) | **Full wide pipeline** |
+| aarch64 | **AES-CE** (AES-3 ✅) | **PMULL** (CLMUL-3 ✅) | **Competitive** |
 | s390x | Portable — need CPACF/KM (AES-4) | Portable — need VGFM (CLMUL-4) | **340x gap** |
 | powerpc64 | Portable — need vcipher (AES-5) | Portable — need VPMSUM (CLMUL-5) | **340x gap** |
 | riscv64 | Portable — need Zvkned (AES-6) | Portable — need Zvkg (CLMUL-6) | **340x gap** |
 | wasm32 | Portable (expected — no HW AES in wasm) | Portable (expected) | N/A |
 
-**Next P0 tasks:**
-- AES-3 + CLMUL-3: aarch64 AES-CE + PMULL (covers macOS, Graviton3, Graviton4)
+**Completed P1 tasks:**
+- AES-2 + CLMUL-2: x86_64 VAES-512 + VPCLMULQDQ wide path shipped (2026-03-31). 4-block parallel AES-CTR + 4-block schoolbook-then-reduce GHASH/POLYVAL on Zen4+/ICL+.
 
-### ChaCha20-Poly1305: 3 stub backends
+### ChaCha20-Poly1305: powerpc64 + s390x now hardware-accelerated
 
 ChaCha20 and Poly1305 have **real** SIMD kernels on x86_64 (AVX2/AVX-512), aarch64 (NEON),
-and wasm32 (SIMD128). But three platforms have dispatch entries that call portable:
+wasm32 (SIMD128), powerpc64 (VSX), and s390x (z/Vector). One platform remains stubbed:
 
 | Platform | ChaCha20 | Poly1305 | Task IDs |
 |----------|----------|----------|----------|
-| powerpc64 | STUB → portable | STUB → portable | CHACHA-1, POLY-1 |
-| s390x | STUB → portable | STUB → portable | CHACHA-2, POLY-2 |
+| powerpc64 | **VSX** (`vadduwm`/`vxor`/`vrlw`) | **VSX** (`vmulouw`/`vaddudm`) | ✅ CHACHA-1, POLY-1 |
+| s390x | **z/Vector** (`vaf`/`vx`/`verll`) | **z/Vector** (`vmlof`/`vag`) | ✅ CHACHA-2, POLY-2 |
 | riscv64 | STUB → portable | STUB → portable | CHACHA-3, POLY-3 |
 
-Benchmark impact: On these platforms, XChaCha20-Poly1305 and ChaCha20-Poly1305 are
-running at portable speed despite the dispatch table saying otherwise.
+Benchmark impact: riscv64 XChaCha20-Poly1305 and ChaCha20-Poly1305 are still
+running at portable speed. powerpc64 and s390x now use native vector instructions.
 
 ## SIMD / HW Rules
 

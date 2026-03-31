@@ -36,6 +36,17 @@ fn mul_x_polyval(v: u128) -> u128 {
   shifted ^ (0u128.wrapping_sub(carry) & POLYVAL_FEEDBACK)
 }
 
+/// Convert a raw GHASH key (big-endian bytes) into the POLYVAL domain.
+///
+/// Loads as big-endian u128 then applies `mulX_POLYVAL`. This is the same
+/// key transformation used internally by `Ghash::new`, exposed for callers
+/// that need the POLYVAL-domain key for precomputation.
+#[inline]
+pub(crate) fn h_to_polyval(h_bytes: &[u8; KEY_SIZE]) -> u128 {
+  let h = u128::from_be_bytes(*h_bytes);
+  mul_x_polyval(h)
+}
+
 /// GHASH accumulator state.
 ///
 /// Internally operates in the "reflected" domain (identical to POLYVAL's
@@ -105,6 +116,16 @@ impl Ghash {
     // Converting back to GHASH convention: to_be_bytes reverses the
     // ByteReverse that was applied at input time.
     self.acc.to_be_bytes()
+  }
+
+  /// Finalize and return the raw accumulator as u128 (POLYVAL domain).
+  ///
+  /// Used by the wide GCM path to continue accumulation outside the
+  /// `Ghash` struct with precomputed H powers.
+  #[cfg(target_arch = "x86_64")]
+  #[inline]
+  pub(crate) fn finalize_u128(self) -> u128 {
+    self.acc
   }
 }
 

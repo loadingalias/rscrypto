@@ -6,7 +6,7 @@
 > **Note:** Zen5 unavailable; Grav3/Grav4 estimated from pre-lane-complementing baseline (aarch64 unchanged)
 >
 > **Acceleration gap tracker:** [`docs/tasks/acceleration.md`](acceleration.md) — per-task inventory of every hardware backend gap across all subsystems.
-> **AEAD status:** AES-256-GCM and AES-256-GCM-SIV shipped with x86_64 AES-NI + PCLMULQDQ hardware dispatch (closes 340x gap on Intel/AMD). aarch64 AES-CE + PMULL is next. AEAD benchmarks will add ~144 new comparison points once `benches/aead.rs` enters CI rotation.
+> **AEAD status:** AES-256-GCM and AES-256-GCM-SIV shipped with full x86_64 pipeline (AES-NI + PCLMULQDQ single-block, VAES-512 + VPCLMULQDQ 4-block wide) and aarch64 AES-CE + PMULL. Ascon-AEAD128 shipped on portable baseline. AEAD benchmarks will add ~144 new comparison points once `benches/aead.rs` enters CI rotation.
 
 ---
 
@@ -161,3 +161,6 @@ Step 7.1 alone converts 28L → competitive. Steps 7.1-7.3 would beat dalek.
 | 6.1 — HMAC-SHA256 oneshot | Direct `[u32; 8]` state, single dispatch compress | 26L→0L, Grav4 3.7-4.0x |
 | **A — Lane-complementing chi** | **XKCP "Bebigokimisa" on x86/s390x/POWER (not aarch64)** | **SHA-3 66W→~123W, SHAKE 90W→~131W (+98W)** |
 | **B — AES-NI + PCLMULQDQ** | **x86_64 hardware AES block + carryless multiply for GCM/GCM-SIV** | **Closes 340x portable→hardware gap on all Intel/AMD** |
+| **C — AES-CE + PMULL** | **aarch64 hardware AES block + carryless multiply for GCM/GCM-SIV** | **Closes 340x portable→hardware gap on Graviton/Apple Silicon** |
+| **D — VAES-512 + VPCLMULQDQ** | **x86_64 4-block wide AES-CTR + GHASH/POLYVAL for GCM/GCM-SIV** | **1.5-4x over single-block AES-NI+PCLMULQDQ on Zen4+/ICL+** |
+| **E — Ascon-AEAD128** | **NIST SP 800-232 lightweight AEAD on portable constant-time baseline** | **Completes AEAD ship order items 1-4** |

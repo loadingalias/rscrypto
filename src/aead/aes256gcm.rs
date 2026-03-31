@@ -4,7 +4,7 @@
 
 use core::fmt;
 
-use super::{AeadBufferError, Nonce96, OpenError, aes, ghash};
+use super::{AeadBufferError, Nonce96, OpenError, aes, ghash, polyval};
 use crate::traits::{Aead, VerificationError, ct};
 
 const KEY_SIZE: usize = 32;
@@ -141,6 +141,9 @@ pub struct Aes256Gcm {
   ek: aes::Aes256EncKey,
   /// GHASH hash key H = AES_K(0^128).
   h: [u8; 16],
+  /// Precomputed H powers [H^4, H^3, H^2, H] in the POLYVAL domain
+  /// for 4-block wide GHASH processing.
+  h_powers_rev: [u128; 4],
 }
 
 impl fmt::Debug for Aes256Gcm {
@@ -266,6 +269,87 @@ fn compute_tag(ek: &aes::Aes256EncKey, h: &[u8; 16], j0: &[u8; 16], aad: &[u8], 
   s
 }
 
+/// Compute the GCM authentication tag using 4-block wide GHASH.
+///
+/// Same semantics as `compute_tag` but processes ciphertext in 4-block
+/// (64-byte) chunks via `accumulate_4blocks`.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+fn compute_tag_wide(
+  ek: &aes::Aes256EncKey,
+  h: &[u8; 16],
+  h_powers_rev: &[u128; 4],
+  j0: &[u8; 16],
+  aad: &[u8],
+  ciphertext: &[u8],
+) -> [u8; TAG_SIZE] {
+  let h_polyval = ghash::h_to_polyval(h);
+
+  // Process AAD (zero-padded, block by block — usually small).
+  let mut acc = {
+    let mut gh = ghash::Ghash::new(h);
+    gh.update_padded(aad);
+    gh.finalize_u128()
+  };
+
+  // Process ciphertext in 4-block wide chunks.
+  let mut offset = 0usize;
+  while offset.strict_add(64) <= ciphertext.len() {
+    let mut blocks = [0u128; 4];
+    let mut i = 0usize;
+    while i < 4 {
+      let base = offset.strict_add(i.strict_mul(16));
+      let mut block = [0u8; 16];
+      block.copy_from_slice(&ciphertext[base..base.strict_add(16)]);
+      blocks[i] = u128::from_be_bytes(block);
+      i = i.strict_add(1);
+    }
+    acc = polyval::accumulate_4blocks(acc, h_polyval, h_powers_rev, &blocks);
+    offset = offset.strict_add(64);
+  }
+
+  // Remaining single blocks.
+  while offset.strict_add(16) <= ciphertext.len() {
+    let mut block = [0u8; 16];
+    block.copy_from_slice(&ciphertext[offset..offset.strict_add(16)]);
+    acc ^= u128::from_be_bytes(block);
+    acc = polyval::clmul128_reduce(acc, h_polyval);
+    offset = offset.strict_add(16);
+  }
+
+  // Partial tail block.
+  let remaining = ciphertext.len().strict_sub(offset);
+  if remaining > 0 {
+    let mut block = [0u8; 16];
+    block[..remaining].copy_from_slice(&ciphertext[offset..]);
+    acc ^= u128::from_be_bytes(block);
+    acc = polyval::clmul128_reduce(acc, h_polyval);
+  }
+
+  // Length block.
+  let aad_bits = (aad.len() as u64).strict_mul(8);
+  let ct_bits = (ciphertext.len() as u64).strict_mul(8);
+  let mut length_block = [0u8; 16];
+  length_block[0..8].copy_from_slice(&aad_bits.to_be_bytes());
+  length_block[8..16].copy_from_slice(&ct_bits.to_be_bytes());
+  acc ^= u128::from_be_bytes(length_block);
+  acc = polyval::clmul128_reduce(acc, h_polyval);
+
+  // Finalize: convert back to GHASH convention.
+  let mut s = acc.to_be_bytes();
+
+  // tag = GHASH_result XOR AES(K, J0)
+  let mut encrypted_j0 = *j0;
+  aes::aes256_encrypt_block(ek, &mut encrypted_j0);
+  let mut i = 0usize;
+  while i < 16 {
+    s[i] ^= encrypted_j0[i];
+    i = i.strict_add(1);
+  }
+  ct::zeroize(&mut encrypted_j0);
+  s
+}
+
 /// Increment the 32-bit big-endian counter in bytes 12..15.
 #[inline]
 fn inc32(block: &mut [u8; 16]) {
@@ -293,7 +377,14 @@ impl Aead for Aes256Gcm {
     let mut h = [0u8; 16];
     aes::aes256_encrypt_block(&ek, &mut h);
 
-    Self { ek, h }
+    // Precompute H powers for 4-block wide GHASH.
+    // GHASH loads H as BE, then applies mulX_POLYVAL to get the POLYVAL-domain key.
+    let h_polyval = ghash::h_to_polyval(&h);
+    let powers = polyval::precompute_powers(h_polyval);
+    // Reverse: [H, H^2, H^3, H^4] -> [H^4, H^3, H^2, H]
+    let h_powers_rev = [powers[3], powers[2], powers[1], powers[0]];
+
+    Self { ek, h, h_powers_rev }
   }
 
   fn tag_from_slice(bytes: &[u8]) -> Result<Self::Tag, AeadBufferError> {
@@ -312,15 +403,25 @@ impl Aead for Aes256Gcm {
     );
 
     let j0 = make_j0(nonce);
-
-    // AES-CTR encryption starting from inc32(J0).
     let mut ctr_block = j0;
     inc32(&mut ctr_block);
+
+    // Wide path: VAES-512 CTR + VPCLMULQDQ GHASH when available.
+    #[cfg(target_arch = "x86_64")]
+    {
+      use crate::platform::caps;
+      let c = crate::platform::caps();
+      if c.has(caps::x86::VAES_READY) && c.has(caps::x86::VPCLMUL_READY) {
+        // SAFETY: VAES + VPCLMULQDQ availability verified via CPUID.
+        unsafe { aes::aes256_ctr32_encrypt_be_wide(&self.ek, &ctr_block, buffer) };
+        let tag_bytes = compute_tag_wide(&self.ek, &self.h, &self.h_powers_rev, &j0, aad, buffer);
+        return Aes256GcmTag::from_bytes(tag_bytes);
+      }
+    }
+
+    // Scalar path: single-block AES-NI/CE/portable + single-block GHASH.
     aes::aes256_ctr32_encrypt_be(&self.ek, &ctr_block, buffer);
-
-    // Compute tag over ciphertext (GCM authenticates ciphertext, not plaintext).
     let tag_bytes = compute_tag(&self.ek, &self.h, &j0, aad, buffer);
-
     Aes256GcmTag::from_bytes(tag_bytes)
   }
 
@@ -338,19 +439,33 @@ impl Aead for Aes256Gcm {
 
     let j0 = make_j0(nonce);
 
-    // Verify tag BEFORE decryption (authenticate-then-decrypt).
-    // GHASH is computed over the ciphertext, so we verify first.
-    let expected = compute_tag(&self.ek, &self.h, &j0, aad, buffer);
+    // Wide path: VPCLMULQDQ GHASH + VAES-512 CTR when available.
+    #[cfg(target_arch = "x86_64")]
+    {
+      use crate::platform::caps;
+      let c = crate::platform::caps();
+      if c.has(caps::x86::VAES_READY) && c.has(caps::x86::VPCLMUL_READY) {
+        // Verify tag BEFORE decryption (authenticate-then-decrypt).
+        let expected = compute_tag_wide(&self.ek, &self.h, &self.h_powers_rev, &j0, aad, buffer);
+        if !ct::constant_time_eq(&expected, tag.as_bytes()) {
+          return Err(VerificationError::new());
+        }
+        let mut ctr_block = j0;
+        inc32(&mut ctr_block);
+        // SAFETY: VAES availability verified via CPUID.
+        unsafe { aes::aes256_ctr32_encrypt_be_wide(&self.ek, &ctr_block, buffer) };
+        return Ok(());
+      }
+    }
 
+    // Scalar path: authenticate then decrypt.
+    let expected = compute_tag(&self.ek, &self.h, &j0, aad, buffer);
     if !ct::constant_time_eq(&expected, tag.as_bytes()) {
       return Err(VerificationError::new());
     }
-
-    // AES-CTR decryption starting from inc32(J0).
     let mut ctr_block = j0;
     inc32(&mut ctr_block);
     aes::aes256_ctr32_encrypt_be(&self.ek, &ctr_block, buffer);
-
     Ok(())
   }
 }
@@ -359,6 +474,8 @@ impl Aead for Aes256Gcm {
 impl Drop for Aes256Gcm {
   fn drop(&mut self) {
     ct::zeroize(&mut self.h);
+    // SAFETY: [u128; 4] is layout-compatible with [u8; 64].
+    ct::zeroize(unsafe { core::slice::from_raw_parts_mut(self.h_powers_rev.as_mut_ptr().cast::<u8>(), 64) });
     // ek's Drop is handled by Aes256EncKey's own Drop impl.
   }
 }

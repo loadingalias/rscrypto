@@ -128,6 +128,15 @@ pub(crate) fn permute_12_portable(s: &mut [u64; 5]) {
   }
 }
 
+/// 6-round Ascon permutation (PB) used by Ascon-AEAD128.
+#[inline(always)]
+pub(crate) fn permute_6_portable(s: &mut [u64; 5]) {
+  // PB uses the last 6 round constants (rounds 6..12).
+  for &c in &RC[6..] {
+    round(s, c);
+  }
+}
+
 #[inline(always)]
 fn round(s: &mut [u64; 5], c: u64) {
   let mut x0 = s[0];
