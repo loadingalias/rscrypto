@@ -4,6 +4,8 @@
 
 use core::fmt;
 
+#[cfg(target_arch = "x86_64")]
+use super::polyval::{accumulate_4blocks, precompute_powers};
 use super::{AeadBufferError, Nonce96, OpenError, aes, polyval};
 use crate::traits::{Aead, VerificationError, ct};
 
@@ -297,6 +299,109 @@ fn compute_tag(
   s
 }
 
+/// Compute the POLYVAL-based authentication tag using 4-block wide processing.
+///
+/// Same semantics as `compute_tag` but processes data in 4-block (64-byte)
+/// chunks via `accumulate_4blocks`.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+fn compute_tag_wide(
+  auth_key: &[u8; 16],
+  enc_ek: &aes::Aes256EncKey,
+  nonce: &Nonce96,
+  aad: &[u8],
+  plaintext: &[u8],
+) -> [u8; TAG_SIZE] {
+  let h = u128::from_le_bytes(*auth_key);
+  let powers = precompute_powers(h);
+  let h_powers_rev = [powers[3], powers[2], powers[1], powers[0]];
+
+  let mut acc: u128 = 0;
+
+  // Process AAD in 4-block wide chunks.
+  let mut offset = 0usize;
+  while offset.strict_add(64) <= aad.len() {
+    let mut blocks = [0u128; 4];
+    let mut i = 0usize;
+    while i < 4 {
+      let base = offset.strict_add(i.strict_mul(16));
+      let mut block = [0u8; 16];
+      block.copy_from_slice(&aad[base..base.strict_add(16)]);
+      blocks[i] = u128::from_le_bytes(block);
+      i = i.strict_add(1);
+    }
+    acc = accumulate_4blocks(acc, h, &h_powers_rev, &blocks);
+    offset = offset.strict_add(64);
+  }
+  // Remaining AAD single blocks.
+  while offset.strict_add(16) <= aad.len() {
+    let mut block = [0u8; 16];
+    block.copy_from_slice(&aad[offset..offset.strict_add(16)]);
+    acc ^= u128::from_le_bytes(block);
+    acc = polyval::clmul128_reduce(acc, h);
+    offset = offset.strict_add(16);
+  }
+  let remaining_aad = aad.len().strict_sub(offset);
+  if remaining_aad > 0 {
+    let mut block = [0u8; 16];
+    block[..remaining_aad].copy_from_slice(&aad[offset..]);
+    acc ^= u128::from_le_bytes(block);
+    acc = polyval::clmul128_reduce(acc, h);
+  }
+
+  // Process plaintext in 4-block wide chunks.
+  offset = 0;
+  while offset.strict_add(64) <= plaintext.len() {
+    let mut blocks = [0u128; 4];
+    let mut i = 0usize;
+    while i < 4 {
+      let base = offset.strict_add(i.strict_mul(16));
+      let mut block = [0u8; 16];
+      block.copy_from_slice(&plaintext[base..base.strict_add(16)]);
+      blocks[i] = u128::from_le_bytes(block);
+      i = i.strict_add(1);
+    }
+    acc = accumulate_4blocks(acc, h, &h_powers_rev, &blocks);
+    offset = offset.strict_add(64);
+  }
+  // Remaining plaintext single blocks.
+  while offset.strict_add(16) <= plaintext.len() {
+    let mut block = [0u8; 16];
+    block.copy_from_slice(&plaintext[offset..offset.strict_add(16)]);
+    acc ^= u128::from_le_bytes(block);
+    acc = polyval::clmul128_reduce(acc, h);
+    offset = offset.strict_add(16);
+  }
+  let remaining_pt = plaintext.len().strict_sub(offset);
+  if remaining_pt > 0 {
+    let mut block = [0u8; 16];
+    block[..remaining_pt].copy_from_slice(&plaintext[offset..]);
+    acc ^= u128::from_le_bytes(block);
+    acc = polyval::clmul128_reduce(acc, h);
+  }
+
+  // Length block: [aad_bits as u64 LE || pt_bits as u64 LE].
+  let aad_bits = (aad.len() as u64).strict_mul(8);
+  let pt_bits = (plaintext.len() as u64).strict_mul(8);
+  let mut length_block = [0u8; 16];
+  length_block[0..8].copy_from_slice(&aad_bits.to_le_bytes());
+  length_block[8..16].copy_from_slice(&pt_bits.to_le_bytes());
+  acc ^= u128::from_le_bytes(length_block);
+  acc = polyval::clmul128_reduce(acc, h);
+
+  // Finalize: convert to bytes, XOR nonce, clear MSB, encrypt.
+  let mut s = acc.to_le_bytes();
+  let nonce_bytes = nonce.as_bytes();
+  let mut j = 0usize;
+  while j < 12 {
+    s[j] ^= nonce_bytes[j];
+    j = j.strict_add(1);
+  }
+  s[15] &= 0x7f;
+  aes::aes256_encrypt_block(enc_ek, &mut s);
+  s
+}
+
 // ---------------------------------------------------------------------------
 // Aead trait implementation
 // ---------------------------------------------------------------------------
@@ -332,10 +437,25 @@ impl Aead for Aes256GcmSiv {
     let (mut auth_key, mut enc_key) = derive_keys(self.key.as_bytes(), nonce);
     let ek = aes::aes256_expand_key(&enc_key);
 
-    // Compute tag over plaintext (before encryption -- nonce-misuse resistance).
-    let tag_bytes = compute_tag(&auth_key, &ek, nonce, aad, buffer);
+    // Wide path: VPCLMULQDQ POLYVAL + VAES-512 CTR when available.
+    #[cfg(target_arch = "x86_64")]
+    {
+      use crate::platform::caps;
+      let c = crate::platform::caps();
+      if c.has(caps::x86::VAES_READY) && c.has(caps::x86::VPCLMUL_READY) {
+        let tag_bytes = compute_tag_wide(&auth_key, &ek, nonce, aad, buffer);
+        let mut counter_block = tag_bytes;
+        counter_block[15] |= 0x80;
+        // SAFETY: VAES availability verified via CPUID.
+        unsafe { aes::aes256_ctr32_encrypt_wide(&ek, &counter_block, buffer) };
+        ct::zeroize(&mut auth_key);
+        ct::zeroize(&mut enc_key);
+        return Aes256GcmSivTag::from_bytes(tag_bytes);
+      }
+    }
 
-    // AES-CTR encryption: counter_block = tag with MSB of byte 15 set.
+    // Scalar path.
+    let tag_bytes = compute_tag(&auth_key, &ek, nonce, aad, buffer);
     let mut counter_block = tag_bytes;
     counter_block[15] |= 0x80;
     aes::aes256_ctr32_encrypt(&ek, &counter_block, buffer);
@@ -361,19 +481,40 @@ impl Aead for Aes256GcmSiv {
     let (mut auth_key, mut enc_key) = derive_keys(self.key.as_bytes(), nonce);
     let ek = aes::aes256_expand_key(&enc_key);
 
-    // AES-CTR decryption first (before verification -- SIV pattern).
+    // Wide path: VAES-512 CTR + VPCLMULQDQ POLYVAL when available.
+    #[cfg(target_arch = "x86_64")]
+    {
+      use crate::platform::caps;
+      let c = crate::platform::caps();
+      if c.has(caps::x86::VAES_READY) && c.has(caps::x86::VPCLMUL_READY) {
+        // Decrypt first (SIV pattern).
+        let mut counter_block = tag.0;
+        counter_block[15] |= 0x80;
+        // SAFETY: VAES availability verified via CPUID.
+        unsafe { aes::aes256_ctr32_encrypt_wide(&ek, &counter_block, buffer) };
+
+        // Verify tag over decrypted plaintext.
+        let expected = compute_tag_wide(&auth_key, &ek, nonce, aad, buffer);
+        ct::zeroize(&mut auth_key);
+        ct::zeroize(&mut enc_key);
+        if !ct::constant_time_eq(&expected, tag.as_bytes()) {
+          ct::zeroize(buffer);
+          return Err(VerificationError::new());
+        }
+        return Ok(());
+      }
+    }
+
+    // Scalar path: decrypt then verify.
     let mut counter_block = tag.0;
     counter_block[15] |= 0x80;
     aes::aes256_ctr32_encrypt(&ek, &counter_block, buffer);
 
-    // Recompute expected tag over the decrypted plaintext.
     let expected = compute_tag(&auth_key, &ek, nonce, aad, buffer);
-
     ct::zeroize(&mut auth_key);
     ct::zeroize(&mut enc_key);
 
     if !ct::constant_time_eq(&expected, tag.as_bytes()) {
-      // Verification failed -- zero the (unauthenticated) plaintext.
       ct::zeroize(buffer);
       return Err(VerificationError::new());
     }

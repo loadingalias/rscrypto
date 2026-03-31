@@ -767,21 +767,272 @@ mod wasm_simd128 {
 
 #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
 mod power_vsx {
-  use super::State;
+  use core::simd::i64x2;
+
+  use super::{FULL_BLOCK_HIBIT, LIMB_MASK, State, load_u32_le};
 
   #[inline]
   pub(super) fn compute_block(state: &mut State, block: &[u8; 16], partial: bool) {
-    state.compute_block_portable(block, partial);
+    // SAFETY: Backend selection guarantees POWER vector support before this wrapper is chosen.
+    unsafe { compute_block_impl(state, block, partial) }
+  }
+
+  #[target_feature(enable = "altivec", enable = "vsx", enable = "power8-vector")]
+  unsafe fn compute_block_impl(state: &mut State, block: &[u8; 16], partial: bool) {
+    let hibit = if partial { 0 } else { FULL_BLOCK_HIBIT };
+
+    let r0 = state.r[0];
+    let r1 = state.r[1];
+    let r2 = state.r[2];
+    let r3 = state.r[3];
+    let r4 = state.r[4];
+
+    let s1 = r1 * 5;
+    let s2 = r2 * 5;
+    let s3 = r3 * 5;
+    let s4 = r4 * 5;
+
+    let mut h0 = state.h[0];
+    let mut h1 = state.h[1];
+    let mut h2 = state.h[2];
+    let mut h3 = state.h[3];
+    let mut h4 = state.h[4];
+
+    h0 = h0.wrapping_add(load_u32_le(&block[0..4]) & LIMB_MASK);
+    h1 = h1.wrapping_add((load_u32_le(&block[3..7]) >> 2) & LIMB_MASK);
+    h2 = h2.wrapping_add((load_u32_le(&block[6..10]) >> 4) & LIMB_MASK);
+    h3 = h3.wrapping_add((load_u32_le(&block[9..13]) >> 6) & LIMB_MASK);
+    h4 = h4.wrapping_add((load_u32_le(&block[12..16]) >> 8) | hibit);
+
+    // SAFETY: target_feature ensures VSX availability for all sum4_mul calls below.
+    let d0 = unsafe { sum4_mul([h0, h1, h2, h3], [r0, s4, s3, s2]) } + (u64::from(h4) * u64::from(s1));
+    // SAFETY: target_feature ensures VSX availability.
+    let mut d1 = unsafe { sum4_mul([h0, h1, h2, h3], [r1, r0, s4, s3]) } + (u64::from(h4) * u64::from(s2));
+    // SAFETY: target_feature ensures VSX availability.
+    let mut d2 = unsafe { sum4_mul([h0, h1, h2, h3], [r2, r1, r0, s4]) } + (u64::from(h4) * u64::from(s3));
+    // SAFETY: target_feature ensures VSX availability.
+    let mut d3 = unsafe { sum4_mul([h0, h1, h2, h3], [r3, r2, r1, r0]) } + (u64::from(h4) * u64::from(s4));
+    // SAFETY: target_feature ensures VSX availability.
+    let mut d4 = unsafe { sum4_mul([h0, h1, h2, h3], [r4, r3, r2, r1]) } + (u64::from(h4) * u64::from(r0));
+
+    let mut c = (d0 >> 26) as u32;
+    h0 = (d0 as u32) & LIMB_MASK;
+    d1 += u64::from(c);
+
+    c = (d1 >> 26) as u32;
+    h1 = (d1 as u32) & LIMB_MASK;
+    d2 += u64::from(c);
+
+    c = (d2 >> 26) as u32;
+    h2 = (d2 as u32) & LIMB_MASK;
+    d3 += u64::from(c);
+
+    c = (d3 >> 26) as u32;
+    h3 = (d3 as u32) & LIMB_MASK;
+    d4 += u64::from(c);
+
+    c = (d4 >> 26) as u32;
+    h4 = (d4 as u32) & LIMB_MASK;
+    h0 = h0.wrapping_add(c * 5);
+
+    c = h0 >> 26;
+    h0 &= LIMB_MASK;
+    h1 = h1.wrapping_add(c);
+
+    state.h = [h0, h1, h2, h3, h4];
+  }
+
+  /// Vectorized 4-element dot product: `vmulouw` + `vaddudm`.
+  ///
+  /// Computes `lhs[0]*rhs[0] + lhs[1]*rhs[1] + lhs[2]*rhs[2] + lhs[3]*rhs[3]`
+  /// using two 128-bit multiply-odd and one 128-bit add.
+  #[inline(always)]
+  unsafe fn sum4_mul(lhs: [u32; 4], rhs: [u32; 4]) -> u64 {
+    // SAFETY: POWER8+ VSX available via enclosing target_feature.
+    unsafe {
+      let a_lo = i64x2::from_array([i64::from(lhs[0]), i64::from(lhs[1])]);
+      let b_lo = i64x2::from_array([i64::from(rhs[0]), i64::from(rhs[1])]);
+      let prod_lo = vmulouw(a_lo, b_lo);
+
+      let a_hi = i64x2::from_array([i64::from(lhs[2]), i64::from(lhs[3])]);
+      let b_hi = i64x2::from_array([i64::from(rhs[2]), i64::from(rhs[3])]);
+      let prod_hi = vmulouw(a_hi, b_hi);
+
+      let sum = vaddudm(prod_lo, prod_hi);
+      let lanes = sum.to_array();
+      (lanes[0] as u64).wrapping_add(lanes[1] as u64)
+    }
+  }
+
+  /// Multiply low 32 bits of each u64 lane → u64: `vmulouw`.
+  #[inline(always)]
+  unsafe fn vmulouw(a: i64x2, b: i64x2) -> i64x2 {
+    let out: i64x2;
+    // SAFETY: POWER8+ VSX available via enclosing target_feature.
+    unsafe {
+      core::arch::asm!(
+        "vmulouw {out}, {a}, {b}",
+        out = lateout(vreg) out,
+        a = in(vreg) a,
+        b = in(vreg) b,
+        options(nomem, nostack, pure)
+      );
+    }
+    out
+  }
+
+  /// Add u64 lanes: `vaddudm`.
+  #[inline(always)]
+  unsafe fn vaddudm(a: i64x2, b: i64x2) -> i64x2 {
+    let out: i64x2;
+    // SAFETY: POWER8+ VSX available via enclosing target_feature.
+    unsafe {
+      core::arch::asm!(
+        "vaddudm {out}, {a}, {b}",
+        out = lateout(vreg) out,
+        a = in(vreg) a,
+        b = in(vreg) b,
+        options(nomem, nostack, pure)
+      );
+    }
+    out
   }
 }
 
 #[cfg(target_arch = "s390x")]
 mod s390x_vector {
-  use super::State;
+  use core::simd::i64x2;
+
+  use super::{FULL_BLOCK_HIBIT, LIMB_MASK, State, load_u32_le};
 
   #[inline]
   pub(super) fn compute_block(state: &mut State, block: &[u8; 16], partial: bool) {
-    state.compute_block_portable(block, partial);
+    // SAFETY: Backend selection guarantees the z/Vector facility before this wrapper is chosen.
+    unsafe { compute_block_impl(state, block, partial) }
+  }
+
+  #[target_feature(enable = "vector")]
+  unsafe fn compute_block_impl(state: &mut State, block: &[u8; 16], partial: bool) {
+    let hibit = if partial { 0 } else { FULL_BLOCK_HIBIT };
+
+    let r0 = state.r[0];
+    let r1 = state.r[1];
+    let r2 = state.r[2];
+    let r3 = state.r[3];
+    let r4 = state.r[4];
+
+    let s1 = r1 * 5;
+    let s2 = r2 * 5;
+    let s3 = r3 * 5;
+    let s4 = r4 * 5;
+
+    let mut h0 = state.h[0];
+    let mut h1 = state.h[1];
+    let mut h2 = state.h[2];
+    let mut h3 = state.h[3];
+    let mut h4 = state.h[4];
+
+    h0 = h0.wrapping_add(load_u32_le(&block[0..4]) & LIMB_MASK);
+    h1 = h1.wrapping_add((load_u32_le(&block[3..7]) >> 2) & LIMB_MASK);
+    h2 = h2.wrapping_add((load_u32_le(&block[6..10]) >> 4) & LIMB_MASK);
+    h3 = h3.wrapping_add((load_u32_le(&block[9..13]) >> 6) & LIMB_MASK);
+    h4 = h4.wrapping_add((load_u32_le(&block[12..16]) >> 8) | hibit);
+
+    // SAFETY: target_feature ensures z/Vector availability for all sum4_mul calls below.
+    let d0 = unsafe { sum4_mul([h0, h1, h2, h3], [r0, s4, s3, s2]) } + (u64::from(h4) * u64::from(s1));
+    // SAFETY: target_feature ensures z/Vector availability.
+    let mut d1 = unsafe { sum4_mul([h0, h1, h2, h3], [r1, r0, s4, s3]) } + (u64::from(h4) * u64::from(s2));
+    // SAFETY: target_feature ensures z/Vector availability.
+    let mut d2 = unsafe { sum4_mul([h0, h1, h2, h3], [r2, r1, r0, s4]) } + (u64::from(h4) * u64::from(s3));
+    // SAFETY: target_feature ensures z/Vector availability.
+    let mut d3 = unsafe { sum4_mul([h0, h1, h2, h3], [r3, r2, r1, r0]) } + (u64::from(h4) * u64::from(s4));
+    // SAFETY: target_feature ensures z/Vector availability.
+    let mut d4 = unsafe { sum4_mul([h0, h1, h2, h3], [r4, r3, r2, r1]) } + (u64::from(h4) * u64::from(r0));
+
+    let mut c = (d0 >> 26) as u32;
+    h0 = (d0 as u32) & LIMB_MASK;
+    d1 += u64::from(c);
+
+    c = (d1 >> 26) as u32;
+    h1 = (d1 as u32) & LIMB_MASK;
+    d2 += u64::from(c);
+
+    c = (d2 >> 26) as u32;
+    h2 = (d2 as u32) & LIMB_MASK;
+    d3 += u64::from(c);
+
+    c = (d3 >> 26) as u32;
+    h3 = (d3 as u32) & LIMB_MASK;
+    d4 += u64::from(c);
+
+    c = (d4 >> 26) as u32;
+    h4 = (d4 as u32) & LIMB_MASK;
+    h0 = h0.wrapping_add(c * 5);
+
+    c = h0 >> 26;
+    h0 &= LIMB_MASK;
+    h1 = h1.wrapping_add(c);
+
+    state.h = [h0, h1, h2, h3, h4];
+  }
+
+  /// Vectorized 4-element dot product: `vmlof` + `vag`.
+  ///
+  /// Computes `lhs[0]*rhs[0] + lhs[1]*rhs[1] + lhs[2]*rhs[2] + lhs[3]*rhs[3]`
+  /// using two 128-bit multiply-odd and one 128-bit add.
+  #[inline]
+  #[target_feature(enable = "vector")]
+  unsafe fn sum4_mul(lhs: [u32; 4], rhs: [u32; 4]) -> u64 {
+    // SAFETY: z/Vector facility available via target_feature.
+    unsafe {
+      let a_lo = i64x2::from_array([i64::from(lhs[0]), i64::from(lhs[1])]);
+      let b_lo = i64x2::from_array([i64::from(rhs[0]), i64::from(rhs[1])]);
+      let prod_lo = vmlof(a_lo, b_lo);
+
+      let a_hi = i64x2::from_array([i64::from(lhs[2]), i64::from(lhs[3])]);
+      let b_hi = i64x2::from_array([i64::from(rhs[2]), i64::from(rhs[3])]);
+      let prod_hi = vmlof(a_hi, b_hi);
+
+      let sum = vag(prod_lo, prod_hi);
+      let lanes = sum.to_array();
+      (lanes[0] as u64).wrapping_add(lanes[1] as u64)
+    }
+  }
+
+  /// Multiply odd-indexed u32 lanes → u64: `vmlof`.
+  #[inline]
+  #[target_feature(enable = "vector")]
+  unsafe fn vmlof(a: i64x2, b: i64x2) -> i64x2 {
+    let out: i64x2;
+    // SAFETY: z/Vector facility available via target_feature.
+    unsafe {
+      core::arch::asm!(
+        "vmlof {out}, {a}, {b}",
+        out = lateout(vreg) out,
+        a = in(vreg) a,
+        b = in(vreg) b,
+        options(nomem, nostack, pure)
+      );
+    }
+    out
+  }
+
+  /// Add u64 lanes: `vag`.
+  #[inline]
+  #[target_feature(enable = "vector")]
+  unsafe fn vag(a: i64x2, b: i64x2) -> i64x2 {
+    let out: i64x2;
+    // SAFETY: z/Vector facility available via target_feature.
+    unsafe {
+      core::arch::asm!(
+        "vag {out}, {a}, {b}",
+        out = lateout(vreg) out,
+        a = in(vreg) a,
+        b = in(vreg) b,
+        options(nomem, nostack, pure)
+      );
+    }
+    out
   }
 }
 

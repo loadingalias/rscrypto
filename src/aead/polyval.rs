@@ -69,7 +69,7 @@ mod pclmul {
   ///
   /// Equivalent to the portable `mont_reduce` but uses SSE2 lane-parallel shifts.
   #[inline(always)]
-  unsafe fn mont_reduce_sse2(lo: __m128i, hi: __m128i) -> __m128i {
+  pub(super) unsafe fn mont_reduce_sse2(lo: __m128i, hi: __m128i) -> __m128i {
     // SAFETY: caller guarantees SSE2 availability via target_feature chain.
     unsafe {
       // Phase 1: Compute left-shift contribution from both lo lanes.
@@ -102,13 +102,168 @@ mod pclmul {
 }
 
 // ---------------------------------------------------------------------------
+// aarch64 PMULL backend
+// ---------------------------------------------------------------------------
+
+#[cfg(target_arch = "aarch64")]
+mod pmull {
+  use core::arch::aarch64::*;
+
+  /// Combined 128×128 carryless multiply + Montgomery reduce using PMULL.
+  ///
+  /// Uses 4 `vmull_p64` instructions for the schoolbook product, then
+  /// lane-parallel NEON shifts for Montgomery reduction — the same
+  /// 2-pass fold-from-bottom structure as the SSE2 and portable paths.
+  ///
+  /// # Safety
+  /// Caller must ensure the CPU supports PMULL (gated via `target_feature = "aes"`
+  /// because ARM bundles PMULL in the crypto extension alongside AES).
+  #[target_feature(enable = "neon", enable = "aes")]
+  pub(super) unsafe fn clmul128_reduce(a: u128, b: u128) -> u128 {
+    // SAFETY: target_feature gate guarantees NEON + PMULL.
+    unsafe {
+      let a_lo = a as u64;
+      let a_hi = (a >> 64) as u64;
+      let b_lo = b as u64;
+      let b_hi = (b >> 64) as u64;
+
+      // Schoolbook 128×128 → 256-bit product (4 PMULL instructions).
+      let ll = vreinterpretq_u64_p128(vmull_p64(a_lo, b_lo));
+      let hh = vreinterpretq_u64_p128(vmull_p64(a_hi, b_hi));
+      let lh = vreinterpretq_u64_p128(vmull_p64(a_lo, b_hi));
+      let hl = vreinterpretq_u64_p128(vmull_p64(a_hi, b_lo));
+      let mid = veorq_u64(lh, hl);
+
+      // Assemble 256-bit product [lo_128 : hi_128].
+      let zero = vdupq_n_u64(0);
+      let lo = veorq_u64(ll, vextq_u64(zero, mid, 1)); // ll XOR (mid << 64)
+      let hi = veorq_u64(hh, vextq_u64(mid, zero, 1)); // hh XOR (mid >> 64)
+
+      // Montgomery reduction for POLYVAL's polynomial.
+      let result = mont_reduce_neon(lo, hi);
+
+      // Extract result as u128 (LE).
+      let r_lo = vgetq_lane_u64(result, 0) as u128;
+      let r_hi = vgetq_lane_u64(result, 1) as u128;
+      r_lo | (r_hi << 64)
+    }
+  }
+
+  /// Montgomery reduction of [lo:hi] modulo POLYVAL's polynomial.
+  ///
+  /// Polynomial: x^128 + x^127 + x^126 + x^121 + 1
+  /// Shifts: 63, 62, 57 (complement of taps relative to 64-bit boundary)
+  ///
+  /// Uses NEON lane-parallel shifts (`vshlq_n_u64`, `vshrq_n_u64`) and
+  /// `vextq_u64` for cross-lane propagation — structurally identical to
+  /// the SSE2 `mont_reduce_sse2` path.
+  #[inline(always)]
+  unsafe fn mont_reduce_neon(lo: uint64x2_t, hi: uint64x2_t) -> uint64x2_t {
+    // SAFETY: caller guarantees NEON availability via target_feature chain.
+    unsafe {
+      let zero = vdupq_n_u64(0);
+
+      // Phase 1: left-shift contribution from both lo lanes.
+      let left = veorq_u64(veorq_u64(vshlq_n_u64(lo, 63), vshlq_n_u64(lo, 62)), vshlq_n_u64(lo, 57));
+
+      // Fold lo[0]'s left shifts into lo[1] (cross-lane: lo → hi).
+      let lo_folded = veorq_u64(lo, vextq_u64(zero, left, 1));
+
+      // Right-shift + identity contribution.
+      let right = veorq_u64(
+        veorq_u64(lo_folded, vshrq_n_u64(lo_folded, 1)),
+        veorq_u64(vshrq_n_u64(lo_folded, 2), vshrq_n_u64(lo_folded, 7)),
+      );
+
+      // Phase 2: left-shift from lo_folded.
+      let left2 = veorq_u64(
+        veorq_u64(vshlq_n_u64(lo_folded, 63), vshlq_n_u64(lo_folded, 62)),
+        vshlq_n_u64(lo_folded, 57),
+      );
+
+      // Final: hi XOR right XOR (left2 >> 64).
+      veorq_u64(veorq_u64(hi, right), vextq_u64(left2, zero, 1))
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// x86_64 VPCLMULQDQ wide backend (4-block aggregate)
+// ---------------------------------------------------------------------------
+
+#[cfg(target_arch = "x86_64")]
+mod vpclmul {
+  use core::arch::x86_64::*;
+
+  /// Process 4 blocks in parallel using VPCLMULQDQ schoolbook-then-reduce.
+  ///
+  /// Computes: (acc ^ b0) * H4 ^ b1 * H3 ^ b2 * H2 ^ b3 * H
+  ///
+  /// The 4 schoolbook 128x128 products are computed in parallel with 4
+  /// `_mm512_clmulepi64_epi128` instructions, XOR'd together into one
+  /// 256-bit aggregate, then reduced with a single Montgomery reduction.
+  ///
+  /// # Safety
+  /// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ +
+  /// VPCLMULQDQ + PCLMULQDQ + SSE2.
+  #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,pclmulqdq,sse2")]
+  pub(super) unsafe fn aggregate_4blocks(
+    acc: u128,
+    h_powers_rev: &[u128; 4], // [H^4, H^3, H^2, H]
+    blocks: &[u128; 4],       // [b0, b1, b2, b3] in correct domain
+  ) -> u128 {
+    // SAFETY: target_feature gate guarantees all required ISA extensions.
+    unsafe {
+      // XOR accumulator into the first block.
+      let mut block_data = *blocks;
+      block_data[0] ^= acc;
+      let data = _mm512_loadu_si512(block_data.as_ptr().cast());
+
+      // Load H powers [H^4, H^3, H^2, H].
+      let h_vec = _mm512_loadu_si512(h_powers_rev.as_ptr().cast());
+
+      // 4-way parallel schoolbook: 4 VPCLMULQDQ instructions.
+      let lo = _mm512_clmulepi64_epi128(data, h_vec, 0x00); // a_lo * b_lo
+      let hi = _mm512_clmulepi64_epi128(data, h_vec, 0x11); // a_hi * b_hi
+      let m1 = _mm512_clmulepi64_epi128(data, h_vec, 0x10); // a_hi * b_lo
+      let m2 = _mm512_clmulepi64_epi128(data, h_vec, 0x01); // a_lo * b_hi
+      let mid = _mm512_xor_si512(m1, m2);
+
+      // Assemble per-lane 256-bit products [lo_128 : hi_128].
+      let lo_128 = _mm512_xor_si512(lo, _mm512_bslli_epi128(mid, 8));
+      let hi_128 = _mm512_xor_si512(hi, _mm512_bsrli_epi128(mid, 8));
+
+      // Reduce 4 lanes -> 1 lane via cascading XOR.
+      let lo_0 = _mm512_extracti64x2_epi64(lo_128, 0);
+      let lo_1 = _mm512_extracti64x2_epi64(lo_128, 1);
+      let lo_2 = _mm512_extracti64x2_epi64(lo_128, 2);
+      let lo_3 = _mm512_extracti64x2_epi64(lo_128, 3);
+      let lo_sum = _mm_xor_si128(_mm_xor_si128(lo_0, lo_1), _mm_xor_si128(lo_2, lo_3));
+
+      let hi_0 = _mm512_extracti64x2_epi64(hi_128, 0);
+      let hi_1 = _mm512_extracti64x2_epi64(hi_128, 1);
+      let hi_2 = _mm512_extracti64x2_epi64(hi_128, 2);
+      let hi_3 = _mm512_extracti64x2_epi64(hi_128, 3);
+      let hi_sum = _mm_xor_si128(_mm_xor_si128(hi_0, hi_1), _mm_xor_si128(hi_2, hi_3));
+
+      // Single Montgomery reduction.
+      let result = super::pclmul::mont_reduce_sse2(lo_sum, hi_sum);
+
+      let mut out = 0u128;
+      _mm_storeu_si128((&mut out as *mut u128).cast(), result);
+      out
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Combined multiply + reduce with hardware dispatch
 // ---------------------------------------------------------------------------
 
 /// Combined 128×128 carryless multiply + Montgomery reduce.
 ///
-/// Dispatches to PCLMULQDQ on x86_64 when available, otherwise uses the
-/// portable Pornin bmul64 + Karatsuba path.
+/// Dispatches to PCLMULQDQ (x86_64) or PMULL (aarch64) when available,
+/// otherwise uses the portable Pornin bmul64 + Karatsuba path.
 pub(super) fn clmul128_reduce(a: u128, b: u128) -> u128 {
   #[cfg(target_arch = "x86_64")]
   {
@@ -117,7 +272,57 @@ pub(super) fn clmul128_reduce(a: u128, b: u128) -> u128 {
       return unsafe { pclmul::clmul128_reduce(a, b) };
     }
   }
+  #[cfg(target_arch = "aarch64")]
+  {
+    if crate::platform::caps().has(crate::platform::caps::aarch64::PMULL) {
+      // SAFETY: PMULL availability verified via HWCAP.
+      return unsafe { pmull::clmul128_reduce(a, b) };
+    }
+  }
   mont_reduce(clmul128(a, b))
+}
+
+/// Precompute hash key powers [H, H^2, H^3, H^4] for 4-block wide processing.
+///
+/// Used by both GHASH and POLYVAL to enable the schoolbook-then-reduce
+/// pattern: 4 parallel multiplies, 1 shared reduction.
+pub(super) fn precompute_powers(h: u128) -> [u128; 4] {
+  let h2 = clmul128_reduce(h, h);
+  let h3 = clmul128_reduce(h2, h);
+  let h4 = clmul128_reduce(h3, h);
+  [h, h2, h3, h4]
+}
+
+/// Process 4 blocks through the hash accumulator in one shot.
+///
+/// Computes: (acc ^ b0) * H^4 ^ b1 * H^3 ^ b2 * H^2 ^ b3 * H
+///
+/// Dispatches to VPCLMULQDQ (x86_64) when available, otherwise falls
+/// back to 4 sequential `clmul128_reduce` calls.
+#[cfg(any(target_arch = "x86_64", test))]
+pub(super) fn accumulate_4blocks(
+  acc: u128,
+  h: u128,
+  h_powers_rev: &[u128; 4], // [H^4, H^3, H^2, H]
+  blocks: &[u128; 4],
+) -> u128 {
+  #[cfg(target_arch = "x86_64")]
+  {
+    if crate::platform::caps().has(crate::platform::caps::x86::VPCLMUL_READY) {
+      // SAFETY: VPCLMULQDQ + AVX-512 availability verified via CPUID.
+      return unsafe { vpclmul::aggregate_4blocks(acc, h_powers_rev, blocks) };
+    }
+  }
+  let _ = h_powers_rev;
+  // Sequential fallback: equivalent to 4 individual block updates.
+  let mut a = acc ^ blocks[0];
+  a = clmul128_reduce(a, h);
+  a ^= blocks[1];
+  a = clmul128_reduce(a, h);
+  a ^= blocks[2];
+  a = clmul128_reduce(a, h);
+  a ^= blocks[3];
+  clmul128_reduce(a, h)
 }
 
 /// POLYVAL accumulator state.
@@ -451,6 +656,60 @@ mod tests {
     let v = [POLY as u64, (POLY >> 64) as u64, 0u64, 0u64];
     let result = mont_reduce(v);
     assert_eq!(result, 1, "mont_reduce(POLY) should be 1");
+  }
+
+  /// Verify precompute_powers produces correct powers of H.
+  #[test]
+  fn precompute_powers_correct() {
+    let h = u128::from_le_bytes(hex_to_16("25629347589242761d31f826ba4b757b"));
+    let powers = precompute_powers(h);
+    assert_eq!(powers[0], h, "powers[0] should be H");
+    assert_eq!(powers[1], clmul128_reduce(h, h), "powers[1] should be H^2");
+    assert_eq!(powers[2], clmul128_reduce(powers[1], h), "powers[2] should be H^3");
+    assert_eq!(powers[3], clmul128_reduce(powers[2], h), "powers[3] should be H^4");
+  }
+
+  /// Verify accumulate_4blocks matches sequential block-by-block processing.
+  #[test]
+  fn accumulate_4blocks_matches_sequential() {
+    let h_bytes = hex_to_16("25629347589242761d31f826ba4b757b");
+    let h = u128::from_le_bytes(h_bytes);
+    let powers = precompute_powers(h);
+    let h_powers_rev = [powers[3], powers[2], powers[1], powers[0]];
+
+    let blocks = [
+      u128::from_le_bytes(hex_to_16("4f4f95668c83dfb6401762bb2d01a262")),
+      u128::from_le_bytes(hex_to_16("d1a24ddd2721d006bbe45f20d3c9f362")),
+      u128::from_le_bytes(hex_to_16("0100000000000000000000000000000f")),
+      u128::from_le_bytes(hex_to_16("abcdef0123456789abcdef0123456789")),
+    ];
+    let acc = 0x42u128;
+
+    // Sequential: 4 individual updates.
+    let mut seq = acc ^ blocks[0];
+    seq = clmul128_reduce(seq, h);
+    seq ^= blocks[1];
+    seq = clmul128_reduce(seq, h);
+    seq ^= blocks[2];
+    seq = clmul128_reduce(seq, h);
+    seq ^= blocks[3];
+    seq = clmul128_reduce(seq, h);
+
+    // Wide: one accumulate_4blocks call.
+    let wide = accumulate_4blocks(acc, h, &h_powers_rev, &blocks);
+
+    assert_eq!(wide, seq, "4-block aggregate must match sequential processing");
+  }
+
+  /// accumulate_4blocks with zero accumulator and zero blocks must produce zero.
+  #[test]
+  fn accumulate_4blocks_zeros() {
+    let h = 0x42u128;
+    let powers = precompute_powers(h);
+    let h_powers_rev = [powers[3], powers[2], powers[1], powers[0]];
+    let blocks = [0u128; 4];
+    let result = accumulate_4blocks(0, h, &h_powers_rev, &blocks);
+    assert_eq!(result, 0);
   }
 
   fn hex_to_16(hex: &str) -> [u8; 16] {

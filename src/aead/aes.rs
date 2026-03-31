@@ -6,10 +6,11 @@
 //! use by AES-based AEAD constructions (GCM-SIV, GCM). All operations are
 //! constant-time: no table lookups indexed by secret data.
 //!
-//! On x86_64 with AES-NI, the hardware path is selected at key-expansion time.
-//! The portable S-box uses algebraic inversion in GF(2^8) via the Fermat
-//! power chain (x^254) and constant-time field arithmetic, avoiding any
-//! lookup tables that could leak through cache timing.
+//! On x86_64 with AES-NI or aarch64 with AES-CE, the hardware path is
+//! selected at key-expansion time. The portable S-box uses algebraic
+//! inversion in GF(2^8) via the Fermat power chain (x^254) and
+//! constant-time field arithmetic, avoiding any lookup tables that could
+//! leak through cache timing.
 
 /// AES block size in bytes.
 pub(crate) const BLOCK_SIZE: usize = 16;
@@ -103,6 +104,33 @@ mod ni {
     }
   }
 
+  /// Encrypt 4 blocks in parallel using VAES-512 (14-round AES-256).
+  ///
+  /// Takes 4 pre-loaded 128-bit blocks in a `__m512i`, broadcasts each
+  /// round key, and applies 14 VAES rounds. Returns the encrypted blocks.
+  ///
+  /// # Safety
+  /// Caller must ensure AVX-512F + AVX-512VL + VAES + AES + SSE2.
+  #[target_feature(enable = "aes,sse2,avx512f,avx512vl,vaes")]
+  pub(super) unsafe fn encrypt_4blocks(keys: &NiRoundKeys, blocks: __m512i) -> __m512i {
+    let k = &keys.rk;
+    let mut state = _mm512_xor_si512(blocks, _mm512_broadcast_i32x4(k[0]));
+    state = _mm512_aesenc_epi128(state, _mm512_broadcast_i32x4(k[1]));
+    state = _mm512_aesenc_epi128(state, _mm512_broadcast_i32x4(k[2]));
+    state = _mm512_aesenc_epi128(state, _mm512_broadcast_i32x4(k[3]));
+    state = _mm512_aesenc_epi128(state, _mm512_broadcast_i32x4(k[4]));
+    state = _mm512_aesenc_epi128(state, _mm512_broadcast_i32x4(k[5]));
+    state = _mm512_aesenc_epi128(state, _mm512_broadcast_i32x4(k[6]));
+    state = _mm512_aesenc_epi128(state, _mm512_broadcast_i32x4(k[7]));
+    state = _mm512_aesenc_epi128(state, _mm512_broadcast_i32x4(k[8]));
+    state = _mm512_aesenc_epi128(state, _mm512_broadcast_i32x4(k[9]));
+    state = _mm512_aesenc_epi128(state, _mm512_broadcast_i32x4(k[10]));
+    state = _mm512_aesenc_epi128(state, _mm512_broadcast_i32x4(k[11]));
+    state = _mm512_aesenc_epi128(state, _mm512_broadcast_i32x4(k[12]));
+    state = _mm512_aesenc_epi128(state, _mm512_broadcast_i32x4(k[13]));
+    _mm512_aesenclast_epi128(state, _mm512_broadcast_i32x4(k[14]))
+  }
+
   /// Encrypt a single 16-byte block using AES-256 with AES-NI.
   ///
   /// # Safety
@@ -136,14 +164,107 @@ mod ni {
 }
 
 // ---------------------------------------------------------------------------
+// aarch64 AES-CE backend
+// ---------------------------------------------------------------------------
+
+#[cfg(target_arch = "aarch64")]
+mod ce {
+  use core::arch::aarch64::*;
+
+  /// AES-256 round keys stored as 15 × 128-bit NEON vectors for AES-CE.
+  #[derive(Clone, Copy)]
+  #[repr(C, align(16))]
+  pub(super) struct CeRoundKeys {
+    rk: [uint8x16_t; 15],
+  }
+
+  impl CeRoundKeys {
+    /// Zeroize all round keys via volatile writes.
+    pub(super) fn zeroize(&mut self) {
+      // SAFETY: `self.rk` is a valid, aligned, fully-initialized [uint8x16_t; 15].
+      // Reinterpreting as a byte slice for volatile zeroization is sound.
+      let bytes = unsafe { core::slice::from_raw_parts_mut(self.rk.as_mut_ptr().cast::<u8>(), 15usize.strict_mul(16)) };
+      crate::traits::ct::zeroize(bytes);
+    }
+  }
+
+  /// Convert portable round keys (60 × big-endian u32) to AES-CE vector format.
+  ///
+  /// AES-CE expects round keys as byte vectors in the standard AES state
+  /// layout. The portable path stores words in big-endian, so serializing
+  /// each u32 to big-endian bytes produces the correct byte vectors.
+  ///
+  /// # Safety
+  /// Caller must ensure the CPU supports NEON (always true on aarch64).
+  #[target_feature(enable = "neon")]
+  pub(super) unsafe fn from_portable(rk: &[u32; 60]) -> CeRoundKeys {
+    // SAFETY: target_feature gate guarantees NEON.
+    unsafe {
+      let mut keys = [vdupq_n_u8(0); 15];
+      let mut i = 0usize;
+      while i < 15 {
+        let base = i.strict_mul(4);
+        let mut bytes = [0u8; 16];
+        bytes[0..4].copy_from_slice(&rk[base].to_be_bytes());
+        bytes[4..8].copy_from_slice(&rk[base.strict_add(1)].to_be_bytes());
+        bytes[8..12].copy_from_slice(&rk[base.strict_add(2)].to_be_bytes());
+        bytes[12..16].copy_from_slice(&rk[base.strict_add(3)].to_be_bytes());
+        keys[i] = vld1q_u8(bytes.as_ptr());
+        i = i.strict_add(1);
+      }
+      CeRoundKeys { rk: keys }
+    }
+  }
+
+  /// Encrypt a single 16-byte block using AES-256 with AES-CE.
+  ///
+  /// ARM's `AESE` instruction performs XOR(state, key) → SubBytes → ShiftRows.
+  /// Combined with `AESMC` (MixColumns), each middle round is a single
+  /// `AESMC(AESE(state, K[i]))` pair. The final round omits MixColumns.
+  ///
+  /// # Safety
+  /// Caller must ensure the CPU supports AES-CE (`target_feature = "aes"`).
+  #[target_feature(enable = "aes,neon")]
+  pub(super) unsafe fn encrypt_block(keys: &CeRoundKeys, block: &mut [u8; 16]) {
+    // SAFETY: target_feature gate guarantees AES-CE + NEON.
+    unsafe {
+      let k = &keys.rk;
+      let mut state = vld1q_u8(block.as_ptr());
+
+      // Rounds 1–13: AESE absorbs the previous round's AddRoundKey,
+      // then SubBytes + ShiftRows. AESMC applies MixColumns.
+      state = vaesmcq_u8(vaeseq_u8(state, k[0]));
+      state = vaesmcq_u8(vaeseq_u8(state, k[1]));
+      state = vaesmcq_u8(vaeseq_u8(state, k[2]));
+      state = vaesmcq_u8(vaeseq_u8(state, k[3]));
+      state = vaesmcq_u8(vaeseq_u8(state, k[4]));
+      state = vaesmcq_u8(vaeseq_u8(state, k[5]));
+      state = vaesmcq_u8(vaeseq_u8(state, k[6]));
+      state = vaesmcq_u8(vaeseq_u8(state, k[7]));
+      state = vaesmcq_u8(vaeseq_u8(state, k[8]));
+      state = vaesmcq_u8(vaeseq_u8(state, k[9]));
+      state = vaesmcq_u8(vaeseq_u8(state, k[10]));
+      state = vaesmcq_u8(vaeseq_u8(state, k[11]));
+      state = vaesmcq_u8(vaeseq_u8(state, k[12]));
+
+      // Round 14 (final): SubBytes + ShiftRows, then AddRoundKey (no MixColumns).
+      state = vaeseq_u8(state, k[13]);
+      state = veorq_u8(state, k[14]);
+
+      vst1q_u8(block.as_mut_ptr(), state);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Aes256EncKey: enum-dispatched key storage
 // ---------------------------------------------------------------------------
 
 /// AES-256 expanded round keys.
 ///
-/// On x86_64 with AES-NI, stores round keys as `__m128i` for zero-copy
-/// use with hardware instructions. Otherwise stores 60 big-endian u32 words
-/// for the portable path. Zeroized on drop.
+/// On x86_64 with AES-NI, stores round keys as `__m128i`; on aarch64 with
+/// AES-CE, stores round keys as `uint8x16_t`. Otherwise stores 60 big-endian
+/// u32 words for the portable path. Zeroized on drop.
 #[derive(Clone)]
 pub(crate) struct Aes256EncKey {
   inner: KeyInner,
@@ -154,6 +275,8 @@ enum KeyInner {
   Portable([u32; EXPANDED_KEY_WORDS]),
   #[cfg(target_arch = "x86_64")]
   AesNi(ni::NiRoundKeys),
+  #[cfg(target_arch = "aarch64")]
+  Aarch64Ce(ce::CeRoundKeys),
 }
 
 impl Drop for Aes256EncKey {
@@ -162,12 +285,16 @@ impl Drop for Aes256EncKey {
       KeyInner::Portable(rk) => {
         // SAFETY: [u32; 60] is layout-compatible with [u8; 240].
         crate::traits::ct::zeroize(unsafe {
-          core::slice::from_raw_parts_mut(rk.as_mut_ptr().cast::<u8>(), EXPANDED_KEY_WORDS * 4)
+          core::slice::from_raw_parts_mut(rk.as_mut_ptr().cast::<u8>(), EXPANDED_KEY_WORDS.strict_mul(4))
         });
       }
       #[cfg(target_arch = "x86_64")]
       KeyInner::AesNi(ni_rk) => {
         ni_rk.zeroize();
+      }
+      #[cfg(target_arch = "aarch64")]
+      KeyInner::Aarch64Ce(ce_rk) => {
+        ce_rk.zeroize();
       }
     }
   }
@@ -332,8 +459,8 @@ fn aes256_expand_key_portable(key: &[u8; KEY_SIZE]) -> [u32; EXPANDED_KEY_WORDS]
 
 /// Expand a 256-bit AES key into round keys.
 ///
-/// On x86_64 with AES-NI detected at runtime, uses hardware key expansion.
-/// Otherwise uses the portable algebraic path.
+/// On x86_64 with AES-NI or aarch64 with AES-CE, converts to hardware-native
+/// round key format at expansion time. Otherwise uses the portable path.
 #[inline]
 pub(crate) fn aes256_expand_key(key: &[u8; KEY_SIZE]) -> Aes256EncKey {
   #[cfg(target_arch = "x86_64")]
@@ -342,6 +469,23 @@ pub(crate) fn aes256_expand_key(key: &[u8; KEY_SIZE]) -> Aes256EncKey {
       return Aes256EncKey {
         // SAFETY: AES-NI availability verified via CPUID above.
         inner: KeyInner::AesNi(unsafe { ni::expand_key(key) }),
+      };
+    }
+  }
+  #[cfg(target_arch = "aarch64")]
+  {
+    if crate::platform::caps().has(crate::platform::caps::aarch64::AES) {
+      let mut portable_rk = aes256_expand_key_portable(key);
+      // SAFETY: AES-CE availability verified via HWCAP above.
+      let ce_keys = unsafe { ce::from_portable(&portable_rk) };
+      // Zeroize the intermediate portable key schedule so it does not
+      // linger on the stack after conversion to NEON vectors.
+      // SAFETY: [u32; 60] is layout-compatible with [u8; 240].
+      crate::traits::ct::zeroize(unsafe {
+        core::slice::from_raw_parts_mut(portable_rk.as_mut_ptr().cast::<u8>(), EXPANDED_KEY_WORDS.strict_mul(4))
+      });
+      return Aes256EncKey {
+        inner: KeyInner::Aarch64Ce(ce_keys),
       };
     }
   }
@@ -356,7 +500,8 @@ pub(crate) fn aes256_expand_key(key: &[u8; KEY_SIZE]) -> Aes256EncKey {
 
 /// Encrypt a single 16-byte block with AES-256.
 ///
-/// Dispatches to AES-NI when available, otherwise uses the portable path.
+/// Dispatches to AES-NI (x86_64) or AES-CE (aarch64) when available,
+/// otherwise uses the portable path.
 #[inline]
 pub(crate) fn aes256_encrypt_block(ek: &Aes256EncKey, block: &mut [u8; BLOCK_SIZE]) {
   match &ek.inner {
@@ -365,6 +510,11 @@ pub(crate) fn aes256_encrypt_block(ek: &Aes256EncKey, block: &mut [u8; BLOCK_SIZ
     KeyInner::AesNi(ni_rk) => {
       // SAFETY: AesNi variant is only constructed after runtime detection confirms AES-NI.
       unsafe { ni::encrypt_block(ni_rk, block) }
+    }
+    #[cfg(target_arch = "aarch64")]
+    KeyInner::Aarch64Ce(ce_rk) => {
+      // SAFETY: Aarch64Ce variant is only constructed after runtime detection confirms AES-CE.
+      unsafe { ce::encrypt_block(ce_rk, block) }
     }
   }
 }
@@ -590,6 +740,186 @@ pub(crate) fn aes256_ctr32_encrypt_be(ek: &Aes256EncKey, initial_counter: &[u8; 
     }
 
     ctr = ctr.wrapping_add(1);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Wide AES-CTR for GCM (big-endian 32-bit counter, VAES-512)
+// ---------------------------------------------------------------------------
+
+/// AES-256 CTR encryption using VAES-512 for the bulk, AES-NI for the tail.
+///
+/// Processes 4 blocks (64 bytes) per iteration using VAES-512, then falls
+/// back to single-block AES-NI for the remaining 0-3 blocks.
+/// Returns the number of blocks encrypted (for counter tracking).
+///
+/// The counter occupies bytes 12..15 (big-endian) per NIST SP 800-38D.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "aes,sse2,avx512f,avx512vl,vaes")]
+pub(crate) unsafe fn aes256_ctr32_encrypt_be_wide(
+  ek: &Aes256EncKey,
+  initial_counter: &[u8; BLOCK_SIZE],
+  data: &mut [u8],
+) {
+  use core::arch::x86_64::*;
+
+  // SAFETY: AesNi variant is guaranteed by caller; target_feature gate
+  // ensures VAES + AVX-512 instructions are available.
+  unsafe {
+    let ni_rk = match &ek.inner {
+      KeyInner::AesNi(rk) => rk,
+      _ => {
+        // Fallback to scalar if not AES-NI (shouldn't happen when VAES is available).
+        aes256_ctr32_encrypt_be(ek, initial_counter, data);
+        return;
+      }
+    };
+
+    let iv_prefix: [u8; 12] = {
+      let mut buf = [0u8; 12];
+      buf.copy_from_slice(&initial_counter[..12]);
+      buf
+    };
+    let mut ctr = u32::from_be_bytes([
+      initial_counter[12],
+      initial_counter[13],
+      initial_counter[14],
+      initial_counter[15],
+    ]);
+    let mut offset = 0usize;
+
+    // Wide path: 4 blocks (64 bytes) per iteration.
+    while offset.strict_add(64) <= data.len() {
+      // Build 4 counter blocks.
+      let mut ctr_blocks = [[0u8; 16]; 4];
+      let mut i = 0u32;
+      while i < 4 {
+        ctr_blocks[i as usize][..12].copy_from_slice(&iv_prefix);
+        ctr_blocks[i as usize][12..16].copy_from_slice(&ctr.wrapping_add(i).to_be_bytes());
+        i = i.strict_add(1);
+      }
+      let ctr_vec = _mm512_loadu_si512(ctr_blocks.as_ptr().cast());
+
+      // Encrypt 4 blocks in parallel.
+      let keystream = ni::encrypt_4blocks(ni_rk, ctr_vec);
+
+      // XOR keystream with data.
+      let plaintext = _mm512_loadu_si512(data.as_ptr().add(offset).cast());
+      let ciphertext = _mm512_xor_si512(plaintext, keystream);
+      _mm512_storeu_si512(data.as_mut_ptr().add(offset).cast(), ciphertext);
+
+      ctr = ctr.wrapping_add(4);
+      offset = offset.strict_add(64);
+    }
+
+    // Tail: 0-3 remaining blocks via single-block AES-NI.
+    while offset < data.len() {
+      let mut counter_block = [0u8; 16];
+      counter_block[..12].copy_from_slice(&iv_prefix);
+      counter_block[12..16].copy_from_slice(&ctr.to_be_bytes());
+
+      let mut keystream = counter_block;
+      ni::encrypt_block(ni_rk, &mut keystream);
+
+      let remaining = data.len().strict_sub(offset);
+      if remaining >= BLOCK_SIZE {
+        let ks = u128::from_ne_bytes(keystream);
+        let mut d = [0u8; BLOCK_SIZE];
+        d.copy_from_slice(&data[offset..offset.strict_add(BLOCK_SIZE)]);
+        let xored = u128::from_ne_bytes(d) ^ ks;
+        data[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&xored.to_ne_bytes());
+        offset = offset.strict_add(BLOCK_SIZE);
+      } else {
+        let mut i = 0usize;
+        while i < remaining {
+          data[offset.strict_add(i)] ^= keystream[i];
+          i = i.strict_add(1);
+        }
+        offset = offset.strict_add(remaining);
+      }
+      ctr = ctr.wrapping_add(1);
+    }
+  }
+}
+
+/// AES-256 CTR encryption using VAES-512 for the bulk, AES-NI for the tail.
+///
+/// GCM-SIV variant: counter occupies bytes 0..3 (little-endian).
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "aes,sse2,avx512f,avx512vl,vaes")]
+pub(crate) unsafe fn aes256_ctr32_encrypt_wide(ek: &Aes256EncKey, initial_counter: &[u8; BLOCK_SIZE], data: &mut [u8]) {
+  use core::arch::x86_64::*;
+
+  // SAFETY: AesNi variant is guaranteed by caller; target_feature gate
+  // ensures VAES + AVX-512 instructions are available.
+  unsafe {
+    let ni_rk = match &ek.inner {
+      KeyInner::AesNi(rk) => rk,
+      _ => {
+        aes256_ctr32_encrypt(ek, initial_counter, data);
+        return;
+      }
+    };
+
+    let iv_suffix: [u8; 12] = {
+      let mut buf = [0u8; 12];
+      buf.copy_from_slice(&initial_counter[4..16]);
+      buf
+    };
+    let mut ctr = u32::from_le_bytes([
+      initial_counter[0],
+      initial_counter[1],
+      initial_counter[2],
+      initial_counter[3],
+    ]);
+    let mut offset = 0usize;
+
+    // Wide path: 4 blocks (64 bytes) per iteration.
+    while offset.strict_add(64) <= data.len() {
+      let mut ctr_blocks = [[0u8; 16]; 4];
+      let mut i = 0u32;
+      while i < 4 {
+        ctr_blocks[i as usize][0..4].copy_from_slice(&ctr.wrapping_add(i).to_le_bytes());
+        ctr_blocks[i as usize][4..16].copy_from_slice(&iv_suffix);
+        i = i.strict_add(1);
+      }
+      let ctr_vec = _mm512_loadu_si512(ctr_blocks.as_ptr().cast());
+      let keystream = ni::encrypt_4blocks(ni_rk, ctr_vec);
+      let plaintext = _mm512_loadu_si512(data.as_ptr().add(offset).cast());
+      let ciphertext = _mm512_xor_si512(plaintext, keystream);
+      _mm512_storeu_si512(data.as_mut_ptr().add(offset).cast(), ciphertext);
+
+      ctr = ctr.wrapping_add(4);
+      offset = offset.strict_add(64);
+    }
+
+    // Tail: 0-3 remaining blocks via single-block AES-NI.
+    while offset < data.len() {
+      let mut counter_block = [0u8; 16];
+      counter_block[0..4].copy_from_slice(&ctr.to_le_bytes());
+      counter_block[4..16].copy_from_slice(&iv_suffix);
+
+      let mut keystream = counter_block;
+      ni::encrypt_block(ni_rk, &mut keystream);
+
+      let remaining = data.len().strict_sub(offset);
+      if remaining >= BLOCK_SIZE {
+        let ks = u128::from_ne_bytes(keystream);
+        let mut d = [0u8; BLOCK_SIZE];
+        d.copy_from_slice(&data[offset..offset.strict_add(BLOCK_SIZE)]);
+        let xored = u128::from_ne_bytes(d) ^ ks;
+        data[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&xored.to_ne_bytes());
+        offset = offset.strict_add(BLOCK_SIZE);
+      } else {
+        let mut i = 0usize;
+        while i < remaining {
+          data[offset.strict_add(i)] ^= keystream[i];
+          i = i.strict_add(1);
+        }
+        offset = offset.strict_add(remaining);
+      }
+      ctr = ctr.wrapping_add(1);
+    }
   }
 }
 
