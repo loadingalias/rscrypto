@@ -651,7 +651,8 @@ const fn mix_column(col: [u8; 4]) -> u32 {
 // Single AES round for AEGIS
 // ---------------------------------------------------------------------------
 
-/// Single AES encryption round on a 128-bit block: SubBytes + ShiftRows + MixColumns + XOR(round_key).
+/// Single AES encryption round on a 128-bit block: SubBytes + ShiftRows + MixColumns +
+/// XOR(round_key).
 ///
 /// Equivalent to `_mm_aesenc_si128(block, round_key)` on x86_64. Used by the
 /// AEGIS-256 portable backend where the full AES round function (not full AES

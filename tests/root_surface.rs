@@ -8,8 +8,7 @@ use rscrypto::aead::introspect::{DispatchInfo as AeadDispatchInfo, backend_for a
 use rscrypto::aead::{
   AeadBackend, AeadBufferError, AeadPrimitive, Aegis256, Aegis256Key, Aegis256Tag, BenchLane, ChaCha20Poly1305,
   ChaCha20Poly1305Key, ChaCha20Poly1305Tag, Nonce96, Nonce128, Nonce192, Nonce256, OpenError, XChaCha20Poly1305,
-  XChaCha20Poly1305Key, XChaCha20Poly1305Tag,
-  lane_target_backend, select_backend,
+  XChaCha20Poly1305Key, XChaCha20Poly1305Tag, lane_target_backend, select_backend,
 };
 #[cfg(feature = "auth")]
 use rscrypto::auth::HkdfOutputLengthError;
