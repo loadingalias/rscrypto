@@ -109,14 +109,7 @@ fn init(key: &[u8; KEY_SIZE], nonce: &[u8; NONCE_SIZE]) -> State {
   let k0_xor_n0 = xor_block(&k0, &n0);
   let k1_xor_n1 = xor_block(&k1, &n1);
 
-  let mut s: State = [
-    k0_xor_n0,
-    k1_xor_n1,
-    C1,
-    C0,
-    xor_block(&k0, &C0),
-    xor_block(&k1, &C1),
-  ];
+  let mut s: State = [k0_xor_n0, k1_xor_n1, C1, C0, xor_block(&k0, &C0), xor_block(&k1, &C1)];
 
   for _ in 0..4 {
     update(&mut s, &k0);
@@ -812,12 +805,7 @@ fn encrypt_portable(key: &[u8; KEY_SIZE], nonce: &[u8; NONCE_SIZE], aad: &[u8], 
   finalize(&mut s, aad.len(), msg_len)
 }
 
-fn decrypt_portable(
-  key: &[u8; KEY_SIZE],
-  nonce: &[u8; NONCE_SIZE],
-  aad: &[u8],
-  buffer: &mut [u8],
-) -> [u8; TAG_SIZE] {
+fn decrypt_portable(key: &[u8; KEY_SIZE], nonce: &[u8; NONCE_SIZE], aad: &[u8], buffer: &mut [u8]) -> [u8; TAG_SIZE] {
   let mut s = init(key, nonce);
   process_aad(&mut s, aad);
   let ct_len = buffer.len();
@@ -1021,12 +1009,15 @@ mod tests {
   // -- Spec test vectors (Appendix A.3) --
 
   fn spec_key() -> Aegis256Key {
-    Aegis256Key::from_bytes(hex_block("10010000000000000000000000000000").iter()
-      .chain(hex_block("00000000000000000000000000000000").iter())
-      .copied()
-      .collect::<Vec<u8>>()
-      .try_into()
-      .unwrap())
+    Aegis256Key::from_bytes(
+      hex_block("10010000000000000000000000000000")
+        .iter()
+        .chain(hex_block("00000000000000000000000000000000").iter())
+        .copied()
+        .collect::<Vec<u8>>()
+        .try_into()
+        .unwrap(),
+    )
   }
 
   fn spec_nonce() -> Nonce256 {

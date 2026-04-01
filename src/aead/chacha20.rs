@@ -399,8 +399,8 @@ pub(crate) fn hchacha20(key: &[u8; KEY_SIZE], nonce: &[u8; HCHACHA_NONCE_SIZE]) 
 mod x86_avx512 {
   use core::arch::x86_64::{
     __m512i, _mm512_add_epi32, _mm512_loadu_si512, _mm512_rol_epi32, _mm512_set1_epi32, _mm512_setr_epi32,
-    _mm512_shuffle_i32x4, _mm512_storeu_si512, _mm512_unpackhi_epi32, _mm512_unpackhi_epi64,
-    _mm512_unpacklo_epi32, _mm512_unpacklo_epi64, _mm512_xor_si512,
+    _mm512_shuffle_i32x4, _mm512_storeu_si512, _mm512_unpackhi_epi32, _mm512_unpackhi_epi64, _mm512_unpacklo_epi32,
+    _mm512_unpacklo_epi64, _mm512_xor_si512,
   };
 
   use super::{BLOCK_SIZE, KEY_SIZE, NONCE_SIZE, load_u32_le, xor_keystream_portable};
@@ -659,10 +659,10 @@ mod x86_avx512 {
 #[cfg(target_arch = "x86_64")]
 mod x86_avx2 {
   use core::arch::x86_64::{
-    __m256i, _mm256_add_epi32, _mm256_loadu_si256, _mm256_or_si256, _mm256_permute2x128_si256, _mm256_set1_epi32,
-    _mm256_set_epi8, _mm256_setr_epi32, _mm256_shuffle_epi8, _mm256_slli_epi32, _mm256_srli_epi32,
-    _mm256_storeu_si256, _mm256_unpackhi_epi32, _mm256_unpackhi_epi64, _mm256_unpacklo_epi32,
-    _mm256_unpacklo_epi64, _mm256_xor_si256,
+    __m256i, _mm256_add_epi32, _mm256_loadu_si256, _mm256_or_si256, _mm256_permute2x128_si256, _mm256_set_epi8,
+    _mm256_set1_epi32, _mm256_setr_epi32, _mm256_shuffle_epi8, _mm256_slli_epi32, _mm256_srli_epi32,
+    _mm256_storeu_si256, _mm256_unpackhi_epi32, _mm256_unpackhi_epi64, _mm256_unpacklo_epi32, _mm256_unpacklo_epi64,
+    _mm256_xor_si256,
   };
 
   use super::{BLOCK_SIZE, KEY_SIZE, NONCE_SIZE, load_u32_le, xor_keystream_portable};
@@ -874,14 +874,7 @@ mod x86_avx2 {
   }
 
   #[inline(always)]
-  fn quarter_round(
-    a: &mut __m256i,
-    b: &mut __m256i,
-    c: &mut __m256i,
-    d: &mut __m256i,
-    rot16: __m256i,
-    rot8: __m256i,
-  ) {
+  fn quarter_round(a: &mut __m256i, b: &mut __m256i, c: &mut __m256i, d: &mut __m256i, rot16: __m256i, rot8: __m256i) {
     // SAFETY: this helper is only reached from the AVX2-enabled backend.
     unsafe {
       *a = _mm256_add_epi32(*a, *b);
@@ -1829,7 +1822,9 @@ mod tests {
 
     let key = [0x71; KEY_SIZE];
     let nonce = [0x19; NONCE_SIZE];
-    for len in [0usize, 1, 63, 64, 65, 255, 256, 257, 511, 512, 513, 1024, 1536, 2048, 4096, 8192] {
+    for len in [
+      0usize, 1, 63, 64, 65, 255, 256, 257, 511, 512, 513, 1024, 1536, 2048, 4096, 8192,
+    ] {
       let mut portable = vec![0u8; len];
       let mut accelerated = vec![0u8; len];
       let mut index = 0usize;
@@ -1855,7 +1850,9 @@ mod tests {
 
     let key = [0x55; KEY_SIZE];
     let nonce = [0x33; NONCE_SIZE];
-    for len in [0usize, 1, 63, 64, 65, 255, 256, 257, 511, 512, 513, 1024, 2048, 4096, 8192] {
+    for len in [
+      0usize, 1, 63, 64, 65, 255, 256, 257, 511, 512, 513, 1024, 2048, 4096, 8192,
+    ] {
       let mut portable = vec![0u8; len];
       let mut accelerated = vec![0u8; len];
       let mut index = 0usize;
