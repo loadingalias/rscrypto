@@ -1,6 +1,8 @@
 # AEAD Roadmap
 
-## Current Status (2026-03-31)
+## Current Status (2026-04-01)
+
+**All six AEAD primitives are shipped.** The AEAD portfolio is complete.
 
 `XChaCha20-Poly1305` is shipped on the typed AEAD surface.
 The plain `ChaCha20-Poly1305` interop companion is shipped on the same core.
@@ -28,9 +30,12 @@ The ChaCha-family core now has explicit backend routing for `x86_64` (`portable 
 - Portable Ascon permutation (rate=64 bits, PA=12, PB=6), no ornamental SIMD dispatch
 - Verified against official Ascon LWC KAT vectors (11 test cases across varied AAD/PT sizes)
 
-Still missing from the primary rollout:
-
-- `AEGIS-256`
+`AEGIS-256` is shipped with **x86_64 AES-NI + aarch64 AES-CE hardware acceleration**:
+- Full draft-irtf-cfrg-aegis-aead-18 construction with 256-bit key, 256-bit nonce, 128-bit tag
+- Three backends: portable (algebraic AES S-box), x86_64 AES-NI (`_mm_aesenc_si128`), aarch64 AES-CE (`vaeseq_u8` + `vaesmcq_u8`)
+- Runtime dispatch via `platform::caps()` at construction time
+- Verified against all 5 spec test vectors (Appendix A.3) plus AESRound and Update unit vectors
+- VAES-512 wide path (AEGIS-256X2/X4) is future work
 
 ## Recommended Set
 
@@ -131,15 +136,16 @@ That does not make `AEGIS-256` the first thing to build here. It makes it the th
 5. companion interop profiles (`ChaCha20-Poly1305`, then AES-128 variants if needed)
 6. `AEGIS-256` if the project still wants to push the frontier
 
-Reality check as of 2026-03-31:
+Reality check as of 2026-04-01:
 
 - item 1 is shipped
 - item 2 (`AES-256-GCM-SIV`) is shipped with **x86_64 AES-NI + PCLMULQDQ + VAES-512 + VPCLMULQDQ and aarch64 AES-CE + PMULL hardware dispatch**; wide path processes 4 blocks per iteration on Zen4+/ICL+
 - item 3 (`AES-256-GCM`) is shipped with the same hardware dispatch plus wide path; GHASH accelerated via shared `clmul128_reduce` + 4-block `accumulate_4blocks` (GHASH↔POLYVAL bridge preserved)
 - item 4 (`Ascon-AEAD128`) is shipped on the portable constant-time baseline with NIST SP 800-232 KAT vectors
 - the `ChaCha20-Poly1305` companion from item 5 is also shipped because it falls out of the same core and is too cheap to defer artificially
-- item 6 remains open
-- `benches/aead.rs` is live: all 5 shipped primitives benchmarked against RustCrypto competitors
+- item 6 (`AEGIS-256`) is shipped with x86_64 AES-NI + aarch64 AES-CE hardware dispatch (2026-04-01)
+- `benches/aead.rs` is live: all 6 shipped primitives benchmarked against RustCrypto competitors
+- **The AEAD ship order is complete.**
 
 ## Acceleration Gap Status
 

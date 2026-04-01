@@ -5,8 +5,9 @@ use std::io::{Cursor, Read, Write};
 
 #[cfg(feature = "aead")]
 use rscrypto::{
-  Aead, ChaCha20Poly1305, ChaCha20Poly1305Key, VerificationError, XChaCha20Poly1305, XChaCha20Poly1305Key,
-  aead::{AeadBufferError, Nonce96, Nonce192},
+  Aead, Aegis256, Aegis256Key, ChaCha20Poly1305, ChaCha20Poly1305Key, VerificationError, XChaCha20Poly1305,
+  XChaCha20Poly1305Key,
+  aead::{AeadBufferError, Nonce96, Nonce192, Nonce256},
 };
 #[cfg(feature = "hashes")]
 use rscrypto::{
@@ -243,6 +244,10 @@ fn all_aeads_follow_new_encrypt_decrypt_and_detached_aliases() {
   assert_aead_api::<XChaCha20Poly1305>(
     XChaCha20Poly1305Key::from_bytes([3u8; XChaCha20Poly1305::KEY_SIZE]),
     Nonce192::from_bytes([5u8; Nonce192::LENGTH]),
+  );
+  assert_aead_api::<Aegis256>(
+    Aegis256Key::from_bytes([6u8; Aegis256::KEY_SIZE]),
+    Nonce256::from_bytes([7u8; Nonce256::LENGTH]),
   );
 }
 

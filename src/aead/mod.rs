@@ -14,6 +14,7 @@ use core::fmt;
 
 pub use crate::traits::Aead;
 use crate::traits::VerificationError;
+mod aegis256;
 mod aes;
 mod aes256gcm;
 mod aes256gcmsiv;
@@ -26,6 +27,7 @@ mod poly1305;
 mod polyval;
 pub mod targets;
 mod xchacha20poly1305;
+pub use aegis256::{Aegis256, Aegis256Key, Aegis256Tag};
 pub use aes256gcm::{Aes256Gcm, Aes256GcmKey, Aes256GcmTag};
 pub use aes256gcmsiv::{Aes256GcmSiv, Aes256GcmSivKey, Aes256GcmSivTag};
 pub use ascon128::{AsconAead128, AsconAead128Key, AsconAead128Tag};
@@ -90,6 +92,7 @@ macro_rules! define_nonce_type {
 define_nonce_type!(Nonce96, 12, "Explicit 96-bit nonce wrapper.");
 define_nonce_type!(Nonce128, 16, "Explicit 128-bit nonce wrapper.");
 define_nonce_type!(Nonce192, 24, "Explicit 192-bit nonce wrapper.");
+define_nonce_type!(Nonce256, 32, "Explicit 256-bit nonce wrapper.");
 
 /// Combined-buffer length mismatch during AEAD sealing or opening.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -188,7 +191,7 @@ impl From<VerificationError> for OpenError {
 
 #[cfg(test)]
 mod tests {
-  use super::{AeadBufferError, Nonce96, Nonce128, Nonce192, OpenError};
+  use super::{AeadBufferError, Nonce96, Nonce128, Nonce192, Nonce256, OpenError};
   use crate::traits::VerificationError;
 
   #[test]
@@ -200,6 +203,9 @@ mod tests {
     assert_eq!(nonce96.to_bytes(), [0x11; Nonce96::LENGTH]);
     assert_eq!(nonce128.to_bytes(), [0x22; Nonce128::LENGTH]);
     assert_eq!(nonce192.to_bytes(), [0x33; Nonce192::LENGTH]);
+
+    let nonce256 = Nonce256::from_bytes([0x44; Nonce256::LENGTH]);
+    assert_eq!(nonce256.to_bytes(), [0x44; Nonce256::LENGTH]);
   }
 
   #[test]

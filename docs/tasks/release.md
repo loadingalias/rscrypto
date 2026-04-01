@@ -1,6 +1,6 @@
 # v0.1.0 Release Plan
 
-> **Last updated:** 2026-03-31
+> **Last updated:** 2026-04-01
 > **Status:** Pre-release — correctness validated, packaging verified, non-loss gate passed, pure-win gate missed
 
 ---
@@ -12,7 +12,7 @@
 No correctness blocker found. The crate passes:
 
 - `just check-all` (host + 12 cross targets including no_std, WASM, Windows, s390x, POWER)
-- `just test` (774+ tests: unit, integration, doctest, compile-fail)
+- `just test` (816+ tests: unit, integration, doctest, compile-fail)
 - 7 official vector test suites against published standards
 - 10 differential test suites against competitor crates
 - 14 proptest property-based test suites
@@ -199,10 +199,13 @@ Run the `/sec` security audit skill against the crate. The foundations are solid
 The current per-algorithm config/force system works. A unified `rscrypto::policy`
 module would be cleaner but is not needed for initial release.
 
-### P2. Ed25519 optimization (8-bit basepoint table, AVX2 field mul)
+### P2. Ed25519 field arithmetic optimization (AVX2/NEON)
 
-The 28 Ed25519 losses are real but the algorithm is correct. Optimization is a
-separate workstream (documented in `next_steps.md`).
+Ed25519 sign/keygen already **beats dalek by 1.3-2x** (basepoint table + dedicated
+doubling + Straus verify are all shipped). Small-message verify is ~12% behind dalek,
+large-message verify wins. The remaining gap is in portable 5×51 field arithmetic —
+AVX2 `vpmuludq` or NEON vectorized field mul would close it. See ED25519-4/6 in
+[`acceleration.md`](acceleration.md).
 
 ### P3. aarch64 SHA-3 improvement
 

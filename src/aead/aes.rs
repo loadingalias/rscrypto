@@ -648,6 +648,37 @@ const fn mix_column(col: [u8; 4]) -> u32 {
 }
 
 // ---------------------------------------------------------------------------
+// Single AES round for AEGIS
+// ---------------------------------------------------------------------------
+
+/// Single AES encryption round on a 128-bit block: SubBytes + ShiftRows + MixColumns + XOR(round_key).
+///
+/// Equivalent to `_mm_aesenc_si128(block, round_key)` on x86_64. Used by the
+/// AEGIS-256 portable backend where the full AES round function (not full AES
+/// encryption) is the core primitive.
+#[inline]
+pub(crate) fn aes_enc_round_portable(block: &[u8; BLOCK_SIZE], round_key: &[u8; BLOCK_SIZE]) -> [u8; BLOCK_SIZE] {
+  let s0 = u32::from_be_bytes([block[0], block[1], block[2], block[3]]);
+  let s1 = u32::from_be_bytes([block[4], block[5], block[6], block[7]]);
+  let s2 = u32::from_be_bytes([block[8], block[9], block[10], block[11]]);
+  let s3 = u32::from_be_bytes([block[12], block[13], block[14], block[15]]);
+
+  let (r0, r1, r2, r3) = aes_round(s0, s1, s2, s3);
+
+  let k0 = u32::from_be_bytes([round_key[0], round_key[1], round_key[2], round_key[3]]);
+  let k1 = u32::from_be_bytes([round_key[4], round_key[5], round_key[6], round_key[7]]);
+  let k2 = u32::from_be_bytes([round_key[8], round_key[9], round_key[10], round_key[11]]);
+  let k3 = u32::from_be_bytes([round_key[12], round_key[13], round_key[14], round_key[15]]);
+
+  let mut out = [0u8; BLOCK_SIZE];
+  out[0..4].copy_from_slice(&(r0 ^ k0).to_be_bytes());
+  out[4..8].copy_from_slice(&(r1 ^ k1).to_be_bytes());
+  out[8..12].copy_from_slice(&(r2 ^ k2).to_be_bytes());
+  out[12..16].copy_from_slice(&(r3 ^ k3).to_be_bytes());
+  out
+}
+
+// ---------------------------------------------------------------------------
 // AES-CTR for GCM-SIV
 // ---------------------------------------------------------------------------
 

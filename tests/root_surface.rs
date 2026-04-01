@@ -6,8 +6,9 @@ use rscrypto::Aead;
 use rscrypto::aead::introspect::{DispatchInfo as AeadDispatchInfo, backend_for as aead_backend_for};
 #[cfg(feature = "aead")]
 use rscrypto::aead::{
-  AeadBackend, AeadBufferError, AeadPrimitive, BenchLane, ChaCha20Poly1305, ChaCha20Poly1305Key, ChaCha20Poly1305Tag,
-  Nonce96, Nonce128, Nonce192, OpenError, XChaCha20Poly1305, XChaCha20Poly1305Key, XChaCha20Poly1305Tag,
+  AeadBackend, AeadBufferError, AeadPrimitive, Aegis256, Aegis256Key, Aegis256Tag, BenchLane, ChaCha20Poly1305,
+  ChaCha20Poly1305Key, ChaCha20Poly1305Tag, Nonce96, Nonce128, Nonce192, Nonce256, OpenError, XChaCha20Poly1305,
+  XChaCha20Poly1305Key, XChaCha20Poly1305Tag,
   lane_target_backend, select_backend,
 };
 #[cfg(feature = "auth")]
@@ -61,6 +62,9 @@ fn root_surface_aead_exports_compile() {
   assert_eq!(nonce96.as_bytes().len(), Nonce96::LENGTH);
   assert_eq!(nonce128.as_bytes().len(), Nonce128::LENGTH);
   assert_eq!(nonce192.as_bytes().len(), Nonce192::LENGTH);
+
+  let nonce256 = Nonce256::from_bytes([0x44; Nonce256::LENGTH]);
+  assert_eq!(nonce256.as_bytes().len(), Nonce256::LENGTH);
 
   let _ = AeadBufferError::new();
   let _ = OpenError::buffer();
@@ -130,6 +134,12 @@ fn root_surface_aead_exports_compile() {
   let mut sealed = [0u8; 20];
   cipher.encrypt(&nonce96, b"aad", b"test", &mut sealed).unwrap();
   let _ = ChaCha20Poly1305Tag::from_bytes([0u8; ChaCha20Poly1305Tag::LENGTH]);
+
+  let key = Aegis256Key::from_bytes([0x66; Aegis256::KEY_SIZE]);
+  let cipher = Aegis256::new(&key);
+  let mut sealed = [0u8; 20];
+  cipher.encrypt(&nonce256, b"aad", b"test", &mut sealed).unwrap();
+  let _ = Aegis256Tag::from_bytes([0u8; Aegis256Tag::LENGTH]);
 }
 
 #[test]

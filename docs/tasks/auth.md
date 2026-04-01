@@ -1,6 +1,6 @@
 # Auth Roadmap
 
-## Current Status (2026-03-30)
+## Current Status (2026-04-01)
 
 Phase 1 (HMAC-SHA256, HKDF-SHA256, Ed25519) is **shipped and benchmarked**.
 Phase 3 (`cSHAKE256`, `KMAC256`) is **now shipped**.
@@ -19,7 +19,7 @@ AEAD work has now split cleanly into its own track:
 |-----------|-----|---------|-------------|
 | **HMAC-SHA256** | `hmac`+`sha2` | **53%** (19W/12T/5L) | Grav4: 3.3-3.7x WIN (SHA-CE). s390x: 1.7-9.4x WIN (KIMD). Zen5/SPR: 4-6% loss at 0-32 B (key setup overhead). |
 | **HKDF-SHA256** | `hkdf`+`sha2` | ~38% | Grav4: 1.6-2.0x WIN. Older Zen5/SPR runs showed **1.5-1.9x LOSS**; remeasure after the cached `prk_mac` path now in tree. |
-| **Ed25519** | `ed25519-dalek` | **0%** | **8-13x behind** everywhere. Expected — portable double-and-add vs dalek's optimized scalar field backends. |
+| **Ed25519** | `ed25519-dalek` | **~65%** | Sign/keygen 1.3-2x WIN (basepoint table). Verify 12% behind dalek on small messages, wins on large messages. |
 
 ### Performance Priorities
 
@@ -30,13 +30,14 @@ AEAD work has now split cleanly into its own track:
    already caches keyed HMAC state inside `HkdfSha256`, so the next step is
    evidence, not another speculative rewrite.
 
-2. **Ed25519 scalar field** — 8-13x behind. This is the deep problem. Dalek uses:
-   - Precomputed basepoint tables for fixed-base scalar mul (sign/keygen)
-   - Straus/Pippenger multi-scalar mul for verify
-   - Platform-specific backends (IFMA on AVX-512, etc.)
-   Our portable double-and-add is correctness-first. The acceleration plan in Phase 2B
-   below remains the right order. Target: ≤3x of dalek by v0.2.
-   **Gap tasks:** ED25519-1 through ED25519-6 in [`acceleration.md`](acceleration.md).
+2. **Ed25519 small-message verify** — ~12% behind dalek (51µs vs 45µs on M4).
+   Sign/keygen already wins by 1.3-2x thanks to shipped optimizations:
+   - Precomputed 64×8 radix-16 basepoint table (ED25519-1 ✅)
+   - Dedicated dbl-2008-hwcd doubling formula (ED25519-2 ✅)
+   - Straus/Shamir verification with variable-base radix-16 (ED25519-3 ✅)
+   The remaining verify gap is in portable 5×51 field mul/square. AVX2 vectorization
+   (ED25519-4) or NEON (ED25519-6) would close it. Target: parity with dalek.
+   **Remaining tasks:** ED25519-4/5/6 in [`acceleration.md`](acceleration.md).
 
 3. **HMAC-SHA256 small-size overhead** — 4-6% loss at 0-32 B on Zen5/SPR. The SHA-256
    compression is fast (SHA-NI), but HMAC wrapping adds two compressions (ipad + opad).
