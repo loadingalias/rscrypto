@@ -570,7 +570,7 @@ impl AsconHash256 {
 
   /// Hashes many messages into adjacent fixed-size outputs.
   ///
-  /// This is the batched companion to [`Digest::digest`](crate::Digest::digest).
+  /// This is the batched companion to [`Digest::digest`].
   /// Equal-length inputs let the implementation use the widest available
   /// permutation backend; mixed lengths automatically fall back to per-message
   /// hashing.
