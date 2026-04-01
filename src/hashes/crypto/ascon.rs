@@ -482,8 +482,11 @@ impl AsconHash256 {
   /// `outputs.len()` must equal `inputs.len()`.
   #[inline]
   #[cfg(any(test, feature = "std"))]
-  #[doc(hidden)]
-  pub fn digest_many_with_kernel(kid: kernels::AsconPermute12KernelId, inputs: &[&[u8]], outputs: &mut [[u8; 32]]) {
+  pub(crate) fn digest_many_with_kernel(
+    kid: kernels::AsconPermute12KernelId,
+    inputs: &[&[u8]],
+    outputs: &mut [[u8; 32]],
+  ) {
     assert_eq!(inputs.len(), outputs.len(), "input/output batch length mismatch");
 
     let degree = kernels::simd_degree(kid);
@@ -565,10 +568,14 @@ impl AsconHash256 {
     }
   }
 
-  /// Multi-message one-shot hashing with automatic kernel selection.
+  /// Hashes many messages into adjacent fixed-size outputs.
+  ///
+  /// This is the batched companion to [`Digest::digest`](crate::Digest::digest).
+  /// Equal-length inputs let the implementation use the widest available
+  /// permutation backend; mixed lengths automatically fall back to per-message
+  /// hashing.
   #[inline]
   #[cfg(any(test, feature = "std"))]
-  #[doc(hidden)]
   pub fn digest_many(inputs: &[&[u8]], outputs: &mut [[u8; 32]]) {
     Self::digest_many_with_kernel(Self::batch_kernel_id_for_inputs(inputs), inputs, outputs);
   }
@@ -711,8 +718,7 @@ impl AsconXof {
   /// `out_len` bytes each.
   #[inline]
   #[cfg(any(test, feature = "std"))]
-  #[doc(hidden)]
-  pub fn hash_many_into_with_kernel(
+  pub(crate) fn hash_many_into_with_kernel(
     kid: kernels::AsconPermute12KernelId,
     inputs: &[&[u8]],
     out_len: usize,
@@ -813,10 +819,13 @@ impl AsconXof {
     }
   }
 
-  /// Multi-message XOF with automatic kernel selection.
+  /// Squeezes equal-sized XOF outputs for many messages into a flat output buffer.
+  ///
+  /// `outputs` must be exactly `inputs.len() * out_len` bytes long. Equal-length
+  /// inputs allow batched permutation backends; mixed lengths automatically fall
+  /// back to the scalar per-message path.
   #[inline]
   #[cfg(any(test, feature = "std"))]
-  #[doc(hidden)]
   pub fn hash_many_into(inputs: &[&[u8]], out_len: usize, outputs: &mut [u8]) {
     let kid = AsconHash256::batch_kernel_id_for_inputs(inputs);
     Self::hash_many_into_with_kernel(kid, inputs, out_len, outputs);
@@ -879,7 +888,7 @@ impl Xof for AsconXofReader {
 pub type AsconXof128 = AsconXof;
 
 /// Spec-precise alias for [`AsconXofReader`].
-pub type AsconXof128Xof = AsconXofReader;
+pub type AsconXof128Reader = AsconXofReader;
 
 /// Ascon-CXOF128 hasher with explicit customization.
 #[derive(Clone)]

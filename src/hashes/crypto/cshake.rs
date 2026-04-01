@@ -65,7 +65,7 @@ impl Cshake256 {
   /// Compute a one-shot cSHAKE256 XOF reader.
   #[inline]
   #[must_use]
-  pub fn xof(function_name: &[u8], customization: &[u8], data: &[u8]) -> Cshake256Xof {
+  pub fn xof(function_name: &[u8], customization: &[u8], data: &[u8]) -> Cshake256XofReader {
     let mut hasher = Self::new(function_name, customization);
     hasher.update(data);
     hasher.finalize_xof()
@@ -86,8 +86,8 @@ impl Cshake256 {
   /// Finalize into an extendable-output reader.
   #[inline]
   #[must_use]
-  pub fn finalize_xof(&self) -> Cshake256Xof {
-    Cshake256Xof {
+  pub fn finalize_xof(&self) -> Cshake256XofReader {
+    Cshake256XofReader {
       inner: self.core.finalize_xof(self.pad),
     }
   }
@@ -107,17 +107,17 @@ impl Cshake256 {
 
 /// cSHAKE256 output reader.
 #[derive(Clone)]
-pub struct Cshake256Xof {
+pub struct Cshake256XofReader {
   inner: KeccakXof<RATE_256>,
 }
 
-impl core::fmt::Debug for Cshake256Xof {
+impl core::fmt::Debug for Cshake256XofReader {
   fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-    f.debug_struct("Cshake256Xof").finish_non_exhaustive()
+    f.debug_struct("Cshake256XofReader").finish_non_exhaustive()
   }
 }
 
-impl Xof for Cshake256Xof {
+impl Xof for Cshake256XofReader {
   #[inline]
   fn squeeze(&mut self, out: &mut [u8]) {
     self.inner.squeeze_into(out);

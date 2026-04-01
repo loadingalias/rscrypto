@@ -47,9 +47,7 @@ mod private {
 }
 
 // Internal re-export for use by sibling modules (checksum, digest).
-// This is #[doc(hidden)] because external users should not implement this trait.
-#[doc(hidden)]
-pub use private::Sealed as SealedMarker;
+pub(crate) use private::Sealed as SealedMarker;
 
 /// Trait for types that can be used with I/O adapters.
 ///

@@ -126,6 +126,19 @@
 //! The only optional runtime dependency is `rayon`, behind the `parallel`
 //! feature.
 //!
+//! # Performance Posture
+//!
+//! The repository's canonical competitive report lives in `docs/bench/BENCHMARKS.md`.
+//! On the March 31, 2026 CI sweep it records `1396W / 435T / 324L` across
+//! `2155` comparisons:
+//!
+//! - non-loss rate `((W + T) / total)`: `84.97%` — passes the project's `80%` gate
+//! - pure win rate `(W / total)`: `64.78%` — below the project's `70%` public-release bar
+//!
+//! The honest current claim is "competitive and often faster," not "already over
+//! the public-release performance bar." Ed25519 is also split rather than one-way:
+//! signing is ahead in the canonical sweep, while verification still trails.
+//!
 //! # Feature Flags
 //!
 //! | Feature | Default | Description |
@@ -239,9 +252,9 @@ pub use checksum::{Crc16Ccitt, Crc16Ibm, Crc24OpenPgp, Crc32, Crc32C, Crc64, Crc
 // ─── Hash re-exports ────────────────────────────────────────────────────────
 #[cfg(feature = "hashes")]
 pub use hashes::crypto::{
-  AsconCxof128, AsconCxof128Reader, AsconHash256, AsconXof, AsconXofReader, Blake3, Blake3Xof, Cshake256, Cshake256Xof,
-  Sha3_224, Sha3_256, Sha3_384, Sha3_512, Sha224, Sha256, Sha384, Sha512, Sha512_256, Shake128, Shake128Xof, Shake256,
-  Shake256Xof,
+  AsconCxof128, AsconCxof128Reader, AsconHash256, AsconXof, AsconXofReader, Blake3, Blake3XofReader, Cshake256,
+  Cshake256XofReader, Sha3_224, Sha3_256, Sha3_384, Sha3_512, Sha224, Sha256, Sha384, Sha512, Sha512_256, Shake128,
+  Shake128XofReader, Shake256, Shake256XofReader,
 };
 #[cfg(feature = "hashes")]
 pub use hashes::fast::{RapidHash, RapidHash128, RapidHashFast64, RapidHashFast128, Xxh3, Xxh3_128};
@@ -296,7 +309,7 @@ use rscrypto::AsconXof128;
 ```
 
 ```compile_fail
-use rscrypto::AsconXof128Xof;
+use rscrypto::AsconXof128Reader;
 ```
 
 ```compile_fail
@@ -539,10 +552,10 @@ mod send_sync_assertions {
     assert_send_sync::<Sha3_384>();
     assert_send_sync::<Shake128>();
     assert_send_sync::<Shake256>();
-    assert_send_sync::<Shake128Xof>();
-    assert_send_sync::<Shake256Xof>();
+    assert_send_sync::<Shake128XofReader>();
+    assert_send_sync::<Shake256XofReader>();
     assert_send_sync::<Cshake256>();
-    assert_send_sync::<Cshake256Xof>();
+    assert_send_sync::<Cshake256XofReader>();
 
     // ASCON
     assert_send_sync::<AsconHash256>();
@@ -553,7 +566,7 @@ mod send_sync_assertions {
 
     // BLAKE3
     assert_send_sync::<Blake3>();
-    assert_send_sync::<Blake3Xof>();
+    assert_send_sync::<Blake3XofReader>();
 
     // Fast hashes
     assert_send_sync::<Xxh3>();
@@ -662,17 +675,17 @@ mod send_sync_assertions {
     assert_clone::<Sha3_384>();
     assert_clone::<Shake128>();
     assert_clone::<Shake256>();
-    assert_clone::<Shake128Xof>();
-    assert_clone::<Shake256Xof>();
+    assert_clone::<Shake128XofReader>();
+    assert_clone::<Shake256XofReader>();
     assert_clone::<Cshake256>();
-    assert_clone::<Cshake256Xof>();
+    assert_clone::<Cshake256XofReader>();
     assert_clone::<AsconHash256>();
     assert_clone::<AsconXof>();
     assert_clone::<AsconXofReader>();
     assert_clone::<AsconCxof128>();
     assert_clone::<AsconCxof128Reader>();
     assert_clone::<Blake3>();
-    assert_clone::<Blake3Xof>();
+    assert_clone::<Blake3XofReader>();
     assert_clone::<Xxh3>();
     assert_clone::<Xxh3_128>();
     assert_clone::<RapidHash>();
@@ -691,17 +704,17 @@ mod send_sync_assertions {
     assert_debug::<Sha3_384>();
     assert_debug::<Shake128>();
     assert_debug::<Shake256>();
-    assert_debug::<Shake128Xof>();
-    assert_debug::<Shake256Xof>();
+    assert_debug::<Shake128XofReader>();
+    assert_debug::<Shake256XofReader>();
     assert_debug::<Cshake256>();
-    assert_debug::<Cshake256Xof>();
+    assert_debug::<Cshake256XofReader>();
     assert_debug::<AsconHash256>();
     assert_debug::<AsconXof>();
     assert_debug::<AsconXofReader>();
     assert_debug::<AsconCxof128>();
     assert_debug::<AsconCxof128Reader>();
     assert_debug::<Blake3>();
-    assert_debug::<Blake3Xof>();
+    assert_debug::<Blake3XofReader>();
     assert_debug::<Xxh3>();
     assert_debug::<Xxh3_128>();
     assert_debug::<RapidHash>();

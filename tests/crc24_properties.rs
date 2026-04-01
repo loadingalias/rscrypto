@@ -1,9 +1,7 @@
-//! CRC-24 property tests: portable kernel comparison and cross-library validation.
+//! CRC-24 property tests: cross-library validation.
 //!
 //! These tests validate our CRC-24 implementation against:
-//! 1. Our own portable (slice-by-N) implementation
-//! 2. A local bitwise reference implementation
-//! 3. The `crc` crate as an external reference
+//! 1. The `crc` crate as an external reference
 
 // Proptest uses getcwd() which fails under Miri isolation.
 #![cfg(not(miri))]
@@ -11,45 +9,11 @@
 
 use crc::Crc as RefCrc;
 use proptest::prelude::*;
-use rscrypto::{
-  Checksum, ChecksumCombine, Crc24OpenPgp,
-  checksum::__internal::proptest_internals::{CRC24_OPENPGP_POLY, crc24_openpgp_slice8},
-};
+use rscrypto::{Checksum, ChecksumCombine, Crc24OpenPgp};
 
 const REF_CRC24_OPENPGP: RefCrc<u32> = RefCrc::<u32>::new(&crc::CRC_24_OPENPGP);
 
-fn crc24_openpgp_reference(data: &[u8]) -> u32 {
-  // MSB-first OpenPGP using a 32-bit expanded register (top 24 bits).
-  let poly_aligned = CRC24_OPENPGP_POLY << 8;
-  let mut state: u32 = 0x00B7_04CE << 8;
-  for &byte in data {
-    state ^= (byte as u32) << 24;
-    for _ in 0..8 {
-      if state & 0x8000_0000 != 0 {
-        state = (state << 1) ^ poly_aligned;
-      } else {
-        state <<= 1;
-      }
-    }
-  }
-  (state >> 8) & 0x00FF_FFFF
-}
-
 proptest! {
-  #[test]
-  fn crc24_openpgp_matches_portable(data in proptest::collection::vec(any::<u8>(), 0..=4096)) {
-    let ours = Crc24OpenPgp::checksum(&data);
-    let portable = crc24_openpgp_slice8(0x00B7_04CE, &data) & 0x00FF_FFFF;
-    prop_assert_eq!(ours, portable);
-  }
-
-  #[test]
-  fn crc24_openpgp_matches_reference(data in proptest::collection::vec(any::<u8>(), 0..=4096)) {
-    let ours = Crc24OpenPgp::checksum(&data);
-    let reference = crc24_openpgp_reference(&data);
-    prop_assert_eq!(ours, reference);
-  }
-
   #[test]
   fn crc24_openpgp_matches_crc_crate(data in proptest::collection::vec(any::<u8>(), 0..=4096)) {
     let ours = Crc24OpenPgp::checksum(&data);
@@ -85,7 +49,7 @@ proptest! {
     let crc_b = Crc24OpenPgp::checksum(b);
     let combined = Crc24OpenPgp::combine(crc_a, crc_b, b.len());
 
-    let reference = crc24_openpgp_reference(&data);
+    let reference = REF_CRC24_OPENPGP.checksum(&data) & 0x00FF_FFFF;
     prop_assert_eq!(combined, reference);
   }
 }

@@ -11,21 +11,19 @@
 //!    - Tests arbitrary, variable-size chunk patterns
 //!    - Proves streaming implementation is correct regardless of update boundaries
 //!
-//! These tests use our own bitwise reference implementations as the oracle,
-//! establishing that production code matches the mathematical CRC definition.
+//! These tests use independent reference crates as the oracle, establishing
+//! that production code matches known-good external implementations.
 
 // Proptest uses getcwd() which fails under Miri isolation.
 #![cfg(not(miri))]
 #![cfg(feature = "checksums")]
 
+use crc::Crc as RefCrc;
+use crc_fast::CrcAlgorithm;
 use proptest::prelude::*;
-use rscrypto::{
-  Checksum, ChecksumCombine, Crc16Ccitt, Crc16Ibm, Crc24OpenPgp, Crc32, Crc32C, Crc64, Crc64Nvme,
-  checksum::__internal::proptest_internals::{
-    CRC16_CCITT_POLY, CRC16_IBM_POLY, CRC24_OPENPGP_POLY, CRC32_IEEE_POLY, CRC32C_POLY, CRC64_NVME_POLY, CRC64_XZ_POLY,
-    crc16_bitwise, crc24_bitwise, crc32_bitwise, crc64_bitwise,
-  },
-};
+use rscrypto::{Checksum, ChecksumCombine, Crc16Ccitt, Crc16Ibm, Crc24OpenPgp, Crc32, Crc32C, Crc64, Crc64Nvme};
+
+const REF_CRC24_OPENPGP: RefCrc<u32> = RefCrc::<u32>::new(&crc::CRC_24_OPENPGP);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Combine Correctness Tests
@@ -34,9 +32,8 @@ use rscrypto::{
 // These tests prove the fundamental combine property:
 //   crc(A || B) == combine(crc(A), crc(B), len(B))
 //
-// We verify against the bitwise reference implementation, which is the
-// mathematical definition of CRC. This proves our combine operation is
-// mathematically correct, not just internally consistent.
+// We verify against independent reference crates. This proves the combine
+// operation matches external implementations, not just internal consistency.
 // ─────────────────────────────────────────────────────────────────────────────
 
 proptest! {
@@ -59,8 +56,8 @@ proptest! {
     let crc_b = Crc16Ccitt::checksum(b);
     let combined = Crc16Ccitt::combine(crc_a, crc_b, b.len());
 
-    // Reference: bitwise computation of full data
-    let expected = crc16_bitwise(CRC16_CCITT_POLY, !0u16, &data) ^ !0u16;
+    // Reference: independent crc-fast implementation over full data
+    let expected = crc_fast::checksum(CrcAlgorithm::Crc16IbmSdlc, &data) as u16;
 
     prop_assert_eq!(combined, expected,
       "combine(crc(A), crc(B), len(B)) != crc(A||B) at split {}/{}",
@@ -79,8 +76,7 @@ proptest! {
     let crc_b = Crc16Ibm::checksum(b);
     let combined = Crc16Ibm::combine(crc_a, crc_b, b.len());
 
-    // CRC-16-IBM: init=0, xorout=0
-    let expected = crc16_bitwise(CRC16_IBM_POLY, 0, &data);
+    let expected = crc_fast::checksum(CrcAlgorithm::Crc16Arc, &data) as u16;
 
     prop_assert_eq!(combined, expected,
       "combine(crc(A), crc(B), len(B)) != crc(A||B) at split {}/{}",
@@ -103,8 +99,7 @@ proptest! {
     let crc_b = Crc24OpenPgp::checksum(b);
     let combined = Crc24OpenPgp::combine(crc_a, crc_b, b.len());
 
-    // CRC-24-OPENPGP: init=0xB704CE, xorout=0
-    let expected = crc24_bitwise(CRC24_OPENPGP_POLY, 0x00B7_04CE, &data);
+    let expected = REF_CRC24_OPENPGP.checksum(&data) & 0x00FF_FFFF;
 
     prop_assert_eq!(combined, expected,
       "combine(crc(A), crc(B), len(B)) != crc(A||B) at split {}/{}",
@@ -127,8 +122,7 @@ proptest! {
     let crc_b = Crc32::checksum(b);
     let combined = Crc32::combine(crc_a, crc_b, b.len());
 
-    // CRC-32-IEEE: init=0xFFFFFFFF, xorout=0xFFFFFFFF
-    let expected = crc32_bitwise(CRC32_IEEE_POLY, !0u32, &data) ^ !0u32;
+    let expected = crc_fast::checksum(CrcAlgorithm::Crc32IsoHdlc, &data) as u32;
 
     prop_assert_eq!(combined, expected,
       "combine(crc(A), crc(B), len(B)) != crc(A||B) at split {}/{}",
@@ -147,8 +141,7 @@ proptest! {
     let crc_b = Crc32C::checksum(b);
     let combined = Crc32C::combine(crc_a, crc_b, b.len());
 
-    // CRC-32C: init=0xFFFFFFFF, xorout=0xFFFFFFFF
-    let expected = crc32_bitwise(CRC32C_POLY, !0u32, &data) ^ !0u32;
+    let expected = crc_fast::checksum(CrcAlgorithm::Crc32Iscsi, &data) as u32;
 
     prop_assert_eq!(combined, expected,
       "combine(crc(A), crc(B), len(B)) != crc(A||B) at split {}/{}",
@@ -171,8 +164,7 @@ proptest! {
     let crc_b = Crc64::checksum(b);
     let combined = Crc64::combine(crc_a, crc_b, b.len());
 
-    // CRC-64-XZ: init=0xFFFFFFFFFFFFFFFF, xorout=0xFFFFFFFFFFFFFFFF
-    let expected = crc64_bitwise(CRC64_XZ_POLY, !0u64, &data) ^ !0u64;
+    let expected = crc_fast::checksum(CrcAlgorithm::Crc64Xz, &data);
 
     prop_assert_eq!(combined, expected,
       "combine(crc(A), crc(B), len(B)) != crc(A||B) at split {}/{}",
@@ -191,8 +183,7 @@ proptest! {
     let crc_b = Crc64Nvme::checksum(b);
     let combined = Crc64Nvme::combine(crc_a, crc_b, b.len());
 
-    // CRC-64-NVME: init=0xFFFFFFFFFFFFFFFF, xorout=0xFFFFFFFFFFFFFFFF
-    let expected = crc64_bitwise(CRC64_NVME_POLY, !0u64, &data) ^ !0u64;
+    let expected = crc_fast::checksum(CrcAlgorithm::Crc64Nvme, &data);
 
     prop_assert_eq!(combined, expected,
       "combine(crc(A), crc(B), len(B)) != crc(A||B) at split {}/{}",
@@ -379,9 +370,11 @@ proptest! {
 /// Test combine at all split points for small data.
 /// This exhaustively tests edge cases that random sampling might miss.
 macro_rules! test_combine_all_splits {
-  ($name:ident, $crc_type:ty, $poly:expr, $init:expr, $xorout:expr, $bitwise:ident) => {
+  ($name:ident, $crc_type:ty, $expected:expr) => {
     #[test]
     fn $name() {
+      let expected_for = $expected;
+
       // Test various small sizes including edge cases
       for size in [0, 1, 2, 3, 7, 8, 15, 16, 31, 32, 63, 64, 127, 128, 255, 256] {
         let data: Vec<u8> = (0..size).map(|i| (i as u8).wrapping_mul(17)).collect();
@@ -393,7 +386,7 @@ macro_rules! test_combine_all_splits {
           let crc_b = <$crc_type>::checksum(b);
           let combined = <$crc_type>::combine(crc_a, crc_b, b.len());
 
-          let expected = $bitwise($poly, $init, &data) ^ $xorout;
+          let expected = expected_for(&data);
 
           assert_eq!(
             combined,
@@ -410,62 +403,27 @@ macro_rules! test_combine_all_splits {
   };
 }
 
-test_combine_all_splits!(
-  crc16_ccitt_combine_all_splits,
-  Crc16Ccitt,
-  CRC16_CCITT_POLY,
-  !0u16,
-  !0u16,
-  crc16_bitwise
-);
-test_combine_all_splits!(
-  crc16_ibm_combine_all_splits,
-  Crc16Ibm,
-  CRC16_IBM_POLY,
-  0u16,
-  0u16,
-  crc16_bitwise
-);
-test_combine_all_splits!(
-  crc24_openpgp_combine_all_splits,
-  Crc24OpenPgp,
-  CRC24_OPENPGP_POLY,
-  0x00B7_04CE_u32,
-  0u32,
-  crc24_bitwise
-);
-test_combine_all_splits!(
-  crc32_ieee_combine_all_splits,
-  Crc32,
-  CRC32_IEEE_POLY,
-  !0u32,
-  !0u32,
-  crc32_bitwise
-);
-test_combine_all_splits!(
-  crc32c_combine_all_splits,
-  Crc32C,
-  CRC32C_POLY,
-  !0u32,
-  !0u32,
-  crc32_bitwise
-);
-test_combine_all_splits!(
-  crc64_xz_combine_all_splits,
-  Crc64,
-  CRC64_XZ_POLY,
-  !0u64,
-  !0u64,
-  crc64_bitwise
-);
-test_combine_all_splits!(
-  crc64_nvme_combine_all_splits,
-  Crc64Nvme,
-  CRC64_NVME_POLY,
-  !0u64,
-  !0u64,
-  crc64_bitwise
-);
+test_combine_all_splits!(crc16_ccitt_combine_all_splits, Crc16Ccitt, |data: &[u8]| {
+  crc_fast::checksum(CrcAlgorithm::Crc16IbmSdlc, data) as u16
+});
+test_combine_all_splits!(crc16_ibm_combine_all_splits, Crc16Ibm, |data: &[u8]| {
+  crc_fast::checksum(CrcAlgorithm::Crc16Arc, data) as u16
+});
+test_combine_all_splits!(crc24_openpgp_combine_all_splits, Crc24OpenPgp, |data: &[u8]| {
+  REF_CRC24_OPENPGP.checksum(data) & 0x00FF_FFFF
+});
+test_combine_all_splits!(crc32_ieee_combine_all_splits, Crc32, |data: &[u8]| {
+  crc_fast::checksum(CrcAlgorithm::Crc32IsoHdlc, data) as u32
+});
+test_combine_all_splits!(crc32c_combine_all_splits, Crc32C, |data: &[u8]| {
+  crc_fast::checksum(CrcAlgorithm::Crc32Iscsi, data) as u32
+});
+test_combine_all_splits!(crc64_xz_combine_all_splits, Crc64, |data: &[u8]| {
+  crc_fast::checksum(CrcAlgorithm::Crc64Xz, data)
+});
+test_combine_all_splits!(crc64_nvme_combine_all_splits, Crc64Nvme, |data: &[u8]| {
+  crc_fast::checksum(CrcAlgorithm::Crc64Nvme, data)
+});
 
 /// Test chunking with specific patterns known to stress SIMD boundaries.
 macro_rules! test_chunking_edge_cases {

@@ -318,6 +318,27 @@ impl Sha512 {
   }
 }
 
+/// Read SHA-512 round constant K[i].
+///
+/// On x86/x86_64, 64-bit constants can sometimes be encoded via `movabs`+`add`,
+/// but on all other architectures (POWER, aarch64, s390x), materializing a
+/// 64-bit immediate requires 4+ instructions. Loading from the static K array
+/// via a single `ld`/`ldr` is far cheaper. `read_volatile` forces the compiler
+/// to emit a memory load. See SHA-256's `rk()` for the full rationale.
+#[inline(always)]
+fn rk(i: usize) -> u64 {
+  #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+  {
+    // SAFETY: i is always in 0..80, and K has exactly 80 elements.
+    unsafe { core::ptr::read(K.0.as_ptr().add(i)) }
+  }
+  #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+  {
+    // SAFETY: i is always in 0..80, and K has exactly 80 elements.
+    unsafe { core::ptr::read_volatile(K.0.as_ptr().add(i)) }
+  }
+}
+
 /// Core SHA-512 block compression, parameterized over the four sigma/sum
 /// operations. The portable kernel passes software rotate-xor-shift; RISC-V
 /// Zknh passes hardware `sha512sum0/1` and `sha512sig0/1` intrinsics.
@@ -394,154 +415,154 @@ pub(crate) fn compress_block_with(
     }};
   }
 
-  round!(K[0], w0);
-  round!(K[1], w1);
-  round!(K[2], w2);
-  round!(K[3], w3);
-  round!(K[4], w4);
-  round!(K[5], w5);
-  round!(K[6], w6);
-  round!(K[7], w7);
-  round!(K[8], w8);
-  round!(K[9], w9);
-  round!(K[10], w10);
-  round!(K[11], w11);
-  round!(K[12], w12);
-  round!(K[13], w13);
-  round!(K[14], w14);
-  round!(K[15], w15);
+  round!(rk(0), w0);
+  round!(rk(1), w1);
+  round!(rk(2), w2);
+  round!(rk(3), w3);
+  round!(rk(4), w4);
+  round!(rk(5), w5);
+  round!(rk(6), w6);
+  round!(rk(7), w7);
+  round!(rk(8), w8);
+  round!(rk(9), w9);
+  round!(rk(10), w10);
+  round!(rk(11), w11);
+  round!(rk(12), w12);
+  round!(rk(13), w13);
+  round!(rk(14), w14);
+  round!(rk(15), w15);
 
   w0 = sched!(w14, w9, w1, w0);
-  round!(K[16], w0);
+  round!(rk(16), w0);
   w1 = sched!(w15, w10, w2, w1);
-  round!(K[17], w1);
+  round!(rk(17), w1);
   w2 = sched!(w0, w11, w3, w2);
-  round!(K[18], w2);
+  round!(rk(18), w2);
   w3 = sched!(w1, w12, w4, w3);
-  round!(K[19], w3);
+  round!(rk(19), w3);
   w4 = sched!(w2, w13, w5, w4);
-  round!(K[20], w4);
+  round!(rk(20), w4);
   w5 = sched!(w3, w14, w6, w5);
-  round!(K[21], w5);
+  round!(rk(21), w5);
   w6 = sched!(w4, w15, w7, w6);
-  round!(K[22], w6);
+  round!(rk(22), w6);
   w7 = sched!(w5, w0, w8, w7);
-  round!(K[23], w7);
+  round!(rk(23), w7);
   w8 = sched!(w6, w1, w9, w8);
-  round!(K[24], w8);
+  round!(rk(24), w8);
   w9 = sched!(w7, w2, w10, w9);
-  round!(K[25], w9);
+  round!(rk(25), w9);
   w10 = sched!(w8, w3, w11, w10);
-  round!(K[26], w10);
+  round!(rk(26), w10);
   w11 = sched!(w9, w4, w12, w11);
-  round!(K[27], w11);
+  round!(rk(27), w11);
   w12 = sched!(w10, w5, w13, w12);
-  round!(K[28], w12);
+  round!(rk(28), w12);
   w13 = sched!(w11, w6, w14, w13);
-  round!(K[29], w13);
+  round!(rk(29), w13);
   w14 = sched!(w12, w7, w15, w14);
-  round!(K[30], w14);
+  round!(rk(30), w14);
   w15 = sched!(w13, w8, w0, w15);
-  round!(K[31], w15);
+  round!(rk(31), w15);
 
   w0 = sched!(w14, w9, w1, w0);
-  round!(K[32], w0);
+  round!(rk(32), w0);
   w1 = sched!(w15, w10, w2, w1);
-  round!(K[33], w1);
+  round!(rk(33), w1);
   w2 = sched!(w0, w11, w3, w2);
-  round!(K[34], w2);
+  round!(rk(34), w2);
   w3 = sched!(w1, w12, w4, w3);
-  round!(K[35], w3);
+  round!(rk(35), w3);
   w4 = sched!(w2, w13, w5, w4);
-  round!(K[36], w4);
+  round!(rk(36), w4);
   w5 = sched!(w3, w14, w6, w5);
-  round!(K[37], w5);
+  round!(rk(37), w5);
   w6 = sched!(w4, w15, w7, w6);
-  round!(K[38], w6);
+  round!(rk(38), w6);
   w7 = sched!(w5, w0, w8, w7);
-  round!(K[39], w7);
+  round!(rk(39), w7);
   w8 = sched!(w6, w1, w9, w8);
-  round!(K[40], w8);
+  round!(rk(40), w8);
   w9 = sched!(w7, w2, w10, w9);
-  round!(K[41], w9);
+  round!(rk(41), w9);
   w10 = sched!(w8, w3, w11, w10);
-  round!(K[42], w10);
+  round!(rk(42), w10);
   w11 = sched!(w9, w4, w12, w11);
-  round!(K[43], w11);
+  round!(rk(43), w11);
   w12 = sched!(w10, w5, w13, w12);
-  round!(K[44], w12);
+  round!(rk(44), w12);
   w13 = sched!(w11, w6, w14, w13);
-  round!(K[45], w13);
+  round!(rk(45), w13);
   w14 = sched!(w12, w7, w15, w14);
-  round!(K[46], w14);
+  round!(rk(46), w14);
   w15 = sched!(w13, w8, w0, w15);
-  round!(K[47], w15);
+  round!(rk(47), w15);
 
   w0 = sched!(w14, w9, w1, w0);
-  round!(K[48], w0);
+  round!(rk(48), w0);
   w1 = sched!(w15, w10, w2, w1);
-  round!(K[49], w1);
+  round!(rk(49), w1);
   w2 = sched!(w0, w11, w3, w2);
-  round!(K[50], w2);
+  round!(rk(50), w2);
   w3 = sched!(w1, w12, w4, w3);
-  round!(K[51], w3);
+  round!(rk(51), w3);
   w4 = sched!(w2, w13, w5, w4);
-  round!(K[52], w4);
+  round!(rk(52), w4);
   w5 = sched!(w3, w14, w6, w5);
-  round!(K[53], w5);
+  round!(rk(53), w5);
   w6 = sched!(w4, w15, w7, w6);
-  round!(K[54], w6);
+  round!(rk(54), w6);
   w7 = sched!(w5, w0, w8, w7);
-  round!(K[55], w7);
+  round!(rk(55), w7);
   w8 = sched!(w6, w1, w9, w8);
-  round!(K[56], w8);
+  round!(rk(56), w8);
   w9 = sched!(w7, w2, w10, w9);
-  round!(K[57], w9);
+  round!(rk(57), w9);
   w10 = sched!(w8, w3, w11, w10);
-  round!(K[58], w10);
+  round!(rk(58), w10);
   w11 = sched!(w9, w4, w12, w11);
-  round!(K[59], w11);
+  round!(rk(59), w11);
   w12 = sched!(w10, w5, w13, w12);
-  round!(K[60], w12);
+  round!(rk(60), w12);
   w13 = sched!(w11, w6, w14, w13);
-  round!(K[61], w13);
+  round!(rk(61), w13);
   w14 = sched!(w12, w7, w15, w14);
-  round!(K[62], w14);
+  round!(rk(62), w14);
   w15 = sched!(w13, w8, w0, w15);
-  round!(K[63], w15);
+  round!(rk(63), w15);
 
   w0 = sched!(w14, w9, w1, w0);
-  round!(K[64], w0);
+  round!(rk(64), w0);
   w1 = sched!(w15, w10, w2, w1);
-  round!(K[65], w1);
+  round!(rk(65), w1);
   w2 = sched!(w0, w11, w3, w2);
-  round!(K[66], w2);
+  round!(rk(66), w2);
   w3 = sched!(w1, w12, w4, w3);
-  round!(K[67], w3);
+  round!(rk(67), w3);
   w4 = sched!(w2, w13, w5, w4);
-  round!(K[68], w4);
+  round!(rk(68), w4);
   w5 = sched!(w3, w14, w6, w5);
-  round!(K[69], w5);
+  round!(rk(69), w5);
   w6 = sched!(w4, w15, w7, w6);
-  round!(K[70], w6);
+  round!(rk(70), w6);
   w7 = sched!(w5, w0, w8, w7);
-  round!(K[71], w7);
+  round!(rk(71), w7);
   w8 = sched!(w6, w1, w9, w8);
-  round!(K[72], w8);
+  round!(rk(72), w8);
   w9 = sched!(w7, w2, w10, w9);
-  round!(K[73], w9);
+  round!(rk(73), w9);
   w10 = sched!(w8, w3, w11, w10);
-  round!(K[74], w10);
+  round!(rk(74), w10);
   w11 = sched!(w9, w4, w12, w11);
-  round!(K[75], w11);
+  round!(rk(75), w11);
   w12 = sched!(w10, w5, w13, w12);
-  round!(K[76], w12);
+  round!(rk(76), w12);
   w13 = sched!(w11, w6, w14, w13);
-  round!(K[77], w13);
+  round!(rk(77), w13);
   w14 = sched!(w12, w7, w15, w14);
-  round!(K[78], w14);
+  round!(rk(78), w14);
   w15 = sched!(w13, w8, w0, w15);
-  round!(K[79], w15);
+  round!(rk(79), w15);
 
   state[0] = state[0].wrapping_add(a);
   state[1] = state[1].wrapping_add(b);

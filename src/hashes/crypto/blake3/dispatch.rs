@@ -318,11 +318,11 @@ pub fn kernel_name_for_len(len: usize) -> &'static str {
 
 #[inline]
 #[must_use]
-pub fn xof(data: &[u8]) -> super::Blake3Xof {
+pub fn xof(data: &[u8]) -> super::Blake3XofReader {
   let d = active();
   let kernel = select(&d, data.len()).kernel;
 
-  // Lean path for single-chunk inputs: directly construct Blake3Xof without
+  // Lean path for single-chunk inputs: directly construct Blake3XofReader without
   // going through root_output_oneshot / single_chunk_output / OutputState.
   if data.len() <= super::CHUNK_LEN {
     return super::xof_oneshot_single_chunk(kernel, super::IV, 0, data);
@@ -335,7 +335,7 @@ pub fn xof(data: &[u8]) -> super::Blake3Xof {
     super::control::policy_kind_from_flags(0, true),
     data,
   );
-  super::Blake3Xof::from_output(output)
+  super::Blake3XofReader::from_output(output)
 }
 
 #[inline]
