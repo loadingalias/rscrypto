@@ -1,8 +1,7 @@
-//! CRC-16 property tests: portable kernel comparison and cross-library validation.
+//! CRC-16 property tests: cross-library validation.
 //!
 //! These tests validate our CRC-16 implementations against:
-//! 1. Our own portable (slice-by-N) implementations
-//! 2. The `crc-fast` crate as an external reference
+//! 1. The `crc-fast` crate as an external reference
 
 // Proptest uses getcwd() which fails under Miri isolation.
 #![cfg(not(miri))]
@@ -10,26 +9,9 @@
 
 use crc_fast::CrcAlgorithm;
 use proptest::prelude::*;
-use rscrypto::{
-  Checksum, ChecksumCombine, Crc16Ccitt, Crc16Ibm,
-  checksum::__internal::proptest_internals::{crc16_ccitt_slice8, crc16_ibm_slice8},
-};
+use rscrypto::{Checksum, ChecksumCombine, Crc16Ccitt, Crc16Ibm};
 
 proptest! {
-  #[test]
-  fn crc16_ccitt_matches_portable(data in proptest::collection::vec(any::<u8>(), 0..=4096)) {
-    let ours = Crc16Ccitt::checksum(&data);
-    let portable = crc16_ccitt_slice8(0xFFFF, &data) ^ 0xFFFF;
-    prop_assert_eq!(ours, portable);
-  }
-
-  #[test]
-  fn crc16_ibm_matches_portable(data in proptest::collection::vec(any::<u8>(), 0..=4096)) {
-    let ours = Crc16Ibm::checksum(&data);
-    let portable = crc16_ibm_slice8(0, &data);
-    prop_assert_eq!(ours, portable);
-  }
-
   // ─────────────────────────────────────────────────────────────────────────────
   // Cross-validation against crc-fast-rust
   // ─────────────────────────────────────────────────────────────────────────────

@@ -49,6 +49,15 @@ assert_eq!(checksum, Crc32C::checksum(b"data"));
 
 **Design**: no C FFI, no vendored C/C++, `no_std` first, portable fallback is authoritative, and ISA-specific kernels are accelerators rather than separate APIs.
 
+## Performance Posture
+
+The canonical competitive report is [`docs/bench/BENCHMARKS.md`](docs/bench/BENCHMARKS.md), currently based on CI run `#23822408700` from March 31, 2026.
+
+- Release gate 1, non-loss rate `((W + T) / total)`: `1831 / 2155 = 84.97%` — passes the `80%` gate.
+- Release gate 2, pure win rate `(W / total)`: `1396 / 2155 = 64.78%` — below the `70%` public-release bar.
+- Current claim: `rscrypto` is broadly competitive and often faster, but it does not yet clear this project's public-release performance bar.
+- Current Ed25519 reality: signing is strong in the canonical sweep (`27W / 1T / 0L`), verification is not (`3W / 4T / 21L`). Do not describe Ed25519 as uniformly behind or uniformly ahead.
+
 ## Invariants
 
 | Invariant | What it guarantees | What breaks if violated |
@@ -119,11 +128,11 @@ Repository-level evidence:
 | `Sha3_384` | struct | SHA3-384 digest | `src/hashes/crypto/sha3.rs:143` |
 | `Sha3_512` | struct | SHA3-512 digest | `src/hashes/crypto/sha3.rs:137` |
 | `Shake128` | struct | SHAKE128 state | `src/hashes/crypto/sha3.rs:257` |
-| `Shake128Xof` | struct | SHAKE128 XOF reader | `src/hashes/crypto/sha3.rs:325` |
+| `Shake128XofReader` | struct | SHAKE128 XOF reader | `src/hashes/crypto/sha3.rs:325` |
 | `Shake256` | struct | SHAKE256 state | `src/hashes/crypto/sha3.rs:251` |
-| `Shake256Xof` | struct | SHAKE256 XOF reader | `src/hashes/crypto/sha3.rs:394` |
+| `Shake256XofReader` | struct | SHAKE256 XOF reader | `src/hashes/crypto/sha3.rs:394` |
 | `Blake3` | struct | BLAKE3 digest and XOF entry point | `src/hashes/crypto/blake3/mod.rs:2318` |
-| `Blake3Xof` | struct | BLAKE3 XOF reader | `src/hashes/crypto/blake3/mod.rs:3122` |
+| `Blake3XofReader` | struct | BLAKE3 XOF reader | `src/hashes/crypto/blake3/mod.rs:3122` |
 | `AsconHash256` | struct | Ascon hash | `src/hashes/crypto/ascon.rs:383` |
 | `AsconXof` | struct | Ascon XOF state | `src/hashes/crypto/ascon.rs:578` |
 | `AsconXofReader` | struct | Ascon XOF reader | `src/hashes/crypto/ascon.rs:787` |
@@ -179,7 +188,7 @@ Repository-level evidence:
 | `hashes::fast` | `Xxh3_64`, `Xxh3_128`, `RapidHash64`, `RapidHash128`, `RapidHashFast64`, `RapidHashFast128` | `src/hashes/fast/xxh3.rs:28`, `src/hashes/fast/xxh3.rs:31`, `src/hashes/fast/rapidhash.rs:26`, `src/hashes/fast/rapidhash.rs:30`, `src/hashes/fast/rapidhash.rs:34`, `src/hashes/fast/rapidhash.rs:38` |
 | `hashes::introspect` | `kernel_for`, `HashKernelIntrospect` | `src/hashes/introspect.rs:29`, `src/hashes/introspect.rs:37` |
 | `hashes::io` | `DigestReader`, `DigestWriter` | `src/traits/io.rs:490`, `src/traits/io.rs:619` |
-| Compatibility aliases | `AsconXof128`, `AsconXof128Xof` | `src/hashes/crypto/ascon.rs:838`, `src/hashes/crypto/ascon.rs:841` |
+| Compatibility aliases | `AsconXof128`, `AsconXof128Reader` | `src/hashes/crypto/ascon.rs:838`, `src/hashes/crypto/ascon.rs:841` |
 
 ### `platform`
 

@@ -18,9 +18,9 @@ pub mod sha512_256;
 pub(crate) mod sp800185;
 
 pub use ascon::{AsconCxof128, AsconCxof128Reader, AsconHash256, AsconXof, AsconXofReader};
-pub use blake3::{Blake3, Blake3Xof};
-pub use cshake::{Cshake256, Cshake256Xof};
-pub use sha3::{Sha3_224, Sha3_256, Sha3_384, Sha3_512, Shake128, Shake128Xof, Shake256, Shake256Xof};
+pub use blake3::{Blake3, Blake3XofReader};
+pub use cshake::{Cshake256, Cshake256XofReader};
+pub use sha3::{Sha3_224, Sha3_256, Sha3_384, Sha3_512, Shake128, Shake128XofReader, Shake256, Shake256XofReader};
 pub use sha224::Sha224;
 pub use sha256::Sha256;
 pub use sha384::Sha384;

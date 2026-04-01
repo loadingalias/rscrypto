@@ -1,7 +1,7 @@
 # v0.1.0 Release Plan
 
-> **Last updated:** 2026-03-29
-> **Status:** Pre-release — correctness validated, performance competitive, surface cleanup remaining
+> **Last updated:** 2026-03-31
+> **Status:** Pre-release — correctness validated, packaging verified, non-loss gate passed, pure-win gate missed
 
 ---
 
@@ -17,29 +17,37 @@ No correctness blocker found. The crate passes:
 - 10 differential test suites against competitor crates
 - 14 proptest property-based test suites
 
-### Performance: COMPETITIVE
+### Performance: COMPETITIVE, BELOW PUBLIC-RELEASE BAR
 
-~69% overall win rate (~1064W / ~379T / ~97L across 7 platforms).
+Canonical benchmark source: [`docs/bench/BENCHMARKS.md`](bench/BENCHMARKS.md),
+CI run `#23822408700` on 2026-03-31.
+
+Overall scoreboard: `1396W / 435T / 324L` across `2155` comparisons.
+
+Release gates:
+
+1. non-loss rate `((W + T) / total)` = `1831 / 2155 = 84.97%` — **passes** the `80%` gate
+2. pure win rate `(W / total)` = `1396 / 2155 = 64.78%` — **misses** the `70%` public-release bar
 
 | Category | Win% | Status |
 |----------|------|--------|
 | Checksums | 85% | Dominant |
-| SHA-2 | 74% | Strong (SPR AVX-512 gap remaining) |
-| SHA-3 | ~49% | Improved (was 26%, lane-complementing on x86) |
-| SHAKE | ~90% | Dominant |
+| SHA-2 | 59% | Competitive, but weak on Grav3/Grav4/POWER10 |
+| SHA-3 | 58% | Competitive |
+| SHAKE | 87% | Strong |
 | Blake3 | 49% | Competitive |
 | XXH3 | 54% | Competitive |
-| RapidHash | 8% | Parity (ties, not losses) |
-| Auth | 48% | HMAC strong; Ed25519 correct but 5.9x slower than dalek |
-| AEAD | N/A | Not yet in CI rotation. ChaCha family 1.27x WIN vs RustCrypto; AES-GCM/SIV 340x behind (portable only) |
+| RapidHash | 6% | Mostly parity, not wins |
+| Auth | 57% | HMAC strong; Ed25519 sign wins, verify lags |
+| AEAD | 64% | Competitive on x86_64/aarch64; fallback platforms still drag the total |
 
 **Acceleration gap tracker:** [`docs/tasks/acceleration.md`](acceleration.md)
 
-Key acceleration gaps blocking "world-class on all platforms":
-- AES-GCM / AES-GCM-SIV: **0% hardware acceleration** — 340x behind on all platforms (P0: AES-NI + PCLMULQDQ, AES + PMULL)
-- ChaCha20-Poly1305: 3 stub backends (power/s390x/riscv dispatch to portable)
-- Keccak-f: dispatch regression (x86-avx512 kernel 26-45% slower than portable)
-- Ed25519: 8-13x behind dalek (portable double-and-add vs precomputed tables)
+Key gaps still holding the pure-win gate below `70%`:
+- SHA-2 on Grav3/Grav4/POWER10
+- Ed25519 verification throughput, even though Ed25519 signing now wins
+- AES-family AEAD on s390x and POWER10, which still falls back to portable code
+- Large-message ChaCha-family AEAD on x86_64 at `4KiB+`
 
 ### Security: SOLID FOUNDATIONS
 
@@ -114,49 +122,59 @@ and streaming-vs-oneshot equivalence:
 
 ## What Must Be Done Before v0.1.0
 
-### M1. Cargo.toml `include` rules (BLOCKING)
+### M1. Cargo.toml `include` rules ✅
 
-No `include`/`exclude` defined. `cargo publish` will ship internal docs, scripts,
-testdata, CI configs, and bench infrastructure.
+Resolved on 2026-03-31.
 
-**Action:** Add `include` list covering `src/`, `Cargo.toml`, `LICENSE-*`, `README.md`,
-`testdata/` (needed for official vector tests in dev-deps).
+- `Cargo.toml` now carries an explicit `include` list
+- publishable inputs are intentionally scoped to crate sources, licenses,
+  `README.md`, and `testdata/` needed by dev-only vector tests
 
-### M2. `#[doc(hidden)] pub` boundary audit (BLOCKING)
+### M2. `#[doc(hidden)] pub` boundary audit ✅
 
-`pub` is semver surface whether rustdoc shows it or not. Internal benchmark hooks,
-dispatch plumbing, and test-only modules that are `pub` or `#[doc(hidden)] pub` will
-become accidental API commitments.
+Resolved on 2026-03-31.
 
-**Action:** Inventory all `pub` items. Convert internal items to `pub(crate)`. Target:
-zero `#[doc(hidden)] pub` except intentionally supported advanced APIs.
+- test-only checksum internals no longer leak through `checksum::__internal`
+- `traits::io::SealedMarker` is crate-private
+- Ascon kernel-selecting batch helpers are crate-private, while the supported
+  batched public APIs (`digest_many`, `hash_many_into`) are documented public
+- target met: zero remaining `#[doc(hidden)] pub` items in `src/`
 
-### M3. Ed25519 positioning (BLOCKING — messaging only)
+### M3. Benchmark-based positioning ✅
 
-Ed25519 is correct (RFC 8032 vectors + dalek oracle pass) but 5.9x slower than
-ed25519-dalek. This is the single largest credibility risk if the crate is positioned
-as "fast crypto."
+Resolved on 2026-03-31.
 
-**Action:** Crate docs and README must be honest:
-- Ed25519 is included for correctness and zero-dep convenience
-- Not yet optimized for speed (optimization roadmap exists)
-- Users needing peak Ed25519 throughput should use dalek until optimization lands
+- README and crate docs now anchor performance claims to the canonical report in
+  [`docs/bench/BENCHMARKS.md`](bench/BENCHMARKS.md)
+- release gate 1 passes: `84.97%` non-loss rate
+- release gate 2 misses: `64.78%` pure win rate vs the `70%` public-release bar
+- Ed25519 messaging now reflects the real split:
+  - `ed25519-sign`: `27W / 1T / 0L`
+  - `ed25519-verify`: `3W / 4T / 21L`
+- the old blanket "behind dalek" claim is deleted
 
-### M4. Verify `cargo package` is clean (BLOCKING)
+### M4. Verify `cargo package` is clean ✅
 
-**Action:** Run `cargo package --list` and verify no sensitive or unnecessary files
-are included. Run `cargo publish --dry-run` for final validation.
+Resolved on 2026-03-31.
+
+- `cargo package --list --allow-dirty` completed successfully
+- `cargo publish --dry-run --allow-dirty` completed successfully
+- expected warning: benchmark `benches/xxh3.rs` is not shipped in the published
+  package
 
 ---
 
 ## What Should Be Done Before v0.1.0 (High Value)
 
-### S1. Naming consistency pass
+### S1. Naming consistency pass ✅
 
-Standardize XOF reader suffix to `*XofReader` everywhere. Current inconsistencies:
-- `Blake3Xof` vs `Shake256Xof` vs `AsconXofReader`
+Resolved on 2026-03-31.
 
-Not a correctness issue. Affects perceived quality.
+- root and module XOF readers now use the `*XofReader` convention:
+  `Blake3XofReader`, `Shake128XofReader`, `Shake256XofReader`,
+  `Cshake256XofReader`, `AsconXofReader`
+- the remaining spec alias now follows the same reader naming law:
+  `AsconXof128Reader`
 
 ### S2. Remove stale `TODO` comments in src/
 
@@ -207,11 +225,12 @@ v0.1.0 baseline for future comparison.
 - Advanced surfaces are explicit: `checksum::config`, `checksum::introspect`, `hashes::introspect`, `hashes::fast`, `platform`
 - Root API is guarded by compile-fail tests (`tests/root_surface.rs`)
 
-### What Still Needs Work (M2)
+### M2 Resolution
 
-- `#[doc(hidden)] pub` modules in `checksum/mod.rs` and `hashes/mod.rs` leak semver surface
-- Internal benchmark hooks are public for bench crate access
-- Target: `pub` = stable API, `pub(crate)` = internal, zero `#[doc(hidden)] pub`
+- hidden-public checksum test hooks were removed from the public crate surface
+- hidden-public Ascon batch hooks were split cleanly into crate-private kernel
+  selectors and documented public batched APIs
+- `pub` now means supported surface here; internal glue stays `pub(crate)`
 
 ### Naming Law (S1)
 
@@ -226,14 +245,14 @@ v0.1.0 baseline for future comparison.
 
 ### Must-do (M)
 
-- [ ] **M1** Add `include` rules to `Cargo.toml`
-- [ ] **M2** Audit and fix `#[doc(hidden)] pub` boundary
-- [ ] **M3** Update README/crate docs with honest Ed25519 positioning
-- [ ] **M4** Verify `cargo package --list` and `cargo publish --dry-run`
+- [x] **M1** Add `include` rules to `Cargo.toml`
+- [x] **M2** Audit and fix `#[doc(hidden)] pub` boundary
+- [x] **M3** Update README/crate docs with honest Ed25519 positioning
+- [x] **M4** Verify `cargo package --list` and `cargo publish --dry-run`
 
 ### Should-do (S)
 
-- [ ] **S1** Naming consistency pass (XOF reader suffixes)
+- [x] **S1** Naming consistency pass (XOF reader suffixes)
 - [ ] **S2** Clean TODO comments in platform detection
 - [ ] **S3** Run `/sec` security audit skill
 
@@ -265,9 +284,11 @@ Supportable claim for v0.1.0:
 
 > Pure Rust checksums, digests, XOFs, MACs, HKDF, Ed25519, and fast hashes.
 > Zero dependencies by default. `no_std` first. Hardware-accelerated where it helps.
-> Competitive or faster than established crates on x86-64, aarch64, s390x, and POWER.
+> Broadly competitive and often faster across the current benchmark sweep, but not
+> yet over this project's `70%` pure-win public-release bar.
 
 Honest caveats:
-- Ed25519 is correct but not yet speed-optimized (5.9x gap vs dalek)
+- Current benchmark gates are `84.97%` non-loss and `64.78%` pure wins
+- Ed25519 is split: sign is strong, verify is still a drag on the total auth score
 - RapidHash is at parity, not faster
 - Blake3 is competitive but not universally faster than the official crate

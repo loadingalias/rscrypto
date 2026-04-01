@@ -2308,7 +2308,7 @@ impl Blake3 {
   /// immediately want to squeeze output without incremental updates.
   #[inline]
   #[must_use]
-  pub fn xof(data: &[u8]) -> Blake3Xof {
+  pub fn xof(data: &[u8]) -> Blake3XofReader {
     dispatch::xof(data)
   }
 
@@ -2329,14 +2329,14 @@ impl Blake3 {
   /// Compute the keyed XOF output state of `data` in one shot.
   #[inline]
   #[must_use]
-  pub fn keyed_xof(key: &[u8; KEY_LEN], data: &[u8]) -> Blake3Xof {
+  pub fn keyed_xof(key: &[u8; KEY_LEN], data: &[u8]) -> Blake3XofReader {
     let key_words = words8_from_le_bytes_32(key);
     let plan = dispatch::hasher_dispatch();
     let kernel = plan.size_class_kernel(data.len());
     if data.len() <= CHUNK_LEN {
       return xof_oneshot_single_chunk(kernel, key_words, KEYED_HASH, data);
     }
-    Blake3Xof::from_output(root_output_oneshot(
+    Blake3XofReader::from_output(root_output_oneshot(
       kernel,
       key_words,
       KEYED_HASH,
@@ -2838,12 +2838,12 @@ impl Blake3 {
   /// Finalize into an extendable output state (XOF).
   #[must_use]
   #[inline]
-  pub fn finalize_xof(&self) -> Blake3Xof {
+  pub fn finalize_xof(&self) -> Blake3XofReader {
     if self.cv_stack_len == 0 && self.pending_chunk_cv.is_none() {
-      return Blake3Xof::new(self.chunk_state.root_emit_state());
+      return Blake3XofReader::new(self.chunk_state.root_emit_state());
     }
 
-    Blake3Xof::new(self.root_emit_state())
+    Blake3XofReader::new(self.root_emit_state())
   }
 }
 
@@ -2977,12 +2977,12 @@ impl Digest for Blake3 {
 
 /// Lean XOF oneshot for single-chunk inputs (≤ 1024 bytes).
 ///
-/// Constructs `Blake3Xof` directly without going through `root_output_oneshot`
+/// Constructs `Blake3XofReader` directly without going through `root_output_oneshot`
 /// or `single_chunk_output`. For inputs ≤ 64B, no compression is needed at all.
 /// For 65–1024B, full blocks are compressed directly via the kernel's compress
 /// function pointer, avoiding the indirect `chunk_compress_blocks` call.
 #[inline]
-fn xof_oneshot_single_chunk(kernel: Kernel, key_words: [u32; 8], flags: u32, input: &[u8]) -> Blake3Xof {
+fn xof_oneshot_single_chunk(kernel: Kernel, key_words: [u32; 8], flags: u32, input: &[u8]) -> Blake3XofReader {
   debug_assert!(input.len() <= CHUNK_LEN);
 
   // Tiny input (≤ 64B): zero-pad into block_words, no compression needed.
@@ -3002,7 +3002,7 @@ fn xof_oneshot_single_chunk(kernel: Kernel, key_words: [u32; 8], flags: u32, inp
       words16_from_le_bytes_64(&block)
     };
 
-    return Blake3Xof::new(RootEmitState {
+    return Blake3XofReader::new(RootEmitState {
       kernel_id: kernel.id,
       input_chaining_value: key_words,
       block_words,
@@ -3049,7 +3049,7 @@ fn xof_oneshot_single_chunk(kernel: Kernel, key_words: [u32; 8], flags: u32, inp
     words16_from_le_bytes_64(&block)
   };
 
-  Blake3Xof::new(RootEmitState {
+  Blake3XofReader::new(RootEmitState {
     kernel_id: kernel.id,
     input_chaining_value: cv,
     block_words,
@@ -3060,18 +3060,18 @@ fn xof_oneshot_single_chunk(kernel: Kernel, key_words: [u32; 8], flags: u32, inp
 }
 
 #[derive(Clone)]
-pub struct Blake3Xof {
+pub struct Blake3XofReader {
   root: RootEmitState,
   position_within_block: u8,
 }
 
-impl core::fmt::Debug for Blake3Xof {
+impl core::fmt::Debug for Blake3XofReader {
   fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-    f.debug_struct("Blake3Xof").finish_non_exhaustive()
+    f.debug_struct("Blake3XofReader").finish_non_exhaustive()
   }
 }
 
-impl Blake3Xof {
+impl Blake3XofReader {
   #[inline]
   fn new(root: RootEmitState) -> Self {
     Self {
@@ -3119,7 +3119,7 @@ impl Blake3Xof {
   }
 }
 
-impl Xof for Blake3Xof {
+impl Xof for Blake3XofReader {
   #[inline]
   fn squeeze(&mut self, mut out: &mut [u8]) {
     if out.is_empty() {
@@ -3131,7 +3131,7 @@ impl Xof for Blake3Xof {
       return;
     }
 
-    Blake3Xof::squeeze_general(self, &mut out);
+    Blake3XofReader::squeeze_general(self, &mut out);
   }
 }
 

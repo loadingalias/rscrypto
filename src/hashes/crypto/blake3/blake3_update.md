@@ -443,10 +443,10 @@ Optional tools only with a specific question they uniquely answer:
 
 ### 2026-03-01 - Candidate AB (`bd61c53`)
 - Hypothesis:
-  - Single-chunk XOF short-output (`32B-out`) pays avoidable fixed overhead from eager zero-init of `Blake3Xof` scratch buffers (`buf` + `root_hash_cache`).
+  - Single-chunk XOF short-output (`32B-out`) pays avoidable fixed overhead from eager zero-init of `Blake3XofReader` scratch buffers (`buf` + `root_hash_cache`).
   - Making these buffers lazy-initialized should improve `xof init+read` at `1B`/`64B`/`1024B` inputs.
 - Change:
-  - In `Blake3Xof`:
+  - In `Blake3XofReader`:
     - switched `buf` and `root_hash_cache` to `MaybeUninit`,
     - initialized `buf` only in `refill`,
     - initialized `root_hash_cache` only when short-root fast path is used.
@@ -572,8 +572,8 @@ Optional tools only with a specific question they uniquely answer:
   - Precomputing/caching single-chunk root hash at `finalize_xof()` should improve `*-in/32B-out` cases.
 - Change:
   - Added direct single-chunk root-hash helper and reused it in `finalize()`.
-  - `finalize_xof()` single-chunk path precomputed root hash and seeded `Blake3Xof` cache.
-  - `Blake3Xof::squeeze()` tiny first-read path used cache when available.
+  - `finalize_xof()` single-chunk path precomputed root hash and seeded `Blake3XofReader` cache.
+  - `Blake3XofReader::squeeze()` tiny first-read path used cache when available.
 - Validation:
   - Local: `just check-all && just test` passed.
   - CI targeted bench run: `22555765324` (`crates=hashes`, `benches=blake3`,
@@ -598,7 +598,7 @@ Optional tools only with a specific question they uniquely answer:
   - AG regressed because eager root-hash precompute at `finalize_xof()` adds fixed cost to all XOF calls.
   - A lazy tiny-first-squeeze optimization should improve `*-in/32B-out` without harming large-output XOF.
 - Change:
-  - Added single-chunk tail hint plumbing from `finalize_xof()` into `Blake3Xof` for single-chunk/no-tree states.
+  - Added single-chunk tail hint plumbing from `finalize_xof()` into `Blake3XofReader` for single-chunk/no-tree states.
   - Tiny first-squeeze path (`out.len() <= 32`) used direct chunk-tail root hashing from the hint.
   - Kept large-output XOF path unchanged (no eager finalize-time precompute).
 - Validation:
@@ -691,7 +691,7 @@ Optional tools only with a specific question they uniquely answer:
   - In `ChunkState` hot paths:
     - replaced repeated `kernels::chunk_compress_blocks_inline(self.kernel.id, ...)` calls with direct
       `(self.kernel.chunk_compress_blocks)(...)` calls.
-  - In `Blake3Xof`:
+  - In `Blake3XofReader`:
     - removed `root_hash_cache` / `root_hash_pos` state and the `out.len() <= 32` first-read root-hash fast path,
     - kept first output generation on normal block path (`root_output_blocks_into`) only.
   - No dispatch-table edits.
@@ -722,13 +722,13 @@ Optional tools only with a specific question they uniquely answer:
 
 ### 2026-03-02 - Candidate AL (`e7fbaf9`)
 - Hypothesis:
-  - XOF gaps are still dominated by tiny-input kernel pinning and extra runtime upgrade logic in `Blake3Xof::squeeze`.
+  - XOF gaps are still dominated by tiny-input kernel pinning and extra runtime upgrade logic in `Blake3XofReader::squeeze`.
   - Streaming `64..1024` update gaps still include avoidable first-chunk control overhead on x86 and over-deferral of SIMD for repeated block-aligned updates.
 - Change:
   - Added x86 one-full-chunk `ChunkState` fast path:
     - `try_chunk_state_one_chunk_x86_out(...)` uses AVX2/AVX-512 asm `hash_many` with `blocks=15` to materialize pre-final-block CV and copy block 15 bytes.
   - Simplified XOF kernel model:
-    - removed runtime XOF kernel/dispatch-upgrade state from `Blake3Xof`,
+    - removed runtime XOF kernel/dispatch-upgrade state from `Blake3XofReader`,
     - moved kernel selection to finalize time (`finalize_xof` => stream kernel; `finalize_xof_sized` => stream/bulk by expected output),
     - retagged one-shot XOF outputs in `dispatch::xof` and `Blake3::keyed_xof` to stream kernel.
   - Streaming defer tweak:
@@ -794,7 +794,7 @@ Optional tools only with a specific question they uniquely answer:
     - now directly selects `stream_kernel()` + `bulk_kernel_for_update(input.len())` on update calls.
   - `Blake3::finalize_xof`:
     - routes through `finalize_xof_sized(OUT_LEN)` to use one output-construction path.
-  - `Blake3Xof`:
+  - `Blake3XofReader`:
     - removed `root_hash_cache` / `root_hash_pos`,
     - removed runtime squeeze kernel-upgrade state (`kernel`, `dispatch_plan`),
     - simplified `squeeze()` to buffered block generation only.
@@ -830,12 +830,12 @@ Optional tools only with a specific question they uniquely answer:
 ### 2026-03-03 - Candidate AO (`ec296b8`)
 - Hypothesis:
   - XOF short-output overhead was still inflated by reader state complexity (`buf`/`root_hash_cache`/runtime dispatch state) and extra control branches.
-  - Shrinking `Blake3Xof` state and making squeeze block-generation/direct-copy first should reduce fixed overhead while preserving large-read kernel throughput.
+  - Shrinking `Blake3XofReader` state and making squeeze block-generation/direct-copy first should reduce fixed overhead while preserving large-read kernel throughput.
 - Change:
   - `dispatch::xof` / `Blake3::finalize_xof` / `Blake3::keyed_xof`:
     - precompute `large_squeeze_kernel = bulk_kernel_for_update(512)`,
     - construct XOF with that kernel directly.
-  - `Blake3Xof` refactor:
+  - `Blake3XofReader` refactor:
     - removed `buf`, `buf_pos`, `root_hash_cache`, `root_hash_pos`, and stored dispatch plan state,
     - added `position_within_block` + `large_squeeze_kernel`,
     - added `fill_one_block()` and rewired `squeeze()` to direct block writes plus a single large-read kernel upgrade.
@@ -873,7 +873,7 @@ Optional tools only with a specific question they uniquely answer:
 ### 2026-03-03 - Candidate AP (`working tree`)
 - Hypothesis:
   - The remaining x86 gap is now mostly control-path overhead in XOF output production, not raw kernel throughput.
-  - We still diverge from upstream architecture by doing runtime kernel-ID laddering in `root_output_blocks_into` and by carrying extra state/branches in `Blake3Xof`.
+  - We still diverge from upstream architecture by doing runtime kernel-ID laddering in `root_output_blocks_into` and by carrying extra state/branches in `Blake3XofReader`.
 - Change:
   - Kernel dispatch model:
     - added `xof_block` function pointer to `kernels::Kernel` for single-block XOF output,
@@ -883,12 +883,12 @@ Optional tools only with a specific question they uniquely answer:
     - added `OutputState::root_output_block_into()` that dispatches through `kernel.xof_block`,
     - replaced `OutputState::root_output_blocks_into` kernel-ID `match` ladder with one indirect call through `kernel.xof_many`.
   - Reader state simplification:
-    - rewrote `Blake3Xof` to upstream-style state (`output`, `block_counter`, `position_within_block`),
-    - removed `buf`, `buf_pos`, `root_hash_cache`, `root_hash_pos`, runtime kernel-upgrade state, and `dispatch_plan` from `Blake3Xof`,
+    - rewrote `Blake3XofReader` to upstream-style state (`output`, `block_counter`, `position_within_block`),
+    - removed `buf`, `buf_pos`, `root_hash_cache`, `root_hash_pos`, runtime kernel-upgrade state, and `dispatch_plan` from `Blake3XofReader`,
     - removed `new_with_kernel`/`refill`; added `fill_one_block`,
     - `fill_one_block()` now uses `xof_block` (single-block path) while full-block regions use `xof_many`.
   - Constructor cleanup:
-    - updated `dispatch::xof`, `Blake3::keyed_xof`, `Blake3::finalize_xof`, and `Blake3::finalize_xof_sized` to use the simplified `Blake3Xof::new(output)`.
+    - updated `dispatch::xof`, `Blake3::keyed_xof`, `Blake3::finalize_xof`, and `Blake3::finalize_xof_sized` to use the simplified `Blake3XofReader::new(output)`.
   - Cleanup:
     - removed dead helper `words16_to_le_bytes`.
 - Validation:
@@ -934,7 +934,7 @@ Optional tools only with a specific question they uniquely answer:
     - on `x86_64`, route SIMD kernels through `kernel.x86_compress_cv_bytes`,
     - on `aarch64` NEON, route through `compress_cv_neon_bytes`,
     - keep portable fallback unchanged.
-  - `Blake3Xof::squeeze` first-block fast path (`out.len() <= 32`):
+  - `Blake3XofReader::squeeze` first-block fast path (`out.len() <= 32`):
     - compute root hash via `root_hash_bytes_with_kernel(...)`,
     - on `x86_64`, if current root kernel is `Portable`, promote only this path to `dispatch_plan.stream_kernel()` when available.
   - No dispatch-table edits, no API changes, no streaming-path rewrites.
@@ -1019,7 +1019,7 @@ Optional tools only with a specific question they uniquely answer:
   - `Digest::update` policy (x86_64 only):
     - bypass first-update SIMD defer gating in the `input.len() <= CHUNK_LEN` path,
     - bypass short-chunk re-defer check when deciding whether to promote from `Portable` to tuned stream kernel.
-  - No `Blake3Xof` state/model changes and no kernel implementation changes.
+  - No `Blake3XofReader` state/model changes and no kernel implementation changes.
 - Validation:
   - Local: `just check-all` passed.
   - Local: `just test` passed (`167/167`).
@@ -1115,7 +1115,7 @@ Optional tools only with a specific question they uniquely answer:
     - `dispatch_tables.rs`: x86 default stream kernel `SSE4.1 -> AVX2`.
     - x86 lane profiles (`Zen4`, `Zen5`, `IntelIcl`, `IntelSpr`) stream kernel `SSE4.1 -> AVX512` (bulk unchanged).
   - Dispatch plumbing cleanup:
-    - `dispatch::xof()` now constructs `Blake3Xof::new(output)` directly.
+    - `dispatch::xof()` now constructs `Blake3XofReader::new(output)` directly.
     - removed stale lazy-defer reporting path in `streaming_dispatch_info`.
 - Validation:
   - Local: `just check` passed.
@@ -1204,7 +1204,7 @@ Optional tools only with a specific question they uniquely answer:
   - XOF short first reads were paying unnecessary fixed cost by materializing a full 64-byte output block even when the caller requests at most 32 bytes.
   - A narrow `squeeze()` fast path for the first `<=32` bytes should improve `xof init+read/*-in/32B-out` without perturbing large streaming throughput.
 - Change:
-  - In `Blake3Xof::squeeze`:
+  - In `Blake3XofReader::squeeze`:
     - added a first-read fast path when `block_counter == 0`, `position_within_block == 0`, and `out.len() <= OUT_LEN`,
     - returns bytes directly from `output.root_hash_bytes()` and advances `position_within_block`,
     - bypasses first-block materialization for this narrow case.
@@ -1352,7 +1352,7 @@ Optional tools only with a specific question they uniquely answer:
   - `mod.rs` runtime-structure update (no dispatch-table/kernel tuning):
     - added aligned right-edge pending subtree retention (`pending_subtree_chunks`) instead of always retaining one chunk CV.
     - added subtree-aware pending commit logic on next `update()`.
-    - added single-block XOF emission helper (`root_output_block`) and switched `Blake3Xof::fill_one_block` to use it.
+    - added single-block XOF emission helper (`root_output_block`) and switched `Blake3XofReader::fill_one_block` to use it.
   - No kernel implementation changes, no dispatch policy edits.
 - Validation:
   - Local: `cargo fmt --all` passed.
@@ -1389,7 +1389,7 @@ Optional tools only with a specific question they uniquely answer:
 - Change:
   - `mod.rs` only:
     - added `OutputState::root_output_block(output_block_counter)` for direct single-block XOF emission,
-    - switched `Blake3Xof::fill_one_block` to use that helper instead of going through `root_output_blocks_into`,
+    - switched `Blake3XofReader::fill_one_block` to use that helper instead of going through `root_output_blocks_into`,
     - restored a narrow `Digest::update` fast path for inputs that fit in the current chunk and have no pending subtree/CV state.
   - Follow-up fixup commit `ab1bf11` moved `// SAFETY:` comments to the exact locations Clippy requires.
   - No dispatch-table changes, no kernel selection retuning, no API changes.
@@ -1432,7 +1432,7 @@ Optional tools only with a specific question they uniquely answer:
 - Change:
   - `mod.rs` structural rewrite:
     - introduced `XofOutputState` as a compact XOF/output holder,
-    - converted `Blake3Xof` to own that compact state directly,
+    - converted `Blake3XofReader` to own that compact state directly,
     - moved XOF counter ownership into the reader,
     - routed short reads through `root_output_block()` and full-block reads through the compact bulk emitter,
     - removed the old generic `OutputState` XOF block emission path from the hot reader flow.
@@ -1925,7 +1925,7 @@ Optional tools only with a specific question they uniquely answer:
     - `finalize-only(clone)/1024B-chunks`: `846.90 ns` vs `844.90 ns`
     - `full(target)/1024B-chunks`: `1.3698 ms` vs `1.3410 ms`
 - Decision / inference:
-  - The short `read32-only` path is basically at parity. Do not treat `Blake3Xof::squeeze()` / first-block copy as the primary culprit anymore.
+  - The short `read32-only` path is basically at parity. Do not treat `Blake3XofReader::squeeze()` / first-block copy as the primary culprit anymore.
   - The short `init+read32` gap is mostly before or at `finalize_xof()`:
     - constructor + first update are still materially behind,
     - `finalize_xof()` setup adds another fixed-cost gap on `1B` / `64B`,
@@ -1937,7 +1937,7 @@ Optional tools only with a specific question they uniquely answer:
 ## Next Step After Truthful Attribution
 
 1. Keep the accepted baseline architecture and keep the new attribution benches.
-2. Do not target `Blake3Xof::squeeze()` / reader-only paths as the primary fix.
+2. Do not target `Blake3XofReader::squeeze()` / reader-only paths as the primary fix.
 3. Next candidate should attack only two fixed-cost surfaces:
    - `Blake3::new_internal()` / first tiny `update()` setup,
    - short `finalize_xof()` / `root_output()` setup before any bytes are squeezed.
@@ -2033,7 +2033,7 @@ Optional tools only with a specific question they uniquely answer:
   - `mod.rs` / `x86_64/{sse41,avx2,avx512}.rs` only:
     - added x86 raw-byte single-block root-output helpers,
     - taught `finalize_xof()` to preserve the padded raw tail block for single-chunk/no-tree states,
-    - taught `Blake3Xof` to use that raw-byte path for block counter `0` only, then fall back to the existing generic `OutputState` path.
+    - taught `Blake3XofReader` to use that raw-byte path for block counter `0` only, then fall back to the existing generic `OutputState` path.
   - No oneshot changes, no generic `OutputState` rewrite, no dispatch-table changes, no public API change.
 - Validation:
   - Correctness smoke before revert:
@@ -2077,8 +2077,8 @@ Optional tools only with a specific question they uniquely answer:
     - `OutputState::root_output_blocks_into`: `3297` LLVM lines
     - `Blake3::update_with`: `1120`
     - `Blake3::root_output`: `332`
-    - `Blake3Xof::squeeze`: `250`
-    - `Blake3Xof::fill_one_block`: `65`
+    - `Blake3XofReader::squeeze`: `250`
+    - `Blake3XofReader::fill_one_block`: `65`
 - Assembly result:
   - Official `init+read32` wrapper stays simple:
     - initialize hasher,
@@ -2090,7 +2090,7 @@ Optional tools only with a specific question they uniquely answer:
     - repeated `stream_kernel` reloads,
     - `bulk_kernel_for_update` / size-class selection,
     - a much larger stack frame,
-    - call chain through `Blake3::update_with`, `Blake3::root_output`, and `Blake3Xof::squeeze`.
+    - call chain through `Blake3::update_with`, `Blake3::root_output`, and `Blake3XofReader::squeeze`.
   - Stack frame size in the wrapper diff was also not subtle:
     - official: `2080` bytes
     - rscrypto: `2352` bytes
@@ -2099,7 +2099,7 @@ Optional tools only with a specific question they uniquely answer:
     - `compress`: `2615`
     - `Blake3::root_output`: `280`
     - `Blake3::update_with`: `190`
-    - `Blake3Xof::squeeze`: `178`
+    - `Blake3XofReader::squeeze`: `178`
     - `memset`: `177`
     - `memmove`: `102`
     - `try_simd_update_batch`: `45`
@@ -2226,7 +2226,7 @@ Optional tools only with a specific question they uniquely answer:
     - chunk-rollover handling
     - pending-chunk/tree admission only as needed for streaming correctness
   - No changes to:
-    - `Blake3Xof`
+    - `Blake3XofReader`
     - `finalize_xof`
     - `OutputState`
     - oneshot APIs
@@ -2265,7 +2265,7 @@ Optional tools only with a specific question they uniquely answer:
 - Why this track exists:
   - External attribution already narrowed the real problem to the short final-output stack:
     - `root_output` construction/folding,
-    - `Blake3Xof::squeeze`,
+    - `Blake3XofReader::squeeze`,
     - `OutputState::root_output_blocks_into`,
     - extra memset/memmove and block-format conversion around them.
   - The code is currently paying generic-tree machinery even when the caller only wants:
@@ -2345,7 +2345,7 @@ Optional tools only with a specific question they uniquely answer:
   - build `RootEmitState` directly
   - do **not** build generic `OutputState`
   - do **not** build split tree/frontier reader state
-- `Blake3Xof`:
+- `Blake3XofReader`:
   - become a compact reader over `RootEmitState`
   - state should be only:
     - `root`
@@ -2399,7 +2399,7 @@ Optional tools only with a specific question they uniquely answer:
     - single-chunk final state
     - folded parent/root state
 - Phase 3: reader replacement
-  - replace current `Blake3Xof` internals with compact root-emitter reader
+  - replace current `Blake3XofReader` internals with compact root-emitter reader
   - keep the public API unchanged
 - Phase 4: optional finalize integration
   - only if it is mechanically clean, let `finalize()` reuse the same root emitter for 32-byte root hash output
@@ -2417,7 +2417,7 @@ Optional tools only with a specific question they uniquely answer:
   - `cargo llvm-lines` on:
     - exact wrapper
     - `Blake3::finalize_xof`
-    - `Blake3Xof::squeeze`
+    - `Blake3XofReader::squeeze`
     - new backend root emitter wrappers
   - `cargo asm` on the exact wrapper and one-block emitter path
   - acceptance requirement:
@@ -2464,7 +2464,7 @@ Optional tools only with a specific question they uniquely answer:
   - Extending only the short-update frontier across chunk rollover, while leaving XOF and final-output code untouched, would convert the short streaming cluster by itself.
 - Change:
   - Broadened the short serial `update()` path so any `<= CHUNK_LEN` update could stay on the local serial path across chunk rollover and pending-chunk commit.
-  - Left `finalize_xof`, `Blake3Xof`, `OutputState`, oneshot code, and kernels unchanged.
+  - Left `finalize_xof`, `Blake3XofReader`, `OutputState`, oneshot code, and kernels unchanged.
 - Validation before CI:
   - `just check-all`
   - `just test`

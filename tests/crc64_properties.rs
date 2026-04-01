@@ -1,9 +1,8 @@
-//! CRC-64 property tests: portable kernel comparison and cross-library validation.
+//! CRC-64 property tests: cross-library validation.
 //!
 //! These tests validate our CRC-64 implementations against:
-//! 1. Our own portable (slice-by-N) implementations
-//! 2. The `crc64fast` and `crc64fast-nvme` crates as external references
-//! 3. The `crc-fast` crate as another external reference
+//! 1. The `crc64fast` and `crc64fast-nvme` crates as external references
+//! 2. The `crc-fast` crate as another external reference
 
 // Proptest uses getcwd() which fails under Miri isolation.
 #![cfg(not(miri))]
@@ -13,26 +12,9 @@ use crc_fast::CrcAlgorithm;
 use crc64fast as ref_crc64fast;
 use crc64fast_nvme as ref_crc64fast_nvme;
 use proptest::prelude::*;
-use rscrypto::{
-  Checksum, ChecksumCombine, Crc64, Crc64Nvme,
-  checksum::__internal::proptest_internals::{crc64_slice16_nvme, crc64_slice16_xz},
-};
+use rscrypto::{Checksum, ChecksumCombine, Crc64, Crc64Nvme};
 
 proptest! {
-  #[test]
-  fn crc64_xz_matches_portable(data in proptest::collection::vec(any::<u8>(), 0..=4096)) {
-    let ours = Crc64::checksum(&data);
-    let portable = crc64_slice16_xz(!0, &data) ^ !0;
-    prop_assert_eq!(ours, portable);
-  }
-
-  #[test]
-  fn crc64_nvme_matches_portable(data in proptest::collection::vec(any::<u8>(), 0..=4096)) {
-    let ours = Crc64Nvme::checksum(&data);
-    let portable = crc64_slice16_nvme(!0, &data) ^ !0;
-    prop_assert_eq!(ours, portable);
-  }
-
   #[test]
   fn crc64_xz_matches_crc64fast(data in proptest::collection::vec(any::<u8>(), 0..=4096)) {
     let ours = Crc64::checksum(&data);

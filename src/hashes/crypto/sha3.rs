@@ -233,7 +233,7 @@ impl Shake128 {
 
   #[inline]
   #[must_use]
-  pub fn xof(data: &[u8]) -> Shake128Xof {
+  pub fn xof(data: &[u8]) -> Shake128XofReader {
     let mut h = Self::new();
     h.update(data);
     h.finalize_xof()
@@ -246,8 +246,8 @@ impl Shake128 {
 
   #[inline]
   #[must_use]
-  pub fn finalize_xof(&self) -> Shake128Xof {
-    Shake128Xof {
+  pub fn finalize_xof(&self) -> Shake128XofReader {
+    Shake128XofReader {
       inner: self.core.finalize_xof(0x1F),
     }
   }
@@ -268,17 +268,17 @@ impl Shake128 {
 }
 
 #[derive(Clone)]
-pub struct Shake128Xof {
+pub struct Shake128XofReader {
   inner: KeccakXof<168>,
 }
 
-impl core::fmt::Debug for Shake128Xof {
+impl core::fmt::Debug for Shake128XofReader {
   fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-    f.debug_struct("Shake128Xof").finish_non_exhaustive()
+    f.debug_struct("Shake128XofReader").finish_non_exhaustive()
   }
 }
 
-impl Xof for Shake128Xof {
+impl Xof for Shake128XofReader {
   #[inline]
   fn squeeze(&mut self, out: &mut [u8]) {
     self.inner.squeeze_into(out);
@@ -294,7 +294,7 @@ impl Shake256 {
 
   #[inline]
   #[must_use]
-  pub fn xof(data: &[u8]) -> Shake256Xof {
+  pub fn xof(data: &[u8]) -> Shake256XofReader {
     let mut h = Self::new();
     h.update(data);
     h.finalize_xof()
@@ -307,8 +307,8 @@ impl Shake256 {
 
   #[inline]
   #[must_use]
-  pub fn finalize_xof(&self) -> Shake256Xof {
-    Shake256Xof {
+  pub fn finalize_xof(&self) -> Shake256XofReader {
+    Shake256XofReader {
       inner: self.core.finalize_xof(0x1F),
     }
   }
@@ -329,17 +329,17 @@ impl Shake256 {
 }
 
 #[derive(Clone)]
-pub struct Shake256Xof {
+pub struct Shake256XofReader {
   inner: KeccakXof<136>,
 }
 
-impl core::fmt::Debug for Shake256Xof {
+impl core::fmt::Debug for Shake256XofReader {
   fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-    f.debug_struct("Shake256Xof").finish_non_exhaustive()
+    f.debug_struct("Shake256XofReader").finish_non_exhaustive()
   }
 }
 
-impl Xof for Shake256Xof {
+impl Xof for Shake256XofReader {
   #[inline]
   fn squeeze(&mut self, out: &mut [u8]) {
     self.inner.squeeze_into(out);

@@ -32,9 +32,9 @@ use rscrypto::hashes::{DigestReader, DigestWriter};
 use rscrypto::platform::{Arch, Caps};
 #[cfg(feature = "hashes")]
 use rscrypto::{
-  AsconCxof128, AsconCxof128Reader, AsconHash256, AsconXof, AsconXofReader, Blake3, Blake3Xof, Cshake256, Cshake256Xof,
-  Digest, FastHash, RapidHash, RapidHash128, Sha3_224, Sha3_256, Sha3_384, Sha3_512, Sha224, Sha256, Sha384, Sha512,
-  Sha512_256, Shake128, Shake128Xof, Shake256, Shake256Xof, Xof, Xxh3, Xxh3_128,
+  AsconCxof128, AsconCxof128Reader, AsconHash256, AsconXof, AsconXofReader, Blake3, Blake3XofReader, Cshake256,
+  Cshake256XofReader, Digest, FastHash, RapidHash, RapidHash128, Sha3_224, Sha3_256, Sha3_384, Sha3_512, Sha224,
+  Sha256, Sha384, Sha512, Sha512_256, Shake128, Shake128XofReader, Shake256, Shake256XofReader, Xof, Xxh3, Xxh3_128,
 };
 #[cfg(feature = "checksums")]
 use rscrypto::{Checksum, ChecksumCombine, Crc16Ccitt, Crc16Ibm, Crc24OpenPgp, Crc32, Crc32C, Crc64, Crc64Nvme};
