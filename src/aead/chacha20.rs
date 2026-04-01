@@ -398,8 +398,9 @@ pub(crate) fn hchacha20(key: &[u8; KEY_SIZE], nonce: &[u8; HCHACHA_NONCE_SIZE]) 
 #[cfg(target_arch = "x86_64")]
 mod x86_avx512 {
   use core::arch::x86_64::{
-    __m512i, _mm512_add_epi32, _mm512_or_si512, _mm512_set1_epi32, _mm512_setr_epi32, _mm512_slli_epi32,
-    _mm512_srli_epi32, _mm512_storeu_si512, _mm512_xor_si512,
+    __m512i, _mm512_add_epi32, _mm512_loadu_si512, _mm512_rol_epi32, _mm512_set1_epi32, _mm512_setr_epi32,
+    _mm512_shuffle_i32x4, _mm512_storeu_si512, _mm512_unpackhi_epi32, _mm512_unpackhi_epi64,
+    _mm512_unpacklo_epi32, _mm512_unpacklo_epi64, _mm512_xor_si512,
   };
 
   use super::{BLOCK_SIZE, KEY_SIZE, NONCE_SIZE, load_u32_le, xor_keystream_portable};
@@ -509,42 +510,114 @@ mod x86_avx512 {
       x14 = _mm512_add_epi32(x14, o14);
       x15 = _mm512_add_epi32(x15, o15);
 
-      let mut words = [[0u32; BLOCKS_PER_BATCH]; 16];
-      // SAFETY: `words[*]` are contiguous `u32[16]` lanes, so each row has exactly
-      // 64 bytes of writable storage for one unaligned `__m512i` store.
-      unsafe {
-        _mm512_storeu_si512(words[0].as_mut_ptr() as *mut __m512i, x0);
-        _mm512_storeu_si512(words[1].as_mut_ptr() as *mut __m512i, x1);
-        _mm512_storeu_si512(words[2].as_mut_ptr() as *mut __m512i, x2);
-        _mm512_storeu_si512(words[3].as_mut_ptr() as *mut __m512i, x3);
-        _mm512_storeu_si512(words[4].as_mut_ptr() as *mut __m512i, x4);
-        _mm512_storeu_si512(words[5].as_mut_ptr() as *mut __m512i, x5);
-        _mm512_storeu_si512(words[6].as_mut_ptr() as *mut __m512i, x6);
-        _mm512_storeu_si512(words[7].as_mut_ptr() as *mut __m512i, x7);
-        _mm512_storeu_si512(words[8].as_mut_ptr() as *mut __m512i, x8);
-        _mm512_storeu_si512(words[9].as_mut_ptr() as *mut __m512i, x9);
-        _mm512_storeu_si512(words[10].as_mut_ptr() as *mut __m512i, x10);
-        _mm512_storeu_si512(words[11].as_mut_ptr() as *mut __m512i, x11);
-        _mm512_storeu_si512(words[12].as_mut_ptr() as *mut __m512i, x12);
-        _mm512_storeu_si512(words[13].as_mut_ptr() as *mut __m512i, x13);
-        _mm512_storeu_si512(words[14].as_mut_ptr() as *mut __m512i, x14);
-        _mm512_storeu_si512(words[15].as_mut_ptr() as *mut __m512i, x15);
-      }
+      // 16×16 u32 matrix transpose: convert from word-major (x_i = word i for all
+      // 16 blocks) to block-major (each register = one complete 64-byte block).
+      //
+      // Stage 1: 32-bit interleave — pairwise unpack adjacent state-word registers.
+      // SAFETY: AVX-512 intrinsics are valid under the enclosing target_feature.
+      let s1_0 = _mm512_unpacklo_epi32(x0, x1);
+      let s1_1 = _mm512_unpackhi_epi32(x0, x1);
+      let s1_2 = _mm512_unpacklo_epi32(x2, x3);
+      let s1_3 = _mm512_unpackhi_epi32(x2, x3);
+      let s1_4 = _mm512_unpacklo_epi32(x4, x5);
+      let s1_5 = _mm512_unpackhi_epi32(x4, x5);
+      let s1_6 = _mm512_unpacklo_epi32(x6, x7);
+      let s1_7 = _mm512_unpackhi_epi32(x6, x7);
+      let s1_8 = _mm512_unpacklo_epi32(x8, x9);
+      let s1_9 = _mm512_unpackhi_epi32(x8, x9);
+      let s1_10 = _mm512_unpacklo_epi32(x10, x11);
+      let s1_11 = _mm512_unpackhi_epi32(x10, x11);
+      let s1_12 = _mm512_unpacklo_epi32(x12, x13);
+      let s1_13 = _mm512_unpackhi_epi32(x12, x13);
+      let s1_14 = _mm512_unpacklo_epi32(x14, x15);
+      let s1_15 = _mm512_unpackhi_epi32(x14, x15);
 
-      let mut block_index = 0usize;
-      while block_index < BLOCKS_PER_BATCH {
-        let mut word_index = 0usize;
-        while word_index < 16 {
-          let offset = block_index.strict_mul(BLOCK_SIZE).strict_add(word_index.strict_mul(4));
-          let keystream = words[word_index][block_index].to_le_bytes();
-          chunk[offset..offset.strict_add(4)]
-            .iter_mut()
-            .zip(keystream)
-            .for_each(|(dst, src)| *dst ^= src);
-          word_index = word_index.strict_add(1);
-        }
-        block_index = block_index.strict_add(1);
-      }
+      // Stage 2: 64-bit interleave — pair up stage-1 results to get 4 consecutive
+      // words from one block in each 128-bit lane.
+      let s2_0 = _mm512_unpacklo_epi64(s1_0, s1_2);
+      let s2_1 = _mm512_unpackhi_epi64(s1_0, s1_2);
+      let s2_2 = _mm512_unpacklo_epi64(s1_1, s1_3);
+      let s2_3 = _mm512_unpackhi_epi64(s1_1, s1_3);
+      let s2_4 = _mm512_unpacklo_epi64(s1_4, s1_6);
+      let s2_5 = _mm512_unpackhi_epi64(s1_4, s1_6);
+      let s2_6 = _mm512_unpacklo_epi64(s1_5, s1_7);
+      let s2_7 = _mm512_unpackhi_epi64(s1_5, s1_7);
+      let s2_8 = _mm512_unpacklo_epi64(s1_8, s1_10);
+      let s2_9 = _mm512_unpackhi_epi64(s1_8, s1_10);
+      let s2_10 = _mm512_unpacklo_epi64(s1_9, s1_11);
+      let s2_11 = _mm512_unpackhi_epi64(s1_9, s1_11);
+      let s2_12 = _mm512_unpacklo_epi64(s1_12, s1_14);
+      let s2_13 = _mm512_unpackhi_epi64(s1_12, s1_14);
+      let s2_14 = _mm512_unpacklo_epi64(s1_13, s1_15);
+      let s2_15 = _mm512_unpackhi_epi64(s1_13, s1_15);
+
+      // Stage 3: 128-bit lane shuffle — assemble complete 64-byte blocks from
+      // four word-groups distributed across s2 registers.
+      //
+      // After stage 2, s2[m] lane L holds 4 consecutive words of block (4L + offset).
+      // We combine word-groups {0-3, 4-7, 8-11, 12-15} for each block using
+      // shuffle_i32x4 which selects 128-bit lanes from two source registers.
+      //
+      // For blocks {0,4,8,12} — from s2[0], s2[4], s2[8], s2[12]:
+      let ab_04_lo = _mm512_shuffle_i32x4::<0b_01_00_01_00>(s2_0, s2_4);
+      let cd_04_lo = _mm512_shuffle_i32x4::<0b_01_00_01_00>(s2_8, s2_12);
+      let ab_04_hi = _mm512_shuffle_i32x4::<0b_11_10_11_10>(s2_0, s2_4);
+      let cd_04_hi = _mm512_shuffle_i32x4::<0b_11_10_11_10>(s2_8, s2_12);
+      let blk0 = _mm512_shuffle_i32x4::<0b_10_00_10_00>(ab_04_lo, cd_04_lo);
+      let blk4 = _mm512_shuffle_i32x4::<0b_11_01_11_01>(ab_04_lo, cd_04_lo);
+      let blk8 = _mm512_shuffle_i32x4::<0b_10_00_10_00>(ab_04_hi, cd_04_hi);
+      let blk12 = _mm512_shuffle_i32x4::<0b_11_01_11_01>(ab_04_hi, cd_04_hi);
+
+      // For blocks {1,5,9,13} — from s2[1], s2[5], s2[9], s2[13]:
+      let ab_15_lo = _mm512_shuffle_i32x4::<0b_01_00_01_00>(s2_1, s2_5);
+      let cd_15_lo = _mm512_shuffle_i32x4::<0b_01_00_01_00>(s2_9, s2_13);
+      let ab_15_hi = _mm512_shuffle_i32x4::<0b_11_10_11_10>(s2_1, s2_5);
+      let cd_15_hi = _mm512_shuffle_i32x4::<0b_11_10_11_10>(s2_9, s2_13);
+      let blk1 = _mm512_shuffle_i32x4::<0b_10_00_10_00>(ab_15_lo, cd_15_lo);
+      let blk5 = _mm512_shuffle_i32x4::<0b_11_01_11_01>(ab_15_lo, cd_15_lo);
+      let blk9 = _mm512_shuffle_i32x4::<0b_10_00_10_00>(ab_15_hi, cd_15_hi);
+      let blk13 = _mm512_shuffle_i32x4::<0b_11_01_11_01>(ab_15_hi, cd_15_hi);
+
+      // For blocks {2,6,10,14} — from s2[2], s2[6], s2[10], s2[14]:
+      let ab_26_lo = _mm512_shuffle_i32x4::<0b_01_00_01_00>(s2_2, s2_6);
+      let cd_26_lo = _mm512_shuffle_i32x4::<0b_01_00_01_00>(s2_10, s2_14);
+      let ab_26_hi = _mm512_shuffle_i32x4::<0b_11_10_11_10>(s2_2, s2_6);
+      let cd_26_hi = _mm512_shuffle_i32x4::<0b_11_10_11_10>(s2_10, s2_14);
+      let blk2 = _mm512_shuffle_i32x4::<0b_10_00_10_00>(ab_26_lo, cd_26_lo);
+      let blk6 = _mm512_shuffle_i32x4::<0b_11_01_11_01>(ab_26_lo, cd_26_lo);
+      let blk10 = _mm512_shuffle_i32x4::<0b_10_00_10_00>(ab_26_hi, cd_26_hi);
+      let blk14 = _mm512_shuffle_i32x4::<0b_11_01_11_01>(ab_26_hi, cd_26_hi);
+
+      // For blocks {3,7,11,15} — from s2[3], s2[7], s2[11], s2[15]:
+      let ab_37_lo = _mm512_shuffle_i32x4::<0b_01_00_01_00>(s2_3, s2_7);
+      let cd_37_lo = _mm512_shuffle_i32x4::<0b_01_00_01_00>(s2_11, s2_15);
+      let ab_37_hi = _mm512_shuffle_i32x4::<0b_11_10_11_10>(s2_3, s2_7);
+      let cd_37_hi = _mm512_shuffle_i32x4::<0b_11_10_11_10>(s2_11, s2_15);
+      let blk3 = _mm512_shuffle_i32x4::<0b_10_00_10_00>(ab_37_lo, cd_37_lo);
+      let blk7 = _mm512_shuffle_i32x4::<0b_11_01_11_01>(ab_37_lo, cd_37_lo);
+      let blk11 = _mm512_shuffle_i32x4::<0b_10_00_10_00>(ab_37_hi, cd_37_hi);
+      let blk15 = _mm512_shuffle_i32x4::<0b_11_01_11_01>(ab_37_hi, cd_37_hi);
+
+      // XOR each transposed block with plaintext and store in-place.
+      // SAFETY: each `chunk` slice has exactly BLOCKS_PER_BATCH * BLOCK_SIZE = 1024
+      // bytes, so all 16 × 64-byte load/store pairs are in bounds.
+      let ptr = chunk.as_mut_ptr();
+      xor_block(ptr, 0, blk0);
+      xor_block(ptr, 1, blk1);
+      xor_block(ptr, 2, blk2);
+      xor_block(ptr, 3, blk3);
+      xor_block(ptr, 4, blk4);
+      xor_block(ptr, 5, blk5);
+      xor_block(ptr, 6, blk6);
+      xor_block(ptr, 7, blk7);
+      xor_block(ptr, 8, blk8);
+      xor_block(ptr, 9, blk9);
+      xor_block(ptr, 10, blk10);
+      xor_block(ptr, 11, blk11);
+      xor_block(ptr, 12, blk12);
+      xor_block(ptr, 13, blk13);
+      xor_block(ptr, 14, blk14);
+      xor_block(ptr, 15, blk15);
 
       counter = counter.wrapping_add(BLOCKS_PER_BATCH as u32);
     }
@@ -555,34 +628,30 @@ mod x86_avx512 {
     }
   }
 
+  /// Load 64 bytes of plaintext at block offset `idx`, XOR with keystream block, store.
+  #[inline(always)]
+  unsafe fn xor_block(buf: *mut u8, idx: usize, keystream: __m512i) {
+    // SAFETY: caller guarantees `buf` points to a 1024-byte chunk and `idx < 16`.
+    unsafe {
+      let p = buf.add(idx.strict_mul(BLOCK_SIZE)).cast::<__m512i>();
+      let plaintext = _mm512_loadu_si512(p);
+      _mm512_storeu_si512(p, _mm512_xor_si512(plaintext, keystream));
+    }
+  }
+
   #[inline(always)]
   fn quarter_round(a: &mut __m512i, b: &mut __m512i, c: &mut __m512i, d: &mut __m512i) {
     // SAFETY: this helper is only called from the AVX-512 kernel, so all
     // `_mm512_*` intrinsics are valid for the current compilation target.
     unsafe {
       *a = _mm512_add_epi32(*a, *b);
-      *d = rotl(_mm512_xor_si512(*d, *a), 16);
+      *d = _mm512_rol_epi32::<16>(_mm512_xor_si512(*d, *a));
       *c = _mm512_add_epi32(*c, *d);
-      *b = rotl(_mm512_xor_si512(*b, *c), 12);
+      *b = _mm512_rol_epi32::<12>(_mm512_xor_si512(*b, *c));
       *a = _mm512_add_epi32(*a, *b);
-      *d = rotl(_mm512_xor_si512(*d, *a), 8);
+      *d = _mm512_rol_epi32::<8>(_mm512_xor_si512(*d, *a));
       *c = _mm512_add_epi32(*c, *d);
-      *b = rotl(_mm512_xor_si512(*b, *c), 7);
-    }
-  }
-
-  #[inline(always)]
-  fn rotl(value: __m512i, bits: i32) -> __m512i {
-    // SAFETY: this helper is only used inside the AVX-512 kernel with the fixed
-    // ChaCha20 rotate counts, so these AVX-512 intrinsics are valid here.
-    unsafe {
-      match bits {
-        16 => _mm512_or_si512(_mm512_slli_epi32(value, 16), _mm512_srli_epi32(value, 16)),
-        12 => _mm512_or_si512(_mm512_slli_epi32(value, 12), _mm512_srli_epi32(value, 20)),
-        8 => _mm512_or_si512(_mm512_slli_epi32(value, 8), _mm512_srli_epi32(value, 24)),
-        7 => _mm512_or_si512(_mm512_slli_epi32(value, 7), _mm512_srli_epi32(value, 25)),
-        _ => unreachable!("ChaCha20 only rotates by fixed amounts"),
-      }
+      *b = _mm512_rol_epi32::<7>(_mm512_xor_si512(*b, *c));
     }
   }
 }
@@ -590,8 +659,10 @@ mod x86_avx512 {
 #[cfg(target_arch = "x86_64")]
 mod x86_avx2 {
   use core::arch::x86_64::{
-    __m256i, _mm256_add_epi32, _mm256_or_si256, _mm256_set1_epi32, _mm256_setr_epi32, _mm256_slli_epi32,
-    _mm256_srli_epi32, _mm256_storeu_si256, _mm256_xor_si256,
+    __m256i, _mm256_add_epi32, _mm256_loadu_si256, _mm256_or_si256, _mm256_permute2x128_si256, _mm256_set1_epi32,
+    _mm256_set_epi8, _mm256_setr_epi32, _mm256_shuffle_epi8, _mm256_slli_epi32, _mm256_srli_epi32,
+    _mm256_storeu_si256, _mm256_unpackhi_epi32, _mm256_unpackhi_epi64, _mm256_unpacklo_epi32,
+    _mm256_unpacklo_epi64, _mm256_xor_si256,
   };
 
   use super::{BLOCK_SIZE, KEY_SIZE, NONCE_SIZE, load_u32_le, xor_keystream_portable};
@@ -611,6 +682,14 @@ mod x86_avx2 {
     nonce: &[u8; NONCE_SIZE],
     buffer: &mut [u8],
   ) {
+    // vpshufb masks for byte-aligned rotations (16-bit and 8-bit).
+    let rot16 = _mm256_set_epi8(
+      13, 12, 15, 14, 9, 8, 11, 10, 5, 4, 7, 6, 1, 0, 3, 2, 13, 12, 15, 14, 9, 8, 11, 10, 5, 4, 7, 6, 1, 0, 3, 2,
+    );
+    let rot8 = _mm256_set_epi8(
+      14, 13, 12, 15, 10, 9, 8, 11, 6, 5, 4, 7, 2, 1, 0, 3, 14, 13, 12, 15, 10, 9, 8, 11, 6, 5, 4, 7, 2, 1, 0, 3,
+    );
+
     let mut counter = initial_counter;
     let mut batches = buffer.chunks_exact_mut(BLOCK_SIZE * BLOCKS_PER_BATCH);
     for chunk in &mut batches {
@@ -663,15 +742,15 @@ mod x86_avx2 {
 
       let mut round = 0usize;
       while round < 10 {
-        quarter_round(&mut x0, &mut x4, &mut x8, &mut x12);
-        quarter_round(&mut x1, &mut x5, &mut x9, &mut x13);
-        quarter_round(&mut x2, &mut x6, &mut x10, &mut x14);
-        quarter_round(&mut x3, &mut x7, &mut x11, &mut x15);
+        quarter_round(&mut x0, &mut x4, &mut x8, &mut x12, rot16, rot8);
+        quarter_round(&mut x1, &mut x5, &mut x9, &mut x13, rot16, rot8);
+        quarter_round(&mut x2, &mut x6, &mut x10, &mut x14, rot16, rot8);
+        quarter_round(&mut x3, &mut x7, &mut x11, &mut x15, rot16, rot8);
 
-        quarter_round(&mut x0, &mut x5, &mut x10, &mut x15);
-        quarter_round(&mut x1, &mut x6, &mut x11, &mut x12);
-        quarter_round(&mut x2, &mut x7, &mut x8, &mut x13);
-        quarter_round(&mut x3, &mut x4, &mut x9, &mut x14);
+        quarter_round(&mut x0, &mut x5, &mut x10, &mut x15, rot16, rot8);
+        quarter_round(&mut x1, &mut x6, &mut x11, &mut x12, rot16, rot8);
+        quarter_round(&mut x2, &mut x7, &mut x8, &mut x13, rot16, rot8);
+        quarter_round(&mut x3, &mut x4, &mut x9, &mut x14, rot16, rot8);
 
         round = round.strict_add(1);
       }
@@ -693,42 +772,60 @@ mod x86_avx2 {
       x14 = _mm256_add_epi32(x14, o14);
       x15 = _mm256_add_epi32(x15, o15);
 
-      let mut words = [[0u32; BLOCKS_PER_BATCH]; 16];
-      // SAFETY: each destination is a valid eight-lane `u32` array and storeu supports unaligned
-      // pointers.
-      unsafe {
-        _mm256_storeu_si256(words[0].as_mut_ptr() as *mut __m256i, x0);
-        _mm256_storeu_si256(words[1].as_mut_ptr() as *mut __m256i, x1);
-        _mm256_storeu_si256(words[2].as_mut_ptr() as *mut __m256i, x2);
-        _mm256_storeu_si256(words[3].as_mut_ptr() as *mut __m256i, x3);
-        _mm256_storeu_si256(words[4].as_mut_ptr() as *mut __m256i, x4);
-        _mm256_storeu_si256(words[5].as_mut_ptr() as *mut __m256i, x5);
-        _mm256_storeu_si256(words[6].as_mut_ptr() as *mut __m256i, x6);
-        _mm256_storeu_si256(words[7].as_mut_ptr() as *mut __m256i, x7);
-        _mm256_storeu_si256(words[8].as_mut_ptr() as *mut __m256i, x8);
-        _mm256_storeu_si256(words[9].as_mut_ptr() as *mut __m256i, x9);
-        _mm256_storeu_si256(words[10].as_mut_ptr() as *mut __m256i, x10);
-        _mm256_storeu_si256(words[11].as_mut_ptr() as *mut __m256i, x11);
-        _mm256_storeu_si256(words[12].as_mut_ptr() as *mut __m256i, x12);
-        _mm256_storeu_si256(words[13].as_mut_ptr() as *mut __m256i, x13);
-        _mm256_storeu_si256(words[14].as_mut_ptr() as *mut __m256i, x14);
-        _mm256_storeu_si256(words[15].as_mut_ptr() as *mut __m256i, x15);
-      }
+      // 16×8 matrix transpose: convert from word-major (x_i = word i for 8 blocks)
+      // to block-major (each pair of YMM registers = one 64-byte block).
+      //
+      // Stage 1: 32-bit interleave.
+      // SAFETY: AVX2 intrinsics are valid under the enclosing target_feature.
+      let s1_0 = _mm256_unpacklo_epi32(x0, x1);
+      let s1_1 = _mm256_unpackhi_epi32(x0, x1);
+      let s1_2 = _mm256_unpacklo_epi32(x2, x3);
+      let s1_3 = _mm256_unpackhi_epi32(x2, x3);
+      let s1_4 = _mm256_unpacklo_epi32(x4, x5);
+      let s1_5 = _mm256_unpackhi_epi32(x4, x5);
+      let s1_6 = _mm256_unpacklo_epi32(x6, x7);
+      let s1_7 = _mm256_unpackhi_epi32(x6, x7);
+      let s1_8 = _mm256_unpacklo_epi32(x8, x9);
+      let s1_9 = _mm256_unpackhi_epi32(x8, x9);
+      let s1_10 = _mm256_unpacklo_epi32(x10, x11);
+      let s1_11 = _mm256_unpackhi_epi32(x10, x11);
+      let s1_12 = _mm256_unpacklo_epi32(x12, x13);
+      let s1_13 = _mm256_unpackhi_epi32(x12, x13);
+      let s1_14 = _mm256_unpacklo_epi32(x14, x15);
+      let s1_15 = _mm256_unpackhi_epi32(x14, x15);
 
-      let mut block_index = 0usize;
-      while block_index < BLOCKS_PER_BATCH {
-        let mut word_index = 0usize;
-        while word_index < 16 {
-          let offset = block_index.strict_mul(BLOCK_SIZE).strict_add(word_index.strict_mul(4));
-          let keystream = words[word_index][block_index].to_le_bytes();
-          chunk[offset..offset.strict_add(4)]
-            .iter_mut()
-            .zip(keystream)
-            .for_each(|(dst, src)| *dst ^= src);
-          word_index = word_index.strict_add(1);
-        }
-        block_index = block_index.strict_add(1);
-      }
+      // Stage 2: 64-bit interleave. After this, each 128-bit lane holds 4 consecutive
+      // words from one block (lo lane = blocks 0-3, hi lane = blocks 4-7).
+      let s2_0 = _mm256_unpacklo_epi64(s1_0, s1_2);
+      let s2_1 = _mm256_unpackhi_epi64(s1_0, s1_2);
+      let s2_2 = _mm256_unpacklo_epi64(s1_1, s1_3);
+      let s2_3 = _mm256_unpackhi_epi64(s1_1, s1_3);
+      let s2_4 = _mm256_unpacklo_epi64(s1_4, s1_6);
+      let s2_5 = _mm256_unpackhi_epi64(s1_4, s1_6);
+      let s2_6 = _mm256_unpacklo_epi64(s1_5, s1_7);
+      let s2_7 = _mm256_unpackhi_epi64(s1_5, s1_7);
+      let s2_8 = _mm256_unpacklo_epi64(s1_8, s1_10);
+      let s2_9 = _mm256_unpackhi_epi64(s1_8, s1_10);
+      let s2_10 = _mm256_unpacklo_epi64(s1_9, s1_11);
+      let s2_11 = _mm256_unpackhi_epi64(s1_9, s1_11);
+      let s2_12 = _mm256_unpacklo_epi64(s1_12, s1_14);
+      let s2_13 = _mm256_unpackhi_epi64(s1_12, s1_14);
+      let s2_14 = _mm256_unpacklo_epi64(s1_13, s1_15);
+      let s2_15 = _mm256_unpackhi_epi64(s1_13, s1_15);
+
+      // Stage 3: 128-bit lane permute. Separate lo/hi lanes to form complete blocks.
+      // Each block = 2 YMM registers (32 + 32 = 64 bytes).
+      // Process block pairs (j, j+4) and XOR+store immediately to ease register pressure.
+      let ptr = chunk.as_mut_ptr();
+
+      // Blocks 0 and 4 — from s2[0], s2[4], s2[8], s2[12]
+      xor_block_pair(ptr, 0, 4, s2_0, s2_4, s2_8, s2_12);
+      // Blocks 1 and 5 — from s2[1], s2[5], s2[9], s2[13]
+      xor_block_pair(ptr, 1, 5, s2_1, s2_5, s2_9, s2_13);
+      // Blocks 2 and 6 — from s2[2], s2[6], s2[10], s2[14]
+      xor_block_pair(ptr, 2, 6, s2_2, s2_6, s2_10, s2_14);
+      // Blocks 3 and 7 — from s2[3], s2[7], s2[11], s2[15]
+      xor_block_pair(ptr, 3, 7, s2_3, s2_7, s2_11, s2_15);
 
       counter = counter.wrapping_add(BLOCKS_PER_BATCH as u32);
     }
@@ -739,34 +836,70 @@ mod x86_avx2 {
     }
   }
 
+  /// Permute stage-2 results into two complete blocks (lo_idx and hi_idx) and
+  /// XOR+store them in-place. Each block is 64 bytes = 2 × YMM.
   #[inline(always)]
-  fn quarter_round(a: &mut __m256i, b: &mut __m256i, c: &mut __m256i, d: &mut __m256i) {
-    // SAFETY: this helper is only reached from the AVX2-enabled backend.
+  unsafe fn xor_block_pair(
+    buf: *mut u8,
+    lo_idx: usize,
+    hi_idx: usize,
+    w03: __m256i,
+    w47: __m256i,
+    w811: __m256i,
+    w1215: __m256i,
+  ) {
+    // SAFETY: caller guarantees `buf` points to a 512-byte chunk and indices < 8.
     unsafe {
-      *a = _mm256_add_epi32(*a, *b);
-      *d = rotl(_mm256_xor_si256(*d, *a), 16);
-      *c = _mm256_add_epi32(*c, *d);
-      *b = rotl(_mm256_xor_si256(*b, *c), 12);
-      *a = _mm256_add_epi32(*a, *b);
-      *d = rotl(_mm256_xor_si256(*d, *a), 8);
-      *c = _mm256_add_epi32(*c, *d);
-      *b = rotl(_mm256_xor_si256(*b, *c), 7);
+      // lo_idx block: select lo 128-bit lanes (0x20 = [a_lo, b_lo])
+      let blk_lo_a = _mm256_permute2x128_si256::<0x20>(w03, w47);
+      let blk_lo_b = _mm256_permute2x128_si256::<0x20>(w811, w1215);
+      // hi_idx block: select hi 128-bit lanes (0x31 = [a_hi, b_hi])
+      let blk_hi_a = _mm256_permute2x128_si256::<0x31>(w03, w47);
+      let blk_hi_b = _mm256_permute2x128_si256::<0x31>(w811, w1215);
+
+      // XOR and store lo_idx block
+      let p_lo = buf.add(lo_idx.strict_mul(BLOCK_SIZE));
+      let pt0 = _mm256_loadu_si256(p_lo.cast());
+      let pt1 = _mm256_loadu_si256(p_lo.add(32).cast());
+      _mm256_storeu_si256(p_lo.cast(), _mm256_xor_si256(pt0, blk_lo_a));
+      _mm256_storeu_si256(p_lo.add(32).cast(), _mm256_xor_si256(pt1, blk_lo_b));
+
+      // XOR and store hi_idx block
+      let p_hi = buf.add(hi_idx.strict_mul(BLOCK_SIZE));
+      let pt2 = _mm256_loadu_si256(p_hi.cast());
+      let pt3 = _mm256_loadu_si256(p_hi.add(32).cast());
+      _mm256_storeu_si256(p_hi.cast(), _mm256_xor_si256(pt2, blk_hi_a));
+      _mm256_storeu_si256(p_hi.add(32).cast(), _mm256_xor_si256(pt3, blk_hi_b));
     }
   }
 
   #[inline(always)]
-  fn rotl(value: __m256i, bits: i32) -> __m256i {
-    // SAFETY: this helper is only reached from the AVX2-enabled backend and only uses fixed shift
-    // amounts supported by the intrinsic immediates.
+  fn quarter_round(
+    a: &mut __m256i,
+    b: &mut __m256i,
+    c: &mut __m256i,
+    d: &mut __m256i,
+    rot16: __m256i,
+    rot8: __m256i,
+  ) {
+    // SAFETY: this helper is only reached from the AVX2-enabled backend.
     unsafe {
-      match bits {
-        16 => _mm256_or_si256(_mm256_slli_epi32(value, 16), _mm256_srli_epi32(value, 16)),
-        12 => _mm256_or_si256(_mm256_slli_epi32(value, 12), _mm256_srli_epi32(value, 20)),
-        8 => _mm256_or_si256(_mm256_slli_epi32(value, 8), _mm256_srli_epi32(value, 24)),
-        7 => _mm256_or_si256(_mm256_slli_epi32(value, 7), _mm256_srli_epi32(value, 25)),
-        _ => unreachable!("ChaCha20 only rotates by fixed amounts"),
-      }
+      *a = _mm256_add_epi32(*a, *b);
+      *d = _mm256_shuffle_epi8(_mm256_xor_si256(*d, *a), rot16);
+      *c = _mm256_add_epi32(*c, *d);
+      *b = rotl::<12, 20>(_mm256_xor_si256(*b, *c));
+      *a = _mm256_add_epi32(*a, *b);
+      *d = _mm256_shuffle_epi8(_mm256_xor_si256(*d, *a), rot8);
+      *c = _mm256_add_epi32(*c, *d);
+      *b = rotl::<7, 25>(_mm256_xor_si256(*b, *c));
     }
+  }
+
+  #[inline(always)]
+  fn rotl<const LEFT: i32, const RIGHT: i32>(value: __m256i) -> __m256i {
+    const { assert!(LEFT + RIGHT == 32, "rotation amounts must sum to 32") };
+    // SAFETY: only reached from the AVX2-enabled backend.
+    unsafe { _mm256_or_si256(_mm256_slli_epi32(value, LEFT), _mm256_srli_epi32(value, RIGHT)) }
   }
 }
 
@@ -1696,7 +1829,7 @@ mod tests {
 
     let key = [0x71; KEY_SIZE];
     let nonce = [0x19; NONCE_SIZE];
-    for len in [0usize, 1, 63, 64, 65, 255, 256, 257, 511, 512, 513, 1024, 1536] {
+    for len in [0usize, 1, 63, 64, 65, 255, 256, 257, 511, 512, 513, 1024, 1536, 2048, 4096, 8192] {
       let mut portable = vec![0u8; len];
       let mut accelerated = vec![0u8; len];
       let mut index = 0usize;
@@ -1709,7 +1842,7 @@ mod tests {
 
       xor_keystream_portable(&key, 3, &nonce, &mut portable);
       super::x86_avx512::xor_keystream(&key, 3, &nonce, &mut accelerated);
-      assert_eq!(accelerated, portable);
+      assert_eq!(accelerated, portable, "AVX-512 mismatch at len={len}");
     }
   }
 
@@ -1722,7 +1855,7 @@ mod tests {
 
     let key = [0x55; KEY_SIZE];
     let nonce = [0x33; NONCE_SIZE];
-    for len in [0usize, 1, 63, 64, 65, 255, 256, 257, 511, 512, 513, 1024] {
+    for len in [0usize, 1, 63, 64, 65, 255, 256, 257, 511, 512, 513, 1024, 2048, 4096, 8192] {
       let mut portable = vec![0u8; len];
       let mut accelerated = vec![0u8; len];
       let mut index = 0usize;
@@ -1735,7 +1868,7 @@ mod tests {
 
       xor_keystream_portable(&key, 7, &nonce, &mut portable);
       super::x86_avx2::xor_keystream(&key, 7, &nonce, &mut accelerated);
-      assert_eq!(accelerated, portable);
+      assert_eq!(accelerated, portable, "AVX2 mismatch at len={len}");
     }
   }
 
