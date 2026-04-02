@@ -162,13 +162,18 @@ auto-dispatch.
 |----------|-----------|---------------|--------|
 | x86_64 | **AES-NI** (AES-1 ✅) + **VAES-512** (AES-2 ✅) | **PCLMULQDQ** (CLMUL-1 ✅) + **VPCLMULQDQ** (CLMUL-2 ✅) | **Full wide pipeline** |
 | aarch64 | **AES-CE** (AES-3 ✅) | **PMULL** (CLMUL-3 ✅) | **Competitive** |
-| s390x | Portable — need CPACF/KM (AES-4) | Portable — need VGFM (CLMUL-4) | **340x gap** |
-| powerpc64 | Portable — need vcipher (AES-5) | Portable — need VPMSUM (CLMUL-5) | **340x gap** |
-| riscv64 | Portable — need Zvkned (AES-6) | Portable — need Zvkg (CLMUL-6) | **340x gap** |
+| s390x | **KM** (AES-4 ✅) | **VGFM** (CLMUL-4 ✅) | **Hardware-accelerated** |
+| powerpc64 | **vcipher** (AES-5 ✅) | **vpmsumd** (CLMUL-5 ✅) | **Hardware-accelerated** |
+| riscv64 | **Zvkned** (AES-6 ✅) | **Zvbc** (CLMUL-6 ✅) | **Hardware-accelerated** |
 | wasm32 | Portable (expected — no HW AES in wasm) | Portable (expected) | N/A |
 
 **Completed P1 tasks:**
 - AES-2 + CLMUL-2: x86_64 VAES-512 + VPCLMULQDQ wide path shipped (2026-03-31). 4-block parallel AES-CTR + 4-block schoolbook-then-reduce GHASH/POLYVAL on Zen4+/ICL+.
+
+**Completed P2 tasks (2026-04-01):**
+- AES-4 + CLMUL-4: s390x KM (CPACF function code 20) + VGFM (Karatsuba 3-multiply + vector Montgomery reduction).
+- AES-5 + CLMUL-5: powerpc64 vcipher/vcipherlast (13+1 round pipeline) + vpmsumd (Karatsuba + vsldoi reduction).
+- AES-6 + CLMUL-6: riscv64 Zvkned (vaesz/vaesem/vaesef in single asm block) + Zvbc (vclmul/vclmulh + portable Montgomery reduction). Note: s390x KM is full-ECB (cannot accelerate AEGIS-256); powerpc64 vcipher and riscv64 vaesem operate at single-round level (can accelerate AEGIS-256).
 
 ### ChaCha20-Poly1305: x86 optimized, powerpc64 + s390x hardware-accelerated
 

@@ -188,6 +188,390 @@ mod pmull {
 }
 
 // ---------------------------------------------------------------------------
+// s390x VGFM backend (Galois field multiply)
+// ---------------------------------------------------------------------------
+
+#[cfg(target_arch = "s390x")]
+#[allow(unsafe_code)]
+mod s390x_vgfm {
+  use core::{arch::asm, simd::i64x2};
+
+  /// 64×64→128 carryless multiply using VGFM mode 3 (doubleword).
+  ///
+  /// Places operands in the low lane (element 1) with the high lane zeroed,
+  /// so VGFM computes `0*0 XOR a*b = a*b`.
+  #[inline]
+  #[target_feature(enable = "vector")]
+  unsafe fn mul64(a: u64, b: u64) -> i64x2 {
+    let va = i64x2::from_array([0, a as i64]);
+    let vb = i64x2::from_array([0, b as i64]);
+    // SAFETY: Caller guarantees z/Vector facility is available.
+    unsafe {
+      let out: i64x2;
+      asm!(
+        "vgfm {out}, {a}, {b}, 3",
+        out = lateout(vreg) out,
+        a = in(vreg) va,
+        b = in(vreg) vb,
+        options(nomem, nostack, pure),
+      );
+      out
+    }
+  }
+
+  /// Per-lane left shift of both 64-bit elements.
+  #[inline]
+  #[target_feature(enable = "vector")]
+  unsafe fn veslg<const N: u32>(a: i64x2) -> i64x2 {
+    // SAFETY: Caller guarantees z/Vector facility is available via target_feature gate.
+    unsafe {
+      let out: i64x2;
+      asm!(
+        "veslg {out}, {a}, {n}",
+        out = lateout(vreg) out,
+        a = in(vreg) a,
+        n = const N,
+        options(nomem, nostack, pure),
+      );
+      out
+    }
+  }
+
+  /// Per-lane logical right shift of both 64-bit elements.
+  #[inline]
+  #[target_feature(enable = "vector")]
+  unsafe fn vesrlg<const N: u32>(a: i64x2) -> i64x2 {
+    // SAFETY: Caller guarantees z/Vector facility is available via target_feature gate.
+    unsafe {
+      let out: i64x2;
+      asm!(
+        "vesrlg {out}, {a}, {n}",
+        out = lateout(vreg) out,
+        a = in(vreg) a,
+        n = const N,
+        options(nomem, nostack, pure),
+      );
+      out
+    }
+  }
+
+  /// Cross-lane byte shift: `high128((a || b) << N*8 bits)`.
+  ///
+  /// - `vsldb(v, zero, 8)`: moves low lane to high, zeros low = `v << 64`
+  /// - `vsldb(zero, v, 8)`: moves high lane to low, zeros high = `v >> 64`
+  #[inline]
+  #[target_feature(enable = "vector")]
+  unsafe fn vsldb<const N: u32>(a: i64x2, b: i64x2) -> i64x2 {
+    // SAFETY: Caller guarantees z/Vector facility is available via target_feature gate.
+    unsafe {
+      let out: i64x2;
+      asm!(
+        "vsldb {out}, {a}, {b}, {n}",
+        out = lateout(vreg) out,
+        a = in(vreg) a,
+        b = in(vreg) b,
+        n = const N,
+        options(nomem, nostack, pure),
+      );
+      out
+    }
+  }
+
+  /// Montgomery reduction of a 256-bit product [lo:hi] modulo POLYVAL's polynomial.
+  ///
+  /// Structurally identical to `mont_reduce_sse2` / `mont_reduce_neon`,
+  /// using s390x VESLG/VESRLG for per-lane shifts and VSLDB for cross-lane
+  /// byte shifts.
+  #[inline]
+  #[target_feature(enable = "vector")]
+  unsafe fn mont_reduce(lo: i64x2, hi: i64x2) -> i64x2 {
+    // SAFETY: target_feature gate guarantees z/Vector availability.
+    unsafe {
+      let zero = i64x2::from_array([0, 0]);
+
+      // Phase 1: left-shift contribution from both lo lanes.
+      // Shifts 63, 62, 57 correspond to polynomial taps 127, 126, 121.
+      let left = veslg::<63>(lo) ^ veslg::<62>(lo) ^ veslg::<57>(lo);
+
+      // Fold: move low lane's left shifts to high lane (lo → hi propagation).
+      // On s390x (BE): element 1 (low) → element 0 (high).
+      let lo_folded = lo ^ vsldb::<8>(left, zero);
+
+      // Right-shift + identity contribution.
+      let right = lo_folded ^ vesrlg::<1>(lo_folded) ^ vesrlg::<2>(lo_folded) ^ vesrlg::<7>(lo_folded);
+
+      // Phase 2: left-shift from lo_folded.
+      let left2 = veslg::<63>(lo_folded) ^ veslg::<62>(lo_folded) ^ veslg::<57>(lo_folded);
+
+      // Final: hi XOR right XOR (high lane of left2 moved to low position).
+      hi ^ right ^ vsldb::<8>(zero, left2)
+    }
+  }
+
+  /// Combined 128×128 carryless multiply + Montgomery reduce using VGFM.
+  ///
+  /// Karatsuba decomposition with 3 VGFM multiplies (vs 4 schoolbook).
+  ///
+  /// # Safety
+  /// Caller must ensure the z/Vector facility is available.
+  #[target_feature(enable = "vector")]
+  pub(super) unsafe fn clmul128_reduce(a: u128, b: u128) -> u128 {
+    // SAFETY: target_feature gate guarantees z/Vector availability.
+    unsafe {
+      let a_lo = a as u64;
+      let a_hi = (a >> 64) as u64;
+      let b_lo = b as u64;
+      let b_hi = (b >> 64) as u64;
+      let zero = i64x2::from_array([0, 0]);
+
+      // Karatsuba: 3 VGFM multiplies.
+      let v0 = mul64(a_lo, b_lo);
+      let v1 = mul64(a_hi, b_hi);
+      let v2 = mul64(a_lo ^ a_hi, b_lo ^ b_hi);
+      let mid = v2 ^ v0 ^ v1;
+
+      // Assemble 256-bit product [lo_128 : hi_128].
+      let lo_128 = v0 ^ vsldb::<8>(mid, zero);
+      let hi_128 = v1 ^ vsldb::<8>(zero, mid);
+
+      let result = mont_reduce(lo_128, hi_128);
+      let arr = result.to_array();
+      ((arr[0] as u64 as u128) << 64) | (arr[1] as u64 as u128)
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// powerpc64 VPMSUMD backend (polynomial multiply-sum doubleword)
+// ---------------------------------------------------------------------------
+
+#[cfg(target_arch = "powerpc64")]
+#[allow(unsafe_code)]
+mod ppc_vpmsum {
+  use core::{arch::asm, simd::i64x2};
+
+  /// 64×64→128 carryless multiply using vpmsumd.
+  ///
+  /// Operands in the low lane (element 1), high lane zeroed.
+  #[inline]
+  #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
+  unsafe fn mul64(a: u64, b: u64) -> i64x2 {
+    let va = i64x2::from_array([0, a as i64]);
+    let vb = i64x2::from_array([0, b as i64]);
+    // SAFETY: Caller guarantees POWER8 crypto availability.
+    unsafe {
+      let out: i64x2;
+      asm!(
+        "vpmsumd {out}, {a}, {b}",
+        out = lateout(vreg) out,
+        a = in(vreg) va,
+        b = in(vreg) vb,
+        options(nomem, nostack, pure),
+      );
+      out
+    }
+  }
+
+  /// Per-lane left shift of both 64-bit elements using vsld.
+  #[inline]
+  #[target_feature(enable = "altivec,vsx,power8-vector")]
+  unsafe fn vsld<const N: u32>(a: i64x2) -> i64x2 {
+    // vsld shifts each doubleword element left by the amount in the
+    // corresponding element of the shift-amount vector (bits 58-63).
+    let shift = i64x2::from_array([N as i64, N as i64]);
+    // SAFETY: Caller guarantees POWER8 vector availability via target_feature gate.
+    unsafe {
+      let out: i64x2;
+      asm!(
+        "vsld {out}, {a}, {sh}",
+        out = lateout(vreg) out,
+        a = in(vreg) a,
+        sh = in(vreg) shift,
+        options(nomem, nostack, pure),
+      );
+      out
+    }
+  }
+
+  /// Per-lane logical right shift of both 64-bit elements using vsrd.
+  #[inline]
+  #[target_feature(enable = "altivec,vsx,power8-vector")]
+  unsafe fn vsrd<const N: u32>(a: i64x2) -> i64x2 {
+    let shift = i64x2::from_array([N as i64, N as i64]);
+    // SAFETY: Caller guarantees POWER8 vector availability via target_feature gate.
+    unsafe {
+      let out: i64x2;
+      asm!(
+        "vsrd {out}, {a}, {sh}",
+        out = lateout(vreg) out,
+        a = in(vreg) a,
+        sh = in(vreg) shift,
+        options(nomem, nostack, pure),
+      );
+      out
+    }
+  }
+
+  /// Cross-lane byte shift: `high128((a || b) << N*8 bits)`.
+  #[inline]
+  #[target_feature(enable = "altivec,vsx")]
+  unsafe fn vsldoi<const N: u32>(a: i64x2, b: i64x2) -> i64x2 {
+    // SAFETY: Caller guarantees POWER8 vector availability via target_feature gate.
+    unsafe {
+      let out: i64x2;
+      asm!(
+        "vsldoi {out}, {a}, {b}, {n}",
+        out = lateout(vreg) out,
+        a = in(vreg) a,
+        b = in(vreg) b,
+        n = const N,
+        options(nomem, nostack, pure),
+      );
+      out
+    }
+  }
+
+  /// Montgomery reduction of a 256-bit product [lo:hi] modulo POLYVAL's polynomial.
+  ///
+  /// Uses POWER8 vector shifts and cross-lane vsldoi (structurally identical
+  /// to the SSE2/NEON/s390x paths).
+  #[inline]
+  #[target_feature(enable = "altivec,vsx,power8-vector")]
+  unsafe fn mont_reduce(lo: i64x2, hi: i64x2) -> i64x2 {
+    // SAFETY: target_feature gate guarantees POWER8 vector availability.
+    unsafe {
+      let zero = i64x2::from_array([0, 0]);
+
+      // Phase 1: left-shift contribution from both lo lanes.
+      let left = vsld::<63>(lo) ^ vsld::<62>(lo) ^ vsld::<57>(lo);
+
+      // Fold: move low lane's left shifts to high lane.
+      // On powerpc64le, element layout matches s390x BE convention for
+      // the purposes of this reduction (both use big-endian AES state).
+      let lo_folded = lo ^ vsldoi::<8>(left, zero);
+
+      // Right-shift + identity contribution.
+      let right = lo_folded ^ vsrd::<1>(lo_folded) ^ vsrd::<2>(lo_folded) ^ vsrd::<7>(lo_folded);
+
+      // Phase 2: left-shift from lo_folded.
+      let left2 = vsld::<63>(lo_folded) ^ vsld::<62>(lo_folded) ^ vsld::<57>(lo_folded);
+
+      // Final: hi XOR right XOR (high lane of left2 moved to low position).
+      hi ^ right ^ vsldoi::<8>(zero, left2)
+    }
+  }
+
+  /// Combined 128×128 carryless multiply + Montgomery reduce using vpmsumd.
+  ///
+  /// Karatsuba decomposition with 3 vpmsumd multiplies.
+  ///
+  /// # Safety
+  /// Caller must ensure POWER8 crypto instructions are available.
+  #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
+  pub(super) unsafe fn clmul128_reduce(a: u128, b: u128) -> u128 {
+    // SAFETY: target_feature gate guarantees POWER8 crypto availability.
+    unsafe {
+      let a_lo = a as u64;
+      let a_hi = (a >> 64) as u64;
+      let b_lo = b as u64;
+      let b_hi = (b >> 64) as u64;
+      let zero = i64x2::from_array([0, 0]);
+
+      // Karatsuba: 3 vpmsumd multiplies.
+      let v0 = mul64(a_lo, b_lo);
+      let v1 = mul64(a_hi, b_hi);
+      let v2 = mul64(a_lo ^ a_hi, b_lo ^ b_hi);
+      let mid = v2 ^ v0 ^ v1;
+
+      // Assemble 256-bit product [lo_128 : hi_128].
+      let lo_128 = v0 ^ vsldoi::<8>(mid, zero);
+      let hi_128 = v1 ^ vsldoi::<8>(zero, mid);
+
+      let result = mont_reduce(lo_128, hi_128);
+      let arr = result.to_array();
+      ((arr[0] as u64 as u128) << 64) | (arr[1] as u64 as u128)
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// riscv64 Zvbc backend (vector carryless multiply)
+// ---------------------------------------------------------------------------
+
+#[cfg(target_arch = "riscv64")]
+#[allow(unsafe_code)]
+mod rv_clmul {
+  use core::arch::asm;
+
+  /// 64×64→128 carryless multiply using Zvbc (vclmul.vx + vclmulh.vx).
+  ///
+  /// Uses the clobber-only vreg workaround: data shuttled through GPRs
+  /// and memory; vector registers referenced by explicit names.
+  #[inline]
+  #[target_feature(enable = "v", enable = "zvbc")]
+  unsafe fn mul64(a: u64, b: u64) -> (u64, u64) {
+    // SAFETY: Caller guarantees Zvbc availability.
+    unsafe {
+      let lo: u64;
+      let hi: u64;
+      asm!(
+        "vsetivli zero, 1, e64, m1, ta, ma",
+        "vmv.v.x v0, {a}",
+        "vclmul.vx v1, v0, {b}",
+        "vclmulh.vx v2, v0, {b}",
+        "vmv.x.s {lo}, v1",
+        "vmv.x.s {hi}, v2",
+        a = in(reg) a,
+        b = in(reg) b,
+        lo = lateout(reg) lo,
+        hi = lateout(reg) hi,
+        out("v0") _,
+        out("v1") _,
+        out("v2") _,
+        options(nostack),
+      );
+      (lo, hi)
+    }
+  }
+
+  /// Combined 128×128 carryless multiply + Montgomery reduce using Zvbc.
+  ///
+  /// Karatsuba decomposition with 3 vclmul/vclmulh pairs, then scalar
+  /// Montgomery reduction (reuses the portable `mont_reduce`).
+  ///
+  /// # Safety
+  /// Caller must ensure Zvbc vector extension is available.
+  #[target_feature(enable = "v", enable = "zvbc")]
+  pub(super) unsafe fn clmul128_reduce(a: u128, b: u128) -> u128 {
+    // SAFETY: target_feature gate guarantees Zvbc availability.
+    unsafe {
+      let a_lo = a as u64;
+      let a_hi = (a >> 64) as u64;
+      let b_lo = b as u64;
+      let b_hi = (b >> 64) as u64;
+
+      // Karatsuba: 3 multiplies.
+      let (v0_lo, v0_hi) = mul64(a_lo, b_lo);
+      let (v1_lo, v1_hi) = mul64(a_hi, b_hi);
+      let (v2_lo, v2_hi) = mul64(a_lo ^ a_hi, b_lo ^ b_hi);
+
+      // Cross term.
+      let mid_lo = v2_lo ^ v0_lo ^ v1_lo;
+      let mid_hi = v2_hi ^ v0_hi ^ v1_hi;
+
+      // Assemble 256-bit product as [w0, w1, w2, w3] (low to high).
+      let w0 = v0_lo;
+      let w1 = v0_hi ^ mid_lo;
+      let w2 = v1_lo ^ mid_hi;
+      let w3 = v1_hi;
+
+      // Reuse portable Montgomery reduction.
+      super::mont_reduce([w0, w1, w2, w3])
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // x86_64 VPCLMULQDQ wide backend (4-block aggregate)
 // ---------------------------------------------------------------------------
 
@@ -277,6 +661,27 @@ pub(super) fn clmul128_reduce(a: u128, b: u128) -> u128 {
     if crate::platform::caps().has(crate::platform::caps::aarch64::PMULL) {
       // SAFETY: PMULL availability verified via HWCAP.
       return unsafe { pmull::clmul128_reduce(a, b) };
+    }
+  }
+  #[cfg(target_arch = "s390x")]
+  {
+    if crate::platform::caps().has(crate::platform::caps::s390x::VECTOR) {
+      // SAFETY: z/Vector availability verified via STFLE/HWCAP.
+      return unsafe { s390x_vgfm::clmul128_reduce(a, b) };
+    }
+  }
+  #[cfg(target_arch = "powerpc64")]
+  {
+    if crate::platform::caps().has(crate::platform::caps::power::POWER8_CRYPTO) {
+      // SAFETY: POWER8 crypto availability verified via HWCAP.
+      return unsafe { ppc_vpmsum::clmul128_reduce(a, b) };
+    }
+  }
+  #[cfg(target_arch = "riscv64")]
+  {
+    if crate::platform::caps().has(crate::platform::caps::riscv::ZVBC) {
+      // SAFETY: Zvbc availability verified via feature detection.
+      return unsafe { rv_clmul::clmul128_reduce(a, b) };
     }
   }
   mont_reduce(clmul128(a, b))

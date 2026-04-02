@@ -176,11 +176,15 @@ Resolved on 2026-03-31.
 - the remaining spec alias now follows the same reader naming law:
   `AsconXof128Reader`
 
-### S2. Remove stale `TODO` comments in src/
+### S2. Remove stale `TODO` comments in src/ ✅
 
-Two TODO markers in `src/platform/detect/arch/aarch64.rs` (lines 401, 438) for
-Apple M5 CPU detection values not yet public. Cosmetic — mark as known limitation
-in a comment rather than TODO.
+Resolved on 2026-04-01.
+
+- Added `CPUFAMILY_ARM_HIDRA` (`0x1d5a_87e8`) and `CPUFAMILY_ARM_SOTRA` (`0xf76c_5b1a`)
+  for M5/M5 Pro/Max detection via Xcode SDK `mach/machine.h`
+- Added `CPUFAMILY_ARM_TILOS` and `CPUFAMILY_ARM_THERA` for A19/A19 Pro (≈ M5 architecture)
+- `AppleSiliconGen::M5` is now reachable — removed `#[allow(dead_code)]`
+- Zero TODO comments remain in `src/platform/`
 
 ### S3. Security skill audit
 
@@ -256,7 +260,7 @@ v0.1.0 baseline for future comparison.
 ### Should-do (S)
 
 - [x] **S1** Naming consistency pass (XOF reader suffixes)
-- [ ] **S2** Clean TODO comments in platform detection
+- [x] **S2** Clean TODO comments in platform detection
 - [ ] **S3** Run `/sec` security audit skill
 
 ### Release verification
