@@ -175,22 +175,30 @@ auto-dispatch.
 - AES-5 + CLMUL-5: powerpc64 vcipher/vcipherlast (13+1 round pipeline) + vpmsumd (Karatsuba + vsldoi reduction).
 - AES-6 + CLMUL-6: riscv64 Zvkned (vaesz/vaesem/vaesef in single asm block) + Zvbc (vclmul/vclmulh + portable Montgomery reduction). Note: s390x KM is full-ECB (cannot accelerate AEGIS-256); powerpc64 vcipher and riscv64 vaesem operate at single-round level (can accelerate AEGIS-256).
 
-### ChaCha20-Poly1305: x86 optimized, powerpc64 + s390x hardware-accelerated
+### ChaCha20-Poly1305: x86 ChaCha20 optimized, Poly1305 vectorization needed
 
 ChaCha20 and Poly1305 have **real** SIMD kernels on x86_64 (AVX2/AVX-512), aarch64 (NEON),
 wasm32 (SIMD128), powerpc64 (VSX), and s390x (z/Vector). One platform remains stubbed:
 
 | Platform | ChaCha20 | Poly1305 | Task IDs |
 |----------|----------|----------|----------|
-| x86_64 | **AVX-512** (`vprold` + 16×16 transpose) / **AVX2** (`vpshufb` + 16×8 transpose) | AVX2/AVX-512 | ✅ CHACHA-4, CHACHA-5 |
+| x86_64 | **AVX-512** (`vprold` + 16×16 transpose) / **AVX2** (`vpshufb` + 16×8 transpose) | **Single-block serial** (inner-product AVX2 only) | ✅ CHACHA-4/5, **open POLY-4** |
 | powerpc64 | **VSX** (`vadduwm`/`vxor`/`vrlw`) | **VSX** (`vmulouw`/`vaddudm`) | ✅ CHACHA-1, POLY-1 |
 | s390x | **z/Vector** (`vaf`/`vx`/`verll`) | **z/Vector** (`vmlof`/`vag`) | ✅ CHACHA-2, POLY-2 |
 | riscv64 | STUB → portable | STUB → portable | CHACHA-3, POLY-3 |
 
-The x86_64 ChaCha20 kernels were optimized (2026-04-01) to close a 0.42-0.69x gap at
-4KiB-1MiB on Zen4/Zen5/SPR. The root cause was scalar byte-by-byte XOR after SIMD keystream
-generation — replaced with SIMD matrix transpose + load-XOR-store, plus `vprold` (AVX-512)
-and `vpshufb` (AVX2) for single-instruction rotations. See CHACHA-4/5 in [`acceleration.md`](acceleration.md).
+**Remaining x86 gap (0.46-0.75x at 64KiB-1MiB):** The ChaCha20 keystream phase is now fast
+(CHACHA-4/5 shipped 2026-04-01), but the **dominant bottleneck is Poly1305**. Our Poly1305
+processes 1 block (16 bytes) at a time with a full 5-limb carry chain per block. RustCrypto's
+`poly1305` 0.8.0 uses the Goll-Gueron 4-way parallel algorithm: 4 blocks in AVX2, precomputed
+R powers (R, R², R³, R⁴), deferred reduction. This gives ~4x Poly1305 throughput, translating
+to ~2x overall AEAD speedup at large sizes. See **POLY-4** in [`acceleration.md`](acceleration.md).
+
+Measured after CHACHA-4/5 (CI run [#23877991837](https://github.com/loadingalias/rscrypto/actions/runs/23877991837)):
+- Zen4 1MiB: 0.42x→0.46x (marginal — Poly1305 dominates)
+- Zen5 1MiB: 0.69x→0.75x (moderate — Zen5 OOO hides some serial latency)
+- Zen5 4KiB: 0.92x→0.99x (near parity — ChaCha20 fix visible at this size)
+- SPR 1MiB: 0.46x→0.48x (marginal — Poly1305 dominates)
 
 riscv64 XChaCha20-Poly1305 and ChaCha20-Poly1305 are still running at portable speed.
 
