@@ -352,12 +352,13 @@ mod ppc_vpmsum {
 
   /// 64×64→128 carryless multiply using vpmsumd.
   ///
-  /// Operands in the low lane (element 1), high lane zeroed.
+  /// Match the existing POWER checksum kernels' lane convention:
+  /// lane 0 carries the low 64 bits, lane 1 the high 64 bits.
   #[inline]
   #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
-  unsafe fn mul64(a: u64, b: u64) -> i64x2 {
-    let va = i64x2::from_array([0, a as i64]);
-    let vb = i64x2::from_array([0, b as i64]);
+  unsafe fn mul64(a: u64, b: u64) -> (u64, u64) {
+    let va = i64x2::from_array([a as i64, 0]);
+    let vb = i64x2::from_array([b as i64, 0]);
     // SAFETY: Caller guarantees POWER8 crypto availability.
     unsafe {
       let out: i64x2;
@@ -368,102 +369,15 @@ mod ppc_vpmsum {
         b = in(vreg) vb,
         options(nomem, nostack, pure),
       );
-      out
-    }
-  }
-
-  /// Per-lane left shift of both 64-bit elements using vsld.
-  #[inline]
-  #[target_feature(enable = "altivec,vsx,power8-vector")]
-  unsafe fn vsld<const N: u32>(a: i64x2) -> i64x2 {
-    // vsld shifts each doubleword element left by the amount in the
-    // corresponding element of the shift-amount vector (bits 58-63).
-    let shift = i64x2::from_array([N as i64, N as i64]);
-    // SAFETY: Caller guarantees POWER8 vector availability via target_feature gate.
-    unsafe {
-      let out: i64x2;
-      asm!(
-        "vsld {out}, {a}, {sh}",
-        out = lateout(vreg) out,
-        a = in(vreg) a,
-        sh = in(vreg) shift,
-        options(nomem, nostack, pure),
-      );
-      out
-    }
-  }
-
-  /// Per-lane logical right shift of both 64-bit elements using vsrd.
-  #[inline]
-  #[target_feature(enable = "altivec,vsx,power8-vector")]
-  unsafe fn vsrd<const N: u32>(a: i64x2) -> i64x2 {
-    let shift = i64x2::from_array([N as i64, N as i64]);
-    // SAFETY: Caller guarantees POWER8 vector availability via target_feature gate.
-    unsafe {
-      let out: i64x2;
-      asm!(
-        "vsrd {out}, {a}, {sh}",
-        out = lateout(vreg) out,
-        a = in(vreg) a,
-        sh = in(vreg) shift,
-        options(nomem, nostack, pure),
-      );
-      out
-    }
-  }
-
-  /// Cross-lane byte shift: `high128((a || b) << N*8 bits)`.
-  #[inline]
-  #[target_feature(enable = "altivec,vsx")]
-  unsafe fn vsldoi<const N: u32>(a: i64x2, b: i64x2) -> i64x2 {
-    // SAFETY: Caller guarantees POWER8 vector availability via target_feature gate.
-    unsafe {
-      let out: i64x2;
-      asm!(
-        "vsldoi {out}, {a}, {b}, {n}",
-        out = lateout(vreg) out,
-        a = in(vreg) a,
-        b = in(vreg) b,
-        n = const N,
-        options(nomem, nostack, pure),
-      );
-      out
-    }
-  }
-
-  /// Montgomery reduction of a 256-bit product [lo:hi] modulo POLYVAL's polynomial.
-  ///
-  /// Uses POWER8 vector shifts and cross-lane vsldoi (structurally identical
-  /// to the SSE2/NEON/s390x paths).
-  #[inline]
-  #[target_feature(enable = "altivec,vsx,power8-vector")]
-  unsafe fn mont_reduce(lo: i64x2, hi: i64x2) -> i64x2 {
-    // SAFETY: target_feature gate guarantees POWER8 vector availability.
-    unsafe {
-      let zero = i64x2::from_array([0, 0]);
-
-      // Phase 1: left-shift contribution from both lo lanes.
-      let left = vsld::<63>(lo) ^ vsld::<62>(lo) ^ vsld::<57>(lo);
-
-      // Fold: move low lane's left shifts to high lane.
-      // On powerpc64le, element layout matches s390x BE convention for
-      // the purposes of this reduction (both use big-endian AES state).
-      let lo_folded = lo ^ vsldoi::<8>(left, zero);
-
-      // Right-shift + identity contribution.
-      let right = lo_folded ^ vsrd::<1>(lo_folded) ^ vsrd::<2>(lo_folded) ^ vsrd::<7>(lo_folded);
-
-      // Phase 2: left-shift from lo_folded.
-      let left2 = vsld::<63>(lo_folded) ^ vsld::<62>(lo_folded) ^ vsld::<57>(lo_folded);
-
-      // Final: hi XOR right XOR (high lane of left2 moved to low position).
-      hi ^ right ^ vsldoi::<8>(zero, left2)
+      let [lo, hi] = out.to_array();
+      (lo as u64, hi as u64)
     }
   }
 
   /// Combined 128×128 carryless multiply + Montgomery reduce using vpmsumd.
   ///
-  /// Karatsuba decomposition with 3 vpmsumd multiplies.
+  /// Karatsuba decomposition with 3 `vpmsumd` multiplies, then the same
+  /// scalar Montgomery reduction as the portable path.
   ///
   /// # Safety
   /// Caller must ensure POWER8 crypto instructions are available.
@@ -475,21 +389,21 @@ mod ppc_vpmsum {
       let a_hi = (a >> 64) as u64;
       let b_lo = b as u64;
       let b_hi = (b >> 64) as u64;
-      let zero = i64x2::from_array([0, 0]);
 
       // Karatsuba: 3 vpmsumd multiplies.
-      let v0 = mul64(a_lo, b_lo);
-      let v1 = mul64(a_hi, b_hi);
-      let v2 = mul64(a_lo ^ a_hi, b_lo ^ b_hi);
-      let mid = v2 ^ v0 ^ v1;
+      let (v0_lo, v0_hi) = mul64(a_lo, b_lo);
+      let (v1_lo, v1_hi) = mul64(a_hi, b_hi);
+      let (v2_lo, v2_hi) = mul64(a_lo ^ a_hi, b_lo ^ b_hi);
 
-      // Assemble 256-bit product [lo_128 : hi_128].
-      let lo_128 = v0 ^ vsldoi::<8>(mid, zero);
-      let hi_128 = v1 ^ vsldoi::<8>(zero, mid);
+      let mid_lo = v2_lo ^ v0_lo ^ v1_lo;
+      let mid_hi = v2_hi ^ v0_hi ^ v1_hi;
 
-      let result = mont_reduce(lo_128, hi_128);
-      let arr = result.to_array();
-      ((arr[0] as u64 as u128) << 64) | (arr[1] as u64 as u128)
+      let w0 = v0_lo;
+      let w1 = v0_hi ^ mid_lo;
+      let w2 = v1_lo ^ mid_hi;
+      let w3 = v1_hi;
+
+      super::mont_reduce([w0, w1, w2, w3])
     }
   }
 }

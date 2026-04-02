@@ -371,6 +371,12 @@ mod km {
 mod ppc {
   use core::{arch::asm, simd::i64x2};
 
+  /// Clang lowers `vec_xl_be` / `vec_xst_be` on `ppc64le` using this
+  /// byte-permute mask plus `xxswapd`. Reuse that exact transform instead of
+  /// guessing at lane endianness for AES state bytes.
+  #[cfg(target_endian = "little")]
+  const BE_LOAD_STORE_MASK: [u8; 16] = [24, 25, 26, 27, 28, 29, 30, 31, 16, 17, 18, 19, 20, 21, 22, 23];
+
   /// AES-256 round keys stored as 15 × 128-bit vectors for POWER8 vcipher.
   ///
   /// POWER8 vcipher expects round keys in big-endian byte order, which
@@ -390,11 +396,81 @@ mod ppc {
     }
   }
 
+  #[cfg(target_endian = "little")]
+  #[inline]
+  #[allow(unused_assignments, unused_variables)]
+  #[target_feature(enable = "altivec,vsx,power8-vector")]
+  unsafe fn permute_be_bytes(v: i64x2) -> i64x2 {
+    // SAFETY: Caller guarantees POWER8 vector support. The mask pointer is
+    // valid for 16 bytes and the transform matches the compiler's `vec_xl_be`
+    // / `vec_xst_be` lowering for ppc64le.
+    unsafe {
+      let raw_mask: i64x2;
+      let mask: i64x2;
+      let out: i64x2;
+      asm!(
+        "lxvd2x {raw_mask}, 0, {mask_ptr}",
+        "xxswapd {mask}, {raw_mask}",
+        "vperm {out}, {v}, {v}, {mask}",
+        raw_mask = lateout(vreg) raw_mask,
+        mask = lateout(vreg) mask,
+        out = lateout(vreg) out,
+        v = in(vreg) v,
+        mask_ptr = in(reg) BE_LOAD_STORE_MASK.as_ptr(),
+        options(readonly, nostack),
+      );
+      out
+    }
+  }
+
+  #[inline]
+  #[target_feature(enable = "altivec,vsx,power8-vector")]
+  unsafe fn load_block_be(ptr: *const u8) -> i64x2 {
+    // SAFETY: Caller guarantees the pointer is valid for 16 bytes and POWER8
+    // vector support is available.
+    unsafe {
+      let raw: i64x2;
+      asm!(
+        "lxvd2x {out}, 0, {ptr}",
+        out = out(vreg) raw,
+        ptr = in(reg) ptr,
+        options(readonly, nostack),
+      );
+      #[cfg(target_endian = "little")]
+      {
+        permute_be_bytes(raw)
+      }
+      #[cfg(target_endian = "big")]
+      {
+        raw
+      }
+    }
+  }
+
+  #[inline]
+  #[target_feature(enable = "altivec,vsx,power8-vector")]
+  unsafe fn store_block_be(ptr: *mut u8, block: i64x2) {
+    // SAFETY: Caller guarantees the pointer is valid for 16 bytes and POWER8
+    // vector support is available.
+    unsafe {
+      #[cfg(target_endian = "little")]
+      let block = permute_be_bytes(block);
+
+      asm!(
+        "stxvd2x {block}, 0, {ptr}",
+        block = in(vreg) block,
+        ptr = in(reg) ptr,
+        options(nostack),
+      );
+    }
+  }
+
   /// Convert portable round keys (60 × big-endian u32) to POWER8 vector format.
   ///
-  /// Each group of 4 u32 words forms one 128-bit round key. The portable
-  /// path stores words in big-endian, and vcipher expects BE byte order,
-  /// so on little-endian hosts we serialize to BE bytes and load.
+  /// Each group of 4 u32 words forms one 128-bit round key in canonical AES
+  /// byte order. On `powerpc64le`, POWER vector registers need the same
+  /// big-endian byte normalization that the compiler applies for
+  /// `vec_xl_be`/`vec_xst_be`.
   pub(super) fn from_portable(rk: &[u32; 60]) -> PpcRoundKeys {
     let mut keys = [i64x2::from_array([0, 0]); 15];
     let mut i = 0usize;
@@ -405,15 +481,8 @@ mod ppc {
       bytes[4..8].copy_from_slice(&rk[base.strict_add(1)].to_be_bytes());
       bytes[8..12].copy_from_slice(&rk[base.strict_add(2)].to_be_bytes());
       bytes[12..16].copy_from_slice(&rk[base.strict_add(3)].to_be_bytes());
-      // SAFETY: bytes is a valid aligned 16-byte buffer. Reinterpret as i64x2.
-      keys[i] = i64x2::from_array([
-        i64::from_be_bytes([
-          bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-        ]),
-        i64::from_be_bytes([
-          bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15],
-        ]),
-      ]);
+      // SAFETY: `bytes` points to a valid 16-byte round key buffer.
+      keys[i] = unsafe { load_block_be(bytes.as_ptr()) };
       i = i.strict_add(1);
     }
     PpcRoundKeys { rk: keys }
@@ -432,14 +501,7 @@ mod ppc {
     unsafe {
       let k = &keys.rk;
 
-      // Load plaintext — on LE hosts, byte-reverse to match AES state (BE).
-      let mut state: i64x2;
-      asm!(
-        "lxvd2x {s}, 0, {ptr}",
-        s = out(vreg) state,
-        ptr = in(reg) block.as_ptr(),
-        options(nostack, readonly),
-      );
+      let mut state = load_block_be(block.as_ptr());
 
       // Rounds 1–13: vcipher (SubBytes + ShiftRows + MixColumns + AddRoundKey).
       macro_rules! vcipher_round {
@@ -491,13 +553,7 @@ mod ppc {
         options(nomem, nostack),
       );
 
-      // Store ciphertext.
-      asm!(
-        "stxvd2x {s}, 0, {ptr}",
-        s = in(vreg) state,
-        ptr = in(reg) block.as_mut_ptr(),
-        options(nostack),
-      );
+      store_block_be(block.as_mut_ptr(), state);
     }
   }
 }
