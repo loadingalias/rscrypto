@@ -599,25 +599,27 @@ mod x86_avx512 {
       let blk15 = _mm512_shuffle_i32x4::<0b_11_01_11_01>(ab_37_hi, cd_37_hi);
 
       // XOR each transposed block with plaintext and store in-place.
+      let ptr = chunk.as_mut_ptr();
       // SAFETY: each `chunk` slice has exactly BLOCKS_PER_BATCH * BLOCK_SIZE = 1024
       // bytes, so all 16 × 64-byte load/store pairs are in bounds.
-      let ptr = chunk.as_mut_ptr();
-      xor_block(ptr, 0, blk0);
-      xor_block(ptr, 1, blk1);
-      xor_block(ptr, 2, blk2);
-      xor_block(ptr, 3, blk3);
-      xor_block(ptr, 4, blk4);
-      xor_block(ptr, 5, blk5);
-      xor_block(ptr, 6, blk6);
-      xor_block(ptr, 7, blk7);
-      xor_block(ptr, 8, blk8);
-      xor_block(ptr, 9, blk9);
-      xor_block(ptr, 10, blk10);
-      xor_block(ptr, 11, blk11);
-      xor_block(ptr, 12, blk12);
-      xor_block(ptr, 13, blk13);
-      xor_block(ptr, 14, blk14);
-      xor_block(ptr, 15, blk15);
+      unsafe {
+        xor_block(ptr, 0, blk0);
+        xor_block(ptr, 1, blk1);
+        xor_block(ptr, 2, blk2);
+        xor_block(ptr, 3, blk3);
+        xor_block(ptr, 4, blk4);
+        xor_block(ptr, 5, blk5);
+        xor_block(ptr, 6, blk6);
+        xor_block(ptr, 7, blk7);
+        xor_block(ptr, 8, blk8);
+        xor_block(ptr, 9, blk9);
+        xor_block(ptr, 10, blk10);
+        xor_block(ptr, 11, blk11);
+        xor_block(ptr, 12, blk12);
+        xor_block(ptr, 13, blk13);
+        xor_block(ptr, 14, blk14);
+        xor_block(ptr, 15, blk15);
+      }
 
       counter = counter.wrapping_add(BLOCKS_PER_BATCH as u32);
     }
@@ -817,15 +819,18 @@ mod x86_avx2 {
       // Each block = 2 YMM registers (32 + 32 = 64 bytes).
       // Process block pairs (j, j+4) and XOR+store immediately to ease register pressure.
       let ptr = chunk.as_mut_ptr();
-
-      // Blocks 0 and 4 — from s2[0], s2[4], s2[8], s2[12]
-      xor_block_pair(ptr, 0, 4, s2_0, s2_4, s2_8, s2_12);
-      // Blocks 1 and 5 — from s2[1], s2[5], s2[9], s2[13]
-      xor_block_pair(ptr, 1, 5, s2_1, s2_5, s2_9, s2_13);
-      // Blocks 2 and 6 — from s2[2], s2[6], s2[10], s2[14]
-      xor_block_pair(ptr, 2, 6, s2_2, s2_6, s2_10, s2_14);
-      // Blocks 3 and 7 — from s2[3], s2[7], s2[11], s2[15]
-      xor_block_pair(ptr, 3, 7, s2_3, s2_7, s2_11, s2_15);
+      // SAFETY: each `chunk` slice has exactly BLOCKS_PER_BATCH * BLOCK_SIZE = 512
+      // bytes, so all 8 × 64-byte load/store pairs are in bounds.
+      unsafe {
+        // Blocks 0 and 4 — from s2[0], s2[4], s2[8], s2[12]
+        xor_block_pair(ptr, 0, 4, s2_0, s2_4, s2_8, s2_12);
+        // Blocks 1 and 5 — from s2[1], s2[5], s2[9], s2[13]
+        xor_block_pair(ptr, 1, 5, s2_1, s2_5, s2_9, s2_13);
+        // Blocks 2 and 6 — from s2[2], s2[6], s2[10], s2[14]
+        xor_block_pair(ptr, 2, 6, s2_2, s2_6, s2_10, s2_14);
+        // Blocks 3 and 7 — from s2[3], s2[7], s2[11], s2[15]
+        xor_block_pair(ptr, 3, 7, s2_3, s2_7, s2_11, s2_15);
+      }
 
       counter = counter.wrapping_add(BLOCKS_PER_BATCH as u32);
     }
