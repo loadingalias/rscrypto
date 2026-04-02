@@ -2,6 +2,7 @@
 
 Source: CI run [#23822408700](https://github.com/loadingalias/rscrypto/actions/runs/23822408700) (2026-03-31) across Zen4, Zen5, SPR, Grav3, Grav4, s390x, POWER10.
 SHA-2 and RapidHash updated from [#23854215324](https://github.com/loadingalias/rscrypto/actions/runs/23854215324) (2026-04-01, Zen5/Grav3/Grav4/s390x/POWER10); Zen4/SPR retained from prior run.
+AEAD (ChaCha20/AEGIS-256) updated from [#23877991837](https://github.com/loadingalias/rscrypto/actions/runs/23877991837) (2026-04-01, Zen4/Zen5/SPR/Grav4): ChaCha20 x86 vprold+vpshufb+transpose; AEGIS-256 first bench vs jedisct1 aegis crate.
 
 This file covers the size-indexed competitive groups from the full `comp` sweep.
 Ascon ran in CI, but the current Ascon bench is single-implementation/internal-scaling work, so it has no cross-implementation speedup table to report here.
@@ -449,33 +450,33 @@ Fixed-cost benches without a size axis, such as `ed25519/public-key-from-secret`
 
 ## AEAD
 
-### chacha20-poly1305-encrypt (42W/12T/9L = 67%)
+### chacha20-poly1305-encrypt (43W/13T/7L = 68%)
 
 | Size | Zen4 | Zen5 | SPR | Grav3 | Grav4 | s390x | POWER10 |
 |------|-----:|-----:|-----:|-----:|-----:|-----:|-----:|
-| 0B | 6.04x | 7.22x | 5.81x | 1.24x | 1.23x | 1.52x | 1.88x |
-| 1B | 3.86x | 5.01x | 3.59x | 1.11x | 1.10x | 1.33x | 1.67x |
-| 32B | 4.81x | 6.05x | 4.40x | 1.06x | 1.05x | 1.35x | 1.58x |
-| 64B | 4.31x | 5.32x | 3.86x | 1.02x | 1.02x | 1.38x | 1.49x |
-| 256B | 1.77x | 2.17x | 1.60x | 1.03x | 1.01x | 2.23x | 1.66x |
-| 1KiB | 1.21x | 1.53x | 1.14x | 1.01x | 0.99x | 2.37x | 1.57x |
-| 4KiB | **0.63x** | **0.92x** | **0.66x** | 1.01x | 0.98x | 2.40x | 1.57x |
-| 64KiB | **0.44x** | **0.71x** | **0.47x** | 1.00x | 0.98x | 2.48x | 1.57x |
-| 1MiB | **0.42x** | **0.69x** | **0.46x** | 1.00x | 0.98x | 2.46x | 1.58x |
+| 0B | 5.99x | 7.27x | 5.64x | 1.24x | 1.22x | 1.52x | 1.88x |
+| 1B | 3.88x | 5.04x | 3.47x | 1.11x | 1.10x | 1.33x | 1.67x |
+| 32B | 4.82x | 6.09x | 4.37x | 1.06x | 1.05x | 1.35x | 1.58x |
+| 64B | 4.30x | 5.35x | 3.91x | 1.02x | 1.02x | 1.38x | 1.49x |
+| 256B | 1.78x | 2.17x | 1.55x | 1.03x | 1.01x | 2.23x | 1.66x |
+| 1KiB | 1.30x | 1.65x | 1.28x | 1.01x | 0.99x | 2.37x | 1.57x |
+| 4KiB | **0.69x** | 0.99x | **0.67x** | 1.01x | 0.98x | 2.40x | 1.57x |
+| 64KiB | **0.48x** | **0.76x** | **0.50x** | 1.00x | 0.98x | 2.48x | 1.57x |
+| 1MiB | **0.46x** | **0.75x** | **0.48x** | 1.00x | 0.98x | 2.46x | 1.58x |
 
-### chacha20-poly1305-decrypt (46W/8T/9L = 73%)
+### chacha20-poly1305-decrypt (47W/9T/7L = 75%)
 
 | Size | Zen4 | Zen5 | SPR | Grav3 | Grav4 | s390x | POWER10 |
 |------|-----:|-----:|-----:|-----:|-----:|-----:|-----:|
-| 0B | 6.12x | 7.27x | 5.86x | 1.28x | 1.28x | 1.69x | 1.88x |
-| 1B | 3.89x | 5.01x | 3.58x | 1.14x | 1.13x | 1.41x | 1.69x |
-| 32B | 4.92x | 6.03x | 4.40x | 1.08x | 1.08x | 1.42x | 1.62x |
-| 64B | 4.31x | 5.24x | 3.79x | 1.04x | 1.04x | 1.47x | 1.52x |
-| 256B | 1.79x | 2.15x | 1.57x | 1.05x | 1.03x | 2.22x | 1.67x |
-| 1KiB | 1.22x | 1.53x | 1.12x | 1.01x | 0.99x | 2.39x | 1.56x |
-| 4KiB | **0.64x** | **0.92x** | **0.64x** | 1.00x | 0.98x | 2.45x | 1.54x |
-| 64KiB | **0.44x** | **0.71x** | **0.47x** | 1.00x | 0.98x | 2.48x | 1.53x |
-| 1MiB | **0.43x** | **0.70x** | **0.46x** | 1.00x | 0.98x | 2.44x | 1.55x |
+| 0B | 6.13x | 7.28x | 5.69x | 1.28x | 1.28x | 1.69x | 1.88x |
+| 1B | 3.91x | 5.07x | 3.50x | 1.14x | 1.14x | 1.41x | 1.69x |
+| 32B | 4.88x | 6.16x | 4.37x | 1.08x | 1.08x | 1.42x | 1.62x |
+| 64B | 4.33x | 5.36x | 3.78x | 1.04x | 1.04x | 1.47x | 1.52x |
+| 256B | 1.79x | 2.18x | 1.55x | 1.05x | 1.04x | 2.22x | 1.67x |
+| 1KiB | 1.30x | 1.66x | 1.17x | 1.01x | 1.00x | 2.39x | 1.56x |
+| 4KiB | **0.68x** | 1.00x | **0.68x** | 1.00x | 0.98x | 2.45x | 1.54x |
+| 64KiB | **0.47x** | **0.76x** | **0.51x** | 1.00x | 0.98x | 2.48x | 1.53x |
+| 1MiB | **0.46x** | **0.75x** | **0.49x** | 1.00x | 0.98x | 2.44x | 1.55x |
 
 ### xchacha20-poly1305-encrypt (45W/9T/9L = 71%)
 

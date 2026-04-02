@@ -438,11 +438,8 @@ unsafe fn rapidhash_fast_tail(mut seed: u64, slice: &[u8], data: &[u8]) -> u64 {
 /// Cold medium path: 17B–~400B. 3-stream accumulation for 49B+.
 ///
 /// `#[cold] #[inline(never)]` keeps the small-path entry point lean for
-/// inlining. The 17–48B range short-circuits to the tail handler on x86-64
-/// to avoid 3-stream register setup/stack spill. On aarch64, ARM's BIC
-/// instruction and register file mean the spill is free, so we skip the
-/// shortcircuit to avoid branch-predictor noise (matching the competitor's
-/// `#[cfg(not(target_arch = "aarch64"))]` pattern).
+/// inlining. The 17–48B range short-circuits to the tail handler to avoid
+/// 3-stream register setup/stack spill on all platforms.
 ///
 /// # Safety
 ///
@@ -453,10 +450,8 @@ unsafe fn rapidhash_fast_core_medium(data: &[u8], mut seed: u64) -> u64 {
   // SAFETY: caller guarantees data.len() > 16.
   unsafe { core::hint::assert_unchecked(data.len() > 16) };
 
-  // Short-circuit 17–48B to the tail handler. On x86-64 this avoids the
-  // 3-stream register setup that causes stack spills. On aarch64 the
-  // extra branch hurts more than the register setup, so skip it.
-  #[cfg(not(target_arch = "aarch64"))]
+  // Short-circuit 17–48B to the tail handler. This avoids the 3-stream
+  // register setup that causes stack spills.
   if likely(data.len() <= 48) {
     // SAFETY: data.len() > 16 guaranteed by caller.
     return unsafe { rapidhash_fast_tail(seed, data, data) };
