@@ -398,8 +398,6 @@ enum AppleSiliconGen {
   M4,
   /// M5, M5 Pro, M5 Max (Hidra/Sotra) - has SME2p1
   /// Released October 2025. Adds SME2p1, SMEB16B16, SMEF16F16 per LLVM.
-  // TODO(M5): Remove allow(dead_code) once CPUFAMILY_ARM_HIDRA/SOTRA values are added.
-  #[allow(dead_code)]
   M5,
 }
 
@@ -432,11 +430,11 @@ pub(crate) enum Aarch64TuneFamily {
   any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "watchos")
 ))]
 fn detect_apple_silicon_gen() -> Option<AppleSiliconGen> {
-  // CPUFAMILY constants from Apple's machine.h (via Zig's darwin.zig / Homebrew / LLVM)
+  // CPUFAMILY constants from Apple's mach/machine.h
   // These identify the CPU microarchitecture, not the marketing name.
   //
-  // Reference: https://github.com/Homebrew/brew/blob/master/Library/Homebrew/extend/os/mac/hardware/cpu.rb
-  // Reference: https://github.com/ziglang/zig/blob/master/lib/std/c/darwin.zig
+  // Reference: Xcode SDK <mach/machine.h>
+  // Reference: https://github.com/pytorch/cpuinfo/blob/main/src/arm/mach/init.c
   const CPUFAMILY_ARM_FIRESTORM_ICESTORM: u32 = 0x1b58_8bb3; // M1 family
   const CPUFAMILY_ARM_BLIZZARD_AVALANCHE: u32 = 0xda33_d83d; // M2 family
   const CPUFAMILY_ARM_EVEREST_SAWTOOTH: u32 = 0x8765_edea; // A16/M2 variant
@@ -452,10 +450,12 @@ fn detect_apple_silicon_gen() -> Option<AppleSiliconGen> {
   // M5 family (released October 2025)
   // Codenames: Hidra (M5 - H17G), Sotra (M5 Pro/Max)
   // Features: SME2p1, SMEB16B16, SMEF16F16 per LLVM commit f85494f6afeb
-  // TODO(M5): Add CPUFAMILY_ARM_HIDRA and CPUFAMILY_ARM_SOTRA hex values
-  //           when publicly documented in Xcode SDK / Homebrew / Zig darwin.zig
-  // Reference: Xcode 26.1b3 added CPUFAMILY_ARM_HIDRA (H17G)
-  // Until then, M5 detection falls back to SME2 feature detection.
+  // Reference: Xcode SDK mach/machine.h, pytorch/cpuinfo, p-x9/swift-cpu-info
+  const CPUFAMILY_ARM_HIDRA: u32 = 0x1d5a_87e8; // M5
+  const CPUFAMILY_ARM_SOTRA: u32 = 0xf76c_5b1a; // M5 Pro/Max
+  // A19 family (same generation as M5)
+  const CPUFAMILY_ARM_TILOS: u32 = 0x01d7_a72b; // A19
+  const CPUFAMILY_ARM_THERA: u32 = 0xab34_5f09; // A19 Pro
 
   // Direct extern "C" linkage to libSystem's sysctlbyname
   // (libSystem is always linked on Apple platforms)
@@ -498,10 +498,12 @@ fn detect_apple_silicon_gen() -> Option<AppleSiliconGen> {
     CPUFAMILY_ARM_BLIZZARD_AVALANCHE | CPUFAMILY_ARM_EVEREST_SAWTOOTH => Some(AppleSiliconGen::M2),
     CPUFAMILY_ARM_IBIZA | CPUFAMILY_ARM_LOBOS | CPUFAMILY_ARM_PALMA => Some(AppleSiliconGen::M3),
     CPUFAMILY_ARM_DONAN | CPUFAMILY_ARM_BRAVA => Some(AppleSiliconGen::M4),
-    // A-series chips (A16, A17, A18) - treat as M-series equivalent for tuning
-    CPUFAMILY_ARM_COLL => Some(AppleSiliconGen::M2), // A17 Pro ≈ M2 architecture
+    CPUFAMILY_ARM_HIDRA | CPUFAMILY_ARM_SOTRA => Some(AppleSiliconGen::M5),
+    // A-series chips - treat as M-series equivalent for tuning
+    CPUFAMILY_ARM_COLL => Some(AppleSiliconGen::M2),                        // A17 Pro ≈ M2 architecture
     CPUFAMILY_ARM_TAHITI | CPUFAMILY_ARM_TUPAI => Some(AppleSiliconGen::M4), // A18 ≈ M4 architecture
-    _ => None,                                       // Unknown future chip - will fall back to feature-based detection
+    CPUFAMILY_ARM_TILOS | CPUFAMILY_ARM_THERA => Some(AppleSiliconGen::M5),  // A19 ≈ M5 architecture
+    _ => None, // Unknown future chip - will fall back to feature-based detection
   }
 }
 
