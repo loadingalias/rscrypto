@@ -6,7 +6,7 @@
 
 `XChaCha20-Poly1305` is shipped on the typed AEAD surface.
 The plain `ChaCha20-Poly1305` interop companion is shipped on the same core.
-The ChaCha-family core now has explicit backend routing for `x86_64` (`portable -> AVX2 -> AVX-512`), `aarch64` (`portable -> NEON`), `wasm32/wasm64` (`portable -> simd128`), and explicit `s390x` / `powerpc64` / `riscv64` vector routes.
+The ChaCha-family core now has explicit backend routing for `x86_64` (`portable -> AVX2 -> AVX-512`), `aarch64` (`portable -> NEON`), `wasm32/wasm64` (`portable -> simd128`), and explicit `s390x` / `powerpc64` / `riscv64` vector routes. The x86_64 backends use `vprold` (AVX-512) and `vpshufb` (AVX2) for single-instruction rotations, plus SIMD matrix transpose for the keystream XOR phase.
 `Poly1305` now follows the same primitive-keyed dispatch contract, with architecture-specific block kernels on `x86_64` (`AVX2` / `AVX-512`), `aarch64` (`NEON`), and `wasm32` (`simd128`), plus explicit fallback routes everywhere else.
 
 `AES-256-GCM-SIV` is shipped with **x86_64 + aarch64 hardware acceleration** plus **x86_64 VAES-512 + VPCLMULQDQ wide path**:
@@ -170,19 +170,24 @@ auto-dispatch.
 **Completed P1 tasks:**
 - AES-2 + CLMUL-2: x86_64 VAES-512 + VPCLMULQDQ wide path shipped (2026-03-31). 4-block parallel AES-CTR + 4-block schoolbook-then-reduce GHASH/POLYVAL on Zen4+/ICL+.
 
-### ChaCha20-Poly1305: powerpc64 + s390x now hardware-accelerated
+### ChaCha20-Poly1305: x86 optimized, powerpc64 + s390x hardware-accelerated
 
 ChaCha20 and Poly1305 have **real** SIMD kernels on x86_64 (AVX2/AVX-512), aarch64 (NEON),
 wasm32 (SIMD128), powerpc64 (VSX), and s390x (z/Vector). One platform remains stubbed:
 
 | Platform | ChaCha20 | Poly1305 | Task IDs |
 |----------|----------|----------|----------|
+| x86_64 | **AVX-512** (`vprold` + 16×16 transpose) / **AVX2** (`vpshufb` + 16×8 transpose) | AVX2/AVX-512 | ✅ CHACHA-4, CHACHA-5 |
 | powerpc64 | **VSX** (`vadduwm`/`vxor`/`vrlw`) | **VSX** (`vmulouw`/`vaddudm`) | ✅ CHACHA-1, POLY-1 |
 | s390x | **z/Vector** (`vaf`/`vx`/`verll`) | **z/Vector** (`vmlof`/`vag`) | ✅ CHACHA-2, POLY-2 |
 | riscv64 | STUB → portable | STUB → portable | CHACHA-3, POLY-3 |
 
-Benchmark impact: riscv64 XChaCha20-Poly1305 and ChaCha20-Poly1305 are still
-running at portable speed. powerpc64 and s390x now use native vector instructions.
+The x86_64 ChaCha20 kernels were optimized (2026-04-01) to close a 0.42-0.69x gap at
+4KiB-1MiB on Zen4/Zen5/SPR. The root cause was scalar byte-by-byte XOR after SIMD keystream
+generation — replaced with SIMD matrix transpose + load-XOR-store, plus `vprold` (AVX-512)
+and `vpshufb` (AVX2) for single-instruction rotations. See CHACHA-4/5 in [`acceleration.md`](acceleration.md).
+
+riscv64 XChaCha20-Poly1305 and ChaCha20-Poly1305 are still running at portable speed.
 
 ## SIMD / HW Rules
 

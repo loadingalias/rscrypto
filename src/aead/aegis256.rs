@@ -368,7 +368,8 @@ mod ce {
 
   pub(super) type State = [uint8x16_t; 6];
 
-  #[inline(always)]
+  #[target_feature(enable = "aes,neon")]
+  #[inline]
   unsafe fn aes_round(block: uint8x16_t, round_key: uint8x16_t) -> uint8x16_t {
     // ARM AESE: XOR(block, key) -> SubBytes -> ShiftRows
     // ARM AESMC: MixColumns
@@ -378,7 +379,8 @@ mod ce {
     veorq_u8(vaesmcq_u8(vaeseq_u8(block, zero)), round_key)
   }
 
-  #[inline(always)]
+  #[target_feature(enable = "aes,neon")]
+  #[inline]
   unsafe fn update(s: &mut State, m: uint8x16_t) {
     let tmp = s[5];
     s[5] = aes_round(s[4], s[5]);
@@ -389,12 +391,14 @@ mod ce {
     s[0] = veorq_u8(aes_round(tmp, s[0]), m);
   }
 
-  #[inline(always)]
+  #[target_feature(enable = "aes,neon")]
+  #[inline]
   unsafe fn load(bytes: &[u8; BLOCK_SIZE]) -> uint8x16_t {
     vld1q_u8(bytes.as_ptr())
   }
 
-  #[inline(always)]
+  #[target_feature(enable = "aes,neon")]
+  #[inline]
   unsafe fn store(v: uint8x16_t, out: &mut [u8; BLOCK_SIZE]) {
     vst1q_u8(out.as_mut_ptr(), v);
   }
@@ -532,6 +536,7 @@ mod ce {
 // ---------------------------------------------------------------------------
 
 /// Whether hardware AES acceleration is available.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[inline]
 fn has_hw_aes() -> bool {
   #[cfg(target_arch = "x86_64")]
@@ -543,10 +548,6 @@ fn has_hw_aes() -> bool {
   {
     use crate::platform::caps::aarch64;
     crate::platform::caps().has(aarch64::AES)
-  }
-  #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-  {
-    false
   }
 }
 

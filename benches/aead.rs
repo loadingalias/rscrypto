@@ -19,6 +19,7 @@ use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 const KEY_32: [u8; 32] = [0x42u8; 32];
 const NONCE_12: [u8; 12] = [0x07u8; 12];
 const NONCE_24: [u8; 24] = [0x07u8; 24];
+const NONCE_32: [u8; 32] = [0x07u8; 32];
 const AAD: &[u8] = b"rscrypto-bench";
 
 // ---------------------------------------------------------------------------
@@ -396,6 +397,91 @@ fn aes256_gcm_decrypt(c: &mut Criterion) {
 }
 
 // ---------------------------------------------------------------------------
+// AEGIS-256
+// ---------------------------------------------------------------------------
+
+fn aegis256_encrypt(c: &mut Criterion) {
+  let inputs = common::comp_sizes();
+  let nonce_rs = rscrypto::aead::Nonce256::from_bytes(NONCE_32);
+  let cipher_rs = rscrypto::Aegis256::new(&rscrypto::Aegis256Key::from_bytes(KEY_32));
+  let mut g = c.benchmark_group("aegis-256/encrypt");
+
+  for (len, data) in &inputs {
+    common::set_throughput(&mut g, *len);
+    let mut buf = data.clone();
+
+    g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
+      b.iter(|| {
+        buf.copy_from_slice(d);
+        black_box(cipher_rs.encrypt_in_place(black_box(&nonce_rs), black_box(AAD), black_box(&mut buf)))
+      })
+    });
+
+    g.bench_with_input(BenchmarkId::new("aegis-crate", len), data, |b, d| {
+      b.iter(|| {
+        buf.copy_from_slice(d);
+        black_box(
+          aegis::aegis256::Aegis256::<16>::new(black_box(&KEY_32), black_box(&NONCE_32))
+            .encrypt_in_place(black_box(&mut buf), black_box(AAD)),
+        )
+      })
+    });
+  }
+
+  g.finish();
+}
+
+fn aegis256_decrypt(c: &mut Criterion) {
+  let inputs = common::comp_sizes();
+  let nonce_rs = rscrypto::aead::Nonce256::from_bytes(NONCE_32);
+  let cipher_rs = rscrypto::Aegis256::new(&rscrypto::Aegis256Key::from_bytes(KEY_32));
+  let mut g = c.benchmark_group("aegis-256/decrypt");
+
+  for (len, data) in &inputs {
+    common::set_throughput(&mut g, *len);
+
+    // Pre-encrypt with rscrypto to get valid ciphertext + tag.
+    let mut ciphertext = data.clone();
+    let tag_rs = cipher_rs.encrypt_in_place(&nonce_rs, AAD, &mut ciphertext);
+
+    // Pre-encrypt with aegis crate to get its tag format.
+    let mut ct_ac = data.clone();
+    let tag_ac = aegis::aegis256::Aegis256::<16>::new(&KEY_32, &NONCE_32).encrypt_in_place(&mut ct_ac, AAD);
+
+    let mut buf = ciphertext.clone();
+
+    g.bench_with_input(BenchmarkId::new("rscrypto", len), &ciphertext, |b, ct| {
+      b.iter(|| {
+        buf.copy_from_slice(ct);
+        cipher_rs
+          .decrypt_in_place(
+            black_box(&nonce_rs),
+            black_box(AAD),
+            black_box(&mut buf),
+            black_box(&tag_rs),
+          )
+          .unwrap();
+        black_box(&buf);
+      })
+    });
+
+    let mut buf_ac = ct_ac.clone();
+
+    g.bench_with_input(BenchmarkId::new("aegis-crate", len), &ct_ac, |b, ct| {
+      b.iter(|| {
+        buf_ac.copy_from_slice(ct);
+        aegis::aegis256::Aegis256::<16>::new(black_box(&KEY_32), black_box(&NONCE_32))
+          .decrypt_in_place(black_box(&mut buf_ac), black_box(&tag_ac), black_box(AAD))
+          .unwrap();
+        black_box(&buf_ac);
+      })
+    });
+  }
+
+  g.finish();
+}
+
+// ---------------------------------------------------------------------------
 // Criterion harness
 // ---------------------------------------------------------------------------
 
@@ -409,5 +495,7 @@ criterion_group!(
   aes256_gcm_siv_decrypt,
   aes256_gcm_encrypt,
   aes256_gcm_decrypt,
+  aegis256_encrypt,
+  aegis256_decrypt,
 );
 criterion_main!(benches);
