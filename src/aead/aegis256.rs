@@ -391,14 +391,12 @@ mod ce {
     s[0] = veorq_u8(aes_round(tmp, s[0]), m);
   }
 
-  #[target_feature(enable = "aes,neon")]
-  #[inline]
+  #[inline(always)]
   unsafe fn load(bytes: &[u8; BLOCK_SIZE]) -> uint8x16_t {
     vld1q_u8(bytes.as_ptr())
   }
 
-  #[target_feature(enable = "aes,neon")]
-  #[inline]
+  #[inline(always)]
   unsafe fn store(v: uint8x16_t, out: &mut [u8; BLOCK_SIZE]) {
     vst1q_u8(out.as_mut_ptr(), v);
   }
@@ -532,11 +530,454 @@ mod ce {
 }
 
 // ---------------------------------------------------------------------------
+// powerpc64 vcipher backend (POWER8 Crypto)
+// ---------------------------------------------------------------------------
+
+#[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+#[allow(unsafe_code, unsafe_op_in_unsafe_fn)]
+mod ppc {
+  use core::{arch::asm, simd::i64x2};
+
+  use super::{BLOCK_SIZE, C0, C1, KEY_SIZE, NONCE_SIZE, TAG_SIZE};
+
+  pub(super) type State = [i64x2; 6];
+
+  /// Load a 16-byte block into a POWER vector register (big-endian byte order).
+  #[inline(always)]
+  fn load_be(bytes: &[u8; 16]) -> i64x2 {
+    let elems = [
+      i64::from_be_bytes([
+        bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15],
+      ]),
+      i64::from_be_bytes([
+        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+      ]),
+    ];
+    #[cfg(target_endian = "little")]
+    {
+      i64x2::from_array(elems)
+    }
+  }
+
+  /// Store a POWER vector register back to a 16-byte block.
+  #[inline(always)]
+  fn store_be(v: i64x2, out: &mut [u8; 16]) {
+    let arr = v.to_array();
+    #[cfg(target_endian = "little")]
+    {
+      let hi = (arr[1] as u64).to_be_bytes();
+      let lo = (arr[0] as u64).to_be_bytes();
+      out[0..8].copy_from_slice(&hi);
+      out[8..16].copy_from_slice(&lo);
+    }
+  }
+
+  /// Single AES round: vcipher(state, round_key).
+  ///
+  /// vcipher computes ShiftRows → SubBytes → MixColumns → XOR(round_key),
+  /// matching x86 AESENC / aarch64 AESE+AESMC+EOR semantics.
+  #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
+  #[inline]
+  unsafe fn aes_round(block: i64x2, round_key: i64x2) -> i64x2 {
+    let out: i64x2;
+    asm!(
+      "vcipher {out}, {block}, {rk}",
+      out = lateout(vreg) out,
+      block = in(vreg) block,
+      rk = in(vreg) round_key,
+      options(nomem, nostack),
+    );
+    out
+  }
+
+  /// XOR two vector registers.
+  #[inline(always)]
+  fn xor_vec(a: i64x2, b: i64x2) -> i64x2 {
+    let aa = a.to_array();
+    let ba = b.to_array();
+    i64x2::from_array([aa[0] ^ ba[0], aa[1] ^ ba[1]])
+  }
+
+  /// AND two vector registers.
+  #[inline(always)]
+  fn and_vec(a: i64x2, b: i64x2) -> i64x2 {
+    let aa = a.to_array();
+    let ba = b.to_array();
+    i64x2::from_array([aa[0] & ba[0], aa[1] & ba[1]])
+  }
+
+  #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
+  #[inline]
+  unsafe fn update(s: &mut State, m: i64x2) {
+    let tmp = s[5];
+    s[5] = aes_round(s[4], s[5]);
+    s[4] = aes_round(s[3], s[4]);
+    s[3] = aes_round(s[2], s[3]);
+    s[2] = aes_round(s[1], s[2]);
+    s[1] = aes_round(s[0], s[1]);
+    s[0] = xor_vec(aes_round(tmp, s[0]), m);
+  }
+
+  #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
+  pub(super) unsafe fn init(key: &[u8; KEY_SIZE], nonce: &[u8; NONCE_SIZE]) -> State {
+    let (kh0, kh1) = super::split_halves(key);
+    let (nh0, nh1) = super::split_halves(nonce);
+    let k0 = load_be(kh0);
+    let k1 = load_be(kh1);
+    let n0 = load_be(nh0);
+    let n1 = load_be(nh1);
+    let c0 = load_be(&C0);
+    let c1 = load_be(&C1);
+
+    let k0_xor_n0 = xor_vec(k0, n0);
+    let k1_xor_n1 = xor_vec(k1, n1);
+
+    let mut s: State = [k0_xor_n0, k1_xor_n1, c1, c0, xor_vec(k0, c0), xor_vec(k1, c1)];
+
+    for _ in 0..4 {
+      update(&mut s, k0);
+      update(&mut s, k1);
+      update(&mut s, k0_xor_n0);
+      update(&mut s, k1_xor_n1);
+    }
+
+    s
+  }
+
+  #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
+  pub(super) unsafe fn process_aad(s: &mut State, aad: &[u8]) {
+    let mut offset = 0usize;
+
+    while offset.strict_add(BLOCK_SIZE) <= aad.len() {
+      let mut tmp = [0u8; 16];
+      tmp.copy_from_slice(&aad[offset..offset.strict_add(BLOCK_SIZE)]);
+      update(s, load_be(&tmp));
+      offset = offset.strict_add(BLOCK_SIZE);
+    }
+
+    if offset < aad.len() {
+      let mut pad = [0u8; BLOCK_SIZE];
+      pad[..aad.len().strict_sub(offset)].copy_from_slice(&aad[offset..]);
+      update(s, load_be(&pad));
+    }
+  }
+
+  #[inline(always)]
+  fn keystream_vec(s: &State) -> i64x2 {
+    let s2_and_s3 = and_vec(s[2], s[3]);
+    xor_vec(xor_vec(s[1], s[4]), xor_vec(s[5], s2_and_s3))
+  }
+
+  #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
+  pub(super) unsafe fn encrypt(s: &mut State, buffer: &mut [u8]) {
+    let mut offset = 0usize;
+
+    while offset.strict_add(BLOCK_SIZE) <= buffer.len() {
+      let z = keystream_vec(s);
+      let mut tmp = [0u8; 16];
+      tmp.copy_from_slice(&buffer[offset..offset.strict_add(BLOCK_SIZE)]);
+      let xi = load_be(&tmp);
+      update(s, xi);
+      let ci = xor_vec(xi, z);
+      store_be(ci, &mut tmp);
+      buffer[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&tmp);
+      offset = offset.strict_add(BLOCK_SIZE);
+    }
+
+    if offset < buffer.len() {
+      let z = keystream_vec(s);
+      let tail_len = buffer.len().strict_sub(offset);
+      let mut pad = [0u8; BLOCK_SIZE];
+      pad[..tail_len].copy_from_slice(&buffer[offset..]);
+      let xi = load_be(&pad);
+      update(s, xi);
+      let mut ct_bytes = [0u8; BLOCK_SIZE];
+      store_be(xor_vec(xi, z), &mut ct_bytes);
+      buffer[offset..].copy_from_slice(&ct_bytes[..tail_len]);
+    }
+  }
+
+  #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
+  pub(super) unsafe fn decrypt(s: &mut State, buffer: &mut [u8]) {
+    let mut offset = 0usize;
+
+    while offset.strict_add(BLOCK_SIZE) <= buffer.len() {
+      let z = keystream_vec(s);
+      let mut tmp = [0u8; 16];
+      tmp.copy_from_slice(&buffer[offset..offset.strict_add(BLOCK_SIZE)]);
+      let ci = load_be(&tmp);
+      let xi = xor_vec(ci, z);
+      update(s, xi);
+      store_be(xi, &mut tmp);
+      buffer[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&tmp);
+      offset = offset.strict_add(BLOCK_SIZE);
+    }
+
+    if offset < buffer.len() {
+      let z = keystream_vec(s);
+      let tail_len = buffer.len().strict_sub(offset);
+      let mut pad = [0u8; BLOCK_SIZE];
+      pad[..tail_len].copy_from_slice(&buffer[offset..]);
+      let mut z_bytes = [0u8; BLOCK_SIZE];
+      store_be(z, &mut z_bytes);
+      let mut pt_pad = [0u8; BLOCK_SIZE];
+      for i in 0..tail_len {
+        pt_pad[i] = pad[i] ^ z_bytes[i];
+      }
+      update(s, load_be(&pt_pad));
+      buffer[offset..].copy_from_slice(&pt_pad[..tail_len]);
+    }
+  }
+
+  #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
+  pub(super) unsafe fn finalize(s: &mut State, ad_len: usize, msg_len: usize) -> [u8; TAG_SIZE] {
+    let ad_bits = (ad_len as u64).strict_mul(8);
+    let msg_bits = (msg_len as u64).strict_mul(8);
+    let mut len_bytes = [0u8; BLOCK_SIZE];
+    len_bytes[..8].copy_from_slice(&ad_bits.to_le_bytes());
+    len_bytes[8..].copy_from_slice(&msg_bits.to_le_bytes());
+    let len_block = load_be(&len_bytes);
+    let t = xor_vec(s[3], len_block);
+
+    for _ in 0..7 {
+      update(s, t);
+    }
+
+    let tag_vec = xor_vec(xor_vec(xor_vec(s[0], s[1]), xor_vec(s[2], s[3])), xor_vec(s[4], s[5]));
+    let mut tag = [0u8; TAG_SIZE];
+    store_be(tag_vec, &mut tag);
+    tag
+  }
+}
+
+// ---------------------------------------------------------------------------
+// s390x VCIPH backend (z14+ MSA8)
+// ---------------------------------------------------------------------------
+
+#[cfg(target_arch = "s390x")]
+#[allow(unsafe_code, unsafe_op_in_unsafe_fn)]
+mod s390x_aes {
+  use core::{arch::asm, simd::i64x2};
+
+  use super::{BLOCK_SIZE, C0, C1, KEY_SIZE, NONCE_SIZE, TAG_SIZE};
+
+  pub(super) type State = [i64x2; 6];
+
+  /// Load a 16-byte block into a z/Vector register.
+  ///
+  /// s390x is big-endian; the block bytes map directly to the vector register
+  /// in memory order.
+  #[inline(always)]
+  fn load(bytes: &[u8; 16]) -> i64x2 {
+    let hi = i64::from_be_bytes([
+      bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+    ]);
+    let lo = i64::from_be_bytes([
+      bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15],
+    ]);
+    i64x2::from_array([hi, lo])
+  }
+
+  /// Store a z/Vector register back to a 16-byte block.
+  #[inline(always)]
+  fn store(v: i64x2, out: &mut [u8; 16]) {
+    let arr = v.to_array();
+    let hi = (arr[0] as u64).to_be_bytes();
+    let lo = (arr[1] as u64).to_be_bytes();
+    out[0..8].copy_from_slice(&hi);
+    out[8..16].copy_from_slice(&lo);
+  }
+
+  /// Single AES round using VCIPH (Vector Cipher Encrypt).
+  ///
+  /// VCIPH v1,v2,v3: one AES middle round where v2=state, v3=round_key, v1=output.
+  /// Matches x86 AESENC semantics.
+  #[target_feature(enable = "vector")]
+  #[inline]
+  unsafe fn aes_round(block: i64x2, round_key: i64x2) -> i64x2 {
+    let out: i64x2;
+    asm!(
+      // VCIPH V1,V2,V3 — opcode E7..77 (VRR-c format)
+      ".insn vrr,0xE70000000077,{out},{block},{rk},0,0,0",
+      out = lateout(vreg) out,
+      block = in(vreg) block,
+      rk = in(vreg) round_key,
+      options(nomem, nostack),
+    );
+    out
+  }
+
+  /// XOR two vector registers.
+  #[inline(always)]
+  fn xor_vec(a: i64x2, b: i64x2) -> i64x2 {
+    let aa = a.to_array();
+    let ba = b.to_array();
+    i64x2::from_array([aa[0] ^ ba[0], aa[1] ^ ba[1]])
+  }
+
+  /// AND two vector registers.
+  #[inline(always)]
+  fn and_vec(a: i64x2, b: i64x2) -> i64x2 {
+    let aa = a.to_array();
+    let ba = b.to_array();
+    i64x2::from_array([aa[0] & ba[0], aa[1] & ba[1]])
+  }
+
+  #[target_feature(enable = "vector")]
+  #[inline]
+  unsafe fn update(s: &mut State, m: i64x2) {
+    let tmp = s[5];
+    s[5] = aes_round(s[4], s[5]);
+    s[4] = aes_round(s[3], s[4]);
+    s[3] = aes_round(s[2], s[3]);
+    s[2] = aes_round(s[1], s[2]);
+    s[1] = aes_round(s[0], s[1]);
+    s[0] = xor_vec(aes_round(tmp, s[0]), m);
+  }
+
+  #[target_feature(enable = "vector")]
+  pub(super) unsafe fn init(key: &[u8; KEY_SIZE], nonce: &[u8; NONCE_SIZE]) -> State {
+    let (kh0, kh1) = super::split_halves(key);
+    let (nh0, nh1) = super::split_halves(nonce);
+    let k0 = load(kh0);
+    let k1 = load(kh1);
+    let n0 = load(nh0);
+    let n1 = load(nh1);
+    let c0 = load(&C0);
+    let c1 = load(&C1);
+
+    let k0_xor_n0 = xor_vec(k0, n0);
+    let k1_xor_n1 = xor_vec(k1, n1);
+
+    let mut s: State = [k0_xor_n0, k1_xor_n1, c1, c0, xor_vec(k0, c0), xor_vec(k1, c1)];
+
+    for _ in 0..4 {
+      update(&mut s, k0);
+      update(&mut s, k1);
+      update(&mut s, k0_xor_n0);
+      update(&mut s, k1_xor_n1);
+    }
+
+    s
+  }
+
+  #[target_feature(enable = "vector")]
+  pub(super) unsafe fn process_aad(s: &mut State, aad: &[u8]) {
+    let mut offset = 0usize;
+
+    while offset.strict_add(BLOCK_SIZE) <= aad.len() {
+      let mut tmp = [0u8; 16];
+      tmp.copy_from_slice(&aad[offset..offset.strict_add(BLOCK_SIZE)]);
+      update(s, load(&tmp));
+      offset = offset.strict_add(BLOCK_SIZE);
+    }
+
+    if offset < aad.len() {
+      let mut pad = [0u8; BLOCK_SIZE];
+      pad[..aad.len().strict_sub(offset)].copy_from_slice(&aad[offset..]);
+      update(s, load(&pad));
+    }
+  }
+
+  #[inline(always)]
+  fn keystream_vec(s: &State) -> i64x2 {
+    let s2_and_s3 = and_vec(s[2], s[3]);
+    xor_vec(xor_vec(s[1], s[4]), xor_vec(s[5], s2_and_s3))
+  }
+
+  #[target_feature(enable = "vector")]
+  pub(super) unsafe fn encrypt(s: &mut State, buffer: &mut [u8]) {
+    let mut offset = 0usize;
+
+    while offset.strict_add(BLOCK_SIZE) <= buffer.len() {
+      let z = keystream_vec(s);
+      let mut tmp = [0u8; 16];
+      tmp.copy_from_slice(&buffer[offset..offset.strict_add(BLOCK_SIZE)]);
+      let xi = load(&tmp);
+      update(s, xi);
+      let ci = xor_vec(xi, z);
+      store(ci, &mut tmp);
+      buffer[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&tmp);
+      offset = offset.strict_add(BLOCK_SIZE);
+    }
+
+    if offset < buffer.len() {
+      let z = keystream_vec(s);
+      let tail_len = buffer.len().strict_sub(offset);
+      let mut pad = [0u8; BLOCK_SIZE];
+      pad[..tail_len].copy_from_slice(&buffer[offset..]);
+      let xi = load(&pad);
+      update(s, xi);
+      let mut ct_bytes = [0u8; BLOCK_SIZE];
+      store(xor_vec(xi, z), &mut ct_bytes);
+      buffer[offset..].copy_from_slice(&ct_bytes[..tail_len]);
+    }
+  }
+
+  #[target_feature(enable = "vector")]
+  pub(super) unsafe fn decrypt(s: &mut State, buffer: &mut [u8]) {
+    let mut offset = 0usize;
+
+    while offset.strict_add(BLOCK_SIZE) <= buffer.len() {
+      let z = keystream_vec(s);
+      let mut tmp = [0u8; 16];
+      tmp.copy_from_slice(&buffer[offset..offset.strict_add(BLOCK_SIZE)]);
+      let ci = load(&tmp);
+      let xi = xor_vec(ci, z);
+      update(s, xi);
+      store(xi, &mut tmp);
+      buffer[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&tmp);
+      offset = offset.strict_add(BLOCK_SIZE);
+    }
+
+    if offset < buffer.len() {
+      let z = keystream_vec(s);
+      let tail_len = buffer.len().strict_sub(offset);
+      let mut pad = [0u8; BLOCK_SIZE];
+      pad[..tail_len].copy_from_slice(&buffer[offset..]);
+      let mut z_bytes = [0u8; BLOCK_SIZE];
+      store(z, &mut z_bytes);
+      let mut pt_pad = [0u8; BLOCK_SIZE];
+      for i in 0..tail_len {
+        pt_pad[i] = pad[i] ^ z_bytes[i];
+      }
+      update(s, load(&pt_pad));
+      buffer[offset..].copy_from_slice(&pt_pad[..tail_len]);
+    }
+  }
+
+  #[target_feature(enable = "vector")]
+  pub(super) unsafe fn finalize(s: &mut State, ad_len: usize, msg_len: usize) -> [u8; TAG_SIZE] {
+    let ad_bits = (ad_len as u64).strict_mul(8);
+    let msg_bits = (msg_len as u64).strict_mul(8);
+    let mut len_bytes = [0u8; BLOCK_SIZE];
+    len_bytes[..8].copy_from_slice(&ad_bits.to_le_bytes());
+    len_bytes[8..].copy_from_slice(&msg_bits.to_le_bytes());
+    let len_block = load(&len_bytes);
+    let t = xor_vec(s[3], len_block);
+
+    for _ in 0..7 {
+      update(s, t);
+    }
+
+    let tag_vec = xor_vec(xor_vec(xor_vec(s[0], s[1]), xor_vec(s[2], s[3])), xor_vec(s[4], s[5]));
+    let mut tag = [0u8; TAG_SIZE];
+    store(tag_vec, &mut tag);
+    tag
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Backend dispatch
 // ---------------------------------------------------------------------------
 
 /// Whether hardware AES acceleration is available.
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[cfg(any(
+  target_arch = "x86_64",
+  target_arch = "aarch64",
+  all(target_arch = "powerpc64", target_endian = "little"),
+  target_arch = "s390x",
+))]
 #[inline]
 fn has_hw_aes() -> bool {
   #[cfg(target_arch = "x86_64")]
@@ -548,6 +989,18 @@ fn has_hw_aes() -> bool {
   {
     use crate::platform::caps::aarch64;
     crate::platform::caps().has(aarch64::AES)
+  }
+  #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+  {
+    use crate::platform::caps::power;
+    crate::platform::caps().has(power::POWER8_CRYPTO)
+  }
+  #[cfg(target_arch = "s390x")]
+  {
+    use crate::platform::caps::s390x;
+    // VCIPH requires z14+ (Vector Enhancements 1 / MSA8).
+    let caps = crate::platform::caps();
+    caps.has(s390x::VECTOR_ENH1) && caps.has(s390x::MSA8)
   }
 }
 
@@ -680,8 +1133,9 @@ impl fmt::Debug for Aegis256Tag {
 /// AEGIS-256 authenticated encryption with associated data.
 ///
 /// High-performance AES-based AEAD with a 256-bit key, 256-bit nonce,
-/// and 128-bit authentication tag. On hardware with AES-NI (x86_64) or
-/// AES-CE (aarch64), AEGIS-256 achieves ~2-3x the throughput of AES-256-GCM.
+/// and 128-bit authentication tag. On hardware with AES round instructions
+/// (AES-NI, AES-CE, POWER8 vcipher, z14+ VCIPH), AEGIS-256 achieves
+/// ~2-3x the throughput of AES-256-GCM.
 ///
 /// # Examples
 ///
@@ -897,6 +1351,32 @@ impl Aead for Aegis256 {
       return Aegis256Tag::from_bytes(tag);
     }
 
+    #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+    if has_hw_aes() {
+      // SAFETY: has_hw_aes() confirmed POWER8 crypto is available.
+      let tag = unsafe {
+        let mut s = ppc::init(key, nonce);
+        ppc::process_aad(&mut s, aad);
+        let msg_len = buffer.len();
+        ppc::encrypt(&mut s, buffer);
+        ppc::finalize(&mut s, aad.len(), msg_len)
+      };
+      return Aegis256Tag::from_bytes(tag);
+    }
+
+    #[cfg(target_arch = "s390x")]
+    if has_hw_aes() {
+      // SAFETY: has_hw_aes() confirmed z14+ VCIPH is available.
+      let tag = unsafe {
+        let mut s = s390x_aes::init(key, nonce);
+        s390x_aes::process_aad(&mut s, aad);
+        let msg_len = buffer.len();
+        s390x_aes::encrypt(&mut s, buffer);
+        s390x_aes::finalize(&mut s, aad.len(), msg_len)
+      };
+      return Aegis256Tag::from_bytes(tag);
+    }
+
     Aegis256Tag::from_bytes(encrypt_portable(key, nonce, aad, buffer))
   }
 
@@ -938,7 +1418,40 @@ impl Aead for Aegis256 {
       decrypt_portable(key, nonce, aad, buffer)
     };
 
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+    let computed = if has_hw_aes() {
+      // SAFETY: has_hw_aes() confirmed POWER8 crypto is available.
+      unsafe {
+        let mut s = ppc::init(key, nonce);
+        ppc::process_aad(&mut s, aad);
+        let ct_len = buffer.len();
+        ppc::decrypt(&mut s, buffer);
+        ppc::finalize(&mut s, aad.len(), ct_len)
+      }
+    } else {
+      decrypt_portable(key, nonce, aad, buffer)
+    };
+
+    #[cfg(target_arch = "s390x")]
+    let computed = if has_hw_aes() {
+      // SAFETY: has_hw_aes() confirmed z14+ VCIPH is available.
+      unsafe {
+        let mut s = s390x_aes::init(key, nonce);
+        s390x_aes::process_aad(&mut s, aad);
+        let ct_len = buffer.len();
+        s390x_aes::decrypt(&mut s, buffer);
+        s390x_aes::finalize(&mut s, aad.len(), ct_len)
+      }
+    } else {
+      decrypt_portable(key, nonce, aad, buffer)
+    };
+
+    #[cfg(not(any(
+      target_arch = "x86_64",
+      target_arch = "aarch64",
+      all(target_arch = "powerpc64", target_endian = "little"),
+      target_arch = "s390x",
+    )))]
     let computed = decrypt_portable(key, nonce, aad, buffer);
 
     if !ct::constant_time_eq(&computed, tag.as_bytes()) {

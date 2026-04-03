@@ -94,6 +94,7 @@ fn init_state(key: &[u8; KEY_SIZE], counter: u32, nonce: &[u8; NONCE_SIZE]) -> [
   ]
 }
 
+#[cfg(not(target_arch = "aarch64"))]
 #[inline]
 fn init_hchacha_state(key: &[u8; KEY_SIZE], nonce: &[u8; HCHACHA_NONCE_SIZE]) -> [u32; 16] {
   [
@@ -139,9 +140,18 @@ pub(crate) fn block(key: &[u8; KEY_SIZE], counter: u32, nonce: &[u8; NONCE_SIZE]
 /// Derive a one-time Poly1305 key from the ChaCha20 block with counter 0.
 #[must_use]
 pub(crate) fn poly1305_key_gen(key: &[u8; KEY_SIZE], nonce: &[u8; NONCE_SIZE]) -> [u8; POLY1305_KEY_SIZE] {
-  let mut out = [0u8; POLY1305_KEY_SIZE];
-  out.copy_from_slice(&block(key, 0, nonce)[..POLY1305_KEY_SIZE]);
-  out
+  #[cfg(target_arch = "aarch64")]
+  // SAFETY: NEON is always available on aarch64 (mandatory since ARMv8).
+  unsafe {
+    aarch64_neon::poly1305_key_gen_neon(key, nonce)
+  }
+
+  #[cfg(not(target_arch = "aarch64"))]
+  {
+    let mut out = [0u8; POLY1305_KEY_SIZE];
+    out.copy_from_slice(&block(key, 0, nonce)[..POLY1305_KEY_SIZE]);
+    out
+  }
 }
 
 /// XOR the ChaCha20 keystream into `buffer` starting from `initial_counter`.
@@ -383,16 +393,25 @@ unsafe fn xor_keystream_u32x4_impl(
 /// HChaCha20 subkey derivation for XChaCha20.
 #[must_use]
 pub(crate) fn hchacha20(key: &[u8; KEY_SIZE], nonce: &[u8; HCHACHA_NONCE_SIZE]) -> [u8; KEY_SIZE] {
-  let mut state = init_hchacha_state(key, nonce);
-  rounds(&mut state);
-
-  let mut out = [0u8; KEY_SIZE];
-  for (chunk, word) in out.chunks_exact_mut(4).zip([
-    state[0], state[1], state[2], state[3], state[12], state[13], state[14], state[15],
-  ]) {
-    chunk.copy_from_slice(&word.to_le_bytes());
+  #[cfg(target_arch = "aarch64")]
+  // SAFETY: NEON is always available on aarch64 (mandatory since ARMv8).
+  unsafe {
+    aarch64_neon::hchacha20_neon(key, nonce)
   }
-  out
+
+  #[cfg(not(target_arch = "aarch64"))]
+  {
+    let mut state = init_hchacha_state(key, nonce);
+    rounds(&mut state);
+
+    let mut out = [0u8; KEY_SIZE];
+    for (chunk, word) in out.chunks_exact_mut(4).zip([
+      state[0], state[1], state[2], state[3], state[12], state[13], state[14], state[15],
+    ]) {
+      chunk.copy_from_slice(&word.to_le_bytes());
+    }
+    out
+  }
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -904,10 +923,10 @@ mod x86_avx2 {
 #[cfg(target_arch = "aarch64")]
 mod aarch64_neon {
   use core::arch::aarch64::{
-    uint32x4_t, vaddq_u32, vdupq_n_u32, veorq_u32, vld1q_u32, vorrq_u32, vshlq_n_u32, vshrq_n_u32, vst1q_u32,
+    uint32x4_t, vaddq_u32, vdupq_n_u32, veorq_u32, vextq_u32, vld1q_u32, vorrq_u32, vshlq_n_u32, vshrq_n_u32, vst1q_u32,
   };
 
-  use super::{BLOCK_SIZE, KEY_SIZE, NONCE_SIZE, load_u32_le, xor_keystream_portable};
+  use super::{BLOCK_SIZE, CONSTANTS, HCHACHA_NONCE_SIZE, KEY_SIZE, NONCE_SIZE, POLY1305_KEY_SIZE, load_u32_le};
 
   const BLOCKS_PER_BATCH: usize = 4;
 
@@ -1043,9 +1062,20 @@ mod aarch64_neon {
       counter = counter.wrapping_add(BLOCKS_PER_BATCH as u32);
     }
 
+    // Use NEON single-block for remainder instead of portable scalar.
     let remainder = batches.into_remainder();
     if !remainder.is_empty() {
-      xor_keystream_portable(key, counter, nonce, remainder);
+      for chunk in remainder.chunks_mut(BLOCK_SIZE) {
+        // SAFETY: NEON availability guaranteed by the backend dispatch that selected this path.
+        let blk = unsafe { block_neon(key, counter, nonce) };
+        for (dst, src) in chunk.iter_mut().zip(blk.iter().copied()) {
+          *dst ^= src;
+        }
+        counter = match counter.checked_add(1) {
+          Some(next) => next,
+          None => panic!("ChaCha20 block counter overflow"),
+        };
+      }
     }
   }
 
@@ -1077,6 +1107,169 @@ mod aarch64_neon {
         _ => unreachable!("ChaCha20 only rotates by fixed amounts"),
       }
     }
+  }
+
+  // ─── Single-block NEON core ───────────────────────────────────────────
+  //
+  // State packed as 4 × uint32x4_t (row-major):
+  //   v0 = [s0, s1, s2, s3]    (constants)
+  //   v1 = [s4, s5, s6, s7]    (key lo)
+  //   v2 = [s8, s9, s10, s11]  (key hi)
+  //   v3 = [s12, s13, s14, s15] (counter + nonce)
+  //
+  // Column round operates on columns directly.
+  // Diagonal round rotates v1 left by 1, v2 by 2, v3 by 3, then reverses.
+
+  /// 10 double-rounds on a row-major single-block NEON state.
+  #[inline(always)]
+  fn chacha20_rounds_single(v0: &mut uint32x4_t, v1: &mut uint32x4_t, v2: &mut uint32x4_t, v3: &mut uint32x4_t) {
+    let mut round = 0usize;
+    while round < 10 {
+      // Column round: QR(0,4,8,12), QR(1,5,9,13), QR(2,6,10,14), QR(3,7,11,15)
+      quarter_round(v0, v1, v2, v3);
+
+      // Diagonal round: rotate rows to align diagonals into columns
+      // SAFETY: vextq_u32 is NEON; callers guarantee NEON is available.
+      unsafe {
+        *v1 = vextq_u32(*v1, *v1, 1); // [s5, s6, s7, s4]
+        *v2 = vextq_u32(*v2, *v2, 2); // [s10, s11, s8, s9]
+        *v3 = vextq_u32(*v3, *v3, 3); // [s15, s12, s13, s14]
+      }
+
+      quarter_round(v0, v1, v2, v3);
+
+      // Restore original lane order
+      // SAFETY: same as above.
+      unsafe {
+        *v1 = vextq_u32(*v1, *v1, 3); // rotate right 1
+        *v2 = vextq_u32(*v2, *v2, 2); // rotate right 2
+        *v3 = vextq_u32(*v3, *v3, 1); // rotate right 3
+      }
+
+      round = round.strict_add(1);
+    }
+  }
+
+  /// Load the initial ChaCha20 state into 4 NEON vectors.
+  #[inline(always)]
+  fn load_state(key: &[u8; KEY_SIZE], w12: u32, w13: u32, w14: u32, w15: u32) -> [uint32x4_t; 4] {
+    // SAFETY: vld1q_u32 is NEON; callers guarantee NEON is available.
+    unsafe {
+      [
+        vld1q_u32([CONSTANTS[0], CONSTANTS[1], CONSTANTS[2], CONSTANTS[3]].as_ptr()),
+        vld1q_u32(
+          [
+            load_u32_le(&key[0..4]),
+            load_u32_le(&key[4..8]),
+            load_u32_le(&key[8..12]),
+            load_u32_le(&key[12..16]),
+          ]
+          .as_ptr(),
+        ),
+        vld1q_u32(
+          [
+            load_u32_le(&key[16..20]),
+            load_u32_le(&key[20..24]),
+            load_u32_le(&key[24..28]),
+            load_u32_le(&key[28..32]),
+          ]
+          .as_ptr(),
+        ),
+        vld1q_u32([w12, w13, w14, w15].as_ptr()),
+      ]
+    }
+  }
+
+  /// Serialize 4 state vectors to LE bytes.
+  #[inline(always)]
+  fn store_state(v: &[uint32x4_t; 4], out: &mut [u8; BLOCK_SIZE]) {
+    let mut words = [0u32; 16];
+    // SAFETY: vst1q_u32 is NEON; callers guarantee NEON is available.
+    unsafe {
+      vst1q_u32(words[0..].as_mut_ptr(), v[0]);
+      vst1q_u32(words[4..].as_mut_ptr(), v[1]);
+      vst1q_u32(words[8..].as_mut_ptr(), v[2]);
+      vst1q_u32(words[12..].as_mut_ptr(), v[3]);
+    }
+    let mut i = 0usize;
+    while i < 16 {
+      let off = i.strict_mul(4);
+      out[off..off.strict_add(4)].copy_from_slice(&words[i].to_le_bytes());
+      i = i.strict_add(1);
+    }
+  }
+
+  /// Generate a single ChaCha20 block using NEON.
+  #[target_feature(enable = "neon")]
+  pub(super) unsafe fn block_neon(
+    key: &[u8; KEY_SIZE],
+    counter: u32,
+    nonce: &[u8; super::NONCE_SIZE],
+  ) -> [u8; BLOCK_SIZE] {
+    let [mut v0, mut v1, mut v2, mut v3] = load_state(
+      key,
+      counter,
+      load_u32_le(&nonce[0..4]),
+      load_u32_le(&nonce[4..8]),
+      load_u32_le(&nonce[8..12]),
+    );
+
+    let (o0, o1, o2, o3) = (v0, v1, v2, v3);
+    chacha20_rounds_single(&mut v0, &mut v1, &mut v2, &mut v3);
+
+    // Add original state (vaddq_u32 is safe under target_feature gate).
+    v0 = vaddq_u32(v0, o0);
+    v1 = vaddq_u32(v1, o1);
+    v2 = vaddq_u32(v2, o2);
+    v3 = vaddq_u32(v3, o3);
+
+    let mut out = [0u8; BLOCK_SIZE];
+    store_state(&[v0, v1, v2, v3], &mut out);
+    out
+  }
+
+  /// HChaCha20 using NEON: subkey derivation for XChaCha20.
+  #[target_feature(enable = "neon")]
+  pub(super) unsafe fn hchacha20_neon(key: &[u8; KEY_SIZE], nonce: &[u8; HCHACHA_NONCE_SIZE]) -> [u8; KEY_SIZE] {
+    let [mut v0, mut v1, mut v2, mut v3] = load_state(
+      key,
+      load_u32_le(&nonce[0..4]),
+      load_u32_le(&nonce[4..8]),
+      load_u32_le(&nonce[8..12]),
+      load_u32_le(&nonce[12..16]),
+    );
+
+    // HChaCha20: rounds only, no add-back of initial state
+    chacha20_rounds_single(&mut v0, &mut v1, &mut v2, &mut v3);
+
+    // Extract words 0-3 (from v0) and 12-15 (from v3)
+    let mut out = [0u8; KEY_SIZE];
+    let mut words = [0u32; 8];
+    // SAFETY: vst1q_u32 is NEON; target_feature gate guarantees availability.
+    unsafe {
+      vst1q_u32(words[0..].as_mut_ptr(), v0);
+      vst1q_u32(words[4..].as_mut_ptr(), v3);
+    }
+    let mut i = 0usize;
+    while i < 8 {
+      let off = i.strict_mul(4);
+      out[off..off.strict_add(4)].copy_from_slice(&words[i].to_le_bytes());
+      i = i.strict_add(1);
+    }
+    out
+  }
+
+  /// Derive a one-time Poly1305 key using NEON single-block.
+  #[target_feature(enable = "neon")]
+  pub(super) unsafe fn poly1305_key_gen_neon(
+    key: &[u8; KEY_SIZE],
+    nonce: &[u8; super::NONCE_SIZE],
+  ) -> [u8; POLY1305_KEY_SIZE] {
+    // SAFETY: block_neon requires NEON, which target_feature gate provides.
+    let blk = unsafe { block_neon(key, 0, nonce) };
+    let mut out = [0u8; POLY1305_KEY_SIZE];
+    out.copy_from_slice(&blk[..POLY1305_KEY_SIZE]);
+    out
   }
 }
 

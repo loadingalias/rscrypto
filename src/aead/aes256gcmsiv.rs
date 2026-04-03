@@ -216,38 +216,38 @@ impl Aes256GcmSiv {
 /// and nonce (RFC 8452 §4, AES-256 variant).
 ///
 /// Returns (auth_key [16 bytes], enc_key [32 bytes]).
+///
+/// Prepares all 6 counter blocks up front and encrypts them in a single
+/// batch call. On s390x this collapses 6 individual KM invocations into
+/// one, eliminating per-block overhead that dominates at small sizes.
 #[inline]
 fn derive_keys(master_key: &[u8; KEY_SIZE], nonce: &Nonce96) -> ([u8; 16], [u8; 32]) {
   let ek = aes::aes256_expand_key(master_key);
   let nonce_bytes = nonce.as_bytes();
 
-  let mut auth_key = [0u8; 16];
-  let mut enc_key = [0u8; 32];
-
-  // 6 AES block encryptions: counter (LE32) || nonce (96 bits)
-  let mut counter_block = [0u8; 16];
-  counter_block[4..16].copy_from_slice(nonce_bytes);
-
+  // Build all 6 counter blocks: counter (LE32) || nonce (96 bits).
+  let mut blocks = [[0u8; 16]; 6];
   let mut i = 0u32;
   while i < 6 {
-    counter_block[0..4].copy_from_slice(&i.to_le_bytes());
-    let mut block = counter_block;
-    aes::aes256_encrypt_block(&ek, &mut block);
-
-    // Take only the first 8 bytes of each encrypted block.
-    match i {
-      0 => auth_key[0..8].copy_from_slice(&block[0..8]),
-      1 => auth_key[8..16].copy_from_slice(&block[0..8]),
-      2 => enc_key[0..8].copy_from_slice(&block[0..8]),
-      3 => enc_key[8..16].copy_from_slice(&block[0..8]),
-      4 => enc_key[16..24].copy_from_slice(&block[0..8]),
-      5 => enc_key[24..32].copy_from_slice(&block[0..8]),
-      _ => unreachable!(),
-    }
-    ct::zeroize(&mut block);
+    blocks[i as usize][0..4].copy_from_slice(&i.to_le_bytes());
+    blocks[i as usize][4..16].copy_from_slice(nonce_bytes);
     i = i.strict_add(1);
   }
 
+  // Encrypt all 6 blocks (single KM call on s390x, per-block elsewhere).
+  aes::aes256_encrypt_blocks_ecb(&ek, &mut blocks);
+
+  // Extract the first 8 bytes of each encrypted block.
+  let mut auth_key = [0u8; 16];
+  let mut enc_key = [0u8; 32];
+  auth_key[0..8].copy_from_slice(&blocks[0][0..8]);
+  auth_key[8..16].copy_from_slice(&blocks[1][0..8]);
+  enc_key[0..8].copy_from_slice(&blocks[2][0..8]);
+  enc_key[8..16].copy_from_slice(&blocks[3][0..8]);
+  enc_key[16..24].copy_from_slice(&blocks[4][0..8]);
+  enc_key[24..32].copy_from_slice(&blocks[5][0..8]);
+
+  ct::zeroize(blocks.as_flattened_mut());
   (auth_key, enc_key)
 }
 
