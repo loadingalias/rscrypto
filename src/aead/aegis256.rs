@@ -792,18 +792,16 @@ mod s390x_aes {
 
   /// Single AES round using VCIPH (Vector Cipher Encrypt).
   ///
-  /// Uses `.insn vrr` with `vreg` operands so the register allocator
-  /// assigns real vector registers. This eliminates the VL/VST memory
-  /// round-trips and hardcoded-register conflicts of the previous V128
-  /// approach that caused SIGSEGV.
-  #[target_feature(enable = "vector")]
+  /// Uses the `vciph` mnemonic with `vreg` operands so the register
+  /// allocator assigns real vector registers and the assembler handles
+  /// VRR-c encoding (including RXB) correctly.
+  #[target_feature(enable = "vector,message-security-assist-extension8")]
   #[inline]
   unsafe fn aes_round(block: i64x2, round_key: i64x2) -> i64x2 {
     let out: i64x2;
     // SAFETY: VECTOR_ENH1 + MSA8 verified by caller (has_hw_aes).
-    // .insn vrr encodes VCIPH (E7___77) in VRR-c format: V1=out, V2=block, V3=rk.
     asm!(
-      ".insn vrr,0xE70000000077,{out},{block},{rk},0,0,0",
+      "vciph {out}, {block}, {rk}",
       out = lateout(vreg) out,
       block = in(vreg) block,
       rk = in(vreg) round_key,
@@ -828,7 +826,7 @@ mod s390x_aes {
     i64x2::from_array([aa[0] & ba[0], aa[1] & ba[1]])
   }
 
-  #[target_feature(enable = "vector")]
+  #[target_feature(enable = "vector,message-security-assist-extension8")]
   #[inline]
   unsafe fn update(s: &mut State, m: i64x2) {
     let tmp = s[5];
@@ -840,7 +838,7 @@ mod s390x_aes {
     s[0] = xor_vec(aes_round(tmp, s[0]), m);
   }
 
-  #[target_feature(enable = "vector")]
+  #[target_feature(enable = "vector,message-security-assist-extension8")]
   pub(super) unsafe fn init(key: &[u8; KEY_SIZE], nonce: &[u8; NONCE_SIZE]) -> State {
     let (kh0, kh1) = super::split_halves(key);
     let (nh0, nh1) = super::split_halves(nonce);
@@ -866,7 +864,7 @@ mod s390x_aes {
     s
   }
 
-  #[target_feature(enable = "vector")]
+  #[target_feature(enable = "vector,message-security-assist-extension8")]
   pub(super) unsafe fn process_aad(s: &mut State, aad: &[u8]) {
     let mut offset = 0usize;
 
@@ -890,7 +888,7 @@ mod s390x_aes {
     xor_vec(xor_vec(s[1], s[4]), xor_vec(s[5], s2_and_s3))
   }
 
-  #[target_feature(enable = "vector")]
+  #[target_feature(enable = "vector,message-security-assist-extension8")]
   pub(super) unsafe fn encrypt(s: &mut State, buffer: &mut [u8]) {
     let mut offset = 0usize;
 
@@ -919,7 +917,7 @@ mod s390x_aes {
     }
   }
 
-  #[target_feature(enable = "vector")]
+  #[target_feature(enable = "vector,message-security-assist-extension8")]
   pub(super) unsafe fn decrypt(s: &mut State, buffer: &mut [u8]) {
     let mut offset = 0usize;
 
@@ -951,7 +949,7 @@ mod s390x_aes {
     }
   }
 
-  #[target_feature(enable = "vector")]
+  #[target_feature(enable = "vector,message-security-assist-extension8")]
   pub(super) unsafe fn finalize(s: &mut State, ad_len: usize, msg_len: usize) -> [u8; TAG_SIZE] {
     let ad_bits = (ad_len as u64).strict_mul(8);
     let msg_bits = (msg_len as u64).strict_mul(8);

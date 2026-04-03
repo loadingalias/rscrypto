@@ -186,9 +186,10 @@
   feature(asm_experimental_arch, portable_simd, powerpc_target_feature)
 )]
 // s390x VGFM backend uses vector asm + portable SIMD.
+// NIGHTLY: s390x_target_feature enables MSA8 target_feature for VCIPH mnemonic.
 #![cfg_attr(
   target_arch = "s390x",
-  feature(asm_experimental_arch, asm_experimental_reg, portable_simd)
+  feature(asm_experimental_arch, asm_experimental_reg, portable_simd, s390x_target_feature)
 )]
 // riscv64 ZVBC backend uses vector target features + inline asm.
 // NIGHTLY: riscv_ext_intrinsics provides sha256{sum,sig}{0,1} Zknh intrinsics.
