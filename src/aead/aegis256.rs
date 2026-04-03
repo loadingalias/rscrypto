@@ -765,19 +765,19 @@ mod s390x_aes {
 
   /// Load 16 bytes into a vector register preserving byte order.
   ///
-  /// On big-endian s390x, `i64x2` element 0 maps to VR bytes 0-7 (MSB
-  /// doubleword) and element 1 to bytes 8-15, both in native (big-endian)
-  /// byte order. We construct the i64 values from big-endian byte slices
-  /// so the resulting VR has the same byte pattern as the input — matching
-  /// the layout that VCIPH expects.
+  /// LLVM maps `i64x2` element 0 to the **low** doubleword of the VR
+  /// (bytes 8-15) on both s390x and ppc64le.  VCIPH operates on the
+  /// full 128-bit VR in big-endian byte order (byte 0 = MSB), so we
+  /// must place bytes[0..7] in element **1** (VR high half) and
+  /// bytes[8..15] in element **0** (VR low half).
   #[inline(always)]
   fn load(bytes: &[u8; 16]) -> i64x2 {
     i64x2::from_array([
       i64::from_be_bytes([
-        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+        bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15],
       ]),
       i64::from_be_bytes([
-        bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15],
+        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
       ]),
     ])
   }
@@ -786,28 +786,24 @@ mod s390x_aes {
   #[inline(always)]
   fn store(v: i64x2, out: &mut [u8; 16]) {
     let arr = v.to_array();
-    out[..8].copy_from_slice(&arr[0].to_be_bytes());
-    out[8..].copy_from_slice(&arr[1].to_be_bytes());
+    out[..8].copy_from_slice(&arr[1].to_be_bytes());
+    out[8..].copy_from_slice(&arr[0].to_be_bytes());
   }
 
   /// Single AES round using VCIPH (Vector Cipher Encrypt).
   ///
-  /// Uses explicit register names (`%v0`, `%v1`) so the `.insn vrr`
-  /// encoding always has RXB = 0. The `vreg` + `.insn` combination
-  /// can mis-encode RXB when LLVM assigns V16-V31, because the
-  /// assembler's generic VRR handler doesn't know the VRR-c field
-  /// layout for instructions outside its table (VCIPH requires MSA5+
-  /// which the target may not advertise).
+  /// `.insn vrr` encodes VCIPH (E7___77) in VRR-c format with `vreg`
+  /// operands so the register allocator assigns real vector registers.
   #[target_feature(enable = "vector,message-security-assist-extension8")]
   #[inline]
   unsafe fn aes_round(block: i64x2, round_key: i64x2) -> i64x2 {
     let out: i64x2;
     // SAFETY: VECTOR_ENH1 + MSA8 verified by caller (has_hw_aes).
-    // .insn vrr encodes VCIPH (E7___77) in VRR-c format.
     asm!(
-      ".insn vrr,0xE70000000077,%v0,%v0,%v1,0,0,0",
-      inlateout("v0") block => out,
-      in("v1") round_key,
+      ".insn vrr,0xE70000000077,{out},{block},{rk},0,0,0",
+      out = lateout(vreg) out,
+      block = in(vreg) block,
+      rk = in(vreg) round_key,
       options(nomem, nostack, pure),
     );
     out
