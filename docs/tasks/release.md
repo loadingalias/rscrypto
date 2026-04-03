@@ -1,7 +1,7 @@
 # v0.1.0 Release Plan
 
-> **Last updated:** 2026-04-01
-> **Status:** Pre-release — correctness validated, packaging verified, non-loss gate passed, pure-win gate missed
+> **Last updated:** 2026-04-03
+> **Status:** Pre-release — correctness validated, packaging verified, non-loss gate passed, pure-win gate approaching
 
 ---
 
@@ -22,12 +22,12 @@ No correctness blocker found. The crate passes:
 Canonical benchmark source: [`docs/bench/BENCHMARKS.md`](bench/BENCHMARKS.md),
 CI run `#23822408700` on 2026-03-31.
 
-Overall scoreboard: `1396W / 435T / 324L` across `2155` comparisons.
+Overall scoreboard: `1300W / 445T / 217L` across `1962` comparisons (updated 2026-04-03 after POLY-4).
 
 Release gates:
 
-1. non-loss rate `((W + T) / total)` = `1831 / 2155 = 84.97%` — **passes** the `80%` gate
-2. pure win rate `(W / total)` = `1396 / 2155 = 64.78%` — **misses** the `70%` public-release bar
+1. non-loss rate `((W + T) / total)` = `1745 / 1962 = 88.94%` — **passes** the `80%` gate
+2. pure win rate `(W / total)` = `1300 / 1962 = 66.26%` — **approaching** the `70%` public-release bar (was 64.78%)
 
 | Category | Win% | Status |
 |----------|------|--------|

@@ -267,28 +267,40 @@ mod km {
 
   /// AES-256 key for the KM (Cipher Message) instruction.
   ///
-  /// Stores the full expanded round key schedule (`[u32; 60]`, 240 bytes)
-  /// — the same layout as the `Portable` variant. KM only needs the raw
-  /// 32-byte key (the first 8 words), but storing the full schedule keeps
-  /// `KeyInner` uniformly sized across all backends and avoids heap
-  /// allocation that would compromise zeroize-on-drop guarantees.
-  ///
-  /// The raw key is extracted from `rk[0..8]` at encrypt time — 8 BE
-  /// serializations dominated by the KM instruction's own latency.
+  /// Caches the raw 32-byte key (extracted once at key-expansion time)
+  /// alongside the full expanded schedule. This avoids 8 BE serializations
+  /// per `encrypt_block` call — critical for GCM-SIV which does 7 AES
+  /// calls for even a 0-byte message.
   #[derive(Clone)]
   #[repr(C, align(8))]
   pub(super) struct KmKey {
+    /// Raw 32-byte AES-256 key, ready for the KM parameter block.
+    raw: [u8; 32],
+    /// Full expanded schedule (kept for potential future use / uniform sizing).
     rk: [u32; EXPANDED_KEY_WORDS],
   }
 
   impl KmKey {
     /// Wrap an already-expanded portable round key schedule for KM.
     pub(super) fn from_portable(rk: [u32; EXPANDED_KEY_WORDS]) -> Self {
-      Self { rk }
+      // Extract the raw 32-byte key from the first 8 big-endian u32 words.
+      let mut raw = [0u8; 32];
+      let mut i = 0usize;
+      while i < 8 {
+        let off = i.strict_mul(4);
+        let bytes = rk[i].to_be_bytes();
+        raw[off] = bytes[0];
+        raw[off.strict_add(1)] = bytes[1];
+        raw[off.strict_add(2)] = bytes[2];
+        raw[off.strict_add(3)] = bytes[3];
+        i = i.strict_add(1);
+      }
+      Self { raw, rk }
     }
 
-    /// Zeroize the full key schedule via volatile writes.
+    /// Zeroize both the raw key and the full key schedule.
     pub(super) fn zeroize(&mut self) {
+      crate::traits::ct::zeroize(&mut self.raw);
       // SAFETY: [u32; 60] is layout-compatible with [u8; 240].
       let bytes =
         unsafe { core::slice::from_raw_parts_mut(self.rk.as_mut_ptr().cast::<u8>(), EXPANDED_KEY_WORDS.strict_mul(4)) };
@@ -298,32 +310,14 @@ mod km {
 
   /// Encrypt a single 16-byte block using the KM instruction (AES-256 ECB).
   ///
-  /// Extracts the raw 32-byte key from the first 8 words of the expanded
-  /// schedule and passes it as the KM parameter block.
-  ///
   /// # Safety
   /// Caller must ensure the MSA (CPACF) facility is available.
   pub(super) unsafe fn encrypt_block(key: &KmKey, block: &mut [u8; 16]) {
-    // Extract the raw 32-byte key from the first 8 big-endian u32 words
-    // of the expanded schedule. This is the original key material that
-    // the AES-256 key expansion starts from.
-    let mut raw_key = [0u8; 32];
-    let mut i = 0usize;
-    while i < 8 {
-      let off = i.strict_mul(4);
-      let bytes = key.rk[i].to_be_bytes();
-      raw_key[off] = bytes[0];
-      raw_key[off.strict_add(1)] = bytes[1];
-      raw_key[off.strict_add(2)] = bytes[2];
-      raw_key[off.strict_add(3)] = bytes[3];
-      i = i.strict_add(1);
-    }
-
     // KM requires non-overlapping source and destination. Copy the
     // plaintext to a stack buffer, encrypt from there into `block`.
     let mut src: [u8; 16] = *block;
 
-    let parm = raw_key.as_ptr();
+    let parm = key.raw.as_ptr();
     let src_ptr = src.as_ptr();
     let dest_ptr = block.as_mut_ptr();
 
@@ -338,8 +332,8 @@ mod km {
     //
     // CC=0: complete. CC=2: partial (kernel preemption) — retry.
     //
-    // SAFETY: MSA verified by caller. Parameter block is the 32-byte
-    // raw key (stack-allocated, 8-aligned via array). Source and
+    // SAFETY: MSA verified by caller. Parameter block is the cached
+    // 32-byte raw key (8-aligned via repr(C, align(8))). Source and
     // destination are valid, non-overlapping 16-byte buffers.
     unsafe {
       core::arch::asm!(
@@ -356,9 +350,48 @@ mod km {
       );
     }
 
-    // Zeroize stack temporaries.
-    crate::traits::ct::zeroize(&mut raw_key);
     crate::traits::ct::zeroize(&mut src);
+  }
+
+  /// Encrypt multiple independent 16-byte blocks using a single KM call.
+  ///
+  /// KM in ECB mode (function code 20) processes `count` contiguous blocks
+  /// in one instruction invocation. This is critical for GCM-SIV key
+  /// derivation which requires 6 independent AES-ECB encryptions.
+  ///
+  /// # Safety
+  /// Caller must ensure the MSA (CPACF) facility is available.
+  /// `blocks` must contain exactly `count * 16` bytes.
+  pub(super) unsafe fn encrypt_blocks(key: &KmKey, blocks: &mut [u8], count: usize) {
+    debug_assert_eq!(blocks.len(), count.strict_mul(16));
+
+    // KM requires non-overlapping source and destination.
+    // Allocate a stack buffer for the source copy.
+    let len = count.strict_mul(16);
+    let mut src = [0u8; 16 * 8]; // max 8 blocks (128 bytes), enough for GCM-SIV's 6
+    src[..len].copy_from_slice(&blocks[..len]);
+
+    let parm = key.raw.as_ptr();
+    let src_ptr = src.as_ptr();
+    let dest_ptr = blocks.as_mut_ptr();
+
+    // SAFETY: Same as encrypt_block. len = count*16 bytes, all within bounds.
+    unsafe {
+      core::arch::asm!(
+        "0:",
+        ".insn rre, 0xB92E0000, 2, 4",
+        "jo 0b",
+        inout("r0") 20u64 => _,
+        in("r1") parm,
+        inout("r2") dest_ptr => _,
+        inout("r3") len as u64 => _,
+        inout("r4") src_ptr => _,
+        inout("r5") len as u64 => _,
+        options(nostack),
+      );
+    }
+
+    crate::traits::ct::zeroize(&mut src[..len]);
   }
 }
 
@@ -986,6 +1019,31 @@ pub(crate) fn aes256_encrypt_block(ek: &Aes256EncKey, block: &mut [u8; BLOCK_SIZ
       // SAFETY: RvAes variant is only constructed after runtime detection confirms Zvkned.
       unsafe { rv_aes::encrypt_block(rv_rk, block) }
     }
+  }
+}
+
+/// Encrypt multiple independent 16-byte blocks with AES-256 ECB.
+///
+/// On s390x this issues a single KM instruction for all `blocks`,
+/// avoiding per-block parameter-block setup overhead. On other platforms
+/// falls back to per-block dispatch.
+#[inline]
+pub(crate) fn aes256_encrypt_blocks_ecb(ek: &Aes256EncKey, blocks: &mut [[u8; BLOCK_SIZE]]) {
+  #[cfg(target_arch = "s390x")]
+  if let KeyInner::S390xKm(km_key) = &ek.inner {
+    let count = blocks.len();
+    if count > 0 {
+      // SAFETY: `[[u8; 16]]` is layout-compatible with a contiguous `[u8]` of `count*16`.
+      // S390xKm variant is only constructed after MSA is confirmed.
+      let flat =
+        unsafe { core::slice::from_raw_parts_mut(blocks.as_mut_ptr().cast::<u8>(), count.strict_mul(BLOCK_SIZE)) };
+      // SAFETY: MSA verified by the S390xKm variant constructor. `flat` is valid for `count*16` bytes.
+      unsafe { km::encrypt_blocks(km_key, flat, count) };
+    }
+    return;
+  }
+  for block in blocks {
+    aes256_encrypt_block(ek, block);
   }
 }
 

@@ -1,13 +1,13 @@
 # AEAD Roadmap
 
-## Current Status (2026-04-01)
+## Current Status (2026-04-03)
 
 **All six AEAD primitives are shipped.** The AEAD portfolio is complete.
 
 `XChaCha20-Poly1305` is shipped on the typed AEAD surface.
 The plain `ChaCha20-Poly1305` interop companion is shipped on the same core.
 The ChaCha-family core now has explicit backend routing for `x86_64` (`portable -> AVX2 -> AVX-512`), `aarch64` (`portable -> NEON`), `wasm32/wasm64` (`portable -> simd128`), and explicit `s390x` / `powerpc64` / `riscv64` vector routes. The x86_64 backends use `vprold` (AVX-512) and `vpshufb` (AVX2) for single-instruction rotations, plus SIMD matrix transpose for the keystream XOR phase.
-`Poly1305` now follows the same primitive-keyed dispatch contract, with architecture-specific block kernels on `x86_64` (`AVX2` / `AVX-512`), `aarch64` (`NEON`), and `wasm32` (`simd128`), plus explicit fallback routes everywhere else.
+`Poly1305` now follows the same primitive-keyed dispatch contract, with architecture-specific block kernels on `x86_64` (`AVX2` / `AVX-512`), `aarch64` (`NEON`), and `wasm32` (`simd128`), plus explicit fallback routes everywhere else. On x86_64, a **4-way parallel Goll-Gueron kernel** (`avx2_par4`) processes 4 blocks simultaneously using precomputed R powers (R, R², R³, R⁴) and deferred reduction, dispatching automatically for messages >= 64 bytes with AVX2 available.
 
 `AES-256-GCM-SIV` is shipped with **x86_64 + aarch64 hardware acceleration** plus **x86_64 VAES-512 + VPCLMULQDQ wide path**:
 - AES-256: enum-based `Aes256EncKey` dispatches AES-NI (x86_64), AES-CE (aarch64), or portable algebraic S-box
@@ -175,30 +175,28 @@ auto-dispatch.
 - AES-5 + CLMUL-5: powerpc64 vcipher/vcipherlast (13+1 round pipeline) + vpmsumd (Karatsuba + vsldoi reduction).
 - AES-6 + CLMUL-6: riscv64 Zvkned (vaesz/vaesem/vaesef in single asm block) + Zvbc (vclmul/vclmulh + portable Montgomery reduction). Note: s390x KM is full-ECB (cannot accelerate AEGIS-256); powerpc64 vcipher and riscv64 vaesem operate at single-round level (can accelerate AEGIS-256).
 
-### ChaCha20-Poly1305: x86 ChaCha20 optimized, Poly1305 vectorization needed
+### ChaCha20-Poly1305: x86 fully accelerated, all platforms winning
 
 ChaCha20 and Poly1305 have **real** SIMD kernels on x86_64 (AVX2/AVX-512), aarch64 (NEON),
 wasm32 (SIMD128), powerpc64 (VSX), and s390x (z/Vector). One platform remains stubbed:
 
 | Platform | ChaCha20 | Poly1305 | Task IDs |
 |----------|----------|----------|----------|
-| x86_64 | **AVX-512** (`vprold` + 16×16 transpose) / **AVX2** (`vpshufb` + 16×8 transpose) | **Single-block serial** (inner-product AVX2 only) | ✅ CHACHA-4/5, **open POLY-4** |
+| x86_64 | **AVX-512** (`vprold` + 16×16 transpose) / **AVX2** (`vpshufb` + 16×8 transpose) | **AVX2 4-way Goll-Gueron** (POLY-4) | ✅ CHACHA-4/5, ✅ POLY-4 |
 | powerpc64 | **VSX** (`vadduwm`/`vxor`/`vrlw`) | **VSX** (`vmulouw`/`vaddudm`) | ✅ CHACHA-1, POLY-1 |
 | s390x | **z/Vector** (`vaf`/`vx`/`verll`) | **z/Vector** (`vmlof`/`vag`) | ✅ CHACHA-2, POLY-2 |
 | riscv64 | STUB → portable | STUB → portable | CHACHA-3, POLY-3 |
 
-**Remaining x86 gap (0.46-0.75x at 64KiB-1MiB):** The ChaCha20 keystream phase is now fast
-(CHACHA-4/5 shipped 2026-04-01), but the **dominant bottleneck is Poly1305**. Our Poly1305
-processes 1 block (16 bytes) at a time with a full 5-limb carry chain per block. RustCrypto's
-`poly1305` 0.8.0 uses the Goll-Gueron 4-way parallel algorithm: 4 blocks in AVX2, precomputed
-R powers (R, R², R³, R⁴), deferred reduction. This gives ~4x Poly1305 throughput, translating
-to ~2x overall AEAD speedup at large sizes. See **POLY-4** in [`acceleration.md`](acceleration.md).
+**x86 gap closed (2026-04-03).** POLY-4 (Goll-Gueron 4-way parallel Poly1305) shipped in
+`src/aead/poly1305.rs` `mod avx2_par4`. The previous 0.46-0.76x losses at bulk sizes are
+now **1.5-2.4x WINs** across all four x86 platforms. 24/24 chacha20/xchacha20-poly1305 data
+points are WINs on Zen4, Zen5, ICL, and SPR.
 
-Measured after CHACHA-4/5 (CI run [#23877991837](https://github.com/loadingalias/rscrypto/actions/runs/23877991837)):
-- Zen4 1MiB: 0.42x→0.46x (marginal — Poly1305 dominates)
-- Zen5 1MiB: 0.69x→0.75x (moderate — Zen5 OOO hides some serial latency)
-- Zen5 4KiB: 0.92x→0.99x (near parity — ChaCha20 fix visible at this size)
-- SPR 1MiB: 0.46x→0.48x (marginal — Poly1305 dominates)
+Measured after POLY-4 (CI run [#23932688230](https://github.com/loadingalias/rscrypto/actions/runs/23932688230)):
+- Zen5 1MiB: 0.75x → **2.37x WIN**
+- Zen4 1MiB: 0.46x → **1.55x WIN**
+- ICL 1MiB: — → **1.74x WIN**
+- SPR 1MiB: 0.48x → **1.79x WIN**
 
 riscv64 XChaCha20-Poly1305 and ChaCha20-Poly1305 are still running at portable speed.
 
