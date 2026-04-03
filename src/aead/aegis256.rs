@@ -1517,6 +1517,7 @@ mod tests {
 
     #[cfg(target_arch = "s390x")]
     if has_hw_aes() {
+      // SAFETY: has_hw_aes() confirmed VECTOR_ENH1 + MSA8 are available.
       let hw_result = unsafe { s390x_aes::test_single_aes_round(&input, &rk) };
       assert_eq!(
         hw_result, portable_result,
