@@ -791,10 +791,7 @@ mod s390x_aes {
   /// Diagnostic: single AES round via VCIPH for comparison with portable.
   /// Returns `None` if HW AES is not available.
   #[cfg(test)]
-  pub(super) unsafe fn test_single_aes_round(
-    block: &[u8; 16],
-    round_key: &[u8; 16],
-  ) -> [u8; 16] {
+  pub(super) unsafe fn test_single_aes_round(block: &[u8; 16], round_key: &[u8; 16]) -> [u8; 16] {
     let b = load(block);
     let rk = load(round_key);
     let result = aes_round(b, rk);
