@@ -517,7 +517,13 @@ fn keccakf_absorb_portable<const RATE: usize>(state: &mut [u64; 25], block: &[u8
 fn absorb_and_permute<const RATE: usize>(state: &mut [u64; 25], block: &[u8; RATE]) {
   #[cfg(target_arch = "aarch64")]
   {
-    keccakf_absorb_portable::<RATE>(state, block);
+    use crate::platform::caps::aarch64 as aarch64_caps;
+    if crate::platform::caps().has(aarch64_caps::SHA3) {
+      xor_block_into::<RATE>(state, block);
+      aarch64::keccakf_aarch64_sha3_single(state);
+    } else {
+      keccakf_absorb_portable::<RATE>(state, block);
+    }
   }
   #[cfg(not(target_arch = "aarch64"))]
   {
@@ -578,13 +584,14 @@ impl Permuter for InlinePermuter {
   }
 }
 
-/// aarch64 permuter: portable for single-state, SHA3 CE for 2-state interleaved.
+/// aarch64 permuter: SHA3 CE for single-state and 2-state interleaved when
+/// available, portable scalar fallback otherwise.
 ///
-/// The full-NEON SHA3 CE kernel (LD1R/XAR/BCAX/ST1) is fast on Apple Silicon
-/// but ~1.8× slower than portable on Graviton3/Graviton4 (Neoverse V1/V2) due
-/// to different SHA3 CE microarchitecture characteristics. The portable scalar
-/// path remains the production single-state kernel on aarch64. SHA3 CE is used
-/// only for the 2-state interleaved path where both NEON lanes carry useful work.
+/// The single-state NEON kernel loads each lane via `vdupq_n_u64` and runs
+/// 24 rounds through the shared SHA3 CE macro (EOR3/RAX1/XAR/BCAX). Both
+/// elements of each `uint64x2_t` carry the same data, so lane 0 produces
+/// the correct result. The 2-state kernel packs two independent states
+/// lane-wise for ~2× aggregate throughput.
 #[cfg(target_arch = "aarch64")]
 #[derive(Clone, Copy)]
 pub(crate) struct Aarch64Permuter {
@@ -608,7 +615,11 @@ impl Default for Aarch64Permuter {
 impl Permuter for Aarch64Permuter {
   #[inline(always)]
   fn permute(self, state: &mut [u64; 25], _len_hint: usize) {
-    keccakf_portable(state);
+    if self.has_sha3 {
+      aarch64::keccakf_aarch64_sha3_single(state);
+    } else {
+      keccakf_portable(state);
+    }
   }
 
   #[inline(always)]

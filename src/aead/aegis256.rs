@@ -757,103 +757,80 @@ mod ppc {
 #[cfg(target_arch = "s390x")]
 #[allow(unsafe_code, unsafe_op_in_unsafe_fn)]
 mod s390x_aes {
-  use core::arch::asm;
+  use core::{arch::asm, simd::i64x2};
 
   use super::{BLOCK_SIZE, C0, C1, KEY_SIZE, NONCE_SIZE, TAG_SIZE};
 
-  /// Opaque 128-bit vector carried in a z/Vector register.
+  pub(super) type State = [i64x2; 6];
+
+  /// Load 16 bytes into a vector register preserving byte order.
   ///
-  /// We deliberately avoid `core::simd::i64x2` because its element ordering
-  /// on big-endian s390x does not match the z/Architecture vector register
-  /// byte layout expected by VCIPH. Instead we use a `[u8; 16]` shell and
-  /// move data in/out via VL/VST asm, guaranteeing byte-correct layout.
-  #[derive(Clone, Copy)]
-  #[repr(C, align(16))]
-  pub(super) struct V128([u8; 16]);
-
-  pub(super) type State = [V128; 6];
-
-  /// Load 16 bytes into a vector register via VL (byte-order-preserving).
+  /// On big-endian s390x, `i64x2` element 0 maps to VR bytes 0-7 (MSB
+  /// doubleword) and element 1 to bytes 8-15, both in native (big-endian)
+  /// byte order. We construct the i64 values from big-endian byte slices
+  /// so the resulting VR has the same byte pattern as the input — matching
+  /// the layout that VCIPH expects.
   #[inline(always)]
-  fn load(bytes: &[u8; 16]) -> V128 {
-    V128(*bytes)
+  fn load(bytes: &[u8; 16]) -> i64x2 {
+    i64x2::from_array([
+      i64::from_be_bytes([
+        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+      ]),
+      i64::from_be_bytes([
+        bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15],
+      ]),
+    ])
   }
 
-  /// Store a vector register to 16 bytes via VST (byte-order-preserving).
+  /// Store a vector register back to 16 bytes preserving byte order.
   #[inline(always)]
-  fn store(v: V128, out: &mut [u8; 16]) {
-    *out = v.0;
+  fn store(v: i64x2, out: &mut [u8; 16]) {
+    let arr = v.to_array();
+    out[..8].copy_from_slice(&arr[0].to_be_bytes());
+    out[8..].copy_from_slice(&arr[1].to_be_bytes());
   }
 
   /// Single AES round using VCIPH (Vector Cipher Encrypt).
   ///
-  /// VCIPH V1,V2,V3: one AES middle round where V2=state, V3=round_key.
-  /// Matches x86 AESENC semantics.
+  /// Uses `.insn vrr` with `vreg` operands so the register allocator
+  /// assigns real vector registers. This eliminates the VL/VST memory
+  /// round-trips and hardcoded-register conflicts of the previous V128
+  /// approach that caused SIGSEGV.
   #[target_feature(enable = "vector")]
   #[inline]
-  unsafe fn aes_round(block: V128, round_key: V128) -> V128 {
-    let mut out = V128([0u8; 16]);
+  unsafe fn aes_round(block: i64x2, round_key: i64x2) -> i64x2 {
+    let out: i64x2;
     // SAFETY: VECTOR_ENH1 + MSA8 verified by caller (has_hw_aes).
-    // VL/VST guarantee byte-correct layout regardless of SIMD element ordering.
+    // .insn vrr encodes VCIPH (E7___77) in VRR-c format: V1=out, V2=block, V3=rk.
     asm!(
-      "vl 0, 0({block})",          // v0 = block
-      "vl 1, 0({rk})",             // v1 = round_key
-      ".insn vrr,0xE70000000077,0,0,1,0,0,0", // v0 = VCIPH(v0, v1)
-      "vst 0, 0({out})",           // store result
-      block = in(reg) block.0.as_ptr(),
-      rk = in(reg) round_key.0.as_ptr(),
-      out = in(reg) out.0.as_mut_ptr(),
-      // Clobber v0, v1 explicitly.
-      out("v0") _,
-      out("v1") _,
-      options(nostack),
+      ".insn vrr,0xE70000000077,{out},{block},{rk},0,0,0",
+      out = lateout(vreg) out,
+      block = in(vreg) block,
+      rk = in(vreg) round_key,
+      options(nomem, nostack, pure),
     );
     out
   }
 
-  /// XOR two 128-bit vectors via VX.
-  #[target_feature(enable = "vector")]
-  #[inline]
-  unsafe fn xor_vec(a: V128, b: V128) -> V128 {
-    let mut out = V128([0u8; 16]);
-    asm!(
-      "vl 0, 0({a})",
-      "vl 1, 0({b})",
-      "vx 0, 0, 1",
-      "vst 0, 0({out})",
-      a = in(reg) a.0.as_ptr(),
-      b = in(reg) b.0.as_ptr(),
-      out = in(reg) out.0.as_mut_ptr(),
-      out("v0") _,
-      out("v1") _,
-      options(nostack),
-    );
-    out
+  /// XOR two vector registers (bitwise, order-independent).
+  #[inline(always)]
+  fn xor_vec(a: i64x2, b: i64x2) -> i64x2 {
+    let aa = a.to_array();
+    let ba = b.to_array();
+    i64x2::from_array([aa[0] ^ ba[0], aa[1] ^ ba[1]])
   }
 
-  /// AND two 128-bit vectors via VN.
-  #[target_feature(enable = "vector")]
-  #[inline]
-  unsafe fn and_vec(a: V128, b: V128) -> V128 {
-    let mut out = V128([0u8; 16]);
-    asm!(
-      "vl 0, 0({a})",
-      "vl 1, 0({b})",
-      "vn 0, 0, 1",
-      "vst 0, 0({out})",
-      a = in(reg) a.0.as_ptr(),
-      b = in(reg) b.0.as_ptr(),
-      out = in(reg) out.0.as_mut_ptr(),
-      out("v0") _,
-      out("v1") _,
-      options(nostack),
-    );
-    out
+  /// AND two vector registers (bitwise, order-independent).
+  #[inline(always)]
+  fn and_vec(a: i64x2, b: i64x2) -> i64x2 {
+    let aa = a.to_array();
+    let ba = b.to_array();
+    i64x2::from_array([aa[0] & ba[0], aa[1] & ba[1]])
   }
 
   #[target_feature(enable = "vector")]
   #[inline]
-  unsafe fn update(s: &mut State, m: V128) {
+  unsafe fn update(s: &mut State, m: i64x2) {
     let tmp = s[5];
     s[5] = aes_round(s[4], s[5]);
     s[4] = aes_round(s[3], s[4]);
@@ -907,9 +884,8 @@ mod s390x_aes {
     }
   }
 
-  #[target_feature(enable = "vector")]
-  #[inline]
-  unsafe fn keystream_vec(s: &State) -> V128 {
+  #[inline(always)]
+  fn keystream_vec(s: &State) -> i64x2 {
     let s2_and_s3 = and_vec(s[2], s[3]);
     xor_vec(xor_vec(s[1], s[4]), xor_vec(s[5], s2_and_s3))
   }
