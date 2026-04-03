@@ -765,29 +765,42 @@ mod s390x_aes {
 
   /// Load 16 bytes into a vector register preserving byte order.
   ///
-  /// LLVM maps `i64x2` element 0 to the **low** doubleword of the VR
-  /// (bytes 8-15) on both s390x and ppc64le.  VCIPH operates on the
-  /// full 128-bit VR in big-endian byte order (byte 0 = MSB), so we
-  /// must place bytes[0..7] in element **1** (VR high half) and
-  /// bytes[8..15] in element **0** (VR low half).
+  /// On big-endian s390x, `i64x2` element 0 maps to VR bytes 0-7 (MSB
+  /// doubleword) and element 1 to bytes 8-15. LLVM optimises the
+  /// `from_be_bytes` + `from_array` construction to a single `VL`.
   #[inline(always)]
-  fn load(bytes: &[u8; 16]) -> i64x2 {
+  pub(super) fn load(bytes: &[u8; 16]) -> i64x2 {
     i64x2::from_array([
       i64::from_be_bytes([
-        bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15],
+        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
       ]),
       i64::from_be_bytes([
-        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+        bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15],
       ]),
     ])
   }
 
   /// Store a vector register back to 16 bytes preserving byte order.
   #[inline(always)]
-  fn store(v: i64x2, out: &mut [u8; 16]) {
+  pub(super) fn store(v: i64x2, out: &mut [u8; 16]) {
     let arr = v.to_array();
-    out[..8].copy_from_slice(&arr[1].to_be_bytes());
-    out[8..].copy_from_slice(&arr[0].to_be_bytes());
+    out[..8].copy_from_slice(&arr[0].to_be_bytes());
+    out[8..].copy_from_slice(&arr[1].to_be_bytes());
+  }
+
+  /// Diagnostic: single AES round via VCIPH for comparison with portable.
+  /// Returns `None` if HW AES is not available.
+  #[cfg(test)]
+  pub(super) unsafe fn test_single_aes_round(
+    block: &[u8; 16],
+    round_key: &[u8; 16],
+  ) -> [u8; 16] {
+    let b = load(block);
+    let rk = load(round_key);
+    let result = aes_round(b, rk);
+    let mut out = [0u8; 16];
+    store(result, &mut out);
+    out
   }
 
   /// Single AES round using VCIPH (Vector Cipher Encrypt).
@@ -1496,6 +1509,40 @@ mod tests {
     let expected = hex_block("7a7b4e5638782546a8c0477a3b813f43");
 
     assert_eq!(aes_round(&input, &rk), expected);
+  }
+
+  /// Diagnostic: compare s390x VCIPH output against the portable AES round.
+  #[test]
+  fn aes_round_hw_matches_portable() {
+    let input = hex_block("000102030405060708090a0b0c0d0e0f");
+    let rk = hex_block("101112131415161718191a1b1c1d1e1f");
+    let portable_result = aes_round(&input, &rk);
+
+    #[cfg(target_arch = "s390x")]
+    if has_hw_aes() {
+      let hw_result = unsafe { s390x_aes::test_single_aes_round(&input, &rk) };
+      assert_eq!(
+        hw_result, portable_result,
+        "s390x VCIPH mismatch: hw={hw_result:?} portable={portable_result:?}"
+      );
+    }
+
+    // On non-s390x, the test trivially passes (nothing to compare).
+    #[cfg(not(target_arch = "s390x"))]
+    let _ = portable_result;
+  }
+
+  /// Diagnostic: verify load→store round-trip preserves bytes on s390x.
+  #[test]
+  fn load_store_roundtrip() {
+    #[cfg(target_arch = "s390x")]
+    {
+      let input: [u8; 16] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+      let v = s390x_aes::load(&input);
+      let mut output = [0u8; 16];
+      s390x_aes::store(v, &mut output);
+      assert_eq!(input, output, "load/store round-trip failed");
+    }
   }
 
   // -- Update test vector (Appendix A.2) --
