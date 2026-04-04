@@ -369,9 +369,13 @@ impl FieldElement51x4 {
   #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
   #[allow(unsafe_op_in_unsafe_fn)]
   pub(crate) unsafe fn mul(&self, rhs: &Self) -> Self {
+    // Reduce both operands so all limbs fit in 52 bits (IFMA reads [51:0]).
+    // Without this, diff_sum's 2p bias can push limbs to ~53 bits.
+    let lhs_r = self.reduce();
+    let rhs_r = rhs.reduce();
     let zero = _mm256_setzero_si256();
-    let f = &self.0;
-    let g = &rhs.0;
+    let f = &lhs_r.0;
+    let g = &rhs_r.0;
 
     // -----------------------------------------------------------------------
     // Phase 1: 5×5 schoolbook with dual accumulators (50 IFMA ops)
@@ -501,8 +505,10 @@ impl FieldElement51x4 {
   #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
   #[allow(unsafe_op_in_unsafe_fn)]
   pub(crate) unsafe fn square(&self) -> Self {
+    // Reduce so all limbs fit in 52 bits for IFMA input.
+    let reduced = self.reduce();
     let zero = _mm256_setzero_si256();
-    let f = &self.0;
+    let f = &reduced.0;
 
     // Pre-double for cross terms (f_i is at most 51 bits → f_i_2 ≤ 52 bits,
     // which fits in IFMA's 52-bit input window).
