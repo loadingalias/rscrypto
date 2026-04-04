@@ -1,0 +1,807 @@
+//! AVX-512 IFMA vectorized field arithmetic for Ed25519.
+//!
+//! Four field elements over GF(2^255 - 19) packed as `[__m256i; 5]` in
+//! radix-2^51 (5 limbs per element, one limb per u64 lane). Multiplications
+//! use the dual-accumulator IFMA pattern (`vpmadd52luq` / `vpmadd52huq`)
+//! which captures the full 104-bit product without the 52-bit truncation
+//! that broke the radix-26/25 approach.
+//!
+//! # Lane layout
+//!
+//! ```text
+//! self.0[i] = (a_i, b_i, c_i, d_i)   // 4 × u64 lanes
+//! ```
+//!
+//! where `a_i..d_i` is limb `i` of four independent field elements A, B, C, D.
+//!
+//! # Arithmetic convention
+//!
+//! Field arithmetic is modular math (mod 2^255 - 19). Per CLAUDE.md rules,
+//! `wrapping_*` is the correct choice for intentional modular arithmetic.
+
+#[cfg(target_arch = "x86_64")]
+use core::arch::x86_64::*;
+
+use super::{
+  field::FieldElement,
+  field_avx2::{Lanes, Shuffle},
+};
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+const MASK51: i64 = (1i64 << 51) - 1;
+
+/// Subtraction bias: 2p in radix-51. Limb 0 accounts for the -19 term.
+const BIAS_0: i64 = 2 * ((1i64 << 51) - 19);
+const BIAS_N: i64 = 2 * ((1i64 << 51) - 1);
+
+// ---------------------------------------------------------------------------
+// Type
+// ---------------------------------------------------------------------------
+
+/// Four field elements packed for AVX-512 IFMA parallel processing.
+///
+/// Uses radix-2^51: 5 limbs per element stored in u64 lanes. Four elements
+/// are interleaved across 5 × `__m256i` registers (4 × u64 each).
+#[derive(Clone, Copy)]
+#[cfg(target_arch = "x86_64")]
+pub(crate) struct FieldElement51x4(pub(crate) [__m256i; 5]);
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Multiply a u64x4 vector by 19 using shift-and-add.
+///
+/// `x * 19 = (x << 4) + (x << 1) + x = 16x + 2x + x`
+///
+/// No AVX-512DQ dependency (avoids `_mm256_mullo_epi64`).
+///
+/// # Safety
+///
+/// Caller must ensure AVX2 is available.
+#[inline]
+#[target_feature(enable = "avx2")]
+#[allow(unsafe_op_in_unsafe_fn)]
+unsafe fn mul19(x: __m256i) -> __m256i {
+  let x16 = _mm256_slli_epi64::<4>(x);
+  let x2 = _mm256_slli_epi64::<1>(x);
+  _mm256_add_epi64(_mm256_add_epi64(x16, x2), x)
+}
+
+/// IFMA fused multiply-accumulate (low 52 bits): `acc += (a * b)[51:0]`.
+///
+/// # Safety
+///
+/// Caller must ensure AVX-512 IFMA + VL are available.
+#[inline]
+#[target_feature(enable = "avx2,avx512ifma,avx512vl")]
+#[allow(unsafe_op_in_unsafe_fn)]
+unsafe fn madd52lo(acc: __m256i, a: __m256i, b: __m256i) -> __m256i {
+  _mm256_madd52lo_epu64(acc, a, b)
+}
+
+/// IFMA fused multiply-accumulate (high 52 bits): `acc += (a * b)[103:52]`.
+///
+/// # Safety
+///
+/// Caller must ensure AVX-512 IFMA + VL are available.
+#[inline]
+#[target_feature(enable = "avx2,avx512ifma,avx512vl")]
+#[allow(unsafe_op_in_unsafe_fn)]
+unsafe fn madd52hi(acc: __m256i, a: __m256i, b: __m256i) -> __m256i {
+  _mm256_madd52hi_epu64(acc, a, b)
+}
+
+// ---------------------------------------------------------------------------
+// FieldElement51x4 implementation
+// ---------------------------------------------------------------------------
+
+#[cfg(target_arch = "x86_64")]
+impl FieldElement51x4 {
+  /// The zero element (all four lanes).
+  ///
+  /// # Safety
+  ///
+  /// Caller must ensure AVX2 is available.
+  #[inline]
+  #[target_feature(enable = "avx2")]
+  #[allow(unsafe_op_in_unsafe_fn)]
+  pub(crate) unsafe fn zero() -> Self {
+    Self([_mm256_setzero_si256(); 5])
+  }
+
+  /// Pack four scalar field elements into IFMA vectorized form.
+  ///
+  /// # Safety
+  ///
+  /// Caller must ensure AVX2 is available.
+  #[inline]
+  #[target_feature(enable = "avx2")]
+  #[allow(unsafe_op_in_unsafe_fn)]
+  pub(crate) unsafe fn new(a: &FieldElement, b: &FieldElement, c: &FieldElement, d: &FieldElement) -> Self {
+    let al = a.limbs();
+    let bl = b.limbs();
+    let cl = c.limbs();
+    let dl = d.limbs();
+
+    Self([
+      _mm256_set_epi64x(dl[0] as i64, cl[0] as i64, bl[0] as i64, al[0] as i64),
+      _mm256_set_epi64x(dl[1] as i64, cl[1] as i64, bl[1] as i64, al[1] as i64),
+      _mm256_set_epi64x(dl[2] as i64, cl[2] as i64, bl[2] as i64, al[2] as i64),
+      _mm256_set_epi64x(dl[3] as i64, cl[3] as i64, bl[3] as i64, al[3] as i64),
+      _mm256_set_epi64x(dl[4] as i64, cl[4] as i64, bl[4] as i64, al[4] as i64),
+    ])
+  }
+
+  /// Unpack back to four scalar field elements.
+  ///
+  /// # Safety
+  ///
+  /// Caller must ensure AVX2 is available.
+  #[target_feature(enable = "avx2")]
+  #[allow(unsafe_op_in_unsafe_fn)]
+  pub(crate) unsafe fn split(&self) -> [FieldElement; 4] {
+    let mut al = [0u64; 5];
+    let mut bl = [0u64; 5];
+    let mut cl = [0u64; 5];
+    let mut dl = [0u64; 5];
+
+    for (((a_out, b_out), (c_out, d_out)), vec) in al
+      .iter_mut()
+      .zip(bl.iter_mut())
+      .zip(cl.iter_mut().zip(dl.iter_mut()))
+      .zip(self.0.iter())
+    {
+      let mut tmp = [0u64; 4];
+      _mm256_storeu_si256(tmp.as_mut_ptr().cast(), *vec);
+      *a_out = tmp[0];
+      *b_out = tmp[1];
+      *c_out = tmp[2];
+      *d_out = tmp[3];
+    }
+
+    [
+      FieldElement::from_limbs(al),
+      FieldElement::from_limbs(bl),
+      FieldElement::from_limbs(cl),
+      FieldElement::from_limbs(dl),
+    ]
+  }
+
+  /// Lazy addition (no carry propagation).
+  ///
+  /// # Safety
+  ///
+  /// Caller must ensure AVX2 is available.
+  #[inline]
+  #[target_feature(enable = "avx2")]
+  #[allow(unsafe_op_in_unsafe_fn)]
+  pub(crate) unsafe fn add(&self, rhs: &Self) -> Self {
+    Self([
+      _mm256_add_epi64(self.0[0], rhs.0[0]),
+      _mm256_add_epi64(self.0[1], rhs.0[1]),
+      _mm256_add_epi64(self.0[2], rhs.0[2]),
+      _mm256_add_epi64(self.0[3], rhs.0[3]),
+      _mm256_add_epi64(self.0[4], rhs.0[4]),
+    ])
+  }
+
+  /// Subtraction with 2p bias to avoid underflow.
+  ///
+  /// # Safety
+  ///
+  /// Caller must ensure AVX2 is available.
+  #[inline]
+  #[target_feature(enable = "avx2")]
+  #[allow(unsafe_op_in_unsafe_fn)]
+  pub(crate) unsafe fn sub(&self, rhs: &Self) -> Self {
+    let bias_0 = _mm256_set1_epi64x(BIAS_0);
+    let bias_n = _mm256_set1_epi64x(BIAS_N);
+
+    Self([
+      _mm256_sub_epi64(_mm256_add_epi64(self.0[0], bias_0), rhs.0[0]),
+      _mm256_sub_epi64(_mm256_add_epi64(self.0[1], bias_n), rhs.0[1]),
+      _mm256_sub_epi64(_mm256_add_epi64(self.0[2], bias_n), rhs.0[2]),
+      _mm256_sub_epi64(_mm256_add_epi64(self.0[3], bias_n), rhs.0[3]),
+      _mm256_sub_epi64(_mm256_add_epi64(self.0[4], bias_n), rhs.0[4]),
+    ])
+  }
+
+  /// Negate all four lanes: `2p - self`.
+  ///
+  /// # Safety
+  ///
+  /// Caller must ensure AVX2 is available.
+  #[inline]
+  #[target_feature(enable = "avx2")]
+  #[allow(unsafe_op_in_unsafe_fn)]
+  pub(crate) unsafe fn negate_lazy(&self) -> Self {
+    Self::zero().sub(self)
+  }
+
+  /// Rearrange the four lane positions according to `pattern`.
+  ///
+  /// Uses `_mm256_permute4x64_epi64` (u64 granularity).
+  ///
+  /// # Safety
+  ///
+  /// Caller must ensure AVX2 is available.
+  #[inline]
+  #[target_feature(enable = "avx2")]
+  #[allow(unsafe_op_in_unsafe_fn)]
+  pub(crate) unsafe fn shuffle(&self, pattern: Shuffle) -> Self {
+    // _mm256_permute4x64_epi64 requires a compile-time immediate.
+    // IMM8 = (d_src << 6) | (c_src << 4) | (b_src << 2) | a_src
+    macro_rules! do_shuffle {
+      ($imm:expr) => {
+        Self([
+          _mm256_permute4x64_epi64::<$imm>(self.0[0]),
+          _mm256_permute4x64_epi64::<$imm>(self.0[1]),
+          _mm256_permute4x64_epi64::<$imm>(self.0[2]),
+          _mm256_permute4x64_epi64::<$imm>(self.0[3]),
+          _mm256_permute4x64_epi64::<$imm>(self.0[4]),
+        ])
+      };
+    }
+
+    match pattern {
+      Shuffle::ABCD => do_shuffle!(0b11_10_01_00),
+      Shuffle::BADC => do_shuffle!(0b10_11_00_01),
+      Shuffle::BACD => do_shuffle!(0b11_10_00_01),
+      Shuffle::ABDC => do_shuffle!(0b10_11_01_00),
+      Shuffle::AAAA => do_shuffle!(0b00_00_00_00),
+      Shuffle::BBBB => do_shuffle!(0b01_01_01_01),
+      Shuffle::CACA => do_shuffle!(0b00_10_00_10),
+      Shuffle::DBBD => do_shuffle!(0b11_01_01_11),
+      Shuffle::ADDA => do_shuffle!(0b00_11_11_00),
+      Shuffle::CBCB => do_shuffle!(0b01_10_01_10),
+      Shuffle::ABAB => do_shuffle!(0b01_00_01_00),
+    }
+  }
+
+  /// Select lanes from `self` or `other` according to `lanes`.
+  ///
+  /// Lanes specified in `lanes` come from `other`; remaining from `self`.
+  /// Uses u64-aligned blend masks for `_mm256_blend_epi32`.
+  ///
+  /// # Safety
+  ///
+  /// Caller must ensure AVX2 is available.
+  #[inline]
+  #[target_feature(enable = "avx2")]
+  #[allow(unsafe_op_in_unsafe_fn)]
+  pub(crate) unsafe fn blend(&self, other: &Self, lanes: Lanes) -> Self {
+    // u64 lane → u32 pair: A={0,1}, B={2,3}, C={4,5}, D={6,7}
+    macro_rules! do_blend {
+      ($imm:expr) => {
+        Self([
+          _mm256_blend_epi32::<$imm>(self.0[0], other.0[0]),
+          _mm256_blend_epi32::<$imm>(self.0[1], other.0[1]),
+          _mm256_blend_epi32::<$imm>(self.0[2], other.0[2]),
+          _mm256_blend_epi32::<$imm>(self.0[3], other.0[3]),
+          _mm256_blend_epi32::<$imm>(self.0[4], other.0[4]),
+        ])
+      };
+    }
+
+    match lanes {
+      Lanes::A => do_blend!(0b0000_0011),
+      Lanes::B => do_blend!(0b0000_1100),
+      Lanes::C => do_blend!(0b0011_0000),
+      Lanes::D => do_blend!(0b1100_0000),
+      Lanes::AB => do_blend!(0b0000_1111),
+      Lanes::AC => do_blend!(0b0011_0011),
+      Lanes::AD => do_blend!(0b1100_0011),
+      Lanes::BC => do_blend!(0b0011_1100),
+      Lanes::CD => do_blend!(0b1111_0000),
+      Lanes::ABCD => do_blend!(0b1111_1111),
+    }
+  }
+
+  /// Compute `(B-A, A+B, D-C, C+D)` in one pass.
+  ///
+  /// # Safety
+  ///
+  /// Caller must ensure AVX2 is available.
+  #[inline]
+  #[target_feature(enable = "avx2")]
+  #[allow(unsafe_op_in_unsafe_fn)]
+  pub(crate) unsafe fn diff_sum(&self) -> Self {
+    let swapped = self.shuffle(Shuffle::BADC); // (B, A, D, C)
+    let negated = self.negate_lazy(); // (-A, -B, -C, -D)
+    let neg_ac = self.blend(&negated, Lanes::AC); // (-A, B, -C, D)
+    swapped.add(&neg_ac) // (B-A, A+B, D-C, C+D)
+  }
+
+  /// Carry-propagate to bring all limbs within 51 bits.
+  ///
+  /// # Safety
+  ///
+  /// Caller must ensure AVX-512 IFMA + VL are available.
+  #[inline]
+  #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
+  #[allow(unsafe_op_in_unsafe_fn)]
+  unsafe fn reduce(mut self) -> Self {
+    let mask = _mm256_set1_epi64x(MASK51);
+    let r19 = _mm256_set1_epi64x(19);
+
+    // Forward carry chain: limb 0 → 1 → 2 → 3 → 4
+    let c0 = _mm256_srli_epi64::<51>(self.0[0]);
+    self.0[0] = _mm256_and_si256(self.0[0], mask);
+    self.0[1] = _mm256_add_epi64(self.0[1], c0);
+
+    let c1 = _mm256_srli_epi64::<51>(self.0[1]);
+    self.0[1] = _mm256_and_si256(self.0[1], mask);
+    self.0[2] = _mm256_add_epi64(self.0[2], c1);
+
+    let c2 = _mm256_srli_epi64::<51>(self.0[2]);
+    self.0[2] = _mm256_and_si256(self.0[2], mask);
+    self.0[3] = _mm256_add_epi64(self.0[3], c2);
+
+    let c3 = _mm256_srli_epi64::<51>(self.0[3]);
+    self.0[3] = _mm256_and_si256(self.0[3], mask);
+    self.0[4] = _mm256_add_epi64(self.0[4], c3);
+
+    // Wraparound: carry from limb 4 × 19 → limb 0
+    let c4 = _mm256_srli_epi64::<51>(self.0[4]);
+    self.0[4] = _mm256_and_si256(self.0[4], mask);
+    self.0[0] = madd52lo(self.0[0], c4, r19);
+
+    // Final carry from limb 0 → 1 (at most 1 bit of overflow)
+    let c0f = _mm256_srli_epi64::<51>(self.0[0]);
+    self.0[0] = _mm256_and_si256(self.0[0], mask);
+    self.0[1] = _mm256_add_epi64(self.0[1], c0f);
+
+    self
+  }
+
+  /// Multiply two vectorized field elements using AVX-512 IFMA.
+  ///
+  /// Full 5×5 schoolbook with dual accumulators (`madd52lo` + `madd52hi`),
+  /// post-reduction of upper limbs, and carry propagation.
+  ///
+  /// # Safety
+  ///
+  /// Caller must ensure AVX-512 IFMA + VL are available.
+  #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
+  #[allow(unsafe_op_in_unsafe_fn)]
+  pub(crate) unsafe fn mul(&self, rhs: &Self) -> Self {
+    let zero = _mm256_setzero_si256();
+    let f = &self.0;
+    let g = &rhs.0;
+
+    // -----------------------------------------------------------------------
+    // Phase 1: 5×5 schoolbook with dual accumulators (50 IFMA ops)
+    //
+    // For each product f_i * g_j targeting output limb k = i+j:
+    //   lo_k += madd52lo(lo_k, f_i, g_j)   — captures bits [51:0]
+    //   hi_k += madd52hi(hi_k, f_i, g_j)   — captures bits [103:52]
+    // -----------------------------------------------------------------------
+
+    // z0 = f0*g0
+    let lo0 = madd52lo(zero, f[0], g[0]);
+    let hi0 = madd52hi(zero, f[0], g[0]);
+
+    // z1 = f0*g1 + f1*g0
+    let mut lo1 = madd52lo(zero, f[0], g[1]);
+    lo1 = madd52lo(lo1, f[1], g[0]);
+    let mut hi1 = madd52hi(zero, f[0], g[1]);
+    hi1 = madd52hi(hi1, f[1], g[0]);
+
+    // z2 = f0*g2 + f1*g1 + f2*g0
+    let mut lo2 = madd52lo(zero, f[0], g[2]);
+    lo2 = madd52lo(lo2, f[1], g[1]);
+    lo2 = madd52lo(lo2, f[2], g[0]);
+    let mut hi2 = madd52hi(zero, f[0], g[2]);
+    hi2 = madd52hi(hi2, f[1], g[1]);
+    hi2 = madd52hi(hi2, f[2], g[0]);
+
+    // z3 = f0*g3 + f1*g2 + f2*g1 + f3*g0
+    let mut lo3 = madd52lo(zero, f[0], g[3]);
+    lo3 = madd52lo(lo3, f[1], g[2]);
+    lo3 = madd52lo(lo3, f[2], g[1]);
+    lo3 = madd52lo(lo3, f[3], g[0]);
+    let mut hi3 = madd52hi(zero, f[0], g[3]);
+    hi3 = madd52hi(hi3, f[1], g[2]);
+    hi3 = madd52hi(hi3, f[2], g[1]);
+    hi3 = madd52hi(hi3, f[3], g[0]);
+
+    // z4 = f0*g4 + f1*g3 + f2*g2 + f3*g1 + f4*g0
+    let mut lo4 = madd52lo(zero, f[0], g[4]);
+    lo4 = madd52lo(lo4, f[1], g[3]);
+    lo4 = madd52lo(lo4, f[2], g[2]);
+    lo4 = madd52lo(lo4, f[3], g[1]);
+    lo4 = madd52lo(lo4, f[4], g[0]);
+    let mut hi4 = madd52hi(zero, f[0], g[4]);
+    hi4 = madd52hi(hi4, f[1], g[3]);
+    hi4 = madd52hi(hi4, f[2], g[2]);
+    hi4 = madd52hi(hi4, f[3], g[1]);
+    hi4 = madd52hi(hi4, f[4], g[0]);
+
+    // z5 = f1*g4 + f2*g3 + f3*g2 + f4*g1
+    let mut lo5 = madd52lo(zero, f[1], g[4]);
+    lo5 = madd52lo(lo5, f[2], g[3]);
+    lo5 = madd52lo(lo5, f[3], g[2]);
+    lo5 = madd52lo(lo5, f[4], g[1]);
+    let mut hi5 = madd52hi(zero, f[1], g[4]);
+    hi5 = madd52hi(hi5, f[2], g[3]);
+    hi5 = madd52hi(hi5, f[3], g[2]);
+    hi5 = madd52hi(hi5, f[4], g[1]);
+
+    // z6 = f2*g4 + f3*g3 + f4*g2
+    let mut lo6 = madd52lo(zero, f[2], g[4]);
+    lo6 = madd52lo(lo6, f[3], g[3]);
+    lo6 = madd52lo(lo6, f[4], g[2]);
+    let mut hi6 = madd52hi(zero, f[2], g[4]);
+    hi6 = madd52hi(hi6, f[3], g[3]);
+    hi6 = madd52hi(hi6, f[4], g[2]);
+
+    // z7 = f3*g4 + f4*g3
+    let mut lo7 = madd52lo(zero, f[3], g[4]);
+    lo7 = madd52lo(lo7, f[4], g[3]);
+    let mut hi7 = madd52hi(zero, f[3], g[4]);
+    hi7 = madd52hi(hi7, f[4], g[3]);
+
+    // z8 = f4*g4
+    let lo8 = madd52lo(zero, f[4], g[4]);
+    let hi8 = madd52hi(zero, f[4], g[4]);
+
+    // -----------------------------------------------------------------------
+    // Phase 2: Combine lo + hi into 10 actual limbs
+    //
+    // z_k = lo_k + 2 * hi_{k-1}
+    // The factor 2 comes from: bits [103:52] have value v * 2^52 = v * 2 * 2^51,
+    // so they contribute v * 2 to the next limb.
+    // -----------------------------------------------------------------------
+
+    let z0 = lo0;
+    let z1 = _mm256_add_epi64(_mm256_add_epi64(lo1, hi0), hi0);
+    let z2 = _mm256_add_epi64(_mm256_add_epi64(lo2, hi1), hi1);
+    let z3 = _mm256_add_epi64(_mm256_add_epi64(lo3, hi2), hi2);
+    let z4 = _mm256_add_epi64(_mm256_add_epi64(lo4, hi3), hi3);
+    let z5 = _mm256_add_epi64(_mm256_add_epi64(lo5, hi4), hi4);
+    let z6 = _mm256_add_epi64(_mm256_add_epi64(lo6, hi5), hi5);
+    let z7 = _mm256_add_epi64(_mm256_add_epi64(lo7, hi6), hi6);
+    let z8 = _mm256_add_epi64(_mm256_add_epi64(lo8, hi7), hi7);
+    let z9 = _mm256_add_epi64(hi8, hi8);
+
+    // -----------------------------------------------------------------------
+    // Phase 3: Reduce upper limbs by ×19 and fold into lower 5
+    //
+    // 2^(51*5) = 2^255 ≡ 19 (mod p)
+    // -----------------------------------------------------------------------
+
+    let z5_19 = mul19(z5);
+    let z6_19 = mul19(z6);
+    let z7_19 = mul19(z7);
+    let z8_19 = mul19(z8);
+    let z9_19 = mul19(z9);
+
+    Self([
+      _mm256_add_epi64(z0, z5_19),
+      _mm256_add_epi64(z1, z6_19),
+      _mm256_add_epi64(z2, z7_19),
+      _mm256_add_epi64(z3, z8_19),
+      _mm256_add_epi64(z4, z9_19),
+    ])
+    .reduce()
+  }
+
+  /// Square a vectorized field element using AVX-512 IFMA.
+  ///
+  /// Exploits symmetry: cross terms `f_i * f_j` (i ≠ j) appear twice, so
+  /// we pre-double one operand and halve the product count.
+  ///
+  /// # Safety
+  ///
+  /// Caller must ensure AVX-512 IFMA + VL are available.
+  #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
+  #[allow(unsafe_op_in_unsafe_fn)]
+  pub(crate) unsafe fn square(&self) -> Self {
+    let zero = _mm256_setzero_si256();
+    let f = &self.0;
+
+    // Pre-double for cross terms (f_i is at most 51 bits → f_i_2 ≤ 52 bits,
+    // which fits in IFMA's 52-bit input window).
+    let f0_2 = _mm256_add_epi64(f[0], f[0]);
+    let f1_2 = _mm256_add_epi64(f[1], f[1]);
+    let f2_2 = _mm256_add_epi64(f[2], f[2]);
+    let f3_2 = _mm256_add_epi64(f[3], f[3]);
+
+    // z0 = f0*f0
+    let lo0 = madd52lo(zero, f[0], f[0]);
+    let hi0 = madd52hi(zero, f[0], f[0]);
+
+    // z1 = 2*f0*f1
+    let lo1 = madd52lo(zero, f0_2, f[1]);
+    let hi1 = madd52hi(zero, f0_2, f[1]);
+
+    // z2 = 2*f0*f2 + f1*f1
+    let mut lo2 = madd52lo(zero, f0_2, f[2]);
+    lo2 = madd52lo(lo2, f[1], f[1]);
+    let mut hi2 = madd52hi(zero, f0_2, f[2]);
+    hi2 = madd52hi(hi2, f[1], f[1]);
+
+    // z3 = 2*f0*f3 + 2*f1*f2
+    let mut lo3 = madd52lo(zero, f0_2, f[3]);
+    lo3 = madd52lo(lo3, f1_2, f[2]);
+    let mut hi3 = madd52hi(zero, f0_2, f[3]);
+    hi3 = madd52hi(hi3, f1_2, f[2]);
+
+    // z4 = 2*f0*f4 + 2*f1*f3 + f2*f2
+    let mut lo4 = madd52lo(zero, f0_2, f[4]);
+    lo4 = madd52lo(lo4, f1_2, f[3]);
+    lo4 = madd52lo(lo4, f[2], f[2]);
+    let mut hi4 = madd52hi(zero, f0_2, f[4]);
+    hi4 = madd52hi(hi4, f1_2, f[3]);
+    hi4 = madd52hi(hi4, f[2], f[2]);
+
+    // z5 = 2*f1*f4 + 2*f2*f3
+    let mut lo5 = madd52lo(zero, f1_2, f[4]);
+    lo5 = madd52lo(lo5, f2_2, f[3]);
+    let mut hi5 = madd52hi(zero, f1_2, f[4]);
+    hi5 = madd52hi(hi5, f2_2, f[3]);
+
+    // z6 = 2*f2*f4 + f3*f3
+    let mut lo6 = madd52lo(zero, f2_2, f[4]);
+    lo6 = madd52lo(lo6, f[3], f[3]);
+    let mut hi6 = madd52hi(zero, f2_2, f[4]);
+    hi6 = madd52hi(hi6, f[3], f[3]);
+
+    // z7 = 2*f3*f4
+    let lo7 = madd52lo(zero, f3_2, f[4]);
+    let hi7 = madd52hi(zero, f3_2, f[4]);
+
+    // z8 = f4*f4
+    let lo8 = madd52lo(zero, f[4], f[4]);
+    let hi8 = madd52hi(zero, f[4], f[4]);
+
+    // Combine lo + hi into 10 actual limbs
+    let z0 = lo0;
+    let z1 = _mm256_add_epi64(_mm256_add_epi64(lo1, hi0), hi0);
+    let z2 = _mm256_add_epi64(_mm256_add_epi64(lo2, hi1), hi1);
+    let z3 = _mm256_add_epi64(_mm256_add_epi64(lo3, hi2), hi2);
+    let z4 = _mm256_add_epi64(_mm256_add_epi64(lo4, hi3), hi3);
+    let z5 = _mm256_add_epi64(_mm256_add_epi64(lo5, hi4), hi4);
+    let z6 = _mm256_add_epi64(_mm256_add_epi64(lo6, hi5), hi5);
+    let z7 = _mm256_add_epi64(_mm256_add_epi64(lo7, hi6), hi6);
+    let z8 = _mm256_add_epi64(_mm256_add_epi64(lo8, hi7), hi7);
+    let z9 = _mm256_add_epi64(hi8, hi8);
+
+    // Reduce upper limbs by ×19
+    let z5_19 = mul19(z5);
+    let z6_19 = mul19(z6);
+    let z7_19 = mul19(z7);
+    let z8_19 = mul19(z8);
+    let z9_19 = mul19(z9);
+
+    Self([
+      _mm256_add_epi64(z0, z5_19),
+      _mm256_add_epi64(z1, z6_19),
+      _mm256_add_epi64(z2, z7_19),
+      _mm256_add_epi64(z3, z8_19),
+      _mm256_add_epi64(z4, z9_19),
+    ])
+    .reduce()
+  }
+
+  /// Square and negate lane D. Fused for HWCD'08 parallel doubling.
+  ///
+  /// # Safety
+  ///
+  /// Caller must ensure AVX-512 IFMA + VL are available.
+  #[inline]
+  #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
+  #[allow(unsafe_op_in_unsafe_fn)]
+  pub(crate) unsafe fn square_and_negate_d(&self) -> Self {
+    let mut result = self.square();
+
+    // Negate lane D (u64 position 3) via 2p - D, blended.
+    let bias_0 = _mm256_set_epi64x(BIAS_0, 0, 0, 0);
+    let bias_n = _mm256_set_epi64x(BIAS_N, 0, 0, 0);
+
+    let neg0 = _mm256_sub_epi64(bias_0, result.0[0]);
+    result.0[0] = _mm256_blend_epi32::<0b1100_0000>(result.0[0], neg0);
+
+    let neg1 = _mm256_sub_epi64(bias_n, result.0[1]);
+    result.0[1] = _mm256_blend_epi32::<0b1100_0000>(result.0[1], neg1);
+
+    let neg2 = _mm256_sub_epi64(bias_n, result.0[2]);
+    result.0[2] = _mm256_blend_epi32::<0b1100_0000>(result.0[2], neg2);
+
+    let neg3 = _mm256_sub_epi64(bias_n, result.0[3]);
+    result.0[3] = _mm256_blend_epi32::<0b1100_0000>(result.0[3], neg3);
+
+    let neg4 = _mm256_sub_epi64(bias_n, result.0[4]);
+    result.0[4] = _mm256_blend_epi32::<0b1100_0000>(result.0[4], neg4);
+
+    result
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+#[cfg(target_arch = "x86_64")]
+mod tests {
+  use super::*;
+  use crate::auth::ed25519::field::FieldElement;
+
+  fn test_field_elements() -> [FieldElement; 4] {
+    let a = FieldElement::from_limbs([
+      1_234_567_890_123,
+      987_654_321_012,
+      111_222_333_444,
+      555_666_777_888,
+      999_000_111_222,
+    ]);
+    let b = FieldElement::from_limbs([
+      2_100_000_000_000,
+      1_800_000_000_000,
+      1_500_000_000_000,
+      1_200_000_000_000,
+      900_000_000_000,
+    ]);
+    let c = FieldElement::from_limbs([42, 0, 0, 0, 0]);
+    let d = FieldElement::from_limbs([
+      (1u64 << 51) - 20,
+      (1u64 << 51) - 1,
+      (1u64 << 51) - 1,
+      (1u64 << 51) - 1,
+      (1u64 << 51) - 1,
+    ]);
+    [a, b, c, d]
+  }
+
+  #[test]
+  fn new_split_roundtrip() {
+    if !is_x86_feature_detected!("avx2") {
+      return;
+    }
+    let [a, b, c, d] = test_field_elements();
+
+    // SAFETY: AVX2 checked above.
+    unsafe {
+      let packed = FieldElement51x4::new(&a, &b, &c, &d);
+      let [ra, rb, rc, rd] = packed.split();
+      assert_eq!(ra.limbs(), a.limbs(), "lane A roundtrip");
+      assert_eq!(rb.limbs(), b.limbs(), "lane B roundtrip");
+      assert_eq!(rc.limbs(), c.limbs(), "lane C roundtrip");
+      assert_eq!(rd.limbs(), d.limbs(), "lane D roundtrip");
+    }
+  }
+
+  #[test]
+  fn add_matches_scalar() {
+    if !is_x86_feature_detected!("avx2") {
+      return;
+    }
+    let [a, b, c, d] = test_field_elements();
+    let [e, f, g, h] = [
+      FieldElement::from_limbs([100, 200, 300, 400, 500]),
+      FieldElement::from_limbs([600, 700, 800, 900, 1000]),
+      FieldElement::from_limbs([1, 1, 1, 1, 1]),
+      FieldElement::from_limbs([10, 20, 30, 40, 50]),
+    ];
+
+    // SAFETY: AVX2 checked above.
+    unsafe {
+      let lhs = FieldElement51x4::new(&a, &b, &c, &d);
+      let rhs = FieldElement51x4::new(&e, &f, &g, &h);
+      let sum = lhs.add(&rhs);
+      let [ra, rb, rc, rd] = sum.split();
+
+      assert_eq!(ra, a.add(&e), "lane A add");
+      assert_eq!(rb, b.add(&f), "lane B add");
+      assert_eq!(rc, c.add(&g), "lane C add");
+      assert_eq!(rd, d.add(&h), "lane D add");
+    }
+  }
+
+  #[test]
+  fn mul_matches_scalar() {
+    if !is_x86_feature_detected!("avx512ifma") {
+      return;
+    }
+    let [a, b, c, d] = test_field_elements();
+    let [e, f, g, h] = [
+      FieldElement::from_limbs([100_000_000, 200_000_000, 300_000_000, 400_000_000, 500_000_000]),
+      FieldElement::from_limbs([600_000_000, 700_000_000, 800_000_000, 900_000_000, 1_000_000_000]),
+      FieldElement::from_limbs([17, 0, 0, 0, 0]),
+      FieldElement::from_limbs([
+        (1u64 << 51) - 100,
+        (1u64 << 51) - 1,
+        (1u64 << 51) - 1,
+        (1u64 << 51) - 1,
+        (1u64 << 51) - 1,
+      ]),
+    ];
+
+    // SAFETY: AVX-512 IFMA checked above.
+    unsafe {
+      let lhs = FieldElement51x4::new(&a, &b, &c, &d);
+      let rhs = FieldElement51x4::new(&e, &f, &g, &h);
+      let product = lhs.mul(&rhs);
+      let [ra, rb, rc, rd] = product.split();
+
+      // Normalize both sides for comparison.
+      let expected_a = a.mul(&e).normalize();
+      let expected_b = b.mul(&f).normalize();
+      let expected_c = c.mul(&g).normalize();
+      let expected_d = d.mul(&h).normalize();
+
+      assert_eq!(ra.normalize(), expected_a, "lane A mul");
+      assert_eq!(rb.normalize(), expected_b, "lane B mul");
+      assert_eq!(rc.normalize(), expected_c, "lane C mul");
+      assert_eq!(rd.normalize(), expected_d, "lane D mul");
+    }
+  }
+
+  #[test]
+  fn square_matches_mul_self() {
+    if !is_x86_feature_detected!("avx512ifma") {
+      return;
+    }
+    let [a, b, c, d] = test_field_elements();
+
+    // SAFETY: AVX-512 IFMA checked above.
+    unsafe {
+      let packed = FieldElement51x4::new(&a, &b, &c, &d);
+      let sq = packed.square();
+      let mul_self = packed.mul(&packed);
+
+      let [sq_a, sq_b, sq_c, sq_d] = sq.split();
+      let [ms_a, ms_b, ms_c, ms_d] = mul_self.split();
+
+      assert_eq!(sq_a.normalize(), ms_a.normalize(), "lane A square vs mul");
+      assert_eq!(sq_b.normalize(), ms_b.normalize(), "lane B square vs mul");
+      assert_eq!(sq_c.normalize(), ms_c.normalize(), "lane C square vs mul");
+      assert_eq!(sq_d.normalize(), ms_d.normalize(), "lane D square vs mul");
+    }
+  }
+
+  #[test]
+  fn square_matches_scalar() {
+    if !is_x86_feature_detected!("avx512ifma") {
+      return;
+    }
+    let [a, b, c, d] = test_field_elements();
+
+    // SAFETY: AVX-512 IFMA checked above.
+    unsafe {
+      let packed = FieldElement51x4::new(&a, &b, &c, &d);
+      let sq = packed.square();
+      let [ra, rb, rc, rd] = sq.split();
+
+      assert_eq!(ra.normalize(), a.square().normalize(), "lane A square");
+      assert_eq!(rb.normalize(), b.square().normalize(), "lane B square");
+      assert_eq!(rc.normalize(), c.square().normalize(), "lane C square");
+      assert_eq!(rd.normalize(), d.square().normalize(), "lane D square");
+    }
+  }
+
+  #[test]
+  fn shuffle_badc() {
+    if !is_x86_feature_detected!("avx2") {
+      return;
+    }
+    let [a, b, c, d] = test_field_elements();
+
+    // SAFETY: AVX2 checked above.
+    unsafe {
+      let packed = FieldElement51x4::new(&a, &b, &c, &d);
+      let shuffled = packed.shuffle(Shuffle::BADC);
+      let [ra, rb, rc, rd] = shuffled.split();
+
+      assert_eq!(ra.limbs(), b.limbs(), "BADC lane 0 = B");
+      assert_eq!(rb.limbs(), a.limbs(), "BADC lane 1 = A");
+      assert_eq!(rc.limbs(), d.limbs(), "BADC lane 2 = D");
+      assert_eq!(rd.limbs(), c.limbs(), "BADC lane 3 = C");
+    }
+  }
+}

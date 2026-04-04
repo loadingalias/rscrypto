@@ -31,6 +31,8 @@ mod constants;
 pub(crate) mod field;
 #[cfg(target_arch = "x86_64")]
 pub(crate) mod field_avx2;
+#[cfg(target_arch = "x86_64")]
+pub(crate) mod field_ifma;
 pub(crate) mod hash;
 pub(crate) mod point;
 #[cfg(target_arch = "x86_64")]
@@ -411,16 +413,8 @@ fn split_signature(signature: &Ed25519Signature) -> ([u8; 32], [u8; 32]) {
 }
 
 // ---------------------------------------------------------------------------
-// Dispatch: AVX2 → portable
+// Dispatch: IFMA → AVX2 → portable
 // ---------------------------------------------------------------------------
-//
-// NOTE: AVX-512 IFMA dispatch is intentionally absent. The IFMA field
-// multiply (`vpmadd52luq`) truncates each product to 52 bits, but the
-// radix-26/25 schoolbook with ×19 reduction produces products up to 56–59
-// bits (26-bit limb × 30-bit `y*19` limb). The high bits are silently
-// discarded, producing wrong field arithmetic. A correct IFMA backend
-// requires a different limb representation (e.g. radix-2^51 with paired
-// `madd52lo`/`madd52hi`).
 
 /// Dispatch `[s]B` (fixed-base scalar mul) to the fastest available path.
 #[must_use]
@@ -428,6 +422,13 @@ fn basepoint_mul_dispatch(scalar_bytes: &[u8; 32]) -> point::ExtendedPoint {
   #[cfg(target_arch = "x86_64")]
   {
     let caps = crate::platform::caps();
+    if caps.has(crate::platform::caps::x86::AVX512IFMA)
+      && caps.has(crate::platform::caps::x86::AVX512VL)
+      && caps.has(crate::platform::caps::x86::AVX2)
+    {
+      // SAFETY: AVX-512 IFMA + VL + AVX2 confirmed by runtime detection.
+      return unsafe { point_avx2::scalar_mul_basepoint_ifma(scalar_bytes) };
+    }
     if caps.has(crate::platform::caps::x86::AVX2) {
       // SAFETY: AVX2 confirmed by runtime detection.
       return unsafe { point_avx2::scalar_mul_basepoint_avx2(scalar_bytes) };
@@ -443,6 +444,13 @@ fn straus_dispatch(s: &[u8; 32], h: &[u8; 32], a: &point::ExtendedPoint) -> poin
   #[cfg(target_arch = "x86_64")]
   {
     let caps = crate::platform::caps();
+    if caps.has(crate::platform::caps::x86::AVX512IFMA)
+      && caps.has(crate::platform::caps::x86::AVX512VL)
+      && caps.has(crate::platform::caps::x86::AVX2)
+    {
+      // SAFETY: AVX-512 IFMA + VL + AVX2 confirmed by runtime detection.
+      return unsafe { point_avx2::straus_basepoint_vartime_ifma(s, h, a) };
+    }
     if caps.has(crate::platform::caps::x86::AVX2) {
       // SAFETY: AVX2 confirmed by runtime detection.
       return unsafe { point_avx2::straus_basepoint_vartime_avx2(s, h, a) };
