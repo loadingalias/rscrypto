@@ -802,20 +802,23 @@ mod s390x_aes {
 
   /// Single AES round using VCIPH (Vector Cipher Encrypt).
   ///
-  /// Uses the `vciph` mnemonic with `vreg` register class (same pattern
-  /// as `vag` in xxh3/s390x). Both are VRR-c format; LLVM handles RXB
-  /// encoding correctly for native mnemonics (unlike `.insn vrr` which
-  /// does not parse `%v<N>` operands, silently encoding all as V0).
-  #[target_feature(enable = "vector,message-security-assist-extension8")]
+  /// Emits raw instruction bytes because LLVM's s390x assembler does not
+  /// recognise the `vciph` mnemonic, and `.insn vrr` silently ignores
+  /// `%v<N>` register-name operands (encoding all fields as V0).
+  /// Registers are pinned to V0-V2 so the encoding is fixed.
+  ///
+  /// VCIPH V2,V0,V1 (VRR-c): result=V2, state=V0, round_key=V1.
+  /// Encoding: E7 20 10 00 00 77.
+  #[target_feature(enable = "vector")]
   #[inline]
   unsafe fn aes_round(block: i64x2, round_key: i64x2) -> i64x2 {
     let out: i64x2;
     // SAFETY: VECTOR_ENH1 + MSA8 verified by caller (has_hw_aes).
     asm!(
-      "vciph {out}, {block}, {rk}",
-      out = lateout(vreg) out,
-      block = in(vreg) block,
-      rk = in(vreg) round_key,
+      ".byte 0xE7, 0x20, 0x10, 0x00, 0x00, 0x77",
+      in("v0") block,
+      in("v1") round_key,
+      lateout("v2") out,
       options(nomem, nostack, pure),
     );
     out
