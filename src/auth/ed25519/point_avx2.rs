@@ -233,7 +233,6 @@ unsafe fn hamburg_affine_constants() -> FieldElement2625x4 {
   FieldElement2625x4::new(&d2_fe, &d2_fe, &d2_fe_2, &d2_fe)
 }
 
-
 // ---------------------------------------------------------------------------
 // Scalar multiplication
 // ---------------------------------------------------------------------------
@@ -428,7 +427,6 @@ pub(crate) unsafe fn straus_basepoint_vartime_avx2(s: &[u8; 32], h: &[u8; 32], a
 
   acc.to_extended()
 }
-
 
 // ---------------------------------------------------------------------------
 // Tests
