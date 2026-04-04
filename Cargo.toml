@@ -3,12 +3,14 @@ name = "rscrypto"
 description = "Pure Rust cryptography. Hardware-accelerated. Zero dependencies."
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.94.0"
+rust-version = "1.94.1"
 license = "MIT OR Apache-2.0"
 authors = ["loadingalias"]
 repository = "https://github.com/loadingalias/rscrypto"
-keywords = ["crypto", "crc", "checksum", "blake3", "simd"]
-categories = ["cryptography", "no-std::no-alloc", "algorithms"]
+documentation = "https://docs.rs/rscrypto"
+readme = "README.md"
+keywords = ["crypto", "cryptography", "blake3", "simd", "no-std"]
+categories = ["cryptography", "no-std", "algorithms", "hardware-support"]
 include = [
   "/.config/target-matrix.json",
   "/Cargo.toml",
@@ -39,10 +41,12 @@ rustdoc-args = ["--cfg", "docsrs"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.94.0"
+rust-version = "1.94.1"
 license = "MIT OR Apache-2.0"
 authors = ["loadingalias"]
 repository = "https://github.com/loadingalias/rscrypto"
+documentation = "https://docs.rs/rscrypto"
+readme = "README.md"
 
 [workspace.lints.rust]
 # `unsafe` is allowed in rscrypto, but must be narrow and well-documented.

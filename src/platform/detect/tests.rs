@@ -290,9 +290,9 @@ mod tests {
     std::eprintln!("  FRINTTS: {}", det.caps.has(aarch64::FRINTTS));
     std::eprintln!("  LSE2: {}", det.caps.has(aarch64::LSE2));
 
-    // These should be present on M1 Pro (hw.optional.arm confirms this)
+    // FRINTTS is detectable via std::arch on macOS; LSE2 is not exposed by
+    // Apple's sysctl and therefore cannot be asserted here.
     assert!(det.caps.has(aarch64::FRINTTS), "FRINTTS should be detected on M1+");
-    assert!(det.caps.has(aarch64::LSE2), "LSE2 should be detected on M1+");
   }
 
   #[test]

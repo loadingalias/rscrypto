@@ -802,18 +802,20 @@ mod s390x_aes {
 
   /// Single AES round using VCIPH (Vector Cipher Encrypt).
   ///
-  /// `.insn vrr` encodes VCIPH (E7___77) in VRR-c format with `vreg`
-  /// operands so the register allocator assigns real vector registers.
+  /// Operands are pinned to V0-V2 because `.insn vrr` mis-encodes the
+  /// RXB extension byte when LLVM assigns V16-V31 via `vreg`, causing
+  /// VCIPH to read/write wrong registers silently.
   #[target_feature(enable = "vector,message-security-assist-extension8")]
   #[inline]
   unsafe fn aes_round(block: i64x2, round_key: i64x2) -> i64x2 {
     let out: i64x2;
     // SAFETY: VECTOR_ENH1 + MSA8 verified by caller (has_hw_aes).
+    // VCIPH V1,V2,V3: V1=result, V2=state, V3=round_key.
     asm!(
-      ".insn vrr,0xE70000000077,{out},{block},{rk},0,0,0",
-      out = lateout(vreg) out,
-      block = in(vreg) block,
-      rk = in(vreg) round_key,
+      ".insn vrr,0xE70000000077,%v2,%v0,%v1,0,0,0",
+      in("v0") block,
+      in("v1") round_key,
+      lateout("v2") out,
       options(nomem, nostack, pure),
     );
     out

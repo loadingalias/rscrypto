@@ -180,7 +180,9 @@
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 #![cfg_attr(not(test), deny(clippy::expect_used))]
 #![cfg_attr(not(test), deny(clippy::indexing_slicing))]
-// Power SIMD backends require nightly-only SIMD/asm + target-feature support.
+// Exotic-architecture backends require nightly-only features (inline asm +
+// portable_simd + unstable target-feature flags). Primary targets (x86_64,
+// aarch64, wasm) compile on stable Rust 1.94.1.
 #![cfg_attr(
   target_arch = "powerpc64",
   feature(asm_experimental_arch, portable_simd, powerpc_target_feature)
@@ -203,7 +205,7 @@
     riscv_ext_intrinsics
   )
 )]
-// NIGHTLY: riscv32 SHA-256 Zknh kernel uses scalar crypto intrinsics.
+// NIGHTLY: RISC-V scalar crypto intrinsics (Zknh) for SHA-256.
 #![cfg_attr(target_arch = "riscv32", feature(riscv_ext_intrinsics))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(not(feature = "std"), no_std)]
