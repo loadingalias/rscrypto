@@ -751,240 +751,6 @@ mod ppc {
 }
 
 // ---------------------------------------------------------------------------
-// s390x VCIPH backend (z14+ MSA8)
-// ---------------------------------------------------------------------------
-
-#[cfg(target_arch = "s390x")]
-#[allow(unsafe_code, unsafe_op_in_unsafe_fn)]
-mod s390x_aes {
-  use core::{arch::asm, simd::i64x2};
-
-  use super::{BLOCK_SIZE, C0, C1, KEY_SIZE, NONCE_SIZE, TAG_SIZE};
-
-  pub(super) type State = [i64x2; 6];
-
-  /// Load 16 bytes into a vector register preserving byte order.
-  ///
-  /// On big-endian s390x, `i64x2` element 0 maps to VR bytes 0-7 (MSB
-  /// doubleword) and element 1 to bytes 8-15. LLVM optimises the
-  /// `from_be_bytes` + `from_array` construction to a single `VL`.
-  #[inline(always)]
-  pub(super) fn load(bytes: &[u8; 16]) -> i64x2 {
-    i64x2::from_array([
-      i64::from_be_bytes([
-        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-      ]),
-      i64::from_be_bytes([
-        bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15],
-      ]),
-    ])
-  }
-
-  /// Store a vector register back to 16 bytes preserving byte order.
-  #[inline(always)]
-  pub(super) fn store(v: i64x2, out: &mut [u8; 16]) {
-    let arr = v.to_array();
-    out[..8].copy_from_slice(&arr[0].to_be_bytes());
-    out[8..].copy_from_slice(&arr[1].to_be_bytes());
-  }
-
-  /// Diagnostic: single AES round via VCIPH for comparison with portable.
-  /// Returns `None` if HW AES is not available.
-  #[cfg(test)]
-  pub(super) unsafe fn test_single_aes_round(block: &[u8; 16], round_key: &[u8; 16]) -> [u8; 16] {
-    let b = load(block);
-    let rk = load(round_key);
-    let result = aes_round(b, rk);
-    let mut out = [0u8; 16];
-    store(result, &mut out);
-    out
-  }
-
-  /// Single AES round using VCIPH (Vector Cipher Encrypt).
-  ///
-  /// Emits raw instruction bytes because LLVM's s390x assembler does not
-  /// recognise the `vciph` mnemonic, and `.insn vrr` silently ignores
-  /// `%v<N>` register-name operands (encoding all fields as V0).
-  /// Registers are pinned to V0-V2 so the encoding is fixed.
-  ///
-  /// VCIPH V2,V0,V1 (VRR-c): result=V2, state=V0, round_key=V1.
-  /// Encoding: E7 20 10 00 00 77.
-  #[target_feature(enable = "vector")]
-  #[inline]
-  unsafe fn aes_round(block: i64x2, round_key: i64x2) -> i64x2 {
-    let out: i64x2;
-    // SAFETY: VECTOR_ENH1 + MSA8 verified by caller (has_hw_aes).
-    asm!(
-      ".byte 0xE7, 0x20, 0x10, 0x00, 0x00, 0x77",
-      in("v0") block,
-      in("v1") round_key,
-      lateout("v2") out,
-      options(nomem, nostack, pure),
-    );
-    out
-  }
-
-  /// XOR two vector registers (bitwise, order-independent).
-  #[inline(always)]
-  fn xor_vec(a: i64x2, b: i64x2) -> i64x2 {
-    let aa = a.to_array();
-    let ba = b.to_array();
-    i64x2::from_array([aa[0] ^ ba[0], aa[1] ^ ba[1]])
-  }
-
-  /// AND two vector registers (bitwise, order-independent).
-  #[inline(always)]
-  fn and_vec(a: i64x2, b: i64x2) -> i64x2 {
-    let aa = a.to_array();
-    let ba = b.to_array();
-    i64x2::from_array([aa[0] & ba[0], aa[1] & ba[1]])
-  }
-
-  #[target_feature(enable = "vector,message-security-assist-extension8")]
-  #[inline]
-  unsafe fn update(s: &mut State, m: i64x2) {
-    let tmp = s[5];
-    s[5] = aes_round(s[4], s[5]);
-    s[4] = aes_round(s[3], s[4]);
-    s[3] = aes_round(s[2], s[3]);
-    s[2] = aes_round(s[1], s[2]);
-    s[1] = aes_round(s[0], s[1]);
-    s[0] = xor_vec(aes_round(tmp, s[0]), m);
-  }
-
-  #[target_feature(enable = "vector,message-security-assist-extension8")]
-  pub(super) unsafe fn init(key: &[u8; KEY_SIZE], nonce: &[u8; NONCE_SIZE]) -> State {
-    let (kh0, kh1) = super::split_halves(key);
-    let (nh0, nh1) = super::split_halves(nonce);
-    let k0 = load(kh0);
-    let k1 = load(kh1);
-    let n0 = load(nh0);
-    let n1 = load(nh1);
-    let c0 = load(&C0);
-    let c1 = load(&C1);
-
-    let k0_xor_n0 = xor_vec(k0, n0);
-    let k1_xor_n1 = xor_vec(k1, n1);
-
-    let mut s: State = [k0_xor_n0, k1_xor_n1, c1, c0, xor_vec(k0, c0), xor_vec(k1, c1)];
-
-    for _ in 0..4 {
-      update(&mut s, k0);
-      update(&mut s, k1);
-      update(&mut s, k0_xor_n0);
-      update(&mut s, k1_xor_n1);
-    }
-
-    s
-  }
-
-  #[target_feature(enable = "vector,message-security-assist-extension8")]
-  pub(super) unsafe fn process_aad(s: &mut State, aad: &[u8]) {
-    let mut offset = 0usize;
-
-    while offset.strict_add(BLOCK_SIZE) <= aad.len() {
-      let mut tmp = [0u8; 16];
-      tmp.copy_from_slice(&aad[offset..offset.strict_add(BLOCK_SIZE)]);
-      update(s, load(&tmp));
-      offset = offset.strict_add(BLOCK_SIZE);
-    }
-
-    if offset < aad.len() {
-      let mut pad = [0u8; BLOCK_SIZE];
-      pad[..aad.len().strict_sub(offset)].copy_from_slice(&aad[offset..]);
-      update(s, load(&pad));
-    }
-  }
-
-  #[inline(always)]
-  fn keystream_vec(s: &State) -> i64x2 {
-    let s2_and_s3 = and_vec(s[2], s[3]);
-    xor_vec(xor_vec(s[1], s[4]), xor_vec(s[5], s2_and_s3))
-  }
-
-  #[target_feature(enable = "vector,message-security-assist-extension8")]
-  pub(super) unsafe fn encrypt(s: &mut State, buffer: &mut [u8]) {
-    let mut offset = 0usize;
-
-    while offset.strict_add(BLOCK_SIZE) <= buffer.len() {
-      let z = keystream_vec(s);
-      let mut tmp = [0u8; 16];
-      tmp.copy_from_slice(&buffer[offset..offset.strict_add(BLOCK_SIZE)]);
-      let xi = load(&tmp);
-      update(s, xi);
-      let ci = xor_vec(xi, z);
-      store(ci, &mut tmp);
-      buffer[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&tmp);
-      offset = offset.strict_add(BLOCK_SIZE);
-    }
-
-    if offset < buffer.len() {
-      let z = keystream_vec(s);
-      let tail_len = buffer.len().strict_sub(offset);
-      let mut pad = [0u8; BLOCK_SIZE];
-      pad[..tail_len].copy_from_slice(&buffer[offset..]);
-      let xi = load(&pad);
-      update(s, xi);
-      let mut ct_bytes = [0u8; BLOCK_SIZE];
-      store(xor_vec(xi, z), &mut ct_bytes);
-      buffer[offset..].copy_from_slice(&ct_bytes[..tail_len]);
-    }
-  }
-
-  #[target_feature(enable = "vector,message-security-assist-extension8")]
-  pub(super) unsafe fn decrypt(s: &mut State, buffer: &mut [u8]) {
-    let mut offset = 0usize;
-
-    while offset.strict_add(BLOCK_SIZE) <= buffer.len() {
-      let z = keystream_vec(s);
-      let mut tmp = [0u8; 16];
-      tmp.copy_from_slice(&buffer[offset..offset.strict_add(BLOCK_SIZE)]);
-      let ci = load(&tmp);
-      let xi = xor_vec(ci, z);
-      update(s, xi);
-      store(xi, &mut tmp);
-      buffer[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&tmp);
-      offset = offset.strict_add(BLOCK_SIZE);
-    }
-
-    if offset < buffer.len() {
-      let z = keystream_vec(s);
-      let tail_len = buffer.len().strict_sub(offset);
-      let mut pad = [0u8; BLOCK_SIZE];
-      pad[..tail_len].copy_from_slice(&buffer[offset..]);
-      let mut z_bytes = [0u8; BLOCK_SIZE];
-      store(z, &mut z_bytes);
-      let mut pt_pad = [0u8; BLOCK_SIZE];
-      for i in 0..tail_len {
-        pt_pad[i] = pad[i] ^ z_bytes[i];
-      }
-      update(s, load(&pt_pad));
-      buffer[offset..].copy_from_slice(&pt_pad[..tail_len]);
-    }
-  }
-
-  #[target_feature(enable = "vector,message-security-assist-extension8")]
-  pub(super) unsafe fn finalize(s: &mut State, ad_len: usize, msg_len: usize) -> [u8; TAG_SIZE] {
-    let ad_bits = (ad_len as u64).strict_mul(8);
-    let msg_bits = (msg_len as u64).strict_mul(8);
-    let mut len_bytes = [0u8; BLOCK_SIZE];
-    len_bytes[..8].copy_from_slice(&ad_bits.to_le_bytes());
-    len_bytes[8..].copy_from_slice(&msg_bits.to_le_bytes());
-    let len_block = load(&len_bytes);
-    let t = xor_vec(s[3], len_block);
-
-    for _ in 0..7 {
-      update(s, t);
-    }
-
-    let tag_vec = xor_vec(xor_vec(xor_vec(s[0], s[1]), xor_vec(s[2], s[3])), xor_vec(s[4], s[5]));
-    let mut tag = [0u8; TAG_SIZE];
-    store(tag_vec, &mut tag);
-    tag
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Backend dispatch
 // ---------------------------------------------------------------------------
 
@@ -993,7 +759,6 @@ mod s390x_aes {
   target_arch = "x86_64",
   target_arch = "aarch64",
   all(target_arch = "powerpc64", target_endian = "little"),
-  target_arch = "s390x",
 ))]
 #[inline]
 fn has_hw_aes() -> bool {
@@ -1011,13 +776,6 @@ fn has_hw_aes() -> bool {
   {
     use crate::platform::caps::power;
     crate::platform::caps().has(power::POWER8_CRYPTO)
-  }
-  #[cfg(target_arch = "s390x")]
-  {
-    use crate::platform::caps::s390x;
-    // VCIPH requires z14+ (Vector Enhancements 1 / MSA8).
-    let caps = crate::platform::caps();
-    caps.has(s390x::VECTOR_ENH1) && caps.has(s390x::MSA8)
   }
 }
 
@@ -1151,7 +909,7 @@ impl fmt::Debug for Aegis256Tag {
 ///
 /// High-performance AES-based AEAD with a 256-bit key, 256-bit nonce,
 /// and 128-bit authentication tag. On hardware with AES round instructions
-/// (AES-NI, AES-CE, POWER8 vcipher, z14+ VCIPH), AEGIS-256 achieves
+/// (AES-NI, AES-CE, POWER8 vcipher), AEGIS-256 achieves
 /// ~2-3x the throughput of AES-256-GCM.
 ///
 /// # Examples
@@ -1381,19 +1139,6 @@ impl Aead for Aegis256 {
       return Aegis256Tag::from_bytes(tag);
     }
 
-    #[cfg(target_arch = "s390x")]
-    if has_hw_aes() {
-      // SAFETY: has_hw_aes() confirmed z14+ VCIPH is available.
-      let tag = unsafe {
-        let mut s = s390x_aes::init(key, nonce);
-        s390x_aes::process_aad(&mut s, aad);
-        let msg_len = buffer.len();
-        s390x_aes::encrypt(&mut s, buffer);
-        s390x_aes::finalize(&mut s, aad.len(), msg_len)
-      };
-      return Aegis256Tag::from_bytes(tag);
-    }
-
     Aegis256Tag::from_bytes(encrypt_portable(key, nonce, aad, buffer))
   }
 
@@ -1449,25 +1194,10 @@ impl Aead for Aegis256 {
       decrypt_portable(key, nonce, aad, buffer)
     };
 
-    #[cfg(target_arch = "s390x")]
-    let computed = if has_hw_aes() {
-      // SAFETY: has_hw_aes() confirmed z14+ VCIPH is available.
-      unsafe {
-        let mut s = s390x_aes::init(key, nonce);
-        s390x_aes::process_aad(&mut s, aad);
-        let ct_len = buffer.len();
-        s390x_aes::decrypt(&mut s, buffer);
-        s390x_aes::finalize(&mut s, aad.len(), ct_len)
-      }
-    } else {
-      decrypt_portable(key, nonce, aad, buffer)
-    };
-
     #[cfg(not(any(
       target_arch = "x86_64",
       target_arch = "aarch64",
       all(target_arch = "powerpc64", target_endian = "little"),
-      target_arch = "s390x",
     )))]
     let computed = decrypt_portable(key, nonce, aad, buffer);
 
@@ -1511,41 +1241,6 @@ mod tests {
     let expected = hex_block("7a7b4e5638782546a8c0477a3b813f43");
 
     assert_eq!(aes_round(&input, &rk), expected);
-  }
-
-  /// Diagnostic: compare s390x VCIPH output against the portable AES round.
-  #[test]
-  fn aes_round_hw_matches_portable() {
-    let input = hex_block("000102030405060708090a0b0c0d0e0f");
-    let rk = hex_block("101112131415161718191a1b1c1d1e1f");
-    let portable_result = aes_round(&input, &rk);
-
-    #[cfg(target_arch = "s390x")]
-    if has_hw_aes() {
-      // SAFETY: has_hw_aes() confirmed VECTOR_ENH1 + MSA8 are available.
-      let hw_result = unsafe { s390x_aes::test_single_aes_round(&input, &rk) };
-      assert_eq!(
-        hw_result, portable_result,
-        "s390x VCIPH mismatch: hw={hw_result:?} portable={portable_result:?}"
-      );
-    }
-
-    // On non-s390x, the test trivially passes (nothing to compare).
-    #[cfg(not(target_arch = "s390x"))]
-    let _ = portable_result;
-  }
-
-  /// Diagnostic: verify load→store round-trip preserves bytes on s390x.
-  #[test]
-  fn load_store_roundtrip() {
-    #[cfg(target_arch = "s390x")]
-    {
-      let input: [u8; 16] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
-      let v = s390x_aes::load(&input);
-      let mut output = [0u8; 16];
-      s390x_aes::store(v, &mut output);
-      assert_eq!(input, output, "load/store round-trip failed");
-    }
   }
 
   // -- Update test vector (Appendix A.2) --
