@@ -1316,6 +1316,7 @@ mod tests {
     }
     let [a, b, c, d] = test_field_elements();
 
+    // SAFETY: AVX2 availability checked by the runtime guard above.
     unsafe {
       let packed = FieldElement2625x4::new(&a, &b, &c, &d);
       let [ra, rb, rc, rd] = packed.split();
@@ -1335,6 +1336,7 @@ mod tests {
     let [a, b, c, d] = test_field_elements();
     let [e, f, g, h] = small_field_elements();
 
+    // SAFETY: AVX2 availability checked by the runtime guard above.
     unsafe {
       let lhs = FieldElement2625x4::new(&a, &b, &c, &d);
       let rhs = FieldElement2625x4::new(&e, &f, &g, &h);
@@ -1356,6 +1358,7 @@ mod tests {
     let [a, b, c, d] = test_field_elements();
     let [e, f, g, h] = small_field_elements();
 
+    // SAFETY: AVX2 availability checked by the runtime guard above.
     unsafe {
       let lhs = FieldElement2625x4::new(&a, &b, &c, &d);
       let rhs = FieldElement2625x4::new(&e, &f, &g, &h);
@@ -1377,6 +1380,7 @@ mod tests {
     let [a, b, c, d] = test_field_elements();
     let [e, f, g, h] = small_field_elements();
 
+    // SAFETY: AVX2 availability checked by the runtime guard above.
     unsafe {
       let lhs = FieldElement2625x4::new(&a, &b, &c, &d);
       let rhs = FieldElement2625x4::new(&e, &f, &g, &h);
@@ -1397,6 +1401,7 @@ mod tests {
     }
     let [a, b, c, d] = test_field_elements();
 
+    // SAFETY: AVX2 availability checked by the runtime guard above.
     unsafe {
       let packed = FieldElement2625x4::new(&a, &b, &c, &d);
       let squared = packed.square();
@@ -1416,6 +1421,7 @@ mod tests {
     }
     let [a, b, c, d] = test_field_elements();
 
+    // SAFETY: AVX2 availability checked by the runtime guard above.
     unsafe {
       let packed = FieldElement2625x4::new(&a, &b, &c, &d);
       let sq = packed.square();
@@ -1437,6 +1443,7 @@ mod tests {
     }
     let [a, b, c, d] = test_field_elements();
 
+    // SAFETY: AVX2 availability checked by the runtime guard above.
     unsafe {
       let packed = FieldElement2625x4::new(&a, &b, &c, &d);
       let result = packed.square_and_negate_d();
@@ -1456,6 +1463,7 @@ mod tests {
     }
     let [a, b, c, d] = test_field_elements();
 
+    // SAFETY: AVX2 availability checked by the runtime guard above.
     unsafe {
       let packed = FieldElement2625x4::new(&a, &b, &c, &d);
       let shuffled = packed.shuffle(Shuffle::BADC);
@@ -1475,6 +1483,7 @@ mod tests {
     }
     let [a, b, c, d] = small_field_elements();
 
+    // SAFETY: AVX2 availability checked by the runtime guard above.
     unsafe {
       let packed = FieldElement2625x4::new(&a, &b, &c, &d);
       let ds = packed.diff_sum().reduce();
@@ -1500,6 +1509,7 @@ mod tests {
       FieldElement::from_limbs([16, 17, 18, 19, 20]),
     ];
 
+    // SAFETY: AVX2 availability checked by the runtime guard above.
     unsafe {
       let lhs = FieldElement2625x4::new(&a, &b, &c, &d);
       let rhs = FieldElement2625x4::new(&e, &f, &g, &h);
@@ -1524,6 +1534,7 @@ mod tests {
     let [a, b, c, d] = test_field_elements();
     let [e, f, g, h] = small_field_elements();
 
+    // SAFETY: AVX2 availability checked by the runtime guard above.
     unsafe {
       let lhs = FieldElement2625x4::new(&a, &b, &c, &d);
       let rhs = FieldElement2625x4::new(&e, &f, &g, &h);
@@ -1546,6 +1557,7 @@ mod tests {
     }
     let [a, b, c, d] = test_field_elements();
 
+    // SAFETY: AVX2 availability checked by the runtime guard above.
     unsafe {
       let packed = FieldElement2625x4::new(&a, &b, &c, &d);
       let avx2 = packed.square();

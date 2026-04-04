@@ -701,6 +701,7 @@ mod tests {
     }
     let bp = basepoint();
 
+    // SAFETY: AVX2 availability checked by the runtime guard above.
     unsafe {
       let avx = ExtendedPointAvx2::from_extended(&bp);
       let back = avx.to_extended();
@@ -720,6 +721,7 @@ mod tests {
     let bp = basepoint();
     let scalar_doubled = bp.double();
 
+    // SAFETY: AVX2 availability checked by the runtime guard above.
     unsafe {
       let avx = ExtendedPointAvx2::from_extended(&bp);
       let avx_doubled = avx.double();
@@ -741,6 +743,7 @@ mod tests {
     // 8B = cofactor mul
     let scalar_8b = bp.double().double().double();
 
+    // SAFETY: AVX2 availability checked by the runtime guard above.
     unsafe {
       let avx = ExtendedPointAvx2::from_extended(&bp);
       let avx_8b = avx.double().double().double();
@@ -763,6 +766,7 @@ mod tests {
     // Scalar: B + 2B = 3B
     let scalar_3b = bp.add(&bp2);
 
+    // SAFETY: AVX2 availability checked by the runtime guard above.
     unsafe {
       let avx_bp = ExtendedPointAvx2::from_extended(&bp);
       let avx_bp2 = ExtendedPointAvx2::from_extended(&bp2);
@@ -785,6 +789,7 @@ mod tests {
     let bp = basepoint();
     let bp2 = bp.double();
 
+    // SAFETY: AVX2 availability checked by the runtime guard above.
     unsafe {
       // 2B + (−B) should equal B
       let avx_bp2 = ExtendedPointAvx2::from_extended(&bp2);
@@ -805,6 +810,7 @@ mod tests {
     // Scalar: 2*(B + B) = 2*(2B) = 4B
     let scalar_4b = bp.add(&bp).double();
 
+    // SAFETY: AVX2 availability checked by the runtime guard above.
     unsafe {
       let avx_bp = ExtendedPointAvx2::from_extended(&bp);
       let cached_bp = avx_bp.to_cached();
@@ -827,6 +833,7 @@ mod tests {
     let bp = basepoint();
     let identity = ExtendedPoint::identity();
 
+    // SAFETY: AVX2 availability checked by the runtime guard above.
     unsafe {
       let avx_bp = ExtendedPointAvx2::from_extended(&bp);
       let avx_id = ExtendedPointAvx2::from_extended(&identity);
@@ -852,6 +859,7 @@ mod tests {
 
     let scalar_result = bp.scalar_mul_vartime(&scalar);
 
+    // SAFETY: AVX2 availability checked by the runtime guard above.
     unsafe {
       let avx_result = scalar_mul_vartime_avx2(&bp, &scalar);
       assert!(
@@ -870,6 +878,7 @@ mod tests {
     scalar[0] = 1;
     let scalar_result = ExtendedPoint::scalar_mul_basepoint(&scalar);
 
+    // SAFETY: AVX2 availability checked by the runtime guard above.
     unsafe {
       let avx_result = scalar_mul_basepoint_avx2(&scalar);
       assert!(
@@ -892,6 +901,7 @@ mod tests {
     let expanded = ExpandedSecret::from_secret_key(&secret);
     let expected = decode_hex_32("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a");
 
+    // SAFETY: AVX2 availability checked by the runtime guard above.
     unsafe {
       let avx_pub = scalar_mul_basepoint_avx2(expanded.scalar_bytes());
       assert_eq!(
@@ -917,6 +927,7 @@ mod tests {
 
     let scalar_result = ExtendedPoint::straus_basepoint_vartime(&s, &h, &a);
 
+    // SAFETY: AVX2 availability checked by the runtime guard above.
     unsafe {
       let avx_result = straus_basepoint_vartime_avx2(&s, &h, &a);
       assert!(
@@ -937,6 +948,7 @@ mod tests {
     }
     let identity = ExtendedPoint::identity();
 
+    // SAFETY: AVX2 availability checked by the runtime guard above.
     unsafe {
       let avx_id = ExtendedPointAvx2::from_extended(&identity);
       let result = avx_id.double().to_extended();
