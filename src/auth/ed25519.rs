@@ -29,8 +29,12 @@ use crate::{
 
 mod constants;
 pub(crate) mod field;
+#[cfg(target_arch = "x86_64")]
+pub(crate) mod field_avx2;
 pub(crate) mod hash;
 pub(crate) mod point;
+#[cfg(target_arch = "x86_64")]
+pub(crate) mod point_avx2;
 pub(crate) mod scalar;
 
 use self::constants::{PUBLIC_KEY_LENGTH, SECRET_KEY_LENGTH, SIGNATURE_LENGTH};
@@ -64,7 +68,12 @@ const _: fn(point::ExtendedPoint) -> Option<[u8; 32]> = point::ExtendedPoint::to
 const _: fn(&[u8; 32]) -> Option<point::ExtendedPoint> = point::ExtendedPoint::from_bytes;
 const _: fn() -> point::ExtendedPoint = point::ExtendedPoint::basepoint;
 const _: fn(&point::ExtendedPoint, &[u8; 32]) -> point::ExtendedPoint = point::ExtendedPoint::scalar_mul;
+const _: fn(&point::ExtendedPoint, &[u8; 32]) -> point::ExtendedPoint = point::ExtendedPoint::scalar_mul_vartime;
 const _: fn(&[u8; 32]) -> point::ExtendedPoint = point::ExtendedPoint::scalar_mul_basepoint;
+#[cfg(target_arch = "x86_64")]
+const _: unsafe fn(&point::ExtendedPoint, &[u8; 32]) -> point::ExtendedPoint = point_avx2::scalar_mul_vartime_avx2;
+#[cfg(target_arch = "x86_64")]
+const _: unsafe fn(&point::ExtendedPoint, &[u8; 32]) -> point::ExtendedPoint = point_avx2::scalar_mul_vartime_ifma;
 const _: fn(&point::ExtendedPoint) -> point::ExtendedPoint = point::ExtendedPoint::mul_by_cofactor;
 const _: fn(point::ExtendedPoint) -> Option<(field::FieldElement, field::FieldElement)> =
   point::ExtendedPoint::to_affine;
@@ -330,8 +339,7 @@ pub fn verify(
 
   // Straus/Shamir: compute [s]B + [-h]A in one interleaved 256-bit scan,
   // then cofactor-clear and compare to [8]R.
-  let combined =
-    point::ExtendedPoint::straus_basepoint_vartime(&s_canonical, &neg_challenge_bytes, &a_point).mul_by_cofactor();
+  let combined = straus_dispatch(&s_canonical, &neg_challenge_bytes, &a_point).mul_by_cofactor();
   let expected = r_point.mul_by_cofactor();
 
   if combined.equals_projective(&expected) {
@@ -357,9 +365,7 @@ fn sign_with_expanded(expanded: &hash::ExpandedSecret, public: &Ed25519PublicKey
   let nonce_digest = nonce_hasher.finalize();
   let nonce_scalar = scalar::reduce_bytes_mod_order(&nonce_digest);
   let nonce_bytes = scalar::to_bytes(&nonce_scalar);
-  let r_encoded = point::ExtendedPoint::scalar_mul_basepoint(&nonce_bytes)
-    .to_bytes()
-    .unwrap_or_default();
+  let r_encoded = basepoint_mul_dispatch(&nonce_bytes).to_bytes().unwrap_or_default();
 
   let mut challenge_hasher = Sha512::new();
   challenge_hasher.update(&r_encoded);
@@ -402,6 +408,53 @@ fn split_signature(signature: &Ed25519Signature) -> ([u8; 32], [u8; 32]) {
   }
 
   (r_bytes, s_bytes)
+}
+
+// ---------------------------------------------------------------------------
+// Dispatch: IFMA → AVX2 → portable
+// ---------------------------------------------------------------------------
+
+/// Dispatch `[s]B` (fixed-base scalar mul) to the fastest available path.
+#[must_use]
+fn basepoint_mul_dispatch(scalar_bytes: &[u8; 32]) -> point::ExtendedPoint {
+  #[cfg(target_arch = "x86_64")]
+  {
+    let caps = crate::platform::caps();
+    if caps.has(crate::platform::caps::x86::AVX512IFMA)
+      && caps.has(crate::platform::caps::x86::AVX512VL)
+      && caps.has(crate::platform::caps::x86::AVX2)
+    {
+      // SAFETY: AVX-512 IFMA + VL + AVX2 confirmed by runtime detection.
+      return unsafe { point_avx2::scalar_mul_basepoint_ifma(scalar_bytes) };
+    }
+    if caps.has(crate::platform::caps::x86::AVX2) {
+      // SAFETY: AVX2 confirmed by runtime detection.
+      return unsafe { point_avx2::scalar_mul_basepoint_avx2(scalar_bytes) };
+    }
+  }
+  point::ExtendedPoint::scalar_mul_basepoint(scalar_bytes)
+}
+
+/// Dispatch `[s]B + [-h]A` (Straus double-scalar mul) to the fastest
+/// available path.
+#[must_use]
+fn straus_dispatch(s: &[u8; 32], h: &[u8; 32], a: &point::ExtendedPoint) -> point::ExtendedPoint {
+  #[cfg(target_arch = "x86_64")]
+  {
+    let caps = crate::platform::caps();
+    if caps.has(crate::platform::caps::x86::AVX512IFMA)
+      && caps.has(crate::platform::caps::x86::AVX512VL)
+      && caps.has(crate::platform::caps::x86::AVX2)
+    {
+      // SAFETY: AVX-512 IFMA + VL + AVX2 confirmed by runtime detection.
+      return unsafe { point_avx2::straus_basepoint_vartime_ifma(s, h, a) };
+    }
+    if caps.has(crate::platform::caps::x86::AVX2) {
+      // SAFETY: AVX2 confirmed by runtime detection.
+      return unsafe { point_avx2::straus_basepoint_vartime_avx2(s, h, a) };
+    }
+  }
+  point::ExtendedPoint::straus_basepoint_vartime(s, h, a)
 }
 
 #[cfg(test)]

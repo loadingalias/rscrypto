@@ -10,7 +10,7 @@ use super::{field::FieldElement, scalar};
 #[path = "basepoint_tables.rs"]
 mod basepoint_tables;
 
-use self::basepoint_tables::BASEPOINT_RADIX16_TABLE;
+pub(crate) use self::basepoint_tables::BASEPOINT_RADIX16_TABLE;
 
 const EDWARDS_D: FieldElement = FieldElement::from_limbs([
   929_955_233_495_203,
@@ -62,6 +62,13 @@ pub(crate) struct CachedPoint {
 }
 
 impl CachedPoint {
+  /// Borrow the cached-point components.
+  #[cfg(target_arch = "x86_64")]
+  #[must_use]
+  pub(crate) const fn components(&self) -> (&FieldElement, &FieldElement, &FieldElement) {
+    (&self.y_plus_x, &self.y_minus_x, &self.t2d)
+  }
+
   #[must_use]
   fn neg(&self) -> Self {
     Self {
@@ -325,14 +332,31 @@ impl ExtendedPoint {
 
   /// Straus/Shamir interleaved double-scalar multiply: `[s]B + [h]A`.
   ///
-  /// Combines two scalar multiplications into a single 256-bit scan using the
-  /// cached basepoint nibble table and a runtime cached table of `a`.
+  /// Scans both scalars in lockstep over 64 signed radix-16 digits
+  /// (high → low), sharing all 256 doublings. Each digit position adds
+  /// from the flat basepoint table (`BASEPOINT_RADIX16_TABLE[0]`) for `s`
+  /// and from a runtime projective table for `h`.
   ///
   /// Variable-time: branches on scalar nibble values. Safe for verification
   /// where both `s` and `h` are public (derived from the message/signature).
   #[must_use]
   pub(crate) fn straus_basepoint_vartime(s: &[u8; 32], h: &[u8; 32], a: &Self) -> Self {
-    Self::scalar_mul_basepoint(s).add(&a.scalar_mul_vartime(h))
+    let s_digits = scalar::as_radix_16(s);
+    let h_digits = scalar::as_radix_16(h);
+    let a_table = projective_cached_multiples(a);
+    let mut acc = Self::identity();
+
+    for (&sd, &hd) in s_digits.iter().zip(h_digits.iter()).rev() {
+      acc = acc.double().double().double().double();
+      if sd != 0 {
+        acc = add_signed_cached(acc, &BASEPOINT_RADIX16_TABLE[0], sd);
+      }
+      if hd != 0 {
+        acc = add_signed_projective_cached(acc, &a_table, hd);
+      }
+    }
+
+    acc
   }
 
   /// Multiply by the Edwards cofactor.
@@ -361,6 +385,13 @@ impl ExtendedPoint {
 
     self.x.mul(&rhs.z).normalize() == rhs.x.mul(&self.z).normalize()
       && self.y.mul(&rhs.z).normalize() == rhs.y.mul(&self.z).normalize()
+  }
+
+  /// Construct from raw field elements (no validation).
+  #[cfg(target_arch = "x86_64")]
+  #[must_use]
+  pub(crate) const fn from_raw(x: FieldElement, y: FieldElement, z: FieldElement, t: FieldElement) -> Self {
+    Self { x, y, z, t }
   }
 
   /// Borrow the extended-coordinate components.
