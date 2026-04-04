@@ -1218,7 +1218,7 @@ mod tests {
     }
   }
 
-  // IFMA tests — verify IFMA mul/square match AVX2 results.
+  // Cross-validation: IFMA (radix-51) mul/square match AVX2 (radix-26/25).
 
   #[test]
   fn ifma_mul_matches_avx2() {
@@ -1228,14 +1228,19 @@ mod tests {
     let [a, b, c, d] = test_field_elements();
     let [e, f, g, h] = small_field_elements();
 
-    // SAFETY: AVX2 availability checked by the runtime guard above.
+    // SAFETY: AVX2 + IFMA availability checked by the runtime guard above.
     unsafe {
-      let lhs = FieldElement2625x4::new(&a, &b, &c, &d);
-      let rhs = FieldElement2625x4::new(&e, &f, &g, &h);
-      let avx2 = lhs.mul(&rhs);
-      let ifma = lhs.mul_ifma(&rhs);
-      let [a2, b2, c2, d2] = avx2.split();
-      let [ai, bi, ci, di] = ifma.split();
+      use crate::auth::ed25519::field_ifma::FieldElement51x4;
+
+      let avx2_lhs = FieldElement2625x4::new(&a, &b, &c, &d);
+      let avx2_rhs = FieldElement2625x4::new(&e, &f, &g, &h);
+      let avx2_result = avx2_lhs.mul(&avx2_rhs);
+      let [a2, b2, c2, d2] = avx2_result.split();
+
+      let ifma_lhs = FieldElement51x4::new(&a, &b, &c, &d);
+      let ifma_rhs = FieldElement51x4::new(&e, &f, &g, &h);
+      let ifma_result = ifma_lhs.mul(&ifma_rhs);
+      let [ai, bi, ci, di] = ifma_result.split();
 
       assert_eq!(a2.normalize(), ai.normalize(), "IFMA mul A mismatch");
       assert_eq!(b2.normalize(), bi.normalize(), "IFMA mul B mismatch");
@@ -1251,13 +1256,17 @@ mod tests {
     }
     let [a, b, c, d] = test_field_elements();
 
-    // SAFETY: AVX2 availability checked by the runtime guard above.
+    // SAFETY: AVX2 + IFMA availability checked by the runtime guard above.
     unsafe {
-      let packed = FieldElement2625x4::new(&a, &b, &c, &d);
-      let avx2 = packed.square();
-      let ifma = packed.square_ifma();
-      let [a2, b2, c2, d2] = avx2.split();
-      let [ai, bi, ci, di] = ifma.split();
+      use crate::auth::ed25519::field_ifma::FieldElement51x4;
+
+      let avx2_packed = FieldElement2625x4::new(&a, &b, &c, &d);
+      let avx2_result = avx2_packed.square();
+      let [a2, b2, c2, d2] = avx2_result.split();
+
+      let ifma_packed = FieldElement51x4::new(&a, &b, &c, &d);
+      let ifma_result = ifma_packed.square();
+      let [ai, bi, ci, di] = ifma_result.split();
 
       assert_eq!(a2.normalize(), ai.normalize(), "IFMA square A mismatch");
       assert_eq!(b2.normalize(), bi.normalize(), "IFMA square B mismatch");

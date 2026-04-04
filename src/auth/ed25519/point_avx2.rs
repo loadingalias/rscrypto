@@ -16,6 +16,7 @@
 use super::{
   field::FieldElement,
   field_avx2::{FieldElement2625x4, Lanes, Shuffle},
+  field_ifma::FieldElement51x4,
   point::{CachedPoint, ExtendedPoint},
   scalar,
 };
@@ -422,6 +423,329 @@ pub(crate) unsafe fn straus_basepoint_vartime_avx2(s: &[u8; 32], h: &[u8; 32], a
     }
     if hd != 0 {
       acc = add_signed_runtime_cached_avx2(acc, &a_table, hd);
+    }
+  }
+
+  acc.to_extended()
+}
+
+// ===========================================================================
+// AVX-512 IFMA point operations (radix-2^51 via FieldElement51x4)
+// ===========================================================================
+
+/// Extended Edwards point in IFMA vectorized form.
+///
+/// Lanes: `(X, Y, Z, T)` as `(A, B, C, D)`.
+#[derive(Clone, Copy)]
+#[cfg(target_arch = "x86_64")]
+pub(crate) struct ExtendedPointIfma(pub(crate) FieldElement51x4);
+
+/// Cached point for efficient addition (Hamburg-scaled, IFMA format).
+#[derive(Clone, Copy)]
+#[cfg(target_arch = "x86_64")]
+pub(crate) struct CachedPointIfma(pub(crate) FieldElement51x4);
+
+#[cfg(target_arch = "x86_64")]
+impl ExtendedPointIfma {
+  /// Pack a scalar extended point into IFMA vectorized form.
+  ///
+  /// # Safety
+  ///
+  /// Caller must ensure AVX2 is available.
+  #[inline]
+  #[target_feature(enable = "avx2")]
+  #[allow(unsafe_op_in_unsafe_fn)]
+  pub(crate) unsafe fn from_extended(p: &ExtendedPoint) -> Self {
+    let (x, y, z, t) = p.components();
+    Self(FieldElement51x4::new(x, y, z, t))
+  }
+
+  /// Unpack back to a scalar extended point.
+  ///
+  /// # Safety
+  ///
+  /// Caller must ensure AVX2 is available.
+  #[inline]
+  #[target_feature(enable = "avx2")]
+  #[allow(unsafe_op_in_unsafe_fn)]
+  pub(crate) unsafe fn to_extended(self) -> ExtendedPoint {
+    let [x, y, z, t] = self.0.split();
+    ExtendedPoint::from_raw(x, y, z, t)
+  }
+
+  /// Convert to Hamburg-scaled cached format for addition.
+  ///
+  /// # Safety
+  ///
+  /// Caller must ensure AVX-512 IFMA + VL are available.
+  #[inline]
+  #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
+  #[allow(unsafe_op_in_unsafe_fn)]
+  pub(crate) unsafe fn to_cached(self) -> CachedPointIfma {
+    let ds = self.0.diff_sum();
+    let prepared = self.0.blend(&ds, Lanes::AB);
+    let constants = hamburg_constants_ifma();
+    let scaled = prepared.mul(&constants);
+    let negated = scaled.negate_lazy();
+    CachedPointIfma(scaled.blend(&negated, Lanes::D))
+  }
+
+  /// Add a cached point to this extended point.
+  ///
+  /// # Safety
+  ///
+  /// Caller must ensure AVX-512 IFMA + VL are available.
+  #[inline]
+  #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
+  #[allow(unsafe_op_in_unsafe_fn)]
+  pub(crate) unsafe fn add_cached(&self, other: &CachedPointIfma) -> Self {
+    let ds = self.0.diff_sum();
+    let tmp = self.0.blend(&ds, Lanes::AB);
+    let product = tmp.mul(&other.0);
+    let swapped = product.shuffle(Shuffle::ABDC);
+    let ehfg = swapped.diff_sum();
+    let t0 = ehfg.shuffle(Shuffle::ADDA);
+    let t1 = ehfg.shuffle(Shuffle::CBCB);
+    Self(t0.mul(&t1))
+  }
+
+  /// Double this point using HWCD'08 parallel doubling.
+  ///
+  /// # Safety
+  ///
+  /// Caller must ensure AVX-512 IFMA + VL are available.
+  #[inline]
+  #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
+  #[allow(unsafe_op_in_unsafe_fn)]
+  pub(crate) unsafe fn double(&self) -> Self {
+    let ab = self.0.shuffle(Shuffle::ABAB);
+    let ba = ab.shuffle(Shuffle::BADC);
+    let xy_sum = ab.add(&ba);
+    let prepared = self.0.blend(&xy_sum, Lanes::D);
+    let sq = prepared.square_and_negate_d();
+
+    let zero = FieldElement51x4::zero();
+    let s1 = sq.shuffle(Shuffle::AAAA);
+    let s2 = sq.shuffle(Shuffle::BBBB);
+
+    let sq_doubled = sq.add(&sq);
+    let mut tmp = zero.blend(&sq_doubled, Lanes::C);
+    tmp = tmp.blend(&sq, Lanes::D);
+    tmp = tmp.add(&s1);
+    let s2_in_ad = zero.blend(&s2, Lanes::AD);
+    tmp = tmp.add(&s2_in_ad);
+    let neg_s2 = s2.negate_lazy();
+    let neg_s2_in_bc = zero.blend(&neg_s2, Lanes::BC);
+    tmp = tmp.add(&neg_s2_in_bc);
+
+    let t0 = tmp.shuffle(Shuffle::CACA);
+    let t1 = tmp.shuffle(Shuffle::DBBD);
+    Self(t0.mul(&t1))
+  }
+}
+
+#[cfg(target_arch = "x86_64")]
+impl CachedPointIfma {
+  /// Negate the cached point (for subtraction).
+  ///
+  /// # Safety
+  ///
+  /// Caller must ensure AVX2 is available.
+  #[inline]
+  #[target_feature(enable = "avx2")]
+  #[allow(unsafe_op_in_unsafe_fn)]
+  pub(crate) unsafe fn neg(&self) -> Self {
+    let swapped = self.0.shuffle(Shuffle::BACD);
+    let negated = swapped.negate_lazy();
+    Self(swapped.blend(&negated, Lanes::D))
+  }
+}
+
+/// Hamburg scaling constants for projective cached (IFMA): `(d2, d2, 2·d2, 2·d1)`.
+///
+/// # Safety
+///
+/// Caller must ensure AVX2 is available.
+#[inline]
+#[target_feature(enable = "avx2")]
+#[allow(unsafe_op_in_unsafe_fn)]
+unsafe fn hamburg_constants_ifma() -> FieldElement51x4 {
+  let d2_fe = FieldElement::from_small(D2);
+  let d2_fe_2 = FieldElement::from_small(D2.wrapping_mul(2));
+  let d1_fe_2 = FieldElement::from_small(D1.wrapping_mul(2));
+  FieldElement51x4::new(&d2_fe, &d2_fe, &d2_fe_2, &d1_fe_2)
+}
+
+/// Hamburg scaling constants for affine cached (IFMA): `(d2, d2, 2·d2, d2)`.
+///
+/// # Safety
+///
+/// Caller must ensure AVX2 is available.
+#[inline]
+#[target_feature(enable = "avx2")]
+#[allow(unsafe_op_in_unsafe_fn)]
+unsafe fn hamburg_affine_constants_ifma() -> FieldElement51x4 {
+  let d2_fe = FieldElement::from_small(D2);
+  let d2_fe_2 = FieldElement::from_small(D2.wrapping_mul(2));
+  FieldElement51x4::new(&d2_fe, &d2_fe, &d2_fe_2, &d2_fe)
+}
+
+/// Convert an affine `CachedPoint` to Hamburg-scaled IFMA cached format.
+///
+/// # Safety
+///
+/// Caller must ensure AVX-512 IFMA + VL are available.
+#[inline]
+#[target_feature(enable = "avx2,avx512ifma,avx512vl")]
+#[allow(unsafe_op_in_unsafe_fn)]
+unsafe fn cached_from_affine_ifma(cp: &CachedPoint, constants: &FieldElement51x4) -> CachedPointIfma {
+  let (y_plus_x, y_minus_x, t2d) = cp.components();
+  let packed = FieldElement51x4::new(y_minus_x, y_plus_x, &FieldElement::ONE, t2d);
+  CachedPointIfma(packed.mul(constants))
+}
+
+/// Add a signed digit from an affine cached table (IFMA).
+///
+/// # Safety
+///
+/// Caller must ensure AVX-512 IFMA + VL are available.
+#[inline]
+#[target_feature(enable = "avx2,avx512ifma,avx512vl")]
+#[allow(unsafe_op_in_unsafe_fn)]
+unsafe fn add_signed_cached_ifma(
+  acc: ExtendedPointIfma,
+  table: &[CachedPoint; 8],
+  digit: i8,
+  affine_k: &FieldElement51x4,
+) -> ExtendedPointIfma {
+  let index = usize::from(digit.unsigned_abs()).wrapping_sub(1);
+  let Some(point) = table.get(index) else {
+    return acc;
+  };
+  let cached = cached_from_affine_ifma(point, affine_k);
+  if digit > 0 {
+    acc.add_cached(&cached)
+  } else {
+    acc.add_cached(&cached.neg())
+  }
+}
+
+/// Add a signed digit from a runtime CachedPointIfma table.
+///
+/// # Safety
+///
+/// Caller must ensure AVX-512 IFMA + VL are available.
+#[inline]
+#[target_feature(enable = "avx2,avx512ifma,avx512vl")]
+#[allow(unsafe_op_in_unsafe_fn)]
+unsafe fn add_signed_runtime_cached_ifma(
+  acc: ExtendedPointIfma,
+  table: &[CachedPointIfma; 8],
+  digit: i8,
+) -> ExtendedPointIfma {
+  let index = usize::from(digit.unsigned_abs()).wrapping_sub(1);
+  let Some(point) = table.get(index) else {
+    return acc;
+  };
+  if digit > 0 {
+    acc.add_cached(point)
+  } else {
+    acc.add_cached(&point.neg())
+  }
+}
+
+/// Build a runtime table of `[1P, 2P, ..., 8P]` in IFMA Hamburg-scaled cached format.
+///
+/// # Safety
+///
+/// Caller must ensure AVX-512 IFMA + VL are available.
+#[target_feature(enable = "avx2,avx512ifma,avx512vl")]
+#[allow(unsafe_op_in_unsafe_fn)]
+unsafe fn cached_multiples_ifma(point: &ExtendedPointIfma) -> [CachedPointIfma; 8] {
+  let mut acc = *point;
+  let point_cached = point.to_cached();
+  let first = acc.to_cached();
+
+  let mut out = [first; 8];
+  for entry in out.iter_mut().skip(1) {
+    acc = acc.add_cached(&point_cached);
+    *entry = acc.to_cached();
+  }
+  out
+}
+
+/// Variable-base scalar multiplication using AVX-512 IFMA.
+///
+/// # Safety
+///
+/// Caller must ensure AVX-512 IFMA + VL are available.
+#[target_feature(enable = "avx2,avx512ifma,avx512vl")]
+#[allow(unsafe_op_in_unsafe_fn)]
+pub(crate) unsafe fn scalar_mul_vartime_ifma(point: &ExtendedPoint, scalar_bytes: &[u8; 32]) -> ExtendedPoint {
+  let digits = scalar::as_radix_16(scalar_bytes);
+  let ifma_point = ExtendedPointIfma::from_extended(point);
+  let table = cached_multiples_ifma(&ifma_point);
+  let mut acc = ExtendedPointIfma::from_extended(&ExtendedPoint::identity());
+  for digit in digits.iter().rev().copied() {
+    acc = acc.double().double().double().double();
+    if digit != 0 {
+      acc = add_signed_runtime_cached_ifma(acc, &table, digit);
+    }
+  }
+  acc.to_extended()
+}
+
+/// Fixed-base scalar multiplication for the Ed25519 basepoint using IFMA.
+///
+/// # Safety
+///
+/// Caller must ensure AVX-512 IFMA + VL are available.
+#[target_feature(enable = "avx2,avx512ifma,avx512vl")]
+#[allow(unsafe_op_in_unsafe_fn)]
+pub(crate) unsafe fn scalar_mul_basepoint_ifma(scalar_bytes: &[u8; 32]) -> ExtendedPoint {
+  use super::point::BASEPOINT_RADIX16_TABLE;
+
+  let digits = scalar::as_radix_16(scalar_bytes);
+  let affine_k = hamburg_affine_constants_ifma();
+  let mut acc = ExtendedPointIfma::from_extended(&ExtendedPoint::identity());
+
+  for (position, digit) in digits.iter().copied().enumerate() {
+    if digit != 0
+      && let Some(table) = BASEPOINT_RADIX16_TABLE.get(position)
+    {
+      acc = add_signed_cached_ifma(acc, table, digit, &affine_k);
+    }
+  }
+
+  acc.to_extended()
+}
+
+/// Straus/Shamir interleaved double-scalar multiply using IFMA.
+///
+/// # Safety
+///
+/// Caller must ensure AVX-512 IFMA + VL are available.
+#[target_feature(enable = "avx2,avx512ifma,avx512vl")]
+#[allow(unsafe_op_in_unsafe_fn)]
+pub(crate) unsafe fn straus_basepoint_vartime_ifma(s: &[u8; 32], h: &[u8; 32], a: &ExtendedPoint) -> ExtendedPoint {
+  use super::point::BASEPOINT_RADIX16_TABLE;
+
+  let s_digits = scalar::as_radix_16(s);
+  let h_digits = scalar::as_radix_16(h);
+  let affine_k = hamburg_affine_constants_ifma();
+
+  let ifma_a = ExtendedPointIfma::from_extended(a);
+  let a_table = cached_multiples_ifma(&ifma_a);
+
+  let mut acc = ExtendedPointIfma::from_extended(&ExtendedPoint::identity());
+
+  for (&sd, &hd) in s_digits.iter().zip(h_digits.iter()).rev() {
+    acc = acc.double().double().double().double();
+    if sd != 0 {
+      acc = add_signed_cached_ifma(acc, &BASEPOINT_RADIX16_TABLE[0], sd, &affine_k);
+    }
+    if hd != 0 {
+      acc = add_signed_runtime_cached_ifma(acc, &a_table, hd);
     }
   }
 
