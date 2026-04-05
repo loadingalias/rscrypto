@@ -752,50 +752,41 @@ pub(crate) unsafe fn scalar_mul_basepoint_ifma(scalar_bytes: &[u8; 32]) -> Exten
   acc.to_extended()
 }
 
-/// Straus/Shamir interleaved double-scalar multiply using IFMA.
+// Radix-16 IFMA Straus removed — superseded by straus_wnaf_vartime_ifma.
+
+// ===========================================================================
+// wNAF-based Straus verify (IFMA)
+// ===========================================================================
+
+/// Build a runtime table of odd multiples `[1P, 3P, 5P, ..., (2n-1)P]` in
+/// IFMA Hamburg-scaled cached format.
 ///
-/// The basepoint table (position 0, 8 entries) is pre-converted to native
-/// `CachedPointIfma` format once per call, eliminating the per-lookup
-/// `cached_from_affine_ifma` conversion (~50 IFMA ops × ~32 lookups).
-/// With `mul_small`, the pre-conversion itself costs only ~10 IFMA ops
-/// per entry (80 total) instead of ~50 per lookup (~1,600 total).
-///
-/// Variable-time: branches on scalar nibble values. Safe for verification
-/// where both `s` and `h` are public (derived from the message/signature).
+/// For wNAF(w), the table has `2^(w-1)` entries. wNAF(5) → 8 entries,
+/// wNAF(8) → 64 entries. Digit `d` indexes as `(|d| - 1) / 2`.
 ///
 /// # Safety
 ///
 /// Caller must ensure AVX-512 IFMA + VL are available.
 #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
 #[allow(unsafe_op_in_unsafe_fn)]
-pub(crate) unsafe fn straus_basepoint_vartime_ifma(s: &[u8; 32], h: &[u8; 32], a: &ExtendedPoint) -> ExtendedPoint {
-  use super::point::BASEPOINT_RADIX16_TABLE;
+unsafe fn odd_multiples_ifma<const N: usize>(point: &ExtendedPointIfma) -> [CachedPointIfma; N] {
+  let p2 = point.double();
+  let p2_cached = p2.to_cached();
 
-  let s_digits = scalar::as_radix_16(s);
-  let h_digits = scalar::as_radix_16(h);
-
-  // Pre-convert basepoint table position 0 to native IFMA format.
-  let base_table = init_basepoint_table_ifma(&BASEPOINT_RADIX16_TABLE[0]);
-
-  let ifma_a = ExtendedPointIfma::from_extended(a);
-  let a_table = cached_multiples_ifma(&ifma_a);
-
-  let mut acc = ExtendedPointIfma::from_extended(&ExtendedPoint::identity());
-
-  for (&sd, &hd) in s_digits.iter().zip(h_digits.iter()).rev() {
-    acc = acc.double().double().double().double();
-    if sd != 0 {
-      acc = add_signed_runtime_cached_ifma(acc, &base_table, sd);
-    }
-    if hd != 0 {
-      acc = add_signed_runtime_cached_ifma(acc, &a_table, hd);
-    }
+  let first = point.to_cached();
+  let mut out = [first; N];
+  let mut acc = *point;
+  for dst in out.iter_mut().skip(1) {
+    acc = acc.add_cached(&p2_cached);
+    *dst = acc.to_cached();
   }
-
-  acc.to_extended()
+  out
 }
 
-/// Convert the 8-entry scalar basepoint table to native IFMA cached format.
+/// Add a signed wNAF digit from an odd-multiples table.
+///
+/// The digit is odd; the table index is `(|digit| - 1) / 2`. Works for
+/// any table size (8 entries for wNAF-5, 64 entries for wNAF-8).
 ///
 /// # Safety
 ///
@@ -803,14 +794,82 @@ pub(crate) unsafe fn straus_basepoint_vartime_ifma(s: &[u8; 32], h: &[u8; 32], a
 #[inline]
 #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
 #[allow(unsafe_op_in_unsafe_fn)]
-unsafe fn init_basepoint_table_ifma(src: &[CachedPoint; 8]) -> [CachedPointIfma; 8] {
-  let affine_k = hamburg_affine_constants_ifma();
-  let first = cached_from_affine_ifma(&src[0], &affine_k);
-  let mut out = [first; 8];
-  for (dst, entry) in out.iter_mut().zip(src.iter()).skip(1) {
-    *dst = cached_from_affine_ifma(entry, &affine_k);
+unsafe fn add_wnaf_digit_ifma(acc: ExtendedPointIfma, table: &[CachedPointIfma], digit: i8) -> ExtendedPointIfma {
+  let index = usize::from((digit.unsigned_abs().wrapping_sub(1)) / 2);
+  let Some(point) = table.get(index) else {
+    return acc;
+  };
+
+  if digit > 0 {
+    acc.add_cached(point)
+  } else {
+    acc.add_cached(&point.neg())
   }
-  out
+}
+
+/// wNAF-based Straus/Shamir: `[s]B + [h]A`.
+///
+/// Uses wNAF(8) for the basepoint scalar `s` (64-entry odd-multiples table,
+/// ~28 additions) and wNAF(5) for the public-key scalar `h` (8-entry
+/// odd-multiples table, ~43 additions). Total ~71 additions vs ~128 with
+/// the radix-16 approach — a ~45% reduction in point additions.
+///
+/// The loop scans 256 bit positions with 1 double per bit (same 256 total
+/// doublings), but additions are much sparser due to the wNAF non-adjacency
+/// property.
+///
+/// Variable-time: branches on scalar digit values. Safe for verification
+/// where both `s` and `h` are public (derived from the message/signature).
+///
+/// # Safety
+///
+/// Caller must ensure AVX-512 IFMA + VL are available.
+#[target_feature(enable = "avx2,avx512ifma,avx512vl")]
+#[allow(unsafe_op_in_unsafe_fn)]
+#[allow(clippy::indexing_slicing)] // i bounded by top < 256, naf arrays are [i8; 256]
+pub(crate) unsafe fn straus_wnaf_vartime_ifma(s: &[u8; 32], h: &[u8; 32], a: &ExtendedPoint) -> ExtendedPoint {
+  let s_naf = scalar::non_adjacent_form(s, 8);
+  let h_naf = scalar::non_adjacent_form(h, 5);
+
+  // Build wNAF(8) basepoint table: [B, 3B, 5B, ..., 127B] (64 entries).
+  let bp = ExtendedPointIfma::from_extended(&ExtendedPoint::basepoint());
+  let base_table: [CachedPointIfma; 64] = odd_multiples_ifma(&bp);
+
+  // Build wNAF(5) public-key table: [A, 3A, 5A, ..., 15A] (8 entries).
+  let ifma_a = ExtendedPointIfma::from_extended(a);
+  let a_table: [CachedPointIfma; 8] = odd_multiples_ifma(&ifma_a);
+
+  // Find the highest non-zero digit position (skip leading zeros).
+  let top = s_naf
+    .iter()
+    .enumerate()
+    .rev()
+    .find(|&(_, &d)| d != 0)
+    .map_or(0, |(i, _)| i)
+    .max(
+      h_naf
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|&(_, &d)| d != 0)
+        .map_or(0, |(i, _)| i),
+    );
+
+  let mut acc = ExtendedPointIfma::from_extended(&ExtendedPoint::identity());
+
+  // Main loop: 1 double per bit, sparse additions from wNAF digits.
+  for i in (0..=top).rev() {
+    acc = acc.double();
+
+    if s_naf[i] != 0 {
+      acc = add_wnaf_digit_ifma(acc, &base_table, s_naf[i]);
+    }
+    if h_naf[i] != 0 {
+      acc = add_wnaf_digit_ifma(acc, &a_table, h_naf[i]);
+    }
+  }
+
+  acc.to_extended()
 }
 
 // ---------------------------------------------------------------------------
@@ -1075,7 +1134,7 @@ mod tests {
     let mut h = [0u8; 32];
     h[0] = 13;
 
-    let scalar_result = ExtendedPoint::straus_basepoint_vartime(&s, &h, &a);
+    let scalar_result = crate::auth::ed25519::point::straus_wnaf_basepoint_vartime(&s, &h, &a);
 
     // SAFETY: AVX2 availability checked by the runtime guard above.
     unsafe {
@@ -1124,7 +1183,8 @@ mod tests {
     let neg_challenge_bytes = crate::auth::ed25519::scalar::to_bytes(&neg_challenge);
     let s_canonical = crate::auth::ed25519::scalar::to_bytes(&s_scalar);
 
-    let scalar_result = ExtendedPoint::straus_basepoint_vartime(&s_canonical, &neg_challenge_bytes, &a_point);
+    let scalar_result =
+      crate::auth::ed25519::point::straus_wnaf_basepoint_vartime(&s_canonical, &neg_challenge_bytes, &a_point);
 
     // SAFETY: AVX2 availability checked by the runtime guard above.
     unsafe {
