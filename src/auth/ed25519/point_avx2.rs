@@ -994,6 +994,63 @@ mod tests {
     }
   }
 
+  #[test]
+  fn straus_matches_scalar_large_scalars() {
+    if !is_x86_feature_detected!("avx2") {
+      return;
+    }
+    // Reproduce the actual verify path: full 256-bit scalars, realistic point.
+    use crate::{
+      auth::ed25519::{Ed25519Keypair, Ed25519SecretKey, hash::ExpandedSecret},
+      hashes::crypto::Sha512,
+      traits::Digest,
+    };
+
+    let secret = Ed25519SecretKey::from_bytes([13u8; 32]);
+    let keypair = Ed25519Keypair::from_secret_key(secret);
+    let public = keypair.public_key();
+    let sig = keypair.sign(b"test message for straus");
+
+    // Extract R, s, compute challenge h — same as verify()
+    let sig_bytes = sig.as_bytes();
+    let mut r_bytes = [0u8; 32];
+    let mut s_bytes = [0u8; 32];
+    r_bytes.copy_from_slice(&sig_bytes[..32]);
+    s_bytes.copy_from_slice(&sig_bytes[32..]);
+
+    let r_point = ExtendedPoint::from_bytes(&r_bytes).unwrap();
+    let a_point = ExtendedPoint::from_bytes(public.as_bytes()).unwrap();
+    let s_scalar = crate::auth::ed25519::scalar::from_canonical_bytes(&s_bytes).unwrap();
+
+    let mut hasher = Sha512::new();
+    hasher.update(&r_bytes);
+    hasher.update(public.as_bytes());
+    hasher.update(b"test message for straus");
+    let challenge = crate::auth::ed25519::scalar::reduce_bytes_mod_order(&hasher.finalize());
+    let neg_challenge = crate::auth::ed25519::scalar::negate_mod(&challenge);
+    let neg_challenge_bytes = crate::auth::ed25519::scalar::to_bytes(&neg_challenge);
+    let s_canonical = crate::auth::ed25519::scalar::to_bytes(&s_scalar);
+
+    let scalar_result = ExtendedPoint::straus_basepoint_vartime(&s_canonical, &neg_challenge_bytes, &a_point);
+
+    // SAFETY: AVX2 availability checked by the runtime guard above.
+    unsafe {
+      let avx_result = straus_basepoint_vartime_avx2(&s_canonical, &neg_challenge_bytes, &a_point);
+      assert!(
+        scalar_result.equals_projective(&avx_result),
+        "AVX2 Straus with large scalars should match scalar"
+      );
+
+      // Also verify the full equation: [s]B + [-h]A == [8]R (after cofactor)
+      let combined = avx_result.mul_by_cofactor();
+      let expected = r_point.mul_by_cofactor();
+      assert!(
+        combined.equals_projective(&expected),
+        "AVX2 Straus verify equation should hold"
+      );
+    }
+  }
+
   // -----------------------------------------------------------------------
   // Phase 2: Point operation tests
   // -----------------------------------------------------------------------

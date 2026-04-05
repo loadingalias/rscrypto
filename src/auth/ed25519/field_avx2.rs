@@ -788,7 +788,6 @@ impl FieldElement2625x4 {
   #[allow(unsafe_op_in_unsafe_fn)]
   pub(crate) unsafe fn square(&self) -> Self {
     let v19 = _mm256_set1_epi64x(19);
-    let v38 = _mm256_set1_epi64x(38);
 
     let (x0, x1) = unpack_pair(self.0[0]);
     let (x2, x3) = unpack_pair(self.0[1]);
@@ -813,17 +812,20 @@ impl FieldElement2625x4 {
     let x8_19 = mul32(x8, v19);
     let x9_19 = mul32(x9, v19);
 
-    // Combined ×38 = 2×19 for odd×odd cross terms on even z_k (×4 total)
-    let x1_38 = mul32(x1, v38);
-    let x3_38 = mul32(x3, v38);
-    let x5_38 = mul32(x5, v38);
-    let x7_38 = mul32(x7, v38);
+    // ×4 for odd×odd cross terms on even z_k:
+    //   ×2 (symmetry: cross term appears twice)
+    //   ×2 (radix alignment: 2^(25+25) vs 2^26 = 2^(26-1) overshoot)
+    // When paired with y_19 terms, gives ×4·19 = ×76 total.
+    let x1_4 = _mm256_slli_epi64::<2>(x1);
+    let x3_4 = _mm256_slli_epi64::<2>(x3);
+    let x5_4 = _mm256_slli_epi64::<2>(x5);
+    let x7_4 = _mm256_slli_epi64::<2>(x7);
 
-    // z0 (even): (0,0)×1 + (1,9)×4·19 + (2,8)×2·19 + (3,7)×4·19 + (4,6)×2·19 + (5,5)×2·19
+    // z0 (even): (0,0)×1 + (1,9)×76 + (2,8)×2·19 + (3,7)×76 + (4,6)×2·19 + (5,5)×2·19
     let z0 = add64(
       add64(
-        add64(mul32(x0, x0), mul32(x1_38, x9_19)),
-        add64(mul32(x2_2, x8_19), mul32(x3_38, x7_19)),
+        add64(mul32(x0, x0), mul32(x1_4, x9_19)),
+        add64(mul32(x2_2, x8_19), mul32(x3_4, x7_19)),
       ),
       add64(mul32(x4_2, x6_19), mul32(x5_2, x5_19)),
     );
@@ -834,13 +836,13 @@ impl FieldElement2625x4 {
       add64(add64(mul32(x3_2, x8_19), mul32(x4_2, x7_19)), mul32(x5_2, x6_19)),
     );
 
-    // z2 (even): (0,2)×2 + (1,1)×2 + (3,9)×4·19 + (4,8)×2·19 + (5,7)×4·19 + (6,6)×1·19
+    // z2 (even): (0,2)×2 + (1,1)×2 + (3,9)×76 + (4,8)×2·19 + (5,7)×76 + (6,6)×1·19
     let z2 = add64(
       add64(
         add64(mul32(x0_2, x2), mul32(x1_2, x1)),
-        add64(mul32(x3_38, x9_19), mul32(x4_2, x8_19)),
+        add64(mul32(x3_4, x9_19), mul32(x4_2, x8_19)),
       ),
-      add64(mul32(x5_38, x7_19), mul32(x6, x6_19)),
+      add64(mul32(x5_4, x7_19), mul32(x6, x6_19)),
     );
 
     // z3 (odd): (0,3)×2 + (1,2)×2 + (4,9)×2·19 + (5,8)×2·19 + (6,7)×2·19
@@ -849,11 +851,11 @@ impl FieldElement2625x4 {
       add64(add64(mul32(x4_2, x9_19), mul32(x5_2, x8_19)), mul32(x6_2, x7_19)),
     );
 
-    // z4 (even): (0,4)×2 + (1,3)×4 + (2,2)×1 + (5,9)×4·19 + (6,8)×2·19 + (7,7)×2·19
+    // z4 (even): (0,4)×2 + (1,3)×4 + (2,2)×1 + (5,9)×76 + (6,8)×2·19 + (7,7)×2·19
     let z4 = add64(
       add64(
-        add64(mul32(x0_2, x4), mul32(x1_38, x3)),
-        add64(mul32(x2, x2), mul32(x5_38, x9_19)),
+        add64(mul32(x0_2, x4), mul32(x1_4, x3)),
+        add64(mul32(x2, x2), mul32(x5_4, x9_19)),
       ),
       add64(mul32(x6_2, x8_19), mul32(x7_2, x7_19)),
     );
@@ -864,13 +866,13 @@ impl FieldElement2625x4 {
       add64(mul32(x2_2, x3), add64(mul32(x6_2, x9_19), mul32(x7_2, x8_19))),
     );
 
-    // z6 (even): (0,6)×2 + (1,5)×4 + (2,4)×2 + (3,3)×2 + (7,9)×4·19 + (8,8)×1·19
+    // z6 (even): (0,6)×2 + (1,5)×4 + (2,4)×2 + (3,3)×2 + (7,9)×76 + (8,8)×1·19
     let z6 = add64(
       add64(
-        add64(mul32(x0_2, x6), mul32(x1_38, x5)),
+        add64(mul32(x0_2, x6), mul32(x1_4, x5)),
         add64(mul32(x2_2, x4), mul32(x3_2, x3)),
       ),
-      add64(mul32(x7_38, x9_19), mul32(x8, x8_19)),
+      add64(mul32(x7_4, x9_19), mul32(x8, x8_19)),
     );
 
     // z7 (odd): (0,7)×2 + (1,6)×2 + (2,5)×2 + (3,4)×2 + (8,9)×2·19
@@ -884,8 +886,8 @@ impl FieldElement2625x4 {
     let x9_2 = add64(x9, x9);
     let z8 = add64(
       add64(
-        add64(mul32(x0_2, x8), mul32(x1_38, x7)),
-        add64(mul32(x2_2, x6), mul32(x3_38, x5)),
+        add64(mul32(x0_2, x8), mul32(x1_4, x7)),
+        add64(mul32(x2_2, x6), mul32(x3_4, x5)),
       ),
       add64(mul32(x4, x4), mul32(x9_2, x9_19)),
     );
