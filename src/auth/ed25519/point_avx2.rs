@@ -171,11 +171,13 @@ impl ExtendedPointAvx2 {
 
     let neg_s2 = s2.negate_lazy();
     let neg_s2_in_bc = zero.blend(&neg_s2, Lanes::BC); // (0, −S2, −S2, 0)
-    // Reduce before the final multiply: lane D (= S9 = S1+S2−S4) accumulates
-    // three terms with 2p bias, pushing even limbs to ~2^28.  The mul's ×19
-    // pre-multiply would produce ~2^28 × 19 > 2^32, overflowing vpmuludq's
-    // 32-bit input window and silently discarding high bits.
-    let tmp = tmp.add(&neg_s2_in_bc).reduce(); // (S5, S6, S8, S9) — reduced
+    // No reduce needed: square_and_negate_d() negates D in the u64 accumulator
+    // domain (p×2^37 bias), so −S4 emerges fully reduced (b < 0.007).
+    // S9 = S1 + S2 + (−S4) is a pure 3-way add with b < 1.6 — safely under
+    // the 1.75 threshold for vpmuludq's ×19 pre-multiply.
+    // Bound check: t1 = (S9, S6, S6, S9), all b < 1.6 < 1.75 (rhs safe).
+    //              t0 = (S8, S5, S8, S5), S8 b < 2.33 < 2.5 (self safe).
+    let tmp = tmp.add(&neg_s2_in_bc); // (S5, S6, S8, S9)
 
     // Step 4: Shuffle into final multiply operands.
     let t0 = tmp.shuffle(Shuffle::CACA); // (S8, S5, S8, S5)
@@ -397,8 +399,12 @@ pub(crate) unsafe fn scalar_mul_basepoint_avx2(scalar_bytes: &[u8; 32]) -> Exten
 ///
 /// Scans both scalars in lockstep over 64 signed radix-16 digits
 /// (high → low), sharing all 256 doublings. Each digit position adds
-/// from the flat basepoint table for `s` and from a runtime AVX2 cached
+/// from the basepoint table for `s` and from a runtime AVX2 cached
 /// table for `h`.
+///
+/// The basepoint table (position 0, 8 entries) is pre-converted to native
+/// `CachedPointAvx2` format once per call, eliminating the per-lookup
+/// `cached_from_affine` conversion (~205 instructions × ~32 lookups).
 ///
 /// Variable-time: branches on scalar nibble values. Safe for verification
 /// where both `s` and `h` are public (derived from the message/signature).
@@ -413,7 +419,11 @@ pub(crate) unsafe fn straus_basepoint_vartime_avx2(s: &[u8; 32], h: &[u8; 32], a
 
   let s_digits = scalar::as_radix_16(s);
   let h_digits = scalar::as_radix_16(h);
-  let affine_k = hamburg_affine_constants();
+
+  // Pre-convert basepoint table position 0 to native AVX2 format.
+  // Converts 8 entries once (~1,640 instructions) instead of per-lookup
+  // (~205 instructions × ~32 non-zero digits = ~6,560 instructions).
+  let base_table = init_basepoint_table_avx2(&BASEPOINT_RADIX16_TABLE[0]);
 
   let avx_a = ExtendedPointAvx2::from_extended(a);
   let a_table = cached_multiples_avx2(&avx_a);
@@ -423,7 +433,7 @@ pub(crate) unsafe fn straus_basepoint_vartime_avx2(s: &[u8; 32], h: &[u8; 32], a
   for (&sd, &hd) in s_digits.iter().zip(h_digits.iter()).rev() {
     acc = acc.double().double().double().double();
     if sd != 0 {
-      acc = add_signed_cached_avx2(acc, &BASEPOINT_RADIX16_TABLE[0], sd, &affine_k);
+      acc = add_signed_runtime_cached_avx2(acc, &base_table, sd);
     }
     if hd != 0 {
       acc = add_signed_runtime_cached_avx2(acc, &a_table, hd);
@@ -431,6 +441,24 @@ pub(crate) unsafe fn straus_basepoint_vartime_avx2(s: &[u8; 32], h: &[u8; 32], a
   }
 
   acc.to_extended()
+}
+
+/// Convert the 8-entry scalar basepoint table to native AVX2 cached format.
+///
+/// # Safety
+///
+/// Caller must ensure AVX2 is available.
+#[inline]
+#[target_feature(enable = "avx2")]
+#[allow(unsafe_op_in_unsafe_fn)]
+unsafe fn init_basepoint_table_avx2(src: &[CachedPoint; 8]) -> [CachedPointAvx2; 8] {
+  let affine_k = hamburg_affine_constants();
+  let first = cached_from_affine(&src[0], &affine_k);
+  let mut out = [first; 8];
+  for (dst, entry) in out.iter_mut().zip(src.iter()).skip(1) {
+    *dst = cached_from_affine(entry, &affine_k);
+  }
+  out
 }
 
 // ===========================================================================
@@ -489,7 +517,7 @@ impl ExtendedPointIfma {
     let ds = self.0.diff_sum();
     let prepared = self.0.blend(&ds, Lanes::AB).reduce();
     let constants = hamburg_constants_ifma();
-    let scaled = prepared.mul(&constants);
+    let scaled = prepared.mul_small(&constants);
     let negated = scaled.negate_lazy();
     CachedPointIfma(scaled.blend(&negated, Lanes::D))
   }
@@ -605,7 +633,7 @@ unsafe fn hamburg_affine_constants_ifma() -> FieldElement51x4 {
 unsafe fn cached_from_affine_ifma(cp: &CachedPoint, constants: &FieldElement51x4) -> CachedPointIfma {
   let (y_plus_x, y_minus_x, t2d) = cp.components();
   let packed = FieldElement51x4::new(y_minus_x, y_plus_x, &FieldElement::ONE, t2d);
-  CachedPointIfma(packed.mul(constants))
+  CachedPointIfma(packed.mul_small(constants))
 }
 
 /// Add a signed digit from an affine cached table (IFMA).
@@ -722,6 +750,67 @@ pub(crate) unsafe fn scalar_mul_basepoint_ifma(scalar_bytes: &[u8; 32]) -> Exten
   }
 
   acc.to_extended()
+}
+
+/// Straus/Shamir interleaved double-scalar multiply using IFMA.
+///
+/// The basepoint table (position 0, 8 entries) is pre-converted to native
+/// `CachedPointIfma` format once per call, eliminating the per-lookup
+/// `cached_from_affine_ifma` conversion (~50 IFMA ops × ~32 lookups).
+/// With `mul_small`, the pre-conversion itself costs only ~10 IFMA ops
+/// per entry (80 total) instead of ~50 per lookup (~1,600 total).
+///
+/// Variable-time: branches on scalar nibble values. Safe for verification
+/// where both `s` and `h` are public (derived from the message/signature).
+///
+/// # Safety
+///
+/// Caller must ensure AVX-512 IFMA + VL are available.
+#[target_feature(enable = "avx2,avx512ifma,avx512vl")]
+#[allow(unsafe_op_in_unsafe_fn)]
+pub(crate) unsafe fn straus_basepoint_vartime_ifma(s: &[u8; 32], h: &[u8; 32], a: &ExtendedPoint) -> ExtendedPoint {
+  use super::point::BASEPOINT_RADIX16_TABLE;
+
+  let s_digits = scalar::as_radix_16(s);
+  let h_digits = scalar::as_radix_16(h);
+
+  // Pre-convert basepoint table position 0 to native IFMA format.
+  let base_table = init_basepoint_table_ifma(&BASEPOINT_RADIX16_TABLE[0]);
+
+  let ifma_a = ExtendedPointIfma::from_extended(a);
+  let a_table = cached_multiples_ifma(&ifma_a);
+
+  let mut acc = ExtendedPointIfma::from_extended(&ExtendedPoint::identity());
+
+  for (&sd, &hd) in s_digits.iter().zip(h_digits.iter()).rev() {
+    acc = acc.double().double().double().double();
+    if sd != 0 {
+      acc = add_signed_runtime_cached_ifma(acc, &base_table, sd);
+    }
+    if hd != 0 {
+      acc = add_signed_runtime_cached_ifma(acc, &a_table, hd);
+    }
+  }
+
+  acc.to_extended()
+}
+
+/// Convert the 8-entry scalar basepoint table to native IFMA cached format.
+///
+/// # Safety
+///
+/// Caller must ensure AVX-512 IFMA + VL are available.
+#[inline]
+#[target_feature(enable = "avx2,avx512ifma,avx512vl")]
+#[allow(unsafe_op_in_unsafe_fn)]
+unsafe fn init_basepoint_table_ifma(src: &[CachedPoint; 8]) -> [CachedPointIfma; 8] {
+  let affine_k = hamburg_affine_constants_ifma();
+  let first = cached_from_affine_ifma(&src[0], &affine_k);
+  let mut out = [first; 8];
+  for (dst, entry) in out.iter_mut().zip(src.iter()).skip(1) {
+    *dst = cached_from_affine_ifma(entry, &affine_k);
+  }
+  out
 }
 
 // ---------------------------------------------------------------------------
