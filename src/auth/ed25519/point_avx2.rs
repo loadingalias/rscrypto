@@ -171,7 +171,11 @@ impl ExtendedPointAvx2 {
 
     let neg_s2 = s2.negate_lazy();
     let neg_s2_in_bc = zero.blend(&neg_s2, Lanes::BC); // (0, −S2, −S2, 0)
-    tmp = tmp.add(&neg_s2_in_bc); // (S1+S2, S1−S2, S1−S2+2S3, S1+S2−S4) = (S5, S6, S8, S9)
+    // Reduce before the final multiply: lane D (= S9 = S1+S2−S4) accumulates
+    // three terms with 2p bias, pushing even limbs to ~2^28.  The mul's ×19
+    // pre-multiply would produce ~2^28 × 19 > 2^32, overflowing vpmuludq's
+    // 32-bit input window and silently discarding high bits.
+    let tmp = tmp.add(&neg_s2_in_bc).reduce(); // (S5, S6, S8, S9) — reduced
 
     // Step 4: Shuffle into final multiply operands.
     let t0 = tmp.shuffle(Shuffle::CACA); // (S8, S5, S8, S5)
