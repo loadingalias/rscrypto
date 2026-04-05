@@ -1037,7 +1037,7 @@ mod tests {
     }
     // Reproduce the actual verify path: full 256-bit scalars, realistic point.
     use crate::{
-      auth::ed25519::{Ed25519Keypair, Ed25519SecretKey, hash::ExpandedSecret},
+      auth::ed25519::{Ed25519Keypair, Ed25519SecretKey},
       hashes::crypto::Sha512,
       traits::Digest,
     };
