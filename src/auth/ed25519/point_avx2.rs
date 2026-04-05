@@ -483,7 +483,7 @@ impl ExtendedPointIfma {
   #[allow(unsafe_op_in_unsafe_fn)]
   pub(crate) unsafe fn to_cached(self) -> CachedPointIfma {
     let ds = self.0.diff_sum();
-    let prepared = self.0.blend(&ds, Lanes::AB);
+    let prepared = self.0.blend(&ds, Lanes::AB).reduce();
     let constants = hamburg_constants_ifma();
     let scaled = prepared.mul(&constants);
     let negated = scaled.negate_lazy();
@@ -500,10 +500,10 @@ impl ExtendedPointIfma {
   #[allow(unsafe_op_in_unsafe_fn)]
   pub(crate) unsafe fn add_cached(&self, other: &CachedPointIfma) -> Self {
     let ds = self.0.diff_sum();
-    let tmp = self.0.blend(&ds, Lanes::AB);
+    let tmp = self.0.blend(&ds, Lanes::AB).reduce();
     let product = tmp.mul(&other.0);
     let swapped = product.shuffle(Shuffle::ABDC);
-    let ehfg = swapped.diff_sum();
+    let ehfg = swapped.diff_sum().reduce();
     let t0 = ehfg.shuffle(Shuffle::ADDA);
     let t1 = ehfg.shuffle(Shuffle::CBCB);
     Self(t0.mul(&t1))
@@ -521,7 +521,7 @@ impl ExtendedPointIfma {
     let ab = self.0.shuffle(Shuffle::ABAB);
     let ba = ab.shuffle(Shuffle::BADC);
     let xy_sum = ab.add(&ba);
-    let prepared = self.0.blend(&xy_sum, Lanes::D);
+    let prepared = self.0.blend(&xy_sum, Lanes::D).reduce();
     let sq = prepared.square_and_negate_d();
 
     let zero = FieldElement51x4::zero();
@@ -536,7 +536,7 @@ impl ExtendedPointIfma {
     tmp = tmp.add(&s2_in_ad);
     let neg_s2 = s2.negate_lazy();
     let neg_s2_in_bc = zero.blend(&neg_s2, Lanes::BC);
-    tmp = tmp.add(&neg_s2_in_bc);
+    tmp = tmp.add(&neg_s2_in_bc).reduce();
 
     let t0 = tmp.shuffle(Shuffle::CACA);
     let t1 = tmp.shuffle(Shuffle::DBBD);
@@ -1045,6 +1045,186 @@ mod tests {
       assert!(
         identity.equals_projective(&result),
         "double(identity) should be identity"
+      );
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // IFMA point operation tests
+  // -----------------------------------------------------------------------
+
+  #[test]
+  fn ifma_pack_unpack_roundtrip() {
+    if !is_x86_feature_detected!("avx512ifma") {
+      return;
+    }
+    let bp = basepoint();
+
+    // SAFETY: AVX-512 IFMA availability checked above.
+    unsafe {
+      let ifma = ExtendedPointIfma::from_extended(&bp);
+      let back = ifma.to_extended();
+      assert!(bp.equals_projective(&back), "IFMA pack/unpack roundtrip");
+    }
+  }
+
+  #[test]
+  fn ifma_double_matches_scalar() {
+    if !is_x86_feature_detected!("avx512ifma") {
+      return;
+    }
+    let bp = basepoint();
+    let scalar_doubled = bp.double();
+
+    // SAFETY: AVX-512 IFMA availability checked above.
+    unsafe {
+      let ifma = ExtendedPointIfma::from_extended(&bp);
+      let result = ifma.double().to_extended();
+      assert!(
+        scalar_doubled.equals_projective(&result),
+        "IFMA double should match scalar"
+      );
+    }
+  }
+
+  #[test]
+  fn ifma_double_chain_matches_scalar() {
+    if !is_x86_feature_detected!("avx512ifma") {
+      return;
+    }
+    let bp = basepoint();
+    let scalar_8b = bp.double().double().double();
+
+    // SAFETY: AVX-512 IFMA availability checked above.
+    unsafe {
+      let ifma = ExtendedPointIfma::from_extended(&bp);
+      let result = ifma.double().double().double().to_extended();
+      assert!(
+        scalar_8b.equals_projective(&result),
+        "IFMA triple-double (8B) should match scalar"
+      );
+    }
+  }
+
+  #[test]
+  fn ifma_add_cached_matches_scalar() {
+    if !is_x86_feature_detected!("avx512ifma") {
+      return;
+    }
+    let bp = basepoint();
+    let bp2 = bp.double();
+    let scalar_3b = bp.add(&bp2);
+
+    // SAFETY: AVX-512 IFMA availability checked above.
+    unsafe {
+      let ifma_bp = ExtendedPointIfma::from_extended(&bp);
+      let ifma_bp2 = ExtendedPointIfma::from_extended(&bp2);
+      let cached = ifma_bp2.to_cached();
+      let result = ifma_bp.add_cached(&cached).to_extended();
+      assert!(
+        scalar_3b.equals_projective(&result),
+        "IFMA add should match scalar (B + 2B = 3B)"
+      );
+    }
+  }
+
+  #[test]
+  fn ifma_add_then_double_matches_scalar() {
+    if !is_x86_feature_detected!("avx512ifma") {
+      return;
+    }
+    let bp = basepoint();
+    let scalar_4b = bp.add(&bp).double();
+
+    // SAFETY: AVX-512 IFMA availability checked above.
+    unsafe {
+      let ifma_bp = ExtendedPointIfma::from_extended(&bp);
+      let cached = ifma_bp.to_cached();
+      let ifma_2b = ifma_bp.add_cached(&cached);
+      let result = ifma_2b.double().to_extended();
+      assert!(
+        scalar_4b.equals_projective(&result),
+        "IFMA add+double should match scalar (4B)"
+      );
+    }
+  }
+
+  #[test]
+  fn ifma_neg_cached_is_subtraction() {
+    if !is_x86_feature_detected!("avx512ifma") {
+      return;
+    }
+    let bp = basepoint();
+    let bp2 = bp.double();
+
+    // SAFETY: AVX-512 IFMA availability checked above.
+    unsafe {
+      let ifma_bp2 = ExtendedPointIfma::from_extended(&bp2);
+      let ifma_bp = ExtendedPointIfma::from_extended(&bp);
+      let neg_cached = ifma_bp.to_cached().neg();
+      let result = ifma_bp2.add_cached(&neg_cached).to_extended();
+      assert!(bp.equals_projective(&result), "IFMA 2B + (-B) should equal B");
+    }
+  }
+
+  #[test]
+  fn ifma_scalar_mul_vartime_matches_scalar() {
+    if !is_x86_feature_detected!("avx512ifma") {
+      return;
+    }
+    let bp = basepoint();
+    let mut scalar = [0u8; 32];
+    scalar[0] = 42;
+    let scalar_result = bp.scalar_mul_vartime(&scalar);
+
+    // SAFETY: AVX-512 IFMA availability checked above.
+    unsafe {
+      let result = scalar_mul_vartime_ifma(&bp, &scalar);
+      assert!(
+        scalar_result.equals_projective(&result),
+        "IFMA vartime scalar mul should match scalar"
+      );
+    }
+  }
+
+  #[test]
+  fn ifma_scalar_mul_basepoint_matches_scalar() {
+    if !is_x86_feature_detected!("avx512ifma") {
+      return;
+    }
+    let mut scalar = [0u8; 32];
+    scalar[0] = 1;
+    let scalar_result = ExtendedPoint::scalar_mul_basepoint(&scalar);
+
+    // SAFETY: AVX-512 IFMA availability checked above.
+    unsafe {
+      let result = scalar_mul_basepoint_ifma(&scalar);
+      assert!(
+        scalar_result.equals_projective(&result),
+        "IFMA basepoint mul [1]B should match scalar"
+      );
+    }
+  }
+
+  #[test]
+  fn ifma_straus_matches_scalar() {
+    if !is_x86_feature_detected!("avx512ifma") {
+      return;
+    }
+    let bp = basepoint();
+    let a = bp.double().double();
+    let mut s = [0u8; 32];
+    s[0] = 7;
+    let mut h = [0u8; 32];
+    h[0] = 13;
+    let scalar_result = ExtendedPoint::straus_basepoint_vartime(&s, &h, &a);
+
+    // SAFETY: AVX-512 IFMA availability checked above.
+    unsafe {
+      let result = straus_basepoint_vartime_ifma(&s, &h, &a);
+      assert!(
+        scalar_result.equals_projective(&result),
+        "IFMA Straus should match scalar"
       );
     }
   }
