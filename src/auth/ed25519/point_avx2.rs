@@ -724,37 +724,6 @@ pub(crate) unsafe fn scalar_mul_basepoint_ifma(scalar_bytes: &[u8; 32]) -> Exten
   acc.to_extended()
 }
 
-/// Straus/Shamir interleaved double-scalar multiply using IFMA.
-///
-/// # Safety
-///
-/// Caller must ensure AVX-512 IFMA + VL are available.
-#[target_feature(enable = "avx2,avx512ifma,avx512vl")]
-#[allow(unsafe_op_in_unsafe_fn)]
-pub(crate) unsafe fn straus_basepoint_vartime_ifma(s: &[u8; 32], h: &[u8; 32], a: &ExtendedPoint) -> ExtendedPoint {
-  use super::point::BASEPOINT_RADIX16_TABLE;
-
-  let s_digits = scalar::as_radix_16(s);
-  let h_digits = scalar::as_radix_16(h);
-  let affine_k = hamburg_affine_constants_ifma();
-
-  let ifma_a = ExtendedPointIfma::from_extended(a);
-  let a_table = cached_multiples_ifma(&ifma_a);
-
-  let mut acc = ExtendedPointIfma::from_extended(&ExtendedPoint::identity());
-
-  for (&sd, &hd) in s_digits.iter().zip(h_digits.iter()).rev() {
-    acc = acc.double().double().double().double();
-    if sd != 0 {
-      acc = add_signed_cached_ifma(acc, &BASEPOINT_RADIX16_TABLE[0], sd, &affine_k);
-    }
-    if hd != 0 {
-      acc = add_signed_runtime_cached_ifma(acc, &a_table, hd);
-    }
-  }
-
-  acc.to_extended()
-}
 
 // ---------------------------------------------------------------------------
 // Tests
