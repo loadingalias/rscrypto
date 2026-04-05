@@ -720,38 +720,6 @@ pub(crate) unsafe fn scalar_mul_basepoint_ifma(scalar_bytes: &[u8; 32]) -> Exten
   acc.to_extended()
 }
 
-/// Straus/Shamir interleaved double-scalar multiply using IFMA.
-///
-/// # Safety
-///
-/// Caller must ensure AVX-512 IFMA + VL are available.
-#[target_feature(enable = "avx2,avx512ifma,avx512vl")]
-#[allow(unsafe_op_in_unsafe_fn)]
-pub(crate) unsafe fn straus_basepoint_vartime_ifma(s: &[u8; 32], h: &[u8; 32], a: &ExtendedPoint) -> ExtendedPoint {
-  use super::point::BASEPOINT_RADIX16_TABLE;
-
-  let s_digits = scalar::as_radix_16(s);
-  let h_digits = scalar::as_radix_16(h);
-  let affine_k = hamburg_affine_constants_ifma();
-
-  let ifma_a = ExtendedPointIfma::from_extended(a);
-  let a_table = cached_multiples_ifma(&ifma_a);
-
-  let mut acc = ExtendedPointIfma::from_extended(&ExtendedPoint::identity());
-
-  for (&sd, &hd) in s_digits.iter().zip(h_digits.iter()).rev() {
-    acc = acc.double().double().double().double();
-    if sd != 0 {
-      acc = add_signed_cached_ifma(acc, &BASEPOINT_RADIX16_TABLE[0], sd, &affine_k);
-    }
-    if hd != 0 {
-      acc = add_signed_runtime_cached_ifma(acc, &a_table, hd);
-    }
-  }
-
-  acc.to_extended()
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -1202,29 +1170,6 @@ mod tests {
       assert!(
         scalar_result.equals_projective(&result),
         "IFMA basepoint mul [1]B should match scalar"
-      );
-    }
-  }
-
-  #[test]
-  fn ifma_straus_matches_scalar() {
-    if !is_x86_feature_detected!("avx512ifma") {
-      return;
-    }
-    let bp = basepoint();
-    let a = bp.double().double();
-    let mut s = [0u8; 32];
-    s[0] = 7;
-    let mut h = [0u8; 32];
-    h[0] = 13;
-    let scalar_result = ExtendedPoint::straus_basepoint_vartime(&s, &h, &a);
-
-    // SAFETY: AVX-512 IFMA availability checked above.
-    unsafe {
-      let result = straus_basepoint_vartime_ifma(&s, &h, &a);
-      assert!(
-        scalar_result.equals_projective(&result),
-        "IFMA Straus should match scalar"
       );
     }
   }
