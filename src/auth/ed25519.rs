@@ -440,20 +440,30 @@ fn basepoint_mul_dispatch(scalar_bytes: &[u8; 32]) -> point::ExtendedPoint {
 /// Dispatch `[s]B + [-h]A` (Straus double-scalar mul) to the fastest
 /// available path.
 ///
-/// Uses AVX2 radix-26/25 (`vpmuludq`) even on IFMA platforms. The IFMA
-/// dual-accumulator schoolbook has higher per-multiply overhead (recombine
-/// and ×19 folding) that makes it structurally slower for the Straus
-/// double-scalar hot loop. AVX2 4-way `vpmuludq` matches dalek's approach
-/// and is faster for the ~1000 field multiplies per verify.
+/// Vendor-aware dispatch: `vpmuludq` (AVX2) has 3c latency on AMD vs 5c
+/// on Intel, while `vpmadd52` (IFMA) is 4c on both. For the ~1000 field
+/// multiplies on the Straus critical path, the 1c-per-mul latency
+/// difference is decisive:
 ///
-/// IFMA is still used for sign (via `basepoint_mul_dispatch`) where the
-/// simpler fixed-base path favors its higher per-multiply throughput.
+/// - **Intel + IFMA**: IFMA wins (4c < 5c `vpmuludq`).
+/// - **AMD + AVX2**: AVX2 wins (3c `vpmuludq` < 4c IFMA).
+/// - **Other + AVX2**: AVX2 (conservative default).
 #[must_use]
 fn straus_dispatch(s: &[u8; 32], h: &[u8; 32], a: &point::ExtendedPoint) -> point::ExtendedPoint {
   #[cfg(target_arch = "x86_64")]
   {
+    use crate::platform::caps::x86;
+
     let caps = crate::platform::caps();
-    if caps.has(crate::platform::caps::x86::AVX2) {
+
+    // Intel (non-AMD) with IFMA: use IFMA path (4c < 5c vpmuludq).
+    if !caps.has(x86::AMD) && caps.has(x86::AVX512IFMA) && caps.has(x86::AVX512VL) && caps.has(x86::AVX2) {
+      // SAFETY: AVX-512 IFMA + VL + AVX2 confirmed by runtime detection.
+      return unsafe { point_avx2::straus_basepoint_vartime_ifma(s, h, a) };
+    }
+
+    // AMD or other: use AVX2 path (3c vpmuludq on AMD, conservative default elsewhere).
+    if caps.has(x86::AVX2) {
       // SAFETY: AVX2 confirmed by runtime detection.
       return unsafe { point_avx2::straus_basepoint_vartime_avx2(s, h, a) };
     }

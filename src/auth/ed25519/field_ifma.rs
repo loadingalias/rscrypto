@@ -384,9 +384,10 @@ impl FieldElement51x4 {
     // -----------------------------------------------------------------------
     // Phase 1: 5×5 schoolbook with dual accumulators (50 IFMA ops)
     //
-    // For each product f_i * g_j targeting output limb k = i+j:
-    //   lo_k += madd52lo(lo_k, f_i, g_j)   — captures bits [51:0]
-    //   hi_k += madd52hi(hi_k, f_i, g_j)   — captures bits [103:52]
+    // Interleaved lo/hi scheduling: each product term issues madd52lo then
+    // madd52hi before the next term. This exposes the independent lo and hi
+    // dependency chains to Intel's dual-issue IFMA ports (0 and 1), letting
+    // the OOO engine overlap them instead of serialising all-lo-then-all-hi.
     // -----------------------------------------------------------------------
 
     // z0 = f0*g0
@@ -395,62 +396,62 @@ impl FieldElement51x4 {
 
     // z1 = f0*g1 + f1*g0
     let mut lo1 = madd52lo(zero, f[0], g[1]);
-    lo1 = madd52lo(lo1, f[1], g[0]);
     let mut hi1 = madd52hi(zero, f[0], g[1]);
+    lo1 = madd52lo(lo1, f[1], g[0]);
     hi1 = madd52hi(hi1, f[1], g[0]);
 
     // z2 = f0*g2 + f1*g1 + f2*g0
     let mut lo2 = madd52lo(zero, f[0], g[2]);
-    lo2 = madd52lo(lo2, f[1], g[1]);
-    lo2 = madd52lo(lo2, f[2], g[0]);
     let mut hi2 = madd52hi(zero, f[0], g[2]);
+    lo2 = madd52lo(lo2, f[1], g[1]);
     hi2 = madd52hi(hi2, f[1], g[1]);
+    lo2 = madd52lo(lo2, f[2], g[0]);
     hi2 = madd52hi(hi2, f[2], g[0]);
 
     // z3 = f0*g3 + f1*g2 + f2*g1 + f3*g0
     let mut lo3 = madd52lo(zero, f[0], g[3]);
-    lo3 = madd52lo(lo3, f[1], g[2]);
-    lo3 = madd52lo(lo3, f[2], g[1]);
-    lo3 = madd52lo(lo3, f[3], g[0]);
     let mut hi3 = madd52hi(zero, f[0], g[3]);
+    lo3 = madd52lo(lo3, f[1], g[2]);
     hi3 = madd52hi(hi3, f[1], g[2]);
+    lo3 = madd52lo(lo3, f[2], g[1]);
     hi3 = madd52hi(hi3, f[2], g[1]);
+    lo3 = madd52lo(lo3, f[3], g[0]);
     hi3 = madd52hi(hi3, f[3], g[0]);
 
     // z4 = f0*g4 + f1*g3 + f2*g2 + f3*g1 + f4*g0
     let mut lo4 = madd52lo(zero, f[0], g[4]);
-    lo4 = madd52lo(lo4, f[1], g[3]);
-    lo4 = madd52lo(lo4, f[2], g[2]);
-    lo4 = madd52lo(lo4, f[3], g[1]);
-    lo4 = madd52lo(lo4, f[4], g[0]);
     let mut hi4 = madd52hi(zero, f[0], g[4]);
+    lo4 = madd52lo(lo4, f[1], g[3]);
     hi4 = madd52hi(hi4, f[1], g[3]);
+    lo4 = madd52lo(lo4, f[2], g[2]);
     hi4 = madd52hi(hi4, f[2], g[2]);
+    lo4 = madd52lo(lo4, f[3], g[1]);
     hi4 = madd52hi(hi4, f[3], g[1]);
+    lo4 = madd52lo(lo4, f[4], g[0]);
     hi4 = madd52hi(hi4, f[4], g[0]);
 
     // z5 = f1*g4 + f2*g3 + f3*g2 + f4*g1
     let mut lo5 = madd52lo(zero, f[1], g[4]);
-    lo5 = madd52lo(lo5, f[2], g[3]);
-    lo5 = madd52lo(lo5, f[3], g[2]);
-    lo5 = madd52lo(lo5, f[4], g[1]);
     let mut hi5 = madd52hi(zero, f[1], g[4]);
+    lo5 = madd52lo(lo5, f[2], g[3]);
     hi5 = madd52hi(hi5, f[2], g[3]);
+    lo5 = madd52lo(lo5, f[3], g[2]);
     hi5 = madd52hi(hi5, f[3], g[2]);
+    lo5 = madd52lo(lo5, f[4], g[1]);
     hi5 = madd52hi(hi5, f[4], g[1]);
 
     // z6 = f2*g4 + f3*g3 + f4*g2
     let mut lo6 = madd52lo(zero, f[2], g[4]);
-    lo6 = madd52lo(lo6, f[3], g[3]);
-    lo6 = madd52lo(lo6, f[4], g[2]);
     let mut hi6 = madd52hi(zero, f[2], g[4]);
+    lo6 = madd52lo(lo6, f[3], g[3]);
     hi6 = madd52hi(hi6, f[3], g[3]);
+    lo6 = madd52lo(lo6, f[4], g[2]);
     hi6 = madd52hi(hi6, f[4], g[2]);
 
     // z7 = f3*g4 + f4*g3
     let mut lo7 = madd52lo(zero, f[3], g[4]);
-    lo7 = madd52lo(lo7, f[4], g[3]);
     let mut hi7 = madd52hi(zero, f[3], g[4]);
+    lo7 = madd52lo(lo7, f[4], g[3]);
     hi7 = madd52hi(hi7, f[4], g[3]);
 
     // z8 = f4*g4
@@ -525,6 +526,8 @@ impl FieldElement51x4 {
     let f2_2 = _mm256_add_epi64(f[2], f[2]);
     let f3_2 = _mm256_add_epi64(f[3], f[3]);
 
+    // Interleaved lo/hi scheduling (same rationale as mul).
+
     // z0 = f0*f0
     let lo0 = madd52lo(zero, f[0], f[0]);
     let hi0 = madd52hi(zero, f[0], f[0]);
@@ -535,34 +538,34 @@ impl FieldElement51x4 {
 
     // z2 = 2*f0*f2 + f1*f1
     let mut lo2 = madd52lo(zero, f0_2, f[2]);
-    lo2 = madd52lo(lo2, f[1], f[1]);
     let mut hi2 = madd52hi(zero, f0_2, f[2]);
+    lo2 = madd52lo(lo2, f[1], f[1]);
     hi2 = madd52hi(hi2, f[1], f[1]);
 
     // z3 = 2*f0*f3 + 2*f1*f2
     let mut lo3 = madd52lo(zero, f0_2, f[3]);
-    lo3 = madd52lo(lo3, f1_2, f[2]);
     let mut hi3 = madd52hi(zero, f0_2, f[3]);
+    lo3 = madd52lo(lo3, f1_2, f[2]);
     hi3 = madd52hi(hi3, f1_2, f[2]);
 
     // z4 = 2*f0*f4 + 2*f1*f3 + f2*f2
     let mut lo4 = madd52lo(zero, f0_2, f[4]);
-    lo4 = madd52lo(lo4, f1_2, f[3]);
-    lo4 = madd52lo(lo4, f[2], f[2]);
     let mut hi4 = madd52hi(zero, f0_2, f[4]);
+    lo4 = madd52lo(lo4, f1_2, f[3]);
     hi4 = madd52hi(hi4, f1_2, f[3]);
+    lo4 = madd52lo(lo4, f[2], f[2]);
     hi4 = madd52hi(hi4, f[2], f[2]);
 
     // z5 = 2*f1*f4 + 2*f2*f3
     let mut lo5 = madd52lo(zero, f1_2, f[4]);
-    lo5 = madd52lo(lo5, f2_2, f[3]);
     let mut hi5 = madd52hi(zero, f1_2, f[4]);
+    lo5 = madd52lo(lo5, f2_2, f[3]);
     hi5 = madd52hi(hi5, f2_2, f[3]);
 
     // z6 = 2*f2*f4 + f3*f3
     let mut lo6 = madd52lo(zero, f2_2, f[4]);
-    lo6 = madd52lo(lo6, f[3], f[3]);
     let mut hi6 = madd52hi(zero, f2_2, f[4]);
+    lo6 = madd52lo(lo6, f[3], f[3]);
     hi6 = madd52hi(hi6, f[3], f[3]);
 
     // z7 = 2*f3*f4
@@ -637,6 +640,57 @@ impl FieldElement51x4 {
     result.0[4] = _mm256_blend_epi32::<0b1100_0000>(result.0[4], neg4);
 
     result
+  }
+
+  /// Multiply by a "small" constant where only limb 0 is non-zero.
+  ///
+  /// The Hamburg scaling constants `(d2, d2, 2·d2, 2·d1)` fit in 18 bits,
+  /// so their radix-51 representation has non-zero content only in limb 0.
+  /// This needs only 10 IFMA ops (5 lo + 5 hi) instead of the full 50-op
+  /// schoolbook, saving ~40 IFMA ops per constant multiply.
+  ///
+  /// # Precondition
+  ///
+  /// - `small.0[1..5]` must all be zero (only limb 0 non-zero).
+  /// - `self` must have limbs ≤ 52 bits (same as `mul`).
+  ///
+  /// # Safety
+  ///
+  /// Caller must ensure AVX-512 IFMA + VL are available.
+  #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
+  #[allow(unsafe_op_in_unsafe_fn)]
+  pub(crate) unsafe fn mul_small(&self, small: &Self) -> Self {
+    let zero = _mm256_setzero_si256();
+    let f = &self.0;
+    let c = small.0[0]; // The only non-zero limb
+
+    // 5 multiplies: f[k] * c — interleaved lo/hi.
+    // Each pair is independent so the OOO engine overlaps freely.
+    let lo0 = madd52lo(zero, f[0], c);
+    let hi0 = madd52hi(zero, f[0], c);
+    let lo1 = madd52lo(zero, f[1], c);
+    let hi1 = madd52hi(zero, f[1], c);
+    let lo2 = madd52lo(zero, f[2], c);
+    let hi2 = madd52hi(zero, f[2], c);
+    let lo3 = madd52lo(zero, f[3], c);
+    let hi3 = madd52hi(zero, f[3], c);
+    let lo4 = madd52lo(zero, f[4], c);
+    let hi4 = madd52hi(zero, f[4], c);
+
+    // Recombine: z_k = lo_k + 2 * hi_{k-1}
+    // Wrap-around: 2 * hi_4 * 19 folds into limb 0.
+    // With 18-bit constants and 51-bit inputs, hi values are ≤ 17 bits,
+    // so 2*hi*19 ≤ ~5M — negligible overflow risk.
+    let hi4_x2 = _mm256_add_epi64(hi4, hi4);
+
+    Self([
+      _mm256_add_epi64(lo0, mul19(hi4_x2)),
+      _mm256_add_epi64(_mm256_add_epi64(lo1, hi0), hi0),
+      _mm256_add_epi64(_mm256_add_epi64(lo2, hi1), hi1),
+      _mm256_add_epi64(_mm256_add_epi64(lo3, hi2), hi2),
+      _mm256_add_epi64(_mm256_add_epi64(lo4, hi3), hi3),
+    ])
+    .reduce()
   }
 }
 
@@ -800,6 +854,35 @@ mod tests {
       assert_eq!(rb.normalize(), b.square().normalize(), "lane B square");
       assert_eq!(rc.normalize(), c.square().normalize(), "lane C square");
       assert_eq!(rd.normalize(), d.square().normalize(), "lane D square");
+    }
+  }
+
+  #[test]
+  fn mul_small_matches_full_mul() {
+    if !is_x86_feature_detected!("avx512ifma") {
+      return;
+    }
+    let [a, b, c, d] = test_field_elements();
+
+    // Hamburg-like small constants: only limb 0 is non-zero.
+    let small = FieldElement::from_limbs([121_666, 0, 0, 0, 0]);
+    let small2 = FieldElement::from_limbs([243_332, 0, 0, 0, 0]);
+
+    // SAFETY: AVX-512 IFMA checked above.
+    unsafe {
+      let packed = FieldElement51x4::new(&a, &b, &c, &d);
+      let constants = FieldElement51x4::new(&small, &small, &small2, &small);
+
+      let via_small = packed.mul_small(&constants);
+      let via_full = packed.mul(&constants);
+
+      let [sa, sb, sc, sd] = via_small.split();
+      let [fa, fb, fc, fd] = via_full.split();
+
+      assert_eq!(sa.normalize(), fa.normalize(), "lane A mul_small vs mul");
+      assert_eq!(sb.normalize(), fb.normalize(), "lane B mul_small vs mul");
+      assert_eq!(sc.normalize(), fc.normalize(), "lane C mul_small vs mul");
+      assert_eq!(sd.normalize(), fd.normalize(), "lane D mul_small vs mul");
     }
   }
 

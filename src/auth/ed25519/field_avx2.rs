@@ -767,18 +767,10 @@ impl FieldElement2625x4 {
   // Squaring (with symmetry optimization)
   // -------------------------------------------------------------------------
 
-  /// Square the vectorized field element (4 independent squarings).
+  /// Compute the square accumulators in the u64 domain (before reduction).
   ///
-  /// Exploits the symmetry `x_i·x_j == x_j·x_i` to reduce multiply count.
-  /// Cross terms are doubled (via pre-doubled x values), diagonal terms
-  /// appear once.
-  ///
-  /// Coefficient rules for z_k:
-  /// - Even k, diagonal, both-even:  ×1
-  /// - Even k, diagonal, both-odd:   ×2 (radix alignment)
-  /// - Even k, cross, both-even:     ×2 (symmetry)
-  /// - Even k, cross, both-odd:      ×4 (symmetry × radix)
-  /// - Odd k, cross, mixed-parity:   ×2 (symmetry only)
+  /// Returns 10 `u64x4` vectors ready for `reduce64`. Factored out so that
+  /// `square()` and `square_and_negate_d()` can share the schoolbook.
   ///
   /// # Safety
   ///
@@ -786,7 +778,7 @@ impl FieldElement2625x4 {
   #[inline]
   #[target_feature(enable = "avx2")]
   #[allow(unsafe_op_in_unsafe_fn)]
-  pub(crate) unsafe fn square(&self) -> Self {
+  unsafe fn square_accum(&self) -> [__m256i; 10] {
     let v19 = _mm256_set1_epi64x(19);
 
     let (x0, x1) = unpack_pair(self.0[0]);
@@ -898,7 +890,23 @@ impl FieldElement2625x4 {
       add64(add64(mul32(x2_2, x7), mul32(x3_2, x6)), mul32(x4_2, x5)),
     );
 
-    let mut z = [z0, z1, z2, z3, z4, z5, z6, z7, z8, z9];
+    [z0, z1, z2, z3, z4, z5, z6, z7, z8, z9]
+  }
+
+  /// Square the vectorized field element (4 independent squarings).
+  ///
+  /// Production code uses `square_and_negate_d()` directly; this standalone
+  /// wrapper exists for differential testing.
+  ///
+  /// # Safety
+  ///
+  /// Caller must ensure AVX2 is available.
+  #[cfg(test)]
+  #[inline]
+  #[target_feature(enable = "avx2")]
+  #[allow(unsafe_op_in_unsafe_fn)]
+  pub(crate) unsafe fn square(&self) -> Self {
+    let mut z = self.square_accum();
     Self::reduce64(&mut z)
   }
 
@@ -908,8 +916,11 @@ impl FieldElement2625x4 {
   /// where the negation keeps intermediate bounds within `vpmuludq`'s
   /// 32-bit input range.
   ///
-  /// The D-lane negation uses `2p - D` in the packed u32 domain, which is
-  /// valid because the squared result is already reduced.
+  /// The D-lane negation is performed in the **u64 accumulator domain**
+  /// before `reduce64`, using a `p × 2^37` bias. This ensures the negated
+  /// D lane emerges fully reduced (b < 0.007), matching the other lanes.
+  /// Without this, a post-reduce `2p − D` negation adds a ~2^27 bias that
+  /// pushes subsequent doubling adds past the ×19 overflow threshold.
   ///
   /// # Safety
   ///
@@ -918,17 +929,56 @@ impl FieldElement2625x4 {
   #[target_feature(enable = "avx2")]
   #[allow(unsafe_op_in_unsafe_fn)]
   pub(crate) unsafe fn square_and_negate_d(&self) -> Self {
-    let mut result = self.square();
-    Self::negate_d_lane(&mut result);
-    result
+    let mut z = self.square_accum();
+    Self::negate_d_accum(&mut z);
+    Self::reduce64(&mut z)
   }
 
-  /// Negate the D lane of each limb via `2p − D`, blending only positions 5,7.
+  /// Negate the D lane in each u64 accumulator using a `p × 2^37` bias.
   ///
-  /// Shared between AVX2 and IFMA `square_and_negate_d` variants.
+  /// Replaces `z[k]_D` with `(p_k × 2^37) − z[k]_D` for each limb `k`.
+  /// The bias is large enough to prevent underflow (max accumulator ≈ 2^60,
+  /// min bias ≈ 2^62) and small enough to fit in u64. The subsequent
+  /// `reduce64` carry chain processes the biased values normally, producing
+  /// a fully reduced negation with b < 0.007.
   #[inline]
   #[target_feature(enable = "avx2")]
   #[allow(unsafe_op_in_unsafe_fn)]
+  unsafe fn negate_d_accum(z: &mut [__m256i; 10]) {
+    // p × 2^37 per limb (radix-26/25):
+    let bias_even_0 = _mm256_set1_epi64x(((1i64 << 26) - 19) << 37);
+    let bias_even = _mm256_set1_epi64x(((1i64 << 26) - 1) << 37);
+    let bias_odd = _mm256_set1_epi64x(((1i64 << 25) - 1) << 37);
+
+    // D lane = u64 lane 3 = u32 positions 6-7.
+    const D_U64: i32 = 0b1100_0000;
+
+    macro_rules! neg_d {
+      ($idx:expr, $bias:expr) => {
+        let negated = _mm256_sub_epi64($bias, z[$idx]);
+        z[$idx] = _mm256_blend_epi32::<D_U64>(z[$idx], negated);
+      };
+    }
+
+    neg_d!(0, bias_even_0);
+    neg_d!(1, bias_odd);
+    neg_d!(2, bias_even);
+    neg_d!(3, bias_odd);
+    neg_d!(4, bias_even);
+    neg_d!(5, bias_odd);
+    neg_d!(6, bias_even);
+    neg_d!(7, bias_odd);
+    neg_d!(8, bias_even);
+    neg_d!(9, bias_odd);
+  }
+
+  /// Negate the D lane of each limb via `2p − D` in the packed u32 domain.
+  ///
+  /// **Not used by AVX2 `square_and_negate_d`** (which negates in u64 domain
+  /// for tighter bounds). Retained for potential external callers.
+  #[inline]
+  #[target_feature(enable = "avx2")]
+  #[allow(unsafe_op_in_unsafe_fn, dead_code)]
   unsafe fn negate_d_lane(fe: &mut Self) {
     let p2_limb0_even = (2i64.wrapping_mul((1i64 << 26) - 19)) as i32;
     let p2_limb_even = (2i64.wrapping_mul((1i64 << 26) - 1)) as i32;
