@@ -439,17 +439,18 @@ fn basepoint_mul_dispatch(scalar_bytes: &[u8; 32]) -> point::ExtendedPoint {
 
 /// Dispatch `[s]B + [-h]A` (Straus double-scalar mul) to the fastest
 /// available path.
-///
-/// Uses AVX2 radix-26/25 (`vpmuludq`) rather than IFMA radix-51 for the
-/// Straus hot loop. The IFMA dual-accumulator schoolbook has higher per-
-/// multiply overhead (recombine + ×19 folding) that makes it slower for
-/// the verify path despite wider multiplies. IFMA remains optimal for the
-/// sign path (single-scalar basepoint mul).
 #[must_use]
 fn straus_dispatch(s: &[u8; 32], h: &[u8; 32], a: &point::ExtendedPoint) -> point::ExtendedPoint {
   #[cfg(target_arch = "x86_64")]
   {
     let caps = crate::platform::caps();
+    if caps.has(crate::platform::caps::x86::AVX512IFMA)
+      && caps.has(crate::platform::caps::x86::AVX512VL)
+      && caps.has(crate::platform::caps::x86::AVX2)
+    {
+      // SAFETY: AVX-512 IFMA + VL + AVX2 confirmed by runtime detection.
+      return unsafe { point_avx2::straus_basepoint_vartime_ifma(s, h, a) };
+    }
     if caps.has(crate::platform::caps::x86::AVX2) {
       // SAFETY: AVX2 confirmed by runtime detection.
       return unsafe { point_avx2::straus_basepoint_vartime_avx2(s, h, a) };
