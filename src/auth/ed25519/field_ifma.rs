@@ -324,7 +324,7 @@ impl FieldElement51x4 {
   #[inline]
   #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
   #[allow(unsafe_op_in_unsafe_fn)]
-  unsafe fn reduce(mut self) -> Self {
+  pub(crate) unsafe fn reduce(mut self) -> Self {
     let mask = _mm256_set1_epi64x(MASK51);
     let r19 = _mm256_set1_epi64x(19);
 
@@ -363,19 +363,23 @@ impl FieldElement51x4 {
   /// Full 5×5 schoolbook with dual accumulators (`madd52lo` + `madd52hi`),
   /// post-reduction of upper limbs, and carry propagation.
   ///
+  /// # Precondition
+  ///
+  /// Both operands must have limbs ≤ 52 bits (fitting IFMA's input window).
+  /// This is satisfied by `reduce()` output (≤51 bits), `negate_lazy()` on
+  /// reduced values (≤52 bits), or `new()` from scalar field elements (≤51 bits).
+  /// It is NOT satisfied after `diff_sum()` on reduced values (up to 53 bits) —
+  /// callers must `reduce()` such intermediates before calling `mul`.
+  ///
   /// # Safety
   ///
   /// Caller must ensure AVX-512 IFMA + VL are available.
   #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
   #[allow(unsafe_op_in_unsafe_fn)]
   pub(crate) unsafe fn mul(&self, rhs: &Self) -> Self {
-    // Reduce both operands so all limbs fit in 52 bits (IFMA reads [51:0]).
-    // Without this, diff_sum's 2p bias can push limbs to ~53 bits.
-    let lhs_r = self.reduce();
-    let rhs_r = rhs.reduce();
     let zero = _mm256_setzero_si256();
-    let f = &lhs_r.0;
-    let g = &rhs_r.0;
+    let f = &self.0;
+    let g = &rhs.0;
 
     // -----------------------------------------------------------------------
     // Phase 1: 5×5 schoolbook with dual accumulators (50 IFMA ops)
@@ -499,16 +503,20 @@ impl FieldElement51x4 {
   /// Exploits symmetry: cross terms `f_i * f_j` (i ≠ j) appear twice, so
   /// we pre-double one operand and halve the product count.
   ///
+  /// # Precondition
+  ///
+  /// All limbs must be ≤ 51 bits (i.e., `reduce()`d). The pre-doubling step
+  /// (`f_i_2 = f[i] + f[i]`) pushes 51-bit limbs to 52 bits — the IFMA limit.
+  /// Inputs with 52-bit limbs would overflow to 53 bits after pre-doubling.
+  ///
   /// # Safety
   ///
   /// Caller must ensure AVX-512 IFMA + VL are available.
   #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
   #[allow(unsafe_op_in_unsafe_fn)]
   pub(crate) unsafe fn square(&self) -> Self {
-    // Reduce so all limbs fit in 52 bits for IFMA input.
-    let reduced = self.reduce();
     let zero = _mm256_setzero_si256();
-    let f = &reduced.0;
+    let f = &self.0;
 
     // Pre-double for cross terms (f_i is at most 51 bits → f_i_2 ≤ 52 bits,
     // which fits in IFMA's 52-bit input window).
@@ -595,6 +603,10 @@ impl FieldElement51x4 {
   }
 
   /// Square and negate lane D. Fused for HWCD'08 parallel doubling.
+  ///
+  /// # Precondition
+  ///
+  /// Inherits `square()`'s constraint: all limbs must be ≤ 51 bits (reduced).
   ///
   /// # Safety
   ///
