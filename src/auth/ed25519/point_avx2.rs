@@ -20,6 +20,8 @@ use super::{
   point::{CachedPoint, ExtendedPoint},
   scalar,
 };
+#[cfg(target_arch = "x86_64")]
+use crate::backend::cache::OnceCache;
 
 /// Hamburg constants for the curve `d = -d1/d2`.
 const D1: u64 = 121_665;
@@ -807,6 +809,21 @@ unsafe fn add_wnaf_digit_ifma(acc: ExtendedPointIfma, table: &[CachedPointIfma],
   }
 }
 
+/// Build the 64-entry wNAF(8) basepoint table: `[B, 3B, 5B, ..., 127B]`.
+///
+/// Called once by `OnceCache` on the first verify, then cached for all
+/// subsequent calls.
+///
+/// # Safety
+///
+/// Caller must ensure AVX-512 IFMA + VL are available.
+#[target_feature(enable = "avx2,avx512ifma,avx512vl")]
+#[allow(unsafe_op_in_unsafe_fn)]
+unsafe fn build_basepoint_wnaf8_table_ifma() -> [CachedPointIfma; 64] {
+  let bp = ExtendedPointIfma::from_extended(&ExtendedPoint::basepoint());
+  odd_multiples_ifma(&bp)
+}
+
 /// wNAF-based Straus/Shamir: `[s]B + [h]A`.
 ///
 /// Uses wNAF(8) for the basepoint scalar `s` (64-entry odd-multiples table,
@@ -831,9 +848,11 @@ pub(crate) unsafe fn straus_wnaf_vartime_ifma(s: &[u8; 32], h: &[u8; 32], a: &Ex
   let s_naf = scalar::non_adjacent_form(s, 8);
   let h_naf = scalar::non_adjacent_form(h, 5);
 
-  // Build wNAF(8) basepoint table: [B, 3B, 5B, ..., 127B] (64 entries).
-  let bp = ExtendedPointIfma::from_extended(&ExtendedPoint::basepoint());
-  let base_table: [CachedPointIfma; 64] = odd_multiples_ifma(&bp);
+  // wNAF(8) basepoint table: [B, 3B, 5B, ..., 127B] (64 entries).
+  // Cached via OnceCache — built once on first verify, reused for all
+  // subsequent calls. Amortizes ~15K instruction table-build to zero.
+  static BASEPOINT_WNAF8_IFMA: OnceCache<[CachedPointIfma; 64]> = OnceCache::new();
+  let base_table = BASEPOINT_WNAF8_IFMA.get_or_init(|| build_basepoint_wnaf8_table_ifma());
 
   // Build wNAF(5) public-key table: [A, 3A, 5A, ..., 15A] (8 entries).
   let ifma_a = ExtendedPointIfma::from_extended(a);
