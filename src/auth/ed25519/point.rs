@@ -330,34 +330,7 @@ impl ExtendedPoint {
     acc
   }
 
-  /// Straus/Shamir interleaved double-scalar multiply: `[s]B + [h]A`.
-  ///
-  /// Scans both scalars in lockstep over 64 signed radix-16 digits
-  /// (high → low), sharing all 256 doublings. Each digit position adds
-  /// from the flat basepoint table (`BASEPOINT_RADIX16_TABLE[0]`) for `s`
-  /// and from a runtime projective table for `h`.
-  ///
-  /// Variable-time: branches on scalar nibble values. Safe for verification
-  /// where both `s` and `h` are public (derived from the message/signature).
-  #[must_use]
-  pub(crate) fn straus_basepoint_vartime(s: &[u8; 32], h: &[u8; 32], a: &Self) -> Self {
-    let s_digits = scalar::as_radix_16(s);
-    let h_digits = scalar::as_radix_16(h);
-    let a_table = projective_cached_multiples(a);
-    let mut acc = Self::identity();
-
-    for (&sd, &hd) in s_digits.iter().zip(h_digits.iter()).rev() {
-      acc = acc.double().double().double().double();
-      if sd != 0 {
-        acc = add_signed_cached(acc, &BASEPOINT_RADIX16_TABLE[0], sd);
-      }
-      if hd != 0 {
-        acc = add_signed_projective_cached(acc, &a_table, hd);
-      }
-    }
-
-    acc
-  }
+  // Radix-16 Straus removed — superseded by straus_wnaf_basepoint_vartime.
 
   /// Multiply by the Edwards cofactor.
   #[must_use]
@@ -448,6 +421,81 @@ fn projective_cached_multiples(point: &ExtendedPoint) -> [ProjectiveCachedPoint;
   }
 
   out
+}
+
+/// Build odd multiples `[1P, 3P, 5P, ..., (2n-1)P]` in projective cached format.
+#[must_use]
+fn odd_projective_cached_multiples<const N: usize>(point: &ExtendedPoint) -> [ProjectiveCachedPoint; N] {
+  let p2 = point.double();
+  let mut out = [ProjectiveCachedPoint::IDENTITY; N];
+  let mut acc = *point;
+  out[0] = ProjectiveCachedPoint::from_extended(&acc);
+
+  for dst in out.iter_mut().skip(1) {
+    acc = acc.add(&p2);
+    *dst = ProjectiveCachedPoint::from_extended(&acc);
+  }
+
+  out
+}
+
+/// Add a signed wNAF digit from an odd-multiples projective cached table.
+#[inline]
+#[must_use]
+fn add_wnaf_digit_projective(acc: ExtendedPoint, table: &[ProjectiveCachedPoint], digit: i8) -> ExtendedPoint {
+  let index = usize::from((digit.unsigned_abs().wrapping_sub(1)) / 2);
+  let Some(point) = table.get(index).copied() else {
+    return acc;
+  };
+
+  if digit > 0 {
+    acc.add_projective_cached(&point)
+  } else {
+    acc.add_projective_cached(&point.neg())
+  }
+}
+
+/// wNAF-based portable Straus: `[s]B + [h]A`.
+///
+/// Uses wNAF(5) for both scalars (8-entry odd-multiples tables).
+#[must_use]
+#[allow(clippy::indexing_slicing)] // i bounded by top < 256, naf arrays are [i8; 256]
+pub(crate) fn straus_wnaf_basepoint_vartime(s: &[u8; 32], h: &[u8; 32], a: &ExtendedPoint) -> ExtendedPoint {
+  let s_naf = scalar::non_adjacent_form(s, 5);
+  let h_naf = scalar::non_adjacent_form(h, 5);
+
+  let bp = ExtendedPoint::basepoint();
+  let base_table: [ProjectiveCachedPoint; 8] = odd_projective_cached_multiples(&bp);
+  let a_table: [ProjectiveCachedPoint; 8] = odd_projective_cached_multiples(a);
+
+  let top = s_naf
+    .iter()
+    .enumerate()
+    .rev()
+    .find(|&(_, &d)| d != 0)
+    .map_or(0, |(i, _)| i)
+    .max(
+      h_naf
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|&(_, &d)| d != 0)
+        .map_or(0, |(i, _)| i),
+    );
+
+  let mut acc = ExtendedPoint::identity();
+
+  for i in (0..=top).rev() {
+    acc = acc.double();
+    if s_naf[i] != 0 {
+      acc = add_wnaf_digit_projective(acc, &base_table, s_naf[i]);
+    }
+    if h_naf[i] != 0 {
+      acc = add_wnaf_digit_projective(acc, &a_table, h_naf[i]);
+    }
+  }
+
+  acc
 }
 
 impl Default for ExtendedPoint {

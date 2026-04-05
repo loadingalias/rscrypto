@@ -376,6 +376,74 @@ pub(crate) fn as_radix_16(bytes: &[u8; SECRET_KEY_LENGTH]) -> [i8; 64] {
   digits
 }
 
+/// Decompose a scalar into width-`w` non-adjacent form (wNAF).
+///
+/// Returns a 256-element array of signed digits. Non-zero digits are odd
+/// and lie in `{±1, ±3, ..., ±(2^(w-1) - 1)}`. At most one in every `w`
+/// consecutive digits is non-zero, giving density ~`1/(w+1)`.
+///
+/// Variable-time: the output digit pattern leaks the scalar value. Safe
+/// for verification where both scalars are public (derived from message).
+///
+/// # Panics
+///
+/// Debug-panics if `w < 2` or `w > 8`.
+#[must_use]
+#[allow(clippy::indexing_slicing)]
+pub(crate) fn non_adjacent_form(bytes: &[u8; 32], w: usize) -> [i8; 256] {
+  debug_assert!((2..=8).contains(&w));
+
+  let mut naf = [0i8; 256];
+
+  // Load scalar into mutable u64 words. The 5th word absorbs carry from
+  // the 256th bit position.
+  let mut x = [0u64; 5];
+  for (dst, chunk) in x.iter_mut().zip(bytes.as_slice().chunks_exact(8)) {
+    *dst = read_u64_le(chunk);
+  }
+
+  let width = 1u64 << w;
+  let window_mask = width.wrapping_sub(1);
+
+  let mut pos = 0usize;
+  let mut carry = 0u64;
+
+  while pos < 256 {
+    // Extract a w-bit window starting at `pos`, including carry.
+    let word = pos / 64;
+    let bit = pos % 64;
+    let bit_buf = if bit < 64usize.wrapping_sub(w) {
+      x[word] >> bit
+    } else {
+      (x[word] >> bit) | (x[word.wrapping_add(1)] << (64usize.wrapping_sub(bit)))
+    };
+
+    let window = carry.wrapping_add(bit_buf & window_mask);
+
+    if window & 1 == 0 {
+      // Even window: emit 0, advance 1 bit. Carry is preserved:
+      // if carry was 1 and window is even, then the low bit of bit_buf
+      // was 1, so the carry propagates to the next position.
+      pos = pos.wrapping_add(1);
+      continue;
+    }
+
+    // Odd window: emit a signed digit.
+    if window < width / 2 {
+      naf[pos] = window as i8;
+      carry = 0;
+    } else {
+      naf[pos] = (window as i8).wrapping_sub(width as i8);
+      carry = 1;
+    }
+
+    // The next w-1 digits are guaranteed to be 0 by the NAF property.
+    pos = pos.wrapping_add(w);
+  }
+
+  naf
+}
+
 #[inline]
 #[must_use]
 fn read_u64_le(chunk: &[u8]) -> u64 {
@@ -495,7 +563,7 @@ fn maybe_sub_order(words: Scalar) -> Scalar {
 mod tests {
   use super::{
     ORDER, Scalar, add_mod, as_radix_16, clamp_secret_scalar, decode_words_le, from_canonical_bytes, mul_add_mod,
-    reduce_bytes_mod_order, reduce_bytes_mod_order_fallback, to_bytes,
+    non_adjacent_form, reduce_bytes_mod_order, reduce_bytes_mod_order_fallback, to_bytes,
   };
 
   fn from_u64(value: u64) -> Scalar {
@@ -591,5 +659,137 @@ mod tests {
     let acc = from_u64(23);
 
     assert_eq!(mul_add_mod(&lhs, &rhs, &acc), from_u64(346));
+  }
+
+  #[test]
+  fn wnaf_reconstructs_scalar() {
+    // Verify that sum of digit[i] * 2^i equals the original scalar.
+    let scalars: [[u8; 32]; 3] = [
+      {
+        let mut s = [0u8; 32];
+        s[0] = 42;
+        s
+      },
+      {
+        let mut s = [0xFFu8; 32];
+        s[31] = 0x7F; // keep < 2^255
+        s
+      },
+      {
+        // Realistic scalar from a hash reduction
+        let mut s = [0u8; 32];
+        s[0] = 0xAB;
+        s[7] = 0xCD;
+        s[15] = 0xEF;
+        s[23] = 0x12;
+        s[31] = 0x34;
+        s
+      },
+    ];
+
+    for w in [5, 8] {
+      for scalar_bytes in &scalars {
+        let naf = non_adjacent_form(scalar_bytes, w);
+
+        // Reconstruct: sum of digit[i] * 2^i using multi-precision arithmetic.
+        // We work in [u64; 5] to handle potential carries.
+        let mut reconstructed = [0u64; 5];
+        for (i, &digit) in naf.iter().enumerate() {
+          if digit == 0 {
+            continue;
+          }
+          let word = i / 64;
+          let bit = i % 64;
+          if digit > 0 {
+            let d = digit as u64;
+            let (new_val, carry) = reconstructed[word].overflowing_add(d << bit);
+            reconstructed[word] = new_val;
+            if carry {
+              for w2 in &mut reconstructed[(word + 1)..] {
+                let (v, c) = w2.overflowing_add(1);
+                *w2 = v;
+                if !c {
+                  break;
+                }
+              }
+            }
+            // Handle cross-word shift
+            if bit > 0 && word + 1 < 5 {
+              reconstructed[word + 1] = reconstructed[word + 1].wrapping_add(d >> (64 - bit));
+            }
+          } else {
+            let d = (-digit) as u64;
+            let (new_val, borrow) = reconstructed[word].overflowing_sub(d << bit);
+            reconstructed[word] = new_val;
+            if borrow {
+              for w2 in &mut reconstructed[(word + 1)..] {
+                let (v, c) = w2.overflowing_sub(1);
+                *w2 = v;
+                if !c {
+                  break;
+                }
+              }
+            }
+            if bit > 0 && word + 1 < 5 {
+              reconstructed[word + 1] = reconstructed[word + 1].wrapping_sub(d >> (64 - bit));
+            }
+          }
+        }
+
+        // Compare lower 4 words (256 bits)
+        let mut expected = [0u64; 4];
+        for (dst, chunk) in expected.iter_mut().zip(scalar_bytes.chunks_exact(8)) {
+          *dst = u64::from_le_bytes(chunk.try_into().unwrap());
+        }
+        assert_eq!(&reconstructed[..4], &expected, "wNAF({w}) reconstruction failed");
+      }
+    }
+  }
+
+  #[test]
+  fn wnaf_digits_are_odd_or_zero() {
+    let mut s = [0u8; 32];
+    s[0] = 0xAB;
+    s[7] = 0xCD;
+    s[15] = 0xEF;
+    s[31] = 0x34;
+
+    for w in [5, 8] {
+      let naf = non_adjacent_form(&s, w);
+      let max_abs = (1i16 << (w - 1)) - 1; // 2^(w-1) - 1
+      for (i, &digit) in naf.iter().enumerate() {
+        if digit != 0 {
+          assert!(digit.abs() % 2 == 1, "wNAF({w}) digit[{i}] = {digit} is even");
+          assert!(
+            (digit as i16).abs() <= max_abs,
+            "wNAF({w}) digit[{i}] = {digit} exceeds ±{max_abs}"
+          );
+        }
+      }
+    }
+  }
+
+  #[test]
+  fn wnaf_nonzero_spacing() {
+    // Verify that no two non-zero digits appear within w positions.
+    let mut s = [0xFFu8; 32];
+    s[31] = 0x7F;
+
+    for w in [5, 8] {
+      let naf = non_adjacent_form(&s, w);
+      let mut last_nonzero: Option<usize> = None;
+      for (i, &digit) in naf.iter().enumerate() {
+        if digit != 0 {
+          if let Some(prev) = last_nonzero {
+            assert!(
+              i - prev >= w,
+              "wNAF({w}) spacing violation: nonzero at {prev} and {i} (gap {})",
+              i - prev
+            );
+          }
+          last_nonzero = Some(i);
+        }
+      }
+    }
   }
 }

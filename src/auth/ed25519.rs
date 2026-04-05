@@ -440,14 +440,11 @@ fn basepoint_mul_dispatch(scalar_bytes: &[u8; 32]) -> point::ExtendedPoint {
 /// Dispatch `[s]B + [-h]A` (Straus double-scalar mul) to the fastest
 /// available path.
 ///
-/// Vendor-aware dispatch: `vpmuludq` (AVX2) has 3c latency on AMD vs 5c
-/// on Intel, while `vpmadd52` (IFMA) is 4c on both. For the ~1000 field
-/// multiplies on the Straus critical path, the 1c-per-mul latency
-/// difference is decisive:
+/// Uses wNAF-based Straus on IFMA platforms: wNAF(8) for the basepoint
+/// scalar (~28 additions) + wNAF(5) for the public-key scalar (~43
+/// additions) = ~71 total, vs ~128 with the old radix-16 approach.
 ///
-/// - **Intel + IFMA**: IFMA wins (4c < 5c `vpmuludq`).
-/// - **AMD + AVX2**: AVX2 wins (3c `vpmuludq` < 4c IFMA).
-/// - **Other + AVX2**: AVX2 (conservative default).
+/// AVX2 radix-16 Straus remains as a fallback for pre-IFMA hardware.
 #[must_use]
 fn straus_dispatch(s: &[u8; 32], h: &[u8; 32], a: &point::ExtendedPoint) -> point::ExtendedPoint {
   #[cfg(target_arch = "x86_64")]
@@ -456,19 +453,19 @@ fn straus_dispatch(s: &[u8; 32], h: &[u8; 32], a: &point::ExtendedPoint) -> poin
 
     let caps = crate::platform::caps();
 
-    // Intel (non-AMD) with IFMA: use IFMA path (4c < 5c vpmuludq).
-    if !caps.has(x86::AMD) && caps.has(x86::AVX512IFMA) && caps.has(x86::AVX512VL) && caps.has(x86::AVX2) {
+    // IFMA + wNAF path: ~45% fewer additions than radix-16.
+    if caps.has(x86::AVX512IFMA) && caps.has(x86::AVX512VL) && caps.has(x86::AVX2) {
       // SAFETY: AVX-512 IFMA + VL + AVX2 confirmed by runtime detection.
-      return unsafe { point_avx2::straus_basepoint_vartime_ifma(s, h, a) };
+      return unsafe { point_avx2::straus_wnaf_vartime_ifma(s, h, a) };
     }
 
-    // AMD or other: use AVX2 path (3c vpmuludq on AMD, conservative default elsewhere).
+    // AVX2 radix-16 fallback for pre-IFMA hardware (Zen3, Haswell, etc.).
     if caps.has(x86::AVX2) {
       // SAFETY: AVX2 confirmed by runtime detection.
       return unsafe { point_avx2::straus_basepoint_vartime_avx2(s, h, a) };
     }
   }
-  point::ExtendedPoint::straus_basepoint_vartime(s, h, a)
+  point::straus_wnaf_basepoint_vartime(s, h, a)
 }
 
 #[cfg(test)]
