@@ -25,6 +25,10 @@ pub fn permute_fn(id: Keccakf1600KernelId) -> fn(&mut [u64; 25]) {
   }
 }
 
+/// All kernel IDs for agreement testing.
+#[cfg(test)]
+pub const ALL: &[Keccakf1600KernelId] = &[Keccakf1600KernelId::Portable];
+
 #[inline]
 #[must_use]
 pub const fn required_caps(id: Keccakf1600KernelId) -> Caps {

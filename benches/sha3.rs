@@ -140,6 +140,31 @@ fn shake256(c: &mut Criterion) {
   g.finish();
 }
 
+fn sha3_256_digest_pair(c: &mut Criterion) {
+  let inputs = common::comp_sizes();
+  let mut g = c.benchmark_group("sha3-256/digest_pair");
+
+  for (len, data) in &inputs {
+    // Throughput is 2× because we hash two messages.
+    g.throughput(criterion::Throughput::Bytes((*len as u64).strict_mul(2)));
+
+    g.bench_with_input(BenchmarkId::new("pair", len), data, |b, d| {
+      b.iter(|| black_box(rscrypto::Sha3_256::digest_pair(black_box(d), black_box(d))))
+    });
+
+    g.bench_with_input(BenchmarkId::new("2x_sequential", len), data, |b, d| {
+      use rscrypto::Digest as _;
+      b.iter(|| {
+        let a = rscrypto::Sha3_256::digest(black_box(d));
+        let b_ = rscrypto::Sha3_256::digest(black_box(d));
+        black_box((a, b_))
+      })
+    });
+  }
+
+  g.finish();
+}
+
 criterion_group!(
   benches,
   sha3_224,
@@ -148,6 +173,7 @@ criterion_group!(
   sha3_512,
   sha3_256_streaming,
   shake128,
-  shake256
+  shake256,
+  sha3_256_digest_pair
 );
 criterion_main!(benches);

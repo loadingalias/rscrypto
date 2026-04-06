@@ -521,9 +521,9 @@ impl ExtendedPointIfma {
   #[allow(unsafe_op_in_unsafe_fn)]
   pub(crate) unsafe fn to_cached(self) -> CachedPointIfma {
     let ds = self.0.diff_sum();
-    let prepared = self.0.blend(&ds, Lanes::AB).reduce();
+    let prepared = self.0.blend(&ds, Lanes::AB);
     let constants = hamburg_constants_ifma();
-    let scaled = prepared.mul_small(&constants);
+    let scaled = prepared.mul_small_unreduced(&constants);
     let negated = scaled.negate_lazy();
     CachedPointIfma(scaled.blend(&negated, Lanes::D))
   }
@@ -538,13 +538,13 @@ impl ExtendedPointIfma {
   #[allow(unsafe_op_in_unsafe_fn)]
   pub(crate) unsafe fn add_cached(&self, other: &CachedPointIfma) -> Self {
     let ds = self.0.diff_sum();
-    let tmp = self.0.blend(&ds, Lanes::AB).reduce();
-    let product = tmp.mul(&other.0);
+    let tmp = self.0.blend(&ds, Lanes::AB);
+    let product = tmp.mul_unreduced(&other.0);
     let swapped = product.shuffle(Shuffle::ABDC);
-    let ehfg = swapped.diff_sum().reduce();
+    let ehfg = swapped.diff_sum();
     let t0 = ehfg.shuffle(Shuffle::ADDA);
     let t1 = ehfg.shuffle(Shuffle::CBCB);
-    Self(t0.mul(&t1))
+    Self(t0.mul_unreduced(&t1))
   }
 
   /// Double this point using HWCD'08 parallel doubling.
@@ -578,11 +578,11 @@ impl ExtendedPointIfma {
     tmp = tmp.add(&s2_in_ad);
     let neg_s2 = s2.negate_lazy();
     let neg_s2_in_bc = zero.blend(&neg_s2, Lanes::BC);
-    tmp = tmp.add(&neg_s2_in_bc).reduce();
+    let tmp = tmp.add(&neg_s2_in_bc);
 
     let t0 = tmp.shuffle(Shuffle::CACA);
     let t1 = tmp.shuffle(Shuffle::DBBD);
-    Self(t0.mul(&t1))
+    Self(t0.mul_unreduced(&t1))
   }
 }
 

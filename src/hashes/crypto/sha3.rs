@@ -61,7 +61,18 @@ impl Digest for Sha3_224 {
   }
 }
 
-impl Sha3_224 {}
+impl Sha3_224 {
+  /// Hash two independent messages in parallel, returning both 28-byte digests.
+  ///
+  /// On aarch64 with SHA3 Crypto Extensions, this achieves ~2× the aggregate
+  /// throughput of two sequential [`digest`](Digest::digest) calls by using
+  /// 2-state NEON interleaving.
+  #[inline]
+  #[must_use]
+  pub fn digest_pair(a: &[u8], b: &[u8]) -> ([u8; 28], [u8; 28]) {
+    super::keccak::oneshot_pair::<144, 28>(0x06, a, b)
+  }
+}
 
 impl Digest for Sha3_256 {
   const OUTPUT_SIZE: usize = 32;
@@ -164,7 +175,18 @@ impl Digest for Sha3_384 {
   }
 }
 
-impl Sha3_384 {}
+impl Sha3_384 {
+  /// Hash two independent messages in parallel, returning both 48-byte digests.
+  ///
+  /// On aarch64 with SHA3 Crypto Extensions, this achieves ~2× the aggregate
+  /// throughput of two sequential [`digest`](Digest::digest) calls by using
+  /// 2-state NEON interleaving.
+  #[inline]
+  #[must_use]
+  pub fn digest_pair(a: &[u8], b: &[u8]) -> ([u8; 48], [u8; 48]) {
+    super::keccak::oneshot_pair::<104, 48>(0x06, a, b)
+  }
+}
 
 impl Digest for Sha3_512 {
   const OUTPUT_SIZE: usize = 64;
@@ -198,7 +220,18 @@ impl Digest for Sha3_512 {
   }
 }
 
-impl Sha3_512 {}
+impl Sha3_512 {
+  /// Hash two independent messages in parallel, returning both 64-byte digests.
+  ///
+  /// On aarch64 with SHA3 Crypto Extensions, this achieves ~2× the aggregate
+  /// throughput of two sequential [`digest`](Digest::digest) calls by using
+  /// 2-state NEON interleaving.
+  #[inline]
+  #[must_use]
+  pub fn digest_pair(a: &[u8], b: &[u8]) -> ([u8; 64], [u8; 64]) {
+    super::keccak::oneshot_pair::<72, 64>(0x06, a, b)
+  }
+}
 
 /// SHAKE256 (XOF).
 #[derive(Clone, Default)]
@@ -348,7 +381,7 @@ impl Xof for Shake256XofReader {
 
 #[cfg(test)]
 mod tests {
-  use super::{Sha3_256, Sha3_512, Shake128, Shake256};
+  use super::{Sha3_224, Sha3_256, Sha3_384, Sha3_512, Shake128, Shake256};
   use crate::traits::{Digest, Xof};
 
   fn hex(bytes: &[u8]) -> alloc::string::String {
@@ -483,5 +516,74 @@ mod tests {
     let (out_c1, out_c2) = Sha3_256::digest_pair(msg_c, msg_c);
     assert_eq!(out_c1, ref_c, "digest_pair same-msg output 1 mismatch");
     assert_eq!(out_c2, ref_c, "digest_pair same-msg output 2 mismatch");
+  }
+
+  #[test]
+  fn sha3_224_digest_pair_matches_sequential() {
+    let msg_a = b"The quick brown fox jumps over the lazy dog";
+    let msg_b = b"";
+    let msg_c = &[0xABu8; 4096];
+
+    let ref_a = Sha3_224::digest(msg_a);
+    let ref_b = Sha3_224::digest(msg_b);
+    let ref_c = Sha3_224::digest(msg_c);
+
+    let (out_a, out_b) = Sha3_224::digest_pair(msg_a, msg_b);
+    assert_eq!(out_a, ref_a);
+    assert_eq!(out_b, ref_b);
+
+    let (out_c, out_b2) = Sha3_224::digest_pair(msg_c, msg_b);
+    assert_eq!(out_c, ref_c);
+    assert_eq!(out_b2, ref_b);
+
+    let (out_c1, out_c2) = Sha3_224::digest_pair(msg_c, msg_c);
+    assert_eq!(out_c1, ref_c);
+    assert_eq!(out_c2, ref_c);
+  }
+
+  #[test]
+  fn sha3_384_digest_pair_matches_sequential() {
+    let msg_a = b"The quick brown fox jumps over the lazy dog";
+    let msg_b = b"";
+    let msg_c = &[0xABu8; 4096];
+
+    let ref_a = Sha3_384::digest(msg_a);
+    let ref_b = Sha3_384::digest(msg_b);
+    let ref_c = Sha3_384::digest(msg_c);
+
+    let (out_a, out_b) = Sha3_384::digest_pair(msg_a, msg_b);
+    assert_eq!(out_a, ref_a);
+    assert_eq!(out_b, ref_b);
+
+    let (out_c, out_b2) = Sha3_384::digest_pair(msg_c, msg_b);
+    assert_eq!(out_c, ref_c);
+    assert_eq!(out_b2, ref_b);
+
+    let (out_c1, out_c2) = Sha3_384::digest_pair(msg_c, msg_c);
+    assert_eq!(out_c1, ref_c);
+    assert_eq!(out_c2, ref_c);
+  }
+
+  #[test]
+  fn sha3_512_digest_pair_matches_sequential() {
+    let msg_a = b"The quick brown fox jumps over the lazy dog";
+    let msg_b = b"";
+    let msg_c = &[0xABu8; 4096];
+
+    let ref_a = Sha3_512::digest(msg_a);
+    let ref_b = Sha3_512::digest(msg_b);
+    let ref_c = Sha3_512::digest(msg_c);
+
+    let (out_a, out_b) = Sha3_512::digest_pair(msg_a, msg_b);
+    assert_eq!(out_a, ref_a);
+    assert_eq!(out_b, ref_b);
+
+    let (out_c, out_b2) = Sha3_512::digest_pair(msg_c, msg_b);
+    assert_eq!(out_c, ref_c);
+    assert_eq!(out_b2, ref_b);
+
+    let (out_c1, out_c2) = Sha3_512::digest_pair(msg_c, msg_c);
+    assert_eq!(out_c1, ref_c);
+    assert_eq!(out_c2, ref_c);
   }
 }

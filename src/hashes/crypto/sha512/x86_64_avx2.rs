@@ -244,6 +244,14 @@ pub(crate) unsafe fn compress_blocks_avx2(state: &mut [u64; 8], blocks: &[u8]) {
 
     // ── Dual-block loop ──────────────────────────────────────────────────
     while remaining >= 2 {
+      // Prefetch next block pair into L1D to hide L2 latency at large sizes.
+      if remaining >= 4 {
+        _mm_prefetch::<_MM_HINT_T0>(ptr.add(BLOCK_LEN.strict_mul(2)).cast());
+        _mm_prefetch::<_MM_HINT_T0>(ptr.add(BLOCK_LEN.strict_mul(2).strict_add(64)).cast());
+        _mm_prefetch::<_MM_HINT_T0>(ptr.add(BLOCK_LEN.strict_mul(3)).cast());
+        _mm_prefetch::<_MM_HINT_T0>(ptr.add(BLOCK_LEN.strict_mul(3).strict_add(64)).cast());
+      }
+
       let blk1 = ptr;
       let blk2 = ptr.add(BLOCK_LEN);
 
@@ -551,6 +559,14 @@ pub(crate) unsafe fn compress_blocks_avx2_decoupled(state: &mut [u64; 8], blocks
 
     // ── Dual-block loop ──────────────────────────────────────────────────
     while remaining >= 2 {
+      // Prefetch next block pair into L1D to hide L2 latency at large sizes.
+      if remaining >= 4 {
+        _mm_prefetch::<_MM_HINT_T0>(ptr.add(BLOCK_LEN.strict_mul(2)).cast());
+        _mm_prefetch::<_MM_HINT_T0>(ptr.add(BLOCK_LEN.strict_mul(2).strict_add(64)).cast());
+        _mm_prefetch::<_MM_HINT_T0>(ptr.add(BLOCK_LEN.strict_mul(3)).cast());
+        _mm_prefetch::<_MM_HINT_T0>(ptr.add(BLOCK_LEN.strict_mul(3).strict_add(64)).cast());
+      }
+
       let blk1 = ptr;
       let blk2 = ptr.add(BLOCK_LEN);
 
@@ -798,6 +814,14 @@ pub(crate) unsafe fn compress_blocks_avx2_std(state: &mut [u64; 8], blocks: &[u8
 
     // ── Dual-block loop ──────────────────────────────────────────────────
     while remaining >= 2 {
+      // Prefetch next block pair into L1D to hide L2 latency at large sizes.
+      if remaining >= 4 {
+        _mm_prefetch::<_MM_HINT_T0>(ptr.add(BLOCK_LEN.strict_mul(2)).cast());
+        _mm_prefetch::<_MM_HINT_T0>(ptr.add(BLOCK_LEN.strict_mul(2).strict_add(64)).cast());
+        _mm_prefetch::<_MM_HINT_T0>(ptr.add(BLOCK_LEN.strict_mul(3)).cast());
+        _mm_prefetch::<_MM_HINT_T0>(ptr.add(BLOCK_LEN.strict_mul(3).strict_add(64)).cast());
+      }
+
       let blk1 = ptr;
       let blk2 = ptr.add(BLOCK_LEN);
 

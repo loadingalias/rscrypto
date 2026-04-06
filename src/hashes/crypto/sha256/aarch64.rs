@@ -36,10 +36,167 @@ static K32: AlignedK32 = AlignedK32([
   0xc67178f2,
 ]);
 
+/// SHA-256 single-block compression with fully unrolled rounds.
+///
+/// All 64 rounds are written out explicitly (no loop for rounds 16-63),
+/// removing branch overhead and giving the scheduler full visibility for
+/// a single block. Multi-block processing still uses the compact loop
+/// variant which wins on I-cache for sustained throughput.
+///
+/// # Safety
+///
+/// Caller must ensure `sha2` CPU feature is available and `block` points
+/// to exactly 64 bytes.
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "sha2")]
+unsafe fn compress_single_block_aarch64_sha2(state: &mut [u32; 8], block: &[u8]) {
+  debug_assert_eq!(block.len(), 64);
+
+  // SAFETY: NEON/SHA2 intrinsics are available via this function's #[target_feature] attribute.
+  // Pointer arithmetic on `ptr` is bounded by the 64-byte block.
+  // Pointer arithmetic on `kp` is bounded by K32 (64 × u32 = 256 bytes).
+  unsafe {
+    let mut abcd = vld1q_u32(state.as_ptr());
+    let mut efgh = vld1q_u32(state.as_ptr().add(4));
+
+    let abcd_save = abcd;
+    let efgh_save = efgh;
+
+    let ptr = block.as_ptr();
+    let kp = K32.0.as_ptr();
+
+    // Load and byte-swap 4 message vectors (16 words = 1 block).
+    let mut s0 = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(ptr)));
+    let mut s1 = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(ptr.add(16))));
+    let mut s2 = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(ptr.add(32))));
+    let mut s3 = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(ptr.add(48))));
+
+    // Rounds 0-3
+    let mut tmp = vaddq_u32(s0, vld1q_u32(kp));
+    let mut abcd_prev = abcd;
+    abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
+    efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
+
+    // Rounds 4-7
+    tmp = vaddq_u32(s1, vld1q_u32(kp.add(4)));
+    abcd_prev = abcd;
+    abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
+    efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
+
+    // Rounds 8-11
+    tmp = vaddq_u32(s2, vld1q_u32(kp.add(8)));
+    abcd_prev = abcd;
+    abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
+    efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
+
+    // Rounds 12-15
+    tmp = vaddq_u32(s3, vld1q_u32(kp.add(12)));
+    abcd_prev = abcd;
+    abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
+    efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
+
+    // --- Rounds 16-19 (schedule s0) ---
+    s0 = vsha256su1q_u32(vsha256su0q_u32(s0, s1), s2, s3);
+    tmp = vaddq_u32(s0, vld1q_u32(kp.add(16)));
+    abcd_prev = abcd;
+    abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
+    efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
+
+    // --- Rounds 20-23 (schedule s1) ---
+    s1 = vsha256su1q_u32(vsha256su0q_u32(s1, s2), s3, s0);
+    tmp = vaddq_u32(s1, vld1q_u32(kp.add(20)));
+    abcd_prev = abcd;
+    abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
+    efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
+
+    // --- Rounds 24-27 (schedule s2) ---
+    s2 = vsha256su1q_u32(vsha256su0q_u32(s2, s3), s0, s1);
+    tmp = vaddq_u32(s2, vld1q_u32(kp.add(24)));
+    abcd_prev = abcd;
+    abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
+    efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
+
+    // --- Rounds 28-31 (schedule s3) ---
+    s3 = vsha256su1q_u32(vsha256su0q_u32(s3, s0), s1, s2);
+    tmp = vaddq_u32(s3, vld1q_u32(kp.add(28)));
+    abcd_prev = abcd;
+    abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
+    efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
+
+    // --- Rounds 32-35 (schedule s0) ---
+    s0 = vsha256su1q_u32(vsha256su0q_u32(s0, s1), s2, s3);
+    tmp = vaddq_u32(s0, vld1q_u32(kp.add(32)));
+    abcd_prev = abcd;
+    abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
+    efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
+
+    // --- Rounds 36-39 (schedule s1) ---
+    s1 = vsha256su1q_u32(vsha256su0q_u32(s1, s2), s3, s0);
+    tmp = vaddq_u32(s1, vld1q_u32(kp.add(36)));
+    abcd_prev = abcd;
+    abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
+    efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
+
+    // --- Rounds 40-43 (schedule s2) ---
+    s2 = vsha256su1q_u32(vsha256su0q_u32(s2, s3), s0, s1);
+    tmp = vaddq_u32(s2, vld1q_u32(kp.add(40)));
+    abcd_prev = abcd;
+    abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
+    efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
+
+    // --- Rounds 44-47 (schedule s3) ---
+    s3 = vsha256su1q_u32(vsha256su0q_u32(s3, s0), s1, s2);
+    tmp = vaddq_u32(s3, vld1q_u32(kp.add(44)));
+    abcd_prev = abcd;
+    abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
+    efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
+
+    // --- Rounds 48-51 (schedule s0) ---
+    s0 = vsha256su1q_u32(vsha256su0q_u32(s0, s1), s2, s3);
+    tmp = vaddq_u32(s0, vld1q_u32(kp.add(48)));
+    abcd_prev = abcd;
+    abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
+    efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
+
+    // --- Rounds 52-55 (schedule s1) ---
+    s1 = vsha256su1q_u32(vsha256su0q_u32(s1, s2), s3, s0);
+    tmp = vaddq_u32(s1, vld1q_u32(kp.add(52)));
+    abcd_prev = abcd;
+    abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
+    efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
+
+    // --- Rounds 56-59 (schedule s2) ---
+    s2 = vsha256su1q_u32(vsha256su0q_u32(s2, s3), s0, s1);
+    tmp = vaddq_u32(s2, vld1q_u32(kp.add(56)));
+    abcd_prev = abcd;
+    abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
+    efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
+
+    // --- Rounds 60-63 (schedule s3) ---
+    s3 = vsha256su1q_u32(vsha256su0q_u32(s3, s0), s1, s2);
+    tmp = vaddq_u32(s3, vld1q_u32(kp.add(60)));
+    abcd_prev = abcd;
+    abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
+    efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
+
+    // Add saved state back.
+    abcd = vaddq_u32(abcd, abcd_save);
+    efgh = vaddq_u32(efgh, efgh_save);
+
+    // Store state back.
+    vst1q_u32(state.as_mut_ptr(), abcd);
+    vst1q_u32(state.as_mut_ptr().add(4), efgh);
+  } // unsafe
+}
+
 /// SHA-256 multi-block compression using ARM SHA2 Crypto Extension.
 ///
 /// Processes one or more consecutive 64-byte blocks, updating the 8-word state
 /// in-place. State lives in two NEON registers (ABCD, EFGH) across blocks.
+///
+/// Single-block calls dispatch to a fully-unrolled variant that eliminates
+/// branch overhead; multi-block calls use the compact loop which wins on
+/// I-cache for sustained throughput.
 ///
 /// # Safety
 ///
@@ -52,6 +209,17 @@ pub(crate) unsafe fn compress_blocks_aarch64_sha2(state: &mut [u32; 8], blocks: 
     return;
   }
 
+  let num_blocks = blocks.len() / 64;
+
+  // Single-block fast path: fully unrolled, no loop overhead.
+  if num_blocks == 1 {
+    // SAFETY: caller guarantees `sha2` feature; blocks has exactly 64 bytes.
+    unsafe {
+      compress_single_block_aarch64_sha2(state, blocks);
+    }
+    return;
+  }
+
   // SAFETY: NEON/SHA2 intrinsics are available via this function's #[target_feature] attribute.
   // Pointer arithmetic on `ptr` is bounded by `blocks.len()`.
   unsafe {
@@ -59,7 +227,6 @@ pub(crate) unsafe fn compress_blocks_aarch64_sha2(state: &mut [u32; 8], blocks: 
     let mut abcd = vld1q_u32(state.as_ptr());
     let mut efgh = vld1q_u32(state.as_ptr().add(4));
 
-    let num_blocks = blocks.len() / 64;
     let mut ptr = blocks.as_ptr();
     let kp = K32.0.as_ptr();
 
