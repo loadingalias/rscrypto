@@ -70,6 +70,15 @@ pub static X86_AVX2_DECOUPLED_TABLE: DispatchTable = DispatchTable {
   l: KernelId::X86Avx2Decoupled,
 };
 
+#[cfg(target_arch = "x86_64")]
+pub static X86_AVX512VL_DECOUPLED_TABLE: DispatchTable = DispatchTable {
+  boundaries: DEFAULT_BOUNDARIES,
+  xs: KernelId::X86Avx512vlDecoupled,
+  s: KernelId::X86Avx512vlDecoupled,
+  m: KernelId::X86Avx512vlDecoupled,
+  l: KernelId::X86Avx512vlDecoupled,
+};
+
 #[cfg(target_arch = "riscv64")]
 pub static RISCV_ZKNH_TABLE: DispatchTable = DispatchTable {
   boundaries: DEFAULT_BOUNDARIES,
@@ -131,9 +140,13 @@ pub fn select_runtime_table(#[allow(unused_variables)] caps: Caps) -> &'static D
         return &X86_AVX512VL_TABLE;
       }
     } else {
-      // Intel: AVX-512VL > AVX2 (native single-block > portable fallback)
+      // Intel: decoupled AVX-512VL > stitched AVX-512VL > AVX2.
+      // The decoupled kernel uses rotation-based schedule (no cross-lane
+      // permute) + VPRORQ native rotates + schedule one-ahead of rounds,
+      // eliminating the `_mm256_permute2x128_si256` bottleneck (3-cycle
+      // latency on SPR) that caused 0.95-0.96x vs sha2 at ≥1KiB.
       if caps.has(x86::AVX512F) && caps.has(x86::AVX512VL) {
-        return &X86_AVX512VL_TABLE;
+        return &X86_AVX512VL_DECOUPLED_TABLE;
       }
       if caps.has(x86::AVX2) {
         return &X86_AVX2_TABLE;

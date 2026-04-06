@@ -1,9 +1,16 @@
-//! SHA-512 x86_64 AVX-512VL + BMI2 stitched kernel.
+//! SHA-512 x86_64 AVX-512VL + BMI2 kernels.
 //!
-//! Uses the Gueron-Krasnov two-block parallel technique with **stitched**
-//! schedule/compress and **VPRORQ** native 64-bit vector rotates.
+//! Uses the Gueron-Krasnov two-block parallel technique with **VPRORQ** native
+//! 64-bit vector rotates for message schedule sigma functions.
 //!
-//! Architecture:
+//! Three kernel variants:
+//! - **Stitched** ([`compress_blocks_avx512vl`]): ring-buffer schedule with
+//!   `_mm256_permute2x128_si256`.
+//! - **Standard-round** ([`compress_blocks_avx512vl_std`]): same schedule, non-deferred Σ0.
+//! - **Decoupled** ([`compress_blocks_avx512vl_decoupled`]): rotation-based schedule
+//!   (`_mm256_alignr_epi8`, no cross-lane permute) + schedule one-ahead of rounds.
+//!
+//! Architecture (stitched/std):
 //! - **Dual-block** (≥ 2 blocks): 256-bit schedule (`__m256i` ring buffer, VPRORQ) stitched with
 //!   scalar rounds. Block 2's `W[t]+K[t]` stored during block 1's pass.
 //! - **Single-block** (odd trailing): 128-bit schedule (`__m128i` ring buffer, VPRORQ) stitched
@@ -406,6 +413,347 @@ pub(crate) unsafe fn compress_blocks_avx512vl(state: &mut [u64; 8], blocks: &[u8
       }
 
       a = a.wrapping_add(t2_deferred);
+      state[0] = state[0].wrapping_add(a);
+      state[1] = state[1].wrapping_add(b);
+      state[2] = state[2].wrapping_add(c);
+      state[3] = state[3].wrapping_add(d);
+      state[4] = state[4].wrapping_add(e);
+      state[5] = state[5].wrapping_add(f);
+      state[6] = state[6].wrapping_add(g);
+      state[7] = state[7].wrapping_add(h);
+    }
+  } // unsafe
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Standard-round variant (non-deferred Σ0)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Rotation-based schedule (eliminates cross-lane permute)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Compute one schedule pair using **array rotation** (128-bit, single-block, VPRORQ).
+///
+/// Same approach as [`schedule_rotate_256_vl`] but for 128-bit registers.
+/// Uses VPRORQ native rotates for sigma functions.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+unsafe fn schedule_rotate_128(x: &mut [__m128i; 8], k: __m128i) -> __m128i {
+  // SAFETY: AVX-512VL intrinsics are available via the caller's #[target_feature] attribute.
+  unsafe {
+    let w_tm15 = _mm_alignr_epi8(x[1], x[0], 8);
+    let w_tm7 = _mm_alignr_epi8(x[5], x[4], 8);
+
+    x[0] = _mm_add_epi64(
+      _mm_add_epi64(x[0], w_tm7),
+      _mm_add_epi64(small_sigma0_128(w_tm15), small_sigma1_128(x[7])),
+    );
+
+    let new_val = x[0];
+    x[0] = x[1];
+    x[1] = x[2];
+    x[2] = x[3];
+    x[3] = x[4];
+    x[4] = x[5];
+    x[5] = x[6];
+    x[6] = x[7];
+    x[7] = new_val;
+
+    _mm_add_epi64(x[7], k)
+  }
+}
+
+/// Compute one schedule pair using **array rotation** (256-bit, dual-block, VPRORQ).
+///
+/// Produces raw W[t:t+1] for both blocks, stores in `x[7]` (after rotation),
+/// and returns `W[t:t+1] + k` (with K constants pre-added for both blocks).
+///
+/// Uses VPRORQ native rotates for sigma functions, eliminating the 3-op
+/// shift-shift-or of the AVX2 path. Combined with array rotation, this also
+/// eliminates `_mm256_permute2x128_si256` (3-cycle latency on SPR) that the
+/// ring-buffer schedule uses for cross-lane extraction.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+unsafe fn schedule_rotate_256(x: &mut [__m256i; 8], k: __m256i) -> __m256i {
+  // SAFETY: AVX-512VL intrinsics are available via the caller's #[target_feature] attribute.
+  unsafe {
+    // σ0 input: W[t-15:t-14] — straddles x[0] and x[1].
+    let w_tm15 = _mm256_alignr_epi8(x[1], x[0], 8);
+    // W[t-7:t-6] — straddles x[4] and x[5].
+    let w_tm7 = _mm256_alignr_epi8(x[5], x[4], 8);
+
+    // W[t:t+1] = W[t-16:t-15] + W[t-7:t-6] + σ0(W[t-15:t-14]) + σ1(W[t-2:t-1])
+    x[0] = _mm256_add_epi64(
+      _mm256_add_epi64(x[0], w_tm7),
+      _mm256_add_epi64(small_sigma0_256(w_tm15), small_sigma1_256(x[7])),
+    );
+
+    // Rotate: x[0] (newest) → x[7], shift everything left.
+    // Zero-cost on modern x86 via register renaming.
+    let new_val = x[0];
+    x[0] = x[1];
+    x[1] = x[2];
+    x[2] = x[3];
+    x[3] = x[4];
+    x[4] = x[5];
+    x[5] = x[6];
+    x[6] = x[7];
+    x[7] = new_val;
+
+    _mm256_add_epi64(x[7], k)
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Decoupled kernel (schedule one-ahead of rounds, rotation + VPRORQ)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// SHA-512 multi-block compression using AVX-512VL + BMI2, **decoupled schedule
+/// with rotation-based message expansion and VPRORQ native rotates**.
+///
+/// Three key optimisations over the stitched AVX-512VL kernel:
+///
+/// 1. **Decoupled schedule/rounds** — rounds consume W+K values from the *previous* 16-round group
+///    while the SIMD schedule computes the *next* group. Gives the OOO engine 16 independent scalar
+///    rounds to overlap with SIMD schedule latency.
+///
+/// 2. **Rotation-based schedule** — the `w[]` array is physically rotated after each schedule
+///    update so adjacent words stay in adjacent registers. This lets `_mm256_alignr_epi8` extract
+///    cross-register values directly, eliminating `_mm256_permute2x128_si256` (3-cycle latency on
+///    SPR). The 7 register moves from rotation are zero-cost (register renaming).
+///
+/// 3. **VPRORQ native rotates** — single-instruction 64-bit vector rotates for sigma functions (1
+///    instruction vs 3-op shift-shift-or on AVX2), yielding ~40% fewer SIMD schedule instructions.
+///
+/// Uses the **standard round** (Σ0 and Σ1 computed independently within
+/// each round for maximum within-round parallelism).
+///
+/// # Safety
+///
+/// Caller must ensure `avx512f`, `avx512vl`, and `bmi2` CPU features are available.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f,avx512vl,bmi2")]
+pub(crate) unsafe fn compress_blocks_avx512vl_decoupled(state: &mut [u64; 8], blocks: &[u8]) {
+  debug_assert_eq!(blocks.len() % BLOCK_LEN, 0);
+  let num_blocks = blocks.len() / BLOCK_LEN;
+  if num_blocks == 0 {
+    return;
+  }
+
+  // SAFETY: AVX-512VL/BMI2 intrinsics and target-feature-gated calls are available via this
+  // function's #[target_feature] attribute. Pointer arithmetic is bounded by blocks.len().
+  unsafe {
+    let mut ptr = blocks.as_ptr();
+    let mut remaining = num_blocks;
+
+    let bswap = _mm_loadu_si128(BSWAP64_128.as_ptr().cast());
+
+    // Round-value buffer: holds one group of 16 W[t]+K[t] values for block 1.
+    // All 16 entries are written (load or schedule) before rounds consume them,
+    // so the initial value is irrelevant. Hoisted to avoid stack reallocation.
+    let mut rv = [0u64; 16];
+
+    // Block-2 round-value buffer: holds all 80 W[t]+K[t] for block 2.
+    let mut t2_buf = [0u64; 80];
+
+    // ── Dual-block loop ──────────────────────────────────────────────────
+    while remaining >= 2 {
+      let blk1 = ptr;
+      let blk2 = ptr.add(BLOCK_LEN);
+
+      let mut w: [__m256i; 8] = [
+        load_two_blocks(blk1, blk2, 0, bswap),
+        load_two_blocks(blk1, blk2, 16, bswap),
+        load_two_blocks(blk1, blk2, 32, bswap),
+        load_two_blocks(blk1, blk2, 48, bswap),
+        load_two_blocks(blk1, blk2, 64, bswap),
+        load_two_blocks(blk1, blk2, 80, bswap),
+        load_two_blocks(blk1, blk2, 96, bswap),
+        load_two_blocks(blk1, blk2, 112, bswap),
+      ];
+
+      // Extract initial W[0-15]+K[0-15] for both blocks.
+      // K is added as a vector op (1 load + 1 broadcast + 1 add vs 4 scalar adds).
+      for (i, &wv) in w.iter().enumerate() {
+        let r = i.strict_mul(2);
+        let k_pair: __m128i = _mm_loadu_si128(K.as_ptr().add(r).cast());
+        let wk = _mm256_add_epi64(wv, _mm256_set_m128i(k_pair, k_pair));
+        let (lo0, lo1) = extract_lo(wk);
+        let (hi0, hi1) = extract_hi(wk);
+        rv[r] = lo0;
+        rv[r.strict_add(1)] = lo1;
+        t2_buf[r] = hi0;
+        t2_buf[r.strict_add(1)] = hi1;
+      }
+
+      let mut a = state[0];
+      let mut b = state[1];
+      let mut c = state[2];
+      let mut d = state[3];
+      let mut e = state[4];
+      let mut f = state[5];
+      let mut g = state[6];
+      let mut h = state[7];
+
+      macro_rules! round {
+        ($wk:expr) => {{
+          let t1 = h
+            .wrapping_add(big_sigma1(e))
+            .wrapping_add(ch(e, f, g))
+            .wrapping_add($wk);
+          let t2 = big_sigma0(a).wrapping_add(maj(a, b, c));
+          h = g;
+          g = f;
+          f = e;
+          e = d.wrapping_add(t1);
+          d = c;
+          c = b;
+          b = a;
+          a = t1.wrapping_add(t2);
+        }};
+      }
+
+      // Decoupled loop: 4 outer × 8 inner = 64 rounds + 64 schedule words.
+      // Rounds consume rv[] from the PREVIOUS group (load or prior outer).
+      // Schedule computes the NEXT group via rotation (no cross-lane permute).
+      for outer in 0..4usize {
+        for j in 0..8usize {
+          // Consume 2 rounds from current rv[] (previous group).
+          let r = j.strict_mul(2);
+          round!(rv[r]);
+          round!(rv[r.strict_add(1)]);
+
+          // Compute next schedule pair via rotation (independent of rounds).
+          let kr = 8usize.strict_add(outer.strict_mul(8)).strict_add(j).strict_mul(2);
+          let k_pair: __m128i = _mm_loadu_si128(K.as_ptr().add(kr).cast());
+          let wk = schedule_rotate_256(&mut w, _mm256_set_m128i(k_pair, k_pair));
+          let (lo0, lo1) = extract_lo(wk);
+          let (hi0, hi1) = extract_hi(wk);
+
+          // Store for next group (overwrite consumed rv[] slots).
+          rv[r] = lo0;
+          rv[r.strict_add(1)] = lo1;
+          t2_buf[kr] = hi0;
+          t2_buf[kr.strict_add(1)] = hi1;
+        }
+      }
+
+      // Final 16 rounds (64-79) from last rv[] — pure scalar.
+      for &wk in &rv {
+        round!(wk);
+      }
+
+      state[0] = state[0].wrapping_add(a);
+      state[1] = state[1].wrapping_add(b);
+      state[2] = state[2].wrapping_add(c);
+      state[3] = state[3].wrapping_add(d);
+      state[4] = state[4].wrapping_add(e);
+      state[5] = state[5].wrapping_add(f);
+      state[6] = state[6].wrapping_add(g);
+      state[7] = state[7].wrapping_add(h);
+
+      // Block 2: pure scalar from pre-computed buffer.
+      a = state[0];
+      b = state[1];
+      c = state[2];
+      d = state[3];
+      e = state[4];
+      f = state[5];
+      g = state[6];
+      h = state[7];
+
+      for &wk in &t2_buf {
+        round!(wk);
+      }
+
+      state[0] = state[0].wrapping_add(a);
+      state[1] = state[1].wrapping_add(b);
+      state[2] = state[2].wrapping_add(c);
+      state[3] = state[3].wrapping_add(d);
+      state[4] = state[4].wrapping_add(e);
+      state[5] = state[5].wrapping_add(f);
+      state[6] = state[6].wrapping_add(g);
+      state[7] = state[7].wrapping_add(h);
+
+      ptr = ptr.add(BLOCK_LEN.strict_mul(2));
+      remaining = remaining.strict_sub(2);
+    }
+
+    // ── Single-block (odd trailing) ──────────────────────────────────────
+    // Uses rotation-based 128-bit schedule with VPRORQ sigma helpers and
+    // vector K addition for consistency with the dual-block path.
+    if remaining == 1 {
+      let mut wv: [__m128i; 8] = [
+        _mm_shuffle_epi8(_mm_loadu_si128(ptr.cast()), bswap),
+        _mm_shuffle_epi8(_mm_loadu_si128(ptr.add(16).cast()), bswap),
+        _mm_shuffle_epi8(_mm_loadu_si128(ptr.add(32).cast()), bswap),
+        _mm_shuffle_epi8(_mm_loadu_si128(ptr.add(48).cast()), bswap),
+        _mm_shuffle_epi8(_mm_loadu_si128(ptr.add(64).cast()), bswap),
+        _mm_shuffle_epi8(_mm_loadu_si128(ptr.add(80).cast()), bswap),
+        _mm_shuffle_epi8(_mm_loadu_si128(ptr.add(96).cast()), bswap),
+        _mm_shuffle_epi8(_mm_loadu_si128(ptr.add(112).cast()), bswap),
+      ];
+
+      // Extract initial W[0-15]+K[0-15] with vector K addition.
+      for (i, &v) in wv.iter().enumerate() {
+        let r = i.strict_mul(2);
+        let k_pair: __m128i = _mm_loadu_si128(K.as_ptr().add(r).cast());
+        let wk = _mm_add_epi64(v, k_pair);
+        let (w0, w1) = extract_128(wk);
+        rv[r] = w0;
+        rv[r.strict_add(1)] = w1;
+      }
+
+      let mut a = state[0];
+      let mut b = state[1];
+      let mut c = state[2];
+      let mut d = state[3];
+      let mut e = state[4];
+      let mut f = state[5];
+      let mut g = state[6];
+      let mut h = state[7];
+
+      macro_rules! round1 {
+        ($wk:expr) => {{
+          let t1 = h
+            .wrapping_add(big_sigma1(e))
+            .wrapping_add(ch(e, f, g))
+            .wrapping_add($wk);
+          let t2 = big_sigma0(a).wrapping_add(maj(a, b, c));
+          h = g;
+          g = f;
+          f = e;
+          e = d.wrapping_add(t1);
+          d = c;
+          c = b;
+          b = a;
+          a = t1.wrapping_add(t2);
+        }};
+      }
+
+      // Decoupled loop: 4 outer × 8 inner = 64 rounds + 64 schedule words.
+      // Rotation-based schedule with VPRORQ sigma and vector K addition.
+      for outer in 0..4usize {
+        for j in 0..8usize {
+          let r = j.strict_mul(2);
+          round1!(rv[r]);
+          round1!(rv[r.strict_add(1)]);
+
+          let kr = 8usize.strict_add(outer.strict_mul(8)).strict_add(j).strict_mul(2);
+          let k_pair: __m128i = _mm_loadu_si128(K.as_ptr().add(kr).cast());
+          let wk = schedule_rotate_128(&mut wv, k_pair);
+          let (w0, w1) = extract_128(wk);
+          rv[r] = w0;
+          rv[r.strict_add(1)] = w1;
+        }
+      }
+
+      // Final 16 rounds (64-79).
+      for &wk in &rv {
+        round1!(wk);
+      }
+
       state[0] = state[0].wrapping_add(a);
       state[1] = state[1].wrapping_add(b);
       state[2] = state[2].wrapping_add(c);

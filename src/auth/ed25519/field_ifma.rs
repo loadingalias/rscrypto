@@ -32,6 +32,7 @@ use super::{
 // ---------------------------------------------------------------------------
 
 const MASK51: i64 = (1i64 << 51) - 1;
+const MASK52: i64 = (1i64 << 52) - 1;
 
 /// Subtraction bias: 2p in radix-51. Limb 0 accounts for the -19 term.
 const BIAS_0: i64 = 2 * ((1i64 << 51) - 19);
@@ -93,6 +94,23 @@ unsafe fn madd52lo(acc: __m256i, a: __m256i, b: __m256i) -> __m256i {
 #[allow(unsafe_op_in_unsafe_fn)]
 unsafe fn madd52hi(acc: __m256i, a: __m256i, b: __m256i) -> __m256i {
   _mm256_madd52hi_epu64(acc, a, b)
+}
+
+/// Select `val` when `bit` is 1, zero when `bit` is 0.
+///
+/// Converts a 0/1 integer mask into a full u64-lane mask and AND-selects.
+/// `bit` must contain only 0 or 1 in each u64 lane.
+///
+/// # Safety
+///
+/// Caller must ensure AVX2 is available.
+#[inline]
+#[target_feature(enable = "avx2")]
+#[allow(unsafe_op_in_unsafe_fn)]
+unsafe fn select_by_bit(bit: __m256i, val: __m256i) -> __m256i {
+  // 0 → 0, 1 → 0xFFFF_FFFF_FFFF_FFFF
+  let mask = _mm256_sub_epi64(_mm256_setzero_si256(), bit);
+  _mm256_and_si256(mask, val)
 }
 
 // ---------------------------------------------------------------------------
@@ -371,9 +389,14 @@ impl FieldElement51x4 {
   /// It is NOT satisfied after `diff_sum()` on reduced values (up to 53 bits) —
   /// callers must `reduce()` such intermediates before calling `mul`.
   ///
+  /// Production code uses [`mul_unreduced`](Self::mul_unreduced) which accepts
+  /// up to 53-bit inputs, eliminating the need for `reduce()` before multiply.
+  /// Retained for differential testing.
+  ///
   /// # Safety
   ///
   /// Caller must ensure AVX-512 IFMA + VL are available.
+  #[cfg(test)]
   #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
   #[allow(unsafe_op_in_unsafe_fn)]
   pub(crate) unsafe fn mul(&self, rhs: &Self) -> Self {
@@ -495,6 +518,412 @@ impl FieldElement51x4 {
       _mm256_add_epi64(z2, z7_19),
       _mm256_add_epi64(z3, z8_19),
       _mm256_add_epi64(z4, z9_19),
+    ])
+    .reduce()
+  }
+
+  /// Multiply two vectorized field elements that may have up to 53-bit limbs.
+  ///
+  /// This is the key optimization for IFMA point operations: `diff_sum()`
+  /// produces limbs up to 53 bits (51-bit reduced + 2-bit bias from add/sub),
+  /// but IFMA's `vpmadd52luq` truncates inputs to 52 bits. The standard
+  /// `mul()` therefore requires a `reduce()` call (17 insns, ~18 cycle
+  /// latency) before each multiply after `diff_sum()`.
+  ///
+  /// `mul_unreduced()` handles the 53rd bit by decomposing each operand
+  /// into a 52-bit low part (suitable for IFMA) and a 0/1 high bit, then
+  /// computing corrections for the overflow:
+  ///
+  ///   f * g = f_lo * g_lo + f_hi * g_lo + f_lo * g_hi + f_hi * g_hi
+  ///
+  /// The `f_lo * g_lo` term uses the standard 50-IFMA schoolbook.
+  /// The cross terms (`f_hi * g_lo`, `f_lo * g_hi`) use `select_by_bit`
+  /// to conditionally add values based on the 0/1 overflow bits.
+  /// The `f_hi * g_hi` term produces at most 4 per accumulator and is
+  /// folded with a simple shift.
+  ///
+  /// # Precondition
+  ///
+  /// Both operands must have limbs ≤ 53 bits. This is satisfied by
+  /// `diff_sum()` on reduced values, or `add()` of two 52-bit values.
+  ///
+  /// # Overflow safety
+  ///
+  /// With 52-bit inputs to IFMA, the lo/hi accumulators after 5 terms
+  /// are at most ~5 × 2^52 ≈ 2^54.3. The corrections add at most
+  /// 5 × (2^52 - 1) per hi accumulator. Combined z_k values stay
+  /// within ~2^57, and the ×19 fold produces values up to ~2^61.3,
+  /// well within u64.
+  ///
+  /// # Safety
+  ///
+  /// Caller must ensure AVX-512 IFMA + VL are available.
+  #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
+  #[allow(unsafe_op_in_unsafe_fn)]
+  pub(crate) unsafe fn mul_unreduced(&self, rhs: &Self) -> Self {
+    let zero = _mm256_setzero_si256();
+    let mask52 = _mm256_set1_epi64x(MASK52);
+
+    // Pre-mask inputs to 52 bits for IFMA, extract overflow bits (0 or 1).
+    let f_lo: [__m256i; 5] = [
+      _mm256_and_si256(self.0[0], mask52),
+      _mm256_and_si256(self.0[1], mask52),
+      _mm256_and_si256(self.0[2], mask52),
+      _mm256_and_si256(self.0[3], mask52),
+      _mm256_and_si256(self.0[4], mask52),
+    ];
+    let f_hi: [__m256i; 5] = [
+      _mm256_srli_epi64::<52>(self.0[0]),
+      _mm256_srli_epi64::<52>(self.0[1]),
+      _mm256_srli_epi64::<52>(self.0[2]),
+      _mm256_srli_epi64::<52>(self.0[3]),
+      _mm256_srli_epi64::<52>(self.0[4]),
+    ];
+    let g_lo: [__m256i; 5] = [
+      _mm256_and_si256(rhs.0[0], mask52),
+      _mm256_and_si256(rhs.0[1], mask52),
+      _mm256_and_si256(rhs.0[2], mask52),
+      _mm256_and_si256(rhs.0[3], mask52),
+      _mm256_and_si256(rhs.0[4], mask52),
+    ];
+    let g_hi: [__m256i; 5] = [
+      _mm256_srli_epi64::<52>(rhs.0[0]),
+      _mm256_srli_epi64::<52>(rhs.0[1]),
+      _mm256_srli_epi64::<52>(rhs.0[2]),
+      _mm256_srli_epi64::<52>(rhs.0[3]),
+      _mm256_srli_epi64::<52>(rhs.0[4]),
+    ];
+
+    // -----------------------------------------------------------------------
+    // Phase 1: 5×5 schoolbook on 52-bit inputs (50 IFMA ops)
+    // Same interleaved lo/hi scheduling as mul().
+    // -----------------------------------------------------------------------
+
+    // z0 = f0*g0
+    let lo0 = madd52lo(zero, f_lo[0], g_lo[0]);
+    let hi0 = madd52hi(zero, f_lo[0], g_lo[0]);
+
+    // z1 = f0*g1 + f1*g0
+    let mut lo1 = madd52lo(zero, f_lo[0], g_lo[1]);
+    let mut hi1 = madd52hi(zero, f_lo[0], g_lo[1]);
+    lo1 = madd52lo(lo1, f_lo[1], g_lo[0]);
+    hi1 = madd52hi(hi1, f_lo[1], g_lo[0]);
+
+    // z2 = f0*g2 + f1*g1 + f2*g0
+    let mut lo2 = madd52lo(zero, f_lo[0], g_lo[2]);
+    let mut hi2 = madd52hi(zero, f_lo[0], g_lo[2]);
+    lo2 = madd52lo(lo2, f_lo[1], g_lo[1]);
+    hi2 = madd52hi(hi2, f_lo[1], g_lo[1]);
+    lo2 = madd52lo(lo2, f_lo[2], g_lo[0]);
+    hi2 = madd52hi(hi2, f_lo[2], g_lo[0]);
+
+    // z3 = f0*g3 + f1*g2 + f2*g1 + f3*g0
+    let mut lo3 = madd52lo(zero, f_lo[0], g_lo[3]);
+    let mut hi3 = madd52hi(zero, f_lo[0], g_lo[3]);
+    lo3 = madd52lo(lo3, f_lo[1], g_lo[2]);
+    hi3 = madd52hi(hi3, f_lo[1], g_lo[2]);
+    lo3 = madd52lo(lo3, f_lo[2], g_lo[1]);
+    hi3 = madd52hi(hi3, f_lo[2], g_lo[1]);
+    lo3 = madd52lo(lo3, f_lo[3], g_lo[0]);
+    hi3 = madd52hi(hi3, f_lo[3], g_lo[0]);
+
+    // z4 = f0*g4 + f1*g3 + f2*g2 + f3*g1 + f4*g0
+    let mut lo4 = madd52lo(zero, f_lo[0], g_lo[4]);
+    let mut hi4 = madd52hi(zero, f_lo[0], g_lo[4]);
+    lo4 = madd52lo(lo4, f_lo[1], g_lo[3]);
+    hi4 = madd52hi(hi4, f_lo[1], g_lo[3]);
+    lo4 = madd52lo(lo4, f_lo[2], g_lo[2]);
+    hi4 = madd52hi(hi4, f_lo[2], g_lo[2]);
+    lo4 = madd52lo(lo4, f_lo[3], g_lo[1]);
+    hi4 = madd52hi(hi4, f_lo[3], g_lo[1]);
+    lo4 = madd52lo(lo4, f_lo[4], g_lo[0]);
+    hi4 = madd52hi(hi4, f_lo[4], g_lo[0]);
+
+    // z5 = f1*g4 + f2*g3 + f3*g2 + f4*g1
+    let mut lo5 = madd52lo(zero, f_lo[1], g_lo[4]);
+    let mut hi5 = madd52hi(zero, f_lo[1], g_lo[4]);
+    lo5 = madd52lo(lo5, f_lo[2], g_lo[3]);
+    hi5 = madd52hi(hi5, f_lo[2], g_lo[3]);
+    lo5 = madd52lo(lo5, f_lo[3], g_lo[2]);
+    hi5 = madd52hi(hi5, f_lo[3], g_lo[2]);
+    lo5 = madd52lo(lo5, f_lo[4], g_lo[1]);
+    hi5 = madd52hi(hi5, f_lo[4], g_lo[1]);
+
+    // z6 = f2*g4 + f3*g3 + f4*g2
+    let mut lo6 = madd52lo(zero, f_lo[2], g_lo[4]);
+    let mut hi6 = madd52hi(zero, f_lo[2], g_lo[4]);
+    lo6 = madd52lo(lo6, f_lo[3], g_lo[3]);
+    hi6 = madd52hi(hi6, f_lo[3], g_lo[3]);
+    lo6 = madd52lo(lo6, f_lo[4], g_lo[2]);
+    hi6 = madd52hi(hi6, f_lo[4], g_lo[2]);
+
+    // z7 = f3*g4 + f4*g3
+    let mut lo7 = madd52lo(zero, f_lo[3], g_lo[4]);
+    let mut hi7 = madd52hi(zero, f_lo[3], g_lo[4]);
+    lo7 = madd52lo(lo7, f_lo[4], g_lo[3]);
+    hi7 = madd52hi(hi7, f_lo[4], g_lo[3]);
+
+    // z8 = f4*g4
+    let lo8 = madd52lo(zero, f_lo[4], g_lo[4]);
+    let hi8 = madd52hi(zero, f_lo[4], g_lo[4]);
+
+    // -----------------------------------------------------------------------
+    // Phase 1b: Corrections for overflow bits (f_hi * g_lo + f_lo * g_hi)
+    //
+    // For each product index k, add contributions from overflow bits:
+    //   hi_k += sum_{i+j=k} select(f_hi[i], g_lo[j]) + select(g_hi[j], f_lo[i])
+    //
+    // Since f_hi[i] is 0 or 1, select(f_hi[i], g_lo[j]) is either 0 or g_lo[j].
+    // These corrections go into hi accumulators because the overflow bit
+    // has weight 2^52 = 2 × 2^51, matching the hi accumulator's weight.
+    // -----------------------------------------------------------------------
+
+    // k=0: i=0,j=0
+    let hi0 = _mm256_add_epi64(hi0, select_by_bit(f_hi[0], g_lo[0]));
+    let hi0 = _mm256_add_epi64(hi0, select_by_bit(g_hi[0], f_lo[0]));
+
+    // k=1: (i,j) = (0,1), (1,0)
+    let mut hi1 = _mm256_add_epi64(hi1, select_by_bit(f_hi[0], g_lo[1]));
+    hi1 = _mm256_add_epi64(hi1, select_by_bit(g_hi[1], f_lo[0]));
+    hi1 = _mm256_add_epi64(hi1, select_by_bit(f_hi[1], g_lo[0]));
+    hi1 = _mm256_add_epi64(hi1, select_by_bit(g_hi[0], f_lo[1]));
+
+    // k=2: (0,2), (1,1), (2,0)
+    let mut hi2 = _mm256_add_epi64(hi2, select_by_bit(f_hi[0], g_lo[2]));
+    hi2 = _mm256_add_epi64(hi2, select_by_bit(g_hi[2], f_lo[0]));
+    hi2 = _mm256_add_epi64(hi2, select_by_bit(f_hi[1], g_lo[1]));
+    hi2 = _mm256_add_epi64(hi2, select_by_bit(g_hi[1], f_lo[1]));
+    hi2 = _mm256_add_epi64(hi2, select_by_bit(f_hi[2], g_lo[0]));
+    hi2 = _mm256_add_epi64(hi2, select_by_bit(g_hi[0], f_lo[2]));
+
+    // k=3: (0,3), (1,2), (2,1), (3,0)
+    let mut hi3 = _mm256_add_epi64(hi3, select_by_bit(f_hi[0], g_lo[3]));
+    hi3 = _mm256_add_epi64(hi3, select_by_bit(g_hi[3], f_lo[0]));
+    hi3 = _mm256_add_epi64(hi3, select_by_bit(f_hi[1], g_lo[2]));
+    hi3 = _mm256_add_epi64(hi3, select_by_bit(g_hi[2], f_lo[1]));
+    hi3 = _mm256_add_epi64(hi3, select_by_bit(f_hi[2], g_lo[1]));
+    hi3 = _mm256_add_epi64(hi3, select_by_bit(g_hi[1], f_lo[2]));
+    hi3 = _mm256_add_epi64(hi3, select_by_bit(f_hi[3], g_lo[0]));
+    hi3 = _mm256_add_epi64(hi3, select_by_bit(g_hi[0], f_lo[3]));
+
+    // k=4: (0,4), (1,3), (2,2), (3,1), (4,0)
+    let mut hi4 = _mm256_add_epi64(hi4, select_by_bit(f_hi[0], g_lo[4]));
+    hi4 = _mm256_add_epi64(hi4, select_by_bit(g_hi[4], f_lo[0]));
+    hi4 = _mm256_add_epi64(hi4, select_by_bit(f_hi[1], g_lo[3]));
+    hi4 = _mm256_add_epi64(hi4, select_by_bit(g_hi[3], f_lo[1]));
+    hi4 = _mm256_add_epi64(hi4, select_by_bit(f_hi[2], g_lo[2]));
+    hi4 = _mm256_add_epi64(hi4, select_by_bit(g_hi[2], f_lo[2]));
+    hi4 = _mm256_add_epi64(hi4, select_by_bit(f_hi[3], g_lo[1]));
+    hi4 = _mm256_add_epi64(hi4, select_by_bit(g_hi[1], f_lo[3]));
+    hi4 = _mm256_add_epi64(hi4, select_by_bit(f_hi[4], g_lo[0]));
+    hi4 = _mm256_add_epi64(hi4, select_by_bit(g_hi[0], f_lo[4]));
+
+    // k=5: (1,4), (2,3), (3,2), (4,1)
+    let mut hi5 = _mm256_add_epi64(hi5, select_by_bit(f_hi[1], g_lo[4]));
+    hi5 = _mm256_add_epi64(hi5, select_by_bit(g_hi[4], f_lo[1]));
+    hi5 = _mm256_add_epi64(hi5, select_by_bit(f_hi[2], g_lo[3]));
+    hi5 = _mm256_add_epi64(hi5, select_by_bit(g_hi[3], f_lo[2]));
+    hi5 = _mm256_add_epi64(hi5, select_by_bit(f_hi[3], g_lo[2]));
+    hi5 = _mm256_add_epi64(hi5, select_by_bit(g_hi[2], f_lo[3]));
+    hi5 = _mm256_add_epi64(hi5, select_by_bit(f_hi[4], g_lo[1]));
+    hi5 = _mm256_add_epi64(hi5, select_by_bit(g_hi[1], f_lo[4]));
+
+    // k=6: (2,4), (3,3), (4,2)
+    let mut hi6 = _mm256_add_epi64(hi6, select_by_bit(f_hi[2], g_lo[4]));
+    hi6 = _mm256_add_epi64(hi6, select_by_bit(g_hi[4], f_lo[2]));
+    hi6 = _mm256_add_epi64(hi6, select_by_bit(f_hi[3], g_lo[3]));
+    hi6 = _mm256_add_epi64(hi6, select_by_bit(g_hi[3], f_lo[3]));
+    hi6 = _mm256_add_epi64(hi6, select_by_bit(f_hi[4], g_lo[2]));
+    hi6 = _mm256_add_epi64(hi6, select_by_bit(g_hi[2], f_lo[4]));
+
+    // k=7: (3,4), (4,3)
+    let mut hi7 = _mm256_add_epi64(hi7, select_by_bit(f_hi[3], g_lo[4]));
+    hi7 = _mm256_add_epi64(hi7, select_by_bit(g_hi[4], f_lo[3]));
+    hi7 = _mm256_add_epi64(hi7, select_by_bit(f_hi[4], g_lo[3]));
+    hi7 = _mm256_add_epi64(hi7, select_by_bit(g_hi[3], f_lo[4]));
+
+    // k=8: (4,4)
+    let hi8 = _mm256_add_epi64(hi8, select_by_bit(f_hi[4], g_lo[4]));
+    let hi8 = _mm256_add_epi64(hi8, select_by_bit(g_hi[4], f_lo[4]));
+
+    // -----------------------------------------------------------------------
+    // Phase 2: Combine lo + hi into 10 actual limbs
+    //
+    // z_k = lo_k + 2 * hi_{k-1}
+    // -----------------------------------------------------------------------
+
+    let z0 = lo0;
+    let z1 = _mm256_add_epi64(_mm256_add_epi64(lo1, hi0), hi0);
+    let z2 = _mm256_add_epi64(_mm256_add_epi64(lo2, hi1), hi1);
+    let z3 = _mm256_add_epi64(_mm256_add_epi64(lo3, hi2), hi2);
+    let z4 = _mm256_add_epi64(_mm256_add_epi64(lo4, hi3), hi3);
+    let z5 = _mm256_add_epi64(_mm256_add_epi64(lo5, hi4), hi4);
+    let z6 = _mm256_add_epi64(_mm256_add_epi64(lo6, hi5), hi5);
+    let z7 = _mm256_add_epi64(_mm256_add_epi64(lo7, hi6), hi6);
+    let z8 = _mm256_add_epi64(_mm256_add_epi64(lo8, hi7), hi7);
+    let z9 = _mm256_add_epi64(hi8, hi8);
+
+    // -----------------------------------------------------------------------
+    // Phase 2b: f_hi * g_hi corrections
+    //
+    // When both f_hi[i] and g_hi[j] are 1, the product is 2^52 * 2^52 =
+    // 2^104, which has weight 2^(104 - 51*(i+j)) in the output. This maps
+    // to 4 × 2^(51*(k+2)) where k = i+j, i.e. add 4 to z_{k+2}.
+    // Since f_hi and g_hi are 0/1, (f_hi[i] AND g_hi[j]) is 0/1, so the
+    // correction is 4 * (f_hi[i] AND g_hi[j]) added to z_{k+2}.
+    //
+    // k=0: → z2, k=1: → z3, ..., k=6: → z8, k=7: → z9 (k=8 overflows
+    // but z_{10} doesn't exist; it would fold via ×19 but the magnitude
+    // is negligible: at most 4).
+    // -----------------------------------------------------------------------
+
+    let four = _mm256_set1_epi64x(4);
+
+    // k=0 → z2: (0,0) — 1 term
+    let hh_0 = _mm256_and_si256(f_hi[0], g_hi[0]);
+    let z2 = _mm256_add_epi64(z2, _mm256_and_si256(_mm256_sub_epi64(zero, hh_0), four));
+
+    // k=1 → z3: (0,1), (1,0) — 2 terms
+    let hh_1 = _mm256_add_epi64(_mm256_and_si256(f_hi[0], g_hi[1]), _mm256_and_si256(f_hi[1], g_hi[0]));
+    let z3 = _mm256_add_epi64(z3, _mm256_slli_epi64::<2>(hh_1));
+
+    // k=2 → z4: (0,2), (1,1), (2,0) — 3 terms
+    let hh_2 = _mm256_add_epi64(
+      _mm256_add_epi64(_mm256_and_si256(f_hi[0], g_hi[2]), _mm256_and_si256(f_hi[1], g_hi[1])),
+      _mm256_and_si256(f_hi[2], g_hi[0]),
+    );
+    let z4 = _mm256_add_epi64(z4, _mm256_slli_epi64::<2>(hh_2));
+
+    // k=3 → z5: (0,3), (1,2), (2,1), (3,0) — 4 terms
+    let hh_3 = _mm256_add_epi64(
+      _mm256_add_epi64(_mm256_and_si256(f_hi[0], g_hi[3]), _mm256_and_si256(f_hi[1], g_hi[2])),
+      _mm256_add_epi64(_mm256_and_si256(f_hi[2], g_hi[1]), _mm256_and_si256(f_hi[3], g_hi[0])),
+    );
+    let z5 = _mm256_add_epi64(z5, _mm256_slli_epi64::<2>(hh_3));
+
+    // k=4 → z6: (0,4), (1,3), (2,2), (3,1), (4,0) — 5 terms
+    let hh_4 = _mm256_add_epi64(
+      _mm256_add_epi64(_mm256_and_si256(f_hi[0], g_hi[4]), _mm256_and_si256(f_hi[1], g_hi[3])),
+      _mm256_add_epi64(
+        _mm256_add_epi64(_mm256_and_si256(f_hi[2], g_hi[2]), _mm256_and_si256(f_hi[3], g_hi[1])),
+        _mm256_and_si256(f_hi[4], g_hi[0]),
+      ),
+    );
+    let z6 = _mm256_add_epi64(z6, _mm256_slli_epi64::<2>(hh_4));
+
+    // k=5 → z7: (1,4), (2,3), (3,2), (4,1) — 4 terms
+    let hh_5 = _mm256_add_epi64(
+      _mm256_add_epi64(_mm256_and_si256(f_hi[1], g_hi[4]), _mm256_and_si256(f_hi[2], g_hi[3])),
+      _mm256_add_epi64(_mm256_and_si256(f_hi[3], g_hi[2]), _mm256_and_si256(f_hi[4], g_hi[1])),
+    );
+    let z7 = _mm256_add_epi64(z7, _mm256_slli_epi64::<2>(hh_5));
+
+    // k=6 → z8: (2,4), (3,3), (4,2) — 3 terms
+    let hh_6 = _mm256_add_epi64(
+      _mm256_add_epi64(_mm256_and_si256(f_hi[2], g_hi[4]), _mm256_and_si256(f_hi[3], g_hi[3])),
+      _mm256_and_si256(f_hi[4], g_hi[2]),
+    );
+    let z8 = _mm256_add_epi64(z8, _mm256_slli_epi64::<2>(hh_6));
+
+    // k=7 → z9: (3,4), (4,3) — 2 terms
+    let hh_7 = _mm256_add_epi64(_mm256_and_si256(f_hi[3], g_hi[4]), _mm256_and_si256(f_hi[4], g_hi[3]));
+    let z9 = _mm256_add_epi64(z9, _mm256_slli_epi64::<2>(hh_7));
+
+    // k=8 → would be z10 (doesn't exist). f_hi[4]*g_hi[4] produces at
+    // most 4 per lane. Fold via ×19 into z5. Max contribution: 4*19 = 76.
+    let hh_8 = _mm256_and_si256(f_hi[4], g_hi[4]);
+    let hh_8_x4 = _mm256_slli_epi64::<2>(hh_8);
+    let z5 = _mm256_add_epi64(z5, mul19(hh_8_x4));
+
+    // -----------------------------------------------------------------------
+    // Phase 3: Reduce upper limbs by ×19 and fold into lower 5
+    // -----------------------------------------------------------------------
+
+    let z5_19 = mul19(z5);
+    let z6_19 = mul19(z6);
+    let z7_19 = mul19(z7);
+    let z8_19 = mul19(z8);
+    let z9_19 = mul19(z9);
+
+    Self([
+      _mm256_add_epi64(z0, z5_19),
+      _mm256_add_epi64(z1, z6_19),
+      _mm256_add_epi64(z2, z7_19),
+      _mm256_add_epi64(z3, z8_19),
+      _mm256_add_epi64(z4, z9_19),
+    ])
+    .reduce()
+  }
+
+  /// Multiply by a "small" constant accepting up to 53-bit self limbs.
+  ///
+  /// Same as `mul_small()` but handles the extra bit from unreduced inputs
+  /// (e.g., after `diff_sum()` + `blend()`). The `small` operand has only
+  /// limb 0 non-zero and is at most 18 bits, so only one-sided corrections
+  /// are needed per limb.
+  ///
+  /// # Precondition
+  ///
+  /// - `small.0[1..5]` must all be zero (only limb 0 non-zero).
+  /// - `self` must have limbs ≤ 53 bits.
+  ///
+  /// # Safety
+  ///
+  /// Caller must ensure AVX-512 IFMA + VL are available.
+  #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
+  #[allow(unsafe_op_in_unsafe_fn)]
+  pub(crate) unsafe fn mul_small_unreduced(&self, small: &Self) -> Self {
+    let zero = _mm256_setzero_si256();
+    let mask52 = _mm256_set1_epi64x(MASK52);
+    let c = small.0[0]; // The only non-zero limb (≤18 bits, fits in 52 bits)
+
+    // Pre-mask self to 52 bits; extract overflow bits.
+    let f_lo: [__m256i; 5] = [
+      _mm256_and_si256(self.0[0], mask52),
+      _mm256_and_si256(self.0[1], mask52),
+      _mm256_and_si256(self.0[2], mask52),
+      _mm256_and_si256(self.0[3], mask52),
+      _mm256_and_si256(self.0[4], mask52),
+    ];
+    let f_hi: [__m256i; 5] = [
+      _mm256_srli_epi64::<52>(self.0[0]),
+      _mm256_srli_epi64::<52>(self.0[1]),
+      _mm256_srli_epi64::<52>(self.0[2]),
+      _mm256_srli_epi64::<52>(self.0[3]),
+      _mm256_srli_epi64::<52>(self.0[4]),
+    ];
+
+    // 5 multiplies: f_lo[k] * c — interleaved lo/hi.
+    let lo0 = madd52lo(zero, f_lo[0], c);
+    let hi0 = madd52hi(zero, f_lo[0], c);
+    let lo1 = madd52lo(zero, f_lo[1], c);
+    let hi1 = madd52hi(zero, f_lo[1], c);
+    let lo2 = madd52lo(zero, f_lo[2], c);
+    let hi2 = madd52hi(zero, f_lo[2], c);
+    let lo3 = madd52lo(zero, f_lo[3], c);
+    let hi3 = madd52hi(zero, f_lo[3], c);
+    let lo4 = madd52lo(zero, f_lo[4], c);
+    let hi4 = madd52hi(zero, f_lo[4], c);
+
+    // Corrections: f_hi[k] * c. Since f_hi is 0/1 and c ≤ 18 bits,
+    // select_by_bit(f_hi[k], c) is either 0 or c. These go into hi
+    // because the overflow bit has weight 2^52 = 2 × 2^51.
+    let hi0 = _mm256_add_epi64(hi0, select_by_bit(f_hi[0], c));
+    let hi1 = _mm256_add_epi64(hi1, select_by_bit(f_hi[1], c));
+    let hi2 = _mm256_add_epi64(hi2, select_by_bit(f_hi[2], c));
+    let hi3 = _mm256_add_epi64(hi3, select_by_bit(f_hi[3], c));
+    let hi4 = _mm256_add_epi64(hi4, select_by_bit(f_hi[4], c));
+
+    // Recombine: z_k = lo_k + 2 * hi_{k-1}
+    // Wrap-around: 2 * hi_4 * 19 folds into limb 0.
+    let hi4_x2 = _mm256_add_epi64(hi4, hi4);
+
+    Self([
+      _mm256_add_epi64(lo0, mul19(hi4_x2)),
+      _mm256_add_epi64(_mm256_add_epi64(lo1, hi0), hi0),
+      _mm256_add_epi64(_mm256_add_epi64(lo2, hi1), hi1),
+      _mm256_add_epi64(_mm256_add_epi64(lo3, hi2), hi2),
+      _mm256_add_epi64(_mm256_add_epi64(lo4, hi3), hi3),
     ])
     .reduce()
   }
@@ -1023,6 +1452,229 @@ mod tests {
       assert_eq!(rb.limbs(), a.limbs(), "BADC lane 1 = A");
       assert_eq!(rc.limbs(), d.limbs(), "BADC lane 2 = D");
       assert_eq!(rd.limbs(), c.limbs(), "BADC lane 3 = C");
+    }
+  }
+
+  /// Helper: create field elements with 53-bit limbs (simulating diff_sum output).
+  fn test_53bit_field_elements() -> [FieldElement; 4] {
+    // 53-bit max: (1 << 53) - 1 = 9_007_199_254_740_991
+    let a = FieldElement::from_limbs([
+      (1u64 << 53) - 1,
+      (1u64 << 53) - 100,
+      (1u64 << 52) + 12345,
+      (1u64 << 53) - 999,
+      (1u64 << 52) + 1,
+    ]);
+    let b = FieldElement::from_limbs([
+      (1u64 << 52) + 7,
+      (1u64 << 53) - 42,
+      (1u64 << 53) - 1,
+      (1u64 << 52) + 100_000,
+      (1u64 << 53) - 7777,
+    ]);
+    let c = FieldElement::from_limbs([
+      (1u64 << 51) + 1,
+      (1u64 << 52),
+      (1u64 << 53) - 2,
+      (1u64 << 51),
+      (1u64 << 52) + 42,
+    ]);
+    let d = FieldElement::from_limbs([
+      (1u64 << 53) - 1,
+      (1u64 << 53) - 1,
+      (1u64 << 53) - 1,
+      (1u64 << 53) - 1,
+      (1u64 << 53) - 1,
+    ]);
+    [a, b, c, d]
+  }
+
+  #[test]
+  fn mul_unreduced_matches_reduce_then_mul() {
+    if !is_x86_feature_detected!("avx512ifma") {
+      return;
+    }
+    let [a, b, c, d] = test_53bit_field_elements();
+    let [e, f, g, h] = [
+      FieldElement::from_limbs([
+        (1u64 << 53) - 5,
+        (1u64 << 52) + 100,
+        (1u64 << 51) + 999,
+        (1u64 << 53) - 1,
+        (1u64 << 52) + 50_000,
+      ]),
+      FieldElement::from_limbs([
+        (1u64 << 52),
+        (1u64 << 53) - 3,
+        (1u64 << 52) + 7,
+        (1u64 << 51) + 42,
+        (1u64 << 53) - 100,
+      ]),
+      FieldElement::from_limbs([
+        (1u64 << 53) - 1,
+        (1u64 << 53) - 1,
+        (1u64 << 53) - 1,
+        (1u64 << 53) - 1,
+        (1u64 << 53) - 1,
+      ]),
+      FieldElement::from_limbs([
+        (1u64 << 51) + 10,
+        (1u64 << 51) + 20,
+        (1u64 << 51) + 30,
+        (1u64 << 51) + 40,
+        (1u64 << 51) + 50,
+      ]),
+    ];
+
+    // SAFETY: AVX-512 IFMA checked above.
+    unsafe {
+      let lhs = FieldElement51x4::new(&a, &b, &c, &d);
+      let rhs = FieldElement51x4::new(&e, &f, &g, &h);
+
+      // mul_unreduced: accepts 53-bit inputs directly
+      let unreduced_product = lhs.mul_unreduced(&rhs);
+      let [ua, ub, uc, ud] = unreduced_product.split();
+
+      // Reference: reduce both operands to ≤51 bits, then use standard mul
+      let lhs_reduced = lhs.reduce();
+      let rhs_reduced = rhs.reduce();
+      let reduced_product = lhs_reduced.mul(&rhs_reduced);
+      let [ra, rb, rc, rd] = reduced_product.split();
+
+      assert_eq!(ua.normalize(), ra.normalize(), "lane A mul_unreduced vs reduce+mul");
+      assert_eq!(ub.normalize(), rb.normalize(), "lane B mul_unreduced vs reduce+mul");
+      assert_eq!(uc.normalize(), rc.normalize(), "lane C mul_unreduced vs reduce+mul");
+      assert_eq!(ud.normalize(), rd.normalize(), "lane D mul_unreduced vs reduce+mul");
+    }
+  }
+
+  #[test]
+  fn mul_unreduced_max_limbs() {
+    if !is_x86_feature_detected!("avx512ifma") {
+      return;
+    }
+    // Worst case: all limbs at maximum 53-bit value.
+    let max = FieldElement::from_limbs([
+      (1u64 << 53) - 1,
+      (1u64 << 53) - 1,
+      (1u64 << 53) - 1,
+      (1u64 << 53) - 1,
+      (1u64 << 53) - 1,
+    ]);
+
+    // SAFETY: AVX-512 IFMA checked above.
+    unsafe {
+      let packed = FieldElement51x4::new(&max, &max, &max, &max);
+
+      let unreduced = packed.mul_unreduced(&packed);
+      let [ua, ub, uc, ud] = unreduced.split();
+
+      let reduced = packed.reduce();
+      let reference = reduced.mul(&reduced);
+      let [ra, rb, rc, rd] = reference.split();
+
+      assert_eq!(ua.normalize(), ra.normalize(), "lane A max-limb mul_unreduced");
+      assert_eq!(ub.normalize(), rb.normalize(), "lane B max-limb mul_unreduced");
+      assert_eq!(uc.normalize(), rc.normalize(), "lane C max-limb mul_unreduced");
+      assert_eq!(ud.normalize(), rd.normalize(), "lane D max-limb mul_unreduced");
+    }
+  }
+
+  #[test]
+  fn mul_unreduced_with_diff_sum_output() {
+    if !is_x86_feature_detected!("avx512ifma") {
+      return;
+    }
+    // Simulate the actual use case: diff_sum() on reduced field elements.
+    let [a, b, c, d] = test_field_elements();
+
+    // SAFETY: AVX-512 IFMA checked above.
+    unsafe {
+      let packed = FieldElement51x4::new(&a, &b, &c, &d);
+      let ds = packed.diff_sum(); // produces up to 53-bit limbs
+
+      // mul_unreduced should handle diff_sum output directly
+      let result = ds.mul_unreduced(&packed);
+      let [ua, ub, uc, ud] = result.split();
+
+      // Reference: reduce first, then mul
+      let ds_reduced = ds.reduce();
+      let reference = ds_reduced.mul(&packed);
+      let [ra, rb, rc, rd] = reference.split();
+
+      assert_eq!(ua.normalize(), ra.normalize(), "lane A diff_sum mul_unreduced");
+      assert_eq!(ub.normalize(), rb.normalize(), "lane B diff_sum mul_unreduced");
+      assert_eq!(uc.normalize(), rc.normalize(), "lane C diff_sum mul_unreduced");
+      assert_eq!(ud.normalize(), rd.normalize(), "lane D diff_sum mul_unreduced");
+    }
+  }
+
+  #[test]
+  fn mul_small_unreduced_matches_reduce_then_mul_small() {
+    if !is_x86_feature_detected!("avx512ifma") {
+      return;
+    }
+    let [a, b, c, d] = test_53bit_field_elements();
+
+    // Hamburg-like small constants: only limb 0 is non-zero.
+    let small = FieldElement::from_limbs([121_666, 0, 0, 0, 0]);
+    let small2 = FieldElement::from_limbs([243_332, 0, 0, 0, 0]);
+
+    // SAFETY: AVX-512 IFMA checked above.
+    unsafe {
+      let packed = FieldElement51x4::new(&a, &b, &c, &d);
+      let constants = FieldElement51x4::new(&small, &small, &small2, &small);
+
+      let via_unreduced = packed.mul_small_unreduced(&constants);
+      let [ua, ub, uc, ud] = via_unreduced.split();
+
+      let packed_reduced = packed.reduce();
+      let via_reduced = packed_reduced.mul_small(&constants);
+      let [ra, rb, rc, rd] = via_reduced.split();
+
+      assert_eq!(ua.normalize(), ra.normalize(), "lane A mul_small_unreduced");
+      assert_eq!(ub.normalize(), rb.normalize(), "lane B mul_small_unreduced");
+      assert_eq!(uc.normalize(), rc.normalize(), "lane C mul_small_unreduced");
+      assert_eq!(ud.normalize(), rd.normalize(), "lane D mul_small_unreduced");
+    }
+  }
+
+  #[test]
+  fn mul_unreduced_51bit_inputs_matches_mul() {
+    if !is_x86_feature_detected!("avx512ifma") {
+      return;
+    }
+    // With 51-bit inputs (already reduced), mul_unreduced should produce
+    // the same result as mul since overflow bits are all zero.
+    let [a, b, c, d] = test_field_elements();
+    let [e, f, g, h] = [
+      FieldElement::from_limbs([100_000_000, 200_000_000, 300_000_000, 400_000_000, 500_000_000]),
+      FieldElement::from_limbs([600_000_000, 700_000_000, 800_000_000, 900_000_000, 1_000_000_000]),
+      FieldElement::from_limbs([17, 0, 0, 0, 0]),
+      FieldElement::from_limbs([
+        (1u64 << 51) - 100,
+        (1u64 << 51) - 1,
+        (1u64 << 51) - 1,
+        (1u64 << 51) - 1,
+        (1u64 << 51) - 1,
+      ]),
+    ];
+
+    // SAFETY: AVX-512 IFMA checked above.
+    unsafe {
+      let lhs = FieldElement51x4::new(&a, &b, &c, &d);
+      let rhs = FieldElement51x4::new(&e, &f, &g, &h);
+
+      let via_mul = lhs.mul(&rhs);
+      let via_unreduced = lhs.mul_unreduced(&rhs);
+
+      let [ma, mb, mc, md] = via_mul.split();
+      let [ua, ub, uc, ud] = via_unreduced.split();
+
+      assert_eq!(ua.normalize(), ma.normalize(), "lane A mul vs mul_unreduced (51-bit)");
+      assert_eq!(ub.normalize(), mb.normalize(), "lane B mul vs mul_unreduced (51-bit)");
+      assert_eq!(uc.normalize(), mc.normalize(), "lane C mul vs mul_unreduced (51-bit)");
+      assert_eq!(ud.normalize(), md.normalize(), "lane D mul vs mul_unreduced (51-bit)");
     }
   }
 }

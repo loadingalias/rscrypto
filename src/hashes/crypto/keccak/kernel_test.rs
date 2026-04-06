@@ -122,8 +122,8 @@ mod tests {
     // Single-state reference: permute each independently.
     let mut ref_a = state_a;
     let mut ref_b = state_b;
-    super::super::aarch64::keccakf_aarch64_sha3(&mut ref_a);
-    super::super::aarch64::keccakf_aarch64_sha3(&mut ref_b);
+    super::super::aarch64::keccakf_aarch64_sha3_single(&mut ref_a);
+    super::super::aarch64::keccakf_aarch64_sha3_single(&mut ref_b);
 
     // 2-state interleaved: permute both simultaneously.
     super::super::aarch64::keccakf_aarch64_sha3_x2(&mut state_a, &mut state_b);

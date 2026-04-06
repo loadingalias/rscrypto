@@ -11,6 +11,8 @@ pub(crate) mod aarch64;
 pub(crate) mod dispatch;
 #[doc(hidden)]
 pub(crate) mod dispatch_tables;
+#[cfg(test)]
+pub(crate) mod kernel_test;
 pub(crate) mod kernels;
 #[cfg(target_arch = "s390x")]
 pub(crate) mod s390x;
@@ -541,9 +543,13 @@ fn absorb_and_permute<const RATE: usize>(state: &mut [u64; 25], block: &[u8; RAT
 // allowing LLVM to inline the permutation into the absorb loop. This is the
 // single most impactful change for SHA-3 throughput.
 //
-// - x86_64 / generic: `InlinePermuter` → `keccakf_portable` (the AVX-512 and AVX2 χ-only SIMD
-//   kernels added pack/extract overhead that exceeded the VPTERNLOG savings; pure scalar is
-//   faster).
+// - x86_64 / generic: `InlinePermuter` → `keccakf_portable`. Verified optimal — SIMD evaluation
+//   (KECCAK-4) concluded no viable optimization path exists:
+//   * AVX-512 χ-only: 9-38% SLOWER on Zen4/5, ICL, SPR (GPR↔SIMD crossing > VPTERNLOG savings)
+//   * AVX2: worse than AVX-512 (no VPTERNLOG, 3 ops for χ vs 1)
+//   * BMI2: LLVM already emits RORX; ANDN saves <5 ops/round after lane-complementing chi
+//   * Full SIMD: 25 u64 lanes need 13+ YMM registers; θ/ρ/π have no efficient SIMD mapping
+//   See docs/tasks/acceleration.md KECCAK-4 for full rationale.
 // - aarch64: `Aarch64Permuter` → portable for single-state (the 1-state SHA3 CE kernel is ~1.9×
 //   slower on Neoverse V1/V2). SHA3 CE is used only for the 2-state interleaved path
 //   (`digest_pair`).
@@ -909,13 +915,12 @@ fn xor_block_into<const RATE: usize>(state: &mut [u64; 25], block: &[u8; RATE]) 
   }
 }
 
-/// Pad and absorb the final block for a Keccak sponge.
+/// XOR remainder + padding into a Keccak state **without** permuting.
 ///
-/// XORs the remainder and padding directly into state lanes without allocating
-/// a RATE-sized buffer. This avoids the memset + full-block absorb overhead
-/// of the buffer approach (saves ~10-15 ns per hash on modern CPUs).
+/// Used by `oneshot_pair` to pad both states independently before a single
+/// `permute_x2` call (saving one permutation vs two sequential `finalize_pad_absorb`).
 #[inline(always)]
-fn finalize_pad_absorb<const RATE: usize>(state: &mut [u64; 25], remainder: &[u8], ds: u8, permuter: PlatformPermuter) {
+fn pad_into_state<const RATE: usize>(state: &mut [u64; 25], remainder: &[u8], ds: u8) {
   debug_assert_eq!(RATE % 8, 0);
   debug_assert!(remainder.len() < RATE);
 
@@ -939,13 +944,17 @@ fn finalize_pad_absorb<const RATE: usize>(state: &mut [u64; 25], remainder: &[u8
   state[full_lanes] ^= u64::from_le_bytes(partial);
 
   // pad10*1: XOR 0x80 into the last byte of the rate.
-  // The shift places 0x80 at LE byte position `last_byte_pos` within the native
-  // u64 — no `from_le` conversion needed (the shift already targets the correct
-  // bit position regardless of platform endianness).
   let last_lane = (RATE - 1) / 8;
   let last_byte_pos = (RATE - 1) % 8;
   state[last_lane] ^= 0x80_u64 << last_byte_pos.strict_mul(8);
+}
 
+/// Pad and absorb the final block for a Keccak sponge.
+///
+/// Equivalent to [`pad_into_state`] followed by a single permutation.
+#[inline(always)]
+fn finalize_pad_absorb<const RATE: usize>(state: &mut [u64; 25], remainder: &[u8], ds: u8, permuter: PlatformPermuter) {
+  pad_into_state::<RATE>(state, remainder, ds);
   permuter.permute(state, 0);
 }
 
@@ -997,9 +1006,10 @@ pub(crate) fn oneshot_pair<const RATE: usize, const OUT: usize>(
     absorb_and_permute::<RATE>(&mut state_b, block);
   }
 
-  // Finalize both states (pad + final absorb + extract).
-  finalize_pad_absorb::<RATE>(&mut state_a, rest_a, ds, permuter);
-  finalize_pad_absorb::<RATE>(&mut state_b, rest_b, ds, permuter);
+  // Finalize both states: pad into each, then permute both in parallel.
+  pad_into_state::<RATE>(&mut state_a, rest_a, ds);
+  pad_into_state::<RATE>(&mut state_b, rest_b, ds);
+  permuter.permute_x2(&mut state_a, &mut state_b, 0);
 
   let mut out_a = [0u8; OUT];
   let mut out_b = [0u8; OUT];
