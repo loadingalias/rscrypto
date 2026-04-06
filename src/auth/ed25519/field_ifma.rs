@@ -499,15 +499,10 @@ impl FieldElement51x4 {
     .reduce()
   }
 
-  /// Square a vectorized field element using AVX-512 IFMA.
+  /// Square (51-bit inputs, pre-doubled cross terms). Retained for testing.
   ///
-  /// Exploits symmetry: cross terms `f_i * f_j` (i ≠ j) appear twice, so
-  /// we pre-double one operand and halve the product count.
-  ///
-  /// # Precondition
-  ///
-  /// All limbs must be ≤ 51 bits (i.e., `reduce()`d). The pre-doubling step
-  /// (`f_i_2 = f[i] + f[i]`) pushes 51-bit limbs to 52 bits — the IFMA limit.
+  /// Production code uses `square_wide()` which accepts 52-bit inputs.
+  #[cfg(test)]
   /// Inputs with 52-bit limbs would overflow to 53 bits after pre-doubling.
   ///
   /// # Safety
@@ -605,15 +600,8 @@ impl FieldElement51x4 {
     .reduce()
   }
 
-  /// Square and negate lane D. Fused for HWCD'08 parallel doubling.
-  ///
-  /// # Precondition
-  ///
-  /// Inherits `square()`'s constraint: all limbs must be ≤ 51 bits (reduced).
-  ///
-  /// # Safety
-  ///
-  /// Caller must ensure AVX-512 IFMA + VL are available.
+  /// Square (51-bit inputs) and negate lane D. Retained for testing.
+  #[cfg(test)]
   #[inline]
   #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
   #[allow(unsafe_op_in_unsafe_fn)]
@@ -621,6 +609,166 @@ impl FieldElement51x4 {
     let mut result = self.square();
 
     // Negate lane D (u64 position 3) via 2p - D, blended.
+    let bias_0 = _mm256_set_epi64x(BIAS_0, 0, 0, 0);
+    let bias_n = _mm256_set_epi64x(BIAS_N, 0, 0, 0);
+
+    let neg0 = _mm256_sub_epi64(bias_0, result.0[0]);
+    result.0[0] = _mm256_blend_epi32::<0b1100_0000>(result.0[0], neg0);
+
+    let neg1 = _mm256_sub_epi64(bias_n, result.0[1]);
+    result.0[1] = _mm256_blend_epi32::<0b1100_0000>(result.0[1], neg1);
+
+    let neg2 = _mm256_sub_epi64(bias_n, result.0[2]);
+    result.0[2] = _mm256_blend_epi32::<0b1100_0000>(result.0[2], neg2);
+
+    let neg3 = _mm256_sub_epi64(bias_n, result.0[3]);
+    result.0[3] = _mm256_blend_epi32::<0b1100_0000>(result.0[3], neg3);
+
+    let neg4 = _mm256_sub_epi64(bias_n, result.0[4]);
+    result.0[4] = _mm256_blend_epi32::<0b1100_0000>(result.0[4], neg4);
+
+    result
+  }
+
+  /// Square accepting 52-bit inputs via double-accumulate for cross terms.
+  ///
+  /// The standard `square()` pre-doubles operands (`f_i_2 = f[i] + f[i]`)
+  /// to exploit symmetry, but this pushes 52-bit inputs to 53 bits —
+  /// exceeding IFMA's 52-bit window. This variant avoids pre-doubling by
+  /// accumulating each cross term twice: `madd52(madd52(acc, f, g), f, g)`.
+  ///
+  /// Costs 50 IFMA ops (same as `mul`) vs 30 for `square`, but eliminates
+  /// the boundary `reduce()` that was needed before `square` in `double()`,
+  /// saving ~18 cycles of serial carry-chain latency per double.
+  ///
+  /// # Precondition
+  ///
+  /// All limbs must be ≤ 52 bits (fitting IFMA's input window directly).
+  ///
+  /// # Safety
+  ///
+  /// Caller must ensure AVX-512 IFMA + VL are available.
+  #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
+  #[allow(unsafe_op_in_unsafe_fn)]
+  pub(crate) unsafe fn square_wide(&self) -> Self {
+    let zero = _mm256_setzero_si256();
+    let f = &self.0;
+
+    // Interleaved lo/hi, double-accumulate for cross terms.
+
+    // z0 = f0*f0
+    let lo0 = madd52lo(zero, f[0], f[0]);
+    let hi0 = madd52hi(zero, f[0], f[0]);
+
+    // z1 = 2*f0*f1 (double-accumulate)
+    let mut lo1 = madd52lo(zero, f[0], f[1]);
+    let mut hi1 = madd52hi(zero, f[0], f[1]);
+    lo1 = madd52lo(lo1, f[0], f[1]);
+    hi1 = madd52hi(hi1, f[0], f[1]);
+
+    // z2 = 2*f0*f2 + f1*f1
+    let mut lo2 = madd52lo(zero, f[0], f[2]);
+    let mut hi2 = madd52hi(zero, f[0], f[2]);
+    lo2 = madd52lo(lo2, f[0], f[2]);
+    hi2 = madd52hi(hi2, f[0], f[2]);
+    lo2 = madd52lo(lo2, f[1], f[1]);
+    hi2 = madd52hi(hi2, f[1], f[1]);
+
+    // z3 = 2*f0*f3 + 2*f1*f2
+    let mut lo3 = madd52lo(zero, f[0], f[3]);
+    let mut hi3 = madd52hi(zero, f[0], f[3]);
+    lo3 = madd52lo(lo3, f[0], f[3]);
+    hi3 = madd52hi(hi3, f[0], f[3]);
+    lo3 = madd52lo(lo3, f[1], f[2]);
+    hi3 = madd52hi(hi3, f[1], f[2]);
+    lo3 = madd52lo(lo3, f[1], f[2]);
+    hi3 = madd52hi(hi3, f[1], f[2]);
+
+    // z4 = 2*f0*f4 + 2*f1*f3 + f2*f2
+    let mut lo4 = madd52lo(zero, f[0], f[4]);
+    let mut hi4 = madd52hi(zero, f[0], f[4]);
+    lo4 = madd52lo(lo4, f[0], f[4]);
+    hi4 = madd52hi(hi4, f[0], f[4]);
+    lo4 = madd52lo(lo4, f[1], f[3]);
+    hi4 = madd52hi(hi4, f[1], f[3]);
+    lo4 = madd52lo(lo4, f[1], f[3]);
+    hi4 = madd52hi(hi4, f[1], f[3]);
+    lo4 = madd52lo(lo4, f[2], f[2]);
+    hi4 = madd52hi(hi4, f[2], f[2]);
+
+    // z5 = 2*f1*f4 + 2*f2*f3
+    let mut lo5 = madd52lo(zero, f[1], f[4]);
+    let mut hi5 = madd52hi(zero, f[1], f[4]);
+    lo5 = madd52lo(lo5, f[1], f[4]);
+    hi5 = madd52hi(hi5, f[1], f[4]);
+    lo5 = madd52lo(lo5, f[2], f[3]);
+    hi5 = madd52hi(hi5, f[2], f[3]);
+    lo5 = madd52lo(lo5, f[2], f[3]);
+    hi5 = madd52hi(hi5, f[2], f[3]);
+
+    // z6 = 2*f2*f4 + f3*f3
+    let mut lo6 = madd52lo(zero, f[2], f[4]);
+    let mut hi6 = madd52hi(zero, f[2], f[4]);
+    lo6 = madd52lo(lo6, f[2], f[4]);
+    hi6 = madd52hi(hi6, f[2], f[4]);
+    lo6 = madd52lo(lo6, f[3], f[3]);
+    hi6 = madd52hi(hi6, f[3], f[3]);
+
+    // z7 = 2*f3*f4 (double-accumulate)
+    let mut lo7 = madd52lo(zero, f[3], f[4]);
+    let mut hi7 = madd52hi(zero, f[3], f[4]);
+    lo7 = madd52lo(lo7, f[3], f[4]);
+    hi7 = madd52hi(hi7, f[3], f[4]);
+
+    // z8 = f4*f4
+    let lo8 = madd52lo(zero, f[4], f[4]);
+    let hi8 = madd52hi(zero, f[4], f[4]);
+
+    // Recombine, fold ×19, reduce — identical to square().
+    let z0 = lo0;
+    let z1 = _mm256_add_epi64(_mm256_add_epi64(lo1, hi0), hi0);
+    let z2 = _mm256_add_epi64(_mm256_add_epi64(lo2, hi1), hi1);
+    let z3 = _mm256_add_epi64(_mm256_add_epi64(lo3, hi2), hi2);
+    let z4 = _mm256_add_epi64(_mm256_add_epi64(lo4, hi3), hi3);
+    let z5 = _mm256_add_epi64(_mm256_add_epi64(lo5, hi4), hi4);
+    let z6 = _mm256_add_epi64(_mm256_add_epi64(lo6, hi5), hi5);
+    let z7 = _mm256_add_epi64(_mm256_add_epi64(lo7, hi6), hi6);
+    let z8 = _mm256_add_epi64(_mm256_add_epi64(lo8, hi7), hi7);
+    let z9 = _mm256_add_epi64(hi8, hi8);
+
+    let z5_19 = mul19(z5);
+    let z6_19 = mul19(z6);
+    let z7_19 = mul19(z7);
+    let z8_19 = mul19(z8);
+    let z9_19 = mul19(z9);
+
+    Self([
+      _mm256_add_epi64(z0, z5_19),
+      _mm256_add_epi64(z1, z6_19),
+      _mm256_add_epi64(z2, z7_19),
+      _mm256_add_epi64(z3, z8_19),
+      _mm256_add_epi64(z4, z9_19),
+    ])
+    .reduce()
+  }
+
+  /// Square 52-bit inputs and negate lane D. Fused for HWCD'08 doubling.
+  ///
+  /// Uses `square_wide()` to accept 52-bit inputs without pre-doubling.
+  ///
+  /// # Precondition
+  ///
+  /// All limbs must be ≤ 52 bits.
+  ///
+  /// # Safety
+  ///
+  /// Caller must ensure AVX-512 IFMA + VL are available.
+  #[inline]
+  #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
+  #[allow(unsafe_op_in_unsafe_fn)]
+  pub(crate) unsafe fn square_and_negate_d_wide(&self) -> Self {
+    let mut result = self.square_wide();
+
     let bias_0 = _mm256_set_epi64x(BIAS_0, 0, 0, 0);
     let bias_n = _mm256_set_epi64x(BIAS_N, 0, 0, 0);
 
