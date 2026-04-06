@@ -578,7 +578,12 @@ impl ExtendedPointIfma {
     tmp = tmp.add(&s2_in_ad);
     let neg_s2 = s2.negate_lazy();
     let neg_s2_in_bc = zero.blend(&neg_s2, Lanes::BC);
-    let tmp = tmp.add(&neg_s2_in_bc);
+    // Reduce required: lane C (S8 = S1−S2+2S3) reaches 54 bits from the
+    // 3-term accumulation with 2p bias. mul_unreduced handles ≤53 bits
+    // (1-bit overflow), but 54 bits produces 2-bit overflow that corrupts
+    // select_by_bit. add_cached avoids this because its intermediates
+    // stay ≤53 bits (only 2-term adds after diff_sum on reduced values).
+    let tmp = tmp.add(&neg_s2_in_bc).reduce();
 
     let t0 = tmp.shuffle(Shuffle::CACA);
     let t1 = tmp.shuffle(Shuffle::DBBD);
