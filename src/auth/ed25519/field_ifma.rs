@@ -600,35 +600,7 @@ impl FieldElement51x4 {
     .reduce()
   }
 
-  /// Square (51-bit inputs) and negate lane D. Retained for testing.
-  #[cfg(test)]
-  #[inline]
-  #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
-  #[allow(unsafe_op_in_unsafe_fn)]
-  pub(crate) unsafe fn square_and_negate_d(&self) -> Self {
-    let mut result = self.square();
-
-    // Negate lane D (u64 position 3) via 2p - D, blended.
-    let bias_0 = _mm256_set_epi64x(BIAS_0, 0, 0, 0);
-    let bias_n = _mm256_set_epi64x(BIAS_N, 0, 0, 0);
-
-    let neg0 = _mm256_sub_epi64(bias_0, result.0[0]);
-    result.0[0] = _mm256_blend_epi32::<0b1100_0000>(result.0[0], neg0);
-
-    let neg1 = _mm256_sub_epi64(bias_n, result.0[1]);
-    result.0[1] = _mm256_blend_epi32::<0b1100_0000>(result.0[1], neg1);
-
-    let neg2 = _mm256_sub_epi64(bias_n, result.0[2]);
-    result.0[2] = _mm256_blend_epi32::<0b1100_0000>(result.0[2], neg2);
-
-    let neg3 = _mm256_sub_epi64(bias_n, result.0[3]);
-    result.0[3] = _mm256_blend_epi32::<0b1100_0000>(result.0[3], neg3);
-
-    let neg4 = _mm256_sub_epi64(bias_n, result.0[4]);
-    result.0[4] = _mm256_blend_epi32::<0b1100_0000>(result.0[4], neg4);
-
-    result
-  }
+  // square_and_negate_d (51-bit) removed — superseded by square_and_negate_d_wide.
 
   /// Square accepting 52-bit inputs via double-accumulate for cross terms.
   ///
