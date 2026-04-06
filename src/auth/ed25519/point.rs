@@ -515,6 +515,48 @@ mod tests {
   use super::ExtendedPoint;
   use crate::auth::ed25519::{Ed25519SecretKey, field::FieldElement, hash::ExpandedSecret};
 
+  /// Generates the wNAF(8) basepoint table for IFMA verify.
+  /// Run with `--nocapture` to print the table source.
+  #[test]
+  fn gen_basepoint_wnaf8_ifma_table() {
+    let bp = ExtendedPoint::basepoint();
+    let bp2 = bp.double();
+
+    let d2_fe = FieldElement::from_small(121_666);
+    let d2_2_fe = FieldElement::from_small(121_666u64.wrapping_mul(2));
+    let d1_2_fe = FieldElement::from_small(121_665u64.wrapping_mul(2));
+
+    let mut acc = bp;
+    eprintln!("pub(crate) static BASEPOINT_WNAF8_IFMA_RAW: [[[i64; 4]; 5]; 64] = [");
+    for i in 0..64u32 {
+      if i > 0 {
+        acc = acc.add(&bp2);
+      }
+      let (x, y, z, t) = acc.components();
+
+      let a = d2_fe.mul(&y.sub(x)).normalize();
+      let b = d2_fe.mul(&y.add(x)).normalize();
+      let c = d2_2_fe.mul(z).normalize();
+      let d = d1_2_fe.mul(t).neg().normalize();
+
+      let al = a.limbs();
+      let bl = b.limbs();
+      let cl = c.limbs();
+      let dl = d.limbs();
+
+      eprintln!("  // {}B", 2 * i + 1);
+      eprintln!("  [");
+      for k in 0..5 {
+        eprintln!(
+          "    [{}, {}, {}, {}],",
+          al[k] as i64, bl[k] as i64, cl[k] as i64, dl[k] as i64
+        );
+      }
+      eprintln!("  ],");
+    }
+    eprintln!("];");
+  }
+
   fn basepoint() -> ExtendedPoint {
     ExtendedPoint::basepoint()
   }

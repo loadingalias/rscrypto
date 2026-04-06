@@ -13,6 +13,9 @@
 //! coordinates.
 
 #[cfg(target_arch = "x86_64")]
+use core::arch::x86_64::_mm256_loadu_si256;
+
+#[cfg(target_arch = "x86_64")]
 use super::{
   field::FieldElement,
   field_avx2::{FieldElement2625x4, Lanes, Shuffle},
@@ -21,7 +24,8 @@ use super::{
   scalar,
 };
 #[cfg(target_arch = "x86_64")]
-use crate::backend::cache::OnceCache;
+#[path = "basepoint_table_ifma.rs"]
+mod basepoint_table_ifma;
 
 /// Hamburg constants for the curve `d = -d1/d2`.
 const D1: u64 = 121_665;
@@ -555,8 +559,12 @@ impl ExtendedPointIfma {
     let ab = self.0.shuffle(Shuffle::ABAB);
     let ba = ab.shuffle(Shuffle::BADC);
     let xy_sum = ab.add(&ba);
-    let prepared = self.0.blend(&xy_sum, Lanes::D).reduce();
-    let sq = prepared.square_and_negate_d();
+    // No reduce needed: square_wide() accepts 52-bit inputs via
+    // double-accumulate for cross terms (no pre-doubling overflow).
+    // Lanes A,B,C (X,Y,Z) are ≤51 bits from prior mul/square;
+    // lane D (X+Y) is ≤52 bits. All within IFMA's window.
+    let prepared = self.0.blend(&xy_sum, Lanes::D);
+    let sq = prepared.square_and_negate_d_wide();
 
     let zero = FieldElement51x4::zero();
     let s1 = sq.shuffle(Shuffle::AAAA);
@@ -809,19 +817,43 @@ unsafe fn add_wnaf_digit_ifma(acc: ExtendedPointIfma, table: &[CachedPointIfma],
   }
 }
 
-/// Build the 64-entry wNAF(8) basepoint table: `[B, 3B, 5B, ..., 127B]`.
+/// Load a `CachedPointIfma` from the static raw `i64` table.
 ///
-/// Called once by `OnceCache` on the first verify, then cached for all
-/// subsequent calls.
+/// # Safety
+///
+/// Caller must ensure AVX2 is available.
+#[inline]
+#[target_feature(enable = "avx2")]
+#[allow(unsafe_op_in_unsafe_fn)]
+unsafe fn load_cached_ifma_raw(entry: &[[i64; 4]; 5]) -> CachedPointIfma {
+  CachedPointIfma(FieldElement51x4([
+    _mm256_loadu_si256(entry[0].as_ptr().cast()),
+    _mm256_loadu_si256(entry[1].as_ptr().cast()),
+    _mm256_loadu_si256(entry[2].as_ptr().cast()),
+    _mm256_loadu_si256(entry[3].as_ptr().cast()),
+    _mm256_loadu_si256(entry[4].as_ptr().cast()),
+  ]))
+}
+
+/// Add a signed wNAF digit from the static raw basepoint table.
 ///
 /// # Safety
 ///
 /// Caller must ensure AVX-512 IFMA + VL are available.
+#[inline]
 #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
 #[allow(unsafe_op_in_unsafe_fn)]
-unsafe fn build_basepoint_wnaf8_table_ifma() -> [CachedPointIfma; 64] {
-  let bp = ExtendedPointIfma::from_extended(&ExtendedPoint::basepoint());
-  odd_multiples_ifma(&bp)
+unsafe fn add_wnaf_digit_ifma_raw(acc: ExtendedPointIfma, table: &[[[i64; 4]; 5]], digit: i8) -> ExtendedPointIfma {
+  let index = usize::from((digit.unsigned_abs().wrapping_sub(1)) / 2);
+  let Some(entry) = table.get(index) else {
+    return acc;
+  };
+  let point = load_cached_ifma_raw(entry);
+  if digit > 0 {
+    acc.add_cached(&point)
+  } else {
+    acc.add_cached(&point.neg())
+  }
 }
 
 /// wNAF-based Straus/Shamir: `[s]B + [h]A`.
@@ -849,10 +881,10 @@ pub(crate) unsafe fn straus_wnaf_vartime_ifma(s: &[u8; 32], h: &[u8; 32], a: &Ex
   let h_naf = scalar::non_adjacent_form(h, 5);
 
   // wNAF(8) basepoint table: [B, 3B, 5B, ..., 127B] (64 entries).
-  // Cached via OnceCache — built once on first verify, reused for all
-  // subsequent calls. Amortizes ~15K instruction table-build to zero.
-  static BASEPOINT_WNAF8_IFMA: OnceCache<[CachedPointIfma; 64]> = OnceCache::new();
-  let base_table = BASEPOINT_WNAF8_IFMA.get_or_init(|| build_basepoint_wnaf8_table_ifma());
+  // Static compile-time data in .rodata — zero build cost, zero copy.
+  // Entries loaded on demand via _mm256_loadu_si256 (~5 loads per access,
+  // only ~28 entries touched per verify due to wNAF sparsity).
+  let base_table = &basepoint_table_ifma::BASEPOINT_WNAF8_IFMA_RAW;
 
   // Build wNAF(5) public-key table: [A, 3A, 5A, ..., 15A] (8 entries).
   let ifma_a = ExtendedPointIfma::from_extended(a);
@@ -881,7 +913,7 @@ pub(crate) unsafe fn straus_wnaf_vartime_ifma(s: &[u8; 32], h: &[u8; 32], a: &Ex
     acc = acc.double();
 
     if s_naf[i] != 0 {
-      acc = add_wnaf_digit_ifma(acc, &base_table, s_naf[i]);
+      acc = add_wnaf_digit_ifma_raw(acc, base_table, s_naf[i]);
     }
     if h_naf[i] != 0 {
       acc = add_wnaf_digit_ifma(acc, &a_table, h_naf[i]);
