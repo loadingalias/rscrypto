@@ -83,7 +83,24 @@ macro_rules! define_nonce_type {
 
     impl fmt::Debug for $name {
       fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple(stringify!($name)).field(&self.0).finish()
+        write!(f, "{}(", stringify!($name))?;
+        crate::hex::fmt_hex_lower(&self.0, f)?;
+        write!(f, ")")
+      }
+    }
+
+    impl $name {
+      /// Construct a nonce by filling bytes from the provided closure.
+      ///
+      /// ```ignore
+      /// let nonce = Nonce96::generate(|buf| getrandom::fill(buf).unwrap());
+      /// ```
+      #[inline]
+      #[must_use]
+      pub fn generate(fill: impl FnOnce(&mut [u8; $len])) -> Self {
+        let mut bytes = [0u8; $len];
+        fill(&mut bytes);
+        Self(bytes)
       }
     }
   };
@@ -93,6 +110,11 @@ define_nonce_type!(Nonce96, 12, "Explicit 96-bit nonce wrapper.");
 define_nonce_type!(Nonce128, 16, "Explicit 128-bit nonce wrapper.");
 define_nonce_type!(Nonce192, 24, "Explicit 192-bit nonce wrapper.");
 define_nonce_type!(Nonce256, 32, "Explicit 256-bit nonce wrapper.");
+
+impl_hex_fmt!(Nonce96);
+impl_hex_fmt!(Nonce128);
+impl_hex_fmt!(Nonce192);
+impl_hex_fmt!(Nonce256);
 
 /// Combined-buffer length mismatch during AEAD sealing or opening.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

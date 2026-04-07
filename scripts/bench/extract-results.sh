@@ -84,11 +84,13 @@ parse_output() {
         mid = vals[3] + 0.0
         unit = vals[4]
         # Convert to nanoseconds
+        # NOTE: "s" must be checked before "µs" — macOS awk has a
+        # locale bug where (unit == "µs") matches bare "s".
         if (unit == "ps") mid_ns = mid / 1000.0
         else if (unit == "ns") mid_ns = mid
-        else if (unit == "µs" || unit == "us") mid_ns = mid * 1000.0
+        else if (unit == "s" && length(unit) == 1) mid_ns = mid * 1000000000.0
         else if (unit == "ms") mid_ns = mid * 1000000.0
-        else if (unit == "s") mid_ns = mid * 1000000000.0
+        else if (unit == "µs" || unit == "us") mid_ns = mid * 1000.0
         else { bench_id = ""; next }
 
         # Split nested bench_id: <group...>/<impl>/<size>

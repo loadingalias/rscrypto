@@ -356,6 +356,213 @@ mod ni {
 }
 
 // ---------------------------------------------------------------------------
+// x86_64 VAES-256 backend (2 states per YMM register)
+// ---------------------------------------------------------------------------
+//
+// Packs the 6-element AEGIS state into 3 YMM registers:
+//   state[0] = [S0 | S1],  state[1] = [S2 | S3],  state[2] = [S4 | S5]
+//
+// The AEGIS update (6 independent AES rounds) becomes 3 VAESENC instructions,
+// halving the AES execution port pressure and doubling throughput vs AES-NI.
+// Cross-lane shuffles (vperm2i128) run on different ports than VAESENC, so
+// they execute in parallel.
+
+#[cfg(target_arch = "x86_64")]
+#[allow(unsafe_op_in_unsafe_fn)]
+mod ni_wide {
+  use core::arch::x86_64::*;
+
+  use super::{BLOCK_SIZE, C0, C1, KEY_SIZE, NONCE_SIZE, TAG_SIZE};
+
+  /// Packed state: 3 × __m256i holding [S0|S1], [S2|S3], [S4|S5].
+  pub(super) type State = [__m256i; 3];
+
+  /// Cross-lane shuffle: extract [a_high128 | b_low128].
+  #[inline(always)]
+  unsafe fn cross(a: __m256i, b: __m256i) -> __m256i {
+    _mm256_permute2x128_si256(a, b, 0x21)
+  }
+
+  /// Pack two __m128i into one __m256i: result = [lo | hi].
+  #[inline(always)]
+  unsafe fn pack(lo: __m128i, hi: __m128i) -> __m256i {
+    _mm256_set_m128i(hi, lo)
+  }
+
+  /// Zero-extend a 128-bit value into the low half of a 256-bit register.
+  #[inline(always)]
+  unsafe fn zext(v: __m128i) -> __m256i {
+    _mm256_set_m128i(_mm_setzero_si128(), v)
+  }
+
+  #[inline(always)]
+  unsafe fn load128(bytes: &[u8; BLOCK_SIZE]) -> __m128i {
+    _mm_loadu_si128(bytes.as_ptr().cast())
+  }
+
+  #[inline(always)]
+  unsafe fn store128(v: __m128i, out: &mut [u8; BLOCK_SIZE]) {
+    _mm_storeu_si128(out.as_mut_ptr().cast(), v);
+  }
+
+  /// AEGIS-256 state update: 3 VAESENC + 3 cross-lane shuffles + message XOR.
+  ///
+  /// Computes the cyclic AES round rotation across all 6 states in 3 wide
+  /// instructions instead of 6 scalar ones. The shuffles and VAESENC use
+  /// independent execution ports, so they overlap on the OOO pipeline.
+  #[inline(always)]
+  unsafe fn update(s: &mut State, m: __m128i) {
+    // Cross-lane blocks: [S_{2i+1} | S_{2i+2}] for each pair
+    let b2 = cross(s[1], s[2]); // [S3 | S4]
+    let b1 = cross(s[0], s[1]); // [S1 | S2]
+    let b0 = cross(s[2], s[0]); // [S5 | S0]
+
+    // 3 VAESENC: each processes 2 independent AES rounds
+    s[2] = _mm256_aesenc_epi128(b2, s[2]); // [AES(S3,S4) | AES(S4,S5)]
+    s[1] = _mm256_aesenc_epi128(b1, s[1]); // [AES(S1,S2) | AES(S2,S3)]
+    s[0] = _mm256_aesenc_epi128(b0, s[0]); // [AES(S5,S0) | AES(S0,S1)]
+
+    // XOR message into S0 (low half of state[0])
+    s[0] = _mm256_xor_si256(s[0], zext(m));
+  }
+
+  /// Compute AEGIS-256 keystream: z = S1 ^ S4 ^ S5 ^ (S2 & S3).
+  #[inline(always)]
+  unsafe fn keystream(s: &State) -> __m128i {
+    let s1 = _mm256_extracti128_si256(s[0], 1);
+    let s2_and_s3 = _mm_and_si128(_mm256_castsi256_si128(s[1]), _mm256_extracti128_si256(s[1], 1));
+    let s4 = _mm256_castsi256_si128(s[2]);
+    let s5 = _mm256_extracti128_si256(s[2], 1);
+    _mm_xor_si128(_mm_xor_si128(s1, s4), _mm_xor_si128(s5, s2_and_s3))
+  }
+
+  #[target_feature(enable = "vaes,avx2")]
+  pub(super) unsafe fn init(key: &[u8; KEY_SIZE], nonce: &[u8; NONCE_SIZE]) -> State {
+    let (kh0, kh1) = super::split_halves(key);
+    let (nh0, nh1) = super::split_halves(nonce);
+    let k0 = load128(kh0);
+    let k1 = load128(kh1);
+    let n0 = load128(nh0);
+    let n1 = load128(nh1);
+    let c0 = load128(&C0);
+    let c1 = load128(&C1);
+
+    let k0_xor_n0 = _mm_xor_si128(k0, n0);
+    let k1_xor_n1 = _mm_xor_si128(k1, n1);
+
+    // Pack initial state: [S0|S1], [S2|S3], [S4|S5]
+    let mut s: State = [
+      pack(k0_xor_n0, k1_xor_n1),                         // [k0^n0 | k1^n1]
+      pack(c1, c0),                                       // [C1 | C0]
+      pack(_mm_xor_si128(k0, c0), _mm_xor_si128(k1, c1)), // [k0^C0 | k1^C1]
+    ];
+
+    for _ in 0..4 {
+      update(&mut s, k0);
+      update(&mut s, k1);
+      update(&mut s, k0_xor_n0);
+      update(&mut s, k1_xor_n1);
+    }
+
+    s
+  }
+
+  #[target_feature(enable = "vaes,avx2")]
+  pub(super) unsafe fn process_aad(s: &mut State, aad: &[u8]) {
+    let mut offset = 0usize;
+
+    while offset.strict_add(BLOCK_SIZE) <= aad.len() {
+      let block = _mm_loadu_si128(aad.as_ptr().add(offset).cast());
+      update(s, block);
+      offset = offset.strict_add(BLOCK_SIZE);
+    }
+
+    if offset < aad.len() {
+      let mut pad = [0u8; BLOCK_SIZE];
+      pad[..aad.len().strict_sub(offset)].copy_from_slice(&aad[offset..]);
+      update(s, load128(&pad));
+    }
+  }
+
+  #[target_feature(enable = "vaes,avx2")]
+  pub(super) unsafe fn encrypt(s: &mut State, buffer: &mut [u8]) {
+    let mut offset = 0usize;
+
+    while offset.strict_add(BLOCK_SIZE) <= buffer.len() {
+      let z = keystream(s);
+      let xi = _mm_loadu_si128(buffer.as_ptr().add(offset).cast());
+      update(s, xi);
+      let ci = _mm_xor_si128(xi, z);
+      _mm_storeu_si128(buffer[offset..].as_mut_ptr().cast(), ci);
+      offset = offset.strict_add(BLOCK_SIZE);
+    }
+
+    // Partial tail block.
+    if offset < buffer.len() {
+      let z = keystream(s);
+      let tail_len = buffer.len().strict_sub(offset);
+      let mut pad = [0u8; BLOCK_SIZE];
+      pad[..tail_len].copy_from_slice(&buffer[offset..]);
+      let xi = load128(&pad);
+      update(s, xi);
+      let mut ct_bytes = [0u8; BLOCK_SIZE];
+      store128(_mm_xor_si128(xi, z), &mut ct_bytes);
+      buffer[offset..].copy_from_slice(&ct_bytes[..tail_len]);
+    }
+  }
+
+  #[target_feature(enable = "vaes,avx2")]
+  pub(super) unsafe fn decrypt(s: &mut State, buffer: &mut [u8]) {
+    let mut offset = 0usize;
+
+    while offset.strict_add(BLOCK_SIZE) <= buffer.len() {
+      let z = keystream(s);
+      let ci = _mm_loadu_si128(buffer.as_ptr().add(offset).cast());
+      let xi = _mm_xor_si128(ci, z);
+      update(s, xi);
+      _mm_storeu_si128(buffer[offset..].as_mut_ptr().cast(), xi);
+      offset = offset.strict_add(BLOCK_SIZE);
+    }
+
+    // Partial tail block.
+    if offset < buffer.len() {
+      let z = keystream(s);
+      let tail_len = buffer.len().strict_sub(offset);
+      let mut pad = [0u8; BLOCK_SIZE];
+      pad[..tail_len].copy_from_slice(&buffer[offset..]);
+      let mut z_bytes = [0u8; BLOCK_SIZE];
+      store128(z, &mut z_bytes);
+      let mut pt_pad = [0u8; BLOCK_SIZE];
+      for i in 0..tail_len {
+        pt_pad[i] = pad[i] ^ z_bytes[i];
+      }
+      update(s, load128(&pt_pad));
+      buffer[offset..].copy_from_slice(&pt_pad[..tail_len]);
+    }
+  }
+
+  #[target_feature(enable = "vaes,avx2")]
+  pub(super) unsafe fn finalize(s: &mut State, ad_len: usize, msg_len: usize) -> [u8; TAG_SIZE] {
+    let ad_bits = (ad_len as u64).strict_mul(8);
+    let msg_bits = (msg_len as u64).strict_mul(8);
+    let len_block = _mm_set_epi64x(msg_bits as i64, ad_bits as i64);
+    let t = _mm_xor_si128(_mm256_extracti128_si256(s[1], 1), len_block); // S3 ^ len
+
+    for _ in 0..7 {
+      update(s, t);
+    }
+
+    // tag = S0 ^ S1 ^ S2 ^ S3 ^ S4 ^ S5
+    let all = _mm256_xor_si256(_mm256_xor_si256(s[0], s[1]), s[2]);
+    let tag_vec = _mm_xor_si128(_mm256_castsi256_si128(all), _mm256_extracti128_si256(all, 1));
+
+    let mut tag = [0u8; TAG_SIZE];
+    store128(tag_vec, &mut tag);
+    tag
+  }
+}
+
+// ---------------------------------------------------------------------------
 // aarch64 AES-CE backend
 // ---------------------------------------------------------------------------
 
@@ -368,27 +575,27 @@ mod ce {
 
   pub(super) type State = [uint8x16_t; 6];
 
-  #[target_feature(enable = "aes,neon")]
-  #[inline]
-  unsafe fn aes_round(block: uint8x16_t, round_key: uint8x16_t) -> uint8x16_t {
-    // ARM AESE: XOR(block, key) -> SubBytes -> ShiftRows
-    // ARM AESMC: MixColumns
-    // To match x86 AESRound(block, rk) = SubBytes(ShiftRows(MixColumns(block))) XOR rk:
-    //   we do AESMC(AESE(block, zero_key)) XOR round_key
-    let zero = vdupq_n_u8(0);
-    veorq_u8(vaesmcq_u8(vaeseq_u8(block, zero)), round_key)
-  }
-
+  /// AEGIS-256 state update with 6 independent AES rounds.
+  ///
+  /// All 6 rounds read original state values and write to different outputs,
+  /// so the OOO engine can schedule them across both Neoverse V1 crypto units.
+  /// The zero constant is hoisted once per update rather than per-round.
+  ///
+  /// ARM AESE applies AddRoundKey *before* SubBytes (opposite of x86 AESENC),
+  /// so we pass zero as the AESE key and XOR the actual round key after
+  /// MixColumns. The zero XOR is NOT redundant — removing it would break
+  /// correctness because SubBytes is non-linear.
   #[target_feature(enable = "aes,neon")]
   #[inline]
   unsafe fn update(s: &mut State, m: uint8x16_t) {
+    let zero = vdupq_n_u8(0);
     let tmp = s[5];
-    s[5] = aes_round(s[4], s[5]);
-    s[4] = aes_round(s[3], s[4]);
-    s[3] = aes_round(s[2], s[3]);
-    s[2] = aes_round(s[1], s[2]);
-    s[1] = aes_round(s[0], s[1]);
-    s[0] = veorq_u8(aes_round(tmp, s[0]), m);
+    s[5] = veorq_u8(vaesmcq_u8(vaeseq_u8(s[4], zero)), s[5]);
+    s[4] = veorq_u8(vaesmcq_u8(vaeseq_u8(s[3], zero)), s[4]);
+    s[3] = veorq_u8(vaesmcq_u8(vaeseq_u8(s[2], zero)), s[3]);
+    s[2] = veorq_u8(vaesmcq_u8(vaeseq_u8(s[1], zero)), s[2]);
+    s[1] = veorq_u8(vaesmcq_u8(vaeseq_u8(s[0], zero)), s[1]);
+    s[0] = veorq_u8(veorq_u8(vaesmcq_u8(vaeseq_u8(tmp, zero)), s[0]), m);
   }
 
   #[inline(always)]
@@ -779,6 +986,15 @@ fn has_hw_aes() -> bool {
   }
 }
 
+/// Whether VAES-256 (VAES + AVX2) is available for wide AEGIS processing.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+fn has_vaes() -> bool {
+  use crate::platform::caps::x86;
+  let c = crate::platform::caps();
+  c.has(x86::VAES) && c.has(x86::AVX2_READY)
+}
+
 // ---------------------------------------------------------------------------
 // Key
 // ---------------------------------------------------------------------------
@@ -837,9 +1053,26 @@ impl AsRef<[u8]> for Aegis256Key {
 
 impl fmt::Debug for Aegis256Key {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    f.debug_struct("Aegis256Key").finish_non_exhaustive()
+    f.write_str("Aegis256Key(****)")
   }
 }
+
+impl Aegis256Key {
+  /// Construct a key by filling bytes from the provided closure.
+  ///
+  /// ```ignore
+  /// let key = Aegis256Key::generate(|buf| getrandom::fill(buf).unwrap());
+  /// ```
+  #[inline]
+  #[must_use]
+  pub fn generate(fill: impl FnOnce(&mut [u8; Self::LENGTH])) -> Self {
+    let mut bytes = [0u8; Self::LENGTH];
+    fill(&mut bytes);
+    Self(bytes)
+  }
+}
+
+impl_hex_fmt_secret!(Aegis256Key);
 
 impl Drop for Aegis256Key {
   fn drop(&mut self) {
@@ -897,9 +1130,13 @@ impl AsRef<[u8]> for Aegis256Tag {
 
 impl fmt::Debug for Aegis256Tag {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    f.debug_tuple("Aegis256Tag").field(&self.0).finish()
+    write!(f, "Aegis256Tag(")?;
+    crate::hex::fmt_hex_lower(&self.0, f)?;
+    write!(f, ")")
   }
 }
+
+impl_hex_fmt!(Aegis256Tag);
 
 // ---------------------------------------------------------------------------
 // AEAD
@@ -1101,16 +1338,29 @@ impl Aead for Aegis256 {
     let nonce = nonce.as_bytes();
 
     #[cfg(target_arch = "x86_64")]
-    if has_hw_aes() {
-      // SAFETY: has_hw_aes() confirmed AES-NI is available.
-      let tag = unsafe {
-        let mut s = ni::init(key, nonce);
-        ni::process_aad(&mut s, aad);
-        let msg_len = buffer.len();
-        ni::encrypt(&mut s, buffer);
-        ni::finalize(&mut s, aad.len(), msg_len)
-      };
-      return Aegis256Tag::from_bytes(tag);
+    {
+      if has_vaes() {
+        // SAFETY: has_vaes() confirmed VAES + AVX2 are available.
+        let tag = unsafe {
+          let mut s = ni_wide::init(key, nonce);
+          ni_wide::process_aad(&mut s, aad);
+          let msg_len = buffer.len();
+          ni_wide::encrypt(&mut s, buffer);
+          ni_wide::finalize(&mut s, aad.len(), msg_len)
+        };
+        return Aegis256Tag::from_bytes(tag);
+      }
+      if has_hw_aes() {
+        // SAFETY: has_hw_aes() confirmed AES-NI is available.
+        let tag = unsafe {
+          let mut s = ni::init(key, nonce);
+          ni::process_aad(&mut s, aad);
+          let msg_len = buffer.len();
+          ni::encrypt(&mut s, buffer);
+          ni::finalize(&mut s, aad.len(), msg_len)
+        };
+        return Aegis256Tag::from_bytes(tag);
+      }
     }
 
     #[cfg(target_arch = "aarch64")]
@@ -1153,7 +1403,16 @@ impl Aead for Aegis256 {
     let nonce = nonce.as_bytes();
 
     #[cfg(target_arch = "x86_64")]
-    let computed = if has_hw_aes() {
+    let computed = if has_vaes() {
+      // SAFETY: has_vaes() confirmed VAES + AVX2 are available.
+      unsafe {
+        let mut s = ni_wide::init(key, nonce);
+        ni_wide::process_aad(&mut s, aad);
+        let ct_len = buffer.len();
+        ni_wide::decrypt(&mut s, buffer);
+        ni_wide::finalize(&mut s, aad.len(), ct_len)
+      }
+    } else if has_hw_aes() {
       // SAFETY: has_hw_aes() confirmed AES-NI is available.
       unsafe {
         let mut s = ni::init(key, nonce);

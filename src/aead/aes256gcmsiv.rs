@@ -71,9 +71,26 @@ impl AsRef<[u8]> for Aes256GcmSivKey {
 
 impl fmt::Debug for Aes256GcmSivKey {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    f.debug_struct("Aes256GcmSivKey").finish_non_exhaustive()
+    f.write_str("Aes256GcmSivKey(****)")
   }
 }
+
+impl Aes256GcmSivKey {
+  /// Construct a key by filling bytes from the provided closure.
+  ///
+  /// ```ignore
+  /// let key = Aes256GcmSivKey::generate(|buf| getrandom::fill(buf).unwrap());
+  /// ```
+  #[inline]
+  #[must_use]
+  pub fn generate(fill: impl FnOnce(&mut [u8; Self::LENGTH])) -> Self {
+    let mut bytes = [0u8; Self::LENGTH];
+    fill(&mut bytes);
+    Self(bytes)
+  }
+}
+
+impl_hex_fmt_secret!(Aes256GcmSivKey);
 
 impl Drop for Aes256GcmSivKey {
   fn drop(&mut self) {
@@ -127,9 +144,13 @@ impl AsRef<[u8]> for Aes256GcmSivTag {
 
 impl fmt::Debug for Aes256GcmSivTag {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    f.debug_tuple("Aes256GcmSivTag").field(&self.0).finish()
+    write!(f, "Aes256GcmSivTag(")?;
+    crate::hex::fmt_hex_lower(&self.0, f)?;
+    write!(f, ")")
   }
 }
+
+impl_hex_fmt!(Aes256GcmSivTag);
 
 /// AES-256-GCM-SIV AEAD (RFC 8452).
 ///

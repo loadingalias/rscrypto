@@ -1,12 +1,13 @@
-//! Basic `rscrypto` usage across checksums, digests, MACs, KDFs, XOFs, fast hashes, and I/O
-//! adapters.
+//! Basic `rscrypto` usage across checksums, digests, MACs, KDFs, XOFs, fast hashes, AEAD,
+//! hex formatting, and I/O adapters.
 //!
 //! Run with: `cargo run --example basic`
 
 use std::io::{Cursor, Read, Write};
 
 use rscrypto::{
-  Blake3, Checksum, Crc32C, Digest, FastHash, HkdfSha256, HmacSha256, Mac, RapidHash, Sha256, Shake256, Xof, Xxh3,
+  Blake3, ChaCha20Poly1305, ChaCha20Poly1305Key, Checksum, Crc32C, Digest, Ed25519Keypair, Ed25519SecretKey, FastHash,
+  HkdfSha256, HmacSha256, Mac, RapidHash, Sha256, Shake256, Xof, Xxh3, aead::Nonce96,
 };
 
 fn main() -> std::io::Result<()> {
@@ -15,6 +16,9 @@ fn main() -> std::io::Result<()> {
   checksum_api();
   digest_api();
   auth_api();
+  aead_api();
+  hex_api();
+  serialization_api();
   xof_api();
   fast_hash_api();
   io_api()?;
@@ -102,6 +106,68 @@ fn auth_api() {
 
   println!("HMAC-SHA256 tag size = {} bytes", tag.len());
   println!("HKDF-SHA256 output   = {} bytes\n", okm.len());
+}
+
+/// AEAD: encrypt, authenticate, and decrypt with typed keys and nonces.
+fn aead_api() {
+  println!("--- AEAD ---\n");
+
+  let key = ChaCha20Poly1305Key::from_bytes([0x11; 32]);
+  let nonce = Nonce96::from_bytes([0x22; 12]);
+  let aead = ChaCha20Poly1305::new(&key);
+
+  let mut buf = *b"hello";
+  let tag = aead.encrypt_in_place(&nonce, b"", &mut buf);
+  assert_ne!(&buf, b"hello");
+  aead
+    .decrypt_in_place(&nonce, b"", &mut buf, &tag)
+    .expect("decrypt must succeed");
+  assert_eq!(&buf, b"hello");
+
+  println!("ChaCha20-Poly1305 round-trip OK");
+  println!("  tag = {tag}");
+  println!("  nonce = {nonce}\n");
+}
+
+/// Hex Display, FromStr, and secret key masking.
+fn hex_api() {
+  println!("--- Hex Formatting ---\n");
+
+  let nonce = Nonce96::from_bytes([0xab; 12]);
+  println!("Display:  {nonce}");
+  println!("LowerHex: {nonce:x}");
+  println!("UpperHex: {nonce:X}");
+  println!("Debug:    {nonce:?}");
+
+  let parsed: Nonce96 = "abababababababababababab".parse().unwrap();
+  assert_eq!(parsed, nonce);
+  println!("FromStr:  round-trip OK");
+
+  let key = ChaCha20Poly1305Key::from_bytes([0x42; 32]);
+  println!("\nSecret Debug: {key:?}");
+  println!("display_secret(): {}", key.display_secret());
+
+  let ed_sk = Ed25519SecretKey::from_bytes([7u8; 32]);
+  let kp = Ed25519Keypair::from_secret_key(ed_sk);
+  println!("\nEd25519 public key: {}", kp.public_key());
+  let sig = kp.sign(b"hello");
+  println!("Ed25519 signature:  {sig}");
+  println!();
+}
+
+/// Serialization via from_bytes / to_bytes / as_bytes.
+fn serialization_api() {
+  println!("--- Serialization ---\n");
+
+  let key = ChaCha20Poly1305Key::from_bytes([0x42; 32]);
+  let raw: [u8; 32] = key.to_bytes();
+  let restored = ChaCha20Poly1305Key::from_bytes(raw);
+  assert_eq!(key, restored);
+  println!("Key round-trip via to_bytes/from_bytes: OK");
+
+  let nonce = Nonce96::from_bytes([0xab; 12]);
+  assert_eq!(nonce, Nonce96::from_bytes(nonce.to_bytes()));
+  println!("Nonce round-trip: OK\n");
 }
 
 /// XOFs support both `new` → `update` → `finalize_xof` and `xof(data)`.

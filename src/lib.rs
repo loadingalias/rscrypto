@@ -117,6 +117,54 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
+//! ## Hex Encoding & Serialization
+//!
+//! Public types display as lowercase hex. Secret keys mask their `Debug` output
+//! and require explicit opt-in via `display_secret()`.
+//!
+//! ```rust
+//! use rscrypto::{ChaCha20Poly1305Key, aead::Nonce96};
+//!
+//! let nonce = Nonce96::from_bytes([0xab; 12]);
+//! assert_eq!(format!("{nonce}"), "abababababababababababab");
+//! assert_eq!(format!("{nonce:X}"), "ABABABABABABABABABABABAB");
+//! assert_eq!(format!("{nonce:?}"), "Nonce96(abababababababababababab)");
+//!
+//! let parsed: Nonce96 = "abababababababababababab".parse().unwrap();
+//! assert_eq!(parsed, nonce);
+//!
+//! let key = ChaCha20Poly1305Key::from_bytes([0x42; 32]);
+//! assert_eq!(format!("{key:?}"), "ChaCha20Poly1305Key(****)");
+//! let secret_hex = format!("{}", key.display_secret());
+//! assert!(secret_hex.starts_with("42"));
+//! ```
+//!
+//! ## Serialization
+//!
+//! All key, nonce, tag, and signature types round-trip through
+//! `from_bytes` / `to_bytes` / `as_bytes`:
+//!
+//! ```rust
+//! use rscrypto::ChaCha20Poly1305Key;
+//!
+//! let key = ChaCha20Poly1305Key::from_bytes([0x42; 32]);
+//! let raw: [u8; 32] = key.to_bytes();
+//! let restored = ChaCha20Poly1305Key::from_bytes(raw);
+//! assert_eq!(key, restored);
+//! ```
+//!
+//! ## Key & Nonce Generation
+//!
+//! Use `generate()` with any entropy source. The crate itself carries
+//! zero RNG dependencies — you bring your own CSPRNG:
+//!
+//! ```ignore
+//! use rscrypto::{ChaCha20Poly1305Key, aead::Nonce96};
+//!
+//! let key = ChaCha20Poly1305Key::generate(|buf| getrandom::fill(buf).unwrap());
+//! let nonce = Nonce96::generate(|buf| getrandom::fill(buf).unwrap());
+//! ```
+//!
 //! `rscrypto` keeps the shipping library inside this repository:
 //!
 //! - no C FFI
@@ -223,6 +271,9 @@ extern crate alloc;
 extern crate std;
 
 // Internal modules (not published as separate crates)
+#[macro_use]
+mod hex;
+
 #[cfg(feature = "aead")]
 pub mod aead;
 #[cfg(feature = "auth")]
@@ -261,6 +312,8 @@ pub use hashes::crypto::{
 };
 #[cfg(feature = "hashes")]
 pub use hashes::fast::{RapidHash, RapidHash128, RapidHashFast64, RapidHashFast128, Xxh3, Xxh3_128};
+// ─── Hex re-exports ──────────────────────────────────────────────────────
+pub use hex::{DisplaySecret, InvalidHexError};
 // ─── Trait re-exports ───────────────────────────────────────────────────────
 #[cfg(feature = "aead")]
 pub use traits::Aead;
