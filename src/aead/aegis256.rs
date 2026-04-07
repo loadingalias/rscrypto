@@ -192,8 +192,6 @@ mod ni {
 
   use super::{BLOCK_SIZE, C0, C1, KEY_SIZE, NONCE_SIZE, TAG_SIZE};
 
-  pub(super) type State = [__m128i; 6];
-
   #[inline(always)]
   unsafe fn load(bytes: &[u8; BLOCK_SIZE]) -> __m128i {
     _mm_loadu_si128(bytes.as_ptr().cast())
@@ -236,10 +234,20 @@ mod ni {
     _mm_xor_si128(_mm_xor_si128(s1, s4), _mm_xor_si128(s5, _mm_and_si128(s2, s3)))
   }
 
-  // ── Init ────────────────────────────────────────────────────────────────
+  // ── Fused encrypt/decrypt ───────────────────────────────────────────────
+  //
+  // Single `#[target_feature]` entry points that keep state in XMM registers
+  // from init through finalize, eliminating ~15 cycles of stack spills that
+  // occur when init/aad/encrypt/finalize are separate function calls.
 
   #[target_feature(enable = "aes,sse2")]
-  pub(super) unsafe fn init(key: &[u8; KEY_SIZE], nonce: &[u8; NONCE_SIZE]) -> State {
+  pub(super) unsafe fn encrypt_fused(
+    key: &[u8; KEY_SIZE],
+    nonce: &[u8; NONCE_SIZE],
+    aad: &[u8],
+    buffer: &mut [u8],
+  ) -> [u8; TAG_SIZE] {
+    // ── init ──
     let (kh0, kh1) = super::split_halves(key);
     let (nh0, nh1) = super::split_halves(nonce);
     let k0 = load(kh0);
@@ -248,19 +256,12 @@ mod ni {
     let n1 = load(nh1);
     let c0 = load(&C0);
     let c1 = load(&C1);
-
     let k0_xor_n0 = _mm_xor_si128(k0, n0);
     let k1_xor_n1 = _mm_xor_si128(k1, n1);
-
     let (mut s0, mut s1, mut s2, mut s3, mut s4, mut s5) = (
-      k0_xor_n0,
-      k1_xor_n1,
-      c1,
-      c0,
-      _mm_xor_si128(k0, c0),
-      _mm_xor_si128(k1, c1),
+      k0_xor_n0, k1_xor_n1, c1, c0,
+      _mm_xor_si128(k0, c0), _mm_xor_si128(k1, c1),
     );
-
     for _ in 0..4 {
       update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k0);
       update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k1);
@@ -268,60 +269,36 @@ mod ni {
       update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k1_xor_n1);
     }
 
-    [s0, s1, s2, s3, s4, s5]
-  }
-
-  // ── AAD ─────────────────────────────────────────────────────────────────
-
-  #[target_feature(enable = "aes,sse2")]
-  pub(super) unsafe fn process_aad(s: &mut State, aad: &[u8]) {
-    let (mut s0, mut s1, mut s2, mut s3, mut s4, mut s5) = (s[0], s[1], s[2], s[3], s[4], s[5]);
+    // ── aad ──
     let mut offset = 0usize;
-
     while offset.strict_add(BLOCK_SIZE) <= aad.len() {
       let block = _mm_loadu_si128(aad.as_ptr().add(offset).cast());
       update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, block);
       offset = offset.strict_add(BLOCK_SIZE);
     }
-
     if offset < aad.len() {
       let mut pad = [0u8; BLOCK_SIZE];
       pad[..aad.len().strict_sub(offset)].copy_from_slice(&aad[offset..]);
       update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, load(&pad));
     }
 
-    *s = [s0, s1, s2, s3, s4, s5];
-  }
-
-  // ── Encrypt (software-pipelined, 2-block unroll) ────────────────────────
-
-  #[target_feature(enable = "aes,sse2")]
-  pub(super) unsafe fn encrypt(s: &mut State, buffer: &mut [u8]) {
-    let (mut s0, mut s1, mut s2, mut s3, mut s4, mut s5) = (s[0], s[1], s[2], s[3], s[4], s[5]);
+    // ── encrypt ──
+    let msg_len = buffer.len();
     let ptr = buffer.as_mut_ptr();
     let len = buffer.len();
-    let mut offset = 0usize;
-
-    // 2-block unrolled pipeline: the OOO engine can overlap block B's load
-    // with block A's update, and block A's store with block B's keystream.
+    offset = 0;
     let two_blocks = BLOCK_SIZE.strict_mul(2);
     while offset.strict_add(two_blocks) <= len {
-      // Block A
       let z_a = keystream_regs(s1, s2, s3, s4, s5);
       let xi_a = _mm_loadu_si128(ptr.add(offset).cast());
       update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, xi_a);
       _mm_storeu_si128(ptr.add(offset).cast(), _mm_xor_si128(xi_a, z_a));
-
-      // Block B
       let z_b = keystream_regs(s1, s2, s3, s4, s5);
       let xi_b = _mm_loadu_si128(ptr.add(offset.strict_add(BLOCK_SIZE)).cast());
       update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, xi_b);
       _mm_storeu_si128(ptr.add(offset.strict_add(BLOCK_SIZE)).cast(), _mm_xor_si128(xi_b, z_b));
-
       offset = offset.strict_add(two_blocks);
     }
-
-    // Single remaining full block.
     if offset.strict_add(BLOCK_SIZE) <= len {
       let z = keystream_regs(s1, s2, s3, s4, s5);
       let xi = _mm_loadu_si128(ptr.add(offset).cast());
@@ -329,8 +306,6 @@ mod ni {
       _mm_storeu_si128(ptr.add(offset).cast(), _mm_xor_si128(xi, z));
       offset = offset.strict_add(BLOCK_SIZE);
     }
-
-    // Partial tail block.
     if offset < len {
       let z = keystream_regs(s1, s2, s3, s4, s5);
       let tail_len = len.strict_sub(offset);
@@ -343,38 +318,84 @@ mod ni {
       buffer[offset..].copy_from_slice(&ct_bytes[..tail_len]);
     }
 
-    *s = [s0, s1, s2, s3, s4, s5];
+    // ── finalize ──
+    let ad_bits = (aad.len() as u64).strict_mul(8);
+    let msg_bits = (msg_len as u64).strict_mul(8);
+    let len_block = _mm_set_epi64x(msg_bits as i64, ad_bits as i64);
+    let t = _mm_xor_si128(s3, len_block);
+    for _ in 0..7 {
+      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, t);
+    }
+    let tag_vec = _mm_xor_si128(
+      _mm_xor_si128(_mm_xor_si128(s0, s1), _mm_xor_si128(s2, s3)),
+      _mm_xor_si128(s4, s5),
+    );
+    let mut tag = [0u8; TAG_SIZE];
+    store(tag_vec, &mut tag);
+    tag
   }
 
-  // ── Decrypt (software-pipelined, 2-block unroll) ────────────────────────
-
   #[target_feature(enable = "aes,sse2")]
-  pub(super) unsafe fn decrypt(s: &mut State, buffer: &mut [u8]) {
-    let (mut s0, mut s1, mut s2, mut s3, mut s4, mut s5) = (s[0], s[1], s[2], s[3], s[4], s[5]);
+  pub(super) unsafe fn decrypt_fused(
+    key: &[u8; KEY_SIZE],
+    nonce: &[u8; NONCE_SIZE],
+    aad: &[u8],
+    buffer: &mut [u8],
+  ) -> [u8; TAG_SIZE] {
+    // ── init ──
+    let (kh0, kh1) = super::split_halves(key);
+    let (nh0, nh1) = super::split_halves(nonce);
+    let k0 = load(kh0);
+    let k1 = load(kh1);
+    let n0 = load(nh0);
+    let n1 = load(nh1);
+    let c0 = load(&C0);
+    let c1 = load(&C1);
+    let k0_xor_n0 = _mm_xor_si128(k0, n0);
+    let k1_xor_n1 = _mm_xor_si128(k1, n1);
+    let (mut s0, mut s1, mut s2, mut s3, mut s4, mut s5) = (
+      k0_xor_n0, k1_xor_n1, c1, c0,
+      _mm_xor_si128(k0, c0), _mm_xor_si128(k1, c1),
+    );
+    for _ in 0..4 {
+      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k0);
+      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k1);
+      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k0_xor_n0);
+      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k1_xor_n1);
+    }
+
+    // ── aad ──
+    let mut offset = 0usize;
+    while offset.strict_add(BLOCK_SIZE) <= aad.len() {
+      let block = _mm_loadu_si128(aad.as_ptr().add(offset).cast());
+      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, block);
+      offset = offset.strict_add(BLOCK_SIZE);
+    }
+    if offset < aad.len() {
+      let mut pad = [0u8; BLOCK_SIZE];
+      pad[..aad.len().strict_sub(offset)].copy_from_slice(&aad[offset..]);
+      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, load(&pad));
+    }
+
+    // ── decrypt ──
+    let ct_len = buffer.len();
     let ptr = buffer.as_mut_ptr();
     let len = buffer.len();
-    let mut offset = 0usize;
-
+    offset = 0;
     let two_blocks = BLOCK_SIZE.strict_mul(2);
     while offset.strict_add(two_blocks) <= len {
-      // Block A
       let z_a = keystream_regs(s1, s2, s3, s4, s5);
       let ci_a = _mm_loadu_si128(ptr.add(offset).cast());
       let xi_a = _mm_xor_si128(ci_a, z_a);
       update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, xi_a);
       _mm_storeu_si128(ptr.add(offset).cast(), xi_a);
-
-      // Block B
       let z_b = keystream_regs(s1, s2, s3, s4, s5);
       let ci_b = _mm_loadu_si128(ptr.add(offset.strict_add(BLOCK_SIZE)).cast());
       let xi_b = _mm_xor_si128(ci_b, z_b);
       update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, xi_b);
       _mm_storeu_si128(ptr.add(offset.strict_add(BLOCK_SIZE)).cast(), xi_b);
-
       offset = offset.strict_add(two_blocks);
     }
-
-    // Single remaining full block.
     if offset.strict_add(BLOCK_SIZE) <= len {
       let z = keystream_regs(s1, s2, s3, s4, s5);
       let ci = _mm_loadu_si128(ptr.add(offset).cast());
@@ -383,8 +404,6 @@ mod ni {
       _mm_storeu_si128(ptr.add(offset).cast(), xi);
       offset = offset.strict_add(BLOCK_SIZE);
     }
-
-    // Partial tail block.
     if offset < len {
       let z = keystream_regs(s1, s2, s3, s4, s5);
       let tail_len = len.strict_sub(offset);
@@ -400,24 +419,14 @@ mod ni {
       buffer[offset..].copy_from_slice(&pt_pad[..tail_len]);
     }
 
-    *s = [s0, s1, s2, s3, s4, s5];
-  }
-
-  // ── Finalize ────────────────────────────────────────────────────────────
-
-  #[target_feature(enable = "aes,sse2")]
-  pub(super) unsafe fn finalize(s: &mut State, ad_len: usize, msg_len: usize) -> [u8; TAG_SIZE] {
-    let (mut s0, mut s1, mut s2, mut s3, mut s4, mut s5) = (s[0], s[1], s[2], s[3], s[4], s[5]);
-
-    let ad_bits = (ad_len as u64).strict_mul(8);
-    let msg_bits = (msg_len as u64).strict_mul(8);
-    let len_block = _mm_set_epi64x(msg_bits as i64, ad_bits as i64);
+    // ── finalize ──
+    let ad_bits = (aad.len() as u64).strict_mul(8);
+    let ct_bits = (ct_len as u64).strict_mul(8);
+    let len_block = _mm_set_epi64x(ct_bits as i64, ad_bits as i64);
     let t = _mm_xor_si128(s3, len_block);
-
     for _ in 0..7 {
       update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, t);
     }
-
     let tag_vec = _mm_xor_si128(
       _mm_xor_si128(_mm_xor_si128(s0, s1), _mm_xor_si128(s2, s3)),
       _mm_xor_si128(s4, s5),
@@ -443,8 +452,6 @@ mod ce {
   use core::arch::aarch64::*;
 
   use super::{BLOCK_SIZE, C0, C1, KEY_SIZE, NONCE_SIZE, TAG_SIZE};
-
-  pub(super) type State = [uint8x16_t; 6];
 
   #[inline(always)]
   unsafe fn load(bytes: &[u8; BLOCK_SIZE]) -> uint8x16_t {
@@ -498,81 +505,53 @@ mod ce {
     veorq_u8(veorq_u8(s1, s4), veorq_u8(s5, vandq_u8(s2, s3)))
   }
 
-  // ── Init ────────────────────────────────────────────────────────────────
+  // ── Fused encrypt/decrypt ───────────────────────────────────────────────
 
   #[target_feature(enable = "aes,neon")]
-  pub(super) unsafe fn init(key: &[u8; KEY_SIZE], nonce: &[u8; NONCE_SIZE]) -> State {
+  pub(super) unsafe fn encrypt_fused(
+    key: &[u8; KEY_SIZE], nonce: &[u8; NONCE_SIZE], aad: &[u8], buffer: &mut [u8],
+  ) -> [u8; TAG_SIZE] {
     let (kh0, kh1) = super::split_halves(key);
     let (nh0, nh1) = super::split_halves(nonce);
-    let k0 = load(kh0);
-    let k1 = load(kh1);
-    let n0 = load(nh0);
-    let n1 = load(nh1);
-    let c0 = load(&C0);
-    let c1 = load(&C1);
-
+    let k0 = load(kh0); let k1 = load(kh1);
+    let n0 = load(nh0); let n1 = load(nh1);
+    let c0 = load(&C0); let c1 = load(&C1);
     let k0_xor_n0 = veorq_u8(k0, n0);
     let k1_xor_n1 = veorq_u8(k1, n1);
-
     let (mut s0, mut s1, mut s2, mut s3, mut s4, mut s5) =
       (k0_xor_n0, k1_xor_n1, c1, c0, veorq_u8(k0, c0), veorq_u8(k1, c1));
-
     for _ in 0..4 {
       update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k0);
       update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k1);
       update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k0_xor_n0);
       update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k1_xor_n1);
     }
-
-    [s0, s1, s2, s3, s4, s5]
-  }
-
-  // ── AAD ─────────────────────────────────────────────────────────────────
-
-  #[target_feature(enable = "aes,neon")]
-  pub(super) unsafe fn process_aad(s: &mut State, aad: &[u8]) {
-    let (mut s0, mut s1, mut s2, mut s3, mut s4, mut s5) = (s[0], s[1], s[2], s[3], s[4], s[5]);
     let mut offset = 0usize;
-
     while offset.strict_add(BLOCK_SIZE) <= aad.len() {
-      let block = vld1q_u8(aad.as_ptr().add(offset));
-      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, block);
+      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, vld1q_u8(aad.as_ptr().add(offset)));
       offset = offset.strict_add(BLOCK_SIZE);
     }
-
     if offset < aad.len() {
       let mut pad = [0u8; BLOCK_SIZE];
       pad[..aad.len().strict_sub(offset)].copy_from_slice(&aad[offset..]);
       update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, load(&pad));
     }
-
-    *s = [s0, s1, s2, s3, s4, s5];
-  }
-
-  // ── Encrypt (software-pipelined, 2-block unroll) ────────────────────────
-
-  #[target_feature(enable = "aes,neon")]
-  pub(super) unsafe fn encrypt(s: &mut State, buffer: &mut [u8]) {
-    let (mut s0, mut s1, mut s2, mut s3, mut s4, mut s5) = (s[0], s[1], s[2], s[3], s[4], s[5]);
+    let msg_len = buffer.len();
     let ptr = buffer.as_mut_ptr();
     let len = buffer.len();
-    let mut offset = 0usize;
-
+    offset = 0;
     let two_blocks = BLOCK_SIZE.strict_mul(2);
     while offset.strict_add(two_blocks) <= len {
       let z_a = keystream_regs(s1, s2, s3, s4, s5);
       let xi_a = vld1q_u8(ptr.add(offset));
       update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, xi_a);
       vst1q_u8(ptr.add(offset), veorq_u8(xi_a, z_a));
-
       let z_b = keystream_regs(s1, s2, s3, s4, s5);
       let xi_b = vld1q_u8(ptr.add(offset.strict_add(BLOCK_SIZE)));
       update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, xi_b);
       vst1q_u8(ptr.add(offset.strict_add(BLOCK_SIZE)), veorq_u8(xi_b, z_b));
-
       offset = offset.strict_add(two_blocks);
     }
-
     if offset.strict_add(BLOCK_SIZE) <= len {
       let z = keystream_regs(s1, s2, s3, s4, s5);
       let xi = vld1q_u8(ptr.add(offset));
@@ -580,7 +559,6 @@ mod ce {
       vst1q_u8(ptr.add(offset), veorq_u8(xi, z));
       offset = offset.strict_add(BLOCK_SIZE);
     }
-
     if offset < len {
       let z = keystream_regs(s1, s2, s3, s4, s5);
       let tail_len = len.strict_sub(offset);
@@ -592,19 +570,52 @@ mod ce {
       store(veorq_u8(xi, z), &mut ct_bytes);
       buffer[offset..].copy_from_slice(&ct_bytes[..tail_len]);
     }
-
-    *s = [s0, s1, s2, s3, s4, s5];
+    let ad_bits = (aad.len() as u64).strict_mul(8);
+    let msg_bits = (msg_len as u64).strict_mul(8);
+    let mut len_bytes = [0u8; BLOCK_SIZE];
+    len_bytes[..8].copy_from_slice(&ad_bits.to_le_bytes());
+    len_bytes[8..].copy_from_slice(&msg_bits.to_le_bytes());
+    let t = veorq_u8(s3, load(&len_bytes));
+    for _ in 0..7 { update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, t); }
+    let tag_vec = veorq_u8(veorq_u8(veorq_u8(s0, s1), veorq_u8(s2, s3)), veorq_u8(s4, s5));
+    let mut tag = [0u8; TAG_SIZE];
+    store(tag_vec, &mut tag);
+    tag
   }
 
-  // ── Decrypt (software-pipelined, 2-block unroll) ────────────────────────
-
   #[target_feature(enable = "aes,neon")]
-  pub(super) unsafe fn decrypt(s: &mut State, buffer: &mut [u8]) {
-    let (mut s0, mut s1, mut s2, mut s3, mut s4, mut s5) = (s[0], s[1], s[2], s[3], s[4], s[5]);
+  pub(super) unsafe fn decrypt_fused(
+    key: &[u8; KEY_SIZE], nonce: &[u8; NONCE_SIZE], aad: &[u8], buffer: &mut [u8],
+  ) -> [u8; TAG_SIZE] {
+    let (kh0, kh1) = super::split_halves(key);
+    let (nh0, nh1) = super::split_halves(nonce);
+    let k0 = load(kh0); let k1 = load(kh1);
+    let n0 = load(nh0); let n1 = load(nh1);
+    let c0 = load(&C0); let c1 = load(&C1);
+    let k0_xor_n0 = veorq_u8(k0, n0);
+    let k1_xor_n1 = veorq_u8(k1, n1);
+    let (mut s0, mut s1, mut s2, mut s3, mut s4, mut s5) =
+      (k0_xor_n0, k1_xor_n1, c1, c0, veorq_u8(k0, c0), veorq_u8(k1, c1));
+    for _ in 0..4 {
+      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k0);
+      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k1);
+      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k0_xor_n0);
+      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k1_xor_n1);
+    }
+    let mut offset = 0usize;
+    while offset.strict_add(BLOCK_SIZE) <= aad.len() {
+      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, vld1q_u8(aad.as_ptr().add(offset)));
+      offset = offset.strict_add(BLOCK_SIZE);
+    }
+    if offset < aad.len() {
+      let mut pad = [0u8; BLOCK_SIZE];
+      pad[..aad.len().strict_sub(offset)].copy_from_slice(&aad[offset..]);
+      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, load(&pad));
+    }
+    let ct_len = buffer.len();
     let ptr = buffer.as_mut_ptr();
     let len = buffer.len();
-    let mut offset = 0usize;
-
+    offset = 0;
     let two_blocks = BLOCK_SIZE.strict_mul(2);
     while offset.strict_add(two_blocks) <= len {
       let z_a = keystream_regs(s1, s2, s3, s4, s5);
@@ -612,25 +623,21 @@ mod ce {
       let xi_a = veorq_u8(ci_a, z_a);
       update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, xi_a);
       vst1q_u8(ptr.add(offset), xi_a);
-
       let z_b = keystream_regs(s1, s2, s3, s4, s5);
-      let ci_b = vld1q_u8(ptr.add(offset.strict_add(BLOCK_SIZE)) as *const u8);
+      let ci_b = vld1q_u8(ptr.add(offset.strict_add(BLOCK_SIZE)));
       let xi_b = veorq_u8(ci_b, z_b);
       update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, xi_b);
       vst1q_u8(ptr.add(offset.strict_add(BLOCK_SIZE)), xi_b);
-
       offset = offset.strict_add(two_blocks);
     }
-
     if offset.strict_add(BLOCK_SIZE) <= len {
       let z = keystream_regs(s1, s2, s3, s4, s5);
-      let ci = vld1q_u8(ptr.add(offset) as *const u8);
+      let ci = vld1q_u8(ptr.add(offset));
       let xi = veorq_u8(ci, z);
       update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, xi);
       vst1q_u8(ptr.add(offset), xi);
       offset = offset.strict_add(BLOCK_SIZE);
     }
-
     if offset < len {
       let z = keystream_regs(s1, s2, s3, s4, s5);
       let tail_len = len.strict_sub(offset);
@@ -639,34 +646,17 @@ mod ce {
       let mut z_bytes = [0u8; BLOCK_SIZE];
       store(z, &mut z_bytes);
       let mut pt_pad = [0u8; BLOCK_SIZE];
-      for i in 0..tail_len {
-        pt_pad[i] = pad[i] ^ z_bytes[i];
-      }
+      for i in 0..tail_len { pt_pad[i] = pad[i] ^ z_bytes[i]; }
       update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, load(&pt_pad));
       buffer[offset..].copy_from_slice(&pt_pad[..tail_len]);
     }
-
-    *s = [s0, s1, s2, s3, s4, s5];
-  }
-
-  // ── Finalize ────────────────────────────────────────────────────────────
-
-  #[target_feature(enable = "aes,neon")]
-  pub(super) unsafe fn finalize(s: &mut State, ad_len: usize, msg_len: usize) -> [u8; TAG_SIZE] {
-    let (mut s0, mut s1, mut s2, mut s3, mut s4, mut s5) = (s[0], s[1], s[2], s[3], s[4], s[5]);
-
-    let ad_bits = (ad_len as u64).strict_mul(8);
-    let msg_bits = (msg_len as u64).strict_mul(8);
+    let ad_bits = (aad.len() as u64).strict_mul(8);
+    let ct_bits = (ct_len as u64).strict_mul(8);
     let mut len_bytes = [0u8; BLOCK_SIZE];
     len_bytes[..8].copy_from_slice(&ad_bits.to_le_bytes());
-    len_bytes[8..].copy_from_slice(&msg_bits.to_le_bytes());
-    let len_block = load(&len_bytes);
-    let t = veorq_u8(s3, len_block);
-
-    for _ in 0..7 {
-      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, t);
-    }
-
+    len_bytes[8..].copy_from_slice(&ct_bits.to_le_bytes());
+    let t = veorq_u8(s3, load(&len_bytes));
+    for _ in 0..7 { update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, t); }
     let tag_vec = veorq_u8(veorq_u8(veorq_u8(s0, s1), veorq_u8(s2, s3)), veorq_u8(s4, s5));
     let mut tag = [0u8; TAG_SIZE];
     store(tag_vec, &mut tag);
@@ -684,8 +674,6 @@ mod ppc {
   use core::{arch::asm, simd::i64x2};
 
   use super::{BLOCK_SIZE, C0, C1, KEY_SIZE, NONCE_SIZE, TAG_SIZE};
-
-  pub(super) type State = [i64x2; 6];
 
   /// Load a 16-byte block into a POWER vector register (big-endian byte order).
   #[inline(always)]
@@ -775,66 +763,42 @@ mod ppc {
     xor_vec(xor_vec(s1, s4), xor_vec(s5, and_vec(s2, s3)))
   }
 
-  // ── Init ────────────────────────────────────────────────────────────────
+  // ── Fused encrypt/decrypt ───────────────────────────────────────────────
 
   #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
-  pub(super) unsafe fn init(key: &[u8; KEY_SIZE], nonce: &[u8; NONCE_SIZE]) -> State {
+  pub(super) unsafe fn encrypt_fused(
+    key: &[u8; KEY_SIZE], nonce: &[u8; NONCE_SIZE], aad: &[u8], buffer: &mut [u8],
+  ) -> [u8; TAG_SIZE] {
     let (kh0, kh1) = super::split_halves(key);
     let (nh0, nh1) = super::split_halves(nonce);
-    let k0 = load_be(kh0);
-    let k1 = load_be(kh1);
-    let n0 = load_be(nh0);
-    let n1 = load_be(nh1);
-    let c0 = load_be(&C0);
-    let c1 = load_be(&C1);
-
+    let k0 = load_be(kh0); let k1 = load_be(kh1);
+    let n0 = load_be(nh0); let n1 = load_be(nh1);
+    let c0 = load_be(&C0); let c1 = load_be(&C1);
     let k0_xor_n0 = xor_vec(k0, n0);
     let k1_xor_n1 = xor_vec(k1, n1);
-
     let (mut s0, mut s1, mut s2, mut s3, mut s4, mut s5) =
       (k0_xor_n0, k1_xor_n1, c1, c0, xor_vec(k0, c0), xor_vec(k1, c1));
-
     for _ in 0..4 {
       update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k0);
       update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k1);
       update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k0_xor_n0);
       update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k1_xor_n1);
     }
-
-    [s0, s1, s2, s3, s4, s5]
-  }
-
-  // ── AAD ─────────────────────────────────────────────────────────────────
-
-  #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
-  pub(super) unsafe fn process_aad(s: &mut State, aad: &[u8]) {
-    let (mut s0, mut s1, mut s2, mut s3, mut s4, mut s5) = (s[0], s[1], s[2], s[3], s[4], s[5]);
     let mut offset = 0usize;
-
     while offset.strict_add(BLOCK_SIZE) <= aad.len() {
       let mut tmp = [0u8; 16];
       tmp.copy_from_slice(&aad[offset..offset.strict_add(BLOCK_SIZE)]);
       update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, load_be(&tmp));
       offset = offset.strict_add(BLOCK_SIZE);
     }
-
     if offset < aad.len() {
       let mut pad = [0u8; BLOCK_SIZE];
       pad[..aad.len().strict_sub(offset)].copy_from_slice(&aad[offset..]);
       update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, load_be(&pad));
     }
-
-    *s = [s0, s1, s2, s3, s4, s5];
-  }
-
-  // ── Encrypt (software-pipelined, 2-block unroll) ────────────────────────
-
-  #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
-  pub(super) unsafe fn encrypt(s: &mut State, buffer: &mut [u8]) {
-    let (mut s0, mut s1, mut s2, mut s3, mut s4, mut s5) = (s[0], s[1], s[2], s[3], s[4], s[5]);
+    let msg_len = buffer.len();
     let len = buffer.len();
-    let mut offset = 0usize;
-
+    offset = 0;
     let two_blocks = BLOCK_SIZE.strict_mul(2);
     while offset.strict_add(two_blocks) <= len {
       let z_a = keystream_regs(s1, s2, s3, s4, s5);
@@ -844,7 +808,6 @@ mod ppc {
       update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, xi_a);
       store_be(xor_vec(xi_a, z_a), &mut tmp_a);
       buffer[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&tmp_a);
-
       let z_b = keystream_regs(s1, s2, s3, s4, s5);
       let off_b = offset.strict_add(BLOCK_SIZE);
       let mut tmp_b = [0u8; 16];
@@ -853,10 +816,8 @@ mod ppc {
       update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, xi_b);
       store_be(xor_vec(xi_b, z_b), &mut tmp_b);
       buffer[off_b..off_b.strict_add(BLOCK_SIZE)].copy_from_slice(&tmp_b);
-
       offset = offset.strict_add(two_blocks);
     }
-
     if offset.strict_add(BLOCK_SIZE) <= len {
       let z = keystream_regs(s1, s2, s3, s4, s5);
       let mut tmp = [0u8; 16];
@@ -867,7 +828,6 @@ mod ppc {
       buffer[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&tmp);
       offset = offset.strict_add(BLOCK_SIZE);
     }
-
     if offset < len {
       let z = keystream_regs(s1, s2, s3, s4, s5);
       let tail_len = len.strict_sub(offset);
@@ -879,54 +839,82 @@ mod ppc {
       store_be(xor_vec(xi, z), &mut ct_bytes);
       buffer[offset..].copy_from_slice(&ct_bytes[..tail_len]);
     }
-
-    *s = [s0, s1, s2, s3, s4, s5];
+    let ad_bits = (aad.len() as u64).strict_mul(8);
+    let msg_bits = (msg_len as u64).strict_mul(8);
+    let mut len_bytes = [0u8; BLOCK_SIZE];
+    len_bytes[..8].copy_from_slice(&ad_bits.to_le_bytes());
+    len_bytes[8..].copy_from_slice(&msg_bits.to_le_bytes());
+    let t = xor_vec(s3, load_be(&len_bytes));
+    for _ in 0..7 { update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, t); }
+    let tag_vec = xor_vec(xor_vec(xor_vec(s0, s1), xor_vec(s2, s3)), xor_vec(s4, s5));
+    let mut tag = [0u8; TAG_SIZE];
+    store_be(tag_vec, &mut tag);
+    tag
   }
 
-  // ── Decrypt (software-pipelined, 2-block unroll) ────────────────────────
-
   #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
-  pub(super) unsafe fn decrypt(s: &mut State, buffer: &mut [u8]) {
-    let (mut s0, mut s1, mut s2, mut s3, mut s4, mut s5) = (s[0], s[1], s[2], s[3], s[4], s[5]);
-    let len = buffer.len();
+  pub(super) unsafe fn decrypt_fused(
+    key: &[u8; KEY_SIZE], nonce: &[u8; NONCE_SIZE], aad: &[u8], buffer: &mut [u8],
+  ) -> [u8; TAG_SIZE] {
+    let (kh0, kh1) = super::split_halves(key);
+    let (nh0, nh1) = super::split_halves(nonce);
+    let k0 = load_be(kh0); let k1 = load_be(kh1);
+    let n0 = load_be(nh0); let n1 = load_be(nh1);
+    let c0 = load_be(&C0); let c1 = load_be(&C1);
+    let k0_xor_n0 = xor_vec(k0, n0);
+    let k1_xor_n1 = xor_vec(k1, n1);
+    let (mut s0, mut s1, mut s2, mut s3, mut s4, mut s5) =
+      (k0_xor_n0, k1_xor_n1, c1, c0, xor_vec(k0, c0), xor_vec(k1, c1));
+    for _ in 0..4 {
+      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k0);
+      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k1);
+      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k0_xor_n0);
+      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k1_xor_n1);
+    }
     let mut offset = 0usize;
-
+    while offset.strict_add(BLOCK_SIZE) <= aad.len() {
+      let mut tmp = [0u8; 16];
+      tmp.copy_from_slice(&aad[offset..offset.strict_add(BLOCK_SIZE)]);
+      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, load_be(&tmp));
+      offset = offset.strict_add(BLOCK_SIZE);
+    }
+    if offset < aad.len() {
+      let mut pad = [0u8; BLOCK_SIZE];
+      pad[..aad.len().strict_sub(offset)].copy_from_slice(&aad[offset..]);
+      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, load_be(&pad));
+    }
+    let ct_len = buffer.len();
+    let len = buffer.len();
+    offset = 0;
     let two_blocks = BLOCK_SIZE.strict_mul(2);
     while offset.strict_add(two_blocks) <= len {
       let z_a = keystream_regs(s1, s2, s3, s4, s5);
       let mut tmp_a = [0u8; 16];
       tmp_a.copy_from_slice(&buffer[offset..offset.strict_add(BLOCK_SIZE)]);
-      let ci_a = load_be(&tmp_a);
-      let xi_a = xor_vec(ci_a, z_a);
+      let xi_a = xor_vec(load_be(&tmp_a), z_a);
       update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, xi_a);
       store_be(xi_a, &mut tmp_a);
       buffer[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&tmp_a);
-
       let z_b = keystream_regs(s1, s2, s3, s4, s5);
       let off_b = offset.strict_add(BLOCK_SIZE);
       let mut tmp_b = [0u8; 16];
       tmp_b.copy_from_slice(&buffer[off_b..off_b.strict_add(BLOCK_SIZE)]);
-      let ci_b = load_be(&tmp_b);
-      let xi_b = xor_vec(ci_b, z_b);
+      let xi_b = xor_vec(load_be(&tmp_b), z_b);
       update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, xi_b);
       store_be(xi_b, &mut tmp_b);
       buffer[off_b..off_b.strict_add(BLOCK_SIZE)].copy_from_slice(&tmp_b);
-
       offset = offset.strict_add(two_blocks);
     }
-
     if offset.strict_add(BLOCK_SIZE) <= len {
       let z = keystream_regs(s1, s2, s3, s4, s5);
       let mut tmp = [0u8; 16];
       tmp.copy_from_slice(&buffer[offset..offset.strict_add(BLOCK_SIZE)]);
-      let ci = load_be(&tmp);
-      let xi = xor_vec(ci, z);
+      let xi = xor_vec(load_be(&tmp), z);
       update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, xi);
       store_be(xi, &mut tmp);
       buffer[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&tmp);
       offset = offset.strict_add(BLOCK_SIZE);
     }
-
     if offset < len {
       let z = keystream_regs(s1, s2, s3, s4, s5);
       let tail_len = len.strict_sub(offset);
@@ -935,34 +923,17 @@ mod ppc {
       let mut z_bytes = [0u8; BLOCK_SIZE];
       store_be(z, &mut z_bytes);
       let mut pt_pad = [0u8; BLOCK_SIZE];
-      for i in 0..tail_len {
-        pt_pad[i] = pad[i] ^ z_bytes[i];
-      }
+      for i in 0..tail_len { pt_pad[i] = pad[i] ^ z_bytes[i]; }
       update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, load_be(&pt_pad));
       buffer[offset..].copy_from_slice(&pt_pad[..tail_len]);
     }
-
-    *s = [s0, s1, s2, s3, s4, s5];
-  }
-
-  // ── Finalize ────────────────────────────────────────────────────────────
-
-  #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
-  pub(super) unsafe fn finalize(s: &mut State, ad_len: usize, msg_len: usize) -> [u8; TAG_SIZE] {
-    let (mut s0, mut s1, mut s2, mut s3, mut s4, mut s5) = (s[0], s[1], s[2], s[3], s[4], s[5]);
-
-    let ad_bits = (ad_len as u64).strict_mul(8);
-    let msg_bits = (msg_len as u64).strict_mul(8);
+    let ad_bits = (aad.len() as u64).strict_mul(8);
+    let ct_bits = (ct_len as u64).strict_mul(8);
     let mut len_bytes = [0u8; BLOCK_SIZE];
     len_bytes[..8].copy_from_slice(&ad_bits.to_le_bytes());
-    len_bytes[8..].copy_from_slice(&msg_bits.to_le_bytes());
-    let len_block = load_be(&len_bytes);
-    let t = xor_vec(s3, len_block);
-
-    for _ in 0..7 {
-      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, t);
-    }
-
+    len_bytes[8..].copy_from_slice(&ct_bits.to_le_bytes());
+    let t = xor_vec(s3, load_be(&len_bytes));
+    for _ in 0..7 { update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, t); }
     let tag_vec = xor_vec(xor_vec(xor_vec(s0, s1), xor_vec(s2, s3)), xor_vec(s4, s5));
     let mut tag = [0u8; TAG_SIZE];
     store_be(tag_vec, &mut tag);
@@ -1351,39 +1322,20 @@ impl Aead for Aegis256 {
     #[cfg(target_arch = "x86_64")]
     if has_hw_aes() {
       // SAFETY: has_hw_aes() confirmed AES-NI is available.
-      let tag = unsafe {
-        let mut s = ni::init(key, nonce);
-        ni::process_aad(&mut s, aad);
-        let msg_len = buffer.len();
-        ni::encrypt(&mut s, buffer);
-        ni::finalize(&mut s, aad.len(), msg_len)
-      };
+      // Fused path keeps state in XMM registers from init through finalize.
+      let tag = unsafe { ni::encrypt_fused(key, nonce, aad, buffer) };
       return Aegis256Tag::from_bytes(tag);
     }
 
     #[cfg(target_arch = "aarch64")]
     if has_hw_aes() {
-      // SAFETY: has_hw_aes() confirmed AES-CE is available.
-      let tag = unsafe {
-        let mut s = ce::init(key, nonce);
-        ce::process_aad(&mut s, aad);
-        let msg_len = buffer.len();
-        ce::encrypt(&mut s, buffer);
-        ce::finalize(&mut s, aad.len(), msg_len)
-      };
+      let tag = unsafe { ce::encrypt_fused(key, nonce, aad, buffer) };
       return Aegis256Tag::from_bytes(tag);
     }
 
     #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
     if has_hw_aes() {
-      // SAFETY: has_hw_aes() confirmed POWER8 crypto is available.
-      let tag = unsafe {
-        let mut s = ppc::init(key, nonce);
-        ppc::process_aad(&mut s, aad);
-        let msg_len = buffer.len();
-        ppc::encrypt(&mut s, buffer);
-        ppc::finalize(&mut s, aad.len(), msg_len)
-      };
+      let tag = unsafe { ppc::encrypt_fused(key, nonce, aad, buffer) };
       return Aegis256Tag::from_bytes(tag);
     }
 
@@ -1403,42 +1355,22 @@ impl Aead for Aegis256 {
     #[cfg(target_arch = "x86_64")]
     let computed = if has_hw_aes() {
       // SAFETY: has_hw_aes() confirmed AES-NI is available.
-      // See encrypt_in_place for why VAES-256 is not dispatched.
-      unsafe {
-        let mut s = ni::init(key, nonce);
-        ni::process_aad(&mut s, aad);
-        let ct_len = buffer.len();
-        ni::decrypt(&mut s, buffer);
-        ni::finalize(&mut s, aad.len(), ct_len)
-      }
+      // Fused path keeps state in XMM registers from init through finalize.
+      unsafe { ni::decrypt_fused(key, nonce, aad, buffer) }
     } else {
       decrypt_portable(key, nonce, aad, buffer)
     };
 
     #[cfg(target_arch = "aarch64")]
     let computed = if has_hw_aes() {
-      // SAFETY: has_hw_aes() confirmed AES-CE is available.
-      unsafe {
-        let mut s = ce::init(key, nonce);
-        ce::process_aad(&mut s, aad);
-        let ct_len = buffer.len();
-        ce::decrypt(&mut s, buffer);
-        ce::finalize(&mut s, aad.len(), ct_len)
-      }
+      unsafe { ce::decrypt_fused(key, nonce, aad, buffer) }
     } else {
       decrypt_portable(key, nonce, aad, buffer)
     };
 
     #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
     let computed = if has_hw_aes() {
-      // SAFETY: has_hw_aes() confirmed POWER8 crypto is available.
-      unsafe {
-        let mut s = ppc::init(key, nonce);
-        ppc::process_aad(&mut s, aad);
-        let ct_len = buffer.len();
-        ppc::decrypt(&mut s, buffer);
-        ppc::finalize(&mut s, aad.len(), ct_len)
-      }
+      unsafe { ppc::decrypt_fused(key, nonce, aad, buffer) }
     } else {
       decrypt_portable(key, nonce, aad, buffer)
     };
