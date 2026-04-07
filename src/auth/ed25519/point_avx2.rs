@@ -559,8 +559,8 @@ impl ExtendedPointIfma {
     let ab = self.0.shuffle(Shuffle::ABAB);
     let ba = ab.shuffle(Shuffle::BADC);
     let xy_sum = ab.add(&ba);
-    // No reduce needed: square_wide() accepts 52-bit inputs via
-    // double-accumulate for cross terms (no pre-doubling overflow).
+    // No reduce needed: square_and_negate_d_wide() accepts 52-bit inputs
+    // via double-accumulate for cross terms (no pre-doubling overflow).
     // Lanes A,B,C (X,Y,Z) are ≤51 bits from prior mul/square;
     // lane D (X+Y) is ≤52 bits. All within IFMA's window.
     let prepared = self.0.blend(&xy_sum, Lanes::D);

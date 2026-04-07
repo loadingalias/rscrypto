@@ -1300,7 +1300,7 @@ impl FieldElement51x4 {
 
   /// Square (51-bit inputs, pre-doubled cross terms). Retained for testing.
   ///
-  /// Production code uses `square_wide()` which accepts 52-bit inputs.
+  /// Production code uses `square_and_negate_d_wide()` which accepts 52-bit inputs.
   #[cfg(test)]
   /// Inputs with 52-bit limbs would overflow to 53 bits after pre-doubling.
   ///
@@ -1403,8 +1403,7 @@ impl FieldElement51x4 {
 
   /// Square 52-bit inputs, returning 5 folded limbs before reduction.
   ///
-  /// Shared helper for [`square_wide`](Self::square_wide) and
-  /// [`square_and_negate_d_wide`](Self::square_and_negate_d_wide).
+  /// Shared helper for [`square_and_negate_d_wide`](Self::square_and_negate_d_wide).
   /// Performs the IFMA schoolbook, lo+hi recombination, and ×19 fold,
   /// returning the 5 combined limbs ready for optional D-lane negation
   /// and final carry propagation via `reduce()`.
@@ -1517,22 +1516,6 @@ impl FieldElement51x4 {
       _mm256_add_epi64(z3, z8_19),
       _mm256_add_epi64(z4, z9_19),
     ]
-  }
-
-  /// Square accepting 52-bit inputs via double-accumulate for cross terms.
-  ///
-  /// Delegates to [`square_wide_fold`](Self::square_wide_fold) and reduces.
-  /// Production code uses `square_and_negate_d_wide` directly; retained for
-  /// differential testing.
-  ///
-  /// # Safety
-  ///
-  /// Caller must ensure AVX-512 IFMA + VL are available.
-  #[cfg(test)]
-  #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
-  #[allow(unsafe_op_in_unsafe_fn)]
-  pub(crate) unsafe fn square_wide(&self) -> Self {
-    Self(self.square_wide_fold()).reduce()
   }
 
   /// Square 52-bit inputs and negate lane D in the accumulator domain.
