@@ -576,25 +576,23 @@ impl ExtendedPointIfma {
     tmp = tmp.add(&s1);
     let s2_in_ad = zero.blend(&s2, Lanes::AD);
     tmp = tmp.add(&s2_in_ad);
-    let neg_s2 = s2.negate_lazy();
+    // Pre-reduce neg_s2 so S8 stays ≤53 bits without a serial reduce on
+    // the full tmp vector. The reduce (~18c) overlaps with tmp building
+    // (~8c), hiding most of its latency.
+    //
+    // Bound analysis (sq output: all lanes ≤51 bits from u64-domain negation):
+    //   neg_s2_reduced: ≤51 bits (reduce output)
+    //   S5 = S1+S2                    (A): ≤52 bits
+    //   S6 = S1+neg_s2_reduced        (B): ≤51+51 = 52 bits
+    //   S8 = S1+2S3+neg_s2_reduced    (C): ≤51+52+51 = 53 bits
+    //   S9 = S1+S2+(−S4)              (D): ≤51+51+51 = 52.6 bits
+    let neg_s2 = s2.negate_lazy().reduce();
     let neg_s2_in_bc = zero.blend(&neg_s2, Lanes::BC);
-    // No reduce needed: square_and_negate_d_wide() negates D in the u64
-    // accumulator domain (p×2^10 bias), so −S4 emerges at ≤51 bits.
-    //
-    // Bound analysis (all lanes from ≤51-bit sq output):
-    //   S5 = S1+S2           (A): ≤52 bits
-    //   S6 = S1+neg(S2)      (B): ≤51+52 = 52.6 bits
-    //   S8 = S1+2S3+neg(S2)  (C): ≤51+52+52 = 53.3 bits (2-bit overflow)
-    //   S9 = S1+S2+(−S4)     (D): ≤51+51+51 = 52.6 bits
-    //
-    // mul_wide_unreduced handles self ≤54 bits (S8 in t0) × rhs ≤53 bits
-    // (S6/S9 in t1) via 2-bit f_hi decomposition — zero critical-path
-    // latency overhead vs the 18-cycle serial reduce it replaces.
     let tmp = tmp.add(&neg_s2_in_bc);
 
-    let t0 = tmp.shuffle(Shuffle::CACA); // (S8, S5, S8, S5) — self ≤54 bits
-    let t1 = tmp.shuffle(Shuffle::DBBD); // (S9, S6, S6, S9) — rhs ≤53 bits
-    Self(t0.mul_wide_unreduced(&t1))
+    let t0 = tmp.shuffle(Shuffle::CACA);
+    let t1 = tmp.shuffle(Shuffle::DBBD);
+    Self(t0.mul_unreduced(&t1))
   }
 }
 
