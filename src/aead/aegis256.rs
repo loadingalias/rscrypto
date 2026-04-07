@@ -259,8 +259,12 @@ mod ni {
     let k0_xor_n0 = _mm_xor_si128(k0, n0);
     let k1_xor_n1 = _mm_xor_si128(k1, n1);
     let (mut s0, mut s1, mut s2, mut s3, mut s4, mut s5) = (
-      k0_xor_n0, k1_xor_n1, c1, c0,
-      _mm_xor_si128(k0, c0), _mm_xor_si128(k1, c1),
+      k0_xor_n0,
+      k1_xor_n1,
+      c1,
+      c0,
+      _mm_xor_si128(k0, c0),
+      _mm_xor_si128(k1, c1),
     );
     for _ in 0..4 {
       update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k0);
@@ -354,8 +358,12 @@ mod ni {
     let k0_xor_n0 = _mm_xor_si128(k0, n0);
     let k1_xor_n1 = _mm_xor_si128(k1, n1);
     let (mut s0, mut s1, mut s2, mut s3, mut s4, mut s5) = (
-      k0_xor_n0, k1_xor_n1, c1, c0,
-      _mm_xor_si128(k0, c0), _mm_xor_si128(k1, c1),
+      k0_xor_n0,
+      k1_xor_n1,
+      c1,
+      c0,
+      _mm_xor_si128(k0, c0),
+      _mm_xor_si128(k1, c1),
     );
     for _ in 0..4 {
       update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k0);
@@ -509,13 +517,19 @@ mod ce {
 
   #[target_feature(enable = "aes,neon")]
   pub(super) unsafe fn encrypt_fused(
-    key: &[u8; KEY_SIZE], nonce: &[u8; NONCE_SIZE], aad: &[u8], buffer: &mut [u8],
+    key: &[u8; KEY_SIZE],
+    nonce: &[u8; NONCE_SIZE],
+    aad: &[u8],
+    buffer: &mut [u8],
   ) -> [u8; TAG_SIZE] {
     let (kh0, kh1) = super::split_halves(key);
     let (nh0, nh1) = super::split_halves(nonce);
-    let k0 = load(kh0); let k1 = load(kh1);
-    let n0 = load(nh0); let n1 = load(nh1);
-    let c0 = load(&C0); let c1 = load(&C1);
+    let k0 = load(kh0);
+    let k1 = load(kh1);
+    let n0 = load(nh0);
+    let n1 = load(nh1);
+    let c0 = load(&C0);
+    let c1 = load(&C1);
     let k0_xor_n0 = veorq_u8(k0, n0);
     let k1_xor_n1 = veorq_u8(k1, n1);
     let (mut s0, mut s1, mut s2, mut s3, mut s4, mut s5) =
@@ -528,7 +542,15 @@ mod ce {
     }
     let mut offset = 0usize;
     while offset.strict_add(BLOCK_SIZE) <= aad.len() {
-      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, vld1q_u8(aad.as_ptr().add(offset)));
+      update_regs(
+        &mut s0,
+        &mut s1,
+        &mut s2,
+        &mut s3,
+        &mut s4,
+        &mut s5,
+        vld1q_u8(aad.as_ptr().add(offset)),
+      );
       offset = offset.strict_add(BLOCK_SIZE);
     }
     if offset < aad.len() {
@@ -576,7 +598,9 @@ mod ce {
     len_bytes[..8].copy_from_slice(&ad_bits.to_le_bytes());
     len_bytes[8..].copy_from_slice(&msg_bits.to_le_bytes());
     let t = veorq_u8(s3, load(&len_bytes));
-    for _ in 0..7 { update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, t); }
+    for _ in 0..7 {
+      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, t);
+    }
     let tag_vec = veorq_u8(veorq_u8(veorq_u8(s0, s1), veorq_u8(s2, s3)), veorq_u8(s4, s5));
     let mut tag = [0u8; TAG_SIZE];
     store(tag_vec, &mut tag);
@@ -585,13 +609,19 @@ mod ce {
 
   #[target_feature(enable = "aes,neon")]
   pub(super) unsafe fn decrypt_fused(
-    key: &[u8; KEY_SIZE], nonce: &[u8; NONCE_SIZE], aad: &[u8], buffer: &mut [u8],
+    key: &[u8; KEY_SIZE],
+    nonce: &[u8; NONCE_SIZE],
+    aad: &[u8],
+    buffer: &mut [u8],
   ) -> [u8; TAG_SIZE] {
     let (kh0, kh1) = super::split_halves(key);
     let (nh0, nh1) = super::split_halves(nonce);
-    let k0 = load(kh0); let k1 = load(kh1);
-    let n0 = load(nh0); let n1 = load(nh1);
-    let c0 = load(&C0); let c1 = load(&C1);
+    let k0 = load(kh0);
+    let k1 = load(kh1);
+    let n0 = load(nh0);
+    let n1 = load(nh1);
+    let c0 = load(&C0);
+    let c1 = load(&C1);
     let k0_xor_n0 = veorq_u8(k0, n0);
     let k1_xor_n1 = veorq_u8(k1, n1);
     let (mut s0, mut s1, mut s2, mut s3, mut s4, mut s5) =
@@ -604,7 +634,15 @@ mod ce {
     }
     let mut offset = 0usize;
     while offset.strict_add(BLOCK_SIZE) <= aad.len() {
-      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, vld1q_u8(aad.as_ptr().add(offset)));
+      update_regs(
+        &mut s0,
+        &mut s1,
+        &mut s2,
+        &mut s3,
+        &mut s4,
+        &mut s5,
+        vld1q_u8(aad.as_ptr().add(offset)),
+      );
       offset = offset.strict_add(BLOCK_SIZE);
     }
     if offset < aad.len() {
@@ -646,7 +684,9 @@ mod ce {
       let mut z_bytes = [0u8; BLOCK_SIZE];
       store(z, &mut z_bytes);
       let mut pt_pad = [0u8; BLOCK_SIZE];
-      for i in 0..tail_len { pt_pad[i] = pad[i] ^ z_bytes[i]; }
+      for i in 0..tail_len {
+        pt_pad[i] = pad[i] ^ z_bytes[i];
+      }
       update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, load(&pt_pad));
       buffer[offset..].copy_from_slice(&pt_pad[..tail_len]);
     }
@@ -656,7 +696,9 @@ mod ce {
     len_bytes[..8].copy_from_slice(&ad_bits.to_le_bytes());
     len_bytes[8..].copy_from_slice(&ct_bits.to_le_bytes());
     let t = veorq_u8(s3, load(&len_bytes));
-    for _ in 0..7 { update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, t); }
+    for _ in 0..7 {
+      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, t);
+    }
     let tag_vec = veorq_u8(veorq_u8(veorq_u8(s0, s1), veorq_u8(s2, s3)), veorq_u8(s4, s5));
     let mut tag = [0u8; TAG_SIZE];
     store(tag_vec, &mut tag);
@@ -767,13 +809,19 @@ mod ppc {
 
   #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
   pub(super) unsafe fn encrypt_fused(
-    key: &[u8; KEY_SIZE], nonce: &[u8; NONCE_SIZE], aad: &[u8], buffer: &mut [u8],
+    key: &[u8; KEY_SIZE],
+    nonce: &[u8; NONCE_SIZE],
+    aad: &[u8],
+    buffer: &mut [u8],
   ) -> [u8; TAG_SIZE] {
     let (kh0, kh1) = super::split_halves(key);
     let (nh0, nh1) = super::split_halves(nonce);
-    let k0 = load_be(kh0); let k1 = load_be(kh1);
-    let n0 = load_be(nh0); let n1 = load_be(nh1);
-    let c0 = load_be(&C0); let c1 = load_be(&C1);
+    let k0 = load_be(kh0);
+    let k1 = load_be(kh1);
+    let n0 = load_be(nh0);
+    let n1 = load_be(nh1);
+    let c0 = load_be(&C0);
+    let c1 = load_be(&C1);
     let k0_xor_n0 = xor_vec(k0, n0);
     let k1_xor_n1 = xor_vec(k1, n1);
     let (mut s0, mut s1, mut s2, mut s3, mut s4, mut s5) =
@@ -845,7 +893,9 @@ mod ppc {
     len_bytes[..8].copy_from_slice(&ad_bits.to_le_bytes());
     len_bytes[8..].copy_from_slice(&msg_bits.to_le_bytes());
     let t = xor_vec(s3, load_be(&len_bytes));
-    for _ in 0..7 { update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, t); }
+    for _ in 0..7 {
+      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, t);
+    }
     let tag_vec = xor_vec(xor_vec(xor_vec(s0, s1), xor_vec(s2, s3)), xor_vec(s4, s5));
     let mut tag = [0u8; TAG_SIZE];
     store_be(tag_vec, &mut tag);
@@ -854,13 +904,19 @@ mod ppc {
 
   #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
   pub(super) unsafe fn decrypt_fused(
-    key: &[u8; KEY_SIZE], nonce: &[u8; NONCE_SIZE], aad: &[u8], buffer: &mut [u8],
+    key: &[u8; KEY_SIZE],
+    nonce: &[u8; NONCE_SIZE],
+    aad: &[u8],
+    buffer: &mut [u8],
   ) -> [u8; TAG_SIZE] {
     let (kh0, kh1) = super::split_halves(key);
     let (nh0, nh1) = super::split_halves(nonce);
-    let k0 = load_be(kh0); let k1 = load_be(kh1);
-    let n0 = load_be(nh0); let n1 = load_be(nh1);
-    let c0 = load_be(&C0); let c1 = load_be(&C1);
+    let k0 = load_be(kh0);
+    let k1 = load_be(kh1);
+    let n0 = load_be(nh0);
+    let n1 = load_be(nh1);
+    let c0 = load_be(&C0);
+    let c1 = load_be(&C1);
     let k0_xor_n0 = xor_vec(k0, n0);
     let k1_xor_n1 = xor_vec(k1, n1);
     let (mut s0, mut s1, mut s2, mut s3, mut s4, mut s5) =
@@ -923,7 +979,9 @@ mod ppc {
       let mut z_bytes = [0u8; BLOCK_SIZE];
       store_be(z, &mut z_bytes);
       let mut pt_pad = [0u8; BLOCK_SIZE];
-      for i in 0..tail_len { pt_pad[i] = pad[i] ^ z_bytes[i]; }
+      for i in 0..tail_len {
+        pt_pad[i] = pad[i] ^ z_bytes[i];
+      }
       update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, load_be(&pt_pad));
       buffer[offset..].copy_from_slice(&pt_pad[..tail_len]);
     }
@@ -933,7 +991,9 @@ mod ppc {
     len_bytes[..8].copy_from_slice(&ad_bits.to_le_bytes());
     len_bytes[8..].copy_from_slice(&ct_bits.to_le_bytes());
     let t = xor_vec(s3, load_be(&len_bytes));
-    for _ in 0..7 { update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, t); }
+    for _ in 0..7 {
+      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, t);
+    }
     let tag_vec = xor_vec(xor_vec(xor_vec(s0, s1), xor_vec(s2, s3)), xor_vec(s4, s5));
     let mut tag = [0u8; TAG_SIZE];
     store_be(tag_vec, &mut tag);
@@ -1329,12 +1389,14 @@ impl Aead for Aegis256 {
 
     #[cfg(target_arch = "aarch64")]
     if has_hw_aes() {
+      // SAFETY: has_hw_aes() confirmed AES-CE is available.
       let tag = unsafe { ce::encrypt_fused(key, nonce, aad, buffer) };
       return Aegis256Tag::from_bytes(tag);
     }
 
     #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
     if has_hw_aes() {
+      // SAFETY: has_hw_aes() confirmed POWER8 crypto is available.
       let tag = unsafe { ppc::encrypt_fused(key, nonce, aad, buffer) };
       return Aegis256Tag::from_bytes(tag);
     }
@@ -1363,6 +1425,7 @@ impl Aead for Aegis256 {
 
     #[cfg(target_arch = "aarch64")]
     let computed = if has_hw_aes() {
+      // SAFETY: has_hw_aes() confirmed AES-CE is available.
       unsafe { ce::decrypt_fused(key, nonce, aad, buffer) }
     } else {
       decrypt_portable(key, nonce, aad, buffer)
@@ -1370,6 +1433,7 @@ impl Aead for Aegis256 {
 
     #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
     let computed = if has_hw_aes() {
+      // SAFETY: has_hw_aes() confirmed POWER8 crypto is available.
       unsafe { ppc::decrypt_fused(key, nonce, aad, buffer) }
     } else {
       decrypt_portable(key, nonce, aad, buffer)
