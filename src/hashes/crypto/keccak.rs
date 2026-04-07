@@ -519,13 +519,11 @@ fn keccakf_absorb_portable<const RATE: usize>(state: &mut [u64; 25], block: &[u8
 fn absorb_and_permute<const RATE: usize>(state: &mut [u64; 25], block: &[u8; RATE]) {
   #[cfg(target_arch = "aarch64")]
   {
-    use crate::platform::caps::aarch64 as aarch64_caps;
-    if crate::platform::caps().has(aarch64_caps::SHA3) {
-      xor_block_into::<RATE>(state, block);
-      aarch64::keccakf_aarch64_sha3_single(state);
-    } else {
-      keccakf_absorb_portable::<RATE>(state, block);
-    }
+    // Always use the fused portable path on aarch64. The single-state SHA3
+    // CE kernel is ~1.8× slower than portable on Neoverse V1/V2 (Graviton3/4)
+    // due to half-utilized 128-bit lanes. SHA3 CE is only beneficial for the
+    // 2-state interleaved path (permute_x2).
+    keccakf_absorb_portable::<RATE>(state, block);
   }
   #[cfg(not(target_arch = "aarch64"))]
   {
@@ -590,14 +588,14 @@ impl Permuter for InlinePermuter {
   }
 }
 
-/// aarch64 permuter: SHA3 CE for single-state and 2-state interleaved when
-/// available, portable scalar fallback otherwise.
+/// aarch64 permuter: portable scalar for single-state, SHA3 CE for 2-state
+/// interleaved (`permute_x2`) when available.
 ///
-/// The single-state NEON kernel loads each lane via `vdupq_n_u64` and runs
-/// 24 rounds through the shared SHA3 CE macro (EOR3/RAX1/XAR/BCAX). Both
-/// elements of each `uint64x2_t` carry the same data, so lane 0 produces
-/// the correct result. The 2-state kernel packs two independent states
-/// lane-wise for ~2× aggregate throughput.
+/// The single-state SHA3 CE kernel is ~1.8× slower than portable on Neoverse
+/// V1/V2 (Graviton3/4) — duplicating each u64 into both lanes of uint64x2_t
+/// wastes half the SIMD bandwidth and incurs GPR↔NEON crossing penalties.
+/// The 2-state kernel packs two independent states lane-wise for ~2× aggregate
+/// throughput, making SHA3 CE worthwhile only for parallel operations.
 #[cfg(target_arch = "aarch64")]
 #[derive(Clone, Copy)]
 pub(crate) struct Aarch64Permuter {
@@ -621,11 +619,9 @@ impl Default for Aarch64Permuter {
 impl Permuter for Aarch64Permuter {
   #[inline(always)]
   fn permute(self, state: &mut [u64; 25], _len_hint: usize) {
-    if self.has_sha3 {
-      aarch64::keccakf_aarch64_sha3_single(state);
-    } else {
-      keccakf_portable(state);
-    }
+    // Always portable for single-state — SHA3 CE single-state is ~1.8× slower
+    // on Neoverse V1/V2 (see module-level comment).
+    keccakf_portable(state);
   }
 
   #[inline(always)]

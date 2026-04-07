@@ -58,9 +58,26 @@ impl AsRef<[u8]> for XChaCha20Poly1305Key {
 
 impl fmt::Debug for XChaCha20Poly1305Key {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    f.debug_struct("XChaCha20Poly1305Key").finish_non_exhaustive()
+    f.write_str("XChaCha20Poly1305Key(****)")
   }
 }
+
+impl XChaCha20Poly1305Key {
+  /// Construct a key by filling bytes from the provided closure.
+  ///
+  /// ```ignore
+  /// let key = XChaCha20Poly1305Key::generate(|buf| getrandom::fill(buf).unwrap());
+  /// ```
+  #[inline]
+  #[must_use]
+  pub fn generate(fill: impl FnOnce(&mut [u8; Self::LENGTH])) -> Self {
+    let mut bytes = [0u8; Self::LENGTH];
+    fill(&mut bytes);
+    Self(bytes)
+  }
+}
+
+impl_hex_fmt_secret!(XChaCha20Poly1305Key);
 
 impl Drop for XChaCha20Poly1305Key {
   fn drop(&mut self) {
@@ -114,9 +131,13 @@ impl AsRef<[u8]> for XChaCha20Poly1305Tag {
 
 impl fmt::Debug for XChaCha20Poly1305Tag {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    f.debug_tuple("XChaCha20Poly1305Tag").field(&self.0).finish()
+    write!(f, "XChaCha20Poly1305Tag(")?;
+    crate::hex::fmt_hex_lower(&self.0, f)?;
+    write!(f, ")")
   }
 }
+
+impl_hex_fmt!(XChaCha20Poly1305Tag);
 
 /// Portable XChaCha20-Poly1305 AEAD.
 #[derive(Clone)]

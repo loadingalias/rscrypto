@@ -143,7 +143,7 @@ macro_rules! keccakf_sha3_neon_round {
 /// # Safety
 ///
 /// Caller must ensure `sha3` target feature is available.
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "aarch64", test))]
 #[target_feature(enable = "sha3")]
 unsafe fn keccakf_sha3_single_impl(state: &mut [u64; 25]) {
   let mut a0 = vdupq_n_u64(state[0]);
@@ -209,7 +209,9 @@ unsafe fn keccakf_sha3_single_impl(state: &mut [u64; 25]) {
 /// Permute a single Keccak-f[1600] state using SHA3 Crypto Extensions.
 ///
 /// Requires `aarch64::SHA3` capability (verified by dispatch before calling).
-#[cfg(target_arch = "aarch64")]
+/// Not used in production (1.8× slower than portable on Neoverse V1/V2),
+/// retained for kernel correctness testing only.
+#[cfg(all(target_arch = "aarch64", test))]
 #[inline]
 pub(crate) fn keccakf_aarch64_sha3_single(state: &mut [u64; 25]) {
   // SAFETY: Dispatch verifies aarch64::SHA3 capability before calling.

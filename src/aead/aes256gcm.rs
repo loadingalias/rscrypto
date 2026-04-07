@@ -69,9 +69,26 @@ impl AsRef<[u8]> for Aes256GcmKey {
 
 impl fmt::Debug for Aes256GcmKey {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    f.debug_struct("Aes256GcmKey").finish_non_exhaustive()
+    f.write_str("Aes256GcmKey(****)")
   }
 }
+
+impl Aes256GcmKey {
+  /// Construct a key by filling bytes from the provided closure.
+  ///
+  /// ```ignore
+  /// let key = Aes256GcmKey::generate(|buf| getrandom::fill(buf).unwrap());
+  /// ```
+  #[inline]
+  #[must_use]
+  pub fn generate(fill: impl FnOnce(&mut [u8; Self::LENGTH])) -> Self {
+    let mut bytes = [0u8; Self::LENGTH];
+    fill(&mut bytes);
+    Self(bytes)
+  }
+}
+
+impl_hex_fmt_secret!(Aes256GcmKey);
 
 impl Drop for Aes256GcmKey {
   fn drop(&mut self) {
@@ -125,9 +142,13 @@ impl AsRef<[u8]> for Aes256GcmTag {
 
 impl fmt::Debug for Aes256GcmTag {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    f.debug_tuple("Aes256GcmTag").field(&self.0).finish()
+    write!(f, "Aes256GcmTag(")?;
+    crate::hex::fmt_hex_lower(&self.0, f)?;
+    write!(f, ")")
   }
 }
+
+impl_hex_fmt!(Aes256GcmTag);
 
 /// AES-256-GCM AEAD (NIST SP 800-38D).
 ///

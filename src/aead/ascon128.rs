@@ -107,9 +107,26 @@ impl AsRef<[u8]> for AsconAead128Key {
 
 impl fmt::Debug for AsconAead128Key {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    f.debug_struct("AsconAead128Key").finish_non_exhaustive()
+    f.write_str("AsconAead128Key(****)")
   }
 }
+
+impl AsconAead128Key {
+  /// Construct a key by filling bytes from the provided closure.
+  ///
+  /// ```ignore
+  /// let key = AsconAead128Key::generate(|buf| getrandom::fill(buf).unwrap());
+  /// ```
+  #[inline]
+  #[must_use]
+  pub fn generate(fill: impl FnOnce(&mut [u8; Self::LENGTH])) -> Self {
+    let mut bytes = [0u8; Self::LENGTH];
+    fill(&mut bytes);
+    Self(bytes)
+  }
+}
+
+impl_hex_fmt_secret!(AsconAead128Key);
 
 impl Drop for AsconAead128Key {
   fn drop(&mut self) {
@@ -167,9 +184,13 @@ impl AsRef<[u8]> for AsconAead128Tag {
 
 impl fmt::Debug for AsconAead128Tag {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    f.debug_tuple("AsconAead128Tag").field(&self.0).finish()
+    write!(f, "AsconAead128Tag(")?;
+    crate::hex::fmt_hex_lower(&self.0, f)?;
+    write!(f, ")")
   }
 }
+
+impl_hex_fmt!(AsconAead128Tag);
 
 // ---------------------------------------------------------------------------
 // AEAD

@@ -157,9 +157,26 @@ impl Default for Ed25519SecretKey {
 
 impl fmt::Debug for Ed25519SecretKey {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    f.debug_struct("Ed25519SecretKey").finish_non_exhaustive()
+    f.write_str("Ed25519SecretKey(****)")
   }
 }
+
+impl Ed25519SecretKey {
+  /// Construct a secret key by filling bytes from the provided closure.
+  ///
+  /// ```ignore
+  /// let sk = Ed25519SecretKey::generate(|buf| getrandom::fill(buf).unwrap());
+  /// ```
+  #[inline]
+  #[must_use]
+  pub fn generate(fill: impl FnOnce(&mut [u8; Self::LENGTH])) -> Self {
+    let mut bytes = [0u8; Self::LENGTH];
+    fill(&mut bytes);
+    Self(bytes)
+  }
+}
+
+impl_hex_fmt_secret!(Ed25519SecretKey);
 
 impl Drop for Ed25519SecretKey {
   fn drop(&mut self) {
@@ -206,9 +223,13 @@ impl Default for Ed25519PublicKey {
 
 impl fmt::Debug for Ed25519PublicKey {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    f.debug_tuple("Ed25519PublicKey").field(&self.0).finish()
+    write!(f, "Ed25519PublicKey(")?;
+    crate::hex::fmt_hex_lower(&self.0, f)?;
+    write!(f, ")")
   }
 }
+
+impl_hex_fmt!(Ed25519PublicKey);
 
 impl Ed25519PublicKey {
   /// Verify a message/signature pair against this public key.
@@ -261,9 +282,13 @@ impl Default for Ed25519Signature {
 
 impl fmt::Debug for Ed25519Signature {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    f.debug_tuple("Ed25519Signature").field(&self.0).finish()
+    write!(f, "Ed25519Signature(")?;
+    crate::hex::fmt_hex_lower(&self.0, f)?;
+    write!(f, ")")
   }
 }
+
+impl_hex_fmt!(Ed25519Signature);
 
 /// Ed25519 keypair with typed secret and public halves.
 #[derive(Clone, PartialEq, Eq)]
@@ -513,7 +538,7 @@ mod tests {
   #[test]
   fn secret_key_debug_is_redacted() {
     let dbg = format!("{:?}", Ed25519SecretKey::default());
-    assert_eq!(dbg, "Ed25519SecretKey { .. }");
+    assert_eq!(dbg, "Ed25519SecretKey(****)");
   }
 
   #[test]
