@@ -214,7 +214,7 @@ pub const fn lane_target_backend(primitive: AeadPrimitive, lane: BenchLane) -> A
     }
     AeadPrimitive::AsconAead128 => AeadBackend::Portable,
     AeadPrimitive::Aegis256 => match lane {
-      BenchLane::IntelIcl | BenchLane::IntelSpr | BenchLane::AmdZen4 | BenchLane::AmdZen5 => AeadBackend::X86Vaes,
+      BenchLane::IntelIcl | BenchLane::IntelSpr | BenchLane::AmdZen4 | BenchLane::AmdZen5 => AeadBackend::X86Aesni,
       BenchLane::Graviton3 | BenchLane::Graviton4 => AeadBackend::Aarch64Aes,
       BenchLane::IbmS390x => AeadBackend::S390xMsa,
       BenchLane::IbmPower10 => AeadBackend::Power8Crypto,
@@ -351,11 +351,12 @@ const fn select_ascon_backend(arch: Arch) -> AeadBackend {
 
 #[inline]
 fn select_aegis_backend(arch: Arch, caps: Caps) -> AeadBackend {
+  // VAES-256 is intentionally not used for AEGIS-256. The serial update chain
+  // (6 dependent AES rounds per block) makes cross-lane shuffle overhead in
+  // the VAES-256 path slower than straight AES-NI. See aegis256.rs encrypt_in_place.
   match arch {
     Arch::X86_64 => {
-      if caps.has(x86::VAES_READY) {
-        AeadBackend::X86Vaes
-      } else if caps.has(x86::AESNI) {
+      if caps.has(x86::AESNI) {
         AeadBackend::X86Aesni
       } else {
         AeadBackend::Portable
@@ -483,8 +484,8 @@ mod tests {
       AeadBackend::WasmSimd128
     );
     assert_eq!(
-      select_backend(AeadPrimitive::Aegis256, Arch::X86_64, x86::VAES_READY),
-      AeadBackend::X86Vaes
+      select_backend(AeadPrimitive::Aegis256, Arch::X86_64, x86::AESNI),
+      AeadBackend::X86Aesni
     );
     assert_eq!(
       select_backend(AeadPrimitive::Aegis256, Arch::Aarch64, aarch64::AES),
