@@ -909,27 +909,8 @@ pub(super) fn accumulate_4blocks(
       return unsafe { vpclmul::aggregate_4blocks(acc, h_powers_rev, blocks) };
     }
   }
-  #[cfg(target_arch = "aarch64")]
-  {
-    if crate::platform::caps().has(crate::platform::caps::aarch64::PMULL) {
-      // SAFETY: PMULL availability verified via HWCAP.
-      return unsafe { pmull::aggregate_4blocks(acc, h_powers_rev, blocks) };
-    }
-  }
-  #[cfg(target_arch = "s390x")]
-  {
-    if crate::platform::caps().has(crate::platform::caps::s390x::VECTOR) {
-      // SAFETY: z/Vector availability verified via STFLE/HWCAP.
-      return unsafe { s390x_vgfm::aggregate_4blocks(acc, h_powers_rev, blocks) };
-    }
-  }
-  #[cfg(target_arch = "powerpc64")]
-  {
-    if crate::platform::caps().has(crate::platform::caps::power::POWER8_CRYPTO) {
-      // SAFETY: POWER8 crypto availability verified via HWCAP.
-      return unsafe { ppc_vpmsum::aggregate_4blocks(acc, h_powers_rev, blocks) };
-    }
-  }
+  // Non-x86 platforms use inline variants in their fused encrypt/decrypt
+  // paths, so only x86_64 dispatches through this function.
   let _ = h_powers_rev;
   // Sequential fallback: equivalent to 4 individual block updates.
   let mut a = acc ^ blocks[0];
