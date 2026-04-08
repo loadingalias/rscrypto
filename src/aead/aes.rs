@@ -376,16 +376,19 @@ mod km {
     }
   }
 
-  /// Encrypt a single 16-byte block using the KM instruction (AES-256 ECB).
+  /// Encrypt a single 16-byte block using a raw AES-256 key and the KM instruction.
+  ///
+  /// This avoids rebuilding a portable key schedule when the caller already has
+  /// the derived 32-byte key material and only needs KM's raw parameter block.
   ///
   /// # Safety
   /// Caller must ensure the MSA (CPACF) facility is available.
-  pub(super) unsafe fn encrypt_block(key: &KmKey, block: &mut [u8; 16]) {
+  pub(super) unsafe fn encrypt_block_raw(raw_key: &[u8; 32], block: &mut [u8; 16]) {
     // KM requires non-overlapping source and destination. Copy the
     // plaintext to a stack buffer, encrypt from there into `block`.
     let mut src: [u8; 16] = *block;
 
-    let parm = key.raw.as_ptr();
+    let parm = raw_key.as_ptr();
     let src_ptr = src.as_ptr();
     let dest_ptr = block.as_mut_ptr();
 
@@ -398,11 +401,11 @@ mod km {
     //   R4  = source address (updated)
     //   R5  = source length in bytes (decremented)
     //
-    // CC=0: complete. CC=2: partial (kernel preemption) — retry.
+    // CC=0: complete. CC=2: partial (kernel preemption) - retry.
     //
-    // SAFETY: MSA verified by caller. Parameter block is the cached
-    // 32-byte raw key (8-aligned via repr(C, align(8))). Source and
-    // destination are valid, non-overlapping 16-byte buffers.
+    // SAFETY: MSA verified by caller. Parameter block is the raw
+    // 32-byte AES-256 key. Source and destination are valid,
+    // non-overlapping 16-byte buffers.
     unsafe {
       core::arch::asm!(
         "0:",
@@ -419,6 +422,15 @@ mod km {
     }
 
     crate::traits::ct::zeroize(&mut src);
+  }
+
+  /// Encrypt a single 16-byte block using the KM instruction (AES-256 ECB).
+  ///
+  /// # Safety
+  /// Caller must ensure the MSA (CPACF) facility is available.
+  pub(super) unsafe fn encrypt_block(key: &KmKey, block: &mut [u8; 16]) {
+    // SAFETY: caller guarantees MSA; KmKey stores a raw 32-byte AES-256 key.
+    unsafe { encrypt_block_raw(&key.raw, block) }
   }
 
   /// Encrypt multiple independent 16-byte blocks using a single KM call.
@@ -558,6 +570,85 @@ mod ppc {
       i = i.strict_add(1);
     }
     PpcRoundKeys { rk: keys }
+  }
+
+  /// Hardware SubWord using POWER8 `vsbox`.
+  ///
+  /// Broadcasts the input word to all 4 columns, applies the byte-wise AES
+  /// S-box in parallel, then returns the first substituted word.
+  #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
+  #[inline(always)]
+  unsafe fn sub_word_hw(w: u32) -> u32 {
+    let word = w.to_be_bytes();
+    let bytes = [
+      word[0], word[1], word[2], word[3], word[0], word[1], word[2], word[3], word[0], word[1], word[2], word[3],
+      word[0], word[1], word[2], word[3],
+    ];
+    let state = load_block_be(bytes.as_ptr());
+    // SAFETY: caller guarantees POWER8 crypto availability.
+    unsafe {
+      let out: i64x2;
+      asm!(
+        "vsbox {out}, {state}",
+        out = lateout(vreg) out,
+        state = in(vreg) state,
+        options(nomem, nostack, pure),
+      );
+      let mut out_bytes = [0u8; 16];
+      store_block_be(out_bytes.as_mut_ptr(), out);
+      u32::from_be_bytes([out_bytes[0], out_bytes[1], out_bytes[2], out_bytes[3]])
+    }
+  }
+
+  /// Hardware-accelerated AES-256 key expansion using POWER8 `vsbox`.
+  #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
+  #[inline(always)]
+  pub(super) unsafe fn expand_key_hw(key: &[u8; 32]) -> PpcRoundKeys {
+    // SAFETY: caller guarantees POWER8 crypto availability.
+    unsafe {
+      let mut rk = [0u32; super::EXPANDED_KEY_WORDS];
+
+      // Load the initial key as big-endian u32 words.
+      let mut i = 0usize;
+      while i < 8 {
+        let base = i.strict_mul(4);
+        rk[i] = u32::from_be_bytes([
+          key[base],
+          key[base.strict_add(1)],
+          key[base.strict_add(2)],
+          key[base.strict_add(3)],
+        ]);
+        i = i.strict_add(1);
+      }
+
+      // Expand key schedule using hardware SubWord.
+      i = 8;
+      while i < super::EXPANDED_KEY_WORDS {
+        let mut temp = rk[i.strict_sub(1)];
+        if i.strict_rem(8) == 0 {
+          temp = sub_word_hw(super::rot_word(temp)) ^ super::RCON[i.strict_div(8).strict_sub(1)];
+        } else if i.strict_rem(8) == 4 {
+          temp = sub_word_hw(temp);
+        }
+        rk[i] = rk[i.strict_sub(8)] ^ temp;
+        i = i.strict_add(1);
+      }
+
+      let keys = from_portable(&rk);
+      // SAFETY: [u32; 60] is layout-compatible with [u8; 240].
+      crate::traits::ct::zeroize(core::slice::from_raw_parts_mut(
+        rk.as_mut_ptr().cast::<u8>(),
+        super::EXPANDED_KEY_WORDS.strict_mul(4),
+      ));
+      keys
+    }
+  }
+
+  /// Non-inline entry point for hardware key expansion.
+  #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
+  pub(super) unsafe fn expand_key(key: &[u8; 32]) -> PpcRoundKeys {
+    // SAFETY: target_feature gate guarantees POWER8 crypto.
+    unsafe { expand_key_hw(key) }
   }
 
   /// Core block-encrypt logic — `#[target_feature]` + `#[inline(always)]` for
@@ -1020,15 +1111,9 @@ pub(crate) fn aes256_expand_key(key: &[u8; KEY_SIZE]) -> Aes256EncKey {
   #[cfg(target_arch = "powerpc64")]
   {
     if crate::platform::caps().has(crate::platform::caps::power::POWER8_CRYPTO) {
-      let mut portable_rk = aes256_expand_key_portable(key);
-      let ppc_keys = ppc::from_portable(&portable_rk);
-      // Zeroize intermediate portable key schedule.
-      // SAFETY: [u32; 60] is layout-compatible with [u8; 240].
-      crate::traits::ct::zeroize(unsafe {
-        core::slice::from_raw_parts_mut(portable_rk.as_mut_ptr().cast::<u8>(), EXPANDED_KEY_WORDS.strict_mul(4))
-      });
       return Aes256EncKey {
-        inner: KeyInner::Power(ppc_keys),
+        // SAFETY: POWER8 crypto availability verified via HWCAP above.
+        inner: KeyInner::Power(unsafe { ppc::expand_key(key) }),
       };
     }
   }
@@ -1101,8 +1186,8 @@ pub(super) unsafe fn aarch64_encrypt_block_inline(keys: &ce::CeRoundKeys, block:
 #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
 #[inline(always)]
 pub(super) unsafe fn ppc_expand_key_inline(key: &[u8; KEY_SIZE]) -> ppc::PpcRoundKeys {
-  let rk = aes256_expand_key_portable(key);
-  ppc::from_portable(&rk)
+  // SAFETY: POWER8 crypto availability guaranteed by caller.
+  unsafe { ppc::expand_key_hw(key) }
 }
 
 /// Encrypt a single AES-256 block with POWER crypto, guaranteed to inline.
@@ -1121,25 +1206,15 @@ pub(super) unsafe fn ppc_encrypt_block_inline(keys: &ppc::PpcRoundKeys, block: &
 // s390x: inline helpers for fused paths (#[inline(always)])
 // ---------------------------------------------------------------------------
 
-/// Expand AES-256 key for s390x KM instruction, guaranteed to inline.
+/// Encrypt a single AES-256 block with s390x KM using a raw 32-byte key.
 ///
 /// # Safety
 /// Caller must ensure MSA is available.
 #[cfg(target_arch = "s390x")]
 #[inline(always)]
-pub(super) unsafe fn s390x_expand_key_inline(key: &[u8; KEY_SIZE]) -> km::KmKey {
-  km::KmKey::from_portable(aes256_expand_key_portable(key))
-}
-
-/// Encrypt a single AES-256 block with KM, guaranteed to inline.
-///
-/// # Safety
-/// Caller must ensure MSA is available.
-#[cfg(target_arch = "s390x")]
-#[inline(always)]
-pub(super) unsafe fn s390x_encrypt_block_inline(key: &km::KmKey, block: &mut [u8; BLOCK_SIZE]) {
+pub(super) unsafe fn s390x_encrypt_block_raw_inline(raw_key: &[u8; KEY_SIZE], block: &mut [u8; BLOCK_SIZE]) {
   // SAFETY: MSA availability guaranteed by caller.
-  unsafe { km::encrypt_block(key, block) }
+  unsafe { km::encrypt_block_raw(raw_key, block) }
 }
 
 /// Encrypt multiple AES-256 blocks with KM (batch), guaranteed to inline.
