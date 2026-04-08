@@ -506,7 +506,7 @@ fn basepoint_mul_dispatch(scalar_bytes: &[u8; 32]) -> point::ExtendedPoint {
 /// scalar (~28 additions) + wNAF(5) for the public-key scalar (~43
 /// additions) = ~71 total, vs ~128 with the old radix-16 approach.
 ///
-/// AVX2 radix-16 Straus remains as a fallback for pre-IFMA hardware.
+/// AVX2 wNAF Straus remains as the fallback for pre-IFMA hardware.
 #[must_use]
 fn straus_dispatch(s: &[u8; 32], h: &[u8; 32], a: &point::ExtendedPoint) -> point::ExtendedPoint {
   #[cfg(target_arch = "x86_64")]
@@ -521,10 +521,10 @@ fn straus_dispatch(s: &[u8; 32], h: &[u8; 32], a: &point::ExtendedPoint) -> poin
       return unsafe { point_avx2::straus_wnaf_vartime_ifma(s, h, a) };
     }
 
-    // AVX2 radix-16 fallback for pre-IFMA hardware (Zen3, Haswell, etc.).
+    // AVX2 wNAF fallback for pre-IFMA hardware.
     if caps.has(x86::AVX2) {
       // SAFETY: AVX2 confirmed by runtime detection.
-      return unsafe { point_avx2::straus_basepoint_vartime_avx2(s, h, a) };
+      return unsafe { point_avx2::straus_wnaf_vartime_avx2(s, h, a) };
     }
   }
   point::straus_wnaf_basepoint_vartime(s, h, a)

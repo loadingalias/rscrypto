@@ -1025,10 +1025,6 @@ unsafe fn encrypt_fused_s390x(
   unsafe {
     let nonce_bytes = nonce.as_bytes();
 
-    // --- 1. Expand derived encryption key ---
-    let enc_km = aes::s390x_expand_key_inline(enc_key_bytes);
-    ct::zeroize(enc_key_bytes);
-
     // --- 2. POLYVAL tag computation (RFC 8452 §5) ---
     let h = u128::from_le_bytes(*auth_key);
     ct::zeroize(auth_key);
@@ -1118,7 +1114,7 @@ unsafe fn encrypt_fused_s390x(
       j = j.strict_add(1);
     }
     tag[15] &= 0x7f;
-    aes::s390x_encrypt_block_inline(&enc_km, &mut tag);
+    aes::s390x_encrypt_block_raw_inline(enc_key_bytes, &mut tag);
 
     // --- 5. AES-CTR encryption ---
     let mut counter_block = tag;
@@ -1128,7 +1124,7 @@ unsafe fn encrypt_fused_s390x(
     while offset < buffer.len() {
       counter_block[0..4].copy_from_slice(&ctr.to_le_bytes());
       let mut keystream = counter_block;
-      aes::s390x_encrypt_block_inline(&enc_km, &mut keystream);
+      aes::s390x_encrypt_block_raw_inline(enc_key_bytes, &mut keystream);
 
       let remaining = buffer.len().strict_sub(offset);
       if remaining >= 16 {
@@ -1148,6 +1144,7 @@ unsafe fn encrypt_fused_s390x(
       ctr = ctr.wrapping_add(1);
     }
 
+    ct::zeroize(enc_key_bytes);
     tag
   }
 }
@@ -1166,10 +1163,6 @@ unsafe fn decrypt_fused_s390x(
   unsafe {
     let nonce_bytes = nonce.as_bytes();
 
-    // --- 1. Expand derived encryption key ---
-    let enc_km = aes::s390x_expand_key_inline(enc_key_bytes);
-    ct::zeroize(enc_key_bytes);
-
     // --- 2. AES-CTR decryption (SIV: decrypt before verify) ---
     let mut counter_block = tag.0;
     counter_block[15] |= 0x80;
@@ -1178,7 +1171,7 @@ unsafe fn decrypt_fused_s390x(
     while offset < buffer.len() {
       counter_block[0..4].copy_from_slice(&ctr.to_le_bytes());
       let mut keystream = counter_block;
-      aes::s390x_encrypt_block_inline(&enc_km, &mut keystream);
+      aes::s390x_encrypt_block_raw_inline(enc_key_bytes, &mut keystream);
 
       let remaining = buffer.len().strict_sub(offset);
       if remaining >= 16 {
@@ -1287,7 +1280,8 @@ unsafe fn decrypt_fused_s390x(
       j = j.strict_add(1);
     }
     expected[15] &= 0x7f;
-    aes::s390x_encrypt_block_inline(&enc_km, &mut expected);
+    aes::s390x_encrypt_block_raw_inline(enc_key_bytes, &mut expected);
+    ct::zeroize(enc_key_bytes);
 
     if !ct::constant_time_eq(&expected, tag.as_bytes()) {
       ct::zeroize(buffer);

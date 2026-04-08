@@ -401,55 +401,31 @@ pub(crate) unsafe fn scalar_mul_basepoint_avx2(scalar_bytes: &[u8; 32]) -> Exten
   acc.to_extended()
 }
 
-/// Straus/Shamir interleaved double-scalar multiply: `[s]B + [h]A`.
+/// Build a runtime table of odd multiples `[1P, 3P, 5P, ..., (2n-1)P]` in
+/// Hamburg-scaled cached AVX2 format.
 ///
-/// Scans both scalars in lockstep over 64 signed radix-16 digits
-/// (high → low), sharing all 256 doublings. Each digit position adds
-/// from the basepoint table for `s` and from a runtime AVX2 cached
-/// table for `h`.
-///
-/// The basepoint table (position 0, 8 entries) is pre-converted to native
-/// `CachedPointAvx2` format once per call, eliminating the per-lookup
-/// `cached_from_affine` conversion (~205 instructions × ~32 lookups).
-///
-/// Variable-time: branches on scalar nibble values. Safe for verification
-/// where both `s` and `h` are public (derived from the message/signature).
+/// For wNAF(w), the table has `2^(w-2)` entries. wNAF(5) -> 8 entries.
 ///
 /// # Safety
 ///
 /// Caller must ensure AVX2 is available.
 #[target_feature(enable = "avx2")]
 #[allow(unsafe_op_in_unsafe_fn)]
-pub(crate) unsafe fn straus_basepoint_vartime_avx2(s: &[u8; 32], h: &[u8; 32], a: &ExtendedPoint) -> ExtendedPoint {
-  use super::point::BASEPOINT_RADIX16_TABLE;
+unsafe fn odd_multiples_avx2<const N: usize>(point: &ExtendedPointAvx2) -> [CachedPointAvx2; N] {
+  let p2 = point.double();
+  let p2_cached = p2.to_cached();
 
-  let s_digits = scalar::as_radix_16(s);
-  let h_digits = scalar::as_radix_16(h);
-
-  // Pre-convert basepoint table position 0 to native AVX2 format.
-  // Converts 8 entries once (~1,640 instructions) instead of per-lookup
-  // (~205 instructions × ~32 non-zero digits = ~6,560 instructions).
-  let base_table = init_basepoint_table_avx2(&BASEPOINT_RADIX16_TABLE[0]);
-
-  let avx_a = ExtendedPointAvx2::from_extended(a);
-  let a_table = cached_multiples_avx2(&avx_a);
-
-  let mut acc = ExtendedPointAvx2::from_extended(&ExtendedPoint::identity());
-
-  for (&sd, &hd) in s_digits.iter().zip(h_digits.iter()).rev() {
-    acc = acc.double().double().double().double();
-    if sd != 0 {
-      acc = add_signed_runtime_cached_avx2(acc, &base_table, sd);
-    }
-    if hd != 0 {
-      acc = add_signed_runtime_cached_avx2(acc, &a_table, hd);
-    }
+  let first = point.to_cached();
+  let mut out = [first; N];
+  let mut acc = *point;
+  for dst in out.iter_mut().skip(1) {
+    acc = acc.add_cached(&p2_cached);
+    *dst = acc.to_cached();
   }
-
-  acc.to_extended()
+  out
 }
 
-/// Convert the 8-entry scalar basepoint table to native AVX2 cached format.
+/// Add a signed wNAF digit from an odd-multiples AVX2 cached table.
 ///
 /// # Safety
 ///
@@ -457,14 +433,73 @@ pub(crate) unsafe fn straus_basepoint_vartime_avx2(s: &[u8; 32], h: &[u8; 32], a
 #[inline]
 #[target_feature(enable = "avx2")]
 #[allow(unsafe_op_in_unsafe_fn)]
-unsafe fn init_basepoint_table_avx2(src: &[CachedPoint; 8]) -> [CachedPointAvx2; 8] {
-  let affine_k = hamburg_affine_constants();
-  let first = cached_from_affine(&src[0], &affine_k);
-  let mut out = [first; 8];
-  for (dst, entry) in out.iter_mut().zip(src.iter()).skip(1) {
-    *dst = cached_from_affine(entry, &affine_k);
+unsafe fn add_wnaf_digit_avx2(acc: ExtendedPointAvx2, table: &[CachedPointAvx2], digit: i8) -> ExtendedPointAvx2 {
+  let index = usize::from((digit.unsigned_abs().wrapping_sub(1)) / 2);
+  let Some(point) = table.get(index) else {
+    return acc;
+  };
+
+  if digit > 0 {
+    acc.add_cached(point)
+  } else {
+    acc.add_cached(&point.neg())
   }
-  out
+}
+
+/// wNAF-based Straus/Shamir: `[s]B + [h]A` using AVX2 point operations.
+///
+/// Uses wNAF(5) for both scalars. This reduces additions versus the older
+/// radix-16 AVX2 Straus fallback while keeping setup costs modest: two 8-entry
+/// odd-multiples tables built at runtime.
+///
+/// Variable-time: branches on scalar digit values. Safe for verification
+/// where both `s` and `h` are public.
+///
+/// # Safety
+///
+/// Caller must ensure AVX2 is available.
+#[target_feature(enable = "avx2")]
+#[allow(unsafe_op_in_unsafe_fn)]
+#[allow(clippy::indexing_slicing)] // i bounded by top < 256, naf arrays are [i8; 256]
+pub(crate) unsafe fn straus_wnaf_vartime_avx2(s: &[u8; 32], h: &[u8; 32], a: &ExtendedPoint) -> ExtendedPoint {
+  let s_naf = scalar::non_adjacent_form(s, 5);
+  let h_naf = scalar::non_adjacent_form(h, 5);
+
+  let base = ExtendedPointAvx2::from_extended(&ExtendedPoint::basepoint());
+  let base_table: [CachedPointAvx2; 8] = odd_multiples_avx2(&base);
+
+  let avx_a = ExtendedPointAvx2::from_extended(a);
+  let a_table: [CachedPointAvx2; 8] = odd_multiples_avx2(&avx_a);
+
+  let top = s_naf
+    .iter()
+    .enumerate()
+    .rev()
+    .find(|&(_, &d)| d != 0)
+    .map_or(0, |(i, _)| i)
+    .max(
+      h_naf
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|&(_, &d)| d != 0)
+        .map_or(0, |(i, _)| i),
+    );
+
+  let mut acc = ExtendedPointAvx2::from_extended(&ExtendedPoint::identity());
+
+  for i in (0..=top).rev() {
+    acc = acc.double();
+
+    if s_naf[i] != 0 {
+      acc = add_wnaf_digit_avx2(acc, &base_table, s_naf[i]);
+    }
+    if h_naf[i] != 0 {
+      acc = add_wnaf_digit_avx2(acc, &a_table, h_naf[i]);
+    }
+  }
+
+  acc.to_extended()
 }
 
 // ===========================================================================
@@ -1199,10 +1234,10 @@ mod tests {
 
     // SAFETY: AVX2 availability checked by the runtime guard above.
     unsafe {
-      let avx_result = straus_basepoint_vartime_avx2(&s, &h, &a);
+      let avx_result = straus_wnaf_vartime_avx2(&s, &h, &a);
       assert!(
         scalar_result.equals_projective(&avx_result),
-        "AVX2 Straus should match scalar"
+        "AVX2 wNAF Straus should match scalar"
       );
     }
   }
@@ -1249,10 +1284,10 @@ mod tests {
 
     // SAFETY: AVX2 availability checked by the runtime guard above.
     unsafe {
-      let avx_result = straus_basepoint_vartime_avx2(&s_canonical, &neg_challenge_bytes, &a_point);
+      let avx_result = straus_wnaf_vartime_avx2(&s_canonical, &neg_challenge_bytes, &a_point);
       assert!(
         scalar_result.equals_projective(&avx_result),
-        "AVX2 Straus with large scalars should match scalar"
+        "AVX2 wNAF Straus with large scalars should match scalar"
       );
 
       // Also verify the full equation: [s]B + [-h]A == [8]R (after cofactor)
@@ -1260,7 +1295,7 @@ mod tests {
       let expected = r_point.mul_by_cofactor();
       assert!(
         combined.equals_projective(&expected),
-        "AVX2 Straus verify equation should hold"
+        "AVX2 wNAF Straus verify equation should hold"
       );
     }
   }
