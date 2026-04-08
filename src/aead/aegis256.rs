@@ -482,7 +482,7 @@ mod ce {
   // OOO engine maximum scheduling freedom across both pipes.
 
   #[target_feature(enable = "aes,neon")]
-  #[inline]
+  #[inline(always)]
   unsafe fn update_regs(
     s0: &mut uint8x16_t,
     s1: &mut uint8x16_t,

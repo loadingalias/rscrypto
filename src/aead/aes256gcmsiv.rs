@@ -424,6 +424,993 @@ fn compute_tag_wide(
 }
 
 // ---------------------------------------------------------------------------
+// aarch64 fused encrypt/decrypt (single #[target_feature] scope)
+// ---------------------------------------------------------------------------
+//
+// On aarch64 the "scalar path" crosses a #[target_feature] boundary for every
+// AES-CE encrypt_block and PMULL clmul128_reduce call, causing register spills
+// that dominate at small message sizes. The fused paths below inline the entire
+// GCM-SIV construction — key derivation, POLYVAL, tag finalization, AES-CTR —
+// into one #[target_feature(enable = "aes,neon")] scope, matching the AEGIS
+// pattern. The compiler keeps AES round keys and POLYVAL state in NEON
+// registers across the whole operation.
+
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "aes,neon")]
+unsafe fn encrypt_fused_aarch64(
+  master_key: &[u8; KEY_SIZE],
+  nonce: &Nonce96,
+  aad: &[u8],
+  buffer: &mut [u8],
+) -> [u8; TAG_SIZE] {
+  // SAFETY: caller has verified AES-CE availability.
+  unsafe {
+    // --- 1. Key derivation (RFC 8452 §4, AES-256 variant) ---
+    let master_ek = aes::aarch64_expand_key_inline(master_key);
+    let nonce_bytes = nonce.as_bytes();
+
+    let mut blocks = [[0u8; 16]; 6];
+    let mut i = 0u32;
+    while i < 6 {
+      blocks[i as usize][0..4].copy_from_slice(&i.to_le_bytes());
+      blocks[i as usize][4..16].copy_from_slice(nonce_bytes);
+      i = i.strict_add(1);
+    }
+    for block in &mut blocks {
+      aes::aarch64_encrypt_block_inline(&master_ek, block);
+    }
+
+    let mut auth_key = [0u8; 16];
+    let mut enc_key_bytes = [0u8; 32];
+    auth_key[0..8].copy_from_slice(&blocks[0][0..8]);
+    auth_key[8..16].copy_from_slice(&blocks[1][0..8]);
+    enc_key_bytes[0..8].copy_from_slice(&blocks[2][0..8]);
+    enc_key_bytes[8..16].copy_from_slice(&blocks[3][0..8]);
+    enc_key_bytes[16..24].copy_from_slice(&blocks[4][0..8]);
+    enc_key_bytes[24..32].copy_from_slice(&blocks[5][0..8]);
+    ct::zeroize(blocks.as_flattened_mut());
+
+    // --- 2. Expand derived encryption key ---
+    let enc_ek = aes::aarch64_expand_key_inline(&enc_key_bytes);
+    ct::zeroize(&mut enc_key_bytes);
+
+    // --- 3. POLYVAL tag computation (RFC 8452 §5) ---
+    let h = u128::from_le_bytes(auth_key);
+    ct::zeroize(&mut auth_key);
+    let mut acc: u128 = 0;
+
+    // Precompute H powers for 4-block wide processing.
+    let powers = polyval::precompute_powers(h);
+    let h_powers_rev = [powers[3], powers[2], powers[1], powers[0]];
+
+    // Process AAD in 4-block (64-byte) chunks.
+    let mut offset = 0usize;
+    while offset.strict_add(64) <= aad.len() {
+      let mut b = [0u128; 4];
+      let mut i = 0usize;
+      while i < 4 {
+        let base = offset.strict_add(i.strict_mul(16));
+        let mut block = [0u8; 16];
+        block.copy_from_slice(&aad[base..base.strict_add(16)]);
+        b[i] = u128::from_le_bytes(block);
+        i = i.strict_add(1);
+      }
+      acc = polyval::aarch64_aggregate_4blocks_inline(acc, &h_powers_rev, &b);
+      offset = offset.strict_add(64);
+    }
+    // Remaining AAD single blocks.
+    while offset.strict_add(16) <= aad.len() {
+      let mut block = [0u8; 16];
+      block.copy_from_slice(&aad[offset..offset.strict_add(16)]);
+      acc ^= u128::from_le_bytes(block);
+      acc = polyval::aarch64_clmul128_reduce_inline(acc, h);
+      offset = offset.strict_add(16);
+    }
+    if offset < aad.len() {
+      let mut block = [0u8; 16];
+      block[..aad.len().strict_sub(offset)].copy_from_slice(&aad[offset..]);
+      acc ^= u128::from_le_bytes(block);
+      acc = polyval::aarch64_clmul128_reduce_inline(acc, h);
+    }
+
+    // Process plaintext in 4-block (64-byte) chunks.
+    offset = 0;
+    while offset.strict_add(64) <= buffer.len() {
+      let mut b = [0u128; 4];
+      let mut i = 0usize;
+      while i < 4 {
+        let base = offset.strict_add(i.strict_mul(16));
+        let mut block = [0u8; 16];
+        block.copy_from_slice(&buffer[base..base.strict_add(16)]);
+        b[i] = u128::from_le_bytes(block);
+        i = i.strict_add(1);
+      }
+      acc = polyval::aarch64_aggregate_4blocks_inline(acc, &h_powers_rev, &b);
+      offset = offset.strict_add(64);
+    }
+    // Remaining plaintext single blocks.
+    while offset.strict_add(16) <= buffer.len() {
+      let mut block = [0u8; 16];
+      block.copy_from_slice(&buffer[offset..offset.strict_add(16)]);
+      acc ^= u128::from_le_bytes(block);
+      acc = polyval::aarch64_clmul128_reduce_inline(acc, h);
+      offset = offset.strict_add(16);
+    }
+    if offset < buffer.len() {
+      let mut block = [0u8; 16];
+      block[..buffer.len().strict_sub(offset)].copy_from_slice(&buffer[offset..]);
+      acc ^= u128::from_le_bytes(block);
+      acc = polyval::aarch64_clmul128_reduce_inline(acc, h);
+    }
+
+    // Length block: [aad_bits as u64 LE || pt_bits as u64 LE].
+    let aad_bits = (aad.len() as u64).strict_mul(8);
+    let pt_bits = (buffer.len() as u64).strict_mul(8);
+    let mut length_block = [0u8; 16];
+    length_block[0..8].copy_from_slice(&aad_bits.to_le_bytes());
+    length_block[8..16].copy_from_slice(&pt_bits.to_le_bytes());
+    acc ^= u128::from_le_bytes(length_block);
+    acc = polyval::aarch64_clmul128_reduce_inline(acc, h);
+
+    // --- 4. Tag finalization ---
+    let mut tag = acc.to_le_bytes();
+    let mut j = 0usize;
+    while j < 12 {
+      tag[j] ^= nonce_bytes[j];
+      j = j.strict_add(1);
+    }
+    tag[15] &= 0x7f;
+    aes::aarch64_encrypt_block_inline(&enc_ek, &mut tag);
+
+    // --- 5. AES-CTR encryption ---
+    let mut counter_block = tag;
+    counter_block[15] |= 0x80;
+    let mut ctr = u32::from_le_bytes([counter_block[0], counter_block[1], counter_block[2], counter_block[3]]);
+    offset = 0;
+    while offset < buffer.len() {
+      counter_block[0..4].copy_from_slice(&ctr.to_le_bytes());
+      let mut keystream = counter_block;
+      aes::aarch64_encrypt_block_inline(&enc_ek, &mut keystream);
+
+      let remaining = buffer.len().strict_sub(offset);
+      if remaining >= 16 {
+        let mut d = [0u8; 16];
+        d.copy_from_slice(&buffer[offset..offset.strict_add(16)]);
+        let xored = u128::from_ne_bytes(d) ^ u128::from_ne_bytes(keystream);
+        buffer[offset..offset.strict_add(16)].copy_from_slice(&xored.to_ne_bytes());
+        offset = offset.strict_add(16);
+      } else {
+        let mut i = 0usize;
+        while i < remaining {
+          buffer[offset.strict_add(i)] ^= keystream[i];
+          i = i.strict_add(1);
+        }
+        offset = offset.strict_add(remaining);
+      }
+      ctr = ctr.wrapping_add(1);
+    }
+
+    tag
+  }
+}
+
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "aes,neon")]
+unsafe fn decrypt_fused_aarch64(
+  master_key: &[u8; KEY_SIZE],
+  nonce: &Nonce96,
+  aad: &[u8],
+  buffer: &mut [u8],
+  tag: &Aes256GcmSivTag,
+) -> Result<(), VerificationError> {
+  // SAFETY: caller has verified AES-CE availability.
+  unsafe {
+    // --- 1. Key derivation ---
+    let master_ek = aes::aarch64_expand_key_inline(master_key);
+    let nonce_bytes = nonce.as_bytes();
+
+    let mut blocks = [[0u8; 16]; 6];
+    let mut i = 0u32;
+    while i < 6 {
+      blocks[i as usize][0..4].copy_from_slice(&i.to_le_bytes());
+      blocks[i as usize][4..16].copy_from_slice(nonce_bytes);
+      i = i.strict_add(1);
+    }
+    for block in &mut blocks {
+      aes::aarch64_encrypt_block_inline(&master_ek, block);
+    }
+
+    let mut auth_key = [0u8; 16];
+    let mut enc_key_bytes = [0u8; 32];
+    auth_key[0..8].copy_from_slice(&blocks[0][0..8]);
+    auth_key[8..16].copy_from_slice(&blocks[1][0..8]);
+    enc_key_bytes[0..8].copy_from_slice(&blocks[2][0..8]);
+    enc_key_bytes[8..16].copy_from_slice(&blocks[3][0..8]);
+    enc_key_bytes[16..24].copy_from_slice(&blocks[4][0..8]);
+    enc_key_bytes[24..32].copy_from_slice(&blocks[5][0..8]);
+    ct::zeroize(blocks.as_flattened_mut());
+
+    // --- 2. Expand derived encryption key ---
+    let enc_ek = aes::aarch64_expand_key_inline(&enc_key_bytes);
+    ct::zeroize(&mut enc_key_bytes);
+
+    // --- 3. AES-CTR decryption (SIV: decrypt before verify) ---
+    let mut counter_block = tag.0;
+    counter_block[15] |= 0x80;
+    let mut ctr = u32::from_le_bytes([counter_block[0], counter_block[1], counter_block[2], counter_block[3]]);
+    let mut offset = 0usize;
+    while offset < buffer.len() {
+      counter_block[0..4].copy_from_slice(&ctr.to_le_bytes());
+      let mut keystream = counter_block;
+      aes::aarch64_encrypt_block_inline(&enc_ek, &mut keystream);
+
+      let remaining = buffer.len().strict_sub(offset);
+      if remaining >= 16 {
+        let mut d = [0u8; 16];
+        d.copy_from_slice(&buffer[offset..offset.strict_add(16)]);
+        let xored = u128::from_ne_bytes(d) ^ u128::from_ne_bytes(keystream);
+        buffer[offset..offset.strict_add(16)].copy_from_slice(&xored.to_ne_bytes());
+        offset = offset.strict_add(16);
+      } else {
+        let mut i = 0usize;
+        while i < remaining {
+          buffer[offset.strict_add(i)] ^= keystream[i];
+          i = i.strict_add(1);
+        }
+        offset = offset.strict_add(remaining);
+      }
+      ctr = ctr.wrapping_add(1);
+    }
+
+    // --- 4. POLYVAL tag computation over decrypted plaintext ---
+    let h = u128::from_le_bytes(auth_key);
+    ct::zeroize(&mut auth_key);
+    let mut acc: u128 = 0;
+
+    // Precompute H powers for 4-block wide processing.
+    let powers = polyval::precompute_powers(h);
+    let h_powers_rev = [powers[3], powers[2], powers[1], powers[0]];
+
+    // Process AAD in 4-block (64-byte) chunks.
+    offset = 0;
+    while offset.strict_add(64) <= aad.len() {
+      let mut b = [0u128; 4];
+      let mut i = 0usize;
+      while i < 4 {
+        let base = offset.strict_add(i.strict_mul(16));
+        let mut block = [0u8; 16];
+        block.copy_from_slice(&aad[base..base.strict_add(16)]);
+        b[i] = u128::from_le_bytes(block);
+        i = i.strict_add(1);
+      }
+      acc = polyval::aarch64_aggregate_4blocks_inline(acc, &h_powers_rev, &b);
+      offset = offset.strict_add(64);
+    }
+    // Remaining AAD single blocks.
+    while offset.strict_add(16) <= aad.len() {
+      let mut block = [0u8; 16];
+      block.copy_from_slice(&aad[offset..offset.strict_add(16)]);
+      acc ^= u128::from_le_bytes(block);
+      acc = polyval::aarch64_clmul128_reduce_inline(acc, h);
+      offset = offset.strict_add(16);
+    }
+    if offset < aad.len() {
+      let mut block = [0u8; 16];
+      block[..aad.len().strict_sub(offset)].copy_from_slice(&aad[offset..]);
+      acc ^= u128::from_le_bytes(block);
+      acc = polyval::aarch64_clmul128_reduce_inline(acc, h);
+    }
+
+    // Process decrypted plaintext in 4-block (64-byte) chunks.
+    offset = 0;
+    while offset.strict_add(64) <= buffer.len() {
+      let mut b = [0u128; 4];
+      let mut i = 0usize;
+      while i < 4 {
+        let base = offset.strict_add(i.strict_mul(16));
+        let mut block = [0u8; 16];
+        block.copy_from_slice(&buffer[base..base.strict_add(16)]);
+        b[i] = u128::from_le_bytes(block);
+        i = i.strict_add(1);
+      }
+      acc = polyval::aarch64_aggregate_4blocks_inline(acc, &h_powers_rev, &b);
+      offset = offset.strict_add(64);
+    }
+    // Remaining plaintext single blocks.
+    while offset.strict_add(16) <= buffer.len() {
+      let mut block = [0u8; 16];
+      block.copy_from_slice(&buffer[offset..offset.strict_add(16)]);
+      acc ^= u128::from_le_bytes(block);
+      acc = polyval::aarch64_clmul128_reduce_inline(acc, h);
+      offset = offset.strict_add(16);
+    }
+    if offset < buffer.len() {
+      let mut block = [0u8; 16];
+      block[..buffer.len().strict_sub(offset)].copy_from_slice(&buffer[offset..]);
+      acc ^= u128::from_le_bytes(block);
+      acc = polyval::aarch64_clmul128_reduce_inline(acc, h);
+    }
+
+    // Length block.
+    let aad_bits = (aad.len() as u64).strict_mul(8);
+    let pt_bits = (buffer.len() as u64).strict_mul(8);
+    let mut length_block = [0u8; 16];
+    length_block[0..8].copy_from_slice(&aad_bits.to_le_bytes());
+    length_block[8..16].copy_from_slice(&pt_bits.to_le_bytes());
+    acc ^= u128::from_le_bytes(length_block);
+    acc = polyval::aarch64_clmul128_reduce_inline(acc, h);
+
+    // --- 5. Tag finalization + verification ---
+    let mut expected = acc.to_le_bytes();
+    let mut j = 0usize;
+    while j < 12 {
+      expected[j] ^= nonce_bytes[j];
+      j = j.strict_add(1);
+    }
+    expected[15] &= 0x7f;
+    aes::aarch64_encrypt_block_inline(&enc_ek, &mut expected);
+
+    if !ct::constant_time_eq(&expected, tag.as_bytes()) {
+      ct::zeroize(buffer);
+      return Err(VerificationError::new());
+    }
+    Ok(())
+  }
+}
+
+// ---------------------------------------------------------------------------
+// powerpc64 fused encrypt/decrypt (single #[target_feature] scope)
+// ---------------------------------------------------------------------------
+
+#[cfg(target_arch = "powerpc64")]
+#[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
+unsafe fn encrypt_fused_ppc(
+  master_key: &[u8; KEY_SIZE],
+  nonce: &Nonce96,
+  aad: &[u8],
+  buffer: &mut [u8],
+) -> [u8; TAG_SIZE] {
+  // SAFETY: caller has verified POWER8 crypto availability.
+  unsafe {
+    // --- 1. Key derivation (RFC 8452 §4, AES-256 variant) ---
+    let master_ek = aes::ppc_expand_key_inline(master_key);
+    let nonce_bytes = nonce.as_bytes();
+
+    let mut blocks = [[0u8; 16]; 6];
+    let mut i = 0u32;
+    while i < 6 {
+      blocks[i as usize][0..4].copy_from_slice(&i.to_le_bytes());
+      blocks[i as usize][4..16].copy_from_slice(nonce_bytes);
+      i = i.strict_add(1);
+    }
+    for block in &mut blocks {
+      aes::ppc_encrypt_block_inline(&master_ek, block);
+    }
+
+    let mut auth_key = [0u8; 16];
+    let mut enc_key_bytes = [0u8; 32];
+    auth_key[0..8].copy_from_slice(&blocks[0][0..8]);
+    auth_key[8..16].copy_from_slice(&blocks[1][0..8]);
+    enc_key_bytes[0..8].copy_from_slice(&blocks[2][0..8]);
+    enc_key_bytes[8..16].copy_from_slice(&blocks[3][0..8]);
+    enc_key_bytes[16..24].copy_from_slice(&blocks[4][0..8]);
+    enc_key_bytes[24..32].copy_from_slice(&blocks[5][0..8]);
+    ct::zeroize(blocks.as_flattened_mut());
+
+    // --- 2. Expand derived encryption key ---
+    let enc_ek = aes::ppc_expand_key_inline(&enc_key_bytes);
+    ct::zeroize(&mut enc_key_bytes);
+
+    // --- 3. POLYVAL tag computation (RFC 8452 §5) ---
+    let h = u128::from_le_bytes(auth_key);
+    ct::zeroize(&mut auth_key);
+    let mut acc: u128 = 0;
+
+    // Precompute H powers for 4-block wide processing.
+    let powers = polyval::precompute_powers(h);
+    let h_powers_rev = [powers[3], powers[2], powers[1], powers[0]];
+
+    // Process AAD in 4-block (64-byte) chunks.
+    let mut offset = 0usize;
+    while offset.strict_add(64) <= aad.len() {
+      let mut b = [0u128; 4];
+      let mut i = 0usize;
+      while i < 4 {
+        let base = offset.strict_add(i.strict_mul(16));
+        let mut block = [0u8; 16];
+        block.copy_from_slice(&aad[base..base.strict_add(16)]);
+        b[i] = u128::from_le_bytes(block);
+        i = i.strict_add(1);
+      }
+      acc = polyval::ppc_aggregate_4blocks_inline(acc, &h_powers_rev, &b);
+      offset = offset.strict_add(64);
+    }
+    // Remaining AAD single blocks.
+    while offset.strict_add(16) <= aad.len() {
+      let mut block = [0u8; 16];
+      block.copy_from_slice(&aad[offset..offset.strict_add(16)]);
+      acc ^= u128::from_le_bytes(block);
+      acc = polyval::ppc_clmul128_reduce_inline(acc, h);
+      offset = offset.strict_add(16);
+    }
+    if offset < aad.len() {
+      let mut block = [0u8; 16];
+      block[..aad.len().strict_sub(offset)].copy_from_slice(&aad[offset..]);
+      acc ^= u128::from_le_bytes(block);
+      acc = polyval::ppc_clmul128_reduce_inline(acc, h);
+    }
+
+    // Process plaintext in 4-block (64-byte) chunks.
+    offset = 0;
+    while offset.strict_add(64) <= buffer.len() {
+      let mut b = [0u128; 4];
+      let mut i = 0usize;
+      while i < 4 {
+        let base = offset.strict_add(i.strict_mul(16));
+        let mut block = [0u8; 16];
+        block.copy_from_slice(&buffer[base..base.strict_add(16)]);
+        b[i] = u128::from_le_bytes(block);
+        i = i.strict_add(1);
+      }
+      acc = polyval::ppc_aggregate_4blocks_inline(acc, &h_powers_rev, &b);
+      offset = offset.strict_add(64);
+    }
+    // Remaining plaintext single blocks.
+    while offset.strict_add(16) <= buffer.len() {
+      let mut block = [0u8; 16];
+      block.copy_from_slice(&buffer[offset..offset.strict_add(16)]);
+      acc ^= u128::from_le_bytes(block);
+      acc = polyval::ppc_clmul128_reduce_inline(acc, h);
+      offset = offset.strict_add(16);
+    }
+    if offset < buffer.len() {
+      let mut block = [0u8; 16];
+      block[..buffer.len().strict_sub(offset)].copy_from_slice(&buffer[offset..]);
+      acc ^= u128::from_le_bytes(block);
+      acc = polyval::ppc_clmul128_reduce_inline(acc, h);
+    }
+
+    // Length block: [aad_bits as u64 LE || pt_bits as u64 LE].
+    let aad_bits = (aad.len() as u64).strict_mul(8);
+    let pt_bits = (buffer.len() as u64).strict_mul(8);
+    let mut length_block = [0u8; 16];
+    length_block[0..8].copy_from_slice(&aad_bits.to_le_bytes());
+    length_block[8..16].copy_from_slice(&pt_bits.to_le_bytes());
+    acc ^= u128::from_le_bytes(length_block);
+    acc = polyval::ppc_clmul128_reduce_inline(acc, h);
+
+    // --- 4. Tag finalization ---
+    let mut tag = acc.to_le_bytes();
+    let mut j = 0usize;
+    while j < 12 {
+      tag[j] ^= nonce_bytes[j];
+      j = j.strict_add(1);
+    }
+    tag[15] &= 0x7f;
+    aes::ppc_encrypt_block_inline(&enc_ek, &mut tag);
+
+    // --- 5. AES-CTR encryption ---
+    let mut counter_block = tag;
+    counter_block[15] |= 0x80;
+    let mut ctr = u32::from_le_bytes([counter_block[0], counter_block[1], counter_block[2], counter_block[3]]);
+    offset = 0;
+    while offset < buffer.len() {
+      counter_block[0..4].copy_from_slice(&ctr.to_le_bytes());
+      let mut keystream = counter_block;
+      aes::ppc_encrypt_block_inline(&enc_ek, &mut keystream);
+
+      let remaining = buffer.len().strict_sub(offset);
+      if remaining >= 16 {
+        let mut d = [0u8; 16];
+        d.copy_from_slice(&buffer[offset..offset.strict_add(16)]);
+        let xored = u128::from_ne_bytes(d) ^ u128::from_ne_bytes(keystream);
+        buffer[offset..offset.strict_add(16)].copy_from_slice(&xored.to_ne_bytes());
+        offset = offset.strict_add(16);
+      } else {
+        let mut i = 0usize;
+        while i < remaining {
+          buffer[offset.strict_add(i)] ^= keystream[i];
+          i = i.strict_add(1);
+        }
+        offset = offset.strict_add(remaining);
+      }
+      ctr = ctr.wrapping_add(1);
+    }
+
+    tag
+  }
+}
+
+#[cfg(target_arch = "powerpc64")]
+#[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
+unsafe fn decrypt_fused_ppc(
+  master_key: &[u8; KEY_SIZE],
+  nonce: &Nonce96,
+  aad: &[u8],
+  buffer: &mut [u8],
+  tag: &Aes256GcmSivTag,
+) -> Result<(), VerificationError> {
+  // SAFETY: caller has verified POWER8 crypto availability.
+  unsafe {
+    // --- 1. Key derivation ---
+    let master_ek = aes::ppc_expand_key_inline(master_key);
+    let nonce_bytes = nonce.as_bytes();
+
+    let mut blocks = [[0u8; 16]; 6];
+    let mut i = 0u32;
+    while i < 6 {
+      blocks[i as usize][0..4].copy_from_slice(&i.to_le_bytes());
+      blocks[i as usize][4..16].copy_from_slice(nonce_bytes);
+      i = i.strict_add(1);
+    }
+    for block in &mut blocks {
+      aes::ppc_encrypt_block_inline(&master_ek, block);
+    }
+
+    let mut auth_key = [0u8; 16];
+    let mut enc_key_bytes = [0u8; 32];
+    auth_key[0..8].copy_from_slice(&blocks[0][0..8]);
+    auth_key[8..16].copy_from_slice(&blocks[1][0..8]);
+    enc_key_bytes[0..8].copy_from_slice(&blocks[2][0..8]);
+    enc_key_bytes[8..16].copy_from_slice(&blocks[3][0..8]);
+    enc_key_bytes[16..24].copy_from_slice(&blocks[4][0..8]);
+    enc_key_bytes[24..32].copy_from_slice(&blocks[5][0..8]);
+    ct::zeroize(blocks.as_flattened_mut());
+
+    // --- 2. Expand derived encryption key ---
+    let enc_ek = aes::ppc_expand_key_inline(&enc_key_bytes);
+    ct::zeroize(&mut enc_key_bytes);
+
+    // --- 3. AES-CTR decryption (SIV: decrypt before verify) ---
+    let mut counter_block = tag.0;
+    counter_block[15] |= 0x80;
+    let mut ctr = u32::from_le_bytes([counter_block[0], counter_block[1], counter_block[2], counter_block[3]]);
+    let mut offset = 0usize;
+    while offset < buffer.len() {
+      counter_block[0..4].copy_from_slice(&ctr.to_le_bytes());
+      let mut keystream = counter_block;
+      aes::ppc_encrypt_block_inline(&enc_ek, &mut keystream);
+
+      let remaining = buffer.len().strict_sub(offset);
+      if remaining >= 16 {
+        let mut d = [0u8; 16];
+        d.copy_from_slice(&buffer[offset..offset.strict_add(16)]);
+        let xored = u128::from_ne_bytes(d) ^ u128::from_ne_bytes(keystream);
+        buffer[offset..offset.strict_add(16)].copy_from_slice(&xored.to_ne_bytes());
+        offset = offset.strict_add(16);
+      } else {
+        let mut i = 0usize;
+        while i < remaining {
+          buffer[offset.strict_add(i)] ^= keystream[i];
+          i = i.strict_add(1);
+        }
+        offset = offset.strict_add(remaining);
+      }
+      ctr = ctr.wrapping_add(1);
+    }
+
+    // --- 4. POLYVAL tag computation over decrypted plaintext ---
+    let h = u128::from_le_bytes(auth_key);
+    ct::zeroize(&mut auth_key);
+    let mut acc: u128 = 0;
+
+    // Precompute H powers for 4-block wide processing.
+    let powers = polyval::precompute_powers(h);
+    let h_powers_rev = [powers[3], powers[2], powers[1], powers[0]];
+
+    // Process AAD in 4-block (64-byte) chunks.
+    offset = 0;
+    while offset.strict_add(64) <= aad.len() {
+      let mut b = [0u128; 4];
+      let mut i = 0usize;
+      while i < 4 {
+        let base = offset.strict_add(i.strict_mul(16));
+        let mut block = [0u8; 16];
+        block.copy_from_slice(&aad[base..base.strict_add(16)]);
+        b[i] = u128::from_le_bytes(block);
+        i = i.strict_add(1);
+      }
+      acc = polyval::ppc_aggregate_4blocks_inline(acc, &h_powers_rev, &b);
+      offset = offset.strict_add(64);
+    }
+    // Remaining AAD single blocks.
+    while offset.strict_add(16) <= aad.len() {
+      let mut block = [0u8; 16];
+      block.copy_from_slice(&aad[offset..offset.strict_add(16)]);
+      acc ^= u128::from_le_bytes(block);
+      acc = polyval::ppc_clmul128_reduce_inline(acc, h);
+      offset = offset.strict_add(16);
+    }
+    if offset < aad.len() {
+      let mut block = [0u8; 16];
+      block[..aad.len().strict_sub(offset)].copy_from_slice(&aad[offset..]);
+      acc ^= u128::from_le_bytes(block);
+      acc = polyval::ppc_clmul128_reduce_inline(acc, h);
+    }
+
+    // Process decrypted plaintext in 4-block (64-byte) chunks.
+    offset = 0;
+    while offset.strict_add(64) <= buffer.len() {
+      let mut b = [0u128; 4];
+      let mut i = 0usize;
+      while i < 4 {
+        let base = offset.strict_add(i.strict_mul(16));
+        let mut block = [0u8; 16];
+        block.copy_from_slice(&buffer[base..base.strict_add(16)]);
+        b[i] = u128::from_le_bytes(block);
+        i = i.strict_add(1);
+      }
+      acc = polyval::ppc_aggregate_4blocks_inline(acc, &h_powers_rev, &b);
+      offset = offset.strict_add(64);
+    }
+    // Remaining plaintext single blocks.
+    while offset.strict_add(16) <= buffer.len() {
+      let mut block = [0u8; 16];
+      block.copy_from_slice(&buffer[offset..offset.strict_add(16)]);
+      acc ^= u128::from_le_bytes(block);
+      acc = polyval::ppc_clmul128_reduce_inline(acc, h);
+      offset = offset.strict_add(16);
+    }
+    if offset < buffer.len() {
+      let mut block = [0u8; 16];
+      block[..buffer.len().strict_sub(offset)].copy_from_slice(&buffer[offset..]);
+      acc ^= u128::from_le_bytes(block);
+      acc = polyval::ppc_clmul128_reduce_inline(acc, h);
+    }
+
+    // Length block.
+    let aad_bits = (aad.len() as u64).strict_mul(8);
+    let pt_bits = (buffer.len() as u64).strict_mul(8);
+    let mut length_block = [0u8; 16];
+    length_block[0..8].copy_from_slice(&aad_bits.to_le_bytes());
+    length_block[8..16].copy_from_slice(&pt_bits.to_le_bytes());
+    acc ^= u128::from_le_bytes(length_block);
+    acc = polyval::ppc_clmul128_reduce_inline(acc, h);
+
+    // --- 5. Tag finalization + verification ---
+    let mut expected = acc.to_le_bytes();
+    let mut j = 0usize;
+    while j < 12 {
+      expected[j] ^= nonce_bytes[j];
+      j = j.strict_add(1);
+    }
+    expected[15] &= 0x7f;
+    aes::ppc_encrypt_block_inline(&enc_ek, &mut expected);
+
+    if !ct::constant_time_eq(&expected, tag.as_bytes()) {
+      ct::zeroize(buffer);
+      return Err(VerificationError::new());
+    }
+    Ok(())
+  }
+}
+
+// ---------------------------------------------------------------------------
+// s390x fused encrypt/decrypt (#[target_feature(enable = "vector")] for POLYVAL)
+// ---------------------------------------------------------------------------
+
+#[cfg(target_arch = "s390x")]
+#[target_feature(enable = "vector")]
+unsafe fn encrypt_fused_s390x(
+  master_key: &[u8; KEY_SIZE],
+  nonce: &Nonce96,
+  aad: &[u8],
+  buffer: &mut [u8],
+) -> [u8; TAG_SIZE] {
+  // SAFETY: caller has verified z/Vector + MSA availability.
+  unsafe {
+    // --- 1. Key derivation ---
+    let master_km = aes::s390x_expand_key_inline(master_key);
+    let nonce_bytes = nonce.as_bytes();
+
+    let mut blocks = [[0u8; 16]; 6];
+    let mut i = 0u32;
+    while i < 6 {
+      blocks[i as usize][0..4].copy_from_slice(&i.to_le_bytes());
+      blocks[i as usize][4..16].copy_from_slice(nonce_bytes);
+      i = i.strict_add(1);
+    }
+    // Batch encrypt all 6 blocks (single KM call).
+    aes::s390x_encrypt_blocks_inline(&master_km, blocks.as_flattened_mut(), 6);
+
+    let mut auth_key = [0u8; 16];
+    let mut enc_key_bytes = [0u8; 32];
+    auth_key[0..8].copy_from_slice(&blocks[0][0..8]);
+    auth_key[8..16].copy_from_slice(&blocks[1][0..8]);
+    enc_key_bytes[0..8].copy_from_slice(&blocks[2][0..8]);
+    enc_key_bytes[8..16].copy_from_slice(&blocks[3][0..8]);
+    enc_key_bytes[16..24].copy_from_slice(&blocks[4][0..8]);
+    enc_key_bytes[24..32].copy_from_slice(&blocks[5][0..8]);
+    ct::zeroize(blocks.as_flattened_mut());
+
+    // --- 2. Expand derived encryption key ---
+    let enc_km = aes::s390x_expand_key_inline(&enc_key_bytes);
+    ct::zeroize(&mut enc_key_bytes);
+
+    // --- 3. POLYVAL tag computation (RFC 8452 §5) ---
+    let h = u128::from_le_bytes(auth_key);
+    ct::zeroize(&mut auth_key);
+    let mut acc: u128 = 0;
+
+    // Precompute H powers for 4-block wide processing.
+    let powers = polyval::precompute_powers(h);
+    let h_powers_rev = [powers[3], powers[2], powers[1], powers[0]];
+
+    // Process AAD in 4-block (64-byte) chunks.
+    let mut offset = 0usize;
+    while offset.strict_add(64) <= aad.len() {
+      let mut b = [0u128; 4];
+      let mut i = 0usize;
+      while i < 4 {
+        let base = offset.strict_add(i.strict_mul(16));
+        let mut block = [0u8; 16];
+        block.copy_from_slice(&aad[base..base.strict_add(16)]);
+        b[i] = u128::from_le_bytes(block);
+        i = i.strict_add(1);
+      }
+      acc = polyval::s390x_aggregate_4blocks_inline(acc, &h_powers_rev, &b);
+      offset = offset.strict_add(64);
+    }
+    // Remaining AAD single blocks.
+    while offset.strict_add(16) <= aad.len() {
+      let mut block = [0u8; 16];
+      block.copy_from_slice(&aad[offset..offset.strict_add(16)]);
+      acc ^= u128::from_le_bytes(block);
+      acc = polyval::s390x_clmul128_reduce_inline(acc, h);
+      offset = offset.strict_add(16);
+    }
+    if offset < aad.len() {
+      let mut block = [0u8; 16];
+      block[..aad.len().strict_sub(offset)].copy_from_slice(&aad[offset..]);
+      acc ^= u128::from_le_bytes(block);
+      acc = polyval::s390x_clmul128_reduce_inline(acc, h);
+    }
+
+    // Process plaintext in 4-block (64-byte) chunks.
+    offset = 0;
+    while offset.strict_add(64) <= buffer.len() {
+      let mut b = [0u128; 4];
+      let mut i = 0usize;
+      while i < 4 {
+        let base = offset.strict_add(i.strict_mul(16));
+        let mut block = [0u8; 16];
+        block.copy_from_slice(&buffer[base..base.strict_add(16)]);
+        b[i] = u128::from_le_bytes(block);
+        i = i.strict_add(1);
+      }
+      acc = polyval::s390x_aggregate_4blocks_inline(acc, &h_powers_rev, &b);
+      offset = offset.strict_add(64);
+    }
+    // Remaining plaintext single blocks.
+    while offset.strict_add(16) <= buffer.len() {
+      let mut block = [0u8; 16];
+      block.copy_from_slice(&buffer[offset..offset.strict_add(16)]);
+      acc ^= u128::from_le_bytes(block);
+      acc = polyval::s390x_clmul128_reduce_inline(acc, h);
+      offset = offset.strict_add(16);
+    }
+    if offset < buffer.len() {
+      let mut block = [0u8; 16];
+      block[..buffer.len().strict_sub(offset)].copy_from_slice(&buffer[offset..]);
+      acc ^= u128::from_le_bytes(block);
+      acc = polyval::s390x_clmul128_reduce_inline(acc, h);
+    }
+
+    // Length block: [aad_bits as u64 LE || pt_bits as u64 LE].
+    let aad_bits = (aad.len() as u64).strict_mul(8);
+    let pt_bits = (buffer.len() as u64).strict_mul(8);
+    let mut length_block = [0u8; 16];
+    length_block[0..8].copy_from_slice(&aad_bits.to_le_bytes());
+    length_block[8..16].copy_from_slice(&pt_bits.to_le_bytes());
+    acc ^= u128::from_le_bytes(length_block);
+    acc = polyval::s390x_clmul128_reduce_inline(acc, h);
+
+    // --- 4. Tag finalization ---
+    let mut tag = acc.to_le_bytes();
+    let mut j = 0usize;
+    while j < 12 {
+      tag[j] ^= nonce_bytes[j];
+      j = j.strict_add(1);
+    }
+    tag[15] &= 0x7f;
+    aes::s390x_encrypt_block_inline(&enc_km, &mut tag);
+
+    // --- 5. AES-CTR encryption ---
+    let mut counter_block = tag;
+    counter_block[15] |= 0x80;
+    let mut ctr = u32::from_le_bytes([counter_block[0], counter_block[1], counter_block[2], counter_block[3]]);
+    offset = 0;
+    while offset < buffer.len() {
+      counter_block[0..4].copy_from_slice(&ctr.to_le_bytes());
+      let mut keystream = counter_block;
+      aes::s390x_encrypt_block_inline(&enc_km, &mut keystream);
+
+      let remaining = buffer.len().strict_sub(offset);
+      if remaining >= 16 {
+        let mut d = [0u8; 16];
+        d.copy_from_slice(&buffer[offset..offset.strict_add(16)]);
+        let xored = u128::from_ne_bytes(d) ^ u128::from_ne_bytes(keystream);
+        buffer[offset..offset.strict_add(16)].copy_from_slice(&xored.to_ne_bytes());
+        offset = offset.strict_add(16);
+      } else {
+        let mut i = 0usize;
+        while i < remaining {
+          buffer[offset.strict_add(i)] ^= keystream[i];
+          i = i.strict_add(1);
+        }
+        offset = offset.strict_add(remaining);
+      }
+      ctr = ctr.wrapping_add(1);
+    }
+
+    tag
+  }
+}
+
+#[cfg(target_arch = "s390x")]
+#[target_feature(enable = "vector")]
+unsafe fn decrypt_fused_s390x(
+  master_key: &[u8; KEY_SIZE],
+  nonce: &Nonce96,
+  aad: &[u8],
+  buffer: &mut [u8],
+  tag: &Aes256GcmSivTag,
+) -> Result<(), VerificationError> {
+  // SAFETY: caller has verified z/Vector + MSA availability.
+  unsafe {
+    // --- 1. Key derivation ---
+    let master_km = aes::s390x_expand_key_inline(master_key);
+    let nonce_bytes = nonce.as_bytes();
+
+    let mut blocks = [[0u8; 16]; 6];
+    let mut i = 0u32;
+    while i < 6 {
+      blocks[i as usize][0..4].copy_from_slice(&i.to_le_bytes());
+      blocks[i as usize][4..16].copy_from_slice(nonce_bytes);
+      i = i.strict_add(1);
+    }
+    // Batch encrypt all 6 blocks (single KM call).
+    aes::s390x_encrypt_blocks_inline(&master_km, blocks.as_flattened_mut(), 6);
+
+    let mut auth_key = [0u8; 16];
+    let mut enc_key_bytes = [0u8; 32];
+    auth_key[0..8].copy_from_slice(&blocks[0][0..8]);
+    auth_key[8..16].copy_from_slice(&blocks[1][0..8]);
+    enc_key_bytes[0..8].copy_from_slice(&blocks[2][0..8]);
+    enc_key_bytes[8..16].copy_from_slice(&blocks[3][0..8]);
+    enc_key_bytes[16..24].copy_from_slice(&blocks[4][0..8]);
+    enc_key_bytes[24..32].copy_from_slice(&blocks[5][0..8]);
+    ct::zeroize(blocks.as_flattened_mut());
+
+    // --- 2. Expand derived encryption key ---
+    let enc_km = aes::s390x_expand_key_inline(&enc_key_bytes);
+    ct::zeroize(&mut enc_key_bytes);
+
+    // --- 3. AES-CTR decryption (SIV: decrypt before verify) ---
+    let mut counter_block = tag.0;
+    counter_block[15] |= 0x80;
+    let mut ctr = u32::from_le_bytes([counter_block[0], counter_block[1], counter_block[2], counter_block[3]]);
+    let mut offset = 0usize;
+    while offset < buffer.len() {
+      counter_block[0..4].copy_from_slice(&ctr.to_le_bytes());
+      let mut keystream = counter_block;
+      aes::s390x_encrypt_block_inline(&enc_km, &mut keystream);
+
+      let remaining = buffer.len().strict_sub(offset);
+      if remaining >= 16 {
+        let mut d = [0u8; 16];
+        d.copy_from_slice(&buffer[offset..offset.strict_add(16)]);
+        let xored = u128::from_ne_bytes(d) ^ u128::from_ne_bytes(keystream);
+        buffer[offset..offset.strict_add(16)].copy_from_slice(&xored.to_ne_bytes());
+        offset = offset.strict_add(16);
+      } else {
+        let mut i = 0usize;
+        while i < remaining {
+          buffer[offset.strict_add(i)] ^= keystream[i];
+          i = i.strict_add(1);
+        }
+        offset = offset.strict_add(remaining);
+      }
+      ctr = ctr.wrapping_add(1);
+    }
+
+    // --- 4. POLYVAL tag computation over decrypted plaintext ---
+    let h = u128::from_le_bytes(auth_key);
+    ct::zeroize(&mut auth_key);
+    let mut acc: u128 = 0;
+
+    // Precompute H powers for 4-block wide processing.
+    let powers = polyval::precompute_powers(h);
+    let h_powers_rev = [powers[3], powers[2], powers[1], powers[0]];
+
+    // Process AAD in 4-block (64-byte) chunks.
+    offset = 0;
+    while offset.strict_add(64) <= aad.len() {
+      let mut b = [0u128; 4];
+      let mut i = 0usize;
+      while i < 4 {
+        let base = offset.strict_add(i.strict_mul(16));
+        let mut block = [0u8; 16];
+        block.copy_from_slice(&aad[base..base.strict_add(16)]);
+        b[i] = u128::from_le_bytes(block);
+        i = i.strict_add(1);
+      }
+      acc = polyval::s390x_aggregate_4blocks_inline(acc, &h_powers_rev, &b);
+      offset = offset.strict_add(64);
+    }
+    // Remaining AAD single blocks.
+    while offset.strict_add(16) <= aad.len() {
+      let mut block = [0u8; 16];
+      block.copy_from_slice(&aad[offset..offset.strict_add(16)]);
+      acc ^= u128::from_le_bytes(block);
+      acc = polyval::s390x_clmul128_reduce_inline(acc, h);
+      offset = offset.strict_add(16);
+    }
+    if offset < aad.len() {
+      let mut block = [0u8; 16];
+      block[..aad.len().strict_sub(offset)].copy_from_slice(&aad[offset..]);
+      acc ^= u128::from_le_bytes(block);
+      acc = polyval::s390x_clmul128_reduce_inline(acc, h);
+    }
+
+    // Process decrypted plaintext in 4-block (64-byte) chunks.
+    offset = 0;
+    while offset.strict_add(64) <= buffer.len() {
+      let mut b = [0u128; 4];
+      let mut i = 0usize;
+      while i < 4 {
+        let base = offset.strict_add(i.strict_mul(16));
+        let mut block = [0u8; 16];
+        block.copy_from_slice(&buffer[base..base.strict_add(16)]);
+        b[i] = u128::from_le_bytes(block);
+        i = i.strict_add(1);
+      }
+      acc = polyval::s390x_aggregate_4blocks_inline(acc, &h_powers_rev, &b);
+      offset = offset.strict_add(64);
+    }
+    // Remaining plaintext single blocks.
+    while offset.strict_add(16) <= buffer.len() {
+      let mut block = [0u8; 16];
+      block.copy_from_slice(&buffer[offset..offset.strict_add(16)]);
+      acc ^= u128::from_le_bytes(block);
+      acc = polyval::s390x_clmul128_reduce_inline(acc, h);
+      offset = offset.strict_add(16);
+    }
+    if offset < buffer.len() {
+      let mut block = [0u8; 16];
+      block[..buffer.len().strict_sub(offset)].copy_from_slice(&buffer[offset..]);
+      acc ^= u128::from_le_bytes(block);
+      acc = polyval::s390x_clmul128_reduce_inline(acc, h);
+    }
+
+    // Length block.
+    let aad_bits = (aad.len() as u64).strict_mul(8);
+    let pt_bits = (buffer.len() as u64).strict_mul(8);
+    let mut length_block = [0u8; 16];
+    length_block[0..8].copy_from_slice(&aad_bits.to_le_bytes());
+    length_block[8..16].copy_from_slice(&pt_bits.to_le_bytes());
+    acc ^= u128::from_le_bytes(length_block);
+    acc = polyval::s390x_clmul128_reduce_inline(acc, h);
+
+    // --- 5. Tag finalization + verification ---
+    let mut expected = acc.to_le_bytes();
+    let mut j = 0usize;
+    while j < 12 {
+      expected[j] ^= nonce_bytes[j];
+      j = j.strict_add(1);
+    }
+    expected[15] &= 0x7f;
+    aes::s390x_encrypt_block_inline(&enc_km, &mut expected);
+
+    if !ct::constant_time_eq(&expected, tag.as_bytes()) {
+      ct::zeroize(buffer);
+      return Err(VerificationError::new());
+    }
+    Ok(())
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Aead trait implementation
 // ---------------------------------------------------------------------------
 
@@ -455,15 +1442,14 @@ impl Aead for Aes256GcmSiv {
       "AES-256-GCM-SIV plaintext exceeds 2^36 - 32 bytes"
     );
 
-    let (mut auth_key, mut enc_key) = derive_keys(self.key.as_bytes(), nonce);
-    let ek = aes::aes256_expand_key(&enc_key);
-
     // Wide path: VPCLMULQDQ POLYVAL + VAES-512 CTR when available.
     #[cfg(target_arch = "x86_64")]
     {
       use crate::platform::caps;
       let c = crate::platform::caps();
       if c.has(caps::x86::VAES_READY) && c.has(caps::x86::VPCLMUL_READY) {
+        let (mut auth_key, mut enc_key) = derive_keys(self.key.as_bytes(), nonce);
+        let ek = aes::aes256_expand_key(&enc_key);
         let tag_bytes = compute_tag_wide(&auth_key, &ek, nonce, aad, buffer);
         let mut counter_block = tag_bytes;
         counter_block[15] |= 0x80;
@@ -475,7 +1461,40 @@ impl Aead for Aes256GcmSiv {
       }
     }
 
+    // Fused path: entire encrypt in a single #[target_feature] scope.
+    #[cfg(target_arch = "aarch64")]
+    {
+      if crate::platform::caps().has(crate::platform::caps::aarch64::AES) {
+        // SAFETY: AES-CE availability verified via HWCAP.
+        let tag_bytes = unsafe { encrypt_fused_aarch64(self.key.as_bytes(), nonce, aad, buffer) };
+        return Aes256GcmSivTag::from_bytes(tag_bytes);
+      }
+    }
+
+    // Fused path: POWER8 crypto.
+    #[cfg(target_arch = "powerpc64")]
+    {
+      if crate::platform::caps().has(crate::platform::caps::power::POWER8_CRYPTO) {
+        // SAFETY: POWER8 crypto availability verified via HWCAP.
+        let tag_bytes = unsafe { encrypt_fused_ppc(self.key.as_bytes(), nonce, aad, buffer) };
+        return Aes256GcmSivTag::from_bytes(tag_bytes);
+      }
+    }
+
+    // Fused path: s390x z/Vector + MSA.
+    #[cfg(target_arch = "s390x")]
+    {
+      let c = crate::platform::caps();
+      if c.has(crate::platform::caps::s390x::VECTOR) && c.has(crate::platform::caps::s390x::MSA) {
+        // SAFETY: z/Vector + MSA availability verified via STFLE/HWCAP.
+        let tag_bytes = unsafe { encrypt_fused_s390x(self.key.as_bytes(), nonce, aad, buffer) };
+        return Aes256GcmSivTag::from_bytes(tag_bytes);
+      }
+    }
+
     // Scalar path.
+    let (mut auth_key, mut enc_key) = derive_keys(self.key.as_bytes(), nonce);
+    let ek = aes::aes256_expand_key(&enc_key);
     let tag_bytes = compute_tag(&auth_key, &ek, nonce, aad, buffer);
     let mut counter_block = tag_bytes;
     counter_block[15] |= 0x80;
@@ -499,15 +1518,14 @@ impl Aead for Aes256GcmSiv {
       "AES-256-GCM-SIV ciphertext exceeds 2^36 - 32 bytes"
     );
 
-    let (mut auth_key, mut enc_key) = derive_keys(self.key.as_bytes(), nonce);
-    let ek = aes::aes256_expand_key(&enc_key);
-
     // Wide path: VAES-512 CTR + VPCLMULQDQ POLYVAL when available.
     #[cfg(target_arch = "x86_64")]
     {
       use crate::platform::caps;
       let c = crate::platform::caps();
       if c.has(caps::x86::VAES_READY) && c.has(caps::x86::VPCLMUL_READY) {
+        let (mut auth_key, mut enc_key) = derive_keys(self.key.as_bytes(), nonce);
+        let ek = aes::aes256_expand_key(&enc_key);
         // Decrypt first (SIV pattern).
         let mut counter_block = tag.0;
         counter_block[15] |= 0x80;
@@ -526,7 +1544,37 @@ impl Aead for Aes256GcmSiv {
       }
     }
 
+    // Fused path: entire decrypt in a single #[target_feature] scope.
+    #[cfg(target_arch = "aarch64")]
+    {
+      if crate::platform::caps().has(crate::platform::caps::aarch64::AES) {
+        // SAFETY: AES-CE availability verified via HWCAP.
+        return unsafe { decrypt_fused_aarch64(self.key.as_bytes(), nonce, aad, buffer, tag) };
+      }
+    }
+
+    // Fused path: POWER8 crypto.
+    #[cfg(target_arch = "powerpc64")]
+    {
+      if crate::platform::caps().has(crate::platform::caps::power::POWER8_CRYPTO) {
+        // SAFETY: POWER8 crypto availability verified via HWCAP.
+        return unsafe { decrypt_fused_ppc(self.key.as_bytes(), nonce, aad, buffer, tag) };
+      }
+    }
+
+    // Fused path: s390x z/Vector + MSA.
+    #[cfg(target_arch = "s390x")]
+    {
+      let c = crate::platform::caps();
+      if c.has(crate::platform::caps::s390x::VECTOR) && c.has(crate::platform::caps::s390x::MSA) {
+        // SAFETY: z/Vector + MSA availability verified via STFLE/HWCAP.
+        return unsafe { decrypt_fused_s390x(self.key.as_bytes(), nonce, aad, buffer, tag) };
+      }
+    }
+
     // Scalar path: decrypt then verify.
+    let (mut auth_key, mut enc_key) = derive_keys(self.key.as_bytes(), nonce);
+    let ek = aes::aes256_expand_key(&enc_key);
     let mut counter_block = tag.0;
     counter_block[15] |= 0x80;
     aes::aes256_ctr32_encrypt(&ek, &counter_block, buffer);

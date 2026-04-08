@@ -255,6 +255,13 @@
 )]
 // NIGHTLY: RISC-V scalar crypto intrinsics (Zknh) for SHA-256.
 #![cfg_attr(target_arch = "riscv32", feature(riscv_ext_intrinsics))]
+// NIGHTLY: combine #[target_feature] + #[inline(always)] on aarch64 to guarantee
+// inlining of AES-CE/PMULL helpers into fused encrypt/decrypt scopes, eliminating
+// per-call register spills that dominate at small message sizes.
+#![cfg_attr(
+  any(target_arch = "aarch64", target_arch = "powerpc64", target_arch = "s390x"),
+  feature(target_feature_inline_always)
+)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(not(feature = "std"), no_std)]
 

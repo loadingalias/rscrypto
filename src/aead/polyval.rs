@@ -109,18 +109,16 @@ mod pclmul {
 mod pmull {
   use core::arch::aarch64::*;
 
-  /// Combined 128×128 carryless multiply + Montgomery reduce using PMULL.
+  /// Core PMULL multiply + reduce — `#[inline(always)]` for guaranteed inlining.
   ///
-  /// Uses 4 `vmull_p64` instructions for the schoolbook product, then
-  /// lane-parallel NEON shifts for Montgomery reduction — the same
-  /// 2-pass fold-from-bottom structure as the SSE2 and portable paths.
-  ///
-  /// # Safety
-  /// Caller must ensure the CPU supports PMULL (gated via `target_feature = "aes"`
-  /// because ARM bundles PMULL in the crypto extension alongside AES).
+  /// Uses `#[target_feature]` because aarch64 intrinsics require matching
+  /// features on the immediate caller. Combined with `#[inline(always)]`,
+  /// the function body is inlined into the caller — no function call boundary,
+  /// no register spills.
   #[target_feature(enable = "neon", enable = "aes")]
-  pub(super) unsafe fn clmul128_reduce(a: u128, b: u128) -> u128 {
-    // SAFETY: target_feature gate guarantees NEON + PMULL.
+  #[inline(always)]
+  pub(super) unsafe fn clmul128_reduce_core(a: u128, b: u128) -> u128 {
+    // SAFETY: caller guarantees NEON + PMULL via target_feature chain.
     unsafe {
       let a_lo = a as u64;
       let a_hi = (a >> 64) as u64;
@@ -147,6 +145,21 @@ mod pmull {
       let r_hi = vgetq_lane_u64(result, 1) as u128;
       r_lo | (r_hi << 64)
     }
+  }
+
+  /// Combined 128×128 carryless multiply + Montgomery reduce using PMULL.
+  ///
+  /// Uses 4 `vmull_p64` instructions for the schoolbook product, then
+  /// lane-parallel NEON shifts for Montgomery reduction — the same
+  /// 2-pass fold-from-bottom structure as the SSE2 and portable paths.
+  ///
+  /// # Safety
+  /// Caller must ensure the CPU supports PMULL (gated via `target_feature = "aes"`
+  /// because ARM bundles PMULL in the crypto extension alongside AES).
+  #[target_feature(enable = "neon", enable = "aes")]
+  pub(super) unsafe fn clmul128_reduce(a: u128, b: u128) -> u128 {
+    // SAFETY: target_feature gate guarantees NEON + PMULL.
+    unsafe { clmul128_reduce_core(a, b) }
   }
 
   /// Montgomery reduction of [lo:hi] modulo POLYVAL's polynomial.
@@ -183,6 +196,61 @@ mod pmull {
 
       // Final: hi XOR right XOR (left2 >> 64).
       veorq_u64(veorq_u64(hi, right), vextq_u64(left2, zero, 1))
+    }
+  }
+
+  /// 4-block wide schoolbook multiply + single Montgomery reduction.
+  ///
+  /// Computes `(acc ^ b0) * H^4 ^ b1 * H^3 ^ b2 * H^2 ^ b3 * H` using
+  /// 16 independent `vmull_p64` instructions that the OOO core on Neoverse
+  /// V1/V2 (2 crypto pipes) can schedule freely, then a single reduction.
+  #[target_feature(enable = "neon", enable = "aes")]
+  #[inline(always)]
+  pub(super) unsafe fn aggregate_4blocks(acc: u128, h_powers_rev: &[u128; 4], blocks: &[u128; 4]) -> u128 {
+    // SAFETY: target_feature gate guarantees NEON + PMULL.
+    unsafe {
+      let b0 = acc ^ blocks[0];
+      let b1 = blocks[1];
+      let b2 = blocks[2];
+      let b3 = blocks[3];
+
+      // 16 vmull_p64: 4 blocks × 4 schoolbook products.
+      let ll0 = vreinterpretq_u64_p128(vmull_p64(b0 as u64, h_powers_rev[0] as u64));
+      let hh0 = vreinterpretq_u64_p128(vmull_p64((b0 >> 64) as u64, (h_powers_rev[0] >> 64) as u64));
+      let lh0 = vreinterpretq_u64_p128(vmull_p64(b0 as u64, (h_powers_rev[0] >> 64) as u64));
+      let hl0 = vreinterpretq_u64_p128(vmull_p64((b0 >> 64) as u64, h_powers_rev[0] as u64));
+
+      let ll1 = vreinterpretq_u64_p128(vmull_p64(b1 as u64, h_powers_rev[1] as u64));
+      let hh1 = vreinterpretq_u64_p128(vmull_p64((b1 >> 64) as u64, (h_powers_rev[1] >> 64) as u64));
+      let lh1 = vreinterpretq_u64_p128(vmull_p64(b1 as u64, (h_powers_rev[1] >> 64) as u64));
+      let hl1 = vreinterpretq_u64_p128(vmull_p64((b1 >> 64) as u64, h_powers_rev[1] as u64));
+
+      let ll2 = vreinterpretq_u64_p128(vmull_p64(b2 as u64, h_powers_rev[2] as u64));
+      let hh2 = vreinterpretq_u64_p128(vmull_p64((b2 >> 64) as u64, (h_powers_rev[2] >> 64) as u64));
+      let lh2 = vreinterpretq_u64_p128(vmull_p64(b2 as u64, (h_powers_rev[2] >> 64) as u64));
+      let hl2 = vreinterpretq_u64_p128(vmull_p64((b2 >> 64) as u64, h_powers_rev[2] as u64));
+
+      let ll3 = vreinterpretq_u64_p128(vmull_p64(b3 as u64, h_powers_rev[3] as u64));
+      let hh3 = vreinterpretq_u64_p128(vmull_p64((b3 >> 64) as u64, (h_powers_rev[3] >> 64) as u64));
+      let lh3 = vreinterpretq_u64_p128(vmull_p64(b3 as u64, (h_powers_rev[3] >> 64) as u64));
+      let hl3 = vreinterpretq_u64_p128(vmull_p64((b3 >> 64) as u64, h_powers_rev[3] as u64));
+
+      // XOR the 4 products.
+      let ll = veorq_u64(veorq_u64(ll0, ll1), veorq_u64(ll2, ll3));
+      let hh = veorq_u64(veorq_u64(hh0, hh1), veorq_u64(hh2, hh3));
+      let lh = veorq_u64(veorq_u64(lh0, lh1), veorq_u64(lh2, lh3));
+      let hl = veorq_u64(veorq_u64(hl0, hl1), veorq_u64(hl2, hl3));
+
+      // Assemble + reduce (same as single-block path).
+      let mid = veorq_u64(lh, hl);
+      let zero = vdupq_n_u64(0);
+      let lo = veorq_u64(ll, vextq_u64(zero, mid, 1));
+      let hi = veorq_u64(hh, vextq_u64(mid, zero, 1));
+      let result = mont_reduce_neon(lo, hi);
+
+      let r_lo = vgetq_lane_u64(result, 0) as u128;
+      let r_hi = vgetq_lane_u64(result, 1) as u128;
+      r_lo | (r_hi << 64)
     }
   }
 }
@@ -308,15 +376,11 @@ mod s390x_vgfm {
     }
   }
 
-  /// Combined 128×128 carryless multiply + Montgomery reduce using VGFM.
-  ///
-  /// Karatsuba decomposition with 3 VGFM multiplies (vs 4 schoolbook).
-  ///
-  /// # Safety
-  /// Caller must ensure the z/Vector facility is available.
+  /// Core VGFM multiply + reduce — `#[inline(always)]` for guaranteed inlining.
   #[target_feature(enable = "vector")]
-  pub(super) unsafe fn clmul128_reduce(a: u128, b: u128) -> u128 {
-    // SAFETY: target_feature gate guarantees z/Vector availability.
+  #[inline(always)]
+  pub(super) unsafe fn clmul128_reduce_core(a: u128, b: u128) -> u128 {
+    // SAFETY: caller guarantees z/Vector availability via target_feature chain.
     unsafe {
       let a_lo = a as u64;
       let a_hi = (a >> 64) as u64;
@@ -331,6 +395,77 @@ mod s390x_vgfm {
       let mid = v2 ^ v0 ^ v1;
 
       // Assemble 256-bit product [lo_128 : hi_128].
+      let lo_128 = v0 ^ vsldb::<8>(mid, zero);
+      let hi_128 = v1 ^ vsldb::<8>(zero, mid);
+
+      let result = mont_reduce(lo_128, hi_128);
+      let arr = result.to_array();
+      ((arr[0] as u64 as u128) << 64) | (arr[1] as u64 as u128)
+    }
+  }
+
+  /// Combined 128×128 carryless multiply + Montgomery reduce using VGFM.
+  ///
+  /// Karatsuba decomposition with 3 VGFM multiplies (vs 4 schoolbook).
+  ///
+  /// # Safety
+  /// Caller must ensure the z/Vector facility is available.
+  #[target_feature(enable = "vector")]
+  pub(super) unsafe fn clmul128_reduce(a: u128, b: u128) -> u128 {
+    // SAFETY: target_feature gate guarantees z/Vector availability.
+    unsafe { clmul128_reduce_core(a, b) }
+  }
+
+  /// 4-block wide Karatsuba multiply + single Montgomery reduction.
+  ///
+  /// 12 independent VGFM (4 × 3 Karatsuba), then one vector
+  /// Montgomery reduction.
+  #[target_feature(enable = "vector")]
+  #[inline(always)]
+  pub(super) unsafe fn aggregate_4blocks(acc: u128, h_powers_rev: &[u128; 4], blocks: &[u128; 4]) -> u128 {
+    // SAFETY: target_feature gate guarantees z/Vector availability.
+    unsafe {
+      let b0 = acc ^ blocks[0];
+      let b1 = blocks[1];
+      let b2 = blocks[2];
+      let b3 = blocks[3];
+      let zero = i64x2::from_array([0, 0]);
+
+      // 12 VGFM: 4 blocks × 3 Karatsuba multiplies.
+      let v0_0 = mul64(b0 as u64, h_powers_rev[0] as u64);
+      let v1_0 = mul64((b0 >> 64) as u64, (h_powers_rev[0] >> 64) as u64);
+      let v2_0 = mul64(
+        b0 as u64 ^ (b0 >> 64) as u64,
+        h_powers_rev[0] as u64 ^ (h_powers_rev[0] >> 64) as u64,
+      );
+
+      let v0_1 = mul64(b1 as u64, h_powers_rev[1] as u64);
+      let v1_1 = mul64((b1 >> 64) as u64, (h_powers_rev[1] >> 64) as u64);
+      let v2_1 = mul64(
+        b1 as u64 ^ (b1 >> 64) as u64,
+        h_powers_rev[1] as u64 ^ (h_powers_rev[1] >> 64) as u64,
+      );
+
+      let v0_2 = mul64(b2 as u64, h_powers_rev[2] as u64);
+      let v1_2 = mul64((b2 >> 64) as u64, (h_powers_rev[2] >> 64) as u64);
+      let v2_2 = mul64(
+        b2 as u64 ^ (b2 >> 64) as u64,
+        h_powers_rev[2] as u64 ^ (h_powers_rev[2] >> 64) as u64,
+      );
+
+      let v0_3 = mul64(b3 as u64, h_powers_rev[3] as u64);
+      let v1_3 = mul64((b3 >> 64) as u64, (h_powers_rev[3] >> 64) as u64);
+      let v2_3 = mul64(
+        b3 as u64 ^ (b3 >> 64) as u64,
+        h_powers_rev[3] as u64 ^ (h_powers_rev[3] >> 64) as u64,
+      );
+
+      // XOR all 4 Karatsuba intermediates (i64x2 vector XOR).
+      let v0 = v0_0 ^ v0_1 ^ v0_2 ^ v0_3;
+      let v1 = v1_0 ^ v1_1 ^ v1_2 ^ v1_3;
+      let v2 = v2_0 ^ v2_1 ^ v2_2 ^ v2_3;
+      let mid = v2 ^ v0 ^ v1;
+
       let lo_128 = v0 ^ vsldb::<8>(mid, zero);
       let hi_128 = v1 ^ vsldb::<8>(zero, mid);
 
@@ -374,16 +509,11 @@ mod ppc_vpmsum {
     }
   }
 
-  /// Combined 128×128 carryless multiply + Montgomery reduce using vpmsumd.
-  ///
-  /// Karatsuba decomposition with 3 `vpmsumd` multiplies, then the same
-  /// scalar Montgomery reduction as the portable path.
-  ///
-  /// # Safety
-  /// Caller must ensure POWER8 crypto instructions are available.
+  /// Core VPMSUMD multiply + reduce — `#[inline(always)]` for guaranteed inlining.
   #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
-  pub(super) unsafe fn clmul128_reduce(a: u128, b: u128) -> u128 {
-    // SAFETY: target_feature gate guarantees POWER8 crypto availability.
+  #[inline(always)]
+  pub(super) unsafe fn clmul128_reduce_core(a: u128, b: u128) -> u128 {
+    // SAFETY: caller guarantees POWER8 crypto availability via target_feature chain.
     unsafe {
       let a_lo = a as u64;
       let a_hi = (a >> 64) as u64;
@@ -398,12 +528,78 @@ mod ppc_vpmsum {
       let mid_lo = v2_lo ^ v0_lo ^ v1_lo;
       let mid_hi = v2_hi ^ v0_hi ^ v1_hi;
 
-      let w0 = v0_lo;
-      let w1 = v0_hi ^ mid_lo;
-      let w2 = v1_lo ^ mid_hi;
-      let w3 = v1_hi;
+      super::mont_reduce([v0_lo, v0_hi ^ mid_lo, v1_lo ^ mid_hi, v1_hi])
+    }
+  }
 
-      super::mont_reduce([w0, w1, w2, w3])
+  /// Combined 128×128 carryless multiply + Montgomery reduce using vpmsumd.
+  ///
+  /// Karatsuba decomposition with 3 `vpmsumd` multiplies, then the same
+  /// scalar Montgomery reduction as the portable path.
+  ///
+  /// # Safety
+  /// Caller must ensure POWER8 crypto instructions are available.
+  #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
+  pub(super) unsafe fn clmul128_reduce(a: u128, b: u128) -> u128 {
+    // SAFETY: target_feature gate guarantees POWER8 crypto availability.
+    unsafe { clmul128_reduce_core(a, b) }
+  }
+
+  /// 4-block wide Karatsuba multiply + single Montgomery reduction.
+  ///
+  /// 12 independent `vpmsumd` (4 × 3 Karatsuba), then one scalar
+  /// Montgomery reduction.
+  #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
+  #[inline(always)]
+  pub(super) unsafe fn aggregate_4blocks(acc: u128, h_powers_rev: &[u128; 4], blocks: &[u128; 4]) -> u128 {
+    // SAFETY: target_feature gate guarantees POWER8 crypto availability.
+    unsafe {
+      let b0 = acc ^ blocks[0];
+      let b1 = blocks[1];
+      let b2 = blocks[2];
+      let b3 = blocks[3];
+
+      // 12 vpmsumd: 4 blocks × 3 Karatsuba multiplies.
+      let (z0_0l, z0_0h) = mul64(b0 as u64, h_powers_rev[0] as u64);
+      let (z1_0l, z1_0h) = mul64((b0 >> 64) as u64, (h_powers_rev[0] >> 64) as u64);
+      let (z2_0l, z2_0h) = mul64(
+        b0 as u64 ^ (b0 >> 64) as u64,
+        h_powers_rev[0] as u64 ^ (h_powers_rev[0] >> 64) as u64,
+      );
+
+      let (z0_1l, z0_1h) = mul64(b1 as u64, h_powers_rev[1] as u64);
+      let (z1_1l, z1_1h) = mul64((b1 >> 64) as u64, (h_powers_rev[1] >> 64) as u64);
+      let (z2_1l, z2_1h) = mul64(
+        b1 as u64 ^ (b1 >> 64) as u64,
+        h_powers_rev[1] as u64 ^ (h_powers_rev[1] >> 64) as u64,
+      );
+
+      let (z0_2l, z0_2h) = mul64(b2 as u64, h_powers_rev[2] as u64);
+      let (z1_2l, z1_2h) = mul64((b2 >> 64) as u64, (h_powers_rev[2] >> 64) as u64);
+      let (z2_2l, z2_2h) = mul64(
+        b2 as u64 ^ (b2 >> 64) as u64,
+        h_powers_rev[2] as u64 ^ (h_powers_rev[2] >> 64) as u64,
+      );
+
+      let (z0_3l, z0_3h) = mul64(b3 as u64, h_powers_rev[3] as u64);
+      let (z1_3l, z1_3h) = mul64((b3 >> 64) as u64, (h_powers_rev[3] >> 64) as u64);
+      let (z2_3l, z2_3h) = mul64(
+        b3 as u64 ^ (b3 >> 64) as u64,
+        h_powers_rev[3] as u64 ^ (h_powers_rev[3] >> 64) as u64,
+      );
+
+      // XOR all 4 Karatsuba intermediates.
+      let z0_lo = z0_0l ^ z0_1l ^ z0_2l ^ z0_3l;
+      let z0_hi = z0_0h ^ z0_1h ^ z0_2h ^ z0_3h;
+      let z1_lo = z1_0l ^ z1_1l ^ z1_2l ^ z1_3l;
+      let z1_hi = z1_0h ^ z1_1h ^ z1_2h ^ z1_3h;
+      let z2_lo = z2_0l ^ z2_1l ^ z2_2l ^ z2_3l;
+      let z2_hi = z2_0h ^ z2_1h ^ z2_2h ^ z2_3h;
+
+      let mid_lo = z2_lo ^ z0_lo ^ z1_lo;
+      let mid_hi = z2_hi ^ z0_hi ^ z1_hi;
+
+      super::mont_reduce([z0_lo, z0_hi ^ mid_lo, z1_lo ^ mid_hi, z1_hi])
     }
   }
 }
@@ -555,6 +751,87 @@ mod vpclmul {
 }
 
 // ---------------------------------------------------------------------------
+// aarch64: inline helper for fused paths (#[target_feature] + #[inline(always)])
+// ---------------------------------------------------------------------------
+
+/// PMULL-based 128×128 carryless multiply + Montgomery reduce, guaranteed
+/// to inline.
+///
+/// Designed to be inlined into a fused `#[target_feature(enable = "aes,neon")]`
+/// scope so every POLYVAL block update stays in the hot loop without
+/// crossing a function boundary.
+///
+/// # Safety
+/// Caller must ensure PMULL is available.
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon", enable = "aes")]
+#[inline(always)]
+pub(super) unsafe fn aarch64_clmul128_reduce_inline(a: u128, b: u128) -> u128 {
+  // SAFETY: PMULL availability guaranteed by caller.
+  unsafe { pmull::clmul128_reduce_core(a, b) }
+}
+
+/// 4-block wide PMULL aggregate, guaranteed to inline.
+///
+/// # Safety
+/// Caller must ensure PMULL is available.
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon", enable = "aes")]
+#[inline(always)]
+pub(super) unsafe fn aarch64_aggregate_4blocks_inline(acc: u128, h_powers_rev: &[u128; 4], blocks: &[u128; 4]) -> u128 {
+  // SAFETY: PMULL availability guaranteed by caller.
+  unsafe { pmull::aggregate_4blocks(acc, h_powers_rev, blocks) }
+}
+
+/// POWER VPMSUMD multiply + reduce, guaranteed to inline.
+///
+/// # Safety
+/// Caller must ensure POWER8 crypto is available.
+#[cfg(target_arch = "powerpc64")]
+#[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
+#[inline(always)]
+pub(super) unsafe fn ppc_clmul128_reduce_inline(a: u128, b: u128) -> u128 {
+  // SAFETY: POWER8 crypto availability guaranteed by caller.
+  unsafe { ppc_vpmsum::clmul128_reduce_core(a, b) }
+}
+
+/// 4-block wide VPMSUMD aggregate, guaranteed to inline.
+///
+/// # Safety
+/// Caller must ensure POWER8 crypto is available.
+#[cfg(target_arch = "powerpc64")]
+#[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
+#[inline(always)]
+pub(super) unsafe fn ppc_aggregate_4blocks_inline(acc: u128, h_powers_rev: &[u128; 4], blocks: &[u128; 4]) -> u128 {
+  // SAFETY: POWER8 crypto availability guaranteed by caller.
+  unsafe { ppc_vpmsum::aggregate_4blocks(acc, h_powers_rev, blocks) }
+}
+
+/// s390x VGFM multiply + reduce, guaranteed to inline.
+///
+/// # Safety
+/// Caller must ensure z/Vector is available.
+#[cfg(target_arch = "s390x")]
+#[target_feature(enable = "vector")]
+#[inline(always)]
+pub(super) unsafe fn s390x_clmul128_reduce_inline(a: u128, b: u128) -> u128 {
+  // SAFETY: z/Vector availability guaranteed by caller.
+  unsafe { s390x_vgfm::clmul128_reduce_core(a, b) }
+}
+
+/// 4-block wide s390x VGFM aggregate, guaranteed to inline.
+///
+/// # Safety
+/// Caller must ensure z/Vector is available.
+#[cfg(target_arch = "s390x")]
+#[target_feature(enable = "vector")]
+#[inline(always)]
+pub(super) unsafe fn s390x_aggregate_4blocks_inline(acc: u128, h_powers_rev: &[u128; 4], blocks: &[u128; 4]) -> u128 {
+  // SAFETY: z/Vector availability guaranteed by caller.
+  unsafe { s390x_vgfm::aggregate_4blocks(acc, h_powers_rev, blocks) }
+}
+
+// ---------------------------------------------------------------------------
 // Combined multiply + reduce with hardware dispatch
 // ---------------------------------------------------------------------------
 
@@ -630,6 +907,27 @@ pub(super) fn accumulate_4blocks(
     if crate::platform::caps().has(crate::platform::caps::x86::VPCLMUL_READY) {
       // SAFETY: VPCLMULQDQ + AVX-512 availability verified via CPUID.
       return unsafe { vpclmul::aggregate_4blocks(acc, h_powers_rev, blocks) };
+    }
+  }
+  #[cfg(target_arch = "aarch64")]
+  {
+    if crate::platform::caps().has(crate::platform::caps::aarch64::PMULL) {
+      // SAFETY: PMULL availability verified via HWCAP.
+      return unsafe { pmull::aggregate_4blocks(acc, h_powers_rev, blocks) };
+    }
+  }
+  #[cfg(target_arch = "s390x")]
+  {
+    if crate::platform::caps().has(crate::platform::caps::s390x::VECTOR) {
+      // SAFETY: z/Vector availability verified via STFLE/HWCAP.
+      return unsafe { s390x_vgfm::aggregate_4blocks(acc, h_powers_rev, blocks) };
+    }
+  }
+  #[cfg(target_arch = "powerpc64")]
+  {
+    if crate::platform::caps().has(crate::platform::caps::power::POWER8_CRYPTO) {
+      // SAFETY: POWER8 crypto availability verified via HWCAP.
+      return unsafe { ppc_vpmsum::aggregate_4blocks(acc, h_powers_rev, blocks) };
     }
   }
   let _ = h_powers_rev;

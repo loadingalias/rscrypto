@@ -174,7 +174,7 @@ mod ce {
   /// AES-256 round keys stored as 15 × 128-bit NEON vectors for AES-CE.
   #[derive(Clone, Copy)]
   #[repr(C, align(16))]
-  pub(super) struct CeRoundKeys {
+  pub(in crate::aead) struct CeRoundKeys {
     rk: [uint8x16_t; 15],
   }
 
@@ -188,17 +188,12 @@ mod ce {
     }
   }
 
-  /// Convert portable round keys (60 × big-endian u32) to AES-CE vector format.
-  ///
-  /// AES-CE expects round keys as byte vectors in the standard AES state
-  /// layout. The portable path stores words in big-endian, so serializing
-  /// each u32 to big-endian bytes produces the correct byte vectors.
-  ///
-  /// # Safety
-  /// Caller must ensure the CPU supports NEON (always true on aarch64).
+  /// Core key-conversion logic — `#[target_feature]` + `#[inline(always)]` for
+  /// guaranteed inlining without register spills.
   #[target_feature(enable = "neon")]
-  pub(super) unsafe fn from_portable(rk: &[u32; 60]) -> CeRoundKeys {
-    // SAFETY: target_feature gate guarantees NEON.
+  #[inline(always)]
+  pub(super) unsafe fn from_portable_core(rk: &[u32; 60]) -> CeRoundKeys {
+    // SAFETY: caller guarantees NEON via target_feature chain.
     unsafe {
       let mut keys = [vdupq_n_u8(0); 15];
       let mut i = 0usize;
@@ -216,17 +211,26 @@ mod ce {
     }
   }
 
-  /// Encrypt a single 16-byte block using AES-256 with AES-CE.
+  /// Convert portable round keys (60 × big-endian u32) to AES-CE vector format.
   ///
-  /// ARM's `AESE` instruction performs XOR(state, key) → SubBytes → ShiftRows.
-  /// Combined with `AESMC` (MixColumns), each middle round is a single
-  /// `AESMC(AESE(state, K[i]))` pair. The final round omits MixColumns.
+  /// AES-CE expects round keys as byte vectors in the standard AES state
+  /// layout. The portable path stores words in big-endian, so serializing
+  /// each u32 to big-endian bytes produces the correct byte vectors.
   ///
   /// # Safety
-  /// Caller must ensure the CPU supports AES-CE (`target_feature = "aes"`).
+  /// Caller must ensure the CPU supports NEON (always true on aarch64).
+  #[target_feature(enable = "neon")]
+  pub(super) unsafe fn from_portable(rk: &[u32; 60]) -> CeRoundKeys {
+    // SAFETY: target_feature gate guarantees NEON.
+    unsafe { from_portable_core(rk) }
+  }
+
+  /// Core block-encrypt logic — `#[target_feature]` + `#[inline(always)]` for
+  /// guaranteed inlining without register spills.
   #[target_feature(enable = "aes,neon")]
-  pub(super) unsafe fn encrypt_block(keys: &CeRoundKeys, block: &mut [u8; 16]) {
-    // SAFETY: target_feature gate guarantees AES-CE + NEON.
+  #[inline(always)]
+  pub(super) unsafe fn encrypt_block_core(keys: &CeRoundKeys, block: &mut [u8; 16]) {
+    // SAFETY: caller guarantees AES-CE + NEON via target_feature chain.
     unsafe {
       let k = &keys.rk;
       let mut state = vld1q_u8(block.as_ptr());
@@ -254,6 +258,20 @@ mod ce {
       vst1q_u8(block.as_mut_ptr(), state);
     }
   }
+
+  /// Encrypt a single 16-byte block using AES-256 with AES-CE.
+  ///
+  /// ARM's `AESE` instruction performs XOR(state, key) → SubBytes → ShiftRows.
+  /// Combined with `AESMC` (MixColumns), each middle round is a single
+  /// `AESMC(AESE(state, K[i]))` pair. The final round omits MixColumns.
+  ///
+  /// # Safety
+  /// Caller must ensure the CPU supports AES-CE (`target_feature = "aes"`).
+  #[target_feature(enable = "aes,neon")]
+  pub(super) unsafe fn encrypt_block(keys: &CeRoundKeys, block: &mut [u8; 16]) {
+    // SAFETY: target_feature gate guarantees AES-CE + NEON.
+    unsafe { encrypt_block_core(keys, block) }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -273,7 +291,7 @@ mod km {
   /// calls for even a 0-byte message.
   #[derive(Clone)]
   #[repr(C, align(8))]
-  pub(super) struct KmKey {
+  pub(in crate::aead) struct KmKey {
     /// Raw 32-byte AES-256 key, ready for the KM parameter block.
     raw: [u8; 32],
     /// Full expanded schedule (kept for potential future use / uniform sizing).
@@ -410,7 +428,7 @@ mod ppc {
   /// matches our portable key schedule (stored as big-endian u32 words).
   #[derive(Clone)]
   #[repr(C, align(16))]
-  pub(super) struct PpcRoundKeys {
+  pub(in crate::aead) struct PpcRoundKeys {
     rk: [i64x2; 15],
   }
 
@@ -492,16 +510,12 @@ mod ppc {
     PpcRoundKeys { rk: keys }
   }
 
-  /// Encrypt a single 16-byte block using AES-256 with POWER8 vcipher.
-  ///
-  /// vcipher performs one AES middle round (SubBytes + ShiftRows + MixColumns
-  /// + AddRoundKey). vcipherlast performs the final round (no MixColumns).
-  ///
-  /// # Safety
-  /// Caller must ensure POWER8 crypto instructions are available.
+  /// Core block-encrypt logic — `#[target_feature]` + `#[inline(always)]` for
+  /// guaranteed inlining without register spills.
   #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
-  pub(super) unsafe fn encrypt_block(keys: &PpcRoundKeys, block: &mut [u8; 16]) {
-    // SAFETY: target_feature gate guarantees POWER8 crypto availability.
+  #[inline(always)]
+  pub(super) unsafe fn encrypt_block_core(keys: &PpcRoundKeys, block: &mut [u8; 16]) {
+    // SAFETY: caller guarantees POWER8 crypto via target_feature chain.
     unsafe {
       let k = &keys.rk;
 
@@ -559,6 +573,19 @@ mod ppc {
 
       store_block_be(block.as_mut_ptr(), state);
     }
+  }
+
+  /// Encrypt a single 16-byte block using AES-256 with POWER8 vcipher.
+  ///
+  /// vcipher performs one AES middle round (SubBytes + ShiftRows + MixColumns
+  /// + AddRoundKey). vcipherlast performs the final round (no MixColumns).
+  ///
+  /// # Safety
+  /// Caller must ensure POWER8 crypto instructions are available.
+  #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
+  pub(super) unsafe fn encrypt_block(keys: &PpcRoundKeys, block: &mut [u8; 16]) {
+    // SAFETY: target_feature gate guarantees POWER8 crypto.
+    unsafe { encrypt_block_core(keys, block) }
   }
 }
 
@@ -980,6 +1007,108 @@ pub(crate) fn aes256_expand_key(key: &[u8; KEY_SIZE]) -> Aes256EncKey {
   Aes256EncKey {
     inner: KeyInner::Portable(aes256_expand_key_portable(key)),
   }
+}
+
+// ---------------------------------------------------------------------------
+// aarch64: inline helpers for fused paths (#[target_feature] + #[inline(always)])
+// ---------------------------------------------------------------------------
+//
+// aarch64 intrinsics are `#[inline(always)]` with `#[target_feature]`, so
+// callers must also have matching features (unlike x86). We use both
+// `#[target_feature]` (for intrinsic compatibility) and `#[inline(always)]`
+// (to guarantee inlining → no function boundary → no register spills).
+
+/// Expand AES-256 key directly to AES-CE round keys.
+///
+/// Designed to be inlined into a fused `#[target_feature(enable = "aes,neon")]`
+/// scope so the compiler can keep round keys in NEON registers across the
+/// entire encrypt/decrypt operation.
+///
+/// # Safety
+/// Caller must ensure AES-CE is available.
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "aes,neon")]
+#[inline(always)]
+pub(super) unsafe fn aarch64_expand_key_inline(key: &[u8; KEY_SIZE]) -> ce::CeRoundKeys {
+  let rk = aes256_expand_key_portable(key);
+  // SAFETY: AES-CE availability guaranteed by caller.
+  unsafe { ce::from_portable_core(&rk) }
+}
+
+/// Encrypt a single AES-256 block with AES-CE, guaranteed to inline.
+///
+/// # Safety
+/// Caller must ensure AES-CE is available.
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "aes,neon")]
+#[inline(always)]
+pub(super) unsafe fn aarch64_encrypt_block_inline(keys: &ce::CeRoundKeys, block: &mut [u8; BLOCK_SIZE]) {
+  // SAFETY: AES-CE availability guaranteed by caller.
+  unsafe { ce::encrypt_block_core(keys, block) }
+}
+
+// ---------------------------------------------------------------------------
+// powerpc64: inline helpers for fused paths (#[target_feature] + #[inline(always)])
+// ---------------------------------------------------------------------------
+
+/// Expand AES-256 key directly to POWER round keys, guaranteed to inline.
+///
+/// # Safety
+/// Caller must ensure POWER8 crypto is available.
+#[cfg(target_arch = "powerpc64")]
+#[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
+#[inline(always)]
+pub(super) unsafe fn ppc_expand_key_inline(key: &[u8; KEY_SIZE]) -> ppc::PpcRoundKeys {
+  let rk = aes256_expand_key_portable(key);
+  ppc::from_portable(&rk)
+}
+
+/// Encrypt a single AES-256 block with POWER crypto, guaranteed to inline.
+///
+/// # Safety
+/// Caller must ensure POWER8 crypto is available.
+#[cfg(target_arch = "powerpc64")]
+#[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
+#[inline(always)]
+pub(super) unsafe fn ppc_encrypt_block_inline(keys: &ppc::PpcRoundKeys, block: &mut [u8; BLOCK_SIZE]) {
+  // SAFETY: POWER8 crypto availability guaranteed by caller.
+  unsafe { ppc::encrypt_block_core(keys, block) }
+}
+
+// ---------------------------------------------------------------------------
+// s390x: inline helpers for fused paths (#[inline(always)])
+// ---------------------------------------------------------------------------
+
+/// Expand AES-256 key for s390x KM instruction, guaranteed to inline.
+///
+/// # Safety
+/// Caller must ensure MSA is available.
+#[cfg(target_arch = "s390x")]
+#[inline(always)]
+pub(super) unsafe fn s390x_expand_key_inline(key: &[u8; KEY_SIZE]) -> km::KmKey {
+  km::KmKey::from_portable(aes256_expand_key_portable(key))
+}
+
+/// Encrypt a single AES-256 block with KM, guaranteed to inline.
+///
+/// # Safety
+/// Caller must ensure MSA is available.
+#[cfg(target_arch = "s390x")]
+#[inline(always)]
+pub(super) unsafe fn s390x_encrypt_block_inline(key: &km::KmKey, block: &mut [u8; BLOCK_SIZE]) {
+  // SAFETY: MSA availability guaranteed by caller.
+  unsafe { km::encrypt_block(key, block) }
+}
+
+/// Encrypt multiple AES-256 blocks with KM (batch), guaranteed to inline.
+///
+/// # Safety
+/// Caller must ensure MSA is available.
+#[cfg(target_arch = "s390x")]
+#[inline(always)]
+pub(super) unsafe fn s390x_encrypt_blocks_inline(key: &km::KmKey, blocks: &mut [u8], count: usize) {
+  // SAFETY: MSA availability guaranteed by caller.
+  unsafe { km::encrypt_blocks(key, blocks, count) }
 }
 
 // ---------------------------------------------------------------------------
