@@ -336,6 +336,14 @@ pub struct Sha256 {
   dispatch: Option<SizeClassDispatch<CompressBlocksFn>>,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct Sha256Prefix {
+  state: [u32; 8],
+  bytes_hashed: u64,
+  compress_blocks: CompressBlocksFn,
+  dispatch: Option<SizeClassDispatch<CompressBlocksFn>>,
+}
+
 impl core::fmt::Debug for Sha256 {
   fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
     f.debug_struct("Sha256").finish_non_exhaustive()
@@ -474,6 +482,40 @@ impl Sha256 {
       chunk.copy_from_slice(&word.to_be_bytes());
     }
     out
+  }
+
+  #[inline]
+  #[must_use]
+  pub(crate) fn aligned_prefix(&self) -> Sha256Prefix {
+    debug_assert_eq!(self.block_len, 0);
+    Sha256Prefix {
+      state: self.state,
+      bytes_hashed: self.bytes_hashed,
+      compress_blocks: self.compress_blocks,
+      dispatch: self.dispatch,
+    }
+  }
+
+  #[inline]
+  #[must_use]
+  pub(crate) fn from_aligned_prefix(prefix: Sha256Prefix) -> Self {
+    Self {
+      state: prefix.state,
+      block: [0u8; BLOCK_LEN],
+      block_len: 0,
+      bytes_hashed: prefix.bytes_hashed,
+      compress_blocks: prefix.compress_blocks,
+      dispatch: prefix.dispatch,
+    }
+  }
+
+  #[inline]
+  pub(crate) fn reset_to_aligned_prefix(&mut self, prefix: Sha256Prefix) {
+    self.state = prefix.state;
+    self.block_len = 0;
+    self.bytes_hashed = prefix.bytes_hashed;
+    self.compress_blocks = prefix.compress_blocks;
+    self.dispatch = prefix.dispatch;
   }
 }
 

@@ -411,26 +411,20 @@ mod tests {
     let workflow = include_str!("../../.github/workflows/bench.yaml");
     let matrix_script = include_str!("../../scripts/ci/emit-manual-matrix.sh");
 
+    assert!(
+      workflow.contains("platforms:"),
+      "missing platforms workflow_dispatch input in bench workflow"
+    );
+    assert!(
+      workflow.contains("BENCH_PLATFORMS: ${{ inputs.platforms }}"),
+      "bench workflow no longer passes platforms input to the matrix script"
+    );
+
     for lane in BenchLane::ALL {
       let platform = lane.platform_name();
       assert!(
         matrix_script.contains(platform),
         "missing {platform} in bench matrix script"
-      );
-
-      let workflow_token = match lane {
-        BenchLane::IntelIcl => "run_intel_icl",
-        BenchLane::IntelSpr => "run_intel_spr",
-        BenchLane::AmdZen4 => "run_amd_zen4",
-        BenchLane::AmdZen5 => "run_amd_zen5",
-        BenchLane::Graviton3 => "run_graviton3",
-        BenchLane::Graviton4 => "run_graviton4",
-        BenchLane::IbmS390x => "run_ibm_s390x",
-        BenchLane::IbmPower10 => "run_ibm_power10",
-      };
-      assert!(
-        workflow.contains(workflow_token),
-        "missing {workflow_token} input in bench workflow"
       );
     }
   }

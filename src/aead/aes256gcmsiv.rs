@@ -159,7 +159,7 @@ impl_hex_fmt!(Aes256GcmSivTag);
 /// up to a multi-message distinguishing bound.
 #[derive(Clone)]
 pub struct Aes256GcmSiv {
-  key: Aes256GcmSivKey,
+  master_ek: aes::Aes256EncKey,
 }
 
 impl fmt::Debug for Aes256GcmSiv {
@@ -233,8 +233,8 @@ impl Aes256GcmSiv {
 // RFC 8452 construction internals
 // ---------------------------------------------------------------------------
 
-/// Derive per-message authentication and encryption keys from the master key
-/// and nonce (RFC 8452 §4, AES-256 variant).
+/// Derive per-message authentication and encryption keys from the cached
+/// master-key schedule and nonce (RFC 8452 §4, AES-256 variant).
 ///
 /// Returns (auth_key [16 bytes], enc_key [32 bytes]).
 ///
@@ -242,8 +242,7 @@ impl Aes256GcmSiv {
 /// batch call. On s390x this collapses 6 individual KM invocations into
 /// one, eliminating per-block overhead that dominates at small sizes.
 #[inline]
-fn derive_keys(master_key: &[u8; KEY_SIZE], nonce: &Nonce96) -> ([u8; 16], [u8; 32]) {
-  let ek = aes::aes256_expand_key(master_key);
+fn derive_keys(master_ek: &aes::Aes256EncKey, nonce: &Nonce96) -> ([u8; 16], [u8; 32]) {
   let nonce_bytes = nonce.as_bytes();
 
   // Build all 6 counter blocks: counter (LE32) || nonce (96 bits).
@@ -256,7 +255,7 @@ fn derive_keys(master_key: &[u8; KEY_SIZE], nonce: &Nonce96) -> ([u8; 16], [u8; 
   }
 
   // Encrypt all 6 blocks (single KM call on s390x, per-block elsewhere).
-  aes::aes256_encrypt_blocks_ecb(&ek, &mut blocks);
+  aes::aes256_encrypt_blocks_ecb(master_ek, &mut blocks);
 
   // Extract the first 8 bytes of each encrypted block.
   let mut auth_key = [0u8; 16];
@@ -438,50 +437,31 @@ fn compute_tag_wide(
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "aes,neon")]
 unsafe fn encrypt_fused_aarch64(
-  master_key: &[u8; KEY_SIZE],
+  auth_key: &mut [u8; 16],
+  enc_key_bytes: &mut [u8; 32],
   nonce: &Nonce96,
   aad: &[u8],
   buffer: &mut [u8],
 ) -> [u8; TAG_SIZE] {
   // SAFETY: caller has verified AES-CE availability.
   unsafe {
-    // --- 1. Key derivation (RFC 8452 §4, AES-256 variant) ---
-    let master_ek = aes::aarch64_expand_key_inline(master_key);
     let nonce_bytes = nonce.as_bytes();
 
-    let mut blocks = [[0u8; 16]; 6];
-    let mut i = 0u32;
-    while i < 6 {
-      blocks[i as usize][0..4].copy_from_slice(&i.to_le_bytes());
-      blocks[i as usize][4..16].copy_from_slice(nonce_bytes);
-      i = i.strict_add(1);
-    }
-    for block in &mut blocks {
-      aes::aarch64_encrypt_block_inline(&master_ek, block);
-    }
+    // --- 1. Expand derived encryption key ---
+    let enc_ek = aes::aarch64_expand_key_inline(enc_key_bytes);
+    ct::zeroize(enc_key_bytes);
 
-    let mut auth_key = [0u8; 16];
-    let mut enc_key_bytes = [0u8; 32];
-    auth_key[0..8].copy_from_slice(&blocks[0][0..8]);
-    auth_key[8..16].copy_from_slice(&blocks[1][0..8]);
-    enc_key_bytes[0..8].copy_from_slice(&blocks[2][0..8]);
-    enc_key_bytes[8..16].copy_from_slice(&blocks[3][0..8]);
-    enc_key_bytes[16..24].copy_from_slice(&blocks[4][0..8]);
-    enc_key_bytes[24..32].copy_from_slice(&blocks[5][0..8]);
-    ct::zeroize(blocks.as_flattened_mut());
-
-    // --- 2. Expand derived encryption key ---
-    let enc_ek = aes::aarch64_expand_key_inline(&enc_key_bytes);
-    ct::zeroize(&mut enc_key_bytes);
-
-    // --- 3. POLYVAL tag computation (RFC 8452 §5) ---
-    let h = u128::from_le_bytes(auth_key);
-    ct::zeroize(&mut auth_key);
+    // --- 2. POLYVAL tag computation (RFC 8452 §5) ---
+    let h = u128::from_le_bytes(*auth_key);
+    ct::zeroize(auth_key);
     let mut acc: u128 = 0;
 
-    // Precompute H powers for 4-block wide processing.
-    let powers = polyval::precompute_powers(h);
-    let h_powers_rev = [powers[3], powers[2], powers[1], powers[0]];
+    // Precompute H powers only when at least one 4-block chunk will run.
+    let mut h_powers_rev = [0u128; 4];
+    if aad.len() >= 64 || buffer.len() >= 64 {
+      let powers = polyval::precompute_powers(h);
+      h_powers_rev = [powers[3], powers[2], powers[1], powers[0]];
+    }
 
     // Process AAD in 4-block (64-byte) chunks.
     let mut offset = 0usize;
@@ -597,7 +577,8 @@ unsafe fn encrypt_fused_aarch64(
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "aes,neon")]
 unsafe fn decrypt_fused_aarch64(
-  master_key: &[u8; KEY_SIZE],
+  auth_key: &mut [u8; 16],
+  enc_key_bytes: &mut [u8; 32],
   nonce: &Nonce96,
   aad: &[u8],
   buffer: &mut [u8],
@@ -605,36 +586,13 @@ unsafe fn decrypt_fused_aarch64(
 ) -> Result<(), VerificationError> {
   // SAFETY: caller has verified AES-CE availability.
   unsafe {
-    // --- 1. Key derivation ---
-    let master_ek = aes::aarch64_expand_key_inline(master_key);
     let nonce_bytes = nonce.as_bytes();
 
-    let mut blocks = [[0u8; 16]; 6];
-    let mut i = 0u32;
-    while i < 6 {
-      blocks[i as usize][0..4].copy_from_slice(&i.to_le_bytes());
-      blocks[i as usize][4..16].copy_from_slice(nonce_bytes);
-      i = i.strict_add(1);
-    }
-    for block in &mut blocks {
-      aes::aarch64_encrypt_block_inline(&master_ek, block);
-    }
+    // --- 1. Expand derived encryption key ---
+    let enc_ek = aes::aarch64_expand_key_inline(enc_key_bytes);
+    ct::zeroize(enc_key_bytes);
 
-    let mut auth_key = [0u8; 16];
-    let mut enc_key_bytes = [0u8; 32];
-    auth_key[0..8].copy_from_slice(&blocks[0][0..8]);
-    auth_key[8..16].copy_from_slice(&blocks[1][0..8]);
-    enc_key_bytes[0..8].copy_from_slice(&blocks[2][0..8]);
-    enc_key_bytes[8..16].copy_from_slice(&blocks[3][0..8]);
-    enc_key_bytes[16..24].copy_from_slice(&blocks[4][0..8]);
-    enc_key_bytes[24..32].copy_from_slice(&blocks[5][0..8]);
-    ct::zeroize(blocks.as_flattened_mut());
-
-    // --- 2. Expand derived encryption key ---
-    let enc_ek = aes::aarch64_expand_key_inline(&enc_key_bytes);
-    ct::zeroize(&mut enc_key_bytes);
-
-    // --- 3. AES-CTR decryption (SIV: decrypt before verify) ---
+    // --- 2. AES-CTR decryption (SIV: decrypt before verify) ---
     let mut counter_block = tag.0;
     counter_block[15] |= 0x80;
     let mut ctr = u32::from_le_bytes([counter_block[0], counter_block[1], counter_block[2], counter_block[3]]);
@@ -662,14 +620,17 @@ unsafe fn decrypt_fused_aarch64(
       ctr = ctr.wrapping_add(1);
     }
 
-    // --- 4. POLYVAL tag computation over decrypted plaintext ---
-    let h = u128::from_le_bytes(auth_key);
-    ct::zeroize(&mut auth_key);
+    // --- 3. POLYVAL tag computation over decrypted plaintext ---
+    let h = u128::from_le_bytes(*auth_key);
+    ct::zeroize(auth_key);
     let mut acc: u128 = 0;
 
-    // Precompute H powers for 4-block wide processing.
-    let powers = polyval::precompute_powers(h);
-    let h_powers_rev = [powers[3], powers[2], powers[1], powers[0]];
+    // Precompute H powers only when at least one 4-block chunk will run.
+    let mut h_powers_rev = [0u128; 4];
+    if aad.len() >= 64 || buffer.len() >= 64 {
+      let powers = polyval::precompute_powers(h);
+      h_powers_rev = [powers[3], powers[2], powers[1], powers[0]];
+    }
 
     // Process AAD in 4-block (64-byte) chunks.
     offset = 0;
@@ -740,7 +701,7 @@ unsafe fn decrypt_fused_aarch64(
     acc ^= u128::from_le_bytes(length_block);
     acc = polyval::aarch64_clmul128_reduce_inline(acc, h);
 
-    // --- 5. Tag finalization + verification ---
+    // --- 4. Tag finalization + verification ---
     let mut expected = acc.to_le_bytes();
     let mut j = 0usize;
     while j < 12 {
@@ -765,50 +726,31 @@ unsafe fn decrypt_fused_aarch64(
 #[cfg(target_arch = "powerpc64")]
 #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
 unsafe fn encrypt_fused_ppc(
-  master_key: &[u8; KEY_SIZE],
+  auth_key: &mut [u8; 16],
+  enc_key_bytes: &mut [u8; 32],
   nonce: &Nonce96,
   aad: &[u8],
   buffer: &mut [u8],
 ) -> [u8; TAG_SIZE] {
   // SAFETY: caller has verified POWER8 crypto availability.
   unsafe {
-    // --- 1. Key derivation (RFC 8452 §4, AES-256 variant) ---
-    let master_ek = aes::ppc_expand_key_inline(master_key);
     let nonce_bytes = nonce.as_bytes();
 
-    let mut blocks = [[0u8; 16]; 6];
-    let mut i = 0u32;
-    while i < 6 {
-      blocks[i as usize][0..4].copy_from_slice(&i.to_le_bytes());
-      blocks[i as usize][4..16].copy_from_slice(nonce_bytes);
-      i = i.strict_add(1);
-    }
-    for block in &mut blocks {
-      aes::ppc_encrypt_block_inline(&master_ek, block);
-    }
+    // --- 1. Expand derived encryption key ---
+    let enc_ek = aes::ppc_expand_key_inline(enc_key_bytes);
+    ct::zeroize(enc_key_bytes);
 
-    let mut auth_key = [0u8; 16];
-    let mut enc_key_bytes = [0u8; 32];
-    auth_key[0..8].copy_from_slice(&blocks[0][0..8]);
-    auth_key[8..16].copy_from_slice(&blocks[1][0..8]);
-    enc_key_bytes[0..8].copy_from_slice(&blocks[2][0..8]);
-    enc_key_bytes[8..16].copy_from_slice(&blocks[3][0..8]);
-    enc_key_bytes[16..24].copy_from_slice(&blocks[4][0..8]);
-    enc_key_bytes[24..32].copy_from_slice(&blocks[5][0..8]);
-    ct::zeroize(blocks.as_flattened_mut());
-
-    // --- 2. Expand derived encryption key ---
-    let enc_ek = aes::ppc_expand_key_inline(&enc_key_bytes);
-    ct::zeroize(&mut enc_key_bytes);
-
-    // --- 3. POLYVAL tag computation (RFC 8452 §5) ---
-    let h = u128::from_le_bytes(auth_key);
-    ct::zeroize(&mut auth_key);
+    // --- 2. POLYVAL tag computation (RFC 8452 §5) ---
+    let h = u128::from_le_bytes(*auth_key);
+    ct::zeroize(auth_key);
     let mut acc: u128 = 0;
 
-    // Precompute H powers for 4-block wide processing.
-    let powers = polyval::precompute_powers(h);
-    let h_powers_rev = [powers[3], powers[2], powers[1], powers[0]];
+    // Precompute H powers only when at least one 4-block chunk will run.
+    let mut h_powers_rev = [0u128; 4];
+    if aad.len() >= 64 || buffer.len() >= 64 {
+      let powers = polyval::precompute_powers(h);
+      h_powers_rev = [powers[3], powers[2], powers[1], powers[0]];
+    }
 
     // Process AAD in 4-block (64-byte) chunks.
     let mut offset = 0usize;
@@ -924,7 +866,8 @@ unsafe fn encrypt_fused_ppc(
 #[cfg(target_arch = "powerpc64")]
 #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
 unsafe fn decrypt_fused_ppc(
-  master_key: &[u8; KEY_SIZE],
+  auth_key: &mut [u8; 16],
+  enc_key_bytes: &mut [u8; 32],
   nonce: &Nonce96,
   aad: &[u8],
   buffer: &mut [u8],
@@ -932,36 +875,13 @@ unsafe fn decrypt_fused_ppc(
 ) -> Result<(), VerificationError> {
   // SAFETY: caller has verified POWER8 crypto availability.
   unsafe {
-    // --- 1. Key derivation ---
-    let master_ek = aes::ppc_expand_key_inline(master_key);
     let nonce_bytes = nonce.as_bytes();
 
-    let mut blocks = [[0u8; 16]; 6];
-    let mut i = 0u32;
-    while i < 6 {
-      blocks[i as usize][0..4].copy_from_slice(&i.to_le_bytes());
-      blocks[i as usize][4..16].copy_from_slice(nonce_bytes);
-      i = i.strict_add(1);
-    }
-    for block in &mut blocks {
-      aes::ppc_encrypt_block_inline(&master_ek, block);
-    }
+    // --- 1. Expand derived encryption key ---
+    let enc_ek = aes::ppc_expand_key_inline(enc_key_bytes);
+    ct::zeroize(enc_key_bytes);
 
-    let mut auth_key = [0u8; 16];
-    let mut enc_key_bytes = [0u8; 32];
-    auth_key[0..8].copy_from_slice(&blocks[0][0..8]);
-    auth_key[8..16].copy_from_slice(&blocks[1][0..8]);
-    enc_key_bytes[0..8].copy_from_slice(&blocks[2][0..8]);
-    enc_key_bytes[8..16].copy_from_slice(&blocks[3][0..8]);
-    enc_key_bytes[16..24].copy_from_slice(&blocks[4][0..8]);
-    enc_key_bytes[24..32].copy_from_slice(&blocks[5][0..8]);
-    ct::zeroize(blocks.as_flattened_mut());
-
-    // --- 2. Expand derived encryption key ---
-    let enc_ek = aes::ppc_expand_key_inline(&enc_key_bytes);
-    ct::zeroize(&mut enc_key_bytes);
-
-    // --- 3. AES-CTR decryption (SIV: decrypt before verify) ---
+    // --- 2. AES-CTR decryption (SIV: decrypt before verify) ---
     let mut counter_block = tag.0;
     counter_block[15] |= 0x80;
     let mut ctr = u32::from_le_bytes([counter_block[0], counter_block[1], counter_block[2], counter_block[3]]);
@@ -989,14 +909,17 @@ unsafe fn decrypt_fused_ppc(
       ctr = ctr.wrapping_add(1);
     }
 
-    // --- 4. POLYVAL tag computation over decrypted plaintext ---
-    let h = u128::from_le_bytes(auth_key);
-    ct::zeroize(&mut auth_key);
+    // --- 3. POLYVAL tag computation over decrypted plaintext ---
+    let h = u128::from_le_bytes(*auth_key);
+    ct::zeroize(auth_key);
     let mut acc: u128 = 0;
 
-    // Precompute H powers for 4-block wide processing.
-    let powers = polyval::precompute_powers(h);
-    let h_powers_rev = [powers[3], powers[2], powers[1], powers[0]];
+    // Precompute H powers only when at least one 4-block chunk will run.
+    let mut h_powers_rev = [0u128; 4];
+    if aad.len() >= 64 || buffer.len() >= 64 {
+      let powers = polyval::precompute_powers(h);
+      h_powers_rev = [powers[3], powers[2], powers[1], powers[0]];
+    }
 
     // Process AAD in 4-block (64-byte) chunks.
     offset = 0;
@@ -1067,7 +990,7 @@ unsafe fn decrypt_fused_ppc(
     acc ^= u128::from_le_bytes(length_block);
     acc = polyval::ppc_clmul128_reduce_inline(acc, h);
 
-    // --- 5. Tag finalization + verification ---
+    // --- 4. Tag finalization + verification ---
     let mut expected = acc.to_le_bytes();
     let mut j = 0usize;
     while j < 12 {
@@ -1092,49 +1015,31 @@ unsafe fn decrypt_fused_ppc(
 #[cfg(target_arch = "s390x")]
 #[target_feature(enable = "vector")]
 unsafe fn encrypt_fused_s390x(
-  master_key: &[u8; KEY_SIZE],
+  auth_key: &mut [u8; 16],
+  enc_key_bytes: &mut [u8; 32],
   nonce: &Nonce96,
   aad: &[u8],
   buffer: &mut [u8],
 ) -> [u8; TAG_SIZE] {
   // SAFETY: caller has verified z/Vector + MSA availability.
   unsafe {
-    // --- 1. Key derivation ---
-    let master_km = aes::s390x_expand_key_inline(master_key);
     let nonce_bytes = nonce.as_bytes();
 
-    let mut blocks = [[0u8; 16]; 6];
-    let mut i = 0u32;
-    while i < 6 {
-      blocks[i as usize][0..4].copy_from_slice(&i.to_le_bytes());
-      blocks[i as usize][4..16].copy_from_slice(nonce_bytes);
-      i = i.strict_add(1);
-    }
-    // Batch encrypt all 6 blocks (single KM call).
-    aes::s390x_encrypt_blocks_inline(&master_km, blocks.as_flattened_mut(), 6);
+    // --- 1. Expand derived encryption key ---
+    let enc_km = aes::s390x_expand_key_inline(enc_key_bytes);
+    ct::zeroize(enc_key_bytes);
 
-    let mut auth_key = [0u8; 16];
-    let mut enc_key_bytes = [0u8; 32];
-    auth_key[0..8].copy_from_slice(&blocks[0][0..8]);
-    auth_key[8..16].copy_from_slice(&blocks[1][0..8]);
-    enc_key_bytes[0..8].copy_from_slice(&blocks[2][0..8]);
-    enc_key_bytes[8..16].copy_from_slice(&blocks[3][0..8]);
-    enc_key_bytes[16..24].copy_from_slice(&blocks[4][0..8]);
-    enc_key_bytes[24..32].copy_from_slice(&blocks[5][0..8]);
-    ct::zeroize(blocks.as_flattened_mut());
-
-    // --- 2. Expand derived encryption key ---
-    let enc_km = aes::s390x_expand_key_inline(&enc_key_bytes);
-    ct::zeroize(&mut enc_key_bytes);
-
-    // --- 3. POLYVAL tag computation (RFC 8452 §5) ---
-    let h = u128::from_le_bytes(auth_key);
-    ct::zeroize(&mut auth_key);
+    // --- 2. POLYVAL tag computation (RFC 8452 §5) ---
+    let h = u128::from_le_bytes(*auth_key);
+    ct::zeroize(auth_key);
     let mut acc: u128 = 0;
 
-    // Precompute H powers for 4-block wide processing.
-    let powers = polyval::precompute_powers(h);
-    let h_powers_rev = [powers[3], powers[2], powers[1], powers[0]];
+    // Precompute H powers only when at least one 4-block chunk will run.
+    let mut h_powers_rev = [0u128; 4];
+    if aad.len() >= 64 || buffer.len() >= 64 {
+      let powers = polyval::precompute_powers(h);
+      h_powers_rev = [powers[3], powers[2], powers[1], powers[0]];
+    }
 
     // Process AAD in 4-block (64-byte) chunks.
     let mut offset = 0usize;
@@ -1250,7 +1155,8 @@ unsafe fn encrypt_fused_s390x(
 #[cfg(target_arch = "s390x")]
 #[target_feature(enable = "vector")]
 unsafe fn decrypt_fused_s390x(
-  master_key: &[u8; KEY_SIZE],
+  auth_key: &mut [u8; 16],
+  enc_key_bytes: &mut [u8; 32],
   nonce: &Nonce96,
   aad: &[u8],
   buffer: &mut [u8],
@@ -1258,35 +1164,13 @@ unsafe fn decrypt_fused_s390x(
 ) -> Result<(), VerificationError> {
   // SAFETY: caller has verified z/Vector + MSA availability.
   unsafe {
-    // --- 1. Key derivation ---
-    let master_km = aes::s390x_expand_key_inline(master_key);
     let nonce_bytes = nonce.as_bytes();
 
-    let mut blocks = [[0u8; 16]; 6];
-    let mut i = 0u32;
-    while i < 6 {
-      blocks[i as usize][0..4].copy_from_slice(&i.to_le_bytes());
-      blocks[i as usize][4..16].copy_from_slice(nonce_bytes);
-      i = i.strict_add(1);
-    }
-    // Batch encrypt all 6 blocks (single KM call).
-    aes::s390x_encrypt_blocks_inline(&master_km, blocks.as_flattened_mut(), 6);
+    // --- 1. Expand derived encryption key ---
+    let enc_km = aes::s390x_expand_key_inline(enc_key_bytes);
+    ct::zeroize(enc_key_bytes);
 
-    let mut auth_key = [0u8; 16];
-    let mut enc_key_bytes = [0u8; 32];
-    auth_key[0..8].copy_from_slice(&blocks[0][0..8]);
-    auth_key[8..16].copy_from_slice(&blocks[1][0..8]);
-    enc_key_bytes[0..8].copy_from_slice(&blocks[2][0..8]);
-    enc_key_bytes[8..16].copy_from_slice(&blocks[3][0..8]);
-    enc_key_bytes[16..24].copy_from_slice(&blocks[4][0..8]);
-    enc_key_bytes[24..32].copy_from_slice(&blocks[5][0..8]);
-    ct::zeroize(blocks.as_flattened_mut());
-
-    // --- 2. Expand derived encryption key ---
-    let enc_km = aes::s390x_expand_key_inline(&enc_key_bytes);
-    ct::zeroize(&mut enc_key_bytes);
-
-    // --- 3. AES-CTR decryption (SIV: decrypt before verify) ---
+    // --- 2. AES-CTR decryption (SIV: decrypt before verify) ---
     let mut counter_block = tag.0;
     counter_block[15] |= 0x80;
     let mut ctr = u32::from_le_bytes([counter_block[0], counter_block[1], counter_block[2], counter_block[3]]);
@@ -1314,14 +1198,17 @@ unsafe fn decrypt_fused_s390x(
       ctr = ctr.wrapping_add(1);
     }
 
-    // --- 4. POLYVAL tag computation over decrypted plaintext ---
-    let h = u128::from_le_bytes(auth_key);
-    ct::zeroize(&mut auth_key);
+    // --- 3. POLYVAL tag computation over decrypted plaintext ---
+    let h = u128::from_le_bytes(*auth_key);
+    ct::zeroize(auth_key);
     let mut acc: u128 = 0;
 
-    // Precompute H powers for 4-block wide processing.
-    let powers = polyval::precompute_powers(h);
-    let h_powers_rev = [powers[3], powers[2], powers[1], powers[0]];
+    // Precompute H powers only when at least one 4-block chunk will run.
+    let mut h_powers_rev = [0u128; 4];
+    if aad.len() >= 64 || buffer.len() >= 64 {
+      let powers = polyval::precompute_powers(h);
+      h_powers_rev = [powers[3], powers[2], powers[1], powers[0]];
+    }
 
     // Process AAD in 4-block (64-byte) chunks.
     offset = 0;
@@ -1392,7 +1279,7 @@ unsafe fn decrypt_fused_s390x(
     acc ^= u128::from_le_bytes(length_block);
     acc = polyval::s390x_clmul128_reduce_inline(acc, h);
 
-    // --- 5. Tag finalization + verification ---
+    // --- 4. Tag finalization + verification ---
     let mut expected = acc.to_le_bytes();
     let mut j = 0usize;
     while j < 12 {
@@ -1424,7 +1311,9 @@ impl Aead for Aes256GcmSiv {
   type Tag = Aes256GcmSivTag;
 
   fn new(key: &Self::Key) -> Self {
-    Self { key: key.clone() }
+    Self {
+      master_ek: aes::aes256_expand_key(key.as_bytes()),
+    }
   }
 
   fn tag_from_slice(bytes: &[u8]) -> Result<Self::Tag, AeadBufferError> {
@@ -1448,7 +1337,7 @@ impl Aead for Aes256GcmSiv {
       use crate::platform::caps;
       let c = crate::platform::caps();
       if c.has(caps::x86::VAES_READY) && c.has(caps::x86::VPCLMUL_READY) {
-        let (mut auth_key, mut enc_key) = derive_keys(self.key.as_bytes(), nonce);
+        let (mut auth_key, mut enc_key) = derive_keys(&self.master_ek, nonce);
         let ek = aes::aes256_expand_key(&enc_key);
         let tag_bytes = compute_tag_wide(&auth_key, &ek, nonce, aad, buffer);
         let mut counter_block = tag_bytes;
@@ -1465,8 +1354,9 @@ impl Aead for Aes256GcmSiv {
     #[cfg(target_arch = "aarch64")]
     {
       if crate::platform::caps().has(crate::platform::caps::aarch64::AES) {
+        let (mut auth_key, mut enc_key) = derive_keys(&self.master_ek, nonce);
         // SAFETY: AES-CE availability verified via HWCAP.
-        let tag_bytes = unsafe { encrypt_fused_aarch64(self.key.as_bytes(), nonce, aad, buffer) };
+        let tag_bytes = unsafe { encrypt_fused_aarch64(&mut auth_key, &mut enc_key, nonce, aad, buffer) };
         return Aes256GcmSivTag::from_bytes(tag_bytes);
       }
     }
@@ -1475,8 +1365,9 @@ impl Aead for Aes256GcmSiv {
     #[cfg(target_arch = "powerpc64")]
     {
       if crate::platform::caps().has(crate::platform::caps::power::POWER8_CRYPTO) {
+        let (mut auth_key, mut enc_key) = derive_keys(&self.master_ek, nonce);
         // SAFETY: POWER8 crypto availability verified via HWCAP.
-        let tag_bytes = unsafe { encrypt_fused_ppc(self.key.as_bytes(), nonce, aad, buffer) };
+        let tag_bytes = unsafe { encrypt_fused_ppc(&mut auth_key, &mut enc_key, nonce, aad, buffer) };
         return Aes256GcmSivTag::from_bytes(tag_bytes);
       }
     }
@@ -1486,14 +1377,15 @@ impl Aead for Aes256GcmSiv {
     {
       let c = crate::platform::caps();
       if c.has(crate::platform::caps::s390x::VECTOR) && c.has(crate::platform::caps::s390x::MSA) {
+        let (mut auth_key, mut enc_key) = derive_keys(&self.master_ek, nonce);
         // SAFETY: z/Vector + MSA availability verified via STFLE/HWCAP.
-        let tag_bytes = unsafe { encrypt_fused_s390x(self.key.as_bytes(), nonce, aad, buffer) };
+        let tag_bytes = unsafe { encrypt_fused_s390x(&mut auth_key, &mut enc_key, nonce, aad, buffer) };
         return Aes256GcmSivTag::from_bytes(tag_bytes);
       }
     }
 
     // Scalar path.
-    let (mut auth_key, mut enc_key) = derive_keys(self.key.as_bytes(), nonce);
+    let (mut auth_key, mut enc_key) = derive_keys(&self.master_ek, nonce);
     let ek = aes::aes256_expand_key(&enc_key);
     let tag_bytes = compute_tag(&auth_key, &ek, nonce, aad, buffer);
     let mut counter_block = tag_bytes;
@@ -1524,7 +1416,7 @@ impl Aead for Aes256GcmSiv {
       use crate::platform::caps;
       let c = crate::platform::caps();
       if c.has(caps::x86::VAES_READY) && c.has(caps::x86::VPCLMUL_READY) {
-        let (mut auth_key, mut enc_key) = derive_keys(self.key.as_bytes(), nonce);
+        let (mut auth_key, mut enc_key) = derive_keys(&self.master_ek, nonce);
         let ek = aes::aes256_expand_key(&enc_key);
         // Decrypt first (SIV pattern).
         let mut counter_block = tag.0;
@@ -1548,8 +1440,9 @@ impl Aead for Aes256GcmSiv {
     #[cfg(target_arch = "aarch64")]
     {
       if crate::platform::caps().has(crate::platform::caps::aarch64::AES) {
+        let (mut auth_key, mut enc_key) = derive_keys(&self.master_ek, nonce);
         // SAFETY: AES-CE availability verified via HWCAP.
-        return unsafe { decrypt_fused_aarch64(self.key.as_bytes(), nonce, aad, buffer, tag) };
+        return unsafe { decrypt_fused_aarch64(&mut auth_key, &mut enc_key, nonce, aad, buffer, tag) };
       }
     }
 
@@ -1557,8 +1450,9 @@ impl Aead for Aes256GcmSiv {
     #[cfg(target_arch = "powerpc64")]
     {
       if crate::platform::caps().has(crate::platform::caps::power::POWER8_CRYPTO) {
+        let (mut auth_key, mut enc_key) = derive_keys(&self.master_ek, nonce);
         // SAFETY: POWER8 crypto availability verified via HWCAP.
-        return unsafe { decrypt_fused_ppc(self.key.as_bytes(), nonce, aad, buffer, tag) };
+        return unsafe { decrypt_fused_ppc(&mut auth_key, &mut enc_key, nonce, aad, buffer, tag) };
       }
     }
 
@@ -1567,13 +1461,14 @@ impl Aead for Aes256GcmSiv {
     {
       let c = crate::platform::caps();
       if c.has(crate::platform::caps::s390x::VECTOR) && c.has(crate::platform::caps::s390x::MSA) {
+        let (mut auth_key, mut enc_key) = derive_keys(&self.master_ek, nonce);
         // SAFETY: z/Vector + MSA availability verified via STFLE/HWCAP.
-        return unsafe { decrypt_fused_s390x(self.key.as_bytes(), nonce, aad, buffer, tag) };
+        return unsafe { decrypt_fused_s390x(&mut auth_key, &mut enc_key, nonce, aad, buffer, tag) };
       }
     }
 
     // Scalar path: decrypt then verify.
-    let (mut auth_key, mut enc_key) = derive_keys(self.key.as_bytes(), nonce);
+    let (mut auth_key, mut enc_key) = derive_keys(&self.master_ek, nonce);
     let ek = aes::aes256_expand_key(&enc_key);
     let mut counter_block = tag.0;
     counter_block[15] |= 0x80;

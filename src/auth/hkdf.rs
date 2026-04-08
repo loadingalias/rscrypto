@@ -103,26 +103,34 @@ impl HkdfSha256 {
       return Ok(());
     }
 
-    // Clone the cached HMAC once. Each iteration resets the inner state
-    // (one memcpy) instead of re-creating from scratch (2 SHA-256 compressions).
+    // Clone the cached HMAC once, then reset to the keyed prefix state for
+    // subsequent blocks.
     let mut mac = self.prk_mac.clone();
-    let mut block = [0u8; OUTPUT_SIZE];
-    let mut have_block = false;
     let mut counter = 1u8;
 
-    for chunk in okm.chunks_mut(OUTPUT_SIZE) {
-      if have_block {
-        mac.reset();
-        mac.update(&block);
-      }
+    let mut chunks = okm.chunks_mut(OUTPUT_SIZE);
+    let Some(first) = chunks.next() else {
+      return Ok(());
+    };
+
+    mac.update(info);
+    mac.update(&[counter]);
+    let mut block = mac.finalize();
+    for (dst, src) in first.iter_mut().zip(block.iter().copied()) {
+      *dst = src;
+    }
+    counter = counter.wrapping_add(1);
+
+    for chunk in chunks {
+      mac.reset();
+      mac.update(&block);
       mac.update(info);
       mac.update(&[counter]);
 
       block = mac.finalize();
-      for (dst, src) in chunk.iter_mut().zip(block.iter()) {
-        *dst = *src;
+      for (dst, src) in chunk.iter_mut().zip(block.iter().copied()) {
+        *dst = src;
       }
-      have_block = true;
       counter = counter.wrapping_add(1);
     }
 

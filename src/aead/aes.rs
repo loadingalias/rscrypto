@@ -1209,7 +1209,7 @@ pub(crate) fn aes256_encrypt_blocks_ecb(ek: &Aes256EncKey, blocks: &mut [[u8; BL
       let flat =
         unsafe { core::slice::from_raw_parts_mut(blocks.as_mut_ptr().cast::<u8>(), count.strict_mul(BLOCK_SIZE)) };
       // SAFETY: MSA verified by the S390xKm variant constructor. `flat` is valid for `count*16` bytes.
-      unsafe { km::encrypt_blocks(km_key, flat, count) };
+      unsafe { s390x_encrypt_blocks_inline(km_key, flat, count) };
     }
     return;
   }

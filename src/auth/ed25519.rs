@@ -20,7 +20,10 @@
 //! distinct types instead of passing raw byte slices through signing and
 //! verification calls.
 
-use core::fmt;
+use core::{
+  fmt,
+  hash::{Hash, Hasher},
+};
 
 use crate::{
   hashes::crypto::Sha512,
@@ -137,7 +140,7 @@ impl Ed25519SecretKey {
   #[must_use]
   pub fn public_key(&self) -> Ed25519PublicKey {
     let expanded = hash::ExpandedSecret::from_secret_key(self);
-    Ed25519PublicKey::from_bytes(expanded.public_key_bytes())
+    Ed25519PublicKey::from_point(basepoint_mul_dispatch(expanded.scalar_bytes()))
   }
 
   /// Sign a message with this secret key.
@@ -185,46 +188,80 @@ impl Drop for Ed25519SecretKey {
 }
 
 /// Ed25519 public key bytes.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Ed25519PublicKey([u8; Self::LENGTH]);
+#[derive(Clone, Copy)]
+pub struct Ed25519PublicKey {
+  bytes: [u8; Self::LENGTH],
+  point: Option<point::ExtendedPoint>,
+}
 
 impl Ed25519PublicKey {
   /// Public key length in bytes.
   pub const LENGTH: usize = PUBLIC_KEY_LENGTH;
 
   /// Construct a public key from its byte representation.
+  #[must_use]
+  pub fn from_bytes(bytes: [u8; Self::LENGTH]) -> Self {
+    Self {
+      point: point::ExtendedPoint::from_bytes(&bytes),
+      bytes,
+    }
+  }
+
   #[inline]
   #[must_use]
-  pub const fn from_bytes(bytes: [u8; Self::LENGTH]) -> Self {
-    Self(bytes)
+  fn from_point(point: point::ExtendedPoint) -> Self {
+    Self {
+      bytes: point.to_bytes().unwrap_or_default(),
+      point: Some(point),
+    }
   }
 
   /// Return the public key bytes.
   #[inline]
   #[must_use]
   pub const fn to_bytes(self) -> [u8; Self::LENGTH] {
-    self.0
+    self.bytes
   }
 
   /// Borrow the public key bytes.
   #[inline]
   #[must_use]
   pub const fn as_bytes(&self) -> &[u8; Self::LENGTH] {
-    &self.0
+    &self.bytes
+  }
+
+  #[inline]
+  #[must_use]
+  const fn point(&self) -> Option<point::ExtendedPoint> {
+    self.point
+  }
+}
+
+impl PartialEq for Ed25519PublicKey {
+  fn eq(&self, other: &Self) -> bool {
+    self.bytes == other.bytes
+  }
+}
+
+impl Eq for Ed25519PublicKey {}
+
+impl Hash for Ed25519PublicKey {
+  fn hash<H: Hasher>(&self, state: &mut H) {
+    self.bytes.hash(state);
   }
 }
 
 impl Default for Ed25519PublicKey {
   #[inline]
   fn default() -> Self {
-    Self([0u8; Self::LENGTH])
+    Self::from_bytes([0u8; Self::LENGTH])
   }
 }
 
 impl fmt::Debug for Ed25519PublicKey {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     write!(f, "Ed25519PublicKey(")?;
-    crate::hex::fmt_hex_lower(&self.0, f)?;
+    crate::hex::fmt_hex_lower(&self.bytes, f)?;
     write!(f, ")")
   }
 }
@@ -303,7 +340,7 @@ impl Ed25519Keypair {
   #[must_use]
   pub fn from_secret_key(secret: Ed25519SecretKey) -> Self {
     let expanded = hash::ExpandedSecret::from_secret_key(&secret);
-    let public = Ed25519PublicKey::from_bytes(expanded.public_key_bytes());
+    let public = Ed25519PublicKey::from_point(basepoint_mul_dispatch(expanded.scalar_bytes()));
     Self {
       secret,
       public,
@@ -351,7 +388,7 @@ pub fn verify(
 ) -> Result<(), VerificationError> {
   let (r_bytes, s_bytes) = split_signature(signature);
   let r_point = point::ExtendedPoint::from_bytes(&r_bytes).ok_or(VerificationError::new())?;
-  let a_point = point::ExtendedPoint::from_bytes(public_key.as_bytes()).ok_or(VerificationError::new())?;
+  let a_point = public_key.point().ok_or(VerificationError::new())?;
   let s = scalar::from_canonical_bytes(&s_bytes).ok_or(VerificationError::new())?;
 
   let mut challenge_hasher = Sha512::new();
