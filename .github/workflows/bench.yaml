@@ -3,98 +3,24 @@ name: Bench
 on:
   workflow_dispatch:
     inputs:
-      crates:
-        description: "Crate(s), comma-separated (e.g. hashes,auth). Empty = workspace."
+      targets:
+        description: "CSV target selectors. Examples: checksums,hashes,auth,aead or blake3,crc32c,ed25519. Empty = all benches."
         required: false
         type: string
-      benches:
-        description: "Bench target(s), comma-separated (e.g. blake3,auth). Optional."
+      platforms:
+        description: "CSV runners. Examples: amd-zen4,intel-spr,graviton4,ibm-s390x. Aliases: zen4,spr,icl,zen5,g3,g4,s390x,power10. Use 'all' for every lane."
         required: false
         type: string
-      run_amd_zen4:
-        description: "AMD Zen4 (RunsOn)"
-        required: false
-        type: boolean
-      run_intel_spr:
-        description: "Intel Sapphire Rapids (RunsOn)"
-        required: false
-        type: boolean
-      run_intel_icl:
-        description: "Intel Ice Lake (RunsOn)"
-        required: false
-        type: boolean
-      run_amd_zen5:
-        description: "AMD Zen5 (RunsOn)"
-        required: false
-        type: boolean
-      run_graviton3:
-        description: "AWS Graviton3 (RunsOn)"
-        required: false
-        type: boolean
-      run_graviton4:
-        description: "AWS Graviton4 (RunsOn)"
-        required: false
-        type: boolean
-      run_ibm_s390x:
-        description: "IBM Z (s390x)"
-        required: false
-        type: boolean
-      run_ibm_power10:
-        description: "IBM POWER10 (ppc64le)"
-        required: false
-        type: boolean
-      only:
-        description: "Algorithm selector(s), comma-separated (e.g. blake3,crc32c,auth,hmac,ed25519). If 'filter' is set, this scopes crate/bench selection only."
+        default: "amd-zen4"
+      filter:
+        description: "Optional raw Criterion filter(s), comma-separated. Examples: sha256,blake3/streaming,encrypt."
         required: false
         type: string
       quick:
-        description: "Quick mode (Criterion --quick). Faster, noisier."
-        required: false
-        type: boolean
-      warmup_ms:
-        description: "Warmup override in ms (optional)."
-        required: false
-        type: string
-      measure_ms:
-        description: "Measurement override in ms (optional)."
-        required: false
-        type: string
-      sample_size:
-        description: "Sample size override (optional, >=10)."
-        required: false
-        type: string
-      profile_time_secs:
-        description: "Profile-time override in seconds (optional)."
-        required: false
-        type: string
-      blake3_force_kernel:
-        description: "Optional BLAKE3 forced kernel override (e.g. x86_64/avx512, aarch64/neon, s390x/vector, powerpc64/vsx)."
-        required: false
-        type: string
-      filter:
-        description: "Advanced raw Criterion filter(s), comma-separated. Authoritative matcher when set (precedes 'only' benchmark matching). Do NOT use 'hashes/comp' here."
-        required: false
-        type: string
-      upload_raw_criterion:
-        description: "Attach raw Criterion directory in artifact (large)."
-        required: false
-        type: boolean
-        default: false
-      allow_full_hashes_comp:
-        description: "Allow unscoped hashes/comp runs (very expensive; may hit lane timeouts)."
+        description: "Quick validation mode (Criterion --quick)."
         required: false
         type: boolean
         default: true
-      enforce_blake3_gap_gate:
-        description: "Fail when pinned BLAKE3 oneshot gap thresholds are exceeded (requires quick=false)."
-        required: false
-        type: boolean
-        default: false
-      enforce_blake3_kernel_gate:
-        description: "Fail when best lane-native kernel-ab BLAKE3 gaps exceed platform thresholds (requires quick=false)."
-        required: false
-        type: boolean
-        default: false
 
 env:
   RUST_BACKTRACE: 1
@@ -123,14 +49,7 @@ jobs:
         shell: bash
         env:
           GH_RUN_ID: ${{ github.run_id }}
-          RUN_AMD_ZEN4: ${{ inputs.run_amd_zen4 && 'true' || 'false' }}
-          RUN_INTEL_SPR: ${{ inputs.run_intel_spr && 'true' || 'false' }}
-          RUN_INTEL_ICL: ${{ inputs.run_intel_icl && 'true' || 'false' }}
-          RUN_AMD_ZEN5: ${{ inputs.run_amd_zen5 && 'true' || 'false' }}
-          RUN_GRAVITON3: ${{ inputs.run_graviton3 && 'true' || 'false' }}
-          RUN_GRAVITON4: ${{ inputs.run_graviton4 && 'true' || 'false' }}
-          RUN_IBM_S390X: ${{ inputs.run_ibm_s390x && 'true' || 'false' }}
-          RUN_IBM_POWER10: ${{ inputs.run_ibm_power10 && 'true' || 'false' }}
+          BENCH_PLATFORMS: ${{ inputs.platforms }}
         run: scripts/ci/emit-manual-matrix.sh bench
 
   bench:
@@ -163,32 +82,11 @@ jobs:
           cat /proc/cpuinfo | head -50
         fi
       run_script: |
-        FILTER_INPUT="${{ inputs.filter }}"
-        FILTER_LOWER="$(echo "${FILTER_INPUT}" | tr '[:upper:]' '[:lower:]')"
-        ONLY_INPUT="${{ inputs.only }}"
-        CRATES_INPUT="${{ inputs.crates }}"
-        BENCHES_INPUT="${{ inputs.benches }}"
-        if [[ ",${FILTER_LOWER}," == *",hashes/comp,"* ]]; then
-          echo "error: filter contains 'hashes/comp', which expands to the full hashes comp matrix." >&2
-          echo "hint: use 'blake3/' for Blake3-only comp groups, or use BENCH_ONLY selectors for scoped plans." >&2
-          exit 2
-        fi
-
         BENCH_OUTPUT_DIR=benchmark-results \
-        BENCH_CRATES="${CRATES_INPUT}" \
-        BENCH_BENCHES="${BENCHES_INPUT}" \
-        BENCH_ONLY="${ONLY_INPUT}" \
-        BENCH_FILTER="${FILTER_INPUT}" \
+        BENCH_ONLY="${{ inputs.targets }}" \
+        BENCH_FILTER="${{ inputs.filter }}" \
         BENCH_QUICK=${{ inputs.quick && 'true' || 'false' }} \
-        BENCH_WARMUP_MS="${{ inputs.warmup_ms }}" \
-        BENCH_MEASURE_MS="${{ inputs.measure_ms }}" \
-        BENCH_SAMPLE_SIZE="${{ inputs.sample_size }}" \
-        BENCH_PROFILE_TIME_SECS="${{ inputs.profile_time_secs }}" \
-        RSCRYPTO_BLAKE3_FORCE_KERNEL="${{ inputs.blake3_force_kernel }}" \
-        BENCH_ATTACH_CRITERION=${{ inputs.upload_raw_criterion && 'true' || 'false' }} \
-        BENCH_ALLOW_FULL_HASHES_COMP=${{ inputs.allow_full_hashes_comp && 'true' || 'false' }} \
-        BENCH_ENFORCE_BLAKE3_GAP_GATE=${{ inputs.enforce_blake3_gap_gate && 'true' || 'false' }} \
-        BENCH_ENFORCE_BLAKE3_KERNEL_GATE=${{ inputs.enforce_blake3_kernel_gate && 'true' || 'false' }} \
+        BENCH_ALLOW_FULL_HASHES_COMP=true \
         BENCH_PLATFORM="${{ matrix.platform }}" \
         scripts/ci/run-bench.sh
       artifact_name: benchmark-${{ matrix.artifact_suffix }}
