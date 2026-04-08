@@ -4,7 +4,7 @@ use crate::{
   hashes::crypto::{
     Sha256,
     dispatch_util::len_hint_from_u64,
-    sha256::{H0 as SHA256_H0, dispatch as sha256_dispatch},
+    sha256::{H0 as SHA256_H0, Sha256Prefix, dispatch as sha256_dispatch},
   },
   traits::{Digest, Mac, VerificationError, ct},
 };
@@ -33,8 +33,8 @@ const TAG_SIZE: usize = 32;
 #[derive(Clone)]
 pub struct HmacSha256 {
   inner: Sha256,
-  inner_init: Sha256,
-  outer_init: Sha256,
+  inner_init: Sha256Prefix,
+  outer_init: Sha256Prefix,
 }
 
 impl core::fmt::Debug for HmacSha256 {
@@ -94,14 +94,17 @@ impl Mac for HmacSha256 {
     let mut outer_init = Sha256::new();
     outer_init.update(&opad);
 
+    let inner_init_prefix = inner_init.aligned_prefix();
+    let outer_init_prefix = outer_init.aligned_prefix();
+
     ct::zeroize(&mut key_block);
     ct::zeroize(&mut ipad);
     ct::zeroize(&mut opad);
 
     Self {
-      inner_init: inner_init.clone(),
       inner: inner_init,
-      outer_init,
+      inner_init: inner_init_prefix,
+      outer_init: outer_init_prefix,
     }
   }
 
@@ -113,14 +116,14 @@ impl Mac for HmacSha256 {
   #[inline]
   fn finalize(&self) -> Self::Tag {
     let inner_hash = self.inner.finalize();
-    let mut outer = self.outer_init.clone();
+    let mut outer = Sha256::from_aligned_prefix(self.outer_init);
     outer.update(&inner_hash);
     outer.finalize()
   }
 
   #[inline]
   fn reset(&mut self) {
-    self.inner = self.inner_init.clone();
+    self.inner.reset_to_aligned_prefix(self.inner_init);
   }
 
   /// Oneshot HMAC-SHA256: bypasses streaming `Sha256` construction entirely.
