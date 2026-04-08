@@ -211,18 +211,68 @@ mod ce {
     }
   }
 
-  /// Convert portable round keys (60 × big-endian u32) to AES-CE vector format.
+  /// Hardware-accelerated AES-256 key expansion using AESE for SubWord.
   ///
-  /// AES-CE expects round keys as byte vectors in the standard AES state
-  /// layout. The portable path stores words in big-endian, so serializing
-  /// each u32 to big-endian bytes produces the correct byte vectors.
-  ///
-  /// # Safety
-  /// Caller must ensure the CPU supports NEON (always true on aarch64).
-  #[target_feature(enable = "neon")]
-  pub(super) unsafe fn from_portable(rk: &[u32; 60]) -> CeRoundKeys {
-    // SAFETY: target_feature gate guarantees NEON.
-    unsafe { from_portable_core(rk) }
+  /// The AESE instruction applies SubBytes to all 16 bytes. By broadcasting
+  /// a 32-bit word to all 4 columns of the AES state, ShiftRows becomes a
+  /// no-op (all columns identical), so `AESE(broadcast(w), 0)` = `SubWord(w)`.
+  /// This replaces ~1560 GF(2^8) field operations per SubWord call with a
+  /// single AESE instruction (~1 cycle on Neoverse V1/V2).
+  #[target_feature(enable = "aes,neon")]
+  #[inline(always)]
+  pub(super) unsafe fn expand_key_hw(key: &[u8; 32]) -> CeRoundKeys {
+    // SAFETY: caller guarantees AES-CE + NEON availability.
+    unsafe {
+      // Hardware SubWord: AESE on broadcast input → SubBytes (ShiftRows is
+      // no-op because all 4 columns are identical).
+      #[target_feature(enable = "aes,neon")]
+      #[inline(always)]
+      unsafe fn sub_word_hw(w: u32) -> u32 {
+        let state = vreinterpretq_u8_u32(vdupq_n_u32(w));
+        let zero = vdupq_n_u8(0);
+        let result = vaeseq_u8(state, zero);
+        vgetq_lane_u32(vreinterpretq_u32_u8(result), 0)
+      }
+
+      let mut rk = [0u32; super::EXPANDED_KEY_WORDS];
+
+      // Load initial key as big-endian u32 words.
+      let mut i = 0usize;
+      while i < 8 {
+        let base = i.strict_mul(4);
+        rk[i] = u32::from_be_bytes([
+          key[base],
+          key[base.strict_add(1)],
+          key[base.strict_add(2)],
+          key[base.strict_add(3)],
+        ]);
+        i = i.strict_add(1);
+      }
+
+      // Expand key schedule using hardware SubWord.
+      i = 8;
+      while i < super::EXPANDED_KEY_WORDS {
+        let mut temp = rk[i.strict_sub(1)];
+        if i.strict_rem(8) == 0 {
+          temp = sub_word_hw(super::rot_word(temp)) ^ super::RCON[i.strict_div(8).strict_sub(1)];
+        } else if i.strict_rem(8) == 4 {
+          temp = sub_word_hw(temp);
+        }
+        rk[i] = rk[i.strict_sub(8)] ^ temp;
+        i = i.strict_add(1);
+      }
+
+      // Convert to NEON round key format.
+      from_portable_core(&rk)
+    }
+  }
+
+  /// Non-inline entry point for hardware key expansion (called from the
+  /// runtime-dispatch `aes256_expand_key`).
+  #[target_feature(enable = "aes,neon")]
+  pub(super) unsafe fn expand_key(key: &[u8; 32]) -> CeRoundKeys {
+    // SAFETY: target_feature gate guarantees AES-CE + NEON.
+    unsafe { expand_key_hw(key) }
   }
 
   /// Core block-encrypt logic — `#[target_feature]` + `#[inline(always)]` for
@@ -952,17 +1002,10 @@ pub(crate) fn aes256_expand_key(key: &[u8; KEY_SIZE]) -> Aes256EncKey {
   #[cfg(target_arch = "aarch64")]
   {
     if crate::platform::caps().has(crate::platform::caps::aarch64::AES) {
-      let mut portable_rk = aes256_expand_key_portable(key);
-      // SAFETY: AES-CE availability verified via HWCAP above.
-      let ce_keys = unsafe { ce::from_portable(&portable_rk) };
-      // Zeroize the intermediate portable key schedule so it does not
-      // linger on the stack after conversion to NEON vectors.
-      // SAFETY: [u32; 60] is layout-compatible with [u8; 240].
-      crate::traits::ct::zeroize(unsafe {
-        core::slice::from_raw_parts_mut(portable_rk.as_mut_ptr().cast::<u8>(), EXPANDED_KEY_WORDS.strict_mul(4))
-      });
       return Aes256EncKey {
-        inner: KeyInner::Aarch64Ce(ce_keys),
+        // SAFETY: AES-CE availability verified via HWCAP above.
+        // Uses AESE for SubWord — ~750x faster than the algebraic GF(2^8) S-box.
+        inner: KeyInner::Aarch64Ce(unsafe { ce::expand_key(key) }),
       };
     }
   }
@@ -1030,9 +1073,8 @@ pub(crate) fn aes256_expand_key(key: &[u8; KEY_SIZE]) -> Aes256EncKey {
 #[target_feature(enable = "aes,neon")]
 #[inline(always)]
 pub(super) unsafe fn aarch64_expand_key_inline(key: &[u8; KEY_SIZE]) -> ce::CeRoundKeys {
-  let rk = aes256_expand_key_portable(key);
   // SAFETY: AES-CE availability guaranteed by caller.
-  unsafe { ce::from_portable_core(&rk) }
+  unsafe { ce::expand_key_hw(key) }
 }
 
 /// Encrypt a single AES-256 block with AES-CE, guaranteed to inline.
