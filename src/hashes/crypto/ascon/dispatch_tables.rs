@@ -17,7 +17,7 @@ pub struct DispatchTable {
 }
 
 impl DispatchTable {
-  #[cfg_attr(not(any(test, feature = "std")), allow(dead_code))]
+  #[allow(dead_code)]
   #[inline]
   #[must_use]
   pub const fn kernel_for_len(&self, len: usize) -> KernelId {
@@ -45,10 +45,15 @@ pub static DEFAULT_TABLE: DispatchTable = DispatchTable {
 #[cfg(target_arch = "aarch64")]
 pub static AARCH64_NEON_TABLE: DispatchTable = DispatchTable {
   boundaries: DEFAULT_BOUNDARIES,
-  xs: KernelId::Aarch64Neon,
-  s: KernelId::Aarch64Neon,
-  m: KernelId::Aarch64Neon,
-  l: KernelId::Aarch64Neon,
+  // Scalar is faster than NEON for single-state Ascon: the 320-bit state
+  // (5 × u64) fits in 5 GPRs with native 1-cycle `ROR`, while NEON has no
+  // 64-bit vector rotate and must simulate each with SHR+SHL+OR (3 ops).
+  // The duplicated-lane single-state kernel doubles work for no benefit.
+  // NEON x2 batch path (used by `digest_many`) is wired separately.
+  xs: KernelId::Portable,
+  s: KernelId::Portable,
+  m: KernelId::Portable,
+  l: KernelId::Portable,
 };
 
 #[cfg(target_arch = "x86_64")]
