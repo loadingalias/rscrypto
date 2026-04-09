@@ -39,6 +39,8 @@ This file is the caller map for `scripts/`.
 
 - `scripts/lib/common.sh`
   - Sourced by: `scripts/check/*.sh`, `scripts/test/*.sh`, `scripts/ci/ci-check.sh`
+- `scripts/lib/rail-plan.sh`
+  - Sourced by: `scripts/lib/common.sh`
 - `scripts/lib/targets.sh`
   - Sourced by: `scripts/check/check-all.sh`, `scripts/check/check-win.sh`, `scripts/check/check-linux.sh`
 - `scripts/lib/target-matrix.sh`
@@ -56,6 +58,8 @@ This file is the caller map for `scripts/`.
   - Called by: `just blake3-codegen-audit`
 - `scripts/bench/blake3-gap-gate.sh`
   - Called by: `scripts/ci/run-bench.sh`, `just bench-blake3-gate`
+- `scripts/bench/extract-results.sh`
+  - Called by: manual developer workflow for post-CI benchmark artifact analysis
 - `scripts/bench/comp-check.py`
   - Called by: `just comp-check`
 - `scripts/gen_blake3_x86_asm_ports.py`

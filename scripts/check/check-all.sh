@@ -41,19 +41,34 @@ select_constrained_crates() {
     return 0
   fi
 
-  local affected
-  affected="$(rail_plan_crates)"
+  local scope_mode
+  scope_mode="$(rail_scope_mode)"
 
-  if [[ -z "$affected" ]]; then
-    CONSTRAINED_CRATES=("${DEFAULT_CONSTRAINED_CRATES[@]}")
-    CONSTRAINED_SCOPE="workspace (no changes)"
-  else
-    CONSTRAINED_CRATES=()
-    for crate in $affected; do
-      CONSTRAINED_CRATES+=("$crate")
-    done
-    CONSTRAINED_SCOPE="affected"
-  fi
+  case "$scope_mode" in
+    workspace)
+      CONSTRAINED_CRATES=("${DEFAULT_CONSTRAINED_CRATES[@]}")
+      CONSTRAINED_SCOPE="workspace (planner)"
+      ;;
+    crates)
+      local affected
+      affected="$(rail_plan_crates)"
+
+      if [[ -z "$affected" ]]; then
+        CONSTRAINED_CRATES=("${DEFAULT_CONSTRAINED_CRATES[@]}")
+        CONSTRAINED_SCOPE="workspace (planner fallback)"
+      else
+        CONSTRAINED_CRATES=()
+        for crate in $affected; do
+          CONSTRAINED_CRATES+=("$crate")
+        done
+        CONSTRAINED_SCOPE="affected"
+      fi
+      ;;
+    *)
+      CONSTRAINED_CRATES=("${DEFAULT_CONSTRAINED_CRATES[@]}")
+      CONSTRAINED_SCOPE="workspace (no changes)"
+      ;;
+  esac
 }
 
 crate_supports_alloc() {

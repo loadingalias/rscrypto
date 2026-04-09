@@ -75,7 +75,8 @@ require_changelog_entries = false
 [change-detection]
   infrastructure = [
     ".github/**",
-    "scripts/ci/**",
+    ".config/**",
+    "scripts/**",
     "justfile",
     "Cargo.lock",
     "rust-toolchain.toml",
@@ -86,10 +87,6 @@ require_changelog_entries = false
 conservative_unclassified_owner_fallback = true  # Enable build+test fallback for unclassified crate-owned files
 confidence_profile = "balanced"  # Planner confidence profile: strict, balanced, fast
 bot_pr_confidence_profile = "strict"  # Optional planner profile override for bot-authored PRs
-
-  [change-detection.custom]
-  benchmarks = ["crates/*/benches/**", "scripts/bench/**"]
-  test-scripts = ["scripts/test/**"]
 
 [run]
 default_profile = "local"  # Default run profile (built-ins: local, ci, nightly)
