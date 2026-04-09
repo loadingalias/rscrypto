@@ -1431,6 +1431,9 @@ const fn mix_column(col: [u8; 4]) -> u32 {
 /// Equivalent to `_mm_aesenc_si128(block, round_key)` on x86_64. Used by the
 /// AEGIS-256 portable backend where the full AES round function (not full AES
 /// encryption) is the core primitive.
+///
+/// On s390x, AEGIS uses T-table rounds instead (in `aegis256::zvec`).
+#[cfg(not(target_arch = "s390x"))]
 #[inline]
 pub(crate) fn aes_enc_round_portable(block: &[u8; BLOCK_SIZE], round_key: &[u8; BLOCK_SIZE]) -> [u8; BLOCK_SIZE] {
   let s0 = u32::from_be_bytes([block[0], block[1], block[2], block[3]]);

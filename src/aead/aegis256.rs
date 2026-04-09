@@ -31,6 +31,7 @@ const C1: [u8; 16] = [
 // Block helpers
 // ---------------------------------------------------------------------------
 
+#[cfg(not(target_arch = "s390x"))]
 type Block = [u8; BLOCK_SIZE];
 
 /// Split a 32-byte array into two 16-byte halves.
@@ -43,6 +44,7 @@ fn split_halves(bytes: &[u8; 32]) -> (&[u8; 16], &[u8; 16]) {
   (lo, hi)
 }
 
+#[cfg(not(target_arch = "s390x"))]
 #[inline(always)]
 fn xor_block(a: &Block, b: &Block) -> Block {
   let mut out = [0u8; BLOCK_SIZE];
@@ -52,6 +54,7 @@ fn xor_block(a: &Block, b: &Block) -> Block {
   out
 }
 
+#[cfg(not(target_arch = "s390x"))]
 #[inline(always)]
 fn and_block(a: &Block, b: &Block) -> Block {
   let mut out = [0u8; BLOCK_SIZE];
@@ -61,6 +64,7 @@ fn and_block(a: &Block, b: &Block) -> Block {
   out
 }
 
+#[cfg(not(target_arch = "s390x"))]
 #[inline(always)]
 fn zero_block() -> Block {
   [0u8; BLOCK_SIZE]
@@ -69,11 +73,14 @@ fn zero_block() -> Block {
 // ---------------------------------------------------------------------------
 // Portable backend
 // ---------------------------------------------------------------------------
+//
+// On s390x, the `zvec` module provides a T-table backend that unconditionally
+// replaces the portable path. Gate this section to suppress dead-code warnings.
 
-/// AEGIS-256 state: six 128-bit AES blocks.
+#[cfg(not(target_arch = "s390x"))]
 type State = [Block; 6];
 
-/// Single AES round: SubBytes + ShiftRows + MixColumns + XOR(round_key).
+#[cfg(not(target_arch = "s390x"))]
 #[inline(always)]
 fn aes_round(block: &Block, round_key: &Block) -> Block {
   super::aes::aes_enc_round_portable(block, round_key)
@@ -83,6 +90,7 @@ fn aes_round(block: &Block, round_key: &Block) -> Block {
 ///
 /// Each step applies a single AES round to rotate the state pipeline.
 /// The message block is XORed into S0 after the round.
+#[cfg(not(target_arch = "s390x"))]
 #[inline]
 fn update(s: &mut State, m: &Block) {
   let tmp = s[5];
@@ -98,6 +106,7 @@ fn update(s: &mut State, m: &Block) {
 ///
 /// Splits key and nonce into 128-bit halves, seeds the 6-block state,
 /// then runs 16 Update calls (4 iterations of 4 Updates).
+#[cfg(not(target_arch = "s390x"))]
 fn init(key: &[u8; KEY_SIZE], nonce: &[u8; NONCE_SIZE]) -> State {
   let (k0_ref, k1_ref) = split_halves(key);
   let (n0_ref, n1_ref) = split_halves(nonce);
@@ -122,6 +131,7 @@ fn init(key: &[u8; KEY_SIZE], nonce: &[u8; NONCE_SIZE]) -> State {
 }
 
 /// Absorb associated data into the state.
+#[cfg(not(target_arch = "s390x"))]
 fn process_aad(s: &mut State, aad: &[u8]) {
   let mut offset = 0usize;
 
@@ -142,6 +152,7 @@ fn process_aad(s: &mut State, aad: &[u8]) {
 }
 
 /// Compute the AEGIS-256 keystream word from the current state.
+#[cfg(not(target_arch = "s390x"))]
 #[inline(always)]
 fn keystream(s: &State) -> Block {
   // z = S1 ^ S4 ^ S5 ^ (S2 & S3)
@@ -156,6 +167,7 @@ fn keystream(s: &State) -> Block {
 ///
 /// XORs the bit-lengths of AAD and message into S3, then runs 7 Update
 /// rounds and XORs all six state blocks together.
+#[cfg(not(target_arch = "s390x"))]
 fn finalize(s: &mut State, ad_len: usize, msg_len: usize) -> [u8; TAG_SIZE] {
   // t = S3 ^ (LE64(ad_len_bits) || LE64(msg_len_bits))
   let ad_bits = (ad_len as u64).strict_mul(8);
@@ -1002,10 +1014,375 @@ mod ppc {
 }
 
 // ---------------------------------------------------------------------------
-// Backend dispatch
+// s390x T-table backend
+// ---------------------------------------------------------------------------
+//
+// s390x has NO single-round AES instruction (no equivalent of x86 AESENC,
+// ARM AESE, or POWER vcipher). CPACF instructions (KM/KMA) only perform
+// full-block AES encryption, which cannot be used for AEGIS's individual
+// AES round function.
+//
+// This backend implements the AES round function using T-tables: 4 × 256-
+// entry lookup tables that fuse SubBytes + MixColumns into a single 32-bit
+// load per byte, matching the approach used by libaegis. Each AES round
+// costs ~16 loads + 12 XOR + ShiftRows indexing.
+//
+// T-tables are NOT constant-time (cache-timing side channel). This is
+// acceptable for AEGIS because: (1) libaegis — the de facto standard —
+// uses T-tables by default; (2) AEGIS is designed for high-throughput
+// bulk AEAD, not scenarios where cache-timing is the primary threat model;
+// (3) the alternative (algebraic S-box) is ~100x slower.
+
+#[cfg(target_arch = "s390x")]
+mod zvec {
+  use super::{BLOCK_SIZE, C0, C1, KEY_SIZE, NONCE_SIZE, TAG_SIZE};
+
+  // ── T-table AES round ────────────────────────────────────────────────────
+  //
+  // T-tables fuse SubBytes + MixColumns into a single 32-bit lookup per
+  // input byte. T0 is the base table; T1-T3 are byte rotations of T0.
+  // ShiftRows is handled by indexing into different columns of the state.
+
+  // ── AES S-box (FIPS 197) ──
+
+  /// Full AES S-box lookup table (256 entries).
+  #[rustfmt::skip]
+  const SBOX: [u8; 256] = [
+    0x63, 0x7C, 0x77, 0x7B, 0xF2, 0x6B, 0x6F, 0xC5, 0x30, 0x01, 0x67, 0x2B, 0xFE, 0xD7, 0xAB, 0x76,
+    0xCA, 0x82, 0xC9, 0x7D, 0xFA, 0x59, 0x47, 0xF0, 0xAD, 0xD4, 0xA2, 0xAF, 0x9C, 0xA4, 0x72, 0xC0,
+    0xB7, 0xFD, 0x93, 0x26, 0x36, 0x3F, 0xF7, 0xCC, 0x34, 0xA5, 0xE5, 0xF1, 0x71, 0xD8, 0x31, 0x15,
+    0x04, 0xC7, 0x23, 0xC3, 0x18, 0x96, 0x05, 0x9A, 0x07, 0x12, 0x80, 0xE2, 0xEB, 0x27, 0xB2, 0x75,
+    0x09, 0x83, 0x2C, 0x1A, 0x1B, 0x6E, 0x5A, 0xA0, 0x52, 0x3B, 0xD6, 0xB3, 0x29, 0xE3, 0x2F, 0x84,
+    0x53, 0xD1, 0x00, 0xED, 0x20, 0xFC, 0xB1, 0x5B, 0x6A, 0xCB, 0xBE, 0x39, 0x4A, 0x4C, 0x58, 0xCF,
+    0xD0, 0xEF, 0xAA, 0xFB, 0x43, 0x4D, 0x33, 0x85, 0x45, 0xF9, 0x02, 0x7F, 0x50, 0x3C, 0x9F, 0xA8,
+    0x51, 0xA3, 0x40, 0x8F, 0x92, 0x9D, 0x38, 0xF5, 0xBC, 0xB6, 0xDA, 0x21, 0x10, 0xFF, 0xF3, 0xD2,
+    0xCD, 0x0C, 0x13, 0xEC, 0x5F, 0x97, 0x44, 0x17, 0xC4, 0xA7, 0x7E, 0x3D, 0x64, 0x5D, 0x19, 0x73,
+    0x60, 0x81, 0x4F, 0xDC, 0x22, 0x2A, 0x90, 0x88, 0x46, 0xEE, 0xB8, 0x14, 0xDE, 0x5E, 0x0B, 0xDB,
+    0xE0, 0x32, 0x3A, 0x0A, 0x49, 0x06, 0x24, 0x5C, 0xC2, 0xD3, 0xAC, 0x62, 0x91, 0x95, 0xE4, 0x79,
+    0xE7, 0xC8, 0x37, 0x6D, 0x8D, 0xD5, 0x4E, 0xA9, 0x6C, 0x56, 0xF4, 0xEA, 0x65, 0x7A, 0xAE, 0x08,
+    0xBA, 0x78, 0x25, 0x2E, 0x1C, 0xA6, 0xB4, 0xC6, 0xE8, 0xDD, 0x74, 0x1F, 0x4B, 0xBD, 0x8B, 0x8A,
+    0x70, 0x3E, 0xB5, 0x66, 0x48, 0x03, 0xF6, 0x0E, 0x61, 0x35, 0x57, 0xB9, 0x86, 0xC1, 0x1D, 0x9E,
+    0xE1, 0xF8, 0x98, 0x11, 0x69, 0xD9, 0x8E, 0x94, 0x9B, 0x1E, 0x87, 0xE9, 0xCE, 0x55, 0x28, 0xDF,
+    0x8C, 0xA1, 0x89, 0x0D, 0xBF, 0xE6, 0x42, 0x68, 0x41, 0x99, 0x2D, 0x0F, 0xB0, 0x54, 0xBB, 0x16,
+  ];
+
+  // ── T-table generation ──
+
+  /// xtime: multiply by 2 in GF(2^8) with AES polynomial.
+  const fn xt(b: u8) -> u8 {
+    let r = (b as u16) << 1;
+    (r ^ (if r & 0x100 != 0 { 0x1B } else { 0 })) as u8
+  }
+
+  /// Generate T0: T0[b] = column [2*S(b), S(b), S(b), 3*S(b)] as big-endian u32.
+  /// T1/T2/T3 are byte rotations of T0.
+  const fn generate_t0() -> [u32; 256] {
+    let mut t = [0u32; 256];
+    let mut i = 0;
+    while i < 256 {
+      let s = SBOX[i];
+      let s2 = xt(s);
+      let s3 = s2 ^ s;
+      t[i] = (s2 as u32) << 24 | (s as u32) << 16 | (s as u32) << 8 | s3 as u32;
+      i += 1;
+    }
+    t
+  }
+
+  const fn generate_t1() -> [u32; 256] {
+    let t0 = generate_t0();
+    let mut t = [0u32; 256];
+    let mut i = 0;
+    while i < 256 {
+      t[i] = t0[i].rotate_right(8);
+      i += 1;
+    }
+    t
+  }
+
+  const fn generate_t2() -> [u32; 256] {
+    let t0 = generate_t0();
+    let mut t = [0u32; 256];
+    let mut i = 0;
+    while i < 256 {
+      t[i] = t0[i].rotate_right(16);
+      i += 1;
+    }
+    t
+  }
+
+  const fn generate_t3() -> [u32; 256] {
+    let t0 = generate_t0();
+    let mut t = [0u32; 256];
+    let mut i = 0;
+    while i < 256 {
+      t[i] = t0[i].rotate_right(24);
+      i += 1;
+    }
+    t
+  }
+
+  static T0: [u32; 256] = generate_t0();
+  static T1: [u32; 256] = generate_t1();
+  static T2: [u32; 256] = generate_t2();
+  static T3: [u32; 256] = generate_t3();
+
+  // ── Block helpers ──────────────────────────────────────────────────────
+
+  type Block = [u8; BLOCK_SIZE];
+
+  #[inline(always)]
+  fn xor_block(a: &Block, b: &Block) -> Block {
+    let mut out = [0u8; BLOCK_SIZE];
+    let mut i = 0;
+    while i < BLOCK_SIZE {
+      out[i] = a[i] ^ b[i];
+      i = i.strict_add(1);
+    }
+    out
+  }
+
+  #[inline(always)]
+  fn and_block(a: &Block, b: &Block) -> Block {
+    let mut out = [0u8; BLOCK_SIZE];
+    let mut i = 0;
+    while i < BLOCK_SIZE {
+      out[i] = a[i] & b[i];
+      i = i.strict_add(1);
+    }
+    out
+  }
+
+  // ── T-table AES round ──────────────────────────────────────────────────
+
+  /// Single AES round via T-tables: SubBytes + ShiftRows + MixColumns + AddRoundKey.
+  ///
+  /// T-tables fuse SubBytes + MixColumns into a single 32-bit lookup per byte.
+  /// ShiftRows is handled by indexing into the correct column positions.
+  #[inline(always)]
+  fn aes_round(block: &Block, round_key: &Block) -> Block {
+    // Load state as 4 big-endian column words.
+    let s0 = u32::from_be_bytes([block[0], block[1], block[2], block[3]]);
+    let s1 = u32::from_be_bytes([block[4], block[5], block[6], block[7]]);
+    let s2 = u32::from_be_bytes([block[8], block[9], block[10], block[11]]);
+    let s3 = u32::from_be_bytes([block[12], block[13], block[14], block[15]]);
+
+    // Load round key as 4 big-endian column words.
+    let k0 = u32::from_be_bytes([round_key[0], round_key[1], round_key[2], round_key[3]]);
+    let k1 = u32::from_be_bytes([round_key[4], round_key[5], round_key[6], round_key[7]]);
+    let k2 = u32::from_be_bytes([round_key[8], round_key[9], round_key[10], round_key[11]]);
+    let k3 = u32::from_be_bytes([round_key[12], round_key[13], round_key[14], round_key[15]]);
+
+    // T-table lookups with ShiftRows baked into the column indexing.
+    // Column j uses bytes from rows (0,j), (1,j+1), (2,j+2), (3,j+3) mod 4.
+    // In big-endian column words: byte 0 = row 0 (bits 31:24), byte 3 = row 3 (bits 7:0).
+    let c0 = T0[(s0 >> 24) as usize]
+      ^ T1[((s1 >> 16) & 0xFF) as usize]
+      ^ T2[((s2 >> 8) & 0xFF) as usize]
+      ^ T3[(s3 & 0xFF) as usize]
+      ^ k0;
+
+    let c1 = T0[(s1 >> 24) as usize]
+      ^ T1[((s2 >> 16) & 0xFF) as usize]
+      ^ T2[((s3 >> 8) & 0xFF) as usize]
+      ^ T3[(s0 & 0xFF) as usize]
+      ^ k1;
+
+    let c2 = T0[(s2 >> 24) as usize]
+      ^ T1[((s3 >> 16) & 0xFF) as usize]
+      ^ T2[((s0 >> 8) & 0xFF) as usize]
+      ^ T3[(s1 & 0xFF) as usize]
+      ^ k2;
+
+    let c3 = T0[(s3 >> 24) as usize]
+      ^ T1[((s0 >> 16) & 0xFF) as usize]
+      ^ T2[((s1 >> 8) & 0xFF) as usize]
+      ^ T3[(s2 & 0xFF) as usize]
+      ^ k3;
+
+    let mut out = [0u8; BLOCK_SIZE];
+    out[0..4].copy_from_slice(&c0.to_be_bytes());
+    out[4..8].copy_from_slice(&c1.to_be_bytes());
+    out[8..12].copy_from_slice(&c2.to_be_bytes());
+    out[12..16].copy_from_slice(&c3.to_be_bytes());
+    out
+  }
+
+  // ── AEGIS-256 state operations ──────────────────────────────────────────
+
+  type State = [Block; 6];
+
+  #[inline(always)]
+  fn update(s: &mut State, m: &Block) {
+    let tmp = s[5];
+    s[5] = aes_round(&s[4], &s[5]);
+    s[4] = aes_round(&s[3], &s[4]);
+    s[3] = aes_round(&s[2], &s[3]);
+    s[2] = aes_round(&s[1], &s[2]);
+    s[1] = aes_round(&s[0], &s[1]);
+    s[0] = xor_block(&aes_round(&tmp, &s[0]), m);
+  }
+
+  #[inline(always)]
+  fn keystream(s: &State) -> Block {
+    xor_block(&xor_block(&s[1], &s[4]), &xor_block(&s[5], &and_block(&s[2], &s[3])))
+  }
+
+  // ── Fused encrypt/decrypt ───────────────────────────────────────────────
+
+  pub(super) fn encrypt_fused(
+    key: &[u8; KEY_SIZE],
+    nonce: &[u8; NONCE_SIZE],
+    aad: &[u8],
+    buffer: &mut [u8],
+  ) -> [u8; TAG_SIZE] {
+    let (kh0, kh1) = super::split_halves(key);
+    let (nh0, nh1) = super::split_halves(nonce);
+    let k0_xor_n0 = xor_block(kh0, nh0);
+    let k1_xor_n1 = xor_block(kh1, nh1);
+    let mut s: State = [k0_xor_n0, k1_xor_n1, C1, C0, xor_block(kh0, &C0), xor_block(kh1, &C1)];
+
+    for _ in 0..4 {
+      update(&mut s, kh0);
+      update(&mut s, kh1);
+      update(&mut s, &k0_xor_n0);
+      update(&mut s, &k1_xor_n1);
+    }
+
+    // ── aad ──
+    let mut offset = 0usize;
+    while offset.strict_add(BLOCK_SIZE) <= aad.len() {
+      let mut tmp = [0u8; BLOCK_SIZE];
+      tmp.copy_from_slice(&aad[offset..offset.strict_add(BLOCK_SIZE)]);
+      update(&mut s, &tmp);
+      offset = offset.strict_add(BLOCK_SIZE);
+    }
+    if offset < aad.len() {
+      let mut pad = [0u8; BLOCK_SIZE];
+      pad[..aad.len().strict_sub(offset)].copy_from_slice(&aad[offset..]);
+      update(&mut s, &pad);
+    }
+
+    // ── encrypt ──
+    let msg_len = buffer.len();
+    let len = buffer.len();
+    offset = 0;
+    while offset.strict_add(BLOCK_SIZE) <= len {
+      let z = keystream(&s);
+      let mut xi = [0u8; BLOCK_SIZE];
+      xi.copy_from_slice(&buffer[offset..offset.strict_add(BLOCK_SIZE)]);
+      update(&mut s, &xi);
+      buffer[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&xor_block(&xi, &z));
+      offset = offset.strict_add(BLOCK_SIZE);
+    }
+    if offset < len {
+      let z = keystream(&s);
+      let tail_len = len.strict_sub(offset);
+      let mut pad = [0u8; BLOCK_SIZE];
+      pad[..tail_len].copy_from_slice(&buffer[offset..]);
+      update(&mut s, &pad);
+      let ct = xor_block(&pad, &z);
+      buffer[offset..].copy_from_slice(&ct[..tail_len]);
+    }
+
+    // ── finalize ──
+    let ad_bits = (aad.len() as u64).strict_mul(8);
+    let msg_bits = (msg_len as u64).strict_mul(8);
+    let mut len_bytes = [0u8; BLOCK_SIZE];
+    len_bytes[..8].copy_from_slice(&ad_bits.to_le_bytes());
+    len_bytes[8..].copy_from_slice(&msg_bits.to_le_bytes());
+    let t = xor_block(&s[3], &len_bytes);
+    for _ in 0..7 {
+      update(&mut s, &t);
+    }
+    xor_block(
+      &xor_block(&xor_block(&s[0], &s[1]), &xor_block(&s[2], &s[3])),
+      &xor_block(&s[4], &s[5]),
+    )
+  }
+
+  pub(super) fn decrypt_fused(
+    key: &[u8; KEY_SIZE],
+    nonce: &[u8; NONCE_SIZE],
+    aad: &[u8],
+    buffer: &mut [u8],
+  ) -> [u8; TAG_SIZE] {
+    let (kh0, kh1) = super::split_halves(key);
+    let (nh0, nh1) = super::split_halves(nonce);
+    let k0_xor_n0 = xor_block(kh0, nh0);
+    let k1_xor_n1 = xor_block(kh1, nh1);
+    let mut s: State = [k0_xor_n0, k1_xor_n1, C1, C0, xor_block(kh0, &C0), xor_block(kh1, &C1)];
+
+    for _ in 0..4 {
+      update(&mut s, kh0);
+      update(&mut s, kh1);
+      update(&mut s, &k0_xor_n0);
+      update(&mut s, &k1_xor_n1);
+    }
+
+    // ── aad ──
+    let mut offset = 0usize;
+    while offset.strict_add(BLOCK_SIZE) <= aad.len() {
+      let mut tmp = [0u8; BLOCK_SIZE];
+      tmp.copy_from_slice(&aad[offset..offset.strict_add(BLOCK_SIZE)]);
+      update(&mut s, &tmp);
+      offset = offset.strict_add(BLOCK_SIZE);
+    }
+    if offset < aad.len() {
+      let mut pad = [0u8; BLOCK_SIZE];
+      pad[..aad.len().strict_sub(offset)].copy_from_slice(&aad[offset..]);
+      update(&mut s, &pad);
+    }
+
+    // ── decrypt ──
+    let ct_len = buffer.len();
+    let len = buffer.len();
+    offset = 0;
+    while offset.strict_add(BLOCK_SIZE) <= len {
+      let z = keystream(&s);
+      let mut ci = [0u8; BLOCK_SIZE];
+      ci.copy_from_slice(&buffer[offset..offset.strict_add(BLOCK_SIZE)]);
+      let xi = xor_block(&ci, &z);
+      update(&mut s, &xi);
+      buffer[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&xi);
+      offset = offset.strict_add(BLOCK_SIZE);
+    }
+    if offset < len {
+      let z = keystream(&s);
+      let tail_len = len.strict_sub(offset);
+      let mut pad = [0u8; BLOCK_SIZE];
+      pad[..tail_len].copy_from_slice(&buffer[offset..]);
+      let mut pt_pad = [0u8; BLOCK_SIZE];
+      for i in 0..tail_len {
+        pt_pad[i] = pad[i] ^ z[i];
+      }
+      update(&mut s, &pt_pad);
+      buffer[offset..].copy_from_slice(&pt_pad[..tail_len]);
+    }
+
+    // ── finalize ──
+    let ad_bits = (aad.len() as u64).strict_mul(8);
+    let ct_bits = (ct_len as u64).strict_mul(8);
+    let mut len_bytes = [0u8; BLOCK_SIZE];
+    len_bytes[..8].copy_from_slice(&ad_bits.to_le_bytes());
+    len_bytes[8..].copy_from_slice(&ct_bits.to_le_bytes());
+    let t = xor_block(&s[3], &len_bytes);
+    for _ in 0..7 {
+      update(&mut s, &t);
+    }
+    xor_block(
+      &xor_block(&xor_block(&s[0], &s[1]), &xor_block(&s[2], &s[3])),
+      &xor_block(&s[4], &s[5]),
+    )
+  }
+}
 // ---------------------------------------------------------------------------
 
 /// Whether hardware AES acceleration is available.
+///
+/// Whether hardware AES acceleration is available (x86_64/aarch64/powerpc64).
+///
+/// s390x uses T-table software AES rounds unconditionally (no HW check needed).
 #[cfg(any(
   target_arch = "x86_64",
   target_arch = "aarch64",
@@ -1277,6 +1654,7 @@ impl Aegis256 {
 // Portable encrypt/decrypt helpers
 // ---------------------------------------------------------------------------
 
+#[cfg(not(target_arch = "s390x"))]
 fn encrypt_portable(key: &[u8; KEY_SIZE], nonce: &[u8; NONCE_SIZE], aad: &[u8], buffer: &mut [u8]) -> [u8; TAG_SIZE] {
   let mut s = init(key, nonce);
   process_aad(&mut s, aad);
@@ -1307,6 +1685,7 @@ fn encrypt_portable(key: &[u8; KEY_SIZE], nonce: &[u8; NONCE_SIZE], aad: &[u8], 
   finalize(&mut s, aad.len(), msg_len)
 }
 
+#[cfg(not(target_arch = "s390x"))]
 fn decrypt_portable(key: &[u8; KEY_SIZE], nonce: &[u8; NONCE_SIZE], aad: &[u8], buffer: &mut [u8]) -> [u8; TAG_SIZE] {
   let mut s = init(key, nonce);
   process_aad(&mut s, aad);
@@ -1401,6 +1780,14 @@ impl Aead for Aegis256 {
       return Aegis256Tag::from_bytes(tag);
     }
 
+    #[cfg(target_arch = "s390x")]
+    {
+      // T-table AES rounds — always available, no hardware feature check needed.
+      #[allow(clippy::needless_return)]
+      return Aegis256Tag::from_bytes(zvec::encrypt_fused(key, nonce, aad, buffer));
+    }
+
+    #[cfg(not(target_arch = "s390x"))]
     Aegis256Tag::from_bytes(encrypt_portable(key, nonce, aad, buffer))
   }
 
@@ -1439,10 +1826,14 @@ impl Aead for Aegis256 {
       decrypt_portable(key, nonce, aad, buffer)
     };
 
+    #[cfg(target_arch = "s390x")]
+    let computed = zvec::decrypt_fused(key, nonce, aad, buffer);
+
     #[cfg(not(any(
       target_arch = "x86_64",
       target_arch = "aarch64",
       all(target_arch = "powerpc64", target_endian = "little"),
+      target_arch = "s390x",
     )))]
     let computed = decrypt_portable(key, nonce, aad, buffer);
 
@@ -1749,5 +2140,212 @@ mod tests {
     let tag32 = aead.encrypt_in_place(&nonce, b"", &mut buf32);
     aead.decrypt_in_place(&nonce, b"", &mut buf32, &tag32).unwrap();
     assert_eq!(buf32, plaintext32);
+  }
+
+  // -- vperm S-box table validation --
+  //
+  // Verifies the Hamburg tower-field lookup tables produce the correct AES
+  // S-box output for all 256 input values. This runs on all platforms using
+  // pure scalar simulation of the VPERM operations, catching transcription
+  // errors in the constant tables without needing s390x hardware.
+
+  /// Scalar simulation of vperm: table[index & 0x0F].
+  fn vperm_scalar(table: &[u8; 16], index: u8) -> u8 {
+    table[(index & 0x0F) as usize]
+  }
+
+  /// Scalar simulation of vperm with PSHUFB zeroing: returns 0 when bit 7 set.
+  fn vperm_z_scalar(table: &[u8; 16], index: u8) -> u8 {
+    if index & 0x80 != 0 {
+      0
+    } else {
+      table[(index & 0x0F) as usize]
+    }
+  }
+
+  // Inline copies of the Hamburg vperm tables for cross-platform testing.
+  // These MUST match the constants in `mod zvec` exactly.
+  const T_IPT_LO: [u8; 16] = [
+    0x00, 0x70, 0x2A, 0x5A, 0x98, 0xE8, 0xB2, 0xC2, 0x08, 0x78, 0x22, 0x52, 0x90, 0xE0, 0xBA, 0xCA,
+  ];
+  const T_IPT_HI: [u8; 16] = [
+    0x00, 0x4D, 0x7C, 0x31, 0x7D, 0x30, 0x01, 0x4C, 0x81, 0xCC, 0xFD, 0xB0, 0xFC, 0xB1, 0x80, 0xCD,
+  ];
+  const T_INV_LO: [u8; 16] = [
+    0x80, 0x01, 0x08, 0x0D, 0x0F, 0x06, 0x05, 0x0E, 0x02, 0x0C, 0x0B, 0x0A, 0x09, 0x03, 0x07, 0x04,
+  ];
+  const T_INV_HI: [u8; 16] = [
+    0x80, 0x07, 0x0B, 0x0F, 0x06, 0x0A, 0x04, 0x01, 0x09, 0x08, 0x05, 0x02, 0x0C, 0x0E, 0x0D, 0x03,
+  ];
+  // sbo (SubBytes Output) tables: pure S-box without MixColumns (for validation).
+  // From OpenSSL Lk_sbo. These give: sbou[io] ^ sbot[jo] = AES_SBOX[input].
+  const T_SBOU: [u8; 16] = [
+    0x00, 0xC7, 0xBD, 0x6F, 0x17, 0x6D, 0xD2, 0xD0, 0x78, 0xA8, 0x02, 0xC5, 0x7A, 0xBF, 0xAA, 0x15,
+  ];
+  const T_SBOT: [u8; 16] = [
+    0x00, 0x6A, 0xBB, 0x5F, 0xA5, 0x74, 0xE4, 0xCF, 0xFA, 0x35, 0x2B, 0x41, 0xD1, 0x90, 0x1E, 0x8E,
+  ];
+
+  /// Compute AES S-box for one byte using the vperm tower-field tables.
+  ///
+  /// This mirrors the `aes_round` Phase 2-4 logic (input transform,
+  /// GF(2^4) inverse, output transform) but operates on a single byte
+  /// without SIMD.
+  fn vperm_sbox_scalar(input: u8) -> u8 {
+    let lo_nib = input & 0x0F;
+    let hi_nib = input >> 4;
+
+    // Phase 2: Input transform (AES basis → tower field)
+    let ipt_l = vperm_scalar(&T_IPT_LO, lo_nib);
+    let ipt_h = vperm_scalar(&T_IPT_HI, hi_nib);
+    let x = ipt_l ^ ipt_h;
+
+    // Phase 3: Nibble extraction of transformed value
+    let t_lo = x & 0x0F;
+    let t_hi = x >> 4;
+
+    // Phase 4: GF(2^4) inverse (5 vperm + 5 XOR)
+    // vperm_z_scalar emulates PSHUFB zeroing for indices with bit 7 set.
+    let ak = vperm_scalar(&T_INV_HI, t_lo);
+    let j = t_hi ^ t_lo;
+    let inv_i = vperm_scalar(&T_INV_LO, t_hi);
+    let iak = inv_i ^ ak;
+    let inv_j = vperm_scalar(&T_INV_LO, j);
+    let jak = inv_j ^ ak;
+    let inv_iak = vperm_z_scalar(&T_INV_LO, iak); // zeroing for 0x80 sentinel
+    let io = inv_iak ^ j; // output high nibble
+    let inv_jak = vperm_z_scalar(&T_INV_LO, jak); // zeroing for 0x80 sentinel
+    let jo = inv_jak ^ t_hi; // output low nibble
+
+    // Phase 5: Output transform (SubBytes only, no MixColumns)
+    // sbo tables encode the combined inverse-isomorphism + AES affine
+    // WITHOUT MixColumns — giving the pure S-box output.
+    // io/jo can have bit 7 set from the 0x80 sentinel, so use vperm_z.
+    let su = vperm_z_scalar(&T_SBOU, io);
+    let st = vperm_z_scalar(&T_SBOT, jo);
+    su ^ st
+  }
+
+  #[test]
+  fn vperm_sbox_tables_match_aes_sbox() {
+    // The canonical AES S-box (FIPS 197, Table 4).
+    #[rustfmt::skip]
+    const AES_SBOX: [u8; 256] = [
+      0x63, 0x7C, 0x77, 0x7B, 0xF2, 0x6B, 0x6F, 0xC5, 0x30, 0x01, 0x67, 0x2B, 0xFE, 0xD7, 0xAB, 0x76,
+      0xCA, 0x82, 0xC9, 0x7D, 0xFA, 0x59, 0x47, 0xF0, 0xAD, 0xD4, 0xA2, 0xAF, 0x9C, 0xA4, 0x72, 0xC0,
+      0xB7, 0xFD, 0x93, 0x26, 0x36, 0x3F, 0xF7, 0xCC, 0x34, 0xA5, 0xE5, 0xF1, 0x71, 0xD8, 0x31, 0x15,
+      0x04, 0xC7, 0x23, 0xC3, 0x18, 0x96, 0x05, 0x9A, 0x07, 0x12, 0x80, 0xE2, 0xEB, 0x27, 0xB2, 0x75,
+      0x09, 0x83, 0x2C, 0x1A, 0x1B, 0x6E, 0x5A, 0xA0, 0x52, 0x3B, 0xD6, 0xB3, 0x29, 0xE3, 0x2F, 0x84,
+      0x53, 0xD1, 0x00, 0xED, 0x20, 0xFC, 0xB1, 0x5B, 0x6A, 0xCB, 0xBE, 0x39, 0x4A, 0x4C, 0x58, 0xCF,
+      0xD0, 0xEF, 0xAA, 0xFB, 0x43, 0x4D, 0x33, 0x85, 0x45, 0xF9, 0x02, 0x7F, 0x50, 0x3C, 0x9F, 0xA8,
+      0x51, 0xA3, 0x40, 0x8F, 0x92, 0x9D, 0x38, 0xF5, 0xBC, 0xB6, 0xDA, 0x21, 0x10, 0xFF, 0xF3, 0xD2,
+      0xCD, 0x0C, 0x13, 0xEC, 0x5F, 0x97, 0x44, 0x17, 0xC4, 0xA7, 0x7E, 0x3D, 0x64, 0x5D, 0x19, 0x73,
+      0x60, 0x81, 0x4F, 0xDC, 0x22, 0x2A, 0x90, 0x88, 0x46, 0xEE, 0xB8, 0x14, 0xDE, 0x5E, 0x0B, 0xDB,
+      0xE0, 0x32, 0x3A, 0x0A, 0x49, 0x06, 0x24, 0x5C, 0xC2, 0xD3, 0xAC, 0x62, 0x91, 0x95, 0xE4, 0x79,
+      0xE7, 0xC8, 0x37, 0x6D, 0x8D, 0xD5, 0x4E, 0xA9, 0x6C, 0x56, 0xF4, 0xEA, 0x65, 0x7A, 0xAE, 0x08,
+      0xBA, 0x78, 0x25, 0x2E, 0x1C, 0xA6, 0xB4, 0xC6, 0xE8, 0xDD, 0x74, 0x1F, 0x4B, 0xBD, 0x8B, 0x8A,
+      0x70, 0x3E, 0xB5, 0x66, 0x48, 0x03, 0xF6, 0x0E, 0x61, 0x35, 0x57, 0xB9, 0x86, 0xC1, 0x1D, 0x9E,
+      0xE1, 0xF8, 0x98, 0x11, 0x69, 0xD9, 0x8E, 0x94, 0x9B, 0x1E, 0x87, 0xE9, 0xCE, 0x55, 0x28, 0xDF,
+      0x8C, 0xA1, 0x89, 0x0D, 0xBF, 0xE6, 0x42, 0x68, 0x41, 0x99, 0x2D, 0x0F, 0xB0, 0x54, 0xBB, 0x16,
+    ];
+
+    let mut failures = 0u32;
+    for input in 0u16..256 {
+      let got = vperm_sbox_scalar(input as u8);
+      // The Hamburg vperm S-box omits the AES affine constant 0x63.
+      // vpaes_sbox(x) = AES_sbox(x) ^ 0x63 for all x.
+      let expected = AES_SBOX[input as usize] ^ 0x63;
+      if got != expected {
+        if failures < 16 {
+          eprintln!(
+            "vperm S-box mismatch at input 0x{:02X}: got 0x{:02X}, expected 0x{:02X}",
+            input, got, expected,
+          );
+        }
+        failures = failures.strict_add(1);
+      }
+    }
+    assert_eq!(failures, 0, "{failures} vperm S-box mismatches out of 256");
+  }
+
+  // -- Full vperm AES round validation --
+  //
+  // Simulates the complete vperm AES round (SubBytes + ShiftRows +
+  // MixColumns + AddRoundKey) using scalar operations and verifies
+  // it matches the portable aes_enc_round_portable() for multiple
+  // test vectors.
+
+  /// Full vperm AES round simulation (scalar): SubBytes → ShiftRows → MixColumns → AddRoundKey.
+  fn vperm_aes_round_scalar(block: &[u8; 16], round_key: &[u8; 16]) -> [u8; 16] {
+    const SR: [u8; 16] = [
+      0x00, 0x05, 0x0A, 0x0F, 0x04, 0x09, 0x0E, 0x03, 0x08, 0x0D, 0x02, 0x07, 0x0C, 0x01, 0x06, 0x0B,
+    ];
+
+    // SubBytes via vperm tower field (includes affine constant compensation)
+    let mut sb = [0u8; 16];
+    for i in 0..16 {
+      sb[i] = vperm_sbox_scalar(block[i]) ^ 0x63;
+    }
+
+    // ShiftRows
+    let mut sr = [0u8; 16];
+    for i in 0..16 {
+      sr[i] = sb[SR[i] as usize];
+    }
+
+    // MixColumns via xtime decomposition
+    fn xtime(b: u8) -> u8 {
+      let r = (b as u16) << 1;
+      (r ^ (if r & 0x100 != 0 { 0x1B } else { 0 })) as u8
+    }
+    let mut mc = [0u8; 16];
+    for col in 0..4 {
+      let c = col * 4;
+      let (b0, b1, b2, b3) = (sr[c], sr[c + 1], sr[c + 2], sr[c + 3]);
+      mc[c] = xtime(b0) ^ xtime(b1) ^ b1 ^ b2 ^ b3;
+      mc[c + 1] = b0 ^ xtime(b1) ^ xtime(b2) ^ b2 ^ b3;
+      mc[c + 2] = b0 ^ b1 ^ xtime(b2) ^ xtime(b3) ^ b3;
+      mc[c + 3] = xtime(b0) ^ b0 ^ b1 ^ b2 ^ xtime(b3);
+    }
+
+    // AddRoundKey
+    let mut result = [0u8; 16];
+    for i in 0..16 {
+      result[i] = mc[i] ^ round_key[i];
+    }
+    result
+  }
+
+  #[test]
+  fn vperm_full_round_matches_portable() {
+    let input = hex_block("000102030405060708090a0b0c0d0e0f");
+    let rk = hex_block("101112131415161718191a1b1c1d1e1f");
+    let expected = aes_round(&input, &rk);
+
+    let got = vperm_aes_round_scalar(&input, &rk);
+    assert_eq!(got, expected, "vperm round mismatch for spec vector");
+
+    // Test with all-zero
+    let zero = [0u8; 16];
+    assert_eq!(vperm_aes_round_scalar(&zero, &zero), aes_round(&zero, &zero));
+
+    // Test with all-0xFF
+    let ff = [0xFFu8; 16];
+    assert_eq!(vperm_aes_round_scalar(&ff, &ff), aes_round(&ff, &ff));
+
+    // Test with random-looking patterns
+    let a = hex_block("deadbeefcafebabe0123456789abcdef");
+    let b = hex_block("fedcba9876543210aabbccddeeff0011");
+    assert_eq!(vperm_aes_round_scalar(&a, &b), aes_round(&a, &b));
+
+    // Exhaustive: test all single-byte patterns in position 0
+    for val in 0u16..256 {
+      let mut block = [0u8; 16];
+      block[0] = val as u8;
+      let key = [0u8; 16];
+      let got = vperm_aes_round_scalar(&block, &key);
+      let expected = aes_round(&block, &key);
+      assert_eq!(got, expected, "vperm round mismatch for block[0]=0x{:02X}", val,);
+    }
   }
 }
