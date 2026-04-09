@@ -133,7 +133,6 @@ DEFAULT_HASH_ALGOS=(
   "blake3"
   "xxh3"
   "rapidhash"
-  "keccakf1600"
   "ascon-hash256"
   "ascon-xof128"
 )
@@ -149,6 +148,7 @@ DEFAULT_AEAD_ALGOS=(
   "chacha20-poly1305"
   "aes-256-gcm-siv"
   "aes-256-gcm"
+  "aegis-256"
 )
 
 ALL_KNOWN_ALGOS=("${DEFAULT_CHECKSUM_ALGOS[@]}" "${DEFAULT_HASH_ALGOS[@]}" "${DEFAULT_AUTH_ALGOS[@]}" "${DEFAULT_AEAD_ALGOS[@]}")
@@ -156,13 +156,13 @@ ALL_KNOWN_ALGOS=("${DEFAULT_CHECKSUM_ALGOS[@]}" "${DEFAULT_HASH_ALGOS[@]}" "${DE
 checksum_filter_token() {
   local algo="${1:-}"
   case "$algo" in
-    crc16-ccitt) echo "crc16/ccitt" ;;
-    crc16-ibm) echo "crc16/ibm" ;;
-    crc24-openpgp) echo "crc24/openpgp" ;;
-    crc32-ieee) echo "crc32/ieee" ;;
+    crc16-ccitt) echo "crc16-ccitt" ;;
+    crc16-ibm) echo "crc16-ibm" ;;
+    crc24-openpgp) echo "crc24-openpgp" ;;
+    crc32-ieee) echo "crc32" ;;
     crc32c) echo "crc32c" ;;
-    crc64-xz) echo "crc64/xz" ;;
-    crc64-nvme) echo "crc64/nvme" ;;
+    crc64-xz) echo "crc64-xz" ;;
+    crc64-nvme) echo "crc64-nvme" ;;
     *) echo "$algo" ;;
   esac
 }
@@ -170,15 +170,14 @@ checksum_filter_token() {
 hash_filter_token() {
   local algo="${1:-}"
   case "$algo" in
-    sha3-224) echo "sha3_224" ;;
-    sha3-256) echo "sha3_256" ;;
-    sha3-384) echo "sha3_384" ;;
-    sha3-512) echo "sha3_512" ;;
-    sha512-256) echo "sha512_256" ;;
+    sha3-224) echo "sha3-224" ;;
+    sha3-256) echo "sha3-256" ;;
+    sha3-384) echo "sha3-384" ;;
+    sha3-512) echo "sha3-512" ;;
+    sha512-256) echo "sha512-256" ;;
 
-    ascon-hash256) echo "ascon_hash256" ;;
-    ascon-xof128) echo "ascon_xof128" ;;
-    keccakf1600) echo "keccak" ;;
+    ascon-hash256) echo "ascon-hash256" ;;
+    ascon-xof128) echo "ascon-xof128" ;;
     xxh3) echo "xxh3" ;;
     blake3) echo "blake3" ;;
     *) echo "$algo" ;;
@@ -202,6 +201,7 @@ aead_filter_token() {
     chacha20-poly1305) echo "chacha20-poly1305" ;;
     aes-256-gcm-siv) echo "aes-256-gcm-siv" ;;
     aes-256-gcm) echo "aes-256-gcm" ;;
+    aegis-256) echo "aegis-256" ;;
     *) echo "$algo" ;;
   esac
 }
@@ -221,7 +221,7 @@ bench_target_for_hash_algo() {
   local algo="${1:-}"
   case "$algo" in
     sha224|sha256|sha384|sha512|sha512-256) echo "sha2" ;;
-    sha3-224|sha3-256|sha3-384|sha3-512|shake128|shake256|keccakf1600) echo "sha3" ;;
+    sha3-224|sha3-256|sha3-384|sha3-512|shake128|shake256) echo "sha3" ;;
     ascon-hash256|ascon-xof128) echo "ascon" ;;
     xxh3) echo "xxh3" ;;
     rapidhash) echo "rapidhash" ;;

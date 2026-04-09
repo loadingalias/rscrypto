@@ -4,13 +4,11 @@ use proptest::prelude::*;
 use rscrypto::{Cshake256, traits::Xof as _};
 
 fn cshake256_ref(function_name: &[u8], customization: &[u8], data: &[u8], out: &mut [u8]) {
-  use sha3::digest::{ExtendableOutput, Update, XofReader};
+  use tiny_keccak::{CShake, Hasher as _};
 
-  let core = sha3::CShake256Core::new_with_function_name(function_name, customization);
-  let mut hasher = sha3::CShake256::from_core(core);
+  let mut hasher = CShake::v256(function_name, customization);
   hasher.update(data);
-  let mut reader = hasher.finalize_xof();
-  reader.read(out);
+  hasher.finalize(out);
 }
 
 proptest! {

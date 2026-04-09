@@ -18,6 +18,11 @@ fn ascon_hash256(c: &mut Criterion) {
       use rscrypto::Digest as _;
       b.iter(|| black_box(rscrypto::AsconHash256::digest(black_box(d))))
     });
+
+    g.bench_with_input(BenchmarkId::new("ascon-hash", len), data, |b, d| {
+      use ascon_hash::Digest as _;
+      b.iter(|| black_box(ascon_hash::AsconHash256::digest(black_box(d))))
+    });
   }
 
   g.finish();
@@ -75,6 +80,41 @@ fn ascon_hash256_many(c: &mut Criterion) {
   g.finish();
 }
 
+fn ascon_xof128(c: &mut Criterion) {
+  let inputs = common::comp_sizes();
+  let mut g = c.benchmark_group("ascon-xof128");
+
+  for (len, data) in &inputs {
+    common::set_throughput(&mut g, *len);
+
+    g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
+      b.iter(|| {
+        use rscrypto::Xof;
+        let mut h = rscrypto::AsconXof::new();
+        h.update(black_box(d));
+        let mut xof = h.finalize_xof();
+        let mut out = [0u8; 32];
+        xof.squeeze(&mut out);
+        black_box(out)
+      })
+    });
+
+    g.bench_with_input(BenchmarkId::new("ascon-hash", len), data, |b, d| {
+      b.iter(|| {
+        use ascon_hash::digest::{ExtendableOutput, Update, XofReader};
+        let mut h = ascon_hash::AsconXof128::default();
+        h.update(black_box(d));
+        let mut reader = h.finalize_xof();
+        let mut out = [0u8; 32];
+        reader.read(&mut out);
+        black_box(out)
+      })
+    });
+  }
+
+  g.finish();
+}
+
 fn ascon_xof128_many(c: &mut Criterion) {
   const MSG_LEN: usize = 4096;
   const OUT_LEN: usize = 64;
@@ -115,6 +155,7 @@ criterion_group!(
   ascon_hash256,
   ascon_hash256_streaming,
   ascon_hash256_many,
+  ascon_xof128,
   ascon_xof128_many
 );
 criterion_main!(benches);
