@@ -435,19 +435,34 @@ pub struct AsconHash256 {
 impl AsconHash256 {
   #[inline]
   #[cfg(any(test, feature = "std"))]
-  fn batch_kernel_id_for_inputs(inputs: &[&[u8]]) -> kernels::AsconPermute12KernelId {
-    inputs
-      .first()
-      .map_or(kernels::AsconPermute12KernelId::Portable, |first| {
-        let caps = crate::platform::caps();
-        let table = dispatch_tables::select_runtime_table(caps);
-        let candidate = table.kernel_for_len(first.len());
-        if caps.has(kernels::required_caps(candidate)) {
-          candidate
-        } else {
-          kernels::AsconPermute12KernelId::Portable
-        }
-      })
+  fn batch_kernel_id_for_inputs(_inputs: &[&[u8]]) -> kernels::AsconPermute12KernelId {
+    // Select the widest available multi-state SIMD kernel for batch hashing.
+    // This is intentionally independent of the single-state dispatch table:
+    // single-state uses Portable (scalar is faster for 5 × u64 on aarch64),
+    // but batch operations benefit from parallel-lane SIMD kernels.
+    let caps = crate::platform::caps();
+
+    #[cfg(target_arch = "x86_64")]
+    {
+      use crate::platform::caps::x86;
+      if caps.has(x86::AVX512F.union(x86::AVX512VL)) {
+        return kernels::AsconPermute12KernelId::X86Avx512;
+      }
+      if caps.has(x86::AVX2) {
+        return kernels::AsconPermute12KernelId::X86Avx2;
+      }
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    {
+      use crate::platform::caps::aarch64;
+      if caps.has(aarch64::NEON) {
+        return kernels::AsconPermute12KernelId::Aarch64Neon;
+      }
+    }
+
+    let _ = caps;
+    kernels::AsconPermute12KernelId::Portable
   }
 
   #[inline]
