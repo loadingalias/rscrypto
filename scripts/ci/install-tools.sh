@@ -5,7 +5,7 @@
 set -euo pipefail
 
 MODE="${1:-standard}"
-CARGO_RAIL_VERSION="${CARGO_RAIL_VERSION:-0.10.12}"
+CARGO_RAIL_VERSION="${CARGO_RAIL_VERSION:-0.11.0}"
 
 echo "Installing cargo tools (mode: $MODE)"
 

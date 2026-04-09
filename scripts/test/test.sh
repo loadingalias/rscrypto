@@ -54,19 +54,29 @@ run_crate_doctests() {
 }
 
 run_changed_doctests() {
-  local affected
-  affected="$(rail_plan_crates)"
-  if [ -z "$affected" ]; then
-    echo "no doc-test targets"
-    return 0
-  fi
+  case "$(rail_scope_mode)" in
+    workspace)
+      run_workspace_doctests
+      ;;
+    crates)
+      local affected
+      affected="$(rail_plan_crates)"
+      if [ -z "$affected" ]; then
+        echo "no doc-test targets"
+        return 0
+      fi
 
-  local crates=()
-  local crate
-  for crate in $affected; do
-    crates+=("$crate")
-  done
-  run_crate_doctests "${crates[@]}"
+      local crates=()
+      local crate
+      for crate in $affected; do
+        crates+=("$crate")
+      done
+      run_crate_doctests "${crates[@]}"
+      ;;
+    *)
+      echo "no doc-test targets"
+      ;;
+  esac
 }
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -99,28 +109,49 @@ if [ "$CHANGED_FLAG" = true ] && { [ "$ALL_FLAG" = true ] || [ ${#CRATES[@]} -gt
 fi
 
 if [ "$CHANGED_FLAG" = true ]; then
-  RAIL_SCOPE_ARGS=()
   if [ -n "${RAIL_SINCE:-}" ]; then
-    RAIL_SCOPE_ARGS=(--since "$RAIL_SINCE")
     echo "Using base ref from CI: $RAIL_SINCE"
-  else
-    RAIL_SCOPE_ARGS=(--merge-base)
   fi
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo "Running tests for changed crates (cargo rail run)"
+  echo "Running tests for planner-selected scope"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  if [ "$HAS_NEXTEST" = true ]; then
-    cargo rail run "${RAIL_SCOPE_ARGS[@]}" --surface test -- -P "$PROFILE" --all-features --config-file .config/nextest.toml
-    run_changed_doctests
+
+  if ! rail_scope_surface_enabled test; then
+    echo "no test targets"
   else
-    affected="$(rail_plan_crates)"
-    if [ -z "$affected" ]; then
-      echo "no test targets"
-    else
-      for crate in $affected; do
-        cargo test -p "$crate" --all-features
-      done
-    fi
+    case "$(rail_scope_mode)" in
+      workspace)
+        if [ "$HAS_NEXTEST" = true ]; then
+          cargo nextest run --workspace -P "$PROFILE" --all-features --config-file .config/nextest.toml
+          run_workspace_doctests
+        else
+          cargo test --workspace --all-features
+        fi
+        ;;
+      crates)
+        affected="$(rail_plan_crates)"
+        if [ -z "$affected" ]; then
+          echo "no test targets"
+          exit 0
+        fi
+
+        if [ "$HAS_NEXTEST" = true ]; then
+          CRATE_FLAGS=()
+          for crate in $affected; do
+            CRATE_FLAGS+=(-p "$crate")
+          done
+          cargo nextest run "${CRATE_FLAGS[@]}" -P "$PROFILE" --all-features --config-file .config/nextest.toml
+          run_changed_doctests
+        else
+          for crate in $affected; do
+            cargo test -p "$crate" --all-features
+          done
+        fi
+        ;;
+      *)
+        echo "no test targets"
+        ;;
+    esac
   fi
 elif [ ${#CRATES[@]} -gt 0 ]; then
   CRATE_FLAGS=""

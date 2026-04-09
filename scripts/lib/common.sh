@@ -74,18 +74,33 @@ get_crate_flags() {
     return 0
   fi
 
-  local affected
-  affected="$(rail_plan_crates)"
+  local scope_mode
+  scope_mode="$(rail_scope_mode)"
 
-  if [[ -z "$affected" ]]; then
-    CRATE_FLAGS="--workspace"
-    SCOPE_DESC="workspace (no changes)"
-  else
-    for crate in $affected; do
-      CRATE_FLAGS="$CRATE_FLAGS -p $crate"
-    done
-    SCOPE_DESC="affected"
-  fi
+  case "$scope_mode" in
+    workspace)
+      CRATE_FLAGS="--workspace"
+      SCOPE_DESC="workspace (planner)"
+      ;;
+    crates)
+      local affected
+      affected="$(rail_plan_crates)"
+
+      if [[ -z "$affected" ]]; then
+        CRATE_FLAGS="--workspace"
+        SCOPE_DESC="workspace (planner fallback)"
+      else
+        for crate in $affected; do
+          CRATE_FLAGS="$CRATE_FLAGS -p $crate"
+        done
+        SCOPE_DESC="affected"
+      fi
+      ;;
+    *)
+      CRATE_FLAGS="--workspace"
+      SCOPE_DESC="workspace (no changes)"
+      ;;
+  esac
 }
 
 maybe_disable_sccache() {

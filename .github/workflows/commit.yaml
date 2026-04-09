@@ -35,6 +35,10 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       base_ref: ${{ steps.rail.outputs.base-ref || steps.manual.outputs.base_ref }}
+      scope_json: ${{ steps.rail.outputs.scope-json || '' }}
+      build: ${{ steps.rail.outputs.build || 'false' }}
+      test: ${{ steps.rail.outputs.test || 'false' }}
+      infra: ${{ steps.rail.outputs.infra || 'false' }}
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
@@ -49,8 +53,9 @@ jobs:
       - name: Build Plan
         if: github.event_name != 'workflow_dispatch'
         id: rail
-        uses: loadingalias/cargo-rail-action@5c8c63658ad8aae2be592d791702773bfc215fc4  # v3.1.1
+        uses: loadingalias/cargo-rail-action@ae6949275b492140e174b0b117286bae3bd9455b  # v4.0.0
         with:
+          version: "0.11.0"
           args: "--explain"
 
   target-matrix:
@@ -76,6 +81,7 @@ jobs:
   ci:
     name: CI (${{ matrix.target.name }})
     needs: [lane-contract, rail-plan, target-matrix]
+    if: ${{ github.event_name == 'workflow_dispatch' || needs.rail-plan.outputs.build == 'true' || needs.rail-plan.outputs.test == 'true' || needs.rail-plan.outputs.infra == 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -96,12 +102,15 @@ jobs:
             cargo test --workspace --all-features --no-run
             ;;
           *)
-            just ci-check
-            just build
             if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+              just check --all
+              just build
               just test --all
             else
               export RAIL_SINCE="${{ needs.rail-plan.outputs.base_ref }}"
+              export RAIL_SCOPE_JSON='${{ needs.rail-plan.outputs.scope_json }}'
+              just check
+              just build
               just test-changed
             fi
             ;;
@@ -110,6 +119,7 @@ jobs:
   ci-ibm-s390x:
     name: CI (IBM Z s390x)
     needs: [lane-contract, rail-plan]
+    if: ${{ github.event_name == 'workflow_dispatch' || needs.rail-plan.outputs.build == 'true' || needs.rail-plan.outputs.test == 'true' || needs.rail-plan.outputs.infra == 'true' }}
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: ubuntu-24.04-s390x
@@ -124,11 +134,18 @@ jobs:
         cat /proc/cpuinfo | head -50
       run_script: |
         just ci-check
-        just test --all
+        if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+          just test --all
+        else
+          export RAIL_SINCE="${{ needs.rail-plan.outputs.base_ref }}"
+          export RAIL_SCOPE_JSON='${{ needs.rail-plan.outputs.scope_json }}'
+          just test-changed
+        fi
 
   ci-ibm-power10:
     name: CI (IBM POWER10 ppc64le)
     needs: [lane-contract, rail-plan]
+    if: ${{ github.event_name == 'workflow_dispatch' || needs.rail-plan.outputs.build == 'true' || needs.rail-plan.outputs.test == 'true' || needs.rail-plan.outputs.infra == 'true' }}
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: ubuntu-24.04-ppc64le-p10
@@ -143,11 +160,18 @@ jobs:
         cat /proc/cpuinfo | head -50
       run_script: |
         just ci-check
-        just test --all
+        if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+          just test --all
+        else
+          export RAIL_SINCE="${{ needs.rail-plan.outputs.base_ref }}"
+          export RAIL_SCOPE_JSON='${{ needs.rail-plan.outputs.scope_json }}'
+          just test-changed
+        fi
 
   no-std:
     name: no_std (${{ matrix.target }})
-    needs: [lane-contract, target-matrix]
+    needs: [lane-contract, rail-plan, target-matrix]
+    if: ${{ github.event_name == 'workflow_dispatch' || needs.rail-plan.outputs.build == 'true' || needs.rail-plan.outputs.infra == 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -171,7 +195,8 @@ jobs:
 
   wasm:
     name: wasm (${{ matrix.target }})
-    needs: [lane-contract, target-matrix]
+    needs: [lane-contract, rail-plan, target-matrix]
+    if: ${{ github.event_name == 'workflow_dispatch' || needs.rail-plan.outputs.build == 'true' || needs.rail-plan.outputs.infra == 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -201,18 +226,18 @@ jobs:
     steps:
       - name: Assert required lanes
         run: |
-          if [ "${{ needs.ci.result }}" != "success" ]; then
+          if [ "${{ needs.ci.result }}" != "success" ] && [ "${{ needs.ci.result }}" != "skipped" ]; then
             exit 1
           fi
-          if [ "${{ needs.ci-ibm-s390x.result }}" != "success" ]; then
+          if [ "${{ needs.ci-ibm-s390x.result }}" != "success" ] && [ "${{ needs.ci-ibm-s390x.result }}" != "skipped" ]; then
             exit 1
           fi
-          if [ "${{ needs.ci-ibm-power10.result }}" != "success" ]; then
+          if [ "${{ needs.ci-ibm-power10.result }}" != "success" ] && [ "${{ needs.ci-ibm-power10.result }}" != "skipped" ]; then
             exit 1
           fi
-          if [ "${{ needs.no-std.result }}" != "success" ]; then
+          if [ "${{ needs.no-std.result }}" != "success" ] && [ "${{ needs.no-std.result }}" != "skipped" ]; then
             exit 1
           fi
-          if [ "${{ needs.wasm.result }}" != "success" ]; then
+          if [ "${{ needs.wasm.result }}" != "success" ] && [ "${{ needs.wasm.result }}" != "skipped" ]; then
             exit 1
           fi
