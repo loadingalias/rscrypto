@@ -9,8 +9,10 @@ use super::{field::FieldElement, scalar};
 
 #[path = "basepoint_tables.rs"]
 mod basepoint_tables;
+#[path = "basepoint_wnaf5_table.rs"]
+mod basepoint_wnaf5_table;
 
-pub(crate) use self::basepoint_tables::BASEPOINT_RADIX16_TABLE;
+pub(crate) use self::{basepoint_tables::BASEPOINT_RADIX16_TABLE, basepoint_wnaf5_table::BASEPOINT_WNAF5_TABLE};
 
 const EDWARDS_D: FieldElement = FieldElement::from_limbs([
   929_955_233_495_203,
@@ -338,6 +340,12 @@ impl ExtendedPoint {
     self.double().double().double()
   }
 
+  /// Whether this point lies in the low-order torsion subgroup.
+  #[must_use]
+  pub(crate) fn is_small_order(&self) -> bool {
+    self.mul_by_cofactor().equals_projective(&Self::identity())
+  }
+
   /// Convert the point to affine coordinates when `Z != 0`.
   #[must_use]
   pub(crate) fn to_affine(self) -> Option<(FieldElement, FieldElement)> {
@@ -455,6 +463,22 @@ fn add_wnaf_digit_projective(acc: ExtendedPoint, table: &[ProjectiveCachedPoint]
   }
 }
 
+/// Add a signed wNAF digit from an affine cached table.
+#[inline]
+#[must_use]
+fn add_wnaf_digit_cached(acc: ExtendedPoint, table: &[CachedPoint], digit: i8) -> ExtendedPoint {
+  let index = usize::from((digit.unsigned_abs().wrapping_sub(1)) / 2);
+  let Some(point) = table.get(index).copied() else {
+    return acc;
+  };
+
+  if digit > 0 {
+    acc.add_cached(&point)
+  } else {
+    acc.add_cached(&point.neg())
+  }
+}
+
 /// wNAF-based portable Straus: `[s]B + [h]A`.
 ///
 /// Uses wNAF(5) for both scalars (8-entry odd-multiples tables).
@@ -464,8 +488,6 @@ pub(crate) fn straus_wnaf_basepoint_vartime(s: &[u8; 32], h: &[u8; 32], a: &Exte
   let s_naf = scalar::non_adjacent_form(s, 5);
   let h_naf = scalar::non_adjacent_form(h, 5);
 
-  let bp = ExtendedPoint::basepoint();
-  let base_table: [ProjectiveCachedPoint; 8] = odd_projective_cached_multiples(&bp);
   let a_table: [ProjectiveCachedPoint; 8] = odd_projective_cached_multiples(a);
 
   let top = s_naf
@@ -488,7 +510,7 @@ pub(crate) fn straus_wnaf_basepoint_vartime(s: &[u8; 32], h: &[u8; 32], a: &Exte
   for i in (0..=top).rev() {
     acc = acc.double();
     if s_naf[i] != 0 {
-      acc = add_wnaf_digit_projective(acc, &base_table, s_naf[i]);
+      acc = add_wnaf_digit_cached(acc, &BASEPOINT_WNAF5_TABLE, s_naf[i]);
     }
     if h_naf[i] != 0 {
       acc = add_wnaf_digit_projective(acc, &a_table, h_naf[i]);
@@ -659,6 +681,41 @@ mod tests {
     let point = ExtendedPoint::identity().mul_by_cofactor();
 
     assert_eq!(point.to_affine(), Some((FieldElement::ZERO, FieldElement::ONE)));
+  }
+
+  #[test]
+  fn straus_wnaf_basepoint_matches_fixed_base_when_variable_scalar_is_zero() {
+    let mut s = [0u8; 32];
+    s[0] = 7;
+    let h = [0u8; 32];
+    let result = super::straus_wnaf_basepoint_vartime(&s, &h, &ExtendedPoint::identity());
+    let expected = ExtendedPoint::scalar_mul_basepoint(&s);
+
+    assert!(result.equals_projective(&expected));
+  }
+
+  #[test]
+  fn basepoint_wnaf5_table_matches_odd_basepoint_multiples() {
+    for (i, cached) in super::BASEPOINT_WNAF5_TABLE.iter().enumerate() {
+      let scalar = (2 * i + 1) as u8;
+      let mut scalar_bytes = [0u8; 32];
+      scalar_bytes[0] = scalar;
+
+      let point = ExtendedPoint::identity().add_cached(cached);
+      let expected = ExtendedPoint::scalar_mul_basepoint(&scalar_bytes);
+
+      assert!(
+        point.equals_projective(&expected),
+        "wNAF table entry for {}B should match scalar multiplication",
+        scalar
+      );
+    }
+  }
+
+  #[test]
+  fn small_order_detection_matches_identity_and_basepoint() {
+    assert!(ExtendedPoint::identity().is_small_order());
+    assert!(!basepoint().is_small_order());
   }
 
   #[test]

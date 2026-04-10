@@ -147,37 +147,31 @@ const fn pad(n: usize) -> u64 {
 /// back to `[u64; 5]` after each round.
 macro_rules! ascon_round {
   ($x0:ident, $x1:ident, $x2:ident, $x3:ident, $x4:ident, $c:literal) => {
-    // Add round constant.
-    $x2 ^= $c;
+    let t0 = $x0 ^ $x4;
+    let t2 = $x2 ^ $x1 ^ $c;
+    let t4 = $x4 ^ $x3;
 
-    // Substitution layer.
-    $x0 ^= $x4;
-    $x4 ^= $x3;
-    $x2 ^= $x1;
+    let s0 = t0 ^ ((!$x1) & t2);
+    let s1 = $x1 ^ ((!t2) & $x3);
+    let s2 = t2 ^ ((!$x3) & t4);
+    let s3 = $x3 ^ ((!t4) & t0);
+    let s4 = t4 ^ ((!t0) & $x1);
 
-    let t0 = (!$x0) & $x1;
-    let t1 = (!$x1) & $x2;
-    let t2 = (!$x2) & $x3;
-    let t3 = (!$x3) & $x4;
-    let t4 = (!$x4) & $x0;
+    let s1 = s1 ^ s0;
+    let s3 = s3 ^ s2;
+    let s0 = s0 ^ s4;
 
-    $x0 ^= t1;
-    $x1 ^= t2;
-    $x2 ^= t3;
-    $x3 ^= t4;
-    $x4 ^= t0;
+    let l0 = s0 ^ s0.rotate_right(9);
+    let l1 = s1 ^ s1.rotate_right(22);
+    let l2 = s2 ^ s2.rotate_right(5);
+    let l3 = s3 ^ s3.rotate_right(7);
+    let l4 = s4 ^ s4.rotate_right(34);
 
-    $x1 ^= $x0;
-    $x0 ^= $x4;
-    $x3 ^= $x2;
-    $x2 = !$x2;
-
-    // Linear diffusion layer.
-    $x0 ^= $x0.rotate_right(19) ^ $x0.rotate_right(28);
-    $x1 ^= $x1.rotate_right(61) ^ $x1.rotate_right(39);
-    $x2 ^= $x2.rotate_right(1) ^ $x2.rotate_right(6);
-    $x3 ^= $x3.rotate_right(10) ^ $x3.rotate_right(17);
-    $x4 ^= $x4.rotate_right(7) ^ $x4.rotate_right(41);
+    $x0 = s0 ^ l0.rotate_right(19);
+    $x1 = s1 ^ l1.rotate_right(39);
+    $x2 = !(s2 ^ l2.rotate_right(1));
+    $x3 = s3 ^ l3.rotate_right(10);
+    $x4 = s4 ^ l4.rotate_right(7);
   };
 }
 
@@ -258,19 +252,6 @@ impl<P: Permuter + Default, const IV0: u64, const IV1: u64, const IV2: u64, cons
       buf_len: 0,
       permuter: P::default(),
     }
-  }
-}
-
-impl<P: Permuter, const IV0: u64, const IV1: u64, const IV2: u64, const IV3: u64, const IV4: u64> Drop
-  for Sponge<P, IV0, IV1, IV2, IV3, IV4>
-{
-  fn drop(&mut self) {
-    for word in self.state.iter_mut() {
-      // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
-      unsafe { core::ptr::write_volatile(word, 0) };
-    }
-    crate::traits::ct::zeroize(&mut self.buf);
-    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
   }
 }
 
@@ -901,17 +882,6 @@ impl fmt::Debug for AsconXofReader {
   }
 }
 
-impl Drop for AsconXofReader {
-  fn drop(&mut self) {
-    for word in self.state.iter_mut() {
-      // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
-      unsafe { core::ptr::write_volatile(word, 0) };
-    }
-    crate::traits::ct::zeroize(&mut self.buf);
-    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
-  }
-}
-
 impl AsconXofReader {
   #[inline(always)]
   fn refill(&mut self) {
@@ -923,15 +893,25 @@ impl AsconXofReader {
 
 impl Xof for AsconXofReader {
   fn squeeze(&mut self, mut out: &mut [u8]) {
-    while !out.is_empty() {
-      if self.pos == RATE {
-        self.refill();
-      }
-
+    if self.pos != RATE && !out.is_empty() {
       let take = core::cmp::min(RATE - self.pos, out.len());
       out[..take].copy_from_slice(&self.buf[self.pos..self.pos.strict_add(take)]);
       self.pos = self.pos.strict_add(take);
       out = &mut out[take..];
+    }
+
+    let (blocks, tail) = out.as_chunks_mut::<RATE>();
+    for block in blocks {
+      *block = self.state[0].to_le_bytes();
+      permute_12_portable(&mut self.state);
+    }
+
+    if !tail.is_empty() {
+      self.refill();
+      tail.copy_from_slice(&self.buf[..tail.len()]);
+      self.pos = tail.len();
+    } else {
+      self.pos = RATE;
     }
   }
 }
