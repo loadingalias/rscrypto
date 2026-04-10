@@ -6,10 +6,7 @@
 
 use core::fmt;
 
-use crate::{
-  hashes::crypto::dispatch_util::SizeClassDispatch,
-  traits::{Digest, Xof},
-};
+use crate::traits::{Digest, Xof};
 
 #[cfg(target_arch = "aarch64")]
 mod aarch64;
@@ -29,11 +26,29 @@ trait Permuter: Copy {
   fn permute(self, state: &mut [u64; 5], len_hint: usize);
 }
 
-#[derive(Clone, Copy)]
-struct DispatchPermuter {
-  dispatch: SizeClassDispatch<fn(&mut [u64; 5])>,
+/// Direct-call permuter using the portable scalar kernel.
+///
+/// No function pointer indirection — LLVM can inline `permute_12_portable`
+/// into the absorb/squeeze loops, enabling register allocation across the
+/// entire sponge operation and instruction scheduling across round boundaries.
+#[derive(Clone, Copy, Default)]
+struct InlinePermuter;
+
+impl Permuter for InlinePermuter {
+  #[inline(always)]
+  fn permute(self, state: &mut [u64; 5], _len_hint: usize) {
+    permute_12_portable(state);
+  }
 }
 
+#[cfg(any(test, feature = "std"))]
+#[allow(dead_code)]
+#[derive(Clone, Copy)]
+struct DispatchPermuter {
+  dispatch: crate::hashes::crypto::dispatch_util::SizeClassDispatch<fn(&mut [u64; 5])>,
+}
+
+#[cfg(any(test, feature = "std"))]
 impl Default for DispatchPermuter {
   #[inline]
   fn default() -> Self {
@@ -43,6 +58,7 @@ impl Default for DispatchPermuter {
   }
 }
 
+#[cfg(any(test, feature = "std"))]
 impl Permuter for DispatchPermuter {
   #[inline(always)]
   fn permute(self, state: &mut [u64; 5], len_hint: usize) {
@@ -65,6 +81,8 @@ impl Permuter for FixedPermuter {
 }
 
 // Ascon permutation round constants (12 rounds).
+// Used by SIMD kernels; the portable permutation inlines the constants.
+#[allow(dead_code)]
 const RC: [u64; 12] = [0xF0, 0xE1, 0xD2, 0xC3, 0xB4, 0xA5, 0x96, 0x87, 0x78, 0x69, 0x5A, 0x4B];
 
 // Domain-specific IVs (from the Ascon hash/XOF specification).
@@ -121,61 +139,98 @@ const fn pad(n: usize) -> u64 {
   0x01_u64 << (8 * n)
 }
 
+/// Single Ascon round on 5 state words held in local variables.
+///
+/// Fully inlining all rounds into the permutation body lets the compiler keep
+/// every word in a register across the full 12-round pipeline and schedule
+/// instructions freely, which is significantly faster than a loop that writes
+/// back to `[u64; 5]` after each round.
+macro_rules! ascon_round {
+  ($x0:ident, $x1:ident, $x2:ident, $x3:ident, $x4:ident, $c:literal) => {
+    // Add round constant.
+    $x2 ^= $c;
+
+    // Substitution layer.
+    $x0 ^= $x4;
+    $x4 ^= $x3;
+    $x2 ^= $x1;
+
+    let t0 = (!$x0) & $x1;
+    let t1 = (!$x1) & $x2;
+    let t2 = (!$x2) & $x3;
+    let t3 = (!$x3) & $x4;
+    let t4 = (!$x4) & $x0;
+
+    $x0 ^= t1;
+    $x1 ^= t2;
+    $x2 ^= t3;
+    $x3 ^= t4;
+    $x4 ^= t0;
+
+    $x1 ^= $x0;
+    $x0 ^= $x4;
+    $x3 ^= $x2;
+    $x2 = !$x2;
+
+    // Linear diffusion layer.
+    $x0 ^= $x0.rotate_right(19) ^ $x0.rotate_right(28);
+    $x1 ^= $x1.rotate_right(61) ^ $x1.rotate_right(39);
+    $x2 ^= $x2.rotate_right(1) ^ $x2.rotate_right(6);
+    $x3 ^= $x3.rotate_right(10) ^ $x3.rotate_right(17);
+    $x4 ^= $x4.rotate_right(7) ^ $x4.rotate_right(41);
+  };
+}
+
+/// Ascon-p[12]: full 12-round permutation (portable, scalar).
+///
+/// Fully unrolled so the compiler can keep all five 64-bit state words in
+/// registers across the entire permutation and freely schedule instructions.
 #[inline(always)]
 pub(crate) fn permute_12_portable(s: &mut [u64; 5]) {
-  for &c in &RC {
-    round(s, c);
-  }
-}
-
-/// 6-round Ascon permutation (PB) used by Ascon-AEAD128.
-#[inline(always)]
-pub(crate) fn permute_6_portable(s: &mut [u64; 5]) {
-  // PB uses the last 6 round constants (rounds 6..12).
-  for &c in &RC[6..] {
-    round(s, c);
-  }
-}
-
-#[inline(always)]
-fn round(s: &mut [u64; 5], c: u64) {
   let mut x0 = s[0];
   let mut x1 = s[1];
   let mut x2 = s[2];
   let mut x3 = s[3];
   let mut x4 = s[4];
 
-  // Add round constant.
-  x2 ^= c;
+  ascon_round!(x0, x1, x2, x3, x4, 0xF0);
+  ascon_round!(x0, x1, x2, x3, x4, 0xE1);
+  ascon_round!(x0, x1, x2, x3, x4, 0xD2);
+  ascon_round!(x0, x1, x2, x3, x4, 0xC3);
+  ascon_round!(x0, x1, x2, x3, x4, 0xB4);
+  ascon_round!(x0, x1, x2, x3, x4, 0xA5);
+  ascon_round!(x0, x1, x2, x3, x4, 0x96);
+  ascon_round!(x0, x1, x2, x3, x4, 0x87);
+  ascon_round!(x0, x1, x2, x3, x4, 0x78);
+  ascon_round!(x0, x1, x2, x3, x4, 0x69);
+  ascon_round!(x0, x1, x2, x3, x4, 0x5A);
+  ascon_round!(x0, x1, x2, x3, x4, 0x4B);
 
-  // Substitution layer.
-  x0 ^= x4;
-  x4 ^= x3;
-  x2 ^= x1;
+  s[0] = x0;
+  s[1] = x1;
+  s[2] = x2;
+  s[3] = x3;
+  s[4] = x4;
+}
 
-  let t0 = (!x0) & x1;
-  let t1 = (!x1) & x2;
-  let t2 = (!x2) & x3;
-  let t3 = (!x3) & x4;
-  let t4 = (!x4) & x0;
+/// Ascon-p[6]: 6-round permutation (PB) used by Ascon-AEAD128.
+///
+/// Fully unrolled for the same register-allocation benefits as
+/// [`permute_12_portable`].
+#[inline(always)]
+pub(crate) fn permute_6_portable(s: &mut [u64; 5]) {
+  let mut x0 = s[0];
+  let mut x1 = s[1];
+  let mut x2 = s[2];
+  let mut x3 = s[3];
+  let mut x4 = s[4];
 
-  x0 ^= t1;
-  x1 ^= t2;
-  x2 ^= t3;
-  x3 ^= t4;
-  x4 ^= t0;
-
-  x1 ^= x0;
-  x0 ^= x4;
-  x3 ^= x2;
-  x2 = !x2;
-
-  // Linear diffusion layer.
-  x0 ^= x0.rotate_right(19) ^ x0.rotate_right(28);
-  x1 ^= x1.rotate_right(61) ^ x1.rotate_right(39);
-  x2 ^= x2.rotate_right(1) ^ x2.rotate_right(6);
-  x3 ^= x3.rotate_right(10) ^ x3.rotate_right(17);
-  x4 ^= x4.rotate_right(7) ^ x4.rotate_right(41);
+  ascon_round!(x0, x1, x2, x3, x4, 0x96);
+  ascon_round!(x0, x1, x2, x3, x4, 0x87);
+  ascon_round!(x0, x1, x2, x3, x4, 0x78);
+  ascon_round!(x0, x1, x2, x3, x4, 0x69);
+  ascon_round!(x0, x1, x2, x3, x4, 0x5A);
+  ascon_round!(x0, x1, x2, x3, x4, 0x4B);
 
   s[0] = x0;
   s[1] = x1;
@@ -189,7 +244,6 @@ struct Sponge<P: Permuter, const IV0: u64, const IV1: u64, const IV2: u64, const
   state: [u64; 5],
   buf: [u8; RATE],
   buf_len: usize,
-  bytes_hint: usize,
   permuter: P,
 }
 
@@ -202,7 +256,6 @@ impl<P: Permuter + Default, const IV0: u64, const IV1: u64, const IV2: u64, cons
       state: [IV0, IV1, IV2, IV3, IV4],
       buf: [0u8; RATE],
       buf_len: 0,
-      bytes_hint: 0,
       permuter: P::default(),
     }
   }
@@ -227,9 +280,7 @@ impl<P: Permuter, const IV0: u64, const IV1: u64, const IV2: u64, const IV3: u64
   #[inline(always)]
   fn absorb_block(&mut self, block: &[u8; RATE]) {
     self.state[0] ^= u64::from_le_bytes(*block);
-    let permuter = self.permuter;
-    let len_hint = self.bytes_hint;
-    permuter.permute(&mut self.state, len_hint);
+    self.permuter.permute(&mut self.state, 0);
   }
 
   fn update(&mut self, mut data: &[u8]) {
@@ -237,8 +288,6 @@ impl<P: Permuter, const IV0: u64, const IV1: u64, const IV2: u64, const IV3: u64
       return;
     }
 
-    // Kernel selection only uses this as an advisory size hint, so wrapping is intentional.
-    self.bytes_hint = self.bytes_hint.wrapping_add(data.len());
     if self.buf_len != 0 {
       let take = core::cmp::min(RATE - self.buf_len, data.len());
       self.buf[self.buf_len..self.buf_len.strict_add(take)].copy_from_slice(&data[..take]);
@@ -266,21 +315,15 @@ impl<P: Permuter, const IV0: u64, const IV1: u64, const IV2: u64, const IV3: u64
 
   fn finalize_state(&self) -> [u64; 5] {
     let mut st = self.state;
-    let permuter = self.permuter;
-    let len_hint = self.bytes_hint;
     let last = &self.buf[..self.buf_len];
 
     let mut tmp = [0u8; RATE];
     tmp[..last.len()].copy_from_slice(last);
     st[0] ^= u64::from_le_bytes(tmp);
     st[0] ^= pad(last.len());
-    permuter.permute(&mut st, len_hint);
+    self.permuter.permute(&mut st, 0);
 
     st
-  }
-
-  fn finalize_state_with_hint(&self) -> ([u64; 5], usize) {
-    (self.finalize_state(), self.bytes_hint)
   }
 }
 
@@ -293,7 +336,6 @@ fn fixed_sponge<P: Permuter, const IV0: u64, const IV1: u64, const IV2: u64, con
     state: [IV0, IV1, IV2, IV3, IV4],
     buf: [0u8; RATE],
     buf_len: 0,
-    bytes_hint: 0,
     permuter,
   }
 }
@@ -423,7 +465,7 @@ fn xof_many_equal_len_group<const N: usize>(
 #[derive(Clone, Default)]
 pub struct AsconHash256 {
   sponge: Sponge<
-    DispatchPermuter,
+    InlinePermuter,
     { HASH256_IV[0] },
     { HASH256_IV[1] },
     { HASH256_IV[2] },
@@ -617,13 +659,13 @@ impl Digest for AsconHash256 {
   }
 
   fn finalize(&self) -> Self::Output {
-    let (mut st, hint) = self.sponge.finalize_state_with_hint();
+    let mut st = self.sponge.finalize_state();
 
     let mut out = [0u8; 32];
     let mut off = 0usize;
     while off < 24 {
       out[off..off + 8].copy_from_slice(&st[0].to_le_bytes());
-      dispatch::permute_12_for_len(&mut st, hint.wrapping_add(off));
+      permute_12_portable(&mut st);
       off += 8;
     }
     out[24..32].copy_from_slice(&st[0].to_le_bytes());
@@ -640,7 +682,7 @@ impl Digest for AsconHash256 {
 #[derive(Clone, Default)]
 pub struct AsconXof {
   sponge:
-    Sponge<DispatchPermuter, { XOF128_IV[0] }, { XOF128_IV[1] }, { XOF128_IV[2] }, { XOF128_IV[3] }, { XOF128_IV[4] }>,
+    Sponge<InlinePermuter, { XOF128_IV[0] }, { XOF128_IV[1] }, { XOF128_IV[2] }, { XOF128_IV[3] }, { XOF128_IV[4] }>,
 }
 
 impl fmt::Debug for AsconXof {
@@ -677,13 +719,11 @@ impl AsconXof {
   #[inline]
   #[must_use]
   pub fn finalize_xof(&self) -> AsconXofReader {
-    let (state, hint) = self.sponge.finalize_state_with_hint();
+    let state = self.sponge.finalize_state();
     AsconXofReader {
       state,
       buf: [0u8; RATE],
       pos: RATE,
-      hint,
-      bytes_out: 0,
     }
   }
 
@@ -853,8 +893,6 @@ pub struct AsconXofReader {
   state: [u64; 5],
   buf: [u8; RATE],
   pos: usize,
-  hint: usize,
-  bytes_out: usize,
 }
 
 impl fmt::Debug for AsconXofReader {
@@ -878,7 +916,7 @@ impl AsconXofReader {
   #[inline(always)]
   fn refill(&mut self) {
     self.buf = self.state[0].to_le_bytes();
-    dispatch::permute_12_for_len(&mut self.state, self.hint.wrapping_add(self.bytes_out));
+    permute_12_portable(&mut self.state);
     self.pos = 0;
   }
 }
@@ -892,7 +930,6 @@ impl Xof for AsconXofReader {
 
       let take = core::cmp::min(RATE - self.pos, out.len());
       out[..take].copy_from_slice(&self.buf[self.pos..self.pos.strict_add(take)]);
-      self.bytes_out = self.bytes_out.wrapping_add(take);
       self.pos = self.pos.strict_add(take);
       out = &mut out[take..];
     }
@@ -909,7 +946,7 @@ pub type AsconXof128Reader = AsconXofReader;
 #[derive(Clone)]
 pub struct AsconCxof128 {
   sponge: Sponge<
-    DispatchPermuter,
+    InlinePermuter,
     { CXOF128_IV[0] },
     { CXOF128_IV[1] },
     { CXOF128_IV[2] },
@@ -917,7 +954,7 @@ pub struct AsconCxof128 {
     { CXOF128_IV[4] },
   >,
   initial_sponge: Sponge<
-    DispatchPermuter,
+    InlinePermuter,
     { CXOF128_IV[0] },
     { CXOF128_IV[1] },
     { CXOF128_IV[2] },
@@ -943,15 +980,14 @@ impl AsconCxof128 {
     }
 
     let mut sponge: Sponge<
-      DispatchPermuter,
+      InlinePermuter,
       { CXOF128_IV[0] },
       { CXOF128_IV[1] },
       { CXOF128_IV[2] },
       { CXOF128_IV[3] },
       { CXOF128_IV[4] },
     > = Sponge::default();
-    let permuter = sponge.permuter;
-    permuter.permute(&mut sponge.state, 0);
+    permute_12_portable(&mut sponge.state);
 
     let customization_bits = match u64::try_from(customization.len()) {
       Ok(value) => value.strict_mul(8),
@@ -998,13 +1034,11 @@ impl AsconCxof128 {
   #[inline]
   #[must_use]
   pub fn finalize_xof(&self) -> AsconCxof128Reader {
-    let (state, hint) = self.sponge.finalize_state_with_hint();
-    AsconCxof128Reader {
+    let state = self.sponge.finalize_state();
+    AsconXofReader {
       state,
       buf: [0u8; RATE],
       pos: RATE,
-      hint,
-      bytes_out: 0,
     }
   }
 

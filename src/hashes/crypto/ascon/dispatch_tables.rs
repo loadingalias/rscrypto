@@ -59,19 +59,30 @@ pub static AARCH64_NEON_TABLE: DispatchTable = DispatchTable {
 #[cfg(target_arch = "x86_64")]
 pub static X86_AVX2_TABLE: DispatchTable = DispatchTable {
   boundaries: DEFAULT_BOUNDARIES,
-  xs: KernelId::X86Avx2,
-  s: KernelId::X86Avx2,
-  m: KernelId::X86Avx2,
-  l: KernelId::X86Avx2,
+  // Scalar is faster than AVX2 for single-state Ascon: the 320-bit state
+  // (5 × u64) fits in 5 GPRs with native 1-cycle `ROR`, while the
+  // duplicated-lane AVX2 kernel broadcasts each word across 4 lanes (4×
+  // the work). The broadcast + extract overhead dominates for a single
+  // state. AVX2 x4 batch path (used by `digest_many`) is wired separately.
+  xs: KernelId::Portable,
+  s: KernelId::Portable,
+  m: KernelId::Portable,
+  l: KernelId::Portable,
 };
 
 #[cfg(target_arch = "x86_64")]
 pub static X86_AVX512_TABLE: DispatchTable = DispatchTable {
   boundaries: DEFAULT_BOUNDARIES,
-  xs: KernelId::X86Avx512,
-  s: KernelId::X86Avx512,
-  m: KernelId::X86Avx512,
-  l: KernelId::X86Avx512,
+  // Scalar is faster than AVX-512 for single-state Ascon: the 320-bit
+  // state (5 × u64) fits in 5 GPRs with native 1-cycle `ROR`, while the
+  // duplicated-lane AVX-512 kernel broadcasts each word across 8 lanes
+  // (8× the work). Even with VPTERNLOGQ and VPROLQ, the broadcast +
+  // extract overhead dominates for a single state. AVX-512 x8 batch path
+  // (used by `digest_many`) is wired separately.
+  xs: KernelId::Portable,
+  s: KernelId::Portable,
+  m: KernelId::Portable,
+  l: KernelId::Portable,
 };
 
 #[inline]
