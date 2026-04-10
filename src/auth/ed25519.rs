@@ -80,6 +80,7 @@ const _: unsafe fn(&point::ExtendedPoint, &[u8; 32]) -> point::ExtendedPoint = p
 #[cfg(target_arch = "x86_64")]
 const _: unsafe fn(&point::ExtendedPoint, &[u8; 32]) -> point::ExtendedPoint = point_avx2::scalar_mul_vartime_ifma;
 const _: fn(&point::ExtendedPoint) -> point::ExtendedPoint = point::ExtendedPoint::mul_by_cofactor;
+const _: fn(&point::ExtendedPoint) -> bool = point::ExtendedPoint::is_small_order;
 const _: fn(point::ExtendedPoint) -> Option<(field::FieldElement, field::FieldElement)> =
   point::ExtendedPoint::to_affine;
 const _: fn(
@@ -192,6 +193,7 @@ impl Drop for Ed25519SecretKey {
 pub struct Ed25519PublicKey {
   bytes: [u8; Self::LENGTH],
   point: Option<point::ExtendedPoint>,
+  small_order: bool,
 }
 
 impl Ed25519PublicKey {
@@ -201,8 +203,10 @@ impl Ed25519PublicKey {
   /// Construct a public key from its byte representation.
   #[must_use]
   pub fn from_bytes(bytes: [u8; Self::LENGTH]) -> Self {
+    let point = point::ExtendedPoint::from_bytes(&bytes);
     Self {
-      point: point::ExtendedPoint::from_bytes(&bytes),
+      small_order: point.is_some_and(|point| point.is_small_order()),
+      point,
       bytes,
     }
   }
@@ -212,6 +216,7 @@ impl Ed25519PublicKey {
   fn from_point(point: point::ExtendedPoint) -> Self {
     Self {
       bytes: point.to_bytes().unwrap_or_default(),
+      small_order: point.is_small_order(),
       point: Some(point),
     }
   }
@@ -234,6 +239,12 @@ impl Ed25519PublicKey {
   #[must_use]
   const fn point(&self) -> Option<point::ExtendedPoint> {
     self.point
+  }
+
+  #[inline]
+  #[must_use]
+  const fn is_small_order(&self) -> bool {
+    self.small_order
   }
 }
 
@@ -273,8 +284,9 @@ impl Ed25519PublicKey {
   ///
   /// # Errors
   ///
-  /// Returns [`VerificationError`] if the public key bytes are invalid, the
-  /// signature is non-canonical, or the signature does not match `message`.
+  /// Returns [`VerificationError`] if the public key bytes are invalid or
+  /// weak, the signature is non-canonical, or the signature does not match
+  /// `message`.
   pub fn verify(&self, message: &[u8], signature: &Ed25519Signature) -> Result<(), VerificationError> {
     verify(message, self, signature)
   }
@@ -379,8 +391,8 @@ impl fmt::Debug for Ed25519Keypair {
 ///
 /// # Errors
 ///
-/// Returns [`VerificationError`] if the public key bytes are invalid, the
-/// signature is non-canonical, or the signature does not match `message`.
+/// Returns [`VerificationError`] if the public key bytes are invalid or weak,
+/// the signature is non-canonical, or the signature does not match `message`.
 pub fn verify(
   message: &[u8],
   public_key: &Ed25519PublicKey,
@@ -388,6 +400,12 @@ pub fn verify(
 ) -> Result<(), VerificationError> {
   let (r_bytes, s_bytes) = split_signature(signature);
   let r_point = point::ExtendedPoint::from_bytes(&r_bytes).ok_or(VerificationError::new())?;
+  if r_point.is_small_order() {
+    return Err(VerificationError::new());
+  }
+  if public_key.is_small_order() {
+    return Err(VerificationError::new());
+  }
   let a_point = public_key.point().ok_or(VerificationError::new())?;
   let s = scalar::from_canonical_bytes(&s_bytes).ok_or(VerificationError::new())?;
 
@@ -401,12 +419,11 @@ pub fn verify(
   let neg_challenge_bytes = scalar::to_bytes(&neg_challenge);
   let s_canonical = scalar::to_bytes(&s);
 
-  // Straus/Shamir: compute [s]B + [-h]A in one interleaved 256-bit scan,
-  // then cofactor-clear and compare to [8]R.
-  let combined = straus_dispatch(&s_canonical, &neg_challenge_bytes, &a_point).mul_by_cofactor();
-  let expected = r_point.mul_by_cofactor();
+  // Strict Ed25519 verification: compute [s]B + [-h]A and compare it
+  // directly with R after rejecting weak points.
+  let combined = straus_dispatch(&s_canonical, &neg_challenge_bytes, &a_point);
 
-  if combined.equals_projective(&expected) {
+  if combined.equals_projective(&r_point) {
     Ok(())
   } else {
     Err(VerificationError::new())
@@ -666,5 +683,31 @@ mod tests {
     ));
 
     assert!(public.verify(b"", &signature).is_err());
+  }
+
+  #[test]
+  fn verify_rejects_small_order_public_key() {
+    let secret = Ed25519SecretKey::from_bytes([0x33; Ed25519SecretKey::LENGTH]);
+    let keypair = Ed25519Keypair::from_secret_key(secret);
+    let signature = keypair.sign(b"strict verify");
+    let public = Ed25519PublicKey::from_bytes([
+      1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    ]);
+
+    assert!(public.is_small_order());
+    assert!(public.verify(b"strict verify", &signature).is_err());
+  }
+
+  #[test]
+  fn verify_rejects_small_order_r_component() {
+    let secret = Ed25519SecretKey::from_bytes([0x44; Ed25519SecretKey::LENGTH]);
+    let keypair = Ed25519Keypair::from_secret_key(secret);
+    let mut signature_bytes = keypair.sign(b"strict verify").to_bytes();
+    signature_bytes[..32].copy_from_slice(&[
+      1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    ]);
+    let signature = Ed25519Signature::from_bytes(signature_bytes);
+
+    assert!(keypair.public_key().verify(b"strict verify", &signature).is_err());
   }
 }

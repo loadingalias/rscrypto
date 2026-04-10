@@ -299,6 +299,33 @@ unsafe fn add_signed_cached_avx2(
   }
 }
 
+/// Add a signed wNAF digit from an affine cached odd-multiples table.
+///
+/// # Safety
+///
+/// Caller must ensure AVX2 is available.
+#[inline]
+#[target_feature(enable = "avx2")]
+#[allow(unsafe_op_in_unsafe_fn)]
+unsafe fn add_wnaf_digit_cached_avx2(
+  acc: ExtendedPointAvx2,
+  table: &[CachedPoint; 8],
+  digit: i8,
+  affine_k: &FieldElement2625x4,
+) -> ExtendedPointAvx2 {
+  let index = usize::from((digit.unsigned_abs().wrapping_sub(1)) / 2);
+  let Some(point) = table.get(index) else {
+    return acc;
+  };
+
+  let cached = cached_from_affine(point, affine_k);
+  if digit > 0 {
+    acc.add_cached(&cached)
+  } else {
+    acc.add_cached(&cached.neg())
+  }
+}
+
 /// Add a signed digit from a runtime CachedPointAvx2 table.
 ///
 /// # Safety
@@ -450,7 +477,7 @@ unsafe fn add_wnaf_digit_avx2(acc: ExtendedPointAvx2, table: &[CachedPointAvx2],
 ///
 /// Uses wNAF(5) for both scalars. This reduces additions versus the older
 /// radix-16 AVX2 Straus fallback while keeping setup costs modest: two 8-entry
-/// odd-multiples tables built at runtime.
+/// odd-multiples tables, with the basepoint table reused from static storage.
 ///
 /// Variable-time: branches on scalar digit values. Safe for verification
 /// where both `s` and `h` are public.
@@ -462,14 +489,14 @@ unsafe fn add_wnaf_digit_avx2(acc: ExtendedPointAvx2, table: &[CachedPointAvx2],
 #[allow(unsafe_op_in_unsafe_fn)]
 #[allow(clippy::indexing_slicing)] // i bounded by top < 256, naf arrays are [i8; 256]
 pub(crate) unsafe fn straus_wnaf_vartime_avx2(s: &[u8; 32], h: &[u8; 32], a: &ExtendedPoint) -> ExtendedPoint {
+  use super::point::BASEPOINT_WNAF5_TABLE;
+
   let s_naf = scalar::non_adjacent_form(s, 5);
   let h_naf = scalar::non_adjacent_form(h, 5);
 
-  let base = ExtendedPointAvx2::from_extended(&ExtendedPoint::basepoint());
-  let base_table: [CachedPointAvx2; 8] = odd_multiples_avx2(&base);
-
   let avx_a = ExtendedPointAvx2::from_extended(a);
   let a_table: [CachedPointAvx2; 8] = odd_multiples_avx2(&avx_a);
+  let affine_k = hamburg_affine_constants();
 
   let top = s_naf
     .iter()
@@ -492,7 +519,7 @@ pub(crate) unsafe fn straus_wnaf_vartime_avx2(s: &[u8; 32], h: &[u8; 32], a: &Ex
     acc = acc.double();
 
     if s_naf[i] != 0 {
-      acc = add_wnaf_digit_avx2(acc, &base_table, s_naf[i]);
+      acc = add_wnaf_digit_cached_avx2(acc, &BASEPOINT_WNAF5_TABLE, s_naf[i], &affine_k);
     }
     if h_naf[i] != 0 {
       acc = add_wnaf_digit_avx2(acc, &a_table, h_naf[i]);
@@ -1290,12 +1317,15 @@ mod tests {
         "AVX2 wNAF Straus with large scalars should match scalar"
       );
 
-      // Also verify the full equation: [s]B + [-h]A == [8]R (after cofactor)
-      let combined = avx_result.mul_by_cofactor();
-      let expected = r_point.mul_by_cofactor();
       assert!(
-        combined.equals_projective(&expected),
-        "AVX2 wNAF Straus verify equation should hold"
+        !a_point.is_small_order(),
+        "public key used in verify should not be weak"
+      );
+      assert!(!r_point.is_small_order(), "R used in verify should not be low order");
+
+      assert!(
+        avx_result.equals_projective(&r_point),
+        "AVX2 wNAF Straus strict verify equation should hold"
       );
     }
   }
