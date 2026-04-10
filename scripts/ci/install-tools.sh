@@ -192,6 +192,8 @@ standard | namespace | runson)
 	# Standard CI tools (same for all CI runners)
 	install_binstall
 	install_if_missing "cargo-nextest" "cargo-nextest"
+	install_if_missing "cargo-deny" "cargo-deny"
+	install_if_missing "cargo-audit" "cargo-audit"
 	ensure_cargo_rail "$CARGO_RAIL_VERSION"
 	install_if_missing "just" "just"
 	;;

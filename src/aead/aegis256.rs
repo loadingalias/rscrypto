@@ -1854,6 +1854,11 @@ impl Aead for Aegis256 {
 mod tests {
   use super::*;
 
+  #[inline(always)]
+  fn portable_aes_round(block: &[u8; 16], round_key: &[u8; 16]) -> [u8; 16] {
+    super::super::aes::aes_enc_round_portable(block, round_key)
+  }
+
   fn hex(s: &str) -> Vec<u8> {
     (0..s.len())
       .step_by(2)
@@ -1876,7 +1881,7 @@ mod tests {
     let rk = hex_block("101112131415161718191a1b1c1d1e1f");
     let expected = hex_block("7a7b4e5638782546a8c0477a3b813f43");
 
-    assert_eq!(aes_round(&input, &rk), expected);
+    assert_eq!(portable_aes_round(&input, &rk), expected);
   }
 
   // -- Update test vector (Appendix A.2) --
@@ -2320,23 +2325,23 @@ mod tests {
   fn vperm_full_round_matches_portable() {
     let input = hex_block("000102030405060708090a0b0c0d0e0f");
     let rk = hex_block("101112131415161718191a1b1c1d1e1f");
-    let expected = aes_round(&input, &rk);
+    let expected = portable_aes_round(&input, &rk);
 
     let got = vperm_aes_round_scalar(&input, &rk);
     assert_eq!(got, expected, "vperm round mismatch for spec vector");
 
     // Test with all-zero
     let zero = [0u8; 16];
-    assert_eq!(vperm_aes_round_scalar(&zero, &zero), aes_round(&zero, &zero));
+    assert_eq!(vperm_aes_round_scalar(&zero, &zero), portable_aes_round(&zero, &zero));
 
     // Test with all-0xFF
     let ff = [0xFFu8; 16];
-    assert_eq!(vperm_aes_round_scalar(&ff, &ff), aes_round(&ff, &ff));
+    assert_eq!(vperm_aes_round_scalar(&ff, &ff), portable_aes_round(&ff, &ff));
 
     // Test with random-looking patterns
     let a = hex_block("deadbeefcafebabe0123456789abcdef");
     let b = hex_block("fedcba9876543210aabbccddeeff0011");
-    assert_eq!(vperm_aes_round_scalar(&a, &b), aes_round(&a, &b));
+    assert_eq!(vperm_aes_round_scalar(&a, &b), portable_aes_round(&a, &b));
 
     // Exhaustive: test all single-byte patterns in position 0
     for val in 0u16..256 {
@@ -2344,7 +2349,7 @@ mod tests {
       block[0] = val as u8;
       let key = [0u8; 16];
       let got = vperm_aes_round_scalar(&block, &key);
-      let expected = aes_round(&block, &key);
+      let expected = portable_aes_round(&block, &key);
       assert_eq!(got, expected, "vperm round mismatch for block[0]=0x{:02X}", val,);
     }
   }
