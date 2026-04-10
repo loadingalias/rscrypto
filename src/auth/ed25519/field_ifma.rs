@@ -32,6 +32,7 @@ use super::{
 // ---------------------------------------------------------------------------
 
 const MASK51: i64 = (1i64 << 51) - 1;
+#[cfg(test)]
 const MASK52: i64 = (1i64 << 52) - 1;
 
 /// Subtraction bias: 2p in radix-51. Limb 0 accounts for the -19 term.
@@ -104,6 +105,7 @@ unsafe fn madd52hi(acc: __m256i, a: __m256i, b: __m256i) -> __m256i {
 /// # Safety
 ///
 /// Caller must ensure AVX2 is available.
+#[cfg(test)]
 #[inline]
 #[target_feature(enable = "avx2")]
 #[allow(unsafe_op_in_unsafe_fn)]
@@ -389,14 +391,9 @@ impl FieldElement51x4 {
   /// It is NOT satisfied after `diff_sum()` on reduced values (up to 53 bits) —
   /// callers must `reduce()` such intermediates before calling `mul`.
   ///
-  /// Production code uses [`mul_unreduced`](Self::mul_unreduced) which accepts
-  /// up to 53-bit inputs, eliminating the need for `reduce()` before multiply.
-  /// Retained for differential testing.
-  ///
   /// # Safety
   ///
   /// Caller must ensure AVX-512 IFMA + VL are available.
-  #[cfg(test)]
   #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
   #[allow(unsafe_op_in_unsafe_fn)]
   pub(crate) unsafe fn mul(&self, rhs: &Self) -> Self {
@@ -558,6 +555,7 @@ impl FieldElement51x4 {
   /// # Safety
   ///
   /// Caller must ensure AVX-512 IFMA + VL are available.
+  #[cfg(test)]
   #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
   #[allow(unsafe_op_in_unsafe_fn)]
   pub(crate) unsafe fn mul_unreduced(&self, rhs: &Self) -> Self {
@@ -870,6 +868,7 @@ impl FieldElement51x4 {
   /// # Safety
   ///
   /// Caller must ensure AVX-512 IFMA + VL are available.
+  #[cfg(test)]
   #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
   #[allow(unsafe_op_in_unsafe_fn)]
   pub(crate) unsafe fn mul_small_unreduced(&self, small: &Self) -> Self {
@@ -928,11 +927,12 @@ impl FieldElement51x4 {
     .reduce()
   }
 
-  /// Square (51-bit inputs, pre-doubled cross terms). Retained for testing.
+  /// Square a field element (pre-doubled cross terms, 30 IFMA ops).
   ///
-  /// Production code uses `square_and_negate_d_wide()` which accepts 52-bit inputs.
-  #[cfg(test)]
-  /// Inputs with 52-bit limbs would overflow to 53 bits after pre-doubling.
+  /// # Precondition
+  ///
+  /// All limbs must be ≤ 51 bits (reduced). Pre-doubling produces ≤ 52-bit
+  /// values which fit IFMA's 52-bit input window.
   ///
   /// # Safety
   ///
@@ -1029,14 +1029,11 @@ impl FieldElement51x4 {
     .reduce()
   }
 
-  // square_and_negate_d (51-bit) removed — superseded by square_and_negate_d_wide.
-
   /// Square 52-bit inputs, returning 5 folded limbs before reduction.
   ///
   /// Shared helper for [`square_and_negate_d_wide`](Self::square_and_negate_d_wide).
-  /// Performs the IFMA schoolbook, lo+hi recombination, and ×19 fold,
-  /// returning the 5 combined limbs ready for optional D-lane negation
-  /// and final carry propagation via `reduce()`.
+  /// Uses double-accumulate for cross terms (avoids pre-doubling overflow
+  /// with 52-bit inputs). Retained for differential testing.
   ///
   /// # Precondition
   ///
@@ -1045,6 +1042,7 @@ impl FieldElement51x4 {
   /// # Safety
   ///
   /// Caller must ensure AVX-512 IFMA + VL are available.
+  #[cfg(test)]
   #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
   #[allow(unsafe_op_in_unsafe_fn)]
   unsafe fn square_wide_fold(&self) -> [__m256i; 5] {
@@ -1157,6 +1155,7 @@ impl FieldElement51x4 {
   ///
   /// This tighter bound is critical: with all lanes ≤51 bits, pre-reducing
   /// `neg_s2` keeps S8 ≤ 53 bits for `mul_unreduced`, and S9 ≤ 52.6 bits.
+  /// Retained for differential testing.
   ///
   /// # Precondition
   ///
@@ -1165,6 +1164,7 @@ impl FieldElement51x4 {
   /// # Safety
   ///
   /// Caller must ensure AVX-512 IFMA + VL are available.
+  #[cfg(test)]
   #[inline]
   #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
   #[allow(unsafe_op_in_unsafe_fn)]
