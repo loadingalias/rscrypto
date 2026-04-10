@@ -84,7 +84,11 @@ pub fn kernel_name_for_len(len: usize) -> &'static str {
 /// The `len` parameter is a hint representing the total amount of work (bytes)
 /// associated with the sponge operation. This allows tuned size-class tables to
 /// take effect for one-shot and long-running streaming workloads.
+///
+/// Production code uses `InlinePermuter` directly; this is retained for the
+/// test/bench harness.
 #[inline]
+#[allow(dead_code)]
 pub fn permute_12_for_len(state: &mut [u64; 5], len: usize) {
   let d = active();
   (select(&d, len).0)(state);
@@ -92,6 +96,7 @@ pub fn permute_12_for_len(state: &mut [u64; 5], len: usize) {
 
 #[inline]
 #[must_use]
+#[allow(dead_code)]
 pub(crate) fn permute_dispatch() -> SizeClassDispatch<PermuteFn> {
   let d = active();
   SizeClassDispatch {
