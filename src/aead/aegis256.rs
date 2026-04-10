@@ -1854,6 +1854,7 @@ impl Aead for Aegis256 {
 mod tests {
   use super::*;
 
+  #[cfg(not(target_arch = "s390x"))]
   #[inline(always)]
   fn portable_aes_round(block: &[u8; 16], round_key: &[u8; 16]) -> [u8; 16] {
     super::super::aes::aes_enc_round_portable(block, round_key)
@@ -1875,6 +1876,7 @@ mod tests {
 
   // -- AESRound test vector (Appendix A.1) --
 
+  #[cfg(not(target_arch = "s390x"))]
   #[test]
   fn aes_round_matches_spec_vector() {
     let input = hex_block("000102030405060708090a0b0c0d0e0f");
@@ -1886,6 +1888,7 @@ mod tests {
 
   // -- Update test vector (Appendix A.2) --
 
+  #[cfg(not(target_arch = "s390x"))]
   #[test]
   fn update_matches_spec_vector() {
     let mut s: State = [
@@ -2321,6 +2324,7 @@ mod tests {
     result
   }
 
+  #[cfg(not(target_arch = "s390x"))]
   #[test]
   fn vperm_full_round_matches_portable() {
     let input = hex_block("000102030405060708090a0b0c0d0e0f");

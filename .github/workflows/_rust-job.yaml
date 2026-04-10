@@ -77,10 +77,6 @@ jobs:
         with:
           mode: ${{ inputs.runson_mode }}
 
-      - name: Setup Namespace
-        if: inputs.setup_kind == 'namespace'
-        uses: ./.github/actions/setup-namespace
-
       - name: Pre Run
         if: inputs.pre_script != ''
         shell: bash

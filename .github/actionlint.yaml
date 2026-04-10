@@ -3,11 +3,6 @@
 
 self-hosted-runner:
   labels:
-    # Namespace runners
-    - namespace-profile-rscrypto
-    - namespace-profile-rscrypto-linux-x86
-    - namespace-profile-rscrypto-linux-arm64
-
     # RunsOn benchmark runners
     - runs-on=${{ github.run_id }}/runner=intel-spr
     - runs-on=${{ github.run_id }}/runner=intel-icl

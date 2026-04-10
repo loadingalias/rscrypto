@@ -69,11 +69,6 @@ Swatinem/rust-cache:
   sha: "779680da715d629ac1d338a641029a2f4372abb5"
   updated: "2026-04-09T16:14:13Z"
   notes: "GitHub runner Rust cache"
-namespacelabs/nscloud-cache-action:
-  ref: v1.2.21
-  sha: "446d8f390563cd54ca27e8de5bdb816f63c0b706"
-  updated: "2026-04-09T16:14:14Z"
-  notes: "Namespace runner NVMe cache (instant restore)"
 loadingalias/cargo-rail-action:
   ref: v4.0.0
   sha: "ae6949275b492140e174b0b117286bae3bd9455b"
