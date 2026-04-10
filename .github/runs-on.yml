@@ -1,14 +1,13 @@
-# .github/runs-on.yml
-# RunsOn configuration for rscrypto benchmark lanes.
+# rscrypto CI & benchmark lanes.
 
 runners:
   # Intel Sapphire Rapids: primary Intel lane for high-end AVX-512 benchmarking.
   intel-spr:
-    cpu: 8
-    ram: 16
+    cpu: 4
+    ram: 8
     family: ["c7i", "m7i", "r7iz"]
     image: ubuntu24-full-x64
-    spot: price-capacity-optimized
+    spot: false
     retry: when-interrupted
     volume: 60gb:gp3:500mbs:4000iops
     ssh: true
@@ -19,11 +18,11 @@ runners:
 
   # Intel Ice Lake: stable lower-gen Intel lane for cross-generation signal.
   intel-icl:
-    cpu: 8
-    ram: 16
+    cpu: 4
+    ram: 8
     family: ["c6i", "m6i", "r6i"]
     image: ubuntu24-full-x64
-    spot: price-capacity-optimized
+    spot: false
     retry: when-interrupted
     volume: 60gb:gp3:500mbs:4000iops
     ssh: true
@@ -34,11 +33,11 @@ runners:
 
   # AMD Zen5 (Turin).
   amd-zen5:
-    cpu: 8
-    ram: 16
+    cpu: 4
+    ram: 8
     family: ["m8a", "c8a", "r8a"]
     image: ubuntu24-full-x64
-    spot: price-capacity-optimized
+    spot: false
     retry: when-interrupted
     volume: 60gb:gp3:500mbs:4000iops
     ssh: true
@@ -49,11 +48,11 @@ runners:
 
   # AMD Zen4 (Genoa).
   amd-zen4:
-    cpu: 8
-    ram: 16
+    cpu: 4
+    ram: 8
     family: ["m7a", "c7a", "r7a"]
     image: ubuntu24-full-x64
-    spot: price-capacity-optimized
+    spot: false
     retry: when-interrupted
     volume: 60gb:gp3:500mbs:4000iops
     ssh: true
@@ -64,11 +63,11 @@ runners:
 
   # AWS Graviton3 explicit lane.
   graviton3:
-    cpu: 8
-    ram: 16
+    cpu: 4
+    ram: 8
     family: ["c7g", "m7g", "r7g"]
     image: ubuntu24-full-arm64
-    spot: price-capacity-optimized
+    spot: false
     retry: when-interrupted
     volume: 60gb:gp3:500mbs:4000iops
     ssh: true
@@ -79,11 +78,11 @@ runners:
 
   # AWS Graviton4 explicit lane.
   graviton4:
-    cpu: 8
-    ram: 16
+    cpu: 4
+    ram: 8
     family: ["c8g", "m8g", "r8g"]
     image: ubuntu24-full-arm64
-    spot: price-capacity-optimized
+    spot: false
     retry: when-interrupted
     volume: 60gb:gp3:500mbs:4000iops
     ssh: true

@@ -29,7 +29,7 @@ This file is the caller map for `scripts/`.
 - `scripts/ci/check-infra.sh`
   - Called by: `scripts/ci/ci-check.sh`
 - `scripts/ci/install-tools.sh`
-  - Called by: `.github/actions/setup/action.yaml`, `.github/actions/setup-runson/action.yaml`, `.github/actions/setup-namespace/action.yaml`
+  - Called by: `.github/actions/setup/action.yaml`, `.github/actions/setup-runson/action.yaml`
 - `scripts/ci/pin-actions.sh`
   - Called by: `just pin-actions`, `just verify-actions`
 - `scripts/ci/pre-push.sh`

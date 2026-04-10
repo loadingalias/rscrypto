@@ -127,6 +127,8 @@ pub(crate) enum Lanes {
   AD = 0b1010_0101,
   /// Select B and C lanes: positions 1, 3, 4, 6
   BC = 0b0101_1010,
+  /// Select B, C, and D lanes: positions 1, 3, 4, 5, 6, 7
+  BCD = 0b1111_1010,
   /// Select C and D lanes: positions 4-7
   CD = 0b1111_0000,
   /// Select all lanes
@@ -451,6 +453,7 @@ impl FieldElement2625x4 {
       Lanes::AC => do_blend!(0b0101_0101),
       Lanes::AD => do_blend!(0b1010_0101),
       Lanes::BC => do_blend!(0b0101_1010),
+      Lanes::BCD => do_blend!(0b1111_1010),
       Lanes::CD => do_blend!(0b1111_0000),
       Lanes::ABCD => do_blend!(0b1111_1111),
     }

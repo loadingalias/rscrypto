@@ -316,6 +316,7 @@ impl FieldElement51x4 {
       Lanes::AC => do_blend!(0b0011_0011),
       Lanes::AD => do_blend!(0b1100_0011),
       Lanes::BC => do_blend!(0b0011_1100),
+      Lanes::BCD => do_blend!(0b1111_1100),
       Lanes::CD => do_blend!(0b1111_0000),
       Lanes::ABCD => do_blend!(0b1111_1111),
     }
