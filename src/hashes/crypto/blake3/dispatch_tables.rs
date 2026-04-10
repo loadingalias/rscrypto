@@ -491,13 +491,13 @@ pub static PROFILE_PORTABLE: FamilyProfile = portable_profile();
 pub static PROFILE_X86_AVX512_AMX: FamilyProfile = FamilyProfile {
   dispatch: DispatchTable {
     boundaries: [64, 1024, 4096],
-    xs: KernelId::X86Avx512,
-    s: KernelId::X86Avx512,
+    xs: KernelId::X86Sse41,
+    s: KernelId::X86Avx2,
     m: KernelId::X86Avx512,
     l: KernelId::X86Avx512,
   },
   streaming: StreamingTable {
-    stream: KernelId::X86Avx512,
+    stream: KernelId::X86Avx2,
     bulk: KernelId::X86Avx512,
     bulk_sizeclass_threshold: THRESHOLD_AVX512,
   },
@@ -531,13 +531,13 @@ pub static PROFILE_X86_AVX512_AMX: FamilyProfile = FamilyProfile {
 pub static PROFILE_X86_AVX512: FamilyProfile = FamilyProfile {
   dispatch: DispatchTable {
     boundaries: [64, 1024, 4096],
-    xs: KernelId::X86Avx512,
-    s: KernelId::X86Avx512,
+    xs: KernelId::X86Sse41,
+    s: KernelId::X86Avx2,
     m: KernelId::X86Avx512,
     l: KernelId::X86Avx512,
   },
   streaming: StreamingTable {
-    stream: KernelId::X86Avx512,
+    stream: KernelId::X86Avx2,
     bulk: KernelId::X86Avx512,
     bulk_sizeclass_threshold: THRESHOLD_AVX512,
   },
