@@ -491,8 +491,11 @@ pub static PROFILE_PORTABLE: FamilyProfile = portable_profile();
 pub static PROFILE_X86_AVX512_AMX: FamilyProfile = FamilyProfile {
   dispatch: DispatchTable {
     boundaries: [64, 1024, 4096],
-    xs: KernelId::X86Sse41,
-    s: KernelId::X86Avx2,
+    // AVX-512 compress uses native `vprord` (1 µop) vs SSE4.1/AVX2 shift+or
+    // emulation (3 instructions). For single-block compress in the one-chunk
+    // path, AVX-512 is strictly faster regardless of input size.
+    xs: KernelId::X86Avx512,
+    s: KernelId::X86Avx512,
     m: KernelId::X86Avx512,
     l: KernelId::X86Avx512,
   },
@@ -531,8 +534,11 @@ pub static PROFILE_X86_AVX512_AMX: FamilyProfile = FamilyProfile {
 pub static PROFILE_X86_AVX512: FamilyProfile = FamilyProfile {
   dispatch: DispatchTable {
     boundaries: [64, 1024, 4096],
-    xs: KernelId::X86Sse41,
-    s: KernelId::X86Avx2,
+    // AVX-512 compress uses native `vprord` (1 µop) vs SSE4.1/AVX2 shift+or
+    // emulation (3 instructions). For single-block compress in the one-chunk
+    // path, AVX-512 is strictly faster regardless of input size.
+    xs: KernelId::X86Avx512,
+    s: KernelId::X86Avx512,
     m: KernelId::X86Avx512,
     l: KernelId::X86Avx512,
   },
