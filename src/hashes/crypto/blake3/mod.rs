@@ -25,6 +25,8 @@ mod control;
 pub(crate) mod dispatch;
 #[doc(hidden)]
 pub(crate) mod dispatch_tables;
+#[cfg(test)]
+mod kernel_test;
 pub(crate) mod kernels;
 #[cfg(feature = "parallel")]
 mod parallel;

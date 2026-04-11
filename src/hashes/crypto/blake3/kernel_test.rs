@@ -2,13 +2,30 @@ use alloc::vec::Vec;
 
 use super::{
   Blake3,
-  kernels::{ALL, Blake3KernelId, kernel as kernel_for_id, required_caps},
+  kernels::{Blake3KernelId, kernel as kernel_for_id, required_caps},
 };
 use crate::traits::Digest as _;
 
+const ALL: &[Blake3KernelId] = &[
+  Blake3KernelId::Portable,
+  #[cfg(target_arch = "x86_64")]
+  Blake3KernelId::X86Sse41,
+  #[cfg(target_arch = "x86_64")]
+  Blake3KernelId::X86Avx2,
+  #[cfg(target_arch = "x86_64")]
+  Blake3KernelId::X86Avx512,
+  #[cfg(target_arch = "aarch64")]
+  Blake3KernelId::Aarch64Neon,
+  #[cfg(target_arch = "s390x")]
+  Blake3KernelId::S390xVector,
+  #[cfg(target_arch = "powerpc64")]
+  Blake3KernelId::PowerVsx,
+  #[cfg(target_arch = "riscv64")]
+  Blake3KernelId::RiscvV,
+];
+
 #[derive(Clone, Debug)]
 pub struct KernelResult {
-  pub name: &'static str,
   pub digest: [u8; 32],
 }
 
@@ -37,7 +54,6 @@ pub fn run_all_blake3_kernels(data: &[u8]) -> Vec<KernelResult> {
   for &id in ALL {
     if caps.has(required_caps(id)) {
       out.push(KernelResult {
-        name: id.as_str(),
         digest: digest_with_kernel(id, data),
       });
     }
@@ -144,43 +160,6 @@ mod tests {
     }
   }
 
-  #[test]
-  fn bench_helpers_match_forced_kernel_streaming() {
-    let caps = crate::platform::caps();
-    let msg = pattern(4096 + 17);
-
-    for &id in ALL {
-      if !caps.has(required_caps(id)) {
-        continue;
-      }
-
-      let oneshot = Blake3::digest_with_kernel_id(id, &msg);
-      assert_eq!(
-        oneshot,
-        digest_with_kernel(id, &msg),
-        "digest_with_kernel_id mismatch for kernel={}",
-        id.as_str()
-      );
-
-      for &chunk in &[64usize, 4096] {
-        let helper_stream = Blake3::stream_chunks_with_kernel_pair_id(id, id, chunk, &msg);
-
-        let kernel = kernel_for_id(id);
-        let mut h = hasher_for_kernel(id);
-        for part in msg.chunks(chunk) {
-          h.update_with(part, kernel.id, kernel.id);
-        }
-        assert_eq!(
-          helper_stream,
-          h.finalize(),
-          "stream_chunks_with_kernel_pair_id mismatch for kernel={} chunk={}",
-          id.as_str(),
-          chunk
-        );
-      }
-    }
-  }
-
   #[cfg(target_arch = "aarch64")]
   #[test]
   fn oneshot_1024_fast_path_matches_official_crate() {
@@ -193,7 +172,7 @@ mod tests {
     let msg = pattern(1024);
 
     // Forced-kernel oneshot (exercises the len==1024 fast path).
-    let ours = Blake3::digest_with_kernel_id(id, &msg);
+    let ours = digest_with_kernel(id, &msg);
     let expected = *blake3::hash(&msg).as_bytes();
     assert_eq!(ours, expected, "blake3 oneshot mismatch kernel={}", id.as_str());
 
