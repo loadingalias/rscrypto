@@ -32,6 +32,28 @@ pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
   acc == 0
 }
 
+/// Volatile-zero a byte slice without emitting a compiler fence.
+///
+/// Use when batching multiple zeroizations under a single fence.
+/// Call `compiler_fence(SeqCst)` once after all buffers are zeroed.
+#[inline(always)]
+pub(crate) fn zeroize_no_fence(buf: &mut [u8]) {
+  // SAFETY: align_to_mut returns valid prefix/words/suffix over the same allocation.
+  let (prefix, words, suffix) = unsafe { buf.align_to_mut::<u64>() };
+  for byte in prefix.iter_mut() {
+    // SAFETY: byte is a valid, aligned, dereferenceable pointer to initialized memory.
+    unsafe { core::ptr::write_volatile(byte, 0) };
+  }
+  for word in words.iter_mut() {
+    // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
+    unsafe { core::ptr::write_volatile(word, 0) };
+  }
+  for byte in suffix.iter_mut() {
+    // SAFETY: byte is a valid, aligned, dereferenceable pointer to initialized memory.
+    unsafe { core::ptr::write_volatile(byte, 0) };
+  }
+}
+
 /// Overwrite a byte slice with zeros using volatile writes.
 ///
 /// The compiler cannot elide these writes, ensuring sensitive data
@@ -48,19 +70,6 @@ pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 /// ```
 #[inline(always)]
 pub fn zeroize(buf: &mut [u8]) {
-  // SAFETY: align_to_mut returns valid prefix/words/suffix over the same allocation.
-  let (prefix, words, suffix) = unsafe { buf.align_to_mut::<u64>() };
-  for byte in prefix.iter_mut() {
-    // SAFETY: byte is a valid, aligned, dereferenceable pointer to initialized memory.
-    unsafe { core::ptr::write_volatile(byte, 0) };
-  }
-  for word in words.iter_mut() {
-    // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
-    unsafe { core::ptr::write_volatile(word, 0) };
-  }
-  for byte in suffix.iter_mut() {
-    // SAFETY: byte is a valid, aligned, dereferenceable pointer to initialized memory.
-    unsafe { core::ptr::write_volatile(byte, 0) };
-  }
+  zeroize_no_fence(buf);
   core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
 }
