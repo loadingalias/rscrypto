@@ -70,6 +70,15 @@ pub static X86_AVX2_DECOUPLED_TABLE: DispatchTable = DispatchTable {
   l: KernelId::X86Avx2Decoupled,
 };
 
+#[cfg(target_arch = "x86_64")]
+pub static X86_AVX512VL_DECOUPLED_TABLE: DispatchTable = DispatchTable {
+  boundaries: DEFAULT_BOUNDARIES,
+  xs: KernelId::X86Avx512vlDecoupled,
+  s: KernelId::X86Avx512vlDecoupled,
+  m: KernelId::X86Avx512vlDecoupled,
+  l: KernelId::X86Avx512vlDecoupled,
+};
+
 #[cfg(target_arch = "riscv64")]
 pub static RISCV_ZKNH_TABLE: DispatchTable = DispatchTable {
   boundaries: DEFAULT_BOUNDARIES,
@@ -122,7 +131,7 @@ pub fn select_runtime_table(#[allow(unused_variables)] caps: Caps) -> &'static D
       }
     } else {
       if caps.has(x86::AVX512F) && caps.has(x86::AVX512VL) {
-        return &X86_AVX512VL_TABLE;
+        return &X86_AVX512VL_DECOUPLED_TABLE;
       }
       if caps.has(x86::AVX2) {
         return &X86_AVX2_TABLE;

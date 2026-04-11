@@ -251,3 +251,32 @@ pub const fn required_caps(id: Sha512KernelId) -> Caps {
     Sha512KernelId::X86Avx512vlDecoupled => x86::AVX512F.union(x86::AVX512VL).union(x86::BMI2),
   }
 }
+
+#[cfg(test)]
+pub const ALL: &[Sha512KernelId] = &[
+  Sha512KernelId::Portable,
+  #[cfg(target_arch = "aarch64")]
+  Sha512KernelId::Aarch64Sha512,
+  #[cfg(target_arch = "x86_64")]
+  Sha512KernelId::X86Sha512,
+  #[cfg(target_arch = "x86_64")]
+  Sha512KernelId::X86Avx512vl,
+  #[cfg(target_arch = "x86_64")]
+  Sha512KernelId::X86Avx2,
+  #[cfg(target_arch = "riscv64")]
+  Sha512KernelId::Riscv64Zknh,
+  #[cfg(target_arch = "wasm32")]
+  Sha512KernelId::WasmSimd128,
+  #[cfg(target_arch = "s390x")]
+  Sha512KernelId::S390xKimd,
+  #[cfg(target_arch = "powerpc64")]
+  Sha512KernelId::Ppc64Crypto,
+  #[cfg(target_arch = "x86_64")]
+  Sha512KernelId::X86Avx2Std,
+  #[cfg(target_arch = "x86_64")]
+  Sha512KernelId::X86Avx512vlStd,
+  #[cfg(target_arch = "x86_64")]
+  Sha512KernelId::X86Avx2Decoupled,
+  #[cfg(target_arch = "x86_64")]
+  Sha512KernelId::X86Avx512vlDecoupled,
+];
