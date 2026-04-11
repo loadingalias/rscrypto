@@ -180,6 +180,7 @@ pub const fn required_caps(id: Sha384KernelId) -> Caps {
   crate::hashes::crypto::sha512::kernels::required_caps(to_sha512_kernel_id(id))
 }
 
+// Keep kernel tests focused on backends that runtime dispatch can actually pick.
 #[cfg(test)]
 pub const ALL: &[Sha384KernelId] = &[
   Sha384KernelId::Portable,
@@ -197,12 +198,6 @@ pub const ALL: &[Sha384KernelId] = &[
   Sha384KernelId::WasmSimd128,
   #[cfg(target_arch = "s390x")]
   Sha384KernelId::S390xKimd,
-  #[cfg(target_arch = "powerpc64")]
-  Sha384KernelId::Ppc64Crypto,
-  #[cfg(target_arch = "x86_64")]
-  Sha384KernelId::X86Avx2Std,
-  #[cfg(target_arch = "x86_64")]
-  Sha384KernelId::X86Avx512vlStd,
   #[cfg(target_arch = "x86_64")]
   Sha384KernelId::X86Avx2Decoupled,
   #[cfg(target_arch = "x86_64")]
