@@ -53,15 +53,6 @@ pub static X86_AVX512VL_TABLE: DispatchTable = DispatchTable {
 };
 
 #[cfg(target_arch = "x86_64")]
-pub static X86_AVX2_TABLE: DispatchTable = DispatchTable {
-  boundaries: DEFAULT_BOUNDARIES,
-  xs: KernelId::X86Avx2,
-  s: KernelId::X86Avx2,
-  m: KernelId::X86Avx2,
-  l: KernelId::X86Avx2,
-};
-
-#[cfg(target_arch = "x86_64")]
 pub static X86_AVX2_DECOUPLED_TABLE: DispatchTable = DispatchTable {
   boundaries: DEFAULT_BOUNDARIES,
   xs: KernelId::X86Avx2Decoupled,
@@ -110,7 +101,7 @@ pub static S390X_KIMD_TABLE: DispatchTable = DispatchTable {
 #[must_use]
 pub fn select_runtime_table(#[allow(unused_variables)] caps: Caps) -> &'static DispatchTable {
   // x86_64 cascade: SHA-512 NI > vendor-aware AVX2/AVX-512VL > Portable
-  // AMD: AVX2 > AVX-512VL; Intel: AVX-512VL > AVX2.
+  // AMD: AVX2 decoupled > AVX-512VL; Intel: AVX-512VL decoupled > AVX2 decoupled.
   // See sha512/dispatch_tables.rs for full rationale.
   #[cfg(target_arch = "x86_64")]
   {
@@ -134,7 +125,7 @@ pub fn select_runtime_table(#[allow(unused_variables)] caps: Caps) -> &'static D
         return &X86_AVX512VL_DECOUPLED_TABLE;
       }
       if caps.has(x86::AVX2) {
-        return &X86_AVX2_TABLE;
+        return &X86_AVX2_DECOUPLED_TABLE;
       }
     }
   }
