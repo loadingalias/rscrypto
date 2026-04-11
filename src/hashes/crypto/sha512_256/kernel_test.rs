@@ -6,6 +6,7 @@ use super::{
 };
 use crate::{hashes::crypto::dispatch_util::SizeClassDispatch, traits::Digest as _};
 
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct KernelResult {
   pub name: &'static str,
@@ -33,6 +34,36 @@ fn digest_with_kernel(id: Sha512_256KernelId, data: &[u8]) -> [u8; 32] {
   h.finalize()
 }
 
+fn digest_oneshot_with_kernel(id: Sha512_256KernelId, data: &[u8]) -> [u8; 32] {
+  let compress = compress_blocks_fn(id);
+  let mut state = super::H0;
+
+  let (blocks, rest) = data.as_chunks::<{ super::BLOCK_LEN }>();
+  if !blocks.is_empty() {
+    compress(&mut state, &data[..blocks.len().strict_mul(super::BLOCK_LEN)]);
+  }
+
+  let total_bits = (data.len() as u128) << 3;
+  let mut block = [0u8; super::BLOCK_LEN];
+  block[..rest.len()].copy_from_slice(rest);
+  block[rest.len()] = 0x80;
+
+  if rest.len() >= 112 {
+    compress(&mut state, &block);
+    block = [0u8; super::BLOCK_LEN];
+  }
+
+  block[112..128].copy_from_slice(&total_bits.to_be_bytes());
+  compress(&mut state, &block);
+
+  let mut out = [0u8; 32];
+  for (chunk, &word) in out.chunks_exact_mut(8).zip(state.iter()) {
+    chunk.copy_from_slice(&word.to_be_bytes());
+  }
+  out
+}
+
+#[allow(dead_code)]
 #[must_use]
 pub fn run_all_sha512_256_kernels(data: &[u8]) -> Vec<KernelResult> {
   let caps = crate::platform::caps();
@@ -48,6 +79,7 @@ pub fn run_all_sha512_256_kernels(data: &[u8]) -> Vec<KernelResult> {
   out
 }
 
+#[allow(dead_code)]
 pub fn verify_sha512_256_kernels(data: &[u8]) -> Result<(), &'static str> {
   let results = run_all_sha512_256_kernels(data);
   let Some(first) = results.first() else {
@@ -72,7 +104,7 @@ mod tests {
   }
 
   #[test]
-  fn all_kernels_match_sha2_oracle() {
+  fn all_kernels_match_sha2_oracle_for_oneshot_and_streaming_splits() {
     let caps = crate::platform::caps();
     for &id in ALL {
       if !caps.has(required_caps(id)) {
@@ -81,13 +113,35 @@ mod tests {
 
       for &len in &[0usize, 1, 2, 3, 111, 112, 113, 127, 128, 129, 239, 240, 241, 1000] {
         let msg = pattern(len);
+        let oneshot = digest_oneshot_with_kernel(id, &msg);
         let ours = digest_with_kernel(id, &msg);
 
         use sha2::Digest as _;
         let expected = sha2::Sha512_256::digest(&msg);
         let mut exp = [0u8; 32];
         exp.copy_from_slice(&expected);
+        assert_eq!(
+          oneshot,
+          exp,
+          "sha512-256 oneshot oracle mismatch for kernel={}",
+          id.as_str()
+        );
         assert_eq!(ours, exp, "sha512-256 oracle mismatch for kernel={}", id.as_str());
+
+        for &chunk in &[1usize, 7, 31, 32, 63, 64, 65, 127, 128, 129, 1024, 4096] {
+          let mut h = hasher_for_kernel(id);
+          for part in msg.chunks(chunk) {
+            h.update(part);
+          }
+          assert_eq!(
+            h.finalize(),
+            ours,
+            "sha512-256 streaming mismatch kernel={} len={} chunk={}",
+            id.as_str(),
+            len,
+            chunk
+          );
+        }
       }
     }
   }

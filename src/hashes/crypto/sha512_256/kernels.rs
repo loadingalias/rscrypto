@@ -30,6 +30,8 @@ pub enum Sha512_256KernelId {
   X86Avx512vlStd = 10,
   #[cfg(target_arch = "x86_64")]
   X86Avx2Decoupled = 11,
+  #[cfg(target_arch = "x86_64")]
+  X86Avx512vlDecoupled = 12,
 }
 
 impl Sha512_256KernelId {
@@ -60,6 +62,8 @@ impl Sha512_256KernelId {
       Self::X86Avx512vlStd => "x86-avx512vl-std",
       #[cfg(target_arch = "x86_64")]
       Self::X86Avx2Decoupled => "x86-avx2-decoupled",
+      #[cfg(target_arch = "x86_64")]
+      Self::X86Avx512vlDecoupled => "x86-avx512vl-decoupled",
     }
   }
 }
@@ -91,6 +95,8 @@ pub fn id_from_name(name: &str) -> Option<Sha512_256KernelId> {
     "x86-avx512vl-std" => Some(Sha512_256KernelId::X86Avx512vlStd),
     #[cfg(target_arch = "x86_64")]
     "x86-avx2-decoupled" => Some(Sha512_256KernelId::X86Avx2Decoupled),
+    #[cfg(target_arch = "x86_64")]
+    "x86-avx512vl-decoupled" => Some(Sha512_256KernelId::X86Avx512vlDecoupled),
     _ => None,
   }
 }
@@ -123,6 +129,8 @@ const fn to_sha512_kernel_id(id: Sha512_256KernelId) -> crate::hashes::crypto::s
     Sha512_256KernelId::X86Avx512vlStd => Sha512KernelId::X86Avx512vlStd,
     #[cfg(target_arch = "x86_64")]
     Sha512_256KernelId::X86Avx2Decoupled => Sha512KernelId::X86Avx2Decoupled,
+    #[cfg(target_arch = "x86_64")]
+    Sha512_256KernelId::X86Avx512vlDecoupled => Sha512KernelId::X86Avx512vlDecoupled,
   }
 }
 
@@ -173,6 +181,10 @@ pub(crate) fn compress_blocks_fn(id: Sha512_256KernelId) -> CompressBlocksFn {
     Sha512_256KernelId::X86Avx2Decoupled => {
       crate::hashes::crypto::sha512::kernels::compress_blocks_fn(to_sha512_kernel_id(id))
     }
+    #[cfg(target_arch = "x86_64")]
+    Sha512_256KernelId::X86Avx512vlDecoupled => {
+      crate::hashes::crypto::sha512::kernels::compress_blocks_fn(to_sha512_kernel_id(id))
+    }
   }
 }
 
@@ -181,3 +193,32 @@ pub(crate) fn compress_blocks_fn(id: Sha512_256KernelId) -> CompressBlocksFn {
 pub const fn required_caps(id: Sha512_256KernelId) -> Caps {
   crate::hashes::crypto::sha512::kernels::required_caps(to_sha512_kernel_id(id))
 }
+
+#[cfg(test)]
+pub const ALL: &[Sha512_256KernelId] = &[
+  Sha512_256KernelId::Portable,
+  #[cfg(target_arch = "aarch64")]
+  Sha512_256KernelId::Aarch64Sha512,
+  #[cfg(target_arch = "x86_64")]
+  Sha512_256KernelId::X86Sha512,
+  #[cfg(target_arch = "x86_64")]
+  Sha512_256KernelId::X86Avx512vl,
+  #[cfg(target_arch = "x86_64")]
+  Sha512_256KernelId::X86Avx2,
+  #[cfg(target_arch = "riscv64")]
+  Sha512_256KernelId::Riscv64Zknh,
+  #[cfg(target_arch = "wasm32")]
+  Sha512_256KernelId::WasmSimd128,
+  #[cfg(target_arch = "s390x")]
+  Sha512_256KernelId::S390xKimd,
+  #[cfg(target_arch = "powerpc64")]
+  Sha512_256KernelId::Ppc64Crypto,
+  #[cfg(target_arch = "x86_64")]
+  Sha512_256KernelId::X86Avx2Std,
+  #[cfg(target_arch = "x86_64")]
+  Sha512_256KernelId::X86Avx512vlStd,
+  #[cfg(target_arch = "x86_64")]
+  Sha512_256KernelId::X86Avx2Decoupled,
+  #[cfg(target_arch = "x86_64")]
+  Sha512_256KernelId::X86Avx512vlDecoupled,
+];

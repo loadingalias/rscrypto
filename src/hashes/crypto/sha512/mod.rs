@@ -15,6 +15,8 @@ use crate::{
 pub(crate) mod dispatch;
 #[doc(hidden)]
 pub(crate) mod dispatch_tables;
+#[cfg(test)]
+mod kernel_test;
 pub(crate) mod kernels;
 
 #[cfg(target_arch = "aarch64")]
