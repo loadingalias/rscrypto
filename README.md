@@ -51,7 +51,7 @@ assert_eq!(checksum, Crc32C::checksum(b"data"));
 
 ## Performance Posture
 
-The canonical competitive report is [`docs/bench/BENCHMARKS.md`](docs/bench/BENCHMARKS.md), currently based on CI run `#23822408700` from March 31, 2026.
+The canonical competitive report is [`docs/bench/BENCHMARKS.md`](docs/bench/BENCHMARKS.md), currently based on CI run `#24273250926` from April 11, 2026.
 
 - Release gate 1, non-loss rate `((W + T) / total)`: `1831 / 2155 = 84.97%` — passes the `80%` gate.
 - Release gate 2, pure win rate `(W / total)`: `1396 / 2155 = 64.78%` — below the `70%` public-release bar.

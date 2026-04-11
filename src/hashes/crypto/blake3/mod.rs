@@ -2199,12 +2199,9 @@ fn hash_full_chunks_cvs_scoped(
 
 #[inline]
 fn digest_oneshot_words(kernel: Kernel, key_words: [u32; 8], flags: u32, input: &[u8]) -> [u32; 8] {
-  // Ultra-fast path for tiny inputs (≤64B): use unified helper
-  if input.len() <= BLOCK_LEN {
-    return hash_tiny_to_root_words(kernel, key_words, flags, input);
-  }
-
-  // Fast path for single-chunk inputs (≤1024B): use platform-specific helpers
+  // Fast path for single-chunk inputs (≤1024B): use platform-specific helpers.
+  // On x86, this also handles tiny inputs (≤64B) so they benefit from assembly
+  // compress instead of the generic intrinsics/function-pointer path.
   #[cfg(target_arch = "x86_64")]
   {
     if input.len() <= CHUNK_LEN {
@@ -2216,6 +2213,11 @@ fn digest_oneshot_words(kernel: Kernel, key_words: [u32; 8], flags: u32, input: 
         _ => {}
       }
     }
+  }
+
+  // Tiny inputs (≤64B) on non-x86 or portable kernel: unified helper.
+  if input.len() <= BLOCK_LEN {
+    return hash_tiny_to_root_words(kernel, key_words, flags, input);
   }
 
   #[cfg(target_arch = "aarch64")]
@@ -3415,27 +3417,41 @@ unsafe fn digest_one_chunk_root_hash_words_x86(
     let first_flags = flags | CHUNK_START;
     // SAFETY: `input` covers at least one full 64-byte block here, and this
     // helper is only entered for the selected x86 SIMD kernels.
-    cv = unsafe {
+    unsafe {
       match kernel.id {
         kernels::Blake3KernelId::X86Sse41 => {
-          x86_64::compress_cv_sse41_bytes(&cv, first_block_ptr, 0, BLOCK_LEN as u32, first_flags)
+          #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+          {
+            x86_64::asm::compress_in_place_sse41_mut(&mut cv, first_block_ptr, 0, BLOCK_LEN as u32, first_flags);
+          }
+          #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+          {
+            cv = x86_64::compress_cv_sse41_bytes(&cv, first_block_ptr, 0, BLOCK_LEN as u32, first_flags);
+          }
         }
         kernels::Blake3KernelId::X86Avx2 => {
-          x86_64::compress_cv_avx2_bytes(&cv, first_block_ptr, 0, BLOCK_LEN as u32, first_flags)
+          #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+          {
+            x86_64::asm::compress_in_place_avx2_mut(&mut cv, first_block_ptr, 0, BLOCK_LEN as u32, first_flags);
+          }
+          #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+          {
+            cv = x86_64::compress_cv_avx2_bytes(&cv, first_block_ptr, 0, BLOCK_LEN as u32, first_flags);
+          }
         }
         kernels::Blake3KernelId::X86Avx512 => {
           #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
           {
-            x86_64::asm::compress_in_place_avx512(&cv, first_block_ptr, 0, BLOCK_LEN as u32, first_flags)
+            x86_64::asm::compress_in_place_avx512_mut(&mut cv, first_block_ptr, 0, BLOCK_LEN as u32, first_flags);
           }
           #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
           {
-            x86_64::compress_cv_avx512_bytes(&cv, first_block_ptr, 0, BLOCK_LEN as u32, first_flags)
+            cv = x86_64::compress_cv_avx512_bytes(&cv, first_block_ptr, 0, BLOCK_LEN as u32, first_flags);
           }
         }
         _ => unreachable!(),
       }
-    };
+    }
 
     if full_blocks > 1 {
       let mut blocks_compressed = 1u8;
@@ -3450,27 +3466,42 @@ unsafe fn digest_one_chunk_root_hash_words_x86(
     // SAFETY: `full_blocks * BLOCK_LEN + BLOCK_LEN <= input.len()`.
     let block_ptr = unsafe { input.as_ptr().add(full_blocks * BLOCK_LEN) };
     // SAFETY: x86 dispatch selected this function only for x86 SIMD kernels.
-    return unsafe {
+    unsafe {
       match kernel.id {
         kernels::Blake3KernelId::X86Sse41 => {
-          x86_64::compress_cv_sse41_bytes(&cv, block_ptr, 0, BLOCK_LEN as u32, final_flags)
+          #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+          {
+            x86_64::asm::compress_in_place_sse41_mut(&mut cv, block_ptr, 0, BLOCK_LEN as u32, final_flags);
+          }
+          #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+          {
+            cv = x86_64::compress_cv_sse41_bytes(&cv, block_ptr, 0, BLOCK_LEN as u32, final_flags);
+          }
         }
         kernels::Blake3KernelId::X86Avx2 => {
-          x86_64::compress_cv_avx2_bytes(&cv, block_ptr, 0, BLOCK_LEN as u32, final_flags)
+          #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+          {
+            x86_64::asm::compress_in_place_avx2_mut(&mut cv, block_ptr, 0, BLOCK_LEN as u32, final_flags);
+          }
+          #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+          {
+            cv = x86_64::compress_cv_avx2_bytes(&cv, block_ptr, 0, BLOCK_LEN as u32, final_flags);
+          }
         }
         kernels::Blake3KernelId::X86Avx512 => {
           #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
           {
-            x86_64::asm::compress_in_place_avx512(&cv, block_ptr, 0, BLOCK_LEN as u32, final_flags)
+            x86_64::asm::compress_in_place_avx512_mut(&mut cv, block_ptr, 0, BLOCK_LEN as u32, final_flags);
           }
           #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
           {
-            x86_64::compress_cv_avx512_bytes(&cv, block_ptr, 0, BLOCK_LEN as u32, final_flags)
+            cv = x86_64::compress_cv_avx512_bytes(&cv, block_ptr, 0, BLOCK_LEN as u32, final_flags);
           }
         }
         _ => unreachable!(),
       }
-    };
+    }
+    return cv;
   }
 
   // Partial final block (including empty): pad to 64 bytes.
@@ -3486,24 +3517,39 @@ unsafe fn digest_one_chunk_root_hash_words_x86(
   unsafe {
     match kernel.id {
       kernels::Blake3KernelId::X86Sse41 => {
-        x86_64::compress_cv_sse41_bytes(&cv, block_ptr, 0, last_len as u32, final_flags)
+        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+        {
+          x86_64::asm::compress_in_place_sse41_mut(&mut cv, block_ptr, 0, last_len as u32, final_flags);
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+        {
+          cv = x86_64::compress_cv_sse41_bytes(&cv, block_ptr, 0, last_len as u32, final_flags);
+        }
       }
       kernels::Blake3KernelId::X86Avx2 => {
-        x86_64::compress_cv_avx2_bytes(&cv, block_ptr, 0, last_len as u32, final_flags)
+        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+        {
+          x86_64::asm::compress_in_place_avx2_mut(&mut cv, block_ptr, 0, last_len as u32, final_flags);
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+        {
+          cv = x86_64::compress_cv_avx2_bytes(&cv, block_ptr, 0, last_len as u32, final_flags);
+        }
       }
       kernels::Blake3KernelId::X86Avx512 => {
         #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
         {
-          x86_64::asm::compress_in_place_avx512(&cv, block_ptr, 0, last_len as u32, final_flags)
+          x86_64::asm::compress_in_place_avx512_mut(&mut cv, block_ptr, 0, last_len as u32, final_flags);
         }
         #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
         {
-          x86_64::compress_cv_avx512_bytes(&cv, block_ptr, 0, last_len as u32, final_flags)
+          cv = x86_64::compress_cv_avx512_bytes(&cv, block_ptr, 0, last_len as u32, final_flags);
         }
       }
       _ => unreachable!(),
     }
   }
+  cv
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
