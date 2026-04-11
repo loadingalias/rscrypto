@@ -260,10 +260,6 @@ pub const ALL: &[Sha512KernelId] = &[
   Sha512KernelId::Aarch64Sha512,
   #[cfg(target_arch = "x86_64")]
   Sha512KernelId::X86Sha512,
-  #[cfg(target_arch = "x86_64")]
-  Sha512KernelId::X86Avx512vl,
-  #[cfg(target_arch = "x86_64")]
-  Sha512KernelId::X86Avx2,
   #[cfg(target_arch = "riscv64")]
   Sha512KernelId::Riscv64Zknh,
   #[cfg(target_arch = "wasm32")]
