@@ -544,23 +544,8 @@ pub(crate) unsafe fn root_output_blocks1(
   flags: u32,
   out: *mut u8,
 ) {
-  #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-  {
-    // SAFETY: SSE4.1 is available (checked by dispatch), and `out` is valid
-    // for 64 writable bytes per this function's contract.
-    unsafe {
-      super::asm::compress_xof_sse41(
-        chaining_value,
-        block_words.as_ptr().cast(),
-        counter,
-        block_len,
-        flags,
-        out,
-      );
-    }
-  }
-
-  #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+  // SAFETY: Caller guarantees the required CPU features and `out` points to
+  // `64` writable bytes. All pointer arithmetic stays within those bounds.
   unsafe {
     let rot16 = _mm_setr_epi8(2, 3, 0, 1, 6, 7, 4, 5, 10, 11, 8, 9, 14, 15, 12, 13);
     let rot8 = _mm_setr_epi8(1, 2, 3, 0, 5, 6, 7, 4, 9, 10, 11, 8, 13, 14, 15, 12);

@@ -640,7 +640,7 @@ pub(crate) unsafe fn root_output_blocks16(
 }
 
 /// Generate 1 root output block (64 bytes).
-/// On supported platforms, uses AVX-512 assembly for lower latency.
+/// Delegates to the SSE4.1 row-wise emitter for the single-block case.
 ///
 /// # Safety
 /// Caller must ensure AVX-512 is available and that `out` is valid for `64` writable bytes.
@@ -653,28 +653,13 @@ pub(crate) unsafe fn root_output_blocks1(
   flags: u32,
   out: *mut u8,
 ) {
-  #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-  // SAFETY: AVX-512 is available (checked by dispatch), and `out` is valid
-  // for 64 writable bytes per this function's contract.
-  unsafe {
-    super::asm::compress_xof_avx512(
-      chaining_value,
-      block_words.as_ptr().cast(),
-      counter,
-      block_len,
-      flags,
-      out,
-    );
-  }
-  // Fallback for other platforms: delegate to SSE4.1 implementation
-  #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-  unsafe {
-    super::sse41::root_output_blocks1(chaining_value, block_words, counter, block_len, flags, out)
-  }
+  // SAFETY: AVX-512 implies the delegated SSE4.1 path is legal on x86_64, and
+  // callers guarantee that `out` is valid for one 64-byte output block.
+  unsafe { super::sse41::root_output_blocks1(chaining_value, block_words, counter, block_len, flags, out) }
 }
 
 /// Generate 2 root output blocks (128 bytes) with consecutive counters.
-/// On supported platforms, uses AVX-512 assembly for lower latency.
+/// Delegates to the SSE4.1 row-wise emitter for the two-block case.
 ///
 /// # Safety
 /// Caller must ensure AVX-512 is available and that `out` is valid for `128` writable bytes.
@@ -687,26 +672,9 @@ pub(crate) unsafe fn root_output_blocks2(
   flags: u32,
   out: *mut u8,
 ) {
-  #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-  // SAFETY: AVX-512 is available (checked by dispatch), and `out` is valid
-  // for 128 writable bytes per this function's contract.
-  unsafe {
-    let block = block_words.as_ptr().cast();
-    super::asm::compress_xof_avx512(chaining_value, block, counter, block_len, flags, out);
-    super::asm::compress_xof_avx512(
-      chaining_value,
-      block,
-      counter.wrapping_add(1),
-      block_len,
-      flags,
-      out.add(64),
-    );
-  }
-  // Fallback for other platforms: delegate to SSE4.1 implementation
-  #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-  unsafe {
-    super::sse41::root_output_blocks2(chaining_value, block_words, counter, block_len, flags, out)
-  }
+  // SAFETY: AVX-512 implies the delegated SSE4.1 path is legal on x86_64, and
+  // callers guarantee that `out` is valid for two 64-byte output blocks.
+  unsafe { super::sse41::root_output_blocks2(chaining_value, block_words, counter, block_len, flags, out) }
 }
 
 /// Compress one BLAKE3 block with a latency-oriented schedule.
