@@ -126,78 +126,98 @@ impl Mac for HmacSha256 {
     self.inner.reset_to_aligned_prefix(self.inner_init);
   }
 
-  /// Oneshot HMAC-SHA256: bypasses streaming `Sha256` construction entirely.
+  /// Oneshot HMAC-SHA256: merges compress calls for small inputs and batches
+  /// zeroization under a single compiler fence.
   ///
-  /// Works directly with `[u32; 8]` state arrays and the dispatch compress
-  /// function. Avoids creating 3 `Sha256` structs, their `Drop` zeroization,
-  /// dispatch lazy-init overhead, and the unused `inner_init` clone.
+  /// For data ≤ 256 B the entire padded inner message is built on the stack
+  /// and compressed in one call, eliminating per-call overhead (function-pointer
+  /// dispatch, state save/restore) that dominates on fast SHA2-CE cores.
+  /// The outer hash is always merged into a single 128-byte (2-block) call.
   #[inline]
   #[allow(clippy::indexing_slicing)] // All indices bounded by prior length checks + fixed-size arrays.
   fn mac(key: &[u8], data: &[u8]) -> Self::Tag {
-    // --- Key normalization (RFC 2104 §2) ---
-    let mut key_block = [0u8; BLOCK_SIZE];
+    // --- Key normalization → ipad (RFC 2104 §2) ---
+    // Build ipad directly: key_byte ^ 0x36; bytes past the key are 0 ^ 0x36.
+    let mut ipad = [0x36u8; BLOCK_SIZE];
     if key.len() > BLOCK_SIZE {
       let digest = Sha256::digest(key);
-      for (dst, src) in key_block.iter_mut().zip(digest.iter()) {
-        *dst = *src;
+      for (ip, &kb) in ipad[..TAG_SIZE].iter_mut().zip(digest.iter()) {
+        *ip = kb ^ 0x36;
       }
     } else {
-      for (dst, src) in key_block.iter_mut().zip(key.iter()) {
-        *dst = *src;
+      for (ip, &kb) in ipad[..key.len()].iter_mut().zip(key.iter()) {
+        *ip = kb ^ 0x36;
       }
-    }
-
-    // --- Build ipad / opad ---
-    let mut ipad = [0u8; BLOCK_SIZE];
-    let mut opad = [0u8; BLOCK_SIZE];
-    for ((ip, op), &kb) in ipad.iter_mut().zip(opad.iter_mut()).zip(key_block.iter()) {
-      *ip = kb ^ 0x36;
-      *op = kb ^ 0x5c;
     }
 
     // --- Resolve compress function once for the full operation ---
     let total_inner = (BLOCK_SIZE as u64).strict_add(data.len() as u64);
     let compress = sha256_dispatch::compress_dispatch().select(len_hint_from_u64(total_inner));
+    let total_inner_bits = total_inner.strict_mul(8);
 
     // --- Inner hash: SHA-256(ipad ∥ data) ---
     let mut state = SHA256_H0;
-    compress(&mut state, &ipad);
 
-    let full_len = data.len().strict_sub(data.len() % BLOCK_SIZE);
-    if full_len != 0 {
-      compress(&mut state, &data[..full_len]);
-    }
-    let rest = &data[full_len..];
+    // Small-data fast path: build the entire padded inner message on the
+    // stack and compress in a single call. This eliminates per-block
+    // function-pointer overhead (state load/store, block-count branch) that
+    // dominates on wide-issue cores where SHA2-CE is very fast.
+    const INLINE_DATA_MAX: usize = 256;
+    // Max padded inner for 256 B data: ⌈(64 + 256 + 9) / 64⌉ × 64 = 384.
+    const INNER_BUF_LEN: usize = 384;
+    let mut inner_buf = [0u8; INNER_BUF_LEN];
+    let inner_used: usize;
 
-    let total_bits = total_inner.strict_mul(8);
-    let mut block = [0u8; BLOCK_SIZE];
-    block[..rest.len()].copy_from_slice(rest);
-    block[rest.len()] = 0x80;
+    if data.len() <= INLINE_DATA_MAX {
+      inner_buf[..BLOCK_SIZE].copy_from_slice(&ipad);
+      let data_end = BLOCK_SIZE.strict_add(data.len());
+      inner_buf[BLOCK_SIZE..data_end].copy_from_slice(data);
+      inner_buf[data_end] = 0x80;
+      let padded = data_end.strict_add(9).strict_add(63).strict_div(64).strict_mul(64);
+      inner_buf[padded.strict_sub(8)..padded].copy_from_slice(&total_inner_bits.to_be_bytes());
+      compress(&mut state, &inner_buf[..padded]);
+      inner_used = padded;
+    } else {
+      // Large-data streaming path.
+      compress(&mut state, &ipad);
 
-    if rest.len() >= 56 {
-      compress(&mut state, &block);
-      block = [0u8; BLOCK_SIZE];
-    }
-    block[56..BLOCK_SIZE].copy_from_slice(&total_bits.to_be_bytes());
-    compress(&mut state, &block);
+      let full_len = data.len().strict_sub(data.len() % BLOCK_SIZE);
+      if full_len != 0 {
+        compress(&mut state, &data[..full_len]);
+      }
+      let rest = &data[full_len..];
 
-    // Serialize inner hash.
-    let mut inner_hash = [0u8; TAG_SIZE];
-    for (chunk, &word) in inner_hash.chunks_exact_mut(4).zip(state.iter()) {
-      chunk.copy_from_slice(&word.to_be_bytes());
+      // Build final padding block(s) in inner_buf[..BLOCK_SIZE].
+      inner_buf[..rest.len()].copy_from_slice(rest);
+      inner_buf[rest.len()] = 0x80;
+      if rest.len() >= 56 {
+        compress(&mut state, &inner_buf[..BLOCK_SIZE]);
+        inner_buf[..BLOCK_SIZE].fill(0);
+      }
+      inner_buf[56..BLOCK_SIZE].copy_from_slice(&total_inner_bits.to_be_bytes());
+      compress(&mut state, &inner_buf[..BLOCK_SIZE]);
+      inner_used = BLOCK_SIZE;
     }
 
     // --- Outer hash: SHA-256(opad ∥ inner_hash) ---
-    // Fixed 96 bytes: opad (64) + inner_hash (32). Remainder 32 < 56, single final block.
-    state = SHA256_H0;
-    compress(&mut state, &opad);
+    // Always 96 bytes: opad (64) + inner_hash (32). Padding fits in one
+    // block → 128 bytes = 2 blocks, compressed in a single call.
+    // Derive opad from ipad: (key ^ 0x36) ^ 0x6a = key ^ 0x5c.
+    let mut outer = [0u8; 128];
+    for (o, &ip) in outer[..BLOCK_SIZE].iter_mut().zip(ipad.iter()) {
+      *o = ip ^ 0x6a;
+    }
+    // Write inner hash directly from state words — no intermediate buffer.
+    for (i, &word) in state.iter().enumerate() {
+      let off = BLOCK_SIZE.strict_add(i.strict_mul(4));
+      outer[off..off.strict_add(4)].copy_from_slice(&word.to_be_bytes());
+    }
+    outer[BLOCK_SIZE.strict_add(TAG_SIZE)] = 0x80;
+    // 96 bytes × 8 = 768 bits.
+    outer[120..128].copy_from_slice(&768u64.to_be_bytes());
 
-    block = [0u8; BLOCK_SIZE];
-    block[..TAG_SIZE].copy_from_slice(&inner_hash);
-    block[TAG_SIZE] = 0x80;
-    // 96 bytes × 8 = 768 bits
-    block[56..BLOCK_SIZE].copy_from_slice(&768u64.to_be_bytes());
-    compress(&mut state, &block);
+    state = SHA256_H0;
+    compress(&mut state, &outer);
 
     // Serialize tag.
     let mut tag = [0u8; TAG_SIZE];
@@ -205,12 +225,10 @@ impl Mac for HmacSha256 {
       chunk.copy_from_slice(&word.to_be_bytes());
     }
 
-    // --- Zeroize sensitive material ---
-    ct::zeroize(&mut key_block);
-    ct::zeroize(&mut ipad);
-    ct::zeroize(&mut opad);
-    ct::zeroize(&mut inner_hash);
-    ct::zeroize(&mut block);
+    // --- Batch zeroize all sensitive material (single fence) ---
+    ct::zeroize_no_fence(&mut ipad);
+    ct::zeroize_no_fence(&mut inner_buf[..inner_used]);
+    ct::zeroize_no_fence(&mut outer);
     for word in state.iter_mut() {
       // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
       unsafe { core::ptr::write_volatile(word, 0) };
