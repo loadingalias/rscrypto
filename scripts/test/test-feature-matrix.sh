@@ -9,6 +9,7 @@ maybe_disable_sccache
 
 LOG_DIR=$(mktemp -d)
 trap 'rm -rf "$LOG_DIR"' EXIT
+TARGET_DIR="$LOG_DIR/target"
 
 FEATURE_SETS=(
   "checksums"
@@ -24,7 +25,10 @@ echo "Executable rscrypto feature matrix"
 for feature_set in "${FEATURE_SETS[@]}"; do
   log_path="$LOG_DIR/$(echo "$feature_set" | tr ',' '_').log"
   step "--no-default-features --features $feature_set"
-  if ! cargo test --workspace --lib --tests --no-default-features --features "$feature_set" >"$log_path" 2>&1; then
+  # Isolate reduced-feature test builds from the workspace target dir. The
+  # commit lane runs full-feature and no_std checks first, and sharing the same
+  # restored target cache has produced flaky matrix failures in CI.
+  if ! CARGO_TARGET_DIR="$TARGET_DIR" cargo test --workspace --lib --tests --no-default-features --features "$feature_set" >"$log_path" 2>&1; then
     fail
     show_error "$log_path"
     exit 1
