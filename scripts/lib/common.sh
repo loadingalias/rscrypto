@@ -37,7 +37,20 @@ show_error() {
   echo ""
   echo "  ${RED}Error:${RESET}"
   if [[ -f "$log_file" ]]; then
-    tail -40 "$log_file" | sed 's/^/    /'
+    local error_pattern='error(\[[A-Z0-9]+\])?:|could not compile|panicked at|test result: FAILED|failures:|Caused by:'
+    local printer=(cat)
+
+    if command -v perl >/dev/null 2>&1; then
+      # Strip ANSI escapes so grep/ripgrep can match the actual compiler text.
+      printer=(perl -pe 's/\e\[[0-9;]*[[:alpha:]]//g')
+    fi
+
+    if command -v rg >/dev/null 2>&1 && "${printer[@]}" "$log_file" | rg -n -m 1 "$error_pattern" >/dev/null 2>&1; then
+      echo "    Relevant excerpt:"
+      "${printer[@]}" "$log_file" | rg -n -m 8 -C 3 "$error_pattern" | sed 's/^/    /'
+    else
+      tail -40 "$log_file" | sed 's/^/    /'
+    fi
   fi
   echo ""
 }
