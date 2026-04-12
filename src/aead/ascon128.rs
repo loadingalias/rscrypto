@@ -9,42 +9,41 @@ use core::fmt;
 
 use super::{AeadBufferError, Nonce128, OpenError};
 use crate::{
-  hashes::crypto::ascon::{permute_6_portable, permute_12_portable},
+  hashes::crypto::ascon::{permute_8_portable, permute_12_portable},
   traits::{Aead, VerificationError, ct},
 };
 
 const KEY_SIZE: usize = 16;
 const NONCE_SIZE: usize = Nonce128::LENGTH;
 const TAG_SIZE: usize = 16;
-const RATE: usize = 8;
+const RATE: usize = 16;
 
-/// Ascon-AEAD128 IV (SP 800-232): k=128, r=64, a=12, b=6.
-const IV: u64 = 0x80400c0600000000;
+/// Ascon-AEAD128 IV (SP 800-232): k=128, r=128, a=12, b=8.
+const IV: u64 = 0x0000_1000_808c_0001;
+const DOMAIN_SEPARATOR: u64 = 0x8000_0000_0000_0000;
 
-/// Big-endian padding: set bit 7 of byte position `n` (0 ≤ n < RATE).
+/// Little-endian padding: set the first free byte at position `n`.
 #[inline(always)]
 const fn pad(n: usize) -> u64 {
-  let shift = 8u32.strict_mul(7u32.strict_sub(n as u32));
-  0x80_u64 << shift
+  0x01_u64 << (8 * n)
 }
 
-/// Big-endian mask covering the first `n` bytes (MSB-aligned).
+/// Clear the lowest `n` bytes of `word`.
 #[inline(always)]
-const fn byte_mask(n: usize) -> u64 {
+const fn clear(word: u64, n: usize) -> u64 {
   if n == 0 {
-    return 0;
+    return word;
   }
-  let shift = 8u32.strict_mul(8u32.strict_sub(n as u32));
-  u64::MAX << shift
+  word & (u64::MAX << (8 * n))
 }
 
-/// Load up to 8 bytes big-endian into a u64, zero-padding on the right.
+/// Load up to 8 bytes little-endian into a u64, zero-padding on the right.
 #[inline(always)]
 fn load_bytes(data: &[u8]) -> u64 {
   debug_assert!(data.len() <= 8);
   let mut buf = [0u8; 8];
   buf[..data.len()].copy_from_slice(data);
-  u64::from_be_bytes(buf)
+  u64::from_le_bytes(buf)
 }
 
 // ---------------------------------------------------------------------------
@@ -80,14 +79,14 @@ impl AsconAead128Key {
     &self.0
   }
 
-  /// Key halves as big-endian u64 words.
+  /// Key halves as little-endian u64 words.
   #[inline]
   fn words(&self) -> (u64, u64) {
     let mut hi = [0u8; 8];
     let mut lo = [0u8; 8];
     hi.copy_from_slice(&self.0[..8]);
     lo.copy_from_slice(&self.0[8..]);
-    (u64::from_be_bytes(hi), u64::from_be_bytes(lo))
+    (u64::from_le_bytes(hi), u64::from_le_bytes(lo))
   }
 }
 
@@ -200,7 +199,7 @@ impl_hex_fmt!(AsconAead128Tag);
 ///
 /// NIST SP 800-232 lightweight AEAD with a 128-bit key, 128-bit nonce,
 /// and 128-bit authentication tag. Built on the Ascon permutation with
-/// rate = 64 bits, PA = 12 rounds, PB = 6 rounds.
+/// rate = 128 bits, PA = 12 rounds, PB = 8 rounds.
 ///
 /// # Examples
 ///
@@ -294,20 +293,20 @@ impl AsconAead128 {
   /// Initialize the 320-bit state from IV, key, and nonce.
   #[inline]
   fn initialize(&self, nonce: &Nonce128) -> [u64; 5] {
-    let (k_hi, k_lo) = self.key.words();
+    let (k0, k1) = self.key.words();
 
     let n = nonce.as_bytes();
-    let mut n_hi_buf = [0u8; 8];
-    let mut n_lo_buf = [0u8; 8];
-    n_hi_buf.copy_from_slice(&n[..8]);
-    n_lo_buf.copy_from_slice(&n[8..]);
-    let n_hi = u64::from_be_bytes(n_hi_buf);
-    let n_lo = u64::from_be_bytes(n_lo_buf);
+    let mut n0_buf = [0u8; 8];
+    let mut n1_buf = [0u8; 8];
+    n0_buf.copy_from_slice(&n[..8]);
+    n1_buf.copy_from_slice(&n[8..]);
+    let n0 = u64::from_le_bytes(n0_buf);
+    let n1 = u64::from_le_bytes(n1_buf);
 
-    let mut s = [IV, k_hi, k_lo, n_hi, n_lo];
+    let mut s = [IV, k0, k1, n0, n1];
     permute_12_portable(&mut s);
-    s[3] ^= k_hi;
-    s[4] ^= k_lo;
+    s[3] ^= k0;
+    s[4] ^= k1;
     s
   }
 
@@ -316,37 +315,42 @@ impl AsconAead128 {
     if !aad.is_empty() {
       let mut chunks = aad.chunks_exact(RATE);
       for chunk in chunks.by_ref() {
-        let mut block = [0u8; RATE];
-        block.copy_from_slice(chunk);
-        s[0] ^= u64::from_be_bytes(block);
-        permute_6_portable(s);
+        s[0] ^= load_bytes(&chunk[..8]);
+        s[1] ^= load_bytes(&chunk[8..]);
+        permute_8_portable(s);
       }
 
-      // Last partial block (padded). Empty remainder is handled correctly:
-      // load_bytes returns 0, pad(0) sets the MSB.
-      let rest = chunks.remainder();
-      s[0] ^= load_bytes(rest);
-      s[0] ^= pad(rest.len());
-      permute_6_portable(s);
+      let mut rest = chunks.remainder();
+      let sidx = if rest.len() >= 8 {
+        s[0] ^= load_bytes(&rest[..8]);
+        rest = &rest[8..];
+        1
+      } else {
+        0
+      };
+      s[sidx] ^= pad(rest.len());
+      if !rest.is_empty() {
+        s[sidx] ^= load_bytes(rest);
+      }
+      permute_8_portable(s);
     }
 
-    // Domain separator (unconditional).
-    s[4] ^= 1;
+    s[4] ^= DOMAIN_SEPARATOR;
   }
 
   /// Finalize the state and extract the 128-bit tag.
   fn finalize(&self, s: &mut [u64; 5]) -> [u8; TAG_SIZE] {
-    let (k_hi, k_lo) = self.key.words();
+    let (k0, k1) = self.key.words();
 
-    s[1] ^= k_hi;
-    s[2] ^= k_lo;
+    s[2] ^= k0;
+    s[3] ^= k1;
     permute_12_portable(s);
-    s[3] ^= k_hi;
-    s[4] ^= k_lo;
+    s[3] ^= k0;
+    s[4] ^= k1;
 
     let mut tag = [0u8; TAG_SIZE];
-    tag[..8].copy_from_slice(&s[3].to_be_bytes());
-    tag[8..].copy_from_slice(&s[4].to_be_bytes());
+    tag[..8].copy_from_slice(&s[3].to_le_bytes());
+    tag[8..].copy_from_slice(&s[4].to_le_bytes());
     tag
   }
 }
@@ -381,28 +385,29 @@ impl Aead for AsconAead128 {
     let mut s = self.initialize(nonce);
     Self::process_aad(&mut s, aad);
 
-    let full_blocks = buffer.len() / RATE;
-    let tail_start = full_blocks.strict_mul(RATE);
-
-    // Encrypt full blocks.
-    for i in 0..full_blocks {
-      let start = i.strict_mul(RATE);
-      let end = start.strict_add(RATE);
-      let mut block = [0u8; RATE];
-      block.copy_from_slice(&buffer[start..end]);
-      s[0] ^= u64::from_be_bytes(block);
-      block = s[0].to_be_bytes();
-      buffer[start..end].copy_from_slice(&block);
-      permute_6_portable(&mut s);
+    let mut blocks = buffer.chunks_exact_mut(RATE);
+    for block in blocks.by_ref() {
+      s[0] ^= load_bytes(&block[..8]);
+      block[..8].copy_from_slice(&s[0].to_le_bytes());
+      s[1] ^= load_bytes(&block[8..]);
+      block[8..].copy_from_slice(&s[1].to_le_bytes());
+      permute_8_portable(&mut s);
     }
 
-    // Last partial block.
-    let tail_len = buffer.len().strict_sub(tail_start);
-    let pt_tail = load_bytes(&buffer[tail_start..]);
-    s[0] ^= pt_tail;
-    let ct_bytes = s[0].to_be_bytes();
-    buffer[tail_start..].copy_from_slice(&ct_bytes[..tail_len]);
-    s[0] ^= pad(tail_len);
+    let mut tail = blocks.into_remainder();
+    let sidx = if tail.len() >= 8 {
+      s[0] ^= load_bytes(&tail[..8]);
+      tail[..8].copy_from_slice(&s[0].to_le_bytes());
+      tail = &mut tail[8..];
+      1
+    } else {
+      0
+    };
+    s[sidx] ^= pad(tail.len());
+    if !tail.is_empty() {
+      s[sidx] ^= load_bytes(tail);
+      tail.copy_from_slice(&s[sidx].to_le_bytes()[..tail.len()]);
+    }
 
     AsconAead128Tag::from_bytes(self.finalize(&mut s))
   }
@@ -417,36 +422,37 @@ impl Aead for AsconAead128 {
     let mut s = self.initialize(nonce);
     Self::process_aad(&mut s, aad);
 
-    let full_blocks = buffer.len() / RATE;
-    let tail_start = full_blocks.strict_mul(RATE);
-
-    // Decrypt full blocks.
-    for i in 0..full_blocks {
-      let start = i.strict_mul(RATE);
-      let end = start.strict_add(RATE);
-      let mut block = [0u8; RATE];
-      block.copy_from_slice(&buffer[start..end]);
-      let ct_word = u64::from_be_bytes(block);
-      block = (s[0] ^ ct_word).to_be_bytes();
-      buffer[start..end].copy_from_slice(&block);
-      s[0] = ct_word;
-      permute_6_portable(&mut s);
+    let mut blocks = buffer.chunks_exact_mut(RATE);
+    for block in blocks.by_ref() {
+      let c0 = load_bytes(&block[..8]);
+      block[..8].copy_from_slice(&(s[0] ^ c0).to_le_bytes());
+      s[0] = c0;
+      let c1 = load_bytes(&block[8..]);
+      block[8..].copy_from_slice(&(s[1] ^ c1).to_le_bytes());
+      s[1] = c1;
+      permute_8_portable(&mut s);
     }
 
-    // Last partial block.
-    let tail_len = buffer.len().strict_sub(tail_start);
-    let ct_word = load_bytes(&buffer[tail_start..]);
-    let pt_bytes = (s[0] ^ ct_word).to_be_bytes();
-    buffer[tail_start..].copy_from_slice(&pt_bytes[..tail_len]);
-    // Reconstruct the state: replace rate bytes with ciphertext, add padding.
-    s[0] &= !byte_mask(tail_len);
-    s[0] |= ct_word;
-    s[0] ^= pad(tail_len);
+    let mut tail = blocks.into_remainder();
+    let sidx = if tail.len() >= 8 {
+      let c0 = load_bytes(&tail[..8]);
+      tail[..8].copy_from_slice(&(s[0] ^ c0).to_le_bytes());
+      s[0] = c0;
+      tail = &mut tail[8..];
+      1
+    } else {
+      0
+    };
+    s[sidx] ^= pad(tail.len());
+    if !tail.is_empty() {
+      let c = load_bytes(tail);
+      s[sidx] ^= c;
+      tail.copy_from_slice(&s[sidx].to_le_bytes()[..tail.len()]);
+      s[sidx] = clear(s[sidx], tail.len()) ^ c;
+    }
 
-    // Finalize and verify.
     let expected = self.finalize(&mut s);
     if !ct::constant_time_eq(&expected, tag.as_bytes()) {
-      // Zeroize unverified plaintext before returning.
       ct::zeroize(buffer);
       return Err(VerificationError::new());
     }
@@ -457,12 +463,38 @@ impl Aead for AsconAead128 {
 
 #[cfg(test)]
 mod tests {
+  use ascon_aead::aead::{Aead as _, KeyInit, Payload, generic_array::GenericArray};
+
   use super::*;
-  fn hex(s: &str) -> Vec<u8> {
-    (0..s.len())
-      .step_by(2)
-      .map(|i| u8::from_str_radix(&s[i..i.strict_add(2)], 16).unwrap())
-      .collect()
+
+  fn assert_matches_oracle(key: [u8; 16], nonce: [u8; 16], aad: &[u8], plaintext: &[u8]) {
+    let aead = AsconAead128::new(&AsconAead128Key::from_bytes(key));
+    let nonce_typed = Nonce128::from_bytes(nonce);
+    let oracle = ascon_aead::AsconAead128::new_from_slice(&key).unwrap();
+    let oracle_nonce = GenericArray::from_slice(&nonce);
+
+    let mut ours = plaintext.to_vec();
+    let tag = aead.encrypt_in_place(&nonce_typed, aad, &mut ours);
+    let mut ours_combined = ours.clone();
+    ours_combined.extend_from_slice(tag.as_bytes());
+    let expected = oracle.encrypt(oracle_nonce, Payload { msg: plaintext, aad }).unwrap();
+    assert_eq!(ours_combined, expected, "encryption mismatch");
+
+    let mut ours_buf = ours.clone();
+    aead.decrypt_in_place(&nonce_typed, aad, &mut ours_buf, &tag).unwrap();
+    assert_eq!(ours_buf, plaintext, "self decrypt mismatch");
+
+    let (oracle_ct, oracle_tag) = expected.split_at(expected.len().strict_sub(TAG_SIZE));
+    let mut oracle_buf = oracle_ct.to_vec();
+    aead
+      .decrypt_in_place(
+        &nonce_typed,
+        aad,
+        &mut oracle_buf,
+        &AsconAead128Tag::from_bytes(oracle_tag.try_into().unwrap()),
+      )
+      .unwrap();
+    assert_eq!(oracle_buf, plaintext, "oracle decrypt mismatch");
   }
 
   /// Round-trip: encrypt then decrypt recovers the original plaintext.
@@ -616,109 +648,45 @@ mod tests {
     assert_eq!(buf16, plaintext16);
   }
 
-  // -- Official test vectors (Ascon-128 NIST LWC KAT) --
-  //
-  // Source: ascon/ascon-c crypto_aead/asconaead128/LWC_AEAD_KAT_128_128.txt
-  //
-  // genkat format:
-  //   Key   = 000102030405060708090A0B0C0D0E0F  (offset 0x00)
-  //   Nonce = 101112131415161718191A1B1C1D1E1F  (offset 0x10)
-  //   PT    = 20, 2021, 202122, ...             (offset 0x20)
-  //   AD    = 30, 3031, 303132, ...             (offset 0x30)
-  //   CT    = ciphertext || 16-byte tag
+  #[test]
+  fn differential_empty_inputs_match_oracle() {
+    assert_matches_oracle([0u8; 16], [0u8; 16], b"", b"");
+  }
 
-  fn kat_key() -> AsconAead128Key {
-    AsconAead128Key::from_bytes([
+  #[test]
+  fn differential_crash_case_matches_oracle() {
+    assert_matches_oracle(
+      [
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x0A, 0xFF, 0xFF, 0xFF, 0x3D,
+      ],
+      [
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x0A, 0xFF, 0xFF, 0xFF, 0x3D, 0xFF, 0xFF, 0x0A,
+      ],
+      &[0xFF, 0xFF, 0xFF],
+      b"",
+    );
+  }
+
+  #[test]
+  fn differential_exact_rate_boundaries_match_oracle() {
+    let key = [
       0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
-    ])
-  }
-
-  fn kat_nonce() -> Nonce128 {
-    Nonce128::from_bytes([
+    ];
+    let nonce = [
       0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
-    ])
+    ];
+    let aad: Vec<u8> = (0x30..0x40).collect();
+    let pt: Vec<u8> = (0x20..0x30).collect();
+    assert_matches_oracle(key, nonce, &aad[..8], &pt[..8]);
+    assert_matches_oracle(key, nonce, &aad, &pt);
   }
 
-  fn kat_verify(pt: &[u8], ad: &[u8], expected_ct_tag: &str) {
-    let aead = AsconAead128::new(&kat_key());
-    let nonce = kat_nonce();
-    let expected = hex(expected_ct_tag);
-    let ct_len = pt.len();
-
-    // Encrypt and check ciphertext + tag.
-    let mut buf = pt.to_vec();
-    let tag = aead.encrypt_in_place(&nonce, ad, &mut buf);
-    assert_eq!(&buf, &expected[..ct_len], "ciphertext mismatch");
-    assert_eq!(tag.as_bytes(), &expected[ct_len..], "tag mismatch");
-
-    // Decrypt and verify round-trip.
-    aead.decrypt_in_place(&nonce, ad, &mut buf, &tag).unwrap();
-    assert_eq!(&buf, pt, "plaintext recovery mismatch");
-  }
-
-  /// Count 1: empty PT, empty AD.
   #[test]
-  fn kat_count_1() {
-    kat_verify(b"", b"", "38CCA290D1F2EF3DF9C8531946499037");
-  }
-
-  /// Count 2: empty PT, 1-byte AD.
-  #[test]
-  fn kat_count_2() {
-    kat_verify(b"", &[0x30], "01FF81046C47E4D78D0389A321FFD48E");
-  }
-
-  /// Count 9: empty PT, 8-byte AD (one full rate block).
-  #[test]
-  fn kat_count_9() {
-    let ad: Vec<u8> = (0x30..0x38).collect();
-    kat_verify(b"", &ad, "E24B128B544E22871026615786C75E9E");
-  }
-
-  /// Count 17: empty PT, 16-byte AD (two rate blocks).
-  #[test]
-  fn kat_count_17() {
-    let ad: Vec<u8> = (0x30..0x40).collect();
-    kat_verify(b"", &ad, "5C1472BC958B7CEB24FCEBA70C81297F");
-  }
-
-  /// Count 33: empty PT, 32-byte AD (four rate blocks).
-  #[test]
-  fn kat_count_33() {
-    let ad: Vec<u8> = (0x30..0x50).collect();
-    kat_verify(b"", &ad, "016B13352D9202913C7CC98F9AC11659");
-  }
-
-  /// Count 34: 1-byte PT, empty AD.
-  #[test]
-  fn kat_count_34() {
-    kat_verify(&[0x20], b"", "EB9B92A2B8149DE23C431A5FEC6E110422");
-  }
-
-  /// Count 35: 1-byte PT, 1-byte AD.
-  #[test]
-  fn kat_count_35() {
-    kat_verify(&[0x20], &[0x30], "5E89608365697A23A0377D13FDBA0EF80E");
-  }
-
-  /// Count 67: 2-byte PT, empty AD.
-  #[test]
-  fn kat_count_67() {
-    kat_verify(&[0x20, 0x21], b"", "EB856FACB4BC06CE8A41F20478F1719EE3BE");
-  }
-
-  /// Count 265: 8-byte PT (one full rate block), empty AD.
-  #[test]
-  fn kat_count_265() {
-    let pt: Vec<u8> = (0x20..0x28).collect();
-    kat_verify(&pt, b"", "EB851929173E2CC2ACD21F198E532C9F15EBF55DEC80AAE2");
-  }
-
-  /// Count 281: 8-byte PT, 16-byte AD (both multi-block).
-  #[test]
-  fn kat_count_281() {
-    let pt: Vec<u8> = (0x20..0x28).collect();
-    let ad: Vec<u8> = (0x30..0x40).collect();
-    kat_verify(&pt, &ad, "42CD8C3F62DECC6BBBDCE06638AAF57D7C17C4438C6251EF");
+  fn differential_multiblock_matches_oracle() {
+    let key = [0x42; 16];
+    let nonce = [0x24; 16];
+    let aad: Vec<u8> = (0..48).map(|i| i as u8).collect();
+    let pt: Vec<u8> = (0u8..97).map(|i| i.wrapping_mul(17)).collect();
+    assert_matches_oracle(key, nonce, &aad, &pt);
   }
 }

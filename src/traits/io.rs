@@ -117,9 +117,12 @@ where
   let n = inner.read_vectored(bufs)?;
   let mut remaining = n;
   for buf in bufs {
+    if remaining == 0 {
+      break;
+    }
     let to_hash = remaining.min(buf.len());
     if to_hash == 0 {
-      break;
+      continue;
     }
     if let Some(data) = buf.get(..to_hash) {
       on_data(data);
@@ -155,9 +158,12 @@ where
   let n = inner.write_vectored(bufs)?;
   let mut remaining = n;
   for buf in bufs {
+    if remaining == 0 {
+      break;
+    }
     let to_hash = remaining.min(buf.len());
     if to_hash == 0 {
-      break;
+      continue;
     }
     if let Some(data) = buf.get(..to_hash) {
       on_data(data);
@@ -699,7 +705,7 @@ impl<W: std::io::Write, D: crate::Digest> std::io::Write for DigestWriter<W, D> 
 
 #[cfg(all(test, feature = "std"))]
 mod tests {
-  use std::io::{self, IoSlice, Write};
+  use std::io::{self, IoSlice, IoSliceMut, Read, Write};
 
   use super::{ChecksumWriter, DigestWriter};
   use crate::{Checksum, Digest};
@@ -788,8 +794,11 @@ mod tests {
 
       for buf in bufs {
         let take = remaining.min(buf.len());
-        if take == 0 {
+        if remaining == 0 {
           break;
+        }
+        if take == 0 {
+          continue;
         }
         self.inner.extend_from_slice(&buf[..take]);
         written = written.strict_add(take);
@@ -859,5 +868,71 @@ mod tests {
     let (inner, digest) = writer.into_parts();
     assert_eq!(inner.inner, b"abcdef");
     assert_eq!(digest, digest_sum(b"abcdef"));
+  }
+
+  #[test]
+  fn checksum_reader_vectored_skips_empty_buffers() {
+    let mut reader = Sum::reader(io::Cursor::new(b"abcde".to_vec()));
+    let mut first = [];
+    let mut second = [0u8; 2];
+    let mut third = [0u8; 3];
+    let mut bufs = [
+      IoSliceMut::new(&mut first),
+      IoSliceMut::new(&mut second),
+      IoSliceMut::new(&mut third),
+    ];
+
+    let read = reader.read_vectored(&mut bufs).unwrap();
+    assert_eq!(read, 5);
+    assert_eq!(second, *b"ab");
+    assert_eq!(third, *b"cde");
+    assert_eq!(reader.checksum(), checksum_sum(b"abcde"));
+  }
+
+  #[test]
+  fn digest_reader_vectored_skips_empty_buffers() {
+    let mut reader = SumDigest::reader(io::Cursor::new(b"abcde".to_vec()));
+    let mut first = [];
+    let mut second = [0u8; 2];
+    let mut third = [0u8; 3];
+    let mut bufs = [
+      IoSliceMut::new(&mut first),
+      IoSliceMut::new(&mut second),
+      IoSliceMut::new(&mut third),
+    ];
+
+    let read = reader.read_vectored(&mut bufs).unwrap();
+    assert_eq!(read, 5);
+    assert_eq!(second, *b"ab");
+    assert_eq!(third, *b"cde");
+    assert_eq!(reader.digest(), digest_sum(b"abcde"));
+  }
+
+  #[test]
+  fn checksum_writer_vectored_skips_empty_buffers() {
+    let mut writer = ChecksumWriter::<_, Sum>::new(PartialWriter::new(5));
+    let bufs = [IoSlice::new(b""), IoSlice::new(b"ab"), IoSlice::new(b"cde")];
+    let written = writer.write_vectored(&bufs).unwrap();
+
+    assert_eq!(written, 5);
+    assert_eq!(writer.checksum(), checksum_sum(b"abcde"));
+
+    let (inner, checksum) = writer.into_parts();
+    assert_eq!(inner.inner, b"abcde");
+    assert_eq!(checksum, checksum_sum(b"abcde"));
+  }
+
+  #[test]
+  fn digest_writer_vectored_skips_empty_buffers() {
+    let mut writer = DigestWriter::<_, SumDigest>::new(PartialWriter::new(5));
+    let bufs = [IoSlice::new(b""), IoSlice::new(b"ab"), IoSlice::new(b"cde")];
+    let written = writer.write_vectored(&bufs).unwrap();
+
+    assert_eq!(written, 5);
+    assert_eq!(writer.digest(), digest_sum(b"abcde"));
+
+    let (inner, digest) = writer.into_parts();
+    assert_eq!(inner.inner, b"abcde");
+    assert_eq!(digest, digest_sum(b"abcde"));
   }
 }

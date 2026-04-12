@@ -207,18 +207,20 @@ pub(crate) fn permute_12_portable(s: &mut [u64; 5]) {
   s[4] = x4;
 }
 
-/// Ascon-p[6]: 6-round permutation (PB) used by Ascon-AEAD128.
+/// Ascon-p[8]: 8-round permutation (PB) used by Ascon-AEAD128.
 ///
 /// Fully unrolled for the same register-allocation benefits as
 /// [`permute_12_portable`].
 #[inline(always)]
-pub(crate) fn permute_6_portable(s: &mut [u64; 5]) {
+pub(crate) fn permute_8_portable(s: &mut [u64; 5]) {
   let mut x0 = s[0];
   let mut x1 = s[1];
   let mut x2 = s[2];
   let mut x3 = s[3];
   let mut x4 = s[4];
 
+  ascon_round!(x0, x1, x2, x3, x4, 0xB4);
+  ascon_round!(x0, x1, x2, x3, x4, 0xA5);
   ascon_round!(x0, x1, x2, x3, x4, 0x96);
   ascon_round!(x0, x1, x2, x3, x4, 0x87);
   ascon_round!(x0, x1, x2, x3, x4, 0x78);

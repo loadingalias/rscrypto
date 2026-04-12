@@ -2904,10 +2904,15 @@ impl Digest for Blake3 {
       return;
     }
 
+    // A pending full chunk must be committed before we accept bytes for the
+    // next chunk. Otherwise a small follow-up update can stay on the fast path
+    // and `finalize()` will root the pending chunk instead of the new tail.
+    if self.pending_chunk_cv.is_some() {
+      self.update_digest_slow(input);
+      return;
+    }
+
     // Fast path: input fits entirely within the current chunk.
-    // Safe even when pending_chunk_cv is Some — the pending CV is for an
-    // earlier chunk and will be committed when we cross the chunk boundary
-    // in update_digest_slow().
     //
     // Uses subtraction instead of addition to avoid an overflow-checking
     // branch from strict_add. The cs_len < CHUNK_LEN guard proves the
@@ -3130,7 +3135,7 @@ impl Xof for Blake3XofReader {
       return;
     }
 
-    if out.len() < OUTPUT_BLOCK_LEN {
+    if out.len() < OUTPUT_BLOCK_LEN && self.position_within_block == 0 {
       self.fill_one_block(&mut out);
       return;
     }
@@ -3810,6 +3815,58 @@ mod tests {
       single_xof.squeeze(&mut single);
 
       assert_eq!(stepped, single, "xof 32+32 mismatch len={len}");
+    }
+  }
+
+  #[test]
+  fn xof_cross_block_partial_squeezes_match_single_read_in_all_modes() {
+    const OUT_LEN: usize = 107;
+    const SPLIT: usize = 44;
+
+    for len in [0usize, 2, 64, 1024] {
+      let input = input_pattern(len);
+
+      let mut plain_single = Blake3::new();
+      plain_single.update(&input);
+      let mut plain_expected = [0u8; OUT_LEN];
+      plain_single.finalize_xof().squeeze(&mut plain_expected);
+
+      let mut plain_step = Blake3::new();
+      plain_step.update(&input);
+      let mut plain_actual = [0u8; OUT_LEN];
+      let mut plain_xof = plain_step.finalize_xof();
+      plain_xof.squeeze(&mut plain_actual[..SPLIT]);
+      plain_xof.squeeze(&mut plain_actual[SPLIT..]);
+      assert_eq!(plain_actual, plain_expected, "plain xof cross-block mismatch len={len}");
+
+      let mut keyed_single = Blake3::new_keyed(KEY);
+      keyed_single.update(&input);
+      let mut keyed_expected = [0u8; OUT_LEN];
+      keyed_single.finalize_xof().squeeze(&mut keyed_expected);
+
+      let mut keyed_step = Blake3::new_keyed(KEY);
+      keyed_step.update(&input);
+      let mut keyed_actual = [0u8; OUT_LEN];
+      let mut keyed_xof = keyed_step.finalize_xof();
+      keyed_xof.squeeze(&mut keyed_actual[..SPLIT]);
+      keyed_xof.squeeze(&mut keyed_actual[SPLIT..]);
+      assert_eq!(keyed_actual, keyed_expected, "keyed xof cross-block mismatch len={len}");
+
+      let mut derive_single = Blake3::new_derive_key(CONTEXT);
+      derive_single.update(&input);
+      let mut derive_expected = [0u8; OUT_LEN];
+      derive_single.finalize_xof().squeeze(&mut derive_expected);
+
+      let mut derive_step = Blake3::new_derive_key(CONTEXT);
+      derive_step.update(&input);
+      let mut derive_actual = [0u8; OUT_LEN];
+      let mut derive_xof = derive_step.finalize_xof();
+      derive_xof.squeeze(&mut derive_actual[..SPLIT]);
+      derive_xof.squeeze(&mut derive_actual[SPLIT..]);
+      assert_eq!(
+        derive_actual, derive_expected,
+        "derive xof cross-block mismatch len={len}"
+      );
     }
   }
 

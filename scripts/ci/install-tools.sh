@@ -227,6 +227,17 @@ case "$MODE" in
     install_if_missing "just" "just"
     ;;
 
+  coverage)
+    # Coverage reporting: nextest + fuzz corpus coverage.
+    install_binstall
+    install_if_missing "cargo-llvm-cov" "cargo-llvm-cov"
+    install_if_missing "cargo-nextest" "cargo-nextest"
+    install_if_missing "cargo-fuzz" "cargo-fuzz"
+    install_if_missing "just" "just"
+    # llvm-tools-preview provides llvm-profdata and llvm-cov for fuzz coverage export.
+    rustup component add llvm-tools-preview 2>/dev/null || true
+    ;;
+
   minimal)
     # Minimal set for quick jobs
     install_binstall
@@ -239,7 +250,7 @@ case "$MODE" in
 
   *)
     echo "Unknown mode: $MODE"
-    echo "Usage: install-tools.sh [standard|runson|bench|runson-bench|ibm|fuzz|minimal|none]"
+    echo "Usage: install-tools.sh [standard|runson|bench|runson-bench|ibm|fuzz|coverage|minimal|none]"
     exit 1
     ;;
 esac

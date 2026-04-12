@@ -52,14 +52,6 @@ pub(crate) fn encoded_string_len(data: &[u8]) -> usize {
   left_encode(bits_from_len(data.len())).1.strict_add(data.len())
 }
 
-#[inline]
-pub(crate) fn absorb_encoded_string<const RATE: usize>(core: &mut KeccakCore<RATE>, data: &[u8]) {
-  let (prefix, prefix_len) = left_encode(bits_from_len(data.len()));
-  core.update(&prefix[..prefix_len]);
-  core.update(data);
-}
-
-#[cfg(feature = "auth")]
 pub(crate) fn absorb_bytepad<const RATE: usize>(core: &mut KeccakCore<RATE>, segments: &[&[u8]], payload_len: usize) {
   let (prefix, prefix_len) = left_encode(RATE as u64);
   core.update(&prefix[..prefix_len]);
@@ -68,8 +60,7 @@ pub(crate) fn absorb_bytepad<const RATE: usize>(core: &mut KeccakCore<RATE>, seg
   }
 
   let total_len = prefix_len.strict_add(payload_len);
-  let pad_len = (RATE.strict_sub(total_len % RATE)) % RATE;
-  if pad_len != 0 {
-    core.update(&[0u8; RATE][..pad_len]);
-  }
+  let rem = total_len % RATE;
+  let pad_len = if rem == 0 { RATE } else { RATE.strict_sub(rem) };
+  core.update(&[0u8; RATE][..pad_len]);
 }

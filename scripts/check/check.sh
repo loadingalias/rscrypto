@@ -53,7 +53,7 @@ ok
 
 if [[ "$CHECK_RSCRYPTO_FEATURE_MATRIX" == true ]]; then
   step "Checking rscrypto no_std matrix"
-  for feature_set in "" "alloc" "checksums" "alloc,checksums" "hashes" "alloc,hashes" "checksums,hashes" "alloc,checksums,hashes"; do
+  for feature_set in "" "alloc" "checksums" "alloc,checksums" "hashes" "alloc,hashes" "auth" "alloc,auth" "checksums,hashes" "alloc,checksums,hashes"; do
     if [[ -n "$feature_set" ]]; then
       if ! cargo check -p rscrypto --no-default-features --features "$feature_set" --lib >>"$LOG_DIR/check.log" 2>&1; then
         fail

@@ -19,6 +19,7 @@ permissions:
   contents: read
 
 jobs:
+  # ─── Gate ───────────────────────────────────────────────────────────────────
   lane-contract:
     name: Lane Contract (weekly)
     runs-on: ubuntu-latest
@@ -28,40 +29,15 @@ jobs:
           test "${{ github.event_name }}" = "schedule" -o "${{ github.event_name }}" = "workflow_dispatch"
           echo "lane=weekly"
 
-  rail-plan:
-    name: Build Plan
-    needs: lane-contract
-    runs-on: ubuntu-latest
-    outputs:
-      base_ref: ${{ steps.rail.outputs.base-ref || steps.manual.outputs.base_ref }}
-      scope_json: ${{ steps.rail.outputs.scope-json || '' }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
-        with:
-          fetch-depth: 0
-
-      - name: Manual dispatch (no change detection)
-        if: github.event_name == 'workflow_dispatch'
-        id: manual
-        run: echo "base_ref=" >> "$GITHUB_OUTPUT"
-
-      - name: Build Plan
-        if: github.event_name != 'workflow_dispatch'
-        id: rail
-        uses: loadingalias/cargo-rail-action@ae6949275b492140e174b0b117286bae3bd9455b  # v4.0.0
-        with:
-          version: "0.11.0"
-          args: "--explain"
-
+  # ─── Matrix ─────────────────────────────────────────────────────────────────
   target-matrix:
     name: Resolve Target Matrix
     needs: lane-contract
     runs-on: ubuntu-latest
     outputs:
-      weekly_ci: ${{ steps.matrix.outputs.weekly_ci }}
-      weekly_no_std: ${{ steps.matrix.outputs.weekly_no_std }}
-      weekly_wasm: ${{ steps.matrix.outputs.weekly_wasm }}
+      ci: ${{ steps.matrix.outputs.ci }}
+      no_std: ${{ steps.matrix.outputs.no_std }}
+      wasm: ${{ steps.matrix.outputs.wasm }}
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
@@ -69,18 +45,19 @@ jobs:
         id: matrix
         run: |
           {
-            echo "weekly_ci=$(bash scripts/lib/target-matrix.sh --format json --key commit_ci)"
-            echo "weekly_no_std=$(bash scripts/lib/target-matrix.sh --format json --key commit_no_std)"
-            echo "weekly_wasm=$(bash scripts/lib/target-matrix.sh --format json --key commit_wasm)"
+            echo "ci=$(bash scripts/lib/target-matrix.sh --format json --key weekly_ci)"
+            echo "no_std=$(bash scripts/lib/target-matrix.sh --format json --key weekly_no_std)"
+            echo "wasm=$(bash scripts/lib/target-matrix.sh --format json --key weekly_wasm)"
           } >> "$GITHUB_OUTPUT"
 
+  # ─── Full CI (all platforms) ────────────────────────────────────────────────
   ci:
     name: CI (${{ matrix.target.name }})
-    needs: [lane-contract, rail-plan, target-matrix]
+    needs: [lane-contract, target-matrix]
     strategy:
       fail-fast: false
       matrix:
-        target: ${{ fromJSON(needs.target-matrix.outputs.weekly_ci) }}
+        target: ${{ fromJSON(needs.target-matrix.outputs.ci) }}
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: ${{ matrix.target.runner }}
@@ -98,23 +75,15 @@ jobs:
             just test --all
             ;;
           *)
-            if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-              just check --all
-              just build
-              just test --all
-            else
-              export RAIL_SINCE="${{ needs.rail-plan.outputs.base_ref }}"
-              export RAIL_SCOPE_JSON='${{ needs.rail-plan.outputs.scope_json }}'
-              just check
-              just build
-              just test-changed
-            fi
+            just check --all
+            just build
+            just test --all
             ;;
         esac
 
   ci-ibm-s390x:
     name: CI (IBM Z s390x)
-    needs: [lane-contract, rail-plan]
+    needs: lane-contract
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: ubuntu-24.04-s390x
@@ -133,7 +102,7 @@ jobs:
 
   ci-ibm-power10:
     name: CI (IBM POWER10 ppc64le)
-    needs: [lane-contract, rail-plan]
+    needs: lane-contract
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: ubuntu-24.04-ppc64le-p10
@@ -150,13 +119,84 @@ jobs:
         just ci-check
         just test --all
 
+  # ─── Feature matrix (weekly-only) ──────────────────────────────────────────
+  feature-matrix:
+    name: Feature Matrix (${{ matrix.target.name }})
+    needs: lane-contract
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - name: x86_64
+            runner: ubuntu-latest
+          - name: aarch64
+            runner: ubuntu-24.04-arm
+    uses: ./.github/workflows/_rust-job.yaml
+    with:
+      runner: ${{ matrix.target.runner }}
+      timeout_minutes: 30
+      setup_kind: default
+      cache_key: weekly-feature-matrix-${{ matrix.target.name }}
+      tools_mode: minimal
+      run_script: just test-feature-matrix
+
+  # ─── Property tests (weekly-only) ──────────────────────────────────────────
+  proptests:
+    name: Property Tests (${{ matrix.target.name }})
+    needs: lane-contract
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - name: x86_64
+            runner: ubuntu-latest
+          - name: aarch64
+            runner: ubuntu-24.04-arm
+    uses: ./.github/workflows/_rust-job.yaml
+    with:
+      runner: ${{ matrix.target.runner }}
+      timeout_minutes: 45
+      setup_kind: default
+      cache_key: weekly-proptests-${{ matrix.target.name }}
+      tools_mode: minimal
+      run_script: just test-proptests
+
+  # ─── Supply chain audit (weekly-only) ──────────────────────────────────────
+  supply-chain:
+    name: Supply Chain Audit
+    needs: lane-contract
+    uses: ./.github/workflows/_rust-job.yaml
+    with:
+      runner: ubuntu-latest
+      timeout_minutes: 15
+      setup_kind: default
+      cache_key: weekly-supply-chain
+      tools_mode: standard
+      run_script: |
+        cargo deny check all
+        cargo audit
+
+  # ─── Infrastructure validation (weekly-only) ───────────────────────────────
+  infra:
+    name: Infrastructure
+    needs: lane-contract
+    uses: ./.github/workflows/_rust-job.yaml
+    with:
+      runner: ubuntu-latest
+      timeout_minutes: 10
+      setup_kind: default
+      cache_key: weekly-infra
+      tools_mode: standard
+      run_script: just ci-infra-check
+
+  # ─── Cross-platform: no_std ─────────────────────────────────────────────────
   no-std:
     name: no_std (${{ matrix.target }})
     needs: [lane-contract, target-matrix]
     strategy:
       fail-fast: false
       matrix:
-        target: ${{ fromJSON(needs.target-matrix.outputs.weekly_no_std) }}
+        target: ${{ fromJSON(needs.target-matrix.outputs.no_std) }}
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: ubuntu-latest
@@ -166,18 +206,34 @@ jobs:
       tools_mode: minimal
       run_script: |
         rustup target add ${{ matrix.target }}
-        cargo check --target ${{ matrix.target }} --no-default-features --lib
-        cargo check --target ${{ matrix.target }} --no-default-features --features alloc --lib
-        cargo build --target ${{ matrix.target }} --no-default-features --lib --release
-        cargo build --target ${{ matrix.target }} --no-default-features --features alloc --lib --release
 
+        # Bare no_std (no features)
+        cargo check --target ${{ matrix.target }} --no-default-features --lib
+        cargo build --target ${{ matrix.target }} --no-default-features --lib --release
+
+        # Individual features
+        cargo check --target ${{ matrix.target }} --no-default-features --features alloc --lib
+        cargo check --target ${{ matrix.target }} --no-default-features --features checksums --lib
+        cargo check --target ${{ matrix.target }} --no-default-features --features hashes --lib
+        cargo check --target ${{ matrix.target }} --no-default-features --features aead --lib
+        cargo check --target ${{ matrix.target }} --no-default-features --features auth --lib
+
+        # Combined features
+        cargo check --target ${{ matrix.target }} --no-default-features --features alloc,checksums --lib
+        cargo check --target ${{ matrix.target }} --no-default-features --features alloc,hashes --lib
+        cargo check --target ${{ matrix.target }} --no-default-features --features alloc,checksums,hashes,auth,aead --lib
+
+        # Full no_std release build
+        cargo build --target ${{ matrix.target }} --no-default-features --features alloc,checksums,hashes,auth,aead --lib --release
+
+  # ─── Cross-platform: wasm ───────────────────────────────────────────────────
   wasm:
     name: wasm (${{ matrix.target }})
     needs: [lane-contract, target-matrix]
     strategy:
       fail-fast: false
       matrix:
-        target: ${{ fromJSON(needs.target-matrix.outputs.weekly_wasm) }}
+        target: ${{ fromJSON(needs.target-matrix.outputs.wasm) }}
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: ubuntu-latest
@@ -187,11 +243,27 @@ jobs:
       tools_mode: minimal
       run_script: |
         rustup target add ${{ matrix.target }}
-        cargo check --target ${{ matrix.target }} --no-default-features --lib
-        cargo check --target ${{ matrix.target }} --no-default-features --features alloc --lib
-        cargo build --target ${{ matrix.target }} --no-default-features --lib --release
-        cargo build --target ${{ matrix.target }} --no-default-features --features alloc --lib --release
 
+        # Bare no_std (no features)
+        cargo check --target ${{ matrix.target }} --no-default-features --lib
+        cargo build --target ${{ matrix.target }} --no-default-features --lib --release
+
+        # Individual features
+        cargo check --target ${{ matrix.target }} --no-default-features --features alloc --lib
+        cargo check --target ${{ matrix.target }} --no-default-features --features checksums --lib
+        cargo check --target ${{ matrix.target }} --no-default-features --features hashes --lib
+        cargo check --target ${{ matrix.target }} --no-default-features --features aead --lib
+        cargo check --target ${{ matrix.target }} --no-default-features --features auth --lib
+
+        # Combined features
+        cargo check --target ${{ matrix.target }} --no-default-features --features alloc,checksums --lib
+        cargo check --target ${{ matrix.target }} --no-default-features --features alloc,hashes --lib
+        cargo check --target ${{ matrix.target }} --no-default-features --features alloc,checksums,hashes,auth,aead --lib
+
+        # Full wasm release build
+        cargo build --target ${{ matrix.target }} --no-default-features --features alloc,checksums,hashes,auth,aead --lib --release
+
+  # ─── Memory safety ─────────────────────────────────────────────────────────
   miri:
     name: Miri (${{ matrix.target.name }})
     needs: lane-contract
@@ -219,6 +291,61 @@ jobs:
       - name: Miri
         run: just test-miri --all
 
+  # ─── Coverage ───────────────────────────────────────────────────────────────
+  coverage:
+    name: Coverage
+    needs: lane-contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          cache-key: weekly-coverage
+          tools-mode: coverage
+          toolchain-components: "rust-src"
+
+      - name: Test Suite Coverage (nextest)
+        run: just coverage-nextest
+
+      - name: Fuzz Corpus Coverage
+        env:
+          RSCRYPTO_COV_FUZZ_SECS: "30"
+        run: just coverage-fuzz
+
+      - name: Upload to Codecov (nextest)
+        uses: codecov/codecov-action@4650159d642e33fdc30954ca22638caf0df6cac8  # v5.4.3
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage/nextest.lcov
+          flags: tests
+          name: nextest
+          fail_ci_if_error: true
+
+      - name: Upload to Codecov (fuzz)
+        uses: codecov/codecov-action@4650159d642e33fdc30954ca22638caf0df6cac8  # v5.4.3
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage/fuzz.lcov
+          flags: fuzz
+          name: fuzz
+          fail_ci_if_error: false
+
+      - name: Upload Coverage Artifacts
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08  # v4.6.0
+        with:
+          name: coverage-reports
+          path: |
+            coverage/nextest.lcov
+            coverage/fuzz.lcov
+            coverage/fuzz-*.lcov
+          retention-days: 90
+          if-no-files-found: warn
+
+  # ─── Fuzzing ────────────────────────────────────────────────────────────────
   fuzzing:
     name: Fuzzing (${{ matrix.target.name }})
     needs: lane-contract
@@ -244,7 +371,7 @@ jobs:
 
       - name: Fuzz
         env:
-          RSCRYPTO_FUZZ_DURATION_SECS: "150"
+          RSCRYPTO_FUZZ_DURATION_SECS: "300"
         run: just test-fuzz --all
 
       - name: Upload Fuzz Crash Artifacts
@@ -256,32 +383,41 @@ jobs:
           retention-days: 90
           if-no-files-found: ignore
 
+  # ─── Gate ───────────────────────────────────────────────────────────────────
   complete:
     name: Complete (weekly)
-    needs: [ci, ci-ibm-s390x, ci-ibm-power10, no-std, wasm, miri, fuzzing]
+    needs: [ci, ci-ibm-s390x, ci-ibm-power10, feature-matrix, proptests, supply-chain, infra, no-std, wasm, miri, fuzzing, coverage]
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Assert required lanes
+      - name: Assert all lanes passed
         run: |
-          if [ "${{ needs.ci.result }}" != "success" ]; then
-            exit 1
-          fi
-          if [ "${{ needs.ci-ibm-s390x.result }}" != "success" ]; then
-            exit 1
-          fi
-          if [ "${{ needs.ci-ibm-power10.result }}" != "success" ]; then
-            exit 1
-          fi
-          if [ "${{ needs.no-std.result }}" != "success" ]; then
-            exit 1
-          fi
-          if [ "${{ needs.wasm.result }}" != "success" ]; then
-            exit 1
-          fi
-          if [ "${{ needs.miri.result }}" != "success" ]; then
-            exit 1
-          fi
-          if [ "${{ needs.fuzzing.result }}" != "success" ]; then
+          failed=0
+          for lane in \
+            "ci=${{ needs.ci.result }}" \
+            "ci-ibm-s390x=${{ needs.ci-ibm-s390x.result }}" \
+            "ci-ibm-power10=${{ needs.ci-ibm-power10.result }}" \
+            "feature-matrix=${{ needs.feature-matrix.result }}" \
+            "proptests=${{ needs.proptests.result }}" \
+            "supply-chain=${{ needs.supply-chain.result }}" \
+            "infra=${{ needs.infra.result }}" \
+            "no-std=${{ needs.no-std.result }}" \
+            "wasm=${{ needs.wasm.result }}" \
+            "miri=${{ needs.miri.result }}" \
+            "fuzzing=${{ needs.fuzzing.result }}" \
+            "coverage=${{ needs.coverage.result }}"
+          do
+            name="${lane%%=*}"
+            result="${lane#*=}"
+            if [ "$result" != "success" ]; then
+              echo "FAIL: $name ($result)"
+              failed=1
+            else
+              echo "  OK: $name"
+            fi
+          done
+          if [ "$failed" -eq 1 ]; then
+            echo ""
+            echo "One or more required lanes failed."
             exit 1
           fi

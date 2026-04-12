@@ -9,7 +9,7 @@ inputs:
     required: false
     default: ""
   tools-mode:
-    description: Tool installation mode (standard, ibm, minimal, none)
+    description: Tool installation mode (standard, runson, bench, runson-bench, ibm, fuzz, minimal, none)
     required: false
     default: "standard"
   toolchain-components:

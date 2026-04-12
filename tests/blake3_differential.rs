@@ -10,12 +10,34 @@ fn blake3_ref_hash(data: &[u8]) -> [u8; 32] {
   *blake3::hash(data).as_bytes()
 }
 
+fn blake3_ref_xof(data: &[u8], out: &mut [u8]) {
+  let mut h = blake3::Hasher::new();
+  h.update(data);
+  h.finalize_xof().fill(out);
+}
+
 fn blake3_ref_keyed(key: &[u8; 32], data: &[u8]) -> [u8; 32] {
   *blake3::keyed_hash(key, data).as_bytes()
 }
 
+fn blake3_ref_keyed_xof(key: &[u8; 32], data: &[u8], out: &mut [u8]) {
+  let mut h = blake3::Hasher::new_keyed(key);
+  h.update(data);
+  h.finalize_xof().fill(out);
+}
+
 fn blake3_ref_derive(context: &str, data: &[u8]) -> [u8; 32] {
   blake3::derive_key(context, data)
+}
+
+fn blake3_ref_derive_xof(context: &str, data: &[u8], out: &mut [u8]) {
+  let mut h = blake3::Hasher::new_derive_key(context);
+  h.update(data);
+  h.finalize_xof().fill(out);
+}
+
+fn patterned_bytes(len: usize) -> Vec<u8> {
+  (0..len).map(|i| (i % 251) as u8).collect()
 }
 
 proptest! {
@@ -75,5 +97,56 @@ proptest! {
     let mut h = Blake3::new_derive_key(CONTEXT);
     h.update(&data);
     prop_assert_eq!(h.finalize(), expected);
+  }
+}
+
+#[test]
+fn blake3_multi_chunk_then_small_tail_matches_official_in_all_modes() {
+  const CHUNK_LEN: usize = 1024;
+  const TAIL_LEN: usize = 9;
+  const XOF_LEN: usize = 96;
+  const CONTEXT: &str = "rscrypto blake3 derive-key regression context";
+
+  let data = patterned_bytes(2 * CHUNK_LEN + TAIL_LEN);
+  let (first, second) = data.split_at(2 * CHUNK_LEN);
+  let key = *b"whats the Elvish word for friend";
+
+  {
+    let mut h = Blake3::new();
+    h.update(first);
+    h.update(second);
+    assert_eq!(h.finalize(), blake3_ref_hash(&data));
+
+    let mut expected = [0u8; XOF_LEN];
+    blake3_ref_xof(&data, &mut expected);
+    let mut actual = [0u8; XOF_LEN];
+    h.finalize_xof().squeeze(&mut actual);
+    assert_eq!(actual, expected);
+  }
+
+  {
+    let mut h = Blake3::new_keyed(&key);
+    h.update(first);
+    h.update(second);
+    assert_eq!(h.finalize(), blake3_ref_keyed(&key, &data));
+
+    let mut expected = [0u8; XOF_LEN];
+    blake3_ref_keyed_xof(&key, &data, &mut expected);
+    let mut actual = [0u8; XOF_LEN];
+    h.finalize_xof().squeeze(&mut actual);
+    assert_eq!(actual, expected);
+  }
+
+  {
+    let mut h = Blake3::new_derive_key(CONTEXT);
+    h.update(first);
+    h.update(second);
+    assert_eq!(h.finalize(), blake3_ref_derive(CONTEXT, &data));
+
+    let mut expected = [0u8; XOF_LEN];
+    blake3_ref_derive_xof(CONTEXT, &data, &mut expected);
+    let mut actual = [0u8; XOF_LEN];
+    h.finalize_xof().squeeze(&mut actual);
+    assert_eq!(actual, expected);
   }
 }

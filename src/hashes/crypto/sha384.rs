@@ -23,7 +23,7 @@ pub(crate) mod kernels;
 const BLOCK_LEN: usize = 128;
 
 // SHA-384 initial hash value (FIPS 180-4 SS5.3.4).
-const H0: [u64; 8] = [
+pub(crate) const H0: [u64; 8] = [
   0xcbbb_9d5d_c105_9ed8,
   0x629a_292a_367c_d507,
   0x9159_015a_3070_dd17,
@@ -39,6 +39,14 @@ pub struct Sha384 {
   state: [u64; 8],
   block: [u8; BLOCK_LEN],
   block_len: usize,
+  bytes_hashed: u128,
+  compress_blocks: CompressBlocksFn,
+  dispatch: Option<SizeClassDispatch<CompressBlocksFn>>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct Sha384Prefix {
+  state: [u64; 8],
   bytes_hashed: u128,
   compress_blocks: CompressBlocksFn,
   dispatch: Option<SizeClassDispatch<CompressBlocksFn>>,
@@ -158,6 +166,59 @@ impl Sha384 {
       chunk.copy_from_slice(&word.to_be_bytes());
     }
     out
+  }
+
+  #[inline]
+  #[must_use]
+  pub(crate) fn aligned_prefix(&self) -> Sha384Prefix {
+    debug_assert_eq!(self.block_len, 0);
+    Sha384Prefix {
+      state: self.state,
+      bytes_hashed: self.bytes_hashed,
+      compress_blocks: self.compress_blocks,
+      dispatch: self.dispatch,
+    }
+  }
+
+  #[inline]
+  #[must_use]
+  pub(crate) fn from_aligned_prefix(prefix: Sha384Prefix) -> Self {
+    Self {
+      state: prefix.state,
+      block: [0u8; BLOCK_LEN],
+      block_len: 0,
+      bytes_hashed: prefix.bytes_hashed,
+      compress_blocks: prefix.compress_blocks,
+      dispatch: prefix.dispatch,
+    }
+  }
+
+  #[inline]
+  pub(crate) fn reset_to_aligned_prefix(&mut self, prefix: Sha384Prefix) {
+    self.state = prefix.state;
+    self.block_len = 0;
+    self.bytes_hashed = prefix.bytes_hashed;
+    self.compress_blocks = prefix.compress_blocks;
+    self.dispatch = prefix.dispatch;
+  }
+
+  #[cfg(test)]
+  #[inline]
+  pub(crate) fn new_with_compress_for_test(compress_blocks: CompressBlocksFn) -> Self {
+    Self {
+      state: H0,
+      block: [0u8; BLOCK_LEN],
+      block_len: 0,
+      bytes_hashed: 0,
+      compress_blocks,
+      dispatch: Some(SizeClassDispatch {
+        boundaries: [usize::MAX; 3],
+        xs: compress_blocks,
+        s: compress_blocks,
+        m: compress_blocks,
+        l: compress_blocks,
+      }),
+    }
   }
 }
 

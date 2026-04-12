@@ -37,7 +37,9 @@
 //! ## Auth
 //!
 //! ```rust
-//! use rscrypto::{Ed25519Keypair, Ed25519SecretKey, HkdfSha256, HmacSha256, Kmac256, Mac};
+//! use rscrypto::{
+//!   Ed25519Keypair, Ed25519SecretKey, HkdfSha256, HmacSha256, Kmac256, Mac, X25519SecretKey,
+//! };
 //!
 //! let key = b"shared-secret";
 //! let data = b"hello world";
@@ -63,7 +65,14 @@
 //! let mut tag32 = [0u8; 32];
 //! kmac.finalize_into(&mut tag32);
 //! assert!(Kmac256::verify(b"shared-secret", b"svc=v1", b"auth", &tag32).is_ok());
-//! # Ok::<(), rscrypto::auth::HkdfOutputLengthError>(())
+//!
+//! let alice = X25519SecretKey::from_bytes([7u8; 32]);
+//! let bob = X25519SecretKey::from_bytes([9u8; 32]);
+//! assert_eq!(
+//!   alice.diffie_hellman(&bob.public_key())?,
+//!   bob.diffie_hellman(&alice.public_key())?
+//! );
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
 //! ## AEAD
@@ -195,7 +204,7 @@
 //! | `alloc` | Yes | Enables buffered types (implied by `std`) |
 //! | `checksums` | Yes | CRC-16, CRC-24, CRC-32, and CRC-64 algorithms |
 //! | `hashes` | Yes | Cryptographic and fast hash families |
-//! | `auth` | Yes | HMAC-SHA256, HKDF-SHA256, KMAC256, and Ed25519 |
+//! | `auth` | Yes | HMAC-SHA256/384/512, HKDF-SHA256/384, KMAC256, Ed25519, and X25519 |
 //! | `aead` | Yes | AEAD traits, nonce wrappers, errors, and ChaCha20/XChaCha20-Poly1305 |
 //! | `parallel` | No | Rayon-based parallel hashing (Blake3) |
 //!
@@ -306,7 +315,8 @@ pub use aead::{
 };
 #[cfg(feature = "auth")]
 pub use auth::{
-  Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature, HkdfSha256, HmacSha256, Kmac256, verify_ed25519,
+  Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature, HkdfSha256, HkdfSha384, HmacSha256, HmacSha384,
+  HmacSha512, Kmac256, X25519Error, X25519PublicKey, X25519SecretKey, X25519SharedSecret, verify_ed25519,
 };
 #[cfg(feature = "checksums")]
 pub use checksum::{Crc16Ccitt, Crc16Ibm, Crc24OpenPgp, Crc32, Crc32C, Crc64, Crc64Nvme};

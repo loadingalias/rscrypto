@@ -497,7 +497,7 @@ fn split_signature(signature: &Ed25519Signature) -> ([u8; 32], [u8; 32]) {
 
 /// Dispatch `[s]B` (fixed-base scalar mul) to the fastest available path.
 #[must_use]
-fn basepoint_mul_dispatch(scalar_bytes: &[u8; 32]) -> point::ExtendedPoint {
+pub(crate) fn basepoint_mul_dispatch(scalar_bytes: &[u8; 32]) -> point::ExtendedPoint {
   #[cfg(target_arch = "x86_64")]
   {
     let caps = crate::platform::caps();
@@ -549,6 +549,8 @@ fn straus_dispatch(s: &[u8; 32], h: &[u8; 32], a: &point::ExtendedPoint) -> poin
 
 #[cfg(test)]
 mod tests {
+  use alloc::format;
+
   use super::{
     Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature, constants, field, hash, point, scalar, verify,
   };

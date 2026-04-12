@@ -539,6 +539,7 @@ mod tests {
 
   /// Generates the wNAF(8) basepoint table for IFMA verify.
   /// Run with `--nocapture` to print the table source.
+  #[cfg(feature = "std")]
   #[test]
   fn gen_basepoint_wnaf8_ifma_table() {
     let bp = ExtendedPoint::basepoint();

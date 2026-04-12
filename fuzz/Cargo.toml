@@ -1,0 +1,191 @@
+[package]
+name = "rscrypto-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+# Crate under test
+rscrypto = { path = "..", features = ["std", "checksums", "hashes", "auth", "aead"] }
+
+# ── Oracle crates for differential testing ────────────────────────────────────
+# AEAD
+ascon-aead = { version = "0.5", default-features = false, features = ["alloc"] }
+aes-gcm = { version = "0.10", default-features = false, features = ["alloc", "aes"] }
+aes-gcm-siv = { version = "0.11", default-features = false, features = ["alloc", "aes"] }
+aegis = "0.9"
+chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
+
+# Auth
+ed25519-dalek = "2.2"
+hmac = "0.13"
+hkdf = "0.13"
+x25519-dalek = { version = "2.0.1", features = ["static_secrets"] }
+
+# Hashes
+ascon-hash = "0.4"
+blake3 = "1.8"
+digest = "0.11"
+sha2 = "0.11"
+sha3 = "0.11"
+tiny-keccak = { version = "2.0", features = ["cshake", "kmac"] }
+
+# Fast hashes
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+
+# Checksums
+crc = "3.4"
+
+# Isolate from parent workspace
+[workspace]
+members = ["."]
+
+# ── AEAD targets ──────────────────────────────────────────────────────────────
+[[bin]]
+name = "aead_aes256gcm"
+path = "fuzz_targets/aead_aes256gcm.rs"
+doc = false
+
+[[bin]]
+name = "aead_aes256gcmsiv"
+path = "fuzz_targets/aead_aes256gcmsiv.rs"
+doc = false
+
+[[bin]]
+name = "aead_chacha20poly1305"
+path = "fuzz_targets/aead_chacha20poly1305.rs"
+doc = false
+
+[[bin]]
+name = "aead_xchacha20poly1305"
+path = "fuzz_targets/aead_xchacha20poly1305.rs"
+doc = false
+
+[[bin]]
+name = "aead_ascon128"
+path = "fuzz_targets/aead_ascon128.rs"
+doc = false
+
+[[bin]]
+name = "aead_aegis256"
+path = "fuzz_targets/aead_aegis256.rs"
+doc = false
+
+# ── Auth targets ──────────────────────────────────────────────────────────────
+[[bin]]
+name = "auth_ed25519"
+path = "fuzz_targets/auth_ed25519.rs"
+doc = false
+
+[[bin]]
+name = "auth_ed25519_verify"
+path = "fuzz_targets/auth_ed25519_verify.rs"
+doc = false
+
+[[bin]]
+name = "auth_hmac_sha256"
+path = "fuzz_targets/auth_hmac_sha256.rs"
+doc = false
+
+[[bin]]
+name = "auth_hmac_sha384"
+path = "fuzz_targets/auth_hmac_sha384.rs"
+doc = false
+
+[[bin]]
+name = "auth_hmac_sha512"
+path = "fuzz_targets/auth_hmac_sha512.rs"
+doc = false
+
+[[bin]]
+name = "auth_hkdf_sha256"
+path = "fuzz_targets/auth_hkdf_sha256.rs"
+doc = false
+
+[[bin]]
+name = "auth_hkdf_sha384"
+path = "fuzz_targets/auth_hkdf_sha384.rs"
+doc = false
+
+[[bin]]
+name = "auth_x25519"
+path = "fuzz_targets/auth_x25519.rs"
+doc = false
+
+[[bin]]
+name = "auth_kmac256"
+path = "fuzz_targets/auth_kmac256.rs"
+doc = false
+
+# ── Hash targets ──────────────────────────────────────────────────────────────
+[[bin]]
+name = "hash_sha2"
+path = "fuzz_targets/hash_sha2.rs"
+doc = false
+
+[[bin]]
+name = "hash_sha3"
+path = "fuzz_targets/hash_sha3.rs"
+doc = false
+
+[[bin]]
+name = "hash_blake3"
+path = "fuzz_targets/hash_blake3.rs"
+doc = false
+
+[[bin]]
+name = "hash_blake3_keyed"
+path = "fuzz_targets/hash_blake3_keyed.rs"
+doc = false
+
+[[bin]]
+name = "hash_blake3_derive"
+path = "fuzz_targets/hash_blake3_derive.rs"
+doc = false
+
+[[bin]]
+name = "hash_ascon"
+path = "fuzz_targets/hash_ascon.rs"
+doc = false
+
+[[bin]]
+name = "hash_ascon_cxof"
+path = "fuzz_targets/hash_ascon_cxof.rs"
+doc = false
+
+[[bin]]
+name = "hash_cshake256"
+path = "fuzz_targets/hash_cshake256.rs"
+doc = false
+
+[[bin]]
+name = "hex_parse"
+path = "fuzz_targets/hex_parse.rs"
+doc = false
+
+# ── Checksum targets ─────────────────────────────────────────────────────────
+[[bin]]
+name = "checksum_crc"
+path = "fuzz_targets/checksum_crc.rs"
+doc = false
+
+[[bin]]
+name = "traits_io"
+path = "fuzz_targets/traits_io.rs"
+doc = false
+
+# ── Fast hash targets ────────────────────────────────────────────────────────
+[[bin]]
+name = "fast_xxh3"
+path = "fuzz_targets/fast_xxh3.rs"
+doc = false
+
+[[bin]]
+name = "fast_rapidhash"
+path = "fuzz_targets/fast_rapidhash.rs"
+doc = false

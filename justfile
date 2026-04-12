@@ -42,6 +42,19 @@ test-all:
     just test-fuzz
     just test-miri
 
+# Coverage reporting.
+coverage *args="":
+    @scripts/test/test-coverage.sh {{args}}
+
+coverage-nextest:
+    @scripts/test/test-coverage.sh --nextest
+
+coverage-fuzz:
+    @scripts/test/test-coverage.sh --fuzz
+
+coverage-html:
+    @scripts/test/test-coverage.sh --html
+
 # Bench frontdoor (local + CI parity via scripts/ci/run-bench.sh).
 # Usage:
 #   just bench
@@ -127,5 +140,5 @@ verify-actions:
 ci-pre-push:
     @scripts/ci/pre-push.sh
 
-fuzz-coverage target:
-    @scripts/test/test-fuzz.sh --coverage {{target}}
+fuzz-coverage:
+    @scripts/test/test-coverage.sh --fuzz

@@ -15,7 +15,7 @@ use rscrypto::{
   Sha512, Sha512_256, Shake128, Shake256, Xof,
 };
 #[cfg(feature = "auth")]
-use rscrypto::{HmacSha256, Kmac256, Mac};
+use rscrypto::{HmacSha256, HmacSha384, HmacSha512, Kmac256, Mac, X25519PublicKey, X25519SecretKey};
 
 #[cfg(feature = "hashes")]
 fn assert_digest_api<D>()
@@ -219,6 +219,8 @@ fn all_xofs_follow_new_update_finalize_xof_and_xof() {
 #[cfg(feature = "auth")]
 fn all_macs_follow_new_update_finalize_reset() {
   assert_mac_api::<HmacSha256>();
+  assert_mac_api::<HmacSha384>();
+  assert_mac_api::<HmacSha512>();
 
   let mut kmac = Kmac256::new(b"api-consistency-key", b"ctx=v1");
   kmac.update(b"abc");
@@ -231,6 +233,18 @@ fn all_macs_follow_new_update_finalize_reset() {
   kmac.finalize_into(&mut actual);
   assert_eq!(actual, expected);
   assert!(kmac.verify_tag(&expected).is_ok());
+}
+
+#[test]
+#[cfg(feature = "auth")]
+fn x25519_types_follow_byte_roundtrip_conventions() {
+  let secret = X25519SecretKey::from_bytes([0x42; X25519SecretKey::LENGTH]);
+  let public = X25519PublicKey::from_bytes(secret.public_key().to_bytes());
+  let shared = secret.diffie_hellman(&public).unwrap();
+
+  assert_eq!(secret.to_bytes(), *secret.as_bytes());
+  assert_eq!(public.to_bytes(), *public.as_bytes());
+  assert_eq!(shared.to_bytes(), *shared.as_bytes());
 }
 
 #[test]

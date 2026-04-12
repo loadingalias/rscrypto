@@ -139,8 +139,12 @@ DEFAULT_HASH_ALGOS=(
 
 DEFAULT_AUTH_ALGOS=(
   "hmac-sha256"
+  "hmac-sha384"
+  "hmac-sha512"
   "hkdf-sha256"
+  "hkdf-sha384"
   "ed25519"
+  "x25519"
 )
 
 DEFAULT_AEAD_ALGOS=(
@@ -188,8 +192,12 @@ auth_filter_token() {
   local algo="${1:-}"
   case "$algo" in
     hmac-sha256) echo "hmac" ;;
+    hmac-sha384) echo "hmac-sha384" ;;
+    hmac-sha512) echo "hmac-sha512" ;;
     hkdf-sha256) echo "hkdf" ;;
+    hkdf-sha384) echo "hkdf-sha384" ;;
     ed25519) echo "ed25519" ;;
+    x25519) echo "x25519" ;;
     *) echo "$algo" ;;
   esac
 }

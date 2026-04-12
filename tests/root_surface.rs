@@ -40,8 +40,8 @@ use rscrypto::{
 use rscrypto::{Checksum, ChecksumCombine, Crc16Ccitt, Crc16Ibm, Crc24OpenPgp, Crc32, Crc32C, Crc64, Crc64Nvme};
 #[cfg(feature = "auth")]
 use rscrypto::{
-  Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature, HkdfSha256, HmacSha256, Kmac256, Mac,
-  verify_ed25519,
+  Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature, HkdfSha256, HkdfSha384, HmacSha256, HmacSha384,
+  HmacSha512, Kmac256, Mac, X25519Error, X25519PublicKey, X25519SecretKey, X25519SharedSecret, verify_ed25519,
 };
 use rscrypto::{VerificationError, ct};
 
@@ -148,16 +148,33 @@ fn root_surface_auth_exports_compile() {
   let data = b"root-surface-data";
 
   let tag = HmacSha256::mac(key, data);
+  let tag384 = HmacSha384::mac(key, data);
+  let tag512 = HmacSha512::mac(key, data);
 
   let mut mac = HmacSha256::new(key);
   mac.update(data);
   assert_eq!(tag, mac.finalize());
   assert!(mac.verify(&tag).is_ok());
 
+  let mut mac384 = HmacSha384::new(key);
+  mac384.update(data);
+  assert_eq!(tag384, mac384.finalize());
+  assert!(mac384.verify(&tag384).is_ok());
+
+  let mut mac512 = HmacSha512::new(key);
+  mac512.update(data);
+  assert_eq!(tag512, mac512.finalize());
+  assert!(mac512.verify(&tag512).is_ok());
+
   let mut out = [0u8; 32];
   let hkdf = HkdfSha256::new(b"salt", key);
   hkdf.expand(b"info", &mut out).unwrap();
   assert_eq!(out, HkdfSha256::derive_array::<32>(b"salt", key, b"info").unwrap());
+
+  let mut out384 = [0u8; 48];
+  let hkdf384 = HkdfSha384::new(b"salt", key);
+  hkdf384.expand(b"info", &mut out384).unwrap();
+  assert_eq!(out384, HkdfSha384::derive_array::<48>(b"salt", key, b"info").unwrap());
   let _ = HkdfOutputLengthError::new();
 
   let mut kmac = Kmac256::new(key, b"svc=v1");
@@ -173,12 +190,22 @@ fn advanced_auth_modules_compile() {
   let keypair = Ed25519Keypair::from_secret_key(secret.clone());
   let public = keypair.public_key();
   let signature = keypair.sign(b"root-surface-ed25519");
+  let alice = X25519SecretKey::from_bytes([11u8; X25519SecretKey::LENGTH]);
+  let bob = X25519SecretKey::from_bytes([13u8; X25519SecretKey::LENGTH]);
+  let alice_public: X25519PublicKey = (&alice).into();
+  let bob_public: X25519PublicKey = (&bob).into();
+  let alice_shared = alice.diffie_hellman(&bob_public).unwrap();
+  let bob_shared = X25519SharedSecret::diffie_hellman(&bob, &alice_public).unwrap();
 
   assert_eq!(secret.as_bytes().len(), 32);
   assert_eq!(public.as_bytes().len(), 32);
   assert_eq!(signature.as_bytes().len(), 64);
   assert!(public.verify(b"root-surface-ed25519", &signature).is_ok());
   assert!(verify_ed25519(b"root-surface-ed25519", &public, &signature).is_ok());
+  assert_eq!(alice_public.as_bytes().len(), 32);
+  assert_eq!(alice_shared.as_bytes().len(), 32);
+  assert_eq!(alice_shared, bob_shared);
+  let _ = X25519Error::new();
 }
 
 #[test]

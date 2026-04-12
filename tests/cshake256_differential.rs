@@ -13,9 +13,9 @@ fn cshake256_ref(function_name: &[u8], customization: &[u8], data: &[u8], out: &
 
 proptest! {
   #[test]
-  fn cshake256_one_shot_matches_sha3_crate(
-    function_name in proptest::collection::vec(any::<u8>(), 0..32),
-    customization in proptest::collection::vec(any::<u8>(), 0..64),
+  fn cshake256_one_shot_matches_tiny_keccak(
+    function_name in proptest::collection::vec(any::<u8>(), 0..192),
+    customization in proptest::collection::vec(any::<u8>(), 0..192),
     data in proptest::collection::vec(any::<u8>(), 0..4096),
     out_len in 0usize..1024,
   ) {
@@ -29,9 +29,9 @@ proptest! {
   }
 
   #[test]
-  fn cshake256_streaming_matches_sha3_crate(
-    function_name in proptest::collection::vec(any::<u8>(), 0..32),
-    customization in proptest::collection::vec(any::<u8>(), 0..64),
+  fn cshake256_streaming_matches_tiny_keccak(
+    function_name in proptest::collection::vec(any::<u8>(), 0..192),
+    customization in proptest::collection::vec(any::<u8>(), 0..192),
     data in proptest::collection::vec(any::<u8>(), 0..4096),
     out_len in 0usize..1024,
   ) {
@@ -51,4 +51,23 @@ proptest! {
     hasher.finalize_xof().squeeze(&mut actual);
     prop_assert_eq!(actual, expected);
   }
+}
+
+#[test]
+fn cshake256_exact_rate_prefix_matches_tiny_keccak() {
+  use tiny_keccak::{Hasher as _, Xof as _};
+
+  let function_name = [0xff; 129];
+  let mut expected = [0u8; 255];
+  let mut oracle = tiny_keccak::CShake::v256(&function_name, b"");
+  oracle.update(b"");
+  oracle.squeeze(&mut expected[..137]);
+  oracle.squeeze(&mut expected[137..]);
+
+  let mut actual = [0u8; 255];
+  let mut reader = Cshake256::new(&function_name, b"").finalize_xof();
+  reader.squeeze(&mut actual[..137]);
+  reader.squeeze(&mut actual[137..]);
+
+  assert_eq!(actual, expected);
 }

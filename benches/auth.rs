@@ -8,10 +8,17 @@ use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use ed25519_dalek::{Signer as _, SigningKey};
 use hkdf::Hkdf as RustCryptoHkdf;
 use hmac::{Hmac, KeyInit};
-use rscrypto::{Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, HkdfSha256, HmacSha256, Mac as _};
+use rscrypto::{
+  Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, HkdfSha256, HkdfSha384, HmacSha256, HmacSha384, HmacSha512,
+  Mac as _, X25519SecretKey,
+};
+use x25519_dalek::{PublicKey as DalekX25519PublicKey, StaticSecret as DalekX25519Secret};
 
 type RustCryptoHmacSha256 = Hmac<sha2::Sha256>;
+type RustCryptoHmacSha384 = Hmac<sha2::Sha384>;
+type RustCryptoHmacSha512 = Hmac<sha2::Sha512>;
 type RustCryptoHkdfSha256 = RustCryptoHkdf<sha2::Sha256>;
+type RustCryptoHkdfSha384 = RustCryptoHkdf<sha2::Sha384>;
 
 fn hmac_sha256(c: &mut Criterion) {
   let inputs = common::comp_sizes();
@@ -30,6 +37,58 @@ fn hmac_sha256(c: &mut Criterion) {
         use hmac::Mac as _;
 
         let mut mac = RustCryptoHmacSha256::new_from_slice(black_box(&key)).unwrap();
+        mac.update(black_box(d));
+        black_box(mac.finalize().into_bytes())
+      })
+    });
+  }
+
+  g.finish();
+}
+
+fn hmac_sha384(c: &mut Criterion) {
+  let inputs = common::comp_sizes();
+  let key = [0x42u8; 48];
+  let mut g = c.benchmark_group("hmac-sha384");
+
+  for (len, data) in &inputs {
+    common::set_throughput(&mut g, *len);
+
+    g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
+      b.iter(|| black_box(HmacSha384::mac(black_box(&key), black_box(d))))
+    });
+
+    g.bench_with_input(BenchmarkId::new("rustcrypto", len), data, |b, d| {
+      b.iter(|| {
+        use hmac::Mac as _;
+
+        let mut mac = RustCryptoHmacSha384::new_from_slice(black_box(&key)).unwrap();
+        mac.update(black_box(d));
+        black_box(mac.finalize().into_bytes())
+      })
+    });
+  }
+
+  g.finish();
+}
+
+fn hmac_sha512(c: &mut Criterion) {
+  let inputs = common::comp_sizes();
+  let key = [0x42u8; 64];
+  let mut g = c.benchmark_group("hmac-sha512");
+
+  for (len, data) in &inputs {
+    common::set_throughput(&mut g, *len);
+
+    g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
+      b.iter(|| black_box(HmacSha512::mac(black_box(&key), black_box(d))))
+    });
+
+    g.bench_with_input(BenchmarkId::new("rustcrypto", len), data, |b, d| {
+      b.iter(|| {
+        use hmac::Mac as _;
+
+        let mut mac = RustCryptoHmacSha512::new_from_slice(black_box(&key)).unwrap();
         mac.update(black_box(d));
         black_box(mac.finalize().into_bytes())
       })
@@ -81,6 +140,36 @@ fn hkdf_sha256_expand(c: &mut Criterion) {
   let mut g = c.benchmark_group("hkdf-sha256/expand");
 
   for out_len in [32usize, 64, 256, 1024] {
+    g.throughput(criterion::Throughput::Bytes(out_len as u64));
+    g.bench_with_input(BenchmarkId::new("rscrypto", out_len), &out_len, |b, &len| {
+      let mut out = vec![0u8; len];
+      b.iter(|| {
+        hkdf.expand(black_box(&info), black_box(&mut out)).unwrap();
+        black_box(out[0])
+      })
+    });
+
+    g.bench_with_input(BenchmarkId::new("rustcrypto", out_len), &out_len, |b, &len| {
+      let mut out = vec![0u8; len];
+      b.iter(|| {
+        rustcrypto.expand(black_box(&info), black_box(&mut out)).unwrap();
+        black_box(out[0])
+      })
+    });
+  }
+
+  g.finish();
+}
+
+fn hkdf_sha384_expand(c: &mut Criterion) {
+  let salt = [0x11u8; 48];
+  let ikm = [0x22u8; 48];
+  let info = [0x33u8; 80];
+  let hkdf = HkdfSha384::new(&salt, &ikm);
+  let rustcrypto = RustCryptoHkdfSha384::new(Some(&salt), &ikm);
+  let mut g = c.benchmark_group("hkdf-sha384/expand");
+
+  for out_len in [48usize, 96, 256, 1024] {
     g.throughput(criterion::Throughput::Bytes(out_len as u64));
     g.bench_with_input(BenchmarkId::new("rscrypto", out_len), &out_len, |b, &len| {
       let mut out = vec![0u8; len];
@@ -205,14 +294,61 @@ fn ed25519_verify(c: &mut Criterion) {
   g.finish();
 }
 
+fn x25519_public_key(c: &mut Criterion) {
+  let secret_bytes = [0x2au8; 32];
+  let mut g = c.benchmark_group("x25519/public-key-from-secret");
+
+  g.bench_function("rscrypto", |b| {
+    b.iter(|| {
+      let secret = X25519SecretKey::from_bytes(*black_box(&secret_bytes));
+      black_box(secret.public_key())
+    })
+  });
+
+  g.bench_function("dalek", |b| {
+    b.iter(|| {
+      let secret = DalekX25519Secret::from(*black_box(&secret_bytes));
+      black_box(DalekX25519PublicKey::from(&secret))
+    })
+  });
+
+  g.finish();
+}
+
+fn x25519_diffie_hellman(c: &mut Criterion) {
+  let alice_bytes = [0x18u8; 32];
+  let bob_bytes = [0x34u8; 32];
+
+  let alice = X25519SecretKey::from_bytes(alice_bytes);
+  let bob_public = X25519SecretKey::from_bytes(bob_bytes).public_key();
+  let dalek_alice = DalekX25519Secret::from(alice_bytes);
+  let dalek_bob_public = DalekX25519PublicKey::from(&DalekX25519Secret::from(bob_bytes));
+  let mut g = c.benchmark_group("x25519/diffie-hellman");
+
+  g.bench_function("rscrypto", |b| {
+    b.iter(|| black_box(black_box(&alice).diffie_hellman(black_box(&bob_public)).unwrap()))
+  });
+
+  g.bench_function("dalek", |b| {
+    b.iter(|| black_box(black_box(&dalek_alice).diffie_hellman(black_box(&dalek_bob_public))))
+  });
+
+  g.finish();
+}
+
 criterion_group!(
   benches,
   hmac_sha256,
+  hmac_sha384,
+  hmac_sha512,
   hmac_sha256_streaming,
   hkdf_sha256_expand,
+  hkdf_sha384_expand,
   ed25519_public_key,
   ed25519_keypair_from_secret,
   ed25519_sign,
-  ed25519_verify
+  ed25519_verify,
+  x25519_public_key,
+  x25519_diffie_hellman
 );
 criterion_main!(benches);

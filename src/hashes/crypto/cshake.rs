@@ -2,11 +2,9 @@
 
 #![allow(clippy::indexing_slicing)] // Fixed-width prefix encodings and rate-sized zero padding.
 
-#[cfg(feature = "auth")]
-use super::sp800185::absorb_bytepad;
 use super::{
   keccak::{KeccakCore, KeccakXof},
-  sp800185::{RATE_256, absorb_encoded_string, encoded_string_len, left_encode},
+  sp800185::{RATE_256, absorb_bytepad, encoded_string_len, left_encode},
 };
 use crate::traits::Xof;
 
@@ -42,17 +40,20 @@ impl Cshake256 {
     }
 
     let mut core = KeccakCore::<RATE_256>::default();
-    let (rate_prefix, rate_prefix_len) = left_encode(RATE_256 as u64);
+    let (function_prefix, function_prefix_len) = left_encode((function_name.len() as u64).strict_mul(8));
+    let (custom_prefix, custom_prefix_len) = left_encode((customization.len() as u64).strict_mul(8));
     let fn_len = encoded_string_len(function_name);
     let custom_len = encoded_string_len(customization);
-    core.update(&rate_prefix[..rate_prefix_len]);
-    absorb_encoded_string::<RATE_256>(&mut core, function_name);
-    absorb_encoded_string::<RATE_256>(&mut core, customization);
-    let total_len = rate_prefix_len.strict_add(fn_len).strict_add(custom_len);
-    let pad_len = (RATE_256.strict_sub(total_len % RATE_256)) % RATE_256;
-    if pad_len != 0 {
-      core.update(&[0u8; RATE_256][..pad_len]);
-    }
+    absorb_bytepad::<RATE_256>(
+      &mut core,
+      &[
+        &function_prefix[..function_prefix_len],
+        function_name,
+        &custom_prefix[..custom_prefix_len],
+        customization,
+      ],
+      fn_len.strict_add(custom_len),
+    );
 
     let initial_state = core.clone();
     Self {

@@ -279,6 +279,17 @@ impl FieldElement {
     self.normalize().0.iter().all(|&limb| limb == 0)
   }
 
+  /// Constant-time conditional swap.
+  #[inline]
+  pub(crate) fn conditional_swap(lhs: &mut Self, rhs: &mut Self, swap: u8) {
+    let mask = 0u64.wrapping_sub(u64::from(swap & 1));
+    for (lhs_limb, rhs_limb) in lhs.0.iter_mut().zip(rhs.0.iter_mut()) {
+      let diff = mask & (*lhs_limb ^ *rhs_limb);
+      *lhs_limb ^= diff;
+      *rhs_limb ^= diff;
+    }
+  }
+
   /// Return the low-bit sign of the canonical encoding.
   #[must_use]
   pub(crate) fn is_negative(&self) -> bool {

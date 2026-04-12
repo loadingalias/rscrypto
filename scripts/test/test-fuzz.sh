@@ -4,20 +4,24 @@ set -euo pipefail
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Fuzz Testing for rscrypto
 #
-# Per-crate fuzzing: each crate with a fuzz/ directory is tested independently.
-# This matches the rail codebase pattern for better isolation and modularity.
+# Root-level fuzzing: targets live in fuzz/fuzz_targets/*.rs and are built via
+# cargo-fuzz from the fuzz/ workspace.
 #
 # Usage:
-#   ./scripts/test/test-fuzz.sh                    # Run smoke test (60s each)
+#   ./scripts/test/test-fuzz.sh                    # Run all targets (60s each)
 #   ./scripts/test/test-fuzz.sh --all              # Run all targets (60s each)
-#   ./scripts/test/test-fuzz.sh <crate>            # Run specific crate's fuzz targets
+#   ./scripts/test/test-fuzz.sh <target>           # Run specific target
 #   ./scripts/test/test-fuzz.sh --build            # Build without running
 #   ./scripts/test/test-fuzz.sh --list             # List available targets
+#   ./scripts/test/test-fuzz.sh --clean            # Clean fuzz artifacts
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 export RSCRYPTO_TEST_MODE=${RSCRYPTO_TEST_MODE:-local}
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+FUZZ_DIR="$REPO_ROOT/fuzz"
+
 # shellcheck source=../lib/common.sh
 source "$SCRIPT_DIR/../lib/common.sh"
 
@@ -37,12 +41,12 @@ if [ "$RSCRYPTO_TEST_MODE" = "commit" ]; then
 fi
 
 show_help() {
-  echo "Fuzz testing for rscrypto (per-crate)"
+  echo "Fuzz testing for rscrypto"
   echo ""
   echo "Usage:"
-  echo "  $0                        Run smoke test (${DURATION_SECS}s per target)"
+  echo "  $0                        Run all targets (${DURATION_SECS}s per target)"
   echo "  $0 --all                  Run all targets (${DURATION_SECS}s each)"
-  echo "  $0 <crate>                Run specific crate's fuzz targets"
+  echo "  $0 <target>               Run specific target"
   echo "  $0 --build                Build fuzz targets without running"
   echo "  $0 --list                 List available targets"
   echo "  $0 --clean                Clean fuzz artifacts"
@@ -60,157 +64,121 @@ check_requirements() {
     echo "Error: Rust toolchain not found"
     exit 1
   fi
-
   if ! cargo fuzz --version &>/dev/null; then
     echo "Error: cargo-fuzz not found"
     echo "Install with: cargo install cargo-fuzz"
     exit 1
   fi
-}
-
-# Find all crates with fuzz/ directories
-find_fuzz_dirs() {
-  find crates -type d -name fuzz 2>/dev/null || true
+  if [ ! -d "$FUZZ_DIR" ]; then
+    echo "No fuzz/ directory found at repo root"
+    exit 0
+  fi
 }
 
 list_targets() {
   echo "Available fuzz targets:"
   echo ""
-
-  local fuzz_dirs
-  fuzz_dirs=$(find_fuzz_dirs)
-
-  if [ -z "$fuzz_dirs" ]; then
-    echo "  No fuzz directories found"
-    return
-  fi
-
-  for fuzz_dir in $fuzz_dirs; do
-    local crate_name
-    crate_name=$(basename "$(dirname "$fuzz_dir")")
-    echo "━━━ $crate_name ━━━"
-
-    pushd "$fuzz_dir" > /dev/null
-    local targets
-    targets=$(cargo fuzz list 2>/dev/null || true)
-    if [ -z "$targets" ]; then
-      echo "  (no targets)"
-    else
-      for target in $targets; do
-        echo "  $target"
-      done
-    fi
-    popd > /dev/null
-    echo ""
-  done
+  pushd "$FUZZ_DIR" > /dev/null
+  cargo fuzz list 2>/dev/null
+  popd > /dev/null
 }
 
 build_targets() {
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo "🔨 Building fuzz targets..."
+  echo "Building fuzz targets..."
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-  local fuzz_dirs
-  fuzz_dirs=$(find_fuzz_dirs)
+  pushd "$FUZZ_DIR" > /dev/null
+  cargo fuzz build --target "$(rustc -vV | sed -n 's|host: ||p')"
+  popd > /dev/null
 
-  if [ -z "$fuzz_dirs" ]; then
-    echo "No fuzz directories found"
-    exit 0
-  fi
-
-  for fuzz_dir in $fuzz_dirs; do
-    local crate_name
-    crate_name=$(basename "$(dirname "$fuzz_dir")")
-    echo "Building: $crate_name"
-
-    pushd "$fuzz_dir" > /dev/null
-    cargo fuzz build --target "$(rustc -vV | sed -n 's|host: ||p')"
-    popd > /dev/null
-  done
-
-  echo "✅ Fuzz targets built successfully!"
+  echo "Fuzz targets built successfully"
 }
 
 clean_artifacts() {
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo "🧹 Cleaning fuzz artifacts..."
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "Cleaning fuzz artifacts..."
 
-  local fuzz_dirs
-  fuzz_dirs=$(find_fuzz_dirs)
+  pushd "$FUZZ_DIR" > /dev/null
+  cargo fuzz clean 2>/dev/null
+  rm -rf artifacts/ corpus/ coverage/
+  popd > /dev/null
 
-  for fuzz_dir in $fuzz_dirs; do
-    pushd "$fuzz_dir" > /dev/null
-    cargo fuzz clean 2>/dev/null || true
-    rm -rf artifacts/ corpus/ coverage/
-    popd > /dev/null
-  done
-
-  echo "✅ Fuzz artifacts cleaned!"
+  echo "Fuzz artifacts cleaned"
 }
 
-run_fuzz() {
-  local fuzz_dirs="$1"
+run_target() {
+  local target="$1"
   local duration="$2"
 
+  echo "  Running: $target (${duration}s)"
+
+  pushd "$FUZZ_DIR" > /dev/null
+
+  mkdir -p "artifacts/$target"
+
+  local fuzz_args="-max_total_time=$duration -timeout=$TIMEOUT -rss_limit_mb=$RSS_LIMIT -max_len=$MAX_LEN"
+  fuzz_args="$fuzz_args -artifact_prefix=artifacts/$target/"
+
+  # shellcheck disable=SC2086
+  # Capture exit code from cargo-fuzz, not from the grep filter.
+  # With pipefail, `grep -v` returning 1 (all lines filtered) would mask a
+  # successful fuzz run.  Use a variable to isolate the two exit codes.
+  local fuzz_exit=0
+  cargo fuzz run "$target" \
+      --jobs="$JOBS" \
+      --target "$(rustc -vV | sed -n 's|host: ||p')" \
+      -- $fuzz_args 2>&1 | { grep -v "^INFO:" || true; } || fuzz_exit=$?
+
+  if [ "$fuzz_exit" -eq 0 ]; then
+    echo "    Completed: $target"
+    popd > /dev/null
+    return 0
+  else
+    echo "    Failed or found crash: $target"
+    popd > /dev/null
+    return 1
+  fi
+}
+
+run_all() {
+  local duration="$1"
+
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo "🚀 Fuzz Testing"
-  echo "⏱️  Duration: ${duration}s per target"
+  echo "Fuzz Testing"
+  echo "Duration: ${duration}s per target"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   echo ""
 
-  local total_targets=0
-  local failed_targets=0
-  local crashed_targets=""
+  pushd "$FUZZ_DIR" > /dev/null
+  local targets
+  targets=$(cargo fuzz list 2>/dev/null)
+  popd > /dev/null
 
-  for fuzz_dir in $fuzz_dirs; do
-    local crate_name
-    crate_name=$(basename "$(dirname "$fuzz_dir")")
-    echo "━━━ Crate: $crate_name ━━━"
+  if [ -z "$targets" ]; then
+    echo "No fuzz targets found"
+    exit 0
+  fi
 
-    pushd "$fuzz_dir" > /dev/null
+  local total=0
+  local failed=0
+  local crashed=""
 
-    local targets
-    targets=$(cargo fuzz list 2>/dev/null || true)
-    if [ -z "$targets" ]; then
-      echo "  No fuzz targets found"
-      popd > /dev/null
-      continue
+  for target in $targets; do
+    total=$((total + 1))
+    if ! run_target "$target" "$duration"; then
+      failed=$((failed + 1))
+      crashed="${crashed}  ${target}\n"
     fi
-
-    for target in $targets; do
-      total_targets=$((total_targets + 1))
-      echo "  Running: $target"
-
-      mkdir -p "artifacts/$target"
-
-      local fuzz_args="-max_total_time=$duration -timeout=$TIMEOUT -rss_limit_mb=$RSS_LIMIT -max_len=$MAX_LEN"
-      fuzz_args="$fuzz_args -artifact_prefix=artifacts/$target/"
-
-      # shellcheck disable=SC2086
-      if cargo fuzz run "$target" \
-          --jobs="$JOBS" \
-          --target "$(rustc -vV | sed -n 's|host: ||p')" \
-          -- $fuzz_args 2>&1 | grep -v "^INFO:"; then
-        echo "    ✅ Completed"
-      else
-        echo "    ❌ Failed or found crash"
-        failed_targets=$((failed_targets + 1))
-        crashed_targets="${crashed_targets}${crate_name}/${target}\n"
-      fi
-    done
-
-    popd > /dev/null
-    echo ""
   done
 
+  echo ""
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo "Fuzzing Summary: $total_targets targets, $failed_targets failed"
-  if [ $failed_targets -gt 0 ]; then
-    echo -e "Crashed: $crashed_targets"
+  echo "Summary: $total targets, $failed failed"
+  if [ $failed -gt 0 ]; then
+    echo -e "Crashed:\n$crashed"
     exit 1
   else
-    echo "✅ All fuzz targets passed!"
+    echo "All fuzz targets passed"
   fi
 }
 
@@ -231,34 +199,13 @@ case "${1:-}" in
     check_requirements
     clean_artifacts
     ;;
-  --all)
+  --all|"")
     check_requirements
-    fuzz_dirs=$(find_fuzz_dirs)
-    if [ -z "$fuzz_dirs" ]; then
-      echo "No fuzz directories found in crates/"
-      exit 0
-    fi
-    run_fuzz "$fuzz_dirs" "${2:-$DURATION_SECS}"
-    ;;
-  "")
-    # Default: run all (same as --all for per-crate fuzzing)
-    check_requirements
-    fuzz_dirs=$(find_fuzz_dirs)
-    if [ -z "$fuzz_dirs" ]; then
-      echo "No fuzz directories found in crates/"
-      exit 0
-    fi
-    run_fuzz "$fuzz_dirs" "$DURATION_SECS"
+    run_all "${2:-$DURATION_SECS}"
     ;;
   *)
-    # Specific crate
+    # Specific target
     check_requirements
-    crate_fuzz_dir="crates/$1/fuzz"
-    if [ ! -d "$crate_fuzz_dir" ]; then
-      echo "Error: No fuzz directory found for crate: $1"
-      echo "Expected: $crate_fuzz_dir"
-      exit 1
-    fi
-    run_fuzz "$crate_fuzz_dir" "${2:-$DURATION_SECS}"
+    run_target "$1" "${2:-$DURATION_SECS}"
     ;;
 esac
