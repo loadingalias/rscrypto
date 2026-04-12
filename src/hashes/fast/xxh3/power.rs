@@ -282,20 +282,8 @@ unsafe fn hash_long_internal_loop(input: &[u8], secret: &[u8]) -> [u64; ACC_NB] 
 // Top-level kernel functions (safe wrappers)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// XXH3 64-bit hash — POWER VSX kernel.
-///
-/// Delegates ≤240 B to portable scalar paths; >240 B uses VSX accumulator.
-pub fn xxh3_64_with_seed(input: &[u8], seed: u64) -> u64 {
-  if input.len() <= 16 {
-    return super::xxh3_64_0to16(input, seed, &DEFAULT_SECRET);
-  }
-  if input.len() <= 128 {
-    return super::xxh3_64_7to128(input, seed, &DEFAULT_SECRET);
-  }
-  if input.len() <= MID_SIZE_MAX {
-    return super::xxh3_64_129to240(input, seed, &DEFAULT_SECRET);
-  }
-
+/// Long-path entry point (>240B) — no ≤240B branches.
+pub fn xxh3_64_long(input: &[u8], seed: u64) -> u64 {
   if seed == 0 {
     // SAFETY: Dispatcher verifies POWER8+ VSX before selecting this kernel.
     let acc = unsafe { hash_long_internal_loop(input, &DEFAULT_SECRET) };
@@ -318,35 +306,34 @@ pub fn xxh3_64_with_seed(input: &[u8], seed: u64) -> u64 {
   }
 }
 
-/// XXH3 128-bit hash — POWER VSX kernel.
+/// XXH3 64-bit hash — POWER VSX kernel.
 ///
 /// Delegates ≤240 B to portable scalar paths; >240 B uses VSX accumulator.
-pub fn xxh3_128_with_seed(input: &[u8], seed: u64) -> u128 {
+pub fn xxh3_64_with_seed(input: &[u8], seed: u64) -> u64 {
   if input.len() <= 16 {
-    return super::xxh3_128_0to16(input, seed, &DEFAULT_SECRET);
+    return super::xxh3_64_0to16(input, seed, &DEFAULT_SECRET);
   }
   if input.len() <= 128 {
-    return super::xxh3_128_7to128(input, seed, &DEFAULT_SECRET);
+    return super::xxh3_64_7to128(input, seed, &DEFAULT_SECRET);
   }
   if input.len() <= MID_SIZE_MAX {
-    return super::xxh3_128_129to240(input, seed, &DEFAULT_SECRET);
+    return super::xxh3_64_129to240(input, seed, &DEFAULT_SECRET);
   }
+  xxh3_64_long(input, seed)
+}
 
-  let (acc, secret_ref) = if seed == 0 {
-    (
-      // SAFETY: Dispatcher verifies POWER8+ VSX before selecting this kernel.
-      unsafe { hash_long_internal_loop(input, &DEFAULT_SECRET) },
-      &DEFAULT_SECRET[..],
-    )
+/// Long-path entry point (>240B) — no ≤240B branches.
+pub fn xxh3_128_long(input: &[u8], seed: u64) -> u128 {
+  if seed == 0 {
+    // SAFETY: Dispatcher verifies POWER8+ VSX before selecting this kernel.
+    let acc = unsafe { hash_long_internal_loop(input, &DEFAULT_SECRET) };
+    xxh3_128_long_finalize(&acc, &DEFAULT_SECRET, input.len())
   } else {
     let secret = super::custom_default_secret(seed);
     // SAFETY: Dispatcher verifies POWER8+ VSX before selecting this kernel.
     let acc = unsafe { hash_long_internal_loop(input, &secret) };
-    let secret2 = super::custom_default_secret(seed);
-    return xxh3_128_long_finalize(&acc, &secret2, input.len());
-  };
-
-  xxh3_128_long_finalize(&acc, secret_ref, input.len())
+    xxh3_128_long_finalize(&acc, &secret, input.len())
+  }
 }
 
 #[inline(always)]

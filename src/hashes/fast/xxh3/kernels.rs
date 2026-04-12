@@ -72,20 +72,39 @@ pub fn hash64_fn(id: Xxh3KernelId) -> fn(&[u8], u64) -> u64 {
   }
 }
 
+/// Long-path-only entry for 64-bit hash (>240B, no ≤240B length checks).
 #[must_use]
-pub fn hash128_fn(id: Xxh3KernelId) -> fn(&[u8], u64) -> u128 {
+pub fn hash64_long_fn(id: Xxh3KernelId) -> fn(&[u8], u64) -> u64 {
   match id {
-    Xxh3KernelId::Portable => super::xxh3_128_with_seed,
+    Xxh3KernelId::Portable => super::xxh3_64_long,
     #[cfg(target_arch = "x86_64")]
-    Xxh3KernelId::Avx2 => super::x86_64_avx2::xxh3_128_with_seed,
+    Xxh3KernelId::Avx2 => super::x86_64_avx2::xxh3_64_long,
     #[cfg(target_arch = "aarch64")]
-    Xxh3KernelId::Neon => super::aarch64_neon::xxh3_128_with_seed,
+    Xxh3KernelId::Neon => super::aarch64_neon::xxh3_64_long,
     #[cfg(target_arch = "x86_64")]
-    Xxh3KernelId::Avx512 => super::x86_64_avx512::xxh3_128_with_seed,
+    Xxh3KernelId::Avx512 => super::x86_64_avx512::xxh3_64_long,
     #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
-    Xxh3KernelId::Vsx => super::power::xxh3_128_with_seed,
+    Xxh3KernelId::Vsx => super::power::xxh3_64_long,
     #[cfg(target_arch = "s390x")]
-    Xxh3KernelId::Vector => super::s390x::xxh3_128_with_seed,
+    Xxh3KernelId::Vector => super::s390x::xxh3_64_long,
+  }
+}
+
+/// Long-path-only entry for 128-bit hash (>240B, no ≤240B length checks).
+#[must_use]
+pub fn hash128_long_fn(id: Xxh3KernelId) -> fn(&[u8], u64) -> u128 {
+  match id {
+    Xxh3KernelId::Portable => super::xxh3_128_long,
+    #[cfg(target_arch = "x86_64")]
+    Xxh3KernelId::Avx2 => super::x86_64_avx2::xxh3_128_long,
+    #[cfg(target_arch = "aarch64")]
+    Xxh3KernelId::Neon => super::aarch64_neon::xxh3_128_long,
+    #[cfg(target_arch = "x86_64")]
+    Xxh3KernelId::Avx512 => super::x86_64_avx512::xxh3_128_long,
+    #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+    Xxh3KernelId::Vsx => super::power::xxh3_128_long,
+    #[cfg(target_arch = "s390x")]
+    Xxh3KernelId::Vector => super::s390x::xxh3_128_long,
   }
 }
 

@@ -6,7 +6,6 @@
 #![allow(clippy::indexing_slicing)] // Fixed-size arrays in finalization
 
 use self::kernels::CompressBlocksFn;
-use super::sha256::Sha256;
 use crate::{
   hashes::crypto::dispatch_util::{SizeClassDispatch, len_hint_from_u64},
   traits::Digest,
@@ -57,12 +56,13 @@ impl core::fmt::Debug for Sha224 {
 impl Default for Sha224 {
   #[inline]
   fn default() -> Self {
+    use crate::hashes::crypto::sha256::kernels as sha256k;
     Self {
       state: H0,
       block: [0u8; BLOCK_LEN],
       block_len: 0,
       bytes_hashed: 0,
-      compress_blocks: Sha256::compress_blocks_portable,
+      compress_blocks: sha256k::compile_time_best(),
       dispatch: None,
     }
   }
@@ -201,12 +201,21 @@ impl Digest for Sha224 {
     if data.is_empty() {
       return;
     }
+    use crate::hashes::crypto::sha256::kernels as sha256k;
+    if sha256k::COMPILE_TIME_HW {
+      self.update_with(data, sha256k::compile_time_best());
+      return;
+    }
     let compress = self.select_compress(data.len());
     self.update_with(data, compress);
   }
 
   #[inline]
   fn finalize(&self) -> Self::Output {
+    use crate::hashes::crypto::sha256::kernels as sha256k;
+    if sha256k::COMPILE_TIME_HW {
+      return self.finalize_inner_with(sha256k::compile_time_best());
+    }
     self.finalize_inner_with(self.compress_blocks)
   }
 

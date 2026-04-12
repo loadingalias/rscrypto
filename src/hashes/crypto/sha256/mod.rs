@@ -358,7 +358,7 @@ impl Default for Sha256 {
       block: [0u8; BLOCK_LEN],
       block_len: 0,
       bytes_hashed: 0,
-      compress_blocks: Sha256::compress_blocks_portable,
+      compress_blocks: kernels::compile_time_best(),
       dispatch: None,
     }
   }
@@ -548,12 +548,19 @@ impl Digest for Sha256 {
     if data.is_empty() {
       return;
     }
+    if kernels::COMPILE_TIME_HW {
+      self.update_with(data, kernels::compile_time_best());
+      return;
+    }
     let compress = self.select_compress(data.len());
     self.update_with(data, compress);
   }
 
   #[inline]
   fn finalize(&self) -> Self::Output {
+    if kernels::COMPILE_TIME_HW {
+      return self.finalize_inner_with(kernels::compile_time_best());
+    }
     self.finalize_inner_with(self.compress_blocks)
   }
 

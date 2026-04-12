@@ -84,6 +84,9 @@ fn select(d: &ActiveDispatch, len: usize) -> Entry {
 #[inline]
 #[must_use]
 pub fn kernel_name_for_len(len: usize) -> &'static str {
+  if super::kernels::COMPILE_TIME_HW {
+    return super::kernels::COMPILE_TIME_NAME;
+  }
   let d = active();
   select(&d, len).name
 }
@@ -91,6 +94,13 @@ pub fn kernel_name_for_len(len: usize) -> &'static str {
 #[inline]
 #[must_use]
 pub fn digest(data: &[u8]) -> [u8; 32] {
+  // When the HW kernel is known at compile time, bypass the OnceCache,
+  // size-class selection, and function-pointer indirection.  LLVM sees a
+  // constant function pointer from compile_time_best() and can
+  // devirtualize + inline the compress calls inside digest_oneshot.
+  if super::kernels::COMPILE_TIME_HW {
+    return digest_oneshot(data, super::kernels::compile_time_best());
+  }
   let d = active();
   let compress = select(&d, data.len()).compress_blocks;
   digest_oneshot(data, compress)
@@ -134,6 +144,16 @@ fn digest_oneshot(data: &[u8], compress_blocks: CompressBlocksFn) -> [u8; 32] {
 #[inline]
 #[must_use]
 pub(crate) fn compress_dispatch() -> SizeClassDispatch<CompressBlocksFn> {
+  if super::kernels::COMPILE_TIME_HW {
+    let f = super::kernels::compile_time_best();
+    return SizeClassDispatch {
+      boundaries: [usize::MAX; 3],
+      xs: f,
+      s: f,
+      m: f,
+      l: f,
+    };
+  }
   let d = active();
   SizeClassDispatch {
     boundaries: d.boundaries,

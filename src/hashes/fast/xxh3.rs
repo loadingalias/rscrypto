@@ -762,19 +762,6 @@ pub(crate) fn xxh3_128_long(input: &[u8], seed: u64) -> u128 {
   }
 }
 
-#[inline(always)]
-fn xxh3_128_with_seed(input: &[u8], seed: u64) -> u128 {
-  if input.len() <= 16 {
-    xxh3_128_0to16(input, seed, &DEFAULT_SECRET)
-  } else if input.len() <= 128 {
-    xxh3_128_7to128(input, seed, &DEFAULT_SECRET)
-  } else if input.len() <= MID_SIZE_MAX {
-    xxh3_128_129to240(input, seed, &DEFAULT_SECRET)
-  } else {
-    xxh3_128_long(input, seed)
-  }
-}
-
 impl FastHash for Xxh3_64 {
   const OUTPUT_SIZE: usize = 8;
   type Output = u64;
