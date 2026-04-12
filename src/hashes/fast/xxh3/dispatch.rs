@@ -93,7 +93,8 @@ pub fn kernel_name_for_len(len: usize) -> &'static str {
 /// the intermediate `xxh3_64_with_seed` call and its redundant ≤`MID_SIZE_MAX`
 /// guard branch.
 ///
-/// The long-path fallback is `#[inline(never)]` to keep the inlined code small.
+/// The long-path fallback is `#[cold]` to keep the caller's ≤240B paths tight
+/// in the µop cache.
 #[inline(always)]
 #[must_use]
 pub fn hash64_with_seed(seed: u64, data: &[u8]) -> u64 {
@@ -119,6 +120,7 @@ pub fn hash64_with_seed(seed: u64, data: &[u8]) -> u64 {
 /// Falls back to runtime dispatch when features are unknown at compile time,
 /// using the dedicated long-path entry point that skips redundant ≤240B length
 /// checks in the kernel.
+#[cold]
 #[inline(never)]
 fn hash64_long(seed: u64, data: &[u8]) -> u64 {
   // Tier 1: compile-time dispatch — dedicated long entry points skip ≤240B
@@ -164,6 +166,7 @@ pub fn hash128_with_seed(seed: u64, data: &[u8]) -> u128 {
 }
 
 /// See [`hash64_long`] for the compile-time dispatch rationale.
+#[cold]
 #[inline(never)]
 fn hash128_long(seed: u64, data: &[u8]) -> u128 {
   // Tier 1: compile-time dispatch (dedicated long entry points).
