@@ -96,6 +96,7 @@ pub(crate) fn permute_12_x86_avx512(state: &mut [u64; 5]) {
 ///
 /// Caller must ensure the `avx512f` and `avx512vl` CPU features are available.
 #[cfg(target_arch = "x86_64")]
+#[cfg_attr(not(any(test, feature = "std")), allow(dead_code))]
 #[target_feature(enable = "avx512f,avx512vl")]
 #[inline]
 unsafe fn permute_12_x86_avx512_x8_impl(states: &mut [[u64; 5]; 8]) {
@@ -212,6 +213,7 @@ unsafe fn permute_12_x86_avx512_x8_impl(states: &mut [[u64; 5]; 8]) {
 
 /// Apply the Ascon-p[12] permutation to eight independent states in parallel.
 #[cfg(target_arch = "x86_64")]
+#[cfg_attr(not(any(test, feature = "std")), allow(dead_code))]
 #[inline]
 pub(crate) fn permute_12_x86_avx512_x8(states: &mut [[u64; 5]; 8]) {
   // SAFETY: Dispatch verifies x86::AVX512F + x86::AVX512VL before selecting this kernel.

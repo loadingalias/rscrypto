@@ -4,6 +4,7 @@ use crate::platform::Caps;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 #[non_exhaustive]
+#[cfg_attr(not(any(test, feature = "std")), allow(dead_code))]
 pub enum AsconPermute12KernelId {
   Portable = 0,
   #[cfg(target_arch = "aarch64")]
