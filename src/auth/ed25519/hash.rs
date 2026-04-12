@@ -93,6 +93,8 @@ impl Drop for ExpandedSecret {
 
 #[cfg(test)]
 mod tests {
+  use alloc::format;
+
   use super::ExpandedSecret;
   use crate::{auth::ed25519::Ed25519SecretKey, hashes::crypto::Sha512};
 

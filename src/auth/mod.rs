@@ -29,7 +29,13 @@
 //! let mut kmac_tag = [0u8; 32];
 //! kmac.finalize_into(&mut kmac_tag);
 //! assert!(rscrypto::Kmac256::verify(b"shared-secret", b"svc=v1", b"auth", &kmac_tag).is_ok());
-//! # Ok::<(), rscrypto::auth::HkdfOutputLengthError>(())
+//!
+//! let alice = rscrypto::X25519SecretKey::from_bytes([7u8; 32]);
+//! let bob = rscrypto::X25519SecretKey::from_bytes([9u8; 32]);
+//! let alice_shared = alice.diffie_hellman(&bob.public_key())?;
+//! let bob_shared = bob.diffie_hellman(&alice.public_key())?;
+//! assert_eq!(alice_shared, bob_shared);
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
 //! # Modules
@@ -38,15 +44,18 @@
 //! - [`hmac`] - HMAC-based authentication.
 //! - [`hkdf`] - HKDF extract-then-expand key derivation.
 //! - [`kmac`] - KMAC256 variable-output MAC.
+//! - [`x25519`] - X25519 Diffie-Hellman key agreement.
 
 pub mod ed25519;
 pub mod hkdf;
 pub mod hmac;
 pub mod kmac;
+pub mod x25519;
 
 pub use ed25519::{Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature, verify as verify_ed25519};
-pub use hkdf::{HkdfOutputLengthError, HkdfSha256};
-pub use hmac::HmacSha256;
+pub use hkdf::{HkdfOutputLengthError, HkdfSha256, HkdfSha384};
+pub use hmac::{HmacSha256, HmacSha384, HmacSha512};
 pub use kmac::Kmac256;
+pub use x25519::{X25519Error, X25519PublicKey, X25519SecretKey, X25519SharedSecret};
 
 pub use crate::traits::Mac;

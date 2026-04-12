@@ -15,6 +15,8 @@ FEATURE_SETS=(
   "alloc,checksums"
   "hashes"
   "alloc,hashes"
+  "auth"
+  "alloc,auth"
 )
 
 echo "Executable rscrypto feature matrix"

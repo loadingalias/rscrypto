@@ -3,308 +3,257 @@
 [![Crates.io](https://img.shields.io/crates/v/rscrypto.svg)](https://crates.io/crates/rscrypto)
 [![docs.rs](https://img.shields.io/docsrs/rscrypto)](https://docs.rs/rscrypto)
 [![CI](https://github.com/loadingalias/rscrypto/actions/workflows/commit.yaml/badge.svg)](https://github.com/loadingalias/rscrypto/actions/workflows/commit.yaml)
-[![MSRV](https://img.shields.io/badge/MSRV-1.94.0-blue.svg)](https://blog.rust-lang.org/)
+[![codecov](https://codecov.io/gh/loadingalias/rscrypto/graph/badge.svg)](https://codecov.io/gh/loadingalias/rscrypto)
+[![MSRV](https://img.shields.io/badge/MSRV-1.94.1-blue.svg)](https://blog.rust-lang.org/)
 
-> Pure Rust checksums, digests, XOFs, MACs, HKDF, Ed25519, and fast hashes with portable fallbacks and ISA dispatch.
+> Pure Rust cryptography. Hardware-accelerated. Zero dependencies.
 
 ## Quick Start
 
 ```rust
 use rscrypto::{
-  Blake3, Checksum, Crc32C, Digest, Ed25519Keypair, Ed25519SecretKey, HkdfSha256, HmacSha256, Mac, RapidHash, Sha256,
-  Shake256, Xof, Xxh3,
+  Aead, Blake3, Checksum, ChaCha20Poly1305, ChaCha20Poly1305Key, Crc32C, Digest,
+  Ed25519Keypair, Ed25519SecretKey, HkdfSha256, HmacSha256, Kmac256, Mac,
+  Sha256, Shake256, X25519SecretKey, Xof, Xxh3, aead::Nonce96,
 };
 
-let checksum = Crc32C::checksum(b"data");
-let digest = Blake3::digest(b"data");
-let tag = HmacSha256::mac(b"key", b"data");
+// Checksum
+let crc = Crc32C::checksum(b"data");
 
+// Digest (one-shot and streaming)
+let hash = Sha256::digest(b"data");
+let mut h = Sha256::new();
+h.update(b"da"); h.update(b"ta");
+assert_eq!(h.finalize(), hash);
+
+// HMAC
+let tag = HmacSha256::mac(b"key", b"data");
+assert!(HmacSha256::verify_tag(b"key", b"data", &tag).is_ok());
+
+// HKDF
 let mut okm = [0u8; 32];
 HkdfSha256::new(b"salt", b"ikm").expand(b"info", &mut okm)?;
 
+// XOF
 let mut xof = Shake256::xof(b"data");
-let mut out = [0u8; 32];
+let mut out = [0u8; 64];
 xof.squeeze(&mut out);
 
-let mut sha = Sha256::new();
-sha.update(b"da");
-sha.update(b"ta");
-assert_eq!(sha.finalize(), Sha256::digest(b"data"));
+// KMAC256
+let mut kmac = Kmac256::new(b"key", b"domain=v1");
+kmac.update(b"data");
+let mut tag32 = [0u8; 32];
+kmac.finalize_into(&mut tag32);
 
-let keypair = Ed25519Keypair::from_secret_key(Ed25519SecretKey::from_bytes([7u8; 32]));
-let sig = keypair.sign(b"data");
-assert!(keypair.public_key().verify(b"data", &sig).is_ok());
+// Ed25519
+let kp = Ed25519Keypair::from_secret_key(Ed25519SecretKey::from_bytes([7u8; 32]));
+let sig = kp.sign(b"data");
+assert!(kp.public_key().verify(b"data", &sig).is_ok());
 
+// X25519
+let alice = X25519SecretKey::from_bytes([7u8; 32]);
+let bob = X25519SecretKey::from_bytes([9u8; 32]);
+assert_eq!(alice.diffie_hellman(&bob.public_key())?, bob.diffie_hellman(&alice.public_key())?);
+
+// AEAD
+let cipher = ChaCha20Poly1305::new(&ChaCha20Poly1305Key::from_bytes([0x11; 32]));
+let nonce = Nonce96::from_bytes([0x22; 12]);
+let mut buf = *b"data";
+let tag = cipher.encrypt_in_place(&nonce, b"aad", &mut buf);
+cipher.decrypt_in_place(&nonce, b"aad", &mut buf, &tag)?;
+assert_eq!(&buf, b"data");
+
+// Fast hashes (non-cryptographic)
 let _ = Xxh3::hash(b"data");
-let _ = RapidHash::hash(b"data");
-assert_eq!(checksum, Crc32C::checksum(b"data"));
-# Ok::<(), rscrypto::auth::HkdfOutputLengthError>(())
+let _ = rscrypto::RapidHash::hash(b"data");
+# Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
 ## Purpose
 
-`rscrypto` is a single-crate crypto and checksum toolbox with a deliberately curated root surface. The root exports cover the default algorithms and traits; more specialized controls stay under explicit modules such as `checksum::config`, `checksum::introspect`, `hashes::introspect`, `hashes::fast`, and `platform`.
-
-**Provides**: CRC families, SHA-2, SHA-3, SHAKE, BLAKE3, Ascon hash/XOF, HMAC-SHA256, HKDF-SHA256, Ed25519, XXH3, rapidhash, I/O adapters, dispatch introspection, and platform capability reporting.
-
-**Design**: no C FFI, no vendored C/C++, `no_std` first, portable fallback is authoritative, and ISA-specific kernels are accelerators rather than separate APIs.
-
-## Performance Posture
-
-The canonical competitive report is [`docs/bench/BENCHMARKS.md`](docs/bench/BENCHMARKS.md), currently based on CI run `#24273250926` from April 11, 2026.
-
-- Release gate 1, non-loss rate `((W + T) / total)`: `1831 / 2155 = 84.97%` — passes the `80%` gate.
-- Release gate 2, pure win rate `(W / total)`: `1396 / 2155 = 64.78%` — below the `70%` public-release bar.
-- Current claim: `rscrypto` is broadly competitive and often faster, but it does not yet clear this project's public-release performance bar.
-- Current Ed25519 reality: signing is strong in the canonical sweep (`27W / 1T / 0L`), verification is not (`3W / 4T / 21L`). Do not describe Ed25519 as uniformly behind or uniformly ahead.
+Single-crate crypto and checksum toolbox. No C FFI, no vendored C/C++, `no_std` first. Portable fallback is authoritative; ISA-specific kernels are accelerators, not separate APIs.
 
 ## Invariants
 
-| Invariant | What it guarantees | What breaks if violated |
-|-----------|--------------------|-------------------------|
-| Portable fallback is the authority | SIMD and ISA dispatch only change speed | Wrong digest or checksum output |
-| Backends are byte-for-byte equivalent | Dispatch is transparent to callers | Silent data corruption |
-| Verification errors stay opaque | MAC and signature checks do not leak extra detail | Timing and oracle risk |
-| Secret material is zeroized on drop where stored | Keying material does not linger in owned buffers | Key retention in memory |
-| Root exports stay small and uniform | Default UX is easy to discover | Public API turns into a junk drawer |
-| Official vectors and differential tests stay green | Algorithms match published behavior and reference crates | Interop and correctness failures |
-
-Repository-level evidence:
-
-- Official vector coverage: `tests/sha256_official_vectors.rs`, `tests/sha3_official_vectors.rs`, `tests/blake3_official_vectors.rs`, `tests/ascon_official_vectors.rs`, `tests/hmac_sha256_vectors.rs`, `tests/hkdf_sha256_vectors.rs`, `tests/ed25519_rfc8032_vectors.rs`
-- Differential coverage: `tests/sha256_differential.rs`, `tests/sha512_differential.rs`, `tests/sha3_differential.rs`, `tests/shake128_differential.rs`, `tests/shake256_differential.rs`, `tests/blake3_differential.rs`, `tests/ascon_differential.rs`, `tests/xxh3_differential.rs`, `tests/rapidhash_differential.rs`
-- Surface and contract guards: `tests/root_surface.rs`, `tests/api_consistency.rs`, `tests/portable_fallback.rs`, `tests/vectored_dispatch.rs`
+| Invariant | What breaks if violated |
+|-----------|-------------------------|
+| Portable fallback is the authority | Wrong digest/checksum/ciphertext output |
+| All backends produce identical bytes | Silent data corruption |
+| Verification errors are opaque | Timing and oracle attacks |
+| Secret material zeroized on drop | Key retention in memory |
+| Official vectors and differential tests stay green | Interoperability failures |
 
 ## Complete Root Inventory
 
-### Public Modules
+### Traits
 
-| Module | Purpose | Source |
-|--------|---------|--------|
-| `auth` | HMAC-SHA256, HKDF-SHA256, Ed25519 | `src/lib.rs:172`, `src/auth/mod.rs:35` |
-| `checksum` | CRC algorithms, buffered wrappers, config, introspection, I/O | `src/lib.rs:179`, `src/checksum/mod.rs:80` |
-| `hashes` | Cryptographic hashes, XOFs, fast hashes, introspection, I/O | `src/lib.rs:182`, `src/hashes/mod.rs:20` |
-| `platform` | CPU capability detection and override control | `src/lib.rs:175`, `src/platform/mod.rs:35` |
-| `traits` | Core contracts and constant-time helpers | `src/lib.rs:176`, `src/traits/mod.rs:32` |
-| `ct` | Constant-time equality and zeroization helpers | `src/lib.rs:200`, `src/traits/ct.rs:24` |
+| Trait | Purpose | Source |
+|-------|---------|--------|
+| `Checksum` | Stateful and one-shot checksum | `traits/checksum.rs:51` |
+| `ChecksumCombine` | Parallel CRC combine | `traits/checksum.rs:280` |
+| `Digest` | Fixed-output hash | `traits/digest.rs:11` |
+| `Xof` | Variable-output squeeze | `traits/xof.rs:7` |
+| `Mac` | Keyed streaming MAC | `traits/mac.rs:13` |
+| `FastHash` | One-shot seeded hash | `traits/fast_hash.rs:13` |
+| `Aead` | Authenticated encryption | `traits/aead.rs:20` |
 
-### Traits and Core Utility
+### AEAD (feature: `aead`)
 
-| Item | Kind | Purpose | Source |
-|------|------|---------|--------|
-| `Checksum` | trait | Stateful and one-shot checksum API | `src/traits/checksum.rs:51` |
-| `ChecksumCombine` | trait | Parallel CRC combine contract | `src/traits/checksum.rs:280` |
-| `Digest` | trait | Stateful and one-shot fixed-output digest API | `src/traits/digest.rs:11` |
-| `Xof` | trait | Arbitrary-output squeeze API | `src/traits/xof.rs:7` |
-| `Mac` | trait | Keyed streaming MAC API | `src/traits/mac.rs:13` |
-| `FastHash` | trait | One-shot seeded fast hash API | `src/traits/fast_hash.rs:13` |
-| `VerificationError` | error type | Opaque verification failure | `src/traits/error.rs:38` |
-| `ct::constant_time_eq` | fn | Constant-time byte comparison | `src/traits/ct.rs:24` |
-| `ct::zeroize` | fn | Best-effort buffer wiping | `src/traits/ct.rs:50` |
+| Cipher | Key | Nonce | Tag | Source |
+|--------|-----|-------|-----|--------|
+| `Aes256Gcm` | 32B | `Nonce96` (12B) | 16B | `aead/aes256gcm.rs` |
+| `Aes256GcmSiv` | 32B | `Nonce96` (12B) | 16B | `aead/aes256gcmsiv.rs` |
+| `ChaCha20Poly1305` | 32B | `Nonce96` (12B) | 16B | `aead/chacha20poly1305.rs` |
+| `XChaCha20Poly1305` | 32B | `Nonce192` (24B) | 16B | `aead/xchacha20poly1305.rs` |
+| `AsconAead128` | 16B | `Nonce128` (16B) | 16B | `aead/ascon128.rs` |
+| `Aegis256` | 32B | `Nonce256` (32B) | 16B | `aead/aegis256.rs` |
 
-### Root Checksums
+Each cipher has typed `*Key` and `*Tag` wrappers. Nonces: `Nonce96`, `Nonce128`, `Nonce192`, `Nonce256` in `rscrypto::aead`.
 
-| Type | Kind | Purpose | Source |
-|------|------|---------|--------|
-| `Crc16Ccitt` | struct | CRC-16/CCITT | `src/checksum/crc16/mod.rs:411` |
-| `Crc16Ibm` | struct | CRC-16/IBM | `src/checksum/crc16/mod.rs:553` |
-| `Crc24OpenPgp` | struct | CRC-24/OpenPGP | `src/checksum/crc24/mod.rs:250` |
-| `Crc32` | struct | CRC-32/IEEE default | `src/checksum/crc32/mod.rs:585` |
-| `Crc32C` | struct | CRC-32C/Castagnoli default | `src/checksum/crc32/mod.rs:728` |
-| `Crc64` | struct | CRC-64/XZ default | `src/checksum/crc64/mod.rs:530` |
-| `Crc64Nvme` | struct | CRC-64/NVME | `src/checksum/crc64/mod.rs:691` |
+### Authentication (feature: `auth`)
 
-### Root Cryptographic Hashes and XOFs
+| Type | Purpose | Source |
+|------|---------|--------|
+| `HmacSha256` / `HmacSha384` / `HmacSha512` | HMAC-SHA2 family (RFC 2104) | `auth/hmac.rs` |
+| `HkdfSha256` / `HkdfSha384` | HKDF extract-expand (RFC 5869) | `auth/hkdf.rs` |
+| `Kmac256` | Variable-output MAC (SP 800-185) | `auth/kmac.rs` |
+| `Ed25519SecretKey` / `PublicKey` / `Signature` / `Keypair` | Ed25519 signatures (RFC 8032) | `auth/ed25519.rs` |
+| `X25519SecretKey` / `PublicKey` / `SharedSecret` | X25519 key exchange (RFC 7748) | `auth/x25519.rs` |
+| `verify_ed25519` | Free-function signature verification | `auth/ed25519.rs` |
 
-| Type | Kind | Purpose | Source |
-|------|------|---------|--------|
-| `Sha224` | struct | SHA-224 digest | `src/hashes/crypto/sha224.rs:42` |
-| `Sha256` | struct | SHA-256 digest | `src/hashes/crypto/sha256/mod.rs:304` |
-| `Sha384` | struct | SHA-384 digest | `src/hashes/crypto/sha384.rs:36` |
-| `Sha512` | struct | SHA-512 digest | `src/hashes/crypto/sha512/mod.rs:180` |
-| `Sha512_256` | struct | SHA-512/256 digest | `src/hashes/crypto/sha512_256.rs:36` |
-| `Sha3_224` | struct | SHA3-224 digest | `src/hashes/crypto/sha3.rs:18` |
-| `Sha3_256` | struct | SHA3-256 digest | `src/hashes/crypto/sha3.rs:12` |
-| `Sha3_384` | struct | SHA3-384 digest | `src/hashes/crypto/sha3.rs:143` |
-| `Sha3_512` | struct | SHA3-512 digest | `src/hashes/crypto/sha3.rs:137` |
-| `Shake128` | struct | SHAKE128 state | `src/hashes/crypto/sha3.rs:257` |
-| `Shake128XofReader` | struct | SHAKE128 XOF reader | `src/hashes/crypto/sha3.rs:325` |
-| `Shake256` | struct | SHAKE256 state | `src/hashes/crypto/sha3.rs:251` |
-| `Shake256XofReader` | struct | SHAKE256 XOF reader | `src/hashes/crypto/sha3.rs:394` |
-| `Blake3` | struct | BLAKE3 digest and XOF entry point | `src/hashes/crypto/blake3/mod.rs:2318` |
-| `Blake3XofReader` | struct | BLAKE3 XOF reader | `src/hashes/crypto/blake3/mod.rs:3122` |
-| `AsconHash256` | struct | Ascon hash | `src/hashes/crypto/ascon.rs:383` |
-| `AsconXof` | struct | Ascon XOF state | `src/hashes/crypto/ascon.rs:578` |
-| `AsconXofReader` | struct | Ascon XOF reader | `src/hashes/crypto/ascon.rs:787` |
+### Cryptographic Hashes (feature: `hashes`)
 
-### Root Authentication and KDF Types
+| Type | Output | Source |
+|------|--------|--------|
+| `Sha224` / `Sha256` / `Sha384` / `Sha512` / `Sha512_256` | 28-64B | `hashes/crypto/sha*.rs` |
+| `Sha3_224` / `Sha3_256` / `Sha3_384` / `Sha3_512` | 28-64B | `hashes/crypto/sha3.rs` |
+| `Shake128` / `Shake256` | XOF | `hashes/crypto/sha3.rs` |
+| `Blake3` | 32B / XOF | `hashes/crypto/blake3/mod.rs` |
+| `AsconHash256` / `AsconXof` / `AsconCxof128` | 32B / XOF | `hashes/crypto/ascon.rs` |
+| `Cshake256` | XOF (SP 800-185) | `hashes/crypto/cshake.rs` |
 
-| Type | Kind | Purpose | Source |
-|------|------|---------|--------|
-| `HmacSha256` | struct | HMAC-SHA256 MAC state | `src/auth/hmac.rs:34` |
-| `HkdfSha256` | struct | HKDF-SHA256 extract/expand state | `src/auth/hkdf.rs:59` |
-| `Ed25519SecretKey` | struct | Typed Ed25519 secret key | `src/auth/ed25519.rs:97` |
-| `Ed25519PublicKey` | struct | Typed Ed25519 public key | `src/auth/ed25519.rs:160` |
-| `Ed25519Signature` | struct | Typed Ed25519 signature | `src/auth/ed25519.rs:210` |
-| `Ed25519Keypair` | struct | Typed Ed25519 keypair | `src/auth/ed25519.rs:253` |
-| `verify_ed25519` | fn | Free-function Ed25519 verification | `src/auth/ed25519.rs:305` |
+XOF readers: `Shake128XofReader`, `Shake256XofReader`, `Blake3XofReader`, `AsconXofReader`, `AsconCxof128Reader`, `Cshake256XofReader`.
 
-### Root Fast Hashes
+### Checksums (feature: `checksums`)
 
-| Type | Kind | Purpose | Source |
-|------|------|---------|--------|
-| `Xxh3` | re-export | Canonical 64-bit XXH3 root name | `src/hashes/fast/mod.rs:11` |
-| `Xxh3_128` | struct | 128-bit XXH3 | `src/hashes/fast/xxh3.rs:31` |
-| `RapidHash` | re-export | Canonical 64-bit rapidhash root name | `src/hashes/fast/mod.rs:10` |
-| `RapidHash128` | struct | 128-bit rapidhash | `src/hashes/fast/rapidhash.rs:30` |
+| Type | Output | Source |
+|------|--------|--------|
+| `Crc16Ccitt` / `Crc16Ibm` | `u16` | `checksum/crc16/` |
+| `Crc24OpenPgp` | `u32` | `checksum/crc24/` |
+| `Crc32` / `Crc32C` | `u32` | `checksum/crc32/` |
+| `Crc64` / `Crc64Nvme` | `u64` | `checksum/crc64/` |
 
-`RapidHashFast64` and `RapidHashFast128` are public but intentionally module-only under `rscrypto::hashes::fast::*`. They are tuned for in-process hashing, not the default root surface.
+All implement `ChecksumCombine` for parallel CRC folding.
 
-## Public Errors
+### Fast Hashes (feature: `hashes`)
 
-| Error | When it occurs | Recovery | Source |
-|-------|----------------|----------|--------|
-| `VerificationError` | MAC or signature verification fails | Reject the input; error is intentionally opaque | `src/traits/error.rs:38` |
-| `HkdfOutputLengthError` | HKDF expand request exceeds RFC 5869's 8160-byte limit | Request less output or split derivation | `src/auth/hkdf.rs:13` |
-| `platform::OverrideError::AlreadyInitialized` | Detection override changed after cache initialization | Set overrides before first detection | `src/platform/detect.rs:24` |
-| `platform::OverrideError::Unsupported` | Override support is unavailable on the current target | Fall back to normal detection | `src/platform/detect.rs:24` |
+| Type | Output | Source |
+|------|--------|--------|
+| `Xxh3` / `Xxh3_128` | `u64` / `u128` | `hashes/fast/xxh3.rs` |
+| `RapidHash` / `RapidHash128` | `u64` / `u128` | `hashes/fast/rapidhash.rs` |
 
-## Advanced Public Modules
+`RapidHashFast64` / `RapidHashFast128` available under `rscrypto::hashes::fast`.
 
-### `checksum`
+### Error Types
 
-| Surface | Public items | Source |
-|---------|--------------|--------|
-| `checksum::config` | `Crc16Config`, `Crc16Force`, `Crc24Config`, `Crc24Force`, `Crc32Config`, `Crc32Force`, `Crc64Config`, `Crc64Force` | `src/checksum/mod.rs:94` |
-| `checksum::buffered` | `BufferedCrc16Ccitt`, `BufferedCrc16Ibm`, `BufferedCrc24OpenPgp`, `BufferedCrc32`, `BufferedCrc32C`, `BufferedCrc64`, `BufferedCrc64Nvme` | `src/checksum/mod.rs:84` |
-| `checksum::introspect` | `DispatchInfo`, `kernel_for`, `KernelIntrospect`, `is_hardware_accelerated` | `src/checksum/introspect.rs:25`, `src/checksum/introspect.rs:38`, `src/checksum/introspect.rs:90`, `src/checksum/introspect.rs:106` |
-| `checksum::io` | `ChecksumReader`, `ChecksumWriter` | `src/traits/io.rs:214`, `src/traits/io.rs:356` |
-| Compatibility aliases | `Crc32Ieee`, `Crc32Castagnoli`, `Crc64Xz` | `src/checksum/crc32/mod.rs:592`, `src/checksum/crc32/mod.rs:735`, `src/checksum/crc64/mod.rs:537` |
+| Error | When | Recovery | Source |
+|-------|------|----------|--------|
+| `VerificationError` | MAC/AEAD/signature check fails | Reject input (opaque) | `traits/error.rs:38` |
+| `HkdfOutputLengthError` | HKDF expand > 8160B | Request less output | `auth/hkdf.rs:24` |
+| `X25519Error` | Low-order DH point | Reject peer key | `auth/x25519.rs:47` |
+| `AeadBufferError` | Output buffer wrong size | Fix buffer length | `aead/mod.rs:121` |
+| `OpenError` | AEAD decryption failure | Buffer or verification | `aead/mod.rs:152` |
+| `AsconCxofCustomizationError` | Customization > 256B | Shorten string | `hashes/crypto/ascon.rs:109` |
+| `InvalidHexError` | Hex decode failure | Fix input | `hex.rs:14` |
+| `platform::OverrideError` | Override after init | Set before first detection | `platform/detect.rs:24` |
 
-### `hashes`
-
-| Surface | Public items | Source |
-|---------|--------------|--------|
-| `hashes::fast` | `Xxh3_64`, `Xxh3_128`, `RapidHash64`, `RapidHash128`, `RapidHashFast64`, `RapidHashFast128` | `src/hashes/fast/xxh3.rs:28`, `src/hashes/fast/xxh3.rs:31`, `src/hashes/fast/rapidhash.rs:26`, `src/hashes/fast/rapidhash.rs:30`, `src/hashes/fast/rapidhash.rs:34`, `src/hashes/fast/rapidhash.rs:38` |
-| `hashes::introspect` | `kernel_for`, `HashKernelIntrospect` | `src/hashes/introspect.rs:29`, `src/hashes/introspect.rs:37` |
-| `hashes::io` | `DigestReader`, `DigestWriter` | `src/traits/io.rs:490`, `src/traits/io.rs:619` |
-| Compatibility aliases | `AsconXof128`, `AsconXof128Reader` | `src/hashes/crypto/ascon.rs:838`, `src/hashes/crypto/ascon.rs:841` |
-
-### `platform`
+### Utility
 
 | Item | Purpose | Source |
 |------|---------|--------|
-| `Arch` | Architecture identifier | `src/platform/caps.rs:242` |
-| `Caps` | 256-bit feature bitset | `src/platform/caps.rs:47` |
-| `Detected` | Cached architecture + capabilities snapshot | `src/platform/detect.rs:53` |
-| `OverrideError` | Override configuration failure | `src/platform/detect.rs:24` |
-| `Description` | Zero-allocation display wrapper for detected state | `src/platform/mod.rs:164` |
-| `get`, `caps`, `arch`, `caps_static` | Capability queries | `src/platform/mod.rs:70`, `src/platform/mod.rs:79`, `src/platform/mod.rs:88`, `src/platform/mod.rs:152` |
-| `set_override`, `try_set_override`, `clear_override`, `has_override` | Detection override control | `src/platform/mod.rs:112`, `src/platform/mod.rs:120`, `src/platform/mod.rs:133`, `src/platform/mod.rs:140` |
-| `describe` | Human-readable detection summary | `src/platform/mod.rs:190` |
+| `ct::constant_time_eq` | Constant-time byte comparison | `traits/ct.rs` |
+| `ct::zeroize` | Best-effort buffer wiping | `traits/ct.rs` |
+| `DisplaySecret` | Opt-in secret key hex display | `hex.rs` |
+| `InvalidHexError` | Hex decode error | `hex.rs` |
 
-## Critical Operations
+## Advanced Modules
 
-| Operation | Use when | Source |
-|-----------|----------|--------|
-| `Checksum::checksum` / `Checksum::new` | One-shot or streaming CRC computation | `src/traits/checksum.rs:120`, `src/traits/checksum.rs:66` |
-| `ChecksumCombine::combine` | Parallel CRC chunk folding | `src/traits/checksum.rs:291` |
-| `Digest::digest` / `Digest::new` | One-shot or streaming digest computation | `src/traits/digest.rs:56`, `src/traits/digest.rs:22` |
-| `Mac::mac` / `Mac::verify_tag` | One-shot MAC and constant-time verification | `src/traits/mac.rs:59`, `src/traits/mac.rs:77` |
-| `HkdfSha256::expand` / `HkdfSha256::derive_array` | KDF expand and one-shot derive | `src/auth/hkdf.rs:97`, `src/auth/hkdf.rs:141` |
-| `Ed25519Keypair::sign` / `verify_ed25519` | Sign and verify messages | `src/auth/ed25519.rs:286`, `src/auth/ed25519.rs:305` |
-| `Xof::squeeze` | Read arbitrary-length output | `src/traits/xof.rs:9` |
-| `checksum::introspect::kernel_for` / `hashes::introspect::kernel_for` | Inspect dispatch decisions | `src/checksum/introspect.rs:98`, `src/hashes/introspect.rs:32` |
-| `platform::describe` | Report detected capabilities | `src/platform/mod.rs:190` |
-
-## Module Hierarchy
-
-```text
-src/
-├── lib.rs
-├── auth/
-│   ├── mod.rs
-│   ├── ed25519.rs
-│   ├── hkdf.rs
-│   └── hmac.rs
-├── checksum/
-│   ├── mod.rs
-│   ├── crc16/
-│   ├── crc24/
-│   ├── crc32/
-│   ├── crc64/
-│   ├── common/
-│   ├── introspect.rs
-│   └── io.rs
-├── hashes/
-│   ├── mod.rs
-│   ├── crypto/
-│   │   ├── ascon.rs
-│   │   ├── blake3/
-│   │   ├── sha224.rs
-│   │   ├── sha256/
-│   │   ├── sha3.rs
-│   │   ├── sha384.rs
-│   │   ├── sha512/
-│   │   └── sha512_256.rs
-│   ├── fast/
-│   │   ├── rapidhash.rs
-│   │   └── xxh3.rs
-│   ├── introspect.rs
-│   └── io.rs
-├── platform/
-│   ├── mod.rs
-│   ├── caps.rs
-│   └── detect.rs
-└── traits/
-    ├── mod.rs
-    ├── checksum.rs
-    ├── digest.rs
-    ├── fast_hash.rs
-    ├── mac.rs
-    ├── xof.rs
-    ├── error.rs
-    ├── ct.rs
-    └── io.rs
-```
+| Module | Purpose |
+|--------|---------|
+| `checksum::config` | Force-dispatch and configuration (`Crc{16,24,32,64}Config`, `*Force`) |
+| `checksum::buffered` | Alloc-backed buffered wrappers (`BufferedCrc32C`, etc.) |
+| `checksum::introspect` | Kernel selection reporting (`DispatchInfo`, `kernel_for`) |
+| `hashes::fast` | Explicit fast-hash access (`RapidHashFast64`, `Xxh3_64`, etc.) |
+| `hashes::introspect` | Hash kernel reporting (`HashKernelIntrospect`, `kernel_for`) |
+| `aead::introspect` | AEAD backend reporting |
+| `platform` | CPU detection, override control, capability queries |
 
 ## Feature Flags
 
 | Feature | Default | Enables | Notes |
 |---------|---------|---------|-------|
 | `std` | Yes | Runtime CPU detection, I/O adapters | Implies `alloc` |
-| `alloc` | Yes via `std` | Buffered checksum wrappers and heap-backed helpers | Can be enabled without `std` |
-| `checksums` | Yes | CRC-16, CRC-24, CRC-32, CRC-64 families | Root checksum exports |
-| `hashes` | Yes | Digests, XOFs, fast hashes | Root digest and fast-hash exports |
-| `auth` | Yes | HMAC-SHA256, HKDF-SHA256, Ed25519 | Depends on `hashes` |
-| `parallel` | No | Rayon-backed BLAKE3 parallel work | Requires `std` and `rayon` |
-| `diag` | No | Checksum dispatch diagnostics | Advanced debugging surface |
-| `testing` | No | Internal validation hooks | Not part of the main release UX |
+| `alloc` | Yes | Buffered wrappers | Can enable without `std` |
+| `checksums` | Yes | CRC-16/24/32/64 families | |
+| `hashes` | Yes | SHA-2, SHA-3, SHAKE, Blake3, Ascon, XXH3, RapidHash | |
+| `auth` | Yes | HMAC, HKDF, KMAC, Ed25519, X25519 | Implies `hashes` |
+| `aead` | Yes | AES-GCM, GCM-SIV, ChaCha20-Poly1305, AEGIS, Ascon | |
+| `parallel` | No | Rayon-backed Blake3 parallelism | Requires `std` |
 
 ## `no_std`
 
 ```toml
 [dependencies]
-rscrypto = { version = "0.1", default-features = false, features = ["checksums"] }
+rscrypto = { version = "0.1", default-features = false, features = ["checksums", "hashes"] }
 ```
 
-Without `std`, runtime detection and I/O adapters are unavailable. Compile-time feature detection and portable implementations remain available.
+Without `std`, runtime detection and I/O adapters are unavailable. Compile-time feature detection and portable fallbacks remain.
+
+## Module Hierarchy
+
+```text
+src/
+├── lib.rs
+├── aead/               # AEAD ciphers (AES-GCM, ChaCha20, AEGIS, Ascon)
+├── auth/               # HMAC, HKDF, KMAC, Ed25519, X25519
+├── checksum/           # CRC families, config, buffered, introspection
+│   ├── crc16/
+│   ├── crc24/
+│   ├── crc32/          # CRC-32 IEEE + Castagnoli
+│   └── crc64/          # CRC-64/XZ + NVME (canonical reference)
+├── hashes/
+│   ├── crypto/         # SHA-2, SHA-3, SHAKE, Blake3, Ascon, cSHAKE
+│   │   ├── blake3/
+│   │   ├── sha256/
+│   │   └── sha512/
+│   └── fast/           # XXH3, RapidHash (non-cryptographic)
+├── platform/           # CPU detection, SIMD dispatch
+└── traits/             # Checksum, Digest, Mac, Xof, FastHash, Aead, ct
+```
+
+## Testing
+
+| Layer | What | Command |
+|-------|------|---------|
+| Unit + integration | 785 tests, official vectors, differential oracles | `just test` |
+| Feature matrix | 4 feature combinations on both x86_64 and aarch64 | `just test-feature-matrix` |
+| Property tests | 10,000 cases per proptest | `just test-proptests` |
+| Miri | Memory safety under Stacked Borrows | `just test-miri` |
+| Fuzz | 20 targets with differential oracles (15 oracle crates) | `just test-fuzz` |
+| Coverage | Nextest + fuzz corpus LCOV, uploaded to Codecov | `just coverage` |
+| Supply chain | `cargo deny` + `cargo audit` | Weekly CI |
+
+**CI platforms**: x86_64 + aarch64 Linux, x86_64 + aarch64 Windows, IBM Z (s390x), IBM POWER10 (ppc64le). **no_std targets**: thumbv6m, riscv32, aarch64-none, x86_64-none, wasm32.
+
+**Fuzz targets by category**: 6 AEAD (roundtrip + forgery + oracle), 4 auth (Ed25519/HMAC/HKDF/KMAC with oracle differential), 5 hash (chunk-split + reset + oracle), 2 Blake3 keyed/derive, 1 CRC combine, 2 fast hash.
 
 ## Examples
 
-| Command | What it covers |
-|---------|----------------|
-| `cargo run --example basic` | Canonical checksum, digest, MAC, KDF, XOF, fast-hash, and I/O usage |
-| `cargo run --example introspect` | Checksum and hash dispatch reporting |
+| Command | Covers |
+|---------|--------|
+| `cargo run --example basic` | Checksum, digest, MAC, KDF, XOF, fast hash, I/O adapters |
+| `cargo run --example introspect` | Dispatch reporting |
 | `cargo run --example parallel --features parallel` | CRC combine-based chunked processing |
-
-## Testing and Development
-
-```bash
-just check-all
-just test
-cargo test --doc
-```
 
 ## License
 

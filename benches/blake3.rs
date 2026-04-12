@@ -45,6 +45,27 @@ fn keyed(c: &mut Criterion) {
   g.finish();
 }
 
+fn derive_key(c: &mut Criterion) {
+  const CONTEXT: &str = "rscrypto benchmark derive-key context";
+
+  let inputs = common::comp_sizes();
+  let mut g = c.benchmark_group("blake3/derive-key");
+
+  for (len, data) in &inputs {
+    common::set_throughput(&mut g, *len);
+
+    g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
+      b.iter(|| black_box(rscrypto::Blake3::derive_key(black_box(CONTEXT), black_box(d))))
+    });
+
+    g.bench_with_input(BenchmarkId::new("blake3", len), data, |b, d| {
+      b.iter(|| black_box(blake3::derive_key(black_box(CONTEXT), black_box(d))))
+    });
+  }
+
+  g.finish();
+}
+
 fn streaming(c: &mut Criterion) {
   let data = common::random_bytes(1048576);
   let mut g = c.benchmark_group("blake3/streaming");
@@ -76,5 +97,40 @@ fn streaming(c: &mut Criterion) {
   g.finish();
 }
 
-criterion_group!(benches, oneshot, keyed, streaming);
+fn xof(c: &mut Criterion) {
+  const OUT_LEN: usize = 64;
+
+  let inputs = common::comp_sizes();
+  let mut g = c.benchmark_group("blake3/xof");
+
+  for (len, data) in &inputs {
+    common::set_throughput(&mut g, *len);
+
+    g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
+      b.iter(|| {
+        use rscrypto::Xof;
+
+        let mut xof = rscrypto::Blake3::xof(black_box(d));
+        let mut out = [0u8; OUT_LEN];
+        xof.squeeze(&mut out);
+        black_box(out)
+      })
+    });
+
+    g.bench_with_input(BenchmarkId::new("blake3", len), data, |b, d| {
+      b.iter(|| {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(black_box(d));
+        let mut reader = hasher.finalize_xof();
+        let mut out = [0u8; OUT_LEN];
+        reader.fill(&mut out);
+        black_box(out)
+      })
+    });
+  }
+
+  g.finish();
+}
+
+criterion_group!(benches, oneshot, keyed, derive_key, streaming, xof);
 criterion_main!(benches);

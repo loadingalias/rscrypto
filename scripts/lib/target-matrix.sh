@@ -52,9 +52,10 @@ print_shell() {
 get_json() {
   local key="$1"
   case "$key" in
-    commit_ci)     jq -c '.ci.commit'   "$MANIFEST" ;;
-    commit_no_std) jq -c '.groups.no_std' "$MANIFEST" ;;
-    commit_wasm)   jq -c '.groups.wasm'  "$MANIFEST" ;;
+    commit_ci)     jq -c '.ci.commit'    "$MANIFEST" ;;
+    weekly_ci)     jq -c '.ci.weekly // .ci.commit' "$MANIFEST" ;;
+    commit_no_std | weekly_no_std) jq -c '.groups.no_std' "$MANIFEST" ;;
+    commit_wasm   | weekly_wasm)   jq -c '.groups.wasm'   "$MANIFEST" ;;
     *)
       echo "ERROR: unknown json key: $key" >&2
       exit 1

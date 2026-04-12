@@ -5,174 +5,173 @@
 Phase 1 auth primitives are **shipped and competitive**:
 
 - `HMAC-SHA256` — 66% win rate (112W/40T/16L across 168 comparisons)
+- `HMAC-SHA384` — shipped
+- `HMAC-SHA512` — shipped
 - `HKDF-SHA256` — 93.8% win rate (30W/1T/1L) after raw-state expand rewrite
+- `HKDF-SHA384` — shipped
 - `Ed25519` — sign 100% WIN on x86 (IFMA/AVX2), verify competitive
+- `X25519` — shipped (portable Montgomery ladder, RFC 7748 coverage, dalek differential tests)
 - `KMAC256` / `cSHAKE256` — shipped (SP 800-185)
 - `Ascon-CXOF128` — shipped (SP 800-232)
 
 Canonical benchmarks: [`docs/bench/BENCHMARKS.md`](../bench/BENCHMARKS.md)
 
-## Remaining Gaps
+## Status
 
-Three primitives are needed to close the classical auth surface before
-shifting focus to PQ (ML-KEM, ML-DSA, SLH-DSA — see [`pqe_pqc.md`](pqe_pqc.md)).
+The classical auth surface is now closed before shifting focus to PQ
+(ML-KEM, ML-DSA, SLH-DSA — see [`pqe_pqc.md`](pqe_pqc.md)).
 
-### 1. X25519 (Curve25519 ECDH Key Exchange)
+### X25519 (Curve25519 ECDH Key Exchange)
 
-**Priority:** Critical — blocks hybrid PQ key exchange (X25519 + ML-KEM).
+**Priority:** Shipped — unblocks hybrid PQ key exchange (X25519 + ML-KEM).
 
 Every modern key agreement protocol depends on X25519: TLS 1.3, SSH,
 WireGuard, Signal, Noise framework. Without it, rscrypto cannot participate
 in key establishment.
 
-**What exists:** Ed25519 is shipped with full Curve25519 field arithmetic
-(`src/auth/ed25519/field.rs`, `point.rs`), including AVX2 and IFMA vectorized
-backends. The field code is shared between Edwards (signing) and Montgomery
-(key exchange) operations.
+**What ships now:** X25519 uses two paths over the existing Curve25519 5x51
+field arithmetic in `src/auth/ed25519/field.rs`:
 
-**What to build:**
+- `X25519SecretKey::public_key()` uses fixed-base Edwards multiplication with
+  Montgomery conversion, inheriting the existing Ed25519 basepoint dispatch
+  (`AVX2` / `IFMA` on x86 where available, portable table-driven fallback
+  everywhere else).
+- `X25519SecretKey::diffie_hellman(&X25519PublicKey)` stays on the dedicated
+  RFC 7748 Montgomery ladder for arbitrary peer inputs.
 
-- `X25519SecretKey` — 32-byte clamped scalar
-- `X25519PublicKey` — 32-byte Montgomery u-coordinate
-- `X25519SharedSecret` — 32-byte Diffie-Hellman output
-- `X25519PublicKey::from(secret)` — basepoint scalar multiply
-- `X25519SharedSecret::diffie_hellman(secret, public)` — variable-base scalar multiply
-- RFC 7748 Montgomery ladder (constant-time, no Edwards conversion needed)
-- Zeroize secret key and shared secret on Drop
+The public API remains typed and byte-oriented:
 
-**Implementation path:**
+- `X25519SecretKey`
+- `X25519PublicKey`
+- `X25519SharedSecret`
+- `X25519SecretKey::public_key()`
+- `X25519SecretKey::diffie_hellman(&X25519PublicKey)`
 
-The Montgomery ladder operates in the (u, u') representation using only
-field arithmetic (add, sub, mul, square, invert). No point decompression,
-no extended coordinates. This is ~150-200 lines of new code on existing
-field infrastructure.
+Secret material is masked in `Debug`, supports `display_secret()`, and is
+zeroized on drop.
 
-For SIMD: the Montgomery ladder has a different parallelism shape than
-Edwards (it's a 2-way differential chain, not 4-way coordinate parallel).
-Start with the portable 5x51 field and evaluate AVX2/IFMA vectorization
-after the portable path is benchmarked.
+**Validation bar met:**
+
+- RFC 7748 scalar-multiplication vectors
+- RFC 7748 iterated ladder vectors (1 and 1,000 iterations)
+- RFC 7748 Alice/Bob Diffie-Hellman vector
+- Differential tests against `x25519-dalek`
+- All-zero shared-secret rejection for low-order inputs
+- Non-canonical public-input acceptance per RFC 7748
+- `no_std` compile coverage in the auth feature matrix
+
+**Performance posture:** fixed-base public-key derivation is now accelerated
+through the existing Ed25519 basepoint machinery and is materially faster on
+real hosts. The remaining headroom is in variable-base Diffie-Hellman, which
+still uses the portable Montgomery ladder today.
 
 **Spec:** RFC 7748 (Elliptic Curves for Security)
 
-**Test bar:**
-
-- RFC 7748 Section 6.1 test vectors (all 3: basepoint, iterated, Alice/Bob)
-- Differential test against `x25519-dalek`
-- All-zero / low-order point rejection
-- Clamping correctness
-- `no_std` compile coverage
-
-### 2. HMAC-SHA384 / HMAC-SHA512
-
-**Priority:** High — needed for TLS 1.3 `TLS_AES_256_GCM_SHA384` suite.
-
-TLS 1.3 mandates two cipher suites:
-
-| Suite | Hash | HMAC | HKDF | Status |
-|-------|------|------|------|--------|
-| `TLS_AES_128_GCM_SHA256` | SHA-256 | HMAC-SHA256 | HKDF-SHA256 | shipped |
-| `TLS_AES_256_GCM_SHA384` | SHA-384 | HMAC-SHA384 | HKDF-SHA384 | **missing** |
-
-SSH, IPsec, and JOSE also use HMAC-SHA384 and HMAC-SHA512.
-
-**What exists:** SHA-384 and SHA-512 are shipped with hardware acceleration
-(SHA-NI on x86, SHA2-CE on aarch64, KIMD on s390x, Zknh on RISC-V).
-`HmacSha256` is shipped with a battle-tested oneshot `mac()` path that
-bypasses streaming `Sha256` construction.
-
-**What to build:**
-
-- `HmacSha384` — 48-byte tag, 128-byte block size
-- `HmacSha512` — 64-byte tag, 128-byte block size
-- Both implement the `Mac` trait (new/update/finalize/reset/verify)
-- Oneshot `mac(key, data)` path following the SHA-256 pattern (raw state
-  arrays, single dispatch resolve, no intermediate struct Drop)
-- Inherent `mac()` and `verify_tag()` methods on each type
-
-**Implementation path:**
-
-The HMAC construction is identical across hash sizes — only block size,
-tag size, and the underlying compress function change. Two approaches:
-
-1. **Concrete types** (preferred): `HmacSha384` and `HmacSha512` as
-   standalone types, each with their own oneshot `mac()` using raw
-   SHA-384/SHA-512 state arrays. Follows the existing `HmacSha256` pattern.
-   More code but zero abstraction overhead.
-
-2. **Generic HMAC<H>**: Parameterized over a hash. Cleaner but risks
-   adding a trait bound that constrains the oneshot optimization path.
-   Evaluate only if the concrete types show unacceptable duplication.
-
-SHA-384 and SHA-512 share the same compression function (SHA-512 core with
-different IVs and output truncation). `HmacSha384` and `HmacSha512` can
-share the same raw oneshot implementation with const-generic block/tag sizes.
-
-**Test bar:**
-
-- RFC 4231 test vectors (cases 1-7 for both SHA-384 and SHA-512)
-- Oneshot matches streaming equivalence (boundary-critical data lengths)
-- Constant-time verification
-- `no_std` compile coverage
-
-### 3. HKDF-SHA384
-
-**Priority:** High — needed for TLS 1.3 `TLS_AES_256_GCM_SHA384` suite.
-
-**What exists:** `HkdfSha256` is shipped with a raw-state expand loop that
-bypasses streaming `Sha256` entirely — direct `[u32; 8]` state arrays with
-cached ipad/opad compressions and a single dispatch-resolved compress function.
-
-**What to build:**
-
-- `HkdfSha384` — extract + expand using SHA-384 (128-byte blocks, 48-byte output)
-- Same raw-state expand pattern as `HkdfSha256` (using `[u64; 8]` state arrays
-  for the SHA-512 family)
-- `new(salt, ikm)`, `extract()`, `expand(info, okm)`, `expand_array::<N>()`
-- `derive()` and `derive_array::<N>()` oneshot helpers
-
-**Implementation path:**
-
-Follow the `HkdfSha256` raw-state pattern directly. The SHA-512 family uses
-64-byte state (`[u64; 8]`) and 128-byte blocks, so the ipad/opad blocks and
-padding arithmetic change, but the structure is identical. The outer hash
-block template changes to: inner_hash(48B) + 0x80 + zeros + length(192 bytes
-= 1536 bits as u128).
-
-Note: SHA-512 uses a 128-bit bit-length field in padding (vs SHA-256's 64-bit).
-The expand helpers need to account for this.
-
-**Test bar:**
-
-- RFC 5869 test vectors (cases 1-3, SHA-384 variant — note: RFC 5869 only
-  specifies SHA-256 vectors; use HKDF test vectors from other sources or
-  derive SHA-384 vectors from the construction)
-- Cross-validation: extract + expand matches oneshot `derive()`
-- Output length boundary tests
-- `no_std` compile coverage
-
 ## Ship Order
 
-1. **HMAC-SHA384 / HMAC-SHA512** — mechanical, high confidence, unblocks HKDF
-2. **HKDF-SHA384** — depends on HMAC-SHA384 for extract phase
-3. **X25519** — independent, but highest protocol value
+Classical auth/key-agreement primitives are now shipped:
 
-All three can be developed in parallel. HMAC-SHA384 and HKDF-SHA384 are
-mechanical extensions of shipped code. X25519 is new algorithmic work but
-builds on existing field infrastructure.
+- `HMAC-SHA256` / `HMAC-SHA384` / `HMAC-SHA512`
+- `HKDF-SHA256` / `HKDF-SHA384`
+- `KMAC256`
+- `Ed25519`
+- `X25519`
 
 ## Acceleration Posture
 
-All three primitives inherit existing hardware acceleration:
+X25519 currently inherits the following portability posture:
 
 | Primitive | x86_64 | aarch64 | s390x | powerpc64 | riscv64 |
 |-----------|--------|---------|-------|-----------|---------|
-| HMAC-SHA384/512 | inherit SHA-NI | inherit SHA2-CE | inherit KIMD | portable | inherit Zknh |
-| HKDF-SHA384 | inherit SHA-NI | inherit SHA2-CE | inherit KIMD | portable | inherit Zknh |
-| X25519 | AVX2/IFMA (shared Ed25519 field) | NEON (when ED25519-6 ships) | portable | portable | portable |
+| X25519 public-key derivation | Ed25519 fixed-base dispatch (`AVX2` / `IFMA` where available) | portable fixed-base table | portable fixed-base table | portable fixed-base table | portable fixed-base table |
+| X25519 Diffie-Hellman | portable Montgomery ladder | portable Montgomery ladder | portable Montgomery ladder | portable Montgomery ladder | portable Montgomery ladder |
 
-No new SIMD kernels are needed for HMAC/HKDF — they inherit the SHA-2 dispatch
-matrix automatically. X25519 can start on the portable 5x51 field and optionally
-pick up AVX2/IFMA vectorization from the Ed25519 field backends.
+X25519 now has a fast fixed-base path everywhere and inherits x86 SIMD from
+the Ed25519 basepoint engine. Variable-base ECDH acceleration remains a
+follow-up optimization track.
+
+## SHA-512 Auth Acceleration Plan
+
+The remaining benchmark-critical auth work is not new primitive design; it is
+performance closure for the SHA-512-family wrappers:
+
+- `HMAC-SHA384`
+- `HMAC-SHA512`
+- `HKDF-SHA384`
+
+These are wrapper surfaces over the existing SHA-512-family dispatch and kernel
+stack, not separate SIMD kernels. The performance bar therefore splits into
+two parts:
+
+- **Kernel inheritance:** always hit the best SHA-512-family backend already
+  available for the current target.
+- **Wrapper overhead:** eliminate avoidable keyed-state setup, buffer motion,
+  and per-call control-flow cost so auth benches stay close to the raw hash
+  lower bound.
+
+### Runner Baseline
+
+The baseline performance lanes are the dedicated runners in
+`.github/runs-on.yml`:
+
+- `amd-zen4`
+- `amd-zen5`
+- `intel-spr`
+- `intel-icl`
+- `graviton3`
+- `graviton4`
+
+Generic CI lanes (`linux-x64-ci`, `linux-arm64-ci`) are compile/test coverage,
+not performance truth.
+
+### Required Coverage Checklist
+
+#### Bench Governance
+
+- [ ] `hmac-sha384` is published in the canonical bench workflow output
+- [ ] `hmac-sha512` is published in the canonical bench workflow output
+- [ ] `hkdf-sha384/expand` is published in the canonical bench workflow output
+- [ ] all three appear in `docs/bench/BENCHMARKS.md` for every dedicated runner
+- [ ] the canonical report includes per-platform win/tie/loss signal, not just
+  local one-off runs
+
+#### Oracle / Differential Validation
+
+- [x] `HMAC-SHA384` vector coverage
+- [x] `HMAC-SHA512` vector coverage
+- [x] `HKDF-SHA384` vector coverage
+- [x] `HMAC-SHA384` differential fuzzing vs RustCrypto
+- [x] `HMAC-SHA512` differential fuzzing vs RustCrypto
+- [x] `HKDF-SHA384` differential fuzzing vs RustCrypto
+- [x] forced portable vs accelerated backend equivalence tests for auth wrappers
+- [ ] feature-matrix / `no_std` coverage remains green with the new fuzz/oracle additions
+
+#### Wrapper Overhead Closure
+
+- [ ] `HMAC-SHA384::new()` keyed-state precompute is measured and profiled on short inputs
+- [ ] `HMAC-SHA512::new()` keyed-state precompute is measured and profiled on short inputs
+- [ ] `HKDF-SHA384::extract()` keyed-state precompute is measured and profiled
+- [ ] `HMAC-SHA384::mac()` short-message path is within an acceptable fixed overhead of raw `Sha384`
+- [ ] `HMAC-SHA512::mac()` short-message path is within an acceptable fixed overhead of raw `Sha512`
+- [ ] `HKDF-SHA384::expand()` minimizes per-block buffer rebuild and copy cost
+
+#### Per-Runner Kernel Policy
+
+- [ ] `amd-zen4`: verify `HMAC-SHA384`, `HMAC-SHA512`, and `HKDF-SHA384` inherit the best measured AVX2-based SHA-512-family path
+- [ ] `amd-zen5`: same verification with Zen5-specific dispatch reality
+- [ ] `intel-spr`: verify the auth surfaces inherit the best measured AVX-512VL/SHA-512 path
+- [ ] `intel-icl`: same verification with Ice Lake-specific dispatch reality
+- [ ] `graviton3`: verify all three surfaces are actually riding `aarch64-sha512`
+- [ ] `graviton4`: same verification with Graviton4-specific numbers
+- [ ] if benchmark governance extends to IBM lanes, add explicit auth benchmark publication for `s390x` and `POWER10`
+
+### Non-Goals
+
+Avoid ornamental work:
+
+- do **not** add auth-specific SIMD kernels that duplicate the SHA-512-family kernels
+- do **not** chase generic abstractions over `HMAC-SHA256/384/512` if they cost hot-path clarity
+- do **not** claim “world-class” on a platform that lacks dedicated benchmark truth
 
 ## After These Three
 
@@ -181,6 +180,8 @@ The classical auth surface is closed. Remaining auth-adjacent work:
 - **Argon2id** — deferred unless password hashing enters scope (requires BLAKE2b
   or a new BLAKE3-based design; see conversation notes)
 - **AEGIS-128L** — AEAD, not auth; optional companion to AEGIS-256
+- **X25519 fixed-base acceleration** — optimize public-key derivation after the
+  portable baseline is benchmarked across the canonical matrix
 - **Ed25519 verify optimization** — Phase 9 (IFMA double reduce elimination);
   incremental, not blocking
 

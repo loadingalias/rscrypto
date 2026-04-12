@@ -42,6 +42,8 @@ corpus
 artifacts
 coverage
 dictionary
+fuzz/target
+
 
 # Testing
 crates/checksum/proptest-regressions
