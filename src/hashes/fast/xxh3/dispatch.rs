@@ -1,6 +1,6 @@
 use super::{
   dispatch_tables::DispatchTable,
-  kernels::{Xxh3KernelId, hash64_fn, hash128_fn, required_caps},
+  kernels::{Xxh3KernelId, hash64_fn, hash64_long_fn, hash128_long_fn, required_caps},
 };
 use crate::{backend::cache::OnceCache, platform::Caps};
 
@@ -9,15 +9,15 @@ type Hash128Fn = fn(&[u8], u64) -> u128;
 
 #[derive(Clone, Copy)]
 struct ActiveDispatch {
+  /// Long-path-only entry for 64-bit hash (>240B, no redundant length checks).
+  long64: Hash64Fn,
+  /// Long-path-only entry for 128-bit hash (>240B, no redundant length checks).
+  long128: Hash128Fn,
   boundaries: [usize; 3],
   xs64: Hash64Fn,
   s64: Hash64Fn,
   m64: Hash64Fn,
   l64: Hash64Fn,
-  xs128: Hash128Fn,
-  s128: Hash128Fn,
-  m128: Hash128Fn,
-  l128: Hash128Fn,
   xs_name: &'static str,
   s_name: &'static str,
   m_name: &'static str,
@@ -49,15 +49,13 @@ fn active() -> ActiveDispatch {
     let l_id = resolve(table.l, caps);
 
     ActiveDispatch {
+      long64: hash64_long_fn(l_id),
+      long128: hash128_long_fn(l_id),
       boundaries: table.boundaries,
       xs64: hash64_fn(xs_id),
       s64: hash64_fn(s_id),
       m64: hash64_fn(m_id),
       l64: hash64_fn(l_id),
-      xs128: hash128_fn(xs_id),
-      s128: hash128_fn(s_id),
-      m128: hash128_fn(m_id),
-      l128: hash128_fn(l_id),
       xs_name: xs_id.as_str(),
       s_name: s_id.as_str(),
       m_name: m_id.as_str(),
@@ -83,21 +81,6 @@ fn select64(d: &ActiveDispatch, len: usize) -> (Hash64Fn, &'static str) {
 
 #[inline]
 #[must_use]
-fn select128(d: &ActiveDispatch, len: usize) -> (Hash128Fn, &'static str) {
-  let [xs_max, s_max, m_max] = d.boundaries;
-  if len <= xs_max {
-    (d.xs128, d.xs_name)
-  } else if len <= s_max {
-    (d.s128, d.s_name)
-  } else if len <= m_max {
-    (d.m128, d.m_name)
-  } else {
-    (d.l128, d.l_name)
-  }
-}
-
-#[inline]
-#[must_use]
 pub fn kernel_name_for_len(len: usize) -> &'static str {
   let d = active();
   select64(&d, len).1
@@ -110,7 +93,7 @@ pub fn kernel_name_for_len(len: usize) -> &'static str {
 /// the intermediate `xxh3_64_with_seed` call and its redundant ≤`MID_SIZE_MAX`
 /// guard branch.
 ///
-/// The long-path fallback is `#[cold]` to keep the inlined code small.
+/// The long-path fallback is `#[inline(never)]` to keep the inlined code small.
 #[inline(always)]
 #[must_use]
 pub fn hash64_with_seed(seed: u64, data: &[u8]) -> u64 {
@@ -133,8 +116,9 @@ pub fn hash64_with_seed(seed: u64, data: &[u8]) -> u64 {
 /// dispatch model. This eliminates the `OnceCache` load + indirect function pointer
 /// call that otherwise dominates at near-boundary sizes (256B).
 ///
-/// Falls back to runtime dispatch when features are unknown at compile time.
-#[cold]
+/// Falls back to runtime dispatch when features are unknown at compile time,
+/// using the dedicated long-path entry point that skips redundant ≤240B length
+/// checks in the kernel.
 #[inline(never)]
 fn hash64_long(seed: u64, data: &[u8]) -> u64 {
   // Tier 1: compile-time dispatch — dedicated long entry points skip ≤240B
@@ -154,12 +138,12 @@ fn hash64_long(seed: u64, data: &[u8]) -> u64 {
     return super::aarch64_neon::xxh3_64_long(data, seed);
   }
 
-  // Tier 2: runtime dispatch (generic binary without known SIMD features).
+  // Tier 2: runtime dispatch — dedicated long-path fn pointer, no redundant
+  // length checks.
   #[allow(unreachable_code)]
   {
     let d = active();
-    let (f, _) = select64(&d, data.len());
-    f(data, seed)
+    (d.long64)(data, seed)
   }
 }
 
@@ -180,7 +164,6 @@ pub fn hash128_with_seed(seed: u64, data: &[u8]) -> u128 {
 }
 
 /// See [`hash64_long`] for the compile-time dispatch rationale.
-#[cold]
 #[inline(never)]
 fn hash128_long(seed: u64, data: &[u8]) -> u128 {
   // Tier 1: compile-time dispatch (dedicated long entry points).
@@ -199,11 +182,10 @@ fn hash128_long(seed: u64, data: &[u8]) -> u128 {
     return super::aarch64_neon::xxh3_128_long(data, seed);
   }
 
-  // Tier 2: runtime dispatch.
+  // Tier 2: runtime dispatch — dedicated long-path fn pointer.
   #[allow(unreachable_code)]
   {
     let d = active();
-    let (f, _) = select128(&d, data.len());
-    f(data, seed)
+    (d.long128)(data, seed)
   }
 }

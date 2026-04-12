@@ -205,22 +205,6 @@ pub fn xxh3_128_long(input: &[u8], seed: u64) -> u128 {
   }
 }
 
-/// XXH3 128-bit hash — AVX-512 kernel.
-///
-/// Delegates ≤240 B to portable scalar paths; >240 B uses AVX-512 accumulator.
-pub fn xxh3_128_with_seed(input: &[u8], seed: u64) -> u128 {
-  if input.len() <= 16 {
-    return super::xxh3_128_0to16(input, seed, &DEFAULT_SECRET);
-  }
-  if input.len() <= 128 {
-    return super::xxh3_128_7to128(input, seed, &DEFAULT_SECRET);
-  }
-  if input.len() <= MID_SIZE_MAX {
-    return super::xxh3_128_129to240(input, seed, &DEFAULT_SECRET);
-  }
-  xxh3_128_long(input, seed)
-}
-
 #[inline(always)]
 fn xxh3_128_long_finalize(acc: &[u64; ACC_NB], secret: &[u8], len: usize) -> u128 {
   let lo = super::merge_accs(

@@ -84,6 +84,10 @@ fn select(d: &ActiveDispatch, len: usize) -> Entry {
 #[inline]
 #[must_use]
 pub fn kernel_name_for_len(len: usize) -> &'static str {
+  use crate::hashes::crypto::sha256::kernels as sha256k;
+  if sha256k::COMPILE_TIME_HW {
+    return sha256k::COMPILE_TIME_NAME;
+  }
   let d = active();
   select(&d, len).name
 }
@@ -91,6 +95,10 @@ pub fn kernel_name_for_len(len: usize) -> &'static str {
 #[inline]
 #[must_use]
 pub fn digest(data: &[u8]) -> [u8; 28] {
+  use crate::hashes::crypto::sha256::kernels as sha256k;
+  if sha256k::COMPILE_TIME_HW {
+    return digest_oneshot(data, sha256k::compile_time_best());
+  }
   let d = active();
   let compress = select(&d, data.len()).compress_blocks;
   digest_oneshot(data, compress)
@@ -131,6 +139,17 @@ fn digest_oneshot(data: &[u8], compress_blocks: CompressBlocksFn) -> [u8; 28] {
 #[inline]
 #[must_use]
 pub(crate) fn compress_dispatch() -> SizeClassDispatch<CompressBlocksFn> {
+  use crate::hashes::crypto::sha256::kernels as sha256k;
+  if sha256k::COMPILE_TIME_HW {
+    let f = sha256k::compile_time_best();
+    return SizeClassDispatch {
+      boundaries: [usize::MAX; 3],
+      xs: f,
+      s: f,
+      m: f,
+      l: f,
+    };
+  }
   let d = active();
   SizeClassDispatch {
     boundaries: d.boundaries,
