@@ -62,6 +62,104 @@ impl HmacSha256 {
   pub fn verify_tag(key: &[u8], data: &[u8], expected: &[u8; TAG_SIZE]) -> Result<(), VerificationError> {
     <Self as Mac>::verify_tag(key, data, expected)
   }
+
+  /// Core HMAC-SHA256 computation, generic over the compress function.
+  ///
+  /// Monomorphization with a closure (aarch64 fast path) yields direct calls
+  /// that LLVM can inline; with a `fn` pointer (generic fallback) it preserves
+  /// the existing indirect-call dispatch.
+  ///
+  /// For data ≤ 256 B the entire padded inner message is built on the stack
+  /// and compressed in one call. The outer hash is always merged into a
+  /// single 128-byte (2-block) call.
+  #[inline(always)]
+  #[allow(clippy::indexing_slicing)] // All indices bounded by prior length checks + fixed-size arrays.
+  fn mac_core(ipad: &mut [u8; BLOCK_SIZE], data: &[u8], compress: impl Fn(&mut [u32; 8], &[u8])) -> [u8; TAG_SIZE] {
+    let total_inner = (BLOCK_SIZE as u64).strict_add(data.len() as u64);
+    let total_inner_bits = total_inner.strict_mul(8);
+
+    // --- Inner hash: SHA-256(ipad ∥ data) ---
+    let mut state = SHA256_H0;
+
+    // Small-data fast path: build the entire padded inner message on the
+    // stack and compress in a single call. This eliminates per-block
+    // overhead (state load/store, block-count branch) that dominates on
+    // wide-issue cores where SHA2-CE is very fast.
+    const INLINE_DATA_MAX: usize = 256;
+    // Max padded inner for 256 B data: ⌈(64 + 256 + 9) / 64⌉ × 64 = 384.
+    const INNER_BUF_LEN: usize = 384;
+    let mut inner_buf = [0u8; INNER_BUF_LEN];
+    let inner_used: usize;
+
+    if data.len() <= INLINE_DATA_MAX {
+      inner_buf[..BLOCK_SIZE].copy_from_slice(ipad);
+      let data_end = BLOCK_SIZE.strict_add(data.len());
+      inner_buf[BLOCK_SIZE..data_end].copy_from_slice(data);
+      inner_buf[data_end] = 0x80;
+      let padded = data_end.strict_add(9).strict_add(63).strict_div(64).strict_mul(64);
+      inner_buf[padded.strict_sub(8)..padded].copy_from_slice(&total_inner_bits.to_be_bytes());
+      compress(&mut state, &inner_buf[..padded]);
+      inner_used = padded;
+    } else {
+      // Large-data streaming path.
+      compress(&mut state, ipad);
+
+      let full_len = data.len().strict_sub(data.len() % BLOCK_SIZE);
+      if full_len != 0 {
+        compress(&mut state, &data[..full_len]);
+      }
+      let rest = &data[full_len..];
+
+      // Build final padding block(s) in inner_buf[..BLOCK_SIZE].
+      inner_buf[..rest.len()].copy_from_slice(rest);
+      inner_buf[rest.len()] = 0x80;
+      if rest.len() >= 56 {
+        compress(&mut state, &inner_buf[..BLOCK_SIZE]);
+        inner_buf[..BLOCK_SIZE].fill(0);
+      }
+      inner_buf[56..BLOCK_SIZE].copy_from_slice(&total_inner_bits.to_be_bytes());
+      compress(&mut state, &inner_buf[..BLOCK_SIZE]);
+      inner_used = BLOCK_SIZE;
+    }
+
+    // --- Outer hash: SHA-256(opad ∥ inner_hash) ---
+    // Always 96 bytes: opad (64) + inner_hash (32). Padding fits in one
+    // block → 128 bytes = 2 blocks, compressed in a single call.
+    // Derive opad from ipad: (key ^ 0x36) ^ 0x6a = key ^ 0x5c.
+    let mut outer = [0u8; 128];
+    for (o, &ip) in outer[..BLOCK_SIZE].iter_mut().zip(ipad.iter()) {
+      *o = ip ^ 0x6a;
+    }
+    // Write inner hash directly from state words — no intermediate buffer.
+    for (i, &word) in state.iter().enumerate() {
+      let off = BLOCK_SIZE.strict_add(i.strict_mul(4));
+      outer[off..off.strict_add(4)].copy_from_slice(&word.to_be_bytes());
+    }
+    outer[BLOCK_SIZE.strict_add(TAG_SIZE)] = 0x80;
+    // 96 bytes × 8 = 768 bits.
+    outer[120..128].copy_from_slice(&768u64.to_be_bytes());
+
+    state = SHA256_H0;
+    compress(&mut state, &outer);
+
+    // Serialize tag.
+    let mut tag = [0u8; TAG_SIZE];
+    for (chunk, &word) in tag.chunks_exact_mut(4).zip(state.iter()) {
+      chunk.copy_from_slice(&word.to_be_bytes());
+    }
+
+    // --- Batch zeroize all sensitive material (single fence) ---
+    ct::zeroize_no_fence(ipad);
+    ct::zeroize_no_fence(&mut inner_buf[..inner_used]);
+    ct::zeroize_no_fence(&mut outer);
+    for word in state.iter_mut() {
+      // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
+      unsafe { core::ptr::write_volatile(word, 0) };
+    }
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+
+    tag
+  }
 }
 
 impl Mac for HmacSha256 {
@@ -126,13 +224,12 @@ impl Mac for HmacSha256 {
     self.inner.reset_to_aligned_prefix(self.inner_init);
   }
 
-  /// Oneshot HMAC-SHA256: merges compress calls for small inputs and batches
-  /// zeroization under a single compiler fence.
+  /// Oneshot HMAC-SHA256.
   ///
-  /// For data ≤ 256 B the entire padded inner message is built on the stack
-  /// and compressed in one call, eliminating per-call overhead (function-pointer
-  /// dispatch, state save/restore) that dominates on fast SHA2-CE cores.
-  /// The outer hash is always merged into a single 128-byte (2-block) call.
+  /// On aarch64 with SHA2-CE, dispatches to a monomorphized path with direct
+  /// calls (no function-pointer indirection) so LLVM can inline the compress
+  /// kernel. This closes a ~16 % gap on Neoverse V2 (Graviton 4) whose
+  /// 10-wide decode stalls on indirect branches.
   #[inline]
   #[allow(clippy::indexing_slicing)] // All indices bounded by prior length checks + fixed-size arrays.
   fn mac(key: &[u8], data: &[u8]) -> Self::Tag {
@@ -150,92 +247,27 @@ impl Mac for HmacSha256 {
       }
     }
 
-    // --- Resolve compress function once for the full operation ---
+    // aarch64 fast path: monomorphized closure → direct calls that LLVM can
+    // inline, matching the pattern that makes rustcrypto's sha2 crate fast
+    // on wide-issue Neoverse V2 cores.
+    #[cfg(target_arch = "aarch64")]
+    {
+      use crate::platform::caps::aarch64;
+      if crate::platform::caps().has(aarch64::SHA2) {
+        return Self::mac_core(&mut ipad, data, |state, blocks| {
+          // SAFETY: caps check above confirms SHA2 is available.
+          unsafe {
+            crate::hashes::crypto::sha256::aarch64::compress_blocks_aarch64_sha2(state, blocks);
+          }
+        });
+      }
+    }
+
+    // Generic fallback: function-pointer dispatch for all other platforms
+    // and the (theoretical) aarch64-without-SHA2 case.
     let total_inner = (BLOCK_SIZE as u64).strict_add(data.len() as u64);
     let compress = sha256_dispatch::compress_dispatch().select(len_hint_from_u64(total_inner));
-    let total_inner_bits = total_inner.strict_mul(8);
-
-    // --- Inner hash: SHA-256(ipad ∥ data) ---
-    let mut state = SHA256_H0;
-
-    // Small-data fast path: build the entire padded inner message on the
-    // stack and compress in a single call. This eliminates per-block
-    // function-pointer overhead (state load/store, block-count branch) that
-    // dominates on wide-issue cores where SHA2-CE is very fast.
-    const INLINE_DATA_MAX: usize = 256;
-    // Max padded inner for 256 B data: ⌈(64 + 256 + 9) / 64⌉ × 64 = 384.
-    const INNER_BUF_LEN: usize = 384;
-    let mut inner_buf = [0u8; INNER_BUF_LEN];
-    let inner_used: usize;
-
-    if data.len() <= INLINE_DATA_MAX {
-      inner_buf[..BLOCK_SIZE].copy_from_slice(&ipad);
-      let data_end = BLOCK_SIZE.strict_add(data.len());
-      inner_buf[BLOCK_SIZE..data_end].copy_from_slice(data);
-      inner_buf[data_end] = 0x80;
-      let padded = data_end.strict_add(9).strict_add(63).strict_div(64).strict_mul(64);
-      inner_buf[padded.strict_sub(8)..padded].copy_from_slice(&total_inner_bits.to_be_bytes());
-      compress(&mut state, &inner_buf[..padded]);
-      inner_used = padded;
-    } else {
-      // Large-data streaming path.
-      compress(&mut state, &ipad);
-
-      let full_len = data.len().strict_sub(data.len() % BLOCK_SIZE);
-      if full_len != 0 {
-        compress(&mut state, &data[..full_len]);
-      }
-      let rest = &data[full_len..];
-
-      // Build final padding block(s) in inner_buf[..BLOCK_SIZE].
-      inner_buf[..rest.len()].copy_from_slice(rest);
-      inner_buf[rest.len()] = 0x80;
-      if rest.len() >= 56 {
-        compress(&mut state, &inner_buf[..BLOCK_SIZE]);
-        inner_buf[..BLOCK_SIZE].fill(0);
-      }
-      inner_buf[56..BLOCK_SIZE].copy_from_slice(&total_inner_bits.to_be_bytes());
-      compress(&mut state, &inner_buf[..BLOCK_SIZE]);
-      inner_used = BLOCK_SIZE;
-    }
-
-    // --- Outer hash: SHA-256(opad ∥ inner_hash) ---
-    // Always 96 bytes: opad (64) + inner_hash (32). Padding fits in one
-    // block → 128 bytes = 2 blocks, compressed in a single call.
-    // Derive opad from ipad: (key ^ 0x36) ^ 0x6a = key ^ 0x5c.
-    let mut outer = [0u8; 128];
-    for (o, &ip) in outer[..BLOCK_SIZE].iter_mut().zip(ipad.iter()) {
-      *o = ip ^ 0x6a;
-    }
-    // Write inner hash directly from state words — no intermediate buffer.
-    for (i, &word) in state.iter().enumerate() {
-      let off = BLOCK_SIZE.strict_add(i.strict_mul(4));
-      outer[off..off.strict_add(4)].copy_from_slice(&word.to_be_bytes());
-    }
-    outer[BLOCK_SIZE.strict_add(TAG_SIZE)] = 0x80;
-    // 96 bytes × 8 = 768 bits.
-    outer[120..128].copy_from_slice(&768u64.to_be_bytes());
-
-    state = SHA256_H0;
-    compress(&mut state, &outer);
-
-    // Serialize tag.
-    let mut tag = [0u8; TAG_SIZE];
-    for (chunk, &word) in tag.chunks_exact_mut(4).zip(state.iter()) {
-      chunk.copy_from_slice(&word.to_be_bytes());
-    }
-
-    // --- Batch zeroize all sensitive material (single fence) ---
-    ct::zeroize_no_fence(&mut ipad);
-    ct::zeroize_no_fence(&mut inner_buf[..inner_used]);
-    ct::zeroize_no_fence(&mut outer);
-    for word in state.iter_mut() {
-      // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
-      unsafe { core::ptr::write_volatile(word, 0) };
-    }
-    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
-
-    tag
+    Self::mac_core(&mut ipad, data, compress)
   }
 
   #[inline]
