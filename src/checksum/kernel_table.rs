@@ -1939,6 +1939,10 @@ mod riscv64_tables {
     requires: crate::platform::caps::riscv::ZBC,
     boundaries: [128, 256, 1024],
     xs: PORTABLE_SET,
+    // CRC64 stays on portable slice-by-16: on in-order Zbc-only cores (e.g.
+    // SpacemiT K1) scalar CLMUL folding loses to table lookup because the
+    // CLMUL dependency chains can't be pipelined.  CRC16/24/32 still benefit
+    // from Zbc because their reference crates use weaker table algorithms.
     s: KernelSet {
       crc16_ccitt: crc16_k::CCITT_ZBC[0],
       crc16_ccitt_name: "riscv64/zbc",
@@ -1950,10 +1954,10 @@ mod riscv64_tables {
       crc32_ieee_name: "riscv64/zbc",
       crc32c: crc32_k::CRC32C_ZBC[0],
       crc32c_name: "riscv64/zbc",
-      crc64_xz: crc64_k::XZ_ZBC[0],
-      crc64_xz_name: "riscv64/zbc",
-      crc64_nvme: crc64_k::NVME_ZBC[0],
-      crc64_nvme_name: "riscv64/zbc",
+      crc64_xz: crate::checksum::crc64::portable::crc64_slice16_xz,
+      crc64_xz_name: "portable/slice16",
+      crc64_nvme: crate::checksum::crc64::portable::crc64_slice16_nvme,
+      crc64_nvme_name: "portable/slice16",
     },
     m: KernelSet {
       crc16_ccitt: crc16_k::CCITT_ZBC[1],
@@ -1966,10 +1970,10 @@ mod riscv64_tables {
       crc32_ieee_name: "riscv64/zbc-2way",
       crc32c: crc32_k::CRC32C_ZBC[1],
       crc32c_name: "riscv64/zbc-2way",
-      crc64_xz: crc64_k::XZ_ZBC[1],
-      crc64_xz_name: "riscv64/zbc-2way",
-      crc64_nvme: crc64_k::NVME_ZBC[1],
-      crc64_nvme_name: "riscv64/zbc-2way",
+      crc64_xz: crate::checksum::crc64::portable::crc64_slice16_xz,
+      crc64_xz_name: "portable/slice16",
+      crc64_nvme: crate::checksum::crc64::portable::crc64_slice16_nvme,
+      crc64_nvme_name: "portable/slice16",
     },
     l: KernelSet {
       crc16_ccitt: crc16_k::CCITT_ZBC[2],
@@ -1982,10 +1986,10 @@ mod riscv64_tables {
       crc32_ieee_name: "riscv64/zbc-4way",
       crc32c: crc32_k::CRC32C_ZBC[2],
       crc32c_name: "riscv64/zbc-4way",
-      crc64_xz: crc64_k::XZ_ZBC[2],
-      crc64_xz_name: "riscv64/zbc-4way",
-      crc64_nvme: crc64_k::NVME_ZBC[2],
-      crc64_nvme_name: "riscv64/zbc-4way",
+      crc64_xz: crate::checksum::crc64::portable::crc64_slice16_xz,
+      crc64_xz_name: "portable/slice16",
+      crc64_nvme: crate::checksum::crc64::portable::crc64_slice16_nvme,
+      crc64_nvme_name: "portable/slice16",
     },
   };
 
