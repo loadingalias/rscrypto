@@ -5,19 +5,27 @@
 //!
 //! Uses fixed VL=2 for portability across all VLEN ≥ 128 implementations.
 //! On wider VLEN machines (e.g. VLEN=256 on SpacemiT K1), upper lanes are
-//! unused but the code is correct and still significantly faster than the
-//! portable scalar fallback.
+//! unused but the code is correct.
 //!
 //! Key advantage over POWER/s390x: RVV has full SEW=64 `vmul.vx`, so the
 //! scramble multiply is a single instruction instead of a lo+hi split.
 //!
+//! # Dispatch status
+//!
+//! Currently **not wired into dispatch** on RISC-V.  On the in-order
+//! SpacemiT K1 core, the RVV accumulate path is slower than the portable
+//! scalar path at 256 B–64 KiB (0.50x–0.60x vs xxhash-rust) because
+//! per-stripe vector load/store latency dominates at medium sizes.  The
+//! kernel is retained for future out-of-order RISC-V cores where RVV
+//! should win.
+//!
 //! # Safety
 //!
 //! Uses `unsafe` for RVV inline asm. Callers must ensure the V extension
-//! is available before executing the accelerated path (the dispatcher
-//! does this via `platform::caps::riscv::V`).
+//! is available before executing the accelerated path.
 #![allow(unsafe_code)]
 #![allow(clippy::indexing_slicing)]
+#![allow(dead_code)] // Not wired into dispatch on current RISC-V targets
 
 use super::{
   ACC_NB, DEFAULT_SECRET, INITIAL_ACC, MID_SIZE_MAX, PRIME32_1, PRIME64_1, PRIME64_2, SECRET_CONSUME_RATE,
@@ -28,33 +36,21 @@ use super::{
 // SIMD accumulate + scramble
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Accumulate `nstripes` consecutive 64-byte stripes into the accumulator.
+/// Accumulate one 64-byte stripe into the accumulator.
 ///
-/// **Fused loop**: loads v16-v19 once, processes all stripes, stores once.
-/// This eliminates the per-stripe accumulator load/store that dominated
-/// medium-size throughput on the in-order K1 core.
-///
-/// Per stripe, processes 4 × 16-byte chunks:
+/// Processes 4 × 16-byte chunks in a single asm block to avoid redundant
+/// `vsetvli` overhead. Per chunk:
 /// 1. Load data and secret, XOR → data_key
 /// 2. product = lo32(data_key) × hi32(data_key)
 /// 3. Swap u64 lanes (`vmv.x.s` + `vslide1down.vx`) for the idx^1 cross-add
 /// 4. acc += product + swap (breaks the acc dependency chain)
 ///
-/// Input pointer advances by `STRIPE_LEN` (64) per stripe.
-/// Secret pointer advances by `SECRET_CONSUME_RATE` (8) per stripe.
-///
 /// Vector registers: v1-v5 temporaries, v16-v19 accumulator pairs.
-///
-/// # Safety
-///
-/// Caller must ensure `nstripes >= 1`, `input` points to `nstripes * 64`
-/// valid bytes, and `secret` points to `(nstripes - 1) * 8 + 64` valid bytes.
 #[inline]
 #[target_feature(enable = "v")]
-unsafe fn accumulate_stripes(acc: &mut [u64; ACC_NB], input: *const u8, secret: *const u8, nstripes: usize) {
-  debug_assert!(nstripes >= 1);
-  // SAFETY: V extension via target_feature. Caller ensures input/secret
-  // bounds and nstripes >= 1, acc is valid for 8 × u64.
+unsafe fn accumulate_512(acc: &mut [u64; ACC_NB], stripe: *const u8, secret: *const u8) {
+  // SAFETY: V extension via target_feature. Caller ensures stripe/secret
+  // point to ≥64 valid bytes, acc is valid for 8 × u64.
   unsafe {
     let mask: u64 = 0xFFFF_FFFF;
     let shift32: u64 = 32;
@@ -62,7 +58,7 @@ unsafe fn accumulate_stripes(acc: &mut [u64; ACC_NB], input: *const u8, secret: 
       // Configure VL=2, SEW=64, LMUL=1, tail/mask agnostic
       "vsetivli zero, 2, e64, m1, ta, ma",
 
-      // Load all 4 accumulator pairs from memory (once)
+      // Load all 4 accumulator pairs from memory
       "vle64.v v16, ({acc})",
       "addi {t1}, {acc}, 16",
       "vle64.v v17, ({t1})",
@@ -71,23 +67,20 @@ unsafe fn accumulate_stripes(acc: &mut [u64; ACC_NB], input: *const u8, secret: 
       "addi {t1}, {acc}, 48",
       "vle64.v v19, ({t1})",
 
-      // ── Stripe loop ──
-      "2:",
-
-      // Chunk 0: bytes 0..15
-      "vle64.v v1, ({input})",
+      // ── Chunk 0: bytes 0..15 ──
+      "vle64.v v1, ({stripe})",
       "vle64.v v2, ({secret})",
-      "vmv.x.s {t0}, v1",
-      "vslide1down.vx v4, v1, {t0}",
-      "vxor.vv v3, v1, v2",
-      "vsrl.vx v2, v3, {shift32}",
-      "vand.vx v5, v3, {mask}",
-      "vmul.vv v3, v5, v2",
-      "vadd.vv v3, v3, v4",
-      "vadd.vv v16, v16, v3",
+      "vmv.x.s {t0}, v1",                // t0 = data[0]
+      "vslide1down.vx v4, v1, {t0}",     // v4 = [data[1], data[0]] (swap)
+      "vxor.vv v3, v1, v2",              // v3 = data_key
+      "vsrl.vx v2, v3, {shift32}",       // v2 = hi32 (reuse v2)
+      "vand.vx v5, v3, {mask}",          // v5 = lo32
+      "vmul.vv v3, v5, v2",              // v3 = product (reuse v3)
+      "vadd.vv v3, v3, v4",              // v3 = product + swap
+      "vadd.vv v16, v16, v3",            // acc[0..1] += sum
 
-      // Chunk 1: bytes 16..31
-      "addi {t1}, {input}, 16",
+      // ── Chunk 1: bytes 16..31 ──
+      "addi {t1}, {stripe}, 16",
       "vle64.v v1, ({t1})",
       "addi {t1}, {secret}, 16",
       "vle64.v v2, ({t1})",
@@ -100,8 +93,8 @@ unsafe fn accumulate_stripes(acc: &mut [u64; ACC_NB], input: *const u8, secret: 
       "vadd.vv v3, v3, v4",
       "vadd.vv v17, v17, v3",
 
-      // Chunk 2: bytes 32..47
-      "addi {t1}, {input}, 32",
+      // ── Chunk 2: bytes 32..47 ──
+      "addi {t1}, {stripe}, 32",
       "vle64.v v1, ({t1})",
       "addi {t1}, {secret}, 32",
       "vle64.v v2, ({t1})",
@@ -114,8 +107,8 @@ unsafe fn accumulate_stripes(acc: &mut [u64; ACC_NB], input: *const u8, secret: 
       "vadd.vv v3, v3, v4",
       "vadd.vv v18, v18, v3",
 
-      // Chunk 3: bytes 48..63
-      "addi {t1}, {input}, 48",
+      // ── Chunk 3: bytes 48..63 ──
+      "addi {t1}, {stripe}, 48",
       "vle64.v v1, ({t1})",
       "addi {t1}, {secret}, 48",
       "vle64.v v2, ({t1})",
@@ -128,15 +121,7 @@ unsafe fn accumulate_stripes(acc: &mut [u64; ACC_NB], input: *const u8, secret: 
       "vadd.vv v3, v3, v4",
       "vadd.vv v19, v19, v3",
 
-      // Advance: input += STRIPE_LEN (64), secret += SECRET_CONSUME_RATE (8)
-      "addi {input}, {input}, 64",
-      "addi {secret}, {secret}, 8",
-
-      // Loop control
-      "addi {n}, {n}, -1",
-      "bnez {n}, 2b",
-
-      // Store all 4 accumulator pairs back to memory (once)
+      // Store all 4 accumulator pairs back to memory
       "vse64.v v16, ({acc})",
       "addi {t1}, {acc}, 16",
       "vse64.v v17, ({t1})",
@@ -146,9 +131,8 @@ unsafe fn accumulate_stripes(acc: &mut [u64; ACC_NB], input: *const u8, secret: 
       "vse64.v v19, ({t1})",
 
       acc = in(reg) acc.as_mut_ptr(),
-      input = inout(reg) input => _,
-      secret = inout(reg) secret => _,
-      n = inout(reg) nstripes => _,
+      stripe = in(reg) stripe,
+      secret = in(reg) secret,
       mask = in(reg) mask,
       shift32 = in(reg) shift32,
       t0 = out(reg) _,
@@ -254,35 +238,42 @@ unsafe fn hash_long_internal_loop(input: &[u8], secret: &[u8]) -> [u64; ACC_NB] 
     let block_len = STRIPE_LEN.strict_mul(nb_stripes);
     let nb_blocks = (input.len().strict_sub(1)) / block_len;
 
-    // Full blocks: accumulate all stripes in one fused asm call, then scramble.
     let mut block = 0usize;
     while block < nb_blocks {
-      let input_off = block.strict_mul(block_len);
-      accumulate_stripes(&mut acc, input.as_ptr().add(input_off), secret.as_ptr(), nb_stripes);
+      let mut stripe = 0usize;
+      while stripe < nb_stripes {
+        let input_off = block.strict_mul(block_len).strict_add(stripe.strict_mul(STRIPE_LEN));
+        let secret_off = stripe.strict_mul(SECRET_CONSUME_RATE);
+        debug_assert!(input_off.strict_add(STRIPE_LEN) <= input.len());
+        debug_assert!(secret_off.strict_add(STRIPE_LEN) <= secret.len());
+        accumulate_512(&mut acc, input.as_ptr().add(input_off), secret.as_ptr().add(secret_off));
+        stripe = stripe.strict_add(1);
+      }
       scramble_acc(&mut acc, secret.as_ptr().add(secret.len().strict_sub(STRIPE_LEN)));
       block = block.strict_add(1);
     }
 
-    // Remaining stripes in final partial block.
-    let final_off = nb_blocks.strict_mul(block_len);
-    let nb_stripes_final = (input.len().strict_sub(1).strict_sub(final_off)) / STRIPE_LEN;
-    if nb_stripes_final > 0 {
-      accumulate_stripes(
-        &mut acc,
-        input.as_ptr().add(final_off),
-        secret.as_ptr(),
-        nb_stripes_final,
-      );
+    // Remaining stripes in final partial block
+    let nb_stripes_final = (input.len().strict_sub(1).strict_sub(block_len.strict_mul(nb_blocks))) / STRIPE_LEN;
+    let mut stripe = 0usize;
+    while stripe < nb_stripes_final {
+      let input_off = nb_blocks
+        .strict_mul(block_len)
+        .strict_add(stripe.strict_mul(STRIPE_LEN));
+      let secret_off = stripe.strict_mul(SECRET_CONSUME_RATE);
+      debug_assert!(input_off.strict_add(STRIPE_LEN) <= input.len());
+      debug_assert!(secret_off.strict_add(STRIPE_LEN) <= secret.len());
+      accumulate_512(&mut acc, input.as_ptr().add(input_off), secret.as_ptr().add(secret_off));
+      stripe = stripe.strict_add(1);
     }
 
-    // Last stripe (may overlap with previous).
-    accumulate_stripes(
+    // Last stripe (may overlap with previous)
+    accumulate_512(
       &mut acc,
       input.as_ptr().add(input.len().strict_sub(STRIPE_LEN)),
       secret
         .as_ptr()
         .add(secret.len().strict_sub(STRIPE_LEN).strict_sub(SECRET_LASTACC_START)),
-      1,
     );
 
     acc

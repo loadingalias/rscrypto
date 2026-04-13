@@ -140,10 +140,9 @@ fn hash64_long(seed: u64, data: &[u8]) -> u64 {
     return super::aarch64_neon::xxh3_64_long(data, seed);
   }
 
-  #[cfg(all(target_arch = "riscv64", target_feature = "v"))]
-  {
-    return super::riscv64_v::xxh3_64_long(data, seed);
-  }
+  // RISC-V: RVV kernel is slower than portable scalar at 256 B–64 KiB on
+  // in-order cores (SpacemiT K1). Fall through to portable via runtime
+  // dispatch until out-of-order RISC-V targets are available.
 
   // Tier 2: runtime dispatch — dedicated long-path fn pointer, no redundant
   // length checks.
@@ -190,10 +189,7 @@ fn hash128_long(seed: u64, data: &[u8]) -> u128 {
     return super::aarch64_neon::xxh3_128_long(data, seed);
   }
 
-  #[cfg(all(target_arch = "riscv64", target_feature = "v"))]
-  {
-    return super::riscv64_v::xxh3_128_long(data, seed);
-  }
+  // RISC-V: see hash64_long comment.
 
   // Tier 2: runtime dispatch — dedicated long-path fn pointer.
   #[allow(unreachable_code)]
