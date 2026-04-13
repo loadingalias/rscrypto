@@ -17,6 +17,8 @@ pub(crate) mod dispatch_tables;
 pub(crate) mod kernels;
 #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
 pub(crate) mod power;
+#[cfg(target_arch = "riscv64")]
+pub(crate) mod riscv64_v;
 #[cfg(target_arch = "s390x")]
 pub(crate) mod s390x;
 #[cfg(target_arch = "x86_64")]

@@ -14,6 +14,8 @@ pub enum Xxh3KernelId {
   Vsx = 4,
   #[cfg(target_arch = "s390x")]
   Vector = 5,
+  #[cfg(target_arch = "riscv64")]
+  Rvv = 6,
 }
 
 impl Xxh3KernelId {
@@ -32,6 +34,8 @@ impl Xxh3KernelId {
       Self::Vsx => "vsx",
       #[cfg(target_arch = "s390x")]
       Self::Vector => "zvector",
+      #[cfg(target_arch = "riscv64")]
+      Self::Rvv => "rvv",
     }
   }
 }
@@ -51,6 +55,8 @@ pub fn id_from_name(name: &str) -> Option<Xxh3KernelId> {
     "vsx" => Some(Xxh3KernelId::Vsx),
     #[cfg(target_arch = "s390x")]
     "zvector" => Some(Xxh3KernelId::Vector),
+    #[cfg(target_arch = "riscv64")]
+    "rvv" => Some(Xxh3KernelId::Rvv),
     _ => None,
   }
 }
@@ -69,6 +75,8 @@ pub fn hash64_fn(id: Xxh3KernelId) -> fn(&[u8], u64) -> u64 {
     Xxh3KernelId::Vsx => super::power::xxh3_64_with_seed,
     #[cfg(target_arch = "s390x")]
     Xxh3KernelId::Vector => super::s390x::xxh3_64_with_seed,
+    #[cfg(target_arch = "riscv64")]
+    Xxh3KernelId::Rvv => super::riscv64_v::xxh3_64_with_seed,
   }
 }
 
@@ -87,6 +95,8 @@ pub fn hash64_long_fn(id: Xxh3KernelId) -> fn(&[u8], u64) -> u64 {
     Xxh3KernelId::Vsx => super::power::xxh3_64_long,
     #[cfg(target_arch = "s390x")]
     Xxh3KernelId::Vector => super::s390x::xxh3_64_long,
+    #[cfg(target_arch = "riscv64")]
+    Xxh3KernelId::Rvv => super::riscv64_v::xxh3_64_long,
   }
 }
 
@@ -105,6 +115,8 @@ pub fn hash128_long_fn(id: Xxh3KernelId) -> fn(&[u8], u64) -> u128 {
     Xxh3KernelId::Vsx => super::power::xxh3_128_long,
     #[cfg(target_arch = "s390x")]
     Xxh3KernelId::Vector => super::s390x::xxh3_128_long,
+    #[cfg(target_arch = "riscv64")]
+    Xxh3KernelId::Rvv => super::riscv64_v::xxh3_128_long,
   }
 }
 
@@ -123,5 +135,7 @@ pub const fn required_caps(id: Xxh3KernelId) -> Caps {
     Xxh3KernelId::Vsx => crate::platform::caps::power::POWER8_VECTOR,
     #[cfg(target_arch = "s390x")]
     Xxh3KernelId::Vector => crate::platform::caps::s390x::VECTOR,
+    #[cfg(target_arch = "riscv64")]
+    Xxh3KernelId::Rvv => crate::platform::caps::riscv::V,
   }
 }

@@ -106,6 +106,9 @@ pub enum AeadBackend {
   Riscv64ScalarCrypto,
   Riscv64VectorCrypto,
   Riscv64Vector,
+  /// T-table AES (software) + optional Zbc scalar CLMUL for POLYVAL.
+  /// Used on RISC-V without crypto extensions (e.g. SpacemiT K1).
+  Riscv64Ttable,
 }
 
 impl AeadBackend {
@@ -133,6 +136,7 @@ impl AeadBackend {
       Self::Riscv64ScalarCrypto => "riscv64/scalar-crypto",
       Self::Riscv64VectorCrypto => "riscv64/vector-crypto",
       Self::Riscv64Vector => "riscv64/vector",
+      Self::Riscv64Ttable => "riscv64/ttable",
     }
   }
 }
@@ -332,10 +336,13 @@ fn select_gcm_backend(arch: Arch, caps: Caps) -> AeadBackend {
       }
     }
     Arch::Riscv64 => {
-      if caps.has(crate::platform::caps::riscv::ZVKNED) && caps.has(crate::platform::caps::riscv::ZVBC) {
+      if caps.has(riscv::ZVKNED) && caps.has(riscv::ZVBC) {
         AeadBackend::Riscv64VectorCrypto
+      } else if caps.has(riscv::ZKNE) && (caps.has(riscv::ZBC) || caps.has(riscv::ZBKC)) {
+        AeadBackend::Riscv64ScalarCrypto
       } else {
-        AeadBackend::Portable
+        // T-table AES + optional scalar CLMUL POLYVAL (Zbc/Zbkc).
+        AeadBackend::Riscv64Ttable
       }
     }
     Arch::Wasm32 | Arch::Wasm64 => AeadBackend::WasmPortable,
@@ -389,7 +396,8 @@ fn select_aegis_backend(arch: Arch, caps: Caps) -> AeadBackend {
       if caps.has(riscv::ZKNE) {
         AeadBackend::Riscv64ScalarCrypto
       } else {
-        AeadBackend::Portable
+        // T-table AES rounds — ~200x faster than algebraic GF(2^8) S-box.
+        AeadBackend::Riscv64Ttable
       }
     }
     Arch::Wasm32 | Arch::Wasm64 => AeadBackend::WasmPortable,
@@ -521,15 +529,53 @@ mod tests {
   }
 
   #[test]
-  fn riscv_and_wasm_have_explicit_chacha_vector_routes() {
-    assert_eq!(
-      select_backend(AeadPrimitive::XChaCha20Poly1305, Arch::Riscv64, riscv::V),
-      AeadBackend::Riscv64Vector
-    );
+  fn riscv_multi_tier_dispatch() {
+    // Tier 1: full vector crypto
     assert_eq!(
       select_backend(AeadPrimitive::Aes256Gcm, Arch::Riscv64, riscv::ZVKNED | riscv::ZVBC),
       AeadBackend::Riscv64VectorCrypto
     );
+
+    // Tier 2: scalar AES + scalar CLMUL
+    assert_eq!(
+      select_backend(AeadPrimitive::Aes256GcmSiv, Arch::Riscv64, riscv::ZKNE | riscv::ZBC),
+      AeadBackend::Riscv64ScalarCrypto
+    );
+    // Zbkc also qualifies for scalar CLMUL
+    assert_eq!(
+      select_backend(AeadPrimitive::Aes256Gcm, Arch::Riscv64, riscv::ZKNE | riscv::ZBKC),
+      AeadBackend::Riscv64ScalarCrypto
+    );
+
+    // Tier 3: T-table fallback (no crypto extensions)
+    assert_eq!(
+      select_backend(AeadPrimitive::Aes256Gcm, Arch::Riscv64, riscv::V | riscv::ZBC),
+      AeadBackend::Riscv64Ttable
+    );
+    assert_eq!(
+      select_backend(AeadPrimitive::Aes256GcmSiv, Arch::Riscv64, riscv::V),
+      AeadBackend::Riscv64Ttable
+    );
+
+    // AEGIS: Zkne → T-table
+    assert_eq!(
+      select_backend(AeadPrimitive::Aegis256, Arch::Riscv64, riscv::ZKNE),
+      AeadBackend::Riscv64ScalarCrypto
+    );
+    assert_eq!(
+      select_backend(AeadPrimitive::Aegis256, Arch::Riscv64, riscv::V),
+      AeadBackend::Riscv64Ttable
+    );
+
+    // ChaCha: V → Riscv64Vector
+    assert_eq!(
+      select_backend(AeadPrimitive::XChaCha20Poly1305, Arch::Riscv64, riscv::V),
+      AeadBackend::Riscv64Vector
+    );
+  }
+
+  #[test]
+  fn wasm_has_simd128_chacha_route() {
     assert_eq!(
       select_backend(AeadPrimitive::ChaCha20Poly1305, Arch::Wasm64, wasm::SIMD128),
       AeadBackend::WasmSimd128

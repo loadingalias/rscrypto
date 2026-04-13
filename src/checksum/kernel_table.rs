@@ -1937,10 +1937,9 @@ mod riscv64_tables {
 
   pub static RISCV64_ZBC_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::riscv::ZBC,
-    boundaries: [64, 64, 4096],
+    boundaries: [128, 256, 1024],
     xs: PORTABLE_SET,
-    s: PORTABLE_SET,
-    m: KernelSet {
+    s: KernelSet {
       crc16_ccitt: crc16_k::CCITT_ZBC[0],
       crc16_ccitt_name: "riscv64/zbc",
       crc16_ibm: crc16_k::IBM_ZBC[0],
@@ -1955,6 +1954,22 @@ mod riscv64_tables {
       crc64_xz_name: "riscv64/zbc",
       crc64_nvme: crc64_k::NVME_ZBC[0],
       crc64_nvme_name: "riscv64/zbc",
+    },
+    m: KernelSet {
+      crc16_ccitt: crc16_k::CCITT_ZBC[1],
+      crc16_ccitt_name: "riscv64/zbc-2way",
+      crc16_ibm: crc16_k::IBM_ZBC[1],
+      crc16_ibm_name: "riscv64/zbc-2way",
+      crc24_openpgp: crc24_k::OPENPGP_ZBC[1],
+      crc24_openpgp_name: "riscv64/zbc-2way",
+      crc32_ieee: crc32_k::CRC32_ZBC[1],
+      crc32_ieee_name: "riscv64/zbc-2way",
+      crc32c: crc32_k::CRC32C_ZBC[1],
+      crc32c_name: "riscv64/zbc-2way",
+      crc64_xz: crc64_k::XZ_ZBC[1],
+      crc64_xz_name: "riscv64/zbc-2way",
+      crc64_nvme: crc64_k::NVME_ZBC[1],
+      crc64_nvme_name: "riscv64/zbc-2way",
     },
     l: KernelSet {
       crc16_ccitt: crc16_k::CCITT_ZBC[2],
@@ -1976,10 +1991,9 @@ mod riscv64_tables {
 
   pub static RISCV64_ZVBC_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::riscv::V.union(crate::platform::caps::riscv::ZVBC),
-    boundaries: [64, 64, 4096],
+    boundaries: [128, 256, 1024],
     xs: PORTABLE_SET,
-    s: PORTABLE_SET,
-    m: KernelSet {
+    s: KernelSet {
       crc16_ccitt: crc16_k::CCITT_ZVBC[0],
       crc16_ccitt_name: "riscv64/zvbc",
       crc16_ibm: crc16_k::IBM_ZVBC[0],
@@ -1994,6 +2008,22 @@ mod riscv64_tables {
       crc64_xz_name: "riscv64/zvbc",
       crc64_nvme: crc64_k::NVME_ZVBC[0],
       crc64_nvme_name: "riscv64/zvbc",
+    },
+    m: KernelSet {
+      crc16_ccitt: crc16_k::CCITT_ZVBC[1],
+      crc16_ccitt_name: "riscv64/zvbc-2way",
+      crc16_ibm: crc16_k::IBM_ZVBC[1],
+      crc16_ibm_name: "riscv64/zvbc-2way",
+      crc24_openpgp: crc24_k::OPENPGP_ZVBC[1],
+      crc24_openpgp_name: "riscv64/zvbc-2way",
+      crc32_ieee: crc32_k::CRC32_ZVBC[1],
+      crc32_ieee_name: "riscv64/zvbc-2way",
+      crc32c: crc32_k::CRC32C_ZVBC[1],
+      crc32c_name: "riscv64/zvbc-2way",
+      crc64_xz: crc64_k::XZ_ZVBC[1],
+      crc64_xz_name: "riscv64/zvbc-2way",
+      crc64_nvme: crc64_k::NVME_ZVBC[1],
+      crc64_nvme_name: "riscv64/zvbc-2way",
     },
     l: KernelSet {
       crc16_ccitt: crc16_k::CCITT_ZVBC[2],

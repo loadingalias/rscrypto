@@ -3135,9 +3135,22 @@ impl Xof for Blake3XofReader {
       return;
     }
 
-    if out.len() < OUTPUT_BLOCK_LEN && self.position_within_block == 0 {
-      self.fill_one_block(&mut out);
-      return;
+    if self.position_within_block == 0 {
+      // Fast path: exactly one full block — write directly, bypassing the
+      // emit_blocks_into loop and squeeze_general function-call overhead.
+      if out.len() == OUTPUT_BLOCK_LEN {
+        // SAFETY: we verified `out.len() == OUTPUT_BLOCK_LEN` (64 bytes).
+        let block = unsafe { &mut *out.as_mut_ptr().cast::<[u8; OUTPUT_BLOCK_LEN]>() };
+        self.root.emit_one_block(block);
+        self.root.counter = self.root.counter.wrapping_add(1);
+        return;
+      }
+
+      // Fast path: sub-block output from block start.
+      if out.len() < OUTPUT_BLOCK_LEN {
+        self.fill_one_block(&mut out);
+        return;
+      }
     }
 
     Blake3XofReader::squeeze_general(self, &mut out);

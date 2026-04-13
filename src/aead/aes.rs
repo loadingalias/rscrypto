@@ -947,6 +947,172 @@ mod rv_aes {
 }
 
 // ---------------------------------------------------------------------------
+// riscv64 T-table backend (AES without crypto extensions)
+// ---------------------------------------------------------------------------
+//
+// On RISC-V without Zvkned or Zkne, the algebraic GF(2^8) S-box is ~200x
+// slower than the reference crate's fixsliced AES. T-tables fuse SubBytes +
+// MixColumns into 4 × 1 KiB lookup tables, reducing AES-256 from ~87K
+// operations/block to ~256 lookups/block.
+//
+// The T-tables use secret-indexed loads. This is the same trade-off made by
+// the s390x AEGIS backend (aegis256::zvec) — acceptable for platforms where
+// the algebraic alternative is catastrophically slow and hardware AES is
+// absent.
+
+#[cfg(target_arch = "riscv64")]
+mod ttable {
+  /// AES S-box (FIPS 197 Table 2).
+  #[rustfmt::skip]
+  const SBOX: [u8; 256] = [
+    0x63,0x7C,0x77,0x7B,0xF2,0x6B,0x6F,0xC5,0x30,0x01,0x67,0x2B,0xFE,0xD7,0xAB,0x76,
+    0xCA,0x82,0xC9,0x7D,0xFA,0x59,0x47,0xF0,0xAD,0xD4,0xA2,0xAF,0x9C,0xA4,0x72,0xC0,
+    0xB7,0xFD,0x93,0x26,0x36,0x3F,0xF7,0xCC,0x34,0xA5,0xE5,0xF1,0x71,0xD8,0x31,0x15,
+    0x04,0xC7,0x23,0xC3,0x18,0x96,0x05,0x9A,0x07,0x12,0x80,0xE2,0xEB,0x27,0xB2,0x75,
+    0x09,0x83,0x2C,0x1A,0x1B,0x6E,0x5A,0xA0,0x52,0x3B,0xD6,0xB3,0x29,0xE3,0x2F,0x84,
+    0x53,0xD1,0x00,0xED,0x20,0xFC,0xB1,0x5B,0x6A,0xCB,0xBE,0x39,0x4A,0x4C,0x58,0xCF,
+    0xD0,0xEF,0xAA,0xFB,0x43,0x4D,0x33,0x85,0x45,0xF9,0x02,0x7F,0x50,0x3C,0x9F,0xA8,
+    0x51,0xA3,0x40,0x8F,0x92,0x9D,0x38,0xF5,0xBC,0xB6,0xDA,0x21,0x10,0xFF,0xF3,0xD2,
+    0xCD,0x0C,0x13,0xEC,0x5F,0x97,0x44,0x17,0xC4,0xA7,0x7E,0x3D,0x64,0x5D,0x19,0x73,
+    0x60,0x81,0x4F,0xDC,0x22,0x2A,0x90,0x88,0x46,0xEE,0xB8,0x14,0xDE,0x5E,0x0B,0xDB,
+    0xE0,0x32,0x3A,0x0A,0x49,0x06,0x24,0x5C,0xC2,0xD3,0xAC,0x62,0x91,0x95,0xE4,0x79,
+    0xE7,0xC8,0x37,0x6D,0x8D,0xD5,0x4E,0xA9,0x6C,0x56,0xF4,0xEA,0x65,0x7A,0xAE,0x08,
+    0xBA,0x78,0x25,0x2E,0x1C,0xA6,0xB4,0xC6,0xE8,0xDD,0x74,0x1F,0x4B,0xBD,0x8B,0x8A,
+    0x70,0x3E,0xB5,0x66,0x48,0x03,0xF6,0x0E,0x61,0x35,0x57,0xB9,0x86,0xC1,0x1D,0x9E,
+    0xE1,0xF8,0x98,0x11,0x69,0xD9,0x8E,0x94,0x9B,0x1E,0x87,0xE9,0xCE,0x55,0x28,0xDF,
+    0x8C,0xA1,0x89,0x0D,0xBF,0xE6,0x42,0x68,0x41,0x99,0x2D,0x0F,0xB0,0x54,0xBB,0x16,
+  ];
+
+  const fn xt(b: u8) -> u8 {
+    let r = (b as u16) << 1;
+    (r ^ (if r & 0x100 != 0 { 0x1B } else { 0 })) as u8
+  }
+
+  const fn generate_t0() -> [u32; 256] {
+    let mut t = [0u32; 256];
+    let mut i = 0;
+    while i < 256 {
+      let s = SBOX[i];
+      let s2 = xt(s);
+      let s3 = s2 ^ s;
+      t[i] = (s2 as u32) << 24 | (s as u32) << 16 | (s as u32) << 8 | s3 as u32;
+      i += 1;
+    }
+    t
+  }
+
+  const fn generate_t1() -> [u32; 256] {
+    let t0 = generate_t0();
+    let mut t = [0u32; 256];
+    let mut i = 0;
+    while i < 256 {
+      t[i] = t0[i].rotate_right(8);
+      i += 1;
+    }
+    t
+  }
+
+  const fn generate_t2() -> [u32; 256] {
+    let t0 = generate_t0();
+    let mut t = [0u32; 256];
+    let mut i = 0;
+    while i < 256 {
+      t[i] = t0[i].rotate_right(16);
+      i += 1;
+    }
+    t
+  }
+
+  const fn generate_t3() -> [u32; 256] {
+    let t0 = generate_t0();
+    let mut t = [0u32; 256];
+    let mut i = 0;
+    while i < 256 {
+      t[i] = t0[i].rotate_right(24);
+      i += 1;
+    }
+    t
+  }
+
+  static T0: [u32; 256] = generate_t0();
+  static T1: [u32; 256] = generate_t1();
+  static T2: [u32; 256] = generate_t2();
+  static T3: [u32; 256] = generate_t3();
+
+  /// AES-256 T-table block encryption (14 rounds).
+  ///
+  /// Rounds 1-13: T-table lookup (SubBytes + MixColumns fused) with ShiftRows
+  /// indexing. Round 14: S-box only (no MixColumns).
+  pub(super) fn encrypt_block(rk: &[u32; super::EXPANDED_KEY_WORDS], block: &mut [u8; 16]) {
+    let mut s0 = u32::from_be_bytes([block[0], block[1], block[2], block[3]]);
+    let mut s1 = u32::from_be_bytes([block[4], block[5], block[6], block[7]]);
+    let mut s2 = u32::from_be_bytes([block[8], block[9], block[10], block[11]]);
+    let mut s3 = u32::from_be_bytes([block[12], block[13], block[14], block[15]]);
+
+    // Initial AddRoundKey.
+    s0 ^= rk[0];
+    s1 ^= rk[1];
+    s2 ^= rk[2];
+    s3 ^= rk[3];
+
+    // Rounds 1-13: T-table (SubBytes + ShiftRows + MixColumns + AddRoundKey).
+    let mut round = 1usize;
+    while round < super::ROUNDS {
+      let rk_off = round.strict_mul(4);
+      let t0 = T0[(s0 >> 24) as usize]
+        ^ T1[((s1 >> 16) & 0xFF) as usize]
+        ^ T2[((s2 >> 8) & 0xFF) as usize]
+        ^ T3[(s3 & 0xFF) as usize]
+        ^ rk[rk_off];
+      let t1 = T0[(s1 >> 24) as usize]
+        ^ T1[((s2 >> 16) & 0xFF) as usize]
+        ^ T2[((s3 >> 8) & 0xFF) as usize]
+        ^ T3[(s0 & 0xFF) as usize]
+        ^ rk[rk_off.strict_add(1)];
+      let t2 = T0[(s2 >> 24) as usize]
+        ^ T1[((s3 >> 16) & 0xFF) as usize]
+        ^ T2[((s0 >> 8) & 0xFF) as usize]
+        ^ T3[(s1 & 0xFF) as usize]
+        ^ rk[rk_off.strict_add(2)];
+      let t3 = T0[(s3 >> 24) as usize]
+        ^ T1[((s0 >> 16) & 0xFF) as usize]
+        ^ T2[((s1 >> 8) & 0xFF) as usize]
+        ^ T3[(s2 & 0xFF) as usize]
+        ^ rk[rk_off.strict_add(3)];
+      s0 = t0;
+      s1 = t1;
+      s2 = t2;
+      s3 = t3;
+      round = round.strict_add(1);
+    }
+
+    // Round 14 (final): S-box + ShiftRows + AddRoundKey (no MixColumns).
+    let rk_off = super::ROUNDS.strict_mul(4);
+    let t0 = (SBOX[(s0 >> 24) as usize] as u32) << 24
+      | (SBOX[((s1 >> 16) & 0xFF) as usize] as u32) << 16
+      | (SBOX[((s2 >> 8) & 0xFF) as usize] as u32) << 8
+      | SBOX[(s3 & 0xFF) as usize] as u32;
+    let t1 = (SBOX[(s1 >> 24) as usize] as u32) << 24
+      | (SBOX[((s2 >> 16) & 0xFF) as usize] as u32) << 16
+      | (SBOX[((s3 >> 8) & 0xFF) as usize] as u32) << 8
+      | SBOX[(s0 & 0xFF) as usize] as u32;
+    let t2 = (SBOX[(s2 >> 24) as usize] as u32) << 24
+      | (SBOX[((s3 >> 16) & 0xFF) as usize] as u32) << 16
+      | (SBOX[((s0 >> 8) & 0xFF) as usize] as u32) << 8
+      | SBOX[(s1 & 0xFF) as usize] as u32;
+    let t3 = (SBOX[(s3 >> 24) as usize] as u32) << 24
+      | (SBOX[((s0 >> 16) & 0xFF) as usize] as u32) << 16
+      | (SBOX[((s1 >> 8) & 0xFF) as usize] as u32) << 8
+      | SBOX[(s2 & 0xFF) as usize] as u32;
+
+    block[0..4].copy_from_slice(&(t0 ^ rk[rk_off]).to_be_bytes());
+    block[4..8].copy_from_slice(&(t1 ^ rk[rk_off.strict_add(1)]).to_be_bytes());
+    block[8..12].copy_from_slice(&(t2 ^ rk[rk_off.strict_add(2)]).to_be_bytes());
+    block[12..16].copy_from_slice(&(t3 ^ rk[rk_off.strict_add(3)]).to_be_bytes());
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Aes256EncKey: enum-dispatched key storage
 // ---------------------------------------------------------------------------
 
@@ -1349,7 +1515,18 @@ pub(super) unsafe fn s390x_encrypt_blocks_inline(key: &km::KmKey, blocks: &mut [
 #[inline]
 pub(crate) fn aes256_encrypt_block(ek: &Aes256EncKey, block: &mut [u8; BLOCK_SIZE]) {
   match &ek.inner {
-    KeyInner::Portable(rk) => aes256_encrypt_block_portable(rk, block),
+    KeyInner::Portable(rk) => {
+      // On riscv64 without crypto extensions, T-tables are ~200x faster than
+      // the algebraic GF(2^8) S-box. Same trade-off as s390x AEGIS (zvec).
+      #[cfg(target_arch = "riscv64")]
+      {
+        ttable::encrypt_block(rk, block)
+      }
+      #[cfg(not(target_arch = "riscv64"))]
+      {
+        aes256_encrypt_block_portable(rk, block)
+      }
+    }
     #[cfg(target_arch = "x86_64")]
     KeyInner::AesNi(ni_rk) => {
       // SAFETY: AesNi variant is only constructed after runtime detection confirms AES-NI.
@@ -1409,6 +1586,7 @@ pub(crate) fn aes256_encrypt_blocks_ecb(ek: &Aes256EncKey, blocks: &mut [[u8; BL
 }
 
 /// Portable AES-256 block encryption.
+#[cfg(not(target_arch = "riscv64"))]
 #[inline]
 fn aes256_encrypt_block_portable(rk: &[u32; EXPANDED_KEY_WORDS], block: &mut [u8; BLOCK_SIZE]) {
   // Load state as four big-endian u32 columns.
@@ -1451,12 +1629,14 @@ fn aes256_encrypt_block_portable(rk: &[u32; EXPANDED_KEY_WORDS], block: &mut [u8
 }
 
 /// Extract byte `row` from a big-endian column word.
+#[cfg(not(target_arch = "riscv64"))]
 #[inline(always)]
 const fn col_byte(col: u32, row: usize) -> u8 {
   (col >> (24u32.strict_sub((row as u32).strict_mul(8)))) as u8
 }
 
 /// xtime: multiply by x in GF(2^8), i.e. x << 1 with conditional reduction.
+#[cfg(not(target_arch = "riscv64"))]
 #[inline(always)]
 const fn xtime(x: u8) -> u8 {
   let hi = (x >> 7) & 1;
@@ -1467,6 +1647,7 @@ const fn xtime(x: u8) -> u8 {
 ///
 /// Input/output: four column words in big-endian byte order.
 /// AddRoundKey is done by the caller.
+#[cfg(not(target_arch = "riscv64"))]
 #[inline(always)]
 const fn aes_round(s0: u32, s1: u32, s2: u32, s3: u32) -> (u32, u32, u32, u32) {
   // After SubBytes + ShiftRows, column j contains:
@@ -1500,6 +1681,7 @@ const fn aes_round(s0: u32, s1: u32, s2: u32, s3: u32) -> (u32, u32, u32, u32) {
 }
 
 /// Final AES round: SubBytes → ShiftRows (no MixColumns).
+#[cfg(not(target_arch = "riscv64"))]
 #[inline(always)]
 const fn aes_final_round(s0: u32, s1: u32, s2: u32, s3: u32) -> (u32, u32, u32, u32) {
   let t0 = (sbox(col_byte(s0, 0)) as u32) << 24
@@ -1523,6 +1705,7 @@ const fn aes_final_round(s0: u32, s1: u32, s2: u32, s3: u32) -> (u32, u32, u32, 
 }
 
 /// MixColumns on a single column [b0, b1, b2, b3].
+#[cfg(not(target_arch = "riscv64"))]
 #[inline(always)]
 const fn mix_column(col: [u8; 4]) -> u32 {
   let [b0, b1, b2, b3] = col;
@@ -1548,7 +1731,7 @@ const fn mix_column(col: [u8; 4]) -> u32 {
 /// encryption) is the core primitive.
 ///
 /// On s390x, AEGIS uses T-table rounds instead (in `aegis256::zvec`).
-#[cfg(not(target_arch = "s390x"))]
+#[cfg(not(any(target_arch = "s390x", target_arch = "riscv64")))]
 #[inline]
 pub(crate) fn aes_enc_round_portable(block: &[u8; BLOCK_SIZE], round_key: &[u8; BLOCK_SIZE]) -> [u8; BLOCK_SIZE] {
   let s0 = u32::from_be_bytes([block[0], block[1], block[2], block[3]]);

@@ -78,6 +78,16 @@ pub static ZVECTOR_TABLE: DispatchTable = DispatchTable {
   l: KernelId::Vector,
 };
 
+/// RISC-V with V extension: four iterations per stripe (VL=2 × u64).
+#[cfg(target_arch = "riscv64")]
+pub static RVV_TABLE: DispatchTable = DispatchTable {
+  boundaries: DEFAULT_BOUNDARIES,
+  xs: KernelId::Rvv,
+  s: KernelId::Rvv,
+  m: KernelId::Rvv,
+  l: KernelId::Rvv,
+};
+
 #[inline]
 #[must_use]
 pub fn select_runtime_table(caps: Caps) -> &'static DispatchTable {
@@ -112,6 +122,13 @@ pub fn select_runtime_table(caps: Caps) -> &'static DispatchTable {
   {
     if caps.has(crate::platform::caps::s390x::VECTOR) {
       return &ZVECTOR_TABLE;
+    }
+  }
+
+  #[cfg(target_arch = "riscv64")]
+  {
+    if caps.has(crate::platform::caps::riscv::V) {
+      return &RVV_TABLE;
     }
   }
 
