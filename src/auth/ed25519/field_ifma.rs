@@ -1292,7 +1292,7 @@ mod tests {
 
   #[test]
   fn new_split_roundtrip() {
-    if !is_x86_feature_detected!("avx2") {
+    if !std::arch::is_x86_feature_detected!("avx2") {
       return;
     }
     let [a, b, c, d] = test_field_elements();
@@ -1310,7 +1310,7 @@ mod tests {
 
   #[test]
   fn add_matches_scalar() {
-    if !is_x86_feature_detected!("avx2") {
+    if !std::arch::is_x86_feature_detected!("avx2") {
       return;
     }
     let [a, b, c, d] = test_field_elements();
@@ -1337,7 +1337,7 @@ mod tests {
 
   #[test]
   fn mul_matches_scalar() {
-    if !is_x86_feature_detected!("avx512ifma") {
+    if !std::arch::is_x86_feature_detected!("avx512ifma") {
       return;
     }
     let [a, b, c, d] = test_field_elements();
@@ -1376,7 +1376,7 @@ mod tests {
 
   #[test]
   fn square_matches_mul_self() {
-    if !is_x86_feature_detected!("avx512ifma") {
+    if !std::arch::is_x86_feature_detected!("avx512ifma") {
       return;
     }
     let [a, b, c, d] = test_field_elements();
@@ -1399,7 +1399,7 @@ mod tests {
 
   #[test]
   fn square_matches_scalar() {
-    if !is_x86_feature_detected!("avx512ifma") {
+    if !std::arch::is_x86_feature_detected!("avx512ifma") {
       return;
     }
     let [a, b, c, d] = test_field_elements();
@@ -1419,7 +1419,7 @@ mod tests {
 
   #[test]
   fn mul_small_matches_full_mul() {
-    if !is_x86_feature_detected!("avx512ifma") {
+    if !std::arch::is_x86_feature_detected!("avx512ifma") {
       return;
     }
     let [a, b, c, d] = test_field_elements();
@@ -1448,7 +1448,7 @@ mod tests {
 
   #[test]
   fn shuffle_badc() {
-    if !is_x86_feature_detected!("avx2") {
+    if !std::arch::is_x86_feature_detected!("avx2") {
       return;
     }
     let [a, b, c, d] = test_field_elements();
@@ -1502,7 +1502,7 @@ mod tests {
 
   #[test]
   fn mul_unreduced_matches_reduce_then_mul() {
-    if !is_x86_feature_detected!("avx512ifma") {
+    if !std::arch::is_x86_feature_detected!("avx512ifma") {
       return;
     }
     let [a, b, c, d] = test_53bit_field_elements();
@@ -1561,7 +1561,7 @@ mod tests {
 
   #[test]
   fn mul_unreduced_max_limbs() {
-    if !is_x86_feature_detected!("avx512ifma") {
+    if !std::arch::is_x86_feature_detected!("avx512ifma") {
       return;
     }
     // Worst case: all limbs at maximum 53-bit value.
@@ -1593,7 +1593,7 @@ mod tests {
 
   #[test]
   fn mul_unreduced_with_diff_sum_output() {
-    if !is_x86_feature_detected!("avx512ifma") {
+    if !std::arch::is_x86_feature_detected!("avx512ifma") {
       return;
     }
     // Simulate the actual use case: diff_sum() on reduced field elements.
@@ -1622,7 +1622,7 @@ mod tests {
 
   #[test]
   fn mul_small_unreduced_matches_reduce_then_mul_small() {
-    if !is_x86_feature_detected!("avx512ifma") {
+    if !std::arch::is_x86_feature_detected!("avx512ifma") {
       return;
     }
     let [a, b, c, d] = test_53bit_field_elements();
@@ -1652,7 +1652,7 @@ mod tests {
 
   #[test]
   fn mul_unreduced_51bit_inputs_matches_mul() {
-    if !is_x86_feature_detected!("avx512ifma") {
+    if !std::arch::is_x86_feature_detected!("avx512ifma") {
       return;
     }
     // With 51-bit inputs (already reduced), mul_unreduced should produce
@@ -1691,7 +1691,7 @@ mod tests {
 
   #[test]
   fn square_and_negate_d_wide_matches_scalar() {
-    if !is_x86_feature_detected!("avx512ifma") {
+    if !std::arch::is_x86_feature_detected!("avx512ifma") {
       return;
     }
     let [a, b, c, d] = test_field_elements();

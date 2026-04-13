@@ -1028,7 +1028,7 @@ mod tests {
 
   #[test]
   fn pack_unpack_roundtrip() {
-    if !is_x86_feature_detected!("avx2") {
+    if !std::arch::is_x86_feature_detected!("avx2") {
       return;
     }
     let bp = basepoint();
@@ -1047,7 +1047,7 @@ mod tests {
 
   #[test]
   fn double_matches_scalar() {
-    if !is_x86_feature_detected!("avx2") {
+    if !std::arch::is_x86_feature_detected!("avx2") {
       return;
     }
     let bp = basepoint();
@@ -1068,7 +1068,7 @@ mod tests {
 
   #[test]
   fn double_chain_matches_scalar() {
-    if !is_x86_feature_detected!("avx2") {
+    if !std::arch::is_x86_feature_detected!("avx2") {
       return;
     }
     let bp = basepoint();
@@ -1090,7 +1090,7 @@ mod tests {
 
   #[test]
   fn add_cached_matches_scalar_add() {
-    if !is_x86_feature_detected!("avx2") {
+    if !std::arch::is_x86_feature_detected!("avx2") {
       return;
     }
     let bp = basepoint();
@@ -1115,7 +1115,7 @@ mod tests {
 
   #[test]
   fn add_cached_neg_is_subtraction() {
-    if !is_x86_feature_detected!("avx2") {
+    if !std::arch::is_x86_feature_detected!("avx2") {
       return;
     }
     let bp = basepoint();
@@ -1135,7 +1135,7 @@ mod tests {
 
   #[test]
   fn add_then_double_matches_scalar() {
-    if !is_x86_feature_detected!("avx2") {
+    if !std::arch::is_x86_feature_detected!("avx2") {
       return;
     }
     let bp = basepoint();
@@ -1159,7 +1159,7 @@ mod tests {
 
   #[test]
   fn identity_addition() {
-    if !is_x86_feature_detected!("avx2") {
+    if !std::arch::is_x86_feature_detected!("avx2") {
       return;
     }
     let bp = basepoint();
@@ -1182,7 +1182,7 @@ mod tests {
 
   #[test]
   fn scalar_mul_vartime_matches_scalar() {
-    if !is_x86_feature_detected!("avx2") {
+    if !std::arch::is_x86_feature_detected!("avx2") {
       return;
     }
     let bp = basepoint();
@@ -1203,7 +1203,7 @@ mod tests {
 
   #[test]
   fn scalar_mul_basepoint_matches_scalar() {
-    if !is_x86_feature_detected!("avx2") {
+    if !std::arch::is_x86_feature_detected!("avx2") {
       return;
     }
     let mut scalar = [0u8; 32];
@@ -1222,7 +1222,7 @@ mod tests {
 
   #[test]
   fn scalar_mul_basepoint_rfc8032_vector1() {
-    if !is_x86_feature_detected!("avx2") {
+    if !std::arch::is_x86_feature_detected!("avx2") {
       return;
     }
     use crate::auth::ed25519::{Ed25519SecretKey, hash::ExpandedSecret};
@@ -1246,7 +1246,7 @@ mod tests {
 
   #[test]
   fn straus_matches_scalar() {
-    if !is_x86_feature_detected!("avx2") {
+    if !std::arch::is_x86_feature_detected!("avx2") {
       return;
     }
     let bp = basepoint();
@@ -1271,7 +1271,7 @@ mod tests {
 
   #[test]
   fn straus_matches_scalar_large_scalars() {
-    if !is_x86_feature_detected!("avx2") {
+    if !std::arch::is_x86_feature_detected!("avx2") {
       return;
     }
     // Reproduce the actual verify path: full 256-bit scalars, realistic point.
@@ -1336,7 +1336,7 @@ mod tests {
 
   #[test]
   fn double_of_identity_is_identity() {
-    if !is_x86_feature_detected!("avx2") {
+    if !std::arch::is_x86_feature_detected!("avx2") {
       return;
     }
     let identity = ExtendedPoint::identity();
@@ -1359,7 +1359,7 @@ mod tests {
 
   #[test]
   fn ifma_pack_unpack_roundtrip() {
-    if !is_x86_feature_detected!("avx512ifma") {
+    if !std::arch::is_x86_feature_detected!("avx512ifma") {
       return;
     }
     let bp = basepoint();
@@ -1374,7 +1374,7 @@ mod tests {
 
   #[test]
   fn ifma_double_matches_scalar() {
-    if !is_x86_feature_detected!("avx512ifma") {
+    if !std::arch::is_x86_feature_detected!("avx512ifma") {
       return;
     }
     let bp = basepoint();
@@ -1393,7 +1393,7 @@ mod tests {
 
   #[test]
   fn ifma_double_chain_matches_scalar() {
-    if !is_x86_feature_detected!("avx512ifma") {
+    if !std::arch::is_x86_feature_detected!("avx512ifma") {
       return;
     }
     let bp = basepoint();
@@ -1412,7 +1412,7 @@ mod tests {
 
   #[test]
   fn ifma_add_cached_matches_scalar() {
-    if !is_x86_feature_detected!("avx512ifma") {
+    if !std::arch::is_x86_feature_detected!("avx512ifma") {
       return;
     }
     let bp = basepoint();
@@ -1434,7 +1434,7 @@ mod tests {
 
   #[test]
   fn ifma_add_then_double_matches_scalar() {
-    if !is_x86_feature_detected!("avx512ifma") {
+    if !std::arch::is_x86_feature_detected!("avx512ifma") {
       return;
     }
     let bp = basepoint();
@@ -1455,7 +1455,7 @@ mod tests {
 
   #[test]
   fn ifma_neg_cached_is_subtraction() {
-    if !is_x86_feature_detected!("avx512ifma") {
+    if !std::arch::is_x86_feature_detected!("avx512ifma") {
       return;
     }
     let bp = basepoint();
@@ -1473,7 +1473,7 @@ mod tests {
 
   #[test]
   fn ifma_scalar_mul_vartime_matches_scalar() {
-    if !is_x86_feature_detected!("avx512ifma") {
+    if !std::arch::is_x86_feature_detected!("avx512ifma") {
       return;
     }
     let bp = basepoint();
@@ -1493,7 +1493,7 @@ mod tests {
 
   #[test]
   fn ifma_scalar_mul_basepoint_matches_scalar() {
-    if !is_x86_feature_detected!("avx512ifma") {
+    if !std::arch::is_x86_feature_detected!("avx512ifma") {
       return;
     }
     let mut scalar = [0u8; 32];
