@@ -283,7 +283,9 @@ extern crate alloc;
 #[cfg(all(test, not(feature = "alloc")))]
 extern crate alloc;
 
-#[cfg(feature = "std")]
+// Tests use std-backed runtime feature detection and the test harness regardless
+// of whether the crate's `std` feature is enabled.
+#[cfg(any(feature = "std", test))]
 extern crate std;
 
 // Internal modules (not published as separate crates)
