@@ -605,6 +605,10 @@ pub mod riscv {
   pub const ZKNH: Caps = Caps::bit(138); // SHA2
   pub const ZKSED: Caps = Caps::bit(139); // SM4
   pub const ZKSH: Caps = Caps::bit(140); // SM3
+  pub const ZKN: Caps = Caps::bit(150); // NIST crypto bundle
+  pub const ZKS: Caps = Caps::bit(151); // ShangMi crypto bundle
+  pub const ZK: Caps = Caps::bit(152); // Standard scalar crypto bundle
+  pub const ZKT: Caps = Caps::bit(153); // Data-independent execution latency
 
   // ─── Vector Crypto ───
   pub const ZVBB: Caps = Caps::bit(141);
@@ -616,6 +620,13 @@ pub mod riscv {
   pub const ZVKNHB: Caps = Caps::bit(147);
   pub const ZVKSED: Caps = Caps::bit(148);
   pub const ZVKSH: Caps = Caps::bit(149);
+  pub const ZVKT: Caps = Caps::bit(154); // Vector data-independent execution latency
+  pub const ZVKN: Caps = Caps::bit(155); // Vector NIST crypto bundle
+  pub const ZVKNC: Caps = Caps::bit(156); // Vector NIST crypto bundle + CLMUL
+  pub const ZVKNG: Caps = Caps::bit(157); // Vector NIST crypto bundle + GCM
+  pub const ZVKS: Caps = Caps::bit(158); // Vector ShangMi crypto bundle
+  pub const ZVKSC: Caps = Caps::bit(159); // Vector ShangMi crypto bundle + CLMUL
+  pub const ZVKSG: Caps = Caps::bit(160); // Vector ShangMi crypto bundle + GCM
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -898,6 +909,10 @@ const RISCV_FEATURES: &[FeatureEntry] = &[
   (138, "zknh"),
   (139, "zksed"),
   (140, "zksh"),
+  (150, "zkn"),
+  (151, "zks"),
+  (152, "zk"),
+  (153, "zkt"),
   (141, "zvbb"),
   (142, "zvbc"),
   (143, "zvkb"),
@@ -907,6 +922,13 @@ const RISCV_FEATURES: &[FeatureEntry] = &[
   (147, "zvknhb"),
   (148, "zvksed"),
   (149, "zvksh"),
+  (154, "zvkt"),
+  (155, "zvkn"),
+  (156, "zvknc"),
+  (157, "zvkng"),
+  (158, "zvks"),
+  (159, "zvksc"),
+  (160, "zvksg"),
 ];
 
 /// WebAssembly feature names.
@@ -1200,14 +1222,24 @@ mod tests {
     assert!(!riscv::ZBC.is_empty());
     assert!(!riscv::ZKNE.is_empty());
     assert!(!riscv::ZKND.is_empty());
+    assert!(!riscv::ZKN.is_empty());
+    assert!(!riscv::ZK.is_empty());
+    assert!(!riscv::ZKT.is_empty());
     assert!(!riscv::ZVBB.is_empty());
     assert!(!riscv::ZVKNED.is_empty());
+    assert!(!riscv::ZVKT.is_empty());
+    assert!(!riscv::ZVKN.is_empty());
+    assert!(!riscv::ZVKNG.is_empty());
 
     // Verify RISC-V features are in the correct word (bits 128-191 = word 2)
     assert!(riscv::V.0[2] != 0);
     assert_eq!(riscv::V.0[0], 0);
     assert_eq!(riscv::V.0[1], 0);
     assert_eq!(riscv::V.0[3], 0);
+
+    let bundles =
+      riscv::ZKN | riscv::ZKS | riscv::ZK | riscv::ZKT | riscv::ZVKT | riscv::ZVKN | riscv::ZVKNC | riscv::ZVKNG;
+    assert_eq!(bundles.count(), 8);
   }
 
   #[test]

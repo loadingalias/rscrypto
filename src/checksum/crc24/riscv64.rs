@@ -13,6 +13,10 @@
 #![allow(dead_code)] // Kernels wired up via dispatcher
 // SAFETY: All indexing is over fixed-size arrays with in-bounds constant indices.
 #![allow(clippy::indexing_slicing)]
+// Rust 2024 requires explicit inner `unsafe` blocks even inside `unsafe fn`.
+// In this backend those blocks are mechanical consequences of target-feature and
+// asm helpers, not independent safety boundaries.
+#![allow(clippy::undocumented_unsafe_blocks)]
 
 use core::{
   arch::asm,
@@ -181,8 +185,10 @@ fn load_block_split_bitrev(block: &Block) -> ([u64; 8], [u64; 8]) {
 #[inline]
 #[target_feature(enable = "zbc")]
 unsafe fn fold_16_zbc(x: Simd, coeff: (u64, u64)) -> Simd {
-  let (coeff_high, coeff_low) = coeff;
-  Simd::mul64(x.low_64(), coeff_high) ^ Simd::mul64(x.high_64(), coeff_low)
+  unsafe {
+    let (coeff_high, coeff_low) = coeff;
+    Simd::mul64(x.low_64(), coeff_high) ^ Simd::mul64(x.high_64(), coeff_low)
+  }
 }
 
 #[inline]
@@ -217,9 +223,11 @@ unsafe fn fold_width32_reflected_zbc(x: Simd, high: u64, low: u64) -> Simd {
 #[inline]
 #[target_feature(enable = "zbc")]
 unsafe fn barrett_width32_reflected_zbc(x: Simd, poly: u64, mu: u64) -> u32 {
-  let t1 = Simd::mul64(x.low_64(), mu);
-  let l = Simd::mul64(t1.low_64(), poly);
-  (x ^ l).high_64() as u32
+  unsafe {
+    let t1 = Simd::mul64(x.low_64(), mu);
+    let l = Simd::mul64(t1.low_64(), poly);
+    (x ^ l).high_64() as u32
+  }
 }
 
 #[inline]

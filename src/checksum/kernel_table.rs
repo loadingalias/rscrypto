@@ -43,6 +43,9 @@ const FAST_PATH_MAX: usize = 7;
 #[inline]
 pub(crate) fn crc64_xz(data: &[u8]) -> u64 {
   if data.len() <= FAST_PATH_MAX {
+    if data.is_empty() {
+      return 0;
+    }
     return crate::checksum::crc64::portable::crc64_xz_bytewise(!0, data) ^ !0;
   }
   let table = active_table();
@@ -54,6 +57,9 @@ pub(crate) fn crc64_xz(data: &[u8]) -> u64 {
 #[inline]
 pub(crate) fn crc64_nvme(data: &[u8]) -> u64 {
   if data.len() <= FAST_PATH_MAX {
+    if data.is_empty() {
+      return 0;
+    }
     return crate::checksum::crc64::portable::crc64_nvme_bytewise(!0, data) ^ !0;
   }
   let table = active_table();
@@ -65,6 +71,9 @@ pub(crate) fn crc64_nvme(data: &[u8]) -> u64 {
 #[inline]
 pub(crate) fn crc32_ieee(data: &[u8]) -> u32 {
   if data.len() <= FAST_PATH_MAX {
+    if data.is_empty() {
+      return 0;
+    }
     return crate::checksum::crc32::portable::crc32_bytewise_ieee(!0, data) ^ !0;
   }
 
@@ -109,6 +118,9 @@ pub(crate) fn crc32_ieee(data: &[u8]) -> u32 {
 #[inline]
 pub(crate) fn crc32c(data: &[u8]) -> u32 {
   if data.len() <= FAST_PATH_MAX {
+    if data.is_empty() {
+      return 0;
+    }
     return crate::checksum::crc32::portable::crc32c_bytewise(!0, data) ^ !0;
   }
 
@@ -146,6 +158,9 @@ pub(crate) fn crc32c(data: &[u8]) -> u32 {
 pub(crate) fn crc16_ccitt(data: &[u8]) -> u16 {
   // CCITT: INIT=0xFFFF, XOROUT=0xFFFF
   if data.len() <= FAST_PATH_MAX {
+    if data.is_empty() {
+      return 0;
+    }
     return crate::checksum::crc16::portable::crc16_ccitt_bytewise(0xFFFF, data) ^ 0xFFFF;
   }
   let table = active_table();
@@ -158,6 +173,9 @@ pub(crate) fn crc16_ccitt(data: &[u8]) -> u16 {
 pub(crate) fn crc16_ibm(data: &[u8]) -> u16 {
   // IBM: INIT=0x0000, XOROUT=0x0000
   if data.len() <= FAST_PATH_MAX {
+    if data.is_empty() {
+      return 0;
+    }
     return crate::checksum::crc16::portable::crc16_ibm_bytewise(0, data);
   }
   let table = active_table();
@@ -172,6 +190,9 @@ pub(crate) fn crc24_openpgp(data: &[u8]) -> u32 {
   const INIT: u32 = 0x00B7_04CE;
   const MASK: u32 = 0x00FF_FFFF;
   if data.len() <= FAST_PATH_MAX {
+    if data.is_empty() {
+      return INIT;
+    }
     return crate::checksum::crc24::portable::crc24_openpgp_bytewise(INIT, data) & MASK;
   }
   let table = active_table();
@@ -2092,7 +2113,8 @@ mod tests {
     assert_eq!(crc32_ieee(&[]), 0, "CRC-32/IEEE of empty data");
     assert_eq!(crc32c(&[]), 0, "CRC-32C of empty data");
     assert_eq!(crc16_ccitt(&[]), 0, "CRC-16/CCITT of empty data");
-    // Note: CRC-16/IBM and CRC-24/OpenPGP have non-zero init values
+    assert_eq!(crc16_ibm(&[]), 0, "CRC-16/IBM of empty data");
+    assert_eq!(crc24_openpgp(&[]), 0x00B7_04CE, "CRC-24/OpenPGP of empty data");
   }
 
   #[test]

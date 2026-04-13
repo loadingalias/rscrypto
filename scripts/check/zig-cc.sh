@@ -37,6 +37,7 @@ case "$TARGET" in
 # ─────────────────────────────────────────────────────────────────────────────
 x86_64-unknown-linux-gnu) ZIG_TARGET="x86_64-linux-gnu" ;;
 aarch64-unknown-linux-gnu) ZIG_TARGET="aarch64-linux-gnu" ;;
+riscv64gc-unknown-linux-gnu) ZIG_TARGET="riscv64-linux-gnu" ;;
 x86_64-pc-windows-msvc) ZIG_TARGET="x86_64-windows-msvc" ;;
 aarch64-apple-darwin) ZIG_TARGET="aarch64-macos" ;;
 x86_64-apple-darwin) ZIG_TARGET="x86_64-macos" ;;

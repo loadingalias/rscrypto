@@ -17,7 +17,7 @@ pub fn crc24_openpgp_slice8(crc: u32, data: &[u8]) -> u32 {
 ///
 /// This is typically faster than slice-by-8 for tiny buffers because it uses a
 /// single 256-entry table.
-#[inline]
+#[inline(always)]
 #[allow(clippy::indexing_slicing)] // index is 0..=255 by byte cast, table is [u32; 256]
 pub fn crc24_openpgp_bytewise(crc: u32, data: &[u8]) -> u32 {
   const MASK24: u32 = 0x00FF_FFFF;

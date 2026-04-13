@@ -2263,6 +2263,7 @@ unsafe fn chunk_compress_blocks_riscv_v(
     let block_bytes: &[u8; BLOCK_LEN] = unsafe { &*(blocks.as_ptr().cast()) };
     let start = if *blocks_compressed == 0 { CHUNK_START } else { 0 };
     let block_words = words16_from_le_bytes_64(block_bytes);
+    // SAFETY: this kernel is only dispatched when `riscv::V` is available.
     *chaining_value = first_8_words(unsafe {
       compress_riscv_v(
         chaining_value,
@@ -2281,6 +2282,7 @@ unsafe fn chunk_compress_blocks_riscv_v(
   for block_bytes in block_slices {
     let start = if *blocks_compressed == 0 { CHUNK_START } else { 0 };
     let block_words = words16_from_le_bytes_64(block_bytes);
+    // SAFETY: this kernel is only dispatched when `riscv::V` is available.
     *chaining_value = first_8_words(unsafe {
       compress_riscv_v(
         chaining_value,
@@ -2355,6 +2357,7 @@ unsafe fn hash_one_chunk_riscv_v(input: *const u8, key: &[u32; 8], counter: u64,
   };
   let start = if blocks_compressed == 0 { CHUNK_START } else { 0 };
   let tail_flags = flags | start | super::CHUNK_END;
+  // SAFETY: this kernel is only dispatched when `riscv::V` is available.
   cv = first_8_words(unsafe { compress_riscv_v(&cv, &tail_words, counter, BLOCK_LEN as u32, tail_flags) });
   // SAFETY: caller guarantees one full CV output is writable at `out`.
   unsafe { write_cv_words(out, &cv) };

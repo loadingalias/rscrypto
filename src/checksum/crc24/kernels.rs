@@ -111,6 +111,7 @@ pub mod s390x {
 }
 
 #[cfg(target_arch = "riscv64")]
+#[allow(dead_code)]
 pub mod riscv64 {
   use super::super::riscv64 as arch;
   use crate::checksum::dispatchers::Crc24Fn;
