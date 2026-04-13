@@ -212,6 +212,7 @@ pub(crate) fn permute_12_portable(s: &mut [u64; 5]) {
 /// Fully unrolled for the same register-allocation benefits as
 /// [`permute_12_portable`].
 #[inline(always)]
+#[cfg_attr(not(feature = "aead"), allow(dead_code))]
 pub(crate) fn permute_8_portable(s: &mut [u64; 5]) {
   let mut x0 = s[0];
   let mut x1 = s[1];

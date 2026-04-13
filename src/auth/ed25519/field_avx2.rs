@@ -1060,7 +1060,7 @@ mod tests {
 
   #[test]
   fn pack_unpack_roundtrip() {
-    if !is_x86_feature_detected!("avx2") {
+    if !std::arch::is_x86_feature_detected!("avx2") {
       return;
     }
     let [a, b, c, d] = test_field_elements();
@@ -1079,7 +1079,7 @@ mod tests {
 
   #[test]
   fn add_matches_scalar() {
-    if !is_x86_feature_detected!("avx2") {
+    if !std::arch::is_x86_feature_detected!("avx2") {
       return;
     }
     let [a, b, c, d] = test_field_elements();
@@ -1101,7 +1101,7 @@ mod tests {
 
   #[test]
   fn sub_matches_scalar() {
-    if !is_x86_feature_detected!("avx2") {
+    if !std::arch::is_x86_feature_detected!("avx2") {
       return;
     }
     let [a, b, c, d] = test_field_elements();
@@ -1123,7 +1123,7 @@ mod tests {
 
   #[test]
   fn mul_matches_scalar() {
-    if !is_x86_feature_detected!("avx2") {
+    if !std::arch::is_x86_feature_detected!("avx2") {
       return;
     }
     let [a, b, c, d] = test_field_elements();
@@ -1145,7 +1145,7 @@ mod tests {
 
   #[test]
   fn square_matches_scalar() {
-    if !is_x86_feature_detected!("avx2") {
+    if !std::arch::is_x86_feature_detected!("avx2") {
       return;
     }
     let [a, b, c, d] = test_field_elements();
@@ -1165,7 +1165,7 @@ mod tests {
 
   #[test]
   fn square_matches_mul_self() {
-    if !is_x86_feature_detected!("avx2") {
+    if !std::arch::is_x86_feature_detected!("avx2") {
       return;
     }
     let [a, b, c, d] = test_field_elements();
@@ -1187,7 +1187,7 @@ mod tests {
 
   #[test]
   fn square_and_negate_d_matches_scalar() {
-    if !is_x86_feature_detected!("avx2") {
+    if !std::arch::is_x86_feature_detected!("avx2") {
       return;
     }
     let [a, b, c, d] = test_field_elements();
@@ -1207,7 +1207,7 @@ mod tests {
 
   #[test]
   fn shuffle_badc_swaps_pairs() {
-    if !is_x86_feature_detected!("avx2") {
+    if !std::arch::is_x86_feature_detected!("avx2") {
       return;
     }
     let [a, b, c, d] = test_field_elements();
@@ -1227,7 +1227,7 @@ mod tests {
 
   #[test]
   fn diff_sum_matches_scalar() {
-    if !is_x86_feature_detected!("avx2") {
+    if !std::arch::is_x86_feature_detected!("avx2") {
       return;
     }
     let [a, b, c, d] = small_field_elements();
@@ -1247,7 +1247,7 @@ mod tests {
 
   #[test]
   fn blend_ab_cd() {
-    if !is_x86_feature_detected!("avx2") {
+    if !std::arch::is_x86_feature_detected!("avx2") {
       return;
     }
     let [a, b, c, d] = test_field_elements();
@@ -1277,7 +1277,7 @@ mod tests {
 
   #[test]
   fn ifma_mul_matches_avx2() {
-    if !is_x86_feature_detected!("avx2") || !is_x86_feature_detected!("avx512ifma") {
+    if !std::arch::is_x86_feature_detected!("avx2") || !std::arch::is_x86_feature_detected!("avx512ifma") {
       return;
     }
     let [a, b, c, d] = test_field_elements();
@@ -1306,7 +1306,7 @@ mod tests {
 
   #[test]
   fn ifma_square_matches_avx2() {
-    if !is_x86_feature_detected!("avx2") || !is_x86_feature_detected!("avx512ifma") {
+    if !std::arch::is_x86_feature_detected!("avx2") || !std::arch::is_x86_feature_detected!("avx512ifma") {
       return;
     }
     let [a, b, c, d] = test_field_elements();
