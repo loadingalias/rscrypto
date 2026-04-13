@@ -103,6 +103,7 @@ pub enum AeadBackend {
   S390xVector,
   Power8Crypto,
   PowerVector,
+  Riscv64ScalarCrypto,
   Riscv64VectorCrypto,
   Riscv64Vector,
 }
@@ -129,6 +130,7 @@ impl AeadBackend {
       Self::S390xVector => "s390x/vector",
       Self::Power8Crypto => "powerpc64/crypto",
       Self::PowerVector => "powerpc64/vector",
+      Self::Riscv64ScalarCrypto => "riscv64/scalar-crypto",
       Self::Riscv64VectorCrypto => "riscv64/vector-crypto",
       Self::Riscv64Vector => "riscv64/vector",
     }
@@ -330,7 +332,7 @@ fn select_gcm_backend(arch: Arch, caps: Caps) -> AeadBackend {
       }
     }
     Arch::Riscv64 => {
-      if caps.has(crate::platform::caps::riscv::ZVKNED) && caps.has(crate::platform::caps::riscv::ZVKG) {
+      if caps.has(crate::platform::caps::riscv::ZVKNED) && caps.has(crate::platform::caps::riscv::ZVBC) {
         AeadBackend::Riscv64VectorCrypto
       } else {
         AeadBackend::Portable
@@ -379,6 +381,13 @@ fn select_aegis_backend(arch: Arch, caps: Caps) -> AeadBackend {
     Arch::Power => {
       if caps.has(power::POWER8_CRYPTO) {
         AeadBackend::Power8Crypto
+      } else {
+        AeadBackend::Portable
+      }
+    }
+    Arch::Riscv64 => {
+      if caps.has(riscv::ZKNE) {
+        AeadBackend::Riscv64ScalarCrypto
       } else {
         AeadBackend::Portable
       }
@@ -485,6 +494,10 @@ mod tests {
       select_backend(AeadPrimitive::Aegis256, Arch::Aarch64, aarch64::AES),
       AeadBackend::Aarch64Aes
     );
+    assert_eq!(
+      select_backend(AeadPrimitive::Aegis256, Arch::Riscv64, riscv::ZKNE),
+      AeadBackend::Riscv64ScalarCrypto
+    );
   }
 
   #[test]
@@ -512,6 +525,10 @@ mod tests {
     assert_eq!(
       select_backend(AeadPrimitive::XChaCha20Poly1305, Arch::Riscv64, riscv::V),
       AeadBackend::Riscv64Vector
+    );
+    assert_eq!(
+      select_backend(AeadPrimitive::Aes256Gcm, Arch::Riscv64, riscv::ZVKNED | riscv::ZVBC),
+      AeadBackend::Riscv64VectorCrypto
     );
     assert_eq!(
       select_backend(AeadPrimitive::ChaCha20Poly1305, Arch::Wasm64, wasm::SIMD128),

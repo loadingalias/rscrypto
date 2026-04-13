@@ -81,6 +81,7 @@ pub static ZVECTOR_TABLE: DispatchTable = DispatchTable {
 #[inline]
 #[must_use]
 pub fn select_runtime_table(caps: Caps) -> &'static DispatchTable {
+  let _ = caps;
   #[cfg(target_arch = "x86_64")]
   {
     // Prefer AVX-512 over AVX2 when available.

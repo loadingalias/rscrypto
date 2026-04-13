@@ -168,6 +168,32 @@ jobs:
           just test --all
         fi
 
+  ci-riscv:
+    name: CI (RISE RISC-V riscv64)
+    needs: [lane-contract, rail-plan]
+    if: ${{ github.event_name != 'pull_request' || needs.rail-plan.outputs.build == 'true' || needs.rail-plan.outputs.test == 'true' || needs.rail-plan.outputs.infra == 'true' }}
+    uses: ./.github/workflows/_rust-job.yaml
+    with:
+      runner: ubuntu-24.04-riscv
+      timeout_minutes: 120
+      setup_kind: default
+      cache_key: commit-ci-riscv64
+      tools_mode: ibm
+      toolchain_components: "clippy, rustfmt"
+      pre_script: |
+        uname -a
+        lscpu
+        cat /proc/cpuinfo | head -50
+      run_script: |
+        just ci-check
+        if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+          export RAIL_SINCE="${{ needs.rail-plan.outputs.base_ref }}"
+          export RAIL_SCOPE_JSON='${{ needs.rail-plan.outputs.scope_json }}'
+          just test-changed
+        else
+          just test --all
+        fi
+
   no-std:
     name: no_std (${{ matrix.target }})
     needs: [lane-contract, rail-plan, target-matrix]
@@ -220,7 +246,7 @@ jobs:
 
   complete:
     name: Complete (commit)
-    needs: [ci, ci-ibm-s390x, ci-ibm-power10, no-std, wasm]
+    needs: [ci, ci-ibm-s390x, ci-ibm-power10, ci-riscv, no-std, wasm]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -233,6 +259,9 @@ jobs:
             exit 1
           fi
           if [ "${{ needs.ci-ibm-power10.result }}" != "success" ] && [ "${{ needs.ci-ibm-power10.result }}" != "skipped" ]; then
+            exit 1
+          fi
+          if [ "${{ needs.ci-riscv.result }}" != "success" ] && [ "${{ needs.ci-riscv.result }}" != "skipped" ]; then
             exit 1
           fi
           if [ "${{ needs.no-std.result }}" != "success" ] && [ "${{ needs.no-std.result }}" != "skipped" ]; then

@@ -225,6 +225,10 @@ pub const fn caps_static() -> Caps {
       "zknh" => riscv::ZKNH,
       "zksed" => riscv::ZKSED,
       "zksh" => riscv::ZKSH,
+      "zkn" => riscv::ZKN,
+      "zks" => riscv::ZKS,
+      "zk" => riscv::ZK,
+      "zkt" => riscv::ZKT,
       // Vector crypto
       "zvbb" => riscv::ZVBB,
       "zvbc" => riscv::ZVBC,
@@ -235,6 +239,13 @@ pub const fn caps_static() -> Caps {
       "zvknhb" => riscv::ZVKNHB,
       "zvksed" => riscv::ZVKSED,
       "zvksh" => riscv::ZVKSH,
+      "zvkt" => riscv::ZVKT,
+      "zvkn" => riscv::ZVKN,
+      "zvknc" => riscv::ZVKNC,
+      "zvkng" => riscv::ZVKNG,
+      "zvks" => riscv::ZVKS,
+      "zvksc" => riscv::ZVKSC,
+      "zvksg" => riscv::ZVKSG,
     );
   }
 

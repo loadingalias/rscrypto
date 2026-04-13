@@ -37,6 +37,7 @@ normalize_platform() {
     graviton4|g4) echo "graviton4" ;;
     ibm-s390x|s390x) echo "ibm-s390x" ;;
     ibm-power10|power10|p10) echo "ibm-power10" ;;
+    rise-riscv|riscv|riscv64|th1520|em-rv1) echo "rise-riscv" ;;
     all) echo "all" ;;
     *) echo "" ;;
   esac
@@ -69,6 +70,9 @@ append_row_for_platform() {
     ibm-power10)
       ROWS+=("{\"platform\":\"ibm-power10\",\"display_name\":\"IBM POWER10 ppc64le\",\"artifact_suffix\":\"ibm-power10\",\"timeout_minutes\":${IBM_TIMEOUT_MINUTES},\"setup_kind\":\"default\",\"runner\":\"ubuntu-24.04-ppc64le-p10\",\"cache_key\":\"manual-ibm-${MODE}-power10\",\"tools_mode\":\"none\",\"toolchain_components\":\"\",\"runson_mode\":\"runson-bench\"}")
       ;;
+    rise-riscv)
+      ROWS+=("{\"platform\":\"rise-riscv\",\"display_name\":\"RISE RISC-V riscv64\",\"artifact_suffix\":\"rise-riscv\",\"timeout_minutes\":${RISCV_TIMEOUT_MINUTES},\"setup_kind\":\"default\",\"runner\":\"ubuntu-24.04-riscv\",\"cache_key\":\"manual-rise-${MODE}-riscv64\",\"tools_mode\":\"none\",\"toolchain_components\":\"\",\"runson_mode\":\"runson-bench\"}")
+      ;;
     *)
       echo "error: unsupported bench platform '$platform'" >&2
       exit 2
@@ -86,6 +90,7 @@ ROWS=()
 COMPONENTS_STD="clippy, rustfmt, rust-src"
 RUNSON_TIMEOUT_MINUTES=180
 IBM_TIMEOUT_MINUTES=240
+RISCV_TIMEOUT_MINUTES=240
 ALL_PLATFORMS=(
   "amd-zen4"
   "intel-spr"
@@ -95,6 +100,7 @@ ALL_PLATFORMS=(
   "graviton4"
   "ibm-s390x"
   "ibm-power10"
+  "rise-riscv"
 )
 
 PLATFORMS_INPUT="${BENCH_PLATFORMS:-}"
@@ -111,7 +117,7 @@ for token in "${platform_tokens[@]:+${platform_tokens[@]}}"; do
   normalized="$(normalize_platform "$token")"
   if [[ -z "$normalized" ]]; then
     echo "error: unknown bench platform '$token'" >&2
-    echo "supported: ${ALL_PLATFORMS[*]}, aliases: zen4 spr icl zen5 g3 g4 s390x power10, or all" >&2
+    echo "supported: ${ALL_PLATFORMS[*]}, aliases: zen4 spr icl zen5 g3 g4 s390x power10 riscv, or all" >&2
     exit 2
   fi
 

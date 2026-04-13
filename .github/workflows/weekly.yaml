@@ -119,6 +119,25 @@ jobs:
         just ci-check
         just test --all
 
+  ci-riscv:
+    name: CI (RISE RISC-V riscv64)
+    needs: lane-contract
+    uses: ./.github/workflows/_rust-job.yaml
+    with:
+      runner: ubuntu-24.04-riscv
+      timeout_minutes: 120
+      setup_kind: default
+      cache_key: weekly-ci-riscv64
+      tools_mode: ibm
+      toolchain_components: "clippy, rustfmt"
+      pre_script: |
+        uname -a
+        lscpu
+        cat /proc/cpuinfo | head -50
+      run_script: |
+        just ci-check
+        just test --all
+
   # ─── Feature matrix (weekly-only) ──────────────────────────────────────────
   feature-matrix:
     name: Feature Matrix (${{ matrix.target.name }})

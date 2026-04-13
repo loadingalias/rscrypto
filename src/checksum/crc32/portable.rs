@@ -18,7 +18,7 @@ pub(crate) const BYTEWISE_KERNEL_NAME: &str = "portable/bytewise";
 ///
 /// This is typically faster than slice-by-16 for tiny buffers because it uses a
 /// single 256-entry table.
-#[inline]
+#[inline(always)]
 pub fn crc32_bytewise_ieee(crc: u32, data: &[u8]) -> u32 {
   crc32_bytewise(crc, data, &kernel_tables::IEEE_TABLES_16[0])
 }
@@ -27,7 +27,7 @@ pub fn crc32_bytewise_ieee(crc: u32, data: &[u8]) -> u32 {
 ///
 /// This is typically faster than slice-by-16 for tiny buffers because it uses a
 /// single 256-entry table.
-#[inline]
+#[inline(always)]
 pub fn crc32c_bytewise(crc: u32, data: &[u8]) -> u32 {
   crc32_bytewise(crc, data, &kernel_tables::CRC32C_TABLES_16[0])
 }
@@ -49,7 +49,7 @@ pub fn crc32c_slice16(crc: u32, data: &[u8]) -> u32 {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Update CRC-32 state using a byte-at-a-time lookup table.
-#[inline]
+#[inline(always)]
 #[allow(clippy::indexing_slicing)] // index is 0..=255 by mask, table is [u32; 256]
 pub fn crc32_bytewise(mut crc: u32, data: &[u8], table: &[u32; 256]) -> u32 {
   for &b in data {

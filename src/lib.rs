@@ -263,7 +263,7 @@
   )
 )]
 // NIGHTLY: RISC-V scalar crypto intrinsics (Zknh) for SHA-256.
-#![cfg_attr(target_arch = "riscv32", feature(riscv_ext_intrinsics))]
+#![cfg_attr(target_arch = "riscv32", feature(riscv_target_feature, riscv_ext_intrinsics))]
 // NIGHTLY: combine #[target_feature] + #[inline(always)] on aarch64 to guarantee
 // inlining of AES-CE/PMULL helpers into fused encrypt/decrypt scopes, eliminating
 // per-call register spills that dominate at small message sizes.

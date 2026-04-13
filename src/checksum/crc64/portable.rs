@@ -44,7 +44,7 @@ pub fn crc64_slice16_nvme(crc: u64, data: &[u8]) -> u64 {
 ///
 /// This is typically faster than slice-by-16 for tiny buffers because it uses a
 /// single 256-entry table.
-#[inline]
+#[inline(always)]
 pub fn crc64_xz_bytewise(crc: u64, data: &[u8]) -> u64 {
   crc64_bytewise(crc, data, &kernel_tables::XZ_TABLES_16[0])
 }
@@ -53,13 +53,13 @@ pub fn crc64_xz_bytewise(crc: u64, data: &[u8]) -> u64 {
 ///
 /// This is typically faster than slice-by-16 for tiny buffers because it uses a
 /// single 256-entry table.
-#[inline]
+#[inline(always)]
 pub fn crc64_nvme_bytewise(crc: u64, data: &[u8]) -> u64 {
   crc64_bytewise(crc, data, &kernel_tables::NVME_TABLES_16[0])
 }
 
 /// Update CRC-64 state using a byte-at-a-time lookup table.
-#[inline]
+#[inline(always)]
 #[allow(clippy::indexing_slicing)] // index is 0..=255 by mask, table is [u64; 256]
 fn crc64_bytewise(mut crc: u64, data: &[u8], table: &[u64; 256]) -> u64 {
   for &b in data {

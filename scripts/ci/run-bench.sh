@@ -163,7 +163,7 @@ checksum_filter_token() {
     crc16-ccitt) echo "crc16-ccitt" ;;
     crc16-ibm) echo "crc16-ibm" ;;
     crc24-openpgp) echo "crc24-openpgp" ;;
-    crc32-ieee) echo "crc32" ;;
+    crc32-ieee) echo "^crc32/" ;;
     crc32c) echo "crc32c" ;;
     crc64-xz) echo "crc64-xz" ;;
     crc64-nvme) echo "crc64-nvme" ;;
@@ -178,6 +178,7 @@ hash_filter_token() {
     sha3-256) echo "sha3-256" ;;
     sha3-384) echo "sha3-384" ;;
     sha3-512) echo "sha3-512" ;;
+    sha512) echo "^sha512/" ;;
     sha512-256) echo "sha512-256" ;;
 
     ascon-hash256) echo "ascon-hash256" ;;
@@ -191,10 +192,10 @@ hash_filter_token() {
 auth_filter_token() {
   local algo="${1:-}"
   case "$algo" in
-    hmac-sha256) echo "hmac" ;;
+    hmac-sha256) echo "^hmac-sha256" ;;
     hmac-sha384) echo "hmac-sha384" ;;
     hmac-sha512) echo "hmac-sha512" ;;
-    hkdf-sha256) echo "hkdf" ;;
+    hkdf-sha256) echo "^hkdf-sha256" ;;
     hkdf-sha384) echo "hkdf-sha384" ;;
     ed25519) echo "ed25519" ;;
     x25519) echo "x25519" ;;
@@ -206,9 +207,9 @@ aead_filter_token() {
   local algo="${1:-}"
   case "$algo" in
     xchacha20-poly1305) echo "xchacha20-poly1305" ;;
-    chacha20-poly1305) echo "chacha20-poly1305" ;;
+    chacha20-poly1305) echo "^chacha20-poly1305/" ;;
     aes-256-gcm-siv) echo "aes-256-gcm-siv" ;;
-    aes-256-gcm) echo "aes-256-gcm" ;;
+    aes-256-gcm) echo "^aes-256-gcm/" ;;
     aegis-256) echo "aegis-256" ;;
     *) echo "$algo" ;;
   esac
@@ -467,6 +468,7 @@ blake3_kernel_gate_prefix() {
     graviton3|graviton4) echo "rscrypto/aarch64/" ;;
     ibm-s390x) echo "rscrypto/s390x/" ;;
     ibm-power10) echo "rscrypto/power" ;;
+    rise-riscv) echo "rscrypto/riscv64/" ;;
     *) echo "rscrypto/" ;;
   esac
 }

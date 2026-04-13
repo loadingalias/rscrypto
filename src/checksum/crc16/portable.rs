@@ -23,7 +23,7 @@ pub fn crc16_ibm_slice8(crc: u16, data: &[u8]) -> u16 {
 ///
 /// This is typically faster than slice-by-8 for tiny buffers because it uses a
 /// single 256-entry table.
-#[inline]
+#[inline(always)]
 pub fn crc16_ccitt_bytewise(crc: u16, data: &[u8]) -> u16 {
   crc16_bytewise(crc, data, &kernel_tables::CCITT_TABLES_8[0])
 }
@@ -32,13 +32,13 @@ pub fn crc16_ccitt_bytewise(crc: u16, data: &[u8]) -> u16 {
 ///
 /// This is typically faster than slice-by-8 for tiny buffers because it uses a
 /// single 256-entry table.
-#[inline]
+#[inline(always)]
 pub fn crc16_ibm_bytewise(crc: u16, data: &[u8]) -> u16 {
   crc16_bytewise(crc, data, &kernel_tables::IBM_TABLES_8[0])
 }
 
 /// Update CRC-16 state using a byte-at-a-time lookup table.
-#[inline]
+#[inline(always)]
 #[allow(clippy::indexing_slicing)] // index is 0..=255 by mask, table is [u16; 256]
 fn crc16_bytewise(mut crc: u16, data: &[u8], table: &[u16; 256]) -> u16 {
   for &b in data {
