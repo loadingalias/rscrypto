@@ -79,7 +79,11 @@ pub static ZVECTOR_TABLE: DispatchTable = DispatchTable {
 };
 
 /// RISC-V with V extension: four iterations per stripe (VL=2 × u64).
+///
+/// Currently unused — the RVV kernel is slower than portable scalar on the
+/// in-order SpacemiT K1 at 256 B–64 KiB.  Retained for future OoO cores.
 #[cfg(target_arch = "riscv64")]
+#[allow(dead_code)]
 pub static RVV_TABLE: DispatchTable = DispatchTable {
   boundaries: DEFAULT_BOUNDARIES,
   xs: KernelId::Rvv,
@@ -125,12 +129,9 @@ pub fn select_runtime_table(caps: Caps) -> &'static DispatchTable {
     }
   }
 
-  #[cfg(target_arch = "riscv64")]
-  {
-    if caps.has(crate::platform::caps::riscv::V) {
-      return &RVV_TABLE;
-    }
-  }
+  // RISC-V: RVV kernel is slower than portable scalar at medium sizes on
+  // in-order cores (SpacemiT K1).  Fall through to DEFAULT_TABLE (portable)
+  // until out-of-order RISC-V targets are available.
 
   &DEFAULT_TABLE
 }
