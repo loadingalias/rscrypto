@@ -140,6 +140,11 @@ fn hash64_long(seed: u64, data: &[u8]) -> u64 {
     return super::aarch64_neon::xxh3_64_long(data, seed);
   }
 
+  #[cfg(all(target_arch = "riscv64", target_feature = "v"))]
+  {
+    return super::riscv64_v::xxh3_64_long(data, seed);
+  }
+
   // Tier 2: runtime dispatch — dedicated long-path fn pointer, no redundant
   // length checks.
   #[allow(unreachable_code)]
@@ -183,6 +188,11 @@ fn hash128_long(seed: u64, data: &[u8]) -> u128 {
   #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
   {
     return super::aarch64_neon::xxh3_128_long(data, seed);
+  }
+
+  #[cfg(all(target_arch = "riscv64", target_feature = "v"))]
+  {
+    return super::riscv64_v::xxh3_128_long(data, seed);
   }
 
   // Tier 2: runtime dispatch — dedicated long-path fn pointer.

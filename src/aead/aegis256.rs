@@ -64,7 +64,7 @@ fn and_block(a: &Block, b: &Block) -> Block {
   out
 }
 
-#[cfg(not(target_arch = "s390x"))]
+#[cfg(not(any(target_arch = "s390x", target_arch = "riscv64")))]
 #[inline(always)]
 fn zero_block() -> Block {
   [0u8; BLOCK_SIZE]
@@ -77,10 +77,10 @@ fn zero_block() -> Block {
 // On s390x, the `zvec` module provides a T-table backend that unconditionally
 // replaces the portable path. Gate this section to suppress dead-code warnings.
 
-#[cfg(not(target_arch = "s390x"))]
+#[cfg(not(any(target_arch = "s390x", target_arch = "riscv64")))]
 type State = [Block; 6];
 
-#[cfg(not(target_arch = "s390x"))]
+#[cfg(not(any(target_arch = "s390x", target_arch = "riscv64")))]
 #[inline(always)]
 fn aes_round(block: &Block, round_key: &Block) -> Block {
   super::aes::aes_enc_round_portable(block, round_key)
@@ -90,7 +90,7 @@ fn aes_round(block: &Block, round_key: &Block) -> Block {
 ///
 /// Each step applies a single AES round to rotate the state pipeline.
 /// The message block is XORed into S0 after the round.
-#[cfg(not(target_arch = "s390x"))]
+#[cfg(not(any(target_arch = "s390x", target_arch = "riscv64")))]
 #[inline]
 fn update(s: &mut State, m: &Block) {
   let tmp = s[5];
@@ -106,7 +106,7 @@ fn update(s: &mut State, m: &Block) {
 ///
 /// Splits key and nonce into 128-bit halves, seeds the 6-block state,
 /// then runs 16 Update calls (4 iterations of 4 Updates).
-#[cfg(not(target_arch = "s390x"))]
+#[cfg(not(any(target_arch = "s390x", target_arch = "riscv64")))]
 fn init(key: &[u8; KEY_SIZE], nonce: &[u8; NONCE_SIZE]) -> State {
   let (k0_ref, k1_ref) = split_halves(key);
   let (n0_ref, n1_ref) = split_halves(nonce);
@@ -131,7 +131,7 @@ fn init(key: &[u8; KEY_SIZE], nonce: &[u8; NONCE_SIZE]) -> State {
 }
 
 /// Absorb associated data into the state.
-#[cfg(not(target_arch = "s390x"))]
+#[cfg(not(any(target_arch = "s390x", target_arch = "riscv64")))]
 fn process_aad(s: &mut State, aad: &[u8]) {
   let mut offset = 0usize;
 
@@ -152,7 +152,7 @@ fn process_aad(s: &mut State, aad: &[u8]) {
 }
 
 /// Compute the AEGIS-256 keystream word from the current state.
-#[cfg(not(target_arch = "s390x"))]
+#[cfg(not(any(target_arch = "s390x", target_arch = "riscv64")))]
 #[inline(always)]
 fn keystream(s: &State) -> Block {
   // z = S1 ^ S4 ^ S5 ^ (S2 & S3)
@@ -167,7 +167,7 @@ fn keystream(s: &State) -> Block {
 ///
 /// XORs the bit-lengths of AAD and message into S3, then runs 7 Update
 /// rounds and XORs all six state blocks together.
-#[cfg(not(target_arch = "s390x"))]
+#[cfg(not(any(target_arch = "s390x", target_arch = "riscv64")))]
 fn finalize(s: &mut State, ad_len: usize, msg_len: usize) -> [u8; TAG_SIZE] {
   // t = S3 ^ (LE64(ad_len_bits) || LE64(msg_len_bits))
   let ad_bits = (ad_len as u64).strict_mul(8);
@@ -513,63 +513,65 @@ mod ni {
     }
 
     // ── encrypt ──
+    //
+    // Counted loop with raw pointer advancement: eliminates per-iteration
+    // overflow-check branches (strict_add) from the hot path. The loop count
+    // is pre-validated via integer division, and all intra-block offsets are
+    // compile-time constants applied through ptr::add inside this unsafe block.
     let msg_len = buffer.len();
     let ptr = buffer.as_mut_ptr();
-    let len = buffer.len();
-    offset = 0;
-    let four_blocks = BLOCK_SIZE.strict_mul(4);
-    let two_blocks = BLOCK_SIZE.strict_mul(2);
-    while offset.strict_add(four_blocks) <= len {
-      _mm_prefetch(ptr.add(offset.strict_add(256)).cast::<i8>(), _MM_HINT_T0);
+    let n_quads = msg_len / 64;
+    let mut p = ptr;
+    for _ in 0..n_quads {
+      _mm_prefetch(p.add(256).cast::<i8>(), _MM_HINT_T0);
       let z_a = keystream_regs(s1, s2, s3, s4, s5);
-      let xi_a = _mm_loadu_si128(ptr.add(offset).cast());
+      let xi_a = _mm_loadu_si128(p.cast());
       update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, xi_a);
-      _mm_storeu_si128(ptr.add(offset).cast(), _mm_xor_si128(xi_a, z_a));
+      _mm_storeu_si128(p.cast(), _mm_xor_si128(xi_a, z_a));
       let z_b = keystream_regs(s1, s2, s3, s4, s5);
-      let xi_b = _mm_loadu_si128(ptr.add(offset.strict_add(BLOCK_SIZE)).cast());
+      let xi_b = _mm_loadu_si128(p.add(16).cast());
       update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, xi_b);
-      _mm_storeu_si128(ptr.add(offset.strict_add(BLOCK_SIZE)).cast(), _mm_xor_si128(xi_b, z_b));
+      _mm_storeu_si128(p.add(16).cast(), _mm_xor_si128(xi_b, z_b));
       let z_c = keystream_regs(s1, s2, s3, s4, s5);
-      let xi_c = _mm_loadu_si128(ptr.add(offset.strict_add(two_blocks)).cast());
+      let xi_c = _mm_loadu_si128(p.add(32).cast());
       update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, xi_c);
-      _mm_storeu_si128(ptr.add(offset.strict_add(two_blocks)).cast(), _mm_xor_si128(xi_c, z_c));
+      _mm_storeu_si128(p.add(32).cast(), _mm_xor_si128(xi_c, z_c));
       let z_d = keystream_regs(s1, s2, s3, s4, s5);
-      let xi_d = _mm_loadu_si128(ptr.add(offset.strict_add(two_blocks.strict_add(BLOCK_SIZE))).cast());
+      let xi_d = _mm_loadu_si128(p.add(48).cast());
       update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, xi_d);
-      _mm_storeu_si128(
-        ptr.add(offset.strict_add(two_blocks.strict_add(BLOCK_SIZE))).cast(),
-        _mm_xor_si128(xi_d, z_d),
-      );
-      offset = offset.strict_add(four_blocks);
+      _mm_storeu_si128(p.add(48).cast(), _mm_xor_si128(xi_d, z_d));
+      p = p.add(64);
     }
-    if offset.strict_add(two_blocks) <= len {
+    let mut remaining = msg_len.strict_sub(n_quads.strict_mul(64));
+    if remaining >= 32 {
       let z_a = keystream_regs(s1, s2, s3, s4, s5);
-      let xi_a = _mm_loadu_si128(ptr.add(offset).cast());
+      let xi_a = _mm_loadu_si128(p.cast());
       update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, xi_a);
-      _mm_storeu_si128(ptr.add(offset).cast(), _mm_xor_si128(xi_a, z_a));
+      _mm_storeu_si128(p.cast(), _mm_xor_si128(xi_a, z_a));
       let z_b = keystream_regs(s1, s2, s3, s4, s5);
-      let xi_b = _mm_loadu_si128(ptr.add(offset.strict_add(BLOCK_SIZE)).cast());
+      let xi_b = _mm_loadu_si128(p.add(16).cast());
       update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, xi_b);
-      _mm_storeu_si128(ptr.add(offset.strict_add(BLOCK_SIZE)).cast(), _mm_xor_si128(xi_b, z_b));
-      offset = offset.strict_add(two_blocks);
+      _mm_storeu_si128(p.add(16).cast(), _mm_xor_si128(xi_b, z_b));
+      p = p.add(32);
+      remaining = remaining.strict_sub(32);
     }
-    if offset.strict_add(BLOCK_SIZE) <= len {
+    if remaining >= 16 {
       let z = keystream_regs(s1, s2, s3, s4, s5);
-      let xi = _mm_loadu_si128(ptr.add(offset).cast());
+      let xi = _mm_loadu_si128(p.cast());
       update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, xi);
-      _mm_storeu_si128(ptr.add(offset).cast(), _mm_xor_si128(xi, z));
-      offset = offset.strict_add(BLOCK_SIZE);
+      _mm_storeu_si128(p.cast(), _mm_xor_si128(xi, z));
+      remaining = remaining.strict_sub(16);
     }
-    if offset < len {
+    if remaining > 0 {
       let z = keystream_regs(s1, s2, s3, s4, s5);
-      let tail_len = len.strict_sub(offset);
+      let tail_off = msg_len.strict_sub(remaining);
       let mut pad = [0u8; BLOCK_SIZE];
-      pad[..tail_len].copy_from_slice(&buffer[offset..]);
+      pad[..remaining].copy_from_slice(&buffer[tail_off..]);
       let xi = load(&pad);
       update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, xi);
       let mut ct_bytes = [0u8; BLOCK_SIZE];
       store(_mm_xor_si128(xi, z), &mut ct_bytes);
-      buffer[offset..].copy_from_slice(&ct_bytes[..tail_len]);
+      buffer[tail_off..].copy_from_slice(&ct_bytes[..remaining]);
     }
 
     // ── finalize ──
@@ -636,73 +638,73 @@ mod ni {
     }
 
     // ── decrypt ──
+    //
+    // Same counted-loop strategy as encrypt: raw pointer advancement with
+    // compile-time-constant offsets, zero overflow checks in the hot path.
     let ct_len = buffer.len();
     let ptr = buffer.as_mut_ptr();
-    let len = buffer.len();
-    offset = 0;
-    let four_blocks = BLOCK_SIZE.strict_mul(4);
-    let two_blocks = BLOCK_SIZE.strict_mul(2);
-    while offset.strict_add(four_blocks) <= len {
-      _mm_prefetch(ptr.add(offset.strict_add(256)).cast::<i8>(), _MM_HINT_T0);
+    let n_quads = ct_len / 64;
+    let mut p = ptr;
+    for _ in 0..n_quads {
+      _mm_prefetch(p.add(256).cast::<i8>(), _MM_HINT_T0);
       let z_a = keystream_regs(s1, s2, s3, s4, s5);
-      let ci_a = _mm_loadu_si128(ptr.add(offset).cast());
+      let ci_a = _mm_loadu_si128(p.cast());
       let xi_a = _mm_xor_si128(ci_a, z_a);
       update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, xi_a);
-      _mm_storeu_si128(ptr.add(offset).cast(), xi_a);
+      _mm_storeu_si128(p.cast(), xi_a);
       let z_b = keystream_regs(s1, s2, s3, s4, s5);
-      let ci_b = _mm_loadu_si128(ptr.add(offset.strict_add(BLOCK_SIZE)).cast());
+      let ci_b = _mm_loadu_si128(p.add(16).cast());
       let xi_b = _mm_xor_si128(ci_b, z_b);
       update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, xi_b);
-      _mm_storeu_si128(ptr.add(offset.strict_add(BLOCK_SIZE)).cast(), xi_b);
+      _mm_storeu_si128(p.add(16).cast(), xi_b);
       let z_c = keystream_regs(s1, s2, s3, s4, s5);
-      let ci_c = _mm_loadu_si128(ptr.add(offset.strict_add(two_blocks)).cast());
+      let ci_c = _mm_loadu_si128(p.add(32).cast());
       let xi_c = _mm_xor_si128(ci_c, z_c);
       update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, xi_c);
-      _mm_storeu_si128(ptr.add(offset.strict_add(two_blocks)).cast(), xi_c);
+      _mm_storeu_si128(p.add(32).cast(), xi_c);
       let z_d = keystream_regs(s1, s2, s3, s4, s5);
-      let ci_d = _mm_loadu_si128(ptr.add(offset.strict_add(two_blocks.strict_add(BLOCK_SIZE))).cast());
+      let ci_d = _mm_loadu_si128(p.add(48).cast());
       let xi_d = _mm_xor_si128(ci_d, z_d);
       update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, xi_d);
-      _mm_storeu_si128(
-        ptr.add(offset.strict_add(two_blocks.strict_add(BLOCK_SIZE))).cast(),
-        xi_d,
-      );
-      offset = offset.strict_add(four_blocks);
+      _mm_storeu_si128(p.add(48).cast(), xi_d);
+      p = p.add(64);
     }
-    if offset.strict_add(two_blocks) <= len {
+    let mut remaining = ct_len.strict_sub(n_quads.strict_mul(64));
+    if remaining >= 32 {
       let z_a = keystream_regs(s1, s2, s3, s4, s5);
-      let ci_a = _mm_loadu_si128(ptr.add(offset).cast());
+      let ci_a = _mm_loadu_si128(p.cast());
       let xi_a = _mm_xor_si128(ci_a, z_a);
       update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, xi_a);
-      _mm_storeu_si128(ptr.add(offset).cast(), xi_a);
+      _mm_storeu_si128(p.cast(), xi_a);
       let z_b = keystream_regs(s1, s2, s3, s4, s5);
-      let ci_b = _mm_loadu_si128(ptr.add(offset.strict_add(BLOCK_SIZE)).cast());
+      let ci_b = _mm_loadu_si128(p.add(16).cast());
       let xi_b = _mm_xor_si128(ci_b, z_b);
       update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, xi_b);
-      _mm_storeu_si128(ptr.add(offset.strict_add(BLOCK_SIZE)).cast(), xi_b);
-      offset = offset.strict_add(two_blocks);
+      _mm_storeu_si128(p.add(16).cast(), xi_b);
+      p = p.add(32);
+      remaining = remaining.strict_sub(32);
     }
-    if offset.strict_add(BLOCK_SIZE) <= len {
+    if remaining >= 16 {
       let z = keystream_regs(s1, s2, s3, s4, s5);
-      let ci = _mm_loadu_si128(ptr.add(offset).cast());
+      let ci = _mm_loadu_si128(p.cast());
       let xi = _mm_xor_si128(ci, z);
       update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, xi);
-      _mm_storeu_si128(ptr.add(offset).cast(), xi);
-      offset = offset.strict_add(BLOCK_SIZE);
+      _mm_storeu_si128(p.cast(), xi);
+      remaining = remaining.strict_sub(16);
     }
-    if offset < len {
+    if remaining > 0 {
       let z = keystream_regs(s1, s2, s3, s4, s5);
-      let tail_len = len.strict_sub(offset);
+      let tail_off = ct_len.strict_sub(remaining);
       let mut pad = [0u8; BLOCK_SIZE];
-      pad[..tail_len].copy_from_slice(&buffer[offset..]);
+      pad[..remaining].copy_from_slice(&buffer[tail_off..]);
       let mut z_bytes = [0u8; BLOCK_SIZE];
       store(z, &mut z_bytes);
       let mut pt_pad = [0u8; BLOCK_SIZE];
-      for i in 0..tail_len {
+      for i in 0..remaining {
         pt_pad[i] = pad[i] ^ z_bytes[i];
       }
       update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, load(&pt_pad));
-      buffer[offset..].copy_from_slice(&pt_pad[..tail_len]);
+      buffer[tail_off..].copy_from_slice(&pt_pad[..remaining]);
     }
 
     // ── finalize ──
@@ -1450,7 +1452,7 @@ mod ppc {
 // bulk AEAD, not scenarios where cache-timing is the primary threat model;
 // (3) the alternative (algebraic S-box) is ~100x slower.
 
-#[cfg(target_arch = "s390x")]
+#[cfg(any(target_arch = "s390x", target_arch = "riscv64"))]
 mod zvec {
   use super::{BLOCK_SIZE, C0, C1, KEY_SIZE, NONCE_SIZE, TAG_SIZE};
 
@@ -2078,7 +2080,7 @@ impl Aegis256 {
 // Portable encrypt/decrypt helpers
 // ---------------------------------------------------------------------------
 
-#[cfg(not(target_arch = "s390x"))]
+#[cfg(not(any(target_arch = "s390x", target_arch = "riscv64")))]
 fn encrypt_portable(key: &[u8; KEY_SIZE], nonce: &[u8; NONCE_SIZE], aad: &[u8], buffer: &mut [u8]) -> [u8; TAG_SIZE] {
   let mut s = init(key, nonce);
   process_aad(&mut s, aad);
@@ -2109,7 +2111,7 @@ fn encrypt_portable(key: &[u8; KEY_SIZE], nonce: &[u8; NONCE_SIZE], aad: &[u8], 
   finalize(&mut s, aad.len(), msg_len)
 }
 
-#[cfg(not(target_arch = "s390x"))]
+#[cfg(not(any(target_arch = "s390x", target_arch = "riscv64")))]
 fn decrypt_portable(key: &[u8; KEY_SIZE], nonce: &[u8; NONCE_SIZE], aad: &[u8], buffer: &mut [u8]) -> [u8; TAG_SIZE] {
   let mut s = init(key, nonce);
   process_aad(&mut s, aad);
@@ -2211,14 +2213,15 @@ impl Aead for Aegis256 {
       return Aegis256Tag::from_bytes(tag);
     }
 
-    #[cfg(target_arch = "s390x")]
+    #[cfg(any(target_arch = "s390x", target_arch = "riscv64"))]
     {
-      // T-table AES rounds — always available, no hardware feature check needed.
+      // T-table AES rounds — ~200x faster than the algebraic GF(2^8) S-box.
+      // On riscv64 this is the fallback when scalar AES (Zkne) is absent.
       #[allow(clippy::needless_return)]
       return Aegis256Tag::from_bytes(zvec::encrypt_fused(key, nonce, aad, buffer));
     }
 
-    #[cfg(not(target_arch = "s390x"))]
+    #[cfg(not(any(target_arch = "s390x", target_arch = "riscv64")))]
     Aegis256Tag::from_bytes(encrypt_portable(key, nonce, aad, buffer))
   }
 
@@ -2262,7 +2265,7 @@ impl Aead for Aegis256 {
       // SAFETY: has_hw_aes() confirmed scalar AES (`zkne`) is available.
       unsafe { rv_zkne::decrypt_fused(key, nonce, aad, buffer) }
     } else {
-      decrypt_portable(key, nonce, aad, buffer)
+      zvec::decrypt_fused(key, nonce, aad, buffer)
     };
 
     #[cfg(target_arch = "s390x")]
@@ -2294,7 +2297,7 @@ impl Aead for Aegis256 {
 mod tests {
   use super::*;
 
-  #[cfg(not(target_arch = "s390x"))]
+  #[cfg(not(any(target_arch = "s390x", target_arch = "riscv64")))]
   #[inline(always)]
   fn portable_aes_round(block: &[u8; 16], round_key: &[u8; 16]) -> [u8; 16] {
     super::super::aes::aes_enc_round_portable(block, round_key)
@@ -2316,7 +2319,7 @@ mod tests {
 
   // -- AESRound test vector (Appendix A.1) --
 
-  #[cfg(not(target_arch = "s390x"))]
+  #[cfg(not(any(target_arch = "s390x", target_arch = "riscv64")))]
   #[test]
   fn aes_round_matches_spec_vector() {
     let input = hex_block("000102030405060708090a0b0c0d0e0f");
@@ -2328,7 +2331,7 @@ mod tests {
 
   // -- Update test vector (Appendix A.2) --
 
-  #[cfg(not(target_arch = "s390x"))]
+  #[cfg(not(any(target_arch = "s390x", target_arch = "riscv64")))]
   #[test]
   fn update_matches_spec_vector() {
     let mut s: State = [
@@ -2742,7 +2745,7 @@ mod tests {
   // test vectors.
 
   /// Full vperm AES round simulation (scalar): SubBytes → ShiftRows → MixColumns → AddRoundKey.
-  #[cfg(not(target_arch = "s390x"))]
+  #[cfg(not(any(target_arch = "s390x", target_arch = "riscv64")))]
   fn vperm_aes_round_scalar(block: &[u8; 16], round_key: &[u8; 16]) -> [u8; 16] {
     const SR: [u8; 16] = [
       0x00, 0x05, 0x0A, 0x0F, 0x04, 0x09, 0x0E, 0x03, 0x08, 0x0D, 0x02, 0x07, 0x0C, 0x01, 0x06, 0x0B,
@@ -2783,7 +2786,7 @@ mod tests {
     result
   }
 
-  #[cfg(not(target_arch = "s390x"))]
+  #[cfg(not(any(target_arch = "s390x", target_arch = "riscv64")))]
   #[test]
   fn vperm_full_round_matches_portable() {
     let input = hex_block("000102030405060708090a0b0c0d0e0f");
