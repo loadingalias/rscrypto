@@ -1455,55 +1455,54 @@ pub(crate) fn aes256_expand_key_riscv_ttable(key: &[u8; KEY_SIZE]) -> Aes256EncK
 
 /// Expand AES-256 key directly to AES-CE round keys.
 ///
-/// Designed to be inlined into a fused `#[target_feature(enable = "aes,neon")]`
-/// scope so the compiler can keep round keys in NEON registers across the
-/// entire encrypt/decrypt operation.
+/// This is the hot-path helper used from fused
+/// `#[target_feature(enable = "aes,neon")]` scopes.
 ///
 /// # Safety
 /// Caller must ensure AES-CE is available.
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "aes,neon")]
-#[inline(always)]
+#[inline]
 pub(super) unsafe fn aarch64_expand_key_inline(key: &[u8; KEY_SIZE]) -> ce::CeRoundKeys {
   // SAFETY: AES-CE availability guaranteed by caller.
   unsafe { ce::expand_key_hw(key) }
 }
 
-/// Encrypt a single AES-256 block with AES-CE, guaranteed to inline.
+/// Encrypt a single AES-256 block with AES-CE.
 ///
 /// # Safety
 /// Caller must ensure AES-CE is available.
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "aes,neon")]
-#[inline(always)]
+#[inline]
 pub(super) unsafe fn aarch64_encrypt_block_inline(keys: &ce::CeRoundKeys, block: &mut [u8; BLOCK_SIZE]) {
   // SAFETY: AES-CE availability guaranteed by caller.
   unsafe { ce::encrypt_block_core(keys, block) }
 }
 
 // ---------------------------------------------------------------------------
-// powerpc64: inline helpers for fused paths (#[target_feature] + #[inline(always)])
+// powerpc64: hot-path helpers for fused target-feature scopes
 // ---------------------------------------------------------------------------
 
-/// Expand AES-256 key directly to POWER round keys, guaranteed to inline.
+/// Expand AES-256 key directly to POWER round keys.
 ///
 /// # Safety
 /// Caller must ensure POWER8 crypto is available.
 #[cfg(target_arch = "powerpc64")]
 #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
-#[inline(always)]
+#[inline]
 pub(super) unsafe fn ppc_expand_key_inline(key: &[u8; KEY_SIZE]) -> ppc::PpcRoundKeys {
   // SAFETY: POWER8 crypto availability guaranteed by caller.
   unsafe { ppc::expand_key_hw(key) }
 }
 
-/// Encrypt a single AES-256 block with POWER crypto, guaranteed to inline.
+/// Encrypt a single AES-256 block with POWER crypto.
 ///
 /// # Safety
 /// Caller must ensure POWER8 crypto is available.
 #[cfg(target_arch = "powerpc64")]
 #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
-#[inline(always)]
+#[inline]
 pub(super) unsafe fn ppc_encrypt_block_inline(keys: &ppc::PpcRoundKeys, block: &mut [u8; BLOCK_SIZE]) {
   // SAFETY: POWER8 crypto availability guaranteed by caller.
   unsafe { ppc::encrypt_block_core(keys, block) }

@@ -822,75 +822,74 @@ mod vpclmul {
 /// PMULL-based 128×128 carryless multiply + Montgomery reduce, guaranteed
 /// to inline.
 ///
-/// Designed to be inlined into a fused `#[target_feature(enable = "aes,neon")]`
-/// scope so every POLYVAL block update stays in the hot loop without
-/// crossing a function boundary.
+/// Hot-path helper for fused `#[target_feature(enable = "aes,neon")]`
+/// POLYVAL updates.
 ///
 /// # Safety
 /// Caller must ensure PMULL is available.
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon", enable = "aes")]
-#[inline(always)]
+#[inline]
 pub(super) unsafe fn aarch64_clmul128_reduce_inline(a: u128, b: u128) -> u128 {
   // SAFETY: PMULL availability guaranteed by caller.
   unsafe { pmull::clmul128_reduce_core(a, b) }
 }
 
-/// 4-block wide PMULL aggregate, guaranteed to inline.
+/// 4-block wide PMULL aggregate helper.
 ///
 /// # Safety
 /// Caller must ensure PMULL is available.
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon", enable = "aes")]
-#[inline(always)]
+#[inline]
 pub(super) unsafe fn aarch64_aggregate_4blocks_inline(acc: u128, h_powers_rev: &[u128; 4], blocks: &[u128; 4]) -> u128 {
   // SAFETY: PMULL availability guaranteed by caller.
   unsafe { pmull::aggregate_4blocks(acc, h_powers_rev, blocks) }
 }
 
-/// POWER VPMSUMD multiply + reduce, guaranteed to inline.
+/// POWER VPMSUMD multiply + reduce helper.
 ///
 /// # Safety
 /// Caller must ensure POWER8 crypto is available.
 #[cfg(target_arch = "powerpc64")]
 #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
-#[inline(always)]
+#[inline]
 pub(super) unsafe fn ppc_clmul128_reduce_inline(a: u128, b: u128) -> u128 {
   // SAFETY: POWER8 crypto availability guaranteed by caller.
   unsafe { ppc_vpmsum::clmul128_reduce_core(a, b) }
 }
 
-/// 4-block wide VPMSUMD aggregate, guaranteed to inline.
+/// 4-block wide VPMSUMD aggregate helper.
 ///
 /// # Safety
 /// Caller must ensure POWER8 crypto is available.
 #[cfg(target_arch = "powerpc64")]
 #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
-#[inline(always)]
+#[inline]
 pub(super) unsafe fn ppc_aggregate_4blocks_inline(acc: u128, h_powers_rev: &[u128; 4], blocks: &[u128; 4]) -> u128 {
   // SAFETY: POWER8 crypto availability guaranteed by caller.
   unsafe { ppc_vpmsum::aggregate_4blocks(acc, h_powers_rev, blocks) }
 }
 
-/// s390x VGFM multiply + reduce, guaranteed to inline.
+/// s390x VGFM multiply + reduce helper.
 ///
 /// # Safety
 /// Caller must ensure z/Vector is available.
 #[cfg(target_arch = "s390x")]
 #[target_feature(enable = "vector")]
-#[inline(always)]
+#[inline]
 pub(super) unsafe fn s390x_clmul128_reduce_inline(a: u128, b: u128) -> u128 {
   // SAFETY: z/Vector availability guaranteed by caller.
   unsafe { s390x_vgfm::clmul128_reduce_core(a, b) }
 }
 
-/// 4-block wide s390x VGFM aggregate, guaranteed to inline.
+/// 4-block wide s390x VGFM aggregate helper.
 ///
 /// # Safety
 /// Caller must ensure z/Vector is available.
 #[cfg(target_arch = "s390x")]
 #[target_feature(enable = "vector")]
-#[inline(always)]
+#[inline]
 pub(super) unsafe fn s390x_aggregate_4blocks_inline(acc: u128, h_powers_rev: &[u128; 4], blocks: &[u128; 4]) -> u128 {
   // SAFETY: z/Vector availability guaranteed by caller.
   unsafe { s390x_vgfm::aggregate_4blocks(acc, h_powers_rev, blocks) }
@@ -905,25 +904,25 @@ pub(super) fn portable_clmul128_reduce_inline(a: u128, b: u128) -> u128 {
   mont_reduce(clmul128(a, b))
 }
 
-/// RISC-V Zvbc carryless multiply + reduce, guaranteed to inline.
+/// RISC-V Zvbc carryless multiply + reduce helper.
 ///
 /// # Safety
 /// Caller must ensure Zvbc is available.
 #[cfg(target_arch = "riscv64")]
 #[target_feature(enable = "v", enable = "zvbc")]
-#[inline(always)]
+#[inline]
 pub(super) unsafe fn riscv_vector_clmul128_reduce_inline(a: u128, b: u128) -> u128 {
   // SAFETY: Zvbc availability guaranteed by caller.
   unsafe { rv_clmul::clmul128_reduce(a, b) }
 }
 
-/// RISC-V Zbc/Zbkc carryless multiply + reduce, guaranteed to inline.
+/// RISC-V Zbc/Zbkc carryless multiply + reduce helper.
 ///
 /// # Safety
 /// Caller must ensure Zbc or Zbkc is available.
 #[cfg(target_arch = "riscv64")]
 #[target_feature(enable = "zbc")]
-#[inline(always)]
+#[inline]
 pub(super) unsafe fn riscv_scalar_clmul128_reduce_inline(a: u128, b: u128) -> u128 {
   // SAFETY: Zbc availability guaranteed by caller.
   unsafe { rv_scalar_clmul::clmul128_reduce(a, b) }
