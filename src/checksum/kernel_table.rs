@@ -2412,10 +2412,14 @@ pub use x86_64_tables::*;
 #[cfg(target_arch = "s390x")]
 mod s390x_tables {
   use super::*;
-  use crate::checksum::{
-    crc16::kernels::s390x as crc16_k, crc24::kernels::s390x as crc24_k, crc32::kernels::s390x as crc32_k,
-    crc64::kernels::s390x as crc64_k,
-  };
+  #[cfg(feature = "crc16")]
+  use crate::checksum::crc16::kernels::s390x as crc16_k;
+  #[cfg(feature = "crc24")]
+  use crate::checksum::crc24::kernels::s390x as crc24_k;
+  #[cfg(feature = "crc32")]
+  use crate::checksum::crc32::kernels::s390x as crc32_k;
+  #[cfg(feature = "crc64")]
+  use crate::checksum::crc64::kernels::s390x as crc64_k;
 
   pub static S390X_Z13_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::s390x::Z13_READY,
@@ -2629,10 +2633,14 @@ pub use s390x_tables::*;
 #[cfg(target_arch = "powerpc64")]
 mod power_tables {
   use super::*;
-  use crate::checksum::{
-    crc16::kernels::power as crc16_k, crc24::kernels::power as crc24_k, crc32::kernels::power as crc32_k,
-    crc64::kernels::power as crc64_k,
-  };
+  #[cfg(feature = "crc16")]
+  use crate::checksum::crc16::kernels::power as crc16_k;
+  #[cfg(feature = "crc24")]
+  use crate::checksum::crc24::kernels::power as crc24_k;
+  #[cfg(feature = "crc32")]
+  use crate::checksum::crc32::kernels::power as crc32_k;
+  #[cfg(feature = "crc64")]
+  use crate::checksum::crc64::kernels::power as crc64_k;
 
   pub static POWER8_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::power::VPMSUM_READY,
@@ -2846,10 +2854,14 @@ pub use power_tables::*;
 #[cfg(target_arch = "riscv64")]
 mod riscv64_tables {
   use super::*;
-  use crate::checksum::{
-    crc16::kernels::riscv64 as crc16_k, crc24::kernels::riscv64 as crc24_k, crc32::kernels::riscv64 as crc32_k,
-    crc64::kernels::riscv64 as crc64_k,
-  };
+  #[cfg(feature = "crc16")]
+  use crate::checksum::crc16::kernels::riscv64 as crc16_k;
+  #[cfg(feature = "crc24")]
+  use crate::checksum::crc24::kernels::riscv64 as crc24_k;
+  #[cfg(feature = "crc32")]
+  use crate::checksum::crc32::kernels::riscv64 as crc32_k;
+  #[cfg(feature = "crc64")]
+  use crate::checksum::crc64::kernels::riscv64 as crc64_k;
 
   pub static RISCV64_ZBC_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::riscv::ZBC,
@@ -3048,7 +3060,7 @@ mod riscv64_tables {
 
   #[cfg(feature = "crc64")]
   const fn crc64_only_set(
-    base: KernelSet,
+    _base: KernelSet,
     #[cfg(feature = "crc64")] crc64_xz: Crc64Fn,
     #[cfg(feature = "crc64")] crc64_xz_name: &'static str,
     #[cfg(feature = "crc64")] crc64_nvme: Crc64Fn,
@@ -3056,25 +3068,25 @@ mod riscv64_tables {
   ) -> KernelSet {
     KernelSet {
       #[cfg(feature = "crc16")]
-      crc16_ccitt: base.crc16_ccitt,
+      crc16_ccitt: _base.crc16_ccitt,
       #[cfg(feature = "crc16")]
-      crc16_ccitt_name: base.crc16_ccitt_name,
+      crc16_ccitt_name: _base.crc16_ccitt_name,
       #[cfg(feature = "crc16")]
-      crc16_ibm: base.crc16_ibm,
+      crc16_ibm: _base.crc16_ibm,
       #[cfg(feature = "crc16")]
-      crc16_ibm_name: base.crc16_ibm_name,
+      crc16_ibm_name: _base.crc16_ibm_name,
       #[cfg(feature = "crc24")]
-      crc24_openpgp: base.crc24_openpgp,
+      crc24_openpgp: _base.crc24_openpgp,
       #[cfg(feature = "crc24")]
-      crc24_openpgp_name: base.crc24_openpgp_name,
+      crc24_openpgp_name: _base.crc24_openpgp_name,
       #[cfg(feature = "crc32")]
-      crc32_ieee: base.crc32_ieee,
+      crc32_ieee: _base.crc32_ieee,
       #[cfg(feature = "crc32")]
-      crc32_ieee_name: base.crc32_ieee_name,
+      crc32_ieee_name: _base.crc32_ieee_name,
       #[cfg(feature = "crc32")]
-      crc32c: base.crc32c,
+      crc32c: _base.crc32c,
       #[cfg(feature = "crc32")]
-      crc32c_name: base.crc32c_name,
+      crc32c_name: _base.crc32c_name,
       crc64_xz,
       crc64_xz_name,
       crc64_nvme,
@@ -3086,6 +3098,7 @@ mod riscv64_tables {
   // decision. Slice16 wins on some in-order parts at modest sizes, while the
   // multi-stream Zbc folds can still become the best available choice once the
   // buffers are large enough to amortize the dependency chains.
+  #[cfg(feature = "crc64")]
   pub static RISCV64_CRC64_ZBC_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::riscv::ZBC,
     boundaries: [128, 4096, 16384],
@@ -3107,6 +3120,7 @@ mod riscv64_tables {
     ),
   };
 
+  #[cfg(feature = "crc64")]
   pub static RISCV64_CRC64_ZVBC_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::riscv::V.union(crate::platform::caps::riscv::ZVBC),
     boundaries: [128, 1024, 4096],
