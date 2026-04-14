@@ -527,8 +527,8 @@ impl crate::traits::ChecksumCombine for Crc16Ccitt {
 #[cfg(feature = "alloc")]
 impl Crc16Ccitt {
   #[must_use]
-  pub fn buffered() -> crate::checksum::buffered::BufferedCrc16Ccitt {
-    crate::checksum::buffered::BufferedCrc16Ccitt::new()
+  pub fn buffered() -> BufferedCrc16Ccitt {
+    BufferedCrc16Ccitt::new()
   }
 }
 
@@ -669,8 +669,8 @@ impl crate::traits::ChecksumCombine for Crc16Ibm {
 #[cfg(feature = "alloc")]
 impl Crc16Ibm {
   #[must_use]
-  pub fn buffered() -> crate::checksum::buffered::BufferedCrc16Ibm {
-    crate::checksum::buffered::BufferedCrc16Ibm::new()
+  pub fn buffered() -> BufferedCrc16Ibm {
+    BufferedCrc16Ibm::new()
   }
 }
 

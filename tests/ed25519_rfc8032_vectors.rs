@@ -1,4 +1,4 @@
-#![cfg(feature = "auth")]
+#![cfg(feature = "ed25519")]
 
 use rscrypto::{Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature, verify_ed25519};
 

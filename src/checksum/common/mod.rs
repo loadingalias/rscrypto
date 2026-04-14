@@ -11,12 +11,15 @@
 //! - Software prefetch helpers for optimal memory access patterns
 
 // CLMUL folding constants and helpers (used by SIMD CRC backends).
-#[cfg(any(
-  target_arch = "x86_64",
-  target_arch = "aarch64",
-  target_arch = "powerpc64",
-  target_arch = "s390x",
-  target_arch = "riscv64"
+#[cfg(all(
+  feature = "crc64",
+  any(
+    target_arch = "x86_64",
+    target_arch = "aarch64",
+    target_arch = "powerpc64",
+    target_arch = "s390x",
+    target_arch = "riscv64"
+  )
 ))]
 pub mod clmul;
 pub mod combine;

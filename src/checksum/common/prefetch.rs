@@ -4,6 +4,14 @@
 // Prefetch instructions are hints to the CPU and cannot cause memory unsafety;
 // invalid addresses are silently ignored.
 #![allow(unsafe_code)]
+#![cfg_attr(
+  all(
+    target_arch = "aarch64",
+    feature = "crc32",
+    not(any(feature = "crc16", feature = "crc24", feature = "crc64", test))
+  ),
+  allow(dead_code, unused_imports)
+)]
 //! This module provides platform-tuned prefetch constants and inline helpers
 //! for optimal memory access patterns in large-buffer CRC computation.
 //!

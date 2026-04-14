@@ -1,4 +1,4 @@
-#![cfg(feature = "auth")]
+#![cfg(feature = "hkdf")]
 
 use rscrypto::{HkdfSha256, auth::HkdfOutputLengthError};
 

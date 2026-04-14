@@ -82,14 +82,46 @@ broken_intra_doc_links = "deny"
 private_intra_doc_links = "warn"
 
 [features]
-default = ["std", "checksums", "hashes", "auth", "aead"]
+default = ["std"]
 std = ["alloc"]
 alloc = []
-checksums = []
-hashes = []
-auth = ["hashes"]
-aead = []
-parallel = ["std", "dep:rayon"]
+crc16 = []
+crc24 = []
+crc32 = []
+crc64 = []
+
+sha2 = []
+sha3 = []
+blake3 = []
+ascon-hash = []
+xxh3 = []
+rapidhash = []
+
+hmac = ["sha2"]
+hkdf = ["hmac"]
+kmac = ["sha3"]
+ed25519 = ["sha2"]
+x25519 = []
+
+aes-gcm = []
+aes-gcm-siv = []
+chacha20poly1305 = []
+xchacha20poly1305 = []
+aegis256 = []
+ascon-aead = []
+
+checksums = ["crc16", "crc24", "crc32", "crc64"]
+crypto-hashes = ["sha2", "sha3", "blake3", "ascon-hash"]
+fast-hashes = ["xxh3", "rapidhash"]
+hashes = ["crypto-hashes", "fast-hashes"]
+macs = ["hmac", "kmac"]
+kdfs = ["hkdf"]
+signatures = ["ed25519"]
+key-exchange = ["x25519"]
+auth = ["macs", "kdfs", "signatures", "key-exchange"]
+aead = ["aes-gcm", "aes-gcm-siv", "chacha20poly1305", "xchacha20poly1305", "aegis256", "ascon-aead"]
+full = ["checksums", "hashes", "auth", "aead"]
+parallel = ["std", "blake3", "dep:rayon"]
 diag = ["std"]
 testing = []
 
@@ -167,15 +199,15 @@ harness = false
 
 [[example]]
 name = "basic"
-required-features = ["std"]
+required-features = ["std", "full"]
 
 [[example]]
 name = "introspect"
-required-features = ["std"]
+required-features = ["std", "checksums", "hashes"]
 
 [[example]]
 name = "parallel"
-required-features = ["parallel"]
+required-features = ["std", "checksums"]
 
 [lints]
 workspace = true

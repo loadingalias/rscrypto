@@ -24,8 +24,10 @@ use core::{
   hash::{Hash, Hasher},
 };
 
-use super::ed25519::{basepoint_mul_dispatch, field::FieldElement, scalar::clamp_secret_scalar};
-use crate::traits::ct;
+use crate::{
+  backend::curve25519::{FieldElement, clamp_secret_scalar},
+  traits::ct,
+};
 
 const POINT_LENGTH: usize = 32;
 const RADIX_BITS: u32 = 51;
@@ -100,8 +102,10 @@ impl X25519SecretKey {
 
   /// Construct a secret key by filling bytes from the provided closure.
   ///
-  /// ```ignore
-  /// let sk = X25519SecretKey::generate(|buf| getrandom::fill(buf).unwrap());
+  /// ```rust
+  /// # use rscrypto::X25519SecretKey;
+  /// let sk = X25519SecretKey::generate(|buf| buf.fill(0xA5));
+  /// assert_eq!(sk.as_bytes(), &[0xA5; X25519SecretKey::LENGTH]);
   /// ```
   #[inline]
   #[must_use]
@@ -370,11 +374,7 @@ fn montgomery_ladder(scalar_bytes: &[u8; POINT_LENGTH], u: &FieldElement) -> Fie
 #[inline]
 #[must_use]
 fn public_key_from_scalar(scalar_bytes: &[u8; POINT_LENGTH]) -> X25519PublicKey {
-  let edwards = basepoint_mul_dispatch(scalar_bytes);
-  let (_, y, z, _) = edwards.components();
-  let numerator = z.add(y);
-  let denominator = z.sub(y);
-  X25519PublicKey::from_u(numerator.mul(&denominator.invert()).normalize())
+  X25519PublicKey::from_u(montgomery_ladder(scalar_bytes, &X25519PublicKey::basepoint().u))
 }
 
 #[must_use]

@@ -80,8 +80,10 @@ impl fmt::Debug for Aes256GcmSivKey {
 impl Aes256GcmSivKey {
   /// Construct a key by filling bytes from the provided closure.
   ///
-  /// ```ignore
-  /// let key = Aes256GcmSivKey::generate(|buf| getrandom::fill(buf).unwrap());
+  /// ```rust
+  /// # use rscrypto::Aes256GcmSivKey;
+  /// let key = Aes256GcmSivKey::generate(|buf| buf.fill(0xA5));
+  /// assert_eq!(key.as_bytes(), &[0xA5; Aes256GcmSivKey::LENGTH]);
   /// ```
   #[inline]
   #[must_use]
@@ -1728,6 +1730,8 @@ impl Aead for Aes256GcmSiv {
 
 #[cfg(test)]
 mod tests {
+  use alloc::{vec, vec::Vec};
+
   use super::*;
 
   /// RFC 8452 Appendix C.2, test case 1: empty plaintext, empty AAD.

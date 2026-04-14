@@ -1,4 +1,4 @@
-#![cfg(feature = "auth")]
+#![cfg(feature = "kmac")]
 
 use proptest::prelude::*;
 use rscrypto::Kmac256;

@@ -53,86 +53,106 @@ macro_rules! impl_hash_kernel_introspect {
   };
 }
 
+#[cfg(feature = "sha2")]
 impl_hash_kernel_introspect!(
   crate::hashes::crypto::Sha224,
   crate::hashes::crypto::sha224::dispatch::kernel_name_for_len
 );
+#[cfg(feature = "sha2")]
 impl_hash_kernel_introspect!(
   crate::hashes::crypto::Sha256,
   crate::hashes::crypto::sha256::dispatch::kernel_name_for_len
 );
+#[cfg(feature = "sha2")]
 impl_hash_kernel_introspect!(
   crate::hashes::crypto::Sha384,
   crate::hashes::crypto::sha384::dispatch::kernel_name_for_len
 );
+#[cfg(feature = "sha2")]
 impl_hash_kernel_introspect!(
   crate::hashes::crypto::Sha512,
   crate::hashes::crypto::sha512::dispatch::kernel_name_for_len
 );
+#[cfg(feature = "sha2")]
 impl_hash_kernel_introspect!(
   crate::hashes::crypto::Sha512_256,
   crate::hashes::crypto::sha512_256::dispatch::kernel_name_for_len
 );
 
+#[cfg(feature = "sha3")]
 impl_hash_kernel_introspect!(
   crate::hashes::crypto::Sha3_224,
   crate::hashes::crypto::keccak::dispatch::kernel_name_for_len
 );
+#[cfg(feature = "sha3")]
 impl_hash_kernel_introspect!(
   crate::hashes::crypto::Sha3_256,
   crate::hashes::crypto::keccak::dispatch::kernel_name_for_len
 );
+#[cfg(feature = "sha3")]
 impl_hash_kernel_introspect!(
   crate::hashes::crypto::Sha3_384,
   crate::hashes::crypto::keccak::dispatch::kernel_name_for_len
 );
+#[cfg(feature = "sha3")]
 impl_hash_kernel_introspect!(
   crate::hashes::crypto::Sha3_512,
   crate::hashes::crypto::keccak::dispatch::kernel_name_for_len
 );
+#[cfg(feature = "sha3")]
 impl_hash_kernel_introspect!(
   crate::hashes::crypto::Shake128,
   crate::hashes::crypto::keccak::dispatch::kernel_name_for_len
 );
+#[cfg(feature = "sha3")]
 impl_hash_kernel_introspect!(
   crate::hashes::crypto::Shake256,
   crate::hashes::crypto::keccak::dispatch::kernel_name_for_len
 );
+#[cfg(feature = "sha3")]
 impl_hash_kernel_introspect!(
   crate::hashes::crypto::Cshake256,
   crate::hashes::crypto::keccak::dispatch::kernel_name_for_len
 );
 
+#[cfg(feature = "blake3")]
 impl_hash_kernel_introspect!(
   crate::hashes::crypto::Blake3,
   crate::hashes::crypto::blake3::dispatch::kernel_name_for_len
 );
 
+#[cfg(feature = "ascon-hash")]
 impl_hash_kernel_introspect!(
   crate::hashes::crypto::AsconHash256,
   crate::hashes::crypto::ascon::dispatch::kernel_name_for_len
 );
+#[cfg(feature = "ascon-hash")]
 impl_hash_kernel_introspect!(
   crate::hashes::crypto::AsconXof,
   crate::hashes::crypto::ascon::dispatch::kernel_name_for_len
 );
+#[cfg(feature = "ascon-hash")]
 impl_hash_kernel_introspect!(
   crate::hashes::crypto::AsconCxof128,
   crate::hashes::crypto::ascon::dispatch::kernel_name_for_len
 );
 
+#[cfg(feature = "xxh3")]
 impl_hash_kernel_introspect!(
   crate::hashes::fast::xxh3::Xxh3_64,
   crate::hashes::fast::xxh3::dispatch::kernel_name_for_len
 );
+#[cfg(feature = "xxh3")]
 impl_hash_kernel_introspect!(
   crate::hashes::fast::xxh3::Xxh3_128,
   crate::hashes::fast::xxh3::dispatch::kernel_name_for_len
 );
+#[cfg(feature = "rapidhash")]
 impl_hash_kernel_introspect!(
   crate::hashes::fast::rapidhash::RapidHash64,
   crate::hashes::fast::rapidhash::dispatch::kernel_name_for_len
 );
+#[cfg(feature = "rapidhash")]
 impl_hash_kernel_introspect!(
   crate::hashes::fast::rapidhash::RapidHash128,
   crate::hashes::fast::rapidhash::dispatch::kernel_name_for_len
@@ -144,18 +164,21 @@ mod tests {
   use super::*;
 
   #[test]
+  #[cfg(feature = "sha2")]
   fn kernel_for_digest_is_not_empty() {
     let kernel = kernel_for::<crate::hashes::crypto::Sha256>(1024);
     assert!(!kernel.is_empty());
   }
 
   #[test]
+  #[cfg(feature = "sha3")]
   fn kernel_for_xof_is_not_empty() {
     let kernel = kernel_for::<crate::hashes::crypto::Shake256>(4096);
     assert!(!kernel.is_empty());
   }
 
   #[test]
+  #[cfg(feature = "xxh3")]
   fn kernel_for_fast_hash_is_not_empty() {
     let kernel = kernel_for::<crate::hashes::fast::xxh3::Xxh3_64>(1024);
     assert!(!kernel.is_empty());

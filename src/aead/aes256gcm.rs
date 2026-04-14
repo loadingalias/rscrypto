@@ -76,8 +76,10 @@ impl fmt::Debug for Aes256GcmKey {
 impl Aes256GcmKey {
   /// Construct a key by filling bytes from the provided closure.
   ///
-  /// ```ignore
-  /// let key = Aes256GcmKey::generate(|buf| getrandom::fill(buf).unwrap());
+  /// ```rust
+  /// # use rscrypto::Aes256GcmKey;
+  /// let key = Aes256GcmKey::generate(|buf| buf.fill(0xA5));
+  /// assert_eq!(key.as_bytes(), &[0xA5; Aes256GcmKey::LENGTH]);
   /// ```
   #[inline]
   #[must_use]
@@ -507,6 +509,8 @@ impl Drop for Aes256Gcm {
 
 #[cfg(test)]
 mod tests {
+  use alloc::{vec, vec::Vec};
+
   use super::*;
 
   // NIST SP 800-38D Test Case 13: AES-256-GCM, empty plaintext, empty AAD.

@@ -1,38 +1,97 @@
 //! Authenticated encryption with associated data foundations.
 //!
-//! This module intentionally starts small:
+//! This module provides the typed AEAD surface for rscrypto:
 //!
 //! - AEAD-specific error types
 //! - explicit nonce wrappers
-//! - lane and backend planning for the AEAD rollout
 //! - dispatch introspection
 //! - the shared [`Aead`] trait re-export
+//! - concrete AEAD implementations on the same typed surface
 //!
-//! Concrete AEAD algorithms will land here on top of the same typed surface.
+//! # Quick Start
+//!
+//! ```rust
+//! use rscrypto::{
+//!   Aead, ChaCha20Poly1305, ChaCha20Poly1305Key,
+//!   aead::{Nonce96, OpenError},
+//! };
+//!
+//! let cipher = ChaCha20Poly1305::new(&ChaCha20Poly1305Key::from_bytes([0x11; 32]));
+//! let nonce = Nonce96::from_bytes([0x22; Nonce96::LENGTH]);
+//!
+//! let mut sealed = [0u8; 4 + ChaCha20Poly1305::TAG_SIZE];
+//! cipher.encrypt(&nonce, b"hdr", b"data", &mut sealed)?;
+//!
+//! let mut opened = [0u8; 4];
+//! cipher.decrypt(&nonce, b"hdr", &sealed, &mut opened)?;
+//! assert_eq!(&opened, b"data");
+//! # Ok::<(), OpenError>(())
+//! ```
+//!
+//! # Feature Selection
+//!
+//! ```toml
+//! [dependencies]
+//! # ChaCha20-Poly1305 only
+//! rscrypto = { version = "0.1", default-features = false, features = ["chacha20poly1305"] }
+//!
+//! # All AEADs
+//! rscrypto = { version = "0.1", default-features = false, features = ["aead"] }
+//! ```
+//!
+//! # API Conventions
+//!
+//! - Every cipher uses a typed `*Key`, typed nonce wrapper, and typed `*Tag`.
+//! - Combined-buffer helpers use `encrypt` / `decrypt`.
+//! - Detached helpers use `encrypt_in_place` / `decrypt_in_place`.
+//! - All AEADs implement the shared [`Aead`] trait with the same constructor and operation names.
+//!
+//! # Error Conventions
+//!
+//! - Buffer shape mistakes return [`AeadBufferError`].
+//! - Combined open failures return [`OpenError`], which preserves whether the failure was a length
+//!   mistake or an authentication failure.
 
 use core::fmt;
 
 pub use crate::traits::Aead;
 use crate::traits::VerificationError;
+#[cfg(feature = "aegis256")]
 mod aegis256;
+#[cfg(any(feature = "aes-gcm", feature = "aes-gcm-siv"))]
 mod aes;
+#[cfg(feature = "aes-gcm")]
 mod aes256gcm;
+#[cfg(feature = "aes-gcm-siv")]
 mod aes256gcmsiv;
+#[cfg(feature = "ascon-aead")]
 mod ascon128;
+#[cfg(any(feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
 mod chacha20;
+#[cfg(feature = "chacha20poly1305")]
 mod chacha20poly1305;
+#[cfg(feature = "aes-gcm")]
 mod ghash;
 pub mod introspect;
+#[cfg(any(feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
 mod poly1305;
+#[cfg(feature = "aes-gcm-siv")]
 mod polyval;
 pub mod targets;
+#[cfg(feature = "xchacha20poly1305")]
 mod xchacha20poly1305;
+#[cfg(feature = "aegis256")]
 pub use aegis256::{Aegis256, Aegis256Key, Aegis256Tag};
+#[cfg(feature = "aes-gcm")]
 pub use aes256gcm::{Aes256Gcm, Aes256GcmKey, Aes256GcmTag};
+#[cfg(feature = "aes-gcm-siv")]
 pub use aes256gcmsiv::{Aes256GcmSiv, Aes256GcmSivKey, Aes256GcmSivTag};
+#[cfg(feature = "ascon-aead")]
 pub use ascon128::{AsconAead128, AsconAead128Key, AsconAead128Tag};
+#[cfg(feature = "chacha20poly1305")]
 pub use chacha20poly1305::{ChaCha20Poly1305, ChaCha20Poly1305Key, ChaCha20Poly1305Tag};
 pub use targets::{AeadBackend, AeadPrimitive, BenchLane, lane_target_backend, select_backend};
+#[cfg(feature = "xchacha20poly1305")]
 pub use xchacha20poly1305::{XChaCha20Poly1305, XChaCha20Poly1305Key, XChaCha20Poly1305Tag};
 
 macro_rules! define_nonce_type {
@@ -90,11 +149,20 @@ macro_rules! define_nonce_type {
     }
 
     impl $name {
-      /// Construct a nonce by filling bytes from the provided closure.
-      ///
-      /// ```ignore
-      /// let nonce = Nonce96::generate(|buf| getrandom::fill(buf).unwrap());
-      /// ```
+      #[doc = concat!(
+                                                    "Construct a nonce by filling bytes from the provided closure.\n\n",
+                                                    "```rust\n",
+                                                    "use rscrypto::aead::",
+                                                    stringify!($name),
+                                                    ";\n\n",
+                                                    "let nonce = ",
+                                                    stringify!($name),
+                                                    "::generate(|buf| buf.fill(0xA5));\n",
+                                                    "assert_eq!(nonce.as_bytes(), &[0xA5; ",
+                                                    stringify!($name),
+                                                    "::LENGTH]);\n",
+                                                    "```"
+                                                  )]
       #[inline]
       #[must_use]
       pub fn generate(fill: impl FnOnce(&mut [u8; $len])) -> Self {

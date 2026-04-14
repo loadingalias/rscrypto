@@ -168,8 +168,10 @@ impl fmt::Debug for Ed25519SecretKey {
 impl Ed25519SecretKey {
   /// Construct a secret key by filling bytes from the provided closure.
   ///
-  /// ```ignore
-  /// let sk = Ed25519SecretKey::generate(|buf| getrandom::fill(buf).unwrap());
+  /// ```rust
+  /// # use rscrypto::Ed25519SecretKey;
+  /// let sk = Ed25519SecretKey::generate(|buf| buf.fill(0xA5));
+  /// assert_eq!(sk.as_bytes(), &[0xA5; Ed25519SecretKey::LENGTH]);
   /// ```
   #[inline]
   #[must_use]

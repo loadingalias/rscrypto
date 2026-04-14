@@ -39,6 +39,25 @@
 //! assert_eq!(combined, crc);
 //! ```
 //!
+//! # Feature Selection
+//!
+//! ```toml
+//! [dependencies]
+//! # Smallest CRC-32-only build
+//! rscrypto = { version = "0.1", default-features = false, features = ["crc32"] }
+//!
+//! # All checksum families
+//! rscrypto = { version = "0.1", default-features = false, features = ["checksums"] }
+//! ```
+//!
+//! # API Conventions
+//!
+//! - All checksum types implement [`crate::traits::Checksum`] with `new` / `update` / `finalize` /
+//!   `reset`.
+//! - One-shot checksum entry points use `Type::checksum(data)`.
+//! - CRC families that support parallel folding also implement [`crate::traits::ChecksumCombine`]
+//!   with `Type::combine(left, right, right_len)`.
+//!
 //! # Advanced
 //!
 //! Dispatch is automatic by default.
@@ -53,7 +72,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! checksum = { version = "0.1", default-features = false }
+//! rscrypto = { version = "0.1", default-features = false, features = ["crc32"] }
 //! ```
 
 mod common;
@@ -62,9 +81,13 @@ mod common;
 #[macro_use]
 mod macros;
 
+#[cfg(feature = "crc16")]
 mod crc16;
+#[cfg(feature = "crc24")]
 mod crc24;
+#[cfg(feature = "crc32")]
 mod crc32;
+#[cfg(feature = "crc64")]
 mod crc64;
 #[cfg(feature = "diag")]
 pub mod diag;
@@ -77,28 +100,36 @@ pub mod io;
 pub(crate) mod kernel_table;
 #[cfg(feature = "alloc")]
 pub mod buffered {
-  pub use crate::checksum::{
-    crc16::{BufferedCrc16Ccitt, BufferedCrc16Ibm},
-    crc24::BufferedCrc24OpenPgp,
-    crc32::{BufferedCrc32, BufferedCrc32C},
-    crc64::{BufferedCrc64, BufferedCrc64Nvme},
-  };
+  #[cfg(feature = "crc16")]
+  pub use crate::checksum::crc16::{BufferedCrc16Ccitt, BufferedCrc16Ibm};
+  #[cfg(feature = "crc24")]
+  pub use crate::checksum::crc24::BufferedCrc24OpenPgp;
+  #[cfg(feature = "crc32")]
+  pub use crate::checksum::crc32::{BufferedCrc32, BufferedCrc32C};
+  #[cfg(feature = "crc64")]
+  pub use crate::checksum::crc64::{BufferedCrc64, BufferedCrc64Nvme};
 }
 
 /// Advanced checksum configuration and force-mode controls.
 pub mod config {
-  pub use crate::checksum::{
-    crc16::{Crc16Config, Crc16Force},
-    crc24::{Crc24Config, Crc24Force},
-    crc32::{Crc32Config, Crc32Force},
-    crc64::{Crc64Config, Crc64Force},
-  };
+  #[cfg(feature = "crc16")]
+  pub use crate::checksum::crc16::{Crc16Config, Crc16Force};
+  #[cfg(feature = "crc24")]
+  pub use crate::checksum::crc24::{Crc24Config, Crc24Force};
+  #[cfg(feature = "crc32")]
+  pub use crate::checksum::crc32::{Crc32Config, Crc32Force};
+  #[cfg(feature = "crc64")]
+  pub use crate::checksum::crc64::{Crc64Config, Crc64Force};
 }
 
 // Re-export public types
+#[cfg(feature = "crc16")]
 pub use crc16::{Crc16Ccitt, Crc16Ibm};
+#[cfg(feature = "crc24")]
 pub use crc24::Crc24OpenPgp;
+#[cfg(feature = "crc32")]
 pub use crc32::{Crc32, Crc32C, Crc32Castagnoli, Crc32Ieee};
+#[cfg(feature = "crc64")]
 pub use crc64::{Crc64, Crc64Nvme, Crc64Xz};
 // Re-export I/O adapters (requires std)
 #[cfg(feature = "std")]

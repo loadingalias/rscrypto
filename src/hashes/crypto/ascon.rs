@@ -6,7 +6,10 @@
 
 use core::fmt;
 
-use crate::traits::{Digest, Xof};
+use crate::{
+  backend::ascon::permute_12_portable,
+  traits::{Digest, Xof},
+};
 
 #[cfg(target_arch = "aarch64")]
 mod aarch64;
@@ -81,7 +84,7 @@ impl Permuter for FixedPermuter {
 }
 
 // Ascon permutation round constants (12 rounds).
-// Used by SIMD kernels; the portable permutation inlines the constants.
+// Used by SIMD kernels; the shared portable permutation inlines the constants.
 #[allow(dead_code)]
 const RC: [u64; 12] = [0xF0, 0xE1, 0xD2, 0xC3, 0xB4, 0xA5, 0x96, 0x87, 0x78, 0x69, 0x5A, 0x4B];
 
@@ -137,103 +140,6 @@ const fn pad(n: usize) -> u64 {
   // Produce the padding mask used by the reference construction:
   // XOR `pad(len)` into state[0], with state interpreted little-endian.
   0x01_u64 << (8 * n)
-}
-
-/// Single Ascon round on 5 state words held in local variables.
-///
-/// Fully inlining all rounds into the permutation body lets the compiler keep
-/// every word in a register across the full 12-round pipeline and schedule
-/// instructions freely, which is significantly faster than a loop that writes
-/// back to `[u64; 5]` after each round.
-macro_rules! ascon_round {
-  ($x0:ident, $x1:ident, $x2:ident, $x3:ident, $x4:ident, $c:literal) => {
-    let t0 = $x0 ^ $x4;
-    let t2 = $x2 ^ $x1 ^ $c;
-    let t4 = $x4 ^ $x3;
-
-    let s0 = t0 ^ ((!$x1) & t2);
-    let s1 = $x1 ^ ((!t2) & $x3);
-    let s2 = t2 ^ ((!$x3) & t4);
-    let s3 = $x3 ^ ((!t4) & t0);
-    let s4 = t4 ^ ((!t0) & $x1);
-
-    let s1 = s1 ^ s0;
-    let s3 = s3 ^ s2;
-    let s0 = s0 ^ s4;
-
-    let l0 = s0 ^ s0.rotate_right(9);
-    let l1 = s1 ^ s1.rotate_right(22);
-    let l2 = s2 ^ s2.rotate_right(5);
-    let l3 = s3 ^ s3.rotate_right(7);
-    let l4 = s4 ^ s4.rotate_right(34);
-
-    $x0 = s0 ^ l0.rotate_right(19);
-    $x1 = s1 ^ l1.rotate_right(39);
-    $x2 = !(s2 ^ l2.rotate_right(1));
-    $x3 = s3 ^ l3.rotate_right(10);
-    $x4 = s4 ^ l4.rotate_right(7);
-  };
-}
-
-/// Ascon-p[12]: full 12-round permutation (portable, scalar).
-///
-/// Fully unrolled so the compiler can keep all five 64-bit state words in
-/// registers across the entire permutation and freely schedule instructions.
-#[inline(always)]
-pub(crate) fn permute_12_portable(s: &mut [u64; 5]) {
-  let mut x0 = s[0];
-  let mut x1 = s[1];
-  let mut x2 = s[2];
-  let mut x3 = s[3];
-  let mut x4 = s[4];
-
-  ascon_round!(x0, x1, x2, x3, x4, 0xF0);
-  ascon_round!(x0, x1, x2, x3, x4, 0xE1);
-  ascon_round!(x0, x1, x2, x3, x4, 0xD2);
-  ascon_round!(x0, x1, x2, x3, x4, 0xC3);
-  ascon_round!(x0, x1, x2, x3, x4, 0xB4);
-  ascon_round!(x0, x1, x2, x3, x4, 0xA5);
-  ascon_round!(x0, x1, x2, x3, x4, 0x96);
-  ascon_round!(x0, x1, x2, x3, x4, 0x87);
-  ascon_round!(x0, x1, x2, x3, x4, 0x78);
-  ascon_round!(x0, x1, x2, x3, x4, 0x69);
-  ascon_round!(x0, x1, x2, x3, x4, 0x5A);
-  ascon_round!(x0, x1, x2, x3, x4, 0x4B);
-
-  s[0] = x0;
-  s[1] = x1;
-  s[2] = x2;
-  s[3] = x3;
-  s[4] = x4;
-}
-
-/// Ascon-p[8]: 8-round permutation (PB) used by Ascon-AEAD128.
-///
-/// Fully unrolled for the same register-allocation benefits as
-/// [`permute_12_portable`].
-#[inline(always)]
-#[cfg_attr(not(feature = "aead"), allow(dead_code))]
-pub(crate) fn permute_8_portable(s: &mut [u64; 5]) {
-  let mut x0 = s[0];
-  let mut x1 = s[1];
-  let mut x2 = s[2];
-  let mut x3 = s[3];
-  let mut x4 = s[4];
-
-  ascon_round!(x0, x1, x2, x3, x4, 0xB4);
-  ascon_round!(x0, x1, x2, x3, x4, 0xA5);
-  ascon_round!(x0, x1, x2, x3, x4, 0x96);
-  ascon_round!(x0, x1, x2, x3, x4, 0x87);
-  ascon_round!(x0, x1, x2, x3, x4, 0x78);
-  ascon_round!(x0, x1, x2, x3, x4, 0x69);
-  ascon_round!(x0, x1, x2, x3, x4, 0x5A);
-  ascon_round!(x0, x1, x2, x3, x4, 0x4B);
-
-  s[0] = x0;
-  s[1] = x1;
-  s[2] = x2;
-  s[3] = x3;
-  s[4] = x4;
 }
 
 #[derive(Clone)]

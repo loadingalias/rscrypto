@@ -50,6 +50,7 @@ where
 
   /// Test combine property at all possible split points for a given buffer.
   #[inline]
+  #[cfg_attr(test, allow(dead_code))]
   pub fn test_combine_all_splits(data: &[u8]) {
     let full = C::checksum(data);
 
@@ -89,6 +90,7 @@ where
 
   /// Test that streaming updates produce the same result as one-shot.
   #[inline]
+  #[cfg_attr(test, allow(dead_code))]
   pub fn test_streaming_equals_oneshot(data: &[u8]) {
     let oneshot = C::checksum(data);
 
@@ -325,6 +327,7 @@ pub const STREAMING_CHUNK_SIZES: &[usize] = &[1, 3, 7, 13, 17, 31, 37, 61, 127, 
 ///
 /// Uses a simple mixing function to produce non-trivial byte patterns
 /// that avoid accidentally passing due to regularity.
+#[cfg_attr(test, allow(dead_code))]
 pub fn generate_test_data(len: usize) -> alloc::vec::Vec<u8> {
   (0..len)
     .map(|i| (i as u64).wrapping_mul(17).wrapping_add(i as u64) as u8)
@@ -337,36 +340,44 @@ pub fn generate_test_data(len: usize) -> alloc::vec::Vec<u8> {
 
 #[cfg(test)]
 mod harness_self_tests {
-  use super::*;
   // Test harness using CRC-64-XZ as the reference implementation
+  #[cfg(feature = "crc64")]
+  use super::*;
+  #[cfg(feature = "crc64")]
   use crate::checksum::Crc64Xz;
 
   #[test]
+  #[cfg(feature = "crc64")]
   fn harness_test_combine_all_splits() {
     CrcTestHarness::<Crc64Xz>::test_combine_all_splits(b"hello world");
   }
 
   #[test]
+  #[cfg(feature = "crc64")]
   fn harness_test_streaming_equals_oneshot() {
     CrcTestHarness::<Crc64Xz>::test_streaming_equals_oneshot(b"The quick brown fox");
   }
 
   #[test]
+  #[cfg(feature = "crc64")]
   fn harness_test_empty_input() {
     CrcTestHarness::<Crc64Xz>::test_empty_input();
   }
 
   #[test]
+  #[cfg(feature = "crc64")]
   fn harness_test_single_bytes() {
     CrcTestHarness::<Crc64Xz>::test_single_bytes();
   }
 
   #[test]
+  #[cfg(feature = "crc64")]
   fn harness_test_finalize_idempotent() {
     CrcTestHarness::<Crc64Xz>::test_finalize_idempotent(b"test data");
   }
 
   #[test]
+  #[cfg(feature = "crc64")]
   fn harness_test_reset() {
     CrcTestHarness::<Crc64Xz>::test_reset(b"fresh data");
   }

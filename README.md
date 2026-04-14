@@ -10,6 +10,40 @@
 
 ## Quick Start
 
+Minimal install:
+
+```toml
+[dependencies]
+rscrypto = { version = "0.1", default-features = false, features = ["crc32"] }
+```
+
+Targeted bundle installs:
+
+```toml
+[dependencies]
+# MACs only
+rscrypto = { version = "0.1", default-features = false, features = ["macs"] }
+
+# Signatures only
+rscrypto = { version = "0.1", default-features = false, features = ["signatures"] }
+
+# X25519 only
+rscrypto = { version = "0.1", default-features = false, features = ["key-exchange"] }
+```
+
+Full install:
+
+```toml
+[dependencies]
+rscrypto = { version = "0.1", features = ["full"] }
+```
+
+Feature selection rules:
+
+- Pick a leaf when size matters most: `crc32`, `sha2`, `hmac`, `hkdf`, `ed25519`, `x25519`, `chacha20poly1305`, etc.
+- Pick a bundle when you want the whole category: `checksums`, `crypto-hashes`, `fast-hashes`, `hashes`, `macs`, `kdfs`, `signatures`, `key-exchange`, `auth`, `aead`, `full`.
+- Keep `default = ["std"]` unless you explicitly need `no_std`.
+
 ```rust
 use rscrypto::{
   Aead, Blake3, Checksum, ChaCha20Poly1305, ChaCha20Poly1305Key, Crc32C, Digest,
@@ -73,6 +107,15 @@ let _ = rscrypto::RapidHash::hash(b"data");
 
 Single-crate crypto and checksum toolbox. No C FFI, no vendored C/C++, `no_std` first. Portable fallback is authoritative; ISA-specific kernels are accelerators, not separate APIs.
 
+## API Conventions
+
+- Checksums use `Type::checksum(data)` plus `new` / `update` / `finalize` / `reset`.
+- Fixed-output digests use `Type::digest(data)`; XOFs use `Type::xof(data)` and `finalize_xof()`.
+- MACs use `Type::mac(key, data)` and `Type::verify_tag(key, data, tag)`; KMAC uses `finalize_into` because output length is caller-chosen.
+- HKDF uses `new(salt, ikm)` followed by `expand` / `expand_array`, with one-shot `derive` / `derive_array`.
+- Signature, key-exchange, nonce, key, and tag wrappers round-trip through `from_bytes` / `to_bytes` / `as_bytes`.
+- AEADs use `encrypt` / `decrypt` for combined buffers and `encrypt_in_place` / `decrypt_in_place` for detached-tag flows.
+
 ## Invariants
 
 | Invariant | What breaks if violated |
@@ -97,7 +140,7 @@ Single-crate crypto and checksum toolbox. No C FFI, no vendored C/C++, `no_std` 
 | `FastHash` | One-shot seeded hash | `traits/fast_hash.rs:13` |
 | `Aead` | Authenticated encryption | `traits/aead.rs:20` |
 
-### AEAD (feature: `aead`)
+### AEAD (feature: `aead` or AEAD leaves)
 
 | Cipher | Key | Nonce | Tag | Source |
 |--------|-----|-------|-----|--------|
@@ -110,18 +153,40 @@ Single-crate crypto and checksum toolbox. No C FFI, no vendored C/C++, `no_std` 
 
 Each cipher has typed `*Key` and `*Tag` wrappers. Nonces: `Nonce96`, `Nonce128`, `Nonce192`, `Nonce256` in `rscrypto::aead`.
 
-### Authentication (feature: `auth`)
+### MACs (feature: `macs` or `hmac` / `kmac`)
 
 | Type | Purpose | Source |
 |------|---------|--------|
 | `HmacSha256` / `HmacSha384` / `HmacSha512` | HMAC-SHA2 family (RFC 2104) | `auth/hmac.rs` |
-| `HkdfSha256` / `HkdfSha384` | HKDF extract-expand (RFC 5869) | `auth/hkdf.rs` |
 | `Kmac256` | Variable-output MAC (SP 800-185) | `auth/kmac.rs` |
+
+### KDFs (feature: `kdfs` or `hkdf`)
+
+| Type | Purpose | Source |
+|------|---------|--------|
+| `HkdfSha256` / `HkdfSha384` | HKDF extract-expand (RFC 5869) | `auth/hkdf.rs` |
+
+### Signatures (feature: `signatures` or `ed25519`)
+
+| Type | Purpose | Source |
+|------|---------|--------|
 | `Ed25519SecretKey` / `PublicKey` / `Signature` / `Keypair` | Ed25519 signatures (RFC 8032) | `auth/ed25519.rs` |
+
+### Key Exchange (feature: `key-exchange` or `x25519`)
+
+| Type | Purpose | Source |
+|------|---------|--------|
 | `X25519SecretKey` / `PublicKey` / `SharedSecret` | X25519 key exchange (RFC 7748) | `auth/x25519.rs` |
+
+### Authentication Umbrella (feature: `auth`)
+
+| Type | Purpose | Source |
+|------|---------|--------|
 | `verify_ed25519` | Free-function signature verification | `auth/ed25519.rs` |
 
-### Cryptographic Hashes (feature: `hashes`)
+`auth` enables `macs`, `kdfs`, `signatures`, and `key-exchange`.
+
+### Cryptographic Hashes (feature: `crypto-hashes` or `hashes`)
 
 | Type | Output | Source |
 |------|--------|--------|
@@ -134,7 +199,7 @@ Each cipher has typed `*Key` and `*Tag` wrappers. Nonces: `Nonce96`, `Nonce128`,
 
 XOF readers: `Shake128XofReader`, `Shake256XofReader`, `Blake3XofReader`, `AsconXofReader`, `AsconCxof128Reader`, `Cshake256XofReader`.
 
-### Checksums (feature: `checksums`)
+### Checksums (feature: `checksums` or checksum leaves)
 
 | Type | Output | Source |
 |------|--------|--------|
@@ -145,7 +210,7 @@ XOF readers: `Shake128XofReader`, `Shake256XofReader`, `Blake3XofReader`, `Ascon
 
 All implement `ChecksumCombine` for parallel CRC folding.
 
-### Fast Hashes (feature: `hashes`)
+### Fast Hashes (feature: `fast-hashes` or `hashes`)
 
 | Type | Output | Source |
 |------|--------|--------|
@@ -194,17 +259,29 @@ All implement `ChecksumCombine` for parallel CRC folding.
 |---------|---------|---------|-------|
 | `std` | Yes | Runtime CPU detection, I/O adapters | Implies `alloc` |
 | `alloc` | Yes | Buffered wrappers | Can enable without `std` |
-| `checksums` | Yes | CRC-16/24/32/64 families | |
-| `hashes` | Yes | SHA-2, SHA-3, SHAKE, Blake3, Ascon, XXH3, RapidHash | |
-| `auth` | Yes | HMAC, HKDF, KMAC, Ed25519, X25519 | Implies `hashes` |
-| `aead` | Yes | AES-GCM, GCM-SIV, ChaCha20-Poly1305, AEGIS, Ascon | |
+| `crc16`, `crc24`, `crc32`, `crc64` | No | Individual checksum families | Pick the minimum leaf you need |
+| `sha2`, `sha3`, `blake3`, `ascon-hash` | No | Cryptographic hash leaves | |
+| `xxh3`, `rapidhash` | No | Fast-hash leaves | Non-cryptographic |
+| `hmac`, `hkdf`, `kmac`, `ed25519`, `x25519` | No | Individual auth/KDF leaves | `hkdf` pulls `hmac`; `x25519` stands alone |
+| `aes-gcm`, `aes-gcm-siv`, `chacha20poly1305`, `xchacha20poly1305`, `aegis256`, `ascon-aead` | No | AEAD leaves | |
+| `checksums` | No | All checksum leaves | Convenience bundle |
+| `crypto-hashes` | No | `sha2`, `sha3`, `blake3`, `ascon-hash` | Convenience bundle |
+| `fast-hashes` | No | `xxh3`, `rapidhash` | Convenience bundle |
+| `hashes` | No | `crypto-hashes` + `fast-hashes` | Convenience bundle |
+| `macs` | No | `hmac`, `kmac` | Convenience bundle |
+| `kdfs` | No | `hkdf` | Convenience bundle |
+| `signatures` | No | `ed25519` | Convenience bundle |
+| `key-exchange` | No | `x25519` | Convenience bundle |
+| `auth` | No | `macs`, `kdfs`, `signatures`, `key-exchange` | Convenience umbrella |
+| `aead` | No | All AEAD leaves | Convenience bundle |
+| `full` | No | `checksums`, `hashes`, `auth`, `aead` | Opt into the whole surface |
 | `parallel` | No | Rayon-backed Blake3 parallelism | Requires `std` |
 
 ## `no_std`
 
 ```toml
 [dependencies]
-rscrypto = { version = "0.1", default-features = false, features = ["checksums", "hashes"] }
+rscrypto = { version = "0.1", default-features = false, features = ["crc32"] }
 ```
 
 Without `std`, runtime detection and I/O adapters are unavailable. Compile-time feature detection and portable fallbacks remain.
@@ -236,7 +313,7 @@ src/
 | Layer | What | Command |
 |-------|------|---------|
 | Unit + integration | 785 tests, official vectors, differential oracles | `just test` |
-| Feature matrix | 4 feature combinations on both x86_64 and aarch64 | `just test-feature-matrix` |
+| Feature matrix | Leaf and bundle reduced-feature combinations | `just test-feature-matrix` |
 | Property tests | 10,000 cases per proptest | `just test-proptests` |
 | Miri | Memory safety under Stacked Borrows | `just test-miri` |
 | Fuzz | 20 targets with differential oracles (15 oracle crates) | `just test-fuzz` |

@@ -1,4 +1,4 @@
-#![cfg(feature = "auth")]
+#![cfg(feature = "x25519")]
 
 use rscrypto::{X25519Error, X25519PublicKey, X25519SecretKey, X25519SharedSecret};
 use x25519_dalek::{PublicKey as DalekPublicKey, StaticSecret as DalekStaticSecret};

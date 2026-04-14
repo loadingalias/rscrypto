@@ -491,13 +491,13 @@ impl<W: std::io::Write, C: crate::Checksum> std::io::Write for ChecksumWriter<W,
 /// ```
 #[cfg(feature = "std")]
 #[derive(Clone)]
-pub struct DigestReader<R, D: crate::Digest> {
+pub struct DigestReader<R, D: crate::traits::Digest> {
   inner: R,
   hasher: D,
 }
 
 #[cfg(feature = "std")]
-impl<R: core::fmt::Debug, D: crate::Digest + core::fmt::Debug> core::fmt::Debug for DigestReader<R, D> {
+impl<R: core::fmt::Debug, D: crate::traits::Digest + core::fmt::Debug> core::fmt::Debug for DigestReader<R, D> {
   fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
     f.debug_struct("DigestReader")
       .field("inner", &self.inner)
@@ -507,7 +507,7 @@ impl<R: core::fmt::Debug, D: crate::Digest + core::fmt::Debug> core::fmt::Debug 
 }
 
 #[cfg(feature = "std")]
-impl<R, D: crate::Digest> DigestReader<R, D> {
+impl<R, D: crate::traits::Digest> DigestReader<R, D> {
   /// Create a new reader wrapper with the default initial state.
   #[inline]
   #[must_use]
@@ -562,7 +562,7 @@ impl<R, D: crate::Digest> DigestReader<R, D> {
 }
 
 #[cfg(feature = "std")]
-impl<R: std::io::Read, D: crate::Digest> std::io::Read for DigestReader<R, D> {
+impl<R: std::io::Read, D: crate::traits::Digest> std::io::Read for DigestReader<R, D> {
   #[inline]
   fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
     read_and_update(&mut self.inner, buf, |data| self.hasher.update(data))
@@ -620,13 +620,13 @@ impl<R: std::io::Read, D: crate::Digest> std::io::Read for DigestReader<R, D> {
 /// ```
 #[cfg(feature = "std")]
 #[derive(Clone)]
-pub struct DigestWriter<W, D: crate::Digest> {
+pub struct DigestWriter<W, D: crate::traits::Digest> {
   inner: W,
   hasher: D,
 }
 
 #[cfg(feature = "std")]
-impl<W: core::fmt::Debug, D: crate::Digest + core::fmt::Debug> core::fmt::Debug for DigestWriter<W, D> {
+impl<W: core::fmt::Debug, D: crate::traits::Digest + core::fmt::Debug> core::fmt::Debug for DigestWriter<W, D> {
   fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
     f.debug_struct("DigestWriter")
       .field("inner", &self.inner)
@@ -636,7 +636,7 @@ impl<W: core::fmt::Debug, D: crate::Digest + core::fmt::Debug> core::fmt::Debug 
 }
 
 #[cfg(feature = "std")]
-impl<W, D: crate::Digest> DigestWriter<W, D> {
+impl<W, D: crate::traits::Digest> DigestWriter<W, D> {
   /// Create a new writer wrapper with the default initial state.
   #[inline]
   #[must_use]
@@ -686,7 +686,7 @@ impl<W, D: crate::Digest> DigestWriter<W, D> {
 }
 
 #[cfg(feature = "std")]
-impl<W: std::io::Write, D: crate::Digest> std::io::Write for DigestWriter<W, D> {
+impl<W: std::io::Write, D: crate::traits::Digest> std::io::Write for DigestWriter<W, D> {
   #[inline]
   fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
     write_and_update(&mut self.inner, buf, |data| self.hasher.update(data))

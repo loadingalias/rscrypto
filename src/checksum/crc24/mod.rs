@@ -342,8 +342,8 @@ impl crate::traits::ChecksumCombine for Crc24OpenPgp {
 #[cfg(feature = "alloc")]
 impl Crc24OpenPgp {
   #[must_use]
-  pub fn buffered() -> crate::checksum::buffered::BufferedCrc24OpenPgp {
-    crate::checksum::buffered::BufferedCrc24OpenPgp::new()
+  pub fn buffered() -> BufferedCrc24OpenPgp {
+    BufferedCrc24OpenPgp::new()
   }
 }
 

@@ -1,4 +1,4 @@
-#![cfg(feature = "auth")]
+#![cfg(feature = "hkdf")]
 
 use hkdf::Hkdf as RustCryptoHkdf;
 use rscrypto::{HkdfSha384, auth::HkdfOutputLengthError};

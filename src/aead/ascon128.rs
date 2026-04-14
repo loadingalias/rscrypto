@@ -9,7 +9,7 @@ use core::fmt;
 
 use super::{AeadBufferError, Nonce128, OpenError};
 use crate::{
-  hashes::crypto::ascon::{permute_8_portable, permute_12_portable},
+  backend::ascon::{permute_8_portable, permute_12_portable},
   traits::{Aead, VerificationError, ct},
 };
 
@@ -113,8 +113,10 @@ impl fmt::Debug for AsconAead128Key {
 impl AsconAead128Key {
   /// Construct a key by filling bytes from the provided closure.
   ///
-  /// ```ignore
-  /// let key = AsconAead128Key::generate(|buf| getrandom::fill(buf).unwrap());
+  /// ```rust
+  /// # use rscrypto::AsconAead128Key;
+  /// let key = AsconAead128Key::generate(|buf| buf.fill(0xA5));
+  /// assert_eq!(key.as_bytes(), &[0xA5; AsconAead128Key::LENGTH]);
   /// ```
   #[inline]
   #[must_use]
@@ -463,6 +465,8 @@ impl Aead for AsconAead128 {
 
 #[cfg(test)]
 mod tests {
+  use alloc::{vec, vec::Vec};
+
   use ascon_aead::aead::{Aead as _, KeyInit, Payload, generic_array::GenericArray};
 
   use super::*;

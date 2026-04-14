@@ -28,6 +28,7 @@
 /// Generate a single CRC-16 lookup table entry.
 ///
 /// Uses bit-by-bit computation with the reflected polynomial.
+#[cfg(feature = "crc16")]
 #[must_use]
 pub const fn crc16_table_entry(poly: u16, index: u8) -> u16 {
   let mut crc = index as u16;
@@ -48,6 +49,7 @@ pub const fn crc16_table_entry(poly: u16, index: u8) -> u16 {
 /// # Arguments
 ///
 /// * `poly` - The reflected polynomial
+#[cfg(feature = "crc16")]
 #[must_use]
 pub const fn generate_crc16_tables_8(poly: u16) -> [[u16; 256]; 8] {
   let mut tables = [[0u16; 256]; 8];
@@ -84,6 +86,7 @@ pub const fn generate_crc16_tables_8(poly: u16) -> [[u16; 256]; 8] {
 /// to/from the expanded form as needed.
 ///
 /// The returned entry has its low 8 bits cleared.
+#[cfg(feature = "crc24")]
 #[must_use]
 pub const fn crc24_table_entry(poly: u32, index: u8) -> u32 {
   // Expand a 24-bit CRC into the top 24 bits of a u32.
@@ -107,6 +110,7 @@ pub const fn crc24_table_entry(poly: u32, index: u8) -> u32 {
 /// # Arguments
 ///
 /// * `poly` - The normal polynomial (low 24 bits), e.g. 0x864CFB for OpenPGP
+#[cfg(feature = "crc24")]
 #[must_use]
 pub const fn generate_crc24_tables_8(poly: u32) -> [[u32; 256]; 8] {
   let mut tables = [[0u32; 256]; 8];
@@ -138,6 +142,7 @@ pub const fn generate_crc24_tables_8(poly: u32) -> [[u32; 256]; 8] {
 /// Generate a single CRC-32 lookup table entry.
 ///
 /// Uses bit-by-bit computation with the reflected polynomial.
+#[cfg(feature = "crc32")]
 #[must_use]
 pub const fn crc32_table_entry(poly: u32, index: u8) -> u32 {
   let mut crc = index as u32;
@@ -158,7 +163,7 @@ pub const fn crc32_table_entry(poly: u32, index: u8) -> u32 {
 /// # Arguments
 ///
 /// * `poly` - The reflected polynomial
-#[cfg(test)]
+#[cfg(all(test, feature = "crc32"))]
 #[must_use]
 pub const fn generate_crc32_tables_8(poly: u32) -> [[u32; 256]; 8] {
   let mut tables = [[0u32; 256]; 8];
@@ -188,6 +193,7 @@ pub const fn generate_crc32_tables_8(poly: u32) -> [[u32; 256]; 8] {
 /// # Arguments
 ///
 /// * `poly` - The reflected polynomial
+#[cfg(feature = "crc32")]
 #[must_use]
 pub const fn generate_crc32_tables_16(poly: u32) -> [[u32; 256]; 16] {
   let mut tables = [[0u32; 256]; 16];
@@ -219,6 +225,7 @@ pub const fn generate_crc32_tables_16(poly: u32) -> [[u32; 256]; 16] {
 /// Generate a single CRC-64 lookup table entry.
 ///
 /// Uses bit-by-bit computation with the reflected polynomial.
+#[cfg(feature = "crc64")]
 #[must_use]
 pub const fn crc64_table_entry(poly: u64, index: u8) -> u64 {
   let mut crc = index as u64;
@@ -239,7 +246,7 @@ pub const fn crc64_table_entry(poly: u64, index: u8) -> u64 {
 /// # Arguments
 ///
 /// * `poly` - The reflected polynomial
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
+#[cfg(all(feature = "crc64", any(target_arch = "x86_64", target_arch = "aarch64", test)))]
 #[must_use]
 pub const fn generate_crc64_tables_8(poly: u64) -> [[u64; 256]; 8] {
   let mut tables = [[0u64; 256]; 8];
@@ -272,6 +279,7 @@ pub const fn generate_crc64_tables_8(poly: u64) -> [[u64; 256]; 8] {
 /// # Arguments
 ///
 /// * `poly` - The reflected polynomial
+#[cfg(feature = "crc64")]
 #[must_use]
 pub const fn generate_crc64_tables_16(poly: u64) -> [[u64; 256]; 16] {
   let mut tables = [[0u64; 256]; 16];
@@ -304,16 +312,19 @@ pub const fn generate_crc64_tables_16(poly: u64) -> [[u64; 256]; 16] {
 
 /// CRC-16-CCITT polynomial (0x1021) in reflected form.
 /// Used by X.25, V.41, HDLC, XMODEM, Bluetooth, PACTOR, SD, etc.
+#[cfg(feature = "crc16")]
 pub const CRC16_CCITT_POLY: u16 = 0x8408;
 
 /// CRC-16-IBM polynomial (0x8005) in reflected form.
 /// Used by Modbus, USB, ANSI X3.28, etc.
+#[cfg(feature = "crc16")]
 pub const CRC16_IBM_POLY: u16 = 0xA001;
 
 // CRC-24 Polynomials
 
 /// CRC-24-OPENPGP polynomial (0x864CFB) in normal form.
 /// Used by OpenPGP (RFC 4880).
+#[cfg(feature = "crc24")]
 pub const CRC24_OPENPGP_POLY: u32 = 0x0086_4CFB;
 
 // CRC-64 Polynomials
@@ -323,19 +334,23 @@ pub const CRC24_OPENPGP_POLY: u32 = 0x0086_4CFB;
 /// CRC-32 (IEEE) polynomial (0x04C11DB7) in reflected form.
 ///
 /// Used by Ethernet, gzip, zip, PNG, etc.
+#[cfg(feature = "crc32")]
 pub const CRC32_IEEE_POLY: u32 = 0xEDB8_8320;
 
 /// CRC-32C (Castagnoli) polynomial (0x1EDC6F41) in reflected form.
 ///
 /// Used by iSCSI, SCTP, ext4, Btrfs, SSE4.2 `crc32`, etc.
+#[cfg(feature = "crc32")]
 pub const CRC32C_POLY: u32 = 0x82F6_3B78;
 
 /// CRC-64-XZ polynomial (0x42F0E1EBA9EA3693) in reflected form.
 /// Used by XZ Utils, 7-Zip, LZMA.
+#[cfg(feature = "crc64")]
 pub const CRC64_XZ_POLY: u64 = 0xC96C_5795_D787_0F42;
 
 /// CRC-64-NVME polynomial (0xAD93D23594C93659) in reflected form.
 /// Used by NVMe specification.
+#[cfg(feature = "crc64")]
 pub const CRC64_NVME_POLY: u64 = 0x9A6C_9329_AC4B_C9B5;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -351,6 +366,7 @@ mod tests {
   // ─────────────────────────────────────────────────────────────────────────
 
   #[test]
+  #[cfg(feature = "crc16")]
   fn test_crc16_tables_8_consistency() {
     let tables8 = generate_crc16_tables_8(CRC16_CCITT_POLY);
 
@@ -368,6 +384,7 @@ mod tests {
   // ─────────────────────────────────────────────────────────────────────────
 
   #[test]
+  #[cfg(feature = "crc32")]
   fn test_crc32_tables_8_consistency() {
     let tables = generate_crc32_tables_8(CRC32_IEEE_POLY);
 
@@ -384,6 +401,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(feature = "crc32")]
   fn test_crc32_tables_16_consistency() {
     let tables = generate_crc32_tables_16(CRC32_IEEE_POLY);
 
@@ -404,6 +422,7 @@ mod tests {
   // ─────────────────────────────────────────────────────────────────────────
 
   #[test]
+  #[cfg(feature = "crc24")]
   fn test_crc24_tables_8_consistency() {
     let tables8 = generate_crc24_tables_8(CRC24_OPENPGP_POLY);
 
@@ -423,6 +442,7 @@ mod tests {
   // ─────────────────────────────────────────────────────────────────────────
 
   #[test]
+  #[cfg(feature = "crc64")]
   fn test_crc64_tables_8_consistency() {
     let tables = generate_crc64_tables_8(CRC64_XZ_POLY);
 
@@ -439,6 +459,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(feature = "crc64")]
   fn test_crc64_tables_16_consistency() {
     let tables8 = generate_crc64_tables_8(CRC64_XZ_POLY);
     let tables16 = generate_crc64_tables_16(CRC64_XZ_POLY);
@@ -461,6 +482,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(feature = "crc64")]
   fn test_crc64_nvme_tables_consistency() {
     // Verify CRC-64-NVME uses a different polynomial
     let xz = generate_crc64_tables_8(CRC64_XZ_POLY);

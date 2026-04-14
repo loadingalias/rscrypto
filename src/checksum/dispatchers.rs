@@ -18,6 +18,7 @@
 /// # Returns
 ///
 /// Updated CRC state after processing the input data.
+#[cfg(feature = "crc16")]
 pub type Crc16Fn = fn(u16, &[u8]) -> u16;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -37,6 +38,7 @@ pub type Crc16Fn = fn(u16, &[u8]) -> u16;
 /// # Returns
 ///
 /// Updated CRC state with the result in the low 24 bits.
+#[cfg(feature = "crc24")]
 pub type Crc24Fn = fn(u32, &[u8]) -> u32;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -62,6 +64,7 @@ pub type Crc24Fn = fn(u32, &[u8]) -> u32;
 /// # Returns
 ///
 /// Updated CRC state after processing the input data.
+#[cfg(feature = "crc32")]
 pub type Crc32Fn = fn(u32, &[u8]) -> u32;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -88,4 +91,5 @@ pub type Crc32Fn = fn(u32, &[u8]) -> u32;
 /// # Returns
 ///
 /// Updated CRC state after processing the input data.
+#[cfg(feature = "crc64")]
 pub type Crc64Fn = fn(u64, &[u8]) -> u64;

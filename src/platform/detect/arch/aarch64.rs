@@ -402,8 +402,11 @@ enum AppleSiliconGen {
 }
 
 /// Microarchitecture family used for aarch64 kernel-table selection.
-#[cfg(target_arch = "aarch64")]
-#[cfg_attr(not(feature = "std"), allow(dead_code))]
+#[cfg(all(
+  target_arch = "aarch64",
+  feature = "std",
+  any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64")
+))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Aarch64TuneFamily {
   #[cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "watchos"))]
@@ -508,8 +511,11 @@ fn detect_apple_silicon_gen() -> Option<AppleSiliconGen> {
 }
 
 /// Detect the aarch64 microarchitecture family used by runtime table selection.
-#[cfg(target_arch = "aarch64")]
-#[cfg_attr(not(feature = "std"), allow(dead_code))]
+#[cfg(all(
+  target_arch = "aarch64",
+  feature = "std",
+  any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64")
+))]
 #[must_use]
 pub(crate) fn detect_aarch64_tune_family() -> Option<Aarch64TuneFamily> {
   #[cfg(all(
@@ -812,33 +818,78 @@ fn detect_sme_vlen() -> u16 {
 // MIDR_EL1 Detection (Linux aarch64)
 // ─────────────────────────────────────────────────────────────────────────────
 
-#[cfg(all(target_arch = "aarch64", feature = "std", any(target_os = "linux", target_os = "android")))]
+#[cfg(all(
+  target_arch = "aarch64",
+  feature = "std",
+  any(target_os = "linux", target_os = "android"),
+  any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64")
+))]
 const MIDR_IMPLEMENTER_SHIFT: u32 = 24;
-#[cfg(all(target_arch = "aarch64", feature = "std", any(target_os = "linux", target_os = "android")))]
+#[cfg(all(
+  target_arch = "aarch64",
+  feature = "std",
+  any(target_os = "linux", target_os = "android"),
+  any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64")
+))]
 const MIDR_PARTNUM_SHIFT: u32 = 4;
 
-#[cfg(all(target_arch = "aarch64", feature = "std", any(target_os = "linux", target_os = "android")))]
+#[cfg(all(
+  target_arch = "aarch64",
+  feature = "std",
+  any(target_os = "linux", target_os = "android"),
+  any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64")
+))]
 const ARM_CPU_IMP_ARM: u32 = 0x41;
-#[cfg(all(target_arch = "aarch64", feature = "std", any(target_os = "linux", target_os = "android")))]
+#[cfg(all(
+  target_arch = "aarch64",
+  feature = "std",
+  any(target_os = "linux", target_os = "android"),
+  any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64")
+))]
 const ARM_CPU_PART_NEOVERSE_N1: u32 = 0xD0C;
-#[cfg(all(target_arch = "aarch64", feature = "std", any(target_os = "linux", target_os = "android")))]
+#[cfg(all(
+  target_arch = "aarch64",
+  feature = "std",
+  any(target_os = "linux", target_os = "android"),
+  any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64")
+))]
 const ARM_CPU_PART_NEOVERSE_V1: u32 = 0xD40;
-#[cfg(all(target_arch = "aarch64", feature = "std", any(target_os = "linux", target_os = "android")))]
+#[cfg(all(
+  target_arch = "aarch64",
+  feature = "std",
+  any(target_os = "linux", target_os = "android"),
+  any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64")
+))]
 const ARM_CPU_PART_NEOVERSE_V2: u32 = 0xD4F;
 
-#[cfg(all(target_arch = "aarch64", feature = "std", any(target_os = "linux", target_os = "android")))]
+#[cfg(all(
+  target_arch = "aarch64",
+  feature = "std",
+  any(target_os = "linux", target_os = "android"),
+  any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64")
+))]
 #[inline]
 fn midr_implementer(midr: u32) -> u32 {
   midr >> MIDR_IMPLEMENTER_SHIFT
 }
 
-#[cfg(all(target_arch = "aarch64", feature = "std", any(target_os = "linux", target_os = "android")))]
+#[cfg(all(
+  target_arch = "aarch64",
+  feature = "std",
+  any(target_os = "linux", target_os = "android"),
+  any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64")
+))]
 #[inline]
 fn midr_partnum(midr: u32) -> u32 {
   (midr >> MIDR_PARTNUM_SHIFT) & 0x0fff
 }
 
-#[cfg(all(target_arch = "aarch64", feature = "std", any(target_os = "linux", target_os = "android")))]
+#[cfg(all(
+  target_arch = "aarch64",
+  feature = "std",
+  any(target_os = "linux", target_os = "android"),
+  any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64")
+))]
 fn parse_u32_auto_radix(value: &str) -> Option<u32> {
   let value = value.trim();
   if let Some(hex) = value.strip_prefix("0x").or_else(|| value.strip_prefix("0X")) {
@@ -848,7 +899,12 @@ fn parse_u32_auto_radix(value: &str) -> Option<u32> {
   value.parse::<u32>().ok().or_else(|| u32::from_str_radix(value, 16).ok())
 }
 
-#[cfg(all(target_arch = "aarch64", feature = "std", any(target_os = "linux", target_os = "android")))]
+#[cfg(all(
+  target_arch = "aarch64",
+  feature = "std",
+  any(target_os = "linux", target_os = "android"),
+  any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64")
+))]
 fn read_linux_midr_sysfs() -> Option<u32> {
   let paths = [
     "/sys/devices/system/cpu/cpu0/regs/identification/midr_el1",
@@ -866,7 +922,12 @@ fn read_linux_midr_sysfs() -> Option<u32> {
   None
 }
 
-#[cfg(all(target_arch = "aarch64", feature = "std", any(target_os = "linux", target_os = "android")))]
+#[cfg(all(
+  target_arch = "aarch64",
+  feature = "std",
+  any(target_os = "linux", target_os = "android"),
+  any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64")
+))]
 fn read_linux_midr_cpuinfo() -> Option<u32> {
   let cpuinfo = std::fs::read_to_string("/proc/cpuinfo").ok()?;
   let mut implementer = None;
@@ -893,7 +954,12 @@ fn read_linux_midr_cpuinfo() -> Option<u32> {
   Some((implementer? << MIDR_IMPLEMENTER_SHIFT) | (0xF << 16) | (part? << MIDR_PARTNUM_SHIFT))
 }
 
-#[cfg(all(target_arch = "aarch64", feature = "std", any(target_os = "linux", target_os = "android")))]
+#[cfg(all(
+  target_arch = "aarch64",
+  feature = "std",
+  any(target_os = "linux", target_os = "android"),
+  any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64")
+))]
 #[inline]
 fn map_linux_midr_to_tune_family(midr: u32) -> Option<Aarch64TuneFamily> {
   if midr_implementer(midr) != ARM_CPU_IMP_ARM {
@@ -908,7 +974,12 @@ fn map_linux_midr_to_tune_family(midr: u32) -> Option<Aarch64TuneFamily> {
   }
 }
 
-#[cfg(all(target_arch = "aarch64", feature = "std", any(target_os = "linux", target_os = "android")))]
+#[cfg(all(
+  target_arch = "aarch64",
+  feature = "std",
+  any(target_os = "linux", target_os = "android"),
+  any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64")
+))]
 fn detect_linux_aarch64_tune_family() -> Option<Aarch64TuneFamily> {
   let midr = read_linux_midr_sysfs().or_else(read_linux_midr_cpuinfo)?;
   map_linux_midr_to_tune_family(midr)

@@ -38,6 +38,44 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
+//! # Feature Selection
+//!
+//! Use leaves for minimum size and bundles when you want the category:
+//!
+//! ```toml
+//! [dependencies]
+//! # HMAC + KMAC only
+//! rscrypto = { version = "0.1", default-features = false, features = ["macs"] }
+//!
+//! # HKDF only
+//! rscrypto = { version = "0.1", default-features = false, features = ["hkdf"] }
+//!
+//! # Ed25519 only
+//! rscrypto = { version = "0.1", default-features = false, features = ["signatures"] }
+//!
+//! # X25519 only
+//! rscrypto = { version = "0.1", default-features = false, features = ["key-exchange"] }
+//!
+//! # Everything in auth/key-derivation
+//! rscrypto = { version = "0.1", default-features = false, features = ["auth"] }
+//! ```
+//!
+//! # API Conventions
+//!
+//! - MACs use `Type::mac(key, data)` and `Type::verify_tag(key, data, tag)` for one-shot helpers,
+//!   plus `new` / `update` / `finalize` / `reset` for streaming.
+//! - KMAC is variable-output, so the streaming path uses `finalize_into`.
+//! - HKDF uses `new(salt, ikm)` for extract state, then `expand` / `expand_array`; one-shot helpers
+//!   are `derive` / `derive_array`.
+//! - Signature and key-exchange types use typed `from_bytes` / `to_bytes` / `as_bytes` wrappers
+//!   plus verb-based operations such as `sign`, `verify`, and `diffie_hellman`.
+//!
+//! # Error Conventions
+//!
+//! - Authentication failures use [`crate::VerificationError`].
+//! - HKDF oversized-output requests use [`HkdfOutputLengthError`].
+//! - X25519 low-order public inputs use [`X25519Error`].
+//!
 //! # Modules
 //!
 //! - [`ed25519`] - Ed25519 key and signature types.
@@ -46,16 +84,26 @@
 //! - [`kmac`] - KMAC256 variable-output MAC.
 //! - [`x25519`] - X25519 Diffie-Hellman key agreement.
 
+#[cfg(feature = "ed25519")]
 pub mod ed25519;
+#[cfg(feature = "hkdf")]
 pub mod hkdf;
+#[cfg(feature = "hmac")]
 pub mod hmac;
+#[cfg(feature = "kmac")]
 pub mod kmac;
+#[cfg(feature = "x25519")]
 pub mod x25519;
 
+#[cfg(feature = "ed25519")]
 pub use ed25519::{Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature, verify as verify_ed25519};
+#[cfg(feature = "hkdf")]
 pub use hkdf::{HkdfOutputLengthError, HkdfSha256, HkdfSha384};
+#[cfg(feature = "hmac")]
 pub use hmac::{HmacSha256, HmacSha384, HmacSha512};
+#[cfg(feature = "kmac")]
 pub use kmac::Kmac256;
+#[cfg(feature = "x25519")]
 pub use x25519::{X25519Error, X25519PublicKey, X25519SecretKey, X25519SharedSecret};
 
 pub use crate::traits::Mac;

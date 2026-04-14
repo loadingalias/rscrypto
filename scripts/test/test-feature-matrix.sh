@@ -12,12 +12,22 @@ trap 'rm -rf "$LOG_DIR"' EXIT
 TARGET_DIR="$LOG_DIR/target"
 
 FEATURE_SETS=(
+  "crc16"
+  "crc24"
+  "crc32"
+  "crc64"
   "checksums"
   "alloc,checksums"
   "hashes"
   "alloc,hashes"
+  "macs"
+  "kdfs"
+  "signatures"
+  "key-exchange"
   "auth"
   "alloc,auth"
+  "aead"
+  "alloc,aead"
 )
 
 echo "Executable rscrypto feature matrix"
