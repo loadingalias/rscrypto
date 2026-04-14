@@ -1274,6 +1274,37 @@ impl RootEmitState {
   }
 
   #[inline]
+  fn emit_root_hash_prefix(&self, offset: usize, out: &mut [u8]) {
+    debug_assert_eq!(
+      self.counter, 0,
+      "digest prefix fast path only applies to the first output block"
+    );
+    debug_assert!(offset <= OUT_LEN);
+    debug_assert!(offset + out.len() <= OUT_LEN);
+
+    let words = first_8_words(kernels::compress_block_inline(
+      self.kernel_id,
+      &self.input_chaining_value,
+      &self.block_words,
+      0,
+      u32::from(self.block_len),
+      u32::from(self.flags) | ROOT,
+    ));
+
+    if cfg!(target_endian = "little") {
+      // SAFETY: `words` is exactly 32 bytes, and the caller bounds-checks the
+      // prefix range against `OUT_LEN`.
+      unsafe {
+        ptr::copy_nonoverlapping(words.as_ptr().cast::<u8>().add(offset), out.as_mut_ptr(), out.len());
+      }
+      return;
+    }
+
+    let bytes = words8_to_le_bytes(&words);
+    out.copy_from_slice(&bytes[offset..offset + out.len()]);
+  }
+
+  #[inline]
   fn emit_blocks_into(&self, out: &mut [u8]) {
     kernels::root_output_blocks_bytes_into_inline(
       self.kernel_id,
@@ -3095,7 +3126,24 @@ impl Blake3XofReader {
   }
 
   #[inline]
+  fn fill_root_hash_prefix(&mut self, out: &mut &mut [u8]) {
+    let offset = self.position_within_block as usize;
+    let take = min(out.len(), OUT_LEN - offset);
+    self.root.emit_root_hash_prefix(offset, &mut out[..take]);
+    self.position_within_block += take as u8;
+    *out = &mut core::mem::take(out)[take..];
+  }
+
+  #[inline]
   fn fill_one_block(&mut self, out: &mut &mut [u8]) {
+    if self.root.counter == 0 && self.position_within_block < OUT_LEN as u8 {
+      let digest_bytes_remaining = OUT_LEN - self.position_within_block as usize;
+      if out.len() <= digest_bytes_remaining {
+        self.fill_root_hash_prefix(out);
+        return;
+      }
+    }
+
     let mut block = [0u8; OUTPUT_BLOCK_LEN];
     self.root.emit_one_block(&mut block);
     let output_bytes = &block[self.position_within_block as usize..];
@@ -3132,6 +3180,11 @@ impl Xof for Blake3XofReader {
   #[inline]
   fn squeeze(&mut self, mut out: &mut [u8]) {
     if out.is_empty() {
+      return;
+    }
+
+    if out.len() <= OUT_LEN && self.root.counter == 0 && self.position_within_block == 0 {
+      self.fill_root_hash_prefix(&mut out);
       return;
     }
 

@@ -88,7 +88,7 @@ pub(crate) fn crc64_xz_selected_kernel_name(len: usize) -> &'static str {
     _ => {}
   }
 
-  let table = crate::checksum::kernel_table::active_table();
+  let table = crate::checksum::kernel_table::active_crc64_table();
   table.select_names(len).crc64_xz_name
 }
 
@@ -125,7 +125,7 @@ pub(crate) fn crc64_nvme_selected_kernel_name(len: usize) -> &'static str {
     _ => {}
   }
 
-  let table = crate::checksum::kernel_table::active_table();
+  let table = crate::checksum::kernel_table::active_crc64_table();
   table.select_names(len).crc64_nvme_name
 }
 
@@ -148,7 +148,7 @@ pub(crate) fn diag_crc64_xz(len: usize) -> Crc64SelectionDiag {
   };
 
   // Thresholds are now baked into dispatch tables; report dispatch boundaries
-  let table = crate::checksum::kernel_table::active_table();
+  let table = crate::checksum::kernel_table::active_crc64_table();
 
   Crc64SelectionDiag {
     polynomial: Crc64Polynomial::Xz,
@@ -182,7 +182,7 @@ pub(crate) fn diag_crc64_nvme(len: usize) -> Crc64SelectionDiag {
   };
 
   // Thresholds are now baked into dispatch tables; report dispatch boundaries
-  let table = crate::checksum::kernel_table::active_table();
+  let table = crate::checksum::kernel_table::active_crc64_table();
 
   Crc64SelectionDiag {
     polynomial: Crc64Polynomial::Nvme,
@@ -283,26 +283,31 @@ fn crc64_apply_kernel_vectored(mut crc: u64, bufs: &[&[u8]], kernel: Crc64Dispat
 
 #[inline]
 fn crc64_xz_dispatch_auto(crc: u64, data: &[u8]) -> u64 {
-  let table = crate::checksum::kernel_table::active_table();
+  let table = crate::checksum::kernel_table::active_crc64_table();
   let kernel = table.select_fns(data.len()).crc64_xz;
   kernel(crc, data)
 }
 
 #[inline]
 fn crc64_xz_dispatch_auto_vectored(crc: u64, bufs: &[&[u8]]) -> u64 {
-  crc_vectored_dispatch!(crate::checksum::kernel_table::active_table(), crc, crc64_xz, bufs)
+  crc_vectored_dispatch!(crate::checksum::kernel_table::active_crc64_table(), crc, crc64_xz, bufs)
 }
 
 #[inline]
 fn crc64_nvme_dispatch_auto(crc: u64, data: &[u8]) -> u64 {
-  let table = crate::checksum::kernel_table::active_table();
+  let table = crate::checksum::kernel_table::active_crc64_table();
   let kernel = table.select_fns(data.len()).crc64_nvme;
   kernel(crc, data)
 }
 
 #[inline]
 fn crc64_nvme_dispatch_auto_vectored(crc: u64, bufs: &[&[u8]]) -> u64 {
-  crc_vectored_dispatch!(crate::checksum::kernel_table::active_table(), crc, crc64_nvme, bufs)
+  crc_vectored_dispatch!(
+    crate::checksum::kernel_table::active_crc64_table(),
+    crc,
+    crc64_nvme,
+    bufs
+  )
 }
 
 #[cfg(feature = "std")]
@@ -590,7 +595,7 @@ fn crc64_xz_runtime_paths() -> (
   if cfg.effective_force == Crc64Force::Auto {
     (
       crc64_xz_dispatch_auto,
-      Some(crate::checksum::kernel_table::active_table()),
+      Some(crate::checksum::kernel_table::active_crc64_table()),
     )
   } else {
     (crc64_xz_resolved_dispatch(), None)
@@ -606,7 +611,7 @@ fn crc64_nvme_runtime_paths() -> (
   if cfg.effective_force == Crc64Force::Auto {
     (
       crc64_nvme_dispatch_auto,
-      Some(crate::checksum::kernel_table::active_table()),
+      Some(crate::checksum::kernel_table::active_crc64_table()),
     )
   } else {
     (crc64_nvme_resolved_dispatch(), None)
@@ -1261,7 +1266,7 @@ mod tests {
   #[test]
   fn test_crc64_streaming_across_threshold() {
     // Use dispatch table boundaries for threshold
-    let table = crate::checksum::kernel_table::active_table();
+    let table = crate::checksum::kernel_table::active_crc64_table();
     let threshold = table.boundaries[0]; // xs_max boundary
 
     // Generate test data larger than threshold

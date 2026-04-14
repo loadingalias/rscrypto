@@ -18,11 +18,23 @@ use crate::{
 /// This is the heart of the new dispatch system. Platform detection happens
 /// exactly once, and all subsequent CRC calls use this pre-resolved table.
 static ACTIVE_TABLE: crate::backend::cache::OnceCache<&'static KernelTable> = crate::backend::cache::OnceCache::new();
+static ACTIVE_CRC64_TABLE: crate::backend::cache::OnceCache<&'static KernelTable> =
+  crate::backend::cache::OnceCache::new();
 
 /// Get the active kernel table for this platform.
 #[inline]
 pub(crate) fn active_table() -> &'static KernelTable {
   ACTIVE_TABLE.get_or_init(|| select_table(crate::platform::caps()))
+}
+
+/// Get the active CRC-64 kernel table for this platform.
+///
+/// Most architectures reuse [`active_table()`]. RISC-V is the exception: CRC-64
+/// has a different best-available ladder than CRC-16/24/32, so it resolves
+/// through a CRC-64-specific selector.
+#[inline]
+pub(crate) fn active_crc64_table() -> &'static KernelTable {
+  ACTIVE_CRC64_TABLE.get_or_init(|| select_crc64_table(crate::platform::caps()))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -48,7 +60,7 @@ pub(crate) fn crc64_xz(data: &[u8]) -> u64 {
     }
     return crate::checksum::crc64::portable::crc64_xz_bytewise(!0, data) ^ !0;
   }
-  let table = active_table();
+  let table = active_crc64_table();
   let kernel = table.select_fns(data.len()).crc64_xz;
   kernel(!0, data) ^ !0
 }
@@ -62,7 +74,7 @@ pub(crate) fn crc64_nvme(data: &[u8]) -> u64 {
     }
     return crate::checksum::crc64::portable::crc64_nvme_bytewise(!0, data) ^ !0;
   }
-  let table = active_table();
+  let table = active_crc64_table();
   let kernel = table.select_fns(data.len()).crc64_nvme;
   kernel(!0, data) ^ !0
 }
@@ -318,10 +330,10 @@ pub(crate) struct KernelTable {
 
   /// Size class boundaries: [xs_max, s_max, m_max]
   ///
-  /// - `len <= xs_max` → use `xs` kernels (tiny: 0-64 bytes)
-  /// - `len <= s_max` → use `s` kernels (small: 65-256 bytes)
-  /// - `len <= m_max` → use `m` kernels (medium: 257-4KB)
-  /// - else → use `l` kernels (large: 4KB+)
+  /// - `len <= xs_max` → use `xs` kernels
+  /// - `len <= s_max` → use `s` kernels
+  /// - `len <= m_max` → use `m` kernels
+  /// - else → use `l` kernels
   pub boundaries: [usize; 3],
 
   /// Hot-path function pointers per size class: [xs, s, m, l]
@@ -439,6 +451,21 @@ pub(crate) fn select_table(caps: Caps) -> &'static KernelTable {
   }
 
   // 2. Portable fallback
+  &PORTABLE_TABLE
+}
+
+#[inline]
+pub(crate) fn select_crc64_table(caps: Caps) -> &'static KernelTable {
+  if let Some(table) = capability_match_crc64(caps) {
+    debug_assert!(
+      caps.has(table.requires),
+      "capability_match_crc64 returned an unsafe table"
+    );
+    if caps.has(table.requires) {
+      return table;
+    }
+  }
+
   &PORTABLE_TABLE
 }
 
@@ -574,6 +601,23 @@ fn capability_match(caps: Caps) -> Option<&'static KernelTable> {
   }
 
   None
+}
+
+#[inline]
+fn capability_match_crc64(caps: Caps) -> Option<&'static KernelTable> {
+  #[cfg(target_arch = "riscv64")]
+  {
+    use crate::platform::caps::riscv::{V, ZBC, ZVBC};
+    let v_zvbc = V.union(ZVBC);
+    if caps.has(v_zvbc) {
+      return Some(&RISCV64_CRC64_ZVBC_TABLE);
+    }
+    if caps.has(ZBC) {
+      return Some(&RISCV64_CRC64_ZBC_TABLE);
+    }
+  }
+
+  capability_match(caps)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1937,12 +1981,11 @@ mod riscv64_tables {
 
   pub static RISCV64_ZBC_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::riscv::ZBC,
-    boundaries: [128, 256, 1024],
+    boundaries: [128, 1024, 4096],
     xs: PORTABLE_SET,
-    // CRC64 stays on portable slice-by-16: on in-order Zbc-only cores (e.g.
-    // SpacemiT K1) scalar CLMUL folding loses to table lookup because the
-    // CLMUL dependency chains can't be pipelined.  CRC16/24/32 still benefit
-    // from Zbc because their reference crates use weaker table algorithms.
+    // CRC64 is handled by a separate table. Keep the generic Zbc ladder focused
+    // on CRC16/24/32, and make the multi-stream cutovers less eager than the
+    // original 256/1024 thresholds.
     s: KernelSet {
       crc16_ccitt: crc16_k::CCITT_ZBC[0],
       crc16_ccitt_name: "riscv64/zbc",
@@ -1995,7 +2038,7 @@ mod riscv64_tables {
 
   pub static RISCV64_ZVBC_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::riscv::V.union(crate::platform::caps::riscv::ZVBC),
-    boundaries: [128, 256, 1024],
+    boundaries: [128, 1024, 4096],
     xs: PORTABLE_SET,
     s: KernelSet {
       crc16_ccitt: crc16_k::CCITT_ZVBC[0],
@@ -2045,6 +2088,77 @@ mod riscv64_tables {
       crc64_nvme: crc64_k::NVME_ZVBC[2],
       crc64_nvme_name: "riscv64/zvbc-4way",
     },
+  };
+
+  const fn crc64_only_set(
+    base: KernelSet,
+    crc64_xz: Crc64Fn,
+    crc64_xz_name: &'static str,
+    crc64_nvme: Crc64Fn,
+    crc64_nvme_name: &'static str,
+  ) -> KernelSet {
+    KernelSet {
+      crc16_ccitt: base.crc16_ccitt,
+      crc16_ccitt_name: base.crc16_ccitt_name,
+      crc16_ibm: base.crc16_ibm,
+      crc16_ibm_name: base.crc16_ibm_name,
+      crc24_openpgp: base.crc24_openpgp,
+      crc24_openpgp_name: base.crc24_openpgp_name,
+      crc32_ieee: base.crc32_ieee,
+      crc32_ieee_name: base.crc32_ieee_name,
+      crc32c: base.crc32c,
+      crc32c_name: base.crc32c_name,
+      crc64_xz,
+      crc64_xz_name,
+      crc64_nvme,
+      crc64_nvme_name,
+    }
+  }
+
+  // Zbc-only CRC64 is not a blanket "always portable" or "always CLMUL"
+  // decision. Slice16 wins on some in-order parts at modest sizes, while the
+  // multi-stream Zbc folds can still become the best available choice once the
+  // buffers are large enough to amortize the dependency chains.
+  pub static RISCV64_CRC64_ZBC_TABLE: KernelTable = kernel_table! {
+    requires: crate::platform::caps::riscv::ZBC,
+    boundaries: [128, 4096, 16384],
+    xs: PORTABLE_SET,
+    s: PORTABLE_SET,
+    m: crc64_only_set(
+      PORTABLE_SET,
+      crc64_k::XZ_ZBC[1],
+      "riscv64/zbc-2way",
+      crc64_k::NVME_ZBC[1],
+      "riscv64/zbc-2way",
+    ),
+    l: crc64_only_set(
+      PORTABLE_SET,
+      crc64_k::XZ_ZBC[2],
+      "riscv64/zbc-4way",
+      crc64_k::NVME_ZBC[2],
+      "riscv64/zbc-4way",
+    ),
+  };
+
+  pub static RISCV64_CRC64_ZVBC_TABLE: KernelTable = kernel_table! {
+    requires: crate::platform::caps::riscv::V.union(crate::platform::caps::riscv::ZVBC),
+    boundaries: [128, 1024, 4096],
+    xs: PORTABLE_SET,
+    s: crc64_only_set(PORTABLE_SET, crc64_k::XZ_ZVBC[0], "riscv64/zvbc", crc64_k::NVME_ZVBC[0], "riscv64/zvbc"),
+    m: crc64_only_set(
+      PORTABLE_SET,
+      crc64_k::XZ_ZVBC[1],
+      "riscv64/zvbc-2way",
+      crc64_k::NVME_ZVBC[1],
+      "riscv64/zvbc-2way",
+    ),
+    l: crc64_only_set(
+      PORTABLE_SET,
+      crc64_k::XZ_ZVBC[2],
+      "riscv64/zvbc-4way",
+      crc64_k::NVME_ZVBC[2],
+      "riscv64/zvbc-4way",
+    ),
   };
 }
 
