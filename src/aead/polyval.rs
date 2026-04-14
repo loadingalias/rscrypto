@@ -896,6 +896,39 @@ pub(super) unsafe fn s390x_aggregate_4blocks_inline(acc: u128, h_powers_rev: &[u
   unsafe { s390x_vgfm::aggregate_4blocks(acc, h_powers_rev, blocks) }
 }
 
+#[cfg(target_arch = "riscv64")]
+/// Explicit portable carryless multiply + reduce.
+///
+/// Unlike `clmul128_reduce`, this never climbs into a hardware backend.
+#[inline(always)]
+pub(super) fn portable_clmul128_reduce_inline(a: u128, b: u128) -> u128 {
+  mont_reduce(clmul128(a, b))
+}
+
+/// RISC-V Zvbc carryless multiply + reduce, guaranteed to inline.
+///
+/// # Safety
+/// Caller must ensure Zvbc is available.
+#[cfg(target_arch = "riscv64")]
+#[target_feature(enable = "v", enable = "zvbc")]
+#[inline(always)]
+pub(super) unsafe fn riscv_vector_clmul128_reduce_inline(a: u128, b: u128) -> u128 {
+  // SAFETY: Zvbc availability guaranteed by caller.
+  unsafe { rv_clmul::clmul128_reduce(a, b) }
+}
+
+/// RISC-V Zbc/Zbkc carryless multiply + reduce, guaranteed to inline.
+///
+/// # Safety
+/// Caller must ensure Zbc or Zbkc is available.
+#[cfg(target_arch = "riscv64")]
+#[target_feature(enable = "zbc")]
+#[inline(always)]
+pub(super) unsafe fn riscv_scalar_clmul128_reduce_inline(a: u128, b: u128) -> u128 {
+  // SAFETY: Zbc availability guaranteed by caller.
+  unsafe { rv_scalar_clmul::clmul128_reduce(a, b) }
+}
+
 // ---------------------------------------------------------------------------
 // Combined multiply + reduce with hardware dispatch
 // ---------------------------------------------------------------------------

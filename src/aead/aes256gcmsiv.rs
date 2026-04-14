@@ -6,6 +6,8 @@ use core::fmt;
 
 #[cfg(target_arch = "x86_64")]
 use super::polyval::{accumulate_4blocks, precompute_powers};
+#[cfg(target_arch = "riscv64")]
+use super::targets::{AeadBackend, AeadPrimitive, select_backend};
 use super::{AeadBufferError, Nonce96, OpenError, aes, polyval};
 use crate::traits::{Aead, VerificationError, ct};
 
@@ -160,6 +162,8 @@ impl_hex_fmt!(Aes256GcmSivTag);
 #[derive(Clone)]
 pub struct Aes256GcmSiv {
   master_ek: aes::Aes256EncKey,
+  #[cfg(target_arch = "riscv64")]
+  master_key: Aes256GcmSivKey,
 }
 
 impl fmt::Debug for Aes256GcmSiv {
@@ -317,6 +321,210 @@ fn compute_tag(
   aes::aes256_encrypt_block(enc_ek, &mut s);
 
   s
+}
+
+#[cfg(target_arch = "riscv64")]
+#[derive(Clone, Copy)]
+enum RiscvPolyvalBackend {
+  Portable,
+  Scalar,
+  Vector,
+}
+
+#[cfg(target_arch = "riscv64")]
+#[inline]
+fn reduce_riscv_portable(a: u128, b: u128) -> u128 {
+  polyval::portable_clmul128_reduce_inline(a, b)
+}
+
+#[cfg(target_arch = "riscv64")]
+#[inline]
+fn reduce_riscv_scalar(a: u128, b: u128) -> u128 {
+  // SAFETY: caller only selects this reducer after runtime detection confirms
+  // Zbc or Zbkc support.
+  unsafe { polyval::riscv_scalar_clmul128_reduce_inline(a, b) }
+}
+
+#[cfg(target_arch = "riscv64")]
+#[inline]
+fn reduce_riscv_vector(a: u128, b: u128) -> u128 {
+  // SAFETY: caller only selects this reducer after runtime detection confirms
+  // Zvbc support.
+  unsafe { polyval::riscv_vector_clmul128_reduce_inline(a, b) }
+}
+
+#[cfg(target_arch = "riscv64")]
+#[inline]
+fn compute_tag_riscv_with_reduce(
+  auth_key: &[u8; 16],
+  enc_ek: &aes::Aes256EncKey,
+  nonce: &Nonce96,
+  aad: &[u8],
+  plaintext: &[u8],
+  reduce: impl Fn(u128, u128) -> u128,
+) -> [u8; TAG_SIZE] {
+  let h = u128::from_le_bytes(*auth_key);
+  let mut acc: u128 = 0;
+
+  let mut offset = 0usize;
+  while offset.strict_add(16) <= aad.len() {
+    let mut block = [0u8; 16];
+    block.copy_from_slice(&aad[offset..offset.strict_add(16)]);
+    acc ^= u128::from_le_bytes(block);
+    acc = reduce(acc, h);
+    offset = offset.strict_add(16);
+  }
+  if offset < aad.len() {
+    let mut block = [0u8; 16];
+    block[..aad.len().strict_sub(offset)].copy_from_slice(&aad[offset..]);
+    acc ^= u128::from_le_bytes(block);
+    acc = reduce(acc, h);
+  }
+
+  offset = 0;
+  while offset.strict_add(16) <= plaintext.len() {
+    let mut block = [0u8; 16];
+    block.copy_from_slice(&plaintext[offset..offset.strict_add(16)]);
+    acc ^= u128::from_le_bytes(block);
+    acc = reduce(acc, h);
+    offset = offset.strict_add(16);
+  }
+  if offset < plaintext.len() {
+    let mut block = [0u8; 16];
+    block[..plaintext.len().strict_sub(offset)].copy_from_slice(&plaintext[offset..]);
+    acc ^= u128::from_le_bytes(block);
+    acc = reduce(acc, h);
+  }
+
+  let aad_bits = (aad.len() as u64).strict_mul(8);
+  let pt_bits = (plaintext.len() as u64).strict_mul(8);
+  let mut length_block = [0u8; 16];
+  length_block[0..8].copy_from_slice(&aad_bits.to_le_bytes());
+  length_block[8..16].copy_from_slice(&pt_bits.to_le_bytes());
+  acc ^= u128::from_le_bytes(length_block);
+  acc = reduce(acc, h);
+
+  let mut s = acc.to_le_bytes();
+  let nonce_bytes = nonce.as_bytes();
+  let mut j = 0usize;
+  while j < 12 {
+    s[j] ^= nonce_bytes[j];
+    j = j.strict_add(1);
+  }
+  s[15] &= 0x7f;
+  aes::aes256_encrypt_block(enc_ek, &mut s);
+  s
+}
+
+#[cfg(target_arch = "riscv64")]
+#[inline]
+fn derive_keys_riscv(master_key: &Aes256GcmSivKey, nonce: &Nonce96, backend: AeadBackend) -> ([u8; 16], [u8; 32]) {
+  let master_ek = match backend {
+    AeadBackend::Riscv64VectorCrypto => aes::aes256_expand_key_riscv_vector(master_key.as_bytes()),
+    AeadBackend::Riscv64ScalarCrypto => aes::aes256_expand_key_riscv_scalar(master_key.as_bytes()),
+    AeadBackend::Riscv64Ttable => aes::aes256_expand_key_riscv_ttable(master_key.as_bytes()),
+    _ => unreachable!("non-RISC-V backend passed to derive_keys_riscv"),
+  };
+  derive_keys(&master_ek, nonce)
+}
+
+#[cfg(target_arch = "riscv64")]
+#[inline]
+fn expand_message_key_riscv(enc_key: &[u8; 32], backend: AeadBackend) -> aes::Aes256EncKey {
+  match backend {
+    AeadBackend::Riscv64VectorCrypto => aes::aes256_expand_key_riscv_vector(enc_key),
+    AeadBackend::Riscv64ScalarCrypto => aes::aes256_expand_key_riscv_scalar(enc_key),
+    AeadBackend::Riscv64Ttable => aes::aes256_expand_key_riscv_ttable(enc_key),
+    _ => unreachable!("non-RISC-V backend passed to expand_message_key_riscv"),
+  }
+}
+
+#[cfg(target_arch = "riscv64")]
+#[inline]
+fn riscv_polyval_backend(backend: AeadBackend) -> RiscvPolyvalBackend {
+  match backend {
+    AeadBackend::Riscv64VectorCrypto => RiscvPolyvalBackend::Vector,
+    AeadBackend::Riscv64ScalarCrypto => RiscvPolyvalBackend::Scalar,
+    AeadBackend::Riscv64Ttable => {
+      let caps = crate::platform::caps();
+      if caps.has(crate::platform::caps::riscv::ZBC) || caps.has(crate::platform::caps::riscv::ZBKC) {
+        RiscvPolyvalBackend::Scalar
+      } else {
+        RiscvPolyvalBackend::Portable
+      }
+    }
+    _ => unreachable!("non-RISC-V backend passed to riscv_polyval_backend"),
+  }
+}
+
+#[cfg(target_arch = "riscv64")]
+#[inline]
+fn compute_tag_riscv(
+  auth_key: &[u8; 16],
+  enc_ek: &aes::Aes256EncKey,
+  nonce: &Nonce96,
+  aad: &[u8],
+  plaintext: &[u8],
+  backend: AeadBackend,
+) -> [u8; TAG_SIZE] {
+  match riscv_polyval_backend(backend) {
+    RiscvPolyvalBackend::Portable => {
+      compute_tag_riscv_with_reduce(auth_key, enc_ek, nonce, aad, plaintext, reduce_riscv_portable)
+    }
+    RiscvPolyvalBackend::Scalar => {
+      compute_tag_riscv_with_reduce(auth_key, enc_ek, nonce, aad, plaintext, reduce_riscv_scalar)
+    }
+    RiscvPolyvalBackend::Vector => {
+      compute_tag_riscv_with_reduce(auth_key, enc_ek, nonce, aad, plaintext, reduce_riscv_vector)
+    }
+  }
+}
+
+#[cfg(target_arch = "riscv64")]
+#[inline]
+fn encrypt_riscv(
+  master_key: &Aes256GcmSivKey,
+  backend: AeadBackend,
+  nonce: &Nonce96,
+  aad: &[u8],
+  buffer: &mut [u8],
+) -> [u8; TAG_SIZE] {
+  let (mut auth_key, mut enc_key) = derive_keys_riscv(master_key, nonce, backend);
+  let ek = expand_message_key_riscv(&enc_key, backend);
+  let tag_bytes = compute_tag_riscv(&auth_key, &ek, nonce, aad, buffer, backend);
+  let mut counter_block = tag_bytes;
+  counter_block[15] |= 0x80;
+  aes::aes256_ctr32_encrypt(&ek, &counter_block, buffer);
+  ct::zeroize(&mut auth_key);
+  ct::zeroize(&mut enc_key);
+  tag_bytes
+}
+
+#[cfg(target_arch = "riscv64")]
+#[inline]
+fn decrypt_riscv(
+  master_key: &Aes256GcmSivKey,
+  backend: AeadBackend,
+  nonce: &Nonce96,
+  aad: &[u8],
+  buffer: &mut [u8],
+  tag: &Aes256GcmSivTag,
+) -> Result<(), VerificationError> {
+  let (mut auth_key, mut enc_key) = derive_keys_riscv(master_key, nonce, backend);
+  let ek = expand_message_key_riscv(&enc_key, backend);
+  let mut counter_block = tag.0;
+  counter_block[15] |= 0x80;
+  aes::aes256_ctr32_encrypt(&ek, &counter_block, buffer);
+
+  let expected = compute_tag_riscv(&auth_key, &ek, nonce, aad, buffer, backend);
+  ct::zeroize(&mut auth_key);
+  ct::zeroize(&mut enc_key);
+
+  if !ct::constant_time_eq(&expected, tag.as_bytes()) {
+    ct::zeroize(buffer);
+    return Err(VerificationError::new());
+  }
+  Ok(())
 }
 
 /// Compute the POLYVAL-based authentication tag using 4-block wide processing.
@@ -1307,6 +1515,8 @@ impl Aead for Aes256GcmSiv {
   fn new(key: &Self::Key) -> Self {
     Self {
       master_ek: aes::aes256_expand_key(key.as_bytes()),
+      #[cfg(target_arch = "riscv64")]
+      master_key: key.clone(),
     }
   }
 
@@ -1375,6 +1585,22 @@ impl Aead for Aes256GcmSiv {
         // SAFETY: z/Vector + MSA availability verified via STFLE/HWCAP.
         let tag_bytes = unsafe { encrypt_fused_s390x(&mut auth_key, &mut enc_key, nonce, aad, buffer) };
         return Aes256GcmSivTag::from_bytes(tag_bytes);
+      }
+    }
+
+    #[cfg(target_arch = "riscv64")]
+    {
+      let backend = select_backend(
+        AeadPrimitive::Aes256GcmSiv,
+        crate::platform::arch(),
+        crate::platform::caps(),
+      );
+      match backend {
+        AeadBackend::Riscv64VectorCrypto | AeadBackend::Riscv64ScalarCrypto | AeadBackend::Riscv64Ttable => {
+          let tag_bytes = encrypt_riscv(&self.master_key, backend, nonce, aad, buffer);
+          return Aes256GcmSivTag::from_bytes(tag_bytes);
+        }
+        _ => {}
       }
     }
 
@@ -1458,6 +1684,21 @@ impl Aead for Aes256GcmSiv {
         let (mut auth_key, mut enc_key) = derive_keys(&self.master_ek, nonce);
         // SAFETY: z/Vector + MSA availability verified via STFLE/HWCAP.
         return unsafe { decrypt_fused_s390x(&mut auth_key, &mut enc_key, nonce, aad, buffer, tag) };
+      }
+    }
+
+    #[cfg(target_arch = "riscv64")]
+    {
+      let backend = select_backend(
+        AeadPrimitive::Aes256GcmSiv,
+        crate::platform::arch(),
+        crate::platform::caps(),
+      );
+      match backend {
+        AeadBackend::Riscv64VectorCrypto | AeadBackend::Riscv64ScalarCrypto | AeadBackend::Riscv64Ttable => {
+          return decrypt_riscv(&self.master_key, backend, nonce, aad, buffer, tag);
+        }
+        _ => {}
       }
     }
 

@@ -1339,6 +1339,15 @@ fn aes256_expand_key_portable(key: &[u8; KEY_SIZE]) -> [u32; EXPANDED_KEY_WORDS]
   rk
 }
 
+#[cfg(target_arch = "riscv64")]
+#[inline]
+fn zeroize_expanded_key_words(rk: &mut [u32; EXPANDED_KEY_WORDS]) {
+  // SAFETY: [u32; 60] is layout-compatible with [u8; 240].
+  crate::traits::ct::zeroize(unsafe {
+    core::slice::from_raw_parts_mut(rk.as_mut_ptr().cast::<u8>(), EXPANDED_KEY_WORDS.strict_mul(4))
+  });
+}
+
 /// Expand a 256-bit AES key into round keys.
 ///
 /// On x86_64 with AES-NI or aarch64 with AES-CE, converts to hardware-native
@@ -1386,11 +1395,7 @@ pub(crate) fn aes256_expand_key(key: &[u8; KEY_SIZE]) -> Aes256EncKey {
     if crate::platform::caps().has(crate::platform::caps::riscv::ZVKNED) {
       let mut portable_rk = aes256_expand_key_portable(key);
       let rv_keys = rv_aes::from_portable(&portable_rk);
-      // Zeroize intermediate portable key schedule.
-      // SAFETY: [u32; 60] is layout-compatible with [u8; 240].
-      crate::traits::ct::zeroize(unsafe {
-        core::slice::from_raw_parts_mut(portable_rk.as_mut_ptr().cast::<u8>(), EXPANDED_KEY_WORDS.strict_mul(4))
-      });
+      zeroize_expanded_key_words(&mut portable_rk);
       return Aes256EncKey {
         inner: KeyInner::RvAes(rv_keys),
       };
@@ -1398,16 +1403,42 @@ pub(crate) fn aes256_expand_key(key: &[u8; KEY_SIZE]) -> Aes256EncKey {
     if crate::platform::caps().has(crate::platform::caps::riscv::ZKNE) {
       let mut portable_rk = aes256_expand_key_portable(key);
       let rv_keys = rv_scalar_aes::from_portable(&portable_rk);
-      // Zeroize intermediate portable key schedule.
-      // SAFETY: [u32; 60] is layout-compatible with [u8; 240].
-      crate::traits::ct::zeroize(unsafe {
-        core::slice::from_raw_parts_mut(portable_rk.as_mut_ptr().cast::<u8>(), EXPANDED_KEY_WORDS.strict_mul(4))
-      });
+      zeroize_expanded_key_words(&mut portable_rk);
       return Aes256EncKey {
         inner: KeyInner::RvScalar(rv_keys),
       };
     }
   }
+  Aes256EncKey {
+    inner: KeyInner::Portable(aes256_expand_key_portable(key)),
+  }
+}
+
+#[cfg(target_arch = "riscv64")]
+#[inline]
+pub(crate) fn aes256_expand_key_riscv_vector(key: &[u8; KEY_SIZE]) -> Aes256EncKey {
+  let mut portable_rk = aes256_expand_key_portable(key);
+  let rv_keys = rv_aes::from_portable(&portable_rk);
+  zeroize_expanded_key_words(&mut portable_rk);
+  Aes256EncKey {
+    inner: KeyInner::RvAes(rv_keys),
+  }
+}
+
+#[cfg(target_arch = "riscv64")]
+#[inline]
+pub(crate) fn aes256_expand_key_riscv_scalar(key: &[u8; KEY_SIZE]) -> Aes256EncKey {
+  let mut portable_rk = aes256_expand_key_portable(key);
+  let rv_keys = rv_scalar_aes::from_portable(&portable_rk);
+  zeroize_expanded_key_words(&mut portable_rk);
+  Aes256EncKey {
+    inner: KeyInner::RvScalar(rv_keys),
+  }
+}
+
+#[cfg(target_arch = "riscv64")]
+#[inline]
+pub(crate) fn aes256_expand_key_riscv_ttable(key: &[u8; KEY_SIZE]) -> Aes256EncKey {
   Aes256EncKey {
     inner: KeyInner::Portable(aes256_expand_key_portable(key)),
   }
