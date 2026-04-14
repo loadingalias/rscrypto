@@ -78,7 +78,7 @@ impl Cshake256 {
     self.core.update(data);
   }
 
-  #[cfg(feature = "auth")]
+  #[cfg(feature = "kmac")]
   #[inline]
   pub(crate) fn absorb_bytepad_segments(&mut self, segments: &[&[u8]], payload_len: usize) {
     absorb_bytepad(&mut self.core, segments, payload_len);

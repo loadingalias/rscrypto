@@ -1898,8 +1898,10 @@ impl fmt::Debug for Aegis256Key {
 impl Aegis256Key {
   /// Construct a key by filling bytes from the provided closure.
   ///
-  /// ```ignore
-  /// let key = Aegis256Key::generate(|buf| getrandom::fill(buf).unwrap());
+  /// ```rust
+  /// # use rscrypto::Aegis256Key;
+  /// let key = Aegis256Key::generate(|buf| buf.fill(0xA5));
+  /// assert_eq!(key.as_bytes(), &[0xA5; Aegis256Key::LENGTH]);
   /// ```
   #[inline]
   #[must_use]
@@ -2295,6 +2297,9 @@ impl Aead for Aegis256 {
 
 #[cfg(test)]
 mod tests {
+  use alloc::{vec, vec::Vec};
+  use std::eprintln;
+
   use super::*;
 
   #[cfg(not(any(target_arch = "s390x", target_arch = "riscv64")))]

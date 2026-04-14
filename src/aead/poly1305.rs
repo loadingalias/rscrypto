@@ -1714,6 +1714,8 @@ mod avx2_par4 {
 
 #[cfg(test)]
 mod tests {
+  use alloc::vec::Vec;
+
   use super::authenticate;
   #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
   use super::{ComputeBlockFn, State, authenticate_aead_with};

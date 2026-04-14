@@ -189,6 +189,7 @@ pub struct Sha512 {
 }
 
 #[derive(Clone, Copy)]
+#[cfg(feature = "hmac")]
 pub(crate) struct Sha512Prefix {
   state: [u64; 8],
   bytes_hashed: u128,
@@ -329,6 +330,7 @@ impl Sha512 {
 
   #[inline]
   #[must_use]
+  #[cfg(feature = "hmac")]
   pub(crate) fn aligned_prefix(&self) -> Sha512Prefix {
     debug_assert_eq!(self.block_len, 0);
     Sha512Prefix {
@@ -341,6 +343,7 @@ impl Sha512 {
 
   #[inline]
   #[must_use]
+  #[cfg(feature = "hmac")]
   pub(crate) fn from_aligned_prefix(prefix: Sha512Prefix) -> Self {
     Self {
       state: prefix.state,
@@ -353,6 +356,7 @@ impl Sha512 {
   }
 
   #[inline]
+  #[cfg(feature = "hmac")]
   pub(crate) fn reset_to_aligned_prefix(&mut self, prefix: Sha512Prefix) {
     self.state = prefix.state;
     self.block_len = 0;
@@ -361,7 +365,7 @@ impl Sha512 {
     self.dispatch = prefix.dispatch;
   }
 
-  #[cfg(test)]
+  #[cfg(all(feature = "hmac", test))]
   #[inline]
   pub(crate) fn new_with_compress_for_test(compress_blocks: CompressBlocksFn) -> Self {
     Self {

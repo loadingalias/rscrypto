@@ -1761,6 +1761,8 @@ mod riscv64_vector {
 
 #[cfg(test)]
 mod tests {
+  use alloc::vec;
+
   #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
   use super::xor_keystream_portable;
   use super::{KEY_SIZE, NONCE_SIZE, block, hchacha20, xor_keystream};

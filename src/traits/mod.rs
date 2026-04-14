@@ -27,7 +27,14 @@
 //!
 //! This crate denies `unwrap`, `expect`, and indexing in non-test code to ensure
 //! all error paths are handled explicitly.
-#[cfg(feature = "aead")]
+#[cfg(any(
+  feature = "aes-gcm",
+  feature = "aes-gcm-siv",
+  feature = "chacha20poly1305",
+  feature = "xchacha20poly1305",
+  feature = "aegis256",
+  feature = "ascon-aead"
+))]
 mod aead;
 mod checksum;
 pub mod ct;
@@ -39,7 +46,14 @@ pub mod io;
 mod mac;
 mod xof;
 
-#[cfg(feature = "aead")]
+#[cfg(any(
+  feature = "aes-gcm",
+  feature = "aes-gcm-siv",
+  feature = "chacha20poly1305",
+  feature = "xchacha20poly1305",
+  feature = "aegis256",
+  feature = "ascon-aead"
+))]
 pub use aead::Aead;
 pub use checksum::{Checksum, ChecksumCombine};
 pub use digest::Digest;

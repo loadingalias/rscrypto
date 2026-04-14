@@ -55,6 +55,7 @@
 /// # Returns
 ///
 /// The raw CRC register state (caller applies final XOR if needed).
+#[cfg(feature = "crc16")]
 #[must_use]
 pub const fn crc16_bitwise(poly: u16, init: u16, data: &[u8]) -> u16 {
   let mut crc = init;
@@ -89,6 +90,7 @@ pub const fn crc16_bitwise(poly: u16, init: u16, data: &[u8]) -> u16 {
 /// # Returns
 ///
 /// The CRC value in the low 24 bits.
+#[cfg(feature = "crc24")]
 #[must_use]
 pub const fn crc24_bitwise(poly: u32, init: u32, data: &[u8]) -> u32 {
   // Work in expanded form: CRC in top 24 bits of u32
@@ -132,6 +134,7 @@ pub const fn crc24_bitwise(poly: u32, init: u32, data: &[u8]) -> u32 {
 /// # Returns
 ///
 /// The raw CRC register state (caller applies final XOR if needed).
+#[cfg(feature = "crc32")]
 #[must_use]
 pub const fn crc32_bitwise(poly: u32, init: u32, data: &[u8]) -> u32 {
   let mut crc = init;
@@ -166,6 +169,7 @@ pub const fn crc32_bitwise(poly: u32, init: u32, data: &[u8]) -> u32 {
 /// # Returns
 ///
 /// The raw CRC register state (caller applies final XOR if needed).
+#[cfg(feature = "crc64")]
 #[must_use]
 pub const fn crc64_bitwise(poly: u64, init: u64, data: &[u8]) -> u64 {
   let mut crc = init;
@@ -189,13 +193,19 @@ pub const fn crc64_bitwise(poly: u64, init: u64, data: &[u8]) -> u64 {
 // These const assertions verify the reference implementations against known
 // check values at compile time. If these fail, the build fails.
 
-use super::tables::{
-  CRC16_CCITT_POLY, CRC24_OPENPGP_POLY, CRC32_IEEE_POLY, CRC32C_POLY, CRC64_NVME_POLY, CRC64_XZ_POLY,
-};
+#[cfg(feature = "crc16")]
+use super::tables::CRC16_CCITT_POLY;
+#[cfg(feature = "crc24")]
+use super::tables::CRC24_OPENPGP_POLY;
+#[cfg(feature = "crc32")]
+use super::tables::{CRC32_IEEE_POLY, CRC32C_POLY};
+#[cfg(feature = "crc64")]
+use super::tables::{CRC64_NVME_POLY, CRC64_XZ_POLY};
 
 /// Standard test input for CRC check values.
 const CHECK_INPUT: &[u8] = b"123456789";
 
+#[cfg(feature = "crc16")]
 // CRC-16-CCITT: init=0xFFFF, xorout=0xFFFF
 // Check value: 0x906E (per CRC RevEng catalog for CRC-16/CCITT-FALSE reflected variant)
 const _: () = {
@@ -204,6 +214,7 @@ const _: () = {
   assert!(check == 0x906E);
 };
 
+#[cfg(feature = "crc24")]
 // CRC-24-OPENPGP: init=0xB704CE, xorout=0x000000
 // Check value: 0x21CF02
 const _: () = {
@@ -211,6 +222,7 @@ const _: () = {
   assert!(check == 0x0021_CF02);
 };
 
+#[cfg(feature = "crc32")]
 // CRC-32-IEEE: init=0xFFFFFFFF, xorout=0xFFFFFFFF
 // Check value: 0xCBF43926
 const _: () = {
@@ -219,6 +231,7 @@ const _: () = {
   assert!(check == 0xCBF4_3926);
 };
 
+#[cfg(feature = "crc32")]
 // CRC-32C (Castagnoli): init=0xFFFFFFFF, xorout=0xFFFFFFFF
 // Check value: 0xE3069283
 const _: () = {
@@ -227,6 +240,7 @@ const _: () = {
   assert!(check == 0xE306_9283);
 };
 
+#[cfg(feature = "crc64")]
 // CRC-64-XZ: init=0xFFFFFFFFFFFFFFFF, xorout=0xFFFFFFFFFFFFFFFF
 // Check value: 0x995DC9BBDF1939FA
 const _: () = {
@@ -235,6 +249,7 @@ const _: () = {
   assert!(check == 0x995D_C9BB_DF19_39FA);
 };
 
+#[cfg(feature = "crc64")]
 // CRC-64-NVME: init=0xFFFFFFFFFFFFFFFF, xorout=0xFFFFFFFFFFFFFFFF
 // Check value: 0xAE8B14860A799888
 const _: () = {
@@ -256,6 +271,7 @@ mod tests {
   // ─────────────────────────────────────────────────────────────────────────
 
   #[test]
+  #[cfg(feature = "crc16")]
   fn crc16_empty() {
     // Empty input should return init XOR xorout
     let raw = crc16_bitwise(CRC16_CCITT_POLY, !0u16, &[]);
@@ -263,6 +279,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(feature = "crc16")]
   fn crc16_single_bytes() {
     // Verify single-byte CRCs are consistent
     for byte in 0u8..=255 {
@@ -273,6 +290,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(feature = "crc16")]
   fn crc16_incremental() {
     // Verify incremental computation matches one-shot
     let data = b"The quick brown fox jumps over the lazy dog";
@@ -290,6 +308,7 @@ mod tests {
   // ─────────────────────────────────────────────────────────────────────────
 
   #[test]
+  #[cfg(feature = "crc24")]
   fn crc24_empty() {
     // Empty input should return init (no xorout for OpenPGP)
     let crc = crc24_bitwise(CRC24_OPENPGP_POLY, 0x00B7_04CE, &[]);
@@ -297,6 +316,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(feature = "crc24")]
   fn crc24_incremental() {
     let data = b"The quick brown fox jumps over the lazy dog";
     let oneshot = crc24_bitwise(CRC24_OPENPGP_POLY, 0x00B7_04CE, data);
@@ -313,12 +333,14 @@ mod tests {
   // ─────────────────────────────────────────────────────────────────────────
 
   #[test]
+  #[cfg(feature = "crc32")]
   fn crc32_empty() {
     let raw = crc32_bitwise(CRC32_IEEE_POLY, !0u32, &[]);
     assert_eq!(raw ^ !0u32, 0);
   }
 
   #[test]
+  #[cfg(feature = "crc32")]
   fn crc32_single_bytes() {
     for byte in 0u8..=255 {
       let crc = crc32_bitwise(CRC32_IEEE_POLY, !0u32, &[byte]);
@@ -327,6 +349,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(feature = "crc32")]
   fn crc32_incremental() {
     let data = b"The quick brown fox jumps over the lazy dog";
     let oneshot = crc32_bitwise(CRC32_IEEE_POLY, !0u32, data);
@@ -339,6 +362,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(feature = "crc32")]
   fn crc32c_check_value() {
     let raw = crc32_bitwise(CRC32C_POLY, !0u32, CHECK_INPUT);
     assert_eq!(raw ^ !0u32, 0xE306_9283);
@@ -349,6 +373,7 @@ mod tests {
   // ─────────────────────────────────────────────────────────────────────────
 
   #[test]
+  #[cfg(feature = "crc64")]
   fn crc64_empty() {
     let raw = crc64_bitwise(CRC64_XZ_POLY, !0u64, &[]);
     assert_eq!(raw ^ !0u64, 0);
@@ -358,6 +383,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(feature = "crc64")]
   fn crc64_single_bytes() {
     for byte in 0u8..=255 {
       let crc = crc64_bitwise(CRC64_XZ_POLY, !0u64, &[byte]);
@@ -366,6 +392,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(feature = "crc64")]
   fn crc64_incremental() {
     let data = b"The quick brown fox jumps over the lazy dog";
     let oneshot = crc64_bitwise(CRC64_XZ_POLY, !0u64, data);
@@ -378,6 +405,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(feature = "crc64")]
   fn crc64_nvme_check_value() {
     let raw = crc64_bitwise(CRC64_NVME_POLY, !0u64, CHECK_INPUT);
     assert_eq!(raw ^ !0u64, 0xAE8B_1486_0A79_9888);
@@ -388,6 +416,7 @@ mod tests {
   // ─────────────────────────────────────────────────────────────────────────
 
   #[test]
+  #[cfg(all(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64"))]
   fn all_widths_handle_large_input() {
     // Verify all widths can handle larger inputs without panic
     let data: [u8; 1024] = core::array::from_fn(|i| (i as u8).wrapping_mul(17));

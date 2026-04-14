@@ -3,19 +3,27 @@
 #[cfg(all(feature = "checksums", feature = "std"))]
 use std::io::{Cursor, Read, Write};
 
+#[cfg(feature = "kmac")]
+use rscrypto::Kmac256;
+use rscrypto::VerificationError;
 #[cfg(feature = "aead")]
 use rscrypto::{
-  Aead, Aegis256, Aegis256Key, ChaCha20Poly1305, ChaCha20Poly1305Key, VerificationError, XChaCha20Poly1305,
-  XChaCha20Poly1305Key,
-  aead::{AeadBufferError, Nonce96, Nonce192, Nonce256},
+  Aead, Aegis256, Aegis256Key, ChaCha20Poly1305, ChaCha20Poly1305Key, XChaCha20Poly1305, XChaCha20Poly1305Key,
+  aead::{AeadBufferError, Nonce96, Nonce192, Nonce256, OpenError},
 };
 #[cfg(feature = "hashes")]
 use rscrypto::{
   AsconCxof128, AsconXof, Blake3, Cshake256, Digest, Sha3_224, Sha3_256, Sha3_384, Sha3_512, Sha224, Sha256, Sha384,
   Sha512, Sha512_256, Shake128, Shake256, Xof,
 };
-#[cfg(feature = "auth")]
-use rscrypto::{HmacSha256, HmacSha384, HmacSha512, Kmac256, Mac, X25519PublicKey, X25519SecretKey};
+#[cfg(feature = "ed25519")]
+use rscrypto::{Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, verify_ed25519};
+#[cfg(feature = "hkdf")]
+use rscrypto::{HkdfSha256, HkdfSha384, auth::HkdfOutputLengthError};
+#[cfg(feature = "hmac")]
+use rscrypto::{HmacSha256, HmacSha384, HmacSha512, Mac};
+#[cfg(feature = "x25519")]
+use rscrypto::{X25519Error, X25519PublicKey, X25519SecretKey};
 
 #[cfg(feature = "hashes")]
 fn assert_digest_api<D>()
@@ -38,7 +46,7 @@ fn squeeze_32(mut reader: impl Xof) -> [u8; 32] {
   out
 }
 
-#[cfg(feature = "auth")]
+#[cfg(feature = "hmac")]
 fn assert_mac_api<M>()
 where
   M: Mac,
@@ -216,12 +224,16 @@ fn all_xofs_follow_new_update_finalize_xof_and_xof() {
 }
 
 #[test]
-#[cfg(feature = "auth")]
+#[cfg(feature = "hmac")]
 fn all_macs_follow_new_update_finalize_reset() {
   assert_mac_api::<HmacSha256>();
   assert_mac_api::<HmacSha384>();
   assert_mac_api::<HmacSha512>();
+}
 
+#[test]
+#[cfg(feature = "kmac")]
+fn kmac_follows_new_update_finalize_into_reset_and_verify() {
   let mut kmac = Kmac256::new(b"api-consistency-key", b"ctx=v1");
   kmac.update(b"abc");
   let expected = Kmac256::mac_array::<32>(b"api-consistency-key", b"ctx=v1", b"abc");
@@ -236,7 +248,57 @@ fn all_macs_follow_new_update_finalize_reset() {
 }
 
 #[test]
-#[cfg(feature = "auth")]
+#[cfg(feature = "hkdf")]
+fn hkdfs_follow_new_expand_and_derive_array_conventions() {
+  let hkdf256 = HkdfSha256::new(b"salt", b"ikm");
+  let hkdf384 = HkdfSha384::new(b"salt", b"ikm");
+
+  let okm256 = hkdf256.expand_array::<32>(b"info").unwrap();
+  let okm384 = hkdf384.expand_array::<48>(b"info").unwrap();
+
+  assert_eq!(
+    okm256,
+    HkdfSha256::derive_array::<32>(b"salt", b"ikm", b"info").unwrap()
+  );
+  assert_eq!(
+    okm384,
+    HkdfSha384::derive_array::<48>(b"salt", b"ikm", b"info").unwrap()
+  );
+  assert_eq!(
+    HkdfSha256::derive_array::<32>(b"salt", b"ikm", b"info").unwrap(),
+    okm256
+  );
+  assert_eq!(
+    HkdfSha384::derive_array::<48>(b"salt", b"ikm", b"info").unwrap(),
+    okm384
+  );
+  assert_eq!(hkdf256.prk().len(), 32);
+  assert_eq!(hkdf384.prk().len(), 48);
+
+  let mut oversized = vec![0u8; HkdfSha256::MAX_OUTPUT_SIZE + 1];
+  assert_eq!(
+    HkdfSha256::derive(b"salt", b"ikm", b"info", &mut oversized),
+    Err(HkdfOutputLengthError::new())
+  );
+}
+
+#[test]
+#[cfg(feature = "ed25519")]
+fn ed25519_types_follow_byte_roundtrip_and_verify_conventions() {
+  let secret = Ed25519SecretKey::from_bytes([0x24; Ed25519SecretKey::LENGTH]);
+  let keypair = Ed25519Keypair::from_secret_key(secret.clone());
+  let public = Ed25519PublicKey::from_bytes(keypair.public_key().to_bytes());
+  let signature = keypair.sign(b"api-consistency-ed25519");
+
+  assert_eq!(secret.to_bytes(), *secret.as_bytes());
+  assert_eq!(public.to_bytes(), *public.as_bytes());
+  assert_eq!(signature.to_bytes(), *signature.as_bytes());
+  assert!(public.verify(b"api-consistency-ed25519", &signature).is_ok());
+  assert!(verify_ed25519(b"api-consistency-ed25519", &public, &signature).is_ok());
+}
+
+#[test]
+#[cfg(feature = "x25519")]
 fn x25519_types_follow_byte_roundtrip_conventions() {
   let secret = X25519SecretKey::from_bytes([0x42; X25519SecretKey::LENGTH]);
   let public = X25519PublicKey::from_bytes(secret.public_key().to_bytes());
@@ -245,6 +307,39 @@ fn x25519_types_follow_byte_roundtrip_conventions() {
   assert_eq!(secret.to_bytes(), *secret.as_bytes());
   assert_eq!(public.to_bytes(), *public.as_bytes());
   assert_eq!(shared.to_bytes(), *shared.as_bytes());
+}
+
+#[test]
+fn verification_error_follows_new_default_and_display_conventions() {
+  assert_eq!(VerificationError::new(), VerificationError::default());
+  assert_eq!(VerificationError::new().to_string(), "verification failed");
+}
+
+#[test]
+#[cfg(feature = "hkdf")]
+fn hkdf_error_follows_new_default_and_display_conventions() {
+  assert_eq!(HkdfOutputLengthError::new(), HkdfOutputLengthError::default());
+  assert_eq!(
+    HkdfOutputLengthError::new().to_string(),
+    "requested HKDF output exceeds the algorithm maximum"
+  );
+}
+
+#[test]
+#[cfg(feature = "x25519")]
+fn x25519_error_follows_new_default_and_display_conventions() {
+  assert_eq!(X25519Error::new(), X25519Error::default());
+  assert_eq!(X25519Error::new().to_string(), "x25519 shared secret is all-zero");
+}
+
+#[test]
+#[cfg(feature = "aead")]
+fn aead_errors_follow_new_default_and_display_conventions() {
+  assert_eq!(AeadBufferError::new(), AeadBufferError::default());
+  assert_eq!(AeadBufferError::new().to_string(), "buffer length mismatch");
+  assert_eq!(OpenError::default(), OpenError::buffer());
+  assert_eq!(OpenError::buffer().to_string(), "buffer length mismatch");
+  assert_eq!(OpenError::verification().to_string(), "verification failed");
 }
 
 #[test]

@@ -221,12 +221,14 @@ mod kernel_tables {
 
 /// CRC-64-XZ portable kernel wrapper.
 #[cfg(any(test, feature = "std"))]
+#[cfg_attr(all(test, not(feature = "std")), allow(dead_code))]
 fn crc64_xz_portable(crc: u64, data: &[u8]) -> u64 {
   portable::crc64_slice16_xz(crc, data)
 }
 
 /// CRC-64-NVME portable kernel wrapper.
 #[cfg(any(test, feature = "std"))]
+#[cfg_attr(all(test, not(feature = "std")), allow(dead_code))]
 fn crc64_nvme_portable(crc: u64, data: &[u8]) -> u64 {
   portable::crc64_slice16_nvme(crc, data)
 }
@@ -823,8 +825,8 @@ impl crate::traits::ChecksumCombine for Crc64 {
 #[cfg(feature = "alloc")]
 impl Crc64 {
   #[must_use]
-  pub fn buffered() -> crate::checksum::buffered::BufferedCrc64 {
-    crate::checksum::buffered::BufferedCrc64::new()
+  pub fn buffered() -> BufferedCrc64 {
+    BufferedCrc64::new()
   }
 }
 
@@ -981,8 +983,8 @@ impl crate::traits::ChecksumCombine for Crc64Nvme {
 #[cfg(feature = "alloc")]
 impl Crc64Nvme {
   #[must_use]
-  pub fn buffered() -> crate::checksum::buffered::BufferedCrc64Nvme {
-    crate::checksum::buffered::BufferedCrc64Nvme::new()
+  pub fn buffered() -> BufferedCrc64Nvme {
+    BufferedCrc64Nvme::new()
   }
 }
 

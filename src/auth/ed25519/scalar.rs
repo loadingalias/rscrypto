@@ -266,13 +266,7 @@ impl Scalar52 {
 /// Clamp the lower half of the expanded secret-key digest per RFC 8032.
 #[inline]
 pub(crate) fn clamp_secret_scalar(bytes: &mut [u8; SECRET_KEY_LENGTH]) {
-  if let Some((first, tail)) = bytes.split_first_mut() {
-    *first &= 248;
-    if let Some(last) = tail.last_mut() {
-      *last &= 63;
-      *last |= 64;
-    }
-  }
+  crate::backend::curve25519::clamp_secret_scalar(bytes);
 }
 
 /// Decode a 32-byte little-endian scalar into the portable limb layout.

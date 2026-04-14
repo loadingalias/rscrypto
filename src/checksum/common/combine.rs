@@ -400,6 +400,7 @@ macro_rules! define_gf2_combine {
 // GF(2) Matrix Types (16-bit CRC)
 // ─────────────────────────────────────────────────────────────────────────────
 
+#[cfg(feature = "crc16")]
 define_gf2_combine! {
   name: Gf2Matrix16,
   backing: u16,
@@ -422,6 +423,7 @@ define_gf2_combine! {
 // GF(2) Matrix Types (24-bit CRC)
 // ─────────────────────────────────────────────────────────────────────────────
 
+#[cfg(feature = "crc24")]
 define_gf2_combine! {
   name: Gf2Matrix24,
   backing: u32,
@@ -445,6 +447,7 @@ define_gf2_combine! {
 // GF(2) Matrix Types (32-bit CRC)
 // ─────────────────────────────────────────────────────────────────────────────
 
+#[cfg(feature = "crc32")]
 define_gf2_combine! {
   name: Gf2Matrix32,
   backing: u32,
@@ -469,7 +472,7 @@ define_gf2_combine! {
 /// GF(2), so `M.mul_vec(crc)` computes `crc * x^(8*len_bytes) mod G(x)`.
 #[inline]
 #[must_use]
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(feature = "crc32", target_arch = "aarch64"))]
 pub const fn pow_shift8_matrix_32(len_bytes: usize, shift8_matrix: Gf2Matrix32) -> Gf2Matrix32 {
   if len_bytes == 0 {
     return Gf2Matrix32::identity();
@@ -494,6 +497,7 @@ pub const fn pow_shift8_matrix_32(len_bytes: usize, shift8_matrix: Gf2Matrix32) 
 // GF(2) Matrix Types (64-bit CRC)
 // ─────────────────────────────────────────────────────────────────────────────
 
+#[cfg(feature = "crc64")]
 define_gf2_combine! {
   name: Gf2Matrix64,
   backing: u64,
@@ -519,13 +523,21 @@ define_gf2_combine! {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::checksum::common::tables::{CRC16_CCITT_POLY, CRC24_OPENPGP_POLY, CRC32_IEEE_POLY, CRC64_XZ_POLY};
+  #[cfg(feature = "crc16")]
+  use crate::checksum::common::tables::CRC16_CCITT_POLY;
+  #[cfg(feature = "crc24")]
+  use crate::checksum::common::tables::CRC24_OPENPGP_POLY;
+  #[cfg(feature = "crc32")]
+  use crate::checksum::common::tables::CRC32_IEEE_POLY;
+  #[cfg(feature = "crc64")]
+  use crate::checksum::common::tables::CRC64_XZ_POLY;
 
   // ─────────────────────────────────────────────────────────────────────────
   // CRC-32 Tests
   // ─────────────────────────────────────────────────────────────────────────
 
   #[test]
+  #[cfg(feature = "crc32")]
   fn test_identity_matrix_32() {
     let id = Gf2Matrix32::identity();
     for i in 0..32 {
@@ -535,6 +547,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(feature = "crc32")]
   fn test_shift1_matrix_32() {
     let poly = CRC32_IEEE_POLY;
     let m = generate_shift1_matrix_32(poly);
@@ -545,6 +558,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(feature = "crc32")]
   fn test_combine_zero_length_32() {
     let shift8 = generate_shift8_matrix_32(CRC32_IEEE_POLY);
     let crc_a = 0x1234_5678;
@@ -553,6 +567,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(feature = "crc32")]
   fn test_shift8_matrix_crc32() {
     let poly = CRC32_IEEE_POLY;
     let shift1 = generate_shift1_matrix_32(poly);
@@ -573,6 +588,7 @@ mod tests {
   // ─────────────────────────────────────────────────────────────────────────
 
   #[test]
+  #[cfg(feature = "crc16")]
   fn test_combine_crc16_x25_split() {
     // CRC-16/X25 (IBM-SDLC): init=0xFFFF, xorout=0xFFFF, refin/refout=true.
     const INIT_XOROUT: u16 = 0;
@@ -606,6 +622,7 @@ mod tests {
   // ─────────────────────────────────────────────────────────────────────────
 
   #[test]
+  #[cfg(feature = "crc24")]
   fn test_combine_crc24_openpgp_split() {
     // CRC-24/OPENPGP: init=0xB704CE, xorout=0, refin/refout=false.
     const INIT_XOROUT: u32 = 0x00B7_04CE;
@@ -640,6 +657,7 @@ mod tests {
   // ─────────────────────────────────────────────────────────────────────────
 
   #[test]
+  #[cfg(feature = "crc64")]
   fn test_identity_matrix_64() {
     let id = Gf2Matrix64::identity();
     for i in 0..64 {
@@ -649,6 +667,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(feature = "crc64")]
   fn test_shift1_matrix_64() {
     let poly = CRC64_XZ_POLY;
     let m = generate_shift1_matrix_64(poly);
@@ -664,6 +683,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(feature = "crc64")]
   fn test_combine_zero_length() {
     let shift8 = generate_shift8_matrix_64(CRC64_XZ_POLY);
     let crc_a = 0x1234_5678_9ABC_DEF0;
@@ -674,6 +694,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(feature = "crc64")]
   fn test_shift8_matrix_crc64() {
     let poly = CRC64_XZ_POLY;
     let shift1 = generate_shift1_matrix_64(poly);

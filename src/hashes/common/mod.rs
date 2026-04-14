@@ -13,4 +13,5 @@
 //! optimization techniques (SIMD vectorization, prefetch hints, etc.)
 //! that can be centralized here.
 
+#[cfg(all(feature = "blake3", target_arch = "aarch64"))]
 pub mod prefetch;

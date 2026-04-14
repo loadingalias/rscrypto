@@ -1,4 +1,4 @@
-#![cfg(feature = "auth")]
+#![cfg(feature = "hmac")]
 
 use rscrypto::HmacSha256;
 

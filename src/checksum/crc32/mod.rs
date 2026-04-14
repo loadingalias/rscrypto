@@ -92,6 +92,7 @@ pub(crate) const CRC32_FOLD_BLOCK_BYTES: usize = 128;
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(any(test, feature = "std"))]
+#[cfg_attr(all(test, not(feature = "std")), allow(dead_code))]
 fn crc32_portable(crc: u32, data: &[u8]) -> u32 {
   const THRESHOLD: usize = 64;
   if data.len() < THRESHOLD {
@@ -102,6 +103,7 @@ fn crc32_portable(crc: u32, data: &[u8]) -> u32 {
 }
 
 #[cfg(any(test, feature = "std"))]
+#[cfg_attr(all(test, not(feature = "std")), allow(dead_code))]
 fn crc32c_portable(crc: u32, data: &[u8]) -> u32 {
   const THRESHOLD: usize = 64;
   if data.len() < THRESHOLD {
@@ -916,8 +918,8 @@ impl crate::traits::ChecksumCombine for Crc32 {
 #[cfg(feature = "alloc")]
 impl Crc32 {
   #[must_use]
-  pub fn buffered() -> crate::checksum::buffered::BufferedCrc32 {
-    crate::checksum::buffered::BufferedCrc32::new()
+  pub fn buffered() -> BufferedCrc32 {
+    BufferedCrc32::new()
   }
 }
 
@@ -1059,8 +1061,8 @@ impl crate::traits::ChecksumCombine for Crc32C {
 #[cfg(feature = "alloc")]
 impl Crc32C {
   #[must_use]
-  pub fn buffered() -> crate::checksum::buffered::BufferedCrc32C {
-    crate::checksum::buffered::BufferedCrc32C::new()
+  pub fn buffered() -> BufferedCrc32C {
+    BufferedCrc32C::new()
   }
 }
 

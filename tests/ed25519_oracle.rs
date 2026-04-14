@@ -1,4 +1,4 @@
-#![cfg(feature = "auth")]
+#![cfg(feature = "ed25519")]
 
 use ed25519_dalek::{Signature as DalekSignature, Signer, SigningKey, VerifyingKey};
 use rscrypto::{Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature, verify_ed25519};

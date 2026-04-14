@@ -18,6 +18,13 @@
 //! h.reset();
 //! ```
 //!
+//! Install only what you need:
+//!
+//! ```toml
+//! [dependencies]
+//! rscrypto = { version = "0.1", default-features = false, features = ["crc32"] }
+//! ```
+//!
 //! ## Digest
 //!
 //! ```rust
@@ -148,6 +155,68 @@
 //! assert!(secret_hex.starts_with("42"));
 //! ```
 //!
+//! ## Bundle Selection
+//!
+//! Prefer leaf features when you know exactly what you need:
+//!
+//! ```toml
+//! [dependencies]
+//! # MACs only
+//! rscrypto = { version = "0.1", default-features = false, features = ["macs"] }
+//!
+//! # Ed25519 only
+//! rscrypto = { version = "0.1", default-features = false, features = ["signatures"] }
+//!
+//! # X25519 only
+//! rscrypto = { version = "0.1", default-features = false, features = ["key-exchange"] }
+//!
+//! # Everything
+//! rscrypto = { version = "0.1", features = ["full"] }
+//! ```
+//!
+//! ## Feature Selection Guide
+//!
+//! Use leaves when size matters more than category semantics:
+//!
+//! - single checksum family: `crc16`, `crc24`, `crc32`, or `crc64`
+//! - single digest family: `sha2`, `sha3`, `blake3`, or `ascon-hash`
+//! - one fast hash family: `xxh3` or `rapidhash`
+//! - one auth primitive: `hmac`, `hkdf`, `kmac`, `ed25519`, or `x25519`
+//! - one AEAD: `aes-gcm`, `aes-gcm-siv`, `chacha20poly1305`, `xchacha20poly1305`, `aegis256`, or
+//!   `ascon-aead`
+//!
+//! Use bundles when you want the category to grow with the crate:
+//!
+//! - all checksums: `checksums`
+//! - all cryptographic hashes: `crypto-hashes`
+//! - all non-cryptographic hashes: `fast-hashes`
+//! - all hashes: `hashes`
+//! - all MACs: `macs`
+//! - all KDFs: `kdfs`
+//! - all signature primitives: `signatures`
+//! - all key-exchange primitives: `key-exchange`
+//! - all auth/key-derivation primitives: `auth`
+//! - all AEADs: `aead`
+//! - everything: `full`
+//!
+//! Keep `default = ["std"]` unless you specifically need a `no_std` build.
+//!
+//! ## API Conventions
+//!
+//! The crate keeps naming deliberate across families:
+//!
+//! - checksums use `Type::checksum(data)` plus `new` / `update` / `finalize` / `reset`
+//! - fixed-output digests use `Type::digest(data)` plus the same streaming verbs
+//! - XOFs use `Type::xof(data)` and `finalize_xof()`
+//! - MACs use `Type::mac(key, data)` and `Type::verify_tag(key, data, tag)`; streaming MACs use
+//!   `new` / `update` / `finalize` / `reset`
+//! - HKDF uses `new(salt, ikm)`, then `expand` / `expand_array`, with one-shot `derive` /
+//!   `derive_array`
+//! - signature, key, nonce, and tag wrappers round-trip through `from_bytes` / `to_bytes` /
+//!   `as_bytes`
+//! - AEADs use typed keys and nonces, with `encrypt` / `decrypt` for combined buffers and
+//!   `encrypt_in_place` / `decrypt_in_place` for detached tags
+//!
 //! ## Serialization
 //!
 //! All key, nonce, tag, and signature types round-trip through
@@ -167,11 +236,13 @@
 //! Use `generate()` with any entropy source. The crate itself carries
 //! zero RNG dependencies — you bring your own CSPRNG:
 //!
-//! ```ignore
+//! ```rust
 //! use rscrypto::{ChaCha20Poly1305Key, aead::Nonce96};
 //!
-//! let key = ChaCha20Poly1305Key::generate(|buf| getrandom::fill(buf).unwrap());
-//! let nonce = Nonce96::generate(|buf| getrandom::fill(buf).unwrap());
+//! let key = ChaCha20Poly1305Key::generate(|buf| buf.fill(0xA5));
+//! let nonce = Nonce96::generate(|buf| buf.fill(0x5A));
+//! assert_eq!(key.as_bytes(), &[0xA5; ChaCha20Poly1305Key::LENGTH]);
+//! assert_eq!(nonce.as_bytes(), &[0x5A; Nonce96::LENGTH]);
 //! ```
 //!
 //! `rscrypto` keeps the shipping library inside this repository:
@@ -202,18 +273,32 @@
 //! |---------|---------|-------------|
 //! | `std` | Yes | Enables runtime CPU detection for optimal dispatch |
 //! | `alloc` | Yes | Enables buffered types (implied by `std`) |
-//! | `checksums` | Yes | CRC-16, CRC-24, CRC-32, and CRC-64 algorithms |
-//! | `hashes` | Yes | Cryptographic and fast hash families |
-//! | `auth` | Yes | HMAC-SHA256/384/512, HKDF-SHA256/384, KMAC256, Ed25519, and X25519 |
-//! | `aead` | Yes | AEAD traits, nonce wrappers, errors, and ChaCha20/XChaCha20-Poly1305 |
-//! | `parallel` | No | Rayon-based parallel hashing (Blake3) |
+//! | `crc16`, `crc24`, `crc32`, `crc64` | No | Individual checksum families |
+//! | `sha2`, `sha3`, `blake3`, `ascon-hash` | No | Cryptographic hash leaves |
+//! | `xxh3`, `rapidhash` | No | Fast non-cryptographic hash leaves |
+//! | `hmac`, `hkdf`, `kmac`, `ed25519`, `x25519` | No | Individual auth/KDF leaves |
+//! | `aes-gcm`, `aes-gcm-siv`, `chacha20poly1305`, `xchacha20poly1305`, `aegis256`, `ascon-aead` | No | AEAD leaves |
+//! | `checksums` | No | All checksum leaves |
+//! | `crypto-hashes` | No | `sha2`, `sha3`, `blake3`, and `ascon-hash` |
+//! | `fast-hashes` | No | `xxh3` and `rapidhash` |
+//! | `hashes` | No | `crypto-hashes` + `fast-hashes` |
+//! | `macs` | No | `hmac` and `kmac` |
+//! | `kdfs` | No | `hkdf` |
+//! | `signatures` | No | `ed25519` |
+//! | `key-exchange` | No | `x25519` |
+//! | `auth` | No | `macs`, `kdfs`, `signatures`, and `key-exchange` |
+//! | `aead` | No | All AEAD leaves |
+//! | `full` | No | `checksums`, `hashes`, `auth`, `aead` |
+//! | `parallel` | No | Rayon-based parallel Blake3 hashing |
 //!
 //! # Examples
 //!
-//! - `cargo run --example basic` is the canonical checksum, digest, MAC, KDF, XOF, fast hash, and
-//!   I/O adapter specimen.
-//! - `cargo run --example introspect` is the advanced dispatch introspection example.
-//! - `cargo run --example parallel --features parallel` shows CRC combine-based chunked processing.
+//! - `cargo run --example basic --features full` is the canonical checksum, digest, MAC, KDF, XOF,
+//!   fast hash, and I/O adapter specimen.
+//! - `cargo run --example introspect --features checksums,hashes` is the advanced dispatch
+//!   introspection example.
+//! - `cargo run --example parallel --features checksums` shows CRC combine-based chunked
+//!   processing.
 //!
 //! # Advanced Surfaces
 //!
@@ -229,7 +314,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! rscrypto = { version = "0.1", default-features = false, features = ["checksums"] }
+//! rscrypto = { version = "0.1", default-features = false, features = ["crc32"] }
 //! ```
 //!
 //! Without `std`, hardware acceleration uses compile-time feature detection only.
@@ -289,55 +374,133 @@ extern crate alloc;
 extern crate std;
 
 // Internal modules (not published as separate crates)
+#[cfg(any(
+  feature = "aes-gcm",
+  feature = "aes-gcm-siv",
+  feature = "chacha20poly1305",
+  feature = "xchacha20poly1305",
+  feature = "aegis256",
+  feature = "ascon-aead",
+  feature = "ed25519",
+  feature = "x25519"
+))]
 #[macro_use]
 mod hex;
 
-#[cfg(feature = "aead")]
+#[cfg(any(
+  feature = "aes-gcm",
+  feature = "aes-gcm-siv",
+  feature = "chacha20poly1305",
+  feature = "xchacha20poly1305",
+  feature = "aegis256",
+  feature = "ascon-aead"
+))]
 pub mod aead;
-#[cfg(feature = "auth")]
+#[cfg(any(
+  feature = "hmac",
+  feature = "hkdf",
+  feature = "kmac",
+  feature = "ed25519",
+  feature = "x25519"
+))]
 pub mod auth;
 #[doc(hidden)]
 mod backend;
 pub mod platform;
 pub mod traits;
 
-#[cfg(feature = "checksums")]
+#[cfg(any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64"))]
 pub mod checksum;
 
-#[cfg(feature = "hashes")]
+#[cfg(any(
+  feature = "sha2",
+  feature = "sha3",
+  feature = "blake3",
+  feature = "ascon-hash",
+  feature = "xxh3",
+  feature = "rapidhash"
+))]
 pub mod hashes;
 
 // ─── Checksum re-exports ────────────────────────────────────────────────────
 
-#[cfg(feature = "aead")]
-pub use aead::{
-  Aegis256, Aegis256Key, Aegis256Tag, Aes256Gcm, Aes256GcmKey, Aes256GcmSiv, Aes256GcmSivKey, Aes256GcmSivTag,
-  Aes256GcmTag, AsconAead128, AsconAead128Key, AsconAead128Tag, ChaCha20Poly1305, ChaCha20Poly1305Key,
-  ChaCha20Poly1305Tag, XChaCha20Poly1305, XChaCha20Poly1305Key, XChaCha20Poly1305Tag,
-};
-#[cfg(feature = "auth")]
-pub use auth::{
-  Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature, HkdfSha256, HkdfSha384, HmacSha256, HmacSha384,
-  HmacSha512, Kmac256, X25519Error, X25519PublicKey, X25519SecretKey, X25519SharedSecret, verify_ed25519,
-};
-#[cfg(feature = "checksums")]
-pub use checksum::{Crc16Ccitt, Crc16Ibm, Crc24OpenPgp, Crc32, Crc32C, Crc64, Crc64Nvme};
+#[cfg(feature = "aegis256")]
+pub use aead::{Aegis256, Aegis256Key, Aegis256Tag};
+#[cfg(feature = "aes-gcm")]
+pub use aead::{Aes256Gcm, Aes256GcmKey, Aes256GcmTag};
+#[cfg(feature = "aes-gcm-siv")]
+pub use aead::{Aes256GcmSiv, Aes256GcmSivKey, Aes256GcmSivTag};
+#[cfg(feature = "ascon-aead")]
+pub use aead::{AsconAead128, AsconAead128Key, AsconAead128Tag};
+#[cfg(feature = "chacha20poly1305")]
+pub use aead::{ChaCha20Poly1305, ChaCha20Poly1305Key, ChaCha20Poly1305Tag};
+#[cfg(feature = "xchacha20poly1305")]
+pub use aead::{XChaCha20Poly1305, XChaCha20Poly1305Key, XChaCha20Poly1305Tag};
+#[cfg(feature = "kmac")]
+pub use auth::Kmac256;
+#[cfg(feature = "ed25519")]
+pub use auth::{Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature, verify_ed25519};
+#[cfg(feature = "hkdf")]
+pub use auth::{HkdfSha256, HkdfSha384};
+#[cfg(feature = "hmac")]
+pub use auth::{HmacSha256, HmacSha384, HmacSha512};
+#[cfg(feature = "x25519")]
+pub use auth::{X25519Error, X25519PublicKey, X25519SecretKey, X25519SharedSecret};
+#[cfg(feature = "crc24")]
+pub use checksum::Crc24OpenPgp;
+#[cfg(feature = "crc16")]
+pub use checksum::{Crc16Ccitt, Crc16Ibm};
+#[cfg(feature = "crc32")]
+pub use checksum::{Crc32, Crc32C};
+#[cfg(feature = "crc64")]
+pub use checksum::{Crc64, Crc64Nvme};
 // ─── Hash re-exports ────────────────────────────────────────────────────────
-#[cfg(feature = "hashes")]
+#[cfg(feature = "ascon-hash")]
+pub use hashes::crypto::{AsconCxof128, AsconCxof128Reader, AsconHash256, AsconXof, AsconXofReader};
+#[cfg(feature = "blake3")]
+pub use hashes::crypto::{Blake3, Blake3XofReader};
+#[cfg(feature = "sha3")]
 pub use hashes::crypto::{
-  AsconCxof128, AsconCxof128Reader, AsconHash256, AsconXof, AsconXofReader, Blake3, Blake3XofReader, Cshake256,
-  Cshake256XofReader, Sha3_224, Sha3_256, Sha3_384, Sha3_512, Sha224, Sha256, Sha384, Sha512, Sha512_256, Shake128,
-  Shake128XofReader, Shake256, Shake256XofReader,
+  Cshake256, Cshake256XofReader, Sha3_224, Sha3_256, Sha3_384, Sha3_512, Shake128, Shake128XofReader, Shake256,
+  Shake256XofReader,
 };
-#[cfg(feature = "hashes")]
-pub use hashes::fast::{RapidHash, RapidHash128, RapidHashFast64, RapidHashFast128, Xxh3, Xxh3_128};
+#[cfg(feature = "sha2")]
+pub use hashes::crypto::{Sha224, Sha256, Sha384, Sha512, Sha512_256};
+#[cfg(feature = "rapidhash")]
+pub use hashes::fast::{RapidHash, RapidHash128, RapidHashFast64, RapidHashFast128};
+#[cfg(feature = "xxh3")]
+pub use hashes::fast::{Xxh3, Xxh3_128};
 // ─── Hex re-exports ──────────────────────────────────────────────────────
+#[cfg(any(
+  feature = "aes-gcm",
+  feature = "aes-gcm-siv",
+  feature = "chacha20poly1305",
+  feature = "xchacha20poly1305",
+  feature = "aegis256",
+  feature = "ascon-aead",
+  feature = "ed25519",
+  feature = "x25519"
+))]
 pub use hex::{DisplaySecret, InvalidHexError};
 // ─── Trait re-exports ───────────────────────────────────────────────────────
-#[cfg(feature = "aead")]
+#[cfg(any(
+  feature = "aes-gcm",
+  feature = "aes-gcm-siv",
+  feature = "chacha20poly1305",
+  feature = "xchacha20poly1305",
+  feature = "aegis256",
+  feature = "ascon-aead"
+))]
 pub use traits::Aead;
 pub use traits::{Checksum, ChecksumCombine, Mac, VerificationError, ct};
-#[cfg(feature = "hashes")]
+#[cfg(any(
+  feature = "sha2",
+  feature = "sha3",
+  feature = "blake3",
+  feature = "ascon-hash",
+  feature = "xxh3",
+  feature = "rapidhash"
+))]
 pub use traits::{Digest, FastHash, Xof};
 
 #[cfg(doctest)]

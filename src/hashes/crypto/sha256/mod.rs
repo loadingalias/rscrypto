@@ -337,6 +337,7 @@ pub struct Sha256 {
 }
 
 #[derive(Clone, Copy)]
+#[cfg(feature = "hmac")]
 pub(crate) struct Sha256Prefix {
   state: [u32; 8],
   bytes_hashed: u64,
@@ -486,6 +487,7 @@ impl Sha256 {
 
   #[inline]
   #[must_use]
+  #[cfg(feature = "hmac")]
   pub(crate) fn aligned_prefix(&self) -> Sha256Prefix {
     debug_assert_eq!(self.block_len, 0);
     Sha256Prefix {
@@ -498,6 +500,7 @@ impl Sha256 {
 
   #[inline]
   #[must_use]
+  #[cfg(feature = "hmac")]
   pub(crate) fn from_aligned_prefix(prefix: Sha256Prefix) -> Self {
     Self {
       state: prefix.state,
@@ -510,6 +513,7 @@ impl Sha256 {
   }
 
   #[inline]
+  #[cfg(feature = "hmac")]
   pub(crate) fn reset_to_aligned_prefix(&mut self, prefix: Sha256Prefix) {
     self.state = prefix.state;
     self.block_len = 0;

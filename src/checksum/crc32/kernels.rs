@@ -78,6 +78,8 @@ pub mod x86_64 {
 
 #[cfg(target_arch = "aarch64")]
 pub mod aarch64 {
+  #![cfg_attr(not(any(target_os = "linux", target_os = "android")), allow(dead_code))]
+
   use super::super::aarch64 as arch;
   use crate::checksum::dispatchers::Crc32Fn;
 

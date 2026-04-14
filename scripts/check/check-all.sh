@@ -125,7 +125,7 @@ run_constrained_target() {
 
   if [[ " ${CONSTRAINED_CRATES[*]} " == *" rscrypto "* ]]; then
     step "$target check (rscrypto facade matrix)"
-    for feature_set in "alloc" "checksums" "alloc,checksums" "hashes" "alloc,hashes" "auth" "alloc,auth" "checksums,hashes" "alloc,checksums,hashes"; do
+    for feature_set in "alloc" "crc16" "crc24" "crc32" "crc64" "alloc,crc32" "sha2" "xxh3" "hmac" "hkdf" "x25519" "chacha20poly1305" "ascon-aead" "checksums" "hashes" "macs" "kdfs" "signatures" "key-exchange" "auth" "aead" "full"; do
       if ! run_constrained_check "rscrypto" "$target" "$target_dir" "$log_file" "$feature_set"; then
         fail
         show_error "$log_file"

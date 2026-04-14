@@ -40,7 +40,7 @@ pub(crate) fn left_encode(value: u64) -> ([u8; 9], usize) {
 }
 
 #[inline]
-#[cfg(feature = "auth")]
+#[cfg(feature = "kmac")]
 pub(crate) fn right_encode(value: u64) -> ([u8; 9], usize) {
   let mut out = [0u8; 9];
   let len = encode_u64_be(value, &mut out, true);

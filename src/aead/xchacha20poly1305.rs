@@ -65,8 +65,10 @@ impl fmt::Debug for XChaCha20Poly1305Key {
 impl XChaCha20Poly1305Key {
   /// Construct a key by filling bytes from the provided closure.
   ///
-  /// ```ignore
-  /// let key = XChaCha20Poly1305Key::generate(|buf| getrandom::fill(buf).unwrap());
+  /// ```rust
+  /// # use rscrypto::XChaCha20Poly1305Key;
+  /// let key = XChaCha20Poly1305Key::generate(|buf| buf.fill(0xA5));
+  /// assert_eq!(key.as_bytes(), &[0xA5; XChaCha20Poly1305Key::LENGTH]);
   /// ```
   #[inline]
   #[must_use]

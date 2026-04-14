@@ -11,6 +11,7 @@
 //! features are available before selecting a kernel (the dispatcher does this).
 
 #![allow(unsafe_code)]
+#![cfg_attr(not(any(target_os = "linux", target_os = "android")), allow(dead_code))]
 // SAFETY: This module is intrinsics-heavy and uses tight, invariant-driven indexing
 // (e.g. fixed-size lanes and chunked processing) where bounds are proven by
 // control flow; Clippy cannot always see these invariants.

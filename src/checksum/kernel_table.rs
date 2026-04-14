@@ -4,10 +4,15 @@
 //! internal table-driven selector that the CRC implementations use after the
 //! tuning work was collapsed into static, benchmark-backed kernel tables.
 
-use crate::{
-  checksum::dispatchers::{Crc16Fn, Crc24Fn, Crc32Fn, Crc64Fn},
-  platform::Caps,
-};
+#[cfg(feature = "crc16")]
+use crate::checksum::dispatchers::Crc16Fn;
+#[cfg(feature = "crc24")]
+use crate::checksum::dispatchers::Crc24Fn;
+#[cfg(feature = "crc32")]
+use crate::checksum::dispatchers::Crc32Fn;
+#[cfg(feature = "crc64")]
+use crate::checksum::dispatchers::Crc64Fn;
+use crate::platform::Caps;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Global Kernel Table Cache
@@ -18,6 +23,7 @@ use crate::{
 /// This is the heart of the new dispatch system. Platform detection happens
 /// exactly once, and all subsequent CRC calls use this pre-resolved table.
 static ACTIVE_TABLE: crate::backend::cache::OnceCache<&'static KernelTable> = crate::backend::cache::OnceCache::new();
+#[cfg(feature = "crc64")]
 static ACTIVE_CRC64_TABLE: crate::backend::cache::OnceCache<&'static KernelTable> =
   crate::backend::cache::OnceCache::new();
 
@@ -32,6 +38,7 @@ pub(crate) fn active_table() -> &'static KernelTable {
 /// Most architectures reuse [`active_table()`]. RISC-V is the exception: CRC-64
 /// has a different best-available ladder than CRC-16/24/32, so it resolves
 /// through a CRC-64-specific selector.
+#[cfg(feature = "crc64")]
 #[inline]
 pub(crate) fn active_crc64_table() -> &'static KernelTable {
   ACTIVE_CRC64_TABLE.get_or_init(|| select_crc64_table(crate::platform::caps()))
@@ -52,6 +59,7 @@ pub(crate) fn active_crc64_table() -> &'static KernelTable {
 const FAST_PATH_MAX: usize = 7;
 
 /// Internal one-shot CRC-64/XZ helper used by trait impls.
+#[cfg(feature = "crc64")]
 #[inline]
 pub(crate) fn crc64_xz(data: &[u8]) -> u64 {
   if data.len() <= FAST_PATH_MAX {
@@ -66,6 +74,7 @@ pub(crate) fn crc64_xz(data: &[u8]) -> u64 {
 }
 
 /// Internal one-shot CRC-64/NVME helper used by trait impls.
+#[cfg(feature = "crc64")]
 #[inline]
 pub(crate) fn crc64_nvme(data: &[u8]) -> u64 {
   if data.len() <= FAST_PATH_MAX {
@@ -80,6 +89,7 @@ pub(crate) fn crc64_nvme(data: &[u8]) -> u64 {
 }
 
 /// Internal one-shot CRC-32/IEEE helper used by trait impls.
+#[cfg(feature = "crc32")]
 #[inline]
 pub(crate) fn crc32_ieee(data: &[u8]) -> u32 {
   if data.len() <= FAST_PATH_MAX {
@@ -127,6 +137,7 @@ pub(crate) fn crc32_ieee(data: &[u8]) -> u32 {
 }
 
 /// Internal one-shot CRC-32C helper used by trait impls.
+#[cfg(feature = "crc32")]
 #[inline]
 pub(crate) fn crc32c(data: &[u8]) -> u32 {
   if data.len() <= FAST_PATH_MAX {
@@ -166,6 +177,7 @@ pub(crate) fn crc32c(data: &[u8]) -> u32 {
 }
 
 /// Internal one-shot CRC-16/CCITT helper used by trait impls.
+#[cfg(feature = "crc16")]
 #[inline]
 pub(crate) fn crc16_ccitt(data: &[u8]) -> u16 {
   // CCITT: INIT=0xFFFF, XOROUT=0xFFFF
@@ -181,6 +193,7 @@ pub(crate) fn crc16_ccitt(data: &[u8]) -> u16 {
 }
 
 /// Internal one-shot CRC-16/IBM helper used by trait impls.
+#[cfg(feature = "crc16")]
 #[inline]
 pub(crate) fn crc16_ibm(data: &[u8]) -> u16 {
   // IBM: INIT=0x0000, XOROUT=0x0000
@@ -196,6 +209,7 @@ pub(crate) fn crc16_ibm(data: &[u8]) -> u16 {
 }
 
 /// Internal one-shot CRC-24/OpenPGP helper used by trait impls.
+#[cfg(feature = "crc24")]
 #[inline]
 pub(crate) fn crc24_openpgp(data: &[u8]) -> u32 {
   // OpenPGP: INIT=0x00B704CE, XOROUT=0x000000, mask to 24 bits
@@ -224,15 +238,22 @@ pub(crate) fn crc24_openpgp(data: &[u8]) -> u32 {
 #[derive(Clone, Copy)]
 pub(crate) struct KernelFnSet {
   // CRC-16
+  #[cfg(feature = "crc16")]
   pub crc16_ccitt: Crc16Fn,
+  #[cfg(feature = "crc16")]
   pub crc16_ibm: Crc16Fn,
   // CRC-24
+  #[cfg(feature = "crc24")]
   pub crc24_openpgp: Crc24Fn,
   // CRC-32
+  #[cfg(feature = "crc32")]
   pub crc32_ieee: Crc32Fn,
+  #[cfg(feature = "crc32")]
   pub crc32c: Crc32Fn,
   // CRC-64
+  #[cfg(feature = "crc64")]
   pub crc64_xz: Crc64Fn,
+  #[cfg(feature = "crc64")]
   pub crc64_nvme: Crc64Fn,
 }
 
@@ -244,15 +265,22 @@ pub(crate) struct KernelFnSet {
 #[derive(Clone, Copy)]
 pub(crate) struct KernelNameSet {
   // CRC-16
+  #[cfg(feature = "crc16")]
   pub crc16_ccitt_name: &'static str,
+  #[cfg(feature = "crc16")]
   pub crc16_ibm_name: &'static str,
   // CRC-24
+  #[cfg(feature = "crc24")]
   pub crc24_openpgp_name: &'static str,
   // CRC-32
+  #[cfg(feature = "crc32")]
   pub crc32_ieee_name: &'static str,
+  #[cfg(feature = "crc32")]
   pub crc32c_name: &'static str,
   // CRC-64
+  #[cfg(feature = "crc64")]
   pub crc64_xz_name: &'static str,
+  #[cfg(feature = "crc64")]
   pub crc64_nvme_name: &'static str,
 }
 
@@ -264,22 +292,36 @@ pub(crate) struct KernelNameSet {
 #[derive(Clone, Copy)]
 pub(crate) struct KernelSet {
   // CRC-16
+  #[cfg(feature = "crc16")]
   pub crc16_ccitt: Crc16Fn,
+  #[cfg(feature = "crc16")]
   pub crc16_ccitt_name: &'static str,
+  #[cfg(feature = "crc16")]
   pub crc16_ibm: Crc16Fn,
+  #[cfg(feature = "crc16")]
   pub crc16_ibm_name: &'static str,
   // CRC-24
+  #[cfg(feature = "crc24")]
   pub crc24_openpgp: Crc24Fn,
+  #[cfg(feature = "crc24")]
   pub crc24_openpgp_name: &'static str,
   // CRC-32
+  #[cfg(feature = "crc32")]
   pub crc32_ieee: Crc32Fn,
+  #[cfg(feature = "crc32")]
   pub crc32_ieee_name: &'static str,
+  #[cfg(feature = "crc32")]
   pub crc32c: Crc32Fn,
+  #[cfg(feature = "crc32")]
   pub crc32c_name: &'static str,
   // CRC-64
+  #[cfg(feature = "crc64")]
   pub crc64_xz: Crc64Fn,
+  #[cfg(feature = "crc64")]
   pub crc64_xz_name: &'static str,
+  #[cfg(feature = "crc64")]
   pub crc64_nvme: Crc64Fn,
+  #[cfg(feature = "crc64")]
   pub crc64_nvme_name: &'static str,
 }
 
@@ -288,12 +330,19 @@ impl KernelSet {
   #[inline]
   pub const fn fns(&self) -> KernelFnSet {
     KernelFnSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: self.crc16_ccitt,
+      #[cfg(feature = "crc16")]
       crc16_ibm: self.crc16_ibm,
+      #[cfg(feature = "crc24")]
       crc24_openpgp: self.crc24_openpgp,
+      #[cfg(feature = "crc32")]
       crc32_ieee: self.crc32_ieee,
+      #[cfg(feature = "crc32")]
       crc32c: self.crc32c,
+      #[cfg(feature = "crc64")]
       crc64_xz: self.crc64_xz,
+      #[cfg(feature = "crc64")]
       crc64_nvme: self.crc64_nvme,
     }
   }
@@ -302,12 +351,19 @@ impl KernelSet {
   #[inline]
   pub const fn names(&self) -> KernelNameSet {
     KernelNameSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: self.crc16_ccitt_name,
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: self.crc16_ibm_name,
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: self.crc24_openpgp_name,
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: self.crc32_ieee_name,
+      #[cfg(feature = "crc32")]
       crc32c_name: self.crc32c_name,
+      #[cfg(feature = "crc64")]
       crc64_xz_name: self.crc64_xz_name,
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: self.crc64_nvme_name,
     }
   }
@@ -454,6 +510,7 @@ pub(crate) fn select_table(caps: Caps) -> &'static KernelTable {
   &PORTABLE_TABLE
 }
 
+#[cfg(feature = "crc64")]
 #[inline]
 pub(crate) fn select_crc64_table(caps: Caps) -> &'static KernelTable {
   if let Some(table) = capability_match_crc64(caps) {
@@ -603,6 +660,7 @@ fn capability_match(caps: Caps) -> Option<&'static KernelTable> {
   None
 }
 
+#[cfg(feature = "crc64")]
 #[inline]
 fn capability_match_crc64(caps: Caps) -> Option<&'static KernelTable> {
   #[cfg(target_arch = "riscv64")]
@@ -628,19 +686,33 @@ fn capability_match_crc64(caps: Caps) -> Option<&'static KernelTable> {
 ///
 /// Used when no SIMD capabilities are detected.
 const PORTABLE_SET: KernelSet = KernelSet {
+  #[cfg(feature = "crc16")]
   crc16_ccitt: crate::checksum::crc16::portable::crc16_ccitt_slice8,
+  #[cfg(feature = "crc16")]
   crc16_ccitt_name: "portable/slice8",
+  #[cfg(feature = "crc16")]
   crc16_ibm: crate::checksum::crc16::portable::crc16_ibm_slice8,
+  #[cfg(feature = "crc16")]
   crc16_ibm_name: "portable/slice8",
+  #[cfg(feature = "crc24")]
   crc24_openpgp: crate::checksum::crc24::portable::crc24_openpgp_slice8,
+  #[cfg(feature = "crc24")]
   crc24_openpgp_name: "portable/slice8",
+  #[cfg(feature = "crc32")]
   crc32_ieee: crate::checksum::crc32::portable::crc32_slice16_ieee,
+  #[cfg(feature = "crc32")]
   crc32_ieee_name: "portable/slice16",
+  #[cfg(feature = "crc32")]
   crc32c: crate::checksum::crc32::portable::crc32c_slice16,
+  #[cfg(feature = "crc32")]
   crc32c_name: "portable/slice16",
+  #[cfg(feature = "crc64")]
   crc64_xz: crate::checksum::crc64::portable::crc64_slice16_xz,
+  #[cfg(feature = "crc64")]
   crc64_xz_name: "portable/slice16",
+  #[cfg(feature = "crc64")]
   crc64_nvme: crate::checksum::crc64::portable::crc64_slice16_nvme,
+  #[cfg(feature = "crc64")]
   crc64_nvme_name: "portable/slice16",
 };
 
@@ -660,20 +732,23 @@ pub static PORTABLE_TABLE: KernelTable = KernelTable::from_sets(
 #[cfg(target_arch = "aarch64")]
 mod aarch64_tables {
   use super::*;
-  // Import kernel constants from the kernels modules
+  #[cfg(feature = "crc16")]
   use crate::checksum::crc16::kernels::aarch64 as crc16_k;
-  use crate::checksum::{
-    crc24::kernels::aarch64 as crc24_k, crc32::kernels::aarch64 as crc32_k, crc64::kernels::aarch64 as crc64_k,
-  };
+  #[cfg(feature = "crc24")]
+  use crate::checksum::crc24::kernels::aarch64 as crc24_k;
+  #[cfg(feature = "crc32")]
+  use crate::checksum::crc32::kernels::aarch64 as crc32_k;
+  #[cfg(feature = "crc64")]
+  use crate::checksum::crc64::kernels::aarch64 as crc64_k;
 
-  #[cfg(any(target_os = "linux", target_os = "android"))]
+  #[cfg(all(feature = "crc16", any(target_os = "linux", target_os = "android")))]
   const G3_CRC16_PMULL_EOR3_2WAY_MAX_LEN: usize = 262_144;
 
   /// Graviton3 CRC16/CCITT large-path PMULL+EOR3 hybrid.
   ///
   /// PMULL+EOR3 2-way improves lower "large" buffers, while PMULL+EOR3 1-way
   /// remains safer for very large buffers on G3.
-  #[cfg(any(target_os = "linux", target_os = "android"))]
+  #[cfg(all(feature = "crc16", any(target_os = "linux", target_os = "android")))]
   #[inline]
   fn g3_crc16_ccitt_l_hybrid(crc: u16, data: &[u8]) -> u16 {
     if data.len() <= G3_CRC16_PMULL_EOR3_2WAY_MAX_LEN {
@@ -687,7 +762,7 @@ mod aarch64_tables {
   ///
   /// Empirically, 2-way PMULL+EOR3 helps lower "large" buffers while 1-way
   /// PMULL+EOR3 remains safer for very large buffers on G3.
-  #[cfg(any(target_os = "linux", target_os = "android"))]
+  #[cfg(all(feature = "crc16", any(target_os = "linux", target_os = "android")))]
   #[inline]
   fn g3_crc16_ibm_l_hybrid(crc: u16, data: &[u8]) -> u16 {
     if data.len() <= G3_CRC16_PMULL_EOR3_2WAY_MAX_LEN {
@@ -728,70 +803,126 @@ mod aarch64_tables {
     boundaries: [64, 256, 4096],
 
     xs: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_PMULL_SMALL_KERNEL,
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "aarch64/pmull-small",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crc16_k::IBM_PMULL_SMALL_KERNEL,
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "aarch64/pmull-small",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crc24_k::OPENPGP_PMULL_SMALL_KERNEL,
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "aarch64/pmull-small",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crc32_k::CRC32_PMULL_EOR3[1],
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "aarch64/pmull-eor3-v9s3x2e-s3-2way",
+      #[cfg(feature = "crc32")]
       crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL,
+      #[cfg(feature = "crc32")]
       crc32c_name: "aarch64/pmull-small",
+      #[cfg(feature = "crc64")]
       crc64_xz: crc64_k::XZ_PMULL_SMALL,
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "aarch64/pmull-small",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crc64_k::NVME_PMULL_SMALL,
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "aarch64/pmull-small",
     },
 
     s: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_PMULL_SMALL_KERNEL,
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "aarch64/pmull-small",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crc16_k::IBM_PMULL_SMALL_KERNEL,
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "aarch64/pmull-small",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crc24_k::OPENPGP_PMULL[0],
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "aarch64/pmull",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL,
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "aarch64/pmull-small",
+      #[cfg(feature = "crc32")]
       crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL,
+      #[cfg(feature = "crc32")]
       crc32c_name: "aarch64/pmull-small",
+      #[cfg(feature = "crc64")]
       crc64_xz: crc64_k::XZ_PMULL_EOR3[0],
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "aarch64/pmull-eor3",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crc64_k::NVME_PMULL[0],
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "aarch64/pmull",
     },
 
     m: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_PMULL[0],
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "aarch64/pmull",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crc16_k::IBM_PMULL[0],
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "aarch64/pmull",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crc24_k::OPENPGP_PMULL[1],
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "aarch64/pmull-2way",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL,
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "aarch64/pmull-small",
+      #[cfg(feature = "crc32")]
       crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL,
+      #[cfg(feature = "crc32")]
       crc32c_name: "aarch64/pmull-small",
+      #[cfg(feature = "crc64")]
       crc64_xz: crc64_k::XZ_PMULL[0],
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "aarch64/pmull",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crc64_k::NVME_PMULL_EOR3[0],
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "aarch64/pmull-eor3",
     },
 
     l: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_PMULL[1],
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "aarch64/pmull-2way",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crc16_k::IBM_PMULL[1],
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "aarch64/pmull-2way",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crc24_k::OPENPGP_PMULL[0],
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "aarch64/pmull",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crc32_k::CRC32_PMULL_EOR3[0],
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "aarch64/pmull-eor3-v9s3x2e-s3",
+      #[cfg(feature = "crc32")]
       crc32c: crc32_k::CRC32C_PMULL_EOR3[0],
+      #[cfg(feature = "crc32")]
       crc32c_name: "aarch64/pmull-eor3-v9s3x2e-s3",
+      #[cfg(feature = "crc64")]
       crc64_xz: crc64_k::XZ_PMULL_EOR3[1],
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "aarch64/pmull-eor3-2way",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crc64_k::NVME_PMULL[1],
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "aarch64/pmull-2way",
     },
   };
@@ -822,70 +953,126 @@ mod aarch64_tables {
     boundaries: [64, 256, 4096],
 
     xs: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_PMULL_SMALL_KERNEL,
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "aarch64/pmull-small",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crc16_k::IBM_PMULL_SMALL_KERNEL,
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "aarch64/pmull-small",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crc24_k::OPENPGP_PMULL_SMALL_KERNEL,
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "aarch64/pmull-small",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL, // pmull-small beats hwcrc @ 9.53 GiB/s
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "aarch64/pmull-small",
+      #[cfg(feature = "crc32")]
       crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL, // pmull-small beats hwcrc @ 9.54 GiB/s
+      #[cfg(feature = "crc32")]
       crc32c_name: "aarch64/pmull-small",
+      #[cfg(feature = "crc64")]
       crc64_xz: crc64_k::XZ_PMULL_SMALL,
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "aarch64/pmull-small",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crc64_k::NVME_PMULL_SMALL,
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "aarch64/pmull-small",
     },
 
     s: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_PMULL_SMALL_KERNEL,
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "aarch64/pmull-small",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crc16_k::IBM_PMULL_SMALL_KERNEL,
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "aarch64/pmull-small",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crc24_k::OPENPGP_PMULL[0], // 1-way @ 11.08 GiB/s
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "aarch64/pmull",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL, // pmull-small @ 13.30 GiB/s
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "aarch64/pmull-small",
+      #[cfg(feature = "crc32")]
       crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL, // pmull-small @ 13.30 GiB/s
+      #[cfg(feature = "crc32")]
       crc32c_name: "aarch64/pmull-small",
+      #[cfg(feature = "crc64")]
       crc64_xz: crc64_k::XZ_PMULL[0], // pmull @ 13.60 GiB/s
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "aarch64/pmull",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crc64_k::NVME_PMULL[0], // pmull @ 13.58 GiB/s (bench: pmull beats pmull-eor3)
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "aarch64/pmull",
     },
 
     m: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_PMULL[0], // 1-way @ 29.19 GiB/s
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "aarch64/pmull",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crc16_k::IBM_PMULL[0], // 1-way @ 29.20 GiB/s
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "aarch64/pmull",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crc24_k::OPENPGP_PMULL[0], // 1-way @ 19.95 GiB/s
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "aarch64/pmull",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL, // pmull-small @ 28.62 GiB/s
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "aarch64/pmull-small",
+      #[cfg(feature = "crc32")]
       crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL, // pmull-small @ 28.68 GiB/s
+      #[cfg(feature = "crc32")]
       crc32c_name: "aarch64/pmull-small",
+      #[cfg(feature = "crc64")]
       crc64_xz: crc64_k::XZ_PMULL[0], // pmull @ 30.39 GiB/s (pmull-eor3 slower here)
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "aarch64/pmull",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crc64_k::NVME_PMULL[0], // pmull @ 30.45 GiB/s
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "aarch64/pmull",
     },
 
     l: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_PMULL[0], // 1-way @ 33.01 GiB/s
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "aarch64/pmull",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crc16_k::IBM_PMULL[0], // 1-way @ 32.78 GiB/s
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "aarch64/pmull",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crc24_k::OPENPGP_PMULL[0], // 1-way @ 24.88 GiB/s
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "aarch64/pmull",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crc32_k::CRC32_PMULL_EOR3[0], // pmull-eor3-v9s3x2e-s3 @ 39.82 GiB/s
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "aarch64/pmull-eor3-v9s3x2e-s3",
+      #[cfg(feature = "crc32")]
       crc32c: crc32_k::CRC32C_PMULL_EOR3[0], // pmull-eor3-v9s3x2e-s3 @ 39.93 GiB/s
+      #[cfg(feature = "crc32")]
       crc32c_name: "aarch64/pmull-eor3-v9s3x2e-s3",
+      #[cfg(feature = "crc64")]
       crc64_xz: crc64_k::XZ_PMULL_EOR3[0], // pmull-eor3 @ 33.07 GiB/s
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "aarch64/pmull-eor3",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crc64_k::NVME_PMULL[0], // pmull @ 33.08 GiB/s
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "aarch64/pmull",
     },
   };
@@ -903,73 +1090,129 @@ mod aarch64_tables {
   // ───────────────────────────────────────────────────────────────────────────
   #[cfg(any(target_os = "linux", target_os = "android"))]
   const G3_XS: KernelSet = KernelSet {
+    #[cfg(feature = "crc16")]
     crc16_ccitt: crc16_k::CCITT_PMULL_SMALL_KERNEL, // pmull-small @ 8.01 GiB/s
+    #[cfg(feature = "crc16")]
     crc16_ccitt_name: "aarch64/pmull-small",
+    #[cfg(feature = "crc16")]
     crc16_ibm: crc16_k::IBM_PMULL_SMALL_KERNEL, // pmull-small @ 7.85 GiB/s
+    #[cfg(feature = "crc16")]
     crc16_ibm_name: "aarch64/pmull-small",
+    #[cfg(feature = "crc24")]
     crc24_openpgp: crc24_k::OPENPGP_PMULL_SMALL_KERNEL, // pmull-small @ 6.81 GiB/s
+    #[cfg(feature = "crc24")]
     crc24_openpgp_name: "aarch64/pmull-small",
+    #[cfg(feature = "crc32")]
     crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL, // pmull-small @ 10.30 GiB/s
+    #[cfg(feature = "crc32")]
     crc32_ieee_name: "aarch64/pmull-small",
+    #[cfg(feature = "crc32")]
     crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL, // pmull-small @ 12.49 GiB/s
+    #[cfg(feature = "crc32")]
     crc32c_name: "aarch64/pmull-small",
+    #[cfg(feature = "crc64")]
     crc64_xz: crc64_k::XZ_PMULL_SMALL, // pmull-small @ 7.06 GiB/s
+    #[cfg(feature = "crc64")]
     crc64_xz_name: "aarch64/pmull-small",
+    #[cfg(feature = "crc64")]
     crc64_nvme: crc64_k::NVME_PMULL_SMALL, // pmull-small @ 7.06 GiB/s
+    #[cfg(feature = "crc64")]
     crc64_nvme_name: "aarch64/pmull-small",
   };
 
   #[cfg(any(target_os = "linux", target_os = "android"))]
   const G3_S: KernelSet = KernelSet {
+    #[cfg(feature = "crc16")]
     crc16_ccitt: crc16_k::CCITT_PMULL[0], // pmull @ 11.97 GiB/s (G3: pmull beats pmull-small)
+    #[cfg(feature = "crc16")]
     crc16_ccitt_name: "aarch64/pmull",
+    #[cfg(feature = "crc16")]
     crc16_ibm: crc16_k::IBM_PMULL[0], // pmull @ 12.01 GiB/s (G3: pmull beats pmull-small)
+    #[cfg(feature = "crc16")]
     crc16_ibm_name: "aarch64/pmull",
+    #[cfg(feature = "crc24")]
     crc24_openpgp: crc24_k::OPENPGP_PMULL[0], // pmull @ 14.12 GiB/s
+    #[cfg(feature = "crc24")]
     crc24_openpgp_name: "aarch64/pmull",
+    #[cfg(feature = "crc32")]
     crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL, // pmull-small @ 8.66 GiB/s
+    #[cfg(feature = "crc32")]
     crc32_ieee_name: "aarch64/pmull-small",
+    #[cfg(feature = "crc32")]
     crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL, // pmull-small @ 8.79 GiB/s
+    #[cfg(feature = "crc32")]
     crc32c_name: "aarch64/pmull-small",
+    #[cfg(feature = "crc64")]
     crc64_xz: crc64_k::XZ_PMULL[0], // pmull @ 18.05 GiB/s
+    #[cfg(feature = "crc64")]
     crc64_xz_name: "aarch64/pmull",
+    #[cfg(feature = "crc64")]
     crc64_nvme: crc64_k::NVME_PMULL[0], // pmull @ 18.01 GiB/s
+    #[cfg(feature = "crc64")]
     crc64_nvme_name: "aarch64/pmull",
   };
 
   #[cfg(any(target_os = "linux", target_os = "android"))]
   const G3_M: KernelSet = KernelSet {
+    #[cfg(feature = "crc16")]
     crc16_ccitt: crc16_k::CCITT_PMULL_EOR3[0], // PMULL+EOR3 cuts XOR chain in large lanes.
+    #[cfg(feature = "crc16")]
     crc16_ccitt_name: "aarch64/pmull-eor3",
+    #[cfg(feature = "crc16")]
     crc16_ibm: crc16_k::IBM_PMULL_EOR3[0], // PMULL+EOR3 cuts XOR chain in large lanes.
+    #[cfg(feature = "crc16")]
     crc16_ibm_name: "aarch64/pmull-eor3",
+    #[cfg(feature = "crc24")]
     crc24_openpgp: crc24_k::OPENPGP_PMULL[0], // pmull @ 32.78 GiB/s
+    #[cfg(feature = "crc24")]
     crc24_openpgp_name: "aarch64/pmull",
+    #[cfg(feature = "crc32")]
     crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL, // pmull-small @ 31.76 GiB/s
+    #[cfg(feature = "crc32")]
     crc32_ieee_name: "aarch64/pmull-small",
+    #[cfg(feature = "crc32")]
     crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL, // pmull-small @ 32.26 GiB/s
+    #[cfg(feature = "crc32")]
     crc32c_name: "aarch64/pmull-small",
+    #[cfg(feature = "crc64")]
     crc64_xz: crc64_k::XZ_PMULL[0], // pmull @ 35.34 GiB/s
+    #[cfg(feature = "crc64")]
     crc64_xz_name: "aarch64/pmull",
+    #[cfg(feature = "crc64")]
     crc64_nvme: crc64_k::NVME_PMULL[1], // pmull-2way @ 34.60 GiB/s (G3: 2way beats 1way)
+    #[cfg(feature = "crc64")]
     crc64_nvme_name: "aarch64/pmull-2way",
   };
 
   #[cfg(any(target_os = "linux", target_os = "android"))]
   const G3_L: KernelSet = KernelSet {
+    #[cfg(feature = "crc16")]
     crc16_ccitt: g3_crc16_ccitt_l_hybrid,
+    #[cfg(feature = "crc16")]
     crc16_ccitt_name: "aarch64/pmull-eor3-g3-ccitt-hybrid",
+    #[cfg(feature = "crc16")]
     crc16_ibm: g3_crc16_ibm_l_hybrid,
+    #[cfg(feature = "crc16")]
     crc16_ibm_name: "aarch64/pmull-eor3-g3-ibm-hybrid",
+    #[cfg(feature = "crc24")]
     crc24_openpgp: crc24_k::OPENPGP_PMULL[0], // pmull @ 37.90 GiB/s
+    #[cfg(feature = "crc24")]
     crc24_openpgp_name: "aarch64/pmull",
+    #[cfg(feature = "crc32")]
     crc32_ieee: crc32_k::CRC32_PMULL_EOR3[0], // pmull-eor3-v9s3x2e-s3 @ 46.29 GiB/s
+    #[cfg(feature = "crc32")]
     crc32_ieee_name: "aarch64/pmull-eor3-v9s3x2e-s3",
+    #[cfg(feature = "crc32")]
     crc32c: crc32_k::CRC32C_PMULL_EOR3[0], // pmull-eor3-v9s3x2e-s3 @ 46.08 GiB/s
+    #[cfg(feature = "crc32")]
     crc32c_name: "aarch64/pmull-eor3-v9s3x2e-s3",
+    #[cfg(feature = "crc64")]
     crc64_xz: crc64_k::XZ_PMULL_EOR3[0], // pmull-eor3 @ 38.04 GiB/s
+    #[cfg(feature = "crc64")]
     crc64_xz_name: "aarch64/pmull-eor3",
+    #[cfg(feature = "crc64")]
     crc64_nvme: crc64_k::NVME_PMULL_EOR3[0], // pmull-eor3 @ 38.05 GiB/s (G3: eor3 beats pmull)
+    #[cfg(feature = "crc64")]
     crc64_nvme_name: "aarch64/pmull-eor3",
   };
 
@@ -995,16 +1238,24 @@ mod aarch64_tables {
     G3_XS,
     G3_S,
     KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_PMULL_EOR3[1],
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "aarch64/pmull-eor3-2way",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crc16_k::IBM_PMULL_EOR3[1],
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "aarch64/pmull-eor3-2way",
       ..G3_M
     },
     KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_PMULL_EOR3[1],
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "aarch64/pmull-eor3-2way",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crc16_k::IBM_PMULL_EOR3[1],
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "aarch64/pmull-eor3-2way",
       ..G3_L
     },
@@ -1028,70 +1279,126 @@ mod aarch64_tables {
     boundaries: [64, 256, 4096],
 
     xs: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_PMULL_SMALL_KERNEL,
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "aarch64/pmull-small",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crc16_k::IBM_PMULL_SMALL_KERNEL,
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "aarch64/pmull-small",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crc24_k::OPENPGP_PMULL_SMALL_KERNEL,
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "aarch64/pmull-small",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL,
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "aarch64/pmull-small",
+      #[cfg(feature = "crc32")]
       crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL,
+      #[cfg(feature = "crc32")]
       crc32c_name: "aarch64/pmull-small",
+      #[cfg(feature = "crc64")]
       crc64_xz: crc64_k::XZ_PMULL_SMALL,
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "aarch64/pmull-small",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crc64_k::NVME_PMULL_SMALL,
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "aarch64/pmull-small",
     },
 
     s: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_PMULL_SMALL_KERNEL,
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "aarch64/pmull-small",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crc16_k::IBM_PMULL_SMALL_KERNEL,
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "aarch64/pmull-small",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crc24_k::OPENPGP_PMULL[0],
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "aarch64/pmull",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL,
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "aarch64/pmull-small",
+      #[cfg(feature = "crc32")]
       crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL,
+      #[cfg(feature = "crc32")]
       crc32c_name: "aarch64/pmull-small",
+      #[cfg(feature = "crc64")]
       crc64_xz: crc64_k::XZ_PMULL[0],
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "aarch64/pmull",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crc64_k::NVME_PMULL[0],
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "aarch64/pmull",
     },
 
     m: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_PMULL[0],
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "aarch64/pmull",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crc16_k::IBM_PMULL[0],
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "aarch64/pmull",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crc24_k::OPENPGP_PMULL[0],
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "aarch64/pmull",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL,
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "aarch64/pmull-small",
+      #[cfg(feature = "crc32")]
       crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL,
+      #[cfg(feature = "crc32")]
       crc32c_name: "aarch64/pmull-small",
+      #[cfg(feature = "crc64")]
       crc64_xz: crc64_k::XZ_PMULL[0],
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "aarch64/pmull",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crc64_k::NVME_PMULL[0],
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "aarch64/pmull",
     },
 
     l: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_PMULL[0],
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "aarch64/pmull",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crc16_k::IBM_PMULL[0],
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "aarch64/pmull",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crc24_k::OPENPGP_PMULL[0],
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "aarch64/pmull",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crc32_k::CRC32_PMULL[0],
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "aarch64/pmull-v9s3x2e-s3",
+      #[cfg(feature = "crc32")]
       crc32c: crc32_k::CRC32C_PMULL[0],
+      #[cfg(feature = "crc32")]
       crc32c_name: "aarch64/pmull-v9s3x2e-s3",
+      #[cfg(feature = "crc64")]
       crc64_xz: crc64_k::XZ_PMULL[0],
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "aarch64/pmull",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crc64_k::NVME_PMULL[0],
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "aarch64/pmull",
     },
   };
@@ -1102,70 +1409,126 @@ mod aarch64_tables {
     boundaries: [64, 256, 4096],
 
     xs: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_PMULL_SMALL_KERNEL,
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "aarch64/pmull-small",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crc16_k::IBM_PMULL_SMALL_KERNEL,
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "aarch64/pmull-small",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crc24_k::OPENPGP_PMULL_SMALL_KERNEL,
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "aarch64/pmull-small",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crate::checksum::crc32::portable::crc32_bytewise_ieee,
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: crate::checksum::crc32::portable::BYTEWISE_KERNEL_NAME,
+      #[cfg(feature = "crc32")]
       crc32c: crate::checksum::crc32::portable::crc32c_bytewise,
+      #[cfg(feature = "crc32")]
       crc32c_name: crate::checksum::crc32::portable::BYTEWISE_KERNEL_NAME,
+      #[cfg(feature = "crc64")]
       crc64_xz: crc64_k::XZ_PMULL_SMALL,
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "aarch64/pmull-small",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crc64_k::NVME_PMULL_SMALL,
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "aarch64/pmull-small",
     },
 
     s: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_PMULL_SMALL_KERNEL,
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "aarch64/pmull-small",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crc16_k::IBM_PMULL_SMALL_KERNEL,
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "aarch64/pmull-small",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crc24_k::OPENPGP_PMULL[0],
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "aarch64/pmull",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crate::checksum::crc32::portable::crc32_slice16_ieee,
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "portable/slice16",
+      #[cfg(feature = "crc32")]
       crc32c: crate::checksum::crc32::portable::crc32c_slice16,
+      #[cfg(feature = "crc32")]
       crc32c_name: "portable/slice16",
+      #[cfg(feature = "crc64")]
       crc64_xz: crc64_k::XZ_PMULL[0],
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "aarch64/pmull",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crc64_k::NVME_PMULL[0],
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "aarch64/pmull",
     },
 
     m: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_PMULL[0],
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "aarch64/pmull",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crc16_k::IBM_PMULL[0],
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "aarch64/pmull",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crc24_k::OPENPGP_PMULL[0],
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "aarch64/pmull",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crate::checksum::crc32::portable::crc32_slice16_ieee,
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "portable/slice16",
+      #[cfg(feature = "crc32")]
       crc32c: crate::checksum::crc32::portable::crc32c_slice16,
+      #[cfg(feature = "crc32")]
       crc32c_name: "portable/slice16",
+      #[cfg(feature = "crc64")]
       crc64_xz: crc64_k::XZ_PMULL[0],
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "aarch64/pmull",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crc64_k::NVME_PMULL[0],
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "aarch64/pmull",
     },
 
     l: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_PMULL[0],
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "aarch64/pmull",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crc16_k::IBM_PMULL[0],
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "aarch64/pmull",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crc24_k::OPENPGP_PMULL[0],
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "aarch64/pmull",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crate::checksum::crc32::portable::crc32_slice16_ieee,
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "portable/slice16",
+      #[cfg(feature = "crc32")]
       crc32c: crate::checksum::crc32::portable::crc32c_slice16,
+      #[cfg(feature = "crc32")]
       crc32c_name: "portable/slice16",
+      #[cfg(feature = "crc64")]
       crc64_xz: crc64_k::XZ_PMULL[0],
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "aarch64/pmull",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crc64_k::NVME_PMULL[0],
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "aarch64/pmull",
     },
   };
@@ -1176,70 +1539,126 @@ mod aarch64_tables {
     boundaries: [64, 256, 4096],
 
     xs: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crate::checksum::crc16::portable::crc16_ccitt_slice8,
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "portable/slice8",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crate::checksum::crc16::portable::crc16_ibm_slice8,
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "portable/slice8",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crate::checksum::crc24::portable::crc24_openpgp_slice8,
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "portable/slice8",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crc32_k::CRC32_HWCRC[0],
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "aarch64/hwcrc",
+      #[cfg(feature = "crc32")]
       crc32c: crc32_k::CRC32C_HWCRC[0],
+      #[cfg(feature = "crc32")]
       crc32c_name: "aarch64/hwcrc",
+      #[cfg(feature = "crc64")]
       crc64_xz: crate::checksum::crc64::portable::crc64_slice16_xz,
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "portable/slice16",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crate::checksum::crc64::portable::crc64_slice16_nvme,
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "portable/slice16",
     },
 
     s: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crate::checksum::crc16::portable::crc16_ccitt_slice8,
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "portable/slice8",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crate::checksum::crc16::portable::crc16_ibm_slice8,
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "portable/slice8",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crate::checksum::crc24::portable::crc24_openpgp_slice8,
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "portable/slice8",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crc32_k::CRC32_HWCRC[0],
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "aarch64/hwcrc",
+      #[cfg(feature = "crc32")]
       crc32c: crc32_k::CRC32C_HWCRC[0],
+      #[cfg(feature = "crc32")]
       crc32c_name: "aarch64/hwcrc",
+      #[cfg(feature = "crc64")]
       crc64_xz: crate::checksum::crc64::portable::crc64_slice16_xz,
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "portable/slice16",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crate::checksum::crc64::portable::crc64_slice16_nvme,
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "portable/slice16",
     },
 
     m: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crate::checksum::crc16::portable::crc16_ccitt_slice8,
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "portable/slice8",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crate::checksum::crc16::portable::crc16_ibm_slice8,
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "portable/slice8",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crate::checksum::crc24::portable::crc24_openpgp_slice8,
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "portable/slice8",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crc32_k::CRC32_HWCRC[0],
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "aarch64/hwcrc",
+      #[cfg(feature = "crc32")]
       crc32c: crc32_k::CRC32C_HWCRC[0],
+      #[cfg(feature = "crc32")]
       crc32c_name: "aarch64/hwcrc",
+      #[cfg(feature = "crc64")]
       crc64_xz: crate::checksum::crc64::portable::crc64_slice16_xz,
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "portable/slice16",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crate::checksum::crc64::portable::crc64_slice16_nvme,
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "portable/slice16",
     },
 
     l: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crate::checksum::crc16::portable::crc16_ccitt_slice8,
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "portable/slice8",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crate::checksum::crc16::portable::crc16_ibm_slice8,
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "portable/slice8",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crate::checksum::crc24::portable::crc24_openpgp_slice8,
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "portable/slice8",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crc32_k::CRC32_HWCRC[0],
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "aarch64/hwcrc",
+      #[cfg(feature = "crc32")]
       crc32c: crc32_k::CRC32C_HWCRC[0],
+      #[cfg(feature = "crc32")]
       crc32c_name: "aarch64/hwcrc",
+      #[cfg(feature = "crc64")]
       crc64_xz: crate::checksum::crc64::portable::crc64_slice16_xz,
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "portable/slice16",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crate::checksum::crc64::portable::crc64_slice16_nvme,
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "portable/slice16",
     },
   };
@@ -1252,18 +1671,23 @@ mod aarch64_tables {
 #[cfg(target_arch = "x86_64")]
 mod x86_64_tables {
   use super::*;
-  // Import kernel constants from the kernels modules
+  #[cfg(feature = "crc16")]
   use crate::checksum::crc16::kernels::x86_64 as crc16_k;
-  use crate::checksum::{
-    crc24::kernels::x86_64 as crc24_k, crc32::kernels::x86_64 as crc32_k, crc64::kernels::x86_64 as crc64_k,
-  };
+  #[cfg(feature = "crc24")]
+  use crate::checksum::crc24::kernels::x86_64 as crc24_k;
+  #[cfg(feature = "crc32")]
+  use crate::checksum::crc32::kernels::x86_64 as crc32_k;
+  #[cfg(feature = "crc64")]
+  use crate::checksum::crc64::kernels::x86_64 as crc64_k;
 
+  #[cfg(feature = "crc64")]
   const ZEN4_CRC64_XZ_2WAY_MAX_LEN: usize = 262_144;
 
   /// Zen4 CRC64/XZ large-path hybrid.
   ///
   /// 2-way is strongest around lower "large" sizes, while 8-way closes the
   /// remaining gap at xl-scale buffers.
+  #[cfg(feature = "crc64")]
   #[inline]
   fn zen4_crc64_xz_l_hybrid(crc: u64, data: &[u8]) -> u64 {
     if data.len() <= ZEN4_CRC64_XZ_2WAY_MAX_LEN {
@@ -1306,70 +1730,126 @@ mod x86_64_tables {
     boundaries: [64, 256, 4096],
 
     xs: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_PCLMUL_SMALL_KERNEL,
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "x86_64/pclmul-small",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crc16_k::IBM_PCLMUL_SMALL_KERNEL,
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "x86_64/pclmul-small",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crc24_k::OPENPGP_PCLMUL_SMALL_KERNEL,
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "x86_64/pclmul-small",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crc32_k::CRC32_PCLMUL_SMALL_KERNEL, // pclmul-small @ 9.30 GiB/s
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "x86_64/pclmul-small",
+      #[cfg(feature = "crc32")]
       crc32c: crc32_k::CRC32C_HWCRC[0], // hwcrc @ 27.73 GiB/s
+      #[cfg(feature = "crc32")]
       crc32c_name: "x86_64/hwcrc",
+      #[cfg(feature = "crc64")]
       crc64_xz: crc64_k::XZ_PCLMUL_SMALL,
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "x86_64/pclmul-small",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crc64_k::NVME_PCLMUL_SMALL,
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "x86_64/pclmul-small",
     },
 
     s: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_VPCLMUL[1], // 2-way @ 18.12 GiB/s
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "x86_64/vpclmul-2way",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crc16_k::IBM_VPCLMUL[1], // 2-way @ 19.90 GiB/s
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "x86_64/vpclmul-2way",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crc24_k::OPENPGP_VPCLMUL[3], // 7-way @ 17.28 GiB/s
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "x86_64/vpclmul-7way",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crc32_k::CRC32_VPCLMUL[0], // 1-way @ 19.15 GiB/s
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "x86_64/vpclmul",
+      #[cfg(feature = "crc32")]
       crc32c: crc32_k::CRC32C_HWCRC[0], // hwcrc @ 23.59 GiB/s
+      #[cfg(feature = "crc32")]
       crc32c_name: "x86_64/hwcrc",
+      #[cfg(feature = "crc64")]
       crc64_xz: crc64_k::XZ_VPCLMUL[0], // 1-way @ 19.48 GiB/s
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "x86_64/vpclmul",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crc64_k::NVME_VPCLMUL[0], // 1-way @ 20.70 GiB/s
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "x86_64/vpclmul",
     },
 
     m: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_VPCLMUL[1], // 2-way @ 61.24 GiB/s
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "x86_64/vpclmul-2way",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crc16_k::IBM_VPCLMUL[1], // 2-way @ 64.84 GiB/s
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "x86_64/vpclmul-2way",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crc24_k::OPENPGP_VPCLMUL[2], // 4-way @ 34.72 GiB/s (bench: 4way beats 8way)
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "x86_64/vpclmul-4way",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crc32_k::CRC32_VPCLMUL[1], // 2-way @ 64.13 GiB/s
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "x86_64/vpclmul-2way",
+      #[cfg(feature = "crc32")]
       crc32c: crc32_k::CRC32C_FUSION_VPCLMUL[0], // fusion-vpclmul-v3x2 @ 58.96 GiB/s
+      #[cfg(feature = "crc32")]
       crc32c_name: "x86_64/fusion-vpclmul-v3x2",
+      #[cfg(feature = "crc64")]
       crc64_xz: crc64_k::XZ_VPCLMUL[1], // 2-way @ 66.51 GiB/s
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "x86_64/vpclmul-2way",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crc64_k::NVME_VPCLMUL[1], // 2-way @ 66.51 GiB/s
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "x86_64/vpclmul-2way",
     },
 
     l: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_VPCLMUL[2], // 4-way @ 73.97 GiB/s
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "x86_64/vpclmul-4way",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crc16_k::IBM_VPCLMUL[1], // 2-way @ 78.09 GiB/s
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "x86_64/vpclmul-2way",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crc24_k::OPENPGP_VPCLMUL[2], // 4-way @ 71.94 GiB/s (bench: 4way beats 2way)
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "x86_64/vpclmul-4way",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crc32_k::CRC32_VPCLMUL[1], // 2-way @ 72.57 GiB/s
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "x86_64/vpclmul-2way",
+      #[cfg(feature = "crc32")]
       crc32c: crc32_k::CRC32C_FUSION_VPCLMUL[0], // fusion-vpclmul-v3x2
+      #[cfg(feature = "crc32")]
       crc32c_name: "x86_64/fusion-vpclmul-v3x2",
+      #[cfg(feature = "crc64")]
       crc64_xz: zen4_crc64_xz_l_hybrid,
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "x86_64/vpclmul-zen4-xz-hybrid",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crc64_k::NVME_VPCLMUL[1], // 2-way edges out 4-way at l/xl in latest comp+kernels
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "x86_64/vpclmul-2way",
     },
   };
@@ -1390,70 +1870,126 @@ mod x86_64_tables {
     boundaries: [64, 256, 4096],
 
     xs: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_PCLMUL_SMALL_KERNEL,
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "x86_64/pclmul-small",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crc16_k::IBM_PCLMUL_SMALL_KERNEL,
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "x86_64/pclmul-small",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crc24_k::OPENPGP_PCLMUL_SMALL_KERNEL,
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "x86_64/pclmul-small",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crc32_k::CRC32_PCLMUL_SMALL_KERNEL,
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "x86_64/pclmul-small",
+      #[cfg(feature = "crc32")]
       crc32c: crate::checksum::crc32::portable::crc32c_bytewise,
+      #[cfg(feature = "crc32")]
       crc32c_name: crate::checksum::crc32::portable::BYTEWISE_KERNEL_NAME,
+      #[cfg(feature = "crc64")]
       crc64_xz: crc64_k::XZ_PCLMUL_SMALL,
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "x86_64/pclmul-small",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crc64_k::NVME_PCLMUL_SMALL,
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "x86_64/pclmul-small",
     },
 
     s: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_VPCLMUL[1],
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "x86_64/vpclmul-2way",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crc16_k::IBM_VPCLMUL[1],
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "x86_64/vpclmul-2way",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crc24_k::OPENPGP_VPCLMUL[3],
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "x86_64/vpclmul-7way",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crc32_k::CRC32_VPCLMUL[0],
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "x86_64/vpclmul",
+      #[cfg(feature = "crc32")]
       crc32c: crate::checksum::crc32::portable::crc32c_slice16,
+      #[cfg(feature = "crc32")]
       crc32c_name: "portable/slice16",
+      #[cfg(feature = "crc64")]
       crc64_xz: crc64_k::XZ_VPCLMUL[0],
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "x86_64/vpclmul",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crc64_k::NVME_VPCLMUL[0],
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "x86_64/vpclmul",
     },
 
     m: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_VPCLMUL[1],
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "x86_64/vpclmul-2way",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crc16_k::IBM_VPCLMUL[1],
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "x86_64/vpclmul-2way",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crc24_k::OPENPGP_VPCLMUL[4],
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "x86_64/vpclmul-8way",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crc32_k::CRC32_VPCLMUL[1],
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "x86_64/vpclmul-2way",
+      #[cfg(feature = "crc32")]
       crc32c: crate::checksum::crc32::portable::crc32c_slice16,
+      #[cfg(feature = "crc32")]
       crc32c_name: "portable/slice16",
+      #[cfg(feature = "crc64")]
       crc64_xz: crc64_k::XZ_VPCLMUL[1],
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "x86_64/vpclmul-2way",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crc64_k::NVME_VPCLMUL[1],
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "x86_64/vpclmul-2way",
     },
 
     l: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_VPCLMUL[2],
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "x86_64/vpclmul-4way",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crc16_k::IBM_VPCLMUL[1],
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "x86_64/vpclmul-2way",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crc24_k::OPENPGP_VPCLMUL[1],
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "x86_64/vpclmul-2way",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crc32_k::CRC32_VPCLMUL[1],
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "x86_64/vpclmul-2way",
+      #[cfg(feature = "crc32")]
       crc32c: crate::checksum::crc32::portable::crc32c_slice16,
+      #[cfg(feature = "crc32")]
       crc32c_name: "portable/slice16",
+      #[cfg(feature = "crc64")]
       crc64_xz: crc64_k::XZ_VPCLMUL_4X512,
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "x86_64/vpclmul-4x512",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crc64_k::NVME_VPCLMUL[2],
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "x86_64/vpclmul-4way",
     },
   };
@@ -1479,70 +2015,126 @@ mod x86_64_tables {
     boundaries: [64, 256, 4096],
 
     xs: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_PCLMUL_SMALL_KERNEL,
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "x86_64/pclmul-small",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crc16_k::IBM_PCLMUL_SMALL_KERNEL,
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "x86_64/pclmul-small",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crc24_k::OPENPGP_PCLMUL_SMALL_KERNEL,
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "x86_64/pclmul-small",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crc32_k::CRC32_PCLMUL_SMALL_KERNEL,
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "x86_64/pclmul-small",
+      #[cfg(feature = "crc32")]
       crc32c: crc32_k::CRC32C_HWCRC[0],
+      #[cfg(feature = "crc32")]
       crc32c_name: "x86_64/hwcrc",
+      #[cfg(feature = "crc64")]
       crc64_xz: crc64_k::XZ_PCLMUL_SMALL,
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "x86_64/pclmul-small",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crc64_k::NVME_PCLMUL_SMALL,
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "x86_64/pclmul-small",
     },
 
     s: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_PCLMUL[0], // 1-way
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "x86_64/pclmul",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crc16_k::IBM_PCLMUL[2], // 4-way
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "x86_64/pclmul-4way",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crc24_k::OPENPGP_PCLMUL[0],
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "x86_64/pclmul",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crc32_k::CRC32_PCLMUL[2], // 4-way
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "x86_64/pclmul-4way",
+      #[cfg(feature = "crc32")]
       crc32c: crc32_k::CRC32C_HWCRC[0],
+      #[cfg(feature = "crc32")]
       crc32c_name: "x86_64/hwcrc",
+      #[cfg(feature = "crc64")]
       crc64_xz: crc64_k::XZ_PCLMUL_SMALL, // small still wins
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "x86_64/pclmul-small",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crc64_k::NVME_PCLMUL_SMALL,
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "x86_64/pclmul-small",
     },
 
     m: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_PCLMUL[3], // 7-way
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "x86_64/pclmul-7way",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crc16_k::IBM_PCLMUL[0], // 1-way
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "x86_64/pclmul",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crc24_k::OPENPGP_PCLMUL[1], // 2-way
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "x86_64/pclmul-2way",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crc32_k::CRC32_PCLMUL[0], // 1-way
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "x86_64/pclmul",
+      #[cfg(feature = "crc32")]
       crc32c: crc32_k::CRC32C_HWCRC[1], // 2-way
+      #[cfg(feature = "crc32")]
       crc32c_name: "x86_64/hwcrc-2way",
+      #[cfg(feature = "crc64")]
       crc64_xz: crc64_k::XZ_PCLMUL[2], // 4-way
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "x86_64/pclmul-4way",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crc64_k::NVME_PCLMUL[1], // 2-way
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "x86_64/pclmul-2way",
     },
 
     l: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_PCLMUL[0], // 1-way wins at large
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "x86_64/pclmul",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crc16_k::IBM_PCLMUL[1], // 2-way
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "x86_64/pclmul-2way",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crc24_k::OPENPGP_PCLMUL[1],
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "x86_64/pclmul-2way",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crc32_k::CRC32_PCLMUL[1], // 2-way
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "x86_64/pclmul-2way",
+      #[cfg(feature = "crc32")]
       crc32c: crc32_k::CRC32C_FUSION_SSE[1], // fusion-sse-v4s3x3-2way
+      #[cfg(feature = "crc32")]
       crc32c_name: "x86_64/fusion-sse-v4s3x3-2way",
+      #[cfg(feature = "crc64")]
       crc64_xz: crc64_k::XZ_PCLMUL[0], // 1-way
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "x86_64/pclmul",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crc64_k::NVME_PCLMUL[1], // 2-way
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "x86_64/pclmul-2way",
     },
   };
@@ -1555,70 +2147,126 @@ mod x86_64_tables {
     boundaries: [64, 256, 4096],
 
     xs: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_PCLMUL_SMALL_KERNEL,
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "x86_64/pclmul-small",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crc16_k::IBM_PCLMUL_SMALL_KERNEL,
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "x86_64/pclmul-small",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crc24_k::OPENPGP_PCLMUL_SMALL_KERNEL,
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "x86_64/pclmul-small",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crc32_k::CRC32_PCLMUL_SMALL_KERNEL,
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "x86_64/pclmul-small",
+      #[cfg(feature = "crc32")]
       crc32c: crate::checksum::crc32::portable::crc32c_bytewise,
+      #[cfg(feature = "crc32")]
       crc32c_name: crate::checksum::crc32::portable::BYTEWISE_KERNEL_NAME,
+      #[cfg(feature = "crc64")]
       crc64_xz: crc64_k::XZ_PCLMUL_SMALL,
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "x86_64/pclmul-small",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crc64_k::NVME_PCLMUL_SMALL,
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "x86_64/pclmul-small",
     },
 
     s: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_PCLMUL[0],
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "x86_64/pclmul",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crc16_k::IBM_PCLMUL[2],
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "x86_64/pclmul-4way",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crc24_k::OPENPGP_PCLMUL[0],
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "x86_64/pclmul",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crc32_k::CRC32_PCLMUL[2],
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "x86_64/pclmul-4way",
+      #[cfg(feature = "crc32")]
       crc32c: crate::checksum::crc32::portable::crc32c_slice16,
+      #[cfg(feature = "crc32")]
       crc32c_name: "portable/slice16",
+      #[cfg(feature = "crc64")]
       crc64_xz: crc64_k::XZ_PCLMUL_SMALL,
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "x86_64/pclmul-small",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crc64_k::NVME_PCLMUL_SMALL,
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "x86_64/pclmul-small",
     },
 
     m: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_PCLMUL[3],
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "x86_64/pclmul-7way",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crc16_k::IBM_PCLMUL[0],
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "x86_64/pclmul",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crc24_k::OPENPGP_PCLMUL[1],
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "x86_64/pclmul-2way",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crc32_k::CRC32_PCLMUL[0],
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "x86_64/pclmul",
+      #[cfg(feature = "crc32")]
       crc32c: crate::checksum::crc32::portable::crc32c_slice16,
+      #[cfg(feature = "crc32")]
       crc32c_name: "portable/slice16",
+      #[cfg(feature = "crc64")]
       crc64_xz: crc64_k::XZ_PCLMUL[2],
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "x86_64/pclmul-4way",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crc64_k::NVME_PCLMUL[1],
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "x86_64/pclmul-2way",
     },
 
     l: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_PCLMUL[0],
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "x86_64/pclmul",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crc16_k::IBM_PCLMUL[1],
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "x86_64/pclmul-2way",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crc24_k::OPENPGP_PCLMUL[1],
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "x86_64/pclmul-2way",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crc32_k::CRC32_PCLMUL[1],
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "x86_64/pclmul-2way",
+      #[cfg(feature = "crc32")]
       crc32c: crate::checksum::crc32::portable::crc32c_slice16,
+      #[cfg(feature = "crc32")]
       crc32c_name: "portable/slice16",
+      #[cfg(feature = "crc64")]
       crc64_xz: crc64_k::XZ_PCLMUL[0],
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "x86_64/pclmul",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crc64_k::NVME_PCLMUL[1],
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "x86_64/pclmul-2way",
     },
   };
@@ -1629,70 +2277,126 @@ mod x86_64_tables {
     boundaries: [64, 256, 4096],
 
     xs: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crate::checksum::crc16::portable::crc16_ccitt_slice8,
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "portable/slice8",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crate::checksum::crc16::portable::crc16_ibm_slice8,
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "portable/slice8",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crate::checksum::crc24::portable::crc24_openpgp_slice8,
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "portable/slice8",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crate::checksum::crc32::portable::crc32_bytewise_ieee,
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: crate::checksum::crc32::portable::BYTEWISE_KERNEL_NAME,
+      #[cfg(feature = "crc32")]
       crc32c: crc32_k::CRC32C_HWCRC[0],
+      #[cfg(feature = "crc32")]
       crc32c_name: "x86_64/hwcrc",
+      #[cfg(feature = "crc64")]
       crc64_xz: crate::checksum::crc64::portable::crc64_slice16_xz,
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "portable/slice16",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crate::checksum::crc64::portable::crc64_slice16_nvme,
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "portable/slice16",
     },
 
     s: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crate::checksum::crc16::portable::crc16_ccitt_slice8,
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "portable/slice8",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crate::checksum::crc16::portable::crc16_ibm_slice8,
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "portable/slice8",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crate::checksum::crc24::portable::crc24_openpgp_slice8,
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "portable/slice8",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crate::checksum::crc32::portable::crc32_slice16_ieee,
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "portable/slice16",
+      #[cfg(feature = "crc32")]
       crc32c: crc32_k::CRC32C_HWCRC[0],
+      #[cfg(feature = "crc32")]
       crc32c_name: "x86_64/hwcrc",
+      #[cfg(feature = "crc64")]
       crc64_xz: crate::checksum::crc64::portable::crc64_slice16_xz,
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "portable/slice16",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crate::checksum::crc64::portable::crc64_slice16_nvme,
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "portable/slice16",
     },
 
     m: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crate::checksum::crc16::portable::crc16_ccitt_slice8,
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "portable/slice8",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crate::checksum::crc16::portable::crc16_ibm_slice8,
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "portable/slice8",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crate::checksum::crc24::portable::crc24_openpgp_slice8,
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "portable/slice8",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crate::checksum::crc32::portable::crc32_slice16_ieee,
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "portable/slice16",
+      #[cfg(feature = "crc32")]
       crc32c: crc32_k::CRC32C_HWCRC[1],
+      #[cfg(feature = "crc32")]
       crc32c_name: "x86_64/hwcrc-2way",
+      #[cfg(feature = "crc64")]
       crc64_xz: crate::checksum::crc64::portable::crc64_slice16_xz,
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "portable/slice16",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crate::checksum::crc64::portable::crc64_slice16_nvme,
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "portable/slice16",
     },
 
     l: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crate::checksum::crc16::portable::crc16_ccitt_slice8,
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "portable/slice8",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crate::checksum::crc16::portable::crc16_ibm_slice8,
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "portable/slice8",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crate::checksum::crc24::portable::crc24_openpgp_slice8,
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "portable/slice8",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crate::checksum::crc32::portable::crc32_slice16_ieee,
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "portable/slice16",
+      #[cfg(feature = "crc32")]
       crc32c: crc32_k::CRC32C_HWCRC[1],
+      #[cfg(feature = "crc32")]
       crc32c_name: "x86_64/hwcrc-2way",
+      #[cfg(feature = "crc64")]
       crc64_xz: crate::checksum::crc64::portable::crc64_slice16_xz,
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "portable/slice16",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crate::checksum::crc64::portable::crc64_slice16_nvme,
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "portable/slice16",
     },
   };
@@ -1719,35 +2423,63 @@ mod s390x_tables {
     xs: PORTABLE_SET,
     s: PORTABLE_SET,
     m: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_VGFM[0],
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "s390x/vgfm",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crc16_k::IBM_VGFM[0],
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "s390x/vgfm",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crc24_k::OPENPGP_VGFM[0],
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "s390x/vgfm",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crc32_k::CRC32_VGFM[0],
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "s390x/vgfm",
+      #[cfg(feature = "crc32")]
       crc32c: crc32_k::CRC32C_VGFM[0],
+      #[cfg(feature = "crc32")]
       crc32c_name: "s390x/vgfm",
+      #[cfg(feature = "crc64")]
       crc64_xz: crc64_k::XZ_VGFM[0],
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "s390x/vgfm",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crc64_k::NVME_VGFM[0],
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "s390x/vgfm",
     },
     l: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_VGFM[1],
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "s390x/vgfm-2way",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crc16_k::IBM_VGFM[1],
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "s390x/vgfm-2way",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crc24_k::OPENPGP_VGFM[1],
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "s390x/vgfm-2way",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crc32_k::CRC32_VGFM[1],
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "s390x/vgfm-2way",
+      #[cfg(feature = "crc32")]
       crc32c: crc32_k::CRC32C_VGFM[1],
+      #[cfg(feature = "crc32")]
       crc32c_name: "s390x/vgfm-2way",
+      #[cfg(feature = "crc64")]
       crc64_xz: crc64_k::XZ_VGFM[1],
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "s390x/vgfm-2way",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crc64_k::NVME_VGFM[1],
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "s390x/vgfm-2way",
     },
   };
@@ -1758,35 +2490,63 @@ mod s390x_tables {
     xs: PORTABLE_SET,
     s: PORTABLE_SET,
     m: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_VGFM[0],
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "s390x/vgfm",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crc16_k::IBM_VGFM[0],
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "s390x/vgfm",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crc24_k::OPENPGP_VGFM[0],
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "s390x/vgfm",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crc32_k::CRC32_VGFM[0],
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "s390x/vgfm",
+      #[cfg(feature = "crc32")]
       crc32c: crc32_k::CRC32C_VGFM[0],
+      #[cfg(feature = "crc32")]
       crc32c_name: "s390x/vgfm",
+      #[cfg(feature = "crc64")]
       crc64_xz: crc64_k::XZ_VGFM[0],
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "s390x/vgfm",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crc64_k::NVME_VGFM[0],
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "s390x/vgfm",
     },
     l: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_VGFM[1],
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "s390x/vgfm-2way",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crc16_k::IBM_VGFM[1],
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "s390x/vgfm-2way",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crc24_k::OPENPGP_VGFM[1],
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "s390x/vgfm-2way",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crc32_k::CRC32_VGFM[1],
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "s390x/vgfm-2way",
+      #[cfg(feature = "crc32")]
       crc32c: crc32_k::CRC32C_VGFM[1],
+      #[cfg(feature = "crc32")]
       crc32c_name: "s390x/vgfm-2way",
+      #[cfg(feature = "crc64")]
       crc64_xz: crc64_k::XZ_VGFM[1],
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "s390x/vgfm-2way",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crc64_k::NVME_VGFM[1],
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "s390x/vgfm-2way",
     },
   };
@@ -1797,35 +2557,63 @@ mod s390x_tables {
     xs: PORTABLE_SET,
     s: PORTABLE_SET,
     m: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_VGFM[0],
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "s390x/vgfm",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crc16_k::IBM_VGFM[0],
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "s390x/vgfm",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crc24_k::OPENPGP_VGFM[0],
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "s390x/vgfm",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crc32_k::CRC32_VGFM[0],
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "s390x/vgfm",
+      #[cfg(feature = "crc32")]
       crc32c: crc32_k::CRC32C_VGFM[0],
+      #[cfg(feature = "crc32")]
       crc32c_name: "s390x/vgfm",
+      #[cfg(feature = "crc64")]
       crc64_xz: crc64_k::XZ_VGFM[0],
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "s390x/vgfm",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crc64_k::NVME_VGFM[0],
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "s390x/vgfm",
     },
     l: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_VGFM[1],
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "s390x/vgfm-2way",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crc16_k::IBM_VGFM[1],
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "s390x/vgfm-2way",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crc24_k::OPENPGP_VGFM[1],
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "s390x/vgfm-2way",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crc32_k::CRC32_VGFM[1],
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "s390x/vgfm-2way",
+      #[cfg(feature = "crc32")]
       crc32c: crc32_k::CRC32C_VGFM[1],
+      #[cfg(feature = "crc32")]
       crc32c_name: "s390x/vgfm-2way",
+      #[cfg(feature = "crc64")]
       crc64_xz: crc64_k::XZ_VGFM[1],
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "s390x/vgfm-2way",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crc64_k::NVME_VGFM[1],
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "s390x/vgfm-2way",
     },
   };
@@ -1852,35 +2640,63 @@ mod power_tables {
     xs: PORTABLE_SET,
     s: PORTABLE_SET,
     m: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_VPMSUM[0],
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "power/vpmsum",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crc16_k::IBM_VPMSUM[0],
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "power/vpmsum",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crc24_k::OPENPGP_VPMSUM[0],
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "power/vpmsum",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crc32_k::CRC32_VPMSUM[0],
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "power/vpmsum",
+      #[cfg(feature = "crc32")]
       crc32c: crc32_k::CRC32C_VPMSUM[0],
+      #[cfg(feature = "crc32")]
       crc32c_name: "power/vpmsum",
+      #[cfg(feature = "crc64")]
       crc64_xz: crc64_k::XZ_VPMSUM[0],
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "power/vpmsum",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crc64_k::NVME_VPMSUM[0],
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "power/vpmsum",
     },
     l: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_VPMSUM[1],
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "power/vpmsum-2way",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crc16_k::IBM_VPMSUM[1],
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "power/vpmsum-2way",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crc24_k::OPENPGP_VPMSUM[1],
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "power/vpmsum-2way",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crc32_k::CRC32_VPMSUM[1],
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "power/vpmsum-2way",
+      #[cfg(feature = "crc32")]
       crc32c: crc32_k::CRC32C_VPMSUM[1],
+      #[cfg(feature = "crc32")]
       crc32c_name: "power/vpmsum-2way",
+      #[cfg(feature = "crc64")]
       crc64_xz: crc64_k::XZ_VPMSUM[1],
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "power/vpmsum-2way",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crc64_k::NVME_VPMSUM[1],
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "power/vpmsum-2way",
     },
   };
@@ -1891,35 +2707,63 @@ mod power_tables {
     xs: PORTABLE_SET,
     s: PORTABLE_SET,
     m: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_VPMSUM[0],
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "power/vpmsum",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crc16_k::IBM_VPMSUM[0],
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "power/vpmsum",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crc24_k::OPENPGP_VPMSUM[0],
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "power/vpmsum",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crc32_k::CRC32_VPMSUM[0],
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "power/vpmsum",
+      #[cfg(feature = "crc32")]
       crc32c: crc32_k::CRC32C_VPMSUM[0],
+      #[cfg(feature = "crc32")]
       crc32c_name: "power/vpmsum",
+      #[cfg(feature = "crc64")]
       crc64_xz: crc64_k::XZ_VPMSUM[0],
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "power/vpmsum",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crc64_k::NVME_VPMSUM[0],
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "power/vpmsum",
     },
     l: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_VPMSUM[2],
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "power/vpmsum-4way",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crc16_k::IBM_VPMSUM[2],
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "power/vpmsum-4way",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crc24_k::OPENPGP_VPMSUM[2],
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "power/vpmsum-4way",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crc32_k::CRC32_VPMSUM[2],
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "power/vpmsum-4way",
+      #[cfg(feature = "crc32")]
       crc32c: crc32_k::CRC32C_VPMSUM[2],
+      #[cfg(feature = "crc32")]
       crc32c_name: "power/vpmsum-4way",
+      #[cfg(feature = "crc64")]
       crc64_xz: crc64_k::XZ_VPMSUM[2],
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "power/vpmsum-4way",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crc64_k::NVME_VPMSUM[2],
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "power/vpmsum-4way",
     },
   };
@@ -1930,35 +2774,63 @@ mod power_tables {
     xs: PORTABLE_SET,
     s: PORTABLE_SET,
     m: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_VPMSUM[0],
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "power/vpmsum",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crc16_k::IBM_VPMSUM[0],
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "power/vpmsum",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crc24_k::OPENPGP_VPMSUM[0],
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "power/vpmsum",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crc32_k::CRC32_VPMSUM[0],
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "power/vpmsum",
+      #[cfg(feature = "crc32")]
       crc32c: crc32_k::CRC32C_VPMSUM[0],
+      #[cfg(feature = "crc32")]
       crc32c_name: "power/vpmsum",
+      #[cfg(feature = "crc64")]
       crc64_xz: crc64_k::XZ_VPMSUM[0],
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "power/vpmsum",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crc64_k::NVME_VPMSUM[0],
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "power/vpmsum",
     },
     l: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_VPMSUM[2],
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "power/vpmsum-4way",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crc16_k::IBM_VPMSUM[2],
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "power/vpmsum-4way",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crc24_k::OPENPGP_VPMSUM[2],
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "power/vpmsum-4way",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crc32_k::CRC32_VPMSUM[2],
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "power/vpmsum-4way",
+      #[cfg(feature = "crc32")]
       crc32c: crc32_k::CRC32C_VPMSUM[2],
+      #[cfg(feature = "crc32")]
       crc32c_name: "power/vpmsum-4way",
+      #[cfg(feature = "crc64")]
       crc64_xz: crc64_k::XZ_VPMSUM[2],
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "power/vpmsum-4way",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crc64_k::NVME_VPMSUM[2],
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "power/vpmsum-4way",
     },
   };
@@ -1987,51 +2859,93 @@ mod riscv64_tables {
     // on CRC16/24/32, and make the multi-stream cutovers less eager than the
     // original 256/1024 thresholds.
     s: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_ZBC[0],
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "riscv64/zbc",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crc16_k::IBM_ZBC[0],
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "riscv64/zbc",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crc24_k::OPENPGP_ZBC[0],
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "riscv64/zbc",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crc32_k::CRC32_ZBC[0],
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "riscv64/zbc",
+      #[cfg(feature = "crc32")]
       crc32c: crc32_k::CRC32C_ZBC[0],
+      #[cfg(feature = "crc32")]
       crc32c_name: "riscv64/zbc",
+      #[cfg(feature = "crc64")]
       crc64_xz: crate::checksum::crc64::portable::crc64_slice16_xz,
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "portable/slice16",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crate::checksum::crc64::portable::crc64_slice16_nvme,
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "portable/slice16",
     },
     m: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_ZBC[1],
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "riscv64/zbc-2way",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crc16_k::IBM_ZBC[1],
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "riscv64/zbc-2way",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crc24_k::OPENPGP_ZBC[1],
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "riscv64/zbc-2way",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crc32_k::CRC32_ZBC[1],
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "riscv64/zbc-2way",
+      #[cfg(feature = "crc32")]
       crc32c: crc32_k::CRC32C_ZBC[1],
+      #[cfg(feature = "crc32")]
       crc32c_name: "riscv64/zbc-2way",
+      #[cfg(feature = "crc64")]
       crc64_xz: crate::checksum::crc64::portable::crc64_slice16_xz,
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "portable/slice16",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crate::checksum::crc64::portable::crc64_slice16_nvme,
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "portable/slice16",
     },
     l: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_ZBC[2],
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "riscv64/zbc-4way",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crc16_k::IBM_ZBC[2],
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "riscv64/zbc-4way",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crc24_k::OPENPGP_ZBC[2],
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "riscv64/zbc-4way",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crc32_k::CRC32_ZBC[2],
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "riscv64/zbc-4way",
+      #[cfg(feature = "crc32")]
       crc32c: crc32_k::CRC32C_ZBC[2],
+      #[cfg(feature = "crc32")]
       crc32c_name: "riscv64/zbc-4way",
+      #[cfg(feature = "crc64")]
       crc64_xz: crate::checksum::crc64::portable::crc64_slice16_xz,
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "portable/slice16",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crate::checksum::crc64::portable::crc64_slice16_nvme,
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "portable/slice16",
     },
   };
@@ -2041,72 +2955,125 @@ mod riscv64_tables {
     boundaries: [128, 1024, 4096],
     xs: PORTABLE_SET,
     s: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_ZVBC[0],
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "riscv64/zvbc",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crc16_k::IBM_ZVBC[0],
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "riscv64/zvbc",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crc24_k::OPENPGP_ZVBC[0],
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "riscv64/zvbc",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crc32_k::CRC32_ZVBC[0],
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "riscv64/zvbc",
+      #[cfg(feature = "crc32")]
       crc32c: crc32_k::CRC32C_ZVBC[0],
+      #[cfg(feature = "crc32")]
       crc32c_name: "riscv64/zvbc",
+      #[cfg(feature = "crc64")]
       crc64_xz: crc64_k::XZ_ZVBC[0],
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "riscv64/zvbc",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crc64_k::NVME_ZVBC[0],
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "riscv64/zvbc",
     },
     m: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_ZVBC[1],
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "riscv64/zvbc-2way",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crc16_k::IBM_ZVBC[1],
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "riscv64/zvbc-2way",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crc24_k::OPENPGP_ZVBC[1],
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "riscv64/zvbc-2way",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crc32_k::CRC32_ZVBC[1],
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "riscv64/zvbc-2way",
+      #[cfg(feature = "crc32")]
       crc32c: crc32_k::CRC32C_ZVBC[1],
+      #[cfg(feature = "crc32")]
       crc32c_name: "riscv64/zvbc-2way",
+      #[cfg(feature = "crc64")]
       crc64_xz: crc64_k::XZ_ZVBC[1],
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "riscv64/zvbc-2way",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crc64_k::NVME_ZVBC[1],
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "riscv64/zvbc-2way",
     },
     l: KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: crc16_k::CCITT_ZVBC[2],
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: "riscv64/zvbc-4way",
+      #[cfg(feature = "crc16")]
       crc16_ibm: crc16_k::IBM_ZVBC[2],
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: "riscv64/zvbc-4way",
+      #[cfg(feature = "crc24")]
       crc24_openpgp: crc24_k::OPENPGP_ZVBC[2],
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: "riscv64/zvbc-4way",
+      #[cfg(feature = "crc32")]
       crc32_ieee: crc32_k::CRC32_ZVBC[2],
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: "riscv64/zvbc-4way",
+      #[cfg(feature = "crc32")]
       crc32c: crc32_k::CRC32C_ZVBC[2],
+      #[cfg(feature = "crc32")]
       crc32c_name: "riscv64/zvbc-4way",
+      #[cfg(feature = "crc64")]
       crc64_xz: crc64_k::XZ_ZVBC[2],
+      #[cfg(feature = "crc64")]
       crc64_xz_name: "riscv64/zvbc-4way",
+      #[cfg(feature = "crc64")]
       crc64_nvme: crc64_k::NVME_ZVBC[2],
+      #[cfg(feature = "crc64")]
       crc64_nvme_name: "riscv64/zvbc-4way",
     },
   };
 
+  #[cfg(feature = "crc64")]
   const fn crc64_only_set(
     base: KernelSet,
-    crc64_xz: Crc64Fn,
-    crc64_xz_name: &'static str,
-    crc64_nvme: Crc64Fn,
-    crc64_nvme_name: &'static str,
+    #[cfg(feature = "crc64")] crc64_xz: Crc64Fn,
+    #[cfg(feature = "crc64")] crc64_xz_name: &'static str,
+    #[cfg(feature = "crc64")] crc64_nvme: Crc64Fn,
+    #[cfg(feature = "crc64")] crc64_nvme_name: &'static str,
   ) -> KernelSet {
     KernelSet {
+      #[cfg(feature = "crc16")]
       crc16_ccitt: base.crc16_ccitt,
+      #[cfg(feature = "crc16")]
       crc16_ccitt_name: base.crc16_ccitt_name,
+      #[cfg(feature = "crc16")]
       crc16_ibm: base.crc16_ibm,
+      #[cfg(feature = "crc16")]
       crc16_ibm_name: base.crc16_ibm_name,
+      #[cfg(feature = "crc24")]
       crc24_openpgp: base.crc24_openpgp,
+      #[cfg(feature = "crc24")]
       crc24_openpgp_name: base.crc24_openpgp_name,
+      #[cfg(feature = "crc32")]
       crc32_ieee: base.crc32_ieee,
+      #[cfg(feature = "crc32")]
       crc32_ieee_name: base.crc32_ieee_name,
+      #[cfg(feature = "crc32")]
       crc32c: base.crc32c,
+      #[cfg(feature = "crc32")]
       crc32c_name: base.crc32c_name,
       crc64_xz,
       crc64_xz_name,
@@ -2205,6 +3172,7 @@ mod tests {
   const TEST_DATA: &[u8] = b"123456789";
 
   #[test]
+  #[cfg(feature = "crc64")]
   fn test_crc64_xz_oneshot() {
     // Standard CRC-64/XZ check value
     let crc = crc64_xz(TEST_DATA);
@@ -2212,6 +3180,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(feature = "crc64")]
   fn test_crc64_nvme_oneshot() {
     // Standard CRC-64/NVME check value
     let crc = crc64_nvme(TEST_DATA);
@@ -2219,6 +3188,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(feature = "crc32")]
   fn test_crc32_ieee_oneshot() {
     // Standard CRC-32/IEEE check value
     let crc = crc32_ieee(TEST_DATA);
@@ -2226,6 +3196,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(feature = "crc32")]
   fn test_crc32c_oneshot() {
     // Standard CRC-32C check value
     let crc = crc32c(TEST_DATA);
@@ -2233,6 +3204,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(feature = "crc16")]
   fn test_crc16_ccitt_oneshot() {
     // Standard CRC-16/CCITT (X.25) check value
     let crc = crc16_ccitt(TEST_DATA);
@@ -2240,6 +3212,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(feature = "crc16")]
   fn test_crc16_ibm_oneshot() {
     // Standard CRC-16/IBM (ARC) check value
     let crc = crc16_ibm(TEST_DATA);
@@ -2247,6 +3220,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(feature = "crc24")]
   fn test_crc24_openpgp_oneshot() {
     // Standard CRC-24/OpenPGP check value
     let crc = crc24_openpgp(TEST_DATA);
@@ -2256,12 +3230,19 @@ mod tests {
   #[test]
   fn test_empty_data() {
     // Empty data should return the "zero-length" checksum
+    #[cfg(feature = "crc64")]
     assert_eq!(crc64_xz(&[]), 0, "CRC-64/XZ of empty data");
+    #[cfg(feature = "crc64")]
     assert_eq!(crc64_nvme(&[]), 0, "CRC-64/NVME of empty data");
+    #[cfg(feature = "crc32")]
     assert_eq!(crc32_ieee(&[]), 0, "CRC-32/IEEE of empty data");
+    #[cfg(feature = "crc32")]
     assert_eq!(crc32c(&[]), 0, "CRC-32C of empty data");
+    #[cfg(feature = "crc16")]
     assert_eq!(crc16_ccitt(&[]), 0, "CRC-16/CCITT of empty data");
+    #[cfg(feature = "crc16")]
     assert_eq!(crc16_ibm(&[]), 0, "CRC-16/IBM of empty data");
+    #[cfg(feature = "crc24")]
     assert_eq!(crc24_openpgp(&[]), 0x00B7_04CE, "CRC-24/OpenPGP of empty data");
   }
 
@@ -2275,12 +3256,19 @@ mod tests {
     for &size in &sizes {
       let data: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
       // Just verify no panics and consistent non-zero results for non-empty data
+      #[cfg(feature = "crc64")]
       let _ = crc64_xz(&data);
+      #[cfg(feature = "crc64")]
       let _ = crc64_nvme(&data);
+      #[cfg(feature = "crc32")]
       let _ = crc32_ieee(&data);
+      #[cfg(feature = "crc32")]
       let _ = crc32c(&data);
+      #[cfg(feature = "crc16")]
       let _ = crc16_ccitt(&data);
+      #[cfg(feature = "crc16")]
       let _ = crc16_ibm(&data);
+      #[cfg(feature = "crc24")]
       let _ = crc24_openpgp(&data);
     }
   }
@@ -2298,14 +3286,34 @@ mod tests {
 
   #[test]
   fn kernel_fn_set_fits_cache_line() {
-    // KernelFnSet holds 7 function pointers (8 bytes each on 64-bit) = 56 bytes,
-    // which fits within a single 64-byte cache line.
+    let mut expected_fields = 0usize;
+    #[cfg(feature = "crc16")]
+    {
+      expected_fields += 2;
+    }
+    #[cfg(feature = "crc24")]
+    {
+      expected_fields += 1;
+    }
+    #[cfg(feature = "crc32")]
+    {
+      expected_fields += 2;
+    }
+    #[cfg(feature = "crc64")]
+    {
+      expected_fields += 2;
+    }
+
+    let expected_size = expected_fields * core::mem::size_of::<usize>();
     let size = core::mem::size_of::<KernelFnSet>();
     assert!(
       size <= 64,
       "KernelFnSet is {size} bytes, must be <= 64 for cache-line fit"
     );
-    assert_eq!(size, 56, "KernelFnSet should be exactly 56 bytes (7 fn ptrs)");
+    assert_eq!(
+      size, expected_size,
+      "KernelFnSet should match the active checksum function pointer count"
+    );
   }
 
   #[test]
