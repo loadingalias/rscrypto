@@ -1714,6 +1714,7 @@ mod avx2_par4 {
 
 #[cfg(test)]
 mod tests {
+  #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
   use alloc::vec::Vec;
 
   use super::authenticate;
