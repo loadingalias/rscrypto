@@ -318,7 +318,7 @@ fn verification_error_follows_new_default_and_display_conventions() {
 #[test]
 #[cfg(feature = "hkdf")]
 fn hkdf_error_follows_new_default_and_display_conventions() {
-  assert_eq!(HkdfOutputLengthError::new(), HkdfOutputLengthError::default());
+  assert_eq!(HkdfOutputLengthError::new(), HkdfOutputLengthError);
   assert_eq!(
     HkdfOutputLengthError::new().to_string(),
     "requested HKDF output exceeds the algorithm maximum"
@@ -328,14 +328,14 @@ fn hkdf_error_follows_new_default_and_display_conventions() {
 #[test]
 #[cfg(feature = "x25519")]
 fn x25519_error_follows_new_default_and_display_conventions() {
-  assert_eq!(X25519Error::new(), X25519Error::default());
+  assert_eq!(X25519Error::new(), X25519Error);
   assert_eq!(X25519Error::new().to_string(), "x25519 shared secret is all-zero");
 }
 
 #[test]
 #[cfg(feature = "aead")]
 fn aead_errors_follow_new_default_and_display_conventions() {
-  assert_eq!(AeadBufferError::new(), AeadBufferError::default());
+  assert_eq!(AeadBufferError::new(), AeadBufferError);
   assert_eq!(AeadBufferError::new().to_string(), "buffer length mismatch");
   assert_eq!(OpenError::default(), OpenError::buffer());
   assert_eq!(OpenError::buffer().to_string(), "buffer length mismatch");
