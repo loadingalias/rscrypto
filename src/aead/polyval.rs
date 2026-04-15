@@ -14,9 +14,11 @@
 //!   structural insight that makes POLYVAL's high-tap polynomial efficient to reduce
 
 /// POLYVAL block size in bytes (128 bits).
+#[cfg(feature = "aes-gcm-siv")]
 pub(crate) const BLOCK_SIZE: usize = 16;
 
 /// POLYVAL key size in bytes.
+#[cfg(feature = "aes-gcm-siv")]
 pub(crate) const KEY_SIZE: usize = 16;
 
 /// POLYVAL reduction polynomial (without x^128):
@@ -204,6 +206,7 @@ mod pmull {
   /// Computes `(acc ^ b0) * H^4 ^ b1 * H^3 ^ b2 * H^2 ^ b3 * H` using
   /// 16 independent `vmull_p64` instructions that the OOO core on Neoverse
   /// V1/V2 (2 crypto pipes) can schedule freely, then a single reduction.
+  #[cfg(feature = "aes-gcm-siv")]
   #[target_feature(enable = "neon", enable = "aes")]
   #[inline(always)]
   pub(super) unsafe fn aggregate_4blocks(acc: u128, h_powers_rev: &[u128; 4], blocks: &[u128; 4]) -> u128 {
@@ -420,6 +423,7 @@ mod s390x_vgfm {
   ///
   /// 12 independent VGFM (4 × 3 Karatsuba), then one vector
   /// Montgomery reduction.
+  #[cfg(feature = "aes-gcm-siv")]
   #[target_feature(enable = "vector")]
   #[inline(always)]
   pub(super) unsafe fn aggregate_4blocks(acc: u128, h_powers_rev: &[u128; 4], blocks: &[u128; 4]) -> u128 {
@@ -549,6 +553,7 @@ mod ppc_vpmsum {
   ///
   /// 12 independent `vpmsumd` (4 × 3 Karatsuba), then one scalar
   /// Montgomery reduction.
+  #[cfg(feature = "aes-gcm-siv")]
   #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
   #[inline(always)]
   pub(super) unsafe fn aggregate_4blocks(acc: u128, h_powers_rev: &[u128; 4], blocks: &[u128; 4]) -> u128 {
@@ -765,6 +770,7 @@ mod vpclmul {
   /// # Safety
   /// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ +
   /// VPCLMULQDQ + PCLMULQDQ + SSE2.
+  #[cfg(feature = "aes-gcm-siv")]
   #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,pclmulqdq,sse2")]
   pub(super) unsafe fn aggregate_4blocks(
     acc: u128,
@@ -827,7 +833,7 @@ mod vpclmul {
 ///
 /// # Safety
 /// Caller must ensure PMULL is available.
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "aarch64", feature = "aes-gcm-siv"))]
 #[target_feature(enable = "neon", enable = "aes")]
 #[inline]
 pub(super) unsafe fn aarch64_clmul128_reduce_inline(a: u128, b: u128) -> u128 {
@@ -839,7 +845,7 @@ pub(super) unsafe fn aarch64_clmul128_reduce_inline(a: u128, b: u128) -> u128 {
 ///
 /// # Safety
 /// Caller must ensure PMULL is available.
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "aarch64", feature = "aes-gcm-siv"))]
 #[target_feature(enable = "neon", enable = "aes")]
 #[inline]
 pub(super) unsafe fn aarch64_aggregate_4blocks_inline(acc: u128, h_powers_rev: &[u128; 4], blocks: &[u128; 4]) -> u128 {
@@ -851,7 +857,7 @@ pub(super) unsafe fn aarch64_aggregate_4blocks_inline(acc: u128, h_powers_rev: &
 ///
 /// # Safety
 /// Caller must ensure POWER8 crypto is available.
-#[cfg(target_arch = "powerpc64")]
+#[cfg(all(target_arch = "powerpc64", feature = "aes-gcm-siv"))]
 #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
 #[inline]
 pub(super) unsafe fn ppc_clmul128_reduce_inline(a: u128, b: u128) -> u128 {
@@ -863,7 +869,7 @@ pub(super) unsafe fn ppc_clmul128_reduce_inline(a: u128, b: u128) -> u128 {
 ///
 /// # Safety
 /// Caller must ensure POWER8 crypto is available.
-#[cfg(target_arch = "powerpc64")]
+#[cfg(all(target_arch = "powerpc64", feature = "aes-gcm-siv"))]
 #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
 #[inline]
 pub(super) unsafe fn ppc_aggregate_4blocks_inline(acc: u128, h_powers_rev: &[u128; 4], blocks: &[u128; 4]) -> u128 {
@@ -875,7 +881,7 @@ pub(super) unsafe fn ppc_aggregate_4blocks_inline(acc: u128, h_powers_rev: &[u12
 ///
 /// # Safety
 /// Caller must ensure z/Vector is available.
-#[cfg(target_arch = "s390x")]
+#[cfg(all(target_arch = "s390x", feature = "aes-gcm-siv"))]
 #[target_feature(enable = "vector")]
 #[inline]
 pub(super) unsafe fn s390x_clmul128_reduce_inline(a: u128, b: u128) -> u128 {
@@ -887,7 +893,7 @@ pub(super) unsafe fn s390x_clmul128_reduce_inline(a: u128, b: u128) -> u128 {
 ///
 /// # Safety
 /// Caller must ensure z/Vector is available.
-#[cfg(target_arch = "s390x")]
+#[cfg(all(target_arch = "s390x", feature = "aes-gcm-siv"))]
 #[target_feature(enable = "vector")]
 #[inline]
 pub(super) unsafe fn s390x_aggregate_4blocks_inline(acc: u128, h_powers_rev: &[u128; 4], blocks: &[u128; 4]) -> u128 {
@@ -895,7 +901,7 @@ pub(super) unsafe fn s390x_aggregate_4blocks_inline(acc: u128, h_powers_rev: &[u
   unsafe { s390x_vgfm::aggregate_4blocks(acc, h_powers_rev, blocks) }
 }
 
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", feature = "aes-gcm-siv"))]
 /// Explicit portable carryless multiply + reduce.
 ///
 /// Unlike `clmul128_reduce`, this never climbs into a hardware backend.
@@ -908,7 +914,7 @@ pub(super) fn portable_clmul128_reduce_inline(a: u128, b: u128) -> u128 {
 ///
 /// # Safety
 /// Caller must ensure Zvbc is available.
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", feature = "aes-gcm-siv"))]
 #[target_feature(enable = "v", enable = "zvbc")]
 #[inline]
 pub(super) unsafe fn riscv_vector_clmul128_reduce_inline(a: u128, b: u128) -> u128 {
@@ -920,7 +926,7 @@ pub(super) unsafe fn riscv_vector_clmul128_reduce_inline(a: u128, b: u128) -> u1
 ///
 /// # Safety
 /// Caller must ensure Zbc or Zbkc is available.
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", feature = "aes-gcm-siv"))]
 #[target_feature(enable = "zbc")]
 #[inline]
 pub(super) unsafe fn riscv_scalar_clmul128_reduce_inline(a: u128, b: u128) -> u128 {
@@ -1031,6 +1037,7 @@ pub(super) fn accumulate_4blocks(
 /// product uses a 2-pass fold-from-bottom reduction that is structurally
 /// a Montgomery reduction, but for POLYVAL's polynomial and LE
 /// representation this directly produces the correct field product.
+#[cfg(feature = "aes-gcm-siv")]
 pub(crate) struct Polyval {
   /// Hash key H (raw field element, no conversion).
   h: u128,
@@ -1038,6 +1045,7 @@ pub(crate) struct Polyval {
   acc: u128,
 }
 
+#[cfg(feature = "aes-gcm-siv")]
 impl Polyval {
   /// Create a new POLYVAL instance with the given 128-bit key.
   #[inline]
@@ -1092,6 +1100,7 @@ impl Polyval {
   }
 }
 
+#[cfg(feature = "aes-gcm-siv")]
 impl Drop for Polyval {
   fn drop(&mut self) {
     // SAFETY: self.acc/self.h are valid, aligned, dereferenceable pointers to initialized memory.

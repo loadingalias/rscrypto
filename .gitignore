@@ -39,6 +39,9 @@ artifacts
 coverage
 dictionary
 fuzz/target
+fuzz/**/target
+fuzz-packages/**/target
+fuzz-packages/**/Cargo.lock
 
 
 # Testing

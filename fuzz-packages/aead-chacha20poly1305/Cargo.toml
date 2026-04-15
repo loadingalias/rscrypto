@@ -1,0 +1,22 @@
+[package]
+name = "rscrypto-fuzz-aead-chacha20poly1305"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+rscrypto = { path = "../..", features = ["std", "chacha20poly1305"] }
+rscrypto_fuzz = { package = "rscrypto-fuzz-support", path = "../../fuzz/support", features = ["aead"] }
+chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "aead_chacha20poly1305"
+path = "fuzz_targets/aead_chacha20poly1305.rs"
+doc = false

@@ -1,0 +1,11 @@
+[package]
+name = "rscrypto-fuzz-support"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[features]
+aead = []
+
+[dependencies]
+rscrypto = { path = "../..", features = ["std"] }

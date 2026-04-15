@@ -3,9 +3,9 @@
 //! Provides deterministic input parsing and generic property-test harnesses
 //! for AEAD, digest, MAC, and checksum primitives.
 
-use rscrypto::{Aead, Checksum, ChecksumCombine, Digest, Mac};
-
-// ── Input parsing ────────────────────────────────────────────────────────────
+#[cfg(feature = "aead")]
+use rscrypto::traits::Aead;
+use rscrypto::traits::{Checksum, ChecksumCombine, Digest, Mac};
 
 /// Early-return from a `fuzz_target!` closure when the fuzzer hasn't provided
 /// enough input bytes to construct a meaningful test case.
@@ -87,8 +87,7 @@ pub fn split_at_ratio(data: &[u8], ratio: u8) -> (&[u8], &[u8]) {
     data.split_at(split_point(data.len(), ratio))
 }
 
-// ── AEAD property tests ──────────────────────────────────────────────────────
-
+#[cfg(feature = "aead")]
 /// Assert that `encrypt_in_place → decrypt_in_place` recovers the original
 /// plaintext for arbitrary inputs.
 pub fn assert_aead_roundtrip<A: Aead>(
@@ -107,7 +106,6 @@ pub fn assert_aead_roundtrip<A: Aead>(
 
     assert_eq!(buf, original, "roundtrip: plaintext mismatch after decrypt");
 
-    // Also test the combined encrypt → decrypt path (ciphertext || tag buffer).
     let ct_len = plaintext.len().strict_add(A::TAG_SIZE);
     let mut sealed = vec![0u8; ct_len];
     cipher
@@ -123,6 +121,7 @@ pub fn assert_aead_roundtrip<A: Aead>(
     );
 }
 
+#[cfg(feature = "aead")]
 /// Assert that flipping a single bit in ciphertext, tag, or AAD causes
 /// `decrypt_in_place` to reject.
 pub fn assert_aead_forgery<A: Aead>(
@@ -139,7 +138,6 @@ pub fn assert_aead_forgery<A: Aead>(
     let seed = control / 3;
 
     match target {
-        // Flip bit in ciphertext
         0 if !ct.is_empty() => {
             let mut forged = ct.clone();
             let idx = seed as usize % forged.len();
@@ -151,7 +149,6 @@ pub fn assert_aead_forgery<A: Aead>(
                 "forgery: accepted tampered ciphertext"
             );
         }
-        // Flip bit in AAD
         2 if !aad.is_empty() => {
             let mut forged_aad = aad.to_vec();
             let idx = seed as usize % forged_aad.len();
@@ -164,7 +161,6 @@ pub fn assert_aead_forgery<A: Aead>(
                 "forgery: accepted tampered aad"
             );
         }
-        // Flip bit in tag (default — always possible)
         _ => {
             let tag_ref = tag.as_ref();
             let mut tag_bytes = tag_ref.to_vec();
@@ -181,8 +177,6 @@ pub fn assert_aead_forgery<A: Aead>(
         }
     }
 }
-
-// ── Digest property tests ────────────────────────────────────────────────────
 
 /// Assert that splitting input at an arbitrary boundary and streaming via
 /// `update` produces the same digest as one-shot `digest()`.
@@ -213,8 +207,6 @@ pub fn assert_digest_reset<D: Digest>(data: &[u8]) {
     assert_eq!(first, second, "reset: digest changed after reset + re-hash");
 }
 
-// ── MAC property tests ───────────────────────────────────────────────────────
-
 /// Assert that streaming MAC with an arbitrary split matches one-shot MAC.
 pub fn assert_mac_streaming<M: Mac>(key: &[u8], data: &[u8], split_byte: u8) {
     let expected = M::mac(key, data);
@@ -229,12 +221,7 @@ pub fn assert_mac_streaming<M: Mac>(key: &[u8], data: &[u8], split_byte: u8) {
     assert_eq!(expected, got, "mac: streaming mismatch");
 }
 
-// ── XOF property tests ──────────────────────────────────────────────────────
-
 /// Assert that squeezing a larger output is a prefix-extension of a smaller one.
-///
-/// `$make_reader` is an expression that produces a fresh `Xof` reader each time
-/// it is evaluated (typically `hasher.finalize_xof()` where `hasher` is `Clone`).
 #[macro_export]
 macro_rules! assert_xof_prefix {
     ($make_reader:expr, $small_len:expr, $large_len:expr, $msg:expr) => {{
@@ -249,8 +236,6 @@ macro_rules! assert_xof_prefix {
         assert_eq!(&small[..], &large[..$small_len], $msg);
     }};
 }
-
-// ── Checksum property tests ──────────────────────────────────────────────────
 
 /// Assert that `checksum(a || b) == combine(checksum(a), checksum(b), len(b))`
 /// for an arbitrary split point.

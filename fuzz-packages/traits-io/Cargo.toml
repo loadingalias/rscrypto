@@ -1,0 +1,21 @@
+[package]
+name = "rscrypto-fuzz-traits-io"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+rscrypto = { path = "../..", features = ["std", "blake3", "crc32"] }
+rscrypto_fuzz = { package = "rscrypto-fuzz-support", path = "../../fuzz/support" }
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "traits_io"
+path = "fuzz_targets/traits_io.rs"
+doc = false

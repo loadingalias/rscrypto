@@ -1460,7 +1460,7 @@ pub(crate) fn aes256_expand_key_riscv_ttable(key: &[u8; KEY_SIZE]) -> Aes256EncK
 ///
 /// # Safety
 /// Caller must ensure AES-CE is available.
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "aarch64", feature = "aes-gcm-siv"))]
 #[target_feature(enable = "aes,neon")]
 #[inline]
 pub(super) unsafe fn aarch64_expand_key_inline(key: &[u8; KEY_SIZE]) -> ce::CeRoundKeys {
@@ -1472,7 +1472,7 @@ pub(super) unsafe fn aarch64_expand_key_inline(key: &[u8; KEY_SIZE]) -> ce::CeRo
 ///
 /// # Safety
 /// Caller must ensure AES-CE is available.
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "aarch64", feature = "aes-gcm-siv"))]
 #[target_feature(enable = "aes,neon")]
 #[inline]
 pub(super) unsafe fn aarch64_encrypt_block_inline(keys: &ce::CeRoundKeys, block: &mut [u8; BLOCK_SIZE]) {
@@ -1595,6 +1595,7 @@ pub(crate) fn aes256_encrypt_block(ek: &Aes256EncKey, block: &mut [u8; BLOCK_SIZ
 /// On s390x this issues a single KM instruction for all `blocks`,
 /// avoiding per-block parameter-block setup overhead. On other platforms
 /// falls back to per-block dispatch.
+#[cfg(feature = "aes-gcm-siv")]
 #[inline]
 pub(crate) fn aes256_encrypt_blocks_ecb(ek: &Aes256EncKey, blocks: &mut [[u8; BLOCK_SIZE]]) {
   #[cfg(target_arch = "s390x")]
@@ -1750,41 +1751,6 @@ const fn mix_column(col: [u8; 4]) -> u32 {
 }
 
 // ---------------------------------------------------------------------------
-// Single AES round for AEGIS
-// ---------------------------------------------------------------------------
-
-/// Single AES encryption round on a 128-bit block: SubBytes + ShiftRows + MixColumns +
-/// XOR(round_key).
-///
-/// Equivalent to `_mm_aesenc_si128(block, round_key)` on x86_64. Used by the
-/// AEGIS-256 portable backend where the full AES round function (not full AES
-/// encryption) is the core primitive.
-///
-/// On s390x, AEGIS uses T-table rounds instead (in `aegis256::zvec`).
-#[cfg(not(any(target_arch = "s390x", target_arch = "riscv64")))]
-#[inline]
-pub(crate) fn aes_enc_round_portable(block: &[u8; BLOCK_SIZE], round_key: &[u8; BLOCK_SIZE]) -> [u8; BLOCK_SIZE] {
-  let s0 = u32::from_be_bytes([block[0], block[1], block[2], block[3]]);
-  let s1 = u32::from_be_bytes([block[4], block[5], block[6], block[7]]);
-  let s2 = u32::from_be_bytes([block[8], block[9], block[10], block[11]]);
-  let s3 = u32::from_be_bytes([block[12], block[13], block[14], block[15]]);
-
-  let (r0, r1, r2, r3) = aes_round(s0, s1, s2, s3);
-
-  let k0 = u32::from_be_bytes([round_key[0], round_key[1], round_key[2], round_key[3]]);
-  let k1 = u32::from_be_bytes([round_key[4], round_key[5], round_key[6], round_key[7]]);
-  let k2 = u32::from_be_bytes([round_key[8], round_key[9], round_key[10], round_key[11]]);
-  let k3 = u32::from_be_bytes([round_key[12], round_key[13], round_key[14], round_key[15]]);
-
-  let mut out = [0u8; BLOCK_SIZE];
-  out[0..4].copy_from_slice(&(r0 ^ k0).to_be_bytes());
-  out[4..8].copy_from_slice(&(r1 ^ k1).to_be_bytes());
-  out[8..12].copy_from_slice(&(r2 ^ k2).to_be_bytes());
-  out[12..16].copy_from_slice(&(r3 ^ k3).to_be_bytes());
-  out
-}
-
-// ---------------------------------------------------------------------------
 // AES-CTR for GCM-SIV
 // ---------------------------------------------------------------------------
 
@@ -1792,6 +1758,7 @@ pub(crate) fn aes_enc_round_portable(block: &[u8; BLOCK_SIZE], round_key: &[u8; 
 ///
 /// The initial counter block is the tag with bit 31 set (MSB of byte 15).
 /// The counter increments the first 32 bits (little-endian) of the block.
+#[cfg(feature = "aes-gcm-siv")]
 #[inline]
 pub(crate) fn aes256_ctr32_encrypt(ek: &Aes256EncKey, initial_counter: &[u8; BLOCK_SIZE], data: &mut [u8]) {
   let mut counter_block = *initial_counter;
@@ -1839,6 +1806,7 @@ pub(crate) fn aes256_ctr32_encrypt(ek: &Aes256EncKey, initial_counter: &[u8; BLO
 /// block and increments as a big-endian 32-bit integer. This matches the
 /// `inc_32` function from NIST SP 800-38D § 6.2.
 #[inline]
+#[cfg(feature = "aes-gcm")]
 pub(crate) fn aes256_ctr32_encrypt_be(ek: &Aes256EncKey, initial_counter: &[u8; BLOCK_SIZE], data: &mut [u8]) {
   let mut counter_block = *initial_counter;
   // Maintain the 32-bit counter separately to avoid per-block BE decode/encode.

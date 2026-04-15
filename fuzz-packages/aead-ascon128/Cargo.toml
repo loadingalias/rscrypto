@@ -1,0 +1,22 @@
+[package]
+name = "rscrypto-fuzz-aead-ascon128"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+rscrypto = { path = "../..", features = ["std", "ascon-aead"] }
+rscrypto_fuzz = { package = "rscrypto-fuzz-support", path = "../../fuzz/support", features = ["aead"] }
+ascon-aead = { version = "0.5", default-features = false, features = ["alloc"] }
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "aead_ascon128"
+path = "fuzz_targets/aead_ascon128.rs"
+doc = false

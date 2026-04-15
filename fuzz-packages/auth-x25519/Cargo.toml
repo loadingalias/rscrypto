@@ -1,0 +1,22 @@
+[package]
+name = "rscrypto-fuzz-auth-x25519"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+rscrypto = { path = "../..", features = ["std", "x25519"] }
+rscrypto_fuzz = { package = "rscrypto-fuzz-support", path = "../../fuzz/support" }
+x25519-dalek = { version = "2.0.1", features = ["static_secrets"] }
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "auth_x25519"
+path = "fuzz_targets/auth_x25519.rs"
+doc = false

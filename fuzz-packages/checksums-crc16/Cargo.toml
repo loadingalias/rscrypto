@@ -1,0 +1,22 @@
+[package]
+name = "rscrypto-fuzz-checksums-crc16"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+rscrypto = { path = "../..", features = ["std", "crc16"] }
+rscrypto_fuzz = { package = "rscrypto-fuzz-support", path = "../../fuzz/support" }
+crc = "3.4"
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "checksum_crc16"
+path = "fuzz_targets/checksum_crc16.rs"
+doc = false

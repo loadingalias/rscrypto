@@ -22,6 +22,7 @@ use crate::platform::Caps;
 ///
 /// This is the heart of the new dispatch system. Platform detection happens
 /// exactly once, and all subsequent CRC calls use this pre-resolved table.
+#[cfg(any(feature = "crc16", feature = "crc24", feature = "crc32", any(test, feature = "diag")))]
 static ACTIVE_TABLE: crate::backend::cache::OnceCache<&'static KernelTable> = crate::backend::cache::OnceCache::new();
 #[cfg(feature = "crc64")]
 static ACTIVE_CRC64_TABLE: crate::backend::cache::OnceCache<&'static KernelTable> =
@@ -29,6 +30,7 @@ static ACTIVE_CRC64_TABLE: crate::backend::cache::OnceCache<&'static KernelTable
 
 /// Get the active kernel table for this platform.
 #[inline]
+#[cfg(any(feature = "crc16", feature = "crc24", feature = "crc32", any(test, feature = "diag")))]
 pub(crate) fn active_table() -> &'static KernelTable {
   ACTIVE_TABLE.get_or_init(|| select_table(crate::platform::caps()))
 }
@@ -500,6 +502,7 @@ pub fn is_hardware_accelerated() -> bool {
 /// 1. **Capability match**: Conservative defaults based on CPU features
 /// 2. **Portable fallback**: No SIMD, table-based only
 #[inline]
+#[cfg(any(feature = "crc16", feature = "crc24", feature = "crc32", any(test, feature = "diag")))]
 pub(crate) fn select_table(caps: Caps) -> &'static KernelTable {
   if let Some(table) = capability_match(caps) {
     debug_assert!(caps.has(table.requires), "capability_match returned an unsafe table");

@@ -1,0 +1,22 @@
+[package]
+name = "rscrypto-fuzz-aead-aegis256"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+rscrypto = { path = "../..", features = ["std", "aegis256"] }
+rscrypto_fuzz = { package = "rscrypto-fuzz-support", path = "../../fuzz/support", features = ["aead"] }
+aegis = "0.9"
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "aead_aegis256"
+path = "fuzz_targets/aead_aegis256.rs"
+doc = false

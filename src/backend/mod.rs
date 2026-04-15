@@ -12,17 +12,13 @@ pub mod ascon;
   feature = "crc32",
   feature = "crc64",
   feature = "sha2",
-  feature = "sha3",
+  all(feature = "sha3", any(test, feature = "diag")),
   feature = "blake3",
   feature = "ascon-hash",
   feature = "xxh3",
   feature = "rapidhash",
-  feature = "aes-gcm",
-  feature = "aes-gcm-siv",
   feature = "chacha20poly1305",
-  feature = "xchacha20poly1305",
-  feature = "aegis256",
-  feature = "ascon-aead"
+  feature = "xchacha20poly1305"
 ))]
 pub mod cache;
 #[cfg(any(feature = "ed25519", feature = "x25519"))]

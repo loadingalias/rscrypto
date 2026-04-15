@@ -1,0 +1,29 @@
+[package]
+name = "rscrypto-fuzz-hash-sha3"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+rscrypto = { path = "../..", features = ["std", "sha3"] }
+rscrypto_fuzz = { package = "rscrypto-fuzz-support", path = "../../fuzz/support" }
+digest = "0.11"
+sha3 = "0.11"
+tiny-keccak = { version = "2.0", features = ["cshake"] }
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "hash_cshake256"
+path = "fuzz_targets/hash_cshake256.rs"
+doc = false
+
+[[bin]]
+name = "hash_sha3"
+path = "fuzz_targets/hash_sha3.rs"
+doc = false

@@ -83,7 +83,7 @@ type State = [Block; 6];
 #[cfg(not(any(target_arch = "s390x", target_arch = "riscv64")))]
 #[inline(always)]
 fn aes_round(block: &Block, round_key: &Block) -> Block {
-  super::aes::aes_enc_round_portable(block, round_key)
+  super::aes_round::aes_enc_round_portable(block, round_key)
 }
 
 /// AEGIS-256 Update function: absorb one 128-bit message block into the state.
@@ -2305,7 +2305,7 @@ mod tests {
   #[cfg(not(any(target_arch = "s390x", target_arch = "riscv64")))]
   #[inline(always)]
   fn portable_aes_round(block: &[u8; 16], round_key: &[u8; 16]) -> [u8; 16] {
-    super::super::aes::aes_enc_round_portable(block, round_key)
+    super::super::aes_round::aes_enc_round_portable(block, round_key)
   }
 
   fn hex(s: &str) -> Vec<u8> {
