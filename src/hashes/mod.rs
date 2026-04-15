@@ -69,6 +69,7 @@ pub(crate) mod common;
 pub mod crypto;
 #[cfg(any(feature = "xxh3", feature = "rapidhash"))]
 pub mod fast;
+#[cfg(feature = "diag")]
 pub mod introspect;
 #[cfg(all(
   feature = "std",
@@ -76,6 +77,7 @@ pub mod introspect;
 ))]
 pub mod io;
 
+#[cfg(any(feature = "sha2", test))]
 mod util;
 
 // Re-export I/O adapters (requires std)

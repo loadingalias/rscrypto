@@ -1078,12 +1078,14 @@ define_buffered_crc! {
 // Kernel Introspection
 // ─────────────────────────────────────────────────────────────────────────────
 
+#[cfg(feature = "diag")]
 impl crate::checksum::introspect::KernelIntrospect for Crc64 {
   fn kernel_name_for_len(len: usize) -> &'static str {
     Self::kernel_name_for_len(len)
   }
 }
 
+#[cfg(feature = "diag")]
 impl crate::checksum::introspect::KernelIntrospect for Crc64Nvme {
   fn kernel_name_for_len(len: usize) -> &'static str {
     Self::kernel_name_for_len(len)

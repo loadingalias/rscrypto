@@ -8,6 +8,7 @@ use crate::{backend::cache::OnceCache, hashes::crypto::dispatch_util::SizeClassD
 #[derive(Clone, Copy)]
 struct Entry {
   compress_blocks: CompressBlocksFn,
+  #[cfg(any(test, feature = "diag"))]
   name: &'static str,
 }
 
@@ -48,18 +49,22 @@ fn active() -> ActiveDispatch {
       boundaries: table.boundaries,
       xs: Entry {
         compress_blocks: compress_blocks_fn(xs_id),
+        #[cfg(any(test, feature = "diag"))]
         name: xs_id.as_str(),
       },
       s: Entry {
         compress_blocks: compress_blocks_fn(s_id),
+        #[cfg(any(test, feature = "diag"))]
         name: s_id.as_str(),
       },
       m: Entry {
         compress_blocks: compress_blocks_fn(m_id),
+        #[cfg(any(test, feature = "diag"))]
         name: m_id.as_str(),
       },
       l: Entry {
         compress_blocks: compress_blocks_fn(l_id),
+        #[cfg(any(test, feature = "diag"))]
         name: l_id.as_str(),
       },
     }
@@ -81,6 +86,7 @@ fn select(d: &ActiveDispatch, len: usize) -> Entry {
   }
 }
 
+#[cfg(any(test, feature = "diag"))]
 #[inline]
 #[must_use]
 pub fn kernel_name_for_len(len: usize) -> &'static str {

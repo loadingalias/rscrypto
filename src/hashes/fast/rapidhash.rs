@@ -17,8 +17,10 @@ use crate::traits::FastHash;
 
 #[doc(hidden)]
 pub(crate) mod dispatch;
+#[cfg(any(test, feature = "diag"))]
 #[doc(hidden)]
 pub(crate) mod dispatch_tables;
+#[cfg(any(test, feature = "diag"))]
 pub(crate) mod kernels;
 
 /// Standard V3 rapidhash (64-bit) with avalanche finisher.

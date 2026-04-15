@@ -30,10 +30,6 @@ benchmark-results
 __pycache__
 crates/hashes/src/crypto/blake3/blake3_update.md
 private/tasks/*
-!private/tasks/aead.md
-!private/tasks/auth.md
-!private/tasks/pqe_pqc.md
-!private/tasks/release.md
 docs/bench/*
 !docs/bench/README.md
 

@@ -247,10 +247,10 @@ All implement `ChecksumCombine` for parallel CRC folding.
 |--------|---------|
 | `checksum::config` | Force-dispatch and configuration (`Crc{16,24,32,64}Config`, `*Force`) |
 | `checksum::buffered` | Alloc-backed buffered wrappers (`BufferedCrc32C`, etc.) |
-| `checksum::introspect` | Kernel selection reporting (`DispatchInfo`, `kernel_for`) |
+| `checksum::introspect` | Kernel selection reporting (`DispatchInfo`, `kernel_for`) with `diag` |
 | `hashes::fast` | Explicit fast-hash access (`RapidHashFast64`, `Xxh3_64`, etc.) |
-| `hashes::introspect` | Hash kernel reporting (`HashKernelIntrospect`, `kernel_for`) |
-| `aead::introspect` | AEAD backend reporting |
+| `hashes::introspect` | Hash kernel reporting (`HashKernelIntrospect`, `kernel_for`) with `diag` |
+| `aead::introspect` | AEAD backend reporting with `diag` |
 | `platform` | CPU detection, override control, capability queries |
 
 ## Feature Flags
@@ -276,6 +276,7 @@ All implement `ChecksumCombine` for parallel CRC folding.
 | `aead` | No | All AEAD leaves | Convenience bundle |
 | `full` | No | `checksums`, `hashes`, `auth`, `aead` | Opt into the whole surface |
 | `parallel` | No | Rayon-backed Blake3 parallelism | Requires `std` |
+| `diag` | No | Advanced checksum/hash/AEAD introspection | Requires `std`; off by default to keep normal builds lean |
 
 ## `no_std`
 
@@ -329,7 +330,7 @@ src/
 | Command | Covers |
 |---------|--------|
 | `cargo run --example basic` | Checksum, digest, MAC, KDF, XOF, fast hash, I/O adapters |
-| `cargo run --example introspect` | Dispatch reporting |
+| `cargo run --example introspect --features checksums,hashes,diag` | Dispatch reporting |
 | `cargo run --example parallel --features parallel` | CRC combine-based chunked processing |
 
 ## License

@@ -226,6 +226,68 @@ default_benches_for_crate() {
   esac
 }
 
+merge_csvs() {
+  local -a parts=()
+  local -a merged=()
+  local csv
+  local token
+
+  for csv in "$@"; do
+    [[ -z "$csv" ]] && continue
+    IFS=',' read -r -a parts <<< "$csv"
+    for token in "${parts[@]:+${parts[@]}}"; do
+      token="$(echo "$token" | xargs)"
+      [[ -z "$token" ]] && continue
+      append_unique "$token" merged
+    done
+  done
+
+  if [[ "${#merged[@]}" -eq 0 ]]; then
+    echo ""
+  else
+    (IFS=','; echo "${merged[*]}")
+  fi
+}
+
+bench_features_for_target() {
+  local bench="${1:-}"
+  case "$bench" in
+    crc) echo "parallel,checksums" ;;
+    sha2) echo "parallel,sha2" ;;
+    sha3) echo "parallel,sha3" ;;
+    ascon) echo "parallel,ascon-hash" ;;
+    xxh3) echo "parallel,xxh3" ;;
+    rapidhash) echo "parallel,rapidhash" ;;
+    blake3) echo "parallel,blake3" ;;
+    auth) echo "parallel,hmac,hkdf,ed25519,x25519" ;;
+    aead) echo "parallel,aes-gcm,aes-gcm-siv,chacha20poly1305,xchacha20poly1305,aegis256" ;;
+    *) echo "parallel" ;;
+  esac
+}
+
+bench_features_for_invocation() {
+  local benches_csv="${1:-}"
+  local features=""
+  local -a benches=()
+  local bench
+
+  if [[ -z "$benches_csv" ]]; then
+    echo "parallel,full"
+    return 0
+  fi
+
+  IFS=',' read -r -a benches <<< "$benches_csv"
+  for bench in "${benches[@]:+${benches[@]}}"; do
+    features="$(merge_csvs "$features" "$(bench_features_for_target "$bench")")"
+  done
+
+  if [[ -z "$features" ]]; then
+    echo "parallel"
+  else
+    echo "$features"
+  fi
+}
+
 bench_target_for_hash_algo() {
   local algo="${1:-}"
   case "$algo" in
@@ -504,7 +566,7 @@ run_blake3_enforced_gates() {
       ours_prefix="$(blake3_kernel_gate_prefix "$PLATFORM_INPUT")"
       echo "" | tee -a "$LOG_PATH"
       echo "Running kernel diagnostics for BLAKE3 gate..." | tee -a "$LOG_PATH"
-      cmd=(cargo bench --profile bench --features parallel --bench blake3 -- kernel-ab)
+      cmd=(cargo bench --profile bench --features "$(bench_features_for_target blake3)" --bench blake3 -- kernel-ab)
       if [[ "${#CRITERION_ARGS[@]}" -gt 0 ]]; then
         cmd+=("${CRITERION_ARGS[@]}")
       fi
@@ -703,7 +765,11 @@ run_bench_cmd() {
   local crate="$1"
   local bench="$2"
   local filter="${3:-}"
-  local -a cmd=(cargo bench --profile bench --features parallel --bench "$bench")
+  local bench_features
+  local -a cmd
+
+  bench_features="$(bench_features_for_target "$bench")"
+  cmd=(cargo bench --profile bench --features "$bench_features" --bench "$bench")
   if [[ -n "$filter" || "${#CRITERION_ARGS[@]}" -gt 0 ]]; then
     cmd+=(--)
     if [[ -n "$filter" ]]; then
@@ -759,8 +825,10 @@ echo "No selector plan generated; running generic cargo bench invocation." | tee
 if [[ -n "$GENERIC_FILTER" ]]; then
   echo "Using first filter token for generic run: $GENERIC_FILTER" | tee -a "$LOG_PATH"
 fi
+GENERIC_FEATURES="$(bench_features_for_invocation "$BENCHES_INPUT")"
+echo "Using features: $GENERIC_FEATURES" | tee -a "$LOG_PATH"
 
-cmd=(cargo bench --profile bench --features parallel "${BENCH_FLAGS[@]}")
+cmd=(cargo bench --profile bench --features "$GENERIC_FEATURES" "${BENCH_FLAGS[@]}")
 if [[ -n "$GENERIC_FILTER" || "${#CRITERION_ARGS[@]}" -gt 0 ]]; then
   cmd+=(--)
   if [[ -n "$GENERIC_FILTER" ]]; then

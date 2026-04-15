@@ -295,7 +295,7 @@
 //!
 //! - `cargo run --example basic --features full` is the canonical checksum, digest, MAC, KDF, XOF,
 //!   fast hash, and I/O adapter specimen.
-//! - `cargo run --example introspect --features checksums,hashes` is the advanced dispatch
+//! - `cargo run --example introspect --features checksums,hashes,diag` is the advanced dispatch
 //!   introspection example.
 //! - `cargo run --example parallel --features checksums` shows CRC combine-based chunked
 //!   processing.
@@ -303,9 +303,9 @@
 //! # Advanced Surfaces
 //!
 //! - `rscrypto::checksum::config` for checksum force/config controls
-//! - `rscrypto::checksum::introspect` for checksum dispatch reporting
-//! - `rscrypto::aead::introspect` for AEAD backend reporting
-//! - `rscrypto::hashes::introspect` for hash kernel reporting
+//! - `rscrypto::checksum::introspect` for checksum dispatch reporting when `diag` is enabled
+//! - `rscrypto::aead::introspect` for AEAD backend reporting when `diag` is enabled
+//! - `rscrypto::hashes::introspect` for hash kernel reporting when `diag` is enabled
 //! - `rscrypto::hashes::fast` for explicit fast-hash family access, including `RapidHashFast64` and
 //!   `RapidHashFast128`
 //! - `rscrypto::platform` for platform detection and override control
@@ -748,11 +748,9 @@ mod send_sync_assertions {
     assert_send_sync::<checksum::config::Crc64Force>();
     assert_send_sync::<checksum::config::Crc64Config>();
 
-    // Dispatch / Diagnostics
-    assert_send_sync::<checksum::introspect::DispatchInfo>();
-
     #[cfg(feature = "diag")]
     {
+      assert_send_sync::<checksum::introspect::DispatchInfo>();
       assert_send_sync::<checksum::diag::SelectionReason>();
       assert_send_sync::<checksum::diag::Crc32Polynomial>();
       assert_send_sync::<checksum::diag::Crc64Polynomial>();
@@ -867,8 +865,6 @@ mod send_sync_assertions {
     assert_clone::<checksum::config::Crc32Config>();
     assert_clone::<checksum::config::Crc64Force>();
     assert_clone::<checksum::config::Crc64Config>();
-    assert_clone::<checksum::introspect::DispatchInfo>();
-
     assert_debug::<Crc16Ccitt>();
     assert_debug::<Crc16Ibm>();
     assert_debug::<Crc24OpenPgp>();
@@ -884,7 +880,11 @@ mod send_sync_assertions {
     assert_debug::<checksum::config::Crc32Config>();
     assert_debug::<checksum::config::Crc64Force>();
     assert_debug::<checksum::config::Crc64Config>();
-    assert_debug::<checksum::introspect::DispatchInfo>();
+    #[cfg(feature = "diag")]
+    {
+      assert_clone::<checksum::introspect::DispatchInfo>();
+      assert_debug::<checksum::introspect::DispatchInfo>();
+    }
   }
 
   #[test]

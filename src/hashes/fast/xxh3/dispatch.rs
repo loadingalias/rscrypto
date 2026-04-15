@@ -1,6 +1,8 @@
+#[cfg(any(test, feature = "diag"))]
+use super::kernels::hash64_fn;
 use super::{
   dispatch_tables::DispatchTable,
-  kernels::{Xxh3KernelId, hash64_fn, hash64_long_fn, hash128_long_fn, required_caps},
+  kernels::{Xxh3KernelId, hash64_long_fn, hash128_long_fn, required_caps},
 };
 use crate::{backend::cache::OnceCache, platform::Caps};
 
@@ -13,14 +15,23 @@ struct ActiveDispatch {
   long64: Hash64Fn,
   /// Long-path-only entry for 128-bit hash (>240B, no redundant length checks).
   long128: Hash128Fn,
+  #[cfg(any(test, feature = "diag"))]
   boundaries: [usize; 3],
+  #[cfg(any(test, feature = "diag"))]
   xs64: Hash64Fn,
+  #[cfg(any(test, feature = "diag"))]
   s64: Hash64Fn,
+  #[cfg(any(test, feature = "diag"))]
   m64: Hash64Fn,
+  #[cfg(any(test, feature = "diag"))]
   l64: Hash64Fn,
+  #[cfg(any(test, feature = "diag"))]
   xs_name: &'static str,
+  #[cfg(any(test, feature = "diag"))]
   s_name: &'static str,
+  #[cfg(any(test, feature = "diag"))]
   m_name: &'static str,
+  #[cfg(any(test, feature = "diag"))]
   l_name: &'static str,
 }
 
@@ -43,27 +54,40 @@ fn active() -> ActiveDispatch {
     let caps = crate::platform::caps();
     let table: &'static DispatchTable = super::dispatch_tables::select_runtime_table(caps);
 
+    #[cfg(any(test, feature = "diag"))]
     let xs_id = resolve(table.xs, caps);
+    #[cfg(any(test, feature = "diag"))]
     let s_id = resolve(table.s, caps);
+    #[cfg(any(test, feature = "diag"))]
     let m_id = resolve(table.m, caps);
     let l_id = resolve(table.l, caps);
 
     ActiveDispatch {
       long64: hash64_long_fn(l_id),
       long128: hash128_long_fn(l_id),
+      #[cfg(any(test, feature = "diag"))]
       boundaries: table.boundaries,
+      #[cfg(any(test, feature = "diag"))]
       xs64: hash64_fn(xs_id),
+      #[cfg(any(test, feature = "diag"))]
       s64: hash64_fn(s_id),
+      #[cfg(any(test, feature = "diag"))]
       m64: hash64_fn(m_id),
+      #[cfg(any(test, feature = "diag"))]
       l64: hash64_fn(l_id),
+      #[cfg(any(test, feature = "diag"))]
       xs_name: xs_id.as_str(),
+      #[cfg(any(test, feature = "diag"))]
       s_name: s_id.as_str(),
+      #[cfg(any(test, feature = "diag"))]
       m_name: m_id.as_str(),
+      #[cfg(any(test, feature = "diag"))]
       l_name: l_id.as_str(),
     }
   })
 }
 
+#[cfg(any(test, feature = "diag"))]
 #[inline]
 #[must_use]
 fn select64(d: &ActiveDispatch, len: usize) -> (Hash64Fn, &'static str) {
@@ -79,6 +103,7 @@ fn select64(d: &ActiveDispatch, len: usize) -> (Hash64Fn, &'static str) {
   }
 }
 
+#[cfg(any(test, feature = "diag"))]
 #[inline]
 #[must_use]
 pub fn kernel_name_for_len(len: usize) -> &'static str {

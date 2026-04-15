@@ -203,7 +203,7 @@ required-features = ["std", "full"]
 
 [[example]]
 name = "introspect"
-required-features = ["std", "checksums", "hashes"]
+required-features = ["std", "checksums", "hashes", "diag"]
 
 [[example]]
 name = "parallel"

@@ -35,6 +35,7 @@ pub enum Sha384KernelId {
 }
 
 impl Sha384KernelId {
+  #[cfg(any(test, feature = "diag"))]
   #[inline]
   #[must_use]
   pub const fn as_str(self) -> &'static str {

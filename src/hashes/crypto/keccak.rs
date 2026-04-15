@@ -7,12 +7,15 @@
 
 #[cfg(target_arch = "aarch64")]
 pub(crate) mod aarch64;
+#[cfg(any(test, feature = "diag"))]
 #[doc(hidden)]
 pub(crate) mod dispatch;
+#[cfg(any(test, feature = "diag"))]
 #[doc(hidden)]
 pub(crate) mod dispatch_tables;
 #[cfg(test)]
 pub(crate) mod kernel_test;
+#[cfg(any(test, feature = "diag"))]
 pub(crate) mod kernels;
 #[cfg(target_arch = "s390x")]
 pub(crate) mod s390x;

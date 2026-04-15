@@ -309,6 +309,7 @@ fn select(d: &ActiveDispatch, len: usize) -> Entry {
   }
 }
 
+#[cfg(any(test, feature = "diag"))]
 #[inline]
 #[must_use]
 pub fn kernel_name_for_len(len: usize) -> &'static str {

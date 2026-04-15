@@ -3,7 +3,7 @@
 //! This example shows how to inspect which kernels are selected for your
 //! platform, useful for verifying hardware acceleration is enabled.
 //!
-//! Run with: `cargo run --example introspect`
+//! Run with: `cargo run --example introspect --features checksums,hashes,diag`
 
 use rscrypto::{
   Blake3, Crc16Ccitt, Crc24OpenPgp, Crc32, Crc32C, Crc64, Crc64Nvme, RapidHash, Sha256, Shake256, Xxh3,

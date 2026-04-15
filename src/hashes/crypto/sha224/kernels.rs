@@ -35,6 +35,7 @@ pub enum Sha224KernelId {
 }
 
 impl Sha224KernelId {
+  #[cfg(any(test, feature = "diag"))]
   #[inline]
   #[must_use]
   pub const fn as_str(self) -> &'static str {
