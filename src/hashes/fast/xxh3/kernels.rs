@@ -19,6 +19,7 @@ pub enum Xxh3KernelId {
 }
 
 impl Xxh3KernelId {
+  #[cfg(any(test, feature = "diag"))]
   #[inline]
   #[must_use]
   pub const fn as_str(self) -> &'static str {
@@ -61,6 +62,7 @@ pub fn id_from_name(name: &str) -> Option<Xxh3KernelId> {
   }
 }
 
+#[cfg(any(test, feature = "diag"))]
 #[must_use]
 pub fn hash64_fn(id: Xxh3KernelId) -> fn(&[u8], u64) -> u64 {
   match id {

@@ -5,21 +5,30 @@
 pub use super::kernels::Xxh3KernelId as KernelId;
 use crate::platform::Caps;
 
+#[cfg(any(test, feature = "diag"))]
 pub const DEFAULT_BOUNDARIES: [usize; 3] = [64, 256, 4096];
 
 #[derive(Clone, Copy, Debug)]
 pub struct DispatchTable {
+  #[cfg(any(test, feature = "diag"))]
   pub boundaries: [usize; 3],
+  #[cfg(any(test, feature = "diag"))]
   pub xs: KernelId,
+  #[cfg(any(test, feature = "diag"))]
   pub s: KernelId,
+  #[cfg(any(test, feature = "diag"))]
   pub m: KernelId,
   pub l: KernelId,
 }
 
 pub static DEFAULT_TABLE: DispatchTable = DispatchTable {
+  #[cfg(any(test, feature = "diag"))]
   boundaries: DEFAULT_BOUNDARIES,
+  #[cfg(any(test, feature = "diag"))]
   xs: KernelId::Portable,
+  #[cfg(any(test, feature = "diag"))]
   s: KernelId::Portable,
+  #[cfg(any(test, feature = "diag"))]
   m: KernelId::Portable,
   l: KernelId::Portable,
 };
@@ -31,9 +40,13 @@ pub static DEFAULT_TABLE: DispatchTable = DispatchTable {
 /// x86-64 with AVX-512F: single-iteration per stripe.
 #[cfg(target_arch = "x86_64")]
 pub static AVX512_TABLE: DispatchTable = DispatchTable {
+  #[cfg(any(test, feature = "diag"))]
   boundaries: DEFAULT_BOUNDARIES,
+  #[cfg(any(test, feature = "diag"))]
   xs: KernelId::Avx512,
+  #[cfg(any(test, feature = "diag"))]
   s: KernelId::Avx512,
+  #[cfg(any(test, feature = "diag"))]
   m: KernelId::Avx512,
   l: KernelId::Avx512,
 };
@@ -41,9 +54,13 @@ pub static AVX512_TABLE: DispatchTable = DispatchTable {
 /// x86-64 with AVX2 (no AVX-512): two iterations per stripe.
 #[cfg(target_arch = "x86_64")]
 pub static AVX2_TABLE: DispatchTable = DispatchTable {
+  #[cfg(any(test, feature = "diag"))]
   boundaries: DEFAULT_BOUNDARIES,
+  #[cfg(any(test, feature = "diag"))]
   xs: KernelId::Avx2,
+  #[cfg(any(test, feature = "diag"))]
   s: KernelId::Avx2,
+  #[cfg(any(test, feature = "diag"))]
   m: KernelId::Avx2,
   l: KernelId::Avx2,
 };
@@ -51,9 +68,13 @@ pub static AVX2_TABLE: DispatchTable = DispatchTable {
 /// aarch64 with NEON: four iterations per stripe.
 #[cfg(target_arch = "aarch64")]
 pub static NEON_TABLE: DispatchTable = DispatchTable {
+  #[cfg(any(test, feature = "diag"))]
   boundaries: DEFAULT_BOUNDARIES,
+  #[cfg(any(test, feature = "diag"))]
   xs: KernelId::Neon,
+  #[cfg(any(test, feature = "diag"))]
   s: KernelId::Neon,
+  #[cfg(any(test, feature = "diag"))]
   m: KernelId::Neon,
   l: KernelId::Neon,
 };
@@ -61,9 +82,13 @@ pub static NEON_TABLE: DispatchTable = DispatchTable {
 /// POWER8+ with VSX: four iterations per stripe (128-bit vectors).
 #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
 pub static VSX_TABLE: DispatchTable = DispatchTable {
+  #[cfg(any(test, feature = "diag"))]
   boundaries: DEFAULT_BOUNDARIES,
+  #[cfg(any(test, feature = "diag"))]
   xs: KernelId::Vsx,
+  #[cfg(any(test, feature = "diag"))]
   s: KernelId::Vsx,
+  #[cfg(any(test, feature = "diag"))]
   m: KernelId::Vsx,
   l: KernelId::Vsx,
 };
@@ -71,9 +96,13 @@ pub static VSX_TABLE: DispatchTable = DispatchTable {
 /// s390x z13+ with z/Vector: four iterations per stripe (128-bit vectors).
 #[cfg(target_arch = "s390x")]
 pub static ZVECTOR_TABLE: DispatchTable = DispatchTable {
+  #[cfg(any(test, feature = "diag"))]
   boundaries: DEFAULT_BOUNDARIES,
+  #[cfg(any(test, feature = "diag"))]
   xs: KernelId::Vector,
+  #[cfg(any(test, feature = "diag"))]
   s: KernelId::Vector,
+  #[cfg(any(test, feature = "diag"))]
   m: KernelId::Vector,
   l: KernelId::Vector,
 };
@@ -85,9 +114,13 @@ pub static ZVECTOR_TABLE: DispatchTable = DispatchTable {
 #[cfg(target_arch = "riscv64")]
 #[allow(dead_code)]
 pub static RVV_TABLE: DispatchTable = DispatchTable {
+  #[cfg(any(test, feature = "diag"))]
   boundaries: DEFAULT_BOUNDARIES,
+  #[cfg(any(test, feature = "diag"))]
   xs: KernelId::Rvv,
+  #[cfg(any(test, feature = "diag"))]
   s: KernelId::Rvv,
+  #[cfg(any(test, feature = "diag"))]
   m: KernelId::Rvv,
   l: KernelId::Rvv,
 };

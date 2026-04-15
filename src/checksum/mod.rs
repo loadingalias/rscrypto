@@ -93,6 +93,7 @@ mod crc64;
 pub mod diag;
 #[doc(hidden)]
 pub(crate) mod dispatchers;
+#[cfg(feature = "diag")]
 pub mod introspect;
 #[cfg(feature = "std")]
 pub mod io;

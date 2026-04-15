@@ -6,7 +6,7 @@ use rscrypto::Aead;
 use rscrypto::Kmac256;
 #[cfg(any(feature = "hmac", feature = "kmac"))]
 use rscrypto::Mac;
-#[cfg(feature = "aead")]
+#[cfg(all(feature = "aead", feature = "diag"))]
 use rscrypto::aead::introspect::{DispatchInfo as AeadDispatchInfo, backend_for as aead_backend_for};
 #[cfg(feature = "aead")]
 use rscrypto::aead::{
@@ -22,13 +22,13 @@ use rscrypto::checksum::buffered::BufferedCrc32C;
 use rscrypto::checksum::config::{
   Crc16Config, Crc16Force, Crc24Config, Crc24Force, Crc32Config, Crc32Force, Crc64Config, Crc64Force,
 };
-#[cfg(feature = "checksums")]
+#[cfg(all(feature = "checksums", feature = "diag"))]
 use rscrypto::checksum::introspect::{DispatchInfo, KernelIntrospect, is_hardware_accelerated, kernel_for};
 #[cfg(feature = "checksums")]
 use rscrypto::checksum::{Crc32Castagnoli, Crc32Ieee, Crc64Xz};
 #[cfg(feature = "hashes")]
 use rscrypto::hashes::fast::{RapidHash64, RapidHashFast64, RapidHashFast128, Xxh3_64};
-#[cfg(feature = "hashes")]
+#[cfg(all(feature = "hashes", feature = "diag"))]
 use rscrypto::hashes::introspect::{HashKernelIntrospect, kernel_for as hash_kernel_for};
 #[cfg(all(feature = "hashes", feature = "std"))]
 use rscrypto::hashes::{DigestReader, DigestWriter};
@@ -75,14 +75,18 @@ fn root_surface_aead_exports_compile() {
   let _ = AeadBufferError::new();
   let _ = OpenError::buffer();
   let _ = OpenError::verification();
-  let _ = AeadDispatchInfo::current();
   let _ = AeadPrimitive::XChaCha20Poly1305.name();
-  let _ = aead_backend_for(AeadPrimitive::ChaCha20Poly1305);
   let _ = AeadBackend::Portable.name();
   let _ = BenchLane::IntelSpr.platform_name();
   let _ = BenchLane::Graviton4.arch();
   let _ = lane_target_backend(AeadPrimitive::Aes256Gcm, BenchLane::IntelSpr);
   let _ = select_backend(AeadPrimitive::AsconAead128, Arch::Wasm32, Caps::NONE);
+
+  #[cfg(feature = "diag")]
+  {
+    let _ = AeadDispatchInfo::current();
+    let _ = aead_backend_for(AeadPrimitive::ChaCha20Poly1305);
+  }
 
   fn assert_aead_trait<T: Aead>() {}
 
@@ -307,7 +311,7 @@ fn root_surface_hash_exports_compile() {
 }
 
 #[test]
-#[cfg(feature = "checksums")]
+#[cfg(all(feature = "checksums", feature = "diag"))]
 fn advanced_checksum_modules_compile() {
   fn assert_kernel_introspect<T: KernelIntrospect>() {}
 
@@ -321,7 +325,7 @@ fn advanced_checksum_modules_compile() {
 }
 
 #[test]
-#[cfg(feature = "hashes")]
+#[cfg(all(feature = "hashes", feature = "diag"))]
 fn advanced_hash_modules_compile() {
   fn assert_hash_kernel_introspect<T: HashKernelIntrospect>() {}
 

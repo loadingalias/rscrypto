@@ -35,6 +35,7 @@ pub enum Sha256KernelId {
 }
 
 impl Sha256KernelId {
+  #[cfg(any(test, feature = "diag"))]
   #[inline]
   #[must_use]
   pub const fn as_str(self) -> &'static str {
@@ -206,6 +207,7 @@ pub(crate) fn compile_time_best() -> CompressBlocksFn {
 }
 
 /// Kernel name for the compile-time-best path (introspection).
+#[cfg(any(test, feature = "diag"))]
 pub(crate) const COMPILE_TIME_NAME: &str = if cfg!(all(target_arch = "x86_64", target_feature = "sha")) {
   "x86-sha"
 } else if cfg!(all(target_arch = "aarch64", target_feature = "sha2")) {

@@ -514,6 +514,7 @@ pub(crate) fn xxh3_64_long(input: &[u8], seed: u64) -> u64 {
   }
 }
 
+#[cfg(any(test, feature = "diag"))]
 #[inline(always)]
 fn xxh3_64_with_seed(input: &[u8], seed: u64) -> u64 {
   if input.len() <= 16 {

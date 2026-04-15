@@ -21,8 +21,8 @@
 use core::arch::aarch64::*;
 
 use super::{
-  ACC_NB, DEFAULT_SECRET, INITIAL_ACC, MID_SIZE_MAX, PRIME32_1, PRIME64_1, PRIME64_2, SECRET_CONSUME_RATE,
-  SECRET_LASTACC_START, SECRET_MERGEACCS_START, STRIPE_LEN,
+  ACC_NB, DEFAULT_SECRET, INITIAL_ACC, PRIME32_1, PRIME64_1, PRIME64_2, SECRET_CONSUME_RATE, SECRET_LASTACC_START,
+  SECRET_MERGEACCS_START, STRIPE_LEN,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -250,6 +250,7 @@ pub fn xxh3_64_long(input: &[u8], seed: u64) -> u64 {
   }
 }
 
+#[cfg(any(test, feature = "diag"))]
 /// XXH3 64-bit hash — NEON kernel.
 ///
 /// Delegates ≤240 B to portable scalar paths; >240 B uses NEON accumulator.
@@ -260,7 +261,7 @@ pub fn xxh3_64_with_seed(input: &[u8], seed: u64) -> u64 {
   if input.len() <= 128 {
     return super::xxh3_64_7to128(input, seed, &DEFAULT_SECRET);
   }
-  if input.len() <= MID_SIZE_MAX {
+  if input.len() <= super::MID_SIZE_MAX {
     return super::xxh3_64_129to240(input, seed, &DEFAULT_SECRET);
   }
   xxh3_64_long(input, seed)

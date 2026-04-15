@@ -72,6 +72,7 @@ mod chacha20;
 mod chacha20poly1305;
 #[cfg(feature = "aes-gcm")]
 mod ghash;
+#[cfg(feature = "diag")]
 pub mod introspect;
 #[cfg(any(feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
 mod poly1305;

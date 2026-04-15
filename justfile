@@ -82,11 +82,11 @@ bench-summary group="" only="oneshot":
 
 # Run `checksum` comparison benches and report non-wins vs competitors.
 bench-compare group="" ours="rscrypto" min_pct="0":
-    RUSTC_WRAPPER= cargo bench --bench crc
+    RUSTC_WRAPPER= cargo bench --features parallel,checksums --bench crc
     @python3 scripts/bench/criterion-summary.py --group-prefix '{{group}}' --non-wins --ours '{{ours}}' --min-improvement-pct {{min_pct}}
 
 bench-blake3-compare min_pct="0" ours="rscrypto":
-    RUSTC_WRAPPER= cargo bench --bench blake3
+    RUSTC_WRAPPER= cargo bench --features parallel,blake3 --bench blake3
     @python3 scripts/bench/criterion-summary.py --group-prefix 'blake3' --non-wins --ours '{{ours}}' --min-improvement-pct {{min_pct}}
 
 bench-blake3-core:

@@ -457,6 +457,7 @@ impl KernelTable {
   ///
   /// A table is hardware-accelerated if it requires any CPU capabilities
   /// beyond the baseline (i.e., `requires != Caps::NONE`).
+  #[cfg(any(test, feature = "diag"))]
   #[inline]
   pub const fn is_hardware_accelerated(&self) -> bool {
     !self.requires.is_empty()
@@ -483,6 +484,7 @@ macro_rules! kernel_table {
 }
 
 /// Returns `true` if the active kernel table uses hardware-accelerated CRC kernels.
+#[cfg(any(test, feature = "diag"))]
 #[inline]
 pub fn is_hardware_accelerated() -> bool {
   active_table().is_hardware_accelerated()

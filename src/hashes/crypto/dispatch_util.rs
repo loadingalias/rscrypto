@@ -33,6 +33,7 @@ impl<T: Copy> SizeClassDispatch<T> {
 
 #[inline]
 #[must_use]
+#[cfg(any(feature = "sha2", test))]
 pub(crate) fn len_hint_from_u64(v: u64) -> usize {
   if (v as usize) as u64 == v {
     v as usize
@@ -43,6 +44,7 @@ pub(crate) fn len_hint_from_u64(v: u64) -> usize {
 
 #[inline]
 #[must_use]
+#[cfg(any(feature = "sha2", test))]
 pub(crate) fn len_hint_from_u128(v: u128) -> usize {
   if (v as usize) as u128 == v {
     v as usize

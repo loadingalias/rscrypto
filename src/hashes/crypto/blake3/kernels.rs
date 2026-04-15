@@ -56,6 +56,7 @@ pub(crate) struct Kernel {
   #[cfg(target_arch = "x86_64")]
   pub(crate) x86_compress_cv_bytes: X86CompressCvBytesFn,
   /// Kernel name for debugging/tuning.
+  #[cfg(any(test, feature = "diag"))]
   pub(crate) name: &'static str,
 }
 
@@ -85,6 +86,7 @@ pub enum Blake3KernelId {
 }
 
 impl Blake3KernelId {
+  #[cfg(any(test, feature = "diag"))]
   #[inline]
   #[must_use]
   pub const fn as_str(self) -> &'static str {
@@ -141,6 +143,7 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
       hash_many_contiguous: hash_many_contiguous_portable,
       #[cfg(target_arch = "x86_64")]
       x86_compress_cv_bytes: x86_compress_cv_portable_wrapper,
+      #[cfg(any(test, feature = "diag"))]
       name: id.as_str(),
     },
     #[cfg(target_arch = "x86_64")]
@@ -153,6 +156,7 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
       chunk_compress_blocks: chunk_compress_blocks_sse41_wrapper,
       hash_many_contiguous: hash_many_contiguous_sse41_wrapper,
       x86_compress_cv_bytes: x86_compress_cv_sse41_wrapper,
+      #[cfg(any(test, feature = "diag"))]
       name: id.as_str(),
     },
     #[cfg(target_arch = "x86_64")]
@@ -165,6 +169,7 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
       chunk_compress_blocks: chunk_compress_blocks_avx2_wrapper,
       hash_many_contiguous: hash_many_contiguous_avx2_wrapper,
       x86_compress_cv_bytes: x86_compress_cv_avx2_wrapper,
+      #[cfg(any(test, feature = "diag"))]
       name: id.as_str(),
     },
     #[cfg(target_arch = "x86_64")]
@@ -177,6 +182,7 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
       chunk_compress_blocks: chunk_compress_blocks_avx512_wrapper,
       hash_many_contiguous: hash_many_contiguous_avx512_wrapper,
       x86_compress_cv_bytes: x86_compress_cv_avx512_wrapper,
+      #[cfg(any(test, feature = "diag"))]
       name: id.as_str(),
     },
     #[cfg(target_arch = "aarch64")]
@@ -189,6 +195,7 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
       compress: compress_neon_wrapper,
       chunk_compress_blocks: chunk_compress_blocks_neon_wrapper,
       hash_many_contiguous: hash_many_contiguous_neon_wrapper,
+      #[cfg(any(test, feature = "diag"))]
       name: id.as_str(),
     },
     #[cfg(target_arch = "s390x")]
@@ -197,6 +204,7 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
       compress: compress_s390x_vector_wrapper,
       chunk_compress_blocks: chunk_compress_blocks_s390x_vector_wrapper,
       hash_many_contiguous: hash_many_contiguous_s390x_vector_wrapper,
+      #[cfg(any(test, feature = "diag"))]
       name: id.as_str(),
     },
     #[cfg(target_arch = "powerpc64")]
@@ -205,6 +213,7 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
       compress: compress_power_vsx_wrapper,
       chunk_compress_blocks: chunk_compress_blocks_power_vsx_wrapper,
       hash_many_contiguous: hash_many_contiguous_power_vsx_wrapper,
+      #[cfg(any(test, feature = "diag"))]
       name: id.as_str(),
     },
     #[cfg(target_arch = "riscv64")]
@@ -213,6 +222,7 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
       compress: compress_riscv_v_wrapper,
       chunk_compress_blocks: chunk_compress_blocks_riscv_v_wrapper,
       hash_many_contiguous: hash_many_contiguous_riscv_v_wrapper,
+      #[cfg(any(test, feature = "diag"))]
       name: id.as_str(),
     },
   }
