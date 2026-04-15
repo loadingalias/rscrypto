@@ -13,11 +13,11 @@
 //!
 //! // Platform-level info
 //! let info = DispatchInfo::current();
-//! println!("{info}");
+//! assert!(!format!("{info}").is_empty());
 //!
 //! // Per-algorithm kernel selection
-//! println!("CRC-64 @ 1KB: {}", Crc64::kernel_name_for_len(1024));
-//! println!("CRC-64 @ 4KB: {}", Crc64::kernel_name_for_len(4096));
+//! assert!(!Crc64::kernel_name_for_len(1024).is_empty());
+//! assert!(!Crc64::kernel_name_for_len(4096).is_empty());
 //! ```
 
 use core::fmt;
@@ -35,8 +35,7 @@ pub use crate::checksum::kernel_table::is_hardware_accelerated;
 /// use rscrypto::checksum::introspect::DispatchInfo;
 ///
 /// let info = DispatchInfo::current();
-/// println!("{info}");
-/// // Example output: "Caps(aarch64, [AES, PMULL, SHA256, ...]) (Apple M1-M3)"
+/// assert!(!format!("{info}").is_empty());
 /// ```
 #[derive(Clone, Copy)]
 pub struct DispatchInfo {
@@ -90,8 +89,8 @@ impl fmt::Debug for DispatchInfo {
 /// // Check kernel selection at different buffer sizes
 /// let small = kernel_for::<Crc64>(64);
 /// let large = kernel_for::<Crc64>(65536);
-/// println!("Small buffers: {small}");
-/// println!("Large buffers: {large}");
+/// assert!(!small.is_empty());
+/// assert!(!large.is_empty());
 /// ```
 #[inline]
 #[must_use]

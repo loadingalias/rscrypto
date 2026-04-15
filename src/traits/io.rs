@@ -708,7 +708,7 @@ mod tests {
   use std::io::{self, IoSlice, IoSliceMut, Read, Write};
 
   use super::{ChecksumWriter, DigestWriter};
-  use crate::{Checksum, Digest};
+  use crate::{Checksum, traits::Digest};
 
   #[derive(Clone, Copy, Debug, Default)]
   struct Sum(u32);

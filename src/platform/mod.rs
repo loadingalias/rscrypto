@@ -1,7 +1,7 @@
 //! CPU detection and capability reporting.
 //!
-//! This crate is the facts layer for rscrypto. It reports what instructions are
-//! legal on the current target and leaves dispatch policy to algorithm crates.
+//! This module is the facts layer for rscrypto. It reports what instructions are
+//! legal on the current target and leaves dispatch policy to algorithm modules.
 //!
 //! # Quick Start
 //!
@@ -20,7 +20,7 @@
 //! - **[`Detected`]**: Capabilities plus architecture identifier
 //!
 //! Algorithm crates decide whether to use compile-time facts, runtime facts, or
-//! a mix of both for their own planners. This crate does not own dispatch
+//! a mix of both for their own planners. This module does not own dispatch
 //! policy.
 //!
 //! # Performance

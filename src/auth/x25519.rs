@@ -72,8 +72,16 @@ impl fmt::Display for X25519Error {
 impl core::error::Error for X25519Error {}
 
 /// X25519 secret scalar bytes.
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone)]
 pub struct X25519SecretKey([u8; Self::LENGTH]);
+
+impl PartialEq for X25519SecretKey {
+  fn eq(&self, other: &Self) -> bool {
+    ct::constant_time_eq(&self.0, &other.0)
+  }
+}
+
+impl Eq for X25519SecretKey {}
 
 impl X25519SecretKey {
   /// Secret key length in bytes.
@@ -115,23 +123,7 @@ impl X25519SecretKey {
     Self(bytes)
   }
 
-  /// Generate a random secret key using the operating system's CSPRNG.
-  ///
-  /// # Panics
-  ///
-  /// Panics if the platform entropy source is unavailable.
-  #[cfg(feature = "getrandom")]
-  #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
-  #[inline]
-  #[must_use]
-  pub fn random() -> Self {
-    let mut bytes = [0u8; Self::LENGTH];
-    match getrandom::fill(&mut bytes) {
-      Ok(()) => {}
-      Err(e) => panic!("getrandom failed: {e}"),
-    }
-    Self(bytes)
-  }
+  impl_getrandom!();
 
   /// Derive the matching public key.
   #[must_use]
@@ -158,13 +150,6 @@ impl X25519SecretKey {
   }
 }
 
-impl Default for X25519SecretKey {
-  #[inline]
-  fn default() -> Self {
-    Self([0u8; Self::LENGTH])
-  }
-}
-
 impl fmt::Debug for X25519SecretKey {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     f.write_str("X25519SecretKey(****)")
@@ -180,12 +165,7 @@ impl Drop for X25519SecretKey {
   }
 }
 
-impl crate::traits::ConstantTimeEq for X25519SecretKey {
-  #[inline]
-  fn ct_eq(&self, other: &Self) -> bool {
-    crate::traits::ct::constant_time_eq(&self.0, &other.0)
-  }
-}
+impl_ct_eq!(X25519SecretKey);
 
 /// X25519 public key bytes.
 #[derive(Clone, Copy)]
@@ -252,13 +232,6 @@ impl Hash for X25519PublicKey {
   }
 }
 
-impl Default for X25519PublicKey {
-  #[inline]
-  fn default() -> Self {
-    Self::from_bytes([0u8; Self::LENGTH])
-  }
-}
-
 impl fmt::Debug for X25519PublicKey {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     write!(f, "X25519PublicKey(")?;
@@ -270,12 +243,7 @@ impl fmt::Debug for X25519PublicKey {
 impl_hex_fmt!(X25519PublicKey);
 impl_serde_bytes!(X25519PublicKey);
 
-impl crate::traits::ConstantTimeEq for X25519PublicKey {
-  #[inline]
-  fn ct_eq(&self, other: &Self) -> bool {
-    crate::traits::ct::constant_time_eq(&self.bytes, &other.bytes)
-  }
-}
+impl_ct_eq!(X25519PublicKey, bytes);
 
 impl From<&X25519SecretKey> for X25519PublicKey {
   #[inline]
@@ -292,8 +260,16 @@ impl From<X25519SecretKey> for X25519PublicKey {
 }
 
 /// X25519 shared secret bytes.
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone)]
 pub struct X25519SharedSecret([u8; Self::LENGTH]);
+
+impl PartialEq for X25519SharedSecret {
+  fn eq(&self, other: &Self) -> bool {
+    ct::constant_time_eq(&self.0, &other.0)
+  }
+}
+
+impl Eq for X25519SharedSecret {}
 
 impl X25519SharedSecret {
   /// Shared secret length in bytes.
@@ -336,13 +312,6 @@ impl X25519SharedSecret {
   }
 }
 
-impl Default for X25519SharedSecret {
-  #[inline]
-  fn default() -> Self {
-    Self([0u8; Self::LENGTH])
-  }
-}
-
 impl fmt::Debug for X25519SharedSecret {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     f.write_str("X25519SharedSecret(****)")
@@ -358,12 +327,7 @@ impl Drop for X25519SharedSecret {
   }
 }
 
-impl crate::traits::ConstantTimeEq for X25519SharedSecret {
-  #[inline]
-  fn ct_eq(&self, other: &Self) -> bool {
-    crate::traits::ct::constant_time_eq(&self.0, &other.0)
-  }
-}
+impl_ct_eq!(X25519SharedSecret);
 
 #[allow(clippy::indexing_slicing)]
 #[must_use]

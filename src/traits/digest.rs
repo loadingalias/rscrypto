@@ -8,6 +8,21 @@ use core::fmt::Debug;
 /// Cryptographic hash function producing a fixed-size digest.
 ///
 /// This trait is intended for algorithms like SHA-256 and BLAKE3 (hash mode).
+///
+/// # Examples
+///
+/// ```
+/// use rscrypto::{Digest, Sha256};
+///
+/// // One-shot.
+/// let digest = Sha256::digest(b"hello world");
+///
+/// // Streaming.
+/// let mut h = Sha256::new();
+/// h.update(b"hello ");
+/// h.update(b"world");
+/// assert_eq!(h.finalize(), digest);
+/// ```
 pub trait Digest: Clone + Default {
   /// Output size in bytes.
   const OUTPUT_SIZE: usize;

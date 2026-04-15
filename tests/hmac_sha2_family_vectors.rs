@@ -2,19 +2,8 @@
 
 use rscrypto::{HmacSha384, HmacSha512, Mac};
 
-fn decode_hex<const N: usize>(hex: &str) -> [u8; N] {
-  assert_eq!(hex.len(), N * 2, "hex length must match output size");
-  let mut out = [0u8; N];
-  let bytes = hex.as_bytes();
-  let mut i = 0usize;
-  while i < N {
-    let hi = char::from(bytes[i * 2]).to_digit(16).unwrap();
-    let lo = char::from(bytes[i * 2 + 1]).to_digit(16).unwrap();
-    out[i] = ((hi << 4) | lo) as u8;
-    i += 1;
-  }
-  out
-}
+mod common;
+use common::decode_hex_array as decode_hex;
 
 #[test]
 fn hmac_sha384_rfc4231_vectors() {

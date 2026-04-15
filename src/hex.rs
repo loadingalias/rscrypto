@@ -239,6 +239,56 @@ macro_rules! impl_serde_bytes {
   ($type:ty) => {};
 }
 
+/// Implement [`ConstantTimeEq`](crate::traits::ConstantTimeEq) for a type
+/// whose secret material lives in a single byte-array field.
+///
+/// Default form uses the tuple field `.0`; pass a field name for named structs.
+macro_rules! impl_ct_eq {
+  ($type:ty) => {
+    impl crate::traits::ConstantTimeEq for $type {
+      #[inline]
+      fn ct_eq(&self, other: &Self) -> bool {
+        crate::traits::ct::constant_time_eq(&self.0, &other.0)
+      }
+    }
+  };
+  ($type:ty, $field:ident) => {
+    impl crate::traits::ConstantTimeEq for $type {
+      #[inline]
+      fn ct_eq(&self, other: &Self) -> bool {
+        crate::traits::ct::constant_time_eq(&self.$field, &other.$field)
+      }
+    }
+  };
+}
+
+/// Generate a `random()` constructor that fills `Self::LENGTH` bytes from
+/// the operating system CSPRNG via `getrandom`.
+///
+/// Invoke inside an `impl` block for a tuple-struct with `LENGTH` and
+/// `from_bytes`.
+macro_rules! impl_getrandom {
+  () => {
+    /// Generate a random instance using the operating system's CSPRNG.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the platform entropy source is unavailable.
+    #[cfg(feature = "getrandom")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
+    #[inline]
+    #[must_use]
+    pub fn random() -> Self {
+      let mut bytes = [0u8; Self::LENGTH];
+      match getrandom::fill(&mut bytes) {
+        Ok(()) => {}
+        Err(e) => panic!("getrandom failed: {e}"),
+      }
+      Self(bytes)
+    }
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------

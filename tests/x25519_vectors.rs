@@ -3,15 +3,10 @@
 use rscrypto::{X25519Error, X25519PublicKey, X25519SecretKey, X25519SharedSecret};
 use x25519_dalek::{PublicKey as DalekPublicKey, StaticSecret as DalekStaticSecret};
 
+mod common;
+
 fn decode_hex_32(hex: &str) -> [u8; 32] {
-  assert_eq!(hex.len(), 64);
-
-  let mut out = [0u8; 32];
-  for (dst, chunk) in out.iter_mut().zip(hex.as_bytes().chunks_exact(2)) {
-    *dst = u8::from_str_radix(core::str::from_utf8(chunk).unwrap(), 16).unwrap();
-  }
-
-  out
+  common::decode_hex_array::<32>(hex)
 }
 
 fn iterative_x25519(iterations: usize) -> [u8; 32] {

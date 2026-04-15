@@ -10,6 +10,26 @@ use crate::traits::{VerificationError, ct};
 /// Message authentication code producing a fixed-size tag.
 ///
 /// This trait is intended for fixed-size algorithms like HMAC-SHA256.
+///
+/// # Examples
+///
+/// ```
+/// use rscrypto::{HmacSha256, Mac};
+///
+/// let key = b"secret-key";
+///
+/// // One-shot.
+/// let tag = HmacSha256::mac(key, b"hello world");
+///
+/// // Streaming.
+/// let mut mac = HmacSha256::new(key);
+/// mac.update(b"hello ");
+/// mac.update(b"world");
+/// assert_eq!(mac.finalize(), tag);
+///
+/// // Verify.
+/// assert!(HmacSha256::verify_tag(key, b"hello world", &tag).is_ok());
+/// ```
 pub trait Mac: Clone {
   /// Tag size in bytes.
   const TAG_SIZE: usize;

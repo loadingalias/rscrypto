@@ -1,6 +1,6 @@
 //! Core cryptographic traits for rscrypto.
 //!
-//! This crate provides the foundational traits that all rscrypto implementations
+//! This module provides the foundational traits that all rscrypto implementations
 //! conform to. It is `no_std` compatible and has zero dependencies.
 //!
 //! # Trait Hierarchy
@@ -25,7 +25,7 @@
 //!
 //! # Fallibility Discipline
 //!
-//! This crate denies `unwrap`, `expect`, and indexing in non-test code to ensure
+//! This module denies `unwrap`, `expect`, and indexing in non-test code to ensure
 //! all error paths are handled explicitly.
 #[cfg(any(
   feature = "aes-gcm",

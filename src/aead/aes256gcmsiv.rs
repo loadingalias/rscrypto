@@ -57,13 +57,6 @@ impl Aes256GcmSivKey {
   }
 }
 
-impl Default for Aes256GcmSivKey {
-  #[inline]
-  fn default() -> Self {
-    Self([0u8; Self::LENGTH])
-  }
-}
-
 impl AsRef<[u8]> for Aes256GcmSivKey {
   #[inline]
   fn as_ref(&self) -> &[u8] {
@@ -71,12 +64,7 @@ impl AsRef<[u8]> for Aes256GcmSivKey {
   }
 }
 
-impl crate::traits::ConstantTimeEq for Aes256GcmSivKey {
-  #[inline]
-  fn ct_eq(&self, other: &Self) -> bool {
-    crate::traits::ct::constant_time_eq(&self.0, &other.0)
-  }
-}
+impl_ct_eq!(Aes256GcmSivKey);
 
 impl fmt::Debug for Aes256GcmSivKey {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -100,23 +88,7 @@ impl Aes256GcmSivKey {
     Self(bytes)
   }
 
-  /// Generate a random key using the operating system's CSPRNG.
-  ///
-  /// # Panics
-  ///
-  /// Panics if the platform entropy source is unavailable.
-  #[cfg(feature = "getrandom")]
-  #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
-  #[inline]
-  #[must_use]
-  pub fn random() -> Self {
-    let mut bytes = [0u8; Self::LENGTH];
-    match getrandom::fill(&mut bytes) {
-      Ok(()) => {}
-      Err(e) => panic!("getrandom failed: {e}"),
-    }
-    Self(bytes)
-  }
+  impl_getrandom!();
 }
 
 impl_hex_fmt_secret!(Aes256GcmSivKey);
@@ -172,12 +144,7 @@ impl AsRef<[u8]> for Aes256GcmSivTag {
   }
 }
 
-impl crate::traits::ConstantTimeEq for Aes256GcmSivTag {
-  #[inline]
-  fn ct_eq(&self, other: &Self) -> bool {
-    crate::traits::ct::constant_time_eq(&self.0, &other.0)
-  }
-}
+impl_ct_eq!(Aes256GcmSivTag);
 
 impl fmt::Debug for Aes256GcmSivTag {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -195,6 +162,30 @@ impl_serde_bytes!(Aes256GcmSivTag);
 /// Nonce-misuse resistant authenticated encryption. On nonce reuse, only
 /// the authentication guarantee degrades — confidentiality is preserved
 /// up to a multi-message distinguishing bound.
+///
+/// # Examples
+///
+/// ```
+/// use rscrypto::{Aead, Aes256GcmSiv, Aes256GcmSivKey, aead::Nonce96};
+///
+/// let key = Aes256GcmSivKey::from_bytes([0x42; 32]);
+/// let nonce = Nonce96::from_bytes([0x24; 12]);
+/// let cipher = Aes256GcmSiv::new(&key);
+///
+/// let mut buf = *b"hello";
+/// let tag = cipher.encrypt_in_place(&nonce, b"", &mut buf);
+/// cipher.decrypt_in_place(&nonce, b"", &mut buf, &tag)?;
+/// assert_eq!(&buf, b"hello");
+/// # Ok::<(), rscrypto::VerificationError>(())
+/// ```
+///
+/// # Security
+///
+/// On x86_64 (AES-NI), aarch64 (AES-CE), and s390x (CPACF), all AES
+/// operations use constant-time hardware instructions. On RISC-V without
+/// hardware AES extensions (Zkne / Zvkned), encryption falls back to
+/// T-table lookups indexed by secret data, which are vulnerable to
+/// cache-timing side channels in shared-tenancy environments.
 #[derive(Clone)]
 pub struct Aes256GcmSiv {
   master_ek: aes::Aes256EncKey,

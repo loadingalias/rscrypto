@@ -68,7 +68,7 @@ pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
   for (&x, &y) in a.iter().zip(b.iter()) {
     acc |= x ^ y;
   }
-  acc == 0
+  core::hint::black_box(acc) == 0
 }
 
 /// Volatile-zero a byte slice without emitting a compiler fence.

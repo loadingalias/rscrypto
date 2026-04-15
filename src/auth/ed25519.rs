@@ -109,8 +109,16 @@ const _: fn(&scalar::Scalar, &scalar::Scalar, &scalar::Scalar) -> scalar::Scalar
 ///
 /// Provides typed signing and public-key derivation instead of vague `&[u8]`
 /// parameters at the call site.
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone)]
 pub struct Ed25519SecretKey([u8; Self::LENGTH]);
+
+impl PartialEq for Ed25519SecretKey {
+  fn eq(&self, other: &Self) -> bool {
+    ct::constant_time_eq(&self.0, &other.0)
+  }
+}
+
+impl Eq for Ed25519SecretKey {}
 
 impl Ed25519SecretKey {
   /// Secret key length in bytes.
@@ -152,13 +160,6 @@ impl Ed25519SecretKey {
   }
 }
 
-impl Default for Ed25519SecretKey {
-  #[inline]
-  fn default() -> Self {
-    Self([0u8; Self::LENGTH])
-  }
-}
-
 impl fmt::Debug for Ed25519SecretKey {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     f.write_str("Ed25519SecretKey(****)")
@@ -181,23 +182,7 @@ impl Ed25519SecretKey {
     Self(bytes)
   }
 
-  /// Generate a random secret key using the operating system's CSPRNG.
-  ///
-  /// # Panics
-  ///
-  /// Panics if the platform entropy source is unavailable.
-  #[cfg(feature = "getrandom")]
-  #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
-  #[inline]
-  #[must_use]
-  pub fn random() -> Self {
-    let mut bytes = [0u8; Self::LENGTH];
-    match getrandom::fill(&mut bytes) {
-      Ok(()) => {}
-      Err(e) => panic!("getrandom failed: {e}"),
-    }
-    Self(bytes)
-  }
+  impl_getrandom!();
 }
 
 impl_hex_fmt_secret!(Ed25519SecretKey);
@@ -209,12 +194,7 @@ impl Drop for Ed25519SecretKey {
   }
 }
 
-impl crate::traits::ConstantTimeEq for Ed25519SecretKey {
-  #[inline]
-  fn ct_eq(&self, other: &Self) -> bool {
-    crate::traits::ct::constant_time_eq(&self.0, &other.0)
-  }
-}
+impl_ct_eq!(Ed25519SecretKey);
 
 /// Ed25519 public key bytes.
 #[derive(Clone, Copy)]
@@ -290,13 +270,6 @@ impl Hash for Ed25519PublicKey {
   }
 }
 
-impl Default for Ed25519PublicKey {
-  #[inline]
-  fn default() -> Self {
-    Self::from_bytes([0u8; Self::LENGTH])
-  }
-}
-
 impl fmt::Debug for Ed25519PublicKey {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     write!(f, "Ed25519PublicKey(")?;
@@ -308,12 +281,7 @@ impl fmt::Debug for Ed25519PublicKey {
 impl_hex_fmt!(Ed25519PublicKey);
 impl_serde_bytes!(Ed25519PublicKey);
 
-impl crate::traits::ConstantTimeEq for Ed25519PublicKey {
-  #[inline]
-  fn ct_eq(&self, other: &Self) -> bool {
-    crate::traits::ct::constant_time_eq(&self.bytes, &other.bytes)
-  }
-}
+impl_ct_eq!(Ed25519PublicKey, bytes);
 
 impl Ed25519PublicKey {
   /// Verify a message/signature pair against this public key.
@@ -376,20 +344,23 @@ impl fmt::Debug for Ed25519Signature {
 impl_hex_fmt!(Ed25519Signature);
 impl_serde_bytes!(Ed25519Signature);
 
-impl crate::traits::ConstantTimeEq for Ed25519Signature {
-  #[inline]
-  fn ct_eq(&self, other: &Self) -> bool {
-    crate::traits::ct::constant_time_eq(&self.0, &other.0)
-  }
-}
+impl_ct_eq!(Ed25519Signature);
 
 /// Ed25519 keypair with typed secret and public halves.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct Ed25519Keypair {
   secret: Ed25519SecretKey,
   public: Ed25519PublicKey,
   expanded: hash::ExpandedSecret,
 }
+
+impl PartialEq for Ed25519Keypair {
+  fn eq(&self, other: &Self) -> bool {
+    self.secret == other.secret && self.public == other.public
+  }
+}
+
+impl Eq for Ed25519Keypair {}
 
 impl Ed25519Keypair {
   /// Derive a keypair from a secret key.
@@ -637,7 +608,7 @@ mod tests {
 
   #[test]
   fn secret_key_debug_is_redacted() {
-    let dbg = format!("{:?}", Ed25519SecretKey::default());
+    let dbg = format!("{:?}", Ed25519SecretKey::from_bytes([0u8; 32]));
     assert_eq!(dbg, "Ed25519SecretKey(****)");
   }
 

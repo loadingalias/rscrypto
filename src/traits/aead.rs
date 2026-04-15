@@ -17,6 +17,25 @@ use crate::{
 /// separately. Combined ciphertext-plus-tag helpers are layered on top through
 /// caller-provided output buffers so the trait remains `no_std` and `no_alloc`
 /// friendly.
+///
+/// # Examples
+///
+/// ```
+/// use rscrypto::{Aead, ChaCha20Poly1305, ChaCha20Poly1305Key, aead::Nonce96};
+///
+/// let key = ChaCha20Poly1305Key::from_bytes([0x42; 32]);
+/// let nonce = Nonce96::from_bytes([0x24; 12]);
+/// let cipher = ChaCha20Poly1305::new(&key);
+///
+/// // In-place encrypt with detached tag.
+/// let mut buf = *b"hello";
+/// let tag = cipher.encrypt_in_place(&nonce, b"aad", &mut buf);
+///
+/// // In-place decrypt.
+/// cipher.decrypt_in_place(&nonce, b"aad", &mut buf, &tag)?;
+/// assert_eq!(&buf, b"hello");
+/// # Ok::<(), rscrypto::VerificationError>(())
+/// ```
 pub trait Aead: Clone {
   /// Key size in bytes.
   const KEY_SIZE: usize;
@@ -151,7 +170,10 @@ pub trait Aead: Clone {
     let (ciphertext, tag_bytes) = ciphertext_and_tag.split_at(plaintext_len);
     out.copy_from_slice(ciphertext);
     let tag = Self::tag_from_slice(tag_bytes)?;
-    self.decrypt_in_place(nonce, aad, out, &tag)?;
+    if let Err(e) = self.decrypt_in_place(nonce, aad, out, &tag) {
+      super::ct::zeroize(out);
+      return Err(e.into());
+    }
     Ok(())
   }
 }

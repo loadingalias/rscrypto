@@ -51,8 +51,16 @@ fn load_bytes(data: &[u8]) -> u64 {
 // ---------------------------------------------------------------------------
 
 /// Ascon-AEAD128 128-bit secret key.
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone)]
 pub struct AsconAead128Key([u8; Self::LENGTH]);
+
+impl PartialEq for AsconAead128Key {
+  fn eq(&self, other: &Self) -> bool {
+    ct::constant_time_eq(&self.0, &other.0)
+  }
+}
+
+impl Eq for AsconAead128Key {}
 
 impl AsconAead128Key {
   /// Key length in bytes.
@@ -90,13 +98,6 @@ impl AsconAead128Key {
   }
 }
 
-impl Default for AsconAead128Key {
-  #[inline]
-  fn default() -> Self {
-    Self([0u8; Self::LENGTH])
-  }
-}
-
 impl AsRef<[u8]> for AsconAead128Key {
   #[inline]
   fn as_ref(&self) -> &[u8] {
@@ -104,12 +105,7 @@ impl AsRef<[u8]> for AsconAead128Key {
   }
 }
 
-impl crate::traits::ConstantTimeEq for AsconAead128Key {
-  #[inline]
-  fn ct_eq(&self, other: &Self) -> bool {
-    crate::traits::ct::constant_time_eq(&self.0, &other.0)
-  }
-}
+impl_ct_eq!(AsconAead128Key);
 
 impl fmt::Debug for AsconAead128Key {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -133,23 +129,7 @@ impl AsconAead128Key {
     Self(bytes)
   }
 
-  /// Generate a random key using the operating system's CSPRNG.
-  ///
-  /// # Panics
-  ///
-  /// Panics if the platform entropy source is unavailable.
-  #[cfg(feature = "getrandom")]
-  #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
-  #[inline]
-  #[must_use]
-  pub fn random() -> Self {
-    let mut bytes = [0u8; Self::LENGTH];
-    match getrandom::fill(&mut bytes) {
-      Ok(()) => {}
-      Err(e) => panic!("getrandom failed: {e}"),
-    }
-    Self(bytes)
-  }
+  impl_getrandom!();
 }
 
 impl_hex_fmt_secret!(AsconAead128Key);
@@ -209,12 +189,7 @@ impl AsRef<[u8]> for AsconAead128Tag {
   }
 }
 
-impl crate::traits::ConstantTimeEq for AsconAead128Tag {
-  #[inline]
-  fn ct_eq(&self, other: &Self) -> bool {
-    crate::traits::ct::constant_time_eq(&self.0, &other.0)
-  }
-}
+impl_ct_eq!(AsconAead128Tag);
 
 impl fmt::Debug for AsconAead128Tag {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -248,8 +223,9 @@ impl_serde_bytes!(AsconAead128Tag);
 ///
 /// let mut buf = *b"hello";
 /// let tag = aead.encrypt_in_place(&nonce, b"", &mut buf);
-/// aead.decrypt_in_place(&nonce, b"", &mut buf, &tag).unwrap();
+/// aead.decrypt_in_place(&nonce, b"", &mut buf, &tag)?;
 /// assert_eq!(&buf, b"hello");
+/// # Ok::<(), rscrypto::VerificationError>(())
 /// ```
 #[derive(Clone)]
 pub struct AsconAead128 {

@@ -13,8 +13,16 @@ const NONCE_SIZE: usize = Nonce192::LENGTH;
 const MAX_PLAINTEXT_LEN: u64 = (u32::MAX as u64) * (chacha20::BLOCK_SIZE as u64);
 
 /// XChaCha20-Poly1305 secret key bytes.
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone)]
 pub struct XChaCha20Poly1305Key([u8; Self::LENGTH]);
+
+impl PartialEq for XChaCha20Poly1305Key {
+  fn eq(&self, other: &Self) -> bool {
+    ct::constant_time_eq(&self.0, &other.0)
+  }
+}
+
+impl Eq for XChaCha20Poly1305Key {}
 
 impl XChaCha20Poly1305Key {
   /// Key length in bytes.
@@ -42,13 +50,6 @@ impl XChaCha20Poly1305Key {
   }
 }
 
-impl Default for XChaCha20Poly1305Key {
-  #[inline]
-  fn default() -> Self {
-    Self([0u8; Self::LENGTH])
-  }
-}
-
 impl AsRef<[u8]> for XChaCha20Poly1305Key {
   #[inline]
   fn as_ref(&self) -> &[u8] {
@@ -56,12 +57,7 @@ impl AsRef<[u8]> for XChaCha20Poly1305Key {
   }
 }
 
-impl crate::traits::ConstantTimeEq for XChaCha20Poly1305Key {
-  #[inline]
-  fn ct_eq(&self, other: &Self) -> bool {
-    crate::traits::ct::constant_time_eq(&self.0, &other.0)
-  }
-}
+impl_ct_eq!(XChaCha20Poly1305Key);
 
 impl fmt::Debug for XChaCha20Poly1305Key {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -85,23 +81,7 @@ impl XChaCha20Poly1305Key {
     Self(bytes)
   }
 
-  /// Generate a random key using the operating system's CSPRNG.
-  ///
-  /// # Panics
-  ///
-  /// Panics if the platform entropy source is unavailable.
-  #[cfg(feature = "getrandom")]
-  #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
-  #[inline]
-  #[must_use]
-  pub fn random() -> Self {
-    let mut bytes = [0u8; Self::LENGTH];
-    match getrandom::fill(&mut bytes) {
-      Ok(()) => {}
-      Err(e) => panic!("getrandom failed: {e}"),
-    }
-    Self(bytes)
-  }
+  impl_getrandom!();
 }
 
 impl_hex_fmt_secret!(XChaCha20Poly1305Key);
@@ -157,12 +137,7 @@ impl AsRef<[u8]> for XChaCha20Poly1305Tag {
   }
 }
 
-impl crate::traits::ConstantTimeEq for XChaCha20Poly1305Tag {
-  #[inline]
-  fn ct_eq(&self, other: &Self) -> bool {
-    crate::traits::ct::constant_time_eq(&self.0, &other.0)
-  }
-}
+impl_ct_eq!(XChaCha20Poly1305Tag);
 
 impl fmt::Debug for XChaCha20Poly1305Tag {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -176,6 +151,22 @@ impl_hex_fmt!(XChaCha20Poly1305Tag);
 impl_serde_bytes!(XChaCha20Poly1305Tag);
 
 /// Portable XChaCha20-Poly1305 AEAD.
+///
+/// # Examples
+///
+/// ```
+/// use rscrypto::{Aead, XChaCha20Poly1305, XChaCha20Poly1305Key, aead::Nonce192};
+///
+/// let key = XChaCha20Poly1305Key::from_bytes([0x42; 32]);
+/// let nonce = Nonce192::from_bytes([0x24; 24]);
+/// let cipher = XChaCha20Poly1305::new(&key);
+///
+/// let mut buf = *b"hello";
+/// let tag = cipher.encrypt_in_place(&nonce, b"", &mut buf);
+/// cipher.decrypt_in_place(&nonce, b"", &mut buf, &tag)?;
+/// assert_eq!(&buf, b"hello");
+/// # Ok::<(), rscrypto::VerificationError>(())
+/// ```
 #[derive(Clone)]
 pub struct XChaCha20Poly1305 {
   key: XChaCha20Poly1305Key,
@@ -324,6 +315,7 @@ impl Aead for XChaCha20Poly1305 {
     ct::zeroize(&mut poly_key);
 
     if !ct::constant_time_eq(&expected, tag.as_bytes()) {
+      ct::zeroize(buffer);
       ct::zeroize(&mut subkey);
       return Err(VerificationError::new());
     }
