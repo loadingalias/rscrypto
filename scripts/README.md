@@ -59,7 +59,7 @@ This file is the caller map for `scripts/`.
 - `scripts/bench/blake3-gap-gate.sh`
   - Called by: `scripts/ci/run-bench.sh`, `just bench-blake3-gate`
 - `scripts/bench/extract-results.sh`
-  - Called by: manual developer workflow for post-CI benchmark artifact analysis
+  - Called by: manual developer workflow, generates `benchmark_results/OVERVIEW.md`
 - `scripts/bench/comp-check.py`
   - Called by: `just comp-check`
 - `scripts/gen_blake3_x86_asm_ports.py`

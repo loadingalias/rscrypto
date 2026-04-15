@@ -7,4 +7,15 @@
 pub trait Xof: Clone {
   /// Squeeze output bytes into `out`.
   fn squeeze(&mut self, out: &mut [u8]);
+
+  /// Squeeze `len` bytes and return them as a `Vec<u8>`.
+  #[cfg(feature = "alloc")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
+  #[inline]
+  #[must_use]
+  fn squeeze_to_vec(&mut self, len: usize) -> alloc::vec::Vec<u8> {
+    let mut out = alloc::vec![0u8; len];
+    self.squeeze(&mut out);
+    out
+  }
 }

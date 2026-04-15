@@ -1,5 +1,44 @@
 //! Constant-time utilities for cryptographic operations.
 
+/// Constant-time equality comparison.
+///
+/// Implementors guarantee that the comparison examines every byte regardless
+/// of mismatches, preventing timing side-channels.
+///
+/// # Examples
+///
+/// ```
+/// use rscrypto::ConstantTimeEq;
+///
+/// let a = [1u8, 2, 3, 4];
+/// let b = [1u8, 2, 3, 4];
+/// let c = [1u8, 2, 3, 5];
+///
+/// assert!(a.ct_eq(&b));
+/// assert!(!a.ct_eq(&c));
+/// ```
+pub trait ConstantTimeEq {
+  /// Returns `true` if `self` and `other` are equal.
+  ///
+  /// The comparison is constant-time with respect to the data contents.
+  #[must_use]
+  fn ct_eq(&self, other: &Self) -> bool;
+}
+
+impl<const N: usize> ConstantTimeEq for [u8; N] {
+  #[inline]
+  fn ct_eq(&self, other: &Self) -> bool {
+    constant_time_eq(self, other)
+  }
+}
+
+impl ConstantTimeEq for [u8] {
+  #[inline]
+  fn ct_eq(&self, other: &Self) -> bool {
+    constant_time_eq(self, other)
+  }
+}
+
 /// Constant-time byte equality comparison.
 ///
 /// Returns `true` if `a` and `b` have equal length and identical contents.

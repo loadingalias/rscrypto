@@ -115,6 +115,24 @@ impl X25519SecretKey {
     Self(bytes)
   }
 
+  /// Generate a random secret key using the operating system's CSPRNG.
+  ///
+  /// # Panics
+  ///
+  /// Panics if the platform entropy source is unavailable.
+  #[cfg(feature = "getrandom")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
+  #[inline]
+  #[must_use]
+  pub fn random() -> Self {
+    let mut bytes = [0u8; Self::LENGTH];
+    match getrandom::fill(&mut bytes) {
+      Ok(()) => {}
+      Err(e) => panic!("getrandom failed: {e}"),
+    }
+    Self(bytes)
+  }
+
   /// Derive the matching public key.
   #[must_use]
   pub fn public_key(&self) -> X25519PublicKey {
@@ -154,10 +172,18 @@ impl fmt::Debug for X25519SecretKey {
 }
 
 impl_hex_fmt_secret!(X25519SecretKey);
+impl_serde_bytes!(X25519SecretKey);
 
 impl Drop for X25519SecretKey {
   fn drop(&mut self) {
     ct::zeroize(&mut self.0);
+  }
+}
+
+impl crate::traits::ConstantTimeEq for X25519SecretKey {
+  #[inline]
+  fn ct_eq(&self, other: &Self) -> bool {
+    crate::traits::ct::constant_time_eq(&self.0, &other.0)
   }
 }
 
@@ -242,6 +268,14 @@ impl fmt::Debug for X25519PublicKey {
 }
 
 impl_hex_fmt!(X25519PublicKey);
+impl_serde_bytes!(X25519PublicKey);
+
+impl crate::traits::ConstantTimeEq for X25519PublicKey {
+  #[inline]
+  fn ct_eq(&self, other: &Self) -> bool {
+    crate::traits::ct::constant_time_eq(&self.bytes, &other.bytes)
+  }
+}
 
 impl From<&X25519SecretKey> for X25519PublicKey {
   #[inline]
@@ -316,10 +350,18 @@ impl fmt::Debug for X25519SharedSecret {
 }
 
 impl_hex_fmt_secret!(X25519SharedSecret);
+impl_serde_bytes!(X25519SharedSecret);
 
 impl Drop for X25519SharedSecret {
   fn drop(&mut self) {
     ct::zeroize(&mut self.0);
+  }
+}
+
+impl crate::traits::ConstantTimeEq for X25519SharedSecret {
+  #[inline]
+  fn ct_eq(&self, other: &Self) -> bool {
+    crate::traits::ct::constant_time_eq(&self.0, &other.0)
   }
 }
 

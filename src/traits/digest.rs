@@ -15,7 +15,7 @@ pub trait Digest: Clone + Default {
   /// The digest output type.
   ///
   /// Typically `[u8; N]`.
-  type Output: Copy + Eq + Debug;
+  type Output: Copy + Eq + Debug + AsRef<[u8]>;
 
   /// Create a new hasher in its initial state.
   #[must_use]
@@ -76,6 +76,24 @@ pub trait Digest: Clone + Default {
     let mut h = Self::new();
     h.update_io_slices(bufs);
     h.finalize()
+  }
+
+  /// Finalize and return the digest as a `Vec<u8>`.
+  #[cfg(feature = "alloc")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
+  #[inline]
+  #[must_use]
+  fn finalize_to_vec(&self) -> alloc::vec::Vec<u8> {
+    self.finalize().as_ref().to_vec()
+  }
+
+  /// Compute the digest of data in one shot, returning a `Vec<u8>`.
+  #[cfg(feature = "alloc")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
+  #[inline]
+  #[must_use]
+  fn digest_to_vec(data: &[u8]) -> alloc::vec::Vec<u8> {
+    Self::digest(data).as_ref().to_vec()
   }
 
   /// Wrap a reader to compute digest transparently during I/O.

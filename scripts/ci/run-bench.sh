@@ -476,6 +476,22 @@ fi
 LOG_PATH="$OUT_DIR/output.txt"
 : > "$LOG_PATH"
 
+# Structured results (set by bench.sh for local runs; unset in direct CI calls)
+RESULTS_DIR="${BENCH_RESULTS_DIR:-}"
+RESULTS_PATH=""
+if [[ -n "$RESULTS_DIR" ]]; then
+  mkdir -p "$RESULTS_DIR"
+  RESULTS_PATH="$RESULTS_DIR/results.txt"
+  {
+    echo "date=${BENCH_RUN_DATE}"
+    echo "time=${BENCH_RUN_TIME}"
+    echo "mode=${BENCH_RUN_MODE}"
+    echo "platform=${BENCH_RUN_OS}-${BENCH_RUN_ARCH}"
+    echo "commit=${BENCH_RUN_COMMIT}"
+    echo ""
+  } > "$RESULTS_PATH"
+fi
+
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "Running benchmark pipeline"
 echo "Quick mode: $QUICK_INPUT"
@@ -782,7 +798,18 @@ run_bench_cmd() {
 
   echo "" | tee -a "$LOG_PATH"
   echo "Running: ${cmd[*]}" | tee -a "$LOG_PATH"
-  "${cmd[@]}" 2>&1 | tee -a "$LOG_PATH"
+  if [[ -n "$RESULTS_PATH" ]]; then
+    {
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo "bench=$bench"
+      [[ -n "$filter" ]] && echo "filter=$filter"
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    } >> "$RESULTS_PATH"
+    "${cmd[@]}" 2>&1 | tee -a "$LOG_PATH" "$RESULTS_PATH"
+    echo "" >> "$RESULTS_PATH"
+  else
+    "${cmd[@]}" 2>&1 | tee -a "$LOG_PATH"
+  fi
 }
 
 if [[ "${#PLAN_ROWS[@]}" -gt 0 ]]; then
@@ -796,6 +823,11 @@ if [[ "${#PLAN_ROWS[@]}" -gt 0 ]]; then
     IFS='|' read -r crate bench filter <<< "$row"
     run_bench_cmd "$crate" "$bench" "$filter"
   done
+
+  if [[ -n "${RESULTS_PATH:-}" && -f "$RESULTS_PATH" ]]; then
+    echo ""
+    echo "Results: $RESULTS_PATH"
+  fi
 
   if ! run_blake3_enforced_gates; then
     maybe_attach_criterion
@@ -840,7 +872,25 @@ if [[ -n "$GENERIC_FILTER" || "${#CRITERION_ARGS[@]}" -gt 0 ]]; then
 fi
 
 echo "Running: ${cmd[*]}" | tee -a "$LOG_PATH"
-"${cmd[@]}" 2>&1 | tee -a "$LOG_PATH"
+if [[ -n "$RESULTS_PATH" ]]; then
+  GENERIC_BENCH_LABEL="${BENCHES_INPUT:-all}"
+  {
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "bench=$GENERIC_BENCH_LABEL"
+    [[ -n "$GENERIC_FILTER" ]] && echo "filter=$GENERIC_FILTER"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  } >> "$RESULTS_PATH"
+  "${cmd[@]}" 2>&1 | tee -a "$LOG_PATH" "$RESULTS_PATH"
+  echo "" >> "$RESULTS_PATH"
+else
+  "${cmd[@]}" 2>&1 | tee -a "$LOG_PATH"
+fi
+
+if [[ -n "${RESULTS_PATH:-}" && -f "$RESULTS_PATH" ]]; then
+  echo ""
+  echo "Results: $RESULTS_PATH"
+fi
+
 if ! run_blake3_enforced_gates; then
   maybe_attach_criterion
   exit 1

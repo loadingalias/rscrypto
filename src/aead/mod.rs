@@ -151,6 +151,13 @@ macro_rules! define_nonce_type {
       }
     }
 
+    impl crate::traits::ConstantTimeEq for $name {
+      #[inline]
+      fn ct_eq(&self, other: &Self) -> bool {
+        crate::traits::ct::constant_time_eq(&self.0, &other.0)
+      }
+    }
+
     impl $name {
       #[doc = concat!(
                                                     "Construct a nonce by filling bytes from the provided closure.\n\n",
@@ -173,6 +180,24 @@ macro_rules! define_nonce_type {
         fill(&mut bytes);
         Self(bytes)
       }
+
+      /// Generate a random nonce using the operating system's CSPRNG.
+      ///
+      /// # Panics
+      ///
+      /// Panics if the platform entropy source is unavailable.
+      #[cfg(feature = "getrandom")]
+      #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
+      #[inline]
+      #[must_use]
+      pub fn random() -> Self {
+        let mut bytes = [0u8; $len];
+        match getrandom::fill(&mut bytes) {
+          Ok(()) => {}
+          Err(e) => panic!("getrandom failed: {e}"),
+        }
+        Self(bytes)
+      }
     }
   };
 }
@@ -186,6 +211,10 @@ impl_hex_fmt!(Nonce96);
 impl_hex_fmt!(Nonce128);
 impl_hex_fmt!(Nonce192);
 impl_hex_fmt!(Nonce256);
+impl_serde_bytes!(Nonce96);
+impl_serde_bytes!(Nonce128);
+impl_serde_bytes!(Nonce192);
+impl_serde_bytes!(Nonce256);
 
 /// Combined-buffer length mismatch during AEAD sealing or opening.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

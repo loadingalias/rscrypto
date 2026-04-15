@@ -14,7 +14,7 @@ Phase 1 auth primitives are **shipped and competitive**:
 - `KMAC256` / `cSHAKE256` — shipped (SP 800-185)
 - `Ascon-CXOF128` — shipped (SP 800-232)
 
-Canonical benchmarks: [`docs/bench/BENCHMARKS.md`](../bench/BENCHMARKS.md)
+Canonical benchmarks: `benchmark_results/` (organized by date/platform)
 
 ## Status
 

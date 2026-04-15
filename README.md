@@ -313,17 +313,54 @@ src/
 
 | Layer | What | Command |
 |-------|------|---------|
-| Unit + integration | 785 tests, official vectors, differential oracles | `just test` |
+| Unit + integration | 861 tests, official vectors, differential oracles | `just test` |
 | Feature matrix | Leaf and bundle reduced-feature combinations | `just test-feature-matrix` |
 | Property tests | 10,000 cases per proptest | `just test-proptests` |
 | Miri | Memory safety under Stacked Borrows | `just test-miri` |
-| Fuzz | 20 targets with differential oracles (15 oracle crates) | `just test-fuzz` |
+| Fuzz | 32 targets with differential oracles (15 oracle crates) | `just test-fuzz` |
 | Coverage | Nextest + fuzz corpus LCOV, uploaded to Codecov | `just coverage` |
 | Supply chain | `cargo deny` + `cargo audit` | Weekly CI |
 
-**CI platforms**: x86_64 + aarch64 Linux, x86_64 + aarch64 Windows, IBM Z (s390x), IBM POWER10 (ppc64le). **no_std targets**: thumbv6m, riscv32, aarch64-none, x86_64-none, wasm32.
+**CI platforms**: x86_64 + aarch64 Linux, x86_64 + aarch64 Windows, IBM Z (s390x), IBM POWER10 (ppc64le), RISC-V (riscv64). **no_std targets**: thumbv6m, riscv32, aarch64-none, x86_64-none, wasm32.
 
-**Fuzz targets by category**: 6 AEAD (roundtrip + forgery + oracle), 4 auth (Ed25519/HMAC/HKDF/KMAC with oracle differential), 5 hash (chunk-split + reset + oracle), 2 Blake3 keyed/derive, 1 CRC combine, 2 fast hash.
+**Fuzz targets by category**: 6 AEAD (roundtrip + forgery + oracle), 7 auth (Ed25519/HMAC-SHA256/384/512/HKDF-SHA256/384/KMAC/X25519), 8 hash (SHA-2/SHA-3/Blake3/Blake3-keyed/Blake3-derive/Ascon/Ascon-cXOF/cSHAKE), 4 checksum (CRC/CRC-16/CRC-24/CRC-32/CRC-64), 2 fast hash (XXH3/RapidHash), 1 hex, 1 traits I/O.
+
+## Benchmarks
+
+Results live in `benchmark_results/` organized by date, OS, and architecture:
+
+```
+benchmark_results/2026-04-15/
+├── linux/
+│   ├── amd-zen4/results.txt
+│   ├── amd-zen5/results.txt
+│   ├── intel-spr/results.txt
+│   ├── intel-icl/results.txt
+│   ├── graviton3/results.txt
+│   ├── graviton4/results.txt
+│   ├── ibm-s390x/results.txt
+│   ├── ibm-power10/results.txt
+│   └── rise-riscv/results.txt
+└── macos/
+    └── aarch64/results.txt
+```
+
+Run locally:
+
+```bash
+just bench                # all benchmarks
+just bench blake3         # single algorithm
+just bench-native blake3  # with -C target-cpu=native
+```
+
+Each `results.txt` contains a metadata header and raw Criterion output with `time: [low mid high]` measurements. See [`benchmark_results/OVERVIEW.md`](benchmark_results/OVERVIEW.md) for the cross-platform competitive scoreboard.
+
+Generate the overview after extraction:
+
+```bash
+scripts/bench/extract-results.sh          # from latest results
+scripts/bench/extract-results.sh <run-id> # download CI artifacts + generate
+```
 
 ## Examples
 

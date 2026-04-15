@@ -318,6 +318,15 @@ impl Xof for Shake128XofReader {
   }
 }
 
+#[cfg(feature = "std")]
+impl std::io::Read for Shake128XofReader {
+  #[inline]
+  fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+    self.squeeze(buf);
+    Ok(buf.len())
+  }
+}
+
 impl Shake256 {
   #[inline]
   #[must_use]
@@ -376,6 +385,15 @@ impl Xof for Shake256XofReader {
   #[inline]
   fn squeeze(&mut self, out: &mut [u8]) {
     self.inner.squeeze_into(out);
+  }
+}
+
+#[cfg(feature = "std")]
+impl std::io::Read for Shake256XofReader {
+  #[inline]
+  fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+    self.squeeze(buf);
+    Ok(buf.len())
   }
 }
 

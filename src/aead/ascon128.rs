@@ -104,6 +104,13 @@ impl AsRef<[u8]> for AsconAead128Key {
   }
 }
 
+impl crate::traits::ConstantTimeEq for AsconAead128Key {
+  #[inline]
+  fn ct_eq(&self, other: &Self) -> bool {
+    crate::traits::ct::constant_time_eq(&self.0, &other.0)
+  }
+}
+
 impl fmt::Debug for AsconAead128Key {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     f.write_str("AsconAead128Key(****)")
@@ -125,9 +132,28 @@ impl AsconAead128Key {
     fill(&mut bytes);
     Self(bytes)
   }
+
+  /// Generate a random key using the operating system's CSPRNG.
+  ///
+  /// # Panics
+  ///
+  /// Panics if the platform entropy source is unavailable.
+  #[cfg(feature = "getrandom")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
+  #[inline]
+  #[must_use]
+  pub fn random() -> Self {
+    let mut bytes = [0u8; Self::LENGTH];
+    match getrandom::fill(&mut bytes) {
+      Ok(()) => {}
+      Err(e) => panic!("getrandom failed: {e}"),
+    }
+    Self(bytes)
+  }
 }
 
 impl_hex_fmt_secret!(AsconAead128Key);
+impl_serde_bytes!(AsconAead128Key);
 
 impl Drop for AsconAead128Key {
   fn drop(&mut self) {
@@ -183,6 +209,13 @@ impl AsRef<[u8]> for AsconAead128Tag {
   }
 }
 
+impl crate::traits::ConstantTimeEq for AsconAead128Tag {
+  #[inline]
+  fn ct_eq(&self, other: &Self) -> bool {
+    crate::traits::ct::constant_time_eq(&self.0, &other.0)
+  }
+}
+
 impl fmt::Debug for AsconAead128Tag {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     write!(f, "AsconAead128Tag(")?;
@@ -192,6 +225,7 @@ impl fmt::Debug for AsconAead128Tag {
 }
 
 impl_hex_fmt!(AsconAead128Tag);
+impl_serde_bytes!(AsconAead128Tag);
 
 // ---------------------------------------------------------------------------
 // AEAD

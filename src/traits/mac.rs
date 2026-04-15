@@ -62,6 +62,24 @@ pub trait Mac: Clone {
     mac.finalize()
   }
 
+  /// Finalize and return the tag as a `Vec<u8>`.
+  #[cfg(feature = "alloc")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
+  #[inline]
+  #[must_use]
+  fn finalize_to_vec(&self) -> alloc::vec::Vec<u8> {
+    self.finalize().as_ref().to_vec()
+  }
+
+  /// Compute the tag of `data` in one shot, returning a `Vec<u8>`.
+  #[cfg(feature = "alloc")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
+  #[inline]
+  #[must_use]
+  fn mac_to_vec(key: &[u8], data: &[u8]) -> alloc::vec::Vec<u8> {
+    Self::mac(key, data).as_ref().to_vec()
+  }
+
   /// Verify `expected` against the current tag in constant time.
   #[inline]
   fn verify(&self, expected: &Self::Tag) -> Result<(), VerificationError> {

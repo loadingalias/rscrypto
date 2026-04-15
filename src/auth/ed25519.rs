@@ -180,13 +180,39 @@ impl Ed25519SecretKey {
     fill(&mut bytes);
     Self(bytes)
   }
+
+  /// Generate a random secret key using the operating system's CSPRNG.
+  ///
+  /// # Panics
+  ///
+  /// Panics if the platform entropy source is unavailable.
+  #[cfg(feature = "getrandom")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
+  #[inline]
+  #[must_use]
+  pub fn random() -> Self {
+    let mut bytes = [0u8; Self::LENGTH];
+    match getrandom::fill(&mut bytes) {
+      Ok(()) => {}
+      Err(e) => panic!("getrandom failed: {e}"),
+    }
+    Self(bytes)
+  }
 }
 
 impl_hex_fmt_secret!(Ed25519SecretKey);
+impl_serde_bytes!(Ed25519SecretKey);
 
 impl Drop for Ed25519SecretKey {
   fn drop(&mut self) {
     ct::zeroize(&mut self.0);
+  }
+}
+
+impl crate::traits::ConstantTimeEq for Ed25519SecretKey {
+  #[inline]
+  fn ct_eq(&self, other: &Self) -> bool {
+    crate::traits::ct::constant_time_eq(&self.0, &other.0)
   }
 }
 
@@ -280,6 +306,14 @@ impl fmt::Debug for Ed25519PublicKey {
 }
 
 impl_hex_fmt!(Ed25519PublicKey);
+impl_serde_bytes!(Ed25519PublicKey);
+
+impl crate::traits::ConstantTimeEq for Ed25519PublicKey {
+  #[inline]
+  fn ct_eq(&self, other: &Self) -> bool {
+    crate::traits::ct::constant_time_eq(&self.bytes, &other.bytes)
+  }
+}
 
 impl Ed25519PublicKey {
   /// Verify a message/signature pair against this public key.
@@ -340,6 +374,14 @@ impl fmt::Debug for Ed25519Signature {
 }
 
 impl_hex_fmt!(Ed25519Signature);
+impl_serde_bytes!(Ed25519Signature);
+
+impl crate::traits::ConstantTimeEq for Ed25519Signature {
+  #[inline]
+  fn ct_eq(&self, other: &Self) -> bool {
+    crate::traits::ct::constant_time_eq(&self.0, &other.0)
+  }
+}
 
 /// Ed25519 keypair with typed secret and public halves.
 #[derive(Clone, PartialEq, Eq)]
