@@ -9,8 +9,8 @@
 //! use rscrypto::{Blake3, Sha256, hashes::introspect::kernel_for};
 //!
 //! // Per-algorithm kernel selection for a specific input size
-//! println!("SHA-256 @ 1KB: {}", kernel_for::<Sha256>(1024));
-//! println!("BLAKE3 @ 4KB: {}", kernel_for::<Blake3>(4096));
+//! assert!(!kernel_for::<Sha256>(1024).is_empty());
+//! assert!(!kernel_for::<Blake3>(4096).is_empty());
 //! ```
 
 /// Returns the kernel name selected for a specific algorithm and buffer size.
@@ -24,8 +24,8 @@
 ///
 /// let small = kernel_for::<Sha256>(64);
 /// let large = kernel_for::<Sha256>(65536);
-/// println!("Small buffers: {small}");
-/// println!("Large buffers: {large}");
+/// assert!(!small.is_empty());
+/// assert!(!large.is_empty());
 /// ```
 #[inline]
 #[must_use]

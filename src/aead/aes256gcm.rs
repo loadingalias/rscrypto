@@ -53,13 +53,6 @@ impl Aes256GcmKey {
   }
 }
 
-impl Default for Aes256GcmKey {
-  #[inline]
-  fn default() -> Self {
-    Self([0u8; Self::LENGTH])
-  }
-}
-
 impl AsRef<[u8]> for Aes256GcmKey {
   #[inline]
   fn as_ref(&self) -> &[u8] {
@@ -67,12 +60,7 @@ impl AsRef<[u8]> for Aes256GcmKey {
   }
 }
 
-impl crate::traits::ConstantTimeEq for Aes256GcmKey {
-  #[inline]
-  fn ct_eq(&self, other: &Self) -> bool {
-    crate::traits::ct::constant_time_eq(&self.0, &other.0)
-  }
-}
+impl_ct_eq!(Aes256GcmKey);
 
 impl fmt::Debug for Aes256GcmKey {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -96,23 +84,7 @@ impl Aes256GcmKey {
     Self(bytes)
   }
 
-  /// Generate a random key using the operating system's CSPRNG.
-  ///
-  /// # Panics
-  ///
-  /// Panics if the platform entropy source is unavailable.
-  #[cfg(feature = "getrandom")]
-  #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
-  #[inline]
-  #[must_use]
-  pub fn random() -> Self {
-    let mut bytes = [0u8; Self::LENGTH];
-    match getrandom::fill(&mut bytes) {
-      Ok(()) => {}
-      Err(e) => panic!("getrandom failed: {e}"),
-    }
-    Self(bytes)
-  }
+  impl_getrandom!();
 }
 
 impl_hex_fmt_secret!(Aes256GcmKey);
@@ -168,12 +140,7 @@ impl AsRef<[u8]> for Aes256GcmTag {
   }
 }
 
-impl crate::traits::ConstantTimeEq for Aes256GcmTag {
-  #[inline]
-  fn ct_eq(&self, other: &Self) -> bool {
-    crate::traits::ct::constant_time_eq(&self.0, &other.0)
-  }
-}
+impl_ct_eq!(Aes256GcmTag);
 
 impl fmt::Debug for Aes256GcmTag {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -188,10 +155,48 @@ impl_serde_bytes!(Aes256GcmTag);
 
 /// AES-256-GCM AEAD (NIST SP 800-38D).
 ///
-/// The standard TLS / interop workhorse. Requires strict nonce uniqueness:
-/// reusing a nonce with the same key leaks the GHASH key, enabling forgery.
-/// For new designs where nonce discipline is uncertain, prefer
-/// `Aes256GcmSiv`.
+/// The standard TLS / interop workhorse.
+///
+/// # Nonce Uniqueness
+///
+/// **A nonce must never be reused with the same key.** Nonce reuse under
+/// AES-GCM is catastrophic: it leaks the GHASH authentication key,
+/// enabling both plaintext recovery (via crib-dragging) and universal
+/// forgery of future messages. There is no recovery — the key must be
+/// discarded.
+///
+/// The 96-bit nonce space allows at most 2^32 encryptions per key when
+/// nonces are chosen randomly (birthday bound). For high-volume use,
+/// prefer a deterministic counter or one of:
+///
+/// - [`Aes256GcmSiv`](crate::Aes256GcmSiv) — nonce-misuse resistant (degrades to deterministic
+///   encryption on reuse, but never leaks the auth key).
+/// - [`XChaCha20Poly1305`](crate::XChaCha20Poly1305) — 192-bit nonce makes random generation safe
+///   for ~2^96 messages per key.
+///
+/// # Examples
+///
+/// ```
+/// use rscrypto::{Aead, Aes256Gcm, Aes256GcmKey, aead::Nonce96};
+///
+/// let key = Aes256GcmKey::from_bytes([0x42; 32]);
+/// let nonce = Nonce96::from_bytes([0x24; 12]);
+/// let cipher = Aes256Gcm::new(&key);
+///
+/// let mut buf = *b"hello";
+/// let tag = cipher.encrypt_in_place(&nonce, b"", &mut buf);
+/// cipher.decrypt_in_place(&nonce, b"", &mut buf, &tag)?;
+/// assert_eq!(&buf, b"hello");
+/// # Ok::<(), rscrypto::VerificationError>(())
+/// ```
+///
+/// # Security
+///
+/// On x86_64 (AES-NI), aarch64 (AES-CE), and s390x (CPACF), all AES
+/// operations use constant-time hardware instructions. On RISC-V without
+/// hardware AES extensions (Zkne / Zvkned), encryption falls back to
+/// T-table lookups indexed by secret data, which are vulnerable to
+/// cache-timing side channels in shared-tenancy environments.
 #[derive(Clone)]
 pub struct Aes256Gcm {
   /// Pre-expanded AES-256 round keys.
@@ -505,6 +510,7 @@ impl Aead for Aes256Gcm {
         // Verify tag BEFORE decryption (authenticate-then-decrypt).
         let expected = compute_tag_wide(&self.ek, &self.h, &self.h_powers_rev, &j0, aad, buffer);
         if !ct::constant_time_eq(&expected, tag.as_bytes()) {
+          ct::zeroize(buffer);
           return Err(VerificationError::new());
         }
         let mut ctr_block = j0;
@@ -518,6 +524,7 @@ impl Aead for Aes256Gcm {
     // Scalar path: authenticate then decrypt.
     let expected = compute_tag(&self.ek, &self.h, &j0, aad, buffer);
     if !ct::constant_time_eq(&expected, tag.as_bytes()) {
+      ct::zeroize(buffer);
       return Err(VerificationError::new());
     }
     let mut ctr_block = j0;

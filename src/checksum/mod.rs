@@ -1,6 +1,6 @@
 //! High-performance CRC checksums.
 //!
-//! This crate provides implementations of common CRC algorithms with automatic
+//! This module provides implementations of common CRC algorithms with automatic
 //! hardware acceleration on supported platforms.
 //!
 //! # Supported Algorithms
@@ -68,7 +68,7 @@
 //!
 //! # no_std Support
 //!
-//! This crate is `no_std` compatible. Disable the `std` feature for embedded use:
+//! This module is `no_std` compatible. Disable the `std` feature for embedded use:
 //!
 //! ```toml
 //! [dependencies]

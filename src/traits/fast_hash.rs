@@ -10,6 +10,16 @@ use core::fmt::Debug;
 ///
 /// This trait is intentionally one-shot. Streaming APIs for fast hashes often
 /// require algorithm-specific buffering and are exposed as concrete types.
+///
+/// # Examples
+///
+/// ```
+/// use rscrypto::{FastHash, Xxh3};
+///
+/// let hash = Xxh3::hash(b"hello world");
+/// let seeded = Xxh3::hash_with_seed(42, b"hello world");
+/// assert_ne!(hash, seeded);
+/// ```
 pub trait FastHash {
   /// Output size in bytes.
   const OUTPUT_SIZE: usize;

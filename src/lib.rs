@@ -1,160 +1,186 @@
 //! Zero-dependency-by-default Rust checksums and hashes.
 //!
 //! # Quick Start
+#![cfg_attr(
+  feature = "crc32",
+  doc = r#"
+## Checksum
+
+```rust
+use rscrypto::{Checksum, Crc32C};
+
+let data = b"hello world";
+
+let checksum = Crc32C::checksum(data);
+
+let mut h = Crc32C::new();
+h.update(b"hello ");
+h.update(b"world");
+assert_eq!(h.finalize(), checksum);
+```
+
+Install only what you need:
+
+```toml
+[dependencies]
+rscrypto = { version = "0.1", default-features = false, features = ["crc32"] }
+```
+"#
+)]
 //!
-//! ## Checksum
+#![cfg_attr(
+  feature = "sha2",
+  doc = r#"
+## Digest
+
+```rust
+use rscrypto::{Digest, Sha256};
+
+let data = b"hello world";
+
+let digest = Sha256::digest(data);
+
+let mut h = Sha256::new();
+h.update(b"hello ");
+h.update(b"world");
+assert_eq!(h.finalize(), digest);
+```
+"#
+)]
 //!
-//! ```rust
-//! use rscrypto::{Checksum, Crc32C};
+#![cfg_attr(
+  feature = "auth",
+  doc = r#"
+## Auth
+
+```rust
+use rscrypto::{
+  Ed25519Keypair, Ed25519SecretKey, HkdfSha256, HmacSha256, Kmac256, Mac, X25519SecretKey,
+};
+
+let key = b"shared-secret";
+let data = b"hello world";
+
+let tag = HmacSha256::mac(key, data);
+
+let mut mac = HmacSha256::new(key);
+mac.update(b"hello ");
+mac.update(b"world");
+assert_eq!(mac.finalize(), tag);
+assert!(mac.verify(&tag).is_ok());
+
+let mut okm = [0u8; 32];
+HkdfSha256::new(b"salt", b"input key material").expand(b"context", &mut okm)?;
+assert_ne!(okm, [0u8; 32]);
+
+let keypair = Ed25519Keypair::from_secret_key(Ed25519SecretKey::from_bytes([7u8; 32]));
+let sig = keypair.sign(b"auth");
+assert!(keypair.public_key().verify(b"auth", &sig).is_ok());
+
+let mut kmac = Kmac256::new(b"shared-secret", b"svc=v1");
+kmac.update(b"auth");
+let mut tag32 = [0u8; 32];
+kmac.finalize_into(&mut tag32);
+assert!(Kmac256::verify(b"shared-secret", b"svc=v1", b"auth", &tag32).is_ok());
+
+let alice = X25519SecretKey::from_bytes([7u8; 32]);
+let bob = X25519SecretKey::from_bytes([9u8; 32]);
+assert_eq!(
+  alice.diffie_hellman(&bob.public_key())?,
+  bob.diffie_hellman(&alice.public_key())?
+);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+"#
+)]
 //!
-//! let data = b"hello world";
+#![cfg_attr(
+  all(feature = "chacha20poly1305", feature = "xchacha20poly1305"),
+  doc = r#"
+## AEAD
+
+```rust
+use rscrypto::{
+  Aead, ChaCha20Poly1305, ChaCha20Poly1305Key, XChaCha20Poly1305, XChaCha20Poly1305Key,
+  aead::{Nonce96, Nonce192},
+};
+
+let chacha = ChaCha20Poly1305::new(&ChaCha20Poly1305Key::from_bytes([0x11; 32]));
+let nonce96 = Nonce96::from_bytes([0x22; Nonce96::LENGTH]);
+let mut sealed = [0u8; 4 + ChaCha20Poly1305::TAG_SIZE];
+chacha.encrypt(&nonce96, b"hdr", b"data", &mut sealed)?;
+
+let xchacha = XChaCha20Poly1305::new(&XChaCha20Poly1305Key::from_bytes([0x33; 32]));
+let nonce192 = Nonce192::from_bytes([0x44; Nonce192::LENGTH]);
+let mut detached = *b"data";
+let tag = xchacha.encrypt_in_place(&nonce192, b"hdr", &mut detached);
+xchacha.decrypt_in_place(&nonce192, b"hdr", &mut detached, &tag)?;
+assert_eq!(&detached, b"data");
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+"#
+)]
 //!
-//! let checksum = Crc32C::checksum(data);
+#![cfg_attr(
+  all(feature = "sha3", feature = "ascon-hash"),
+  doc = r#"
+## XOF
+
+```rust
+use rscrypto::{AsconCxof128, Cshake256, Shake256, Xof};
+
+let data = b"hello world";
+
+let mut h = Shake256::new();
+h.update(data);
+let mut xof = h.finalize_xof();
+let mut out = [0u8; 64];
+xof.squeeze(&mut out);
+
+let mut oneshot = Shake256::xof(data);
+let mut same = [0u8; 64];
+oneshot.squeeze(&mut same);
+assert_eq!(out, same);
+assert_ne!(out, [0u8; 64]);
+
+let mut cshake = Cshake256::xof(b"", b"domain=v1", data);
+cshake.squeeze(&mut same);
+assert_ne!(out, same);
+
+let mut cxof = AsconCxof128::xof(b"domain=v1", data)?;
+cxof.squeeze(&mut same);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+"#
+)]
 //!
-//! let mut h = Crc32C::new();
-//! h.update(b"hello ");
-//! h.update(b"world");
-//! assert_eq!(h.finalize(), checksum);
-//! h.reset();
-//! ```
-//!
-//! Install only what you need:
-//!
-//! ```toml
-//! [dependencies]
-//! rscrypto = { version = "0.1", default-features = false, features = ["crc32"] }
-//! ```
-//!
-//! ## Digest
-//!
-//! ```rust
-//! use rscrypto::{Digest, Sha256};
-//!
-//! let data = b"hello world";
-//!
-//! let digest = Sha256::digest(data);
-//!
-//! let mut h = Sha256::new();
-//! h.update(b"hello ");
-//! h.update(b"world");
-//! assert_eq!(h.finalize(), digest);
-//! h.reset();
-//! ```
-//!
-//! ## Auth
-//!
-//! ```rust
-//! use rscrypto::{
-//!   Ed25519Keypair, Ed25519SecretKey, HkdfSha256, HmacSha256, Kmac256, Mac, X25519SecretKey,
-//! };
-//!
-//! let key = b"shared-secret";
-//! let data = b"hello world";
-//!
-//! let tag = HmacSha256::mac(key, data);
-//!
-//! let mut mac = HmacSha256::new(key);
-//! mac.update(b"hello ");
-//! mac.update(b"world");
-//! assert_eq!(mac.finalize(), tag);
-//! assert!(mac.verify(&tag).is_ok());
-//!
-//! let mut okm = [0u8; 32];
-//! HkdfSha256::new(b"salt", b"input key material").expand(b"context", &mut okm)?;
-//! assert_ne!(okm, [0u8; 32]);
-//!
-//! let keypair = Ed25519Keypair::from_secret_key(Ed25519SecretKey::from_bytes([7u8; 32]));
-//! let sig = keypair.sign(b"auth");
-//! assert!(keypair.public_key().verify(b"auth", &sig).is_ok());
-//!
-//! let mut kmac = Kmac256::new(b"shared-secret", b"svc=v1");
-//! kmac.update(b"auth");
-//! let mut tag32 = [0u8; 32];
-//! kmac.finalize_into(&mut tag32);
-//! assert!(Kmac256::verify(b"shared-secret", b"svc=v1", b"auth", &tag32).is_ok());
-//!
-//! let alice = X25519SecretKey::from_bytes([7u8; 32]);
-//! let bob = X25519SecretKey::from_bytes([9u8; 32]);
-//! assert_eq!(
-//!   alice.diffie_hellman(&bob.public_key())?,
-//!   bob.diffie_hellman(&alice.public_key())?
-//! );
-//! # Ok::<(), Box<dyn std::error::Error>>(())
-//! ```
-//!
-//! ## AEAD
-//!
-//! ```rust
-//! use rscrypto::{
-//!   Aead, ChaCha20Poly1305, ChaCha20Poly1305Key, XChaCha20Poly1305, XChaCha20Poly1305Key,
-//!   aead::{Nonce96, Nonce192},
-//! };
-//!
-//! let chacha = ChaCha20Poly1305::new(&ChaCha20Poly1305Key::from_bytes([0x11; 32]));
-//! let nonce96 = Nonce96::from_bytes([0x22; Nonce96::LENGTH]);
-//! let mut sealed = [0u8; 4 + ChaCha20Poly1305::TAG_SIZE];
-//! chacha.encrypt(&nonce96, b"hdr", b"data", &mut sealed)?;
-//!
-//! let xchacha = XChaCha20Poly1305::new(&XChaCha20Poly1305Key::from_bytes([0x33; 32]));
-//! let nonce192 = Nonce192::from_bytes([0x44; Nonce192::LENGTH]);
-//! let mut detached = *b"data";
-//! let tag = xchacha.encrypt_in_place(&nonce192, b"hdr", &mut detached);
-//! xchacha.decrypt_in_place(&nonce192, b"hdr", &mut detached, &tag)?;
-//! assert_eq!(&detached, b"data");
-//! # Ok::<(), Box<dyn std::error::Error>>(())
-//! ```
-//!
-//! ## XOF
-//!
-//! ```rust
-//! use rscrypto::{AsconCxof128, Cshake256, Shake256, Xof};
-//!
-//! let data = b"hello world";
-//!
-//! let mut h = Shake256::new();
-//! h.update(data);
-//! let mut xof = h.finalize_xof();
-//! let mut out = [0u8; 64];
-//! xof.squeeze(&mut out);
-//! h.reset();
-//!
-//! let mut oneshot = Shake256::xof(data);
-//! let mut same = [0u8; 64];
-//! oneshot.squeeze(&mut same);
-//! assert_eq!(out, same);
-//! assert_ne!(out, [0u8; 64]);
-//!
-//! let mut cshake = Cshake256::xof(b"", b"domain=v1", data);
-//! cshake.squeeze(&mut same);
-//! assert_ne!(out, same);
-//!
-//! let mut cxof = AsconCxof128::xof(b"domain=v1", data)?;
-//! cxof.squeeze(&mut same);
-//! # Ok::<(), Box<dyn std::error::Error>>(())
-//! ```
-//!
-//! ## Hex Encoding & Serialization
-//!
-//! Public types display as lowercase hex. Secret keys mask their `Debug` output
-//! and require explicit opt-in via `display_secret()`.
-//!
-//! ```rust
-//! use rscrypto::{ChaCha20Poly1305Key, aead::Nonce96};
-//!
-//! let nonce = Nonce96::from_bytes([0xab; 12]);
-//! assert_eq!(format!("{nonce}"), "abababababababababababab");
-//! assert_eq!(format!("{nonce:X}"), "ABABABABABABABABABABABAB");
-//! assert_eq!(format!("{nonce:?}"), "Nonce96(abababababababababababab)");
-//!
-//! let parsed: Nonce96 = "abababababababababababab".parse().unwrap();
-//! assert_eq!(parsed, nonce);
-//!
-//! let key = ChaCha20Poly1305Key::from_bytes([0x42; 32]);
-//! assert_eq!(format!("{key:?}"), "ChaCha20Poly1305Key(****)");
-//! let secret_hex = format!("{}", key.display_secret());
-//! assert!(secret_hex.starts_with("42"));
-//! ```
-//!
+#![cfg_attr(
+  feature = "chacha20poly1305",
+  doc = r#"
+## Hex Encoding & Serialization
+
+Public types display as lowercase hex. Secret keys mask their `Debug` output
+and require explicit opt-in via `display_secret()`.
+
+```rust
+use rscrypto::{ChaCha20Poly1305Key, aead::Nonce96};
+
+let nonce = Nonce96::from_bytes([0xab; 12]);
+assert_eq!(format!("{nonce}"), "abababababababababababab");
+assert_eq!(format!("{nonce:X}"), "ABABABABABABABABABABABAB");
+assert_eq!(format!("{nonce:?}"), "Nonce96(abababababababababababab)");
+
+let parsed: Nonce96 = "abababababababababababab".parse()?;
+assert_eq!(parsed, nonce);
+
+let key = ChaCha20Poly1305Key::from_bytes([0x42; 32]);
+assert_eq!(format!("{key:?}"), "ChaCha20Poly1305Key(****)");
+let secret_hex = format!("{}", key.display_secret());
+assert!(secret_hex.starts_with("42"));
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+"#
+)]
 //! ## Bundle Selection
 //!
 //! Prefer leaf features when you know exactly what you need:
@@ -216,35 +242,38 @@
 //!   `as_bytes`
 //! - AEADs use typed keys and nonces, with `encrypt` / `decrypt` for combined buffers and
 //!   `encrypt_in_place` / `decrypt_in_place` for detached tags
-//!
-//! ## Serialization
-//!
-//! All key, nonce, tag, and signature types round-trip through
-//! `from_bytes` / `to_bytes` / `as_bytes`:
-//!
-//! ```rust
-//! use rscrypto::ChaCha20Poly1305Key;
-//!
-//! let key = ChaCha20Poly1305Key::from_bytes([0x42; 32]);
-//! let raw: [u8; 32] = key.to_bytes();
-//! let restored = ChaCha20Poly1305Key::from_bytes(raw);
-//! assert_eq!(key, restored);
-//! ```
-//!
-//! ## Key & Nonce Generation
-//!
-//! Use `generate()` with any entropy source. The crate itself carries
-//! zero RNG dependencies — you bring your own CSPRNG:
-//!
-//! ```rust
-//! use rscrypto::{ChaCha20Poly1305Key, aead::Nonce96};
-//!
-//! let key = ChaCha20Poly1305Key::generate(|buf| buf.fill(0xA5));
-//! let nonce = Nonce96::generate(|buf| buf.fill(0x5A));
-//! assert_eq!(key.as_bytes(), &[0xA5; ChaCha20Poly1305Key::LENGTH]);
-//! assert_eq!(nonce.as_bytes(), &[0x5A; Nonce96::LENGTH]);
-//! ```
-//!
+#![cfg_attr(
+  feature = "chacha20poly1305",
+  doc = r#"
+## Serialization
+
+All key, nonce, tag, and signature types round-trip through
+`from_bytes` / `to_bytes` / `as_bytes`:
+
+```rust
+use rscrypto::ChaCha20Poly1305Key;
+
+let key = ChaCha20Poly1305Key::from_bytes([0x42; 32]);
+let raw: [u8; 32] = key.to_bytes();
+let restored = ChaCha20Poly1305Key::from_bytes(raw);
+assert_eq!(key, restored);
+```
+
+## Key & Nonce Generation
+
+Use `generate()` with any entropy source. The crate itself carries
+zero RNG dependencies — you bring your own CSPRNG:
+
+```rust
+use rscrypto::{ChaCha20Poly1305Key, aead::Nonce96};
+
+let key = ChaCha20Poly1305Key::generate(|buf| buf.fill(0xA5));
+let nonce = Nonce96::generate(|buf| buf.fill(0x5A));
+assert_eq!(key.as_bytes(), &[0xA5; ChaCha20Poly1305Key::LENGTH]);
+assert_eq!(nonce.as_bytes(), &[0x5A; Nonce96::LENGTH]);
+```
+"#
+)]
 //! `rscrypto` keeps the shipping library inside this repository:
 //!
 //! - no C FFI
@@ -412,6 +441,22 @@ pub mod traits;
 #[cfg(any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64"))]
 pub mod checksum;
 
+/// Implement [`std::io::Read`] for an [`Xof`](crate::traits::Xof) type by
+/// delegating to `squeeze`.
+#[cfg(any(feature = "sha3", feature = "blake3", feature = "ascon-hash"))]
+macro_rules! impl_xof_read {
+  ($type:ty) => {
+    #[cfg(feature = "std")]
+    impl std::io::Read for $type {
+      #[inline]
+      fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.squeeze(buf);
+        Ok(buf.len())
+      }
+    }
+  };
+}
+
 #[cfg(any(
   feature = "sha2",
   feature = "sha3",
@@ -507,7 +552,7 @@ pub use traits::{Checksum, ChecksumCombine, ConstantTimeEq, Mac, VerificationErr
 ))]
 pub use traits::{Digest, FastHash, Xof};
 
-#[cfg(doctest)]
+#[cfg(all(doctest, feature = "full"))]
 #[doc(hidden)]
 #[doc = r#"
 ```compile_fail
@@ -606,7 +651,7 @@ let _ = (core::any::TypeId::of::<RapidHashFast64>(), core::any::TypeId::of::<Rap
 "#]
 pub struct __RootSurfaceAudit;
 
-#[cfg(doctest)]
+#[cfg(all(doctest, feature = "full"))]
 #[doc(hidden)]
 #[doc = r#"
 ```rust

@@ -146,7 +146,31 @@ mod tests {
             chunk
           );
         }
+
+        // Exhaustive two-split for small buffers (padding edges).
+        if len <= 256 {
+          for split in 0..=len {
+            let (a, b) = msg.split_at(split);
+            let mut h = hasher_for_kernel(id);
+            h.update(a);
+            h.update(b);
+            assert_eq!(
+              h.finalize(),
+              ours,
+              "sha512 split mismatch kernel={} len={} split={}",
+              id.as_str(),
+              len,
+              split
+            );
+          }
+        }
       }
     }
+  }
+
+  #[test]
+  fn run_all_agree() {
+    verify_sha512_kernels(b"abc").expect("kernels should agree");
+    verify_sha512_kernels(&pattern(4096)).expect("kernels should agree");
   }
 }

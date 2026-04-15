@@ -4,6 +4,17 @@
 ///
 /// This trait intentionally has no `std::io::Read` dependency; it is usable in
 /// `no_std` environments.
+///
+/// # Examples
+///
+/// ```
+/// use rscrypto::{Shake256, Xof};
+///
+/// let mut xof = Shake256::xof(b"hello world");
+/// let mut out = [0u8; 64];
+/// xof.squeeze(&mut out);
+/// assert_ne!(out, [0u8; 64]);
+/// ```
 pub trait Xof: Clone {
   /// Squeeze output bytes into `out`.
   fn squeeze(&mut self, out: &mut [u8]);

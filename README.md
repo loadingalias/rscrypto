@@ -139,6 +139,7 @@ Single-crate crypto and checksum toolbox. No C FFI, no vendored C/C++, `no_std` 
 | `Mac` | Keyed streaming MAC | `traits/mac.rs:13` |
 | `FastHash` | One-shot seeded hash | `traits/fast_hash.rs:13` |
 | `Aead` | Authenticated encryption | `traits/aead.rs:20` |
+| `ConstantTimeEq` | Constant-time byte equality | `traits/ct.rs:20` |
 
 ### AEAD (feature: `aead` or AEAD leaves)
 
@@ -151,7 +152,36 @@ Single-crate crypto and checksum toolbox. No C FFI, no vendored C/C++, `no_std` 
 | `AsconAead128` | 16B | `Nonce128` (16B) | 16B | `aead/ascon128.rs` |
 | `Aegis256` | 32B | `Nonce256` (32B) | 16B | `aead/aegis256.rs` |
 
-Each cipher has typed `*Key` and `*Tag` wrappers. Nonces: `Nonce96`, `Nonce128`, `Nonce192`, `Nonce256` in `rscrypto::aead`.
+#### Key Wrappers
+
+| Type | Length | Source |
+|------|--------|--------|
+| `Aes256GcmKey` | 32B | `aead/aes256gcm.rs:20` |
+| `Aes256GcmSivKey` | 32B | `aead/aes256gcmsiv.rs:24` |
+| `ChaCha20Poly1305Key` | 32B | `aead/chacha20poly1305.rs:17` |
+| `XChaCha20Poly1305Key` | 32B | `aead/xchacha20poly1305.rs:17` |
+| `AsconAead128Key` | 16B | `aead/ascon128.rs:55` |
+| `Aegis256Key` | 32B | `aead/aegis256.rs:1842` |
+
+#### Tag Wrappers
+
+| Type | Length | Source |
+|------|--------|--------|
+| `Aes256GcmTag` | 16B | `aead/aes256gcm.rs:101` |
+| `Aes256GcmSivTag` | 16B | `aead/aes256gcmsiv.rs:105` |
+| `ChaCha20Poly1305Tag` | 16B | `aead/chacha20poly1305.rs:98` |
+| `XChaCha20Poly1305Tag` | 16B | `aead/xchacha20poly1305.rs:98` |
+| `AsconAead128Tag` | 16B | `aead/ascon128.rs:150` |
+| `Aegis256Tag` | 16B | `aead/aegis256.rs:1927` |
+
+#### Nonce Types (`rscrypto::aead`)
+
+| Type | Length | Source |
+|------|--------|--------|
+| `Nonce96` | 12B | `aead/mod.rs:205` |
+| `Nonce128` | 16B | `aead/mod.rs:206` |
+| `Nonce192` | 24B | `aead/mod.rs:207` |
+| `Nonce256` | 32B | `aead/mod.rs:208` |
 
 ### MACs (feature: `macs` or `hmac` / `kmac`)
 
@@ -170,19 +200,21 @@ Each cipher has typed `*Key` and `*Tag` wrappers. Nonces: `Nonce96`, `Nonce128`,
 
 | Type | Purpose | Source |
 |------|---------|--------|
-| `Ed25519SecretKey` / `PublicKey` / `Signature` / `Keypair` | Ed25519 signatures (RFC 8032) | `auth/ed25519.rs` |
+| `Ed25519SecretKey` | 32-byte secret key | `auth/ed25519.rs:113` |
+| `Ed25519PublicKey` | 32-byte public key | `auth/ed25519.rs:201` |
+| `Ed25519Signature` | 64-byte signature | `auth/ed25519.rs:302` |
+| `Ed25519Keypair` | Secret + public + cached expansion | `auth/ed25519.rs:352` |
+| `verify_ed25519` | Free-function signature verification | `auth/ed25519.rs:412` |
 
 ### Key Exchange (feature: `key-exchange` or `x25519`)
 
 | Type | Purpose | Source |
 |------|---------|--------|
-| `X25519SecretKey` / `PublicKey` / `SharedSecret` | X25519 key exchange (RFC 7748) | `auth/x25519.rs` |
+| `X25519SecretKey` | 32-byte secret scalar | `auth/x25519.rs:76` |
+| `X25519PublicKey` | 32-byte public point | `auth/x25519.rs:172` |
+| `X25519SharedSecret` | 32-byte DH output | `auth/x25519.rs:264` |
 
 ### Authentication Umbrella (feature: `auth`)
-
-| Type | Purpose | Source |
-|------|---------|--------|
-| `verify_ed25519` | Free-function signature verification | `auth/ed25519.rs` |
 
 `auth` enables `macs`, `kdfs`, `signatures`, and `key-exchange`.
 
@@ -219,6 +251,15 @@ All implement `ChecksumCombine` for parallel CRC folding.
 
 `RapidHashFast64` / `RapidHashFast128` available under `rscrypto::hashes::fast`.
 
+#### BuildHasher Support (feature: `alloc`)
+
+| Type | Purpose | Source |
+|------|---------|--------|
+| `Xxh3Hasher` | Streaming `core::hash::Hasher` backed by XXH3-64 | `hashes/fast/xxh3.rs:798` |
+| `Xxh3BuildHasher` | `BuildHasher` producing `Xxh3Hasher` | `hashes/fast/xxh3.rs:842` |
+| `RapidHasher` | Streaming `core::hash::Hasher` backed by RapidHash-64 | `hashes/fast/rapidhash.rs:716` |
+| `RapidBuildHasher` | `BuildHasher` producing `RapidHasher` | `hashes/fast/rapidhash.rs:760` |
+
 ### Error Types
 
 | Error | When | Recovery | Source |
@@ -226,8 +267,8 @@ All implement `ChecksumCombine` for parallel CRC folding.
 | `VerificationError` | MAC/AEAD/signature check fails | Reject input (opaque) | `traits/error.rs:38` |
 | `HkdfOutputLengthError` | HKDF expand > 8160B | Request less output | `auth/hkdf.rs:24` |
 | `X25519Error` | Low-order DH point | Reject peer key | `auth/x25519.rs:47` |
-| `AeadBufferError` | Output buffer wrong size | Fix buffer length | `aead/mod.rs:121` |
-| `OpenError` | AEAD decryption failure | Buffer or verification | `aead/mod.rs:152` |
+| `AeadBufferError` | Output buffer wrong size | Fix buffer length | `aead/mod.rs:221` |
+| `OpenError` | AEAD decryption failure | Buffer or verification | `aead/mod.rs:252` |
 | `AsconCxofCustomizationError` | Customization > 256B | Shorten string | `hashes/crypto/ascon.rs:109` |
 | `InvalidHexError` | Hex decode failure | Fix input | `hex.rs:14` |
 | `platform::OverrideError` | Override after init | Set before first detection | `platform/detect.rs:24` |

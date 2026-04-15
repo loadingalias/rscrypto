@@ -3,23 +3,8 @@
 use hkdf::Hkdf as RustCryptoHkdf;
 use rscrypto::{HkdfSha384, auth::HkdfOutputLengthError};
 
-fn decode_hex_vec(hex: &str) -> Vec<u8> {
-  assert_eq!(hex.len() % 2, 0, "hex length must be even");
-  let mut out = Vec::with_capacity(hex.len() / 2);
-  let bytes = hex.as_bytes();
-  let mut i = 0usize;
-  while i < bytes.len() {
-    let hi = char::from(bytes[i]).to_digit(16).unwrap();
-    let lo = char::from(bytes[i + 1]).to_digit(16).unwrap();
-    out.push(((hi << 4) | lo) as u8);
-    i += 2;
-  }
-  out
-}
-
-fn decode_hex_array<const N: usize>(hex: &str) -> [u8; N] {
-  decode_hex_vec(hex).try_into().unwrap()
-}
+mod common;
+use common::{decode_hex_array, decode_hex_vec};
 
 #[test]
 fn hkdf_sha384_case_1() {

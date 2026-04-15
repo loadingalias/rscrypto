@@ -1875,13 +1875,6 @@ impl PartialEq for Aegis256Key {
 
 impl Eq for Aegis256Key {}
 
-impl Default for Aegis256Key {
-  #[inline]
-  fn default() -> Self {
-    Self([0u8; Self::LENGTH])
-  }
-}
-
 impl AsRef<[u8]> for Aegis256Key {
   #[inline]
   fn as_ref(&self) -> &[u8] {
@@ -1889,12 +1882,7 @@ impl AsRef<[u8]> for Aegis256Key {
   }
 }
 
-impl crate::traits::ConstantTimeEq for Aegis256Key {
-  #[inline]
-  fn ct_eq(&self, other: &Self) -> bool {
-    crate::traits::ct::constant_time_eq(&self.0, &other.0)
-  }
-}
+impl_ct_eq!(Aegis256Key);
 
 impl fmt::Debug for Aegis256Key {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -1918,23 +1906,7 @@ impl Aegis256Key {
     Self(bytes)
   }
 
-  /// Generate a random key using the operating system's CSPRNG.
-  ///
-  /// # Panics
-  ///
-  /// Panics if the platform entropy source is unavailable.
-  #[cfg(feature = "getrandom")]
-  #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
-  #[inline]
-  #[must_use]
-  pub fn random() -> Self {
-    let mut bytes = [0u8; Self::LENGTH];
-    match getrandom::fill(&mut bytes) {
-      Ok(()) => {}
-      Err(e) => panic!("getrandom failed: {e}"),
-    }
-    Self(bytes)
-  }
+  impl_getrandom!();
 }
 
 impl_hex_fmt_secret!(Aegis256Key);
@@ -1994,12 +1966,7 @@ impl AsRef<[u8]> for Aegis256Tag {
   }
 }
 
-impl crate::traits::ConstantTimeEq for Aegis256Tag {
-  #[inline]
-  fn ct_eq(&self, other: &Self) -> bool {
-    crate::traits::ct::constant_time_eq(&self.0, &other.0)
-  }
-}
+impl_ct_eq!(Aegis256Tag);
 
 impl fmt::Debug for Aegis256Tag {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -2022,6 +1989,15 @@ impl_serde_bytes!(Aegis256Tag);
 /// and 128-bit authentication tag. On hardware with AES round instructions
 /// (AES-NI, AES-CE, POWER8 vcipher), AEGIS-256 achieves
 /// ~2-3x the throughput of AES-256-GCM.
+///
+/// # Security
+///
+/// On x86_64 (AES-NI), aarch64 (AES-CE), and POWER (vcipher), all AES
+/// round operations use constant-time hardware instructions. On s390x and
+/// RISC-V without hardware AES extensions (Zkne / Zvkned), the AES rounds
+/// fall back to T-table lookups indexed by secret data, which are
+/// vulnerable to cache-timing side channels in shared-tenancy environments
+/// (co-located VMs or processes sharing a CPU cache).
 ///
 /// # Examples
 ///

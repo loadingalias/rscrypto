@@ -1,6 +1,6 @@
 //! Cryptographic digests and fast non-cryptographic hashes.
 //!
-//! This crate is `no_std` compatible and has zero library dependencies outside
+//! This module is `no_std` compatible and has zero library dependencies outside
 //! the rscrypto workspace. Dev-only dependencies are used for oracle testing
 //! and benchmarking.
 //!

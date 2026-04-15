@@ -2,25 +2,8 @@
 
 use rscrypto::{AsconCxof128, AsconCxof128Reader, traits::Xof as _};
 
-fn decode_hex(hex: &str) -> Vec<u8> {
-  assert_eq!(hex.len() % 2, 0, "hex input must have even length");
-
-  fn nibble(byte: u8) -> u8 {
-    match byte {
-      b'0'..=b'9' => byte - b'0',
-      b'a'..=b'f' => byte - b'a' + 10,
-      b'A'..=b'F' => byte - b'A' + 10,
-      _ => panic!("invalid hex digit"),
-    }
-  }
-
-  let bytes = hex.as_bytes();
-  let mut out = Vec::with_capacity(bytes.len() / 2);
-  for pair in bytes.chunks_exact(2) {
-    out.push((nibble(pair[0]) << 4) | nibble(pair[1]));
-  }
-  out
-}
+mod common;
+use common::decode_hex_vec as decode_hex;
 
 fn squeeze_all(mut reader: AsconCxof128Reader, len: usize) -> Vec<u8> {
   let mut out = vec![0u8; len];

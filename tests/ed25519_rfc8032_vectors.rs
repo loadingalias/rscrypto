@@ -9,36 +9,8 @@ struct Vector<'a> {
   signature: [u8; 64],
 }
 
-fn decode_hex<const N: usize>(hex: &str) -> [u8; N] {
-  let bytes = hex.as_bytes();
-  assert_eq!(bytes.len(), N * 2);
-
-  let mut out = [0u8; N];
-  for (dst, chunk) in out.iter_mut().zip(bytes.chunks_exact(2)) {
-    *dst = (hex_nibble(chunk[0]) << 4) | hex_nibble(chunk[1]);
-  }
-  out
-}
-
-fn decode_hex_vec(hex: &str) -> Vec<u8> {
-  let bytes = hex.as_bytes();
-  assert_eq!(bytes.len() % 2, 0);
-
-  let mut out = Vec::with_capacity(bytes.len() / 2);
-  for chunk in bytes.chunks_exact(2) {
-    out.push((hex_nibble(chunk[0]) << 4) | hex_nibble(chunk[1]));
-  }
-  out
-}
-
-fn hex_nibble(byte: u8) -> u8 {
-  match byte {
-    b'0'..=b'9' => byte - b'0',
-    b'a'..=b'f' => byte - b'a' + 10,
-    b'A'..=b'F' => byte - b'A' + 10,
-    _ => panic!("invalid hex"),
-  }
-}
+mod common;
+use common::{decode_hex_array as decode_hex, decode_hex_vec};
 
 #[test]
 fn ed25519_rfc8032_vectors() {

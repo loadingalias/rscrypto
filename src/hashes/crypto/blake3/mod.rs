@@ -3197,14 +3197,7 @@ impl Xof for Blake3XofReader {
   }
 }
 
-#[cfg(feature = "std")]
-impl std::io::Read for Blake3XofReader {
-  #[inline]
-  fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-    self.squeeze(buf);
-    Ok(buf.len())
-  }
-}
+impl_xof_read!(Blake3XofReader);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Unified tiny-input fast path helpers

@@ -12,11 +12,8 @@
 //! };
 //!
 //! let info = DispatchInfo::current();
-//! println!("{info}");
-//! println!(
-//!   "xchacha20-poly1305: {}",
-//!   backend_for(AeadPrimitive::XChaCha20Poly1305)
-//! );
+//! assert!(!format!("{info}").is_empty());
+//! assert!(!backend_for(AeadPrimitive::XChaCha20Poly1305).is_empty());
 //! ```
 
 use core::fmt;

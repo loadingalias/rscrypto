@@ -6,25 +6,8 @@ use chacha20poly1305::{
 };
 use rscrypto::{ChaCha20Poly1305, ChaCha20Poly1305Key, ChaCha20Poly1305Tag, aead::Nonce96};
 
-fn decode_hex(hex: &str) -> Vec<u8> {
-  let bytes = hex.as_bytes();
-  assert_eq!(bytes.len() % 2, 0);
-
-  fn nibble(byte: u8) -> u8 {
-    match byte {
-      b'0'..=b'9' => byte - b'0',
-      b'a'..=b'f' => byte - b'a' + 10,
-      b'A'..=b'F' => byte - b'A' + 10,
-      _ => panic!("invalid hex"),
-    }
-  }
-
-  let mut out = Vec::with_capacity(bytes.len() / 2);
-  for pair in bytes.chunks_exact(2) {
-    out.push((nibble(pair[0]) << 4) | nibble(pair[1]));
-  }
-  out
-}
+mod common;
+use common::decode_hex_vec as decode_hex;
 
 #[test]
 fn chacha20poly1305_matches_rfc_8439_vector() {
