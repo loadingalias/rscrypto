@@ -1,0 +1,22 @@
+[package]
+name = "rscrypto-fuzz-auth-kmac256"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+rscrypto = { path = "../..", features = ["std", "kmac"] }
+rscrypto_fuzz = { package = "rscrypto-fuzz-support", path = "../../fuzz/support" }
+tiny-keccak = { version = "2.0", features = ["kmac"] }
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "auth_kmac256"
+path = "fuzz_targets/auth_kmac256.rs"
+doc = false

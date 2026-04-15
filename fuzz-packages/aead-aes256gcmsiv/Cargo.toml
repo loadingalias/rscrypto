@@ -1,0 +1,22 @@
+[package]
+name = "rscrypto-fuzz-aead-aes256gcmsiv"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+rscrypto = { path = "../..", features = ["std", "aes-gcm-siv"] }
+rscrypto_fuzz = { package = "rscrypto-fuzz-support", path = "../../fuzz/support", features = ["aead"] }
+aes-gcm-siv = { version = "0.11", default-features = false, features = ["alloc", "aes"] }
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "aead_aes256gcmsiv"
+path = "fuzz_targets/aead_aes256gcmsiv.rs"
+doc = false

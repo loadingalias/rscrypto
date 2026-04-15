@@ -9,6 +9,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
+rscrypto_fuzz = { package = "rscrypto-fuzz-support", path = "support", features = ["aead"] }
 
 # Crate under test
 rscrypto = { path = "..", features = ["std", "checksums", "hashes", "auth", "aead"] }

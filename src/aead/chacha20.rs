@@ -15,6 +15,7 @@ use crate::{
 
 pub(crate) const KEY_SIZE: usize = 32;
 pub(crate) const NONCE_SIZE: usize = 12;
+#[cfg(feature = "xchacha20poly1305")]
 pub(crate) const HCHACHA_NONCE_SIZE: usize = 16;
 pub(crate) const BLOCK_SIZE: usize = 64;
 pub(crate) const POLY1305_KEY_SIZE: usize = 32;
@@ -95,6 +96,7 @@ fn init_state(key: &[u8; KEY_SIZE], counter: u32, nonce: &[u8; NONCE_SIZE]) -> [
 }
 
 #[inline]
+#[cfg(feature = "xchacha20poly1305")]
 fn init_hchacha_state(key: &[u8; KEY_SIZE], nonce: &[u8; HCHACHA_NONCE_SIZE]) -> [u32; 16] {
   [
     CONSTANTS[0],
@@ -382,6 +384,7 @@ unsafe fn xor_keystream_u32x4_impl(
 
 /// HChaCha20 subkey derivation for XChaCha20.
 #[must_use]
+#[cfg(feature = "xchacha20poly1305")]
 pub(crate) fn hchacha20(key: &[u8; KEY_SIZE], nonce: &[u8; HCHACHA_NONCE_SIZE]) -> [u8; KEY_SIZE] {
   let mut state = init_hchacha_state(key, nonce);
   rounds(&mut state);

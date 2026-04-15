@@ -64,6 +64,8 @@ mod aes;
 mod aes256gcm;
 #[cfg(feature = "aes-gcm-siv")]
 mod aes256gcmsiv;
+#[cfg(all(feature = "aegis256", not(any(target_arch = "s390x", target_arch = "riscv64"))))]
+mod aes_round;
 #[cfg(feature = "ascon-aead")]
 mod ascon128;
 #[cfg(any(feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
@@ -76,7 +78,7 @@ mod ghash;
 pub mod introspect;
 #[cfg(any(feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
 mod poly1305;
-#[cfg(feature = "aes-gcm-siv")]
+#[cfg(any(feature = "aes-gcm", feature = "aes-gcm-siv"))]
 mod polyval;
 pub mod targets;
 #[cfg(feature = "xchacha20poly1305")]

@@ -1,0 +1,28 @@
+[package]
+name = "rscrypto-fuzz-auth-hkdf"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+rscrypto = { path = "../..", features = ["std", "hkdf"] }
+rscrypto_fuzz = { package = "rscrypto-fuzz-support", path = "../../fuzz/support" }
+hkdf = "0.13"
+sha2 = "0.11"
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "auth_hkdf_sha256"
+path = "fuzz_targets/auth_hkdf_sha256.rs"
+doc = false
+
+[[bin]]
+name = "auth_hkdf_sha384"
+path = "fuzz_targets/auth_hkdf_sha384.rs"
+doc = false

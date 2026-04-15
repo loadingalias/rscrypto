@@ -1,0 +1,32 @@
+[package]
+name = "rscrypto-fuzz-hash-blake3"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+rscrypto = { path = "../..", features = ["std", "blake3"] }
+rscrypto_fuzz = { package = "rscrypto-fuzz-support", path = "../../fuzz/support" }
+blake3 = "1.8"
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "hash_blake3"
+path = "fuzz_targets/hash_blake3.rs"
+doc = false
+
+[[bin]]
+name = "hash_blake3_derive"
+path = "fuzz_targets/hash_blake3_derive.rs"
+doc = false
+
+[[bin]]
+name = "hash_blake3_keyed"
+path = "fuzz_targets/hash_blake3_keyed.rs"
+doc = false

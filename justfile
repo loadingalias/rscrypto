@@ -31,8 +31,17 @@ test-miri *crates="":
 test-fuzz *args="":
     @scripts/test/test-fuzz.sh {{args}}
 
+test-fuzz-full *args="":
+    @scripts/test/test-fuzz.sh --full {{args}}
+
+test-fuzz-scoped *args="":
+    @scripts/test/test-fuzz.sh --scoped {{args}}
+
 test-fuzz-build:
     @scripts/test/test-fuzz.sh --build
+
+test-fuzz-build-scoped:
+    @scripts/test/test-fuzz.sh --scoped-build
 
 test-proptests:
     PROPTEST_CASES=10000 cargo nextest run --workspace --all-features -E 'test(/proptest/)' --test-threads=1
