@@ -71,6 +71,13 @@ impl AsRef<[u8]> for Aes256GcmSivKey {
   }
 }
 
+impl crate::traits::ConstantTimeEq for Aes256GcmSivKey {
+  #[inline]
+  fn ct_eq(&self, other: &Self) -> bool {
+    crate::traits::ct::constant_time_eq(&self.0, &other.0)
+  }
+}
+
 impl fmt::Debug for Aes256GcmSivKey {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     f.write_str("Aes256GcmSivKey(****)")
@@ -92,9 +99,28 @@ impl Aes256GcmSivKey {
     fill(&mut bytes);
     Self(bytes)
   }
+
+  /// Generate a random key using the operating system's CSPRNG.
+  ///
+  /// # Panics
+  ///
+  /// Panics if the platform entropy source is unavailable.
+  #[cfg(feature = "getrandom")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
+  #[inline]
+  #[must_use]
+  pub fn random() -> Self {
+    let mut bytes = [0u8; Self::LENGTH];
+    match getrandom::fill(&mut bytes) {
+      Ok(()) => {}
+      Err(e) => panic!("getrandom failed: {e}"),
+    }
+    Self(bytes)
+  }
 }
 
 impl_hex_fmt_secret!(Aes256GcmSivKey);
+impl_serde_bytes!(Aes256GcmSivKey);
 
 impl Drop for Aes256GcmSivKey {
   fn drop(&mut self) {
@@ -146,6 +172,13 @@ impl AsRef<[u8]> for Aes256GcmSivTag {
   }
 }
 
+impl crate::traits::ConstantTimeEq for Aes256GcmSivTag {
+  #[inline]
+  fn ct_eq(&self, other: &Self) -> bool {
+    crate::traits::ct::constant_time_eq(&self.0, &other.0)
+  }
+}
+
 impl fmt::Debug for Aes256GcmSivTag {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     write!(f, "Aes256GcmSivTag(")?;
@@ -155,6 +188,7 @@ impl fmt::Debug for Aes256GcmSivTag {
 }
 
 impl_hex_fmt!(Aes256GcmSivTag);
+impl_serde_bytes!(Aes256GcmSivTag);
 
 /// AES-256-GCM-SIV AEAD (RFC 8452).
 ///

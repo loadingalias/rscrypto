@@ -56,6 +56,13 @@ impl AsRef<[u8]> for ChaCha20Poly1305Key {
   }
 }
 
+impl crate::traits::ConstantTimeEq for ChaCha20Poly1305Key {
+  #[inline]
+  fn ct_eq(&self, other: &Self) -> bool {
+    crate::traits::ct::constant_time_eq(&self.0, &other.0)
+  }
+}
+
 impl fmt::Debug for ChaCha20Poly1305Key {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     f.write_str("ChaCha20Poly1305Key(****)")
@@ -77,9 +84,28 @@ impl ChaCha20Poly1305Key {
     fill(&mut bytes);
     Self(bytes)
   }
+
+  /// Generate a random key using the operating system's CSPRNG.
+  ///
+  /// # Panics
+  ///
+  /// Panics if the platform entropy source is unavailable.
+  #[cfg(feature = "getrandom")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
+  #[inline]
+  #[must_use]
+  pub fn random() -> Self {
+    let mut bytes = [0u8; Self::LENGTH];
+    match getrandom::fill(&mut bytes) {
+      Ok(()) => {}
+      Err(e) => panic!("getrandom failed: {e}"),
+    }
+    Self(bytes)
+  }
 }
 
 impl_hex_fmt_secret!(ChaCha20Poly1305Key);
+impl_serde_bytes!(ChaCha20Poly1305Key);
 
 impl Drop for ChaCha20Poly1305Key {
   fn drop(&mut self) {
@@ -131,6 +157,13 @@ impl AsRef<[u8]> for ChaCha20Poly1305Tag {
   }
 }
 
+impl crate::traits::ConstantTimeEq for ChaCha20Poly1305Tag {
+  #[inline]
+  fn ct_eq(&self, other: &Self) -> bool {
+    crate::traits::ct::constant_time_eq(&self.0, &other.0)
+  }
+}
+
 impl fmt::Debug for ChaCha20Poly1305Tag {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     write!(f, "ChaCha20Poly1305Tag(")?;
@@ -140,6 +173,7 @@ impl fmt::Debug for ChaCha20Poly1305Tag {
 }
 
 impl_hex_fmt!(ChaCha20Poly1305Tag);
+impl_serde_bytes!(ChaCha20Poly1305Tag);
 
 /// Portable ChaCha20-Poly1305 AEAD.
 #[derive(Clone)]

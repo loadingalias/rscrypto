@@ -787,6 +787,100 @@ impl FastHash for Xxh3_128 {
   }
 }
 
+// ─── BuildHasher support ──────────────────────────────────────────────────
+
+/// Streaming [`core::hash::Hasher`] backed by XXH3-64.
+///
+/// Created by [`Xxh3BuildHasher`]. Buffers input and computes the hash
+/// on [`finish`](core::hash::Hasher::finish).
+#[cfg(feature = "alloc")]
+#[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
+pub struct Xxh3Hasher {
+  buf: alloc::vec::Vec<u8>,
+  seed: u64,
+}
+
+#[cfg(feature = "alloc")]
+impl core::fmt::Debug for Xxh3Hasher {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.debug_struct("Xxh3Hasher")
+      .field("seed", &self.seed)
+      .field("buffered", &self.buf.len())
+      .finish()
+  }
+}
+
+#[cfg(feature = "alloc")]
+impl core::hash::Hasher for Xxh3Hasher {
+  #[inline]
+  fn write(&mut self, bytes: &[u8]) {
+    self.buf.extend_from_slice(bytes);
+  }
+
+  #[inline]
+  fn finish(&self) -> u64 {
+    Xxh3_64::hash_with_seed(self.seed, &self.buf)
+  }
+}
+
+/// [`BuildHasher`](core::hash::BuildHasher) producing [`Xxh3Hasher`] instances.
+///
+/// # Examples
+///
+/// ```
+/// use std::collections::HashMap;
+///
+/// use rscrypto::hashes::fast::xxh3::Xxh3BuildHasher;
+///
+/// let mut map: HashMap<&str, i32, Xxh3BuildHasher> = HashMap::with_hasher(Xxh3BuildHasher::new());
+/// map.insert("hello", 42);
+/// assert_eq!(map["hello"], 42);
+/// ```
+#[cfg(feature = "alloc")]
+#[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
+#[derive(Clone, Debug)]
+pub struct Xxh3BuildHasher {
+  seed: u64,
+}
+
+#[cfg(feature = "alloc")]
+impl Xxh3BuildHasher {
+  /// Create a builder with the default seed (0).
+  #[inline]
+  #[must_use]
+  pub const fn new() -> Self {
+    Self { seed: 0 }
+  }
+
+  /// Create a builder with a custom seed.
+  #[inline]
+  #[must_use]
+  pub const fn with_seed(seed: u64) -> Self {
+    Self { seed }
+  }
+}
+
+#[cfg(feature = "alloc")]
+impl Default for Xxh3BuildHasher {
+  #[inline]
+  fn default() -> Self {
+    Self::new()
+  }
+}
+
+#[cfg(feature = "alloc")]
+impl core::hash::BuildHasher for Xxh3BuildHasher {
+  type Hasher = Xxh3Hasher;
+
+  #[inline]
+  fn build_hasher(&self) -> Self::Hasher {
+    Xxh3Hasher {
+      buf: alloc::vec::Vec::new(),
+      seed: self.seed,
+    }
+  }
+}
+
 #[cfg(test)]
 mod tests {
 

@@ -1,282 +1,420 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# extract-results.sh — Download CI bench artifacts and produce a W/T/L report.
+# extract-results.sh — Generate benchmark_results/OVERVIEW.md from extracted results.
 #
 # Usage:
-#   scripts/bench/extract-results.sh <run-id> [--filter <pattern>]
+#   scripts/bench/extract-results.sh                     Latest date
+#   scripts/bench/extract-results.sh --date 2026-04-15   Specific date
+#   scripts/bench/extract-results.sh <run-id>            Download + extract + generate
+#   scripts/bench/extract-results.sh --filter crc         Filter groups
 #
-# Examples:
-#   scripts/bench/extract-results.sh 23415302173
-#   scripts/bench/extract-results.sh 23415302173 --filter crc
-#
-# Requires: gh (GitHub CLI)
+# Requires: python3, gh (for run-id mode)
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+RESULTS_ROOT="$REPO_ROOT/benchmark_results"
+REPO="loadingalias/rscrypto"
 
 usage() {
-  echo "Usage: $0 <run-id> [--filter <pattern>]" >&2
-  exit 1
+  cat <<'USAGE'
+Usage: extract-results.sh [<run-id> | --date YYYY-MM-DD | --latest] [--filter <pattern>]
+
+Modes:
+  <run-id>              Download CI artifacts, extract, generate OVERVIEW.md
+  --date YYYY-MM-DD     Generate from existing results for that date
+  --latest (default)    Generate from the most recent date directory
+
+Options:
+  --filter <pattern>    Only include groups containing <pattern>
+  --output <path>       Output path (default: benchmark_results/OVERVIEW.md)
+USAGE
+  exit "${1:-0}"
 }
 
-RUN_ID="${1:-}"
-shift || true
+MODE="latest"
+RUN_ID=""
+DATE=""
 FILTER=""
+OUTPUT=""
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --date)   DATE="${2:-}"; MODE="date"; shift 2 ;;
+    --latest) MODE="latest"; shift ;;
     --filter) FILTER="${2:-}"; shift 2 ;;
-    *) usage ;;
+    --output) OUTPUT="${2:-}"; shift 2 ;;
+    -h|--help) usage 0 ;;
+    *)
+      if [[ "$1" =~ ^[0-9]+$ ]]; then
+        RUN_ID="$1"; MODE="run"
+      else
+        echo "error: unknown argument '$1'" >&2; usage 1
+      fi
+      shift ;;
   esac
 done
-[[ -z "$RUN_ID" ]] && usage
 
-REPO="loadingalias/rscrypto"
-WORK="/tmp/bench-extract-$$"
-mkdir -p "$WORK"
-trap 'rm -rf "$WORK"' EXIT
+# ── Download + extract (run-id mode) ─────────────────────────────────────────
+if [[ "$MODE" == "run" ]]; then
+  echo "Fetching metadata for run $RUN_ID..."
+  CREATED=$(gh run view "$RUN_ID" --repo "$REPO" --json createdAt --jq '.createdAt')
+  DATE=$(echo "$CREATED" | sed -E 's/T.*//')
+  TIME=$(echo "$CREATED" | sed -E 's/.*T([0-9]{2}):([0-9]{2}):([0-9]{2})Z/\1_\2_\3/')
+  COMMIT=$(gh run view "$RUN_ID" --repo "$REPO" --json headSha --jq '.headSha')
 
-# ── 1. Download artifacts ─────────────────────────────────────────────────────
+  echo "  date=$DATE time=$TIME commit=${COMMIT:0:12}"
+  echo "Downloading artifacts..."
+  WORK="/tmp/rscrypto-bench-artifacts-$$"
+  rm -rf "$WORK"
+  gh run download "$RUN_ID" --repo "$REPO" --dir "$WORK"
 
-echo "Fetching artifact list for run $RUN_ID..."
-gh api "repos/$REPO/actions/runs/$RUN_ID/artifacts" --jq \
-  '.artifacts[] | "\(.id) \(.name)"' | awk '!seen[$2]++' > "$WORK/artifacts.txt"
+  RESULTS_BASE="$RESULTS_ROOT/$DATE"
 
-ARTIFACT_COUNT=$(wc -l < "$WORK/artifacts.txt" | tr -d ' ')
-echo "Found $ARTIFACT_COUNT artifacts."
+  python3 - "$WORK" "$RESULTS_BASE" "$DATE" "$TIME" "$COMMIT" <<'EXTRACT_PY'
+import os, re, sys
 
-while read -r id name; do
-  platform="${name#benchmark-}"
-  echo "  Downloading $platform..."
-  gh api "repos/$REPO/actions/artifacts/$id/zip" > "$WORK/${platform}.zip"
-  mkdir -p "$WORK/$platform"
-  unzip -o "$WORK/${platform}.zip" -d "$WORK/$platform" > /dev/null
-done < "$WORK/artifacts.txt"
+work, base, date, time_str, commit = sys.argv[1:6]
+ansi_re = re.compile(r'\x1b\[[0-9;]*m')
+running_re = re.compile(r'^Running: cargo bench .+--bench (\S+)')
+noise_re = re.compile(r'^\s*(Updating|Downloading|Downloaded|Compiling|Compiled|Finished|Locking|Running (unittests|benches))\b|^warning\[')
+SEP = '\u2501' * 74
 
-# ── 2. Parse Criterion stdout ─────────────────────────────────────────────────
-#
-# Extract lines matching nested Criterion benchmark ids where the final path
-# segment is the numeric size and the penultimate segment is the implementation.
-# Produce TSV: platform  group  impl  size  mid_ns
+for entry in sorted(os.listdir(work)):
+    if not entry.startswith('benchmark-'):
+        continue
+    runner = entry.replace('benchmark-', '')
+    dst_dir = os.path.join(base, 'linux', runner)
+    os.makedirs(dst_dir, exist_ok=True)
+    results_path = os.path.join(dst_dir, 'results.txt')
 
-parse_output() {
-  local platform="$1"
-  local file="$2"
+    # Prefer pre-built results.txt
+    pre = os.path.join(work, entry, 'results.txt')
+    if os.path.isfile(pre):
+        import shutil
+        shutil.copy2(pre, results_path)
+        print(f'  {runner}: copied results.txt')
+        continue
 
-  # Criterion output has two formats:
-  #   1. bench_id        time:   [lo mid hi unit]     (single line)
-  #   2. bench_id\n                        time:   [lo mid hi unit]  (split across lines)
-  # We use awk to handle both: track the last bench_id seen, then parse time lines.
-  awk -v platform="$platform" -v filter="$FILTER" '
-  /^[A-Za-z0-9_-]+(\/[A-Za-z0-9_-]+)+/ {
-    # Extract bench_id (first non-whitespace token)
-    bench_id = $1
-    # If this line also has time:, fall through to the time block
-  }
-  /time:[ \t]+\[/ && bench_id != "" {
-    # Parse: time:   [lo lo_unit mid mid_unit hi hi_unit]
-    line = $0
-    # Extract content between [ and ]
-    start = index(line, "[")
-    end = index(line, "]")
-    if (start > 0 && end > start) {
-      inner = substr(line, start + 1, end - start - 1)
-      m = split(inner, vals, " ")
-      # vals: lo lo_unit mid mid_unit hi hi_unit
-      if (m >= 4) {
-        mid = vals[3] + 0.0
-        unit = vals[4]
-        # Convert to nanoseconds
-        # NOTE: "s" must be checked before "µs" — macOS awk has a
-        # locale bug where (unit == "µs") matches bare "s".
-        if (unit == "ps") mid_ns = mid / 1000.0
-        else if (unit == "ns") mid_ns = mid
-        else if (unit == "s" && length(unit) == 1) mid_ns = mid * 1000000000.0
-        else if (unit == "ms") mid_ns = mid * 1000000.0
-        else if (unit == "µs" || unit == "us") mid_ns = mid * 1000.0
-        else { bench_id = ""; next }
+    # Fall back to parsing output.txt
+    src = os.path.join(work, entry, 'output.txt')
+    if not os.path.isfile(src):
+        continue
 
-        # Split nested bench_id: <group...>/<impl>/<size>
-        n2 = split(bench_id, bid, "/")
-        if (n2 >= 3) {
-          size = bid[n2]
-          if (size !~ /^[0-9]+$/) {
-            bench_id = ""
-            next
-          }
+    with open(src) as f:
+        lines = f.readlines()
 
-          impl = bid[n2 - 1]
-          group = bid[1]
-          for (i = 2; i <= n2 - 2; i++) {
-            group = group "/" bid[i]
-          }
+    sections = []
+    for i, line in enumerate(lines):
+        cleaned = ansi_re.sub('', line).strip()
+        m = running_re.match(cleaned)
+        if m:
+            bench_name = m.group(1)
+            filt = ''
+            if ' -- ' in cleaned:
+                after = cleaned.split(' -- ', 1)[1]
+                for token in after.split():
+                    if not token.startswith('--'):
+                        filt = token
+                        break
+            sections.append((i, bench_name, filt))
 
-          if (filter != "" && index(group, filter) == 0) {
-            bench_id = ""
-            next
-          }
-          printf "%s\t%s\t%s\t%s\t%.4f\n", platform, group, impl, size, mid_ns
-        }
-      }
-    }
-    bench_id = ""
-  }
-  ' "$file"
+    with open(results_path, 'w') as out:
+        out.write(f'date={date}\ntime={time_str}\nmode=ci\nplatform=linux-{runner}\ncommit={commit}\n\n')
+        for idx, (start_line, bench, filt) in enumerate(sections):
+            end_line = sections[idx + 1][0] if idx + 1 < len(sections) else len(lines)
+            content_lines = [ansi_re.sub('', l) for l in lines[start_line + 1 : end_line] if not noise_re.match(ansi_re.sub('', l))]
+            content = ''.join(content_lines).strip()
+            out.write(f'{SEP}\nbench={bench}\n')
+            if filt:
+                out.write(f'filter={filt}\n')
+            out.write(f'{SEP}\n{content}\n\n')
+
+    print(f'  {runner}: parsed {len(sections)} sections')
+
+EXTRACT_PY
+  rm -rf "$WORK"
+fi
+
+# ── Resolve results directory ────────────────────────────────────────────────
+if [[ -z "$DATE" ]]; then
+  DATE="$(ls -1 "$RESULTS_ROOT" 2>/dev/null | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' | sort -r | head -1)"
+  if [[ -z "$DATE" ]]; then
+    echo "error: no benchmark results found in $RESULTS_ROOT" >&2
+    exit 1
+  fi
+fi
+
+RESULTS_BASE="$RESULTS_ROOT/$DATE"
+if [[ ! -d "$RESULTS_BASE" ]]; then
+  echo "error: results directory not found: $RESULTS_BASE" >&2
+  exit 1
+fi
+
+OUTPUT="${OUTPUT:-$RESULTS_ROOT/OVERVIEW.md}"
+echo "Source: $RESULTS_BASE"
+
+# ── Generate OVERVIEW.md ─────────────────────────────────────────────────────
+python3 - "$RESULTS_BASE" "$OUTPUT" "$FILTER" "$RUN_ID" <<'OVERVIEW_PY'
+import os, re, sys
+from collections import defaultdict
+
+results_base, output_path, filter_pattern, run_id = sys.argv[1], sys.argv[2], sys.argv[3] or None, sys.argv[4] or None
+
+# ── Constants ────────────────────────────────────────────────────────────────
+
+PLATFORM_ORDER = [
+    'amd-zen4', 'amd-zen5', 'intel-spr', 'intel-icl',
+    'graviton3', 'graviton4', 'ibm-s390x', 'ibm-power10', 'rise-riscv',
+]
+PLATFORM_SHORT = {
+    'amd-zen4': 'Zen4', 'amd-zen5': 'Zen5', 'intel-spr': 'SPR', 'intel-icl': 'ICL',
+    'graviton3': 'Grav3', 'graviton4': 'Grav4', 'ibm-s390x': 's390x',
+    'ibm-power10': 'POWER10', 'rise-riscv': 'RISE',
 }
-
-echo ""
-echo "Parsing results..."
-RESULTS="$WORK/results.tsv"
-: > "$RESULTS"
-
-for dir in "$WORK"/*/; do
-  [[ -f "$dir/output.txt" ]] || continue
-  platform=$(basename "$dir")
-  parse_output "$platform" "$dir/output.txt" >> "$RESULTS"
-done
-
-TOTAL_LINES=$(wc -l < "$RESULTS" | tr -d ' ')
-echo "Parsed $TOTAL_LINES data points."
-
-# ── 3. Compute W/T/L ─────────────────────────────────────────────────────────
-
-echo ""
-echo "================================================================="
-echo "  Benchmark Results -- Run $RUN_ID"
-echo "================================================================="
-
-awk -F'\t' '
-BEGIN {
-  TIE_MARGIN = 0.03
-  wins = 0; ties = 0; losses = 0
+PLATFORM_FULL = {
+    'amd-zen4': ('AMD EPYC (Zen 4)', 'x86-64'), 'amd-zen5': ('AMD EPYC (Zen 5)', 'x86-64'),
+    'intel-spr': ('Intel Xeon (Sapphire Rapids)', 'x86-64'), 'intel-icl': ('Intel Xeon (Ice Lake)', 'x86-64'),
+    'graviton3': ('AWS Graviton 3', 'aarch64'), 'graviton4': ('AWS Graviton 4', 'aarch64'),
+    'ibm-s390x': ('IBM Z s390x', 's390x'), 'ibm-power10': ('IBM POWER10', 'ppc64le'),
+    'rise-riscv': ('RISE RISC-V riscv64', 'riscv64'),
 }
+CATEGORY_ORDER = ['Checksums', 'SHA-2', 'SHA-3', 'SHAKE', 'Ascon', 'Blake3', 'XXH3', 'RapidHash', 'Auth', 'AEAD']
+TIE_LO, TIE_HI = 0.97, 1.03
+SIZE_LABELS = {0:'0B',1:'1B',32:'32B',48:'48B',64:'64B',96:'96B',256:'256B',
+               1024:'1KiB',4096:'4KiB',16384:'16KiB',65536:'64KiB',1048576:'1MiB'}
 
-{
-  platform = $1; group = $2; impl = $3; size = $4; ns = $5 + 0.0
-  key = platform SUBSEP group SUBSEP size
-  data[key, impl] = ns
-  # Track which impls exist per key
-  n = ++impl_count[key]
-  impl_list[key, n] = impl
-  # Track unique keys
-  if (!(key in seen_keys)) {
-    seen_keys[key] = 1
-    nkeys++
-    all_keys[nkeys] = key
-    key_platform[key] = platform
-    key_group[key] = group
-    key_size[key] = size + 0
-  }
-}
+def fmt_size(n):
+    return SIZE_LABELS.get(n, f'{n}B')
 
-END {
-  # Process each key
-  for (ki = 1; ki <= nkeys; ki++) {
-    key = all_keys[ki]
-    platform = key_platform[key]
-    group = key_group[key]
-    size = key_size[key]
+def to_ns(val, unit):
+    m = {'ps': 1e-3, 'ns': 1, 'us': 1e3, '\u00b5s': 1e3, '\u03bcs': 1e3, 'ms': 1e6, 's': 1e9}
+    return val * m[unit] if unit in m else None
 
-    # Find rscrypto time
-    rscrypto_ns = data[key, "rscrypto"] + 0.0
-    if (rscrypto_ns == 0) continue
+def category_for(group):
+    g = group.split('/')[0]
+    if g.startswith('crc'): return 'Checksums'
+    if g in ('sha224','sha256','sha384','sha512','sha512-256'): return 'SHA-2'
+    if g.startswith('sha3-'): return 'SHA-3'
+    if g.startswith('shake'): return 'SHAKE'
+    if g.startswith('ascon-hash') or g.startswith('ascon-xof'): return 'Ascon'
+    if g.startswith('blake3'): return 'Blake3'
+    if g.startswith('xxh3'): return 'XXH3'
+    if g.startswith('rapidhash'): return 'RapidHash'
+    if any(g.startswith(p) for p in ('hmac-','hkdf-','ed25519','x25519','kmac')): return 'Auth'
+    if any(g.startswith(p) for p in ('chacha20-poly1305','xchacha20-poly1305','aes-256-gcm','aegis-256','ascon-aead')): return 'AEAD'
+    return 'Other'
 
-    # Compare against each competitor
-    ni = impl_count[key]
-    for (ii = 1; ii <= ni; ii++) {
-      impl = impl_list[key, ii]
-      if (impl == "rscrypto") continue
-      comp_ns = data[key, impl] + 0.0
-      if (comp_ns == 0) continue
+# ── Parse results.txt files ──────────────────────────────────────────────────
 
-      ratio = rscrypto_ns / comp_ns
-      if (ratio <= 1.0 + TIE_MARGIN && ratio >= 1.0 - TIE_MARGIN) {
-        result = "TIE"
-        ties++
-      } else if (rscrypto_ns < comp_ns) {
-        result = "WIN"
-        wins++
-      } else {
-        result = "LOSS"
-        losses++
-      }
+bench_id_re = re.compile(r'^([A-Za-z0-9_-]+(?:/[A-Za-z0-9_.-]+)+)')
+time_re = re.compile(r'time:\s+\[([^\]]+)\]')
+ansi_re = re.compile(r'\x1b\[[0-9;]*m')
 
-      # Track per-size bucket
-      bucket = (size <= 64) ? "small" : "large"
-      if (result == "WIN") bucket_wins[bucket]++
-      if (result == "TIE") bucket_ties[bucket]++
-      if (result == "LOSS") bucket_losses[bucket]++
+# data[group][size][platform][impl] = mid_ns
+data = defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))
+meta = {}
+platforms_found = []
 
-      # Track per-group
-      if (result == "WIN") group_wins[group]++
-      if (result == "TIE") group_ties[group]++
-      if (result == "LOSS") group_losses[group]++
+for root, dirs, files in os.walk(results_base):
+    if 'results.txt' not in files:
+        continue
+    path = os.path.join(root, 'results.txt')
+    rel_parts = os.path.relpath(root, results_base).split(os.sep)  # e.g. ['linux', 'amd-zen4']
+    platform_id = rel_parts[-1] if len(rel_parts) >= 2 else rel_parts[0]
 
-      # Store losses for detail report
-      if (result == "LOSS") {
-        nloss++
-        loss_platform[nloss] = platform
-        loss_group[nloss] = group
-        loss_size[nloss] = size
-        loss_rscrypto[nloss] = rscrypto_ns
-        loss_impl[nloss] = impl
-        loss_comp[nloss] = comp_ns
-        loss_ratio[nloss] = ratio
-      }
-    }
-  }
+    with open(path) as f:
+        lines = f.readlines()
 
-  total = wins + ties + losses
-  win_pct = (total > 0) ? (wins * 100.0 / total) : 0
+    # Read header
+    if not meta:
+        for line in lines:
+            s = line.strip()
+            if not s: break
+            if '=' in s:
+                k, v = s.split('=', 1)
+                meta[k] = v
 
-  printf "\n"
-  printf "=================================================================\n"
-  printf "  OVERALL: %d W / %d T / %d L  (%.0f%% win rate, %d comparisons)\n", \
-    wins, ties, losses, win_pct, total
-  printf "=================================================================\n"
+    if platform_id not in platforms_found:
+        platforms_found.append(platform_id)
 
-  # Per-group summary
-  printf "\n  Per-group breakdown:\n"
-  for (g in group_wins) {
-    gt = group_wins[g] + group_ties[g] + group_losses[g]
-    gp = (gt > 0) ? (group_wins[g] * 100.0 / gt) : 0
-    printf "    %-20s %3dW / %2dT / %2dL  (%5.1f%%)\n", \
-      g, group_wins[g] + 0, group_ties[g] + 0, group_losses[g] + 0, gp
-  }
-  # Print groups that only have ties/losses (no wins entry)
-  for (g in group_ties) {
-    if (!(g in group_wins)) {
-      gt = 0 + group_ties[g] + group_losses[g]
-      printf "    %-20s %3dW / %2dT / %2dL  (%5.1f%%)\n", \
-        g, 0, group_ties[g] + 0, group_losses[g] + 0, 0.0
-    }
-  }
-  for (g in group_losses) {
-    if (!(g in group_wins) && !(g in group_ties)) {
-      gt = 0 + group_losses[g]
-      printf "    %-20s %3dW / %2dT / %2dL  (%5.1f%%)\n", \
-        g, 0, 0, group_losses[g] + 0, 0.0
-    }
-  }
+    current_id = None
+    for line in lines:
+        line = ansi_re.sub('', line)
+        stripped = line.strip()
+        m = bench_id_re.match(stripped)
+        if m:
+            current_id = m.group(1)
+        tm = time_re.search(stripped)
+        if tm and current_id:
+            tokens = tm.group(1).split()
+            if len(tokens) >= 4:
+                try:
+                    mid, unit = float(tokens[2]), tokens[3]
+                    mid_ns = to_ns(mid, unit)
+                    if mid_ns is not None:
+                        parts = current_id.split('/')
+                        if len(parts) >= 3 and parts[-1].isdigit():
+                            size, impl_name = int(parts[-1]), parts[-2]
+                            group = '/'.join(parts[:-2])
+                            if filter_pattern and filter_pattern not in group:
+                                current_id = None; continue
+                            data[group][size][platform_id][impl_name] = mid_ns
+                except (ValueError, IndexError):
+                    pass
+            current_id = None
 
-  # Per-size-bucket summary
-  printf "\n  Fast-path impact (0-64 B vs 256+ B):\n"
-  for (b in bucket_wins) {
-    bt = bucket_wins[b] + bucket_ties[b] + bucket_losses[b]
-    bp = (bt > 0) ? (bucket_wins[b] * 100.0 / bt) : 0
-    label = (b == "small") ? "0-64 B (fast-path)" : "256+ B (dispatch)"
-    printf "    %-25s %3dW / %2dT / %2dL  (%5.1f%%)\n", \
-      label, bucket_wins[b] + 0, bucket_ties[b] + 0, bucket_losses[b] + 0, bp
-  }
+platforms = [p for p in PLATFORM_ORDER if p in platforms_found]
+# Add any non-CI platforms (e.g., local macOS) at the end
+for p in platforms_found:
+    if p not in platforms:
+        platforms.append(p)
 
-  # All losses
-  printf "\n  ALL LOSSES (rscrypto slower, sorted by severity):\n"
-  printf "  %-14s %-16s %7s  %10s  %-12s %10s  %s\n", \
-    "PLATFORM", "GROUP", "SIZE", "OURS (ns)", "COMPETITOR", "THEIRS", "RATIO"
-  printf "  %-14s %-16s %7s  %10s  %-12s %10s  %s\n", \
-    "--------------", "----------------", "-------", "----------", "------------", "----------", "-------"
-  for (i = 1; i <= nloss; i++) {
-    printf "  %-14s %-16s %7d  %10.2f  %-12s %10.2f  %.2fx\n", \
-      loss_platform[i], loss_group[i], loss_size[i], \
-      loss_rscrypto[i], loss_impl[i], loss_comp[i], loss_ratio[i]
-  }
-  printf "\n"
-}
-' "$RESULTS"
+if not data:
+    print('error: no benchmark data parsed', file=sys.stderr); sys.exit(1)
+
+# ── Compute speedups + W/T/L ─────────────────────────────────────────────────
+
+def primary_competitor(group_data):
+    counts = defaultdict(int)
+    for size_data in group_data.values():
+        for plat_data in size_data.values():
+            for impl in plat_data:
+                if impl != 'rscrypto':
+                    counts[impl] += 1
+    return max(counts, key=lambda k: (counts[k], k)) if counts else None
+
+speedups = defaultdict(lambda: defaultdict(dict))
+wtl_group = defaultdict(lambda: [0, 0, 0])   # [W, T, L]
+wtl_cat   = defaultdict(lambda: [0, 0, 0])
+wtl_plat  = defaultdict(lambda: [0, 0, 0])
+total_wtl = [0, 0, 0]
+
+for group, sizes in data.items():
+    primary = primary_competitor(sizes)
+    if not primary: continue
+    cat = category_for(group)
+
+    for size, plats in sizes.items():
+        for plat, impls in plats.items():
+            ours = impls.get('rscrypto')
+            if not ours or ours == 0: continue
+
+            if primary in impls:
+                speedups[group][size][plat] = impls[primary] / ours
+
+            for impl, theirs in impls.items():
+                if impl == 'rscrypto' or theirs == 0: continue
+                ratio = theirs / ours
+                idx = 0 if ratio >= TIE_HI else (2 if ratio < TIE_LO else 1)
+                wtl_group[group][idx] += 1
+                wtl_cat[cat][idx] += 1
+                wtl_plat[plat][idx] += 1
+                total_wtl[idx] += 1
+
+# ── Generate OVERVIEW.md ─────────────────────────────────────────────────────
+
+o = []
+w = o.append
+
+date_str = meta.get('date', os.path.basename(results_base))
+commit = meta.get('commit', '?')
+commit_short = commit[:12]
+
+w('# Benchmark Overview\n')
+if run_id:
+    w(f'Source: CI run [#{run_id}](https://github.com/loadingalias/rscrypto/actions/runs/{run_id}) on {date_str} across {len(platforms)} platforms.')
+else:
+    w(f'Source: {meta.get("mode","local")} run on {date_str} across {len(platforms)} platforms.')
+w(f'Commit: `{commit_short}`\n')
+w('This file covers the size-indexed competitive groups from the full `comp` sweep.')
+w('Fixed-cost benches without a size axis, such as `ed25519/public-key-from-secret`, `ed25519/keypair-from-secret`, and `x25519`, are intentionally excluded from this canonical report.\n')
+
+# Platforms
+w('## Platforms\n')
+w('| Short | Full | Architecture |')
+w('|-------|------|-------------|')
+for p in platforms:
+    short = PLATFORM_SHORT.get(p, p)
+    full, arch = PLATFORM_FULL.get(p, (p, '?'))
+    w(f'| {short} | {full} | {arch} |')
+w('')
+
+# How to Read
+w('## How to Read\n')
+w('- **Speedup** = competitor_time / rscrypto_time. Values above `1.00x` mean `rscrypto` is faster.')
+w('- **WIN**: speedup >= `1.03x`. **TIE**: `0.97x`--`1.03x`. **LOSS**: < `0.97x`.')
+w('- Group W/T/L totals count every competitor in the canonical size-indexed bench for that algorithm.')
+w('')
+
+# Scoreboard
+total = sum(total_wtl)
+pct = total_wtl[0] * 100 // total if total else 0
+w('## Overall Scoreboard\n')
+w(f'**{total_wtl[0]}W / {total_wtl[1]}T / {total_wtl[2]}L = {pct}% win rate** ({total} comparisons)\n')
+
+# By Category
+w('### By Category\n')
+w('| Category | W | T | L | Total | Win % |')
+w('|----------|--:|--:|--:|------:|------:|')
+for cat in CATEGORY_ORDER:
+    if cat not in wtl_cat: continue
+    d = wtl_cat[cat]; t = sum(d)
+    w(f'| {cat} | {d[0]} | {d[1]} | {d[2]} | {t} | {d[0]*100//t if t else 0}% |')
+w('')
+
+# By Platform
+w('### By Platform\n')
+w('| Platform | W | T | L | Total | Win % |')
+w('|----------|--:|--:|--:|------:|------:|')
+for p in platforms:
+    if p not in wtl_plat: continue
+    d = wtl_plat[p]; t = sum(d)
+    w(f'| {PLATFORM_SHORT.get(p,p)} | {d[0]} | {d[1]} | {d[2]} | {t} | {d[0]*100//t if t else 0}% |')
+w('')
+
+# Per-group tables
+def fmt_ratio(r):
+    s = f'{r:.2f}x'
+    return f'**{s}**' if r < TIE_LO else s
+
+groups_by_cat = defaultdict(list)
+for group in sorted(data.keys()):
+    groups_by_cat[category_for(group)].append(group)
+
+for cat in CATEGORY_ORDER:
+    if cat not in groups_by_cat: continue
+    w(f'\n---\n## {cat}\n')
+
+    for group in groups_by_cat[cat]:
+        if group not in wtl_group: continue
+        d = wtl_group[group]; t = sum(d)
+        pct = f'{d[0]*100.0/t:.1f}' if t else '0.0'
+        w(f'### {group} ({d[0]}W/{d[1]}T/{d[2]}L = {pct}%)\n')
+
+        hdrs = ' | '.join(f'{PLATFORM_SHORT.get(p,p)}' for p in platforms)
+        w(f'| Size | {hdrs} |')
+        aligns = ' | '.join('----:' for _ in platforms)
+        w(f'|------| {aligns} |')
+
+        for size in sorted(speedups[group].keys()):
+            cells = []
+            for p in platforms:
+                r = speedups[group][size].get(p)
+                cells.append(fmt_ratio(r) if r is not None else '-')
+            w(f'| {fmt_size(size)} | {" | ".join(cells)} |')
+        w('')
+
+with open(output_path, 'w') as f:
+    f.write('\n'.join(o) + '\n')
+
+# Summary to stdout
+print(f'\n  Overall: {total_wtl[0]}W / {total_wtl[1]}T / {total_wtl[2]}L = {pct}% win rate ({total} comparisons)')
+for cat in CATEGORY_ORDER:
+    if cat not in wtl_cat: continue
+    d = wtl_cat[cat]; t = sum(d)
+    print(f'    {cat:12s}  {d[0]:4d}W {d[1]:3d}T {d[2]:3d}L  ({d[0]*100//t if t else 0}%)')
+print(f'\n  Generated: {output_path}')
+OVERVIEW_PY
+
+echo "Done."

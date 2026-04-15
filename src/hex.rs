@@ -186,6 +186,59 @@ macro_rules! impl_hex_fmt_secret {
   };
 }
 
+/// Implement `serde::Serialize` and `serde::Deserialize` for a byte-array
+/// newtype with `as_bytes() -> &[u8; N]`, `from_bytes([u8; N]) -> Self`,
+/// and `LENGTH`.
+#[cfg(feature = "serde")]
+macro_rules! impl_serde_bytes {
+  ($type:ty) => {
+    #[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
+    impl serde::Serialize for $type {
+      fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_bytes(self.as_bytes())
+      }
+    }
+
+    #[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
+    impl<'de> serde::Deserialize<'de> for $type {
+      fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct ByteVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for ByteVisitor {
+          type Value = $type;
+
+          fn expecting(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            write!(f, "{} bytes", <$type>::LENGTH)
+          }
+
+          fn visit_bytes<E: serde::de::Error>(self, v: &[u8]) -> Result<Self::Value, E> {
+            let arr: [u8; <$type>::LENGTH] = v.try_into().map_err(|_| E::invalid_length(v.len(), &self))?;
+            Ok(<$type>::from_bytes(arr))
+          }
+
+          fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+            let mut arr = [0u8; <$type>::LENGTH];
+            for (i, byte) in arr.iter_mut().enumerate() {
+              *byte = seq
+                .next_element()?
+                .ok_or_else(|| serde::de::Error::invalid_length(i, &self))?;
+            }
+            Ok(<$type>::from_bytes(arr))
+          }
+        }
+
+        deserializer.deserialize_bytes(ByteVisitor)
+      }
+    }
+  };
+}
+
+// No-op when serde feature is disabled.
+#[cfg(not(feature = "serde"))]
+macro_rules! impl_serde_bytes {
+  ($type:ty) => {};
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------

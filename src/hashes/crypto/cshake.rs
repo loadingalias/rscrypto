@@ -125,6 +125,15 @@ impl Xof for Cshake256XofReader {
   }
 }
 
+#[cfg(feature = "std")]
+impl std::io::Read for Cshake256XofReader {
+  #[inline]
+  fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+    self.squeeze(buf);
+    Ok(buf.len())
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use alloc::vec;

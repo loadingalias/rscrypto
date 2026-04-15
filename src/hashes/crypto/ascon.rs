@@ -825,6 +825,15 @@ impl Xof for AsconXofReader {
   }
 }
 
+#[cfg(feature = "std")]
+impl std::io::Read for AsconXofReader {
+  #[inline]
+  fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+    self.squeeze(buf);
+    Ok(buf.len())
+  }
+}
+
 /// Spec-precise alias for [`AsconXof`].
 pub type AsconXof128 = AsconXof;
 

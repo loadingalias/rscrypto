@@ -140,6 +140,35 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
+# ── Structured results output ──────────────────────────────────────────────
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+detect_bench_os() {
+  case "${RUNNER_OS:-$(uname -s)}" in
+    Linux)                         echo "linux" ;;
+    Darwin)                        echo "macos" ;;
+    Windows|MINGW*|MSYS*|CYGWIN*) echo "windows" ;;
+    *)                             uname -s | tr '[:upper:]' '[:lower:]' ;;
+  esac
+}
+
+detect_bench_arch() {
+  case "$(uname -m)" in
+    arm64)         echo "aarch64" ;;
+    x86_64|amd64)  echo "x86-64" ;;
+    *)             uname -m ;;
+  esac
+}
+
+RUN_DATE="$(date -u +"%Y-%m-%d")"
+RUN_TIME="$(date -u +"%H_%M_%S")"
+RUN_OS="$(detect_bench_os)"
+RUN_ARCH="$(detect_bench_arch)"
+RUN_COMMIT="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
+RUN_MODE="${RSCRYPTO_BENCH_MODE:-local}"
+RESULTS_DIR="$REPO_ROOT/benchmark_results/$RUN_DATE/$RUN_OS/$RUN_ARCH"
+
 BENCH_CRATES="$CRATES" \
 BENCH_BENCHES="$BENCHES" \
 BENCH_ONLY="$ONLY" \
@@ -151,4 +180,11 @@ BENCH_SAMPLE_SIZE="$SAMPLE_SIZE" \
 BENCH_PROFILE_TIME_SECS="$PROFILE_TIME_SECS" \
 BENCH_OUTPUT_DIR="$OUTPUT_DIR" \
 BENCH_CLEAN="$CLEAN" \
+BENCH_RESULTS_DIR="$RESULTS_DIR" \
+BENCH_RUN_DATE="$RUN_DATE" \
+BENCH_RUN_TIME="$RUN_TIME" \
+BENCH_RUN_OS="$RUN_OS" \
+BENCH_RUN_ARCH="$RUN_ARCH" \
+BENCH_RUN_COMMIT="$RUN_COMMIT" \
+BENCH_RUN_MODE="$RUN_MODE" \
 scripts/ci/run-bench.sh

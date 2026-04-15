@@ -1889,6 +1889,13 @@ impl AsRef<[u8]> for Aegis256Key {
   }
 }
 
+impl crate::traits::ConstantTimeEq for Aegis256Key {
+  #[inline]
+  fn ct_eq(&self, other: &Self) -> bool {
+    crate::traits::ct::constant_time_eq(&self.0, &other.0)
+  }
+}
+
 impl fmt::Debug for Aegis256Key {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     f.write_str("Aegis256Key(****)")
@@ -1910,9 +1917,28 @@ impl Aegis256Key {
     fill(&mut bytes);
     Self(bytes)
   }
+
+  /// Generate a random key using the operating system's CSPRNG.
+  ///
+  /// # Panics
+  ///
+  /// Panics if the platform entropy source is unavailable.
+  #[cfg(feature = "getrandom")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
+  #[inline]
+  #[must_use]
+  pub fn random() -> Self {
+    let mut bytes = [0u8; Self::LENGTH];
+    match getrandom::fill(&mut bytes) {
+      Ok(()) => {}
+      Err(e) => panic!("getrandom failed: {e}"),
+    }
+    Self(bytes)
+  }
 }
 
 impl_hex_fmt_secret!(Aegis256Key);
+impl_serde_bytes!(Aegis256Key);
 
 impl Drop for Aegis256Key {
   fn drop(&mut self) {
@@ -1968,6 +1994,13 @@ impl AsRef<[u8]> for Aegis256Tag {
   }
 }
 
+impl crate::traits::ConstantTimeEq for Aegis256Tag {
+  #[inline]
+  fn ct_eq(&self, other: &Self) -> bool {
+    crate::traits::ct::constant_time_eq(&self.0, &other.0)
+  }
+}
+
 impl fmt::Debug for Aegis256Tag {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     write!(f, "Aegis256Tag(")?;
@@ -1977,6 +2010,7 @@ impl fmt::Debug for Aegis256Tag {
 }
 
 impl_hex_fmt!(Aegis256Tag);
+impl_serde_bytes!(Aegis256Tag);
 
 // ---------------------------------------------------------------------------
 // AEAD

@@ -82,7 +82,17 @@ jobs:
           cat /proc/cpuinfo | head -50
         fi
       run_script: |
+        RUN_DATE="$(date -u +"%Y-%m-%d")"
+        RUN_TIME="$(date -u +"%H_%M_%S")"
+        RUN_COMMIT="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
         BENCH_OUTPUT_DIR=benchmark-results \
+        BENCH_RESULTS_DIR=benchmark-results \
+        BENCH_RUN_DATE="$RUN_DATE" \
+        BENCH_RUN_TIME="$RUN_TIME" \
+        BENCH_RUN_OS=linux \
+        BENCH_RUN_ARCH="${{ matrix.platform }}" \
+        BENCH_RUN_COMMIT="$RUN_COMMIT" \
+        BENCH_RUN_MODE=ci \
         BENCH_ONLY="${{ inputs.targets }}" \
         BENCH_FILTER="${{ inputs.filter }}" \
         BENCH_QUICK=${{ inputs.quick && 'true' || 'false' }} \

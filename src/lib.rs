@@ -256,12 +256,10 @@
 //!
 //! # Performance Posture
 //!
-//! The repository's canonical competitive report lives in `docs/bench/BENCHMARKS.md`.
-//! On the March 31, 2026 CI sweep it records `1396W / 435T / 324L` across
-//! `2155` comparisons:
-//!
-//! - non-loss rate `((W + T) / total)`: `84.97%` — passes the project's `80%` gate
-//! - pure win rate `(W / total)`: `64.78%` — below the project's `70%` public-release bar
+//! Benchmark results live in `benchmark_results/` organized by date, platform,
+//! and architecture. Run `just bench` locally or extract CI results with the
+//! `extract-bench` skill. On the April 14, 2026 CI sweep across 9 platforms:
+//! `2707W / 729T / 191L` = `75%` win rate (`3627` comparisons).
 //!
 //! The honest current claim is "competitive and often faster," not "already over
 //! the public-release performance bar." Ed25519 is also split rather than one-way:
@@ -290,6 +288,8 @@
 //! | `aead` | No | All AEAD leaves |
 //! | `full` | No | `checksums`, `hashes`, `auth`, `aead` |
 //! | `parallel` | No | Rayon-based parallel Blake3 hashing |
+//! | `getrandom` | No | `random()` constructors for keys and nonces |
+//! | `serde` | No | `Serialize`/`Deserialize` for keys, nonces, tags, and signatures |
 //!
 //! # Examples
 //!
@@ -466,10 +466,14 @@ pub use hashes::crypto::{
 };
 #[cfg(feature = "sha2")]
 pub use hashes::crypto::{Sha224, Sha256, Sha384, Sha512, Sha512_256};
+#[cfg(all(feature = "rapidhash", feature = "alloc"))]
+pub use hashes::fast::{RapidBuildHasher, RapidHasher};
 #[cfg(feature = "rapidhash")]
 pub use hashes::fast::{RapidHash, RapidHash128, RapidHashFast64, RapidHashFast128};
 #[cfg(feature = "xxh3")]
 pub use hashes::fast::{Xxh3, Xxh3_128};
+#[cfg(all(feature = "xxh3", feature = "alloc"))]
+pub use hashes::fast::{Xxh3BuildHasher, Xxh3Hasher};
 // ─── Hex re-exports ──────────────────────────────────────────────────────
 #[cfg(any(
   feature = "aes-gcm",
@@ -492,7 +496,7 @@ pub use hex::{DisplaySecret, InvalidHexError};
   feature = "ascon-aead"
 ))]
 pub use traits::Aead;
-pub use traits::{Checksum, ChecksumCombine, Mac, VerificationError, ct};
+pub use traits::{Checksum, ChecksumCombine, ConstantTimeEq, Mac, VerificationError, ct};
 #[cfg(any(
   feature = "sha2",
   feature = "sha3",
@@ -811,6 +815,15 @@ mod send_sync_assertions {
     assert_send_sync::<RapidHash128>();
     assert_send_sync::<hashes::fast::RapidHashFast64>();
     assert_send_sync::<hashes::fast::RapidHashFast128>();
+
+    // BuildHasher types
+    #[cfg(feature = "alloc")]
+    {
+      assert_send_sync::<Xxh3BuildHasher>();
+      assert_send_sync::<Xxh3Hasher>();
+      assert_send_sync::<RapidBuildHasher>();
+      assert_send_sync::<RapidHasher>();
+    }
   }
 
   #[test]
@@ -959,6 +972,17 @@ mod send_sync_assertions {
     assert_debug::<RapidHash128>();
     assert_debug::<hashes::fast::RapidHashFast64>();
     assert_debug::<hashes::fast::RapidHashFast128>();
+
+    // BuildHasher types
+    #[cfg(feature = "alloc")]
+    {
+      assert_clone::<Xxh3BuildHasher>();
+      assert_clone::<RapidBuildHasher>();
+      assert_debug::<Xxh3BuildHasher>();
+      assert_debug::<Xxh3Hasher>();
+      assert_debug::<RapidBuildHasher>();
+      assert_debug::<RapidHasher>();
+    }
   }
 
   #[test]

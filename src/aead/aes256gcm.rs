@@ -67,6 +67,13 @@ impl AsRef<[u8]> for Aes256GcmKey {
   }
 }
 
+impl crate::traits::ConstantTimeEq for Aes256GcmKey {
+  #[inline]
+  fn ct_eq(&self, other: &Self) -> bool {
+    crate::traits::ct::constant_time_eq(&self.0, &other.0)
+  }
+}
+
 impl fmt::Debug for Aes256GcmKey {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     f.write_str("Aes256GcmKey(****)")
@@ -88,9 +95,28 @@ impl Aes256GcmKey {
     fill(&mut bytes);
     Self(bytes)
   }
+
+  /// Generate a random key using the operating system's CSPRNG.
+  ///
+  /// # Panics
+  ///
+  /// Panics if the platform entropy source is unavailable.
+  #[cfg(feature = "getrandom")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
+  #[inline]
+  #[must_use]
+  pub fn random() -> Self {
+    let mut bytes = [0u8; Self::LENGTH];
+    match getrandom::fill(&mut bytes) {
+      Ok(()) => {}
+      Err(e) => panic!("getrandom failed: {e}"),
+    }
+    Self(bytes)
+  }
 }
 
 impl_hex_fmt_secret!(Aes256GcmKey);
+impl_serde_bytes!(Aes256GcmKey);
 
 impl Drop for Aes256GcmKey {
   fn drop(&mut self) {
@@ -142,6 +168,13 @@ impl AsRef<[u8]> for Aes256GcmTag {
   }
 }
 
+impl crate::traits::ConstantTimeEq for Aes256GcmTag {
+  #[inline]
+  fn ct_eq(&self, other: &Self) -> bool {
+    crate::traits::ct::constant_time_eq(&self.0, &other.0)
+  }
+}
+
 impl fmt::Debug for Aes256GcmTag {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     write!(f, "Aes256GcmTag(")?;
@@ -151,6 +184,7 @@ impl fmt::Debug for Aes256GcmTag {
 }
 
 impl_hex_fmt!(Aes256GcmTag);
+impl_serde_bytes!(Aes256GcmTag);
 
 /// AES-256-GCM AEAD (NIST SP 800-38D).
 ///
