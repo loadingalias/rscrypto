@@ -55,6 +55,13 @@ const BLOCK_SIZE: usize = 128;
 const MAX_KEY_LEN: usize = 64;
 const MAX_OUTPUT_LEN: usize = 64;
 
+#[cfg(any(test, feature = "diag"))]
+#[inline]
+#[must_use]
+pub(crate) fn kernel_name_for_len(len: usize) -> &'static str {
+  dispatch::kernel_name_for_len(len)
+}
+
 // ─── Core state ─────────────────────────────────────────────────────────────
 
 /// Internal Blake2b state shared by `Blake2b256` and `Blake2b512`.
@@ -97,15 +104,13 @@ impl Core {
     stored_key[..key.len()].copy_from_slice(key);
 
     let mut buf = [0u8; BLOCK_SIZE];
-    let buf_len;
-
-    if kk > 0 {
+    let buf_len = if kk > 0 {
       // Pad key to block size and buffer it
       buf[..key.len()].copy_from_slice(key);
-      buf_len = BLOCK_SIZE as u8;
+      BLOCK_SIZE as u8
     } else {
-      buf_len = 0;
-    }
+      0
+    };
 
     Self {
       h,
@@ -175,8 +180,8 @@ impl Core {
     // Extract first nn bytes from h (little-endian word order)
     let nn = self.nn as usize;
     let full_words = nn / 8;
-    for i in 0..full_words {
-      let bytes = h[i].to_le_bytes();
+    for (i, word) in h.iter().enumerate().take(full_words) {
+      let bytes = word.to_le_bytes();
       let off = i.strict_mul(8);
       out[off..off.strict_add(8)].copy_from_slice(&bytes);
     }
@@ -401,12 +406,6 @@ impl Blake2b512 {
   pub(crate) fn new_with_compress_for_test(compress: kernels::CompressFn) -> Self {
     Self(Core::new_with_compress_for_test(64, &[], compress))
   }
-
-  #[cfg(test)]
-  pub(crate) fn keyed_with_compress_for_test(key: &[u8], compress: kernels::CompressFn) -> Self {
-    assert!(!key.is_empty(), "use new_with_compress_for_test() for unkeyed hashing");
-    Self(Core::new_with_compress_for_test(64, key, compress))
-  }
 }
 
 impl Default for Blake2b512 {
@@ -450,8 +449,7 @@ impl Drop for Blake2b512 {
 // ─── Variable-output helper for Argon2 ──────────────────────────────────────
 
 /// One-shot Blake2b with variable output length (1-64 bytes).
-///
-/// Used internally by Argon2's variable-length hash function H'.
+#[cfg(test)]
 #[allow(clippy::indexing_slicing)]
 pub(crate) fn blake2b_hash(data: &[u8], nn: u8, out: &mut [u8]) {
   debug_assert!(nn >= 1 && nn as usize <= MAX_OUTPUT_LEN);

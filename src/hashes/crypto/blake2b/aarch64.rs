@@ -15,6 +15,8 @@ use super::kernels::{SIGMA, init_v, load_msg};
 /// Rotate right by 32: swap 32-bit halves within each 64-bit lane.
 #[inline(always)]
 unsafe fn ror32(x: uint64x2_t) -> uint64x2_t {
+  // SAFETY: reinterpret and byte-reverse operate entirely on the input NEON
+  // register value without memory access or additional preconditions.
   unsafe { vreinterpretq_u64_u32(vrev64q_u32(vreinterpretq_u32_u64(x))) }
 }
 
@@ -22,6 +24,8 @@ unsafe fn ror32(x: uint64x2_t) -> uint64x2_t {
 #[inline(always)]
 unsafe fn ror24(x: uint64x2_t) -> uint64x2_t {
   static ROT24: [u8; 16] = [3, 4, 5, 6, 7, 0, 1, 2, 11, 12, 13, 14, 15, 8, 9, 10];
+  // SAFETY: the shuffle table is a fixed 16-byte constant and the NEON table
+  // lookup reads only from the provided register/table values.
   unsafe {
     let tbl = vld1q_u8(ROT24.as_ptr());
     vreinterpretq_u64_u8(vqtbl1q_u8(vreinterpretq_u8_u64(x), tbl))
@@ -32,6 +36,8 @@ unsafe fn ror24(x: uint64x2_t) -> uint64x2_t {
 #[inline(always)]
 unsafe fn ror16(x: uint64x2_t) -> uint64x2_t {
   static ROT16: [u8; 16] = [2, 3, 4, 5, 6, 7, 0, 1, 10, 11, 12, 13, 14, 15, 8, 9];
+  // SAFETY: the shuffle table is a fixed 16-byte constant and the NEON table
+  // lookup reads only from the provided register/table values.
   unsafe {
     let tbl = vld1q_u8(ROT16.as_ptr());
     vreinterpretq_u64_u8(vqtbl1q_u8(vreinterpretq_u8_u64(x), tbl))
@@ -41,6 +47,8 @@ unsafe fn ror16(x: uint64x2_t) -> uint64x2_t {
 /// Rotate right by 63: shift-right-insert.
 #[inline(always)]
 unsafe fn ror63(x: uint64x2_t) -> uint64x2_t {
+  // SAFETY: the shift/insert sequence operates only on the provided register
+  // value and requires no memory access or aliasing assumptions.
   unsafe { vsriq_n_u64(vaddq_u64(x, x), x, 63) }
 }
 
@@ -63,6 +71,8 @@ unsafe fn g2(
   my0: uint64x2_t,
   my1: uint64x2_t,
 ) {
+  // SAFETY: all operations stay within NEON registers and the mutable
+  // references point to disjoint working-row vectors owned by the caller.
   unsafe {
     // a += b + mx
     *a0 = vaddq_u64(vaddq_u64(*a0, *b0), mx0);
@@ -102,6 +112,8 @@ unsafe fn diagonalize(
   d0: &mut uint64x2_t,
   d1: &mut uint64x2_t,
 ) {
+  // SAFETY: diagonalization permutes only the caller-provided NEON registers;
+  // no memory is accessed and the mutable references are disjoint.
   unsafe {
     // B: rotate left 1: (v4,v5,v6,v7) → (v5,v6,v7,v4)
     let tb0 = *b0;
@@ -129,6 +141,8 @@ unsafe fn undiagonalize(
   d0: &mut uint64x2_t,
   d1: &mut uint64x2_t,
 ) {
+  // SAFETY: undiagonalization permutes only the caller-provided NEON registers;
+  // no memory is accessed and the mutable references are disjoint.
   unsafe {
     // B: rotate right 1
     let tb0 = *b0;
@@ -156,6 +170,8 @@ unsafe fn undiagonalize(
 /// Caller must ensure NEON is available (baseline on AArch64).
 #[target_feature(enable = "neon")]
 pub(super) unsafe fn compress_neon(h: &mut [u64; 8], block: &[u8; 128], t: u128, last: bool) {
+  // SAFETY: NEON is required by the target_feature on this function; all
+  // pointer-based loads/stores stay within the provided Blake2b state/block.
   unsafe {
     let m = load_msg(block);
     let v = init_v(h, t, last);
@@ -212,5 +228,7 @@ pub(super) unsafe fn compress_neon(h: &mut [u64; 8], block: &[u8; 128], t: u128,
 #[inline(always)]
 unsafe fn load_msg_pair(m: &[u64; 16], i0: u8, i1: u8) -> uint64x2_t {
   let pair = [m[i0 as usize], m[i1 as usize]];
+  // SAFETY: `pair` is a stack-allocated 2-lane buffer, so loading one NEON
+  // vector from its base pointer is in-bounds and properly initialized.
   unsafe { vld1q_u64(pair.as_ptr()) }
 }

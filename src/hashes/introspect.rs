@@ -121,6 +121,27 @@ impl_hash_kernel_introspect!(
   crate::hashes::crypto::blake3::dispatch::kernel_name_for_len
 );
 
+#[cfg(feature = "blake2b")]
+impl_hash_kernel_introspect!(
+  crate::hashes::crypto::Blake2b256,
+  crate::hashes::crypto::blake2b::kernel_name_for_len
+);
+#[cfg(feature = "blake2b")]
+impl_hash_kernel_introspect!(
+  crate::hashes::crypto::Blake2b512,
+  crate::hashes::crypto::blake2b::kernel_name_for_len
+);
+#[cfg(feature = "blake2s")]
+impl_hash_kernel_introspect!(
+  crate::hashes::crypto::Blake2s128,
+  crate::hashes::crypto::blake2s::kernel_name_for_len
+);
+#[cfg(feature = "blake2s")]
+impl_hash_kernel_introspect!(
+  crate::hashes::crypto::Blake2s256,
+  crate::hashes::crypto::blake2s::kernel_name_for_len
+);
+
 #[cfg(feature = "ascon-hash")]
 impl_hash_kernel_introspect!(
   crate::hashes::crypto::AsconHash256,
@@ -181,6 +202,20 @@ mod tests {
   #[cfg(feature = "xxh3")]
   fn kernel_for_fast_hash_is_not_empty() {
     let kernel = kernel_for::<crate::hashes::fast::xxh3::Xxh3_64>(1024);
+    assert!(!kernel.is_empty());
+  }
+
+  #[test]
+  #[cfg(feature = "blake2b")]
+  fn kernel_for_blake2b_is_not_empty() {
+    let kernel = kernel_for::<crate::hashes::crypto::Blake2b512>(1024);
+    assert!(!kernel.is_empty());
+  }
+
+  #[test]
+  #[cfg(feature = "blake2s")]
+  fn kernel_for_blake2s_is_not_empty() {
+    let kernel = kernel_for::<crate::hashes::crypto::Blake2s256>(1024);
     assert!(!kernel.is_empty());
   }
 }

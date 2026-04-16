@@ -65,7 +65,7 @@ pub(crate) fn compress_dispatch() -> CompressFn {
 #[cfg(any(test, feature = "diag"))]
 #[inline]
 #[must_use]
-pub fn kernel_name() -> &'static str {
+pub fn kernel_name_for_len(_len: usize) -> &'static str {
   if super::kernels::COMPILE_TIME_HW {
     return compile_time_name();
   }

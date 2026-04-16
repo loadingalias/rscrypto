@@ -70,7 +70,7 @@ mod pclmul {
   /// Montgomery reduction of a 256-bit product [lo:hi] modulo POLYVAL's polynomial.
   ///
   /// Equivalent to the portable `mont_reduce` but uses SSE2 lane-parallel shifts.
-  #[inline(always)]
+  #[inline]
   pub(super) unsafe fn mont_reduce_sse2(lo: __m128i, hi: __m128i) -> __m128i {
     // SAFETY: caller guarantees SSE2 availability via target_feature chain.
     unsafe {
@@ -118,7 +118,7 @@ mod pmull {
   /// the function body is inlined into the caller — no function call boundary,
   /// no register spills.
   #[target_feature(enable = "neon", enable = "aes")]
-  #[inline(always)]
+  #[inline]
   pub(super) unsafe fn clmul128_reduce_core(a: u128, b: u128) -> u128 {
     // SAFETY: caller guarantees NEON + PMULL via target_feature chain.
     unsafe {
@@ -172,7 +172,7 @@ mod pmull {
   /// Uses NEON lane-parallel shifts (`vshlq_n_u64`, `vshrq_n_u64`) and
   /// `vextq_u64` for cross-lane propagation — structurally identical to
   /// the SSE2 `mont_reduce_sse2` path.
-  #[inline(always)]
+  #[inline]
   unsafe fn mont_reduce_neon(lo: uint64x2_t, hi: uint64x2_t) -> uint64x2_t {
     // SAFETY: caller guarantees NEON availability via target_feature chain.
     unsafe {
@@ -208,7 +208,7 @@ mod pmull {
   /// V1/V2 (2 crypto pipes) can schedule freely, then a single reduction.
   #[cfg(feature = "aes-gcm-siv")]
   #[target_feature(enable = "neon", enable = "aes")]
-  #[inline(always)]
+  #[inline]
   pub(super) unsafe fn aggregate_4blocks(acc: u128, h_powers_rev: &[u128; 4], blocks: &[u128; 4]) -> u128 {
     // SAFETY: target_feature gate guarantees NEON + PMULL.
     unsafe {
@@ -381,7 +381,7 @@ mod s390x_vgfm {
 
   /// Core VGFM multiply + reduce — `#[inline(always)]` for guaranteed inlining.
   #[target_feature(enable = "vector")]
-  #[inline(always)]
+  #[inline]
   pub(super) unsafe fn clmul128_reduce_core(a: u128, b: u128) -> u128 {
     // SAFETY: caller guarantees z/Vector availability via target_feature chain.
     unsafe {
@@ -425,7 +425,7 @@ mod s390x_vgfm {
   /// Montgomery reduction.
   #[cfg(feature = "aes-gcm-siv")]
   #[target_feature(enable = "vector")]
-  #[inline(always)]
+  #[inline]
   pub(super) unsafe fn aggregate_4blocks(acc: u128, h_powers_rev: &[u128; 4], blocks: &[u128; 4]) -> u128 {
     // SAFETY: target_feature gate guarantees z/Vector availability.
     unsafe {
@@ -515,7 +515,7 @@ mod ppc_vpmsum {
 
   /// Core VPMSUMD multiply + reduce — `#[inline(always)]` for guaranteed inlining.
   #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
-  #[inline(always)]
+  #[inline]
   pub(super) unsafe fn clmul128_reduce_core(a: u128, b: u128) -> u128 {
     // SAFETY: caller guarantees POWER8 crypto availability via target_feature chain.
     unsafe {
@@ -555,7 +555,7 @@ mod ppc_vpmsum {
   /// Montgomery reduction.
   #[cfg(feature = "aes-gcm-siv")]
   #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
-  #[inline(always)]
+  #[inline]
   pub(super) unsafe fn aggregate_4blocks(acc: u128, h_powers_rev: &[u128; 4], blocks: &[u128; 4]) -> u128 {
     // SAFETY: target_feature gate guarantees POWER8 crypto availability.
     unsafe {
@@ -990,6 +990,14 @@ pub(super) fn clmul128_reduce(a: u128, b: u128) -> u128 {
 ///
 /// Used by both GHASH and POLYVAL to enable the schoolbook-then-reduce
 /// pattern: 4 parallel multiplies, 1 shared reduction.
+#[cfg(any(
+  feature = "aes-gcm",
+  target_arch = "x86_64",
+  target_arch = "aarch64",
+  target_arch = "powerpc64",
+  target_arch = "s390x",
+  test
+))]
 pub(super) fn precompute_powers(h: u128) -> [u128; 4] {
   let h2 = clmul128_reduce(h, h);
   let h3 = clmul128_reduce(h2, h);
