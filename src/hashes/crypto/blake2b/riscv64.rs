@@ -26,44 +26,6 @@ use super::kernels::{SIGMA, init_v, load_msg};
 // at the top of compress_rvv. Individual helpers assume VL=2/SEW=64 is already
 // set and use paired vector registers passed by the caller.
 
-/// Load 2 consecutive u64 values from a pointer into a vector register.
-///
-/// # Safety
-///
-/// Caller must ensure `p` is valid for 2 x u64 and VL=2/SEW=64 is set.
-#[inline(always)]
-unsafe fn vload_pair(p: *const u64, vd: &mut [u64; 2]) {
-  // SAFETY: V extension via target_feature on caller. p valid for 16 bytes.
-  unsafe {
-    core::arch::asm!(
-      "vle64.v v0, ({ptr})",
-      "vse64.v v0, ({out})",
-      ptr = in(reg) p,
-      out = in(reg) vd.as_mut_ptr(),
-      options(nostack)
-    );
-  }
-}
-
-/// Store 2 u64 values to a pointer from a local array.
-///
-/// # Safety
-///
-/// Caller must ensure `p` is valid for 2 x u64 and VL=2/SEW=64 is set.
-#[inline(always)]
-unsafe fn vstore_pair(p: *mut u64, vs: &[u64; 2]) {
-  // SAFETY: V extension via target_feature on caller. p valid for 16 bytes.
-  unsafe {
-    core::arch::asm!(
-      "vle64.v v0, ({src})",
-      "vse64.v v0, ({ptr})",
-      src = in(reg) vs.as_ptr(),
-      ptr = in(reg) p,
-      options(nostack)
-    );
-  }
-}
-
 // ─── Rotation helpers (shift-right + shift-left + OR) ─────────────────────
 
 /// Rotate right u64 lanes by 32: (x >> 32) | (x << 32).

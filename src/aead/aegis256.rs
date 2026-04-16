@@ -248,7 +248,7 @@ mod rv_zkne {
     }
   }
 
-  #[inline(always)]
+  #[inline]
   fn keystream(s: &State) -> Block {
     let s2_and_s3 = and_block(&s[2], &s[3]);
     let mut z = xor_block(&s[1], &s[4]);
@@ -419,12 +419,12 @@ mod ni {
 
   use super::{BLOCK_SIZE, C0, C1, KEY_SIZE, NONCE_SIZE, TAG_SIZE};
 
-  #[inline(always)]
+  #[inline]
   unsafe fn load(bytes: &[u8; BLOCK_SIZE]) -> __m128i {
     _mm_loadu_si128(bytes.as_ptr().cast())
   }
 
-  #[inline(always)]
+  #[inline]
   unsafe fn store(v: __m128i, out: &mut [u8; BLOCK_SIZE]) {
     _mm_storeu_si128(out.as_mut_ptr().cast(), v);
   }
@@ -437,7 +437,7 @@ mod ni {
   // pin them to XMM registers across loop iterations, eliminating store-to-
   // load round-trips that serialize the OOO pipeline.
 
-  #[inline(always)]
+  #[inline]
   unsafe fn update_regs(
     s0: &mut __m128i,
     s1: &mut __m128i,
@@ -456,7 +456,7 @@ mod ni {
     *s0 = _mm_xor_si128(_mm_aesenc_si128(tmp, *s0), m);
   }
 
-  #[inline(always)]
+  #[inline]
   unsafe fn keystream_regs(s1: __m128i, s2: __m128i, s3: __m128i, s4: __m128i, s5: __m128i) -> __m128i {
     _mm_xor_si128(_mm_xor_si128(s1, s4), _mm_xor_si128(s5, _mm_and_si128(s2, s3)))
   }
@@ -742,12 +742,12 @@ mod ce {
 
   use super::{BLOCK_SIZE, C0, C1, KEY_SIZE, NONCE_SIZE, TAG_SIZE};
 
-  #[inline(always)]
+  #[inline]
   unsafe fn load(bytes: &[u8; BLOCK_SIZE]) -> uint8x16_t {
     vld1q_u8(bytes.as_ptr())
   }
 
-  #[inline(always)]
+  #[inline]
   unsafe fn store(v: uint8x16_t, out: &mut [u8; BLOCK_SIZE]) {
     vst1q_u8(out.as_mut_ptr(), v);
   }
@@ -763,7 +763,7 @@ mod ce {
   // OOO engine maximum scheduling freedom across both pipes.
 
   #[target_feature(enable = "aes,neon")]
-  #[inline(always)]
+  #[inline]
   #[allow(clippy::too_many_arguments)]
   unsafe fn update_regs(
     s0: &mut uint8x16_t,
@@ -784,7 +784,7 @@ mod ce {
     *s0 = veorq_u8(veorq_u8(vaesmcq_u8(vaeseq_u8(tmp, zero)), *s0), m);
   }
 
-  #[inline(always)]
+  #[inline]
   unsafe fn keystream_regs(
     s1: uint8x16_t,
     s2: uint8x16_t,
@@ -1062,7 +1062,7 @@ mod ppc {
   use super::{BLOCK_SIZE, C0, C1, KEY_SIZE, NONCE_SIZE, TAG_SIZE};
 
   /// Load a 16-byte block into a POWER vector register (big-endian byte order).
-  #[inline(always)]
+  #[inline]
   fn load_be(bytes: &[u8; 16]) -> i64x2 {
     let elems = [
       i64::from_be_bytes([
@@ -1525,7 +1525,7 @@ mod s390x_vperm {
   /// # Safety
   /// Requires the s390x vector facility (z13+).
   #[target_feature(enable = "vector")]
-  #[inline(always)]
+  #[inline]
   unsafe fn vperm(v2: i64x2, v3: i64x2, control: i64x2) -> i64x2 {
     // SAFETY: Caller guarantees the s390x vector facility is available.
     // VPERM operates on pure register values with no memory access.
@@ -1548,8 +1548,9 @@ mod s390x_vperm {
   /// # Safety
   /// Requires the s390x vector facility.
   #[target_feature(enable = "vector")]
-  #[inline(always)]
+  #[inline]
   unsafe fn vnc(a: i64x2, b: i64x2) -> i64x2 {
+    // SAFETY: caller guarantees the s390x vector facility is available.
     unsafe {
       let out: i64x2;
       asm!(
@@ -1568,8 +1569,9 @@ mod s390x_vperm {
   /// # Safety
   /// Requires the s390x vector facility.
   #[target_feature(enable = "vector")]
-  #[inline(always)]
+  #[inline]
   unsafe fn vesrlb_4(v: i64x2) -> i64x2 {
+    // SAFETY: caller guarantees the s390x vector facility is available.
     unsafe {
       let out: i64x2;
       asm!(
@@ -1588,8 +1590,9 @@ mod s390x_vperm {
   /// # Safety
   /// Requires the s390x vector facility.
   #[target_feature(enable = "vector")]
-  #[inline(always)]
+  #[inline]
   unsafe fn vesrab_7(v: i64x2) -> i64x2 {
+    // SAFETY: caller guarantees the s390x vector facility is available.
     unsafe {
       let out: i64x2;
       asm!(
@@ -1607,8 +1610,9 @@ mod s390x_vperm {
   /// # Safety
   /// Requires the s390x vector facility.
   #[target_feature(enable = "vector")]
-  #[inline(always)]
+  #[inline]
   unsafe fn veslb_1(v: i64x2) -> i64x2 {
+    // SAFETY: caller guarantees the s390x vector facility is available.
     unsafe {
       let out: i64x2;
       asm!(
@@ -1629,12 +1633,16 @@ mod s390x_vperm {
   /// when bit 7 of the index is set (the "infinity" sentinel from the
   /// GF(2^4) inverse). Uses VPERM + VESRAB + VNC.
   #[target_feature(enable = "vector")]
-  #[inline(always)]
+  #[inline]
   unsafe fn vperm_z(table: i64x2, indices: i64x2, mask_0f: i64x2) -> i64x2 {
-    let idx4 = and_vec(indices, mask_0f);
-    let result = vperm(table, table, idx4);
-    let bit7 = vesrab_7(indices);
-    vnc(result, bit7)
+    // SAFETY: caller guarantees the s390x vector facility is available for
+    // this helper; all invoked primitives operate only on register values.
+    unsafe {
+      let idx4 = and_vec(indices, mask_0f);
+      let result = vperm(table, table, idx4);
+      let bit7 = vesrab_7(indices);
+      vnc(result, bit7)
+    }
   }
 
   /// Single AES round via Hamburg vperm: SubBytes + ShiftRows + MixColumns +
@@ -1643,63 +1651,67 @@ mod s390x_vperm {
   /// # Safety
   /// Requires the s390x vector facility (z13+).
   #[target_feature(enable = "vector")]
-  #[inline(always)]
+  #[inline]
   unsafe fn aes_round(state: i64x2, round_key: i64x2, tables: &VpermTables) -> i64x2 {
-    // ── Phase 1: Nibble extraction ──
-    let lo_nib = and_vec(state, tables.mask_0f);
-    let hi_nib = vesrlb_4(state);
+    // SAFETY: caller guarantees the s390x vector facility is available for
+    // this helper; all invoked primitives operate only on register values.
+    unsafe {
+      // ── Phase 1: Nibble extraction ──
+      let lo_nib = and_vec(state, tables.mask_0f);
+      let hi_nib = vesrlb_4(state);
 
-    // ── Phase 2: Input transform (AES basis → tower field) ──
-    let ipt_l = vperm(tables.ipt_lo, tables.ipt_lo, lo_nib);
-    let ipt_h = vperm(tables.ipt_hi, tables.ipt_hi, hi_nib);
-    let x = xor_vec(ipt_l, ipt_h);
+      // ── Phase 2: Input transform (AES basis → tower field) ──
+      let ipt_l = vperm(tables.ipt_lo, tables.ipt_lo, lo_nib);
+      let ipt_h = vperm(tables.ipt_hi, tables.ipt_hi, hi_nib);
+      let x = xor_vec(ipt_l, ipt_h);
 
-    // ── Phase 3: Re-extract nibbles of transformed value ──
-    let t_lo = and_vec(x, tables.mask_0f);
-    let t_hi = vesrlb_4(x);
+      // ── Phase 3: Re-extract nibbles of transformed value ──
+      let t_lo = and_vec(x, tables.mask_0f);
+      let t_hi = vesrlb_4(x);
 
-    // ── Phase 4: GF(2^4) inverse (5 plain VPERM + 4 zeroing VPERM + XORs) ──
-    let ak = vperm(tables.inv_hi, tables.inv_hi, t_lo);
-    let j = xor_vec(t_hi, t_lo);
-    let inv_i = vperm(tables.inv_lo, tables.inv_lo, t_hi);
-    let iak = xor_vec(inv_i, ak);
-    let inv_j = vperm(tables.inv_lo, tables.inv_lo, j);
-    let jak = xor_vec(inv_j, ak);
+      // ── Phase 4: GF(2^4) inverse (5 plain VPERM + 4 zeroing VPERM + XORs) ──
+      let ak = vperm(tables.inv_hi, tables.inv_hi, t_lo);
+      let j = xor_vec(t_hi, t_lo);
+      let inv_i = vperm(tables.inv_lo, tables.inv_lo, t_hi);
+      let iak = xor_vec(inv_i, ak);
+      let inv_j = vperm(tables.inv_lo, tables.inv_lo, j);
+      let jak = xor_vec(inv_j, ak);
 
-    // Zeroing lookups: sentinel 0x80 in T_INV_LO maps to "infinity" in GF(2^4).
-    // When bit 7 is set in the index, the result must be 0 (not table[0]).
-    let inv_iak = vperm_z(tables.inv_lo, iak, tables.mask_0f);
-    let io = xor_vec(inv_iak, j);
-    let inv_jak = vperm_z(tables.inv_lo, jak, tables.mask_0f);
-    let jo = xor_vec(inv_jak, t_hi);
+      // Zeroing lookups: sentinel 0x80 in T_INV_LO maps to "infinity" in GF(2^4).
+      // When bit 7 is set in the index, the result must be 0 (not table[0]).
+      let inv_iak = vperm_z(tables.inv_lo, iak, tables.mask_0f);
+      let io = xor_vec(inv_iak, j);
+      let inv_jak = vperm_z(tables.inv_lo, jak, tables.mask_0f);
+      let jo = xor_vec(inv_jak, t_hi);
 
-    // ── Phase 5: Output transform (SubBytes output, no MixColumns) ──
-    // io/jo can have bit 7 set from the sentinel propagation.
-    let su = vperm_z(tables.sbou, io, tables.mask_0f);
-    let st = vperm_z(tables.sbot, jo, tables.mask_0f);
-    let sb = xor_vec(xor_vec(su, st), tables.affine_63);
+      // ── Phase 5: Output transform (SubBytes output, no MixColumns) ──
+      // io/jo can have bit 7 set from the sentinel propagation.
+      let su = vperm_z(tables.sbou, io, tables.mask_0f);
+      let st = vperm_z(tables.sbot, jo, tables.mask_0f);
+      let sb = xor_vec(xor_vec(su, st), tables.affine_63);
 
-    // ── ShiftRows ──
-    let sr = vperm(sb, sb, tables.sr_perm);
+      // ── ShiftRows ──
+      let sr = vperm(sb, sb, tables.sr_perm);
 
-    // ── MixColumns (xtime decomposition) ──
-    // rot1[i] = sr[(i+1) mod 4 within each column]
-    let rot1 = vperm(sr, sr, tables.mc_rot1);
-    // pair = sr ^ rot1 = [b0^b1, b1^b2, b2^b3, b3^b0] per column
-    let pair = xor_vec(sr, rot1);
-    // xtime(pair): (pair<<1) ^ (((pair>>7)&1) * 0x1B)
-    let xt_shifted = veslb_1(pair);
-    let xt_mask = and_vec(vesrab_7(pair), tables.xtime_1b);
-    let xt = xor_vec(xt_shifted, xt_mask);
-    // rot2_pair[i] = pair[(i+2) mod 4 within each column]
-    let rot2_pair = vperm(pair, pair, tables.mc_rot2);
-    // col_sum = pair ^ rot2(pair) = [b0^b1^b2^b3, ...] in every position
-    let col_sum = xor_vec(pair, rot2_pair);
-    // result = sr ^ col_sum ^ xtime(pair)
-    let mc = xor_vec(xor_vec(sr, col_sum), xt);
+      // ── MixColumns (xtime decomposition) ──
+      // rot1[i] = sr[(i+1) mod 4 within each column]
+      let rot1 = vperm(sr, sr, tables.mc_rot1);
+      // pair = sr ^ rot1 = [b0^b1, b1^b2, b2^b3, b3^b0] per column
+      let pair = xor_vec(sr, rot1);
+      // xtime(pair): (pair<<1) ^ (((pair>>7)&1) * 0x1B)
+      let xt_shifted = veslb_1(pair);
+      let xt_mask = and_vec(vesrab_7(pair), tables.xtime_1b);
+      let xt = xor_vec(xt_shifted, xt_mask);
+      // rot2_pair[i] = pair[(i+2) mod 4 within each column]
+      let rot2_pair = vperm(pair, pair, tables.mc_rot2);
+      // col_sum = pair ^ rot2(pair) = [b0^b1^b2^b3, ...] in every position
+      let col_sum = xor_vec(pair, rot2_pair);
+      // result = sr ^ col_sum ^ xtime(pair)
+      let mc = xor_vec(xor_vec(sr, col_sum), xt);
 
-    // ── AddRoundKey ──
-    xor_vec(mc, round_key)
+      // ── AddRoundKey ──
+      xor_vec(mc, round_key)
+    }
   }
 
   /// Preloaded Hamburg vperm constant vectors.
@@ -1744,7 +1756,8 @@ mod s390x_vperm {
   // ── AEGIS-256 state operations ──────────────────────────────────────────
 
   #[target_feature(enable = "vector")]
-  #[inline(always)]
+  #[allow(clippy::too_many_arguments)]
+  #[inline]
   unsafe fn update_regs(
     s0: &mut i64x2,
     s1: &mut i64x2,
@@ -1755,13 +1768,17 @@ mod s390x_vperm {
     m: i64x2,
     tables: &VpermTables,
   ) {
-    let tmp = *s5;
-    *s5 = aes_round(*s4, *s5, tables);
-    *s4 = aes_round(*s3, *s4, tables);
-    *s3 = aes_round(*s2, *s3, tables);
-    *s2 = aes_round(*s1, *s2, tables);
-    *s1 = aes_round(*s0, *s1, tables);
-    *s0 = xor_vec(aes_round(tmp, *s0, tables), m);
+    // SAFETY: caller guarantees the s390x vector facility is available for
+    // this helper and all state registers are valid local values.
+    unsafe {
+      let tmp = *s5;
+      *s5 = aes_round(*s4, *s5, tables);
+      *s4 = aes_round(*s3, *s4, tables);
+      *s3 = aes_round(*s2, *s3, tables);
+      *s2 = aes_round(*s1, *s2, tables);
+      *s1 = aes_round(*s0, *s1, tables);
+      *s0 = xor_vec(aes_round(tmp, *s0, tables), m);
+    }
   }
 
   #[inline(always)]
@@ -1778,96 +1795,96 @@ mod s390x_vperm {
     aad: &[u8],
     buffer: &mut [u8],
   ) -> [u8; TAG_SIZE] {
-    let tables = VpermTables::load();
-    let (kh0, kh1) = super::split_halves(key);
-    let (nh0, nh1) = super::split_halves(nonce);
-    let k0 = load_be(kh0);
-    let k1 = load_be(kh1);
-    let n0 = load_be(nh0);
-    let n1 = load_be(nh1);
-    let c0 = load_be(&C0);
-    let c1 = load_be(&C1);
-    let k0_xor_n0 = xor_vec(k0, n0);
-    let k1_xor_n1 = xor_vec(k1, n1);
-    let (mut s0, mut s1, mut s2, mut s3, mut s4, mut s5) =
-      (k0_xor_n0, k1_xor_n1, c1, c0, xor_vec(k0, c0), xor_vec(k1, c1));
-    // Initialization: 16 updates.
-    for _ in 0..4 {
-      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k0, &tables);
-      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k1, &tables);
-      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k0_xor_n0, &tables);
-      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k1_xor_n1, &tables);
+    // SAFETY: caller guarantees the s390x vector facility is available for
+    // the full fused operation and all references are valid Rust buffers.
+    unsafe {
+      let tables = VpermTables::load();
+      let (kh0, kh1) = super::split_halves(key);
+      let (nh0, nh1) = super::split_halves(nonce);
+      let k0 = load_be(kh0);
+      let k1 = load_be(kh1);
+      let n0 = load_be(nh0);
+      let n1 = load_be(nh1);
+      let c0 = load_be(&C0);
+      let c1 = load_be(&C1);
+      let k0_xor_n0 = xor_vec(k0, n0);
+      let k1_xor_n1 = xor_vec(k1, n1);
+      let (mut s0, mut s1, mut s2, mut s3, mut s4, mut s5) =
+        (k0_xor_n0, k1_xor_n1, c1, c0, xor_vec(k0, c0), xor_vec(k1, c1));
+      for _ in 0..4 {
+        update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k0, &tables);
+        update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k1, &tables);
+        update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k0_xor_n0, &tables);
+        update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k1_xor_n1, &tables);
+      }
+      let mut offset = 0usize;
+      while offset.strict_add(BLOCK_SIZE) <= aad.len() {
+        let mut tmp = [0u8; 16];
+        tmp.copy_from_slice(&aad[offset..offset.strict_add(BLOCK_SIZE)]);
+        update_regs(
+          &mut s0,
+          &mut s1,
+          &mut s2,
+          &mut s3,
+          &mut s4,
+          &mut s5,
+          load_be(&tmp),
+          &tables,
+        );
+        offset = offset.strict_add(BLOCK_SIZE);
+      }
+      if offset < aad.len() {
+        let mut pad = [0u8; BLOCK_SIZE];
+        pad[..aad.len().strict_sub(offset)].copy_from_slice(&aad[offset..]);
+        update_regs(
+          &mut s0,
+          &mut s1,
+          &mut s2,
+          &mut s3,
+          &mut s4,
+          &mut s5,
+          load_be(&pad),
+          &tables,
+        );
+      }
+      let msg_len = buffer.len();
+      let len = buffer.len();
+      offset = 0;
+      while offset.strict_add(BLOCK_SIZE) <= len {
+        let z = keystream_regs(s1, s2, s3, s4, s5);
+        let mut tmp = [0u8; 16];
+        tmp.copy_from_slice(&buffer[offset..offset.strict_add(BLOCK_SIZE)]);
+        let xi = load_be(&tmp);
+        update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, xi, &tables);
+        store_be(xor_vec(xi, z), &mut tmp);
+        buffer[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&tmp);
+        offset = offset.strict_add(BLOCK_SIZE);
+      }
+      if offset < len {
+        let z = keystream_regs(s1, s2, s3, s4, s5);
+        let tail_len = len.strict_sub(offset);
+        let mut pad = [0u8; BLOCK_SIZE];
+        pad[..tail_len].copy_from_slice(&buffer[offset..]);
+        let xi = load_be(&pad);
+        update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, xi, &tables);
+        let mut ct_bytes = [0u8; BLOCK_SIZE];
+        store_be(xor_vec(xi, z), &mut ct_bytes);
+        buffer[offset..].copy_from_slice(&ct_bytes[..tail_len]);
+      }
+      let ad_bits = (aad.len() as u64).strict_mul(8);
+      let msg_bits = (msg_len as u64).strict_mul(8);
+      let mut len_bytes = [0u8; BLOCK_SIZE];
+      len_bytes[..8].copy_from_slice(&ad_bits.to_le_bytes());
+      len_bytes[8..].copy_from_slice(&msg_bits.to_le_bytes());
+      let t = xor_vec(s3, load_be(&len_bytes));
+      for _ in 0..7 {
+        update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, t, &tables);
+      }
+      let tag_vec = xor_vec(xor_vec(xor_vec(s0, s1), xor_vec(s2, s3)), xor_vec(s4, s5));
+      let mut tag = [0u8; TAG_SIZE];
+      store_be(tag_vec, &mut tag);
+      tag
     }
-    // Process AAD.
-    let mut offset = 0usize;
-    while offset.strict_add(BLOCK_SIZE) <= aad.len() {
-      let mut tmp = [0u8; 16];
-      tmp.copy_from_slice(&aad[offset..offset.strict_add(BLOCK_SIZE)]);
-      update_regs(
-        &mut s0,
-        &mut s1,
-        &mut s2,
-        &mut s3,
-        &mut s4,
-        &mut s5,
-        load_be(&tmp),
-        &tables,
-      );
-      offset = offset.strict_add(BLOCK_SIZE);
-    }
-    if offset < aad.len() {
-      let mut pad = [0u8; BLOCK_SIZE];
-      pad[..aad.len().strict_sub(offset)].copy_from_slice(&aad[offset..]);
-      update_regs(
-        &mut s0,
-        &mut s1,
-        &mut s2,
-        &mut s3,
-        &mut s4,
-        &mut s5,
-        load_be(&pad),
-        &tables,
-      );
-    }
-    // Encrypt message.
-    let msg_len = buffer.len();
-    let len = buffer.len();
-    offset = 0;
-    while offset.strict_add(BLOCK_SIZE) <= len {
-      let z = keystream_regs(s1, s2, s3, s4, s5);
-      let mut tmp = [0u8; 16];
-      tmp.copy_from_slice(&buffer[offset..offset.strict_add(BLOCK_SIZE)]);
-      let xi = load_be(&tmp);
-      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, xi, &tables);
-      store_be(xor_vec(xi, z), &mut tmp);
-      buffer[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&tmp);
-      offset = offset.strict_add(BLOCK_SIZE);
-    }
-    if offset < len {
-      let z = keystream_regs(s1, s2, s3, s4, s5);
-      let tail_len = len.strict_sub(offset);
-      let mut pad = [0u8; BLOCK_SIZE];
-      pad[..tail_len].copy_from_slice(&buffer[offset..]);
-      let xi = load_be(&pad);
-      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, xi, &tables);
-      let mut ct_bytes = [0u8; BLOCK_SIZE];
-      store_be(xor_vec(xi, z), &mut ct_bytes);
-      buffer[offset..].copy_from_slice(&ct_bytes[..tail_len]);
-    }
-    // Finalization.
-    let ad_bits = (aad.len() as u64).strict_mul(8);
-    let msg_bits = (msg_len as u64).strict_mul(8);
-    let mut len_bytes = [0u8; BLOCK_SIZE];
-    len_bytes[..8].copy_from_slice(&ad_bits.to_le_bytes());
-    len_bytes[8..].copy_from_slice(&msg_bits.to_le_bytes());
-    let t = xor_vec(s3, load_be(&len_bytes));
-    for _ in 0..7 {
-      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, t, &tables);
-    }
-    let tag_vec = xor_vec(xor_vec(xor_vec(s0, s1), xor_vec(s2, s3)), xor_vec(s4, s5));
-    let mut tag = [0u8; TAG_SIZE];
-    store_be(tag_vec, &mut tag);
-    tag
   }
 
   #[target_feature(enable = "vector")]
@@ -1877,108 +1894,108 @@ mod s390x_vperm {
     aad: &[u8],
     buffer: &mut [u8],
   ) -> [u8; TAG_SIZE] {
-    let tables = VpermTables::load();
-    let (kh0, kh1) = super::split_halves(key);
-    let (nh0, nh1) = super::split_halves(nonce);
-    let k0 = load_be(kh0);
-    let k1 = load_be(kh1);
-    let n0 = load_be(nh0);
-    let n1 = load_be(nh1);
-    let c0 = load_be(&C0);
-    let c1 = load_be(&C1);
-    let k0_xor_n0 = xor_vec(k0, n0);
-    let k1_xor_n1 = xor_vec(k1, n1);
-    let (mut s0, mut s1, mut s2, mut s3, mut s4, mut s5) =
-      (k0_xor_n0, k1_xor_n1, c1, c0, xor_vec(k0, c0), xor_vec(k1, c1));
-    // Initialization: 16 updates.
-    for _ in 0..4 {
-      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k0, &tables);
-      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k1, &tables);
-      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k0_xor_n0, &tables);
-      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k1_xor_n1, &tables);
-    }
-    // Process AAD.
-    let mut offset = 0usize;
-    while offset.strict_add(BLOCK_SIZE) <= aad.len() {
-      let mut tmp = [0u8; 16];
-      tmp.copy_from_slice(&aad[offset..offset.strict_add(BLOCK_SIZE)]);
-      update_regs(
-        &mut s0,
-        &mut s1,
-        &mut s2,
-        &mut s3,
-        &mut s4,
-        &mut s5,
-        load_be(&tmp),
-        &tables,
-      );
-      offset = offset.strict_add(BLOCK_SIZE);
-    }
-    if offset < aad.len() {
-      let mut pad = [0u8; BLOCK_SIZE];
-      pad[..aad.len().strict_sub(offset)].copy_from_slice(&aad[offset..]);
-      update_regs(
-        &mut s0,
-        &mut s1,
-        &mut s2,
-        &mut s3,
-        &mut s4,
-        &mut s5,
-        load_be(&pad),
-        &tables,
-      );
-    }
-    // Decrypt message.
-    let ct_len = buffer.len();
-    let len = buffer.len();
-    offset = 0;
-    while offset.strict_add(BLOCK_SIZE) <= len {
-      let z = keystream_regs(s1, s2, s3, s4, s5);
-      let mut tmp = [0u8; 16];
-      tmp.copy_from_slice(&buffer[offset..offset.strict_add(BLOCK_SIZE)]);
-      let xi = xor_vec(load_be(&tmp), z); // xi = plaintext
-      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, xi, &tables);
-      store_be(xi, &mut tmp);
-      buffer[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&tmp);
-      offset = offset.strict_add(BLOCK_SIZE);
-    }
-    if offset < len {
-      let z = keystream_regs(s1, s2, s3, s4, s5);
-      let tail_len = len.strict_sub(offset);
-      let mut pad = [0u8; BLOCK_SIZE];
-      pad[..tail_len].copy_from_slice(&buffer[offset..]);
-      let mut z_bytes = [0u8; BLOCK_SIZE];
-      store_be(z, &mut z_bytes);
-      let mut pt_pad = [0u8; BLOCK_SIZE];
-      for i in 0..tail_len {
-        pt_pad[i] = pad[i] ^ z_bytes[i];
+    // SAFETY: caller guarantees the s390x vector facility is available for
+    // the full fused operation and all references are valid Rust buffers.
+    unsafe {
+      let tables = VpermTables::load();
+      let (kh0, kh1) = super::split_halves(key);
+      let (nh0, nh1) = super::split_halves(nonce);
+      let k0 = load_be(kh0);
+      let k1 = load_be(kh1);
+      let n0 = load_be(nh0);
+      let n1 = load_be(nh1);
+      let c0 = load_be(&C0);
+      let c1 = load_be(&C1);
+      let k0_xor_n0 = xor_vec(k0, n0);
+      let k1_xor_n1 = xor_vec(k1, n1);
+      let (mut s0, mut s1, mut s2, mut s3, mut s4, mut s5) =
+        (k0_xor_n0, k1_xor_n1, c1, c0, xor_vec(k0, c0), xor_vec(k1, c1));
+      for _ in 0..4 {
+        update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k0, &tables);
+        update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k1, &tables);
+        update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k0_xor_n0, &tables);
+        update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k1_xor_n1, &tables);
       }
-      update_regs(
-        &mut s0,
-        &mut s1,
-        &mut s2,
-        &mut s3,
-        &mut s4,
-        &mut s5,
-        load_be(&pt_pad),
-        &tables,
-      );
-      buffer[offset..].copy_from_slice(&pt_pad[..tail_len]);
+      let mut offset = 0usize;
+      while offset.strict_add(BLOCK_SIZE) <= aad.len() {
+        let mut tmp = [0u8; 16];
+        tmp.copy_from_slice(&aad[offset..offset.strict_add(BLOCK_SIZE)]);
+        update_regs(
+          &mut s0,
+          &mut s1,
+          &mut s2,
+          &mut s3,
+          &mut s4,
+          &mut s5,
+          load_be(&tmp),
+          &tables,
+        );
+        offset = offset.strict_add(BLOCK_SIZE);
+      }
+      if offset < aad.len() {
+        let mut pad = [0u8; BLOCK_SIZE];
+        pad[..aad.len().strict_sub(offset)].copy_from_slice(&aad[offset..]);
+        update_regs(
+          &mut s0,
+          &mut s1,
+          &mut s2,
+          &mut s3,
+          &mut s4,
+          &mut s5,
+          load_be(&pad),
+          &tables,
+        );
+      }
+      let ct_len = buffer.len();
+      let len = buffer.len();
+      offset = 0;
+      while offset.strict_add(BLOCK_SIZE) <= len {
+        let z = keystream_regs(s1, s2, s3, s4, s5);
+        let mut tmp = [0u8; 16];
+        tmp.copy_from_slice(&buffer[offset..offset.strict_add(BLOCK_SIZE)]);
+        let xi = xor_vec(load_be(&tmp), z);
+        update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, xi, &tables);
+        store_be(xi, &mut tmp);
+        buffer[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&tmp);
+        offset = offset.strict_add(BLOCK_SIZE);
+      }
+      if offset < len {
+        let z = keystream_regs(s1, s2, s3, s4, s5);
+        let tail_len = len.strict_sub(offset);
+        let mut pad = [0u8; BLOCK_SIZE];
+        pad[..tail_len].copy_from_slice(&buffer[offset..]);
+        let mut z_bytes = [0u8; BLOCK_SIZE];
+        store_be(z, &mut z_bytes);
+        let mut pt_pad = [0u8; BLOCK_SIZE];
+        for i in 0..tail_len {
+          pt_pad[i] = pad[i] ^ z_bytes[i];
+        }
+        update_regs(
+          &mut s0,
+          &mut s1,
+          &mut s2,
+          &mut s3,
+          &mut s4,
+          &mut s5,
+          load_be(&pt_pad),
+          &tables,
+        );
+        buffer[offset..].copy_from_slice(&pt_pad[..tail_len]);
+      }
+      let ad_bits = (aad.len() as u64).strict_mul(8);
+      let ct_bits = (ct_len as u64).strict_mul(8);
+      let mut len_bytes = [0u8; BLOCK_SIZE];
+      len_bytes[..8].copy_from_slice(&ad_bits.to_le_bytes());
+      len_bytes[8..].copy_from_slice(&ct_bits.to_le_bytes());
+      let t = xor_vec(s3, load_be(&len_bytes));
+      for _ in 0..7 {
+        update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, t, &tables);
+      }
+      let tag_vec = xor_vec(xor_vec(xor_vec(s0, s1), xor_vec(s2, s3)), xor_vec(s4, s5));
+      let mut tag = [0u8; TAG_SIZE];
+      store_be(tag_vec, &mut tag);
+      tag
     }
-    // Finalization.
-    let ad_bits = (aad.len() as u64).strict_mul(8);
-    let ct_bits = (ct_len as u64).strict_mul(8);
-    let mut len_bytes = [0u8; BLOCK_SIZE];
-    len_bytes[..8].copy_from_slice(&ad_bits.to_le_bytes());
-    len_bytes[8..].copy_from_slice(&ct_bits.to_le_bytes());
-    let t = xor_vec(s3, load_be(&len_bytes));
-    for _ in 0..7 {
-      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, t, &tables);
-    }
-    let tag_vec = xor_vec(xor_vec(xor_vec(s0, s1), xor_vec(s2, s3)), xor_vec(s4, s5));
-    let mut tag = [0u8; TAG_SIZE];
-    store_be(tag_vec, &mut tag);
-    tag
   }
 }
 
@@ -2052,7 +2069,7 @@ mod rv_vperm {
   /// # Safety
   /// Requires the RISC-V V extension.
   #[target_feature(enable = "v")]
-  #[inline(always)]
+  #[inline]
   unsafe fn aes_round(block: &Block, round_key: &Block, tables: &VpermTables) -> Block {
     let mut out = [0u8; BLOCK_SIZE];
 
@@ -2184,8 +2201,10 @@ mod rv_vperm {
   // ── AEGIS-256 state operations ──────────────────────────────────────────
 
   #[target_feature(enable = "v")]
-  #[inline(always)]
+  #[inline]
   unsafe fn update(s: &mut State, m: &Block, tables: &VpermTables) {
+    // SAFETY: caller guarantees the RISC-V V extension is available and the
+    // state blocks are valid local buffers for the Hamburg round function.
     unsafe {
       let tmp = s[5];
       s[5] = aes_round(&s[4], &s[5], tables);
@@ -2211,6 +2230,8 @@ mod rv_vperm {
     aad: &[u8],
     buffer: &mut [u8],
   ) -> [u8; TAG_SIZE] {
+    // SAFETY: caller guarantees the RISC-V V extension is available for the
+    // lifetime of this fused operation and all slices are valid Rust references.
     unsafe {
       let tables = VpermTables::load();
       let (kh0, kh1) = split_halves(key);
@@ -2284,6 +2305,8 @@ mod rv_vperm {
     aad: &[u8],
     buffer: &mut [u8],
   ) -> [u8; TAG_SIZE] {
+    // SAFETY: caller guarantees the RISC-V V extension is available for the
+    // lifetime of this fused operation and all slices are valid Rust references.
     unsafe {
       let tables = VpermTables::load();
       let (kh0, kh1) = split_halves(key);
@@ -3696,8 +3719,7 @@ mod tests {
   #[cfg(not(any(target_arch = "s390x", target_arch = "riscv64")))]
   fn vperm_aes_round_scalar(block: &[u8; 16], round_key: &[u8; 16]) -> [u8; 16] {
     // SubBytes via vperm tower field (includes affine constant compensation)
-    use super::super::aes_round::AES_AFFINE;
-    use super::super::aes_round::VPERM_SR as SR;
+    use super::super::aes_round::{AES_AFFINE, VPERM_SR as SR};
     let mut sb = [0u8; 16];
     for i in 0..16 {
       sb[i] = vperm_sbox_scalar(block[i]) ^ AES_AFFINE;

@@ -45,6 +45,13 @@ const BLOCK_SIZE: usize = 64;
 const MAX_KEY_LEN: usize = 32;
 const MAX_OUTPUT_LEN: usize = 32;
 
+#[cfg(any(test, feature = "diag"))]
+#[inline]
+#[must_use]
+pub(crate) fn kernel_name_for_len(len: usize) -> &'static str {
+  dispatch::kernel_name_for_len(len)
+}
+
 // ─── Core state ─────────────────────────────────────────────────────────────
 
 #[derive(Clone)]
@@ -79,14 +86,12 @@ impl Core {
     stored_key[..key.len()].copy_from_slice(key);
 
     let mut buf = [0u8; BLOCK_SIZE];
-    let buf_len;
-
-    if kk > 0 {
+    let buf_len = if kk > 0 {
       buf[..key.len()].copy_from_slice(key);
-      buf_len = BLOCK_SIZE as u8;
+      BLOCK_SIZE as u8
     } else {
-      buf_len = 0;
-    }
+      0
+    };
 
     Self {
       h,
@@ -154,8 +159,8 @@ impl Core {
 
     let nn = self.nn as usize;
     let full_words = nn / 4;
-    for i in 0..full_words {
-      let bytes = h[i].to_le_bytes();
+    for (i, word) in h.iter().enumerate().take(full_words) {
+      let bytes = word.to_le_bytes();
       let off = i.strict_mul(4);
       out[off..off.strict_add(4)].copy_from_slice(&bytes);
     }
@@ -193,10 +198,12 @@ impl Core {
 impl Drop for Core {
   fn drop(&mut self) {
     for word in self.h.iter_mut() {
+      // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
       unsafe { core::ptr::write_volatile(word, 0) };
     }
     ct::zeroize_no_fence(&mut self.buf);
     ct::zeroize_no_fence(&mut self.key);
+    // SAFETY: buf_len and t are valid, aligned, dereferenceable pointers.
     unsafe {
       core::ptr::write_volatile(&mut self.buf_len, 0);
       core::ptr::write_volatile(&mut self.t, 0);
@@ -261,12 +268,6 @@ impl Blake2s256 {
   #[cfg(test)]
   pub(crate) fn new_with_compress_for_test(compress: kernels::CompressFn) -> Self {
     Self(Core::new_with_compress_for_test(32, &[], compress))
-  }
-
-  #[cfg(test)]
-  pub(crate) fn keyed_with_compress_for_test(key: &[u8], compress: kernels::CompressFn) -> Self {
-    assert!(!key.is_empty());
-    Self(Core::new_with_compress_for_test(32, key, compress))
   }
 }
 

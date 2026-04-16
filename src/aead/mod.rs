@@ -64,7 +64,10 @@ mod aes;
 mod aes256gcm;
 #[cfg(feature = "aes-gcm-siv")]
 mod aes256gcmsiv;
-#[cfg(all(feature = "aegis256", not(any(target_arch = "s390x", target_arch = "riscv64"))))]
+#[cfg(any(
+  feature = "aegis256",
+  all(target_arch = "riscv64", any(feature = "aes-gcm", feature = "aes-gcm-siv"))
+))]
 mod aes_round;
 #[cfg(feature = "ascon-aead")]
 mod ascon128;

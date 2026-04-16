@@ -191,7 +191,7 @@ mod ce {
   /// Core key-conversion logic — `#[target_feature]` + `#[inline(always)]` for
   /// guaranteed inlining without register spills.
   #[target_feature(enable = "neon")]
-  #[inline(always)]
+  #[inline]
   pub(super) unsafe fn from_portable_core(rk: &[u32; 60]) -> CeRoundKeys {
     // SAFETY: caller guarantees NEON via target_feature chain.
     unsafe {
@@ -219,14 +219,14 @@ mod ce {
   /// This replaces ~1560 GF(2^8) field operations per SubWord call with a
   /// single AESE instruction (~1 cycle on Neoverse V1/V2).
   #[target_feature(enable = "aes,neon")]
-  #[inline(always)]
+  #[inline]
   pub(super) unsafe fn expand_key_hw(key: &[u8; 32]) -> CeRoundKeys {
     // SAFETY: caller guarantees AES-CE + NEON availability.
     unsafe {
       // Hardware SubWord: AESE on broadcast input → SubBytes (ShiftRows is
       // no-op because all 4 columns are identical).
       #[target_feature(enable = "aes,neon")]
-      #[inline(always)]
+      #[inline]
       unsafe fn sub_word_hw(w: u32) -> u32 {
         let state = vreinterpretq_u8_u32(vdupq_n_u32(w));
         let zero = vdupq_n_u8(0);
@@ -278,7 +278,7 @@ mod ce {
   /// Core block-encrypt logic — `#[target_feature]` + `#[inline(always)]` for
   /// guaranteed inlining without register spills.
   #[target_feature(enable = "aes,neon")]
-  #[inline(always)]
+  #[inline]
   pub(super) unsafe fn encrypt_block_core(keys: &CeRoundKeys, block: &mut [u8; 16]) {
     // SAFETY: caller guarantees AES-CE + NEON via target_feature chain.
     unsafe {
@@ -577,7 +577,7 @@ mod ppc {
   /// Broadcasts the input word to all 4 columns, applies the byte-wise AES
   /// S-box in parallel, then returns the first substituted word.
   #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
-  #[inline(always)]
+  #[inline]
   unsafe fn sub_word_hw(w: u32) -> u32 {
     let word = w.to_be_bytes();
     let bytes = [
@@ -602,7 +602,7 @@ mod ppc {
 
   /// Hardware-accelerated AES-256 key expansion using POWER8 `vsbox`.
   #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
-  #[inline(always)]
+  #[inline]
   pub(super) unsafe fn expand_key_hw(key: &[u8; 32]) -> PpcRoundKeys {
     // SAFETY: caller guarantees POWER8 crypto availability.
     unsafe {
@@ -654,7 +654,7 @@ mod ppc {
   /// Core block-encrypt logic — `#[target_feature]` + `#[inline(always)]` for
   /// guaranteed inlining without register spills.
   #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
-  #[inline(always)]
+  #[inline]
   pub(super) unsafe fn encrypt_block_core(keys: &PpcRoundKeys, block: &mut [u8; 16]) {
     // SAFETY: caller guarantees POWER8 crypto via target_feature chain.
     unsafe {
@@ -1174,7 +1174,7 @@ mod rv_vperm_aes {
   }
 
   /// Extract round key bytes from the portable key schedule.
-  #[inline(always)]
+  #[inline]
   fn round_key_bytes(rk: &[u32; super::EXPANDED_KEY_WORDS], round: usize) -> [u8; 16] {
     let off = round.strict_mul(4);
     let mut bytes = [0u8; 16];
@@ -1188,9 +1188,11 @@ mod rv_vperm_aes {
   /// Single inner AES round (SubBytes + ShiftRows + MixColumns + AddRoundKey).
   /// Same asm as aegis256::rv_vperm::aes_round.
   #[target_feature(enable = "v")]
-  #[inline(always)]
+  #[inline]
   unsafe fn aes_inner_round(block: &[u8; 16], round_key: &[u8; 16], tables: &VpermTables) -> [u8; 16] {
     let mut out = [0u8; 16];
+    // SAFETY: caller guarantees the RISC-V V extension is available and the
+    // asm block only reads the provided state/table/key buffers and writes `out`.
     unsafe {
       asm!(
         "vsetivli zero, 16, e8, m1, ta, ma",
@@ -1289,9 +1291,11 @@ mod rv_vperm_aes {
 
   /// Final AES round (SubBytes + ShiftRows + AddRoundKey, no MixColumns).
   #[target_feature(enable = "v")]
-  #[inline(always)]
+  #[inline]
   unsafe fn aes_final_round(block: &[u8; 16], round_key: &[u8; 16], tables: &VpermTables) -> [u8; 16] {
     let mut out = [0u8; 16];
+    // SAFETY: caller guarantees the RISC-V V extension is available and the
+    // asm block only reads the provided state/table/key buffers and writes `out`.
     unsafe {
       asm!(
         "vsetivli zero, 16, e8, m1, ta, ma",
@@ -1373,6 +1377,8 @@ mod rv_vperm_aes {
   /// Requires the RISC-V V extension.
   #[target_feature(enable = "v")]
   pub(super) unsafe fn encrypt_block(rk: &[u32; super::EXPANDED_KEY_WORDS], block: &mut [u8; 16]) {
+    // SAFETY: caller guarantees the RISC-V V extension is available for the
+    // full AES-256 block operation and all references are valid Rust buffers.
     unsafe {
       let tables = VpermTables::load();
 
@@ -1468,6 +1474,8 @@ impl Drop for Aes256EncKey {
       }
       #[cfg(target_arch = "riscv64")]
       KeyInner::RvVperm(rk) => {
+        // SAFETY: the expanded key is a contiguous `[u32; 60]`, so viewing it as
+        // a mutable byte slice for zeroization is valid for its exact size.
         crate::traits::ct::zeroize(unsafe {
           core::slice::from_raw_parts_mut(rk.as_mut_ptr().cast::<u8>(), EXPANDED_KEY_WORDS.strict_mul(4))
         });
@@ -1713,7 +1721,7 @@ pub(crate) fn aes256_expand_key(key: &[u8; KEY_SIZE]) -> Aes256EncKey {
   }
 }
 
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", feature = "aes-gcm-siv"))]
 #[inline]
 pub(crate) fn aes256_expand_key_riscv_vector(key: &[u8; KEY_SIZE]) -> Aes256EncKey {
   let mut portable_rk = aes256_expand_key_portable(key);
@@ -1724,7 +1732,7 @@ pub(crate) fn aes256_expand_key_riscv_vector(key: &[u8; KEY_SIZE]) -> Aes256EncK
   }
 }
 
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", feature = "aes-gcm-siv"))]
 #[inline]
 pub(crate) fn aes256_expand_key_riscv_scalar(key: &[u8; KEY_SIZE]) -> Aes256EncKey {
   let mut portable_rk = aes256_expand_key_portable(key);
@@ -1735,7 +1743,7 @@ pub(crate) fn aes256_expand_key_riscv_scalar(key: &[u8; KEY_SIZE]) -> Aes256EncK
   }
 }
 
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", feature = "aes-gcm-siv"))]
 #[inline]
 pub(crate) fn aes256_expand_key_riscv_vperm(key: &[u8; KEY_SIZE]) -> Aes256EncKey {
   Aes256EncKey {
@@ -1743,7 +1751,7 @@ pub(crate) fn aes256_expand_key_riscv_vperm(key: &[u8; KEY_SIZE]) -> Aes256EncKe
   }
 }
 
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", feature = "aes-gcm-siv"))]
 #[inline]
 pub(crate) fn aes256_expand_key_riscv_ttable(key: &[u8; KEY_SIZE]) -> Aes256EncKey {
   Aes256EncKey {

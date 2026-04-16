@@ -70,6 +70,8 @@ impl Blake2sKernelId {
 
 #[cfg(target_arch = "aarch64")]
 fn compress_aarch64_neon(h: &mut [u32; 8], block: &[u8; 64], t: u64, last: bool) {
+  // SAFETY: this wrapper is only compiled on AArch64, where `compress_neon`
+  // requires the baseline NEON feature guaranteed by the architecture.
   unsafe { super::aarch64::compress_neon(h, block, t, last) }
 }
 
@@ -190,10 +192,10 @@ fn g(v: &mut [u32; 16], a: usize, b: usize, c: usize, d: usize, x: u32, y: u32) 
 pub(crate) fn load_msg(block: &[u8; 64]) -> [u32; 16] {
   let mut m = [0u32; 16];
   let src = block.as_ptr();
-  for i in 0..16usize {
+  for (i, word) in m.iter_mut().enumerate() {
     // SAFETY: block is 64 bytes, i < 16, so src + i*4 is within bounds.
     let raw = unsafe { core::ptr::read_unaligned(src.add(i.strict_mul(4)).cast::<u32>()) };
-    m[i] = u32::from_le(raw);
+    *word = u32::from_le(raw);
   }
   m
 }

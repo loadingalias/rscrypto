@@ -42,6 +42,8 @@ unsafe fn ror24_avx2(x: __m256i) -> __m256i {
   static ROT24: Align32 = Align32([
     3, 4, 5, 6, 7, 0, 1, 2, 11, 12, 13, 14, 15, 8, 9, 10, 3, 4, 5, 6, 7, 0, 1, 2, 11, 12, 13, 14, 15, 8, 9, 10,
   ]);
+  // SAFETY: `ROT24` is 32-byte aligned by construction, so loading it with an
+  // aligned AVX2 load is valid and the subsequent shuffle stays in registers.
   unsafe {
     let mask = _mm256_load_si256(ROT24.0.as_ptr().cast());
     _mm256_shuffle_epi8(x, mask)
@@ -58,6 +60,8 @@ unsafe fn ror16_avx2(x: __m256i) -> __m256i {
   static ROT16: Align32 = Align32([
     2, 3, 4, 5, 6, 7, 0, 1, 10, 11, 12, 13, 14, 15, 8, 9, 2, 3, 4, 5, 6, 7, 0, 1, 10, 11, 12, 13, 14, 15, 8, 9,
   ]);
+  // SAFETY: `ROT16` is 32-byte aligned by construction, so loading it with an
+  // aligned AVX2 load is valid and the subsequent shuffle stays in registers.
   unsafe {
     let mask = _mm256_load_si256(ROT16.0.as_ptr().cast());
     _mm256_shuffle_epi8(x, mask)

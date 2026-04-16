@@ -255,11 +255,11 @@ fn g(v: &mut [u64; 16], a: usize, b: usize, c: usize, d: usize, x: u64, y: u64) 
 pub(crate) fn load_msg(block: &[u8; 128]) -> [u64; 16] {
   let mut m = [0u64; 16];
   let src = block.as_ptr();
-  for i in 0..16usize {
+  for (i, word) in m.iter_mut().enumerate() {
     // SAFETY: block is 128 bytes, i < 16, so src + i*8 is within bounds.
     // read_unaligned handles the 1-byte alignment of [u8; 128].
     let raw = unsafe { core::ptr::read_unaligned(src.add(i.strict_mul(8)).cast::<u64>()) };
-    m[i] = u64::from_le(raw);
+    *word = u64::from_le(raw);
   }
   m
 }
