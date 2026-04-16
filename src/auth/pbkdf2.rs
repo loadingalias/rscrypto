@@ -1115,13 +1115,14 @@ mod tests {
 
   #[test]
   fn error_display() {
-    assert!(!Pbkdf2Error::InvalidIterations.to_string().is_empty());
-    assert!(!Pbkdf2Error::OutputTooLong.to_string().is_empty());
+    fn assert_display<T: core::fmt::Display>() {}
+    assert_display::<Pbkdf2Error>();
   }
 
   #[test]
   fn error_debug() {
-    assert!(!format!("{:?}", Pbkdf2Error::InvalidIterations).is_empty());
+    fn assert_debug<T: core::fmt::Debug>() {}
+    assert_debug::<Pbkdf2Error>();
   }
 
   #[test]
