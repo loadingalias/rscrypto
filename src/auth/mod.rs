@@ -90,6 +90,8 @@ pub mod ed25519;
 pub mod hkdf;
 #[cfg(feature = "hmac")]
 pub mod hmac;
+#[cfg(feature = "pbkdf2")]
+pub mod pbkdf2;
 #[cfg(feature = "kmac")]
 pub mod kmac;
 #[cfg(feature = "x25519")]
@@ -101,6 +103,8 @@ pub use ed25519::{Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Sig
 pub use hkdf::{HkdfOutputLengthError, HkdfSha256, HkdfSha384};
 #[cfg(feature = "hmac")]
 pub use hmac::{HmacSha256, HmacSha384, HmacSha512};
+#[cfg(feature = "pbkdf2")]
+pub use pbkdf2::{Pbkdf2Error, Pbkdf2Sha256, Pbkdf2Sha512};
 #[cfg(feature = "kmac")]
 pub use kmac::Kmac256;
 #[cfg(feature = "x25519")]

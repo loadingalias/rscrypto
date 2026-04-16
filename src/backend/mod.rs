@@ -13,6 +13,8 @@ pub mod ascon;
   feature = "crc64",
   feature = "sha2",
   all(feature = "sha3", any(test, feature = "diag")),
+  feature = "blake2b",
+  feature = "blake2s",
   feature = "blake3",
   feature = "ascon-hash",
   feature = "xxh3",

@@ -1,6 +1,97 @@
-//! Shared portable AES round helpers for AEGIS.
+//! Shared portable AES round helpers for AEGIS and Hamburg vperm constants.
 
 const BLOCK_SIZE: usize = 16;
+
+// ---------------------------------------------------------------------------
+// Hamburg vperm lookup tables (tower-field GF(2^4) AES S-box decomposition)
+// ---------------------------------------------------------------------------
+//
+// These tables implement the Hamburg technique (CHES 2009) for computing the
+// AES S-box using only 4-bit nibble lookups via byte-shuffle instructions
+// (PSHUFB, VPERM, vrgather). All operations are register-to-register with
+// no secret-dependent memory access — constant-time by construction.
+//
+// Reference: Hamburg, "Accelerating AES with Vector Permute Instructions"
+// https://www.shiftleft.org/papers/vector_aes/vector_aes.pdf
+//
+// Table sources: OpenSSL Lk_ipt, Lk_inv, Lk_sbo (vpaes-x86_64.pl).
+// Validated for all 256 input values in aegis256.rs tests.
+
+/// Input transform, low nibble: maps AES GF(2^8) basis to tower-field basis.
+#[rustfmt::skip]
+pub(crate) const VPERM_IPT_LO: [u8; 16] = [
+  0x00, 0x70, 0x2A, 0x5A, 0x98, 0xE8, 0xB2, 0xC2,
+  0x08, 0x78, 0x22, 0x52, 0x90, 0xE0, 0xBA, 0xCA,
+];
+
+/// Input transform, high nibble: maps AES GF(2^8) basis to tower-field basis.
+#[rustfmt::skip]
+pub(crate) const VPERM_IPT_HI: [u8; 16] = [
+  0x00, 0x4D, 0x7C, 0x31, 0x7D, 0x30, 0x01, 0x4C,
+  0x81, 0xCC, 0xFD, 0xB0, 0xFC, 0xB1, 0x80, 0xCD,
+];
+
+/// GF(2^4) inverse table, low nibble. Entry 0 is `0x80` (infinity sentinel).
+#[rustfmt::skip]
+pub(crate) const VPERM_INV_LO: [u8; 16] = [
+  0x80, 0x01, 0x08, 0x0D, 0x0F, 0x06, 0x05, 0x0E,
+  0x02, 0x0C, 0x0B, 0x0A, 0x09, 0x03, 0x07, 0x04,
+];
+
+/// GF(2^4) inverse table, high nibble. Entry 0 is `0x80` (infinity sentinel).
+#[rustfmt::skip]
+pub(crate) const VPERM_INV_HI: [u8; 16] = [
+  0x80, 0x07, 0x0B, 0x0F, 0x06, 0x0A, 0x04, 0x01,
+  0x09, 0x08, 0x05, 0x02, 0x0C, 0x0E, 0x0D, 0x03,
+];
+
+/// SubBytes output table, upper component (inverse-isomorphism + AES affine,
+/// no MixColumns). `sbou[io] ^ sbot[jo] = AES_SBOX[x] ^ 0x63`.
+#[rustfmt::skip]
+pub(crate) const VPERM_SBOU: [u8; 16] = [
+  0x00, 0xC7, 0xBD, 0x6F, 0x17, 0x6D, 0xD2, 0xD0,
+  0x78, 0xA8, 0x02, 0xC5, 0x7A, 0xBF, 0xAA, 0x15,
+];
+
+/// SubBytes output table, lower component (inverse-isomorphism + AES affine,
+/// no MixColumns). `sbou[io] ^ sbot[jo] = AES_SBOX[x] ^ 0x63`.
+#[rustfmt::skip]
+pub(crate) const VPERM_SBOT: [u8; 16] = [
+  0x00, 0x6A, 0xBB, 0x5F, 0xA5, 0x74, 0xE4, 0xCF,
+  0xFA, 0x35, 0x2B, 0x41, 0xD1, 0x90, 0x1E, 0x8E,
+];
+
+/// AES ShiftRows permutation: output byte `i` reads from input byte `SR[i]`.
+#[rustfmt::skip]
+pub(crate) const VPERM_SR: [u8; 16] = [
+  0x00, 0x05, 0x0A, 0x0F, 0x04, 0x09, 0x0E, 0x03,
+  0x08, 0x0D, 0x02, 0x07, 0x0C, 0x01, 0x06, 0x0B,
+];
+
+/// AES affine constant: Hamburg vperm S-box omits this; XOR after SubBytes.
+pub(crate) const AES_AFFINE: u8 = 0x63;
+
+/// AES MixColumns reduction constant: `xtime(b) = (b<<1) ^ ((b>>7) * 0x1B)`.
+pub(crate) const XTIME_REDUCE: u8 = 0x1B;
+
+/// Nibble mask: extract low 4 bits of each byte.
+pub(crate) const NIBBLE_MASK: u8 = 0x0F;
+
+/// MixColumns column-rotate-by-1 permutation: rotates each 4-byte column by 1.
+/// `[b1,b2,b3,b0, b5,b6,b7,b4, b9,b10,b11,b8, b13,b14,b15,b12]`
+#[rustfmt::skip]
+pub(crate) const MC_ROT1: [u8; 16] = [
+  0x01, 0x02, 0x03, 0x00, 0x05, 0x06, 0x07, 0x04,
+  0x09, 0x0A, 0x0B, 0x08, 0x0D, 0x0E, 0x0F, 0x0C,
+];
+
+/// MixColumns column-rotate-by-2 permutation: rotates each 4-byte column by 2.
+/// `[b2,b3,b0,b1, b6,b7,b4,b5, b10,b11,b8,b9, b14,b15,b12,b13]`
+#[rustfmt::skip]
+pub(crate) const MC_ROT2: [u8; 16] = [
+  0x02, 0x03, 0x00, 0x01, 0x06, 0x07, 0x04, 0x05,
+  0x0A, 0x0B, 0x08, 0x09, 0x0E, 0x0F, 0x0C, 0x0D,
+];
 
 #[inline(always)]
 const fn gf256_mul(a: u8, b: u8) -> u8 {
