@@ -112,12 +112,18 @@ fn vxor(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
 fn g2(
-  a0: &mut [u64; 2], a1: &mut [u64; 2],
-  b0: &mut [u64; 2], b1: &mut [u64; 2],
-  c0: &mut [u64; 2], c1: &mut [u64; 2],
-  d0: &mut [u64; 2], d1: &mut [u64; 2],
-  mx0: [u64; 2], mx1: [u64; 2],
-  my0: [u64; 2], my1: [u64; 2],
+  a0: &mut [u64; 2],
+  a1: &mut [u64; 2],
+  b0: &mut [u64; 2],
+  b1: &mut [u64; 2],
+  c0: &mut [u64; 2],
+  c1: &mut [u64; 2],
+  d0: &mut [u64; 2],
+  d1: &mut [u64; 2],
+  mx0: [u64; 2],
+  mx1: [u64; 2],
+  my0: [u64; 2],
+  my1: [u64; 2],
 ) {
   // a += b + mx
   *a0 = vadd(vadd(*a0, *b0), mx0);
@@ -154,9 +160,12 @@ fn g2(
 ///   new_hi = [old_hi[1], old_lo[0]]
 #[inline(always)]
 fn diagonalize(
-  b0: &mut [u64; 2], b1: &mut [u64; 2],
-  c0: &mut [u64; 2], c1: &mut [u64; 2],
-  d0: &mut [u64; 2], d1: &mut [u64; 2],
+  b0: &mut [u64; 2],
+  b1: &mut [u64; 2],
+  c0: &mut [u64; 2],
+  c1: &mut [u64; 2],
+  d0: &mut [u64; 2],
+  d1: &mut [u64; 2],
 ) {
   // B: rotate left 1
   let tb0 = *b0;
@@ -177,9 +186,12 @@ fn diagonalize(
 /// Un-diagonalize: reverse the rotations.
 #[inline(always)]
 fn undiagonalize(
-  b0: &mut [u64; 2], b1: &mut [u64; 2],
-  c0: &mut [u64; 2], c1: &mut [u64; 2],
-  d0: &mut [u64; 2], d1: &mut [u64; 2],
+  b0: &mut [u64; 2],
+  b1: &mut [u64; 2],
+  c0: &mut [u64; 2],
+  c1: &mut [u64; 2],
+  d0: &mut [u64; 2],
+  d1: &mut [u64; 2],
 ) {
   // B: rotate right 1 (undo left 1)
   let tb0 = *b0;
@@ -234,9 +246,7 @@ pub(super) unsafe fn compress_rvv(h: &mut [u64; 8], block: &[u8; 128], t: u128, 
     let my1 = [m[s[5] as usize], m[s[7] as usize]];
 
     g2(
-      &mut a0, &mut a1, &mut b0, &mut b1,
-      &mut c0, &mut c1, &mut d0, &mut d1,
-      mx0, mx1, my0, my1,
+      &mut a0, &mut a1, &mut b0, &mut b1, &mut c0, &mut c1, &mut d0, &mut d1, mx0, mx1, my0, my1,
     );
 
     diagonalize(&mut b0, &mut b1, &mut c0, &mut c1, &mut d0, &mut d1);
@@ -248,9 +258,7 @@ pub(super) unsafe fn compress_rvv(h: &mut [u64; 8], block: &[u8; 128], t: u128, 
     let my1 = [m[s[13] as usize], m[s[15] as usize]];
 
     g2(
-      &mut a0, &mut a1, &mut b0, &mut b1,
-      &mut c0, &mut c1, &mut d0, &mut d1,
-      mx0, mx1, my0, my1,
+      &mut a0, &mut a1, &mut b0, &mut b1, &mut c0, &mut c1, &mut d0, &mut d1, mx0, mx1, my0, my1,
     );
 
     undiagonalize(&mut b0, &mut b1, &mut c0, &mut c1, &mut d0, &mut d1);

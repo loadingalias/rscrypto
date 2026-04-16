@@ -1134,24 +1134,24 @@ mod rv_vperm_aes {
   use core::arch::asm;
 
   use crate::aead::aes_round::{
-    AES_AFFINE, MC_ROT1, MC_ROT2, VPERM_INV_HI, VPERM_INV_LO, VPERM_IPT_HI, VPERM_IPT_LO,
-    VPERM_SBOU, VPERM_SBOT, VPERM_SR, XTIME_REDUCE,
+    AES_AFFINE, MC_ROT1, MC_ROT2, VPERM_INV_HI, VPERM_INV_LO, VPERM_IPT_HI, VPERM_IPT_LO, VPERM_SBOT, VPERM_SBOU,
+    VPERM_SR, XTIME_REDUCE,
   };
 
   /// Precomputed Hamburg vperm table block — contiguous for offset-based loads.
   #[repr(C, align(16))]
   struct VpermTables {
-    ipt_lo: [u8; 16],   // offset 0
-    ipt_hi: [u8; 16],   // offset 16
-    inv_lo: [u8; 16],   // offset 32
-    inv_hi: [u8; 16],   // offset 48
-    sbou: [u8; 16],     // offset 64
-    sbot: [u8; 16],     // offset 80
-    sr_perm: [u8; 16],  // offset 96
-    mc_rot1: [u8; 16],  // offset 112
-    mc_rot2: [u8; 16],  // offset 128
-    affine: [u8; 16],   // offset 144
-    xtime: [u8; 16],    // offset 160
+    ipt_lo: [u8; 16],  // offset 0
+    ipt_hi: [u8; 16],  // offset 16
+    inv_lo: [u8; 16],  // offset 32
+    inv_hi: [u8; 16],  // offset 48
+    sbou: [u8; 16],    // offset 64
+    sbot: [u8; 16],    // offset 80
+    sr_perm: [u8; 16], // offset 96
+    mc_rot1: [u8; 16], // offset 112
+    mc_rot2: [u8; 16], // offset 128
+    affine: [u8; 16],  // offset 144
+    xtime: [u8; 16],   // offset 160
   }
 
   impl VpermTables {
@@ -1189,11 +1189,7 @@ mod rv_vperm_aes {
   /// Same asm as aegis256::rv_vperm::aes_round.
   #[target_feature(enable = "v")]
   #[inline(always)]
-  unsafe fn aes_inner_round(
-    block: &[u8; 16],
-    round_key: &[u8; 16],
-    tables: &VpermTables,
-  ) -> [u8; 16] {
+  unsafe fn aes_inner_round(block: &[u8; 16], round_key: &[u8; 16], tables: &VpermTables) -> [u8; 16] {
     let mut out = [0u8; 16];
     unsafe {
       asm!(
@@ -1294,11 +1290,7 @@ mod rv_vperm_aes {
   /// Final AES round (SubBytes + ShiftRows + AddRoundKey, no MixColumns).
   #[target_feature(enable = "v")]
   #[inline(always)]
-  unsafe fn aes_final_round(
-    block: &[u8; 16],
-    round_key: &[u8; 16],
-    tables: &VpermTables,
-  ) -> [u8; 16] {
+  unsafe fn aes_final_round(block: &[u8; 16], round_key: &[u8; 16], tables: &VpermTables) -> [u8; 16] {
     let mut out = [0u8; 16];
     unsafe {
       asm!(
@@ -1380,10 +1372,7 @@ mod rv_vperm_aes {
   /// # Safety
   /// Requires the RISC-V V extension.
   #[target_feature(enable = "v")]
-  pub(super) unsafe fn encrypt_block(
-    rk: &[u32; super::EXPANDED_KEY_WORDS],
-    block: &mut [u8; 16],
-  ) {
+  pub(super) unsafe fn encrypt_block(rk: &[u32; super::EXPANDED_KEY_WORDS], block: &mut [u8; 16]) {
     unsafe {
       let tables = VpermTables::load();
 

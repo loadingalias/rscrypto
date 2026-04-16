@@ -1460,13 +1460,12 @@ mod ppc {
 #[cfg(target_arch = "s390x")]
 #[allow(unsafe_code)]
 mod s390x_vperm {
-  use core::arch::asm;
-  use core::simd::i64x2;
+  use core::{arch::asm, simd::i64x2};
 
   use super::{BLOCK_SIZE, C0, C1, KEY_SIZE, NONCE_SIZE, TAG_SIZE};
   use crate::aead::aes_round::{
-    AES_AFFINE, MC_ROT1, MC_ROT2, NIBBLE_MASK, VPERM_INV_HI, VPERM_INV_LO, VPERM_IPT_HI,
-    VPERM_IPT_LO, VPERM_SBOU, VPERM_SBOT, VPERM_SR, XTIME_REDUCE,
+    AES_AFFINE, MC_ROT1, MC_ROT2, NIBBLE_MASK, VPERM_INV_HI, VPERM_INV_LO, VPERM_IPT_HI, VPERM_IPT_LO, VPERM_SBOT,
+    VPERM_SBOU, VPERM_SR, XTIME_REDUCE,
   };
 
   // ── Vector register helpers ──────────────────────────────────────────────
@@ -1804,13 +1803,31 @@ mod s390x_vperm {
     while offset.strict_add(BLOCK_SIZE) <= aad.len() {
       let mut tmp = [0u8; 16];
       tmp.copy_from_slice(&aad[offset..offset.strict_add(BLOCK_SIZE)]);
-      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, load_be(&tmp), &tables);
+      update_regs(
+        &mut s0,
+        &mut s1,
+        &mut s2,
+        &mut s3,
+        &mut s4,
+        &mut s5,
+        load_be(&tmp),
+        &tables,
+      );
       offset = offset.strict_add(BLOCK_SIZE);
     }
     if offset < aad.len() {
       let mut pad = [0u8; BLOCK_SIZE];
       pad[..aad.len().strict_sub(offset)].copy_from_slice(&aad[offset..]);
-      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, load_be(&pad), &tables);
+      update_regs(
+        &mut s0,
+        &mut s1,
+        &mut s2,
+        &mut s3,
+        &mut s4,
+        &mut s5,
+        load_be(&pad),
+        &tables,
+      );
     }
     // Encrypt message.
     let msg_len = buffer.len();
@@ -1885,13 +1902,31 @@ mod s390x_vperm {
     while offset.strict_add(BLOCK_SIZE) <= aad.len() {
       let mut tmp = [0u8; 16];
       tmp.copy_from_slice(&aad[offset..offset.strict_add(BLOCK_SIZE)]);
-      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, load_be(&tmp), &tables);
+      update_regs(
+        &mut s0,
+        &mut s1,
+        &mut s2,
+        &mut s3,
+        &mut s4,
+        &mut s5,
+        load_be(&tmp),
+        &tables,
+      );
       offset = offset.strict_add(BLOCK_SIZE);
     }
     if offset < aad.len() {
       let mut pad = [0u8; BLOCK_SIZE];
       pad[..aad.len().strict_sub(offset)].copy_from_slice(&aad[offset..]);
-      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, load_be(&pad), &tables);
+      update_regs(
+        &mut s0,
+        &mut s1,
+        &mut s2,
+        &mut s3,
+        &mut s4,
+        &mut s5,
+        load_be(&pad),
+        &tables,
+      );
     }
     // Decrypt message.
     let ct_len = buffer.len();
@@ -1918,7 +1953,16 @@ mod s390x_vperm {
       for i in 0..tail_len {
         pt_pad[i] = pad[i] ^ z_bytes[i];
       }
-      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, load_be(&pt_pad), &tables);
+      update_regs(
+        &mut s0,
+        &mut s1,
+        &mut s2,
+        &mut s3,
+        &mut s4,
+        &mut s5,
+        load_be(&pt_pad),
+        &tables,
+      );
       buffer[offset..].copy_from_slice(&pt_pad[..tail_len]);
     }
     // Finalization.
@@ -1960,8 +2004,8 @@ mod rv_vperm {
 
   use super::{BLOCK_SIZE, Block, C0, C1, KEY_SIZE, NONCE_SIZE, TAG_SIZE, and_block, split_halves, xor_block};
   use crate::aead::aes_round::{
-    AES_AFFINE, MC_ROT1, MC_ROT2, VPERM_INV_HI, VPERM_INV_LO, VPERM_IPT_HI, VPERM_IPT_LO,
-    VPERM_SBOU, VPERM_SBOT, VPERM_SR, XTIME_REDUCE,
+    AES_AFFINE, MC_ROT1, MC_ROT2, VPERM_INV_HI, VPERM_INV_LO, VPERM_IPT_HI, VPERM_IPT_LO, VPERM_SBOT, VPERM_SBOU,
+    VPERM_SR, XTIME_REDUCE,
   };
 
   type State = [Block; 6];
@@ -1970,17 +2014,17 @@ mod rv_vperm {
   /// offset-based vector loads in the asm block.
   #[repr(C, align(16))]
   struct VpermTables {
-    ipt_lo: [u8; 16],   // offset 0
-    ipt_hi: [u8; 16],   // offset 16
-    inv_lo: [u8; 16],   // offset 32
-    inv_hi: [u8; 16],   // offset 48
-    sbou: [u8; 16],     // offset 64
-    sbot: [u8; 16],     // offset 80
-    sr_perm: [u8; 16],  // offset 96
-    mc_rot1: [u8; 16],  // offset 112
-    mc_rot2: [u8; 16],  // offset 128
-    affine: [u8; 16],   // offset 144
-    xtime: [u8; 16],    // offset 160
+    ipt_lo: [u8; 16],  // offset 0
+    ipt_hi: [u8; 16],  // offset 16
+    inv_lo: [u8; 16],  // offset 32
+    inv_hi: [u8; 16],  // offset 48
+    sbou: [u8; 16],    // offset 64
+    sbot: [u8; 16],    // offset 80
+    sr_perm: [u8; 16], // offset 96
+    mc_rot1: [u8; 16], // offset 112
+    mc_rot2: [u8; 16], // offset 128
+    affine: [u8; 16],  // offset 144
+    xtime: [u8; 16],   // offset 160
   }
 
   impl VpermTables {
@@ -3110,9 +3154,7 @@ impl Aead for Aegis256 {
       // Hamburg vperm AES rounds — constant-time via z/Vector VPERM.
       // SAFETY: z13+ vector facility is available on all supported s390x.
       #[allow(clippy::needless_return)]
-      return Aegis256Tag::from_bytes(unsafe {
-        s390x_vperm::encrypt_fused(key, nonce, aad, buffer)
-      });
+      return Aegis256Tag::from_bytes(unsafe { s390x_vperm::encrypt_fused(key, nonce, aad, buffer) });
     }
 
     #[cfg(target_arch = "riscv64")]
@@ -3556,8 +3598,8 @@ mod tests {
 
   // Import the Hamburg vperm tables from the shared constants in aes_round.rs.
   use super::super::aes_round::{
-    VPERM_INV_HI as T_INV_HI, VPERM_INV_LO as T_INV_LO, VPERM_IPT_HI as T_IPT_HI,
-    VPERM_IPT_LO as T_IPT_LO, VPERM_SBOU as T_SBOU, VPERM_SBOT as T_SBOT,
+    VPERM_INV_HI as T_INV_HI, VPERM_INV_LO as T_INV_LO, VPERM_IPT_HI as T_IPT_HI, VPERM_IPT_LO as T_IPT_LO,
+    VPERM_SBOT as T_SBOT, VPERM_SBOU as T_SBOU,
   };
 
   /// Compute AES S-box for one byte using the vperm tower-field tables.
@@ -3653,10 +3695,9 @@ mod tests {
   /// Full vperm AES round simulation (scalar): SubBytes → ShiftRows → MixColumns → AddRoundKey.
   #[cfg(not(any(target_arch = "s390x", target_arch = "riscv64")))]
   fn vperm_aes_round_scalar(block: &[u8; 16], round_key: &[u8; 16]) -> [u8; 16] {
-    use super::super::aes_round::VPERM_SR as SR;
-
     // SubBytes via vperm tower field (includes affine constant compensation)
     use super::super::aes_round::AES_AFFINE;
+    use super::super::aes_round::VPERM_SR as SR;
     let mut sb = [0u8; 16];
     for i in 0..16 {
       sb[i] = vperm_sbox_scalar(block[i]) ^ AES_AFFINE;

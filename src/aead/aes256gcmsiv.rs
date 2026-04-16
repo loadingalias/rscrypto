@@ -1625,7 +1625,10 @@ impl Aead for Aes256GcmSiv {
         crate::platform::caps(),
       );
       match backend {
-        AeadBackend::Riscv64VectorCrypto | AeadBackend::Riscv64ScalarCrypto | AeadBackend::Riscv64Vperm | AeadBackend::Riscv64Ttable => {
+        AeadBackend::Riscv64VectorCrypto
+        | AeadBackend::Riscv64ScalarCrypto
+        | AeadBackend::Riscv64Vperm
+        | AeadBackend::Riscv64Ttable => {
           let tag_bytes = encrypt_riscv(&self.master_key, backend, nonce, aad, buffer);
           return Aes256GcmSivTag::from_bytes(tag_bytes);
         }
@@ -1724,7 +1727,10 @@ impl Aead for Aes256GcmSiv {
         crate::platform::caps(),
       );
       match backend {
-        AeadBackend::Riscv64VectorCrypto | AeadBackend::Riscv64ScalarCrypto | AeadBackend::Riscv64Vperm | AeadBackend::Riscv64Ttable => {
+        AeadBackend::Riscv64VectorCrypto
+        | AeadBackend::Riscv64ScalarCrypto
+        | AeadBackend::Riscv64Vperm
+        | AeadBackend::Riscv64Ttable => {
           return decrypt_riscv(&self.master_key, backend, nonce, aad, buffer, tag);
         }
         _ => {}

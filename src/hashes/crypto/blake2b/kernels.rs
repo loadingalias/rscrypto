@@ -179,7 +179,11 @@ pub const ALL: &[Blake2bKernelId] = &[
 
 /// Whether the best Blake2b kernel is known at compile time.
 pub(crate) const COMPILE_TIME_HW: bool = cfg!(any(
-  all(target_arch = "x86_64", target_feature = "avx512f", target_feature = "avx512vl"),
+  all(
+    target_arch = "x86_64",
+    target_feature = "avx512f",
+    target_feature = "avx512vl"
+  ),
   all(target_arch = "x86_64", target_feature = "avx2"),
   all(target_arch = "aarch64", target_feature = "neon"),
 ));

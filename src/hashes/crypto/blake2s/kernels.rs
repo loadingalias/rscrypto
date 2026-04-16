@@ -128,9 +128,7 @@ pub const ALL: &[Blake2sKernelId] = &[
 
 // ─── Compile-time dispatch bypass ────────────────────────────────────────────
 
-pub(crate) const COMPILE_TIME_HW: bool = cfg!(any(
-  all(target_arch = "aarch64", target_feature = "neon"),
-));
+pub(crate) const COMPILE_TIME_HW: bool = cfg!(any(all(target_arch = "aarch64", target_feature = "neon"),));
 
 #[inline(always)]
 pub(crate) fn compile_time_best() -> CompressFn {
@@ -146,8 +144,14 @@ pub(crate) fn compile_time_best() -> CompressFn {
 
 /// Blake2s initialization vectors (same as SHA-256 fractional parts).
 pub(crate) const IV: [u32; 8] = [
-  0x6a09_e667, 0xbb67_ae85, 0x3c6e_f372, 0xa54f_f53a,
-  0x510e_527f, 0x9b05_688c, 0x1f83_d9ab, 0x5be0_cd19,
+  0x6a09_e667,
+  0xbb67_ae85,
+  0x3c6e_f372,
+  0xa54f_f53a,
+  0x510e_527f,
+  0x9b05_688c,
+  0x1f83_d9ab,
+  0x5be0_cd19,
 ];
 
 /// Message-word permutation schedule (10 rows, reused cyclically for 10 rounds).

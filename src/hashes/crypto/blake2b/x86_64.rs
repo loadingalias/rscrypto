@@ -5,8 +5,8 @@
 //!
 //! Two kernels:
 //! - **AVX2** (`compress_avx2`): rotations via shuffle/shift.
-//! - **AVX-512VL** (`compress_avx512vl`): rotations via `VPRORQ` (`_mm256_ror_epi64`),
-//!   eliminating the byte-shuffle tables entirely.
+//! - **AVX-512VL** (`compress_avx512vl`): rotations via `VPRORQ` (`_mm256_ror_epi64`), eliminating
+//!   the byte-shuffle tables entirely.
 //!
 //! # Safety
 //!
@@ -40,8 +40,7 @@ unsafe fn ror24_avx2(x: __m256i) -> __m256i {
   #[repr(align(32))]
   struct Align32([u8; 32]);
   static ROT24: Align32 = Align32([
-    3, 4, 5, 6, 7, 0, 1, 2, 11, 12, 13, 14, 15, 8, 9, 10,
-    3, 4, 5, 6, 7, 0, 1, 2, 11, 12, 13, 14, 15, 8, 9, 10,
+    3, 4, 5, 6, 7, 0, 1, 2, 11, 12, 13, 14, 15, 8, 9, 10, 3, 4, 5, 6, 7, 0, 1, 2, 11, 12, 13, 14, 15, 8, 9, 10,
   ]);
   unsafe {
     let mask = _mm256_load_si256(ROT24.0.as_ptr().cast());
@@ -57,8 +56,7 @@ unsafe fn ror16_avx2(x: __m256i) -> __m256i {
   #[repr(align(32))]
   struct Align32([u8; 32]);
   static ROT16: Align32 = Align32([
-    2, 3, 4, 5, 6, 7, 0, 1, 10, 11, 12, 13, 14, 15, 8, 9,
-    2, 3, 4, 5, 6, 7, 0, 1, 10, 11, 12, 13, 14, 15, 8, 9,
+    2, 3, 4, 5, 6, 7, 0, 1, 10, 11, 12, 13, 14, 15, 8, 9, 2, 3, 4, 5, 6, 7, 0, 1, 10, 11, 12, 13, 14, 15, 8, 9,
   ]);
   unsafe {
     let mask = _mm256_load_si256(ROT16.0.as_ptr().cast());
@@ -77,14 +75,7 @@ unsafe fn ror63_avx2(x: __m256i) -> __m256i {
 
 /// Blake2b quarter-round G on 4-wide AVX2 rows.
 #[inline(always)]
-unsafe fn g_avx2(
-  a: &mut __m256i,
-  b: &mut __m256i,
-  c: &mut __m256i,
-  d: &mut __m256i,
-  mx: __m256i,
-  my: __m256i,
-) {
+unsafe fn g_avx2(a: &mut __m256i, b: &mut __m256i, c: &mut __m256i, d: &mut __m256i, mx: __m256i, my: __m256i) {
   // SAFETY: AVX2 intrinsics are available via the caller's #[target_feature] attribute.
   unsafe {
     // a += b + mx
@@ -151,10 +142,10 @@ pub(super) unsafe fn compress_avx2(h: &mut [u64; 8], block: &[u8; 128], t: u128,
     let v = init_v(h, t, last);
 
     // Pack the 16-word working vector into 4 rows of __m256i
-    let mut a = _mm256_loadu_si256(v.as_ptr().cast());          // v[0..4]
-    let mut b = _mm256_loadu_si256(v.as_ptr().add(4).cast());   // v[4..8]
-    let mut c = _mm256_loadu_si256(v.as_ptr().add(8).cast());   // v[8..12]
-    let mut d = _mm256_loadu_si256(v.as_ptr().add(12).cast());  // v[12..16]
+    let mut a = _mm256_loadu_si256(v.as_ptr().cast()); // v[0..4]
+    let mut b = _mm256_loadu_si256(v.as_ptr().add(4).cast()); // v[4..8]
+    let mut c = _mm256_loadu_si256(v.as_ptr().add(8).cast()); // v[8..12]
+    let mut d = _mm256_loadu_si256(v.as_ptr().add(12).cast()); // v[12..16]
 
     // 12 rounds of column + diagonal mixing
     for round in 0..12u8 {
@@ -222,14 +213,7 @@ pub(super) unsafe fn compress_avx2(h: &mut [u64; 8], block: &[u8; 128], t: u128,
 ///
 /// All rotations use `VPRORQ` (`_mm256_ror_epi64`) — no shuffle tables needed.
 #[inline(always)]
-unsafe fn g_avx512vl(
-  a: &mut __m256i,
-  b: &mut __m256i,
-  c: &mut __m256i,
-  d: &mut __m256i,
-  mx: __m256i,
-  my: __m256i,
-) {
+unsafe fn g_avx512vl(a: &mut __m256i, b: &mut __m256i, c: &mut __m256i, d: &mut __m256i, mx: __m256i, my: __m256i) {
   // SAFETY: AVX-512VL intrinsics are available via the caller's #[target_feature] attribute.
   unsafe {
     // a += b + mx
@@ -262,12 +246,7 @@ unsafe fn g_avx512vl(
 ///
 /// Caller must ensure AVX-512F and AVX-512VL are available.
 #[target_feature(enable = "avx512f,avx512vl")]
-pub(super) unsafe fn compress_avx512vl(
-  h: &mut [u64; 8],
-  block: &[u8; 128],
-  t: u128,
-  last: bool,
-) {
+pub(super) unsafe fn compress_avx512vl(h: &mut [u64; 8], block: &[u8; 128], t: u128, last: bool) {
   // SAFETY: AVX-512VL intrinsics are available via this function's #[target_feature] attribute.
   // diagonalize/undiagonalize use only AVX2 permutes, which are available under AVX-512VL.
   unsafe {
@@ -275,10 +254,10 @@ pub(super) unsafe fn compress_avx512vl(
     let v = init_v(h, t, last);
 
     // Pack the 16-word working vector into 4 rows of __m256i
-    let mut a = _mm256_loadu_si256(v.as_ptr().cast());          // v[0..4]
-    let mut b = _mm256_loadu_si256(v.as_ptr().add(4).cast());   // v[4..8]
-    let mut c = _mm256_loadu_si256(v.as_ptr().add(8).cast());   // v[8..12]
-    let mut d = _mm256_loadu_si256(v.as_ptr().add(12).cast());  // v[12..16]
+    let mut a = _mm256_loadu_si256(v.as_ptr().cast()); // v[0..4]
+    let mut b = _mm256_loadu_si256(v.as_ptr().add(4).cast()); // v[4..8]
+    let mut c = _mm256_loadu_si256(v.as_ptr().add(8).cast()); // v[8..12]
+    let mut d = _mm256_loadu_si256(v.as_ptr().add(12).cast()); // v[12..16]
 
     // 12 rounds of column + diagonal mixing
     for round in 0..12u8 {

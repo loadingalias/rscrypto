@@ -80,7 +80,10 @@ impl Core {
   /// Panics if `nn` is 0 or > 64, or if `key` is longer than 64 bytes.
   #[allow(clippy::indexing_slicing)]
   fn new(nn: u8, key: &[u8]) -> Self {
-    assert!(nn >= 1 && nn as usize <= MAX_OUTPUT_LEN, "Blake2b output length must be 1-64");
+    assert!(
+      nn >= 1 && nn as usize <= MAX_OUTPUT_LEN,
+      "Blake2b output length must be 1-64"
+    );
     assert!(key.len() <= MAX_KEY_LEN, "Blake2b key must be at most 64 bytes");
 
     let kk = key.len() as u8;
@@ -104,7 +107,16 @@ impl Core {
       buf_len = 0;
     }
 
-    Self { h, buf, buf_len, t: 0, nn, kk, key: stored_key, compress: dispatch::compress_dispatch() }
+    Self {
+      h,
+      buf,
+      buf_len,
+      t: 0,
+      nn,
+      kk,
+      key: stored_key,
+      compress: dispatch::compress_dispatch(),
+    }
   }
 
   /// Feed data into the hash state.
@@ -452,8 +464,10 @@ pub(crate) fn blake2b_hash(data: &[u8], nn: u8, out: &mut [u8]) {
 #[cfg(test)]
 mod tests {
   use blake2::{Blake2b as OracleBlake2b, Blake2bMac, Digest as _};
-  use digest::consts::{U32, U64};
-  use digest::KeyInit;
+  use digest::{
+    KeyInit,
+    consts::{U32, U64},
+  };
 
   use super::*;
 
@@ -712,8 +726,7 @@ mod tests {
   // ── Forced-kernel oracle tests ────────────────────────────────────────
 
   use super::kernels::{
-    ALL as BLAKE2B_KERNELS, Blake2bKernelId, compress_fn as blake2b_compress_fn,
-    required_caps as blake2b_required_caps,
+    ALL as BLAKE2B_KERNELS, Blake2bKernelId, compress_fn as blake2b_compress_fn, required_caps as blake2b_required_caps,
   };
 
   fn assert_blake2b_kernel(id: Blake2bKernelId) {
