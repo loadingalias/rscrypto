@@ -57,12 +57,18 @@ fn ror63(x: v128) -> v128 {
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
 fn g2(
-  a0: &mut v128, a1: &mut v128,
-  b0: &mut v128, b1: &mut v128,
-  c0: &mut v128, c1: &mut v128,
-  d0: &mut v128, d1: &mut v128,
-  mx0: v128, mx1: v128,
-  my0: v128, my1: v128,
+  a0: &mut v128,
+  a1: &mut v128,
+  b0: &mut v128,
+  b1: &mut v128,
+  c0: &mut v128,
+  c1: &mut v128,
+  d0: &mut v128,
+  d1: &mut v128,
+  mx0: v128,
+  mx1: v128,
+  my0: v128,
+  my1: v128,
 ) {
   // a += b + mx
   *a0 = i64x2_add(i64x2_add(*a0, *b0), mx0);
@@ -97,11 +103,7 @@ fn g2(
 /// `i64x2_shuffle` indices: 0,1 = lanes from first operand, 2,3 = from second.
 #[cfg(target_arch = "wasm32")]
 #[inline(always)]
-fn diagonalize(
-  b0: &mut v128, b1: &mut v128,
-  c0: &mut v128, c1: &mut v128,
-  d0: &mut v128, d1: &mut v128,
-) {
+fn diagonalize(b0: &mut v128, b1: &mut v128, c0: &mut v128, c1: &mut v128, d0: &mut v128, d1: &mut v128) {
   // B: rotate left 1: (v4,v5,v6,v7) -> (v5,v6,v7,v4)
   let tb0 = *b0;
   let tb1 = *b1;
@@ -121,11 +123,7 @@ fn diagonalize(
 /// Un-diagonalize: reverse the rotations.
 #[cfg(target_arch = "wasm32")]
 #[inline(always)]
-fn undiagonalize(
-  b0: &mut v128, b1: &mut v128,
-  c0: &mut v128, c1: &mut v128,
-  d0: &mut v128, d1: &mut v128,
-) {
+fn undiagonalize(b0: &mut v128, b1: &mut v128, c0: &mut v128, c1: &mut v128, d0: &mut v128, d1: &mut v128) {
   // B: rotate right 1 (undo left 1)
   let tb0 = *b0;
   let tb1 = *b1;
@@ -174,14 +172,14 @@ pub(super) unsafe fn compress_simd128(h: &mut [u64; 8], block: &[u8; 128], t: u1
 
   // Pack into 2-wide SIMD rows: (lo, hi) for each row
   // SAFETY: v is a [u64; 16] — pointer arithmetic is within bounds.
-  let mut a0 = unsafe { vload_u64_pair(v.as_ptr()) };          // v[0], v[1]
-  let mut a1 = unsafe { vload_u64_pair(v.as_ptr().add(2)) };   // v[2], v[3]
-  let mut b0 = unsafe { vload_u64_pair(v.as_ptr().add(4)) };   // v[4], v[5]
-  let mut b1 = unsafe { vload_u64_pair(v.as_ptr().add(6)) };   // v[6], v[7]
-  let mut c0 = unsafe { vload_u64_pair(v.as_ptr().add(8)) };   // v[8], v[9]
-  let mut c1 = unsafe { vload_u64_pair(v.as_ptr().add(10)) };  // v[10], v[11]
-  let mut d0 = unsafe { vload_u64_pair(v.as_ptr().add(12)) };  // v[12], v[13]
-  let mut d1 = unsafe { vload_u64_pair(v.as_ptr().add(14)) };  // v[14], v[15]
+  let mut a0 = unsafe { vload_u64_pair(v.as_ptr()) }; // v[0], v[1]
+  let mut a1 = unsafe { vload_u64_pair(v.as_ptr().add(2)) }; // v[2], v[3]
+  let mut b0 = unsafe { vload_u64_pair(v.as_ptr().add(4)) }; // v[4], v[5]
+  let mut b1 = unsafe { vload_u64_pair(v.as_ptr().add(6)) }; // v[6], v[7]
+  let mut c0 = unsafe { vload_u64_pair(v.as_ptr().add(8)) }; // v[8], v[9]
+  let mut c1 = unsafe { vload_u64_pair(v.as_ptr().add(10)) }; // v[10], v[11]
+  let mut d0 = unsafe { vload_u64_pair(v.as_ptr().add(12)) }; // v[12], v[13]
+  let mut d1 = unsafe { vload_u64_pair(v.as_ptr().add(14)) }; // v[14], v[15]
 
   // 12 rounds
   for round in 0..12u8 {
@@ -194,9 +192,7 @@ pub(super) unsafe fn compress_simd128(h: &mut [u64; 8], block: &[u8; 128], t: u1
     let my1 = load_msg_pair(&m, s[5], s[7]);
 
     g2(
-      &mut a0, &mut a1, &mut b0, &mut b1,
-      &mut c0, &mut c1, &mut d0, &mut d1,
-      mx0, mx1, my0, my1,
+      &mut a0, &mut a1, &mut b0, &mut b1, &mut c0, &mut c1, &mut d0, &mut d1, mx0, mx1, my0, my1,
     );
 
     diagonalize(&mut b0, &mut b1, &mut c0, &mut c1, &mut d0, &mut d1);
@@ -208,9 +204,7 @@ pub(super) unsafe fn compress_simd128(h: &mut [u64; 8], block: &[u8; 128], t: u1
     let my1 = load_msg_pair(&m, s[13], s[15]);
 
     g2(
-      &mut a0, &mut a1, &mut b0, &mut b1,
-      &mut c0, &mut c1, &mut d0, &mut d1,
-      mx0, mx1, my0, my1,
+      &mut a0, &mut a1, &mut b0, &mut b1, &mut c0, &mut c1, &mut d0, &mut d1, mx0, mx1, my0, my1,
     );
 
     undiagonalize(&mut b0, &mut b1, &mut c0, &mut c1, &mut d0, &mut d1);

@@ -8,7 +8,7 @@
 
 use core::arch::aarch64::*;
 
-use super::kernels::{SIGMA, load_msg, init_v};
+use super::kernels::{SIGMA, init_v, load_msg};
 
 // ─── Rotation helpers ──────────────────────────────────────────────────────
 
@@ -50,12 +50,18 @@ unsafe fn ror63(x: uint64x2_t) -> uint64x2_t {
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
 unsafe fn g2(
-  a0: &mut uint64x2_t, a1: &mut uint64x2_t,
-  b0: &mut uint64x2_t, b1: &mut uint64x2_t,
-  c0: &mut uint64x2_t, c1: &mut uint64x2_t,
-  d0: &mut uint64x2_t, d1: &mut uint64x2_t,
-  mx0: uint64x2_t, mx1: uint64x2_t,
-  my0: uint64x2_t, my1: uint64x2_t,
+  a0: &mut uint64x2_t,
+  a1: &mut uint64x2_t,
+  b0: &mut uint64x2_t,
+  b1: &mut uint64x2_t,
+  c0: &mut uint64x2_t,
+  c1: &mut uint64x2_t,
+  d0: &mut uint64x2_t,
+  d1: &mut uint64x2_t,
+  mx0: uint64x2_t,
+  mx1: uint64x2_t,
+  my0: uint64x2_t,
+  my1: uint64x2_t,
 ) {
   unsafe {
     // a += b + mx
@@ -89,9 +95,12 @@ unsafe fn g2(
 
 #[inline(always)]
 unsafe fn diagonalize(
-  b0: &mut uint64x2_t, b1: &mut uint64x2_t,
-  c0: &mut uint64x2_t, c1: &mut uint64x2_t,
-  d0: &mut uint64x2_t, d1: &mut uint64x2_t,
+  b0: &mut uint64x2_t,
+  b1: &mut uint64x2_t,
+  c0: &mut uint64x2_t,
+  c1: &mut uint64x2_t,
+  d0: &mut uint64x2_t,
+  d1: &mut uint64x2_t,
 ) {
   unsafe {
     // B: rotate left 1: (v4,v5,v6,v7) → (v5,v6,v7,v4)
@@ -113,9 +122,12 @@ unsafe fn diagonalize(
 
 #[inline(always)]
 unsafe fn undiagonalize(
-  b0: &mut uint64x2_t, b1: &mut uint64x2_t,
-  c0: &mut uint64x2_t, c1: &mut uint64x2_t,
-  d0: &mut uint64x2_t, d1: &mut uint64x2_t,
+  b0: &mut uint64x2_t,
+  b1: &mut uint64x2_t,
+  c0: &mut uint64x2_t,
+  c1: &mut uint64x2_t,
+  d0: &mut uint64x2_t,
+  d1: &mut uint64x2_t,
 ) {
   unsafe {
     // B: rotate right 1
@@ -166,7 +178,9 @@ pub(super) unsafe fn compress_neon(h: &mut [u64; 8], block: &[u8; 128], t: u128,
       let mx1 = load_msg_pair(&m, s[4], s[6]);
       let my0 = load_msg_pair(&m, s[1], s[3]);
       let my1 = load_msg_pair(&m, s[5], s[7]);
-      g2(&mut a0, &mut a1, &mut b0, &mut b1, &mut c0, &mut c1, &mut d0, &mut d1, mx0, mx1, my0, my1);
+      g2(
+        &mut a0, &mut a1, &mut b0, &mut b1, &mut c0, &mut c1, &mut d0, &mut d1, mx0, mx1, my0, my1,
+      );
 
       diagonalize(&mut b0, &mut b1, &mut c0, &mut c1, &mut d0, &mut d1);
 
@@ -175,7 +189,9 @@ pub(super) unsafe fn compress_neon(h: &mut [u64; 8], block: &[u8; 128], t: u128,
       let mx1 = load_msg_pair(&m, s[12], s[14]);
       let my0 = load_msg_pair(&m, s[9], s[11]);
       let my1 = load_msg_pair(&m, s[13], s[15]);
-      g2(&mut a0, &mut a1, &mut b0, &mut b1, &mut c0, &mut c1, &mut d0, &mut d1, mx0, mx1, my0, my1);
+      g2(
+        &mut a0, &mut a1, &mut b0, &mut b1, &mut c0, &mut c1, &mut d0, &mut d1, mx0, mx1, my0, my1,
+      );
 
       undiagonalize(&mut b0, &mut b1, &mut c0, &mut c1, &mut d0, &mut d1);
     }

@@ -74,7 +74,11 @@ pub fn kernel_name() -> &'static str {
 
 #[cfg(any(test, feature = "diag"))]
 const fn compile_time_name() -> &'static str {
-  if cfg!(all(target_arch = "x86_64", target_feature = "avx512f", target_feature = "avx512vl")) {
+  if cfg!(all(
+    target_arch = "x86_64",
+    target_feature = "avx512f",
+    target_feature = "avx512vl"
+  )) {
     "x86/avx512vl"
   } else if cfg!(all(target_arch = "x86_64", target_feature = "avx2")) {
     "x86/avx2"

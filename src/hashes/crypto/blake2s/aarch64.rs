@@ -8,7 +8,7 @@
 
 use core::arch::aarch64::*;
 
-use super::kernels::{SIGMA, load_msg, init_v};
+use super::kernels::{SIGMA, init_v, load_msg};
 
 // ─── Rotation helpers ──────────────────────────────────────────────────────
 
@@ -44,9 +44,12 @@ unsafe fn ror7(x: uint32x4_t) -> uint32x4_t {
 
 #[inline(always)]
 unsafe fn g4(
-  a: &mut uint32x4_t, b: &mut uint32x4_t,
-  c: &mut uint32x4_t, d: &mut uint32x4_t,
-  mx: uint32x4_t, my: uint32x4_t,
+  a: &mut uint32x4_t,
+  b: &mut uint32x4_t,
+  c: &mut uint32x4_t,
+  d: &mut uint32x4_t,
+  mx: uint32x4_t,
+  my: uint32x4_t,
 ) {
   unsafe {
     *a = vaddq_u32(vaddq_u32(*a, *b), mx);

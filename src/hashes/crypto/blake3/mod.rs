@@ -3065,7 +3065,13 @@ fn xof_oneshot_single_chunk(kernel: Kernel, key_words: [u32; 8], flags: u32, inp
   // Compress block 0 with CHUNK_START, then bulk-compress remaining blocks.
   // SAFETY: `input.len() > BLOCK_LEN` in this branch (tiny path handles ≤64B).
   let block0_words = unsafe { words16_from_le_bytes_64(&*input.as_ptr().cast::<[u8; BLOCK_LEN]>()) };
-  cv = first_8_words((kernel.compress)(&cv, &block0_words, 0, BLOCK_LEN as u32, flags | CHUNK_START));
+  cv = first_8_words((kernel.compress)(
+    &cv,
+    &block0_words,
+    0,
+    BLOCK_LEN as u32,
+    flags | CHUNK_START,
+  ));
 
   // Bulk-compress blocks 1..full_blocks via chunk_compress_blocks. This lets
   // platform-specific implementations apply batch optimizations (e.g., s390x

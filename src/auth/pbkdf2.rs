@@ -146,7 +146,11 @@ impl Pbkdf2Sha256 {
     ct::zeroize(&mut ipad);
     ct::zeroize(&mut opad);
 
-    Self { inner_init, outer_init, compress }
+    Self {
+      inner_init,
+      outer_init,
+      compress,
+    }
   }
 
   /// Derive a key into `okm`.
@@ -169,7 +173,15 @@ impl Pbkdf2Sha256 {
     let mut block_out = [0u8; SHA256_OUTPUT_SIZE];
     for (i, chunk) in okm.chunks_mut(SHA256_OUTPUT_SIZE).enumerate() {
       let block_index = (i as u32).strict_add(1);
-      pbkdf2_sha256_f(self.compress, &self.inner_init, &self.outer_init, salt, iterations, block_index, &mut block_out);
+      pbkdf2_sha256_f(
+        self.compress,
+        &self.inner_init,
+        &self.outer_init,
+        salt,
+        iterations,
+        block_index,
+        &mut block_out,
+      );
       chunk.copy_from_slice(&block_out[..chunk.len()]);
     }
 
@@ -202,7 +214,15 @@ impl Pbkdf2Sha256 {
 
     for (i, chunk) in expected.chunks(SHA256_OUTPUT_SIZE).enumerate() {
       let block_index = (i as u32).strict_add(1);
-      pbkdf2_sha256_f(self.compress, &self.inner_init, &self.outer_init, salt, iterations, block_index, &mut block_out);
+      pbkdf2_sha256_f(
+        self.compress,
+        &self.inner_init,
+        &self.outer_init,
+        salt,
+        iterations,
+        block_index,
+        &mut block_out,
+      );
       for (&a, &b) in block_out[..chunk.len()].iter().zip(chunk.iter()) {
         acc |= a ^ b;
       }
@@ -210,7 +230,11 @@ impl Pbkdf2Sha256 {
 
     ct::zeroize(&mut block_out);
 
-    if core::hint::black_box(acc) == 0 { Ok(()) } else { Err(VerificationError::new()) }
+    if core::hint::black_box(acc) == 0 {
+      Ok(())
+    } else {
+      Err(VerificationError::new())
+    }
   }
 
   /// Derive a key in one shot.
@@ -268,7 +292,11 @@ impl Pbkdf2Sha256 {
     ct::zeroize(&mut ipad);
     ct::zeroize(&mut opad);
 
-    Self { inner_init, outer_init, compress }
+    Self {
+      inner_init,
+      outer_init,
+      compress,
+    }
   }
 }
 
@@ -497,7 +525,11 @@ impl Pbkdf2Sha512 {
     ct::zeroize(&mut ipad);
     ct::zeroize(&mut opad);
 
-    Self { inner_init, outer_init, compress }
+    Self {
+      inner_init,
+      outer_init,
+      compress,
+    }
   }
 
   /// Derive a key into `okm`.
@@ -517,7 +549,15 @@ impl Pbkdf2Sha512 {
     let mut block_out = [0u8; SHA512_OUTPUT_SIZE];
     for (i, chunk) in okm.chunks_mut(SHA512_OUTPUT_SIZE).enumerate() {
       let block_index = (i as u32).strict_add(1);
-      pbkdf2_sha512_f(self.compress, &self.inner_init, &self.outer_init, salt, iterations, block_index, &mut block_out);
+      pbkdf2_sha512_f(
+        self.compress,
+        &self.inner_init,
+        &self.outer_init,
+        salt,
+        iterations,
+        block_index,
+        &mut block_out,
+      );
       chunk.copy_from_slice(&block_out[..chunk.len()]);
     }
 
@@ -548,7 +588,15 @@ impl Pbkdf2Sha512 {
 
     for (i, chunk) in expected.chunks(SHA512_OUTPUT_SIZE).enumerate() {
       let block_index = (i as u32).strict_add(1);
-      pbkdf2_sha512_f(self.compress, &self.inner_init, &self.outer_init, salt, iterations, block_index, &mut block_out);
+      pbkdf2_sha512_f(
+        self.compress,
+        &self.inner_init,
+        &self.outer_init,
+        salt,
+        iterations,
+        block_index,
+        &mut block_out,
+      );
       for (&a, &b) in block_out[..chunk.len()].iter().zip(chunk.iter()) {
         acc |= a ^ b;
       }
@@ -556,7 +604,11 @@ impl Pbkdf2Sha512 {
 
     ct::zeroize(&mut block_out);
 
-    if core::hint::black_box(acc) == 0 { Ok(()) } else { Err(VerificationError::new()) }
+    if core::hint::black_box(acc) == 0 {
+      Ok(())
+    } else {
+      Err(VerificationError::new())
+    }
   }
 
   /// Derive a key in one shot.
@@ -614,7 +666,11 @@ impl Pbkdf2Sha512 {
     ct::zeroize(&mut ipad);
     ct::zeroize(&mut opad);
 
-    Self { inner_init, outer_init, compress }
+    Self {
+      inner_init,
+      outer_init,
+      compress,
+    }
   }
 }
 
@@ -884,7 +940,8 @@ mod tests {
       Pbkdf2Sha256::derive_key(password, salt, iterations, &mut actual).unwrap();
 
       assert_eq!(
-        actual, expected,
+        actual,
+        expected,
         "SHA-256 mismatch: pw_len={} salt_len={} c={} dk_len={}",
         password.len(),
         salt.len(),
@@ -924,7 +981,8 @@ mod tests {
       Pbkdf2Sha512::derive_key(password, salt, iterations, &mut actual).unwrap();
 
       assert_eq!(
-        actual, expected,
+        actual,
+        expected,
         "SHA-512 mismatch: pw_len={} salt_len={} c={} dk_len={}",
         password.len(),
         salt.len(),
@@ -977,13 +1035,19 @@ mod tests {
   #[test]
   fn sha256_zero_iterations_error() {
     let mut dk = [0u8; 32];
-    assert_eq!(Pbkdf2Sha256::derive_key(b"pw", b"salt", 0, &mut dk), Err(Pbkdf2Error::InvalidIterations));
+    assert_eq!(
+      Pbkdf2Sha256::derive_key(b"pw", b"salt", 0, &mut dk),
+      Err(Pbkdf2Error::InvalidIterations)
+    );
   }
 
   #[test]
   fn sha512_zero_iterations_error() {
     let mut dk = [0u8; 64];
-    assert_eq!(Pbkdf2Sha512::derive_key(b"pw", b"salt", 0, &mut dk), Err(Pbkdf2Error::InvalidIterations));
+    assert_eq!(
+      Pbkdf2Sha512::derive_key(b"pw", b"salt", 0, &mut dk),
+      Err(Pbkdf2Error::InvalidIterations)
+    );
   }
 
   #[test]
@@ -1068,13 +1132,14 @@ mod tests {
 
   // ── Forced-kernel oracle tests ──────────────────────────────────────
 
-  use crate::hashes::crypto::sha256::kernels::{
-    Sha256KernelId, compress_blocks_fn as sha256_compress_blocks_fn,
-    required_caps as sha256_required_caps,
-  };
-  use crate::hashes::crypto::sha512::kernels::{
-    ALL as SHA512_KERNELS, Sha512KernelId, compress_blocks_fn as sha512_compress_blocks_fn,
-    required_caps as sha512_required_caps,
+  use crate::hashes::crypto::{
+    sha256::kernels::{
+      Sha256KernelId, compress_blocks_fn as sha256_compress_blocks_fn, required_caps as sha256_required_caps,
+    },
+    sha512::kernels::{
+      ALL as SHA512_KERNELS, Sha512KernelId, compress_blocks_fn as sha512_compress_blocks_fn,
+      required_caps as sha512_required_caps,
+    },
   };
 
   /// SHA-256 kernel list (sha256 module doesn't define ALL).
@@ -1098,12 +1163,12 @@ mod tests {
       (b"password", b"salt", 1, 32),
       (b"password", b"salt", 4, 32),
       (b"password", b"salt", 100, 32),
-      (b"password", b"salt", 1, 64),    // multi-block
-      (b"", b"salt", 1, 32),            // empty password
-      (b"password", b"", 1, 32),        // empty salt
-      (b"p", b"s", 1, 1),              // minimal output
+      (b"password", b"salt", 1, 64),      // multi-block
+      (b"", b"salt", 1, 32),              // empty password
+      (b"password", b"", 1, 32),          // empty salt
+      (b"p", b"s", 1, 1),                 // minimal output
       (b"password", &[0xBB; 200], 1, 32), // long salt
-      (&[0xCC; 128], b"salt", 1, 32),   // password > block_size (triggers key hashing)
+      (&[0xCC; 128], b"salt", 1, 32),     // password > block_size (triggers key hashing)
     ];
 
     for &(password, salt, iterations, dk_len) in cases {
@@ -1115,7 +1180,8 @@ mod tests {
       state.derive(salt, iterations, &mut actual).unwrap();
 
       assert_eq!(
-        actual, expected,
+        actual,
+        expected,
         "pbkdf2-sha256 forced mismatch kernel={} pw_len={} salt_len={} c={} dk_len={}",
         id.as_str(),
         password.len(),
@@ -1132,12 +1198,12 @@ mod tests {
       (b"password", b"salt", 1, 64),
       (b"password", b"salt", 4, 64),
       (b"password", b"salt", 100, 64),
-      (b"password", b"salt", 1, 128),   // multi-block
-      (b"", b"salt", 1, 64),            // empty password
-      (b"password", b"", 1, 64),        // empty salt
-      (b"p", b"s", 1, 1),              // minimal output
+      (b"password", b"salt", 1, 128),     // multi-block
+      (b"", b"salt", 1, 64),              // empty password
+      (b"password", b"", 1, 64),          // empty salt
+      (b"p", b"s", 1, 1),                 // minimal output
       (b"password", &[0xBB; 200], 1, 64), // long salt
-      (&[0xCC; 200], b"salt", 1, 64),   // password > block_size
+      (&[0xCC; 200], b"salt", 1, 64),     // password > block_size
     ];
 
     for &(password, salt, iterations, dk_len) in cases {
@@ -1149,7 +1215,8 @@ mod tests {
       state.derive(salt, iterations, &mut actual).unwrap();
 
       assert_eq!(
-        actual, expected,
+        actual,
+        expected,
         "pbkdf2-sha512 forced mismatch kernel={} pw_len={} salt_len={} c={} dk_len={}",
         id.as_str(),
         password.len(),

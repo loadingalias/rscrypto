@@ -62,7 +62,10 @@ struct Core {
 impl Core {
   #[allow(clippy::indexing_slicing)]
   fn new(nn: u8, key: &[u8]) -> Self {
-    assert!(nn >= 1 && nn as usize <= MAX_OUTPUT_LEN, "Blake2s output length must be 1-32");
+    assert!(
+      nn >= 1 && nn as usize <= MAX_OUTPUT_LEN,
+      "Blake2s output length must be 1-32"
+    );
     assert!(key.len() <= MAX_KEY_LEN, "Blake2s key must be at most 32 bytes");
 
     let kk = key.len() as u8;
@@ -85,7 +88,16 @@ impl Core {
       buf_len = 0;
     }
 
-    Self { h, buf, buf_len, t: 0, nn, kk, key: stored_key, compress: dispatch::compress_dispatch() }
+    Self {
+      h,
+      buf,
+      buf_len,
+      t: 0,
+      nn,
+      kk,
+      key: stored_key,
+      compress: dispatch::compress_dispatch(),
+    }
   }
 
   #[cfg(test)]
@@ -383,10 +395,12 @@ impl Drop for Blake2s128 {
 mod tests {
   use blake2::{Blake2s256 as OracleBlake2s256, Digest as _};
 
-  use super::*;
-  use super::kernels::{
-    ALL as BLAKE2S_KERNELS, Blake2sKernelId, compress_fn as blake2s_compress_fn,
-    required_caps as blake2s_required_caps,
+  use super::{
+    kernels::{
+      ALL as BLAKE2S_KERNELS, Blake2sKernelId, compress_fn as blake2s_compress_fn,
+      required_caps as blake2s_required_caps,
+    },
+    *,
   };
 
   fn oracle_hash_256(data: &[u8]) -> [u8; 32] {

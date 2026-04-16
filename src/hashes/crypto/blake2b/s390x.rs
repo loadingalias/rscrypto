@@ -237,12 +237,18 @@ unsafe fn vload_u64_pair(p: *const u64) -> i64x2 {
 #[allow(clippy::too_many_arguments)]
 #[target_feature(enable = "vector")]
 unsafe fn g2(
-  a0: &mut i64x2, a1: &mut i64x2,
-  b0: &mut i64x2, b1: &mut i64x2,
-  c0: &mut i64x2, c1: &mut i64x2,
-  d0: &mut i64x2, d1: &mut i64x2,
-  mx0: i64x2, mx1: i64x2,
-  my0: i64x2, my1: i64x2,
+  a0: &mut i64x2,
+  a1: &mut i64x2,
+  b0: &mut i64x2,
+  b1: &mut i64x2,
+  c0: &mut i64x2,
+  c1: &mut i64x2,
+  d0: &mut i64x2,
+  d1: &mut i64x2,
+  mx0: i64x2,
+  mx1: i64x2,
+  my0: i64x2,
+  my1: i64x2,
 ) {
   // a += b + mx
   *a0 = vag(vag(*a0, *b0), mx0);
@@ -280,11 +286,7 @@ unsafe fn g2(
 ///   D rotate-right-1: (d0=[0,1], d1=[2,3]) -> ([3,0], [1,2])
 #[inline(always)]
 #[target_feature(enable = "vector")]
-unsafe fn diagonalize(
-  b0: &mut i64x2, b1: &mut i64x2,
-  c0: &mut i64x2, c1: &mut i64x2,
-  d0: &mut i64x2, d1: &mut i64x2,
-) {
+unsafe fn diagonalize(b0: &mut i64x2, b1: &mut i64x2, c0: &mut i64x2, c1: &mut i64x2, d0: &mut i64x2, d1: &mut i64x2) {
   // B: rotate left 1: (v4,v5,v6,v7) -> (v5,v6,v7,v4)
   // vpdi_1(b0, b1) = [b0[1], b1[0]] = [v5, v6]
   // vpdi_1(b1, b0) = [b1[1], b0[0]] = [v7, v4]
@@ -310,9 +312,12 @@ unsafe fn diagonalize(
 #[inline(always)]
 #[target_feature(enable = "vector")]
 unsafe fn undiagonalize(
-  b0: &mut i64x2, b1: &mut i64x2,
-  c0: &mut i64x2, c1: &mut i64x2,
-  d0: &mut i64x2, d1: &mut i64x2,
+  b0: &mut i64x2,
+  b1: &mut i64x2,
+  c0: &mut i64x2,
+  c1: &mut i64x2,
+  d0: &mut i64x2,
+  d1: &mut i64x2,
 ) {
   // B: rotate right 1 (undo left 1)
   // Current: b0=[v5,v6], b1=[v7,v4]
@@ -352,14 +357,14 @@ pub(super) unsafe fn compress_vector(h: &mut [u64; 8], block: &[u8; 128], t: u12
 
   // Pack into 2-wide SIMD rows: (lo, hi) for each row
   // SAFETY: v is a [u64; 16] — pointer arithmetic is within bounds.
-  let mut a0 = unsafe { vload_u64_pair(v.as_ptr()) };          // v[0], v[1]
-  let mut a1 = unsafe { vload_u64_pair(v.as_ptr().add(2)) };   // v[2], v[3]
-  let mut b0 = unsafe { vload_u64_pair(v.as_ptr().add(4)) };   // v[4], v[5]
-  let mut b1 = unsafe { vload_u64_pair(v.as_ptr().add(6)) };   // v[6], v[7]
-  let mut c0 = unsafe { vload_u64_pair(v.as_ptr().add(8)) };   // v[8], v[9]
-  let mut c1 = unsafe { vload_u64_pair(v.as_ptr().add(10)) };  // v[10], v[11]
-  let mut d0 = unsafe { vload_u64_pair(v.as_ptr().add(12)) };  // v[12], v[13]
-  let mut d1 = unsafe { vload_u64_pair(v.as_ptr().add(14)) };  // v[14], v[15]
+  let mut a0 = unsafe { vload_u64_pair(v.as_ptr()) }; // v[0], v[1]
+  let mut a1 = unsafe { vload_u64_pair(v.as_ptr().add(2)) }; // v[2], v[3]
+  let mut b0 = unsafe { vload_u64_pair(v.as_ptr().add(4)) }; // v[4], v[5]
+  let mut b1 = unsafe { vload_u64_pair(v.as_ptr().add(6)) }; // v[6], v[7]
+  let mut c0 = unsafe { vload_u64_pair(v.as_ptr().add(8)) }; // v[8], v[9]
+  let mut c1 = unsafe { vload_u64_pair(v.as_ptr().add(10)) }; // v[10], v[11]
+  let mut d0 = unsafe { vload_u64_pair(v.as_ptr().add(12)) }; // v[12], v[13]
+  let mut d1 = unsafe { vload_u64_pair(v.as_ptr().add(14)) }; // v[14], v[15]
 
   // 12 rounds
   for round in 0..12u8 {
@@ -372,9 +377,7 @@ pub(super) unsafe fn compress_vector(h: &mut [u64; 8], block: &[u8; 128], t: u12
     let my1 = load_msg_pair(&m, s[5], s[7]);
 
     g2(
-      &mut a0, &mut a1, &mut b0, &mut b1,
-      &mut c0, &mut c1, &mut d0, &mut d1,
-      mx0, mx1, my0, my1,
+      &mut a0, &mut a1, &mut b0, &mut b1, &mut c0, &mut c1, &mut d0, &mut d1, mx0, mx1, my0, my1,
     );
 
     diagonalize(&mut b0, &mut b1, &mut c0, &mut c1, &mut d0, &mut d1);
@@ -386,9 +389,7 @@ pub(super) unsafe fn compress_vector(h: &mut [u64; 8], block: &[u8; 128], t: u12
     let my1 = load_msg_pair(&m, s[13], s[15]);
 
     g2(
-      &mut a0, &mut a1, &mut b0, &mut b1,
-      &mut c0, &mut c1, &mut d0, &mut d1,
-      mx0, mx1, my0, my1,
+      &mut a0, &mut a1, &mut b0, &mut b1, &mut c0, &mut c1, &mut d0, &mut d1, mx0, mx1, my0, my1,
     );
 
     undiagonalize(&mut b0, &mut b1, &mut c0, &mut c1, &mut d0, &mut d1);
