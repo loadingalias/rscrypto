@@ -552,7 +552,7 @@ pub use traits::{Checksum, ChecksumCombine, ConstantTimeEq, Mac, VerificationErr
 ))]
 pub use traits::{Digest, FastHash, Xof};
 
-#[cfg(all(doctest, feature = "full"))]
+#[cfg(all(doctest, feature = "full", feature = "diag"))]
 #[doc(hidden)]
 #[doc = r#"
 ```compile_fail

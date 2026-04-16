@@ -34,10 +34,6 @@ mod asm;
 // ─────────────────────────────────────────────────────────────────────────────
 use super::{BLOCK_LEN, CHUNK_LEN, CHUNK_START, IV, MSG_SCHEDULE, OUT_LEN, PARENT, words16_from_le_bytes_64};
 
-/// SIMD degree for NEON (4 parallel lanes).
-#[allow(dead_code)]
-pub const SIMD_DEGREE: usize = 4;
-
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[inline(always)]
 fn ptr_is_aligned(ptr: *const u8, align: usize) -> bool {
@@ -232,7 +228,6 @@ unsafe fn rot_lanes_left_3(v: uint32x4_t) -> uint32x4_t {
 /// ```
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
-#[allow(dead_code)]
 unsafe fn transpose_vecs(vecs: &mut [uint32x4_t; 4]) {
   // SAFETY: NEON intrinsics are available via this function's #[target_feature] attribute.
   unsafe {
@@ -1387,7 +1382,6 @@ pub(crate) unsafe fn parent_cvs_many_neon(
 /// Caller must ensure NEON is available.
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
-#[allow(dead_code)]
 pub(crate) unsafe fn chunk_compress_blocks_neon(
   chaining_value: &mut [u32; 8],
   chunk_counter: u64,
@@ -1473,7 +1467,6 @@ pub(crate) unsafe fn compress_cv_neon_bytes(
 /// Caller must ensure NEON is available.
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
-#[allow(dead_code)]
 pub(crate) unsafe fn parent_cv_neon(
   left_child_cv: [u32; 8],
   right_child_cv: [u32; 8],

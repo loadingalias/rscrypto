@@ -11,14 +11,26 @@ use core::fmt::Debug;
 ///
 /// # Examples
 ///
-/// ```
-/// use rscrypto::{Digest, Sha256};
+/// ```rust
+/// # use rscrypto::traits::Digest;
+/// # #[derive(Clone, Default)]
+/// # struct MyDigest(u8);
+/// # impl Digest for MyDigest {
+/// #   const OUTPUT_SIZE: usize = 4;
+/// #   type Output = [u8; 4];
+/// #   fn new() -> Self { Self(0) }
+/// #   fn update(&mut self, data: &[u8]) {
+/// #     self.0 = data.iter().fold(self.0, |acc, &b| acc.wrapping_add(b));
+/// #   }
+/// #   fn finalize(&self) -> Self::Output { [self.0; 4] }
+/// #   fn reset(&mut self) { self.0 = 0; }
+/// # }
 ///
 /// // One-shot.
-/// let digest = Sha256::digest(b"hello world");
+/// let digest = MyDigest::digest(b"hello world");
 ///
 /// // Streaming.
-/// let mut h = Sha256::new();
+/// let mut h = MyDigest::new();
 /// h.update(b"hello ");
 /// h.update(b"world");
 /// assert_eq!(h.finalize(), digest);

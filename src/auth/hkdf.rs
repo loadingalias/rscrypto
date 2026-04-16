@@ -200,7 +200,7 @@ impl HkdfSha256 {
 
     ct::zeroize(&mut prev_tag);
     ct::zeroize(&mut inner_hash);
-    ct::zeroize(&mut outer_block[..SHA384_OUTPUT_SIZE]);
+    ct::zeroize(&mut outer_block);
     for word in state.iter_mut() {
       // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
       unsafe { core::ptr::write_volatile(word, 0) };

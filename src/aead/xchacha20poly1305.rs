@@ -325,3 +325,65 @@ impl Aead for XChaCha20Poly1305 {
     Ok(())
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn round_trip() {
+    let key = XChaCha20Poly1305Key::from_bytes([0x42u8; 32]);
+    let nonce = Nonce192::from_bytes([0x07u8; 24]);
+    let cipher = XChaCha20Poly1305::new(&key);
+
+    let mut buf = *b"hello xchacha";
+    let tag = cipher.encrypt_in_place(&nonce, b"aad", &mut buf);
+    cipher.decrypt_in_place(&nonce, b"aad", &mut buf, &tag).unwrap();
+    assert_eq!(&buf, b"hello xchacha");
+  }
+
+  #[test]
+  fn wrong_nonce_rejected() {
+    let key = XChaCha20Poly1305Key::from_bytes([0x42u8; 32]);
+    let nonce = Nonce192::from_bytes([0x07u8; 24]);
+    let cipher = XChaCha20Poly1305::new(&key);
+
+    let mut buf = *b"nonce test";
+    let tag = cipher.encrypt_in_place(&nonce, b"aad", &mut buf);
+
+    let wrong_nonce = Nonce192::from_bytes([0x08u8; 24]);
+    let result = cipher.decrypt_in_place(&wrong_nonce, b"aad", &mut buf, &tag);
+    assert!(result.is_err());
+  }
+
+  #[test]
+  fn buffer_zeroed_on_auth_failure() {
+    let key = XChaCha20Poly1305Key::from_bytes([0x42u8; 32]);
+    let nonce = Nonce192::from_bytes([0x07u8; 24]);
+    let cipher = XChaCha20Poly1305::new(&key);
+
+    let mut buf = *b"zero me on failure";
+    let tag = cipher.encrypt_in_place(&nonce, b"aad", &mut buf);
+
+    let mut bad_tag = tag.to_bytes();
+    bad_tag[0] ^= 0xFF;
+    let bad_tag = XChaCha20Poly1305Tag::from_bytes(bad_tag);
+
+    let result = cipher.decrypt_in_place(&nonce, b"aad", &mut buf, &bad_tag);
+    assert!(result.is_err());
+    assert!(buf.iter().all(|&b| b == 0), "buffer not zeroed on auth failure");
+  }
+
+  #[test]
+  fn wrong_aad_rejected() {
+    let key = XChaCha20Poly1305Key::from_bytes([0x42u8; 32]);
+    let nonce = Nonce192::from_bytes([0x07u8; 24]);
+    let cipher = XChaCha20Poly1305::new(&key);
+
+    let mut buf = *b"aad test";
+    let tag = cipher.encrypt_in_place(&nonce, b"correct", &mut buf);
+
+    let result = cipher.decrypt_in_place(&nonce, b"wrong", &mut buf, &tag);
+    assert!(result.is_err());
+  }
+}

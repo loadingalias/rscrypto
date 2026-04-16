@@ -1,6 +1,8 @@
 //! XXH3 (**NOT CRYPTO**).
 //!
-//! Portable scalar implementation (no SIMD yet).
+//! Hardware-accelerated on x86-64 (AVX2, AVX-512), aarch64 (NEON), POWER
+//! (VSX), s390x (z/Vector), and WASM (SIMD128), with a portable scalar
+//! fallback.
 
 #![allow(clippy::indexing_slicing)] // Tight block parsing + fixed-size arrays
 

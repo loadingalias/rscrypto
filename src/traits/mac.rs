@@ -13,22 +13,36 @@ use crate::traits::{VerificationError, ct};
 ///
 /// # Examples
 ///
-/// ```
-/// use rscrypto::{HmacSha256, Mac};
+/// ```rust
+/// # use rscrypto::traits::Mac;
+/// # #[derive(Clone)]
+/// # struct MyMac { key: u8, state: u8 }
+/// # impl Mac for MyMac {
+/// #   const TAG_SIZE: usize = 4;
+/// #   type Tag = [u8; 4];
+/// #   fn new(key: &[u8]) -> Self {
+/// #     Self { key: key.first().copied().unwrap_or(0), state: 0 }
+/// #   }
+/// #   fn update(&mut self, data: &[u8]) {
+/// #     self.state = data.iter().fold(self.state, |acc, &b| acc.wrapping_add(b));
+/// #   }
+/// #   fn finalize(&self) -> Self::Tag { [self.state ^ self.key; 4] }
+/// #   fn reset(&mut self) { self.state = 0; }
+/// # }
 ///
 /// let key = b"secret-key";
 ///
 /// // One-shot.
-/// let tag = HmacSha256::mac(key, b"hello world");
+/// let tag = MyMac::mac(key, b"hello world");
 ///
 /// // Streaming.
-/// let mut mac = HmacSha256::new(key);
+/// let mut mac = MyMac::new(key);
 /// mac.update(b"hello ");
 /// mac.update(b"world");
 /// assert_eq!(mac.finalize(), tag);
 ///
 /// // Verify.
-/// assert!(HmacSha256::verify_tag(key, b"hello world", &tag).is_ok());
+/// assert!(MyMac::verify_tag(key, b"hello world", &tag).is_ok());
 /// ```
 pub trait Mac: Clone {
   /// Tag size in bytes.

@@ -311,6 +311,28 @@ fn root_surface_hash_exports_compile() {
 }
 
 #[test]
+#[cfg(all(feature = "hashes", feature = "std"))]
+fn digest_reader_writer_round_trip() {
+  use std::io::{Cursor, Read, Write};
+
+  let data = b"hello digest reader writer";
+  let expected = Sha256::digest(data);
+
+  // DigestReader: read data through and verify digest matches.
+  let mut reader = DigestReader::<_, Sha256>::new(Cursor::new(data.to_vec()));
+  let mut sink = Vec::new();
+  std::io::copy(&mut reader, &mut sink).unwrap();
+  assert_eq!(reader.digest(), expected);
+
+  // DigestWriter: write data through and verify digest matches.
+  let mut writer = DigestWriter::<_, Sha256>::new(Vec::new());
+  writer.write_all(data).unwrap();
+  let (out, digest) = writer.into_parts();
+  assert_eq!(&out, data);
+  assert_eq!(digest, expected);
+}
+
+#[test]
 #[cfg(all(feature = "checksums", feature = "diag"))]
 fn advanced_checksum_modules_compile() {
   fn assert_kernel_introspect<T: KernelIntrospect>() {}

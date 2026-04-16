@@ -125,7 +125,7 @@ impl Kmac256 {
     }
 
     ct::zeroize(&mut block);
-    if diff == 0 {
+    if core::hint::black_box(diff) == 0 {
       Ok(())
     } else {
       Err(VerificationError::new())

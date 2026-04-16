@@ -59,9 +59,9 @@ pub(super) fn derive_context_key_words_cached(context: &str) -> [u32; 8] {
 pub(super) fn keyed_words_cached(key: &[u8; KEY_LEN]) -> [u32; 8] {
   if let Some(words) = KEYED_WORDS_LOCAL_CACHE.with(|slot| {
     let borrowed = slot.borrow();
-    borrowed
-      .as_ref()
-      .and_then(|(cached_key, cached_words)| (cached_key == key).then_some(*cached_words))
+    borrowed.as_ref().and_then(|(cached_key, cached_words)| {
+      crate::traits::ct::constant_time_eq(cached_key, key).then_some(*cached_words)
+    })
   }) {
     return words;
   }

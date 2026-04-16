@@ -53,6 +53,20 @@ pub(crate) struct Sha384Prefix {
   dispatch: Option<SizeClassDispatch<CompressBlocksFn>>,
 }
 
+#[cfg(feature = "hmac")]
+impl Sha384Prefix {
+  /// Volatile-zero key-derived state to prevent lingering in memory.
+  pub(crate) fn zeroize(&mut self) {
+    for word in self.state.iter_mut() {
+      // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
+      unsafe { core::ptr::write_volatile(word, 0) };
+    }
+    // SAFETY: bytes_hashed is a valid, aligned, dereferenceable pointer to initialized memory.
+    unsafe { core::ptr::write_volatile(&mut self.bytes_hashed, 0) };
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+  }
+}
+
 impl Sha384 {
   /// Compute the digest of `data` in one shot.
   ///

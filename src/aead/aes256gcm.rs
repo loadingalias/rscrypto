@@ -801,4 +801,40 @@ mod tests {
     }
     out
   }
+
+  /// Decryption with wrong nonce must fail.
+  #[test]
+  fn wrong_nonce_rejected() {
+    let key = Aes256GcmKey::from_bytes([0x42u8; 32]);
+    let nonce = Nonce96::from_bytes([0x07u8; 12]);
+    let cipher = Aes256Gcm::new(&key);
+
+    let mut buf = *b"hello gcm";
+    let tag = cipher.encrypt_in_place(&nonce, b"aad", &mut buf);
+
+    let wrong_nonce = Nonce96::from_bytes([0x08u8; 12]);
+    let result = cipher.decrypt_in_place(&wrong_nonce, b"aad", &mut buf, &tag);
+    assert!(result.is_err());
+  }
+
+  /// On authentication failure, the output buffer must be zeroed.
+  #[test]
+  fn buffer_zeroed_on_auth_failure() {
+    let key = Aes256GcmKey::from_bytes([0x42u8; 32]);
+    let nonce = Nonce96::from_bytes([0x07u8; 12]);
+    let cipher = Aes256Gcm::new(&key);
+
+    let plaintext = *b"zero me on failure";
+    let mut buf = plaintext;
+    let tag = cipher.encrypt_in_place(&nonce, b"aad", &mut buf);
+
+    // Corrupt the tag.
+    let mut bad_tag = tag.to_bytes();
+    bad_tag[0] ^= 0xFF;
+    let bad_tag = Aes256GcmTag::from_bytes(bad_tag);
+
+    let result = cipher.decrypt_in_place(&nonce, b"aad", &mut buf, &bad_tag);
+    assert!(result.is_err());
+    assert!(buf.iter().all(|&b| b == 0), "buffer not zeroed on auth failure");
+  }
 }
