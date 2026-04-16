@@ -41,27 +41,6 @@ impl Xxh3KernelId {
   }
 }
 
-#[allow(dead_code)]
-#[must_use]
-pub fn id_from_name(name: &str) -> Option<Xxh3KernelId> {
-  match name {
-    "portable" => Some(Xxh3KernelId::Portable),
-    #[cfg(target_arch = "x86_64")]
-    "avx2" => Some(Xxh3KernelId::Avx2),
-    #[cfg(target_arch = "aarch64")]
-    "neon" => Some(Xxh3KernelId::Neon),
-    #[cfg(target_arch = "x86_64")]
-    "avx512" => Some(Xxh3KernelId::Avx512),
-    #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
-    "vsx" => Some(Xxh3KernelId::Vsx),
-    #[cfg(target_arch = "s390x")]
-    "zvector" => Some(Xxh3KernelId::Vector),
-    #[cfg(target_arch = "riscv64")]
-    "rvv" => Some(Xxh3KernelId::Rvv),
-    _ => None,
-  }
-}
-
 #[cfg(any(test, feature = "diag"))]
 #[must_use]
 pub fn hash64_fn(id: Xxh3KernelId) -> fn(&[u8], u64) -> u64 {

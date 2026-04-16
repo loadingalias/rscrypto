@@ -389,7 +389,7 @@ fn is_all_zero(bytes: &[u8; POINT_LENGTH]) -> bool {
   for &byte in bytes {
     acc |= byte;
   }
-  acc == 0
+  core::hint::black_box(acc) == 0
 }
 
 #[must_use]

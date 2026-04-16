@@ -18,17 +18,11 @@ AGENTS.md
 *.key
 
 # Personal - Notes, Docs, Examples, Testing, etc.
-crates/*/bench_baseline
-crates/checksum/tuning_results.txt
-crates/hashes/src/crypto/blake3/TASK.md
-crates/*/src/*/*/bench_baseline
 ARCHITECTURE_MATRIX.md
-crates/hashes/src/crypto/blake3/final_work.md
 PLAN.md
 tune-results/
 benchmark-results
 __pycache__
-crates/hashes/src/crypto/blake3/blake3_update.md
 docs/tasks/*
 
 # Fuzzing
@@ -41,6 +35,5 @@ fuzz/**/target
 fuzz-packages/**/target
 fuzz-packages/**/Cargo.lock
 
-
 # Testing
-crates/checksum/proptest-regressions
+proptest-regressions

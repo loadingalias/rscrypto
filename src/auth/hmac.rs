@@ -234,6 +234,13 @@ impl Mac for HmacSha256 {
   }
 }
 
+impl Drop for HmacSha256 {
+  fn drop(&mut self) {
+    self.inner_init.zeroize();
+    self.outer_init.zeroize();
+  }
+}
+
 /// HMAC-SHA384 authentication state.
 #[derive(Clone)]
 pub struct HmacSha384 {
@@ -479,6 +486,13 @@ impl Mac for HmacSha384 {
   }
 }
 
+impl Drop for HmacSha384 {
+  fn drop(&mut self) {
+    self.inner_init.zeroize();
+    self.outer_init.zeroize();
+  }
+}
+
 /// HMAC-SHA512 authentication state.
 #[derive(Clone)]
 pub struct HmacSha512 {
@@ -721,6 +735,13 @@ impl Mac for HmacSha512 {
     } else {
       Err(VerificationError::new())
     }
+  }
+}
+
+impl Drop for HmacSha512 {
+  fn drop(&mut self) {
+    self.inner_init.zeroize();
+    self.outer_init.zeroize();
   }
 }
 

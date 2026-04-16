@@ -2,14 +2,13 @@
 
 ## Reporting a Vulnerability
 
-I take the security of `rscrypto` seriously. If you believe you have found a security vulnerability, please report it to as described below.
+I take the security of `rscrypto` seriously. If you believe you have found a security vulnerability, please report it as described below.
 
 **Please DO NOT report security vulnerabilities through public GitHub issues.**
 
 ### How to Report
 
-- **Email**: [security@loadingalias.com](mailto:security@loadingalias.dev) (preferred)
-- **GitHub**: Use [Private Vulnerability Reporting](../../security/advisories/new)
+Use GitHub's [Private Vulnerability Reporting](../../security/advisories/new).
 
 Include as much detail as possible:
 - Affected version(s) and commit hash

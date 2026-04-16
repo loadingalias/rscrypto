@@ -13,11 +13,20 @@ use core::fmt::Debug;
 ///
 /// # Examples
 ///
-/// ```
-/// use rscrypto::{FastHash, Xxh3};
+/// ```rust
+/// # use rscrypto::traits::FastHash;
+/// # struct MyHash;
+/// # impl FastHash for MyHash {
+/// #   const OUTPUT_SIZE: usize = 8;
+/// #   type Output = u64;
+/// #   type Seed = u64;
+/// #   fn hash_with_seed(seed: u64, data: &[u8]) -> u64 {
+/// #     data.iter().fold(seed, |acc, &b| acc.wrapping_add(u64::from(b)))
+/// #   }
+/// # }
 ///
-/// let hash = Xxh3::hash(b"hello world");
-/// let seeded = Xxh3::hash_with_seed(42, b"hello world");
+/// let hash = MyHash::hash(b"hello world");
+/// let seeded = MyHash::hash_with_seed(42, b"hello world");
 /// assert_ne!(hash, seeded);
 /// ```
 pub trait FastHash {

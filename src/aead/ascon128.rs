@@ -599,6 +599,20 @@ mod tests {
   }
 
   #[test]
+  fn wrong_nonce_fails() {
+    let key = AsconAead128Key::from_bytes([9; 16]);
+    let nonce = Nonce128::from_bytes([10; 16]);
+    let aead = AsconAead128::new(&key);
+
+    let mut buf = *b"nonce test";
+    let tag = aead.encrypt_in_place(&nonce, b"aad", &mut buf);
+
+    let wrong_nonce = Nonce128::from_bytes([11; 16]);
+    let result = aead.decrypt_in_place(&wrong_nonce, b"aad", &mut buf, &tag);
+    assert!(result.is_err());
+  }
+
+  #[test]
   fn combined_encrypt_decrypt_round_trip() {
     let key = AsconAead128Key::from_bytes([7; 16]);
     let nonce = Nonce128::from_bytes([8; 16]);

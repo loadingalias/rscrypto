@@ -2,8 +2,6 @@ use super::Sha256;
 use crate::platform::Caps;
 #[cfg(target_arch = "aarch64")]
 use crate::platform::caps::aarch64;
-#[cfg(target_arch = "powerpc64")]
-use crate::platform::caps::power;
 #[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
 use crate::platform::caps::riscv;
 #[cfg(target_arch = "s390x")]
@@ -30,8 +28,6 @@ pub enum Sha256KernelId {
   WasmSimd128 = 4,
   #[cfg(target_arch = "s390x")]
   S390xKimd = 5,
-  #[cfg(target_arch = "powerpc64")]
-  Ppc64Crypto = 6,
 }
 
 impl Sha256KernelId {
@@ -51,30 +47,7 @@ impl Sha256KernelId {
       Self::WasmSimd128 => "wasm/simd128",
       #[cfg(target_arch = "s390x")]
       Self::S390xKimd => "s390x/kimd",
-      #[cfg(target_arch = "powerpc64")]
-      Self::Ppc64Crypto => "ppc64/crypto",
     }
-  }
-}
-
-#[allow(dead_code)]
-#[must_use]
-pub fn id_from_name(name: &str) -> Option<Sha256KernelId> {
-  match name {
-    "portable" => Some(Sha256KernelId::Portable),
-    #[cfg(target_arch = "x86_64")]
-    "x86-sha" => Some(Sha256KernelId::X86Sha),
-    #[cfg(target_arch = "aarch64")]
-    "aarch64-sha2" => Some(Sha256KernelId::Aarch64Sha2),
-    #[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
-    "riscv/zknh" => Some(Sha256KernelId::RiscvZknh),
-    #[cfg(target_arch = "wasm32")]
-    "wasm/simd128" => Some(Sha256KernelId::WasmSimd128),
-    #[cfg(target_arch = "s390x")]
-    "s390x/kimd" => Some(Sha256KernelId::S390xKimd),
-    #[cfg(target_arch = "powerpc64")]
-    "ppc64/crypto" => Some(Sha256KernelId::Ppc64Crypto),
-    _ => None,
   }
 }
 
@@ -112,12 +85,6 @@ fn compress_blocks_s390x_kimd(state: &mut [u32; 8], blocks: &[u8]) {
   unsafe { super::s390x::compress_blocks_kimd(state, blocks) }
 }
 
-#[cfg(target_arch = "powerpc64")]
-fn compress_blocks_ppc64_crypto(state: &mut [u32; 8], blocks: &[u8]) {
-  // SAFETY: Only called when dispatch has verified `power::POWER8_CRYPTO` is available.
-  unsafe { super::ppc64::compress_blocks_ppc64_crypto(state, blocks) }
-}
-
 #[must_use]
 pub(crate) fn compress_blocks_fn(id: Sha256KernelId) -> CompressBlocksFn {
   match id {
@@ -132,8 +99,6 @@ pub(crate) fn compress_blocks_fn(id: Sha256KernelId) -> CompressBlocksFn {
     Sha256KernelId::WasmSimd128 => compress_blocks_wasm_simd128,
     #[cfg(target_arch = "s390x")]
     Sha256KernelId::S390xKimd => compress_blocks_s390x_kimd,
-    #[cfg(target_arch = "powerpc64")]
-    Sha256KernelId::Ppc64Crypto => compress_blocks_ppc64_crypto,
   }
 }
 
@@ -152,8 +117,6 @@ pub const fn required_caps(id: Sha256KernelId) -> Caps {
     Sha256KernelId::WasmSimd128 => wasm::SIMD128,
     #[cfg(target_arch = "s390x")]
     Sha256KernelId::S390xKimd => s390x::MSA,
-    #[cfg(target_arch = "powerpc64")]
-    Sha256KernelId::Ppc64Crypto => power::POWER8_CRYPTO,
   }
 }
 

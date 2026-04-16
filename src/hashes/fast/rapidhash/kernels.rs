@@ -17,15 +17,6 @@ impl RapidHashKernelId {
   }
 }
 
-#[allow(dead_code)]
-#[must_use]
-pub fn id_from_name(name: &str) -> Option<RapidHashKernelId> {
-  match name {
-    "portable" => Some(RapidHashKernelId::Portable),
-    _ => None,
-  }
-}
-
 #[must_use]
 pub fn hash64_fn(id: RapidHashKernelId) -> fn(&[u8], u64) -> u64 {
   match id {

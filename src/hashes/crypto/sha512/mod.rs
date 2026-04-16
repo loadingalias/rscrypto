@@ -21,8 +21,6 @@ pub(crate) mod kernels;
 
 #[cfg(target_arch = "aarch64")]
 mod aarch64;
-#[cfg(target_arch = "powerpc64")]
-pub(crate) mod ppc64;
 #[cfg(target_arch = "riscv64")]
 pub(crate) mod riscv64;
 #[cfg(target_arch = "s390x")]
@@ -195,6 +193,20 @@ pub(crate) struct Sha512Prefix {
   bytes_hashed: u128,
   compress_blocks: CompressBlocksFn,
   dispatch: Option<SizeClassDispatch<CompressBlocksFn>>,
+}
+
+#[cfg(feature = "hmac")]
+impl Sha512Prefix {
+  /// Volatile-zero key-derived state to prevent lingering in memory.
+  pub(crate) fn zeroize(&mut self) {
+    for word in self.state.iter_mut() {
+      // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
+      unsafe { core::ptr::write_volatile(word, 0) };
+    }
+    // SAFETY: bytes_hashed is a valid, aligned, dereferenceable pointer to initialized memory.
+    unsafe { core::ptr::write_volatile(&mut self.bytes_hashed, 0) };
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+  }
 }
 
 impl core::fmt::Debug for Sha512 {

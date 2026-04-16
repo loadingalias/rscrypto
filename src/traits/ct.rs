@@ -112,3 +112,102 @@ pub fn zeroize(buf: &mut [u8]) {
   zeroize_no_fence(buf);
   core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  // ── constant_time_eq ────────────────────────────────────────────────────
+
+  #[test]
+  fn equal_slices() {
+    assert!(constant_time_eq(b"abcdef", b"abcdef"));
+  }
+
+  #[test]
+  fn differ_first_byte() {
+    assert!(!constant_time_eq(b"\x00bcdef", b"\xFFbcdef"));
+  }
+
+  #[test]
+  fn differ_last_byte() {
+    assert!(!constant_time_eq(b"abcde\x00", b"abcde\xFF"));
+  }
+
+  #[test]
+  fn differ_middle_byte() {
+    assert!(!constant_time_eq(b"ab\x00def", b"ab\xFFdef"));
+  }
+
+  #[test]
+  fn both_empty() {
+    assert!(constant_time_eq(b"", b""));
+  }
+
+  #[test]
+  fn one_empty_one_not() {
+    assert!(!constant_time_eq(b"", b"x"));
+    assert!(!constant_time_eq(b"x", b""));
+  }
+
+  #[test]
+  fn length_mismatch() {
+    assert!(!constant_time_eq(b"short", b"longer"));
+    assert!(!constant_time_eq(b"longer", b"short"));
+  }
+
+  #[test]
+  fn single_byte_equal() {
+    assert!(constant_time_eq(&[0x42], &[0x42]));
+  }
+
+  #[test]
+  fn single_byte_differ() {
+    assert!(!constant_time_eq(&[0x00], &[0x01]));
+  }
+
+  #[test]
+  fn all_zeros_equal() {
+    assert!(constant_time_eq(&[0u8; 64], &[0u8; 64]));
+  }
+
+  #[test]
+  fn all_ones_equal() {
+    assert!(constant_time_eq(&[0xFF; 64], &[0xFF; 64]));
+  }
+
+  // ── ConstantTimeEq trait ────────────────────────────────────────────────
+
+  #[test]
+  fn ct_eq_fixed_array() {
+    let a = [1u8, 2, 3, 4];
+    let b = [1u8, 2, 3, 4];
+    let c = [1u8, 2, 3, 5];
+    assert!(a.ct_eq(&b));
+    assert!(!a.ct_eq(&c));
+  }
+
+  #[test]
+  fn ct_eq_slice() {
+    let a: &[u8] = &[10, 20, 30];
+    let b: &[u8] = &[10, 20, 30];
+    let c: &[u8] = &[10, 20, 31];
+    assert!(a.ct_eq(b));
+    assert!(!a.ct_eq(c));
+  }
+
+  // ── zeroize ─────────────────────────────────────────────────────────────
+
+  #[test]
+  fn zeroize_clears_buffer() {
+    let mut buf = [0xFFu8; 37]; // odd size to exercise prefix/suffix
+    zeroize(&mut buf);
+    assert!(buf.iter().all(|&b| b == 0));
+  }
+
+  #[test]
+  fn zeroize_empty_is_noop() {
+    let mut buf = [];
+    zeroize(&mut buf); // must not panic
+  }
+}

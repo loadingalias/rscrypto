@@ -1,19 +1,19 @@
-//! AEAD rollout targets and backend policy.
+//! AEAD backend targets and dispatch policy.
 //!
-//! This is the contract layer between `docs/tasks/aead.md`, platform
-//! detection, and future concrete implementations.
+//! Maps each AEAD primitive to the best available backend for a given platform,
+//! based on detected CPU capabilities.
 //!
-//! Two rules matter:
+//! Two rules:
 //!
-//! - every primitive has an explicit backend goal for every benchmark lane
-//! - backend selection is derived from detected CPU capabilities, not wishful thinking
+//! - every primitive has an explicit backend for every benchmark lane
+//! - backend selection is derived from detected CPU capabilities
 
 use crate::platform::{
   Arch, Caps,
   caps::{aarch64, power, riscv, s390x, wasm, x86},
 };
 
-/// AEAD primitives planned for the public surface.
+/// AEAD primitives on the public surface.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum AeadPrimitive {
@@ -21,14 +21,16 @@ pub enum AeadPrimitive {
   ChaCha20Poly1305,
   Aes256GcmSiv,
   Aes256Gcm,
+  /// Planned — no encrypt/decrypt implementation yet.
   Aes128GcmSiv,
+  /// Planned — no encrypt/decrypt implementation yet.
   Aes128Gcm,
   AsconAead128,
   Aegis256,
 }
 
 impl AeadPrimitive {
-  /// Primary AEAD rollout set from `docs/tasks/aead.md`.
+  /// Primary AEAD set.
   pub const CORE: [Self; 5] = [
     Self::XChaCha20Poly1305,
     Self::Aes256GcmSiv,
@@ -37,7 +39,7 @@ impl AeadPrimitive {
     Self::Aegis256,
   ];
 
-  /// All planned public AEAD primitives, including interop companions.
+  /// All public AEAD primitives, including interop companions.
   pub const ALL: [Self; 8] = [
     Self::XChaCha20Poly1305,
     Self::ChaCha20Poly1305,
@@ -208,15 +210,16 @@ pub const fn lane_target_backend(primitive: AeadPrimitive, lane: BenchLane) -> A
       BenchLane::IbmS390x => AeadBackend::S390xVector,
       BenchLane::IbmPower10 => AeadBackend::PowerVector,
     },
-    AeadPrimitive::Aes256GcmSiv | AeadPrimitive::Aes256Gcm | AeadPrimitive::Aes128GcmSiv | AeadPrimitive::Aes128Gcm => {
-      match lane {
-        BenchLane::IntelIcl | BenchLane::IntelSpr | BenchLane::AmdZen4 | BenchLane::AmdZen5 => {
-          AeadBackend::X86VaesVpclmul
-        }
-        BenchLane::Graviton3 | BenchLane::Graviton4 => AeadBackend::Aarch64AesPmull,
-        BenchLane::IbmS390x => AeadBackend::S390xMsa,
-        BenchLane::IbmPower10 => AeadBackend::Power8Crypto,
+    AeadPrimitive::Aes256GcmSiv | AeadPrimitive::Aes256Gcm => match lane {
+      BenchLane::IntelIcl | BenchLane::IntelSpr | BenchLane::AmdZen4 | BenchLane::AmdZen5 => {
+        AeadBackend::X86VaesVpclmul
       }
+      BenchLane::Graviton3 | BenchLane::Graviton4 => AeadBackend::Aarch64AesPmull,
+      BenchLane::IbmS390x => AeadBackend::S390xMsa,
+      BenchLane::IbmPower10 => AeadBackend::Power8Crypto,
+    },
+    AeadPrimitive::Aes128GcmSiv | AeadPrimitive::Aes128Gcm => {
+      panic!("AES-128-GCM[-SIV] AEAD not yet implemented")
     }
     AeadPrimitive::AsconAead128 => AeadBackend::Portable,
     AeadPrimitive::Aegis256 => match lane {
@@ -237,8 +240,9 @@ pub const fn lane_target_backend(primitive: AeadPrimitive, lane: BenchLane) -> A
 pub fn select_backend(primitive: AeadPrimitive, arch: Arch, caps: Caps) -> AeadBackend {
   match primitive {
     AeadPrimitive::XChaCha20Poly1305 | AeadPrimitive::ChaCha20Poly1305 => select_chacha_backend(arch, caps),
-    AeadPrimitive::Aes256GcmSiv | AeadPrimitive::Aes256Gcm | AeadPrimitive::Aes128GcmSiv | AeadPrimitive::Aes128Gcm => {
-      select_gcm_backend(arch, caps)
+    AeadPrimitive::Aes256GcmSiv | AeadPrimitive::Aes256Gcm => select_gcm_backend(arch, caps),
+    AeadPrimitive::Aes128GcmSiv | AeadPrimitive::Aes128Gcm => {
+      todo!("AES-128-GCM[-SIV] AEAD: key schedule, encrypt, decrypt")
     }
     AeadPrimitive::AsconAead128 => select_ascon_backend(arch),
     AeadPrimitive::Aegis256 => select_aegis_backend(arch, caps),
@@ -471,7 +475,7 @@ mod tests {
 
     let aes_pmull_caps = aarch64::AES | aarch64::PMULL;
     assert_eq!(
-      select_backend(AeadPrimitive::Aes128GcmSiv, Arch::Aarch64, aes_pmull_caps),
+      select_backend(AeadPrimitive::Aes256GcmSiv, Arch::Aarch64, aes_pmull_caps),
       AeadBackend::Aarch64AesPmull
     );
   }

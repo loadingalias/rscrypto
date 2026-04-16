@@ -324,3 +324,65 @@ impl Aead for ChaCha20Poly1305 {
     Ok(())
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn round_trip() {
+    let key = ChaCha20Poly1305Key::from_bytes([0x42u8; 32]);
+    let nonce = Nonce96::from_bytes([0x07u8; 12]);
+    let cipher = ChaCha20Poly1305::new(&key);
+
+    let mut buf = *b"hello chacha";
+    let tag = cipher.encrypt_in_place(&nonce, b"aad", &mut buf);
+    cipher.decrypt_in_place(&nonce, b"aad", &mut buf, &tag).unwrap();
+    assert_eq!(&buf, b"hello chacha");
+  }
+
+  #[test]
+  fn wrong_nonce_rejected() {
+    let key = ChaCha20Poly1305Key::from_bytes([0x42u8; 32]);
+    let nonce = Nonce96::from_bytes([0x07u8; 12]);
+    let cipher = ChaCha20Poly1305::new(&key);
+
+    let mut buf = *b"nonce test";
+    let tag = cipher.encrypt_in_place(&nonce, b"aad", &mut buf);
+
+    let wrong_nonce = Nonce96::from_bytes([0x08u8; 12]);
+    let result = cipher.decrypt_in_place(&wrong_nonce, b"aad", &mut buf, &tag);
+    assert!(result.is_err());
+  }
+
+  #[test]
+  fn buffer_zeroed_on_auth_failure() {
+    let key = ChaCha20Poly1305Key::from_bytes([0x42u8; 32]);
+    let nonce = Nonce96::from_bytes([0x07u8; 12]);
+    let cipher = ChaCha20Poly1305::new(&key);
+
+    let mut buf = *b"zero me on failure";
+    let tag = cipher.encrypt_in_place(&nonce, b"aad", &mut buf);
+
+    let mut bad_tag = tag.to_bytes();
+    bad_tag[0] ^= 0xFF;
+    let bad_tag = ChaCha20Poly1305Tag::from_bytes(bad_tag);
+
+    let result = cipher.decrypt_in_place(&nonce, b"aad", &mut buf, &bad_tag);
+    assert!(result.is_err());
+    assert!(buf.iter().all(|&b| b == 0), "buffer not zeroed on auth failure");
+  }
+
+  #[test]
+  fn wrong_aad_rejected() {
+    let key = ChaCha20Poly1305Key::from_bytes([0x42u8; 32]);
+    let nonce = Nonce96::from_bytes([0x07u8; 12]);
+    let cipher = ChaCha20Poly1305::new(&key);
+
+    let mut buf = *b"aad test";
+    let tag = cipher.encrypt_in_place(&nonce, b"correct", &mut buf);
+
+    let result = cipher.decrypt_in_place(&nonce, b"wrong", &mut buf, &tag);
+    assert!(result.is_err());
+  }
+}

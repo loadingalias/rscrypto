@@ -1,7 +1,7 @@
 //! I/O adapter support for hashing algorithms.
 //!
 //! This module provides sealed traits that enable generic I/O adapter implementations
-//! for [`Checksum`](crate::Checksum) and [`Digest`](crate::Digest) types.
+//! for [`Checksum`](crate::Checksum) and [`Digest`](crate::traits::Digest) types.
 //!
 //! # Design
 //!
@@ -52,7 +52,7 @@ pub(crate) use private::Sealed as SealedMarker;
 /// Trait for types that can be used with I/O adapters.
 ///
 /// This is implemented automatically for all [`Checksum`](crate::Checksum) and
-/// [`Digest`](crate::Digest) types. It cannot be implemented manually.
+/// [`Digest`](crate::traits::Digest) types. It cannot be implemented manually.
 ///
 /// # Stability
 ///
@@ -83,7 +83,7 @@ pub trait ChecksumMarker: private::Sealed {
 
 /// Marker trait for digest algorithms.
 ///
-/// This is automatically implemented for all types implementing [`Digest`](crate::Digest).
+/// This is automatically implemented for all types implementing [`Digest`](crate::traits::Digest).
 /// It provides the `digest()` method alias for `finalize()`.
 pub trait DigestMarker: private::Sealed {
   type Output: Copy + core::fmt::Debug;

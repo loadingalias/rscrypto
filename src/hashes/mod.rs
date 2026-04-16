@@ -53,16 +53,17 @@
 //!
 //! # Modules
 //!
-//! - [`crypto`] - Cryptographic hash functions (safe by default).
-//! - [`fast`] - Non-cryptographic hashes (**NOT CRYPTO**).
-//! - [`introspect`] - Advanced kernel selection reporting.
+//! - `crypto` - Cryptographic hash functions (safe by default).
+//! - `fast` - Non-cryptographic hashes (**NOT CRYPTO**).
+//! - `introspect` (requires `diag` feature) - Advanced kernel selection reporting.
 //!
 //! # Advanced
 //!
 //! Dispatch is automatic by default.
 //!
-//! - Use [`crate::hashes::introspect`] for kernel reporting and size-based dispatch details.
-//! - Use [`crate::hashes::fast`] for explicit fast-hash family access.
+//! - Use `crate::hashes::introspect` (requires `diag` feature) for kernel reporting and size-based
+//!   dispatch details.
+//! - Use `crate::hashes::fast` for explicit fast-hash family access.
 #[doc(hidden)]
 pub(crate) mod common;
 #[cfg(any(feature = "sha2", feature = "sha3", feature = "blake3", feature = "ascon-hash"))]

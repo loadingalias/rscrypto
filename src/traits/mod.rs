@@ -7,8 +7,8 @@
 //!
 //! | Trait | Purpose | Examples |
 //! |-------|---------|----------|
-//! | [`Aead`] | Authenticated encryption with associated data | XChaCha20-Poly1305 |
-//! | [`Checksum`] | Non-cryptographic checksums | CRC32, CRC64, xxHash |
+//! | `Aead` | Authenticated encryption with associated data | XChaCha20-Poly1305 |
+//! | [`Checksum`] | Non-cryptographic checksums | CRC32, CRC64 |
 //! | [`ChecksumCombine`] | Parallel checksum combination | CRC with O(log n) combine |
 //! | [`Digest`] | Cryptographic digests | BLAKE3, SHA-2 |
 //! | [`Mac`] | Message authentication codes | HMAC-SHA256 |

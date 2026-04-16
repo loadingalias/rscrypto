@@ -7,10 +7,22 @@
 ///
 /// # Examples
 ///
-/// ```
-/// use rscrypto::{Shake256, Xof};
+/// ```rust
+/// # use rscrypto::traits::Xof;
+/// # #[derive(Clone)]
+/// # struct MyXof(u8);
+/// # impl MyXof {
+/// #   fn xof(data: &[u8]) -> Self {
+/// #     Self(data.iter().fold(0u8, |acc, &b| acc.wrapping_add(b)))
+/// #   }
+/// # }
+/// # impl Xof for MyXof {
+/// #   fn squeeze(&mut self, out: &mut [u8]) {
+/// #     for b in out.iter_mut() { *b = self.0; self.0 = self.0.wrapping_add(1); }
+/// #   }
+/// # }
 ///
-/// let mut xof = Shake256::xof(b"hello world");
+/// let mut xof = MyXof::xof(b"hello world");
 /// let mut out = [0u8; 64];
 /// xof.squeeze(&mut out);
 /// assert_ne!(out, [0u8; 64]);

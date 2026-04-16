@@ -215,6 +215,70 @@ run_fuzz_coverage() {
   fi
 }
 
+# ── Merge + Summary ──────────────────────────────────────────────────────────
+
+generate_summary() {
+  echo ""
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "Merging coverage reports"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  local lcov_files=()
+  for f in "$COV_DIR"/nextest.lcov "$COV_DIR"/fuzz.lcov "$COV_DIR"/fuzz-*.lcov; do
+    [ -f "$f" ] && lcov_files+=("$f")
+  done
+
+  if [ ${#lcov_files[@]} -eq 0 ]; then
+    echo "No LCOV files to merge"
+    return
+  fi
+
+  local merged="$COV_DIR/merged.lcov"
+  cat "${lcov_files[@]}" > "$merged"
+
+  local lines_found lines_hit fn_found fn_hit
+  lines_found=$(awk -F: '/^LF:/{s+=$2} END{print s+0}' "$merged")
+  lines_hit=$(awk -F: '/^LH:/{s+=$2} END{print s+0}' "$merged")
+  fn_found=$(awk -F: '/^FNF:/{s+=$2} END{print s+0}' "$merged")
+  fn_hit=$(awk -F: '/^FNH:/{s+=$2} END{print s+0}' "$merged")
+
+  local line_pct="0.0" fn_pct="0.0"
+  if [ "$lines_found" -gt 0 ]; then
+    line_pct=$(awk "BEGIN{printf \"%.1f\", 100*$lines_hit/$lines_found}")
+  fi
+  if [ "$fn_found" -gt 0 ]; then
+    fn_pct=$(awk "BEGIN{printf \"%.1f\", 100*$fn_hit/$fn_found}")
+  fi
+
+  echo ""
+  echo "  Lines:     ${lines_hit}/${lines_found} (${line_pct}%)"
+  echo "  Functions: ${fn_hit}/${fn_found} (${fn_pct}%)"
+  echo "  Sources:   ${#lcov_files[@]} LCOV file(s) merged"
+  echo "  Merged:    $merged"
+
+  local sources_list=""
+  for f in "${lcov_files[@]}"; do
+    sources_list="${sources_list}
+- \`$(basename "$f")\`"
+  done
+
+  cat > "$COV_DIR/SUMMARY.md" <<SUMMARY_EOF
+# Coverage Summary
+
+| Metric    | Hit | Total | Coverage |
+|-----------|-----|-------|----------|
+| Lines     | ${lines_hit} | ${lines_found} | ${line_pct}% |
+| Functions | ${fn_hit} | ${fn_found} | ${fn_pct}% |
+
+Generated: $(date -u +"%Y-%m-%d %H:%M UTC")
+
+## Sources
+${sources_list}
+SUMMARY_EOF
+
+  echo "  Summary:   $COV_DIR/SUMMARY.md"
+}
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 if [ "$RUN_NEXTEST" = true ]; then
@@ -223,6 +287,10 @@ fi
 
 if [ "$RUN_FUZZ" = true ]; then
   run_fuzz_coverage
+fi
+
+if [ "$RUN_NEXTEST" = true ] && [ "$RUN_FUZZ" = true ]; then
+  generate_summary
 fi
 
 echo ""

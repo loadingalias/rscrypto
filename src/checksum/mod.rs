@@ -7,13 +7,13 @@
 //!
 //! | Type | Polynomial | Output | Use Cases |
 //! |------|------------|--------|-----------|
-//! | [`Crc16Ccitt`] | 0x1021 | `u16` | X.25, HDLC, PACTOR, SD |
-//! | [`Crc16Ibm`] | 0x8005 | `u16` | Legacy protocols, ARC/IBM |
-//! | [`Crc24OpenPgp`] | 0x864CFB | `u32` (24-bit) | OpenPGP (RFC 4880) |
-//! | [`Crc32`] | 0x04C11DB7 | `u32` | Ethernet, gzip, zip, PNG |
-//! | [`Crc32C`] | 0x1EDC6F41 | `u32` | iSCSI, SCTP, ext4, Btrfs |
-//! | [`Crc64`] | 0x42F0E1EBA9EA3693 | `u64` | XZ Utils, 7-Zip |
-//! | [`Crc64Nvme`] | 0xAD93D23594C93659 | `u64` | NVMe specification |
+//! | `Crc16Ccitt` | 0x1021 | `u16` | X.25, HDLC, PACTOR, SD |
+//! | `Crc16Ibm` | 0x8005 | `u16` | Legacy protocols, ARC/IBM |
+//! | `Crc24OpenPgp` | 0x864CFB | `u32` (24-bit) | OpenPGP (RFC 4880) |
+//! | `Crc32` | 0x04C11DB7 | `u32` | Ethernet, gzip, zip, PNG |
+//! | `Crc32C` | 0x1EDC6F41 | `u32` | iSCSI, SCTP, ext4, Btrfs |
+//! | `Crc64` | 0x42F0E1EBA9EA3693 | `u64` | XZ Utils, 7-Zip |
+//! | `Crc64Nvme` | 0xAD93D23594C93659 | `u64` | NVMe specification |
 //!
 //! # Examples
 //!
@@ -63,7 +63,8 @@
 //! Dispatch is automatic by default.
 //!
 //! - Use [`crate::checksum::config`] for force/config controls.
-//! - Use [`crate::checksum::introspect`] for kernel reporting and selection details.
+//! - Use `crate::checksum::introspect` (requires `diag` feature) for kernel reporting and selection
+//!   details.
 //! - Use [`crate::platform`] for platform detection and override control.
 //!
 //! # no_std Support

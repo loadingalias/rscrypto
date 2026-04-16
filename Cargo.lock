@@ -1175,6 +1175,7 @@ dependencies = [
  "rapidhash",
  "rayon",
  "serde",
+ "serde_json",
  "sha2 0.11.0",
  "sha3",
  "tiny-keccak",

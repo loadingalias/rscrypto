@@ -52,6 +52,9 @@ test-all:
     just test-miri
 
 # Coverage reporting.
+cov:
+    @scripts/test/test-coverage.sh --html
+
 coverage *args="":
     @scripts/test/test-coverage.sh {{args}}
 
@@ -85,19 +88,6 @@ blake3-codegen-audit target="x86_64-unknown-linux-gnu" out="target/blake3-codege
     @scripts/bench/blake3-codegen-audit.sh {{target}} {{out}}
 
 
-# Summarize Criterion results as TSV
-bench-summary group="" only="oneshot":
-    @python3 scripts/bench/criterion-summary.py --group-prefix '{{group}}' --only {{only}}
-
-# Run `checksum` comparison benches and report non-wins vs competitors.
-bench-compare group="" ours="rscrypto" min_pct="0":
-    RUSTC_WRAPPER= cargo bench --features parallel,checksums --bench crc
-    @python3 scripts/bench/criterion-summary.py --group-prefix '{{group}}' --non-wins --ours '{{ours}}' --min-improvement-pct {{min_pct}}
-
-bench-blake3-compare min_pct="0" ours="rscrypto":
-    RUSTC_WRAPPER= cargo bench --features parallel,blake3 --bench blake3
-    @python3 scripts/bench/criterion-summary.py --group-prefix 'blake3' --non-wins --ours '{{ours}}' --min-improvement-pct {{min_pct}}
-
 bench-blake3-core:
     @scripts/bench/bench.sh benches=blake3 filter=oneshot,streaming,keyed,derive-key,xof
 
@@ -110,21 +100,11 @@ bench-blake3-gate:
 bench-blake3-kernel-gate platform="intel-icl":
     @BENCH_ENFORCE_BLAKE3_KERNEL_GATE=true BENCH_PLATFORM={{platform}} scripts/bench/bench.sh benches=blake3 filter=kernel-ab quick=false
 
-comp-check path:
-    @python3 scripts/bench/comp-check.py {{path}}
-
-gen-blake3-x86-asm-ports:
-    @scripts/gen_blake3_x86_asm_ports.py
-
 target-matrix-shell:
     @bash scripts/lib/target-matrix.sh --format shell
 
 target-matrix-json key:
     @bash scripts/lib/target-matrix.sh --format json --key "{{key}}"
-
-gen-hashes-testdata:
-    @python3 scripts/gen_hashes_testdata.py
-
 
 ci-pin-actions:
     @scripts/ci/pin-actions.sh --update-lock
@@ -139,7 +119,6 @@ update:
 update-check:
     @scripts/update/update-all.sh --check
 
-# Legacy convenience wrappers used in contributor docs.
 pin-actions:
     @just ci-pin-actions
 
@@ -150,4 +129,4 @@ ci-pre-push:
     @scripts/ci/pre-push.sh
 
 fuzz-coverage:
-    @scripts/test/test-coverage.sh --fuzz
+    @just coverage-fuzz
