@@ -955,10 +955,15 @@ mod rv_aes {
 // MixColumns into 4 × 1 KiB lookup tables, reducing AES-256 from ~87K
 // operations/block to ~256 lookups/block.
 //
-// The T-tables use secret-indexed loads. This is the same trade-off made by
-// the s390x AEGIS backend (aegis256::zvec) — acceptable for platforms where
-// the algebraic alternative is catastrophically slow and hardware AES is
-// absent.
+// # Security
+//
+// T-tables are NOT constant-time (Bernstein 2005, Osvik et al. 2006).
+// Secret-indexed loads leak key material via cache-timing side channels.
+//
+// This module is a last-resort fallback for RISC-V without V extension AND
+// without Zkne/Zvkned hardware AES. When V is available, the `rv_vperm_aes`
+// module provides a practically constant-time path via `vrgather.vv`.
+// Dispatch hierarchy: Zvkned > Zkne > V+vperm > T-table (here).
 
 #[cfg(target_arch = "riscv64")]
 mod ttable {
@@ -1113,6 +1118,297 @@ mod ttable {
 }
 
 // ---------------------------------------------------------------------------
+// RISC-V V Hamburg vperm full-block AES-256 (constant-time)
+// ---------------------------------------------------------------------------
+//
+// 14-round AES-256 encryption using Hamburg vperm technique with `vrgather.vv`.
+// Rounds 1-13: SubBytes + ShiftRows + MixColumns + AddRoundKey.
+// Round 14:    SubBytes + ShiftRows + AddRoundKey (no MixColumns).
+//
+// Uses the same portable key schedule as the T-table path — round keys are
+// stored as `[u32; 60]` and converted to bytes per round.
+
+#[cfg(target_arch = "riscv64")]
+#[allow(unsafe_code)]
+mod rv_vperm_aes {
+  use core::arch::asm;
+
+  use crate::aead::aes_round::{
+    AES_AFFINE, MC_ROT1, MC_ROT2, VPERM_INV_HI, VPERM_INV_LO, VPERM_IPT_HI, VPERM_IPT_LO,
+    VPERM_SBOU, VPERM_SBOT, VPERM_SR, XTIME_REDUCE,
+  };
+
+  /// Precomputed Hamburg vperm table block — contiguous for offset-based loads.
+  #[repr(C, align(16))]
+  struct VpermTables {
+    ipt_lo: [u8; 16],   // offset 0
+    ipt_hi: [u8; 16],   // offset 16
+    inv_lo: [u8; 16],   // offset 32
+    inv_hi: [u8; 16],   // offset 48
+    sbou: [u8; 16],     // offset 64
+    sbot: [u8; 16],     // offset 80
+    sr_perm: [u8; 16],  // offset 96
+    mc_rot1: [u8; 16],  // offset 112
+    mc_rot2: [u8; 16],  // offset 128
+    affine: [u8; 16],   // offset 144
+    xtime: [u8; 16],    // offset 160
+  }
+
+  impl VpermTables {
+    #[inline(always)]
+    fn load() -> Self {
+      Self {
+        ipt_lo: VPERM_IPT_LO,
+        ipt_hi: VPERM_IPT_HI,
+        inv_lo: VPERM_INV_LO,
+        inv_hi: VPERM_INV_HI,
+        sbou: VPERM_SBOU,
+        sbot: VPERM_SBOT,
+        sr_perm: VPERM_SR,
+        mc_rot1: MC_ROT1,
+        mc_rot2: MC_ROT2,
+        affine: [AES_AFFINE; 16],
+        xtime: [XTIME_REDUCE; 16],
+      }
+    }
+  }
+
+  /// Extract round key bytes from the portable key schedule.
+  #[inline(always)]
+  fn round_key_bytes(rk: &[u32; super::EXPANDED_KEY_WORDS], round: usize) -> [u8; 16] {
+    let off = round.strict_mul(4);
+    let mut bytes = [0u8; 16];
+    bytes[0..4].copy_from_slice(&rk[off].to_be_bytes());
+    bytes[4..8].copy_from_slice(&rk[off.strict_add(1)].to_be_bytes());
+    bytes[8..12].copy_from_slice(&rk[off.strict_add(2)].to_be_bytes());
+    bytes[12..16].copy_from_slice(&rk[off.strict_add(3)].to_be_bytes());
+    bytes
+  }
+
+  /// Single inner AES round (SubBytes + ShiftRows + MixColumns + AddRoundKey).
+  /// Same asm as aegis256::rv_vperm::aes_round.
+  #[target_feature(enable = "v")]
+  #[inline(always)]
+  unsafe fn aes_inner_round(
+    block: &[u8; 16],
+    round_key: &[u8; 16],
+    tables: &VpermTables,
+  ) -> [u8; 16] {
+    let mut out = [0u8; 16];
+    unsafe {
+      asm!(
+        "vsetivli zero, 16, e8, m1, ta, ma",
+        // Load tables.
+        "vle8.v v2, ({tbl})",
+        "addi {tmp}, {tbl}, 16",
+        "vle8.v v3, ({tmp})",
+        "addi {tmp}, {tbl}, 32",
+        "vle8.v v4, ({tmp})",
+        "addi {tmp}, {tbl}, 48",
+        "vle8.v v5, ({tmp})",
+        "addi {tmp}, {tbl}, 64",
+        "vle8.v v6, ({tmp})",
+        "addi {tmp}, {tbl}, 80",
+        "vle8.v v7, ({tmp})",
+        "addi {tmp}, {tbl}, 96",
+        "vle8.v v8, ({tmp})",
+        "addi {tmp}, {tbl}, 112",
+        "vle8.v v9, ({tmp})",
+        "addi {tmp}, {tbl}, 128",
+        "vle8.v v10, ({tmp})",
+        "addi {tmp}, {tbl}, 144",
+        "vle8.v v11, ({tmp})",
+        "addi {tmp}, {tbl}, 160",
+        "vle8.v v12, ({tmp})",
+        "vle8.v v0, ({state})",
+        "vle8.v v1, ({rk})",
+        // Phase 1: Nibble extraction.
+        "vand.vi v14, v0, 15",
+        "vsrl.vi v15, v0, 4",
+        // Phase 2: Input transform.
+        "vrgather.vv v16, v2, v14",
+        "vrgather.vv v17, v3, v15",
+        "vxor.vv v14, v16, v17",
+        // Phase 3: Re-extract nibbles.
+        "vand.vi v15, v14, 15",
+        "vsrl.vi v16, v14, 4",
+        // Phase 4: GF(2^4) inverse.
+        "vrgather.vv v17, v5, v15",
+        "vxor.vv v18, v16, v15",
+        "vrgather.vv v19, v4, v16",
+        "vxor.vv v20, v19, v17",
+        "vrgather.vv v21, v4, v18",
+        "vxor.vv v22, v21, v17",
+        "vand.vi v23, v20, 15",
+        "vrgather.vv v24, v4, v23",
+        "vsra.vi v25, v20, 7",
+        "vxor.vi v26, v25, -1",
+        "vand.vv v24, v24, v26",
+        "vxor.vv v14, v24, v18",
+        "vand.vi v23, v22, 15",
+        "vrgather.vv v24, v4, v23",
+        "vsra.vi v25, v22, 7",
+        "vxor.vi v26, v25, -1",
+        "vand.vv v24, v24, v26",
+        "vxor.vv v15, v24, v16",
+        // Phase 5: Output transform.
+        "vand.vi v23, v14, 15",
+        "vrgather.vv v24, v6, v23",
+        "vsra.vi v25, v14, 7",
+        "vxor.vi v26, v25, -1",
+        "vand.vv v16, v24, v26",
+        "vand.vi v23, v15, 15",
+        "vrgather.vv v24, v7, v23",
+        "vsra.vi v25, v15, 7",
+        "vxor.vi v26, v25, -1",
+        "vand.vv v17, v24, v26",
+        "vxor.vv v14, v16, v17",
+        "vxor.vv v14, v14, v11",
+        // ShiftRows.
+        "vrgather.vv v15, v14, v8",
+        // MixColumns.
+        "vrgather.vv v16, v15, v9",
+        "vxor.vv v17, v15, v16",
+        "vsll.vi v18, v17, 1",
+        "vsra.vi v19, v17, 7",
+        "vand.vv v19, v19, v12",
+        "vxor.vv v18, v18, v19",
+        "vrgather.vv v19, v17, v10",
+        "vxor.vv v20, v17, v19",
+        "vxor.vv v14, v15, v20",
+        "vxor.vv v14, v14, v18",
+        // AddRoundKey.
+        "vxor.vv v0, v14, v1",
+        "vse8.v v0, ({out})",
+        state = in(reg) block.as_ptr(),
+        rk = in(reg) round_key.as_ptr(),
+        tbl = in(reg) tables as *const VpermTables as *const u8,
+        out = in(reg) out.as_mut_ptr(),
+        tmp = out(reg) _,
+        options(nostack),
+      );
+    }
+    out
+  }
+
+  /// Final AES round (SubBytes + ShiftRows + AddRoundKey, no MixColumns).
+  #[target_feature(enable = "v")]
+  #[inline(always)]
+  unsafe fn aes_final_round(
+    block: &[u8; 16],
+    round_key: &[u8; 16],
+    tables: &VpermTables,
+  ) -> [u8; 16] {
+    let mut out = [0u8; 16];
+    unsafe {
+      asm!(
+        "vsetivli zero, 16, e8, m1, ta, ma",
+        // Load tables (only need SubBytes + ShiftRows, no MixColumns).
+        "vle8.v v2, ({tbl})",
+        "addi {tmp}, {tbl}, 16",
+        "vle8.v v3, ({tmp})",
+        "addi {tmp}, {tbl}, 32",
+        "vle8.v v4, ({tmp})",
+        "addi {tmp}, {tbl}, 48",
+        "vle8.v v5, ({tmp})",
+        "addi {tmp}, {tbl}, 64",
+        "vle8.v v6, ({tmp})",
+        "addi {tmp}, {tbl}, 80",
+        "vle8.v v7, ({tmp})",
+        "addi {tmp}, {tbl}, 96",
+        "vle8.v v8, ({tmp})",
+        "addi {tmp}, {tbl}, 144",
+        "vle8.v v11, ({tmp})",
+        "vle8.v v0, ({state})",
+        "vle8.v v1, ({rk})",
+        // SubBytes (same as inner round).
+        "vand.vi v14, v0, 15",
+        "vsrl.vi v15, v0, 4",
+        "vrgather.vv v16, v2, v14",
+        "vrgather.vv v17, v3, v15",
+        "vxor.vv v14, v16, v17",
+        "vand.vi v15, v14, 15",
+        "vsrl.vi v16, v14, 4",
+        "vrgather.vv v17, v5, v15",
+        "vxor.vv v18, v16, v15",
+        "vrgather.vv v19, v4, v16",
+        "vxor.vv v20, v19, v17",
+        "vrgather.vv v21, v4, v18",
+        "vxor.vv v22, v21, v17",
+        "vand.vi v23, v20, 15",
+        "vrgather.vv v24, v4, v23",
+        "vsra.vi v25, v20, 7",
+        "vxor.vi v26, v25, -1",
+        "vand.vv v24, v24, v26",
+        "vxor.vv v14, v24, v18",
+        "vand.vi v23, v22, 15",
+        "vrgather.vv v24, v4, v23",
+        "vsra.vi v25, v22, 7",
+        "vxor.vi v26, v25, -1",
+        "vand.vv v24, v24, v26",
+        "vxor.vv v15, v24, v16",
+        "vand.vi v23, v14, 15",
+        "vrgather.vv v24, v6, v23",
+        "vsra.vi v25, v14, 7",
+        "vxor.vi v26, v25, -1",
+        "vand.vv v16, v24, v26",
+        "vand.vi v23, v15, 15",
+        "vrgather.vv v24, v7, v23",
+        "vsra.vi v25, v15, 7",
+        "vxor.vi v26, v25, -1",
+        "vand.vv v17, v24, v26",
+        "vxor.vv v14, v16, v17",
+        "vxor.vv v14, v14, v11",
+        // ShiftRows (no MixColumns).
+        "vrgather.vv v15, v14, v8",
+        // AddRoundKey.
+        "vxor.vv v0, v15, v1",
+        "vse8.v v0, ({out})",
+        state = in(reg) block.as_ptr(),
+        rk = in(reg) round_key.as_ptr(),
+        tbl = in(reg) tables as *const VpermTables as *const u8,
+        out = in(reg) out.as_mut_ptr(),
+        tmp = out(reg) _,
+        options(nostack),
+      );
+    }
+    out
+  }
+
+  /// AES-256 full-block encryption (14 rounds) using Hamburg vperm.
+  ///
+  /// # Safety
+  /// Requires the RISC-V V extension.
+  #[target_feature(enable = "v")]
+  pub(super) unsafe fn encrypt_block(
+    rk: &[u32; super::EXPANDED_KEY_WORDS],
+    block: &mut [u8; 16],
+  ) {
+    unsafe {
+      let tables = VpermTables::load();
+
+      // Initial AddRoundKey (round 0).
+      let rk0 = round_key_bytes(rk, 0);
+      for i in 0..16 {
+        block[i] ^= rk0[i];
+      }
+
+      // Rounds 1-13: full AES round (SubBytes + ShiftRows + MixColumns + AddRoundKey).
+      let mut round = 1usize;
+      while round < super::ROUNDS {
+        let rk_r = round_key_bytes(rk, round);
+        *block = aes_inner_round(block, &rk_r, &tables);
+        round = round.strict_add(1);
+      }
+
+      // Round 14 (final): SubBytes + ShiftRows + AddRoundKey (no MixColumns).
+      let rk14 = round_key_bytes(rk, super::ROUNDS);
+      *block = aes_final_round(block, &rk14, &tables);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Aes256EncKey: enum-dispatched key storage
 // ---------------------------------------------------------------------------
 
@@ -1143,6 +1439,9 @@ enum KeyInner {
   RvScalar(rv_scalar_aes::RvScalarRoundKeys),
   #[cfg(target_arch = "riscv64")]
   RvAes(rv_aes::RvRoundKeys),
+  /// Hamburg vperm via vrgather.vv — uses portable key schedule, constant-time.
+  #[cfg(target_arch = "riscv64")]
+  RvVperm([u32; EXPANDED_KEY_WORDS]),
 }
 
 impl Drop for Aes256EncKey {
@@ -1177,6 +1476,12 @@ impl Drop for Aes256EncKey {
       #[cfg(target_arch = "riscv64")]
       KeyInner::RvAes(rv_rk) => {
         rv_rk.zeroize();
+      }
+      #[cfg(target_arch = "riscv64")]
+      KeyInner::RvVperm(rk) => {
+        crate::traits::ct::zeroize(unsafe {
+          core::slice::from_raw_parts_mut(rk.as_mut_ptr().cast::<u8>(), EXPANDED_KEY_WORDS.strict_mul(4))
+        });
       }
     }
   }
@@ -1408,6 +1713,11 @@ pub(crate) fn aes256_expand_key(key: &[u8; KEY_SIZE]) -> Aes256EncKey {
         inner: KeyInner::RvScalar(rv_keys),
       };
     }
+    if crate::platform::caps().has(crate::platform::caps::riscv::V) {
+      return Aes256EncKey {
+        inner: KeyInner::RvVperm(aes256_expand_key_portable(key)),
+      };
+    }
   }
   Aes256EncKey {
     inner: KeyInner::Portable(aes256_expand_key_portable(key)),
@@ -1433,6 +1743,14 @@ pub(crate) fn aes256_expand_key_riscv_scalar(key: &[u8; KEY_SIZE]) -> Aes256EncK
   zeroize_expanded_key_words(&mut portable_rk);
   Aes256EncKey {
     inner: KeyInner::RvScalar(rv_keys),
+  }
+}
+
+#[cfg(target_arch = "riscv64")]
+#[inline]
+pub(crate) fn aes256_expand_key_riscv_vperm(key: &[u8; KEY_SIZE]) -> Aes256EncKey {
+  Aes256EncKey {
+    inner: KeyInner::RvVperm(aes256_expand_key_portable(key)),
   }
 }
 
@@ -1586,6 +1904,11 @@ pub(crate) fn aes256_encrypt_block(ek: &Aes256EncKey, block: &mut [u8; BLOCK_SIZ
     KeyInner::RvAes(rv_rk) => {
       // SAFETY: RvAes variant is only constructed after runtime detection confirms Zvkned.
       unsafe { rv_aes::encrypt_block(rv_rk, block) }
+    }
+    #[cfg(target_arch = "riscv64")]
+    KeyInner::RvVperm(rk) => {
+      // SAFETY: RvVperm variant is only constructed after runtime detection confirms V extension.
+      unsafe { rv_vperm_aes::encrypt_block(rk, block) }
     }
   }
 }

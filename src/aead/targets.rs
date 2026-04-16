@@ -102,14 +102,20 @@ pub enum AeadBackend {
   Aarch64AesPmull,
   Aarch64Sve2AesPmull,
   S390xMsa,
+  /// Hamburg vperm AES rounds for AEGIS — constant-time via z/Vector VPERM.
+  /// Used on s390x z13+ where no single-round AES instruction exists.
+  S390xVperm,
   S390xVector,
   Power8Crypto,
   PowerVector,
   Riscv64ScalarCrypto,
   Riscv64VectorCrypto,
   Riscv64Vector,
+  /// Hamburg vperm AES via `vrgather.vv` — practically constant-time.
+  /// Used on RISC-V with V extension but without Zkne/Zvkned.
+  Riscv64Vperm,
   /// T-table AES (software) + optional Zbc scalar CLMUL for POLYVAL.
-  /// Used on RISC-V without crypto extensions (e.g. SpacemiT K1).
+  /// Last-resort fallback on RISC-V without V AND without crypto extensions.
   Riscv64Ttable,
 }
 
@@ -132,12 +138,14 @@ impl AeadBackend {
       Self::Aarch64AesPmull => "aarch64/aes+pmull",
       Self::Aarch64Sve2AesPmull => "aarch64/sve2+aes+pmull",
       Self::S390xMsa => "s390x/msa",
+      Self::S390xVperm => "s390x/vperm",
       Self::S390xVector => "s390x/vector",
       Self::Power8Crypto => "powerpc64/crypto",
       Self::PowerVector => "powerpc64/vector",
       Self::Riscv64ScalarCrypto => "riscv64/scalar-crypto",
       Self::Riscv64VectorCrypto => "riscv64/vector-crypto",
       Self::Riscv64Vector => "riscv64/vector",
+      Self::Riscv64Vperm => "riscv64/vperm",
       Self::Riscv64Ttable => "riscv64/ttable",
     }
   }
@@ -225,7 +233,7 @@ pub const fn lane_target_backend(primitive: AeadPrimitive, lane: BenchLane) -> A
     AeadPrimitive::Aegis256 => match lane {
       BenchLane::IntelIcl | BenchLane::IntelSpr | BenchLane::AmdZen4 | BenchLane::AmdZen5 => AeadBackend::X86Aesni,
       BenchLane::Graviton3 | BenchLane::Graviton4 => AeadBackend::Aarch64Aes,
-      BenchLane::IbmS390x => AeadBackend::S390xMsa,
+      BenchLane::IbmS390x => AeadBackend::S390xVperm,
       BenchLane::IbmPower10 => AeadBackend::Power8Crypto,
     },
   }
@@ -344,8 +352,11 @@ fn select_gcm_backend(arch: Arch, caps: Caps) -> AeadBackend {
         AeadBackend::Riscv64VectorCrypto
       } else if caps.has(riscv::ZKNE) && (caps.has(riscv::ZBC) || caps.has(riscv::ZBKC)) {
         AeadBackend::Riscv64ScalarCrypto
+      } else if caps.has(riscv::V) {
+        // Hamburg vperm AES + optional scalar CLMUL POLYVAL (Zbc/Zbkc).
+        AeadBackend::Riscv64Vperm
       } else {
-        // T-table AES + optional scalar CLMUL POLYVAL (Zbc/Zbkc).
+        // T-table last resort (bare scalar RISC-V).
         AeadBackend::Riscv64Ttable
       }
     }
@@ -383,8 +394,10 @@ fn select_aegis_backend(arch: Arch, caps: Caps) -> AeadBackend {
       }
     }
     Arch::S390x => {
-      if caps.has(s390x::MSA) {
-        AeadBackend::S390xMsa
+      // AEGIS needs single AES rounds — CPACF KM/KMA only do full blocks.
+      // Hamburg vperm provides constant-time rounds on z13+ (vector facility).
+      if caps.has(s390x::VECTOR) {
+        AeadBackend::S390xVperm
       } else {
         AeadBackend::Portable
       }
@@ -399,8 +412,11 @@ fn select_aegis_backend(arch: Arch, caps: Caps) -> AeadBackend {
     Arch::Riscv64 => {
       if caps.has(riscv::ZKNE) {
         AeadBackend::Riscv64ScalarCrypto
+      } else if caps.has(riscv::V) {
+        // Hamburg vperm via vrgather.vv — practically constant-time.
+        AeadBackend::Riscv64Vperm
       } else {
-        // T-table AES rounds — ~200x faster than algebraic GF(2^8) S-box.
+        // T-table last resort (bare scalar RISC-V, no V, no Zkne).
         AeadBackend::Riscv64Ttable
       }
     }
@@ -551,23 +567,33 @@ mod tests {
       AeadBackend::Riscv64ScalarCrypto
     );
 
-    // Tier 3: T-table fallback (no crypto extensions)
+    // Tier 3: vperm (V extension, no crypto)
     assert_eq!(
       select_backend(AeadPrimitive::Aes256Gcm, Arch::Riscv64, riscv::V | riscv::ZBC),
-      AeadBackend::Riscv64Ttable
+      AeadBackend::Riscv64Vperm
     );
     assert_eq!(
       select_backend(AeadPrimitive::Aes256GcmSiv, Arch::Riscv64, riscv::V),
+      AeadBackend::Riscv64Vperm
+    );
+
+    // Tier 4: T-table last resort (bare scalar, no V, no crypto)
+    assert_eq!(
+      select_backend(AeadPrimitive::Aes256Gcm, Arch::Riscv64, Caps::NONE),
       AeadBackend::Riscv64Ttable
     );
 
-    // AEGIS: Zkne → T-table
+    // AEGIS: Zkne → vperm (V) → T-table
     assert_eq!(
       select_backend(AeadPrimitive::Aegis256, Arch::Riscv64, riscv::ZKNE),
       AeadBackend::Riscv64ScalarCrypto
     );
     assert_eq!(
       select_backend(AeadPrimitive::Aegis256, Arch::Riscv64, riscv::V),
+      AeadBackend::Riscv64Vperm
+    );
+    assert_eq!(
+      select_backend(AeadPrimitive::Aegis256, Arch::Riscv64, Caps::NONE),
       AeadBackend::Riscv64Ttable
     );
 

@@ -95,85 +95,70 @@ unsafe fn compress_single_block_aarch64_sha2(state: &mut [u32; 8], block: &[u8])
     abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
     efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
 
-    // --- Rounds 16-19 (schedule s0) ---
+    // --- Rounds 16-31: batch schedule, then hash ---
     s0 = vsha256su1q_u32(vsha256su0q_u32(s0, s1), s2, s3);
+    s1 = vsha256su1q_u32(vsha256su0q_u32(s1, s2), s3, s0);
+    s2 = vsha256su1q_u32(vsha256su0q_u32(s2, s3), s0, s1);
+    s3 = vsha256su1q_u32(vsha256su0q_u32(s3, s0), s1, s2);
+
     tmp = vaddq_u32(s0, vld1q_u32(kp.add(16)));
     abcd_prev = abcd;
     abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
     efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
-
-    // --- Rounds 20-23 (schedule s1) ---
-    s1 = vsha256su1q_u32(vsha256su0q_u32(s1, s2), s3, s0);
     tmp = vaddq_u32(s1, vld1q_u32(kp.add(20)));
     abcd_prev = abcd;
     abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
     efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
-
-    // --- Rounds 24-27 (schedule s2) ---
-    s2 = vsha256su1q_u32(vsha256su0q_u32(s2, s3), s0, s1);
     tmp = vaddq_u32(s2, vld1q_u32(kp.add(24)));
     abcd_prev = abcd;
     abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
     efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
-
-    // --- Rounds 28-31 (schedule s3) ---
-    s3 = vsha256su1q_u32(vsha256su0q_u32(s3, s0), s1, s2);
     tmp = vaddq_u32(s3, vld1q_u32(kp.add(28)));
     abcd_prev = abcd;
     abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
     efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
 
-    // --- Rounds 32-35 (schedule s0) ---
+    // --- Rounds 32-47: batch schedule, then hash ---
     s0 = vsha256su1q_u32(vsha256su0q_u32(s0, s1), s2, s3);
+    s1 = vsha256su1q_u32(vsha256su0q_u32(s1, s2), s3, s0);
+    s2 = vsha256su1q_u32(vsha256su0q_u32(s2, s3), s0, s1);
+    s3 = vsha256su1q_u32(vsha256su0q_u32(s3, s0), s1, s2);
+
     tmp = vaddq_u32(s0, vld1q_u32(kp.add(32)));
     abcd_prev = abcd;
     abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
     efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
-
-    // --- Rounds 36-39 (schedule s1) ---
-    s1 = vsha256su1q_u32(vsha256su0q_u32(s1, s2), s3, s0);
     tmp = vaddq_u32(s1, vld1q_u32(kp.add(36)));
     abcd_prev = abcd;
     abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
     efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
-
-    // --- Rounds 40-43 (schedule s2) ---
-    s2 = vsha256su1q_u32(vsha256su0q_u32(s2, s3), s0, s1);
     tmp = vaddq_u32(s2, vld1q_u32(kp.add(40)));
     abcd_prev = abcd;
     abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
     efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
-
-    // --- Rounds 44-47 (schedule s3) ---
-    s3 = vsha256su1q_u32(vsha256su0q_u32(s3, s0), s1, s2);
     tmp = vaddq_u32(s3, vld1q_u32(kp.add(44)));
     abcd_prev = abcd;
     abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
     efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
 
-    // --- Rounds 48-51 (schedule s0) ---
+    // --- Rounds 48-63: batch schedule, then hash ---
     s0 = vsha256su1q_u32(vsha256su0q_u32(s0, s1), s2, s3);
+    s1 = vsha256su1q_u32(vsha256su0q_u32(s1, s2), s3, s0);
+    s2 = vsha256su1q_u32(vsha256su0q_u32(s2, s3), s0, s1);
+    s3 = vsha256su1q_u32(vsha256su0q_u32(s3, s0), s1, s2);
+
     tmp = vaddq_u32(s0, vld1q_u32(kp.add(48)));
     abcd_prev = abcd;
     abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
     efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
-
-    // --- Rounds 52-55 (schedule s1) ---
-    s1 = vsha256su1q_u32(vsha256su0q_u32(s1, s2), s3, s0);
     tmp = vaddq_u32(s1, vld1q_u32(kp.add(52)));
     abcd_prev = abcd;
     abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
     efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
-
-    // --- Rounds 56-59 (schedule s2) ---
-    s2 = vsha256su1q_u32(vsha256su0q_u32(s2, s3), s0, s1);
     tmp = vaddq_u32(s2, vld1q_u32(kp.add(56)));
     abcd_prev = abcd;
     abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
     efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
-
-    // --- Rounds 60-63 (schedule s3) ---
-    s3 = vsha256su1q_u32(vsha256su0q_u32(s3, s0), s1, s2);
     tmp = vaddq_u32(s3, vld1q_u32(kp.add(60)));
     abcd_prev = abcd;
     abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
@@ -265,30 +250,36 @@ pub(crate) unsafe fn compress_blocks_aarch64_sha2(state: &mut [u32; 8], blocks: 
       efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
 
       // Rounds 16-63: compact loop (3 iterations × 16 rounds each).
-      // The loop reduces I-cache footprint vs full unroll — critical on
-      // Graviton's Neoverse V1/V2 where the competitor's compact kernel
-      // beats our previously fully-unrolled version by ~11%.
+      //
+      // Schedule-first ordering: all 4 message schedule updates are
+      // batched before the 4 hash round groups.  This gives wide OOO
+      // cores (Neoverse V1/V2) better pipeline overlap — the schedule
+      // chain (depends only on message words) can execute ahead of the
+      // hash chain (strict ABCD→EFGH serial dependency).
       let mut t: usize = 16;
       while t < 64 {
+        // --- Batch all 4 schedule updates ---
         s0 = vsha256su1q_u32(vsha256su0q_u32(s0, s1), s2, s3);
+        s1 = vsha256su1q_u32(vsha256su0q_u32(s1, s2), s3, s0);
+        s2 = vsha256su1q_u32(vsha256su0q_u32(s2, s3), s0, s1);
+        s3 = vsha256su1q_u32(vsha256su0q_u32(s3, s0), s1, s2);
+
+        // --- Then all 4 hash round groups ---
         tmp = vaddq_u32(s0, vld1q_u32(kp.add(t)));
         abcd_prev = abcd;
         abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
         efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
 
-        s1 = vsha256su1q_u32(vsha256su0q_u32(s1, s2), s3, s0);
         tmp = vaddq_u32(s1, vld1q_u32(kp.add(t.strict_add(4))));
         abcd_prev = abcd;
         abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
         efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
 
-        s2 = vsha256su1q_u32(vsha256su0q_u32(s2, s3), s0, s1);
         tmp = vaddq_u32(s2, vld1q_u32(kp.add(t.strict_add(8))));
         abcd_prev = abcd;
         abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
         efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
 
-        s3 = vsha256su1q_u32(vsha256su0q_u32(s3, s0), s1, s2);
         tmp = vaddq_u32(s3, vld1q_u32(kp.add(t.strict_add(12))));
         abcd_prev = abcd;
         abcd = vsha256hq_u32(abcd_prev, efgh, tmp);

@@ -74,8 +74,9 @@ fn zero_block() -> Block {
 // Portable backend
 // ---------------------------------------------------------------------------
 //
-// On s390x, the `zvec` module provides a T-table backend that unconditionally
-// replaces the portable path. Gate this section to suppress dead-code warnings.
+// On s390x, the `s390x_vperm` module provides a Hamburg vperm backend.
+// On riscv64, the `zvec` module provides a T-table fallback.
+// Gate this section to suppress dead-code warnings.
 
 #[cfg(not(any(target_arch = "s390x", target_arch = "riscv64")))]
 type State = [Block; 6];
@@ -1433,7 +1434,7 @@ mod ppc {
 }
 
 // ---------------------------------------------------------------------------
-// s390x T-table backend
+// s390x Hamburg vperm backend (constant-time)
 // ---------------------------------------------------------------------------
 //
 // s390x has NO single-round AES instruction (no equivalent of x86 AESENC,
@@ -1441,18 +1442,883 @@ mod ppc {
 // full-block AES encryption, which cannot be used for AEGIS's individual
 // AES round function.
 //
-// This backend implements the AES round function using T-tables: 4 × 256-
-// entry lookup tables that fuse SubBytes + MixColumns into a single 32-bit
-// load per byte, matching the approach used by libaegis. Each AES round
-// costs ~16 loads + 12 XOR + ShiftRows indexing.
+// This backend implements the AES round function using the Hamburg vperm
+// technique (CHES 2009): the AES S-box is decomposed into GF(2^4) tower-
+// field operations, each implemented as a 16-entry nibble lookup via the
+// s390x VPERM instruction. All operations are register-to-register with
+// no secret-dependent memory access — constant-time by construction.
 //
-// T-tables are NOT constant-time (cache-timing side channel). This is
-// acceptable for AEGIS because: (1) libaegis — the de facto standard —
-// uses T-tables by default; (2) AEGIS is designed for high-throughput
-// bulk AEAD, not scenarios where cache-timing is the primary threat model;
-// (3) the alternative (algebraic S-box) is ~100x slower.
+// ~44 vector instructions per AES round (9 VPERM + 6 VN + 4 VESRAB +
+// 4 VNC + 8 VX + 2 VESRLB + 3 VPERM + 5 VX + 1 VESLB + 1 VESRAB + 1 VN).
+// No cache-timing side channel.
+//
+// Reference: Hamburg, "Accelerating AES with Vector Permute Instructions"
+// https://www.shiftleft.org/papers/vector_aes/vector_aes.pdf
+//
+// This is the first known Hamburg vperm implementation on s390x z/Vector.
 
-#[cfg(any(target_arch = "s390x", target_arch = "riscv64"))]
+#[cfg(target_arch = "s390x")]
+#[allow(unsafe_code)]
+mod s390x_vperm {
+  use core::arch::asm;
+  use core::simd::i64x2;
+
+  use super::{BLOCK_SIZE, C0, C1, KEY_SIZE, NONCE_SIZE, TAG_SIZE};
+  use crate::aead::aes_round::{
+    AES_AFFINE, MC_ROT1, MC_ROT2, NIBBLE_MASK, VPERM_INV_HI, VPERM_INV_LO, VPERM_IPT_HI,
+    VPERM_IPT_LO, VPERM_SBOU, VPERM_SBOT, VPERM_SR, XTIME_REDUCE,
+  };
+
+  // ── Vector register helpers ──────────────────────────────────────────────
+
+  /// Load a 16-byte block into an i64x2 vector register (big-endian native).
+  #[inline(always)]
+  fn load_be(bytes: &[u8; 16]) -> i64x2 {
+    // s390x is big-endian: vector byte 0 = bytes[0] (MSB).
+    let hi = i64::from_ne_bytes([
+      bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+    ]);
+    let lo = i64::from_ne_bytes([
+      bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15],
+    ]);
+    i64x2::from_array([hi, lo])
+  }
+
+  /// Store an i64x2 back to a 16-byte block (big-endian native).
+  #[inline(always)]
+  fn store_be(v: i64x2, out: &mut [u8; 16]) {
+    let arr = v.to_array();
+    let hi = arr[0].to_ne_bytes();
+    let lo = arr[1].to_ne_bytes();
+    out[0..8].copy_from_slice(&hi);
+    out[8..16].copy_from_slice(&lo);
+  }
+
+  #[inline(always)]
+  fn xor_vec(a: i64x2, b: i64x2) -> i64x2 {
+    let aa = a.to_array();
+    let ba = b.to_array();
+    i64x2::from_array([aa[0] ^ ba[0], aa[1] ^ ba[1]])
+  }
+
+  #[inline(always)]
+  fn and_vec(a: i64x2, b: i64x2) -> i64x2 {
+    let aa = a.to_array();
+    let ba = b.to_array();
+    i64x2::from_array([aa[0] & ba[0], aa[1] & ba[1]])
+  }
+
+  /// Broadcast a byte to all 16 positions of a vector.
+  #[inline(always)]
+  fn splat_byte(b: u8) -> i64x2 {
+    let w = u64::from_ne_bytes([b; 8]) as i64;
+    i64x2::from_array([w, w])
+  }
+
+  // ── z/Vector inline asm primitives ─────────────────────────────────────
+
+  /// VPERM: byte permute — `out[i] = (v2||v3)[control[i] & 0x1F]`.
+  ///
+  /// For 16-entry table lookups: pass `table` as both v2 and v3 (indices
+  /// 0-15 select from v2; indices 16-31 would select from v3 but never
+  /// occur when control bytes are 0-15).
+  ///
+  /// # Safety
+  /// Requires the s390x vector facility (z13+).
+  #[target_feature(enable = "vector")]
+  #[inline(always)]
+  unsafe fn vperm(v2: i64x2, v3: i64x2, control: i64x2) -> i64x2 {
+    // SAFETY: Caller guarantees the s390x vector facility is available.
+    // VPERM operates on pure register values with no memory access.
+    unsafe {
+      let out: i64x2;
+      asm!(
+        "vperm {out}, {v2}, {v3}, {ctl}",
+        out = lateout(vreg) out,
+        v2 = in(vreg) v2,
+        v3 = in(vreg) v3,
+        ctl = in(vreg) control,
+        options(nomem, nostack, pure),
+      );
+      out
+    }
+  }
+
+  /// VNC: AND with complement — `out = a & ~b`.
+  ///
+  /// # Safety
+  /// Requires the s390x vector facility.
+  #[target_feature(enable = "vector")]
+  #[inline(always)]
+  unsafe fn vnc(a: i64x2, b: i64x2) -> i64x2 {
+    unsafe {
+      let out: i64x2;
+      asm!(
+        "vnc {out}, {a}, {b}",
+        out = lateout(vreg) out,
+        a = in(vreg) a,
+        b = in(vreg) b,
+        options(nomem, nostack, pure),
+      );
+      out
+    }
+  }
+
+  /// VESRLB: shift each byte element right (logical) by `count` bits.
+  ///
+  /// # Safety
+  /// Requires the s390x vector facility.
+  #[target_feature(enable = "vector")]
+  #[inline(always)]
+  unsafe fn vesrlb_4(v: i64x2) -> i64x2 {
+    unsafe {
+      let out: i64x2;
+      asm!(
+        "vesrlb {out}, {v}, 4",
+        out = lateout(vreg) out,
+        v = in(vreg) v,
+        options(nomem, nostack, pure),
+      );
+      out
+    }
+  }
+
+  /// VESRAB: arithmetic shift each byte right by 7 — produces 0xFF for
+  /// bytes with bit 7 set, 0x00 otherwise.
+  ///
+  /// # Safety
+  /// Requires the s390x vector facility.
+  #[target_feature(enable = "vector")]
+  #[inline(always)]
+  unsafe fn vesrab_7(v: i64x2) -> i64x2 {
+    unsafe {
+      let out: i64x2;
+      asm!(
+        "vesrab {out}, {v}, 7",
+        out = lateout(vreg) out,
+        v = in(vreg) v,
+        options(nomem, nostack, pure),
+      );
+      out
+    }
+  }
+
+  /// VESLB: shift each byte element left (logical) by 1 bit.
+  ///
+  /// # Safety
+  /// Requires the s390x vector facility.
+  #[target_feature(enable = "vector")]
+  #[inline(always)]
+  unsafe fn veslb_1(v: i64x2) -> i64x2 {
+    unsafe {
+      let out: i64x2;
+      asm!(
+        "veslb {out}, {v}, 1",
+        out = lateout(vreg) out,
+        v = in(vreg) v,
+        options(nomem, nostack, pure),
+      );
+      out
+    }
+  }
+
+  // ── Hamburg vperm S-box + ShiftRows + MixColumns + AddRoundKey ─────────
+
+  /// VPERM table lookup with PSHUFB zeroing emulation.
+  ///
+  /// Returns `table[idx & 0x0F]` for each byte, but zeros the result byte
+  /// when bit 7 of the index is set (the "infinity" sentinel from the
+  /// GF(2^4) inverse). Uses VPERM + VESRAB + VNC.
+  #[target_feature(enable = "vector")]
+  #[inline(always)]
+  unsafe fn vperm_z(table: i64x2, indices: i64x2, mask_0f: i64x2) -> i64x2 {
+    let idx4 = and_vec(indices, mask_0f);
+    let result = vperm(table, table, idx4);
+    let bit7 = vesrab_7(indices);
+    vnc(result, bit7)
+  }
+
+  /// Single AES round via Hamburg vperm: SubBytes + ShiftRows + MixColumns +
+  /// AddRoundKey. Constant-time — all register-to-register, no table lookups.
+  ///
+  /// # Safety
+  /// Requires the s390x vector facility (z13+).
+  #[target_feature(enable = "vector")]
+  #[inline(always)]
+  unsafe fn aes_round(state: i64x2, round_key: i64x2, tables: &VpermTables) -> i64x2 {
+    // ── Phase 1: Nibble extraction ──
+    let lo_nib = and_vec(state, tables.mask_0f);
+    let hi_nib = vesrlb_4(state);
+
+    // ── Phase 2: Input transform (AES basis → tower field) ──
+    let ipt_l = vperm(tables.ipt_lo, tables.ipt_lo, lo_nib);
+    let ipt_h = vperm(tables.ipt_hi, tables.ipt_hi, hi_nib);
+    let x = xor_vec(ipt_l, ipt_h);
+
+    // ── Phase 3: Re-extract nibbles of transformed value ──
+    let t_lo = and_vec(x, tables.mask_0f);
+    let t_hi = vesrlb_4(x);
+
+    // ── Phase 4: GF(2^4) inverse (5 plain VPERM + 4 zeroing VPERM + XORs) ──
+    let ak = vperm(tables.inv_hi, tables.inv_hi, t_lo);
+    let j = xor_vec(t_hi, t_lo);
+    let inv_i = vperm(tables.inv_lo, tables.inv_lo, t_hi);
+    let iak = xor_vec(inv_i, ak);
+    let inv_j = vperm(tables.inv_lo, tables.inv_lo, j);
+    let jak = xor_vec(inv_j, ak);
+
+    // Zeroing lookups: sentinel 0x80 in T_INV_LO maps to "infinity" in GF(2^4).
+    // When bit 7 is set in the index, the result must be 0 (not table[0]).
+    let inv_iak = vperm_z(tables.inv_lo, iak, tables.mask_0f);
+    let io = xor_vec(inv_iak, j);
+    let inv_jak = vperm_z(tables.inv_lo, jak, tables.mask_0f);
+    let jo = xor_vec(inv_jak, t_hi);
+
+    // ── Phase 5: Output transform (SubBytes output, no MixColumns) ──
+    // io/jo can have bit 7 set from the sentinel propagation.
+    let su = vperm_z(tables.sbou, io, tables.mask_0f);
+    let st = vperm_z(tables.sbot, jo, tables.mask_0f);
+    let sb = xor_vec(xor_vec(su, st), tables.affine_63);
+
+    // ── ShiftRows ──
+    let sr = vperm(sb, sb, tables.sr_perm);
+
+    // ── MixColumns (xtime decomposition) ──
+    // rot1[i] = sr[(i+1) mod 4 within each column]
+    let rot1 = vperm(sr, sr, tables.mc_rot1);
+    // pair = sr ^ rot1 = [b0^b1, b1^b2, b2^b3, b3^b0] per column
+    let pair = xor_vec(sr, rot1);
+    // xtime(pair): (pair<<1) ^ (((pair>>7)&1) * 0x1B)
+    let xt_shifted = veslb_1(pair);
+    let xt_mask = and_vec(vesrab_7(pair), tables.xtime_1b);
+    let xt = xor_vec(xt_shifted, xt_mask);
+    // rot2_pair[i] = pair[(i+2) mod 4 within each column]
+    let rot2_pair = vperm(pair, pair, tables.mc_rot2);
+    // col_sum = pair ^ rot2(pair) = [b0^b1^b2^b3, ...] in every position
+    let col_sum = xor_vec(pair, rot2_pair);
+    // result = sr ^ col_sum ^ xtime(pair)
+    let mc = xor_vec(xor_vec(sr, col_sum), xt);
+
+    // ── AddRoundKey ──
+    xor_vec(mc, round_key)
+  }
+
+  /// Preloaded Hamburg vperm constant vectors.
+  ///
+  /// Loaded once at the start of encrypt/decrypt and passed to every
+  /// `aes_round` call to avoid redundant memory loads.
+  struct VpermTables {
+    ipt_lo: i64x2,
+    ipt_hi: i64x2,
+    inv_lo: i64x2,
+    inv_hi: i64x2,
+    sbou: i64x2,
+    sbot: i64x2,
+    sr_perm: i64x2,
+    mc_rot1: i64x2,
+    mc_rot2: i64x2,
+    mask_0f: i64x2,
+    affine_63: i64x2,
+    xtime_1b: i64x2,
+  }
+
+  impl VpermTables {
+    #[inline(always)]
+    fn load() -> Self {
+      Self {
+        ipt_lo: load_be(&VPERM_IPT_LO),
+        ipt_hi: load_be(&VPERM_IPT_HI),
+        inv_lo: load_be(&VPERM_INV_LO),
+        inv_hi: load_be(&VPERM_INV_HI),
+        sbou: load_be(&VPERM_SBOU),
+        sbot: load_be(&VPERM_SBOT),
+        sr_perm: load_be(&VPERM_SR),
+        mc_rot1: load_be(&MC_ROT1),
+        mc_rot2: load_be(&MC_ROT2),
+        mask_0f: splat_byte(NIBBLE_MASK),
+        affine_63: splat_byte(AES_AFFINE),
+        xtime_1b: splat_byte(XTIME_REDUCE),
+      }
+    }
+  }
+
+  // ── AEGIS-256 state operations ──────────────────────────────────────────
+
+  #[target_feature(enable = "vector")]
+  #[inline(always)]
+  unsafe fn update_regs(
+    s0: &mut i64x2,
+    s1: &mut i64x2,
+    s2: &mut i64x2,
+    s3: &mut i64x2,
+    s4: &mut i64x2,
+    s5: &mut i64x2,
+    m: i64x2,
+    tables: &VpermTables,
+  ) {
+    let tmp = *s5;
+    *s5 = aes_round(*s4, *s5, tables);
+    *s4 = aes_round(*s3, *s4, tables);
+    *s3 = aes_round(*s2, *s3, tables);
+    *s2 = aes_round(*s1, *s2, tables);
+    *s1 = aes_round(*s0, *s1, tables);
+    *s0 = xor_vec(aes_round(tmp, *s0, tables), m);
+  }
+
+  #[inline(always)]
+  fn keystream_regs(s1: i64x2, s2: i64x2, s3: i64x2, s4: i64x2, s5: i64x2) -> i64x2 {
+    xor_vec(xor_vec(s1, s4), xor_vec(s5, and_vec(s2, s3)))
+  }
+
+  // ── Fused encrypt/decrypt ─────────────────────────────────────────────
+
+  #[target_feature(enable = "vector")]
+  pub(super) unsafe fn encrypt_fused(
+    key: &[u8; KEY_SIZE],
+    nonce: &[u8; NONCE_SIZE],
+    aad: &[u8],
+    buffer: &mut [u8],
+  ) -> [u8; TAG_SIZE] {
+    let tables = VpermTables::load();
+    let (kh0, kh1) = super::split_halves(key);
+    let (nh0, nh1) = super::split_halves(nonce);
+    let k0 = load_be(kh0);
+    let k1 = load_be(kh1);
+    let n0 = load_be(nh0);
+    let n1 = load_be(nh1);
+    let c0 = load_be(&C0);
+    let c1 = load_be(&C1);
+    let k0_xor_n0 = xor_vec(k0, n0);
+    let k1_xor_n1 = xor_vec(k1, n1);
+    let (mut s0, mut s1, mut s2, mut s3, mut s4, mut s5) =
+      (k0_xor_n0, k1_xor_n1, c1, c0, xor_vec(k0, c0), xor_vec(k1, c1));
+    // Initialization: 16 updates.
+    for _ in 0..4 {
+      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k0, &tables);
+      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k1, &tables);
+      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k0_xor_n0, &tables);
+      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k1_xor_n1, &tables);
+    }
+    // Process AAD.
+    let mut offset = 0usize;
+    while offset.strict_add(BLOCK_SIZE) <= aad.len() {
+      let mut tmp = [0u8; 16];
+      tmp.copy_from_slice(&aad[offset..offset.strict_add(BLOCK_SIZE)]);
+      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, load_be(&tmp), &tables);
+      offset = offset.strict_add(BLOCK_SIZE);
+    }
+    if offset < aad.len() {
+      let mut pad = [0u8; BLOCK_SIZE];
+      pad[..aad.len().strict_sub(offset)].copy_from_slice(&aad[offset..]);
+      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, load_be(&pad), &tables);
+    }
+    // Encrypt message.
+    let msg_len = buffer.len();
+    let len = buffer.len();
+    offset = 0;
+    while offset.strict_add(BLOCK_SIZE) <= len {
+      let z = keystream_regs(s1, s2, s3, s4, s5);
+      let mut tmp = [0u8; 16];
+      tmp.copy_from_slice(&buffer[offset..offset.strict_add(BLOCK_SIZE)]);
+      let xi = load_be(&tmp);
+      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, xi, &tables);
+      store_be(xor_vec(xi, z), &mut tmp);
+      buffer[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&tmp);
+      offset = offset.strict_add(BLOCK_SIZE);
+    }
+    if offset < len {
+      let z = keystream_regs(s1, s2, s3, s4, s5);
+      let tail_len = len.strict_sub(offset);
+      let mut pad = [0u8; BLOCK_SIZE];
+      pad[..tail_len].copy_from_slice(&buffer[offset..]);
+      let xi = load_be(&pad);
+      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, xi, &tables);
+      let mut ct_bytes = [0u8; BLOCK_SIZE];
+      store_be(xor_vec(xi, z), &mut ct_bytes);
+      buffer[offset..].copy_from_slice(&ct_bytes[..tail_len]);
+    }
+    // Finalization.
+    let ad_bits = (aad.len() as u64).strict_mul(8);
+    let msg_bits = (msg_len as u64).strict_mul(8);
+    let mut len_bytes = [0u8; BLOCK_SIZE];
+    len_bytes[..8].copy_from_slice(&ad_bits.to_le_bytes());
+    len_bytes[8..].copy_from_slice(&msg_bits.to_le_bytes());
+    let t = xor_vec(s3, load_be(&len_bytes));
+    for _ in 0..7 {
+      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, t, &tables);
+    }
+    let tag_vec = xor_vec(xor_vec(xor_vec(s0, s1), xor_vec(s2, s3)), xor_vec(s4, s5));
+    let mut tag = [0u8; TAG_SIZE];
+    store_be(tag_vec, &mut tag);
+    tag
+  }
+
+  #[target_feature(enable = "vector")]
+  pub(super) unsafe fn decrypt_fused(
+    key: &[u8; KEY_SIZE],
+    nonce: &[u8; NONCE_SIZE],
+    aad: &[u8],
+    buffer: &mut [u8],
+  ) -> [u8; TAG_SIZE] {
+    let tables = VpermTables::load();
+    let (kh0, kh1) = super::split_halves(key);
+    let (nh0, nh1) = super::split_halves(nonce);
+    let k0 = load_be(kh0);
+    let k1 = load_be(kh1);
+    let n0 = load_be(nh0);
+    let n1 = load_be(nh1);
+    let c0 = load_be(&C0);
+    let c1 = load_be(&C1);
+    let k0_xor_n0 = xor_vec(k0, n0);
+    let k1_xor_n1 = xor_vec(k1, n1);
+    let (mut s0, mut s1, mut s2, mut s3, mut s4, mut s5) =
+      (k0_xor_n0, k1_xor_n1, c1, c0, xor_vec(k0, c0), xor_vec(k1, c1));
+    // Initialization: 16 updates.
+    for _ in 0..4 {
+      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k0, &tables);
+      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k1, &tables);
+      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k0_xor_n0, &tables);
+      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k1_xor_n1, &tables);
+    }
+    // Process AAD.
+    let mut offset = 0usize;
+    while offset.strict_add(BLOCK_SIZE) <= aad.len() {
+      let mut tmp = [0u8; 16];
+      tmp.copy_from_slice(&aad[offset..offset.strict_add(BLOCK_SIZE)]);
+      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, load_be(&tmp), &tables);
+      offset = offset.strict_add(BLOCK_SIZE);
+    }
+    if offset < aad.len() {
+      let mut pad = [0u8; BLOCK_SIZE];
+      pad[..aad.len().strict_sub(offset)].copy_from_slice(&aad[offset..]);
+      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, load_be(&pad), &tables);
+    }
+    // Decrypt message.
+    let ct_len = buffer.len();
+    let len = buffer.len();
+    offset = 0;
+    while offset.strict_add(BLOCK_SIZE) <= len {
+      let z = keystream_regs(s1, s2, s3, s4, s5);
+      let mut tmp = [0u8; 16];
+      tmp.copy_from_slice(&buffer[offset..offset.strict_add(BLOCK_SIZE)]);
+      let xi = xor_vec(load_be(&tmp), z); // xi = plaintext
+      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, xi, &tables);
+      store_be(xi, &mut tmp);
+      buffer[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&tmp);
+      offset = offset.strict_add(BLOCK_SIZE);
+    }
+    if offset < len {
+      let z = keystream_regs(s1, s2, s3, s4, s5);
+      let tail_len = len.strict_sub(offset);
+      let mut pad = [0u8; BLOCK_SIZE];
+      pad[..tail_len].copy_from_slice(&buffer[offset..]);
+      let mut z_bytes = [0u8; BLOCK_SIZE];
+      store_be(z, &mut z_bytes);
+      let mut pt_pad = [0u8; BLOCK_SIZE];
+      for i in 0..tail_len {
+        pt_pad[i] = pad[i] ^ z_bytes[i];
+      }
+      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, load_be(&pt_pad), &tables);
+      buffer[offset..].copy_from_slice(&pt_pad[..tail_len]);
+    }
+    // Finalization.
+    let ad_bits = (aad.len() as u64).strict_mul(8);
+    let ct_bits = (ct_len as u64).strict_mul(8);
+    let mut len_bytes = [0u8; BLOCK_SIZE];
+    len_bytes[..8].copy_from_slice(&ad_bits.to_le_bytes());
+    len_bytes[8..].copy_from_slice(&ct_bits.to_le_bytes());
+    let t = xor_vec(s3, load_be(&len_bytes));
+    for _ in 0..7 {
+      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, t, &tables);
+    }
+    let tag_vec = xor_vec(xor_vec(xor_vec(s0, s1), xor_vec(s2, s3)), xor_vec(s4, s5));
+    let mut tag = [0u8; TAG_SIZE];
+    store_be(tag_vec, &mut tag);
+    tag
+  }
+}
+
+// ---------------------------------------------------------------------------
+// RISC-V V Hamburg vperm backend (practically constant-time)
+// ---------------------------------------------------------------------------
+//
+// On RISC-V without Zkne/Zvkned, this backend replaces T-tables with the
+// Hamburg vperm technique using `vrgather.vv` for 16-entry nibble lookups.
+//
+// IMPORTANT: `vrgather.vv` is NOT formally guaranteed constant-time by the
+// RISC-V V specification. However, at LMUL=1 with a 16-byte table, it is a
+// register-to-register operation with no cache hierarchy involvement —
+// practically constant-time on all known implementations. This is strictly
+// better than T-tables, which are KNOWN vulnerable to cache-timing attacks.
+//
+// Dispatch hierarchy: Zkne (scalar HW AES) → V+vperm → T-table (bare scalar).
+
+#[cfg(target_arch = "riscv64")]
+#[allow(unsafe_code)]
+mod rv_vperm {
+  use core::arch::asm;
+
+  use super::{BLOCK_SIZE, Block, C0, C1, KEY_SIZE, NONCE_SIZE, TAG_SIZE, and_block, split_halves, xor_block};
+  use crate::aead::aes_round::{
+    AES_AFFINE, MC_ROT1, MC_ROT2, VPERM_INV_HI, VPERM_INV_LO, VPERM_IPT_HI, VPERM_IPT_LO,
+    VPERM_SBOU, VPERM_SBOT, VPERM_SR, XTIME_REDUCE,
+  };
+
+  type State = [Block; 6];
+
+  /// Precomputed Hamburg vperm table block — packed contiguously for
+  /// offset-based vector loads in the asm block.
+  #[repr(C, align(16))]
+  struct VpermTables {
+    ipt_lo: [u8; 16],   // offset 0
+    ipt_hi: [u8; 16],   // offset 16
+    inv_lo: [u8; 16],   // offset 32
+    inv_hi: [u8; 16],   // offset 48
+    sbou: [u8; 16],     // offset 64
+    sbot: [u8; 16],     // offset 80
+    sr_perm: [u8; 16],  // offset 96
+    mc_rot1: [u8; 16],  // offset 112
+    mc_rot2: [u8; 16],  // offset 128
+    affine: [u8; 16],   // offset 144
+    xtime: [u8; 16],    // offset 160
+  }
+
+  impl VpermTables {
+    #[inline(always)]
+    fn load() -> Self {
+      Self {
+        ipt_lo: VPERM_IPT_LO,
+        ipt_hi: VPERM_IPT_HI,
+        inv_lo: VPERM_INV_LO,
+        inv_hi: VPERM_INV_HI,
+        sbou: VPERM_SBOU,
+        sbot: VPERM_SBOT,
+        sr_perm: VPERM_SR,
+        mc_rot1: MC_ROT1,
+        mc_rot2: MC_ROT2,
+        affine: [AES_AFFINE; 16],
+        xtime: [XTIME_REDUCE; 16],
+      }
+    }
+  }
+
+  /// Single AES round via Hamburg vperm on RISC-V V: SubBytes + ShiftRows +
+  /// MixColumns + AddRoundKey. Uses `vrgather.vv` for all S-box nibble lookups.
+  ///
+  /// # Safety
+  /// Requires the RISC-V V extension.
+  #[target_feature(enable = "v")]
+  #[inline(always)]
+  unsafe fn aes_round(block: &Block, round_key: &Block, tables: &VpermTables) -> Block {
+    let mut out = [0u8; BLOCK_SIZE];
+
+    // SAFETY: Caller guarantees RISC-V V extension is available.
+    // The asm block loads the state, tables, and round key from memory,
+    // performs all computation in vector registers, and stores the result.
+    // All vrgather indices are masked to 0-15 before lookup — no secret-
+    // dependent memory access.
+    unsafe {
+      asm!(
+        // ── Setup ──────────────────────────────────────────────────────
+        "vsetivli zero, 16, e8, m1, ta, ma",
+
+        // Load tables from the VpermTables struct (contiguous, 16B each).
+        "vle8.v v2, ({tbl})",          // IPT_LO  (offset 0)
+        "addi {tmp}, {tbl}, 16",
+        "vle8.v v3, ({tmp})",          // IPT_HI  (offset 16)
+        "addi {tmp}, {tbl}, 32",
+        "vle8.v v4, ({tmp})",          // INV_LO  (offset 32)
+        "addi {tmp}, {tbl}, 48",
+        "vle8.v v5, ({tmp})",          // INV_HI  (offset 48)
+        "addi {tmp}, {tbl}, 64",
+        "vle8.v v6, ({tmp})",          // SBOU    (offset 64)
+        "addi {tmp}, {tbl}, 80",
+        "vle8.v v7, ({tmp})",          // SBOT    (offset 80)
+        "addi {tmp}, {tbl}, 96",
+        "vle8.v v8, ({tmp})",          // SR_PERM (offset 96)
+        "addi {tmp}, {tbl}, 112",
+        "vle8.v v9, ({tmp})",          // MC_ROT1 (offset 112)
+        "addi {tmp}, {tbl}, 128",
+        "vle8.v v10, ({tmp})",         // MC_ROT2 (offset 128)
+        "addi {tmp}, {tbl}, 144",
+        "vle8.v v11, ({tmp})",         // 0x63    (offset 144)
+        "addi {tmp}, {tbl}, 160",
+        "vle8.v v12, ({tmp})",         // 0x1B    (offset 160)
+
+        // Load state and round key.
+        "vle8.v v0, ({state})",
+        "vle8.v v1, ({rk})",
+
+        // ── Phase 1: Nibble extraction ─────────────────────────────────
+        "vand.vi v14, v0, 15",         // lo_nib = state & 0x0F
+        "vsrl.vi v15, v0, 4",          // hi_nib = state >> 4
+
+        // ── Phase 2: Input transform (AES → tower field) ──────────────
+        "vrgather.vv v16, v2, v14",    // ipt_l = IPT_LO[lo_nib]
+        "vrgather.vv v17, v3, v15",    // ipt_h = IPT_HI[hi_nib]
+        "vxor.vv v14, v16, v17",       // x = ipt_l ^ ipt_h
+
+        // ── Phase 3: Re-extract nibbles of transformed value ───────────
+        "vand.vi v15, v14, 15",        // t_lo = x & 0x0F
+        "vsrl.vi v16, v14, 4",         // t_hi = x >> 4
+
+        // ── Phase 4: GF(2^4) inverse ──────────────────────────────────
+        "vrgather.vv v17, v5, v15",    // ak = INV_HI[t_lo]
+        "vxor.vv v18, v16, v15",       // j = t_hi ^ t_lo
+        "vrgather.vv v19, v4, v16",    // inv_i = INV_LO[t_hi]
+        "vxor.vv v20, v19, v17",       // iak = inv_i ^ ak
+        "vrgather.vv v21, v4, v18",    // inv_j = INV_LO[j]
+        "vxor.vv v22, v21, v17",       // jak = inv_j ^ ak
+
+        // vperm_z(INV_LO, iak): zero where bit 7 set
+        "vand.vi v23, v20, 15",        // iak & 0x0F
+        "vrgather.vv v24, v4, v23",    // INV_LO[iak & 0x0F]
+        "vsra.vi v25, v20, 7",         // 0xFF where bit 7 set
+        "vxor.vi v26, v25, -1",        // ~mask
+        "vand.vv v24, v24, v26",       // zero masked positions
+        "vxor.vv v14, v24, v18",       // io = inv_iak ^ j
+
+        // vperm_z(INV_LO, jak): zero where bit 7 set
+        "vand.vi v23, v22, 15",
+        "vrgather.vv v24, v4, v23",
+        "vsra.vi v25, v22, 7",
+        "vxor.vi v26, v25, -1",
+        "vand.vv v24, v24, v26",
+        "vxor.vv v15, v24, v16",       // jo = inv_jak ^ t_hi
+
+        // ── Phase 5: Output transform (SubBytes) ──────────────────────
+        // vperm_z(SBOU, io)
+        "vand.vi v23, v14, 15",
+        "vrgather.vv v24, v6, v23",
+        "vsra.vi v25, v14, 7",
+        "vxor.vi v26, v25, -1",
+        "vand.vv v16, v24, v26",       // su
+
+        // vperm_z(SBOT, jo)
+        "vand.vi v23, v15, 15",
+        "vrgather.vv v24, v7, v23",
+        "vsra.vi v25, v15, 7",
+        "vxor.vi v26, v25, -1",
+        "vand.vv v17, v24, v26",       // st
+
+        // sb = su ^ st ^ 0x63
+        "vxor.vv v14, v16, v17",
+        "vxor.vv v14, v14, v11",
+
+        // ── ShiftRows ─────────────────────────────────────────────────
+        "vrgather.vv v15, v14, v8",    // sr = sb permuted
+
+        // ── MixColumns (xtime decomposition) ──────────────────────────
+        "vrgather.vv v16, v15, v9",    // rot1 = column-rotate-by-1
+        "vxor.vv v17, v15, v16",       // pair = sr ^ rot1
+        "vsll.vi v18, v17, 1",         // pair << 1
+        "vsra.vi v19, v17, 7",         // bit-7 mask for xtime reduction
+        "vand.vv v19, v19, v12",       // mask & 0x1B
+        "vxor.vv v18, v18, v19",       // xt = xtime(pair)
+        "vrgather.vv v19, v17, v10",   // rot2_pair = column-rotate-by-2
+        "vxor.vv v20, v17, v19",       // col_sum = pair ^ rot2_pair
+        "vxor.vv v14, v15, v20",       // sr ^ col_sum
+        "vxor.vv v14, v14, v18",       // mc = sr ^ col_sum ^ xt
+
+        // ── AddRoundKey ───────────────────────────────────────────────
+        "vxor.vv v0, v14, v1",
+
+        // ── Store result ──────────────────────────────────────────────
+        "vse8.v v0, ({out})",
+
+        state = in(reg) block.as_ptr(),
+        rk = in(reg) round_key.as_ptr(),
+        tbl = in(reg) tables as *const VpermTables as *const u8,
+        out = in(reg) out.as_mut_ptr(),
+        tmp = out(reg) _,
+        options(nostack),
+      );
+    }
+    out
+  }
+
+  // ── AEGIS-256 state operations ──────────────────────────────────────────
+
+  #[target_feature(enable = "v")]
+  #[inline(always)]
+  unsafe fn update(s: &mut State, m: &Block, tables: &VpermTables) {
+    unsafe {
+      let tmp = s[5];
+      s[5] = aes_round(&s[4], &s[5], tables);
+      s[4] = aes_round(&s[3], &s[4], tables);
+      s[3] = aes_round(&s[2], &s[3], tables);
+      s[2] = aes_round(&s[1], &s[2], tables);
+      s[1] = aes_round(&s[0], &s[1], tables);
+      s[0] = xor_block(&aes_round(&tmp, &s[0], tables), m);
+    }
+  }
+
+  #[inline(always)]
+  fn keystream(s: &State) -> Block {
+    xor_block(&xor_block(&s[1], &s[4]), &xor_block(&s[5], &and_block(&s[2], &s[3])))
+  }
+
+  // ── Fused encrypt/decrypt ─────────────────────────────────────────────
+
+  #[target_feature(enable = "v")]
+  pub(super) unsafe fn encrypt_fused(
+    key: &[u8; KEY_SIZE],
+    nonce: &[u8; NONCE_SIZE],
+    aad: &[u8],
+    buffer: &mut [u8],
+  ) -> [u8; TAG_SIZE] {
+    unsafe {
+      let tables = VpermTables::load();
+      let (kh0, kh1) = split_halves(key);
+      let (nh0, nh1) = split_halves(nonce);
+      let k0_xor_n0 = xor_block(kh0, nh0);
+      let k1_xor_n1 = xor_block(kh1, nh1);
+      let mut s: State = [k0_xor_n0, k1_xor_n1, C1, C0, xor_block(kh0, &C0), xor_block(kh1, &C1)];
+
+      for _ in 0..4 {
+        update(&mut s, kh0, &tables);
+        update(&mut s, kh1, &tables);
+        update(&mut s, &k0_xor_n0, &tables);
+        update(&mut s, &k1_xor_n1, &tables);
+      }
+
+      let mut offset = 0usize;
+      while offset.strict_add(BLOCK_SIZE) <= aad.len() {
+        let mut tmp = [0u8; BLOCK_SIZE];
+        tmp.copy_from_slice(&aad[offset..offset.strict_add(BLOCK_SIZE)]);
+        update(&mut s, &tmp, &tables);
+        offset = offset.strict_add(BLOCK_SIZE);
+      }
+      if offset < aad.len() {
+        let mut pad = [0u8; BLOCK_SIZE];
+        pad[..aad.len().strict_sub(offset)].copy_from_slice(&aad[offset..]);
+        update(&mut s, &pad, &tables);
+      }
+
+      let msg_len = buffer.len();
+      let len = buffer.len();
+      offset = 0;
+      while offset.strict_add(BLOCK_SIZE) <= len {
+        let z = keystream(&s);
+        let mut xi = [0u8; BLOCK_SIZE];
+        xi.copy_from_slice(&buffer[offset..offset.strict_add(BLOCK_SIZE)]);
+        update(&mut s, &xi, &tables);
+        buffer[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&xor_block(&xi, &z));
+        offset = offset.strict_add(BLOCK_SIZE);
+      }
+      if offset < len {
+        let z = keystream(&s);
+        let tail_len = len.strict_sub(offset);
+        let mut pad = [0u8; BLOCK_SIZE];
+        pad[..tail_len].copy_from_slice(&buffer[offset..]);
+        update(&mut s, &pad, &tables);
+        let ct = xor_block(&pad, &z);
+        buffer[offset..].copy_from_slice(&ct[..tail_len]);
+      }
+
+      let ad_bits = (aad.len() as u64).strict_mul(8);
+      let msg_bits = (msg_len as u64).strict_mul(8);
+      let mut len_bytes = [0u8; BLOCK_SIZE];
+      len_bytes[..8].copy_from_slice(&ad_bits.to_le_bytes());
+      len_bytes[8..].copy_from_slice(&msg_bits.to_le_bytes());
+      let t = xor_block(&s[3], &len_bytes);
+      for _ in 0..7 {
+        update(&mut s, &t, &tables);
+      }
+
+      xor_block(
+        &xor_block(&xor_block(&s[0], &s[1]), &xor_block(&s[2], &s[3])),
+        &xor_block(&s[4], &s[5]),
+      )
+    }
+  }
+
+  #[target_feature(enable = "v")]
+  pub(super) unsafe fn decrypt_fused(
+    key: &[u8; KEY_SIZE],
+    nonce: &[u8; NONCE_SIZE],
+    aad: &[u8],
+    buffer: &mut [u8],
+  ) -> [u8; TAG_SIZE] {
+    unsafe {
+      let tables = VpermTables::load();
+      let (kh0, kh1) = split_halves(key);
+      let (nh0, nh1) = split_halves(nonce);
+      let k0_xor_n0 = xor_block(kh0, nh0);
+      let k1_xor_n1 = xor_block(kh1, nh1);
+      let mut s: State = [k0_xor_n0, k1_xor_n1, C1, C0, xor_block(kh0, &C0), xor_block(kh1, &C1)];
+
+      for _ in 0..4 {
+        update(&mut s, kh0, &tables);
+        update(&mut s, kh1, &tables);
+        update(&mut s, &k0_xor_n0, &tables);
+        update(&mut s, &k1_xor_n1, &tables);
+      }
+
+      let mut offset = 0usize;
+      while offset.strict_add(BLOCK_SIZE) <= aad.len() {
+        let mut tmp = [0u8; BLOCK_SIZE];
+        tmp.copy_from_slice(&aad[offset..offset.strict_add(BLOCK_SIZE)]);
+        update(&mut s, &tmp, &tables);
+        offset = offset.strict_add(BLOCK_SIZE);
+      }
+      if offset < aad.len() {
+        let mut pad = [0u8; BLOCK_SIZE];
+        pad[..aad.len().strict_sub(offset)].copy_from_slice(&aad[offset..]);
+        update(&mut s, &pad, &tables);
+      }
+
+      let ct_len = buffer.len();
+      let len = buffer.len();
+      offset = 0;
+      while offset.strict_add(BLOCK_SIZE) <= len {
+        let z = keystream(&s);
+        let mut ci = [0u8; BLOCK_SIZE];
+        ci.copy_from_slice(&buffer[offset..offset.strict_add(BLOCK_SIZE)]);
+        let xi = xor_block(&ci, &z);
+        update(&mut s, &xi, &tables);
+        buffer[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&xi);
+        offset = offset.strict_add(BLOCK_SIZE);
+      }
+      if offset < len {
+        let z = keystream(&s);
+        let tail_len = len.strict_sub(offset);
+        let mut pad = [0u8; BLOCK_SIZE];
+        pad[..tail_len].copy_from_slice(&buffer[offset..]);
+        let mut pt_pad = [0u8; BLOCK_SIZE];
+        for i in 0..tail_len {
+          pt_pad[i] = pad[i] ^ z[i];
+        }
+        update(&mut s, &pt_pad, &tables);
+        buffer[offset..].copy_from_slice(&pt_pad[..tail_len]);
+      }
+
+      let ad_bits = (aad.len() as u64).strict_mul(8);
+      let ct_bits = (ct_len as u64).strict_mul(8);
+      let mut len_bytes = [0u8; BLOCK_SIZE];
+      len_bytes[..8].copy_from_slice(&ad_bits.to_le_bytes());
+      len_bytes[8..].copy_from_slice(&ct_bits.to_le_bytes());
+      let t = xor_block(&s[3], &len_bytes);
+      for _ in 0..7 {
+        update(&mut s, &t, &tables);
+      }
+
+      xor_block(
+        &xor_block(&xor_block(&s[0], &s[1]), &xor_block(&s[2], &s[3])),
+        &xor_block(&s[4], &s[5]),
+      )
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// riscv64 T-table backend (last-resort fallback)
+// ---------------------------------------------------------------------------
+//
+// T-tables are NOT constant-time (cache-timing side channel).
+// Used only on RISC-V without V extension AND without Zkne (bare scalar).
+
+#[cfg(target_arch = "riscv64")]
 mod zvec {
   use super::{BLOCK_SIZE, C0, C1, KEY_SIZE, NONCE_SIZE, TAG_SIZE};
 
@@ -1799,9 +2665,8 @@ mod zvec {
 
 /// Whether hardware AES acceleration is available.
 ///
-/// Whether hardware AES acceleration is available (x86_64/aarch64/powerpc64).
-///
-/// s390x uses T-table software AES rounds unconditionally (no HW check needed).
+/// s390x uses Hamburg vperm (constant-time, no cache leaks) unconditionally —
+/// no HW check needed. riscv64 checks for scalar Zkne.
 #[cfg(any(
   target_arch = "x86_64",
   target_arch = "aarch64",
@@ -1831,6 +2696,14 @@ fn has_hw_aes() -> bool {
     use crate::platform::caps::riscv;
     crate::platform::caps().has(riscv::ZKNE)
   }
+}
+
+/// Whether the RISC-V V (vector) extension is available for Hamburg vperm.
+#[cfg(target_arch = "riscv64")]
+#[inline]
+fn has_rv_vector() -> bool {
+  use crate::platform::caps::riscv;
+  crate::platform::caps().has(riscv::V)
 }
 
 // ---------------------------------------------------------------------------
@@ -2225,10 +3098,26 @@ impl Aead for Aegis256 {
       return Aegis256Tag::from_bytes(tag);
     }
 
-    #[cfg(any(target_arch = "s390x", target_arch = "riscv64"))]
+    #[cfg(target_arch = "riscv64")]
+    if has_rv_vector() {
+      // SAFETY: has_rv_vector() confirmed RISC-V V extension is available.
+      let tag = unsafe { rv_vperm::encrypt_fused(key, nonce, aad, buffer) };
+      return Aegis256Tag::from_bytes(tag);
+    }
+
+    #[cfg(target_arch = "s390x")]
     {
-      // T-table AES rounds — ~200x faster than the algebraic GF(2^8) S-box.
-      // On riscv64 this is the fallback when scalar AES (Zkne) is absent.
+      // Hamburg vperm AES rounds — constant-time via z/Vector VPERM.
+      // SAFETY: z13+ vector facility is available on all supported s390x.
+      #[allow(clippy::needless_return)]
+      return Aegis256Tag::from_bytes(unsafe {
+        s390x_vperm::encrypt_fused(key, nonce, aad, buffer)
+      });
+    }
+
+    #[cfg(target_arch = "riscv64")]
+    {
+      // T-table AES rounds — last-resort fallback (bare scalar, no V, no Zkne).
       #[allow(clippy::needless_return)]
       return Aegis256Tag::from_bytes(zvec::encrypt_fused(key, nonce, aad, buffer));
     }
@@ -2276,12 +3165,16 @@ impl Aead for Aegis256 {
     let computed = if has_hw_aes() {
       // SAFETY: has_hw_aes() confirmed scalar AES (`zkne`) is available.
       unsafe { rv_zkne::decrypt_fused(key, nonce, aad, buffer) }
+    } else if has_rv_vector() {
+      // SAFETY: has_rv_vector() confirmed RISC-V V extension is available.
+      unsafe { rv_vperm::decrypt_fused(key, nonce, aad, buffer) }
     } else {
       zvec::decrypt_fused(key, nonce, aad, buffer)
     };
 
     #[cfg(target_arch = "s390x")]
-    let computed = zvec::decrypt_fused(key, nonce, aad, buffer);
+    // SAFETY: z13+ vector facility is available on all supported s390x.
+    let computed = unsafe { s390x_vperm::decrypt_fused(key, nonce, aad, buffer) };
 
     #[cfg(not(any(
       target_arch = "x86_64",
@@ -2661,28 +3554,11 @@ mod tests {
     }
   }
 
-  // Inline copies of the Hamburg vperm tables for cross-platform testing.
-  // These MUST match the constants in `mod zvec` exactly.
-  const T_IPT_LO: [u8; 16] = [
-    0x00, 0x70, 0x2A, 0x5A, 0x98, 0xE8, 0xB2, 0xC2, 0x08, 0x78, 0x22, 0x52, 0x90, 0xE0, 0xBA, 0xCA,
-  ];
-  const T_IPT_HI: [u8; 16] = [
-    0x00, 0x4D, 0x7C, 0x31, 0x7D, 0x30, 0x01, 0x4C, 0x81, 0xCC, 0xFD, 0xB0, 0xFC, 0xB1, 0x80, 0xCD,
-  ];
-  const T_INV_LO: [u8; 16] = [
-    0x80, 0x01, 0x08, 0x0D, 0x0F, 0x06, 0x05, 0x0E, 0x02, 0x0C, 0x0B, 0x0A, 0x09, 0x03, 0x07, 0x04,
-  ];
-  const T_INV_HI: [u8; 16] = [
-    0x80, 0x07, 0x0B, 0x0F, 0x06, 0x0A, 0x04, 0x01, 0x09, 0x08, 0x05, 0x02, 0x0C, 0x0E, 0x0D, 0x03,
-  ];
-  // sbo (SubBytes Output) tables: pure S-box without MixColumns (for validation).
-  // From OpenSSL Lk_sbo. These give: sbou[io] ^ sbot[jo] = AES_SBOX[input].
-  const T_SBOU: [u8; 16] = [
-    0x00, 0xC7, 0xBD, 0x6F, 0x17, 0x6D, 0xD2, 0xD0, 0x78, 0xA8, 0x02, 0xC5, 0x7A, 0xBF, 0xAA, 0x15,
-  ];
-  const T_SBOT: [u8; 16] = [
-    0x00, 0x6A, 0xBB, 0x5F, 0xA5, 0x74, 0xE4, 0xCF, 0xFA, 0x35, 0x2B, 0x41, 0xD1, 0x90, 0x1E, 0x8E,
-  ];
+  // Import the Hamburg vperm tables from the shared constants in aes_round.rs.
+  use super::super::aes_round::{
+    VPERM_INV_HI as T_INV_HI, VPERM_INV_LO as T_INV_LO, VPERM_IPT_HI as T_IPT_HI,
+    VPERM_IPT_LO as T_IPT_LO, VPERM_SBOU as T_SBOU, VPERM_SBOT as T_SBOT,
+  };
 
   /// Compute AES S-box for one byte using the vperm tower-field tables.
   ///
@@ -2750,9 +3626,10 @@ mod tests {
     let mut failures = 0u32;
     for input in 0u16..256 {
       let got = vperm_sbox_scalar(input as u8);
-      // The Hamburg vperm S-box omits the AES affine constant 0x63.
-      // vpaes_sbox(x) = AES_sbox(x) ^ 0x63 for all x.
-      let expected = AES_SBOX[input as usize] ^ 0x63;
+      // The Hamburg vperm S-box omits the AES affine constant.
+      // vpaes_sbox(x) = AES_sbox(x) ^ AES_AFFINE for all x.
+      use super::super::aes_round::AES_AFFINE;
+      let expected = AES_SBOX[input as usize] ^ AES_AFFINE;
       if got != expected {
         if failures < 16 {
           eprintln!(
@@ -2776,14 +3653,13 @@ mod tests {
   /// Full vperm AES round simulation (scalar): SubBytes → ShiftRows → MixColumns → AddRoundKey.
   #[cfg(not(any(target_arch = "s390x", target_arch = "riscv64")))]
   fn vperm_aes_round_scalar(block: &[u8; 16], round_key: &[u8; 16]) -> [u8; 16] {
-    const SR: [u8; 16] = [
-      0x00, 0x05, 0x0A, 0x0F, 0x04, 0x09, 0x0E, 0x03, 0x08, 0x0D, 0x02, 0x07, 0x0C, 0x01, 0x06, 0x0B,
-    ];
+    use super::super::aes_round::VPERM_SR as SR;
 
     // SubBytes via vperm tower field (includes affine constant compensation)
+    use super::super::aes_round::AES_AFFINE;
     let mut sb = [0u8; 16];
     for i in 0..16 {
-      sb[i] = vperm_sbox_scalar(block[i]) ^ 0x63;
+      sb[i] = vperm_sbox_scalar(block[i]) ^ AES_AFFINE;
     }
 
     // ShiftRows

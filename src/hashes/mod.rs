@@ -66,7 +66,7 @@
 //! - Use `crate::hashes::fast` for explicit fast-hash family access.
 #[doc(hidden)]
 pub(crate) mod common;
-#[cfg(any(feature = "sha2", feature = "sha3", feature = "blake3", feature = "ascon-hash"))]
+#[cfg(any(feature = "sha2", feature = "sha3", feature = "blake2b", feature = "blake2s", feature = "blake3", feature = "ascon-hash"))]
 pub mod crypto;
 #[cfg(any(feature = "xxh3", feature = "rapidhash"))]
 pub mod fast;
@@ -74,7 +74,7 @@ pub mod fast;
 pub mod introspect;
 #[cfg(all(
   feature = "std",
-  any(feature = "sha2", feature = "sha3", feature = "blake3", feature = "ascon-hash")
+  any(feature = "sha2", feature = "sha3", feature = "blake2b", feature = "blake2s", feature = "blake3", feature = "ascon-hash")
 ))]
 pub mod io;
 
@@ -84,7 +84,7 @@ mod util;
 // Re-export I/O adapters (requires std)
 #[cfg(all(
   feature = "std",
-  any(feature = "sha2", feature = "sha3", feature = "blake3", feature = "ascon-hash")
+  any(feature = "sha2", feature = "sha3", feature = "blake2b", feature = "blake2s", feature = "blake3", feature = "ascon-hash")
 ))]
 pub use io::{DigestReader, DigestWriter};
 

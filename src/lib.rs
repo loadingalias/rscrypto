@@ -460,6 +460,8 @@ macro_rules! impl_xof_read {
 #[cfg(any(
   feature = "sha2",
   feature = "sha3",
+  feature = "blake2b",
+  feature = "blake2s",
   feature = "blake3",
   feature = "ascon-hash",
   feature = "xxh3",
@@ -489,6 +491,8 @@ pub use auth::{Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signat
 pub use auth::{HkdfSha256, HkdfSha384};
 #[cfg(feature = "hmac")]
 pub use auth::{HmacSha256, HmacSha384, HmacSha512};
+#[cfg(feature = "pbkdf2")]
+pub use auth::{Pbkdf2Error, Pbkdf2Sha256, Pbkdf2Sha512};
 #[cfg(feature = "x25519")]
 pub use auth::{X25519Error, X25519PublicKey, X25519SecretKey, X25519SharedSecret};
 #[cfg(feature = "crc24")]
@@ -502,6 +506,10 @@ pub use checksum::{Crc64, Crc64Nvme};
 // ─── Hash re-exports ────────────────────────────────────────────────────────
 #[cfg(feature = "ascon-hash")]
 pub use hashes::crypto::{AsconCxof128, AsconCxof128Reader, AsconHash256, AsconXof, AsconXofReader};
+#[cfg(feature = "blake2b")]
+pub use hashes::crypto::{Blake2b256, Blake2b512};
+#[cfg(feature = "blake2s")]
+pub use hashes::crypto::{Blake2s128, Blake2s256};
 #[cfg(feature = "blake3")]
 pub use hashes::crypto::{Blake3, Blake3XofReader};
 #[cfg(feature = "sha3")]
@@ -545,6 +553,8 @@ pub use traits::{Checksum, ChecksumCombine, ConstantTimeEq, Mac, VerificationErr
 #[cfg(any(
   feature = "sha2",
   feature = "sha3",
+  feature = "blake2b",
+  feature = "blake2s",
   feature = "blake3",
   feature = "ascon-hash",
   feature = "xxh3",

@@ -449,6 +449,7 @@ fn derive_keys_riscv(master_key: &Aes256GcmSivKey, nonce: &Nonce96, backend: Aea
   let master_ek = match backend {
     AeadBackend::Riscv64VectorCrypto => aes::aes256_expand_key_riscv_vector(master_key.as_bytes()),
     AeadBackend::Riscv64ScalarCrypto => aes::aes256_expand_key_riscv_scalar(master_key.as_bytes()),
+    AeadBackend::Riscv64Vperm => aes::aes256_expand_key_riscv_vperm(master_key.as_bytes()),
     AeadBackend::Riscv64Ttable => aes::aes256_expand_key_riscv_ttable(master_key.as_bytes()),
     _ => unreachable!("non-RISC-V backend passed to derive_keys_riscv"),
   };
@@ -461,6 +462,7 @@ fn expand_message_key_riscv(enc_key: &[u8; 32], backend: AeadBackend) -> aes::Ae
   match backend {
     AeadBackend::Riscv64VectorCrypto => aes::aes256_expand_key_riscv_vector(enc_key),
     AeadBackend::Riscv64ScalarCrypto => aes::aes256_expand_key_riscv_scalar(enc_key),
+    AeadBackend::Riscv64Vperm => aes::aes256_expand_key_riscv_vperm(enc_key),
     AeadBackend::Riscv64Ttable => aes::aes256_expand_key_riscv_ttable(enc_key),
     _ => unreachable!("non-RISC-V backend passed to expand_message_key_riscv"),
   }
@@ -472,7 +474,7 @@ fn riscv_polyval_backend(backend: AeadBackend) -> RiscvPolyvalBackend {
   match backend {
     AeadBackend::Riscv64VectorCrypto => RiscvPolyvalBackend::Vector,
     AeadBackend::Riscv64ScalarCrypto => RiscvPolyvalBackend::Scalar,
-    AeadBackend::Riscv64Ttable => {
+    AeadBackend::Riscv64Vperm | AeadBackend::Riscv64Ttable => {
       let caps = crate::platform::caps();
       if caps.has(crate::platform::caps::riscv::ZBC) || caps.has(crate::platform::caps::riscv::ZBKC) {
         RiscvPolyvalBackend::Scalar
@@ -1623,7 +1625,7 @@ impl Aead for Aes256GcmSiv {
         crate::platform::caps(),
       );
       match backend {
-        AeadBackend::Riscv64VectorCrypto | AeadBackend::Riscv64ScalarCrypto | AeadBackend::Riscv64Ttable => {
+        AeadBackend::Riscv64VectorCrypto | AeadBackend::Riscv64ScalarCrypto | AeadBackend::Riscv64Vperm | AeadBackend::Riscv64Ttable => {
           let tag_bytes = encrypt_riscv(&self.master_key, backend, nonce, aad, buffer);
           return Aes256GcmSivTag::from_bytes(tag_bytes);
         }
@@ -1722,7 +1724,7 @@ impl Aead for Aes256GcmSiv {
         crate::platform::caps(),
       );
       match backend {
-        AeadBackend::Riscv64VectorCrypto | AeadBackend::Riscv64ScalarCrypto | AeadBackend::Riscv64Ttable => {
+        AeadBackend::Riscv64VectorCrypto | AeadBackend::Riscv64ScalarCrypto | AeadBackend::Riscv64Vperm | AeadBackend::Riscv64Ttable => {
           return decrypt_riscv(&self.master_key, backend, nonce, aad, buffer, tag);
         }
         _ => {}
