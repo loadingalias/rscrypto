@@ -24,6 +24,7 @@ tune-results/
 benchmark-results
 __pycache__
 private/tasks/*
+benchmark_results/*
 
 # Fuzzing
 corpus
