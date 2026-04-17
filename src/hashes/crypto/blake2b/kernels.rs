@@ -253,7 +253,18 @@ impl U64x4 {
 
   #[inline(always)]
   fn gather(src: &[u64; 16], i0: usize, i1: usize, i2: usize, i3: usize) -> Self {
-    Self(src[i0], src[i1], src[i2], src[i3])
+    debug_assert!(i0 < src.len() && i1 < src.len() && i2 < src.len() && i3 < src.len());
+    // SAFETY: all gather indices are derived from the fixed Blake2 sigma schedule,
+    // which only contains values in 0..16. The debug assertion above checks that
+    // contract in debug builds.
+    unsafe {
+      Self(
+        *src.get_unchecked(i0),
+        *src.get_unchecked(i1),
+        *src.get_unchecked(i2),
+        *src.get_unchecked(i3),
+      )
+    }
   }
 
   #[inline(always)]
