@@ -75,25 +75,61 @@ fn compress_aarch64_neon(h: &mut [u32; 8], block: &[u8; 64], t: u64, last: bool)
   unsafe { super::aarch64::compress_neon(h, block, t, last) }
 }
 
+#[cfg(target_arch = "powerpc64")]
+fn compress_power_vsx(h: &mut [u32; 8], block: &[u8; 64], t: u64, last: bool) {
+  // SAFETY: runtime dispatch selects this only when VSX is available.
+  unsafe { super::power::compress_vsx(h, block, t, last) }
+}
+
+#[cfg(target_arch = "riscv64")]
+fn compress_riscv64_v(h: &mut [u32; 8], block: &[u8; 64], t: u64, last: bool) {
+  // SAFETY: runtime dispatch selects this only when the V extension is available.
+  unsafe { super::riscv64::compress_rvv(h, block, t, last) }
+}
+
+#[cfg(target_arch = "s390x")]
+fn compress_s390x_vector(h: &mut [u32; 8], block: &[u8; 64], t: u64, last: bool) {
+  // SAFETY: runtime dispatch selects this only when the vector facility is available.
+  unsafe { super::s390x::compress_vector(h, block, t, last) }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn compress_wasm_simd128(h: &mut [u32; 8], block: &[u8; 64], t: u64, last: bool) {
+  // SAFETY: runtime dispatch selects this only when SIMD128 is available.
+  unsafe { super::wasm::compress_simd128(h, block, t, last) }
+}
+
+#[cfg(target_arch = "x86_64")]
+fn compress_x86_avx2(h: &mut [u32; 8], block: &[u8; 64], t: u64, last: bool) {
+  // SAFETY: runtime/compile-time dispatch selects this only when AVX2 is available.
+  unsafe { super::x86_64::compress_avx2(h, block, t, last) }
+}
+
+#[cfg(target_arch = "x86_64")]
+fn compress_x86_avx512vl(h: &mut [u32; 8], block: &[u8; 64], t: u64, last: bool) {
+  // SAFETY: runtime/compile-time dispatch selects this only when AVX-512F/VL are available.
+  unsafe { super::x86_64::compress_avx512vl(h, block, t, last) }
+}
+
 /// Return the compress function for the given kernel.
 #[must_use]
 pub(crate) fn compress_fn(id: Blake2sKernelId) -> CompressFn {
   match id {
     Blake2sKernelId::Portable => compress,
     #[cfg(target_arch = "x86_64")]
-    Blake2sKernelId::X86Avx2 => compress, // TODO: SIMD kernel
+    Blake2sKernelId::X86Avx2 => compress_x86_avx2,
     #[cfg(target_arch = "x86_64")]
-    Blake2sKernelId::X86Avx512vl => compress, // TODO: SIMD kernel
+    Blake2sKernelId::X86Avx512vl => compress_x86_avx512vl,
     #[cfg(target_arch = "aarch64")]
     Blake2sKernelId::Aarch64Neon => compress_aarch64_neon,
     #[cfg(target_arch = "s390x")]
-    Blake2sKernelId::S390xVector => compress, // TODO: SIMD kernel
+    Blake2sKernelId::S390xVector => compress_s390x_vector,
     #[cfg(target_arch = "powerpc64")]
-    Blake2sKernelId::PowerVsx => compress, // TODO: SIMD kernel
+    Blake2sKernelId::PowerVsx => compress_power_vsx,
     #[cfg(target_arch = "riscv64")]
-    Blake2sKernelId::Riscv64V => compress, // TODO: SIMD kernel
+    Blake2sKernelId::Riscv64V => compress_riscv64_v,
     #[cfg(target_arch = "wasm32")]
-    Blake2sKernelId::WasmSimd128 => compress, // TODO: SIMD kernel
+    Blake2sKernelId::WasmSimd128 => compress_wasm_simd128,
   }
 }
 
@@ -124,16 +160,44 @@ pub const fn required_caps(id: Blake2sKernelId) -> Caps {
 #[cfg(test)]
 pub const ALL: &[Blake2sKernelId] = &[
   Blake2sKernelId::Portable,
+  #[cfg(target_arch = "x86_64")]
+  Blake2sKernelId::X86Avx2,
+  #[cfg(target_arch = "x86_64")]
+  Blake2sKernelId::X86Avx512vl,
   #[cfg(target_arch = "aarch64")]
   Blake2sKernelId::Aarch64Neon,
+  #[cfg(target_arch = "s390x")]
+  Blake2sKernelId::S390xVector,
+  #[cfg(target_arch = "powerpc64")]
+  Blake2sKernelId::PowerVsx,
+  #[cfg(target_arch = "riscv64")]
+  Blake2sKernelId::Riscv64V,
+  #[cfg(target_arch = "wasm32")]
+  Blake2sKernelId::WasmSimd128,
 ];
 
 // ─── Compile-time dispatch bypass ────────────────────────────────────────────
 
-pub(crate) const COMPILE_TIME_HW: bool = cfg!(any(all(target_arch = "aarch64", target_feature = "neon"),));
+pub(crate) const COMPILE_TIME_HW: bool = cfg!(any(
+  all(target_arch = "x86_64", target_feature = "avx2"),
+  all(
+    target_arch = "x86_64",
+    target_feature = "avx512f",
+    target_feature = "avx512vl"
+  ),
+  all(target_arch = "aarch64", target_feature = "neon"),
+));
 
 #[inline(always)]
 pub(crate) fn compile_time_best() -> CompressFn {
+  #[cfg(all(target_arch = "x86_64", target_feature = "avx512f", target_feature = "avx512vl"))]
+  {
+    return compress_x86_avx512vl;
+  }
+  #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+  {
+    return compress_x86_avx2;
+  }
   #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
   {
     return compress_aarch64_neon;

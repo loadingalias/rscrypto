@@ -135,7 +135,9 @@ crc64fast-nvme = "1.2.1"
 ascon-hash = "0.4.0"
 blake3 = { version = "1.8.4", default-features = false, features = ["std", "rayon"] }
 blake2 = "0.11.0-rc.6"
+pbkdf2 = "0.12.2"
 sha2 = "0.11.0"
+sha2_010 = { package = "sha2", version = "0.10.9" }
 sha3 = "0.11.0"
 keccak = "0.2.0"
 xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
@@ -155,6 +157,10 @@ serde_json = "1"
 
 [[bench]]
 name = "aead"
+harness = false
+
+[[bench]]
+name = "blake2"
 harness = false
 
 [[bench]]

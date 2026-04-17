@@ -133,24 +133,37 @@ unsafe fn verllg_1(x: i64x2) -> i64x2 {
   out
 }
 
-/// Permute doubleword immediate: `vpdi` with M3 mask.
+/// `vpdi` helper for `[a[1], b[0]]`.
 ///
-/// `vpdi v1, v2, v3, M3` selects one doubleword from each source:
-///   - bit 0 of M3: selects element from v2 (0=high, 1=low)
-///   - bit 2 of M3: selects element from v3 (0=high, 1=low)
-///
-/// M3=0: [v2[0], v3[0]]  (both high elements)
-/// M3=1: [v2[1], v3[0]]  (low of a, high of b)
-/// M3=4: [v2[0], v3[1]]  (high of a, low of b)
-/// M3=5: [v2[1], v3[1]]  (both low elements)
+/// `vpdi` selects each output doubleword from the concatenation `[a[0], a[1], b[0], b[1]]`.
+/// The high two bits of the immediate select output lane 0, and the low two bits select output
+/// lane 1. `xxh3` already relies on this encoding with `vpdi ..., 4` as an in-register lane swap.
 #[inline(always)]
 #[target_feature(enable = "vector")]
-unsafe fn vpdi_1(a: i64x2, b: i64x2) -> i64x2 {
+unsafe fn vpdi_a1_b0(a: i64x2, b: i64x2) -> i64x2 {
   let out: i64x2;
   // SAFETY: z13+ vector facility via target_feature.
   unsafe {
     core::arch::asm!(
-      "vpdi {out}, {a}, {b}, 1",
+      "vpdi {out}, {a}, {b}, 6",
+      out = lateout(vreg) out,
+      a = in(vreg) a,
+      b = in(vreg) b,
+      options(nomem, nostack, pure)
+    );
+  }
+  out
+}
+
+/// `vpdi` helper for `[b[1], a[0]]`.
+#[inline(always)]
+#[target_feature(enable = "vector")]
+unsafe fn vpdi_b1_a0(a: i64x2, b: i64x2) -> i64x2 {
+  let out: i64x2;
+  // SAFETY: z13+ vector facility via target_feature.
+  unsafe {
+    core::arch::asm!(
+      "vpdi {out}, {a}, {b}, 12",
       out = lateout(vreg) out,
       a = in(vreg) a,
       b = in(vreg) b,
@@ -237,13 +250,13 @@ unsafe fn diagonalize(b0: &mut i64x2, b1: &mut i64x2, c0: &mut i64x2, c1: &mut i
   unsafe {
     let tb0 = *b0;
     let tb1 = *b1;
-    *b0 = vpdi_1(tb0, tb1);
-    *b1 = vpdi_1(tb1, tb0);
+    *b0 = vpdi_a1_b0(tb0, tb1);
+    *b1 = vpdi_b1_a0(tb0, tb1);
     core::mem::swap(c0, c1);
     let td0 = *d0;
     let td1 = *d1;
-    *d0 = vpdi_1(td1, td0);
-    *d1 = vpdi_1(td0, td1);
+    *d0 = vpdi_b1_a0(td0, td1);
+    *d1 = vpdi_a1_b0(td0, td1);
   }
 }
 
@@ -263,13 +276,13 @@ unsafe fn undiagonalize(
   unsafe {
     let tb0 = *b0;
     let tb1 = *b1;
-    *b0 = vpdi_1(tb1, tb0);
-    *b1 = vpdi_1(tb0, tb1);
+    *b0 = vpdi_b1_a0(tb0, tb1);
+    *b1 = vpdi_a1_b0(tb0, tb1);
     core::mem::swap(c0, c1);
     let td0 = *d0;
     let td1 = *d1;
-    *d0 = vpdi_1(td0, td1);
-    *d1 = vpdi_1(td1, td0);
+    *d0 = vpdi_a1_b0(td0, td1);
+    *d1 = vpdi_b1_a0(td0, td1);
   }
 }
 
@@ -328,5 +341,48 @@ pub(super) unsafe fn compress_vector(h: &mut [u64; 8], block: &[u8; 128], t: u12
     core::ptr::write_unaligned(h.as_mut_ptr().add(2) as *mut i64x2, r1);
     core::ptr::write_unaligned(h.as_mut_ptr().add(4) as *mut i64x2, r2);
     core::ptr::write_unaligned(h.as_mut_ptr().add(6) as *mut i64x2, r3);
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use core::simd::i64x2;
+
+  use super::{diagonalize, undiagonalize, vpdi_a1_b0, vpdi_b1_a0};
+
+  #[test]
+  fn vpdi_lane_selectors_match_expected_pairs() {
+    // SAFETY: the CI s390x runner only executes this module when the vector facility exists.
+    unsafe {
+      let a = i64x2::from_array([10, 11]);
+      let b = i64x2::from_array([20, 21]);
+      assert_eq!(vpdi_a1_b0(a, b).to_array(), [11, 20]);
+      assert_eq!(vpdi_b1_a0(a, b).to_array(), [21, 10]);
+    }
+  }
+
+  #[test]
+  fn diagonalize_round_trip_restores_rows() {
+    // SAFETY: the CI s390x runner only executes this module when the vector facility exists.
+    unsafe {
+      let mut b0 = i64x2::from_array([4, 5]);
+      let mut b1 = i64x2::from_array([6, 7]);
+      let mut c0 = i64x2::from_array([8, 9]);
+      let mut c1 = i64x2::from_array([10, 11]);
+      let mut d0 = i64x2::from_array([12, 13]);
+      let mut d1 = i64x2::from_array([14, 15]);
+      let original = (b0, b1, c0, c1, d0, d1);
+
+      diagonalize(&mut b0, &mut b1, &mut c0, &mut c1, &mut d0, &mut d1);
+      assert_eq!(b0.to_array(), [5, 6]);
+      assert_eq!(b1.to_array(), [7, 4]);
+      assert_eq!(c0.to_array(), [10, 11]);
+      assert_eq!(c1.to_array(), [8, 9]);
+      assert_eq!(d0.to_array(), [15, 12]);
+      assert_eq!(d1.to_array(), [13, 14]);
+
+      undiagonalize(&mut b0, &mut b1, &mut c0, &mut c1, &mut d0, &mut d1);
+      assert_eq!((b0, b1, c0, c1, d0, d1), original);
+    }
   }
 }

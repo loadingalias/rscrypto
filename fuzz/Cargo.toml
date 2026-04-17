@@ -26,10 +26,13 @@ chacha20poly1305 = { version = "0.10", default-features = false, features = ["al
 ed25519-dalek = "2.2"
 hmac = "0.13"
 hkdf = "0.13"
+pbkdf2 = "0.12.2"
+sha2_010 = { package = "sha2", version = "0.10.9" }
 x25519-dalek = { version = "2.0.1", features = ["static_secrets"] }
 
 # Hashes
 ascon-hash = "0.4"
+blake2 = "0.11.0-rc.6"
 blake3 = "1.8"
 digest = "0.11"
 sha2 = "0.11"
@@ -114,6 +117,11 @@ path = "fuzz_targets/auth_hkdf_sha384.rs"
 doc = false
 
 [[bin]]
+name = "auth_pbkdf2"
+path = "fuzz_targets/auth_pbkdf2.rs"
+doc = false
+
+[[bin]]
 name = "auth_x25519"
 path = "fuzz_targets/auth_x25519.rs"
 doc = false
@@ -132,6 +140,16 @@ doc = false
 [[bin]]
 name = "hash_sha3"
 path = "fuzz_targets/hash_sha3.rs"
+doc = false
+
+[[bin]]
+name = "hash_blake2b"
+path = "fuzz_targets/hash_blake2b.rs"
+doc = false
+
+[[bin]]
+name = "hash_blake2s"
+path = "fuzz_targets/hash_blake2s.rs"
 doc = false
 
 [[bin]]

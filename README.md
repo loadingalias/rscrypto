@@ -123,13 +123,14 @@ XOF readers: `Shake128XofReader`, `Shake256XofReader`, `Cshake256XofReader`, `Bl
 
 `BuildHasher` support (requires `alloc`): `Xxh3BuildHasher`, `RapidBuildHasher`.
 
-### MACs & KDFs (features: `macs` / `kdfs` or `hmac` / `hkdf` / `kmac`)
+### MACs & KDFs (features: `macs` / `kdfs` or `hmac` / `hkdf` / `pbkdf2` / `kmac`)
 
 | Type | Tag/Output | Standard |
 |------|------------|----------|
 | `HmacSha256` / `HmacSha384` / `HmacSha512` | 32-64B | RFC 2104 |
 | `Kmac256` | variable | SP 800-185 |
 | `HkdfSha256` / `HkdfSha384` | 32-48B PRK | RFC 5869 |
+| `Pbkdf2Sha256` / `Pbkdf2Sha512` | variable | RFC 2898 / SP 800-132 |
 
 ### Signatures & Key Exchange (features: `signatures` / `key-exchange` or `ed25519` / `x25519`)
 
@@ -197,7 +198,7 @@ Nonce types: `Nonce96` (12B), `Nonce128` (16B), `Nonce192` (24B), `Nonce256` (32
 | `fast-hashes` | No | `xxh3` + `rapidhash` |
 | `hashes` | No | `crypto-hashes` + `fast-hashes` |
 | `macs` | No | `hmac` + `kmac` |
-| `kdfs` | No | `hkdf` (implies `hmac`) |
+| `kdfs` | No | `hkdf` + `pbkdf2` (implies `hmac`) |
 | `auth` | No | `macs` + `kdfs` + `signatures` + `key-exchange` |
 | `aead` | No | All 6 AEAD leaves |
 | `full` | No | `checksums` + `hashes` + `auth` + `aead` |
@@ -206,7 +207,7 @@ Nonce types: `Nonce96` (12B), `Nonce128` (16B), `Nonce192` (24B), `Nonce256` (32
 | `serde` | No | `Serialize`/`Deserialize` on keys, nonces, tags, signatures |
 | `diag` | No | Dispatch introspection. Implies `std` |
 
-Leaf features: `crc16`, `crc24`, `crc32`, `crc64`, `sha2`, `sha3`, `blake3`, `ascon-hash`, `xxh3`, `rapidhash`, `hmac`, `hkdf`, `kmac`, `ed25519`, `x25519`, `aes-gcm`, `aes-gcm-siv`, `chacha20poly1305`, `xchacha20poly1305`, `aegis256`, `ascon-aead`.
+Leaf features: `crc16`, `crc24`, `crc32`, `crc64`, `sha2`, `sha3`, `blake3`, `ascon-hash`, `xxh3`, `rapidhash`, `hmac`, `hkdf`, `pbkdf2`, `kmac`, `ed25519`, `x25519`, `aes-gcm`, `aes-gcm-siv`, `chacha20poly1305`, `xchacha20poly1305`, `aegis256`, `ascon-aead`.
 
 ## Platform Support
 

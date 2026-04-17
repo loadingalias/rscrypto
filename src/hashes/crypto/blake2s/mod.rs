@@ -34,6 +34,16 @@ pub(crate) mod kernels;
 #[cfg(target_arch = "aarch64")]
 mod aarch64;
 mod dispatch;
+#[cfg(target_arch = "powerpc64")]
+mod power;
+#[cfg(target_arch = "riscv64")]
+mod riscv64;
+#[cfg(target_arch = "s390x")]
+mod s390x;
+#[cfg(target_arch = "wasm32")]
+mod wasm;
+#[cfg(target_arch = "x86_64")]
+mod x86_64;
 
 use core::fmt;
 
@@ -269,6 +279,12 @@ impl Blake2s256 {
   pub(crate) fn new_with_compress_for_test(compress: kernels::CompressFn) -> Self {
     Self(Core::new_with_compress_for_test(32, &[], compress))
   }
+
+  #[cfg(test)]
+  pub(crate) fn keyed_with_compress_for_test(key: &[u8], compress: kernels::CompressFn) -> Self {
+    assert!(!key.is_empty(), "use new_with_compress_for_test() for unkeyed hashing");
+    Self(Core::new_with_compress_for_test(32, key, compress))
+  }
 }
 
 impl Default for Blake2s256 {
@@ -352,6 +368,17 @@ impl Blake2s128 {
     h.update(data);
     h.finalize()
   }
+
+  #[cfg(test)]
+  pub(crate) fn new_with_compress_for_test(compress: kernels::CompressFn) -> Self {
+    Self(Core::new_with_compress_for_test(16, &[], compress))
+  }
+
+  #[cfg(test)]
+  pub(crate) fn keyed_with_compress_for_test(key: &[u8], compress: kernels::CompressFn) -> Self {
+    assert!(!key.is_empty(), "use new_with_compress_for_test() for unkeyed hashing");
+    Self(Core::new_with_compress_for_test(16, key, compress))
+  }
 }
 
 impl Default for Blake2s128 {
@@ -394,7 +421,9 @@ impl Drop for Blake2s128 {
 
 #[cfg(test)]
 mod tests {
-  use blake2::{Blake2s256 as OracleBlake2s256, Digest as _};
+  use blake2::{Blake2s128 as OracleBlake2s128, Blake2s256 as OracleBlake2s256, Blake2sMac, Digest as _};
+  use digest::typenum::{U16, U32};
+  use hmac::{Mac as _, digest::KeyInit};
 
   use super::{
     kernels::{
@@ -403,6 +432,21 @@ mod tests {
     },
     *,
   };
+
+  type OracleBlake2sMac128 = Blake2sMac<U16>;
+  type OracleBlake2sMac256 = Blake2sMac<U32>;
+
+  const ORACLE_CASES: &[&[u8]] = &[
+    b"",
+    b"a",
+    b"abc",
+    b"hello world",
+    &[0u8; 64],
+    &[0xFFu8; 128],
+    &[0xAAu8; 129],
+    &[0xBBu8; 256],
+    &[0xCCu8; 1024],
+  ];
 
   fn oracle_hash_256(data: &[u8]) -> [u8; 32] {
     let mut h = OracleBlake2s256::new();
@@ -413,25 +457,32 @@ mod tests {
     out
   }
 
+  fn oracle_hash_128(data: &[u8]) -> [u8; 16] {
+    let mut h = OracleBlake2s128::new();
+    h.update(data);
+    let result = h.finalize();
+    let mut out = [0u8; 16];
+    out.copy_from_slice(&result);
+    out
+  }
+
   // ── Unkeyed oracle tests ────────────────────────────────────────────
 
   #[test]
   fn blake2s256_matches_oracle() {
-    let cases: &[&[u8]] = &[
-      b"",
-      b"a",
-      b"abc",
-      b"hello world",
-      &[0u8; 64],
-      &[0xFFu8; 128],
-      &[0xAAu8; 129],
-      &[0xBBu8; 256],
-      &[0xCCu8; 1024],
-    ];
-    for &data in cases {
+    for &data in ORACLE_CASES {
       let expected = oracle_hash_256(data);
       let actual = Blake2s256::digest(data);
       assert_eq!(actual, expected, "Blake2s256 mismatch for len={}", data.len());
+    }
+  }
+
+  #[test]
+  fn blake2s128_matches_oracle() {
+    for &data in ORACLE_CASES {
+      let expected = oracle_hash_128(data);
+      let actual = Blake2s128::digest(data);
+      assert_eq!(actual, expected, "Blake2s128 mismatch for len={}", data.len());
     }
   }
 
@@ -445,6 +496,18 @@ mod tests {
     let mut h = Blake2s256::new();
     for byte in data.iter() {
       h.update(core::slice::from_ref(byte));
+    }
+    assert_eq!(h.finalize(), oneshot);
+  }
+
+  #[test]
+  fn blake2s128_streaming_matches_oneshot() {
+    let data = [0x24u8; 300];
+    let oneshot = Blake2s128::digest(&data);
+
+    let mut h = Blake2s128::new();
+    for chunk in data.chunks(31) {
+      h.update(chunk);
     }
     assert_eq!(h.finalize(), oneshot);
   }
@@ -474,12 +537,52 @@ mod tests {
     assert_ne!(hash, tag);
   }
 
+  #[test]
+  fn blake2s256_keyed_matches_oracle() {
+    let key = b"secret-key";
+    let data = b"hello world";
+
+    let mut oracle = OracleBlake2sMac256::new_from_slice(key).unwrap();
+    oracle.update(data);
+    let expected = oracle.finalize().into_bytes();
+
+    let actual = Blake2s256::keyed_hash(key, data);
+    assert_eq!(&actual[..], &expected[..]);
+  }
+
+  #[test]
+  fn blake2s128_keyed_matches_oracle() {
+    let key = b"tiny-key";
+    let data = b"hello world";
+
+    let mut oracle = OracleBlake2sMac128::new_from_slice(key).unwrap();
+    oracle.update(data);
+    let expected = oracle.finalize().into_bytes();
+
+    let actual = Blake2s128::keyed_hash(key, data);
+    assert_eq!(&actual[..], &expected[..]);
+  }
+
+  #[test]
+  fn blake2s256_keyed_long_data() {
+    let key = &[0xAA; 32];
+    let data = &[0xBB; 512];
+
+    let mut oracle = OracleBlake2sMac256::new_from_slice(key).unwrap();
+    oracle.update(data);
+    let expected = oracle.finalize().into_bytes();
+
+    let actual = Blake2s256::keyed_hash(key, data);
+    assert_eq!(&actual[..], &expected[..]);
+  }
+
   // ── Edge cases ────────────────────────────────────────────────────────
 
   #[test]
   fn empty_input() {
     let expected = oracle_hash_256(b"");
     assert_eq!(Blake2s256::digest(b""), expected);
+    assert_eq!(Blake2s128::digest(b""), oracle_hash_128(b""));
   }
 
   #[test]
@@ -487,6 +590,7 @@ mod tests {
     let data = [0u8; 64];
     let expected = oracle_hash_256(&data);
     assert_eq!(Blake2s256::digest(&data), expected);
+    assert_eq!(Blake2s128::digest(&data), oracle_hash_128(&data));
   }
 
   #[test]
@@ -494,6 +598,7 @@ mod tests {
     let data = [0u8; 65];
     let expected = oracle_hash_256(&data);
     assert_eq!(Blake2s256::digest(&data), expected);
+    assert_eq!(Blake2s128::digest(&data), oracle_hash_128(&data));
   }
 
   #[test]
@@ -521,19 +626,8 @@ mod tests {
 
   fn assert_blake2s_kernel(id: Blake2sKernelId) {
     let compress = blake2s_compress_fn(id);
-    let cases: &[&[u8]] = &[
-      b"",
-      b"a",
-      b"abc",
-      b"hello world",
-      &[0u8; 64],
-      &[0xFFu8; 128],
-      &[0xAAu8; 129],
-      &[0xBBu8; 256],
-      &[0xCCu8; 1024],
-    ];
 
-    for &data in cases {
+    for &data in ORACLE_CASES {
       let expected = oracle_hash_256(data);
       let mut h = Blake2s256::new_with_compress_for_test(compress);
       h.update(data);
@@ -543,6 +637,55 @@ mod tests {
         "blake2s-256 forced mismatch kernel={} len={}",
         id.as_str(),
         data.len(),
+      );
+    }
+
+    for &data in ORACLE_CASES {
+      let expected = oracle_hash_128(data);
+      let mut h = Blake2s128::new_with_compress_for_test(compress);
+      h.update(data);
+      assert_eq!(
+        h.finalize(),
+        expected,
+        "blake2s-128 forced mismatch kernel={} len={}",
+        id.as_str(),
+        data.len(),
+      );
+    }
+
+    for &(key, msg) in &[
+      (&b"key"[..], &b"message"[..]),
+      (&[0xAA; 16][..], &[0x55; 257][..]),
+      (&[0xCC; 32][..], &[0x11; 512][..]),
+    ] {
+      let mut oracle_128 = OracleBlake2sMac128::new_from_slice(key).unwrap();
+      oracle_128.update(msg);
+      let expected_128 = oracle_128.finalize().into_bytes();
+
+      let mut h128 = Blake2s128::keyed_with_compress_for_test(key, compress);
+      h128.update(msg);
+      let actual_128 = h128.finalize();
+      assert_eq!(
+        &actual_128[..],
+        &expected_128[..],
+        "blake2s-128 keyed forced mismatch kernel={} key_len={}",
+        id.as_str(),
+        key.len(),
+      );
+
+      let mut oracle_256 = OracleBlake2sMac256::new_from_slice(key).unwrap();
+      oracle_256.update(msg);
+      let expected_256 = oracle_256.finalize().into_bytes();
+
+      let mut h256 = Blake2s256::keyed_with_compress_for_test(key, compress);
+      h256.update(msg);
+      let actual_256 = h256.finalize();
+      assert_eq!(
+        &actual_256[..],
+        &expected_256[..],
+        "blake2s-256 keyed forced mismatch kernel={} key_len={}",
+        id.as_str(),
+        key.len(),
       );
     }
 
@@ -558,6 +701,21 @@ mod tests {
         h.finalize(),
         expected,
         "blake2s-256 streaming forced mismatch kernel={} chunk={}",
+        id.as_str(),
+        chunk_size,
+      );
+    }
+
+    let expected_128 = oracle_hash_128(data);
+    for chunk_size in [1, 7, 31, 32, 63, 64, 65] {
+      let mut h = Blake2s128::new_with_compress_for_test(compress);
+      for chunk in data.chunks(chunk_size) {
+        h.update(chunk);
+      }
+      assert_eq!(
+        h.finalize(),
+        expected_128,
+        "blake2s-128 streaming forced mismatch kernel={} chunk={}",
         id.as_str(),
         chunk_size,
       );
