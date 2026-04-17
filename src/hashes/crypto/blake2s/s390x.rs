@@ -218,27 +218,39 @@ pub(super) unsafe fn compress_vector(h: &mut [u32; 8], block: &[u8; 64], t: u64,
 
 #[cfg(test)]
 mod tests {
-  use core::simd::i64x2;
-
   use super::{DiagMasks, diagonalize, to_u32x4, undiagonalize};
+
+  #[target_feature(enable = "vector")]
+  unsafe fn assert_diagonalize_matches_blake2s_lane_rotation() {
+    // SAFETY: the helper itself requires the s390x vector facility.
+    let masks = unsafe { DiagMasks::new() };
+    let mut b = super::from_u32x4([4, 5, 6, 7]);
+    let mut c = super::from_u32x4([8, 9, 10, 11]);
+    let mut d = super::from_u32x4([12, 13, 14, 15]);
+    let original = (b, c, d);
+
+    // SAFETY: the helper itself requires the s390x vector facility.
+    unsafe {
+      diagonalize(&mut b, &mut c, &mut d, &masks);
+    }
+    assert_eq!(to_u32x4(b), [5, 6, 7, 4]);
+    assert_eq!(to_u32x4(c), [10, 11, 8, 9]);
+    assert_eq!(to_u32x4(d), [15, 12, 13, 14]);
+
+    // SAFETY: the helper itself requires the s390x vector facility.
+    unsafe {
+      undiagonalize(&mut b, &mut c, &mut d, &masks);
+    }
+    assert_eq!((b, c, d), original);
+  }
 
   #[test]
   fn diagonalize_matches_blake2s_lane_rotation() {
-    // SAFETY: the CI s390x runner executes this only when vector support exists.
-    unsafe {
-      let masks = DiagMasks::new();
-      let mut b = super::from_u32x4([4, 5, 6, 7]);
-      let mut c = super::from_u32x4([8, 9, 10, 11]);
-      let mut d = super::from_u32x4([12, 13, 14, 15]);
-      let original = (b, c, d);
-
-      diagonalize(&mut b, &mut c, &mut d, &masks);
-      assert_eq!(to_u32x4(b), [5, 6, 7, 4]);
-      assert_eq!(to_u32x4(c), [10, 11, 8, 9]);
-      assert_eq!(to_u32x4(d), [15, 12, 13, 14]);
-
-      undiagonalize(&mut b, &mut c, &mut d, &masks);
-      assert_eq!((b, c, d), original);
-    }
+    assert!(
+      std::arch::is_s390x_feature_detected!("vector"),
+      "s390x vector facility is required for Blake2s diagonalize tests"
+    );
+    // SAFETY: the runtime check above guarantees the vector facility is available.
+    unsafe { assert_diagonalize_matches_blake2s_lane_rotation() };
   }
 }

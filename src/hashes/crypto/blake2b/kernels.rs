@@ -3,7 +3,7 @@
 use crate::platform::Caps;
 #[cfg(target_arch = "aarch64")]
 use crate::platform::caps::aarch64;
-#[cfg(target_arch = "powerpc64")]
+#[cfg(all(target_arch = "powerpc64", target_endian = "big"))]
 use crate::platform::caps::power;
 #[cfg(target_arch = "riscv64")]
 use crate::platform::caps::riscv;
@@ -34,7 +34,7 @@ pub enum Blake2bKernelId {
   Aarch64Neon = 3,
   #[cfg(target_arch = "s390x")]
   S390xVector = 4,
-  #[cfg(target_arch = "powerpc64")]
+  #[cfg(all(target_arch = "powerpc64", target_endian = "big"))]
   PowerVsx = 5,
   #[cfg(target_arch = "riscv64")]
   Riscv64V = 6,
@@ -57,7 +57,7 @@ impl Blake2bKernelId {
       Self::Aarch64Neon => "aarch64/neon",
       #[cfg(target_arch = "s390x")]
       Self::S390xVector => "s390x/vector",
-      #[cfg(target_arch = "powerpc64")]
+      #[cfg(all(target_arch = "powerpc64", target_endian = "big"))]
       Self::PowerVsx => "power/vsx",
       #[cfg(target_arch = "riscv64")]
       Self::Riscv64V => "riscv64/v",
@@ -93,7 +93,7 @@ fn compress_s390x_vector(h: &mut [u64; 8], block: &[u8; 128], t: u128, last: boo
   unsafe { super::s390x::compress_vector(h, block, t, last) }
 }
 
-#[cfg(target_arch = "powerpc64")]
+#[cfg(all(target_arch = "powerpc64", target_endian = "big"))]
 fn compress_power_vsx(h: &mut [u64; 8], block: &[u8; 128], t: u128, last: bool) {
   // SAFETY: Only called when dispatch has verified VSX is available.
   unsafe { super::power::compress_vsx(h, block, t, last) }
@@ -124,7 +124,7 @@ pub(crate) fn compress_fn(id: Blake2bKernelId) -> CompressFn {
     Blake2bKernelId::Aarch64Neon => compress_aarch64_neon,
     #[cfg(target_arch = "s390x")]
     Blake2bKernelId::S390xVector => compress_s390x_vector,
-    #[cfg(target_arch = "powerpc64")]
+    #[cfg(all(target_arch = "powerpc64", target_endian = "big"))]
     Blake2bKernelId::PowerVsx => compress_power_vsx,
     #[cfg(target_arch = "riscv64")]
     Blake2bKernelId::Riscv64V => compress_riscv64_v,
@@ -148,7 +148,7 @@ pub const fn required_caps(id: Blake2bKernelId) -> Caps {
     Blake2bKernelId::Aarch64Neon => aarch64::NEON,
     #[cfg(target_arch = "s390x")]
     Blake2bKernelId::S390xVector => s390x::VECTOR,
-    #[cfg(target_arch = "powerpc64")]
+    #[cfg(all(target_arch = "powerpc64", target_endian = "big"))]
     Blake2bKernelId::PowerVsx => power::VSX,
     #[cfg(target_arch = "riscv64")]
     Blake2bKernelId::Riscv64V => riscv::V,
@@ -169,7 +169,7 @@ pub const ALL: &[Blake2bKernelId] = &[
   Blake2bKernelId::Aarch64Neon,
   #[cfg(target_arch = "s390x")]
   Blake2bKernelId::S390xVector,
-  #[cfg(target_arch = "powerpc64")]
+  #[cfg(all(target_arch = "powerpc64", target_endian = "big"))]
   Blake2bKernelId::PowerVsx,
   #[cfg(target_arch = "riscv64")]
   Blake2bKernelId::Riscv64V,
